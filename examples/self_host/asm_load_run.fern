@@ -68,25 +68,33 @@ function shaken_program(typed: parser.Module, prune: boolean): parser.Module {
     return treeshake.treeshake(typed);
 }
 
-// emit_per_module_concat compiles a program's modules SEPARATELY (per-module IR
-// units) and concatenates them into one linkable asm stream, routing a program
-// that overflows the merged 512-function IR budget through the IR path anyway
-// (#3457). Each module is under budget, so each unit lowers
-// on the IR path; the units share a whole-program func/struct view (all_funcs /
-// all_structs) so cross-module calls and imported struct layouts resolve, and
-// only the entry unit emits `_start` + the shared runtime (seeded with the full
-// need roots). `reach` is the reachable-name set: each module is pruned to it
-// first, so unused stdlib functions — which may use per-function constructs the
-// IR path cannot lower yet — do NOT make the module ineligible.
-// Returns "" if a REACHABLE module is still not IR-eligible; the caller then
-// falls through to the merged IR-or-error emit.
+// emit_per_module_concat compiles a program's modules as separate units and
+// concatenates them into one linkable asm stream. The units share a
+// whole-program function and struct view, so cross-module calls and imported
+// struct layouts resolve, and only the entry unit emits `_start` and the shared
+// runtime (seeded with the full need roots).
 //
-// Bounded to programs that fit ONE process: the whole-compiler self-compile
-// (~2040 funcs) would accumulate every unit's working set in a single process
-// and OOM (that path uses the batched, file-based per-module emit instead), so
-// the caller only routes here for merged sizes comfortably below it.
-function emit_per_module_concat(entry_mod: parser.Module, loaded: flatten.LoadedModule[], reach: string[], target: string): string {
+// With the typed lowering on, `d` is the merged emit's program and the units
+// are cut from its lowering. With it off each module is pruned to `reach`, so
+// unused stdlib functions do not make it ineligible, and returns "" if a
+// reachable module is still not IR-eligible; the caller then falls through to
+// the merged IR-or-error emit.
+function emit_per_module_concat(entry_mod: parser.Module, loaded: flatten.LoadedModule[], reach: string[], target: string, d: semlower.Driven): string {
     var parts: flatten.PerModule[] = flatten.bundle_per_module(entry_mod, loaded, target);
+    var needs: string[] = ircore.all_runtime_need_roots();
+    var out: string = "";
+    if (semlower.sem_ir_on()) {
+        var g: ircore.Gated = semlower.program(d);
+        var u: ircore.Units = ircore.split_units(g, part_mods(parts), entry_index(parts));
+        var ti: i32 = 0;
+        while (ti < parts.len()) {
+            var textra: string[] = [];
+            if (parts[ti].is_entry) { textra = needs; }
+            out = out + asm_ir.emit_module_ir_unit_flat(u.mods[ti], parts[ti].is_entry, true, parts[ti].ns, textra, g.im.funcs, g.stab, 0, 0 - 1, u.caches[ti], g.base, d.sub.rt_lower);
+            ti = ti + 1;
+        }
+        return out;
+    }
     var infmods: parser.Module[] = [];
     var all_funcs: parser.FuncDecl[] = [];
     var all_structs: parser.StructDecl[] = [];
@@ -112,14 +120,12 @@ function emit_per_module_concat(entry_mod: parser.Module, loaded: flatten.Loaded
         while (sk < im.structs.len()) { all_structs = all_structs.append(im.structs[sk]); sk = sk + 1; }
         pi = pi + 1;
     }
-    var needs: string[] = ircore.all_runtime_need_roots();
     // all_structs is complete once the import walk above finishes, so the index
     // is built once here rather than per module inside the loop (#8178).
     var all_stab: irlower.StructTab = irlower.struct_tab(all_structs);
     // The whole-program registry base, derived once and shared by every unit's
     // gate and emit (#8199).
     var wpb: irlower.FnSigs = ircore.wp_fn_sigs(all_funcs, all_stab);
-    var out: string = "";
     var idx: i32 = 0;
     while (idx < parts.len()) {
         // Per-module eligibility against the whole-program view, exactly as the
@@ -128,10 +134,43 @@ function emit_per_module_concat(entry_mod: parser.Module, loaded: flatten.Loaded
         if (!ircore.all_eligible_view_base(infmods[idx], known, all_stab, wpb)) { return ""; }
         var extra: string[] = [];
         if (parts[idx].is_entry) { extra = needs; }
-        out = out + asm_ir.emit_module_ir_unit_flat(infmods[idx], parts[idx].is_entry, true, parts[idx].ns, extra, all_funcs, all_stab, 0, 0 - 1, [], wpb);
+        out = out + asm_ir.emit_module_ir_unit_flat(infmods[idx], parts[idx].is_entry, true, parts[idx].ns, extra, all_funcs, all_stab, 0, 0 - 1, [], wpb, asmcore.no_rt_lower);
         idx = idx + 1;
     }
     return out;
+}
+
+function part_mods(parts: flatten.PerModule[]): parser.Module[] {
+    var out: parser.Module[] = [];
+    for pt in parts { out = out.append(pt.mod); }
+    return out;
+}
+
+function entry_index(parts: flatten.PerModule[]): i32 {
+    var i: i32 = 0;
+    while (i < parts.len()) {
+        if (parts[i].is_entry) { return i; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+// checked_or_exit is the program the merged emit reads: the bundle, held to
+// the checker's build gate, annotated and pruned when `prune` is set.
+function checked_or_exit(merged: parser.Module, prune: boolean): parser.Module {
+    // Build gate: reject a program the checker rejects before codegen, so this
+    // driver is not more permissive than `-check` or the native compiler
+    // (#6961). checker.is_build_gate_code decides the set — every coded
+    // diagnostic except the partial-port rules measured to false-positive.
+    var gated: util.Diag[] = checker.build_gate_diags(merged);
+    if (gated.len() > 0) {
+        eprint(util.format_diags(gated));
+        exit(1);
+    }
+    // typed-IR (#5531): stamp each call expression with its checker-inferred
+    // result type so the IR lowering READS the type instead of re-deriving it
+    // (docs/TYPED-IR-REWRITE.md).
+    return shaken_program(checker.annotate_module(merged), prune);
 }
 
 function main(): i32 {
@@ -279,6 +318,26 @@ function main(): i32 {
     if (asmcore.refuse_decl_names(parsed)) { return 1; }
     if (asmcore.refuse_parse_unknowns(parsed)) { return 1; }
 
+    // Prune unreachable functions (sound, name-based reachability from main)
+    // so a stdlib-importing program's merged module fits the IR budget. Raw
+    // (pre-module_with_builtins) pruning is sound: derive-synthesised methods
+    // and monomorph instantiations are added AFTER this from functions that are
+    // themselves reachable, so nothing reachable is dropped. Applied by default
+    // whenever a stdlib root is in play (the only time the transitive closure
+    // bloats past the IR budget); `-treeshake` forces it on even without a root.
+    // A program with no stdlib imports (the bootstrap self-compile, root == "")
+    // is left exactly as before.
+    //
+    // The prune runs on the ANNOTATED module and after the build gate, in the
+    // order fern.fern uses. The gate has to read the module as written: the
+    // prune drops mod.funcs while leaving mod.impls whole, so an empty
+    // `impl Trait for T { }` whose adopted method is unreachable reads to the
+    // checker as a missing method (#8885). And the annotate pass has to run
+    // first because it is what roots a Display method: `print(q)` becomes
+    // `q.to_string()` there (docs/TRAITS.md §3a), and the prune keeps
+    // `Q.to_string` only once that call exists.
+    var prune: boolean = (do_treeshake || root.len() > 0) && !no_treeshake;
+
     // Per-module compilation (#3451 step 4 / #3456). Run BEFORE flatten.bundle
     // (which mangles entry_mod / loaded in place) so bundle_per_module sees the
     // un-mangled modules. The native runtime's global string buffer can hold
@@ -298,6 +357,36 @@ function main(): i32 {
         var parts: flatten.PerModule[] = flatten.bundle_per_module(entry_mod, loaded, target);
         if (pm_mode == "count") {
             print(util.i32_to_string(parts.len()) + "\n");
+            return 0;
+        }
+        if (pm_mode == "needs") {
+            // Seed the entry's shared runtime with the full root set instead of an
+            // exact per-module union (ircore.all_runtime_need_roots): a sound,
+            // deterministic over-approximation. Computing the exact union here ran
+            // module_runtime_needs (a full emit) over EVERY module in one process,
+            // which OOMs a self-host-built driver (#3425) — the one thing blocking a
+            // self-host per-module self-compile. The entry over-emits a few unused
+            // helpers; close_needs still pulls each root's transitive deps.
+            var needs: string[] = ircore.all_runtime_need_roots();
+            var no: i32 = 0;
+            while (no < needs.len()) { print(needs[no] + "\n"); no = no + 1; }
+            return 0;
+        }
+        // pm_mode == "emit": emit exactly module pm_index (the ONLY strbuf-emit
+        // in this process, so the buffer is clean).
+        if (pm_index < 0 || pm_index >= parts.len()) {
+            eprint("per-module: emit index out of range\n");
+            return 1;
+        }
+        var extra: string[] = [];
+        if (parts[pm_index].is_entry) { extra = pm_extra; }
+        // The typed lowering lowers the program the merged emit reads, whole,
+        // and this unit is cut from it.
+        if (semlower.sem_ir_on()) {
+            var pd: semlower.Driven = semlower.driven_annotated(checked_or_exit(flatten.bundle(entry_mod, loaded, target), prune), target);
+            var pg: ircore.Gated = semlower.program(pd);
+            var pu: ircore.Units = ircore.split_units(pg, part_mods(parts), entry_index(parts));
+            write(asm_ir.emit_module_ir_unit_flat(pu.mods[pm_index], parts[pm_index].is_entry, true, parts[pm_index].ns, extra, pg.im.funcs, pg.stab, 0, 0 - 1, pu.caches[pm_index], pg.base, pd.sub.rt_lower));
             return 0;
         }
         // Whole-program signature view + program-wide known-symbol set.
@@ -326,25 +415,6 @@ function main(): i32 {
             while (sk < im.structs.len()) { all_structs = all_structs.append(im.structs[sk]); sk = sk + 1; }
             pi = pi + 1;
         }
-        if (pm_mode == "needs") {
-            // Seed the entry's shared runtime with the full root set instead of an
-            // exact per-module union (ircore.all_runtime_need_roots): a sound,
-            // deterministic over-approximation. Computing the exact union here ran
-            // module_runtime_needs (a full emit) over EVERY module in one process,
-            // which OOMs a self-host-built driver (#3425) — the one thing blocking a
-            // self-host per-module self-compile. The entry over-emits a few unused
-            // helpers; close_needs still pulls each root's transitive deps.
-            var needs: string[] = ircore.all_runtime_need_roots();
-            var no: i32 = 0;
-            while (no < needs.len()) { print(needs[no] + "\n"); no = no + 1; }
-            return 0;
-        }
-        // pm_mode == "emit": emit exactly module pm_index (the ONLY strbuf-emit
-        // in this process, so the buffer is clean).
-        if (pm_index < 0 || pm_index >= parts.len()) {
-            eprint("per-module: emit index out of range\n");
-            return 1;
-        }
         // The unit gates against the WHOLE-PROGRAM all_funcs / all_structs view,
         // so a function touching a sibling module's struct layout lowers in the
         // gate exactly as it does in emit_module_ir_unit_flat (which lowers
@@ -361,33 +431,12 @@ function main(): i32 {
         }
         // The entry folds the whole-program runtime-need union (-extra-need,
         // from the -per-module-needs invocation) into its single shared runtime.
-        var extra: string[] = [];
-        if (parts[pm_index].is_entry) { extra = pm_extra; }
-        write(asm_ir.emit_module_ir_unit_flat(infmods[pm_index], parts[pm_index].is_entry, true, parts[pm_index].ns, extra, all_funcs, pm_stab, 0, 0 - 1, [], pm_wpb));
+        write(asm_ir.emit_module_ir_unit_flat(infmods[pm_index], parts[pm_index].is_entry, true, parts[pm_index].ns, extra, all_funcs, pm_stab, 0, 0 - 1, [], pm_wpb, asmcore.no_rt_lower));
         return 0;
     }
 
     var merged: parser.Module = flatten.bundle(entry_mod, loaded, target);
 
-    // Prune unreachable functions (sound, name-based reachability from main)
-    // so a stdlib-importing program's merged module fits the IR budget. Raw
-    // (pre-module_with_builtins) pruning is sound: derive-synthesised methods
-    // and monomorph instantiations are added AFTER this from functions that are
-    // themselves reachable, so nothing reachable is dropped. Applied by default
-    // whenever a stdlib root is in play (the only time the transitive closure
-    // bloats past the IR budget); `-treeshake` forces it on even without a root.
-    // A program with no stdlib imports (the bootstrap self-compile, root == "")
-    // is left exactly as before.
-    //
-    // The prune runs on the ANNOTATED module and after the build gate, in the
-    // order fern.fern uses. The gate has to read the module as written: the
-    // prune drops mod.funcs while leaving mod.impls whole, so an empty
-    // `impl Trait for T { }` whose adopted method is unreachable reads to the
-    // checker as a missing method (#8885). And the annotate pass has to run
-    // first because it is what roots a Display method: `print(q)` becomes
-    // `q.to_string()` there (docs/TRAITS.md §3a), and the prune keeps
-    // `Q.to_string` only once that call exists.
-    var prune: boolean = (do_treeshake || root.len() > 0) && !no_treeshake;
 
     // `-decide`: print the path the merged module routes through (ir / ast) —
     // the same all_eligible decision emit_module makes — and stop. Judged on the
@@ -424,23 +473,7 @@ function main(): i32 {
         return 0;
     }
 
-    // Build gate: reject a program the checker rejects before codegen, so this
-    // driver is not more permissive than `-check` or the native compiler
-    // (#6961). checker.is_build_gate_code decides the set — every coded
-    // diagnostic except the partial-port rules measured to false-positive.
-    // A hit prints the diagnostic to stderr and fails the build.
-    var gated: util.Diag[] = checker.build_gate_diags(merged);
-    if (gated.len() > 0) {
-        eprint(util.format_diags(gated));
-        return 1;
-    }
-
-    // typed-IR (#5531): stamp each call expression with its checker-inferred
-    // result type so the IR lowering READS the type instead of re-deriving it
-    // (docs/TYPED-IR-REWRITE.md). Runs after the checker (its Scope resolves the
-    // types) and before emit_module's eligible-module IR routing, which is what
-    // reads c.ty. A no-op on drivers that skip it (asm_ir_run leaves ty "").
-    merged = shaken_program(checker.annotate_module(merged), prune);
+    merged = checked_or_exit(merged, prune);
 
     if (target == "wasm32-wasi") {
         // The preview1 command core, or the component core, as the CLI emits it.
@@ -488,18 +521,18 @@ function main(): i32 {
     // set the per-module emit prunes each module to; emit_per_module_concat
     // returns "" if a reachable module is genuinely IR-ineligible, so such
     // programs fall through to the merged emit below.
+    var d: semlower.Driven = semlower.driven_annotated(merged, target);
     var nfuncs: i32 = ircore.lift_lambdas(parser.module_with_builtins(merged)).funcs.len();
     if (nfuncs > 512 && nfuncs < 1500) {
         var reach: string[] = [];
         var ri: i32 = 0;
         while (ri < merged.funcs.len()) { reach = reach.append(treeshake.reach_key(merged.funcs[ri])); ri = ri + 1; }
-        var pmc: string = emit_per_module_concat(entry_mod, loaded, reach, target);
+        var pmc: string = emit_per_module_concat(entry_mod, loaded, reach, target, d);
         if (pmc.len() > 0) { write(pmc); return 0; }
     }
     // Last resort, and no longer a fallback: a module the per-module concat rescue
     // above declined (or one past its 1500-function ceiling) is an ERROR, not a
     // silent drop to the legacy AST emitter (#3457 slice 5).
-    var d: semlower.Driven = semlower.driven_annotated(merged, target);
     write(asm_ir.emit_module_or_error_sub(d.full, d.sub));
     return 0;
 }

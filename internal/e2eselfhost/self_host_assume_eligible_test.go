@@ -43,6 +43,16 @@ func TestSelfHostAssumeEligibleByteIdenticalX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostModloadProject(t)
 	driverBin := buildSelfHostBin(t, gcc, dir, "asm_modload_run.fern", "ae_driver")
+	// The pre-check is the AST lowering's. Over the typed lowering every
+	// process gates the whole program before it cuts units, so there is none,
+	// and TestSelfHostPerModuleRoutesAgree covers the per-process route there.
+	// Set after the build, which stage0 would otherwise run on the AST lowering.
+	t.Setenv("FERN_SEM_IR", "")
+	// The AST lowering lowers a Map itself and cannot lower core/map's generic
+	// bodies as a unit of their own, so its program leaves the vendored copy out.
+	if err := os.RemoveAll(filepath.Join(dir, "core")); err != nil {
+		t.Fatal(err)
+	}
 	entry := filepath.Join(dir, "asm_modload_run.fern")
 
 	drive := func(args ...string) (string, error) {
@@ -113,7 +123,7 @@ func TestSelfHostAssumeEligibleByteIdenticalX86_64(t *testing.T) {
 	}
 	t.Logf("per-process (checked): %d units in %.1fs on %d workers", len(checked), time.Since(ppStart).Seconds(), workers)
 
-	assumed := emitAllWholeCompiler(t, runner, driverBin, entry, dir, "ae", "x86-64-linux", pmEmitAllBatch, pmGoBuiltEmitMemoryMB)
+	assumed := emitAllWholeCompiler(t, runner, driverBin, entry, dir, "ae", "x86-64-linux", pmEmitAllBatch(), pmGoBuiltEmitMemoryMB)
 
 	if len(assumed) != len(checked) {
 		t.Fatalf("unit count differs: per-process %d, emit-all %d", len(checked), len(assumed))

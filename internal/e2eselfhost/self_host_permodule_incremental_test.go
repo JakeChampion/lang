@@ -51,9 +51,9 @@ func TestSelfHostPerModuleIncrementalCodegenX86_64(t *testing.T) {
 			t.Fatalf("write leaf.fern: %v", err)
 		}
 	}
-	const leafI32 = "pub function leaf_val(): i32 { return 40; }\n"
-	const leafI32Body = "pub function leaf_val(): i32 { return 41; }\n" // body-only change, signature identical
-	const leafI64 = "pub function leaf_val(): i64 { return 40i64; }\n"  // signature change
+	const leafI32 = "@noinline pub function leaf_val(): i32 { return 40; }\n"
+	const leafI32Body = "@noinline pub function leaf_val(): i32 { return 41; }\n" // body-only change, signature identical
+	const leafI64 = "@noinline pub function leaf_val(): i64 { return 40i64; }\n"  // signature change
 	writeLeaf(leafI32)
 	if err := os.WriteFile(filepath.Join(proj, "mid.fern"), []byte(
 		"import \"./leaf\";\n"+
@@ -383,7 +383,7 @@ func TestSelfHostPerModuleObjectCacheX86_64(t *testing.T) {
 			t.Fatalf("write leaf.fern: %v", err)
 		}
 	}
-	writeLeaf("pub function leaf_val(): i32 { return 40; }\n")
+	writeLeaf("@noinline pub function leaf_val(): i32 { return 40; }\n")
 	if err := os.WriteFile(filepath.Join(proj, "mid.fern"), []byte(
 		"import \"./leaf\";\n"+
 			"pub function mid_val(): i32 {\n"+
@@ -547,7 +547,7 @@ func TestSelfHostPerModuleObjectCacheX86_64(t *testing.T) {
 	}
 
 	// --- Body-only edit to leaf: only leaf re-emits; mid/__entry served. ---
-	writeLeaf("pub function leaf_val(): i32 { return 41; }\n")
+	writeLeaf("@noinline pub function leaf_val(): i32 { return 41; }\n")
 	unitsA, hitsA, missesA := buildWithCache()
 	if !eq(missesA, "leaf") {
 		t.Fatalf("body edit: misses=%v, want exactly [leaf]", missesA)
@@ -566,7 +566,7 @@ func TestSelfHostPerModuleObjectCacheX86_64(t *testing.T) {
 	// closure because a unit lowers under the whole-program view and can
 	// reference declarations it never imported. This is the guard: a source-only
 	// cache would serve a stale mid unit. ---
-	writeLeaf("pub function leaf_val(): i64 { return 41i64; }\n")
+	writeLeaf("@noinline pub function leaf_val(): i64 { return 41i64; }\n")
 	unitsB, hitsB, missesB := buildWithCache()
 	if !eq(missesB, "leaf", "mid", "__entry") {
 		t.Fatalf("sig edit: misses=%v, want exactly [leaf mid __entry]", missesB)

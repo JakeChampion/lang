@@ -299,6 +299,16 @@ pub function body_refs(fd: parser.FuncDecl): BodyRefs {
     return BodyRefs { any: refset_of(ts_func_names(fd, [])), methods: refset_of(methods) };
 }
 
+// free_names is the receiver-less functions `br` names.
+pub function free_names(br: BodyRefs): string[] {
+    var out: string[] = [];
+    var root: string = ts_free_root("");
+    for n in br.any.names {
+        if (util.str_has_prefix(n, root)) { out = out.append(slice_unchecked(n, root.len(), n.len()) + ""); }
+    }
+    return out;
+}
+
 pub function refs_name(br: BodyRefs, fd: parser.FuncDecl): boolean {
     if (fd.receiver_type.len() > 0) { return ts_kept_name(fd, br.methods); }
     return ts_kept_name(fd, br.any);

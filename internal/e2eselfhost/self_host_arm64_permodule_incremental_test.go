@@ -42,7 +42,7 @@ func TestSelfHostPerModuleObjectCacheArm64(t *testing.T) {
 			t.Fatalf("write leaf.fern: %v", err)
 		}
 	}
-	writeLeaf("pub function leaf_val(): i32 { return 40; }\n")
+	writeLeaf("@noinline pub function leaf_val(): i32 { return 40; }\n")
 	if err := os.WriteFile(filepath.Join(proj, "mid.fern"), []byte(
 		"import \"./leaf\";\n"+
 			"pub function mid_val(): i32 {\n"+
@@ -144,7 +144,7 @@ func TestSelfHostPerModuleObjectCacheArm64(t *testing.T) {
 	}
 
 	// Body-only edit: only leaf re-emits; mid/__entry served byte-identically.
-	writeLeaf("pub function leaf_val(): i32 { return 41; }\n")
+	writeLeaf("@noinline pub function leaf_val(): i32 { return 41; }\n")
 	unitsA, hitsA, missesA := buildWithCache()
 	if !eq(missesA, "leaf") || !eq(hitsA, "mid", "__entry") {
 		t.Fatalf("body edit: misses=%v hits=%v, want misses=[leaf] hits=[mid __entry]", missesA, hitsA)
@@ -159,7 +159,7 @@ func TestSelfHostPerModuleObjectCacheArm64(t *testing.T) {
 	// re-emits. mid's arm64 call-site codegen depends on leaf's return type
 	// directly; __entry reaches it transitively and the key folds the closure,
 	// which is backend-independent like the rest of the key.
-	writeLeaf("pub function leaf_val(): i64 { return 41i64; }\n")
+	writeLeaf("@noinline pub function leaf_val(): i64 { return 41i64; }\n")
 	_, hitsB, missesB := buildWithCache()
 	if !eq(missesB, "leaf", "mid", "__entry") || len(hitsB) != 0 {
 		t.Fatalf("sig edit: misses=%v hits=%v, want misses=[leaf mid __entry] hits=[]", missesB, hitsB)

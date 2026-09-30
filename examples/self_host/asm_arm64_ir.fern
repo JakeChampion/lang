@@ -10123,15 +10123,9 @@ pub function emit_module_ir_gated(mod: parser.Module, darwin: boolean): string {
 // lowering substituted into it (ircore.Sub) — the arm64 twin of
 // asm_ir.emit_module_ir_gated_sub.
 pub function emit_module_ir_gated_sub(mod: parser.Module, darwin: boolean, sub: ircore.Sub): string {
-    // script_normalized desugars a SCRIPT-shaped module (top-level statements,
-    // no `main`) into `function main(): i32 { … }`. Return types are inferred
-    // BEFORE the registries are derived so they see the inferred ones.
-    var im: parser.Module = parser.infer_ret_types_module(ircore.script_normalized(mod));
-    var imtab: irlower.StructTab = irlower.struct_tab(im.structs);
-    var base: irlower.FnSigs = ircore.sub_base(sub, im.funcs, imtab);
-    var g: ircore.Lowered = ircore.lower_gated(im, imtab, irlower.fn_sigs_with_dyn(base, im.trait_reqs), [], false, sub);
+    var g: ircore.Gated = ircore.gate_program(mod, [], sub);
     if (!g.ok) { return ""; }
-    return emit_module_ir_flat(im, imtab, darwin, ircore.inline_tiny_leaves(im, ircore.sub_cache(sub, g.cache)), base, sub.rt_lower);
+    return emit_module_ir_flat(g.im, g.stab, darwin, ircore.inline_tiny_leaves(g.im, g.cache), g.base, sub.rt_lower);
 }
 
 function emit_module_ir_flat(mod: parser.Module, stab: irlower.StructTab, darwin: boolean, cache: irlower.LowerResult[], base: irlower.FnSigs, rt: (string) => irlower.LowerResult[]): string {
@@ -10175,14 +10169,14 @@ function emit_module_ir_flat(mod: parser.Module, stab: irlower.StructTab, darwin
 // `b` is the whole-program registry base (ircore.wp_fn_sigs over all_funcs /
 // all_structs), derived once by the driver and shared by every unit it emits
 // (the arm64 twin of asm_ir.emit_module_ir_unit_flat).
-pub function emit_module_ir_unit_arm64_flat(mod: parser.Module, is_entry: boolean, globl_defs: boolean, str_ns: string, extra_needs: string[], all_funcs: parser.FuncDecl[], all_structs: irlower.StructTab, lo: i32, hi: i32, b: irlower.FnSigs): string {
+pub function emit_module_ir_unit_arm64_flat(mod: parser.Module, is_entry: boolean, globl_defs: boolean, str_ns: string, extra_needs: string[], all_funcs: parser.FuncDecl[], all_structs: irlower.StructTab, lo: i32, hi: i32, cache: irlower.LowerResult[], b: irlower.FnSigs, rt: (string) => irlower.LowerResult[]): string {
     var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
     mod = parser.infer_ret_types_module(mod);
     strbuf_reset();
     var s: asmcore.EmitState = asmcore.new_state();
     // struct_decls is the WHOLE-PROGRAM struct set so a function emitting an
     // imported struct's layout resolves it; str_ns namespaces this unit's pools.
-    s = asmcore.EmitState { ...s, struct_decls: all_structs, funcs: mod.funcs, str_ns: str_ns };
+    s = asmcore.EmitState { ...s, struct_decls: all_structs, funcs: mod.funcs, str_ns: str_ns, rt_lower: rt };
     // The Display gate for a unit, as asm_ir.emit_module_ir_unit_flat runs it.
     var derrs: util.Diag[] = asmcore.display_errs_module(mod, s);
     if (derrs.len() > 0) {
@@ -10212,18 +10206,26 @@ pub function emit_module_ir_unit_arm64_flat(mod: parser.Module, is_entry: boolea
     var vsigs: irverify.NameIndex = irlower.fn_sig_index(all_funcs);
     var hh: i32 = hi;
     if (hh < 0 || hh > mod.funcs.len()) { hh = mod.funcs.len(); }
-    ircore.check_fip_claims(mod.funcs, lo, hh, [], all_structs, sg, false);
-    s = asmcore.EmitState { ...s, reg_entries: irlower.sig_reg_of(asmcore.unit_labels(mod, lo, hh, [])) };
+    // `cache`, when non-empty, is the unit's lowering, indexed by mod.funcs
+    // position, with declaration-less bodies on its tail (asm_ir.emit_module_funcs).
+    ircore.check_fip_claims(mod.funcs, lo, hh, cache, all_structs, sg, false);
+    s = asmcore.EmitState { ...s, reg_entries: irlower.sig_reg_of(asmcore.unit_labels(mod, lo, hh, cache)), leaves: asmcore.unit_leaves(mod, lo, hh, cache) };
     var fi: i32 = lo;
     while (fi < hh) {
+        if (cache.len() > 0 && cache[fi].superseded) { fi = fi + 1; continue; }
         if (globl_defs) {
             var gname: string = mod.funcs[fi].name;
             if (mod.funcs[fi].receiver_type.len() > 0) { gname = util.base_type_name(mod.funcs[fi].receiver_type) + "." + mod.funcs[fi].name; }
             s = s.write(".globl __fn_" + asmcore.sanitize_label(gname) + "\n");
         }
-        s = emit_function_via_ir(mod.funcs[fi], s, sg, vsigs);
+        if (cache.len() == 0) {
+            s = emit_function_via_ir(mod.funcs[fi], s, sg, vsigs);
+        } else {
+            s = emit_function_via_ir_pre(cache[fi], mod.funcs[fi], s, vsigs);
+        }
         fi = fi + 1;
     }
+    s = emit_named_bodies(cache, mod.funcs.len(), s, vsigs);
     // #4355: admit the replaced-STRING-field arm per type from the
     // WHOLE-PROGRAM read scan (all_funcs — see asm_ir.emit_module_ir_unit's
     // sibling seeding and irlower.strfld_reclaim_ok_types_of).

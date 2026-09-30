@@ -9373,45 +9373,20 @@ pub function emit_module_ir_gated(mod: parser.Module, known: string[]): string {
 // ir_const_numeric_run's rebuilt copy of it. ircore.no_sub() is this
 // function behaving exactly as it did before the seam existed.
 pub function emit_module_ir_gated_sub(mod: parser.Module, known: string[], sub: ircore.Sub): string {
-    var sm: parser.Module = ircore.script_normalized(mod);
-    // The merged-bundle SIZE budget that stood here is gone with its twin in
-    // eligible_core_known_impl — see the note there for why (#3425's large-tier
-    // freelist is fixed, and since #5972 the budget was a refusal rather than a
-    // fallback). So is the function-less refusal, for the reason given there.
-    //
-    // A main-less module is admitted now: emit_module_ir_unit's `_start` exits 0
-    // instead of calling a __fn_main that does not exist (see its has_main branch).
-    // Was a blanket refusal, which is what kept the bootstrap smoke test's
-    // main-less compiler sources on the AST emitter.
-    // Infer ret types BEFORE lowering the cache so the side-tables see inferred
-    // return types (emit_module_ir_unit re-infers idempotently, keeping the cache
-    // indices aligned with the module it emits).
-    var im: parser.Module = parser.infer_ret_types_module(sm);
-    // Derive the emit-side side-tables ONCE (over im.funcs/im.structs — the whole-
-    // program view, all_funcs == im.funcs here) exactly as emit_module_funcs does,
-    // so the cached lowering is byte-identical to what emit would produce.
-    // The whole-program registry set is the most expensive thing this driver
-    // computes (both interprocedural fixpoints plus fn_sigs_for_borrow); it is
-    // built once — here, or by the substitution's producer — and handed to the
-    // unit emitter, which folds the per-module tails onto it itself (#8199).
-    var imtab: irlower.StructTab = irlower.struct_tab(im.structs);
-    var base: irlower.FnSigs = ircore.sub_base(sub, im.funcs, imtab);
-    var g: ircore.Lowered = ircore.lower_gated(im, imtab, irlower.fn_sigs_with_dyn(base, im.trait_reqs), known, false, sub);
+    // A main-less module is admitted: the unit's `_start` exits 0 instead of
+    // calling a __fn_main that does not exist (see its has_main branch).
+    var g: ircore.Gated = ircore.gate_program(mod, known, sub);
     if (!g.ok) { return ""; }
     // Every function eligible — emit from the cache (no second lowering).
-    return emit_unit_flat_with(im, true, false, "", [], im.funcs, imtab, 0, 0 - 1, ircore.inline_tiny_leaves(im, ircore.sub_cache(sub, g.cache)), base, sub.rt_lower);
+    return emit_module_ir_unit_flat(g.im, true, false, "", [], g.im.funcs, g.stab, 0, 0 - 1, ircore.inline_tiny_leaves(g.im, g.cache), g.base, sub.rt_lower);
 }
 
 pub function emit_module_ir_unit(mod: parser.Module, is_entry: boolean, globl_defs: boolean, str_ns: string, extra_needs: string[], all_funcs: parser.FuncDecl[], all_structs: irlower.StructTab, lo: i32, hi: i32, cache: irlower.LowerResult[]): string {
-    return emit_module_ir_unit_flat(mod, is_entry, globl_defs, str_ns, extra_needs, all_funcs, all_structs, lo, hi, cache, ircore.wp_fn_sigs(all_funcs, all_structs));
-}
-
-pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, globl_defs: boolean, str_ns: string, extra_needs: string[], all_funcs: parser.FuncDecl[], all_structs: irlower.StructTab, lo: i32, hi: i32, cache: irlower.LowerResult[], b: irlower.FnSigs): string {
-    return emit_unit_flat_with(mod, is_entry, globl_defs, str_ns, extra_needs, all_funcs, all_structs, lo, hi, cache, b, asmcore.no_rt_lower);
+    return emit_module_ir_unit_flat(mod, is_entry, globl_defs, str_ns, extra_needs, all_funcs, all_structs, lo, hi, cache, ircore.wp_fn_sigs(all_funcs, all_structs), asmcore.no_rt_lower);
 }
 
 // `rt` lowers the runtime helpers this unit appends (asmcore.EmitState.rt_lower).
-function emit_unit_flat_with(mod: parser.Module, is_entry: boolean, globl_defs: boolean, str_ns: string, extra_needs: string[], all_funcs: parser.FuncDecl[], all_structs: irlower.StructTab, lo: i32, hi: i32, cache: irlower.LowerResult[], b: irlower.FnSigs, rt: (string) => irlower.LowerResult[]): string {
+pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, globl_defs: boolean, str_ns: string, extra_needs: string[], all_funcs: parser.FuncDecl[], all_structs: irlower.StructTab, lo: i32, hi: i32, cache: irlower.LowerResult[], b: irlower.FnSigs, rt: (string) => irlower.LowerResult[]): string {
     // Infer return types for unannotated functions so the IR path's
     // ret-type-keyed call tagging (str_ret_fns_of / opt_ret_fns_of / …)
     // matches what module_with_builtins supplies.

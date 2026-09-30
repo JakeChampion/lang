@@ -2305,9 +2305,9 @@ What is left, in order:
    (`fixtureCompile`), and the four scripts that measure the self-hosted
    compiler (`perf-bench-selfhost`, `cliff-bench`, `selfhost-alloc-bench`,
    `coreutils-bench`). The CLI, the four asm drivers and the wasm drivers
-   other than `wasm_modload_run` build a typed-path substitution for a
-   whole-module emit; the rest of the drivers never reach the typed path (see
-   below). The semantic differential legs fail a seed that compiles as
+   other than `wasm_modload_run` build a typed-path substitution, for a
+   whole-module emit and, on the asm drivers, for the per-module modes; the
+   rest of the drivers never reach the typed path (see below). The semantic differential legs fail a seed that compiles as
    a mixed module. The production rows' `FERN_SEM_IR_SKIP` leg and
    `TestSelfHostSemIRStrict`'s off leg keep the AST lowering on purpose.
 3. The AST lowering is deleted, along with the differential legs that compare
@@ -2329,13 +2329,23 @@ into four groups:
   which force the AST lowering's gated emit, run only with the typed path
   off, and the wasm drivers' `-decide` asks `wasm_ir.ir_route_ok` with the
   same substitution. `asm_modload_run -verifyprovided` checks the bodies that
-  emit reads. The per-module modes still take the AST lowering: the asm
-  drivers' `-ir-unit`, `-per-module-emit*` and the concat rescue for a
-  512–1500-function program, because `emit_module_ir_unit_flat` and its arm64
-  twin take no substitution; and `wasm_modload_run`, whose units lower their
-  window through `wasm_ir.lower_all_for_view`, which takes none either. So the
-  per-module and modload whole-compiler fixpoints build the compiler on the
-  AST lowering.
+  emit reads. The asm drivers' per-module modes (`asm_ir_run -ir-unit`,
+  `-per-module-emit*` and the concat rescue for a 512–1500-function program)
+  take the typed lowering too. Every process lowers the program the merged
+  emit reads, whole, through `ircore.gate_program` (the gate the merged emits
+  run), and `ircore.split_units` cuts that lowering into one unit per module:
+  a declaration goes to the module declaring it, a method the front end added
+  to the module declaring its receiver type, anything else the front end or
+  the lambda lift made to the module of the first function naming it, and the
+  instances and drop helpers to the entry. Units are not inlined into each
+  other. `-ir-unit` lowers its module together with its `-ir-sigs` siblings,
+  so a call to a sibling it was not given is the checker's error. A unit's
+  object-cache key folds in `ircore.lowered_digest` of its bodies, since a
+  typed body can depend on another module's (an inferred parameter mode, an
+  instance). With `FERN_SEM_IR=` each module is still lowered on its own by
+  the AST lowering. `wasm_modload_run` still takes the AST lowering: its units
+  lower their window through `wasm_ir.lower_all_for_view`, which takes no
+  substitution.
 - Gate probes: `asm_pathprobe_run` and `asm_ir_elig_run`. They run
   `ircore.all_eligible` and emit nothing, so they need no substitution. The
   verdict `asm_pathprobe_run` and `-decide` print is `ir` or `refused`.

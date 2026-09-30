@@ -5,7 +5,10 @@
 package e2eharness
 
 import (
+	"os"
 	"os/exec"
+	"path/filepath"
+	"regexp"
 	"testing"
 )
 
@@ -18,7 +21,54 @@ func WriteSelfHostModloadProject(t *testing.T) string {
 	// treeshake backs the over-budget per-module rescue: the driver derives
 	// the reachable-name set from it before pruning each unit.
 	CopySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifyprovided.fern", "irverifygate.fern", "asm_ir.fern", "asm_arm64_ir.fern", "flatten.fern", "modloader.fern", "fern_toml.fern", "builtins.fern", "asm_modload_run.fern", "treeshake.fern", "rundriver.fern")
+	VendorStdlibImports(t, dir)
 	return dir
+}
+
+var stdlibImport = regexp.MustCompile(`(?m)^import "((?:core|std)/[a-z0-9_/]+)";`)
+
+// VendorStdlibImports copies every stdlib module the sources in dir import to
+// dir/<path>.fern, where asm_modload_run's loader resolves `import "core/map"`.
+// The typed lowering reads those modules' bodies; nothing else supplies them.
+func VendorStdlibImports(t *testing.T, dir string) {
+	t.Helper()
+	root := SelfHostStdlibRoot(t)
+	var queue []string
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range ents {
+		if filepath.Ext(e.Name()) == ".fern" {
+			queue = append(queue, filepath.Join(dir, e.Name()))
+		}
+	}
+	seen := map[string]bool{}
+	for len(queue) > 0 {
+		src, err := os.ReadFile(queue[0])
+		queue = queue[1:]
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, m := range stdlibImport.FindAllStringSubmatch(string(src), -1) {
+			if seen[m[1]] {
+				continue
+			}
+			seen[m[1]] = true
+			body, err := os.ReadFile(filepath.Join(root, m[1]+".fern"))
+			if err != nil {
+				t.Fatalf("vendor %s: %v", m[1], err)
+			}
+			dst := filepath.Join(dir, m[1]+".fern")
+			if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(dst, body, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			queue = append(queue, dst)
+		}
+	}
 }
 
 // RunDriverFile runs the compiled driver binary with `entry` as argv[1]

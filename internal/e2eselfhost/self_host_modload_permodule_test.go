@@ -63,7 +63,7 @@ func TestSelfHostModloadPerModuleWholeCompilerX86_64(t *testing.T) {
 	// 1. Emit every unit of the whole compiler. The entry unit folds in the full
 	// runtime-need root set the driver derives itself, so the link below still
 	// checks the need aggregation end to end.
-	units := emitAllWholeCompiler(t, runner, driverBin, entry, dir, "wc", "x86-64-linux", pmEmitAllBatch, pmGoBuiltEmitMemoryMB)
+	units := emitAllWholeCompiler(t, runner, driverBin, entry, dir, "wc", "x86-64-linux", pmEmitAllBatch(), pmGoBuiltEmitMemoryMB)
 	objs := unitObjPaths(t, dir, "wc", units)
 
 	// 2. Link all units — no undefined symbols proves the runtime-need union is
@@ -203,8 +203,15 @@ func TestSelfHostModloadPerModuleWholeCompilerX86_64(t *testing.T) {
 // pmEmitAllBatch is the units-per-process batch every whole-compiler emit-all in
 // this package drives. It is also what `emit_per_module_spawned` uses for the
 // driver's own default build, so the harness and the compiler exercise one
-// memory shape rather than two.
-const pmEmitAllBatch = 8
+// memory shape rather than two: 64 over the typed lowering, where every process
+// lowers the whole program first, and 8 over the AST lowering (FERN_SEM_IR=),
+// which accumulates each unit's lowering.
+func pmEmitAllBatch() int {
+	if v, set := os.LookupEnv("FERN_SEM_IR"); set && v == "" {
+		return 8
+	}
+	return 64
+}
 
 // pmFuncBudget is the [lo,hi) function-window budget the emit plan is sized
 // with, passed to the driver as -func-budget so its internal windowing matches.

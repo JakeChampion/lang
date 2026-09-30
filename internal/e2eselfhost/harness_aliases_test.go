@@ -55,6 +55,7 @@ var withBuildMemoryMB = e2eharness.WithBuildMemoryMB
 var withPrintInt = e2eharness.WithPrintInt
 var writeSelfHostAsmProject = e2eharness.WriteSelfHostAsmProject
 var writeSelfHostModloadProject = e2eharness.WriteSelfHostModloadProject
+var vendorStdlibImports = e2eharness.VendorStdlibImports
 var x86_64Tooling = e2eharness.X86_64Tooling
 var x86_64Runner = e2eharness.X86_64Runner
 

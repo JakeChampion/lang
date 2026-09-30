@@ -61,6 +61,7 @@ pub function leaf_val(): i32 {
 
 function main(): i32 { return leaf.leaf_val(); }
 `)
+	vendorStdlibImports(t, proj)
 	entry := filepath.Join(proj, "main.fern")
 
 	drive := func(args ...string) string {

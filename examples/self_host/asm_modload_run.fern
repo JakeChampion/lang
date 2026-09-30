@@ -287,86 +287,108 @@ function prune_to_reachable(mod: parser.Module, reach: string[]): parser.Module 
     return parser.Module { funcs: kept, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs, trait_decls: mod.trait_decls, inferred_consts: mod.inferred_consts };
 }
 
-// emit_per_module_concat compiles a program's modules SEPARATELY (per-module IR
-// units) and concatenates them into one linkable asm stream — the file-based
-// driver's copy of asm_load_run's over-budget rescue (#5676), which this driver
-// never had. Each module is under the merged 512-function IR budget, so each
-// unit lowers on the IR path; the units share a whole-program func/struct view
-// so cross-module calls and imported struct layouts resolve, and only the entry
-// unit emits `_start` + the shared runtime.
-//
-// Without it, a stdlib-importing program whose merged closure crosses the
-// budget dropped to the AST emitter (deleted since; #3457) — which could not
-// emit tcp_listen / poll / tcp_pollable at all, so the main edge-handler
-// program (std/http + std/tcp + a `handle` function) compiled to asm with a
-// dozen dangling `__fn_` symbols and failed at LINK, even though every one of
-// its functions lowers on the IR path.
-//
-// The struct view is extended with builtin_view, exactly as run_per_module
-// does: a unit touching a built-in type (Option / Result / IoError /
-// HttpRequest) needs those layouts or it miscompiles.
-//
-// Returns "" if a REACHABLE module is still not IR-eligible. That used to mean
-// "fall back to the AST emitter"; the emitters are gone (#3457), so the caller
-// turns it into a hard error via emit_module_or_error.
-// `target` selects the per-unit emitter: "arm64" uses
-// asm_arm64_ir.emit_module_ir_unit_arm64_flat, anything else the x86-64
-// asm_ir.emit_module_ir_unit_flat. The other per-module routes here were already
-// target-aware; this one was not, so the arm64 merged leg had no over-budget
-// rescue and dropped straight to the (since-deleted) AST emitter for the whole
-// single-process band x86 served via IR (#3457 slice 5).
-function emit_per_module_concat(dir: string, entry_path: string, entry_mod: parser.Module, loaded: flatten.LoadedModule[], reach: string[], target: string, cache_dir: string): string {
-    var parts: flatten.PerModule[] = flatten.bundle_per_module(entry_mod, loaded, target);
-    var infmods: parser.Module[] = [];
+// View is what a per-module build emits from: one module per unit, each
+// unit's lowering (empty where the unit emit lowers it), and the whole-program
+// function, struct and registry view every unit lowers against.
+struct View {
+    mods: parser.Module[],
+    caches: irlower.LowerResult[][],
+    all_funcs: parser.FuncDecl[],
+    stab: irlower.StructTab,
+    base: irlower.FnSigs,
+    // The program-wide symbols the AST lowering's eligibility gate accepts.
+    known: string[],
+    rt: (string) => irlower.LowerResult[],
+    // The units are cut from the typed lowering of the whole program, which
+    // has already been gated, so there is no per-unit gate to run.
+    typed: boolean,
+}
+
+// per_module_view builds the units of `parts`. The typed lowering lowers the
+// program the merged emit reads, whole, and cuts it into units; with it off
+// (FERN_SEM_IR set empty) each module is lambda-lifted on its own, pruned to
+// `reach` when that is non-empty, and lowered by the unit emit.
+function per_module_view(dir: string, entry: parser.Module, loaded: flatten.LoadedModule[], parts: flatten.PerModule[], target: string, reach: string[]): View {
+    if (semlower.sem_ir_on()) {
+        var d: semlower.Driven = semlower.driven(merged_program(dir, entry, loaded, target), target);
+        var g: ircore.Gated = semlower.program(d);
+        var raw: parser.Module[] = [];
+        var entry_at: i32 = 0;
+        var k: i32 = 0;
+        while (k < parts.len()) {
+            raw = raw.append(parts[k].mod);
+            if (parts[k].is_entry) { entry_at = k; }
+            k = k + 1;
+        }
+        var u: ircore.Units = ircore.split_units(g, raw, entry_at);
+        return View { mods: u.mods, caches: u.caches, all_funcs: g.im.funcs, stab: g.stab, base: g.base, known: [], rt: d.sub.rt_lower, typed: true };
+    }
+    var pruned: parser.Module[] = [];
+    for pt in parts {
+        if (reach.len() > 0) { pruned = pruned.append(prune_to_reachable(pt.mod, reach)); }
+        else { pruned = pruned.append(pt.mod); }
+    }
+    var lifted: parser.Module[] = ircore.lift_lambdas_parts(pruned);
     var all_funcs: parser.FuncDecl[] = [];
     var all_structs: parser.StructDecl[] = [];
     var known: string[] = [];
-    var pruned: parser.Module[] = [];
-    var si0: i32 = 0;
-    while (si0 < parts.len()) { pruned = pruned.append(prune_to_reachable(parts[si0].mod, reach)); si0 = si0 + 1; }
-    var lifted: parser.Module[] = ircore.lift_lambdas_parts(pruned);
-    var pi: i32 = 0;
-    while (pi < parts.len()) {
-        var im: parser.Module = lifted[pi];
-        infmods = infmods.append(im);
-        var fk: i32 = 0;
-        while (fk < im.funcs.len()) {
-            all_funcs = all_funcs.append(im.funcs[fk]);
-            known = known.append(im.funcs[fk].name);
-            if (im.funcs[fk].receiver_type.len() > 0) {
-                known = known.append(util.base_type_name(im.funcs[fk].receiver_type) + "." + im.funcs[fk].name);
-            }
-            fk = fk + 1;
+    var caches: irlower.LowerResult[][] = [];
+    for im in lifted {
+        for fd in im.funcs {
+            all_funcs = all_funcs.append(fd);
+            known = known.append(fd.name);
+            if (fd.receiver_type.len() > 0) { known = known.append(util.base_type_name(fd.receiver_type) + "." + fd.name); }
         }
-        var sk: i32 = 0;
-        while (sk < im.structs.len()) { all_structs = all_structs.append(im.structs[sk]); sk = sk + 1; }
-        pi = pi + 1;
+        for sd in im.structs { all_structs = all_structs.append(sd); }
+        caches = caches.append([]);
     }
-    all_structs = builtin_view(dir, all_structs);
-    // Settled: the index is built once here and threaded, rather than rebuilt
-    // at every eligibility check and unit emit below (#8178).
-    var all_stab: irlower.StructTab = irlower.struct_tab(all_structs);
+    // Extend the struct view with the built-in type layouts (see builtin_view),
+    // and index it once for every gate and unit emit (#8178).
+    var stab: irlower.StructTab = irlower.struct_tab(builtin_view(dir, all_structs));
+    // The whole-program registry base, derived once and shared by every unit's
+    // gate and emit (#8199).
+    return View { mods: lifted, caches: caches, all_funcs: all_funcs, stab: stab, base: ircore.wp_fn_sigs(all_funcs, stab), known: known, rt: asmcore.no_rt_lower, typed: false };
+}
+
+// merged_program is the whole program the merged emit reads.
+function merged_program(dir: string, entry: parser.Module, loaded: flatten.LoadedModule[], target: string): parser.Module {
+    var merged: parser.Module = flatten.bundle(entry, loaded, target);
+    // builtins.fern supplies the built-in types' layouts to the AST lowering.
+    // The typed path takes them from module_with_builtins' injection, as the
+    // CLI does, and a merged copy would redeclare them.
+    if (!semlower.sem_ir_on()) { merged = modloader.merge_builtins(dir, merged); }
+    // target_os() / target_arch() are the -target's environment and ISA as
+    // string literals, not calls: the compile driver folds them here
+    // (fern.fern) and no backend emits a body for either, so a pipeline that
+    // skips the fold hands every later pass a call to a symbol nothing
+    // defines. merge_builtins runs after fold_target_calls, so the modules it
+    // brings in are folded here rather than there.
+    var md: platforms.Descriptor = platforms.for_target(target);
+    return constfold.fold_target_name(merged, md.environment, md.isa);
+}
+
+// emit_per_module_concat compiles a program's modules as separate units and
+// concatenates them into one linkable asm stream. The units share a
+// whole-program function and struct view, so cross-module calls and imported
+// struct layouts resolve, and only the entry unit emits `_start` and the shared
+// runtime.
+//
+// Returns "" if a REACHABLE module is not IR-eligible, which the caller turns
+// into a hard error through the merged emit.
+function emit_per_module_concat(dir: string, entry_path: string, entry_mod: parser.Module, loaded: flatten.LoadedModule[], reach: string[], target: string, cache_dir: string): string {
+    var parts: flatten.PerModule[] = flatten.bundle_per_module(entry_mod, loaded, target);
+    var v: View = per_module_view(dir, entry_mod, loaded, parts, target, reach);
     // The entry unit emits the ONE shared runtime; seed it with every root so a
     // library unit's `call __fern_*` resolves (ircore.all_runtime_need_roots —
     // the same superset the batched per-module build feeds it).
-    //
-    // The exact union via module_runtime_needs is NOT usable here: it lowers
-    // each module under that module's OWN struct view, so a function needing
-    // the whole-program view to lower at all (std/tcp's __serve_loop, whose
-    // signature is built from the builtin HttpRequest / Platform layouts) is
-    // silently skipped and the needs it would have marked — tcp_send,
-    // tcp_close — go missing, dangling at link.
     var needs: string[] = ircore.all_runtime_need_roots();
-    // The whole-program registry base, derived once and shared by every unit's
-    // gate and emit (#8199).
-    var wpb: irlower.FnSigs = ircore.wp_fn_sigs(all_funcs, all_stab);
     // Signatures are hashed over the PRUNED modules, so a dependency whose
     // reach changed moves every dependent's key.
     var sighashes: string[] = [];
     var fh: modloader.FactHashes = modloader.FactHashes { per_mod: [], global: "" };
     if (cache_dir.len() > 0) {
-        fh = modloader.module_fact_hashes(infmods, irlower.wp_fact_rows(wpb, all_funcs, all_stab));
-        sighashes = modloader.fact_sig_hashes(infmods, fh);
+        fh = modloader.module_fact_hashes(v.mods, irlower.wp_fact_rows(v.base, v.all_funcs, v.stab));
+        sighashes = modloader.fact_sig_hashes(v.mods, fh);
     }
     var out: string = "";
     var idx: i32 = 0;
@@ -376,8 +398,8 @@ function emit_per_module_concat(dir: string, entry_path: string, entry_mod: pars
         var cachefile: string = "";
         if (cache_dir.len() > 0) {
             var src_hash: string = modloader.module_src_hash(modloader.no_overlay(), dir, entry_path, parts, idx);
-            var key: string = modloader.module_concat_unit_cache_key(parts, infmods, sighashes, idx, src_hash, extra, fh);
-            if (key.len() > 0) { cachefile = cache_dir + "/" + parts[idx].ns + "_c__" + util.hash_key(key) + ".s"; }
+            var key: string = modloader.module_concat_unit_cache_key(parts, v.mods, sighashes, idx, src_hash, extra, fh);
+            if (key.len() > 0) { cachefile = cache_dir + "/" + parts[idx].ns + "_c__" + util.hash_key(key + "|ir" + ircore.lowered_digest(v.caches[idx])) + ".s"; }
         }
         var served: boolean = false;
         if (cachefile.len() > 0) {
@@ -391,7 +413,7 @@ function emit_per_module_concat(dir: string, entry_path: string, entry_mod: pars
             }
         }
         if (!served) {
-            if (!ircore.all_eligible_view_base(infmods[idx], known, all_stab, wpb)) {
+            if (!v.typed && !ircore.all_eligible_view_base(v.mods[idx], v.known, v.stab, v.base)) {
                 // Name the module that took the whole program off the per-module
                 // route. Without this the decline is silent and the failure
                 // resurfaces as an undefined `__fn_` at link, with nothing
@@ -399,12 +421,7 @@ function emit_per_module_concat(dir: string, entry_path: string, entry_mod: pars
                 eprint("per-module concat: module not IR-eligible: " + parts[idx].ns + "\n");
                 return "";
             }
-            var unit: string = "";
-            if (target == "arm64-linux") {
-                unit = asm_arm64_ir.emit_module_ir_unit_arm64_flat(infmods[idx], parts[idx].is_entry, true, parts[idx].ns, extra, all_funcs, all_stab, 0, 0 - 1, wpb);
-            } else {
-                unit = asm_ir.emit_module_ir_unit_flat(infmods[idx], parts[idx].is_entry, true, parts[idx].ns, extra, all_funcs, all_stab, 0, 0 - 1, [], wpb);
-            }
+            var unit: string = emit_unit(v, idx, parts[idx].is_entry, parts[idx].ns, extra, 0, 0 - 1, target);
             if (cachefile.len() > 0) {
                 eprint("cache-miss " + parts[idx].ns + "\n");
                 match (write_file(cachefile, unit)) {
@@ -419,6 +436,14 @@ function emit_per_module_concat(dir: string, entry_path: string, entry_mod: pars
     return dedupe_weak_defs(out);
 }
 
+// emit_unit emits unit `idx`'s [lo, hi) function window for `target`.
+function emit_unit(v: View, idx: i32, is_entry: boolean, ns: string, extra: string[], lo: i32, hi: i32, target: string): string {
+    if (target == "arm64-linux") {
+        return asm_arm64_ir.emit_module_ir_unit_arm64_flat(v.mods[idx], is_entry, true, ns, extra, v.all_funcs, v.stab, lo, hi, v.caches[idx], v.base, v.rt);
+    }
+    return asm_ir.emit_module_ir_unit_flat(v.mods[idx], is_entry, true, ns, extra, v.all_funcs, v.stab, lo, hi, v.caches[idx], v.base, v.rt);
+}
+
 // unit_cache_file returns the object path for ONE emitted unit, or "" when the
 // cache is off or the module has no stable key (src_hash "?" — always rebuild).
 // The single source of the path both the read and the write use.
@@ -428,12 +453,15 @@ function emit_per_module_concat(dir: string, entry_path: string, entry_mod: pars
 // bytes for that unit (TestSelfHostAssumeEligibleByteIdenticalX86_64 pins it),
 // so without the normalisation they would key the same asm twice and never
 // reuse each other's entries.
-function unit_cache_file(cache_dir: string, parts: flatten.PerModule[], infmods: parser.Module[], sighashes: string[], src_hash: string, midx: i32, extra: string[], wlo: i32, whi: i32, fh: modloader.FactHashes): string {
+function unit_cache_file(cache_dir: string, parts: flatten.PerModule[], v: View, sighashes: string[], src_hash: string, midx: i32, extra: string[], wlo: i32, whi: i32, fh: modloader.FactHashes): string {
     if (cache_dir.len() == 0 || sighashes.len() == 0 || src_hash.len() == 0) { return ""; }
     var khi: i32 = whi;
-    if (wlo == 0 && khi >= infmods[midx].funcs.len()) { khi = 0 - 1; }
-    var key: string = modloader.module_unit_cache_key(parts, infmods, sighashes, midx, src_hash, extra, wlo, khi, fh);
+    if (wlo == 0 && khi >= v.mods[midx].funcs.len()) { khi = 0 - 1; }
+    var key: string = modloader.module_unit_cache_key(parts, v.mods, sighashes, midx, src_hash, extra, wlo, khi, fh);
     if (key.len() == 0) { return ""; }
+    // A typed unit's lowering can read another module's bodies (an inferred
+    // parameter mode, an instance), which no signature covers.
+    key = key + "|ir" + ircore.lowered_digest(v.caches[midx]);
     var shard_tag: string = "";
     if (wlo > 0) { shard_tag = "_s" + util.i32_to_string(wlo); }
     return cache_dir + "/" + parts[midx].ns + shard_tag + "__" + util.hash_key(key) + ".s";
@@ -448,7 +476,7 @@ function unit_cache_file(cache_dir: string, parts: flatten.PerModule[], infmods:
 // goes to stderr (one shard-ns per line) so an orchestrator can see the reuse
 // set; the unit FILE is written either way, since that is what the caller reads
 // back.
-function emit_unit_to_file(out_dir: string, unit_spec: string, infmods: parser.Module[], parts: flatten.PerModule[], midx: i32, needs: string[], all_funcs: parser.FuncDecl[], all_stab: irlower.StructTab, wpb: irlower.FnSigs, target: string, cachefile: string): boolean {
+function emit_unit_to_file(out_dir: string, unit_spec: string, v: View, parts: flatten.PerModule[], midx: i32, needs: string[], target: string, cachefile: string): boolean {
     var wlo: i32 = nth_field_i32(unit_spec, 1);
     var whi: i32 = nth_field_i32(unit_spec, 2);
     var is_entry: boolean = parts[midx].is_entry;
@@ -473,12 +501,7 @@ function emit_unit_to_file(out_dir: string, unit_spec: string, infmods: parser.M
             Err(e_ch) => { },
         }
     }
-    var unit: string = "";
-    if (target == "arm64-linux") {
-        unit = asm_arm64_ir.emit_module_ir_unit_arm64_flat(infmods[midx], is_entry, true, shard_ns, extra, all_funcs, all_stab, wlo, whi, wpb);
-    } else {
-        unit = asm_ir.emit_module_ir_unit_flat(infmods[midx], is_entry, true, shard_ns, extra, all_funcs, all_stab, wlo, whi, [], wpb);
-    }
+    var unit: string = emit_unit(v, midx, is_entry, shard_ns, extra, wlo, whi, target);
     match (write_file(outpath, unit)) {
         Err(werr) => {
             eprint("per-module: unit write failed: " + outpath + "\n");
@@ -574,15 +597,10 @@ function spawn_batch(self_exe: string, entry_path: string, tmp: string, lo: i32,
 // own private temp directory.
 function emit_per_module_spawned(dir: string, entry_path: string, entry: parser.Module, loaded: flatten.LoadedModule[], target: string, func_budget: i32, batch: i32, self_exe: string, cache_dir: string): i32 {
     if (self_exe.len() == 0) { return 1; }
-    // Only the flat unit LIST is needed here (analysis, no codegen); each child
-    // re-derives the same list and emits its slice of it.
+    // Only the flat unit LIST is needed here (no codegen); each child derives
+    // the same units and emits its slice of them.
     var parts: flatten.PerModule[] = flatten.bundle_per_module(entry, loaded, target);
-    var rawmods: parser.Module[] = [];
-    var pi: i32 = 0;
-    while (pi < parts.len()) { rawmods = rawmods.append(parts[pi].mod); pi = pi + 1; }
-    // The same lift the children run, so the unit list this sizes matches theirs.
-    var infmods: parser.Module[] = ircore.lift_lambdas_parts(rawmods);
-    var units: string[] = flat_unit_list(dir, parts, infmods, func_budget);
+    var units: string[] = flat_unit_list(dir, parts, per_module_view(dir, entry, loaded, parts, target, []).mods, func_budget);
     if (units.len() == 0) { return 1; }
     var tmp: string = "";
     match (temp_dir("fern-pm")) {
@@ -752,50 +770,22 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
         print(util.i32_to_string(parts.len()) + "\n");
         return 0;
     }
-    // Whole-program signature view + program-wide known-symbol set, recomputed
-    // each invocation (cheap: parse + analysis, no codegen).
-    var infmods: parser.Module[] = [];
-    var all_funcs: parser.FuncDecl[] = [];
-    var all_structs: parser.StructDecl[] = [];
-    var known: string[] = [];
-    var rawmods: parser.Module[] = [];
-    var rpi: i32 = 0;
-    while (rpi < parts.len()) { rawmods = rawmods.append(parts[rpi].mod); rpi = rpi + 1; }
-    var lifted: parser.Module[] = ircore.lift_lambdas_parts(rawmods);
+    // The units and the whole-program view they lower against, derived each
+    // invocation.
+    var v: View = per_module_view(dir, entry, loaded, parts, target, []);
+    var infmods: parser.Module[] = v.mods;
     // Planning needs the post-lift counts and their module namespaces, not
     // emission side tables or incremental-cache signature hashes.
     if (pm_mode == "func-counts" || pm_mode == "shape") {
         var fci: i32 = 0;
-        while (fci < lifted.len()) {
-            var line: string = util.i32_to_string(lifted[fci].funcs.len());
+        while (fci < infmods.len()) {
+            var line: string = util.i32_to_string(infmods[fci].funcs.len());
             if (pm_mode == "shape") { line = parts[fci].ns + "|" + line; }
             print(line + "\n");
             fci = fci + 1;
         }
         return 0;
     }
-    var pi: i32 = 0;
-    while (pi < parts.len()) {
-        var im: parser.Module = lifted[pi];
-        infmods = infmods.append(im);
-        var fk: i32 = 0;
-        while (fk < im.funcs.len()) {
-            all_funcs = all_funcs.append(im.funcs[fk]);
-            known = known.append(im.funcs[fk].name);
-            if (im.funcs[fk].receiver_type.len() > 0) {
-                known = known.append(util.base_type_name(im.funcs[fk].receiver_type) + "." + im.funcs[fk].name);
-            }
-            fk = fk + 1;
-        }
-        var sk: i32 = 0;
-        while (sk < im.structs.len()) { all_structs = all_structs.append(im.structs[sk]); sk = sk + 1; }
-        pi = pi + 1;
-    }
-    // Extend the struct view with the built-in type layouts (see builtin_view).
-    all_structs = builtin_view(dir, all_structs);
-    // Settled: the index is built once here and threaded, rather than rebuilt
-    // at every eligibility check and unit emit below (#8178).
-    var all_stab: irlower.StructTab = irlower.struct_tab(all_structs);
     if (pm_mode == "emit-all") {
         // Multi-unit-per-process whole-compiler per-module emit (#3457 slice 2).
         // The whole-program signature registry is derived ONCE per process
@@ -814,7 +804,6 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
         // its batch. The entry gets the full runtime-need roots as its extra_needs.
         // x86 shares the bases; -target arm64-linux uses the arm64 emitter unchanged.
         var needs: string[] = ircore.all_runtime_need_roots();
-        var wpb: irlower.FnSigs = ircore.wp_fn_sigs(all_funcs, all_stab);
         var units: string[] = flat_unit_list(dir, parts, infmods, func_budget);
         // Incremental object cache (#3451 step 6 / #3458). This is the mode the
         // DEFAULT build flow runs in — emit_per_module_spawned execs a child per
@@ -828,7 +817,7 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
         var sighashes_ea: string[] = [];
         var fh_ea: modloader.FactHashes = modloader.FactHashes { per_mod: [], global: "" };
         if (cache_dir.len() > 0) {
-            fh_ea = modloader.module_fact_hashes(infmods, irlower.wp_fact_rows(wpb, all_funcs, all_stab));
+            fh_ea = modloader.module_fact_hashes(infmods, irlower.wp_fact_rows(v.base, v.all_funcs, v.stab));
             sighashes_ea = modloader.fact_sig_hashes(infmods, fh_ea);
             var chi: i32 = 0;
             while (chi < parts.len()) {
@@ -849,7 +838,7 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
             if (parts[idx].is_entry) { uextra = needs; }
             var usrc: string = "";
             if (srchashes.len() > 0) { usrc = srchashes[idx]; }
-            var ucache: string = unit_cache_file(cache_dir, parts, infmods, sighashes_ea, usrc, idx, uextra, nth_field_i32(units[uidx], 1), nth_field_i32(units[uidx], 2), fh_ea);
+            var ucache: string = unit_cache_file(cache_dir, parts, v, sighashes_ea, usrc, idx, uextra, nth_field_i32(units[uidx], 1), nth_field_i32(units[uidx], 2), fh_ea);
             // Whatever is in the cache was emitted from a module that lowered, so
             // a hit makes the eligibility re-lowering pure waste — and that check
             // costs about as much as the emit the hit just saved. Probe before
@@ -862,8 +851,8 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
                     Err(e_cs) => { },
                 }
             }
-            if (!assume_eligible && !cached_here && idx != checked_idx) {
-                if (!ircore.all_eligible_view_base(infmods[idx], known, all_stab, wpb)) {
+            if (!v.typed && !assume_eligible && !cached_here && idx != checked_idx) {
+                if (!ircore.all_eligible_view_base(infmods[idx], v.known, v.stab, v.base)) {
                     eprint("per-module: module not IR-eligible: ");
                     eprint(parts[idx].ns);
                     eprint("\n");
@@ -871,7 +860,7 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
                 }
                 checked_idx = idx;
             }
-            if (!emit_unit_to_file(out_dir, units[uidx], infmods, parts, idx, needs, all_funcs, all_stab, wpb, target, ucache)) { return 1; }
+            if (!emit_unit_to_file(out_dir, units[uidx], v, parts, idx, needs, target, ucache)) { return 1; }
             uidx = uidx + 1;
         }
         return 0;
@@ -952,14 +941,11 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
     // reuse set; stdout stays exactly the unit asm. A "?" src_hash yields an empty
     // key, which disables the cache for that module (always emit — sound, see
     // module_src_hash).
-    // The whole-program registry base: the cache key digests it, the gate lowers
-    // with it and the unit emit routes on it (#8199).
-    var pm_wpb: irlower.FnSigs = ircore.wp_fn_sigs(all_funcs, all_stab);
     var cachefile: string = "";
     if (cache_dir.len() > 0) {
         var src_hash: string = modloader.module_src_hash(modloader.no_overlay(), dir, entry_path, parts, pm_index);
-        var pm_fh: modloader.FactHashes = modloader.module_fact_hashes(infmods, irlower.wp_fact_rows(pm_wpb, all_funcs, all_stab));
-        cachefile = unit_cache_file(cache_dir, parts, infmods, modloader.fact_sig_hashes(infmods, pm_fh), src_hash, pm_index, extra, pm_lo, pm_hi, pm_fh);
+        var pm_fh: modloader.FactHashes = modloader.module_fact_hashes(infmods, irlower.wp_fact_rows(v.base, v.all_funcs, v.stab));
+        cachefile = unit_cache_file(cache_dir, parts, v, modloader.fact_sig_hashes(infmods, pm_fh), src_hash, pm_index, extra, pm_lo, pm_hi, pm_fh);
         if (cachefile.len() > 0) {
             match (read_file(cachefile)) {
                 Ok(cached) => {
@@ -975,9 +961,9 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
     // windows are separate processes, so each checking the whole module would
     // lower it once per window. The entry is never sharded.
     var elig: boolean = true;
-    if (!assume_eligible) {
-        elig = ircore.all_eligible_view_base_range(infmods[pm_index], known, all_stab, pm_wpb, pm_lo, pm_hi);
-        if (parts[pm_index].is_entry) { elig = ircore.all_eligible_view_base(infmods[pm_index], known, all_stab, pm_wpb); }
+    if (!v.typed && !assume_eligible) {
+        elig = ircore.all_eligible_view_base_range(infmods[pm_index], v.known, v.stab, v.base, pm_lo, pm_hi);
+        if (parts[pm_index].is_entry) { elig = ircore.all_eligible_view_base(infmods[pm_index], v.known, v.stab, v.base); }
     }
     if (!elig) {
         eprint("per-module: module not IR-eligible: ");
@@ -996,17 +982,7 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
     // and of the entry's file name, so two shards of one module never share one.
     var shard_ns: string = parts[pm_index].ns;
     if (pm_lo > 0) { shard_ns = shard_ns + "_s" + util.i32_to_string(pm_lo); }
-    var unit: string = "";
-    // `-target arm64-linux` routes the per-unit emit through the arm64 emitter
-    // (#4398 part 1: the asm_arm64_modload_run fold), incl. the same
-    // -func-range [lo,hi) window sharding (#3425) the x86 emit uses — the
-    // fold doubled the whole-compiler per-module program (both backends in
-    // one closure), pushing its biggest modules past the one-process ceiling.
-    if (target == "arm64-linux") {
-        unit = asm_arm64_ir.emit_module_ir_unit_arm64_flat(infmods[pm_index], parts[pm_index].is_entry, true, shard_ns, extra, all_funcs, all_stab, pm_lo, pm_hi, pm_wpb);
-    } else {
-        unit = asm_ir.emit_module_ir_unit_flat(infmods[pm_index], parts[pm_index].is_entry, true, shard_ns, extra, all_funcs, all_stab, pm_lo, pm_hi, [], pm_wpb);
-    }
+    var unit: string = emit_unit(v, pm_index, parts[pm_index].is_entry, shard_ns, extra, pm_lo, pm_hi, target);
     // Emit to stdout first, then populate the cache. Both consume `unit`; doing
     // the file write last keeps the ordering unambiguous and avoids relying on
     // write_file's borrow/consume semantics for the unit box.
@@ -1092,10 +1068,14 @@ function main(): i32 {
     // pre-check there is safe. Default OFF preserves the clean "not IR-eligible"
     // diagnostic for arbitrary per-module use.
     var assume_eligible: boolean = false;
-    // Units per orchestrated batch process (see emit_per_module_spawned). The
-    // per-window emit accumulates ~0.4 GB a process does not reclaim, so 8 sits
-    // near 3.2 GB against the 16 GiB arena. `-unit-batch N` tunes it.
-    var unit_batch: i32 = 8;
+    // Units per orchestrated batch process (see emit_per_module_spawned). Each
+    // process lowers the whole program through the typed lowering before it
+    // emits (52 s and 4.4 GB for the compiler), and its units add ~0.2 GB over
+    // that, so a batch is large. The AST lowering (FERN_SEM_IR=) accumulates
+    // ~0.4 GB per unit a process does not reclaim, so there 8 sits near 3.2 GB
+    // against the 16 GiB arena. `-unit-batch N` tunes it.
+    var unit_batch: i32 = 64;
+    if (!semlower.sem_ir_on()) { unit_batch = 8; }
     var force_spawned: boolean = false;
     var ai: i32 = 1;
     while (ai < a.len()) {
@@ -1175,19 +1155,7 @@ function main(): i32 {
             if (pm_mode.len() > 0) {
                 return run_per_module(dir, entry_path, entry, loaded, pm_mode, pm_index, pm_extra, cache_dir, pm_lo, pm_hi, target, out_dir, func_budget, unit_lo, unit_hi, assume_eligible);
             }
-            var merged: parser.Module = flatten.bundle(entry, loaded, target);
-            // builtins.fern supplies the built-in types' layouts to the AST
-            // lowering. The typed path takes them from module_with_builtins'
-            // injection, as the CLI does, and a merged copy would redeclare them.
-            if (!semlower.sem_ir_on()) { merged = modloader.merge_builtins(dir, merged); }
-            // target_os() / target_arch() are the -target's environment and ISA
-            // as string literals, not calls: the compile driver folds them here
-            // (fern.fern) and no backend emits a body for either, so a pipeline
-            // that skips the fold hands every later pass a call to a symbol
-            // nothing defines. merge_builtins runs after fold_target_calls, so
-            // the modules it brings in are folded here rather than there.
-            var md: platforms.Descriptor = platforms.for_target(target);
-            merged = constfold.fold_target_name(merged, md.environment, md.isa);
+            var merged: parser.Module = merged_program(dir, entry, loaded, target);
             if (vprovided) { return verify_provided_module(merged, target); }
             if (probe) {
                 // Probe the module codegen actually routes on: run the same

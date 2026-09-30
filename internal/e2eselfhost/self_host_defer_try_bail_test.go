@@ -45,8 +45,9 @@ function main(): i32 { build(); return 0; }
 	}
 
 	// The typed lowering replays the same actions on a `?` failure edge, and
-	// refuses the shape the same way.
-	for _, args := range [][]string{nil} {
+	// refuses the shape the same way, on both the per-module and the merged
+	// route.
+	for _, args := range [][]string{{"-per-module-emit", "0"}, nil} {
 		_, stderr, code := runDriver(t, runner, driverBin, nil, true, append([]string{entry}, args...)...)
 		if code != 3 {
 			t.Fatalf("typed %v: exited %d, want 3 (a refusal) — a signal here is the recursion back\n%s", args, code, stderr)

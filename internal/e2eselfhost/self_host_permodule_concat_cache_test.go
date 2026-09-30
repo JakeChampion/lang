@@ -12,10 +12,10 @@ import (
 // single-process per-module concat (the 512–1500 function band), #6937. Every
 // phase is compared byte-for-byte with a clean concat build of the same sources.
 //
-// The reach phase is the one a source-and-signature key gets wrong: the entry
-// starts calling a second lib3 function, so lib3's pruned unit grows although
-// lib3.fern is untouched. It must be re-emitted, not served. The fact phase is
-// the other: a body-only edit that flips a borrow verdict its caller reads.
+// The reach phase: the entry starts calling a second lib3 function. The units
+// are cut from the typed lowering of the whole program, which is not pruned to
+// what the entry reaches, so only the entry re-emits. The fact phase is a
+// body-only edit that flips a borrow verdict its caller reads.
 func TestSelfHostPerModuleConcatObjectCacheX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -100,7 +100,7 @@ func TestSelfHostPerModuleConcatObjectCacheX86_64(t *testing.T) {
 			reHits = append(reHits, a)
 		}
 	}
-	pmWantSets(t, "reach", hits, misses, reHits, []string{"__entry", "lib3"})
+	pmWantSets(t, "reach", hits, misses, without("__entry"), []string{"__entry"})
 
 	// A body-only edit that moves a fact about a function. m3_keep's parameter is
 	// borrowable until its body starts storing it, and callers lower against that
