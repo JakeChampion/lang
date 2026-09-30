@@ -1055,6 +1055,15 @@ func buildTcpListenWithBody(idxs map[string]uint32) []byte {
 	return inst.PutFunctionBody(nil, inst.PutLocalsOneGroup(nil, 4, encode.ValtypeI32), body)
 }
 
+// buildTcpSendfileBody assembles __fern_tcp_sendfile: (conn, file, max) →
+// -ENOTSUP (58). wasi:sockets moves bytes through streams only, so the
+// serve loop reads the file and sends the piece itself.
+func buildTcpSendfileBody(_ map[string]uint32) []byte {
+	var body []byte
+	body = inst.InstI32Const(body, -58)
+	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+}
+
 // buildTcpSocketCtlBody assembles __fern_tcp_socket_ctl over a connection
 // or listener record. op 2 (keep-alive), op 4 (shutdown) and op 7 (the
 // peer's address, through remote-address) are the controls wasi:sockets
@@ -1091,8 +1100,8 @@ func buildTcpSocketCtlBody(idxs map[string]uint32) []byte {
 	}
 
 	var body []byte
-	// op 1, 3 and 6: no control on this target.
-	for _, op := range []int32{1, 3, 6} {
+	// op 1, 3, 6 and 8: no control on this target.
+	for _, op := range []int32{1, 3, 6, 8} {
 		body = opIs(body, op)
 		body = inst.InstI32Const(body, -58)
 		body = inst.InstReturn(body)

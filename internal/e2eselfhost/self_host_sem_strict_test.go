@@ -91,4 +91,29 @@ function main(): i32 {
 	if code, out := compile(viewRead, "FERN_SEM_IR_STRICT="); code != 0 {
 		t.Fatalf("a refused module without strict: exit %d, want the AST lowering's compile\n%s", code, out)
 	}
+
+	// A stream handle's `fd` is the handle's own descriptor, read as the i32
+	// through a parameter, a local and an enum payload binding alike (std/tcp
+	// hands a file body's fd to tcp_sendfile). It was an unsupported
+	// projection: a handle wears a record's nominal but has no schema.
+	handleFd := `enum Tail { NoTail, FileTail(Reader, i64) }
+function fd_of(t: Tail): i32 {
+    match (t) {
+        FileTail(r, left) => { return r.fd; },
+        _ => { return 0 - 1; }
+    }
+    return 0 - 1;
+}
+function fd_direct(r: Reader): i32 { return r.fd; }
+function main(): i32 {
+    var w: Writer = stdout();
+    var t: Tail = FileTail(stdin(), 1 as i64);
+    return w.fd * 10 + fd_of(t) + fd_direct(stdin()) + 5;
+}
+`
+	for _, target := range []string{"x86-64-linux", "arm64-linux", "arm64-darwin"} {
+		if code, out := compileFor(target, handleFd, "FERN_SEM_IR_STRICT=1"); code != 0 {
+			t.Errorf("%s: a handle's fd read: exit %d under strict\n%s", target, code, out)
+		}
+	}
 }

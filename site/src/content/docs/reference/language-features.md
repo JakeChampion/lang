@@ -129,7 +129,7 @@ not match, and forces you to handle the miss with a diverging `else`:
 
 ```fern
 let Some(user) = lookup(id) else {
-    return http.http_response_not_found();
+    return http.not_found();
 };
 // `user` is in scope for the rest of the block, unwrapped.
 ```

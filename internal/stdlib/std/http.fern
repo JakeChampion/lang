@@ -84,55 +84,62 @@ pub function http_is_error(code: i32): boolean {
     return code >= 400 && code <= 599;
 }
 
-// `http_response_ok(body)` — 200 OK with the given body.
-// `http_response_text(status, body)` — explicit status code.
-// `http_response_not_found()` — common 404 builder.
+// `ok(body)` — 200 OK with the given body.
+// `text(status, body)` — explicit status code.
+// `not_found()` — common 404 builder.
 // Saves the `HttpResponse { status: 200, body: ... }` boiler-
 // plate at every handler call site.
-pub function http_response_ok(body: string): HttpResponse {
-    return HttpResponse { status: 200, body: body, headers: headers.header_map_new() };
+pub function ok(body: string): HttpResponse {
+    return HttpResponse { status: 200, body: BodyText(body), headers: headers.header_map_new() };
 }
 
-pub function http_response_text(status: i32, body: string): HttpResponse {
-    return HttpResponse { status: status, body: body, headers: headers.header_map_new() };
+pub function text(status: i32, body: string): HttpResponse {
+    return HttpResponse { status: status, body: BodyText(body), headers: headers.header_map_new() };
 }
 
-pub function http_response_not_found(): HttpResponse {
-    return HttpResponse { status: 404, body: "Not Found", headers: headers.header_map_new() };
+pub function not_found(): HttpResponse {
+    return HttpResponse { status: 404, body: BodyText("Not Found"), headers: headers.header_map_new() };
 }
 
-// `http_response_bad_request(body)` — 400 with the given
+// `bad_request(body)` — 400 with the given
 // body. Common shape for validation-failure responses.
-pub function http_response_bad_request(body: string): HttpResponse {
-    return HttpResponse { status: 400, body: body, headers: headers.header_map_new() };
+pub function bad_request(body: string): HttpResponse {
+    return HttpResponse { status: 400, body: BodyText(body), headers: headers.header_map_new() };
 }
 
-// `http_response_internal_error(body)` — 500. The default
+// `internal_error(body)` — 500. The default
 // body shape for unhandled / unexpected exceptions in a
 // handler.
-pub function http_response_internal_error(body: string): HttpResponse {
-    return HttpResponse { status: 500, body: body, headers: headers.header_map_new() };
+pub function internal_error(body: string): HttpResponse {
+    return HttpResponse { status: 500, body: BodyText(body), headers: headers.header_map_new() };
 }
 
-// `http_response_redirect(location)` — 302 Found with the
+// `redirect(location)` — 302 Found with the
 // redirect target both in the body (for clients that ignore
 // headers) and as a real `Location:` header.
-pub function http_response_redirect(location: string): HttpResponse {
+pub function redirect(location: string): HttpResponse {
     var h: HeaderMap = headers.header_map_new();
     h = h.set("Location", location);
-    return HttpResponse { status: 302, body: location, headers: h };
+    return HttpResponse { status: 302, body: BodyText(location), headers: h };
 }
 
-// `http_response_no_content()` — 204 No Content, empty
+// `no_content()` — 204 No Content, empty
 // body. The standard "I handled it, nothing to say"
 // response for DELETE / PUT / etc.
-pub function http_response_no_content(): HttpResponse {
-    return HttpResponse { status: 204, body: "", headers: headers.header_map_new() };
+pub function no_content(): HttpResponse {
+    return HttpResponse { status: 204, body: BodyText(""), headers: headers.header_map_new() };
+}
+
+// `created(body)` — 201 Created with the given body: what a POST that
+// made something answers, the new resource's address in the body or
+// set on `Location` by the caller.
+pub function created(body: string): HttpResponse {
+    return HttpResponse { status: 201, body: BodyText(body), headers: headers.header_map_new() };
 }
 
 // ============================================================
 // Typed-body builders (#4385 — "response builders never set
-// Content-Type"). The plain `http_response_*` builders above
+// Content-Type"). The plain builders above (`ok`, `text`, …)
 // leave the media type unset, so a browser sniffs the body and
 // a JSON API response can render as text. These set the right
 // `Content-Type` up front, saving the `.with_header("Content-
@@ -144,35 +151,35 @@ pub function http_response_no_content(): HttpResponse {
 function __http_response_typed(status: i32, body: string, ct: string): HttpResponse {
     var h: HeaderMap = headers.header_map_new();
     h = h.set("Content-Type", ct);
-    return HttpResponse { status: status, body: body, headers: h };
+    return HttpResponse { status: status, body: BodyText(body), headers: h };
 }
 
-// `http_response_json(body)` — 200 with `Content-Type:
+// `json(body)` — 200 with `Content-Type:
 // application/json`. `body` is the already-serialized JSON
 // text (e.g. from `json.encode(...)`); this only sets the
 // media type, it does not itself serialize.
-pub function http_response_json(body: string): HttpResponse {
+pub function json(body: string): HttpResponse {
     return __http_response_typed(200, body, "application/json");
 }
 
-// `http_response_json_status(status, body)` — like
-// `http_response_json` but with an explicit status code, for
+// `json_status(status, body)` — like
+// `json` but with an explicit status code, for
 // `201 Created` / `422 Unprocessable Entity` / … JSON replies.
-pub function http_response_json_status(status: i32, body: string): HttpResponse {
+pub function json_status(status: i32, body: string): HttpResponse {
     return __http_response_typed(status, body, "application/json");
 }
 
-// `http_response_html(body)` — 200 with `Content-Type:
+// `html(body)` — 200 with `Content-Type:
 // text/html; charset=utf-8`.
-pub function http_response_html(body: string): HttpResponse {
+pub function html(body: string): HttpResponse {
     return __http_response_typed(200, body, "text/html; charset=utf-8");
 }
 
-// `http_response_plain(body)` — 200 with `Content-Type:
+// `plain(body)` — 200 with `Content-Type:
 // text/plain; charset=utf-8`. The typed sibling of
-// `http_response_ok`, for when the client should be told the
+// `ok`, for when the client should be told the
 // body is plain text rather than left to sniff it.
-pub function http_response_plain(body: string): HttpResponse {
+pub function plain(body: string): HttpResponse {
     return __http_response_typed(200, body, "text/plain; charset=utf-8");
 }
 
@@ -244,6 +251,74 @@ impl ToResponse for string {
     function to_response(self: Self): HttpResponse {
         return problem(500, "", "");
     }
+}
+
+// ============================================================
+// A typed JSON body (#9854).
+//
+// `body_json[T](req)` decodes a request's body as a `T` that implements
+// `json.FromJson` (`@derive(json.FromJson)` on a struct), and tells the
+// three failures apart so each answers with its own status: a media type
+// that is not JSON (`UnsupportedMediaType`, 415), a body that is not JSON
+// (`MalformedJson`, 400, with where the text broke), and JSON of the wrong
+// shape (`WrongShape`, 422, naming the field). `BodyError` is `ToResponse`,
+// so a handler declared as `Result[HttpResponse, BodyError]` fails with `?`:
+//
+//     function handle(req: HttpRequest, plat: Platform): Result[HttpResponse, http.BodyError] {
+//         var item: Item = http.body_json[Item](req)?;
+//         return Ok(http.json(item.to_json()));
+//     }
+//
+// The media type is the `Content-Type` header's type without its
+// parameters, `application/json` or any `+json` suffix, compared without
+// regard to case; a request without the header is refused too.
+
+pub enum BodyError {
+    UnsupportedMediaType(string),
+    MalformedJson(json.JsonError),
+    WrongShape(string),
+}
+
+impl ToResponse for BodyError {
+    function to_response(self: Self): HttpResponse {
+        match (self) {
+            UnsupportedMediaType(ct) => {
+                if (ct.len() == 0) { return problem(415, "", "expected a Content-Type of application/json"); }
+                return problem(415, "", "expected application/json, got " + ct);
+            },
+            MalformedJson(e) => { return problem(400, "Malformed JSON", e.to_string()); },
+            WrongShape(why) => { return problem(422, "", why); }
+        }
+        return problem(500, "", "");
+    }
+}
+
+pub function body_json[T: json.FromJson](req: HttpRequest): Result[T, BodyError] {
+    match (req.headers.get("content-type")) {
+        Some(ct) => { if (!__media_type_is_json(ct)) { return Err(UnsupportedMediaType(ct)); } },
+        None => { return Err(UnsupportedMediaType("")); }
+    }
+    match (json.json_parse_result(req.body_string())) {
+        Ok(v) => {
+            match (T.from_json_value(v)) {
+                Ok(t) => { return Ok(t); },
+                Err(why) => { return Err(WrongShape(why)); }
+            }
+        },
+        Err(e) => { return Err(MalformedJson(e)); }
+    }
+    return Err(UnsupportedMediaType(""));
+}
+
+// __media_type_is_json: the type before any `;` parameter, trimmed, is
+// `application/json` or ends in `+json`, in any case.
+function __media_type_is_json(ct: string): boolean {
+    var mt: string = ct;
+    var semi: i32 = ct.index_of(";");
+    if (semi >= 0) { mt = slice_unchecked(ct, 0, semi) + ""; }
+    mt = mt.trim();
+    if (mt.len() == 16 && mt.starts_with_ci("application/json")) { return true; }
+    return mt.ends_with_ci("+json");
 }
 
 // `http_path_segments(path)` — split an HTTP path into
@@ -906,7 +981,7 @@ pub function http_parse_request_bytes(buf: u8[]): Option[HttpRequest] {
 // connection persists after its response (RFC 9112 §9.3: HTTP/1.1 unless
 // the request says `Connection: close`; HTTP/1.0 only when it says
 // `Connection: keep-alive`).
-pub struct HttpFramed { request: HttpRequest, len: i32, keep_alive: boolean }
+pub struct HttpFramed { request: HttpRequest, len: i32, keep_alive: boolean, version: string }
 
 // HttpFraming — what a buffer holds at an offset: a complete request with
 // its framing; less than one (the loop keeps reading); less than one
@@ -1050,7 +1125,7 @@ pub function http_parse_request_framed_from(buf: u8[], from: i32): HttpFraming {
         headers: req_headers,
         trailers: body.3,
     };
-    return Framed(HttpFramed { request: req, len: body.2 - start, keep_alive: __persists(version, req_headers) });
+    return Framed(HttpFramed { request: req, len: body.2 - start, keep_alive: __persists(version, req_headers), version: version });
 }
 
 // `http_request_target(method, target)` — the request-target (RFC 9112
@@ -1371,30 +1446,44 @@ pub function http_serialize_response_conn(resp: HttpResponse, keep_alive: boolea
 // neither, whatever the handler put in the body. Every other response
 // carries `Content-Length` and the body.
 pub function http_serialize_response_to(method: string, resp: HttpResponse, keep_alive: boolean): string {
+    var bodiless: boolean = http_bodiless(resp.status);
+    var framing: string = "";
+    if (!bodiless) { framing = "Content-Length: " + int.int_to_string(resp.body_len()) + "\r\n"; }
+    var head: string = http_serialize_response_head(resp, keep_alive, framing);
+    if (bodiless || method == "HEAD") { return head; }
+    return head + resp.body_string();
+}
+
+// `http_bodiless(status)` — whether a response with `status` carries no
+// body whatever the request: 1xx, 204 and 304 (RFC 9112 §6.3).
+pub function http_bodiless(status: i32): boolean {
+    return status < 200 || status == 204 || status == 304;
+}
+
+// `http_serialize_response_head(resp, keep_alive, framing)` — the
+// status line and header block of `resp`, ending in the blank line:
+// the handler's headers but `Content-Length`, `Transfer-Encoding` and
+// `Connection`, which the caller's `framing` (a `Content-Length` or
+// `Transfer-Encoding` line, or none for a close-delimited or bodiless
+// response) and `keep_alive` decide. The serve loop writes a streamed
+// body behind this head.
+pub function http_serialize_response_head(resp: HttpResponse, keep_alive: boolean, framing: string): string {
     var connection: string = "Connection: close\r\n";
     if (keep_alive) { connection = "Connection: keep-alive\r\n"; }
     var status_line: string = "HTTP/1.1 " + int.int_to_string(resp.status)
         + " " + __http_reason(resp.status) + "\r\n";
-    // User-supplied headers first; skip `content-length` and
-    // `connection` so the auto-block below stays authoritative.
-    // (Names in HeaderMap are case-folded on insert, so a direct
-    // string compare against the lowercase sentinel is correct.)
+    // Names in HeaderMap are case-folded on insert, so a direct string
+    // compare against the lowercase sentinel is correct.
     var hdr_block: string = "";
     var i: i32 = 0;
     while (i < resp.headers.names.len()) {
         var hname: string = resp.headers.names[i];
-        if (hname != "content-length" && hname != "connection") {
+        if (hname != "content-length" && hname != "connection" && hname != "transfer-encoding") {
             hdr_block = hdr_block + hname + ": " + resp.headers.values[i] + "\r\n";
         }
         i = i + 1;
     }
-    var bodiless: boolean = resp.status < 200 || resp.status == 204 || resp.status == 304;
-    if (!bodiless) {
-        hdr_block = hdr_block + "Content-Length: " + int.int_to_string(resp.body_len()) + "\r\n";
-    }
-    hdr_block = hdr_block + connection + "\r\n";
-    if (bodiless || method == "HEAD") { return status_line + hdr_block; }
-    return status_line + hdr_block + resp.body_string();
+    return status_line + hdr_block + framing + connection + "\r\n";
 }
 
 // ============================================================
@@ -1469,33 +1558,131 @@ pub function (r: HttpRequest) body_len(): i32 {
     return r.body.data.len();
 }
 
-// `(r: HttpResponse).body_string()` — body as a UTF-8 string.
+// `(r: HttpResponse).body_string()` — the body as text, whichever
+// `Body` holds it: the text itself, the bytes or the Stream's remainder
+// read as UTF-8 unchecked, or every chunk the producer answers, joined.
+// A `BodyFile` answers "" here: the file is streamed by the serve loop
+// as the response is written, never read by code a handler reaches,
+// since a handler's host effects go through its `Platform` bag (E080).
 // The response-side twin of the HttpRequest readers above.
-// A response body stays a `string`: the streaming half of
-// Rec §4 gives the response an explicit writer
-// (`resp.write` / `flush` / `finish`) rather than a Stream
-// field, so that `HttpResponse { status: 200, body: "ok" }`
-// keeps working as the sugar the recommendation preserves.
 pub function (r: HttpResponse) body_string(): string {
-    return r.body;
+    match (r.body) {
+        BodyText(s) => { return s; },
+        BodyBytes(bs) => { return string_from_bytes_unchecked(bs); },
+        BodyStream(st) => {
+            var rest: (u8[], Stream) = st.read_all();
+            return string_from_bytes_unchecked(rest.0);
+        },
+        BodyFile(path) => { return ""; },
+        BodyChunks(producer) => {
+            var joined: u8[] = __chunks_joined(producer);
+            return string_from_bytes_unchecked(joined);
+        }
+    }
+    return "";
 }
 
-// `(r: HttpResponse).body_bytes()` — body as a u8 array.
+// `(r: HttpResponse).body_bytes()` — the body as bytes, read as
+// `body_string` reads it.
 pub function (r: HttpResponse) body_bytes(): u8[] {
-    return r.body.bytes();
+    match (r.body) {
+        BodyText(s) => { return s.bytes(); },
+        BodyBytes(bs) => { return bs; },
+        BodyStream(st) => {
+            var rest: (u8[], Stream) = st.read_all();
+            return rest.0;
+        },
+        BodyFile(path) => { var none: u8[] = []; return none; },
+        BodyChunks(producer) => { return __chunks_joined(producer); }
+    }
+    var empty: u8[] = [];
+    return empty;
 }
 
-// `(r: HttpResponse).body_len()` — body length in bytes.
+// `__chunks_joined(producer)` — every chunk the producer answers, from
+// index 0 until it answers None, as one byte string.
+function __chunks_joined(producer: ChunkProducer): u8[] {
+    var next: (i32) => Option[u8[]] = producer.next;
+    var out: u8[] = [];
+    var i: i32 = 0;
+    while (true) {
+        match (next(i)) {
+            Some(chunk) => { out = out.concat(chunk); },
+            None => { return out; }
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// `(r: HttpResponse).body_len()` — the body's length in bytes: the
+// text's or the bytes' length, the Stream's remainder, the chunks'
+// total, 0 for a file the loop has not opened yet.
 pub function (r: HttpResponse) body_len(): i32 {
-    return r.body.len();
+    match (r.body) {
+        BodyText(s) => { return s.len(); },
+        BodyBytes(bs) => { return bs.len(); },
+        BodyStream(st) => { return st.remaining(); },
+        BodyFile(path) => { return 0; },
+        BodyChunks(producer) => { return __chunks_joined(producer).len(); }
+    }
+    return 0;
 }
 
-// `http_response_bytes(status, bs)` — a response whose body is
+// `http_materialize(r)` — the response with a `BodyFile` read into a
+// `BodyBytes`, or a 404 when the file cannot be read; any other body
+// as it was. For a test that wants the bytes a served file body would
+// carry: the serve loop itself streams the file from a `Reader` as the
+// socket takes it, after the handler has answered, on the loop's own
+// thread of control and outside the reach of E080's rule that a
+// handler's host effects go through its bag.
+pub function http_materialize(r: HttpResponse): HttpResponse {
+    match (r.body) {
+        BodyFile(path) => {
+            match (read_file_bytes(path)) {
+                Ok(bs) => { return HttpResponse { ...r, body: BodyBytes(bs) }; },
+                Err(e) => { return not_found(); }
+            }
+            return not_found();
+        },
+        _ => { return r; }
+    }
+    return r;
+}
+
+// `bytes(status, bs)` — a response whose body is
 // given as bytes rather than a string, so a handler holding
 // `u8[]` (an image, a decoded frame, bytes read off a request
 // Stream) does not have to spell the conversion itself.
-pub function http_response_bytes(status: i32, bs: u8[]): HttpResponse {
-    return HttpResponse { status: status, body: string_from_bytes_unchecked(bs), headers: headers.header_map_new() };
+pub function bytes(status: i32, bs: u8[]): HttpResponse {
+    return HttpResponse { status: status, body: BodyBytes(bs), headers: headers.header_map_new() };
+}
+
+// `stream(status, s)` — a response whose body is what
+// is left of a Stream: bytes already in memory, drained to the wire
+// from its cursor.
+pub function stream(status: i32, s: Stream): HttpResponse {
+    return HttpResponse { status: status, body: BodyStream(s), headers: headers.header_map_new() };
+}
+
+// `file(path)` — a 200 whose body is the file at `path`,
+// streamed by the serve loop as the socket takes it, so a handler
+// answers a file without holding it or reaching the filesystem; a file
+// the loop cannot open is answered 404 in its place. The
+// `Content-Type` is the caller's to set.
+pub function file(path: string): HttpResponse {
+    return HttpResponse { status: 200, body: BodyFile(path), headers: headers.header_map_new() };
+}
+
+// `chunks(status, next)` — a response whose body is what
+// `next` answers for the indexes 0, 1, 2, … until it answers None, each
+// chunk produced as the socket takes the one before it. The serve loop
+// writes it under chunked transfer coding to an HTTP/1.1 client and
+// close-delimited to an HTTP/1.0 one, so the length need not be known
+// up front; a `Content-Length` the handler set is dropped. The
+// `Content-Type` is the caller's to set.
+pub function chunks(status: i32, next: (i32) => Option[u8[]]): HttpResponse {
+    return HttpResponse { status: status, body: BodyChunks(ChunkProducer { next: next }), headers: headers.header_map_new() };
 }
 
 // ============================================================
@@ -1525,9 +1712,9 @@ pub function (r: HttpResponse) with_appended_header(name: string, value: string)
 // `(r: HttpResponse).with_content_type(ct)` — set (replace) the
 // `Content-Type` header. Convenience over `with_header` for the
 // most common single header a handler overrides; pairs with the
-// plain `http_response_*` builders when you want to keep their
+// plain builders (`ok`, `text`, …) when you want to keep their
 // status/body but add a media type:
-//   r = http_response_ok(csv).with_content_type("text/csv");
+//   r = ok(csv).with_content_type("text/csv");
 pub function (r: HttpResponse) with_content_type(ct: string): HttpResponse {
     return HttpResponse { ...r, headers: r.headers.set("Content-Type", ct) };
 }

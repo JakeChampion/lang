@@ -34,5 +34,5 @@ import "std/platform";
 
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
   plat.log(req.method + " " + req.path);
-  return http.http_response_ok("method=" + req.method + " path=" + req.path + "\n");
+  return http.ok("method=" + req.method + " path=" + req.path + "\n");
 }

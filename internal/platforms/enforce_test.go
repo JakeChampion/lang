@@ -169,7 +169,7 @@ func TestEnforceUnusedImportsDontTrip(t *testing.T) {
 import "std/tcp";
 
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
-    return http.http_response_ok("ok");
+    return http.ok("ok");
 }`
 	prog := prepared(t, src, true)
 	if vs := platforms.Enforce(prog, "wasm32-wasi-http"); len(vs) != 0 {

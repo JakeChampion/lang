@@ -72,15 +72,15 @@ function census_burn(n: i32): i32 {
     return x;
 }
 function census_handle(req: HttpRequest, plat: Platform): HttpResponse {
-    if (req.path == "/chunked") { return http.http_response_ok(req.body_string()); }
-    if (req.path == "/nocontent") { return http.http_response_no_content(); }
-    if (req.path == "/expect") { return http.http_response_ok(req.body_string()); }
+    if (req.path == "/chunked") { return http.ok(req.body_string()); }
+    if (req.path == "/nocontent") { return http.no_content(); }
+    if (req.path == "/expect") { return http.ok(req.body_string()); }
     var work: i32 = 0;
     if (req.path.starts_with("/slow")) { work = 12000000; }
     if (req.path.starts_with("/gone")) { work = 60000000; }
     if (req.path == "/behind-a-failed-write") { plat.log("answered /behind-a-failed-write"); }
-    if (census_burn(work) == 0 - 1) { return http.http_response_ok("never"); }
-    return http.http_response_ok("ok");
+    if (census_burn(work) == 0 - 1) { return http.ok("never"); }
+    return http.ok("ok");
 }
 function main(): i32 {
     return __serve_loop(3, (req: HttpRequest, plat: Platform): HttpResponse => census_handle(req, plat), ServeOptions { ...serve_options(), recv_deadline: time.duration_millis(300 as i64), data_rate_grace: time.duration_millis(100 as i64), keep_alive_requests: 200, max_connections: 2 }, (reason: string): void => {});
@@ -90,12 +90,13 @@ function main(): i32 {
 
 // KeepAliveCycle is how many requests one pass of HTTPKeepAliveRequests
 // sends; a bounded loop driven by it is bounded to a multiple.
-const KeepAliveCycle = 284
+const KeepAliveCycle = 285
 
 // HTTPKeepAliveRequests drives `rounds` requests through one bounded serve
 // loop whose per-connection cap is 200, whose request read deadline is
 // 300 ms and which holds two connections open at most: a pipeline of 200 requests on one connection, answered in
-// order across several waits and closed by the cap; HTTP/1.0 and
+// order across several waits and closed by the cap; an upgrade request
+// answered as HTTP/1.1 on a connection that persists; HTTP/1.0 and
 // `Connection: close` requests that end theirs; a pipeline of 33 requests
 // whose peer half-closes behind them, one more than the loop's burst so
 // the last is answered from the backlog on a later wait, all of which
@@ -287,6 +288,15 @@ func HTTPKeepAliveRequests(t *testing.T, addr string, rounds int) {
 		write(conn, "GET /f HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
 		read(conn, r, "Connection: close", "close")
 		eof(conn, r, "after Connection: close")
+		// One HTTP/1.1 request asking to upgrade: the loop has no protocol
+		// to switch to, and RFC 9110 §7.8 lets a server ignore the ask, so
+		// the request is answered as HTTP/1.1 and the connection persists,
+		// the `upgrade` token being neither `close` nor `keep-alive`.
+		conn = dial()
+		r = bufio.NewReader(conn)
+		write(conn, "GET /u HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n")
+		read(conn, r, "Upgrade", "keep-alive")
+		conn.Close()
 		// A pipeline of 33 requests whose peer half-closes behind them. The
 		// write and the half-close are separate calls, so the server may
 		// answer even the 33rd before the end of stream arrives: that one

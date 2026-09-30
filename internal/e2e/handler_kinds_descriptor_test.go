@@ -17,7 +17,7 @@ var handlerKindPrograms = map[string]string{
 	"handle": `import "std/http";
 import "std/tcp";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
-    return http.http_response_ok("hi");
+    return http.ok("hi");
 }
 `,
 	"main": "function main(): i32 { return 0; }\n",

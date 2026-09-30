@@ -2264,11 +2264,11 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"e023-known-enum-match-ok", "enum Color { Red, Green }\nfunction f(c: Color): i32 { match (c) { Red => { return 1; }, Green => { return 2; } } }\nfunction main(): i32 { return 0; }\n", nil},
 		{"e023-option-match-ok", "function main(): i32 { var o: Option[i32] = Some(3); match (o) { Some(v) => { return v; }, None => { return 0; } } }\n", nil},
 		// E044 (unsupported capture type): a lambda capturing a value with
-		// no runtime representation — a void call result or an erased
-		// generic type parameter — draws E044 (the two shapes the native
-		// captureSink rejects). Scalar captures and shadowing lambda params
-		// stay clean.
-		{"e044-capture-generic-param", "function f[T](x: T): i32 {\n    var g = () => x;\n    return 0;\n}\nfunction main(): i32 { return f(1); }\n", []string{"E044"}},
+		// no runtime representation — a void call result — draws E044, the
+		// one shape the native captureSink rejects. A generic parameter's
+		// value is concrete once the function is instantiated, so capturing
+		// one is clean; so are scalar captures and shadowing lambda params.
+		{"e044-capture-generic-param-ok", "function f[T](x: T): i32 {\n    var g = () => x;\n    return 0;\n}\nfunction main(): i32 { return f(1); }\n", nil},
 		{"e044-capture-void", "function v(): void { return; }\nfunction main(): i32 {\n    var x = v();\n    var g = () => x;\n    return 0;\n}\n", []string{"E044"}},
 		{"e044-capture-scalar-ok", "function main(): i32 {\n    var x = 5;\n    var g = () => x;\n    return g();\n}\n", nil},
 		{"e044-capture-shadowed-ok", "function v(): void { return; }\nfunction main(): i32 {\n    var x = v();\n    var g = (x: i32) => x;\n    return g(1);\n}\n", nil},
@@ -2282,7 +2282,7 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// parser gives an origin. Native desugars `use` to a local function and
 		// runs the same capture sink over it, so the rule applies there too.
 		{"e044-capture-void-use-callback", "function v(): void { return; }\nfunction apply(n: i32, cb: (i32) => i32): i32 { return cb(n); }\nfunction main(): i32 {\n    var x = v();\n    use n <- apply(41);\n    x;\n    return n;\n}\n", []string{"E044"}},
-		{"e044-capture-generic-use-callback", "function apply(n: i32, cb: (i32) => i32): i32 { return cb(n); }\nfunction f[T](x: T): i32 {\n    use n <- apply(41);\n    x;\n    return n;\n}\nfunction main(): i32 { return f(1); }\n", []string{"E044"}},
+		{"e044-capture-generic-use-callback-ok", "function apply(n: i32, cb: (i32) => i32): i32 { return cb(n); }\nfunction f[T](x: T): i32 {\n    use n <- apply(41);\n    x;\n    return n;\n}\nfunction main(): i32 { return f(1); }\n", nil},
 		// A suspect declared AFTER the `use` lives inside the callback body, so
 		// it is not a capture — and the walk must not report it as one.
 		{"e044-use-callback-declares-suspect-ok", "function v(): void { return; }\nfunction apply(n: i32, cb: (i32) => i32): i32 { return cb(n); }\nfunction main(): i32 {\n    use n <- apply(41);\n    var x = v();\n    return n;\n}\n", nil},
@@ -2302,12 +2302,9 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// wraps, but only by accident of the wrapping; written out, it is the
 		// case the descent exists for and it belongs in the corpus on its own.
 		{"e044-capture-void-declared-in-a-lambda", "function v(): void { return; }\nfunction main(): i32 {\n    var f = (): i32 => {\n        var x = v();\n        var g = () => x;\n        return 0;\n    };\n    return f();\n}\n", []string{"E044"}},
-		// A LAMBDA's own type-variable parameter is a suspect the same way the
-		// enclosing generic's parameter is: native's capture sink runs per
-		// function-like body, so `(x: T)` binds a value with no runtime
-		// representation and a lambda nested in that body capturing it is E044.
-		// The walk seeds each lambda's scope from its own parameters to match.
-		{"e044-capture-generic-lambda-param", "function outer[T](a: T): i32 {\n    var f = (x: T): i32 => {\n        var g = () => x;\n        return 0;\n    };\n    return f(a);\n}\nfunction main(): i32 { return outer(1); }\n", []string{"E044"}},
+		// A lambda's own type-variable parameter is as concrete as the
+		// enclosing generic's, so a lambda nested in its body may capture it.
+		{"e044-capture-generic-lambda-param-ok", "function outer[T](a: T): i32 {\n    var f = (x: T): i32 => {\n        var g = () => x;\n        return 0;\n    };\n    return f(a);\n}\nfunction main(): i32 { return outer(1); }\n", nil},
 		// The negative: an ordinary binding captured by a nested lambda draws
 		// nothing. The descent widens what is walked, so without this a rule
 		// that reported on every nested lambda would look correct.

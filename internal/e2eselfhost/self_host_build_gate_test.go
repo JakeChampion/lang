@@ -436,9 +436,8 @@ func TestSelfHostBuildGateX86_64(t *testing.T) {
 		},
 		{
 			// An if-EXPRESSION is an IIFE here and has no counterpart in the
-			// native AST, so the erased `T` operands read as closure captures
-			// with no runtime representation — E044 on a program native
-			// accepts.
+			// native AST; its `T` operands once read as closure captures with
+			// no runtime representation, E044 on a program native accepts.
 			name:     "if-expr-in-generic-compiles",
 			src:      "function pick[T](cond: boolean, a: T, b: T): T { return if (cond) { a } else { b }; }\nfunction main(): i32 { return pick(true, 1, 2); }\n",
 			wantDiag: "",
@@ -454,10 +453,10 @@ func TestSelfHostBuildGateX86_64(t *testing.T) {
 		{
 			// An associated function a @derive supplies. A derive synthesises
 			// no impl-table entry and `from_json` is not a requirement of the
-			// `Json` trait either, so `User.from_json` resolved to nothing and
-			// its own type name drew E001.
+			// `FromJson` trait either, so `User.from_json` resolved to nothing
+			// and its own type name drew E001.
 			name:     "derived-associated-fn-compiles",
-			src:      "import \"std/json\";\n@derive(json.Json) struct User { id: i32, name: string }\nfunction main(): i32 { match (User.from_json(\"{\\\"id\\\":7,\\\"name\\\":\\\"g\\\"}\")) { Ok(u) => { return u.id; }, Err(e) => { return 1; } } }\n",
+			src:      "import \"std/json\";\n@derive(json.FromJson) struct User { id: i32, name: string }\nfunction main(): i32 { match (User.from_json(\"{\\\"id\\\":7,\\\"name\\\":\\\"g\\\"}\")) { Ok(u) => { return u.id; }, Err(e) => { return 1; } } }\n",
 			wantDiag: "",
 		},
 		{

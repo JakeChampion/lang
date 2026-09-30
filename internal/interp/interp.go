@@ -1388,6 +1388,7 @@ func New() *Interp {
 	i.Builtins["tcp_socket_ctl"] = &Builtin{Fn: builtinTcpSocketCtl}
 	i.Builtins["tcp_recv"] = &Builtin{Fn: builtinTcpRecv}
 	i.Builtins["tcp_send"] = &Builtin{Fn: builtinTcpSend}
+	i.Builtins["tcp_sendfile"] = &Builtin{Fn: builtinTcpSendfile}
 	i.Builtins["tcp_connect_with"] = &Builtin{Fn: builtinTcpConnectWith}
 	i.Builtins["unix_listen"] = &Builtin{Fn: builtinUnixListen}
 	i.Builtins["unix_connect"] = &Builtin{Fn: builtinUnixConnect}
@@ -1493,6 +1494,58 @@ func builtinTcpRecv(i *Interp, args []Value) (Value, error) {
 	return out, nil
 }
 
+// builtinTcpSendfile answers tcp_sendfile(fd, file, max) as a read of the
+// open file followed by one socket write: the bytes the socket took, 0 at
+// the file's end, or -errno. The file is moved back over the bytes the
+// socket did not take, so the position advances by what was sent, as
+// sendfile(2) leaves it.
+func builtinTcpSendfile(i *Interp, args []Value) (Value, error) {
+	if len(args) != 3 {
+		return nil, fmt.Errorf("tcp_sendfile: expected 3 args, got %d", len(args))
+	}
+	id, ok := args[0].(Number)
+	if !ok {
+		return nil, fmt.Errorf("tcp_sendfile: expected number fd arg, got %T", args[0])
+	}
+	file, ok := args[1].(Number)
+	if !ok {
+		return nil, fmt.Errorf("tcp_sendfile: expected number file arg, got %T", args[1])
+	}
+	max, ok := args[2].(Number)
+	if !ok {
+		return nil, fmt.Errorf("tcp_sendfile: expected number max arg, got %T", args[2])
+	}
+	conn, ok := i.tcpConns[int64(id)]
+	if !ok {
+		return Number(-9), nil
+	}
+	f, ok := i.openFiles[int64(file)]
+	if !ok {
+		return Number(-9), nil
+	}
+	if max <= 0 {
+		return Number(0), nil
+	}
+	buf := make([]byte, int(max))
+	n, err := f.Read(buf)
+	if n == 0 {
+		if err == nil || err == io.EOF {
+			return Number(0), nil
+		}
+		return Number(errnoOf(err)), nil
+	}
+	sent, werr := writeSocket(conn, buf[:n], i.tcpNonblocking[int64(id)])
+	if sent < n {
+		if _, serr := f.Seek(int64(sent-n), io.SeekCurrent); serr != nil {
+			return Number(errnoOf(serr)), nil
+		}
+	}
+	if werr != nil && sent == 0 {
+		return Number(errnoOf(werr)), nil
+	}
+	return Number(sent), nil
+}
+
 func builtinTcpSend(i *Interp, args []Value) (Value, error) {
 	if len(args) != 2 {
 		return nil, fmt.Errorf("tcp_send: expected 2 args, got %d", len(args))
@@ -1588,6 +1641,10 @@ func builtinTcpListenWith(i *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("tcp_listen_with: expected boolean reuse_port arg, got %T", args[3])
 	}
 	lc := net.ListenConfig{}
+	// A plain TCP socket, as the native runtimes open: Go listens with
+	// MPTCP by default, which the kernel refuses socket controls on
+	// (the reuseport filter of op 8 among them).
+	lc.SetMultipathTCP(false)
 	if reuse {
 		lc.Control = func(_, _ string, c syscall.RawConn) error {
 			var serr error
@@ -1693,8 +1750,9 @@ func builtinTcpConnect(i *Interp, args []Value) (Value, error) {
 // builtinTcpSocketCtl is the interpreter's `tcp_socket_ctl(fd, op, arg)`,
 // over the net package's own controls: op 1 SetNoDelay, 2 SetKeepAlive, 3
 // the non-blocking flag tcp_recv honours, 4 CloseRead / CloseWrite / both,
-// 6 the host's send queue, 7 the peer's address key (peerKey). 0, -1 for
-// a handle that is not a connection, -22 for an unknown op.
+// 6 the host's send queue, 7 the peer's address key (peerKey), 8 the
+// listener's SO_REUSEPORT group steered by CPU (hostSteerByCPU). 0, -1
+// for a handle that is not a connection, -22 for an unknown op.
 func builtinTcpSocketCtl(i *Interp, args []Value) (Value, error) {
 	if len(args) != 3 {
 		return nil, fmt.Errorf("tcp_socket_ctl: expected 3 args, got %d", len(args))
@@ -1711,8 +1769,18 @@ func builtinTcpSocketCtl(i *Interp, args []Value) (Value, error) {
 	if !ok {
 		return nil, fmt.Errorf("tcp_socket_ctl: expected number arg, got %T", args[2])
 	}
-	if op < 1 || op > 7 {
+	if op < 1 || op > 8 {
 		return Number(-22), nil
+	}
+	if op == 8 {
+		fd, ok := i.rawFd(int64(id))
+		if !ok {
+			return Number(-1), nil
+		}
+		if err := hostSteerByCPU(fd); err != nil {
+			return Number(errnoOf(err)), nil
+		}
+		return Number(0), nil
 	}
 	if op == 7 {
 		if _, isDatagram := i.udpSocks[int64(id)]; isDatagram {

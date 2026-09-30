@@ -70,6 +70,7 @@ import "std/float";
 import "std/array";
 import "std/string";
 import "std/headers";
+import "std/http";
 // `assert_json_eq` parses both sides and walks the JsonValue
 // trees in order-independent fashion (JObject keys can come
 // out of `Map.keys()` in any order). Std/json is already a
@@ -2858,8 +2859,9 @@ pub function assert_no_header(resp: HttpResponse, name: string): TestOutcome {
 
 // `assert_body(resp, expected)` — the response's body, as text.
 pub function assert_body(resp: HttpResponse, expected: string): TestOutcome {
-    if (resp.body == expected) { return Pass; }
-    return Fail("assert_body: got \"" + resp.body + "\", expected \"" + expected + "\"");
+    var got: string = resp.body_string();
+    if (got == expected) { return Pass; }
+    return Fail("assert_body: got \"" + got + "\", expected \"" + expected + "\"");
 }
 
 // =================== RESULT ASSERTIONS ===================

@@ -20,7 +20,7 @@ const httpHandlerSrc = `import "std/http";
 import "std/tcp";
 
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
-    return http.http_response_ok("method=" + req.method + " path=" + req.path);
+    return http.ok("method=" + req.method + " path=" + req.path);
 }
 
 function main(): i32 {
@@ -249,7 +249,7 @@ func checkSelfHostHttpHandlerServes(t *testing.T, entry func(port int) string) {
 import "std/tcp";
 
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
-    return http.http_response_ok("method=" + req.method + " path=" + req.path);
+    return http.ok("method=" + req.method + " path=" + req.path);
 }
 
 function main(): i32 {

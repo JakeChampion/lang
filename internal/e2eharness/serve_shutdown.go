@@ -44,10 +44,10 @@ function burn(n: i32): i32 {
 }
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
     if (req.path == "/slow") {
-        if (burn(400000000) == 0 - 1) { return http.http_response_ok("never"); }
-        return http.http_response_ok("slow");
+        if (burn(400000000) == 0 - 1) { return http.ok("never"); }
+        return http.ok("slow");
     }
-    return http.http_response_ok("ok");
+    return http.ok("ok");
 }
 function main(): i32 {
     var opts: tcp.ServeOptions = tcp.ServeOptions { ...tcp.serve_options(), shutdown_grace: time.duration_millis(300 as i64), readiness_path: "/healthz", drain_deadline: time.duration_millis(%d as i64) };

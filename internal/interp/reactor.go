@@ -174,7 +174,7 @@ func builtinReactorCtl(i *Interp, args []Value) (Value, error) {
 		if !ok {
 			return Number(-int64(syscall.EBADF)), nil
 		}
-		interest := int(n[3]) & 3
+		interest := int(n[3]) & 7
 		if n[1] == 2 {
 			interest = 0
 		}

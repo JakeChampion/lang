@@ -644,9 +644,9 @@ think they're free additions to make.
 - **`(s: string).count_lines()`**: count newline-separated
   lines; a trailing newline doesn't add a phantom empty
   line.
-- **HTTP response builders**: `http_response_ok(body)`,
-  `http_response_text(status, body)`,
-  `http_response_not_found()`. Saves the
+- **HTTP response builders**: `http.ok(body)`,
+  `http.text(status, body)`,
+  `http.not_found()`. Saves the
   `HttpResponse { status: 200, body: ... }` boilerplate.
 - **Log helpers**: `log_info(msg)` / `log_warn(msg)` /
   `log_error(msg)`. Thin wrappers around `eprint` with a

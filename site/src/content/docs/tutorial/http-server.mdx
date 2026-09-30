@@ -22,15 +22,17 @@ import "std/http";
 import "std/tcp";
 
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
-    return http.http_response_ok("hello, world");
+    return http.ok("hello, world");
 }
 ```
 
 That's a complete program — there's no `main`. When Fern sees a `handle`
 function and no `main`, it **synthesises one for you**:
 
-- For a **native** target it generates `main` that calls
-  `tcp_serve(port, handle)`, listening on `$PORT` (default `8080`).
+- For a **native** target it generates a `main` that serves `handle`
+  under a supervisor, listening on `$PORT` (default `8080`): one worker
+  process per CPU, each running its own accept loop, and a worker that
+  dies is replaced while the others keep answering.
 - For the **`wasi-http`** target it drops the synthesised `main` and
   exports `wasi:http/incoming-handler` instead — the standard component
   interface that `wasmtime serve` and edge hosts speak.
@@ -54,13 +56,13 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
     if (req.path == "/hello") {
         // with_header returns a NEW response with the header set —
         // responses are immutable, like every value in Fern.
-        return http.http_response_ok("hello, world")
+        return http.ok("hello, world")
             .with_header("x-served-by", "fern");
     }
     if (req.method == "POST") {
-        return http.http_response_ok(req.body_string());
+        return http.ok(req.body_string());
     }
-    return http.http_response_text(404, "not found");
+    return http.text(404, "not found");
 }`}
   autoRun={false}
 />
@@ -115,23 +117,23 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
   </thead>
   <tbody>
     <tr>
-      <td><code>http.http_response_ok(body)</code></td>
+      <td><code>http.ok(body)</code></td>
       <td><code>200 OK</code> with <code>body</code></td>
     </tr>
     <tr>
-      <td><code>http.http_response_text(status, body)</code></td>
+      <td><code>http.text(status, body)</code></td>
       <td>any status + body</td>
     </tr>
     <tr>
-      <td><code>http.http_response_not_found()</code></td>
+      <td><code>http.not_found()</code></td>
       <td><code>404 Not Found</code></td>
     </tr>
     <tr>
-      <td><code>http.http_response_bad_request(body)</code></td>
+      <td><code>http.bad_request(body)</code></td>
       <td><code>400</code> + body</td>
     </tr>
     <tr>
-      <td><code>http.http_response_redirect(location)</code></td>
+      <td><code>http.redirect(location)</code></td>
       <td><code>302</code> + <code>Location</code></td>
     </tr>
   </tbody>
@@ -158,7 +160,7 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
     // req.path is path+query; anchor it against a host so url_parse
     // has something to chew on.
     match (url.url_parse("http://x.local" + req.path)) {
-        None => { return http.http_response_bad_request("bad URL\n"); },
+        None => { return http.bad_request("bad URL\n"); },
         Some(u) => {
             var q: Map[string, string[]] = url.query_parse(u.query);
             var out: Map[string, JsonValue] = map_new(2);
@@ -171,7 +173,7 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
             }
             // `|>` pipes the left value into the right function.
             var body: string = JObject(out) |> json.json_encode;
-            return http.http_response_ok(body);
+            return http.ok(body);
         }
     }
 }
@@ -185,13 +187,17 @@ between requests — comes from `init`, not from a top-level variable
 to every request and the value the handler returns is what the next one
 sees.
 
+`init` may also take the platform and answer the serve options beside
+the state. This one asks for a single worker, so there is one counter:
+
 ```fern
 import "std/http";
 import "std/tcp";
 import "core/int";
 
-function init(): Map[string, i32] {
-    return map_new(8);
+function init(plat: Platform): (tcp.ServeOptions, Map[string, i32]) {
+    return (tcp.ServeOptions { ...tcp.serve_options(), workers: 1 },
+            map_new(8));
 }
 
 function handle(hits: Map[string, i32], req: HttpRequest,
@@ -202,7 +208,7 @@ function handle(hits: Map[string, i32], req: HttpRequest,
         None => {}
     }
     return (hits.insert(req.path, n),
-            http.http_response_ok(int.int_to_string(n)));
+            http.ok(int.int_to_string(n)));
 }
 ```
 
@@ -212,11 +218,20 @@ curl http://localhost:8080/a   # → 2
 curl http://localhost:8080/b   # → 1
 ```
 
-The state lives in the accept loop, so it is per process: a handler
-compiled for `wasm32-wasi-http` cannot take one, because that world
-builds a fresh instance per request. An `init` returning nothing is still
-useful — it runs before the first request, which is where a start-up log
-line or an env-var read goes.
+The state lives in a worker's accept loop, so it is **per worker**: with
+the default worker count, every worker starts from the map `init` built
+and counts the requests that reached it, so two `curl`s of `/a` can both
+answer `1` from different workers. A worker that crashes is replaced by
+one starting from `init`'s value again, not from where the dead one left
+off. Anything that must be shared across workers or outlive a crash
+belongs in a store the handler reaches through `plat`, not in the state.
+
+A handler compiled for `wasm32-wasi-http` cannot take a state at all,
+because that world builds a fresh instance per request. An `init`
+returning nothing is still useful — it runs before the first request,
+which is where a start-up log line or an env-var read goes; one
+returning only `tcp.ServeOptions` tunes the server for a stateless
+handler.
 
 ## Compile and serve
 

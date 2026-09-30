@@ -1,0 +1,27 @@
+// http_hello — the hello path of a request without the socket: one GET
+// framed and parsed into an HttpRequest, and a one-word 200 serialized
+// to the wire, per round. The serve loop's own cost per request is
+// mostly these two, so a change to the parser's rules or to the
+// response writer moves this count where the socket tests cannot see
+// it; the socket half is net-nightly.yml's.
+import "std/http";
+
+function main(): i32 {
+  var wire: string = "GET /hello HTTP/1.1\r\nHost: bench\r\nUser-Agent: perf-bench\r\nAccept: */*\r\n\r\n";
+  var total: i64 = 0i64;
+  var i: i32 = 0;
+  while (i < 4000) {
+    match (http.http_parse_request(wire)) {
+      Some(req) => {
+        var resp: HttpResponse = http.ok("hello " + req.path);
+        var out: string = http.http_serialize_response(resp);
+        total = total + (out.len() + req.headers.len()) as i64;
+      },
+      None => {
+        return 100;
+      }
+    }
+    i = i + 1;
+  }
+  return (total % 97i64) as i32;
+}

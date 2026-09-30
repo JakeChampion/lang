@@ -40,6 +40,15 @@ var enumRcPayloadsKnownDivergent = map[string]bool{
 	// sanitizer-clean on the case, and "alias-from-result-box" in
 	// TestX86_64EnumRcPayloadsSound pins the shape under it.
 	"http_cookies": true,
+	// The same class through std/json: `@derive(json.FromJson)` reads a
+	// `string[]` field by taking each element's string out of its
+	// `JsonString` box, and the move model frees it with the JSON tree
+	// the decode walked. The wasm leg traps on the dead strings when the
+	// `User` is dropped; the natives read them before the blocks are
+	// reused, so no native case can observe the free. The fixture's own
+	// wasm leg in TestFernFixtures is the pin: it runs clean under the
+	// production model and traps (exit 134) with the model off.
+	"derive_from_json_shapes": true,
 }
 
 func TestX86_64EnumRcPayloadsMatchesMove(t *testing.T) {

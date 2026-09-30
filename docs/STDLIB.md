@@ -1006,7 +1006,21 @@ Percent-encoding, URL parsing, query parsing.
   human-readable JSON (`indent` spaces per level; empty arrays/objects
   stay on one line). Same value tokens as `json_encode` — only
   whitespace differs.
-- `json_parse(s: string): Option[JsonValue]`
+- `json_parse(s: string): Option[JsonValue]`;
+  `json_parse_result(s): Result[JsonValue, JsonError]` with where the text
+  broke
+- **Typed decode:** `FromJson` is the decode half of `Json`:
+  `T.from_json_value(v: JsonValue): Result[T, string]`, implemented for the
+  integers, floats, `boolean` and `string`, and derived for a struct by
+  `@derive(json.FromJson)` (fields decode through their own `FromJson`; an
+  `E[]` field through `from_json_array[E]`, an `Option[E]` field through
+  `from_json_option[E]`, `None` when the field is missing or null; a
+  container nested in another is E021). `json.decode[T](text)` parses and
+  decodes in one call, and a derived type also has `T.from_json(text)`. A
+  shape error says where: `missing field "id"`, `field "id": expected an
+  integer, got a string`, `field "tags": [1]: expected a string, got null`;
+  a parse failure reads `invalid JSON: <line>:<col>: <why>`. `json_kind(v)`
+  names a value's kind for such messages.
 - `json_escape(s: string): string` — escape a raw string for embedding
   inside a JSON string literal (caller supplies the quotes): `\` `"`
   backslash-escaped, `\n` `\r` `\t` short escapes, other C0 controls as
@@ -1019,13 +1033,44 @@ Percent-encoding, URL parsing, query parsing.
 HTTP/1.1 request parsing, response builders, wire-format
 serializer.
 
-- **Response builders:** `http_response_ok`,
-  `http_response_text`, `http_response_not_found`,
-  `http_response_bad_request`, `http_response_internal_error`,
-  `http_response_redirect`, `http_response_no_content`; typed-body
-  variants that set `Content-Type` up front:
-  `http_response_json` / `http_response_json_status` /
-  `http_response_html` / `http_response_plain`
+- **Response builders:** `http.ok(body)`, `http.created(body)`,
+  `http.text(status, body)`, `http.not_found()`, `http.bad_request(body)`,
+  `http.internal_error(body)`, `http.redirect(location)`,
+  `http.no_content()`; typed-body variants that set `Content-Type` up
+  front: `http.json(body)` / `http.json_status(status, body)` /
+  `http.html(body)` / `http.plain(body)`; `http.problem(status, title,
+  detail)` for an RFC 9457 problem document
+- **Bodies:** `HttpResponse.body` is a `Body`: `BodyText(string)`,
+  `BodyBytes(u8[])`, `BodyStream(Stream)` (the stream's remainder),
+  `BodyFile(string)` (a path) or `BodyChunks((i32) => Option[u8[]])` (a
+  producer asked for chunk 0, 1, 2, … until it answers None).
+  `http.bytes(status, bytes)`, `http.stream(status, stream)`,
+  `http.file(path)` and `http.chunks(status, next)` build
+  the last four. `(resp).body_string()`, `(resp).body_bytes()` and
+  `(resp).body_len()` read whichever a response carries, a producer's chunks
+  joined; a `BodyFile` reads as empty from a handler, since a handler may not
+  reach the file system (E080), and `http_materialize(resp)` reads one whole
+  for a test. The serve loop produces a file body and a chunks body as the
+  socket takes them, after the handler has answered: a file is opened and
+  streamed from a `Reader` under its size as the `Content-Length`, moved
+  from the file to the socket by `sendfile(2)` where the target has it
+  (Linux and Darwin; `tcp_sendfile(fd, file, max)` is the builtin, -ENOTSUP
+  on wasm, where the loop reads and sends each piece), or answered 404 when
+  it cannot be opened; chunks go out under chunked transfer
+  coding to an HTTP/1.1 client, and close-delimited (the connection ending
+  with the body) to an HTTP/1.0 one, so the length need not be known up
+  front. A response to HEAD, or with a 1xx, 204 or 304 status, produces no
+  body either way. `http_serialize_response_head(resp, keep_alive, framing)`
+  is the head alone, the framing line (`Content-Length` or
+  `Transfer-Encoding`) the caller's.
+- **Typed JSON body:** `body_json[T](req): Result[T, BodyError]` decodes the
+  body as a `T: json.FromJson` and tells the failures apart:
+  `UnsupportedMediaType(ct)` when the `Content-Type` is not
+  `application/json` or a `+json` type (or is missing), `MalformedJson(e)`
+  with std/json's `JsonError`, `WrongShape(why)` naming the field.
+  `BodyError` is `ToResponse` (415 / 400 / 422, as RFC 9457 problems), so a
+  handler declared as `Result[HttpResponse, http.BodyError]` reads
+  `var item: Item = http.body_json[Item](req)?;`.
 - **Header methods:** `(resp).with_header(name, value)` (set) /
   `(resp).with_appended_header(name, value)` (append) /
   `(resp).with_content_type(ct)`
@@ -1083,7 +1128,10 @@ serializer.
   the next pipelined request can be found behind it) and whether the
   connection outlives it (RFC 9112 §9.3: HTTP/1.1 unless `Connection:
   close`, HTTP/1.0 only with `Connection: keep-alive`; `Connection` is
-  read as a comma-separated token list and only a whole token counts;
+  read as a comma-separated token list and only a whole token counts,
+  so `Connection: upgrade` with an `Upgrade` header is ignored, the
+  request answered as HTTP/1.1 on a connection that persists, as RFC
+  9110 §7.8 allows a server with no protocol to switch to;
   a higher HTTP/1 minor version is read as HTTP/1.1, RFC 9112 §2.3).
   `http_parse_request_framed_from(buf, from)` is the same parse over
   `buf[from, len)`, so a loop answering pipelined requests moves an
@@ -1268,7 +1316,14 @@ loop and `std/fetch` the client.
   one listener per port, the 10 s deadline, 240 bytes per second after
   5 s, 130 s, 1000, 1024 and 100): the accept queue
   depth, port sharing between listeners (`SO_REUSEPORT`, ignored on
-  wasm), the read deadline, the least rate a request body must keep
+  wasm; under `tcp_serve_supervised_opts` each worker then binds a
+  listener of its own instead of inheriting the supervisor's, the group
+  steered by the CPU a connection arrived on where the host can, Linux,
+  and by the kernel's hash elsewhere; what a worker's listener holds
+  unaccepted when the worker dies is lost with it unless the kernel
+  migrates it, `net.ipv4.tcp_migrate_req=1`, where the inherited
+  listener keeps it for the next worker; a listener handed in through
+  `LISTEN_FDS` stays the shared one), the read deadline, the least rate a request body must keep
   arriving at once its header block is in and a response must keep
   being drained at once a write came up short (after the grace, the body
   may take as long as its bytes buy at that rate beyond the read
@@ -1278,7 +1333,8 @@ loop and `std/fetch` the client.
   off after the grace; 0 turns the rate off), how long an idle persistent connection waits for
   its next request, how many requests one connection may carry before
   its last response says `Connection: close` (a value below 1 behaves as
-  1), how many connections the loop holds open at once (at the cap the
+  1), how many connections the loop holds open at once (a value below 1
+  behaves as 1; at the cap the
   listener is not read, so further connections wait in its accept queue,
   `backlog` deep, the kernel refusing past it, until one closes), how
   many of them one client may hold (`max_connections_per_ip`, counted by
@@ -1324,23 +1380,43 @@ loop and `std/fetch` the client.
   opts, handler)` takes the `ServeOptions` and forks `workers` workers
   (one per processing unit by default), each running its own loop over
   the one listener, watched exclusively (epoll's `EPOLLEXCLUSIVE`) so a
-  connection wakes one of them; whichever dies is replaced, and SIGTERM
-  is forwarded to every worker and waited for. No threaded-state variant
-  — a refork resets the loop frame.
+  connection wakes one of them, or with `reuse_port` over a listener of
+  its own; whichever dies is replaced, and SIGTERM is forwarded to every
+  worker and waited for, the exit being the worst code a worker answered
+  it with. Eight deaths in a row within 100 ms of a fork are a give-up:
+  the workers still serving are stopped the same way, and the exit is
+  the last death's code. `tcp_serve_supervised_with(port, opts, init,
+  handler)` threads a state as `tcp_serve_with` does: built once before
+  the first fork, every worker inherits a copy, and a worker forked
+  again after a death starts from that copy, not from where the dead one
+  left it — a counter is per worker and lost on refork; state that must
+  outlive a crash belongs in a store the handler reaches through `plat`.
+  `tcp_serve_supervised_shutdown(port, opts, handler, shutdown)` and
+  `tcp_serve_supervised_with_shutdown(port, opts, init, handler, shutdown)`
+  take the hook of the `_shutdown` entries, which each worker's loop calls
+  on its way out. Where there is no fork (the interpreter) every one of
+  them serves single-process.
 - `tcp_recv_deadline(fd, max, deadline): Option[u8[]]` —
   recv bounded by a readability deadline: `Some(chunk)` in time
   (empty chunk = EOF), `None` at the deadline. On interp (where
   `poll` is a stub) it degrades to a blocking recv.
 - `__port_from_env(name, fallback)` — env-var port lookup used
   by the auto-`main`-from-`handle()` synthesis so handler-shaped
-  programs can be tuned via `PORT=N ./bin`. That synthesis picks
-  `tcp_serve_with` over `tcp_serve` when the program defines
-  `init(): S` alongside a state-taking `handle`
-  (docs/PLATFORM-RESEARCH.md Rec §3); mismatching the two is
-  E075. A top-level `shutdown(reason)`, or `shutdown(reason, state)`
-  beside a state-threading handler, sends the synthesis to
-  `tcp_serve_shutdown` / `tcp_serve_with_shutdown` with `serve_options()`
-  and the hook; a hook whose state parameter disagrees with the
+  programs can be tuned via `PORT=N ./bin`. That synthesis serves
+  `handle` under the supervisor: `tcp_serve_supervised_opts` with
+  `serve_options()`, or `tcp_serve_supervised_with` when the program
+  defines an `init` answering the state a state-taking `handle` threads
+  (docs/PLATFORM-RESEARCH.md Rec §3). `init` takes nothing or the
+  platform (`__init_platform()`, the host bag with no reactor, since it
+  runs once in the supervising parent), and answers nothing, the state
+  `S`, the `ServeOptions` alone, or `(ServeOptions, S)`; options it
+  answers replace the defaults. On a target without processes
+  (wasm32-wasi) the synthesis serves through `tcp_serve_opts` and its
+  `_with` / `_shutdown` twins instead. Mismatching `init` and `handle` about the
+  state, or an `init` taking anything else, is E075. A top-level
+  `shutdown(reason)`, or `shutdown(reason, state)` beside a
+  state-threading handler, sends the synthesis to the `_shutdown` entries
+  with the hook; a hook whose state parameter disagrees with the
   handler's is E075 too. A `handle` declared as `Result[HttpResponse, E]` (or
   `(S, Result[HttpResponse, E])` with state), so its body fails with
   `?`, is accepted by both compilers: they rename it
@@ -1502,7 +1578,7 @@ import "std/platform";
 
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
     plat.log(req.method + " " + req.path);
-    return http.http_response_ok("ok");
+    return http.ok("ok");
 }
 ```
 
@@ -1512,7 +1588,7 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
   serving worker that built the bag, 0 for one built by `platform_new` or
   the wasi-http wrapper. Per-worker mutable state a capability needs lives
   behind it, since a bag's fields are frozen and a cell holds only a scalar
-  or a string. `plat.version` is 2 since it was added.
+  or a string. `plat.version` is 3 since `HttpResponse.body` became a `Body`.
 - `(plat).log(msg)` — one line to the platform's log sink (`log`).
 - `(plat).now_ms()` — wall-clock ms since the epoch (`now`).
 - `(plat).elapsed_ns()` — monotonic ns, for measuring (`now`).

@@ -18,7 +18,7 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
         None => { plat.log("no-region"); }
     }
     plat.log("done");
-    return http.http_response_ok("body-" + req.path);
+    return http.ok("body-" + req.path);
 }
 
 function main(): i32 {

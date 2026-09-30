@@ -1,0 +1,75 @@
+name: Net nightly
+
+# The HTTP throughput record of #9854: once a night, scripts/net-bench
+# loads the Fern hello server, Go's net/http hello, hyper's and h2o's with
+# oha at 64 and 4,096 connections and appends throughput, p50 and p99 per
+# server and count, plus the heap one held connection costs the Fern
+# loop, to the main commit's note under refs/notes/perf.
+# `scripts/perf-history show net/fern/c64.rps` reads the trend back.
+#
+# RECORDED, NOT GATED, and nightly rather than per pull request: wall-clock
+# throughput on a shared runner moves by tens of percent between runs, so a
+# threshold loose enough not to false-alarm would miss a real regression
+# (perf.yml counts instructions for that reason), and one run costs about a
+# minute of load per server. A trend over nights is what this lane gives;
+# a per-request instruction count for the hello path is perf.yml's to
+# take.
+
+on:
+  schedule:
+    # 04:23 UTC, off the hour like nightly-fuzz.yml, since scheduled runs
+    # across GitHub queue at :00.
+    - cron: "23 4 * * *"
+  workflow_dispatch:
+    inputs:
+      seconds:
+        description: "How long each load runs, in seconds."
+        required: false
+        default: "10"
+
+permissions:
+  contents: write
+
+# Two loads at once would share the runner and measure each other.
+concurrency:
+  group: net-nightly
+  cancel-in-progress: false
+
+jobs:
+  bench:
+    name: net-nightly-x86_64
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # The Rust toolchain that builds the hyper server is pinned in
+    # mise.net-nightly.toml, which this env selects on top of mise.toml.
+    env:
+      MISE_ENV: net-nightly
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-fern
+
+      # The load generator mise.toml pins and the Rust toolchain
+      # mise.net-nightly.toml pins, beside the base toolchain setup-fern
+      # installs; h2o is the runner image's package, its version in the
+      # report's header.
+      - name: Install oha and rust (mise.toml, mise.net-nightly.toml)
+        run: mise install oha rust
+      - name: Install h2o
+        run: sudo apt-get install -y --no-install-recommends h2o
+
+      - name: Load the hello servers
+        env:
+          FERN_NET_BENCH_SECONDS: ${{ github.event.inputs.seconds || '10' }}
+        run: scripts/net-bench "${{ runner.temp }}/net-report.txt"
+
+      - name: Record the report in refs/notes/perf
+        if: github.ref == 'refs/heads/main'
+        run: scripts/perf-history record net-nightly "${{ runner.temp }}/net-report.txt"
+
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: net-report-x86_64
+          path: ${{ runner.temp }}/net-report.txt
+          if-no-files-found: warn

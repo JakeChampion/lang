@@ -33,7 +33,7 @@ func TestSelfHostAmbientEffectDifferentialX86_64(t *testing.T) {
 	}
 
 	const tail = `
-    return http.http_response_ok("");
+    return http.ok("");
 }
 function main(): i32 { return 0; }
 `

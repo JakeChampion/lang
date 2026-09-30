@@ -1,9 +1,9 @@
-// `@derive(json.Json)` synthesises a deserialise companion `from_json(s):
-// Result[Self, string]` alongside `to_json` (#2695). It parses the JSON text and
-// extracts each field by name (i32 / string / boolean fields, via std/json's
-// json_get_* accessors); a missing field or invalid JSON returns `Err`.
+// `@derive(json.FromJson)` synthesises `from_json_value(v)` and the
+// text-taking `from_json(s): Result[Self, string]`, which parses the JSON
+// text and decodes each field by name through its type's own FromJson; a
+// missing field or invalid JSON returns `Err`.
 import "std/json";
-@derive(json.Json) struct User { id: i32, name: string, admin: boolean }
+@derive(json.Json, json.FromJson) struct User { id: i32, name: string, admin: boolean }
 function main(): i32 {
     var u: User = User { id: 7, name: "Gloin", admin: true };
     var s: string = u.to_json();                      // round-trip through to_json
