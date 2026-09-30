@@ -8,27 +8,15 @@ import (
 	"testing"
 )
 
-// TestSelfHostFieldReclaimWasm — the wasm Perceus slice 1d: the per-type
-// $__field_reclaim_<T> body (and the $__fern_snapshot_dec it calls) now REALLY
-// reclaim a consume-rebind's superseded boxes, instead of leak-safe
-// PASS-THROUGHs that returned `new` and freed nothing. The wasm sibling of the
-// register backends' emit_ir_field_reclaim_one + __fern_snapshot_dec and of
-// arm64's emit_arm64_field_reclaim_one (slice 1b).
+// TestSelfHostFieldReclaimWasm checks that rebinding a struct parameter
+// (`a = T { … }`) reclaims each superseded struct and its array field, and
+// never the caller's borrowed original.
 //
-// When a struct PARAM is reassigned (`a = T { … }`), the superseded `old`
-// struct's rc-array field buffers are freed (cow-guarded ≠ new, snapshot-guarded
-// ≠ the caller's borrowed original `snap`) and then `old`'s box itself via
-// $__fern_snapshot_dec — which frees only the UNIQUELY-owned case (rc==1), never
-// decrementing a shared/borrowed box. The field offset is the IR struct layout
-// (8 + i*8), as in struct_drop (slice 1c).
-//
-// As in slice 1c, the RC-introspection builtins force a module onto the wasm AST
-// path, so an IR-routed reclaim test can't use them. Reclaim is proven by a
-// memory-pressure differential: a single call whose snapshot param is loop-rebound
-// 2M times reclaims every intermediate (memory stays ~bounded under a tight cap)
-// with the real bodies, and leaks one box+buffer per rebind — exceeding any
-// reasonable cap — with the pass-through. The WAT-shape assertion pins the emitted
-// real body so a silent reroute to the AST path can't make the gate pass vacuously.
+// Reclaim is proven by a memory-pressure differential: a single call whose
+// parameter is loop-rebound 2M times stays bounded under a tight cap, where a
+// leak of one box+buffer per rebind would exceed it. The WAT assertion pins
+// that the rebinding function releases the superseded struct
+// ($__sem_release_Acc), so the cap is not passed vacuously.
 func TestSelfHostFieldReclaimWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping wasm field-reclaim e2e")
@@ -48,20 +36,6 @@ func TestSelfHostFieldReclaimWasm(t *testing.T) {
 		"function main(): i32 { var seed: Acc = Acc { items: [0] }; var r: Acc = build(seed, 2000000); return r.items[0] - 1999999; }"
 	const cap = "16777216" // 16 MiB — ~16× the bounded footprint, ~1/10 the leak
 
-	// The real $__field_reclaim_Acc body opens with the old-is-heap guard ANDed
-	// with the identity-reclaim guard (#6644: old == new replaced nothing, so the
-	// carried-field arm below must not release), then the cow check on field 0 at
-	// the IR offset 8 — the pass-through is just `(local.get $new))`. Pinning this
-	// guarantees IR routing + the real shape.
-	const wantBody = "(func $__field_reclaim_Acc (param $new i32) (param $old i32) (param $snap i32) (result i32)\n" +
-		"    (if (i32.and (i32.ge_u (local.get $old)"
-
-	// The heap base is a per-program constant, so the identity operand cannot be
-	// reached from wantBody by one substring — it is pinned separately, and the
-	// pair is what makes the guard rather than just its i32.and wrapper the thing
-	// under test.
-	const wantIdentityGuard = "(i32.ne (local.get $old) (local.get $new))) (then"
-
 	cases := []struct {
 		name string
 		src  string
@@ -70,13 +44,10 @@ func TestSelfHostFieldReclaimWasm(t *testing.T) {
 		// expected exit code
 		exit int
 	}{
-		// RECLAIM: 2M consume-rebind intermediates stay bounded under the cap ⇒
-		// field_reclaim + snapshot_dec free each superseded box+buffer.
+		// RECLAIM: 2M consume-rebind intermediates stay bounded under the cap.
 		{"consume-rebind-reclaim", reclaimSrc, true, 0},
-		// SNAPSHOT GUARD: the caller's original `seed` must survive the param
-		// rebinds (snapshot_dec never frees `old == snap`; field_reclaim never decs
-		// `old.field == snap.field`). Reads seed AFTER the rebind-heavy call: its
-		// values must be intact, AND the rebound result must be the last
+		// The caller's original `seed` must survive the param rebinds: read after
+		// the call, its values are intact, and the result is the last
 		// intermediate. (sum 50 - 50) + (4999 - 4999) == 0.
 		{"snapshot-guard-caller-intact",
 			"struct Acc { items: i32[] } " +
@@ -91,11 +62,14 @@ func TestSelfHostFieldReclaimWasm(t *testing.T) {
 			if len(wat) == 0 {
 				t.Fatal("wasm emitter produced 0 bytes")
 			}
-			if !strings.Contains(string(wat), wantBody) {
-				t.Fatalf("%s: emitted $__field_reclaim body missing the real shape\nwant substring:\n%s\n--- WAT ---\n%s", tc.name, wantBody, wat)
+			ws := string(wat)
+			at := strings.Index(ws, "(func $build ")
+			if at < 0 {
+				t.Fatalf("%s: no $build in the WAT", tc.name)
 			}
-			if !strings.Contains(string(wat), wantIdentityGuard) {
-				t.Fatalf("%s: emitted $__field_reclaim body missing the identity-reclaim guard\nwant substring:\n%s\n--- WAT ---\n%s", tc.name, wantIdentityGuard, wat)
+			build, _, _ := strings.Cut(ws[at:], "\n  (func ")
+			if !strings.Contains(build, "call $__sem_release_Acc") {
+				t.Fatalf("%s: $build releases no superseded Acc\n--- WAT ---\n%s", tc.name, wat)
 			}
 			watPath := filepath.Join(dir, tc.name+".wat")
 			if err := os.WriteFile(watPath, wat, 0o644); err != nil {
@@ -111,7 +85,7 @@ func TestSelfHostFieldReclaimWasm(t *testing.T) {
 			if code := cmd.ProcessState.ExitCode(); code != tc.exit {
 				detail := ""
 				if tc.capped {
-					detail = " (a trap means the consume-rebind intermediates leaked past the " + cap + "-byte cap — field_reclaim/snapshot_dec did not reclaim)"
+					detail = " (a trap means the consume-rebind intermediates leaked past the " + cap + "-byte cap — the rebind did not reclaim)"
 				}
 				t.Errorf("%s: wasm exited %d, want %d%s\n--- WAT ---\n%s", tc.name, code, tc.exit, detail, wat)
 			}

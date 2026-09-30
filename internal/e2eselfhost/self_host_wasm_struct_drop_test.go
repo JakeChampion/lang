@@ -8,28 +8,17 @@ import (
 	"testing"
 )
 
-// TestSelfHostStructDropWasm — the wasm Perceus slice 1c: the per-type
-// $__struct_drop_<T> body now REALLY deep-drops a reclaimable struct's
-// rc-array fields at scope exit (it was a leak-safe pass-through before).
-// The wasm sibling of the register backends' emit_ir_struct_drop_one and of
-// arm64's emit_arm64_struct_drop_one (slice 1a/1b): for each ARRAY field it
-// releases the buffer via $__fern_arr_dec (scalar-element array — flat free)
-// or $__fern_arr_dec_ptr (pointer-element array — also releases ITS element
-// boxes), at the IR struct layout offset (8 + i*8 — an 8-byte header then
-// 8-byte slots, matching wasm_ir's struct_make / struct_get / struct_set).
+// TestSelfHostStructDropWasm checks that a reclaimable struct's rc fields are
+// released at scope exit: scalar and struct arrays, nested structs at any
+// acyclic depth, and strings.
 //
-// These programs route the wasm IR path (they emit $__struct_drop_<T>, asserted
-// below). The RC-introspection builtins (__fern_rc_underflow_count /
-// __fern_arr_dec / __fern_rc_is_unique) all force a module onto the wasm AST
-// path, so they CANNOT appear in an IR-routed reclaim test — reclaim is proven
-// instead by a memory-pressure differential: a long alloc→drop churn is run
-// under a tight `max-memory-size` cap with `trap-on-grow-failure`. With the real
-// drop the field buffers (and, for the struct-array case, their element boxes)
-// are reclaimed onto the freelist and reused, so memory stays bounded and the
-// program completes (exit 0); a regression to the pass-through leaks one block
-// per iteration, goes past the cap, and traps. The WAT-shape assertions pin the
-// emitted body so a silent reroute to the AST path (where a different drop
-// handles it) can't make the gate pass vacuously.
+// Reclaim is proven by a memory-pressure differential: a long alloc→drop churn
+// is run under a tight `max-memory-size` cap with `trap-on-grow-failure`. With
+// the real drop the field buffers (and, for the struct-array case, their element
+// boxes) are reclaimed onto the freelist and reused, so memory stays bounded and
+// the program completes (exit 0); a leak goes past the cap and traps. The WAT
+// assertions pin the typed lowering's drop helper and the release it makes, so
+// the cap is not passed vacuously.
 func TestSelfHostStructDropWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping wasm struct-drop e2e")
@@ -47,98 +36,77 @@ func TestSelfHostStructDropWasm(t *testing.T) {
 	cases := []struct {
 		name string
 		src  string
-		// wantFn is the $__struct_drop_<T> whose body carries the reclaim, and
-		// wantBody the deep-drop call that body must contain — together proving
-		// IR routing + the real (non-pass-through) shape. The pass-through body
-		// is just `(local.get $box))` with no call. Naming the function rather
-		// than searching the whole module keeps the assertion on ONE body, so a
-		// prologue (the #9481 box guard) does not break it and another type's
-		// identically-shaped body cannot satisfy it.
+		// wantFn is the $__sem_drop_<T> whose body carries the reclaim, and
+		// wantBody the release call that body must contain. Naming the function
+		// rather than searching the whole module keeps the assertion on ONE body,
+		// so another type's identically-shaped body cannot satisfy it.
 		wantFn   string
 		wantBody string
 	}{
-		// SCALAR-array field (i32[]) — the k_scalar path: the buffer is freed flat
-		// via $__fern_arr_dec at field offset 8 (IR layout). 500k cycles stay
+		// SCALAR-array field (i32[]): the buffer is freed flat. 500k cycles stay
 		// bounded under the cap ⇒ the buffer is reclaimed each iteration.
 		{
 			"scalar-array-field-reclaim",
 			"struct Bag { items: i32[] } " +
 				"function mk(): i32 { var b: Bag = Bag { items: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16] }; return b.items[0] + b.items[15]; } " +
 				"function main(): i32 { var s: i32 = 0; var k: i32 = 0; while (k < 500000) { s = mk(); k = k + 1; } return s - 17; }",
-			"$__struct_drop_Bag",
-			"    (drop (call $__fern_arr_dec (i32.load offset=8 (local.get $box))))",
+			"$__sem_drop_Bag",
+			"call $__fern_arr_dec",
 		},
-		// STRUCT-array field (Inner[]) — the k_box path: $__fern_arr_dec_ptr also
-		// releases each element box. 400k cycles stay bounded ⇒ both the buffer and
-		// its element boxes are reclaimed (a buffer-only free would still leak the
-		// elements and exceed the cap).
+		// STRUCT-array field (Inner[]): the buffer and each element box are
+		// released. 400k cycles stay bounded (a buffer-only free would still leak
+		// the elements and exceed the cap).
 		{
 			"struct-array-field-reclaim",
 			"struct Inner { v: i32 } struct Nest { inners: Inner[] } " +
 				"function mk(): i32 { var nz: Nest = Nest { inners: [Inner{v:1},Inner{v:2},Inner{v:3},Inner{v:4},Inner{v:5},Inner{v:6},Inner{v:7},Inner{v:8}] }; return nz.inners[0].v + nz.inners[7].v; } " +
 				"function main(): i32 { var s: i32 = 0; var k: i32 = 0; while (k < 400000) { s = mk(); k = k + 1; } return s - 9; }",
-			"$__struct_drop_Nest",
-			"    (drop (call $__fern_arr_dec_ptr (i32.load offset=8 (local.get $box))))",
+			"$__sem_drop_Nest",
+			"call $__fern_arr_dec",
 		},
-		// DIRECT nested-struct field (Inner, not an array) — the k_struct path
-		// (Perceus slice 3c): the inner box is freed SHALLOW via $__fern_arr_dec at
-		// the field offset (8 + i*8). The inner is a fresh literal (sole-owned, no
-		// construction-inc), so 500k cycles stay bounded under the cap ⇒ the inner
-		// box is reclaimed each iteration; the slice-1c pass-through leaked it.
+		// DIRECT nested-struct field (Inner, not an array): the inner box, a fresh
+		// literal, is freed. 500k cycles stay bounded under the cap.
 		{
 			"nested-struct-field-reclaim",
 			"struct Inner { v: i32, w: i32 } struct Outer { inner: Inner, tag: i32 } " +
 				"function mk(): i32 { var o: Outer = Outer { inner: Inner { v: 5, w: 6 }, tag: 3 }; return o.inner.v + o.inner.w + o.tag; } " +
 				"function main(): i32 { var s: i32 = 0; var k: i32 = 0; while (k < 500000) { s = mk(); k = k + 1; } return s - 14; }",
-			"$__struct_drop_Outer",
-			"    (drop (call $__fern_arr_dec (i32.load offset=8 (local.get $box))))",
+			"$__sem_drop_Outer",
+			"call $__fern_arr_dec",
 		},
-		// DEEP nested-struct field (Perceus slice 3 deep-drop): the inner is a LEAF
-		// carrying its OWN rc-array field (`Inner { items: i32[] }`). When the inner
-		// box is uniquely owned, $__struct_drop_Outer first calls $__struct_drop_Inner
-		// (releasing inner.items) before freeing the inner box — instead of the shallow
-		// box-only free that leaked inner.items. The recursive call + the wasm_ir
-		// transitive closure (which emits $__struct_drop_Inner even though no lowered
-		// op references it) are both asserted. 400k churn cycles stay bounded under the
-		// cap ⇒ inner.items is reclaimed; the slice-3c shallow drop leaked it → trap.
+		// DEEP nested-struct field: the inner carries its own rc-array field
+		// (`Inner { items: i32[] }`), and $__sem_drop_Outer releases the inner through
+		// $__sem_release_Inner, which frees inner.items too. 400k churn cycles stay
+		// bounded under the cap; a shallow box-only free would leak inner.items.
 		{
 			"nested-struct-field-deep-drop",
 			"struct Inner { items: i32[] } struct Outer { inner: Inner, tag: i32 } " +
 				"function mk(): i32 { var o: Outer = Outer { inner: Inner { items: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16] }, tag: 7 }; return o.inner.items[0] + o.inner.items[15] + o.tag; } " +
 				"function main(): i32 { var s: i32 = 0; var k: i32 = 0; while (k < 400000) { s = mk(); k = k + 1; } return s - 24; }",
-			"$__struct_drop_Outer",
-			"    (if (call $__fern_rc_is_unique (i32.load offset=8 (local.get $box))) (then\n      (drop (call $__struct_drop_Inner (i32.load offset=8 (local.get $box))))))\n    (drop (call $__fern_arr_dec (i32.load offset=8 (local.get $box))))",
+			"$__sem_drop_Outer",
+			"call $__sem_release_Inner",
 		},
 		// DEPTH-2 DEEP-DROP (#5336): `Outer { mid: Mid }`, `Mid { inner: Inner }`,
-		// `Inner { items: i32[] }`. nested_field_deep_drop_ok admits arbitrary acyclic
-		// depth, so $__struct_drop_Outer calls $__struct_drop_Mid, which must ITSELF
-		// recursively call $__struct_drop_Inner (releasing the depth-2 inner.items
-		// buffer). The wantBody asserts the transitive $__struct_drop_Mid body (proving
-		// struct_drop_types walked the whole DAG, not just depth-1). 400k churn cycles
-		// stay bounded under the cap ⇒ the depth-2 buffer is reclaimed; a depth-1-only
-		// deep-drop leaks inner.items → over the cap → trap.
+		// `Inner { items: i32[] }`. $__sem_drop_Mid must itself release the inner,
+		// which frees the depth-2 inner.items buffer. 400k churn cycles stay bounded;
+		// a depth-1-only drop leaks inner.items → over the cap → trap.
 		{
 			"nested-struct-field-deep-drop-depth2",
 			"struct Inner { items: i32[] } struct Mid { inner: Inner, m: i32 } struct Outer { mid: Mid, tag: i32 } " +
 				"function mk(): i32 { var o: Outer = Outer { mid: Mid { inner: Inner { items: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16] }, m: 2 }, tag: 7 }; return o.mid.inner.items[0] + o.mid.inner.items[15] + o.mid.m + o.tag; } " +
 				"function main(): i32 { var s: i32 = 0; var k: i32 = 0; while (k < 400000) { s = mk(); k = k + 1; } return s - 26; }",
-			"$__struct_drop_Mid",
-			"    (if (call $__fern_rc_is_unique (i32.load offset=8 (local.get $box))) (then\n      (drop (call $__struct_drop_Inner (i32.load offset=8 (local.get $box))))))\n    (drop (call $__fern_arr_dec (i32.load offset=8 (local.get $box))))",
+			"$__sem_drop_Mid",
+			"call $__sem_release_Inner",
 		},
-		// STRING field (#4297 A2 — the k_str path): a reclaimable struct (it has the
-		// `items` rc-array field, so it gets a $__struct_drop) whose `name: string`
-		// field is now freed too. `name` is a FRESH concat (sole-owned rc=1, no
-		// construction-inc), stored at field offset 8; the drop frees it via the
-		// rc-aware $__fern_arr_dec. 400k churn cycles under the cap stay bounded ⇒
-		// the fresh name box is reclaimed each iteration (a pass-through leaked a
-		// fresh string/iter → over the cap → trap).
+		// STRING field (#4297 A2): `name` is a fresh concat, and the drop frees it
+		// with the items buffer. 400k churn cycles under the cap stay bounded.
 		{
 			"string-field-reclaim",
 			"struct R { name: string, items: i32[] } " +
 				"function mk(pre: string): i32 { var r: R = R { name: pre + \"x\", items: [1,2,3,4] }; return r.name.len() + r.items[0]; } " +
 				"function main(): i32 { var p: string = \"aa\"; var s: i32 = 0; var k: i32 = 0; while (k < 400000) { s = mk(p); k = k + 1; } return s - 4; }",
-			"$__struct_drop_R",
-			"    (drop (call $__fern_arr_dec (i32.load offset=8 (local.get $box))))",
+			"$__sem_drop_R",
+			"call $__fern_arr_dec",
 		},
 	}
 
@@ -165,7 +133,7 @@ func TestSelfHostStructDropWasm(t *testing.T) {
 				"--dir", dir, watPath)
 			_, _ = cmd.Output()
 			if code := cmd.ProcessState.ExitCode(); code != 0 {
-				t.Errorf("%s: wasm exited %d, want 0 (a non-zero/trap means the field buffer leaked past the %s-byte cap — struct_drop did not reclaim)\n--- WAT ---\n%s", tc.name, code, cap, wat)
+				t.Errorf("%s: wasm exited %d, want 0 (a non-zero/trap means the field buffer leaked past the %s-byte cap — the drop did not reclaim)\n--- WAT ---\n%s", tc.name, code, cap, wat)
 			}
 		})
 	}
