@@ -1070,18 +1070,31 @@ pub function driven_annotated(annotated: parser.Module, target: string): Driven 
   if (!sem_ir_on()) {
     return Driven { full: parser.module_with_builtins(annotated), sub: ircore.no_sub() };
   }
+  var typed: parser.Module = checked_typed(annotated, target);
+  return Driven { full: parser.erase_str_module(typed), sub: target_substitution(typed, target) };
+}
+
+// driven_module is driven's `full` without the typed lowering, for a driver
+// step that reads the module but lowers nothing.
+pub function driven_module(mod: parser.Module, target: string): parser.Module {
+  if (!sem_ir_on()) {
+    return parser.module_with_builtins(mod);
+  }
+  return parser.erase_str_module(checked_typed(checker.annotate_module(mod), target));
+}
+
+function checked_typed(annotated: parser.Module, target: string): parser.Module {
   var desc: platforms.Descriptor = platforms.for_target(target);
   var folded: parser.Module = constfold.fold_target_name(annotated, desc.environment, desc.isa);
   var typed: parser.Module = parser.module_with_builtins_typed(folded);
-  var full: parser.Module = parser.erase_str_module(typed);
   // The emit entry's checks run before the lowering, so a module they refuse
   // gets its diagnostic rather than a lowering refusal.
-  var errs: util.Diag[] = asmcore.entry_check_errors(checker.ensure_annotated(full));
+  var errs: util.Diag[] = asmcore.entry_check_errors(checker.ensure_annotated(parser.erase_str_module(typed)));
   if (errs.len() > 0) {
     eprint(util.format_diags(errs));
     exit(1);
   }
-  return Driven { full: full, sub: target_substitution(typed, target) };
+  return typed;
 }
 
 // program is the whole program a register backend's emit over `d` gates, which

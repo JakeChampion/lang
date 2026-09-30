@@ -2305,10 +2305,10 @@ What is left, in order:
    (`fixtureCompile`), and the four scripts that measure the self-hosted
    compiler (`perf-bench-selfhost`, `cliff-bench`, `selfhost-alloc-bench`,
    `coreutils-bench`). The CLI, the four asm drivers and the wasm drivers
-   other than `wasm_modload_run` build a typed-path substitution, for a
-   whole-module emit and, on the asm drivers, for the per-module modes; the
-   rest of the drivers never reach the typed path (see below). The semantic differential legs fail a seed that compiles as
-   a mixed module. The production rows' `FERN_SEM_IR_SKIP` leg and
+   build a typed-path substitution for what they emit; the rest of the
+   drivers never reach the typed path (see below). The semantic differential
+   legs fail a seed that compiles as a mixed module. The production rows'
+   `FERN_SEM_IR_SKIP` leg and
    `TestSelfHostSemIRStrict`'s off leg keep the AST lowering on purpose.
 3. The AST lowering is deleted, along with the differential legs that compare
    against it.
@@ -2317,7 +2317,7 @@ What is left, in order:
 
 **The drivers.** The CLI and the playground driver build a substitution from
 the typed path, through `semlower.target_substitution`. The other drivers fall
-into four groups:
+into five groups:
 
 - Emitting drivers. `asm_ir_run`, `asm_run`, `asm_load_run`,
   `asm_modload_run`, `wasm_ir_run`, `wasm_run` and `wasm_runio_run` hand
@@ -2346,9 +2346,19 @@ into four groups:
   object-cache key folds in `ircore.lowered_digest` of its bodies, since a
   typed body can depend on another module's (an inferred parameter mode, an
   instance). With `FERN_SEM_IR=` each module is still lowered on its own by
-  the AST lowering. `wasm_modload_run` still takes the AST lowering: its units
-  lower their window through `wasm_ir.lower_all_for_view`, which takes no
-  substitution.
+  the AST lowering.
+- `wasm_modload_run`, whose per-module units take the typed lowering the way
+  `wasm_units_probe`'s do: each `-per-module-emit` and `-link` lowers the
+  whole program once through `semlower.driven` and keeps the units it asked
+  for. A module's units cover the functions it declares or lifted; the generic
+  clones, instances and drop helpers are the entry's. The typed lowering
+  inlines and infers ownership across modules, so a unit's cache key
+  (`modloader.typed_unit_cache_key`) hashes its lowered bodies
+  (`ircore.lowered_key`), and a body edit re-emits every unit its code reached.
+  `-per-module-emit-all` emits a whole link plan from one lowering, which is
+  how the whole-compiler link test builds the compiler. With `FERN_SEM_IR=`
+  the units lower their window through `wasm_ir.lower_all_for_view` as
+  before.
 - Gate probes: `asm_pathprobe_run` and `asm_ir_elig_run`. They run
   `ircore.all_eligible` and emit nothing, so they need no substitution. The
   verdict `asm_pathprobe_run` and `-decide` print is `ir` or `refused`.
