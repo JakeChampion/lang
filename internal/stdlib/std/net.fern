@@ -780,7 +780,7 @@ pub enum Shutdown {
 }
 
 // `set_nodelay(sock, on)` — send segments as they are written instead of
-// waiting to coalesce them (`TCP_NODELAY`). On already for every socket
+// waiting to coalesce them (`TCP_NODELAY`). On by default for every socket
 // `connect`, `connect_start` and `accept` answer, as Go and Node have it;
 // `false` turns Nagle's coalescing back on.
 pub function set_nodelay(sock: i32, on: boolean): Result[(), NetError] {
