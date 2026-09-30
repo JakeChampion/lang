@@ -2232,17 +2232,21 @@ pub function view_copy_types(): typeinfo.Type[] {
     return [typeinfo.TypeString { tag: 0 }, typeinfo.TypeString { tag: 0 }, typeinfo.TypeString { tag: 1 }];
 }
 
-// One phi operand to replace with a copy made at the end of its incoming block.
-pub struct MergeCopy { pred: i32, phi: i32, slot: i32, value: i32, first: i32 }
+// One view operand to replace with a copy: made at the end of block `at` when
+// the consumer is a phi reading it on that edge, else just before the consumer.
+pub struct MergeCopy { at: i32, edge: boolean, consumer: i32, slot: i32, value: i32, first: i32 }
 
-// merge_copies finds the `str` phi operands whose bytes are held by a value
-// that does not strictly dominate the join, and with_merge_copies copies each
-// on its edge. Such an operand outlives its source: the source is defined on
-// that incoming path alone, so nothing at the join can keep it alive. That is
-// a `str` local assigned, in a branch or a loop body, a view of a string
-// declared there. The copy is the one a returned view that outlives its
-// source gets (docs/STR-VIEW-CONTRACT.md §5). Both read a body carrying the
-// module's anchor table, through which a call's roots are found.
+// merge_copies finds the views held by a phi operand whose bytes are held by a
+// value that does not strictly dominate the join, and with_merge_copies copies
+// each. Such an operand outlives its source: the source is defined on that
+// incoming path alone, so nothing at the join can keep it alive. That is a
+// local assigned, in a branch or a loop body, a view of a string declared
+// there, or a container built there around one. A `str` operand is copied on
+// its edge; a container's views are copied where its construction takes them,
+// so it holds counted strings. A view that is a literal or a retagged string
+// anchors nothing and is not copied. The copy is the one a returned view that
+// outlives its source gets (docs/STR-VIEW-CONTRACT.md §5). Both read a body
+// carrying the module's anchor table, through which a call's roots are found.
 pub function with_merge_copies(f: Func, copies: MergeCopy[]): Func {
     var values: typeinfo.Type[] = f.values;
     for _ in copies { for t in view_copy_types() { values = values.append(t); } }
@@ -2250,22 +2254,36 @@ pub function with_merge_copies(f: Func, copies: MergeCopy[]): Func {
     var pi: i32 = 0;
     while (pi < f.graph.blocks.len()) {
         var insts: ssa.SInst[] = [];
-        for ins in f.graph.blocks[pi].insts { insts = insts.append(with_copied_operands(ins, copies)); }
-        for c in copies { if (c.pred == pi) { for ci in view_copy(c.first, c.value) { insts = insts.append(ci); } } }
+        for ins in f.graph.blocks[pi].insts {
+            insts = copies_at(insts, copies, pi, false, ins.result);
+            insts = insts.append(with_copied_operands(ins, copies));
+        }
+        insts = copies_at(insts, copies, pi, true, 0 - 1);
         blocks = blocks.append(ssa.SBlock { ...f.graph.blocks[pi], insts: insts });
         pi = pi + 1;
     }
     return Func { ...f, values: values, graph: ssa.SFunc { ...f.graph, blocks: blocks, nvals: values.len() } };
 }
 
+// The copies made at block position `at`: those on its outgoing edges, or
+// those just before the instruction defining `consumer`.
+function copies_at(own insts: ssa.SInst[], copies: MergeCopy[], at: i32, edge: boolean, consumer: i32): ssa.SInst[] {
+    for c in copies {
+        if (c.at == at && c.edge == edge && (edge || c.consumer == consumer)) {
+            for ci in view_copy(c.first, c.value) { insts = insts.append(ci); }
+        }
+    }
+    return insts;
+}
+
 function with_copied_operands(ins: ssa.SInst, copies: MergeCopy[]): ssa.SInst {
-    if (ins.kind_tag != 8) { return ins; }
-    for c in copies { if (ins.result == c.phi) { ins = ssa.SInst { ...ins, args: ins.args.with(c.slot, c.first + 2) }; } }
+    for c in copies { if (ins.result >= 0 && ins.result == c.consumer) { ins = ssa.SInst { ...ins, args: ins.args.with(c.slot, c.first + 2) }; } }
     return ins;
 }
 
-// The operands to copy, each given three fresh values after the last.
+// The views to copy, each given three fresh values after the last.
 pub function merge_copies(f: Func): MergeCopy[] {
+    if (!has_view_phi(f)) { return []; }
     var none: boolean[] = [];
     for _ in f.values { none = none.append(false); }
     var defs: ssa.SInst[] = definitions(f);
@@ -2274,27 +2292,73 @@ pub function merge_copies(f: Func): MergeCopy[] {
     var bi: i32 = 0;
     while (bi < f.graph.blocks.len()) {
         for ins in f.graph.blocks[bi].insts {
-            if (ins.kind_tag == 8 && is_view(f.values[ins.result])) { copies = phi_copies(f, defs, m, bi, ins, copies); }
+            if (ins.kind_tag == 8 && semtypes.holds_view(f.values[ins.result])) {
+                copies = operand_copies(f, defs, m, bi, ins.result, none, copies);
+            }
         }
         bi = bi + 1;
     }
     return copies;
 }
 
+function has_view_phi(f: Func): boolean {
+    for b in f.graph.blocks {
+        for ins in b.insts { if (ins.kind_tag == 8 && semtypes.holds_view(f.values[ins.result])) { return true; } }
+    }
+    return false;
+}
+
+function copies_slot(copies: MergeCopy[], consumer: i32, slot: i32): boolean {
+    for c in copies { if (c.consumer == consumer && c.slot == slot) { return true; } }
+    return false;
+}
+
 struct MergeScan { at: i32[], dom: ssadeps.Dom, home: i32[], none: boolean[] }
 
-function phi_copies(f: Func, defs: ssa.SInst[], m: MergeScan, bi: i32, phi: ssa.SInst, own copies: MergeCopy[]): MergeCopy[] {
-    var preds: i32[] = f.graph.blocks[bi].preds;
-    var k: i32 = 0;
-    while (k < phi.args.len() && k < preds.len()) {
-        var a: i32 = phi.args[k];
-        if (!counted_view(f, defs, a, m.none) && roots_outlived(f, defs, m, a, bi)) {
-            var first: i32 = f.values.len() + 3 * copies.len();
-            copies = copies.append(MergeCopy { pred: m.at[preds[k]], phi: phi.result, slot: k, value: a, first: first });
-        }
-        k = k + 1;
+// The copies that stop `x`, operand `slot` of `consumer`, holding bytes that
+// fail to dominate block position `join`: `x` itself when it is a `str`, else
+// the views its construction takes, through phis and projections.
+function held_copies(f: Func, defs: ssa.SInst[], m: MergeScan, join: i32, consumer: i32, slot: i32, x: i32,
+        seen: boolean[], own copies: MergeCopy[]): MergeCopy[] {
+    if (!holds_outlived(f, defs, m, join, x, seen)) { return copies; }
+    if (is_view(f.values[x])) { return with_copy(f, defs, m, consumer, slot, x, copies); }
+    var d: ssa.SInst = defs[x];
+    var next: boolean[] = seen.with(x, true);
+    if (projects(d.kind_tag) && d.args.len() > 0) { return held_copies(f, defs, m, join, x, 0, d.args[0], next, copies); }
+    if (!gathers_views(d.kind_tag)) { return copies; }
+    return operand_copies(f, defs, m, join, x, next, copies);
+}
+
+// held_copies over each operand of `consumer`.
+function operand_copies(f: Func, defs: ssa.SInst[], m: MergeScan, join: i32, consumer: i32, seen: boolean[],
+        own copies: MergeCopy[]): MergeCopy[] {
+    var args: i32[] = defs[consumer].args;
+    var j: i32 = 0;
+    while (j < args.len()) {
+        copies = held_copies(f, defs, m, join, consumer, j, args[j], seen, copies);
+        j = j + 1;
     }
     return copies;
+}
+
+// Whether `x` holds a view a copy would stop reading bytes that fail to
+// dominate `join`.
+function holds_outlived(f: Func, defs: ssa.SInst[], m: MergeScan, join: i32, x: i32, seen: boolean[]): boolean {
+    if (x < 0 || x >= defs.len() || seen[x] || !semtypes.holds_view(f.values[x])) { return false; }
+    return !counted_view(f, defs, x, m.none) && roots_outlived(f, defs, m, x, join);
+}
+
+function with_copy(f: Func, defs: ssa.SInst[], m: MergeScan, consumer: i32, slot: i32, x: i32, own copies: MergeCopy[]): MergeCopy[] {
+    if (copies_slot(copies, consumer, slot)) { return copies; }
+    var home: i32 = m.home[consumer];
+    var edge: boolean = defs[consumer].kind_tag == 8;
+    var at: i32 = home;
+    if (edge) {
+        var preds: i32[] = f.graph.blocks[home].preds;
+        if (slot >= preds.len()) { return copies; }
+        at = m.at[preds[slot]];
+    }
+    return copies.append(MergeCopy { at: at, edge: edge, consumer: consumer, slot: slot, value: x, first: f.values.len() + 3 * copies.len() });
 }
 
 // Whether some value holding the bytes `v` reads fails to strictly dominate

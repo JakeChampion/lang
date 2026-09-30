@@ -4627,6 +4627,73 @@ function main(): i32 {
     return last(6).len();
 }
 `},
+	// A container built in a branch or a loop body around a view of a string
+	// declared there: its views are copied where the construction takes them.
+	{name: "a-str-array-built-from-a-view-of-a-branch-local-is-produced", atLeast: 3, noLeak: true, src: `
+function mk(n: i32): string {
+    var s: string = "ab";
+    var i: i32 = 0;
+    while (i < n) { s = s + "c"; i = i + 1; }
+    return s;
+}
+function f(n: i32): string {
+    var a: str[] = [];
+    if (n != 0) {
+        var s: string = mk(n);
+        a = a.append(slice_unchecked(s, 0, 2));
+    }
+    var out: string = "";
+    for v in a { out = out + v + "|"; }
+    return out;
+}
+function main(): i32 { print(f(3) + f(0)); return f(2).len(); }
+`},
+	// The control: the source declared above the branch dominates the join.
+	{name: "a-str-array-built-from-a-view-of-a-dominating-local-is-produced", atLeast: 3, noLeak: true, src: `
+function mk(n: i32): string {
+    var s: string = "ab";
+    var i: i32 = 0;
+    while (i < n) { s = s + "c"; i = i + 1; }
+    return s;
+}
+function f(n: i32): string {
+    var a: str[] = [];
+    var s: string = mk(n);
+    if (n != 0) {
+        a = a.append(slice_unchecked(s, 0, 2));
+    }
+    var out: string = "";
+    for v in a { out = out + v + "|"; }
+    return out;
+}
+function main(): i32 { print(f(3) + f(0)); return f(2).len(); }
+`},
+	{name: "a-tuple-option-and-array-of-views-of-a-loop-body-local-is-produced", atLeast: 3, noLeak: true, src: `
+function mk(n: i32): string {
+    var s: string = "ab";
+    var i: i32 = 0;
+    while (i < n) { s = s + "c"; i = i + 1; }
+    return s;
+}
+function f(n: i32): string {
+    var t: (str, i32) = ("x", 0);
+    var o: Option[str] = None;
+    var a: str[] = ["lit"];
+    var i: i32 = 0;
+    while (i < n) {
+        var s: string = mk(i + 1);
+        t = (slice_unchecked(s, 0, 3), i);
+        o = Some(slice_unchecked(s, 0, 1));
+        a = a.append(slice_unchecked(s, 2, 3));
+        i = i + 1;
+    }
+    var out: string = t.0 + "|";
+    match (o) { Some(v) => { out = out + v; }, None => { out = out + "-"; } }
+    for v in a { out = out + "," + v; }
+    return out;
+}
+function main(): i32 { print(f(3) + " " + f(0)); return f(2).len(); }
+`},
 	// std/time's Zoned.format_rfc3339 is that branch shape (#10796).
 	{name: "std-time-format-rfc3339-is-produced", atLeast: 77, noLeak: true, src: `
 import "std/time";
@@ -6076,6 +6143,32 @@ function main(): i32 {
 }
 `
 
+// semDominatingViewSource merges views of `s`, declared above the loop, at
+// the loop's joins: a copy of either would allocate once per round.
+const semDominatingViewSource = `
+function mk(n: i32): string {
+    var s: string = "ab";
+    var i: i32 = 0;
+    while (i < n) { s = s + "c"; i = i + 1; }
+    return s;
+}
+function pick(n: i32): i32 {
+    var s: string = mk(n);
+    var tail: str = "";
+    var a: str[] = [];
+    var i: i32 = 0;
+    while (i < n) {
+        if (i % 2 == 0) {
+            tail = slice_unchecked(s, 1, 3);
+            a = a.append(slice_unchecked(s, 0, 2));
+        }
+        i = i + 1;
+    }
+    return tail.len() + a.len();
+}
+function main(): i32 { return pick(9); }
+`
+
 // semHeldElementSource sorts by length with the insertion sort's body: the
 // element read into `v` is live across the inner loop's `.with`.
 const semHeldElementSource = `
@@ -6132,6 +6225,8 @@ func TestSelfHostSemanticAllocationParity(t *testing.T) {
 	fernBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
 	for _, prog := range []struct{ name, src string }{
 		{"element-read-outlives-the-array-write", semHeldElementSource},
+		// A view merged past a source that dominates the join stays a view.
+		{"a-view-of-a-dominating-source-is-not-copied", semDominatingViewSource},
 	} {
 		t.Run(prog.name, func(t *testing.T) {
 			src := filepath.Join(t.TempDir(), "main.fern")

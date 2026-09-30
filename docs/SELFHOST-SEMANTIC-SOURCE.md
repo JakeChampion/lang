@@ -432,12 +432,20 @@ Unsupported constructs refuse the whole function with a reason.
   taking their units, and a view parameter the result keeps, or any other
   value keeps, is a fresh view of its bytes (`semsource.kept_view`).
 
-  A `str` phi operand whose source does not strictly dominate the join is
-  copied at the end of its incoming block (`ssasem.merge_copies`, `ssasem.with_merge_copies`): a
-  `str` local assigned, in a branch or a loop body, a view of a string
-  declared there. The join cannot keep alive a source that only one incoming
-  path defines. The pass runs in `anchor_module` once the anchor table is
-  attached, so a call's roots are read through it.
+  A phi operand holding a view whose source does not strictly dominate the
+  join is copied (`ssasem.merge_copies`, `ssasem.with_merge_copies`): a local
+  assigned, in a branch or a loop body, a view of a string declared there, or
+  a container built there around one. The join cannot keep alive a source
+  that only one incoming path defines. A `str` operand is copied at the end of
+  its incoming block. A container's views are copied where its construction
+  (a phi, a tuple, record, variant or array built, an append, a `.with`, a map
+  built or inserted into) takes them, through projections, so the container
+  holds counted strings. A view that is a literal or a retagged string
+  (`ssasem.counted_view`) anchors nothing and is not copied. A container the
+  body did not build, a call's result anchored to a string local to the
+  branch, has no copy form and is still refused. The pass runs in
+  `anchor_module` once the anchor table is attached, so a call's roots are
+  read through it, and skips a function with no phi holding a view.
 
   An anchor is an edge in `Analysis.parents`, and `Analysis.dependencies` is
   its transitive closure (`ssasem.closure`). A value with one parent has that
