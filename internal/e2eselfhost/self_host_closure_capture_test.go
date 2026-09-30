@@ -337,8 +337,116 @@ function main(): i32 { return churn() % 7; }`,
 	}
 }
 
+// A struct holding a closure, built by a call (#10755).
+func closureInStructCases() []ownParamReleaseCase {
+	return []ownParamReleaseCase{
+		{
+			// A closure local stored through a callee into a returned struct, called
+			// through the struct's field.
+			name: "struct_holds_bound_closure",
+			src: `import "std/i32";
+@noinline
+function w(i: i32): string { return "s-a-wide-payload-past-any-inline-threshold-" + i.to_string(); }
+struct Box { f: (i32) => i32 }
+@noinline
+function apply(f: (i32) => i32, i: i32): i32 { return f(i); }
+@noinline
+function keepit(f: (i32) => i32): Box { return Box { f: f }; }
+@noinline
+function round(i: i32): i32 {
+    var s: string = w(i);
+    var xs: i32[] = [i, 2];
+    var a: i32 = xs[1];
+    var f = (j: i32): i32 => j + s.len();
+    var b: Box = keepit(f);
+    return a + b.f(1);
+}
+function main(): i32 {
+    var x: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) { x = x + round(i); i = i + 1; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return x % 83;
+}`,
+			want: 59,
+		},
+		{
+			// The same with the lambda written as the argument.
+			name: "struct_holds_lambda_argument",
+			src: `import "std/i32";
+@noinline
+function w(i: i32): string { return "s-a-wide-payload-past-any-inline-threshold-" + i.to_string(); }
+struct Box { f: (i32) => i32 }
+@noinline
+function apply(f: (i32) => i32, i: i32): i32 { return f(i); }
+@noinline
+function keepit(f: (i32) => i32): Box { return Box { f: f }; }
+@noinline
+function round(i: i32): i32 {
+    var s: string = w(i);
+    var xs: i32[] = [i, 2];
+    var a: i32 = xs[1];
+    var b: Box = keepit((j: i32): i32 => j + s.len());
+    return a + b.f(1);
+}
+function main(): i32 {
+    var x: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) { x = x + round(i); i = i + 1; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return x % 83;
+}`,
+			want: 59,
+		},
+		{
+			// A struct bound from the call, over a closure capturing an array.
+			name: "struct_holds_closure_capture",
+			src: `struct Box { f: (i32) => i32 }
+@noinline
+function keepit(f: (i32) => i32): Box { return Box { f: f }; }
+@noinline
+function round(i: i32): i32 {
+    var xs: i32[] = [i, 2];
+    var f = (j: i32): i32 => j + xs[1];
+    var b: Box = keepit(f);
+    return b.f(1);
+}
+function main(): i32 {
+    var x: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) { x = x + round(i); i = i + 1; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return x % 83;
+}`,
+			want: 51,
+		},
+		{
+			// The struct result called through its field and dropped.
+			name: "struct_result_field_called",
+			src: `struct Box { f: (i32) => i32 }
+@noinline
+function keepit(f: (i32) => i32): Box { return Box { f: f }; }
+@noinline
+function round(i: i32): i32 {
+    var xs: i32[] = [i, 2];
+    var f = (j: i32): i32 => j + xs[1];
+    return keepit(f).f(1);
+}
+function main(): i32 {
+    var x: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) { x = x + round(i); i = i + 1; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return x % 83;
+}`,
+			want: 51,
+		},
+	}
+}
+
 func TestSelfHostClosureCaptureX86_64(t *testing.T) {
 	cases := append(closureArgBoxCases(), closureCaptureCreditCases()...)
 	cases = append(cases, fnValueArrResultCases()...)
-	runBalancedRows(t, "clocap", append(cases, closureOwnedCaptureCases()...))
+	cases = append(cases, closureOwnedCaptureCases()...)
+	runBalancedRows(t, "clocap", append(cases, closureInStructCases()...))
 }

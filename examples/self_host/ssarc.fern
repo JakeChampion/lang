@@ -4238,7 +4238,7 @@ function tier_flags(tiers: string[], prefix: string): string {
     return flags;
 }
 
-function tier_prefixes(): string[] { return ["ACNT:", "SCNT:", "ECNT:", "DCNT:", "TCNT:", "PCNT:"]; }
+function tier_prefixes(): string[] { return ["ACNT:", "SCNT:", "ECNT:", "DCNT:", "TCNT:", "PCNT:", "FCNT:"]; }
 
 // tier_rows appends `name`'s row for each counted tier its parameters use.
 function tier_rows(rows: string[], name: string, tiers: string[]): string[] {

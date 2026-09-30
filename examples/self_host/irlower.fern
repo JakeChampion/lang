@@ -13748,7 +13748,8 @@ function lower_call_named_generic(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIde
             // after the call, so an array-returning callee would hand the caller
             // freed memory.
             var arg_releasable: boolean = call_arg_borrowable(sc, cid.name, ai)
-                || arr_param_counted_at(sc.frame.sigs.param_counted, cid.name, ai);
+                || arr_param_counted_at(sc.frame.sigs.param_counted, cid.name, ai)
+                || param_counted_at(sc.frame.sigs.param_counted, "FCNT:", cid.name, ai);
             // A CONSUMED-THREADED position (consumed_arr_positions) admits the
             // same temp on different grounds: the callee's ownership flag
             // starts clear, so it never releases the buffer it was handed,
@@ -14199,9 +14200,20 @@ function lower_call_struct_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, rty:
 function lower_call_fn_field(c: ast.ExprCall, fa: ast.ExprFieldAccess, rty: string, s: LowerState): LowerState {
     var ffidx: i32 = s.field_index_in(rty, fa.field);
     if (ffidx < 0) { return s.fail(); }
-    // Evaluate the receiver, read the field box, stash it.
+    // Evaluate the receiver, read the field box, stash it. A receiver that is
+    // a strict-fresh producer's result is this frame's to release once the
+    // call returns; it holds the field box until then.
     var ffs: LowerState = lower_expr(fa.obj, s);
     if (!ffs.ok) { return ffs; }
+    var ffrecv: i32 = 0 - 1;
+    if (owned_fresh_call_callee(fa.obj, "", s) != "") {
+        var frn: string = "$fnrecv" + util.i32_to_string(ffs.locals.len());
+        ffs = ffs.add_local(frn);
+        ffrecv = ffs.slot_of(frn);
+        ffs = ffs.mark_struct_type(ffrecv, rty);
+        ffs = ffs.emit(ir.op_store_local(ffrecv));
+        ffs = ffs.emit(ir.op_load_local(ffrecv));
+    }
     ffs = ffs.emit(ir.op_struct_get(ffidx, struct_field_width(s.frame.structs, rty, ffidx)));
     var fbtmp: string = "$fnfield" + util.i32_to_string(ffs.locals.len());
     ffs = ffs.add_local(fbtmp);
@@ -14222,7 +14234,10 @@ function lower_call_fn_field(c: ast.ExprCall, fa: ast.ExprFieldAccess, rty: stri
     ffs = ffs.emit(ir.op_load_local(fbslot));
     ffs = ffs.emit(ir.op_const_i32(0));
     ffs = ffs.emit(ir.op_arr_get(32));   // box[0] -> funcval
-    return ffs.emit(ir.op_call_indirect_sig(c.args.len() + 1, callee_fn_sig_declared(fsig, c, true)));
+    ffs = ffs.emit(ir.op_call_indirect_sig(c.args.len() + 1, callee_fn_sig_declared(fsig, c, true)));
+    if (ffrecv < 0) { return ffs; }
+    ffs = emit_struct_field_drops_gated(ffs, ffrecv, true);
+    return ffs.release(ffrecv, "__fern_rc_dec", "fnfield-fresh-recv");
 }
 
 // lower_call_dyn_method dispatches `recv.m(args)` on a `dyn Trait` receiver,
@@ -44671,7 +44686,7 @@ function reclaimable_names_of(body: ast.Stmt[], reassigned: string[], structs: S
         if (mvsty == "") { mvsty = declared_struct_type_of(body, mvnmk, structs); }
         var mvnm: string[] = recv_borrow_methods_of(recv_borrow, mvsty);
         mvnm = append_all(mvnm, recv_ident_methods_of(recv_borrow, mvsty, body, mvnmk, borrowable));
-        if (mvty != "") { mvnm = append_all(mvnm, clo_field_names_of(structs, mvty)); }
+        if (mvsty != "") { mvnm = append_all(mvnm, clo_field_names_of(structs, mvsty)); }
         var mv_moves: boolean = moves_fields_stmts(body, mvnmk, mvnm, mvsty != "" && spread_copy_counted(structs, sfok, mvsty));
         // A BARE NON-SCALAR FIELD READ moves the field out just as surely as a
         // receiver use does, and moves_fields_expr cannot see it: its
@@ -69879,6 +69894,9 @@ function arrparam_use_ok(e: ast.Expr, pn: string, counted: boolean, reg: string[
             // unconditional and unaffected.
             var scnt: boolean = true;
             if ((pfx == "SCNT:" || pfx == "ECNT:" || pfx == "TCNT:") && !struct_routes_field_reclaim_at(structs, sfok, sl.type_name)) { scnt = false; }
+            // A closure field retains a bare ident only under the type's "clo:"
+            // admission (clo_field_ident_counted).
+            if (pfx == "FCNT:" && !reclaim_has(sfok, "clo:", sl.type_name)) { scnt = false; }
             // The STRUCT tier credits ONLY the counted append store below. A
             // bare param in a field slot takes the construction-side retain
             // just for a type that routes field reclaim, and crediting it
@@ -70046,7 +70064,7 @@ function borrow_reg_with_counted(reg: string[], pcnt: string[]): string[] {
         var bar: i32 = 0;
         while (bar < row.len() && row[bar] != b'|') { bar = bar + 1; }
         // Every tier key is five bytes ("ACNT:" / "SCNT:" / "ECNT:" / "DCNT:" /
-        // "TCNT:" / "PCNT:") — the slice below hard-codes that width;
+        // "TCNT:" / "PCNT:" / "FCNT:") — the slice below hard-codes that width;
         // a row with no key or no '|' is not one param_counted_of wrote.
         if (bar < row.len() && bar > 5) {
             var key: string = "CNT:" + slice_unchecked(row, 5, bar);
@@ -70232,6 +70250,8 @@ function param_counted_entries_of(fn: parser.FuncDecl, reg: string[], structs: S
     var tany: boolean = false;
     var pflags: string = "";
     var pany: boolean = false;
+    var fflags: string = "";
+    var fany: boolean = false;
     var ret_routes: boolean = struct_routes_field_reclaim_at(structs, sfok, fn.ret_type);
     var pj: i32 = 0;
     while (pj < fn.params.len()) {
@@ -70325,6 +70345,16 @@ function param_counted_entries_of(fn: parser.FuncDecl, reg: string[], structs: S
             && !fn.params[pj].own
             && arrparam_uses_ok_stmts(fn.body, fn.params[pj].name, reg, "PCNT:", structs, sfok, ret_hb)) { pok = true; }
         if (pok) { pflags = pflags + "1"; pany = true; } else { pflags = pflags + "0"; }
+        // CLOSURE tier. `keepit(f) { return Box { f: f } }` stores a borrowed
+        // closure into an admitted closure field, which retains it, so the
+        // caller's own release and the holder's field drop net to one owner.
+        // The result must not be the closure itself.
+        var fok: boolean = false;
+        if ((scalar_result || ret_routes)
+            && fn.params[pj].type_name == "fn"
+            && !fn.params[pj].own
+            && arrparam_uses_ok_stmts(fn.body, fn.params[pj].name, reg, "FCNT:", structs, sfok, false)) { fok = true; }
+        if (fok) { fflags = fflags + "1"; fany = true; } else { fflags = fflags + "0"; }
         pj = pj + 1;
     }
     if (aany) {
@@ -70351,6 +70381,7 @@ function param_counted_entries_of(fn: parser.FuncDecl, reg: string[], structs: S
         var pent: string = "PCNT:" + borrowable_key(fn) + "|" + pflags;
         ents = ents.append(pent);
     }
+    if (fany) { ents = ents.append("FCNT:" + borrowable_key(fn) + "|" + fflags); }
     return ents;
 }
 
