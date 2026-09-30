@@ -24,7 +24,10 @@ pub struct Func {
     // The builtin names the module's own declarations take over
     // (semsource.shadowed_builtins): a call to one is an ordinary call, never
     // the builtin's op.
-    shadows: string[]
+    shadows: string[],
+    // The records and enums an `impl mem.Drop` gives a finalizer, by name. The
+    // whole module's, so every function's drop helper for a type agrees.
+    finalizers: string[]
 }
 
 // The parameters whose storage a callee's result reads, so a caller keeps
@@ -33,6 +36,17 @@ pub struct Func {
 // whose views read nothing the caller passed. Read off the whole module
 // (`semsource.anchor_module`).
 pub struct Anchor { name: string, params: i32[] }
+
+// The `drop` method an `impl mem.Drop` gives a record or an enum, or "". A
+// value of such a type is always a counted box, so the finalizer runs at the
+// free: never a static constant, never a box handed on for reuse.
+pub function finalizer_of(f: Func, t: typeinfo.Type): string {
+    var n: string = "";
+    if let typeinfo.TypeStruct(r) = t { n = r.name; }
+    if let typeinfo.TypeUnion(u) = t { n = u.name; }
+    if (n != "" && util.index_of_str(f.finalizers, n) >= 0) { return n + ".drop"; }
+    return "";
+}
 
 // Whether the callee named `name` has a row.
 pub function anchored(anchors: Anchor[], name: string): boolean {

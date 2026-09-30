@@ -642,6 +642,7 @@ function constants(f: ssasem.Func, defs: ssa.SInst[]): string[] {
         for ins in b.insts {
             var fields: semrecords.Field[] = constructed_fields(f, ins);
             if (fields.len() != ins.args.len()) { continue; }
+            if (ins.result >= 0 && ssasem.finalizer_of(f, f.values[ins.result]) != "") { continue; }
             var words: string = "|";
             var j: i32 = 0;
             while (j < fields.len() && words != "") {
