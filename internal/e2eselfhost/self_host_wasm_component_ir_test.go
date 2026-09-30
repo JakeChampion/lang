@@ -45,7 +45,7 @@ func TestSelfHostWasmComponentIRPath(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 
-	copySelfHostDriver(t, dir, "wasm_ir.fern")
+	copySelfHostDriver(t, dir, "wasm_ir.fern", "semlower.fern")
 	// The no-I/O run core (emit_module_run) and the stdout run core
 	// (emit_module_run_io) — the two component modes with an IR leg.
 	if err := os.WriteFile(filepath.Join(dir, "wasm_run_p2.fern"), []byte(p2Driver), 0o644); err != nil {

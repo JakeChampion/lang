@@ -2459,8 +2459,9 @@ pub function emit_ir_module_mode(mod: parser.Module, ir_cache: irlower.LowerResu
 
 
 // ir_route_ok is the wasm routing decision as a PROBE: the use_ir default is
-// on, the module lowers (the fused gate, lower_all_gated), and ir_route_final
-// admits the lowering. emit_module_mode_or_error makes the same decision
+// on, the module lowers (the fused gate, lower_all_gated, with `sub` in it as
+// the emit entry has it), and ir_route_final admits the lowering.
+// emit_module_mode_or_error_sub makes the same decision
 // inline because it goes on to emit from that lowering; a driver's `-decide`
 // asks here so the probe cannot drift from the emitter it describes.
 //
@@ -2470,11 +2471,11 @@ pub function emit_ir_module_mode(mod: parser.Module, ir_cache: irlower.LowerResu
 // made the wasm side the one backend with no routing probe (the asm side has
 // `-ir-probe` and asm_pathprobe_run), and an emitter-retirement reroute is
 // exactly the change whose risk lives in what the gates DECLINE.
-pub function ir_route_ok(lm: parser.Module, component: boolean, io: boolean): boolean {
+pub function ir_route_ok(lm: parser.Module, component: boolean, io: boolean, sub: ircore.Sub): boolean {
     if (!asmcore.new_state().use_ir) { return false; }
     var stab: irlower.StructTab = irlower.struct_tab(lm.structs);
-    var g: ircore.Lowered = lower_all_gated(lm, stab, ircore.wp_fn_sigs(lm.funcs, stab), ircore.no_sub());
-    return g.ok && ir_route_final(g.cache, component, io);
+    var g: ircore.Lowered = lower_all_gated(lm, stab, ircore.sub_base(sub, lm.funcs, stab), sub);
+    return g.ok && ir_route_final(ircore.sub_cache(sub, g.cache), component, io);
 }
 
 // ir_route_final is the half of the decision that needs the lowering: the
