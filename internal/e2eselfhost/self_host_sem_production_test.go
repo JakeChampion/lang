@@ -5837,6 +5837,31 @@ function main(): i32 {
     return pick(zs, true) + pick(zs, false) + ws[0](1) + qs[0](1);
 }
 `},
+	// Methods std/i32 and std/i64 declare on a scalar receiver: keyed by the
+	// receiver's spelling (`u8.to_ascii_lower`, `i64.to_string`) and called
+	// with the receiver at argument 0, chained and in a condition.
+	{name: "std-i32-methods-on-a-scalar-receiver", atLeast: 2, src: `
+import "std/i32";
+import "std/i64";
+function fold(s: string): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < s.len()) {
+        var b: u8 = s[i];
+        out = out + b.to_ascii_lower().to_ascii_string();
+        i = i + 1;
+    }
+    return out;
+}
+function main(): i32 {
+    var n: i32 = 0 - 42;
+    var w: i64 = 9000000000i64;
+    var c: u8 = 90;
+    print(fold("MiXeD") + " " + n.to_string() + " " + w.to_string());
+    if (c.to_ascii_lower().is_ascii_lower()) { return 3; }
+    return 1;
+}
+`},
 }
 
 // semDynShapes is a trait with a record and an enum implementation, each
