@@ -1762,7 +1762,7 @@ function container_op(k: i32): boolean {
         ssasem.array_get(), ssasem.tuple_get(), ssasem.record_get(),
         ssasem.length(), ssasem.append(), ssasem.with(), ssasem.slice(), ssasem.str_index(),
         ssasem.str_bytes(), ssasem.arr_join(), ssasem.arr_slice()], k)
-        || variant_op(k) || ssasem.is_cell_op(k) || ssasem.is_map_op(k) || ssasem.is_map_iter_op(k);
+        || variant_op(k) || ssasem.is_cell_op(k) || ssasem.is_map_op(k) || ssasem.is_map_iter_op(k) || ssasem.is_hole_op(k);
 }
 
 function variant_op(k: i32): boolean {
@@ -2689,6 +2689,7 @@ function instruction(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Pla
     r = negation_zero(r, f, ins);
     if (ins.kind_tag == ssasem.with()) { r = with_update(r, f, p, ins, defer0); return emit(r, ir.op_store_local(ins.result)); }
     if (ssasem.is_cell_op(ins.kind_tag)) { return cell_site(r, f, ins); }
+    if (ssasem.is_hole_op(ins.kind_tag)) { return hole_site(r, ins); }
     if (routed_map_op(f, ins)) { r = routed_map_site(r, f, ins); return emit(r, ir.op_store_local(ins.result)); }
     if (ssasem.is_map_iter_op(ins.kind_tag)) { return map_iter_site(r, f, ins); }
     if (ssasem.is_function_op(ins.kind_tag)) { r = function_site(r, f, ins); return emit(r, ir.op_store_local(ins.result)); }
@@ -3273,6 +3274,29 @@ function cell_site(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): 
     r = emit(r, ir.op_load_local(ins.args[0]));
     r = emit(r, arr_make_op(semtypes.cell_elem(f.values[ins.result]), 1));
     return emit(r, ir.op_store_local(ins.result));
+}
+
+// A node's address is the box's own word. A fill writes the node at the hole
+// over its zero placeholder, so nothing is released, and answers the chain;
+// the first fill has no node to write and answers the value itself.
+function hole_site(own r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerResult {
+    if (ins.kind_tag == ssasem.hole_at()) {
+        r = emit(r, ir.op_load_local(ins.args[0]));
+        return emit(r, ir.op_store_local(ins.result));
+    }
+    r = emit(r, ir.op_load_local(ins.args[1]));
+    r = emit(r, ir.op_const_i32(0));
+    r = emit(r, ir.op_bin("eq", ir.width_ptr(), true));
+    r = emit(r, ir.op_if(0));
+    r = emit(r, ir.op_load_local(ins.args[2]));
+    r = emit(r, ir.op_store_local(ins.result));
+    r = emit(r, ir.op_else());
+    r = emit(r, ir.op_load_local(ins.args[1]));
+    r = emit(r, ir.op_load_local(ins.args[2]));
+    r = emit(r, ir.op_struct_set(ins.imm, 0));
+    r = emit(r, ir.op_load_local(ins.args[0]));
+    r = emit(r, ir.op_store_local(ins.result));
+    return emit(r, ir.op_end());
 }
 
 // A read hands out a unit of the element: the slot is loaded and, for a

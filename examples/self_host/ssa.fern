@@ -127,7 +127,7 @@ function semantic_names_symbol(id: i32): boolean {
 // it rather than the zero its immediate holds; the other kinds print the
 // immediate, the operator, or the symbol they name.
 function carries_imm(kind: i32): boolean {
-    return kind == 1 || kind == 2 || kind == 6 || kind == 0 - 4 || kind == 0 - 6 || kind == 0 - 10;
+    return kind == 1 || kind == 2 || kind == 6 || kind == 0 - 4 || kind == 0 - 6 || kind == 0 - 10 || kind == 0 - 49;
 }
 
 function carries_str(kind: i32): boolean {
@@ -214,7 +214,8 @@ function semantic_kind_name(id: i32): string {
         "map_new", "map_insert", "map_has", "map_get_or", "map_len", "map_get",
         "map_keys", "map_values", "map_delete", "map_cleared", "zero", "str_bytes",
         "arr_join", "arr_slice", "map_iter", "mapiter_has_next",
-        "mapiter_key", "mapiter_value", "mapiter_advance", "dyn_up", "dyn_box"];
+        "mapiter_key", "mapiter_value", "mapiter_advance", "dyn_up", "dyn_box",
+        "dyn_is", "dyn_as", "hole_at", "hole_fill"];
     var at: i32 = 0 - id - 1;
     if (at < 0 || at >= names.len()) { return "invalid"; }
     return names[at];
