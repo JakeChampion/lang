@@ -142,7 +142,7 @@ func parseRuntimeNeedDeps(t *testing.T, text string) map[string][]string {
 		}
 	}
 	// Every other arm is `if (name == "x") { ... var d: string[] = [...]; return d; }`.
-	arms := regexp.MustCompile(`if \(name == "([a-z0-9_]+)"\) \{([\s\S]*?)\n    \}`).FindAllStringSubmatch(body, -1)
+	arms := regexp.MustCompile(`if \(name == "([a-z0-9_]+)"\) \{([\s\S]*?)\breturn [a-z0-9_]+;`).FindAllStringSubmatch(body, -1)
 	for _, a := range arms {
 		lit := regexp.MustCompile(`string\[\] = \[([^\]]*)\]`).FindStringSubmatch(a[2])
 		if lit == nil {
