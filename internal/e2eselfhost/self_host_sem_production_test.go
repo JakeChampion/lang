@@ -5643,6 +5643,33 @@ function main(): i32 {
     return (s * 4.0) as i32 + (t / 1000000000) as i32 + (w * 4.0) as i32 + (tu.0 * 2.0) as i32 + tu.1;
 }
 `},
+	// A map that reaches the program only as JObject's payload. JsonValue's
+	// variants are injected after the tree shake, which kept none of the
+	// routed map functions, so the typed lowering's map iteration called
+	// `__map_iter_impl` and the module was refused (#10796).
+	{name: "a-map-reached-only-through-a-jsonvalue-is-produced", atLeast: 81, noLeak: true, src: `
+import "core/map";
+function width(v: JsonValue): i32 {
+    match (v) {
+        JObject(m) => {
+            var n: i32 = 0;
+            for (k, x) in m { n = n + k.len() + width(x); }
+            return n;
+        },
+        JString(s) => { return s.len(); },
+        _ => { return 1; }
+    }
+}
+function main(): i32 { return width(JString("abc")) + width(JNull); }
+`},
+	{name: "std-json-encode-is-produced", atLeast: 139, noLeak: true, src: `
+import "std/json";
+function main(): i32 {
+    var s: string = json.json_encode(JNumber("42"));
+    print(s);
+    return s.len();
+}
+`},
 	// A module the program imports does not see the program's enums (#10139):
 	// std/json's bare `Ok` is Result's though the program declares one, while
 	// a helper the compiler synthesises for the program's own map key still
