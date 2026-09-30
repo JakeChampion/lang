@@ -4,13 +4,15 @@ import "./semtypes";
 import "./util";
 
 pub struct Field { name: string, ty: typeinfo.Type }
-pub struct Record { ty: typeinfo.Type, fields: Field[] }
+// `views` says whether a value of the type holds a `str` view anywhere,
+// through every type its fields reach (semsource.view_types).
+pub struct Record { ty: typeinfo.Type, fields: Field[], views: boolean }
 // An enum's identity is its union type; each variant is a named field shape.
 // `layout` says how a variant's box is built and read, which is a property of
 // the declaration rather than of any use: a declared enum boxes its payload
 // behind the variant's own shape, while a struct-union's member IS the box.
 pub struct Variant { name: string, fields: Field[] }
-pub struct Enum { ty: typeinfo.Type, variants: Variant[], layout: i32 }
+pub struct Enum { ty: typeinfo.Type, variants: Variant[], layout: i32, views: boolean }
 
 pub function layout_variant(): i32 { return 1; }
 pub function layout_member(): i32 { return 2; }

@@ -109,6 +109,62 @@ function main(): i32 {
 		t.Fatalf("a generic struct over an unbound variable: exit %d under strict, want 3 naming the refusal\n%s", code, out)
 	}
 
+	// A value that holds a view behind a dyn cannot be rebuilt at a merge
+	// (ssasem.copyable), so one merged past its source is refused rather than
+	// read after the source is released. A closure that captures a view is
+	// refused where it is built.
+	for _, c := range []struct{ name, src, why string }{
+		{"dyn-view-merged", `import "std/i32";
+trait Size { function size(self: Self): i32; }
+struct P { a: str }
+impl Size for P { function size(self: P): i32 { return self.a.len() * 10 + (self.a[0] as i32) - 97; } }
+function mk(n: i32): string {
+    var s: string = "ab";
+    var i: i32 = 0;
+    while (i < n) { s = s + "c"; i = i + 1; }
+    return s;
+}
+function wrap(s: string): dyn Size { var p: P = P { a: slice_unchecked(s, 1, 4) }; return p; }
+function g(n: i32): i32 {
+    var d: dyn Size = P { a: "q" };
+    if (n != 0) {
+        var s: string = mk(n);
+        d = wrap(s);
+    }
+    var junk: string[] = [];
+    var i: i32 = 0;
+    while (i < 50) { junk = junk.append("zz" + i.to_string()); i = i + 1; }
+    return d.size();
+}
+function main(): i32 { print(g(3).to_string() + " " + g(0).to_string()); return 0; }
+`, "FERN_SEM_IR: g: produced graph fails semantic verification: dependency unavailable at use"},
+		{"closure-captures-a-view", `import "std/i32";
+function mk(n: i32): string {
+    var s: string = "ab";
+    var i: i32 = 0;
+    while (i < n) { s = s + "c"; i = i + 1; }
+    return s;
+}
+function viewer(n: i32): () => i32 {
+    var s: string = mk(n);
+    var v: str = slice_unchecked(s, 1, 4);
+    return () => v.len() * 10 + (v[0] as i32) - 97;
+}
+function main(): i32 {
+    var f: () => i32 = viewer(3);
+    var junk: string[] = [];
+    var i: i32 = 0;
+    while (i < 50) { junk = junk.append("zz" + i.to_string()); i = i + 1; }
+    print(f().to_string());
+    return 0;
+}
+`, "FERN_SEM_IR: viewer: closure capture type"},
+	} {
+		if code, out := compile(c.src, "FERN_SEM_IR_STRICT=1"); code != 3 || !strings.Contains(out, c.why) {
+			t.Fatalf("%s: exit %d under strict, want 3 naming %q\n%s", c.name, code, c.why, out)
+		}
+	}
+
 	// A stream handle's `fd` is the handle's own descriptor, read as the i32
 	// through a parameter, a local and an enum payload binding alike (std/tcp
 	// hands a file body's fd to tcp_sendfile). It was an unsupported
