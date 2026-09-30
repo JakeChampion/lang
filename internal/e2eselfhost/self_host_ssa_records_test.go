@@ -3,7 +3,7 @@ package e2eselfhost
 const semanticRecord = `
 var recordType: typeinfo.Type = typeinfo.TypeStruct { name: "Box", args: [i32t] };
 var wideRecord: typeinfo.Type = typeinfo.TypeStruct { name: "Box", args: [i64t] };
-var record = semrecords.Record { ty: recordType, fields: [
+var record = semrecords.Record { views: false, ty: recordType, fields: [
     semrecords.Field { name: "xs", ty: ia }, semrecords.Field { name: "n", ty: i32t }
 ] };
 records = [record];
@@ -20,11 +20,11 @@ graph = ssa.SFunc { name: "replacement", nparams: 1, nvals: 7, entry: 7, takes_e
 func semanticRecordCases() []struct{ name, change, want string } {
 	cases := []struct{ name, change, want string }{
 		{"record-replacement", "", ""},
-		{"record-generic-instances", `records = records.append(semrecords.Record { ty: wideRecord, fields: [semrecords.Field { name: "xs", ty: typeinfo.TypeArray { elem: i64t, view: false } }, semrecords.Field { name: "n", ty: i64t }] });`, ""},
-		{"record-recursive-schema", `var node: typeinfo.Type = typeinfo.TypeStruct { name: "Node", args: [] }; records = records.append(semrecords.Record { ty: node, fields: [semrecords.Field { name: "children", ty: typeinfo.TypeArray { elem: node, view: false } }] });`, ""},
+		{"record-generic-instances", `records = records.append(semrecords.Record { views: false, ty: wideRecord, fields: [semrecords.Field { name: "xs", ty: typeinfo.TypeArray { elem: i64t, view: false } }, semrecords.Field { name: "n", ty: i64t }] });`, ""},
+		{"record-recursive-schema", `var node: typeinfo.Type = typeinfo.TypeStruct { name: "Node", args: [] }; records = records.append(semrecords.Record { views: false, ty: node, fields: [semrecords.Field { name: "children", ty: typeinfo.TypeArray { elem: node, view: false } }] });`, ""},
 		{"record-missing-schema", "records = [];", "missing record projection schema"},
 		{"record-duplicate-schema", "records = records.append(record);", "duplicate record schema"},
-		{"record-duplicate-schema-apart", `records = records.append(semrecords.Record { ty: typeinfo.TypeStruct { name: "Other", args: [] }, fields: [record.fields[1]] }); records = records.append(record);`, "duplicate record schema"},
+		{"record-duplicate-schema-apart", `records = records.append(semrecords.Record { views: false, ty: typeinfo.TypeStruct { name: "Other", args: [] }, fields: [record.fields[1]] }); records = records.append(record);`, "duplicate record schema"},
 		{"record-unresolved-identity", `records = [semrecords.Record { ...record, ty: typeinfo.unchecked() }];`, "unresolved record identity"},
 		{"record-nonnominal-identity", `records = [semrecords.Record { ...record, ty: ia }];`, "non-nominal record identity"},
 		{"record-duplicate-field", `records = [semrecords.Record { ...record, fields: [record.fields[0], record.fields[0]] }];`, "duplicate record field name"},
@@ -32,8 +32,8 @@ func semanticRecordCases() []struct{ name, change, want string } {
 		{"record-unresolved-field", `records = [semrecords.Record { ...record, fields: [semrecords.Field { name: "xs", ty: typeinfo.unchecked() }] }];`, "unresolved record field type"},
 		{"record-void-field", `records = [semrecords.Record { ...record, fields: [semrecords.Field { name: "xs", ty: typeinfo.TypeVoid { tag: 0 } }] }];`, "unresolved record field type"},
 		{"record-missing-nested-schema", `records = [semrecords.Record { ...record, fields: [semrecords.Field { name: "xs", ty: typeinfo.TypeArray { elem: wideRecord, view: false } }] }];`, "missing nested record schema"},
-		{"record-inconsistent-instance-fields", `records = records.append(semrecords.Record { ty: wideRecord, fields: [record.fields[1], record.fields[0]] });`, "inconsistent record instance schema"},
-		{"record-inconsistent-instance-arity", `records = records.append(semrecords.Record { ty: typeinfo.TypeStruct { name: "Box", args: [] }, fields: record.fields });`, "inconsistent record instance schema"},
+		{"record-inconsistent-instance-fields", `records = records.append(semrecords.Record { views: false, ty: wideRecord, fields: [record.fields[1], record.fields[0]] });`, "inconsistent record instance schema"},
+		{"record-inconsistent-instance-arity", `records = records.append(semrecords.Record { views: false, ty: typeinfo.TypeStruct { name: "Box", args: [] }, fields: record.fields });`, "inconsistent record instance schema"},
 		{"record-projection-arity", `graph = change(graph, 1, inst(ssasem.record_get(), 1, [], 0));`, "record projection arity"},
 		{"record-negative-field-index", `graph = change(graph, 1, field(1, 0, 0 - 1, "xs"));`, "record projection index"},
 		{"record-large-field-index", `graph = change(graph, 1, field(1, 0, 2, "xs"));`, "record projection index"},
@@ -53,7 +53,7 @@ func semanticRecordCases() []struct{ name, change, want string } {
 
 const unitRecordDuplicate = `
 var recordType: typeinfo.Type = typeinfo.TypeStruct { name: "Pair", args: [] };
-records = [semrecords.Record { ty: recordType, fields: [
+records = [semrecords.Record { views: false, ty: recordType, fields: [
     semrecords.Field { name: "left", ty: sa }, semrecords.Field { name: "right", ty: sa }
 ] }];
 params = [sa]; types = [sa, recordType]; result = recordType; modes = [3];
@@ -85,12 +85,12 @@ if (!supply(find(p, 7, ssaunits.edge_point(), 17), 0, 0, 0, ssaunits.move_unit()
 if (!supply(find(p, 27, ssaunits.edge_point(), 17), 0, 2, 0, ssaunits.move_unit())) { return 47; }
 `, "", ""},
 		{"record-recursive-return", unitRecordDuplicate + `
-records = [semrecords.Record { ty: recordType, fields: [semrecords.Field { name: "children", ty: typeinfo.TypeArray { elem: recordType, view: false } }] }];
+records = [semrecords.Record { views: false, ty: recordType, fields: [semrecords.Field { name: "children", ty: typeinfo.TypeArray { elem: recordType, view: false } }] }];
 params = [recordType]; types = [recordType]; modes = [2];
 graph = ssa.SFunc { ...graph, nvals: 1, blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0)], term: ret(0) }] };
 `, `if (!supply(find(p, 7, ssaunits.return_point(), 0 - 1), 0, 0, 0, ssaunits.retain_unit())) { return 48; }`, "", ""},
 		{"record-empty-construction", unitRecordDuplicate + `
-records = [semrecords.Record { ty: recordType, fields: [] }];
+records = [semrecords.Record { views: false, ty: recordType, fields: [] }];
 params = []; types = [recordType]; modes = [];
 graph = ssa.SFunc { ...graph, nparams: 0, nvals: 1, blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(ssasem.record_new(), 0, [], 0)], term: ret(0) }] };
 `, `if (!supply(find(p, 7, ssaunits.return_point(), 0 - 1), 0, 0, 0, ssaunits.move_unit())) { return 49; }`, "", ""},

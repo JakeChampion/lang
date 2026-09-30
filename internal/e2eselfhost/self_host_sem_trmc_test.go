@@ -96,6 +96,24 @@ function append_to(xs: List, tails: List[]): List {
     }
 }
 
+// A self-tail call whose argument is a payload read out of a cell holding a
+// view is declined (ssasem.crosses_jump): the jump would re-enter the loop past
+// the frame's hold on that cell, and a view's retain is a no-op. So this walk
+// keeps its self-call, and runs shallow here.
+enum NL { NCons(str, NL), NNil }
+function count(xs: NL, acc: i32): i32 {
+    match (xs) {
+        NCons(h, t) => { return count(t, acc + h.len()); },
+        NNil => { return acc; },
+    }
+}
+function spans(n: i32): NL {
+    var acc: NL = NNil;
+    var i: i32 = 0;
+    while (i < n) { acc = NCons(slice_unchecked("abcdefgh", 0, 1 + i % 3), acc); i = i + 1; }
+    return acc;
+}
+
 // Two self-calls: the first stays a call, and the second, whose result is the
 // payload the construction returns, is the hole. The input leans left, so it
 // is the second that goes deep. A leaf is handed back as it came in.
@@ -193,17 +211,18 @@ function main(): i32 {
     var tails: List[] = [build(10)];
     var j: i32 = score(append_to(keep, tails));
     var tail_after: i32 = score(tails[0]);
+    var k: i32 = count(spans(20), 0);
     var after: i32 = score(keep);
     print("before=" + before.to_string() + " a=" + a.to_string() + " b=" + b.to_string()
         + " c=" + c.to_string() + " d=" + d.to_string() + " e=" + e.to_string()
         + " f=" + f.to_string() + " g=" + g.to_string() + " m=" + m.to_string()
-        + " j=" + j.to_string() + " tail=" + tail_after.to_string()
+        + " j=" + j.to_string() + " tail=" + tail_after.to_string() + " k=" + k.to_string()
         + " after=" + after.to_string() + " underflow=" + __rc_underflow_count().to_string());
     return __rc_underflow_count();
 }
 `
 
-const selfHostTrmcWant = "0|before=1000021 a=3100021 b=3000000 c=999974 d=300003 e=900000 f=0 g=3100021 m=1199991 j=1000080 tail=59 after=1000021 underflow=0\n"
+const selfHostTrmcWant = "0|before=1000021 a=3100021 b=3000000 c=999974 d=300003 e=900000 f=0 g=3100021 m=1199991 j=1000080 tail=59 k=39 after=1000021 underflow=0\n"
 
 // TestSelfHostSemanticTrmc runs that program on every target through the
 // typed lowering and pins the answer, a clean sanitizer leg with nothing held
@@ -241,7 +260,7 @@ func TestSelfHostSemanticTrmc(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for name, want := range map[string]int{"inc_all": 2, "drop_neg": 1, "take": 1, "to_rev": 1, "tag_all": 1, "last_of": 1, "mirror": 2, "append_to": 1} {
+		for name, want := range map[string]int{"inc_all": 2, "drop_neg": 1, "take": 1, "to_rev": 1, "tag_all": 1, "last_of": 1, "mirror": 2, "append_to": 1, "count": 2} {
 			if got := countSelfCalls(string(asm), name); got != want {
 				t.Errorf("%d call sites to %s in the listing, want %d", got, name, want)
 			}
