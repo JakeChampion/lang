@@ -44,7 +44,7 @@ import "./ircore";
 import "./modloader";
 import "./wasm_objfile";
 import "./semlower";
-import "core/map";
+import "./irverify";
 
 // unit_ns namespaces module `idx`'s base globals. Module 0 keeps the historical
 // unnamespaced names so a single-module program's unit is byte-identical to the
@@ -315,25 +315,42 @@ function func_key(f: parser.FuncDecl): string {
     return util.base_type_name(parser.erase_str_spelling(f.receiver_type)) + "." + f.name;
 }
 
-// A lifted function (`<fd>$cloN`, `<fd>$wrapN`) is named before its `$` for the
-// declaration it was lifted from, and belongs to that declaration's module.
-function declaring_module(declared: Map[string, i32], f: parser.FuncDecl): i32 {
-    var own: i32 = declared.get_or(func_key(f), 0);
-    if (own > 0) { return own - 1; }
-    var cut: i32 = 0;
-    while (cut < f.name.len() && f.name[cut] != b'$') { cut = cut + 1; }
-    if (cut == 0 || cut == f.name.len()) { return 0 - 1; }
-    return declared.get_or(func_key(parser.FuncDecl { ...f, name: slice_unchecked(f.name, 0, cut) + "" }), 0) - 1;
+// Declared indexes each module's declarations by func_key: row i of the index
+// is declared by mods[i].
+struct Declared { ix: irverify.NameIndex, mods: i32[] }
+
+function declared_of(parts: flatten.PerModule[]): Declared {
+    var keys: string[] = [];
+    var mods: i32[] = [];
+    var j: i32 = 0;
+    while (j < parts.len()) {
+        for f in parts[j].mod.funcs {
+            keys = keys.append(func_key(f));
+            mods = mods.append(j);
+        }
+        j = j + 1;
+    }
+    return Declared { ix: irverify.name_index(keys), mods: mods };
+}
+
+// declaring_module is the module that declares f, or -1. A lifted function
+// (`<fd>$cloN`, `<fd>$wrapN`) is named before its `$` for the declaration it
+// was lifted from, and belongs to that declaration's module.
+function declaring_module(d: Declared, f: parser.FuncDecl): i32 {
+    var row: i32 = irverify.index_row(d.ix, func_key(f));
+    if (row < 0) {
+        var cut: i32 = 0;
+        while (cut < f.name.len() && f.name[cut] != b'$') { cut = cut + 1; }
+        if (cut == 0 || cut == f.name.len()) { return 0 - 1; }
+        row = irverify.index_row(d.ix, func_key(parser.FuncDecl { ...f, name: slice_unchecked(f.name, 0, cut) + "" }));
+    }
+    if (row < 0) { return 0 - 1; }
+    return d.mods[row];
 }
 
 function typed_view(parts: flatten.PerModule[], full: parser.Module): TypedView {
     var im: parser.Module = parser.infer_ret_types_module(wasm_ir.route_normalized(full));
-    var declared: Map[string, i32] = map_new(im.funcs.len() + 1);
-    var j: i32 = 0;
-    while (j < parts.len()) {
-        for f in parts[j].mod.funcs { declared = declared.insert(func_key(f), j + 1); }
-        j = j + 1;
-    }
+    var declared: Declared = declared_of(parts);
     var entry_idx: i32 = parts.len() - 1;
     var owner: i32[] = [];
     var unowned: parser.FuncDecl[] = [];
@@ -347,7 +364,7 @@ function typed_view(parts: flatten.PerModule[], full: parser.Module): TypedView 
     }
     var mods: parser.Module[] = [];
     var sighashes: string[] = [];
-    j = 0;
+    var j: i32 = 0;
     while (j < parts.len()) {
         var fs: parser.FuncDecl[] = [];
         for r in owned_rows(owner, j) { fs = fs.append(im.funcs[r]); }
