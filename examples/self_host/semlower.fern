@@ -325,10 +325,12 @@ function ast_values(mod: parser.Module, built: semsource.Built, r: Rows): AstVal
 }
 
 // Whether row `i` is a body the AST lowering emits. A template's row is not
-// kept, but its instances stand for it and no body is emitted in its name.
+// kept, but in a module produced whole its instances stand for it and no body
+// is emitted in its name; under the bisect knobs its erased body stands.
 function ast_lowered(built: semsource.Built, r: Rows, i: i32): boolean {
     if (r.keep[i]) { return false; }
-    return i >= built.decls.len() || !built.decls[i].template;
+    if (i >= built.decls.len() || !built.decls[i].template) { return true; }
+    return sem_ir_only() != "" || sem_ir_skip() != "";
 }
 
 // Whether a function type carries a reference: a parameter or the result

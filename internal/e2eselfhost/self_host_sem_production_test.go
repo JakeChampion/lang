@@ -6106,8 +6106,11 @@ function main(): i32 {
 	// A lambda returned out of a nested generic function that names no type
 	// variable is an ordinary declaration row, `__lam_0$wrap0` or
 	// `__lam_0$clo0`. Its creator `__lam_0` is a template: not kept, yet no
-	// AST-lowered body either, so the value it builds is produced.
-	{name: "a-nested-generic-function-returning-a-lambda-that-names-no-type-variable", atLeast: 7, noLeak: true, src: `
+	// AST-lowered body either, so the value it builds is produced. Under
+	// the skip knob the template's erased body stands and builds the box,
+	// so there the lambda keeps the AST lowering.
+	{name: "a-nested-generic-function-returning-a-lambda-that-names-no-type-variable", atLeast: 7, noLeak: true,
+		skip: "main", refuses: "__lam_0$wrap0: is a function value __lam_0 builds, which the AST lowering defines", src: `
 pub function make[T](seed: T): T {
     function outer(base: T): (string) => i32 {
         return (s: string): i32 => s.len() + 1;
