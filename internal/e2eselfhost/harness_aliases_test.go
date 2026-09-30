@@ -25,7 +25,6 @@ var cachedLink = e2eharness.CachedLink
 var compileFilesModload = e2eharness.CompileFilesModload
 var compileSourceModload = e2eharness.CompileSourceModload
 var writeSourceModloadProject = e2eharness.WriteSourceModloadProject
-var compileStdProgModload = e2eharness.CompileStdProgModload
 var componentCoreSection = e2eharness.ComponentCoreSection
 var contains = e2eharness.Contains
 var copySelfHostFiles = e2eharness.CopySelfHostFiles
