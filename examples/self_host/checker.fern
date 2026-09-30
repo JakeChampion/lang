@@ -417,6 +417,24 @@ function canon_trait_set(traits: string): string {
   return out;
 }
 
+// A handle names a declared resource: `own R`, `borrow R`, or the bare `R`,
+// which is an owned handle. Only a declared resource makes `own R` a handle;
+// elsewhere `own T` is a consuming parameter's spelling.
+function names_resource_handle(name: string, tn: TypeNames): boolean {
+  return tn.resources.has(handle_resource(name));
+}
+
+function handle_resource(name: string): string {
+  if (name.len() > 4 && slice_unchecked(name, 0, 4) == "own ") { return slice_unchecked(name, 4, name.len()) + ""; }
+  if (name.len() > 7 && slice_unchecked(name, 0, 7) == "borrow ") { return slice_unchecked(name, 7, name.len()) + ""; }
+  return name;
+}
+
+function resource_handle(name: string): typeinfo.Type {
+  var borrowed: boolean = name.len() > 7 && slice_unchecked(name, 0, 7) == "borrow ";
+  return typeinfo.TypeHandle { resource: handle_resource(name), borrowed: borrowed };
+}
+
 function t_dyn(traits: string): typeinfo.Type {
   return typeinfo.TypeDyn { traits: canon_trait_set(traits) };
 }
@@ -743,6 +761,9 @@ pub function type_debug(t: typeinfo.Type): string {
     typeinfo.TypeDyn(d) => {
       return "dyn:" + d.traits;
     },
+    typeinfo.TypeHandle(h) => {
+      return "handle:" + typeinfo.handle_spelling(h);
+    },
     typeinfo.TypeVoid(_) => {
       return "void";
     },
@@ -984,6 +1005,10 @@ function type_eq(a: typeinfo.Type, b: typeinfo.Type): boolean {
           return false;
         }
       }
+    },
+    typeinfo.TypeHandle(ah) => {
+      if let typeinfo.TypeHandle(bh) = b { return ah.resource == bh.resource && ah.borrowed == bh.borrowed; }
+      return false;
     },
     typeinfo.TypeVoid(_) => {
       match (b) {
@@ -1508,6 +1533,8 @@ pub struct StructTable {
   // The declared names, in `structs` order, which is also what the type
   // resolvers read (TypeNames).
   index: util.NameIndex,
+  // The module's declared `resource` names, which a handle type names.
+  resources: util.NameIndex,
 }
 
 // TypeNames is the declared struct and union names a type spelling resolves
@@ -1516,17 +1543,24 @@ pub struct StructTable {
 pub struct TypeNames {
   structs: util.NameIndex,
   unions: util.NameIndex,
+  resources: util.NameIndex,
 }
 
-function type_names(struct_names: string[], union_names: string[]): TypeNames {
-  return TypeNames { structs: util.name_index(struct_names), unions: util.name_index(union_names) };
+function type_names(struct_names: string[], union_names: string[], resource_names: string[]): TypeNames {
+  return TypeNames { structs: util.name_index(struct_names), unions: util.name_index(union_names), resources: util.name_index(resource_names) };
 }
 
 // struct_table indexes `structs` by name.
-function struct_table(structs: StructSig[]): StructTable {
+function struct_table(structs: StructSig[], resources: string[]): StructTable {
   var names: string[] = [];
   for sd in structs { names = names.append(sd.name); }
-  return StructTable { structs: structs, index: util.name_index(names) };
+  return StructTable { structs: structs, index: util.name_index(names), resources: util.name_index(resources) };
+}
+
+function resource_names(mod: parser.Module): string[] {
+  var out: string[] = [];
+  for r in mod.resources { out = out.append(r.name); }
+  return out;
 }
 
 // UnionTable is the module's union/enum-alias table plus a bucket index over
@@ -1684,7 +1718,7 @@ function new_scope(): Scope {
   var ss: StructSig[] = [];
   var us: UnionSig[] = [];
   var ms: MethodSig[] = [];
-  return Scope { names: ns, types: ts, sigs: sig_table(fs), structs: struct_table(ss), unions: union_table(us), methods: method_table(ms), imports: [], loop_depth: 0, ret_type: t_unknown("no enclosing function"), impls: [], trait_reqs: [], tparams: [], tbounds: [], tpvars: [], tpvar_tps: [] };
+  return Scope { names: ns, types: ts, sigs: sig_table(fs), structs: struct_table(ss, []), unions: union_table(us), methods: method_table(ms), imports: [], loop_depth: 0, ret_type: t_unknown("no enclosing function"), impls: [], trait_reqs: [], tparams: [], tbounds: [], tpvars: [], tpvar_tps: [] };
 }
 
 // new_scope_full is a module's scope. The impl table rides on every one:
@@ -1715,7 +1749,7 @@ function (s: Scope) with_tparams(tparams: string[], tbounds: string[]): Scope {
 // a cast — so a type parameter cannot be captured by a same-named declared type
 // at one of them.
 function (s: Scope) type_names(): TypeNames {
-  return TypeNames { structs: s.structs.index, unions: s.unions.index };
+  return TypeNames { structs: s.structs.index, unions: s.unions.index, resources: s.structs.resources };
 }
 
 function (s: Scope) resolve_type(name: string): typeinfo.Type {
@@ -3472,6 +3506,13 @@ function type_assignable(from: typeinfo.Type, to: typeinfo.Type, unions: UnionSi
         }
       }
     },
+    typeinfo.TypeHandle(th) => {
+      // An owned handle may be lent where a borrow of the same resource is
+      // taken. A borrow never becomes an owned handle, and no integer becomes
+      // either.
+      if let typeinfo.TypeHandle(fh) = from { return th.borrowed && !fh.borrowed && th.resource == fh.resource; }
+      return false;
+    },
     typeinfo.TypeDyn(_) => {
       // A direct coercion site accepts any value here; whether the concrete
       // implements the traits needs the impl table, which `coercible`
@@ -3499,7 +3540,7 @@ function type_assignable(from: typeinfo.Type, to: typeinfo.Type, unions: UnionSi
 // to a width-tagged TypeI32 (see the struct comment), which is what lets a
 // receiver method on one pass the E021 gate and a call site recover the width.
 function type_from_name(name: string): typeinfo.Type {
-  return type_from_spelling(name, type_names([], []));
+  return type_from_spelling(name, type_names([], [], []));
 }
 
 // =================== CHECKER ====================
@@ -6055,7 +6096,7 @@ function collect_method_sigs(funcs: parser.FuncDecl[], tn: TypeNames): MethodSig
 // type_from_name path used for function params — bare strings
 // like "i32" / "boolean" / "string", plus references to other
 // declared structs.
-function collect_struct_sigs(structs: parser.StructDecl[], union_names: string[]): StructSig[] {
+function collect_struct_sigs(structs: parser.StructDecl[], union_names: string[], resources: string[]): StructSig[] {
   var out: StructSig[] = [];
   // First pass: build a name-only table so type_from_name
   // can resolve struct → struct references (e.g. a `Box`
@@ -6064,7 +6105,7 @@ function collect_struct_sigs(structs: parser.StructDecl[], union_names: string[]
   for sd in structs {
     names = names.append(sd.name);
   }
-  var tn: TypeNames = type_names(names, union_names);
+  var tn: TypeNames = type_names(names, union_names, resources);
   // Second pass: resolve fields with the full name set
   // available. Struct-to-struct field references resolve via
   // the name set; union-typed fields (`f: SomeUnion`, `xs:
@@ -6099,22 +6140,22 @@ function collect_struct_sigs(structs: parser.StructDecl[], union_names: string[]
 // disagreeing about a SHAPE: a resolver modelling fewer of them answers
 // `unknown`, and an unknown type widens silently into every consumer (#8459).
 pub function type_from_name_with_structs(name: string, structs: StructSig[]): typeinfo.Type {
-  return type_from_spelling(name, type_names(struct_sig_names(structs), []));
+  return type_from_spelling(name, type_names(struct_sig_names(structs), [], []));
 }
 
 pub function type_from_name_with_struct_names(name: string, struct_names: string[]): typeinfo.Type {
-  return type_from_spelling(name, type_names(struct_names, []));
+  return type_from_spelling(name, type_names(struct_names, [], []));
 }
 
 // The two `_unions` resolvers are the context that can also name a union alias.
 // A struct name and an alias name can't collide — collect_union_sigs rejects the
 // overlap at module build time.
 pub function type_from_name_with_structs_unions(name: string, structs: StructSig[], unions: UnionSig[]): typeinfo.Type {
-  return type_from_spelling(name, type_names(struct_sig_names(structs), union_sig_names(unions)));
+  return type_from_spelling(name, type_names(struct_sig_names(structs), union_sig_names(unions), []));
 }
 
 pub function type_from_name_with_names_and_unions(name: string, struct_names: string[], union_names: string[]): typeinfo.Type {
-  return type_from_spelling(name, type_names(struct_names, union_names));
+  return type_from_spelling(name, type_names(struct_names, union_names, []));
 }
 
 function struct_sig_names(structs: StructSig[]): string[] {
@@ -6160,6 +6201,9 @@ function type_from_ref_names(r: parser.TypeRef, tn: TypeNames): typeinfo.Type {
   // parameters, tuples and containers obey the same rule as a top-level type.
   if (name.len() >= 5 && slice_unchecked(name, 0, 4) == "dyn ") {
     return t_dyn(slice_unchecked(name, 4, name.len()) + "");
+  }
+  if (names_resource_handle(name, tn)) {
+    return resource_handle(name);
   }
   if (name == "i32") {
     return t_i32();
@@ -6847,6 +6891,9 @@ function type_label(t: typeinfo.Type): string {
     },
     typeinfo.TypeDyn(d) => {
       return "dyn " + d.traits;
+    },
+    typeinfo.TypeHandle(h) => {
+      return typeinfo.handle_spelling(h);
     },
     typeinfo.TypeVoid(_) => {
       return "void";
@@ -18310,7 +18357,7 @@ function check_module_pass(mod: parser.Module, fda_diags: util.Diag[], focus: st
   // typed as a union (or union array) resolves rather than going
   // unknown. The full UnionSig table (with variants) still comes after.
   var import_paths: string[] = import_paths_of(mod);
-  var structs: StructSig[] = collect_struct_sigs(mod.structs, declared_union_names(mod));
+  var structs: StructSig[] = collect_struct_sigs(mod.structs, declared_union_names(mod), resource_names(mod));
   var struct_names: string[] = [];
   for sd in structs {
     struct_names = struct_names.append(sd.name);
@@ -18330,10 +18377,10 @@ function check_module_pass(mod: parser.Module, fda_diags: util.Diag[], focus: st
     well_typed = false;
   }
   var union_names: string[] = union_sig_names(unions);
-  var tn: TypeNames = type_names(struct_names, union_names);
+  var tn: TypeNames = type_names(struct_names, union_names, resource_names(mod));
   var sigs: FuncSig[] = collect_func_sigs(mod.funcs, tn);
   var st: SigTable = sig_table(sigs);
-  var stt: StructTable = struct_table(structs);
+  var stt: StructTable = struct_table(structs, resource_names(mod));
   var ut: UnionTable = union_table(unions);
   var methods: MethodTable = method_table(collect_method_sigs(mod.funcs, tn));
   var body_diags: util.Diag[] = [];
@@ -18753,7 +18800,7 @@ function check_module_pass(mod: parser.Module, fda_diags: util.Diag[], focus: st
 struct ModuleEnv { sigs: SigTable, structs: StructTable, unions: UnionTable, methods: MethodTable, imports: string[], impls: parser.ImplInfo[], trait_reqs: parser.TraitReq[] }
 
 function module_env(mod: parser.Module): ModuleEnv {
-  var structs: StructSig[] = collect_struct_sigs(mod.structs, declared_union_names(mod));
+  var structs: StructSig[] = collect_struct_sigs(mod.structs, declared_union_names(mod), resource_names(mod));
   var struct_names: string[] = [];
   for sd in structs {
     struct_names = struct_names.append(sd.name);
@@ -18763,11 +18810,11 @@ function module_env(mod: parser.Module): ModuleEnv {
     unions = unions.append(enum_union_sig(ed));
   }
   var union_names: string[] = union_sig_names(unions);
-  var tn: TypeNames = type_names(struct_names, union_names);
+  var tn: TypeNames = type_names(struct_names, union_names, resource_names(mod));
   var sigs: FuncSig[] = collect_func_sigs(mod.funcs, tn);
   return ModuleEnv {
     sigs: sig_table(sigs),
-    structs: struct_table(structs),
+    structs: struct_table(structs, resource_names(mod)),
     unions: union_table(unions),
     methods: method_table(collect_method_sigs(mod.funcs, tn)),
     imports: import_paths_of(mod),
@@ -19850,7 +19897,7 @@ function import_paths_of(mod: parser.Module): string[] {
 }
 
 function build_module_tables(mod: parser.Module): ModuleTables {
-  var structs: StructSig[] = collect_struct_sigs(mod.structs, declared_union_names(mod));
+  var structs: StructSig[] = collect_struct_sigs(mod.structs, declared_union_names(mod), resource_names(mod));
   var struct_names: string[] = [];
   for sd in structs {
     struct_names = struct_names.append(sd.name);
@@ -19860,10 +19907,10 @@ function build_module_tables(mod: parser.Module): ModuleTables {
     unions = unions.append(enum_union_sig(ed));
   }
   var union_names: string[] = union_sig_names(unions);
-  var tn: TypeNames = type_names(struct_names, union_names);
+  var tn: TypeNames = type_names(struct_names, union_names, resource_names(mod));
   var sigs: FuncSig[] = collect_func_sigs(mod.funcs, tn);
   var methods: MethodTable = method_table(collect_method_sigs(mod.funcs, tn));
-  return ModuleTables { structs: struct_table(structs), unions: union_table(unions), sigs: sig_table(sigs), methods: methods, imports: import_paths_of(mod), impls: assoc_func_impls(mod.impls, mod.funcs), trait_reqs: mod.trait_reqs };
+  return ModuleTables { structs: struct_table(structs, resource_names(mod)), unions: union_table(unions), sigs: sig_table(sigs), methods: methods, imports: import_paths_of(mod), impls: assoc_func_impls(mod.impls, mod.funcs), trait_reqs: mod.trait_reqs };
 }
 
 // settle_int_tree records a contextual integer type on the compile-only AST.

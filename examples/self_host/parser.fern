@@ -15905,8 +15905,9 @@ function lower_defers_body(body0: ast.Stmt[], params: string[], ret: string, fn_
     var cleanup_err: ast.Stmt[] = dl_cleanup_kind(cr.actions, cr.flags, 1);
     var expanded: ast.Stmt[] = dl_expand_returns(cr.stmts, cleanup, cleanup_err);
     var body: ast.Stmt[] = [];
-    // The shared return temp, and a boolean flag per defer.
-    body = body.append(dl_defret_decl(ret, fn_ret, fn_param_types));
+    // The shared return temp, which a void return never writes, and a
+    // boolean flag per defer.
+    if (ret != "void") { body = body.append(dl_defret_decl(ret, fn_ret, fn_param_types)); }
     var i: i32 = 0;
     while (i < cr.actions.len()) {
         body = body.append(s_var("__dfa" + dl_itoa(i), "boolean", e_bool(false)));

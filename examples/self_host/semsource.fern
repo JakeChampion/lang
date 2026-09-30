@@ -874,7 +874,7 @@ function record_field(fa: ast.ExprFieldAccess, s: State): Value {
     if (!s.ok) { return container; }
     // `r.fd` on a stream handle: the handle is its descriptor, so the
     // projection is the value itself read as the i32.
-    if (fa.field == "fd" && semtypes.is_handle(s.values[container.id])) {
+    if (fa.field == "fd" && semtypes.is_stream(s.values[container.id])) {
         return define(s, ssasem.cast(), [container.id], 0, "", t_i32());
     }
     var name: string = "";
@@ -2479,6 +2479,7 @@ function widen(v: Value, expected: typeinfo.Type): Value {
     var s: State = v.s;
     if (semtypes.equal(s.values[v.id], expected)) { return v; }
     if (ssasem.is_view(expected) && ssasem.is_string(s.values[v.id])) { return define(s, ssasem.str_as(), [v.id], 0, "", expected); }
+    if (ssasem.lends_handle(s.values[v.id], expected)) { return define(s, ssasem.cast(), [v.id], 0, "", expected); }
     if (ssasem.is_dyn(expected) && (struct_name(s.values[v.id]) != "" || union_name(s.values[v.id]) != "")) {
         return define(s, ssasem.dyn_up(), [v.id], 0, "", expected);
     }

@@ -164,7 +164,11 @@ pub struct TypeUnknown { reason: string }
 // TypeUnknown, which means the checker could not work a type out at all.
 pub struct TypeErased { name: string }
 
-pub type Type = TypeI32 | TypeBool | TypeString | TypeFloat | TypeArray | TypeStruct | TypeTuple | TypeFunc | TypeMap | TypeUnion | TypeDyn | TypeVoid | TypeUnknown | TypeErased;
+// A WIT resource handle, `own R` or `borrow R`: the i32 the host names a
+// resource by. A borrowed handle is lent, and its holder never drops it.
+pub struct TypeHandle { resource: string, borrowed: boolean }
+
+pub type Type = TypeI32 | TypeBool | TypeString | TypeFloat | TypeArray | TypeStruct | TypeTuple | TypeFunc | TypeMap | TypeUnion | TypeDyn | TypeHandle | TypeVoid | TypeUnknown | TypeErased;
 
 pub function unchecked(): Type {
   return TypeUnknown { reason: "not yet checked" };
@@ -205,6 +209,11 @@ function integer_spelling(i: TypeI32): string {
 // Unknown and opaque signatures have no usable declaration spelling.
 // A polymorphic float uses Fern's f64 default when no context committed f32;
 // the semantic Type remains on the AST and retains that polymorphism metadata.
+pub function handle_spelling(h: TypeHandle): string {
+  if (h.borrowed) { return "borrow " + h.resource; }
+  return "own " + h.resource;
+}
+
 pub function spelling(t: Type): string {
   match (t) {
     TypeI32(i) => { return integer_spelling(i); },
@@ -252,6 +261,7 @@ pub function spelling(t: Type): string {
       if (d.traits.len() == 0) { return ""; }
       return "dyn " + d.traits;
     },
+    TypeHandle(h) => { return handle_spelling(h); },
     TypeVoid(_) => { return "void"; },
     TypeUnknown(_) => { return ""; },
     TypeErased(_) => { return ""; }

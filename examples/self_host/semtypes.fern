@@ -94,6 +94,7 @@ function named_equal(a: typeinfo.Type, b: typeinfo.Type): boolean {
     if let typeinfo.TypeUnion(x) = a { if let typeinfo.TypeUnion(y) = b { return named_args_equal(x.name, x.args, y.name, y.args); } }
     if let typeinfo.TypeFunc(x) = a { if let typeinfo.TypeFunc(y) = b { return callable_equal(x, y); } }
     if let typeinfo.TypeDyn(x) = a { if let typeinfo.TypeDyn(y) = b { return x.traits == y.traits; } }
+    if let typeinfo.TypeHandle(x) = a { if let typeinfo.TypeHandle(y) = b { return x.resource == y.resource && x.borrowed == y.borrowed; } }
     return false;
 }
 
@@ -128,6 +129,7 @@ function concrete_leaf(t: typeinfo.Type, allow_void: boolean): boolean {
     if let typeinfo.TypeBool(_) = t { return true; }
     if let typeinfo.TypeString(s) = t { return s.tag == 0 || s.tag == 1; }
     if let typeinfo.TypeDyn(d) = t { return d.traits.len() > 0; }
+    if let typeinfo.TypeHandle(h) = t { return h.resource.len() > 0; }
     if let typeinfo.TypeVoid(_) = t { return allow_void; }
     return false;
 }
@@ -183,12 +185,20 @@ pub function cell_elem(t: typeinfo.Type): typeinfo.Type {
     return typeinfo.unchecked();
 }
 
-// A stream HANDLE — the `Reader` / `Writer` the front end injects, never
-// declared by a module — is REPRESENTED by its bare descriptor: an i32 the
-// resource ops take directly, the same value `stdin()` answers. So the
-// nominal is a record's only in the type system; it holds no box, anchors
-// nothing, and carries no unit to release.
+// A HANDLE is REPRESENTED by its bare descriptor, an i32: it holds no box,
+// anchors nothing, and carries no unit to release. A stream handle — the
+// `Reader` / `Writer` the front end injects, never declared by a module — is
+// the value the resource ops take directly, the same one `stdin()` answers,
+// and wears a record's nominal only in the type system. A WIT resource handle
+// (`own R` / `borrow R`) is the i32 the host names the resource by; dropping
+// an owned one is a call to its `[resource-drop]` import, which the front end
+// inserts, not a release.
 pub function is_handle(t: typeinfo.Type): boolean {
+    if let typeinfo.TypeHandle(_) = t { return true; }
+    return is_stream(t);
+}
+
+pub function is_stream(t: typeinfo.Type): boolean {
     if let typeinfo.TypeStruct(s) = t { return s.name == "Reader" || s.name == "Writer"; }
     return false;
 }

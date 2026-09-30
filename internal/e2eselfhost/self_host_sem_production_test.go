@@ -4712,6 +4712,17 @@ function f(n: i32): string {
 }
 function main(): i32 { print(f(3) + " " + f(0)); return f(2).len(); }
 `},
+	// A void function with a `defer` and a `return;`: the defer expansion's
+	// return temp is never written on a void return, and is not declared.
+	{name: "a-void-function-with-a-defer-and-a-return-is-produced", atLeast: 2, noLeak: true, src: `
+function f(n: i32): void {
+    defer write("d");
+    if (n > 0) { write("a"); return; }
+    write("b");
+    return;
+}
+function main(): i32 { f(1); f(0); return 0; }
+`},
 	// std/time's Zoned.format_rfc3339 is that branch shape (#10796).
 	{name: "std-time-format-rfc3339-is-produced", atLeast: 77, noLeak: true, src: `
 import "std/time";

@@ -1611,10 +1611,20 @@ pub function cast_ascribes(to: typeinfo.Type): boolean {
     return !converts_as_integer(to) && !is_float(to);
 }
 
+// An owned resource handle where a borrow of the same resource is taken: the
+// same i32, lent.
+pub function lends_handle(from: typeinfo.Type, to: typeinfo.Type): boolean {
+    if let typeinfo.TypeHandle(fh) = from {
+        if let typeinfo.TypeHandle(th) = to { return th.borrowed && !fh.borrowed && th.resource == fh.resource; }
+    }
+    return false;
+}
+
 pub function cast_admits(from: typeinfo.Type, to: typeinfo.Type): boolean {
     if (reinterprets(from, to)) { return true; }
     // A stream handle's descriptor read (`r.fd`): the handle IS the i32.
-    if (semtypes.is_handle(from) && is_i32(to)) { return true; }
+    if (semtypes.is_stream(from) && is_i32(to)) { return true; }
+    if (lends_handle(from, to)) { return true; }
     if (is_usize(from)) { return converts_as_integer(to); }
     if (is_usize(to)) { return converts_as_integer(from); }
     if (converts_as_integer(from) && converts_as_integer(to)) { return true; }
@@ -1626,7 +1636,7 @@ pub function cast_admits(from: typeinfo.Type, to: typeinfo.Type): boolean {
 
 function cast_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     if (ins.args.len() != 1) { return "cast arity"; }
-    if (!converts_as_integer(result) && !is_float(result) && !reference(result)) { return "cast result type"; }
+    if (!converts_as_integer(result) && !is_float(result) && !reference(result) && !semtypes.is_handle(result)) { return "cast result type"; }
     if (!cast_admits(f.values[ins.args[0]], result)) { return "cast operand type"; }
     return "";
 }
