@@ -122,9 +122,11 @@ func TestSelfHostStrAccumIRX86_64(t *testing.T) {
 			if len(asm) == 0 {
 				t.Fatal("self-host compiler emitted 0 bytes")
 			}
-			reclaims := countUserStrFreeReclaims(asm)
+			// The reclaim decisions counted are the AST lowering's.
+			astAsm := runCaptureAST(t, runner, driverBin, []byte(tc.src))
+			reclaims := countUserStrFreeReclaims(astAsm)
 			if tc.scope != "" {
-				reclaims = countCallsInFn(asm, tc.scope, "__fn___fern_str_free")
+				reclaims = countCallsInFn(astAsm, tc.scope, "__fn___fern_str_free")
 			}
 			if tc.mustReclaim && reclaims == 0 {
 				t.Errorf("%s: expected an accumulator reclaim (call __fn___fern_str_free), found none — the growth chain leaks", tc.name)

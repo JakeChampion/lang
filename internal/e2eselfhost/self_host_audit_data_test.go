@@ -1,9 +1,6 @@
 package e2eselfhost
 
 import (
-	"os"
-	"os/exec"
-	"path/filepath"
 	"testing"
 )
 
@@ -42,32 +39,13 @@ function main(): i32 { var m: Map[i32,i32] = map_new(8); m = m.insert(1,1); m = 
 }
 
 // TestSelfHostAuditDataX86_64 runs each string/array/map case through the
-// self-hosted x86-64 driver and asserts the exit code.
+// self-hosted x86-64 load driver and asserts the exit code.
 func TestSelfHostAuditDataX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := writeSelfHostAsmProject(t)
-	src, err := os.ReadFile("../../examples/self_host/asm_run.fern")
-	if err != nil {
-		t.Fatalf("read asm_run.fern: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "asm_run.fern"), src, 0o644); err != nil {
-		t.Fatalf("write asm_run.fern: %v", err)
-	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
-
+	l := newStdlibLoader(t)
 	for _, tc := range auditDataCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src))
-			if len(asm) == 0 {
-				t.Fatal("self-host compiler emitted 0 bytes")
-			}
-			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(progBin)
-			} else {
-				cmd = exec.Command(runner[0], append(runner[1:], progBin)...)
-			}
+			asm := l.emit(t, tc.src)
+			cmd := runX86_64Bin(l.runner, buildBin(t, l.gcc, t.TempDir(), tc.name, asm))
 			_ = cmd.Run()
 			if code := cmd.ProcessState.ExitCode(); code != tc.exit {
 				t.Errorf("%s exited %d, want %d", tc.name, code, tc.exit)

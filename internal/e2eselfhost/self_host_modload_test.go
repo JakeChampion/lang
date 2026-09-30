@@ -49,7 +49,7 @@ func TestSelfHostModloadX86_64(t *testing.T) {
 		"function classify(e: IoError): i32 {\n" +
 		"    match (e) {\n" +
 		"        NotFound(m) => { return 1; },\n" +
-		"        Other(m) => { return 2; },\n" +
+		"        Other(p, m) => { return 2; },\n" +
 		"        _ => { return 0; },\n" +
 		"    }\n" +
 		"}\n" +

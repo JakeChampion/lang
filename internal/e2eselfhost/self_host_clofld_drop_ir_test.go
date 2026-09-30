@@ -26,6 +26,10 @@ import (
 // nesting-aware fresh_struct_lit_type_deep, so a loop/if-nested declaration is
 // no longer wrongly NODEEP'd into the box-only shallow dec). The churn case
 // asserts the reclaim call and proves it stays BALANCED at scale.
+//
+// The admission and the helpers it names are the AST lowering's, so the asm
+// is read from that lowering; the programs run as the typed lowering builds
+// them.
 func TestSelfHostClofldDropIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -44,7 +48,7 @@ func TestSelfHostClofldDropIRX86_64(t *testing.T) {
 		if len(asm) == 0 {
 			t.Fatalf("%s: self-host compiler emitted 0 bytes", name)
 		}
-		if wantAsmSubstr != "" && !strings.Contains(string(asm), wantAsmSubstr) {
+		if wantAsmSubstr != "" && !strings.Contains(string(runCaptureAST(t, runner, driverBin, []byte(prog))), wantAsmSubstr) {
 			t.Fatalf("%s: emitted asm missing %q — the fn-field struct was not admitted / the k_clo drop not emitted", name, wantAsmSubstr)
 		}
 		bin := buildBin(t, gcc, dir, name, string(asm))

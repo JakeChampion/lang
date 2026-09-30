@@ -1,9 +1,7 @@
 package e2eselfhost
 
 import (
-	"os"
 	"os/exec"
-	"path/filepath"
 	"testing"
 )
 
@@ -28,7 +26,8 @@ function main(): i32 { var a: string = (42).to_string(); if (a.len() != 2) { ret
 function main(): i32 { var z: string = (0).to_string(); var n: string = (5 - 12).to_string(); if (z.len() != 1) { return 60; } if (z[0] != 48) { return 61; } if (n.len() != 2) { return 62; } if (n[0] != 45) { return 63; } if (n[1] != 55) { return 64; } return z.len() + n.len(); }`, 3},
 	// string.to_string() is identity — same bytes, same length.
 	{"string-identity",
-		`import "std/string";
+		`import "std/i32";
+import "std/string";
 function main(): i32 { var s: string = "hi"; var t: string = s.to_string(); if (t.len() != 2) { return 70; } if (t[0] != 104) { return 71; } if (t[1] != 105) { return 72; } return t.len(); }`, 2},
 	// to_string() result feeds `+` concat (the Display shape): "n=" + (7).to_string() == "n=7".
 	{"concat-with-to-string",
@@ -65,22 +64,15 @@ function main(): i32 { var a: string = (100).to_string(); var b: string = (9).to
 }
 
 // TestSelfHostToStringIRX86_64 compiles each case through the self-hosted x86-64
-// driver (asm_run, IR default-on) and asserts the exit code.
+// load driver (asm_load_run) and asserts the exit code.
 func TestSelfHostToStringIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
-	dir := writeSelfHostAsmProject(t)
-	src, err := os.ReadFile("../../examples/self_host/asm_run.fern")
-	if err != nil {
-		t.Fatalf("read asm_run.fern: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "asm_run.fern"), src, 0o644); err != nil {
-		t.Fatalf("write asm_run.fern: %v", err)
-	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
+	l := newStdlibLoader(t)
+	dir := t.TempDir()
 
 	for _, tc := range toStringIRCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src))
+			asm := []byte(l.emit(t, tc.src))
 			if len(asm) == 0 {
 				t.Fatal("self-host compiler emitted 0 bytes")
 			}

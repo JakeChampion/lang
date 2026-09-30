@@ -63,8 +63,13 @@ func TestSelfHostConstFuncGen2(t *testing.T) {
 	selfSrc := filepath.Join(dir, "asm_load_run.fern")
 	mmc1 := buildSelfHostBin(t, gcc, dir, "asm_load_run.fern", "cfg_mmc1")
 
-	// gen 2: built by gen 1, so its own body came out of the IR emitter.
-	stage2Asm, err := exec.Command(mmc1, selfSrc).Output()
+	// gen 2: built by gen 1, so its own body came out of the IR emitter. The
+	// compiler imports core/map, which only the stdlib root resolves.
+	stdlibRoot, err := filepath.Abs("../../internal/stdlib")
+	if err != nil {
+		t.Fatalf("abs stdlib root: %v", err)
+	}
+	stage2Asm, err := exec.Command(mmc1, selfSrc, stdlibRoot).Output()
 	if err != nil {
 		t.Fatalf("mmc1 compile self failed: %v", err)
 	}

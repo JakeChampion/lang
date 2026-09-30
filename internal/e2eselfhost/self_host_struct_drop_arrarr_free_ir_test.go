@@ -85,11 +85,13 @@ func TestSelfHostStructDropArrArrFreeIRX86_64(t *testing.T) {
 		if len(asm) == 0 {
 			t.Fatalf("%s: self-host compiler emitted 0 bytes", name)
 		}
-		if got := strings.Count(asm, "call __fn___fern_arrarr_free"); got != wantCalls {
+		// The helper calls counted are the AST lowering's drop helpers'.
+		astAsm := string(runCaptureAST(t, runner, driverBin, []byte(prog)))
+		if got := strings.Count(astAsm, "call __fn___fern_arrarr_free"); got != wantCalls {
 			t.Errorf("%s: %d `call __fn___fern_arrarr_free`, want %d — the struct-array field release is not going through the shared helper", name, got, wantCalls)
 		}
 		for _, walk := range []string{".Lstd_Bag_loop", ".Lfr_Bag_loop"} {
-			if strings.Contains(asm, walk) {
+			if strings.Contains(astAsm, walk) {
 				t.Errorf("%s: emitted asm still has %s — the open-coded element walk came back beside the helper call", name, walk)
 			}
 		}
