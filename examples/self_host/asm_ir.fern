@@ -732,7 +732,8 @@ function buf_block_free(s: asmcore.EmitState, ptr: string, words: string, lbl: s
 
 // __fern_alloc_bytes(%rdi = n) -> a zeroed packed u8[] of n bytes: a box of
 // ceil(n/8) words, whose length word __fern_arr_box writes as that word count
-// and this overwrites with n. A negative n aborts.
+// and this overwrites with n. It backs the packed alloc_u8 op, which is how the
+// typed lowering emits `__alloc_u8`. A negative n aborts.
 function emit_alloc_bytes(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("__fern_alloc_bytes:\n");
     s = s.write("    testl %edi, %edi\n    js __fern_alloc_size_abort\n");
@@ -4077,6 +4078,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(".globl __fern_alloc_u8\n");
     s = s.write(".type __fern_alloc_u8, @function\n");
     s = s.write("__fern_alloc_u8:\n");
+    s = s.write("    testl %edi, %edi\n    js __fern_alloc_size_abort\n");
     s = s.write("    pushq %rbp\n");
     s = s.write("    movq %rsp, %rbp\n");
     s = s.write("    pushq %r12\n");

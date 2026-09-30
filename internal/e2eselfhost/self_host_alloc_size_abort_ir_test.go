@@ -30,9 +30,9 @@ function main(): i32 {
 
 const allocSizeCause = "fern: allocation size out of range"
 
-func assertX86SizeAbort(t *testing.T, cli *strictCLI, src string) {
+func assertX86SizeAbort(t *testing.T, cli *strictCLI, src string, env ...string) {
 	t.Helper()
-	bin := buildBin(t, cli.gcc, t.TempDir(), "prog", cli.emit(t, "x86-64-linux", src))
+	bin := buildBin(t, cli.gcc, t.TempDir(), "prog", cli.emit(t, "x86-64-linux", src, env...))
 	stderr, exit := runWithStdin(t, cli.runner, bin, nil)
 	if exit != 134 || !strings.Contains(stderr, allocSizeCause) {
 		t.Fatalf("exit %d, stderr %q; want 134 and %q", exit, stderr, allocSizeCause)
@@ -42,6 +42,11 @@ func assertX86SizeAbort(t *testing.T, cli *strictCLI, src string) {
 func TestSelfHostAllocSizeAbortIRX86_64(t *testing.T) {
 	cli := newStrictCLI(t)
 	t.Run("alloc-u8-negative-length", func(t *testing.T) { assertX86SizeAbort(t, cli, allocNegativeLengthSrc) })
+	// The AST lowering emits the unpacked op, which reaches __fern_alloc_u8
+	// rather than __fern_alloc_bytes.
+	t.Run("alloc-u8-negative-length-ast-lowering", func(t *testing.T) {
+		assertX86SizeAbort(t, cli, allocNegativeLengthSrc, "FERN_SEM_IR=")
+	})
 	t.Run("repeat-wraps-to-zero", func(t *testing.T) { assertX86SizeAbort(t, cli, repeatWrapsToZeroSrc) })
 }
 

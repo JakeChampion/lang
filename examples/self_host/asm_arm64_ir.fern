@@ -5204,7 +5204,8 @@ function arr_push_fast_u8(slow: string): string {
 
 // __fern_alloc_bytes(x0 = n) -> a zeroed packed u8[] of n bytes: a box of
 // ceil(n/8) words, whose length word __fern_arr_box writes as that word count
-// and this overwrites with n. A negative n aborts.
+// and this overwrites with n. It backs the packed alloc_u8 op, which is how the
+// typed lowering emits `__alloc_u8`. A negative n aborts.
 function emit_alloc_bytes(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("__fern_alloc_bytes:\n");
     s = s.write("    tbz w0, #31, .Lfern_alloc_bytes_sized\n    b __fern_alloc_size_abort\n.Lfern_alloc_bytes_sized:\n");
@@ -8044,6 +8045,7 @@ function emit_rt_net(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
     s = s.write(".globl __fern_alloc_u8\n");
     s = s.write(".type __fern_alloc_u8, %function\n");
     s = s.write("__fern_alloc_u8:\n");
+    s = s.write("    tbz w0, #31, .Lfern_alloc_u8_sized\n    b __fern_alloc_size_abort\n.Lfern_alloc_u8_sized:\n");
     s = s.write("    stp x29, x30, [sp, #-16]!\n");
     s = s.write("    mov x29, sp\n");
     s = s.write("    stp x19, x20, [sp, #-16]!\n");
