@@ -347,14 +347,18 @@ function ast_value_call(called: typeinfo.Type[], values: AstValue[]): string {
     return "";
 }
 
-// The declaration a hoisted body was lifted out of: the name before the
+// The declaration a hoisted body was lifted out of: the name before the last
 // marker. The lift names the box `__mkclo$<creator>$wrapN`, built in the
-// creator's body, so the creator is the one that hands the value out.
+// creator's body, so the creator is the one that hands the value out; a body
+// lifted out of a lifted body is `<creator>$wrapN$wrapM`.
 function creator_of(name: string): string {
     var markers: string[] = ["$wrap", "$clo", "$iife"];
-    for m in markers {
-        var at: i32 = util.index_of_sub(name, m);
-        if (at >= 0) { return slice_unchecked(name, 0, at) + ""; }
+    var at: i32 = name.len() - 1;
+    while (at > 0) {
+        for m in markers {
+            if (at + m.len() <= name.len() && slice_unchecked(name, at, at + m.len()) == m) { return slice_unchecked(name, 0, at) + ""; }
+        }
+        at = at - 1;
     }
     return "";
 }
@@ -575,13 +579,15 @@ function rows_of(mod: parser.Module, built: semsource.Built, structs: irlower.St
     for p in built.instances {
         // An instance is named after the template it came from, so the bisect
         // knob reaches it through the same prefix test.
+        // A refused instance has no graph to name it; its symbol is the one requested.
+        var name: string = built.names[at];
         var plan: ssaunits.Plan = ssaunits.refused("not selected");
         if (row_reusable(prev, changed, at)) { plan = prev.plans[at]; }
-        else if (selected(only, skip, p.func.graph.name)) { plan = produced_plan(p, p.func.graph.name); }
+        else if (selected(only, skip, name)) { plan = produced_plan(p, name); }
         plans = plans.append(plan);
-        keys = keys.append(p.func.graph.name);
+        keys = keys.append(name);
         funcs = funcs.append(p.func);
-        r = Rows { ...r, n1: r.n1.append(p.func.graph.name), n2: r.n2.append(""), called: r.called.append(called_values(p.func)) };
+        r = Rows { ...r, n1: r.n1.append(name), n2: r.n2.append(""), called: r.called.append(called_values(p.func)) };
         at = at + 1;
     }
     r = Rows { ...r, grows: ssaunits.grow_table(keys, funcs, plans), plans: plans };

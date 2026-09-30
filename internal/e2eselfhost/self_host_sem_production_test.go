@@ -5882,6 +5882,38 @@ function main(): i32 {
 	// The lambda binds only the variable its type mentions, so its one
 	// instance `__lam_0$wrap0$i32` is built by both instances of `__lam_0`,
 	// whose names carry a second binding it does not spell.
+	// A body hoisted out of a hoisted body is named `<creator>$clo0$clo0`;
+	// its creator is the body before the last marker, not the declaration
+	// before the first.
+	{name: "a-lambda-lifted-out-of-a-lifted-lambda", atLeast: 7, src: `
+struct Box { f: (i32) => i32 }
+
+function adder(n: i32): (i32) => (i32) => i32 {
+    return (x: i32) => (y: i32) => x + y + n;
+}
+
+function boxed(n: i32): i32 {
+    var b: Box = Box { f: (x: i32): i32 => {
+        var c: Box = Box { f: (y: i32): i32 => y + x + n };
+        return c.f(x);
+    } };
+    return b.f(n);
+}
+
+function listed(seed: i32, n: i32): i32 {
+    var fs: ((i32) => i32)[] = [((k: i32): i32 => {
+        var gs: ((i32) => i32)[] = [((j: i32): i32 => seed + j)];
+        return gs[0](k + n);
+    })];
+    return fs[0](0);
+}
+
+function main(): i32 {
+    var f: (i32) => (i32) => i32 = adder(1);
+    var g: (i32) => i32 = f(2);
+    return g(3) + boxed(3) + listed(7, 1);
+}
+`},
 	{name: "a-lambda-binding-fewer-variables-than-its-creator", atLeast: 2, src: `
 pub function make[A, B](a: A, b: B): A {
     function idmaker(base: A, other: B): (A) => A {
