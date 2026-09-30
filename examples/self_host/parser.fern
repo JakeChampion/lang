@@ -12890,7 +12890,58 @@ function clone_struct_method(m: FuncDecl, base: string, key: string, gstructs: S
 // concrete instantiation, rewriting all references to the mangled name.
 // See the section comment above. Runs after function monomorphisation so
 // it also sees the concrete `Box[i32]` annotations those clones produce.
+// A generic enum whose templates name a generic struct (`A(Box[U])`) is left
+// as written, and so are the generic structs and bounded generics: only the
+// enum pass knows `U`, and monomorphize_enum_structs instantiates what it
+// substitutes.
 pub function monomorphize_structs(mod: Module): Module {
+    return ms_module(mod, true);
+}
+
+// monomorphize_enum_structs runs after monomorphize_enums: it clones the
+// generic structs the enum clones name (`A__i32(Box[i32])`), and is a no-op
+// when monomorphize_structs deferred nothing.
+pub function monomorphize_enum_structs(mod: Module): Module {
+    return ms_module(mod, false);
+}
+
+// The generic enums whose variant payloads or method signatures name a
+// generic struct.
+function ms_deferred_enums(mod: Module, gstructs: StructDecl[]): string[] {
+    var out: string[] = [];
+    for sd in mod.structs {
+        if (sd.enum_owner.len() == 0 || genum_index(mod.enums, sd.enum_owner) < 0 || str_in(out, sd.enum_owner)) { continue; }
+        for f in sd.fields {
+            if (ms_names_gstruct(f.type_name, gstructs) || ms_names_gstruct(f.fn_ret, gstructs) || ms_names_gstruct(f.fn_param_types, gstructs)) { out = out.append(sd.enum_owner); break; }
+        }
+    }
+    for fd in mod.funcs {
+        var owner: string = strip_struct_base(fd.receiver_type);
+        if (fd.receiver_type.len() == 0 || genum_index(mod.enums, owner) < 0 || str_in(out, owner)) { continue; }
+        var names: boolean = ms_names_gstruct(fd.ret_type, gstructs) || ms_names_gstruct(fd.ret_fn_ret, gstructs);
+        for p in fd.params { if (ms_names_gstruct(p.type_name, gstructs) || ms_names_gstruct(p.fn_ret, gstructs)) { names = true; } }
+        if (names) { out = out.append(owner); }
+    }
+    return out;
+}
+
+function ms_names_gstruct(ty: string, gstructs: StructDecl[]): boolean {
+    if (ty.len() == 0) { return false; }
+    return mg_ty_list(ty, gstructs, Insts { inames: [], itypes: [], iargs: [] }).mins.inames.len() > 0;
+}
+
+// A deferred generic enum's variant struct or method.
+function ms_deferred_owner(sd_owner: string, receiver_type: string, deferred: string[]): boolean {
+    if (sd_owner.len() > 0) { return str_in(deferred, sd_owner); }
+    return receiver_type.len() > 0 && str_in(deferred, strip_struct_base(receiver_type));
+}
+
+function struct_named(structs: StructDecl[], name: string): boolean {
+    for sd in structs { if (sd.name == name) { return true; } }
+    return false;
+}
+
+function ms_module(mod: Module, defer_enums: boolean): Module {
     var gstructs: StructDecl[] = [];
     var gi: i32 = 0;
     while (gi < mod.structs.len()) {
@@ -12898,16 +12949,22 @@ pub function monomorphize_structs(mod: Module): Module {
         gi = gi + 1;
     }
     if (gstructs.len() == 0) { return Module { ...mod, funcs: drop_bg_templates(mod.funcs) }; }
+    var deferred: string[] = [];
+    if (defer_enums) { deferred = ms_deferred_enums(mod, gstructs); }
+    var keep: boolean = deferred.len() > 0;
 
     var ins: Insts = Insts { inames: [], itypes: [], iargs: [] };
     var sfns: MFns = mfns_of(mod.funcs, mod.structs, mod.enums, mod.impls);
 
-    // Phase 1: rewrite all references; drop the generic decls.
+    // Phase 1: rewrite all references; drop the generic decls unless a
+    // deferred enum's templates still name them.
     var nstructs: StructDecl[] = [];
     var si: i32 = 0;
     while (si < mod.structs.len()) {
         var sd: StructDecl = mod.structs[si];
-        if (sd.type_params.len() == 0) {
+        if (keep && (sd.type_params.len() > 0 || ms_deferred_owner(sd.enum_owner, "", deferred))) {
+            nstructs = nstructs.append(sd);
+        } else if (sd.type_params.len() == 0) {
             var nf: StructFieldDecl[] = [];
             var fj: i32 = 0;
             while (fj < sd.fields.len()) {
@@ -12928,7 +12985,9 @@ pub function monomorphize_structs(mod: Module): Module {
     while (fi2 < mod.funcs.len()) {
         var fn: FuncDecl = mod.funcs[fi2];
         var rbase: string = strip_struct_base(fn.receiver_type);
-        if (fn.receiver_type.len() > 0 && gstruct_index(gstructs, rbase) >= 0) {
+        if (keep && (gstruct_index(gstructs, rbase) >= 0 || is_bg_template(fn) || ms_deferred_owner("", fn.receiver_type, deferred))) {
+            nfuncs = nfuncs.append(fn);
+        } else if (fn.receiver_type.len() > 0 && gstruct_index(gstructs, rbase) >= 0) {
             // generic-struct method OR receiver-less associated fn (a derived
             // `default()`, receiver_name "") — dropped here, cloned in phase 2.
         } else if (is_bg_template(fn)) {
@@ -12970,6 +13029,8 @@ pub function monomorphize_structs(mod: Module): Module {
                 nfuncs = nfuncs.append(bfr.ffn);
             }
         }
+        // monomorphize_structs already cloned what it saw.
+        if (idx >= 0 && struct_named(mod.structs, base + "__" + sanitize_key(key))) { idx = 0 - 1; }
         if (idx >= 0) {
             var gd: StructDecl = gstructs[idx];
             // A single-type-param struct's key IS the one concrete arg verbatim
@@ -18246,7 +18307,7 @@ pub function module_with_builtins_typed(mod: Module): Module {
     // Prepare defaults, ranges, return types and resource drops before generic
     // specialization. Deferred actions retain their source scopes until the
     // IR consumer resolves binding identities and expands cleanup.
-    var mono: Module = monomorphize_enums(monomorphize_structs(monomorphize_module(register_struct_method_generics(register_map_method_generics(register_array_method_generics(lower_defers_prepass_module(hoist_local_funcs_module(desugar_prepass_module(mod)))))))));
+    var mono: Module = monomorphize_enum_structs(monomorphize_enums(monomorphize_structs(monomorphize_module(register_struct_method_generics(register_map_method_generics(register_array_method_generics(lower_defers_prepass_module(hoist_local_funcs_module(desugar_prepass_module(mod))))))))));
     return Module { ...mono, structs: inject_builtin_enums(mono.structs) };
 }
 
