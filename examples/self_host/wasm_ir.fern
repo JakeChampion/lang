@@ -2635,7 +2635,7 @@ pub function fs_imports_p2(has_readfile: boolean, has_writefile: boolean): strin
 // same reason) through $__fern_build_io_error_p2. Both emitters get one, each
 // against its own box layout — see build_io_error_func's `slot` (#5795).
 function err_payload_p2(): string {
-  return "(call $__fern_build_io_error_p2 (i32.load8_u (i32.add (local.get $ra) (i32.const 4))) (local.get $np))";
+  return "(call $__fern_build_io_error_p2 (i32.load8_u (i32.add (local.get $ra) (i32.const 4))) (call $__fern_rc_inc (local.get $np)))";
 }
 
 // no_preopen_p2 follows a get-directories call whose list header sits at
@@ -2646,7 +2646,7 @@ function no_preopen_p2(): string {
   var o: string = "    (if (i32.eqz (i32.load (i32.add (local.get $ra) (i32.const 4)))) (then\n";
   o = o + "      (local.set $tmp (call $__fern_str_box (i32.const 8)))\n";
   o = o + "      (i32.store (local.get $tmp) (i32.const 1))\n";
-  o = o + "      (i32.store (i32.add (local.get $tmp) (i32.const 4)) (call $__fern_build_io_error (i32.const 44) (local.get $np)))\n";
+  o = o + "      (i32.store (i32.add (local.get $tmp) (i32.const 4)) (call $__fern_build_io_error (i32.const 44) (call $__fern_rc_inc (local.get $np))))\n";
   o = o + "      (return (local.get $tmp))))\n";
   return o;
 }
@@ -2701,7 +2701,7 @@ pub function readfile_func_p2(): string {
   o = o + "    (if (i32.eqz (call $__fern_utf8_valid (i32.add (local.get $buf) (i32.const 4)) (local.get $off))) (then\n";
   o = o + "      (local.set $tmp (call $__fern_str_box (i32.const 8)))\n";
   o = o + "      (i32.store (local.get $tmp) (i32.const 1))\n";
-  o = o + "      (i32.store (i32.add (local.get $tmp) (i32.const 4)) (call $__fern_build_io_error (i32.const 25) (local.get $np)))\n";
+  o = o + "      (i32.store (i32.add (local.get $tmp) (i32.const 4)) (call $__fern_build_io_error (i32.const 25) (call $__fern_rc_inc (local.get $np))))\n";
   o = o + "      (return (local.get $tmp))))\n";
   o = o + "    (local.set $tmp (call $__fern_str_box (i32.const 8)))\n";
   o = o + "    (i32.store (local.get $tmp) (i32.const 0))\n";
@@ -6269,7 +6269,8 @@ function struct_type_id(structs: irlower.StructTab, name: string): i32 {
 // two-field default arm `Other(path, msg)` — where every unmapped errno lands —
 // wrong in both fields (#5795). Boxes via $__fern_str_box, the same rc-headered
 // allocation both emitters build variants with. A string field is a single
-// [len][bytes] block pointer, so the caller's path block is stored directly.
+// [len][bytes] block pointer, and the builder consumes the path it is given: a
+// caller passing a borrowed path retains it first.
 // build_io_error_p2_func emits $__fern_build_io_error_p2(code, path): the
 // PREVIEW2 sibling of $__fern_build_io_error below. It does not duplicate the
 // variant boxing — it translates a `wasi:filesystem/types.error-code`
@@ -6292,7 +6293,7 @@ pub function build_io_error_p2_func(): string {
     o = o + "    (if (i32.eq (local.get $code) (i32.const " + util.i32_to_string(ci) + ")) (then (local.set $errno (i32.const " + util.i32_to_string(codes[ci]) + "))))\n";
     ci = ci + 1;
   }
-  o = o + "    (call $__fern_build_io_error (local.get $errno) (local.get $path)))\n";
+  o = o + "    (call $__fern_build_io_error (local.get $errno) (call $__fern_rc_inc (local.get $path))))\n";
   return o;
 }
 
@@ -6976,7 +6977,7 @@ function stat_like_func(name: string, lookupflags: string): string {
   o = o + "      (call $__fern_raw_free (local.get $buf) (i32.const 64))\n";
   o = o + "      (local.set $res (call $__fern_str_box (i32.const 8)))\n";
   o = o + "      (i32.store (local.get $res) (i32.const 1))\n";
-  o = o + "      (i32.store (i32.add (local.get $res) (i32.const 4)) (call $__fern_build_io_error (local.get $err) (local.get $path)))\n";
+  o = o + "      (i32.store (i32.add (local.get $res) (i32.const 4)) (call $__fern_build_io_error (local.get $err) (call $__fern_rc_inc (local.get $path))))\n";
   o = o + "      (return (local.get $res))))\n";
   o = o + filestat_project_wat();
   return o;
@@ -7241,7 +7242,7 @@ pub function remove_file_func(): string {
   o = o + "      (i32.store (i32.add (local.get $res) (i32.const 4)) (i32.const 0))\n";
   o = o + "      (return (local.get $res))))\n";
   o = o + "    (i32.store (local.get $res) (i32.const 1))\n";
-  o = o + "    (i32.store (i32.add (local.get $res) (i32.const 4)) (call $__fern_build_io_error (local.get $err) (local.get $path)))\n";
+  o = o + "    (i32.store (i32.add (local.get $res) (i32.const 4)) (call $__fern_build_io_error (local.get $err) (call $__fern_rc_inc (local.get $path))))\n";
   o = o + "    (local.get $res))\n";
   return o;
 }
@@ -7394,7 +7395,7 @@ function path_result_tail(pathvar: string): string {
   o = o + "      (i32.store (i32.add (local.get $res) (i32.const 4)) (i32.const 0))\n";
   o = o + "      (return (local.get $res))))\n";
   o = o + "    (i32.store (local.get $res) (i32.const 1))\n";
-  o = o + "    (i32.store (i32.add (local.get $res) (i32.const 4)) (call $__fern_build_io_error (local.get $err) (local.get " + pathvar + ")))\n";
+  o = o + "    (i32.store (i32.add (local.get $res) (i32.const 4)) (call $__fern_build_io_error (local.get $err) (call $__fern_rc_inc (local.get " + pathvar + "))))\n";
   o = o + "    (local.get $res))\n";
   return o;
 }
@@ -7420,7 +7421,7 @@ pub function read_link_func(): string {
   o = o + "    (if (i32.ne (local.get $err) (i32.const 0)) (then\n";
   o = o + "      (local.set $res (call $__fern_str_box (i32.const 8)))\n";
   o = o + "      (i32.store (local.get $res) (i32.const 1))\n";
-  o = o + "      (i32.store (i32.add (local.get $res) (i32.const 4)) (call $__fern_build_io_error (local.get $err) (local.get $path)))\n";
+  o = o + "      (i32.store (i32.add (local.get $res) (i32.const 4)) (call $__fern_build_io_error (local.get $err) (call $__fern_rc_inc (local.get $path))))\n";
   o = o + "      (return (local.get $res))))\n";
   // The target in its own [len][bytes] block, copied out of the scratch
   // buffer because the caller keeps it past this call.
@@ -7470,7 +7471,7 @@ pub function create_dir_all_func(): string {
   o = o + "      (i32.store (i32.add (local.get $res) (i32.const 4)) (i32.const 0))\n";
   o = o + "      (return (local.get $res))))\n";
   o = o + "    (i32.store (local.get $res) (i32.const 1))\n";
-  o = o + "    (i32.store (i32.add (local.get $res) (i32.const 4)) (call $__fern_build_io_error (local.get $err) (local.get $path)))\n";
+  o = o + "    (i32.store (i32.add (local.get $res) (i32.const 4)) (call $__fern_build_io_error (local.get $err) (call $__fern_rc_inc (local.get $path))))\n";
   o = o + "    (local.get $res))\n";
   return o;
 }
@@ -7511,7 +7512,7 @@ function read_dir_func_like(fname: string, skip_dots: boolean): string {
   o = o + "    (if (i32.ne (local.get $err) (i32.const 0)) (then\n";
   o = o + "      (local.set $res (call $__fern_str_box (i32.const 8)))\n";
   o = o + "      (i32.store (local.get $res) (i32.const 1))\n";
-  o = o + "      (i32.store (i32.add (local.get $res) (i32.const 4)) (call $__fern_build_io_error (local.get $err) (local.get $path)))\n";
+  o = o + "      (i32.store (i32.add (local.get $res) (i32.const 4)) (call $__fern_build_io_error (local.get $err) (call $__fern_rc_inc (local.get $path))))\n";
   o = o + "      (return (local.get $res))))\n";
   o = o + "    (local.set $fd (i32.load (i32.const 16)))\n";
   // Empty string[] (len = cap = 0); $__fern_arr_push grows it.
@@ -7527,7 +7528,7 @@ function read_dir_func_like(fname: string, skip_dots: boolean): string {
   o = o + "        (drop (call $fd_close (local.get $fd)))\n";
   o = o + "        (local.set $res (call $__fern_str_box (i32.const 8)))\n";
   o = o + "        (i32.store (local.get $res) (i32.const 1))\n";
-  o = o + "        (i32.store (i32.add (local.get $res) (i32.const 4)) (call $__fern_build_io_error (local.get $err) (local.get $path)))\n";
+  o = o + "        (i32.store (i32.add (local.get $res) (i32.const 4)) (call $__fern_build_io_error (local.get $err) (call $__fern_rc_inc (local.get $path))))\n";
   o = o + "        (return (local.get $res))))\n";
   o = o + "      (local.set $used (i32.load (i32.const 8)))\n";
   o = o + "      (br_if $rdone (i32.eqz (local.get $used)))\n";
@@ -7616,7 +7617,7 @@ pub function remove_dir_all_func(): string {
   o = o + "      (if (i32.eq (local.get $err) (i32.const 54)) (then\n";
   o = o + "        (drop (call $path_unlink_file (i32.const 3) (i32.add (local.get $path) (i32.const 4)) (i32.load (local.get $path))))\n";
   o = o + "        (return (call $__rda_ok))))\n";
-  o = o + "      (return (call $__rda_err (call $__fern_build_io_error (local.get $err) (local.get $path))))))\n";
+  o = o + "      (return (call $__rda_err (call $__fern_build_io_error (local.get $err) (call $__fern_rc_inc (local.get $path)))))))\n";
   o = o + "    (local.set $fd (i32.load (i32.const 16)))\n";
   // Enumerate all child names into a string[] (empty to grow).
   o = o + "    (local.set $names (call $__fern_arr_box (i32.const 0)))\n";
@@ -7631,7 +7632,7 @@ pub function remove_dir_all_func(): string {
   o = o + "        (drop (call $fd_close (local.get $fd)))\n";
   o = o + "        (call $__fern_raw_free (local.get $buf) (i32.const 4096))\n";
   o = o + "        (drop (call $__fern_arr_dec_ptr (local.get $names)))\n";
-  o = o + "        (return (call $__rda_err (call $__fern_build_io_error (local.get $err) (local.get $path))))))\n";
+  o = o + "        (return (call $__rda_err (call $__fern_build_io_error (local.get $err) (call $__fern_rc_inc (local.get $path)))))))\n";
   o = o + "      (local.set $used (i32.load (i32.const 8)))\n";
   o = o + "      (br_if $rdone (i32.eqz (local.get $used)))\n";
   o = o + "      (local.set $pos (i32.const 0))\n";
@@ -7809,24 +7810,14 @@ pub function temp_dir_func(): string {
   o = o + "    (local $blk i32) (local $base i32) (local $i i32) (local $err i32) (local $res i32)\n";
   o = o + "    (local.set $ns (call $__fern_monotonic_ns))\n";
   o = o + "    (local.set $plen (i32.load (local.get $prefix)))\n";
-  // A '/' makes the prefix a path rather than a name: reject it, with a
-  // fresh copy of the prefix as the IoError's path so the borrowed
-  // parameter is never stored.
+  // A '/' makes the prefix a path rather than a name: reject it.
   o = o + "    (local.set $i (i32.const 0))\n";
   o = o + "    (block $sd (loop $sl\n";
   o = o + "      (br_if $sd (i32.ge_u (local.get $i) (local.get $plen)))\n";
   o = o + "      (if (i32.eq (i32.load8_u (i32.add (i32.add (local.get $prefix) (i32.const 4)) (local.get $i))) (i32.const 47)) (then\n";
-  o = o + "        (local.set $blk (call $__fern_str_box (i32.add (i32.const 4) (local.get $plen))))\n";
-  o = o + "        (i32.store (local.get $blk) (local.get $plen))\n";
-  o = o + "        (local.set $i (i32.const 0))\n";
-  o = o + "        (block $qd (loop $ql\n";
-  o = o + "          (br_if $qd (i32.ge_u (local.get $i) (local.get $plen)))\n";
-  o = o + "          (i32.store8 (i32.add (i32.add (local.get $blk) (i32.const 4)) (local.get $i)) (i32.load8_u (i32.add (i32.add (local.get $prefix) (i32.const 4)) (local.get $i))))\n";
-  o = o + "          (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
-  o = o + "          (br $ql)))\n";
   o = o + "        (local.set $res (call $__fern_str_box (i32.const 8)))\n";
   o = o + "        (i32.store (local.get $res) (i32.const 1))\n";
-  o = o + "        (i32.store (i32.add (local.get $res) (i32.const 4)) (call $__fern_build_io_error (i32.const 28) (local.get $blk)))\n";
+  o = o + "        (i32.store (i32.add (local.get $res) (i32.const 4)) (call $__fern_build_io_error (i32.const 28) (call $__fern_rc_inc (local.get $prefix))))\n";
   o = o + "        (return (local.get $res))))\n";
   o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
   o = o + "      (br $sl)))\n";
@@ -9630,7 +9621,7 @@ pub function readfile_func(): string {
   o = o + "    (if (i32.ne (local.get $err) (i32.const 0)) (then\n";
   o = o + "      (local.set $tmp (call $__fern_str_box (i32.const 8)))\n";
   o = o + "      (i32.store (local.get $tmp) (i32.const 1))\n";
-  o = o + "      (i32.store (i32.add (local.get $tmp) (i32.const 4)) (call $__fern_build_io_error (local.get $err) (local.get $np)))\n";
+  o = o + "      (i32.store (i32.add (local.get $tmp) (i32.const 4)) (call $__fern_build_io_error (local.get $err) (call $__fern_rc_inc (local.get $np))))\n";
   o = o + "      (return (local.get $tmp))))\n";
   o = o + "    (local.set $fd (i32.load (i32.const 16)))\n";
   // Growable read buffer: a [len][bytes] block whose data capacity starts
@@ -9661,7 +9652,7 @@ pub function readfile_func(): string {
   o = o + "    (if (i32.eqz (call $__fern_utf8_valid (i32.add (local.get $blk) (i32.const 4)) (local.get $off))) (then\n";
   o = o + "      (local.set $tmp (call $__fern_str_box (i32.const 8)))\n";
   o = o + "      (i32.store (local.get $tmp) (i32.const 1))\n";
-  o = o + "      (i32.store (i32.add (local.get $tmp) (i32.const 4)) (call $__fern_build_io_error (i32.const 25) (local.get $np)))\n";
+  o = o + "      (i32.store (i32.add (local.get $tmp) (i32.const 4)) (call $__fern_build_io_error (i32.const 25) (call $__fern_rc_inc (local.get $np))))\n";
   o = o + "      (return (local.get $tmp))))\n";
   o = o + "    (local.set $tmp (call $__fern_str_box (i32.const 8)))\n";
   o = o + "    (i32.store (local.get $tmp) (i32.const 0))\n";
@@ -9683,7 +9674,7 @@ pub function readfile_bytes_func(): string {
   o = o + "    (if (i32.ne (local.get $err) (i32.const 0)) (then\n";
   o = o + "      (local.set $tmp (call $__fern_str_box (i32.const 8)))\n";
   o = o + "      (i32.store (local.get $tmp) (i32.const 1))\n";
-  o = o + "      (i32.store (i32.add (local.get $tmp) (i32.const 4)) (call $__fern_build_io_error (local.get $err) (local.get $np)))\n";
+  o = o + "      (i32.store (i32.add (local.get $tmp) (i32.const 4)) (call $__fern_build_io_error (local.get $err) (call $__fern_rc_inc (local.get $np))))\n";
   o = o + "      (return (local.get $tmp))))\n";
   o = o + "    (local.set $fd (i32.load (i32.const 16)))\n";
   o = o + "    (local.set $cap (i32.const 65536))\n";
@@ -9733,7 +9724,7 @@ pub function writefile_func(): string {
   o = o + "    (if (i32.ne (local.get $err) (i32.const 0)) (then\n";
   o = o + "      (local.set $tmp (call $__fern_str_box (i32.const 8)))\n";
   o = o + "      (i32.store (local.get $tmp) (i32.const 1))\n";
-  o = o + "      (i32.store (i32.add (local.get $tmp) (i32.const 4)) (call $__fern_build_io_error (local.get $err) (local.get $np)))\n";
+  o = o + "      (i32.store (i32.add (local.get $tmp) (i32.const 4)) (call $__fern_build_io_error (local.get $err) (call $__fern_rc_inc (local.get $np))))\n";
   o = o + "      (return (local.get $tmp))))\n";
   o = o + "    (local.set $fd (i32.load (i32.const 16)))\n";
   o = o + "    (local.set $n (i32.load (local.get $cp)))\n";
@@ -9745,7 +9736,7 @@ pub function writefile_func(): string {
   o = o + "      (if (i32.ne (local.get $err) (i32.const 0)) (then\n";
   o = o + "        (local.set $tmp (call $__fern_str_box (i32.const 8)))\n";
   o = o + "        (i32.store (local.get $tmp) (i32.const 1))\n";
-  o = o + "        (i32.store (i32.add (local.get $tmp) (i32.const 4)) (call $__fern_build_io_error (local.get $err) (local.get $np)))\n";
+  o = o + "        (i32.store (i32.add (local.get $tmp) (i32.const 4)) (call $__fern_build_io_error (local.get $err) (call $__fern_rc_inc (local.get $np))))\n";
   o = o + "        (drop (call $fd_close (local.get $fd)))\n";
   o = o + "        (return (local.get $tmp))))\n";
   o = o + "      (br_if $wd (i32.eqz (i32.load (i32.const 8))))\n";
@@ -9785,7 +9776,7 @@ pub function open_file_func(): string {
   o = o + "    (local.set $res (call $__fern_str_box (i32.const 8)))\n";
   o = o + "    (if (i32.ne (local.get $err) (i32.const 0)) (then\n";
   o = o + "      (i32.store (local.get $res) (i32.const 1))\n";
-  o = o + "      (i32.store (i32.add (local.get $res) (i32.const 4)) (call $__fern_build_io_error (local.get $err) (local.get $np)))\n";
+  o = o + "      (i32.store (i32.add (local.get $res) (i32.const 4)) (call $__fern_build_io_error (local.get $err) (call $__fern_rc_inc (local.get $np))))\n";
   o = o + "      (return (local.get $res))))\n";
   o = o + "    (i32.store (local.get $res) (i32.const 0))\n";
   o = o + "    (i32.store (i32.add (local.get $res) (i32.const 4)) (i32.load (i32.const 16)))\n";
@@ -9808,7 +9799,7 @@ pub function open_with_func(): string {
   o = o + "    (local.set $res (call $__fern_str_box (i32.const 8)))\n";
   o = o + "    (if (i32.ne (local.get $err) (i32.const 0)) (then\n";
   o = o + "      (i32.store (local.get $res) (i32.const 1))\n";
-  o = o + "      (i32.store (i32.add (local.get $res) (i32.const 4)) (call $__fern_build_io_error (local.get $err) (local.get $np)))\n";
+  o = o + "      (i32.store (i32.add (local.get $res) (i32.const 4)) (call $__fern_build_io_error (local.get $err) (call $__fern_rc_inc (local.get $np))))\n";
   o = o + "      (return (local.get $res))))\n";
   o = o + "    (i32.store (local.get $res) (i32.const 0))\n";
   o = o + "    (i32.store (i32.add (local.get $res) (i32.const 4)) (i32.load (i32.const 16)))\n";

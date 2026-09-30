@@ -127,7 +127,7 @@ function chain_names(names: string[], params: i32[]): NameIndex {
 // index_row is the row for `name`, or -1. The modulus comes from head.len()
 // rather than the constant, so a probe cannot pick a different bucket count
 // than the build did.
-function index_row(ix: NameIndex, name: string): i32 {
+pub function index_row(ix: NameIndex, name: string): i32 {
   var i: i32 = ix.head[util.hash_bucket(name, ix.head.len())];
   while (i >= 0) {
     if (ix.names[i] == name) {

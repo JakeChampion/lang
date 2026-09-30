@@ -19,6 +19,12 @@ var wasmLoadRunStdlibCases = []struct {
 	want   int
 	stdout string // "" means don't check
 }{
+	// An IoError keeps a reference to the path it carries. When it did not,
+	// dropping the error released the caller's path, and once() released it
+	// again on return: the underflow count, not block reuse, is the check.
+	{"io-error-keeps-caller-path-read", "function fails(p: string): i32 { match (read_file(p)) { Ok(_) => { return 0; }, Err(e) => { return 1; } } return 0; }\nfunction path_for(dir: string): string { return dir + \"/unit__x.wu\"; }\nfunction once(): i32 { var p: string = path_for(\"no-such-dir\"); return fails(p); }\nfunction main(): i32 { var n: i32 = once(); if (__rc_underflow_count() != 0) { return 99; } return n; }", 1, ""},
+	{"io-error-keeps-caller-path-write", "function fails(p: string): i32 { match (write_file(p, \"x\")) { Ok(_) => { return 0; }, Err(e) => { return 1; } } return 0; }\nfunction path_for(dir: string): string { return dir + \"/unit__x.wu\"; }\nfunction once(): i32 { var p: string = path_for(\"no-such-dir\"); return fails(p); }\nfunction main(): i32 { var n: i32 = once(); if (__rc_underflow_count() != 0) { return 99; } return n; }", 1, ""},
+	{"io-error-keeps-caller-path-stat", "function fails(p: string): i32 { match (stat(p)) { Ok(_) => { return 0; }, Err(e) => { return 1; } } return 0; }\nfunction path_for(dir: string): string { return dir + \"/unit__x.wu\"; }\nfunction once(): i32 { var p: string = path_for(\"no-such-dir\"); return fails(p); }\nfunction main(): i32 { var n: i32 = once(); if (__rc_underflow_count() != 0) { return 99; } return n; }", 1, ""},
 	{"ir-map-i32-len3", "import \"core/map\";\nfunction main(): i32 { var m: Map[i32, i32] = map_new(4); m = m.insert(1, 100); m = m.insert(2, 200); m = m.insert(3, 300); return m.len(); }", 3, ""},
 	{"ir-map-str-keys", "import \"core/map\";\nfunction main(): i32 { var m: Map[string, i32] = map_new(4); m = m.insert(\"a\", 1); m = m.insert(\"bb\", 2); m = m.insert(\"a\", 9); return m.len(); }", 2, ""},
 	{"ir-map-get-hit", "import \"core/map\";\nfunction main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(7, 42); match (m.get(7)) { Some(v) => { return v; }, None => { return 0; } } return 9; }", 42, ""},
