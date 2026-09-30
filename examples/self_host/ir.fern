@@ -4310,6 +4310,11 @@ pub function optimize_ops(ops: Op[], n_params: i32, n_locals: i32): OptimizedOps
 // open a scope other than `block`. A `while` lowers its condition there, so
 // `while (i < s.len())` re-reads the length on every iteration.
 //
+// The header rule differs from native's: endsLoopHeader in
+// internal/ir/licm.go (frozen) also stops at `block`. Native's `while` opens
+// its break block before the `loop`, so it never needs to look past one; the
+// typed lowering opens blocks inside the loop, ahead of the condition.
+//
 // The header is the only region this pass hoists FROM, and that is what makes
 // the transform safe rather than speculative. `loop` falls through into its
 // header, so those ops run whenever the loop is reached, whether or not the
@@ -4416,23 +4421,22 @@ function licm_cached_len(ops: Op[], j: i32, hdr_end: i32, slot_for: i32[]): i32 
 }
 
 // licm_header_end is one past the last op that runs unconditionally on
-// reaching the loop: the run after `loop` up to the first branch or nested
-// scope. A `block` opener is part of the run — it falls through and only
-// labels a forward target — and the typed lowering opens one or more before
+// reaching the loop: the run after `loop` up to the first terminator, branch,
+// or scope other than `block`. A `block` opener stays in the run because a
+// branch to it lands after its `end`, and `end` stops the scan, so nothing
+// enters the run partway. The typed lowering opens one or more blocks before
 // a `while` condition.
 function licm_header_end(ops: Op[], loop_idx: i32): i32 {
-    var k_br: i32 = kind_id("br");
     var k_brif: i32 = kind_id("brif");
     var k_if: i32 = kind_id("if");
     var k_else: i32 = kind_id("else");
     var k_loop: i32 = kind_id("loop");
     var k_end: i32 = kind_id("end");
-    var k_return: i32 = kind_id("return");
     var j: i32 = loop_idx + 1;
     while (j < ops.len()) {
         var t: i32 = ops[j].kind_tag;
-        if (t == k_br || t == k_brif || t == k_if || t == k_else
-                || t == k_loop || t == k_end || t == k_return) { return j; }
+        if (is_terminator_kind(t) || t == k_brif || t == k_if || t == k_else
+                || t == k_loop || t == k_end) { return j; }
         j = j + 1;
     }
     return j;
@@ -4511,8 +4515,8 @@ function licm_stored_locals(ops: Op[], lo: i32, hi: i32): boolean[] {
 //	this pass  const 7 ;                const 2 ; mul ; return
 //	fold       const 14 ;                                return
 //
-// The last line is why optimize_ops folds once more after this runs — without
-// it the exposed const/const/binary triple has nothing to collapse it.
+// The last line is why propagate_fold folds after this runs — without it the
+// exposed const/const/binary triple has nothing to collapse it.
 //
 // SAFE because the RC exit sweeps are IN this op stream: a swept local is read
 // by a `load_local` before its dec, so its slot is never "untouched" and its tee
