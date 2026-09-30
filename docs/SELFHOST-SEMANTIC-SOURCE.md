@@ -443,13 +443,16 @@ Unsupported constructs refuse the whole function with a reason.
   through projections, so the container holds counted strings. A container
   the body did not build, a call's result, is rebuilt whole at that point
   (`ssasem.deep_copy`): an array in a loop over its elements, a tuple element
-  by element, an enum by a test per variant, each view in it copied. A view
-  that is a literal or a retagged string (`ssasem.counted_view`) anchors
-  nothing and is not copied. A cell is shared storage that a copy would split,
-  and a view in a map column is never read out of it, so a call's result
-  holding either is still refused (`ssasem.copyable`). The pass runs in `anchor_module` once the anchor table
-  is attached, so a call's roots are read through it, and skips a function
-  with no phi holding a view.
+  by element, a record field by field, an enum by a test per variant, each
+  view in it copied. A view that is a literal or a retagged string
+  (`ssasem.counted_view`) anchors nothing and is not copied. A cell is shared
+  storage that a copy would split, and a view in a map column is never read
+  out of it, so a call's result holding either is still refused
+  (`ssasem.copyable`). Whether a type holds a view at all is
+  `ssasem.holds_view`, which reads a declared record's fields and an enum's
+  payloads through the body's schema tables. The pass runs in
+  `anchor_module` once the anchor table is attached, so a call's roots are
+  read through it, and skips a function with no phi holding a view.
 
   An anchor is an edge in `Analysis.parents`, and `Analysis.dependencies` is
   its transitive closure (`ssasem.closure`). A value with one parent has that

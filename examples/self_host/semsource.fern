@@ -5220,7 +5220,7 @@ function anchor_module(all: Produced[], names: string[]): Produced[] {
             changed = false;
             var i: i32 = 0;
             while (i < all.len()) {
-                if (all[i].ok && semtypes.holds_view(all[i].func.result) && !ssasem.anchored(anchors, names[i])) {
+                if (all[i].ok && ssasem.holds_view(all[i].func, all[i].func.result) && !ssasem.anchored(anchors, names[i])) {
                     var k: ssasem.ResultAnchor = ssasem.result_anchor(all[i].func, anchors, names);
                     if (!k.escapes && !k.pending) {
                         anchors = anchors.append(ssasem.Anchor { name: names[i], params: k.params });
@@ -5250,7 +5250,7 @@ function anchor_module(all: Produced[], names: string[]): Produced[] {
     var i: i32 = 0;
     while (i < all.len()) {
         var p: Produced = all[i];
-        if (p.ok && semtypes.holds_view(p.func.result) && !ssasem.anchored(anchors, names[i])) {
+        if (p.ok && ssasem.holds_view(p.func, p.func.result) && !ssasem.anchored(anchors, names[i])) {
             p = Produced { ...refuse("view result escapes its source"), key: p.key };
         }
         if (p.ok && !p.template) {

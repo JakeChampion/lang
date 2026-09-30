@@ -4817,6 +4817,88 @@ function f(n: i32): string {
 }
 function main(): i32 { print(f(5) + " " + f(2) + " " + f(0)); return f(4).len(); }
 `},
+	// A declared enum of three variants, one carrying two views: the copy
+	// reads the second field by its index, chains a second test, and rebuilds
+	// the last variant by exclusion. Each call reaches a different variant and
+	// reads every field it carries, so a wrong index or a phi operand paired
+	// with the wrong arm changes the answer.
+	{name: "a-three-variant-enum-a-call-returns-from-a-branch-local-is-produced", atLeast: 4, noLeak: true, src: `
+enum Tri { A(str, str), B(str), C }
+function mk(n: i32): string {
+    var s: string = "ab";
+    var i: i32 = 0;
+    while (i < n) { s = s + "c"; i = i + 1; }
+    return s;
+}
+function pick(s: string, which: i32): Tri {
+    if (which == 1) { return A(slice_unchecked(s, 0, 2), slice_unchecked(s, 1, 3)); }
+    if (which == 2) { return B(slice_unchecked(s, 0, 1)); }
+    return C;
+}
+function f(n: i32): string {
+    var t: Tri = C;
+    if (n != 0) {
+        var s: string = mk(n + 2);
+        t = pick(s, n);
+    }
+    var out: string = "";
+    match (t) { A(a, b) => { out = a + "/" + b; }, B(x) => { out = "b:" + x; }, C => { out = "c"; } }
+    return out;
+}
+function main(): i32 { print(f(1) + " " + f(2) + " " + f(3)); return f(1).len(); }
+`},
+	// The same enum with no merge: the call's result is read after a loop
+	// that churns the allocator. The result holds views of the temporary it
+	// was handed, so it anchors that temporary until its last read; read as
+	// holding no view, the temporary was released at the call and the views
+	// read what the churn reissued.
+	{name: "a-declared-enum-of-views-keeps-its-source-alive", atLeast: 4, noLeak: true, src: `
+import "std/i32";
+enum Tri { A(str, str), B(str), C }
+function mk(n: i32): string {
+    var s: string = "ab";
+    var i: i32 = 0;
+    while (i < n) { s = s + "c"; i = i + 1; }
+    return s;
+}
+function pick(s: string, which: i32): Tri {
+    if (which == 1) { return A(slice_unchecked(s, 0, 2), slice_unchecked(s, 1, 3)); }
+    if (which == 2) { return B(slice_unchecked(s, 0, 1)); }
+    return C;
+}
+function f(n: i32): string {
+    var t: Tri = pick(mk(n + 2), n);
+    var junk: string[] = [];
+    var i: i32 = 0;
+    while (i < 50) { junk = junk.append("zz" + i.to_string()); i = i + 1; }
+    var out: string = "";
+    match (t) { A(a, b) => { out = a + "/" + b; }, B(x) => { out = "b:" + x; }, C => { out = "c"; } }
+    return out;
+}
+function main(): i32 { print(f(1) + " " + f(2) + " " + f(3)); return 0; }
+`},
+	// A declared record with view fields, merged from a branch: rebuilt field
+	// by field, the scalar read out and the views copied.
+	{name: "a-record-a-call-returns-from-a-branch-local-is-produced", atLeast: 4, noLeak: true, src: `
+import "std/i32";
+struct Pair { a: str, b: str, n: i32 }
+function mk(n: i32): string {
+    var s: string = "ab";
+    var i: i32 = 0;
+    while (i < n) { s = s + "c"; i = i + 1; }
+    return s;
+}
+function halves(s: string, n: i32): Pair { return Pair { a: slice_unchecked(s, 0, 1), b: slice_unchecked(s, 1, 3), n: n }; }
+function f(n: i32): string {
+    var p: Pair = Pair { a: "-", b: "-", n: 0 };
+    if (n != 0) {
+        var s: string = mk(n);
+        p = halves(s, n);
+    }
+    return p.a + "/" + p.b + "/" + p.b.len().to_string() + "/" + p.n.to_string();
+}
+function main(): i32 { print(f(3) + " " + f(0)); return f(2).len(); }
+`},
 	{name: "a-nested-array-a-call-returns-from-a-branch-local-is-produced", atLeast: 4, noLeak: true, src: `
 function mk(n: i32): string {
     var s: string = "ab";

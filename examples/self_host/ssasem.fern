@@ -1874,7 +1874,7 @@ function view_sources(f: Func, defs: ssa.SInst[], anchors: Anchor[], names: stri
         return out;
     }
     if (d.kind_tag != 8 && gathers_views(d.kind_tag)) {
-        for a in d.args { if (a >= 0 && semtypes.holds_view(f.values[a])) { out = view_sources(f, defs, anchors, names, a, out); } }
+        for a in d.args { if (a >= 0 && holds_view(f, f.values[a])) { out = view_sources(f, defs, anchors, names, a, out); } }
         return out;
     }
     if (projects(d.kind_tag)) { return view_sources(f, defs, anchors, names, d.args[0], out); }
@@ -1882,7 +1882,7 @@ function view_sources(f: Func, defs: ssa.SInst[], anchors: Anchor[], names: stri
         if (!anchored(anchors, d.str)) {
             // Only a view-holding result is ever anchored; an owned one is
             // this frame's storage however the callee settles.
-            if (semtypes.holds_view(f.values[v]) && util.index_of_str(names, d.str) >= 0) { return ViewSources { ...out, pending: true }; }
+            if (holds_view(f, f.values[v]) && util.index_of_str(names, d.str) >= 0) { return ViewSources { ...out, pending: true }; }
             return ViewSources { ...out, escapes: true };
         }
         for k in anchor_params(anchors, d.str) {
@@ -2032,7 +2032,7 @@ function bytes_roots(f: Func, defs: ssa.SInst[], v: i32, seen: boolean[]): i32[]
     var next: boolean[] = seen.with(v, true);
     // A retag is the same box, whichever way it goes.
     if (d.kind_tag == str_as() && d.args.len() == 1) { return bytes_roots(f, defs, d.args[0], next); }
-    if (!semtypes.holds_view(f.values[v])) { return [v]; }
+    if (!holds_view(f, f.values[v])) { return [v]; }
     if (d.kind_tag == 5) { return []; }
     if (projects(d.kind_tag) && d.args.len() > 0) { return bytes_roots(f, defs, d.args[0], next); }
     if (d.kind_tag == call()) {
@@ -2046,7 +2046,7 @@ function bytes_roots(f: Func, defs: ssa.SInst[], v: i32, seen: boolean[]): i32[]
     if (!gathers_views(d.kind_tag)) { return [v]; }
     var roots: i32[] = [];
     for a in d.args {
-        if (a < 0 || (d.kind_tag != 8 && !semtypes.holds_view(f.values[a]))) { continue; }
+        if (a < 0 || (d.kind_tag != 8 && !holds_view(f, f.values[a]))) { continue; }
         if (counted_view(f, defs, a, next)) { continue; }
         roots = union_into(roots, bytes_roots(f, defs, a, next));
     }
@@ -2090,7 +2090,7 @@ function view_roots(f: Func, parents: i32[][]): i32[][] {
     var out: i32[][] = parents;
     for b in f.graph.blocks {
         for ins in b.insts {
-            if (ins.result < 0 || !gathers_views(ins.kind_tag) || !semtypes.holds_view(f.values[ins.result])) { continue; }
+            if (ins.result < 0 || !gathers_views(ins.kind_tag) || !holds_view(f, f.values[ins.result])) { continue; }
             var roots: i32[] = [];
             for r in bytes_roots(f, defs, ins.result, none) { if (r != ins.result) { roots = roots.append(r); } }
             if (roots.len() > 0) { out = out.with(ins.result, roots); }
@@ -2361,19 +2361,57 @@ function boolean_type(): typeinfo.Type { return typeinfo.TypeBool { tag: 0 }; }
 
 function i32_type(): typeinfo.Type { return typeinfo.TypeI32 { is_char: false, width: 32, unsigned: false }; }
 
+// Whether a value of `t` holds a view anywhere in it. A declared record or
+// enum is read through this body's schema tables, which close over every type
+// its values reach, so a `str` payload of `enum E { A(str) }` counts as the one
+// in `Option[str]` does.
+pub function holds_view(f: Func, t: typeinfo.Type): boolean { return view_within(f, t, []); }
+
+function view_within(f: Func, t: typeinfo.Type, seen: string[]): boolean {
+    if let typeinfo.TypeString(st) = t { return st.tag == 1; }
+    if let typeinfo.TypeArray(a) = t { return view_within(f, a.elem, seen); }
+    if let typeinfo.TypeTuple(tup) = t {
+        for e in tup.elements { if (view_within(f, e, seen)) { return true; } }
+        return false;
+    }
+    if (semtypes.is_cell(t)) { return view_within(f, semtypes.cell_elem(t), seen); }
+    if let typeinfo.TypeMap(m) = t { return view_within(f, m.key, seen) || view_within(f, m.value, seen); }
+    var key: string = type_key(t);
+    if (name_seen(seen, key)) { return false; }
+    var next: string[] = seen.append(key);
+    var r: i32 = semrecords.find(f.records, t);
+    if (r >= 0) {
+        for fl in f.records[r].fields { if (view_within(f, fl.ty, next)) { return true; } }
+        return false;
+    }
+    var e: i32 = semrecords.find_enum(f.enums, t);
+    if (e >= 0) {
+        for v in f.enums[e].variants { for fl in v.fields { if (view_within(f, fl.ty, next)) { return true; } } }
+        return false;
+    }
+    if let typeinfo.TypeUnion(u) = t {
+        for a in u.args { if (view_within(f, a, next)) { return true; } }
+    }
+    return false;
+}
+
 // Whether a value of `t` can be rebuilt holding counted strings in place of
-// its views: a `str`, and an array, tuple or enum of such. A cell is shared
-// storage, which a copy would split, and a view in a map column is not read
-// out of it (semsource refuses the read), so a copy could not read it either.
+// its views: a `str`, and an array, tuple, record or enum of such. A cell is
+// shared storage, which a copy would split, and a view in a map column is not
+// read out of it (semsource refuses the read), so a copy could not read it
+// either.
 pub function copyable(f: Func, t: typeinfo.Type): boolean {
-    if (!semtypes.holds_view(t) || is_view(t)) { return true; }
+    if (!holds_view(f, t) || is_view(t)) { return true; }
     if let typeinfo.TypeArray(a) = t { return copyable(f, a.elem); }
     if let typeinfo.TypeTuple(tup) = t {
         for e in tup.elements { if (!copyable(f, e)) { return false; } }
         return true;
     }
     if let typeinfo.TypeUnion(_) = t { return enum_copyable(f, t); }
-    return false;
+    var r: i32 = semrecords.find(f.records, t);
+    if (r < 0 || semtypes.is_env(t)) { return false; }
+    for fl in f.records[r].fields { if (!copyable(f, fl.ty)) { return false; } }
+    return true;
 }
 
 function enum_copyable(f: Func, t: typeinfo.Type): boolean {
@@ -2387,7 +2425,7 @@ function enum_copyable(f: Func, t: typeinfo.Type): boolean {
 // by a counted copy (`view_copy`) and every other part read out of it.
 function deep_copy(f: Func, s: Splice, v: i32): Copied {
     var t: typeinfo.Type = s.values[v];
-    if (!semtypes.holds_view(t)) { return Copied { s: s, value: v }; }
+    if (!holds_view(f, t)) { return Copied { s: s, value: v }; }
     if (is_view(t)) {
         var first: i32 = s.values.len();
         var values: typeinfo.Type[] = s.values;
@@ -2398,7 +2436,22 @@ function deep_copy(f: Func, s: Splice, v: i32): Copied {
     }
     if let typeinfo.TypeArray(a) = t { return copy_array(f, s, v, t, a.elem); }
     if let typeinfo.TypeTuple(tup) = t { return copy_tuple(f, s, v, t, tup.elements); }
+    if let typeinfo.TypeStruct(_) = t { return copy_record(f, s, v, t); }
     return copy_enum(f, s, v, t);
+}
+
+function copy_record(f: Func, s: Splice, v: i32, t: typeinfo.Type): Copied {
+    var fields: semrecords.Field[] = f.records[semrecords.find(f.records, t)].fields;
+    var parts: i32[] = [];
+    var i: i32 = 0;
+    while (i < fields.len()) {
+        var g: Copied = sp_emit(s, record_get(), fields[i].ty, [v], i, fields[i].name);
+        var c: Copied = deep_copy(f, g.s, g.value);
+        s = c.s;
+        parts = parts.append(c.value);
+        i = i + 1;
+    }
+    return sp_emit(s, record_new(), t, parts, 0, "");
 }
 
 function copy_tuple(f: Func, s: Splice, v: i32, t: typeinfo.Type, elements: typeinfo.Type[]): Copied {
@@ -2511,7 +2564,8 @@ function rebuilt_variant(f: Func, s: Splice, v: i32, t: typeinfo.Type, variant: 
     return sp_emit(s, variant_new(), t, parts, 0, variant.name);
 }
 
-// The views to copy, each given three fresh values after the last.
+// The view-holding operands to copy. `with_merge_copies` makes each copy
+// with `sp_emit` / `deep_copy` and records its value in `made`.
 pub function merge_copies(f: Func): MergeCopy[] {
     if (!has_view_phi(f)) { return []; }
     var none: boolean[] = [];
@@ -2522,7 +2576,7 @@ pub function merge_copies(f: Func): MergeCopy[] {
     var bi: i32 = 0;
     while (bi < f.graph.blocks.len()) {
         for ins in f.graph.blocks[bi].insts {
-            if (ins.kind_tag == 8 && semtypes.holds_view(f.values[ins.result])) {
+            if (ins.kind_tag == 8 && holds_view(f, f.values[ins.result])) {
                 copies = operand_copies(f, defs, m, bi, ins.result, none, copies);
             }
         }
@@ -2533,7 +2587,7 @@ pub function merge_copies(f: Func): MergeCopy[] {
 
 function has_view_phi(f: Func): boolean {
     for b in f.graph.blocks {
-        for ins in b.insts { if (ins.kind_tag == 8 && semtypes.holds_view(f.values[ins.result])) { return true; } }
+        for ins in b.insts { if (ins.kind_tag == 8 && holds_view(f, f.values[ins.result])) { return true; } }
     }
     return false;
 }
@@ -2577,7 +2631,7 @@ function operand_copies(f: Func, defs: ssa.SInst[], m: MergeScan, join: i32, con
 // Whether `x` holds a view a copy would stop reading bytes that fail to
 // dominate `join`.
 function holds_outlived(f: Func, defs: ssa.SInst[], m: MergeScan, join: i32, x: i32, seen: boolean[]): boolean {
-    if (x < 0 || x >= defs.len() || seen[x] || !semtypes.holds_view(f.values[x])) { return false; }
+    if (x < 0 || x >= defs.len() || seen[x] || !holds_view(f, f.values[x])) { return false; }
     return !counted_view(f, defs, x, m.none) && roots_outlived(f, defs, m, x, join);
 }
 
