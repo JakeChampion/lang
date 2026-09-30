@@ -1348,7 +1348,8 @@ loop and `std/fetch` the client.
   cap), and
   how many workers `tcp_serve_supervised_opts` forks (`workers`; 0, the
   default, is one per processing unit the process may use, what
-  `cpu_count()` answers), and the shutdown SIGTERM starts: the loop keeps
+  `cpu_count()` answers), and the shutdown SIGTERM or SIGINT starts (SIGHUP
+  keeps its default, ending the process): the loop keeps
   accepting for `shutdown_grace` (2 s, since whoever routes to it removes
   it in parallel), answers 503 on `readiness_path` ("" for none), then
   closes the listener, ends keep-alive, closes the connections with
@@ -1365,9 +1366,9 @@ loop and `std/fetch` the client.
   `tcp_serve_opts` and `tcp_serve_with_opts` with a hook the loop calls
   once it has stopped, before returning: `shutdown(reason)`, or
   `shutdown(reason, state)` with the state as the last request left it,
-  where a counter is flushed or a store closed. The reason is "sigterm"
-  when every request in flight was answered after the signal and
-  "drain-deadline" when one was cut off.
+  where a counter is flushed or a store closed. The reason is the signal
+  that started the shutdown, "sigterm" or "sigint", when every request in
+  flight was answered after it and "drain-deadline" when one was cut off.
 - `tcp_serve_deadline(port, handler, recv_deadline)` —
   `tcp_serve` with an explicit per-request read deadline; a
   client that hasn't delivered a complete request in time is
@@ -1387,8 +1388,8 @@ loop and `std/fetch` the client.
   (one per processing unit by default), each running its own loop over
   the one listener, watched exclusively (epoll's `EPOLLEXCLUSIVE`) so a
   connection wakes one of them, or with `reuse_port` over a listener of
-  its own; whichever dies is replaced, and SIGTERM is forwarded to every
-  worker and waited for, the exit being the worst code a worker answered
+  its own; whichever dies is replaced, and SIGTERM or SIGINT is forwarded
+  to every worker and waited for, the exit being the worst code a worker answered
   it with. Eight deaths in a row within 100 ms of a fork are a give-up:
   the workers still serving are stopped the same way, and the exit is
   the last death's code. `tcp_serve_supervised_with(port, opts, init,

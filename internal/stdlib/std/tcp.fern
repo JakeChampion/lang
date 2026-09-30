@@ -9,7 +9,7 @@
 // and handler code typically ignores it.
 // When the listener can't be bound (EADDRINUSE, say) the address and the
 // error's text go to stderr and the entry returns 98; otherwise the loop
-// runs until SIGTERM, then
+// runs until SIGTERM or SIGINT, then
 // drains and returns `__stop_code`: 0 when every request in
 // flight was answered, 1 when one was cut off.
 //
@@ -51,7 +51,8 @@
 //      or it has answered `keep_alive_requests`; the request's bytes are
 //      dropped from its buffer, so requests pipelined behind them are
 //      answered from the same readable event → unwatch → tcp_close.
-//   7. SIGTERM, a readiness event on the reactor, starts the shutdown:
+//   7. SIGTERM or SIGINT, a readiness event on the reactor, starts the
+//      shutdown:
 //      the loop keeps accepting for `shutdown_grace` (whoever routes to
 //      it removes it in parallel), answers 503 on `readiness_path`,
 //      then closes the listener, stops keep-alive (every response says
@@ -156,8 +157,9 @@ pub function tcp_serve_opts(port: i32, opts: ServeOptions, handler: (HttpRequest
 
 // tcp_serve_shutdown(port, opts, handler, shutdown) — `tcp_serve_opts`
 // with a hook the loop calls once it has stopped, before returning: with
-// "sigterm" when every request in flight was answered after SIGTERM, or
-// "drain-deadline" when one was cut off at the drain deadline.
+// "sigterm" or "sigint", the signal that started the shutdown, when every
+// request in flight was answered, or "drain-deadline" when one was cut
+// off at the drain deadline.
 pub function tcp_serve_shutdown(port: i32, opts: ServeOptions, handler: (HttpRequest, Platform) => HttpResponse, shutdown: (string) => void): i32 {
     var listener: i32 = __serve_listener(port, opts);
     if (listener < 0) {
@@ -1055,11 +1057,18 @@ function __listener_interest(opts: ServeOptions): i32 {
     return 1;
 }
 
-// __stop_begin(stop) — the shutdown started by SIGTERM (reported as -15),
-// once: a second signal changes nothing.
-function __stop_begin(stop: __Stop): __Stop {
+// __stop_begin(stop, sig) — the shutdown `sig` started, once: a second
+// signal changes nothing.
+function __stop_begin(stop: __Stop, sig: i32): __Stop {
     if (__serve_stopping(stop)) { return stop; }
-    return __Stop { ...stop, at: monotonic_ns() };
+    return __Stop { ...stop, at: monotonic_ns(), sig: sig };
+}
+
+// __stop_signal(fd) — the signal a wait's event reports, when it is one
+// that stops a server (SIGTERM or SIGINT, reported as -15 and -2), else 0.
+function __stop_signal(fd: i32): i32 {
+    if (fd == 0 - 15 || fd == 0 - 2) { return 0 - fd; }
+    return 0;
 }
 
 // __serve_pass_end(drv, listener, c, opts, stop, accepting) — what one
@@ -1074,16 +1083,17 @@ function __serve_pass_end[D: async.Driver](drv: D, listener: i32, c: __Conns, op
     return __serve_stop_step(drv, listener, c, opts, stop, accepting, now);
 }
 
-// __Stop — where a loop is in its shutdown: the monotonic time SIGTERM
-// arrived (-1 before it), whether the listener has been closed since,
-// and whether a connection was cut off with a request in flight.
-struct __Stop { at: i64, closed: boolean, aborted: boolean }
+// __Stop — where a loop is in its shutdown: the monotonic time the stop
+// signal arrived (-1 before it) and which one it was, whether the
+// listener has been closed since, and whether a connection was cut off
+// with a request in flight.
+struct __Stop { at: i64, sig: i32, closed: boolean, aborted: boolean }
 
 function __stop_none(): __Stop {
-    return __Stop { at: 0 - (1 as i64), closed: false, aborted: false };
+    return __Stop { at: 0 - (1 as i64), sig: 0, closed: false, aborted: false };
 }
 
-// __serve_stopping(stop) — whether SIGTERM has arrived.
+// __serve_stopping(stop) — whether a stop signal has arrived.
 function __serve_stopping(stop: __Stop): boolean {
     return stop.at >= (0 as i64);
 }
@@ -1148,10 +1158,12 @@ function __stop_code(stop: __Stop): i32 {
 }
 
 // __stop_reason(stop) — what a finished shutdown tells the program's
-// `shutdown` hook: "sigterm" when every request in flight was answered,
-// "drain-deadline" when one was cut off.
+// `shutdown` hook: "sigterm" or "sigint", the signal that started it,
+// when every request in flight was answered, "drain-deadline" when one
+// was cut off.
 function __stop_reason(stop: __Stop): string {
     if (stop.aborted) { return "drain-deadline"; }
+    if (stop.sig == 2) { return "sigint"; }
     return "sigterm";
 }
 
@@ -1223,7 +1235,7 @@ function __init_platform(): Platform {
 // it does NOT create: the supervising parent owns the listening socket
 // (created before the first fork, inherited by every worker), so the
 // kernel backlog — and any pending connections in it — survives a worker
-// death. Runs until SIGTERM: the shutdown drains, `on_stop` is handed
+// death. Runs until SIGTERM or SIGINT: the shutdown drains, `on_stop` is handed
 // `__stop_reason(stop)`, and the loop returns `__stop_code(stop)`; a
 // listener the reactor cannot watch returns its -errno like a failed
 // bind. `opts` bounds each connection's request read (see
@@ -1235,6 +1247,7 @@ function __serve_loop(listener: i32, handler: (HttpRequest, Platform) => HttpRes
     var accepting: boolean = true;
     var stop: __Stop = __stop_none();
     drv.watch_signal(15);
+    drv.watch_signal(2);
     var plat: Platform = __host_platform(drv.handle());
     var conns: __Conns = __Conns { fds: [], bufs: [], offs: [], pending: [], deadlines: [], keep: [], served: [], backlog: [], continued: [], rate_since: [], rate_base: [], send_since: [], send_base: [], peers: [], tails: [] };
     var scratch: u8[] = __recv_scratch();
@@ -1246,8 +1259,9 @@ function __serve_loop(listener: i32, handler: (HttpRequest, Platform) => HttpRes
         while (k + 1 < events.len()) {
             var fd: i32 = events[k];
             k = k + 2;
-            if (fd == 0 - 15) {
-                stop = __stop_begin(stop);
+            var sig: i32 = __stop_signal(fd);
+            if (sig != 0) {
+                stop = __stop_begin(stop, sig);
                 continue;
             }
             if (fd == listener) {
@@ -1318,6 +1332,7 @@ function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, 
     var accepting: boolean = true;
     var stop: __Stop = __stop_none();
     drv.watch_signal(15);
+    drv.watch_signal(2);
     var plat: Platform = __host_platform(drv.handle());
     var conns: __Conns = __Conns { fds: [], bufs: [], offs: [], pending: [], deadlines: [], keep: [], served: [], backlog: [], continued: [], rate_since: [], rate_base: [], send_since: [], send_base: [], peers: [], tails: [] };
     var scratch: u8[] = __recv_scratch();
@@ -1329,8 +1344,9 @@ function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, 
         while (k + 1 < events.len()) {
             var fd: i32 = events[k];
             k = k + 2;
-            if (fd == 0 - 15) {
-                stop = __stop_begin(stop);
+            var sig: i32 = __stop_signal(fd);
+            if (sig != 0) {
+                stop = __stop_begin(stop, sig);
                 continue;
             }
             if (fd == listener) {
@@ -1407,8 +1423,8 @@ pub function tcp_serve_supervised(port: i32, handler: (HttpRequest, Platform) =>
 // listener, watched exclusively so a connection wakes one of them — or,
 // with `reuse_port`, over a listener of its own bound beside the others'
 // (`__per_worker_listeners`); whichever dies is replaced, the backoff
-// and the fast-death count shared among them. SIGTERM is forwarded to
-// every worker and the supervisor waits for them, exiting with the
+// and the fast-death count shared among them. SIGTERM or SIGINT is
+// forwarded to every worker and the supervisor waits for them, exiting with the
 // worst code they answered (1 when one cut a request off).
 pub function tcp_serve_supervised_opts(port: i32, opts: ServeOptions, handler: (HttpRequest, Platform) => HttpResponse): i32 {
     return tcp_serve_supervised_shutdown(port, opts, handler, (reason: string): void => {});
@@ -1466,6 +1482,7 @@ function __supervise(port: i32, opts: ServeOptions, run: (i32, ServeOptions) => 
     var chld: i32 = drv.watch_signal(17);
     if (chld < 0) { return chld; }
     drv.watch_signal(15);
+    drv.watch_signal(2);
     while (true) {
         var refork_ms: i32 = -1;
         if (!sup.stopping && sup.pids.len() < workers) {
@@ -1496,13 +1513,14 @@ function __supervise(port: i32, opts: ServeOptions, run: (i32, ServeOptions) => 
 }
 
 // __supervisor_events(sup, events) — the wait's events acted on: SIGTERM
-// (-15) forwarded, SIGCHLD (-17) reaped.
+// or SIGINT forwarded, SIGCHLD (-17) reaped.
 function __supervisor_events(sup: __Supervisor, events: i32[]): __Supervisor {
     var k: i32 = 0;
     while (k + 1 < events.len()) {
         var fd: i32 = events[k];
         k = k + 2;
-        if (fd == 0 - 15) { sup = __supervisor_stop(sup); }
+        var sig: i32 = __stop_signal(fd);
+        if (sig != 0) { sup = __supervisor_stop(sup, sig); }
         if (fd == 0 - 17) { sup = __supervisor_reap(sup); }
     }
     return sup;
@@ -1524,6 +1542,7 @@ function __supervisor_fork(drv: async.RealDriver, port: i32, listener: i32, run:
         eprint("tcp_serve_supervised: supervision unavailable; serving single-process");
         drv.unwatch_signal(17);
         drv.unwatch_signal(15);
+        drv.unwatch_signal(2);
         drv.close();
         var single: i32 = __worker_listener(port, listener, opts);
         if (single < 0) { return (sup, __listen_failed(port, single)); }
@@ -1573,8 +1592,8 @@ function __worker_listener(port: i32, listener: i32, opts: ServeOptions): i32 {
 
 // __Supervisor — the supervisor's workers (pids, and when each was
 // forked), its refork backoff and the time before which nothing is
-// forked again, its consecutive fast-death count, whether SIGTERM has
-// been forwarded, the worst exit code a worker answered while stopping
+// forked again, its consecutive fast-death count, whether a stop signal
+// has been forwarded, the worst exit code a worker answered while stopping
 // (the clean shutdown's exit) and the last code a worker died with while
 // serving (a give-up's exit).
 struct __Supervisor { pids: i32[], spawned: i64[], backoff_ms: i64, fork_after: i64, fast_deaths: i32, stopping: boolean, worst: i32, crashed: i32 }
@@ -1591,7 +1610,7 @@ function (s: __Supervisor) gave_up(): boolean {
 // up to five seconds for them to drain, then SIGKILL for the rest, every
 // one reaped before the supervisor returns.
 function __supervisor_abandon(drv: async.RealDriver, sup: __Supervisor): void {
-    var s: __Supervisor = __supervisor_stop(sup);
+    var s: __Supervisor = __supervisor_stop(sup, 15);
     var until: i64 = now_unix_ms() + (5000 as i64);
     while (s.pids.len() > 0) {
         var left: i64 = until - now_unix_ms();
@@ -1608,12 +1627,12 @@ function __supervisor_abandon(drv: async.RealDriver, sup: __Supervisor): void {
     }
 }
 
-// __supervisor_stop(sup) — SIGTERM forwarded to every worker, each of
-// which drains and exits; nothing is forked again.
-function __supervisor_stop(sup: __Supervisor): __Supervisor {
+// __supervisor_stop(sup, sig) — the stop signal forwarded to every
+// worker, each of which drains and exits; nothing is forked again.
+function __supervisor_stop(sup: __Supervisor, sig: i32): __Supervisor {
     if (sup.stopping) { return sup; }
     for pid in sup.pids {
-        match (signal_send(pid, 15)) { Ok(_) => { }, Err(_) => { } }
+        match (signal_send(pid, sig)) { Ok(_) => { }, Err(_) => { } }
     }
     return __Supervisor { ...sup, stopping: true };
 }

@@ -83,3 +83,12 @@ func TestServeShutdownHookX86_64(t *testing.T) {
 	cmd, stderrPath := startSupervisedServer(t, bin, runner, fmt.Sprintf("PORT=%d", port))
 	e2eharness.CheckShutdownHook(t, cmd, fmt.Sprintf("127.0.0.1:%d", port), stderrPath)
 }
+
+// SIGINT, what Ctrl-C sends, stops the server gracefully as SIGTERM does
+// (#9853): the supervisor forwards it and the hook's reason names it.
+func TestServeShutdownHookSigintX86_64(t *testing.T) {
+	port := freeLoopbackPort(t)
+	bin, runner := buildSupervisedServeBin(t, e2eharness.ShutdownHookServerSource())
+	cmd, stderrPath := startSupervisedServer(t, bin, runner, fmt.Sprintf("PORT=%d", port))
+	e2eharness.CheckShutdownHookOnSigint(t, cmd, fmt.Sprintf("127.0.0.1:%d", port), stderrPath)
+}
