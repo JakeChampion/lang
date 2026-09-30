@@ -19078,20 +19078,28 @@ function synth_from_json_text(sd: StructDecl): FuncDecl {
     return FuncDecl { no_inline: false, name: "from_json", receiver_name: "", receiver_type: sd.name, type_params: notp, params: params, ret_type: "Result[" + sd.name + ", string]", body: [s_return(call)], line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "" , is_package: false, module: "" };
 }
 
-// synth_enum_display: variant-wise `to_string` rendering `Variant(p)` /
-// `Variant` — the same shape the Go synthEnumDisplay emits. Self-host
-// enum variants carry at most one payload (`__ev`), so a payload
-// variant renders its single field.
+// synth_enum_display: variant-wise `to_string` rendering `Variant(p, …)`,
+// `Variant { f: p, … }` or `Variant` — the shapes the Go synthEnumDisplay emits.
 function synth_enum_display(ename: string, variants: StructDecl[]): FuncDecl {
     var arms: ast.MatchArm[] = [];
     var i: i32 = 0;
     while (i < variants.len()) {
         var v: StructDecl = variants[i];
         if (v.fields.len() > 0) {
+            // A record-form variant renders `Rect { w: 3, h: 4 }`, a positional
+            // one `Rect(3, 4)`: every payload, as the Go synthEnumDisplay does.
+            var named: boolean = v.variant_field_names.len() == v.fields.len();
             var e: ast.Expr = e_string(v.name + "(");
-            e = e_binary("+", e, dv_call0(e_ident("__p0"), "to_string"));
-            e = e_binary("+", e, e_string(")"));
-            arms = arms.append(ast.MatchArm { pattern: p_variant(v.name, "__p0"), body: [s_return(e)], line: 0, col: 0, guard: e_bool(true), has_guard: false, alt_cont: false });
+            if (named) { e = e_string(v.name + " { "); }
+            var dj: i32 = 0;
+            while (dj < v.fields.len()) {
+                if (dj > 0) { e = e_binary("+", e, e_string(", ")); }
+                if (named) { e = e_binary("+", e, e_string(v.variant_field_names[dj] + ": ")); }
+                e = e_binary("+", e, dv_call0(e_ident("__p" + dl_itoa(dj)), "to_string"));
+                dj = dj + 1;
+            }
+            if (named) { e = e_binary("+", e, e_string(" }")); } else { e = e_binary("+", e, e_string(")")); }
+            arms = arms.append(ast.MatchArm { pattern: p_variant_n(v.name, "__p", v.fields.len()), body: [s_return(e)], line: 0, col: 0, guard: e_bool(true), has_guard: false, alt_cont: false });
         } else {
             arms = arms.append(ast.MatchArm { pattern: p_variant(v.name, ""), body: [s_return(e_string(v.name))], line: 0, col: 0, guard: e_bool(true), has_guard: false, alt_cont: false });
         }

@@ -1125,7 +1125,7 @@ function binary(e: ast.Expr, b: ast.ExprBinary, s: State, expected: typeinfo.Typ
     // one expression.
     var key: string = composite_key(b.op, s.values[left.id], s);
     if (key != "") { return composite_compare(b, left, key, s); }
-    var arith: string = nominal_method_key(arithmetic_verb(b.op), s.values[left.id], s);
+    var arith: string = nominal_method_key(ast.operator_method(b.op), s.values[left.id], s);
     if (arith != "") { return operator_method(left, [b.right], arith, s); }
     var right: Value = address_widen(expr(b.right, s, want), want);
     s = right.s;
@@ -1190,18 +1190,6 @@ function nominal_method_key(verb: string, t: typeinfo.Type, s: State): string {
     var key: string = owner + "." + verb;
     if (ssasem.find_contract(s.contracts, key) < 0) { return ""; }
     return key;
-}
-
-// An arithmetic operator on a struct or an enum is the method its `impl`
-// supplies: `a + b` is `a.add(b)` and `-a` is `a.neg()`, the desugar the
-// native checker applies (#2706). The result is whatever the method answers.
-function arithmetic_verb(op: string): string {
-    if (op == "+") { return "add"; }
-    if (op == "-") { return "sub"; }
-    if (op == "*") { return "mul"; }
-    if (op == "/") { return "div"; }
-    if (op == "%") { return "rem"; }
-    return "";
 }
 
 function operator_method(recv: Value, args: ast.Expr[], key: string, s: State): Value {
