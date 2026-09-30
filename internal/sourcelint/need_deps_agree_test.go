@@ -141,8 +141,9 @@ func parseRuntimeNeedDeps(t *testing.T, text string) map[string][]string {
 			out[m[1]] = []string{"heap"}
 		}
 	}
-	// Every other arm is `if (name == "x") { ... var d: string[] = [...]; return d; }`.
-	arms := regexp.MustCompile(`if \(name == "([a-z0-9_]+)"\) \{([\s\S]*?)\breturn [a-z0-9_]+;`).FindAllStringSubmatch(body, -1)
+	// Every other arm is `if (name == "x") { ... var d: string[] = [...]; return d; }`,
+	// ending at the first line holding only its closing brace, whatever the indent.
+	arms := regexp.MustCompile(`if \(name == "([a-z0-9_]+)"\) \{([\s\S]*?)\n\s*\}`).FindAllStringSubmatch(body, -1)
 	for _, a := range arms {
 		lit := regexp.MustCompile(`string\[\] = \[([^\]]*)\]`).FindStringSubmatch(a[2])
 		if lit == nil {
