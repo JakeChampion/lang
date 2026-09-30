@@ -3817,11 +3817,10 @@ function list_var_uses(stmts: ast.Stmt[], own acc: string[]): string[] {
         if let ast.StmtVar(v) = stmts[i] {
             if (!destructures(v)) {
                 acc = acc.append("=" + v.name);
+                var rest: ast.Stmt[] = [];
                 var j: i32 = i + 1;
-                while (j < stmts.len()) {
-                    for u in astwalk.fold_stmt_nodes(stmts[j], [], name_uses, ident_uses, descend_all) { if (u == v.name) { acc = acc.append(u); } }
-                    j = j + 1;
-                }
+                while (j < stmts.len()) { rest = rest.append(stmts[j]); j = j + 1; }
+                for u in uses_in(rest, []) { if (u == v.name) { acc = acc.append(u); } }
             }
         }
         i = i + 1;
