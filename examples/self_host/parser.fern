@@ -13219,13 +13219,19 @@ function fn_spelling_ret(t: string): string {
 // form: a simple nominal (`i32`, `string`, a bare struct `P`) passes through;
 // a NESTED monomorphisable generic-enum arg (`Opt[i32]`) recurses to its
 // mangled clone name (`Opt__i32`); a fn type (`(i32) => i32`) sanitises to a
-// symbol-safe token (native parity), and a tuple to native's `tup_…` name.
-// Returns "" for an arg this pass still can't key (an array, a generic struct,
-// a non-generic enum, or a tuple holding one), so the enclosing instantiation
+// symbol-safe token (native parity), a tuple to native's `tup_…` name, and an
+// array to its element's name suffixed `_arr` (`u8[]` → `u8_arr`).
+// Returns "" for an arg this pass still can't key (a generic struct, a
+// non-generic enum, or a tuple holding one), so the enclosing instantiation
 // bails cleanly.
 function ge_targ_mangle(arg: string, enums: EnumDecl[]): string {
     if (arg.len() == 0) { return ""; }
     if (pk_is_fn_spelling(arg)) { return fn_key_sanitize(arg); }
+    if (type_ends_arr(arg)) {
+        var elem: string = ge_targ_mangle(slice_unchecked(arg, 0, arg.len() - 2) + "", enums);
+        if (elem.len() == 0) { return ""; }
+        return elem + "_arr";
+    }
     if (arg[0] == b'(') { return ge_tuple_mangle(arg); }
     var lb: i32 = first_bracket(arg);
     if (lb < 0) {
@@ -13239,10 +13245,10 @@ function ge_targ_mangle(arg: string, enums: EnumDecl[]): string {
 }
 
 // keyed_by_mangle: a spelling whose key is a mangled token rather than the
-// spelling itself (a fn type or a tuple), so a clone's field types must read
-// the spelling back.
+// spelling itself (a fn type, a tuple or an array), so a clone's field types
+// must read the spelling back.
 function keyed_by_mangle(t: string): boolean {
-    return t.len() > 0 && t[0] == b'(';
+    return t.len() > 0 && (t[0] == b'(' || type_ends_arr(t));
 }
 
 // ge_tuple_mangle names a tuple type argument as native's mangleArg does:
@@ -13381,14 +13387,13 @@ function me_infer_variant_key(ed: EnumDecl, vname: string, args: ast.Expr[], exp
         key = key + b;
         j = j + 1;
     }
-    // A single-param fn instantiation (`Has(f)` with f: (i32) => i32, the
-    // binding carrying the full spelling): sanitise to the same symbol-safe
+    // A single-param fn, tuple or array instantiation (`Has(f)` with f:
+    // (i32) => i32, the binding carrying the full spelling): name it with the
     // token ge_targ_mangle produces for the annotated path, so the inferred
     // and annotated spellings of one instantiation share a clone (#5298
     // follow-up). The caller recovers the raw spelling for iargs from
     // me_variant_bound.
-    if (ed.type_params.len() == 1 && pk_is_fn_spelling(key)) { return fn_key_sanitize(key); }
-    if (ed.type_params.len() == 1 && key[0] == b'(') { return ge_tuple_mangle(key); }
+    if (ed.type_params.len() == 1 && keyed_by_mangle(key)) { return ge_targ_mangle(key, enums); }
     if (!is_simple_key(key)) { return ""; }
     return key;
 }

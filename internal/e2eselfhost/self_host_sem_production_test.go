@@ -5888,6 +5888,32 @@ function main(): i32 {
     return a + run((k: i32): Opt[string] => { if (k > 1) { return Has("x" + "yz"); } return Non; }, 2) + pick(t) + b;
 }
 `},
+	// A generic enum instantiated at an array, annotated or inferred from the
+	// payload, including a closure payload returning the enum: std/async's
+	// `Future[u8[]]` shape (#10762).
+	{name: "a-generic-enum-at-an-array-type-argument", atLeast: 7, noLeak: true, src: `
+enum Fut[T] { Ready(T), Pending(i32, (i32) => Fut[T]) }
+enum Holder[T] { Has(T), Empty }
+function step(fd: i32): Fut[u8[]] { var b: u8[] = [1 as u8, 2 as u8, fd as u8]; return Ready(b); }
+function run(f: Fut[u8[]]): i32 {
+    match (f) { Ready(b) => { return b.len() + (b[2] as i32); }, Pending(k, g) => { return run(g(k)); } }
+}
+function mk(n: i32): i32[] {
+    var a: i32[] = [];
+    var i: i32 = 0;
+    while (i < n) { a = a.append(i * 3); i = i + 1; }
+    return a;
+}
+function probe(h: Holder[i32[]]): i32 { match (h) { Has(xs) => { return xs[1]; }, Empty => { return 0; } } }
+function first(h: Holder[string[]]): string { match (h) { Has(xs) => { return xs[0]; }, Empty => { return "-"; } } }
+function main(): i32 {
+    var names: string[] = ["x" + "yz", "w"];
+    var h = Has(names);
+    print(first(h) + first(Empty));
+    var bound: Holder[i32[]] = Has(mk(4));
+    return run(Pending(5, step)) * 10 + probe(Has(mk(8))) + probe(bound) + probe(Empty);
+}
+`},
 }
 
 // semDynShapes is a trait with a record and an enum implementation, each
