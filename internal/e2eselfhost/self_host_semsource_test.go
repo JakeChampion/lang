@@ -922,6 +922,7 @@ func goldenDiff(want, got string) string {
 }
 
 const semsourceRCProgram = `import "core/map";
+import "std/string";
 @noinline function pick(k: i32): i32[] {
     var rows: i32[][] = [[1, 2], [3, 4], [5, 6]];
     var chosen: i32[] = rows[0];
@@ -1003,7 +1004,8 @@ const semsourceRCProgram = `import "core/map";
 }
 @noinline function twice(n: i32): i32 {
     var a: i32[] = fill(n);
-    var x: i32 = first_of(a) + first_of(keep(a, 1)) + first_of(a);
+    var held: i32[] = a;
+    var x: i32 = first_of(held) + first_of(keep(a, 1)) + first_of(held);
     fill(x);
     return x;
 }
@@ -2154,10 +2156,14 @@ struct WideRec { d: f64, n: i64, s: string }
 // first is read back after the last grow: a buffer released early reads back
 // as something other than what went into it, which a balanced allocation count
 // alone would not report.
-@noinline function wide_grow(n: i64, k: i32): i32 {
+@noinline function wide_pushes(n: i64, k: i32): i64[] {
     var xs: i64[] = [];
     var i: i32 = 0;
     while (i < k) { xs = xs.append(n + (i as i64)); i = i + 1; }
+    return xs;
+}
+@noinline function wide_grow(n: i64, k: i32): i32 {
+    var xs: i64[] = wide_pushes(n, k);
     if (xs.len() != k) { return 0 - 1; }
     if (k > 0 && xs[0] != n) { return 0 - 2; }
     return (wide_sum(xs) >> 32) as i32;
@@ -2165,8 +2171,11 @@ struct WideRec { d: f64, n: i64, s: string }
 @noinline function wide_set(own xs: i64[], i: i32, v: i64): i64[] { return xs.with(i, v); }
 // The donor is shared, so the replacement forks a copy at the same stride and
 // the donor keeps the element it had.
-@noinline function wide_copy_set(xs: i64[], v: i64): i32 {
-    var ys: i64[] = wide_set(xs, 1, v);
+@noinline function wide_triple(a: i64, b: i64, c: i64): i64[] { return [a, b, c]; }
+@noinline function wide_copy_set(a: i64, b: i64, c: i64, v: i64): i32 {
+    var donor: i64[] = wide_triple(a, b, c);
+    var xs: i64[] = donor;
+    var ys: i64[] = wide_set(donor, 1, v);
     if (ys[1] != v) { return 0 - 1; }
     if (xs[1] == v) { return 0 - 2; }
     return ((ys[1] + xs[1]) >> 32) as i32;
@@ -2182,17 +2191,24 @@ struct WideRec { d: f64, n: i64, s: string }
     return total;
 }
 @noinline function uwide_lit_sum(n: u64): i32 { return (uwide_sum(uwide_lit(n)) >> 32u64) as i32; }
-@noinline function uwide_grow(n: u64, k: i32): i32 {
+@noinline function uwide_pushes(n: u64, k: i32): u64[] {
     var xs: u64[] = [];
     var i: i32 = 0;
     while (i < k) { xs = xs.append(n + (i as u64)); i = i + 1; }
+    return xs;
+}
+@noinline function uwide_grow(n: u64, k: i32): i32 {
+    var xs: u64[] = uwide_pushes(n, k);
     if (xs.len() != k) { return 0 - 1; }
     if (k > 0 && xs[0] != n) { return 0 - 2; }
     return (uwide_sum(xs) >> 32u64) as i32;
 }
 @noinline function uwide_set(own xs: u64[], i: i32, v: u64): u64[] { return xs.with(i, v); }
-@noinline function uwide_copy_set(xs: u64[], v: u64): i32 {
-    var ys: u64[] = uwide_set(xs, 1, v);
+@noinline function uwide_triple(a: u64, b: u64, c: u64): u64[] { return [a, b, c]; }
+@noinline function uwide_copy_set(a: u64, b: u64, c: u64, v: u64): i32 {
+    var donor: u64[] = uwide_triple(a, b, c);
+    var xs: u64[] = donor;
+    var ys: u64[] = uwide_set(donor, 1, v);
     if (ys[1] != v) { return 0 - 1; }
     if (xs[1] == v) { return 0 - 2; }
     return ((ys[1] + xs[1]) >> 32u64) as i32;
@@ -2221,10 +2237,14 @@ struct WideRec { d: f64, n: i64, s: string }
     return total;
 }
 @noinline function float_lit_sum(x: f64): i32 { return (float_sum(float_arr(x)) * 10.0) as i32; }
-@noinline function float_grow(x: f64, k: i32): i32 {
+@noinline function float_pushes(x: f64, k: i32): f64[] {
     var ds: f64[] = [];
     var i: i32 = 0;
     while (i < k) { ds = ds.append(x + (i as f64)); i = i + 1; }
+    return ds;
+}
+@noinline function float_grow(x: f64, k: i32): i32 {
+    var ds: f64[] = float_pushes(x, k);
     if (ds.len() != k) { return 0 - 1; }
     if (ds[0] != x) { return 0 - 2; }
     ds = ds.with(0, x * 4.0);
@@ -2242,8 +2262,11 @@ struct WideRec { d: f64, n: i64, s: string }
     while (i < n) { xs = xs.with(i, i * i); i = i + 1; }
     return xs[n - 1] + xs.len();
 }
-@noinline function copy_set(xs: i32[]): i32 {
-    var ys: i32[] = set_at(xs, 0, 7);
+@noinline function int_pair(a: i32, b: i32): i32[] { return [a, b]; }
+@noinline function copy_set(a: i32, b: i32): i32 {
+    var donor: i32[] = int_pair(a, b);
+    var xs: i32[] = donor;
+    var ys: i32[] = set_at(donor, 0, 7);
     return ys[0] + xs[0];
 }
 // A with on a record FIELD the frame reads no further through — the
@@ -2281,9 +2304,11 @@ struct WideRec { d: f64, n: i64, s: string }
     ws = set_word(ws, "fghi");
     return ws[1].len() + n;
 }
+@noinline function two_words(a: string, b: string): string[] { return [a, b]; }
 @noinline function shared_word(n: i32): i32 {
-    var ws: string[] = ["ab", "c"];
-    var vs: string[] = set_word(ws, "z");
+    var donor: string[] = two_words("ab", "c");
+    var ws: string[] = donor;
+    var vs: string[] = set_word(donor, "z");
     return vs[1].len() * 10 + ws[1].len() + n;
 }
 @noinline function set_p(own ps: P[], p: P): i32 {
@@ -2344,7 +2369,7 @@ const TAG: string = "ab";
 // runtime builtins with a contract: the writer copies the bytes it is lent,
 // the builder round-trips its appends into an owned string, and the byte
 // search reads its string.
-@noinline function tick(n: i32) { if (n > 0) { print("tick"); } }
+@noinline function tick(n: i32): void { if (n > 0) { print("tick"); } }
 @noinline function ticked(n: i32): i32 { tick(n); return n + 1; }
 @noinline function built(s: string): i32 {
     strbuf_reset();
@@ -2845,7 +2870,8 @@ struct Half { v: f32, n: i32 }
 }
 @noinline function map_hand(k: string): i32 {
     var m: Map[string, i32] = map_new(2);
-    return map_eat(m.insert(k, 7), k);
+    m = m.insert(k, 7);
+    return map_eat(m, k);
 }
 // A method on a generic receiver is a template the receiver's type
 // instantiates: once at i32, once at string, whose payload the instance
@@ -3494,8 +3520,8 @@ function main(): i32 {
     var e: i32[] = carry(0);
     print_int(d[0] + e[0]); print("");
     print_int(count_even(5)); print(""); print_int(count_even(0)); print("");
-    var r: i32[] = chain(3);
-    print_int(r[0]); print(""); print_int(r[1]); print("");
+    var rc: i32[] = chain(3);
+    print_int(rc[0]); print(""); print_int(rc[1]); print("");
     print_int(twice(2)); print(""); print_int(count_down(4)); print("");
     var g: i32[] = grow(3);
     var h: i32[] = grow(0);
@@ -3513,9 +3539,9 @@ function main(): i32 {
     // field box, so the row's release must be the box dec alone and the reuse
     // demand below must fork rather than write through to w.
     var w: W = W { s: S2 { a: 1, b: 2 } };
-    var d: S2 = proj(w);
-    var c: S2 = S2 { ...d, a: 5 };
-    print_int(w.s.a + c.a + d.b); print("");
+    var dp: S2 = proj(w);
+    var cp: S2 = S2 { ...dp, a: 5 };
+    print_int(w.s.a + cp.a + dp.b); print("");
     // A METHOD lowered through this boundary: its receiver is parameter 0 and
     // it borrows, so the box main owns is still main's to release.
     var ct: Counter = make_counter(6);
@@ -3530,9 +3556,9 @@ function main(): i32 {
     print_int(text_size("hello")); print(""); print_int(grown_size(3)); print("");
     var lp: P = P { n: 1, xs: [1, 2] };
     print_int(grown_size(0)); print(""); print_int(inner_size(lp)); print("");
-    var g: i32[] = grow_to(9);
-    print_int(g.len()); print(""); print_int(sum_all(g)); print("");
-    print_int(borrow_acc(g, 3)); print(""); print_int(g.len()); print("");
+    var gt: i32[] = grow_to(9);
+    print_int(gt.len()); print(""); print_int(sum_all(gt)); print("");
+    print_int(borrow_acc(gt, 3)); print(""); print_int(gt.len()); print("");
     print_int(sum_all(grow_to(0))); print(""); print_int(push_temp(1)); print("");
     print_int(row_total(4)); print(""); print_int(word_bytes(3)); print("");
     print_int(sum_for(lens)); print(""); print_int(skip_two(lens)); print("");
@@ -3582,12 +3608,12 @@ function main(): i32 {
     print_int(wide_fields(WideRec { d: 1.25, n: 8589934592i64, s: "ab" })); print(""); print_int(span_wide(Wide(1.5, "abc"))); print("");
     print_int(mk_wide(2.5, 4294967296i64, "abcd")); print(""); print_int(mk_span(0.25)); print("");
     print_int(wide_lit_sum(5000000000i64)); print(""); print_int(wide_grow(4294967296i64, 6)); print("");
-    print_int(wide_grow(1i64, 0)); print(""); print_int(wide_copy_set([1i64, 4294967296i64, 3i64], 8589934592i64)); print("");
+    print_int(wide_grow(1i64, 0)); print(""); print_int(wide_copy_set(1i64, 4294967296i64, 3i64, 8589934592i64)); print("");
     print_int(uwide_lit_sum(5000000000u64)); print(""); print_int(uwide_grow(4294967296u64, 6)); print("");
-    print_int(uwide_copy_set([1u64, 4294967296u64, 3u64], 8589934592u64)); print("");
+    print_int(uwide_copy_set(1u64, 4294967296u64, 3u64, 8589934592u64)); print("");
     print_int(wide_pair_sum(5000000000i64)); print(""); print_int(float_pair_sum(2.5)); print("");
     print_int(float_lit_sum(1.5)); print(""); print_int(float_grow(0.5, 5)); print(""); print_int(float_grow(2.0, 1)); print("");
-    print_int(fill_squares(5)); print(""); print_int(copy_set([1, 2])); print(""); print_int(word_swap(1)); print("");
+    print_int(fill_squares(5)); print(""); print_int(copy_set(1, 2)); print(""); print_int(word_swap(1)); print("");
     print_int(shared_word(1)); print("");
     print_int(set_p([P { n: 1, xs: [] }], P { n: 4, xs: [1, 2] })); print("");
     print_int(unpack(3)); print(""); print_int(unpack_discard(2)); print(""); print_int(unpack_words("abc")); print("");
@@ -3861,7 +3887,17 @@ function main(): i32 {
     // The program's imports resolve against the stdlib root (av[3], with its
     // trailing slash), merge in and are tree-shaken as the CLI does them: a
     // routed map calls core/map's functions, which the program has to carry.
-    var parsed = treeshake.treeshake(flatten.bundle(entry, modloader.load_imports(modloader.no_overlay(), av[3], entry), ""));
+    var merged = flatten.bundle(entry, modloader.load_imports(modloader.no_overlay(), av[3], entry), "");
+    // Gate on the checker as the CLI does, so the fixture cannot hold a
+    // program the language rejects.
+    var gated: util.Diag[] = checker.build_gate_diags(merged);
+    if (gated.len() > 0) {
+        for d in gated {
+            eprint(util.i32_to_string(d.line) + ":" + util.i32_to_string(d.col) + ": error[" + d.code + "]: " + d.message + "\n");
+        }
+        return 6;
+    }
+    var parsed = treeshake.treeshake(merged);
     // The typed lowering reads typed; the AST lowering reads its erasure.
     var typed = irlower.lift_lambdas_typed(checker.annotate_module(parser.register_struct_method_generics(parser.register_map_method_generics(parser.register_array_method_generics(parser.Module { ...parsed, structs: parser.inject_builtin_enums(parsed.structs) })))));
     var mod = parser.erase_str_module(typed);
@@ -3886,7 +3922,8 @@ function main(): i32 {
         // main is AST-lowered, and so is a template's own erased body, which
         // main's calls name; the template's instances are bodies of their own.
         if (fd.name == "main" || p.template) {
-            if (!p.ok && fd.name != "main") { eprint(fd.name + ": " + p.why); return 4; }
+            // A template no produced body reaches is bodyless: nothing to lower.
+            if (!p.ok && !p.bodyless && fd.name != "main") { eprint(fd.name + ": " + p.why); return 4; }
         } else {
             if (!p.ok) { eprint(fd.name + ": " + p.why); return 4; }
             plan = ssaunits.plan(p.func, p.modes);
