@@ -274,6 +274,22 @@ function main(): i32 {
     }
     return t;
 }`, 42)
+	// An owned dyn receiver temp is released once its method call returns
+	// (#10554).
+	checkBalancedOnEveryBackend(t, "dyn-owned-receiver", dynShapesPrelude+`function mkd(j: i32): dyn Shape { return Rect { w: j, h: 2, tag: "q" + "r" }; }
+function main(): i32 {
+    var t: i32 = 0;
+    var j: i32 = 0;
+    var d1: dyn Shape = Rect { w: 5, h: 1, tag: "s" + "" };
+    while (j < 3) {
+        t = t + mkd(j).area();
+        t = t + (if (j > 1) { d1 } else { mkd(j) }).area();
+        t = t + (match (j) { 0 => mkd(1), _ => d1 }).area();
+        t = t + d1.area();
+        j = j + 1;
+    }
+    return t;
+}`, 58)
 	checkBalancedOnEveryBackend(t, "dyn-conditional-args", dynShapesPrelude+`function mkd(j: i32): dyn Shape { return Rect { w: j, h: 2, tag: "q" + "r" }; }
 function main(): i32 {
     var t: i32 = 0;

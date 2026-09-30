@@ -14559,6 +14559,9 @@ func (b *builder) call(n *ast.Call) error {
 			params = append(params, resolve(p.Type))
 		}
 		sig := &ast.FuncType{Params: params, Result: resolve(meth.Result)}
+		// An owned receiver temp (`mkd(j).area()`) is the call's to release
+		// once it returns, unless the result could be the receiver itself.
+		lowerRecv, releaseRecv := b.dynReceiverLowering(fa.Target, sig.Result)
 		// OpCallDyn's stack contract is uniform across backends:
 		// `[data, args..., vtable]`. Only how `data` and `vtable` are
 		// obtained from the receiver differs by representation
@@ -14568,7 +14571,7 @@ func (b *builder) call(n *ast.Call) error {
 			// pointer to a `{data @0, vtable @ptrW}` cell. Stash the cell
 			// pointer, deref `data` (+0), lower args, deref `vtable`
 			// (+ptrW), then dispatch.
-			if err := b.expr(fa.Target); err != nil {
+			if err := lowerRecv(); err != nil {
 				return err
 			}
 			cellTmp := b.allocSlot()
@@ -14589,12 +14592,13 @@ func (b *builder) call(n *ast.Call) error {
 			b.emit(Op{Kind: OpAdd})
 			b.emit(Op{Kind: OpLoad, Width: WidthPtr})
 			b.emit(Op{Kind: OpCallDyn, I32: int32(slot), Ext: &OpExt{Sig: sig}})
+			releaseRecv()
 			return nil
 		}
 		// Inline two-word (wasm, §4.2.1): lower the receiver →
 		// [data, vtable]; pop the vtable word into a fresh i32 temp
 		// (OpStoreLocal pops one word, leaving [data]).
-		if err := b.expr(fa.Target); err != nil {
+		if err := lowerRecv(); err != nil {
 			return err
 		}
 		vtmp := b.allocSlot()
@@ -14609,6 +14613,7 @@ func (b *builder) call(n *ast.Call) error {
 		// Push the vtable back → [data, args..., vtable], then dispatch.
 		b.emit(Op{Kind: OpLoadLocal, I32: vtmp})
 		b.emit(Op{Kind: OpCallDyn, I32: int32(slot), Ext: &OpExt{Sig: sig}})
+		releaseRecv()
 		return nil
 	}
 	if cr, ok := n.Callee.(*ast.CaptureRef); ok {
@@ -16900,6 +16905,43 @@ func (b *builder) stashOwnedArgTemp(a ast.Expr) (int32, ast.Type, bool, error) {
 	b.emit(Op{Kind: OpStoreLocal, I32: slot})
 	b.emit(Op{Kind: OpLoadLocal, I32: slot})
 	return slot, tt, true, nil
+}
+
+// dynReceiverLowering returns how a dyn method call lowers its receiver, and
+// what it runs once the call returns. An owned receiver temp — a fresh call
+// result or an owned conditional — is parked in a slot and released after the
+// call, as an argument temp is (#10554); an exit taken while the arguments are
+// lowered releases it too. A result that could be the receiver keeps it.
+func (b *builder) dynReceiverLowering(recv ast.Expr, result ast.Type) (func() error, func()) {
+	plain := func() error { return b.expr(recv) }
+	if !b.dynReclaim() || !resultCannotAliasArg(result) {
+		return plain, func() {}
+	}
+	t, ok := b.freshOwnedRcTempType(recv)
+	if !ok {
+		t, ok = b.ownedCallResultType(recv)
+	}
+	if _, isDyn := t.(ast.DynTraitType); !ok || !isDyn {
+		return plain, func() {}
+	}
+	slot := b.allocSlot()
+	b.locals[fmt.Sprintf("__dynrecv_%d", slot)] = slot
+	b.scratchType[slot] = t
+	pop := func() {}
+	lower := func() error {
+		if err := b.expr(recv); err != nil {
+			return err
+		}
+		b.emit(Op{Kind: OpStoreLocal, I32: slot})
+		b.emit(Op{Kind: OpLoadLocal, I32: slot})
+		pop = b.pushPendingDrop(func() { b.emitArgTempDrop(slot, t) })
+		return nil
+	}
+	release := func() {
+		pop()
+		b.emitArgTempDrop(slot, t)
+	}
+	return lower, release
 }
 
 // emitArgTempDrops releases the temps emitIndirectCallArgs stashed. Net-zero
