@@ -33,9 +33,11 @@ import "./asmcore";
 import "./ir";
 import "./ircore";
 import "./checker";
+import "./constfold";
 import "./lexer";
 import "./irlower";
 import "./parser";
+import "./platforms";
 import "./semsource";
 import "./ssasem";
 import "./ssarc";
@@ -836,9 +838,13 @@ pub function driven(mod: parser.Module, target: string): Driven {
 }
 
 // driven_annotated is driven for a module the caller has already annotated.
+// `target_os()` / `target_arch()` are folded to the target's names first, as
+// the CLI folds them: no backend emits a body for either.
 pub function driven_annotated(annotated: parser.Module, target: string): Driven {
     if (!sem_ir_on()) { return Driven { full: parser.module_with_builtins(annotated), sub: ircore.no_sub() }; }
-    var typed: parser.Module = parser.module_with_builtins_typed(annotated);
+    var desc: platforms.Descriptor = platforms.for_target(target);
+    var folded: parser.Module = constfold.fold_target_name(annotated, desc.environment, desc.isa);
+    var typed: parser.Module = parser.module_with_builtins_typed(folded);
     var full: parser.Module = parser.erase_str_module(typed);
     // The emit entry's checks run before the lowering, so a module they refuse
     // gets its diagnostic rather than a lowering refusal.

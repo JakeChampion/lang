@@ -119,6 +119,9 @@ var asmLoadRunStdlibCases = []struct {
 	{"str-split-trailing-sep", "import \"std/string\";\nfunction main(): i32 { var a = \"a,b,\".split(\",\"); for s in a { write(s); write(\"|\"); } return a.len(); }", 3, "a|b||"},
 	{"str-split-multi-char-sep", "import \"std/string\";\nfunction main(): i32 { var a = \"foo--bar--baz\".split(\"--\"); for s in a { write(s); write(\"|\"); } return a.len(); }", 3, "foo|bar|baz|"},
 	{"str-split-consecutive", "import \"std/string\";\nfunction main(): i32 { var a = \"a,,b\".split(\",\"); for s in a { write(s); write(\"|\"); } return a.len(); }", 3, "a||b|"},
+	// target_os() / target_arch() are folded to the -target's names before the
+	// typed lowering, which has no body for either call.
+	{"target-name-folds", "function main(): i32 { write(target_os()); write(\"|\"); write(target_arch()); if (target_arch() == \"x86-64\") { return 0; } return 1; }", 0, "linux|x86-64"},
 }
 
 // stdlibLoader compiles programs that import the standard library through
