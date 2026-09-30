@@ -24,11 +24,11 @@
 // (proto: U, v: i32): U { return U.from(v); }` resolves `U.from` against the
 // bound. See docs/TRAITS.md.
 pub trait From[T] {
-    function from(v: T): Self;
+  function from(v: T): Self;
 }
 
 pub trait Into[T] {
-    function into(self: Self): T;
+  function into(self: Self): T;
 }
 
 // `TryFrom[T]` / `TryInto[T]` are the FALLIBLE siblings of From / Into, for
@@ -57,9 +57,9 @@ pub trait Into[T] {
 // : Result[U, string] { return U.try_from(s); }`) resolves `U.try_from`
 // against the bound. See docs/TRAITS.md.
 pub trait TryFrom[T] {
-    function try_from(v: T): Result[Self, string];
+  function try_from(v: T): Result[Self, string];
 }
 
 pub trait TryInto[T] {
-    function try_into(self: Self): Result[T, string];
+  function try_into(self: Self): Result[T, string];
 }

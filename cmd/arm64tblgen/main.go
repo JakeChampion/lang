@@ -19,6 +19,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/jakechampion/lang/internal/fmtsource"
 	"github.com/jakechampion/lang/internal/native/arm64tbl"
 )
 
@@ -224,14 +225,22 @@ func rewriteBlock(src, begin, end, gen string) (string, error) {
 // Rewrite replaces every marked block present in src. A file carrying none
 // is returned unchanged.
 func Rewrite(src string) (string, error) {
+	found := strings.Contains(src, scalarBegin)
 	var err error
 	for _, t := range arm64tbl.VecTables {
 		begin, end := markers(t)
+		found = found || strings.Contains(src, begin)
 		if src, err = rewriteBlock(src, begin, end, genTable(t)); err != nil {
 			return "", err
 		}
 	}
-	return rewriteBlock(src, scalarBegin, scalarEnd, genScalar())
+	if src, err = rewriteBlock(src, scalarBegin, scalarEnd, genScalar()); err != nil {
+		return "", err
+	}
+	if !found {
+		return src, nil
+	}
+	return fmtsource.Format(src)
 }
 
 func main() {

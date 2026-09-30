@@ -15,51 +15,55 @@ import "std/test";
 import "core/cmp";
 
 function test_display(): test.TestOutcome {
-    var b: u8 = 65;
-    var zero: u8 = 0;
-    var high: u8 = 255;
-    return test.assert_true(
-        b.to_string() == "65"
-        && zero.to_string() == "0"
-        && high.to_string() == "255");
+  var b: u8 = 65;
+  var zero: u8 = 0;
+  var high: u8 = 255;
+  return test.assert_true(
+    b.to_string() == "65"
+      && zero.to_string() == "0"
+      && high.to_string() == "255",
+  );
 }
 
 function test_eq(): test.TestOutcome {
-    var a: u8 = 7;
-    var b: u8 = 7;
-    var c: u8 = 8;
-    return test.assert_true(a.eq(b) && !a.eq(c));
+  var a: u8 = 7;
+  var b: u8 = 7;
+  var c: u8 = 8;
+  return test.assert_true(a.eq(b) && !a.eq(c));
 }
 
 // cmp returns -1 / 0 / 1. The high byte matters: a byte is UNSIGNED, so 255
 // must order ABOVE 1 rather than below it the way a sign-extended i32 would.
 function test_ord(): test.TestOutcome {
-    var lo: u8 = 1;
-    var hi: u8 = 255;
-    return test.assert_true(
-        lo.cmp(hi) == 0 - 1
-        && hi.cmp(lo) == 1
-        && lo.cmp(lo) == 0);
+  var lo: u8 = 1;
+  var hi: u8 = 255;
+  return test.assert_true(
+    lo.cmp(hi) == 0 - 1
+      && hi.cmp(lo) == 1
+      && lo.cmp(lo) == 0,
+  );
 }
 
 function test_hash(): test.TestOutcome {
-    var a: u8 = 42;
-    var b: u8 = 43;
-    // Distinct bytes should not collide under the standard mixer, and a
-    // byte's hash must agree with the i32 it widens to.
-    return test.assert_true(a.hash() != b.hash() && a.hash() == (42).hash());
+  var a: u8 = 42;
+  var b: u8 = 43;
+  // Distinct bytes should not collide under the standard mixer, and a
+  // byte's hash must agree with the i32 it widens to.
+  return test.assert_true(a.hash() != b.hash() && a.hash() == 42.hash());
 }
 
 // Debug is the developer-facing half of the Display/Debug split. A byte has
 // no quoting or structure to add, so it debugs as its decimal form — the
 // point is that `[T: Debug]` (an `@derive(Debug)` struct with a `u8` field,
 // which expands to `self.f.to_debug()`) can reach a byte at all.
-function debug_of[T: cmp.Debug](x: T): string { return x.to_debug(); }
+function debug_of[T: cmp.Debug](x: T): string {
+  return x.to_debug();
+}
 
 function test_debug(): test.TestOutcome {
-    var high: u8 = 200;
-    var zero: u8 = 0;
-    return test.assert_true(debug_of(high) == "200" && debug_of(zero) == "0");
+  var high: u8 = 200;
+  var zero: u8 = 0;
+  return test.assert_true(debug_of(high) == "200" && debug_of(zero) == "0");
 }
 
 // The composing half: a derived `to_debug` expands to `self.r.to_debug()` for
@@ -68,8 +72,8 @@ function test_debug(): test.TestOutcome {
 struct Pixel { r: u8, a: i32 }
 
 function test_derive_debug(): test.TestOutcome {
-    var p: Pixel = Pixel { r: 200, a: 7 };
-    return test.assert_eq(p.to_debug(), "Pixel { r: 200, a: 7 }");
+  var p: Pixel = Pixel { r: 200, a: 7 };
+  return test.assert_eq(p.to_debug(), "Pixel { r: 200, a: 7 }");
 }
 
 // Default is an ASSOCIATED function — `T.default()`, no receiver — so a byte
@@ -80,26 +84,26 @@ function test_derive_debug(): test.TestOutcome {
 struct Box[T] { v: T }
 
 function test_default(): test.TestOutcome {
-    var b: Box[u8] = Box.default();
-    return test.assert_eq(b.v, 0 as u8);
+  var b: Box[u8] = Box.default();
+  return test.assert_eq(b.v, 0 as u8);
 }
 
 // The reason the impls exist: a bare assert_eq on two bytes resolves through
 // the `[T: Eq + Display]` bound, so it only compiles when u8 satisfies them.
 function test_generic_bound(): test.TestOutcome {
-    var b: u8 = 65;
-    return test.assert_eq(b, 65 as u8);
+  var b: u8 = 65;
+  return test.assert_eq(b, 65 as u8);
 }
 
 function main(): i32 {
-    var r: test.TestRunner = test.test_new("core/cmp u8 impls");
-    r = r.it("Display", test_display);
-    r = r.it("Eq", test_eq);
-    r = r.it("Ord unsigned order", test_ord);
-    r = r.it("Hash", test_hash);
-    r = r.it("Debug", test_debug);
-    r = r.it("derived Debug over a byte field", test_derive_debug);
-    r = r.it("Default", test_default);
-    r = r.it("generic Eq+Display bound", test_generic_bound);
-    return r.finish();
+  var r: test.TestRunner = test.test_new("core/cmp u8 impls");
+  r = r.it("Display", test_display);
+  r = r.it("Eq", test_eq);
+  r = r.it("Ord unsigned order", test_ord);
+  r = r.it("Hash", test_hash);
+  r = r.it("Debug", test_debug);
+  r = r.it("derived Debug over a byte field", test_derive_debug);
+  r = r.it("Default", test_default);
+  r = r.it("generic Eq+Display bound", test_generic_bound);
+  return r.finish();
 }

@@ -9,7 +9,6 @@
 // "reads like a compiler gap" outcome the warning exists to prevent. Routing
 // every driver through one function makes that drift unrepresentable rather
 // than merely fixed.
-
 import "std/io";
 import "./lexer";
 import "./parser";
@@ -19,8 +18,8 @@ import "./parser";
 // that warning. It is a no-op for an import-free program, which is what the
 // fixture corpus is almost entirely made of.
 pub function parse_stdin(driver: string): parser.Module {
-    var src: string = io.read_all_stdin();
-    var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
-    var _unresolved: boolean = parser.warn_unresolved_imports(mod, driver);
-    return mod;
+  var src: string = io.read_all_stdin();
+  var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
+  var _unresolved: boolean = parser.warn_unresolved_imports(mod, driver);
+  return mod;
 }

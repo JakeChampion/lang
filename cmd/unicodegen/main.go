@@ -59,6 +59,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+
+	"github.com/jakechampion/lang/internal/fmtsource"
 )
 
 // bias is added to a stored delta so negative deltas fit an unsigned
@@ -2853,7 +2855,11 @@ pub function word_count(s: string): i32 {
 }
 `))
 
-	return b.String(), stats
+	src, err := fmtsource.Format(b.String())
+	if err != nil {
+		panic("unicodegen: generated source does not parse: " + err.Error())
+	}
+	return src, stats
 }
 
 func main() {

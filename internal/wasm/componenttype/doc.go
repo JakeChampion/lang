@@ -31,9 +31,9 @@
 //	dd if=/tmp/proxy.wasm of=internal/wasm/componenttype/proxy.bin bs=1 skip=26
 //
 //	# 4. The self-host compiler embeds the proxy payload as Fern source
-//	#    (examples/self_host/wit_proxy_world.fern); rewrite it from proxy.bin
-//	#    with the same \xNN-per-byte spelling. TestProxyWorldFernPayload pins
-//	#    the two equal.
+//	#    (examples/self_host/wit_proxy_world.fern); rewrite its string
+//	#    literals from proxy.bin, one \xNN escape per byte, and run
+//	#    `fern -fmt -w` on it. TestProxyWorldFernPayload pins the two equal.
 //
 // Anything that changes the WIT (adding/removing imports,
 // version bumps) requires regenerating all three files. The CI

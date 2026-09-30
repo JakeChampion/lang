@@ -30,5 +30,5 @@
 // its `drop` never runs. `Drop` is a cleanup hook, not a guarantee; do
 // not depend on it for correctness.
 pub trait Drop {
-    function drop(self: Self): void;
+  function drop(self: Self): void;
 }

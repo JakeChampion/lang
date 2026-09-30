@@ -14,87 +14,184 @@
 // callback parameter / return is still limited at the indirect-call
 // seam (#2753), so keep `string`-typed callbacks out of these for now.
 // Non-callback combinators work for every type on every backend.
-
 import "core/cmp";
 
 // is_ok reports whether the result is `Ok`.
 pub function (r: Result[T, E]) is_ok(): boolean {
-    match (r) { Ok(x) => { return true; }, Err(e) => { return false; } }
+  match (r) {
+    Ok(x) => {
+      return true;
+    },
+    Err(e) => {
+      return false;
+    }
+  }
 }
 
 // is_err reports whether the result is `Err`.
 pub function (r: Result[T, E]) is_err(): boolean {
-    match (r) { Ok(x) => { return false; }, Err(e) => { return true; } }
+  match (r) {
+    Ok(x) => {
+      return false;
+    },
+    Err(e) => {
+      return true;
+    }
+  }
 }
 
 // unwrap_or returns the `Ok` value, or `fallback` on `Err`.
 pub function (r: Result[T, E]) unwrap_or(fallback: T): T {
-    match (r) { Ok(x) => { return x; }, Err(e) => { return fallback; } }
+  match (r) {
+    Ok(x) => {
+      return x;
+    },
+    Err(e) => {
+      return fallback;
+    }
+  }
 }
 
 // unwrap_or_else returns the `Ok` value, or computes a fallback from
 // the error.
 pub function (r: Result[T, E]) unwrap_or_else(f: (E) => T): T {
-    match (r) { Ok(x) => { return x; }, Err(e) => { return f(e); } }
+  match (r) {
+    Ok(x) => {
+      return x;
+    },
+    Err(e) => {
+      return f(e);
+    }
+  }
 }
 
 // map transforms the `Ok` value, leaving an `Err` untouched.
 pub function (r: Result[T, E]) map[U](f: (T) => U): Result[U, E] {
-    match (r) { Ok(x) => { return Ok(f(x)); }, Err(e) => { return Err(e); } }
+  match (r) {
+    Ok(x) => {
+      return Ok(f(x));
+    },
+    Err(e) => {
+      return Err(e);
+    }
+  }
 }
 
 // and_then chains a result-returning function on the `Ok` value
 // (flat-map / `?`-style), short-circuiting on `Err`.
 pub function (r: Result[T, E]) and_then[U](f: (T) => Result[U, E]): Result[U, E] {
-    match (r) { Ok(x) => { return f(x); }, Err(e) => { return Err(e); } }
+  match (r) {
+    Ok(x) => {
+      return f(x);
+    },
+    Err(e) => {
+      return Err(e);
+    }
+  }
 }
 
 // map_err transforms the `Err` value, leaving an `Ok` untouched.
 pub function (r: Result[T, E]) map_err[F](f: (E) => F): Result[T, F] {
-    match (r) { Ok(x) => { return Ok(x); }, Err(e) => { return Err(f(e)); } }
+  match (r) {
+    Ok(x) => {
+      return Ok(x);
+    },
+    Err(e) => {
+      return Err(f(e));
+    }
+  }
 }
 
 // ok converts to an `Option`, discarding the error: `Ok(v)` ->
 // `Some(v)`, `Err(_)` -> `None`.
 pub function (r: Result[T, E]) ok(): Option[T] {
-    match (r) { Ok(x) => { return Some(x); }, Err(e) => { return None; } }
+  match (r) {
+    Ok(x) => {
+      return Some(x);
+    },
+    Err(e) => {
+      return None;
+    }
+  }
 }
 
 // err converts to an `Option` of the error: `Err(e)` -> `Some(e)`,
 // `Ok(_)` -> `None`.
 pub function (r: Result[T, E]) err(): Option[E] {
-    match (r) { Ok(x) => { return None; }, Err(e) => { return Some(e); } }
+  match (r) {
+    Ok(x) => {
+      return None;
+    },
+    Err(e) => {
+      return Some(e);
+    }
+  }
 }
 
 // map_or applies `f` to the `Ok` value, or returns `fallback` on `Err`
 // — `r.map(f).unwrap_or(fallback)` in one step.
 pub function (r: Result[T, E]) map_or[U](fallback: U, f: (T) => U): U {
-    match (r) { Ok(x) => { return f(x); }, Err(e) => { return fallback; } }
+  match (r) {
+    Ok(x) => {
+      return f(x);
+    },
+    Err(e) => {
+      return fallback;
+    }
+  }
 }
 
 // is_ok_and reports whether the result is `Ok` AND its value satisfies
 // `pred`. `Err` short-circuits to false (pred is not called).
 pub function (r: Result[T, E]) is_ok_and(pred: (T) => boolean): boolean {
-    match (r) { Ok(x) => { return pred(x); }, Err(e) => { return false; } }
+  match (r) {
+    Ok(x) => {
+      return pred(x);
+    },
+    Err(e) => {
+      return false;
+    }
+  }
 }
 
 // is_err_and reports whether the result is `Err` AND its error satisfies
 // `pred`. `Ok` short-circuits to false.
 pub function (r: Result[T, E]) is_err_and(pred: (E) => boolean): boolean {
-    match (r) { Ok(x) => { return false; }, Err(e) => { return pred(e); } }
+  match (r) {
+    Ok(x) => {
+      return false;
+    },
+    Err(e) => {
+      return pred(e);
+    }
+  }
 }
 
 // or returns this result if `Ok`, else `other` (the eagerly-evaluated
 // counterpart of `unwrap_or_else` at the `Result` level).
 pub function (r: Result[T, E]) or(other: Result[T, E]): Result[T, E] {
-    match (r) { Ok(x) => { return Ok(x); }, Err(e) => { return other; } }
+  match (r) {
+    Ok(x) => {
+      return Ok(x);
+    },
+    Err(e) => {
+      return other;
+    }
+  }
 }
 
 // and returns `other` if this result is `Ok`, else the original `Err`
 // — the eager counterpart of `and_then`, mirroring `Option.and`. The
 // `Ok` type may change (`Result[T, E]` -> `Result[U, E]`).
 pub function (r: Result[T, E]) and[U](other: Result[U, E]): Result[U, E] {
-    match (r) { Ok(x) => { return other; }, Err(e) => { return Err(e); } }
+  match (r) {
+    Ok(x) => {
+      return other;
+    },
+    Err(e) => {
+      return Err(e);
+    }
+  }
 }
 
 // or_else returns this result if `Ok`, else computes a recovery result
@@ -102,14 +199,28 @@ pub function (r: Result[T, E]) and[U](other: Result[U, E]): Result[U, E] {
 // dual of `and_then`. The error type may change (`Result[T, E]` ->
 // `Result[T, F]`).
 pub function (r: Result[T, E]) or_else[F](f: (E) => Result[T, F]): Result[T, F] {
-    match (r) { Ok(x) => { return Ok(x); }, Err(e) => { return f(e); } }
+  match (r) {
+    Ok(x) => {
+      return Ok(x);
+    },
+    Err(e) => {
+      return f(e);
+    }
+  }
 }
 
 // map_or_else applies `f` to the `Ok` value, or computes a fallback
 // from the error via `default_fn` — the lazy counterpart of `map_or`
 // (both arms are functions, so nothing is built on the unused path).
 pub function (r: Result[T, E]) map_or_else[U](default_fn: (E) => U, f: (T) => U): U {
-    match (r) { Ok(x) => { return f(x); }, Err(e) => { return default_fn(e); } }
+  match (r) {
+    Ok(x) => {
+      return f(x);
+    },
+    Err(e) => {
+      return default_fn(e);
+    }
+  }
 }
 
 // flatten collapses one level of nesting on the `Ok` side:
@@ -118,7 +229,14 @@ pub function (r: Result[T, E]) map_or_else[U](default_fn: (E) => U, f: (T) => U)
 // `and_then(x => x)` but callback-free, so it avoids the indirect-call
 // seam.
 pub function (r: Result[Result[T, E], E]) flatten(): Result[T, E] {
-    match (r) { Ok(inner) => { return inner; }, Err(e) => { return Err(e); } }
+  match (r) {
+    Ok(inner) => {
+      return inner;
+    },
+    Err(e) => {
+      return Err(e);
+    }
+  }
 }
 
 // transpose swaps a `Result` of an `Option` into an `Option` of a
@@ -127,13 +245,19 @@ pub function (r: Result[Result[T, E], E]) flatten(): Result[T, E] {
 // Callback-free (a nested `match`), so it lowers on every backend
 // without touching the indirect-call seam.
 pub function (r: Result[Option[T], E]) transpose[T, E](): Option[Result[T, E]] {
-    match (r) {
-        Ok(inner) => {
-            match (inner) {
-                Some(x) => { return Some(Ok(x)); },
-                None => { return None; }
-            }
+  match (r) {
+    Ok(inner) => {
+      match (inner) {
+        Some(x) => {
+          return Some(Ok(x));
         },
-        Err(e) => { return Some(Err(e)); }
+        None => {
+          return None;
+        }
+      }
+    },
+    Err(e) => {
+      return Some(Err(e));
     }
+  }
 }

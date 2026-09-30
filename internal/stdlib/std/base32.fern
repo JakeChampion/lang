@@ -15,74 +15,81 @@
 // rendering bytes as text. Read a decode result back with
 // `std/utf8.from_bytes` when the bytes are supposed to be text; encode
 // a string's bytes with `std/string`'s `s.bytes()`.
-
 // __b32_alphabet maps a 5-bit value (0..31) to its character byte:
 // 0..25 → 'A'..'Z', 26..31 → '2'..'7'.
 function __b32_alphabet(v: i32): i32 {
-    if (v < 26) { return v + 65; }   // 'A' + v
-    return v + 24;                    // 26 → '2' (50)
+  if (v < 26) {  // 'A' + v
+    return v + 65;
+  }
+  return v + 24;  // 26 → '2' (50)
 }
 
 // __b32_decode_char maps a character byte back to its 5-bit value, or
 // -1 if it is not a base32 digit.
 function __b32_decode_char(c: i32): i32 {
-    if (c >= 65 && c < 91)  { return c - 65; }   // A-Z
-    if (c >= 50 && c < 56)  { return c - 24; }   // 2-7 → 26..31
-    return 0 - 1;
+  if (c >= 65 && c < 91) {  // A-Z
+    return c - 65;
+  }
+  if (c >= 50 && c < 56) {  // 2-7 → 26..31
+    return c - 24;
+  }
+  return 0 - 1;
 }
 
 // `base32_encode(b)` — RFC 4648 base32, `=`-padded to 8-char groups.
 pub function base32_encode(bs: u8[]): string {
-    var out: u8[] = [];
-    var acc: i32 = 0;
-    var bits: i32 = 0;
-    var i: i32 = 0;
-    var n: i32 = bs.len();
-    while (i < n) {
-        acc = (acc << 8) | (bs[i] as i32);
-        bits = bits + 8;
-        while (bits >= 5) {
-            bits = bits - 5;
-            out = out.append(__b32_alphabet((acc >> bits) & 31) as u8);
-        }
-        i = i + 1;
+  var out: u8[] = [];
+  var acc: i32 = 0;
+  var bits: i32 = 0;
+  var i: i32 = 0;
+  var n: i32 = bs.len();
+  while (i < n) {
+    acc = acc << 8 | bs[i] as i32;
+    bits = bits + 8;
+    while (bits >= 5) {
+      bits = bits - 5;
+      out = out.append(__b32_alphabet(acc >> bits & 31) as u8);
     }
-    if (bits > 0) {
-        // Flush the final partial group, zero-padding the low bits.
-        out = out.append(__b32_alphabet((acc << (5 - bits)) & 31) as u8);
-    }
-    // Pad with '=' to a multiple of 8 characters.
-    while (out.len() % 8 != 0) {
-        out = out.append(61 as u8);   // '='
-    }
-    return string_from_bytes_unchecked(out);
+    i = i + 1;
+  }
+  if (bits > 0) {
+    // Flush the final partial group, zero-padding the low bits.
+    out = out.append(__b32_alphabet(acc << 5 - bits & 31) as u8);
+  }
+  // Pad with '=' to a multiple of 8 characters.
+  while (out.len() % 8 != 0) {
+    out = out.append(61 as u8);  // '='
+  }
+  return string_from_bytes_unchecked(out);
 }
 
 // `base32_decode(s)` — inverse of base32_encode. Lenient: stops at the
 // first non-base32 / non-`=` character (so trailing `=` padding needs no
 // special handling), returning the bytes decoded up to that point.
 pub function base32_decode(s: string): u8[] {
-    // Count the leading run of valid base32 digits (stop at '=' / junk).
-    var n: i32 = 0;
-    var sLen: i32 = s.len();
-    while (n < sLen) {
-        if (__b32_decode_char((s[n] as i32)) < 0) { break; }
-        n = n + 1;
+  // Count the leading run of valid base32 digits (stop at '=' / junk).
+  var n: i32 = 0;
+  var sLen: i32 = s.len();
+  while (n < sLen) {
+    if (__b32_decode_char(s[n] as i32) < 0) {
+      break;
     }
-    var out: u8[] = [];
-    var acc: i32 = 0;
-    var bits: i32 = 0;
-    var i: i32 = 0;
-    while (i < n) {
-        acc = (acc << 5) | __b32_decode_char((s[i] as i32));
-        bits = bits + 5;
-        if (bits >= 8) {
-            bits = bits - 8;
-            out = out.append(((acc >> bits) & 255) as u8);
-        }
-        i = i + 1;
+    n = n + 1;
+  }
+  var out: u8[] = [];
+  var acc: i32 = 0;
+  var bits: i32 = 0;
+  var i: i32 = 0;
+  while (i < n) {
+    acc = acc << 5 | __b32_decode_char(s[i] as i32);
+    bits = bits + 5;
+    if (bits >= 8) {
+      bits = bits - 8;
+      out = out.append((acc >> bits & 255) as u8);
     }
-    return out;
+    i = i + 1;
+  }
+  return out;
 }
 
 // `base32_decode_strict(s)` — like `base32_decode` but returns `None` on
@@ -100,47 +107,61 @@ pub function base32_decode(s: string): u8[] {
 // with an otherwise-valid data length is accepted (padding-optional,
 // matching `base64_decode_strict`). `""` decodes to `Some("")`.
 pub function base32_decode_strict(s: string): Option[u8[]] {
-    var sLen: i32 = s.len();
-    var n: i32 = 0;
-    while (n < sLen) {
-        if (__b32_decode_char((s[n] as i32)) < 0) { break; }
-        n = n + 1;
+  var sLen: i32 = s.len();
+  var n: i32 = 0;
+  while (n < sLen) {
+    if (__b32_decode_char(s[n] as i32) < 0) {
+      break;
     }
-    // Everything after the data run must be `=` padding — a non-`=` char
-    // (including a valid base32 char after a `=`) means it's malformed.
-    var p: i32 = n;
-    var pad: i32 = 0;
-    while (p < sLen) {
-        if (s[p] != 61) { return None; }   // 61 = '='
-        pad = pad + 1;
-        p = p + 1;
+    n = n + 1;
+  }
+  // Everything after the data run must be `=` padding — a non-`=` char
+  // (including a valid base32 char after a `=`) means it's malformed.
+  var p: i32 = n;
+  var pad: i32 = 0;
+  while (p < sLen) {
+    if (s[p] != 61) {  // 61 = '='
+      return None;
     }
-    if (pad > 6) { return None; }
-    if (n == 0) {
-        if (pad > 0) { return None; }
-        return Some([]);
+    pad = pad + 1;
+    p = p + 1;
+  }
+  if (pad > 6) {
+    return None;
+  }
+  if (n == 0) {
+    if (pad > 0) {
+      return None;
     }
-    // A final data group of 1, 3, or 6 chars can't form whole bytes.
-    var rem: i32 = n % 8;
-    if (rem == 1 || rem == 3 || rem == 6) { return None; }
-    // When padded, the total must fill an 8-char group.
-    if (pad > 0 && (n + pad) % 8 != 0) { return None; }
-    var out_len: i32 = (n * 5) / 8;
-    if (out_len == 0) { return Some([]); }
-    var buf: u8[] = __alloc_u8(out_len);
-    var i: i32 = 0;
-    var j: i32 = 0;
-    var acc: i32 = 0;
-    var bits: i32 = 0;
-    while (i < n) {
-        acc = (acc << 5) | __b32_decode_char((s[i] as i32));
-        bits = bits + 5;
-        if (bits >= 8) {
-            bits = bits - 8;
-            buf = buf.with(j, ((acc >> bits) & 255) as u8);
-            j = j + 1;
-        }
-        i = i + 1;
+    return Some([]);
+  }
+  // A final data group of 1, 3, or 6 chars can't form whole bytes.
+  var rem: i32 = n % 8;
+  if (rem == 1 || rem == 3 || rem == 6) {
+    return None;
+  }
+  // When padded, the total must fill an 8-char group.
+  if (pad > 0 && (n + pad) % 8 != 0) {
+    return None;
+  }
+  var out_len: i32 = n * 5 / 8;
+  if (out_len == 0) {
+    return Some([]);
+  }
+  var buf: u8[] = __alloc_u8(out_len);
+  var i: i32 = 0;
+  var j: i32 = 0;
+  var acc: i32 = 0;
+  var bits: i32 = 0;
+  while (i < n) {
+    acc = acc << 5 | __b32_decode_char(s[i] as i32);
+    bits = bits + 5;
+    if (bits >= 8) {
+      bits = bits - 8;
+      buf = buf.with(j, (acc >> bits & 255) as u8);
+      j = j + 1;
     }
-    return Some(buf);
+    i = i + 1;
+  }
+  return Some(buf);
 }

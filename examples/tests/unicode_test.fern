@@ -1,178 +1,242 @@
 import "std/test";
 import "std/unicode" as unicode;
+
 // examples/tests/unicode_test.fern — pure-Fern coverage of std/unicode's
 // simple (1:1) case mapping. Exercises multiple scripts (ASCII, Latin-1,
 // Latin Extended, Greek, Cyrillic), the code-point-level helpers, the
 // full-mapping behaviour (ß expands), and case folding.
-
 function test_ascii(): test.TestOutcome {
-    return test.assert_true(unicode.to_upper("hello") == "HELLO" &&
-                            unicode.to_lower("HeLLo") == "hello");
+  return test.assert_true(unicode.to_upper("hello") == "HELLO"
+    && unicode.to_lower("HeLLo") == "hello");
 }
 
 function test_latin1(): test.TestOutcome {
-    // Accented Western-European letters map both ways.
-    return test.assert_true(unicode.to_upper("café") == "CAFÉ" &&
-                            unicode.to_lower("ÜBER") == "über");
+  // Accented Western-European letters map both ways.
+  return test.assert_true(unicode.to_upper("café") == "CAFÉ"
+    && unicode.to_lower("ÜBER") == "über");
 }
 
 function test_greek(): test.TestOutcome {
-    return test.assert_eq(unicode.to_upper("αβγδ"), "ΑΒΓΔ");
+  return test.assert_eq(unicode.to_upper("αβγδ"), "ΑΒΓΔ");
 }
 
 function test_cyrillic(): test.TestOutcome {
-    return test.assert_eq(unicode.to_upper("привет"), "ПРИВЕТ");
+  return test.assert_eq(unicode.to_upper("привет"), "ПРИВЕТ");
 }
 
 function test_mixed_unchanged(): test.TestOutcome {
-    // Digits, punctuation, spaces pass through untouched.
-    return test.assert_eq(unicode.to_upper("a1-b2 c3!"), "A1-B2 C3!");
+  // Digits, punctuation, spaces pass through untouched.
+  return test.assert_eq(unicode.to_upper("a1-b2 c3!"), "A1-B2 C3!");
 }
 
 function test_char_level(): test.TestOutcome {
-    // 'a'(97) -> 'A'(65); Greek Α(0x391) -> α(0x3B1).
-    return test.assert_true(((97 as char).to_upper() as i32) == 65 &&
-                            ((913 as char).to_lower() as i32) == 945 &&
-                            ((48 as char).to_upper() as i32) == 48);   // '0' unchanged
+  // 'a'(97) -> 'A'(65); Greek Α(0x391) -> α(0x3B1).
+  return test.assert_true((97 as char).to_upper() as i32 == 65
+    && (913 as char).to_lower() as i32 == 945
+    && (48 as char).to_upper() as i32 == 48);  // '0' unchanged
 }
 
 function test_sharp_s_expands(): test.TestOutcome {
-    // FULL mapping: ß has no single-code-point uppercase, so it expands
-    // to two. The per-code-point to_upper_char cannot express this and
-    // leaves it alone — that is the whole reason both exist.
-    if (unicode.to_upper("straße") != "STRASSE") { return test.fail("straße -> STRASSE"); }
-    if (((223 as char).to_upper() as i32) != 223) { return test.fail("to_upper_char leaves ß alone"); }
-    return test.pass();
+  // FULL mapping: ß has no single-code-point uppercase, so it expands
+  // to two. The per-code-point to_upper_char cannot express this and
+  // leaves it alone — that is the whole reason both exist.
+  if (unicode.to_upper("straße") != "STRASSE") {
+    return test.fail("straße -> STRASSE");
+  }
+  if ((223 as char).to_upper() as i32 != 223) {
+    return test.fail("to_upper_char leaves ß alone");
+  }
+  return test.pass();
 }
 
 function test_eq_ignore_case(): test.TestOutcome {
-    if (!unicode.eq_ignore_case("Café", "cafÉ")) { return test.fail("Café ~ cafÉ"); }
-    if (!unicode.eq_ignore_case("ПРИВЕТ", "привет")) { return test.fail("cyrillic fold"); }
-    if (unicode.eq_ignore_case("abc", "abd")) { return test.fail("abc != abd"); }
-    if (unicode.eq_ignore_case("ab", "abc")) { return test.fail("length differs"); }
-    if (unicode.eq_ignore_case("abc", "ab")) { return test.fail("length differs, reversed"); }
-    // KELVIN SIGN (U+212A, 3 bytes) folds to plain 'k' (1 byte): equal
-    // under case folding while the BYTE lengths differ, which is why the
-    // comparison walks both operands independently.
-    if (!unicode.eq_ignore_case("K", "k")) { return test.fail("kelvin sign ~ k"); }
-    if (unicode.eq_ignore_case("K", "kk")) { return test.fail("kelvin sign != kk"); }
-    // FOLDING, not lowercasing: ß folds to ss, so these compare equal
-    // even though to_lower leaves ß alone. This is the whole difference
-    // between eq_ignore_case and eq_ignore_ascii_case.
-    if (!unicode.eq_ignore_case("ß", "ss")) { return test.fail("ß ~ ss"); }
-    if (!unicode.eq_ignore_case("STRASSE", "straße")) { return test.fail("STRASSE ~ straße"); }
-    if (!unicode.eq_ignore_case("ſ", "s")) { return test.fail("long s ~ s"); }
-    if (unicode.eq_ignore_case("ß", "s")) { return test.fail("ß != s"); }
-    if (unicode.case_fold("ß") != "ss") { return test.fail("case_fold ß"); }
-    if (unicode.case_fold("HELLO") != "hello") { return test.fail("case_fold ascii"); }
-    return test.pass();
+  if (!unicode.eq_ignore_case("Café", "cafÉ")) {
+    return test.fail("Café ~ cafÉ");
+  }
+  if (!unicode.eq_ignore_case("ПРИВЕТ", "привет")) {
+    return test.fail("cyrillic fold");
+  }
+  if (unicode.eq_ignore_case("abc", "abd")) {
+    return test.fail("abc != abd");
+  }
+  if (unicode.eq_ignore_case("ab", "abc")) {
+    return test.fail("length differs");
+  }
+  if (unicode.eq_ignore_case("abc", "ab")) {
+    return test.fail("length differs, reversed");
+  }
+  // KELVIN SIGN (U+212A, 3 bytes) folds to plain 'k' (1 byte): equal
+  // under case folding while the BYTE lengths differ, which is why the
+  // comparison walks both operands independently.
+  if (!unicode.eq_ignore_case("K", "k")) {
+    return test.fail("kelvin sign ~ k");
+  }
+  if (unicode.eq_ignore_case("K", "kk")) {
+    return test.fail("kelvin sign != kk");
+  }
+  // FOLDING, not lowercasing: ß folds to ss, so these compare equal
+  // even though to_lower leaves ß alone. This is the whole difference
+  // between eq_ignore_case and eq_ignore_ascii_case.
+  if (!unicode.eq_ignore_case("ß", "ss")) {
+    return test.fail("ß ~ ss");
+  }
+  if (!unicode.eq_ignore_case("STRASSE", "straße")) {
+    return test.fail("STRASSE ~ straße");
+  }
+  if (!unicode.eq_ignore_case("ſ", "s")) {
+    return test.fail("long s ~ s");
+  }
+  if (unicode.eq_ignore_case("ß", "s")) {
+    return test.fail("ß != s");
+  }
+  if (unicode.case_fold("ß") != "ss") {
+    return test.fail("case_fold ß");
+  }
+  if (unicode.case_fold("HELLO") != "hello") {
+    return test.fail("case_fold ascii");
+  }
+  return test.pass();
 }
 
 function test_roundtrip(): test.TestOutcome {
-    // lower(upper(x)) == lower(x) holds only where every code point maps
-    // 1:1. Greek and Latin without expansions qualify.
-    var s: string = "Gross-Ελλάδα";
-    if (unicode.to_lower(unicode.to_upper(s)) != unicode.to_lower(s)) {
-        return test.fail("simple-mapping roundtrip");
-    }
-    // It does NOT hold once an expansion is involved: upper("ß") is "SS",
-    // whose lowercase is "ss", not "ß". Full mapping is not reversible.
-    var e: string = "Groß";
-    if (unicode.to_lower(unicode.to_upper(e)) == unicode.to_lower(e)) {
-        return test.fail("expansion should break the roundtrip");
-    }
-    return test.pass();
+  // lower(upper(x)) == lower(x) holds only where every code point maps
+  // 1:1. Greek and Latin without expansions qualify.
+  var s: string = "Gross-Ελλάδα";
+  if (unicode.to_lower(unicode.to_upper(s)) != unicode.to_lower(s)) {
+    return test.fail("simple-mapping roundtrip");
+  }
+  // It does NOT hold once an expansion is involved: upper("ß") is "SS",
+  // whose lowercase is "ss", not "ß". Full mapping is not reversible.
+  var e: string = "Groß";
+  if (unicode.to_lower(unicode.to_upper(e)) == unicode.to_lower(e)) {
+    return test.fail("expansion should break the roundtrip");
+  }
+  return test.pass();
 }
 
 function test_is_letter(): test.TestOutcome {
-    // Latin, Greek, and CJK are letters; a digit is not.
-    return test.assert_true(((97 as char).is_letter()) && ((945 as char).is_letter()) &&
-                            ((0x4E2D as char).is_letter()) && !((48 as char).is_letter()));
+  // Latin, Greek, and CJK are letters; a digit is not.
+  return test.assert_true((97 as char).is_letter() && (945 as char).is_letter()
+    && (0x4E2D as char).is_letter() && !(48 as char).is_letter());
 }
 
 function test_is_digit(): test.TestOutcome {
-    // ASCII 0, Arabic-Indic 9 (U+0669) are digits; a letter is not.
-    return test.assert_true(((48 as char).is_digit()) && ((0x0669 as char).is_digit()) &&
-                            !((97 as char).is_digit()));
+  // ASCII 0, Arabic-Indic 9 (U+0669) are digits; a letter is not.
+  return test.assert_true((48 as char).is_digit() && (0x0669 as char).is_digit()
+    && !(97 as char).is_digit());
 }
 
 function test_is_alnum_whitespace(): test.TestOutcome {
-    if (!((97 as char).is_alnum()) || !((48 as char).is_alnum())) { return test.fail("alnum"); }
-    if (((32 as char).is_alnum())) { return test.fail("space is not alnum"); }
-    // space, tab, and NBSP (U+00A0) are whitespace; a letter is not.
-    if (!((32 as char).is_whitespace()) || !((9 as char).is_whitespace()) ||
-        !((0xA0 as char).is_whitespace())) { return test.fail("whitespace"); }
-    return test.assert_false(((97 as char).is_whitespace()));
+  if (!(97 as char).is_alnum() || !(48 as char).is_alnum()) {
+    return test.fail("alnum");
+  }
+  if ((32 as char).is_alnum()) {
+    return test.fail("space is not alnum");
+  }
+  // space, tab, and NBSP (U+00A0) are whitespace; a letter is not.
+  if (!(32 as char).is_whitespace() || !(9 as char).is_whitespace()
+    || !(0xA0 as char).is_whitespace()) {
+    return test.fail("whitespace");
+  }
+  return test.assert_false((97 as char).is_whitespace());
 }
 
 function test_is_upper_lower(): test.TestOutcome {
-    return test.assert_true(((65 as char).is_upper()) && !((97 as char).is_upper()) &&
-                            ((97 as char).is_lower()) && !((65 as char).is_lower()) &&
-                            ((0x391 as char).is_upper()) && ((0x3B1 as char).is_lower()));
+  return test.assert_true((65 as char).is_upper() && !(97 as char).is_upper()
+    && (97 as char).is_lower() && !(65 as char).is_lower()
+    && (0x391 as char).is_upper() && (0x3B1 as char).is_lower());
 }
 
 function test_ascii_fast_path_agrees(): test.TestOutcome {
-    // A pure-ASCII string takes the byte-fold fast path; the same text
-    // with one non-ASCII code point appended takes the decode path. The
-    // ASCII prefix must come out identical either way.
-    if (unicode.to_upper("abcXYZ 123!") != "ABCXYZ 123!") { return test.fail("ascii fast path"); }
-    if (unicode.to_upper("abcXYZ 123!é") != "ABCXYZ 123!É") { return test.fail("decode path prefix"); }
-    if (unicode.to_lower("ABCxyz 123!") != "abcxyz 123!") { return test.fail("ascii fast path lower"); }
-    if (unicode.to_lower("ABCxyz 123!É") != "abcxyz 123!é") { return test.fail("decode path prefix lower"); }
-    // The 0x7F/0x80 boundary the fast path branches on.
-    if (((127 as char).to_upper() as i32) != 127) { return test.fail("U+007F unchanged"); }
-    if (((0xB5 as char).to_upper() as i32) != 0x39C) { return test.fail("µ -> Μ across the boundary"); }
-    return test.pass();
+  // A pure-ASCII string takes the byte-fold fast path; the same text
+  // with one non-ASCII code point appended takes the decode path. The
+  // ASCII prefix must come out identical either way.
+  if (unicode.to_upper("abcXYZ 123!") != "ABCXYZ 123!") {
+    return test.fail("ascii fast path");
+  }
+  if (unicode.to_upper("abcXYZ 123!é") != "ABCXYZ 123!É") {
+    return test.fail("decode path prefix");
+  }
+  if (unicode.to_lower("ABCxyz 123!") != "abcxyz 123!") {
+    return test.fail("ascii fast path lower");
+  }
+  if (unicode.to_lower("ABCxyz 123!É") != "abcxyz 123!é") {
+    return test.fail("decode path prefix lower");
+  }
+  // The 0x7F/0x80 boundary the fast path branches on.
+  if ((127 as char).to_upper() as i32 != 127) {
+    return test.fail("U+007F unchanged");
+  }
+  if ((0xB5 as char).to_upper() as i32 != 0x39C) {
+    return test.fail("µ -> Μ across the boundary");
+  }
+  return test.pass();
 }
 
 function test_alternating_run(): test.TestOutcome {
-    // Latin Extended-A is encoded as alternating pair runs (even offset
-    // uppercase, odd its lowercase) rather than per-code-point entries —
-    // a decode path nothing else here exercises.
-    if (((0x100 as char).to_lower() as i32) != 0x101) { return test.fail("Ā -> ā"); }
-    if (((0x101 as char).to_upper() as i32) != 0x100) { return test.fail("ā -> Ā"); }
-    if (((0x100 as char).to_upper() as i32) != 0x100) { return test.fail("Ā is already upper"); }
-    if (((0x101 as char).to_lower() as i32) != 0x101) { return test.fail("ā is already lower"); }
-    // Deep inside the same run, and at its far end.
-    if (((0x12F as char).to_upper() as i32) != 0x12E) { return test.fail("į -> Į"); }
-    return test.assert_eq(unicode.to_upper("ăćĕ"), "ĂĆĔ");
+  // Latin Extended-A is encoded as alternating pair runs (even offset
+  // uppercase, odd its lowercase) rather than per-code-point entries —
+  // a decode path nothing else here exercises.
+  if ((0x100 as char).to_lower() as i32 != 0x101) {
+    return test.fail("Ā -> ā");
+  }
+  if ((0x101 as char).to_upper() as i32 != 0x100) {
+    return test.fail("ā -> Ā");
+  }
+  if ((0x100 as char).to_upper() as i32 != 0x100) {
+    return test.fail("Ā is already upper");
+  }
+  if ((0x101 as char).to_lower() as i32 != 0x101) {
+    return test.fail("ā is already lower");
+  }
+  // Deep inside the same run, and at its far end.
+  if ((0x12F as char).to_upper() as i32 != 0x12E) {
+    return test.fail("į -> Į");
+  }
+  return test.assert_eq(unicode.to_upper("ăćĕ"), "ĂĆĔ");
 }
 
 function test_large_delta_and_non_bmp(): test.TestOutcome {
-    // Constant runs whose delta is large, and mappings outside the BMP
-    // (4-byte UTF-8 on both sides).
-    if (((0x250 as char).to_upper() as i32) != 0x2C6F) { return test.fail("ɐ -> Ɐ (delta 10783)"); }
-    if (((0x10400 as char).to_lower() as i32) != 0x10428) { return test.fail("Deseret upper -> lower"); }
-    if (((0x10428 as char).to_upper() as i32) != 0x10400) { return test.fail("Deseret lower -> upper"); }
-    return test.assert_eq(unicode.to_upper("𐐨𐐩"), "𐐀𐐁");
+  // Constant runs whose delta is large, and mappings outside the BMP
+  // (4-byte UTF-8 on both sides).
+  if ((0x250 as char).to_upper() as i32 != 0x2C6F) {
+    return test.fail("ɐ -> Ɐ (delta 10783)");
+  }
+  if ((0x10400 as char).to_lower() as i32 != 0x10428) {
+    return test.fail("Deseret upper -> lower");
+  }
+  if ((0x10428 as char).to_upper() as i32 != 0x10400) {
+    return test.fail("Deseret lower -> upper");
+  }
+  return test.assert_eq(unicode.to_upper("𐐨𐐩"), "𐐀𐐁");
 }
 
 function test_invalid_utf8_replaced(): test.TestOutcome {
-    // A malformed byte becomes U+FFFD, the same lossy rule
-    // utf8.codepoints uses — checked here because the case path decodes
-    // independently of `codepoints`.
-    var bad: u8[] = [65 as u8, 200 as u8, 66 as u8];
-    return test.assert_eq(unicode.to_lower(string_from_bytes_unchecked(bad)), "a�b");
+  // A malformed byte becomes U+FFFD, the same lossy rule
+  // utf8.codepoints uses — checked here because the case path decodes
+  // independently of `codepoints`.
+  var bad: u8[] = [65 as u8, 200 as u8, 66 as u8];
+  return test.assert_eq(unicode.to_lower(string_from_bytes_unchecked(bad)), "a�b");
 }
 
 function main(): i32 {
-    var r: test.TestRunner = test.test_new("std/unicode");
-    r = r.it("ascii",             test_ascii);
-    r = r.it("latin-1",           test_latin1);
-    r = r.it("greek",             test_greek);
-    r = r.it("cyrillic",          test_cyrillic);
-    r = r.it("mixed unchanged",   test_mixed_unchanged);
-    r = r.it("char level",        test_char_level);
-    r = r.it("sharp-s expands",   test_sharp_s_expands);
-    r = r.it("eq_ignore_case",    test_eq_ignore_case);
-    r = r.it("roundtrip",         test_roundtrip);
-    r = r.it("is_letter",         test_is_letter);
-    r = r.it("is_digit",          test_is_digit);
-    r = r.it("is_alnum/space",    test_is_alnum_whitespace);
-    r = r.it("is_upper/lower",    test_is_upper_lower);
-    r = r.it("ascii fast path",   test_ascii_fast_path_agrees);
-    r = r.it("alternating run",   test_alternating_run);
-    r = r.it("big delta/non-BMP", test_large_delta_and_non_bmp);
-    r = r.it("invalid utf-8",     test_invalid_utf8_replaced);
-    return r.finish();
+  var r: test.TestRunner = test.test_new("std/unicode");
+  r = r.it("ascii", test_ascii);
+  r = r.it("latin-1", test_latin1);
+  r = r.it("greek", test_greek);
+  r = r.it("cyrillic", test_cyrillic);
+  r = r.it("mixed unchanged", test_mixed_unchanged);
+  r = r.it("char level", test_char_level);
+  r = r.it("sharp-s expands", test_sharp_s_expands);
+  r = r.it("eq_ignore_case", test_eq_ignore_case);
+  r = r.it("roundtrip", test_roundtrip);
+  r = r.it("is_letter", test_is_letter);
+  r = r.it("is_digit", test_is_digit);
+  r = r.it("is_alnum/space", test_is_alnum_whitespace);
+  r = r.it("is_upper/lower", test_is_upper_lower);
+  r = r.it("ascii fast path", test_ascii_fast_path_agrees);
+  r = r.it("alternating run", test_alternating_run);
+  r = r.it("big delta/non-BMP", test_large_delta_and_non_bmp);
+  r = r.it("invalid utf-8", test_invalid_utf8_replaced);
+  return r.finish();
 }

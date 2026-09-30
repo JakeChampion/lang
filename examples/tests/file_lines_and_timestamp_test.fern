@@ -1,4 +1,5 @@
 import "std/test";
+
 // examples/tests/file_lines_and_timestamp_test.fern — batch
 // 25 additions to std/test:
 //   * `test.assert_file_lines(path, expected_lines)` — read a
@@ -6,139 +7,186 @@ import "std/test";
 //   * `test.assert_file_line_count(path, n)` — count lines.
 //   * `test.assert_close_to_now_ms(actual_ms, max_skew_ms)` —
 //     wall-clock timestamp recency check.
-
 function test_file_lines_pass(r: test.TestRunner): test.TestRunner {
-    var (dir, rr) = test.must_temp_dir(r, "lines-pass");
-    if (dir == "") { return rr; }
-    var path: string = dir + "/output.txt";
-    match (write_file(path, "alpha\nbeta\ngamma\n")) {
-        Err(_) => { return rr.it("write fixture", () => test.fail("io")); },
-        Ok(_) => {}
-    }
-    rr = rr.it("file_lines exact match",
-               () => test.assert_file_lines(path, ["alpha", "beta", "gamma"]));
-    rr = rr.it("file_line_count 3",
-               () => test.assert_file_line_count(path, 3));
+  let (dir, rr) = test.must_temp_dir(r, "lines-pass");
+  if (dir == "") {
     return rr;
+  }
+  var path: string = dir + "/output.txt";
+  match (write_file(path, "alpha\nbeta\ngamma\n")) {
+    Err(_) => {
+      return rr.it("write fixture", () => test.fail("io"));
+    },
+    Ok(_) => {}
+  }
+  rr = rr.it(
+    "file_lines exact match",
+    () => test.assert_file_lines(path, ["alpha", "beta", "gamma"]),
+  );
+  rr = rr.it(
+    "file_line_count 3",
+    () => test.assert_file_line_count(path, 3),
+  );
+  return rr;
 }
 
 function test_file_lines_no_trailing_newline(r: test.TestRunner): test.TestRunner {
-    var (dir, rr) = test.must_temp_dir(r, "lines-no-trail");
-    if (dir == "") { return rr; }
-    var path: string = dir + "/output.txt";
-    // No trailing newline — `.lines()` still returns 3 lines.
-    match (write_file(path, "one\ntwo\nthree")) {
-        Err(_) => { return rr.it("write fixture", () => test.fail("io")); },
-        Ok(_) => {}
-    }
-    rr = rr.it("file_lines no-trail match",
-               () => test.assert_file_lines(path, ["one", "two", "three"]));
+  let (dir, rr) = test.must_temp_dir(r, "lines-no-trail");
+  if (dir == "") {
     return rr;
+  }
+  var path: string = dir + "/output.txt";
+  // No trailing newline — `.lines()` still returns 3 lines.
+  match (write_file(path, "one\ntwo\nthree")) {
+    Err(_) => {
+      return rr.it("write fixture", () => test.fail("io"));
+    },
+    Ok(_) => {}
+  }
+  rr = rr.it(
+    "file_lines no-trail match",
+    () => test.assert_file_lines(path, ["one", "two", "three"]),
+  );
+  return rr;
 }
 
 function test_file_lines_mismatch_reports(r: test.TestRunner): test.TestRunner {
-    var (dir, rr) = test.must_temp_dir(r, "lines-fail");
-    if (dir == "") { return rr; }
-    var path: string = dir + "/output.txt";
-    match (write_file(path, "alpha\nWRONG\ngamma\n")) {
-        Err(_) => { return rr.it("write fixture", () => test.fail("io")); },
-        Ok(_) => {}
-    }
-    match (test.assert_file_lines(path, ["alpha", "beta", "gamma"])) {
-        Pass => { return rr.it("expected mismatch fail", () => test.fail("missed")); },
-        Fail(msg) => {
-            // assert_lines_eq names the differing line; the
-            // file wrapper just routes through it.
-            if (!msg.contains("line 2")) {
-                rr = rr.it("file_lines diff names line",
-                           () => test.fail("expected 'line 2': " + msg));
-            } else {
-                rr = rr.it("file_lines mismatch named", test.pass);
-            }
-        }
-    }
+  let (dir, rr) = test.must_temp_dir(r, "lines-fail");
+  if (dir == "") {
     return rr;
+  }
+  var path: string = dir + "/output.txt";
+  match (write_file(path, "alpha\nWRONG\ngamma\n")) {
+    Err(_) => {
+      return rr.it("write fixture", () => test.fail("io"));
+    },
+    Ok(_) => {}
+  }
+  match (test.assert_file_lines(path, ["alpha", "beta", "gamma"])) {
+    Pass => {
+      return rr.it("expected mismatch fail", () => test.fail("missed"));
+    },
+    Fail(msg) => {
+      // assert_lines_eq names the differing line; the
+      // file wrapper just routes through it.
+      if (!msg.contains("line 2")) {
+        rr = rr.it(
+          "file_lines diff names line",
+          () => test.fail("expected 'line 2': " + msg),
+        );
+      } else {
+        rr = rr.it("file_lines mismatch named", test.pass);
+      }
+    }
+  }
+  return rr;
 }
 
 function test_file_line_count_wrong_reports(r: test.TestRunner): test.TestRunner {
-    var (dir, rr) = test.must_temp_dir(r, "line-count-wrong");
-    if (dir == "") { return rr; }
-    var path: string = dir + "/output.txt";
-    match (write_file(path, "a\nb\n")) {
-        Err(_) => { return rr.it("write fixture", () => test.fail("io")); },
-        Ok(_) => {}
-    }
-    match (test.assert_file_line_count(path, 5)) {
-        Pass => { return rr.it("count mismatch missed", () => test.fail("expected fail")); },
-        Fail(msg) => {
-            if (!msg.contains("2") || !msg.contains("5")) {
-                rr = rr.it("count mismatch context",
-                           () => test.fail("expected '2' + '5': " + msg));
-            } else {
-                rr = rr.it("count mismatch reports both", test.pass);
-            }
-        }
-    }
+  let (dir, rr) = test.must_temp_dir(r, "line-count-wrong");
+  if (dir == "") {
     return rr;
+  }
+  var path: string = dir + "/output.txt";
+  match (write_file(path, "a\nb\n")) {
+    Err(_) => {
+      return rr.it("write fixture", () => test.fail("io"));
+    },
+    Ok(_) => {}
+  }
+  match (test.assert_file_line_count(path, 5)) {
+    Pass => {
+      return rr.it("count mismatch missed", () => test.fail("expected fail"));
+    },
+    Fail(msg) => {
+      if (!msg.contains("2") || !msg.contains("5")) {
+        rr = rr.it(
+          "count mismatch context",
+          () => test.fail("expected '2' + '5': " + msg),
+        );
+      } else {
+        rr = rr.it("count mismatch reports both", test.pass);
+      }
+    }
+  }
+  return rr;
 }
 
 function test_file_lines_missing_file(): test.TestOutcome {
-    match (test.assert_file_lines("/tmp/lang-test-no-such-file-zztop",
-                             ["x"])) {
-        Pass => { return test.fail("missing file should fail"); },
-        Fail(msg) => {
-            if (!msg.contains("failed to read")) {
-                return test.fail("expected 'failed to read': " + msg);
-            }
-            return test.pass();
-        }
+  match (test.assert_file_lines(
+    "/tmp/lang-test-no-such-file-zztop",
+    ["x"],
+  )) {
+    Pass => {
+      return test.fail("missing file should fail");
+    },
+    Fail(msg) => {
+      if (!msg.contains("failed to read")) {
+        return test.fail("expected 'failed to read': " + msg);
+      }
+      return test.pass();
     }
+  }
 }
 
 function test_close_to_now_ms_now_passes(): test.TestOutcome {
-    // A timestamp captured "right now" should be within
-    // 5s of now_unix_ms() under any sane runtime.
-    var t: i64 = now_unix_ms();
-    return test.assert_close_to_now_ms(t, 5000 as i64);
+  // A timestamp captured "right now" should be within
+  // 5s of now_unix_ms() under any sane runtime.
+  var t: i64 = now_unix_ms();
+  return test.assert_close_to_now_ms(t, 5000 as i64);
 }
 
 function test_close_to_now_ms_old_fails(): test.TestOutcome {
-    // A timestamp from 1 hour ago must NOT be considered
-    // recent.
-    var t: i64 = now_unix_ms() - (3600000 as i64);
-    match (test.assert_close_to_now_ms(t, 1000 as i64)) {
-        Pass => { return test.fail("old timestamp should fail"); },
-        Fail(msg) => {
-            if (!msg.contains("exceeds bound")) {
-                return test.fail("expected 'exceeds bound': " + msg);
-            }
-            return test.pass();
-        }
+  // A timestamp from 1 hour ago must NOT be considered
+  // recent.
+  var t: i64 = now_unix_ms() - 3600000 as i64;
+  match (test.assert_close_to_now_ms(t, 1000 as i64)) {
+    Pass => {
+      return test.fail("old timestamp should fail");
+    },
+    Fail(msg) => {
+      if (!msg.contains("exceeds bound")) {
+        return test.fail("expected 'exceeds bound': " + msg);
+      }
+      return test.pass();
     }
+  }
 }
 
 function test_close_to_now_ms_future_skew_fails(): test.TestOutcome {
-    // Future-skewed (negative signed skew) must also fail.
-    var t: i64 = now_unix_ms() + (3600000 as i64);
-    match (test.assert_close_to_now_ms(t, 1000 as i64)) {
-        Pass => { return test.fail("future timestamp should fail"); },
-        Fail(_) => { return test.pass(); }
+  // Future-skewed (negative signed skew) must also fail.
+  var t: i64 = now_unix_ms() + 3600000 as i64;
+  match (test.assert_close_to_now_ms(t, 1000 as i64)) {
+    Pass => {
+      return test.fail("future timestamp should fail");
+    },
+    Fail(_) => {
+      return test.pass();
     }
+  }
 }
 
 function main(): i32 {
-    var r: test.TestRunner = test.test_new("file-lines + timestamp recency");
-    r = test_file_lines_pass(r);
-    r = test_file_lines_no_trailing_newline(r);
-    r = test_file_lines_mismatch_reports(r);
-    r = test_file_line_count_wrong_reports(r);
-    r = r.it("file_lines missing file",
-             test_file_lines_missing_file);
-    r = r.it("close_to_now_ms now passes",
-             test_close_to_now_ms_now_passes);
-    r = r.it("close_to_now_ms 1h-old fails",
-             test_close_to_now_ms_old_fails);
-    r = r.it("close_to_now_ms future-skew fails",
-             test_close_to_now_ms_future_skew_fails);
-    return r.finish();
+  var r: test.TestRunner = test.test_new("file-lines + timestamp recency");
+  r = test_file_lines_pass(r);
+  r = test_file_lines_no_trailing_newline(r);
+  r = test_file_lines_mismatch_reports(r);
+  r = test_file_line_count_wrong_reports(r);
+  r = r.it(
+    "file_lines missing file",
+    test_file_lines_missing_file,
+  );
+  r = r.it(
+    "close_to_now_ms now passes",
+    test_close_to_now_ms_now_passes,
+  );
+  r = r.it(
+    "close_to_now_ms 1h-old fails",
+    test_close_to_now_ms_old_fails,
+  );
+  r = r.it(
+    "close_to_now_ms future-skew fails",
+    test_close_to_now_ms_future_skew_fails,
+  );
+  return r.finish();
 }
