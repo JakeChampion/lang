@@ -3497,7 +3497,9 @@ function live_edges(b: ssa.SBlock, seen: boolean[]): ssa.SBlock {
     return ssa.SBlock { ...b, insts: insts, preds: preds };
 }
 
-// The blocks the entry reaches.
+// The blocks the entry reaches. ssa.fern's thread_forwarding and
+// trim_phi_edges do the same trim later; both rely on a phi's args being
+// parallel to its preds, and here a phi always has one arg per pred.
 function reachable(blocks: ssa.SBlock[]): ssa.SBlock[] {
     var seen: boolean[] = reached(blocks, block_positions(blocks));
     var out: ssa.SBlock[] = [];

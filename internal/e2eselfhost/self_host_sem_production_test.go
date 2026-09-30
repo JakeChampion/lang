@@ -5840,7 +5840,7 @@ function main(): i32 {
 	// A value block, if-expression or match-expression no path leaves by its
 	// end: the enclosing expression is unreachable, including from inside a
 	// loop whose join and exit the block's `break` still reaches (#10793).
-	{name: "a-value-block-that-leaves-only-by-return-or-break", atLeast: 5, noLeak: true, src: `
+	{name: "a-value-block-that-leaves-only-by-return-or-break", atLeast: 6, noLeak: true, src: `
 function f(c: boolean): i32 { var x: i32 = { if (c) { return 1; } return 2; }; return x + 100; }
 function g(n: i32): string {
     var s: string = "a";
@@ -5854,11 +5854,19 @@ function g(n: i32): string {
 }
 function h(c: boolean): i32 { var x: i32 = if (c) { return 1; } else { return 2; }; return x + 100; }
 function k(n: i32): string { var x: string = match (n) { 0 => { return "zero"; }, _ => { return "many"; } }; return x + "?"; }
+function j(c: boolean, stop: boolean): i32 {
+    var i: i32 = 0;
+    while (i < 4) {
+        i = i + 1;
+        if (c) { var t: i32 = { if (stop) { return 0; } continue; }; i = i + t; }
+    }
+    return i;
+}
 function main(): i32 {
     print(g(1));
     print(g(3));
     print(k(0) + k(4));
-    return f(true) * 10 + f(false) + h(true) * 30 + h(false) * 40;
+    return f(true) * 10 + f(false) + h(true) * 30 + h(false) * 40 + j(true, false) + j(false, false) * 2 + j(true, true);
 }
 `},
 	// A generic enum instance spelled inside a function type or a tuple type:
