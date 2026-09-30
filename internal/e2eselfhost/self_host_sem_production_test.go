@@ -5882,6 +5882,35 @@ function main(): i32 {
 	// The lambda binds only the variable its type mentions, so its one
 	// instance `__lam_0$wrap0$i32` is built by both instances of `__lam_0`,
 	// whose names carry a second binding it does not spell.
+	// An instance of a lifted generic lambda that returns a call to another
+	// lifted lambda reads that callee's result under its own binding, not as
+	// the template's `T`.
+	{name: "a-lambda-inside-a-lifted-generic-lambda", atLeast: 9, noLeak: true, src: `
+pub function make[T](seed: T): T {
+    function outer(base: T): (T) => T {
+        return (x: T): T => ((y: T): T => y)(x);
+    }
+    var f: (T) => T = outer(seed);
+    return f(seed);
+}
+
+pub function keep[T](seed: T): T {
+    function outer(base: T): (T) => T {
+        return (x: T): T => {
+            var inner: (T) => T = (y: T): T => y;
+            return inner(x);
+        };
+    }
+    var f: (T) => T = outer(seed);
+    return f(seed);
+}
+
+function main(): i32 {
+    var s: string = make("ab" + "c");
+    var t: string = keep("de" + "f");
+    return make(7) + keep(1) + s.len() + t.len();
+}
+`},
 	// A body hoisted out of a hoisted body is named `<creator>$clo0$clo0`;
 	// its creator is the body before the last marker, not the declaration
 	// before the first.
