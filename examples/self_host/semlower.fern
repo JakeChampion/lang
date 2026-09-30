@@ -352,15 +352,13 @@ function ast_value_call(called: typeinfo.Type[], values: AstValue[]): string {
 // creator's body, so the creator is the one that hands the value out; a body
 // lifted out of a lifted body is `<creator>$wrapN$wrapM`.
 function creator_of(name: string): string {
-    var markers: string[] = ["$wrap", "$clo", "$iife"];
-    var at: i32 = name.len() - 1;
-    while (at > 0) {
-        for m in markers {
-            if (at + m.len() <= name.len() && slice_unchecked(name, at, at + m.len()) == m) { return slice_unchecked(name, 0, at) + ""; }
-        }
-        at = at - 1;
+    var at: i32 = 0 - 1;
+    for m in ["$wrap", "$clo", "$iife"] {
+        var i: i32 = util.last_index_of_sub(name, m);
+        if (i > at) { at = i; }
     }
-    return "";
+    if (at <= 0) { return ""; }
+    return slice_unchecked(name, 0, at) + "";
 }
 
 // A produced hoisted body whose value an AST-lowered creator builds is
