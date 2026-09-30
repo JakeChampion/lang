@@ -6,6 +6,27 @@ date-time / I/O depth) and `LANGUAGE-DIRECTION.md`. This one surveys the
 question, Unicode operations, and the related types that always ship
 alongside (byte views, scalar/char, paths, symbols, builders).
 
+## Completion audit, September 2026
+
+Epic #5626 remains open. Its closed child issues do not establish D9's
+valid-string invariant: ordinary string methods still include unchecked
+byte transformations. The implementation notes below record earlier stages
+and need to be checked against the current tree before choosing more work.
+
+The character-set methods now compare complete Unicode scalar values:
+`without_chars`, `contains_only`, `count_chars_in`, `trim_chars`,
+`trim_start_chars` and `trim_end_chars`. They preserve ASCII behavior and
+do not normalize text. Combining marks are separate scalars, and repeated
+characters in a set do not multiply a match. For example,
+`"éê".without_chars("é")` returns `"ê"`; it previously removed the shared
+UTF-8 lead byte from both characters, leaving an invalid string.
+
+`StringCharacterSetProgram` exercises exact results and UTF-8 preservation
+through the bootstrap interpreter and native/wasm backends, and through the
+primary self-host CLI. Raw-byte methods such as `reverse_bytes` and
+`shift_byte`, other string producers, and external input boundaries still
+need an audit before the epic can close.
+
 Written because #5552 ("stdlib case ops are ASCII-only — add a Unicode
 `std/unicode`") asked a question the codebase can't answer from first
 principles yet: *should Unicode be a separate opt-in module, or the
