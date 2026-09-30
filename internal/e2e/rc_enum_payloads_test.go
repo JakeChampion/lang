@@ -45,8 +45,9 @@ var enumRcPayloadsKnownDivergent = map[string]bool{
 	// `JsonString` box, and the move model frees it with the JSON tree
 	// the decode walked. The wasm leg traps on the dead strings when the
 	// `User` is dropped; the natives read them before the blocks are
-	// reused. "payload-kept-past-box" in TestX86_64EnumRcPayloadsSound
-	// pins the shape under the production model.
+	// reused, so no native case can observe the free. The fixture's own
+	// wasm leg in TestFernFixtures is the pin: it runs clean under the
+	// production model and traps (exit 134) with the model off.
 	"derive_from_json_shapes": true,
 }
 
@@ -120,9 +121,6 @@ func TestX86_64EnumRcPayloadsSound(t *testing.T) {
 		// #10700: a pointer payload aliased out of a Result box by the arm
 		// outlives the box, and is read twice after it.
 		"alias-from-result-box": `struct M{xs:string[]} function mk():Result[M,i32]{var h:M=M{xs:[]};h=M{xs:h.xs.append("a")};return Ok(h);} function main():i32{var m:M=M{xs:[]};match(mk()){Ok(h)=>{m=h;},Err(s)=>{return s;}} if(m.xs.len()!=1){return 100;} if(m.xs.len()!=1){return 101;} return __rc_underflow_count();}`,
-		// A string taken out of an enum payload and kept in an array past
-		// the box it came from, as a derived JSON decode does.
-		"payload-kept-past-box": `enum V{S(string),N(i32)} function mk(i:i32):V{var s:string="t";s=s+"ag";if(i>5){return N(i);}return S(s);} function take():string[]{var out:string[]=[];var i:i32=0;while(i<3){var v:V=mk(i);match(v){S(s)=>{out=out.append(s);},N(n)=>{}}i=i+1;}return out;} function main():i32{var xs:string[]=take();var junk:string[]=[];var k:i32=0;while(k<20){junk=junk.append("zz"+"yy");k=k+1;} if(xs[0]+xs[1]+xs[2]!="tagtagtag"){return 100;} return __rc_underflow_count();}`,
 		"tree":                  `enum T{Leaf(i32),Node(T,T)} function s(t:T):i32{match(t){Leaf(x)=>{return x;},Node(l,r)=>{return s(l)+s(r);}}} function mk(d:i32):T{if(d==0){return Leaf(1);}return Node(mk(d-1),mk(d-1));} function main():i32{if(s(mk(4))!=16){return 100;}return __rc_underflow_count();}`,
 	}
 	for name, src := range cases {
