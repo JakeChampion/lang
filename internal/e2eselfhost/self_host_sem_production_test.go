@@ -4712,6 +4712,19 @@ function f(n: i32): string {
 }
 function main(): i32 { print(f(3) + " " + f(0)); return f(2).len(); }
 `},
+	// A void function with a `defer` and a `return;`: the defer expansion's
+	// return temp is never written on a void return, and is not declared.
+	// Both legs share that expansion, so each is pinned to the interpreter's
+	// answer rather than to the other.
+	{name: "a-void-function-with-a-defer-and-a-return-is-produced", atLeast: 2, noLeak: true, want: "0|adbd", astAnswers: "0|adbd", src: `
+function f(n: i32): void {
+    defer write("d");
+    if (n > 0) { write("a"); return; }
+    write("b");
+    return;
+}
+function main(): i32 { f(1); f(0); return 0; }
+`},
 	// A `.with` and a map insert take a view of a branch local: copied where
 	// each takes it.
 	{name: "an-array-with-a-view-of-a-branch-local-is-produced", atLeast: 3, noLeak: true, src: `
@@ -6330,6 +6343,158 @@ pub function make[T](seed: T): T {
 
 function main(): i32 {
     return make(7);
+}
+`},
+	// A generic struct a generic function's body spells at its own variable is
+	// cloned with the function per binding (parser clause (e)), so the string
+	// clone's record has a field of its own to release and the i64 clone's a
+	// field wasm stores at its width.
+	{name: "a-generic-struct-inside-a-generic-function", atLeast: 3, noLeak: true, src: `
+struct Slot[T] { v: T }
+
+pub function make[T](seed: T): T {
+    var c: Slot[T] = Slot[T] { v: seed };
+    return c.v;
+}
+
+function main(): i32 {
+    var s: string = make("ab" + "c");
+    var w: i64 = make(5000000000 as i64);
+    if (w != 5000000000 as i64) { return 1; }
+    return make(7) + s.len();
+}
+`},
+	// The same for a function-typed field, and for a lambda field built inside
+	// another one.
+	{name: "a-generic-struct-with-a-function-field-inside-a-generic-function", atLeast: 7, noLeak: true, src: `
+struct Box[T] { f: (T) => T }
+
+pub function apply[T](seed: T): T {
+    var b: Box[T] = Box[T] { f: (x: T): T => x };
+    return b.f(seed);
+}
+
+pub function nested[T](seed: T): T {
+    var b: Box[T] = Box[T] { f: (x: T): T => {
+        var c: Box[T] = Box[T] { f: (y: T): T => y };
+        return c.f(x);
+    } };
+    return b.f(seed);
+}
+
+function main(): i32 {
+    var s: string = apply("ab" + "c");
+    var t: string = nested("de" + "f");
+    return apply(7) + nested(2) + s.len() + t.len();
+}
+`},
+	// A variable only a function-typed parameter carries binds from what each
+	// call passes for it: a lambda, a named function, a call returning a
+	// function, a function-typed field of a plain or a generic struct. The
+	// generic is cloned per binding with
+	// its struct, as a parameter-bound one is (#10824).
+	{name: "a-generic-struct-over-a-function-parameters-result", atLeast: 7, noLeak: true, src: `
+struct Slot[T] { v: T }
+
+pub function hold[T](f: () => T): i32 {
+    var c: Slot[T] = Slot[T] { v: f() };
+    return 1;
+}
+
+struct Maker { f: () => string }
+
+struct Box[U] { f: () => U }
+
+function seven(): i32 { return 7; }
+function pick(): () => string { return (): string => "de" + "f"; }
+
+function main(): i32 {
+    var m: Maker = Maker { f: (): string => "gh" + "i" };
+    var b: Box[i32] = Box[i32] { f: (): i32 => 3 };
+    var w: Box[string] = Box[string] { f: (): string => "j" + "k" };
+    return hold((): i32 => 7) + hold(() => "ab" + "c") + hold(seven) + hold(pick()) + hold(m.f) + hold(b.f) + hold(w.f);
+}
+`},
+	// A return-bound constructor (`stack_new[T](): Stack[T]`, clause (b′)) is
+	// called by name from generic-struct methods, which are rewritten only per
+	// struct instantiation. It is not a fn-param promotion, so it is cloned,
+	// not restored to erased: erased, its body named the generic enum's
+	// unmangled `Leaf` (std/pvec and std/pmap, #10829).
+	{name: "a-return-bound-constructor-called-from-generic-methods", atLeast: 11, noLeak: true, src: `
+enum Node[T] { Leaf(T[]), Branch(Node[T][]) }
+
+struct Stack[T] { root: Node[T], n: i32 }
+
+pub function stack_new[T](): Stack[T] {
+    return Stack[T] { root: Leaf([]), n: 0 };
+}
+
+function size_of[T](node: Node[T]): i32 {
+    match (node) {
+        Leaf(xs) => { return xs.len(); },
+        Branch(kids) => { return kids.len(); }
+    }
+}
+
+pub function (s: Stack[T]) pushed(x: T): Stack[T] {
+    match (s.root) {
+        Leaf(xs) => { return Stack[T] { root: Leaf(xs.append(x)), n: s.n + 1 }; },
+        Branch(kids) => { return s; }
+    }
+}
+
+pub function (s: Stack[T]) cleared(): Stack[T] {
+    return stack_new();
+}
+
+pub function (s: Stack[T]) size(): i32 {
+    return size_of(s.root);
+}
+
+function main(): i32 {
+    var s: Stack[string] = stack_new();
+    s = s.pushed("a" + "b").pushed("c");
+    var n: Stack[i32] = stack_new();
+    n = n.pushed(4);
+    return s.size() + n.size() + n.cleared().size() + s.cleared().size() + 5;
+}
+`},
+	// A call from a generic-struct method is rewritten only per struct
+	// instantiation, after monomorphize_module; the stranded-call scan reads
+	// the finished module, so a keyable call there is cloned, not erased.
+	{name: "a-fn-param-bound-generic-called-from-a-generic-method", atLeast: 10, noLeak: true, src: `
+struct Slot[T] { v: T }
+
+pub function hold[T](f: () => T): i32 {
+    var c: Slot[T] = Slot[T] { v: f() };
+    return 1;
+}
+
+struct Box[U] { u: U }
+
+pub function (b: Box[U]) held(): i32 {
+    return hold((): i32 => 7) + hold((): string => "ab" + "c");
+}
+
+function main(): i32 {
+    var b: Box[i32] = Box[i32] { u: 1 };
+    var w: Box[string] = Box[string] { u: "x" };
+    return b.held() + w.held() + hold((): i32 => 2);
+}
+`},
+	// The same through a function-typed parameter's parameter.
+	{name: "a-generic-struct-over-a-function-parameters-parameter", atLeast: 5, noLeak: true, src: `
+struct Slot[T] { v: T[] }
+
+pub function count[T](f: (T) => i32): i32 {
+    var c: Slot[T] = Slot[T] { v: [] };
+    return c.v.len() + 1;
+}
+
+function strlen(s: string): i32 { return s.len(); }
+
+function main(): i32 {
+    return count((x: i32): i32 => x) + count((s: string): i32 => s.len()) + count(strlen);
 }
 `},
 	// An instance of a lifted generic lambda that returns a call to another

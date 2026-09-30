@@ -2501,6 +2501,43 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// done-flag if/else chain that falls through by construction, so
 		// reading the chain said every such function could fall off its end
 		// (E052). The `if` carries the arms as written.
+		// WIT resource handles: `own R` lends to `borrow R`, a bare `R` is an
+		// owned handle, and a handle and an integer convert in neither direction.
+		{"resource-handle-owned-lent-to-a-borrow", "@import(\"wasi:io/poll@0.2.0\", \"pollable\")\nresource Pollable;\n@import(\"wasi:clocks/monotonic-clock@0.2.0\", \"subscribe-duration\")\nfunction subscribe(ns: u64): own Pollable;\n@import(\"wasi:io/poll@0.2.0\", \"[method]pollable.ready\")\nfunction ready(h: borrow Pollable): boolean;\n@import(\"wasi:io/poll@0.2.0\", \"[resource-drop]pollable\")\nfunction drop_pollable(h: own Pollable): void;\n" + "function main(): i32 { var p: own Pollable = subscribe(0 as u64); if (ready(p)) { drop_pollable(p); return 1; } drop_pollable(p); return 0; }\n", nil},
+		{"resource-handle-bare-name-is-owned", "@import(\"wasi:io/poll@0.2.0\", \"pollable\")\nresource Pollable;\n@import(\"wasi:clocks/monotonic-clock@0.2.0\", \"subscribe-duration\")\nfunction subscribe(ns: u64): own Pollable;\n@import(\"wasi:io/poll@0.2.0\", \"[method]pollable.ready\")\nfunction ready(h: borrow Pollable): boolean;\n@import(\"wasi:io/poll@0.2.0\", \"[resource-drop]pollable\")\nfunction drop_pollable(h: own Pollable): void;\n" + "function f(): Pollable { return subscribe(0 as u64); }\nfunction main(): i32 { var p: Pollable = f(); drop_pollable(p); return 0; }\n", nil},
+		{"resource-handle-borrow-into-an-owned-parameter", "@import(\"wasi:io/poll@0.2.0\", \"pollable\")\nresource Pollable;\n@import(\"wasi:clocks/monotonic-clock@0.2.0\", \"subscribe-duration\")\nfunction subscribe(ns: u64): own Pollable;\n@import(\"wasi:io/poll@0.2.0\", \"[method]pollable.ready\")\nfunction ready(h: borrow Pollable): boolean;\n@import(\"wasi:io/poll@0.2.0\", \"[resource-drop]pollable\")\nfunction drop_pollable(h: own Pollable): void;\n" + "function f(b: borrow Pollable): void { drop_pollable(b); }\nfunction main(): i32 { return 0; }\n", []string{"E038"}},
+		{"resource-handle-into-an-integer", "@import(\"wasi:io/poll@0.2.0\", \"pollable\")\nresource Pollable;\n@import(\"wasi:clocks/monotonic-clock@0.2.0\", \"subscribe-duration\")\nfunction subscribe(ns: u64): own Pollable;\n@import(\"wasi:io/poll@0.2.0\", \"[method]pollable.ready\")\nfunction ready(h: borrow Pollable): boolean;\n@import(\"wasi:io/poll@0.2.0\", \"[resource-drop]pollable\")\nfunction drop_pollable(h: own Pollable): void;\n" + "function main(): i32 { var p: own Pollable = subscribe(0 as u64); var x: i32 = p; return x; }\n", []string{"E003"}},
+		{"resource-handle-lent-to-a-borrow-of-another-resource", "@import(\"wasi:io/poll@0.2.0\", \"pollable\")\nresource Pollable;\n@import(\"local:test/res@0.1.0\", \"thing\")\nresource Thing;\n@import(\"wasi:clocks/monotonic-clock@0.2.0\", \"subscribe-duration\")\nfunction subscribe(ns: u64): own Pollable;\n@import(\"local:test/res@0.1.0\", \"[method]thing.poke\")\nfunction poke(t: borrow Thing): void;\nfunction main(): i32 { var p: own Pollable = subscribe(0 as u64); poke(p); return 0; }\n", []string{"E038"}},
+		{"integer-into-a-resource-handle", "@import(\"wasi:io/poll@0.2.0\", \"pollable\")\nresource Pollable;\n@import(\"wasi:clocks/monotonic-clock@0.2.0\", \"subscribe-duration\")\nfunction subscribe(ns: u64): own Pollable;\n@import(\"wasi:io/poll@0.2.0\", \"[method]pollable.ready\")\nfunction ready(h: borrow Pollable): boolean;\n@import(\"wasi:io/poll@0.2.0\", \"[resource-drop]pollable\")\nfunction drop_pollable(h: own Pollable): void;\n" + "function main(): i32 { var p: own Pollable = 5; return 0; }\n", []string{"E003"}},
+		// A resource shares the nominal namespace with structs, enums and union
+		// aliases: a collision is E006 and the name keeps its other meaning.
+		{"resource-redeclared", "resource Pollable;\nresource Pollable;\nfunction main(): i32 { return 0; }\n", []string{"E006"}},
+		{"resource-beside-a-struct", "@import(\"wasi:io/poll@0.2.0\", \"pollable\")\nresource Pollable;\nstruct Pollable { v: i32 }\nfunction main(): i32 { var p: Pollable = Pollable { v: 1 }; return p.v; }\n", []string{"E006"}},
+		{"resource-beside-an-enum", "@import(\"wasi:io/poll@0.2.0\", \"pollable\")\nresource Pollable;\nenum Pollable { A, B }\nfunction main(): i32 { var p: Pollable = Pollable.A; return 0; }\n", []string{"E006"}},
+		{"resource-beside-a-generic-struct", "@import(\"local:test/res@0.1.0\", \"box\")\nresource Box;\nstruct Box[T] { v: T }\nfunction main(): i32 { var b: Box[i32] = Box { v: 1 }; return b.v; }\n", []string{"E006"}},
+		{"resource-beside-a-union-alias", "struct A { v: i32 }\nstruct B { w: i32 }\ntype X = A | B;\n@import(\"local:test/res@0.1.0\", \"x\")\nresource X;\nfunction main(): i32 { var x: X = A { v: 1 }; return 0; }\n", []string{"E006"}},
+		// A union whose members are not all distinct non-generic structs is E016
+		// and never becomes an enum, so a resource may take its name.
+		{"union-over-enums", "enum A { P, Q }\nenum B { R, T }\ntype X = A | B;\nfunction main(): i32 { return 0; }\n", []string{"E016"}},
+		{"union-duplicate-member", "struct A { v: i32 }\ntype X = A | A;\nfunction main(): i32 { return 0; }\n", []string{"E016"}},
+		{"union-generic-member-without-arguments", "struct Box[T] { v: T }\nstruct B { w: i32 }\ntype X = Box | B;\nfunction main(): i32 { return 0; }\n", []string{"E016"}},
+		{"union-bare-cell-member", "struct B { w: i32 }\ntype X = Cell | B;\nfunction main(): i32 { return 0; }\n", []string{"E016"}},
+		{"union-bare-map-member", "struct B { w: i32 }\ntype X = Map | B;\nfunction main(): i32 { return 0; }\n", []string{"E016"}},
+		{"union-bare-mapiter-member", "struct B { w: i32 }\ntype X = MapIter | B;\nfunction main(): i32 { return 0; }\n", []string{"E016"}},
+		// A union that desugars joins the enums after the declared ones, so a
+		// name already an enum's is E006 on the alias, in either source order.
+		{"union-alias-after-an-enum-of-its-name", "struct A { v: i32 }\nstruct B { w: i32 }\nenum X { P, Q }\ntype X = A | B;\nfunction main(): i32 { return 0; }\n", []string{"E006"}},
+		{"union-alias-after-an-enum-of-its-name-used", "struct A { v: i32 }\nstruct B { w: i32 }\nenum X { P, Q }\ntype X = A | B;\nfunction main(): i32 { var x: X = A { v: 1 }; return 0; }\n", []string{"E003", "E006"}},
+		{"union-alias-before-an-enum-of-its-name", "struct A { v: i32 }\nstruct B { w: i32 }\ntype X = A | B;\nenum X { P, Q }\nfunction main(): i32 { return 0; }\n", []string{"E006"}},
+		{"union-alias-named-option", "struct A { v: i32 }\nstruct B { w: i32 }\ntype Option = A | B;\nfunction main(): i32 { return 0; }\n", []string{"E006"}},
+		{"union-alias-redeclared", "struct A { v: i32 }\nstruct B { w: i32 }\ntype X = A | B;\ntype X = A | B;\nfunction main(): i32 { return 0; }\n", []string{"E006"}},
+		{"union-alias-after-a-refused-one", "enum A { P, Q }\nstruct B { w: i32 }\nstruct C { u: i32 }\ntype X = A | B;\ntype X = B | C;\nfunction main(): i32 { return 0; }\n", []string{"E016"}},
+		{"resource-beside-a-union-over-enums", "enum A { P, Q }\nenum B { R, T }\ntype X = A | B;\n@import(\"local:test/res@0.1.0\", \"x\")\nresource X;\nfunction main(): i32 { return 0; }\n", []string{"E016"}},
+		// A built-in struct or enum name is taken before any resource.
+		{"resource-named-like-builtin-reader", "@import(\"local:test/res@0.1.0\", \"reader\")\nresource Reader;\nfunction f(r: Reader): i32 { return r.fd; }\nfunction main(): i32 { return 0; }\n", []string{"E006"}},
+		{"resource-named-like-builtin-cell", "@import(\"local:test/res@0.1.0\", \"cell\")\nresource Cell;\nfunction main(): i32 { return 0; }\n", []string{"E006"}},
+		{"resource-named-like-builtin-option", "@import(\"local:test/res@0.1.0\", \"option\")\nresource Option;\nfunction main(): i32 { return 0; }\n", []string{"E006"}},
+		{"resource-named-like-builtin-map", "@import(\"local:test/res@0.1.0\", \"map\")\nresource Map;\nfunction main(): i32 { return 0; }\n", []string{"E006"}},
 		{"tuple-match-exhausts-the-function", "function f(t: (i32, i32)): i32 { match (t) { (0, b) => { return b; }, (a, _) => { return a; } } }\nfunction main(): i32 { return f((0, 7)); }\n", nil},
 	}
 	for _, tc := range cases {
