@@ -658,6 +658,12 @@ pub function rewrite_type_name(tn: string, ctx: RewriteCtx): string {
     // element is a full type spelling, so it needs the full rewrite, not a
     // substring copy. An `args`-less spelling (`Flag[]`, a bare name) has
     // nothing to recurse into and falls through to the logic below unchanged.
+    if (!tref.is_tuple && !tref.is_fn && tref.args.len() == 0 && parser.dyn_trait_set(tref.base).len() > 0) {
+        var dout: string = canon_dyn(tref.base, ctx);
+        var dd: i32 = 0;
+        while (dd < tref.array_depth) { dout = dout + "[]"; dd = dd + 1; }
+        return dout;
+    }
     if (!tref.is_tuple && tref.args.len() > 0) {
         var gout: string = rewrite_type_name(tref.base, ctx) + "[";
         var gi: i32 = 0;
@@ -1010,23 +1016,51 @@ function rewrite_type_name_list(list: string, ctx: RewriteCtx): string {
     return out;
 }
 
-// canon_derives spells each `@derive` trait by the bundle prefix of the module
-// that must declare it: a bare name by the deriving module's own prefix ("" for
-// the entry, so it stays bare), a qualified one by the prefix of the import it
-// names. A qualifier naming no import is left as written, and resolves nothing.
+// canon_trait spells a trait by the bundle prefix of the module that must
+// declare it: a bare name by the naming module's own prefix ("" for the entry,
+// so it stays bare), a qualified one by the prefix of the import it names. A
+// qualifier naming no import is left as written, and resolves nothing.
+function canon_trait(d: string, ctx: RewriteCtx): string {
+    var dot: i32 = d.len() - 1;
+    while (dot >= 0 && d[dot] != b'.') { dot = dot - 1; }
+    if (dot < 0) {
+        if (ctx.prefix.len() == 0) { return d; }
+        return ctx.prefix + "." + d;
+    }
+    var k: i32 = util.index_of_str(ctx.modnames, slice_unchecked(d, 0, dot) + "");
+    if (k < 0) { return d; }
+    return ctx.modprefixes[k] + "." + slice_unchecked(d, dot + 1, d.len());
+}
+
 function canon_derives(derives: string[], ctx: RewriteCtx): string[] {
     var out: string[] = [];
-    for d in derives {
-        var dot: i32 = d.len() - 1;
-        while (dot >= 0 && d[dot] != b'.') { dot = dot - 1; }
-        if (dot < 0) {
-            if (ctx.prefix.len() == 0) { out = out.append(d); }
-            else { out = out.append(ctx.prefix + "." + d); }
-        } else {
-            var k: i32 = util.index_of_str(ctx.modnames, slice_unchecked(d, 0, dot) + "");
-            if (k < 0) { out = out.append(d); }
-            else { out = out.append(ctx.modprefixes[k] + "." + slice_unchecked(d, dot + 1, d.len())); }
-        }
+    for d in derives { out = out.append(canon_trait(d, ctx)); }
+    return out;
+}
+
+// The module that declares the trait `im` implements, as canon_trait resolves
+// it: "" for the entry's own, and for an inherent impl.
+function trait_module_of(im: parser.ImplInfo, ctx: RewriteCtx): string {
+    if (im.trait_name.len() == 0) { return ""; }
+    var spelling: string = im.trait_spelling;
+    if (spelling.len() == 0) { spelling = im.trait_name; }
+    var canon: string = canon_trait(util.base_type_name(spelling), ctx);
+    var dot: i32 = canon.len() - 1;
+    while (dot >= 0 && canon[dot] != b'.') { dot = dot - 1; }
+    if (dot < 0) { return ""; }
+    return slice_unchecked(canon, 0, dot) + "";
+}
+
+// canon_dyn spells each trait of a `dyn` set by canon_trait, keeping any
+// bracketed pin (`Iter[Item = i32]`) on the trait it follows.
+function canon_dyn(set: string, ctx: RewriteCtx): string {
+    var out: string = "dyn ";
+    var first: boolean = true;
+    for tr in parser.dyn_trait_set(set) {
+        if (!first) { out = out + " + "; }
+        var head: string = util.base_type_name(tr);
+        out = out + canon_trait(head, ctx) + slice_unchecked(tr, head.len(), tr.len());
+        first = false;
     }
     return out;
 }
@@ -1139,8 +1173,9 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
 // `E021 ... missing method`, and because a bundle's diagnostics are checked as
 // a SET, that poisoned every program importing std/string (which reaches
 // core/bigint + core/cmp since #6314) in the Go-vs-self-host differential.
-// Only the target is rewritten: trait_name and bounds are trait-namespace
-// names, and method_names are bare method names, none of which flatten mangles.
+// trait_name and bounds are trait-namespace names, and method_names are bare
+// method names, none of which flatten mangles; trait_module names the module
+// that declares the trait, as canon_trait resolves it.
 function mangle_impls(impls: parser.ImplInfo[], ctx: RewriteCtx): parser.ImplInfo[] {
     var out: parser.ImplInfo[] = [];
     var i: i32 = 0;
@@ -1165,7 +1200,8 @@ function mangle_impls(impls: parser.ImplInfo[], ctx: RewriteCtx): parser.ImplInf
             trait_spelling: im.trait_spelling,
             trait_ref: rewrite_type_name(im.trait_ref, ctx),
             assoc_names: im.assoc_names,
-            assoc_values: mangled_vals
+            assoc_values: mangled_vals,
+            trait_module: trait_module_of(im, ctx)
         });
         i = i + 1;
     }

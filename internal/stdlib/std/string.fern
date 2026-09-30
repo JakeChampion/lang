@@ -31,8 +31,7 @@ import "core/bigint";
 // support handles the std/string ↔ std/i32 back-edge.
 import "std/i32";
 // Plus Array methods on string[] / i32[] values:
-// `.reverse().join(" ")` in reverse_words, `.take(...)`, and
-// `.index_of(...)` in the trim_chars family.
+// `.reverse().join(" ")` in reverse_words and `.take(...)`.
 import "std/array";
 // `to_upper` / `to_lower` are Unicode, so they delegate to
 // std/unicode's case tables. This closes a std/string →
@@ -1124,24 +1123,24 @@ pub function (s: string) shift_byte(delta: i32): string {
     return string_from_bytes_unchecked(buf);
 }
 
-// `__byte_in_set(b, set)` — true iff byte `b` appears anywhere
-// in `set`. The shared inner loop behind without_chars /
-// contains_only / count_chars_in (and any future set-membership
-// string verb). Plain i32/string -> bool (no closures), so it
-// stays inside the self-host fixed-point emit surface.
-function __byte_in_set(b: i32, set: string): boolean {
+// Character sets compare Unicode scalar values, without normalization.
+// Each ill-formed maximal subpart compares as U+FFFD in either input;
+// retained units keep their original bytes, without lossy replacement.
+// Plain i32/string -> boolean, without closures, for the self-host surface.
+function __char_in_set(cp: i32, set: string): boolean {
     var j: i32 = 0;
     var setLen: i32 = set.len();
     while (j < setLen) {
-        if (set[j] as i32 == b) { return true; }
-        j = j + 1;
+        var step: i32 = __utf8_step(set, j, setLen);
+        if (__utf8_decode_at(set, j, step) == cp) { return true; }
+        j = j + step;
     }
     return false;
 }
 
-// `s.without_chars(set)` — remove every byte from s that
-// appears anywhere in `set`. Empty set → unchanged.
-// ASCII-level character class semantics.
+// `s.without_chars(set)` removes each Unicode scalar present in set.
+// Empty set leaves s unchanged; retained characters keep their original bytes.
+// Ill-formed maximal subparts compare as U+FFFD; this does not validate s.
 pub function (s: string) without_chars(set: string): string {
     var n: i32 = s.len();
     if (n == 0) { return s; }
@@ -1150,12 +1149,16 @@ pub function (s: string) without_chars(set: string): string {
     var pos: i32 = 0;
     var i: i32 = 0;
     while (i < n) {
-        var b: i32 = s[i] as i32;
-        if (!__byte_in_set(b, set)) {
-            buf = buf.with(pos, b as u8);
-            pos = pos + 1;
+        var step: i32 = __utf8_step(s, i, n);
+        if (!__char_in_set(__utf8_decode_at(s, i, step), set)) {
+            var b: i32 = 0;
+            while (b < step) {
+                buf = buf.with(pos, s[i + b]);
+                pos = pos + 1;
+                b = b + 1;
+            }
         }
-        i = i + 1;
+        i = i + step;
     }
     var out: u8[] = __alloc_u8(pos);
     var k: i32 = 0;
@@ -1166,32 +1169,34 @@ pub function (s: string) without_chars(set: string): string {
     return string_from_bytes_unchecked(out);
 }
 
-// `s.contains_only(set)` — true if every byte in s is in
-// `set`. Empty s → true (vacuous). Empty set with non-empty
-// s → false (no characters allowed). ASCII-level.
+// `s.contains_only(set)` is true when every Unicode scalar in s is in set.
+// Empty s returns true, including when set is empty.
+// Ill-formed maximal subparts in either input compare as U+FFFD.
 pub function (s: string) contains_only(set: string): boolean {
     var n: i32 = s.len();
     if (n == 0) { return true; }
     if (set.len() == 0) { return false; }
     var i: i32 = 0;
     while (i < n) {
-        if (!__byte_in_set((s[i] as i32), set)) { return false; }
-        i = i + 1;
+        var step: i32 = __utf8_step(s, i, n);
+        if (!__char_in_set(__utf8_decode_at(s, i, step), set)) { return false; }
+        i = i + step;
     }
     return true;
 }
 
-// `s.count_chars_in(set)` — count bytes of s that appear
-// in `set`. Counterpart to `without_chars` / `contains_only`.
-// Empty set → 0.
+// `s.count_chars_in(set)` counts Unicode scalars of s present in set.
+// Repeated characters in set do not count a character more than once.
+// Each ill-formed maximal subpart in either input compares as U+FFFD.
 pub function (s: string) count_chars_in(set: string): i32 {
     var n: i32 = s.len();
     if (n == 0 || set.len() == 0) { return 0; }
     var c: i32 = 0;
     var i: i32 = 0;
     while (i < n) {
-        if (__byte_in_set((s[i] as i32), set)) { c = c + 1; }
-        i = i + 1;
+        var step: i32 = __utf8_step(s, i, n);
+        if (__char_in_set(__utf8_decode_at(s, i, step), set)) { c = c + 1; }
+        i = i + step;
     }
     return c;
 }
@@ -1606,45 +1611,52 @@ pub function (s: string) rstrip_newline(): string {
     return s;
 }
 
-// `s.trim_chars(chars)` — strip any byte that appears in
-// `chars` from both ends. Empty `chars` is a no-op. Useful
-// for stripping a chosen set of delimiters / wrapping
-// characters in one pass.
+// `s.trim_chars(chars)` strips Unicode scalars present in chars from both
+// ends. Empty chars is a no-op. Combining marks are separate scalars.
+// Ill-formed maximal subparts compare as U+FFFD; retained bytes are unchanged.
 pub function (s: string) trim_chars(chars: string): string {
     var n: i32 = s.len();
     if (chars.len() == 0) { return s; }
     var low: i32 = 0;
     var high: i32 = n;
     while (low < high) {
-        if (chars.index_of((slice_unchecked(s, low, low + 1) + "")) < 0) { break; }
-        low = low + 1;
+        var step: i32 = __utf8_step(s, low, n);
+        if (!__char_in_set(__utf8_decode_at(s, low, step), chars)) { break; }
+        low = low + step;
     }
     while (high > low) {
-        if (chars.index_of((slice_unchecked(s, high - 1, high) + "")) < 0) { break; }
-        high = high - 1;
+        var start: i32 = __utf8_prev_unit(s, high);
+        if (!__char_in_set(__utf8_decode_at(s, start, high - start), chars)) { break; }
+        high = start;
     }
     return (slice_unchecked(s, low, high) + "");
 }
 
 // `s.trim_start_chars(chars)` / `s.trim_end_chars(chars)` —
-// one-sided variants of trim_chars. Strip any byte in `chars`
+// one-sided variants of trim_chars. Strip Unicode scalars in `chars`
 // from the start / end only.
+// Ill-formed maximal subparts compare as U+FFFD; retained bytes are unchanged.
 pub function (s: string) trim_start_chars(chars: string): string {
     var n: i32 = s.len();
     if (chars.len() == 0) { return s; }
     var i: i32 = 0;
-    while (i < n && chars.index_of((slice_unchecked(s, i, i + 1) + "")) >= 0) {
-        i = i + 1;
+    while (i < n) {
+        var step: i32 = __utf8_step(s, i, n);
+        if (!__char_in_set(__utf8_decode_at(s, i, step), chars)) { break; }
+        i = i + step;
     }
     return (slice_unchecked(s, i, n) + "");
 }
 
+// As trim_start_chars, using the same maximal-subpart units from the end.
 pub function (s: string) trim_end_chars(chars: string): string {
     var n: i32 = s.len();
     if (chars.len() == 0) { return s; }
     var end: i32 = n;
-    while (end > 0 && chars.index_of((slice_unchecked(s, end - 1, end) + "")) >= 0) {
-        end = end - 1;
+    while (end > 0) {
+        var start: i32 = __utf8_prev_unit(s, end);
+        if (!__char_in_set(__utf8_decode_at(s, start, end - start), chars)) { break; }
+        end = start;
     }
     return (slice_unchecked(s, 0, end) + "");
 }
@@ -2639,6 +2651,20 @@ pub function __utf8_step(s: string, i: i32, n: i32): i32 {
         k = k + 1;
     }
     return want;
+}
+
+// Previous maximal-subpart start before a positive forward-unit boundary.
+// A unit spans at most four bytes. Bound the backward probe so repeated
+// trimming stays linear even for long runs of stray continuation bytes.
+function __utf8_prev_unit(s: string, end: i32): i32 {
+    var start: i32 = end - 1;
+    while (start > 0 && end - start < 4 && __utf8_is_cont(s[start] as i32)) {
+        start = start - 1;
+    }
+    if (start + __utf8_step(s, start, end) == end) { return start; }
+    // A lead that cannot consume through end leaves the final byte as its
+    // own unit. This includes stray tails after a complete valid sequence.
+    return end - 1;
 }
 
 // `__utf8_decode_at(s, i, step)` — the scalar value of the unit at `i`

@@ -529,6 +529,32 @@ function operation_supplies(f: ssasem.Func, ins: ssa.SInst): Supply[] {
     }
     return out;
 }
+// The operands a call lends rather than counts. The callee reads them for the
+// whole call, and it may release a unit it is handed before it does.
+function lent_operands(f: ssasem.Func, ins: ssa.SInst): i32[] {
+    var out: i32[] = [];
+    if (ins.kind_tag != ssasem.call() && ins.kind_tag != ssasem.call_value()) { return out; }
+    var counted: Supply[] = operation_supplies(f, ins);
+    var i: i32 = 0;
+    while (i < ins.args.len()) {
+        var slot_counted: boolean = false;
+        for got in counted { if (got.slot == i) { slot_counted = true; } }
+        if (!slot_counted && ins.args[i] >= 0) { out = out.append(ins.args[i]); }
+        i = i + 1;
+    }
+    return out;
+}
+
+// What a call's lent operands borrow from: none of it may move into the call
+// (#10832).
+function lent_owners(f: ssasem.Func, ins: ssa.SInst, deps: i32[][]): i32[] {
+    var out: i32[] = [];
+    for v in lent_operands(f, ins) {
+        for dep in deps[v] { if (dep != v && !has_id(out, dep)) { out = out.append(dep); } }
+    }
+    return out;
+}
+
 // An indirect call LENDS every reference it is handed except at a slot the
 // function type spells CONSUMING, `own T`. The callee box itself (operand 0)
 // is lent like any other.
@@ -1449,20 +1475,21 @@ function choose(s: Step, supplies: Supply[], dead: boolean[], owned: boolean[]):
     var ids: i32[] = [];
     var i: i32 = 0;
     while (i < dead.len()) { if (dead[i]) { ids = ids.append(i); } i = i + 1; }
-    return choose_ids(s, supplies, ids, owned);
+    return choose_ids(s, supplies, ids, owned, []);
 }
 
 // choose_ids is choose over the dead values listed by id, in any order: a
 // dead owned supply moves its unit (the last one to name it), and the other
-// dead owned values drop, in ascending id order.
-function choose_ids(s: Step, supplies: Supply[], dead: i32[], owned: boolean[]): Step {
+// dead owned values drop, in ascending id order. A `pinned` value retains and
+// drops after the operation instead of moving.
+function choose_ids(s: Step, supplies: Supply[], dead: i32[], owned: boolean[], pinned: i32[]): Step {
     var moved: i32[] = [];
     var selected: Supply[] = supplies;
     var i: i32 = selected.len() - 1;
     while (i >= 0) {
         var item: Supply = selected[i];
         var mode: i32 = retain_unit();
-        if (owned[item.value] && has_id(dead, item.value) && !has_id(moved, item.value)) {
+        if (owned[item.value] && has_id(dead, item.value) && !has_id(moved, item.value) && !has_id(pinned, item.value)) {
             mode = move_unit();
             moved = moved.append(item.value);
         }
@@ -1536,7 +1563,7 @@ pub function plan(f: ssasem.Func, modes: i32[]): Plan {
                             }
                         }
                     }
-                    steps = steps.append(steals(f, analysis, owned, defs, bi, pos, hands(f, analysis, owned, defs, bi, pos, choose_ids(step(b.id, pos, 0 - 1), operation_supplies(f, ins), dead, owned))));
+                    steps = steps.append(steals(f, analysis, owned, defs, bi, pos, hands(f, analysis, owned, defs, bi, pos, choose_ids(step(b.id, pos, 0 - 1), operation_supplies(f, ins), dead, owned, lent_owners(f, ins, analysis.dependencies)))));
                     var root: i32 = field_grow_root(f, analysis, owned, defs, bi, pos);
                     if (root >= 0) {
                         grows = grows.with(ins.result, root);
@@ -1559,7 +1586,7 @@ pub function plan(f: ssasem.Func, modes: i32[]): Plan {
                 var si: i32 = ssalive.position(analysis.flow, target);
                 entry_kept = entry_kept_of(f, analysis, b, si, entry_kept);
                 var dead: i32[] = ssalive.out_not_in(analysis.flow, bi, si);
-                steps = steps.append(choose_ids(step(b.id, edge_point(), target), edge_supplies(f, b, si, owned), dead, owned));
+                steps = steps.append(choose_ids(step(b.id, edge_point(), target), edge_supplies(f, b, si, owned), dead, owned, []));
             }
         }
         bi = bi + 1;
@@ -1733,6 +1760,8 @@ function verify_operations(f: ssasem.Func, b: ssa.SBlock, p: Plan, idx: i32[][],
             }
             var at: i32 = find_step(p, idx, b.id, pos, 0 - 1);
             if (at < 0) { return progress_error("missing or duplicate operation step"); }
+            var lent: string = lent_error(next, p.steps[at], f, ins, owned, deps);
+            if (lent != "") { return progress_error(lent); }
             var done: Ledger = replay(next, p.steps[at], operation_supplies(f, ins), ins.result, owned, deps);
             if (!done.ok) { return progress_error(done.why); }
             next = done.bits;
@@ -1741,6 +1770,18 @@ function verify_operations(f: ssasem.Func, b: ssa.SBlock, p: Plan, idx: i32[][],
         pos = pos + 1;
     }
     return ReplayProgress { why: "", state: next, count: count };
+}
+
+// A call's lent operand borrows from units that must outlast the call's moves.
+function lent_error(state: boolean[], s: Step, f: ssasem.Func, ins: ssa.SInst, owned: boolean[], deps: i32[][]): string {
+    var moved: Ledger = move_supplies(state, s.supplies, owned);
+    if (!moved.ok) { return ""; }
+    for v in lent_operands(f, ins) {
+        for dep in deps[v] {
+            if (dep != v && owned[dep] && !moved.bits[dep]) { return "a lent call operand borrows from a unit moved into the call"; }
+        }
+    }
+    return "";
 }
 
 function verify_return(f: ssasem.Func, b: ssa.SBlock, p: Plan, idx: i32[][], state: boolean[], owned: boolean[], deps: i32[][]): string {

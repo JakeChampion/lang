@@ -3538,10 +3538,11 @@ pub function (s: EmitState) mark_str_repeat(): EmitState {
 // rt_src_str_repeat backs `str_repeat(s, n)` / `s.repeat(n)` (#2649) — n copies
 // of `s` in a fresh buffer, via the raw-memory intrinsic floor. Allocates
 // slen*count bytes (min 1 so a 0-length result still has a valid box ptr),
-// copies `s` byte-by-byte `count` times, boxes it. n <= 0 → empty string. Heap
+// copies `s` byte-by-byte `count` times, boxes it. n <= 0 → empty string. A
+// total past i32 is handed to __raw_alloc as -1, whose size check aborts. Heap
 // is its sole dep. Replaces the hand-written register-ABI body on every backend.
 pub function rt_src_str_repeat(): string {
-    return "function __fern_str_repeat(s: string, n: i32): string { var slen: i32 = s.len(); var count: i32 = n; if (count < 0) { count = 0; } var total: i32 = slen * count; var cap: i32 = total; if (cap == 0) { cap = 1; } var p: usize = __raw_alloc(cap); var w: i32 = 0; var k: i32 = 0; while (k < count) { var j: i32 = 0; while (j < slen) { __raw_store8(p, w, s[j] as i32); w = w + 1; j = j + 1; } k = k + 1; } return __raw_string(p, total); }";
+    return "function __fern_str_repeat(s: string, n: i32): string { var slen: i32 = s.len(); var count: i32 = n; if (count < 0) { count = 0; } var total64: i64 = (slen as i64) * (count as i64); var total: i32 = total64 as i32; if (total64 > 2147483647) { total = 0 - 1; } var cap: i32 = total; if (cap == 0) { cap = 1; } var p: usize = __raw_alloc(cap); var w: i32 = 0; var k: i32 = 0; while (k < count) { var j: i32 = 0; while (j < slen) { __raw_store8(p, w, s[j] as i32); w = w + 1; j = j + 1; } k = k + 1; } return __raw_string(p, total); }";
 }
 
 pub function (s: EmitState) mark_str_trim(): EmitState {

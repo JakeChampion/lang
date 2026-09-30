@@ -607,7 +607,7 @@ think they're free additions to make.
   (Fern has no const declaration syntax yet).
 - **One-sided trim**: `s.trim_start()` / `s.trim_end()`.
   Asymmetric whitespace strip.
-- **`s.trim_chars(chars)`**: strip any byte in `chars`
+- **`s.trim_chars(chars)`**: strip any Unicode scalar in `chars`
   from both ends. Useful for unwrapping `"(x)"`, `"=x="`,
   etc. in one pass.
 - **Case-insensitive prefix/suffix**: `s.starts_with_ci(p)`
