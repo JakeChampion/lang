@@ -72,7 +72,7 @@ targets).
 | #10761 | typed lowering: reading a `str` map value | 3 |
 | #10769 | wasm: no instruction selection for `raw_store8` and `write_some`; one module fails wasmtime's compile | 3 |
 | #10773 | arm64: the termios round trip fails at step 21 | 2 |
-| #10758 | typed lowering: unary minus on u32 | 1 |
+| #10758 (closed by this change after this measurement; the cause was the AST folder, not the typed lowering) | typed lowering: unary minus on u32 | 1 |
 | #10772 | x86-64: the in-process assembler cannot encode an instruction in a string-payload `match`, and names nothing | 1 |
 
 The three fuzz differentials (`TestDifferential_LangsmithMain`,
