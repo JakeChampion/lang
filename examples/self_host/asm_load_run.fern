@@ -434,9 +434,9 @@ function main(): i32 {
     merged = shaken_program(checker.annotate_module(merged), prune);
 
     if (target == "wasm32-wasi") {
-        // The preview1 command core, over the typed lowering, as the CLI emits it.
-        var typed: parser.Module = parser.module_with_builtins_typed(merged);
-        write(wasm_ir.emit_module_mode_or_error_sub(parser.erase_str_module(typed), false, false, semlower.target_substitution(typed, target)));
+        // The preview1 command core, as the CLI emits it.
+        var dw: semlower.Driven = semlower.driven_annotated(merged, target);
+        write(wasm_ir.emit_module_mode_or_error_sub(dw.full, false, false, dw.sub));
         return 0;
     }
     if (target == "arm64-linux") {

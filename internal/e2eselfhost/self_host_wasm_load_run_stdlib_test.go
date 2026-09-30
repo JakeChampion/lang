@@ -222,6 +222,9 @@ var wasmLoadRunStdlibCases = []struct {
 	{"map-has-and-not", "import \"core/map\";\nfunction main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); if (m.has(1) && !m.has(2)) { return 7; } return 0; }", 7, ""},
 	{"map-has-and-true", "import \"core/map\";\nfunction main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); m = m.insert(2, 20); if (m.has(1) && m.has(2)) { return 5; } return 0; }", 5, ""},
 	{"map-has-or-short", "import \"core/map\";\nfunction main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); if (m.has(1) || m.has(2)) { return 9; } return 0; }", 9, ""},
+	// target_os() / target_arch() are folded to the -target's names before the
+	// typed lowering, which has no body for either call.
+	{"target-name-folds", "function main(): i32 { write(target_os()); write(\"|\"); write(target_arch()); if (target_arch() == \"wasm32\") { return 0; } return 1; }", 0, "wasi|wasm32"},
 }
 
 // wasmStdlibLoader compiles programs that import the standard library to WAT
