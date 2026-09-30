@@ -61,7 +61,7 @@ func selfHostSysnoTables(t *testing.T) (darwin, linux map[string]int) {
 	_, next := cut(0)            // x86-64
 	darwinSrc, next := cut(next) // arm64-darwin
 	linuxSrc, _ := cut(next)     // arm64-linux (the fall-through)
-	row := regexp.MustCompile(`name == "([a-z0-9_]+)"\) \{ return "(-?\d+)"; \}`)
+	row := regexp.MustCompile(`name == "([a-z0-9_]+)"\)\s*\{\s*return "(-?\d+)";\s*\}`)
 	read := func(what, s string) map[string]int {
 		out := map[string]int{}
 		for _, m := range row.FindAllStringSubmatch(s, -1) {
