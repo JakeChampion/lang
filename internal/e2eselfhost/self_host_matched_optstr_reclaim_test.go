@@ -44,20 +44,17 @@ import (
 // (`op_opt_make`) and a string assignment BORROWS, so the arm binding takes no
 // retain — which is why the credit is safe when the arm only reads, and why
 // freeing a payload the arm hands out would be a use-after-free rather than a
-// double-count. The escape analysis is an allow-list: an unrecognised use denies
-// the credit (the shape keeps leaking) instead of releasing a live reference.
-// The five `refuses_*` rows below each pin an exact free count, so a widening
-// that starts releasing one of them fails here rather than in a sanitizer run.
+// double-count. The `refuses_*` rows below exercise the handed-out shapes; each
+// must exit its oracle answer and stay sanitizer-clean. On the typed lowering
+// every row balances.
 //
 // Every want was confirmed against BOTH oracles — bin/fern -interp and the
 // native x86-64 backend agreed on each — never read off the self-host run under
 // test. All twelve rows are additionally sanitizer-clean under FERN_SANITIZE=1.
 type matchedOptstrCase struct {
-	name      string
-	src       string
-	want      int
-	balance   bool  // assert allocs == frees at live_bytes 0
-	wantFrees int64 // asserted exactly on every row that does not set balance
+	name string
+	src  string
+	want int
 }
 
 const matchedOptstrMain = "\nfunction main(): i32 { var t: i32 = 0; var i: i32 = 0; " +
@@ -76,7 +73,7 @@ func matchedOptstrCases() []matchedOptstrCase {
     match (o) { Some(v) => { return v.len(); }, None => { return 2; } }
     return 0;
 }` + matchedOptstrMain,
-			want: 19, balance: true,
+			want: 19,
 		},
 		{
 			// The binding present but unused — identical leak before, which is
@@ -87,7 +84,7 @@ func matchedOptstrCases() []matchedOptstrCase {
     match (o) { Some(v) => { return 5; }, None => { return 2; } }
     return 0;
 }` + matchedOptstrMain,
-			want: 4, balance: true,
+			want: 4,
 		},
 		{
 			// No binding at all. Also leaked before, so the arm binding was never
@@ -98,7 +95,7 @@ func matchedOptstrCases() []matchedOptstrCase {
     match (o) { Some(_) => { return 5; }, None => { return 2; } }
     return 0;
 }` + matchedOptstrMain,
-			want: 4, balance: true,
+			want: 4,
 		},
 		{
 			// The never-matched quadrant, which already worked. It must stay
@@ -109,7 +106,7 @@ func matchedOptstrCases() []matchedOptstrCase {
     var o: Option[string] = Some(w("ab"));
     return i % 7;
 }` + matchedOptstrMain,
-			want: 13, balance: true,
+			want: 13,
 		},
 		{
 			// The array payload, matched: the quadrant that always worked and the
@@ -120,7 +117,7 @@ func matchedOptstrCases() []matchedOptstrCase {
     match (o) { Some(a) => { return a[0]; }, None => { return 2; } }
     return 0;
 }` + matchedOptstrMain,
-			want: 63, balance: true,
+			want: 63,
 		},
 		{
 			// The arr-of-arr payload, matched — the OPTARRARR sibling whose
@@ -131,7 +128,7 @@ func matchedOptstrCases() []matchedOptstrCase {
     match (o) { Some(_) => { return 5; }, None => { return 2; } }
     return 0;
 }` + matchedOptstrMain,
-			want: 4, balance: true,
+			want: 4,
 		},
 		{
 			// THE REBIND QUADRANT (#7712): reassigned, every rebind itself fresh.
@@ -148,7 +145,7 @@ func matchedOptstrCases() []matchedOptstrCase {
     match (o) { Some(v) => { return v.len(); }, None => { return 2; } }
     return 0;
 }` + matchedOptstrMain,
-			want: 19, balance: true,
+			want: 19,
 		},
 		{
 			// The flat-ARRAY payload reassigned: reassignment is precisely
@@ -161,10 +158,10 @@ func matchedOptstrCases() []matchedOptstrCase {
     match (o) { Some(a) => { return a[0]; }, None => { return 2; } }
     return 0;
 }` + matchedOptstrMain,
-			want: 14, balance: true,
+			want: 14,
 		},
 		{
-			// REFUSED: a rebind that is NOT fresh — `Some(p)` of a parameter the
+			// A rebind that is NOT fresh — `Some(p)` of a parameter the
 			// caller owns. Admitting reassignment must not admit an aliased rebind,
 			// which would release a live reference at the NEXT rebind.
 			name: "refuses_rebind_aliasing_param",
@@ -175,10 +172,10 @@ func matchedOptstrCases() []matchedOptstrCase {
     return 0;
 }
 function round(i: i32): i32 { var s: string = w("zz"); return run(s, i); }` + matchedOptstrMain,
-			want: 19, wantFrees: 0,
+			want: 19,
 		},
 		{
-			// REFUSED: reassigned AND the payload escapes. The escape gate must
+			// Reassigned AND the payload escapes. The escape gate must
 			// still apply once reassignment is admitted.
 			name: "refuses_reassigned_escaping",
 			src: matchedOptstrW + `function round(i: i32): i32 {
@@ -188,10 +185,10 @@ function round(i: i32): i32 { var s: string = w("zz"); return run(s, i); }` + ma
     match (o) { Some(v) => { held = v; }, None => {} }
     return held.len();
 }` + matchedOptstrMain,
-			want: 19, wantFrees: 0,
+			want: 19,
 		},
 		{
-			// REFUSED: the arm RETURNS the payload, so the caller owns it.
+			// The arm RETURNS the payload, so the caller owns it.
 			// Releasing it here is a use-after-free, not a double count.
 			name: "refuses_returned_payload",
 			src: matchedOptstrW + `function mk(i: i32): string {
@@ -200,10 +197,10 @@ function round(i: i32): i32 { var s: string = w("zz"); return run(s, i); }` + ma
     return "y";
 }
 function round(i: i32): i32 { var s: string = mk(i); return s.len(); }` + matchedOptstrMain,
-			want: 19, wantFrees: 0,
+			want: 19,
 		},
 		{
-			// REFUSED: the payload is stored into a local that outlives the match.
+			// The payload is stored into a local that outlives the match.
 			name: "refuses_stored_outer",
 			src: matchedOptstrW + `function round(i: i32): i32 {
     var held: string = "";
@@ -211,10 +208,10 @@ function round(i: i32): i32 { var s: string = mk(i); return s.len(); }` + matche
     match (o) { Some(v) => { held = v; }, None => {} }
     return held.len();
 }` + matchedOptstrMain,
-			want: 19, wantFrees: 0,
+			want: 19,
 		},
 		{
-			// REFUSED: the payload is passed to a callee, which may retain it.
+			// The payload is passed to a callee, which may retain it.
 			name: "refuses_passed_to_callee",
 			src: matchedOptstrW + `function take(s: string): i32 { return s.len(); }
 function round(i: i32): i32 {
@@ -222,10 +219,10 @@ function round(i: i32): i32 {
     match (o) { Some(v) => { return take(v); }, None => { return 2; } }
     return 0;
 }` + matchedOptstrMain,
-			want: 19, wantFrees: 0,
+			want: 19,
 		},
 		{
-			// REFUSED: the payload goes into a container.
+			// The payload goes into a container.
 			name: "refuses_into_container",
 			src: matchedOptstrW + `function round(i: i32): i32 {
     var keep: string[] = [];
@@ -233,27 +230,17 @@ function round(i: i32): i32 {
     match (o) { Some(v) => { keep = keep.append(v); }, None => {} }
     return keep.len();
 }` + matchedOptstrMain,
-			want: 34, wantFrees: 200,
+			want: 34,
 		},
 		{
-			// REFUSED, and deliberately conservative: `v + "z"` BORROWS the
-			// payload, so this one is admissible in principle and is left out
-			// because nothing here proves it. Pinned so that widening the
-			// allow-list to cover it is a visible, measured change rather than a
-			// silent one — it must arrive with its own balance, not by accident.
-			//
-			// wantFrees halved with #7351 (one block per heap string, not two)
-			// and both frees here are string frees. That it is the block count and
-			// not the refusal is settled by live_bytes: 14400 before and after,
-			// off 1000/400 then and 600/200 now, same answer. A row whose leaked
-			// bytes MOVE is the refusal changing; this one's did not.
+			// `v + "z"` BORROWS the payload.
 			name: "refuses_concat_conservative",
 			src: matchedOptstrW + `function round(i: i32): i32 {
     var o: Option[string] = Some(w("ab"));
     match (o) { Some(v) => { var t: string = v + "z"; return t.len(); }, None => { return 2; } }
     return 0;
 }` + matchedOptstrMain,
-			want: 53, wantFrees: 200,
+			want: 53,
 		},
 		{
 			// A non-fresh payload: `Some(p)` of a PARAMETER the caller owns.
@@ -267,7 +254,7 @@ function round(i: i32): i32 {
     return 0;
 }
 function round(i: i32): i32 { var s: string = w("ab"); return wrap(s, i); }` + matchedOptstrMain,
-			want: 19, wantFrees: 0,
+			want: 19,
 		},
 	}
 }
@@ -300,14 +287,8 @@ func TestSelfHostMatchedOptstrReclaimX86_64(t *testing.T) {
 			if allocs == 0 {
 				t.Fatalf("%s allocated nothing — the probe is not exercising the path", tc.name)
 			}
-			if tc.balance && (live != 0 || allocs != frees) {
+			if live != 0 || allocs != frees {
 				t.Errorf("%s: %s — must balance at live_bytes 0 (native does)", tc.name, summary)
-			}
-			if !tc.balance && frees != tc.wantFrees {
-				t.Errorf("%s: %s — want exactly %d frees. A HIGHER count is the "+
-					"refusal breaking down and the escaping payload being released; "+
-					"a lower one means the probe stopped exercising the path",
-					tc.name, summary, tc.wantFrees)
 			}
 		})
 	}

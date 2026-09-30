@@ -1591,12 +1591,12 @@ import "std/http";
 import "std/tcp";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
     if (req.path == "/hello") {
-        return http.http_response_ok("world");
+        return http.ok("world");
     }
     if (req.method == "POST") {
-        return http.http_response_ok(req.body_string());
+        return http.ok(req.body_string());
     }
-    return http.http_response_text(404, "not found");
+    return http.text(404, "not found");
 }
 `
 	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
@@ -1731,7 +1731,7 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
     var h: HeaderMap = headers.header_map_new();
     h = h.set("x-served-by", "fern");
     h = h.set("content-type", "text/plain");
-    return HttpResponse { status: 201, body: "ok", headers: h };
+    return HttpResponse { status: 201, body: BodyText("ok"), headers: h, trailers: headers.header_map_new() };
 }
 `
 	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
@@ -1830,8 +1830,8 @@ import "std/http";
 import "std/tcp";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
     match (req.headers.get("x-echo")) {
-        Some(v) => { return http.http_response_ok(v); },
-        None => { return http.http_response_text(400, "no x-echo"); },
+        Some(v) => { return http.ok(v); },
+        None => { return http.text(400, "no x-echo"); },
     }
 }
 `
@@ -1935,7 +1935,7 @@ import "std/platform";
 import "std/tcp";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
     plat.log(f"LOGLINE {req.method} {req.path}");
-    return http.http_response_ok("logged");
+    return http.ok("logged");
 }
 `
 	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
@@ -2047,8 +2047,8 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
     var t: i64 = plat.now_ms();
     var m: i64 = plat.elapsed_ns();
     var r: i32 = plat.random_i32();
-    if (t > 0) { return http.http_response_ok("clock-ok"); }
-    return http.http_response_ok("no-clock");
+    if (t > 0) { return http.ok("clock-ok"); }
+    return http.ok("no-clock");
 }
 `
 	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
@@ -2118,7 +2118,7 @@ import "std/platform";
 import "std/tcp";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
     match (plat.env("X")) { Some(_) => {}, None => {} }
-    return http.http_response_ok("e");
+    return http.ok("e");
 }
 `
 	envPath := filepath.Join(dir, "env.fern")
@@ -2167,12 +2167,12 @@ import "std/http";
 import "std/tcp";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
     if (req.path == "/hello") {
-        return http.http_response_ok("world");
+        return http.ok("world");
     }
     if (req.method == "POST") {
-        return http.http_response_ok(req.body_string());
+        return http.ok(req.body_string());
     }
-    return http.http_response_text(404, "not found");
+    return http.text(404, "not found");
 }
 `
 	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
@@ -2301,15 +2301,15 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
     plat.log("handled " + req.path);
     var floor: i64 = 1600000000000;
     if (plat.now_ms() < floor) {
-        return http.http_response_text(500, "clock");
+        return http.text(500, "clock");
     }
     if (plat.elapsed_ns() < 0) {
-        return http.http_response_text(500, "monotonic");
+        return http.text(500, "monotonic");
     }
     if (plat.random_i32() == 0 && plat.random_i32() == 0 && plat.random_i32() == 0) {
-        return http.http_response_text(500, "random");
+        return http.text(500, "random");
     }
-    return http.http_response_ok("caps-ok");
+    return http.ok("caps-ok");
 }
 `
 	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {

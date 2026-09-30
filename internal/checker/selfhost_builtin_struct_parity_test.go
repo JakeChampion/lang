@@ -103,12 +103,12 @@ func parseInjectedStructDecls(t *testing.T, src string) map[string]string {
 	// The guard is `name_declared`, which answers for an enum of that name
 	// as well as a struct; `struct_declared` is the struct-only half it calls.
 	block := regexp.MustCompile(`if \(!(?:name|struct)_declared\(structs, "([A-Za-z_][A-Za-z0-9_]*)"\)\) \{([\s\S]*?)\n    \}`)
-	field := regexp.MustCompile(`StructFieldDecl \{ name: "([^"]*)", type_name: "([^"]*)"`)
+	field := regexp.MustCompile(`StructFieldDecl \{[^}]*\}`)
 	out := map[string]string{}
 	for _, m := range block.FindAllStringSubmatch(src, -1) {
 		var parts []string
-		for _, f := range field.FindAllStringSubmatch(m[2], -1) {
-			parts = append(parts, f[1]+": "+f[2])
+		for _, f := range field.FindAllString(m[2], -1) {
+			parts = append(parts, injectedFieldSpelling(f))
 		}
 		if len(parts) > 0 {
 			out[m[1]] = strings.Join(parts, ", ")
@@ -118,6 +118,25 @@ func parseInjectedStructDecls(t *testing.T, src string) map[string]string {
 		t.Fatal("no injected struct declarations found — has the injection site been reshaped?")
 	}
 	return out
+}
+
+// injectedFieldSpelling renders one StructFieldDecl literal as builtins.fern
+// spells the field. A fn-typed field carries the flat "fn" tag with its
+// return and parameter spellings in the fn_ret / fn_param_types sidecars,
+// which is where the `(P) => R` spelling is rebuilt from.
+func injectedFieldSpelling(lit string) string {
+	attr := func(key string) string {
+		m := regexp.MustCompile(key + `: "([^"]*)"`).FindStringSubmatch(lit)
+		if m == nil {
+			return ""
+		}
+		return m[1]
+	}
+	name, ty := attr("name"), attr("type_name")
+	if ty == "fn" {
+		ty = "(" + attr("fn_param_types") + ") => " + attr("fn_ret")
+	}
+	return name + ": " + ty
 }
 
 // fernStructBody spells a builtin's fields the way builtins.fern does.
@@ -162,6 +181,21 @@ func fernTypeSpelling(t *testing.T, ty ast.Type) string {
 			args = append(args, fernTypeSpelling(t, a))
 		}
 		return v.Name + "[" + strings.Join(args, ", ") + "]"
+	case ast.EnumType:
+		if len(v.Args) == 0 {
+			return v.Name
+		}
+		args := make([]string, 0, len(v.Args))
+		for _, a := range v.Args {
+			args = append(args, fernTypeSpelling(t, a))
+		}
+		return v.Name + "[" + strings.Join(args, ", ") + "]"
+	case *ast.FuncType:
+		params := make([]string, 0, len(v.Params))
+		for _, p := range v.Params {
+			params = append(params, fernTypeSpelling(t, p))
+		}
+		return "(" + strings.Join(params, ", ") + ") => " + fernTypeSpelling(t, v.Result)
 	}
 	t.Fatalf("no Fern spelling for builtin field type %T — teach fernTypeSpelling about it", ty)
 	return ""
@@ -170,7 +204,22 @@ func fernTypeSpelling(t *testing.T, ty ast.Type) string {
 // normaliseFields collapses whitespace so the comparison is on field
 // names and types, not on how the declaration is laid out.
 func normaliseFields(s string) string {
-	fields := strings.Split(s, ",")
+	var fields []string
+	depth, start := 0, 0
+	for i, c := range s {
+		switch c {
+		case '(', '[':
+			depth++
+		case ')', ']':
+			depth--
+		case ',':
+			if depth == 0 {
+				fields = append(fields, s[start:i])
+				start = i + 1
+			}
+		}
+	}
+	fields = append(fields, s[start:])
 	out := make([]string, 0, len(fields))
 	for _, f := range fields {
 		f = strings.Join(strings.Fields(f), " ")

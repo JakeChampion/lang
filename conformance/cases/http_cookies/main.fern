@@ -58,7 +58,7 @@ function main(): i32 {
     if (evil.serialize() != "name=vSet-Cookie: hax=1x") { return 14; }
 
     // ---- with_set_cookie: append semantics on the wire ----
-    var resp: HttpResponse = http.http_response_ok("hi");
+    var resp: HttpResponse = http.ok("hi");
     resp = resp.with_set_cookie(http.cookie_new("a", "1"));
     resp = resp.with_set_cookie(http.cookie_new("b", "2"));
     var out: string = http.http_serialize_response(resp);

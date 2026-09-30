@@ -21,20 +21,20 @@ import "std/headers";
 import "std/tcp";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
     if (req.path == "/hello") {
-        return http.http_response_ok("world")
+        return http.ok("world")
             .with_header("x-served-by", "fern")
             .with_header("content-type", "text/plain");
     }
     if (req.path == "/headers") {
         match (req.headers.get("x-token")) {
-            Some(v) => { return http.http_response_ok("token=" + v); },
-            None => { return http.http_response_text(400, "no token"); }
+            Some(v) => { return http.ok("token=" + v); },
+            None => { return http.text(400, "no token"); }
         }
     }
     if (req.method == "POST") {
-        return http.http_response_ok(req.method + ":" + req.body_string());
+        return http.ok(req.method + ":" + req.body_string());
     }
-    return http.http_response_text(404, "not found");
+    return http.text(404, "not found");
 }
 `
 

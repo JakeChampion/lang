@@ -29,9 +29,9 @@ import (
 // free is releasing memory nothing reads again, and refusing costs the tuple its
 // BOX as well as its element.
 //
-// `tuple_elem_bind_sites_of` admits exactly the binds whose target is neither
-// reassigned nor escaping, so the three refusal rows below still refuse — an
-// element that is returned, stored, or rebound is not in the set.
+// The `refuses_*` rows bind an element that is returned, stored, or rebound;
+// each must exit its oracle answer and stay sanitizer-clean. On the typed
+// lowering every row balances.
 //
 // Every row is gated on `__rc_underflow_count()` and runs a second leg under
 // FERN_SANITIZE=1. This change WIDENS a deep free, which is the shape that
@@ -41,11 +41,9 @@ import (
 // Every want was confirmed against BOTH oracles: `bin/fern -interp` and the
 // native x86-64 backend agreed on each.
 type tupleElemBindCase struct {
-	name      string
-	src       string
-	want      int
-	balance   bool
-	wantFrees int64 // asserted exactly on every row that does not set balance
+	name string
+	src  string
+	want int
 }
 
 func tupleElemBindMain(rounds string) string {
@@ -65,7 +63,7 @@ func tupleElemBindCases() []tupleElemBindCase {
 			// THE REPRO. Was 200/0 live 8000 — box and buffer both stranded.
 			name: "elem_bound_to_a_local",
 			src:  bindElem + tupleElemBindMain("100"),
-			want: 4, balance: true,
+			want: 4,
 		},
 		{
 			// The same shape at 4x the rounds. Was 800/0 live 32000 — the row that
@@ -73,7 +71,7 @@ func tupleElemBindCases() []tupleElemBindCase {
 			// single count cannot show.
 			name: "elem_bound_400_rounds",
 			src:  bindElem + tupleElemBindMain("400"),
-			want: 7, balance: true,
+			want: 7,
 		},
 		{
 			// A STRING element: a different release from the flat buffer dec, so
@@ -85,7 +83,7 @@ function round(i: i32): i32 {
     var e: string = t.1;
     return e.len() + i;
 }` + tupleElemBindMain("100"),
-			want: 21, balance: true,
+			want: 21,
 		},
 		{
 			// The element is read after binding and then dead, which is the shape
@@ -98,7 +96,7 @@ function round(i: i32): i32 {
     var n: i32 = e.len() + e[0];
     return n + i;
 }` + tupleElemBindMain("100"),
-			want: 57, balance: true,
+			want: 57,
 		},
 		{
 			// A THREE-element tuple with a second rc element the bind does not
@@ -111,7 +109,7 @@ function round(i: i32): i32 {
     var e: i32[] = t.1;
     return e.len() + i;
 }` + tupleElemBindMain("100"),
-			want: 4, balance: true,
+			want: 4,
 		},
 		{
 			// LOOP-RESIDENT: tuple and bind both re-made each iteration, so the
@@ -124,7 +122,7 @@ function round(i: i32): i32 {
     while (k < 3) { var t: (i32, i32[]) = (i, [i, k]); var e: i32[] = t.1; n = (n + e.len()) % 101; k = k + 1; }
     return n + i;
 }` + tupleElemBindMain("100"),
-			want: 72, balance: true,
+			want: 72,
 		},
 		{
 			// The bind is in an IF ARM while the tuple outlives it.
@@ -135,20 +133,19 @@ function round(i: i32): i32 {
     if (i % 2 == 0) { var e: i32[] = t.1; n = e.len(); }
     return n + i;
 }` + tupleElemBindMain("100"),
-			want: 70, balance: true,
+			want: 70,
 		},
 		{
-			// REFUSED, and this is the case the whole gate exists for: the element
-			// is RETURNED, so it outlives the frame and a deep free would release
-			// it under the caller. Unchanged by this change.
+			// The element is RETURNED, so it outlives the frame and a deep
+			// free would release it under the caller.
 			name: "refuses_elem_returned",
 			src: `function esc(i: i32): i32[] { var t: (i32, i32[]) = (i, [i, i + 1]); return t.1; }
 function round(i: i32): i32 { return esc(i).len() + i; }` + tupleElemBindMain("100"),
-			want: 4, wantFrees: 100,
+			want: 4,
 		},
 		{
-			// REFUSED: the element is STORED into a container that outlives the
-			// bind, so the frame does not keep it after all.
+			// The element is STORED into a container that outlives the
+			// bind.
 			name: "refuses_elem_stored",
 			src: `function sink(xs: i32[][]): i32 { return xs.len(); }
 function round(i: i32): i32 {
@@ -157,11 +154,11 @@ function round(i: i32): i32 {
     var held: i32[][] = [e];
     return sink(held) + i;
 }` + tupleElemBindMain("100"),
-			want: 70, wantFrees: 100,
+			want: 70,
 		},
 		{
-			// REFUSED: the target is REASSIGNED, so its final value is not the
-			// element the credit was reasoned about.
+			// The target is REASSIGNED, so its final value is not the
+			// element bound.
 			name: "refuses_elem_reassigned",
 			src: `function round(i: i32): i32 {
     var t: (i32, i32[]) = (i, [i, i + 1]);
@@ -169,7 +166,7 @@ function round(i: i32): i32 {
     e = [i];
     return e.len() + i;
 }` + tupleElemBindMain("100"),
-			want: 70, wantFrees: 100,
+			want: 70,
 		},
 		{
 			// The ALIAS side (#7466): the same element bind reached through a
@@ -187,16 +184,15 @@ function round(i: i32): i32 {
     var e: i32[] = v.1;
     return e.len() + i;
 }` + tupleElemBindMain("100"),
-			want: 4, balance: true,
+			want: 4,
 		},
 		{
-			// REFUSED through the alias too: the element escapes the frame by
-			// the alias's own return, so the box is freed and the buffer is
-			// correctly stranded — the same half-release as the direct form.
+			// Through the alias: the element escapes the frame by the
+			// alias's own return.
 			name: "refuses_elem_returned_through_alias",
 			src: `function esc(i: i32): i32[] { var t: (i32, i32[]) = (i, [i, i + 1]); var v: (i32, i32[]) = t; return v.1; }
 function round(i: i32): i32 { return esc(i).len() + i; }` + tupleElemBindMain("100"),
-			want: 4, wantFrees: 100,
+			want: 4,
 		},
 		{
 			// Controls that were already clean and must stay so: a BORROW of the
@@ -207,7 +203,7 @@ function round(i: i32): i32 { return esc(i).len() + i; }` + tupleElemBindMain("1
     var t: (i32, i32[]) = (i, [i, i + 1]);
     return t.1.len() + i;
 }` + tupleElemBindMain("100"),
-			want: 4, balance: true,
+			want: 4,
 		},
 		{
 			name: "scalar_elem_bind_unchanged",
@@ -216,14 +212,14 @@ function round(i: i32): i32 { return esc(i).len() + i; }` + tupleElemBindMain("1
     var e: i32 = t.0;
     return e + t.1.len() + i;
 }` + tupleElemBindMain("100"),
-			want: 57, balance: true,
+			want: 57,
 		},
 	}
 }
 
 // TestSelfHostTupleElemBindX86_64 — every admitted row balances at live_bytes 0
 // with no rc underflow, on the census leg and again under the quarantining
-// allocator; every refused row keeps its exact free count.
+// allocator.
 func TestSelfHostTupleElemBindX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -250,16 +246,10 @@ func TestSelfHostTupleElemBindX86_64(t *testing.T) {
 			if allocs == 0 {
 				t.Fatalf("%s allocated nothing — the probe is not exercising the path", tc.name)
 			}
-			if tc.balance {
-				if live != 0 || allocs != frees {
-					t.Errorf("%s: %s — must balance at live_bytes 0 (native does). A "+
-						"short free count is the element bind costing the tuple its "+
-						"whole credit again", tc.name, summary)
-				}
-			} else if frees != tc.wantFrees {
-				t.Errorf("%s: %s — refused row's frees moved (want exactly %d). A "+
-					"HIGHER count is the refusal breaking down: an element released "+
-					"while something outside the frame still holds it", tc.name, summary, tc.wantFrees)
+			if live != 0 || allocs != frees {
+				t.Errorf("%s: %s — must balance at live_bytes 0 (native does). A "+
+					"short free count is the element bind costing the tuple its "+
+					"whole credit again", tc.name, summary)
 			}
 
 			sanAsm := hevCompile(t, runner, driverBin, tc.src, []string{"FERN_SANITIZE=1"})

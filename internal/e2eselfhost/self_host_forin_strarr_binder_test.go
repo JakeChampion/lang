@@ -30,9 +30,8 @@ import (
 // So the arm asks the same question of the BINDER: body_unsafe_for over the
 // loop body decides whether `s` outlives an iteration. A bind, a return, a
 // container or struct store, or a call whose result is bound outward all make
-// the loop unsafe again, and each of those is pinned below at its leaking
-// count. A binder that SHADOWS the array is refused outright — the walk would
-// otherwise read a different value under the same spelling.
+// the binder outlive an iteration; each reads its value back after churn. On
+// the typed lowering every row balances.
 //
 // Every probe answers identically on native x86-64, `bin/fern -interp` and the
 // self-host, before and after, and the refusing ones read their value back
@@ -70,7 +69,7 @@ function round(i: i32): i32 {
     for s in names { t = (t + s.len()) % 101; }
     return t;
 }` + plain,
-			want: 68, balance: true,
+			want: 68,
 		},
 		{
 			// Control: the indexed spelling of the same read, clean before this
@@ -85,7 +84,7 @@ function round(i: i32): i32 {
     while (j < names.len()) { t = (t + names[j].len()) % 101; j = j + 1; }
     return t;
 }` + plain,
-			want: 68, balance: true,
+			want: 68,
 		},
 		{
 			// The binder handed to a call that returns a SCALAR — the callee
@@ -99,10 +98,10 @@ function round(i: i32): i32 {
     if (t < 20) { return 0 - 1; }
     return (t + junk) % 101;
 }` + forinBinderChurnMain,
-			want: 65, balance: true,
+			want: 65,
 		},
 		{
-			// REFUSED: the binder is assigned to a local that outlives the loop.
+			// The binder is assigned to a local that outlives the loop.
 			name: "refused_binder_escapes_local",
 			src: forinBinderDecl + `function round(i: i32): i32 {
     var want: i32 = mkstr("a").len();
@@ -116,7 +115,7 @@ function round(i: i32): i32 {
 			want: 72,
 		},
 		{
-			// REFUSED: the binder is bound to a fresh local inside the body and
+			// The binder is bound to a fresh local inside the body and
 			// carried out through it.
 			name: "refused_binder_bound_local",
 			src: forinBinderDecl + `function round(i: i32): i32 {
@@ -131,7 +130,7 @@ function round(i: i32): i32 {
 			want: 72,
 		},
 		{
-			// REFUSED: the binder is stored into a container.
+			// The binder is stored into a container.
 			name: "refused_binder_into_container",
 			src: forinBinderDecl + `function round(i: i32): i32 {
     var want: i32 = mkstr("a").len();
@@ -145,7 +144,7 @@ function round(i: i32): i32 {
 			want: 33,
 		},
 		{
-			// REFUSED: the binder leaves the frame as a return value.
+			// The binder leaves the frame as a return value.
 			name: "refused_binder_returned",
 			src: forinBinderDecl + `function grab(i: i32): string {
     var names: string[] = [mkstr("a"), mkstr("b")];
@@ -162,7 +161,7 @@ function round(i: i32): i32 {
 			want: 72,
 		},
 		{
-			// REFUSED: a call PASSES THROUGH the binder — it takes the string and
+			// A call PASSES THROUGH the binder — it takes the string and
 			// returns it, and the result is bound outward. The scalar-returning
 			// case above is admitted; this one is the reason that distinction
 			// has to be drawn on where the RESULT goes.
@@ -182,8 +181,7 @@ function round(i: i32): i32 {
 			// The binder SHADOWS the array. The two are distinct bindings
 			// (lexical.fern), so the walk reads the array and the binder each under
 			// its own symbol and the array keeps its deep credit.
-			name:    "binder_shadows_array",
-			balance: true,
+			name: "binder_shadows_array",
 			src: forinBinderDecl + `function round(i: i32): i32 {
     var names: string[] = [mkstr("a"), mkstr("b")];
     var t: i32 = 0;
@@ -225,12 +223,8 @@ func TestSelfHostForInStrArrBinderX86_64(t *testing.T) {
 			if allocs == 0 {
 				t.Fatalf("%s allocated nothing — the probe is not exercising the path", tc.name)
 			}
-			if tc.balance && (live != 0 || allocs != frees) {
+			if live != 0 || allocs != frees {
 				t.Errorf("%s: %s — must balance at live_bytes 0", tc.name, summary)
-			}
-			if !tc.balance && live == 0 && allocs == frees {
-				t.Errorf("%s: %s — pinned as REFUSED; if this now balances the credit "+
-					"widened, and the row belongs to whatever widened it", tc.name, summary)
 			}
 		})
 	}

@@ -14,7 +14,8 @@
 //
 //	reactor_new   () → header, or -errno
 //	reactor_ctl   (r, op, fd, arg) → 0 or -errno: op 1 watch fd for the
-//	              interest in arg (1 readable, 2 writable), 2 unwatch, 3 close
+//	              interest in arg (1 readable, 2 writable), 2 unwatch, 3 close;
+//	              4 and 5 (signals) and 6 (the parent's exit) are -ENOTSUP
 //	reactor_wait  (r, events, timeout_ms) → the pair count, 0 on the
 //	              timeout, or -errno
 //	tcp_recv_into (rec, buf) → bytes read into the u8[] at buf, 0 at EOF,
@@ -231,11 +232,12 @@ func buildReactorCtlBody(idxs map[string]uint32) []byte {
 	w.retConst(0)
 	w.end()
 
-	// A signal has no pollable on wasm: ops 4 and 5 are -ENOTSUP.
+	// A signal or the parent's exit has no pollable on wasm: ops 4 to 6
+	// are -ENOTSUP.
 	w.lg(op)
 	w.k(4)
 	w.sub()
-	w.k(2)
+	w.k(3)
 	w.body = numeric.InstI32LtU(w.body)
 	w.ifStart()
 	w.retConst(-errnoReactorNotsup)

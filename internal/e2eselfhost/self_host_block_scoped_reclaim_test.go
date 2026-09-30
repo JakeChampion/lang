@@ -5,35 +5,12 @@ import (
 	"testing"
 )
 
-// --- Block-scoped reclaim: retired slot names miss their credit (#6127) ------
+// --- Block-scoped reclaim (#6127) ----------------------------------------------
 //
-// The #6127 sweep probed top-level and rebound locals. A third sub-shape went
-// unmeasured throughout — a local DECLARED INSIDE the loop — and every reclaim
-// class leaks on it, by the same amount per iteration:
-//
-//	(i32, i32)                 400 / 300    4000
-//	Option[(i32, i32[])]      1200 / 900   12000
-//	Option[P { xs: i32[] }]   1200 / 900   12800
-//	Option[i32[][]]           1600 / 1200  15200
-//
-// The frees column is the tell: exactly n-1 of n per round. The loop's own
-// re-declaration frees the PRIOR iteration's value correctly; the FINAL one is
-// never freed.
-//
-// Cause: `lower_block` retires a nested block's locals by renaming them, so a
-// sibling block can re-declare the name onto a fresh slot. Every
-// slot_is_reclaimable_* predicate resolves its credit BY NAME, so once retired
-// the lookup fails and the function-exit sweep skips the slot.
-// `emit_dec_sweep_except_list` already noted the mechanism in passing — "loop-
-// scoped candidates dodged it only because their retired slot names miss the
-// credit lookup" — from the other side, where it was shielding them from a
-// double free that has since been fixed.
-//
-// retire_locals now keeps the source name after the sentinel and
-// reclaim_slot_name recovers it. Sound because the slot index space is
-// MONOTONIC — retirement renames, never truncates or reuses — so a retired slot
-// still holds its block's final value at function exit and is the sole
-// reference to it.
+// A local declared inside a loop or a nested block must be released on every
+// iteration, including the last, and sibling blocks that declare the same name
+// must each be freed exactly once. Each probe holds a heap value, since a
+// scalar tuple is not heap-allocated.
 //
 // These assert allocs == frees alongside live_bytes == 0: frees > allocs is a
 // double free, frees < allocs an unclaimed box, and they mean different bugs.
@@ -82,8 +59,8 @@ func TestSelfHostBlockScopedReclaimX86_64(t *testing.T) {
     var acc: i32 = 0;
     var i: i32 = 0;
     while (i < 4) {
-        var t: (i32, i32) = (i, i + 1);
-        acc = acc + t.0 + t.1;
+        var t: (i32, i32[]) = (i, [i + 1]);
+        acc = acc + t.0 + t.1[0];
         i = i + 1;
     }
     return acc;
@@ -162,11 +139,11 @@ function main(): i32 {
     var i: i32 = 0;
     while (i < 4) {
         if (i % 2 == 0) {
-            var t: (i32, i32) = (i, 1);
-            acc = acc + t.0 + t.1;
+            var t: (i32, i32[]) = (i, [1]);
+            acc = acc + t.0 + t.1[0];
         } else {
-            var t: (i32, i32) = (i, 2);
-            acc = acc + t.0 + t.1;
+            var t: (i32, i32[]) = (i, [2]);
+            acc = acc + t.0 + t.1[0];
         }
         i = i + 1;
     }
@@ -190,8 +167,8 @@ function main(): i32 {
     var i: i32 = 0;
     while (i < 4) {
         if (i > 0) {
-            var t: (i32, i32) = (i, i + 1);
-            acc = acc + t.0 + t.1;
+            var t: (i32, i32[]) = (i, [i + 1]);
+            acc = acc + t.0 + t.1[0];
         }
         i = i + 1;
     }

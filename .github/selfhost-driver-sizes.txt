@@ -374,11 +374,15 @@
 # ssasem.fern, d5792c908 read_all_stdin, aee0e4136 parser.fern, 067f7462a
 # checker.fern, 02196de0a irlower.fern) and none moved the stage2 byte
 # count off stage1's. One that does will part the two (docs/BOOTSTRAP.md).
+# 2026-09-29 — asm_ir_run alone, 7302608 -> 9080328 (+24.3%). The driver
+# lowers through the typed path (semlower) and links both lowerings until the
+# AST one retires (#10659). The other rows are unchanged. Number pasted from
+# driver-sizes' own report on run 36612302644.
 fern.fern/stage2 12346536
 fern.fern 12346536
 asm_load_run.fern 8099152
 asm_modload_run.fern 7556384
-asm_ir_run.fern 7302608
+asm_ir_run.fern 9080328
 asm_run.fern 6765464
 wasm_ir_run.fern 6704912
 wasm_run.fern 6702024

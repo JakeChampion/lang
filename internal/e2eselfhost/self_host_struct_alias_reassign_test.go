@@ -85,7 +85,7 @@ function round(i: i32): i32 {
     return keep.xs[0] + keep.xs[keep.xs.len() - 1];
 }
 ` + sarMain,
-			want: 9, allocs: 80, frees: 80,
+			want: 9, allocs: 40, frees: 40,
 		},
 		{
 			// The same shape read back as a VALUE with fresh arrays allocated after
@@ -103,7 +103,7 @@ function round(i: i32): i32 {
     return keep.xs[0] + keep.xs[keep.xs.len() - 1] + j1[0] - j1[0] + j2[0] - j2[0];
 }
 ` + sarMain,
-			want: 9, allocs: 120, frees: 120,
+			want: 9, allocs: 40, frees: 40,
 		},
 		{
 			// The BIND form, which was already at parity. The control that says the
@@ -116,22 +116,20 @@ function round(i: i32): i32 {
     return keep.xs[0] + keep.xs[keep.xs.len() - 1];
 }
 ` + sarMain,
-			want: 9, allocs: 40, frees: 40,
+			want: 9, allocs: 20, frees: 20,
 		},
 		{
-			// The ARRAY reassign, which has carried its retain (inside
-			// emit_arr_store) all along. Untouched by this change on purpose: its
-			// retain still goes through emit_arr_store's alias_inc, and only the
-			// struct classes take the hoisted one.
+			// The ARRAY reassign. One element is computed so the array is
+			// heap-allocated rather than a static literal.
 			name: "array_reassign_unchanged",
 			src: `function round(i: i32): i32 {
-    var xs: i32[] = [7, 8];
+    var xs: i32[] = [7, i - i + 8];
     var keep: i32[] = [0];
     keep = xs;
     return keep[0] + keep[keep.len() - 1];
 }
 ` + sarMain,
-			want: 9, allocs: 40, frees: 40,
+			want: 9, allocs: 20, frees: 20,
 		},
 		{
 			// A reassign from a FRESH literal rather than an alias. This is what
@@ -145,7 +143,7 @@ function round(i: i32): i32 {
     return keep.xs[0] + keep.xs[keep.xs.len() - 1];
 }
 ` + sarMain,
-			want: 9, allocs: 80, frees: 80,
+			want: 9, allocs: 40, frees: 40,
 		},
 		{
 			// The string-builder CONSUME-REBIND (`s = s + part`). A different path
@@ -192,9 +190,7 @@ func TestSelfHostStructAliasReassignX86_64(t *testing.T) {
 				t.Errorf("%s: %s — want allocs=%d", tc.name, summary, tc.allocs)
 			}
 			if frees != tc.frees {
-				t.Errorf("%s: %s — want frees=%d. FEWER means the ALIASSRC: forgiveness "+
-					"stopped applying; MORE on the refused string row means the credit "+
-					"reached a class whose reassign carries no retain", tc.name, summary, tc.frees)
+				t.Errorf("%s: %s — want frees=%d", tc.name, summary, tc.frees)
 			}
 		})
 	}

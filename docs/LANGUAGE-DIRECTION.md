@@ -1689,7 +1689,7 @@ function handle(req: HttpRequest): HttpResponse <io, throws[BadRequest]> {
         throw BadRequest("method not allowed");
     }
     var body = read_body(req);  // <io, suspend> bubbles up
-    return HttpResponse { status: 200, body: body };
+    return HttpResponse { status: 200, body: BodyText(body) };
 }
 ```
 

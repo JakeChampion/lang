@@ -15,45 +15,22 @@ import (
 // "STRUCTARRA:", "RCENUM:", "RCENUMS:", "SCENUMS:" and the "DYN:" / "DYNCAND:"
 // pair. After this nothing in irlower.fern resolves a reclaim credit by name.
 //
-// Every one had the same defect: a name has no scope, so two same-named locals
-// in sibling blocks are two slots under one key, and when only one is credited
-// the other inherits its verdict. THREE different signals came out of it:
+// A name has no scope, so two same-named locals in sibling blocks must each
+// keep their own reclaim verdict. A collision shows as a release landing on a
+// box the other local still owns (exit 99 on __rc_underflow_count()), a stray
+// release masking a leak, or a denied release; the census alone cannot see the
+// first. Every row is therefore asserted on the exit code AND on exact counts,
+// and each colliding row must match its rename control. On the typed lowering
+// every pair has identical, balanced censuses.
 //
-//	fault     ARRTUP / ARRSTRUCT / STRUCTARR / STRUCTARRA / ARRENUM  -> exit 99
-//	latent    SCENUMS — the class leaks its own source, so nothing reports it
-//	denial    DYN — tagged_value_of returns the FIRST match, so the alias's
-//	          entry SHADOWED the credited one and suppressed a release
+// `arrenum_collide` needs an rc-bearing payload: the `A(i32)` version of the
+// same program never reaches the credit at all.
 //
-// The latent form is the dangerous one and it is why the ordering matters: the
-// stray dec lands on a box nothing else claimed, the census reads BETTER than
-// the correct program's, and it becomes a double free the moment the class's own
-// leak is fixed. So `scenum_collide` gets a LARGER leak after this change —
-// removing a release that was never owed exposes the leak it was masking — and
-// converges exactly onto its rename control.
-//
-// The census cannot see the faulting form either: `structarr_collide` and its
-// rename control both read `allocs=400 frees=200 live_bytes=9600` and differ
-// only in the exit code. Every row is therefore asserted on
-// `__rc_underflow_count()` AND on exact counts; neither alone is sufficient.
-//
-// ADMISSION MATTERS MORE THAN THE SHAPE. `arrenum_collide` needs an rc-bearing
-// payload: the `A(i32)` version of the same program never earns the credit and
-// measured "no collision" while the bug was fully present. Two other classes
-// were probed the same wrong way before this table settled.
-//
-// No credit is widened. The eight `credited_*` rows pin that every class still
-// fires where there is no collision — the silent half of a key migration, where
-// a site key resolving to nothing denies the credit and no exit code moves.
+// The `credited_*` rows pin that every class still reclaims where there is no
+// collision.
 //
 // Every want was confirmed against BOTH oracles — bin/fern -interp and the
 // native x86-64 backend agreed on each — never read off the self-host run.
-//
-// Counts here are ONE block per heap string: #7351 fused the box into the
-// buffer's reserved header. Every row was re-measured against the commit
-// before it, and every live_bytes is unchanged — the clean rows stayed clean
-// and each refusal-leak row leaks the same bytes — so what moved is block
-// volume, not behaviour. A pre-fusion number in a row note below is the older
-// one.
 
 type finalKeyCase struct {
 	name   string
@@ -68,7 +45,7 @@ func finalKeyCases() []finalKeyCase {
 		{
 			// THE FAULT on "ARRTUP:". Two same-named locals in sibling `if`
 			// arms — one a fresh array-of-tuples literal that earns the credit, one
-			// a bare alias of a local that outlives the block. Base: 99.
+			// a bare alias of a local that outlives the block.
 			name: "arrtup_collide",
 			src: `function round(i: i32): i32 {
     var keep: (i32, i32[])[] = [(i, [i, i + 1]), (i + 1, [i + 2, i + 3])];
@@ -78,12 +55,11 @@ func finalKeyCases() []finalKeyCase {
     return t + keep.len();
 }
 function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
-			want: 18, allocs: 650, frees: 250,
+			want: 18, allocs: 650, frees: 650,
 		},
 		{
 			// Its pairwise control — the same program with the second local
-			// renamed. Already correct at base; the colliding row converges onto
-			// these exact numbers.
+			// renamed. The colliding row must match these exact numbers.
 			name: "arrtup_renamed",
 			src: `function round(i: i32): i32 {
     var keep: (i32, i32[])[] = [(i, [i, i + 1]), (i + 1, [i + 2, i + 3])];
@@ -93,11 +69,11 @@ function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t +
     return t + keep.len();
 }
 function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
-			want: 18, allocs: 650, frees: 250,
+			want: 18, allocs: 650, frees: 650,
 		},
 		{
 			// The same fault on "ARRSTRUCT:" (a struct with an rc-array field).
-			// Base: 99.
+			//
 			name: "arrstruct_collide",
 			src: `struct P { xs: i32[] }
 function round(i: i32): i32 {
@@ -108,12 +84,11 @@ function round(i: i32): i32 {
     return t + keep.len();
 }
 function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
-			want: 18, allocs: 650, frees: 250,
+			want: 18, allocs: 650, frees: 650,
 		},
 		{
 			// Its pairwise control — the same program with the second local
-			// renamed. Already correct at base; the colliding row converges onto
-			// these exact numbers.
+			// renamed. The colliding row must match these exact numbers.
 			name: "arrstruct_renamed",
 			src: `struct P { xs: i32[] }
 function round(i: i32): i32 {
@@ -124,12 +99,10 @@ function round(i: i32): i32 {
     return t + keep.len();
 }
 function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
-			want: 18, allocs: 650, frees: 250,
+			want: 18, allocs: 650, frees: 650,
 		},
 		{
-			// The same fault on "STRUCTARR:" (a scalar-field struct array), and
-			// another byte-identical row: base and control both read 400/200
-			// live_bytes=9600, differing only in the exit code.
+			// The same shape on a scalar-field struct array.
 			name: "structarr_collide",
 			src: `struct N { a: i32, b: i32 }
 function round(i: i32): i32 {
@@ -140,12 +113,11 @@ function round(i: i32): i32 {
     return t + keep.len();
 }
 function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
-			want: 18, allocs: 400, frees: 200,
+			want: 18, allocs: 400, frees: 400,
 		},
 		{
 			// Its pairwise control — the same program with the second local
-			// renamed. Already correct at base; the colliding row converges onto
-			// these exact numbers.
+			// renamed. The colliding row must match these exact numbers.
 			name: "structarr_renamed",
 			src: `struct N { a: i32, b: i32 }
 function round(i: i32): i32 {
@@ -156,12 +128,12 @@ function round(i: i32): i32 {
     return t + keep.len();
 }
 function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
-			want: 18, allocs: 400, frees: 200,
+			want: 18, allocs: 400, frees: 400,
 		},
 		{
 			// The APPEND-BUILT sibling, "STRUCTARRA:". Its entry and its "A|"
 			// marker row are the same key, so the self-lookup that separates
-			// append-built from literal-built stays key-to-key. Base: 99.
+			// append-built from literal-built stays key-to-key.
 			name: "structarra_collide",
 			src: `struct N { a: i32, b: i32 }
 function round(i: i32): i32 {
@@ -173,12 +145,11 @@ function round(i: i32): i32 {
     return t + keep.len();
 }
 function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
-			want: 34, allocs: 300, frees: 200,
+			want: 34, allocs: 300, frees: 300,
 		},
 		{
 			// Its pairwise control — the same program with the second local
-			// renamed. Already correct at base; the colliding row converges onto
-			// these exact numbers.
+			// renamed. The colliding row must match these exact numbers.
 			name: "structarra_renamed",
 			src: `struct N { a: i32, b: i32 }
 function round(i: i32): i32 {
@@ -190,17 +161,11 @@ function round(i: i32): i32 {
     return t + keep.len();
 }
 function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
-			want: 34, allocs: 300, frees: 200,
+			want: 34, allocs: 300, frees: 300,
 		},
 		{
-			// The same fault on "ARRENUM:", whose entry is "<key>#<Enum>" — the
-			// element enum is carried in the credit because an `E[]` slot records its
-			// element type nowhere. A site key contains no '#', so the split is
-			// unambiguous. Base: 99.
-			//
-			// The payload must be rc-bearing: an `A(i32)` version of this program
-			// never earns the credit at all, and measured "no collision" while the
-			// bug was fully present.
+			// The same shape on an enum array. The payload must be rc-bearing:
+			// an `A(i32)` version of this program never reaches the credit.
 			name: "arrenum_collide",
 			src: `enum E { A(string), B }
 function round(pre: string, i: i32): i32 {
@@ -211,12 +176,11 @@ function round(pre: string, i: i32): i32 {
     return t + keep.len();
 }
 function main(): i32 { var pre: string = "ab"; var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(pre, i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
-			want: 68, allocs: 600, frees: 300,
+			want: 68, allocs: 450, frees: 450,
 		},
 		{
 			// Its pairwise control — the same program with the second local
-			// renamed. Already correct at base; the colliding row converges onto
-			// these exact numbers.
+			// renamed. The colliding row must match these exact numbers.
 			name: "arrenum_renamed",
 			src: `enum E { A(string), B }
 function round(pre: string, i: i32): i32 {
@@ -227,13 +191,10 @@ function round(pre: string, i: i32): i32 {
     return t + keep.len();
 }
 function main(): i32 { var pre: string = "ab"; var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(pre, i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
-			want: 68, allocs: 600, frees: 300,
+			want: 68, allocs: 450, frees: 450,
 		},
 		{
-			// LATENT, not faulting: "SCENUMS:" leaks its own source box, so the
-			// stray release lands on something nothing else claimed. Base 150/100
-			// (2000) -> 150/50 (4000), converging on its control. THE LEAK GETS
-			// BIGGER AND THAT IS THE FIX.
+			// The same shape on a scalar-enum array source.
 			name: "scenum_collide",
 			src: `enum S { P(i32), Q }
 function round(i: i32): i32 {
@@ -245,12 +206,11 @@ function round(i: i32): i32 {
     return t;
 }
 function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
-			want: 37, allocs: 150, frees: 50,
+			want: 37, allocs: 150, frees: 150,
 		},
 		{
 			// Its pairwise control — the same program with the second local
-			// renamed. Already correct at base; the colliding row converges onto
-			// these exact numbers.
+			// renamed. The colliding row must match these exact numbers.
 			name: "scenum_renamed",
 			src: `enum S { P(i32), Q }
 function round(i: i32): i32 {
@@ -262,14 +222,11 @@ function round(i: i32): i32 {
     return t;
 }
 function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
-			want: 37, allocs: 150, frees: 50,
+			want: 37, allocs: 150, frees: 150,
 		},
 		{
-			// The "DYN:" / "DYNCAND:" family, and a THIRD severity flavour: here
-			// the collision DENIED a release rather than granting a stray one —
-			// base 150/0 (6000) against the control's 150/50 (4000), because
-			// tagged_value_of returns the FIRST match and the alias's entry
-			// shadowed the credited one. Converges on the control after.
+			// The same shape on a `dyn` value, where a collision would DENY
+			// a release rather than grant a stray one.
 			name: "dyn_collide",
 			src: `trait Show { function id(self: Self): i32; }
 struct A { v: i32 }
@@ -282,12 +239,11 @@ function round(i: i32): i32 {
     return t + keep.id();
 }
 function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
-			want: 73, allocs: 150, frees: 50,
+			want: 73, allocs: 150, frees: 150,
 		},
 		{
 			// Its pairwise control — the same program with the second local
-			// renamed. Already correct at base; the colliding row converges onto
-			// these exact numbers.
+			// renamed. The colliding row must match these exact numbers.
 			name: "dyn_renamed",
 			src: `trait Show { function id(self: Self): i32; }
 struct A { v: i32 }
@@ -300,7 +256,7 @@ function round(i: i32): i32 {
     return t + keep.id();
 }
 function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
-			want: 73, allocs: 150, frees: 50,
+			want: 73, allocs: 150, frees: 150,
 		},
 		{
 			// POSITIVE CONTROL — a single credited binding with no sibling. The
@@ -365,7 +321,7 @@ function round(pre: string, i: i32): i32 {
     return o.len();
 }
 function main(): i32 { var pre: string = "ab"; var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(pre, i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
-			want: 34, allocs: 400, frees: 400,
+			want: 34, allocs: 300, frees: 300,
 		},
 		{
 			// POSITIVE CONTROL — a single credited binding with no sibling. The
@@ -445,9 +401,7 @@ func TestSelfHostFinalCreditSiteKeyX86_64(t *testing.T) {
 					"probe stopped measuring this shape", tc.name, summary, tc.allocs)
 			}
 			if frees != tc.frees {
-				t.Errorf("%s: %s — want frees=%d. MORE means a binding is releasing something "+
-					"it does not own (the collision); FEWER means a binding resolved no credit "+
-					"at all, which is the silent half of a key migration", tc.name, summary, tc.frees)
+				t.Errorf("%s: %s — want frees=%d", tc.name, summary, tc.frees)
 			}
 		})
 	}

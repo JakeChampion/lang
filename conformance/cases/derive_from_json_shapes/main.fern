@@ -1,0 +1,43 @@
+// `@derive(json.FromJson)` over every field shape it decodes: a nested
+// struct through its own derive, an array and an Option through std/json's
+// generic readers, and the integer, float and boolean leaves; each failure
+// names the field it happened in, from the innermost out.
+import "std/json";
+@derive(json.Json, json.FromJson)
+struct Address { city: string, zip: i32 }
+@derive(json.FromJson)
+struct User { id: i32, tags: string[], nick: Option[string], home: Address, score: f64, big: i64, wide: u32, huge: u64, ok: boolean }
+
+function show(r: Result[User, string]): string {
+    match (r) {
+        Ok(u) => {
+            var nick: string = "-";
+            match (u.nick) { Some(s) => { nick = s; }, None => {} }
+            var flag: string = "n";
+            if (u.ok) { flag = "y"; }
+            return "ok id=" + u.id.to_string() + " tags=" + u.tags.len().to_string() + " nick=" + nick + " city=" + u.home.city + " zip=" + u.home.zip.to_string() + " score=" + u.score.to_string() + " big=" + u.big.to_string() + " wide=" + u.wide.to_string() + " huge=" + u.huge.to_string() + " ok=" + flag;
+        },
+        Err(e) => { return "err " + e; }
+    }
+    return "";
+}
+
+function main(): i32 {
+    var rest: string = ",\"home\":{\"city\":\"Erebor\",\"zip\":42},\"score\":1.5,\"big\":9000000000,\"wide\":4000000000,\"huge\":18446744073709551615,\"ok\":true}";
+    print(show(User.from_json("{\"id\":7,\"tags\":[\"a\",\"b\"],\"nick\":\"gl\"" + rest)));
+    print(show(json.decode[User]("{\"id\":7,\"tags\":[],\"nick\":null" + rest)));
+    print(show(User.from_json("{\"id\":\"x\",\"tags\":[]" + rest)));
+    print(show(User.from_json("{\"id\":1,\"tags\":[\"a\",3]" + rest)));
+    print(show(User.from_json("{\"id\":1,\"tags\":[],\"home\":{\"city\":\"Erebor\"}}")));
+    print(show(User.from_json("{\"id\":1,\"tags\":[],\"home\":{\"city\":\"Erebor\",\"zip\":99999999999}}")));
+    print(show(User.from_json("{\"id\":1,\"tags\":[],\"home\":{\"city\":\"Erebor\",\"zip\":1},\"score\":1,\"big\":1,\"wide\":-1,\"huge\":1,\"ok\":true}")));
+    print(show(User.from_json("{\"id\":1,\"tags\":[],\"home\":{\"city\":\"Erebor\",\"zip\":1},\"score\":1,\"big\":1,\"wide\":1,\"huge\":18446744073709551616,\"ok\":true}")));
+    print(show(User.from_json("{\"id\":1,\"tags\":[],\"home\":{\"city\":\"Erebor\",\"zip\":1},\"score\":1,\"big\":1,\"wide\":1,\"huge\":1,\"ok\":\"yes\"}")));
+    print(show(User.from_json("[1]")));
+    print(show(User.from_json("{\"id\":")));
+    match (Address.from_json("{\"zip\":3,\"city\":\"Dale\"}")) {
+        Ok(a) => { print(a.to_json()); },
+        Err(e) => { print("err " + e); }
+    }
+    return 0;
+}

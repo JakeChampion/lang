@@ -62,9 +62,19 @@ function main(): i32 {
 // stays in the struct: it must now change nothing, and a regression that put
 // the type back outside the owned model would show up as the sibling
 // TestOptFieldStructOverwriteDeepDrops rather than silently here.
+//
+// `put` stores `w` as a map value, an uncounted retention the classifier
+// refuses, so its parameter stays uncounted and the caller cannot take the
+// plain counted release instead: a concatenation alone (`w.buf + s`) is a
+// non-retaining read the classifier credits.
 func TestBoxTempUnderPointerResultIsReleased(t *testing.T) {
 	src := `struct W { buf: string, err: Option[i32] }
-function put(w: W, s: string): W { return W { ...w, buf: w.buf + s }; }
+function put(w: W, s: string): W {
+    var m: Map[i32, W] = map_new(1);
+    var m2: Map[i32, W] = m.insert(1, w);
+    if (m2.len() > 9) { return w; }
+    return W { ...w, buf: w.buf + s };
+}
 function id_w(w: W): W { return w; }
 function apply(f: (W, string) => W, w: W): W { return f(w, "z"); }
 function main(): i32 {

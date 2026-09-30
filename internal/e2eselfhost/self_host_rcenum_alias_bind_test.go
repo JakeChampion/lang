@@ -31,7 +31,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return s % 97;
 }`,
-			want: 21, balance: true,
+			want: 21,
 		},
 		{
 			// The alias CONSUMED by a match, borrow-only. The matrix rows
@@ -45,7 +45,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return s % 97;
 }`,
-			want: 6, balance: true,
+			want: 6,
 		},
 		{
 			// The source REBOUND while the alias is live: the rebind releases
@@ -60,7 +60,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return s % 97;
 }`,
-			want: 6, balance: true,
+			want: 6,
 		},
 		{
 			// Handed to a borrowing callee.
@@ -74,7 +74,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return s % 97;
 }`,
-			want: 6, balance: true,
+			want: 6,
 		},
 		{
 			// The typed region counts the escaping payload separately and owns
@@ -90,12 +90,12 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return s % 97;
 }`,
-			want: 6, balance: true,
+			want: 6,
 		},
 		{
-			// The alias itself escapes by return — refused for the plain reason,
-			// and the control proving the vetting is not simply forgiving
-			// everything.
+			// The alias itself escapes by return: the control proving a
+			// release is not simply granted everywhere. The exit and the
+			// sanitize leg guard it.
 			name: "alias_returned_refused",
 			src: `enum E { Full(i32[]), None }
 function mk(i: i32): E { var src: E = E.Full([i, i + 1]); var x: E = src; return x; }
@@ -106,7 +106,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return s % 97;
 }`,
-			want: 6, balance: false, wantFrees: 0,
+			want: 6,
 		},
 	}
 }
@@ -139,19 +139,8 @@ func TestSelfHostRcEnumAliasBindX86_64(t *testing.T) {
 			if allocs == 0 {
 				t.Fatalf("%s allocated nothing — the probe is not exercising the path", tc.name)
 			}
-			if tc.balance {
-				if live != 0 || allocs != frees {
-					t.Errorf("%s: %s — must balance at live_bytes 0", tc.name, summary)
-				}
-			} else {
-				if live == 0 {
-					t.Errorf("%s: %s — a REFUSED shape came back clean. If the forgiveness was widened to "+
-						"cover it, that widening owns this row and needs its own over-release measurement",
-						tc.name, summary)
-				}
-				if frees != tc.wantFrees {
-					t.Errorf("%s: frees=%d, want %d — a moved count on a refused row is a silent widening", tc.name, frees, tc.wantFrees)
-				}
+			if live != 0 || allocs != frees {
+				t.Errorf("%s: %s — must balance at live_bytes 0", tc.name, summary)
 			}
 
 			sanAsm := hevCompile(t, runner, driverBin, tc.src, []string{"FERN_SANITIZE=1"})

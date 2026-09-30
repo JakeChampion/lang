@@ -17,6 +17,7 @@ import (
 	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/defaultargs"
 	"github.com/jakechampion/lang/internal/diag"
+	"github.com/jakechampion/lang/internal/platforms"
 	"github.com/jakechampion/lang/internal/stdlib"
 )
 
@@ -468,6 +469,23 @@ func builtinEnumDecls() []*ast.EnumDecl {
 				{Name: "Other", Payloads: []ast.Type{ast.StringType{}, ast.StringType{}}},
 			},
 		},
+		{
+			// Body — what an HttpResponse carries (std/http): text or
+			// bytes held whole, a Stream drained to the wire, or a
+			// file the serve loop reads. Constructed through std/http's
+			// `http.ok` / `http.text` builders in ordinary code. The
+			// variants carry the enum's name, as JsonValue's do, since
+			// a builtin variant is in every module's scope and a bare
+			// `Text` would ambiguate any user enum's.
+			Name: "Body",
+			Variants: []ast.EnumVariant{
+				{Name: "BodyText", Payloads: []ast.Type{ast.StringType{}}},
+				{Name: "BodyBytes", Payloads: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}}},
+				{Name: "BodyStream", Payloads: []ast.Type{ast.StructType{Name: "Stream"}}},
+				{Name: "BodyFile", Payloads: []ast.Type{ast.StringType{}}},
+				{Name: "BodyChunks", Payloads: []ast.Type{ast.StructType{Name: "ChunkProducer"}}},
+			},
+		},
 		// JsonValue — recursive AST representation for JSON
 		// documents. Numbers carry their textual representation
 		// (the JSON spec doesn't fix precision); callers that
@@ -565,16 +583,25 @@ func builtinStructDecls() []*ast.StructDecl {
 			Name: "HttpResponse",
 			Fields: []ast.Param{
 				{Name: "status", Type: ast.NumberType{}},
-				{Name: "body", Type: ast.StringType{}},
-				// `headers` lands at the END so the wasi-http
-				// wrapper's hardcoded reads (status@+0,
-				// body@+8/+12) stay stable. http_serialize_response
-				// walks this map to emit the wire header block;
-				// Content-Length and Connection are auto-emitted
-				// after user headers (and de-duped against names
-				// the user already set so a manual
-				// `resp.headers.set("Connection", ...)` wins).
+				// `body` is a Body: text or bytes held whole, a
+				// Stream, or a file the serve loop reads
+				// (std/http's `ok` / `json` / … build each).
+				{Name: "body", Type: ast.EnumType{Name: "Body"}},
+				// The wasi-http wrapper hardcodes these byte offsets
+				// (status@+0, body@+4, headers@+8) and reads the body
+				// through std/http's `body_string`; a new field goes
+				// at the END. http_serialize_response walks the map
+				// to emit the wire header block; Content-Length and
+				// Connection are auto-emitted after user headers
+				// (and de-duped against names the user already set
+				// so a manual `resp.headers.set("Connection", ...)`
+				// wins).
 				{Name: "headers", Type: ast.StructType{Name: "HeaderMap"}},
+				// `trailers` follow a chunked body's last chunk
+				// (std/tcp's serve loop); a body with a length has
+				// nowhere to carry them, and the wasi-http wrapper
+				// finishes the outgoing body without them.
+				{Name: "trailers", Type: ast.StructType{Name: "HeaderMap"}},
 			},
 		},
 		// Platform — the capability bag threaded as the second
@@ -650,6 +677,19 @@ func builtinStructDecls() []*ast.StructDecl {
 			Fields: []ast.Param{
 				{Name: "data", Type: ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
 				{Name: "pos", Type: ast.NumberType{}},
+			},
+		},
+		// ChunkProducer — the producer a `BodyChunks` carries: asked for
+		// chunk 0, 1, 2, … until it answers None. A record rather than the
+		// bare function because a closure is released as a struct member
+		// and only leaks as an enum payload (rc_insert.go's variant drop).
+		{
+			Name: "ChunkProducer",
+			Fields: []ast.Param{
+				{Name: "next", Type: &ast.FuncType{
+					Params: []ast.Type{ast.NumberType{}},
+					Result: ast.EnumType{Name: "Option", Args: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}}},
+				}},
 			},
 		},
 		// BytesWriter — in-memory buffered writer
@@ -982,6 +1022,14 @@ func Check(prog *ast.Program) (*Info, error) {
 	return CheckContext(context.Background(), prog)
 }
 
+// CheckTarget is Check for a program built for `target`: the main it
+// synthesises for a handler program serves under the supervisor where the
+// target has processes and single-process where it has none (wasm32-wasi).
+// An unknown or empty target is the hosted shape, as Check is.
+func CheckTarget(prog *ast.Program, target string) (*Info, error) {
+	return checkTarget(context.Background(), prog, target)
+}
+
 // CheckContext is the context-aware sibling of Check —
 // checks the context between each top-level function-body
 // pass so the LSP can cancel a long type-check mid-flight
@@ -995,6 +1043,10 @@ func Check(prog *ast.Program) (*Info, error) {
 // no recursive descent, so a single up-front ctx check
 // suffices for them.
 func CheckContext(ctx context.Context, prog *ast.Program) (*Info, error) {
+	return checkTarget(ctx, prog, "")
+}
+
+func checkTarget(ctx context.Context, prog *ast.Program, target string) (*Info, error) {
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
@@ -1003,10 +1055,18 @@ func CheckContext(ctx context.Context, prog *ast.Program) (*Info, error) {
 	if hasHandleDecl(prog) {
 		adaptResultHandler(prog)
 	}
-	return checkImpl(ctx, prog)
+	return checkImpl(ctx, prog, targetSupervises(target))
 }
 
-func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
+// targetSupervises reports whether a handler program built for `target`
+// serves under the supervisor: the target has processes to fork. An
+// unknown or empty target is the hosted default.
+func targetSupervises(target string) bool {
+	d := platforms.ForTarget(target)
+	return d == nil || slices.Contains(d.Capabilities, "proc")
+}
+
+func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, error) {
 	// Prepend the built-in Option / Result / IoError /
 	// JsonValue enums so user code (and the stdlib)
 	// can reference them without an explicit declaration.
@@ -1111,6 +1171,7 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		},
 		variantOf:            map[string][]variantRef{},
 		shadowedGenericCalls: map[*ast.Call]bool{},
+		reservedShadows:      map[string]bool{},
 	}
 	// Map operations need core/map linked. If the program came through
 	// modload (LoadedStdlibPaths populated) but didn't pull core/map
@@ -1135,9 +1196,11 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// some synthetic builtin we never actually exposed.
 	for _, ed := range shadowedEnums {
 		c.errfCode(ed.P, "E010", "enum %q is a reserved built-in name and cannot be redeclared", ed.Name)
+		c.reservedShadows[ed.Name] = true
 	}
 	for _, sd := range shadowedStructs {
 		c.errfCode(sd.P, "E010", "struct %q is a reserved built-in name and cannot be redeclared", sd.Name)
+		c.reservedShadows[sd.Name] = true
 	}
 
 	// Register every struct declaration up front so that types
@@ -1983,6 +2046,16 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// connected, -EINPROGRESS while under way, else the -errno it failed
 	// with. 0, or -errno; an op the target has no control for is -EINVAL.
 	c.info.FuncSigs["tcp_socket_ctl"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}, ast.NumberType{}, ast.NumberType{}},
+		Result: ast.NumberType{},
+	}
+	// tcp_sendfile(fd, file, max): number — up to max bytes of the open
+	// file (a Reader's fd, from its current position) sent on the socket
+	// without a copy through user space: the bytes sent, 0 at the file's
+	// end, or -errno; -EAGAIN when a non-blocking socket took none and
+	// -ENOTSUP where the target has no sendfile, so the caller reads and
+	// sends the piece itself.
+	c.info.FuncSigs["tcp_sendfile"] = &ast.FuncType{
 		Params: []ast.Type{ast.NumberType{}, ast.NumberType{}, ast.NumberType{}},
 		Result: ast.NumberType{},
 	}
@@ -5010,7 +5083,7 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		// declaration that is wrong; synthesising main on top of it adds
 		// a second, positionless error about a call nobody wrote.
 		if c.checkHandlerStatePairing(prog) {
-			prog.Funcs = append(prog.Funcs, synthesiseHandleMain(prog))
+			prog.Funcs = append(prog.Funcs, synthesiseHandleMain(prog, supervised))
 		}
 	}
 
@@ -6169,14 +6242,74 @@ func demangleAll(s string) string {
 }
 
 // deriveKind classifies a (possibly module-mangled) derived-trait name
-// by its simple name: "Eq", "Display", "Ord", "Hash", "Json", "Default",
-// or "Debug". Returns "" for any other trait — only these are derivable.
+// by its simple name: "Eq", "Display", "Ord", "Hash", "Json", "FromJson",
+// "Default", or "Debug". Returns "" for any other trait — only these are
+// derivable.
 func deriveKind(name string) string {
 	switch simple := simpleTraitName(name); simple {
-	case "Eq", "Display", "Ord", "Hash", "Json", "Default", "Debug":
+	case "Eq", "Display", "Ord", "Hash", "Json", "FromJson", "Default", "Debug":
 		return simple
 	}
 	return ""
+}
+
+// hasStdJson reports whether std/json is in the program: its parser is
+// what a derived decoder calls, so a `@derive(json.FromJson)` needs it.
+func hasStdJson(prog *ast.Program) bool {
+	for _, pf := range prog.Funcs {
+		if pf.Name == "json__json_parse" {
+			return true
+		}
+	}
+	return false
+}
+
+// fromJsonFieldTypes maps each field type of a FromJson derive to the type
+// whose decoder the synthesised body calls: an array's or an Option's
+// element, else the field type itself. A container nested in another has
+// no decoder; its index is returned with ok=false.
+func fromJsonFieldTypes(types []ast.Type) ([]ast.Type, int, bool) {
+	out := make([]ast.Type, len(types))
+	for i, t := range types {
+		e := fromJsonElem(t)
+		if _, nested := fromJsonContainer(e); nested {
+			return nil, i, false
+		}
+		switch e.(type) {
+		case ast.SliceType, ast.TupleType, *ast.FuncType:
+			return nil, i, false
+		}
+		out[i] = e
+	}
+	return out, -1, true
+}
+
+// fromJsonContainer names the container a field type is — "array" for
+// `E[]`, "option" for `Option[E]` — with ok=false for any other type.
+func fromJsonContainer(t ast.Type) (string, bool) {
+	switch x := t.(type) {
+	case ast.ArrayType:
+		return "array", true
+	case ast.EnumType:
+		if x.Name == "Option" && len(x.Args) == 1 {
+			return "option", true
+		}
+	}
+	return "", false
+}
+
+// fromJsonElem is the element type of a FromJson field's container, or the
+// field type itself.
+func fromJsonElem(t ast.Type) ast.Type {
+	switch x := t.(type) {
+	case ast.ArrayType:
+		return x.Elem
+	case ast.EnumType:
+		if x.Name == "Option" && len(x.Args) == 1 {
+			return x.Args[0]
+		}
+	}
+	return t
 }
 
 // typeImplsEqAndHash reports whether the named struct/enum implements
@@ -6400,7 +6533,7 @@ func (c *checker) synthesizeDerives(prog *ast.Program) {
 			}
 			kind := deriveKind(dn)
 			if kind == "" {
-				c.errfCode(sd.P, "E021", "cannot @derive(%s): only Eq, Display, Debug, Ord, Hash, Json, and Default are derivable", demangle(dn))
+				c.errfCode(sd.P, "E021", "cannot @derive(%s): only Eq, Display, Debug, Ord, Hash, Json, FromJson, and Default are derivable", demangle(dn))
 				continue
 			}
 			labels := make([]string, len(sd.Fields))
@@ -6408,6 +6541,18 @@ func (c *checker) synthesizeDerives(prog *ast.Program) {
 			for i, f := range sd.Fields {
 				labels[i] = "field " + f.Name
 				types[i] = f.Type
+			}
+			if kind == "FromJson" {
+				if !hasStdJson(prog) {
+					c.errfCode(sd.P, "E021", "cannot @derive(%s): the decoder is std/json's; import \"std/json\"", demangle(dn))
+					continue
+				}
+				elems, bad, ok := fromJsonFieldTypes(types)
+				if !ok {
+					c.errfCode(sd.P, "E021", "cannot @derive(%s) for %s: %s has type %s; FromJson decodes a field of a FromJson type, an array of one or an Option of one", demangle(dn), demangle(sd.Name), labels[bad], types[bad])
+					continue
+				}
+				types = elems
 			}
 			if c.preCheckDeriveFields(dc, td, dn, kind, sd.Name, sd.P, labels, types, sd.TypeParams) {
 				continue
@@ -6426,31 +6571,15 @@ func (c *checker) synthesizeDerives(prog *ast.Program) {
 				method = synthHash(sd, recvType)
 			case "Json":
 				method = synthJson(sd, recvType)
-				// Also synthesise the deserialise companion `from_json(s):
-				// Result[Self, string]` — but ONLY when the real std/json is
-				// imported (its `json__json_parse` is in scope) and every field
-				// is supported (i32 / string / boolean). A user's own inline
-				// `trait Json` (no std/json) gets serialise-only, as does a
-				// struct with array / nested / wider fields — to_json still
-				// derives in both cases. See synthFromJson / #2695.
-				// Only synthesise from_json when the real std/json is imported
-				// (its `json__json_parse` was merged into prog.Funcs by modload).
-				// FuncSigs isn't populated yet at derive-synth time, so scan the
-				// merged function list.
-				haveStdJson := false
-				for _, pf := range prog.Funcs {
-					if pf.Name == "json__json_parse" {
-						haveStdJson = true
-						break
-					}
-				}
-				fj, fjOK := synthFromJson(sd, recvType)
-				if haveStdJson && fjOK {
-					fj.SourceModule = sd.SourceModule
-					fj.ImplTrait = dn
-					bindDeriveTypeParams(fj, implTypeParams, dn)
-					prog.Funcs = append(prog.Funcs, fj)
-				}
+			case "FromJson":
+				method = synthFromJsonValue(sd, recvType)
+				// The text-taking companion `from_json(s)` is an associated
+				// function beside the impl, not a requirement of the trait.
+				text := synthFromJsonText(sd, recvType)
+				text.SourceModule = sd.SourceModule
+				text.ImplTrait = dn
+				bindDeriveTypeParams(text, implTypeParams, dn)
+				prog.Funcs = append(prog.Funcs, text)
 			case "Default":
 				m, badField, badType := synthDefault(sd, recvType)
 				if m == nil {
@@ -7260,90 +7389,101 @@ func synthJson(sd *ast.StructDecl, recv ast.StructType) *ast.FuncDecl {
 	}
 }
 
-// synthFromJson builds the deserialise companion to synthJson: a receiver-less
-// associated `from_json(s: string): Result[Self, string]` that parses the JSON
-// text and extracts each field by name, returning `Err(...)` on invalid JSON or
-// a missing/wrong-typed field. v1 supports flat structs whose fields are i32 /
-// string / boolean (the types with a `json.json_get_*` accessor); a field of any
-// other type makes this return ok=false so the caller synthesises `to_json`
-// only (serialise still works; from_json over nested / array / Option / wider
-// numeric fields is a documented follow-up — see #2695). The body nests one
-// `match` per field over the field's accessor `Option`, so a missing field
-// short-circuits to `Err("missing field: <name>")` without a `?` operator. The
-// `json.*` calls resolve through the `@derive(json.Json)` site's own
-// `import "std/json"` (basename alias `json`).
-func synthFromJson(sd *ast.StructDecl, recv ast.StructType) (*ast.FuncDecl, bool) {
-	type fld struct{ name, accessor, bind string }
-	flds := make([]fld, 0, len(sd.Fields))
-	for _, f := range sd.Fields {
-		acc := ""
-		switch ft := f.Type.(type) {
-		case ast.NumberType:
-			// 64-bit-wide integer fields (i64 / u64) extract through the
-			// i64 accessor; everything narrower through json_get_i32.
-			if ft.Width == 64 {
-				acc = "json_get_i64"
-			} else {
-				acc = "json_get_i32"
-			}
-		case ast.BoolType:
-			acc = "json_get_bool"
-		case ast.StringType:
-			acc = "json_get_string"
-		default:
-			return nil, false
-		}
-		flds = append(flds, fld{name: f.Name, accessor: acc, bind: "__fj_" + f.Name})
-	}
-	// The synthesis runs AFTER modload has rewritten module-qualified calls
-	// (`json.json_parse` → the flat `json__json_parse`), so emit the already-
-	// mangled basename-prefixed name directly — a post-modload `json.func`
-	// FieldAccess would leave `json` an undefined identifier.
+// synthFromJsonValue builds a struct's derived `from_json_value(v:
+// JsonValue): Result[Self, string]`: one nested match per field, reading
+// the field with std/json's `from_json_field` (`from_json_optional_field`
+// for an `Option`, which is `None` when the field is missing or null) and
+// decoding it through the field type's own `from_json_value`, an array
+// through `from_json_array[E]` and an Option through `from_json_option[E]`.
+// A field's shape error comes back prefixed with the field's name
+// (`from_json_at`); the innermost arm returns `Ok(Recv { … })`. The
+// synthesis runs after modload, so the std/json calls are spelled with
+// their flat `json__` names, as the `@derive(json.FromJson)` site's own
+// `import "std/json"` would mangle them.
+func synthFromJsonValue(sd *ast.StructDecl, recv ast.StructType) *ast.FuncDecl {
 	jcall := func(fn string, args ...ast.Expr) ast.Expr {
 		return &ast.Call{Callee: &ast.Ident{Name: "json__" + fn}, Args: args}
 	}
 	variant := func(name string, arg ast.Expr) ast.Expr {
 		return &ast.Call{Callee: &ast.Ident{Name: name}, Args: []ast.Expr{arg}}
 	}
-	// Innermost: return Ok(Recv { f: __fj_f, … }).
-	fis := make([]ast.FieldInit, len(flds))
-	for i, fl := range flds {
-		fis[i] = ast.FieldInit{Name: fl.name, Value: &ast.Ident{Name: fl.bind}}
+	ret := func(e ast.Expr) *ast.Block {
+		return &ast.Block{Stmts: []ast.Stmt{&ast.Return{Value: e}}}
 	}
-	lit := &ast.StructLit{TypeName: recv.Name, Fields: fis, TypeArgs: recv.Args}
-	body := &ast.Block{Stmts: []ast.Stmt{&ast.Return{Value: variant("Ok", lit)}}}
-	// Wrap each field's accessor match, inner-to-outer.
-	for i := len(flds) - 1; i >= 0; i-- {
-		fl := flds[i]
-		missing := &ast.Block{Stmts: []ast.Stmt{&ast.Return{Value: variant("Err",
-			&ast.StringLit{Value: "missing field: " + fl.name})}}}
-		m := &ast.Match{
-			Tag: jcall(fl.accessor, &ast.Ident{Name: "__fj_jv"}, &ast.StringLit{Value: fl.name}),
+	fis := make([]ast.FieldInit, len(sd.Fields))
+	for i, f := range sd.Fields {
+		fis[i] = ast.FieldInit{Name: f.Name, Value: &ast.Ident{Name: "__fj_" + f.Name}}
+	}
+	body := ret(variant("Ok", &ast.StructLit{TypeName: recv.Name, Fields: fis, TypeArgs: recv.Args}))
+	for i := len(sd.Fields) - 1; i >= 0; i-- {
+		f := sd.Fields[i]
+		value := "__fj_v_" + f.Name
+		errBind := "__fj_e_" + f.Name
+		getter := "from_json_field"
+		var decode ast.Expr
+		switch container, _ := fromJsonContainer(f.Type); container {
+		case "array":
+			decode = &ast.Call{Callee: &ast.Ident{Name: "json__from_json_array"}, Args: []ast.Expr{&ast.Ident{Name: value}},
+				TypeArgs: []ast.Type{fromJsonElem(f.Type)}, TypeArgsWritten: true}
+		case "option":
+			getter = "from_json_optional_field"
+			decode = &ast.Call{Callee: &ast.Ident{Name: "json__from_json_option"}, Args: []ast.Expr{&ast.Ident{Name: value}},
+				TypeArgs: []ast.Type{fromJsonElem(f.Type)}, TypeArgsWritten: true}
+		default:
+			decode = &ast.Call{Callee: &ast.FieldAccess{Target: &ast.Ident{Name: fromJsonTypeName(f.Type)}, Field: "from_json_value"},
+				Args: []ast.Expr{&ast.Ident{Name: value}}}
+		}
+		inner := &ast.Match{
+			Tag: decode,
 			Arms: []*ast.MatchArm{
-				{VariantName: "Some", Bindings: []string{fl.bind}, Body: body},
-				{VariantName: "None", Body: missing},
+				{VariantName: "Ok", Bindings: []string{"__fj_" + f.Name}, Body: body},
+				{VariantName: "Err", Bindings: []string{errBind}, Body: ret(variant("Err",
+					jcall("from_json_at", &ast.StringLit{Value: f.Name}, &ast.Ident{Name: errBind})))},
 			},
 		}
-		body = &ast.Block{Stmts: []ast.Stmt{m}}
+		outer := &ast.Match{
+			Tag: jcall(getter, &ast.Ident{Name: "v"}, &ast.StringLit{Value: f.Name}),
+			Arms: []*ast.MatchArm{
+				{VariantName: "Ok", Bindings: []string{value}, Body: &ast.Block{Stmts: []ast.Stmt{inner}}},
+				{VariantName: "Err", Bindings: []string{errBind}, Body: ret(variant("Err", &ast.Ident{Name: errBind}))},
+			},
+		}
+		body = &ast.Block{Stmts: []ast.Stmt{outer}}
 	}
-	// Outermost: parse the string, then run the field chain.
-	parseFail := &ast.Block{Stmts: []ast.Stmt{&ast.Return{Value: variant("Err",
-		&ast.StringLit{Value: "invalid JSON"})}}}
-	outer := &ast.Match{
-		Tag: jcall("json_parse", &ast.Ident{Name: "s"}),
-		Arms: []*ast.MatchArm{
-			{VariantName: "Some", Bindings: []string{"__fj_jv"}, Body: body},
-			{VariantName: "None", Body: parseFail},
-		},
+	return &ast.FuncDecl{
+		Name:       "from_json_value",
+		AssocType:  recv.Name,
+		Params:     []ast.Param{{Name: "v", Type: ast.EnumType{Name: "JsonValue"}}},
+		ReturnType: ast.EnumType{Name: "Result", Args: []ast.Type{recv, ast.StringType{}}},
+		Body:       body,
 	}
-	resultType := ast.EnumType{Name: "Result", Args: []ast.Type{recv, ast.StringType{}}}
+}
+
+// fromJsonTypeName spells the type a derived decoder calls
+// `from_json_value` on: a nominal or primitive by its method-receiver
+// name, a type parameter by its own.
+func fromJsonTypeName(t ast.Type) string {
+	if tn, ok := ast.ReceiverTypeName(t); ok {
+		return tn
+	}
+	if pt, ok := t.(ast.ParamType); ok {
+		return pt.Name
+	}
+	return fmt.Sprint(t)
+}
+
+// synthFromJsonText builds the derived `from_json(s: string): Result[Self,
+// string]`, `json.decode[Self](s)` under the type's own name.
+func synthFromJsonText(sd *ast.StructDecl, recv ast.StructType) *ast.FuncDecl {
+	call := &ast.Call{Callee: &ast.Ident{Name: "json__decode"}, Args: []ast.Expr{&ast.Ident{Name: "s"}},
+		TypeArgs: []ast.Type{recv}, TypeArgsWritten: true}
 	return &ast.FuncDecl{
 		Name:       "from_json",
 		AssocType:  recv.Name,
 		Params:     []ast.Param{{Name: "s", Type: ast.StringType{}}},
-		ReturnType: resultType,
-		Body:       &ast.Block{Stmts: []ast.Stmt{outer}},
-	}, true
+		ReturnType: ast.EnumType{Name: "Result", Args: []ast.Type{recv, ast.StringType{}}},
+		Body:       &ast.Block{Stmts: []ast.Stmt{&ast.Return{Value: call}}},
+	}
 }
 
 // tagged convention: a unit variant renders as the JSON string of its
@@ -7716,6 +7856,11 @@ type checker struct {
 	// is checked; the later passes read the verdict from here.
 	shadowedGenericCalls map[*ast.Call]bool
 
+	// reservedShadows names the builtin types a program redeclared: E010
+	// flags each once, and an injected declaration's use of the name,
+	// which now finds the user's shape, is not flagged again.
+	reservedShadows map[string]bool
+
 	// elemHint carries the expected element type for an array literal
 	// being checked at a coercion site (var init / return / argument).
 	// It is set ONLY immediately around a checkExpr call whose argument
@@ -7826,6 +7971,24 @@ type captureEntry struct {
 // bare identifiers — so we disambiguate here against the enum's
 // declared TypeParams set.
 func (c *checker) resolveTypeNames(prog *ast.Program) {
+	// A trait method's signature is read raw by the bounded-dispatch paths
+	// (`T.f(x)` on a type parameter), so an enum named there has to be an
+	// EnumType like the argument it is compared with.
+	for _, td := range prog.Traits {
+		var params map[string]bool
+		if len(td.TypeParams) > 0 {
+			params = make(map[string]bool, len(td.TypeParams))
+			for _, n := range td.TypeParams {
+				params[n] = true
+			}
+		}
+		for i := range td.Methods {
+			for j := range td.Methods[i].Params {
+				c.resolveType(&td.Methods[i].Params[j].Type, params, td.Methods[i].P)
+			}
+			c.resolveType(&td.Methods[i].Result, params, td.Methods[i].P)
+		}
+	}
 	for _, fn := range prog.Funcs {
 		// Collect the function's type parameters so occurrences
 		// of those names in the signature / body resolve to
@@ -8230,7 +8393,7 @@ func (c *checker) resolveType(slot *ast.Type, params map[string]bool, pos ast.Po
 			c.resolveType(&args[i], params, pos)
 		}
 		if sd, ok := c.info.Structs[t.Name]; ok {
-			if len(sd.TypeParams) != len(args) {
+			if len(sd.TypeParams) != len(args) && !c.reservedShadows[t.Name] {
 				c.errfCode(sd.P, "E019", "struct %s has %d type parameter(s), %d supplied",
 					t.Name, len(sd.TypeParams), len(args))
 			}
@@ -8258,7 +8421,7 @@ func (c *checker) resolveType(slot *ast.Type, params map[string]bool, pos ast.Po
 			return
 		}
 		if ed, ok := c.info.Enums[t.Name]; ok {
-			if len(ed.TypeParams) != len(args) {
+			if len(ed.TypeParams) != len(args) && !c.reservedShadows[t.Name] {
 				c.errfCode(ed.P, "E019", "enum %s has %d type parameter(s), %d supplied",
 					t.Name, len(ed.TypeParams), len(args))
 			}
@@ -16164,7 +16327,7 @@ func (c *checker) checkLocalFunc(fn *ast.FuncDecl, outer *scope) {
 		// (an unresolved generic placeholder — should never
 		// surface here in practice but guard for safety).
 		switch t.(type) {
-		case ast.VoidType, ast.ParamType:
+		case ast.VoidType:
 			c.errfCode(fn.P, "E044", "captured variable %q has unsupported type %s", name, t)
 		default:
 			captured[name] = t
@@ -18451,7 +18614,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				return
 			}
 			switch t.(type) {
-			case ast.VoidType, ast.ParamType:
+			case ast.VoidType:
 				c.errfCode(n.P, "E044", "captured variable %q has unsupported type %s", name, t)
 			default:
 				captured[name] = t
@@ -20791,13 +20954,15 @@ func hasMainDecl(prog *ast.Program) bool {
 	return false
 }
 
-// checkHandlerStatePairing rejects the two ways `init` and `handle`
-// can disagree about process-lifetime state (docs/PLATFORM-RESEARCH.md
-// Rec §3). Either the handler takes a state nothing produces, or `init`
-// produces one nothing takes — the second silently dropped the value
-// before this check existed, which is the worse of the two.
+// checkHandlerStatePairing rejects the ways `init`, `handle` and
+// `shutdown` can disagree about process-lifetime state
+// (docs/PLATFORM-RESEARCH.md Rec §3). Either the handler takes a state
+// nothing produces, or `init` produces one nothing takes — the second
+// silently dropped the value before this check existed, which is the
+// worse of the two — and an `init` taking anything but the platform has
+// no caller to hand it that.
 //
-// Only reached when the synthesised main is what wires the two
+// Only reached when the synthesised main is what wires the three
 // together: a user-written `main` owns its own wiring, and pairing them
 // some other way is that program's business.
 // It reports whether the pair is coherent enough to synthesise a main
@@ -20808,7 +20973,12 @@ func (c *checker) checkHandlerStatePairing(prog *ast.Program) bool {
 	if handle == nil {
 		return true
 	}
-	initReturnsState := init != nil && !isVoidReturn(init.ReturnType)
+	if init != nil && !initTakesPlatformOnly(init) {
+		c.errfCode(init.P, "E075",
+			"`init` takes %d parameters; it takes none, or the platform alone", len(init.Params))
+		return false
+	}
+	_, initReturnsState := initReturnShape(init)
 	handleTakesState := len(handle.Params) == 3
 	switch {
 	case handleTakesState && !initReturnsState:
@@ -20848,24 +21018,38 @@ func findDecl(prog *ast.Program, name string) *ast.FuncDecl {
 	return nil
 }
 
-// hasInitDecl reports whether the program defines a top-level
-// `init` function — recognised by the auto-`main`-from-`handle`
-// synthesis as a one-shot startup entry that runs before the
-// per-request loop (docs/PLATFORM-RESEARCH.md Rec §3).
-func hasInitDecl(prog *ast.Program) bool {
-	return findDecl(prog, "init") != nil
+// initTakesPlatformOnly reports whether `init` takes nothing, or the
+// platform alone: the two shapes the synthesised main can call.
+func initTakesPlatformOnly(init *ast.FuncDecl) bool {
+	if len(init.Params) == 0 {
+		return true
+	}
+	if len(init.Params) != 1 {
+		return false
+	}
+	st, ok := init.Params[0].Type.(ast.StructType)
+	return ok && st.Name == "Platform"
 }
 
-// initProvidesState reports whether `init` returns a value for the
-// handler to carry, and `handle` is the shape that takes one:
+// isServeOptionsType reports whether `t` is std/tcp's `ServeOptions`,
+// under its bare name (flat loads) or a module prefix (`tcp__ServeOptions`).
+func isServeOptionsType(t ast.Type) bool {
+	st, ok := t.(ast.StructType)
+	return ok && (st.Name == "ServeOptions" || strings.HasSuffix(st.Name, "__ServeOptions"))
+}
+
+// initReturnShape reports what a handler program's `init` answers: the
+// serve options, a state for the handler to carry, both as
+// `(ServeOptions, S)`, or neither.
 //
 //	function init(): S
+//	function init(plat: Platform): (ServeOptions, S)
 //	function handle(state: S, req: HttpRequest, plat: Platform): (S, HttpResponse)
 //
-// That pair is the two-phase lifecycle of docs/PLATFORM-RESEARCH.md
+// The state pair is the two-phase lifecycle of docs/PLATFORM-RESEARCH.md
 // Rec §3 — build once at startup, thread through every request — and
 // the sanctioned answer to process-lifetime mutable state (#2679): the
-// value lives in the accept loop's frame, not in a module-level `var`
+// value lives in the serve loop's frame, not in a module-level `var`
 // the language does not have.
 //
 // A void `init` stays the Phase-1 shape: run for its side effects, then
@@ -20874,13 +21058,17 @@ func hasInitDecl(prog *ast.Program) bool {
 // value-returning init with nothing consuming it) are rejected at the
 // synthesis site rather than lowered into a call that would not
 // type-check against a synthesised main nobody wrote.
-func initProvidesState(prog *ast.Program) bool {
-	init := findDecl(prog, "init")
-	handle := findDecl(prog, "handle")
-	if init == nil || handle == nil {
-		return false
+func initReturnShape(init *ast.FuncDecl) (opts, state bool) {
+	if init == nil || isVoidReturn(init.ReturnType) {
+		return false, false
 	}
-	return !isVoidReturn(init.ReturnType) && len(handle.Params) == 3
+	if isServeOptionsType(init.ReturnType) {
+		return true, false
+	}
+	if tt, ok := init.ReturnType.(ast.TupleType); ok && len(tt.Elems) == 2 && isServeOptionsType(tt.Elems[0]) {
+		return true, true
+	}
+	return false, true
 }
 
 // resultHandlerName is what a handler written as a `Result[HttpResponse, E]`
@@ -20969,7 +21157,7 @@ const platformCtorName = "__fern_platform_new"
 // synthesisePlatformCtor builds:
 //
 //	function __fern_platform_new(): Platform {
-//	    return Platform { version: 2, mode: 0, sink: cell_new(""), handle: 0 };
+//	    return Platform { version: 3, mode: 0, sink: cell_new(""), handle: 0 };
 //	}
 //
 // The capability bag built in Fern, where the struct's layout is the
@@ -20989,7 +21177,7 @@ func synthesisePlatformCtor() *ast.FuncDecl {
 		P:        pos,
 		TypeName: "Platform",
 		Fields: []ast.FieldInit{
-			{Name: "version", Value: &ast.NumberLit{P: pos, Value: 2}},
+			{Name: "version", Value: &ast.NumberLit{P: pos, Value: 3}},
 			{Name: "mode", Value: &ast.NumberLit{P: pos, Value: 0}},
 			{Name: "sink", Value: &ast.Call{
 				P:      pos,
@@ -21008,40 +21196,39 @@ func synthesisePlatformCtor() *ast.FuncDecl {
 	}
 }
 
-// synthesiseHandleMain builds:
+// synthesiseHandleMain builds the main of a handler-shaped program: the
+// handler served under the supervisor (docs/CRASH-ONLY-SERVE.md) on
+// `PORT`, with `init`'s options and state where it answers them —
 //
 //	function main(): i32 {
-//	    return tcp_serve(__port_from_env("PORT", 8080), handle);
+//	    return tcp_serve_supervised_opts(__port_from_env("PORT", 8080), serve_options(), handle);
 //	}
 //
-// or, when `init` returns a value the handler takes
-// (initProvidesState):
+// or, for `init(plat: Platform): (ServeOptions, S)` beside a handler
+// threading `S` and a `shutdown(reason, state)` hook:
 //
 //	function main(): i32 {
-//	    return tcp_serve_with(__port_from_env("PORT", 8080), init(), handle);
+//	    let (__fern_opts, __fern_state) = init(__init_platform());
+//	    return tcp_serve_supervised_with_shutdown(__port_from_env("PORT", 8080), __fern_opts, __fern_state, handle, shutdown);
 //	}
 //
-// and with a `shutdown` hook declared, the `_shutdown` entry of either,
-// handed `serve_options()` and the hook:
+// An `init` answering only the state goes as the state argument, one
+// answering only the options as the options argument, and a void one
+// runs as a statement before the serve call. Where the target has no
+// processes (`supervised` false: wasm32-wasi) the single-process entries
+// of the same arity serve instead — `tcp_serve_opts`, `tcp_serve_with_opts`
+// and their `_shutdown` twins.
 //
-//	function main(): i32 {
-//	    return tcp_serve_with_shutdown(__port_from_env("PORT", 8080), serve_options(), init(), handle, shutdown);
-//	}
+// The wasi-http target has its own `wasi:http/incoming-handler.handle`
+// export wrapper that invokes the user's `handle` directly and drops
+// this main before the tree-shake.
 //
-// — the canonical entry point for handler-shaped programs on
-// CLI / arm64 targets. The wasi-http target has its own
-// `wasi:http/incoming-handler.handle` export wrapper that
-// invokes the user's `handle` directly; main existing
-// alongside it costs nothing (wasi-http's _start is an empty
-// stub anyway).
-//
-// Loaded flat via `LoadStdlibFlat` (e.g. in tests), both
-// `tcp_serve` and `__port_from_env` live at their bare names
-// (no mangling). Loaded via modload with `import "std/tcp";`
-// they get the `tcp__` prefix instead. We probe `prog.Funcs` for
-// whichever name exists and stamp the Ident accordingly so the
-// synthesised main resolves cleanly through both load paths.
-func synthesiseHandleMain(prog *ast.Program) *ast.FuncDecl {
+// Loaded flat via `LoadStdlibFlat` (e.g. in tests), the std/tcp entries
+// live at their bare names (no mangling). Loaded via modload with
+// `import "std/tcp";` they get the `tcp__` prefix instead. We probe
+// `prog.Funcs` for whichever name exists and stamp the Ident accordingly
+// so the synthesised main resolves cleanly through both load paths.
+func synthesiseHandleMain(prog *ast.Program, supervised bool) *ast.FuncDecl {
 	pos := ast.Position{}
 	resolve := func(bare, mangled string) string {
 		for _, fn := range prog.Funcs {
@@ -21059,79 +21246,66 @@ func synthesiseHandleMain(prog *ast.Program) *ast.FuncDecl {
 		// the program forgot to import std/tcp.
 		return bare
 	}
-	portCall := &ast.Call{
-		P:      pos,
-		Callee: &ast.Ident{P: pos, Name: resolve("__port_from_env", "tcp____port_from_env")},
-		Args: []ast.Expr{
-			&ast.StringLit{P: pos, Value: "PORT"},
-			&ast.NumberLit{P: pos, Value: 8080},
-		},
+	tcpCall := func(bare string, args ...ast.Expr) *ast.Call {
+		return &ast.Call{P: pos, Callee: &ast.Ident{P: pos, Name: resolve(bare, "tcp__"+bare)}, Args: args}
 	}
+	ident := func(name string) *ast.Ident { return &ast.Ident{P: pos, Name: name} }
+	portCall := tcpCall("__port_from_env", &ast.StringLit{P: pos, Value: "PORT"}, &ast.NumberLit{P: pos, Value: 8080})
 	// `init` is the BARE name; if a module import qualifies it, modload
-	// rewrites the call separately.
-	initCall := &ast.Call{P: pos, Callee: &ast.Ident{P: pos, Name: "init"}, Args: nil}
+	// rewrites the call separately. It is handed the platform when it
+	// takes one.
+	init := findDecl(prog, "init")
+	initCall := &ast.Call{P: pos, Callee: ident("init")}
+	if init != nil && len(init.Params) == 1 {
+		initCall.Args = []ast.Expr{tcpCall("__init_platform")}
+	}
+	initOpts, initState := initReturnShape(init)
 
 	var stmts []ast.Stmt
-	var serveCall *ast.Call
-	// A `shutdown` hook goes to the `_shutdown` entry, which takes the
-	// options too (`serve_options()`, the defaults) and calls the hook once
-	// the loop has stopped.
-	hasShutdown := findDecl(prog, "shutdown") != nil
-	optsCall := &ast.Call{P: pos, Callee: &ast.Ident{P: pos, Name: resolve("serve_options", "tcp__serve_options")}, Args: nil}
-	shutdownRef := &ast.Ident{P: pos, Name: "shutdown"}
-	if initProvidesState(prog) {
-		// `init(): S` + `handle(state: S, req, plat): (S, HttpResponse)`
-		// — the two-phase lifecycle: build the state once, thread it
-		// through the request chain (docs/PLATFORM-RESEARCH.md Rec §3).
-		// tcp_serve_with owns the state in the accept loop's frame, so
-		// it lives as long as the process.
-		serveCall = &ast.Call{
-			P:      pos,
-			Callee: &ast.Ident{P: pos, Name: resolve("tcp_serve_with", "tcp__tcp_serve_with")},
-			Args: []ast.Expr{
-				portCall,
-				initCall,
-				&ast.Ident{P: pos, Name: "handle"},
-			},
-		}
-		if hasShutdown {
-			serveCall = &ast.Call{
-				P:      pos,
-				Callee: &ast.Ident{P: pos, Name: resolve("tcp_serve_with_shutdown", "tcp__tcp_serve_with_shutdown")},
-				Args:   []ast.Expr{portCall, optsCall, initCall, &ast.Ident{P: pos, Name: "handle"}, shutdownRef},
-			}
-		}
-	} else {
-		serveCall = &ast.Call{
-			P:      pos,
-			Callee: &ast.Ident{P: pos, Name: resolve("tcp_serve", "tcp__tcp_serve")},
-			Args: []ast.Expr{
-				portCall,
-				&ast.Ident{P: pos, Name: "handle"},
-			},
-		}
-		if hasShutdown {
-			serveCall = &ast.Call{
-				P:      pos,
-				Callee: &ast.Ident{P: pos, Name: resolve("tcp_serve_shutdown", "tcp__tcp_serve_shutdown")},
-				Args:   []ast.Expr{portCall, optsCall, &ast.Ident{P: pos, Name: "handle"}, shutdownRef},
-			}
-		}
+	// The options are `init`'s when it answers them, else the defaults;
+	// the state is `init`'s value, destructured from beside the options
+	// when it answers both.
+	var opts ast.Expr = tcpCall("serve_options")
+	var state ast.Expr = initCall
+	switch {
+	case initOpts && initState:
+		stmts = append(stmts, &ast.Destructure{P: pos, Names: []string{"__fern_opts", "__fern_state"}, Init: initCall})
+		opts, state = ident("__fern_opts"), ident("__fern_state")
+	case initOpts:
+		opts = initCall
+	case init != nil && !initState:
 		// A void `init` runs for its side effects before the loop —
 		// logging "starting", reading env vars, warming a cache the
 		// handler reaches some other way.
-		if hasInitDecl(prog) {
-			stmts = append(stmts, &ast.ExprStmt{P: pos, Expr: initCall})
+		stmts = append(stmts, &ast.ExprStmt{P: pos, Expr: initCall})
+	}
+	// A `shutdown` hook goes to the `_shutdown` entry, which calls the
+	// hook once a worker's loop has stopped.
+	hasShutdown := findDecl(prog, "shutdown") != nil
+	entry := func(supervisedName, singleName string) string {
+		if supervised {
+			return supervisedName
 		}
+		return singleName
+	}
+	var serveCall *ast.Call
+	switch {
+	case initState && hasShutdown:
+		serveCall = tcpCall(entry("tcp_serve_supervised_with_shutdown", "tcp_serve_with_shutdown"), portCall, opts, state, ident("handle"), ident("shutdown"))
+	case initState:
+		serveCall = tcpCall(entry("tcp_serve_supervised_with", "tcp_serve_with_opts"), portCall, opts, state, ident("handle"))
+	case hasShutdown:
+		serveCall = tcpCall(entry("tcp_serve_supervised_shutdown", "tcp_serve_shutdown"), portCall, opts, ident("handle"), ident("shutdown"))
+	default:
+		serveCall = tcpCall(entry("tcp_serve_supervised_opts", "tcp_serve_opts"), portCall, opts, ident("handle"))
 	}
 	stmts = append(stmts, &ast.Return{P: pos, Value: serveCall})
-	body := &ast.Block{Stmts: stmts}
 	return &ast.FuncDecl{
 		P:                        pos,
 		Name:                     "main",
 		Params:                   nil,
 		ReturnType:               ast.NumberType{Width: 32, Signed: true},
-		Body:                     body,
+		Body:                     &ast.Block{Stmts: stmts},
 		IsSynthesisedHandlerMain: true,
 	}
 }

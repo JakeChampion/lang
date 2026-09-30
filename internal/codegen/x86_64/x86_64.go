@@ -4004,6 +4004,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_tcp_listen_with"
 		case "tcp_socket_ctl":
 			target = "__fern_tcp_socket_ctl"
+		case "tcp_sendfile":
+			target = "__fern_tcp_sendfile"
 		case "tcp_connect_with":
 			target = "__fern_tcp_connect_with"
 		case "unix_listen":

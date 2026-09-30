@@ -66,14 +66,14 @@ const PLATFORM_MODE_MOCK: i32 = 1;
 // connections, timers, the sim's driver — lives behind the handle rather
 // than in the bag.
 pub function platform_new(): Platform {
-    return Platform { version: 2, mode: PLATFORM_MODE_HOST, sink: cell_new(""), handle: 0 };
+    return Platform { version: 3, mode: PLATFORM_MODE_HOST, sink: cell_new(""), handle: 0 };
 }
 
 // `platform_mock(sink)` — a bag that records into `sink` instead of reaching
 // the host. std/mock_platform is the caller: it passes its own cell, so the
 // mock and the handler write one log through two views.
 pub function platform_mock(sink: Cell[string]): Platform {
-    return Platform { version: 2, mode: PLATFORM_MODE_MOCK, sink: sink, handle: 0 };
+    return Platform { version: 3, mode: PLATFORM_MODE_MOCK, sink: sink, handle: 0 };
 }
 
 // `.is_mock()` — is this a recording bag? Each capability method below asks

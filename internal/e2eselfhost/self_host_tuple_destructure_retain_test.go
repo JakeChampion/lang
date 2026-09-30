@@ -45,7 +45,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
 }`,
-			want: 9, balance: true,
+			want: 9,
 		},
 		{
 			// The 8-byte-stride element kinds use a different mark
@@ -59,7 +59,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
 }`,
-			want: 9, balance: true,
+			want: 9,
 		},
 		{
 			name: "i64arr_bind_read",
@@ -70,7 +70,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
 }`,
-			want: 9, balance: true,
+			want: 9,
 		},
 		{
 			// A BARE-IDENT element source: the tuple earns no "TUPRC:" literal
@@ -86,7 +86,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
 }`,
-			want: 9, balance: true,
+			want: 9,
 		},
 		{
 			// The MOVE path: the destructured element is returned, so the exit
@@ -103,7 +103,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
 }`,
-			want: 6, balance: true,
+			want: 6,
 		},
 		{
 			// Handed to a borrowing callee — the third disposal of an extracted
@@ -118,7 +118,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
 }`,
-			want: 8, balance: true,
+			want: 8,
 		},
 		{
 			// A `string[]` element: the tuple's sweep releases this position
@@ -136,7 +136,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
 }`,
-			want: 9, balance: true,
+			want: 9,
 		},
 		{
 			// STRING-LITERAL elements: the syntactic admission the sweep credit
@@ -151,7 +151,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
 }`,
-			want: 9, balance: true,
+			want: 9,
 		},
 		{
 			// A BARE-IDENT string[] source — the string[] twin of the row
@@ -166,7 +166,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
 }`,
-			want: 9, balance: true,
+			want: 9,
 		},
 		{
 			// Handed to a borrowing callee, the string[] twin of
@@ -182,17 +182,12 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
 }`,
-			want: 8, balance: true,
+			want: 8,
 		},
 		{
-			// The MOVE path is where the string[] retain is deliberately NOT
-			// matched, and the residual leak this whole fix accepts. `b` is
-			// returned, so its slot sweep is elided and the retain is never
-			// given back: the tuple's drop finds rc 2, decs without walking,
-			// and the caller's shallow dec frees the buffer with the element
-			// boxes still on it — 2 boxes/round. Sound, and strictly better
-			// than the alternative, which freed the buffer under a live
-			// caller binding. Pinned so closing it moves a number here.
+			// The MOVE path: `b` is returned, so the caller owns the
+			// string[] and its element boxes; the exit guards the values
+			// read back.
 			name: "strarr_moved_out_by_return",
 			src: `function w(a: string): string { return a + "!"; }
 function get(i: i32): string[] { var p: (i32, string[]) = (i, [w("x"), w("y")]); var (a, b) = p; return b; }
@@ -203,7 +198,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
 }`,
-			want: 6, balance: false, wantFrees: 200,
+			want: 6,
 		},
 	}
 }
@@ -236,18 +231,8 @@ func TestSelfHostTupleDestructureRetainX86_64(t *testing.T) {
 			if allocs == 0 {
 				t.Fatalf("%s allocated nothing — the probe is not exercising the path", tc.name)
 			}
-			if tc.balance {
-				if live != 0 || allocs != frees {
-					t.Errorf("%s: %s — must balance at live_bytes 0", tc.name, summary)
-				}
-			} else {
-				if live == 0 {
-					t.Errorf("%s: %s — a row pinned to a residual leak came back clean; closing it is its own "+
-						"measured increment and this pin needs re-measuring", tc.name, summary)
-				}
-				if frees != tc.wantFrees {
-					t.Errorf("%s: frees=%d, want %d — a moved count on an unchanged row is a silent widening", tc.name, frees, tc.wantFrees)
-				}
+			if live != 0 || allocs != frees {
+				t.Errorf("%s: %s — must balance at live_bytes 0", tc.name, summary)
 			}
 
 			sanAsm := hevCompile(t, runner, driverBin, tc.src, []string{"FERN_SANITIZE=1"})

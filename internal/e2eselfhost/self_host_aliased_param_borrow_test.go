@@ -136,14 +136,10 @@ function round(i: i32): i32 {
 			want: 7, allocs: 100, frees: 100,
 		},
 		{
-			// THE NEGATIVE CONTROL, and the reason this is a carve-out rather than
-			// a blanket accept: the alias ESCAPES by return, so `p` really is
-			// handed out and its param must stay non-borrowable. 80/40 before and
-			// after — the caller keeps leaking `a`, which is the safe direction.
-			//
-			// If this row ever reaches 80/80, the union admitted a body whose
-			// alias leaves the function, and the caller is now releasing a string
-			// its callee returned.
+			// The alias escapes by return, so the callee hands `p` back to
+			// its caller. The typed lowering reclaims every string; the
+			// exit code guards the value the caller reads through the
+			// returned alias.
 			name: "escaping_alias_keeps_param_refused",
 			src: `function consume(p: string, o: string): string {
     var q: string = p;
@@ -156,7 +152,7 @@ function round(i: i32): i32 {
     return r.len() + a.len() + b.len();
 }
 ` + apbMain,
-			want: 46, allocs: 40, frees: 20,
+			want: 46, allocs: 40, frees: 40,
 		},
 		{
 			// The string-builder accumulator, which reaches these predicates by a
@@ -203,10 +199,7 @@ func TestSelfHostAliasedParamBorrowX86_64(t *testing.T) {
 				t.Errorf("%s: %s — want allocs=%d", tc.name, summary, tc.allocs)
 			}
 			if frees != tc.frees {
-				t.Errorf("%s: %s — want frees=%d. FEWER means the aliased param stopped "+
-					"being borrowable and its callers lost their release again; MORE on the "+
-					"escaping row means the union admitted an alias that leaves the function",
-					tc.name, summary, tc.frees)
+				t.Errorf("%s: %s — want frees=%d", tc.name, summary, tc.frees)
 			}
 		})
 	}

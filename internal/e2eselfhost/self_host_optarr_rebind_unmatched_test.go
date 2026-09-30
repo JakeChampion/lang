@@ -33,11 +33,12 @@ import (
 // matched branch carries name_escapes_outside_stmt. That row is the one below
 // worth reading twice.
 //
-// Five shapes stay refused at their leaking counts — two matches on the name, a
-// payload bound out of the match, the option escaping, an alias bound before
-// the rebind, and a match placed BEFORE the rebind. Each reads its value back
-// after 200 rounds of churn have recycled the freelist, and each answers
-// identically on native x86-64, `bin/fern -interp` and the self-host.
+// Five shapes could over-release — two matches on the name, a payload bound out
+// of the match, the option escaping, an alias bound before the rebind, and a
+// match placed BEFORE the rebind. Each reads its value back after 200 rounds of
+// churn have recycled the freelist, and each answers identically on native
+// x86-64, `bin/fern -interp` and the self-host. On the typed lowering every row
+// balances.
 //
 // Every flipped row was re-run under FERN_SANITIZE=1 with
 // FERN_RC_UNDERFLOW_TRAP=1 and FERN_RC_FREE_DEBUG=1: clean, no trap, no
@@ -75,7 +76,7 @@ func optarrRebindCases() []arrenumShareCase {
     t = t + 1;
     return t;
 }` + optarrRebindPlainMain,
-			want: 17, balance: true,
+			want: 17,
 		},
 		{
 			// Control: the same rebind WITH a consuming match, clean before this
@@ -89,7 +90,7 @@ func optarrRebindCases() []arrenumShareCase {
     t = t + 1;
     return t;
 }` + optarrRebindPlainMain,
-			want: 68, balance: true,
+			want: 68,
 		},
 		{
 			// Control: the never-reassigned sibling, credited by the other
@@ -101,7 +102,7 @@ func optarrRebindCases() []arrenumShareCase {
     t = t + 1;
     return t;
 }` + optarrRebindPlainMain,
-			want: 17, balance: true,
+			want: 17,
 		},
 		{
 			name: "loop_rebind",
@@ -113,7 +114,7 @@ func optarrRebindCases() []arrenumShareCase {
     var junk: i32 = churn(i);
     return (t + junk) % 101;
 }` + optarrRebindChurnMain,
-			want: 25, balance: true,
+			want: 25,
 		},
 		{
 			name: "conditional_rebind",
@@ -124,14 +125,12 @@ func optarrRebindCases() []arrenumShareCase {
     var junk: i32 = churn(i);
     return (t + junk) % 101;
 }` + optarrRebindChurnMain,
-			want: 25, balance: true,
+			want: 25,
 		},
 		{
 			// THE SOUNDNESS ROW. The rebound local is RETURNED out of the
-			// callee, so the frame must not release it. Crediting this through
-			// the never-reassigned class's plan-backed escape gate made the
-			// self-host answer 25 where native and interp say 42 — a wrong
-			// answer, not a leak. It stays refused, and it stays 42.
+			// callee, so the frame must not release it; a release here
+			// answered 25 where native and interp say 42.
 			name: "refused_option_escapes",
 			src: optarrRebindChurn + `function grab(i: i32): Option[i32[]] {
     var x: Option[i32[]] = Some([i, i + 1]);
@@ -148,7 +147,7 @@ function round(i: i32): i32 {
 			want: 42,
 		},
 		{
-			// REFUSED: two matches on the name, which
+			// Two matches on the name, which
 			// sole_top_level_match_idx reports the same way as none.
 			name: "refused_two_matches",
 			src: optarrRebindChurn + `function round(i: i32): i32 {
@@ -164,7 +163,7 @@ function round(i: i32): i32 {
 			want: 51,
 		},
 		{
-			// REFUSED: the payload is bound out of the match and outlives it.
+			// The payload is bound out of the match and outlives it.
 			name: "refused_payload_escapes",
 			src: optarrRebindChurn + `function round(i: i32): i32 {
     var t: i32 = 0;
@@ -179,7 +178,7 @@ function round(i: i32): i32 {
 			want: 42,
 		},
 		{
-			// REFUSED: an alias is bound before the rebind and matched after.
+			// An alias is bound before the rebind and matched after.
 			name: "refused_alias_bind",
 			src: optarrRebindChurn + `function round(i: i32): i32 {
     var t: i32 = 0;
@@ -193,7 +192,7 @@ function round(i: i32): i32 {
 			want: 28,
 		},
 		{
-			// REFUSED: the match precedes the rebind, so it consumes a value
+			// The match precedes the rebind, so it consumes a value
 			// the later store replaces — `match_idx > vi` is what rules it out.
 			name: "refused_match_before_rebind",
 			src: optarrRebindChurn + `function round(i: i32): i32 {
@@ -239,12 +238,8 @@ func TestSelfHostOptArrRebindUnmatchedX86_64(t *testing.T) {
 			if allocs == 0 {
 				t.Fatalf("%s allocated nothing — the probe is not exercising the path", tc.name)
 			}
-			if tc.balance && (live != 0 || allocs != frees) {
+			if live != 0 || allocs != frees {
 				t.Errorf("%s: %s — must balance at live_bytes 0", tc.name, summary)
-			}
-			if !tc.balance && live == 0 && allocs == frees {
-				t.Errorf("%s: %s — pinned as REFUSED; if this now balances the credit "+
-					"widened, and the row belongs to whatever widened it", tc.name, summary)
 			}
 		})
 	}

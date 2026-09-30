@@ -98,7 +98,7 @@ pub function serve(request: i32, response_out: i32, handle: (HttpRequest, Platfo
         Ok(p) => { path = p; },
         Err(status) => {
             req_drop(request);
-            send(response_out, http.http_response_text(status, ""));
+            send(response_out, http.text(status, ""));
             return;
         }
     }
@@ -201,7 +201,7 @@ function send(response_out: i32, resp: HttpResponse): void {
         Ok(body) => {
             match (body_write(body)) {
                 Ok(stream) => {
-                    write_all(stream, resp.body);
+                    write_all(stream, resp.body_string());
                     output_stream_drop(stream);
                 },
                 Err(e) => {}

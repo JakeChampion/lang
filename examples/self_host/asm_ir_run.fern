@@ -28,6 +28,7 @@ import "./asmcore";
 import "./asm_arm64_ir";
 import "./irlower";
 import "./ircore";
+import "./semlower";
 
 // main wraps `run` in the shared rc-over-release guard: this driver is
 // exactly where #6021 hid — a native-compiler rc bug that corrupted the
@@ -154,13 +155,14 @@ function run(): i32 {
     // the old mirror driver (which ignored unknown flags).
     if (target == "arm64-linux") {
         var a64: string = "";
-        if (use_ir) { a64 = asm_arm64_ir.emit_module_ir_gated(lm, false); }
+        if (use_ir && !semlower.sem_ir_on()) { a64 = asm_arm64_ir.emit_module_ir_gated(lm, false); }
         if (a64 == "") {
             // IR-or-error (#3457 slice 5): no AST fallback. With this the `-ir`-off
             // leg behaves exactly like the `-ir`-on one — route IR or refuse — which
             // is why the AST-vs-IR differential retires alongside (its two legs no
             // longer differ for any program).
-            a64 = asm_arm64_ir.emit_module_or_error(parser.module_with_builtins(mod), false);
+            var d64: semlower.Driven = semlower.driven(mod, target);
+            a64 = asm_arm64_ir.emit_module_or_error_sub(d64.full, false, d64.sub);
         }
         print(a64);
         return 0;
@@ -174,7 +176,8 @@ function run(): i32 {
     // opt out of. (The comment this replaces claimed darwin had no IR leg,
     // which would make "build one" look like remaining #3457 work; it is not.)
     if (target == "arm64-darwin") {
-        print(asm_arm64_ir.darwinize(asm_arm64_ir.emit_module_or_error(parser.module_with_builtins(mod), true)));
+        var dd: semlower.Driven = semlower.driven(mod, target);
+        print(asm_arm64_ir.darwinize(asm_arm64_ir.emit_module_or_error_sub(dd.full, true, dd.sub)));
         return 0;
     }
     // `-ir-unit entry|lib`: emit a single per-module translation unit (defs
@@ -190,13 +193,14 @@ function run(): i32 {
     var emitted: string = "";
     // #4394 lever 3: the fused gate+emit lowers each function once (was: gate
     // lowered all, then emit re-lowered all). "" means ineligible.
-    if (use_ir) { emitted = asm_ir.emit_module_ir_gated(lm, known); }
+    if (use_ir && !semlower.sem_ir_on()) { emitted = asm_ir.emit_module_ir_gated(lm, known); }
     if (emitted == "") {
         // IR-or-error (#3457 slice 5). This was the AST fallback; it is now a
         // refusal. `use_ir` false lands here too, so the `-ir` flag no longer
         // selects between two emitters — it only skips the gated fast path, and
         // emit_module_or_error re-runs the same gate.
-        emitted = asm_ir.emit_module_or_error(parser.module_with_builtins(mod));
+        var d: semlower.Driven = semlower.driven(mod, target);
+        emitted = asm_ir.emit_module_or_error_sub(d.full, d.sub);
     }
     print(emitted);
     return 0;

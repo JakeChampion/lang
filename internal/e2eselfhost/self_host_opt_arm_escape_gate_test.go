@@ -20,15 +20,8 @@ import (
 // assignment is a BORROW. With the gate matching nothing, `held = s` leaves
 // `__fern_str_free` releasing a box the caller still reads.
 //
-// The gate now takes `"Ok|Some"` for the string rows: the SUCCESS arm under
-// either spelling. Two things it deliberately is NOT:
-//
-//   - not applied to the array rows. Doing so refuses a shape that is already
-//     correct and costs real reclaim — `escaping_arm_binding_array` drops from
-//     1600/1600 to 800/1600. That row is pinned below for exactly this reason.
-//   - not "every arm". A scalar `Err(e)` used in arithmetic reads as an escape,
-//     which strands `Result[string, i32]` at 22400. A scalar binding is never a
-//     payload this drop releases.
+// On the typed lowering the escaping string rows balance and read back
+// correctly, and the array and scalar-`Err` rows reclaim fully.
 //
 // THE FAILURE IS INVISIBLE TO A PLAIN PROBE. With the bug present, the escaping
 // shape still exits correctly — the freed box is simply not reused before it is
@@ -109,32 +102,14 @@ function main(): i32 {
     return x % 251;
 }`
 		allocs, frees, live := counts(t, "oae_str_escape", src)
-		// The STRANDED COUNT is the measurement, not the free count. Pinning
-		// frees made this read the literal churn too: `"va" + "lue"` and
-		// `"zz" + "zzz"` each boxed both operands per evaluation, 2100
-		// balanced alloc/free pairs that said nothing about the escape. Static
-		// string literals (#7080) removed them, dropping allocs 4500 -> 2400
-		// and frees 3300 -> 1200 while leaving the remainder untouched — which
-		// is the point: a balanced pair cannot change it.
-		//
-		// What DOES change it is the number of blocks one stranded string
-		// occupies. #7351 made that one rather than two, and the remainder fell
-		// 1200 -> 800 with the leak itself untouched: live_bytes is 28800 on
-		// both sides, the same bytes in fewer blocks.
-		//
-		// A SMALLER remainder means the escaping binding's string was released
-		// under a live alias — a dangle, not the leak this shape must keep. A
-		// larger one means something else stopped being reclaimed. Either way
-		// the live_bytes moves with it, which is what separates those from a
-		// pure block-count change.
-		if allocs-frees != 800 || live != 28800 {
-			t.Errorf("allocs=%d frees=%d live_bytes=%d — want allocs-frees=800 at "+
-				"live_bytes 28800", allocs, frees, live)
+		// A release of the escaping binding's string under its live alias would
+		// read back wrong; the exit agreement inside counts() guards that.
+		if live != 0 || allocs != frees {
+			t.Errorf("allocs=%d frees=%d live_bytes=%d — want an exact balance", allocs, frees, live)
 		}
 	})
 
-	// Same escape written as a `Result`, so the SUCCESS arm is spelled `Ok`. Pins
-	// that the marker covers both spellings rather than trading one miss for another.
+	// Same escape written as a `Result`, so the SUCCESS arm is spelled `Ok`.
 	t.Run("escaping_arm_binding_result_ok_is_refused", func(t *testing.T) {
 		src := `function mk(i: i32): Result[string, i32] {
     return Ok("va" + "lue");
@@ -163,10 +138,9 @@ function main(): i32 {
     return x % 251;
 }`
 		allocs, frees, live := counts(t, "oae_result_escape", src)
-		if live == 0 {
-			t.Errorf("allocs=%d frees=%d live_bytes=%d — want a nonzero remainder; an `Ok(s)` "+
-				"arm that escapes must be refused exactly as the `Some(s)` spelling is",
-				allocs, frees, live)
+		if live != 0 || allocs != frees {
+			t.Errorf("allocs=%d frees=%d live_bytes=%d — want an exact balance, as the "+
+				"`Some(s)` spelling has", allocs, frees, live)
 		}
 	})
 
@@ -199,9 +173,7 @@ function main(): i32 {
 		}
 	})
 
-	// The ARRAY row the marker is deliberately kept away from. An escaping array
-	// binding retains, so refusing it would cost reclaim for no soundness gain —
-	// this drops to 800 the moment the marker is widened past strings.
+	// An escaping array binding retains, so it reclaims fully.
 	t.Run("escaping_arm_binding_array_still_reclaims", func(t *testing.T) {
 		src := `function mk(i: i32): Option[i32[]] {
     return Some([i + 11, i + 22]);
@@ -227,11 +199,10 @@ function main(): i32 {
     return x % 251;
 }`
 		allocs, frees, live := counts(t, "oae_arr_escape", src)
-		if frees != 1600 || live != 0 {
-			t.Errorf("allocs=%d frees=%d live_bytes=%d — want 1600 frees and 0 remaining. "+
-				"An escaping arm binding RETAINS an array, so this shape is already correct "+
-				"and reclaims fully; it drops to 800 if the string-only \"Ok|Some\" marker "+
-				"is widened to the array rows (native leaks 11200 here)", allocs, frees, live)
+		if frees != 1400 || live != 0 {
+			t.Errorf("allocs=%d frees=%d live_bytes=%d — want 1400 frees and 0 remaining. "+
+				"An escaping arm binding RETAINS an array, so this shape reclaims fully",
+				allocs, frees, live)
 		}
 	})
 

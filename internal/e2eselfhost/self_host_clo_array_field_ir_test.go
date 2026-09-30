@@ -1,10 +1,7 @@
 package e2eselfhost
 
 import (
-	"os"
 	"os/exec"
-	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -16,8 +13,7 @@ import (
 // call through a LOCAL clo-array all lowered already — only the inline call
 // bailed, because the element-call dispatch's ExprFieldAccess arm recognised
 // only a registered fn-POINTER field, so a field of env BOXES matched neither
-// flag and fell through to s.fail(). TestSelfHostCloArrayFieldRoutesIR below
-// pins the routing, since these behaviour cases pass either way.
+// flag and fell through to s.fail().
 //
 // The AST emitter still handles them, and that path stays correct: it bails to
 // the legacy emitter
@@ -113,40 +109,6 @@ func TestSelfHostCloArrayFieldCallIRArm64(t *testing.T) {
 			_ = cmd.Run()
 			if code := cmd.ProcessState.ExitCode(); code != tc.exit {
 				t.Errorf("%s exited %d, want %d", tc.name, code, tc.exit)
-			}
-		})
-	}
-}
-
-// TestSelfHostCloArrayFieldRoutesIR pins that the inline call through a
-// struct-field CLOSURE array reaches the IR path. The behaviour test above
-// passes either way — the AST emitter compiles these correctly — so without a
-// routing assertion a regression back to the fallback is silent (#3457).
-func TestSelfHostCloArrayFieldRoutesIR(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := writeSelfHostAsmProject(t)
-	src, err := os.ReadFile("../../examples/self_host/asm_ir_run.fern")
-	if err != nil {
-		t.Fatalf("read asm_ir_run.fern: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "asm_ir_run.fern"), src, 0o644); err != nil {
-		t.Fatalf("write asm_ir_run.fern: %v", err)
-	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
-
-	for _, tc := range []struct{ name, src string }{
-		{"clo-field-call", "struct R { hs: (() => i32)[] }\nfunction main(): i32 { var n: i32 = 3; var r = R { hs: [() => n] }; return r.hs[0](); }"},
-		{"clo-field-arg", "struct R { hs: ((i32) => i32)[] }\nfunction main(): i32 { var n: i32 = 3; var r = R { hs: [(x: i32) => x + n] }; return r.hs[0](4); }"},
-		// The proof survives a rebind of the local it comes from: the closure
-		// credit is re-established by the ASSIGNMENT. Without that the field is
-		// unproven and the module bails (the AST emitter it once fell to returned 0 for
-		// this program on wasm).
-		{"clo-field-rebound", "struct R { hs: (() => i32)[] }\nfunction seven(): i32 { return 7; }\nfunction main(): i32 { var n: i32 = 5; var a: (() => i32)[] = [seven]; a = [() => n]; var r: R = R { hs: a }; return r.hs[0](); }"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			out := runCapture(t, gcc, runner, driverBin, []byte(tc.src+"\n"), "-ir-probe")
-			if !strings.Contains(string(out), "module: IR") {
-				t.Errorf("module is not IR-eligible, want the IR path:\n%s", out)
 			}
 		})
 	}

@@ -1,12 +1,14 @@
 package e2eharness
 
 import (
+	"bufio"
 	"fmt"
 	"io"
 	"net"
 	"os"
 	"os/exec"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -89,7 +91,7 @@ function handle(hits: Map[string, i32], req: HttpRequest, plat: Platform): (Map[
         None => {}
     }
     return (hits.insert(req.path, n),
-            http.http_response_ok(req.path + "=" + int.int_to_string(n)));
+            http.ok(req.path + "=" + int.int_to_string(n)));
 }
 
 function main(): i32 {
@@ -129,7 +131,7 @@ func LargeResponseServerSource(port int) string {
 import "std/string";
 import "std/tcp";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
-    return http.http_response_ok("x".repeat(%d));
+    return http.ok("x".repeat(%d));
 }
 function main(): i32 {
     return tcp.tcp_serve(%d, handle);
@@ -178,7 +180,7 @@ func RecvDeadlineServerSource(port int) string {
 import "std/time";
 import "std/tcp";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
-    return http.http_response_ok("ok");
+    return http.ok("ok");
 }
 function main(): i32 {
     return tcp.tcp_serve_deadline(%d, handle, time.duration_millis(400));
@@ -228,9 +230,9 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
         var a: i32[] = [1, 2, 3];
         var i: i32 = a.len() + 5;
         var x: i32 = a[i];
-        return http.http_response_ok("unreachable " + int.int_to_string(x));
+        return http.ok("unreachable " + int.int_to_string(x));
     }
-    return http.http_response_ok("ok");
+    return http.ok("ok");
 }
 function main(): i32 {
     return tcp.tcp_serve_supervised_opts(%d, tcp.ServeOptions { ...tcp.serve_options(), workers: 1 }, handle);
@@ -258,12 +260,82 @@ func CheckSurvivesHandlerTrap(t *testing.T, addr, stderrPath string) {
 	}
 }
 
+// ReusePortServerSource serves through tcp_serve_opts with a backlog of
+// 4 and SO_REUSEPORT on the listener, in place of tcp_listen's fixed
+// 128 and one listener per port.
+func ReusePortServerSource(port int) string {
+	return fmt.Sprintf(`import "std/http";
+import "std/tcp";
+function handle(req: HttpRequest, plat: Platform): HttpResponse {
+    return http.ok("ok");
+}
+function main(): i32 {
+    var opts: tcp.ServeOptions = tcp.ServeOptions { ...tcp.serve_options(), backlog: 4, reuse_port: true };
+    return tcp.tcp_serve_opts(%d, opts, handle);
+}
+`, port)
+}
+
+// soReusePort is SO_REUSEPORT, which Go's syscall package spells only on
+// the BSDs: 15 on Linux.
+const soReusePort = 15
+
+// CheckReusePortReachesListener drives ReusePortServerSource: the proof
+// that the option reached the kernel is a second SO_REUSEPORT socket
+// binding the served port while the loop holds it, which a plain
+// listener refuses with EADDRINUSE; the loop still answers 200 through
+// the first.
+func CheckReusePortReachesListener(t *testing.T, port int) {
+	t.Helper()
+	addr := fmt.Sprintf("127.0.0.1:%d", port)
+	WaitServerReady(t, addr, 10*time.Second)
+	fd, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_STREAM, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer syscall.Close(fd)
+	if err := syscall.SetsockoptInt(fd, syscall.SOL_SOCKET, soReusePort, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Bind(fd, &syscall.SockaddrInet4{Port: port, Addr: [4]byte{127, 0, 0, 1}}); err != nil {
+		t.Fatalf("a second SO_REUSEPORT socket could not bind the served port, so reuse_port did not reach the listener: %v", err)
+	}
+	if resp := HTTPRoundTrip(t, addr, "/ok", 3*time.Second); !ContainsStatus200(resp) {
+		t.Fatalf("the loop did not answer 200:\n%s", resp)
+	}
+}
+
+// StalledSurvivorServerSource is TrappingServerSource over two workers
+// sharing the supervisor's listener, with /stall holding its worker in
+// the handler for a minute: the worker the crash loop never reaches.
+func StalledSurvivorServerSource(port int) string {
+	src := strings.Replace(TrappingServerSource(port), "workers: 1 }", "workers: 2 }", 1)
+	return strings.Replace(src, `    return http.ok("ok");`, `    if (req.path == "/stall") { sleep_ms(60000 as i64); }
+    return http.ok("ok");`, 1)
+}
+
+// CheckCrashLoopStopsSurvivor drives StalledSurvivorServerSource: one
+// worker is held in /stall while the other and its replacements
+// crash-loop on /boom; at the give-up the stalled worker is alive and
+// holding the listener, and the supervisor stops it (SIGTERM, which a
+// handler-held worker cannot act on, then SIGKILL five seconds later)
+// before exiting, so the port refuses connections afterwards.
+func CheckCrashLoopStopsSurvivor(t *testing.T, cmd *exec.Cmd, addr, stderrPath string) {
+	t.Helper()
+	WaitServerReady(t, addr, 10*time.Second)
+	stalled := rawRequest(t, addr, "/stall", "")
+	defer stalled.Close()
+	time.Sleep(200 * time.Millisecond)
+	CheckCrashLoopGivesUp(t, cmd, addr, stderrPath)
+}
+
 // CheckCrashLoopGivesUp drives TrappingServerSource with /boom in a
 // reconnect loop: each queued connection is accepted by the next worker
 // as soon as it forks and kills it within the 100 ms fast-death window,
 // and after eight such deaths the supervisor exits with the child's
-// code (134) instead of reforking forever. The doubling backoff sleeps
-// sum to about 11 s before the give-up.
+// code (134) instead of reforking forever, with no worker left holding
+// the port. The doubling backoff waits sum to about 11 s before the
+// give-up.
 func CheckCrashLoopGivesUp(t *testing.T, cmd *exec.Cmd, addr, stderrPath string) {
 	t.Helper()
 	WaitServerReady(t, addr, 10*time.Second)
@@ -304,21 +376,72 @@ func CheckCrashLoopGivesUp(t *testing.T, cmd *exec.Cmd, addr, stderrPath string)
 	if n := strings.Count(stderr, "worker died with exit code 134"); n < 8 {
 		t.Errorf("worker-death lines = %d, want at least 8:\n%s", n, stderr)
 	}
+	// The fast deaths are counted over every worker, so another may have
+	// been alive at the give-up: the supervisor stops it before exiting,
+	// and nothing is left to accept.
+	if conn, err := net.DialTimeout("tcp", addr, 2*time.Second); err == nil {
+		conn.Close()
+		t.Errorf("the port still accepts after the supervisor gave up: a worker survived it\n--- stderr ---\n%s", stderr)
+	}
+}
+
+// CheckTrapThenShutdownExitsClean drives TrappingServerSource through a
+// trap and a refork, then SIGTERM: the exit is the shutdown's 0, not
+// the earlier death's 134.
+func CheckTrapThenShutdownExitsClean(t *testing.T, cmd *exec.Cmd, addr, stderrPath string) {
+	t.Helper()
+	CheckSurvivesHandlerTrap(t, addr, stderrPath)
+	sigterm(t, cmd)
+	if code := waitExit(t, cmd, 10*time.Second); code != 0 {
+		t.Fatalf("supervisor exit code %d after a clean shutdown, want 0: the reforked worker's death leaked into it\n--- stderr ---\n%s", code, readFileString(stderrPath))
+	}
+}
+
+// MaxConnectionsFloorServerSource serves with `max_connections: 0`,
+// which the loop takes as 1: the listener is read whenever no
+// connection is held, so requests one at a time are answered.
+func MaxConnectionsFloorServerSource(port int) string {
+	return fmt.Sprintf(`import "std/http";
+import "std/tcp";
+function handle(req: HttpRequest, plat: Platform): HttpResponse {
+    return http.ok("ok");
+}
+function main(): i32 {
+    return tcp.tcp_serve_opts(%d, tcp.ServeOptions { ...tcp.serve_options(), max_connections: 0 }, handle);
+}
+`, port)
+}
+
+// CheckMaxConnectionsFloor drives MaxConnectionsFloorServerSource: three
+// requests in turn are each answered 200.
+func CheckMaxConnectionsFloor(t *testing.T, addr string) {
+	t.Helper()
+	WaitServerReady(t, addr, 10*time.Second)
+	for i := 0; i < 3; i++ {
+		if resp := HTTPRoundTrip(t, addr, "/ok", 5*time.Second); !ContainsStatus200(resp) {
+			t.Fatalf("request %d under max_connections: 0: want 200, got\n%s", i+1, resp)
+		}
+	}
 }
 
 // WorkersServerSource is a supervised server with two workers: /slow
-// burns pure work for well over a second, /boom traps, /ok answers at
+// burns pure work until 1.5 s of the bag's monotonic clock has passed, so
+// it holds its worker that long on any runner; /boom traps, /ok answers at
 // once.
 func WorkersServerSource(port int) string {
 	return fmt.Sprintf(`import "std/http";
 import "std/tcp";
+import "std/platform";
 import "core/int";
-function burn(n: i32): i32 {
+function burn(plat: Platform, ns: i64): i32 {
     var x: i32 = 12345;
-    var i: i32 = 0;
-    while (i < n) {
-        x = (x * 1103515245 + 12345) & 2147483647;
-        i = i + 1;
+    var until: i64 = plat.elapsed_ns() + ns;
+    while (plat.elapsed_ns() < until) {
+        var i: i32 = 0;
+        while (i < 100000) {
+            x = (x * 1103515245 + 12345) & 2147483647;
+            i = i + 1;
+        }
     }
     return x;
 }
@@ -327,18 +450,27 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
         var a: i32[] = [1, 2, 3];
         var i: i32 = a.len() + 5;
         var x: i32 = a[i];
-        return http.http_response_ok("unreachable " + int.int_to_string(x));
+        return http.ok("unreachable " + int.int_to_string(x));
     }
     if (req.path == "/slow") {
-        if (burn(400000000) == 0 - 1) { return http.http_response_ok("never"); }
-        return http.http_response_ok("slow");
+        if (burn(plat, 1500000000 as i64) == 0 - 1) { return http.ok("never"); }
+        return http.ok("slow");
     }
-    return http.http_response_ok("ok");
+    return http.ok("ok");
 }
 function main(): i32 {
     return tcp.tcp_serve_supervised_opts(%d, tcp.ServeOptions { ...tcp.serve_options(), workers: 2 }, handle);
 }
 `, port)
+}
+
+// ReusePortWorkersServerSource is TrappingServerSource over two workers
+// that each bind their own SO_REUSEPORT listener (`reuse_port`): a
+// worker's death takes its listener with it, and its replacement binds
+// anew, so CheckSurvivesHandlerTrap proves the service is back on the
+// port after a trap.
+func ReusePortWorkersServerSource(port int) string {
+	return strings.Replace(TrappingServerSource(port), "workers: 1 }", "workers: 2, reuse_port: true }", 1)
 }
 
 // CheckWorkersServeSideBySide drives WorkersServerSource: a request on a
@@ -388,16 +520,18 @@ func CheckWorkersServeSideBySide(t *testing.T, addr, stderrPath string) {
 
 // InitStateServerSource is ThreadedStateServerSource with no `main`: an
 // `init(): S` and a state-taking `handle` are the two-phase lifecycle the
-// compilers synthesise a main for, which serves on `PORT` and hands
-// init()'s value to the loop rather than building the state per request
-// or dropping it.
+// compilers synthesise a main for, which serves on `PORT` under the
+// supervisor and hands init()'s value to the loop rather than building
+// the state per request or dropping it. `init` takes the platform and
+// answers the serve options beside the state: one worker, so the count
+// every request sees is the one the request before it left.
 func InitStateServerSource() string {
 	return `import "std/http";
 import "std/tcp";
 import "core/int";
 
-function init(): Map[string, i32] {
-    return map_new(8);
+function init(plat: Platform): (tcp.ServeOptions, Map[string, i32]) {
+    return (tcp.ServeOptions { ...tcp.serve_options(), workers: 1 }, map_new(8));
 }
 
 function handle(hits: Map[string, i32], req: HttpRequest, plat: Platform): (Map[string, i32], HttpResponse) {
@@ -407,7 +541,7 @@ function handle(hits: Map[string, i32], req: HttpRequest, plat: Platform): (Map[
         None => {}
     }
     return (hits.insert(req.path, n),
-            http.http_response_ok(req.path + "=" + int.int_to_string(n)));
+            http.ok(req.path + "=" + int.int_to_string(n)));
 }
 `
 }
@@ -419,7 +553,7 @@ func HandleOnlyServerSource() string {
 import "std/tcp";
 
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
-    return http.http_response_ok("path=" + req.path);
+    return http.ok("path=" + req.path);
 }
 `
 }
@@ -462,7 +596,7 @@ function lookup(path: string): Result[string, http.HttpError] {
 
 function handle(req: HttpRequest, plat: Platform): Result[HttpResponse, http.HttpError] {
     var name: string = lookup(req.path)?;
-    return Ok(http.http_response_ok(name));
+    return Ok(http.ok(name));
 }
 `
 }
@@ -475,8 +609,8 @@ func StatefulResultHandlerServerSource() string {
 import "std/tcp";
 import "core/int";
 
-function init(): Map[string, i32] {
-    return map_new(8);
+function init(plat: Platform): (tcp.ServeOptions, Map[string, i32]) {
+    return (tcp.ServeOptions { ...tcp.serve_options(), workers: 1 }, map_new(8));
 }
 
 function handle(hits: Map[string, i32], req: HttpRequest, plat: Platform): (Map[string, i32], Result[HttpResponse, http.HttpError]) {
@@ -486,7 +620,7 @@ function handle(hits: Map[string, i32], req: HttpRequest, plat: Platform): (Map[
         Some(prev) => { n = prev + 1; },
         None => {}
     }
-    return (hits.insert(req.path, n), Ok(http.http_response_ok(req.path + "=" + int.int_to_string(n))));
+    return (hits.insert(req.path, n), Ok(http.ok(req.path + "=" + int.int_to_string(n))));
 }
 `
 }
@@ -535,12 +669,12 @@ func ShutdownHookServerSource() string {
 import "std/tcp";
 import "core/int";
 
-function init(): i32 {
-    return 0;
+function init(plat: Platform): (tcp.ServeOptions, i32) {
+    return (tcp.ServeOptions { ...tcp.serve_options(), workers: 1 }, 0);
 }
 
 function handle(hits: i32, req: HttpRequest, plat: Platform): (i32, HttpResponse) {
-    return (hits + 1, http.http_response_ok("hit " + int.int_to_string(hits + 1)));
+    return (hits + 1, http.ok("hit " + int.int_to_string(hits + 1)));
 }
 
 function shutdown(reason: string, hits: i32): void {
@@ -554,18 +688,33 @@ function shutdown(reason: string, hits: i32): void {
 // with the reason and the count.
 func CheckShutdownHook(t *testing.T, cmd *exec.Cmd, addr, stderrPath string) {
 	t.Helper()
+	checkShutdownHookOn(t, cmd, addr, stderrPath, syscall.SIGTERM, "sigterm")
+}
+
+// CheckShutdownHookOnSigint is CheckShutdownHook with SIGINT, what Ctrl-C
+// sends: the supervisor forwards it, the worker drains the same way, and
+// the hook's reason names it.
+func CheckShutdownHookOnSigint(t *testing.T, cmd *exec.Cmd, addr, stderrPath string) {
+	t.Helper()
+	checkShutdownHookOn(t, cmd, addr, stderrPath, syscall.SIGINT, "sigint")
+}
+
+func checkShutdownHookOn(t *testing.T, cmd *exec.Cmd, addr, stderrPath string, sig syscall.Signal, reason string) {
+	t.Helper()
 	WaitServerReady(t, addr, 10*time.Second)
 	for i := 1; i <= 2; i++ {
 		if got := ResponseBodyTail(HTTPRoundTrip(t, addr, "/", 5*time.Second)); got != fmt.Sprintf("hit %d", i) {
 			t.Fatalf("request %d: body %q, want \"hit %d\"", i, got, i)
 		}
 	}
-	sigterm(t, cmd)
+	if err := cmd.Process.Signal(sig); err != nil {
+		t.Fatal(err)
+	}
 	if code := waitExit(t, cmd, 10*time.Second); code != 0 {
 		t.Fatalf("exit code %d, want 0", code)
 	}
-	if stderr := readFileString(stderrPath); !strings.Contains(stderr, "shutdown reason=sigterm hits=2") {
-		t.Fatalf("the shutdown hook did not report on stderr:\n%s", stderr)
+	if stderr := readFileString(stderrPath); !strings.Contains(stderr, "shutdown reason="+reason+" hits=2") {
+		t.Fatalf("the shutdown hook did not report %s on stderr:\n%s", reason, stderr)
 	}
 }
 
@@ -592,14 +741,206 @@ func CheckHandlerStallsItsWorker(t *testing.T, addr string) {
 		t.Fatal(err)
 	}
 	started := time.Now()
+	type slowResult struct {
+		body string
+		err  error
+		done time.Time
+	}
+	slowCh := make(chan slowResult, 1)
+	go func() {
+		b, err := io.ReadAll(slow)
+		slowCh <- slowResult{string(b), err, time.Now()}
+	}()
 	time.Sleep(200 * time.Millisecond)
 	if resp := HTTPRoundTrip(t, addr, "/ok", 20*time.Second); !strings.Contains(resp, "HTTP/1.1 200") {
 		t.Fatalf("/ok behind /slow: want 200 once the worker is free, got\n%s", resp)
 	}
-	if waited := time.Since(started); waited < 500*time.Millisecond {
-		t.Fatalf("/ok behind /slow was answered after %v, before the one worker could have finished /slow", waited)
+	okDone := time.Now()
+	r := <-slowCh
+	if r.err != nil || !strings.Contains(r.body, "slow") {
+		t.Fatalf("/slow itself: %q, %v", r.body, r.err)
 	}
-	if b, err := io.ReadAll(slow); err != nil || !strings.Contains(string(b), "slow") {
-		t.Fatalf("/slow itself: %q, %v", b, err)
+	// The proof is the order; /slow's 1.5 s deadline keeps it well past the
+	// 200 ms head start, and this floor catches a source that loses that.
+	if held := r.done.Sub(started); held < 400*time.Millisecond {
+		t.Fatalf("/slow held its worker for only %v; too short to show /ok waited behind it", held)
+	}
+	if okDone.Before(r.done.Add(-50 * time.Millisecond)) {
+		t.Fatalf("/ok was answered %v before /slow finished, so the one worker did not run /slow to completion first", r.done.Sub(okDone))
+	}
+}
+
+// ListenFailureServerSource serves on `port` through the single loop
+// (`tcp_serve_opts`) or the supervisor (`tcp_serve_supervised_opts`).
+func ListenFailureServerSource(port int, supervised bool) string {
+	entry := "tcp_serve_opts"
+	if supervised {
+		entry = "tcp_serve_supervised_opts"
+	}
+	return fmt.Sprintf(`import "std/http";
+import "std/tcp";
+function handle(req: HttpRequest, plat: Platform): HttpResponse {
+    return http.ok("ok");
+}
+function main(): i32 {
+    return tcp.%s(%d, tcp.serve_options(), handle);
+}
+`, entry, port)
+}
+
+// CheckListenFailure runs a server built from ListenFailureServerSource
+// on a port something else holds: it exits 98, and stderr names the
+// address and the error in words.
+func CheckListenFailure(t *testing.T, cmd *exec.Cmd, port int) {
+	t.Helper()
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	done := make(chan error, 1)
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	go func() { done <- cmd.Wait() }()
+	select {
+	case <-done:
+	case <-time.After(20 * time.Second):
+		_ = cmd.Process.Kill()
+		t.Fatalf("the server did not exit on a port already in use\n--- stderr ---\n%s", stderr.String())
+	}
+	if code := cmd.ProcessState.ExitCode(); code != 98 {
+		t.Errorf("exit code %d, want 98\n--- stderr ---\n%s", code, stderr.String())
+	}
+	want := fmt.Sprintf("serve: cannot listen on 0.0.0.0:%d: Address already in use", port)
+	if !strings.Contains(stderr.String(), want) {
+		t.Errorf("stderr lacks %q:\n%s", want, stderr.String())
+	}
+}
+
+// FetchDeadlineUpstreams starts two loopback upstreams for
+// FetchDeadlineSource: one that accepts and never replies, and one that
+// answers one canned 200 per connection. A loopback listener that cannot
+// be had is a failure, not a skip: every networking lane has one.
+func FetchDeadlineUpstreams(t *testing.T) (silentPort, livePort int) {
+	t.Helper()
+	silent, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("no loopback listener: %v", err)
+	}
+	t.Cleanup(func() { silent.Close() })
+	var held []net.Conn
+	go func() {
+		for {
+			c, err := silent.Accept()
+			if err != nil {
+				return
+			}
+			held = append(held, c)
+		}
+	}()
+	live, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("no loopback listener: %v", err)
+	}
+	t.Cleanup(func() { live.Close() })
+	go func() {
+		for {
+			c, err := live.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				buf := make([]byte, 4096)
+				_, _ = c.Read(buf)
+				_, _ = c.Write([]byte("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nhi"))
+				c.Close()
+			}(c)
+		}
+	}()
+	return silent.Addr().(*net.TCPAddr).Port, live.Addr().(*net.TCPAddr).Port
+}
+
+// FetchDeadlineSource is a `fetch_get_deadline` client (#4385): against
+// the silent upstream it must answer `None` at its 400 ms deadline, and
+// against the live one `Some` with a 200 in time. Exit 0 when both hold.
+func FetchDeadlineSource(silentPort, livePort int) string {
+	return fmt.Sprintf(`import "std/fetch";
+import "std/time";
+function main(): i32 {
+    var slow: Option[u8[]] = fetch.fetch_get_deadline(fetch.ipv4(127,0,0,1), %d, "/", time.duration_millis(400));
+    var slow_ok: boolean = false;
+    match (slow) {
+        Some(s) => { },
+        None => { slow_ok = true; },
+    }
+    if (!slow_ok) { return 1; }
+    var fast: Option[u8[]] = fetch.fetch_get_deadline(fetch.ipv4(127,0,0,1), %d, "/", time.duration_millis(5000));
+    match (fast) {
+        Some(resp) => {
+            if (fetch.http_status(resp) == 200) { return 0; }
+            return 2;
+        },
+        None => { return 3; },
+    }
+    return 4;
+}
+`, silentPort, livePort)
+}
+
+// CheckFetchDeadline runs a FetchDeadlineSource client: it exits 0, and
+// well before the silent upstream could have been waited out.
+func CheckFetchDeadline(t *testing.T, cmd *exec.Cmd) {
+	t.Helper()
+	start := time.Now()
+	out, err := cmd.CombinedOutput()
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("fetch deadline client failed (elapsed %v): %v\n%s", elapsed, err, out)
+	}
+	if elapsed >= 30*time.Second {
+		t.Fatalf("fetch deadline client took %v: the deadline was not enforced", elapsed)
+	}
+}
+
+// LimitsServerSource serves with the parser's caps lowered through
+// `ServeOptions.limits`: a 16-byte body and three header fields.
+func LimitsServerSource(port int) string {
+	return fmt.Sprintf(`import "std/http";
+import "std/tcp";
+function handle(req: HttpRequest, plat: Platform): HttpResponse {
+    return http.ok("ok");
+}
+function main(): i32 {
+    var limits: http.HttpLimits = http.HttpLimits { ...http.http_limits(), body: 16, header_fields: 3 };
+    return tcp.tcp_serve_opts(%d, tcp.ServeOptions { ...tcp.serve_options(), limits: limits }, handle);
+}
+`, port)
+}
+
+// CheckServeLimits drives LimitsServerSource: a request inside the caps
+// is answered 200, a body past 16 bytes 413 and a fourth header field
+// 431, each before the handler runs.
+func CheckServeLimits(t *testing.T, addr string) {
+	t.Helper()
+	WaitServerReady(t, addr, 10*time.Second)
+	ask := func(req string) string {
+		conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer conn.Close()
+		_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+		if _, err := io.WriteString(conn, req); err != nil {
+			t.Fatal(err)
+		}
+		line, _ := bufio.NewReader(conn).ReadString('\n')
+		return strings.TrimSpace(line)
+	}
+	if got := ask("POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 16\r\nConnection: close\r\n\r\n0123456789abcdef"); got != "HTTP/1.1 200 OK" {
+		t.Errorf("a 16-byte body: %q, want 200", got)
+	}
+	if got := ask("POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 17\r\nConnection: close\r\n\r\n0123456789abcdefg"); !strings.HasPrefix(got, "HTTP/1.1 413") {
+		t.Errorf("a 17-byte body: %q, want 413", got)
+	}
+	if got := ask("GET / HTTP/1.1\r\nHost: x\r\nA: 1\r\nB: 2\r\nC: 3\r\n\r\n"); !strings.HasPrefix(got, "HTTP/1.1 431") {
+		t.Errorf("four header fields: %q, want 431", got)
 	}
 }

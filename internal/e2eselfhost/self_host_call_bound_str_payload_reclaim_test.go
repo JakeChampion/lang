@@ -23,11 +23,11 @@ import (
 // could not see it; it is now seeded as "OPTFRESHF:<name>" beside the existing
 // "OPTFRESH:<name>".
 //
-// The distinction this file exists to pin is REFUSAL, not reclaim. Freeing a
-// non-fresh payload does not leak less — it DANGLES, which is the one outcome
-// worse than the leak being fixed. So the aliased rows below are as essential
-// as the reclaiming ones, and each asserts the exit code against `fern -interp`
-// so a dangle shows up as a wrong answer rather than a quiet corruption.
+// Freeing a non-fresh payload under a live alias does not leak less — it
+// DANGLES. So the aliased rows below are as essential as the fresh ones, and
+// each asserts the exit code against `fern -interp` so a dangle shows up as a
+// wrong answer rather than a quiet corruption. On the typed lowering every row
+// balances.
 
 const cbsOptStrCallSrc = `function mk(i: i32): Option[string] {
     if (i < 0) { return None; }
@@ -224,37 +224,23 @@ func TestSelfHostCallBoundStrPayloadReclaimX86_64(t *testing.T) {
 		return allocs, frees, live
 	}
 
-	// Fully reclaimed: box and string both released by the tag-guarded drop.
+	// Fully reclaimed: box and string both released. The alias rows' payload
+	// aliases a live string, so a release under it shows up as a wrong answer
+	// against the interpreter.
 	for _, tc := range []struct{ name, src string }{
 		{"optstr_from_call", cbsOptStrCallSrc},
 		{"result_str_ok_from_call", cbsResultStrOkCallSrc},
 		{"optstr_concat_from_call", cbsOptStrConcatCallSrc},
 		{"optstr_fnscope_from_call", cbsOptStrFnScopeSrc},
 		{"optstr_direct_ctor", cbsOptStrDirectSrc},
+		{"optstr_alias_local_from_call", cbsOptStrAliasLocalSrc},
+		{"optstr_param_alias_from_call", cbsOptStrParamAliasSrc},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			allocs, frees, live := counts(t, tc.name, tc.src)
 			if live != 0 || allocs != frees {
 				t.Errorf("%s: allocs=%d frees=%d live_bytes=%d — want an exact balance",
 					tc.name, allocs, frees, live)
-			}
-		})
-	}
-
-	// Refused, and pinned AS refused. If one of these starts reclaiming, the
-	// admission has widened past what the "f" flag proves and is freeing a
-	// payload someone else still owns — re-derive the freshness proof before
-	// moving the row up, and do not simply delete the case.
-	for _, tc := range []struct{ name, src string }{
-		{"optstr_alias_local_from_call", cbsOptStrAliasLocalSrc},
-		{"optstr_param_alias_from_call", cbsOptStrParamAliasSrc},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			allocs, frees, live := counts(t, tc.name, tc.src)
-			if frees != 0 || live == 0 {
-				t.Errorf("%s: allocs=%d frees=%d live_bytes=%d — want frees=0 and a nonzero remainder. "+
-					"This shape's payload ALIASES a live string (the \"a\" flag), so reclaiming it is a "+
-					"dangle, not a fix", tc.name, allocs, frees, live)
 			}
 		})
 	}

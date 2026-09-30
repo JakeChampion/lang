@@ -1,0 +1,23 @@
+// A closure may capture a value whose type is a type parameter of the
+// enclosing function: it is concrete once the function is instantiated.
+import "core/int";
+
+struct Pair { a: i32, b: string }
+
+function apply[S](init: S, f: (S) => i32): i32 {
+    var run: () => i32 = (): i32 => f(init);
+    return run();
+}
+
+function twice[S](init: S, f: (S) => i32): i32 {
+    var g: (i32) => i32 = (k: i32): i32 => f(init) * k;
+    return g(2);
+}
+
+function main(): i32 {
+    print(int.int_to_string(apply(7, (n: i32): i32 => n + 1)));
+    print(int.int_to_string(apply("abcd", (s: string): i32 => s.len())));
+    print(int.int_to_string(apply(Pair { a: 3, b: "xy" }, (p: Pair): i32 => p.a + p.b.len())));
+    print(int.int_to_string(twice([1, 2, 3], (xs: i32[]): i32 => xs.len())));
+    return 0;
+}

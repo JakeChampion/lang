@@ -19,8 +19,9 @@
 //	                          body@+16 (Stream ptr),
 //	                          headers@+20 (HeaderMap ptr),
 //	                          trailers@+24 (HeaderMap ptr, empty)
-//	HttpResponse (24 bytes): status@+0, body@+8/+12,
-//	                          headers@+16 (HeaderMap ptr)
+//	HttpResponse (12 bytes): status@+0, body@+4 (a Body enum
+//	                          pointer, read through body_string),
+//	                          headers@+8 (HeaderMap ptr)
 //	HeaderMap    (8 bytes):  names_ptr@+0, values_ptr@+4
 //	Stream       (8 bytes):  data_ptr@+0 (u8[]), pos@+4
 //
@@ -264,6 +265,7 @@ func buildHttpEntryBody(idxs map[string]uint32) []byte {
 	allocU8 := idxs["__alloc_u8"]
 	bytesToStr := idxs["__bytes_to_lang_string"]
 	hmAppend, hasHMAppend := idxs["__method_HeaderMap_append"]
+	bodyString, hasBodyString := idxs["__method_HttpResponse_body_string"]
 	handleFn, hasHandle := idxs["handle"]
 	platformCtor, hasPlatformCtor := idxs["__fern_platform_new"]
 	reqMethod := idxs["wasi_http_request_method"]
@@ -765,37 +767,41 @@ func buildHttpEntryBody(idxs map[string]uint32) []byte {
 		body = inst.InstLocalSet(body, 18)
 	} else {
 		// No user `handle`: synthesise a 500 response struct. Same
-		// fallback shape as the WAT path. status@+0=500; body
-		// fields zeroed (empty string); headers ptr zeroed.
-		body = inst.InstI32Const(body, 24)
+		// fallback shape as the WAT path. status@+0=500; body and
+		// headers pointers zeroed.
+		body = inst.InstI32Const(body, 12)
 		body = inst.InstCall(body, alloc)
 		body = inst.InstLocalTee(body, 18)
 		body = inst.InstI32Const(body, 500)
 		body = memory.InstI32Store(body, 2, 0)
 	}
 
-	// Load (status, body_data, body_len) from resp_struct.
+	// Load the status from resp_struct, and the body as text through
+	// std/http's `body_string`, which reads whichever `Body` the
+	// response holds (a `BodyFile` answers "": the proxy world has no
+	// filesystem). The fallback response has no body to read.
 	body = inst.InstLocalGet(body, 18)
 	body = memory.InstI32Load(body, 2, 0)
 	body = inst.InstLocalSet(body, 19)
-	body = inst.InstLocalGet(body, 18)
-	body = inst.InstI32Const(body, 8)
-	body = numeric.InstI32Add(body)
-	body = memory.InstI32Load(body, 2, 0)
-	body = inst.InstLocalSet(body, 7)
-	body = inst.InstLocalGet(body, 18)
-	body = inst.InstI32Const(body, 12)
-	body = numeric.InstI32Add(body)
-	body = memory.InstI32Load(body, 2, 0)
-	body = inst.InstLocalSet(body, 8)
+	if hasHandle && hasBodyString {
+		body = inst.InstLocalGet(body, 18)
+		body = inst.InstCall(body, bodyString)
+		body = inst.InstLocalSet(body, 8)
+		body = inst.InstLocalSet(body, 7)
+	} else {
+		body = inst.InstI32Const(body, 0)
+		body = inst.InstLocalSet(body, 7)
+		body = inst.InstI32Const(body, 0)
+		body = inst.InstLocalSet(body, 8)
+	}
 
 	// ================ Build outgoing-response ================
 	body = inst.InstCall(body, fieldsNew)
 	body = inst.InstLocalSet(body, 21)
 
-	// Populate outgoing fields from resp.headers (+16).
+	// Populate outgoing fields from resp.headers (+8).
 	body = inst.InstLocalGet(body, 18)
-	body = inst.InstI32Const(body, 16)
+	body = inst.InstI32Const(body, 8)
 	body = numeric.InstI32Add(body)
 	body = memory.InstI32Load(body, 2, 0)
 	body = inst.InstLocalTee(body, 34) // resp_hm

@@ -458,18 +458,9 @@ func runSelfHostBin(cmd *exec.Cmd, stdin string) selfHostRun {
 	var so, se bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &so, &se
 	start := time.Now()
-	if err := cmd.Start(); err != nil {
+	timedOut, err := runBounded(cmd, selfHostRunTimeout)
+	if cmd.ProcessState == nil && err != nil {
 		return selfHostRun{stderr: err.Error(), exit: -1}
-	}
-	done := make(chan error, 1)
-	go func() { done <- cmd.Wait() }()
-	timedOut := false
-	select {
-	case <-done:
-	case <-time.After(selfHostRunTimeout):
-		timedOut = true
-		_ = cmd.Process.Kill()
-		<-done
 	}
 	r := selfHostRun{stdout: so.String(), stderr: se.String(), exit: -1, elapsed: time.Since(start), timedOut: timedOut}
 	if ps := cmd.ProcessState; ps != nil {

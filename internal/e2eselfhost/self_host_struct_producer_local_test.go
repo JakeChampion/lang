@@ -31,10 +31,10 @@ import (
 // cleanup, and this suite pins that it now holds: `sibling_alias` and
 // `sibling_alias_renamed` measure identically.
 //
-// The refusals are half the suite, because a widening is only as good as what it
-// still declines. A returned PARAMETER, an aliased local, a reassigned one, two
-// declarations of the name, and a receiver call that moves a field out are all
-// still refused and still leak — unchanged, byte for byte.
+// The hazard rows are half the suite: a returned PARAMETER, an aliased local, a
+// reassigned one, two declarations of the name, and a receiver call that moves
+// a field out. Each must exit its oracle answer; on the typed lowering every
+// row balances.
 //
 // Every want was confirmed against BOTH oracles — bin/fern -interp and the
 // native x86-64 backend agreed on each — never read off the self-host run.
@@ -64,7 +64,7 @@ function w(a: string): string { return a + "!"; }
 function mk(): P { var p: P = P { xs: [1,2,3], s: w("p") }; return p; }
 function round(i: i32): i32 { var v: P = mk(); return v.xs.len(); }
 function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 200) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
-			want: 19, allocs: 600, frees: 600,
+			want: 19, allocs: 400, frees: 400,
 		},
 		{
 			// CONTROL — the same producer returning the literal DIRECTLY, which
@@ -75,7 +75,7 @@ function w(a: string): string { return a + "!"; }
 function mk(): P { return P { xs: [1,2,3], s: w("p") }; }
 function round(i: i32): i32 { var v: P = mk(); return v.xs.len(); }
 function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 200) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
-			want: 19, allocs: 600, frees: 600,
+			want: 19, allocs: 400, frees: 400,
 		},
 		{
 			// CONTROL — no producer at all. Unchanged.
@@ -85,17 +85,16 @@ function w(a: string): string { return a + "!"; }
 
 function round(i: i32): i32 { var v: P = P { xs: [1,2,3], s: w("p") }; return v.xs.len(); }
 function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 200) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
-			want: 19, allocs: 600, frees: 600,
+			want: 19, allocs: 400, frees: 400,
 		},
 		{
-			// The smallest shape: one rc-array field, no string. Base 200/0
-			// (8800).
+			// The smallest shape: one rc-array field, no string.
 			name: "minimal_array_field",
 			src: `struct P { xs: i32[] }
 function mk(): P { var p: P = P { xs: [1, 2, 3] }; return p; }
 function round(i: i32): i32 { var v: P = mk(); return v.xs.len(); }
 function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
-			want: 51, allocs: 200, frees: 200,
+			want: 51, allocs: 100, frees: 100,
 		},
 		{
 			// THE OVER-RELEASE GUARD, and the reason this fix waited for
@@ -121,7 +120,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 83;
 }`,
-			want: 1, allocs: 153, frees: 153,
+			want: 1, allocs: 102, frees: 102,
 		},
 		{
 			// Its pairwise witness. The colliding program above matches these
@@ -146,7 +145,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 83;
 }`,
-			want: 1, allocs: 153, frees: 153,
+			want: 1, allocs: 102, frees: 102,
 		},
 		{
 			// ADMITTED, and deliberately so after being measured rather than
@@ -182,15 +181,15 @@ function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t +
 			want: 34, allocs: 200, frees: 200,
 		},
 		{
-			// REFUSED — a second binding aliases the local before it is
-			// returned, so two references leave the frame. Unchanged.
+			// A second binding aliases the local before it is returned, so
+			// two references leave the frame.
 			name: "refused_aliased",
 			src: `struct P { xs: i32[] }
 function keepit(q: P): i32 { return q.xs.len(); }
 function mk(i: i32): P { var p: P = P { xs: [i, i + 1] }; var alias: P = p; return p; }
 function round(i: i32): i32 { var v: P = mk(i); return v.xs.len(); }
 function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
-			want: 34, allocs: 200, frees: 0,
+			want: 34, allocs: 200, frees: 200,
 		},
 		{
 			// ADMITTED — the local is reassigned, but EVERY write is itself a
@@ -225,23 +224,21 @@ function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t +
 			want: 34, allocs: 200, frees: 200,
 		},
 		{
-			// REFUSED — a method call on the local moves a field into the
-			// result (`P { xs: p.xs }`), so the returned box no longer sole-owns it.
-			// This is the row that proves the field-move guard is live rather than
-			// decorative: base and after both 300/0, 12000.
+			// A method call on the local moves a field into the result (`P
+			// { xs: p.xs }`), so the returned box no longer sole-owns it.
 			name: "refused_receiver_field_move",
 			src: `struct P { xs: i32[] }
 function (p: P) grow(): P { return P { xs: p.xs }; }
 function mk(i: i32): P { var p: P = P { xs: [i, i + 1] }; var q: P = p.grow(); return p; }
 function round(i: i32): i32 { var v: P = mk(i); return v.xs.len(); }
 function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
-			want: 34, allocs: 300, frees: 0,
+			want: 34, allocs: 300, frees: 300,
 		}}
 }
 
 // TestSelfHostStructProducerLocalX86_64 — a producer that returns a local earns
 // its caller the same reclaim credit the literal-returning form does, and the
-// shapes that must stay refused still are.
+// hazard shapes answer correctly.
 func TestSelfHostStructProducerLocalX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -272,9 +269,7 @@ func TestSelfHostStructProducerLocalX86_64(t *testing.T) {
 				t.Errorf("%s: %s — want allocs=%d", tc.name, summary, tc.allocs)
 			}
 			if frees != tc.frees {
-				t.Errorf("%s: %s — want frees=%d. MORE on a refused row means the "+
-					"widening reached a shape it must decline; FEWER on an admitted row "+
-					"means the credit stopped resolving", tc.name, summary, tc.frees)
+				t.Errorf("%s: %s — want frees=%d", tc.name, summary, tc.frees)
 			}
 		})
 	}

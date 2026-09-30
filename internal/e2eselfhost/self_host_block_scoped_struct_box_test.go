@@ -145,14 +145,13 @@ function main(): i32 {
 	})
 }
 
-// TestSelfHostBlockScopedStructBoxHazardsX86_64 — the block-scoped shapes the box
-// free must still REFUSE, because the box is not the sole owner. Each keeps a live
-// reference past the block and reads it after, so a wrongly-granted free is a
-// use-after-free rather than a leak.
+// TestSelfHostBlockScopedStructBoxHazardsX86_64 — block-scoped shapes whose box
+// is not the sole owner. Each keeps a live reference past the block and reads it
+// after, so a wrongly-granted free is a use-after-free rather than a leak.
 //
-// Free counts are exact and pinned at what this build produces; `__rc_underflow_count()`
-// is asserted separately, because the box free legitimately moves some counts and
-// only the counter distinguishes a new safe release from one landing on a live box.
+// Free counts are exact and pinned at what this build produces (every row
+// reclaims all it allocates); `__rc_underflow_count()` is asserted separately,
+// because only the counter tells a safe release from one landing on a live box.
 //
 // Every `want` is from `fern -interp`.
 func TestSelfHostBlockScopedStructBoxHazardsX86_64(t *testing.T) {
@@ -168,15 +167,10 @@ func TestSelfHostBlockScopedStructBoxHazardsX86_64(t *testing.T) {
 		wantFrees int64
 	}{
 		{
-			// Each block-scoped box is moved into a container read after the loop.
-			//
-			// The count moved 200 -> 1000 with #6535's bound-element admission, and
-			// 1000 is the right number: `keep` now earns the append-built ARRSTRUCT
-			// credit, so its deep walk releases the four boxes and their `xs` buffers
-			// per round instead of stranding them. Native prints the identical
-			// `allocs=1000 frees=1000 live_bytes=0` for this program, and the exit
-			// code below (a read of every element after the loop) is what says the
-			// release lands after the last live use rather than under it.
+			// Each block-scoped box is moved into a container read after
+			// the loop. The exit code (a read of every element after the
+			// loop) says the release lands after the last live use rather
+			// than under it.
 			name: "boxes_escape_into_an_outer_container",
 			body: `struct S { xs: i32[], n: i32 }
 function round(r: i32): i32 {
@@ -196,25 +190,9 @@ function round(r: i32): i32 {
 			wantFrees: 900,
 		},
 		{
-			// Aliased to a local that outlives the block and is read after it.
-			//
-			// wantFrees moved 0 -> 1000 with the alias-REASSIGN retain. This row is
-			// the probe struct_bare_assigned_src's header cited for refusing the
-			// source outright ("the assignee holds the box uncounted and the
-			// source's release frees it underneath ... want frees exactly 0"), and
-			// that header named its own precondition: the refusal stood only until
-			// assignments carried the co-extensive retain. `held = s` now retains,
-			// so `s`'s block-exit release lands on a second counted claim rather
-			// than on the box, and `held` still owns it after the loop.
-			//
-			// Checked rather than assumed, because 0 -> 200 is the direction an
-			// over-release also moves in: native frees every block on this exact
-			// program, the answer is unchanged at 57, __rc_underflow_count() is 0,
-			// and -sanitize reports neither a use-after-free nor a double free. The
-			// check that settles it reads `held.xs[1]` after THREE fresh arrays are
-			// allocated post-loop — a freed buffer would be reused before the read —
-			// and returns native's answer with allocs == frees (measured at 260/260
-			// over 20 rounds; this row runs 100, hence 1000).
+			// Aliased to a local that outlives the block and is read after
+			// it. The typed lowering reclaims every block, allocs == frees;
+			// the answer (57) is what says no release landed under `held`.
 			name: "aliased_to_an_outer_local",
 			body: `struct S { xs: i32[], n: i32 }
 function round(r: i32): i32 {
@@ -230,21 +208,12 @@ function round(r: i32): i32 {
     return acc + held.xs[1] + r;
 }`,
 			want:      57,
-			wantFrees: 1000,
+			wantFrees: 900,
 		},
 		{
-			// Returned out of the block to the caller.
-			//
-			// wantFrees moved 0 -> 200 with #7343: `build` returns a LOCAL, which
-			// the strict-fresh return predicate now admits, so the caller's `var g`
-			// earns its reclaim and releases the returned box. That is the safe
-			// direction and it is checked rather than assumed — the answer still
-			// agrees with interp and native (6), __rc_underflow_count() is 0, and
-			// `-sanitize` reports a leak and no rc over-release. Native frees
-			// 800/800 on this program, so the count moved TOWARDS the oracle.
-			//
-			// The residual 26400 is the loop-local instances from the iterations
-			// that do not return; nothing sweeps those, and that is not this row.
+			// Returned out of the block to the caller. Every block is
+			// reclaimed, allocs == frees, and the answer agrees with
+			// interp.
 			name: "returned_from_inside_the_block",
 			body: `struct S { xs: i32[], n: i32 }
 function build(r: i32): S {
@@ -261,7 +230,7 @@ function round(r: i32): i32 {
     return g.n + g.xs[1];
 }`,
 			want:      6,
-			wantFrees: 200,
+			wantFrees: 800,
 		},
 		{
 			// Passed to a callee that keeps it.
@@ -281,12 +250,11 @@ function round(r: i32): i32 {
     return acc + held.xs[1] + r;
 }`,
 			want:      57,
-			wantFrees: 1000,
+			wantFrees: 900,
 		},
 		{
-			// The FIELD extracted out of the block. The box free is still granted —
-			// it does not touch the field — so this one checks that the withheld deep
-			// drop really is withheld.
+			// The FIELD extracted out of the block and read after the loop;
+			// every block is reclaimed.
 			name: "field_extracted_out_of_the_block",
 			body: `struct S { xs: i32[], n: i32 }
 function round(r: i32): i32 {
@@ -302,7 +270,7 @@ function round(r: i32): i32 {
     return acc + held[1] + r;
 }`,
 			want:      57,
-			wantFrees: 500,
+			wantFrees: 800,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -42,7 +42,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
 }`,
-			want: 87, balance: true,
+			want: 87,
 		},
 		{
 			// REFUSED: the alias is a `.with` receiver. Cancelling the retain
@@ -72,7 +72,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
 }`,
-			want: 6, balance: true,
+			want: 6,
 		},
 		{
 			// REFUSED: the alias leaves the frame whole. The return hands out
@@ -96,7 +96,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
 }`,
-			want: 42, balance: true,
+			want: 42,
 		},
 	}
 }

@@ -52,11 +52,9 @@ import (
 // native x86-64 backend agreed on each — never read off the self-host run under
 // test, and every row is sanitizer-clean under FERN_SANITIZE=1.
 type unmatchedOptoptCase struct {
-	name      string
-	src       string
-	want      int
-	balance   bool
-	wantFrees int64 // asserted exactly on every row that does not set balance
+	name string
+	src  string
+	want int
 }
 
 const unmatchedOptoptMain = "\nfunction main(): i32 { var t: i32 = 0; var i: i32 = 0; " +
@@ -72,7 +70,7 @@ func unmatchedOptoptCases() []unmatchedOptoptCase {
     var o: Option[Option[i32]] = Some(Some(i));
     return i % 7;
 }` + unmatchedOptoptMain,
-			want: 13, balance: true,
+			want: 13,
 		},
 		{
 			// The None-payload spelling of the same construction.
@@ -81,7 +79,7 @@ func unmatchedOptoptCases() []unmatchedOptoptCase {
     var o: Option[Option[i32]] = Some(None);
     return i % 7;
 }` + unmatchedOptoptMain,
-			want: 13, balance: true,
+			want: 13,
 		},
 		{
 			// Matched: covered by the consuming-match analysis before this change
@@ -93,7 +91,7 @@ func unmatchedOptoptCases() []unmatchedOptoptCase {
     match (o) { Some(inner) => { match (inner) { Some(v) => { return v; }, None => { return 3; } } }, None => { return 2; } }
     return 0;
 }` + unmatchedOptoptMain,
-			want: 63, balance: true,
+			want: 63,
 		},
 		{
 			// Matched with NO arm binding — the row that showed the binding was
@@ -104,7 +102,7 @@ func unmatchedOptoptCases() []unmatchedOptoptCase {
     match (o) { Some(_) => { return 5; }, None => { return 2; } }
     return 0;
 }` + unmatchedOptoptMain,
-			want: 4, balance: true,
+			want: 4,
 		},
 		{
 			// THE REBIND HALF (#7716): reassigned, every rebind allocating its own
@@ -115,7 +113,7 @@ func unmatchedOptoptCases() []unmatchedOptoptCase {
     if (i % 2 == 0) { o = Some(Some(i + 1)); }
     return i % 7;
 }` + unmatchedOptoptMain,
-			want: 13, balance: true,
+			want: 13,
 		},
 		{
 			// The MATCHED half of the same rebind, which never reaches this
@@ -136,7 +134,7 @@ func unmatchedOptoptCases() []unmatchedOptoptCase {
     match (o) { Some(inner) => { match (inner) { Some(v) => { return v; }, None => { return 3; } } }, None => { return 2; } }
     return 0;
 }` + unmatchedOptoptMain,
-			want: 80, balance: true,
+			want: 80,
 		},
 		{
 			// THREE rebinds, the last a `Some(None)`, so the assign-path release
@@ -152,13 +150,12 @@ func unmatchedOptoptCases() []unmatchedOptoptCase {
     match (o) { Some(inner) => { match (inner) { Some(v) => { return v; }, None => { return 3; } } }, None => { return 2; } }
     return 0;
 }` + unmatchedOptoptMain,
-			want: 19, balance: true,
+			want: 19,
 		},
 		{
-			// REFUSED: a rebind ALIASING an inner box the function still reads.
+			// A rebind ALIASING an inner box the function still reads.
 			// Releasing it at the next rebind would free a box under a live
-			// reference — the freshness requirement, essential because the
-			// payload is stored uncounted.
+			// reference.
 			name: "refuses_rebind_aliasing_inner",
 			src: `function round(i: i32): i32 {
     var keep: Option[i32] = Some(i);
@@ -167,7 +164,7 @@ func unmatchedOptoptCases() []unmatchedOptoptCase {
     match (keep) { Some(v) => { return v; }, None => { return 2; } }
     return 0;
 }` + unmatchedOptoptMain,
-			want: 63, wantFrees: 0,
+			want: 63,
 		},
 		{
 			// THE rc-INNER SHAPE (#7718): what the scalar-inner gate used to refuse
@@ -182,7 +179,7 @@ function round(i: i32): i32 {
     var o: Option[Option[string]] = Some(Some(w("ab")));
     return i % 7;
 }` + unmatchedOptoptMain,
-			want: 13, balance: true,
+			want: 13,
 		},
 		{
 			// The inner-tag guard is what this row is for: the inner is statically
@@ -193,7 +190,7 @@ function round(i: i32): i32 {
     var o: Option[Option[string]] = Some(None);
     return i % 7;
 }` + unmatchedOptoptMain,
-			want: 13, balance: true,
+			want: 13,
 		},
 		{
 			// Was 800/400 live 6400 — the two option boxes freed, the STRING's own
@@ -213,7 +210,7 @@ function round(i: i32): i32 {
     match (o) { Some(inner) => { match (inner) { Some(v) => { return v.len(); }, None => { return 3; } } }, None => { return 2; } }
     return 0;
 }` + unmatchedOptoptMain,
-			want: 19, balance: true,
+			want: 19,
 		},
 		{
 			// The LITERAL-inner control for the row above. It balances — but note
@@ -228,7 +225,7 @@ function round(i: i32): i32 {
     match (o) { Some(inner) => { match (inner) { Some(v) => { return v.len(); }, None => { return 3; } } }, None => { return 2; } }
     return 0;
 }` + unmatchedOptoptMain,
-			want: 68, balance: true,
+			want: 68,
 		},
 		{
 			// The matched `Some(None)` rc-inner shape, fixed by giving the
@@ -244,13 +241,11 @@ function round(i: i32): i32 {
     match (o) { Some(inner) => { match (inner) { Some(v) => { return v.len(); }, None => { return 3; } } }, None => { return 2; } }
     return 0;
 }` + unmatchedOptoptMain,
-			want: 19, balance: true,
+			want: 19,
 		},
 		{
-			// REFUSED: the inner box is ALIASED from a local the function still
-			// reads. Releasing it would free a box under a live reference — the
-			// family's freshness requirement, essential because the payload is
-			// stored uncounted.
+			// The inner box is ALIASED from a local the function still
+			// reads. Releasing it would free a box under a live reference.
 			name: "refuses_aliased_inner",
 			src: `function round(i: i32): i32 {
     var inner: Option[i32] = Some(i);
@@ -258,13 +253,13 @@ function round(i: i32): i32 {
     match (inner) { Some(v) => { return v; }, None => { return 2; } }
     return 0;
 }` + unmatchedOptoptMain,
-			want: 63, wantFrees: 0,
+			want: 63,
 		},
 	}
 }
 
 // TestSelfHostUnmatchedOptoptX86_64 — an unmatched nested-Option local reclaims
-// both boxes, and an rc inner payload stays refused.
+// both boxes, and an aliased rc inner payload is never freed under its alias.
 func TestSelfHostUnmatchedOptoptX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -291,14 +286,8 @@ func TestSelfHostUnmatchedOptoptX86_64(t *testing.T) {
 			if allocs == 0 {
 				t.Fatalf("%s allocated nothing — the probe is not exercising the path", tc.name)
 			}
-			if tc.balance && (live != 0 || allocs != frees) {
+			if live != 0 || allocs != frees {
 				t.Errorf("%s: %s — must balance at live_bytes 0 (native does)", tc.name, summary)
-			}
-			if !tc.balance && frees != tc.wantFrees {
-				t.Errorf("%s: %s — want exactly %d frees. A HIGHER count is the "+
-					"refusal breaking down: an rc inner payload stranded by a flat "+
-					"dec, or an aliased inner box freed under a live reference",
-					tc.name, summary, tc.wantFrees)
 			}
 		})
 	}

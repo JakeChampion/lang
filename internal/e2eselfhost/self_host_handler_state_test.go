@@ -21,19 +21,26 @@ func TestSelfHostHandlerStateX86_64(t *testing.T) {
 	formattedBin := buildSelfHostBin(t, gcc, dir, "checker_run.fern", "checker_run")
 	const decls = `struct ServeOptions { backlog: i32 }
 function serve_options(): ServeOptions { return ServeOptions { backlog: 128 }; }
-function tcp_serve(port: i32, handler: (HttpRequest, Platform) => HttpResponse): i32 { return 0; }
-function tcp_serve_with[S](port: i32, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse)): i32 { return 0; }
+function __init_platform(): Platform { return Platform { version: 3, mode: 0, sink: cell_new(""), handle: 0 }; }
+function tcp_serve_supervised_opts(port: i32, opts: ServeOptions, handler: (HttpRequest, Platform) => HttpResponse): i32 { return 0; }
+function tcp_serve_supervised_shutdown(port: i32, opts: ServeOptions, handler: (HttpRequest, Platform) => HttpResponse, shutdown: (string) => void): i32 { return 0; }
+function tcp_serve_supervised_with[S](port: i32, opts: ServeOptions, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse)): i32 { return 0; }
+function tcp_serve_supervised_with_shutdown[S](port: i32, opts: ServeOptions, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse), shutdown: (string, S) => void): i32 { return 0; }
+function tcp_serve_opts(port: i32, opts: ServeOptions, handler: (HttpRequest, Platform) => HttpResponse): i32 { return 0; }
 function tcp_serve_shutdown(port: i32, opts: ServeOptions, handler: (HttpRequest, Platform) => HttpResponse, shutdown: (string) => void): i32 { return 0; }
+function tcp_serve_with_opts[S](port: i32, opts: ServeOptions, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse)): i32 { return 0; }
 function tcp_serve_with_shutdown[S](port: i32, opts: ServeOptions, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse), shutdown: (string, S) => void): i32 { return 0; }
 function __port_from_env(name: string, def: i32): i32 { return def; }
 `
-	const response = `HttpResponse { status: 200, body: "ok", headers: HeaderMap { names: [], values: [] } }`
+	const response = `HttpResponse { status: 200, body: BodyText("ok"), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] } }`
 	const stateless = `function handle(req: HttpRequest, plat: Platform): HttpResponse { return ` + response + `; }`
 	const stateful = `function handle(state: i32, req: HttpRequest, plat: Platform): (i32, HttpResponse) { return (state, ` + response + `); }`
 	const missingState = "handler takes a state parameter, but no `init` produces the state to thread through it"
 	const droppedState = "`init` returns a value, but the handler takes no state parameter to thread it through"
 	const hookNeedsInit = "`shutdown` takes a state parameter, but no `init` produces the state to hand it"
 	const hookDropsState = "`shutdown` takes no state parameter, but the handler threads a state it would drop"
+	const initParams = "`init` takes 2 parameters; it takes none, or the platform alone"
+	const initParam = "`init` takes 1 parameters; it takes none, or the platform alone"
 	cases := []struct{ name, src, message string }{
 		{"missing init", stateful, missingState},
 		{"void init", "function init(): void {}\n" + stateful, missingState},
@@ -52,6 +59,13 @@ function __port_from_env(name: string, def: i32): i32 { return def; }
 		{"shutdown with state", "function init(): i32 { return 7; }\n" + stateful + "\nfunction shutdown(reason: string, n: i32): void { print(reason); }", ""},
 		{"stateful shutdown without init", stateless + "\nfunction shutdown(reason: string, n: i32): void { print(reason); }", hookNeedsInit},
 		{"stateless shutdown drops the state", "function init(): i32 { return 7; }\n" + stateful + "\nfunction shutdown(reason: string): void { print(reason); }", hookDropsState},
+		{"init takes the platform", "function init(plat: Platform): i32 { return 7; }\n" + stateful, ""},
+		{"init answers the options", "function init(): ServeOptions { return serve_options(); }\n" + stateless, ""},
+		{"init answers the options beside the state", "function init(plat: Platform): (ServeOptions, i32) { return (serve_options(), 7); }\n" + stateful, ""},
+		{"options are not a state", "function init(): ServeOptions { return serve_options(); }\n" + stateful, missingState},
+		{"state beside the options nobody takes", "function init(): (ServeOptions, i32) { return (serve_options(), 7); }\n" + stateless, droppedState},
+		{"init takes two parameters", "function init(plat: Platform, n: i32): i32 { return n; }\n" + stateful, initParams},
+		{"init takes something else", "function init(n: i32): i32 { return n; }\n" + stateful, initParam},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -87,6 +101,9 @@ function __port_from_env(name: string, def: i32): i32 { return def; }
 				}
 				if tc.message == hookNeedsInit || tc.message == hookDropsState {
 					decl = "\nfunction shutdown("
+				}
+				if tc.message == initParams || tc.message == initParam {
+					decl = "\nfunction init("
 				}
 				at := strings.Index(src, decl)
 				if at < 0 {
