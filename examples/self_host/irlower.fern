@@ -13548,6 +13548,7 @@ function lower_call_named_generic(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIde
     var lat_guard: i32[] = [];
     var laa_slots: i32[] = [];
     var lsa_slots: i32[] = [];
+    var loa_slots: i32[] = [];
     var lca_slots: i32[] = [];
     var own_arr_moves: i32[] = [];
     var lsl_slots: i32[] = [];
@@ -13775,6 +13776,29 @@ function lower_call_named_generic(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIde
                     _ => {}
                 }
             }
+            // A fresh pointer-element literal at an `own` position its callee
+            // does not consume stays this frame's to release
+            // (own_array_flag_param), and a callee whose result can hold no
+            // buffer cannot hand it back.
+            if (!arrlit_arg && sc.ok && own_arg_left_to_caller(sc, cid.name, ai)) {
+                var olrel: string = "";
+                match (c.args[ai]) {
+                    ast.ExprArray(ola) => {
+                        if (arrarr_lit_is_fresh(c.args[ai], [], 0 - 1)) { olrel = "__fern_arrarr_free"; }
+                        else if (fresh_or_literal_strarr_lit(ola, sc)) { olrel = "__fern_str_arr_free"; }
+                    },
+                    _ => {}
+                }
+                if (olrel.len() > 0) {
+                    var olan: string = "$ola" + util.i32_to_string(sc.locals.len());
+                    sc = sc.add_local(olan);
+                    var olas: i32 = sc.slot_of(olan);
+                    sc = sc.emit(ir.op_store_local(olas));
+                    sc = sc.emit(ir.op_load_local(olas));
+                    if (olrel == "__fern_arrarr_free") { loa_slots = loa_slots.append(olas); }
+                    else { lsa_slots = lsa_slots.append(olas); }
+                }
+            }
             // A fresh STRUCT argument — a literal or a strict-fresh producer
             // call. Both stash and free on the same terms as the array arm
             // above; stash_fresh_struct_arg holds the reasoning.
@@ -13906,6 +13930,7 @@ function lower_call_named_generic(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIde
         scr = scr.release(lsa_slots[lsf], "__fern_str_arr_free", "stashed-strarr-arg");
         lsf = lsf + 1;
     }
+    for los in loa_slots { scr = scr.release(los, "__fern_arrarr_free", "stashed-own-arrarr-arg"); }
     scr = release_consumed_arg_temps(scr, lca_slots, cid.name);
     scr = free_stashed_struct_args(scr, lsl_slots);
     // #5464: a bare-typevar-RETURN pass-through fn (`id[T](x:T):T`,
@@ -19742,6 +19767,16 @@ function iife_free_fn_ret_i32(name: string, s: LowerState): boolean {
     return true;
 }
 
+// own_arg_left_to_caller: position `ai` of `callee` is an `own` array
+// position the callee does not consume, and the callee's declared result can
+// hold no buffer.
+function own_arg_left_to_caller(s: LowerState, callee: string, ai: i32): boolean {
+    if (util.index_of_str(s.frame.sigs.own_positions, callee + "|" + util.i32_to_string(ai)) < 0) { return false; }
+    if (s.callee_consumes_own_array(callee, ai)) { return false; }
+    var rt: string = sig_reg_value_of(s.frame.sigs.ret_type_fns, callee);
+    return rt.len() > 0 && ret_type_cannot_hold_buffer(rt);
+}
+
 // iife_arg_is_payload_borrow reports whether `arg` is a BORROW read of the bound
 // payload `name` — the bare payload itself, or a field- / tuple- / index-access
 // chain rooted at it (`name`, `name.f`, `name.0.x`, `name[i]`). Such an argument
@@ -21699,7 +21734,10 @@ function lower_stmt_return(r0: ast.StmtReturn, s: LowerState): LowerState {
         //
         // A hoisted closure's capture extract (`var <cap> = __env[1+i]`,
         // "ENVCAP:") is the same borrow: the env box keeps the reference.
-        var rpenv: boolean = rps >= s.frame.n_params && s.is_arr_slot(rps)
+        // E049 refuses assigning a reference-typed capture, so the slot still
+        // holds what was captured. A captured closure takes ret_closure_uncounted's
+        // retain below instead.
+        var rpenv: boolean = rps >= s.frame.n_params && s.is_arr_slot(rps) && !s.is_closure_local(rpid)
             && reclaim_has(s.frame.reclaimable_names, "ENVCAP:", s.reclaim_site_key(rps));
         if (rpenv || (rps >= s.frame.n_params && s.is_borrowed_arr_slot(rps)
             && (!s.is_moved_claim_slot(rps) || s.ownflag_slot_of(rps) >= 0))) {

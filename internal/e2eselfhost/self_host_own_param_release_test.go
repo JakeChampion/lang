@@ -592,6 +592,59 @@ function main(): i32 {
 }`,
 			want: 35,
 		},
+		{
+			// An `own` capture: the callee does not consume it, so the caller releases
+			// the literal it passed after the call, and the closure's return retains.
+			name: "closure_returns_captured_own_arrarr",
+			src: `@noinline
+function usr(f: (i32) => i32[][], i: i32): i32 {
+    var g: i32[][] = f(i);
+    return g.len() + g[0][0];
+}
+@noinline
+function round(own keep: i32[][], i: i32): i32 {
+    var f = (j: i32): i32[][] => keep;
+    return usr(f, i);
+}
+function main(): i32 {
+    var x: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) {
+        x = x + round([[5], [6]], i);
+        i = i + 1;
+    }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return x % 83;
+}`,
+			want: 36,
+		},
+		{
+			// The same with string[], beside a plain `own` callee.
+			name: "closure_returns_captured_own_strarr",
+			src: `import "std/i32";
+@noinline
+function w(i: i32): string { return "s-a-wide-payload-past-any-inline-threshold-" + i.to_string(); }
+@noinline
+function usr(f: (i32) => string[], i: i32): i32 {
+    var g: string[] = f(i);
+    return g.len() + g[1].len();
+}
+@noinline
+function round(own keep: string[], i: i32): i32 {
+    var f = (j: i32): string[] => keep;
+    return usr(f, i);
+}
+@noinline
+function plain(own keep: string[]): i32 { return keep[0].len(); }
+function main(): i32 {
+    var x: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) { x = x + round([w(i), w(i + 1)], i) + plain([w(i)]); i = i + 1; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return x % 83;
+}`,
+			want: 52,
+		},
 	}
 }
 
