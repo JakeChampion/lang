@@ -69,7 +69,7 @@ function main(): i32 {
 // THE HAZARD THE DEEP DROP EXISTS TO AVOID: the arm moves the array FIELD out to
 // an outer local, so the field buffer is still live where the deep drop would
 // walk it. Freeing it is a use-after-free, which shows up as a wrong exit rather
-// than as a byte count — hence the oracle, and hence this row asserting a leak.
+// than as a byte count — hence the oracle.
 const blkStructFieldMovedSrc = `struct P { xs: i32[], n: i32 }
 function main(): i32 {
     var held: i32[] = [0, 0];
@@ -133,24 +133,16 @@ func TestSelfHostBlockStructPayloadNestedMatchX86_64(t *testing.T) {
 	for _, tc := range []struct{ name, src string }{
 		{"struct_payload_nested", blkStructNestedSrc},
 		{"struct_payload_flat_control", blkStructFlatSrc},
+		// The arm moves the array field to an outer local; the exit agreement
+		// above is what says the drop did not reach it.
+		{"field_moved_out_of_the_arm", blkStructFieldMovedSrc},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			allocs, frees, live := counts(t, tc.name, tc.src)
 			if live != 0 || allocs != frees {
-				t.Errorf("%s: allocs=%d frees=%d live_bytes=%d — want an exact balance. "+
-					"The nested spelling leaked 51200 over 100 rounds with frees=0, because "+
-					"the block pass had no deep-drop branch to reach", tc.name, allocs, frees, live)
+				t.Errorf("%s: allocs=%d frees=%d live_bytes=%d — want an exact balance",
+					tc.name, allocs, frees, live)
 			}
 		})
 	}
-
-	t.Run("field_moved_out_of_the_arm", func(t *testing.T) {
-		allocs, frees, live := counts(t, "field_moved_out_of_the_arm", blkStructFieldMovedSrc)
-		if live == 0 {
-			t.Errorf("field_moved_out_of_the_arm: allocs=%d frees=%d live_bytes=%d — the arm "+
-				"moves the array field to an outer local, so the deep drop must be withheld "+
-				"and the buffer stranded. Exit agreement above is the real detector; a full "+
-				"balance here means the field-move gate was bypassed", allocs, frees, live)
-		}
-	})
 }

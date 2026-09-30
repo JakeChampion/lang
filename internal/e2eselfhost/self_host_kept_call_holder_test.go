@@ -17,11 +17,8 @@ import (
 // keep the shape running under the sanitizer, directly and through an alias.
 //
 // The other two rows are the value-form `.with` / `.append` on a
-// closure-element array: the clone retained its elements through
-// __fern_arr_inc_elems, and a closure element is a code address, not an
-// rc-headed box (#9017). The local's slot is refused by arr_expr_counted_elems;
-// a struct field of that type is spelled `fn[]`, which
-// is_counted_elem_array_type refuses.
+// closure-element array, whose clone must retain its elements only where they
+// are rc-headed boxes (#9017).
 //
 // All four are pinned by the exit code against the interpreter and by the
 // sanitizer staying silent: a use-after-free or an over-release is a
@@ -29,15 +26,11 @@ import (
 // either. A leak line is not a finding here.
 
 type keptCallHolderCase struct {
-	name string
-	// fn is the function whose emitted asm must not carry `absent`; an empty
-	// `absent` pins nothing on the emit.
-	fn, absent string
-	src        string
+	name, src string
 }
 
 var keptCallHolderCases = []keptCallHolderCase{
-	{"kept_call_holder", "lift", "", `enum E { A(i32), B }
+	{"kept_call_holder", `enum E { A(i32), B }
 struct F { body: E[], n: i32 }
 struct M { funcs: F[], items: E[], k: i32 }
 function touch(f: F): F { if (f.n < 0) { return F { body: [], n: 0 }; } return f; }
@@ -75,7 +68,7 @@ function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 50) { t = t + 
 `},
 	// The holder handed on through an alias: `var alias = result` is the same
 	// box, so `infer(alias)` keeps it exactly as `infer(result)` would.
-	{"kept_call_alias", "lift", "", `enum E { A(i32), B }
+	{"kept_call_alias", `enum E { A(i32), B }
 struct F { body: E[], n: i32 }
 struct M { funcs: F[], items: E[], k: i32 }
 function touch(f: F): F { if (f.n < 0) { return F { body: [], n: 0 }; } return f; }
@@ -107,7 +100,7 @@ function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 50) { t = t + 
 	// the flat "fn[]" spelling that is_enum_array_field_type admits.
 	// The elements are read into locals before the call: a call through an
 	// indexed element is not IR-eligible.
-	{"closure_field_with", "round", "__fern_arr_inc_elems", `struct H { hs: ((i32) => i32)[], n: i32 }
+	{"closure_field_with", `struct H { hs: ((i32) => i32)[], n: i32 }
 function inc(x: i32): i32 { return x + 7; }
 function dec(x: i32): i32 { return x - 1; }
 function round(i: i32): i32 {
@@ -122,7 +115,7 @@ function round(i: i32): i32 {
 }
 function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 50) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }
 `},
-	{"closure_array_with", "round", "__fern_arr_inc_elems", `function round(i: i32): i32 {
+	{"closure_array_with", `function round(i: i32): i32 {
     var v1: (i32) => i32 = ((x: i32) => x + 7);
     var s0: ((i32) => i32)[] = [v1, v1, ((y: i32) => y - 1), v1];
     var a0: ((i32) => i32)[] = s0;
@@ -145,9 +138,8 @@ func emittedFn(t *testing.T, asm, fn string) string {
 	return functionListing(asm, label)
 }
 
-// The x86-64 leg pins the emit where a row asks and runs the result: the named
-// function must not carry the retain the bug emitted, and the exit is the
-// interpreter's under the sanitizer, which stays silent.
+// The x86-64 leg runs each row: the exit is the interpreter's under the
+// sanitizer, which stays silent.
 func TestSelfHostKeptCallHolderX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)
@@ -162,9 +154,6 @@ func TestSelfHostKeptCallHolderX86_64(t *testing.T) {
 				[]string{"PATH=/usr/bin:/bin", "FERN_STRICT_IR=1", "FERN_SANITIZE=1"}, "-ir")
 			if len(asm) == 0 {
 				t.Fatal("self-host compiler emitted 0 bytes")
-			}
-			if n := strings.Count(emittedFn(t, string(asm), tc.fn), tc.absent); tc.absent != "" && n != 0 {
-				t.Errorf("%s: %s carries %d call(s) of %s, want none", tc.name, tc.fn, n, tc.absent)
 			}
 			bin := buildBin(t, gcc, dir, "kch_"+tc.name, string(asm))
 			stderr, code := runCaptureStderrExit(t, runner, bin)

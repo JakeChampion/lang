@@ -152,10 +152,11 @@ function round(i: i32): i32 {
 			want: 5, allocs: 500, frees: 500,
 		},
 		{
-			// THE USE-AFTER-FREE the rc gate closes, read as a VALUE rather than a
-			// count: the rebind used to free the old box's xs while the container
-			// still held that box, and the two fresh arrays below reuse the
-			// buffer. Read garbage where native reads 15 per round.
+			// A rebind while the container still holds the old box, read
+			// back as a value: freeing the old xs early reads garbage where
+			// native reads 15 per round. The junk arrays are not heap-
+			// allocated on the typed lowering, so the count covers only the
+			// P values.
 			name: "rebound_source_element_still_readable",
 			src: decl + `function round(i: i32): i32 {
     var p: P = P { xs: [7, 8], n: i };
@@ -167,7 +168,7 @@ function round(i: i32): i32 {
     return ps[0].xs[0] + ps[0].xs[1] + junk[0] - junk[0] + junk2[0] - junk2[0];
 }
 ` + alelMain,
-			want: 45, allocs: 700, frees: 700,
+			want: 45, allocs: 300, frees: 300,
 		},
 	}
 }

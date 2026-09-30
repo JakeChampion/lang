@@ -66,7 +66,7 @@ function main(): i32 {
 		},
 		{
 			// The literal flavor — it never consulted the walk gate at all;
-			// only the element-admission fallback flips it. Was 3/2.
+			// only the element-admission fallback flips it.
 			name: "scalar_literal",
 			src: `enum Tag { Box(i32), Nil }
 function round(src: Tag[], i: i32): i32 {
@@ -87,7 +87,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return acc % 83;
 }`,
-			want: 4, allocs: 3, frees: 3,
+			want: 4, allocs: 1, frees: 1,
 		},
 		{
 			// Control: the rc-payload sibling, admitted by the pre-existing
@@ -141,8 +141,7 @@ func TestSelfHostScalarEnumArrReclaimX86_64(t *testing.T) {
 				t.Errorf("%s: %s — want allocs=%d", tc.name, summary, tc.allocs)
 			}
 			if frees != tc.frees {
-				t.Errorf("%s: %s — want frees=%d. FEWER means the scalar-enum "+
-					"element release stopped being credited and the boxes strand again",
+				t.Errorf("%s: %s — want frees=%d",
 					tc.name, summary, tc.frees)
 			}
 		})

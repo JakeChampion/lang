@@ -28,13 +28,12 @@ import (
 // machinery: str_accum_value_is_fresh is the expression test OR the registry
 // lookup, and both the declaration and the rebind ask it.
 //
-// WHAT DID NOT MOVE IS THE POINT. The class's own gates are untouched, so the
-// three shapes that must stay refused still are, each pinned below at its
-// leaking count: an alias bound before the rebind (which would point at a box
-// the rebind frees), a rebind from a non-fresh value (which would alias a live
-// box), and a store into a container. Each reads its value back after 200
-// rounds of churn have recycled the freelist, and each answers identically on
-// native x86-64, `bin/fern -interp` and the self-host.
+// Three shapes could over-release: an alias bound before the rebind (which
+// would point at a box the rebind frees), a rebind from a non-fresh value
+// (which would alias a live box), and a store into a container. Each reads its
+// value back after 200 rounds of churn have recycled the freelist, and each
+// answers identically on native x86-64, `bin/fern -interp` and the self-host.
+// On the typed lowering every row balances.
 //
 // Every flipped row was re-run under FERN_SANITIZE=1 with
 // FERN_RC_UNDERFLOW_TRAP=1 and FERN_RC_FREE_DEBUG=1: clean, no trap, no
@@ -77,7 +76,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return acc % 83;
 }`,
-			want: 68, balance: true,
+			want: 68,
 		},
 		{
 			// The same shape with strings too long for SSO, so native allocates
@@ -97,7 +96,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return acc % 83;
 }`,
-			want: 46, balance: true,
+			want: 46,
 		},
 		{
 			// A rebind inside an `if`, so half the rounds take it and half
@@ -110,7 +109,7 @@ function main(): i32 {
     if (x.len() < 10) { return 0 - 1; }
     return (x.len() + junk) % 101;
 }` + strRebindChurnMain,
-			want: 6, balance: true,
+			want: 6,
 		},
 		{
 			// A loop rebind: three superseded boxes per round, each freed at
@@ -124,7 +123,7 @@ function main(): i32 {
     if (x.len() < 10) { return 0 - 1; }
     return (x.len() + junk) % 101;
 }` + strRebindChurnMain,
-			want: 72, balance: true,
+			want: 72,
 		},
 		{
 			// The rebind CONSUMES the local (`x = mk(x)`), which is the
@@ -138,7 +137,7 @@ function main(): i32 {
     if (x.len() < 10) { return 0 - 1; }
     return (x.len() + junk) % 101;
 }` + strRebindChurnMain,
-			want: 31, balance: true,
+			want: 31,
 		},
 		{
 			// The final value is MOVED OUT by a bare `return x`, which the
@@ -153,7 +152,7 @@ function round(i: i32): i32 {
     if (s.len() != want) { return 0 - 1; }
     return (s.len() + junk) % 101;
 }` + strRebindChurnMain,
-			want: 23, balance: true,
+			want: 23,
 		},
 		{
 			// Control: the single-bind sibling, clean before this change. If it
@@ -172,10 +171,10 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return acc % 83;
 }`,
-			want: 51, balance: true,
+			want: 51,
 		},
 		{
-			// REFUSED: an alias is bound BEFORE the rebind, so crediting would
+			// An alias is bound BEFORE the rebind, so crediting would
 			// free a box `y` still points at. This is the hazard the class's
 			// own comment names, and it is why the fix is the registry rather
 			// than a loosened gate.
@@ -192,7 +191,7 @@ function main(): i32 {
 			want: 16,
 		},
 		{
-			// REFUSED: the rebind value is another LIVE local, not a fresh box,
+			// The rebind value is another LIVE local, not a fresh box,
 			// so the slot would hold an alias at exit.
 			name: "refused_nonfresh_rebind",
 			src: strRebindDecl + `function round(i: i32): i32 {
@@ -206,7 +205,7 @@ function main(): i32 {
 			want: 72,
 		},
 		{
-			// REFUSED: the final value is stored into a container, which
+			// The final value is stored into a container, which
 			// outlives the sweep.
 			name: "refused_container_store",
 			src: strRebindDecl + `function round(i: i32): i32 {
@@ -251,12 +250,8 @@ func TestSelfHostStrRebindProducerX86_64(t *testing.T) {
 			if allocs == 0 {
 				t.Fatalf("%s allocated nothing — the probe is not exercising the path", tc.name)
 			}
-			if tc.balance && (live != 0 || allocs != frees) {
+			if live != 0 || allocs != frees {
 				t.Errorf("%s: %s — must balance at live_bytes 0", tc.name, summary)
-			}
-			if !tc.balance && live == 0 && allocs == frees {
-				t.Errorf("%s: %s — pinned as REFUSED; if this now balances the credit "+
-					"widened, and the row belongs to whatever widened it", tc.name, summary)
 			}
 		})
 	}

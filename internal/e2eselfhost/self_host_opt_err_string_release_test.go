@@ -147,7 +147,7 @@ function main(): i32 {
 		}
 	})
 
-	// REFUSED: the producer's Err payload is a bare parameter, so it aliases the
+	// The producer's Err payload is a bare parameter, so it aliases the
 	// caller's box. Churns same-shaped strings before the aliased read, because
 	// otherwise the released box is not recycled and this exits correctly with the
 	// bug present.
@@ -180,11 +180,10 @@ function main(): i32 {
     return x % 251;
 }`
 		allocs, frees, live := counts(t, "oes_err_alias", src)
-		if live == 0 {
-			t.Errorf("allocs=%d frees=%d live_bytes=%d — want a nonzero remainder. This "+
-				"producer's Err payload is its own PARAMETER, so it aliases the caller's box "+
-				"and releasing it is a dangle. The \"f\" flag would admit it — it describes "+
-				"the success payload — which is why the Err verdict is computed separately",
+		if live != 0 || allocs != frees {
+			t.Errorf("allocs=%d frees=%d live_bytes=%d — want an exact balance. This "+
+				"producer's Err payload is its own PARAMETER, so it aliases the caller's box; "+
+				"the exit agreement is what says it was not freed under the caller",
 				allocs, frees, live)
 		}
 	})

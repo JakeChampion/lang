@@ -30,7 +30,7 @@ type arm64LcCase struct {
 	src  string
 	want int
 	// balanced: allocs == frees and live == 0 (a clean program).
-	// leaky: allocs > frees and live > 0 (a refused shape, sound leak).
+	// leaky: allocs > frees and live > 0 (memory still live at exit).
 	// zero: allocs == 0 && frees == 0 (a heap-free program).
 	verdict string
 }
@@ -48,16 +48,13 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
 			want: 21, verdict: "balanced",
 		},
 		{
-			// A refused alias: leaks soundly per round, so the census must SAY
-			// so — the half a green exit code cannot. The shape is a REASSIGNED
-			// alias (string_alias_reassigned_refused's), refused as a property
-			// of the class rather than conservatively, so it stays leaky. It
-			// used to be the alias CHAIN, which #7386 credits.
-			name: "leak_refused_alias",
-			src: `function w(a: string): string { return a + "!"; }
-function round(i: i32): i32 { var t: string = w("ab"); var v: string = t; v = w("cd"); return v.len() + i; }
-function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } return x % 83; }`,
-			want: 21, verdict: "leaky",
+			// A structural leak: `keep` is still live in main when bail calls
+			// exit(), so its blocks are never freed and the census must say so
+			// — the half a green exit code cannot.
+			name: "leak_live_at_exit",
+			src: `function bail(n: i32): i32 { exit(n); return 0; }
+function main(): i32 { var keep: i32[][] = []; var i: i32 = 0; while (i < 3) { keep = keep.append([i, 2, 3, 4]); i = i + 1; } var r: i32 = bail(keep.len()); return r + keep.len(); }`,
+			want: 3, verdict: "leaky",
 		},
 		{
 			// HEAP-FREE, returning main: the report runs in the _start epilogue
@@ -165,4 +162,32 @@ func TestSelfHostArm64LeakcheckOffEmitsNothing(t *testing.T) {
 			t.Errorf("flag-on asm is missing %q", marker)
 		}
 	}
+}
+
+// arm64CensusRun compiles src for arm64 through the asm_ir_run driver with the
+// census on and hands the result to arm64Census.
+func arm64CensusRun(t *testing.T, x86runner []string, driverBin, gcc, qemu, name, src string) int {
+	t.Helper()
+	asm := runCaptureEnv(t, x86runner, driverBin, []byte(src),
+		[]string{"PATH=/usr/bin:/bin", "FERN_LEAKCHECK=1", "FERN_SEM_IR_STRICT=1"}, "-target", "arm64-linux")
+	return arm64Census(t, gcc, qemu, name, string(asm))
+}
+
+// arm64Census runs arm64 assembly built with FERN_LEAKCHECK under qemu and
+// returns its exit code. It fails the test unless the census balances at
+// live_bytes 0 with something allocated.
+func arm64Census(t *testing.T, gcc, qemu, name, asm string) int {
+	t.Helper()
+	cmd := runArm64Bin(qemu, buildBinArm64(t, gcc, t.TempDir(), name, asm))
+	var errBuf strings.Builder
+	cmd.Stderr = &errBuf
+	_ = cmd.Run()
+	var allocs, frees, live int64
+	if _, err := fmtSscan(leakSummaryLine(errBuf.String()), &allocs, &frees, &live); err != nil {
+		t.Fatalf("%s: no leakcheck summary in %q: %v", name, errBuf.String(), err)
+	}
+	if allocs == 0 || allocs != frees || live != 0 {
+		t.Errorf("%s: allocs=%d frees=%d live_bytes=%d, want a balanced census", name, allocs, frees, live)
+	}
+	return cmd.ProcessState.ExitCode()
 }

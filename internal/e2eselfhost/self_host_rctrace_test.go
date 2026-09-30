@@ -41,27 +41,25 @@ const hevBalancedSrc = `function sum(xs: i32[]): i32 {
 }
 
 function main(): i32 {
-    var a: i32 = sum([1, 2, 3]);
+    var a: i32 = sum([1, 2].append(3));
     var s: string = "ab" + "cd";
     return a + s.len();
 }`
 
-// hevExitLeakSrc leaves memory unreclaimed by calling exit() with live locals:
-// the process terminates without unwinding, so the scope sweep never runs and
-// the blocks are genuinely never freed.
+// hevExitLeakSrc leaves memory unreclaimed by calling exit() while `keep` is
+// still live in main, since main reads it again after the call. The process
+// terminates without unwinding, so the blocks are genuinely never freed.
 //
-// That structural quality is the point. This probe used to retain arrays in an
-// `i32[][]` and rely on the reclaim credit not covering them — which was true
-// when it was written and stopped being true in #6112, breaking this test. A
-// probe whose leak is a CONSERVATISM GAP has a shelf life measured in however
-// long it takes someone to close the gap; a probe whose leak is "the process
-// exited" does not. Anything asserting a leak exists needs the second kind.
-const hevExitLeakSrc = `function main(): i32 {
+// A probe asserting a leak needs one that is structural like this, not a
+// reclaim gap someone will close. Calling exit() from main itself is not
+// enough: a local dead before the call is released before it.
+const hevExitLeakSrc = `function bail(n: i32): i32 { exit(n); return 0; }
+function main(): i32 {
     var keep: i32[][] = [];
     var i: i32 = 0;
-    while (i < 3) { keep = keep.append([1, 2, 3, 4]); i = i + 1; }
-    exit(keep.len());
-    return 0;
+    while (i < 3) { keep = keep.append([i, 2, 3, 4]); i = i + 1; }
+    var r: i32 = bail(keep.len());
+    return r + keep.len();
 }`
 
 // hevEvent is one parsed `rctrace` line.

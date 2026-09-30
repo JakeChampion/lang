@@ -231,10 +231,8 @@ function main(): i32 {
 		counts(t, "oss_aliased", src)
 	})
 
-	// REFUSED, and it must stay refused: the arm binds the payload into a value
-	// that outlives the match, so the deep drop would dangle rather than leak.
-	// optstruct_payload_escapes sees the bare `p.name` extraction (a `string` field
-	// is non-scalar, so extracting it escapes) and withholds the credit.
+	// The arm binds the payload's string field into a value that outlives the
+	// match, so a deep drop at the match would dangle.
 	t.Run("escaping_payload_field_still_strands", func(t *testing.T) {
 		src := `struct P { name: string, n: i32 }
 function round(r: i32): i32 {
@@ -254,12 +252,11 @@ function main(): i32 {
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 97;
 }`
-		_, _, live := counts(t, "oss_escaping", src)
-		if live == 0 {
-			t.Errorf("live_bytes=0 — want a nonzero remainder. This arm extracts the " +
-				"string field into a name that outlives the match, so releasing the " +
-				"payload here would DANGLE, not leak. If a later slice teaches the pass " +
-				"to see through the extraction, convert this case rather than delete it")
+		allocs, frees, live := counts(t, "oss_escaping", src)
+		if live != 0 || allocs != frees {
+			t.Errorf("allocs=%d frees=%d live_bytes=%d — want an exact balance. This arm "+
+				"extracts the string field into a name that outlives the match; the exit "+
+				"agreement is what says the payload was not freed under it", allocs, frees, live)
 		}
 	})
 }

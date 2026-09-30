@@ -99,13 +99,8 @@ func fsDirTreeSrc(rounds int, p string) string {
         match (remove_dir_all("%[1]s/x")) { Ok(_) => {}, Err(e) => { return 9; } }`, p))
 }
 
-// fsStatSrc and fsReadDirSrc are the two leaves that still hold something once
-// their path buffer comes back: stat's FileStat struct and read_dir's string[]
-// of names are Ok payloads no arm binding reclaims (the owned-payload family of
-// #8402 names read_file / read_file_bytes / read_chunk / read_line / env and
-// stops there). They assert the #8813 property — live bytes independent of the
-// PATH — plus a pinned count of blocks left per round, which is what keeps a
-// re-abandoned dirent buffer from hiding behind the payload.
+// fsStatSrc and fsReadDirSrc return an Ok payload beside the path buffer:
+// stat's FileStat struct and read_dir's string[] of names. Both are reclaimed.
 func fsStatSrc(rounds int, p string) string {
 	return fsLoop(rounds, fmt.Sprintf(
 		`        match (stat("%s")) { Ok(st) => { acc = acc + 1; }, Err(e) => { return 8; } }`, p))
@@ -170,20 +165,16 @@ func TestSelfHostFsPathBufferReclaimX86_64(t *testing.T) {
 		name string
 		base func(work string) string
 		src  func(rounds int, path string) string
-		// residual is the number of blocks a round still leaves for a leaf
-		// whose Ok payload nothing reclaims yet; -1 means the leaf must
-		// leave nothing at all.
-		residual int
 	}{
-		{name: "open_close", base: fsBase("f"), src: fsOpenCloseSrc, residual: -1},
-		{name: "read_file", base: fsBase("f"), src: fsReadFileSrc, residual: -1},
-		{name: "read_file_bytes", base: fsBase("f"), src: fsReadFileBytesSrc, residual: -1},
-		{name: "write_file", base: fsBase("f"), src: fsWriteFileSrc, residual: -1},
-		{name: "access", base: fsBase("f"), src: fsAccessSrc, residual: -1},
-		{name: "write_remove", base: fsBase("scratch"), src: fsWriteRemoveSrc, residual: -1},
-		{name: "dir_tree", base: fsDirTreeBase, src: fsDirTreeSrc, residual: -1},
-		{name: "stat", base: fsBase("f"), src: fsStatSrc, residual: 1},
-		{name: "read_dir", base: fsBase("d"), src: fsReadDirSrc, residual: 2},
+		{name: "open_close", base: fsBase("f"), src: fsOpenCloseSrc},
+		{name: "read_file", base: fsBase("f"), src: fsReadFileSrc},
+		{name: "read_file_bytes", base: fsBase("f"), src: fsReadFileBytesSrc},
+		{name: "write_file", base: fsBase("f"), src: fsWriteFileSrc},
+		{name: "access", base: fsBase("f"), src: fsAccessSrc},
+		{name: "write_remove", base: fsBase("scratch"), src: fsWriteRemoveSrc},
+		{name: "dir_tree", base: fsDirTreeBase, src: fsDirTreeSrc},
+		{name: "stat", base: fsBase("f"), src: fsStatSrc},
+		{name: "read_dir", base: fsBase("d"), src: fsReadDirSrc},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			measure := fsMeasure(t, gcc, runner, dir, driverBin, tc.name)
@@ -202,15 +193,6 @@ func TestSelfHostFsPathBufferReclaimX86_64(t *testing.T) {
 					sl, len(short), ll, len(long), sa, la, sf, lf)
 			}
 
-			if tc.residual >= 0 {
-				if got, want := sa-sf, int64(tc.residual*many); got != want {
-					t.Errorf("%d blocks left over %d rounds, want %d (allocs=%d frees=%d): "+
-						"only the Ok payload may remain — a re-abandoned buffer shows up here",
-						got, many, want, sa, sf)
-				}
-				return
-			}
-
 			fa, ff, fl := measure("few", tc.src(few, short))
 			if fl != sl {
 				t.Errorf("live_bytes %d at rounds=%d vs %d at rounds=%d (allocs %d/%d, frees %d/%d): "+
@@ -224,14 +206,11 @@ func TestSelfHostFsPathBufferReclaimX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostFsErrorPathBufferReclaimX86_64 — the failing calls. Their path
-// buffer always had an owner (it WAS the IoError's path string), so what these
-// legs read is the block that owner never covered: read_file allocates its
-// content buffer from the file's size and then abandons it whenever the read or
-// the UTF-8 check fails, which on a directory is a 4 KiB block a call.
-//
-// A failing call still leaves TWO blocks — the IoError and the path string
-// inside it, the deep drop #8806 left open — so these read the count, not zero.
+// TestSelfHostFsErrorPathBufferReclaimX86_64 — the failing calls. read_file
+// allocates its content buffer from the file's size and must not abandon it when
+// the read or the UTF-8 check fails, which on a directory is a 4 KiB block a
+// call. Every block a failing call allocates, the IoError and its path string
+// included, is reclaimed.
 func TestSelfHostFsErrorPathBufferReclaimX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -243,10 +222,6 @@ func TestSelfHostFsErrorPathBufferReclaimX86_64(t *testing.T) {
 		few  = 20
 		many = 200
 	)
-	// errBlocks is what a failing call is allowed to leave: the IoError box and
-	// the path string it carries.
-	const errBlocks = 2
-
 	fail := func(call string) func(rounds int, path string) string {
 		return func(rounds int, path string) string {
 			return fsLoop(rounds, fmt.Sprintf(
@@ -274,10 +249,9 @@ func TestSelfHostFsErrorPathBufferReclaimX86_64(t *testing.T) {
 			p := fsShortPath(work, tc.base)
 			for _, rounds := range []int{few, many} {
 				a, f, l := measure(fmt.Sprintf("r%d", rounds), tc.src(rounds, p))
-				if got, want := a-f, int64(errBlocks*rounds); got != want {
-					t.Errorf("%d blocks left over %d rounds, want %d (allocs=%d frees=%d live_bytes=%d): "+
-						"only the IoError and its path string may remain",
-						got, rounds, want, a, f, l)
+				if a != f || l != 0 {
+					t.Errorf("allocs=%d frees=%d live_bytes=%d over %d rounds — every block a "+
+						"failing call allocates must be freed", a, f, l, rounds)
 				}
 			}
 		})

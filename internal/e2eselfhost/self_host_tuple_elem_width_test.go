@@ -5,7 +5,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -270,32 +269,19 @@ func TestSelfHostTupleElemWidthWasmIR(t *testing.T) {
 	}
 }
 
-// untypedTupleElemBailCases are destructures whose element types NOTHING in
-// scope records. Binding them anyway is the miscompile the bail exists to
-// prevent: the untyped element read is 4 bytes, so an f64 element came back as
-// the low half of its bit pattern and an i64 element truncated, on every backend
-// and with no diagnostic (#8458). The refusal names the element and the binding.
-//
-// Both shapes are typed correctly by the ANNOTATING drivers (asm_load_run, and
-// the self-host CLI) from ExprIndex.ty, and compile there — these rows say what
-// happens where the checker's stamp is absent, which is every IR driver that
-// reads one module from stdin.
-var untypedTupleElemBailCases = []struct {
+// untypedTupleElemCases are destructures whose element types no annotation
+// in the driver's module records: a two-deep tuple array, and an erased
+// generic's tuple array. Binding them with a 4-byte read would truncate an i64
+// and return the low half of an f64 (#8458). The typed lowering types both from
+// the declarations, so each compiles and matches bin/fern -interp.
+var untypedTupleElemCases = []struct {
 	name string
 	src  string
-	want string
+	want int
 }{
-	// A two-deep tuple array: no slot records the element spelling of a
-	// `(…)[][]`, and the array-tag walk peels to the inner array, not the tuple.
-	{"nested-tuple-array", `function main(): i32 { var ts: (i32, f64)[][] = [[(1, 2.5)]]; var (a, b) = ts[0][0]; return a; }`,
-		"destructured tuple element 0 (`a`) has no type"},
-	// An ERASED generic's tuple array. The self-host does not monomorphise
-	// `mk[T]`, and T is not pinned by the registry (arrtup_ret_fns_of declines a
-	// return spelling holding a type variable), so the element has no type here
-	// at all.
+	{"nested-tuple-array", `function main(): i32 { var ts: (i32, f64)[][] = [[(1, 2.5)]]; var (a, b) = ts[0][0]; return a + (b * 2.0) as i32; }`, 6},
 	{"erased-generic-tuple-array", `function mk[T](x: T): (i32, T)[] { return [(1, x)]; }
-function main(): i32 { var e = mk(5); var (a, b) = e[0]; return a + b; }`,
-		"destructured tuple element 0 (`a`) has no type"},
+function main(): i32 { var e = mk(5); var (a, b) = e[0]; return a + b; }`, 6},
 }
 
 func TestSelfHostUntypedTupleElemBailsX86_64(t *testing.T) {
@@ -304,23 +290,12 @@ func TestSelfHostUntypedTupleElemBailsX86_64(t *testing.T) {
 	copySelfHostDriver(t, dir, "asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
 
-	for _, tc := range untypedTupleElemBailCases {
+	for _, tc := range untypedTupleElemCases {
 		t.Run(tc.name, func(t *testing.T) {
-			cmd := runX86_64Bin(runner, driverBin, "-ir")
-			cmd.Stdin = bytes.NewReader([]byte(tc.src + "\n"))
-			var stdout, stderr bytes.Buffer
-			cmd.Stdout = &stdout
-			cmd.Stderr = &stderr
-			cmd.Env = append(childEnv(), "FERN_STRICT_IR=1")
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != 3 {
-				t.Fatalf("%s: driver exited %d under FERN_STRICT_IR=1, want 3 (a named bail)\nstderr: %s", tc.name, code, stderr.String())
-			}
-			if !strings.Contains(stderr.String(), tc.want) {
-				t.Errorf("%s: bail diagnostic %q does not name the site (%q)", tc.name, stderr.String(), tc.want)
-			}
-			if stdout.Len() != 0 {
-				t.Errorf("%s: driver emitted %d bytes of asm for a bailed module", tc.name, stdout.Len())
+			asm := hevCompile(t, runner, driverBin, tc.src+"\n", []string{"FERN_SEM_IR_STRICT=1"})
+			_, exit := hevRun(t, runner, buildBin(t, gcc, dir, "untyped_"+tc.name, asm))
+			if exit != tc.want {
+				t.Errorf("%s exited %d, want %d", tc.name, exit, tc.want)
 			}
 		})
 	}

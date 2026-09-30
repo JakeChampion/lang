@@ -205,9 +205,8 @@ function main(): i32 {
 `
 
 // The hazard: the arm binding is a scalar, but the OPTION itself is read again
-// after the match, so the box is still live where the precise drop would land.
-// `body_unsafe_for_match_borrow` re-reads only the scrutinee as a borrow — a
-// second, non-scrutinee mention must still refuse.
+// after the match, so the box is still live where a drop inside the arm would
+// land.
 const scalarOptUsedAfterSrc = `function olen(o: Option[i32]): i32 { match (o) { Some(a) => { return a; }, None => { return 0; } } }
 function round(i: i32): i32 {
     var acc: i32 = 0;
@@ -272,24 +271,17 @@ func TestSelfHostScalarOptNestedMatchX86_64(t *testing.T) {
 		{"call_init_flat_control", scalarOptCallFlatSrc},
 		{"block_scoped_nested", scalarOptBlockNestedSrc},
 		{"block_scoped_flat_control", scalarOptBlockFlatSrc},
+		// The option is read again after the match, so the box is live where a
+		// drop inside the arm would land; the underflow counter guards that.
+		{"read_after_the_enclosing_if", scalarOptUsedAfterSrc},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			allocs, frees, live := counts(t, tc.name, tc.src)
 			if live != 0 || allocs != frees {
-				t.Errorf("%s: allocs=%d frees=%d live_bytes=%d — want an exact balance. "+
-					"The nested spelling leaked the box every round (4000 over 100) while "+
-					"the flat control was 0", tc.name, allocs, frees, live)
+				t.Errorf("%s: allocs=%d frees=%d live_bytes=%d — want an exact balance",
+					tc.name, allocs, frees, live)
 			}
 		})
 	}
 
-	t.Run("read_after_the_enclosing_if", func(t *testing.T) {
-		allocs, frees, live := counts(t, "read_after_the_enclosing_if", scalarOptUsedAfterSrc)
-		if frees != 0 || live == 0 {
-			t.Errorf("read_after_the_enclosing_if: allocs=%d frees=%d live_bytes=%d — want "+
-				"frees=0. The option is read again after the match, so the box is live "+
-				"where the precise drop would land; the borrow reading re-reads only the "+
-				"SCRUTINEE, and a second mention must still refuse", allocs, frees, live)
-		}
-	})
 }

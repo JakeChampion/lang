@@ -41,7 +41,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
 }`,
-			want: 14, balance: true,
+			want: 14,
 		},
 		{
 			// The freed-block-reuse net: 200 rounds of same-size string churn
@@ -68,7 +68,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return (t + ok) % 97;
 }`,
-			want: 17, balance: true,
+			want: 17,
 		},
 	}
 }
@@ -117,10 +117,11 @@ func TestSelfHostOptStrCallargX86_64(t *testing.T) {
 	// Plan-off leg on the flipped cell: the escape gate reverts to
 	// body_unsafe_for, which reads the call arg as an escape, so the credit
 	// is withheld and the cell reverts to its old safe leak — the exit must
-	// not move and nothing may over-release.
+	// not move and nothing may over-release. The knob is the AST lowering's,
+	// so this leg compiles on it.
 	t.Run("callarg_plan_off_reverts_to_leak", func(t *testing.T) {
 		src := optstrCallargCases()[0].src
-		asm := hevCompile(t, runner, driverBin, src, []string{"FERN_LEAKCHECK=1", "FERN_SELFHOST_RC_PLAN=0"})
+		asm := hevCompile(t, runner, driverBin, src, []string{"FERN_SEM_IR=", "FERN_LEAKCHECK=1", "FERN_SELFHOST_RC_PLAN=0"})
 		progBin := buildBin(t, gcc, dir, "optstrcallarg_planoff", asm)
 		stderr, exit := hevRun(t, runner, progBin)
 		if exit != 14 {

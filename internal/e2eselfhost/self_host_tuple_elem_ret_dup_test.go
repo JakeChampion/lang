@@ -40,7 +40,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return acc % 83;
 }`,
-			want: 4, balance: true,
+			want: 4,
 		},
 		{
 			// Self-extract: the frame that owns the TUPRCS tuple also calls
@@ -60,7 +60,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return acc % 83;
 }`,
-			want: 21, balance: true,
+			want: 21,
 		},
 		{
 			// A CONDITIONAL element return (the ret_ok recursion) with a live
@@ -83,7 +83,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return acc % 83;
 }`,
-			want: 2, balance: true,
+			want: 2,
 		},
 		{
 			// Adversarial: the element passed ONWARD (`sink(src.1)`) is a
@@ -108,14 +108,8 @@ function main(): i32 {
 			want: 4,
 		},
 		{
-			// Adversarial: the BIND spelling (`var e = src.1; return e`) is
-			// deliberately NOT admitted by this port (the StmtVar arm of the
-			// scans is untouched; the alias vet passes ret_dup_ok=false), so
-			// the callee's caller keeps its refusal — a safe leak, pinned by
-			// frees so a silent widening moves a number. Measured 200/0/8000
-			// per 100 rounds: keep's box leaks (TUPB refused) and the element
-			// leaks with it — its bind-retain count goes out to the caller
-			// and back to rest at 1 inside the never-freed box.
+			// Adversarial: the BIND spelling (`var e = src.1; return e`).
+			// The exit and free-safety are what this row pins.
 			name: "bind_spelling_stays_refused",
 			src: `function get(src: (i32, i32[])): i32[] {
     var e: i32[] = src.1;
@@ -133,7 +127,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return acc % 83;
 }`,
-			want: 4, wantFrees: 0,
+			want: 4,
 		},
 	}
 }
@@ -163,14 +157,8 @@ func TestSelfHostTupleElemRetDupX86_64(t *testing.T) {
 			if allocs == 0 {
 				t.Fatalf("%s allocated nothing — the probe is not exercising the path", tc.name)
 			}
-			if tc.balance {
-				if live != 0 || allocs != frees {
-					t.Errorf("%s: %s — must balance at live_bytes 0", tc.name, summary)
-				}
-			} else if tc.wantFrees >= 0 && frees != tc.wantFrees {
-				t.Errorf("%s: %s — pinned frees moved (want %d)", tc.name, summary, tc.wantFrees)
-			} else if tc.wantFrees < 0 {
-				t.Logf("%s: %s (measure and pin)", tc.name, summary)
+			if live != 0 || allocs != frees {
+				t.Errorf("%s: %s — must balance at live_bytes 0", tc.name, summary)
 			}
 
 			sanAsm := hevCompile(t, runner, driverBin, tc.src, []string{"FERN_SANITIZE=1"})
@@ -183,24 +171,22 @@ func TestSelfHostTupleElemRetDupX86_64(t *testing.T) {
 				t.Fatalf("%s sanitize leg reported:\n%s", tc.name, sanErr)
 			}
 
-			if tc.balance {
-				// Plan-off leg: none of TUPB / TUPELEMOK / TUPRCS is
-				// plan-routed, so FERN_SELFHOST_RC_PLAN=0 must change
-				// nothing on the flipped shapes.
-				offAsm := hevCompile(t, runner, driverBin, tc.src, []string{"FERN_LEAKCHECK=1", "FERN_SELFHOST_RC_PLAN=0"})
-				offBin := buildBin(t, gcc, dir, "tupelemret_off_"+tc.name, offAsm)
-				offErr, offExit := hevRun(t, runner, offBin)
-				if offExit != tc.want {
-					t.Fatalf("%s plan-off exited %d, want %d", tc.name, offExit, tc.want)
-				}
-				offSummary := leakSummaryLine(offErr)
-				var oa, of, ol int64
-				if _, err := fmtSscan(offSummary, &oa, &of, &ol); err != nil {
-					t.Fatalf("%s plan-off: parse %q: %v", tc.name, offSummary, err)
-				}
-				if ol != 0 || oa != of {
-					t.Errorf("%s plan-off: %s — the port is not plan-routed and must balance without the plan", tc.name, offSummary)
-				}
+			// Plan-off leg: none of TUPB / TUPELEMOK / TUPRCS is
+			// plan-routed, so FERN_SELFHOST_RC_PLAN=0 must change
+			// nothing on the flipped shapes.
+			offAsm := hevCompile(t, runner, driverBin, tc.src, []string{"FERN_LEAKCHECK=1", "FERN_SELFHOST_RC_PLAN=0"})
+			offBin := buildBin(t, gcc, dir, "tupelemret_off_"+tc.name, offAsm)
+			offErr, offExit := hevRun(t, runner, offBin)
+			if offExit != tc.want {
+				t.Fatalf("%s plan-off exited %d, want %d", tc.name, offExit, tc.want)
+			}
+			offSummary := leakSummaryLine(offErr)
+			var oa, of, ol int64
+			if _, err := fmtSscan(offSummary, &oa, &of, &ol); err != nil {
+				t.Fatalf("%s plan-off: parse %q: %v", tc.name, offSummary, err)
+			}
+			if ol != 0 || oa != of {
+				t.Errorf("%s plan-off: %s — the port is not plan-routed and must balance without the plan", tc.name, offSummary)
 			}
 		})
 	}

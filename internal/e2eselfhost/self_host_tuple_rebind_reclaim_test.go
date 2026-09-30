@@ -5,35 +5,17 @@ import (
 	"testing"
 )
 
-// --- Rebound scalar-tuple reclaim (#6127) -----------------------------------
+// --- Rebound tuple reclaim (#6127) -------------------------------------------
 //
-// A fresh non-escaping scalar tuple local already earned the "TUP:" credit whether
-// or not it was rebound — that credit's escape gate (body_unsafe_for) never looked
-// at reassignment. But "TUP:" is only consumed by the scope-exit sweep, so a loop
-// rebind freed the FINAL box and leaked every box the rebinds superseded:
-// allocs=500 frees=100 live_bytes=16000 over 100 rounds against 0 on native, while
-// the same tuple bound ONCE is flat at 0.
-//
-// So this was never an admission gap — the credit was already there and the
-// release was missing. #6127's own notes read the measurement the other way, as an
-// all-scalar tuple leaking on a SINGLE bind, and concluded "do not start from the
-// rebind template". The 500/100/16000 row it cited is reproducibly the REBOUND
-// probe; single-bind all-scalar measures 100/100/0.
-//
-// The new "TUPREBIND:" credit says the superseded box is releasable, which is a
-// different claim from "TUP:" (the box is non-escaping and freeable at exit), so it
-// is a separate credit rather than a widened one. It is granted only when EVERY
-// assignment builds a fresh scalar tuple: one `p = q` rebind would leave the slot
-// holding q's box, and the next assignment's release would free a box q still owns.
-//
-// The release itself is emit_arr_store's existing do_dec branch — cow-guarded, and
-// a SHALLOW __fern_rc_dec, which is all a scalar tuple needs.
+// A tuple local rebound in a loop must release every box a rebind supersedes as
+// well as its final value. The tuple carries an array element because a scalar
+// tuple is not heap-allocated at all.
 
 const tupleRebindSrc = `function round(): i32 {
-    var p: (i32, i32) = (0, 1);
+    var p: (i32, i32[]) = (0, [1]);
     var i: i32 = 0;
-    while (i < 4) { p = (i, i + 1); i = i + 1; }
-    return p.0;
+    while (i < 4) { p = (i, [i + 1]); i = i + 1; }
+    return p.0 + p.1[0] - p.1[0];
 }
 
 function main(): i32 {
@@ -43,11 +25,10 @@ function main(): i32 {
     return t % 7;
 }`
 
-// TestSelfHostTupleRebindReclaimX86_64 — a rebound scalar-tuple local frees every
-// box it supersedes as well as its final value. allocs == frees is the
-// essential assertion: frees short of allocs is the leak this closes, frees
-// ABOVE allocs would mean the rebind release and the scope-exit sweep both claimed
-// one box (a double free).
+// TestSelfHostTupleRebindReclaimX86_64 — allocs == frees is the essential
+// assertion: frees short of allocs is a leaked superseded box, frees ABOVE allocs
+// would mean the rebind release and the scope-exit sweep both claimed one box (a
+// double free).
 func TestSelfHostTupleRebindReclaimX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -79,7 +60,7 @@ func TestSelfHostTupleRebindReclaimX86_64(t *testing.T) {
 		t.Fatalf("allocated nothing — the probe is not exercising the path")
 	}
 	if allocs != frees {
-		t.Errorf("allocs=%d frees=%d — a rebound scalar tuple must free the box each "+
+		t.Errorf("allocs=%d frees=%d — a rebound tuple must free the box each "+
 			"assignment supersedes; frees > allocs means the rebind release and the "+
 			"scope-exit sweep both claimed one box (double free)", allocs, frees)
 	}

@@ -30,11 +30,12 @@ import (
 //
 // The failure mode is an over-release rather than a leak — the store now frees
 // element boxes another holder could still reach — so the refused rows below
-// are essential. Four shapes bind an element out of the array, rebind from a
-// live local, rebuild from the array's own element, or store it into a
-// container; each reads its value back after 200 rounds of churn have
-// recycled the freelist, each stays pinned at its leaking count, and each
-// answers identically on native x86-64, `bin/fern -interp` and the self-host.
+// are essential. Five shapes return the array after rebuilding it, bind an
+// element out of it, rebind from a live local, rebuild from the array's own
+// element, or store it into a container; each reads its value back after 200
+// rounds of churn have recycled the freelist and answers identically on native
+// x86-64, `bin/fern -interp` and the self-host. On the typed lowering every row
+// balances.
 //
 // `alias_before_rebind` is the row that proves the arbitration rather than the
 // refusal: an alias bound BEFORE the rebind is not refused, it goes CLEAN,
@@ -82,7 +83,7 @@ function round(i: i32): i32 {
     t = t + 1;
     return t;
 }` + strarrRebuildPlainMain,
-			want: 51, balance: true,
+			want: 51,
 		},
 		{
 			// The producer-call form of the same rebuild, which the declaration
@@ -95,7 +96,7 @@ function round(i: i32): i32 {
     t = (t + x.len()) % 101;
     return t + 1;
 }` + strarrRebuildPlainMain,
-			want: 51, balance: true,
+			want: 51,
 		},
 		{
 			// Rebuilding to `[]` drops every element the slot held — the case
@@ -110,7 +111,7 @@ function round(i: i32): i32 {
     t = (t + x.len()) % 101;
     return t + 1;
 }` + strarrRebuildPlainMain,
-			want: 17, balance: true,
+			want: 17,
 		},
 		{
 			// Three superseded buffers per round, each freed at its own store.
@@ -123,7 +124,7 @@ function round(i: i32): i32 {
     if (x.len() != 2) { return 0 - 1; }
     return (x[0].len() + junk) % 101;
 }` + strarrRebuildChurnMain,
-			want: 72, balance: true,
+			want: 72,
 		},
 		{
 			// Half the rounds take the rebind; the other half leave the
@@ -136,7 +137,7 @@ function round(i: i32): i32 {
     if (x.len() < 1) { return 0 - 1; }
     return (x[0].len() + junk) % 101;
 }` + strarrRebuildChurnMain,
-			want: 72, balance: true,
+			want: 72,
 		},
 		{
 			// NOT a refusal — the arbitration. The alias is bound before the
@@ -153,7 +154,7 @@ function round(i: i32): i32 {
     if (ys[0].len() != want) { return 0 - 1; }
     return (ys.len() + x.len() + junk) % 101;
 }` + strarrRebuildChurnMain,
-			want: 67, balance: true,
+			want: 67,
 		},
 		{
 			// Control: the self-append rebind, sanctioned and clean before this
@@ -167,7 +168,7 @@ function round(i: i32): i32 {
     t = (t + x.len()) % 101;
     return t + 1;
 }` + strarrRebuildPlainMain,
-			want: 51, balance: true,
+			want: 51,
 		},
 		{
 			// A local returned bare after its rebuild (#10721): the rebind releases
@@ -182,10 +183,10 @@ function round(i: i32): i32 {
     if (xs[0].len() != want) { return 0 - 2; }
     return (xs[1].len() + junk) % 101;
 }` + strarrRebuildChurnMain,
-			want: 72, balance: true,
+			want: 72,
 		},
 		{
-			// REFUSED: an ELEMENT is bound out before the rebind, so the store's
+			// An ELEMENT is bound out before the rebind, so the store's
 			// element walk would free a box the local still reads.
 			name: "refused_element_bound",
 			src: strarrRebuildDecl + `function round(i: i32): i32 {
@@ -200,7 +201,7 @@ function round(i: i32): i32 {
 			want: 57,
 		},
 		{
-			// REFUSED: the rebind value is another LIVE local, not a rebuild.
+			// The rebind value is another LIVE local, not a rebuild.
 			name: "refused_nonfresh_rebind",
 			src: strarrRebuildDecl + `function round(i: i32): i32 {
     var other: string[] = [mkstr("o")];
@@ -213,7 +214,7 @@ function round(i: i32): i32 {
 			want: 82,
 		},
 		{
-			// REFUSED: the new literal is built FROM the array's own element, so
+			// The new literal is built FROM the array's own element, so
 			// the value shares a box with what the store is about to free.
 			name: "refused_self_element",
 			src: strarrRebuildDecl + `function round(i: i32): i32 {
@@ -227,7 +228,7 @@ function round(i: i32): i32 {
 			want: 72,
 		},
 		{
-			// REFUSED: the rebuilt value is stored into a container that
+			// The rebuilt value is stored into a container that
 			// outlives the sweep.
 			name: "refused_container_store",
 			src: strarrRebuildDecl + `function round(i: i32): i32 {
@@ -272,12 +273,8 @@ func TestSelfHostStrArrRebuildRebindX86_64(t *testing.T) {
 			if allocs == 0 {
 				t.Fatalf("%s allocated nothing — the probe is not exercising the path", tc.name)
 			}
-			if tc.balance && (live != 0 || allocs != frees) {
+			if live != 0 || allocs != frees {
 				t.Errorf("%s: %s — must balance at live_bytes 0", tc.name, summary)
-			}
-			if !tc.balance && live == 0 && allocs == frees {
-				t.Errorf("%s: %s — pinned as REFUSED; if this now balances the credit "+
-					"widened, and the row belongs to whatever widened it", tc.name, summary)
 			}
 		})
 	}

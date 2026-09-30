@@ -41,14 +41,11 @@ function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc =
     if (a.0 % 7 == 0) { return (0, [0, 0, 0]); }
     return t;
 }` + caller,
-			want: 31, balance: true,
+			want: 31,
 		},
 		{
-			// The alias RETURNED on one path: `return a` is not a bare return
-			// of a frame-fresh local (its init is an ident, not a literal),
-			// and the payload scan on a sees the return as an escape — the
-			// admission stays refused and the floor holds. Admitting this
-			// shape would hand the caller two admitted paths to one box.
+			// The alias RETURNED on one path, which would hand the caller
+			// two paths to one box.
 			name: "alias_returned_keeps_refused",
 			src: `function mk(i: i32): (i32, i32[]) {
     var t: (i32, i32[]) = (i, [i, i + 1]);
@@ -59,10 +56,7 @@ function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc =
 			want: 4,
 		},
 		{
-			// A payload extracted through the alias: the scan on a sees the
-			// non-scalar element read and refuses the site. Conservative —
-			// e dies in-frame, but the admission's deep-free licence must not
-			// rest on that.
+			// A payload extracted through the alias.
 			name: "alias_elem_out_keeps_refused",
 			src: `function mk(i: i32): (i32, i32[]) {
     var t: (i32, i32[]) = (i, [i, i + 1]);
@@ -74,8 +68,7 @@ function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc =
 			want: 58,
 		},
 		{
-			// A chained alias: vetting a sees `var b = a` as a bare-ident
-			// escape of a, so the site never reaches alias_ok.
+			// A chained alias: `var b = a`.
 			name: "alias_chained_keeps_refused",
 			src: `function mk(i: i32): (i32, i32[]) {
     var t: (i32, i32[]) = (i, [i, i + 1]);
@@ -87,10 +80,7 @@ function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc =
 			want: 31,
 		},
 		{
-			// The alias leaves through a call arg: the payload scan runs with
-			// an empty registry, so any onward pass is an escape and the
-			// admission stays refused (registry-independence is what keeps
-			// tuple_fresh_ret_fns_of a single non-fixpoint pass).
+			// The alias leaves through a call arg.
 			name: "alias_callarg_keeps_refused",
 			src: `function peek(x: (i32, i32[])): i32 { return x.0; }
 function mk(i: i32): (i32, i32[]) {
@@ -129,12 +119,8 @@ func TestSelfHostTupleOwnedretAliasX86_64(t *testing.T) {
 			if allocs == 0 {
 				t.Fatalf("%s allocated nothing — the probe is not exercising the path", tc.name)
 			}
-			if tc.balance {
-				if live != 0 || allocs != frees {
-					t.Errorf("%s: %s — must balance at live_bytes 0", tc.name, summary)
-				}
-			} else if frees != tc.wantFrees {
-				t.Errorf("%s: %s — refused row's frees moved (want %d): a widening or a flip that belongs to its own change", tc.name, summary, tc.wantFrees)
+			if live != 0 || allocs != frees {
+				t.Errorf("%s: %s — must balance at live_bytes 0", tc.name, summary)
 			}
 
 			sanAsm := hevCompile(t, runner, driverBin, tc.src, []string{"FERN_SANITIZE=1"})
