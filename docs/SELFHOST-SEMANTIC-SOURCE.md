@@ -446,9 +446,8 @@ Unsupported constructs refuse the whole function with a reason.
   by element, a record field by field, an enum by a test per variant, each
   view in it copied. A view that is a literal or a retagged string
   (`ssasem.counted_view`) anchors nothing and is not copied. A cell is shared
-  storage that a copy would split, and a view in a map column is never read
-  out of it, so a call's result holding either is still refused
-  (`ssasem.copyable`). Whether a type holds a view at all is
+  storage that a copy would split, and `deep_copy` rebuilds no map, so a
+  call's result holding either is still refused (`ssasem.copyable`). Whether a type holds a view at all is
   `ssasem.holds_view`, which reads a declared record's fields and an enum's
   payloads through the body's schema tables. The pass runs in
   `anchor_module` once the anchor table is attached, so a call's roots are
@@ -655,7 +654,13 @@ Unsupported constructs refuse the whole function with a reason.
   of the frame's own, released as any Option is; the runtime copies the
   column's entry into it without a retain, so over a counted column the
   lowering retains the payload on a hit, and the box owns one unit of it as
-  any Option this frame drops does. `without`
+  any Option this frame drops does. A `str` column holds view boxes, whose
+  immortal rc no retain can count, so every read out of one (`get`,
+  `get_or`, `values`, and so iteration) and every entry an un-share copies
+  takes `__fern_str_own` instead: a retain on a counted string, a fresh box
+  over an arena view's bytes. A `get` hit is rebuilt around that box. Such a
+  map stays on the runtime's map rather than core/map, whose reads and
+  copies retain (#10701). `without`
   takes the receiver's unit and answers the map and a flag, releasing the
   removed entry's key and value through the columns' releases on the way
   (`__fern_map_delete_rel` on the register backends; wasm's delete reads the

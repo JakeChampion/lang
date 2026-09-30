@@ -4528,6 +4528,82 @@ function main(): i32 {
     return xs.len() + ys.len() + ws.len() + zs.len() + g.names.len() + junk.len();
 }
 `},
+	// Every read of a view map value hands out a fresh box over the entry's
+	// bytes: get, get_or on a hit and on a miss, values() and iteration. The
+	// map keeps its own boxes, which it frees on its drop; before #10701 each
+	// read shared them, the reader's release freed the map's entry, and
+	// `junk` reused it, so later reads printed "zzz".
+	{name: "every-read-of-a-view-map-value-is-a-fresh-view", atLeast: 2, noLeak: true, src: `
+import "core/map";
+function fill(s: string): Map[i32, str] {
+    var m: Map[i32, str] = map_new(4);
+    m = m.insert(1, slice_unchecked(s, 0, 2));
+    m = m.insert(2, slice_unchecked(s, 2, 5));
+    return m;
+}
+function main(): i32 {
+    var s: string = "abcdefgh";
+    var m: Map[i32, str] = fill(s);
+    var n: i32 = 0;
+    match (m.get(1)) { Some(v) => { print(v); n = n + v.len(); }, None => { n = 100; } }
+    var d: str = m.get_or(2, slice_unchecked(s, 7, 8));
+    var e: str = m.get_or(9, slice_unchecked(s, 7, 8));
+    var junk: str[] = [slice_unchecked("zzzzzzzz", 0, 3), slice_unchecked("yyyyyyyy", 0, 3)];
+    print(d);
+    print(e);
+    var vs: str[] = m.values();
+    for v in vs { print(v); }
+    for (k, v) in m { print(v); n = n + k; }
+    match (m.get(2)) { Some(v) => { print(v); }, None => { n = 100; } }
+    print(m.get_or(1, "q"));
+    return n + d.len() + e.len() + vs.len() + junk.len();
+}
+`},
+	// A shared view map copied by an insert, a without or a lent receiver's
+	// insert gives the copy a fresh box for each view, and a counted string or
+	// a literal held as a view reads back as itself. A view column stays off
+	// core/map, whose retains would share the boxes. The AST lowering refuses
+	// the program.
+	{name: "a-copied-view-map-owns-its-boxes", atLeast: 3, noLeak: true, want: "28|gh\nabcdefgh!\nlit\nq\ngone\nbc\nabcdefgh!\nbc\nbc\nd\n", src: `
+import "core/map";
+function fill(s: string): Map[string, str] {
+    var m: Map[string, str] = map_new(4);
+    m = m.insert("a", slice_unchecked(s, 0, 2));
+    m = m.insert("b", slice_unchecked(s, 2, 5));
+    m = m.insert("d", "lit");
+    return m;
+}
+function grow(m: Map[string, str], s: string): Map[string, str] {
+    return m.insert("e", slice_unchecked(s, 3, 4));
+}
+function main(): i32 {
+    var s: string = "abcdefgh";
+    var m: Map[string, str] = fill(s);
+    var w: Map[i64, str] = map_new(2);
+    w = w.insert(5 as i64, slice_unchecked(s, 1, 3));
+    var t: string = s + "!";
+    var c: str = t;
+    m = m.insert("c", c);
+    var held: Map[string, str] = m;
+    var (m2, had) = held.without("b");
+    m = m.insert("a", slice_unchecked(s, 6, 8));
+    var m3: Map[string, str] = grow(m, s);
+    var junk: str[] = [slice_unchecked("zzzzzzzz", 0, 3), slice_unchecked("yyyyyyyy", 0, 3)];
+    print(m.get_or("a", "q"));
+    print(m.get_or("c", "q"));
+    print(m.get_or("d", "q"));
+    print(m.get_or("x", "q"));
+    print(m2.get_or("b", "gone"));
+    print(w.get_or(5 as i64, "q"));
+    var n: i32 = 0;
+    for (k, v) in m2 { n = n + v.len(); }
+    match (m.get("c")) { Some(v) => { print(v); }, None => { n = 100; } }
+    match (w.get(5 as i64)) { Some(v) => { print(v); }, None => { n = 100; } }
+    for v in w.values() { print(v); }
+    print(m3.get_or("e", "q"));
+    return n + m.len() + m2.len() + m3.len() + junk.len();
+}
+`},
 	// A call result holding views that flows back into a loop phi. A body is
 	// verified once it carries the anchor table: without it the call result
 	// is its own root, which the phi cannot depend on, and `build` was
