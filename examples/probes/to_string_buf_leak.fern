@@ -36,16 +36,18 @@ import "std/i64";
 import "std/u64";
 
 function main(): i32 {
-    var t: i32 = 0;
-    var k: i32 = 0;
-    while (k < 50) {
-        var s: string = k.to_string();
-        var u: string = ((k as i64) * 1000000007).to_string();
-        var v: string = ((k as u64) * (1234567891 as u64)).to_string();
-        var w: string = (k * 1234567).to_binary();
-        t = t + s.len() + u.len() + v.len() + w.len();
-        k = k + 1;
-    }
-    if (t == 2378) { return 0; }
-    return 1;
+  var t: i32 = 0;
+  var k: i32 = 0;
+  while (k < 50) {
+    var s: string = k.to_string();
+    var u: string = (k as i64 * 1000000007).to_string();
+    var v: string = (k as u64 * (1234567891 as u64)).to_string();
+    var w: string = (k * 1234567).to_binary();
+    t = t + s.len() + u.len() + v.len() + w.len();
+    k = k + 1;
+  }
+  if (t == 2378) {
+    return 0;
+  }
+  return 1;
 }

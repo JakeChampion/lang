@@ -4,7 +4,9 @@ QEMU        ?= qemu-aarch64
 EXAMPLES := $(basename $(notdir $(wildcard examples/*.fern)))
 ASMS     := $(addprefix build/,$(addsuffix .s,$(EXAMPLES)))
 BINS     := $(addprefix build/,$(EXAMPLES))
-LANG_SRCS := $(wildcard examples/*.fern) $(wildcard coreutils/*.fern) $(wildcard coreutils/lib/*.fern) $(wildcard coreutils/multicall/*.fern)
+# Every tracked .fern source but the conformance fixtures, whose expected
+# diagnostics pin line and column, and testdata inputs kept as written.
+LANG_SRCS := $(shell git ls-files '*.fern' | grep -v -e '^conformance/' -e '/testdata/')
 
 .PHONY: all build test vet deadcode actionlint hooks testnames freeze check-sources selfhost-cli bootstrap distcheck clean examples run-% fmt fmt-check gofmt gofmt-check lint-all ci-selftest fern-test-cache digest-check
 
@@ -201,28 +203,20 @@ build/%: build/%.s
 run-%: build/%
 	$(QEMU) $<
 
-# Re-format every .fern source under examples/ in place. Useful as
-# a one-shot before-commit cleanup; the formatter is idempotent so
-# running it on already-formatted files is a no-op.
+# Re-format every LANG_SRCS file in place. The formatter is idempotent,
+# so running it on already-formatted files is a no-op.
 fmt: bin/fern
-	@for f in $(LANG_SRCS); do \
-		./bin/fern -fmt -w "$$f"; \
-	done
+	@./bin/fern -fmt -w $(LANG_SRCS)
 
 # Verify every .fern source is already formatted. Prints the
 # unified-diff hunks for any file that would change and exits
 # non-zero so CI fails on unformatted submissions.
 fmt-check: bin/fern
-	@status=0; \
-	for f in $(LANG_SRCS); do \
-		if ! ./bin/fern -fmt -d "$$f"; then status=1; fi; \
-	done; \
-	exit $$status
+	@./bin/fern -fmt -d $(LANG_SRCS)
 
-# The Go-side counterpart to fmt / fmt-check. `fmt-check` covers only
-# examples/*.fern, so nothing gated Go formatting and it drifted —
-# gofmt's trailing-comment and map-literal alignment goes stale as soon
-# as a longer entry lands beside an existing one.
+# The Go-side counterpart to fmt / fmt-check. Go formatting drifted while
+# nothing gated it: gofmt's trailing-comment and map-literal alignment goes
+# stale as soon as a longer entry lands beside an existing one.
 gofmt:
 	./tools/gofmt_gate.sh --fix
 

@@ -110,7 +110,7 @@ func TestTablesAreStringsNotArrays(t *testing.T) {
 	}
 	for _, name := range []string{"_case_table", "_letter_ranges", "_digit_ranges",
 		"_space_ranges", "_upper_ranges", "_lower_ranges"} {
-		decl := "function " + name + "(): string {\n    return \""
+		decl := "function " + name + "(): string {\n  return \""
 		if !strings.Contains(src, decl) {
 			t.Errorf("%s is not a string-literal-returning table", name)
 		}

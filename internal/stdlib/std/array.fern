@@ -16,7 +16,6 @@
 // No prelude: a program `import "std/array";` explicitly to
 // call `arr.sum()` / `arr.join(",")` / etc.
 // (docs/PRELUDE-TO-MODULES.md, Phase 5).
-
 import "std/sort";
 // core/cmp supplies the `Eq` trait that bounds the equality-driven verbs
 // (`contains` / `index_of` / `distinct`) below, plus the primitive `impl Eq`
@@ -42,39 +41,46 @@ import "std/num";
 // identity element. The element-polymorphic reductions (`sum` / `max` /
 // `min` / `product` / `count` / `sorted_asc` / …) live at the bottom of
 // the file as bounded generic methods.
-
 // `(arr: i32[]) avg()` — integer mean (truncated toward zero).
 // None on empty input. The running sum is accumulated in i64,
 // so a long / large-valued array can't overflow BEFORE the
 // divide the way the i32 `sum()` does (#2687) — the truncated
 // mean of any i32[] always fits back in i32.
 pub function __method_Array_avg(arr: i32[]): Option[i32] {
-    var n: i32 = arr.len();
-    if (n == 0) { return None; }
-    var s: i64 = 0;
-    var i: i32 = 0;
-    while (i < n) {
-        s = s + (arr[i] as i64);
-        i = i + 1;
-    }
-    return Some((s / (n as i64)) as i32);
+  var n: i32 = arr.len();
+  if (n == 0) {
+    return None;
+  }
+  var s: i64 = 0;
+  var i: i32 = 0;
+  while (i < n) {
+    s = s + arr[i] as i64;
+    i = i + 1;
+  }
+  return Some((s / (n as i64)) as i32);
 }
 
 // `(arr: i32[]) range()` — max - min, the spread of the
 // data. Option[i32] None when empty. Single-element arrays
 // return Some(0). Useful as a quick variance proxy.
 pub function __method_Array_range(arr: i32[]): Option[i32] {
-    var n: i32 = arr.len();
-    if (n == 0) { return None; }
-    var lo: i32 = arr[0];
-    var hi: i32 = arr[0];
-    var i: i32 = 1;
-    while (i < n) {
-        if (arr[i] < lo) { lo = arr[i]; }
-        if (arr[i] > hi) { hi = arr[i]; }
-        i = i + 1;
+  var n: i32 = arr.len();
+  if (n == 0) {
+    return None;
+  }
+  var lo: i32 = arr[0];
+  var hi: i32 = arr[0];
+  var i: i32 = 1;
+  while (i < n) {
+    if (arr[i] < lo) {
+      lo = arr[i];
     }
-    return Some(hi - lo);
+    if (arr[i] > hi) {
+      hi = arr[i];
+    }
+    i = i + 1;
+  }
+  return Some(hi - lo);
 }
 
 // `(arr: i32[]) gcd_all()` — fold gcd across the array.
@@ -82,15 +88,17 @@ pub function __method_Array_range(arr: i32[]): Option[i32] {
 // Some(arr[0].abs()). Negative inputs use their magnitude
 // (gcd is sign-invariant).
 pub function __method_Array_gcd_all(arr: i32[]): Option[i32] {
-    var n: i32 = arr.len();
-    if (n == 0) { return None; }
-    var g: i32 = arr[0].abs();
-    var i: i32 = 1;
-    while (i < n) {
-        g = g.gcd(arr[i].abs());
-        i = i + 1;
-    }
-    return Some(g);
+  var n: i32 = arr.len();
+  if (n == 0) {
+    return None;
+  }
+  var g: i32 = arr[0].abs();
+  var i: i32 = 1;
+  while (i < n) {
+    g = g.gcd(arr[i].abs());
+    i = i + 1;
+  }
+  return Some(g);
 }
 
 // `(arr: i32[]) lcm_all()` — fold lcm across the array.
@@ -98,15 +106,17 @@ pub function __method_Array_gcd_all(arr: i32[]): Option[i32] {
 // callers handling unbounded ranges should pre-check or
 // widen to i64.
 pub function __method_Array_lcm_all(arr: i32[]): Option[i32] {
-    var n: i32 = arr.len();
-    if (n == 0) { return None; }
-    var l: i32 = arr[0].abs();
-    var i: i32 = 1;
-    while (i < n) {
-        l = l.lcm(arr[i].abs());
-        i = i + 1;
-    }
-    return Some(l);
+  var n: i32 = arr.len();
+  if (n == 0) {
+    return None;
+  }
+  var l: i32 = arr[0].abs();
+  var i: i32 = 1;
+  while (i < n) {
+    l = l.lcm(arr[i].abs());
+    i = i + 1;
+  }
+  return Some(l);
 }
 
 // `(arr: i32[]) abs_each()` — fresh array of absolute
@@ -114,14 +124,14 @@ pub function __method_Array_lcm_all(arr: i32[]): Option[i32] {
 // to `arr.map(abs)` once first-class higher-order
 // methods land.
 pub function __method_Array_abs_each(arr: i32[]): i32[] {
-    var n: i32 = arr.len();
-    var out: i32[] = [];
-    var i: i32 = 0;
-    while (i < n) {
-        out = out.append(arr[i].abs());
-        i = i + 1;
-    }
-    return out;
+  var n: i32 = arr.len();
+  var out: i32[] = [];
+  var i: i32 = 0;
+  while (i < n) {
+    out = out.append(arr[i].abs());
+    i = i + 1;
+  }
+  return out;
 }
 
 // `(arr: i32[]) pairwise_diffs()` — array of consecutive
@@ -129,61 +139,71 @@ pub function __method_Array_abs_each(arr: i32[]): i32[] {
 // max(len(arr) - 1, 0). Empty / singleton inputs return
 // empty. Useful for slope / delta computations on samples.
 pub function __method_Array_pairwise_diffs(arr: i32[]): i32[] {
-    var n: i32 = arr.len();
-    var out: i32[] = [];
-    if (n < 2) { return out; }
-    var i: i32 = 1;
-    while (i < n) {
-        out = out.append(arr[i] - arr[i - 1]);
-        i = i + 1;
-    }
+  var n: i32 = arr.len();
+  var out: i32[] = [];
+  if (n < 2) {
     return out;
+  }
+  var i: i32 = 1;
+  while (i < n) {
+    out = out.append(arr[i] - arr[i - 1]);
+    i = i + 1;
+  }
+  return out;
 }
 
 // `(arr: i32[]) min_max()` — Option[(min, max)] in a single
 // pass. Empty → None. Saves a second iteration when callers
 // need both bounds.
 pub function __method_Array_min_max(arr: i32[]): Option[(i32, i32)] {
-    var n: i32 = arr.len();
-    if (n == 0) { return None; }
-    var lo: i32 = arr[0];
-    var hi: i32 = arr[0];
-    var i: i32 = 1;
-    while (i < n) {
-        if (arr[i] < lo) { lo = arr[i]; }
-        if (arr[i] > hi) { hi = arr[i]; }
-        i = i + 1;
+  var n: i32 = arr.len();
+  if (n == 0) {
+    return None;
+  }
+  var lo: i32 = arr[0];
+  var hi: i32 = arr[0];
+  var i: i32 = 1;
+  while (i < n) {
+    if (arr[i] < lo) {
+      lo = arr[i];
     }
-    return Some((lo, hi));
+    if (arr[i] > hi) {
+      hi = arr[i];
+    }
+    i = i + 1;
+  }
+  return Some((lo, hi));
 }
 
 // `(arr: i32[]) every_positive()` — true if every element is
 // strictly positive (n > 0). Empty → true (vacuous). Useful
 // for input validation on count / size arrays.
 pub function __method_Array_every_positive(arr: i32[]): boolean {
-    var n: i32 = arr.len();
-    var i: i32 = 0;
-    while (i < n) {
-        if (arr[i] <= 0) { return false; }
-        i = i + 1;
+  var n: i32 = arr.len();
+  var i: i32 = 0;
+  while (i < n) {
+    if (arr[i] <= 0) {
+      return false;
     }
-    return true;
+    i = i + 1;
+  }
+  return true;
 }
 
 // `(arr: i32[]) cumsum()` — running sum: out[i] is the sum
 // of arr[0..=i]. Empty → empty. Overflow wraps silently.
 // Common shape for prefix-sum optimisations.
 pub function __method_Array_cumsum(arr: i32[]): i32[] {
-    var n: i32 = arr.len();
-    var out: i32[] = [];
-    var s: i32 = 0;
-    var i: i32 = 0;
-    while (i < n) {
-        s = s + arr[i];
-        out = out.append(s);
-        i = i + 1;
-    }
-    return out;
+  var n: i32 = arr.len();
+  var out: i32[] = [];
+  var s: i32 = 0;
+  var i: i32 = 0;
+  while (i < n) {
+    s = s + arr[i];
+    out = out.append(s);
+    i = i + 1;
+  }
+  return out;
 }
 
 // `(arr: i32[]) sum_squared()` — sum of squares (x*x for
@@ -191,14 +211,14 @@ pub function __method_Array_cumsum(arr: i32[]): i32[] {
 // magnitude calculations. No overflow detection — squares
 // of larger ints will wrap.
 pub function __method_Array_sum_squared(arr: i32[]): i32 {
-    var n: i32 = arr.len();
-    var s: i32 = 0;
-    var i: i32 = 0;
-    while (i < n) {
-        s = s + arr[i] * arr[i];
-        i = i + 1;
-    }
-    return s;
+  var n: i32 = arr.len();
+  var s: i32 = 0;
+  var i: i32 = 0;
+  while (i < n) {
+    s = s + arr[i] * arr[i];
+    i = i + 1;
+  }
+  return s;
 }
 
 // `(arr: i32[]) median()` — middle value after ascending
@@ -206,10 +226,12 @@ pub function __method_Array_sum_squared(arr: i32[]): i32 {
 // (no float averaging since the result type is i32).
 // Option[i32] None on empty.
 pub function __method_Array_median(arr: i32[]): Option[i32] {
-    var n: i32 = arr.len();
-    if (n == 0) { return None; }
-    var sorted: i32[] = cmp.sort(arr);
-    return Some(sorted[(n - 1) / 2]);
+  var n: i32 = arr.len();
+  if (n == 0) {
+    return None;
+  }
+  var sorted: i32[] = cmp.sort(arr);
+  return Some(sorted[(n - 1) / 2]);
 }
 
 // `(arr: i32[]) mode()` — most frequently occurring
@@ -218,20 +240,22 @@ pub function __method_Array_median(arr: i32[]): Option[i32] {
 // naive count; fine for the small-n use cases this
 // module targets.
 pub function __method_Array_mode(arr: i32[]): Option[i32] {
-    var n: i32 = arr.len();
-    if (n == 0) { return None; }
-    var best: i32 = arr[0];
-    var best_count: i32 = 1;
-    var i: i32 = 0;
-    while (i < n) {
-        var c: i32 = arr.count(arr[i]);
-        if (c > best_count) {
-            best = arr[i];
-            best_count = c;
-        }
-        i = i + 1;
+  var n: i32 = arr.len();
+  if (n == 0) {
+    return None;
+  }
+  var best: i32 = arr[0];
+  var best_count: i32 = 1;
+  var i: i32 = 0;
+  while (i < n) {
+    var c: i32 = arr.count(arr[i]);
+    if (c > best_count) {
+      best = arr[i];
+      best_count = c;
     }
-    return Some(best);
+    i = i + 1;
+  }
+  return Some(best);
 }
 
 // `arr.join(sep)` — concatenate a string-array into a single
@@ -246,32 +270,36 @@ pub function __method_Array_mode(arr: i32[]): Option[i32] {
 // i32[] surface as a clean type error rather than a missing-
 // method one.
 pub function __method_Array_join(arr: string[], sep: string): string {
-    var n: i32 = arr.len();
-    if (n == 0) { return ""; }
-    if (n == 1) { return arr[0]; }
-    // Size the result once and fill a builder, which is a memcpy per
-    // element and hands its bytes over as the string without copying them
-    // — O(total), where the `out = out + …` chain recopies the whole
-    // prefix on every step (O(total²), the #4379 hot path).
-    var total: i32 = 0;
-    var i: i32 = 0;
-    while (i < n) {
-        total = total + arr[i].len();
-        i = i + 1;
+  var n: i32 = arr.len();
+  if (n == 0) {
+    return "";
+  }
+  if (n == 1) {
+    return arr[0];
+  }
+  // Size the result once and fill a builder, which is a memcpy per
+  // element and hands its bytes over as the string without copying them
+  // — O(total), where the `out = out + …` chain recopies the whole
+  // prefix on every step (O(total²), the #4379 hot path).
+  var total: i32 = 0;
+  var i: i32 = 0;
+  while (i < n) {
+    total = total + arr[i].len();
+    i = i + 1;
+  }
+  total = total + sep.len() * (n - 1);
+  var b: usize = buf_new(total);
+  i = 0;
+  while (i < n) {
+    if (i > 0) {
+      buf_push(b, sep);
     }
-    total = total + sep.len() * (n - 1);
-    var b: usize = buf_new(total);
-    i = 0;
-    while (i < n) {
-        if (i > 0) {
-            buf_push(b, sep);
-        }
-        buf_push(b, arr[i]);
-        i = i + 1;
-    }
-    var out: string = buf_take(b);
-    buf_free(b);
-    return out;
+    buf_push(b, arr[i]);
+    i = i + 1;
+  }
+  var out: string = buf_take(b);
+  buf_free(b);
+  return out;
 }
 
 // `(arr: string[]) filter_non_empty()` — fresh string[] with
@@ -279,86 +307,100 @@ pub function __method_Array_join(arr: string[], sep: string): string {
 // output of `split(sep)` when adjacent separators left empty
 // holes (e.g. `"a,,b".split(",")` → `["a", "", "b"]`).
 pub function __method_Array_filter_non_empty(arr: string[]): string[] {
-    var n: i32 = arr.len();
-    var out: string[] = [];
-    var i: i32 = 0;
-    while (i < n) {
-        if (arr[i].len() > 0) { out = out.append(arr[i]); }
-        i = i + 1;
+  var n: i32 = arr.len();
+  var out: string[] = [];
+  var i: i32 = 0;
+  while (i < n) {
+    if (arr[i].len() > 0) {
+      out = out.append(arr[i]);
     }
-    return out;
+    i = i + 1;
+  }
+  return out;
 }
 
 // `(arr: string[]) count_non_empty()` — number of non-empty
 // entries. The "how many real values" counterpart to
 // filter_non_empty when callers only need the count.
 pub function __method_Array_count_non_empty(arr: string[]): i32 {
-    var n: i32 = arr.len();
-    var c: i32 = 0;
-    var i: i32 = 0;
-    while (i < n) {
-        if (arr[i].len() > 0) { c = c + 1; }
-        i = i + 1;
+  var n: i32 = arr.len();
+  var c: i32 = 0;
+  var i: i32 = 0;
+  while (i < n) {
+    if (arr[i].len() > 0) {
+      c = c + 1;
     }
-    return c;
+    i = i + 1;
+  }
+  return c;
 }
 
 // `(arr: string[]) distinct_count()` — number of unique
 // elements. Same algorithm as `cmp.distinct` but skips
 // building the output array.
 pub function __method_Array_distinct_count(arr: string[]): i32 {
-    var n: i32 = arr.len();
-    var seen: string[] = [];
-    var i: i32 = 0;
-    while (i < n) {
-        if (!cmp.contains(seen, arr[i])) { seen = seen.append(arr[i]); }
-        i = i + 1;
+  var n: i32 = arr.len();
+  var seen: string[] = [];
+  var i: i32 = 0;
+  while (i < n) {
+    if (!cmp.contains(seen, arr[i])) {
+      seen = seen.append(arr[i]);
     }
-    return seen.len();
+    i = i + 1;
+  }
+  return seen.len();
 }
 
 // `(arr: string[]) max_by_len()` — element with the
 // longest length; Option[string] None on empty. Ties go to
 // the first occurrence.
 pub function __method_Array_max_by_len(arr: string[]): Option[string] {
-    var n: i32 = arr.len();
-    if (n == 0) { return None; }
-    var best: string = arr[0];
-    var i: i32 = 1;
-    while (i < n) {
-        if (arr[i].len() > best.len()) { best = arr[i]; }
-        i = i + 1;
+  var n: i32 = arr.len();
+  if (n == 0) {
+    return None;
+  }
+  var best: string = arr[0];
+  var i: i32 = 1;
+  while (i < n) {
+    if (arr[i].len() > best.len()) {
+      best = arr[i];
     }
-    return Some(best);
+    i = i + 1;
+  }
+  return Some(best);
 }
 
 // `(arr: string[]) min_by_len()` — element with the
 // shortest length; Option[string] None on empty. Ties go
 // to the first occurrence. Counterpart to max_by_len.
 pub function __method_Array_min_by_len(arr: string[]): Option[string] {
-    var n: i32 = arr.len();
-    if (n == 0) { return None; }
-    var best: string = arr[0];
-    var i: i32 = 1;
-    while (i < n) {
-        if (arr[i].len() < best.len()) { best = arr[i]; }
-        i = i + 1;
+  var n: i32 = arr.len();
+  if (n == 0) {
+    return None;
+  }
+  var best: string = arr[0];
+  var i: i32 = 1;
+  while (i < n) {
+    if (arr[i].len() < best.len()) {
+      best = arr[i];
     }
-    return Some(best);
+    i = i + 1;
+  }
+  return Some(best);
 }
 
 // `(arr: string[]) sum_lens()` — total bytes across every
 // element. Useful for capacity-planning a join() output
 // buffer or reporting size statistics.
 pub function __method_Array_sum_lens(arr: string[]): i32 {
-    var n: i32 = arr.len();
-    var s: i32 = 0;
-    var i: i32 = 0;
-    while (i < n) {
-        s = s + arr[i].len();
-        i = i + 1;
-    }
-    return s;
+  var n: i32 = arr.len();
+  var s: i32 = 0;
+  var i: i32 = 0;
+  while (i < n) {
+    s = s + arr[i].len();
+    i = i + 1;
+  }
+  return s;
 }
 
 // `(arr: string[]) all_non_empty()` — true iff every entry
@@ -366,26 +408,30 @@ pub function __method_Array_sum_lens(arr: string[]): i32 {
 // (vacuously — there are no empty entries). Useful for
 // post-split validation.
 pub function __method_Array_all_non_empty(arr: string[]): boolean {
-    var n: i32 = arr.len();
-    var i: i32 = 0;
-    while (i < n) {
-        if (arr[i].len() == 0) { return false; }
-        i = i + 1;
+  var n: i32 = arr.len();
+  var i: i32 = 0;
+  while (i < n) {
+    if (arr[i].len() == 0) {
+      return false;
     }
-    return true;
+    i = i + 1;
+  }
+  return true;
 }
 
 // `(arr: string[]) any_contains(needle)` — true if any entry
 // contains needle as a substring. Useful for searching a
 // list of values for a common token.
 pub function __method_Array_any_contains(arr: string[], needle: string): boolean {
-    var n: i32 = arr.len();
-    var i: i32 = 0;
-    while (i < n) {
-        if (arr[i].contains(needle)) { return true; }
-        i = i + 1;
+  var n: i32 = arr.len();
+  var i: i32 = 0;
+  while (i < n) {
+    if (arr[i].contains(needle)) {
+      return true;
     }
-    return false;
+    i = i + 1;
+  }
+  return false;
 }
 
 // `(arr: string[]) all_starts_with(prefix)` — true if
@@ -393,25 +439,29 @@ pub function __method_Array_any_contains(arr: string[], needle: string): boolean
 // (vacuous). Empty prefix → true (every string starts
 // with "").
 pub function __method_Array_all_starts_with(arr: string[], prefix: string): boolean {
-    var n: i32 = arr.len();
-    var i: i32 = 0;
-    while (i < n) {
-        if (!arr[i].starts_with(prefix)) { return false; }
-        i = i + 1;
+  var n: i32 = arr.len();
+  var i: i32 = 0;
+  while (i < n) {
+    if (!arr[i].starts_with(prefix)) {
+      return false;
     }
-    return true;
+    i = i + 1;
+  }
+  return true;
 }
 
 // `(arr: string[]) all_ends_with(suffix)` — true if every
 // element ends with `suffix`. Empty array → true.
 pub function __method_Array_all_ends_with(arr: string[], suffix: string): boolean {
-    var n: i32 = arr.len();
-    var i: i32 = 0;
-    while (i < n) {
-        if (!arr[i].ends_with(suffix)) { return false; }
-        i = i + 1;
+  var n: i32 = arr.len();
+  var i: i32 = 0;
+  while (i < n) {
+    if (!arr[i].ends_with(suffix)) {
+      return false;
     }
-    return true;
+    i = i + 1;
+  }
+  return true;
 }
 
 // `(arr: string[]) join_with_last(sep, last_sep)` — like
@@ -421,86 +471,98 @@ pub function __method_Array_all_ends_with(arr: string[], suffix: string): boolea
 // single-element array → that element; two-element array
 // → joined with `last_sep` only.
 pub function __method_Array_join_with_last(arr: string[], sep: string, last_sep: string): string {
-    var n: i32 = arr.len();
-    if (n == 0) { return ""; }
-    if (n == 1) { return arr[0]; }
-    if (n == 2) { return arr[0] + last_sep + arr[1]; }
-    // Two-pass exact-size buffer (#4379), mirroring __method_Array_join:
-    // the gap before element i is `sep` for the inner joins and `last_sep`
-    // before the final element, so size = sum(elem lens) + sep*(n-2) +
-    // last_sep. Replaces the `out = out + …` chain that recopied the whole
-    // prefix each step (O(total²)). Byte-for-byte identical output.
-    var total: i32 = 0;
-    var i: i32 = 0;
-    while (i < n) {
-        total = total + arr[i].len();
-        i = i + 1;
+  var n: i32 = arr.len();
+  if (n == 0) {
+    return "";
+  }
+  if (n == 1) {
+    return arr[0];
+  }
+  if (n == 2) {
+    return arr[0] + last_sep + arr[1];
+  }
+  // Two-pass exact-size buffer (#4379), mirroring __method_Array_join:
+  // the gap before element i is `sep` for the inner joins and `last_sep`
+  // before the final element, so size = sum(elem lens) + sep*(n-2) +
+  // last_sep. Replaces the `out = out + …` chain that recopied the whole
+  // prefix each step (O(total²)). Byte-for-byte identical output.
+  var total: i32 = 0;
+  var i: i32 = 0;
+  while (i < n) {
+    total = total + arr[i].len();
+    i = i + 1;
+  }
+  total = total + sep.len() * (n - 2) + last_sep.len();
+  var buf: u8[] = __alloc_u8(total);
+  var pos: i32 = 0;
+  i = 0;
+  while (i < n) {
+    if (i > 0) {
+      var sp: string = sep;
+      if (i == n - 1) {
+        sp = last_sep;
+      }
+      var spl: i32 = sp.len();
+      var j: i32 = 0;
+      while (j < spl) {
+        buf = buf.with(pos, sp[j] as u8);
+        pos = pos + 1;
+        j = j + 1;
+      }
     }
-    total = total + sep.len() * (n - 2) + last_sep.len();
-    var buf: u8[] = __alloc_u8(total);
-    var pos: i32 = 0;
-    i = 0;
-    while (i < n) {
-        if (i > 0) {
-            var sp: string = sep;
-            if (i == n - 1) { sp = last_sep; }
-            var spl: i32 = sp.len();
-            var j: i32 = 0;
-            while (j < spl) {
-                buf = buf.with(pos, sp[j] as u8);
-                pos = pos + 1;
-                j = j + 1;
-            }
-        }
-        var e: string = arr[i];
-        var el: i32 = e.len();
-        var k: i32 = 0;
-        while (k < el) {
-            buf = buf.with(pos, e[k] as u8);
-            pos = pos + 1;
-            k = k + 1;
-        }
-        i = i + 1;
+    var e: string = arr[i];
+    var el: i32 = e.len();
+    var k: i32 = 0;
+    while (k < el) {
+      buf = buf.with(pos, e[k] as u8);
+      pos = pos + 1;
+      k = k + 1;
     }
-    return string_from_bytes_unchecked(buf);
+    i = i + 1;
+  }
+  return string_from_bytes_unchecked(buf);
 }
 
 // `(arr: i32[]) sum_abs()` — sum of |x| for each element.
 // Useful for L1 norm / "ignore sign, total magnitude" cases.
 // Empty → 0. Overflow wraps silently.
 pub function __method_Array_sum_abs(arr: i32[]): i32 {
-    var n: i32 = arr.len();
-    var s: i32 = 0;
-    var i: i32 = 0;
-    while (i < n) {
-        s = s + arr[i].abs();
-        i = i + 1;
-    }
-    return s;
+  var n: i32 = arr.len();
+  var s: i32 = 0;
+  var i: i32 = 0;
+  while (i < n) {
+    s = s + arr[i].abs();
+    i = i + 1;
+  }
+  return s;
 }
 
 // `(arr: i32[]) all_zero()` — true iff every element is 0.
 // Empty array → true (vacuously).
 pub function __method_Array_all_zero(arr: i32[]): boolean {
-    var n: i32 = arr.len();
-    var i: i32 = 0;
-    while (i < n) {
-        if (arr[i] != 0) { return false; }
-        i = i + 1;
+  var n: i32 = arr.len();
+  var i: i32 = 0;
+  while (i < n) {
+    if (arr[i] != 0) {
+      return false;
     }
-    return true;
+    i = i + 1;
+  }
+  return true;
 }
 
 // `(arr: string[]) all_eq_str(target)` — true iff every element
 // equals `target`. Empty array → true (vacuously).
 pub function __method_Array_all_eq_str(arr: string[], target: string): boolean {
-    var n: i32 = arr.len();
-    var i: i32 = 0;
-    while (i < n) {
-        if (arr[i] != target) { return false; }
-        i = i + 1;
+  var n: i32 = arr.len();
+  var i: i32 = 0;
+  while (i < n) {
+    if (arr[i] != target) {
+      return false;
     }
-    return true;
+    i = i + 1;
+  }
+  return true;
 }
 
 // =================== WIDER-INT / FLOAT REDUCTIONS ===================
@@ -517,17 +579,21 @@ pub function __method_Array_all_eq_str(arr: string[], target: string): boolean {
 // `[T: Mul + One]` (#2663) — `xs.product()` is the f64 spelling now.
 //
 // Empty-input semantics: `avg_*` returns None (no sensible default).
-
 // avg_i64 — integer mean (floor toward zero for positive
 // sums, toward zero for negative — Go's int64 division
 // semantics). Returns None on empty.
 pub function avg_i64(arr: i64[]): Option[i64] {
-    var n: i32 = arr.len();
-    if (n == 0) { return None; }
-    var total: i64 = 0;
-    var i: i32 = 0;
-    while (i < n) { total = total + arr[i]; i = i + 1; }
-    return Some(total / (n as i64));
+  var n: i32 = arr.len();
+  if (n == 0) {
+    return None;
+  }
+  var total: i64 = 0;
+  var i: i32 = 0;
+  while (i < n) {
+    total = total + arr[i];
+    i = i + 1;
+  }
+  return Some(total / (n as i64));
 }
 
 // `cumsum_f64(arr)` — the running (prefix) sum: element `i` of the result is
@@ -535,32 +601,32 @@ pub function avg_i64(arr: i64[]): Option[i64] {
 // sibling of the i32 `cumsum`, handy for numeric integration and running
 // totals.
 pub function cumsum_f64(arr: f64[]): f64[] {
-    var n: i32 = arr.len();
-    var out: f64[] = [];
-    var s: f64 = 0.0;
-    var i: i32 = 0;
-    while (i < n) {
-        s = s + arr[i];
-        out = out.append(s);
-        i = i + 1;
-    }
-    return out;
+  var n: i32 = arr.len();
+  var out: f64[] = [];
+  var s: f64 = 0.0;
+  var i: i32 = 0;
+  while (i < n) {
+    s = s + arr[i];
+    out = out.append(s);
+    i = i + 1;
+  }
+  return out;
 }
 
 // `cumprod_f64(arr)` — the running (prefix) product: element `i` of the result
 // is `product(arr[0..=i])`. Same length as the input, the multiplicative
 // counterpart to `cumsum`; empty in, empty out.
 pub function cumprod_f64(arr: f64[]): f64[] {
-    var n: i32 = arr.len();
-    var out: f64[] = [];
-    var p: f64 = 1.0;
-    var i: i32 = 0;
-    while (i < n) {
-        p = p * arr[i];
-        out = out.append(p);
-        i = i + 1;
-    }
-    return out;
+  var n: i32 = arr.len();
+  var out: f64[] = [];
+  var p: f64 = 1.0;
+  var i: i32 = 0;
+  while (i < n) {
+    p = p * arr[i];
+    out = out.append(p);
+    i = i + 1;
+  }
+  return out;
 }
 
 // `diff_f64(arr)` — the successive differences `arr[i+1] - arr[i]`, so the
@@ -568,23 +634,28 @@ pub function cumprod_f64(arr: f64[]): f64[] {
 // discrete counterpart to differentiation and the left-inverse of `cumsum`:
 // `diff(cumsum(xs))` recovers `xs` (minus its first element).
 pub function diff_f64(arr: f64[]): f64[] {
-    var n: i32 = arr.len();
-    var out: f64[] = [];
-    var i: i32 = 1;
-    while (i < n) {
-        out = out.append(arr[i] - arr[i - 1]);
-        i = i + 1;
-    }
-    return out;
+  var n: i32 = arr.len();
+  var out: f64[] = [];
+  var i: i32 = 1;
+  while (i < n) {
+    out = out.append(arr[i] - arr[i - 1]);
+    i = i + 1;
+  }
+  return out;
 }
 
 pub function avg_f64(arr: f64[]): Option[f64] {
-    var n: i32 = arr.len();
-    if (n == 0) { return None; }
-    var total: f64 = 0.0;
-    var i: i32 = 0;
-    while (i < n) { total = total + arr[i]; i = i + 1; }
-    return Some(total / (n as f64));
+  var n: i32 = arr.len();
+  if (n == 0) {
+    return None;
+  }
+  var total: f64 = 0.0;
+  var i: i32 = 0;
+  while (i < n) {
+    total = total + arr[i];
+    i = i + 1;
+  }
+  return Some(total / (n as f64));
 }
 
 // `variance_f64(arr)` — the POPULATION variance (mean of the squared deviations
@@ -592,30 +663,39 @@ pub function avg_f64(arr: f64[]): Option[f64] {
 // two-pass form (compute the mean, then the sum of squared deviations), which
 // is numerically stabler than the one-pass sum-of-squares.
 pub function variance_f64(arr: f64[]): Option[f64] {
-    var n: i32 = arr.len();
-    if (n == 0) { return None; }
-    var msum: f64 = 0.0;
-    var mi: i32 = 0;
-    while (mi < n) { msum = msum + arr[mi]; mi = mi + 1; }
-    var mean: f64 = msum / (n as f64);
-    var acc: f64 = 0.0;
-    var i: i32 = 0;
-    while (i < n) {
-        var d: f64 = arr[i] - mean;
-        acc = acc + d * d;
-        i = i + 1;
-    }
-    return Some(acc / (n as f64));
+  var n: i32 = arr.len();
+  if (n == 0) {
+    return None;
+  }
+  var msum: f64 = 0.0;
+  var mi: i32 = 0;
+  while (mi < n) {
+    msum = msum + arr[mi];
+    mi = mi + 1;
+  }
+  var mean: f64 = msum / (n as f64);
+  var acc: f64 = 0.0;
+  var i: i32 = 0;
+  while (i < n) {
+    var d: f64 = arr[i] - mean;
+    acc = acc + d * d;
+    i = i + 1;
+  }
+  return Some(acc / (n as f64));
 }
 
 // `stddev_f64(arr)` — the POPULATION standard deviation, `sqrt(variance)`.
 // `None` for an empty array. `sqrt` goes through the `__sqrt_f64` builtin
 // directly so this needs no std/float import.
 pub function stddev_f64(arr: f64[]): Option[f64] {
-    match (variance_f64(arr)) {
-        Some(v) => { return Some(__sqrt_f64(v)); },
-        None => { return None; }
+  match (variance_f64(arr)) {
+    Some(v) => {
+      return Some(__sqrt_f64(v));
+    },
+    None => {
+      return None;
     }
+  }
 }
 
 // `median_f64(arr)` — the median after an ascending sort. Unlike the i32
@@ -623,28 +703,38 @@ pub function stddev_f64(arr: f64[]): Option[f64] {
 // elements for even-length input, the standard continuous-data convention.
 // `None` for empty. Odd length returns the exact middle element.
 pub function median_f64(arr: f64[]): Option[f64] {
-    var n: i32 = arr.len();
-    if (n == 0) { return None; }
-    var sorted: f64[] = cmp.sort(arr);
-    if (n % 2 == 1) { return Some(sorted[n / 2]); }
-    var hi: i32 = n / 2;
-    return Some((sorted[hi - 1] + sorted[hi]) * 0.5);
+  var n: i32 = arr.len();
+  if (n == 0) {
+    return None;
+  }
+  var sorted: f64[] = cmp.sort(arr);
+  if (n % 2 == 1) {
+    return Some(sorted[n / 2]);
+  }
+  var hi: i32 = n / 2;
+  return Some((sorted[hi - 1] + sorted[hi]) * 0.5);
 }
 
 // `range_f64(arr)` — the spread `max - min` (always `>= 0`). A single element
 // has range 0. `None` for empty. Computed in one pass, so it needs no sort.
 pub function range_f64(arr: f64[]): Option[f64] {
-    var n: i32 = arr.len();
-    if (n == 0) { return None; }
-    var lo: f64 = arr[0];
-    var hi: f64 = arr[0];
-    var i: i32 = 1;
-    while (i < n) {
-        if (arr[i] < lo) { lo = arr[i]; }
-        if (arr[i] > hi) { hi = arr[i]; }
-        i = i + 1;
+  var n: i32 = arr.len();
+  if (n == 0) {
+    return None;
+  }
+  var lo: f64 = arr[0];
+  var hi: f64 = arr[0];
+  var i: i32 = 1;
+  while (i < n) {
+    if (arr[i] < lo) {
+      lo = arr[i];
     }
-    return Some(hi - lo);
+    if (arr[i] > hi) {
+      hi = arr[i];
+    }
+    i = i + 1;
+  }
+  return Some(hi - lo);
 }
 
 // `dot_f64(a, b)` — the dot product `sum(a[i] * b[i])`. When the two arrays
@@ -652,16 +742,18 @@ pub function range_f64(arr: f64[]): Option[f64] {
 // to the shorter length); empty inputs give `0`. Returns a plain f64 (no
 // Option) since the natural identity for the empty sum is `0`.
 pub function dot_f64(a: f64[], b: f64[]): f64 {
-    var n: i32 = a.len();
-    var m: i32 = b.len();
-    if (m < n) { n = m; }
-    var s: f64 = 0.0;
-    var i: i32 = 0;
-    while (i < n) {
-        s = s + a[i] * b[i];
-        i = i + 1;
-    }
-    return s;
+  var n: i32 = a.len();
+  var m: i32 = b.len();
+  if (m < n) {
+    n = m;
+  }
+  var s: f64 = 0.0;
+  var i: i32 = 0;
+  while (i < n) {
+    s = s + a[i] * b[i];
+    i = i + 1;
+  }
+  return s;
 }
 
 // `norm_f64(arr)` — the Euclidean norm (L2 magnitude) `sqrt(sum(x*x))`, i.e.
@@ -669,31 +761,33 @@ pub function dot_f64(a: f64[], b: f64[]): f64 {
 // magnitudes can overflow before the sqrt — callers near the f64 max should
 // scale first; typical data is fine.
 pub function norm_f64(arr: f64[]): f64 {
-    var n: i32 = arr.len();
-    var s: f64 = 0.0;
-    var i: i32 = 0;
-    while (i < n) {
-        s = s + arr[i] * arr[i];
-        i = i + 1;
-    }
-    return __sqrt_f64(s);
+  var n: i32 = arr.len();
+  var s: f64 = 0.0;
+  var i: i32 = 0;
+  while (i < n) {
+    s = s + arr[i] * arr[i];
+    i = i + 1;
+  }
+  return __sqrt_f64(s);
 }
 
 // `distance_f64(a, b)` — the Euclidean distance `sqrt(sum((a[i]-b[i])^2))`, i.e.
 // `norm(a - b)`. On a length mismatch the sum runs to the shorter length; equal
 // vectors (and empty inputs) give `0`. Returns a plain f64.
 pub function distance_f64(a: f64[], b: f64[]): f64 {
-    var n: i32 = a.len();
-    var m: i32 = b.len();
-    if (m < n) { n = m; }
-    var s: f64 = 0.0;
-    var i: i32 = 0;
-    while (i < n) {
-        var d: f64 = a[i] - b[i];
-        s = s + d * d;
-        i = i + 1;
-    }
-    return __sqrt_f64(s);
+  var n: i32 = a.len();
+  var m: i32 = b.len();
+  if (m < n) {
+    n = m;
+  }
+  var s: f64 = 0.0;
+  var i: i32 = 0;
+  while (i < n) {
+    var d: f64 = a[i] - b[i];
+    s = s + d * d;
+    i = i + 1;
+  }
+  return __sqrt_f64(s);
 }
 
 // `normalize_f64(arr)` — the unit vector in the same direction: each element
@@ -701,16 +795,18 @@ pub function distance_f64(a: f64[], b: f64[]): f64 {
 // the empty vector are returned unchanged rather than producing NaNs from a
 // divide-by-zero.
 pub function normalize_f64(arr: f64[]): f64[] {
-    var mag: f64 = norm_f64(arr);
-    if (mag == 0.0) { return arr; }
-    var out: f64[] = [];
-    var n: i32 = arr.len();
-    var i: i32 = 0;
-    while (i < n) {
-        out = out.append(arr[i] / mag);
-        i = i + 1;
-    }
-    return out;
+  var mag: f64 = norm_f64(arr);
+  if (mag == 0.0) {
+    return arr;
+  }
+  var out: f64[] = [];
+  var n: i32 = arr.len();
+  var i: i32 = 0;
+  while (i < n) {
+    out = out.append(arr[i] / mag);
+    i = i + 1;
+  }
+  return out;
 }
 
 // `scale_f64(arr, k)` — every element multiplied by the scalar `k`, returning a
@@ -719,23 +815,25 @@ pub function normalize_f64(arr: f64[]): f64[] {
 // (docs/ATLAS-PLATFORM-PLAN.md §3.4): one allocation and one multiply per
 // element, with nothing for a loop here to add.
 pub function scale_f64(arr: f64[], k: f64): f64[] {
-    return __scale_f64(arr, k);
+  return __scale_f64(arr, k);
 }
 
 // `add_f64(a, b)` — the element-wise sum `a[i] + b[i]`. On a length mismatch
 // the result runs to the shorter length (the longer tail is dropped); empty in,
 // empty out. The vector-addition companion to `scale_f64`.
 pub function add_f64(a: f64[], b: f64[]): f64[] {
-    var n: i32 = a.len();
-    var m: i32 = b.len();
-    if (m < n) { n = m; }
-    var out: f64[] = [];
-    var i: i32 = 0;
-    while (i < n) {
-        out = out.append(a[i] + b[i]);
-        i = i + 1;
-    }
-    return out;
+  var n: i32 = a.len();
+  var m: i32 = b.len();
+  if (m < n) {
+    n = m;
+  }
+  var out: f64[] = [];
+  var i: i32 = 0;
+  while (i < n) {
+    out = out.append(a[i] + b[i]);
+    i = i + 1;
+  }
+  return out;
 }
 
 // =================== GENERIC ARRAY COMBINATORS ===================
@@ -763,52 +861,61 @@ pub function add_f64(a: f64[], b: f64[]): f64[] {
 // the right v1 trade for the small-n CLI / edge-handler workloads.
 // A lazy `std/iter` can layer on later without reworking these
 // bodies.
-
 // `is_empty(xs)` — `true` iff `xs` has no elements. The readable spelling of
 // `xs.len() == 0`.
 pub function is_empty[T](xs: T[]): boolean {
-    return xs.len() == 0;
+  return xs.len() == 0;
 }
 
 // `first(xs)` — `Some` of the first element, or `None` when empty. The safe,
 // bounds-checked alternative to `xs[0]` (which traps on an empty array).
 pub function first[T](xs: T[]): Option[T] {
-    if (xs.len() == 0) { return None; }
-    return Some(xs[0]);
+  if (xs.len() == 0) {
+    return None;
+  }
+  return Some(xs[0]);
 }
 
 // `last(xs)` — `Some` of the final element, or `None` when empty. The safe
 // alternative to `xs[xs.len() - 1]`.
 pub function last[T](xs: T[]): Option[T] {
-    var n: i32 = xs.len();
-    if (n == 0) { return None; }
-    return Some(xs[n - 1]);
+  var n: i32 = xs.len();
+  if (n == 0) {
+    return None;
+  }
+  return Some(xs[n - 1]);
 }
 
 // `get(xs, i)` — bounds-checked indexing: `Some(xs[i])` when `0 <= i < len`,
 // else `None`. Turns an out-of-range access (which `xs[i]` would trap on) into
 // a value you can match on; negative `i` is `None`, never a from-the-end index.
 pub function get[T](xs: T[], i: i32): Option[T] {
-    if (i < 0 || i >= xs.len()) { return None; }
-    return Some(xs[i]);
+  if (i < 0 || i >= xs.len()) {
+    return None;
+  }
+  return Some(xs[i]);
 }
 
 // `map(xs, f)` — fresh `U[]` with `f` applied to every element.
 // Empty → empty. The most common transform.
 pub function map[T, U](xs: T[], f: (T) => U): U[] {
-    var out: U[] = [];
-    for x in xs { out = out.append(f(x)); }
-    return out;
+  var out: U[] = [];
+  for x in xs {
+    out = out.append(f(x));
+  }
+  return out;
 }
 
 // `filter(xs, keep)` — fresh `T[]` of the elements for which
 // `keep` returns true, original order preserved. Empty → empty.
 pub function filter[T](xs: T[], keep: (T) => boolean): T[] {
-    var out: T[] = [];
-    for x in xs {
-        if (keep(x)) { out = out.append(x); }
+  var out: T[] = [];
+  for x in xs {
+    if (keep(x)) {
+      out = out.append(x);
     }
-    return out;
+  }
+  return out;
 }
 
 // `fold(xs, init, f)` — left fold. Threads `acc` (starting at
@@ -816,27 +923,33 @@ pub function filter[T](xs: T[], keep: (T) => boolean): T[] {
 // final accumulator. The general reduction; `sum` / `product` /
 // `min` / `max` are all special cases.
 pub function fold[T, A](xs: T[], init: A, f: (A, T) => A): A {
-    var acc: A = init;
-    for x in xs { acc = f(acc, x); }
-    return acc;
+  var acc: A = init;
+  for x in xs {
+    acc = f(acc, x);
+  }
+  return acc;
 }
 
 // `any(xs, pred)` — true if `pred` holds for at least one
 // element. Short-circuits on the first match. Empty → false.
 pub function any[T](xs: T[], pred: (T) => boolean): boolean {
-    for x in xs {
-        if (pred(x)) { return true; }
+  for x in xs {
+    if (pred(x)) {
+      return true;
     }
-    return false;
+  }
+  return false;
 }
 
 // `all(xs, pred)` — true if `pred` holds for every element.
 // Short-circuits on the first failure. Empty → true (vacuous).
 pub function all[T](xs: T[], pred: (T) => boolean): boolean {
-    for x in xs {
-        if (!pred(x)) { return false; }
+  for x in xs {
+    if (!pred(x)) {
+      return false;
     }
-    return true;
+  }
+  return true;
 }
 
 // `none(xs, pred)` — true if `pred` holds for NO element (the readable
@@ -844,20 +957,24 @@ pub function all[T](xs: T[], pred: (T) => boolean): boolean {
 // `!any(xs, is_error)`). Short-circuits on the first match. Empty → true
 // (vacuous). Completes the any / all / none predicate triad.
 pub function none[T](xs: T[], pred: (T) => boolean): boolean {
-    for x in xs {
-        if (pred(x)) { return false; }
+  for x in xs {
+    if (pred(x)) {
+      return false;
     }
-    return true;
+  }
+  return true;
 }
 
 // `find(xs, pred)` — `Some(x)` for the first element matching
 // `pred`, else `None`. Short-circuits. The Option return keeps
 // "not found" out-of-band rather than leaning on a sentinel.
 pub function find[T](xs: T[], pred: (T) => boolean): Option[T] {
-    for x in xs {
-        if (pred(x)) { return Some(x); }
+  for x in xs {
+    if (pred(x)) {
+      return Some(x);
     }
-    return None;
+  }
+  return None;
 }
 
 // `find_last(xs, pred)` — `Some` of the LAST element satisfying `pred`,
@@ -866,12 +983,14 @@ pub function find[T](xs: T[], pred: (T) => boolean): Option[T] {
 // element", `find_last` "the last". Works for any element type via the
 // closure; empty → `None`.
 pub function find_last[T](xs: T[], pred: (T) => boolean): Option[T] {
-    var i: i32 = xs.len() - 1;
-    while (i >= 0) {
-        if (pred(xs[i])) { return Some(xs[i]); }
-        i = i - 1;
+  var i: i32 = xs.len() - 1;
+  while (i >= 0) {
+    if (pred(xs[i])) {
+      return Some(xs[i]);
     }
-    return None;
+    i = i - 1;
+  }
+  return None;
 }
 
 // `find_map(xs, f)` — apply `f` to each element and return the FIRST
@@ -882,13 +1001,15 @@ pub function find_last[T](xs: T[], pred: (T) => boolean): Option[T] {
 // parses to a valid config entry. Mirrors Rust's `Iterator::find_map`;
 // the closure lowers on every backend and the self-host IR path.
 pub function find_map[T, U](xs: T[], f: (T) => Option[U]): Option[U] {
-    for x in xs {
-        match (f(x)) {
-            Some(v) => { return Some(v); },
-            None => {},
-        }
+  for x in xs {
+    match (f(x)) {
+      Some(v) => {
+        return Some(v);
+      },
+      None => {}
     }
-    return None;
+  }
+  return None;
 }
 
 // `max_by_i32_key(xs, key)` / `min_by_i32_key(xs, key)` — the ELEMENT of `xs`
@@ -902,31 +1023,41 @@ pub function find_map[T, U](xs: T[], f: (T) => Option[U]): Option[U] {
 // stable w.r.t. input order. Like `find` / `sort_by`, the closure lowers on
 // every backend and the self-host IR path.
 pub function max_by_i32_key[T](xs: T[], key: (T) => i32): Option[T] {
-    if (xs.len() == 0) { return None; }
-    var best: T = xs[0];
-    var best_k: i32 = key(best);
-    var i: i32 = 1;
-    while (i < xs.len()) {
-        var k: i32 = key(xs[i]);
-        if (k > best_k) { best = xs[i]; best_k = k; }
-        i = i + 1;
+  if (xs.len() == 0) {
+    return None;
+  }
+  var best: T = xs[0];
+  var best_k: i32 = key(best);
+  var i: i32 = 1;
+  while (i < xs.len()) {
+    var k: i32 = key(xs[i]);
+    if (k > best_k) {
+      best = xs[i];
+      best_k = k;
     }
-    return Some(best);
+    i = i + 1;
+  }
+  return Some(best);
 }
 
 // `min_by_i32_key` is `max_by_i32_key`'s mirror: the element with the smallest
 // i32 key, or `None` when empty.
 pub function min_by_i32_key[T](xs: T[], key: (T) => i32): Option[T] {
-    if (xs.len() == 0) { return None; }
-    var best: T = xs[0];
-    var best_k: i32 = key(best);
-    var i: i32 = 1;
-    while (i < xs.len()) {
-        var k: i32 = key(xs[i]);
-        if (k < best_k) { best = xs[i]; best_k = k; }
-        i = i + 1;
+  if (xs.len() == 0) {
+    return None;
+  }
+  var best: T = xs[0];
+  var best_k: i32 = key(best);
+  var i: i32 = 1;
+  while (i < xs.len()) {
+    var k: i32 = key(xs[i]);
+    if (k < best_k) {
+      best = xs[i];
+      best_k = k;
     }
-    return Some(best);
+    i = i + 1;
+  }
+  return Some(best);
 }
 
 // `max_index(xs)` / `min_index(xs)` — the INDEX of the largest / smallest
@@ -939,26 +1070,34 @@ pub function min_by_i32_key[T](xs: T[], key: (T) => i32): Option[T] {
 // type (scalar for `i32`, lexicographic for `string`); the return is
 // `Option[i32]` regardless of `T`.
 pub function max_index[T: cmp.Ord](xs: T[]): Option[i32] {
-    if (xs.len() == 0) { return None; }
-    var best: i32 = 0;
-    var i: i32 = 1;
-    while (i < xs.len()) {
-        if (xs[i].cmp(xs[best]) > 0) { best = i; }
-        i = i + 1;
+  if (xs.len() == 0) {
+    return None;
+  }
+  var best: i32 = 0;
+  var i: i32 = 1;
+  while (i < xs.len()) {
+    if (xs[i].cmp(xs[best]) > 0) {
+      best = i;
     }
-    return Some(best);
+    i = i + 1;
+  }
+  return Some(best);
 }
 
 // `min_index` is `max_index`'s mirror: the index of the smallest element.
 pub function min_index[T: cmp.Ord](xs: T[]): Option[i32] {
-    if (xs.len() == 0) { return None; }
-    var best: i32 = 0;
-    var i: i32 = 1;
-    while (i < xs.len()) {
-        if (xs[i].cmp(xs[best]) < 0) { best = i; }
-        i = i + 1;
+  if (xs.len() == 0) {
+    return None;
+  }
+  var best: i32 = 0;
+  var i: i32 = 1;
+  while (i < xs.len()) {
+    if (xs[i].cmp(xs[best]) < 0) {
+      best = i;
     }
-    return Some(best);
+    i = i + 1;
+  }
+  return Some(best);
 }
 
 // `running_max(xs)` / `running_min(xs)` — the running (prefix) maximum /
@@ -968,28 +1107,37 @@ pub function min_index[T: cmp.Ord](xs: T[]): Option[i32] {
 // siblings of `num.cumsum`, useful for high-water marks, drawdowns, and
 // monotone-envelope scans. Empty in, empty out.
 pub function running_max[T: cmp.Ord](xs: T[]): T[] {
-    var out: T[] = [];
-    if (xs.len() == 0) { return out; }
-    var best: T = xs[0];
-    var i: i32 = 0;
-    while (i < xs.len()) {
-        if (xs[i].cmp(best) > 0) { best = xs[i]; }
-        out = out.append(best);
-        i = i + 1;
-    }
+  var out: T[] = [];
+  if (xs.len() == 0) {
     return out;
+  }
+  var best: T = xs[0];
+  var i: i32 = 0;
+  while (i < xs.len()) {
+    if (xs[i].cmp(best) > 0) {
+      best = xs[i];
+    }
+    out = out.append(best);
+    i = i + 1;
+  }
+  return out;
 }
+
 pub function running_min[T: cmp.Ord](xs: T[]): T[] {
-    var out: T[] = [];
-    if (xs.len() == 0) { return out; }
-    var best: T = xs[0];
-    var i: i32 = 0;
-    while (i < xs.len()) {
-        if (xs[i].cmp(best) < 0) { best = xs[i]; }
-        out = out.append(best);
-        i = i + 1;
-    }
+  var out: T[] = [];
+  if (xs.len() == 0) {
     return out;
+  }
+  var best: T = xs[0];
+  var i: i32 = 0;
+  while (i < xs.len()) {
+    if (xs[i].cmp(best) < 0) {
+      best = xs[i];
+    }
+    out = out.append(best);
+    i = i + 1;
+  }
+  return out;
 }
 
 // `max_by(xs, cmp)` — `Some` of the element that is greatest under the
@@ -1003,28 +1151,36 @@ pub function running_min[T: cmp.Ord](xs: T[]): T[] {
 // so the result is stable w.r.t. input order. Like `sort_by`, the closure
 // lowers on every backend and the self-host IR path.
 pub function max_by[T](xs: T[], cmp: (T, T) => i32): Option[T] {
-    if (xs.len() == 0) { return None; }
-    var best: T = xs[0];
-    var i: i32 = 1;
-    while (i < xs.len()) {
-        if (cmp(xs[i], best) > 0) { best = xs[i]; }
-        i = i + 1;
+  if (xs.len() == 0) {
+    return None;
+  }
+  var best: T = xs[0];
+  var i: i32 = 1;
+  while (i < xs.len()) {
+    if (cmp(xs[i], best) > 0) {
+      best = xs[i];
     }
-    return Some(best);
+    i = i + 1;
+  }
+  return Some(best);
 }
 
 // `min_by(xs, cmp)` is `max_by`'s mirror: the element that is least under the
 // comparator, or `None` when empty. `best` is replaced only on a STRICTLY
 // smaller element (`cmp(xs[i], best) < 0`), so ties keep the first minimal one.
 pub function min_by[T](xs: T[], cmp: (T, T) => i32): Option[T] {
-    if (xs.len() == 0) { return None; }
-    var best: T = xs[0];
-    var i: i32 = 1;
-    while (i < xs.len()) {
-        if (cmp(xs[i], best) < 0) { best = xs[i]; }
-        i = i + 1;
+  if (xs.len() == 0) {
+    return None;
+  }
+  var best: T = xs[0];
+  var i: i32 = 1;
+  while (i < xs.len()) {
+    if (cmp(xs[i], best) < 0) {
+      best = xs[i];
     }
-    return Some(best);
+    i = i + 1;
+  }
+  return Some(best);
 }
 
 // `position(xs, pred)` — `Some(i)` for the FIRST index whose element
@@ -1033,12 +1189,14 @@ pub function min_by[T](xs: T[], cmp: (T, T) => i32): Option[T] {
 // returns the element): `find` answers "which element", `position` answers
 // "where". Works for any element type via the closure; empty → `None`.
 pub function position[T](xs: T[], pred: (T) => boolean): Option[i32] {
-    var i: i32 = 0;
-    while (i < xs.len()) {
-        if (pred(xs[i])) { return Some(i); }
-        i = i + 1;
+  var i: i32 = 0;
+  while (i < xs.len()) {
+    if (pred(xs[i])) {
+      return Some(i);
     }
-    return None;
+    i = i + 1;
+  }
+  return None;
 }
 
 // `find_indices(xs, pred)` — the indices (ascending) of every element that
@@ -1048,13 +1206,15 @@ pub function position[T](xs: T[], pred: (T) => boolean): Option[i32] {
 // (which keeps the values) when it is the positions you need — a selection
 // mask, later `swap` / `remove_at` targets, gap analysis.
 pub function find_indices[T](xs: T[], pred: (T) => boolean): i32[] {
-    var out: i32[] = [];
-    var i: i32 = 0;
-    while (i < xs.len()) {
-        if (pred(xs[i])) { out = out.append(i); }
-        i = i + 1;
+  var out: i32[] = [];
+  var i: i32 = 0;
+  while (i < xs.len()) {
+    if (pred(xs[i])) {
+      out = out.append(i);
     }
-    return out;
+    i = i + 1;
+  }
+  return out;
 }
 
 // `rposition(xs, pred)` — `Some(i)` for the LAST index whose element
@@ -1063,12 +1223,14 @@ pub function find_indices[T](xs: T[], pred: (T) => boolean): i32[] {
 // `index_of_last` (which matches by `Eq` value). Works for any element type
 // via the closure; empty → `None`.
 pub function rposition[T](xs: T[], pred: (T) => boolean): Option[i32] {
-    var i: i32 = xs.len() - 1;
-    while (i >= 0) {
-        if (pred(xs[i])) { return Some(i); }
-        i = i - 1;
+  var i: i32 = xs.len() - 1;
+  while (i >= 0) {
+    if (pred(xs[i])) {
+      return Some(i);
     }
-    return None;
+    i = i - 1;
+  }
+  return None;
 }
 
 // `count_where(xs, pred)` — how many elements satisfy `pred`. The aggregate
@@ -1076,13 +1238,15 @@ pub function rposition[T](xs: T[], pred: (T) => boolean): Option[i32] {
 // finds the first): `count_where` just tallies, so it avoids `filter(…).len()`'s
 // throwaway allocation. Works for any element type via the closure; empty → 0.
 pub function count_where[T](xs: T[], pred: (T) => boolean): i32 {
-    var c: i32 = 0;
-    var i: i32 = 0;
-    while (i < xs.len()) {
-        if (pred(xs[i])) { c = c + 1; }
-        i = i + 1;
+  var c: i32 = 0;
+  var i: i32 = 0;
+  while (i < xs.len()) {
+    if (pred(xs[i])) {
+      c = c + 1;
     }
-    return c;
+    i = i + 1;
+  }
+  return c;
 }
 
 // `sum_by(xs, key)` — the sum of the i32 projection `key(x)` over every
@@ -1091,13 +1255,13 @@ pub function count_where[T](xs: T[], pred: (T) => boolean): i32 {
 // element type (e.g. total line length over a `string[]`, total price over a
 // `Cart[]`). `key` is evaluated once per element; empty → 0.
 pub function sum_by[T](xs: T[], key: (T) => i32): i32 {
-    var total: i32 = 0;
-    var i: i32 = 0;
-    while (i < xs.len()) {
-        total = total + key(xs[i]);
-        i = i + 1;
-    }
-    return total;
+  var total: i32 = 0;
+  var i: i32 = 0;
+  while (i < xs.len()) {
+    total = total + key(xs[i]);
+    i = i + 1;
+  }
+  return total;
 }
 
 // `take_while(xs, pred)` — fresh `T[]` of the LONGEST leading run whose every
@@ -1106,13 +1270,13 @@ pub function sum_by[T](xs: T[], key: (T) => i32): i32 {
 // fails, a full copy when all pass. Complement of `drop_while`:
 // `take_while(xs, p) ++ drop_while(xs, p) == xs`.
 pub function take_while[T](xs: T[], pred: (T) => boolean): T[] {
-    var out: T[] = [];
-    var i: i32 = 0;
-    while (i < xs.len() && pred(xs[i])) {
-        out = out.append(xs[i]);
-        i = i + 1;
-    }
-    return out;
+  var out: T[] = [];
+  var i: i32 = 0;
+  while (i < xs.len() && pred(xs[i])) {
+    out = out.append(xs[i]);
+    i = i + 1;
+  }
+  return out;
 }
 
 // `drop_while(xs, pred)` — fresh `T[]` starting at the FIRST element that fails
@@ -1120,14 +1284,16 @@ pub function take_while[T](xs: T[], pred: (T) => boolean): T[] {
 // count-based `drop`. A full copy when the first element fails, `[]` when all
 // pass.
 pub function drop_while[T](xs: T[], pred: (T) => boolean): T[] {
-    var i: i32 = 0;
-    while (i < xs.len() && pred(xs[i])) { i = i + 1; }
-    var out: T[] = [];
-    while (i < xs.len()) {
-        out = out.append(xs[i]);
-        i = i + 1;
-    }
-    return out;
+  var i: i32 = 0;
+  while (i < xs.len() && pred(xs[i])) {
+    i = i + 1;
+  }
+  var out: T[] = [];
+  while (i < xs.len()) {
+    out = out.append(xs[i]);
+    i = i + 1;
+  }
+  return out;
 }
 
 // `enumerate(xs)` — pair each element with its 0-based index:
@@ -1135,26 +1301,26 @@ pub function drop_while[T](xs: T[], pred: (T) => boolean): T[] {
 // enumerate(xs)`-style loop carry the index without a manual
 // counter. Empty → empty.
 pub function enumerate[T](xs: T[]): (i32, T)[] {
-    var out: (i32, T)[] = [];
-    var i: i32 = 0;
-    for x in xs {
-        out = out.append((i, x));
-        i = i + 1;
-    }
-    return out;
+  var out: (i32, T)[] = [];
+  var i: i32 = 0;
+  for x in xs {
+    out = out.append((i, x));
+    i = i + 1;
+  }
+  return out;
 }
 
 // `reverse(xs)` — fresh `T[]` with the elements in reverse order.
 // Empty → empty. Structural (no element comparison), so it works
 // for any element type, unlike the i32/string-specific reversers.
 pub function reverse[T](xs: T[]): T[] {
-    var out: T[] = [];
-    var i: i32 = xs.len() - 1;
-    while (i >= 0) {
-        out = out.append(xs[i]);
-        i = i - 1;
-    }
-    return out;
+  var out: T[] = [];
+  var i: i32 = xs.len() - 1;
+  while (i >= 0) {
+    out = out.append(xs[i]);
+    i = i - 1;
+  }
+  return out;
 }
 
 // `rotate_left(xs, n)` — fresh `T[]` with the elements cyclically shifted
@@ -1164,18 +1330,20 @@ pub function reverse[T](xs: T[]): T[] {
 // rotate_right(xs, 1)`. Empty / length-1 / `n % len == 0` → an unchanged copy.
 // Structural (no element comparison), so it works for any element type.
 pub function rotate_left[T](xs: T[], n: i32): T[] {
-    var len: i32 = xs.len();
-    var out: T[] = [];
-    if (len == 0) { return out; }
-    // Normalise the shift into [0, len) — `%` can be negative in Fern, so add
-    // len and take `%` again to fold negatives back into range.
-    var sh: i32 = ((n % len) + len) % len;
-    var i: i32 = 0;
-    while (i < len) {
-        out = out.append(xs[(i + sh) % len]);
-        i = i + 1;
-    }
+  var len: i32 = xs.len();
+  var out: T[] = [];
+  if (len == 0) {
     return out;
+  }
+  // Normalise the shift into [0, len) — `%` can be negative in Fern, so add
+  // len and take `%` again to fold negatives back into range.
+  var sh: i32 = (n % len + len) % len;
+  var i: i32 = 0;
+  while (i < len) {
+    out = out.append(xs[(i + sh) % len]);
+    i = i + 1;
+  }
+  return out;
 }
 
 // `rotate_right(xs, n)` — the mirror of `rotate_left`: the last `n` elements
@@ -1183,33 +1351,35 @@ pub function rotate_left[T](xs: T[], n: i32): T[] {
 // Implemented as a left-rotate by `len - (n mod len)`; same wrap / negative /
 // empty handling.
 pub function rotate_right[T](xs: T[], n: i32): T[] {
-    return rotate_left(xs, 0 - n);
+  return rotate_left(xs, 0 - n);
 }
 
 // `take(xs, n)` — fresh `T[]` of the first `n` elements (the prefix).
 // Clamped: `n <= 0` → empty, `n >= len` → a full copy. The
 // complement of `drop`: `take(xs, n) ++ drop(xs, n) == xs`.
 pub function take[T](xs: T[], n: i32): T[] {
-    var out: T[] = [];
-    var i: i32 = 0;
-    while (i < n && i < xs.len()) {
-        out = out.append(xs[i]);
-        i = i + 1;
-    }
-    return out;
+  var out: T[] = [];
+  var i: i32 = 0;
+  while (i < n && i < xs.len()) {
+    out = out.append(xs[i]);
+    i = i + 1;
+  }
+  return out;
 }
 
 // `drop(xs, n)` — fresh `T[]` with the first `n` elements removed
 // (the suffix). Clamped: `n <= 0` → a full copy, `n >= len` → empty.
 pub function drop[T](xs: T[], n: i32): T[] {
-    var out: T[] = [];
-    var i: i32 = n;
-    if (i < 0) { i = 0; }
-    while (i < xs.len()) {
-        out = out.append(xs[i]);
-        i = i + 1;
-    }
-    return out;
+  var out: T[] = [];
+  var i: i32 = n;
+  if (i < 0) {
+    i = 0;
+  }
+  while (i < xs.len()) {
+    out = out.append(xs[i]);
+    i = i + 1;
+  }
+  return out;
 }
 
 // `take_last(xs, n)` / `drop_last(xs, n)` — the back-of-the-array mirrors
@@ -1218,16 +1388,25 @@ pub function drop[T](xs: T[], n: i32): T[] {
 // them (`[1,2,3]`). Like `take` / `drop`, `n` is clamped: `n <= 0` and
 // `n >= len` behave as the natural empty / whole-array cases, never fault.
 pub function take_last[T](xs: T[], n: i32): T[] {
-    if (n <= 0) { return []; }
-    var start: i32 = xs.len() - n;
-    if (start < 0) { start = 0; }
-    return slice(xs, start, xs.len());
+  if (n <= 0) {
+    return [];
+  }
+  var start: i32 = xs.len() - n;
+  if (start < 0) {
+    start = 0;
+  }
+  return slice(xs, start, xs.len());
 }
+
 pub function drop_last[T](xs: T[], n: i32): T[] {
-    if (n <= 0) { return slice(xs, 0, xs.len()); }
-    var end: i32 = xs.len() - n;
-    if (end < 0) { end = 0; }
-    return slice(xs, 0, end);
+  if (n <= 0) {
+    return slice(xs, 0, xs.len());
+  }
+  var end: i32 = xs.len() - n;
+  if (end < 0) {
+    end = 0;
+  }
+  return slice(xs, 0, end);
 }
 
 // `slice(xs, start, end)` — fresh `T[]` of the half-open range
@@ -1236,17 +1415,21 @@ pub function drop_last[T](xs: T[], n: i32): T[] {
 // `slice(xs, -3, 100)` copies the whole array. `take`/`drop` are the
 // one-bound special cases; `slice` is the general window into a range.
 pub function slice[T](xs: T[], start: i32, end: i32): T[] {
-    var lo: i32 = start;
-    var hi: i32 = end;
-    if (lo < 0) { lo = 0; }
-    if (hi > xs.len()) { hi = xs.len(); }
-    var out: T[] = [];
-    var i: i32 = lo;
-    while (i < hi) {
-        out = out.append(xs[i]);
-        i = i + 1;
-    }
-    return out;
+  var lo: i32 = start;
+  var hi: i32 = end;
+  if (lo < 0) {
+    lo = 0;
+  }
+  if (hi > xs.len()) {
+    hi = xs.len();
+  }
+  var out: T[] = [];
+  var i: i32 = lo;
+  while (i < hi) {
+    out = out.append(xs[i]);
+    i = i + 1;
+  }
+  return out;
 }
 
 // `chunks(xs, size)` — split `xs` into consecutive, non-overlapping
@@ -1255,20 +1438,24 @@ pub function slice[T](xs: T[], start: i32, end: i32): T[] {
 // looping forever) and empty input → empty. The batch-processing verb:
 // `for batch in chunks(rows, 100) { flush(batch); }`.
 pub function chunks[T](xs: T[], size: i32): T[][] {
-    var out: T[][] = [];
-    if (size <= 0) { return out; }
-    var n: i32 = xs.len();
-    var i: i32 = 0;
-    while (i < n) {
-        // Each group is a fresh `slice` return rather than a reused
-        // loop-local buffer — the latter is miscompiled by the
-        // self-host RC reuse pass (all groups alias the last one).
-        var hi: i32 = i + size;
-        if (hi > n) { hi = n; }
-        out = out.append(slice(xs, i, hi));
-        i = i + size;
-    }
+  var out: T[][] = [];
+  if (size <= 0) {
     return out;
+  }
+  var n: i32 = xs.len();
+  var i: i32 = 0;
+  while (i < n) {
+    // Each group is a fresh `slice` return rather than a reused
+    // loop-local buffer — the latter is miscompiled by the
+    // self-host RC reuse pass (all groups alias the last one).
+    var hi: i32 = i + size;
+    if (hi > n) {
+      hi = n;
+    }
+    out = out.append(slice(xs, i, hi));
+    i = i + size;
+  }
+  return out;
 }
 
 // `chunks_exact(xs, size)` — like `chunks`, but only the full-length
@@ -1280,15 +1467,17 @@ pub function chunks[T](xs: T[], size: i32): T[][] {
 // loop-local buffer is miscompiled by the self-host RC reuse pass — see
 // `chunks`).
 pub function chunks_exact[T](xs: T[], size: i32): T[][] {
-    var out: T[][] = [];
-    if (size <= 0) { return out; }
-    var n: i32 = xs.len();
-    var i: i32 = 0;
-    while (i + size <= n) {
-        out = out.append(slice(xs, i, i + size));
-        i = i + size;
-    }
+  var out: T[][] = [];
+  if (size <= 0) {
     return out;
+  }
+  var n: i32 = xs.len();
+  var i: i32 = 0;
+  while (i + size <= n) {
+    out = out.append(slice(xs, i, i + size));
+    i = i + size;
+  }
+  return out;
 }
 
 // `windows(xs, size)` — every contiguous length-`size` sub-slice,
@@ -1297,26 +1486,32 @@ pub function chunks_exact[T](xs: T[], size: i32): T[][] {
 // window fits). Unlike `chunks`, windows OVERLAP and each one has
 // exactly `size` elements — the shape pairwise/rolling scans want.
 pub function windows[T](xs: T[], size: i32): T[][] {
-    var out: T[][] = [];
-    if (size <= 0) { return out; }
-    var n: i32 = xs.len();
-    var i: i32 = 0;
-    while (i + size <= n) {
-        // Fresh `slice` return per window (see the note in `chunks`).
-        out = out.append(slice(xs, i, i + size));
-        i = i + 1;
-    }
+  var out: T[][] = [];
+  if (size <= 0) {
     return out;
+  }
+  var n: i32 = xs.len();
+  var i: i32 = 0;
+  while (i + size <= n) {
+    // Fresh `slice` return per window (see the note in `chunks`).
+    out = out.append(slice(xs, i, i + size));
+    i = i + 1;
+  }
+  return out;
 }
 
 // `concat(a, b)` — fresh `T[]` of `a`'s elements followed by `b`'s.
 // Neither input is mutated. Empty inputs are fine (`concat([], b)`
 // copies `b`).
 pub function concat[T](a: T[], b: T[]): T[] {
-    var out: T[] = [];
-    for x in a { out = out.append(x); }
-    for y in b { out = out.append(y); }
-    return out;
+  var out: T[] = [];
+  for x in a {
+    out = out.append(x);
+  }
+  for y in b {
+    out = out.append(y);
+  }
+  return out;
 }
 
 // `zip(a, b)` — pair up elements positionally into a fresh `(T, U)[]`,
@@ -1324,15 +1519,17 @@ pub function concat[T](a: T[], b: T[]): T[] {
 // Structural (no callback / comparison), so it works for any element
 // types. `zip([1,2,3], ["a","b"])` → `[(1,"a"), (2,"b")]`.
 pub function zip[T, U](a: T[], b: U[]): (T, U)[] {
-    var out: (T, U)[] = [];
-    var n: i32 = a.len();
-    if (b.len() < n) { n = b.len(); }
-    var i: i32 = 0;
-    while (i < n) {
-        out = out.append((a[i], b[i]));
-        i = i + 1;
-    }
-    return out;
+  var out: (T, U)[] = [];
+  var n: i32 = a.len();
+  if (b.len() < n) {
+    n = b.len();
+  }
+  var i: i32 = 0;
+  while (i < n) {
+    out = out.append((a[i], b[i]));
+    i = i + 1;
+  }
+  return out;
 }
 
 // `flat_map(xs, f)` — map each element to a `U[]` and concatenate the
@@ -1341,22 +1538,26 @@ pub function zip[T, U](a: T[], b: U[]): (T, U)[] {
 // as `map`/`filter`. `flat_map([1,2], dup)` with `dup(x) = [x, x]` →
 // `[1,1,2,2]`.
 pub function flat_map[T, U](xs: T[], f: (T) => U[]): U[] {
-    var out: U[] = [];
-    for x in xs {
-        for y in f(x) { out = out.append(y); }
+  var out: U[] = [];
+  for x in xs {
+    for y in f(x) {
+      out = out.append(y);
     }
-    return out;
+  }
+  return out;
 }
 
 // `flatten(xss)` — concatenate a nested `T[][]` into one flat `T[]`,
 // preserving order (`flat_map` with the identity callback, but
 // structural — no closure). `flatten([[1,2],[],[3]])` → `[1,2,3]`.
 pub function flatten[T](xss: T[][]): T[] {
-    var out: T[] = [];
-    for xs in xss {
-        for x in xs { out = out.append(x); }
+  var out: T[] = [];
+  for xs in xss {
+    for x in xs {
+      out = out.append(x);
     }
-    return out;
+  }
+  return out;
 }
 
 // `partition(xs, pred)` — split `xs` into `(kept, rejected)`: the first
@@ -1364,12 +1565,16 @@ pub function flatten[T](xss: T[][]): T[] {
 // rest (in order). `partition([1,2,3,4], is_even)` → `([2,4], [1,3])`.
 // A single pass, so `pred` runs exactly once per element.
 pub function partition[T](xs: T[], pred: (T) => boolean): (T[], T[]) {
-    var kept: T[] = [];
-    var rejected: T[] = [];
-    for x in xs {
-        if (pred(x)) { kept = kept.append(x); } else { rejected = rejected.append(x); }
+  var kept: T[] = [];
+  var rejected: T[] = [];
+  for x in xs {
+    if (pred(x)) {
+      kept = kept.append(x);
+    } else {
+      rejected = rejected.append(x);
     }
-    return (kept, rejected);
+  }
+  return (kept, rejected);
 }
 
 // `scan(xs, init, f)` — the running accumulators of a left fold: element
@@ -1378,13 +1583,13 @@ pub function partition[T](xs: T[], pred: (T) => boolean): (T[], T[]) {
 // emitted). `scan([1,2,3], 0, add)` → `[1,3,6]` (a generic `cumsum`).
 // The final element equals `fold(xs, init, f)`.
 pub function scan[T, A](xs: T[], init: A, f: (A, T) => A): A[] {
-    var out: A[] = [];
-    var acc: A = init;
-    for x in xs {
-        acc = f(acc, x);
-        out = out.append(acc);
-    }
-    return out;
+  var out: A[] = [];
+  var acc: A = init;
+  for x in xs {
+    acc = f(acc, x);
+    out = out.append(acc);
+  }
+  return out;
 }
 
 // `intersperse(xs, sep)` — a fresh `T[]` with `sep` inserted between
@@ -1393,15 +1598,17 @@ pub function scan[T, A](xs: T[], init: A, f: (A, T) => A): A[] {
 // `intersperse([1,2,3], 0)` → `[1,0,2,0,3]`; a 0- or 1-element input is
 // returned element-for-element (no gap to fill).
 pub function intersperse[T](xs: T[], sep: T): T[] {
-    var out: T[] = [];
-    var i: i32 = 0;
-    var n: i32 = xs.len();
-    while (i < n) {
-        if (i > 0) { out = out.append(sep); }
-        out = out.append(xs[i]);
-        i = i + 1;
+  var out: T[] = [];
+  var i: i32 = 0;
+  var n: i32 = xs.len();
+  while (i < n) {
+    if (i > 0) {
+      out = out.append(sep);
     }
-    return out;
+    out = out.append(xs[i]);
+    i = i + 1;
+  }
+  return out;
 }
 
 // `step_by(xs, n)` — a fresh array of every `n`-th element starting at
@@ -1409,16 +1616,17 @@ pub function intersperse[T](xs: T[], sep: T): T[] {
 // empty array (there is no sensible non-positive stride). Mirrors Rust's
 // `Iterator::step_by`, minus its panic on a zero step.
 pub function step_by[T](xs: T[], n: i32): T[] {
-    var out: T[] = [];
-    if (n <= 0) { return out; }
-    var i: i32 = 0;
-    while (i < xs.len()) {
-        out = out.append(xs[i]);
-        i = i + n;
-    }
+  var out: T[] = [];
+  if (n <= 0) {
     return out;
+  }
+  var i: i32 = 0;
+  while (i < xs.len()) {
+    out = out.append(xs[i]);
+    i = i + n;
+  }
+  return out;
 }
-
 
 // `reduce(xs, f)` — left fold with no explicit seed: the first element
 // is the initial accumulator and `f` combines it with each remaining
@@ -1426,21 +1634,22 @@ pub function step_by[T](xs: T[], n: i32): T[] {
 // the difference from `fold`, which always has its `init`. `reduce([3,1,2], max2)`
 // → `Some(3)`.
 pub function reduce[T](xs: T[], f: (T, T) => T): Option[T] {
-    if (xs.len() == 0) { return None; }
-    var acc: T = xs[0];
-    var i: i32 = 1;
-    while (i < xs.len()) {
-        acc = f(acc, xs[i]);
-        i = i + 1;
-    }
-    return Some(acc);
+  if (xs.len() == 0) {
+    return None;
+  }
+  var acc: T = xs[0];
+  var i: i32 = 1;
+  while (i < xs.len()) {
+    acc = f(acc, xs[i]);
+    i = i + 1;
+  }
+  return Some(acc);
 }
 
 // (Generic `sort_by(xs, cmp)` lives in std/sort; generic `sort(xs)` for a
 // `T: cmp.Ord` element type lives in core/cmp. The method forms
 // `xs.sort_by(cmp)` below delegate to std/sort — #5348 removed the duplicate
 // free-function copies that used to live here.)
-
 // `binary_search(xs, target)` — `Some(i)` for an index where `xs[i] == target`,
 // or `None` if absent, assuming `xs` is sorted ASCENDING by the element type's
 // `Ord` ordering (the order `sort` produces). O(log n) — halve the search range
@@ -1451,15 +1660,21 @@ pub function reduce[T](xs: T[], f: (T, T) => T): Option[T] {
 // regardless of `T`. Precondition: `xs` must be sorted — on unsorted input the
 // result is unspecified (it won't crash, but may miss a present element).
 pub function binary_search[T: cmp.Ord](xs: T[], target: T): Option[i32] {
-    var lo: i32 = 0;
-    var hi: i32 = xs.len();
-    while (lo < hi) {
-        var mid: i32 = lo + (hi - lo) / 2;
-        var c: i32 = xs[mid].cmp(target);
-        if (c == 0) { return Some(mid); }
-        if (c < 0) { lo = mid + 1; } else { hi = mid; }
+  var lo: i32 = 0;
+  var hi: i32 = xs.len();
+  while (lo < hi) {
+    var mid: i32 = lo + (hi - lo) / 2;
+    var c: i32 = xs[mid].cmp(target);
+    if (c == 0) {
+      return Some(mid);
     }
-    return None;
+    if (c < 0) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
+    }
+  }
+  return None;
 }
 
 // =================== EQ-DRIVEN ARRAY VERBS ===================
@@ -1483,21 +1698,24 @@ pub function binary_search[T: cmp.Ord](xs: T[], target: T): Option[i32] {
 // `.distinct()` receiver methods (method-form block at the end of this file)
 // are element-generic over the same bound and delegate to core/cmp; the only
 // string[]-specific member of this family is `.distinct_count()`.
-
 // `all_equal(xs)` — true iff every element equals the first (i.e. the array has
 // at most one DISTINCT value). Vacuously true for an empty or single-element
 // array. Short-circuits on the first element that differs. The `T: cmp.Eq`
 // bound supplies the compare (the type's structural equality). Useful for "is
 // this column constant" / "did every worker agree" checks.
 pub function all_equal[T: cmp.Eq](xs: T[]): boolean {
-    var n: i32 = xs.len();
-    if (n < 2) { return true; }
-    var i: i32 = 1;
-    while (i < n) {
-        if (!xs[i].eq(xs[0])) { return false; }
-        i = i + 1;
-    }
+  var n: i32 = xs.len();
+  if (n < 2) {
     return true;
+  }
+  var i: i32 = 1;
+  while (i < n) {
+    if (!xs[i].eq(xs[0])) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
 }
 
 // `dedup(xs)` — fresh `T[]` with each run of CONSECUTIVE equal elements
@@ -1507,13 +1725,15 @@ pub function all_equal[T: cmp.Eq](xs: T[]): boolean {
 // single O(n) pass, and on unsorted data it compresses runs while keeping later
 // repeats. Empty → empty. Same `T: cmp.Eq` bound / per-type monomorphisation.
 pub function dedup[T: cmp.Eq](xs: T[]): T[] {
-    var out: T[] = [];
-    var i: i32 = 0;
-    while (i < xs.len()) {
-        if (i == 0 || !xs[i].eq(xs[i - 1])) { out = out.append(xs[i]); }
-        i = i + 1;
+  var out: T[] = [];
+  var i: i32 = 0;
+  while (i < xs.len()) {
+    if (i == 0 || !xs[i].eq(xs[i - 1])) {
+      out = out.append(xs[i]);
     }
-    return out;
+    i = i + 1;
+  }
+  return out;
 }
 
 // =================== EQ-DRIVEN SET ALGEBRA ===================
@@ -1527,67 +1747,77 @@ pub function dedup[T: cmp.Eq](xs: T[]): T[] {
 // (`str_eq` for strings, the scalar compare for `i32`). O(n·m) membership
 // scans; fine for the small-n CLI / edge-handler workloads, reach for a
 // Map/Set at larger N.
-
 // `count(xs, target)` — how many elements equal `target`. The Eq-bounded
 // generic companion to the element-type-specific `.count()` / `.count_str()`
 // receiver methods (which dispatch on the array's element type by name). Empty
 // → 0.
 pub function count[T: cmp.Eq](xs: T[], target: T): i32 {
-    var c: i32 = 0;
-    for x in xs {
-        if (x.eq(target)) { c = c + 1; }
+  var c: i32 = 0;
+  for x in xs {
+    if (x.eq(target)) {
+      c = c + 1;
     }
-    return c;
+  }
+  return c;
 }
 
 // `union(a, b)` — set union: the distinct elements of `a`, then the distinct
 // elements of `b` not already present. First-seen order across `a` then `b`
 // (equivalent to `cmp.distinct(concat(a, b))`, one pass).
 pub function union[T: cmp.Eq](a: T[], b: T[]): T[] {
-    var out: T[] = [];
-    for x in a {
-        if (!cmp.contains(out, x)) { out = out.append(x); }
+  var out: T[] = [];
+  for x in a {
+    if (!cmp.contains(out, x)) {
+      out = out.append(x);
     }
-    for y in b {
-        if (!cmp.contains(out, y)) { out = out.append(y); }
+  }
+  for y in b {
+    if (!cmp.contains(out, y)) {
+      out = out.append(y);
     }
-    return out;
+  }
+  return out;
 }
 
 // `intersection(a, b)` — set intersection: the distinct elements of `a` that
 // also appear in `b`, in `a`'s first-seen order.
 pub function intersection[T: cmp.Eq](a: T[], b: T[]): T[] {
-    var out: T[] = [];
-    for x in a {
-        if (cmp.contains(b, x) && !cmp.contains(out, x)) { out = out.append(x); }
+  var out: T[] = [];
+  for x in a {
+    if (cmp.contains(b, x) && !cmp.contains(out, x)) {
+      out = out.append(x);
     }
-    return out;
+  }
+  return out;
 }
 
 // `difference(a, b)` — set difference (`a \ b`): the distinct elements of `a`
 // that do NOT appear in `b`, in `a`'s first-seen order.
 pub function difference[T: cmp.Eq](a: T[], b: T[]): T[] {
-    var out: T[] = [];
-    for x in a {
-        if (!cmp.contains(b, x) && !cmp.contains(out, x)) { out = out.append(x); }
+  var out: T[] = [];
+  for x in a {
+    if (!cmp.contains(b, x) && !cmp.contains(out, x)) {
+      out = out.append(x);
     }
-    return out;
+  }
+  return out;
 }
 
 // (Structural array equality lives in core/cmp as `eq_arrays[T: Eq]`; the
 // method form `xs.equal(other)` below delegates to it — #5348 removed the
 // duplicate free-function copy that used to live here.)
-
 // `index_of_last(xs, target)` — `Some(i)` for the LAST index whose element
 // equals `target`, else `None`. The reverse-scan companion to `index_of`
 // (first match); the Option keeps "not found" out of band.
 pub function index_of_last[T: cmp.Eq](xs: T[], target: T): Option[i32] {
-    var i: i32 = xs.len() - 1;
-    while (i >= 0) {
-        if (xs[i].eq(target)) { return Some(i); }
-        i = i - 1;
+  var i: i32 = xs.len() - 1;
+  while (i >= 0) {
+    if (xs[i].eq(target)) {
+      return Some(i);
     }
-    return None;
+    i = i - 1;
+  }
+  return None;
 }
 
 // `starts_with(xs, prefix)` — true iff `xs` begins with `prefix`: every element
@@ -1595,28 +1825,36 @@ pub function index_of_last[T: cmp.Eq](xs: T[], target: T): Option[i32] {
 // than `xs` is never a prefix (false); an empty `prefix` always matches (true).
 // The array analogue of `string.starts_with`, over any `T: cmp.Eq`.
 pub function starts_with[T: cmp.Eq](xs: T[], prefix: T[]): boolean {
-    if (prefix.len() > xs.len()) { return false; }
-    var i: i32 = 0;
-    while (i < prefix.len()) {
-        if (!xs[i].eq(prefix[i])) { return false; }
-        i = i + 1;
+  if (prefix.len() > xs.len()) {
+    return false;
+  }
+  var i: i32 = 0;
+  while (i < prefix.len()) {
+    if (!xs[i].eq(prefix[i])) {
+      return false;
     }
-    return true;
+    i = i + 1;
+  }
+  return true;
 }
 
 // `ends_with(xs, suffix)` — true iff `xs` ends with `suffix`: every element of
 // `suffix` equals the element of `xs` at the matching tail index. A `suffix`
 // longer than `xs` is false; an empty `suffix` always matches.
 pub function ends_with[T: cmp.Eq](xs: T[], suffix: T[]): boolean {
-    var n: i32 = xs.len();
-    var m: i32 = suffix.len();
-    if (m > n) { return false; }
-    var i: i32 = 0;
-    while (i < m) {
-        if (!xs[n - m + i].eq(suffix[i])) { return false; }
-        i = i + 1;
+  var n: i32 = xs.len();
+  var m: i32 = suffix.len();
+  if (m > n) {
+    return false;
+  }
+  var i: i32 = 0;
+  while (i < m) {
+    if (!xs[n - m + i].eq(suffix[i])) {
+      return false;
     }
-    return true;
+    i = i + 1;
+  }
+  return true;
 }
 
 // ---- Generic array methods --------------------------------------
@@ -1629,84 +1867,141 @@ pub function ends_with[T: cmp.Eq](xs: T[], suffix: T[]): boolean {
 // parameter / return is a composite (`string`, `Option`, …) hits the
 // indirect-call codegen limitation (#2753) on the native + wasm
 // backends, so keep callbacks scalar / bool / pointer-shaped there.
-
 // `xs.is_empty()` — true iff `xs` has no elements.
-pub function (xs: T[]) is_empty(): boolean { return is_empty(xs); }
+pub function (xs: T[]) is_empty(): boolean {
+  return is_empty(xs);
+}
 
 // `xs.first()` / `xs.last()` — `Some` of the first / last element, `None` when
 // empty. Safe, bounds-checked alternatives to `xs[0]` / `xs[len-1]`.
-pub function (xs: T[]) first(): Option[T] { return first(xs); }
-pub function (xs: T[]) last(): Option[T] { return last(xs); }
+pub function (xs: T[]) first(): Option[T] {
+  return first(xs);
+}
+
+pub function (xs: T[]) last(): Option[T] {
+  return last(xs);
+}
 
 // `xs.get(i)` — bounds-checked indexing: `Some(xs[i])` in range, else `None`.
-pub function (xs: T[]) get(i: i32): Option[T] { return get(xs, i); }
+pub function (xs: T[]) get(i: i32): Option[T] {
+  return get(xs, i);
+}
 
 // `xs.map(f)` — apply `f` to every element, yielding a new array.
-pub function (xs: T[]) map[U](f: (T) => U): U[] { return map(xs, f); }
+pub function (xs: T[]) map[U](f: (T) => U): U[] {
+  return map(xs, f);
+}
 
 // `xs.filter(keep)` — keep only elements where `keep` holds.
-pub function (xs: T[]) filter(keep: (T) => boolean): T[] { return filter(xs, keep); }
+pub function (xs: T[]) filter(keep: (T) => boolean): T[] {
+  return filter(xs, keep);
+}
 
 // `xs.fold(init, f)` — left fold over the elements.
-pub function (xs: T[]) fold[A](init: A, f: (A, T) => A): A { return fold(xs, init, f); }
+pub function (xs: T[]) fold[A](init: A, f: (A, T) => A): A {
+  return fold(xs, init, f);
+}
 
 // `xs.any(pred)` / `xs.all(pred)` — existential / universal quantifier.
-pub function (xs: T[]) any(pred: (T) => boolean): boolean { return any(xs, pred); }
-pub function (xs: T[]) all(pred: (T) => boolean): boolean { return all(xs, pred); }
+pub function (xs: T[]) any(pred: (T) => boolean): boolean {
+  return any(xs, pred);
+}
+
+pub function (xs: T[]) all(pred: (T) => boolean): boolean {
+  return all(xs, pred);
+}
 
 // `xs.none(pred)` — true iff `pred` holds for no element (complement of `any`).
-pub function (xs: T[]) none(pred: (T) => boolean): boolean { return none(xs, pred); }
+pub function (xs: T[]) none(pred: (T) => boolean): boolean {
+  return none(xs, pred);
+}
 
 // `xs.find(pred)` — first element satisfying `pred`, or `None`.
-pub function (xs: T[]) find(pred: (T) => boolean): Option[T] { return find(xs, pred); }
+pub function (xs: T[]) find(pred: (T) => boolean): Option[T] {
+  return find(xs, pred);
+}
 
 // `xs.find_last(pred)` — LAST element satisfying `pred`, or `None`.
-pub function (xs: T[]) find_last(pred: (T) => boolean): Option[T] { return find_last(xs, pred); }
+pub function (xs: T[]) find_last(pred: (T) => boolean): Option[T] {
+  return find_last(xs, pred);
+}
 
 // `xs.rposition(pred)` — index of the LAST element satisfying `pred`, or `None`.
-pub function (xs: T[]) rposition(pred: (T) => boolean): Option[i32] { return rposition(xs, pred); }
+pub function (xs: T[]) rposition(pred: (T) => boolean): Option[i32] {
+  return rposition(xs, pred);
+}
 
 // `xs.count_where(pred)` — how many elements satisfy `pred`.
-pub function (xs: T[]) count_where(pred: (T) => boolean): i32 { return count_where(xs, pred); }
+pub function (xs: T[]) count_where(pred: (T) => boolean): i32 {
+  return count_where(xs, pred);
+}
 
 // `xs.sum_by(key)` — sum of the i32 projection `key(x)` over all elements.
-pub function (xs: T[]) sum_by(key: (T) => i32): i32 { return sum_by(xs, key); }
+pub function (xs: T[]) sum_by(key: (T) => i32): i32 {
+  return sum_by(xs, key);
+}
 
 // `xs.enumerate()` — pair each element with its 0-based index.
-pub function (xs: T[]) enumerate(): (i32, T)[] { return enumerate(xs); }
+pub function (xs: T[]) enumerate(): (i32, T)[] {
+  return enumerate(xs);
+}
 
 // `xs.concat(other)` — `xs` followed by `other` (fresh array).
-pub function (xs: T[]) concat(other: T[]): T[] { return concat(xs, other); }
+pub function (xs: T[]) concat(other: T[]): T[] {
+  return concat(xs, other);
+}
 
 // `xs.zip(other)` — positional pairing, truncated to the shorter input.
-pub function (xs: T[]) zip[U](other: U[]): (T, U)[] { return zip(xs, other); }
+pub function (xs: T[]) zip[U](other: U[]): (T, U)[] {
+  return zip(xs, other);
+}
 
 // `xs.step_by(n)` — every n-th element from index 0; empty for `n <= 0`.
-pub function (xs: T[]) step_by(n: i32): T[] { return step_by(xs, n); }
+pub function (xs: T[]) step_by(n: i32): T[] {
+  return step_by(xs, n);
+}
 
 // `xs.flat_map(f)` — map to `U[]` per element, then flatten.
-pub function (xs: T[]) flat_map[U](f: (T) => U[]): U[] { return flat_map(xs, f); }
+pub function (xs: T[]) flat_map[U](f: (T) => U[]): U[] {
+  return flat_map(xs, f);
+}
 
 // `xs.intersperse(sep)` — insert `sep` between each pair of adjacent
 // elements (fresh array).
-pub function (xs: T[]) intersperse(sep: T): T[] { return intersperse(xs, sep); }
+pub function (xs: T[]) intersperse(sep: T): T[] {
+  return intersperse(xs, sep);
+}
 
 // `xs.rotate_left(n)` / `xs.rotate_right(n)` — cyclic shift by `n` (mod len);
 // negative `n` rotates the other way. Fresh array.
-pub function (xs: T[]) rotate_left(n: i32): T[] { return rotate_left(xs, n); }
-pub function (xs: T[]) rotate_right(n: i32): T[] { return rotate_right(xs, n); }
+pub function (xs: T[]) rotate_left(n: i32): T[] {
+  return rotate_left(xs, n);
+}
+
+pub function (xs: T[]) rotate_right(n: i32): T[] {
+  return rotate_right(xs, n);
+}
 
 // `xs.reduce(f)` — seedless left fold; `None` on an empty array.
-pub function (xs: T[]) reduce(f: (T, T) => T): Option[T] { return reduce(xs, f); }
+pub function (xs: T[]) reduce(f: (T, T) => T): Option[T] {
+  return reduce(xs, f);
+}
 
 // `xs.sort_by(cmp)` — comparator-driven stable sort (fresh array); delegates
 // to std/sort's generic `sort_by`.
-pub function (xs: T[]) sort_by(cmp: (T, T) => i32): T[] { return sort.sort_by(xs, cmp); }
+pub function (xs: T[]) sort_by(cmp: (T, T) => i32): T[] {
+  return sort.sort_by(xs, cmp);
+}
 
 // `xs.max_by(cmp)` / `xs.min_by(cmp)` — extremal element under the comparator
 // (first on a tie); `None` when empty.
-pub function (xs: T[]) max_by(cmp: (T, T) => i32): Option[T] { return max_by(xs, cmp); }
-pub function (xs: T[]) min_by(cmp: (T, T) => i32): Option[T] { return min_by(xs, cmp); }
+pub function (xs: T[]) max_by(cmp: (T, T) => i32): Option[T] {
+  return max_by(xs, cmp);
+}
+
+pub function (xs: T[]) min_by(cmp: (T, T) => i32): Option[T] {
+  return min_by(xs, cmp);
+}
 
 // ---- Element-polymorphic method forms of the Ord/Eq verbs ----------
 //
@@ -1721,62 +2016,90 @@ pub function (xs: T[]) min_by(cmp: (T, T) => i32): Option[T] { return min_by(xs,
 // deferred until the self-host RC copy-on-write matches native.
 // (Bounded-receiver generic methods: carried on the self-host IR path by
 // the same fold that already lowers `map`/`filter`/`fold`.)
-
 // `xs.is_sorted()` — true iff `xs` is in non-decreasing `Ord` order
 // (vacuously true for length < 2).
-pub function (xs: T[]) is_sorted[T: cmp.Ord](): boolean { return cmp.is_sorted(xs); }
+pub function (xs: T[]) is_sorted[T: cmp.Ord](): boolean {
+  return cmp.is_sorted(xs);
+}
 
 // `xs.binary_search(target)` — `Some(i)` where `xs[i] == target`, else `None`,
 // assuming `xs` is sorted ascending. O(log n). The method form of
 // array.binary_search.
-pub function (xs: T[]) binary_search[T: cmp.Ord](target: T): Option[i32] { return binary_search(xs, target); }
+pub function (xs: T[]) binary_search[T: cmp.Ord](target: T): Option[i32] {
+  return binary_search(xs, target);
+}
 
 // `xs.max_index()` / `xs.min_index()` — index of the largest / smallest element
 // by `Ord` (first on a tie), `None` when empty.
-pub function (xs: T[]) max_index[T: cmp.Ord](): Option[i32] { return max_index(xs); }
-pub function (xs: T[]) min_index[T: cmp.Ord](): Option[i32] { return min_index(xs); }
+pub function (xs: T[]) max_index[T: cmp.Ord](): Option[i32] {
+  return max_index(xs);
+}
+
+pub function (xs: T[]) min_index[T: cmp.Ord](): Option[i32] {
+  return min_index(xs);
+}
 
 // `xs.equal(other)` — structural element-wise equality (same length and
 // equal elements at every index); delegates to core/cmp's `eq_arrays`.
-pub function (xs: T[]) equal[T: cmp.Eq](other: T[]): boolean { return cmp.eq_arrays(xs, other); }
+pub function (xs: T[]) equal[T: cmp.Eq](other: T[]): boolean {
+  return cmp.eq_arrays(xs, other);
+}
 
 // `xs.dedup()` — collapse each run of consecutive equal elements to one.
-pub function (xs: T[]) dedup[T: cmp.Eq](): T[] { return dedup(xs); }
+pub function (xs: T[]) dedup[T: cmp.Eq](): T[] {
+  return dedup(xs);
+}
 
 // `xs.all_equal()` — true iff every element is equal (≤ 1 distinct value);
 // vacuously true for length < 2.
-pub function (xs: T[]) all_equal[T: cmp.Eq](): boolean { return all_equal(xs); }
+pub function (xs: T[]) all_equal[T: cmp.Eq](): boolean {
+  return all_equal(xs);
+}
 
 // `xs.starts_with(prefix)` / `xs.ends_with(suffix)` — array analogues of
 // the string prefix/suffix tests, over any `T: cmp.Eq`.
-pub function (xs: T[]) starts_with[T: cmp.Eq](prefix: T[]): boolean { return starts_with(xs, prefix); }
-pub function (xs: T[]) ends_with[T: cmp.Eq](suffix: T[]): boolean { return ends_with(xs, suffix); }
+pub function (xs: T[]) starts_with[T: cmp.Eq](prefix: T[]): boolean {
+  return starts_with(xs, prefix);
+}
+
+pub function (xs: T[]) ends_with[T: cmp.Eq](suffix: T[]): boolean {
+  return ends_with(xs, suffix);
+}
 
 // `xs.index_of(target)` — `Some(i)` for the first index equal to `target`,
 // `None` when absent. The reverse-scan companion is `.index_of_last`;
 // `.position(pred)` is the predicate-driven form.
-pub function (xs: T[]) index_of[T: cmp.Eq](target: T): Option[i32] { return cmp.index_of(xs, target); }
+pub function (xs: T[]) index_of[T: cmp.Eq](target: T): Option[i32] {
+  return cmp.index_of(xs, target);
+}
 
 // `xs.contains(target)` — boolean membership test; delegates to core/cmp's
 // `contains`.
-pub function (xs: T[]) contains[T: cmp.Eq](target: T): boolean { return cmp.contains(xs, target); }
+pub function (xs: T[]) contains[T: cmp.Eq](target: T): boolean {
+  return cmp.contains(xs, target);
+}
 
 // `xs.index_of_last(target)` — `Some(i)` for the LAST index equal to
 // `target`, else `None`. The reverse-scan companion to `.index_of` /
 // `.position`, over any `T: cmp.Eq`.
-pub function (xs: T[]) index_of_last[T: cmp.Eq](target: T): Option[i32] { return index_of_last(xs, target); }
+pub function (xs: T[]) index_of_last[T: cmp.Eq](target: T): Option[i32] {
+  return index_of_last(xs, target);
+}
 
 // (No `T[][]` receiver method for `flatten` — array-receiver methods
 // must be element-polymorphic `(xs: T[])`, so a nested-array receiver
 // is rejected by E021. Call the free `flatten(xss)` form instead.)
-
 // `xs.partition(pred)` — method form of `partition`: `(kept, rejected)`
 // split by the predicate.
-pub function (xs: T[]) partition[T](pred: (T) => boolean): (T[], T[]) { return partition(xs, pred); }
+pub function (xs: T[]) partition[T](pred: (T) => boolean): (T[], T[]) {
+  return partition(xs, pred);
+}
 
 // `xs.scan(init, f)` — method form of `scan`: the running accumulators
 // of a left fold (same length as `xs`).
-pub function (xs: T[]) scan[T, A](init: A, f: (A, T) => A): A[] { return scan(xs, init, f); }
+pub function (xs: T[]) scan[T, A](init: A, f: (A, T) => A): A[] {
+  return scan(xs, init, f);
+}
 
 // `xs.chunks(size)` / `xs.windows(size)` — method forms of the free
 // `chunks` / `windows`, completing the receiver-method surface every
@@ -1784,11 +2107,18 @@ pub function (xs: T[]) scan[T, A](init: A, f: (A, T) => A): A[] { return scan(xs
 // `chunks` splits into non-overlapping `T[]` groups of length `size`
 // (last group shorter); `windows` yields every contiguous length-`size`
 // sub-slice, sliding one element at a time. Both return `T[][]`.
-pub function (xs: T[]) chunks[T](size: i32): T[][] { return chunks(xs, size); }
+pub function (xs: T[]) chunks[T](size: i32): T[][] {
+  return chunks(xs, size);
+}
 
 // `xs.chunks_exact(size)` — full-length groups only; drops a short tail.
-pub function (xs: T[]) chunks_exact[T](size: i32): T[][] { return chunks_exact(xs, size); }
-pub function (xs: T[]) windows[T](size: i32): T[][] { return windows(xs, size); }
+pub function (xs: T[]) chunks_exact[T](size: i32): T[][] {
+  return chunks_exact(xs, size);
+}
+
+pub function (xs: T[]) windows[T](size: i32): T[][] {
+  return windows(xs, size);
+}
 
 // ---- Element-polymorphic method forms of the reductions ------------
 //
@@ -1801,38 +2131,65 @@ pub function (xs: T[]) windows[T](size: i32): T[][] { return windows(xs, size); 
 // so the same call works for every element type that satisfies the bound —
 // i32 / i64 / u32 / u64 / f32 / f64 / string and `@derive(Ord)` /
 // `@derive(Eq)` types alike (#2663).
-
 // `xs.sum()` / `xs.product()` — additive / multiplicative fold over any
 // element type carrying the identity its bound names, so the same call
 // works for i32 / i64 / f64 / … and for a user type with `impl Add`.
-pub function (xs: T[]) sum[T: num.Add + num.Zero](): T { return num.sum(xs); }
-pub function (xs: T[]) product[T: num.Mul + num.One](): T { return num.product(xs); }
+pub function (xs: T[]) sum[T: num.Add + num.Zero](): T {
+  return num.sum(xs);
+}
+
+pub function (xs: T[]) product[T: num.Mul + num.One](): T {
+  return num.product(xs);
+}
 
 // `xs.max()` / `xs.min()` — extremal element by `Ord`, `None` when empty.
 // The Option arm is necessary: no sentinel is safe across a full numeric range.
-pub function (xs: T[]) max[T: cmp.Ord](): Option[T] { return cmp.max_of(xs); }
-pub function (xs: T[]) min[T: cmp.Ord](): Option[T] { return cmp.min_of(xs); }
+pub function (xs: T[]) max[T: cmp.Ord](): Option[T] {
+  return cmp.max_of(xs);
+}
+
+pub function (xs: T[]) min[T: cmp.Ord](): Option[T] {
+  return cmp.min_of(xs);
+}
 
 // `xs.count(target)` — how many elements equal `target`.
-pub function (xs: T[]) count[T: cmp.Eq](target: T): i32 { return count(xs, target); }
+pub function (xs: T[]) count[T: cmp.Eq](target: T): i32 {
+  return count(xs, target);
+}
 
 // `xs.sorted_asc()` / `xs.sorted_desc()` — a fresh array in `Ord` order;
 // the input is untouched.
-pub function (xs: T[]) sorted_asc[T: cmp.Ord](): T[] { return cmp.sort(xs); }
-pub function (xs: T[]) sorted_desc[T: cmp.Ord](): T[] { return cmp.sort_desc(xs); }
+pub function (xs: T[]) sorted_asc[T: cmp.Ord](): T[] {
+  return cmp.sort(xs);
+}
+
+pub function (xs: T[]) sorted_desc[T: cmp.Ord](): T[] {
+  return cmp.sort_desc(xs);
+}
 
 // `xs.reverse()` — fresh array, elements in reverse order.
-pub function (xs: T[]) reverse(): T[] { return reverse(xs); }
+pub function (xs: T[]) reverse(): T[] {
+  return reverse(xs);
+}
 
 // `xs.take(n)` / `xs.drop(n)` — the first `n` elements / everything after
 // them. Both clamp: `n <= 0` and `n >= len` give empty or a full copy.
-pub function (xs: T[]) take(n: i32): T[] { return take(xs, n); }
-pub function (xs: T[]) drop(n: i32): T[] { return drop(xs, n); }
+pub function (xs: T[]) take(n: i32): T[] {
+  return take(xs, n);
+}
+
+pub function (xs: T[]) drop(n: i32): T[] {
+  return drop(xs, n);
+}
 
 // `xs.distinct()` — duplicates removed, first occurrence wins, order kept.
-pub function (xs: T[]) distinct[T: cmp.Eq](): T[] { return cmp.distinct(xs); }
+pub function (xs: T[]) distinct[T: cmp.Eq](): T[] {
+  return cmp.distinct(xs);
+}
 
 // `xs.position(pred)` — index of the first element satisfying `pred`, or
 // `None`. Predicate-driven, matching the free `position(xs, pred)`; the
 // value-driven form is `index_of`.
-pub function (xs: T[]) position(pred: (T) => boolean): Option[i32] { return position(xs, pred); }
+pub function (xs: T[]) position(pred: (T) => boolean): Option[i32] {
+  return position(xs, pred);
+}

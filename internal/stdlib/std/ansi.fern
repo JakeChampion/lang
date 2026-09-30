@@ -15,7 +15,6 @@
 //
 // POSIX terminal / xterm SGR only. The ESC byte (0x1B) is built from a
 // byte array since Fern string literals don't decode a `\x1b` escape.
-
 // The 256-colour / truecolour helpers stringify their numeric channel
 // via (i32) `.to_string()`; declare std/i32 so it registers under
 // no-prelude.
@@ -23,8 +22,8 @@ import "std/i32";
 
 // __esc() — the ESC (0x1B) control byte as a one-character string.
 function __esc(): string {
-    var b: u8[] = [27 as u8];
-    return string_from_bytes_unchecked(b);
+  var b: u8[] = [27 as u8];
+  return string_from_bytes_unchecked(b);
 }
 
 // `sgr(code, s)` — wrap `s` in `ESC[<code>m … ESC[0m`. The primitive
@@ -32,62 +31,147 @@ function __esc(): string {
 // 256-colour (`sgr("38;5;208", s)`) or truecolour
 // (`sgr("38;2;255;128;0", s)`).
 pub function sgr(code: string, s: string): string {
-    var e: string = __esc();
-    return e + "[" + code + "m" + s + e + "[0m";
+  var e: string = __esc();
+  return e + "[" + code + "m" + s + e + "[0m";
 }
 
 // === Foreground colours (SGR 30–37) ===
-pub function black(s: string): string   { return sgr("30", s); }
-pub function red(s: string): string     { return sgr("31", s); }
-pub function green(s: string): string   { return sgr("32", s); }
-pub function yellow(s: string): string  { return sgr("33", s); }
-pub function blue(s: string): string    { return sgr("34", s); }
-pub function magenta(s: string): string { return sgr("35", s); }
-pub function cyan(s: string): string    { return sgr("36", s); }
-pub function white(s: string): string   { return sgr("37", s); }
+pub function black(s: string): string {
+  return sgr("30", s);
+}
+
+pub function red(s: string): string {
+  return sgr("31", s);
+}
+
+pub function green(s: string): string {
+  return sgr("32", s);
+}
+
+pub function yellow(s: string): string {
+  return sgr("33", s);
+}
+
+pub function blue(s: string): string {
+  return sgr("34", s);
+}
+
+pub function magenta(s: string): string {
+  return sgr("35", s);
+}
+
+pub function cyan(s: string): string {
+  return sgr("36", s);
+}
+
+pub function white(s: string): string {
+  return sgr("37", s);
+}
 
 // === Bright foreground colours (SGR 90–97) ===
-pub function bright_black(s: string): string   { return sgr("90", s); }
-pub function bright_red(s: string): string     { return sgr("91", s); }
-pub function bright_green(s: string): string   { return sgr("92", s); }
-pub function bright_yellow(s: string): string  { return sgr("93", s); }
-pub function bright_blue(s: string): string     { return sgr("94", s); }
-pub function bright_magenta(s: string): string { return sgr("95", s); }
-pub function bright_cyan(s: string): string    { return sgr("96", s); }
-pub function bright_white(s: string): string   { return sgr("97", s); }
+pub function bright_black(s: string): string {
+  return sgr("90", s);
+}
+
+pub function bright_red(s: string): string {
+  return sgr("91", s);
+}
+
+pub function bright_green(s: string): string {
+  return sgr("92", s);
+}
+
+pub function bright_yellow(s: string): string {
+  return sgr("93", s);
+}
+
+pub function bright_blue(s: string): string {
+  return sgr("94", s);
+}
+
+pub function bright_magenta(s: string): string {
+  return sgr("95", s);
+}
+
+pub function bright_cyan(s: string): string {
+  return sgr("96", s);
+}
+
+pub function bright_white(s: string): string {
+  return sgr("97", s);
+}
 
 // === Background colours (SGR 40–47) ===
-pub function bg_black(s: string): string   { return sgr("40", s); }
-pub function bg_red(s: string): string     { return sgr("41", s); }
-pub function bg_green(s: string): string   { return sgr("42", s); }
-pub function bg_yellow(s: string): string  { return sgr("43", s); }
-pub function bg_blue(s: string): string    { return sgr("44", s); }
-pub function bg_magenta(s: string): string { return sgr("45", s); }
-pub function bg_cyan(s: string): string    { return sgr("46", s); }
-pub function bg_white(s: string): string   { return sgr("47", s); }
+pub function bg_black(s: string): string {
+  return sgr("40", s);
+}
+
+pub function bg_red(s: string): string {
+  return sgr("41", s);
+}
+
+pub function bg_green(s: string): string {
+  return sgr("42", s);
+}
+
+pub function bg_yellow(s: string): string {
+  return sgr("43", s);
+}
+
+pub function bg_blue(s: string): string {
+  return sgr("44", s);
+}
+
+pub function bg_magenta(s: string): string {
+  return sgr("45", s);
+}
+
+pub function bg_cyan(s: string): string {
+  return sgr("46", s);
+}
+
+pub function bg_white(s: string): string {
+  return sgr("47", s);
+}
 
 // === Text styles ===
-pub function bold(s: string): string          { return sgr("1", s); }
-pub function dim(s: string): string           { return sgr("2", s); }
-pub function italic(s: string): string        { return sgr("3", s); }
-pub function underline(s: string): string     { return sgr("4", s); }
-pub function reverse(s: string): string       { return sgr("7", s); }
-pub function strikethrough(s: string): string { return sgr("9", s); }
+pub function bold(s: string): string {
+  return sgr("1", s);
+}
+
+pub function dim(s: string): string {
+  return sgr("2", s);
+}
+
+pub function italic(s: string): string {
+  return sgr("3", s);
+}
+
+pub function underline(s: string): string {
+  return sgr("4", s);
+}
+
+pub function reverse(s: string): string {
+  return sgr("7", s);
+}
+
+pub function strikethrough(s: string): string {
+  return sgr("9", s);
+}
 
 // === 256-colour palette (SGR 38;5;n / 48;5;n) ===
 //
 // The xterm 256-colour cube: 0–15 the classic + bright colours, 16–231
 // a 6×6×6 RGB cube, 232–255 a greyscale ramp. `n` is used as given (no
 // clamp) — callers pass a value in 0–255.
-
 // `fg_256(n, s)` — foreground from the 256-colour palette.
 pub function fg_256(n: i32, s: string): string {
-    return sgr("38;5;" + n.to_string(), s);
+  return sgr("38;5;" + n.to_string(), s);
 }
 
 // `bg_256(n, s)` — background from the 256-colour palette.
 pub function bg_256(n: i32, s: string): string {
-    return sgr("48;5;" + n.to_string(), s);
+  return sgr("48;5;" + n.to_string(), s);
 }
 
 // === Truecolour / 24-bit RGB (SGR 38;2;r;g;b / 48;2;r;g;b) ===
@@ -95,33 +179,36 @@ pub function bg_256(n: i32, s: string): string {
 // Direct 24-bit colour for terminals that support it. Channels are used
 // as given (callers pass 0–255 each); pair with a hex parser or
 // std/math.pack_rgb upstream.
-
 // `fg_rgb(r, g, b, s)` — 24-bit foreground colour.
 pub function fg_rgb(r: i32, g: i32, b: i32, s: string): string {
-    return sgr("38;2;" + r.to_string() + ";" + g.to_string() + ";" + b.to_string(), s);
+  return sgr("38;2;" + r.to_string() + ";" + g.to_string() + ";" + b.to_string(), s);
 }
 
 // `bg_rgb(r, g, b, s)` — 24-bit background colour.
 pub function bg_rgb(r: i32, g: i32, b: i32, s: string): string {
-    return sgr("48;2;" + r.to_string() + ";" + g.to_string() + ";" + b.to_string(), s);
+  return sgr("48;2;" + r.to_string() + ";" + g.to_string() + ";" + b.to_string(), s);
 }
 
 // `strip(s)` — remove every SGR escape sequence (`ESC [ … m`) from `s`,
 // leaving the plain text. Walks byte-by-byte so multi-byte UTF-8
 // content is copied through untouched (SGR codes are pure ASCII).
 pub function strip(s: string): string {
-    var n: i32 = s.len();
-    var out: u8[] = [];
-    var i: i32 = 0;
-    while (i < n) {
-        if (s[i] == 27 && i + 1 < n && s[i + 1] == 91) {   // ESC '['
-            i = i + 2;
-            while (i < n && s[i] != 109) { i = i + 1; }     // skip to 'm'
-            if (i < n) { i = i + 1; }                        // consume 'm'
-        } else {
-            out = out.append(s[i] as u8);
-            i = i + 1;
-        }
+  var n: i32 = s.len();
+  var out: u8[] = [];
+  var i: i32 = 0;
+  while (i < n) {
+    if (s[i] == 27 && i + 1 < n && s[i + 1] == 91) {  // ESC '['
+      i = i + 2;
+      while (i < n && s[i] != 109) {  // skip to 'm'
+        i = i + 1;
+      }
+      if (i < n) {  // consume 'm'
+        i = i + 1;
+      }
+    } else {
+      out = out.append(s[i] as u8);
+      i = i + 1;
     }
-    return string_from_bytes_unchecked(out);
+  }
+  return string_from_bytes_unchecked(out);
 }

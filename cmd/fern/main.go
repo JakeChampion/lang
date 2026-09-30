@@ -81,6 +81,7 @@ import (
 	"github.com/jakechampion/lang/internal/constfold"
 	"github.com/jakechampion/lang/internal/diag"
 	"github.com/jakechampion/lang/internal/embed"
+	"github.com/jakechampion/lang/internal/fmtsource"
 	"github.com/jakechampion/lang/internal/interp"
 	"github.com/jakechampion/lang/internal/ir"
 	"github.com/jakechampion/lang/internal/literate"
@@ -1109,11 +1110,10 @@ func formatFile(srcPath string, writeBack, diffMode bool, outPath string) (int, 
 		// `<<ref>>`-bearing chunks the formatter can't parse stay verbatim.
 		formatted = literate.Parse(src).FormatCode(formatChunkBody)
 	} else {
-		prog, err := parser.Parse(src)
+		formatted, err = fmtsource.Format(src)
 		if err != nil {
 			return 1, fmt.Errorf("%s", diag.Format(srcPath, src, err))
 		}
-		formatted = printer.Format(prog)
 	}
 	if diffMode {
 		diff := printer.UnifiedDiff(src, formatted, srcPath, srcPath)

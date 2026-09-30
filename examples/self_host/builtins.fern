@@ -26,29 +26,28 @@
 //
 // Option / Result are NOT here: Some/None/Ok/Err are special-cased in the
 // emitter, never synthesised as variant structs.
-
 // JsonValue — the std/json document model. `JString(x)` / `match … JObject(m) …`
 // resolve against these variants.
 enum JsonValue {
-    JNull,
-    JBool(boolean),
-    JNumber(string),
-    JString(string),
-    JArray(JsonValue[]),
-    JObject(Map[string, JsonValue]),
+  JNull,
+  JBool(boolean),
+  JNumber(string),
+  JString(string),
+  JArray(JsonValue[]),
+  JObject(Map[string, JsonValue]),
 }
 
 // IoError — the error arm of filesystem / io Results.
 enum IoError {
-    NotFound(string),
-    PermissionDenied(string),
-    AlreadyExists(string),
-    InvalidUtf8(string),
-    Interrupted,
-    Unsupported,
-    // Two payloads (path, message), matching native's declaration — the
-    // self-host copy carried one string (#4370).
-    Other(string, string),
+  NotFound(string),
+  PermissionDenied(string),
+  AlreadyExists(string),
+  InvalidUtf8(string),
+  Interrupted,
+  Unsupported,
+  // Two payloads (path, message), matching native's declaration — the
+  // self-host copy carried one string (#4370).
+  Other(string, string),
 }
 
 // ChunkProducer — the producer a `BodyChunks` carries: asked for chunk 0,
@@ -56,15 +55,16 @@ enum IoError {
 // because a closure is released as a struct member and only leaks as an
 // enum payload on the native backends.
 struct ChunkProducer { next: (i32) => Option[u8[]] }
+
 // Body — what an HttpResponse carries (std/http): text or bytes held
 // whole, a Stream drained to the wire, a file the serve loop streams, or
 // chunks the loop pulls from a producer by index until it answers None.
 enum Body {
-    BodyText(string),
-    BodyBytes(u8[]),
-    BodyStream(Stream),
-    BodyFile(string),
-    BodyChunks(ChunkProducer),
+  BodyText(string),
+  BodyBytes(u8[]),
+  BodyStream(Stream),
+  BodyFile(string),
+  BodyChunks(ChunkProducer),
 }
 
 // FileStat — returned by stat(path). The emitter resolves
@@ -81,10 +81,13 @@ struct ProcessResult { stdout: string, stderr: string, exit_code: i32 }
 // field); the self-host shape dispatch needs the declaration to resolve
 // field offsets, so it lives here.
 struct HeaderMap { names: string[], values: string[] }
+
 // Stream — std/stream's byte-stream value, and the type of
 // HttpRequest.body (docs/PLATFORM-RESEARCH.md Rec §4).
 struct Stream { data: u8[], pos: i32 }
+
 struct HttpRequest { method: string, path: string, body: Stream, headers: HeaderMap, trailers: HeaderMap }
+
 struct HttpResponse { status: i32, body: Body, headers: HeaderMap, trailers: HeaderMap }
 
 // Platform — the capability bag threaded as the second parameter of every

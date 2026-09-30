@@ -2,5 +2,5 @@ import "std/http";
 import "std/tcp";
 
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
-    return http.ok("Hello, World!");
+  return http.ok("Hello, World!");
 }

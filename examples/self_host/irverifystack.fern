@@ -48,83 +48,82 @@
 // reported as a problem. Coverage is then a number the corpus gate can hold a
 // floor under, so an unmodelled op shows up as a coverage regression rather
 // than as a spurious failure, and the table can grow monotonically.
-
 import "./ir";
 import "./irverify";
 import "./util";
 
 // ---- results -----------------------------------------------------------
-
 // StackResult is one function's verdict. `bail` is empty when the function
 // was fully modelled; when it is set the problems are DISCARDED, because a
 // pass that stopped modelling halfway has nothing trustworthy to say about
 // the ops after the one it could not read.
 pub struct StackResult {
-    problems: irverify.Problem[],
-    bail: string,
+  problems: irverify.Problem[],
+  bail: string,
 }
 
 // Coverage records how much of a program the pass could model. modelled +
 // skipped.len() == funcs. Per function rather than a count because the useful
 // question is WHICH function went unchecked, not how many did.
 pub struct Coverage {
-    funcs: i32,
-    modelled: i32,
-    skipped_fns: string[],
-    skipped_why: string[],
+  funcs: i32,
+  modelled: i32,
+  skipped_fns: string[],
+  skipped_why: string[],
 }
 
 pub function coverage_new(): Coverage {
-    var none: string[] = [];
-    return Coverage { funcs: 0, modelled: 0, skipped_fns: none, skipped_why: none };
+  var none: string[] = [];
+  return Coverage { funcs: 0, modelled: 0, skipped_fns: none, skipped_why: none };
 }
 
 pub function coverage_add(c: Coverage, fn_name: string, bail: string): Coverage {
-    if (bail.len() == 0) {
-        return Coverage { ...c, funcs: c.funcs + 1, modelled: c.modelled + 1 };
-    }
-    return Coverage {
-        ...c,
-        funcs: c.funcs + 1,
-        skipped_fns: c.skipped_fns.append(fn_name),
-        skipped_why: c.skipped_why.append(bail)
-    };
+  if (bail.len() == 0) {
+    return Coverage { ...c, funcs: c.funcs + 1, modelled: c.modelled + 1 };
+  }
+  return Coverage {
+    ...c,
+    funcs: c.funcs + 1,
+    skipped_fns: c.skipped_fns.append(fn_name),
+    skipped_why: c.skipped_why.append(bail),
+  };
 }
 
 // coverage_str renders the tally, with the skip reasons grouped by cause. An
 // empty problem list means nothing without knowing how much was looked at, so
 // this is printed next to the problems rather than behind a flag.
 pub function coverage_str(c: Coverage): string {
-    var out: string = "modelled " + util.i32_to_string(c.modelled) + "/" + util.i32_to_string(c.funcs);
-    var seen: string[] = [];
-    var count: i32[] = [];
-    var i: i32 = 0;
-    while (i < c.skipped_why.len()) {
-        var at: i32 = util.index_of_str(seen, c.skipped_why[i]);
-        if (at < 0) {
-            seen = seen.append(c.skipped_why[i]);
-            count = count.append(1);
-        } else {
-            count = count.with(at, count[at] + 1);
-        }
-        i = i + 1;
+  var out: string = "modelled " + util.i32_to_string(c.modelled) + "/" + util.i32_to_string(c.funcs);
+  var seen: string[] = [];
+  var count: i32[] = [];
+  var i: i32 = 0;
+  while (i < c.skipped_why.len()) {
+    var at: i32 = util.index_of_str(seen, c.skipped_why[i]);
+    if (at < 0) {
+      seen = seen.append(c.skipped_why[i]);
+      count = count.append(1);
+    } else {
+      count = count.with(at, count[at] + 1);
     }
-    var j: i32 = 0;
-    while (j < seen.len()) {
-        out = out + "\n    skipped " + util.i32_to_string(count[j]) + ": " + seen[j];
-        j = j + 1;
-    }
-    return out;
+    i = i + 1;
+  }
+  var j: i32 = 0;
+  while (j < seen.len()) {
+    out = out + "\n    skipped " + util.i32_to_string(count[j]) + ": " + seen[j];
+    j = j + 1;
+  }
+  return out;
 }
 
 // fn_result_slots is what one function result occupies. Always one slot:
 // wasm_ir.fern's signature emit gives an i64 result to an i64 / u64 return, an
 // f64 result to a float one, and `(result i32)` to everything else INCLUDING
 // `void`, so there is no zero-result function to model.
-function fn_result_slots(): i32 { return 1; }
+function fn_result_slots(): i32 {
+  return 1;
+}
 
 // ---- the pass ----------------------------------------------------------
-
 // verify_stack_fn walks one lowered function's op stream and reports every
 // operand-stack violation, in op order.
 //
@@ -134,172 +133,176 @@ function fn_result_slots(): i32 { return 1; }
 // O(1) — an array-slice pop would make the walk quadratic on the compiler's
 // own long functions.
 pub function verify_stack_fn(fn_name: string, ops: ir.Op[]): StackResult {
-    var out: irverify.Problem[] = [];
-    var none: irverify.Problem[] = [];
+  var out: irverify.Problem[] = [];
+  var none: irverify.Problem[] = [];
 
-    // The open-scope stack. Frame 0 is the implicit function-body scope: it
-    // is never closed by an `end`, and what it must hold when the function
-    // ends is the function's result.
-    var fr_kind: i32[] = [0];
-    var fr_at: i32[] = [0 - 1];
-    var fr_height: i32[] = [0];
-    // 0 / 1 rather than boolean[], matching irverify.fern's parallel-array
-    // scope stack.
-    var fr_unreach: i32[] = [0];
-    var fr_else: i32[] = [0];
-    var depth: i32 = 1;
+  // The open-scope stack. Frame 0 is the implicit function-body scope: it
+  // is never closed by an `end`, and what it must hold when the function
+  // ends is the function's result.
+  var fr_kind: i32[] = [0];
+  var fr_at: i32[] = [0 - 1];
+  var fr_height: i32[] = [0];
+  // 0 / 1 rather than boolean[], matching irverify.fern's parallel-array
+  // scope stack.
+  var fr_unreach: i32[] = [0];
+  var fr_else: i32[] = [0];
+  var depth: i32 = 1;
 
-    var height: i32 = 0;
+  var height: i32 = 0;
 
-    var i: i32 = 0;
-    while (i < ops.len()) {
-        var o: ir.Op = ops[i];
-        var t: i32 = o.kind_tag;
-        var base: i32 = fr_height[depth - 1];
-        var unreach: boolean = fr_unreach[depth - 1] != 0;
+  var i: i32 = 0;
+  while (i < ops.len()) {
+    var o: ir.Op = ops[i];
+    var t: i32 = o.kind_tag;
+    var base: i32 = fr_height[depth - 1];
+    var unreach: boolean = fr_unreach[depth - 1] != 0;
 
-        if (t == 152 || t == 153 || t == 154) {          // block, loop, if
-            if (t == 154) {
-                // The condition is consumed before the scope opens, so it
-                // belongs to the ENCLOSING frame's height.
-                if (height > base) { height = height - 1; }
-                else if (!unreach) {
-                    out = out.append(irverify.Problem {
-                        fn_name: fn_name, op: i, kind: "if",
-                        msg: "operand stack underflow - the if needs a condition, but the enclosing scope holds none"
-                    });
-                }
-            }
-            if (o.i32_imm != 0) {
-                // Every scope irlower opens is void. A typed one would carry
-                // a value out of its end, which nothing here models.
-                return StackResult { problems: none, bail: "non-void block type " + util.i32_to_string(o.i32_imm) };
-            }
-            if (depth < fr_kind.len()) {
-                fr_kind = fr_kind.with(depth, t);
-                fr_at = fr_at.with(depth, i);
-                fr_height = fr_height.with(depth, height);
-                fr_unreach = fr_unreach.with(depth, 0);
-                fr_else = fr_else.with(depth, 0);
-            } else {
-                fr_kind = fr_kind.append(t);
-                fr_at = fr_at.append(i);
-                fr_height = fr_height.append(height);
-                fr_unreach = fr_unreach.append(0);
-                fr_else = fr_else.append(0);
-            }
-            depth = depth + 1;
-        } else if (t == 155) {                            // else
-            if (depth == 1 || fr_kind[depth - 1] != 154 || fr_else[depth - 1] != 0) {
-                // irverify.fern reports both shapes; a second report of one
-                // defect is noise, and the frame is no longer trustworthy.
-                return StackResult { problems: none, bail: "malformed else" };
-            }
-            if (!unreach && height != base) {
-                out = out.append(irverify.Problem {
-                    fn_name: fn_name, op: i, kind: "else",
-                    msg: "the then-arm leaves " + util.i32_to_string(height - base)
-                        + " operand slot(s), but the if opened at op "
-                        + util.i32_to_string(fr_at[depth - 1]) + " is void"
-                });
-            }
-            fr_else = fr_else.with(depth - 1, 1);
-            fr_unreach = fr_unreach.with(depth - 1, 0);
-            height = base;
-        } else if (t == 156) {                            // end
-            if (depth == 1) {
-                return StackResult { problems: none, bail: "end with no open scope" };
-            }
-            if (!unreach && height != base) {
-                out = out.append(irverify.Problem {
-                    fn_name: fn_name, op: i, kind: "end",
-                    msg: "the " + ir.kind_name(fr_kind[depth - 1]) + " opened at op "
-                        + util.i32_to_string(fr_at[depth - 1]) + " leaves "
-                        + util.i32_to_string(height - base) + " operand slot(s), but it is void"
-                });
-            }
-            height = base;
-            depth = depth - 1;
-        } else if (t == 157 || t == 158) {                // br, brif
-            if (t == 158) {
-                if (height > base) { height = height - 1; }
-                else if (!unreach) {
-                    out = out.append(irverify.Problem {
-                        fn_name: fn_name, op: i, kind: "brif",
-                        msg: "operand stack underflow - the brif needs a condition, but the enclosing scope holds none"
-                    });
-                }
-            }
-            var d: i32 = o.i32_imm;
-            if (d < 0 || d >= depth) {
-                // irverify.fern reports the depth; with no target there is
-                // nothing further to say about what the branch carries.
-                return StackResult { problems: none, bail: "branch depth has no target" };
-            }
-            // Every scope is void and a branch to the function body is the
-            // `return`-shaped exit, which carries the result. A branch out of
-            // a scope discards whatever that scope had accumulated, so only
-            // the function-body case constrains the height.
-            if (!unreach && depth - 1 - d == 0 && height - base < fn_result_slots()) {
-                out = out.append(irverify.Problem {
-                    fn_name: fn_name, op: i, kind: ir.kind_name(t),
-                    msg: "branch to the function body needs " + util.i32_to_string(fn_result_slots())
-                        + " operand slot(s) for the result, but "
-                        + util.i32_to_string(height - base) + " are available"
-                });
-            }
-            if (t == 157) {
-                fr_unreach = fr_unreach.with(depth - 1, 1);
-                height = base;
-            }
-        } else {
-            var np: i32 = ir.op_pops(o);
-            if (np < 0) {
-                return StackResult { problems: none, bail: "unmodelled op " + ir.kind_name(t) };
-            }
-            if (np > height - base) {
-                if (!unreach) {
-                    out = out.append(irverify.Problem {
-                        fn_name: fn_name, op: i, kind: ir.kind_name(t),
-                        msg: "operand stack underflow - needs " + util.i32_to_string(np)
-                            + " operand slot(s), but the enclosing scope holds "
-                            + util.i32_to_string(height - base)
-                    });
-                }
-                // Continue from the frame's floor with the result pushed, so
-                // one underflow does not cascade into a report per later op.
-                height = base;
-            } else {
-                height = height - np;
-            }
-            height = height + ir.op_pushes(o);
-            if (t == 160) {                               // return
-                fr_unreach = fr_unreach.with(depth - 1, 1);
-                height = fr_height[depth - 1];
-            }
+    if (t == 152 || t == 153 || t == 154) {  // block, loop, if
+      if (t == 154) {
+        // The condition is consumed before the scope opens, so it
+        // belongs to the ENCLOSING frame's height.
+        if (height > base) {
+          height = height - 1;
+        } else if (!unreach) {
+          out = out.append(irverify.Problem {
+            fn_name: fn_name, op: i, kind: "if",
+            msg: "operand stack underflow - the if needs a condition, but the enclosing scope holds none",
+          });
         }
-        i = i + 1;
-    }
-
-    // An unclosed scope is irverify.fern's report; the height consequences of
-    // one would be a second report of the same defect.
-    if (depth != 1) { return StackResult { problems: out, bail: "" }; }
-    // What the function must leave is decided by the BACKENDS, and both of
-    // them append a zero result of the declared type past the last op — x86's
-    // `movq $0, %rax` epilogue, wasm's `i32.const 0)` fallthrough. A
-    // well-formed stream ends in `return`, so that filler lands in the
-    // unreachable continuation; a stream that instead falls off the end hands
-    // it a reachable continuation, where the filler IS the result and the
-    // stack must be empty for it to be the only one. Anything still held
-    // there is a value the filler is pushed on top of: a second operand at
-    // wasm's implicit end (a module that will not validate), and a `pushq`
-    // nobody pops on the register backends.
-    if (fr_unreach[0] == 0 && height != 0) {
+      }
+      if (o.i32_imm != 0) {
+        // Every scope irlower opens is void. A typed one would carry
+        // a value out of its end, which nothing here models.
+        return StackResult { problems: none, bail: "non-void block type " + util.i32_to_string(o.i32_imm) };
+      }
+      if (depth < fr_kind.len()) {
+        fr_kind = fr_kind.with(depth, t);
+        fr_at = fr_at.with(depth, i);
+        fr_height = fr_height.with(depth, height);
+        fr_unreach = fr_unreach.with(depth, 0);
+        fr_else = fr_else.with(depth, 0);
+      } else {
+        fr_kind = fr_kind.append(t);
+        fr_at = fr_at.append(i);
+        fr_height = fr_height.append(height);
+        fr_unreach = fr_unreach.append(0);
+        fr_else = fr_else.append(0);
+      }
+      depth = depth + 1;
+    } else if (t == 155) {  // else
+      if (depth == 1 || fr_kind[depth - 1] != 154 || fr_else[depth - 1] != 0) {
+        // irverify.fern reports both shapes; a second report of one
+        // defect is noise, and the frame is no longer trustworthy.
+        return StackResult { problems: none, bail: "malformed else" };
+      }
+      if (!unreach && height != base) {
         out = out.append(irverify.Problem {
-            fn_name: fn_name, op: ops.len() - 1, kind: ir.kind_name(ops[ops.len() - 1].kind_tag),
-            msg: "the function falls off its end holding " + util.i32_to_string(height)
-                + " operand slot(s), which the backend's fallthrough result is then pushed on top of"
+          fn_name: fn_name, op: i, kind: "else",
+          msg: "the then-arm leaves " + util.i32_to_string(height - base)
+            + " operand slot(s), but the if opened at op "
+            + util.i32_to_string(fr_at[depth - 1]) + " is void",
         });
+      }
+      fr_else = fr_else.with(depth - 1, 1);
+      fr_unreach = fr_unreach.with(depth - 1, 0);
+      height = base;
+    } else if (t == 156) {  // end
+      if (depth == 1) {
+        return StackResult { problems: none, bail: "end with no open scope" };
+      }
+      if (!unreach && height != base) {
+        out = out.append(irverify.Problem {
+          fn_name: fn_name, op: i, kind: "end",
+          msg: "the " + ir.kind_name(fr_kind[depth - 1]) + " opened at op "
+            + util.i32_to_string(fr_at[depth - 1]) + " leaves "
+            + util.i32_to_string(height - base) + " operand slot(s), but it is void",
+        });
+      }
+      height = base;
+      depth = depth - 1;
+    } else if (t == 157 || t == 158) {  // br, brif
+      if (t == 158) {
+        if (height > base) {
+          height = height - 1;
+        } else if (!unreach) {
+          out = out.append(irverify.Problem {
+            fn_name: fn_name, op: i, kind: "brif",
+            msg: "operand stack underflow - the brif needs a condition, but the enclosing scope holds none",
+          });
+        }
+      }
+      var d: i32 = o.i32_imm;
+      if (d < 0 || d >= depth) {
+        // irverify.fern reports the depth; with no target there is
+        // nothing further to say about what the branch carries.
+        return StackResult { problems: none, bail: "branch depth has no target" };
+      }
+      // Every scope is void and a branch to the function body is the
+      // `return`-shaped exit, which carries the result. A branch out of
+      // a scope discards whatever that scope had accumulated, so only
+      // the function-body case constrains the height.
+      if (!unreach && depth - 1 - d == 0 && height - base < fn_result_slots()) {
+        out = out.append(irverify.Problem {
+          fn_name: fn_name, op: i, kind: ir.kind_name(t),
+          msg: "branch to the function body needs " + util.i32_to_string(fn_result_slots())
+            + " operand slot(s) for the result, but "
+            + util.i32_to_string(height - base) + " are available",
+        });
+      }
+      if (t == 157) {
+        fr_unreach = fr_unreach.with(depth - 1, 1);
+        height = base;
+      }
+    } else {
+      var np: i32 = ir.op_pops(o);
+      if (np < 0) {
+        return StackResult { problems: none, bail: "unmodelled op " + ir.kind_name(t) };
+      }
+      if (np > height - base) {
+        if (!unreach) {
+          out = out.append(irverify.Problem {
+            fn_name: fn_name, op: i, kind: ir.kind_name(t),
+            msg: "operand stack underflow - needs " + util.i32_to_string(np)
+              + " operand slot(s), but the enclosing scope holds "
+              + util.i32_to_string(height - base),
+          });
+        }
+        // Continue from the frame's floor with the result pushed, so
+        // one underflow does not cascade into a report per later op.
+        height = base;
+      } else {
+        height = height - np;
+      }
+      height = height + ir.op_pushes(o);
+      if (t == 160) {  // return
+        fr_unreach = fr_unreach.with(depth - 1, 1);
+        height = fr_height[depth - 1];
+      }
     }
+    i = i + 1;
+  }
+
+  // An unclosed scope is irverify.fern's report; the height consequences of
+  // one would be a second report of the same defect.
+  if (depth != 1) {
     return StackResult { problems: out, bail: "" };
+  }
+  // What the function must leave is decided by the BACKENDS, and both of
+  // them append a zero result of the declared type past the last op — x86's
+  // `movq $0, %rax` epilogue, wasm's `i32.const 0)` fallthrough. A
+  // well-formed stream ends in `return`, so that filler lands in the
+  // unreachable continuation; a stream that instead falls off the end hands
+  // it a reachable continuation, where the filler IS the result and the
+  // stack must be empty for it to be the only one. Anything still held
+  // there is a value the filler is pushed on top of: a second operand at
+  // wasm's implicit end (a module that will not validate), and a `pushq`
+  // nobody pops on the register backends.
+  if (fr_unreach[0] == 0 && height != 0) {
+    out = out.append(irverify.Problem {
+      fn_name: fn_name, op: ops.len() - 1, kind: ir.kind_name(ops[ops.len() - 1].kind_tag),
+      msg: "the function falls off its end holding " + util.i32_to_string(height)
+        + " operand slot(s), which the backend's fallthrough result is then pushed on top of",
+    });
+  }
+  return StackResult { problems: out, bail: "" };
 }

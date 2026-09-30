@@ -26,47 +26,72 @@
 //
 // Exit code 5, matching the interpreter.
 import "std/i32";
+
 struct Lx { src: string, i: i32, n: i32, line: i32 }
+
 struct TIdent { text: string, line: i32 }
+
 struct TPunct { text: string, line: i32 }
+
 struct TEof { line: i32 }
+
 type Tok = TIdent | TPunct | TEof;
 
-function (l: Lx) at_end(): boolean { return l.i >= l.n; }
-function (l: Lx) peek(): i32 { return l.src[l.i] as i32; }
-function (l: Lx) adv(): Lx { return Lx { src: l.src, i: l.i + 1, n: l.n, line: l.line }; }
-
-function skip_ws(l: Lx): Lx {
-    while (!l.at_end()) {
-        if (l.src[l.i] != 32) { return l; }
-        l = l.adv();
-    }
-    return l;
+function (l: Lx) at_end(): boolean {
+  return l.i >= l.n;
 }
 
-function tok_of(text: string, line: i32): Tok { return TIdent { text: text, line: line }; }
-function eof_of(line: i32): Tok { return TEof { line: line }; }
+function (l: Lx) peek(): i32 {
+  return l.src[l.i] as i32;
+}
+
+function (l: Lx) adv(): Lx {
+  return Lx { src: l.src, i: l.i + 1, n: l.n, line: l.line };
+}
+
+function skip_ws(l: Lx): Lx {
+  while (!l.at_end()) {
+    if (l.src[l.i] != 32) {
+      return l;
+    }
+    l = l.adv();
+  }
+  return l;
+}
+
+function tok_of(text: string, line: i32): Tok {
+  return TIdent { text: text, line: line };
+}
+
+function eof_of(line: i32): Tok {
+  return TEof { line: line };
+}
 
 function lex(src: string): Tok[] {
-    var l: Lx = Lx { src: src, i: 0, n: src.len(), line: 1 };
-    var out: Tok[] = [];
-    while (true) {
-        l = skip_ws(l);
-        if (l.at_end()) { out = out.append(eof_of(l.line)); return out; }
-        var start: i32 = l.i;
-        while (!l.at_end() && l.src[l.i] != 32) { l = l.adv(); }
-        out = out.append(tok_of(slice_unchecked(src, start, l.i), l.line));
+  var l: Lx = Lx { src: src, i: 0, n: src.len(), line: 1 };
+  var out: Tok[] = [];
+  while (true) {
+    l = skip_ws(l);
+    if (l.at_end()) {
+      out = out.append(eof_of(l.line));
+      return out;
     }
-    return out;
+    var start: i32 = l.i;
+    while (!l.at_end() && l.src[l.i] != 32) {
+      l = l.adv();
+    }
+    out = out.append(tok_of(slice_unchecked(src, start, l.i), l.line));
+  }
+  return out;
 }
 
 function main(): i32 {
-    var acc: i32 = 0;
-    var r: i32 = 0;
-    while (r < 20) {
-        var toks: Tok[] = lex("alpha beta gamma delta epsilon zeta eta theta");
-        acc = acc + toks.len();
-        r = r + 1;
-    }
-    return acc % 7;
+  var acc: i32 = 0;
+  var r: i32 = 0;
+  while (r < 20) {
+    var toks: Tok[] = lex("alpha beta gamma delta epsilon zeta eta theta");
+    acc = acc + toks.len();
+    r = r + 1;
+  }
+  return acc % 7;
 }

@@ -15,7 +15,6 @@
 // type. The world import prefix does not surface one, so each dropped
 // resource is aliased out of its imported instance once, right after the
 // prefix, and shared by every drop of it (mirror of component.ComposeFromWorld).
-
 import "./watbin";
 import "./wit_decode";
 
@@ -29,99 +28,111 @@ pub struct Composed { bytes: i32[], refused: string }
 // surfaced so far (aliased in the order first met).
 struct WorldWired { o: i32[], n_type: i32, kinds: i32[], insts: i32[], rts: i32[], res_names: string[], res_types: i32[], refused: string }
 
-function drop_prefix(): string { return "[resource-drop]"; }
+function drop_prefix(): string {
+  return "[resource-drop]";
+}
 
 function is_resource_drop(name: string): boolean {
-    var pre: string = drop_prefix();
-    if (name.len() <= pre.len()) { return false; }
-    var i: i32 = 0;
-    while (i < pre.len()) {
-        if (name[i] != pre[i]) { return false; }
-        i = i + 1;
+  var pre: string = drop_prefix();
+  if (name.len() <= pre.len()) {
+    return false;
+  }
+  var i: i32 = 0;
+  while (i < pre.len()) {
+    if (name[i] != pre[i]) {
+      return false;
     }
-    return true;
+    i = i + 1;
+  }
+  return true;
 }
 
 // name_from is the tail of `s` from byte `from`.
 function name_from(s: string, from: i32): string {
-    var bytes: u8[] = [];
-    var i: i32 = from;
-    while (i < s.len()) {
-        bytes = bytes.append(s[i]);
-        i = i + 1;
-    }
-    return string_from_bytes_unchecked(bytes);
+  var bytes: u8[] = [];
+  var i: i32 = from;
+  while (i < s.len()) {
+    bytes = bytes.append(s[i]);
+    i = i + 1;
+  }
+  return string_from_bytes_unchecked(bytes);
 }
 
 // surface_resource returns the component type index of resource `res` of the
 // world instance `inst`, aliasing it out of the instance on first use.
 function surface_resource(w: WorldWired, inst: i32, res: string): (WorldWired, i32) {
-    var i: i32 = 0;
-    while (i < w.res_names.len()) {
-        if (w.res_names[i] == res) { return (w, w.res_types[i]); }
-        i = i + 1;
+  var i: i32 = 0;
+  while (i < w.res_names.len()) {
+    if (w.res_names[i] == res) {
+      return (w, w.res_types[i]);
     }
-    var rt: i32 = w.n_type;
-    var o: i32[] = watbin.wcat(w.o, watbin.comp_alias_inst_type(inst, res));
-    return (WorldWired { ...w, o: o, n_type: rt + 1, res_names: w.res_names.append(res), res_types: w.res_types.append(rt) }, rt);
+    i = i + 1;
+  }
+  var rt: i32 = w.n_type;
+  var o: i32[] = watbin.wcat(w.o, watbin.comp_alias_inst_type(inst, res));
+  return (WorldWired { ...w, o: o, n_type: rt + 1, res_names: w.res_names.append(res), res_types: w.res_types.append(rt) }, rt);
 }
 
 function refuse(w: WorldWired, why: string): WorldWired {
-    return WorldWired { ...w, refused: why };
+  return WorldWired { ...w, refused: why };
 }
 
 // wire_world emits the world import prefix and plans each core import's
 // lowering against the world: 0 no-opt, 1 memory, 2 memory + realloc, 3 a
 // resource drop (with the surfaced resource type in rts).
 function wire_world(tbody: i32[], ci: wit_decode.WitCoreImports): WorldWired {
-    var pl: wit_decode.WitPrefixLayout = wit_decode.wit_prefix_layout(tbody);
-    var o: i32[] = watbin.component_preamble();
-    o = watbin.wcat(o, wit_decode.wit_emit_world_imports(tbody));
-    var w: WorldWired = WorldWired { o: o, n_type: pl.types, kinds: [], insts: [], rts: [], res_names: [], res_types: [], refused: "" };
-    var i: i32 = 0;
-    while (i < ci.ifaces.len()) {
-        var iface: string = ci.ifaces[i];
-        var name: string = ci.names[i];
-        var inst: i32 = wit_decode.wit_import_instance_index(tbody, iface);
-        if (inst < 0) { return refuse(w, "core imports interface " + iface + " not declared by the world"); }
-        var kind: i32 = 0;
-        var rt: i32 = 0;
-        if (is_resource_drop(name)) {
-            var res: string = name_from(name, drop_prefix().len());
-            if (!wit_decode.wit_iface_has_resource(tbody, iface, res)) {
-                return refuse(w, "world interface " + iface + " has no resource " + res + " to drop");
-            }
-            var (w2, rt2) = surface_resource(w, inst, res);
-            w = w2;
-            rt = rt2;
-            kind = 3;
-        } else {
-            if (!wit_decode.wit_iface_func_lookup(tbody, iface, name).found) {
-                return refuse(w, "interface " + iface + " has no function " + name);
-            }
-            kind = wit_decode.wit_classify(tbody, iface, name);
-        }
-        w = WorldWired { ...w, kinds: w.kinds.append(kind), insts: w.insts.append(inst), rts: w.rts.append(rt) };
-        i = i + 1;
+  var pl: wit_decode.WitPrefixLayout = wit_decode.wit_prefix_layout(tbody);
+  var o: i32[] = watbin.component_preamble();
+  o = watbin.wcat(o, wit_decode.wit_emit_world_imports(tbody));
+  var w: WorldWired = WorldWired { o: o, n_type: pl.types, kinds: [], insts: [], rts: [], res_names: [], res_types: [], refused: "" };
+  var i: i32 = 0;
+  while (i < ci.ifaces.len()) {
+    var iface: string = ci.ifaces[i];
+    var name: string = ci.names[i];
+    var inst: i32 = wit_decode.wit_import_instance_index(tbody, iface);
+    if (inst < 0) {
+      return refuse(w, "core imports interface " + iface + " not declared by the world");
     }
-    return w;
+    var kind: i32 = 0;
+    var rt: i32 = 0;
+    if (is_resource_drop(name)) {
+      var res: string = name_from(name, drop_prefix().len());
+      if (!wit_decode.wit_iface_has_resource(tbody, iface, res)) {
+        return refuse(w, "world interface " + iface + " has no resource " + res + " to drop");
+      }
+      let (w2, rt2) = surface_resource(w, inst, res);
+      w = w2;
+      rt = rt2;
+      kind = 3;
+    } else {
+      if (!wit_decode.wit_iface_func_lookup(tbody, iface, name).found) {
+        return refuse(w, "interface " + iface + " has no function " + name);
+      }
+      kind = wit_decode.wit_classify(tbody, iface, name);
+    }
+    w = WorldWired { ...w, kinds: w.kinds.append(kind), insts: w.insts.append(inst), rts: w.rts.append(rt) };
+    i = i + 1;
+  }
+  return w;
 }
 
 // compose_run composes `core` — a command exporting `_lang_run` — into a
 // wasi:cli/run component of the world.
 pub function compose_run(tbody: i32[], core: i32[]): Composed {
-    var ci: wit_decode.WitCoreImports = wit_decode.wit_core_func_imports(core);
-    var w: WorldWired = wire_world(tbody, ci);
-    if (w.refused.len() > 0) { return Composed { bytes: [], refused: w.refused }; }
-    var pl: wit_decode.WitPrefixLayout = wit_decode.wit_prefix_layout(tbody);
-    var o: i32[] = watbin.wcat(w.o, watbin.comp_core_module_section(core));
-    o = watbin.wcat(o, watbin.component_suffix(ci.ifaces, ci.names, w.kinds, w.insts, ci.params, w.rts, w.n_type, pl.instances, 0, "_lang_run"));
-    return Composed { bytes: o, refused: "" };
+  var ci: wit_decode.WitCoreImports = wit_decode.wit_core_func_imports(core);
+  var w: WorldWired = wire_world(tbody, ci);
+  if (w.refused.len() > 0) {
+    return Composed { bytes: [], refused: w.refused };
+  }
+  var pl: wit_decode.WitPrefixLayout = wit_decode.wit_prefix_layout(tbody);
+  var o: i32[] = watbin.wcat(w.o, watbin.comp_core_module_section(core));
+  o = watbin.wcat(o, watbin.component_suffix(ci.ifaces, ci.names, w.kinds, w.insts, ci.params, w.rts, w.n_type, pl.instances, 0, "_lang_run"));
+  return Composed { bytes: o, refused: "" };
 }
 
 // component_from_world is compose_run's bytes, empty on refusal.
 pub function component_from_world(tbody: i32[], core: i32[]): i32[] {
-    return compose_run(tbody, core).bytes;
+  return compose_run(tbody, core).bytes;
 }
 
 // compose_http composes `core` — a reactor exporting
@@ -130,16 +141,20 @@ pub function component_from_world(tbody: i32[], core: i32[]): i32[] {
 // wasi:http/types, whose incoming-request and response-outparam resources
 // type the export.
 pub function compose_http(tbody: i32[], core: i32[]): Composed {
-    var ci: wit_decode.WitCoreImports = wit_decode.wit_core_func_imports(core);
-    var w: WorldWired = wire_world(tbody, ci);
-    if (w.refused.len() > 0) { return Composed { bytes: [], refused: w.refused }; }
-    var http_iface: string = "wasi:http/types@0.2.0";
-    var http_inst: i32 = wit_decode.wit_import_instance_index(tbody, http_iface);
-    if (http_inst < 0) { return Composed { bytes: [], refused: "world does not import " + http_iface }; }
-    var (w2, req_t) = surface_resource(w, http_inst, "incoming-request");
-    var (w3, out_t) = surface_resource(w2, http_inst, "response-outparam");
-    var pl: wit_decode.WitPrefixLayout = wit_decode.wit_prefix_layout(tbody);
-    var o: i32[] = watbin.wcat(w3.o, watbin.comp_core_module_section(core));
-    o = watbin.wcat(o, watbin.component_suffix_http(ci.ifaces, ci.names, w3.kinds, w3.insts, ci.params, w3.rts, w3.n_type, pl.instances, 0, req_t, out_t));
-    return Composed { bytes: o, refused: "" };
+  var ci: wit_decode.WitCoreImports = wit_decode.wit_core_func_imports(core);
+  var w: WorldWired = wire_world(tbody, ci);
+  if (w.refused.len() > 0) {
+    return Composed { bytes: [], refused: w.refused };
+  }
+  var http_iface: string = "wasi:http/types@0.2.0";
+  var http_inst: i32 = wit_decode.wit_import_instance_index(tbody, http_iface);
+  if (http_inst < 0) {
+    return Composed { bytes: [], refused: "world does not import " + http_iface };
+  }
+  let (w2, req_t) = surface_resource(w, http_inst, "incoming-request");
+  let (w3, out_t) = surface_resource(w2, http_inst, "response-outparam");
+  var pl: wit_decode.WitPrefixLayout = wit_decode.wit_prefix_layout(tbody);
+  var o: i32[] = watbin.wcat(w3.o, watbin.comp_core_module_section(core));
+  o = watbin.wcat(o, watbin.component_suffix_http(ci.ifaces, ci.names, w3.kinds, w3.insts, ci.params, w3.rts, w3.n_type, pl.instances, 0, req_t, out_t));
+  return Composed { bytes: o, refused: "" };
 }

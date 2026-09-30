@@ -43,80 +43,105 @@ import "./ssarc";
 struct Hist { keys: string[], counts: i32[] }
 
 function hist_bump(h: Hist, k: string): Hist {
-    var i: i32 = 0;
-    while (i < h.keys.len()) {
-        if (h.keys[i] == k) { return Hist { keys: h.keys, counts: h.counts.with(i, h.counts[i] + 1) }; }
-        i = i + 1;
+  var i: i32 = 0;
+  while (i < h.keys.len()) {
+    if (h.keys[i] == k) {
+      return Hist { keys: h.keys, counts: h.counts.with(i, h.counts[i] + 1) };
     }
-    return Hist { keys: h.keys.append(k), counts: h.counts.append(1) };
+    i = i + 1;
+  }
+  return Hist { keys: h.keys.append(k), counts: h.counts.append(1) };
 }
 
 function hist_print(label: string, h: Hist): void {
-    print(label);
-    // selection sort by count, descending
-    var order: i32[] = [];
-    var used: boolean[] = [];
-    var i: i32 = 0;
-    while (i < h.keys.len()) { used = used.append(false); i = i + 1; }
-    var n: i32 = 0;
-    while (n < h.keys.len()) {
-        var best: i32 = 0 - 1;
-        var j: i32 = 0;
-        while (j < h.keys.len()) {
-            if (!used[j]) { if (best < 0 || h.counts[j] > h.counts[best]) { best = j; } }
-            j = j + 1;
+  print(label);
+  // selection sort by count, descending
+  var order: i32[] = [];
+  var used: boolean[] = [];
+  var i: i32 = 0;
+  while (i < h.keys.len()) {
+    used = used.append(false);
+    i = i + 1;
+  }
+  var n: i32 = 0;
+  while (n < h.keys.len()) {
+    var best: i32 = 0 - 1;
+    var j: i32 = 0;
+    while (j < h.keys.len()) {
+      if (!used[j]) {
+        if (best < 0 || h.counts[j] > h.counts[best]) {
+          best = j;
         }
-        used = used.with(best, true);
-        order = order.append(best);
-        n = n + 1;
+      }
+      j = j + 1;
     }
-    for k in order { print("  " + util.i32_to_string(h.counts[k]) + "  " + h.keys[k]); }
+    used = used.with(best, true);
+    order = order.append(best);
+    n = n + 1;
+  }
+  for k in order {
+    print("  " + util.i32_to_string(h.counts[k]) + "  " + h.keys[k]);
+  }
 }
 
 // The leaf reason: strip every cascade prefix.
 function leaf(why: string): string {
-    var tag: string = "call target was refused: ";
-    var out: string = why;
-    while (out.len() > tag.len()) {
-        var head: string = slice_unchecked(out, 0, tag.len()).to_owned();
-        if (head != tag) { return out; }
-        out = slice_unchecked(out, tag.len(), out.len()).to_owned();
+  var tag: string = "call target was refused: ";
+  var out: string = why;
+  while (out.len() > tag.len()) {
+    var head: string = slice_unchecked(out, 0, tag.len()).to_owned();
+    if (head != tag) {
+      return out;
     }
-    return out;
+    out = slice_unchecked(out, tag.len(), out.len()).to_owned();
+  }
+  return out;
 }
 
 // The stage one body reaches, and the reason it stopped there.
 struct Stage { planned: boolean, lowered: boolean, plan_why: string, rc_why: string }
 
 function stage_of(p: semsource.Produced, tab: irlower.StructTab): Stage {
-    var plan: ssaunits.Plan = ssaunits.plan(p.func, p.modes);
-    if (!plan.ok) { return Stage { planned: false, lowered: false, plan_why: plan.why, rc_why: "" }; }
-    var lr: irlower.LowerResult = ssarc.lower(p.func, p.modes, plan, tab, []);
-    if (!lr.ok) { return Stage { planned: true, lowered: false, plan_why: "", rc_why: lr.why }; }
-    return Stage { planned: true, lowered: true, plan_why: "", rc_why: "" };
+  var plan: ssaunits.Plan = ssaunits.plan(p.func, p.modes);
+  if (!plan.ok) {
+    return Stage { planned: false, lowered: false, plan_why: plan.why, rc_why: "" };
+  }
+  var lr: irlower.LowerResult = ssarc.lower(p.func, p.modes, plan, tab, []);
+  if (!lr.ok) {
+    return Stage { planned: true, lowered: false, plan_why: "", rc_why: lr.why };
+  }
+  return Stage { planned: true, lowered: true, plan_why: "", rc_why: "" };
 }
 
 // A template's stage is the first its instances stop at.
 function template_stage(key: string, instances: semsource.Produced[], stages: Stage[]): Stage {
-    var out: Stage = Stage { planned: true, lowered: true, plan_why: "", rc_why: "" };
-    var i: i32 = 0;
-    while (i < instances.len()) {
-        if (instances[i].key == key) {
-            if (!stages[i].planned) { return stages[i]; }
-            if (!stages[i].lowered) { out = stages[i]; }
-        }
-        i = i + 1;
+  var out: Stage = Stage { planned: true, lowered: true, plan_why: "", rc_why: "" };
+  var i: i32 = 0;
+  while (i < instances.len()) {
+    if (instances[i].key == key) {
+      if (!stages[i].planned) {
+        return stages[i];
+      }
+      if (!stages[i].lowered) {
+        out = stages[i];
+      }
     }
-    return out;
+    i = i + 1;
+  }
+  return out;
 }
 
 // Every declaration's stage, and the leaf it stopped at.
 function listed_leaf(): string {
-    match (env("FERN_CENSUS_LIST")) {
-        Some(v) => { return v; },
-        None => { return ""; }
+  match (env("FERN_CENSUS_LIST")) {
+    Some(v) => {
+      return v;
+    },
+    None => {
+      return "";
     }
-    return "";
+  }
+  return "";
 }
 
 // The build whose stages this report describes. Production widens the declared
@@ -134,63 +159,78 @@ function listed_leaf(): string {
 // pipeline, and its own `lowered` against `produced` is the condition, so a
 // body that refuses under the widening is shown rather than hidden.
 function measured_build(merged: parser.Module): semsource.Built {
-    var built: semsource.Built = semsource.build_module(merged);
-    var widened: semsource.Built = semsource.with_inferred_modes(built);
-    if (!semsource.any_row_changed(semsource.changed_rows(built, widened))) { return built; }
-    return widened;
+  var built: semsource.Built = semsource.build_module(merged);
+  var widened: semsource.Built = semsource.with_inferred_modes(built);
+  if (!semsource.any_row_changed(semsource.changed_rows(built, widened))) {
+    return built;
+  }
+  return widened;
 }
 
 function report(merged: parser.Module, tab: irlower.StructTab): void {
-    var listed: string = listed_leaf();
-    var built: semsource.Built = measured_build(merged);
-    var total: i32 = built.decls.len();
-    var n_produced: i32 = 0;
-    var n_planned: i32 = 0;
-    var n_lowered: i32 = 0;
-    var n_instances: i32 = 0;
-    var n_bodyless: i32 = 0;
-    var refusals: Hist = Hist { keys: [], counts: [] };
-    var leaves: Hist = Hist { keys: [], counts: [] };
-    var plan_why: Hist = Hist { keys: [], counts: [] };
-    var rc_why: Hist = Hist { keys: [], counts: [] };
-    var stages: Stage[] = [];
-    for inst in built.instances {
-        var st: Stage = Stage { planned: false, lowered: false, plan_why: "", rc_why: "" };
-        if (inst.ok) { n_instances = n_instances + 1; st = stage_of(inst, tab); }
-        stages = stages.append(st);
+  var listed: string = listed_leaf();
+  var built: semsource.Built = measured_build(merged);
+  var total: i32 = built.decls.len();
+  var n_produced: i32 = 0;
+  var n_planned: i32 = 0;
+  var n_lowered: i32 = 0;
+  var n_instances: i32 = 0;
+  var n_bodyless: i32 = 0;
+  var refusals: Hist = Hist { keys: [], counts: [] };
+  var leaves: Hist = Hist { keys: [], counts: [] };
+  var plan_why: Hist = Hist { keys: [], counts: [] };
+  var rc_why: Hist = Hist { keys: [], counts: [] };
+  var stages: Stage[] = [];
+  for inst in built.instances {
+    var st: Stage = Stage { planned: false, lowered: false, plan_why: "", rc_why: "" };
+    if (inst.ok) {
+      n_instances = n_instances + 1;
+      st = stage_of(inst, tab);
     }
-    var i: i32 = 0;
-    while (i < built.decls.len()) {
-        var p: semsource.Produced = built.decls[i];
-        if (p.bodyless) {
-            n_bodyless = n_bodyless + 1;
-        } else if (!p.ok) {
-            refusals = hist_bump(refusals, p.why);
-            leaves = hist_bump(leaves, leaf(p.why));
-            if (listed != "" && leaf(p.why) == listed) { print("  refused " + merged.funcs[i].name + ": " + p.why); }
+    stages = stages.append(st);
+  }
+  var i: i32 = 0;
+  while (i < built.decls.len()) {
+    var p: semsource.Produced = built.decls[i];
+    if (p.bodyless) {
+      n_bodyless = n_bodyless + 1;
+    } else if (!p.ok) {
+      refusals = hist_bump(refusals, p.why);
+      leaves = hist_bump(leaves, leaf(p.why));
+      if (listed != "" && leaf(p.why) == listed) {
+        print("  refused " + merged.funcs[i].name + ": " + p.why);
+      }
+    } else {
+      n_produced = n_produced + 1;
+      var st: Stage = Stage { planned: false, lowered: false, plan_why: "", rc_why: "" };
+      if (p.template) {
+        st = template_stage(p.key, built.instances, stages);
+      } else {
+        st = stage_of(p, tab);
+      }
+      if (!st.planned) {
+        plan_why = hist_bump(plan_why, st.plan_why);
+      } else {
+        n_planned = n_planned + 1;
+        if (!st.lowered) {
+          rc_why = hist_bump(rc_why, st.rc_why);
         } else {
-            n_produced = n_produced + 1;
-            var st: Stage = Stage { planned: false, lowered: false, plan_why: "", rc_why: "" };
-            if (p.template) { st = template_stage(p.key, built.instances, stages); } else { st = stage_of(p, tab); }
-            if (!st.planned) {
-                plan_why = hist_bump(plan_why, st.plan_why);
-            } else {
-                n_planned = n_planned + 1;
-                if (!st.lowered) { rc_why = hist_bump(rc_why, st.rc_why); } else { n_lowered = n_lowered + 1; }
-            }
+          n_lowered = n_lowered + 1;
         }
-        i = i + 1;
+      }
     }
-    print("functions      " + util.i32_to_string(total));
-    print("bodyless       " + util.i32_to_string(n_bodyless));
-    print("measured       " + util.i32_to_string(total - n_bodyless));
-    print("produced       " + util.i32_to_string(n_produced));
-    print("planned        " + util.i32_to_string(n_planned));
-    print("lowered        " + util.i32_to_string(n_lowered));
-    print("instances      " + util.i32_to_string(built.instances.len()) + " requested, " + util.i32_to_string(n_instances) + " produced");
-    hist_print("-- leaf refusals --", leaves);
-    hist_print("-- plan refusals --", plan_why);
-    hist_print("-- rc refusals --", rc_why);
+    i = i + 1;
+  }
+  print("functions      " + util.i32_to_string(total));
+  print("bodyless       " + util.i32_to_string(n_bodyless));
+  print("measured       " + util.i32_to_string(total - n_bodyless));
+  print("produced       " + util.i32_to_string(n_produced));
+  print("planned        " + util.i32_to_string(n_planned));
+  print("lowered        " + util.i32_to_string(n_lowered));
+  print("instances      " + util.i32_to_string(built.instances.len()) + " requested, " + util.i32_to_string(n_instances) + " produced");
+  hist_print("-- leaf refusals --", leaves);
+  hist_print("-- plan refusals --", plan_why);
+  hist_print("-- rc refusals --", rc_why);
 }
 
 // STDLIB_EXT is the suffix an embedded module name carries and an import path
@@ -201,17 +241,17 @@ const STDLIB_EXT: string = ".fern";
 // sealed: an entry's own relative imports (`./util`) miss the overlay and fall
 // through to disk, which is where they live.
 function embedded_stdlib(): modloader.Overlay {
-    var paths: string[] = [];
-    var srcs: string[] = [];
-    for a in __fern_assets() {
-        var name: string = a.0;
-        if (name.len() > STDLIB_EXT.len()
-                && slice_unchecked(name, name.len() - STDLIB_EXT.len(), name.len()) == STDLIB_EXT) {
-            paths = paths.append(slice_unchecked(name, 0, name.len() - STDLIB_EXT.len()) + "");
-            srcs = srcs.append(a.1 + "");
-        }
+  var paths: string[] = [];
+  var srcs: string[] = [];
+  for a in __fern_assets() {
+    var name: string = a.0;
+    if (name.len() > STDLIB_EXT.len()
+      && slice_unchecked(name, name.len() - STDLIB_EXT.len(), name.len()) == STDLIB_EXT) {
+      paths = paths.append(slice_unchecked(name, 0, name.len() - STDLIB_EXT.len()) + "");
+      srcs = srcs.append(a.1 + "");
     }
-    return modloader.Overlay { paths: paths, srcs: srcs, sealed: false };
+  }
+  return modloader.Overlay { paths: paths, srcs: srcs, sealed: false };
 }
 
 // Every import, transitively, the loader did not resolve. It drops one without
@@ -219,58 +259,70 @@ function embedded_stdlib(): modloader.Overlay {
 // unresolvable import) and in a census is the failure mode that produced a
 // whole phantom refusal class.
 function unresolved_imports(entry: parser.Module, loaded: flatten.LoadedModule[]): string[] {
-    var have: string[] = [];
-    for m in loaded { have = have.append(m.name + ""); }
-    var missing: string[] = [];
-    var wanted: parser.Import[] = entry.imports;
-    for m in loaded { wanted = util.append_all(wanted, m.mod.imports); }
-    for imp in wanted {
-        var name: string = modloader.base_name(imp.path);
-        if (!util.has_str(have, name) && !util.has_str(missing, imp.path)) {
-            missing = missing.append(imp.path + "");
-        }
+  var have: string[] = [];
+  for m in loaded {
+    have = have.append(m.name + "");
+  }
+  var missing: string[] = [];
+  var wanted: parser.Import[] = entry.imports;
+  for m in loaded {
+    wanted = util.append_all(wanted, m.mod.imports);
+  }
+  for imp in wanted {
+    var name: string = modloader.base_name(imp.path);
+    if (!util.has_str(have, name) && !util.has_str(missing, imp.path)) {
+      missing = missing.append(imp.path + "");
     }
-    return missing;
+  }
+  return missing;
 }
 
 function main(): i32 {
-    var av: string[] = args();
-    if (av.len() < 2) { eprint("usage: semsource_census_run <entry.fern>\n"); return 2; }
-    var entry_path: string = av[1];
-    var dir: string = modloader.dirname(entry_path);
-    match (read_file(entry_path)) {
-        Ok(src) => {
-            var entry: parser.Module = parser.parse_module(lexer.tokenize(src));
-            var loaded: flatten.LoadedModule[] = modloader.load_imports(embedded_stdlib(), dir, entry);
-            var missing: string[] = unresolved_imports(entry, loaded);
-            if (missing.len() > 0) {
-                for m in missing { eprint("unresolved import: " + m + "\n"); }
-                return 2;
-            }
-            var merged: parser.Module = flatten.bundle(entry, loaded, "arm64-linux");
-            merged = modloader.merge_builtins(dir, merged);
-            // The driver folds the target's name to its two literals before
-            // anything lowers, so the boundary never sees the call; the
-            // census counts against the default target.
-            var desc: platforms.Descriptor = platforms.for_target("arm64-linux");
-            merged = constfold.fold_target_name(merged, desc.environment, desc.isa);
-            // The pipeline the CLI's typed route runs before it lowers:
-            // `lift_lambdas_typed(parser.module_with_builtins_typed(merged))`. This used to hand-roll a prefix of it —
-            // the three method-generic registrations and the enum injection —
-            // and skip the rest, so it measured a module the compiler never
-            // lowers and charged the difference to the boundary. It cost a
-            // wrongly-filed issue: a self-recursive nested `function` refused
-            // here and produces whole in production, because
-            // `hoist_local_funcs_module` is one of the passes that was missing
-            // (#9773, #9778).
-            merged = parser.module_with_builtins_typed(merged);
-            merged = irlower.lift_lambdas_typed(merged);
-            var tab: irlower.StructTab = irlower.struct_tab(parser.erase_str_structs(merged.structs));
+  var av: string[] = args();
+  if (av.len() < 2) {
+    eprint("usage: semsource_census_run <entry.fern>\n");
+    return 2;
+  }
+  var entry_path: string = av[1];
+  var dir: string = modloader.dirname(entry_path);
+  match (read_file(entry_path)) {
+    Ok(src) => {
+      var entry: parser.Module = parser.parse_module(lexer.tokenize(src));
+      var loaded: flatten.LoadedModule[] = modloader.load_imports(embedded_stdlib(), dir, entry);
+      var missing: string[] = unresolved_imports(entry, loaded);
+      if (missing.len() > 0) {
+        for m in missing {
+          eprint("unresolved import: " + m + "\n");
+        }
+        return 2;
+      }
+      var merged: parser.Module = flatten.bundle(entry, loaded, "arm64-linux");
+      merged = modloader.merge_builtins(dir, merged);
+      // The driver folds the target's name to its two literals before
+      // anything lowers, so the boundary never sees the call; the
+      // census counts against the default target.
+      var desc: platforms.Descriptor = platforms.for_target("arm64-linux");
+      merged = constfold.fold_target_name(merged, desc.environment, desc.isa);
+      // The pipeline the CLI's typed route runs before it lowers:
+      // `lift_lambdas_typed(parser.module_with_builtins_typed(merged))`. This used to hand-roll a prefix of it —
+      // the three method-generic registrations and the enum injection —
+      // and skip the rest, so it measured a module the compiler never
+      // lowers and charged the difference to the boundary. It cost a
+      // wrongly-filed issue: a self-recursive nested `function` refused
+      // here and produces whole in production, because
+      // `hoist_local_funcs_module` is one of the passes that was missing
+      // (#9773, #9778).
+      merged = parser.module_with_builtins_typed(merged);
+      merged = irlower.lift_lambdas_typed(merged);
+      var tab: irlower.StructTab = irlower.struct_tab(parser.erase_str_structs(merged.structs));
 
-            report(merged, tab);
-            return 0;
-        },
-        Err(_) => { eprint("cannot read entry\n"); return 2; }
+      report(merged, tab);
+      return 0;
+    },
+    Err(_) => {
+      eprint("cannot read entry\n");
+      return 2;
     }
-    return 0;
+  }
+  return 0;
 }

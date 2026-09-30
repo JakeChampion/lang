@@ -16,26 +16,27 @@
 // ever fed the E019 struct-arity check on a struct's OWN generic head (never an
 // array), so the arity diagnostics are unchanged — confirmed by the three x86
 // self-compile fixpoints.
-
 import "./checker";
 import "./util";
 
 function main(): i32 {
-    var corpus: string[] = [
-        "Box[i32]", "Map[K, V]", "Triple[a, b, c]",
-        "Pair[Map[a, b], c]", "Wrap[(a, b)]", "Nest[Box[Box[i32]]]",
-        "Foo", "i32", "(a, b)", "(Map[a, b], c)",
-        "Box[i32][]", "i32[]", "Foo[]", "Map[K, V][]", ""
-    ];
-    var out: string = "";
-    var i: i32 = 0;
-    while (i < corpus.len()) {
-        var t: string = corpus[i];
-        var label: string = t;
-        if (label.len() == 0) { label = "<empty>"; }
-        out = out + label + " -> " + util.i32_to_string(checker.count_type_args(t)) + "\n";
-        i = i + 1;
+  var corpus: string[] = [
+    "Box[i32]", "Map[K, V]", "Triple[a, b, c]",
+    "Pair[Map[a, b], c]", "Wrap[(a, b)]", "Nest[Box[Box[i32]]]",
+    "Foo", "i32", "(a, b)", "(Map[a, b], c)",
+    "Box[i32][]", "i32[]", "Foo[]", "Map[K, V][]", "",
+  ];
+  var out: string = "";
+  var i: i32 = 0;
+  while (i < corpus.len()) {
+    var t: string = corpus[i];
+    var label: string = t;
+    if (label.len() == 0) {
+      label = "<empty>";
     }
-    write(out);
-    return 0;
+    out = out + label + " -> " + util.i32_to_string(checker.count_type_args(t)) + "\n";
+    i = i + 1;
+  }
+  write(out);
+  return 0;
 }

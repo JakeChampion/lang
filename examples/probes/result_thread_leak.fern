@@ -38,33 +38,37 @@
 //
 // Exit code 3, matching the interpreter.
 struct Lx { src: string, i: i32 }
+
 struct TId { text: string }
-struct TEof {}
+
+struct TEof {  }
+
 type Tok = TId | TEof;
+
 struct Res { lex: Lx, tok: Tok }
 
 function scan(l: Lx): Res {
-    var t: Tok = TId { text: slice_unchecked(l.src, l.i, l.i + 1) + "" };
-    return Res { lex: Lx { src: l.src, i: l.i + 1 }, tok: t };
+  var t: Tok = TId { text: slice_unchecked(l.src, l.i, l.i + 1) + "" };
+  return Res { lex: Lx { src: l.src, i: l.i + 1 }, tok: t };
 }
 
 function run(src: string): i32 {
-    var l: Lx = Lx { src: src, i: 0 };
-    var out: Tok[] = [];
-    while (l.i < 5) {
-        var r = scan(l);
-        l = r.lex;
-        out = out.append(r.tok);
-    }
-    return out.len();
+  var l: Lx = Lx { src: src, i: 0 };
+  var out: Tok[] = [];
+  while (l.i < 5) {
+    var r = scan(l);
+    l = r.lex;
+    out = out.append(r.tok);
+  }
+  return out.len();
 }
 
 function main(): i32 {
-    var acc: i32 = 0;
-    var n: i32 = 0;
-    while (n < 100) {
-        acc = acc + run("abcdefgh");
-        n = n + 1;
-    }
-    return acc % 7;
+  var acc: i32 = 0;
+  var n: i32 = 0;
+  while (n < 100) {
+    acc = acc + run("abcdefgh");
+    n = n + 1;
+  }
+  return acc % 7;
 }
