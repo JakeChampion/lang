@@ -167,6 +167,13 @@ function report(what: string, why: string): i32 {
     return 0;
 }
 
+// tally reports what was produced. Strict prints only the refusals, so a
+// strict compile that succeeds writes nothing to stderr.
+function tally(what: string, why: string): i32 {
+    if (sem_report_on()) { eprint("FERN_SEM_IR: " + what + ": " + why + "\n"); }
+    return 0;
+}
+
 // declined is the cache entry for a function this boundary is not emitting:
 // `ok: false` is what the substitution reads as "keep the AST body", and
 // nothing emits from it, so the partial-op shape ircore.lower_failed_refuse
@@ -720,7 +727,7 @@ pub function substitution(mod: parser.Module, lowered: parser.FuncDecl[], struct
         }
         return ircore.no_sub();
     }
-    report("module", "produced " + util.i32_to_string(n) + " of "
+    tally("module", "produced " + util.i32_to_string(n) + " of "
         + util.i32_to_string(mod.funcs.len()) + " declarations and "
         + util.i32_to_string(instances.len()) + " of "
         + util.i32_to_string(built.instances.len()) + " instances");
@@ -770,7 +777,7 @@ pub function runtime_bodies(src: string): irlower.LowerResult[] {
     // The drop helpers follow the bodies, deduplicated by symbol.
     var all: irlower.LowerResult[] = ssarc.merge_helpers(out, helpers);
     for h in all { if (!h.ok) { return runtime_refused(h.name, h.why); } }
-    for fd in im.funcs { report("runtime " + fd.name, "produced"); }
+    for fd in im.funcs { tally("runtime " + fd.name, "produced"); }
     return all;
 }
 
