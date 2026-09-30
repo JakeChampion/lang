@@ -53,9 +53,16 @@ func TestSelfHostAllocSizeAbortIRX86_64(t *testing.T) {
 func TestSelfHostAllocSizeAbortIRArm64(t *testing.T) {
 	gcc, qemu := arm64Tooling(t)
 	cli := newStrictCLI(t)
-	for name, src := range map[string]string{"alloc-u8-negative-length": allocNegativeLengthSrc, "repeat-wraps-to-zero": repeatWrapsToZeroSrc} {
+	for name, c := range map[string]struct {
+		src string
+		env []string
+	}{
+		"alloc-u8-negative-length":              {allocNegativeLengthSrc, nil},
+		"alloc-u8-negative-length-ast-lowering": {allocNegativeLengthSrc, []string{"FERN_SEM_IR="}},
+		"repeat-wraps-to-zero":                  {repeatWrapsToZeroSrc, nil},
+	} {
 		t.Run(name, func(t *testing.T) {
-			if code, out := runArm64(t, gcc, qemu, cli.emit(t, "arm64-linux", src)); code != 134 || out != "" {
+			if code, out := runArm64(t, gcc, qemu, cli.emit(t, "arm64-linux", c.src, c.env...)); code != 134 || out != "" {
 				t.Fatalf("arm64: exit %d, stdout %q; want 134 and nothing printed", code, out)
 			}
 		})
