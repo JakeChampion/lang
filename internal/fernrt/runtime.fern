@@ -4,32 +4,73 @@
 // hand-written twin per backend. Bodies bottom out in the provided-callee
 // floor (`__load_u8`, `__load_i64`, ...) and never in an operation that would
 // lower to a call of the helper being defined.
-
 // wasi:sockets error-code discriminants to Preview 1 errnos. Keep in sync
 // with internal/strerror.WasiSocketErrorCodes; its parity test checks all rows.
 function __fern_wasi_socket_errno(code: i32): i32 {
-    if (code == 0) { return 29; }
-    if (code == 1) { return 2; }
-    if (code == 2) { return 58; }
-    if (code == 3) { return 28; }
-    if (code == 4) { return 48; }
-    if (code == 5) { return 73; }
-    if (code == 6) { return 7; }
-    if (code == 7) { return 28; }
-    if (code == 8) { return 6; }
-    if (code == 9) { return 28; }
-    if (code == 10) { return 33; }
-    if (code == 11) { return 4; }
-    if (code == 12) { return 3; }
-    if (code == 13) { return 23; }
-    if (code == 14) { return 14; }
-    if (code == 15) { return 15; }
-    if (code == 16) { return 13; }
-    if (code == 17) { return 35; }
-    if (code == 18) { return 44; }
-    if (code == 19) { return 6; }
-    if (code == 20) { return 29; }
+  if (code == 0) {
     return 29;
+  }
+  if (code == 1) {
+    return 2;
+  }
+  if (code == 2) {
+    return 58;
+  }
+  if (code == 3) {
+    return 28;
+  }
+  if (code == 4) {
+    return 48;
+  }
+  if (code == 5) {
+    return 73;
+  }
+  if (code == 6) {
+    return 7;
+  }
+  if (code == 7) {
+    return 28;
+  }
+  if (code == 8) {
+    return 6;
+  }
+  if (code == 9) {
+    return 28;
+  }
+  if (code == 10) {
+    return 33;
+  }
+  if (code == 11) {
+    return 4;
+  }
+  if (code == 12) {
+    return 3;
+  }
+  if (code == 13) {
+    return 23;
+  }
+  if (code == 14) {
+    return 14;
+  }
+  if (code == 15) {
+    return 15;
+  }
+  if (code == 16) {
+    return 13;
+  }
+  if (code == 17) {
+    return 35;
+  }
+  if (code == 18) {
+    return 44;
+  }
+  if (code == 19) {
+    return 6;
+  }
+  if (code == 20) {
+    return 29;
+  }
+  return 29;
 }
 
 // __fern_utf8_valid(data, len) is 1 when the `len` bytes at `data` are
@@ -40,257 +81,412 @@ function __fern_wasi_socket_errno(code: i32): i32 {
 // formulation, no codepoint assembly; a run of ASCII is skipped eight bytes at
 // a time.
 function __fern_utf8_valid(data: usize, len: usize): i32 {
-    var p: usize = data;
-    var end: usize = data + len;
-    // Every byte's top bit: a word with no bit of this set is all ASCII.
-    var mask: u64 = 9259542123273814144 as u64;
-    while (p < end) {
-        if (end - p >= 8) {
-            if (((__load_i64(p) as u64) & mask) == (0 as u64)) {
-                p = p + 8;
-                continue;
-            }
-        }
-        var b: i32 = __load_u8(p);
-        if (b < 128) {
-            p = p + 1;
-            continue;
-        }
-        // 0x80..0xBF is a continuation with no lead; 0xC0 / 0xC1 are overlong.
-        if (b < 194) { return 0; }
-        if (b < 224) {
-            // 0xC2..0xDF: one continuation.
-            if (p + 2 > end) { return 0; }
-            if ((__load_u8(p + 1) & 192) != 128) { return 0; }
-            p = p + 2;
-            continue;
-        }
-        if (b < 240) {
-            // 0xE0..0xEF: two continuations. The first one's range carries
-            // the E0 overlong floor and the ED surrogate ceiling.
-            if (p + 3 > end) { return 0; }
-            var c1: i32 = __load_u8(p + 1);
-            if ((c1 & 192) != 128) { return 0; }
-            if ((__load_u8(p + 2) & 192) != 128) { return 0; }
-            if (b == 224 && c1 < 160) { return 0; }
-            if (b == 237 && c1 >= 160) { return 0; }
-            p = p + 3;
-            continue;
-        }
-        // 0xF0..0xF4: three continuations. The first one's range carries the
-        // F0 overlong floor and the F4 ceiling at U+10FFFF.
-        if (b > 244) { return 0; }
-        if (p + 4 > end) { return 0; }
-        var d1: i32 = __load_u8(p + 1);
-        if ((d1 & 192) != 128) { return 0; }
-        if ((__load_u8(p + 2) & 192) != 128) { return 0; }
-        if ((__load_u8(p + 3) & 192) != 128) { return 0; }
-        if (b == 240 && d1 < 144) { return 0; }
-        if (b == 244 && d1 >= 144) { return 0; }
-        p = p + 4;
+  var p: usize = data;
+  var end: usize = data + len;
+  // Every byte's top bit: a word with no bit of this set is all ASCII.
+  var mask: u64 = 9259542123273814144 as u64;
+  while (p < end) {
+    if (end - p >= 8) {
+      if ((__load_i64(p) as u64 & mask) == 0 as u64) {
+        p = p + 8;
+        continue;
+      }
     }
-    return 1;
+    var b: i32 = __load_u8(p);
+    if (b < 128) {
+      p = p + 1;
+      continue;
+    }
+    // 0x80..0xBF is a continuation with no lead; 0xC0 / 0xC1 are overlong.
+    if (b < 194) {
+      return 0;
+    }
+    if (b < 224) {
+      // 0xC2..0xDF: one continuation.
+      if (p + 2 > end) {
+        return 0;
+      }
+      if ((__load_u8(p + 1) & 192) != 128) {
+        return 0;
+      }
+      p = p + 2;
+      continue;
+    }
+    if (b < 240) {
+      // 0xE0..0xEF: two continuations. The first one's range carries
+      // the E0 overlong floor and the ED surrogate ceiling.
+      if (p + 3 > end) {
+        return 0;
+      }
+      var c1: i32 = __load_u8(p + 1);
+      if ((c1 & 192) != 128) {
+        return 0;
+      }
+      if ((__load_u8(p + 2) & 192) != 128) {
+        return 0;
+      }
+      if (b == 224 && c1 < 160) {
+        return 0;
+      }
+      if (b == 237 && c1 >= 160) {
+        return 0;
+      }
+      p = p + 3;
+      continue;
+    }
+    // 0xF0..0xF4: three continuations. The first one's range carries the
+    // F0 overlong floor and the F4 ceiling at U+10FFFF.
+    if (b > 244) {
+      return 0;
+    }
+    if (p + 4 > end) {
+      return 0;
+    }
+    var d1: i32 = __load_u8(p + 1);
+    if ((d1 & 192) != 128) {
+      return 0;
+    }
+    if ((__load_u8(p + 2) & 192) != 128) {
+      return 0;
+    }
+    if ((__load_u8(p + 3) & 192) != 128) {
+      return 0;
+    }
+    if (b == 240 && d1 < 144) {
+      return 0;
+    }
+    if (b == 244 && d1 >= 144) {
+      return 0;
+    }
+    p = p + 4;
+  }
+  return 1;
 }
 
 // The socket floor (#9853): one body per helper over `__syscall3`, with the
 // syscall numbers and the sockaddr layout keyed by target. Each answers a
 // descriptor or the kernel's -errno, as the builtins it backs always have.
-
 function __sys_socket(): i32 {
-    if (target_arch() == "x86-64") { return 41; }
-    if (target_os() == "darwin") { return 97; }
-    return 198;
+  if (target_arch() == "x86-64") {
+    return 41;
+  }
+  if (target_os() == "darwin") {
+    return 97;
+  }
+  return 198;
 }
+
 function __sys_bind(): i32 {
-    if (target_arch() == "x86-64") { return 49; }
-    if (target_os() == "darwin") { return 104; }
-    return 200;
+  if (target_arch() == "x86-64") {
+    return 49;
+  }
+  if (target_os() == "darwin") {
+    return 104;
+  }
+  return 200;
 }
+
 function __sys_listen(): i32 {
-    if (target_arch() == "x86-64") { return 50; }
-    if (target_os() == "darwin") { return 106; }
-    return 201;
+  if (target_arch() == "x86-64") {
+    return 50;
+  }
+  if (target_os() == "darwin") {
+    return 106;
+  }
+  return 201;
 }
+
 function __sys_accept(): i32 {
-    if (target_arch() == "x86-64") { return 43; }
-    if (target_os() == "darwin") { return 30; }
-    return 202;
+  if (target_arch() == "x86-64") {
+    return 43;
+  }
+  if (target_os() == "darwin") {
+    return 30;
+  }
+  return 202;
 }
+
 function __sys_connect(): i32 {
-    if (target_arch() == "x86-64") { return 42; }
-    if (target_os() == "darwin") { return 98; }
-    return 203;
+  if (target_arch() == "x86-64") {
+    return 42;
+  }
+  if (target_os() == "darwin") {
+    return 98;
+  }
+  return 203;
 }
+
 function __sys_getsockname(): i32 {
-    if (target_arch() == "x86-64") { return 51; }
-    if (target_os() == "darwin") { return 32; }
-    return 204;
+  if (target_arch() == "x86-64") {
+    return 51;
+  }
+  if (target_os() == "darwin") {
+    return 32;
+  }
+  return 204;
 }
+
 function __sys_getpeername(): i32 {
-    if (target_arch() == "x86-64") { return 52; }
-    if (target_os() == "darwin") { return 31; }
-    return 205;
+  if (target_arch() == "x86-64") {
+    return 52;
+  }
+  if (target_os() == "darwin") {
+    return 31;
+  }
+  return 205;
 }
+
 function __sys_getsockopt(): i32 {
-    if (target_arch() == "x86-64") { return 55; }
-    if (target_os() == "darwin") { return 118; }
-    return 209;
+  if (target_arch() == "x86-64") {
+    return 55;
+  }
+  if (target_os() == "darwin") {
+    return 118;
+  }
+  return 209;
 }
+
 function __sys_close(): i32 {
-    if (target_arch() == "x86-64") { return 3; }
-    if (target_os() == "darwin") { return 6; }
-    return 57;
+  if (target_arch() == "x86-64") {
+    return 3;
+  }
+  if (target_os() == "darwin") {
+    return 6;
+  }
+  return 57;
 }
+
 function __sys_setsockopt(): i32 {
-    if (target_arch() == "x86-64") { return 54; }
-    if (target_os() == "darwin") { return 105; }
-    return 208;
+  if (target_arch() == "x86-64") {
+    return 54;
+  }
+  if (target_os() == "darwin") {
+    return 105;
+  }
+  return 208;
 }
+
 function __sys_shutdown(): i32 {
-    if (target_arch() == "x86-64") { return 48; }
-    if (target_os() == "darwin") { return 134; }
-    return 210;
+  if (target_arch() == "x86-64") {
+    return 48;
+  }
+  if (target_os() == "darwin") {
+    return 134;
+  }
+  return 210;
 }
+
 function __sys_lseek(): i32 {
-    if (target_arch() == "x86-64") { return 8; }
-    if (target_os() == "darwin") { return 199; }
-    return 62;
+  if (target_arch() == "x86-64") {
+    return 8;
+  }
+  if (target_os() == "darwin") {
+    return 199;
+  }
+  return 62;
 }
+
 function __sys_sendfile(): i32 {
-    if (target_arch() == "x86-64") { return 40; }
-    if (target_os() == "darwin") { return 337; }
-    return 71;
+  if (target_arch() == "x86-64") {
+    return 40;
+  }
+  if (target_os() == "darwin") {
+    return 337;
+  }
+  return 71;
 }
+
 function __sys_read(): i32 {
-    if (target_arch() == "x86-64") { return 0; }
-    if (target_os() == "darwin") { return 3; }
-    return 63;
+  if (target_arch() == "x86-64") {
+    return 0;
+  }
+  if (target_os() == "darwin") {
+    return 3;
+  }
+  return 63;
 }
+
 function __sys_sendto(): i32 {
-    if (target_arch() == "x86-64") { return 44; }
-    if (target_os() == "darwin") { return 133; }
-    return 206;
+  if (target_arch() == "x86-64") {
+    return 44;
+  }
+  if (target_os() == "darwin") {
+    return 133;
+  }
+  return 206;
 }
+
 function __sys_recvfrom(): i32 {
-    if (target_arch() == "x86-64") { return 45; }
-    if (target_os() == "darwin") { return 29; }
-    return 207;
+  if (target_arch() == "x86-64") {
+    return 45;
+  }
+  if (target_os() == "darwin") {
+    return 29;
+  }
+  return 207;
 }
+
 function __sys_fcntl(): i32 {
-    if (target_arch() == "x86-64") { return 72; }
-    if (target_os() == "darwin") { return 92; }
-    return 25;
+  if (target_arch() == "x86-64") {
+    return 72;
+  }
+  if (target_os() == "darwin") {
+    return 92;
+  }
+  return 25;
 }
+
 // The socket-level option names, which XNU numbers differently from Linux.
 function __sol_socket(): i64 {
-    if (target_os() == "darwin") { return 65535; }
-    return 1;
+  if (target_os() == "darwin") {
+    return 65535;
+  }
+  return 1;
 }
+
 function __so_reuseport(): i64 {
-    if (target_os() == "darwin") { return 512; }
-    return 15;
+  if (target_os() == "darwin") {
+    return 512;
+  }
+  return 15;
 }
+
 function __so_keepalive(): i64 {
-    if (target_os() == "darwin") { return 8; }
-    return 9;
+  if (target_os() == "darwin") {
+    return 8;
+  }
+  return 9;
 }
+
 function __o_nonblock(): i64 {
-    if (target_os() == "darwin") { return 4; }
-    return 2048;
-}
-function __so_type(): i64 {
-    if (target_os() == "darwin") { return 4104; }
-    return 3;
-}
-function __so_error(): i64 {
-    if (target_os() == "darwin") { return 4103; }
+  if (target_os() == "darwin") {
     return 4;
+  }
+  return 2048;
 }
+
+function __so_type(): i64 {
+  if (target_os() == "darwin") {
+    return 4104;
+  }
+  return 3;
+}
+
+function __so_error(): i64 {
+  if (target_os() == "darwin") {
+    return 4103;
+  }
+  return 4;
+}
+
 // SO_NWRITE: Darwin's count of the bytes in a socket's send buffer.
 function __so_nwrite(): i64 {
-    return 4132;
+  return 4132;
 }
+
 // SIOCOUTQ (TIOCOUTQ): Linux's count of the bytes queued to send, unsent
 // and unacknowledged alike.
 function __siocoutq(): i64 {
-    return 21521;
+  return 21521;
 }
+
 function __sys_ioctl(): i32 {
-    if (target_arch() == "x86-64") { return 16; }
-    if (target_os() == "darwin") { return 54; }
-    return 29;
+  if (target_arch() == "x86-64") {
+    return 16;
+  }
+  if (target_os() == "darwin") {
+    return 54;
+  }
+  return 29;
 }
+
 // EINPROGRESS: what a non-blocking connect answers while it is under way.
 function __einprogress(): i64 {
-    if (target_os() == "darwin") { return 36; }
-    return 115;
+  if (target_os() == "darwin") {
+    return 36;
+  }
+  return 115;
 }
+
 // MSG_NOSIGNAL: a send on a peer-closed socket answers -EPIPE instead of
 // raising SIGPIPE at the process.
 function __msg_nosignal(): i64 {
-    if (target_os() == "darwin") { return 524288; }
-    return 16384;
+  if (target_os() == "darwin") {
+    return 524288;
+  }
+  return 16384;
 }
 
 // setsockopt(fd, level, name, &value, 4) with the i32 in a fresh block.
 function __setsockopt_i32(fd: i64, level: i64, name: i64, value: i32): i64 {
-    var p: usize = __alloc(4);
-    __store_i32(p, value);
-    var r: i64 = __syscall5(__sys_setsockopt(), fd, level, name, p as i64, 4);
-    __free(p, 4);
-    return r;
+  var p: usize = __alloc(4);
+  __store_i32(p, value);
+  var r: i64 = __syscall5(__sys_setsockopt(), fd, level, name, p as i64, 4);
+  __free(p, 4);
+  return r;
 }
 
 // A sockaddr_in in a fresh 16-byte block: Darwin leads with sin_len and a
 // one-byte family, Linux with a two-byte family; then the port in network
 // order, the address as its packed network-order bytes, and eight zero bytes.
 function __sockaddr_in(port: i32, host_be: i32): usize {
-    var sa: usize = __alloc(16);
-    if (target_os() == "darwin") {
-        __store_u8(sa, 16);
-        __store_u8(sa + 1, 2);
-    } else {
-        __store_u8(sa, 2);
-        __store_u8(sa + 1, 0);
-    }
-    __store_u8(sa + 2, (port >> 8) & 255);
-    __store_u8(sa + 3, port & 255);
-    __store_u8(sa + 4, host_be & 255);
-    __store_u8(sa + 5, (host_be >> 8) & 255);
-    __store_u8(sa + 6, (host_be >> 16) & 255);
-    __store_u8(sa + 7, (host_be >> 24) & 255);
-    var z: usize = 8;
-    while (z < 16) {
-        __store_u8(sa + z, 0);
-        z = z + 1;
-    }
-    return sa;
+  var sa: usize = __alloc(16);
+  if (target_os() == "darwin") {
+    __store_u8(sa, 16);
+    __store_u8(sa + 1, 2);
+  } else {
+    __store_u8(sa, 2);
+    __store_u8(sa + 1, 0);
+  }
+  __store_u8(sa + 2, port >> 8 & 255);
+  __store_u8(sa + 3, port & 255);
+  __store_u8(sa + 4, host_be & 255);
+  __store_u8(sa + 5, host_be >> 8 & 255);
+  __store_u8(sa + 6, host_be >> 16 & 255);
+  __store_u8(sa + 7, host_be >> 24 & 255);
+  var z: usize = 8;
+  while (z < 16) {
+    __store_u8(sa + z, 0);
+    z = z + 1;
+  }
+  return sa;
 }
 
 // AF_INET6 and EAFNOSUPPORT, which XNU numbers differently from Linux.
 function __af_inet6(): i32 {
-    if (target_os() == "darwin") { return 30; }
-    return 10;
+  if (target_os() == "darwin") {
+    return 30;
+  }
+  return 10;
 }
+
 function __eafnosupport(): i32 {
-    if (target_os() == "darwin") { return 47; }
-    return 97;
+  if (target_os() == "darwin") {
+    return 47;
+  }
+  return 97;
 }
 
 // The family an address names by its length: AF_INET for four bytes,
 // AF_INET6 for sixteen, else -EAFNOSUPPORT.
 function __af_of(addr: u8[]): i32 {
-    if (addr.len() == 4) { return 2; }
-    if (addr.len() == 16) { return __af_inet6(); }
-    return 0 - __eafnosupport();
+  if (addr.len() == 4) {
+    return 2;
+  }
+  if (addr.len() == 16) {
+    return __af_inet6();
+  }
+  return 0 - __eafnosupport();
 }
 
 // socket(2) of `kind` (1 stream, 2 datagram) for the family `addr` names:
 // the descriptor, or -errno.
 function __socket_for(addr: u8[], kind: i32): i64 {
-    var af: i32 = __af_of(addr);
-    if (af < 0) { return af as i64; }
-    return __syscall3(__sys_socket(), af as i64, kind as i64, 0);
+  var af: i32 = __af_of(addr);
+  if (af < 0) {
+    return af as i64;
+  }
+  return __syscall3(__sys_socket(), af as i64, kind as i64, 0);
 }
 
 // A sockaddr_in (16 bytes) or sockaddr_in6 (28: the family, the port, a
@@ -298,60 +494,66 @@ function __socket_for(addr: u8[], kind: i32): i64 {
 // fresh 32-byte block, its byte length at 28. The family head is as in
 // __sockaddr_in; the port sits at 2 in network order on both.
 function __sockaddr_of(addr: u8[], port: i32): usize {
-    var sa: usize = __alloc(32);
-    var z: usize = 0;
-    while (z < 32) {
-        __store_i32(sa + z, 0);
-        z = z + 4;
-    }
-    var len: i32 = 16;
-    var at: usize = 4;
-    var family: i32 = 2;
-    if (addr.len() == 16) {
-        len = 28;
-        at = 8;
-        family = __af_inet6();
-    }
-    if (target_os() == "darwin") {
-        __store_u8(sa, len);
-        __store_u8(sa + 1, family);
-    } else {
-        __store_u8(sa, family);
-        __store_u8(sa + 1, 0);
-    }
-    __store_u8(sa + 2, (port >> 8) & 255);
-    __store_u8(sa + 3, port & 255);
-    var a: usize = addr as usize;
-    var i: usize = 0;
-    while (i < (addr.len() as usize)) {
-        __store_u8(sa + at + i, __load_u8(a + i));
-        i = i + 1;
-    }
-    __store_i32(sa + 28, len);
-    return sa;
+  var sa: usize = __alloc(32);
+  var z: usize = 0;
+  while (z < 32) {
+    __store_i32(sa + z, 0);
+    z = z + 4;
+  }
+  var len: i32 = 16;
+  var at: usize = 4;
+  var family: i32 = 2;
+  if (addr.len() == 16) {
+    len = 28;
+    at = 8;
+    family = __af_inet6();
+  }
+  if (target_os() == "darwin") {
+    __store_u8(sa, len);
+    __store_u8(sa + 1, family);
+  } else {
+    __store_u8(sa, family);
+    __store_u8(sa + 1, 0);
+  }
+  __store_u8(sa + 2, port >> 8 & 255);
+  __store_u8(sa + 3, port & 255);
+  var a: usize = addr as usize;
+  var i: usize = 0;
+  while (i < addr.len() as usize) {
+    __store_u8(sa + at + i, __load_u8(a + i));
+    i = i + 1;
+  }
+  __store_i32(sa + 28, len);
+  return sa;
 }
 
 // connect(2) to addr:port: 0 or -errno.
 function __connect_to(fd: i64, addr: u8[], port: i32): i64 {
-    var sa: usize = __sockaddr_of(addr, port);
-    var r: i64 = __syscall3(__sys_connect(), fd, sa as i64, __load_i32(sa + 28) as i64);
-    __free(sa, 32);
-    return r;
+  var sa: usize = __sockaddr_of(addr, port);
+  var r: i64 = __syscall3(__sys_connect(), fd, sa as i64, __load_i32(sa + 28) as i64);
+  __free(sa, 32);
+  return r;
 }
 
 // bind(2) and listen(2) on a fresh stream socket, SO_REUSEPORT set first
 // when asked: the socket, or the -errno of the step that failed with the
 // socket closed again.
 function __listen_at(fd: i64, sa: usize, salen: i32, backlog: i32, reuse_port: i32): i32 {
-    var r: i64 = 0;
-    if (reuse_port != 0) { r = __setsockopt_i32(fd, __sol_socket(), __so_reuseport(), 1); }
-    if (r >= 0) { r = __syscall3(__sys_bind(), fd, sa as i64, salen as i64); }
-    if (r >= 0) { r = __syscall3(__sys_listen(), fd, backlog as i64, 0); }
-    if (r < 0) {
-        __syscall3(__sys_close(), fd, 0, 0);
-        return r as i32;
-    }
-    return fd as i32;
+  var r: i64 = 0;
+  if (reuse_port != 0) {
+    r = __setsockopt_i32(fd, __sol_socket(), __so_reuseport(), 1);
+  }
+  if (r >= 0) {
+    r = __syscall3(__sys_bind(), fd, sa as i64, salen as i64);
+  }
+  if (r >= 0) {
+    r = __syscall3(__sys_listen(), fd, backlog as i64, 0);
+  }
+  if (r < 0) {
+    __syscall3(__sys_close(), fd, 0, 0);
+    return r as i32;
+  }
+  return fd as i32;
 }
 
 // __fern_tcp_listen_with(addr, port, backlog, reuse_port) is a socket
@@ -361,23 +563,27 @@ function __listen_at(fd: i64, sa: usize, salen: i32, backlog: i32, reuse_port: i
 // the bind when asked, or -errno. `reuse_port` is the builtin's boolean,
 // an i32 here.
 function __fern_tcp_listen_with(addr: u8[], port: i32, backlog: i32, reuse_port: i32): i32 {
-    var fd: i64 = __socket_for(addr, 1);
-    if (fd < 0) { return fd as i32; }
-    var sa: usize = __sockaddr_of(addr, port);
-    var r: i32 = __listen_at(fd, sa, __load_i32(sa + 28), backlog, reuse_port);
-    __free(sa, 32);
-    return r;
+  var fd: i64 = __socket_for(addr, 1);
+  if (fd < 0) {
+    return fd as i32;
+  }
+  var sa: usize = __sockaddr_of(addr, port);
+  var r: i32 = __listen_at(fd, sa, __load_i32(sa + 28), backlog, reuse_port);
+  __free(sa, 32);
+  return r;
 }
 
 // __fern_tcp_listen(port) listens on 0.0.0.0:port at the accept queue
 // depth the serve loop has always used, without SO_REUSEPORT.
 function __fern_tcp_listen(port: i32): i32 {
-    var fd: i64 = __syscall3(__sys_socket(), 2, 1, 0);
-    if (fd < 0) { return fd as i32; }
-    var sa: usize = __sockaddr_in(port, 0);
-    var r: i32 = __listen_at(fd, sa, 16, 128, 0);
-    __free(sa, 16);
-    return r;
+  var fd: i64 = __syscall3(__sys_socket(), 2, 1, 0);
+  if (fd < 0) {
+    return fd as i32;
+  }
+  var sa: usize = __sockaddr_in(port, 0);
+  var r: i32 = __listen_at(fd, sa, 16, 128, 0);
+  __free(sa, 16);
+  return r;
 }
 
 // __fern_tcp_socket_ctl(fd, op, arg) is one control call on a socket: op
@@ -392,35 +598,55 @@ function __fern_tcp_listen(port: i32): i32 {
 // group by CPU (__steer_by_cpu). 0 or the count, -errno, or -EINVAL for
 // an op that names no control.
 function __fern_tcp_socket_ctl(fd: i32, op: i32, arg: i32): i32 {
-    var f: i64 = fd as i64;
-    if (op == 5) { return __connect_result(f); }
-    if (op == 6) { return __send_queue(f); }
-    if (op == 7) { return __peer_key(f); }
-    if (op == 8) { return __steer_by_cpu(f); }
-    if (op == 1) { return __setsockopt_i32(f, 6, 1, arg) as i32; }
-    if (op == 2) { return __setsockopt_i32(f, __sol_socket(), __so_keepalive(), arg) as i32; }
-    if (op == 3) {
-        var flags: i64 = __syscall3(__sys_fcntl(), f, 3, 0);
-        if (flags < 0) { return flags as i32; }
-        var want: i64 = flags | __o_nonblock();
-        if (arg == 0) { want = flags & (0 - 1 - __o_nonblock()); }
-        return __syscall3(__sys_fcntl(), f, 4, want) as i32;
+  var f: i64 = fd as i64;
+  if (op == 5) {
+    return __connect_result(f);
+  }
+  if (op == 6) {
+    return __send_queue(f);
+  }
+  if (op == 7) {
+    return __peer_key(f);
+  }
+  if (op == 8) {
+    return __steer_by_cpu(f);
+  }
+  if (op == 1) {
+    return __setsockopt_i32(f, 6, 1, arg) as i32;
+  }
+  if (op == 2) {
+    return __setsockopt_i32(f, __sol_socket(), __so_keepalive(), arg) as i32;
+  }
+  if (op == 3) {
+    var flags: i64 = __syscall3(__sys_fcntl(), f, 3, 0);
+    if (flags < 0) {
+      return flags as i32;
     }
-    if (op == 4) { return __syscall3(__sys_shutdown(), f, arg as i64, 0) as i32; }
-    return 0 - 22;
+    var want: i64 = flags | __o_nonblock();
+    if (arg == 0) {
+      want = flags & 0 - 1 - __o_nonblock();
+    }
+    return __syscall3(__sys_fcntl(), f, 4, want) as i32;
+  }
+  if (op == 4) {
+    return __syscall3(__sys_shutdown(), f, arg as i64, 0) as i32;
+  }
+  return 0 - 22;
 }
 
 // SO_TYPE: 1 for a stream socket, 2 for a datagram one, -errno when the
 // descriptor is no socket.
 function __sock_type(f: i64): i32 {
-    var v: usize = __alloc(8);
-    __store_i32(v, 0);
-    __store_i32(v + 4, 4);
-    var r: i64 = __syscall5(__sys_getsockopt(), f, __sol_socket(), __so_type(), v as i64, (v + 4) as i64);
-    var ty: i32 = __load_i32(v);
-    __free(v, 8);
-    if (r < 0) { return r as i32; }
-    return ty;
+  var v: usize = __alloc(8);
+  __store_i32(v, 0);
+  __store_i32(v + 4, 4);
+  var r: i64 = __syscall5(__sys_getsockopt(), f, __sol_socket(), __so_type(), v as i64, (v + 4) as i64);
+  var ty: i32 = __load_i32(v);
+  __free(v, 8);
+  if (r < 0) {
+    return r as i32;
+  }
+  return ty;
 }
 
 // The listener's SO_REUSEPORT group steered by CPU: the classic filter
@@ -429,39 +655,43 @@ function __sock_type(f: i64): i32 {
 // kernel's hash where no socket has that index). Every socket of the
 // group shares the one program. Linux only: -ENOTSUP on Darwin.
 function __steer_by_cpu(f: i64): i32 {
-    if (target_os() == "darwin") { return 0 - 45; }
-    var p: usize = __alloc(32);
-    // Two sock_filter { u16 code; u8 jt; u8 jf; u32 k }: BPF_LD|BPF_W|BPF_ABS
-    // of SKF_AD_OFF + SKF_AD_CPU (-4096 + 36), then BPF_RET|BPF_A.
-    __store_i32(p, 32);
-    __store_i32(p + 4, 0 - 4060);
-    __store_i32(p + 8, 22);
-    __store_i32(p + 12, 0);
-    // sock_fprog { u16 len; struct sock_filter *filter } at p + 16.
-    __store_i32(p + 16, 2);
-    __store_i32(p + 20, 0);
-    __store_i64(p + 24, p as i64);
-    var r: i64 = __syscall5(__sys_setsockopt(), f, __sol_socket(), 51, (p + 16) as i64, 16);
-    __free(p, 32);
-    return r as i32;
+  if (target_os() == "darwin") {
+    return 0 - 45;
+  }
+  var p: usize = __alloc(32);
+  // Two sock_filter { u16 code; u8 jt; u8 jf; u32 k }: BPF_LD|BPF_W|BPF_ABS
+  // of SKF_AD_OFF + SKF_AD_CPU (-4096 + 36), then BPF_RET|BPF_A.
+  __store_i32(p, 32);
+  __store_i32(p + 4, 0 - 4060);
+  __store_i32(p + 8, 22);
+  __store_i32(p + 12, 0);
+  // sock_fprog { u16 len; struct sock_filter *filter } at p + 16.
+  __store_i32(p + 16, 2);
+  __store_i32(p + 20, 0);
+  __store_i64(p + 24, p as i64);
+  var r: i64 = __syscall5(__sys_setsockopt(), f, __sol_socket(), 51, (p + 16) as i64, 16);
+  __free(p, 32);
+  return r as i32;
 }
 
 // The bytes queued to send on the socket: a four-byte count the kernel
 // fills, read through the ioctl on Linux and the socket option on Darwin.
 function __send_queue(f: i64): i32 {
-    var n: usize = __alloc(8);
-    __store_i32(n, 0);
-    __store_i32(n + 4, 4);
-    var r: i64 = 0;
-    if (target_os() == "darwin") {
-        r = __syscall5(__sys_getsockopt(), f, __sol_socket(), __so_nwrite(), n as i64, (n + 4) as i64);
-    } else {
-        r = __syscall3(__sys_ioctl(), f, __siocoutq(), n as i64);
-    }
-    var queued: i32 = __load_i32(n);
-    __free(n, 8);
-    if (r < 0) { return r as i32; }
-    return queued;
+  var n: usize = __alloc(8);
+  __store_i32(n, 0);
+  __store_i32(n + 4, 4);
+  var r: i64 = 0;
+  if (target_os() == "darwin") {
+    r = __syscall5(__sys_getsockopt(), f, __sol_socket(), __so_nwrite(), n as i64, (n + 4) as i64);
+  } else {
+    r = __syscall3(__sys_ioctl(), f, __siocoutq(), n as i64);
+  }
+  var queued: i32 = __load_i32(n);
+  __free(n, 8);
+  if (r < 0) {
+    return r as i32;
+  }
+  return queued;
 }
 
 // The peer's address as one 32-bit key: an IPv4 address packed as
@@ -470,98 +700,114 @@ function __send_queue(f: i64): i32 {
 // first eight bytes XORed (never 0), so the peers of one /64 share a key.
 // 0 for a socket with no peer, so a key is never mistaken for an error.
 function __peer_key(f: i64): i32 {
-    if (__sock_type(f) == 2) { return 0; }
-    var sa: usize = __alloc(32);
-    var z: usize = 0;
-    while (z < 32) {
-        __store_u8(sa + z, 0);
-        z = z + 1;
+  if (__sock_type(f) == 2) {
+    return 0;
+  }
+  var sa: usize = __alloc(32);
+  var z: usize = 0;
+  while (z < 32) {
+    __store_u8(sa + z, 0);
+    z = z + 1;
+  }
+  __store_i32(sa + 28, 28);
+  var r: i64 = __syscall3(__sys_getpeername(), f, sa as i64, (sa + 28) as i64);
+  var fam: i32 = __load_u8(sa) | __load_u8(sa + 1) << 8;
+  if (target_os() == "darwin") {
+    fam = __load_u8(sa + 1);
+  }
+  var key: i32 = 0;
+  if (r >= 0 && fam == 2) {
+    key = __peer_word(sa + 4);
+  } else if (r >= 0 && fam == __af_inet6()) {
+    if (__peer_word(sa + 8) == 0 && __peer_word(sa + 12) == 0 && __peer_word(sa + 16) == 0 && __load_u8(sa + 18) == 255 && __load_u8(sa + 19) == 255) {
+      key = __peer_word(sa + 20);
+    } else {
+      key = __peer_word(sa + 8) ^ __peer_word(sa + 12);
+      if (key == 0) {
+        key = 1;
+      }
     }
-    __store_i32(sa + 28, 28);
-    var r: i64 = __syscall3(__sys_getpeername(), f, sa as i64, (sa + 28) as i64);
-    var fam: i32 = __load_u8(sa) | (__load_u8(sa + 1) << 8);
-    if (target_os() == "darwin") { fam = __load_u8(sa + 1); }
-    var key: i32 = 0;
-    if (r >= 0 && fam == 2) {
-        key = __peer_word(sa + 4);
-    } else if (r >= 0 && fam == __af_inet6()) {
-        if (__peer_word(sa + 8) == 0 && __peer_word(sa + 12) == 0 && __peer_word(sa + 16) == 0 && __load_u8(sa + 18) == 255 && __load_u8(sa + 19) == 255) {
-            key = __peer_word(sa + 20);
-        } else {
-            key = __peer_word(sa + 8) ^ __peer_word(sa + 12);
-            if (key == 0) { key = 1; }
-        }
-    }
-    __free(sa, 32);
-    return key;
+  }
+  __free(sa, 32);
+  return key;
 }
 
 // Four address bytes at p as one word, the first in the low byte.
 function __peer_word(p: usize): i32 {
-    return __load_u8(p) | (__load_u8(p + 1) << 8) | (__load_u8(p + 2) << 16) | (__load_u8(p + 3) << 24);
+  return __load_u8(p) | __load_u8(p + 1) << 8 | __load_u8(p + 2) << 16 | __load_u8(p + 3) << 24;
 }
 
 // A peer name in the block means the connect completed; otherwise the
 // pending SO_ERROR says whether it failed, and its absence that it is
 // still under way.
 function __connect_result(f: i64): i32 {
-    var sa: usize = __alloc(20);
-    __store_i32(sa + 16, 16);
-    var peer: i64 = __syscall3(__sys_getpeername(), f, sa as i64, (sa + 16) as i64);
-    var r: i32 = 0;
-    if (peer < 0) {
-        __store_i32(sa + 16, 4);
-        var g: i64 = __syscall5(__sys_getsockopt(), f, __sol_socket(), __so_error(), sa as i64, (sa + 16) as i64);
-        var pending: i32 = __load_i32(sa);
-        if (g < 0) { r = g as i32; }
-        else if (pending != 0) { r = 0 - pending; }
-        else { r = 0 - (__einprogress() as i32); }
+  var sa: usize = __alloc(20);
+  __store_i32(sa + 16, 16);
+  var peer: i64 = __syscall3(__sys_getpeername(), f, sa as i64, (sa + 16) as i64);
+  var r: i32 = 0;
+  if (peer < 0) {
+    __store_i32(sa + 16, 4);
+    var g: i64 = __syscall5(__sys_getsockopt(), f, __sol_socket(), __so_error(), sa as i64, (sa + 16) as i64);
+    var pending: i32 = __load_i32(sa);
+    if (g < 0) {
+      r = g as i32;
+    } else if (pending != 0) {
+      r = 0 - pending;
+    } else {
+      r = 0 - __einprogress() as i32;
     }
-    __free(sa, 20);
-    return r;
+  }
+  __free(sa, 20);
+  return r;
 }
 
 // connect(2) to the IPv4 address packed in network order: 0 or -errno.
 function __connect_v4(fd: i64, host_be: i32, port: i32): i64 {
-    var sa: usize = __sockaddr_in(port, host_be);
-    var r: i64 = __syscall3(__sys_connect(), fd, sa as i64, 16);
-    __free(sa, 16);
-    return r;
+  var sa: usize = __sockaddr_in(port, host_be);
+  var r: i64 = __syscall3(__sys_connect(), fd, sa as i64, 16);
+  __free(sa, 16);
+  return r;
 }
 
 // A sockaddr_un in a fresh 112-byte block: the family head (Darwin leads
 // with sun_len), the path's bytes and a terminator. The path fits, since
 // the callers refuse one longer than __sun_path_max() first.
 function __sockaddr_un(path: string): usize {
-    var n: i32 = path.len();
-    var sa: usize = __alloc(112);
-    if (target_os() == "darwin") {
-        __store_u8(sa, n + 3);
-        __store_u8(sa + 1, 1);
-    } else {
-        __store_u8(sa, 1);
-        __store_u8(sa + 1, 0);
-    }
-    var scratch: usize = __alloc(16);
-    var p: usize = __str_bytes(path, scratch);
-    var i: usize = 0;
-    while (i < (n as usize)) {
-        __store_u8(sa + 2 + i, __load_u8(p + i));
-        i = i + 1;
-    }
-    __store_u8(sa + 2 + (n as usize), 0);
-    __free(scratch, 16);
-    return sa;
+  var n: i32 = path.len();
+  var sa: usize = __alloc(112);
+  if (target_os() == "darwin") {
+    __store_u8(sa, n + 3);
+    __store_u8(sa + 1, 1);
+  } else {
+    __store_u8(sa, 1);
+    __store_u8(sa + 1, 0);
+  }
+  var scratch: usize = __alloc(16);
+  var p: usize = __str_bytes(path, scratch);
+  var i: usize = 0;
+  while (i < n as usize) {
+    __store_u8(sa + 2 + i, __load_u8(p + i));
+    i = i + 1;
+  }
+  __store_u8(sa + 2 + n as usize, 0);
+  __free(scratch, 16);
+  return sa;
 }
+
 // The longest path a sockaddr_un holds with its terminator: 108 bytes on
 // Linux, 104 on Darwin.
 function __sun_path_max(): i32 {
-    if (target_os() == "darwin") { return 103; }
-    return 107;
+  if (target_os() == "darwin") {
+    return 103;
+  }
+  return 107;
 }
+
 function __enametoolong(): i32 {
-    if (target_os() == "darwin") { return 63; }
-    return 36;
+  if (target_os() == "darwin") {
+    return 63;
+  }
+  return 36;
 }
 
 // __fern_unix_listen(path, backlog) is a stream socket listening at the
@@ -569,35 +815,45 @@ function __enametoolong(): i32 {
 // again; a path longer than a sockaddr_un holds is -ENAMETOOLONG before any
 // socket exists. The path is not unlinked first: a held one is -EADDRINUSE.
 function __fern_unix_listen(path: string, backlog: i32): i32 {
-    if (path.len() > __sun_path_max()) { return 0 - __enametoolong(); }
-    var fd: i64 = __syscall3(__sys_socket(), 1, 1, 0);
-    if (fd < 0) { return fd as i32; }
-    var sa: usize = __sockaddr_un(path);
-    var r: i64 = __syscall3(__sys_bind(), fd, sa as i64, (path.len() + 3) as i64);
-    if (r >= 0) { r = __syscall3(__sys_listen(), fd, backlog as i64, 0); }
-    __free(sa, 112);
-    if (r < 0) {
-        __syscall3(__sys_close(), fd, 0, 0);
-        return r as i32;
-    }
+  if (path.len() > __sun_path_max()) {
+    return 0 - __enametoolong();
+  }
+  var fd: i64 = __syscall3(__sys_socket(), 1, 1, 0);
+  if (fd < 0) {
     return fd as i32;
+  }
+  var sa: usize = __sockaddr_un(path);
+  var r: i64 = __syscall3(__sys_bind(), fd, sa as i64, (path.len() + 3) as i64);
+  if (r >= 0) {
+    r = __syscall3(__sys_listen(), fd, backlog as i64, 0);
+  }
+  __free(sa, 112);
+  if (r < 0) {
+    __syscall3(__sys_close(), fd, 0, 0);
+    return r as i32;
+  }
+  return fd as i32;
 }
 
 // __fern_unix_connect(path) is a stream socket connected to the listener at
 // the filesystem path, or -errno with the socket closed again (-ENOENT when
 // nothing is there).
 function __fern_unix_connect(path: string): i32 {
-    if (path.len() > __sun_path_max()) { return 0 - __enametoolong(); }
-    var fd: i64 = __syscall3(__sys_socket(), 1, 1, 0);
-    if (fd < 0) { return fd as i32; }
-    var sa: usize = __sockaddr_un(path);
-    var r: i64 = __syscall3(__sys_connect(), fd, sa as i64, (path.len() + 3) as i64);
-    __free(sa, 112);
-    if (r < 0) {
-        __syscall3(__sys_close(), fd, 0, 0);
-        return r as i32;
-    }
+  if (path.len() > __sun_path_max()) {
+    return 0 - __enametoolong();
+  }
+  var fd: i64 = __syscall3(__sys_socket(), 1, 1, 0);
+  if (fd < 0) {
     return fd as i32;
+  }
+  var sa: usize = __sockaddr_un(path);
+  var r: i64 = __syscall3(__sys_connect(), fd, sa as i64, (path.len() + 3) as i64);
+  __free(sa, 112);
+  if (r < 0) {
+    __syscall3(__sys_close(), fd, 0, 0);
+    return r as i32;
+  }
+  return fd as i32;
 }
 
 // __fern_tcp_connect_with(addr, port, nonblocking) is a socket connected
@@ -607,45 +863,53 @@ function __fern_unix_connect(path: string): i32 {
 // descriptor comes back while it is under way, and control op 5 reports
 // how it ended.
 function __fern_tcp_connect_with(addr: u8[], port: i32, nonblocking: i32): i32 {
-    var fd: i64 = __socket_for(addr, 1);
-    if (fd < 0) { return fd as i32; }
-    var r: i64 = 0;
-    if (nonblocking != 0) { r = __fern_tcp_socket_ctl(fd as i32, 3, 1) as i64; }
-    if (r >= 0) {
-        r = __connect_to(fd, addr, port);
-        if (nonblocking != 0 && r == 0 - __einprogress()) { r = 0; }
-    }
-    if (r < 0) {
-        __syscall3(__sys_close(), fd, 0, 0);
-        return r as i32;
-    }
+  var fd: i64 = __socket_for(addr, 1);
+  if (fd < 0) {
     return fd as i32;
+  }
+  var r: i64 = 0;
+  if (nonblocking != 0) {
+    r = __fern_tcp_socket_ctl(fd as i32, 3, 1) as i64;
+  }
+  if (r >= 0) {
+    r = __connect_to(fd, addr, port);
+    if (nonblocking != 0 && r == 0 - __einprogress()) {
+      r = 0;
+    }
+  }
+  if (r < 0) {
+    __syscall3(__sys_close(), fd, 0, 0);
+    return r as i32;
+  }
+  return fd as i32;
 }
 
 // __fern_tcp_connect(host_be, port) is a socket connected to the IPv4
 // address packed in network order, or -errno.
 function __fern_tcp_connect(host_be: i32, port: i32): i32 {
-    var fd: i64 = __syscall3(__sys_socket(), 2, 1, 0);
-    if (fd < 0) { return fd as i32; }
-    var r: i64 = __connect_v4(fd, host_be, port);
-    if (r < 0) {
-        __syscall3(__sys_close(), fd, 0, 0);
-        return r as i32;
-    }
+  var fd: i64 = __syscall3(__sys_socket(), 2, 1, 0);
+  if (fd < 0) {
     return fd as i32;
+  }
+  var r: i64 = __connect_v4(fd, host_be, port);
+  if (r < 0) {
+    __syscall3(__sys_close(), fd, 0, 0);
+    return r as i32;
+  }
+  return fd as i32;
 }
 
 function __fern_tcp_accept(fd: i32): i32 {
-    return __syscall3(__sys_accept(), fd as i64, 0, 0) as i32;
+  return __syscall3(__sys_accept(), fd as i64, 0, 0) as i32;
 }
 
 function __fern_tcp_close(fd: i32): i32 {
-    return __syscall3(__sys_close(), fd as i64, 0, 0) as i32;
+  return __syscall3(__sys_close(), fd as i64, 0, 0) as i32;
 }
 
 // A native pollable is the descriptor itself.
 function __fern_tcp_pollable(fd: i32): i32 {
-    return fd;
+  return fd;
 }
 
 // The reactor floor (#9853): a readiness set that outlives one wait, epoll
@@ -658,95 +922,141 @@ function __fern_tcp_pollable(fd: i32): i32 {
 // error or hang-up: the pair count, 0 on the timeout (-1 waits without
 // one), or -errno.
 function __sys_epoll_create1(): i32 {
-    if (target_arch() == "x86-64") { return 291; }
-    return 20;
+  if (target_arch() == "x86-64") {
+    return 291;
+  }
+  return 20;
 }
+
 function __sys_epoll_ctl(): i32 {
-    if (target_arch() == "x86-64") { return 233; }
-    return 21;
+  if (target_arch() == "x86-64") {
+    return 233;
+  }
+  return 21;
 }
+
 function __sys_epoll_pwait(): i32 {
-    if (target_arch() == "x86-64") { return 281; }
-    return 22;
+  if (target_arch() == "x86-64") {
+    return 281;
+  }
+  return 22;
 }
-function __sys_kqueue(): i32 { return 362; }
-function __sys_kevent(): i32 { return 363; }
+
+function __sys_kqueue(): i32 {
+  return 362;
+}
+
+function __sys_kevent(): i32 {
+  return 363;
+}
+
 function __sys_rt_sigaction(): i32 {
-    if (target_arch() == "x86-64") { return 13; }
-    if (target_os() == "darwin") { return 46; }
-    return 134;
+  if (target_arch() == "x86-64") {
+    return 13;
+  }
+  if (target_os() == "darwin") {
+    return 46;
+  }
+  return 134;
 }
+
 function __sys_rt_sigprocmask(): i32 {
-    if (target_arch() == "x86-64") { return 14; }
-    if (target_os() == "darwin") { return 48; }
-    return 135;
+  if (target_arch() == "x86-64") {
+    return 14;
+  }
+  if (target_os() == "darwin") {
+    return 48;
+  }
+  return 135;
 }
+
 function __sys_prctl(): i32 {
-    if (target_arch() == "x86-64") { return 157; }
-    return 167;
+  if (target_arch() == "x86-64") {
+    return 157;
+  }
+  return 167;
 }
+
 function __sys_getppid(): i32 {
-    if (target_arch() == "x86-64") { return 110; }
-    if (target_os() == "darwin") { return 39; }
-    return 173;
+  if (target_arch() == "x86-64") {
+    return 110;
+  }
+  if (target_os() == "darwin") {
+    return 39;
+  }
+  return 173;
 }
+
 function __sys_signalfd4(): i32 {
-    if (target_arch() == "x86-64") { return 289; }
-    return 74;
+  if (target_arch() == "x86-64") {
+    return 289;
+  }
+  return 74;
 }
 
 // struct epoll_event is packed on x86-64 (12 bytes, data at 4) and
 // naturally aligned on arm64 (16 bytes, data at 8).
 function __epoll_event_size(): i32 {
-    if (target_arch() == "x86-64") { return 12; }
-    return 16;
+  if (target_arch() == "x86-64") {
+    return 12;
+  }
+  return 16;
 }
+
 function __epoll_data_at(): i32 {
-    if (target_arch() == "x86-64") { return 4; }
-    return 8;
+  if (target_arch() == "x86-64") {
+    return 4;
+  }
+  return 8;
 }
 
 function __fern_reactor_new(): i32 {
-    if (target_os() == "darwin") { return __syscall3(__sys_kqueue(), 0, 0, 0) as i32; }
-    return __syscall3(__sys_epoll_create1(), 524288, 0, 0) as i32;
+  if (target_os() == "darwin") {
+    return __syscall3(__sys_kqueue(), 0, 0, 0) as i32;
+  }
+  return __syscall3(__sys_epoll_create1(), 524288, 0, 0) as i32;
 }
 
 // One struct kevent (32 bytes) at p: the fd, the filter (-1 read, -2
 // write), the flags, and zero fflags, data and udata.
 function __kevent_change(p: usize, fd: i32, filter: i32, flags: i32): i32 {
-    __store_i32(p, fd);
-    __store_i32(p + 4, 0);
-    __store_u8(p + 8, filter & 255);
-    __store_u8(p + 9, (filter >> 8) & 255);
-    __store_u8(p + 10, flags & 255);
-    __store_u8(p + 11, (flags >> 8) & 255);
-    __store_i32(p + 12, 0);
-    __store_i32(p + 16, 0);
-    __store_i32(p + 20, 0);
-    __store_i32(p + 24, 0);
-    __store_i32(p + 28, 0);
-    return 0;
+  __store_i32(p, fd);
+  __store_i32(p + 4, 0);
+  __store_u8(p + 8, filter & 255);
+  __store_u8(p + 9, filter >> 8 & 255);
+  __store_u8(p + 10, flags & 255);
+  __store_u8(p + 11, flags >> 8 & 255);
+  __store_i32(p + 12, 0);
+  __store_i32(p + 16, 0);
+  __store_i32(p + 20, 0);
+  __store_i32(p + 24, 0);
+  __store_i32(p + 28, 0);
+  return 0;
 }
 
 // kqueue keeps one entry per filter, so an interest is two changes: EV_ADD
 // with EV_ENABLE (5) for a filter wanted and EV_DELETE (2) for one not,
 // where deleting a filter that was never added is ENOENT and not an error.
 function __kqueue_watch(kq: i64, fd: i32, interest: i32): i32 {
-    var ch: usize = __alloc(32);
-    var r: i64 = 0;
-    var filter: i32 = 0 - 1;
-    var bit: i32 = 1;
-    while (bit <= 2 && r >= 0) {
-        var flags: i32 = 2;
-        if ((interest & bit) != 0) { flags = 5; }
-        __kevent_change(ch, fd, filter, flags);
-        var e: i64 = __syscall6(__sys_kevent(), kq, ch as i64, 1, 0, 0, 0);
-        if (e < 0 && !(flags == 2 && e == 0 - 2)) { r = e; }
-        filter = filter - 1;
-        bit = bit + bit;
+  var ch: usize = __alloc(32);
+  var r: i64 = 0;
+  var filter: i32 = 0 - 1;
+  var bit: i32 = 1;
+  while (bit <= 2 && r >= 0) {
+    var flags: i32 = 2;
+    if ((interest & bit) != 0) {
+      flags = 5;
     }
-    __free(ch, 32);
-    return r as i32;
+    __kevent_change(ch, fd, filter, flags);
+    var e: i64 = __syscall6(__sys_kevent(), kq, ch as i64, 1, 0, 0, 0);
+    if (e < 0 && !(flags == 2 && e == 0 - 2)) {
+      r = e;
+    }
+    filter = filter - 1;
+    bit = bit + bit;
+  }
+  __free(ch, 32);
+  return r as i32;
 }
 
 // EPOLL_CTL_ADD, or EPOLL_CTL_MOD once the fd is in the set (EEXIST), for
@@ -758,23 +1068,31 @@ function __kqueue_watch(kq: i64, fd: i32, interest: i32): i32 {
 // listener is only ever unwatched before its next watch, so the loop
 // never asks for that.
 function __epoll_watch(ep: i64, fd: i32, interest: i32): i32 {
-    var ev: usize = __alloc(16);
-    var bits: i32 = 0;
-    if ((interest & 1) != 0) { bits = bits | 1; }
-    if ((interest & 2) != 0) { bits = bits | 4; }
-    if ((interest & 4) != 0) { bits = bits | 268435456; }
-    __store_i32(ev, bits);
-    __store_i32(ev + (__epoll_data_at() as usize), fd);
-    __store_i32(ev + (__epoll_data_at() as usize) + 4, 0);
-    var r: i64 = 0;
-    if (interest == 0) {
-        r = __syscall4(__sys_epoll_ctl(), ep, 2, fd as i64, ev as i64);
-    } else {
-        r = __syscall4(__sys_epoll_ctl(), ep, 1, fd as i64, ev as i64);
-        if (r == 0 - 17) { r = __syscall4(__sys_epoll_ctl(), ep, 3, fd as i64, ev as i64); }
+  var ev: usize = __alloc(16);
+  var bits: i32 = 0;
+  if ((interest & 1) != 0) {
+    bits = bits | 1;
+  }
+  if ((interest & 2) != 0) {
+    bits = bits | 4;
+  }
+  if ((interest & 4) != 0) {
+    bits = bits | 268435456;
+  }
+  __store_i32(ev, bits);
+  __store_i32(ev + __epoll_data_at() as usize, fd);
+  __store_i32(ev + __epoll_data_at() as usize + 4, 0);
+  var r: i64 = 0;
+  if (interest == 0) {
+    r = __syscall4(__sys_epoll_ctl(), ep, 2, fd as i64, ev as i64);
+  } else {
+    r = __syscall4(__sys_epoll_ctl(), ep, 1, fd as i64, ev as i64);
+    if (r == 0 - 17) {
+      r = __syscall4(__sys_epoll_ctl(), ep, 3, fd as i64, ev as i64);
     }
-    __free(ev, 16);
-    return r as i32;
+  }
+  __free(ev, 16);
+  return r as i32;
 }
 
 // A signal as a readiness event (op 4 watches signal `fd`, op 5 stops with
@@ -783,85 +1101,94 @@ function __epoll_watch(ep: i64, fd: i32, interest: i32): i32 {
 // signalfd the set holds in its event's data word beside -signal; on
 // Darwin it is ignored, so its default action cannot end the process,
 // and kqueue's EVFILT_SIGNAL records each delivery.
-
 // A zeroed 32-byte act with the handler at 0, which both kernels read
 // that way: SIG_IGN is 1, SIG_DFL 0.
 function __sig_disposition(sig: i32, handler: i32): i32 {
-    var act: usize = __alloc(32);
-    var z: usize = 0;
-    while (z < 32) {
-        __store_i32(act + z, 0);
-        z = z + 4;
-    }
-    __store_i32(act, handler);
-    var r: i64 = __syscall4(__sys_rt_sigaction(), sig as i64, act as i64, 0, 8);
-    __free(act, 32);
-    return r as i32;
+  var act: usize = __alloc(32);
+  var z: usize = 0;
+  while (z < 32) {
+    __store_i32(act + z, 0);
+    z = z + 4;
+  }
+  __store_i32(act, handler);
+  var r: i64 = __syscall4(__sys_rt_sigaction(), sig as i64, act as i64, 0, 8);
+  __free(act, 32);
+  return r as i32;
 }
 
 // The signal's bit in a fresh 8-byte kernel sigset.
 function __sigset_of(sig: i32): usize {
-    var set: usize = __alloc(8);
-    __store_i32(set, 0);
-    __store_i32(set + 4, 0);
-    if (sig <= 32) { __store_i32(set, 1 << (sig - 1)); } else { __store_i32(set + 4, 1 << (sig - 33)); }
-    return set;
+  var set: usize = __alloc(8);
+  __store_i32(set, 0);
+  __store_i32(set + 4, 0);
+  if (sig <= 32) {
+    __store_i32(set, 1 << sig - 1);
+  } else {
+    __store_i32(set + 4, 1 << sig - 33);
+  }
+  return set;
 }
 
 // rt_sigprocmask(how, {sig}, 0, 8): SIG_BLOCK is 0, SIG_UNBLOCK 1.
 function __sig_mask_change(sig: i32, how: i32): i32 {
-    var set: usize = __sigset_of(sig);
-    var r: i64 = __syscall4(__sys_rt_sigprocmask(), how as i64, set as i64, 0, 8);
-    __free(set, 8);
-    return r as i32;
+  var set: usize = __sigset_of(sig);
+  var r: i64 = __syscall4(__sys_rt_sigprocmask(), how as i64, set as i64, 0, 8);
+  __free(set, 8);
+  return r as i32;
 }
 
 function __signal_watch(r: i64, sig: i32): i32 {
-    if (sig <= 0 || sig > 64) { return 0 - 22; }
-    if (target_os() == "darwin") {
-        __sig_disposition(sig, 1);
-        var ch: usize = __alloc(32);
-        __kevent_change(ch, sig, 0 - 6, 5);
-        var e: i64 = __syscall6(__sys_kevent(), r, ch as i64, 1, 0, 0, 0);
-        __free(ch, 32);
-        return e as i32;
-    }
-    var blocked: i32 = __sig_mask_change(sig, 0);
-    if (blocked < 0) { return blocked; }
-    var set: usize = __sigset_of(sig);
-    var sfd: i64 = __syscall4(__sys_signalfd4(), 0 - 1, set as i64, 8, 526336);
-    __free(set, 8);
-    if (sfd < 0) { return sfd as i32; }
-    var ev: usize = __alloc(16);
-    __store_i32(ev, 1);
-    __store_i32(ev + (__epoll_data_at() as usize), 0 - sig);
-    __store_i32(ev + (__epoll_data_at() as usize) + 4, sfd as i32);
-    var added: i64 = __syscall4(__sys_epoll_ctl(), r, 1, sfd, ev as i64);
-    __free(ev, 16);
-    if (added < 0) {
-        __syscall3(__sys_close(), sfd, 0, 0);
-        return added as i32;
-    }
+  if (sig <= 0 || sig > 64) {
+    return 0 - 22;
+  }
+  if (target_os() == "darwin") {
+    __sig_disposition(sig, 1);
+    var ch: usize = __alloc(32);
+    __kevent_change(ch, sig, 0 - 6, 5);
+    var e: i64 = __syscall6(__sys_kevent(), r, ch as i64, 1, 0, 0, 0);
+    __free(ch, 32);
+    return e as i32;
+  }
+  var blocked: i32 = __sig_mask_change(sig, 0);
+  if (blocked < 0) {
+    return blocked;
+  }
+  var set: usize = __sigset_of(sig);
+  var sfd: i64 = __syscall4(__sys_signalfd4(), 0 - 1, set as i64, 8, 526336);
+  __free(set, 8);
+  if (sfd < 0) {
     return sfd as i32;
+  }
+  var ev: usize = __alloc(16);
+  __store_i32(ev, 1);
+  __store_i32(ev + __epoll_data_at() as usize, 0 - sig);
+  __store_i32(ev + __epoll_data_at() as usize + 4, sfd as i32);
+  var added: i64 = __syscall4(__sys_epoll_ctl(), r, 1, sfd, ev as i64);
+  __free(ev, 16);
+  if (added < 0) {
+    __syscall3(__sys_close(), sfd, 0, 0);
+    return added as i32;
+  }
+  return sfd as i32;
 }
 
 function __signal_unwatch(r: i64, sig: i32, sfd: i32): i32 {
-    if (target_os() == "darwin") {
-        var ch: usize = __alloc(32);
-        __kevent_change(ch, sig, 0 - 6, 2);
-        __syscall6(__sys_kevent(), r, ch as i64, 1, 0, 0, 0);
-        __free(ch, 32);
-        return __sig_disposition(sig, 0);
-    }
-    var ev: usize = __alloc(16);
-    __store_i32(ev, 0);
-    __store_i32(ev + 4, 0);
-    __store_i32(ev + 8, 0);
-    __store_i32(ev + 12, 0);
-    __syscall4(__sys_epoll_ctl(), r, 2, sfd as i64, ev as i64);
-    __free(ev, 16);
-    __syscall3(__sys_close(), sfd as i64, 0, 0);
-    return __sig_mask_change(sig, 1);
+  if (target_os() == "darwin") {
+    var ch: usize = __alloc(32);
+    __kevent_change(ch, sig, 0 - 6, 2);
+    __syscall6(__sys_kevent(), r, ch as i64, 1, 0, 0, 0);
+    __free(ch, 32);
+    return __sig_disposition(sig, 0);
+  }
+  var ev: usize = __alloc(16);
+  __store_i32(ev, 0);
+  __store_i32(ev + 4, 0);
+  __store_i32(ev + 8, 0);
+  __store_i32(ev + 12, 0);
+  __syscall4(__sys_epoll_ctl(), r, 2, sfd as i64, ev as i64);
+  __free(ev, 16);
+  __syscall3(__sys_close(), sfd as i64, 0, 0);
+  return __sig_mask_change(sig, 1);
 }
 
 // The parent's exit reported as a SIGTERM: PR_SET_PDEATHSIG on Linux, an
@@ -869,111 +1196,145 @@ function __signal_unwatch(r: i64, sig: i32, sfd: i32): i32 {
 // maps to (-15, 1). A parent already gone, found reparented to init, is
 // -ESRCH.
 function __parent_watch(r: i64): i32 {
-    var ppid: i64 = __syscall3(__sys_getppid(), 0, 0, 0);
-    if (target_os() == "darwin") {
-        if (ppid == 1) { return 0 - 3; }
-        var ch: usize = __alloc(32);
-        __kevent_change(ch, ppid as i32, 0 - 5, 17);
-        __store_u8(ch + 15, 128);
-        var e: i64 = __syscall6(__sys_kevent(), r, ch as i64, 1, 0, 0, 0);
-        __free(ch, 32);
-        return e as i32;
+  var ppid: i64 = __syscall3(__sys_getppid(), 0, 0, 0);
+  if (target_os() == "darwin") {
+    if (ppid == 1) {
+      return 0 - 3;
     }
-    var set: i64 = __syscall3(__sys_prctl(), 1, 15, 0);
-    if (set < 0) { return set as i32; }
-    if (__syscall3(__sys_getppid(), 0, 0, 0) == 1) { return 0 - 3; }
-    return 0;
+    var ch: usize = __alloc(32);
+    __kevent_change(ch, ppid as i32, 0 - 5, 17);
+    __store_u8(ch + 15, 128);
+    var e: i64 = __syscall6(__sys_kevent(), r, ch as i64, 1, 0, 0, 0);
+    __free(ch, 32);
+    return e as i32;
+  }
+  var set: i64 = __syscall3(__sys_prctl(), 1, 15, 0);
+  if (set < 0) {
+    return set as i32;
+  }
+  if (__syscall3(__sys_getppid(), 0, 0, 0) == 1) {
+    return 0 - 3;
+  }
+  return 0;
 }
 
 function __fern_reactor_ctl(r: i32, op: i32, fd: i32, arg: i32): i32 {
-    if (op == 3) { return __syscall3(__sys_close(), r as i64, 0, 0) as i32; }
-    if (op == 4) { return __signal_watch(r as i64, fd); }
-    if (op == 5) { return __signal_unwatch(r as i64, fd, arg); }
-    if (op == 6) { return __parent_watch(r as i64); }
-    if (op != 1 && op != 2) { return 0 - 22; }
-    var interest: i32 = arg & 7;
-    if (op == 2) { interest = 0; }
-    if (target_os() == "darwin") { return __kqueue_watch(r as i64, fd, interest); }
-    return __epoll_watch(r as i64, fd, interest);
+  if (op == 3) {
+    return __syscall3(__sys_close(), r as i64, 0, 0) as i32;
+  }
+  if (op == 4) {
+    return __signal_watch(r as i64, fd);
+  }
+  if (op == 5) {
+    return __signal_unwatch(r as i64, fd, arg);
+  }
+  if (op == 6) {
+    return __parent_watch(r as i64);
+  }
+  if (op != 1 && op != 2) {
+    return 0 - 22;
+  }
+  var interest: i32 = arg & 7;
+  if (op == 2) {
+    interest = 0;
+  }
+  if (target_os() == "darwin") {
+    return __kqueue_watch(r as i64, fd, interest);
+  }
+  return __epoll_watch(r as i64, fd, interest);
 }
 
 // The pairs go into `events` as i32 words, fd then readiness.
 function __reactor_event(events: usize, i: i32, fd: i32, ready: i32): i32 {
-    var p: usize = events + ((i * 8) as usize);
-    __store_i32(p, fd);
-    __store_i32(p + 4, ready);
-    return 0;
+  var p: usize = events + (i * 8) as usize;
+  __store_i32(p, fd);
+  __store_i32(p + 4, ready);
+  return 0;
 }
 
 function __epoll_wait_into(ep: i64, events: usize, cap: i32, timeout_ms: i32): i32 {
-    var size: i32 = __epoll_event_size();
-    var buf: usize = __alloc(cap * size);
-    var n: i64 = __syscall6(__sys_epoll_pwait(), ep, buf as i64, cap as i64, timeout_ms as i64, 0, 8);
-    var i: i32 = 0;
-    while (i < n) {
-        var e: usize = buf + ((i * size) as usize);
-        var bits: i32 = __load_i32(e);
-        var ready: i32 = 0;
-        if ((bits & 1) != 0) { ready = ready | 1; }
-        if ((bits & 4) != 0) { ready = ready | 2; }
-        if ((bits & 24) != 0) { ready = ready | 4; }
-        var fd: i32 = __load_i32(e + (__epoll_data_at() as usize));
-        if (fd < 0) {
-            // A signal: drain its signalfd so the delivery is consumed.
-            var drain: usize = __alloc(128);
-            __syscall3(__sys_read(), __load_i32(e + (__epoll_data_at() as usize) + 4) as i64, drain as i64, 128);
-            __free(drain, 128);
-            ready = 1;
-        }
-        __reactor_event(events, i, fd, ready);
-        i = i + 1;
+  var size: i32 = __epoll_event_size();
+  var buf: usize = __alloc(cap * size);
+  var n: i64 = __syscall6(__sys_epoll_pwait(), ep, buf as i64, cap as i64, timeout_ms as i64, 0, 8);
+  var i: i32 = 0;
+  while (i < n) {
+    var e: usize = buf + (i * size) as usize;
+    var bits: i32 = __load_i32(e);
+    var ready: i32 = 0;
+    if ((bits & 1) != 0) {
+      ready = ready | 1;
     }
-    __free(buf, cap * size);
-    return n as i32;
+    if ((bits & 4) != 0) {
+      ready = ready | 2;
+    }
+    if ((bits & 24) != 0) {
+      ready = ready | 4;
+    }
+    var fd: i32 = __load_i32(e + __epoll_data_at() as usize);
+    if (fd < 0) {
+      // A signal: drain its signalfd so the delivery is consumed.
+      var drain: usize = __alloc(128);
+      __syscall3(__sys_read(), __load_i32(e + __epoll_data_at() as usize + 4) as i64, drain as i64, 128);
+      __free(drain, 128);
+      ready = 1;
+    }
+    __reactor_event(events, i, fd, ready);
+    i = i + 1;
+  }
+  __free(buf, cap * size);
+  return n as i32;
 }
 
 function __kqueue_wait_into(kq: i64, events: usize, cap: i32, timeout_ms: i32): i32 {
-    var buf: usize = __alloc(cap * 32 + 16);
-    var ts: usize = buf + ((cap * 32) as usize);
-    var tmo: usize = 0 as usize;
-    if (timeout_ms >= 0) {
-        __store_i32(ts, timeout_ms / 1000);
-        __store_i32(ts + 4, 0);
-        __store_i32(ts + 8, (timeout_ms % 1000) * 1000000);
-        __store_i32(ts + 12, 0);
-        tmo = ts;
+  var buf: usize = __alloc(cap * 32 + 16);
+  var ts: usize = buf + (cap * 32) as usize;
+  var tmo: usize = 0 as usize;
+  if (timeout_ms >= 0) {
+    __store_i32(ts, timeout_ms / 1000);
+    __store_i32(ts + 4, 0);
+    __store_i32(ts + 8, timeout_ms % 1000 * 1000000);
+    __store_i32(ts + 12, 0);
+    tmo = ts;
+  }
+  var n: i64 = __syscall6(__sys_kevent(), kq, 0, 0, buf as i64, cap as i64, tmo as i64);
+  var i: i32 = 0;
+  while (i < n) {
+    var e: usize = buf + (i * 32) as usize;
+    var ready: i32 = 2;
+    var fd: i32 = __load_i32(e);
+    if (__load_u8(e + 8) == 255) {
+      ready = 1;
     }
-    var n: i64 = __syscall6(__sys_kevent(), kq, 0, 0, buf as i64, cap as i64, tmo as i64);
-    var i: i32 = 0;
-    while (i < n) {
-        var e: usize = buf + ((i * 32) as usize);
-        var ready: i32 = 2;
-        var fd: i32 = __load_i32(e);
-        if (__load_u8(e + 8) == 255) { ready = 1; }
-        if (__load_u8(e + 8) == 250) {
-            // EVFILT_SIGNAL (-6): the ident is the signal.
-            ready = 1;
-            fd = 0 - fd;
-        }
-        if ((__load_u8(e + 11) & 192) != 0) { ready = ready | 4; }
-        if (__load_u8(e + 8) == 251) {
-            // EVFILT_PROC (-5): the parent's exit, reported as SIGTERM; the
-            // EV_EOF XNU sets on NOTE_EXIT is not a hang-up.
-            ready = 1;
-            fd = 0 - 15;
-        }
-        __reactor_event(events, i, fd, ready);
-        i = i + 1;
+    if (__load_u8(e + 8) == 250) {
+      // EVFILT_SIGNAL (-6): the ident is the signal.
+      ready = 1;
+      fd = 0 - fd;
     }
-    __free(buf, cap * 32 + 16);
-    return n as i32;
+    if ((__load_u8(e + 11) & 192) != 0) {
+      ready = ready | 4;
+    }
+    if (__load_u8(e + 8) == 251) {
+      // EVFILT_PROC (-5): the parent's exit, reported as SIGTERM; the
+      // EV_EOF XNU sets on NOTE_EXIT is not a hang-up.
+      ready = 1;
+      fd = 0 - 15;
+    }
+    __reactor_event(events, i, fd, ready);
+    i = i + 1;
+  }
+  __free(buf, cap * 32 + 16);
+  return n as i32;
 }
 
 function __fern_reactor_wait(r: i32, events: i32[], timeout_ms: i32): i32 {
-    var cap: i32 = events.len() / 2;
-    if (cap <= 0) { return 0 - 22; }
-    if (target_os() == "darwin") { return __kqueue_wait_into(r as i64, events as usize, cap, timeout_ms); }
-    return __epoll_wait_into(r as i64, events as usize, cap, timeout_ms);
+  var cap: i32 = events.len() / 2;
+  if (cap <= 0) {
+    return 0 - 22;
+  }
+  if (target_os() == "darwin") {
+    return __kqueue_wait_into(r as i64, events as usize, cap, timeout_ms);
+  }
+  return __epoll_wait_into(r as i64, events as usize, cap, timeout_ms);
 }
 
 // __fern_tcp_local_port(fd) reads the bound port back through getsockname:
@@ -981,13 +1342,15 @@ function __fern_reactor_wait(r: i32, events: i32[], timeout_ms: i32): i32 {
 // Darwin too, since sin_len displaces the family and not the port. The
 // socklen_t the call reads and writes follows the address in the same block.
 function __fern_tcp_local_port(fd: i32): i32 {
-    var sa: usize = __alloc(20);
-    __store_i32(sa + 16, 16);
-    var r: i64 = __syscall3(__sys_getsockname(), fd as i64, sa as i64, (sa + 16) as i64);
-    var port: i32 = (__load_u8(sa + 2) << 8) | __load_u8(sa + 3);
-    __free(sa, 20);
-    if (r < 0) { return r as i32; }
-    return port;
+  var sa: usize = __alloc(20);
+  __store_i32(sa + 16, 16);
+  var r: i64 = __syscall3(__sys_getsockname(), fd as i64, sa as i64, (sa + 16) as i64);
+  var port: i32 = __load_u8(sa + 2) << 8 | __load_u8(sa + 3);
+  __free(sa, 20);
+  if (r < 0) {
+    return r as i32;
+  }
+  return port;
 }
 
 // __fern_tcp_recv(fd, max) is a fresh u8[] of the bytes one read(2) of up to
@@ -995,42 +1358,48 @@ function __fern_tcp_local_port(fd: i32): i32 {
 // error, and for a max of zero or less. The op has no error channel, so
 // -errno reads as empty too.
 function __fern_tcp_recv(fd: i32, max: i32): u8[] {
-    if (max <= 0) { return __alloc_u8(0); }
-    var buf: u8[] = __alloc_u8(max);
-    var n: i64 = __syscall3(__sys_read(), fd as i64, (buf as usize) as i64, max as i64);
-    if (n < 0) { n = 0; }
-    __arr_set_len(buf, n as i32);
-    return buf;
+  if (max <= 0) {
+    return __alloc_u8(0);
+  }
+  var buf: u8[] = __alloc_u8(max);
+  var n: i64 = __syscall3(__sys_read(), fd as i64, (buf as usize) as i64, max as i64);
+  if (n < 0) {
+    n = 0;
+  }
+  __arr_set_len(buf, n as i32);
+  return buf;
 }
 
 // __fern_tcp_recv_into(fd, buf) reads once into the caller's buffer, up to
 // its length: the byte count, 0 at EOF, or -errno (-EAGAIN on a
 // non-blocking socket with nothing to read).
 function __fern_tcp_recv_into(fd: i32, buf: u8[]): i32 {
-    return __syscall3(__sys_read(), fd as i64, (buf as usize) as i64, buf.len() as i64) as i32;
+  return __syscall3(__sys_read(), fd as i64, (buf as usize) as i64, buf.len() as i64) as i32;
 }
 
 // sendto(fd, p, n, MSG_NOSIGNAL, sa, salen): the bytes accepted, or -errno.
 // A zero sa sends to the connected peer.
 function __sendto_bytes(fd: i32, p: usize, n: i32, sa: usize, salen: i32): i32 {
-    return __syscall6(__sys_sendto(), fd as i64, p as i64, n as i64, __msg_nosignal(), sa as i64, salen as i64) as i32;
+  return __syscall6(__sys_sendto(), fd as i64, p as i64, n as i64, __msg_nosignal(), sa as i64, salen as i64) as i32;
 }
 
 // __send_str(fd, s, sa, salen) sends s's bytes. A string carried inline in
 // its words has no address until it is spilled, so that case borrows
 // sixteen bytes for the call; a heap string is sent from where it is.
 function __send_str(fd: i32, s: string, sa: usize, salen: i32): i32 {
-    var p: usize = __str_bytes(s, 0 as usize);
-    if (p != (0 as usize)) { return __sendto_bytes(fd, p, s.len(), sa, salen); }
-    var scratch: usize = __alloc(16);
-    var r: i32 = __sendto_bytes(fd, __str_bytes(s, scratch), s.len(), sa, salen);
-    __free(scratch, 16);
-    return r;
+  var p: usize = __str_bytes(s, 0 as usize);
+  if (p != 0 as usize) {
+    return __sendto_bytes(fd, p, s.len(), sa, salen);
+  }
+  var scratch: usize = __alloc(16);
+  var r: i32 = __sendto_bytes(fd, __str_bytes(s, scratch), s.len(), sa, salen);
+  __free(scratch, 16);
+  return r;
 }
 
 // __fern_tcp_send(fd, s) writes s's bytes to a connected socket.
 function __fern_tcp_send(fd: i32, s: string): i32 {
-    return __send_str(fd, s, 0 as usize, 0);
+  return __send_str(fd, s, 0 as usize, 0);
 }
 
 // __fern_tcp_sendfile(fd, file, max) moves up to max bytes from the file
@@ -1040,59 +1409,73 @@ function __fern_tcp_send(fd: i32, s: string): i32 {
 // Darwin's sendfile takes an explicit offset and an in-out length, so the
 // position is read and moved around the call.
 function __fern_tcp_sendfile(fd: i32, file: i32, max: i32): i32 {
-    if (max <= 0) { return 0; }
-    if (target_os() == "darwin") {
-        var pos: i64 = __syscall3(__sys_lseek(), file as i64, 0, 1);
-        if (pos < 0) { return pos as i32; }
-        var lenp: usize = __alloc(8);
-        __store_i64(lenp, max as i64);
-        var r: i64 = __syscall6(__sys_sendfile(), file as i64, fd as i64, pos, lenp as i64, 0, 0);
-        var sent: i64 = __load_i64(lenp);
-        __free(lenp, 8);
-        if (sent > 0) {
-            __syscall3(__sys_lseek(), file as i64, pos + sent, 0);
-            return sent as i32;
-        }
-        if (r < 0) { return r as i32; }
-        return 0;
+  if (max <= 0) {
+    return 0;
+  }
+  if (target_os() == "darwin") {
+    var pos: i64 = __syscall3(__sys_lseek(), file as i64, 0, 1);
+    if (pos < 0) {
+      return pos as i32;
     }
-    return __syscall4(__sys_sendfile(), fd as i64, file as i64, 0, max as i64) as i32;
+    var lenp: usize = __alloc(8);
+    __store_i64(lenp, max as i64);
+    var r: i64 = __syscall6(__sys_sendfile(), file as i64, fd as i64, pos, lenp as i64, 0, 0);
+    var sent: i64 = __load_i64(lenp);
+    __free(lenp, 8);
+    if (sent > 0) {
+      __syscall3(__sys_lseek(), file as i64, pos + sent, 0);
+      return sent as i32;
+    }
+    if (r < 0) {
+      return r as i32;
+    }
+    return 0;
+  }
+  return __syscall4(__sys_sendfile(), fd as i64, file as i64, 0, max as i64) as i32;
 }
 
 // __fern_udp_bind(addr, port) is a datagram socket bound to addr:port (4
 // or 16 network-order bytes; the unspecified address for every interface,
 // port 0 for one the kernel picks), or -errno with the socket closed again.
 function __fern_udp_bind(addr: u8[], port: i32): i32 {
-    var fd: i64 = __socket_for(addr, 2);
-    if (fd < 0) { return fd as i32; }
-    var sa: usize = __sockaddr_of(addr, port);
-    var r: i64 = __syscall3(__sys_bind(), fd, sa as i64, __load_i32(sa + 28) as i64);
-    __free(sa, 32);
-    if (r < 0) {
-        __syscall3(__sys_close(), fd, 0, 0);
-        return r as i32;
-    }
+  var fd: i64 = __socket_for(addr, 2);
+  if (fd < 0) {
     return fd as i32;
+  }
+  var sa: usize = __sockaddr_of(addr, port);
+  var r: i64 = __syscall3(__sys_bind(), fd, sa as i64, __load_i32(sa + 28) as i64);
+  __free(sa, 32);
+  if (r < 0) {
+    __syscall3(__sys_close(), fd, 0, 0);
+    return r as i32;
+  }
+  return fd as i32;
 }
 
 // __fern_udp_connect(fd, addr, port) fixes a datagram socket's peer: 0 or
 // -errno.
 function __fern_udp_connect(fd: i32, addr: u8[], port: i32): i32 {
-    var af: i32 = __af_of(addr);
-    if (af < 0) { return af; }
-    return __connect_to(fd as i64, addr, port) as i32;
+  var af: i32 = __af_of(addr);
+  if (af < 0) {
+    return af;
+  }
+  return __connect_to(fd as i64, addr, port) as i32;
 }
 
 // __fern_udp_sendto(fd, addr, port, data) is one datagram to addr:port, or
 // to the connected peer when addr is empty: the bytes accepted, or -errno.
 function __fern_udp_sendto(fd: i32, addr: u8[], port: i32, data: string): i32 {
-    if (addr.len() == 0) { return __send_str(fd, data, 0 as usize, 0); }
-    var af: i32 = __af_of(addr);
-    if (af < 0) { return af; }
-    var sa: usize = __sockaddr_of(addr, port);
-    var r: i32 = __send_str(fd, data, sa, __load_i32(sa + 28));
-    __free(sa, 32);
-    return r;
+  if (addr.len() == 0) {
+    return __send_str(fd, data, 0 as usize, 0);
+  }
+  var af: i32 = __af_of(addr);
+  if (af < 0) {
+    return af;
+  }
+  var sa: usize = __sockaddr_of(addr, port);
+  var r: i32 = __send_str(fd, data, sa, __load_i32(sa + 28));
+  __free(sa, 32);
+  return r;
 }
 
 // __fern_udp_recvfrom(fd, buf, from) reads one datagram into buf, up to its
@@ -1101,72 +1484,86 @@ function __fern_udp_sendto(fd: i32, addr: u8[], port: i32, data: string): i32 {
 // family at 0 (4 or 6), the address's network-order bytes from 1 (four or
 // sixteen, the rest zero), and the port at 17, high byte first.
 function __fern_udp_recvfrom(fd: i32, buf: u8[], from: u8[]): i32 {
-    var sa: usize = __alloc(32);
-    __store_i32(sa + 28, 28);
-    var n: i64 = __syscall6(__sys_recvfrom(), fd as i64, (buf as usize) as i64, buf.len() as i64, 0, sa as i64, (sa + 28) as i64);
-    if (n >= 0 && from.len() >= 19) {
-        var family: i32 = __load_u8(sa + 1);
-        if (target_os() != "darwin") { family = __load_u8(sa) | (family << 8); }
-        var f: usize = from as usize;
-        var z: usize = 0;
-        while (z < 19) {
-            __store_u8(f + z, 0);
-            z = z + 1;
-        }
-        var n_addr: usize = 0;
-        var at: usize = 4;
-        if (family == 2) {
-            __store_u8(f, 4);
-            n_addr = 4;
-        } else if (family == __af_inet6()) {
-            __store_u8(f, 6);
-            n_addr = 16;
-            at = 8;
-        }
-        var k: usize = 0;
-        while (k < n_addr) {
-            __store_u8(f + 1 + k, __load_u8(sa + at + k));
-            k = k + 1;
-        }
-        __store_u8(f + 17, __load_u8(sa + 2));
-        __store_u8(f + 18, __load_u8(sa + 3));
+  var sa: usize = __alloc(32);
+  __store_i32(sa + 28, 28);
+  var n: i64 = __syscall6(__sys_recvfrom(), fd as i64, (buf as usize) as i64, buf.len() as i64, 0, sa as i64, (sa + 28) as i64);
+  if (n >= 0 && from.len() >= 19) {
+    var family: i32 = __load_u8(sa + 1);
+    if (target_os() != "darwin") {
+      family = __load_u8(sa) | family << 8;
     }
-    __free(sa, 32);
-    return n as i32;
+    var f: usize = from as usize;
+    var z: usize = 0;
+    while (z < 19) {
+      __store_u8(f + z, 0);
+      z = z + 1;
+    }
+    var n_addr: usize = 0;
+    var at: usize = 4;
+    if (family == 2) {
+      __store_u8(f, 4);
+      n_addr = 4;
+    } else if (family == __af_inet6()) {
+      __store_u8(f, 6);
+      n_addr = 16;
+      at = 8;
+    }
+    var k: usize = 0;
+    while (k < n_addr) {
+      __store_u8(f + 1 + k, __load_u8(sa + at + k));
+      k = k + 1;
+    }
+    __store_u8(f + 17, __load_u8(sa + 2));
+    __store_u8(f + 18, __load_u8(sa + 3));
+  }
+  __free(sa, 32);
+  return n as i32;
 }
 
 // __fern_udp_send(host, port, data) is one datagram to host:port from an
 // ephemeral socket that is closed again: the bytes accepted, -errno from the
 // step that failed, or -3 for a host that is not a dotted quad of octets.
 function __fern_udp_send(host: string, port: i32, data: string): i32 {
-    var host_be: i32 = 0;
-    var octet: i32 = 0;
-    var octets: i32 = 0;
-    var digits: i32 = 0;
-    var bad: i32 = 0;
-    var i: i32 = 0;
-    while (i < host.len()) {
-        var c: i32 = host[i] as i32;
-        if (c == 46) {
-            if (digits == 0 || octets == 3) { bad = 1; }
-            host_be = host_be | (octet << (8 * octets));
-            octets = octets + 1;
-            octet = 0;
-            digits = 0;
-        } else {
-            if (c < 48 || c > 57) { bad = 1; }
-            octet = octet * 10 + (c - 48);
-            digits = digits + 1;
-            if (octet > 255) { bad = 1; }
-        }
-        i = i + 1;
+  var host_be: i32 = 0;
+  var octet: i32 = 0;
+  var octets: i32 = 0;
+  var digits: i32 = 0;
+  var bad: i32 = 0;
+  var i: i32 = 0;
+  while (i < host.len()) {
+    var c: i32 = host[i] as i32;
+    if (c == 46) {
+      if (digits == 0 || octets == 3) {
+        bad = 1;
+      }
+      host_be = host_be | octet << 8 * octets;
+      octets = octets + 1;
+      octet = 0;
+      digits = 0;
+    } else {
+      if (c < 48 || c > 57) {
+        bad = 1;
+      }
+      octet = octet * 10 + (c - 48);
+      digits = digits + 1;
+      if (octet > 255) {
+        bad = 1;
+      }
     }
-    if (bad != 0 || octets != 3 || digits == 0) { return 0 - 3; }
-    host_be = host_be | (octet << 24);
-    var fd: i64 = __syscall3(__sys_socket(), 2, 2, 0);
-    if (fd < 0) { return fd as i32; }
-    var r: i32 = __connect_v4(fd, host_be, port) as i32;
-    if (r >= 0) { r = __send_str(fd as i32, data, 0 as usize, 0); }
-    __syscall3(__sys_close(), fd, 0, 0);
-    return r;
+    i = i + 1;
+  }
+  if (bad != 0 || octets != 3 || digits == 0) {
+    return 0 - 3;
+  }
+  host_be = host_be | octet << 24;
+  var fd: i64 = __syscall3(__sys_socket(), 2, 2, 0);
+  if (fd < 0) {
+    return fd as i32;
+  }
+  var r: i32 = __connect_v4(fd, host_be, port) as i32;
+  if (r >= 0) {
+    r = __send_str(fd as i32, data, 0 as usize, 0);
+  }
+  __syscall3(__sys_close(), fd, 0, 0);
+  return r;
 }

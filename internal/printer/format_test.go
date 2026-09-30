@@ -1536,9 +1536,10 @@ func TestFormatKeepsNonUTF8BytesEscaped(t *testing.T) {
 	}
 }
 
-// A comment inside a multi-line list stays where it was written (#10143). The
-// list keeps the source's line grouping, so a long annotated table does not turn
-// into one element per line, and a list with no comment inside stays one line.
+// A comment inside a multi-line list stays where it was written (#10143), and a
+// list written across lines keeps its lines (#8475). Either way the list keeps
+// the source's line grouping, so a long table does not turn into one element per
+// line or into one line; a list written on one line stays one line.
 func TestFormatKeepsListInteriorComments(t *testing.T) {
 	src := `struct S { a: i32, b: i32 }
 function g(a: i32, b: i32): i32 { return a + b; }
@@ -1559,10 +1560,11 @@ function f(): i32 {
     a: 3 };
   var plain: i32[] = [1,
     2];
+  var flat: i32[] = [1, 2];
   return g(
     xs[0],  // first
     // second
-    t.a + s.b + plain[1],
+    t.a + s.b + plain[1] + flat[0],
   );
 }
 `
@@ -1582,11 +1584,58 @@ function f(): i32 {
     // override
     a: 3,
   };
-  var plain: i32[] = [1, 2];
+  var plain: i32[] = [
+    1,
+    2,
+  ];
+  var flat: i32[] = [1, 2];
   return g(
     xs[0],  // first
     // second
-    t.a + s.b + plain[1],
+    t.a + s.b + plain[1] + flat[0],
+  );
+`
+	got := formatSrc(t, src)
+	if !strings.Contains(got, want) {
+		t.Fatalf("want\n%s\nin:\n%s", want, got)
+	}
+	if again := formatSrc(t, got); again != got {
+		t.Fatalf("not idempotent:\n%s\n---\n%s", got, again)
+	}
+}
+
+// A binary chain written across lines keeps its breaks (#8475), printed with
+// the operator leading the continuation line whichever side of it the source
+// broke; a chain written on one line stays on one line.
+func TestFormatKeepsBinaryLineBreaks(t *testing.T) {
+	src := `function f(a: i32, b: i32): boolean {
+  var s: string = "x"
+      + "y" + a.to_string()
+      + "z";
+  var t: i32 = a +
+      b;
+  var u: i32 = a + b;
+  if (a > 0 &&
+      b > 0) { return s.len() > t + u; }
+  return g(a,
+    a == 1
+      || b == 2);
+}
+`
+	want := `  var s: string = "x"
+    + "y" + a.to_string()
+    + "z";
+  var t: i32 = a
+    + b;
+  var u: i32 = a + b;
+  if (a > 0
+    && b > 0) {
+    return s.len() > t + u;
+  }
+  return g(
+    a,
+    a == 1
+      || b == 2,
   );
 `
 	got := formatSrc(t, src)

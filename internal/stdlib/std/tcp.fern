@@ -76,7 +76,6 @@
 // No prelude: these are in scope only after a program
 // declares `import "std/tcp";` (docs/PRELUDE-TO-MODULES.md,
 // Phase 5).
-
 import "std/async";
 import "std/http";
 import "std/net";
@@ -93,11 +92,11 @@ import "core/int";
 // pins the single-threaded accept loop forever. `tcp_serve_deadline`
 // takes a caller-chosen value.
 function __recv_deadline_default(): Duration {
-    return time.duration_seconds(10 as i64);
+  return time.duration_seconds(10 as i64);
 }
 
 pub function tcp_serve(port: i32, handler: (HttpRequest, Platform) => HttpResponse): i32 {
-    return tcp_serve_opts(port, serve_options(), handler);
+  return tcp_serve_opts(port, serve_options(), handler);
 }
 
 // ServeOptions — what a serve loop asks of its listener and of each
@@ -130,21 +129,21 @@ pub function tcp_serve(port: i32, handler: (HttpRequest, Platform) => HttpRespon
 // starts that shutdown too (`async.Driver.watch_parent`), which the
 // supervisor sets for its workers.
 pub struct ServeOptions {
-    backlog: i32,
-    reuse_port: boolean,
-    recv_deadline: Duration,
-    min_data_rate: i32,
-    data_rate_grace: Duration,
-    keep_alive_idle: Duration,
-    keep_alive_requests: i32,
-    max_connections: i32,
-    max_connections_per_ip: i32,
-    workers: i32,
-    shutdown_grace: Duration,
-    readiness_path: string,
-    drain_deadline: Duration,
-    limits: http.HttpLimits,
-    stop_with_parent: boolean,
+  backlog: i32,
+  reuse_port: boolean,
+  recv_deadline: Duration,
+  min_data_rate: i32,
+  data_rate_grace: Duration,
+  keep_alive_idle: Duration,
+  keep_alive_requests: i32,
+  max_connections: i32,
+  max_connections_per_ip: i32,
+  workers: i32,
+  shutdown_grace: Duration,
+  readiness_path: string,
+  drain_deadline: Duration,
+  limits: http.HttpLimits,
+  stop_with_parent: boolean,
 }
 
 // serve_options() — what `tcp_serve` uses: a backlog of 128, the port held
@@ -152,13 +151,13 @@ pub struct ServeOptions {
 // 1000 requests per connection, 1024 connections open and 100 of them per
 // client, a worker per processing unit, and the parser's `http_limits()`.
 pub function serve_options(): ServeOptions {
-    return ServeOptions { backlog: 128, reuse_port: false, recv_deadline: __recv_deadline_default(), min_data_rate: 240, data_rate_grace: time.duration_seconds(5 as i64), keep_alive_idle: time.duration_seconds(130 as i64), keep_alive_requests: 1000, max_connections: 1024, max_connections_per_ip: 100, workers: 0, shutdown_grace: time.duration_seconds(2 as i64), readiness_path: "", drain_deadline: time.duration_seconds(30 as i64), limits: http.http_limits(), stop_with_parent: false };
+  return ServeOptions { backlog: 128, reuse_port: false, recv_deadline: __recv_deadline_default(), min_data_rate: 240, data_rate_grace: time.duration_seconds(5 as i64), keep_alive_idle: time.duration_seconds(130 as i64), keep_alive_requests: 1000, max_connections: 1024, max_connections_per_ip: 100, workers: 0, shutdown_grace: time.duration_seconds(2 as i64), readiness_path: "", drain_deadline: time.duration_seconds(30 as i64), limits: http.http_limits(), stop_with_parent: false };
 }
 
 // tcp_serve_opts(port, opts, handler) — `tcp_serve` with the listener and
 // the read deadline chosen by the caller.
 pub function tcp_serve_opts(port: i32, opts: ServeOptions, handler: (HttpRequest, Platform) => HttpResponse): i32 {
-    return tcp_serve_shutdown(port, opts, handler, (reason: string): void => {});
+  return tcp_serve_shutdown(port, opts, handler, (reason: string): void => {});
 }
 
 // tcp_serve_shutdown(port, opts, handler, shutdown) — `tcp_serve_opts`
@@ -167,11 +166,11 @@ pub function tcp_serve_opts(port: i32, opts: ServeOptions, handler: (HttpRequest
 // request in flight was answered, or "drain-deadline" when one was cut
 // off at the drain deadline.
 pub function tcp_serve_shutdown(port: i32, opts: ServeOptions, handler: (HttpRequest, Platform) => HttpResponse, shutdown: (string) => void): i32 {
-    var listener: i32 = __serve_listener(port, opts);
-    if (listener < 0) {
-        return __listen_failed(port, listener);
-    }
-    return __serve_loop(listener, handler, opts, shutdown);
+  var listener: i32 = __serve_listener(port, opts);
+  if (listener < 0) {
+    return __listen_failed(port, listener);
+  }
+  return __serve_loop(listener, handler, opts, shutdown);
 }
 
 // __serve_listener(port, opts) — the listener a serve loop runs over: the
@@ -179,36 +178,42 @@ pub function tcp_serve_shutdown(port: i32, opts: ServeOptions, handler: (HttpReq
 // (descriptor 3, the systemd convention, which is also how a restarted
 // server takes over a socket without a gap), else a fresh one on `port`.
 function __serve_listener(port: i32, opts: ServeOptions): i32 {
-    var listener: i32 = __listener_of(port, opts);
-    // Non-blocking: a wake-up over a listener workers share can reach
-    // more than one of them, and the one that finds nothing to accept
-    // must return to its wait rather than block in accept until the next
-    // connection, deaf to SIGTERM.
-    if (listener >= 0) { tcp_socket_ctl(listener, 3, 1); }
-    return listener;
+  var listener: i32 = __listener_of(port, opts);
+  // Non-blocking: a wake-up over a listener workers share can reach
+  // more than one of them, and the one that finds nothing to accept
+  // must return to its wait rather than block in accept until the next
+  // connection, deaf to SIGTERM.
+  if (listener >= 0) {
+    tcp_socket_ctl(listener, 3, 1);
+  }
+  return listener;
 }
 
 // __listen_failed(port, r) — a listener refused with `r` (-errno): the
 // address and the error's text on stderr, and 98, the exit code a serve
 // entry answers for it.
 function __listen_failed(port: i32, r: i32): i32 {
-    eprint("serve: cannot listen on 0.0.0.0:" + int.int_to_string(port) + ": " + net.error_from_errno(r).message());
-    return 98;
+  eprint("serve: cannot listen on 0.0.0.0:" + int.int_to_string(port) + ": " + net.error_from_errno(r).message());
+  return 98;
 }
 
 // __listener_of(port, opts) — the listener handed in through LISTEN_FDS,
 // or a fresh one on `port`.
 function __listener_of(port: i32, opts: ServeOptions): i32 {
-    match (env("LISTEN_FDS")) {
-        Some(n) => {
-            match (int.parse_int_radix(n, 10)) {
-                Some(count) => { if (count >= 1) { return 3; } },
-                None => { }
-            }
+  match (env("LISTEN_FDS")) {
+    Some(n) => {
+      match (int.parse_int_radix(n, 10)) {
+        Some(count) => {
+          if (count >= 1) {
+            return 3;
+          }
         },
-        None => { }
-    }
-    return tcp_listen_with(__every_v4(), port, opts.backlog, opts.reuse_port);
+        None => {}
+      }
+    },
+    None => {}
+  }
+  return tcp_listen_with(__every_v4(), port, opts.backlog, opts.reuse_port);
 }
 
 // tcp_serve_deadline(port, handler, recv_deadline) — `tcp_serve`
@@ -216,7 +221,7 @@ function __listener_of(port: i32, opts: ServeOptions): i32 {
 // delivered a complete request within the window is disconnected
 // without a response and the loop moves on.
 pub function tcp_serve_deadline(port: i32, handler: (HttpRequest, Platform) => HttpResponse, recv_deadline: Duration): i32 {
-    return tcp_serve_opts(port, ServeOptions { ...serve_options(), recv_deadline: recv_deadline }, handler);
+  return tcp_serve_opts(port, ServeOptions { ...serve_options(), recv_deadline: recv_deadline }, handler);
 }
 
 // tcp_serve_with(port, init, handler) — serve with a caller-owned
@@ -248,13 +253,13 @@ pub function tcp_serve_deadline(port: i32, handler: (HttpRequest, Platform) => H
 // every refork. State that must outlive a crash belongs in a store the
 // handler reaches through `plat`.
 pub function tcp_serve_with[S](port: i32, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse)): i32 {
-    return tcp_serve_with_opts(port, serve_options(), init, handler);
+  return tcp_serve_with_opts(port, serve_options(), init, handler);
 }
 
 // tcp_serve_with_opts(port, opts, init, handler) — `tcp_serve_with` with
 // the listener and the read deadline chosen by the caller.
 pub function tcp_serve_with_opts[S](port: i32, opts: ServeOptions, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse)): i32 {
-    return tcp_serve_with_shutdown(port, opts, init, handler, (reason: string, state: S): void => {});
+  return tcp_serve_with_shutdown(port, opts, init, handler, (reason: string, state: S): void => {});
 }
 
 // tcp_serve_with_shutdown(port, opts, init, handler, shutdown) —
@@ -263,18 +268,18 @@ pub function tcp_serve_with_opts[S](port: i32, opts: ServeOptions, init: S, hand
 // state as the last request left it: where a counter is flushed or a
 // store is closed.
 pub function tcp_serve_with_shutdown[S](port: i32, opts: ServeOptions, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse), shutdown: (string, S) => void): i32 {
-    var listener: i32 = __serve_listener(port, opts);
-    if (listener < 0) {
-        return __listen_failed(port, listener);
-    }
-    return __serve_loop_with(listener, init, handler, opts, shutdown);
+  var listener: i32 = __serve_listener(port, opts);
+  if (listener < 0) {
+    return __listen_failed(port, listener);
+  }
+  return __serve_loop_with(listener, init, handler, opts, shutdown);
 }
 
 // tcp_serve_with_deadline(port, init, handler, recv_deadline) —
 // `tcp_serve_with` with an explicit per-request read deadline, the same
 // slow-loris guard `tcp_serve_deadline` applies.
 pub function tcp_serve_with_deadline[S](port: i32, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse), recv_deadline: Duration): i32 {
-    return tcp_serve_with_opts(port, ServeOptions { ...serve_options(), recv_deadline: recv_deadline }, init, handler);
+  return tcp_serve_with_opts(port, ServeOptions { ...serve_options(), recv_deadline: recv_deadline }, init, handler);
 }
 
 // tcp_recv_deadline(fd, max, deadline) — recv up to `max` bytes,
@@ -296,31 +301,33 @@ pub function tcp_serve_with_deadline[S](port: i32, init: S, handler: (S, HttpReq
 // blocking recv — preserving interp behavior at the cost of the
 // deadline.
 pub function tcp_recv_deadline(fd: i32, max: i32, deadline: Duration): Option[u8[]] {
-    var wait_ms: i32 = deadline.as_millis() as i32;
-    if (wait_ms < 1) { wait_ms = 1; }
-    var ns_per_ms: i64 = 1000000;
-    var start_ns: i64 = monotonic_ns();
-    var tok: i32 = tcp_pollable(fd);
-    var timer: i32 = wasm_timer_pollable((wait_ms as i64) * ns_per_ms);
-    var pollset: i32[] = [tok, timer];
-    var ready: i32 = poll(pollset, wait_ms);
-    var dtimer: i32 = wasm_pollable_drop(timer);
-    var dtok: i32 = wasm_pollable_drop(tok);
-    if (ready == 0) {
-        return Some(tcp_recv(fd, max));
-    }
-    if (ready == 1) {
-        // The timer pollable fired first (wasm) — deadline.
-        return None;
-    }
-    // ready < 0: a native poll(2) only reports this after the wait
-    // elapsed (timeout); an instant -1 is the interp stub (or EINTR /
-    // a poll error), where blocking recv preserves the old behavior.
-    var waited_ns: i64 = monotonic_ns() - start_ns;
-    if (waited_ns * 2i64 >= (wait_ms as i64) * ns_per_ms) {
-        return None;
-    }
+  var wait_ms: i32 = deadline.as_millis() as i32;
+  if (wait_ms < 1) {
+    wait_ms = 1;
+  }
+  var ns_per_ms: i64 = 1000000;
+  var start_ns: i64 = monotonic_ns();
+  var tok: i32 = tcp_pollable(fd);
+  var timer: i32 = wasm_timer_pollable(wait_ms as i64 * ns_per_ms);
+  var pollset: i32[] = [tok, timer];
+  var ready: i32 = poll(pollset, wait_ms);
+  var dtimer: i32 = wasm_pollable_drop(timer);
+  var dtok: i32 = wasm_pollable_drop(tok);
+  if (ready == 0) {
     return Some(tcp_recv(fd, max));
+  }
+  if (ready == 1) {
+    // The timer pollable fired first (wasm) — deadline.
+    return None;
+  }
+  // ready < 0: a native poll(2) only reports this after the wait
+  // elapsed (timeout); an instant -1 is the interp stub (or EINTR /
+  // a poll error), where blocking recv preserves the old behavior.
+  var waited_ns: i64 = monotonic_ns() - start_ns;
+  if (waited_ns * 2i64 >= wait_ms as i64 * ns_per_ms) {
+    return None;
+  }
+  return Some(tcp_recv(fd, max));
 }
 
 // __eagain() — EAGAIN as this target numbers it: what a non-blocking read
@@ -328,31 +335,39 @@ pub function tcp_recv_deadline(fd: i32, max: i32, deadline: Duration): Option[u8
 // same answer.
 // 0.0.0.0: the serve loops listen on every IPv4 interface.
 function __every_v4(): u8[] {
-    return [0u8, 0u8, 0u8, 0u8];
+  return [0u8, 0u8, 0u8, 0u8];
 }
 
 function __eagain(): i32 {
-    if (target_os() == "darwin") { return 35; }
-    if (target_os() == "wasi") { return 6; }
-    return 11;
+  if (target_os() == "darwin") {
+    return 35;
+  }
+  if (target_os() == "wasi") {
+    return 6;
+  }
+  return 11;
 }
 
 function __enotsup(): i32 {
-    if (target_os() == "darwin") { return 45; }
-    if (target_os() == "wasi") { return 58; }
-    return 95;
+  if (target_os() == "darwin") {
+    return 45;
+  }
+  if (target_os() == "wasi") {
+    return 58;
+  }
+  return 95;
 }
 
 // __recv_scratch() — the loop's one read buffer, filled per readable
 // connection and copied out; owned by the loop, never by a request.
 function __recv_scratch(): u8[] {
-    var buf: u8[] = [];
-    var i: i32 = 0;
-    while (i < 4096) {
-        buf = buf.append(0 as u8);
-        i = i + 1;
-    }
-    return buf;
+  var buf: u8[] = [];
+  var i: i32 = 0;
+  while (i < 4096) {
+    buf = buf.append(0 as u8);
+    i = i + 1;
+  }
+  return buf;
 }
 
 // __Conns — the open connections of a serve loop, by position: the
@@ -398,9 +413,11 @@ struct __Clock { sec: i64, date: string }
 // reformatted only when the second has changed. Read once per wait, so
 // the responses of one event share it.
 function __clock_tick(clk: __Clock): __Clock {
-    var sec: i64 = now_unix_ms() / 1000;
-    if (sec == clk.sec && clk.date.len() > 0) { return clk; }
-    return __Clock { sec: sec, date: time.instant_from_unix(sec).format_http_date() };
+  var sec: i64 = now_unix_ms() / 1000;
+  if (sec == clk.sec && clk.date.len() > 0) {
+    return clk;
+  }
+  return __Clock { sec: sec, date: time.instant_from_unix(sec).format_http_date() };
 }
 
 // __serve_wire(method, version, answer, keep_alive, clk) — the response
@@ -412,77 +429,101 @@ function __clock_tick(clk: __Clock): __Clock {
 // transfer coding for an HTTP/1.1 client and close-delimited, the
 // connection ending with it, for an HTTP/1.0 one.
 function __serve_wire(method: string, version: string, answer: HttpResponse, keep_alive: boolean, clk: __Clock): __Wire {
-    var resp: HttpResponse = answer;
-    if (resp.headers.get_all("date").len() == 0) { resp = answer.with_header("Date", clk.date); }
-    var headless: boolean = http.http_bodiless(resp.status) || method == "HEAD";
-    match (resp.body) {
-        BodyFile(path) => {
-            match (open_reader(path)) {
-                Ok(r) => {
-                    var size: i64 = 0 - (1 as i64);
-                    match (r.stat()) {
-                        Ok(st) => { size = st.size; },
-                        Err(e) => { }
-                    }
-                    if (size < (0 as i64)) {
-                        r.close();
-                        return __serve_wire(method, version, http.not_found(), keep_alive, clk);
-                    }
-                    var head: string = http.http_serialize_response_head(resp, keep_alive, "Content-Length: " + size.to_string() + "\r\n");
-                    if (headless || size == (0 as i64)) {
-                        r.close();
-                        return __Wire { head: head, tail: NoTail, keep: keep_alive };
-                    }
-                    return __Wire { head: head, tail: FileTail(r, size), keep: keep_alive };
-                },
-                Err(e) => { return __serve_wire(method, version, http.not_found(), keep_alive, clk); }
-            }
-            return __Wire { head: "", tail: NoTail, keep: false };
+  var resp: HttpResponse = answer;
+  if (resp.headers.get_all("date").len() == 0) {
+    resp = answer.with_header("Date", clk.date);
+  }
+  var headless: boolean = http.http_bodiless(resp.status) || method == "HEAD";
+  match (resp.body) {
+    BodyFile(path) => {
+      match (open_reader(path)) {
+        Ok(r) => {
+          var size: i64 = 0 - 1 as i64;
+          match (r.stat()) {
+            Ok(st) => {
+              size = st.size;
+            },
+            Err(e) => {}
+          }
+          if (size < 0 as i64) {
+            r.close();
+            return __serve_wire(method, version, http.not_found(), keep_alive, clk);
+          }
+          var head: string = http.http_serialize_response_head(resp, keep_alive, "Content-Length: " + size.to_string() + "\r\n");
+          if (headless || size == 0 as i64) {
+            r.close();
+            return __Wire { head: head, tail: NoTail, keep: keep_alive };
+          }
+          return __Wire { head: head, tail: FileTail(r, size), keep: keep_alive };
         },
-        BodyChunks(producer) => {
-            if (headless) { return __Wire { head: http.http_serialize_response_head(resp, keep_alive, ""), tail: NoTail, keep: keep_alive }; }
-            if (version == "HTTP/1.0") {
-                return __Wire { head: http.http_serialize_response_head(resp, false, ""), tail: ChunkTail(producer, 0, ""), keep: false };
-            }
-            var framing: string = "Transfer-Encoding: chunked\r\n";
-            if (resp.trailers.names.len() > 0) { framing = framing + "Trailer: " + resp.trailers.names.join(", ") + "\r\n"; }
-            return __Wire { head: http.http_serialize_response_head(resp, keep_alive, framing), tail: ChunkTail(producer, 0, "0\r\n" + http.http_serialize_fields(resp.trailers) + "\r\n"), keep: keep_alive };
-        },
-        _ => { return __Wire { head: http.http_serialize_response_to(method, resp, keep_alive), tail: NoTail, keep: keep_alive }; }
+        Err(e) => {
+          return __serve_wire(method, version, http.not_found(), keep_alive, clk);
+        }
+      }
+      return __Wire { head: "", tail: NoTail, keep: false };
+    },
+    BodyChunks(producer) => {
+      if (headless) {
+        return __Wire { head: http.http_serialize_response_head(resp, keep_alive, ""), tail: NoTail, keep: keep_alive };
+      }
+      if (version == "HTTP/1.0") {
+        return __Wire { head: http.http_serialize_response_head(resp, false, ""), tail: ChunkTail(producer, 0, ""), keep: false };
+      }
+      var framing: string = "Transfer-Encoding: chunked\r\n";
+      if (resp.trailers.names.len() > 0) {
+        framing = framing + "Trailer: " + resp.trailers.names.join(", ") + "\r\n";
+      }
+      return __Wire { head: http.http_serialize_response_head(resp, keep_alive, framing), tail: ChunkTail(producer, 0, "0\r\n" + http.http_serialize_fields(resp.trailers) + "\r\n"), keep: keep_alive };
+    },
+    _ => {
+      return __Wire { head: http.http_serialize_response_to(method, resp, keep_alive), tail: NoTail, keep: keep_alive };
     }
-    return __Wire { head: "", tail: NoTail, keep: false };
+  }
+  return __Wire { head: "", tail: NoTail, keep: false };
 }
 
 // __in_flight(c, at) — whether a response is still going out on the
 // connection: bytes pending, or a tail still to be produced.
 function __in_flight(c: __Conns, at: i32): boolean {
-    if (c.pending[at].len() > 0) { return true; }
-    match (c.tails[at]) {
-        NoTail => { return false; },
-        _ => { return true; }
-    }
+  if (c.pending[at].len() > 0) {
     return true;
+  }
+  match (c.tails[at]) {
+    NoTail => {
+      return false;
+    },
+    _ => {
+      return true;
+    }
+  }
+  return true;
 }
 
 // __tail_left(c, at) — the bytes a file tail still owes, 0 for any other.
 function __tail_left(c: __Conns, at: i32): i32 {
-    match (c.tails[at]) {
-        FileTail(r, left) => {
-            if (left > (2147483647 as i64)) { return 2147483647; }
-            return left as i32;
-        },
-        _ => { return 0; }
+  match (c.tails[at]) {
+    FileTail(r, left) => {
+      if (left > 2147483647 as i64) {
+        return 2147483647;
+      }
+      return left as i32;
+    },
+    _ => {
+      return 0;
     }
-    return 0;
+  }
+  return 0;
 }
 
 // __tail_drop(c, at) — the tail let go: a file's reader closed.
 function __tail_drop(c: __Conns, at: i32): __Conns {
-    match (c.tails[at]) {
-        FileTail(r, left) => { r.close(); },
-        _ => { }
-    }
-    return __Conns { ...c, tails: c.tails.with(at, NoTail) };
+  match (c.tails[at]) {
+    FileTail(r, left) => {
+      r.close();
+    },
+    _ => {}
+  }
+  return __Conns { ...c, tails: c.tails.with(at, NoTail) };
 }
 
 // __tail_piece(c, at) — the next piece of the tail, produced: `(conns,
@@ -491,125 +532,151 @@ function __tail_drop(c: __Conns, at: i32): __Conns {
 // file shorter than the length its head announced, or one that cannot
 // be read), which only closing the connection answers honestly.
 function __tail_piece(c: __Conns, at: i32): (__Conns, string, boolean) {
-    match (c.tails[at]) {
-        NoTail => { return (c, "", true); },
-        FileTail(r, left) => {
-            var want: i32 = 65536;
-            if (left < (want as i64)) { want = left as i32; }
-            match (r.read_chunk(want)) {
-                Ok(bytes) => {
-                    if (bytes.len() == 0) { return (__tail_drop(c, at), "", false); }
-                    var rest: i64 = left - (bytes.len() as i64);
-                    if (rest <= (0 as i64)) { return (__tail_drop(c, at), bytes, true); }
-                    return (__Conns { ...c, tails: c.tails.with(at, FileTail(r, rest)) }, bytes, true);
-                },
-                Err(e) => { return (__tail_drop(c, at), "", false); }
-            }
-            return (c, "", false);
+  match (c.tails[at]) {
+    NoTail => {
+      return (c, "", true);
+    },
+    FileTail(r, left) => {
+      var want: i32 = 65536;
+      if (left < want as i64) {
+        want = left as i32;
+      }
+      match (r.read_chunk(want)) {
+        Ok(bytes) => {
+          if (bytes.len() == 0) {
+            return (__tail_drop(c, at), "", false);
+          }
+          var rest: i64 = left - bytes.len() as i64;
+          if (rest <= 0 as i64) {
+            return (__tail_drop(c, at), bytes, true);
+          }
+          return (__Conns { ...c, tails: c.tails.with(at, FileTail(r, rest)) }, bytes, true);
         },
-        ChunkTail(producer, index, end) => {
-            var next: (i32) => Option[u8[]] = producer.next;
-            var i: i32 = index;
-            while (true) {
-                match (next(i)) {
-                    Some(chunk) => {
-                        if (chunk.len() > 0) {
-                            var piece: string = string_from_bytes_unchecked(chunk);
-                            if (end.len() > 0) { piece = int.int_to_string_radix(chunk.len(), 16) + "\r\n" + piece + "\r\n"; }
-                            return (__Conns { ...c, tails: c.tails.with(at, ChunkTail(producer, i + 1, end)) }, piece, true);
-                        }
-                    },
-                    None => {
-                        return (__Conns { ...c, tails: c.tails.with(at, NoTail) }, end, true);
-                    }
-                }
-                i = i + 1;
-            }
-            return (c, "", true);
+        Err(e) => {
+          return (__tail_drop(c, at), "", false);
         }
+      }
+      return (c, "", false);
+    },
+    ChunkTail(producer, index, end) => {
+      var next: (i32) => Option[u8[]] = producer.next;
+      var i: i32 = index;
+      while (true) {
+        match (next(i)) {
+          Some(chunk) => {
+            if (chunk.len() > 0) {
+              var piece: string = string_from_bytes_unchecked(chunk);
+              if (end.len() > 0) {
+                piece = int.int_to_string_radix(chunk.len(), 16) + "\r\n" + piece + "\r\n";
+              }
+              return (__Conns { ...c, tails: c.tails.with(at, ChunkTail(producer, i + 1, end)) }, piece, true);
+            }
+          },
+          None => {
+            return (__Conns { ...c, tails: c.tails.with(at, NoTail) }, end, true);
+          }
+        }
+        i = i + 1;
+      }
+      return (c, "", true);
     }
-    return (c, "", true);
+  }
+  return (c, "", true);
 }
 
 function __conns_index(c: __Conns, fd: i32): i32 {
-    var i: i32 = 0;
-    while (i < c.fds.len()) {
-        if (c.fds[i] == fd) { return i; }
-        i = i + 1;
+  var i: i32 = 0;
+  while (i < c.fds.len()) {
+    if (c.fds[i] == fd) {
+      return i;
     }
-    return -1;
+    i = i + 1;
+  }
+  return -1;
 }
 
 function __conns_add(c: __Conns, fd: i32, deadline: i64, peer: i32): __Conns {
-    var empty: u8[] = [];
-    return __Conns { fds: c.fds.append(fd), bufs: c.bufs.append(empty), offs: c.offs.append(0), pending: c.pending.append(""), deadlines: c.deadlines.append(deadline), keep: c.keep.append(false), served: c.served.append(0), backlog: c.backlog.append(false), continued: c.continued.append(false), rate_since: c.rate_since.append(0 - (1 as i64)), rate_base: c.rate_base.append(0), send_since: c.send_since.append(0 - (1 as i64)), send_base: c.send_base.append(0), peers: c.peers.append(peer), tails: c.tails.append(NoTail) };
+  var empty: u8[] = [];
+  return __Conns { fds: c.fds.append(fd), bufs: c.bufs.append(empty), offs: c.offs.append(0), pending: c.pending.append(""), deadlines: c.deadlines.append(deadline), keep: c.keep.append(false), served: c.served.append(0), backlog: c.backlog.append(false), continued: c.continued.append(false), rate_since: c.rate_since.append(0 - 1 as i64), rate_base: c.rate_base.append(0), send_since: c.send_since.append(0 - 1 as i64), send_base: c.send_base.append(0), peers: c.peers.append(peer), tails: c.tails.append(NoTail) };
 }
 
 // __conns_from_peer(c, peer) — how many open connections the peer holds.
 function __conns_from_peer(c: __Conns, peer: i32): i32 {
-    var n: i32 = 0;
-    for p in c.peers {
-        if (p == peer) { n = n + 1; }
+  var n: i32 = 0;
+  for p in c.peers {
+    if (p == peer) {
+      n = n + 1;
     }
-    return n;
+  }
+  return n;
 }
 
 function __conns_remove(c: __Conns, at: i32): __Conns {
-    var fds: i32[] = [];
-    var bufs: u8[][] = [];
-    var offs: i32[] = [];
-    var pending: string[] = [];
-    var deadlines: i64[] = [];
-    var keep: boolean[] = [];
-    var served: i32[] = [];
-    var backlog: boolean[] = [];
-    var continued: boolean[] = [];
-    var rate_since: i64[] = [];
-    var rate_base: i32[] = [];
-    var send_since: i64[] = [];
-    var send_base: i32[] = [];
-    var peers: i32[] = [];
-    var tails: __Tail[] = [];
-    var i: i32 = 0;
-    while (i < c.fds.len()) {
-        if (i != at) {
-            fds = fds.append(c.fds[i]);
-            bufs = bufs.append(c.bufs[i]);
-            offs = offs.append(c.offs[i]);
-            pending = pending.append(c.pending[i]);
-            deadlines = deadlines.append(c.deadlines[i]);
-            keep = keep.append(c.keep[i]);
-            served = served.append(c.served[i]);
-            backlog = backlog.append(c.backlog[i]);
-            continued = continued.append(c.continued[i]);
-            rate_since = rate_since.append(c.rate_since[i]);
-            rate_base = rate_base.append(c.rate_base[i]);
-            send_since = send_since.append(c.send_since[i]);
-            send_base = send_base.append(c.send_base[i]);
-            peers = peers.append(c.peers[i]);
-            tails = tails.append(c.tails[i]);
-        }
-        i = i + 1;
+  var fds: i32[] = [];
+  var bufs: u8[][] = [];
+  var offs: i32[] = [];
+  var pending: string[] = [];
+  var deadlines: i64[] = [];
+  var keep: boolean[] = [];
+  var served: i32[] = [];
+  var backlog: boolean[] = [];
+  var continued: boolean[] = [];
+  var rate_since: i64[] = [];
+  var rate_base: i32[] = [];
+  var send_since: i64[] = [];
+  var send_base: i32[] = [];
+  var peers: i32[] = [];
+  var tails: __Tail[] = [];
+  var i: i32 = 0;
+  while (i < c.fds.len()) {
+    if (i != at) {
+      fds = fds.append(c.fds[i]);
+      bufs = bufs.append(c.bufs[i]);
+      offs = offs.append(c.offs[i]);
+      pending = pending.append(c.pending[i]);
+      deadlines = deadlines.append(c.deadlines[i]);
+      keep = keep.append(c.keep[i]);
+      served = served.append(c.served[i]);
+      backlog = backlog.append(c.backlog[i]);
+      continued = continued.append(c.continued[i]);
+      rate_since = rate_since.append(c.rate_since[i]);
+      rate_base = rate_base.append(c.rate_base[i]);
+      send_since = send_since.append(c.send_since[i]);
+      send_base = send_base.append(c.send_base[i]);
+      peers = peers.append(c.peers[i]);
+      tails = tails.append(c.tails[i]);
     }
-    return __Conns { fds: fds, bufs: bufs, offs: offs, pending: pending, deadlines: deadlines, keep: keep, served: served, backlog: backlog, continued: continued, rate_since: rate_since, rate_base: rate_base, send_since: send_since, send_base: send_base, peers: peers, tails: tails };
+    i = i + 1;
+  }
+  return __Conns { fds: fds, bufs: bufs, offs: offs, pending: pending, deadlines: deadlines, keep: keep, served: served, backlog: backlog, continued: continued, rate_since: rate_since, rate_base: rate_base, send_since: send_since, send_base: send_base, peers: peers, tails: tails };
 }
 
 // __conns_timeout(c, now) — the wait's timeout: the milliseconds until the
 // earliest read deadline (0 once one is due, or while a connection has a
 // request its event's burst left unanswered), or -1 with nothing open.
 function __conns_timeout(c: __Conns, now: i64): i32 {
-    for b in c.backlog {
-        if (b) { return 0; }
+  for b in c.backlog {
+    if (b) {
+      return 0;
     }
-    var best: i64 = -1 as i64;
-    for d in c.deadlines {
-        if (best < (0 as i64) || d < best) { best = d; }
+  }
+  var best: i64 = -(1 as i64);
+  for d in c.deadlines {
+    if (best < 0 as i64 || d < best) {
+      best = d;
     }
-    if (best < (0 as i64)) { return -1; }
-    if (best <= now) { return 0; }
-    var ms: i64 = (best - now + (999999 as i64)) / 1000000;
-    if (ms > (2147483647 as i64)) { return 2147483647; }
-    return ms as i32;
+  }
+  if (best < 0 as i64) {
+    return -1;
+  }
+  if (best <= now) {
+    return 0;
+  }
+  var ms: i64 = (best - now + 999999 as i64) / 1000000;
+  if (ms > 2147483647 as i64) {
+    return 2147483647;
+  }
+  return ms as i32;
 }
 
 // __serve_accept(drv, listener, c, opts) — one accepted connection,
@@ -617,31 +684,33 @@ function __conns_timeout(c: __Conns, now: i64): i32 {
 // and so does a peer already holding `max_connections_per_ip` of them.
 // wasm has no non-blocking mode to switch on and its reads never block.
 function __serve_accept[D: async.Driver](drv: D, listener: i32, c: __Conns, opts: ServeOptions): __Conns {
-    var fd: i32 = tcp_accept(listener);
-    if (fd < 0) { return c; }
-    var peer: i32 = 0;
-    if (opts.max_connections_per_ip > 0) {
-        peer = tcp_socket_ctl(fd, 7, 0);
-        if (peer != 0 && __conns_from_peer(c, peer) >= opts.max_connections_per_ip) {
-            tcp_close(fd);
-            return c;
-        }
+  var fd: i32 = tcp_accept(listener);
+  if (fd < 0) {
+    return c;
+  }
+  var peer: i32 = 0;
+  if (opts.max_connections_per_ip > 0) {
+    peer = tcp_socket_ctl(fd, 7, 0);
+    if (peer != 0 && __conns_from_peer(c, peer) >= opts.max_connections_per_ip) {
+      tcp_close(fd);
+      return c;
     }
-    tcp_socket_ctl(fd, 3, 1);
-    tcp_socket_ctl(fd, 1, 1);
-    if (drv.watch(fd, 1) < 0) {
-        tcp_close(fd);
-        return c;
-    }
-    return __conns_add(c, fd, monotonic_ns() + opts.recv_deadline.as_nanos(), peer);
+  }
+  tcp_socket_ctl(fd, 3, 1);
+  tcp_socket_ctl(fd, 1, 1);
+  if (drv.watch(fd, 1) < 0) {
+    tcp_close(fd);
+    return c;
+  }
+  return __conns_add(c, fd, monotonic_ns() + opts.recv_deadline.as_nanos(), peer);
 }
 
 // __serve_close(drv, c, at) — the connection at `at` unwatched, closed
 // and forgotten.
 function __serve_close[D: async.Driver](drv: D, c: __Conns, at: i32): __Conns {
-    drv.unwatch(c.fds[at]);
-    tcp_close(c.fds[at]);
-    return __conns_remove(__tail_drop(c, at), at);
+  drv.unwatch(c.fds[at]);
+  tcp_close(c.fds[at]);
+  return __conns_remove(__tail_drop(c, at), at);
 }
 
 // __serve_read(c, at, scratch, opts) — the readable connection at `at`
@@ -652,42 +721,46 @@ function __serve_close[D: async.Driver](drv: D, c: __Conns, at: i32): __Conns {
 // was waiting under, and the body's clock keeps the deadline no earlier
 // than what the body has delivered buys (`__body_deadline`).
 function __serve_read(c: __Conns, at: i32, scratch: u8[], opts: ServeOptions): (__Conns, boolean) {
-    var buf: u8[] = c.bufs[at];
-    var was_idle: boolean = buf.len() == 0;
-    while (true) {
-        var n: i32 = tcp_recv_into(c.fds[at], scratch);
-        if (n == 0 - __eagain()) {
-            var deadline: i64 = c.deadlines[at];
-            if (was_idle && buf.len() > 0) { deadline = monotonic_ns() + opts.recv_deadline.as_nanos(); }
-            c = __Conns { ...c, bufs: c.bufs.with(at, buf), deadlines: c.deadlines.with(at, deadline) };
-            return (__body_deadline(c, at, opts, monotonic_ns()), false);
-        }
-        if (n <= 0) {
-            return (__Conns { ...c, bufs: c.bufs.with(at, buf) }, true);
-        }
-        buf = buf.concat(scratch.take(n));
-        // A connection holds at most the parser's largest request unread;
-        // past that the peer is treated as finished: what is complete is
-        // answered, then the connection is closed.
-        if (buf.len() > http.http_request_bytes_cap(opts.limits)) {
-            return (__Conns { ...c, bufs: c.bufs.with(at, buf) }, true);
-        }
+  var buf: u8[] = c.bufs[at];
+  var was_idle: boolean = buf.len() == 0;
+  while (true) {
+    var n: i32 = tcp_recv_into(c.fds[at], scratch);
+    if (n == 0 - __eagain()) {
+      var deadline: i64 = c.deadlines[at];
+      if (was_idle && buf.len() > 0) {
+        deadline = monotonic_ns() + opts.recv_deadline.as_nanos();
+      }
+      c = __Conns { ...c, bufs: c.bufs.with(at, buf), deadlines: c.deadlines.with(at, deadline) };
+      return (__body_deadline(c, at, opts, monotonic_ns()), false);
     }
-    return (c, true);
+    if (n <= 0) {
+      return (__Conns { ...c, bufs: c.bufs.with(at, buf) }, true);
+    }
+    buf = buf.concat(scratch.take(n));
+    // A connection holds at most the parser's largest request unread;
+    // past that the peer is treated as finished: what is complete is
+    // answered, then the connection is closed.
+    if (buf.len() > http.http_request_bytes_cap(opts.limits)) {
+      return (__Conns { ...c, bufs: c.bufs.with(at, buf) }, true);
+    }
+  }
+  return (c, true);
 }
 
 // __bytes_from(buf, from) — buf[from, len) as a fresh array: the bytes
 // behind an answered request, the next pipelined request's or nothing.
 function __bytes_from(buf: u8[], from: i32): u8[] {
-    var n: i32 = buf.len() - from;
-    if (n < 0) { n = 0; }
-    var out: u8[] = __alloc_u8(n);
-    var i: i32 = 0;
-    while (i < n) {
-        out = out.with(i, buf[from + i]);
-        i = i + 1;
-    }
-    return out;
+  var n: i32 = buf.len() - from;
+  if (n < 0) {
+    n = 0;
+  }
+  var out: u8[] = __alloc_u8(n);
+  var i: i32 = 0;
+  while (i < n) {
+    out = out.with(i, buf[from + i]);
+    i = i + 1;
+  }
+  return out;
 }
 
 // __tail_persists(tail, eof) — whether the connection outlives the
@@ -697,13 +770,21 @@ function __bytes_from(buf: u8[], from: i32): u8[] {
 // only another complete request keeps it open, so the last response on a
 // half-closed connection says `close` too.
 function __tail_persists(tail: http.HttpFraming, eof: boolean): boolean {
-    match (tail) {
-        http.Framed(_) => { return true; },
-        http.Incomplete => { return !eof; },
-        http.Continue => { return !eof; },
-        http.Malformed(_) => { return false; }
+  match (tail) {
+    http.Framed(_) => {
+      return true;
+    },
+    http.Incomplete => {
+      return !eof;
+    },
+    http.Continue => {
+      return !eof;
+    },
+    http.Malformed(_) => {
+      return false;
     }
-    return false;
+  }
+  return false;
 }
 
 // __serve_took(c, at, f, opts, eof) — the request behind the answered
@@ -715,19 +796,23 @@ function __tail_persists(tail: http.HttpFraming, eof: boolean): boolean {
 // the bytes behind the request, which the response and the next turn of
 // the loop read rather than parse again.
 function __serve_took(c: __Conns, at: i32, f: http.HttpFramed, opts: ServeOptions, eof: boolean, stop: __Stop): (__Conns, boolean, http.HttpFraming) {
-    var served: i32 = c.served[at] + 1;
-    var keep: boolean = f.keep_alive && served < opts.keep_alive_requests && !__serve_stopping(stop);
-    c = __Conns { ...c, offs: c.offs.with(at, c.offs[at] + f.len), served: c.served.with(at, served), backlog: c.backlog.with(at, false), continued: c.continued.with(at, false) };
-    var tail: http.HttpFraming = http.http_parse_request_framed_from(c.bufs[at], c.offs[at], opts.limits);
-    if (keep) { keep = __tail_persists(tail, eof); }
-    return (__Conns { ...c, keep: c.keep.with(at, keep) }, keep, tail);
+  var served: i32 = c.served[at] + 1;
+  var keep: boolean = f.keep_alive && served < opts.keep_alive_requests && !__serve_stopping(stop);
+  c = __Conns { ...c, offs: c.offs.with(at, c.offs[at] + f.len), served: c.served.with(at, served), backlog: c.backlog.with(at, false), continued: c.continued.with(at, false) };
+  var tail: http.HttpFraming = http.http_parse_request_framed_from(c.bufs[at], c.offs[at], opts.limits);
+  if (keep) {
+    keep = __tail_persists(tail, eof);
+  }
+  return (__Conns { ...c, keep: c.keep.with(at, keep) }, keep, tail);
 }
 
 // __serve_compact(c, at) — the bytes the event's answered requests
 // occupied dropped, once, when the event is done with the connection.
 function __serve_compact(c: __Conns, at: i32): __Conns {
-    if (c.offs[at] == 0) { return c; }
-    return __Conns { ...c, bufs: c.bufs.with(at, __bytes_from(c.bufs[at], c.offs[at])), offs: c.offs.with(at, 0) };
+  if (c.offs[at] == 0) {
+    return c;
+  }
+  return __Conns { ...c, bufs: c.bufs.with(at, __bytes_from(c.bufs[at], c.offs[at])), offs: c.offs.with(at, 0) };
 }
 
 // __pipeline_burst() — how many pipelined requests one readiness event
@@ -735,7 +820,7 @@ function __serve_compact(c: __Conns, at: i32): __Conns {
 // pipeline cannot hold every other client off the reactor. What is left
 // is the connection's backlog, answered on the next wait.
 function __pipeline_burst(): i32 {
-    return 32;
+  return 32;
 }
 
 // __serve_next(c, at, opts) — an answered connection with nothing left
@@ -746,11 +831,13 @@ function __pipeline_burst(): i32 {
 // rather than at its first byte, which may have arrived a burst ago;
 // the body's clock starts over with it.
 function __serve_next(c: __Conns, at: i32, opts: ServeOptions): __Conns {
-    var now: i64 = monotonic_ns();
-    var span: Duration = opts.keep_alive_idle;
-    if (c.bufs[at].len() > c.offs[at]) { span = opts.recv_deadline; }
-    c = __Conns { ...c, deadlines: c.deadlines.with(at, now + span.as_nanos()), rate_since: c.rate_since.with(at, 0 - (1 as i64)) };
-    return __body_deadline(c, at, opts, now);
+  var now: i64 = monotonic_ns();
+  var span: Duration = opts.keep_alive_idle;
+  if (c.bufs[at].len() > c.offs[at]) {
+    span = opts.recv_deadline;
+  }
+  c = __Conns { ...c, deadlines: c.deadlines.with(at, now + span.as_nanos()), rate_since: c.rate_since.with(at, 0 - 1 as i64) };
+  return __body_deadline(c, at, opts, now);
 }
 
 // __body_deadline(c, at, opts, now) — the connection's deadline held no
@@ -760,19 +847,25 @@ function __serve_next(c: __Conns, at: i32, opts: ServeOptions): __Conns {
 // A body that keeps flowing outlasts the read deadline; one that stalls
 // or trickles does not.
 function __body_deadline(c: __Conns, at: i32, opts: ServeOptions, now: i64): __Conns {
-    var since: i64 = c.rate_since[at];
-    var base: i32 = c.rate_base[at];
-    var buf: u8[] = c.bufs[at];
-    if (since < (0 as i64)) {
-        if (buf.len() <= c.offs[at] || !http.http_header_block_complete(buf, c.offs[at], opts.limits)) { return c; }
-        since = now;
-        base = buf.len();
+  var since: i64 = c.rate_since[at];
+  var base: i32 = c.rate_base[at];
+  var buf: u8[] = c.bufs[at];
+  if (since < 0 as i64) {
+    if (buf.len() <= c.offs[at] || !http.http_header_block_complete(buf, c.offs[at], opts.limits)) {
+      return c;
     }
-    var earned: i64 = since + opts.data_rate_grace.as_nanos();
-    if (opts.min_data_rate > 0) { earned = earned + ((buf.len() - base) as i64) * (1000000000 as i64) / (opts.min_data_rate as i64); }
-    var deadline: i64 = c.deadlines[at];
-    if (earned > deadline) { deadline = earned; }
-    return __Conns { ...c, deadlines: c.deadlines.with(at, deadline), rate_since: c.rate_since.with(at, since), rate_base: c.rate_base.with(at, base) };
+    since = now;
+    base = buf.len();
+  }
+  var earned: i64 = since + opts.data_rate_grace.as_nanos();
+  if (opts.min_data_rate > 0) {
+    earned = earned + (buf.len() - base) as i64 * (1000000000 as i64) / (opts.min_data_rate as i64);
+  }
+  var deadline: i64 = c.deadlines[at];
+  if (earned > deadline) {
+    deadline = earned;
+  }
+  return __Conns { ...c, deadlines: c.deadlines.with(at, deadline), rate_since: c.rate_since.with(at, since), rate_base: c.rate_base.with(at, base) };
 }
 
 // __serve_ready(drv, c, at, opts, tail) — a persisting connection whose
@@ -783,13 +876,21 @@ function __body_deadline(c: __Conns, at: i32, opts: ServeOptions, now: i64): __C
 // waits under `__serve_next`'s deadline, and a malformed one is refused
 // now: no bytes could complete it.
 function __serve_ready[D: async.Driver](drv: D, c: __Conns, at: i32, opts: ServeOptions, tail: http.HttpFraming, clk: __Clock): (__Conns, boolean) {
-    match (tail) {
-        http.Framed(_) => { return (c, true); },
-        http.Incomplete => { return (__serve_next(c, at, opts), false); },
-        http.Continue => { return (__serve_continue(drv, c, at, opts), false); },
-        http.Malformed(status) => { return (__serve_refuse(drv, c, at, status, opts, clk), false); }
+  match (tail) {
+    http.Framed(_) => {
+      return (c, true);
+    },
+    http.Incomplete => {
+      return (__serve_next(c, at, opts), false);
+    },
+    http.Continue => {
+      return (__serve_continue(drv, c, at, opts), false);
+    },
+    http.Malformed(status) => {
+      return (__serve_refuse(drv, c, at, status, opts, clk), false);
     }
-    return (c, false);
+  }
+  return (c, false);
 }
 
 // __serve_continue(drv, c, at, opts) — a request whose header block asks
@@ -799,15 +900,23 @@ function __serve_ready[D: async.Driver](drv: D, c: __Conns, at: i32, opts: Serve
 // finished by a later wait, and the connection is kept for the request
 // it is still reading; a refused write closes it.
 function __serve_continue[D: async.Driver](drv: D, c: __Conns, at: i32, opts: ServeOptions): __Conns {
-    if (c.continued[at]) { return __serve_next(c, at, opts); }
-    c = __Conns { ...c, continued: c.continued.with(at, true), keep: c.keep.with(at, true) };
-    var sent: (__Conns, __Sent) = __serve_send(drv, c, at, "HTTP/1.1 100 Continue\r\n\r\n", opts);
-    match (sent.1) {
-        Partial => { return sent.0; },
-        Failed => { return __serve_close(drv, sent.0, at); },
-        Whole => { return __serve_next(sent.0, at, opts); }
+  if (c.continued[at]) {
+    return __serve_next(c, at, opts);
+  }
+  c = __Conns { ...c, continued: c.continued.with(at, true), keep: c.keep.with(at, true) };
+  var sent: (__Conns, __Sent) = __serve_send(drv, c, at, "HTTP/1.1 100 Continue\r\n\r\n", opts);
+  match (sent.1) {
+    Partial => {
+      return sent.0;
+    },
+    Failed => {
+      return __serve_close(drv, sent.0, at);
+    },
+    Whole => {
+      return __serve_next(sent.0, at, opts);
     }
-    return sent.0;
+  }
+  return sent.0;
 }
 
 // __serve_refuse(drv, c, at, status, opts) — the loop's own answer to a
@@ -816,14 +925,20 @@ function __serve_continue[D: async.Driver](drv: D, c: __Conns, at: i32, opts: Se
 // finished by a later wait, which closes the connection once it has gone
 // out; a refused write closes it now.
 function __serve_refuse[D: async.Driver](drv: D, c: __Conns, at: i32, status: i32, opts: ServeOptions, clk: __Clock): __Conns {
-    var wire: __Wire = __serve_wire("GET", "HTTP/1.1", http.text(status, ""), false, clk);
-    var sent: (__Conns, __Sent) = __serve_send(drv, __Conns { ...c, keep: c.keep.with(at, false) }, at, wire.head, opts);
-    match (sent.1) {
-        Partial => { return sent.0; },
-        Failed => { return __serve_close(drv, sent.0, at); },
-        Whole => { return __serve_close(drv, sent.0, at); }
+  var wire: __Wire = __serve_wire("GET", "HTTP/1.1", http.text(status, ""), false, clk);
+  var sent: (__Conns, __Sent) = __serve_send(drv, __Conns { ...c, keep: c.keep.with(at, false) }, at, wire.head, opts);
+  match (sent.1) {
+    Partial => {
+      return sent.0;
+    },
+    Failed => {
+      return __serve_close(drv, sent.0, at);
+    },
+    Whole => {
+      return __serve_close(drv, sent.0, at);
     }
-    return sent.0;
+  }
+  return sent.0;
 }
 
 // __serve_respond(drv, c, at, wire, opts, answered, tail, clk, corked) —
@@ -841,32 +956,48 @@ function __serve_refuse[D: async.Driver](drv: D, c: __Conns, at: i32, status: i3
 // response, and the third result is what is left corked, so one readable
 // event's answers leave in one write (`__corks`).
 function __serve_respond[D: async.Driver](drv: D, c: __Conns, at: i32, wire: __Wire, opts: ServeOptions, answered: i32, tail: http.HttpFraming, clk: __Clock, corked: string): (__Conns, boolean, string) {
-    c = __Conns { ...c, tails: c.tails.with(at, wire.tail), keep: c.keep.with(at, c.keep[at] && wire.keep) };
-    var payload: string = wire.head;
-    if (corked.len() > 0) { payload = corked + wire.head; }
-    if (__corks(wire, c.keep[at], answered, tail)) { return (c, true, payload); }
-    var sent: (__Conns, __Sent) = __serve_send(drv, c, at, payload, opts);
-    c = sent.0;
-    match (sent.1) {
-        Partial => { return (c, false, ""); },
-        Failed => { return (__serve_close(drv, c, at), false, ""); },
-        Whole => { }
-    }
-    var produced: (__Conns, __Sent) = __serve_produce(drv, c, at, opts);
-    c = produced.0;
-    match (produced.1) {
-        Partial => { return (c, false, ""); },
-        Failed => { return (__serve_close(drv, c, at), false, ""); },
-        Whole => { }
-    }
-    if (!c.keep[at]) { return (__serve_close(drv, c, at), false, ""); }
-    var ready: (__Conns, boolean) = __serve_ready(drv, c, at, opts, tail, clk);
-    c = ready.0;
-    if (!ready.1) { return (c, false, ""); }
-    if (answered >= __pipeline_burst()) {
-        return (__Conns { ...c, backlog: c.backlog.with(at, true) }, false, "");
-    }
-    return (c, true, "");
+  c = __Conns { ...c, tails: c.tails.with(at, wire.tail), keep: c.keep.with(at, c.keep[at] && wire.keep) };
+  var payload: string = wire.head;
+  if (corked.len() > 0) {
+    payload = corked + wire.head;
+  }
+  if (__corks(wire, c.keep[at], answered, tail)) {
+    return (c, true, payload);
+  }
+  var sent: (__Conns, __Sent) = __serve_send(drv, c, at, payload, opts);
+  c = sent.0;
+  match (sent.1) {
+    Partial => {
+      return (c, false, "");
+    },
+    Failed => {
+      return (__serve_close(drv, c, at), false, "");
+    },
+    Whole => {}
+  }
+  var produced: (__Conns, __Sent) = __serve_produce(drv, c, at, opts);
+  c = produced.0;
+  match (produced.1) {
+    Partial => {
+      return (c, false, "");
+    },
+    Failed => {
+      return (__serve_close(drv, c, at), false, "");
+    },
+    Whole => {}
+  }
+  if (!c.keep[at]) {
+    return (__serve_close(drv, c, at), false, "");
+  }
+  var ready: (__Conns, boolean) = __serve_ready(drv, c, at, opts, tail, clk);
+  c = ready.0;
+  if (!ready.1) {
+    return (c, false, "");
+  }
+  if (answered >= __pipeline_burst()) {
+    return (__Conns { ...c, backlog: c.backlog.with(at, true) }, false, "");
+  }
+  return (c, true, "");
 }
 
 // __corks(wire, persists, answered, tail) — whether a response waits to
@@ -876,16 +1007,24 @@ function __serve_respond[D: async.Driver](drv: D, c: __Conns, at: i32, wire: __W
 // nothing corked outlives the event, and no other write (an interim
 // `100 Continue`, a refusal) can come between.
 function __corks(wire: __Wire, persists: boolean, answered: i32, tail: http.HttpFraming): boolean {
-    if (!persists || answered >= __pipeline_burst()) { return false; }
-    match (wire.tail) {
-        NoTail => { },
-        _ => { return false; }
-    }
-    match (tail) {
-        http.Framed(_) => { return true; },
-        _ => { return false; }
-    }
+  if (!persists || answered >= __pipeline_burst()) {
     return false;
+  }
+  match (wire.tail) {
+    NoTail => {},
+    _ => {
+      return false;
+    }
+  }
+  match (tail) {
+    http.Framed(_) => {
+      return true;
+    },
+    _ => {
+      return false;
+    }
+  }
+  return false;
 }
 
 // __serve_drain(drv, c, at, opts) — a writable connection with a response
@@ -897,34 +1036,50 @@ function __corks(wire: __Wire, persists: boolean, answered: i32, tail: http.Http
 // failed, the connection does not persist, or the reactor refused to
 // watch it again).
 function __serve_drain[D: async.Driver](drv: D, c: __Conns, at: i32, opts: ServeOptions, clk: __Clock): (__Conns, i32, boolean) {
-    var sent: (__Conns, __Sent) = __serve_send(drv, c, at, c.pending[at], opts);
-    c = sent.0;
-    match (sent.1) {
-        Partial => { return (c, -1, false); },
-        Failed => { return (__serve_close(drv, c, at), -1, false); },
-        Whole => { }
-    }
-    var produced: (__Conns, __Sent) = __serve_produce(drv, __Conns { ...c, pending: c.pending.with(at, "") }, at, opts);
-    c = produced.0;
-    match (produced.1) {
-        Partial => { return (c, -1, false); },
-        Failed => { return (__serve_close(drv, c, at), -1, false); },
-        Whole => { }
-    }
-    if (!c.keep[at]) { return (__serve_close(drv, c, at), -1, false); }
-    if (drv.watch(c.fds[at], 1) < 0) { return (__serve_close(drv, c, at), -1, false); }
-    var tail: http.HttpFraming = http.http_parse_request_framed_from(c.bufs[at], c.offs[at], opts.limits);
-    var ready: (__Conns, boolean) = __serve_ready(drv, __Conns { ...c, pending: c.pending.with(at, "") }, at, opts, tail, clk);
-    if (!ready.1) { return (ready.0, -1, false); }
-    return (ready.0, at, false);
+  var sent: (__Conns, __Sent) = __serve_send(drv, c, at, c.pending[at], opts);
+  c = sent.0;
+  match (sent.1) {
+    Partial => {
+      return (c, -1, false);
+    },
+    Failed => {
+      return (__serve_close(drv, c, at), -1, false);
+    },
+    Whole => {}
+  }
+  var produced: (__Conns, __Sent) = __serve_produce(drv, __Conns { ...c, pending: c.pending.with(at, "") }, at, opts);
+  c = produced.0;
+  match (produced.1) {
+    Partial => {
+      return (c, -1, false);
+    },
+    Failed => {
+      return (__serve_close(drv, c, at), -1, false);
+    },
+    Whole => {}
+  }
+  if (!c.keep[at]) {
+    return (__serve_close(drv, c, at), -1, false);
+  }
+  if (drv.watch(c.fds[at], 1) < 0) {
+    return (__serve_close(drv, c, at), -1, false);
+  }
+  var tail: http.HttpFraming = http.http_parse_request_framed_from(c.bufs[at], c.offs[at], opts.limits);
+  var ready: (__Conns, boolean) = __serve_ready(drv, __Conns { ...c, pending: c.pending.with(at, "") }, at, opts, tail, clk);
+  if (!ready.1) {
+    return (ready.0, -1, false);
+  }
+  return (ready.0, at, false);
 }
 
 // __serve_eof(drv, c, at) — the peer has finished sending: a response
 // still draining goes out and then closes the connection; anything else
 // closes it now.
 function __serve_eof[D: async.Driver](drv: D, c: __Conns, at: i32): __Conns {
-    if (__in_flight(c, at)) { return __Conns { ...c, keep: c.keep.with(at, false) }; }
-    return __serve_close(drv, c, at);
+  if (__in_flight(c, at)) {
+    return __Conns { ...c, keep: c.keep.with(at, false) };
+  }
+  return __serve_close(drv, c, at);
 }
 
 // __serve_event(drv, c, fd, scratch, opts) — one readiness event on the
@@ -934,11 +1089,15 @@ function __serve_eof[D: async.Driver](drv: D, c: __Conns, at: i32): __Conns {
 // draining, a connection closed once it drained), and `eof` when the peer
 // has finished sending.
 function __serve_event[D: async.Driver](drv: D, c: __Conns, fd: i32, scratch: u8[], opts: ServeOptions, clk: __Clock): (__Conns, i32, boolean) {
-    var at: i32 = __conns_index(c, fd);
-    if (at < 0) { return (c, -1, false); }
-    if (__in_flight(c, at)) { return __serve_drain(drv, c, at, opts, clk); }
-    var read: (__Conns, boolean) = __serve_read(c, at, scratch, opts);
-    return (read.0, at, read.1);
+  var at: i32 = __conns_index(c, fd);
+  if (at < 0) {
+    return (c, -1, false);
+  }
+  if (__in_flight(c, at)) {
+    return __serve_drain(drv, c, at, opts, clk);
+  }
+  var read: (__Conns, boolean) = __serve_read(c, at, scratch, opts);
+  return (read.0, at, read.1);
 }
 
 // __serve_finish(drv, c, fd, eof) — after an event's requests are answered:
@@ -947,11 +1106,15 @@ function __serve_event[D: async.Driver](drv: D, c: __Conns, fd: i32, scratch: u8
 // burst left a request buffered is not closed yet: the backlog answers
 // it on the next wait, whose read sees the end of stream again.
 function __serve_finish[D: async.Driver](drv: D, c: __Conns, fd: i32, eof: boolean): __Conns {
-    var at: i32 = __conns_index(c, fd);
-    if (at < 0) { return c; }
-    c = __serve_compact(c, at);
-    if (!eof || c.backlog[at]) { return c; }
-    return __serve_eof(drv, c, at);
+  var at: i32 = __conns_index(c, fd);
+  if (at < 0) {
+    return c;
+  }
+  c = __serve_compact(c, at);
+  if (!eof || c.backlog[at]) {
+    return c;
+  }
+  return __serve_eof(drv, c, at);
 }
 
 // __with_backlog(c, events) — the wait's events with one more for every
@@ -959,24 +1122,28 @@ function __serve_finish[D: async.Driver](drv: D, c: __Conns, fd: i32, eof: boole
 // not report itself, so the loop answers the backlog on this pass
 // without the peer having to send anything, and once per pass.
 function __with_backlog(c: __Conns, events: i32[]): i32[] {
-    var reported: i32 = events.len();
-    var i: i32 = 0;
-    while (i < c.fds.len()) {
-        if (c.backlog[i] && !__reported(events, reported, c.fds[i])) { events = events.append(c.fds[i]).append(0); }
-        i = i + 1;
+  var reported: i32 = events.len();
+  var i: i32 = 0;
+  while (i < c.fds.len()) {
+    if (c.backlog[i] && !__reported(events, reported, c.fds[i])) {
+      events = events.append(c.fds[i]).append(0);
     }
-    return events;
+    i = i + 1;
+  }
+  return events;
 }
 
 // __reported(events, n, fd) — whether `fd` is among the first `n` entries
 // of the wait's (fd, readiness) pairs.
 function __reported(events: i32[], n: i32, fd: i32): boolean {
-    var k: i32 = 0;
-    while (k + 1 < n) {
-        if (events[k] == fd) { return true; }
-        k = k + 2;
+  var k: i32 = 0;
+  while (k + 1 < n) {
+    if (events[k] == fd) {
+      return true;
     }
-    return false;
+    k = k + 2;
+  }
+  return false;
 }
 
 // __Sent — how far a write got: the kernel took it all, keeps the rest
@@ -990,14 +1157,20 @@ enum __Sent { Whole, Partial, Failed }
 // finishes the write on later waits. A write the kernel refuses (the
 // peer is gone) leaves the connection to the caller to close.
 function __serve_send[D: async.Driver](drv: D, c: __Conns, at: i32, payload: string, opts: ServeOptions): (__Conns, __Sent) {
-    var n: i32 = tcp_send(c.fds[at], payload);
-    if (n >= payload.len()) { return (c, Whole); }
-    if (n < 0 && n != 0 - __eagain()) { return (c, Failed); }
-    var rest: string = payload;
-    if (n > 0) { rest = slice_unchecked(payload, n, payload.len()).to_owned(); }
-    drv.watch(c.fds[at], 2);
-    var first: boolean = c.pending[at].len() == 0;
-    return (__drain_deadline(__Conns { ...c, pending: c.pending.with(at, rest) }, at, opts, first), Partial);
+  var n: i32 = tcp_send(c.fds[at], payload);
+  if (n >= payload.len()) {
+    return (c, Whole);
+  }
+  if (n < 0 && n != 0 - __eagain()) {
+    return (c, Failed);
+  }
+  var rest: string = payload;
+  if (n > 0) {
+    rest = slice_unchecked(payload, n, payload.len()).to_owned();
+  }
+  drv.watch(c.fds[at], 2);
+  var first: boolean = c.pending[at].len() == 0;
+  return (__drain_deadline(__Conns { ...c, pending: c.pending.with(at, rest) }, at, opts, first), Partial);
 }
 
 // __serve_produce(drv, c, at, opts) — the next piece of the tail on the
@@ -1007,22 +1180,32 @@ function __serve_send[D: async.Driver](drv: D, c: __Conns, at: i32, payload: str
 // and a writable socket wakes it again at once; a tail that cannot be
 // honoured is Failed, for the caller to close.
 function __serve_produce[D: async.Driver](drv: D, c: __Conns, at: i32, opts: ServeOptions): (__Conns, __Sent) {
-    if (!__in_flight(c, at)) { return (c, Whole); }
-    var moved: (__Conns, __Sent, boolean) = __file_tail_send(drv, c, at, opts);
-    c = moved.0;
-    if (moved.2) { return (c, moved.1); }
-    var produced: (__Conns, string, boolean) = __tail_piece(c, at);
-    c = produced.0;
-    if (!produced.2) { return (c, Failed); }
-    var sent: (__Conns, __Sent) = __serve_send(drv, c, at, produced.1, opts);
-    c = sent.0;
-    match (sent.1) {
-        Whole => { },
-        _ => { return (c, sent.1); }
+  if (!__in_flight(c, at)) {
+    return (c, Whole);
+  }
+  var moved: (__Conns, __Sent, boolean) = __file_tail_send(drv, c, at, opts);
+  c = moved.0;
+  if (moved.2) {
+    return (c, moved.1);
+  }
+  var produced: (__Conns, string, boolean) = __tail_piece(c, at);
+  c = produced.0;
+  if (!produced.2) {
+    return (c, Failed);
+  }
+  var sent: (__Conns, __Sent) = __serve_send(drv, c, at, produced.1, opts);
+  c = sent.0;
+  match (sent.1) {
+    Whole => {},
+    _ => {
+      return (c, sent.1);
     }
-    if (!__in_flight(c, at)) { return (c, Whole); }
-    drv.watch(c.fds[at], 2);
-    return (c, Partial);
+  }
+  if (!__in_flight(c, at)) {
+    return (c, Whole);
+  }
+  drv.watch(c.fds[at], 2);
+  return (c, Partial);
 }
 
 // __file_tail_send(drv, c, at, opts) — the next piece of a file tail
@@ -1032,25 +1215,35 @@ function __serve_produce[D: async.Driver](drv: D, c: __Conns, at: i32, opts: Ser
 // sends the piece itself. A file shorter than its head announced is
 // Failed, as the read path answers it.
 function __file_tail_send[D: async.Driver](drv: D, c: __Conns, at: i32, opts: ServeOptions): (__Conns, __Sent, boolean) {
-    match (c.tails[at]) {
-        FileTail(r, left) => {
-            var want: i32 = 65536;
-            if (left < (want as i64)) { want = left as i32; }
-            var n: i32 = tcp_sendfile(c.fds[at], r.fd, want);
-            if (n == 0 - __enotsup()) { return (c, Whole, false); }
-            if (n == 0 - __eagain()) {
-                drv.watch(c.fds[at], 2);
-                return (__drain_deadline(c, at, opts, true), Partial, true);
-            }
-            if (n <= 0) { return (__tail_drop(c, at), Failed, true); }
-            var rest: i64 = left - (n as i64);
-            if (rest <= (0 as i64)) { return (__tail_drop(c, at), Whole, true); }
-            drv.watch(c.fds[at], 2);
-            return (__Conns { ...c, tails: c.tails.with(at, FileTail(r, rest)) }, Partial, true);
-        },
-        _ => { return (c, Whole, false); }
+  match (c.tails[at]) {
+    FileTail(r, left) => {
+      var want: i32 = 65536;
+      if (left < want as i64) {
+        want = left as i32;
+      }
+      var n: i32 = tcp_sendfile(c.fds[at], r.fd, want);
+      if (n == 0 - __enotsup()) {
+        return (c, Whole, false);
+      }
+      if (n == 0 - __eagain()) {
+        drv.watch(c.fds[at], 2);
+        return (__drain_deadline(c, at, opts, true), Partial, true);
+      }
+      if (n <= 0) {
+        return (__tail_drop(c, at), Failed, true);
+      }
+      var rest: i64 = left - n as i64;
+      if (rest <= 0 as i64) {
+        return (__tail_drop(c, at), Whole, true);
+      }
+      drv.watch(c.fds[at], 2);
+      return (__Conns { ...c, tails: c.tails.with(at, FileTail(r, rest)) }, Partial, true);
+    },
+    _ => {
+      return (c, Whole, false);
     }
-    return (c, Whole, false);
+  }
+  return (c, Whole, false);
 }
 
 // __drain_deadline(c, at, opts, first) — the deadline of a response being
@@ -1065,53 +1258,63 @@ function __file_tail_send[D: async.Driver](drv: D, c: __Conns, at: i32, opts: Se
 // from each write. Where the socket cannot report its queue (wasm), the
 // bytes the loop has handed it are the progress.
 function __drain_deadline(c: __Conns, at: i32, opts: ServeOptions, first: boolean): __Conns {
-    var now: i64 = monotonic_ns();
-    var since: i64 = c.send_since[at];
-    var base: i32 = c.send_base[at];
-    var queued: i32 = tcp_socket_ctl(c.fds[at], 6, 0);
-    if (queued < 0) { queued = 0; }
-    var outstanding: i32 = c.pending[at].len() + queued + __tail_left(c, at);
-    if (first) {
-        since = now;
-        base = outstanding;
-    }
-    var deadline: i64 = now + opts.recv_deadline.as_nanos();
-    if (opts.min_data_rate > 0) {
-        deadline = since + opts.data_rate_grace.as_nanos() + ((base - outstanding) as i64) * (1000000000 as i64) / (opts.min_data_rate as i64);
-    }
-    return __Conns { ...c, deadlines: c.deadlines.with(at, deadline), send_since: c.send_since.with(at, since), send_base: c.send_base.with(at, base) };
+  var now: i64 = monotonic_ns();
+  var since: i64 = c.send_since[at];
+  var base: i32 = c.send_base[at];
+  var queued: i32 = tcp_socket_ctl(c.fds[at], 6, 0);
+  if (queued < 0) {
+    queued = 0;
+  }
+  var outstanding: i32 = c.pending[at].len() + queued + __tail_left(c, at);
+  if (first) {
+    since = now;
+    base = outstanding;
+  }
+  var deadline: i64 = now + opts.recv_deadline.as_nanos();
+  if (opts.min_data_rate > 0) {
+    deadline = since + opts.data_rate_grace.as_nanos() + (base - outstanding) as i64 * (1000000000 as i64) / (opts.min_data_rate as i64);
+  }
+  return __Conns { ...c, deadlines: c.deadlines.with(at, deadline), send_since: c.send_since.with(at, since), send_base: c.send_base.with(at, base) };
 }
 
 // __listener_interest(opts) — how a loop watches its listener: for reads,
 // and exclusively when other workers watch the same listener, so a
 // connection wakes one of them rather than all.
 function __listener_interest(opts: ServeOptions): i32 {
-    if (opts.workers > 1) { return 5; }
-    return 1;
+  if (opts.workers > 1) {
+    return 5;
+  }
+  return 1;
 }
 
 // __stop_begin(stop, sig) — the shutdown `sig` started, once: a second
 // signal changes nothing.
 function __stop_begin(stop: __Stop, sig: i32): __Stop {
-    if (__serve_stopping(stop)) { return stop; }
-    return __Stop { ...stop, at: monotonic_ns(), sig: sig };
+  if (__serve_stopping(stop)) {
+    return stop;
+  }
+  return __Stop { ...stop, at: monotonic_ns(), sig: sig };
 }
 
 // __serve_stop_sources(drv, opts) — the loop's stop sources watched:
 // SIGTERM, SIGINT and, when `opts.stop_with_parent`, the parent's exit,
 // which is a SIGTERM already delivered when the parent is gone.
 function __serve_stop_sources(drv: async.RealDriver, opts: ServeOptions): __Stop {
-    drv.watch_signal(15);
-    drv.watch_signal(2);
-    if (opts.stop_with_parent && drv.watch_parent() == 0 - 3) { return __stop_begin(__stop_none(), 15); }
-    return __stop_none();
+  drv.watch_signal(15);
+  drv.watch_signal(2);
+  if (opts.stop_with_parent && drv.watch_parent() == 0 - 3) {
+    return __stop_begin(__stop_none(), 15);
+  }
+  return __stop_none();
 }
 
 // __stop_signal(fd) — the signal a wait's event reports, when it is one
 // that stops a server (SIGTERM or SIGINT, reported as -15 and -2), else 0.
 function __stop_signal(fd: i32): i32 {
-    if (fd == 0 - 15 || fd == 0 - 2) { return 0 - fd; }
-    return 0;
+  if (fd == 0 - 15 || fd == 0 - 2) {
+    return 0 - fd;
+  }
+  return 0;
 }
 
 // __serve_pass_end(drv, listener, c, opts, stop, accepting) — what one
@@ -1120,10 +1323,12 @@ function __stop_signal(fd: i32): i32 {
 // (until a shutdown, which owns the listener from then), and the
 // shutdown takes its next step. `(conns, stop, accepting, done)`.
 function __serve_pass_end[D: async.Driver](drv: D, listener: i32, c: __Conns, opts: ServeOptions, stop: __Stop, accepting: boolean): (__Conns, __Stop, boolean, boolean) {
-    var now: i64 = monotonic_ns();
-    c = __serve_expire(drv, c, opts, now);
-    if (!__serve_stopping(stop)) { accepting = __serve_gate(drv, listener, c, opts, accepting); }
-    return __serve_stop_step(drv, listener, c, opts, stop, accepting, now);
+  var now: i64 = monotonic_ns();
+  c = __serve_expire(drv, c, opts, now);
+  if (!__serve_stopping(stop)) {
+    accepting = __serve_gate(drv, listener, c, opts, accepting);
+  }
+  return __serve_stop_step(drv, listener, c, opts, stop, accepting, now);
 }
 
 // __Stop — where a loop is in its shutdown: the monotonic time the stop
@@ -1133,26 +1338,36 @@ function __serve_pass_end[D: async.Driver](drv: D, listener: i32, c: __Conns, op
 struct __Stop { at: i64, sig: i32, closed: boolean, aborted: boolean }
 
 function __stop_none(): __Stop {
-    return __Stop { at: 0 - (1 as i64), sig: 0, closed: false, aborted: false };
+  return __Stop { at: 0 - 1 as i64, sig: 0, closed: false, aborted: false };
 }
 
 // __serve_stopping(stop) — whether a stop signal has arrived.
 function __serve_stopping(stop: __Stop): boolean {
-    return stop.at >= (0 as i64);
+  return stop.at >= 0 as i64;
 }
 
 // __stop_timeout(stop, opts, now, timeout) — the wait's timeout brought
 // forward to the next step of a shutdown: the end of the accept grace,
 // then the drain deadline.
 function __stop_timeout(stop: __Stop, opts: ServeOptions, now: i64, timeout: i32): i32 {
-    if (!__serve_stopping(stop)) { return timeout; }
-    var due: i64 = stop.at + opts.shutdown_grace.as_nanos();
-    if (stop.closed) { due = stop.at + opts.drain_deadline.as_nanos(); }
-    var ms: i64 = (due - now + (999999 as i64)) / 1000000;
-    if (ms < (0 as i64)) { ms = 0 as i64; }
-    if (timeout >= 0 && (timeout as i64) < ms) { return timeout; }
-    if (ms > (2147483647 as i64)) { return 2147483647; }
-    return ms as i32;
+  if (!__serve_stopping(stop)) {
+    return timeout;
+  }
+  var due: i64 = stop.at + opts.shutdown_grace.as_nanos();
+  if (stop.closed) {
+    due = stop.at + opts.drain_deadline.as_nanos();
+  }
+  var ms: i64 = (due - now + 999999 as i64) / 1000000;
+  if (ms < 0 as i64) {
+    ms = 0 as i64;
+  }
+  if (timeout >= 0 && timeout as i64 < ms) {
+    return timeout;
+  }
+  if (ms > 2147483647 as i64) {
+    return 2147483647;
+  }
+  return ms as i32;
 }
 
 // __serve_stop_step(drv, listener, c, opts, stop, accepting, now) — the
@@ -1163,41 +1378,51 @@ function __stop_timeout(stop: __Stop, opts: ServeOptions, now: i64, timeout: i32
 // `(conns, stop, accepting, done)`, `done` once the listener is closed
 // and no connection remains.
 function __serve_stop_step[D: async.Driver](drv: D, listener: i32, c: __Conns, opts: ServeOptions, stop: __Stop, accepting: boolean, now: i64): (__Conns, __Stop, boolean, boolean) {
-    if (!__serve_stopping(stop)) { return (c, stop, accepting, false); }
-    if (!stop.closed) {
-        if (now < stop.at + opts.shutdown_grace.as_nanos()) { return (c, stop, accepting, false); }
-        if (accepting) { drv.unwatch(listener); }
-        tcp_close(listener);
-        stop = __Stop { ...stop, closed: true };
-        accepting = false;
+  if (!__serve_stopping(stop)) {
+    return (c, stop, accepting, false);
+  }
+  if (!stop.closed) {
+    if (now < stop.at + opts.shutdown_grace.as_nanos()) {
+      return (c, stop, accepting, false);
     }
-    var swept: (__Conns, __Stop) = __stop_sweep(drv, c, stop, now >= stop.at + opts.drain_deadline.as_nanos());
-    return (swept.0, swept.1, accepting, swept.0.fds.len() == 0);
+    if (accepting) {
+      drv.unwatch(listener);
+    }
+    tcp_close(listener);
+    stop = __Stop { ...stop, closed: true };
+    accepting = false;
+  }
+  var swept: (__Conns, __Stop) = __stop_sweep(drv, c, stop, now >= stop.at + opts.drain_deadline.as_nanos());
+  return (swept.0, swept.1, accepting, swept.0.fds.len() == 0);
 }
 
 // __stop_sweep(drv, c, stop, past_drain) — the connections with nothing
 // in flight closed, and past the drain deadline every connection, the
 // shutdown remembering the ones it cut off.
 function __stop_sweep[D: async.Driver](drv: D, c: __Conns, stop: __Stop, past_drain: boolean): (__Conns, __Stop) {
-    var i: i32 = 0;
-    while (i < c.fds.len()) {
-        var idle: boolean = c.bufs[i].len() == 0 && !__in_flight(c, i) && !c.backlog[i];
-        if (idle || past_drain) {
-            if (!idle) { stop = __Stop { ...stop, aborted: true }; }
-            c = __serve_close(drv, c, i);
-        } else {
-            i = i + 1;
-        }
+  var i: i32 = 0;
+  while (i < c.fds.len()) {
+    var idle: boolean = c.bufs[i].len() == 0 && !__in_flight(c, i) && !c.backlog[i];
+    if (idle || past_drain) {
+      if (!idle) {
+        stop = __Stop { ...stop, aborted: true };
+      }
+      c = __serve_close(drv, c, i);
+    } else {
+      i = i + 1;
     }
-    return (c, stop);
+  }
+  return (c, stop);
 }
 
 // __stop_code(stop) — what a finished shutdown exits with: 0 when every
 // request in flight was answered, 1 when one was cut off at the drain
 // deadline.
 function __stop_code(stop: __Stop): i32 {
-    if (stop.aborted) { return 1; }
-    return 0;
+  if (stop.aborted) {
+    return 1;
+  }
+  return 0;
 }
 
 // __stop_reason(stop) — what a finished shutdown tells the program's
@@ -1205,16 +1430,20 @@ function __stop_code(stop: __Stop): i32 {
 // when every request in flight was answered, "drain-deadline" when one
 // was cut off.
 function __stop_reason(stop: __Stop): string {
-    if (stop.aborted) { return "drain-deadline"; }
-    if (stop.sig == 2) { return "sigint"; }
-    return "sigterm";
+  if (stop.aborted) {
+    return "drain-deadline";
+  }
+  if (stop.sig == 2) {
+    return "sigint";
+  }
+  return "sigterm";
 }
 
 // __serve_not_ready(f, opts, stop) — whether the request is the
 // readiness probe of a loop that is stopping, to be answered 503 by the
 // loop itself so whoever routes to it stops.
 function __serve_not_ready(f: http.HttpFramed, opts: ServeOptions, stop: __Stop): boolean {
-    return __serve_stopping(stop) && opts.readiness_path.len() > 0 && f.request.path == opts.readiness_path;
+  return __serve_stopping(stop) && opts.readiness_path.len() > 0 && f.request.path == opts.readiness_path;
 }
 
 // __serve_gate(drv, listener, c, opts, accepting) — whether the listener
@@ -1223,15 +1452,19 @@ function __serve_not_ready(f: http.HttpFramed, opts: ServeOptions, stop: __Stop)
 // closed. A watch the reactor refuses leaves the listener unwatched
 // until the next pass tries again.
 function __serve_gate[D: async.Driver](drv: D, listener: i32, c: __Conns, opts: ServeOptions, accepting: boolean): boolean {
-    var cap: i32 = opts.max_connections;
-    if (cap < 1) { cap = 1; }
-    var full: boolean = c.fds.len() >= cap;
-    if (accepting && full) {
-        drv.unwatch(listener);
-        return false;
-    }
-    if (!accepting && !full) { return drv.watch(listener, __listener_interest(opts)) >= 0; }
-    return accepting;
+  var cap: i32 = opts.max_connections;
+  if (cap < 1) {
+    cap = 1;
+  }
+  var full: boolean = c.fds.len() >= cap;
+  if (accepting && full) {
+    drv.unwatch(listener);
+    return false;
+  }
+  if (!accepting && !full) {
+    return drv.watch(listener, __listener_interest(opts)) >= 0;
+  }
+  return accepting;
 }
 
 // __serve_expire(drv, c, opts, now) — every connection whose deadline is
@@ -1242,16 +1475,18 @@ function __serve_gate[D: async.Driver](drv: D, listener: i32, c: __Conns, opts: 
 // waiting on the peer: its deadline is stale from the read that filled
 // the backlog, and it stays open for the next wait to answer it.
 function __serve_expire[D: async.Driver](drv: D, c: __Conns, opts: ServeOptions, now: i64): __Conns {
-    var i: i32 = 0;
-    while (i < c.fds.len()) {
-        if (c.deadlines[i] <= now && !c.backlog[i] && __in_flight(c, i)) { c = __drain_deadline(c, i, opts, false); }
-        if (c.deadlines[i] <= now && !c.backlog[i]) {
-            c = __serve_close(drv, c, i);
-        } else {
-            i = i + 1;
-        }
+  var i: i32 = 0;
+  while (i < c.fds.len()) {
+    if (c.deadlines[i] <= now && !c.backlog[i] && __in_flight(c, i)) {
+      c = __drain_deadline(c, i, opts, false);
     }
-    return c;
+    if (c.deadlines[i] <= now && !c.backlog[i]) {
+      c = __serve_close(drv, c, i);
+    } else {
+      i = i + 1;
+    }
+  }
+  return c;
 }
 
 // __host_platform — the bag the accept loops hand every handler: the host
@@ -1261,16 +1496,18 @@ function __serve_expire[D: async.Driver](drv: D, c: __Conns, opts: ServeOptions,
 // (std/mock_platform). Built once per loop rather than per request, since
 // no request can change it.
 function __host_platform(reactor: i32): Platform {
-    var handle: i32 = reactor;
-    if (handle < 0) { handle = 0; }
-    return Platform { version: 3, mode: 0, sink: cell_new(""), handle: handle };
+  var handle: i32 = reactor;
+  if (handle < 0) {
+    handle = 0;
+  }
+  return Platform { version: 3, mode: 0, sink: cell_new(""), handle: handle };
 }
 
 // __init_platform() — the platform a handler program's `init(plat)` is
 // handed: the host bag with no reactor, since it runs once in the
 // supervising parent before any worker's loop exists.
 function __init_platform(): Platform {
-    return __host_platform(0 - 1);
+  return __host_platform(0 - 1);
 }
 
 // __serve_loop — the HTTP/1.1 reactor loop factored out of `tcp_serve`
@@ -1284,83 +1521,93 @@ function __init_platform(): Platform {
 // bind. `opts` bounds each connection's request read (see
 // `tcp_serve_deadline`) and its persistence.
 function __serve_loop(listener: i32, handler: (HttpRequest, Platform) => HttpResponse, opts: ServeOptions, on_stop: (string) => void): i32 {
-    var drv: async.RealDriver = async.real_driver();
-    var watched: i32 = drv.watch(listener, __listener_interest(opts));
-    if (watched < 0) { return watched; }
-    var accepting: boolean = true;
-    var stop: __Stop = __serve_stop_sources(drv, opts);
-    var plat: Platform = __host_platform(drv.handle());
-    var conns: __Conns = __Conns { fds: [], bufs: [], offs: [], pending: [], deadlines: [], keep: [], served: [], backlog: [], continued: [], rate_since: [], rate_base: [], send_since: [], send_base: [], peers: [], tails: [] };
-    var scratch: u8[] = __recv_scratch();
-    var clk: __Clock = __Clock { sec: 0 as i64, date: "" };
-    while (true) {
-        var events: i32[] = __with_backlog(conns, drv.wait(64, __stop_timeout(stop, opts, monotonic_ns(), __conns_timeout(conns, monotonic_ns()))));
-        clk = __clock_tick(clk);
-        var k: i32 = 0;
-        while (k + 1 < events.len()) {
-            var fd: i32 = events[k];
-            k = k + 2;
-            var sig: i32 = __stop_signal(fd);
-            if (sig != 0) {
-                stop = __stop_begin(stop, sig);
-                continue;
+  var drv: async.RealDriver = async.real_driver();
+  var watched: i32 = drv.watch(listener, __listener_interest(opts));
+  if (watched < 0) {
+    return watched;
+  }
+  var accepting: boolean = true;
+  var stop: __Stop = __serve_stop_sources(drv, opts);
+  var plat: Platform = __host_platform(drv.handle());
+  var conns: __Conns = __Conns { fds: [], bufs: [], offs: [], pending: [], deadlines: [], keep: [], served: [], backlog: [], continued: [], rate_since: [], rate_base: [], send_since: [], send_base: [], peers: [], tails: [] };
+  var scratch: u8[] = __recv_scratch();
+  var clk: __Clock = __Clock { sec: 0 as i64, date: "" };
+  while (true) {
+    var events: i32[] = __with_backlog(conns, drv.wait(64, __stop_timeout(stop, opts, monotonic_ns(), __conns_timeout(conns, monotonic_ns()))));
+    clk = __clock_tick(clk);
+    var k: i32 = 0;
+    while (k + 1 < events.len()) {
+      var fd: i32 = events[k];
+      k = k + 2;
+      var sig: i32 = __stop_signal(fd);
+      if (sig != 0) {
+        stop = __stop_begin(stop, sig);
+        continue;
+      }
+      if (fd == listener) {
+        conns = __serve_accept(drv, listener, conns, opts);
+        continue;
+      }
+      var ev: (__Conns, i32, boolean) = __serve_event(drv, conns, fd, scratch, opts, clk);
+      conns = ev.0;
+      var at: i32 = ev.1;
+      if (at < 0) {
+        continue;
+      }
+      var more: boolean = true;
+      var count: i32 = 0;
+      var corked: string = "";
+      var framing: http.HttpFraming = http.http_parse_request_framed_from(conns.bufs[at], conns.offs[at], opts.limits);
+      while (more) {
+        var next: http.HttpFraming = http.Incomplete;
+        match (framing) {
+          http.Framed(f) => {
+            var took: (__Conns, boolean, http.HttpFraming) = __serve_took(conns, at, f, opts, ev.2, stop);
+            conns = took.0;
+            count = count + 1;
+            var resp: HttpResponse = http.text(503, "");
+            if (!__serve_not_ready(f, opts, stop)) {
+              resp = handler(f.request, plat);
             }
-            if (fd == listener) {
-                conns = __serve_accept(drv, listener, conns, opts);
-                continue;
-            }
-            var ev: (__Conns, i32, boolean) = __serve_event(drv, conns, fd, scratch, opts, clk);
-            conns = ev.0;
-            var at: i32 = ev.1;
-            if (at < 0) { continue; }
-            var more: boolean = true;
-            var count: i32 = 0;
-            var corked: string = "";
-            var framing: http.HttpFraming = http.http_parse_request_framed_from(conns.bufs[at], conns.offs[at], opts.limits);
-            while (more) {
-                var next: http.HttpFraming = http.Incomplete;
-                match (framing) {
-                    http.Framed(f) => {
-                        var took: (__Conns, boolean, http.HttpFraming) = __serve_took(conns, at, f, opts, ev.2, stop);
-                        conns = took.0;
-                        count = count + 1;
-                        var resp: HttpResponse = http.text(503, "");
-                        if (!__serve_not_ready(f, opts, stop)) { resp = handler(f.request, plat); }
-                        var answered: (__Conns, boolean, string) = __serve_respond(drv, conns, at, __serve_wire(f.request.method, f.version, resp, took.1, clk), opts, count, took.2, clk, corked);
-                        conns = answered.0;
-                        more = answered.1;
-                        corked = answered.2;
-                        next = took.2;
-                    },
-                    http.Incomplete => { more = false; },
-                    http.Continue => {
-                        conns = __serve_continue(drv, conns, at, opts);
-                        more = false;
-                    },
-                    http.Malformed(status) => {
-                        conns = __serve_refuse(drv, conns, at, status, opts, clk);
-                        more = false;
-                    }
-                }
-                framing = next;
-            }
-            conns = __serve_finish(drv, conns, fd, ev.2);
+            var answered: (__Conns, boolean, string) = __serve_respond(drv, conns, at, __serve_wire(f.request.method, f.version, resp, took.1, clk), opts, count, took.2, clk, corked);
+            conns = answered.0;
+            more = answered.1;
+            corked = answered.2;
+            next = took.2;
+          },
+          http.Incomplete => {
+            more = false;
+          },
+          http.Continue => {
+            conns = __serve_continue(drv, conns, at, opts);
+            more = false;
+          },
+          http.Malformed(status) => {
+            conns = __serve_refuse(drv, conns, at, status, opts, clk);
+            more = false;
+          }
         }
-        var ended: (__Conns, __Stop, boolean, boolean) = __serve_pass_end(drv, listener, conns, opts, stop, accepting);
-        conns = ended.0;
-        stop = ended.1;
-        accepting = ended.2;
-        if (ended.3) {
-            drv.close();
-            on_stop(__stop_reason(stop));
-            return __stop_code(stop);
-        }
+        framing = next;
+      }
+      conns = __serve_finish(drv, conns, fd, ev.2);
     }
-    // A bounded loop (the census fixtures) hands the listener back with
-    // nothing watching it: on wasm a socket still subscribed cannot close.
-    if (accepting) { drv.unwatch(listener); }
-    drv.close();
-    return 0;
+    var ended: (__Conns, __Stop, boolean, boolean) = __serve_pass_end(drv, listener, conns, opts, stop, accepting);
+    conns = ended.0;
+    stop = ended.1;
+    accepting = ended.2;
+    if (ended.3) {
+      drv.close();
+      on_stop(__stop_reason(stop));
+      return __stop_code(stop);
+    }
+  }
+  // A bounded loop (the census fixtures) hands the listener back with
+  // nothing watching it: on wasm a socket still subscribed cannot close.
+  if (accepting) {
+    drv.unwatch(listener);
+  }
+  drv.close();
+  return 0;
 }
 
 // __serve_loop_with — `__serve_loop` threading a caller-owned state
@@ -1368,85 +1615,95 @@ function __serve_loop(listener: i32, handler: (HttpRequest, Platform) => HttpRes
 // so it is process-lifetime without any language-level global: each
 // request sees the value the previous one returned.
 function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse), opts: ServeOptions, on_stop: (string, S) => void): i32 {
-    var st: S = init;
-    var drv: async.RealDriver = async.real_driver();
-    var watched: i32 = drv.watch(listener, __listener_interest(opts));
-    if (watched < 0) { return watched; }
-    var accepting: boolean = true;
-    var stop: __Stop = __serve_stop_sources(drv, opts);
-    var plat: Platform = __host_platform(drv.handle());
-    var conns: __Conns = __Conns { fds: [], bufs: [], offs: [], pending: [], deadlines: [], keep: [], served: [], backlog: [], continued: [], rate_since: [], rate_base: [], send_since: [], send_base: [], peers: [], tails: [] };
-    var scratch: u8[] = __recv_scratch();
-    var clk: __Clock = __Clock { sec: 0 as i64, date: "" };
-    while (true) {
-        var events: i32[] = __with_backlog(conns, drv.wait(64, __stop_timeout(stop, opts, monotonic_ns(), __conns_timeout(conns, monotonic_ns()))));
-        clk = __clock_tick(clk);
-        var k: i32 = 0;
-        while (k + 1 < events.len()) {
-            var fd: i32 = events[k];
-            k = k + 2;
-            var sig: i32 = __stop_signal(fd);
-            if (sig != 0) {
-                stop = __stop_begin(stop, sig);
-                continue;
+  var st: S = init;
+  var drv: async.RealDriver = async.real_driver();
+  var watched: i32 = drv.watch(listener, __listener_interest(opts));
+  if (watched < 0) {
+    return watched;
+  }
+  var accepting: boolean = true;
+  var stop: __Stop = __serve_stop_sources(drv, opts);
+  var plat: Platform = __host_platform(drv.handle());
+  var conns: __Conns = __Conns { fds: [], bufs: [], offs: [], pending: [], deadlines: [], keep: [], served: [], backlog: [], continued: [], rate_since: [], rate_base: [], send_since: [], send_base: [], peers: [], tails: [] };
+  var scratch: u8[] = __recv_scratch();
+  var clk: __Clock = __Clock { sec: 0 as i64, date: "" };
+  while (true) {
+    var events: i32[] = __with_backlog(conns, drv.wait(64, __stop_timeout(stop, opts, monotonic_ns(), __conns_timeout(conns, monotonic_ns()))));
+    clk = __clock_tick(clk);
+    var k: i32 = 0;
+    while (k + 1 < events.len()) {
+      var fd: i32 = events[k];
+      k = k + 2;
+      var sig: i32 = __stop_signal(fd);
+      if (sig != 0) {
+        stop = __stop_begin(stop, sig);
+        continue;
+      }
+      if (fd == listener) {
+        conns = __serve_accept(drv, listener, conns, opts);
+        continue;
+      }
+      var ev: (__Conns, i32, boolean) = __serve_event(drv, conns, fd, scratch, opts, clk);
+      conns = ev.0;
+      var at: i32 = ev.1;
+      if (at < 0) {
+        continue;
+      }
+      var more: boolean = true;
+      var count: i32 = 0;
+      var corked: string = "";
+      var framing: http.HttpFraming = http.http_parse_request_framed_from(conns.bufs[at], conns.offs[at], opts.limits);
+      while (more) {
+        var next: http.HttpFraming = http.Incomplete;
+        match (framing) {
+          http.Framed(f) => {
+            var took: (__Conns, boolean, http.HttpFraming) = __serve_took(conns, at, f, opts, ev.2, stop);
+            conns = took.0;
+            count = count + 1;
+            var stepped: (S, HttpResponse) = (st, http.text(503, ""));
+            if (!__serve_not_ready(f, opts, stop)) {
+              stepped = handler(st, f.request, plat);
             }
-            if (fd == listener) {
-                conns = __serve_accept(drv, listener, conns, opts);
-                continue;
-            }
-            var ev: (__Conns, i32, boolean) = __serve_event(drv, conns, fd, scratch, opts, clk);
-            conns = ev.0;
-            var at: i32 = ev.1;
-            if (at < 0) { continue; }
-            var more: boolean = true;
-            var count: i32 = 0;
-            var corked: string = "";
-            var framing: http.HttpFraming = http.http_parse_request_framed_from(conns.bufs[at], conns.offs[at], opts.limits);
-            while (more) {
-                var next: http.HttpFraming = http.Incomplete;
-                match (framing) {
-                    http.Framed(f) => {
-                        var took: (__Conns, boolean, http.HttpFraming) = __serve_took(conns, at, f, opts, ev.2, stop);
-                        conns = took.0;
-                        count = count + 1;
-                        var stepped: (S, HttpResponse) = (st, http.text(503, ""));
-                        if (!__serve_not_ready(f, opts, stop)) { stepped = handler(st, f.request, plat); }
-                        st = stepped.0;
-                        var answered: (__Conns, boolean, string) = __serve_respond(drv, conns, at, __serve_wire(f.request.method, f.version, stepped.1, took.1, clk), opts, count, took.2, clk, corked);
-                        conns = answered.0;
-                        more = answered.1;
-                        corked = answered.2;
-                        next = took.2;
-                    },
-                    http.Incomplete => { more = false; },
-                    http.Continue => {
-                        conns = __serve_continue(drv, conns, at, opts);
-                        more = false;
-                    },
-                    http.Malformed(status) => {
-                        conns = __serve_refuse(drv, conns, at, status, opts, clk);
-                        more = false;
-                    }
-                }
-                framing = next;
-            }
-            conns = __serve_finish(drv, conns, fd, ev.2);
+            st = stepped.0;
+            var answered: (__Conns, boolean, string) = __serve_respond(drv, conns, at, __serve_wire(f.request.method, f.version, stepped.1, took.1, clk), opts, count, took.2, clk, corked);
+            conns = answered.0;
+            more = answered.1;
+            corked = answered.2;
+            next = took.2;
+          },
+          http.Incomplete => {
+            more = false;
+          },
+          http.Continue => {
+            conns = __serve_continue(drv, conns, at, opts);
+            more = false;
+          },
+          http.Malformed(status) => {
+            conns = __serve_refuse(drv, conns, at, status, opts, clk);
+            more = false;
+          }
         }
-        var ended: (__Conns, __Stop, boolean, boolean) = __serve_pass_end(drv, listener, conns, opts, stop, accepting);
-        conns = ended.0;
-        stop = ended.1;
-        accepting = ended.2;
-        if (ended.3) {
-            drv.close();
-            on_stop(__stop_reason(stop), st);
-            return __stop_code(stop);
-        }
+        framing = next;
+      }
+      conns = __serve_finish(drv, conns, fd, ev.2);
     }
-    // A bounded loop (the census fixtures) hands the listener back with
-    // nothing watching it: on wasm a socket still subscribed cannot close.
-    if (accepting) { drv.unwatch(listener); }
-    drv.close();
-    return 0;
+    var ended: (__Conns, __Stop, boolean, boolean) = __serve_pass_end(drv, listener, conns, opts, stop, accepting);
+    conns = ended.0;
+    stop = ended.1;
+    accepting = ended.2;
+    if (ended.3) {
+      drv.close();
+      on_stop(__stop_reason(stop), st);
+      return __stop_code(stop);
+    }
+  }
+  // A bounded loop (the census fixtures) hands the listener back with
+  // nothing watching it: on wasm a socket still subscribed cannot close.
+  if (accepting) {
+    drv.unwatch(listener);
+  }
+  drv.close();
+  return 0;
 }
 
 // tcp_serve_supervised(port, handler) — `tcp_serve` under a supervising
@@ -1457,7 +1714,7 @@ function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, 
 // their forks in a row give up with the last exit code. Serves
 // single-process where there is no fork (the interpreter).
 pub function tcp_serve_supervised(port: i32, handler: (HttpRequest, Platform) => HttpResponse): i32 {
-    return tcp_serve_supervised_opts(port, serve_options(), handler);
+  return tcp_serve_supervised_opts(port, serve_options(), handler);
 }
 
 // tcp_serve_supervised_opts(port, opts, handler) — `tcp_serve_supervised`
@@ -1470,7 +1727,7 @@ pub function tcp_serve_supervised(port: i32, handler: (HttpRequest, Platform) =>
 // forwarded to every worker and the supervisor waits for them, exiting with the
 // worst code they answered (1 when one cut a request off).
 pub function tcp_serve_supervised_opts(port: i32, opts: ServeOptions, handler: (HttpRequest, Platform) => HttpResponse): i32 {
-    return tcp_serve_supervised_shutdown(port, opts, handler, (reason: string): void => {});
+  return tcp_serve_supervised_shutdown(port, opts, handler, (reason: string): void => {});
 }
 
 // tcp_serve_supervised_shutdown(port, opts, handler, shutdown) —
@@ -1478,7 +1735,7 @@ pub function tcp_serve_supervised_opts(port: i32, opts: ServeOptions, handler: (
 // it has stopped, as `tcp_serve_shutdown` does: with `opts.workers`
 // workers it runs once per worker.
 pub function tcp_serve_supervised_shutdown(port: i32, opts: ServeOptions, handler: (HttpRequest, Platform) => HttpResponse, shutdown: (string) => void): i32 {
-    return __supervise(port, opts, (fd: i32, worker_opts: ServeOptions): i32 => __serve_loop(fd, handler, worker_opts, shutdown));
+  return __supervise(port, opts, (fd: i32, worker_opts: ServeOptions): i32 => __serve_loop(fd, handler, worker_opts, shutdown));
 }
 
 // tcp_serve_supervised_with(port, opts, init, handler) —
@@ -1489,7 +1746,7 @@ pub function tcp_serve_supervised_shutdown(port: i32, opts: ServeOptions, handle
 // after a death starts from the copy `init` was, not from where the
 // dead one left it.
 pub function tcp_serve_supervised_with[S](port: i32, opts: ServeOptions, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse)): i32 {
-    return tcp_serve_supervised_with_shutdown(port, opts, init, handler, (reason: string, state: S): void => {});
+  return tcp_serve_supervised_with_shutdown(port, opts, init, handler, (reason: string, state: S): void => {});
 }
 
 // tcp_serve_supervised_with_shutdown(port, opts, init, handler, shutdown)
@@ -1497,7 +1754,7 @@ pub function tcp_serve_supervised_with[S](port: i32, opts: ServeOptions, init: S
 // it has stopped, with the reason and the state as that worker's last
 // request left it.
 pub function tcp_serve_supervised_with_shutdown[S](port: i32, opts: ServeOptions, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse), shutdown: (string, S) => void): i32 {
-    return __supervise(port, opts, (fd: i32, worker_opts: ServeOptions): i32 => __serve_loop_with(fd, init, handler, worker_opts, shutdown));
+  return __supervise(port, opts, (fd: i32, worker_opts: ServeOptions): i32 => __serve_loop_with(fd, init, handler, worker_opts, shutdown));
 }
 
 // __supervise(port, opts, run) — the supervisor every `tcp_serve_supervised*`
@@ -1505,68 +1762,80 @@ pub function tcp_serve_supervised_with_shutdown[S](port: i32, opts: ServeOptions
 // over the listener it is handed, answering the code the worker exits
 // with.
 function __supervise(port: i32, opts: ServeOptions, run: (i32, ServeOptions) => i32): i32 {
-    // Listener FIRST, in the parent — the whole design hinges on
-    // workers inheriting this fd rather than owning it. Per-worker
-    // listeners are the opt-in that gives that up: each worker binds
-    // its own once forked.
-    var listener: i32 = 0 - 1;
-    if (!__per_worker_listeners(opts)) {
-        listener = __serve_listener(port, opts);
-        if (listener < 0) {
-            return __listen_failed(port, listener);
-        }
+  // Listener FIRST, in the parent — the whole design hinges on
+  // workers inheriting this fd rather than owning it. Per-worker
+  // listeners are the opt-in that gives that up: each worker binds
+  // its own once forked.
+  var listener: i32 = 0 - 1;
+  if (!__per_worker_listeners(opts)) {
+    listener = __serve_listener(port, opts);
+    if (listener < 0) {
+      return __listen_failed(port, listener);
     }
-    var workers: i32 = opts.workers;
-    if (workers < 1) { workers = cpu_count(); }
-    if (workers < 1) { workers = 1; }
-    var resolved: ServeOptions = ServeOptions { ...opts, workers: workers };
-    var sup: __Supervisor = __Supervisor { pids: [], spawned: [], backoff_ms: 100 as i64, fork_after: 0 as i64, fast_deaths: 0, stopping: false, worst: 0, crashed: 0 };
-    var drv: async.RealDriver = async.real_driver();
-    var chld: i32 = drv.watch_signal(17);
-    if (chld < 0) { return chld; }
-    drv.watch_signal(15);
-    drv.watch_signal(2);
-    while (true) {
-        var refork_ms: i32 = -1;
-        if (!sup.stopping && sup.pids.len() < workers) {
-            var wait_ms: i64 = sup.fork_after - now_unix_ms();
-            if (wait_ms <= (0 as i64)) {
-                var forked: (__Supervisor, i32) = __supervisor_fork(drv, port, listener, run, resolved, sup);
-                sup = forked.0;
-                if (forked.1 != 0 - 1) { return forked.1; }
-                continue;
-            }
-            refork_ms = wait_ms as i32;
+  }
+  var workers: i32 = opts.workers;
+  if (workers < 1) {
+    workers = cpu_count();
+  }
+  if (workers < 1) {
+    workers = 1;
+  }
+  var resolved: ServeOptions = ServeOptions { ...opts, workers: workers };
+  var sup: __Supervisor = __Supervisor { pids: [], spawned: [], backoff_ms: 100 as i64, fork_after: 0 as i64, fast_deaths: 0, stopping: false, worst: 0, crashed: 0 };
+  var drv: async.RealDriver = async.real_driver();
+  var chld: i32 = drv.watch_signal(17);
+  if (chld < 0) {
+    return chld;
+  }
+  drv.watch_signal(15);
+  drv.watch_signal(2);
+  while (true) {
+    var refork_ms: i32 = -1;
+    if (!sup.stopping && sup.pids.len() < workers) {
+      var wait_ms: i64 = sup.fork_after - now_unix_ms();
+      if (wait_ms <= 0 as i64) {
+        var forked: (__Supervisor, i32) = __supervisor_fork(drv, port, listener, run, resolved, sup);
+        sup = forked.0;
+        if (forked.1 != 0 - 1) {
+          return forked.1;
         }
-        if (sup.stopping && sup.pids.len() == 0) {
-            drv.close();
-            return sup.worst;
-        }
-        // Parent: supervise. A child's death and SIGTERM both arrive as
-        // readiness events; a death is reaped by probing every worker. A
-        // refork the backoff holds back is what the wait's deadline is.
-        sup = __supervisor_events(sup, drv.wait(8, refork_ms));
-        if (sup.gave_up()) {
-            __supervisor_abandon(drv, sup);
-            drv.close();
-            return sup.crashed;
-        }
+        continue;
+      }
+      refork_ms = wait_ms as i32;
     }
-    return 0;
+    if (sup.stopping && sup.pids.len() == 0) {
+      drv.close();
+      return sup.worst;
+    }
+    // Parent: supervise. A child's death and SIGTERM both arrive as
+    // readiness events; a death is reaped by probing every worker. A
+    // refork the backoff holds back is what the wait's deadline is.
+    sup = __supervisor_events(sup, drv.wait(8, refork_ms));
+    if (sup.gave_up()) {
+      __supervisor_abandon(drv, sup);
+      drv.close();
+      return sup.crashed;
+    }
+  }
+  return 0;
 }
 
 // __supervisor_events(sup, events) — the wait's events acted on: SIGTERM
 // or SIGINT forwarded, SIGCHLD (-17) reaped.
 function __supervisor_events(sup: __Supervisor, events: i32[]): __Supervisor {
-    var k: i32 = 0;
-    while (k + 1 < events.len()) {
-        var fd: i32 = events[k];
-        k = k + 2;
-        var sig: i32 = __stop_signal(fd);
-        if (sig != 0) { sup = __supervisor_stop(sup, sig); }
-        if (fd == 0 - 17) { sup = __supervisor_reap(sup); }
+  var k: i32 = 0;
+  while (k + 1 < events.len()) {
+    var fd: i32 = events[k];
+    k = k + 2;
+    var sig: i32 = __stop_signal(fd);
+    if (sig != 0) {
+      sup = __supervisor_stop(sup, sig);
     }
-    return sup;
+    if (fd == 0 - 17) {
+      sup = __supervisor_reap(sup);
+    }
+  }
+  return sup;
 }
 
 // __supervisor_fork(drv, port, listener, run, opts, sup) — one more
@@ -1581,28 +1850,36 @@ function __supervisor_events(sup: __Supervisor, events: i32[]): __Supervisor {
 // across the fork, so the child only closes its copy, since an unwatch
 // would take the parent's signals out of the set the parent waits on.
 function __supervisor_fork(drv: async.RealDriver, port: i32, listener: i32, run: (i32, ServeOptions) => i32, opts: ServeOptions, sup: __Supervisor): (__Supervisor, i32) {
-    var pid: i32 = proc_fork();
-    if (pid == -38) {
-        eprint("tcp_serve_supervised: supervision unavailable; serving single-process");
-        drv.unwatch_signal(17);
-        drv.unwatch_signal(15);
-        drv.unwatch_signal(2);
-        drv.close();
-        var single: i32 = __worker_listener(port, listener, opts);
-        if (single < 0) { return (sup, __listen_failed(port, single)); }
-        return (sup, run(single, ServeOptions { ...opts, workers: 1 }));
+  var pid: i32 = proc_fork();
+  if (pid == -38) {
+    eprint("tcp_serve_supervised: supervision unavailable; serving single-process");
+    drv.unwatch_signal(17);
+    drv.unwatch_signal(15);
+    drv.unwatch_signal(2);
+    drv.close();
+    var single: i32 = __worker_listener(port, listener, opts);
+    if (single < 0) {
+      return (sup, __listen_failed(port, single));
     }
-    if (pid < 0) { return (sup, pid); }
-    if (pid == 0) {
-        drv.close();
-        var own: i32 = __worker_listener(port, listener, opts);
-        if (own < 0) { exit(__listen_failed(port, own)); }
-        var loop_opts: ServeOptions = ServeOptions { ...opts, stop_with_parent: true };
-        if (listener < 0) { loop_opts = ServeOptions { ...loop_opts, workers: 1 }; }
-        exit(run(own, loop_opts));
-        return (sup, 0);
+    return (sup, run(single, ServeOptions { ...opts, workers: 1 }));
+  }
+  if (pid < 0) {
+    return (sup, pid);
+  }
+  if (pid == 0) {
+    drv.close();
+    var own: i32 = __worker_listener(port, listener, opts);
+    if (own < 0) {
+      exit(__listen_failed(port, own));
     }
-    return (__Supervisor { ...sup, pids: sup.pids.append(pid), spawned: sup.spawned.append(now_unix_ms()) }, 0 - 1);
+    var loop_opts: ServeOptions = ServeOptions { ...opts, stop_with_parent: true };
+    if (listener < 0) {
+      loop_opts = ServeOptions { ...loop_opts, workers: 1 };
+    }
+    exit(run(own, loop_opts));
+    return (sup, 0);
+  }
+  return (__Supervisor { ...sup, pids: sup.pids.append(pid), spawned: sup.spawned.append(now_unix_ms()) }, 0 - 1);
 }
 
 // __per_worker_listeners(opts) — whether each worker binds a listener of
@@ -1615,12 +1892,18 @@ function __supervisor_fork(drv: async.RealDriver, port: i32, listener: i32, run:
 // it unless the kernel migrates it (`net.ipv4.tcp_migrate_req`), where
 // the inherited listener keeps it for the next worker.
 function __per_worker_listeners(opts: ServeOptions): boolean {
-    if (!opts.reuse_port) { return false; }
-    match (env("LISTEN_FDS")) {
-        Some(n) => { return false; },
-        None => { return true; }
+  if (!opts.reuse_port) {
+    return false;
+  }
+  match (env("LISTEN_FDS")) {
+    Some(n) => {
+      return false;
+    },
+    None => {
+      return true;
     }
-    return true;
+  }
+  return true;
 }
 
 // __worker_listener(port, listener, opts) — the listener a worker serves:
@@ -1628,10 +1911,14 @@ function __per_worker_listeners(opts: ServeOptions): boolean {
 // steered by CPU where the host can, which every socket of the group
 // then shares).
 function __worker_listener(port: i32, listener: i32, opts: ServeOptions): i32 {
-    if (listener >= 0) { return listener; }
-    var own: i32 = __serve_listener(port, opts);
-    if (own >= 0) { tcp_socket_ctl(own, 8, 0); }
-    return own;
+  if (listener >= 0) {
+    return listener;
+  }
+  var own: i32 = __serve_listener(port, opts);
+  if (own >= 0) {
+    tcp_socket_ctl(own, 8, 0);
+  }
+  return own;
 }
 
 // __Supervisor — the supervisor's workers (pids, and when each was
@@ -1645,7 +1932,7 @@ struct __Supervisor { pids: i32[], spawned: i64[], backoff_ms: i64, fork_after: 
 // `.gave_up()` — eight consecutive fast deaths: the supervisor exits with
 // the last one's code rather than spinning.
 function (s: __Supervisor) gave_up(): boolean {
-    return s.fast_deaths >= 8;
+  return s.fast_deaths >= 8;
 }
 
 // __supervisor_abandon(drv, sup) — the pool stopped after a give-up: the
@@ -1654,31 +1941,41 @@ function (s: __Supervisor) gave_up(): boolean {
 // up to five seconds for them to drain, then SIGKILL for the rest, every
 // one reaped before the supervisor returns.
 function __supervisor_abandon(drv: async.RealDriver, sup: __Supervisor): void {
-    var s: __Supervisor = __supervisor_stop(sup, 15);
-    var until: i64 = now_unix_ms() + (5000 as i64);
-    while (s.pids.len() > 0) {
-        var left: i64 = until - now_unix_ms();
-        if (left <= (0 as i64)) { break; }
-        drv.wait(8, left as i32);
-        s = __supervisor_reap(s);
+  var s: __Supervisor = __supervisor_stop(sup, 15);
+  var until: i64 = now_unix_ms() + 5000 as i64;
+  while (s.pids.len() > 0) {
+    var left: i64 = until - now_unix_ms();
+    if (left <= 0 as i64) {
+      break;
     }
-    for pid in s.pids {
-        match (signal_send(pid, 9)) { Ok(_) => { }, Err(_) => { } }
+    drv.wait(8, left as i32);
+    s = __supervisor_reap(s);
+  }
+  for pid in s.pids {
+    match (signal_send(pid, 9)) {
+      Ok(_) => {},
+      Err(_) => {}
     }
-    while (s.pids.len() > 0) {
-        drv.wait(8, 50);
-        s = __supervisor_reap(s);
-    }
+  }
+  while (s.pids.len() > 0) {
+    drv.wait(8, 50);
+    s = __supervisor_reap(s);
+  }
 }
 
 // __supervisor_stop(sup, sig) — the stop signal forwarded to every
 // worker, each of which drains and exits; nothing is forked again.
 function __supervisor_stop(sup: __Supervisor, sig: i32): __Supervisor {
-    if (sup.stopping) { return sup; }
-    for pid in sup.pids {
-        match (signal_send(pid, sig)) { Ok(_) => { }, Err(_) => { } }
+  if (sup.stopping) {
+    return sup;
+  }
+  for pid in sup.pids {
+    match (signal_send(pid, sig)) {
+      Ok(_) => {},
+      Err(_) => {}
     }
-    return __Supervisor { ...sup, stopping: true };
+  }
+  return __Supervisor { ...sup, stopping: true };
 }
 
 // __supervisor_reap(sup) — every worker that has exited reaped: a death
@@ -1688,56 +1985,66 @@ function __supervisor_stop(sup: __Supervisor, sig: i32): __Supervisor {
 // forks no replacement; a death after SIGTERM is the worker's shutdown,
 // and its code is the worst the shutdown answers.
 function __supervisor_reap(sup: __Supervisor): __Supervisor {
-    var i: i32 = 0;
-    while (i < sup.pids.len()) {
-        var code: i32 = proc_waitpid_nohang(sup.pids[i]);
-        if (code == 0 - 1) {
-            i = i + 1;
-            continue;
-        }
-        if (code < 0) { code = 0 - code; }
-        var lived_ms: i64 = now_unix_ms() - sup.spawned[i];
-        sup = __Supervisor { ...sup, pids: __without_index_i32(sup.pids, i), spawned: __without_index_i64(sup.spawned, i) };
-        if (sup.stopping) {
-            if (code > sup.worst) { sup = __Supervisor { ...sup, worst: code }; }
-            continue;
-        }
-        eprint("tcp_serve_supervised: worker died with exit code " + int.int_to_string(code) + "; restarting");
-        sup = __Supervisor { ...sup, crashed: code };
-        if (lived_ms < (100 as i64)) {
-            sup = __Supervisor { ...sup, fast_deaths: sup.fast_deaths + 1 };
-            if (sup.gave_up()) {
-                eprint("tcp_serve_supervised: giving up after 8 consecutive fast worker deaths");
-                return sup;
-            }
-        } else {
-            sup = __Supervisor { ...sup, fast_deaths: 0, backoff_ms: 100 as i64 };
-        }
-        var next: i64 = sup.backoff_ms * (2 as i64);
-        if (next > (5000 as i64)) { next = 5000 as i64; }
-        sup = __Supervisor { ...sup, fork_after: now_unix_ms() + sup.backoff_ms, backoff_ms: next };
+  var i: i32 = 0;
+  while (i < sup.pids.len()) {
+    var code: i32 = proc_waitpid_nohang(sup.pids[i]);
+    if (code == 0 - 1) {
+      i = i + 1;
+      continue;
     }
-    return sup;
+    if (code < 0) {
+      code = 0 - code;
+    }
+    var lived_ms: i64 = now_unix_ms() - sup.spawned[i];
+    sup = __Supervisor { ...sup, pids: __without_index_i32(sup.pids, i), spawned: __without_index_i64(sup.spawned, i) };
+    if (sup.stopping) {
+      if (code > sup.worst) {
+        sup = __Supervisor { ...sup, worst: code };
+      }
+      continue;
+    }
+    eprint("tcp_serve_supervised: worker died with exit code " + int.int_to_string(code) + "; restarting");
+    sup = __Supervisor { ...sup, crashed: code };
+    if (lived_ms < 100 as i64) {
+      sup = __Supervisor { ...sup, fast_deaths: sup.fast_deaths + 1 };
+      if (sup.gave_up()) {
+        eprint("tcp_serve_supervised: giving up after 8 consecutive fast worker deaths");
+        return sup;
+      }
+    } else {
+      sup = __Supervisor { ...sup, fast_deaths: 0, backoff_ms: 100 as i64 };
+    }
+    var next: i64 = sup.backoff_ms * (2 as i64);
+    if (next > 5000 as i64) {
+      next = 5000 as i64;
+    }
+    sup = __Supervisor { ...sup, fork_after: now_unix_ms() + sup.backoff_ms, backoff_ms: next };
+  }
+  return sup;
 }
 
 function __without_index_i32(xs: i32[], at: i32): i32[] {
-    var out: i32[] = [];
-    var i: i32 = 0;
-    while (i < xs.len()) {
-        if (i != at) { out = out.append(xs[i]); }
-        i = i + 1;
+  var out: i32[] = [];
+  var i: i32 = 0;
+  while (i < xs.len()) {
+    if (i != at) {
+      out = out.append(xs[i]);
     }
-    return out;
+    i = i + 1;
+  }
+  return out;
 }
 
 function __without_index_i64(xs: i64[], at: i32): i64[] {
-    var out: i64[] = [];
-    var i: i32 = 0;
-    while (i < xs.len()) {
-        if (i != at) { out = out.append(xs[i]); }
-        i = i + 1;
+  var out: i64[] = [];
+  var i: i32 = 0;
+  while (i < xs.len()) {
+    if (i != at) {
+      out = out.append(xs[i]);
     }
-    return out;
+    i = i + 1;
+  }
+  return out;
 }
 
 // Pull a port number out of an env var. Returns the parsed
@@ -1751,22 +2058,28 @@ function __without_index_i64(xs: i64[], at: i32): i64[] {
 // pull that module in just for a port number). The result is
 // bounded to a valid TCP port (0..65535), so i32 suffices.
 function __port_from_env(name: string, fallback: i32): i32 {
-    match (env(name)) {
-        Some(s) => {
-            var n: i32 = 0;
-            var i: i32 = 0;
-            while (i < s.len()) {
-                var b: i32 = s[i] as i32;
-                if (b < 48 || b > 57) { return fallback; }
-                n = n * 10 + (b - 48);
-                if (n > 65535) { return fallback; }
-                i = i + 1;
-            }
-            if (i == 0) { return fallback; }
-            return n;
-        },
-        None => {
-            return fallback;
+  match (env(name)) {
+    Some(s) => {
+      var n: i32 = 0;
+      var i: i32 = 0;
+      while (i < s.len()) {
+        var b: i32 = s[i] as i32;
+        if (b < 48 || b > 57) {
+          return fallback;
         }
+        n = n * 10 + (b - 48);
+        if (n > 65535) {
+          return fallback;
+        }
+        i = i + 1;
+      }
+      if (i == 0) {
+        return fallback;
+      }
+      return n;
+    },
+    None => {
+      return fallback;
     }
+  }
 }

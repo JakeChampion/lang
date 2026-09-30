@@ -408,13 +408,25 @@ func (l *lexer) skipTrivia() {
 				l.advance()
 			}
 			l.comments = append(l.comments, ast.Comment{
-				Pos:  start,
-				Text: l.src[textStart:l.i],
+				Pos:      start,
+				Text:     l.src[textStart:l.i],
+				Trailing: codeBefore(l.src, textStart-2),
 			})
 		default:
 			return
 		}
 	}
+}
+
+// codeBefore reports whether anything but whitespace precedes src[i] on its
+// line.
+func codeBefore(src string, i int) bool {
+	for j := i - 1; j >= 0 && src[j] != '\n'; j-- {
+		if !asciiSpace(rune(src[j])) {
+			return true
+		}
+	}
+	return false
 }
 
 func (l *lexer) next() (Token, error) {

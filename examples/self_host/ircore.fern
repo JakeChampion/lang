@@ -27,7 +27,6 @@
 // This module must stay backend-free: it imports the front end, the IR and the
 // lowering, never a backend. asm_ir/asm_arm64_ir/wasm_ir import it, so anything
 // added here that needs to emit an instruction belongs in the backend instead.
-
 import "./parser";
 import "./asmcore";
 import "./util";
@@ -38,47 +37,49 @@ import "./irverify";
 import "./ast";
 import "./astwalk";
 
-
 // is_array_type reports whether a type string denotes an array (ends "[]").
 function is_array_type(t: string): boolean {
-    var n: i32 = t.len();
-    if (n < 2) { return false; }
-    return slice_unchecked(t, n - 2, n) == "[]";
+  var n: i32 = t.len();
+  if (n < 2) {
+    return false;
+  }
+  return slice_unchecked(t, n - 2, n) == "[]";
 }
 
 // array_ret_fns collects the names of functions whose return type is an array,
 // so move-on-return / move-from-call fire (mirrors irlower.lower_module).
 pub function array_ret_fns(mod: parser.Module): string[] {
-    return array_ret_fns_of(mod.funcs);
+  return array_ret_fns_of(mod.funcs);
 }
 
 // array_ret_fns_of is array_ret_fns over an explicit funcs array, so it can be
 // derived over the WHOLE-PROGRAM function set (#3454) rather than one module's.
 pub function array_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
-    var out: string[] = [];
-    var i: i32 = 0;
-    while (i < funcs.len()) {
-        if (is_array_type(funcs[i].ret_type)) {
-            out = out.append(funcs[i].name);
-            // A receiver METHOD additionally gets a QUALIFIED
-            // "<BaseType>.<method>" entry, so an expression-position call
-            // (`h.get().len()`) can prove array-ness from the receiver's
-            // struct type rather than from a bare name any type could share.
-            // The bare entry stays for the existing consumers, and the
-            // qualified spelling never collides with a free-fn lookup (free
-            // names carry no '.'). Mirrors strarr_ret_fns_of.
-            if (funcs[i].receiver_type.len() > 0) {
-                out = out.append(util.base_type_name(funcs[i].receiver_type) + "." + funcs[i].name);
-            }
-        }
-        // A lifted if-/match-expression `__lam_` whose branch is an array literal
-        // carries a default i32 ret_type, so `var xs = if (c) { [..] } else { .. }`
-        // was mis-treated as a scalar. Register it (a fresh owned-array move, like
-        // any array-returning fn) so the binding tracks as an array (#3224).
-        else if (funcs[i].name.len() >= 6 && slice_unchecked(funcs[i].name, 0, 6) == "__lam_" && irlower.lam_leaf_array_elem(funcs[i], funcs, 0) != "") { out = out.append(funcs[i].name); }
-        i = i + 1;
+  var out: string[] = [];
+  var i: i32 = 0;
+  while (i < funcs.len()) {
+    if (is_array_type(funcs[i].ret_type)) {
+      out = out.append(funcs[i].name);
+      // A receiver METHOD additionally gets a QUALIFIED
+      // "<BaseType>.<method>" entry, so an expression-position call
+      // (`h.get().len()`) can prove array-ness from the receiver's
+      // struct type rather than from a bare name any type could share.
+      // The bare entry stays for the existing consumers, and the
+      // qualified spelling never collides with a free-fn lookup (free
+      // names carry no '.'). Mirrors strarr_ret_fns_of.
+      if (funcs[i].receiver_type.len() > 0) {
+        out = out.append(util.base_type_name(funcs[i].receiver_type) + "." + funcs[i].name);
+      }
+    } else if (funcs[i].name.len() >= 6 && slice_unchecked(funcs[i].name, 0, 6) == "__lam_" && irlower.lam_leaf_array_elem(funcs[i], funcs, 0) != "") {
+      // A lifted if-/match-expression `__lam_` whose branch is an array literal
+      // carries a default i32 ret_type, so `var xs = if (c) { [..] } else { .. }`
+      // was mis-treated as a scalar. Register it (a fresh owned-array move, like
+      // any array-returning fn) so the binding tracks as an array (#3224).
+      out = out.append(funcs[i].name);
     }
-    return out;
+    i = i + 1;
+  }
+  return out;
 }
 
 // is_fern_helper reports whether a call_direct callee is one of the IR
@@ -88,219 +89,219 @@ pub function array_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
 // is exact: any OTHER __fern_* / __rc_* call is NOT provided here, so
 // calls_only_known refuses the module rather than emitting a call with no body.
 pub function is_fern_helper(name: string): boolean {
-    return is_rc_helper(name)
-        || is_release_helper(name)
-        || is_map_release_helper(name)
-        || is_boxed_key_map_release_helper(name)
-        || is_text_helper(name)
-        // per-type field-level move tracking (#3457): __field_reclaim_<T> frees
-        // the REPLACED array-field buffers of the superseded old box (cow + snap
-        // guarded) before freeing the box. All three backends emit a real per-type
-        // body (x86 emit_ir_field_reclaims, arm64 emit_arm64_field_reclaim_one, wasm
-        // emit_wasm_field_reclaim_body).
-        || is_field_reclaim_name(name)
-        // per-type deep struct-drop (#3457): __struct_drop_<T> deep-drops the
-        // rc-array FIELDS of a reclaimable struct box at scope exit (a scalar
-        // field's buffer; a struct/enum-array field's elements + buffer; an acyclic
-        // nested-struct field, recursively). All three backends emit a real per-type
-        // body (x86 emit_ir_struct_drops, arm64 emit_arm64_struct_drop_one, wasm
-        // emit_wasm_struct_drop_body). The per-type helper replaces the former inline
-        // field-drop so the broad struct reclaim fits #3452.
-        || is_struct_drop_name(name)
-        // per-type struct-VALUE column walk of a reclaimable map:
-        // __map_vals_struct_drop_<T> releases each value box's own rc fields
-        // (through the backend's element walk over __struct_drop_<T>) before the
-        // map's one-dec column free takes the boxes.
-        || is_map_vals_struct_drop_name(name);
+  return is_rc_helper(name)
+    || is_release_helper(name)
+    || is_map_release_helper(name)
+    || is_boxed_key_map_release_helper(name)
+    || is_text_helper(name)
+    // per-type field-level move tracking (#3457): __field_reclaim_<T> frees
+    // the REPLACED array-field buffers of the superseded old box (cow + snap
+    // guarded) before freeing the box. All three backends emit a real per-type
+    // body (x86 emit_ir_field_reclaims, arm64 emit_arm64_field_reclaim_one, wasm
+    // emit_wasm_field_reclaim_body).
+    || is_field_reclaim_name(name)
+    // per-type deep struct-drop (#3457): __struct_drop_<T> deep-drops the
+    // rc-array FIELDS of a reclaimable struct box at scope exit (a scalar
+    // field's buffer; a struct/enum-array field's elements + buffer; an acyclic
+    // nested-struct field, recursively). All three backends emit a real per-type
+    // body (x86 emit_ir_struct_drops, arm64 emit_arm64_struct_drop_one, wasm
+    // emit_wasm_struct_drop_body). The per-type helper replaces the former inline
+    // field-drop so the broad struct reclaim fits #3452.
+    || is_struct_drop_name(name)
+    // per-type struct-VALUE column walk of a reclaimable map:
+    // __map_vals_struct_drop_<T> releases each value box's own rc fields
+    // (through the backend's element walk over __struct_drop_<T>) before the
+    // map's one-dec column free takes the boxes.
+    || is_map_vals_struct_drop_name(name);
 }
 
 // The count primitives and the element retain and reuse built on them.
 function is_rc_helper(name: string): boolean {
-    return name == "__fern_rc_inc"
-        || name == "__fern_rc_dec"
-        // #4873 grow-bracket share helpers: the backend-selectable rc touch
-        // around a surviving ident arg at a may-grow param position. Register
-        // backends alias them to the plain rc inc / rc-guarded arr dec (their
-        // arrays carry an rc header at base-4, and __fern_arr_push's
-        // uniqueness gate reads it); wasm_ir intercepts BOTH as no-ops — wasm
-        // arrays have no rc header ([len@0, cap@4, elems@8]), so an rc touch
-        // at base-4 would corrupt the neighbouring allocation.
-        || name == "__fern_arr_share_inc"
-        || name == "__fern_arr_share_dec"
-        || name == "__fern_rc_is_unique"
-        // element retain ahead of an un-share copy: one rc_inc per element of
-        // a pointer-element array, so the copy and the original both hold a
-        // count of each. Default ir_helper_symbol maps it to
-        // __fn___fern_arr_inc_elems; wasm_helper_symbol to $__fern_arr_inc_elems.
-        // Never user-callable — only the in-place field append / with emit it.
-        || name == "__fern_arr_inc_elems"
-        // The same over a copy whose elements may be string views: the copy
-        // takes a fresh box for each arena view it shares (register backends),
-        // and the element retain otherwise. Only ssarc's copy sites emit it.
-        || name == "__fern_arr_own_elems"
-        // FBIP reuse-degrade primitive (#4350): hands a dead donor's block back
-        // when its cap matches, else freelists it and allocs fresh — so a reuse
-        // site guarded by __fern_rc_is_unique degrades instead of corrupting.
-        // Never user-callable — only irlower's reuse emitters emit it.
-        || name == "__fern_alloc_reuse"
-        || name == "__fern_rc_underflow_get"
-        // snapshot-param consume-rebind reclaim (#3456 slice 2): frees the
-        // superseded old box (rc-guarded shallow free) unless it is `new` or the
-        // caller's snapshot; passes `new` back through. Body in emit_ir_runtime.
-        || name == "__fern_snapshot_dec"
-        || name == "__fern_mapiter_free";
+  return name == "__fern_rc_inc"
+    || name == "__fern_rc_dec"
+    // #4873 grow-bracket share helpers: the backend-selectable rc touch
+    // around a surviving ident arg at a may-grow param position. Register
+    // backends alias them to the plain rc inc / rc-guarded arr dec (their
+    // arrays carry an rc header at base-4, and __fern_arr_push's
+    // uniqueness gate reads it); wasm_ir intercepts BOTH as no-ops — wasm
+    // arrays have no rc header ([len@0, cap@4, elems@8]), so an rc touch
+    // at base-4 would corrupt the neighbouring allocation.
+    || name == "__fern_arr_share_inc"
+    || name == "__fern_arr_share_dec"
+    || name == "__fern_rc_is_unique"
+    // element retain ahead of an un-share copy: one rc_inc per element of
+    // a pointer-element array, so the copy and the original both hold a
+    // count of each. Default ir_helper_symbol maps it to
+    // __fn___fern_arr_inc_elems; wasm_helper_symbol to $__fern_arr_inc_elems.
+    // Never user-callable — only the in-place field append / with emit it.
+    || name == "__fern_arr_inc_elems"
+    // The same over a copy whose elements may be string views: the copy
+    // takes a fresh box for each arena view it shares (register backends),
+    // and the element retain otherwise. Only ssarc's copy sites emit it.
+    || name == "__fern_arr_own_elems"
+    // FBIP reuse-degrade primitive (#4350): hands a dead donor's block back
+    // when its cap matches, else freelists it and allocs fresh — so a reuse
+    // site guarded by __fern_rc_is_unique degrades instead of corrupting.
+    // Never user-callable — only irlower's reuse emitters emit it.
+    || name == "__fern_alloc_reuse"
+    || name == "__fern_rc_underflow_get"
+    // snapshot-param consume-rebind reclaim (#3456 slice 2): frees the
+    // superseded old box (rc-guarded shallow free) unless it is `new` or the
+    // caller's snapshot; passes `new` back through. Body in emit_ir_runtime.
+    || name == "__fern_snapshot_dec"
+    || name == "__fern_mapiter_free";
 }
 
 // The releases of strings and nested arrays.
 function is_release_helper(name: string): boolean {
-    // string RC reclaim (#2649): frees a fresh, non-escaping heap string's
-    // data buffer + 16-byte box. Default ir_helper_symbol maps it to
-    // __fn___fern_str_free; body in emit_ir_runtime. Never user-callable —
-    // only the irlower reclaim sites emit the call.
-    return name == "__fern_str_free"
-        // string VIEW reclaim (#6544): __fern_str_free plus the one case it
-        // must skip — a `s[a:b]` box, which carries the immortal rc sentinel
-        // because its bytes belong to the source. At a site that has proved the
-        // view is dead this returns the 24-byte box alone to the freelist.
-        // Default ir_helper_symbol maps it to __fn___fern_str_view_free; wasm
-        // routes it to $__fern_arr_dec (its slices copy, so there is no view
-        // box). Never user-callable — only the irlower reclaim sites emit it.
-        || name == "__fern_str_view_free"
-        // string[] ELEMENT reclaim (#4355): the element-walking sibling of the
-        // shallow array dec — at rc==1 it __fern_str_free's every element box,
-        // then frees the buffer; rc>1 decs; rc<0 (immortal) skips; rc==0 ticks
-        // the underflow detector. Default ir_helper_symbol maps it to
-        // __fn___fern_str_arr_free (body in emit_ir_runtime); wasm_helper_symbol
-        // routes it to $__fern_arr_dec_ptr (the wasm AST path's pointer-element
-        // walk — wasm strings are single inline rc-headered blocks, so the plain
-        // per-element $__fern_arr_dec IS the wasm string free). Never
-        // user-callable — only the irlower exit sweep emits it.
-        || name == "__fern_str_arr_free"
-        // arr-of-arr reclaim (#4355 slice 9): __fern_arrarr_free walks a fresh
-        // arr-of-arr's elements (each a scalar-element inner buffer, one
-        // rc-guarded __fern_arr_dec apiece) then frees the outer buffer;
-        // __fern_strarrarr_free is the string[][] sibling (each element a
-        // string[] released fully by __fern_str_arr_free). Only the irlower
-        // exit sweep / rebind emits them.
-        || name == "__fern_arrarr_free"
-        || name == "__fern_strarrarr_free"
-        || name == "__fern_optarrarr_free";
+  // string RC reclaim (#2649): frees a fresh, non-escaping heap string's
+  // data buffer + 16-byte box. Default ir_helper_symbol maps it to
+  // __fn___fern_str_free; body in emit_ir_runtime. Never user-callable —
+  // only the irlower reclaim sites emit the call.
+  return name == "__fern_str_free"
+    // string VIEW reclaim (#6544): __fern_str_free plus the one case it
+    // must skip — a `s[a:b]` box, which carries the immortal rc sentinel
+    // because its bytes belong to the source. At a site that has proved the
+    // view is dead this returns the 24-byte box alone to the freelist.
+    // Default ir_helper_symbol maps it to __fn___fern_str_view_free; wasm
+    // routes it to $__fern_arr_dec (its slices copy, so there is no view
+    // box). Never user-callable — only the irlower reclaim sites emit it.
+    || name == "__fern_str_view_free"
+    // string[] ELEMENT reclaim (#4355): the element-walking sibling of the
+    // shallow array dec — at rc==1 it __fern_str_free's every element box,
+    // then frees the buffer; rc>1 decs; rc<0 (immortal) skips; rc==0 ticks
+    // the underflow detector. Default ir_helper_symbol maps it to
+    // __fn___fern_str_arr_free (body in emit_ir_runtime); wasm_helper_symbol
+    // routes it to $__fern_arr_dec_ptr (the wasm AST path's pointer-element
+    // walk — wasm strings are single inline rc-headered blocks, so the plain
+    // per-element $__fern_arr_dec IS the wasm string free). Never
+    // user-callable — only the irlower exit sweep emits it.
+    || name == "__fern_str_arr_free"
+    // arr-of-arr reclaim (#4355 slice 9): __fern_arrarr_free walks a fresh
+    // arr-of-arr's elements (each a scalar-element inner buffer, one
+    // rc-guarded __fern_arr_dec apiece) then frees the outer buffer;
+    // __fern_strarrarr_free is the string[][] sibling (each element a
+    // string[] released fully by __fern_str_arr_free). Only the irlower
+    // exit sweep / rebind emits them.
+    || name == "__fern_arrarr_free"
+    || name == "__fern_strarrarr_free"
+    || name == "__fern_optarrarr_free";
 }
 
 // The map releases whose key column is an integer or a string.
 function is_map_release_helper(name: string): boolean {
-    // map reclaim (Perceus map-local slice): frees a fresh, non-escaping map
-    // local's keys + values buffers AND the raw 16-byte mapbox. Default
-    // ir_helper_symbol maps it to __fn___fern_map_free; wasm_helper_symbol
-    // routes it to $__fern_map_release (which additionally deep-drops string
-    // K/V). Never user-callable — only irlower's emit_map_buffers_free emits it.
-    return name == "__fern_map_free"
-        // #4353: string-VALUE-column deep-release variant — frees the vals
-        // column via __fern_str_arr_free (each fresh value box + the buffer)
-        // instead of the shallow arr_dec; keys still shallow. Register-only;
-        // wasm_helper_symbol routes it to the already-deep $__fern_map_release.
-        || name == "__fern_map_free_vs"
-        // #4353: the KEY-column and both-column deep-release variants (siblings of
-        // _vs; free the keys column, resp. both, via __fern_str_arr_free).
-        || name == "__fern_map_free_ks"
-        || name == "__fern_map_free_kvs"
-        // #4353 item 3: the BOX-value-column variants — free the vals column via
-        // __fern_arrarr_free (one rc-guarded dec per element box) for a
-        // scalar-element array or all-scalar struct column, keys shallow resp.
-        // string-deep.
-        || name == "__fern_map_free_va"
-        || name == "__fern_map_free_ksva"
-        || name == "__fern_map_free_vsa"
-        || name == "__fern_map_free_ksvsa"
-        // The column-of-boxes pair (box, release): the runtime walks the value
-        // column calling the release the semantic lowering names for the
-        // value type. wasm_helper_symbol routes both to $__fern_map_release_vf.
-        || name == "__fern_map_free_vf"
-        || name == "__fern_map_free_ksvf";
+  // map reclaim (Perceus map-local slice): frees a fresh, non-escaping map
+  // local's keys + values buffers AND the raw 16-byte mapbox. Default
+  // ir_helper_symbol maps it to __fn___fern_map_free; wasm_helper_symbol
+  // routes it to $__fern_map_release (which additionally deep-drops string
+  // K/V). Never user-callable — only irlower's emit_map_buffers_free emits it.
+  return name == "__fern_map_free"
+    // #4353: string-VALUE-column deep-release variant — frees the vals
+    // column via __fern_str_arr_free (each fresh value box + the buffer)
+    // instead of the shallow arr_dec; keys still shallow. Register-only;
+    // wasm_helper_symbol routes it to the already-deep $__fern_map_release.
+    || name == "__fern_map_free_vs"
+    // #4353: the KEY-column and both-column deep-release variants (siblings of
+    // _vs; free the keys column, resp. both, via __fern_str_arr_free).
+    || name == "__fern_map_free_ks"
+    || name == "__fern_map_free_kvs"
+    // #4353 item 3: the BOX-value-column variants — free the vals column via
+    // __fern_arrarr_free (one rc-guarded dec per element box) for a
+    // scalar-element array or all-scalar struct column, keys shallow resp.
+    // string-deep.
+    || name == "__fern_map_free_va"
+    || name == "__fern_map_free_ksva"
+    || name == "__fern_map_free_vsa"
+    || name == "__fern_map_free_ksvsa"
+    // The column-of-boxes pair (box, release): the runtime walks the value
+    // column calling the release the semantic lowering names for the
+    // value type. wasm_helper_symbol routes both to $__fern_map_release_vf.
+    || name == "__fern_map_free_vf"
+    || name == "__fern_map_free_ksvf";
 }
 
 // The map releases whose key column holds boxes.
 function is_boxed_key_map_release_helper(name: string): boolean {
-    // #9966: the BOX-KEY siblings — the key column freed via
-    // __fern_arrarr_free for an all-scalar struct or enum key, the value
-    // column as its own suffix says.
-    return name == "__fern_map_free_ka"
-        || name == "__fern_map_free_kavs"
-        || name == "__fern_map_free_kava"
-        || name == "__fern_map_free_kavsa"
-        // The keyed-column members (#9962): (box, key release), and for a
-        // column of boxes beside it (box, key release, value release).
-        || name == "__fern_map_free_kf"
-        || name == "__fern_map_free_kfvs"
-        || name == "__fern_map_free_kfvsa"
-        || name == "__fern_map_free_kfvf";
+  // #9966: the BOX-KEY siblings — the key column freed via
+  // __fern_arrarr_free for an all-scalar struct or enum key, the value
+  // column as its own suffix says.
+  return name == "__fern_map_free_ka"
+    || name == "__fern_map_free_kavs"
+    || name == "__fern_map_free_kava"
+    || name == "__fern_map_free_kavsa"
+    // The keyed-column members (#9962): (box, key release), and for a
+    // column of boxes beside it (box, key release, value release).
+    || name == "__fern_map_free_kf"
+    || name == "__fern_map_free_kfvs"
+    || name == "__fern_map_free_kfvsa"
+    || name == "__fern_map_free_kfvf";
 }
 
 // The map key search and the helpers that convert to and from text.
 function is_text_helper(name: string): boolean {
-    // the map runtime's shared key search (#2649): walk the keys array,
-    // return the hit's index or -1. Default ir_helper_symbol maps it to
-    // __fn___fern_map_find; body from asmcore.rt_src_map_find, gated on the
-    // "maps" need. Its only caller in Fern is __fern_map_delete — the
-    // hand-asm map_set / map_get / map_has reach it by symbol.
-    return name == "__fern_map_find"
-        // i32.to_string()'s decimal-text helper (emit_ir_runtime provides the
-        // stack-arg body under __fn___fern_i32_to_string).
-        || name == "__fern_i32_to_string"
-        // u32.to_string()'s UNSIGNED decimal-text helper (#2649). Emitted as a
-        // Fern runtime fn under __fn___fern_u32_to_string; the ir_helper_symbol
-        // default (__fn_ + name) targets it. Heap-dep.
-        || name == "__fern_u32_to_string"
-        // wide-int stringifiers (#5826): the i64/u64 siblings, backed by
-        // asmcore.rt_src_i64_to_string / rt_src_u64_to_string via
-        // emit_ir_runtime_fern_fn, exactly as the 32-bit pair is.
-        || name == "__fern_i64_to_string"
-        || name == "__fern_u64_to_string"
-        // chr(n)'s 1-char-string-box helper (stack-arg body under
-        // __fn___fern_chr; allocates, so it needs the heap runtime).
-        || name == "__fern_chr"
-        // xs.join(sep)'s array-of-strings concatenator (#5328): a real Fern
-        // runtime function (asmcore.rt_src_arr_str_join) that fills one
-        // exact-size block, so the heap is its only runtime dep. Body under
-        // __fn___fern_arr_str_join,
-        // emitted in each native backend's runtime block. Only
-        // irlower's lower_arr_str_join emits the call. wasm emits a matching
-        // $__fern_arr_str_join shim over the hand-written $__fern_str_join WAT
-        // (wasm.arr_str_join_helper).
-        || name == "__fern_arr_str_join";
+  // the map runtime's shared key search (#2649): walk the keys array,
+  // return the hit's index or -1. Default ir_helper_symbol maps it to
+  // __fn___fern_map_find; body from asmcore.rt_src_map_find, gated on the
+  // "maps" need. Its only caller in Fern is __fern_map_delete — the
+  // hand-asm map_set / map_get / map_has reach it by symbol.
+  return name == "__fern_map_find"
+    // i32.to_string()'s decimal-text helper (emit_ir_runtime provides the
+    // stack-arg body under __fn___fern_i32_to_string).
+    || name == "__fern_i32_to_string"
+    // u32.to_string()'s UNSIGNED decimal-text helper (#2649). Emitted as a
+    // Fern runtime fn under __fn___fern_u32_to_string; the ir_helper_symbol
+    // default (__fn_ + name) targets it. Heap-dep.
+    || name == "__fern_u32_to_string"
+    // wide-int stringifiers (#5826): the i64/u64 siblings, backed by
+    // asmcore.rt_src_i64_to_string / rt_src_u64_to_string via
+    // emit_ir_runtime_fern_fn, exactly as the 32-bit pair is.
+    || name == "__fern_i64_to_string"
+    || name == "__fern_u64_to_string"
+    // chr(n)'s 1-char-string-box helper (stack-arg body under
+    // __fn___fern_chr; allocates, so it needs the heap runtime).
+    || name == "__fern_chr"
+    // xs.join(sep)'s array-of-strings concatenator (#5328): a real Fern
+    // runtime function (asmcore.rt_src_arr_str_join) that fills one
+    // exact-size block, so the heap is its only runtime dep. Body under
+    // __fn___fern_arr_str_join,
+    // emitted in each native backend's runtime block. Only
+    // irlower's lower_arr_str_join emits the call. wasm emits a matching
+    // $__fern_arr_str_join shim over the hand-written $__fern_str_join WAT
+    // (wasm.arr_str_join_helper).
+    || name == "__fern_arr_str_join";
 }
 
 // is_struct_drop_name reports whether a call_direct callee is a per-type
 // __struct_drop_<T> helper (the suffix is the struct type name).
 pub function is_struct_drop_name(name: string): boolean {
-    return name.len() > 14 && slice_unchecked(name, 0, 14) == "__struct_drop_";
+  return name.len() > 14 && slice_unchecked(name, 0, 14) == "__struct_drop_";
 }
 
 // struct_drop_type returns the struct type T from a "__struct_drop_<T>" name.
 pub function struct_drop_type(name: string): string {
-    return slice_unchecked(name, 14, name.len()) + "";
+  return slice_unchecked(name, 14, name.len()) + "";
 }
 
 // is_map_vals_struct_drop_name reports whether a call_direct callee is a
 // per-type __map_vals_struct_drop_<T> helper (the suffix is the value struct).
 pub function is_map_vals_struct_drop_name(name: string): boolean {
-    return name.len() > 23 && slice_unchecked(name, 0, 23) == "__map_vals_struct_drop_";
+  return name.len() > 23 && slice_unchecked(name, 0, 23) == "__map_vals_struct_drop_";
 }
 
 // map_vals_struct_drop_type returns T from a "__map_vals_struct_drop_<T>" name.
 pub function map_vals_struct_drop_type(name: string): string {
-    return slice_unchecked(name, 23, name.len()) + "";
+  return slice_unchecked(name, 23, name.len()) + "";
 }
 
 // is_field_reclaim_name reports whether a call_direct callee is a per-type
 // __field_reclaim_<T> helper (the suffix is the struct type name).
 pub function is_field_reclaim_name(name: string): boolean {
-    return name.len() > 16 && slice_unchecked(name, 0, 16) == "__field_reclaim_";
+  return name.len() > 16 && slice_unchecked(name, 0, 16) == "__field_reclaim_";
 }
 
 // field_reclaim_type returns the struct type T from a "__field_reclaim_<T>" name.
 pub function field_reclaim_type(name: string): string {
-    return slice_unchecked(name, 16, name.len()) + "";
+  return slice_unchecked(name, 16, name.len()) + "";
 }
 
 // is_c_call reports whether a call_direct callee is an FFI shim of the
@@ -313,24 +314,38 @@ pub function field_reclaim_type(name: string): string {
 // no C-ABI, so wasm_ir_deferrals_ok subtracts the family (native parity: native
 // wasm has no __c_call either).
 pub function is_c_call(name: string): boolean {
-    if (name.len() < 9) { return false; }
-    if (slice_unchecked(name, 0, 8) != "__c_call") { return false; }
-    var d: str = slice_unchecked(name, 8, 9);
-    if (d != "0" && d != "1" && d != "2" && d != "3" && d != "4") { return false; }
-    var rest: str = slice_unchecked(name, 9, name.len());
-    return rest == "" || rest == "_f32" || rest == "_f64";
+  if (name.len() < 9) {
+    return false;
+  }
+  if (slice_unchecked(name, 0, 8) != "__c_call") {
+    return false;
+  }
+  var d: str = slice_unchecked(name, 8, 9);
+  if (d != "0" && d != "1" && d != "2" && d != "3" && d != "4") {
+    return false;
+  }
+  var rest: str = slice_unchecked(name, 9, name.len());
+  return rest == "" || rest == "_f32" || rest == "_f64";
 }
 
 // c_call_arity returns the integer-arg count n (0..4) of a `__c_call<n>...`
 // callee name (the digit at index 8). The shim body depends only on n, not on
 // the return-type suffix.
 pub function c_call_arity(name: string): i32 {
-    var d: str = slice_unchecked(name, 8, 9);
-    if (d == "1") { return 1; }
-    if (d == "2") { return 2; }
-    if (d == "3") { return 3; }
-    if (d == "4") { return 4; }
-    return 0;
+  var d: str = slice_unchecked(name, 8, 9);
+  if (d == "1") {
+    return 1;
+  }
+  if (d == "2") {
+    return 2;
+  }
+  if (d == "3") {
+    return 3;
+  }
+  if (d == "4") {
+    return 4;
+  }
+  return 0;
 }
 
 // ir_helper_symbol maps an IR runtime-helper name to the stack-arg-ABI symbol
@@ -338,27 +353,45 @@ pub function c_call_arity(name: string): i32 {
 // maps to __fn___fern_arr_dec — the array release that frees at rc==1 via the
 // size-class freelist.
 pub function ir_helper_symbol(name: string): string {
-    if (name == "__fern_rc_inc") { return "__fn___fern_rc_inc"; }
-    if (name == "__fern_rc_dec") { return "__fn___fern_arr_dec"; }
-    // A map cursor is a two-slot array box that owns nothing; wasm's also owns
-    // its snapshots and has a release of its own.
-    if (name == "__fern_mapiter_free") { return "__fn___fern_arr_dec"; }
-    // #4873 grow-bracket share helpers: same runtime symbols as the plain rc
-    // pair on the register backends (zero new runtime); the distinct NAMES let
-    // each backend pick its own pair (wasm_ir maps them to $__fern_rc_inc /
-    // $__fern_arr_dec on its rc-headered arrays).
-    if (name == "__fern_arr_share_inc") { return "__fn___fern_rc_inc"; }
-    if (name == "__fern_arr_share_dec") { return "__fn___fern_arr_dec"; }
-    if (name == "__fern_rc_is_unique") { return "__fn___fern_rc_is_unique"; }
-    if (name == "__fern_rc_underflow_get") { return "__fn___fern_rc_underflow_count"; }
-    // __field_reclaim_<T> -> __fn___field_reclaim_<sanitized T> (#3457). Sanitised
-    // so a monomorphised / bracketed type name yields a valid asm label, matching
-    // the body label emit_ir_field_reclaims writes.
-    if (is_field_reclaim_name(name)) { return "__fn___field_reclaim_" + asmcore.sanitize_label(field_reclaim_type(name)); }
-    // __struct_drop_<T> -> __fn___struct_drop_<sanitized T> (#3457), matching the
-    // body label emit_ir_struct_drops writes.
-    if (is_struct_drop_name(name)) { return "__fn___struct_drop_" + asmcore.sanitize_label(struct_drop_type(name)); }
-    return "__fn_" + name;
+  if (name == "__fern_rc_inc") {
+    return "__fn___fern_rc_inc";
+  }
+  if (name == "__fern_rc_dec") {
+    return "__fn___fern_arr_dec";
+  }
+  // A map cursor is a two-slot array box that owns nothing; wasm's also owns
+  // its snapshots and has a release of its own.
+  if (name == "__fern_mapiter_free") {
+    return "__fn___fern_arr_dec";
+  }
+  // #4873 grow-bracket share helpers: same runtime symbols as the plain rc
+  // pair on the register backends (zero new runtime); the distinct NAMES let
+  // each backend pick its own pair (wasm_ir maps them to $__fern_rc_inc /
+  // $__fern_arr_dec on its rc-headered arrays).
+  if (name == "__fern_arr_share_inc") {
+    return "__fn___fern_rc_inc";
+  }
+  if (name == "__fern_arr_share_dec") {
+    return "__fn___fern_arr_dec";
+  }
+  if (name == "__fern_rc_is_unique") {
+    return "__fn___fern_rc_is_unique";
+  }
+  if (name == "__fern_rc_underflow_get") {
+    return "__fn___fern_rc_underflow_count";
+  }
+  // __field_reclaim_<T> -> __fn___field_reclaim_<sanitized T> (#3457). Sanitised
+  // so a monomorphised / bracketed type name yields a valid asm label, matching
+  // the body label emit_ir_field_reclaims writes.
+  if (is_field_reclaim_name(name)) {
+    return "__fn___field_reclaim_" + asmcore.sanitize_label(field_reclaim_type(name));
+  }
+  // __struct_drop_<T> -> __fn___struct_drop_<sanitized T> (#3457), matching the
+  // body label emit_ir_struct_drops writes.
+  if (is_struct_drop_name(name)) {
+    return "__fn___struct_drop_" + asmcore.sanitize_label(struct_drop_type(name));
+  }
+  return "__fn_" + name;
 }
 
 // all_eligible reports whether every function in the module is IR-eligible
@@ -375,8 +408,8 @@ pub function ir_helper_symbol(name: string): string {
 // the wasm backend lowers them (a funcref table). all_eligible adds the
 // register-backend restriction on top (they don't emit the closure ops yet).
 pub function eligible_core(mod: parser.Module): boolean {
-    var none: string[] = [];
-    return eligible_core_known(mod, none);
+  var none: string[] = [];
+  return eligible_core_known(mod, none);
 }
 
 // eligible_core_known is eligible_core threaded with the program-wide
@@ -391,7 +424,7 @@ pub function eligible_core(mod: parser.Module): boolean {
 // cross-module call is already local in the merged module), so the merged path
 // is byte-for-byte unchanged.
 pub function eligible_core_known(mod: parser.Module, known: string[]): boolean {
-    return eligible_core_known_impl(mod, known);
+  return eligible_core_known_impl(mod, known);
 }
 
 // all_eligible_lib_known is the per-module LIBRARY eligibility check (#3456): a
@@ -403,7 +436,7 @@ pub function eligible_core_known(mod: parser.Module, known: string[]): boolean {
 // per-module call sites read better for it, and because "is this unit a library?"
 // may well need to mean something again.
 pub function all_eligible_lib_known(mod: parser.Module, known: string[]): boolean {
-    return eligible_core_known_impl(mod, known);
+  return eligible_core_known_impl(mod, known);
 }
 
 // eligible_core_known_impl is the shared body. It used to take a `require_main`
@@ -413,53 +446,54 @@ pub function all_eligible_lib_known(mod: parser.Module, known: string[]): boolea
 // callers want the same answer. The flag and its two `has_main` checks are
 // deleted rather than left inert (#3457 slice 5).
 pub function eligible_core_known_impl(mod: parser.Module, known: string[]): boolean {
-    var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
-    // A function-less module is eligible, as in all_eligible_view_base:
-    // emit_module_ir_unit's `_start` exits 0 when there is no main, so a
-    // types-only unit lowers to the preamble and that stub.
-    //
-    // The 512-function module-size budget is GONE (#3457). It existed because
-    // emit_module_ir's per-function ir.Op lists grow past the runtime's 2048 B
-    // "large" freelist tier, and that tier did not recycle — so a merged
-    // ~1000-function bundle leaked enough to push the bump heap into exit-137
-    // (#3425). Its own comment said "until the native large-tier freelist is
-    // fixed"; that is done (ported to the self-host runtime, x86 #5609 / arm64
-    // #5614, with the per-module fixpoint green), so the precondition is met.
-    //
-    // Removing it is not just cleanup. Since #5972 deleted the AST emitters the
-    // budget stopped being a FALLBACK and became a HARD LIMIT: a >512-function
-    // whole-program module was simply uncompilable on the register backends
-    // ("module is not IR-eligible; the AST emitter is no longer reachable"). It
-    // is also the last thing keeping the merged whole-compiler bundle off the IR
-    // path, which is what the wasm AST emitter's retirement needs.
-    // Per-function eligibility lowers fd ONCE and runs all three checks (body
-    // lowers / calls-only-known / const-funcs-only-known) on that single
-    // LowerResult, rather than re-lowering it three times (the body check +
-    // calls_only_known + const_funcs_only_known each lowered independently). On a
-    // large all-eligible module the per-function `LowerResult.ops` is retained
-    // (the native catch-all dec only decrements, never frees — #3425), so three
-    // lowerings per function held ~3x the ops; this single pass + emit_module_ir's
-    // own pass keeps the eligibility-check + emit live set to ~2x instead of ~4x.
-    // Derived ONCE here and threaded into every func_eligible. Deriving them per
-    // call (as calling lower_func_for would) makes this loop O(n^2): on the
-    // large self-host modules that quadratic allocation churned the bump heap
-    // hard enough to corrupt it, crashing the self-host-emitted compiler during
-    // its OWN eligibility pass (#3425). Once is byte-identical, at O(n).
-    var sg: irlower.FnSigs = irlower.fn_sigs_without_ownership(
-        irlower.fn_sigs_of(mod.funcs, stab, array_ret_fns(mod)));
-    var freg: irlower.SigReg = module_func_reg(mod);
-    var i: i32 = 0;
-    while (i < mod.funcs.len()) {
-        if (!func_eligible(mod.funcs[i], mod, stab, known, sg, freg)) {
-            if (strict_ir_on()) {
-                strict_ir_refuse(mod.funcs[i].name
-                    + func_ineligible_reason(mod.funcs[i], mod, stab, known, sg, freg));
-            }
-            return false;
-        }
-        i = i + 1;
+  var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
+  // A function-less module is eligible, as in all_eligible_view_base:
+  // emit_module_ir_unit's `_start` exits 0 when there is no main, so a
+  // types-only unit lowers to the preamble and that stub.
+  //
+  // The 512-function module-size budget is GONE (#3457). It existed because
+  // emit_module_ir's per-function ir.Op lists grow past the runtime's 2048 B
+  // "large" freelist tier, and that tier did not recycle — so a merged
+  // ~1000-function bundle leaked enough to push the bump heap into exit-137
+  // (#3425). Its own comment said "until the native large-tier freelist is
+  // fixed"; that is done (ported to the self-host runtime, x86 #5609 / arm64
+  // #5614, with the per-module fixpoint green), so the precondition is met.
+  //
+  // Removing it is not just cleanup. Since #5972 deleted the AST emitters the
+  // budget stopped being a FALLBACK and became a HARD LIMIT: a >512-function
+  // whole-program module was simply uncompilable on the register backends
+  // ("module is not IR-eligible; the AST emitter is no longer reachable"). It
+  // is also the last thing keeping the merged whole-compiler bundle off the IR
+  // path, which is what the wasm AST emitter's retirement needs.
+  // Per-function eligibility lowers fd ONCE and runs all three checks (body
+  // lowers / calls-only-known / const-funcs-only-known) on that single
+  // LowerResult, rather than re-lowering it three times (the body check +
+  // calls_only_known + const_funcs_only_known each lowered independently). On a
+  // large all-eligible module the per-function `LowerResult.ops` is retained
+  // (the native catch-all dec only decrements, never frees — #3425), so three
+  // lowerings per function held ~3x the ops; this single pass + emit_module_ir's
+  // own pass keeps the eligibility-check + emit live set to ~2x instead of ~4x.
+  // Derived ONCE here and threaded into every func_eligible. Deriving them per
+  // call (as calling lower_func_for would) makes this loop O(n^2): on the
+  // large self-host modules that quadratic allocation churned the bump heap
+  // hard enough to corrupt it, crashing the self-host-emitted compiler during
+  // its OWN eligibility pass (#3425). Once is byte-identical, at O(n).
+  var sg: irlower.FnSigs = irlower.fn_sigs_without_ownership(
+    irlower.fn_sigs_of(mod.funcs, stab, array_ret_fns(mod)),
+  );
+  var freg: irlower.SigReg = module_func_reg(mod);
+  var i: i32 = 0;
+  while (i < mod.funcs.len()) {
+    if (!func_eligible(mod.funcs[i], mod, stab, known, sg, freg)) {
+      if (strict_ir_on()) {
+        strict_ir_refuse(mod.funcs[i].name
+          + func_ineligible_reason(mod.funcs[i], mod, stab, known, sg, freg));
+      }
+      return false;
     }
-    return true;
+    i = i + 1;
+  }
+  return true;
 }
 
 // strict_ir_on reports whether FERN_STRICT_IR is set (#5646). A bail refuses the
@@ -470,20 +504,28 @@ pub function eligible_core_known_impl(mod: parser.Module, known: string[]): bool
 // unlowerable operator in a match scrutinee bailed its enclosing function and
 // surfaced as 46 failing subtests reading like several unrelated bugs.
 pub function strict_ir_on(): boolean {
-    match (env("FERN_STRICT_IR")) {
-        Some(_) => { return true; },
-        None => { return false; }
+  match (env("FERN_STRICT_IR")) {
+    Some(_) => {
+      return true;
+    },
+    None => {
+      return false;
     }
+  }
 }
 
 // ssa_report_on reports whether FERN_SSA_REPORT asks for a line on stderr per
 // function whose lift or emit took over 200 ms. Nothing about the emitted
 // program changes with it.
 pub function ssa_report_on(): boolean {
-    match (env("FERN_SSA_REPORT")) {
-        Some(v) => { return v.len() > 0; },
-        None => { return false; }
+  match (env("FERN_SSA_REPORT")) {
+    Some(v) => {
+      return v.len() > 0;
+    },
+    None => {
+      return false;
     }
+  }
 }
 
 // ssa_refuse reports a function the register path cannot emit, and exits.
@@ -492,9 +534,9 @@ pub function ssa_report_on(): boolean {
 // native ISAs, so this is a compiler bug naming its site, never a program the
 // backend does not cover.
 pub function ssa_refuse(name: string, why: string): i32 {
-    eprint("error: internal: " + name + " did not lift to SSA: " + why + " — the register path is the only native emitter and every op the lowering produces must reach it\n");
-    exit(3);
-    return 0;
+  eprint("error: internal: " + name + " did not lift to SSA: " + why + " — the register path is the only native emitter and every op the lowering produces must reach it\n");
+  exit(3);
+  return 0;
 }
 
 // flat_arm_missing reports an op the register path bridged onto the machine
@@ -502,25 +544,25 @@ pub function ssa_refuse(name: string, why: string): i32 {
 // bridges any op with a known stack effect, so a new op kind whose pop count
 // ir.op_pops models lands here until its arm is written.
 pub function flat_arm_missing(o: ir.Op): i32 {
-    eprint("error: internal: no stack-machine arm for op " + ir.kind_name(o.kind_tag) + " — the register path bridges it through emit_stack_op, which has no arm for it\n");
-    exit(3);
-    return 0;
+  eprint("error: internal: no stack-machine arm for op " + ir.kind_name(o.kind_tag) + " — the register path bridges it through emit_stack_op, which has no arm for it\n");
+  exit(3);
+  return 0;
 }
 
 // strict_ir_refuse reports an IR bail as a hard error and exits. Called only when
 // strict_ir_on(); `what` names the function (or module-level gate) that bailed.
 pub function strict_ir_refuse(what: string): i32 {
-    eprint("FERN_STRICT_IR: " + what + " — the IR path bailed here; strict mode reports the bail site rather than a whole-module refusal (#5646)\n");
-    exit(3);
-    return 0;
+  eprint("FERN_STRICT_IR: " + what + " — the IR path bailed here; strict mode reports the bail site rather than a whole-module refusal (#5646)\n");
+  exit(3);
+  return 0;
 }
 
 // ssa_block_id_collision reports an SSA lift that returned two blocks carrying
 // one id, and exits (#9688).
 pub function ssa_block_id_collision(name: string, id: i32): i32 {
-    eprint("error: internal: the SSA lift returned block " + util.i32_to_string(id) + " twice in " + name + " — one `.Lssa_` label would be written twice; this is a compiler bug (#9688)\n");
-    exit(3);
-    return 0;
+  eprint("error: internal: the SSA lift returned block " + util.i32_to_string(id) + " twice in " + name + " — one `.Lssa_` label would be written twice; this is a compiler bug (#9688)\n");
+  exit(3);
+  return 0;
 }
 
 // all_eligible_view_base is the PER-MODULE eligibility gate (#3451 — retiring
@@ -540,7 +582,7 @@ pub function ssa_block_id_collision(name: string, id: i32): i32 {
 // The entry unit and a library unit take the same gate: a main-less module is
 // eligible, because the entry emitter's `_start` exits 0 when there is no main.
 pub function all_eligible_view_base(mod: parser.Module, known: string[], all_structs: irlower.StructTab, base: irlower.FnSigs): boolean {
-    return all_eligible_view_base_range(mod, known, all_structs, base, 0, mod.funcs.len());
+  return all_eligible_view_base_range(mod, known, all_structs, base, 0, mod.funcs.len());
 }
 
 // all_eligible_view_base_range is all_eligible_view_base over the functions
@@ -548,34 +590,38 @@ pub function all_eligible_view_base(mod: parser.Module, known: string[], all_str
 // pre-check lowers its own window rather than the whole module once per
 // process. hi < 0 (or past the end) means to the module end.
 pub function all_eligible_view_base_range(mod: parser.Module, known: string[], all_structs: irlower.StructTab, base: irlower.FnSigs, lo: i32, hi: i32): boolean {
-    // A function-less module is eligible: a types-only module (ast.fern) has
-    // nothing that could fail to lower, and its unit is the preamble alone.
-    // No 512-function size budget here: a per-module unit is a SINGLE module
-    // (the largest, irlower, is ~350 funcs), so the merged-bundle OOM the budget
-    // guards against (eligible_core_known_impl) can't arise — each module is
-    // emitted in its own process, holding only its own ops live.
-    var sg: irlower.FnSigs = irlower.FnSigs {
-        ...irlower.fn_sigs_without_ownership(base),
-        // These two stay scoped to THIS module rather than the whole program.
-        fn_names: irlower.sig_reg_of(irlower.fn_names_of(mod.funcs)),
-        closurearr_ret_fns: irlower.closurearr_ret_fns_of(mod.funcs),
-    };
-    var freg: irlower.SigReg = module_func_reg(mod);
-    var end: i32 = hi;
-    if (end < 0 || end > mod.funcs.len()) { end = mod.funcs.len(); }
-    var i: i32 = lo;
-    if (i < 0) { i = 0; }
-    while (i < end) {
-        if (!func_eligible(mod.funcs[i], mod, all_structs, known, sg, freg)) {
-            if (strict_ir_on()) {
-                strict_ir_refuse(mod.funcs[i].name
-                    + func_ineligible_reason(mod.funcs[i], mod, all_structs, known, sg, freg));
-            }
-            return false;
-        }
-        i = i + 1;
+  // A function-less module is eligible: a types-only module (ast.fern) has
+  // nothing that could fail to lower, and its unit is the preamble alone.
+  // No 512-function size budget here: a per-module unit is a SINGLE module
+  // (the largest, irlower, is ~350 funcs), so the merged-bundle OOM the budget
+  // guards against (eligible_core_known_impl) can't arise — each module is
+  // emitted in its own process, holding only its own ops live.
+  var sg: irlower.FnSigs = irlower.FnSigs {
+    ...irlower.fn_sigs_without_ownership(base),
+    // These two stay scoped to THIS module rather than the whole program.
+    fn_names: irlower.sig_reg_of(irlower.fn_names_of(mod.funcs)),
+    closurearr_ret_fns: irlower.closurearr_ret_fns_of(mod.funcs),
+  };
+  var freg: irlower.SigReg = module_func_reg(mod);
+  var end: i32 = hi;
+  if (end < 0 || end > mod.funcs.len()) {
+    end = mod.funcs.len();
+  }
+  var i: i32 = lo;
+  if (i < 0) {
+    i = 0;
+  }
+  while (i < end) {
+    if (!func_eligible(mod.funcs[i], mod, all_structs, known, sg, freg)) {
+      if (strict_ir_on()) {
+        strict_ir_refuse(mod.funcs[i].name
+          + func_ineligible_reason(mod.funcs[i], mod, all_structs, known, sg, freg));
+      }
+      return false;
     }
-    return true;
+    i = i + 1;
+  }
+  return true;
 }
 
 // known_includes reports whether `name` is in the program-wide known-symbol
@@ -585,12 +631,14 @@ pub function all_eligible_view_base_range(mod: parser.Module, known: string[], a
 // target is a sibling module's `__fn_*` symbol (resolved at link) while still
 // bailing on a truly-unknown / builtin-only name.
 pub function known_includes(known: string[], name: string): boolean {
-    var i: i32 = 0;
-    while (i < known.len()) {
-        if (known[i] == name) { return true; }
-        i = i + 1;
+  var i: i32 = 0;
+  while (i < known.len()) {
+    if (known[i] == name) {
+      return true;
     }
-    return false;
+    i = i + 1;
+  }
+  return false;
 }
 
 // func_eligible is eligible_core's per-function check, folded into ONE lowering:
@@ -609,26 +657,32 @@ pub function known_includes(known: string[], name: string): boolean {
 // emit_module_ir_gated — needed 8.5 GB to compile an empty main importing
 // std/array, against x86's 1.5 GB.
 function func_eligible(fd: parser.FuncDecl, mod: parser.Module, sview: irlower.StructTab, known: string[], sg: irlower.FnSigs, freg: irlower.SigReg): boolean {
-    // lower_func with the hoisted side-tables (the same set lower_func_for would
-    // derive, but computed once by eligible_core — see the hoist note there).
-    // `sview` is the struct-decl view lowering resolves field layouts against:
-    // the module's own structs for the merged/whole-program path, the WHOLE-
-    // PROGRAM struct union for a per-module unit (so a function touching an
-    // imported struct's layout lowers in the gate exactly as it does in
-    // emit_module_funcs, which already lowers against all_structs).
-    var r: irlower.LowerResult = irlower.lower_func(fd, sview, sg, false);
-    if (!r.ok) { return false; }
-    var i: i32 = 0;
-    while (i < r.ops.len()) {
-        var o: ir.Op = r.ops[i];
-        if (o.kind_tag == 149) {  // call_direct
-            if (!is_fern_helper(o.str) && !is_c_call(o.str) && !module_has_func(freg, o.str) && !known_includes(known, o.str)) { return false; }
-        } else if (o.kind_tag == 6) {  // const_func
-            if (!module_has_func(freg, o.str) && !known_includes(known, o.str)) { return false; }
-        }
-        i = i + 1;
+  // lower_func with the hoisted side-tables (the same set lower_func_for would
+  // derive, but computed once by eligible_core — see the hoist note there).
+  // `sview` is the struct-decl view lowering resolves field layouts against:
+  // the module's own structs for the merged/whole-program path, the WHOLE-
+  // PROGRAM struct union for a per-module unit (so a function touching an
+  // imported struct's layout lowers in the gate exactly as it does in
+  // emit_module_funcs, which already lowers against all_structs).
+  var r: irlower.LowerResult = irlower.lower_func(fd, sview, sg, false);
+  if (!r.ok) {
+    return false;
+  }
+  var i: i32 = 0;
+  while (i < r.ops.len()) {
+    var o: ir.Op = r.ops[i];
+    if (o.kind_tag == 149) {  // call_direct
+      if (!is_fern_helper(o.str) && !is_c_call(o.str) && !module_has_func(freg, o.str) && !known_includes(known, o.str)) {
+        return false;
+      }
+    } else if (o.kind_tag == 6) {  // const_func
+      if (!module_has_func(freg, o.str) && !known_includes(known, o.str)) {
+        return false;
+      }
     }
-    return true;
+    i = i + 1;
+  }
+  return true;
 }
 
 // func_ineligible_reason re-runs func_eligible's checks and names WHICH one
@@ -651,23 +705,25 @@ function func_eligible(fd: parser.FuncDecl, mod: parser.Module, sview: irlower.S
 // normal path — which is why func_eligible itself stays a plain boolean and
 // this duplicates its shape rather than the two sharing a richer return.
 function func_ineligible_reason(fd: parser.FuncDecl, mod: parser.Module, sview: irlower.StructTab, known: string[], sg: irlower.FnSigs, freg: irlower.SigReg): string {
-    var r: irlower.LowerResult = irlower.lower_func(fd, sview, sg, false);
-    if (!r.ok) { return " (did not lower: " + r.why + ")"; }
-    var i: i32 = 0;
-    while (i < r.ops.len()) {
-        var o: ir.Op = r.ops[i];
-        if (o.kind_tag == 149) {  // call_direct
-            if (!is_fern_helper(o.str) && !is_c_call(o.str) && !module_has_func(freg, o.str) && !known_includes(known, o.str)) {
-                return " (body lowered, but calls unknown symbol \"" + o.str + "\")";
-            }
-        } else if (o.kind_tag == 6) {  // const_func
-            if (!module_has_func(freg, o.str) && !known_includes(known, o.str)) {
-                return " (body lowered, but references unknown function value \"" + o.str + "\")";
-            }
-        }
-        i = i + 1;
+  var r: irlower.LowerResult = irlower.lower_func(fd, sview, sg, false);
+  if (!r.ok) {
+    return " (did not lower: " + r.why + ")";
+  }
+  var i: i32 = 0;
+  while (i < r.ops.len()) {
+    var o: ir.Op = r.ops[i];
+    if (o.kind_tag == 149) {  // call_direct
+      if (!is_fern_helper(o.str) && !is_c_call(o.str) && !module_has_func(freg, o.str) && !known_includes(known, o.str)) {
+        return " (body lowered, but calls unknown symbol \"" + o.str + "\")";
+      }
+    } else if (o.kind_tag == 6) {  // const_func
+      if (!module_has_func(freg, o.str) && !known_includes(known, o.str)) {
+        return " (body lowered, but references unknown function value \"" + o.str + "\")";
+      }
     }
-    return "";
+    i = i + 1;
+  }
+  return "";
 }
 
 // all_eligible is the module eligibility gate for every backend now: it is
@@ -676,7 +732,7 @@ function func_ineligible_reason(fd: parser.FuncDecl, mod: parser.Module, sview: 
 // the function's code address (no table needed). (Capturing lambdas are a later
 // slice and still bail via lower_func.)
 pub function all_eligible(mod: parser.Module): boolean {
-    return eligible_core(mod);
+  return eligible_core(mod);
 }
 
 // all_eligible_known is all_eligible with the program-wide known-symbol set
@@ -686,7 +742,7 @@ pub function all_eligible(mod: parser.Module): boolean {
 // all_eligible would bail it. An empty `known` is identical to
 // all_eligible.
 pub function all_eligible_known(mod: parser.Module, known: string[]): boolean {
-    return eligible_core_known(mod, known);
+  return eligible_core_known(mod, known);
 }
 
 // eligibility_report returns a per-function IR-eligibility breakdown for `mod`:
@@ -704,8 +760,8 @@ pub function all_eligible_known(mod: parser.Module, known: string[]): boolean {
 // IR subset (goal 1) can see WHICH function, and which category, keeps a module
 // off the IR path, and prove a construct moved onto it.
 pub function eligibility_report(mod: parser.Module): string {
-    var none: string[] = [];
-    return eligibility_report_known(mod, none);
+  var none: string[] = [];
+  return eligibility_report_known(mod, none);
 }
 
 // eligibility_report_known is eligibility_report with the program-wide
@@ -714,44 +770,54 @@ pub function eligibility_report(mod: parser.Module): string {
 // instead of `BAIL call` / `BAIL const_func`, and the module verdict reflects
 // all_eligible_known. An empty `known` reproduces eligibility_report exactly.
 pub function eligibility_report_known(mod: parser.Module, known: string[]): string {
-    var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
-    var out: string = "";
-    var freg: irlower.SigReg = module_func_reg(mod);
-    var sga: irlower.FnSigs = irlower.fn_sigs_of(mod.funcs, stab, array_ret_fns(mod));
-    var sgn: irlower.FnSigs = irlower.fn_sigs_of(mod.funcs, stab, irlower.array_ret_fn_names(mod.funcs));
-    var i: i32 = 0;
-    while (i < mod.funcs.len()) {
-        out = out + eligibility_line(mod.funcs[i], mod, known, stab, freg, sga, sgn);
-        i = i + 1;
-    }
-    var verdict: string = "module: refused";
-    if (all_eligible_known(mod, known)) { verdict = "module: IR"; }
-    return out + verdict + "\n";
+  var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
+  var out: string = "";
+  var freg: irlower.SigReg = module_func_reg(mod);
+  var sga: irlower.FnSigs = irlower.fn_sigs_of(mod.funcs, stab, array_ret_fns(mod));
+  var sgn: irlower.FnSigs = irlower.fn_sigs_of(mod.funcs, stab, irlower.array_ret_fn_names(mod.funcs));
+  var i: i32 = 0;
+  while (i < mod.funcs.len()) {
+    out = out + eligibility_line(mod.funcs[i], mod, known, stab, freg, sga, sgn);
+    i = i + 1;
+  }
+  var verdict: string = "module: refused";
+  if (all_eligible_known(mod, known)) {
+    verdict = "module: IR";
+  }
+  return out + verdict + "\n";
 }
 
 // eligibility_line is the single-function verdict line ("<name>: ir\n" or
 // "<name>: BAIL <reasons>\n") shared by eligibility_report and its sharded
 // twin. A receiver method is reported as "<Type>.<method>".
 function eligibility_line(fd: parser.FuncDecl, mod: parser.Module, known: string[], stab: irlower.StructTab, freg: irlower.SigReg, sga: irlower.FnSigs, sgn: irlower.FnSigs): string {
-    var name: string = fd.name;
-    if (fd.receiver_type.len() > 0) { name = util.base_type_name(fd.receiver_type) + "." + fd.name; }
-    // Lowered with the SAME registries emit_function_via_ir (and the wasm
-    // emit_function_ir) use, so "eligible" means exactly "lowers". The array and
-    // string return registries matter for ok/bail, not just op selection: `var a
-    // = mk()` is tracked as an array only when `mk` is in arr_ret_fns, and a
-    // later `for x in a` bails when its slot is not array-typed. An empty
-    // registry here would under-approximate and refuse modules that do lower.
-    var lower_ok: boolean = irlower.lower_func(fd, stab, sga, false).ok;
-    var calls_ok: boolean = calls_only_known(fd, mod, known, stab, freg, sgn);
-    var cfns_ok: boolean = const_funcs_only_known(fd, mod, known, stab, freg, sgn);
-    if (lower_ok && calls_ok && cfns_ok) {
-        return name + ": ir\n";
-    }
-    var reasons: string = "";
-    if (!lower_ok) { reasons = reasons + " lower"; }
-    if (!calls_ok) { reasons = reasons + " call"; }
-    if (!cfns_ok) { reasons = reasons + " const_func"; }
-    return name + ": BAIL" + reasons + "\n";
+  var name: string = fd.name;
+  if (fd.receiver_type.len() > 0) {
+    name = util.base_type_name(fd.receiver_type) + "." + fd.name;
+  }
+  // Lowered with the SAME registries emit_function_via_ir (and the wasm
+  // emit_function_ir) use, so "eligible" means exactly "lowers". The array and
+  // string return registries matter for ok/bail, not just op selection: `var a
+  // = mk()` is tracked as an array only when `mk` is in arr_ret_fns, and a
+  // later `for x in a` bails when its slot is not array-typed. An empty
+  // registry here would under-approximate and refuse modules that do lower.
+  var lower_ok: boolean = irlower.lower_func(fd, stab, sga, false).ok;
+  var calls_ok: boolean = calls_only_known(fd, mod, known, stab, freg, sgn);
+  var cfns_ok: boolean = const_funcs_only_known(fd, mod, known, stab, freg, sgn);
+  if (lower_ok && calls_ok && cfns_ok) {
+    return name + ": ir\n";
+  }
+  var reasons: string = "";
+  if (!lower_ok) {
+    reasons = reasons + " lower";
+  }
+  if (!calls_ok) {
+    reasons = reasons + " call";
+  }
+  if (!cfns_ok) {
+    reasons = reasons + " const_func";
+  }
+  return name + ": BAIL" + reasons + "\n";
 }
 
 // eligibility_report_range is the sharded form of eligibility_report: it reports
@@ -766,23 +832,29 @@ function eligibility_line(fd: parser.FuncDecl, mod: parser.Module, known: string
 // past the end yields just that header (or nothing); count <= 0 reports to the
 // module end.
 pub function eligibility_report_range(mod: parser.Module, start: i32, count: i32): string {
-    var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
-    var out: string = "";
-    if (start <= 0) { out = "funcs: " + util.i32_to_string(mod.funcs.len()) + "\n"; }
-    var lo: i32 = start;
-    if (lo < 0) { lo = 0; }
-    var hi: i32 = mod.funcs.len();
-    if (count > 0 && lo + count < hi) { hi = lo + count; }
-    var i: i32 = lo;
-    var none: string[] = [];
-    var freg: irlower.SigReg = module_func_reg(mod);
-    var sga: irlower.FnSigs = irlower.fn_sigs_of(mod.funcs, stab, array_ret_fns(mod));
-    var sgn: irlower.FnSigs = irlower.fn_sigs_of(mod.funcs, stab, irlower.array_ret_fn_names(mod.funcs));
-    while (i < hi) {
-        out = out + eligibility_line(mod.funcs[i], mod, none, stab, freg, sga, sgn);
-        i = i + 1;
-    }
-    return out;
+  var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
+  var out: string = "";
+  if (start <= 0) {
+    out = "funcs: " + util.i32_to_string(mod.funcs.len()) + "\n";
+  }
+  var lo: i32 = start;
+  if (lo < 0) {
+    lo = 0;
+  }
+  var hi: i32 = mod.funcs.len();
+  if (count > 0 && lo + count < hi) {
+    hi = lo + count;
+  }
+  var i: i32 = lo;
+  var none: string[] = [];
+  var freg: irlower.SigReg = module_func_reg(mod);
+  var sga: irlower.FnSigs = irlower.fn_sigs_of(mod.funcs, stab, array_ret_fns(mod));
+  var sgn: irlower.FnSigs = irlower.fn_sigs_of(mod.funcs, stab, irlower.array_ret_fn_names(mod.funcs));
+  while (i < hi) {
+    out = out + eligibility_line(mod.funcs[i], mod, none, stab, freg, sga, sgn);
+    i = i + 1;
+  }
+  return out;
 }
 
 // const_funcs_only_known reports whether every function-value reference
@@ -790,13 +862,15 @@ pub function eligibility_report_range(mod: parser.Module, start: i32, count: i32
 // twin of calls_only_known. A const_func to an unknown name can't resolve to a
 // funcref table slot, so such modules bail.
 function const_funcs_only_known(fd: parser.FuncDecl, mod: parser.Module, known: string[], stab: irlower.StructTab, freg: irlower.SigReg, sgn: irlower.FnSigs): boolean {
-    var r: irlower.LowerResult = irlower.lower_func(fd, stab, sgn, false);
-    var i: i32 = 0;
-    while (i < r.ops.len()) {
-        if (r.ops[i].kind_tag == 6 && !module_has_func(freg, r.ops[i].str) && !known_includes(known, r.ops[i].str)) { return false; }  // const_func
-        i = i + 1;
+  var r: irlower.LowerResult = irlower.lower_func(fd, stab, sgn, false);
+  var i: i32 = 0;
+  while (i < r.ops.len()) {
+    if (r.ops[i].kind_tag == 6 && !module_has_func(freg, r.ops[i].str) && !known_includes(known, r.ops[i].str)) {  // const_func
+      return false;
     }
-    return true;
+    i = i + 1;
+  }
+  return true;
 }
 
 // module_func_reg indexes every name module_has_func answers to: each function's
@@ -809,34 +883,36 @@ function const_funcs_only_known(fd: parser.FuncDecl, mod: parser.Module, known: 
 // the scan this replaces built one per RECEIVER FUNCTION on every query, and
 // discarded all but the match.
 pub function module_func_reg(mod: parser.Module): irlower.SigReg {
-    var rows: string[] = [];
-    for fd in mod.funcs {
-        rows = rows.append(fd.name);
-        if (fd.receiver_type.len() > 0) {
-            rows = rows.append(util.base_type_name(fd.receiver_type) + "." + fd.name);
-        }
+  var rows: string[] = [];
+  for fd in mod.funcs {
+    rows = rows.append(fd.name);
+    if (fd.receiver_type.len() > 0) {
+      rows = rows.append(util.base_type_name(fd.receiver_type) + "." + fd.name);
     }
-    return irlower.sig_reg_of(rows);
+  }
+  return irlower.sig_reg_of(rows);
 }
 
 // module_has_func reports whether `name` is a function defined in the module.
 pub function module_has_func(freg: irlower.SigReg, name: string): boolean {
-    return irlower.sig_reg_has_exact(freg, name);
+  return irlower.sig_reg_has_exact(freg, name);
 }
 
 // calls_only_known reports whether every direct call in fd targets a module
 // function or an IR runtime helper (not a builtin).
 function calls_only_known(fd: parser.FuncDecl, mod: parser.Module, known: string[], stab: irlower.StructTab, freg: irlower.SigReg, sgn: irlower.FnSigs): boolean {
-    var r: irlower.LowerResult = irlower.lower_func(fd, stab, sgn, false);
-    var i: i32 = 0;
-    while (i < r.ops.len()) {
-        var o: ir.Op = r.ops[i];
-        if (o.kind_tag == 149) {  // call_direct
-            if (!is_fern_helper(o.str) && !is_c_call(o.str) && !module_has_func(freg, o.str) && !known_includes(known, o.str)) { return false; }
-        }
-        i = i + 1;
+  var r: irlower.LowerResult = irlower.lower_func(fd, stab, sgn, false);
+  var i: i32 = 0;
+  while (i < r.ops.len()) {
+    var o: ir.Op = r.ops[i];
+    if (o.kind_tag == 149) {  // call_direct
+      if (!is_fern_helper(o.str) && !is_c_call(o.str) && !module_has_func(freg, o.str) && !known_includes(known, o.str)) {
+        return false;
+      }
     }
-    return true;
+    i = i + 1;
+  }
+  return true;
 }
 
 // ---- compare-and-branch fusion --------------------------------------------
@@ -848,27 +924,42 @@ function calls_only_known(fd: parser.FuncDecl, mod: parser.Module, known: string
 // each backend); which mnemonic comes out is the backend's (#4378, #8194).
 // These two classify the comparisons that fuse and turn one round when its
 // operands swap.
-
 // is_int_cmp_kind reports whether `id` is an integer comparison — eq, ne and
 // the signed/unsigned orderings. Float compares are excluded: NaN breaks the
 // negation identity (`!(a < b)` is not `a >= b` when either operand is NaN), so
 // their 0/1 materialisation stays.
 pub function is_int_cmp_kind(id: i32): boolean {
-    return id >= 35 && id <= 44;  // eq, ne, lt_s..ge_s, lt_u..ge_u
+  return id >= 35 && id <= 44;  // eq, ne, lt_s..ge_s, lt_u..ge_u
 }
 
 // flip_int_cmp_kind is the same comparison with its operands the other way
 // round; eq, ne and a non-comparison are their own flip.
 pub function flip_int_cmp_kind(id: i32): i32 {
-    if (id == 37) { return 39; }
-    if (id == 39) { return 37; }
-    if (id == 38) { return 40; }
-    if (id == 40) { return 38; }
-    if (id == 41) { return 43; }
-    if (id == 43) { return 41; }
-    if (id == 42) { return 44; }
-    if (id == 44) { return 42; }
-    return id;
+  if (id == 37) {
+    return 39;
+  }
+  if (id == 39) {
+    return 37;
+  }
+  if (id == 38) {
+    return 40;
+  }
+  if (id == 40) {
+    return 38;
+  }
+  if (id == 41) {
+    return 43;
+  }
+  if (id == 43) {
+    return 41;
+  }
+  if (id == 42) {
+    return 44;
+  }
+  if (id == 44) {
+    return 42;
+  }
+  return id;
 }
 
 // lift_lambdas re-exports irlower's lambda-lift pre-pass so the dispatch sites
@@ -918,11 +1009,11 @@ pub function flip_int_cmp_kind(id: i32): i32 {
 // answers a different type than it takes, so `__arrm_map__f64` alone does not
 // say the result is f64. The lambda's own signature is what settles that.
 pub function scale_f64_maps_module(mod: parser.Module): parser.Module {
-    var out: parser.FuncDecl[] = [];
-    for fd in mod.funcs {
-        out = out.append(parser.FuncDecl { ...fd, body: astwalk.map_stmts(fd.body, scale_map_call) });
-    }
-    return parser.Module { ...mod, funcs: out };
+  var out: parser.FuncDecl[] = [];
+  for fd in mod.funcs {
+    out = out.append(parser.FuncDecl { ...fd, body: astwalk.map_stmts(fd.body, scale_map_call) });
+  }
+  return parser.Module { ...mod, funcs: out };
 }
 
 // Every shape test below is spelled `if let` rather than `match`, and that is
@@ -932,7 +1023,6 @@ pub function scale_f64_maps_module(mod: parser.Module): parser.Module {
 // reason. This pass discriminates ONE shape at each step and has nothing to
 // say about the rest, which is what `if let` spells without an arm at all, so
 // it adds none.
-
 // ScaleFactor is scale_lambda_factor's answer: the factor expression as the
 // author wrote it, and whether the lambda was the one shape that has one.
 struct ScaleFactor { ok: boolean, k: ast.Expr }
@@ -941,20 +1031,28 @@ struct ScaleFactor { ok: boolean, k: ast.Expr }
 // astwalk.map_expr has already rewritten the children, so a chained
 // `xs.map(f).map(g)` has its inner call rewritten when the outer one is seen.
 function scale_map_call(e: ast.Expr): ast.Expr {
-    if let ast.ExprCall(c) = e {
-        if (c.args.len() != 2) { return e; }
-        if let ast.ExprIdent(id) = c.callee {
-            if (!util.str_has_prefix(id.name, "__arrm_map__")) { return e; }
-            if let ast.ExprLambda(lm) = c.args[1] {
-                var got: ScaleFactor = scale_lambda_factor(lm);
-                if (!got.ok) { return e; }
-                return ast.ExprCall { ...c, type_args: [],
-                    callee: ast.ExprIdent { name: "__scale_f64", line: id.line, col: id.col, ty: "" },
-                    args: [c.args[0], got.k] };
-            }
-        }
+  if let ast.ExprCall(c) = e {
+    if (c.args.len() != 2) {
+      return e;
     }
-    return e;
+    if let ast.ExprIdent(id) = c.callee {
+      if (!util.str_has_prefix(id.name, "__arrm_map__")) {
+        return e;
+      }
+      if let ast.ExprLambda(lm) = c.args[1] {
+        var got: ScaleFactor = scale_lambda_factor(lm);
+        if (!got.ok) {
+          return e;
+        }
+        return ast.ExprCall {
+          ...c, type_args: [],
+          callee: ast.ExprIdent { name: "__scale_f64", line: id.line, col: id.col, ty: "" },
+          args: [c.args[0], got.k],
+        };
+      }
+    }
+  }
+  return e;
 }
 
 // scale_lambda_factor reads `x * K` out of the lambda and answers K.
@@ -971,42 +1069,56 @@ function scale_map_call(e: ast.Expr): ast.Expr {
 // wants its own change, because moving it out of the lambda moves WHERE it is
 // evaluated, which is only sound for an expression that cannot observe when.
 function scale_lambda_factor(lm: ast.ExprLambda): ScaleFactor {
-    var no: ScaleFactor = ScaleFactor { ok: false, k: ast.ExprUnknown { kind: "", line: 0, col: 0 } };
-    if (lm.params.len() != 1) { return no; }
-    if (lm.params[0].type_name != "f64" || lm.ret_type != "f64") { return no; }
-    if (lm.body.len() != 1) { return no; }
-    if let ast.StmtReturn(r) = lm.body[0] {
-        if let ast.ExprBinary(b) = r.value {
-            if (b.op != "*") { return no; }
-            if (scale_is_param(b.left, lm.params[0].name) && scale_is_f64_literal(b.right)) {
-                return ScaleFactor { ok: true, k: b.right };
-            }
-            if (scale_is_param(b.right, lm.params[0].name) && scale_is_f64_literal(b.left)) {
-                return ScaleFactor { ok: true, k: b.left };
-            }
-        }
-    }
+  var no: ScaleFactor = ScaleFactor { ok: false, k: ast.ExprUnknown { kind: "", line: 0, col: 0 } };
+  if (lm.params.len() != 1) {
     return no;
+  }
+  if (lm.params[0].type_name != "f64" || lm.ret_type != "f64") {
+    return no;
+  }
+  if (lm.body.len() != 1) {
+    return no;
+  }
+  if let ast.StmtReturn(r) = lm.body[0] {
+    if let ast.ExprBinary(b) = r.value {
+      if (b.op != "*") {
+        return no;
+      }
+      if (scale_is_param(b.left, lm.params[0].name) && scale_is_f64_literal(b.right)) {
+        return ScaleFactor { ok: true, k: b.right };
+      }
+      if (scale_is_param(b.right, lm.params[0].name) && scale_is_f64_literal(b.left)) {
+        return ScaleFactor { ok: true, k: b.left };
+      }
+    }
+  }
+  return no;
 }
 
 // scale_is_param reports whether `e` reads the lambda's one parameter.
 function scale_is_param(e: ast.Expr, name: string): boolean {
-    if let ast.ExprIdent(id) = e { return id.name == name; }
-    return false;
+  if let ast.ExprIdent(id) = e {
+    return id.name == name;
+  }
+  return false;
 }
 
 // scale_is_f64_literal reports whether `e` is a float literal, or one negated.
 function scale_is_f64_literal(e: ast.Expr): boolean {
-    if let ast.ExprNumber(n) = e { return n.is_float; }
-    if let ast.ExprUnary(u) = e {
-        if (u.op != "-") { return false; }
-        return scale_is_f64_literal(u.operand);
+  if let ast.ExprNumber(n) = e {
+    return n.is_float;
+  }
+  if let ast.ExprUnary(u) = e {
+    if (u.op != "-") {
+      return false;
     }
-    return false;
+    return scale_is_f64_literal(u.operand);
+  }
+  return false;
 }
 
 pub function lift_lambdas(mod: parser.Module): parser.Module {
-    return lift_lambdas_view(mod, []);
+  return lift_lambdas_view(mod, []);
 }
 
 // lift_lambdas_view threads a whole-program signature view into the lift pass —
@@ -1016,30 +1128,30 @@ pub function lift_lambdas(mod: parser.Module): parser.Module {
 // A per-module route reaches it through lift_lambdas_parts below rather than
 // building the view itself.
 pub function lift_lambdas_view(mod: parser.Module, view: parser.FuncDecl[]): parser.Module {
-    // The scale kernel runs BEFORE the lift, which is the whole reason it can
-    // be this simple: a recognized element function is still a lambda here,
-    // so its body is in hand and nothing has to be looked up by name.
-    //
-    // This reaches the NATIVE / asm routes only, and the limit is structural
-    // rather than an omission. Those call this after module_with_builtins, so
-    // the module arrives monomorphised and the map is the free call the pass
-    // matches. The wasm route does neither: wasm_ir.lift_lambdas goes straight
-    // to irlower, bypassing this function, and it lifts BEFORE monomorphising
-    // (wasm_ir_run.fern lifts at 80 and monomorphises at 107). So hooking the
-    // wasm funnel would not help either -- pre-mono there is no
-    // `__arrm_map__<elem>` call to recognise. Giving wasm the kernel means
-    // running this pass post-mono on that route, which is its own change.
-    return with_builtin_enums(irlower.lift_lambdas_view(scale_f64_maps_module(mod), view));
+  // The scale kernel runs BEFORE the lift, which is the whole reason it can
+  // be this simple: a recognized element function is still a lambda here,
+  // so its body is in hand and nothing has to be looked up by name.
+  //
+  // This reaches the NATIVE / asm routes only, and the limit is structural
+  // rather than an omission. Those call this after module_with_builtins, so
+  // the module arrives monomorphised and the map is the free call the pass
+  // matches. The wasm route does neither: wasm_ir.lift_lambdas goes straight
+  // to irlower, bypassing this function, and it lifts BEFORE monomorphising
+  // (wasm_ir_run.fern lifts at 80 and monomorphises at 107). So hooking the
+  // wasm funnel would not help either -- pre-mono there is no
+  // `__arrm_map__<elem>` call to recognise. Giving wasm the kernel means
+  // running this pass post-mono on that route, which is its own change.
+  return with_builtin_enums(irlower.lift_lambdas_view(scale_f64_maps_module(mod), view));
 }
 
 // lift_lambdas_typed is lift_lambdas for the typed lowering, which keeps each
 // `str` as a view.
 pub function lift_lambdas_typed(mod: parser.Module): parser.Module {
-    return with_builtin_enums(irlower.lift_lambdas_typed(scale_f64_maps_module(mod)));
+  return with_builtin_enums(irlower.lift_lambdas_typed(scale_f64_maps_module(mod)));
 }
 
 function with_builtin_enums(lifted: parser.Module): parser.Module {
-    return parser.Module { funcs: lifted.funcs, structs: parser.inject_builtin_enums(lifted.structs), aliases: lifted.aliases, imports: lifted.imports, top_stmts: lifted.top_stmts, enums: lifted.enums, resources: lifted.resources, exports: lifted.exports, impls: lifted.impls, trait_reqs: lifted.trait_reqs, trait_decls: lifted.trait_decls, inferred_consts: lifted.inferred_consts };
+  return parser.Module { funcs: lifted.funcs, structs: parser.inject_builtin_enums(lifted.structs), aliases: lifted.aliases, imports: lifted.imports, top_stmts: lifted.top_stmts, enums: lifted.enums, resources: lifted.resources, exports: lifted.exports, impls: lifted.impls, trait_reqs: lifted.trait_reqs, trait_decls: lifted.trait_decls, inferred_consts: lifted.inferred_consts };
 }
 
 // lift_lambdas_parts lifts and return-type-infers every module of a PER-MODULE
@@ -1050,15 +1162,15 @@ function with_builtin_enums(lifted: parser.Module): parser.Module {
 // unboxed and lowering then names a `<fd>$clo` the lift never hoisted — an
 // undefined symbol at link (#5698, #7215).
 pub function lift_lambdas_parts(mods: parser.Module[]): parser.Module[] {
-    mods = irlower.prepare_lambda_parts(mods);
-    var view: parser.FuncDecl[] = irlower.module_sig_view(mods);
-    var out: parser.Module[] = [];
-    var i: i32 = 0;
-    while (i < mods.len()) {
-        out = out.append(parser.infer_ret_types_module(lift_lambdas_view(mods[i], view)));
-        i = i + 1;
-    }
-    return out;
+  mods = irlower.prepare_lambda_parts(mods);
+  var view: parser.FuncDecl[] = irlower.module_sig_view(mods);
+  var out: parser.Module[] = [];
+  var i: i32 = 0;
+  while (i < mods.len()) {
+    out = out.append(parser.infer_ret_types_module(lift_lambdas_view(mods[i], view)));
+    i = i + 1;
+  }
+  return out;
 }
 
 // all_runtime_need_roots is the closed set of runtime-need ROOT names — every
@@ -1087,81 +1199,81 @@ pub function lift_lambdas_parts(mods: parser.Module[]): parser.Module[] {
 // an undefined `__fern_x` — caught immediately by the per-module link test, never a
 // silent miscompile.
 pub function all_runtime_need_roots(): string[] {
-    return [
-        "alloc_u8", "args", "arr_push", "arr_push_owned", "arr_slice",
-        "arr_str_join", "arr_inc_elems", "arr_own_elems", "arrarr_free", "chr", "env", "eprint", "heap",
-        "i32_to_string", "u32_to_string", "maps", "monotonic_ns", "now_ns", "now_unix_ms",
-        // The map roots that "maps" does NOT reach. Each is marked directly by
-        // the arm64 emitter, and runtime_need_deps declares no root with any of
-        // them as a dependency — map_delete's own edge points AT maps, pulling
-        // the bundle in behind itself, so the direction is the trap: listing
-        // maps reaches none of these. Same story as isatty and the platform
-        // helpers below, and the same reason nothing noticed — only a
-        // library-only caller finds out, which is now a fixture
-        // (TestSelfHostPerModuleArm64MapDeleteLinks).
-        "map_delete", "map_delete_rel", "map_free_va", "map_free_vsa", "map_free_vf", "map_hash_seed", "map_vfree",
-        "map_free_ka", "map_free_kavs", "map_free_kava", "map_free_kavsa",
-        "map_free_kf", "map_free_kfvs", "map_free_kfvsa", "map_free_kfvf",
-        "chdir", "chroot", "setuid", "setgid", "setgroups",
-        "signal_mask", "signal_disposition",
-        "proc_exec", "proc_exec_as", "proc_fork", "proc_waitpid", "proc_waitpid_nohang", "putchar", "random_bytes", "random_i32", "read_file",
-        "read_file_bytes",
-        "sleep_ms", "sleep_ns", "str_bytes", "str_case", "str_cmp",
-        "str_concat", "str_eq", "str_from_bytes", "str_lines", "str_print",
-        "str_read_line", "str_repeat", "str_replace",
-        "optarrarr_free", "str_split", "str_trim", "strarrarr_free", "strbuf", "buf",
-        // The platform helpers. These were absent for as long as the list
-        // existed, which made the "closed set" claim above false: the
-        // bootstrap compiler marks none of them, so nothing noticed until a
-        // per-module build of a REAL program — the std/http + std/tcp
-        // edge-handler — linked its library units against undefined
-        // __fern_tcp_listen / __fern_tcp_send / __fern_poll / … (#5686).
-        // Filesystem + process:
-        "stat", "lstat", "statfs", "access", "read_dir", "read_dir_all", "remove_file", "create_dir_all", "remove_dir_all", "write_file", "write_file_exec",
-        "create_dir", "remove_dir", "create_link", "create_symlink", "read_link", "umask", "rename",
-        "chmod", "chmod_at", "set_file_times", "truncate", "mknod", "chown_at",
-        "sync", "fd_fsync", "fd_fdatasync", "fd_syncfs", "fd_dup_onto",
-        "termios_get", "termios_set",
-        "temp_dir", "open_file", "open_with", "reader", "fd_stat", "reader_seek", "reader_splice", "fd_flags",
-        "writer_write", "write_some", "writer_truncate", "subprocess", "crc32_cksum", "sum_bytes",
-        // The packed-byte twins a typed program's u8[] calls (asmcore.packed_suffix).
-        "alloc_bytes", "arr_push_u8", "buf_u8", "str_bytes_u8", "str_from_bytes_u8", "arr_slice_u8",
-        "random_bytes_u8", "read_file_bytes_u8", "tcp_recv_u8", "tcp_recv_into_u8", "tcp_listen_with_u8",
-        "udp_bind_u8", "udp_connect_u8", "udp_sendto_u8", "udp_recvfrom_u8", "tcp_connect_with_u8",
-        // argv / the host's name / the process's own identity:
-        "hostname", "environ",
-        "geteuid", "getegid", "getuid", "getgid", "getgroups",
-        "uname_field", "getcwd", "cpu_count",
-        // The terminal fact and the two signal dispositions. `isatty` was
-        // absent for the same reason the platform helpers above were —
-        // nothing in the per-module link fixtures reaches it from a
-        // library-only module, and std/cli's colour gate is exactly such a
-        // caller. The two signal roots are marked through a VARIABLE rather
-        // than a literal (`s.need(sig_fn)`), so a grep for `.need("` does not
-        // find them either.
-        "isatty", "window_size", "set_window_size", "signal_ignore", "signal_default",
-        // The liveness of one pid, delivering a signal to one, and this
-        // process's descriptor ceiling.
-        "process_alive", "signal_send", "set_process_group", "rlimit_nofile",
-        // And how it competes for the CPU.
-        "priority", "set_priority",
-        // sockets + readiness (the edge-handler serve loop):
-        "tcp_listen", "tcp_accept", "tcp_local_port", "tcp_connect", "tcp_send", "tcp_recv", "udp_send",
-        "tcp_listen_with", "tcp_socket_ctl", "udp_bind", "udp_connect", "udp_sendto", "udp_recvfrom", "tcp_connect_with", "unix_listen", "unix_connect", "reactor_new", "reactor_ctl", "reactor_wait", "tcp_recv_into", "tcp_sendfile",
-        "tcp_close", "tcp_pollable", "poll", "timer_fd",
-        "wasm_timer_pollable", "wasm_pollable_drop", "wasm_block", "wasm_poll",
-        // wide-int stringifiers:
-        "i64_to_string", "u64_to_string",
-        // The allocation counter (#9596). `__heap_bump_bytes` needs no root —
-        // it lowers to an inline read of a word the heap already defines — but
-        // `alloc_count` owns both the counter word and the tick in
-        // `__fern_alloc`, so a module that asks for the number and nothing else
-        // is the one that dangles.
-        "alloc_count",
-        // the f64 transcendental bundle (sin/cos/exp/log/pow), on both register
-        // backends.
-        "float_transcendentals"
-    ];
+  return [
+    "alloc_u8", "args", "arr_push", "arr_push_owned", "arr_slice",
+    "arr_str_join", "arr_inc_elems", "arr_own_elems", "arrarr_free", "chr", "env", "eprint", "heap",
+    "i32_to_string", "u32_to_string", "maps", "monotonic_ns", "now_ns", "now_unix_ms",
+    // The map roots that "maps" does NOT reach. Each is marked directly by
+    // the arm64 emitter, and runtime_need_deps declares no root with any of
+    // them as a dependency — map_delete's own edge points AT maps, pulling
+    // the bundle in behind itself, so the direction is the trap: listing
+    // maps reaches none of these. Same story as isatty and the platform
+    // helpers below, and the same reason nothing noticed — only a
+    // library-only caller finds out, which is now a fixture
+    // (TestSelfHostPerModuleArm64MapDeleteLinks).
+    "map_delete", "map_delete_rel", "map_free_va", "map_free_vsa", "map_free_vf", "map_hash_seed", "map_vfree",
+    "map_free_ka", "map_free_kavs", "map_free_kava", "map_free_kavsa",
+    "map_free_kf", "map_free_kfvs", "map_free_kfvsa", "map_free_kfvf",
+    "chdir", "chroot", "setuid", "setgid", "setgroups",
+    "signal_mask", "signal_disposition",
+    "proc_exec", "proc_exec_as", "proc_fork", "proc_waitpid", "proc_waitpid_nohang", "putchar", "random_bytes", "random_i32", "read_file",
+    "read_file_bytes",
+    "sleep_ms", "sleep_ns", "str_bytes", "str_case", "str_cmp",
+    "str_concat", "str_eq", "str_from_bytes", "str_lines", "str_print",
+    "str_read_line", "str_repeat", "str_replace",
+    "optarrarr_free", "str_split", "str_trim", "strarrarr_free", "strbuf", "buf",
+    // The platform helpers. These were absent for as long as the list
+    // existed, which made the "closed set" claim above false: the
+    // bootstrap compiler marks none of them, so nothing noticed until a
+    // per-module build of a REAL program — the std/http + std/tcp
+    // edge-handler — linked its library units against undefined
+    // __fern_tcp_listen / __fern_tcp_send / __fern_poll / … (#5686).
+    // Filesystem + process:
+    "stat", "lstat", "statfs", "access", "read_dir", "read_dir_all", "remove_file", "create_dir_all", "remove_dir_all", "write_file", "write_file_exec",
+    "create_dir", "remove_dir", "create_link", "create_symlink", "read_link", "umask", "rename",
+    "chmod", "chmod_at", "set_file_times", "truncate", "mknod", "chown_at",
+    "sync", "fd_fsync", "fd_fdatasync", "fd_syncfs", "fd_dup_onto",
+    "termios_get", "termios_set",
+    "temp_dir", "open_file", "open_with", "reader", "fd_stat", "reader_seek", "reader_splice", "fd_flags",
+    "writer_write", "write_some", "writer_truncate", "subprocess", "crc32_cksum", "sum_bytes",
+    // The packed-byte twins a typed program's u8[] calls (asmcore.packed_suffix).
+    "alloc_bytes", "arr_push_u8", "buf_u8", "str_bytes_u8", "str_from_bytes_u8", "arr_slice_u8",
+    "random_bytes_u8", "read_file_bytes_u8", "tcp_recv_u8", "tcp_recv_into_u8", "tcp_listen_with_u8",
+    "udp_bind_u8", "udp_connect_u8", "udp_sendto_u8", "udp_recvfrom_u8", "tcp_connect_with_u8",
+    // argv / the host's name / the process's own identity:
+    "hostname", "environ",
+    "geteuid", "getegid", "getuid", "getgid", "getgroups",
+    "uname_field", "getcwd", "cpu_count",
+    // The terminal fact and the two signal dispositions. `isatty` was
+    // absent for the same reason the platform helpers above were —
+    // nothing in the per-module link fixtures reaches it from a
+    // library-only module, and std/cli's colour gate is exactly such a
+    // caller. The two signal roots are marked through a VARIABLE rather
+    // than a literal (`s.need(sig_fn)`), so a grep for `.need("` does not
+    // find them either.
+    "isatty", "window_size", "set_window_size", "signal_ignore", "signal_default",
+    // The liveness of one pid, delivering a signal to one, and this
+    // process's descriptor ceiling.
+    "process_alive", "signal_send", "set_process_group", "rlimit_nofile",
+    // And how it competes for the CPU.
+    "priority", "set_priority",
+    // sockets + readiness (the edge-handler serve loop):
+    "tcp_listen", "tcp_accept", "tcp_local_port", "tcp_connect", "tcp_send", "tcp_recv", "udp_send",
+    "tcp_listen_with", "tcp_socket_ctl", "udp_bind", "udp_connect", "udp_sendto", "udp_recvfrom", "tcp_connect_with", "unix_listen", "unix_connect", "reactor_new", "reactor_ctl", "reactor_wait", "tcp_recv_into", "tcp_sendfile",
+    "tcp_close", "tcp_pollable", "poll", "timer_fd",
+    "wasm_timer_pollable", "wasm_pollable_drop", "wasm_block", "wasm_poll",
+    // wide-int stringifiers:
+    "i64_to_string", "u64_to_string",
+    // The allocation counter (#9596). `__heap_bump_bytes` needs no root —
+    // it lowers to an inline read of a word the heap already defines — but
+    // `alloc_count` owns both the counter word and the tick in
+    // `__fern_alloc`, so a module that asks for the number and nothing else
+    // is the one that dangles.
+    "alloc_count",
+    // the f64 transcendental bundle (sin/cos/exp/log/pow), on both register
+    // backends.
+    "float_transcendentals",
+  ];
 }
 
 // script_normalized returns the module the whole-program IR emit actually
@@ -1178,14 +1290,16 @@ pub function all_runtime_need_roots(): string[] {
 // main has not been synthesised yet, so `-decide` / asm_pathprobe_run printed
 // "refused" for a script that emit_module_ir_gated then lowered through the IR path.
 pub function script_normalized(mod: parser.Module): parser.Module {
-    if (!asmcore.is_script_module(mod)) { return mod; }
-    return lift_lambdas(asmcore.synth_script_main(mod));
+  if (!asmcore.is_script_module(mod)) {
+    return mod;
+  }
+  return lift_lambdas(asmcore.synth_script_main(mod));
 }
 
 // eprint_ir_ineligible writes the refusal every IR route shares — the three
 // backends' `*_or_error` entries and the driver's `-O` pre-gate.
 pub function eprint_ir_ineligible(): void {
-    eprint("error: module is not IR-eligible; the AST emitter is no longer reachable from this driver (set FERN_STRICT_IR=1 to name the bail site)\n");
+  eprint("error: module is not IR-eligible; the AST emitter is no longer reachable from this driver (set FERN_STRICT_IR=1 to name the bail site)\n");
 }
 
 // module_ir_eligible answers the question each backend's `*_or_error` entry
@@ -1197,7 +1311,7 @@ pub function eprint_ir_ineligible(): void {
 // The driver asks it under `-O`, on the module as written, because the assert
 // elision that follows can only make a module more eligible (#7170).
 pub function module_ir_eligible(mod: parser.Module): boolean {
-    return all_eligible(script_normalized(lift_lambdas(mod)));
+  return all_eligible(script_normalized(lift_lambdas(mod)));
 }
 
 // unsupported_op_refuse ends compilation for an IR op that reached a backend's
@@ -1224,9 +1338,9 @@ pub function module_ir_eligible(mod: parser.Module): boolean {
 // they `return unsupported_op_refuse(...)` in the position an instruction
 // string would have taken.
 pub function unsupported_op_refuse(tag: i32, backend: string): string {
-    eprint("error: no instruction selection for IR op " + ir.kind_name(tag) + " (kind " + util.i32_to_string(tag) + ") on the " + backend + " backend — refusing to emit a silently dropped operation (#6917)\n");
-    exit(3);
-    return "";
+  eprint("error: no instruction selection for IR op " + ir.kind_name(tag) + " (kind " + util.i32_to_string(tag) + ") on the " + backend + " backend — refusing to emit a silently dropped operation (#6917)\n");
+  exit(3);
+  return "";
 }
 
 // lower_failed_refuse ends compilation for a function whose lowering bailed,
@@ -1239,10 +1353,12 @@ pub function unsupported_op_refuse(tag: i32, backend: string): string {
 // as malformed IR with every local "outside the frame" (#8590) — or on wasm
 // as an elem entry naming a `$<fd>$clo` nothing defines (#7215).
 pub function lower_failed_refuse(name: string, r: irlower.LowerResult): i32 {
-    if (r.ok) { return 0; }
-    eprint("error: " + name + " did not lower: " + r.why + " — the IR path bailed in this function and there is no AST emitter to fall back to (#8590)\n");
-    exit(3);
+  if (r.ok) {
     return 0;
+  }
+  eprint("error: " + name + " did not lower: " + r.why + " — the IR path bailed in this function and there is no AST emitter to fall back to (#8590)\n");
+  exit(3);
+  return 0;
 }
 
 // wp_fn_sigs derives the whole-program FnSigs base once. These are the
@@ -1255,11 +1371,11 @@ pub function lower_failed_refuse(name: string, r: irlower.LowerResult): i32 {
 // instead: FnSigs.borrowable_params is the counted form, not `bparams`, so
 // routing through here would mean running borrowable_params_interproc twice.
 pub function wp_fn_sigs(funcs: parser.FuncDecl[], structs: irlower.StructTab): irlower.FnSigs {
-    var bparams: string[] = irlower.borrowable_params_interproc(funcs, structs);
-    return irlower.FnSigs {
-        ...irlower.fn_sigs_for_borrow(funcs, structs, array_ret_fns_of(funcs), bparams),
-        consume_safe_params: irlower.consume_safe_params_interproc(funcs, bparams),
-    };
+  var bparams: string[] = irlower.borrowable_params_interproc(funcs, structs);
+  return irlower.FnSigs {
+    ...irlower.fn_sigs_for_borrow(funcs, structs, array_ret_fns_of(funcs), bparams),
+    consume_safe_params: irlower.consume_safe_params_interproc(funcs, bparams),
+  };
 }
 
 // Sub is a whole-module semantic lowering the CALLER produced, threaded into
@@ -1268,67 +1384,80 @@ pub function wp_fn_sigs(funcs: parser.FuncDecl[], structs: irlower.StructTab): i
 // calling the producer is what keeps a driver that cannot use the path from
 // linking it: `no_sub()` is the AST lowering, unchanged.
 pub struct Sub {
-    on: boolean,
-    // One entry per mod.funcs, `ok` where a produced body replaces the AST one.
-    bodies: irlower.LowerResult[],
-    // The bodies with no declaration of their own: the generic instances and
-    // the per-type drop helpers, deduped onto the cache tail by symbol.
-    extra: irlower.LowerResult[],
-    // The registries `ssarc.caller_sigs` rewrote from the produced callees'
-    // verified contracts. The AST lowering of what is left must read these, and
-    // so must the emit.
-    sigs: irlower.FnSigs,
-    // The runtime helpers' lowering, handed to the emit's state; independent of
-    // `on`, since a helper produces whether or not the program's module did.
-    rt_lower: (string) => irlower.LowerResult[],
-    // The typed module the producer lambda-lifted, which a register backend's
-    // emit reads erased rather than lifting again; `has_lifted` says it is set.
-    lifted: parser.Module,
-    has_lifted: boolean,
+  on: boolean,
+  // One entry per mod.funcs, `ok` where a produced body replaces the AST one.
+  bodies: irlower.LowerResult[],
+  // The bodies with no declaration of their own: the generic instances and
+  // the per-type drop helpers, deduped onto the cache tail by symbol.
+  extra: irlower.LowerResult[],
+  // The registries `ssarc.caller_sigs` rewrote from the produced callees'
+  // verified contracts. The AST lowering of what is left must read these, and
+  // so must the emit.
+  sigs: irlower.FnSigs,
+  // The runtime helpers' lowering, handed to the emit's state; independent of
+  // `on`, since a helper produces whether or not the program's module did.
+  rt_lower: (string) => irlower.LowerResult[],
+  // The typed module the producer lambda-lifted, which a register backend's
+  // emit reads erased rather than lifting again; `has_lifted` says it is set.
+  lifted: parser.Module,
+  has_lifted: boolean,
 }
 
 pub function no_sub(): Sub {
-    var none: parser.Module = parser.Module { funcs: [], structs: [], aliases: [], imports: [], top_stmts: [], enums: [], resources: [], exports: [], impls: [], trait_reqs: [], trait_decls: [], inferred_consts: [] };
-    return Sub { on: false, bodies: [], extra: [], sigs: irlower.fn_sigs_empty(), rt_lower: asmcore.no_rt_lower, lifted: none, has_lifted: false };
+  var none: parser.Module = parser.Module { funcs: [], structs: [], aliases: [], imports: [], top_stmts: [], enums: [], resources: [], exports: [], impls: [], trait_reqs: [], trait_decls: [], inferred_consts: [] };
+  return Sub { on: false, bodies: [], extra: [], sigs: irlower.fn_sigs_empty(), rt_lower: asmcore.no_rt_lower, lifted: none, has_lifted: false };
 }
 
 // The register emit's lambda-lifted module: the producer's, erased, when it
 // handed one over, else `annotated` lifted here.
 pub function sub_lifted(sub: Sub, annotated: parser.Module): parser.Module {
-    if (sub.has_lifted) { return parser.erase_str_module(sub.lifted); }
-    return lift_lambdas(annotated);
+  if (sub.has_lifted) {
+    return parser.erase_str_module(sub.lifted);
+  }
+  return lift_lambdas(annotated);
 }
 
 // The body the substitution produced for declaration `i`, else the AST
 // lowering's.
 pub function produced_or_lowered(sub: Sub, i: i32, fd: parser.FuncDecl, structs: irlower.StructTab, sg: irlower.FnSigs, for_wasm: boolean): irlower.LowerResult {
-    if (sub.on && i < sub.bodies.len() && sub.bodies[i].ok) { return sub.bodies[i]; }
-    return irlower.lower_func(fd, structs, sg, for_wasm);
+  if (sub.on && i < sub.bodies.len() && sub.bodies[i].ok) {
+    return sub.bodies[i];
+  }
+  return irlower.lower_func(fd, structs, sg, for_wasm);
 }
 
 // The registry base the lowering and the emit share: the whole-program set when
 // no substitution is happening, and the rewritten set when one is. The
 // substitution was built from that same set, so it is not computed again.
 pub function sub_base(sub: Sub, funcs: parser.FuncDecl[], structs: irlower.StructTab): irlower.FnSigs {
-    if (sub.on) { return sub.sigs; }
-    return wp_fn_sigs(funcs, structs);
+  if (sub.on) {
+    return sub.sigs;
+  }
+  return wp_fn_sigs(funcs, structs);
 }
 
 // The cache the emit reads: each produced body in place of the AST one, then
 // the declaration-less bodies on the tail.
 pub function sub_cache(sub: Sub, cache: irlower.LowerResult[]): irlower.LowerResult[] {
-    if (!sub.on) { return cache; }
-    var out: irlower.LowerResult[] = [];
-    var i: i32 = 0;
-    while (i < cache.len()) {
-        if (i < sub.bodies.len() && sub.bodies[i].ok) { out = out.append(sub.bodies[i]); }
-        else { out = out.append(cache[i]); }
-        i = i + 1;
+  if (!sub.on) {
+    return cache;
+  }
+  var out: irlower.LowerResult[] = [];
+  var i: i32 = 0;
+  while (i < cache.len()) {
+    if (i < sub.bodies.len() && sub.bodies[i].ok) {
+      out = out.append(sub.bodies[i]);
+    } else {
+      out = out.append(cache[i]);
     }
-    // Already deduped by symbol and conflict-checked where it was built
-    // (ssarc.merge_helpers), so the tail is a plain append here.
-    for h in sub.extra { out = out.append(h); }
-    return out;
+    i = i + 1;
+  }
+  // Already deduped by symbol and conflict-checked where it was built
+  // (ssarc.merge_helpers), so the tail is a plain append here.
+  for h in sub.extra {
+    out = out.append(h);
+  }
+  return out;
 }
 
 // Lowered is lower_gated's result: `ok` is the module's IR-eligibility verdict,
@@ -1336,8 +1465,8 @@ pub function sub_cache(sub: Sub, cache: irlower.LowerResult[]): irlower.LowerRes
 // from. A separate flag rather than an empty cache, because a function-less
 // module is eligible and its cache is legitimately empty.
 pub struct Lowered {
-    ok: boolean,
-    cache: irlower.LowerResult[],
+  ok: boolean,
+  cache: irlower.LowerResult[],
 }
 
 // lower_gated is the FUSED eligibility gate + lowering pass every whole-program
@@ -1356,43 +1485,51 @@ pub struct Lowered {
 // arg-stash forms); it changes instruction selection, never whether a body
 // lowers, so the wasm gate can sit on the same cache its emit consumes.
 pub function lower_gated(mod: parser.Module, structs: irlower.StructTab, sg: irlower.FnSigs, known: string[], for_wasm: boolean, sub: Sub): Lowered {
-    var cache: irlower.LowerResult[] = [];
-    var freg: irlower.SigReg = module_func_reg(mod);
-    // The bodies the substitution defines beside the declarations, which a
-    // produced body calls by name the way an AST one calls a declaration.
-    var extra: string[] = [];
-    for x in sub.extra { extra = extra.append(x.name); }
-    var i: i32 = 0;
-    while (i < mod.funcs.len()) {
-        // A declaration the substitution produced is not lowered again: its
-        // body is the one the emit reads, and the AST lowering's verdict on it
-        // is not asked for, so the semantic lowering reaches what the AST
-        // lowering refuses.
-        var r: irlower.LowerResult = produced_or_lowered(sub, i, mod.funcs[i], structs, sg, for_wasm);
-        if (!r.ok) {
-            if (strict_ir_on()) { strict_ir_refuse(mod.funcs[i].name + " (did not lower: " + r.why + ")"); }
-            return Lowered { ok: false, cache: [] };
-        }
-        var j: i32 = 0;
-        while (j < r.ops.len()) {
-            var o: ir.Op = r.ops[j];
-            if (o.kind_tag == 149) {  // call_direct
-                if (!is_fern_helper(o.str) && !is_c_call(o.str) && !module_has_func(freg, o.str) && !known_includes(known, o.str) && !known_includes(extra, o.str)) {
-                    if (strict_ir_on()) { strict_ir_refuse(mod.funcs[i].name + " (call to unknown symbol " + o.str + ")"); }
-                    return Lowered { ok: false, cache: [] };
-                }
-            } else if (o.kind_tag == 6) {  // const_func
-                if (!module_has_func(freg, o.str) && !known_includes(known, o.str) && !known_includes(extra, o.str)) {
-                    if (strict_ir_on()) { strict_ir_refuse(mod.funcs[i].name + " (function value " + o.str + " not defined)"); }
-                    return Lowered { ok: false, cache: [] };
-                }
-            }
-            j = j + 1;
-        }
-        cache = cache.append(r);
-        i = i + 1;
+  var cache: irlower.LowerResult[] = [];
+  var freg: irlower.SigReg = module_func_reg(mod);
+  // The bodies the substitution defines beside the declarations, which a
+  // produced body calls by name the way an AST one calls a declaration.
+  var extra: string[] = [];
+  for x in sub.extra {
+    extra = extra.append(x.name);
+  }
+  var i: i32 = 0;
+  while (i < mod.funcs.len()) {
+    // A declaration the substitution produced is not lowered again: its
+    // body is the one the emit reads, and the AST lowering's verdict on it
+    // is not asked for, so the semantic lowering reaches what the AST
+    // lowering refuses.
+    var r: irlower.LowerResult = produced_or_lowered(sub, i, mod.funcs[i], structs, sg, for_wasm);
+    if (!r.ok) {
+      if (strict_ir_on()) {
+        strict_ir_refuse(mod.funcs[i].name + " (did not lower: " + r.why + ")");
+      }
+      return Lowered { ok: false, cache: [] };
     }
-    return Lowered { ok: true, cache: cache };
+    var j: i32 = 0;
+    while (j < r.ops.len()) {
+      var o: ir.Op = r.ops[j];
+      if (o.kind_tag == 149) {  // call_direct
+        if (!is_fern_helper(o.str) && !is_c_call(o.str) && !module_has_func(freg, o.str) && !known_includes(known, o.str) && !known_includes(extra, o.str)) {
+          if (strict_ir_on()) {
+            strict_ir_refuse(mod.funcs[i].name + " (call to unknown symbol " + o.str + ")");
+          }
+          return Lowered { ok: false, cache: [] };
+        }
+      } else if (o.kind_tag == 6) {  // const_func
+        if (!module_has_func(freg, o.str) && !known_includes(known, o.str) && !known_includes(extra, o.str)) {
+          if (strict_ir_on()) {
+            strict_ir_refuse(mod.funcs[i].name + " (function value " + o.str + " not defined)");
+          }
+          return Lowered { ok: false, cache: [] };
+        }
+      }
+      j = j + 1;
+    }
+    cache = cache.append(r);
+    i = i + 1;
+  }
+  return Lowered { ok: true, cache: cache };
 }
 
 // ---- tiny-leaf inlining -------------------------------------------------
@@ -1415,42 +1552,53 @@ pub function lower_gated(mod: parser.Module, structs: irlower.StructTab, sg: irl
 // names no function, and touches its frame only through load/store/tee_local. A caller
 // claiming fip or fbip is left alone, since its claim is verified against its
 // own ops.
-function inline_leaf_ops(): i32 { return 16; }
+function inline_leaf_ops(): i32 {
+  return 16;
+}
 
 pub function inline_tiny_leaves(mod: parser.Module, cache: irlower.LowerResult[]): irlower.LowerResult[] {
-    var names: string[] = [];
-    var at: i32[] = [];
-    var unit: i32 = 0;
-    var i: i32 = 0;
-    while (i < cache.len() && i < mod.funcs.len()) {
-        unit = unit + cache[i].ops.len();
-        if (inline_leaf(mod.funcs[i], cache[i])) { names = names.append(inline_label(mod.funcs[i])); at = at.append(i); }
-        i = i + 1;
+  var names: string[] = [];
+  var at: i32[] = [];
+  var unit: i32 = 0;
+  var i: i32 = 0;
+  while (i < cache.len() && i < mod.funcs.len()) {
+    unit = unit + cache[i].ops.len();
+    if (inline_leaf(mod.funcs[i], cache[i])) {
+      names = names.append(inline_label(mod.funcs[i]));
+      at = at.append(i);
     }
-    if (names.len() == 0) { return cache; }
-    var reg: irlower.SigReg = irlower.sig_reg_of(names);
-    // Only a unit over native's inlineMaxUnitOps has its growth budgeted.
-    var budget: i32 = 2147483647;
-    if (unit > 20000) { budget = unit / 10; }
-    var out: irlower.LowerResult[] = [];
-    i = 0;
-    while (i < cache.len()) {
-        var r: irlower.LowerResult = cache[i];
-        var claims: boolean = i < mod.funcs.len() && (mod.funcs[i].fip || mod.funcs[i].fbip);
-        if (r.ok && !r.superseded && !claims && budget > 0) {
-            var self: string = r.name;
-            if (i < mod.funcs.len()) { self = inline_label(mod.funcs[i]); }
-            var sp: Spliced = splice_leaves(r, self, reg, names, at, cache, budget);
-            budget = sp.budget;
-            if (sp.changed) {
-                var opt: ir.OptimizedOps = ir.optimize_ops(sp.r.ops, sp.r.n_params, sp.r.n_locals);
-                r = irlower.LowerResult { ...sp.r, ops: opt.ops, n_locals: opt.n_locals };
-            }
-        }
-        out = out.append(r);
-        i = i + 1;
+    i = i + 1;
+  }
+  if (names.len() == 0) {
+    return cache;
+  }
+  var reg: irlower.SigReg = irlower.sig_reg_of(names);
+  // Only a unit over native's inlineMaxUnitOps has its growth budgeted.
+  var budget: i32 = 2147483647;
+  if (unit > 20000) {
+    budget = unit / 10;
+  }
+  var out: irlower.LowerResult[] = [];
+  i = 0;
+  while (i < cache.len()) {
+    var r: irlower.LowerResult = cache[i];
+    var claims: boolean = i < mod.funcs.len() && (mod.funcs[i].fip || mod.funcs[i].fbip);
+    if (r.ok && !r.superseded && !claims && budget > 0) {
+      var self: string = r.name;
+      if (i < mod.funcs.len()) {
+        self = inline_label(mod.funcs[i]);
+      }
+      var sp: Spliced = splice_leaves(r, self, reg, names, at, cache, budget);
+      budget = sp.budget;
+      if (sp.changed) {
+        var opt: ir.OptimizedOps = ir.optimize_ops(sp.r.ops, sp.r.n_params, sp.r.n_locals);
+        r = irlower.LowerResult { ...sp.r, ops: opt.ops, n_locals: opt.n_locals };
+      }
     }
-    return cull_spliced_leaves(mod, out, names, at);
+    out = out.append(r);
+    i = i + 1;
+  }
+  return cull_spliced_leaves(mod, out, names, at);
 }
 
 // cull_spliced_leaves drops a leaf every one of whose references was spliced
@@ -1460,52 +1608,78 @@ pub function inline_tiny_leaves(mod: parser.Module, cache: irlower.LowerResult[]
 // reference in the ops — and never `main`, an import or an export. Dropping is marking it
 // superseded, which no emit writes.
 function cull_spliced_leaves(mod: parser.Module, cache: irlower.LowerResult[], names: string[], at: i32[]): irlower.LowerResult[] {
-    var dead: boolean[] = [];
-    var k: i32 = 0;
-    while (k < names.len()) {
-        var fd: parser.FuncDecl = mod.funcs[at[k]];
-        var exported: boolean = false;
-        for x in mod.exports { if (x.func_name == fd.name) { exported = true; } }
-        dead = dead.append(fd.receiver_type.len() == 0 && fd.name != "main" && !util.str_has_prefix(fd.name, "__") && fd.import_iface == "" && !exported);
-        k = k + 1;
+  var dead: boolean[] = [];
+  var k: i32 = 0;
+  while (k < names.len()) {
+    var fd: parser.FuncDecl = mod.funcs[at[k]];
+    var exported: boolean = false;
+    for x in mod.exports {
+      if (x.func_name == fd.name) {
+        exported = true;
+      }
     }
-    var reg: irlower.SigReg = irlower.sig_reg_of(names);
-    for r in cache {
-        if (r.superseded) { continue; }
-        for o in r.ops {
-            if (o.str == "") { continue; }
-            var ref: string = o.str;
-            if (o.kind_tag == ir.kind_id("const_struct")) { ref = ir.const_struct_fn_body(o.str); }
-            if (irlower.sig_reg_has_exact(reg, ref)) { dead = dead.with(util.index_of_str(names, ref), false); }
-        }
+    dead = dead.append(fd.receiver_type.len() == 0 && fd.name != "main" && !util.str_has_prefix(fd.name, "__") && fd.import_iface == "" && !exported);
+    k = k + 1;
+  }
+  var reg: irlower.SigReg = irlower.sig_reg_of(names);
+  for r in cache {
+    if (r.superseded) {
+      continue;
     }
-    var out: irlower.LowerResult[] = cache;
-    k = 0;
-    while (k < names.len()) {
-        if (dead[k]) { out = out.with(at[k], irlower.LowerResult { ...out[at[k]], superseded: true }); }
-        k = k + 1;
+    for o in r.ops {
+      if (o.str == "") {
+        continue;
+      }
+      var ref: string = o.str;
+      if (o.kind_tag == ir.kind_id("const_struct")) {
+        ref = ir.const_struct_fn_body(o.str);
+      }
+      if (irlower.sig_reg_has_exact(reg, ref)) {
+        dead = dead.with(util.index_of_str(names, ref), false);
+      }
     }
-    return out;
+  }
+  var out: irlower.LowerResult[] = cache;
+  k = 0;
+  while (k < names.len()) {
+    if (dead[k]) {
+      out = out.with(at[k], irlower.LowerResult { ...out[at[k]], superseded: true });
+    }
+    k = k + 1;
+  }
+  return out;
 }
 
 // inline_label is the name a direct call to fd carries.
 function inline_label(fd: parser.FuncDecl): string {
-    if (fd.receiver_type.len() > 0) { return util.base_type_name(fd.receiver_type) + "." + fd.name; }
-    return fd.name;
+  if (fd.receiver_type.len() > 0) {
+    return util.base_type_name(fd.receiver_type) + "." + fd.name;
+  }
+  return fd.name;
 }
 
 function inline_leaf(fd: parser.FuncDecl, r: irlower.LowerResult): boolean {
-    if (!r.ok || r.superseded || fd.no_inline || r.n_params > r.n_locals) { return false; }
-    var k_calld: i32 = ir.kind_id("call_direct");
-    var work: i32 = 0;
-    for o in r.ops {
-        var k: i32 = o.kind_tag;
-        if (k != ir.kind_id("load_local") && k != ir.kind_id("store_local") && k != ir.kind_id("tee_local")) { work = work + 1; }
-        if (work > inline_leaf_ops()) { return false; }
-        if (k == k_calld) { return false; }
-        if (k == ir.kind_id("call_indirect") || k == ir.kind_id("call_closure_direct") || k == ir.kind_id("const_func") || k == ir.kind_id("dyn_dispatch")) { return false; }
+  if (!r.ok || r.superseded || fd.no_inline || r.n_params > r.n_locals) {
+    return false;
+  }
+  var k_calld: i32 = ir.kind_id("call_direct");
+  var work: i32 = 0;
+  for o in r.ops {
+    var k: i32 = o.kind_tag;
+    if (k != ir.kind_id("load_local") && k != ir.kind_id("store_local") && k != ir.kind_id("tee_local")) {
+      work = work + 1;
     }
-    return true;
+    if (work > inline_leaf_ops()) {
+      return false;
+    }
+    if (k == k_calld) {
+      return false;
+    }
+    if (k == ir.kind_id("call_indirect") || k == ir.kind_id("call_closure_direct") || k == ir.kind_id("const_func") || k == ir.kind_id("dyn_dispatch")) {
+      return false;
+    }
+  }
+  return true;
 }
 
 struct Spliced { r: irlower.LowerResult, changed: boolean, budget: i32 }
@@ -1517,45 +1691,61 @@ struct Spliced { r: irlower.LowerResult, changed: boolean, budget: i32 }
 // returns (every function returns one, irverifystack) parked in one more
 // fresh slot and loaded after the block.
 function splice_leaves(r: irlower.LowerResult, self: string, reg: irlower.SigReg, names: string[], at: i32[], cache: irlower.LowerResult[], budget: i32): Spliced {
-    var k_calld: i32 = ir.kind_id("call_direct");
-    var out: ir.Op[] = [];
-    var n_locals: i32 = r.n_locals;
-    var changed: boolean = false;
-    for o in r.ops {
-        if (o.kind_tag != k_calld || o.str == self || !irlower.sig_reg_has_exact(reg, o.str)) { out = out.append(o); continue; }
-        var li: i32 = at[util.index_of_str(names, o.str)];
-        var leaf: irlower.LowerResult = cache[li];
-        if (o.i32_imm != leaf.n_params || leaf.ops.len() > budget) { out = out.append(o); continue; }
-        var base: i32 = n_locals;
-        var ret: i32 = base + leaf.n_locals;
-        var p: i32 = leaf.n_params - 1;
-        while (p >= 0) { out = out.append(ir.op_store_local(base + p)); p = p - 1; }
-        var z: i32 = leaf.n_params;
-        while (z < leaf.n_locals) { out = out.append(ir.op_const_i32(0)); out = out.append(ir.op_store_local(base + z)); z = z + 1; }
-        out = out.append(ir.op_block(0));
-        var depth: i32 = 0;
-        for b in leaf.ops {
-            var k: i32 = b.kind_tag;
-            if (k == ir.kind_id("load_local") || k == ir.kind_id("store_local") || k == ir.kind_id("tee_local")) {
-                out = out.append(ir.Op { ...b, i32_imm: b.i32_imm + base });
-            } else if (k == ir.kind_id("return")) {
-                out = out.append(ir.op_store_local(ret));
-                out = out.append(ir.op_br(depth));
-            } else {
-                if (k == ir.kind_id("block") || k == ir.kind_id("loop") || k == ir.kind_id("if")) { depth = depth + 1; }
-                if (k == ir.kind_id("end")) { depth = depth - 1; }
-                out = out.append(b);
-            }
-        }
-        out = out.append(ir.op_end());
-        out = out.append(ir.op_load_local(ret));
-        n_locals = ret + 1;
-        budget = budget - leaf.ops.len();
-        changed = true;
+  var k_calld: i32 = ir.kind_id("call_direct");
+  var out: ir.Op[] = [];
+  var n_locals: i32 = r.n_locals;
+  var changed: boolean = false;
+  for o in r.ops {
+    if (o.kind_tag != k_calld || o.str == self || !irlower.sig_reg_has_exact(reg, o.str)) {
+      out = out.append(o);
+      continue;
     }
-    return Spliced { r: irlower.LowerResult { ...r, ops: out, n_locals: n_locals }, changed: changed, budget: budget };
+    var li: i32 = at[util.index_of_str(names, o.str)];
+    var leaf: irlower.LowerResult = cache[li];
+    if (o.i32_imm != leaf.n_params || leaf.ops.len() > budget) {
+      out = out.append(o);
+      continue;
+    }
+    var base: i32 = n_locals;
+    var ret: i32 = base + leaf.n_locals;
+    var p: i32 = leaf.n_params - 1;
+    while (p >= 0) {
+      out = out.append(ir.op_store_local(base + p));
+      p = p - 1;
+    }
+    var z: i32 = leaf.n_params;
+    while (z < leaf.n_locals) {
+      out = out.append(ir.op_const_i32(0));
+      out = out.append(ir.op_store_local(base + z));
+      z = z + 1;
+    }
+    out = out.append(ir.op_block(0));
+    var depth: i32 = 0;
+    for b in leaf.ops {
+      var k: i32 = b.kind_tag;
+      if (k == ir.kind_id("load_local") || k == ir.kind_id("store_local") || k == ir.kind_id("tee_local")) {
+        out = out.append(ir.Op { ...b, i32_imm: b.i32_imm + base });
+      } else if (k == ir.kind_id("return")) {
+        out = out.append(ir.op_store_local(ret));
+        out = out.append(ir.op_br(depth));
+      } else {
+        if (k == ir.kind_id("block") || k == ir.kind_id("loop") || k == ir.kind_id("if")) {
+          depth = depth + 1;
+        }
+        if (k == ir.kind_id("end")) {
+          depth = depth - 1;
+        }
+        out = out.append(b);
+      }
+    }
+    out = out.append(ir.op_end());
+    out = out.append(ir.op_load_local(ret));
+    n_locals = ret + 1;
+    budget = budget - leaf.ops.len();
+    changed = true;
+  }
+  return Spliced { r: irlower.LowerResult { ...r, ops: out, n_locals: n_locals }, changed: changed, budget: budget };
 }
-
 
 // check_fip_claims refuses a window of declarations whose `fip` / `fbip` claim
 // the lowering does not keep. The budget check itself is irfipverify's; what is
@@ -1584,37 +1774,43 @@ function splice_leaves(r: irlower.LowerResult, self: string, reg: irlower.SigReg
 // The unannotated early return is what keeps this free: one boolean pair per
 // function, before any op is examined.
 pub function check_fip_claims(funcs: parser.FuncDecl[], lo: i32, hi: i32, cache: irlower.LowerResult[], structs: irlower.StructTab, sg: irlower.FnSigs, for_wasm: boolean): void {
-    var diags: util.Diag[] = [];
-    var hh: i32 = hi;
-    if (hh < 0 || hh > funcs.len()) { hh = funcs.len(); }
-    var i: i32 = lo;
-    while (i < hh) {
-        if (funcs[i].fip || funcs[i].fbip) {
-            diags = fip_claim_diags(funcs[i], claim_lowering(cache, i, funcs[i], structs, sg, for_wasm), diags);
-        }
-        i = i + 1;
+  var diags: util.Diag[] = [];
+  var hh: i32 = hi;
+  if (hh < 0 || hh > funcs.len()) {
+    hh = funcs.len();
+  }
+  var i: i32 = lo;
+  while (i < hh) {
+    if (funcs[i].fip || funcs[i].fbip) {
+      diags = fip_claim_diags(funcs[i], claim_lowering(cache, i, funcs[i], structs, sg, for_wasm), diags);
     }
-    if (diags.len() == 0) { return; }
-    eprint(util.format_diags(diags));
-    exit(1);
+    i = i + 1;
+  }
+  if (diags.len() == 0) {
+    return;
+  }
+  eprint(util.format_diags(diags));
+  exit(1);
 }
 
 // claim_lowering is the lowering to judge function `i` against: the caller's,
 // when it kept one, and a fresh one otherwise.
 function claim_lowering(cache: irlower.LowerResult[], i: i32, fn: parser.FuncDecl, structs: irlower.StructTab, sg: irlower.FnSigs, for_wasm: boolean): irlower.LowerResult {
-    if (i < cache.len()) { return cache[i]; }
-    return irlower.lower_func(fn, structs, sg, for_wasm);
+  if (i < cache.len()) {
+    return cache[i];
+  }
+  return irlower.lower_func(fn, structs, sg, for_wasm);
 }
 
 // fip_claim_diags appends this function's E068 verdicts.
 function fip_claim_diags(fn: parser.FuncDecl, r: irlower.LowerResult, acc: util.Diag[]): util.Diag[] {
-    var claim: irfipverify.FipClaim = irfipverify.FipClaim {
-        fn_name: fn.name, is_fip: fn.fip, is_fbip: fn.fbip, allowance: fn.fip_allowance
-    };
-    var res: irfipverify.FipResult = irfipverify.verify_fip_fn(claim, r.ops);
-    var out: util.Diag[] = acc;
-    for p in res.problems {
-        out = out.append(util.Diag { code: "E068", message: irverify.problem_str(p), line: fn.line, col: fn.col });
-    }
-    return out;
+  var claim: irfipverify.FipClaim = irfipverify.FipClaim {
+    fn_name: fn.name, is_fip: fn.fip, is_fbip: fn.fbip, allowance: fn.fip_allowance,
+  };
+  var res: irfipverify.FipResult = irfipverify.verify_fip_fn(claim, r.ops);
+  var out: util.Diag[] = acc;
+  for p in res.problems {
+    out = out.append(util.Diag { code: "E068", message: irverify.problem_str(p), line: fn.line, col: fn.col });
+  }
+  return out;
 }

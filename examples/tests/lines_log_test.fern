@@ -1,4 +1,5 @@
 import "std/test";
+
 // examples/tests/lines_log_test.fern — exercises the
 // `assert_lines_eq` multi-line comparison helper + the
 // `(r).log(msg)` chainable TAP-comment emitter.
@@ -13,55 +14,58 @@ import "std/test";
 // `r.log(msg)` prints a TAP comment (`# msg`) without
 // recording a test outcome. Useful for debug breadcrumbs
 // between cases.
-
 function test_lines_match(): test.TestOutcome {
-    var actual: string = "line 1\nline 2\nline 3\n";
-    return test.assert_lines_eq(actual, ["line 1", "line 2", "line 3"]);
+  var actual: string = "line 1\nline 2\nline 3\n";
+  return test.assert_lines_eq(actual, ["line 1", "line 2", "line 3"]);
 }
 
 function test_lines_line_count_mismatch(): test.TestOutcome {
-    match (test.assert_lines_eq("a\nb\nc\n", ["a", "b"])) {
-        Fail(msg) => {
-            if (!msg.contains("line count differs")) {
-                return test.fail("missing reason in: " + msg);
-            }
-            return test.pass();
-        },
-        Pass => { return test.fail("expected line-count mismatch to fail"); }
+  match (test.assert_lines_eq("a\nb\nc\n", ["a", "b"])) {
+    Fail(msg) => {
+      if (!msg.contains("line count differs")) {
+        return test.fail("missing reason in: " + msg);
+      }
+      return test.pass();
+    },
+    Pass => {
+      return test.fail("expected line-count mismatch to fail");
     }
-    return test.pass();
+  }
+  return test.pass();
 }
 
 function test_lines_first_diff_localised(): test.TestOutcome {
-    match (test.assert_lines_eq("a\nB\nc\n", ["a", "b", "c"])) {
-        Fail(msg) => {
-            if (!msg.contains("line 2")) {
-                return test.fail("missing line 2 in: " + msg);
-            }
-            return test.pass();
-        },
-        Pass => { return test.fail("expected mismatch on line 2"); }
+  match (test.assert_lines_eq("a\nB\nc\n", ["a", "b", "c"])) {
+    Fail(msg) => {
+      if (!msg.contains("line 2")) {
+        return test.fail("missing line 2 in: " + msg);
+      }
+      return test.pass();
+    },
+    Pass => {
+      return test.fail("expected mismatch on line 2");
     }
-    return test.pass();
+  }
+  return test.pass();
 }
 
 function test_lines_empty_input(): test.TestOutcome {
-    return test.assert_lines_eq("", []);
+  return test.assert_lines_eq("", []);
 }
 
 function main(): i32 {
-    var r: test.TestRunner = test.test_new("lines+log");
+  var r: test.TestRunner = test.test_new("lines+log");
 
-    // r.log emits TAP comments; the test stream interleaves
-    // them with `ok`/`not ok` lines so the log breadcrumbs
-    // are attributable to a stage of the suite.
-    r = r.log("phase 1: positive cases");
-    r = r.it("lines match",                   test_lines_match);
-    r = r.it("empty input",                   test_lines_empty_input);
+  // r.log emits TAP comments; the test stream interleaves
+  // them with `ok`/`not ok` lines so the log breadcrumbs
+  // are attributable to a stage of the suite.
+  r = r.log("phase 1: positive cases");
+  r = r.it("lines match", test_lines_match);
+  r = r.it("empty input", test_lines_empty_input);
 
-    r = r.log("phase 2: failure cases (inverted)");
-    r = r.it("line count mismatch reports",   test_lines_line_count_mismatch);
-    r = r.it("first diff line localised",     test_lines_first_diff_localised);
+  r = r.log("phase 2: failure cases (inverted)");
+  r = r.it("line count mismatch reports", test_lines_line_count_mismatch);
+  r = r.it("first diff line localised", test_lines_first_diff_localised);
 
-    return r.finish();
+  return r.finish();
 }

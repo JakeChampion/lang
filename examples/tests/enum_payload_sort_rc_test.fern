@@ -14,7 +14,6 @@ import "std/test";
 // so the array is freed once. The churn loops + the empty-array case (freelist
 // class 3, which a later string box recycles) turn any residual double-free
 // fatal — a clean run proves the balance holds.
-
 function make_names(k: i32): Result[string[], i32] {
   var a: string[] = [];
   var i: i32 = 0;
@@ -28,7 +27,9 @@ function make_names(k: i32): Result[string[], i32] {
 function ascending(xs: string[]): boolean {
   var i: i32 = 1;
   while (i < xs.len()) {
-    if (sort.string_cmp(xs[i - 1], xs[i]) > 0) { return false; }
+    if (sort.string_cmp(xs[i - 1], xs[i]) > 0) {
+      return false;
+    }
     i = i + 1;
   }
   return true;
@@ -46,13 +47,20 @@ function test_match_payload_sort(): test.TestOutcome {
           var sorted: string[] = sort.sort_by(names, sort.string_cmp);
           var churn: string = "x";
           var c: i32 = 0;
-          while (c < 40) { churn = churn + "yyyy"; c = c + 1; }
+          while (c < 40) {
+            churn = churn + "yyyy";
+            c = c + 1;
+          }
           if (sorted.len() != k) {
             return test.fail("length changed after sort: got " + sorted.len().to_string() + " want " + k.to_string());
           }
-          if (!ascending(sorted)) { return test.fail("not ascending at k=" + k.to_string()); }
+          if (!ascending(sorted)) {
+            return test.fail("not ascending at k=" + k.to_string());
+          }
         },
-        Err(_) => { return test.fail("unexpected Err"); }
+        Err(_) => {
+          return test.fail("unexpected Err");
+        }
       }
       k = k + 1;
     }
@@ -71,10 +79,16 @@ function test_empty_payload_sort(): test.TestOutcome {
       Ok(names) => {
         var sorted: string[] = sort.sort_by(names, sort.string_cmp);
         var s: string = "a" + "b" + "c";
-        if (sorted.len() != 0) { return test.fail("empty sort grew"); }
-        if (s.len() != 3) { return test.fail("string clobbered: " + s); }
+        if (sorted.len() != 0) {
+          return test.fail("empty sort grew");
+        }
+        if (s.len() != 3) {
+          return test.fail("string clobbered: " + s);
+        }
       },
-      Err(_) => { return test.fail("unexpected Err"); }
+      Err(_) => {
+        return test.fail("unexpected Err");
+      }
     }
     rounds = rounds + 1;
   }

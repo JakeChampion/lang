@@ -5,28 +5,27 @@
 // drivers then refuse the module. This is a pure decision probe: it emits NO
 // assembly, so the Go-side gates can assert the verdict without assembling +
 // running.
-
 import "./lexer";
 import "./parser";
 import "./rundriver";
 import "./ircore";
 
 function main(): i32 {
-    var mod: parser.Module = rundriver.parse_stdin("asm_pathprobe_run");
-    // Mirror the production path exactly: emit_module (asm.fern) receives a
-    // module_with_builtins-processed module (desugar + monomorphisation +
-    // builtin-enum injection), then checks all_eligible on lift_lambdas of
-    // THAT. The probe must run the same pipeline or it sees un-monomorphised
-    // generics and under-reports IR eligibility.
-    // ircore.script_normalized is part of that pipeline: a SCRIPT-shaped source
-    // has its `main` synthesised inside emit_module_ir_gated, so judging the raw
-    // module here reported "refused" for a program the emitter does route through IR.
-    var bm: parser.Module = parser.module_with_builtins(mod);
-    var lm: parser.Module = ircore.script_normalized(ircore.lift_lambdas(bm));
-    if (ircore.all_eligible(lm)) {
-        print("ir\n");
-    } else {
-        print("refused\n");
-    }
-    return 0;
+  var mod: parser.Module = rundriver.parse_stdin("asm_pathprobe_run");
+  // Mirror the production path exactly: emit_module (asm.fern) receives a
+  // module_with_builtins-processed module (desugar + monomorphisation +
+  // builtin-enum injection), then checks all_eligible on lift_lambdas of
+  // THAT. The probe must run the same pipeline or it sees un-monomorphised
+  // generics and under-reports IR eligibility.
+  // ircore.script_normalized is part of that pipeline: a SCRIPT-shaped source
+  // has its `main` synthesised inside emit_module_ir_gated, so judging the raw
+  // module here reported "refused" for a program the emitter does route through IR.
+  var bm: parser.Module = parser.module_with_builtins(mod);
+  var lm: parser.Module = ircore.script_normalized(ircore.lift_lambdas(bm));
+  if (ircore.all_eligible(lm)) {
+    print("ir\n");
+  } else {
+    print("refused\n");
+  }
+  return 0;
 }

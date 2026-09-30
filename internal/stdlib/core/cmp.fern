@@ -16,7 +16,6 @@
 // (from `std/i32` … and `std/string`), and an empty impl simply records
 // that the type satisfies the trait by adopting its existing method.
 // See docs/TRAITS.md.
-
 import "std/i32";
 import "std/i64";
 import "std/u32";
@@ -26,18 +25,18 @@ import "std/string";
 import "core/bigint";
 
 pub trait Display {
-    function to_string(self: Self): string;
+  function to_string(self: Self): string;
 }
 
 pub trait Eq {
-    function eq(self: Self, other: Self): boolean;
+  function eq(self: Self, other: Self): boolean;
 }
 
 // `cmp(a, b)` returns -1 when a < b, 0 when equal, 1 when a > b — the
 // same shape std/sort's comparators use, so an `Ord` type drops
 // straight into a sort.
 pub trait Ord {
-    function cmp(self: Self, other: Self): i32;
+  function cmp(self: Self, other: Self): i32;
 }
 
 // `hash(v)` returns a 32-bit hash of the value. Pairs with `Eq` under
@@ -46,7 +45,7 @@ pub trait Ord {
 // type is hashable as soon as its fields are. The foundation for
 // user-type Map keys / `Set[T]`.
 pub trait Hash {
-    function hash(self: Self): i32;
+  function hash(self: Self): i32;
 }
 
 // `Default.default()` is an *associated function* (no `self`): it builds a
@@ -55,7 +54,7 @@ pub trait Hash {
 // fields delegate to their own `default()`, and an enum defaults to its
 // first variant — so a type has a default as soon as its fields do.
 pub trait Default {
-    function default(): Self;
+  function default(): Self;
 }
 
 // `Debug.to_debug()` is developer/diagnostic formatting, distinct from
@@ -67,59 +66,88 @@ pub trait Default {
 // `{:?}` half of the Display/Debug split (and the clean shape for
 // `assert_eq[T: Eq + Debug]` in the test runner). See docs/TRAITS.md.
 pub trait Debug {
-    function to_debug(self: Self): string;
+  function to_debug(self: Self): string;
 }
 
 // ---- Display ---------------------------------------------------
 // Numeric + string types already have `to_string`; empty impls adopt
 // it. `boolean` and `u8` do not, so they get real bodies — `u8` is the
 // byte type (`s[i]`, #5629) and has no scalar module of its own.
+impl Display for i32 {}
 
-impl Display for i32 { }
-impl Display for i64 { }
-impl Display for u32 { }
-impl Display for u64 { }
-impl Display for f64 { }
-impl Display for f32 { }
-impl Display for string { }
+impl Display for i64 {}
+
+impl Display for u32 {}
+
+impl Display for u64 {}
+
+impl Display for f64 {}
+
+impl Display for f32 {}
+
+impl Display for string {}
 
 // `u8` has no scalar module, so no `to_string` to adopt — it widens to
 // i32 and borrows that one. Without this a byte cannot reach any
 // `[T: Display]` generic, which is what `assert_eq` on two bytes needs.
 impl Display for u8 {
-    function to_string(self: Self): string { return (self as i32).to_string(); }
+  function to_string(self: u8): string {
+    return (self as i32).to_string();
+  }
 }
 
 impl Display for boolean {
-    function to_string(self: Self): string {
-        if (self) { return "true"; }
-        return "false";
+  function to_string(self: boolean): string {
+    if (self) {
+      return "true";
     }
+    return "false";
+  }
 }
 
 // ---- Eq --------------------------------------------------------
-
 impl Eq for i32 {
-    function eq(self: Self, other: Self): boolean { return self == other; }
+  function eq(self: i32, other: i32): boolean {
+    return self == other;
+  }
 }
+
 impl Eq for i64 {
-    function eq(self: Self, other: Self): boolean { return self == other; }
+  function eq(self: i64, other: i64): boolean {
+    return self == other;
+  }
 }
+
 impl Eq for u32 {
-    function eq(self: Self, other: Self): boolean { return self == other; }
+  function eq(self: u32, other: u32): boolean {
+    return self == other;
+  }
 }
+
 impl Eq for u64 {
-    function eq(self: Self, other: Self): boolean { return self == other; }
+  function eq(self: u64, other: u64): boolean {
+    return self == other;
+  }
 }
+
 impl Eq for u8 {
-    function eq(self: Self, other: Self): boolean { return self == other; }
+  function eq(self: u8, other: u8): boolean {
+    return self == other;
+  }
 }
+
 impl Eq for string {
-    function eq(self: Self, other: Self): boolean { return self == other; }
+  function eq(self: string, other: string): boolean {
+    return self == other;
+  }
 }
+
 impl Eq for boolean {
-    function eq(self: Self, other: Self): boolean { return self == other; }
+  function eq(self: boolean, other: boolean): boolean {
+    return self == other;
+  }
 }
+
 // Float equality is IEEE `==` with ONE correction: a NaN equals itself.
 //
 // The operator cannot make that concession — `nan == nan` is false and has to
@@ -130,58 +158,87 @@ impl Eq for boolean {
 // twice (#8588). Every NaN is one value here, payload and sign ignored, which
 // is the same choice `Ord` below makes.
 impl Eq for f64 {
-    function eq(self: Self, other: Self): boolean {
-        if (self != self) { return other != other; }
-        return self == other;
+  function eq(self: f64, other: f64): boolean {
+    if (self != self) {
+      return other != other;
     }
+    return self == other;
+  }
 }
+
 impl Eq for f32 {
-    function eq(self: Self, other: Self): boolean {
-        if (self != self) { return other != other; }
-        return self == other;
+  function eq(self: f32, other: f32): boolean {
+    if (self != self) {
+      return other != other;
     }
+    return self == other;
+  }
 }
 
 // ---- Ord -------------------------------------------------------
 // Relational comparison for the integer types. (string / boolean
 // ordering isn't needed by the assertion helpers, so it's left for a
 // follow-up.)
-
 impl Ord for i32 {
-    function cmp(self: Self, other: Self): i32 {
-        if (self < other) { return 0 - 1; }
-        if (self > other) { return 1; }
-        return 0;
+  function cmp(self: i32, other: i32): i32 {
+    if (self < other) {
+      return 0 - 1;
     }
+    if (self > other) {
+      return 1;
+    }
+    return 0;
+  }
 }
+
 impl Ord for i64 {
-    function cmp(self: Self, other: Self): i32 {
-        if (self < other) { return 0 - 1; }
-        if (self > other) { return 1; }
-        return 0;
+  function cmp(self: i64, other: i64): i32 {
+    if (self < other) {
+      return 0 - 1;
     }
+    if (self > other) {
+      return 1;
+    }
+    return 0;
+  }
 }
+
 impl Ord for u32 {
-    function cmp(self: Self, other: Self): i32 {
-        if (self < other) { return 0 - 1; }
-        if (self > other) { return 1; }
-        return 0;
+  function cmp(self: u32, other: u32): i32 {
+    if (self < other) {
+      return 0 - 1;
     }
+    if (self > other) {
+      return 1;
+    }
+    return 0;
+  }
 }
+
 impl Ord for u64 {
-    function cmp(self: Self, other: Self): i32 {
-        if (self < other) { return 0 - 1; }
-        if (self > other) { return 1; }
-        return 0;
+  function cmp(self: u64, other: u64): i32 {
+    if (self < other) {
+      return 0 - 1;
     }
+    if (self > other) {
+      return 1;
+    }
+    return 0;
+  }
 }
+
 impl Ord for u8 {
-    function cmp(self: Self, other: Self): i32 {
-        if (self < other) { return 0 - 1; }
-        if (self > other) { return 1; }
-        return 0;
+  function cmp(self: u8, other: u8): i32 {
+    if (self < other) {
+      return 0 - 1;
     }
+    if (self > other) {
+      return 1;
+    }
+    return 0;
+  }
 }
+
 // Float ordering is IEEE `< / >` extended to a TOTAL order: every NaN sorts
 // after every number, and NaNs are equal to each other.
 //
@@ -203,29 +260,46 @@ impl Ord for u8 {
 //
 // -0.0 and 0.0 stay equal, as IEEE `==` and the `Eq` instance have them.
 impl Ord for f64 {
-    function cmp(self: Self, other: Self): i32 {
-        if (self < other) { return 0 - 1; }
-        if (self > other) { return 1; }
-        if (self != self) {
-            // self is NaN: after every number, level with another NaN.
-            if (other != other) { return 0; }
-            return 1;
-        }
-        if (other != other) { return 0 - 1; }
-        return 0;
+  function cmp(self: f64, other: f64): i32 {
+    if (self < other) {
+      return 0 - 1;
     }
+    if (self > other) {
+      return 1;
+    }
+    if (self != self) {
+      // self is NaN: after every number, level with another NaN.
+      if (other != other) {
+        return 0;
+      }
+      return 1;
+    }
+    if (other != other) {
+      return 0 - 1;
+    }
+    return 0;
+  }
 }
+
 impl Ord for f32 {
-    function cmp(self: Self, other: Self): i32 {
-        if (self < other) { return 0 - 1; }
-        if (self > other) { return 1; }
-        if (self != self) {
-            if (other != other) { return 0; }
-            return 1;
-        }
-        if (other != other) { return 0 - 1; }
-        return 0;
+  function cmp(self: f32, other: f32): i32 {
+    if (self < other) {
+      return 0 - 1;
     }
+    if (self > other) {
+      return 1;
+    }
+    if (self != self) {
+      if (other != other) {
+        return 0;
+      }
+      return 1;
+    }
+    if (other != other) {
+      return 0 - 1;
+    }
+    return 0;
+  }
 }
 
 // Byte-order comparison for strings — the same total order the `<` /
@@ -233,11 +307,15 @@ impl Ord for f32 {
 // asserts, `@derive(Ord)` on a struct/enum with a string field) cover
 // string.
 impl Ord for string {
-    function cmp(self: Self, other: Self): i32 {
-        if (self < other) { return 0 - 1; }
-        if (self > other) { return 1; }
-        return 0;
+  function cmp(self: string, other: string): i32 {
+    if (self < other) {
+      return 0 - 1;
     }
+    if (self > other) {
+      return 1;
+    }
+    return 0;
+  }
 }
 
 // ---- Hash ------------------------------------------------------
@@ -249,52 +327,67 @@ impl Ord for string {
 // Not the function core/map hashes string keys with: that one seeds the
 // offset basis per process and finishes with an fmix32 avalanche, because
 // its callers read only the low bits after masking.
-
 function __hash_mix_i32(x: i32): i32 {
-    var h: i32 = x ^ 61;
-    h = h ^ (((h as u32) >> (16 as u32)) as i32);
-    h = h + (h << 3);
-    h = h ^ (((h as u32) >> (4 as u32)) as i32);
-    h = h * 668265261;                      // 0x27d4eb2d
-    h = h ^ (((h as u32) >> (15 as u32)) as i32);
-    return h;
+  var h: i32 = x ^ 61;
+  h = h ^ (h as u32 >> 16 as u32) as i32;
+  h = h + (h << 3);
+  h = h ^ (h as u32 >> 4 as u32) as i32;
+  h = h * 668265261;  // 0x27d4eb2d
+  h = h ^ (h as u32 >> 15 as u32) as i32;
+  return h;
 }
 
 impl Hash for i32 {
-    function hash(self: Self): i32 { return __hash_mix_i32(self); }
+  function hash(self: i32): i32 {
+    return __hash_mix_i32(self);
+  }
 }
+
 impl Hash for u8 {
-    function hash(self: Self): i32 { return __hash_mix_i32(self as i32); }
+  function hash(self: u8): i32 {
+    return __hash_mix_i32(self as i32);
+  }
 }
+
 impl Hash for u32 {
-    function hash(self: Self): i32 { return __hash_mix_i32(self as i32); }
+  function hash(self: u32): i32 {
+    return __hash_mix_i32(self as i32);
+  }
 }
+
 impl Hash for i64 {
-    function hash(self: Self): i32 {
-        var lo: i32 = self as i32;
-        var hi: i32 = (self >> (32 as i64)) as i32;
-        return __hash_mix_i32(lo ^ hi);
-    }
+  function hash(self: i64): i32 {
+    var lo: i32 = self as i32;
+    var hi: i32 = (self >> 32 as i64) as i32;
+    return __hash_mix_i32(lo ^ hi);
+  }
 }
+
 impl Hash for u64 {
-    function hash(self: Self): i32 {
-        var lo: i32 = self as i32;
-        var hi: i32 = (self >> (32 as u64)) as i32;
-        return __hash_mix_i32(lo ^ hi);
-    }
+  function hash(self: u64): i32 {
+    var lo: i32 = self as i32;
+    var hi: i32 = (self >> 32 as u64) as i32;
+    return __hash_mix_i32(lo ^ hi);
+  }
 }
+
 impl Hash for boolean {
-    function hash(self: Self): i32 {
-        if (self) { return 1; }
-        return 0;
+  function hash(self: boolean): i32 {
+    if (self) {
+      return 1;
     }
+    return 0;
+  }
 }
+
 impl Hash for string {
+  function hash(self: string): i32 {
     // The u32 result reinterpreted, not re-derived: two's-complement
     // multiply agrees with the unsigned one on the low 32 bits, so the
     // cast is a bit reinterpretation and the two spellings of FNV-1a
     // cannot drift apart.
-    function hash(self: Self): i32 { return self.hash_fnv32() as i32; }
+    return self.hash_fnv32() as i32;
+  }
 }
 
 // ---- Default ---------------------------------------------------
@@ -304,33 +397,58 @@ impl Hash for string {
 // (`@derive(Default) struct Box[T]` instantiated at `Box[i32]`)
 // resolve `T.default()` against the bound, the same way nominal
 // fields delegate to their own derived `default()`.
-
 impl Default for i32 {
-    function default(): i32 { return 0; }
+  function default(): i32 {
+    return 0;
+  }
 }
+
 impl Default for i64 {
-    function default(): i64 { return 0 as i64; }
+  function default(): i64 {
+    return 0 as i64;
+  }
 }
+
 impl Default for u32 {
-    function default(): u32 { return 0 as u32; }
+  function default(): u32 {
+    return 0 as u32;
+  }
 }
+
 impl Default for u64 {
-    function default(): u64 { return 0 as u64; }
+  function default(): u64 {
+    return 0 as u64;
+  }
 }
+
 impl Default for u8 {
-    function default(): u8 { return 0 as u8; }
+  function default(): u8 {
+    return 0 as u8;
+  }
 }
+
 impl Default for string {
-    function default(): string { return ""; }
+  function default(): string {
+    return "";
+  }
 }
+
 impl Default for boolean {
-    function default(): boolean { return false; }
+  function default(): boolean {
+    return false;
+  }
 }
+
 impl Default for f32 {
-    function default(): f32 { return 0.0 as f32; }
+  function default(): f32 {
+    return 0.0 as f32;
+  }
 }
+
 impl Default for f64 {
-    function default(): f64 { return 0.0 as f64; }
+  function default(): f64 {
+    return 0.0 as f64;
+  }
 }
 
 // ---- Debug -----------------------------------------------------
@@ -340,55 +458,94 @@ impl Default for f64 {
 // round-trips visibly. These primitive impls let `[T: Debug]` generics
 // (the test runner's `assert_eq`) and nested `@derive(Debug)` fields
 // resolve `(v).to_debug()` for any leaf type.
-
 impl Debug for i32 {
-    function to_debug(self: Self): string { return self.to_string(); }
+  function to_debug(self: i32): string {
+    return self.to_string();
+  }
 }
+
 impl Debug for i64 {
-    function to_debug(self: Self): string { return self.to_string(); }
+  function to_debug(self: i64): string {
+    return self.to_string();
+  }
 }
+
 impl Debug for u32 {
-    function to_debug(self: Self): string { return self.to_string(); }
+  function to_debug(self: u32): string {
+    return self.to_string();
+  }
 }
+
 impl Debug for u64 {
-    function to_debug(self: Self): string { return self.to_string(); }
+  function to_debug(self: u64): string {
+    return self.to_string();
+  }
 }
+
 // A byte has neither structure to render nor a `to_string` of its own to
 // call, so it debugs as the decimal form of the i32 it widens to — the same
 // borrow `impl Display for u8` makes.
 impl Debug for u8 {
-    function to_debug(self: Self): string { return (self as i32).to_string(); }
+  function to_debug(self: u8): string {
+    return (self as i32).to_string();
+  }
 }
+
 impl Debug for f64 {
-    function to_debug(self: Self): string { return self.to_string(); }
+  function to_debug(self: f64): string {
+    return self.to_string();
+  }
 }
+
 impl Debug for f32 {
-    function to_debug(self: Self): string { return self.to_string(); }
+  function to_debug(self: f32): string {
+    return self.to_string();
+  }
 }
+
 impl Debug for boolean {
-    function to_debug(self: Self): string {
-        if (self) { return "true"; }
-        return "false";
+  function to_debug(self: boolean): string {
+    if (self) {
+      return "true";
     }
+    return "false";
+  }
 }
+
 impl Debug for string {
-    function to_debug(self: Self): string {
-        // Byte-level rebuild: the escapes are ASCII and every other
-        // byte (multibyte sequences included) passes through byte-exact.
-        var out: u8[] = [];
-        var i: i32 = 0;
-        var n: i32 = self.len();
-        while (i < n) {
-            var b: i32 = self[i] as i32;
-            if (b == 34) { out = out.append(92 as u8); out = out.append(34 as u8); }        // "
-            else { if (b == 92) { out = out.append(92 as u8); out = out.append(92 as u8); }  // backslash
-            else { if (b == 10) { out = out.append(92 as u8); out = out.append(110 as u8); }  // \n
-            else { if (b == 9) { out = out.append(92 as u8); out = out.append(116 as u8); }   // \t
-            else { out = out.append(self[i]); } } } }
-            i = i + 1;
+  function to_debug(self: string): string {
+    // Byte-level rebuild: the escapes are ASCII and every other
+    // byte (multibyte sequences included) passes through byte-exact.
+    var out: u8[] = [];
+    var i: i32 = 0;
+    var n: i32 = self.len();
+    while (i < n) {
+      var b: i32 = self[i] as i32;
+      if (b == 34) {  // "
+        out = out.append(92 as u8);
+        out = out.append(34 as u8);
+      } else {  // backslash
+        if (b == 92) {
+          out = out.append(92 as u8);
+          out = out.append(92 as u8);
+        } else {  // \n
+          if (b == 10) {
+            out = out.append(92 as u8);
+            out = out.append(110 as u8);
+          } else {  // \t
+            if (b == 9) {
+              out = out.append(92 as u8);
+              out = out.append(116 as u8);
+            } else {
+              out = out.append(self[i]);
+            }
+          }
         }
-        return "\"" + string_from_bytes_unchecked(out) + "\"";
+      }
+      i = i + 1;
     }
+    return "\"" + string_from_bytes_unchecked(out) + "\"";
+  }
 }
 
 // ---- Generic Ord helpers ---------------------------------------
@@ -397,24 +554,31 @@ impl Debug for string {
 // any user `Ord` type (incl. `@derive(Ord)`). A bounded generic whose
 // body calls `a.cmp(b)` monomorphises to a direct call, so these lower
 // on the self-host IR path too (#2691 / #3558).
-
 // min returns the smaller of `a` and `b` (`a` when equal).
 pub function min[T: Ord](a: T, b: T): T {
-    if (b.cmp(a) < 0) { return b; }
-    return a;
+  if (b.cmp(a) < 0) {
+    return b;
+  }
+  return a;
 }
 
 // max returns the larger of `a` and `b` (`a` when equal).
 pub function max[T: Ord](a: T, b: T): T {
-    if (a.cmp(b) < 0) { return b; }
-    return a;
+  if (a.cmp(b) < 0) {
+    return b;
+  }
+  return a;
 }
 
 // clamp constrains `x` to the inclusive range [lo, hi]. Assumes lo <= hi.
 pub function clamp[T: Ord](x: T, lo: T, hi: T): T {
-    if (x.cmp(lo) < 0) { return lo; }
-    if (x.cmp(hi) > 0) { return hi; }
-    return x;
+  if (x.cmp(lo) < 0) {
+    return lo;
+  }
+  if (x.cmp(hi) > 0) {
+    return hi;
+  }
+  return x;
 }
 
 // max_of / min_of reduce an array to its largest / smallest element under
@@ -426,44 +590,65 @@ pub function clamp[T: Ord](x: T, lo: T, hi: T): T {
 // extremal element wins (a strict `> 0` / `< 0` only replaces on a genuine
 // improvement), so the result is stable w.r.t. input order.
 pub function max_of[T: Ord](xs: T[]): Option[T] {
-    if (xs.len() == 0) { return None; }
-    var best: T = xs[0];
-    var i: i32 = 1;
-    while (i < xs.len()) {
-        if (xs[i].cmp(best) > 0) { best = xs[i]; }
-        i = i + 1;
+  if (xs.len() == 0) {
+    return None;
+  }
+  var best: T = xs[0];
+  var i: i32 = 1;
+  while (i < xs.len()) {
+    if (xs[i].cmp(best) > 0) {
+      best = xs[i];
     }
-    return Some(best);
+    i = i + 1;
+  }
+  return Some(best);
 }
 
 // min_of is max_of's mirror: the smallest element, or `None` when empty.
 pub function min_of[T: Ord](xs: T[]): Option[T] {
-    if (xs.len() == 0) { return None; }
-    var best: T = xs[0];
-    var i: i32 = 1;
-    while (i < xs.len()) {
-        if (xs[i].cmp(best) < 0) { best = xs[i]; }
-        i = i + 1;
+  if (xs.len() == 0) {
+    return None;
+  }
+  var best: T = xs[0];
+  var i: i32 = 1;
+  while (i < xs.len()) {
+    if (xs[i].cmp(best) < 0) {
+      best = xs[i];
     }
-    return Some(best);
+    i = i + 1;
+  }
+  return Some(best);
 }
 
 // lt / lte / gt / gte are the named relational forms of `cmp`, for call
 // sites that read better than a bare `a.cmp(b) < 0`.
-pub function lt[T: Ord](a: T, b: T): boolean { return a.cmp(b) < 0; }
-pub function lte[T: Ord](a: T, b: T): boolean { return a.cmp(b) <= 0; }
-pub function gt[T: Ord](a: T, b: T): boolean { return a.cmp(b) > 0; }
-pub function gte[T: Ord](a: T, b: T): boolean { return a.cmp(b) >= 0; }
+pub function lt[T: Ord](a: T, b: T): boolean {
+  return a.cmp(b) < 0;
+}
+
+pub function lte[T: Ord](a: T, b: T): boolean {
+  return a.cmp(b) <= 0;
+}
+
+pub function gt[T: Ord](a: T, b: T): boolean {
+  return a.cmp(b) > 0;
+}
+
+pub function gte[T: Ord](a: T, b: T): boolean {
+  return a.cmp(b) >= 0;
+}
 
 // is_sorted reports whether `arr` is in non-decreasing `Ord` order.
 pub function is_sorted[T: Ord](arr: T[]): boolean {
-    var i = 1;
-    var n = arr.len();
-    while (i < n) {
-        if (arr[i].cmp(arr[i - 1]) < 0) { return false; }
-        i = i + 1;
+  var i = 1;
+  var n = arr.len();
+  while (i < n) {
+    if (arr[i].cmp(arr[i - 1]) < 0) {
+      return false;
     }
-    return true;
+    i = i + 1;
+  }
+  return true;
 }
 
 // __cmp_insertion sorts `a[lo..hi)` in place by insertion. O(k^2) on k elements
@@ -484,32 +669,36 @@ pub function is_sorted[T: Ord](arr: T[]): boolean {
 // 32 gives up that balancing; it keeps the win that matters here (collapsing
 // the first several near-empty merge rounds on random input) without a
 // divide-and-round per call.
-function __cmp_min_run(): i32 { return 32; }
+function __cmp_min_run(): i32 {
+  return 32;
+}
 
 // The array is `own` so the writes land in the caller's buffer, which the
 // caller moves in as `a = __cmp_insertion(a, ...)`; a borrowed array would
 // be copied whole on the first `.with`, once per call.
 function __cmp_insertion[T: Ord](own a: T[], lo: i32, hi: i32, desc: boolean): T[] {
-    var i: i32 = lo + 1;
-    while (i < hi) {
-        var v: T = a[i];
-        var j: i32 = i - 1;
-        var moving: boolean = j >= lo;
-        while (moving) {
-            var o: i32 = a[j].cmp(v);
-            if (desc) { o = 0 - o; }
-            if (o > 0) {
-                a = a.with(j + 1, a[j]);
-                j = j - 1;
-                moving = j >= lo;
-            } else {
-                moving = false;
-            }
-        }
-        a = a.with(j + 1, v);
-        i = i + 1;
+  var i: i32 = lo + 1;
+  while (i < hi) {
+    var v: T = a[i];
+    var j: i32 = i - 1;
+    var moving: boolean = j >= lo;
+    while (moving) {
+      var o: i32 = a[j].cmp(v);
+      if (desc) {
+        o = 0 - o;
+      }
+      if (o > 0) {
+        a = a.with(j + 1, a[j]);
+        j = j - 1;
+        moving = j >= lo;
+      } else {
+        moving = false;
+      }
     }
-    return a;
+    a = a.with(j + 1, v);
+    i = i + 1;
+  }
+  return a;
 }
 
 // __cmp_sort_adaptive is the shared body behind `sort` and `sort_desc`: a
@@ -561,119 +750,147 @@ function __cmp_insertion[T: Ord](own a: T[], lo: i32, hi: i32, desc: boolean): T
 // fixed). `__cmp_insertion(a, i, e, desc)` passes the array, so `T` binds from
 // `T[]` and the call monomorphises normally, inside a loop or not.
 function __cmp_sort_adaptive[T: Ord](arr: T[], desc: boolean): T[] {
-    var n: i32 = arr.len();
-    if (n < 2) { return arr; }
+  var n: i32 = arr.len();
+  if (n < 2) {
+    return arr;
+  }
 
-    // Own a copy: the descending-run reversal writes in place.
-    var a: T[] = [];
-    var c: i32 = 0;
-    while (c < n) { a = a.append(arr[c]); c = c + 1; }
+  // Own a copy: the descending-run reversal writes in place.
+  var a: T[] = [];
+  var c: i32 = 0;
+  while (c < n) {
+    a = a.append(arr[c]);
+    c = c + 1;
+  }
 
-    if (n <= 32) {
-        a = __cmp_insertion(a, 0, n, desc);
-        return a;
-    }
-
-    // Pass 1 — natural runs. `bounds` holds each run's start, terminated by n.
-    var bounds: i32[] = [];
-    var i: i32 = 0;
-    while (i < n) {
-        bounds = bounds.append(i);
-        var e: i32 = i + 1;
-        if (e < n) {
-            var head: i32 = a[i].cmp(a[e]);
-            if (desc) { head = 0 - head; }
-            if (head > 0) {
-                // Strictly descending: extend, then reverse into order.
-                var falling: boolean = true;
-                while (falling) {
-                    e = e + 1;
-                    falling = false;
-                    if (e < n) {
-                        var od: i32 = a[e - 1].cmp(a[e]);
-                        if (desc) { od = 0 - od; }
-                        if (od > 0) { falling = true; }
-                    }
-                }
-                var lo: i32 = i;
-                var hi: i32 = e - 1;
-                while (lo < hi) {
-                    var t: T = a[lo];
-                    a = a.with(lo, a[hi]);
-                    a = a.with(hi, t);
-                    lo = lo + 1;
-                    hi = hi - 1;
-                }
-            } else {
-                var rising: boolean = true;
-                while (rising) {
-                    e = e + 1;
-                    rising = false;
-                    if (e < n) {
-                        var oa: i32 = a[e - 1].cmp(a[e]);
-                        if (desc) { oa = 0 - oa; }
-                        if (oa <= 0) { rising = true; }
-                    }
-                }
-            }
-        }
-        // MIN_RUN: a short natural run is padded out to __cmp_min_run() and
-        // insertion-sorted. On sorted input the run already spans the array, so
-        // this never fires and the O(n) path is untouched.
-        if (e - i < __cmp_min_run()) {
-            var ext: i32 = i + __cmp_min_run();
-            if (ext > n) { ext = n; }
-            if (ext > e) {
-                a = __cmp_insertion(a, i, ext, desc);
-                e = ext;
-            }
-        }
-        i = e;
-    }
-    bounds = bounds.append(n);
-
-    // Pass 2 — merge adjacent runs in rounds until one remains. Each round
-    // rebuilds the array by appending merged segments, so the output never
-    // aliases the input it is reading.
-    while (bounds.len() > 2) {
-        var out: T[] = [];
-        var next: i32[] = [];
-        var r: i32 = 0;
-        while (r + 1 < bounds.len()) {
-            var mlo: i32 = bounds[r];
-            next = next.append(mlo);
-            if (r + 2 < bounds.len()) {
-                var mmid: i32 = bounds[r + 1];
-                var mhi: i32 = bounds[r + 2];
-                var p: i32 = mlo;
-                var q: i32 = mmid;
-                while (p < mmid && q < mhi) {
-                    var om: i32 = a[p].cmp(a[q]);
-                    if (desc) { om = 0 - om; }
-                    if (om > 0) {
-                        out = out.append(a[q]);
-                        q = q + 1;
-                    } else {
-                        out = out.append(a[p]);
-                        p = p + 1;
-                    }
-                }
-                while (p < mmid) { out = out.append(a[p]); p = p + 1; }
-                while (q < mhi) { out = out.append(a[q]); q = q + 1; }
-                r = r + 2;
-            } else {
-                // Odd run out: carry it forward untouched.
-                var mend: i32 = bounds[r + 1];
-                var mk: i32 = mlo;
-                while (mk < mend) { out = out.append(a[mk]); mk = mk + 1; }
-                r = r + 1;
-            }
-        }
-        next = next.append(n);
-        a = out;
-        bounds = next;
-    }
+  if (n <= 32) {
+    a = __cmp_insertion(a, 0, n, desc);
     return a;
+  }
+
+  // Pass 1 — natural runs. `bounds` holds each run's start, terminated by n.
+  var bounds: i32[] = [];
+  var i: i32 = 0;
+  while (i < n) {
+    bounds = bounds.append(i);
+    var e: i32 = i + 1;
+    if (e < n) {
+      var head: i32 = a[i].cmp(a[e]);
+      if (desc) {
+        head = 0 - head;
+      }
+      if (head > 0) {
+        // Strictly descending: extend, then reverse into order.
+        var falling: boolean = true;
+        while (falling) {
+          e = e + 1;
+          falling = false;
+          if (e < n) {
+            var od: i32 = a[e - 1].cmp(a[e]);
+            if (desc) {
+              od = 0 - od;
+            }
+            if (od > 0) {
+              falling = true;
+            }
+          }
+        }
+        var lo: i32 = i;
+        var hi: i32 = e - 1;
+        while (lo < hi) {
+          var t: T = a[lo];
+          a = a.with(lo, a[hi]);
+          a = a.with(hi, t);
+          lo = lo + 1;
+          hi = hi - 1;
+        }
+      } else {
+        var rising: boolean = true;
+        while (rising) {
+          e = e + 1;
+          rising = false;
+          if (e < n) {
+            var oa: i32 = a[e - 1].cmp(a[e]);
+            if (desc) {
+              oa = 0 - oa;
+            }
+            if (oa <= 0) {
+              rising = true;
+            }
+          }
+        }
+      }
+    }
+    // MIN_RUN: a short natural run is padded out to __cmp_min_run() and
+    // insertion-sorted. On sorted input the run already spans the array, so
+    // this never fires and the O(n) path is untouched.
+    if (e - i < __cmp_min_run()) {
+      var ext: i32 = i + __cmp_min_run();
+      if (ext > n) {
+        ext = n;
+      }
+      if (ext > e) {
+        a = __cmp_insertion(a, i, ext, desc);
+        e = ext;
+      }
+    }
+    i = e;
+  }
+  bounds = bounds.append(n);
+
+  // Pass 2 — merge adjacent runs in rounds until one remains. Each round
+  // rebuilds the array by appending merged segments, so the output never
+  // aliases the input it is reading.
+  while (bounds.len() > 2) {
+    var out: T[] = [];
+    var next: i32[] = [];
+    var r: i32 = 0;
+    while (r + 1 < bounds.len()) {
+      var mlo: i32 = bounds[r];
+      next = next.append(mlo);
+      if (r + 2 < bounds.len()) {
+        var mmid: i32 = bounds[r + 1];
+        var mhi: i32 = bounds[r + 2];
+        var p: i32 = mlo;
+        var q: i32 = mmid;
+        while (p < mmid && q < mhi) {
+          var om: i32 = a[p].cmp(a[q]);
+          if (desc) {
+            om = 0 - om;
+          }
+          if (om > 0) {
+            out = out.append(a[q]);
+            q = q + 1;
+          } else {
+            out = out.append(a[p]);
+            p = p + 1;
+          }
+        }
+        while (p < mmid) {
+          out = out.append(a[p]);
+          p = p + 1;
+        }
+        while (q < mhi) {
+          out = out.append(a[q]);
+          q = q + 1;
+        }
+        r = r + 2;
+      } else {
+        // Odd run out: carry it forward untouched.
+        var mend: i32 = bounds[r + 1];
+        var mk: i32 = mlo;
+        while (mk < mend) {
+          out = out.append(a[mk]);
+          mk = mk + 1;
+        }
+        r = r + 1;
+      }
+    }
+    next = next.append(n);
+    a = out;
+    bounds = next;
+  }
+  return a;
 }
 
 // sort returns a new array with `arr`'s elements in non-decreasing `Ord` order.
@@ -692,7 +909,7 @@ function __cmp_sort_adaptive[T: Ord](arr: T[], desc: boolean): T[] {
 // it sits against the state of the art (pdqsort for an unstable sibling, and a
 // radix path for integer keys, are both still open).
 pub function sort[T: Ord](arr: T[]): T[] {
-    return __cmp_sort_adaptive(arr, false);
+  return __cmp_sort_adaptive(arr, false);
 }
 
 // sort_desc is `sort`'s descending mirror: a new array with `arr`'s elements in
@@ -701,7 +918,7 @@ pub function sort[T: Ord](arr: T[]): T[] {
 // `sort_strings_desc`, #5397). Stable on ties, same adaptive shape as `sort` —
 // the two differ only in the sign of the three-way compare.
 pub function sort_desc[T: Ord](arr: T[]): T[] {
-    return __cmp_sort_adaptive(arr, true);
+  return __cmp_sort_adaptive(arr, true);
 }
 
 // ---- Eq-bounded sequence verbs ---------------------------------
@@ -715,13 +932,14 @@ pub function sort_desc[T: Ord](arr: T[]): T[] {
 // in #5348). They cover any `T: Eq`, including a `@derive(Eq)` struct or
 // enum; std/array's `.contains()` / `.index_of()` receiver methods are the
 // method-form surface over the same bound.
-
 // contains reports whether `xs` holds a value equal to `target`.
 pub function contains[T: Eq](xs: T[], target: T): boolean {
-    for x in xs {
-        if (x.eq(target)) { return true; }
+  for x in xs {
+    if (x.eq(target)) {
+      return true;
     }
-    return false;
+  }
+  return false;
 }
 
 // index_of returns `Some(i)` for the 0-based position of the first value
@@ -729,12 +947,14 @@ pub function contains[T: Eq](xs: T[], target: T): boolean {
 // keeps "not found" out of band rather than leaning on a `-1` sentinel
 // (the modern shape unified from std/array in #5348).
 pub function index_of[T: Eq](xs: T[], target: T): Option[i32] {
-    var i = 0;
-    for x in xs {
-        if (x.eq(target)) { return Some(i); }
-        i = i + 1;
+  var i = 0;
+  for x in xs {
+    if (x.eq(target)) {
+      return Some(i);
     }
-    return None;
+    i = i + 1;
+  }
+  return None;
 }
 
 // distinct returns a new array with duplicate values removed, keeping
@@ -742,11 +962,13 @@ pub function index_of[T: Eq](xs: T[], target: T): Option[i32] {
 // (no `Hash` needed) — suited to small / convenience inputs; a
 // `Hash`-backed dedup is the larger-n follow-up.
 pub function distinct[T: Eq](xs: T[]): T[] {
-    var out: T[] = [];
-    for x in xs {
-        if (!contains(out, x)) { out = out.append(x); }
+  var out: T[] = [];
+  for x in xs {
+    if (!contains(out, x)) {
+      out = out.append(x);
     }
-    return out;
+  }
+  return out;
 }
 
 // ---- BigInt ----------------------------------------------------
@@ -762,31 +984,41 @@ pub function distinct[T: Eq](xs: T[]): T[] {
 // `eq`, `cmp` and `hash` with exactly these signatures, and an empty impl
 // adopts the existing method — the same shape as `impl Display for i32`.
 // `cmp` returns -1 / 0 / 1, so a BigInt[] drops straight into std/sort.
+impl Display for bigint.BigInt {}
 
-impl Display for bigint.BigInt { }
-impl Eq for bigint.BigInt { }
-impl Ord for bigint.BigInt { }
-impl Hash for bigint.BigInt { }
+impl Eq for bigint.BigInt {}
+
+impl Ord for bigint.BigInt {}
+
+impl Hash for bigint.BigInt {}
 
 impl Default for bigint.BigInt {
-    function default(): bigint.BigInt { return bigint.zero(); }
+  function default(): bigint.BigInt {
+    return bigint.zero();
+  }
 }
 
 // A number has no structure to render and no ambiguity to disambiguate, so
 // debug is the decimal form — the same call the numeric primitives make.
 impl Debug for bigint.BigInt {
-    function to_debug(self: Self): string { return self.to_string(); }
+  function to_debug(self: bigint.BigInt): string {
+    return self.to_string();
+  }
 }
 
 // eq_arrays reports whether `a` and `b` have the same length and equal
 // elements pairwise under `Eq`.
 pub function eq_arrays[T: Eq](a: T[], b: T[]): boolean {
-    var n = a.len();
-    if (n != b.len()) { return false; }
-    var i = 0;
-    while (i < n) {
-        if (!a[i].eq(b[i])) { return false; }
-        i = i + 1;
+  var n = a.len();
+  if (n != b.len()) {
+    return false;
+  }
+  var i = 0;
+  while (i < n) {
+    if (!a[i].eq(b[i])) {
+      return false;
     }
-    return true;
+    i = i + 1;
+  }
+  return true;
 }

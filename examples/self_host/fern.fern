@@ -50,7 +50,6 @@
 // file-loading scheme from asm_load_run (follow `import "./x"` to
 // sibling files; resolve `std/…` / `core/…` under an optional stdlib
 // root).
-
 import "./util";
 import "./lexer";
 import "./parser";
@@ -61,110 +60,28 @@ import "./wasm_ir";
 import "./checker";
 import "./interp";
 import "./printer";
-
 // blank_line_map marks the 1-based source lines that hold nothing but
 // whitespace, indexed by line number so the formatter can ask about one in
 // constant time. Element 0 is unused (there is no line 0).
-function blank_line_map(src: string): boolean[] {
-    var out: boolean[] = [false];
-    var i: i32 = 0;
-    var n: i32 = src.len();
-    var blank: boolean = true;
-    while (i < n) {
-        var b: i32 = src[i] as i32;
-        if (b == 10) {
-            out = out.append(blank);
-            blank = true;
-        } else if (b != 32 && b != 9 && b != 13) {
-            blank = false;
-        }
-        i = i + 1;
-    }
-    out = out.append(blank);
-    return out;
-}
-
 // fmt_output_is_readable is the `-fmt -w` safety net: the formatted text must
 // come back through the formatter as itself. The parser has no error list — a
 // construct it refuses becomes an Unknown node the printer spells `/*unknown*/`
 // — so re-formatting is the check that reaches both halves at once, an
 // unreadable node and a printer that is not a fixed point on its own output.
-function fmt_output_is_readable(formatted: string): boolean {
-    if (util.contains(formatted, "/*unknown")) { return false; }
-    var flex: lexer.LexResult = lexer.tokenize_full(formatted);
-    var pf: parser.ParsedFmt = parser.parse_module_verbatim(flex.tokens);
-    var again: string = printer.format_parsed(pf, flex.comments, blank_line_map(formatted));
-    return again == formatted;
-}
-
 // read_failure is the one-line report for a file that could not be read:
 // `fern: cannot read module /abs/x.fern: invalid UTF-8`. An empty reason means
 // the file was not found.
-function read_failure(what: string, path: string, reason: string): string {
-    if (reason.len() == 0) { reason = "not found"; }
-    return "fern: cannot read " + what + " " + path + ": " + reason;
-}
-
 // fmt_file is `-fmt` for ONE file: the formatted source goes to stdout, back
 // over the file (-w), to out_path (-o), or out as a unified diff (-d, exit 1
 // when it is non-empty). Formatting never loads imports, so a file is read and
 // formatted on its own. Returns the exit code for this file.
-function fmt_file(path: string, fmt_write: boolean, fmt_diff: boolean, out_path: string): i32 {
-    var esrc: string = "";
-    match (read_file(path)) {
-        Ok(s) => { esrc = s; },
-        Err(e) => {
-            eprint(read_failure("entry file", path, modloader.read_error_reason(e)));
-            return 1;
-        },
-    }
-    // Formatting is the one mode that needs the trivia the compile path
-    // discards: `tokenize_full` keeps the `//` comments beside the tokens,
-    // and the blank-line map is read straight off the source (#6769).
-    var flex: lexer.LexResult = lexer.tokenize_full(esrc);
-    var pf: parser.ParsedFmt = parser.parse_module_verbatim(flex.tokens);
-    var formatted: string = printer.format_parsed(pf, flex.comments, blank_line_map(esrc));
-    if (fmt_diff) {
-        var d: string = printer.unified_diff(esrc, formatted, path, path);
-        if (d.len() == 0) { return 0; }
-        write(d);
-        return 1;
-    }
-    if (fmt_write) {
-        // The only irreversible path, so it refuses to overwrite the input
-        // with output the parser cannot read back. A printer with no case
-        // for a node emits `/*unknown*/` rather than failing, and a file is
-        // not recoverable from a diagnostic printed after the write.
-        if (!fmt_output_is_readable(formatted)) {
-            eprint("fern: " + path + ": refusing to write back — the formatted output does not re-parse; this is a formatter bug, please report it\n");
-            return 1;
-        }
-        match (write_file(path, formatted)) {
-            Err(e) => {
-                eprint("fern: cannot write back: ");
-                eprint(path);
-                eprint("\n");
-                return 1;
-            },
-            Ok(_) => {},
-        }
-        return 0;
-    }
-    if (out_path.len() > 0) {
-        match (write_file(out_path, formatted)) {
-            Err(e) => {
-                eprint("fern: cannot write output: ");
-                eprint(out_path);
-                eprint("\n");
-                return 1;
-            },
-            Ok(_) => {},
-        }
-    } else {
-        write(formatted);
-    }
-    return 0;
-}
+// Formatting is the one mode that needs the trivia the compile path
+// discards: `tokenize_full` keeps the `//` comments beside the tokens,
+// and the blank-line map is read straight off the source (#6769).
+// The only irreversible path, so it refuses to overwrite the input
+// with output the parser cannot read back. A printer with no case
+// for a node emits `/*unknown*/` rather than failing, and a file is
+// not recoverable from a diagnostic printed after the write.
 import "./watbin";
 import "./wit_compose";
 import "./constfold";
@@ -187,6 +104,96 @@ import "./ircore";
 import "./emitforms";
 import "./semlower";
 
+function blank_line_map(src: string): boolean[] {
+  var out: boolean[] = [false];
+  var i: i32 = 0;
+  var n: i32 = src.len();
+  var blank: boolean = true;
+  while (i < n) {
+    var b: i32 = src[i] as i32;
+    if (b == 10) {
+      out = out.append(blank);
+      blank = true;
+    } else if (b != 32 && b != 9 && b != 13) {
+      blank = false;
+    }
+    i = i + 1;
+  }
+  out = out.append(blank);
+  return out;
+}
+
+function fmt_output_is_readable(formatted: string): boolean {
+  if (util.contains(formatted, "/*unknown")) {
+    return false;
+  }
+  var flex: lexer.LexResult = lexer.tokenize_full(formatted);
+  var pf: parser.ParsedFmt = parser.parse_module_verbatim(flex.tokens);
+  var again: string = printer.format_parsed(pf, flex.comments, blank_line_map(formatted));
+  return again == formatted;
+}
+
+function read_failure(what: string, path: string, reason: string): string {
+  if (reason.len() == 0) {
+    reason = "not found";
+  }
+  return "fern: cannot read " + what + " " + path + ": " + reason;
+}
+
+function fmt_file(path: string, fmt_write: boolean, fmt_diff: boolean, out_path: string): i32 {
+  var esrc: string = "";
+  match (read_file(path)) {
+    Ok(s) => {
+      esrc = s;
+    },
+    Err(e) => {
+      eprint(read_failure("entry file", path, modloader.read_error_reason(e)));
+      return 1;
+    }
+  }
+  var flex: lexer.LexResult = lexer.tokenize_full(esrc);
+  var pf: parser.ParsedFmt = parser.parse_module_verbatim(flex.tokens);
+  var formatted: string = printer.format_parsed(pf, flex.comments, blank_line_map(esrc));
+  if (fmt_diff) {
+    var d: string = printer.unified_diff(esrc, formatted, path, path);
+    if (d.len() == 0) {
+      return 0;
+    }
+    write(d);
+    return 1;
+  }
+  if (fmt_write) {
+    if (!fmt_output_is_readable(formatted)) {
+      eprint("fern: " + path + ": refusing to write back — the formatted output does not re-parse; this is a formatter bug, please report it\n");
+      return 1;
+    }
+    match (write_file(path, formatted)) {
+      Err(e) => {
+        eprint("fern: cannot write back: ");
+        eprint(path);
+        eprint("\n");
+        return 1;
+      },
+      Ok(_) => {}
+    }
+    return 0;
+  }
+  if (out_path.len() > 0) {
+    match (write_file(out_path, formatted)) {
+      Err(e) => {
+        eprint("fern: cannot write output: ");
+        eprint(out_path);
+        eprint("\n");
+        return 1;
+      },
+      Ok(_) => {}
+    }
+  } else {
+    write(formatted);
+  }
+  return 0;
+}
+
 // to_u8 copies an i32[] byte buffer (values 0..255, as the wasm binary
 // encoder produces) into a u8[] so string_from_bytes_unchecked can pack it into a
 // string whose bytes are written verbatim (incl. 0x00 / high bytes) by
@@ -195,15 +202,17 @@ import "./semlower";
 // (util.pos_str) when it is known, and no `error[…]` segment for an uncoded
 // one (the const-grammar rule is one).
 function eprint_diags(ds: util.Diag[], files: string[]): void {
-    for d in ds {
-        var tag: string = "";
-        if (d.code.len() > 0) { tag = "error[" + d.code + "]: "; }
-        if (d.line > 0) {
-            eprint(util.pos_str(files, d.line, d.col) + ": " + tag + d.message + "\n");
-        } else {
-            eprint(tag + d.message + "\n");
-        }
+  for d in ds {
+    var tag: string = "";
+    if (d.code.len() > 0) {
+      tag = "error[" + d.code + "]: ";
     }
+    if (d.line > 0) {
+      eprint(util.pos_str(files, d.line, d.col) + ": " + tag + d.message + "\n");
+    } else {
+      eprint(tag + d.message + "\n");
+    }
+  }
 }
 
 // arm64_refusals renders the assembler's / linker's refusal list as ONE
@@ -222,16 +231,18 @@ function eprint_diags(ds: util.Diag[], files: string[]): void {
 // while `label:__fern_x` is an emitted call to a runtime helper the emitter did
 // not define — not an instruction at all, which the old wording insisted it was.
 function arm64_refusals(target: string, stage: string, unknown: string[]): string {
-    var msg: string = "fern: -target " + target + ": in-process " + stage
-        + " refused " + util.i32_to_string(unknown.len()) + ": ";
-    var i: i32 = 0;
-    while (i < unknown.len()) {
-        if (i > 0) { msg = msg + ", "; }
-        msg = msg + unknown[i];
-        i = i + 1;
+  var msg: string = "fern: -target " + target + ": in-process " + stage
+    + " refused " + util.i32_to_string(unknown.len()) + ": ";
+  var i: i32 = 0;
+  while (i < unknown.len()) {
+    if (i > 0) {
+      msg = msg + ", ";
     }
-    eprint(msg);
-    return "";
+    msg = msg + unknown[i];
+    i = i + 1;
+  }
+  eprint(msg);
+  return "";
 }
 
 // arm64_elf_binary assembles arm64 Linux GAS text (from either the SSA or AST
@@ -241,51 +252,55 @@ function arm64_refusals(target: string, stage: string, unknown: string[]): strin
 // instruction it doesn't yet support (the caller reports it and exits 2). The
 // arm64-darwin counterpart is the macho_executable path above.
 function arm64_elf_binary(asm: string, emit_syms: boolean): string {
-    var p: arm64_native.Arm64GasProg = arm64_native.arm64_gas_program(asm);
-    if (p.unknown.len() > 0) {
-        return arm64_refusals("arm64-linux", "assembler", p.unknown);
-    }
-    var pa: arm64_native.Arm64Asm = p.asm;
-    // W^X two-segment layout: .text loads R+X at elf_text_vaddr_wx(), the
-    // unwind data the `.cfi_*` directives rendered follows it in the same
-    // segment, and the data blob (.rodata + globals + the .bss heap) loads
-    // R+W on the first page boundary past those, so no mapping is both
-    // writable and executable (required by W^X-enforcing loaders such as
-    // Android's). The unwind images are rendered before the link because
-    // the data address depends on their size; neither depends on the data.
-    var text_len: i32 = pa.code.len();
-    var tv: i64 = (elf.elf_text_vaddr_wx()) as i64;
-    var hdr_len: i32 = arm64_native.arm64_eh_frame_hdr_len(p);
-    var hv: i64 = (elf.elf_eh_hdr_vaddr_wx(text_len)) as i64;
-    var ev: i64 = (elf.elf_eh_frame_vaddr_wx(text_len, hdr_len)) as i64;
-    var eh: i32[] = arm64_native.arm64_eh_frame(p, tv, ev);
-    var hdr: i32[] = arm64_native.arm64_eh_frame_hdr(p, tv, ev, hv);
-    var dv: i64 = (elf.elf_data_vaddr_wx_unwind(text_len, hdr.len(), eh.len())) as i64;
-    p = arm64_native.arm64_gas_link(p, tv, dv);
-    // Symbol resolution happens IN the link, so its refusals land here rather
-    // than in the parse check above. Reporting them matters more than it
-    // sounds: an unresolvable symbol used to be patched as an offset anyway,
-    // which is how a function value became an address in the middle of .data
-    // and stayed a runtime SEGV rather than a compile error (#6045).
-    if (p.unknown.len() > 0) {
-        return arm64_refusals("arm64-linux", "linker", p.unknown);
-    }
-    var pa2: arm64_native.Arm64Asm = p.asm;
-    var eoff: i32 = arm64_native.arm64_asm_label_off(pa2, "_start");
-    if (eoff < 0) { eoff = 0; }
-    var bin: i32[] = elf.elf_image_wx_unwind(pa2.code, hdr, eh, p.data, elf.elf_em_aarch64(), eoff, p.bss_size);
-    if (emit_syms) {
-        // `-g`, the W^X counterpart of the x86 path. Arm64Asm records no
-        // section per label — every label it holds is a .text label — so the
-        // section filter is -1 rather than 0.
-        var aend: i32 = pa2.code.len();
-        var nosec: i32[] = [];
-        bin = elf.elf_append_symtab(bin, elf.elf_text_vaddr_wx(), elf.elf_wx_text_off(), pa2.code.len(),
-            elf.elf_func_sym_names(pa2.lab_names, pa2.lab_offs, nosec, 0 - 1, aend),
-            elf.elf_func_sym_offs(pa2.lab_names, pa2.lab_offs, nosec, 0 - 1, aend),
-            elf.elf_func_sym_sizes(pa2.lab_names, pa2.lab_offs, nosec, 0 - 1, aend));
-    }
-    return string_from_bytes_unchecked(util.to_u8(bin));
+  var p: arm64_native.Arm64GasProg = arm64_native.arm64_gas_program(asm);
+  if (p.unknown.len() > 0) {
+    return arm64_refusals("arm64-linux", "assembler", p.unknown);
+  }
+  var pa: arm64_native.Arm64Asm = p.asm;
+  // W^X two-segment layout: .text loads R+X at elf_text_vaddr_wx(), the
+  // unwind data the `.cfi_*` directives rendered follows it in the same
+  // segment, and the data blob (.rodata + globals + the .bss heap) loads
+  // R+W on the first page boundary past those, so no mapping is both
+  // writable and executable (required by W^X-enforcing loaders such as
+  // Android's). The unwind images are rendered before the link because
+  // the data address depends on their size; neither depends on the data.
+  var text_len: i32 = pa.code.len();
+  var tv: i64 = elf.elf_text_vaddr_wx() as i64;
+  var hdr_len: i32 = arm64_native.arm64_eh_frame_hdr_len(p);
+  var hv: i64 = elf.elf_eh_hdr_vaddr_wx(text_len) as i64;
+  var ev: i64 = elf.elf_eh_frame_vaddr_wx(text_len, hdr_len) as i64;
+  var eh: i32[] = arm64_native.arm64_eh_frame(p, tv, ev);
+  var hdr: i32[] = arm64_native.arm64_eh_frame_hdr(p, tv, ev, hv);
+  var dv: i64 = elf.elf_data_vaddr_wx_unwind(text_len, hdr.len(), eh.len()) as i64;
+  p = arm64_native.arm64_gas_link(p, tv, dv);
+  // Symbol resolution happens IN the link, so its refusals land here rather
+  // than in the parse check above. Reporting them matters more than it
+  // sounds: an unresolvable symbol used to be patched as an offset anyway,
+  // which is how a function value became an address in the middle of .data
+  // and stayed a runtime SEGV rather than a compile error (#6045).
+  if (p.unknown.len() > 0) {
+    return arm64_refusals("arm64-linux", "linker", p.unknown);
+  }
+  var pa2: arm64_native.Arm64Asm = p.asm;
+  var eoff: i32 = arm64_native.arm64_asm_label_off(pa2, "_start");
+  if (eoff < 0) {
+    eoff = 0;
+  }
+  var bin: i32[] = elf.elf_image_wx_unwind(pa2.code, hdr, eh, p.data, elf.elf_em_aarch64(), eoff, p.bss_size);
+  if (emit_syms) {
+    // `-g`, the W^X counterpart of the x86 path. Arm64Asm records no
+    // section per label — every label it holds is a .text label — so the
+    // section filter is -1 rather than 0.
+    var aend: i32 = pa2.code.len();
+    var nosec: i32[] = [];
+    bin = elf.elf_append_symtab(
+      bin, elf.elf_text_vaddr_wx(), elf.elf_wx_text_off(), pa2.code.len(),
+      elf.elf_func_sym_names(pa2.lab_names, pa2.lab_offs, nosec, 0 - 1, aend),
+      elf.elf_func_sym_offs(pa2.lab_names, pa2.lab_offs, nosec, 0 - 1, aend),
+      elf.elf_func_sym_sizes(pa2.lab_names, pa2.lab_offs, nosec, 0 - 1, aend),
+    );
+  }
+  return string_from_bytes_unchecked(util.to_u8(bin));
 }
 
 // arm64_elf_binary_pie is arm64_elf_binary as a static position-independent
@@ -303,22 +318,24 @@ function arm64_elf_binary(asm: string, emit_syms: boolean): string {
 // before anyone noticed (`match` on a const aggregate took no arm and the
 // program silently returned 0).
 function arm64_elf_binary_pie(asm: string): string {
-    var p: arm64_native.Arm64GasProg = arm64_native.arm64_gas_program(asm);
-    if (p.unknown.len() > 0) {
-        return arm64_refusals("arm64-android", "assembler", p.unknown);
-    }
-    var pa: arm64_native.Arm64Asm = p.asm;
-    var tv: i64 = (elf.elf_text_vaddr_pie()) as i64;
-    var dv: i64 = (elf.elf_data_vaddr_pie(pa.code.len())) as i64;
-    p = arm64_native.arm64_gas_link(p, tv, dv);
-    if (p.unknown.len() > 0) {
-        return arm64_refusals("arm64-android", "linker", p.unknown);
-    }
-    var pa2: arm64_native.Arm64Asm = p.asm;
-    var eoff: i32 = arm64_native.arm64_asm_label_off(pa2, "_start");
-    if (eoff < 0) { eoff = 0; }
-    var bin: i32[] = elf.elf_image_pie(pa2.code, p.data, elf.elf_em_aarch64(), eoff, p.bss_size);
-    return string_from_bytes_unchecked(util.to_u8(bin));
+  var p: arm64_native.Arm64GasProg = arm64_native.arm64_gas_program(asm);
+  if (p.unknown.len() > 0) {
+    return arm64_refusals("arm64-android", "assembler", p.unknown);
+  }
+  var pa: arm64_native.Arm64Asm = p.asm;
+  var tv: i64 = elf.elf_text_vaddr_pie() as i64;
+  var dv: i64 = elf.elf_data_vaddr_pie(pa.code.len()) as i64;
+  p = arm64_native.arm64_gas_link(p, tv, dv);
+  if (p.unknown.len() > 0) {
+    return arm64_refusals("arm64-android", "linker", p.unknown);
+  }
+  var pa2: arm64_native.Arm64Asm = p.asm;
+  var eoff: i32 = arm64_native.arm64_asm_label_off(pa2, "_start");
+  if (eoff < 0) {
+    eoff = 0;
+  }
+  var bin: i32[] = elf.elf_image_pie(pa2.code, p.data, elf.elf_em_aarch64(), eoff, p.bss_size);
+  return string_from_bytes_unchecked(util.to_u8(bin));
 }
 
 // x86_elf_binary assembles x86-64 Linux GAS text into a runnable static ELF
@@ -331,51 +348,53 @@ function arm64_elf_binary_pie(asm: string): string {
 // length, which is exactly this layout. W^X would need the assembler to
 // resolve against a page-aligned data vaddr, as arm64_gas_link does.
 function x86_elf_binary(asm: string, emit_syms: boolean): string {
-    util.arr_push_cliff_report("x86:emitted", 0);
-    var a: x86_native.X86Asm = x86_native.x86_gas_assemble(asm);
-    util.arr_push_cliff_report("x86:assembled", 0);
-    // Absolute `.quad <label>` pointers need the load address, which the ELF
-    // container picks — the analogue of arm64_gas_link's data-vaddr argument.
-    a = x86_native.x86_resolve_data(a, elf.elf_text_vaddr_x86());
-    util.arr_push_cliff_report("x86:resolved", 0);
-    // Anything unencodable means bytes were dropped, so every offset past
-    // the first is wrong — refuse rather than write it (SH-005, #6045).
-    if (a.unknown.len() > 0) {
-        eprint("fern: -target x86-64: in-process assembler could not encode: ");
-        eprint(a.unknown[0]);
-        eprint("\n");
-        return "";
-    }
-    var eoff: i32 = x86_native.x86_label_off(a, "_start");
-    if (eoff < 0) {
-        eprint("fern: -target x86-64: no _start symbol in the emitted program\n");
-        return "";
-    }
-    // The unwind data the `.cfi_*` directives rendered, at the addresses the
-    // image places it — .text's size is final here, and the data base the
-    // assembler resolved against already accounts for these sections.
-    var tv: i64 = (elf.elf_text_vaddr_x86()) as i64;
-    var hdr_len: i32 = x86_native.x86_eh_frame_hdr_len(a);
-    var hv: i64 = (elf.elf_eh_hdr_vaddr_x86(a.code.len())) as i64;
-    var ev: i64 = (elf.elf_eh_frame_vaddr_x86(a.code.len(), hdr_len)) as i64;
-    var eh: i32[] = x86_native.x86_eh_frame(a, tv, ev);
-    var hdr: i32[] = x86_native.x86_eh_frame_hdr(a, tv, ev, hv);
-    util.arr_push_cliff_report("x86:unwind", 0);
-    var bin: i32[] = elf.elf_program_x86(a.code, hdr, eh, a.rodata, a.bss_size, eoff);
-    util.arr_push_cliff_report("x86:image", 0);
-    if (emit_syms) {
-        // `-g`: a static .symtab so nm / a debugger / a profiler can map an
-        // address back to a function. Only .text labels (section 0) become
-        // symbols, and the sizes span to the end of the code, which is what
-        // lets a backtrace attribute an address INSIDE a function rather
-        // than only an exact entry point.
-        var end: i32 = a.code.len();
-        bin = elf.elf_append_symtab(bin, elf.elf_text_vaddr_x86(), elf.elf_text_off_x86(), a.code.len(),
-            elf.elf_func_sym_names(a.lab_names, a.lab_offs, a.lab_secs, 0, end),
-            elf.elf_func_sym_offs(a.lab_names, a.lab_offs, a.lab_secs, 0, end),
-            elf.elf_func_sym_sizes(a.lab_names, a.lab_offs, a.lab_secs, 0, end));
-    }
-    return string_from_bytes_unchecked(util.to_u8(bin));
+  util.arr_push_cliff_report("x86:emitted", 0);
+  var a: x86_native.X86Asm = x86_native.x86_gas_assemble(asm);
+  util.arr_push_cliff_report("x86:assembled", 0);
+  // Absolute `.quad <label>` pointers need the load address, which the ELF
+  // container picks — the analogue of arm64_gas_link's data-vaddr argument.
+  a = x86_native.x86_resolve_data(a, elf.elf_text_vaddr_x86());
+  util.arr_push_cliff_report("x86:resolved", 0);
+  // Anything unencodable means bytes were dropped, so every offset past
+  // the first is wrong — refuse rather than write it (SH-005, #6045).
+  if (a.unknown.len() > 0) {
+    eprint("fern: -target x86-64: in-process assembler could not encode: ");
+    eprint(a.unknown[0]);
+    eprint("\n");
+    return "";
+  }
+  var eoff: i32 = x86_native.x86_label_off(a, "_start");
+  if (eoff < 0) {
+    eprint("fern: -target x86-64: no _start symbol in the emitted program\n");
+    return "";
+  }
+  // The unwind data the `.cfi_*` directives rendered, at the addresses the
+  // image places it — .text's size is final here, and the data base the
+  // assembler resolved against already accounts for these sections.
+  var tv: i64 = elf.elf_text_vaddr_x86() as i64;
+  var hdr_len: i32 = x86_native.x86_eh_frame_hdr_len(a);
+  var hv: i64 = elf.elf_eh_hdr_vaddr_x86(a.code.len()) as i64;
+  var ev: i64 = elf.elf_eh_frame_vaddr_x86(a.code.len(), hdr_len) as i64;
+  var eh: i32[] = x86_native.x86_eh_frame(a, tv, ev);
+  var hdr: i32[] = x86_native.x86_eh_frame_hdr(a, tv, ev, hv);
+  util.arr_push_cliff_report("x86:unwind", 0);
+  var bin: i32[] = elf.elf_program_x86(a.code, hdr, eh, a.rodata, a.bss_size, eoff);
+  util.arr_push_cliff_report("x86:image", 0);
+  if (emit_syms) {
+    // `-g`: a static .symtab so nm / a debugger / a profiler can map an
+    // address back to a function. Only .text labels (section 0) become
+    // symbols, and the sizes span to the end of the code, which is what
+    // lets a backtrace attribute an address INSIDE a function rather
+    // than only an exact entry point.
+    var end: i32 = a.code.len();
+    bin = elf.elf_append_symtab(
+      bin, elf.elf_text_vaddr_x86(), elf.elf_text_off_x86(), a.code.len(),
+      elf.elf_func_sym_names(a.lab_names, a.lab_offs, a.lab_secs, 0, end),
+      elf.elf_func_sym_offs(a.lab_names, a.lab_offs, a.lab_secs, 0, end),
+      elf.elf_func_sym_sizes(a.lab_names, a.lab_offs, a.lab_secs, 0, end),
+    );
+  }
+  return string_from_bytes_unchecked(util.to_u8(bin));
 }
 
 // ImportQueue is the breadth-first import worklist: each path paired with the
@@ -389,60 +408,64 @@ struct ImportQueue { paths: string[], dirs: string[], unrooted: string }
 // queued reports whether this import path has already been queued FROM this
 // same directory.
 function queued(paths: string[], dirs: string[], ip: string, from_dir: string): boolean {
-    var i: i32 = 0;
-    while (i < paths.len()) {
-        if (paths[i] == ip && dirs[i] == from_dir) { return true; }
-        i = i + 1;
+  var i: i32 = 0;
+  while (i < paths.len()) {
+    if (paths[i] == ip && dirs[i] == from_dir) {
+      return true;
     }
-    return false;
+    i = i + 1;
+  }
+  return false;
 }
 
 // queue_imports appends each of mod's loadable import paths, deduped by path
 // AND directory, each tagged with `from_dir` — mod's own directory, which is
 // what its imports resolve against.
 function queue_imports(q: ImportQueue, mod: parser.Module, from_dir: string, root: string, deps: string[]): ImportQueue {
-    var paths: string[] = q.paths;
-    var dirs: string[] = q.dirs;
-    var unrooted: string = q.unrooted;
-    var i: i32 = 0;
-    while (i < mod.imports.len()) {
-        var ip: string = mod.imports[i].path;
-        if (root.len() == 0 && unrooted.len() == 0 && util.is_stdlib_path(ip) && !util.should_load(ip, root, deps)) {
-            unrooted = ip;
-        }
-        // Keyed on the path AND the directory it was written in. `./sort` from
-        // the entry and `./sort` from a module in sub/ are the same string and
-        // different files, so deduping on the string alone queued one of them
-        // and gave it the other's directory (#9762). Genuine duplicates are
-        // still collapsed downstream, where the RESOLVED path says so.
-        if (util.should_load(ip, root, deps) && !queued(paths, dirs, ip, from_dir)) {
-            paths = paths.append(ip);
-            dirs = dirs.append(from_dir + "");
-        }
-        i = i + 1;
+  var paths: string[] = q.paths;
+  var dirs: string[] = q.dirs;
+  var unrooted: string = q.unrooted;
+  var i: i32 = 0;
+  while (i < mod.imports.len()) {
+    var ip: string = mod.imports[i].path;
+    if (root.len() == 0 && unrooted.len() == 0 && util.is_stdlib_path(ip) && !util.should_load(ip, root, deps)) {
+      unrooted = ip;
     }
-    return ImportQueue { paths: paths, dirs: dirs, unrooted: unrooted };
+    // Keyed on the path AND the directory it was written in. `./sort` from
+    // the entry and `./sort` from a module in sub/ are the same string and
+    // different files, so deduping on the string alone queued one of them
+    // and gave it the other's directory (#9762). Genuine duplicates are
+    // still collapsed downstream, where the RESOLVED path says so.
+    if (util.should_load(ip, root, deps) && !queued(paths, dirs, ip, from_dir)) {
+      paths = paths.append(ip);
+      dirs = dirs.append(from_dir + "");
+    }
+    i = i + 1;
+  }
+  return ImportQueue { paths: paths, dirs: dirs, unrooted: unrooted };
 }
 
 // is_flag is true for an argument that begins with '-'. A bare `-` is not a
 // flag: it is the conventional name for stdin, and reading it as one made
 // `fern -interp -` an unknown-flag error.
 function is_flag(a: string): boolean {
-    if (a.len() < 2) { return false; }
-    return a[0] == b'-';
+  if (a.len() < 2) {
+    return false;
+  }
+  return a[0] == b'-';
 }
 
 function usage(): i32 {
-    eprint("usage: fern [-check | -interp | -fmt | -capabilities] [-target <isa>-<environment>] [-backend flat|ssa] [-emit asm|core-module] [-embed DIR] [-o OUT] <entry.fern> [stdlib-root]\n");
-    eprint("       fern -fmt [-w | -d | -o OUT] FILE...          (-w overwrites each file, -d prints unified diffs; -o takes one FILE)\n");
-    eprint("       fern -targets                                (list supported targets + capabilities)\n");
-    eprint("       fern -resolve <ABS-DIR>                      (run MVS over the manifest's index; write fern.lock)\n");
-    eprint("       fern -tangle <doc.fern.md>                   (literate: emit the tangled Fern source)\n");
-    eprint("       fern -doc <module.fern> [-o OUT]             (Markdown reference page; stdout without -o)\n");
-    eprint("       fern -doc <DIR> -o OUTDIR                    (one page per module under DIR)\n");
-    eprint("       fern -add NAME SPEC <ABS-DIR>                (declare a dependency: path:DIR | workspace)\n");
-    eprint("       fern -vendor <ABS-DIR>                       (flatten the dependency graph into vendor/)\n");
-    return 2;
+  eprint("usage: fern [-check | -interp | -fmt | -capabilities] [-target <isa>-<environment>] [-backend flat|ssa] [-emit asm|core-module] [-embed DIR] [-o OUT] <entry.fern> [stdlib-root]\n");
+  eprint("       fern -fmt [-w | -d | -o OUT] FILE...          (-w overwrites each file, -d prints unified diffs; -o takes one FILE)\n");
+  eprint("       fern -targets                                (list supported targets + capabilities)\n");
+  eprint("       fern -resolve <ABS-DIR>                      (run MVS over the manifest's index; write fern.lock)\n");
+  eprint("       fern -tangle <doc.fern.md>                   (literate: emit the tangled Fern source)\n");
+  eprint("       fern -doc <module.fern> [-o OUT]             (Markdown reference page; stdout without -o)\n");
+  eprint("       fern -doc <DIR> -o OUTDIR                    (one page per module under DIR)\n");
+  eprint("       fern -add NAME SPEC <ABS-DIR>                (declare a dependency: path:DIR | workspace)\n");
+  eprint("       fern -vendor <ABS-DIR>                       (flatten the dependency graph into vendor/)\n");
+  return 2;
 }
 
 // list_targets implements `-targets`: every target the descriptor table
@@ -450,25 +473,27 @@ function usage(): i32 {
 // carries no prose description (platforms.fern says why), so a target is
 // printed as the two axes its name spells out.
 function list_targets(): i32 {
-    var all: string[] = platforms.targets();
-    var i: i32 = 0;
-    while (i < all.len()) {
-        var d: platforms.Descriptor = platforms.for_target(all[i]);
-        var line: string = d.name + ": " + d.isa + " / " + d.environment + "\n    capabilities: [";
-        var c: i32 = 0;
-        while (c < d.capabilities.len()) {
-            if (c > 0) { line = line + " "; }
-            line = line + d.capabilities[c];
-            c = c + 1;
-        }
-        line = line + "]\n";
-        if (!platforms.emits_code(d.name)) {
-            line = line + "    note:         check-only — no backend emits for this target yet\n";
-        }
-        write(line);
-        i = i + 1;
+  var all: string[] = platforms.targets();
+  var i: i32 = 0;
+  while (i < all.len()) {
+    var d: platforms.Descriptor = platforms.for_target(all[i]);
+    var line: string = d.name + ": " + d.isa + " / " + d.environment + "\n    capabilities: [";
+    var c: i32 = 0;
+    while (c < d.capabilities.len()) {
+      if (c > 0) {
+        line = line + " ";
+      }
+      line = line + d.capabilities[c];
+      c = c + 1;
     }
-    return 0;
+    line = line + "]\n";
+    if (!platforms.emits_code(d.name)) {
+      line = line + "    note:         check-only — no backend emits for this target yet\n";
+    }
+    write(line);
+    i = i + 1;
+  }
+  return 0;
 }
 
 // main wraps `run` in the opt-in quadratic-copy readout (FERN_CLIFF_REPORT,
@@ -490,7 +515,7 @@ function list_targets(): i32 {
 // with it. Adding it now would only convert a silent corruption into a broken
 // CLI. See #6057.
 function main(): i32 {
-    return util.arr_push_cliff_report("fern", run());
+  return util.arr_push_cliff_report("fern", run());
 }
 
 // target_writes_binary reports whether `-target t` produces a finished
@@ -503,8 +528,10 @@ function main(): i32 {
 // loaded by a runtime, not something the kernel execs, so it stays 0644 — as
 // does anything `-emit asm` produced, which is text.
 function target_writes_binary(t: string, emit: string): boolean {
-    if (emit.len() > 0) { return false; }
-    return t == "x86-64-linux" || t == "arm64-linux" || t == "arm64-android" || t == "arm64-darwin";
+  if (emit.len() > 0) {
+    return false;
+  }
+  return t == "x86-64-linux" || t == "arm64-linux" || t == "arm64-android" || t == "arm64-darwin";
 }
 
 // write_output writes the compiler's output, executable when the target
@@ -523,15 +550,24 @@ function target_writes_binary(t: string, emit: string): boolean {
 // pointing where it did (a dangling one creates its target), and only a path
 // that resolves to a regular file is made executable.
 function write_output(out_path: string, data: string, t: string, emit: string): Result[void, IoError] {
-    if (!target_writes_binary(t, emit)) { return write_file(out_path, data); }
-    if let Ok(link) = lstat(out_path) {
-        if (!link.is_file) {
-            if let Ok(st) = stat(out_path) { if (!st.is_file) { return write_file(out_path, data); } }
-            return write_file_exec(out_path, data);
+  if (!target_writes_binary(t, emit)) {
+    return write_file(out_path, data);
+  }
+  if let Ok(link) = lstat(out_path) {
+    if (!link.is_file) {
+      if let Ok(st) = stat(out_path) {
+        if (!st.is_file) {
+          return write_file(out_path, data);
         }
-        match (remove_file(out_path)) { Ok(_) => {}, Err(_) => {} }
+      }
+      return write_file_exec(out_path, data);
     }
-    return write_file_exec(out_path, data);
+    match (remove_file(out_path)) {
+      Ok(_) => {},
+      Err(_) => {}
+    }
+  }
+  return write_file_exec(out_path, data);
 }
 
 // capability_violations reports every call to a builtin the target does not
@@ -547,29 +583,31 @@ function write_output(out_path: string, data: string, t: string, emit: string): 
 // enforceTargetCapabilities); the cheap pre-pass is only about not shaking a
 // module whose answer cannot change.
 function capability_violations(merged: parser.Module, target: string): boolean {
-    if (platforms.enforce(merged, target).len() == 0) { return false; }
-    var vs: platforms.Violation[] = platforms.enforce(treeshake.treeshake(merged), target);
-    var i: i32 = 0;
-    while (i < vs.len()) {
-        var v: platforms.Violation = vs[i];
-        var msg: string = "error[E066]: " + platforms.violation_message(v);
-        // Only the entry module's positions index the file being reported on
-        // — an imported module's line numbers index ITS source, so a
-        // violation from one degrades to a position-less line whose message
-        // names the function and module instead. Native's renderer makes the
-        // same split.
-        if (v.fn_module.len() == 0 && v.line > 0) {
-            eprint(util.i32_to_string(v.line) + ":" + util.i32_to_string(v.col) + ": " + msg + "\n");
-        } else {
-            eprint(msg + "\n");
-        }
-        i = i + 1;
+  if (platforms.enforce(merged, target).len() == 0) {
+    return false;
+  }
+  var vs: platforms.Violation[] = platforms.enforce(treeshake.treeshake(merged), target);
+  var i: i32 = 0;
+  while (i < vs.len()) {
+    var v: platforms.Violation = vs[i];
+    var msg: string = "error[E066]: " + platforms.violation_message(v);
+    // Only the entry module's positions index the file being reported on
+    // — an imported module's line numbers index ITS source, so a
+    // violation from one degrades to a position-less line whose message
+    // names the function and module instead. Native's renderer makes the
+    // same split.
+    if (v.fn_module.len() == 0 && v.line > 0) {
+      eprint(util.i32_to_string(v.line) + ":" + util.i32_to_string(v.col) + ": " + msg + "\n");
+    } else {
+      eprint(msg + "\n");
     }
-    // The shaken module's answer is the verdict, so an empty `vs` is an ACCEPT:
-    // the flat pre-pass fired on a builtin only unreachable code reaches. This
-    // returned true unconditionally, rejecting such a program with exit 1 and
-    // no diagnostic printed at all, where native accepts it.
-    return vs.len() > 0;
+    i = i + 1;
+  }
+  // The shaken module's answer is the verdict, so an empty `vs` is an ACCEPT:
+  // the flat pre-pass fired on a builtin only unreachable code reaches. This
+  // returned true unconditionally, rejecting such a program with exit 1 and
+  // no diagnostic printed at all, where native accepts it.
+  return vs.len() > 0;
 }
 
 // ambient_violations reports every host effect a handler reaches around its
@@ -578,69 +616,79 @@ function capability_violations(merged: parser.Module, target: string): boolean {
 // independent, so it runs on every check and every build, on the bundle
 // before the shake: a handler is judged on what its body reaches.
 function ambient_violations(merged: parser.Module): boolean {
-    var vs: ambient.Violation[] = ambient.enforce(merged);
-    var i: i32 = 0;
-    while (i < vs.len()) {
-        var v: ambient.Violation = vs[i];
-        var msg: string = "error[E080]: " + ambient.violation_message(v);
-        if (v.fn_module.len() == 0 && v.line > 0) {
-            eprint(util.i32_to_string(v.line) + ":" + util.i32_to_string(v.col) + ": " + msg + "\n");
-        } else {
-            eprint(msg + "\n");
-        }
-        i = i + 1;
+  var vs: ambient.Violation[] = ambient.enforce(merged);
+  var i: i32 = 0;
+  while (i < vs.len()) {
+    var v: ambient.Violation = vs[i];
+    var msg: string = "error[E080]: " + ambient.violation_message(v);
+    if (v.fn_module.len() == 0 && v.line > 0) {
+      eprint(util.i32_to_string(v.line) + ":" + util.i32_to_string(v.col) + ": " + msg + "\n");
+    } else {
+      eprint(msg + "\n");
     }
-    return vs.len() > 0;
+    i = i + 1;
+  }
+  return vs.len() > 0;
 }
 
 // read_manifest parses `<dir>fern.toml`, or an empty manifest when the entry
 // has none — which is every compiler source, and a program with no packages
 // to govern.
 function read_manifest(dir_slash: string): fern_toml.Manifest {
-    match (read_file(dir_slash + "fern.toml")) {
-        Ok(src) => { return fern_toml.parse(src); },
-        Err(e) => { },
-    }
-    var no_deps: fern_toml.Dep[] = [];
-    var no_members: string[] = [];
-    var no_excl: string[] = [];
-    return fern_toml.Manifest {
-        name: "", lib: "lib.fern", index: "", deps: no_deps, members: no_members,
-        excl_pkg: no_excl, excl_ver: no_excl,
-    };
+  match (read_file(dir_slash + "fern.toml")) {
+    Ok(src) => {
+      return fern_toml.parse(src);
+    },
+    Err(e) => {}
+  }
+  var no_deps: fern_toml.Dep[] = [];
+  var no_members: string[] = [];
+  var no_excl: string[] = [];
+  return fern_toml.Manifest {
+    name: "", lib: "lib.fern", index: "", deps: no_deps, members: no_members,
+    excl_pkg: no_excl, excl_ver: no_excl,
+  };
 }
 
 // manifest_reqs is a manifest's versioned ([package] index) dependencies as
 // MVS demands: name → its declared LOWEST acceptable version.
 function manifest_reqs(man: fern_toml.Manifest): mvs.Req[] {
-    var out: mvs.Req[] = [];
-    var i: i32 = 0;
-    while (i < man.deps.len()) {
-        if (man.deps[i].kind == "version" && man.deps[i].version.len() > 0) {
-            out = out.append(mvs.Req { pkg: man.deps[i].name + "", min: man.deps[i].version + "" });
-        }
-        i = i + 1;
+  var out: mvs.Req[] = [];
+  var i: i32 = 0;
+  while (i < man.deps.len()) {
+    if (man.deps[i].kind == "version" && man.deps[i].version.len() > 0) {
+      out = out.append(mvs.Req { pkg: man.deps[i].name + "", min: man.deps[i].version + "" });
     }
-    return out;
+    i = i + 1;
+  }
+  return out;
 }
 
 // find_manifest_dir walks up from `dir` to the first directory holding a
 // fern.toml, or "" when nothing governs it.
 function find_manifest_dir(dir: string): string {
-    var d: string = dir;
-    while (d.len() > 0) {
-        var found: boolean = false;
-        match (read_file(d + "/fern.toml")) {
-            Ok(s) => { found = true; },
-            Err(e) => { },
-        }
-        if (found) { return d; }
-        if (d.len() <= 1) { return ""; }
-        var up: string = util.dir_of(d);
-        if (up.len() == 0) { up = "/"; }
-        d = up;
+  var d: string = dir;
+  while (d.len() > 0) {
+    var found: boolean = false;
+    match (read_file(d + "/fern.toml")) {
+      Ok(s) => {
+        found = true;
+      },
+      Err(e) => {}
     }
-    return "";
+    if (found) {
+      return d;
+    }
+    if (d.len() <= 1) {
+      return "";
+    }
+    var up: string = util.dir_of(d);
+    if (up.len() == 0) {
+      up = "/";
+    }
+    d = up;
+  }
+  return "";
 }
 
 // run_resolve implements `-resolve [DIR]`: read the manifest governing DIR,
@@ -655,103 +703,115 @@ function find_manifest_dir(dir: string): string {
 // source cannot be materialised — fetching is native-only — so an index
 // entry MVS actually selects by url is a diagnostic rather than a download.
 function run_resolve(start: string): i32 {
-    if (start.len() == 0 || start[0] != b'/') {
-        eprint("resolve: pass an absolute path (this driver has no working-directory builtin)");
-        return 2;
-    }
-    var dir: string = start;
-    match (read_file(start)) {
-        Ok(s) => { dir = util.dir_of(start); },
-        Err(e) => { },
-    }
-    var mdir: string = find_manifest_dir(dir);
-    if (mdir.len() == 0) {
-        eprint("resolve: no fern.toml governs " + dir);
-        return 1;
-    }
-    var mpath: string = mdir + "/fern.toml";
-    var man: fern_toml.Manifest = read_manifest(mdir + "/");
-    var roots: mvs.Req[] = manifest_reqs(man);
-    if (roots.len() == 0) {
-        eprint("resolve: " + mpath + " declares no versioned dependencies (nothing to resolve)");
-        return 1;
-    }
-    if (man.index.len() == 0) {
-        eprint("resolve: " + mpath + " has versioned dependencies but no `index = \"…\"` under [package]");
-        return 1;
-    }
-    var ipath: string = man.index;
-    if (!mvs.is_abs(ipath)) { ipath = mvs.join_path(mdir, ipath); }
-    var isrc: string = "";
-    var iok: boolean = false;
-    match (read_file(ipath)) {
-        Ok(s) => { isrc = s; iok = true; },
-        Err(e) => { },
-    }
-    if (!iok) {
-        eprint("index " + ipath + ": cannot read");
-        return 1;
-    }
-    var ix: mvs.Index = mvs.parse_index(isrc);
-    if (ix.err.len() > 0) {
-        eprint("index " + ipath + ": " + ix.err);
-        return 1;
-    }
-    ix = mvs.with_dir(ix, mvs.join_path(util.dir_of(ipath), "."));
+  if (start.len() == 0 || start[0] != b'/') {
+    eprint("resolve: pass an absolute path (this driver has no working-directory builtin)");
+    return 2;
+  }
+  var dir: string = start;
+  match (read_file(start)) {
+    Ok(s) => {
+      dir = util.dir_of(start);
+    },
+    Err(e) => {}
+  }
+  var mdir: string = find_manifest_dir(dir);
+  if (mdir.len() == 0) {
+    eprint("resolve: no fern.toml governs " + dir);
+    return 1;
+  }
+  var mpath: string = mdir + "/fern.toml";
+  var man: fern_toml.Manifest = read_manifest(mdir + "/");
+  var roots: mvs.Req[] = manifest_reqs(man);
+  if (roots.len() == 0) {
+    eprint("resolve: " + mpath + " declares no versioned dependencies (nothing to resolve)");
+    return 1;
+  }
+  if (man.index.len() == 0) {
+    eprint("resolve: " + mpath + " has versioned dependencies but no `index = \"…\"` under [package]");
+    return 1;
+  }
+  var ipath: string = man.index;
+  if (!mvs.is_abs(ipath)) {
+    ipath = mvs.join_path(mdir, ipath);
+  }
+  var isrc: string = "";
+  var iok: boolean = false;
+  match (read_file(ipath)) {
+    Ok(s) => {
+      isrc = s;
+      iok = true;
+    },
+    Err(e) => {}
+  }
+  if (!iok) {
+    eprint("index " + ipath + ": cannot read");
+    return 1;
+  }
+  var ix: mvs.Index = mvs.parse_index(isrc);
+  if (ix.err.len() > 0) {
+    eprint("index " + ipath + ": " + ix.err);
+    return 1;
+  }
+  ix = mvs.with_dir(ix, mvs.join_path(util.dir_of(ipath), "."));
 
-    var bans: mvs.Ban[] = [];
-    var bi: i32 = 0;
-    while (bi < man.excl_pkg.len()) {
-        bans = bans.append(mvs.Ban { pkg: man.excl_pkg[bi] + "", ver: man.excl_ver[bi] + "" });
-        bi = bi + 1;
-    }
+  var bans: mvs.Ban[] = [];
+  var bi: i32 = 0;
+  while (bi < man.excl_pkg.len()) {
+    bans = bans.append(mvs.Ban { pkg: man.excl_pkg[bi] + "", ver: man.excl_ver[bi] + "" });
+    bi = bi + 1;
+  }
 
-    // The step loop native spells as a `DepsOf` closure: materialise the
-    // package version MVS is asking about and hand back ITS versioned deps.
-    // That is what makes the resolution transitive, and it reads only the
-    // versions actually selected.
-    var st: mvs.State = mvs.begin(roots, bans, ix);
-    while (st.err.len() == 0 && !mvs.done(st)) {
-        var src: mvs.Source = mvs.index_source(ix, st.need_pkg, st.need_ver);
-        if (src.path.len() == 0) {
-            st = mvs.fail(st, "url sources need `fern -fetch`, which this driver does not have");
-        } else {
-            var dsrc: string = "";
-            var dok: boolean = false;
-            match (read_file(src.path + "/fern.toml")) {
-                Ok(s) => { dsrc = s; dok = true; },
-                Err(e) => { },
-            }
-            if (!dok) {
-                st = mvs.fail(st, st.need_pkg + "@" + st.need_ver + " has no fern.toml");
-            } else {
-                st = mvs.supply(st, manifest_reqs(fern_toml.parse(dsrc)));
-            }
-        }
+  // The step loop native spells as a `DepsOf` closure: materialise the
+  // package version MVS is asking about and hand back ITS versioned deps.
+  // That is what makes the resolution transitive, and it reads only the
+  // versions actually selected.
+  var st: mvs.State = mvs.begin(roots, bans, ix);
+  while (st.err.len() == 0 && !mvs.done(st)) {
+    var src: mvs.Source = mvs.index_source(ix, st.need_pkg, st.need_ver);
+    if (src.path.len() == 0) {
+      st = mvs.fail(st, "url sources need `fern -fetch`, which this driver does not have");
+    } else {
+      var dsrc: string = "";
+      var dok: boolean = false;
+      match (read_file(src.path + "/fern.toml")) {
+        Ok(s) => {
+          dsrc = s;
+          dok = true;
+        },
+        Err(e) => {}
+      }
+      if (!dok) {
+        st = mvs.fail(st, st.need_pkg + "@" + st.need_ver + " has no fern.toml");
+      } else {
+        st = mvs.supply(st, manifest_reqs(fern_toml.parse(dsrc)));
+      }
     }
-    if (st.err.len() > 0) {
-        eprint(st.err);
-        return 1;
-    }
+  }
+  if (st.err.len() > 0) {
+    eprint(st.err);
+    return 1;
+  }
 
-    var sel: mvs.Sel[] = mvs.selected(st);
-    var lock: string = mdir + "/fern.lock";
-    var wrote: boolean = false;
-    match (write_file(lock, mvs.lock_text(sel))) {
-        Ok(u) => { wrote = true; },
-        Err(e) => { },
-    }
-    if (!wrote) {
-        eprint("resolve: cannot write " + lock);
-        return 1;
-    }
-    eprint("resolve: " + util.i32_to_string(sel.len()) + " package(s) pinned in " + lock);
-    var i: i32 = 0;
-    while (i < sel.len()) {
-        eprint("  " + sel[i].name + " " + sel[i].ver);
-        i = i + 1;
-    }
-    return 0;
+  var sel: mvs.Sel[] = mvs.selected(st);
+  var lock: string = mdir + "/fern.lock";
+  var wrote: boolean = false;
+  match (write_file(lock, mvs.lock_text(sel))) {
+    Ok(u) => {
+      wrote = true;
+    },
+    Err(e) => {}
+  }
+  if (!wrote) {
+    eprint("resolve: cannot write " + lock);
+    return 1;
+  }
+  eprint("resolve: " + util.i32_to_string(sel.len()) + " package(s) pinned in " + lock);
+  var i: i32 = 0;
+  while (i < sel.len()) {
+    eprint("  " + sel[i].name + " " + sel[i].ver);
+    i = i + 1;
+  }
+  return 0;
 }
 
 // run_add implements `-add NAME SPEC <ABS-DIR>`: append a declared dependency
@@ -763,123 +823,138 @@ function run_resolve(start: string): i32 {
 // survive: a dependency is a line spliced into `[dependencies]`, not a
 // re-render of a parsed tree.
 function run_add(pos: string[]): i32 {
-    if (pos.len() < 2) {
-        eprint("usage: fern -add NAME SPEC   (SPEC = path:../dir | url:https://… | workspace)");
-        return 1;
+  if (pos.len() < 2) {
+    eprint("usage: fern -add NAME SPEC   (SPEC = path:../dir | url:https://… | workspace)");
+    return 1;
+  }
+  var name: string = pos[0];
+  var spec: string = pos[1];
+  if (pos.len() < 3) {
+    eprint("add: pass the package directory (this driver has no working-directory builtin)");
+    return 2;
+  }
+  var dir: string = pos[2];
+  if (!mvs.is_abs(dir)) {
+    eprint("add: pass an absolute directory (this driver has no working-directory builtin)");
+    return 2;
+  }
+  if (!valid_dep_name(name)) {
+    eprint("add: invalid dependency name " + mvs.quoted(name) + " (letters, digits, `_`, `-`; must not start with a digit)");
+    return 1;
+  }
+  var mdir: string = find_manifest_dir(dir);
+  if (mdir.len() == 0) {
+    eprint("add: no fern.toml governs " + dir + " — create one with a [package] table first");
+    return 1;
+  }
+  var mpath: string = mdir + "/fern.toml";
+  if (fern_toml.has_dep(read_manifest(mdir + "/"), name)) {
+    eprint("add: " + mvs.quoted(name) + " is already a dependency in " + mpath + " (edit it by hand to change its source)");
+    return 1;
+  }
+  var line: string = "";
+  if (spec == "workspace") {
+    line = name + " = { workspace = true }";
+  } else if (spec.len() >= 5 && slice_unchecked(spec, 0, 5) == "path:") {
+    var p: string = slice_unchecked(spec, 5, spec.len()) + "";
+    if (p.len() == 0) {
+      eprint("add: empty path in " + mvs.quoted(spec));
+      return 1;
     }
-    var name: string = pos[0];
-    var spec: string = pos[1];
-    if (pos.len() < 3) {
-        eprint("add: pass the package directory (this driver has no working-directory builtin)");
-        return 2;
-    }
-    var dir: string = pos[2];
-    if (!mvs.is_abs(dir)) {
-        eprint("add: pass an absolute directory (this driver has no working-directory builtin)");
-        return 2;
-    }
-    if (!valid_dep_name(name)) {
-        eprint("add: invalid dependency name " + mvs.quoted(name) + " (letters, digits, `_`, `-`; must not start with a digit)");
-        return 1;
-    }
-    var mdir: string = find_manifest_dir(dir);
-    if (mdir.len() == 0) {
-        eprint("add: no fern.toml governs " + dir + " — create one with a [package] table first");
-        return 1;
-    }
-    var mpath: string = mdir + "/fern.toml";
-    if (fern_toml.has_dep(read_manifest(mdir + "/"), name)) {
-        eprint("add: " + mvs.quoted(name) + " is already a dependency in " + mpath + " (edit it by hand to change its source)");
-        return 1;
-    }
-    var line: string = "";
-    if (spec == "workspace") {
-        line = name + " = { workspace = true }";
-    } else if (spec.len() >= 5 && slice_unchecked(spec, 0, 5) == "path:") {
-        var p: string = slice_unchecked(spec, 5, spec.len()) + "";
-        if (p.len() == 0) {
-            eprint("add: empty path in " + mvs.quoted(spec));
-            return 1;
-        }
-        line = name + " = { path = " + mvs.quoted(p) + " }";
-    } else if (spec.len() >= 4 && slice_unchecked(spec, 0, 4) == "url:") {
-        eprint("add: a url dependency records the archive's sha256, which means fetching it — use the native `fern -add` (this driver has no fetcher)");
-        return 1;
-    } else {
-        eprint("add: unrecognised source " + mvs.quoted(spec) + " — use path:DIR, url:HTTPS_URL, or workspace");
-        return 1;
-    }
+    line = name + " = { path = " + mvs.quoted(p) + " }";
+  } else if (spec.len() >= 4 && slice_unchecked(spec, 0, 4) == "url:") {
+    eprint("add: a url dependency records the archive's sha256, which means fetching it — use the native `fern -add` (this driver has no fetcher)");
+    return 1;
+  } else {
+    eprint("add: unrecognised source " + mvs.quoted(spec) + " — use path:DIR, url:HTTPS_URL, or workspace");
+    return 1;
+  }
 
-    var orig: string = "";
-    var ok: boolean = false;
-    match (read_file(mpath)) {
-        Ok(s) => { orig = s; ok = true; },
-        Err(e) => { },
+  var orig: string = "";
+  var ok: boolean = false;
+  match (read_file(mpath)) {
+    Ok(s) => {
+      orig = s;
+      ok = true;
+    },
+    Err(e) => {}
+  }
+  if (!ok) {
+    eprint("add: cannot read " + mpath);
+    return 1;
+  }
+  var updated: string = insert_dependency(orig, line);
+  // Read the edit back before committing it. Native re-parses with a strict
+  // manifest parser and refuses to write a manifest that would not load;
+  // this reader never rejects, so the equivalent check is positive — the
+  // dependency the edit claims to add has to be there when the result is
+  // parsed again.
+  if (!fern_toml.has_dep(fern_toml.parse(updated), name)) {
+    eprint("add: the edit would not declare " + mvs.quoted(name) + " — no change written");
+    return 1;
+  }
+  match (write_file(mpath, updated)) {
+    Ok(u) => {},
+    Err(e) => {
+      eprint("add: cannot write " + mpath);
+      return 1;
     }
-    if (!ok) {
-        eprint("add: cannot read " + mpath);
-        return 1;
-    }
-    var updated: string = insert_dependency(orig, line);
-    // Read the edit back before committing it. Native re-parses with a strict
-    // manifest parser and refuses to write a manifest that would not load;
-    // this reader never rejects, so the equivalent check is positive — the
-    // dependency the edit claims to add has to be there when the result is
-    // parsed again.
-    if (!fern_toml.has_dep(fern_toml.parse(updated), name)) {
-        eprint("add: the edit would not declare " + mvs.quoted(name) + " — no change written");
-        return 1;
-    }
-    match (write_file(mpath, updated)) {
-        Ok(u) => { },
-        Err(e) => {
-            eprint("add: cannot write " + mpath);
-            return 1;
-        },
-    }
-    eprint("add: " + line);
-    return 0;
+  }
+  eprint("add: " + line);
+  return 0;
 }
 
 // insert_dependency splices a dependency line into a manifest's
 // [dependencies] table, creating the table at EOF when there is none.
 // Everything else — formatting, comments, other sections — survives verbatim.
 function insert_dependency(src: string, line: string): string {
-    var lines: string[] = mvs.split_char(src, b'\n');
-    var i: i32 = 0;
-    while (i < lines.len()) {
-        if (util.trim(lines[i]) == "[dependencies]") {
-            var out: string = "";
-            var k: i32 = 0;
-            while (k < lines.len()) {
-                if (k > 0) { out = out + "\n"; }
-                out = out + lines[k];
-                if (k == i) { out = out + "\n" + line; }
-                k = k + 1;
-            }
-            return out;
+  var lines: string[] = mvs.split_char(src, b'\n');
+  var i: i32 = 0;
+  while (i < lines.len()) {
+    if (util.trim(lines[i]) == "[dependencies]") {
+      var out: string = "";
+      var k: i32 = 0;
+      while (k < lines.len()) {
+        if (k > 0) {
+          out = out + "\n";
         }
-        i = i + 1;
+        out = out + lines[k];
+        if (k == i) {
+          out = out + "\n" + line;
+        }
+        k = k + 1;
+      }
+      return out;
     }
-    var sep: string = "\n";
-    if (src.len() > 0 && src[src.len() - 1] == b'\n') { sep = ""; }
-    return src + sep + "\n[dependencies]\n" + line + "\n";
+    i = i + 1;
+  }
+  var sep: string = "\n";
+  if (src.len() > 0 && src[src.len() - 1] == b'\n') {
+    sep = "";
+  }
+  return src + sep + "\n[dependencies]\n" + line + "\n";
 }
 
 // valid_dep_name accepts letters, digits, `_` and `-`, and refuses a leading
 // digit — the manifest's own rule for a dependency key.
 function valid_dep_name(s: string): boolean {
-    if (s.len() == 0) { return false; }
-    if (s[0] >= b'0' && s[0] <= b'9') { return false; }
-    var i: i32 = 0;
-    while (i < s.len()) {
-        var c: i32 = s[i] as i32;
-        var alpha: boolean = (c >= 97 && c <= 122) || (c >= 65 && c <= 90);
-        var digit: boolean = c >= 48 && c <= 57;
-        if (!alpha && !digit && c != 95 && c != 45) { return false; }   // '_' '-'
-        i = i + 1;
+  if (s.len() == 0) {
+    return false;
+  }
+  if (s[0] >= b'0' && s[0] <= b'9') {
+    return false;
+  }
+  var i: i32 = 0;
+  while (i < s.len()) {
+    var c: i32 = s[i] as i32;
+    var alpha: boolean = c >= 97 && c <= 122 || c >= 65 && c <= 90;
+    var digit: boolean = c >= 48 && c <= 57;
+    if (!alpha && !digit && c != 95 && c != 45) {  // '_' '-'
+      return false;
     }
-    return true;
+    i = i + 1;
+  }
+  return true;
 }
 
 // VendorSrc is one dependency's resolved source directory, or the
@@ -903,73 +978,80 @@ struct VendorSet { names: string[], srcs: string[], err: string }
 // it is reachable here — populating the store is `fern -fetch`, which is still
 // native's.
 function run_vendor(start: string): i32 {
-    if (!mvs.is_abs(start)) {
-        eprint("vendor: pass an absolute path (this driver has no working-directory builtin)");
-        return 2;
+  if (!mvs.is_abs(start)) {
+    eprint("vendor: pass an absolute path (this driver has no working-directory builtin)");
+    return 2;
+  }
+  var dir: string = start;
+  if (!is_dir(start)) {
+    var readable: boolean = false;
+    match (read_file(start)) {
+      Ok(s) => {
+        readable = true;
+      },
+      Err(e) => {}
     }
-    var dir: string = start;
-    if (!is_dir(start)) {
-        var readable: boolean = false;
-        match (read_file(start)) { Ok(s) => { readable = true; }, Err(e) => { } }
-        if (!readable) {
-            eprint("vendor: cannot read " + start);
-            return 1;
-        }
-        dir = util.dir_of(start);
+    if (!readable) {
+      eprint("vendor: cannot read " + start);
+      return 1;
     }
-    var mdir: string = find_manifest_dir(dir);
-    if (mdir.len() == 0) {
-        eprint("vendor: no fern.toml governs " + dir);
+    dir = util.dir_of(start);
+  }
+  var mdir: string = find_manifest_dir(dir);
+  if (mdir.len() == 0) {
+    eprint("vendor: no fern.toml governs " + dir);
+    return 1;
+  }
+  var root: fern_toml.Manifest = read_manifest(mdir + "/");
+
+  // A workspace root vendors the UNION of its members' external
+  // dependencies into the root's vendor/ (members resolve out of it); a
+  // plain package vendors its own transitive deps.
+  var starts: string[] = [];
+  if (root.members.len() == 0) {
+    starts = starts.append(mdir + "");
+  } else {
+    var mi: i32 = 0;
+    while (mi < root.members.len()) {
+      var rel: string = root.members[mi];
+      mi = mi + 1;
+      var mem: string = rel;
+      if (!mvs.is_abs(rel)) {
+        mem = mvs.join_path(mdir, rel);
+      }
+      if (!has_manifest(mem)) {
+        eprint("vendor: workspace member " + mvs.quoted(rel) + " has no fern.toml");
         return 1;
+      }
+      starts = starts.append(mem + "");
     }
-    var root: fern_toml.Manifest = read_manifest(mdir + "/");
+  }
 
-    // A workspace root vendors the UNION of its members' external
-    // dependencies into the root's vendor/ (members resolve out of it); a
-    // plain package vendors its own transitive deps.
-    var starts: string[] = [];
-    if (root.members.len() == 0) {
-        starts = starts.append(mdir + "");
-    } else {
-        var mi: i32 = 0;
-        while (mi < root.members.len()) {
-            var rel: string = root.members[mi];
-            mi = mi + 1;
-            var mem: string = rel;
-            if (!mvs.is_abs(rel)) { mem = mvs.join_path(mdir, rel); }
-            if (!has_manifest(mem)) {
-                eprint("vendor: workspace member " + mvs.quoted(rel) + " has no fern.toml");
-                return 1;
-            }
-            starts = starts.append(mem + "");
-        }
-    }
+  var set: VendorSet = vendor_collect(starts);
+  if (set.err.len() > 0) {
+    eprint(set.err);
+    return 1;
+  }
 
-    var set: VendorSet = vendor_collect(starts);
-    if (set.err.len() > 0) {
-        eprint(set.err);
-        return 1;
+  var vdir: string = mdir + "/vendor";
+  match (remove_dir_all(vdir)) {
+    Ok(u) => {},
+    Err(e) => {
+      eprint("vendor: clearing " + vdir);
+      return 1;
     }
-
-    var vdir: string = mdir + "/vendor";
-    match (remove_dir_all(vdir)) {
-        Ok(u) => { },
-        Err(e) => {
-            eprint("vendor: clearing " + vdir);
-            return 1;
-        },
+  }
+  var i: i32 = 0;
+  while (i < set.names.len()) {
+    var err: string = copy_package(set.srcs[i], vdir + "/" + set.names[i]);
+    if (err.len() > 0) {
+      eprint("vendor: copying " + mvs.quoted(set.names[i]) + ": " + err);
+      return 1;
     }
-    var i: i32 = 0;
-    while (i < set.names.len()) {
-        var err: string = copy_package(set.srcs[i], vdir + "/" + set.names[i]);
-        if (err.len() > 0) {
-            eprint("vendor: copying " + mvs.quoted(set.names[i]) + ": " + err);
-            return 1;
-        }
-        i = i + 1;
-    }
-    eprint("vendor: " + util.i32_to_string(set.names.len()) + " package(s) written to " + vdir);
-    return 0;
+    i = i + 1;
+  }
+  eprint("vendor: " + util.i32_to_string(set.names.len()) + " package(s) written to " + vdir);
+  return 0;
 }
 
 // vendor_collect walks the dependency graph breadth-first from each starting
@@ -981,61 +1063,75 @@ function run_vendor(start: string): i32 {
 // The flat namespace is what forces the collision check — two distinct
 // packages claiming one name would silently overwrite each other.
 function vendor_collect(starts: string[]): VendorSet {
-    var names: string[] = [];
-    var srcs: string[] = [];
-    var seen: string[] = [];
-    var queue: string[] = starts;
-    var qi: i32 = 0;
-    while (qi < queue.len()) {
-        var mdir: string = queue[qi];
-        qi = qi + 1;
-        if (str_index(seen, mdir) >= 0) { continue; }
-        seen = seen.append(mdir + "");
-        var man: fern_toml.Manifest = read_manifest(mdir + "/");
-        var di: i32 = 0;
-        while (di < man.deps.len()) {
-            var d: fern_toml.Dep = man.deps[di];
-            di = di + 1;
-            if (d.kind == "workspace") { continue; }
-            var src: VendorSrc = vendor_dep_dir(mdir, d);
-            if (src.err.len() > 0) {
-                return VendorSet { names: names, srcs: srcs, err: src.err };
-            }
-            var key: string = d.name + "";
-            var pkg_name: string = read_manifest(src.dir + "/").name;
-            if (pkg_name.len() > 0) { key = pkg_name; }
-            var at: i32 = str_index(names, key);
-            if (at >= 0) {
-                if (srcs[at] != src.dir) {
-                    return VendorSet { names: names, srcs: srcs,
-                        err: "vendor: two different packages both named " + mvs.quoted(key)
-                            + " (" + srcs[at] + " and " + src.dir + ") — package names must be unique to vendor" };
-                }
-            } else {
-                names = names.append(key + "");
-                srcs = srcs.append(src.dir + "");
-            }
-            if (has_manifest(src.dir)) { queue = queue.append(src.dir + ""); }
-        }
+  var names: string[] = [];
+  var srcs: string[] = [];
+  var seen: string[] = [];
+  var queue: string[] = starts;
+  var qi: i32 = 0;
+  while (qi < queue.len()) {
+    var mdir: string = queue[qi];
+    qi = qi + 1;
+    if (str_index(seen, mdir) >= 0) {
+      continue;
     }
-    return VendorSet { names: names, srcs: srcs, err: "" };
+    seen = seen.append(mdir + "");
+    var man: fern_toml.Manifest = read_manifest(mdir + "/");
+    var di: i32 = 0;
+    while (di < man.deps.len()) {
+      var d: fern_toml.Dep = man.deps[di];
+      di = di + 1;
+      if (d.kind == "workspace") {
+        continue;
+      }
+      var src: VendorSrc = vendor_dep_dir(mdir, d);
+      if (src.err.len() > 0) {
+        return VendorSet { names: names, srcs: srcs, err: src.err };
+      }
+      var key: string = d.name + "";
+      var pkg_name: string = read_manifest(src.dir + "/").name;
+      if (pkg_name.len() > 0) {
+        key = pkg_name;
+      }
+      var at: i32 = str_index(names, key);
+      if (at >= 0) {
+        if (srcs[at] != src.dir) {
+          return VendorSet {
+            names: names, srcs: srcs,
+            err: "vendor: two different packages both named " + mvs.quoted(key)
+              + " (" + srcs[at] + " and " + src.dir + ") — package names must be unique to vendor",
+          };
+        }
+      } else {
+        names = names.append(key + "");
+        srcs = srcs.append(src.dir + "");
+      }
+      if (has_manifest(src.dir)) {
+        queue = queue.append(src.dir + "");
+      }
+    }
+  }
+  return VendorSet { names: names, srcs: srcs, err: "" };
 }
 
 // vendor_dep_dir resolves one declared dependency to the directory whose
 // sources get copied: a path dep's directory, a versioned dep's fern.lock
 // source, or a url dep's already-populated store directory.
 function vendor_dep_dir(mdir: string, d: fern_toml.Dep): VendorSrc {
-    if (d.kind == "version") { return vendor_locked_dir(mdir, d.name); }
-    if (d.kind == "url") {
-        var store: string = store_dir(d.hash);
-        if (store.len() == 0) {
-            return VendorSrc { dir: "", err: "dependency " + mvs.quoted(d.name) + " (" + d.hash
-                + ") is not in the package store — run `fern -fetch " + mdir + "/fern.toml` before vendoring" };
-        }
-        return VendorSrc { dir: store, err: "" };
+  if (d.kind == "version") {
+    return vendor_locked_dir(mdir, d.name);
+  }
+  if (d.kind == "url") {
+    var store: string = store_dir(d.hash);
+    if (store.len() == 0) {
+      return VendorSrc { dir: "", err: "dependency " + mvs.quoted(d.name) + " (" + d.hash
+        + ") is not in the package store — run `fern -fetch " + mdir + "/fern.toml` before vendoring" };
     }
-    if (mvs.is_abs(d.path)) { return VendorSrc { dir: mvs.join_path(d.path, "."), err: "" }; }
-    return VendorSrc { dir: mvs.join_path(mdir, d.path), err: "" };
+    return VendorSrc { dir: store, err: "" };
+  }
+  if (mvs.is_abs(d.path)) {
+    return VendorSrc { dir: mvs.join_path(d.path, "."), err: "" };
+  }
+  return VendorSrc { dir: mvs.join_path(mdir, d.path), err: "" };
 }
 
 // vendor_locked_dir resolves a versioned (MVS) dependency through the
@@ -1043,40 +1139,48 @@ function vendor_dep_dir(mdir: string, d: fern_toml.Dep): VendorSrc {
 // names no directory at all and vendoring would silently copy the package
 // into its own vendor/ under its own name.
 function vendor_locked_dir(mdir: string, name: string): VendorSrc {
-    var lsrc: string = "";
-    var have: boolean = false;
-    match (read_file(mdir + "/fern.lock")) { Ok(s) => { lsrc = s; have = true; }, Err(e) => { } }
-    if (!have) {
-        return VendorSrc { dir: "", err: "dependency " + mvs.quoted(name) + " is versioned but " + mdir
-            + " has no fern.lock — run `fern -resolve " + mdir + "/fern.toml`" };
-    }
-    var lr: fern_toml.LockResult = fern_toml.parse_lock(lsrc);
-    if (lr.err.len() > 0) {
-        return VendorSrc { dir: "", err: mdir + "/" + lr.err };
-    }
-    var entries: fern_toml.LockEntry[] = lr.entries;
-    if (!fern_toml.lock_has(entries, name)) {
-        return VendorSrc { dir: "", err: "dependency " + mvs.quoted(name) + " is not in " + mdir
-            + "/fern.lock — run `fern -resolve " + mdir + "/fern.toml`" };
-    }
-    match (fern_toml.lock_path_of(entries, name)) {
-        Some(p) => { return VendorSrc { dir: p, err: "" }; },
-        None => { },
-    }
-    match (fern_toml.lock_hash_of(entries, name)) {
-        Some(h) => {
-            var store: string = store_dir(h);
-            if (store.len() == 0) {
-                return VendorSrc { dir: "", err: "dependency " + mvs.quoted(name) + "@"
-                    + fern_toml.lock_version_of(entries, name) + " (" + h
-                    + ") is not in the package store — run `fern -fetch " + mdir + "/fern.toml`" };
-            }
-            return VendorSrc { dir: store, err: "" };
-        },
-        None => { },
-    }
+  var lsrc: string = "";
+  var have: boolean = false;
+  match (read_file(mdir + "/fern.lock")) {
+    Ok(s) => {
+      lsrc = s;
+      have = true;
+    },
+    Err(e) => {}
+  }
+  if (!have) {
+    return VendorSrc { dir: "", err: "dependency " + mvs.quoted(name) + " is versioned but " + mdir
+      + " has no fern.lock — run `fern -resolve " + mdir + "/fern.toml`" };
+  }
+  var lr: fern_toml.LockResult = fern_toml.parse_lock(lsrc);
+  if (lr.err.len() > 0) {
+    return VendorSrc { dir: "", err: mdir + "/" + lr.err };
+  }
+  var entries: fern_toml.LockEntry[] = lr.entries;
+  if (!fern_toml.lock_has(entries, name)) {
     return VendorSrc { dir: "", err: "dependency " + mvs.quoted(name) + " is not in " + mdir
-        + "/fern.lock — run `fern -resolve " + mdir + "/fern.toml`" };
+      + "/fern.lock — run `fern -resolve " + mdir + "/fern.toml`" };
+  }
+  match (fern_toml.lock_path_of(entries, name)) {
+    Some(p) => {
+      return VendorSrc { dir: p, err: "" };
+    },
+    None => {}
+  }
+  match (fern_toml.lock_hash_of(entries, name)) {
+    Some(h) => {
+      var store: string = store_dir(h);
+      if (store.len() == 0) {
+        return VendorSrc { dir: "", err: "dependency " + mvs.quoted(name) + "@"
+          + fern_toml.lock_version_of(entries, name) + " (" + h
+          + ") is not in the package store — run `fern -fetch " + mdir + "/fern.toml`" };
+      }
+      return VendorSrc { dir: store, err: "" };
+    },
+    None => {}
+  }
+  return VendorSrc { dir: "", err: "dependency " + mvs.quoted(name) + " is not in " + mdir
+    + "/fern.lock — run `fern -resolve " + mdir + "/fern.toml`" };
 }
 
 // store_dir returns the content-addressed store directory holding the archive
@@ -1090,49 +1194,66 @@ function vendor_locked_dir(mdir: string, name: string): VendorSrc {
 // the hex is joined onto the store root, so a later route reaching this
 // unchecked would be a directory traversal (#8464).
 function store_dir(hash: string): string {
-    var hr: fern_toml.HashResult = fern_toml.validate_hash(hash);
-    if (hr.err.len() > 0) { return ""; }
-    var hex: string = hr.hex;
-    match (env("FERN_CACHE_DIR")) {
-        Some(d) => { return dir_or_empty(d + "/pkgs/" + hex); },
-        None => { },
-    }
-    match (env("XDG_CACHE_HOME")) {
-        Some(x) => { return dir_or_empty(x + "/fern/pkgs/" + hex); },
-        None => { },
-    }
-    match (env("HOME")) {
-        Some(h) => {
-            var linux: string = dir_or_empty(h + "/.cache/fern/pkgs/" + hex);
-            if (linux.len() > 0) { return linux; }
-            return dir_or_empty(h + "/Library/Caches/fern/pkgs/" + hex);
-        },
-        None => { },
-    }
+  var hr: fern_toml.HashResult = fern_toml.validate_hash(hash);
+  if (hr.err.len() > 0) {
     return "";
+  }
+  var hex: string = hr.hex;
+  match (env("FERN_CACHE_DIR")) {
+    Some(d) => {
+      return dir_or_empty(d + "/pkgs/" + hex);
+    },
+    None => {}
+  }
+  match (env("XDG_CACHE_HOME")) {
+    Some(x) => {
+      return dir_or_empty(x + "/fern/pkgs/" + hex);
+    },
+    None => {}
+  }
+  match (env("HOME")) {
+    Some(h) => {
+      var linux: string = dir_or_empty(h + "/.cache/fern/pkgs/" + hex);
+      if (linux.len() > 0) {
+        return linux;
+      }
+      return dir_or_empty(h + "/Library/Caches/fern/pkgs/" + hex);
+    },
+    None => {}
+  }
+  return "";
 }
 
 function dir_or_empty(p: string): string {
-    if (is_dir(p)) { return p; }
-    return "";
+  if (is_dir(p)) {
+    return p;
+  }
+  return "";
 }
 
 // has_manifest reports whether a fern.toml sits directly in `dir`. Distinct
 // from read_manifest, which fabricates an empty manifest for a directory that
 // has none — a difference vendoring turns on (whether to recurse into a dep).
 function has_manifest(dir: string): boolean {
-    match (read_file(dir + "/fern.toml")) { Ok(s) => { return true; }, Err(e) => { } }
-    return false;
+  match (read_file(dir + "/fern.toml")) {
+    Ok(s) => {
+      return true;
+    },
+    Err(e) => {}
+  }
+  return false;
 }
 
 // str_index returns the position of `want` in `xs`, or -1.
 function str_index(xs: string[], want: string): i32 {
-    var i: i32 = 0;
-    while (i < xs.len()) {
-        if (xs[i] == want) { return i; }
-        i = i + 1;
+  var i: i32 = 0;
+  while (i < xs.len()) {
+    if (xs[i] == want) {
+      return i;
     }
-    return -1;
+    i = i + 1;
+  }
+  return -1;
 }
 
 // copy_package copies a package's Fern sources into `dst`: fern.toml plus
@@ -1141,59 +1262,95 @@ function str_index(xs: string[], want: string): i32 {
 // dot-directories — a vendored package is source, not a working tree.
 // Returns "" on success, or the diagnostic body naming what failed.
 function copy_package(src: string, dst: string): string {
-    // Relative subdirectories still to visit, "" being the package root. A
-    // worklist rather than recursion: the whole walk then shares one
-    // early-return path for the first read that fails.
-    var rels: string[] = [""];
-    var ri: i32 = 0;
-    while (ri < rels.len()) {
-        var rel: string = rels[ri];
-        ri = ri + 1;
-        var sdir: string = src;
-        if (rel.len() > 0) { sdir = src + "/" + rel; }
-        var entries: string[] = [];
-        var listed: boolean = false;
-        match (read_dir(sdir)) { Ok(ns) => { entries = ns; listed = true; }, Err(e) => { } }
-        if (!listed) { return "cannot read " + sdir; }
-        var i: i32 = 0;
-        while (i < entries.len()) {
-            var name: string = entries[i];
-            i = i + 1;
-            var child_rel: string = name + "";
-            if (rel.len() > 0) { child_rel = rel + "/" + name; }
-            var child: string = src + "/" + child_rel;
-            if (is_dir(child)) {
-                if (name == "vendor") { continue; }
-                if (name.len() > 0 && name[0] == b'.') { continue; }   // and so `.` / `..`
-                rels = rels.append(child_rel + "");
-                continue;
-            }
-            if (!is_vendorable(name)) { continue; }
-            var body: string = "";
-            var read_ok: boolean = false;
-            match (read_file(child)) { Ok(s) => { body = s; read_ok = true; }, Err(e) => { } }
-            if (!read_ok) { return "cannot read " + child; }
-            var out: string = dst + "/" + child_rel;
-            match (create_dir_all(util.dir_of(out))) {
-                Ok(u) => { },
-                Err(e) => { return "cannot create " + util.dir_of(out); },
-            }
-            match (write_file(out, body)) {
-                Ok(u) => { },
-                Err(e) => { return "cannot write " + out; },
-            }
-        }
+  // Relative subdirectories still to visit, "" being the package root. A
+  // worklist rather than recursion: the whole walk then shares one
+  // early-return path for the first read that fails.
+  var rels: string[] = [""];
+  var ri: i32 = 0;
+  while (ri < rels.len()) {
+    var rel: string = rels[ri];
+    ri = ri + 1;
+    var sdir: string = src;
+    if (rel.len() > 0) {
+      sdir = src + "/" + rel;
     }
-    return "";
+    var entries: string[] = [];
+    var listed: boolean = false;
+    match (read_dir(sdir)) {
+      Ok(ns) => {
+        entries = ns;
+        listed = true;
+      },
+      Err(e) => {}
+    }
+    if (!listed) {
+      return "cannot read " + sdir;
+    }
+    var i: i32 = 0;
+    while (i < entries.len()) {
+      var name: string = entries[i];
+      i = i + 1;
+      var child_rel: string = name + "";
+      if (rel.len() > 0) {
+        child_rel = rel + "/" + name;
+      }
+      var child: string = src + "/" + child_rel;
+      if (is_dir(child)) {
+        if (name == "vendor") {
+          continue;
+        }
+        if (name.len() > 0 && name[0] == b'.') {  // and so `.` / `..`
+          continue;
+        }
+        rels = rels.append(child_rel + "");
+        continue;
+      }
+      if (!is_vendorable(name)) {
+        continue;
+      }
+      var body: string = "";
+      var read_ok: boolean = false;
+      match (read_file(child)) {
+        Ok(s) => {
+          body = s;
+          read_ok = true;
+        },
+        Err(e) => {}
+      }
+      if (!read_ok) {
+        return "cannot read " + child;
+      }
+      var out: string = dst + "/" + child_rel;
+      match (create_dir_all(util.dir_of(out))) {
+        Ok(u) => {},
+        Err(e) => {
+          return "cannot create " + util.dir_of(out);
+        }
+      }
+      match (write_file(out, body)) {
+        Ok(u) => {},
+        Err(e) => {
+          return "cannot write " + out;
+        }
+      }
+    }
+  }
+  return "";
 }
 
 // is_vendorable selects the files a vendored package consists of: its
 // manifest and its Fern sources, literate documents included.
 function is_vendorable(name: string): boolean {
-    if (name == "fern.toml") { return true; }
-    if (name.len() >= 8 && slice_unchecked(name, name.len() - 8, name.len()) == ".fern.md") { return true; }
-    if (name.len() >= 5 && slice_unchecked(name, name.len() - 5, name.len()) == ".fern") { return true; }
-    return false;
+  if (name == "fern.toml") {
+    return true;
+  }
+  if (name.len() >= 8 && slice_unchecked(name, name.len() - 8, name.len()) == ".fern.md") {
+    return true;
+  }
+  if (name.len() >= 5 && slice_unchecked(name, name.len() - 5, name.len()) == ".fern") {
+    return true;
+  }
+  return false;
 }
 
 // Bundle is a loaded program: the entry module, the modules its imports
@@ -1202,22 +1359,28 @@ function is_vendorable(name: string): boolean {
 // order, which is the order of their line bases (util.pos_str). `ok` is false
 // when a module could not be read — the diagnostic is already printed.
 struct Bundle {
-    entry: parser.Module,
-    loaded: flatten.LoadedModule[],
-    merged: parser.Module,
-    pkgs: caps.Pkg[],
-    files: string[],
-    ok: boolean,
+  entry: parser.Module,
+  loaded: flatten.LoadedModule[],
+  merged: parser.Module,
+  pkgs: caps.Pkg[],
+  files: string[],
+  ok: boolean,
 }
 
 // display_path names a module file as native's diagnostics do: a stdlib module
 // as `stdlib://<path>`, any other as the path it was read from.
 function display_path(mpath: string, root: string): string {
-    if (root.len() == 0 || !util.str_has_prefix(mpath, root)) { return mpath; }
-    var at: i32 = root.len();
-    if (at < mpath.len() && mpath[at] != b'/' && root[root.len() - 1] != b'/') { return mpath; }
-    while (at < mpath.len() && mpath[at] == b'/') { at = at + 1; }
-    return "stdlib://" + slice_unchecked(mpath, at, mpath.len());
+  if (root.len() == 0 || !util.str_has_prefix(mpath, root)) {
+    return mpath;
+  }
+  var at: i32 = root.len();
+  if (at < mpath.len() && mpath[at] != b'/' && root[root.len() - 1] != b'/') {
+    return mpath;
+  }
+  while (at < mpath.len() && mpath[at] == b'/') {
+    at = at + 1;
+  }
+  return "stdlib://" + slice_unchecked(mpath, at, mpath.len());
 }
 
 // read_bundle_module reads one imported module for load_bundle: the resolved
@@ -1226,21 +1389,27 @@ function display_path(mpath: string, root: string): string {
 // writing `import "./gnu"` means lib/gnu.fern — unless a manifest-resolved
 // dependency moves the root to its package.
 function read_bundle_module(mpath: string, from: string, ipath: string): modloader.Resolved {
-    var mdir: string = util.dir_of(mpath);
-    if (mdir.len() > 0) { mdir = mdir + "/"; }
-    match (read_file(mpath)) {
-        Ok(src) => { return modloader.Resolved { src: src, dir: mdir, ok: true, err: "", err_path: "", shown: mpath }; },
-        Err(e) => {
-            var reason: string = modloader.read_error_reason(e);
-            if (reason.len() > 0) { return modloader.Resolved { src: "", dir: mdir, ok: false, err: reason, err_path: mpath, shown: "" }; }
-        },
+  var mdir: string = util.dir_of(mpath);
+  if (mdir.len() > 0) {
+    mdir = mdir + "/";
+  }
+  match (read_file(mpath)) {
+    Ok(src) => {
+      return modloader.Resolved { src: src, dir: mdir, ok: true, err: "", err_path: "", shown: mpath };
+    },
+    Err(e) => {
+      var reason: string = modloader.read_error_reason(e);
+      if (reason.len() > 0) {
+        return modloader.Resolved { src: "", dir: mdir, ok: false, err: reason, err_path: mpath, shown: "" };
+      }
     }
-    // Manifest fallback: a DECLARED dependency resolves through fern.toml across
-    // the disk-resolvable forms (path, workspace member, lock, vendor tree,
-    // content-addressed store). It is the only way to reach a package that
-    // carries its own manifest — the rules above can only name a sibling file
-    // or something under the stdlib root.
-    return modloader.resolve_module(modloader.no_overlay(), from, ipath, util.module_name(ipath));
+  }
+  // Manifest fallback: a DECLARED dependency resolves through fern.toml across
+  // the disk-resolvable forms (path, workspace member, lock, vendor tree,
+  // content-addressed store). It is the only way to reach a package that
+  // carries its own manifest — the rules above can only name a sibling file
+  // or something under the stdlib root.
+  return modloader.resolve_module(modloader.no_overlay(), from, ipath, util.module_name(ipath));
 }
 
 // load_bundle loads `entry_mod`'s transitive imports off disk and flattens
@@ -1248,73 +1417,79 @@ function read_bundle_module(mpath: string, from: string, ipath: string): modload
 // entry is parsed by the caller, which needs it for `-fmt` before any import
 // is resolved.
 function load_bundle(entry_path: string, entry_mod: parser.Module, root: string, target: string): Bundle {
-    var dir: string = util.dir_of(entry_path);
-    // The entry's own manifest, when it has one: it names the dependency
-    // packages, which are both a way to RESOLVE an import the sibling-file and
-    // stdlib-root rules cannot name, and the identity every capability grant
-    // is attached to (caps.fern / #6634).
-    var dir_slash: string = "";
-    if (dir.len() > 0) { dir_slash = dir + "/"; }
-    var man: fern_toml.Manifest = read_manifest(dir_slash);
-    var deps: string[] = fern_toml.dep_names(man);
-    var pkgs: caps.Pkg[] = [root_pkg(man)];
-    var no_mods: flatten.LoadedModule[] = [];
+  var dir: string = util.dir_of(entry_path);
+  // The entry's own manifest, when it has one: it names the dependency
+  // packages, which are both a way to RESOLVE an import the sibling-file and
+  // stdlib-root rules cannot name, and the identity every capability grant
+  // is attached to (caps.fern / #6634).
+  var dir_slash: string = "";
+  if (dir.len() > 0) {
+    dir_slash = dir + "/";
+  }
+  var man: fern_toml.Manifest = read_manifest(dir_slash);
+  var deps: string[] = fern_toml.dep_names(man);
+  var pkgs: caps.Pkg[] = [root_pkg(man)];
+  var no_mods: flatten.LoadedModule[] = [];
 
-    var q: ImportQueue = queue_imports(ImportQueue { paths: [], dirs: [], unrooted: "" }, entry_mod, dir_slash, root, deps);
-    var loaded: flatten.LoadedModule[] = [];
-    var files: string[] = [];
-    var done_paths: string[] = [];
-    var j: i32 = 0;
-    while (j < q.paths.len()) {
-        var ipath: string = q.paths[j];
-        var from: string = q.dirs[j];
-        j = j + 1;
-        var from_dir: string = from;
-        if (from_dir.len() > 1) { from_dir = slice_unchecked(from_dir, 0, from_dir.len() - 1) + ""; }
-        var mpath: string = util.resolve_path(ipath, from_dir, root);
-        // One module is one file, and the RESOLVED path is the only thing that
-        // says so. `./lib/gnu` from the entry and `./gnu` from a module in
-        // lib/ name the same file and load once; `./sort` from the entry and
-        // `./sort` from a module in sub/ name DIFFERENT files and must both
-        // load. Deduping on the path as written did the second one wrong and
-        // silently dropped the module (#9762).
-        if (!util.has_str(done_paths, mpath)) {
-            done_paths = done_paths.append(mpath);
-            var rm: modloader.Resolved = read_bundle_module(mpath, from, ipath);
-            if (!rm.ok) {
-                var bad: string = mpath;
-                if (rm.err_path.len() > 0) { bad = rm.err_path; }
-                eprint(read_failure("module", bad, rm.err));
-                return Bundle { entry: entry_mod, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, ok: false };
-            }
-            var mdir: string = rm.dir;
-            var m: parser.Module = parser.parse_module(lexer.tokenize_from(rm.src, util.line_base(files.len()) + 1));
-            files = files.append(display_path(rm.shown, root));
-            // Identity is the FILE, not its basename: two modules can share a
-            // basename (`std/sort` and `coreutils/sort`) and the bundler has
-            // to tell them apart to give each its own prefix (#9762).
-            m = flatten.resolve_imports(m, mdir, root);
-            loaded = loaded.append(flatten.LoadedModule { name: util.module_name(ipath), ident: flatten.module_ident(mpath), mod: m });
-            // Attribute and expand against the manifest GOVERNING the importer,
-            // which is the entry's only for a direct import.
-            var from_man: fern_toml.Manifest = read_manifest(from);
-            pkgs = add_pkg(pkgs, from_man, from, ipath);
-            q = queue_imports(q, m, mdir, root, fern_toml.dep_names(read_manifest(mdir)));
+  var q: ImportQueue = queue_imports(ImportQueue { paths: [], dirs: [], unrooted: "" }, entry_mod, dir_slash, root, deps);
+  var loaded: flatten.LoadedModule[] = [];
+  var files: string[] = [];
+  var done_paths: string[] = [];
+  var j: i32 = 0;
+  while (j < q.paths.len()) {
+    var ipath: string = q.paths[j];
+    var from: string = q.dirs[j];
+    j = j + 1;
+    var from_dir: string = from;
+    if (from_dir.len() > 1) {
+      from_dir = slice_unchecked(from_dir, 0, from_dir.len() - 1) + "";
+    }
+    var mpath: string = util.resolve_path(ipath, from_dir, root);
+    // One module is one file, and the RESOLVED path is the only thing that
+    // says so. `./lib/gnu` from the entry and `./gnu` from a module in
+    // lib/ name the same file and load once; `./sort` from the entry and
+    // `./sort` from a module in sub/ name DIFFERENT files and must both
+    // load. Deduping on the path as written did the second one wrong and
+    // silently dropped the module (#9762).
+    if (!util.has_str(done_paths, mpath)) {
+      done_paths = done_paths.append(mpath);
+      var rm: modloader.Resolved = read_bundle_module(mpath, from, ipath);
+      if (!rm.ok) {
+        var bad: string = mpath;
+        if (rm.err_path.len() > 0) {
+          bad = rm.err_path;
         }
-    }
-    if (q.unrooted.len() > 0) {
-        eprint("fern: import \"" + q.unrooted + "\" needs the stdlib root: pass its directory after the entry file\n");
+        eprint(read_failure("module", bad, rm.err));
         return Bundle { entry: entry_mod, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, ok: false };
+      }
+      var mdir: string = rm.dir;
+      var m: parser.Module = parser.parse_module(lexer.tokenize_from(rm.src, util.line_base(files.len()) + 1));
+      files = files.append(display_path(rm.shown, root));
+      // Identity is the FILE, not its basename: two modules can share a
+      // basename (`std/sort` and `coreutils/sort`) and the bundler has
+      // to tell them apart to give each its own prefix (#9762).
+      m = flatten.resolve_imports(m, mdir, root);
+      loaded = loaded.append(flatten.LoadedModule { name: util.module_name(ipath), ident: flatten.module_ident(mpath), mod: m });
+      // Attribute and expand against the manifest GOVERNING the importer,
+      // which is the entry's only for a direct import.
+      var from_man: fern_toml.Manifest = read_manifest(from);
+      pkgs = add_pkg(pkgs, from_man, from, ipath);
+      q = queue_imports(q, m, mdir, root, fern_toml.dep_names(read_manifest(mdir)));
     }
-    var merged: parser.Module = flatten.bundle(flatten.resolve_imports(entry_mod, dir_slash, root), loaded, target);
-    // Fill omitted trailing args from default parameter values up front, so the
-    // checker, SSA, and interpreter all see complete calls.
-    merged = parser.fill_default_args_module(merged);
-    // A record-form variant pattern on an IMPORTED enum has no declaration to
-    // settle against until the bundle exists; parse_module resolved the
-    // same-module ones already, and the pass is idempotent.
-    merged = parser.resolve_variant_fields_module(merged);
-    return Bundle { entry: entry_mod, loaded: loaded, merged: merged, pkgs: pkgs, files: files, ok: true };
+  }
+  if (q.unrooted.len() > 0) {
+    eprint("fern: import \"" + q.unrooted + "\" needs the stdlib root: pass its directory after the entry file\n");
+    return Bundle { entry: entry_mod, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, ok: false };
+  }
+  var merged: parser.Module = flatten.bundle(flatten.resolve_imports(entry_mod, dir_slash, root), loaded, target);
+  // Fill omitted trailing args from default parameter values up front, so the
+  // checker, SSA, and interpreter all see complete calls.
+  merged = parser.fill_default_args_module(merged);
+  // A record-form variant pattern on an IMPORTED enum has no declaration to
+  // settle against until the bundle exists; parse_module resolved the
+  // same-module ones already, and the pass is idempotent.
+  merged = parser.resolve_variant_fields_module(merged);
+  return Bundle { entry: entry_mod, loaded: loaded, merged: merged, pkgs: pkgs, files: files, ok: true };
 }
 
 // bundle_visibility_diags reports cross-module visibility errors (#6714): a
@@ -1324,14 +1499,14 @@ function load_bundle(entry_path: string, entry_mod: parser.Module, root: string,
 // well as `-check` — native REFUSES TO BUILD such a program, and accepting it
 // here is the divergence. True means the program is refused.
 function bundle_visibility_diags(b: Bundle): boolean {
-    var vis_diags: util.Diag[] = visibility.export_diags(b.entry, b.loaded);
-    var vi: i32 = 0;
-    while (vi < vis_diags.len()) {
-        var vd: util.Diag = vis_diags[vi];
-        eprint(util.pos_str(b.files, vd.line, vd.col) + ": " + vd.message + "\n");
-        vi = vi + 1;
-    }
-    return vis_diags.len() > 0;
+  var vis_diags: util.Diag[] = visibility.export_diags(b.entry, b.loaded);
+  var vi: i32 = 0;
+  while (vi < vis_diags.len()) {
+    var vd: util.Diag = vis_diags[vi];
+    eprint(util.pos_str(b.files, vd.line, vd.col) + ": " + vd.message + "\n");
+    vi = vi + 1;
+  }
+  return vis_diags.len() > 0;
 }
 
 // report_decl_name_errors prints asmcore's nameless-declaration diagnostics and
@@ -1341,19 +1516,21 @@ function bundle_visibility_diags(b: Bundle): boolean {
 // EMPTY name and consumes nothing — asmcore.check_decl_names is where that is
 // caught, and each emitting driver calls it on the module as parsed.
 function report_decl_name_errors(mod: parser.Module, files: string[]): boolean {
-    var ds: util.Diag[] = asmcore.check_decl_names(mod);
-    if (ds.len() == 0) { return false; }
-    var i: i32 = 0;
-    while (i < ds.len()) {
-        var d: util.Diag = ds[i];
-        if (d.line > 0) {
-            eprint(util.pos_str(files, d.line, d.col) + ": error[" + d.code + "]: " + d.message + "\n");
-        } else {
-            eprint("error[" + d.code + "]: " + d.message + "\n");
-        }
-        i = i + 1;
+  var ds: util.Diag[] = asmcore.check_decl_names(mod);
+  if (ds.len() == 0) {
+    return false;
+  }
+  var i: i32 = 0;
+  while (i < ds.len()) {
+    var d: util.Diag = ds[i];
+    if (d.line > 0) {
+      eprint(util.pos_str(files, d.line, d.col) + ": error[" + d.code + "]: " + d.message + "\n");
+    } else {
+      eprint("error[" + d.code + "]: " + d.message + "\n");
     }
-    return true;
+    i = i + 1;
+  }
+  return true;
 }
 
 // report_parse_unknown_errors is the same gate for the parser's OWN markers,
@@ -1368,10 +1545,12 @@ function report_decl_name_errors(mod: parser.Module, files: string[]): boolean {
 // uncalled function is dead code: shaking drops the declaration, and with it
 // the only evidence the source did not parse.
 function report_parse_unknown_errors(mod: parser.Module, files: string[]): boolean {
-    var ds: util.Diag[] = asmcore.parse_unknown_errors_module(mod);
-    if (ds.len() == 0) { return false; }
-    eprint(util.format_diags_in(ds, files));
-    return true;
+  var ds: util.Diag[] = asmcore.parse_unknown_errors_module(mod);
+  if (ds.len() == 0) {
+    return false;
+  }
+  eprint(util.format_diags_in(ds, files));
+  return true;
 }
 
 // report_top_level_stmt_errors is the third of these gates, for statements
@@ -1381,10 +1560,12 @@ function report_parse_unknown_errors(mod: parser.Module, files: string[]): boole
 // must be named by the gate that understands it rather than reported here as
 // though the author had written a script.
 function report_top_level_stmt_errors(mod: parser.Module, files: string[]): boolean {
-    var ds: util.Diag[] = asmcore.check_top_level_stmts(mod);
-    if (ds.len() == 0) { return false; }
-    eprint(util.format_diags_in(ds, files));
-    return true;
+  var ds: util.Diag[] = asmcore.check_top_level_stmts(mod);
+  if (ds.len() == 0) {
+    return false;
+  }
+  eprint(util.format_diags_in(ds, files));
+  return true;
 }
 
 // fold_embedded_assets loads `-embed DIR` and substitutes every asset call in
@@ -1395,78 +1576,94 @@ function report_top_level_stmt_errors(mod: parser.Module, files: string[]): bool
 // `__fern_asset(...)` has to be REFUSED rather than ignored: a program asking
 // for a file nobody embedded must not compile into one that silently has none.
 function fold_embedded_assets(b: Bundle, embed_dir: string): (Bundle, i32) {
-    var assets: embed.Assets = embed.no_assets();
-    if (embed_dir.len() > 0) {
-        var lr: embed.LoadResult = embed.load(embed_dir);
-        if (lr.err.len() > 0) {
-            eprint("fern: " + lr.err);
-            return (b, 1);
-        }
-        assets = lr.assets;
+  var assets: embed.Assets = embed.no_assets();
+  if (embed_dir.len() > 0) {
+    var lr: embed.LoadResult = embed.load(embed_dir);
+    if (lr.err.len() > 0) {
+      eprint("fern: " + lr.err);
+      return (b, 1);
     }
-    var folded: embed.Folded = embed.fold_assets(b.merged, assets);
-    if (folded.errs.len() > 0) {
-        for msg in folded.errs { eprint("fern: " + msg); }
-        return (b, 1);
+    assets = lr.assets;
+  }
+  var folded: embed.Folded = embed.fold_assets(b.merged, assets);
+  if (folded.errs.len() > 0) {
+    for msg in folded.errs {
+      eprint("fern: " + msg);
     }
-    return (Bundle { ...b, merged: folded.module }, 0);
+    return (b, 1);
+  }
+  return (Bundle { ...b, merged: folded.module }, 0);
 }
 
 // check_bundle type-checks a loaded program and reports its diagnostics,
 // returning the exit code `-check` answers with: 0 well-typed and within
 // every capability grant, 1 otherwise.
 function check_bundle(b: Bundle, target: string, target_given: boolean): i32 {
-    var merged: parser.Module = b.merged;
-    var pkgs: caps.Pkg[] = b.pkgs;
-    // Nameless-declaration gate (#7447), ahead of the checker and returning
-    // without it. The permissive parser leaves an empty name where a keyword
-    // was written (`function use()`) and consumes nothing, so the body parses
-    // on as top-level statements: the checker then reported E052 plus an E001
-    // per parameter name, every one of them pointing AWAY from the cause.
-    // Native stops at its parse error and prints only that, so reporting this
-    // alone is both the correct diagnostic and the code-set parity — anything
-    // downstream of a declaration that did not parse is noise.
-    if (report_decl_name_errors(merged, b.files)) { return 1; }
-    if (report_parse_unknown_errors(merged, b.files)) { return 1; }
-    if (report_top_level_stmt_errors(merged, b.files)) { return 1; }
-    var mt: checker.ModuleTypes = checker.check_module(merged);
-    // Surface the coded diagnostics (the same E0XX codes the Go
-    // checker emits — see docs/SELFHOST-CHECKER-PORT.md) on stderr.
-    eprint_diags(mt.diags, b.files);
-    // The capability boundary, when a target was asked for. It runs
-    // whatever the checker concluded: the scan is syntactic — a call to a
-    // named builtin — so it holds where the partial checker collapses an
-    // expression to TypeUnknown (#9053), and that is exactly where a
-    // violation would otherwise go unreported while native names it.
-    var caps_violated: boolean = false;
-    if (target_given) { caps_violated = capability_violations(merged, target); }
-    // The package boundary (E070) runs whether or not a target was named:
-    // what a dependency may reach is a property of the manifests, not of
-    // what the program is being built for.
-    if (package_violations(merged, pkgs)) { caps_violated = true; }
-    if (ambient_violations(merged)) { caps_violated = true; }
-    if (mt.all_well_typed) {
-        if (caps_violated) { return 1; }
-        return 0;
-    }
-    // The module is ill-typed but produced no coded diagnostic — an
-    // expression collapsed to TypeUnknown on a type the partial checker
-    // can't model yet (#9053). Surface a best-effort hint so `-check`
-    // never exits 1 silently; the native `fern` remains the full oracle.
-    if (mt.diags.len() == 0) {
-        var hints: util.Diag[] = checker.ill_typed_hint(merged);
-        var hi: i32 = 0;
-        while (hi < hints.len()) {
-            var h: util.Diag = hints[hi];
-            if (h.line > 0) {
-                eprint(util.pos_str(b.files, h.line, h.col) + ": error[" + h.code + "]: " + h.message + "\n");
-            } else {
-                eprint("error[" + h.code + "]: " + h.message + "\n");
-            }
-            hi = hi + 1;
-        }
-    }
+  var merged: parser.Module = b.merged;
+  var pkgs: caps.Pkg[] = b.pkgs;
+  // Nameless-declaration gate (#7447), ahead of the checker and returning
+  // without it. The permissive parser leaves an empty name where a keyword
+  // was written (`function use()`) and consumes nothing, so the body parses
+  // on as top-level statements: the checker then reported E052 plus an E001
+  // per parameter name, every one of them pointing AWAY from the cause.
+  // Native stops at its parse error and prints only that, so reporting this
+  // alone is both the correct diagnostic and the code-set parity — anything
+  // downstream of a declaration that did not parse is noise.
+  if (report_decl_name_errors(merged, b.files)) {
     return 1;
+  }
+  if (report_parse_unknown_errors(merged, b.files)) {
+    return 1;
+  }
+  if (report_top_level_stmt_errors(merged, b.files)) {
+    return 1;
+  }
+  var mt: checker.ModuleTypes = checker.check_module(merged);
+  // Surface the coded diagnostics (the same E0XX codes the Go
+  // checker emits — see docs/SELFHOST-CHECKER-PORT.md) on stderr.
+  eprint_diags(mt.diags, b.files);
+  // The capability boundary, when a target was asked for. It runs
+  // whatever the checker concluded: the scan is syntactic — a call to a
+  // named builtin — so it holds where the partial checker collapses an
+  // expression to TypeUnknown (#9053), and that is exactly where a
+  // violation would otherwise go unreported while native names it.
+  var caps_violated: boolean = false;
+  if (target_given) {
+    caps_violated = capability_violations(merged, target);
+  }
+  // The package boundary (E070) runs whether or not a target was named:
+  // what a dependency may reach is a property of the manifests, not of
+  // what the program is being built for.
+  if (package_violations(merged, pkgs)) {
+    caps_violated = true;
+  }
+  if (ambient_violations(merged)) {
+    caps_violated = true;
+  }
+  if (mt.all_well_typed) {
+    if (caps_violated) {
+      return 1;
+    }
+    return 0;
+  }
+  // The module is ill-typed but produced no coded diagnostic — an
+  // expression collapsed to TypeUnknown on a type the partial checker
+  // can't model yet (#9053). Surface a best-effort hint so `-check`
+  // never exits 1 silently; the native `fern` remains the full oracle.
+  if (mt.diags.len() == 0) {
+    var hints: util.Diag[] = checker.ill_typed_hint(merged);
+    var hi: i32 = 0;
+    while (hi < hints.len()) {
+      var h: util.Diag = hints[hi];
+      if (h.line > 0) {
+        eprint(util.pos_str(b.files, h.line, h.col) + ": error[" + h.code + "]: " + h.message + "\n");
+      } else {
+        eprint("error[" + h.code + "]: " + h.message + "\n");
+      }
+      hi = hi + 1;
+    }
+  }
+  return 1;
 }
 
 // package_entry returns the entry module to type-check for the package rooted
@@ -1474,18 +1671,26 @@ function check_bundle(b: Bundle, target: string, target_given: boolean): i32 {
 // `main.fern` (an application member), else "" — the caller reports it naming
 // both spellings, as native does.
 function package_entry(dir: string): string {
-    var lib: string = read_manifest(dir + "/").lib;
-    if (file_readable(dir + "/" + lib)) { return dir + "/" + lib; }
-    if (file_readable(dir + "/main.fern")) { return dir + "/main.fern"; }
-    return "";
+  var lib: string = read_manifest(dir + "/").lib;
+  if (file_readable(dir + "/" + lib)) {
+    return dir + "/" + lib;
+  }
+  if (file_readable(dir + "/main.fern")) {
+    return dir + "/main.fern";
+  }
+  return "";
 }
 
 function file_readable(path: string): boolean {
-    match (read_file(path)) {
-        Ok(s) => { return true; },
-        Err(e) => { return false; },
+  match (read_file(path)) {
+    Ok(s) => {
+      return true;
+    },
+    Err(e) => {
+      return false;
     }
-    return false;
+  }
+  return false;
 }
 
 // run_tangle implements `-tangle FILE.fern.md`: expand a literate document's
@@ -1497,60 +1702,71 @@ function file_readable(path: string): boolean {
 // each under a `// ==> path <==` banner, because a multi-module program is
 // one document and several files.
 function run_tangle(path: string, out_path: string, chunk: string): i32 {
-    var src: string = "";
-    var ok: boolean = false;
-    match (read_file(path)) {
-        Ok(s) => { src = s; ok = true; },
-        Err(e) => { },
-    }
-    if (!ok) {
-        eprint("fern: cannot read " + path);
+  var src: string = "";
+  var ok: boolean = false;
+  match (read_file(path)) {
+    Ok(s) => {
+      src = s;
+      ok = true;
+    },
+    Err(e) => {}
+  }
+  if (!ok) {
+    eprint("fern: cannot read " + path);
+    return 1;
+  }
+  // `-chunk NAME` expands one definition rather than the document, so it
+  // answers about the chunk whether or not the document has a root.
+  if (chunk.len() > 0) {
+    match (literate.tangle_chunk(src, chunk)) {
+      literate.TangleOk(o) => {
+        return tangle_emit(end_with_newline(o.code), out_path);
+      },
+      literate.TangleErr(e) => {
+        eprint(path + ":" + util.i32_to_string(e.line) + ":1: error: " + e.msg);
         return 1;
+      }
     }
-    // `-chunk NAME` expands one definition rather than the document, so it
-    // answers about the chunk whether or not the document has a root.
-    if (chunk.len() > 0) {
-        match (literate.tangle_chunk(src, chunk)) {
-            literate.TangleOk(o) => { return tangle_emit(end_with_newline(o.code), out_path); },
-            literate.TangleErr(e) => {
-                eprint(path + ":" + util.i32_to_string(e.line) + ":1: error: " + e.msg);
-                return 1;
-            },
+  }
+  var files: literate.FilePiece[] = literate.parse_file_pieces(src);
+  if (files.len() > 0) {
+    match (literate.tangle_files(src)) {
+      literate.FileTangleOk(o) => {
+        // With `-o`, a multi-file document writes one module per
+        // path INTO that directory rather than one concatenated
+        // file: the banners are a reading aid for stdout, not a
+        // format anything consumes.
+        if (out_path.len() > 0) {
+          return tangle_write_files(o.files, out_path);
         }
-    }
-    var files: literate.FilePiece[] = literate.parse_file_pieces(src);
-    if (files.len() > 0) {
-        match (literate.tangle_files(src)) {
-            literate.FileTangleOk(o) => {
-                // With `-o`, a multi-file document writes one module per
-                // path INTO that directory rather than one concatenated
-                // file: the banners are a reading aid for stdout, not a
-                // format anything consumes.
-                if (out_path.len() > 0) { return tangle_write_files(o.files, out_path); }
-                var out: string = "";
-                var i: i32 = 0;
-                while (i < o.files.len()) {
-                    // A blank line between modules, so the banners read as
-                    // separators rather than as comments on the line above.
-                    if (i > 0) { out = out + "\n"; }
-                    out = out + "// ==> " + o.files[i].path + " <==\n" + end_with_newline(o.files[i].code);
-                    i = i + 1;
-                }
-                return tangle_emit(out, "");
-            },
-            literate.FileTangleErr(e) => {
-                eprint(path + ":" + util.i32_to_string(e.line) + ":1: error: " + e.msg);
-                return 1;
-            },
+        var out: string = "";
+        var i: i32 = 0;
+        while (i < o.files.len()) {
+          // A blank line between modules, so the banners read as
+          // separators rather than as comments on the line above.
+          if (i > 0) {
+            out = out + "\n";
+          }
+          out = out + "// ==> " + o.files[i].path + " <==\n" + end_with_newline(o.files[i].code);
+          i = i + 1;
         }
+        return tangle_emit(out, "");
+      },
+      literate.FileTangleErr(e) => {
+        eprint(path + ":" + util.i32_to_string(e.line) + ":1: error: " + e.msg);
+        return 1;
+      }
     }
-    match (literate.tangle(src)) {
-        literate.TangleOk(o) => { return tangle_emit(end_with_newline(o.code), out_path); },
-        literate.TangleErr(e) => {
-            eprint(path + ":" + util.i32_to_string(e.line) + ":1: error: " + e.msg);
-            return 1;
-        },
+  }
+  match (literate.tangle(src)) {
+    literate.TangleOk(o) => {
+      return tangle_emit(end_with_newline(o.code), out_path);
+    },
+    literate.TangleErr(e) => {
+      eprint(path + ":" + util.i32_to_string(e.line) + ":1: error: " + e.msg);
+      return 1;
     }
+  }
 }
 
 // end_with_newline terminates the tangled source. `join_lines` joins with
@@ -1558,8 +1774,10 @@ function run_tangle(path: string, out_path: string, chunk: string): i32 {
 // module whose final line has no newline is a diff against native's output
 // and an oddity in the file `-o` writes.
 function end_with_newline(code: string): string {
-    if (code.len() > 0 && code[code.len() - 1] == b'\n') { return code; }
-    return code + "\n";
+  if (code.len() > 0 && code[code.len() - 1] == b'\n') {
+    return code;
+  }
+  return code + "\n";
 }
 
 // tangle_emit writes the tangled source to `-o` when one was given, else to
@@ -1567,49 +1785,51 @@ function end_with_newline(code: string): string {
 // is announced on stderr, so `-o` reports what it produced without
 // contaminating a redirected stdout.
 function tangle_emit(code: string, out_path: string): i32 {
-    if (out_path.len() == 0) {
-        write(code);
-        return 0;
+  if (out_path.len() == 0) {
+    write(code);
+    return 0;
+  }
+  // Parents are created, matching native's writeGeneratedFile: a `file=`
+  // root naming `sub/util.fern` writes into a subdirectory the document
+  // describes and the caller has no reason to have made.
+  var parent: string = util.dir_of(out_path);
+  if (parent.len() > 0) {
+    match (create_dir_all(parent)) {
+      Ok(u) => {},
+      Err(e) => {
+        eprint("fern: cannot create output directory: " + parent);
+        return 1;
+      }
     }
-    // Parents are created, matching native's writeGeneratedFile: a `file=`
-    // root naming `sub/util.fern` writes into a subdirectory the document
-    // describes and the caller has no reason to have made.
-    var parent: string = util.dir_of(out_path);
-    if (parent.len() > 0) {
-        match (create_dir_all(parent)) {
-            Ok(u) => { },
-            Err(e) => {
-                eprint("fern: cannot create output directory: " + parent);
-                return 1;
-            },
-        }
+  }
+  match (write_file(out_path, code)) {
+    Ok(u) => {
+      eprint("wrote " + out_path);
+      return 0;
+    },
+    Err(e) => {
+      eprint("fern: cannot write output: " + out_path);
+      return 1;
     }
-    match (write_file(out_path, code)) {
-        Ok(u) => {
-            eprint("wrote " + out_path);
-            return 0;
-        },
-        Err(e) => {
-            eprint("fern: cannot write output: " + out_path);
-            return 1;
-        },
-    }
+  }
 }
 
 // tangle_write_files writes one module per `file=PATH` root into `dir`,
 // subdirectory layout preserved — tangle_emit creates the parents.
 function tangle_write_files(files: literate.FileResult[], dir: string): i32 {
-    var i: i32 = 0;
-    while (i < files.len()) {
-        var rel: string = files[i].path;
-        // Written verbatim, NOT newline-terminated: native's per-module
-        // files end where the chunk does, even though its stdout form
-        // terminates the last line. Parity is on what native writes.
-        var code: i32 = tangle_emit(files[i].code, dir + "/" + rel);
-        if (code != 0) { return code; }
-        i = i + 1;
+  var i: i32 = 0;
+  while (i < files.len()) {
+    var rel: string = files[i].path;
+    // Written verbatim, NOT newline-terminated: native's per-module
+    // files end where the chunk does, even though its stdout form
+    // terminates the last line. Parity is on what native writes.
+    var code: i32 = tangle_emit(files[i].code, dir + "/" + rel);
+    if (code != 0) {
+      return code;
     }
-    return 0;
+    i = i + 1;
+  }
+  return 0;
 }
 
 // run_doc implements `-doc`: cmd/ferndoc's Markdown reference pages, generated
@@ -1625,26 +1845,36 @@ function tangle_write_files(files: literate.FileResult[], dir: string): i32 {
 // reproduce `ferndoc -out D` exactly, and it means the namespace needs no flag
 // to carry it.
 function run_doc(path: string, out_path: string): i32 {
-    if (is_dir(path)) { return doc_tree(path, out_path); }
-    var src: string = "";
-    var read_ok: boolean = false;
-    match (read_file(path)) { Ok(s) => { src = s; read_ok = true; }, Err(e) => { } }
-    if (!read_ok) {
-        eprint("fern: -doc: cannot read " + path);
-        return 1;
+  if (is_dir(path)) {
+    return doc_tree(path, out_path);
+  }
+  var src: string = "";
+  var read_ok: boolean = false;
+  match (read_file(path)) {
+    Ok(s) => {
+      src = s;
+      read_ok = true;
+    },
+    Err(e) => {}
+  }
+  if (!read_ok) {
+    eprint("fern: -doc: cannot read " + path);
+    return 1;
+  }
+  var page: string = ferndoc.render_page(src, doc_module_path(path_base(util.dir_of(path)), doc_stem(path_base(path))));
+  if (out_path.len() == 0) {
+    write(page);
+    return 0;
+  }
+  match (write_file(out_path, page)) {
+    Ok(u) => {
+      return 0;
+    },
+    Err(e) => {
+      eprint("fern: -doc: cannot write " + out_path);
+      return 1;
     }
-    var page: string = ferndoc.render_page(src, doc_module_path(path_base(util.dir_of(path)), doc_stem(path_base(path))));
-    if (out_path.len() == 0) {
-        write(page);
-        return 0;
-    }
-    match (write_file(out_path, page)) {
-        Ok(u) => { return 0; },
-        Err(e) => {
-            eprint("fern: -doc: cannot write " + out_path);
-            return 1;
-        },
-    }
+  }
 }
 
 // doc_tree walks `dir` for modules and writes one page each into `out_dir`.
@@ -1654,115 +1884,151 @@ function run_doc(path: string, out_path: string): i32 {
 // two modules with the same basename in different subdirectories cannot
 // clobber each other. Native does the same, for the same reason.
 function doc_tree(dir: string, out_dir: string): i32 {
-    if (out_dir.len() == 0) {
-        eprint("fern: -doc <DIR> needs -o OUTDIR — a directory of pages has nowhere else to go");
-        return 2;
+  if (out_dir.len() == 0) {
+    eprint("fern: -doc <DIR> needs -o OUTDIR — a directory of pages has nowhere else to go");
+    return 2;
+  }
+  match (create_dir_all(out_dir)) {
+    Ok(u) => {},
+    Err(e) => {
+      eprint("fern: -doc: cannot create " + out_dir);
+      return 1;
     }
-    match (create_dir_all(out_dir)) {
-        Ok(u) => { },
-        Err(e) => {
-            eprint("fern: -doc: cannot create " + out_dir);
-            return 1;
+  }
+  var ns: string = path_base(dir);
+  // Relative subdirectories still to visit, "" being `dir` itself. A worklist
+  // rather than recursion, matching copy_package's walk.
+  var rels: string[] = [""];
+  var ri: i32 = 0;
+  while (ri < rels.len()) {
+    var rel: string = rels[ri];
+    ri = ri + 1;
+    var sdir: string = dir;
+    if (rel.len() > 0) {
+      sdir = dir + "/" + rel;
+    }
+    var entries: string[] = [];
+    var listed: boolean = false;
+    match (read_dir(sdir)) {
+      Ok(ns2) => {
+        entries = ns2;
+        listed = true;
+      },
+      Err(e) => {}
+    }
+    if (!listed) {
+      eprint("fern: -doc: cannot read " + sdir);
+      return 1;
+    }
+    var i: i32 = 0;
+    while (i < entries.len()) {
+      var name: string = entries[i];
+      i = i + 1;
+      var child_rel: string = name + "";
+      if (rel.len() > 0) {
+        child_rel = rel + "/" + name;
+      }
+      var child: string = dir + "/" + child_rel;
+      if (is_dir(child)) {
+        if (name.len() > 0 && name[0] == b'.') {  // and so `.` / `..`
+          continue;
+        }
+        rels = rels.append(child_rel + "");
+        continue;
+      }
+      if (!is_doc_module(name)) {
+        continue;
+      }
+      var src: string = "";
+      var read_ok: boolean = false;
+      match (read_file(child)) {
+        Ok(s) => {
+          src = s;
+          read_ok = true;
         },
-    }
-    var ns: string = path_base(dir);
-    // Relative subdirectories still to visit, "" being `dir` itself. A worklist
-    // rather than recursion, matching copy_package's walk.
-    var rels: string[] = [""];
-    var ri: i32 = 0;
-    while (ri < rels.len()) {
-        var rel: string = rels[ri];
-        ri = ri + 1;
-        var sdir: string = dir;
-        if (rel.len() > 0) { sdir = dir + "/" + rel; }
-        var entries: string[] = [];
-        var listed: boolean = false;
-        match (read_dir(sdir)) { Ok(ns2) => { entries = ns2; listed = true; }, Err(e) => { } }
-        if (!listed) {
-            eprint("fern: -doc: cannot read " + sdir);
-            return 1;
+        Err(e) => {}
+      }
+      if (!read_ok) {
+        eprint("fern: -doc: cannot read " + child);
+        return 1;
+      }
+      var stem: string = doc_stem(child_rel);
+      var page: string = ferndoc.render_page(src, doc_module_path(ns, stem));
+      // A module with nothing public gets no page at all rather than a
+      // heading with no content under it.
+      if (page.len() == 0) {
+        continue;
+      }
+      var dest: string = out_dir + "/" + flatten_path(stem) + ".md";
+      match (write_file(dest, page)) {
+        Ok(u) => {},
+        Err(e) => {
+          eprint("fern: -doc: cannot write " + dest);
+          return 1;
         }
-        var i: i32 = 0;
-        while (i < entries.len()) {
-            var name: string = entries[i];
-            i = i + 1;
-            var child_rel: string = name + "";
-            if (rel.len() > 0) { child_rel = rel + "/" + name; }
-            var child: string = dir + "/" + child_rel;
-            if (is_dir(child)) {
-                if (name.len() > 0 && name[0] == b'.') { continue; }   // and so `.` / `..`
-                rels = rels.append(child_rel + "");
-                continue;
-            }
-            if (!is_doc_module(name)) { continue; }
-            var src: string = "";
-            var read_ok: boolean = false;
-            match (read_file(child)) { Ok(s) => { src = s; read_ok = true; }, Err(e) => { } }
-            if (!read_ok) {
-                eprint("fern: -doc: cannot read " + child);
-                return 1;
-            }
-            var stem: string = doc_stem(child_rel);
-            var page: string = ferndoc.render_page(src, doc_module_path(ns, stem));
-            // A module with nothing public gets no page at all rather than a
-            // heading with no content under it.
-            if (page.len() == 0) { continue; }
-            var dest: string = out_dir + "/" + flatten_path(stem) + ".md";
-            match (write_file(dest, page)) {
-                Ok(u) => { },
-                Err(e) => {
-                    eprint("fern: -doc: cannot write " + dest);
-                    return 1;
-                },
-            }
-        }
+      }
     }
-    return 0;
+  }
+  return 0;
 }
 
 // is_doc_module selects the files a reference page is generated from: Fern
 // modules, minus the `_test_` stubs, which are fixtures rather than API.
 // `.fern.md` is excluded by the same suffix test that admits `.fern`.
 function is_doc_module(name: string): boolean {
-    if (name.len() < 6 || slice_unchecked(name, name.len() - 5, name.len()) != ".fern") { return false; }
-    return !(name.len() >= 6 && slice_unchecked(name, 0, 6) == "_test_");
+  if (name.len() < 6 || slice_unchecked(name, name.len() - 5, name.len()) != ".fern") {
+    return false;
+  }
+  return !(name.len() >= 6 && slice_unchecked(name, 0, 6) == "_test_");
 }
 
 // doc_stem drops a trailing `.fern`, leaving the module's path relative to its
 // namespace.
 function doc_stem(p: string): string {
-    if (p.len() >= 5 && slice_unchecked(p, p.len() - 5, p.len()) == ".fern") { return slice_unchecked(p, 0, p.len() - 5) + ""; }
-    return p;
+  if (p.len() >= 5 && slice_unchecked(p, p.len() - 5, p.len()) == ".fern") {
+    return slice_unchecked(p, 0, p.len() - 5) + "";
+  }
+  return p;
 }
 
 // doc_module_path joins the namespace to the module stem. A module with no
 // containing directory to name — `fern -doc io.fern` from inside it — is
 // documented under its bare name rather than under a leading slash.
 function doc_module_path(ns: string, stem: string): string {
-    if (ns.len() == 0) { return stem; }
-    return ns + "/" + stem;
+  if (ns.len() == 0) {
+    return stem;
+  }
+  return ns + "/" + stem;
 }
 
 // path_base is the final segment of a path, trailing slashes ignored so
 // `-doc std/` names the same namespace as `-doc std`.
 function path_base(p: string): string {
-    var end: i32 = p.len();
-    while (end > 0 && p[end - 1] == b'/') { end = end - 1; }
-    var start: i32 = end;
-    while (start > 0 && p[start - 1] != b'/') { start = start - 1; }
-    return slice_unchecked(p, start, end) + "";
+  var end: i32 = p.len();
+  while (end > 0 && p[end - 1] == b'/') {
+    end = end - 1;
+  }
+  var start: i32 = end;
+  while (start > 0 && p[start - 1] != b'/') {
+    start = start - 1;
+  }
+  return slice_unchecked(p, start, end) + "";
 }
 
 // flatten_path replaces `/` with `_` so a nested module's page is a single
 // file in the output directory.
 function flatten_path(p: string): string {
-    var out: string = "";
-    var i: i32 = 0;
-    while (i < p.len()) {
-        if (p[i] == b'/') { out = out + "_"; } else { out = out + slice_unchecked(p, i, i + 1); }
-        i = i + 1;
+  var out: string = "";
+  var i: i32 = 0;
+  while (i < p.len()) {
+    if (p[i] == b'/') {
+      out = out + "_";
+    } else {
+      out = out + slice_unchecked(p, i, i + 1);
     }
-    return out;
+    i = i + 1;
+  }
+  return out;
 }
 
 // read_stdin reads the whole of stdin, which is how `-` names a program with
@@ -1770,26 +2036,34 @@ function flatten_path(p: string): string {
 // filesystem to open (#6643). `read_line` keeps its newline, so the lines
 // concatenate back into the source verbatim.
 function read_stdin(): string {
-    var src: string = "";
-    var more: boolean = true;
-    while (more) {
-        match (read_line()) {
-            Some(line) => { src = src + line; },
-            None => { more = false; },
-        }
+  var src: string = "";
+  var more: boolean = true;
+  while (more) {
+    match (read_line()) {
+      Some(line) => {
+        src = src + line;
+      },
+      None => {
+        more = false;
+      }
     }
-    return src;
+  }
+  return src;
 }
 
 // is_dir reports whether `path` names a directory. `read_dir` is the probe: a
 // file answers ENOTDIR, so a mistyped entry path stays a file error rather
 // than being read as a package directory.
 function is_dir(path: string): boolean {
-    match (read_dir(path)) {
-        Ok(names) => { return true; },
-        Err(e) => { return false; },
+  match (read_dir(path)) {
+    Ok(names) => {
+      return true;
+    },
+    Err(e) => {
+      return false;
     }
-    return false;
+  }
+  return false;
 }
 
 // check_dir implements `-check <DIR>`: type-check the package governing DIR,
@@ -1798,66 +2072,77 @@ function is_dir(path: string): boolean {
 // does not hide the rest. This is the workspace-wide check a multi-package
 // program wants: one command validates every member.
 function check_dir(dir: string, root: string, target: string, target_given: boolean): i32 {
-    var mdir: string = find_manifest_dir(dir);
-    if (mdir.len() == 0) {
-        eprint("check: " + dir + " is a directory with no fern.toml — pass a .fern file, or run inside a package");
-        return 1;
+  var mdir: string = find_manifest_dir(dir);
+  if (mdir.len() == 0) {
+    eprint("check: " + dir + " is a directory with no fern.toml — pass a .fern file, or run inside a package");
+    return 1;
+  }
+  var man: fern_toml.Manifest = read_manifest(mdir + "/");
+  if (man.members.len() == 0) {
+    var entry: string = package_entry(mdir);
+    if (entry.len() == 0) {
+      eprint("no entry module in " + mdir + " (looked for " + man.lib + " and main.fern)");
+      return 1;
     }
-    var man: fern_toml.Manifest = read_manifest(mdir + "/");
-    if (man.members.len() == 0) {
-        var entry: string = package_entry(mdir);
-        if (entry.len() == 0) {
-            eprint("no entry module in " + mdir + " (looked for " + man.lib + " and main.fern)");
-            return 1;
-        }
-        return check_file(entry, root, target, target_given);
+    return check_file(entry, root, target, target_given);
+  }
+  var failed: i32 = 0;
+  var i: i32 = 0;
+  while (i < man.members.len()) {
+    var rel: string = man.members[i];
+    i = i + 1;
+    var mem: string = rel;
+    if (!mvs.is_abs(rel)) {
+      mem = mvs.join_path(mdir, rel);
     }
-    var failed: i32 = 0;
-    var i: i32 = 0;
-    while (i < man.members.len()) {
-        var rel: string = man.members[i];
-        i = i + 1;
-        var mem: string = rel;
-        if (!mvs.is_abs(rel)) { mem = mvs.join_path(mdir, rel); }
-        var mentry: string = package_entry(mem);
-        if (mentry.len() == 0) {
-            eprint("FAIL " + rel + ": no entry module in " + mem + " (looked for " + read_manifest(mem + "/").lib + " and main.fern)");
-            failed = failed + 1;
-            continue;
-        }
-        if (check_file(mentry, root, target, target_given) != 0) {
-            eprint("FAIL " + rel);
-            failed = failed + 1;
-            continue;
-        }
-        eprint("ok   " + rel);
+    var mentry: string = package_entry(mem);
+    if (mentry.len() == 0) {
+      eprint("FAIL " + rel + ": no entry module in " + mem + " (looked for " + read_manifest(mem + "/").lib + " and main.fern)");
+      failed = failed + 1;
+      continue;
     }
-    if (failed > 0) {
-        eprint("check: " + util.i32_to_string(failed) + " of " + util.i32_to_string(man.members.len()) + " workspace member(s) failed");
-        return 1;
+    if (check_file(mentry, root, target, target_given) != 0) {
+      eprint("FAIL " + rel);
+      failed = failed + 1;
+      continue;
     }
-    eprint("check: " + util.i32_to_string(man.members.len()) + " workspace member(s) ok");
-    return 0;
+    eprint("ok   " + rel);
+  }
+  if (failed > 0) {
+    eprint("check: " + util.i32_to_string(failed) + " of " + util.i32_to_string(man.members.len()) + " workspace member(s) failed");
+    return 1;
+  }
+  eprint("check: " + util.i32_to_string(man.members.len()) + " workspace member(s) ok");
+  return 0;
 }
 
 // check_file loads one entry module and type-checks it — the single-package
 // half of `-check`, and the per-member step of the workspace half.
 function check_file(entry_path: string, root: string, target: string, target_given: boolean): i32 {
-    var src: string = "";
-    match (read_file(entry_path)) {
-        Ok(s) => { src = s; },
-        Err(e) => {
-            eprint(read_failure("entry file", entry_path, modloader.read_error_reason(e)));
-            return 1;
-        },
+  var src: string = "";
+  match (read_file(entry_path)) {
+    Ok(s) => {
+      src = s;
+    },
+    Err(e) => {
+      eprint(read_failure("entry file", entry_path, modloader.read_error_reason(e)));
+      return 1;
     }
-    var entry_mod: parser.Module = parser.parse_module(lexer.tokenize(emitforms.entry_source(src, target)));
-    var missing: string = emitforms.http_entry_missing(entry_mod, target);
-    if (missing.len() > 0) { eprint(missing); return 1; }
-    var b: Bundle = load_bundle(entry_path, entry_mod, root, target);
-    if (!b.ok) { return 1; }
-    if (bundle_visibility_diags(b)) { return 1; }
-    return check_bundle(b, target, target_given);
+  }
+  var entry_mod: parser.Module = parser.parse_module(lexer.tokenize(emitforms.entry_source(src, target)));
+  var missing: string = emitforms.http_entry_missing(entry_mod, target);
+  if (missing.len() > 0) {
+    eprint(missing);
+    return 1;
+  }
+  var b: Bundle = load_bundle(entry_path, entry_mod, root, target);
+  if (!b.ok) {
+    return 1;
+  }
+  if (bundle_visibility_diags(b)) {
+    return 1;
+  }
+  return check_bundle(b, target, target_given);
 }
 
 // root_pkg is the entry's own package: its manifest's [package] name, or
@@ -1865,10 +2150,12 @@ function check_file(entry_path: string, root: string, target: string, target_giv
 // grants restrict DEPENDENCIES, and the program's author is trusting
 // themselves.
 function root_pkg(man: fern_toml.Manifest): caps.Pkg {
-    var name: string = "(root)";
-    if (man.name.len() > 0) { name = man.name; }
-    var no_grants: string[] = [];
-    return caps.Pkg { module: "", name: name, root: true, governed: false, grants: no_grants };
+  var name: string = "(root)";
+  if (man.name.len() > 0) {
+    name = man.name;
+  }
+  var no_grants: string[] = [];
+  return caps.Pkg { module: "", name: name, root: true, governed: false, grants: no_grants };
 }
 
 // dep_pkg_name is a dependency's REPORT name: the [package] name in its own
@@ -1876,19 +2163,21 @@ function root_pkg(man: fern_toml.Manifest): caps.Pkg {
 // governing manifest, so a dep declared under a different key still reports
 // under its own name.
 function dep_pkg_name(man: fern_toml.Manifest, dir_slash: string, dep: string): string {
-    match (fern_toml.dep_path(man, dep)) {
-        Some(dp) => {
-            match (read_file(dir_slash + dp + "/fern.toml")) {
-                Ok(src) => {
-                    var dm: fern_toml.Manifest = fern_toml.parse(src);
-                    if (dm.name.len() > 0) { return dm.name; }
-                },
-                Err(e) => { },
-            }
+  match (fern_toml.dep_path(man, dep)) {
+    Some(dp) => {
+      match (read_file(dir_slash + dp + "/fern.toml")) {
+        Ok(src) => {
+          var dm: fern_toml.Manifest = fern_toml.parse(src);
+          if (dm.name.len() > 0) {
+            return dm.name;
+          }
         },
-        None => { },
-    }
-    return dep;
+        Err(e) => {}
+      }
+    },
+    None => {}
+  }
+  return dep;
 }
 
 // add_pkg records the package a just-loaded module belongs to. Three cases,
@@ -1901,19 +2190,21 @@ function dep_pkg_name(man: fern_toml.Manifest, dir_slash: string, dep: string): 
 // driver's loader resolves: a dependency's own dependencies are not reachable
 // from here, so there is no deeper package to attribute.
 function add_pkg(pkgs: caps.Pkg[], man: fern_toml.Manifest, dir_slash: string, import_path: string): caps.Pkg[] {
-    var mod: string = util.module_name(import_path);
-    var no_grants: string[] = [];
-    if (util.is_local(import_path)) {
-        return pkgs.append(caps.Pkg { module: mod, name: pkgs[0].name, root: true, governed: false, grants: no_grants });
-    }
-    if (fern_toml.dep_kind(man, mod).len() == 0) { return pkgs; }
-    return pkgs.append(caps.Pkg {
-        module: mod,
-        name: dep_pkg_name(man, dir_slash, mod),
-        root: false,
-        governed: fern_toml.dep_governed(man, mod),
-        grants: fern_toml.dep_caps(man, mod),
-    });
+  var mod: string = util.module_name(import_path);
+  var no_grants: string[] = [];
+  if (util.is_local(import_path)) {
+    return pkgs.append(caps.Pkg { module: mod, name: pkgs[0].name, root: true, governed: false, grants: no_grants });
+  }
+  if (fern_toml.dep_kind(man, mod).len() == 0) {
+    return pkgs;
+  }
+  return pkgs.append(caps.Pkg {
+    module: mod,
+    name: dep_pkg_name(man, dir_slash, mod),
+    root: false,
+    governed: fern_toml.dep_governed(man, mod),
+    grants: fern_toml.dep_caps(man, mod),
+  });
 }
 
 // package_violations is phase 2 of docs/PACKAGE-CAPABILITIES-BRIEF.md: hold
@@ -1927,636 +2218,727 @@ function add_pkg(pkgs: caps.Pkg[], man: fern_toml.Manifest, dir_slash: string, i
 // function in the bundle — the common single-package compile, including every
 // compiler source.
 function package_violations(merged: parser.Module, pkgs: caps.Pkg[]): boolean {
-    if (!caps.enforceable(merged, pkgs)) { return false; }
-    var vs: caps.Violation[] = caps.enforce(caps.analyze(merged, pkgs), pkgs);
-    var bad: boolean = false;
-    var i: i32 = 0;
-    while (i < vs.len()) {
-        if (!vs[i].governed) { eprint("warning: " + caps.violation_message(vs[i]) + "\n"); }
-        i = i + 1;
+  if (!caps.enforceable(merged, pkgs)) {
+    return false;
+  }
+  var vs: caps.Violation[] = caps.enforce(caps.analyze(merged, pkgs), pkgs);
+  var bad: boolean = false;
+  var i: i32 = 0;
+  while (i < vs.len()) {
+    if (!vs[i].governed) {
+      eprint("warning: " + caps.violation_message(vs[i]) + "\n");
     }
-    var k: i32 = 0;
-    while (k < vs.len()) {
-        if (vs[k].governed) {
-            eprint("error[E070]: " + caps.violation_message(vs[k]) + "\n");
-            bad = true;
-        }
-        k = k + 1;
+    i = i + 1;
+  }
+  var k: i32 = 0;
+  while (k < vs.len()) {
+    if (vs[k].governed) {
+      eprint("error[E070]: " + caps.violation_message(vs[k]) + "\n");
+      bad = true;
     }
-    return bad;
+    k = k + 1;
+  }
+  return bad;
 }
 
 function run(): i32 {
-    var av: string[] = args();
+  var av: string[] = args();
 
-    var entry_path: string = "";
-    var out_path: string = "";
-    var root: string = "";
-    var have_root: boolean = false;
-    // Positionals past the stdlib root are the program's own, as `-interp
-    // FILE ARG...` hands them to `args()` behind the entry's path.
-    var prog_args: string[] = [];
-    var target: string = "x86-64-linux";
-    // Output FORM, independent of the target: "" is the target's default
-    // (a linked executable, or a component on wasm), "asm" the emitter's
-    // text, "core-module" a raw wasm core module.
-    var emit: string = "";
-    var mode_check: boolean = false;
-    var mode_interp: boolean = false;
-    var mode_fmt: boolean = false;
-    // `-fmt` output destination, mirroring native: stdout by default, the input
-    // file under `-w`, a unified diff (exit 1 when it is non-empty) under `-d`.
-    var fmt_write: boolean = false;
-    var fmt_diff: boolean = false;
-    var mode_caps: boolean = false;
-    var mode_targets: boolean = false;
-    var mode_resolve: boolean = false;
-    var mode_tangle: boolean = false;
-    var chunk: string = "";
-    var mode_doc: boolean = false;
-    var mode_add: boolean = false;
-    var mode_vendor: boolean = false;
-    // Every non-flag argument, in order. The compile modes read the first two
-    // (entry, stdlib root); `-add` takes three of its own.
-    var pos: string[] = [];
-    // -backend names the target's one emitter explicitly: `ssa`, the
-    // register-allocating emit, on the native ISAs (docs/SELFHOST-SSA-BACKEND.md);
-    // `flat`, the stack machine, on wasm. Empty is the same emitter unnamed.
-    var backend: string = "";
-    // -embed DIR: the asset bundle __fern_asset / __fern_assets resolve
-    // against. Empty means the flag was not passed, which makes any use of
-    // either builtin the error (embed.fern / docs/EMBED.md).
-    var embed_dir: string = "";
-    // `-O` is the release build: it elides every assert() check, matching
-    // native. Constant folding is NOT what this flag selects on either
-    // compiler — that runs on every build.
-    var optimize: boolean = false;
-    var emit_syms: boolean = false;
-    var have_entry: boolean = false;
-    // Whether -target was given, as distinct from the default above. It only
-    // matters to `-check`: native type-checks against a capability set only
-    // when asked for a target, so enforcing the default one here would refuse
-    // a program `fern -check` accepts.
-    var target_given: boolean = false;
+  var entry_path: string = "";
+  var out_path: string = "";
+  var root: string = "";
+  var have_root: boolean = false;
+  // Positionals past the stdlib root are the program's own, as `-interp
+  // FILE ARG...` hands them to `args()` behind the entry's path.
+  var prog_args: string[] = [];
+  var target: string = "x86-64-linux";
+  // Output FORM, independent of the target: "" is the target's default
+  // (a linked executable, or a component on wasm), "asm" the emitter's
+  // text, "core-module" a raw wasm core module.
+  var emit: string = "";
+  var mode_check: boolean = false;
+  var mode_interp: boolean = false;
+  var mode_fmt: boolean = false;
+  // `-fmt` output destination, mirroring native: stdout by default, the input
+  // file under `-w`, a unified diff (exit 1 when it is non-empty) under `-d`.
+  var fmt_write: boolean = false;
+  var fmt_diff: boolean = false;
+  var mode_caps: boolean = false;
+  var mode_targets: boolean = false;
+  var mode_resolve: boolean = false;
+  var mode_tangle: boolean = false;
+  var chunk: string = "";
+  var mode_doc: boolean = false;
+  var mode_add: boolean = false;
+  var mode_vendor: boolean = false;
+  // Every non-flag argument, in order. The compile modes read the first two
+  // (entry, stdlib root); `-add` takes three of its own.
+  var pos: string[] = [];
+  // -backend names the target's one emitter explicitly: `ssa`, the
+  // register-allocating emit, on the native ISAs (docs/SELFHOST-SSA-BACKEND.md);
+  // `flat`, the stack machine, on wasm. Empty is the same emitter unnamed.
+  var backend: string = "";
+  // -embed DIR: the asset bundle __fern_asset / __fern_assets resolve
+  // against. Empty means the flag was not passed, which makes any use of
+  // either builtin the error (embed.fern / docs/EMBED.md).
+  var embed_dir: string = "";
+  // `-O` is the release build: it elides every assert() check, matching
+  // native. Constant folding is NOT what this flag selects on either
+  // compiler — that runs on every build.
+  var optimize: boolean = false;
+  var emit_syms: boolean = false;
+  var have_entry: boolean = false;
+  // Whether -target was given, as distinct from the default above. It only
+  // matters to `-check`: native type-checks against a capability set only
+  // when asked for a target, so enforcing the default one here would refuse
+  // a program `fern -check` accepts.
+  var target_given: boolean = false;
 
-    var i: i32 = 1;
-    while (i < av.len()) {
-        var a: string = av[i];
-        if (a == "-check") {
-            mode_check = true;
-        } else if (a == "-interp") {
-            mode_interp = true;
-        } else if (a == "-fmt") {
-            mode_fmt = true;
-        } else if (a == "-w") {
-            fmt_write = true;
-        } else if (a == "-d") {
-            fmt_diff = true;
-        } else if (a == "-backend") {
-            i = i + 1;
-            if (i >= av.len()) { return usage(); }
-            backend = av[i];
-        } else if (a == "-g") {
-            // Emit a static .symtab into the native binary (#6637). x86-64
-            // Linux only for now: arm64 links through arm64_gas_link's W^X
-            // image, which needs its own wiring. Native excludes darwin and
-            // android from -g too.
-            emit_syms = true;
-        } else if (a == "-capabilities") {
-            mode_caps = true;
-        } else if (a == "-tangle") {
-            // Literate: expand a .fern.md document's chunks into Fern source.
-            // It reads a document, not a module, so it never loads imports.
-            mode_tangle = true;
-        } else if (a == "-doc") {
-            // Reference pages. Like -tangle it reads sources and compiles
-            // nothing, so it takes a path rather than an entry module.
-            mode_doc = true;
-        } else if (a == "-add") {
-            // Manifest editing: append a declared dependency. Takes NAME SPEC
-            // DIR positionally, not an entry module.
-            mode_add = true;
-        } else if (a == "-vendor") {
-            // Flatten the transitive dependency graph into <root>/vendor/.
-            // Like -resolve it reads manifests, so it takes a directory.
-            mode_vendor = true;
-        } else if (a == "-resolve") {
-            // Version resolution (MVS) over the manifest's [package] index,
-            // writing fern.lock. It reads manifests, not sources, so it takes
-            // a directory rather than an entry file.
-            mode_resolve = true;
-        } else if (a == "-targets") {
-            mode_targets = true;
-        } else if (a == "-chunk") {
-            i = i + 1;
-            if (i >= av.len()) { return usage(); }
-            chunk = av[i];
-        } else if (a == "-emit") {
-            i = i + 1;
-            if (i >= av.len()) { return usage(); }
-            emit = av[i];
-        } else if (a == "-O") {
-            optimize = true;
-        } else if (a == "-target") {
-            i = i + 1;
-            if (i >= av.len()) { return usage(); }
-            target = av[i];
-            target_given = true;
-        } else if (a == "-embed") {
-            i = i + 1;
-            if (i >= av.len()) { return usage(); }
-            embed_dir = av[i];
-        } else if (a == "-o") {
-            i = i + 1;
-            if (i >= av.len()) { return usage(); }
-            out_path = av[i];
-        } else if (is_flag(a)) {
-            eprint("fern: unknown flag: ");
-            eprint(a);
-            eprint("\n");
-            return 2;
-        } else {
-            pos = pos.append(a);
-            if (!have_entry) {
-                entry_path = a;
-                have_entry = true;
-            } else if (!have_root) {
-                root = a;
-                have_root = true;
-            } else {
-                prog_args = prog_args.append(a);
-            }
-        }
-        i = i + 1;
-    }
-
-    // `-targets` answers from the table alone; it needs no entry file.
-    if (mode_targets) { return list_targets(); }
-
-    // `-resolve` takes a directory (or any file inside the package), not an
-    // entry module — it reads manifests and never compiles anything.
-    if (mode_resolve) { return run_resolve(entry_path); }
-
-    // `-vendor` copies sources between directories and compiles nothing.
-    if (mode_vendor) {
-        if (!have_entry) { return usage(); }
-        return run_vendor(entry_path);
-    }
-
-    // `-tangle` reads a literate document and compiles nothing.
-    if (mode_tangle) {
-        if (!have_entry) { return usage(); }
-        return run_tangle(entry_path, out_path, chunk);
-    }
-
-    // `-doc` reads sources for their declarations and comments and compiles
-    // nothing.
-    if (mode_doc) {
-        if (!have_entry) { return usage(); }
-        return run_doc(entry_path, out_path);
-    }
-
-    // `-add` edits a manifest and compiles nothing.
-    if (mode_add) { return run_add(pos); }
-
-    // `-check` and `-interp` with no path read the program from stdin, as
-    // native's do. Every other mode wants a file: `-fmt` writes back over one,
-    // and a compile names its output after one.
-    if (!have_entry && (mode_check || mode_interp)) {
-        entry_path = "-";
+  var i: i32 = 1;
+  while (i < av.len()) {
+    var a: string = av[i];
+    if (a == "-check") {
+      mode_check = true;
+    } else if (a == "-interp") {
+      mode_interp = true;
+    } else if (a == "-fmt") {
+      mode_fmt = true;
+    } else if (a == "-w") {
+      fmt_write = true;
+    } else if (a == "-d") {
+      fmt_diff = true;
+    } else if (a == "-backend") {
+      i = i + 1;
+      if (i >= av.len()) {
+        return usage();
+      }
+      backend = av[i];
+    } else if (a == "-g") {
+      // Emit a static .symtab into the native binary (#6637). x86-64
+      // Linux only for now: arm64 links through arm64_gas_link's W^X
+      // image, which needs its own wiring. Native excludes darwin and
+      // android from -g too.
+      emit_syms = true;
+    } else if (a == "-capabilities") {
+      mode_caps = true;
+    } else if (a == "-tangle") {
+      // Literate: expand a .fern.md document's chunks into Fern source.
+      // It reads a document, not a module, so it never loads imports.
+      mode_tangle = true;
+    } else if (a == "-doc") {
+      // Reference pages. Like -tangle it reads sources and compiles
+      // nothing, so it takes a path rather than an entry module.
+      mode_doc = true;
+    } else if (a == "-add") {
+      // Manifest editing: append a declared dependency. Takes NAME SPEC
+      // DIR positionally, not an entry module.
+      mode_add = true;
+    } else if (a == "-vendor") {
+      // Flatten the transitive dependency graph into <root>/vendor/.
+      // Like -resolve it reads manifests, so it takes a directory.
+      mode_vendor = true;
+    } else if (a == "-resolve") {
+      // Version resolution (MVS) over the manifest's [package] index,
+      // writing fern.lock. It reads manifests, not sources, so it takes
+      // a directory rather than an entry file.
+      mode_resolve = true;
+    } else if (a == "-targets") {
+      mode_targets = true;
+    } else if (a == "-chunk") {
+      i = i + 1;
+      if (i >= av.len()) {
+        return usage();
+      }
+      chunk = av[i];
+    } else if (a == "-emit") {
+      i = i + 1;
+      if (i >= av.len()) {
+        return usage();
+      }
+      emit = av[i];
+    } else if (a == "-O") {
+      optimize = true;
+    } else if (a == "-target") {
+      i = i + 1;
+      if (i >= av.len()) {
+        return usage();
+      }
+      target = av[i];
+      target_given = true;
+    } else if (a == "-embed") {
+      i = i + 1;
+      if (i >= av.len()) {
+        return usage();
+      }
+      embed_dir = av[i];
+    } else if (a == "-o") {
+      i = i + 1;
+      if (i >= av.len()) {
+        return usage();
+      }
+      out_path = av[i];
+    } else if (is_flag(a)) {
+      eprint("fern: unknown flag: ");
+      eprint(a);
+      eprint("\n");
+      return 2;
+    } else {
+      pos = pos.append(a);
+      if (!have_entry) {
+        entry_path = a;
         have_entry = true;
+      } else if (!have_root) {
+        root = a;
+        have_root = true;
+      } else {
+        prog_args = prog_args.append(a);
+      }
     }
-    if (!have_entry) { return usage(); }
+    i = i + 1;
+  }
 
-    // `-check <DIR>` checks the package governing DIR, or every member of the
-    // workspace it roots. A file argument takes the single-entry path below,
-    // and so does a bad one — `is_dir` answers false for both.
-    if (mode_check && is_dir(entry_path)) { return check_dir(entry_path, root, target, target_given); }
+  // `-targets` answers from the table alone; it needs no entry file.
+  if (mode_targets) {
+    return list_targets();
+  }
 
-    if (!platforms.for_target(target).known) {
-        // One eprint, not one per name: eprint appends its own newline, so a
-        // loop of them prints the target list down the left margin.
-        var msg: string = "fern: unknown -target: " + target + " (want one of:";
-        var tn: string[] = platforms.targets();
-        var ti: i32 = 0;
-        while (ti < tn.len()) { msg = msg + " " + tn[ti]; ti = ti + 1; }
-        eprint(msg + ")");
-        return 2;
-    }
-    if (emit.len() > 0 && emit != "asm" && emit != "core-module") {
-        eprint("fern: unknown -emit: " + emit + " (want asm, core-module, or omit it for the target's default output form)\n");
-        return 2;
-    }
-    if (emit == "core-module" && platforms.for_target(target).isa != "wasm32") {
-        eprint("fern: -emit core-module is a wasm output form; -target " + target + " has no core module to emit\n");
-        return 2;
-    }
-    if (backend != "" && backend != "ssa" && backend != "flat") {
-        eprint("fern: unknown -backend: " + backend + " (want flat or ssa, or omit it for the target's default emitter)\n");
-        return 2;
-    }
-    // Each target has one emitter, and `-backend` may only name it: the
-    // register path on the native ISAs (docs/SELFHOST-SSA-BACKEND.md), the
-    // stack machine on wasm, which has no registers to allocate.
-    var ssa_isa: boolean = platforms.for_target(target).isa == "arm64" || platforms.for_target(target).isa == "x86-64";
-    if (backend == "ssa" && !ssa_isa) {
-        eprint("fern: -backend ssa is not available for -target " + target + " (available for: arm64-linux, arm64-darwin, arm64-android, x86-64-linux)\n");
-        return 2;
-    }
-    if (backend == "flat" && ssa_isa) {
-        eprint("fern: -backend flat is not available for -target " + target + ": the stack machine's function emitter was retired, and the register path (-backend ssa, the default) is the only emitter on arm64 and x86-64\n");
-        return 2;
-    }
+  // `-resolve` takes a directory (or any file inside the package), not an
+  // entry module — it reads manifests and never compiles anything.
+  if (mode_resolve) {
+    return run_resolve(entry_path);
+  }
 
-    // `-fmt FILE...` is per-file, gofmt-style: every positional is formatted in
-    // order (none of them is a stdlib root), a failing file does not stop the
-    // rest, and the exit code is the worst one seen — so `-d` over a list exits
-    // 1 when any file needs formatting.
-    if (mode_fmt) {
-        if (out_path.len() > 0 && pos.len() > 1) {
-            eprint("fern: -fmt -o takes a single input file (" + util.i32_to_string(pos.len()) + " given)\n");
-            return 2;
-        }
-        var code: i32 = 0;
-        var fi: i32 = 0;
-        while (fi < pos.len()) {
-            var fc: i32 = fmt_file(pos[fi], fmt_write, fmt_diff, out_path);
-            if (fc > code) { code = fc; }
-            fi = fi + 1;
-        }
-        return code;
+  // `-vendor` copies sources between directories and compiles nothing.
+  if (mode_vendor) {
+    if (!have_entry) {
+      return usage();
     }
+    return run_vendor(entry_path);
+  }
 
-    // Load the entry + its transitive imports off disk and flatten them
-    // into one module (the import-driven scheme from asm_load_run).
-    var dir: string = util.dir_of(entry_path);
-    var esrc: string = "";
-    var eok: boolean = false;
-    var eerr: string = "";
-    // `-` names stdin for the two modes native reads it in, and only those:
-    // `-fmt -` and a compile from `-` are file errors under native, and the
-    // self-host accepting them would be a divergence in the permissive
-    // direction — the one that lets a program build under one compiler only.
-    if (entry_path == "-" && (mode_check || mode_interp)) {
-        esrc = read_stdin();
+  // `-tangle` reads a literate document and compiles nothing.
+  if (mode_tangle) {
+    if (!have_entry) {
+      return usage();
+    }
+    return run_tangle(entry_path, out_path, chunk);
+  }
+
+  // `-doc` reads sources for their declarations and comments and compiles
+  // nothing.
+  if (mode_doc) {
+    if (!have_entry) {
+      return usage();
+    }
+    return run_doc(entry_path, out_path);
+  }
+
+  // `-add` edits a manifest and compiles nothing.
+  if (mode_add) {
+    return run_add(pos);
+  }
+
+  // `-check` and `-interp` with no path read the program from stdin, as
+  // native's do. Every other mode wants a file: `-fmt` writes back over one,
+  // and a compile names its output after one.
+  if (!have_entry && (mode_check || mode_interp)) {
+    entry_path = "-";
+    have_entry = true;
+  }
+  if (!have_entry) {
+    return usage();
+  }
+
+  // `-check <DIR>` checks the package governing DIR, or every member of the
+  // workspace it roots. A file argument takes the single-entry path below,
+  // and so does a bad one — `is_dir` answers false for both.
+  if (mode_check && is_dir(entry_path)) {
+    return check_dir(entry_path, root, target, target_given);
+  }
+
+  if (!platforms.for_target(target).known) {
+    // One eprint, not one per name: eprint appends its own newline, so a
+    // loop of them prints the target list down the left margin.
+    var msg: string = "fern: unknown -target: " + target + " (want one of:";
+    var tn: string[] = platforms.targets();
+    var ti: i32 = 0;
+    while (ti < tn.len()) {
+      msg = msg + " " + tn[ti];
+      ti = ti + 1;
+    }
+    eprint(msg + ")");
+    return 2;
+  }
+  if (emit.len() > 0 && emit != "asm" && emit != "core-module") {
+    eprint("fern: unknown -emit: " + emit + " (want asm, core-module, or omit it for the target's default output form)\n");
+    return 2;
+  }
+  if (emit == "core-module" && platforms.for_target(target).isa != "wasm32") {
+    eprint("fern: -emit core-module is a wasm output form; -target " + target + " has no core module to emit\n");
+    return 2;
+  }
+  if (backend != "" && backend != "ssa" && backend != "flat") {
+    eprint("fern: unknown -backend: " + backend + " (want flat or ssa, or omit it for the target's default emitter)\n");
+    return 2;
+  }
+  // Each target has one emitter, and `-backend` may only name it: the
+  // register path on the native ISAs (docs/SELFHOST-SSA-BACKEND.md), the
+  // stack machine on wasm, which has no registers to allocate.
+  var ssa_isa: boolean = platforms.for_target(target).isa == "arm64" || platforms.for_target(target).isa == "x86-64";
+  if (backend == "ssa" && !ssa_isa) {
+    eprint("fern: -backend ssa is not available for -target " + target + " (available for: arm64-linux, arm64-darwin, arm64-android, x86-64-linux)\n");
+    return 2;
+  }
+  if (backend == "flat" && ssa_isa) {
+    eprint("fern: -backend flat is not available for -target " + target + ": the stack machine's function emitter was retired, and the register path (-backend ssa, the default) is the only emitter on arm64 and x86-64\n");
+    return 2;
+  }
+
+  // `-fmt FILE...` is per-file, gofmt-style: every positional is formatted in
+  // order (none of them is a stdlib root), a failing file does not stop the
+  // rest, and the exit code is the worst one seen — so `-d` over a list exits
+  // 1 when any file needs formatting.
+  if (mode_fmt) {
+    if (out_path.len() > 0 && pos.len() > 1) {
+      eprint("fern: -fmt -o takes a single input file (" + util.i32_to_string(pos.len()) + " given)\n");
+      return 2;
+    }
+    var code: i32 = 0;
+    var fi: i32 = 0;
+    while (fi < pos.len()) {
+      var fc: i32 = fmt_file(pos[fi], fmt_write, fmt_diff, out_path);
+      if (fc > code) {
+        code = fc;
+      }
+      fi = fi + 1;
+    }
+    return code;
+  }
+
+  // Load the entry + its transitive imports off disk and flatten them
+  // into one module (the import-driven scheme from asm_load_run).
+  var dir: string = util.dir_of(entry_path);
+  var esrc: string = "";
+  var eok: boolean = false;
+  var eerr: string = "";
+  // `-` names stdin for the two modes native reads it in, and only those:
+  // `-fmt -` and a compile from `-` are file errors under native, and the
+  // self-host accepting them would be a divergence in the permissive
+  // direction — the one that lets a program build under one compiler only.
+  if (entry_path == "-" && (mode_check || mode_interp)) {
+    esrc = read_stdin();
+    eok = true;
+  } else {
+    match (read_file(entry_path)) {
+      Ok(s) => {
+        esrc = s;
         eok = true;
-    } else {
-        match (read_file(entry_path)) {
-            Ok(s) => { esrc = s; eok = true; },
-            Err(e) => { eerr = modloader.read_error_reason(e); },
-        }
+      },
+      Err(e) => {
+        eerr = modloader.read_error_reason(e);
+      }
     }
-    if (!eok) {
-        eprint(read_failure("entry file", entry_path, eerr));
-        return 1;
-    }
-    var entry_mod: parser.Module = parser.parse_module(lexer.tokenize(emitforms.entry_source(esrc, target)));
-    var missing_handle: string = emitforms.http_entry_missing(entry_mod, target);
-    if (missing_handle.len() > 0) { eprint(missing_handle); return 1; }
+  }
+  if (!eok) {
+    eprint(read_failure("entry file", entry_path, eerr));
+    return 1;
+  }
+  var entry_mod: parser.Module = parser.parse_module(lexer.tokenize(emitforms.entry_source(esrc, target)));
+  var missing_handle: string = emitforms.http_entry_missing(entry_mod, target);
+  if (missing_handle.len() > 0) {
+    eprint(missing_handle);
+    return 1;
+  }
 
-    var b: Bundle = load_bundle(entry_path, entry_mod, root, target);
-    if (!b.ok) { return 1; }
-    // -embed: resolve __fern_asset / __fern_assets into string literals before
-    // anything else reads the tree, so the checker, the interpreter and every
-    // backend see literals and never learn that assets exist. Native folds them
-    // in the same place, ahead of checker.Check.
-    var (folded_bundle, fold_code) = fold_embedded_assets(b, embed_dir);
-    if (fold_code != 0) { return fold_code; }
-    b = folded_bundle;
-    var merged: parser.Module = b.merged;
-    var pkgs: caps.Pkg[] = b.pkgs;
+  var b: Bundle = load_bundle(entry_path, entry_mod, root, target);
+  if (!b.ok) {
+    return 1;
+  }
+  // -embed: resolve __fern_asset / __fern_assets into string literals before
+  // anything else reads the tree, so the checker, the interpreter and every
+  // backend see literals and never learn that assets exist. Native folds them
+  // in the same place, ahead of checker.Check.
+  let (folded_bundle, fold_code) = fold_embedded_assets(b, embed_dir);
+  if (fold_code != 0) {
+    return fold_code;
+  }
+  b = folded_bundle;
+  var merged: parser.Module = b.merged;
+  var pkgs: caps.Pkg[] = b.pkgs;
 
-    if (bundle_visibility_diags(b)) { return 1; }
+  if (bundle_visibility_diags(b)) {
+    return 1;
+  }
 
-    // `-capabilities`: print the per-package capability report and stop
-    // (docs/PACKAGE-CAPABILITIES-BRIEF.md phase 1). Report mode enforces
-    // nothing — the grants are enforced on the compile / -check / -interp
-    // paths below.
-    if (mode_caps) {
-        write(caps.format_rows(caps.analyze(merged, pkgs)));
-        return 0;
-    }
-
-    if (mode_check) { return check_bundle(b, target, target_given); }
-
-    if (mode_interp) {
-        // Package-capability gate (E070 — caps.fern): a dependency reaching
-        // past its grant is refused before the program runs, not after it has
-        // already opened the socket.
-        if (package_violations(merged, pkgs)) { return 1; }
-        if (ambient_violations(merged)) { return 1; }
-        // Evaluate via the tree-walking interpreter; the program's
-        // result becomes the process exit code (VInt → its value,
-        // VBool → 1/0), matching interp_run.fern. A non-i32/bool
-        // result exits 254.
-        var argv: string[] = [entry_path];
-        var pa: i32 = 0;
-        while (pa < prog_args.len()) {
-            argv = argv.append(prog_args[pa]);
-            pa = pa + 1;
-        }
-        var result: interp.Value = interp.eval_module_argv(merged, argv);
-        match (result) {
-            interp.VInt(iv) => { return iv.v; },
-            interp.VBool(bv) => {
-                if (bv.v) { return 1; }
-                return 0;
-            },
-            // The interpreter's bottom carries WHY it stopped. Printing it is
-            // the difference between "exit 254" and a usable report: #5990 was
-            // filed against a silent 254 whose cause (an unimplemented
-            // construct) the message already named.
-            interp.VErr(ev) => {
-                eprint("fern: interp: " + ev.msg + "\n");
-                return 254;
-            },
-            _ => { return 254; },
-        }
-        return 254;
-    }
-
-    // The nameless-declaration gate the `-check` path runs (#7447), for the
-    // same reason the checker gate below exists: without it a build is MORE
-    // permissive than `-check`, and a keyword-named function reaches codegen
-    // as a nameless declaration.
-    if (report_decl_name_errors(merged, b.files)) { return 1; }
-    if (report_parse_unknown_errors(merged, b.files)) { return 1; }
-    if (report_top_level_stmt_errors(merged, b.files)) { return 1; }
-
-    // Build gate: reject what the checker rejects BEFORE codegen, so the
-    // compiler is not MORE permissive than the native compiler / `-check`
-    // (issue #2825 — the codegen paths previously compiled forbidden field
-    // mutation like `p.x = v` straight to a working binary; #6961 — every
-    // other coded rule was reachable only through `-check`, so a checker rule
-    // ported for parity did not gate a build). Native always type-checks ahead
-    // of codegen; this is the matching gate for the self-host CLI's compile
-    // path. checker.is_build_gate_code decides the set — every coded
-    // diagnostic except the partial-port rules measured to false-positive —
-    // and a hit is reported with the same `line:col: error[CODE]: message`
-    // shape as `-check`.
-    var gated: util.Diag[] = checker.build_gate_diags(merged);
-    if (gated.len() > 0) {
-        eprint_diags(gated, b.files);
-        return 1;
-    }
-
-    // Target-capability gate (E066 — platforms.fern): reject, before codegen,
-    // a call to a runtime builtin the target's descriptor does not grant
-    // (`subprocess` anywhere compiled, `proc_fork` / `__heap_mark` on wasm).
-    // Without it the self-host compiles a program native refuses, and the
-    // failure lands mid-build as an undefined label or, on wasm, as a
-    // host-side instantiation error.
-    if (capability_violations(merged, target)) { return 1; }
-
-    // Package-capability gate (E070 — caps.fern): the other capability
-    // system, gating what a DEPENDENCY may reach rather than what the target
-    // provides. Without it the self-host builds a program native refuses.
-    if (package_violations(merged, pkgs)) { return 1; }
-
-    // The bag boundary (E080 — ambient.fern): a handler reaching a host
-    // effect around its `Platform`, on either compiler.
-    if (ambient_violations(merged)) { return 1; }
-
-    // Constant-fold the program before codegen, on EVERY build. Native gates
-    // no constant folding behind `-O` either — `internal/constfold` runs on
-    // all four of its compile paths and the expression fold in `internal/ir`
-    // likewise — and `-O` there means assert elision, below. Gating this
-    // behind `-O` meant a default self-host build emitted a runtime call for
-    // `"ab" + "cd"` where native emitted one literal.
-    //
-    // Compile-only: applied after -check / -interp / -fmt (which return above
-    // and want the original AST), ahead of both the SSA and AST emit paths.
-    // Folding is behaviour-preserving — it skips `/` and `%` by zero, leaving
-    // the runtime error intact — so it changes only the shape of the emitted
-    // code, which is why it needs no flag.
-    //
-    // The target name first: its environment and ISA as string literals, so a
-    // branch on target_os() or target_arch() is pruned by
-    // ir.fold_const_binaries. -check and -interp returned above with the
-    // calls intact.
-    var desc: platforms.Descriptor = platforms.for_target(target);
-    merged = constfold.fold_target_name(merged, desc.environment, desc.isa);
-    merged = constfold.fold_module(merged);
-
-    // typed-IR (#5531): stamp each call expression with its checker-inferred
-    // result type so the IR lowering READS the type instead of re-deriving it
-    // structurally (docs/TYPED-IR-REWRITE.md). Runs after check + constfold and
-    // before every emit path, so the emit_module_ir routing sees c.ty. Deterministic,
-    // so the byte-identical self-compile fixpoint is preserved.
-    //
-    // Ahead of the elision so the `-O` gate below sees the module the emit path
-    // would have been handed. Annotation is per-call, so a deleted assert takes
-    // only its own stamps with it and the surviving ones are the same either way.
-    merged = checker.annotate_module(merged);
-
-    // -O: drop every assert() check, the one thing native spends the flag on
-    // (constfold.ElideAsserts). The condition goes with the check, which is
-    // why asserts must be side-effect-free.
-    //
-    // `-O` must narrow the emitted program and never widen the set that
-    // compiles, so the elision runs after EVERY gate: the checker and the two
-    // capability gates above, and IR-eligibility, which the emit path decides
-    // BELOW and so is asked for here, on the module as written. Deleting a
-    // statement can only make a module more eligible, and on an ill-typed
-    // assert that is the whole difference: `assert(nosuchname > 1)` takes the
-    // undefined name away with it and the module lowers (#7170).
-    //
-    // The CHECKER is what rejects that program now, on either build: it
-    // reports E001 for the undefined name and E001 gates since #8461. The
-    // ineligibility refusal below is what rejected it while E001 was exempt
-    // from the compile path, naming neither the name nor the mistake.
-    if (optimize) {
-        if (constfold.has_asserts(merged) && !ircore.module_ir_eligible(parser.module_with_builtins(merged))) {
-            ircore.eprint_ir_ineligible();
-            return 1;
-        }
-        merged = constfold.elide_asserts(merged);
-    }
-
-    // Prune functions unreachable from `main` (+ top-level statements + WIT
-    // exports), the same name-based over-approximation asm_load_run applies and
-    // native runs before platforms.Enforce. Without it a program importing one
-    // stdlib module emits that module's whole transitive closure: `import
-    // "std/string"` costs examples/bench/string_count_byte 958 emitted functions
-    // against native's 27.
-    //
-    // After every gate, for the reason the assert elision above is: pruning can
-    // only narrow the emitted program, and running it earlier would widen the
-    // set that compiles — a module ineligible for the IR path can become
-    // eligible once the function that bails it is dropped. The checker and both
-    // capability gates therefore still see the module as written, so no
-    // diagnostic moves.
-    merged = treeshake.treeshake(merged);
-
-    if (!platforms.emits_code(target)) {
-        // Native reports the same shape from its descriptor's NoBackend flag.
-        // A freestanding target type-checks (against an empty capability set)
-        // and has nothing to lower with, so refusing here is the correct answer
-        // — the alternative is an artifact built for the wrong machine.
-        eprint("fern: -target " + target + ": check-only — no backend emits for this target yet\n");
-        return 2;
-    }
-
-    var typed: parser.Module = parser.module_with_builtins_typed(merged);
-    var full: parser.Module = parser.erase_str_module(typed);
-    // The typed semantic lowering, unless FERN_SEM_IR= turns it off, threaded
-    // into whichever emit path runs. Off, this is ircore.no_sub().
-    var sub: ircore.Sub = semlower.target_substitution(typed, target);
-    var out_asm: string = "";
-    var emit_text: boolean = emit == "asm";
-    if (target == "arm64-linux") {
-        // `-emit asm` is the arm64 emitter's GAS text, stopping short of the
-        // in-process assembler + linker the default form runs on top of it —
-        // the shape a harness wants when it assembles with its own toolchain.
-        //
-        // It is also the only way to observe the emitter in isolation, which
-        // is what corrected #6011: measured through the linked form the arm64
-        // path looked 5x hungrier than x86-64, but that compared "emit +
-        // assemble + link" against x86-64's "emit". Emitter to emitter they
-        // are at parity (1.56 GB vs 1.50 GB on an empty `main` importing
-        // std/array); the excess is all in arm64_gas_program.
-        //
-        // The default form is the in-process ELF (arm64_native + elf.fern) —
-        // no `.s` + gcc/ld.
-        out_asm = asm_arm64_ir.emit_module_or_error_sub(full, false, sub);
-        util.arr_push_cliff_report("arm64:emitted", 0);
-        if (out_asm.len() == 0) { return 2; }
-        if (!emit_text) {
-            out_asm = arm64_elf_binary(out_asm, emit_syms);
-            util.arr_push_cliff_report("arm64:image", 0);
-            if (out_asm.len() == 0) { return 2; }
-        }
-    } else if (target == "arm64-android") {
-        // arm64-android is the arm64 emitter wrapped in a static-PIE (ET_DYN)
-        // image instead of the fixed-address W^X one. `-emit asm` produces the
-        // same GAS as arm64-linux: the PIE-ness is a link-time property, and
-        // the one construct that cares — the startup self-relocation loop — is
-        // emitted on both, where ET_EXEC simply computes a zero slide and skips
-        // it (#7112).
-        out_asm = asm_arm64_ir.emit_module_or_error_sub(full, false, sub);
-        if (out_asm.len() == 0) { return 2; }
-        if (!emit_text) {
-            out_asm = arm64_elf_binary_pie(out_asm);
-            if (out_asm.len() == 0) { return 2; }
-        }
-    } else if (target == "arm64-darwin") {
-        // Same arm64 code generator with the Darwin syscall builtins
-        // (gettimeofday / getentropy) selected via the darwin flag;
-        // darwinize() rewrites the emitter output into the Mach-O assembler
-        // dialect (@PAGE/@PAGEOFF, _main entry, BSD syscalls). That GAS
-        // text is then assembled + linked entirely in-process by
-        // arm64_native: arm64_gas_program parses + selects instructions,
-        // macho_text_vaddr/macho_data_vaddr fix the segment addresses,
-        // arm64_gas_link resolves @PAGE/@PAGEOFF + branch fixups against
-        // them, and macho_executable writes the signed Mach-O
-        // (ad-hoc LC_CODE_SIGNATURE — Apple Silicon refuses unsigned
-        // binaries). No external clang / ld64. The output bytes are packed
-        // into a string written verbatim by write_file (see the wasm core
-        // module for the same i32[]->u8[]->string idiom).
-        //
-        // `-emit asm` stops at the darwinized text: it is the only way to hand
-        // the emitter's output to clang, which decides whether a misbehaving
-        // binary is the emitter's fault or arm64_gas_program's.
-        out_asm = asm_arm64_ir.emit_module_or_error_sub(full, true, sub);
-        util.arr_push_cliff_report("darwin:emitted", 0);
-        out_asm = asm_arm64_ir.darwinize(out_asm);
-        util.arr_push_cliff_report("darwin:darwinized", 0);
-        if (out_asm.len() == 0) { return 2; }
-        if (!emit_text) {
-            var prog: arm64_native.Arm64GasProg = arm64_native.arm64_gas_program(out_asm);
-            util.arr_push_cliff_report("darwin:assembled", 0);
-            if (prog.unknown.len() > 0) {
-                var _ar: string = arm64_refusals("arm64-darwin", "assembler", prog.unknown);
-                return 2;
-            }
-            var pa: arm64_native.Arm64Asm = prog.asm;
-            // __eh_frame sits inside __TEXT between the code and __DATA, and
-            // its section header shifts the first code byte, so its LENGTH is
-            // needed before any address is. It does not depend on either
-            // address, so rendering it once at the final length and again at
-            // the final addresses is exact rather than a fixpoint.
-            var deh_len: i32 = arm64_native.arm64_eh_frame_darwin_len(prog);
-            var tv: i64 = arm64_native.macho_text_vaddr(pa.code.len(), deh_len, prog.data.len(), prog.bss_size);
-            var ev: i64 = arm64_native.macho_eh_vaddr(pa.code.len(), deh_len, prog.data.len(), prog.bss_size);
-            var dv: i64 = arm64_native.macho_data_vaddr(pa.code.len(), deh_len, prog.data.len(), prog.bss_size);
-            var deh: i32[] = arm64_native.arm64_eh_frame_darwin(prog, tv, ev);
-            util.arr_push_cliff_report("darwin:unwind", 0);
-            prog = arm64_native.arm64_gas_link(prog, tv, dv);
-            util.arr_push_cliff_report("darwin:linked", 0);
-            if (prog.unknown.len() > 0) {
-                var _lr: string = arm64_refusals("arm64-darwin", "linker", prog.unknown);
-                return 2;
-            }
-            var pa2: arm64_native.Arm64Asm = prog.asm;
-            // darwinize renames the ELF `_start` entry to `_main`; like the
-            // ELF path, resolve its label rather than assuming offset 0 — the
-            // emitter writes the entry after the user's functions.
-            var deoff: i32 = arm64_native.macho_entry_off(pa2);
-            var dreb: i32[] = arm64_native.arm64_gas_rebase_offs(prog);
-            out_asm = string_from_bytes_unchecked(util.to_u8(arm64_native.macho_executable(pa2.code, deh, prog.data, "fern", deoff, prog.bss_size, dreb)));
-            util.arr_push_cliff_report("darwin:image", 0);
-        }
-    } else if (target == "wasm32-wasi" && emit_text) {
-        // WASI core module in text format (WAT). Runnable directly by
-        // `wasmtime run`; main()'s result becomes the process exit code.
-        out_asm = wasm_ir.emit_module_mode_or_error_sub(full, false, false, sub);
-    } else if (target == "wasm32-wasi" && emit == "core-module") {
-        // Same WASI core module, assembled to the wasm *binary* format:
-        // emit WAT, then run it through the self-hosted
-        // WAT->binary assembler (watbin). The binary bytes (an i32[] of
-        // 0..255) are packed into a string whose bytes write_file / write
-        // emit verbatim, so the output file is a runnable `.wasm`.
-        out_asm = string_from_bytes_unchecked(util.to_u8(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error_sub(full, false, false, sub))));
-    } else if (target == "wasm32-wasi") {
-        // A Component-Model `wasi:cli/run` component, framed from the program's
-        // WASI usage (emitforms.wasm_component). Programs using WASI the
-        // self-host component path doesn't wrap yet are rejected rather than
-        // emitting a broken component.
-        var comp: i32[] = emitforms.wasm_component(full, sub);
-        if (comp.len() == 0) {
-            eprint(emitforms.COMPONENT_REFUSED);
-            return 2;
-        }
-        out_asm = string_from_bytes_unchecked(util.to_u8(comp));
-    } else if (target == "wasm32-wasi-http" && emit_text) {
-        out_asm = emitforms.wasm_http_core(full, sub);
-    } else if (target == "wasm32-wasi-http" && emit == "core-module") {
-        var hwat: string = emitforms.wasm_http_core(full, sub);
-        if (hwat.len() == 0) { return 2; }
-        out_asm = string_from_bytes_unchecked(util.to_u8(watbin.wat_to_binary(hwat)));
-    } else if (target == "wasm32-wasi-http") {
-        // A wasi:http/incoming-handler component of the proxy world.
-        var hc: wit_compose.Composed = emitforms.wasm_http_component(full, sub);
-        if (hc.bytes.len() == 0) {
-            if (hc.refused.len() > 0) { eprint(emitforms.http_refused(hc.refused)); }
-            return 2;
-        }
-        out_asm = string_from_bytes_unchecked(util.to_u8(hc.bytes));
-    } else {
-        // #3457 slice 3: the x86 CLI path routes IR-or-error, never the legacy
-        // AST emitter. As of slice 5 asm.emit_module has no callers at all.
-        // `-emit asm` stops at that text — what a harness assembling with its
-        // own toolchain wants; the default form assembles + links it in-process
-        // (x86_native + elf.fern), so it produces a runnable binary like
-        // arm64-linux does and needs nothing on $PATH.
-        out_asm = asm_ir.emit_module_or_error_sub(full, sub);
-        if (!emit_text) {
-            out_asm = x86_elf_binary(out_asm, emit_syms);
-            if (out_asm.len() == 0) { return 2; }
-        }
-    }
-    if (out_path.len() > 0) {
-        match (write_output(out_path, out_asm, target, emit)) {
-            Err(e) => {
-                eprint("fern: cannot write output: ");
-                eprint(out_path);
-                eprint("\n");
-                return 1;
-            },
-            Ok(_) => {},
-        }
-    } else {
-        write(out_asm);
-    }
+  // `-capabilities`: print the per-package capability report and stop
+  // (docs/PACKAGE-CAPABILITIES-BRIEF.md phase 1). Report mode enforces
+  // nothing — the grants are enforced on the compile / -check / -interp
+  // paths below.
+  if (mode_caps) {
+    write(caps.format_rows(caps.analyze(merged, pkgs)));
     return 0;
+  }
+
+  if (mode_check) {
+    return check_bundle(b, target, target_given);
+  }
+
+  if (mode_interp) {
+    // Package-capability gate (E070 — caps.fern): a dependency reaching
+    // past its grant is refused before the program runs, not after it has
+    // already opened the socket.
+    if (package_violations(merged, pkgs)) {
+      return 1;
+    }
+    if (ambient_violations(merged)) {
+      return 1;
+    }
+    // Evaluate via the tree-walking interpreter; the program's
+    // result becomes the process exit code (VInt → its value,
+    // VBool → 1/0), matching interp_run.fern. A non-i32/bool
+    // result exits 254.
+    var argv: string[] = [entry_path];
+    var pa: i32 = 0;
+    while (pa < prog_args.len()) {
+      argv = argv.append(prog_args[pa]);
+      pa = pa + 1;
+    }
+    var result: interp.Value = interp.eval_module_argv(merged, argv);
+    match (result) {
+      interp.VInt(iv) => {
+        return iv.v;
+      },
+      interp.VBool(bv) => {
+        if (bv.v) {
+          return 1;
+        }
+        return 0;
+      },
+      interp.VErr(ev) => {
+        // The interpreter's bottom carries WHY it stopped. Printing it is
+        // the difference between "exit 254" and a usable report: #5990 was
+        // filed against a silent 254 whose cause (an unimplemented
+        // construct) the message already named.
+        eprint("fern: interp: " + ev.msg + "\n");
+        return 254;
+      },
+      _ => {
+        return 254;
+      }
+    }
+    return 254;
+  }
+
+  // The nameless-declaration gate the `-check` path runs (#7447), for the
+  // same reason the checker gate below exists: without it a build is MORE
+  // permissive than `-check`, and a keyword-named function reaches codegen
+  // as a nameless declaration.
+  if (report_decl_name_errors(merged, b.files)) {
+    return 1;
+  }
+  if (report_parse_unknown_errors(merged, b.files)) {
+    return 1;
+  }
+  if (report_top_level_stmt_errors(merged, b.files)) {
+    return 1;
+  }
+
+  // Build gate: reject what the checker rejects BEFORE codegen, so the
+  // compiler is not MORE permissive than the native compiler / `-check`
+  // (issue #2825 — the codegen paths previously compiled forbidden field
+  // mutation like `p.x = v` straight to a working binary; #6961 — every
+  // other coded rule was reachable only through `-check`, so a checker rule
+  // ported for parity did not gate a build). Native always type-checks ahead
+  // of codegen; this is the matching gate for the self-host CLI's compile
+  // path. checker.is_build_gate_code decides the set — every coded
+  // diagnostic except the partial-port rules measured to false-positive —
+  // and a hit is reported with the same `line:col: error[CODE]: message`
+  // shape as `-check`.
+  var gated: util.Diag[] = checker.build_gate_diags(merged);
+  if (gated.len() > 0) {
+    eprint_diags(gated, b.files);
+    return 1;
+  }
+
+  // Target-capability gate (E066 — platforms.fern): reject, before codegen,
+  // a call to a runtime builtin the target's descriptor does not grant
+  // (`subprocess` anywhere compiled, `proc_fork` / `__heap_mark` on wasm).
+  // Without it the self-host compiles a program native refuses, and the
+  // failure lands mid-build as an undefined label or, on wasm, as a
+  // host-side instantiation error.
+  if (capability_violations(merged, target)) {
+    return 1;
+  }
+
+  // Package-capability gate (E070 — caps.fern): the other capability
+  // system, gating what a DEPENDENCY may reach rather than what the target
+  // provides. Without it the self-host builds a program native refuses.
+  if (package_violations(merged, pkgs)) {
+    return 1;
+  }
+
+  // The bag boundary (E080 — ambient.fern): a handler reaching a host
+  // effect around its `Platform`, on either compiler.
+  if (ambient_violations(merged)) {
+    return 1;
+  }
+
+  // Constant-fold the program before codegen, on EVERY build. Native gates
+  // no constant folding behind `-O` either — `internal/constfold` runs on
+  // all four of its compile paths and the expression fold in `internal/ir`
+  // likewise — and `-O` there means assert elision, below. Gating this
+  // behind `-O` meant a default self-host build emitted a runtime call for
+  // `"ab" + "cd"` where native emitted one literal.
+  //
+  // Compile-only: applied after -check / -interp / -fmt (which return above
+  // and want the original AST), ahead of both the SSA and AST emit paths.
+  // Folding is behaviour-preserving — it skips `/` and `%` by zero, leaving
+  // the runtime error intact — so it changes only the shape of the emitted
+  // code, which is why it needs no flag.
+  //
+  // The target name first: its environment and ISA as string literals, so a
+  // branch on target_os() or target_arch() is pruned by
+  // ir.fold_const_binaries. -check and -interp returned above with the
+  // calls intact.
+  var desc: platforms.Descriptor = platforms.for_target(target);
+  merged = constfold.fold_target_name(merged, desc.environment, desc.isa);
+  merged = constfold.fold_module(merged);
+
+  // typed-IR (#5531): stamp each call expression with its checker-inferred
+  // result type so the IR lowering READS the type instead of re-deriving it
+  // structurally (docs/TYPED-IR-REWRITE.md). Runs after check + constfold and
+  // before every emit path, so the emit_module_ir routing sees c.ty. Deterministic,
+  // so the byte-identical self-compile fixpoint is preserved.
+  //
+  // Ahead of the elision so the `-O` gate below sees the module the emit path
+  // would have been handed. Annotation is per-call, so a deleted assert takes
+  // only its own stamps with it and the surviving ones are the same either way.
+  merged = checker.annotate_module(merged);
+
+  // -O: drop every assert() check, the one thing native spends the flag on
+  // (constfold.ElideAsserts). The condition goes with the check, which is
+  // why asserts must be side-effect-free.
+  //
+  // `-O` must narrow the emitted program and never widen the set that
+  // compiles, so the elision runs after EVERY gate: the checker and the two
+  // capability gates above, and IR-eligibility, which the emit path decides
+  // BELOW and so is asked for here, on the module as written. Deleting a
+  // statement can only make a module more eligible, and on an ill-typed
+  // assert that is the whole difference: `assert(nosuchname > 1)` takes the
+  // undefined name away with it and the module lowers (#7170).
+  //
+  // The CHECKER is what rejects that program now, on either build: it
+  // reports E001 for the undefined name and E001 gates since #8461. The
+  // ineligibility refusal below is what rejected it while E001 was exempt
+  // from the compile path, naming neither the name nor the mistake.
+  if (optimize) {
+    if (constfold.has_asserts(merged) && !ircore.module_ir_eligible(parser.module_with_builtins(merged))) {
+      ircore.eprint_ir_ineligible();
+      return 1;
+    }
+    merged = constfold.elide_asserts(merged);
+  }
+
+  // Prune functions unreachable from `main` (+ top-level statements + WIT
+  // exports), the same name-based over-approximation asm_load_run applies and
+  // native runs before platforms.Enforce. Without it a program importing one
+  // stdlib module emits that module's whole transitive closure: `import
+  // "std/string"` costs examples/bench/string_count_byte 958 emitted functions
+  // against native's 27.
+  //
+  // After every gate, for the reason the assert elision above is: pruning can
+  // only narrow the emitted program, and running it earlier would widen the
+  // set that compiles — a module ineligible for the IR path can become
+  // eligible once the function that bails it is dropped. The checker and both
+  // capability gates therefore still see the module as written, so no
+  // diagnostic moves.
+  merged = treeshake.treeshake(merged);
+
+  if (!platforms.emits_code(target)) {
+    // Native reports the same shape from its descriptor's NoBackend flag.
+    // A freestanding target type-checks (against an empty capability set)
+    // and has nothing to lower with, so refusing here is the correct answer
+    // — the alternative is an artifact built for the wrong machine.
+    eprint("fern: -target " + target + ": check-only — no backend emits for this target yet\n");
+    return 2;
+  }
+
+  var typed: parser.Module = parser.module_with_builtins_typed(merged);
+  var full: parser.Module = parser.erase_str_module(typed);
+  // The typed semantic lowering, unless FERN_SEM_IR= turns it off, threaded
+  // into whichever emit path runs. Off, this is ircore.no_sub().
+  var sub: ircore.Sub = semlower.target_substitution(typed, target);
+  var out_asm: string = "";
+  var emit_text: boolean = emit == "asm";
+  if (target == "arm64-linux") {
+    // `-emit asm` is the arm64 emitter's GAS text, stopping short of the
+    // in-process assembler + linker the default form runs on top of it —
+    // the shape a harness wants when it assembles with its own toolchain.
+    //
+    // It is also the only way to observe the emitter in isolation, which
+    // is what corrected #6011: measured through the linked form the arm64
+    // path looked 5x hungrier than x86-64, but that compared "emit +
+    // assemble + link" against x86-64's "emit". Emitter to emitter they
+    // are at parity (1.56 GB vs 1.50 GB on an empty `main` importing
+    // std/array); the excess is all in arm64_gas_program.
+    //
+    // The default form is the in-process ELF (arm64_native + elf.fern) —
+    // no `.s` + gcc/ld.
+    out_asm = asm_arm64_ir.emit_module_or_error_sub(full, false, sub);
+    util.arr_push_cliff_report("arm64:emitted", 0);
+    if (out_asm.len() == 0) {
+      return 2;
+    }
+    if (!emit_text) {
+      out_asm = arm64_elf_binary(out_asm, emit_syms);
+      util.arr_push_cliff_report("arm64:image", 0);
+      if (out_asm.len() == 0) {
+        return 2;
+      }
+    }
+  } else if (target == "arm64-android") {
+    // arm64-android is the arm64 emitter wrapped in a static-PIE (ET_DYN)
+    // image instead of the fixed-address W^X one. `-emit asm` produces the
+    // same GAS as arm64-linux: the PIE-ness is a link-time property, and
+    // the one construct that cares — the startup self-relocation loop — is
+    // emitted on both, where ET_EXEC simply computes a zero slide and skips
+    // it (#7112).
+    out_asm = asm_arm64_ir.emit_module_or_error_sub(full, false, sub);
+    if (out_asm.len() == 0) {
+      return 2;
+    }
+    if (!emit_text) {
+      out_asm = arm64_elf_binary_pie(out_asm);
+      if (out_asm.len() == 0) {
+        return 2;
+      }
+    }
+  } else if (target == "arm64-darwin") {
+    // Same arm64 code generator with the Darwin syscall builtins
+    // (gettimeofday / getentropy) selected via the darwin flag;
+    // darwinize() rewrites the emitter output into the Mach-O assembler
+    // dialect (@PAGE/@PAGEOFF, _main entry, BSD syscalls). That GAS
+    // text is then assembled + linked entirely in-process by
+    // arm64_native: arm64_gas_program parses + selects instructions,
+    // macho_text_vaddr/macho_data_vaddr fix the segment addresses,
+    // arm64_gas_link resolves @PAGE/@PAGEOFF + branch fixups against
+    // them, and macho_executable writes the signed Mach-O
+    // (ad-hoc LC_CODE_SIGNATURE — Apple Silicon refuses unsigned
+    // binaries). No external clang / ld64. The output bytes are packed
+    // into a string written verbatim by write_file (see the wasm core
+    // module for the same i32[]->u8[]->string idiom).
+    //
+    // `-emit asm` stops at the darwinized text: it is the only way to hand
+    // the emitter's output to clang, which decides whether a misbehaving
+    // binary is the emitter's fault or arm64_gas_program's.
+    out_asm = asm_arm64_ir.emit_module_or_error_sub(full, true, sub);
+    util.arr_push_cliff_report("darwin:emitted", 0);
+    out_asm = asm_arm64_ir.darwinize(out_asm);
+    util.arr_push_cliff_report("darwin:darwinized", 0);
+    if (out_asm.len() == 0) {
+      return 2;
+    }
+    if (!emit_text) {
+      var prog: arm64_native.Arm64GasProg = arm64_native.arm64_gas_program(out_asm);
+      util.arr_push_cliff_report("darwin:assembled", 0);
+      if (prog.unknown.len() > 0) {
+        var _ar: string = arm64_refusals("arm64-darwin", "assembler", prog.unknown);
+        return 2;
+      }
+      var pa: arm64_native.Arm64Asm = prog.asm;
+      // __eh_frame sits inside __TEXT between the code and __DATA, and
+      // its section header shifts the first code byte, so its LENGTH is
+      // needed before any address is. It does not depend on either
+      // address, so rendering it once at the final length and again at
+      // the final addresses is exact rather than a fixpoint.
+      var deh_len: i32 = arm64_native.arm64_eh_frame_darwin_len(prog);
+      var tv: i64 = arm64_native.macho_text_vaddr(pa.code.len(), deh_len, prog.data.len(), prog.bss_size);
+      var ev: i64 = arm64_native.macho_eh_vaddr(pa.code.len(), deh_len, prog.data.len(), prog.bss_size);
+      var dv: i64 = arm64_native.macho_data_vaddr(pa.code.len(), deh_len, prog.data.len(), prog.bss_size);
+      var deh: i32[] = arm64_native.arm64_eh_frame_darwin(prog, tv, ev);
+      util.arr_push_cliff_report("darwin:unwind", 0);
+      prog = arm64_native.arm64_gas_link(prog, tv, dv);
+      util.arr_push_cliff_report("darwin:linked", 0);
+      if (prog.unknown.len() > 0) {
+        var _lr: string = arm64_refusals("arm64-darwin", "linker", prog.unknown);
+        return 2;
+      }
+      var pa2: arm64_native.Arm64Asm = prog.asm;
+      // darwinize renames the ELF `_start` entry to `_main`; like the
+      // ELF path, resolve its label rather than assuming offset 0 — the
+      // emitter writes the entry after the user's functions.
+      var deoff: i32 = arm64_native.macho_entry_off(pa2);
+      var dreb: i32[] = arm64_native.arm64_gas_rebase_offs(prog);
+      out_asm = string_from_bytes_unchecked(util.to_u8(arm64_native.macho_executable(pa2.code, deh, prog.data, "fern", deoff, prog.bss_size, dreb)));
+      util.arr_push_cliff_report("darwin:image", 0);
+    }
+  } else if (target == "wasm32-wasi" && emit_text) {
+    // WASI core module in text format (WAT). Runnable directly by
+    // `wasmtime run`; main()'s result becomes the process exit code.
+    out_asm = wasm_ir.emit_module_mode_or_error_sub(full, false, false, sub);
+  } else if (target == "wasm32-wasi" && emit == "core-module") {
+    // Same WASI core module, assembled to the wasm *binary* format:
+    // emit WAT, then run it through the self-hosted
+    // WAT->binary assembler (watbin). The binary bytes (an i32[] of
+    // 0..255) are packed into a string whose bytes write_file / write
+    // emit verbatim, so the output file is a runnable `.wasm`.
+    out_asm = string_from_bytes_unchecked(util.to_u8(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error_sub(full, false, false, sub))));
+  } else if (target == "wasm32-wasi") {
+    // A Component-Model `wasi:cli/run` component, framed from the program's
+    // WASI usage (emitforms.wasm_component). Programs using WASI the
+    // self-host component path doesn't wrap yet are rejected rather than
+    // emitting a broken component.
+    var comp: i32[] = emitforms.wasm_component(full, sub);
+    if (comp.len() == 0) {
+      eprint(emitforms.COMPONENT_REFUSED);
+      return 2;
+    }
+    out_asm = string_from_bytes_unchecked(util.to_u8(comp));
+  } else if (target == "wasm32-wasi-http" && emit_text) {
+    out_asm = emitforms.wasm_http_core(full, sub);
+  } else if (target == "wasm32-wasi-http" && emit == "core-module") {
+    var hwat: string = emitforms.wasm_http_core(full, sub);
+    if (hwat.len() == 0) {
+      return 2;
+    }
+    out_asm = string_from_bytes_unchecked(util.to_u8(watbin.wat_to_binary(hwat)));
+  } else if (target == "wasm32-wasi-http") {
+    // A wasi:http/incoming-handler component of the proxy world.
+    var hc: wit_compose.Composed = emitforms.wasm_http_component(full, sub);
+    if (hc.bytes.len() == 0) {
+      if (hc.refused.len() > 0) {
+        eprint(emitforms.http_refused(hc.refused));
+      }
+      return 2;
+    }
+    out_asm = string_from_bytes_unchecked(util.to_u8(hc.bytes));
+  } else {
+    // #3457 slice 3: the x86 CLI path routes IR-or-error, never the legacy
+    // AST emitter. As of slice 5 asm.emit_module has no callers at all.
+    // `-emit asm` stops at that text — what a harness assembling with its
+    // own toolchain wants; the default form assembles + links it in-process
+    // (x86_native + elf.fern), so it produces a runnable binary like
+    // arm64-linux does and needs nothing on $PATH.
+    out_asm = asm_ir.emit_module_or_error_sub(full, sub);
+    if (!emit_text) {
+      out_asm = x86_elf_binary(out_asm, emit_syms);
+      if (out_asm.len() == 0) {
+        return 2;
+      }
+    }
+  }
+  if (out_path.len() > 0) {
+    match (write_output(out_path, out_asm, target, emit)) {
+      Err(e) => {
+        eprint("fern: cannot write output: ");
+        eprint(out_path);
+        eprint("\n");
+        return 1;
+      },
+      Ok(_) => {}
+    }
+  } else {
+    write(out_asm);
+  }
+  return 0;
 }

@@ -12,14 +12,11 @@ import "./typeinfo";
 // Expr / Stmt / Pattern and their cases, the arm and desugar records they
 // carry, and ParamDecl for a lambda's signature. Nothing here may name a
 // type that stayed in parser.fern, or the cycle comes straight back.
-
-
 // Expression nodes. Recursive via the union — `ExprBinary` holds
 // two Expr children, `ExprCall` holds a list of args, etc. The Go
 // parser produces a denser typed AST (NumberLit / FloatLit /
 // Ident / Binary / Call); this port collapses similar shapes into
 // fewer variants to keep the union member count tractable.
-
 // `raw` is the source spelling of a literal whose written form is not its
 // decoded payload — a quoted `'x'` (a `char`, suffix "char") or `b'x'` (a
 // `u8`, suffix "u8"), and the unit value `()`, which the parser records as
@@ -95,6 +92,7 @@ pub struct ExprArray { elements: Expr[], elem_ty: string, line: i32, col: i32 }
 // and match-/if-expression IIFEs — which is what keeps a reporter off their
 // guessed `ret_type`: those carry no annotation the programmer wrote.
 pub struct TypedBinding { name: string, ty: typeinfo.Type }
+
 // ret_fn_ret / ret_fn_param_types describe a lambda that RETURNS a function
 // value, the way the identically-named pair does on FuncDecl, ParamDecl,
 // StructFieldDecl and StmtVar (#5986): `parse_type_name` coarsens `(i32) => i32`
@@ -209,11 +207,7 @@ pub struct ExprFString { lits: string[], exprs: Expr[], is_expr: boolean[], line
 // assignment left behind at the declaration site runs.
 pub struct ExprZero { type_name: string, line: i32, col: i32 }
 
-pub type Expr = ExprNumber | ExprIdent | ExprString | ExprBool
-              | ExprBinary | ExprUnary | ExprCall
-              | ExprArray | ExprTuple | ExprIndex | ExprSlice
-              | ExprStructLit | ExprFieldAccess | ExprLambda
-              | ExprMapLit | ExprFString | ExprUnknown | ExprZero;
+pub type Expr = ExprNumber | ExprIdent | ExprString | ExprBool | ExprBinary | ExprUnary | ExprCall | ExprArray | ExprTuple | ExprIndex | ExprSlice | ExprStructLit | ExprFieldAccess | ExprLambda | ExprMapLit | ExprFString | ExprUnknown | ExprZero;
 
 // expr_line / expr_col are the 1-based source position an expression node
 // carries, or 0 for the three that carry none (ExprBool, ExprIndex,
@@ -232,105 +226,238 @@ pub const ORIGIN_NESTED_FN: string = "nested_fn";
 // declares. Only a nested `function` declaration does, as native's IsLocal
 // FuncDecl does; an arrow lambda reads any enclosing binding of the name.
 pub function var_binds_itself(v: StmtVar): boolean {
-    if let ExprLambda(lm) = v.init { return lm.origin == ORIGIN_NESTED_FN; }
-    return false;
+  if let ExprLambda(lm) = v.init {
+    return lm.origin == ORIGIN_NESTED_FN;
+  }
+  return false;
 }
 
 pub function stmt_line(st: Stmt): i32 {
-    match (st) {
-        StmtVar(v) => { return v.line; },
-        StmtReturn(r) => { return r.line; },
-        StmtAssign(a) => { return a.line; },
-        StmtExpr(x) => { return x.line; },
-        StmtIf(f) => { return f.line; },
-        StmtWhile(w) => { return w.line; },
-        StmtFor(fo) => { return fo.line; },
-        StmtMatch(m) => { return m.line; },
-        StmtDefer(d) => { return d.line; },
-        StmtBreak(b) => { return b.line; },
-        StmtContinue(c) => { return c.line; },
-        _ => { return 0; }
+  match (st) {
+    StmtVar(v) => {
+      return v.line;
+    },
+    StmtReturn(r) => {
+      return r.line;
+    },
+    StmtAssign(a) => {
+      return a.line;
+    },
+    StmtExpr(x) => {
+      return x.line;
+    },
+    StmtIf(f) => {
+      return f.line;
+    },
+    StmtWhile(w) => {
+      return w.line;
+    },
+    StmtFor(fo) => {
+      return fo.line;
+    },
+    StmtMatch(m) => {
+      return m.line;
+    },
+    StmtDefer(d) => {
+      return d.line;
+    },
+    StmtBreak(b) => {
+      return b.line;
+    },
+    StmtContinue(c) => {
+      return c.line;
+    },
+    _ => {
+      return 0;
     }
-    return 0;
+  }
+  return 0;
 }
 
 pub function expr_line(e: Expr): i32 {
-    match (e) {
-        ExprNumber(n) => { return n.line; },
-        ExprIdent(id) => { return id.line; },
-        ExprString(st) => { return st.line; },
-        ExprBool(b) => { return b.line; },
-        ExprBinary(b) => { return b.line; },
-        ExprUnary(u) => { return u.line; },
-        ExprCall(c) => { return c.line; },
-        ExprArray(al) => { return al.line; },
-        ExprTuple(tl) => { return tl.line; },
-        ExprIndex(ix) => { return ix.line; },
-        ExprSlice(sl) => { return sl.line; },
-        ExprStructLit(st) => { return st.line; },
-        ExprFieldAccess(fa) => { return fa.line; },
-        ExprLambda(lm) => { return lm.line; },
-        ExprMapLit(ml) => { return ml.line; },
-        ExprFString(fs) => { return fs.line; },
-        ExprUnknown(uk) => { return uk.line; },
-        ExprZero(z) => { return z.line; }
+  match (e) {
+    ExprNumber(n) => {
+      return n.line;
+    },
+    ExprIdent(id) => {
+      return id.line;
+    },
+    ExprString(st) => {
+      return st.line;
+    },
+    ExprBool(b) => {
+      return b.line;
+    },
+    ExprBinary(b) => {
+      return b.line;
+    },
+    ExprUnary(u) => {
+      return u.line;
+    },
+    ExprCall(c) => {
+      return c.line;
+    },
+    ExprArray(al) => {
+      return al.line;
+    },
+    ExprTuple(tl) => {
+      return tl.line;
+    },
+    ExprIndex(ix) => {
+      return ix.line;
+    },
+    ExprSlice(sl) => {
+      return sl.line;
+    },
+    ExprStructLit(st) => {
+      return st.line;
+    },
+    ExprFieldAccess(fa) => {
+      return fa.line;
+    },
+    ExprLambda(lm) => {
+      return lm.line;
+    },
+    ExprMapLit(ml) => {
+      return ml.line;
+    },
+    ExprFString(fs) => {
+      return fs.line;
+    },
+    ExprUnknown(uk) => {
+      return uk.line;
+    },
+    ExprZero(z) => {
+      return z.line;
     }
-    return 0;
+  }
+  return 0;
 }
 
 // expr_ty is the result-type tag the checker's annotate pass stamped on `e`,
 // or "" for a node that carries none (a literal, an aggregate, a lambda) and
 // for one the pass has not visited.
 pub function expr_ty(e: Expr): string {
-    match (e) {
-        ExprNumber(n) => { return ""; },
-        ExprIdent(id) => { return id.ty; },
-        ExprString(st) => { return ""; },
-        ExprBool(b) => { return ""; },
-        ExprBinary(b) => { return b.ty; },
-        ExprUnary(u) => { return u.ty; },
-        ExprCall(c) => { return c.ty; },
-        ExprArray(al) => { return ""; },
-        ExprTuple(tl) => { return ""; },
-        ExprIndex(ix) => { return ix.ty; },
-        ExprSlice(sl) => { return sl.ty; },
-        ExprStructLit(st) => { return ""; },
-        ExprFieldAccess(fa) => { return fa.ty; },
-        ExprLambda(lm) => { return ""; },
-        ExprMapLit(ml) => { return ""; },
-        ExprFString(fs) => { return ""; },
-        ExprUnknown(uk) => { return ""; },
-        ExprZero(z) => { return ""; }
+  match (e) {
+    ExprNumber(n) => {
+      return "";
+    },
+    ExprIdent(id) => {
+      return id.ty;
+    },
+    ExprString(st) => {
+      return "";
+    },
+    ExprBool(b) => {
+      return "";
+    },
+    ExprBinary(b) => {
+      return b.ty;
+    },
+    ExprUnary(u) => {
+      return u.ty;
+    },
+    ExprCall(c) => {
+      return c.ty;
+    },
+    ExprArray(al) => {
+      return "";
+    },
+    ExprTuple(tl) => {
+      return "";
+    },
+    ExprIndex(ix) => {
+      return ix.ty;
+    },
+    ExprSlice(sl) => {
+      return sl.ty;
+    },
+    ExprStructLit(st) => {
+      return "";
+    },
+    ExprFieldAccess(fa) => {
+      return fa.ty;
+    },
+    ExprLambda(lm) => {
+      return "";
+    },
+    ExprMapLit(ml) => {
+      return "";
+    },
+    ExprFString(fs) => {
+      return "";
+    },
+    ExprUnknown(uk) => {
+      return "";
+    },
+    ExprZero(z) => {
+      return "";
     }
-    return "";
+  }
+  return "";
 }
 
 pub function expr_col(e: Expr): i32 {
-    match (e) {
-        ExprNumber(n) => { return n.col; },
-        ExprIdent(id) => { return id.col; },
-        ExprString(st) => { return st.col; },
-        ExprBool(b) => { return 0; },
-        ExprBinary(b) => { return b.col; },
-        ExprUnary(u) => { return u.col; },
-        ExprCall(c) => { return c.col; },
-        ExprArray(al) => { return al.col; },
-        ExprTuple(tl) => { return tl.col; },
-        ExprIndex(ix) => { return ix.col; },
-        ExprSlice(sl) => { return sl.col; },
-        ExprStructLit(st) => { return st.col; },
-        ExprFieldAccess(fa) => { return fa.col; },
-        ExprLambda(lm) => { return lm.col; },
-        ExprMapLit(ml) => { return ml.col; },
-        ExprFString(fs) => { return fs.col; },
-        ExprUnknown(uk) => { return uk.col; },
-        ExprZero(z) => { return z.col; }
+  match (e) {
+    ExprNumber(n) => {
+      return n.col;
+    },
+    ExprIdent(id) => {
+      return id.col;
+    },
+    ExprString(st) => {
+      return st.col;
+    },
+    ExprBool(b) => {
+      return 0;
+    },
+    ExprBinary(b) => {
+      return b.col;
+    },
+    ExprUnary(u) => {
+      return u.col;
+    },
+    ExprCall(c) => {
+      return c.col;
+    },
+    ExprArray(al) => {
+      return al.col;
+    },
+    ExprTuple(tl) => {
+      return tl.col;
+    },
+    ExprIndex(ix) => {
+      return ix.col;
+    },
+    ExprSlice(sl) => {
+      return sl.col;
+    },
+    ExprStructLit(st) => {
+      return st.col;
+    },
+    ExprFieldAccess(fa) => {
+      return fa.col;
+    },
+    ExprLambda(lm) => {
+      return lm.col;
+    },
+    ExprMapLit(ml) => {
+      return ml.col;
+    },
+    ExprFString(fs) => {
+      return fs.col;
+    },
+    ExprUnknown(uk) => {
+      return uk.col;
+    },
+    ExprZero(z) => {
+      return z.col;
     }
-    return 0;
+  }
+  return 0;
 }
 
 // Statement nodes.
-
 // StmtVar binds a name to an init value. `type_name` is the
 // optional `: Type` annotation (bare type name; empty string
 // means no annotation). The checker uses it to override the
@@ -510,9 +637,7 @@ pub struct StmtUnknown { kind: string, line: i32, col: i32 }
 // a plain `defer`. lower_defers schedules the two kinds at the right exits.
 pub struct StmtDefer { action: Stmt, on_error: i32, line: i32 }
 
-pub type Stmt = StmtVar | StmtReturn | StmtExpr | StmtIf | StmtWhile
-              | StmtAssign | StmtMatch | StmtFor
-              | StmtBreak | StmtContinue | StmtUnknown | StmtDefer;
+pub type Stmt = StmtVar | StmtReturn | StmtExpr | StmtIf | StmtWhile | StmtAssign | StmtMatch | StmtFor | StmtBreak | StmtContinue | StmtUnknown | StmtDefer;
 
 // Top-level function decl: `function name(p1: T1, p2: T2): RT { body }`.
 // type names are captured as bare strings — full type-syntax
@@ -593,16 +718,36 @@ pub struct StructArm { is_wild: boolean, type_name: string, binds: string[], fie
 // `a.bitand(b)`, as native's checker desugars them (#2706). "" for an operator
 // with no overload form.
 pub function operator_method(op: string): string {
-  if (op == "+") { return "add"; }
-  if (op == "-") { return "sub"; }
-  if (op == "*") { return "mul"; }
-  if (op == "/") { return "div"; }
-  if (op == "%") { return "rem"; }
-  if (op == "&") { return "bitand"; }
-  if (op == "|") { return "bitor"; }
-  if (op == "^") { return "bitxor"; }
-  if (op == "<<") { return "shl"; }
-  if (op == ">>") { return "shr"; }
+  if (op == "+") {
+    return "add";
+  }
+  if (op == "-") {
+    return "sub";
+  }
+  if (op == "*") {
+    return "mul";
+  }
+  if (op == "/") {
+    return "div";
+  }
+  if (op == "%") {
+    return "rem";
+  }
+  if (op == "&") {
+    return "bitand";
+  }
+  if (op == "|") {
+    return "bitor";
+  }
+  if (op == "^") {
+    return "bitxor";
+  }
+  if (op == "<<") {
+    return "shl";
+  }
+  if (op == ">>") {
+    return "shr";
+  }
   return "";
 }
 

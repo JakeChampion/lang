@@ -17,5 +17,5 @@
 //
 // A type opts in with `impl error.Error for MyError { function message(...) … }`.
 pub trait Error {
-    function message(self: Self): string;
+  function message(self: Self): string;
 }

@@ -82,7 +82,6 @@
 // self-host IR path (the array-payload-enum parser bug #3720 that once
 // blocked grouped patterns there is fixed — see
 // internal/e2eselfhost/self_host_regex_ir_test.go).
-
 // RNode is the parsed pattern tree. Leaf atoms (`RChar` / `RAny` /
 // `RClass` / `RStart` / `REnd`, plus `RBound` for a `\b` / `\B`
 // word-boundary assertion) and the composites `RSeq` (concatenation)
@@ -113,9 +112,18 @@
 struct RGroupData { idx: i32, node: RNode }
 
 pub enum RNode {
-    RChar(i32), RAny, RClass(string), RStart, REnd, RBound(boolean),
-    RSeq(RNode[]), RAlt(RNode[]), RStar(RNode), RPlus(RNode), ROpt(RNode),
-    RGroup(RGroupData)
+  RChar(i32),
+  RAny,
+  RClass(string),
+  RStart,
+  REnd,
+  RBound(boolean),
+  RSeq(RNode[]),
+  RAlt(RNode[]),
+  RStar(RNode),
+  RPlus(RNode),
+  ROpt(RNode),
+  RGroup(RGroupData),
 }
 
 // RParse threads the recursive-descent parser's cursor: the node parsed
@@ -130,84 +138,132 @@ struct RParse { node: RNode, pos: i32, g: i32 }
 // index, threaded through every parse function and returned (updated) in
 // the RParse.
 function __rx_atom(p: string, i: i32, g: i32): RParse {
-    var c: i32 = p[i] as i32;
-    if (c == 92) {                                   // '\' escape
-        if (i + 1 >= p.len()) { return RParse { node: RChar(92), pos: i + 1, g: g }; } // trailing → literal '\'
-        var d: i32 = p[i + 1] as i32;
-        // Shorthand classes (and their negations) desugar to an equivalent
-        // `[ … ]` class token the matcher already understands.
-        if (d == 100) { return RParse { node: RClass("[0-9]"), pos: i + 2, g: g }; }          // \d
-        if (d == 68)  { return RParse { node: RClass("[^0-9]"), pos: i + 2, g: g }; }         // \D
-        if (d == 119) { return RParse { node: RClass("[A-Za-z0-9_]"), pos: i + 2, g: g }; }   // \w
-        if (d == 87)  { return RParse { node: RClass("[^A-Za-z0-9_]"), pos: i + 2, g: g }; }  // \W
-        if (d == 115) { return RParse { node: RClass("[ \t\n\r]"), pos: i + 2, g: g }; }      // \s
-        if (d == 83)  { return RParse { node: RClass("[^ \t\n\r]"), pos: i + 2, g: g }; }     // \S
-        // Word-boundary assertions (zero-width).
-        if (d == 98)  { return RParse { node: RBound(true),  pos: i + 2, g: g }; }            // \b
-        if (d == 66)  { return RParse { node: RBound(false), pos: i + 2, g: g }; }            // \B
-        // Escaped control bytes.
-        if (d == 110) { return RParse { node: RChar(10), pos: i + 2, g: g }; }   // \n
-        if (d == 116) { return RParse { node: RChar(9),  pos: i + 2, g: g }; }   // \t
-        if (d == 114) { return RParse { node: RChar(13), pos: i + 2, g: g }; }   // \r
-        // Any other escaped byte is that literal byte — covers the
-        // metacharacters `\. \* \+ \? \( \) \[ \] \| \^ \$ \\` etc.
-        // NOTE: this includes `\1`…`\9` — they are literal digit bytes,
-        // NOT backreferences (which this engine does not support).
-        return RParse { node: RChar(d), pos: i + 2, g: g };
+  var c: i32 = p[i] as i32;
+  if (c == 92) {  // '\' escape
+    if (i + 1 >= p.len()) {  // trailing → literal '\'
+      return RParse { node: RChar(92), pos: i + 1, g: g };
     }
-    if (c == 40) {                                   // '('
-        // Any `(? … )` form is NON-capturing. `(?:` is the supported
-        // spelling (the `?:` is skipped); an unrecognised `(?` construct —
-        // a mid-pattern `(?i)`, a lookaround `(?=` / `(?!` — keeps its old
-        // lenient behaviour (the `?…` parses as literal bytes, so the
-        // pattern likely won't match) but must NOT claim a capture index,
-        // or every later group's number would silently shift.
-        if (i + 1 < p.len() && p[i + 1] == 63) {                     // '?'
-            // `(?<name>…)` — a NAMED capturing group: claims an index like a
-            // bare group (the NAME itself is recovered separately by
-            // `__rx_group_names`, which mirrors this exact recognition — the
-            // node stays a plain 2-field RGroupData). Recognised as `(?<`
-            // followed by a name byte that is NOT `=`/`!` (those would be
-            // `(?<=` / `(?<!` lookbehind, unsupported). A `(?<…` with no
-            // closing `>` falls through to non-capturing.
-            if (i + 3 < p.len() && p[i + 2] == 60
-                && p[i + 3] != 61 && p[i + 3] != 33) {               // '?' '<' !'=' !'!'
-                var ne: i32 = i + 3;
-                while (ne < p.len() && p[ne] != 62) { ne = ne + 1; }  // scan to '>'
-                if (ne < p.len()) {                                  // found '>'
-                    var gi: RParse = __rx_alt(p, ne + 1, g + 1);
-                    var gpos: i32 = gi.pos;
-                    if (gpos < p.len() && p[gpos] == 41) { gpos = gpos + 1; }   // ')'
-                    return RParse { node: RGroup(RGroupData { idx: g, node: gi.node }), pos: gpos, g: gi.g };
-                }
-            }
-            var nb: i32 = i + 1;
-            if (i + 2 < p.len() && p[i + 2] == 58) { nb = i + 3; }   // '?:' → skip both
-            var ni: RParse = __rx_alt(p, nb, g);
-            var npos: i32 = ni.pos;
-            if (npos < p.len() && p[npos] == 41) { npos = npos + 1; }   // ')'
-            return RParse { node: ni.node, pos: npos, g: ni.g };
+    var d: i32 = p[i + 1] as i32;
+    // Shorthand classes (and their negations) desugar to an equivalent
+    // `[ … ]` class token the matcher already understands.
+    if (d == 100) {  // \d
+      return RParse { node: RClass("[0-9]"), pos: i + 2, g: g };
+    }
+    if (d == 68) {  // \D
+      return RParse { node: RClass("[^0-9]"), pos: i + 2, g: g };
+    }
+    if (d == 119) {  // \w
+      return RParse { node: RClass("[A-Za-z0-9_]"), pos: i + 2, g: g };
+    }
+    if (d == 87) {  // \W
+      return RParse { node: RClass("[^A-Za-z0-9_]"), pos: i + 2, g: g };
+    }
+    if (d == 115) {  // \s
+      return RParse { node: RClass("[ \t\n\r]"), pos: i + 2, g: g };
+    }
+    if (d == 83) {  // \S
+      return RParse { node: RClass("[^ \t\n\r]"), pos: i + 2, g: g };
+    }
+    // Word-boundary assertions (zero-width).
+    if (d == 98) {  // \b
+      return RParse { node: RBound(true), pos: i + 2, g: g };
+    }
+    if (d == 66) {  // \B
+      return RParse { node: RBound(false), pos: i + 2, g: g };
+    }
+    // Escaped control bytes.
+    if (d == 110) {  // \n
+      return RParse { node: RChar(10), pos: i + 2, g: g };
+    }
+    if (d == 116) {  // \t
+      return RParse { node: RChar(9), pos: i + 2, g: g };
+    }
+    if (d == 114) {  // \r
+      return RParse { node: RChar(13), pos: i + 2, g: g };
+    }
+    // Any other escaped byte is that literal byte — covers the
+    // metacharacters `\. \* \+ \? \( \) \[ \] \| \^ \$ \\` etc.
+    // NOTE: this includes `\1`…`\9` — they are literal digit bytes,
+    // NOT backreferences (which this engine does not support).
+    return RParse { node: RChar(d), pos: i + 2, g: g };
+  }
+  if (c == 40) {  // '('
+    // Any `(? … )` form is NON-capturing. `(?:` is the supported
+    // spelling (the `?:` is skipped); an unrecognised `(?` construct —
+    // a mid-pattern `(?i)`, a lookaround `(?=` / `(?!` — keeps its old
+    // lenient behaviour (the `?…` parses as literal bytes, so the
+    // pattern likely won't match) but must NOT claim a capture index,
+    // or every later group's number would silently shift.
+    if (i + 1 < p.len() && p[i + 1] == 63) {  // '?'
+      // `(?<name>…)` — a NAMED capturing group: claims an index like a
+      // bare group (the NAME itself is recovered separately by
+      // `__rx_group_names`, which mirrors this exact recognition — the
+      // node stays a plain 2-field RGroupData). Recognised as `(?<`
+      // followed by a name byte that is NOT `=`/`!` (those would be
+      // `(?<=` / `(?<!` lookbehind, unsupported). A `(?<…` with no
+      // closing `>` falls through to non-capturing.
+      if (i + 3 < p.len() && p[i + 2] == 60
+        && p[i + 3] != 61 && p[i + 3] != 33) {  // '?' '<' !'=' !'!'
+        var ne: i32 = i + 3;
+        while (ne < p.len() && p[ne] != 62) {  // scan to '>'
+          ne = ne + 1;
         }
-        // `( … )` — capturing: claim index `g`, then parse the body (which
-        // numbers any nested groups after this one, left to right).
-        var inner: RParse = __rx_alt(p, i + 1, g + 1);
-        var pos: i32 = inner.pos;
-        if (pos < p.len() && p[pos] == 41) { pos = pos + 1; }   // ')'
-        return RParse { node: RGroup(RGroupData { idx: g, node: inner.node }), pos: pos, g: inner.g };
+        if (ne < p.len()) {  // found '>'
+          var gi: RParse = __rx_alt(p, ne + 1, g + 1);
+          var gpos: i32 = gi.pos;
+          if (gpos < p.len() && p[gpos] == 41) {  // ')'
+            gpos = gpos + 1;
+          }
+          return RParse { node: RGroup(RGroupData { idx: g, node: gi.node }), pos: gpos, g: gi.g };
+        }
+      }
+      var nb: i32 = i + 1;
+      if (i + 2 < p.len() && p[i + 2] == 58) {  // '?:' → skip both
+        nb = i + 3;
+      }
+      var ni: RParse = __rx_alt(p, nb, g);
+      var npos: i32 = ni.pos;
+      if (npos < p.len() && p[npos] == 41) {  // ')'
+        npos = npos + 1;
+      }
+      return RParse { node: ni.node, pos: npos, g: ni.g };
     }
-    if (c == 91) {                                   // '['
-        var j: i32 = i + 1;
-        if (j < p.len() && p[j] == 94) { j = j + 1; }            // leading '^'
-        if (j < p.len() && p[j] == 93) { j = j + 1; }            // ']' as first member
-        while (j < p.len() && p[j] != 93) { j = j + 1; }
-        var endb: i32 = j;
-        if (endb < p.len()) { endb = endb + 1; }                 // include ']'
-        return RParse { node: RClass(slice_unchecked(p, i, endb) + ""), pos: endb, g: g };
+    // `( … )` — capturing: claim index `g`, then parse the body (which
+    // numbers any nested groups after this one, left to right).
+    var inner: RParse = __rx_alt(p, i + 1, g + 1);
+    var pos: i32 = inner.pos;
+    if (pos < p.len() && p[pos] == 41) {  // ')'
+      pos = pos + 1;
     }
-    if (c == 46) { return RParse { node: RAny, pos: i + 1, g: g }; }   // '.'
-    if (c == 94) { return RParse { node: RStart, pos: i + 1, g: g }; } // '^'
-    if (c == 36) { return RParse { node: REnd, pos: i + 1, g: g }; }   // '$'
-    return RParse { node: RChar(c), pos: i + 1, g: g };                // literal
+    return RParse { node: RGroup(RGroupData { idx: g, node: inner.node }), pos: pos, g: inner.g };
+  }
+  if (c == 91) {  // '['
+    var j: i32 = i + 1;
+    if (j < p.len() && p[j] == 94) {  // leading '^'
+      j = j + 1;
+    }
+    if (j < p.len() && p[j] == 93) {  // ']' as first member
+      j = j + 1;
+    }
+    while (j < p.len() && p[j] != 93) {
+      j = j + 1;
+    }
+    var endb: i32 = j;
+    if (endb < p.len()) {  // include ']'
+      endb = endb + 1;
+    }
+    return RParse { node: RClass(slice_unchecked(p, i, endb) + ""), pos: endb, g: g };
+  }
+  if (c == 46) {  // '.'
+    return RParse { node: RAny, pos: i + 1, g: g };
+  }
+  if (c == 94) {  // '^'
+    return RParse { node: RStart, pos: i + 1, g: g };
+  }
+  if (c == 36) {  // '$'
+    return RParse { node: REnd, pos: i + 1, g: g };
+  }
+  return RParse { node: RChar(c), pos: i + 1, g: g };  // literal
 }
 
 // __rx_repeat desugars a counted quantifier `node{n,m}` into the existing
@@ -218,17 +274,25 @@ function __rx_atom(p: string, i: i32, g: i32): RParse {
 // index across all copies, so (like a quantified group) it reports the
 // last iteration's span to the capture engine.
 function __rx_repeat(node: RNode, n: i32, m: i32, has_max: boolean): RNode {
-    var items: RNode[] = [];
-    var i: i32 = 0;
-    while (i < n) { items = items.append(node); i = i + 1; }
-    if (!has_max) {
-        items = items.append(RStar(node));
-    } else {
-        var k: i32 = n;
-        while (k < m) { items = items.append(ROpt(node)); k = k + 1; }
+  var items: RNode[] = [];
+  var i: i32 = 0;
+  while (i < n) {
+    items = items.append(node);
+    i = i + 1;
+  }
+  if (!has_max) {
+    items = items.append(RStar(node));
+  } else {
+    var k: i32 = n;
+    while (k < m) {
+      items = items.append(ROpt(node));
+      k = k + 1;
     }
-    if (items.len() == 1) { return items[0]; }
-    return RSeq(items);
+  }
+  if (items.len() == 1) {
+    return items[0];
+  }
+  return RSeq(items);
 }
 
 // __rx_count parses a `{n}` / `{n,}` / `{n,m}` counted quantifier following
@@ -237,97 +301,135 @@ function __rx_repeat(node: RNode, n: i32, m: i32, has_max: boolean): RNode {
 // byte, matching the lenient behaviour of most engines. `a` is the
 // already-parsed atom at index `pos` (the `{`).
 function __rx_count(p: string, pos: i32, a: RParse): RParse {
-    var j: i32 = pos + 1;
-    var n: i32 = 0;
-    var have_n: boolean = false;
-    while (j < p.len() && (p[j] as i32) >= 48 && (p[j] as i32) <= 57) { n = n * 10 + ((p[j] as i32) - 48); j = j + 1; have_n = true; }
-    if (!have_n) { return a; }
-    var m: i32 = n;
-    var has_max: boolean = true;
-    if (j < p.len() && p[j] == 44) {                 // ','
+  var j: i32 = pos + 1;
+  var n: i32 = 0;
+  var have_n: boolean = false;
+  while (j < p.len() && p[j] as i32 >= 48 && p[j] as i32 <= 57) {
+    n = n * 10 + (p[j] as i32 - 48);
+    j = j + 1;
+    have_n = true;
+  }
+  if (!have_n) {
+    return a;
+  }
+  var m: i32 = n;
+  var has_max: boolean = true;
+  if (j < p.len() && p[j] == 44) {  // ','
+    j = j + 1;
+    if (j < p.len() && p[j] == 125) {  // `{n,}`
+      has_max = false;
+    } else {
+      m = 0;
+      while (j < p.len() && p[j] as i32 >= 48 && p[j] as i32 <= 57) {
+        m = m * 10 + (p[j] as i32 - 48);
         j = j + 1;
-        if (j < p.len() && p[j] == 125) {            // `{n,}`
-            has_max = false;
-        } else {
-            m = 0;
-            while (j < p.len() && (p[j] as i32) >= 48 && (p[j] as i32) <= 57) { m = m * 10 + ((p[j] as i32) - 48); j = j + 1; }
-        }
+      }
     }
-    if (j >= p.len() || p[j] != 125) { return a; }   // no closing '}' → literal '{'
-    return RParse { node: __rx_repeat(a.node, n, m, has_max), pos: j + 1, g: a.g };
+  }
+  if (j >= p.len() || p[j] != 125) {  // no closing '}' → literal '{'
+    return a;
+  }
+  return RParse { node: __rx_repeat(a.node, n, m, has_max), pos: j + 1, g: a.g };
 }
 
 // __rx_quant parses an atom plus an optional trailing quantifier:
 // `*` / `+` / `?`, or a counted `{n}` / `{n,}` / `{n,m}`.
 function __rx_quant(p: string, i: i32, g: i32): RParse {
-    var a: RParse = __rx_atom(p, i, g);
-    var pos: i32 = a.pos;
-    if (pos < p.len()) {
-        var c: i32 = p[pos] as i32;
-        if (c == 42) { return RParse { node: RStar(a.node), pos: pos + 1, g: a.g }; }
-        if (c == 43) { return RParse { node: RPlus(a.node), pos: pos + 1, g: a.g }; }
-        if (c == 63) { return RParse { node: ROpt(a.node), pos: pos + 1, g: a.g }; }
-        if (c == 123) { return __rx_count(p, pos, a); }   // '{'
+  var a: RParse = __rx_atom(p, i, g);
+  var pos: i32 = a.pos;
+  if (pos < p.len()) {
+    var c: i32 = p[pos] as i32;
+    if (c == 42) {
+      return RParse { node: RStar(a.node), pos: pos + 1, g: a.g };
     }
-    return a;
+    if (c == 43) {
+      return RParse { node: RPlus(a.node), pos: pos + 1, g: a.g };
+    }
+    if (c == 63) {
+      return RParse { node: ROpt(a.node), pos: pos + 1, g: a.g };
+    }
+    if (c == 123) {  // '{'
+      return __rx_count(p, pos, a);
+    }
+  }
+  return a;
 }
 
 // __rx_seq parses a concatenation of quantified atoms, stopping at `|` or
 // `)` (or end). An empty run yields `RSeq([])`, which matches the empty
 // string (so `a|` and `()` behave).
 function __rx_seq(p: string, i: i32, g: i32): RParse {
-    var items: RNode[] = [];
-    var pos: i32 = i;
-    var gi: i32 = g;
-    while (pos < p.len() && p[pos] != 124 && p[pos] != 41) {     // not '|' / ')'
-        var q: RParse = __rx_quant(p, pos, gi);
-        items = items.append(q.node);
-        pos = q.pos;
-        gi = q.g;
-    }
-    if (items.len() == 1) { return RParse { node: items[0], pos: pos, g: gi }; }
-    return RParse { node: RSeq(items), pos: pos, g: gi };
+  var items: RNode[] = [];
+  var pos: i32 = i;
+  var gi: i32 = g;
+  while (pos < p.len() && p[pos] != 124 && p[pos] != 41) {  // not '|' / ')'
+    var q: RParse = __rx_quant(p, pos, gi);
+    items = items.append(q.node);
+    pos = q.pos;
+    gi = q.g;
+  }
+  if (items.len() == 1) {
+    return RParse { node: items[0], pos: pos, g: gi };
+  }
+  return RParse { node: RSeq(items), pos: pos, g: gi };
 }
 
 // __rx_alt parses `seq ('|' seq)*`, the top of the grammar (also entered
 // for the body of each group).
 function __rx_alt(p: string, i: i32, g: i32): RParse {
-    var first: RParse = __rx_seq(p, i, g);
-    var branches: RNode[] = [first.node];
-    var pos: i32 = first.pos;
-    var gi: i32 = first.g;
-    while (pos < p.len() && p[pos] == 124) {                     // '|'
-        var nxt: RParse = __rx_seq(p, pos + 1, gi);
-        branches = branches.append(nxt.node);
-        pos = nxt.pos;
-        gi = nxt.g;
-    }
-    if (branches.len() == 1) { return RParse { node: branches[0], pos: pos, g: gi }; }
-    return RParse { node: RAlt(branches), pos: pos, g: gi };
+  var first: RParse = __rx_seq(p, i, g);
+  var branches: RNode[] = [first.node];
+  var pos: i32 = first.pos;
+  var gi: i32 = first.g;
+  while (pos < p.len() && p[pos] == 124) {  // '|'
+    var nxt: RParse = __rx_seq(p, pos + 1, gi);
+    branches = branches.append(nxt.node);
+    pos = nxt.pos;
+    gi = nxt.g;
+  }
+  if (branches.len() == 1) {
+    return RParse { node: branches[0], pos: pos, g: gi };
+  }
+  return RParse { node: RAlt(branches), pos: pos, g: gi };
 }
 
 // __rx_is_word reports whether byte `c` is a word character (`[A-Za-z0-9_]`)
 // — the alphabet a `\b` word boundary is defined against.
 function __rx_is_word(c: i32): boolean {
-    if (c >= 48 && c <= 57) { return true; }    // 0-9
-    if (c >= 65 && c <= 90) { return true; }    // A-Z
-    if (c >= 97 && c <= 122) { return true; }   // a-z
-    if (c == 95) { return true; }               // _
-    return false;
+  if (c >= 48 && c <= 57) {  // 0-9
+    return true;
+  }
+  if (c >= 65 && c <= 90) {  // A-Z
+    return true;
+  }
+  if (c >= 97 && c <= 122) {  // a-z
+    return true;
+  }
+  if (c == 95) {  // _
+    return true;
+  }
+  return false;
 }
 
 function __rx_has(xs: i32[], v: i32): boolean {
-    var i: i32 = 0;
-    while (i < xs.len()) { if (xs[i] == v) { return true; } i = i + 1; }
-    return false;
+  var i: i32 = 0;
+  while (i < xs.len()) {
+    if (xs[i] == v) {
+      return true;
+    }
+    i = i + 1;
+  }
+  return false;
 }
 
 // __rx_fold lowercases an ASCII uppercase byte when case-insensitive
 // matching (`ci`) is on; otherwise returns the byte unchanged. The whole
 // case-insensitive rule is ASCII A–Z ↔ a–z.
 function __rx_fold(c: i32, ci: boolean): i32 {
-    if (ci && c >= 65 && c <= 90) { return c + 32; }
-    return c;
+  if (ci && c >= 65 && c <= 90) {
+    return c + 32;
+  }
+  return c;
 }
 
 // RProg is a compiled pattern: the parsed tree, whether matching is
@@ -348,43 +450,51 @@ pub struct RProg { root: RNode, ci: boolean, ngroups: i32, names: string[] }
 // shape; the shared recognition keeps the numbering in lockstep with the
 // parser (guarded by the group_index checks in the e2e fixture).
 function __rx_group_names(pattern: string): string[] {
-    var names: string[] = [];
-    var i: i32 = 0;
-    var n: i32 = pattern.len();
-    while (i < n) {
-        var c: i32 = pattern[i] as i32;
-        if (c == 92) {                                  // '\' escape — skip next byte
-            i = i + 2;
-        } else if (c == 91) {                           // '[' character class
-            var j: i32 = i + 1;
-            if (j < n && pattern[j] == 94) { j = j + 1; }   // leading '^'
-            if (j < n && pattern[j] == 93) { j = j + 1; }   // ']' as first member
-            while (j < n && pattern[j] != 93) { j = j + 1; }
-            i = j + 1;                                  // past the closing ']'
-        } else if (c == 40) {                           // '('
-            if (i + 1 < n && pattern[i + 1] == 63) {    // '(?'
-                if (i + 3 < n && pattern[i + 2] == 60
-                    && pattern[i + 3] != 61 && pattern[i + 3] != 33) {   // '(?<' name
-                    var ne: i32 = i + 3;
-                    while (ne < n && pattern[ne] != 62) { ne = ne + 1; }  // to '>'
-                    if (ne < n) {                       // named capturing group
-                        names = names.append(slice_unchecked(pattern, i + 3, ne) + "");
-                        i = ne + 1;
-                    } else {
-                        i = i + 1;                      // `(?<…` no '>' → non-capturing
-                    }
-                } else {
-                    i = i + 1;                          // `(?:` / `(?i)` / … → non-capturing
-                }
-            } else {
-                names = names.append("");               // bare capturing group
-                i = i + 1;
-            }
+  var names: string[] = [];
+  var i: i32 = 0;
+  var n: i32 = pattern.len();
+  while (i < n) {
+    var c: i32 = pattern[i] as i32;
+    if (c == 92) {  // '\' escape — skip next byte
+      i = i + 2;
+    } else if (c == 91) {  // '[' character class
+      var j: i32 = i + 1;
+      if (j < n && pattern[j] == 94) {  // leading '^'
+        j = j + 1;
+      }
+      if (j < n && pattern[j] == 93) {  // ']' as first member
+        j = j + 1;
+      }
+      while (j < n && pattern[j] != 93) {
+        j = j + 1;
+      }
+      i = j + 1;  // past the closing ']'
+    } else if (c == 40) {  // '('
+      if (i + 1 < n && pattern[i + 1] == 63) {  // '(?'
+        if (i + 3 < n && pattern[i + 2] == 60
+          && pattern[i + 3] != 61 && pattern[i + 3] != 33) {  // '(?<' name
+          var ne: i32 = i + 3;
+          while (ne < n && pattern[ne] != 62) {  // to '>'
+            ne = ne + 1;
+          }
+          if (ne < n) {  // named capturing group
+            names = names.append(slice_unchecked(pattern, i + 3, ne) + "");
+            i = ne + 1;
+          } else {
+            i = i + 1;  // `(?<…` no '>' → non-capturing
+          }
         } else {
-            i = i + 1;
+          i = i + 1;  // `(?:` / `(?i)` / … → non-capturing
         }
+      } else {
+        names = names.append("");  // bare capturing group
+        i = i + 1;
+      }
+    } else {
+      i = i + 1;
     }
-    return names;
+  }
+  return names;
 }
 
 // __rx_compile parses `pattern`, honouring a leading `(?i)` flag that turns
@@ -393,36 +503,45 @@ function __rx_group_names(pattern: string): string[] {
 // `(?i)` prefix is itself a `(?…` form, so __rx_group_names skips it (no
 // index claimed), matching the parser which strips it before numbering.
 function __rx_compile(pattern: string): RProg {
-    var names: string[] = __rx_group_names(pattern);
-    if (pattern.len() >= 4 && slice_unchecked(pattern, 0, 4) == "(?i)") {
-        var r: RParse = __rx_alt(pattern, 4, 1);
-        return RProg { root: r.node, ci: true, ngroups: r.g - 1, names: names };
-    }
-    var r0: RParse = __rx_alt(pattern, 0, 1);
-    return RProg { root: r0.node, ci: false, ngroups: r0.g - 1, names: names };
+  var names: string[] = __rx_group_names(pattern);
+  if (pattern.len() >= 4 && slice_unchecked(pattern, 0, 4) == "(?i)") {
+    var r: RParse = __rx_alt(pattern, 4, 1);
+    return RProg { root: r.node, ci: true, ngroups: r.g - 1, names: names };
+  }
+  var r0: RParse = __rx_alt(pattern, 0, 1);
+  return RProg { root: r0.node, ci: false, ngroups: r0.g - 1, names: names };
 }
 
 // __rx_class tests a byte against a `[ … ]` class token (including its
 // brackets): ranges `a-b`, a leading `^` negation, and bare members. Under
 // `ci`, the candidate byte and the class members/bounds are folded.
 function __rx_class(tok: string, c0: i32, ci: boolean): boolean {
-    var c: i32 = __rx_fold(c0, ci);
-    var j: i32 = 1;                       // skip '['
-    var neg: boolean = false;
-    if (j < tok.len() && tok[j] == 94) { neg = true; j = j + 1; }
-    var found: boolean = false;
-    var end: i32 = tok.len() - 1;         // index of ']'
-    while (j < end) {
-        if (tok[j + 1] == 45 && j + 2 < end) {       // 'a' '-' 'b'
-            if (c >= __rx_fold((tok[j] as i32), ci) && c <= __rx_fold((tok[j + 2] as i32), ci)) { found = true; }
-            j = j + 3;
-        } else {
-            if (c == __rx_fold((tok[j] as i32), ci)) { found = true; }
-            j = j + 1;
-        }
+  var c: i32 = __rx_fold(c0, ci);
+  var j: i32 = 1;  // skip '['
+  var neg: boolean = false;
+  if (j < tok.len() && tok[j] == 94) {
+    neg = true;
+    j = j + 1;
+  }
+  var found: boolean = false;
+  var end: i32 = tok.len() - 1;  // index of ']'
+  while (j < end) {
+    if (tok[j + 1] == 45 && j + 2 < end) {  // 'a' '-' 'b'
+      if (c >= __rx_fold(tok[j] as i32, ci) && c <= __rx_fold(tok[j + 2] as i32, ci)) {
+        found = true;
+      }
+      j = j + 3;
+    } else {
+      if (c == __rx_fold(tok[j] as i32, ci)) {
+        found = true;
+      }
+      j = j + 1;
     }
-    if (neg) { return !found; }
-    return found;
+  }
+  if (neg) {
+    return !found;
+  }
+  return found;
 }
 
 // __rx_closure computes every text position reachable from `ti` by
@@ -430,34 +549,40 @@ function __rx_class(tok: string, c0: i32, ci: boolean): boolean {
 // (for `+`) times. A breadth-first set expansion: dedup against `seen`
 // guarantees termination even when `inner` can match the empty string.
 function __rx_closure(inner: RNode, t: string, ti: i32, allow_zero: boolean, ci: boolean): i32[] {
-    var seen: i32[] = [];
-    var frontier: i32[] = [];
-    if (allow_zero) {
-        seen = seen.append(ti);
-        frontier = frontier.append(ti);
-    } else {
-        var first: i32[] = __rx_match(inner, t, ti, ci);
-        var s: i32 = 0;
-        while (s < first.len()) {
-            if (!__rx_has(seen, first[s])) { seen = seen.append(first[s]); frontier = frontier.append(first[s]); }
-            s = s + 1;
-        }
+  var seen: i32[] = [];
+  var frontier: i32[] = [];
+  if (allow_zero) {
+    seen = seen.append(ti);
+    frontier = frontier.append(ti);
+  } else {
+    var first: i32[] = __rx_match(inner, t, ti, ci);
+    var s: i32 = 0;
+    while (s < first.len()) {
+      if (!__rx_has(seen, first[s])) {
+        seen = seen.append(first[s]);
+        frontier = frontier.append(first[s]);
+      }
+      s = s + 1;
     }
-    while (frontier.len() > 0) {
-        var nf: i32[] = [];
-        var m: i32 = 0;
-        while (m < frontier.len()) {
-            var sub: i32[] = __rx_match(inner, t, frontier[m], ci);
-            var s2: i32 = 0;
-            while (s2 < sub.len()) {
-                if (!__rx_has(seen, sub[s2])) { seen = seen.append(sub[s2]); nf = nf.append(sub[s2]); }
-                s2 = s2 + 1;
-            }
-            m = m + 1;
+  }
+  while (frontier.len() > 0) {
+    var nf: i32[] = [];
+    var m: i32 = 0;
+    while (m < frontier.len()) {
+      var sub: i32[] = __rx_match(inner, t, frontier[m], ci);
+      var s2: i32 = 0;
+      while (s2 < sub.len()) {
+        if (!__rx_has(seen, sub[s2])) {
+          seen = seen.append(sub[s2]);
+          nf = nf.append(sub[s2]);
         }
-        frontier = nf;
+        s2 = s2 + 1;
+      }
+      m = m + 1;
     }
-    return seen;
+    frontier = nf;
+  }
+  return seen;
 }
 
 // __rx_match returns the set of text positions at which a match of `n`
@@ -465,61 +590,116 @@ function __rx_closure(inner: RNode, t: string, ti: i32, allow_zero: boolean, ci:
 // current position when satisfied; `RSeq` threads the set through each
 // child; `RAlt` unions the alternatives.
 function __rx_match(n: RNode, t: string, ti: i32, ci: boolean): i32[] {
-    match (n) {
-        RChar(c) => { var e: i32[] = []; if (ti < t.len() && __rx_fold((t[ti] as i32), ci) == __rx_fold(c, ci)) { e = e.append(ti + 1); } return e; },
-        RAny => { var e: i32[] = []; if (ti < t.len()) { e = e.append(ti + 1); } return e; },
-        RClass(tok) => { var e: i32[] = []; if (ti < t.len() && __rx_class(tok, (t[ti] as i32), ci)) { e = e.append(ti + 1); } return e; },
-        // The zero-width arms delegate to __rx_assert_ok — the capture
-        // engine's IAssert shares the same definitions, so the two engines
-        // cannot drift on anchor / word-boundary semantics.
-        RStart => { var e: i32[] = []; if (__rx_assert_ok(0, t, ti)) { e = e.append(ti); } return e; },
-        REnd => { var e: i32[] = []; if (__rx_assert_ok(1, t, ti)) { e = e.append(ti); } return e; },
-        RBound(want) => {
-            var k: i32 = 3;
-            if (want) { k = 2; }
-            var e: i32[] = [];
-            if (__rx_assert_ok(k, t, ti)) { e = e.append(ti); }   // zero-width
-            return e;
-        },
-        RSeq(xs) => {
-            var cur: i32[] = [ti];
-            var k: i32 = 0;
-            while (k < xs.len()) {
-                var nextset: i32[] = [];
-                var m: i32 = 0;
-                while (m < cur.len()) {
-                    var sub: i32[] = __rx_match(xs[k], t, cur[m], ci);
-                    var s: i32 = 0;
-                    while (s < sub.len()) { if (!__rx_has(nextset, sub[s])) { nextset = nextset.append(sub[s]); } s = s + 1; }
-                    m = m + 1;
-                }
-                cur = nextset;
-                k = k + 1;
+  match (n) {
+    RChar(c) => {
+      var e: i32[] = [];
+      if (ti < t.len() && __rx_fold(t[ti] as i32, ci) == __rx_fold(c, ci)) {
+        e = e.append(ti + 1);
+      }
+      return e;
+    },
+    RAny => {
+      var e: i32[] = [];
+      if (ti < t.len()) {
+        e = e.append(ti + 1);
+      }
+      return e;
+    },
+    RClass(tok) => {
+      var e: i32[] = [];
+      if (ti < t.len() && __rx_class(tok, t[ti] as i32, ci)) {
+        e = e.append(ti + 1);
+      }
+      return e;
+    },
+    RStart => {
+      // The zero-width arms delegate to __rx_assert_ok — the capture
+      // engine's IAssert shares the same definitions, so the two engines
+      // cannot drift on anchor / word-boundary semantics.
+      var e: i32[] = [];
+      if (__rx_assert_ok(0, t, ti)) {
+        e = e.append(ti);
+      }
+      return e;
+    },
+    REnd => {
+      var e: i32[] = [];
+      if (__rx_assert_ok(1, t, ti)) {
+        e = e.append(ti);
+      }
+      return e;
+    },
+    RBound(want) => {
+      var k: i32 = 3;
+      if (want) {
+        k = 2;
+      }
+      var e: i32[] = [];
+      if (__rx_assert_ok(k, t, ti)) {  // zero-width
+        e = e.append(ti);
+      }
+      return e;
+    },
+    RSeq(xs) => {
+      var cur: i32[] = [ti];
+      var k: i32 = 0;
+      while (k < xs.len()) {
+        var nextset: i32[] = [];
+        var m: i32 = 0;
+        while (m < cur.len()) {
+          var sub: i32[] = __rx_match(xs[k], t, cur[m], ci);
+          var s: i32 = 0;
+          while (s < sub.len()) {
+            if (!__rx_has(nextset, sub[s])) {
+              nextset = nextset.append(sub[s]);
             }
-            return cur;
-        },
-        RAlt(xs) => {
-            var out: i32[] = [];
-            var k: i32 = 0;
-            while (k < xs.len()) {
-                var sub: i32[] = __rx_match(xs[k], t, ti, ci);
-                var s: i32 = 0;
-                while (s < sub.len()) { if (!__rx_has(out, sub[s])) { out = out.append(sub[s]); } s = s + 1; }
-                k = k + 1;
-            }
-            return out;
-        },
-        ROpt(inner) => {
-            var out: i32[] = [ti];
-            var sub: i32[] = __rx_match(inner, t, ti, ci);
-            var s: i32 = 0;
-            while (s < sub.len()) { if (!__rx_has(out, sub[s])) { out = out.append(sub[s]); } s = s + 1; }
-            return out;
-        },
-        RStar(inner) => { return __rx_closure(inner, t, ti, true, ci); },
-        RPlus(inner) => { return __rx_closure(inner, t, ti, false, ci); },
-        RGroup(gd) => { return __rx_match(gd.node, t, ti, ci); }   // transparent to the span matcher
+            s = s + 1;
+          }
+          m = m + 1;
+        }
+        cur = nextset;
+        k = k + 1;
+      }
+      return cur;
+    },
+    RAlt(xs) => {
+      var out: i32[] = [];
+      var k: i32 = 0;
+      while (k < xs.len()) {
+        var sub: i32[] = __rx_match(xs[k], t, ti, ci);
+        var s: i32 = 0;
+        while (s < sub.len()) {
+          if (!__rx_has(out, sub[s])) {
+            out = out.append(sub[s]);
+          }
+          s = s + 1;
+        }
+        k = k + 1;
+      }
+      return out;
+    },
+    ROpt(inner) => {
+      var out: i32[] = [ti];
+      var sub: i32[] = __rx_match(inner, t, ti, ci);
+      var s: i32 = 0;
+      while (s < sub.len()) {
+        if (!__rx_has(out, sub[s])) {
+          out = out.append(sub[s]);
+        }
+        s = s + 1;
+      }
+      return out;
+    },
+    RStar(inner) => {
+      return __rx_closure(inner, t, ti, true, ci);
+    },
+    RPlus(inner) => {
+      return __rx_closure(inner, t, ti, false, ci);
+    },
+    RGroup(gd) => {  // transparent to the span matcher
+      return __rx_match(gd.node, t, ti, ci);
     }
+  }
 }
 
 // RMatch is the result of `regex_search`: whether a match was found and,
@@ -534,19 +714,26 @@ pub struct RMatch { found: boolean, start: i32, end: i32 }
 // `text[start:end]` is the longest leftmost match — the conventional search
 // semantics. The scanning helper behind search / find_all / replace / split.
 function __rx_search_from(root: RNode, text: string, from: i32, ci: boolean): RMatch {
-    var ti: i32 = from;
-    while (true) {
-        var ends: i32[] = __rx_match(root, text, ti, ci);
-        if (ends.len() > 0) {
-            var best: i32 = ends[0];
-            var i: i32 = 1;
-            while (i < ends.len()) { if (ends[i] > best) { best = ends[i]; } i = i + 1; }
-            return RMatch { found: true, start: ti, end: best };
+  var ti: i32 = from;
+  while (true) {
+    var ends: i32[] = __rx_match(root, text, ti, ci);
+    if (ends.len() > 0) {
+      var best: i32 = ends[0];
+      var i: i32 = 1;
+      while (i < ends.len()) {
+        if (ends[i] > best) {
+          best = ends[i];
         }
-        if (ti >= text.len()) { return RMatch { found: false, start: 0 - 1, end: 0 - 1 }; }
-        ti = ti + 1;
+        i = i + 1;
+      }
+      return RMatch { found: true, start: ti, end: best };
     }
-    return RMatch { found: false, start: 0 - 1, end: 0 - 1 };
+    if (ti >= text.len()) {
+      return RMatch { found: false, start: 0 - 1, end: 0 - 1 };
+    }
+    ti = ti + 1;
+  }
+  return RMatch { found: false, start: 0 - 1, end: 0 - 1 };
 }
 
 // `regex_search(pattern, text)` — find the leftmost-longest match of
@@ -554,15 +741,15 @@ function __rx_search_from(root: RNode, text: string, from: i32, ci: boolean): RM
 // match). The pattern is parsed once; a `^` / `$` anchor self-limits the
 // match.
 pub function regex_search(pattern: string, text: string): RMatch {
-    var prog: RProg = __rx_compile(pattern);
-    return __rx_search_from(prog.root, text, 0, prog.ci);
+  var prog: RProg = __rx_compile(pattern);
+  return __rx_search_from(prog.root, text, 0, prog.ci);
 }
 
 // `regex_match(pattern, text)` — true when `pattern` matches anywhere in
 // `text` (a search). A `^` / `$` anchor in the pattern self-limits the
 // match.
 pub function regex_match(pattern: string, text: string): boolean {
-    return regex_search(pattern, text).found;
+  return regex_search(pattern, text).found;
 }
 
 // `regex_find(pattern, text)` — the start byte index of the leftmost match,
@@ -570,54 +757,60 @@ pub function regex_match(pattern: string, text: string): boolean {
 // the boolean `regex_match`; pair with `regex_search` when the end / the
 // matched substring is also needed.
 pub function regex_find(pattern: string, text: string): i32 {
-    var m: RMatch = regex_search(pattern, text);
-    if (m.found) { return m.start; }
-    return 0 - 1;
+  var m: RMatch = regex_search(pattern, text);
+  if (m.found) {
+    return m.start;
+  }
+  return 0 - 1;
 }
 
 // __rx_advance returns the next scan position after a match, always making
 // progress: the match's end, or one past its start for a zero-width match
 // (`a*` matching empty) so the left-to-right scanners can't loop forever.
 function __rx_advance(m: RMatch): i32 {
-    if (m.end > m.start) { return m.end; }
-    return m.start + 1;
+  if (m.end > m.start) {
+    return m.end;
+  }
+  return m.start + 1;
 }
 
 // `regex_find_all(pattern, text)` — every non-overlapping leftmost-longest
 // match, left to right, as an `RMatch[]`. A zero-width match advances one
 // byte so the scan terminates; the result is empty when nothing matches.
 pub function regex_find_all(pattern: string, text: string): RMatch[] {
-    var prog: RProg = __rx_compile(pattern);
-    var out: RMatch[] = [];
-    var pos: i32 = 0;
-    while (pos <= text.len()) {
-        var m: RMatch = __rx_search_from(prog.root, text, pos, prog.ci);
-        if (!m.found) { return out; }
-        out = out.append(m);
-        pos = __rx_advance(m);
+  var prog: RProg = __rx_compile(pattern);
+  var out: RMatch[] = [];
+  var pos: i32 = 0;
+  while (pos <= text.len()) {
+    var m: RMatch = __rx_search_from(prog.root, text, pos, prog.ci);
+    if (!m.found) {
+      return out;
     }
-    return out;
+    out = out.append(m);
+    pos = __rx_advance(m);
+  }
+  return out;
 }
 
 // __rx_join concatenates `parts` into one string of exactly `total` bytes
 // (the caller sums the lengths while collecting). One exact-size buffer
 // fill, so builders stay O(output) instead of O(output²) (#4379).
 function __rx_join(parts: string[], total: i32): string {
-    var buf: u8[] = __alloc_u8(total);
-    var bpos: i32 = 0;
-    var pi: i32 = 0;
-    while (pi < parts.len()) {
-        var s: string = parts[pi];
-        var sl: i32 = s.len();
-        var k: i32 = 0;
-        while (k < sl) {
-            buf = buf.with(bpos, s[k] as u8);
-            bpos = bpos + 1;
-            k = k + 1;
-        }
-        pi = pi + 1;
+  var buf: u8[] = __alloc_u8(total);
+  var bpos: i32 = 0;
+  var pi: i32 = 0;
+  while (pi < parts.len()) {
+    var s: string = parts[pi];
+    var sl: i32 = s.len();
+    var k: i32 = 0;
+    while (k < sl) {
+      buf = buf.with(bpos, s[k] as u8);
+      bpos = bpos + 1;
+      k = k + 1;
     }
-    return string_from_bytes_unchecked(buf);
+    pi = pi + 1;
+  }
+  return string_from_bytes_unchecked(buf);
 }
 
 // `regex_replace_all(pattern, text, repl)` — replace every non-overlapping
@@ -625,39 +818,43 @@ function __rx_join(parts: string[], total: i32): string {
 // string. `repl` is inserted verbatim (no `$1` group substitution — for
 // that, see `regex_replace_all_groups`).
 pub function regex_replace_all(pattern: string, text: string, repl: string): string {
-    var prog: RProg = __rx_compile(pattern);
-    // Collect the output pieces in one scan (amortized-O(1) appends, like
-    // regex_find_all), summing their lengths, then fill one exact-size buffer
-    // (#4379). The old `out = out + text[…] + repl` per match recopied the
-    // whole growing result on every step -- O(output²) on a match-dense text.
-    var parts: string[] = [];
-    var total: i32 = 0;
-    var last: i32 = 0;          // end of the text already emitted
-    var pos: i32 = 0;
-    var done: boolean = false;
-    while (!done && pos <= text.len()) {
-        var m: RMatch = __rx_search_from(prog.root, text, pos, prog.ci);
-        if (!m.found) {
-            done = true;
-        } else {
-            var seg: string = slice_unchecked(text, last, m.start) + "";
-            parts = parts.append(seg);  total = total + seg.len();
-            parts = parts.append(repl); total = total + repl.len();
-            last = m.end;
-            var nxt: i32 = __rx_advance(m);
-            // a zero-width match leaves `last` at m.start; carry the skipped
-            // byte into the output by emitting it before advancing.
-            if (m.end <= m.start && nxt <= text.len() && nxt > last) {
-                var z: string = slice_unchecked(text, last, nxt) + "";
-                parts = parts.append(z);  total = total + z.len();
-                last = nxt;
-            }
-            pos = nxt;
-        }
+  var prog: RProg = __rx_compile(pattern);
+  // Collect the output pieces in one scan (amortized-O(1) appends, like
+  // regex_find_all), summing their lengths, then fill one exact-size buffer
+  // (#4379). The old `out = out + text[…] + repl` per match recopied the
+  // whole growing result on every step -- O(output²) on a match-dense text.
+  var parts: string[] = [];
+  var total: i32 = 0;
+  var last: i32 = 0;  // end of the text already emitted
+  var pos: i32 = 0;
+  var done: boolean = false;
+  while (!done && pos <= text.len()) {
+    var m: RMatch = __rx_search_from(prog.root, text, pos, prog.ci);
+    if (!m.found) {
+      done = true;
+    } else {
+      var seg: string = slice_unchecked(text, last, m.start) + "";
+      parts = parts.append(seg);
+      total = total + seg.len();
+      parts = parts.append(repl);
+      total = total + repl.len();
+      last = m.end;
+      var nxt: i32 = __rx_advance(m);
+      // a zero-width match leaves `last` at m.start; carry the skipped
+      // byte into the output by emitting it before advancing.
+      if (m.end <= m.start && nxt <= text.len() && nxt > last) {
+        var z: string = slice_unchecked(text, last, nxt) + "";
+        parts = parts.append(z);
+        total = total + z.len();
+        last = nxt;
+      }
+      pos = nxt;
     }
-    var tail: string = slice_unchecked(text, last, text.len()) + "";
-    parts = parts.append(tail); total = total + tail.len();
-    return __rx_join(parts, total);
+  }
+  var tail: string = slice_unchecked(text, last, text.len()) + "";
+  parts = parts.append(tail);
+  total = total + tail.len();
+  return __rx_join(parts, total);
 }
 
 // `regex_split(text, pattern)` — split `text` on non-overlapping matches of
@@ -668,26 +865,26 @@ pub function regex_replace_all(pattern: string, text: string, repl: string): str
 // Each piece is materialised with `+ ""`: a bare slice views `text`, which
 // the returned array outlives.
 pub function regex_split(text: string, pattern: string): string[] {
-    var prog: RProg = __rx_compile(pattern);
-    var out: string[] = [];
-    var last: i32 = 0;
-    var pos: i32 = 0;
-    while (pos <= text.len()) {
-        var m: RMatch = __rx_search_from(prog.root, text, pos, prog.ci);
-        if (!m.found) {
-            out = out.append(slice_unchecked(text, last, text.len()) + "");
-            return out;
-        }
-        if (m.end > m.start) {           // non-empty separator
-            out = out.append(slice_unchecked(text, last, m.start) + "");
-            last = m.end;
-            pos = m.end;
-        } else {
-            pos = m.start + 1;           // skip a zero-width match
-        }
+  var prog: RProg = __rx_compile(pattern);
+  var out: string[] = [];
+  var last: i32 = 0;
+  var pos: i32 = 0;
+  while (pos <= text.len()) {
+    var m: RMatch = __rx_search_from(prog.root, text, pos, prog.ci);
+    if (!m.found) {
+      out = out.append(slice_unchecked(text, last, text.len()) + "");
+      return out;
     }
-    out = out.append(slice_unchecked(text, last, text.len()) + "");
-    return out;
+    if (m.end > m.start) {  // non-empty separator
+      out = out.append(slice_unchecked(text, last, m.start) + "");
+      last = m.end;
+      pos = m.end;
+    } else {
+      pos = m.start + 1;  // skip a zero-width match
+    }
+  }
+  out = out.append(slice_unchecked(text, last, text.len()) + "");
+  return out;
 }
 
 // `regex_full_match(pattern, text)` — true only when `pattern` matches the
@@ -695,20 +892,22 @@ pub function regex_split(text: string, pattern: string): string[] {
 // can end exactly at `text.len()`, so it's correct even when the pattern
 // has shorter matches too (`a|aa` fully matches "aa").
 pub function regex_full_match(pattern: string, text: string): boolean {
-    var prog: RProg = __rx_compile(pattern);
-    var ends: i32[] = __rx_match(prog.root, text, 0, prog.ci);
-    var i: i32 = 0;
-    while (i < ends.len()) {
-        if (ends[i] == text.len()) { return true; }
-        i = i + 1;
+  var prog: RProg = __rx_compile(pattern);
+  var ends: i32[] = __rx_match(prog.root, text, 0, prog.ci);
+  var i: i32 = 0;
+  while (i < ends.len()) {
+    if (ends[i] == text.len()) {
+      return true;
     }
-    return false;
+    i = i + 1;
+  }
+  return false;
 }
 
 // `regex_count(pattern, text)` — the number of non-overlapping matches of
 // `pattern` in `text` (0 when it doesn't match).
 pub function regex_count(pattern: string, text: string): i32 {
-    return regex_find_all(pattern, text).len();
+  return regex_find_all(pattern, text).len();
 }
 
 // `regex_replace(pattern, text, repl)` — replace only the FIRST match of
@@ -716,9 +915,11 @@ pub function regex_count(pattern: string, text: string): i32 {
 // returned unchanged when there is no match. The single-match counterpart
 // to `regex_replace_all`.
 pub function regex_replace(pattern: string, text: string, repl: string): string {
-    var m: RMatch = regex_search(pattern, text);
-    if (!m.found) { return text; }
-    return slice_unchecked(text, 0, m.start) + repl + slice_unchecked(text, m.end, text.len());
+  var m: RMatch = regex_search(pattern, text);
+  if (!m.found) {
+    return text;
+  }
+  return slice_unchecked(text, 0, m.start) + repl + slice_unchecked(text, m.end, text.len());
 }
 
 // ---------------------------------------------------------------------------
@@ -739,7 +940,6 @@ pub function regex_replace(pattern: string, text: string, repl: string): string 
 // that start's matches, the greatest end). Among paths reaching that same
 // longest end, the highest-priority thread's captures win — quantifiers
 // capture greedily and earlier `|` alternatives are preferred.
-
 // RInst is one compiled instruction. `IChar` / `IAny` / `IClass` consume a
 // byte; `IAssert(k)` is a zero-width test (0 = `^`, 1 = `$`, 2 = `\b`,
 // 3 = `\B`); `ISplit(RSplit{a, b})` forks a thread to both targets with `a`
@@ -754,133 +954,172 @@ pub function regex_replace(pattern: string, text: string, repl: string): string 
 struct RSplit { a: i32, b: i32 }
 
 enum RInst {
-    IChar(i32), IAny, IClass(string), IAssert(i32),
-    ISplit(RSplit), IJmp(i32), ISave(i32), IMatch
+  IChar(i32),
+  IAny,
+  IClass(string),
+  IAssert(i32),
+  ISplit(RSplit),
+  IJmp(i32),
+  ISave(i32),
+  IMatch,
 }
 
 // __rx_split builds an ISplit instruction targeting `a` (preferred) then `b`.
-function __rx_split(a: i32, b: i32): RInst { return ISplit(RSplit { a: a, b: b }); }
+function __rx_split(a: i32, b: i32): RInst {
+  return ISplit(RSplit { a: a, b: b });
+}
 
 // __rx_emit appends the instructions for `n` to `prog` and returns the
 // extended program. Split targets that point past code not yet emitted are
 // appended as placeholders and patched (`.with`) once the target address is
 // known.
 function __rx_emit(prog: RInst[], n: RNode): RInst[] {
-    match (n) {
-        RChar(c) => { return prog.append(IChar(c)); },
-        RAny => { return prog.append(IAny); },
-        RClass(tok) => { return prog.append(IClass(tok)); },
-        RStart => { return prog.append(IAssert(0)); },
-        REnd => { return prog.append(IAssert(1)); },
-        RBound(want) => {
-            if (want) { return prog.append(IAssert(2)); }
-            return prog.append(IAssert(3));
-        },
-        RGroup(gd) => {
-            var pg: RInst[] = prog.append(ISave(gd.idx + gd.idx));
-            pg = __rx_emit(pg, gd.node);
-            return pg.append(ISave(gd.idx + gd.idx + 1));
-        },
-        RSeq(xs) => {
-            var ps: RInst[] = prog;
-            var k: i32 = 0;
-            while (k < xs.len()) { ps = __rx_emit(ps, xs[k]); k = k + 1; }
-            return ps;
-        },
-        RAlt(xs) => {
-            // Each non-last branch: `split(branch, next-alternative)`,
-            // branch code, `jmp end`. The last branch falls through. All
-            // jmps are patched to the common end.
-            var pa: RInst[] = prog;
-            var jmps: i32[] = [];
-            var k2: i32 = 0;
-            var nb: i32 = xs.len();
-            while (k2 < nb) {
-                if (k2 < nb - 1) {
-                    var sp: i32 = pa.len();
-                    pa = pa.append(__rx_split(0, 0));             // placeholder
-                    pa = __rx_emit(pa, xs[k2]);
-                    jmps = jmps.append(pa.len());
-                    pa = pa.append(IJmp(0));                      // placeholder
-                    pa = pa.with(sp, __rx_split(sp + 1, pa.len()));
-                } else {
-                    pa = __rx_emit(pa, xs[k2]);
-                }
-                k2 = k2 + 1;
-            }
-            var alt_end: i32 = pa.len();
-            var j: i32 = 0;
-            while (j < jmps.len()) { pa = pa.with(jmps[j], IJmp(alt_end)); j = j + 1; }
-            return pa;
-        },
-        RStar(inner) => {
-            // split(body, end); body; split(body, end) — entering the body
-            // is the preferred (greedy) leg at both splits. The loop-back is
-            // a SECOND split rather than a jmp to the first: a body
-            // iteration that matched empty re-arrives at a fresh pc, so its
-            // exit leg (carrying the iteration's ISave captures) survives
-            // the per-step dedup. With a `jmp` back, that thread would die
-            // at the already-seen entry split and a group matching only
-            // empty would wrongly read as non-participating —
-            // `(a?)*b` on "b" must capture group 1 = [0,0], like
-            // Go/RE2/Perl. (The dedup still kills a SECOND empty
-            // iteration, so nullable bodies terminate.)
-            var s1: i32 = prog.len();
-            var pst: RInst[] = prog.append(__rx_split(0, 0));     // placeholder
-            pst = __rx_emit(pst, inner);
-            var s2: i32 = pst.len();
-            pst = pst.append(__rx_split(0, 0));                   // placeholder
-            var send: i32 = pst.len();
-            pst = pst.with(s1, __rx_split(s1 + 1, send));
-            return pst.with(s2, __rx_split(s1 + 1, send));
-        },
-        RPlus(inner) => {
-            // body; split(body, next) — looping again is preferred (greedy).
-            var b1: i32 = prog.len();
-            var pp: RInst[] = __rx_emit(prog, inner);
-            var sp2: i32 = pp.len();
-            pp = pp.append(__rx_split(0, 0));                     // placeholder
-            return pp.with(sp2, __rx_split(b1, sp2 + 1));
-        },
-        ROpt(inner) => {
-            // split(body, next) — taking the body is preferred (greedy).
-            var s3: i32 = prog.len();
-            var po: RInst[] = prog.append(__rx_split(0, 0));      // placeholder
-            po = __rx_emit(po, inner);
-            return po.with(s3, __rx_split(s3 + 1, po.len()));
+  match (n) {
+    RChar(c) => {
+      return prog.append(IChar(c));
+    },
+    RAny => {
+      return prog.append(IAny);
+    },
+    RClass(tok) => {
+      return prog.append(IClass(tok));
+    },
+    RStart => {
+      return prog.append(IAssert(0));
+    },
+    REnd => {
+      return prog.append(IAssert(1));
+    },
+    RBound(want) => {
+      if (want) {
+        return prog.append(IAssert(2));
+      }
+      return prog.append(IAssert(3));
+    },
+    RGroup(gd) => {
+      var pg: RInst[] = prog.append(ISave(gd.idx + gd.idx));
+      pg = __rx_emit(pg, gd.node);
+      return pg.append(ISave(gd.idx + gd.idx + 1));
+    },
+    RSeq(xs) => {
+      var ps: RInst[] = prog;
+      var k: i32 = 0;
+      while (k < xs.len()) {
+        ps = __rx_emit(ps, xs[k]);
+        k = k + 1;
+      }
+      return ps;
+    },
+    RAlt(xs) => {
+      // Each non-last branch: `split(branch, next-alternative)`,
+      // branch code, `jmp end`. The last branch falls through. All
+      // jmps are patched to the common end.
+      var pa: RInst[] = prog;
+      var jmps: i32[] = [];
+      var k2: i32 = 0;
+      var nb: i32 = xs.len();
+      while (k2 < nb) {
+        if (k2 < nb - 1) {
+          var sp: i32 = pa.len();
+          pa = pa.append(__rx_split(0, 0));  // placeholder
+          pa = __rx_emit(pa, xs[k2]);
+          jmps = jmps.append(pa.len());
+          pa = pa.append(IJmp(0));  // placeholder
+          pa = pa.with(sp, __rx_split(sp + 1, pa.len()));
+        } else {
+          pa = __rx_emit(pa, xs[k2]);
         }
+        k2 = k2 + 1;
+      }
+      var alt_end: i32 = pa.len();
+      var j: i32 = 0;
+      while (j < jmps.len()) {
+        pa = pa.with(jmps[j], IJmp(alt_end));
+        j = j + 1;
+      }
+      return pa;
+    },
+    RStar(inner) => {
+      // split(body, end); body; split(body, end) — entering the body
+      // is the preferred (greedy) leg at both splits. The loop-back is
+      // a SECOND split rather than a jmp to the first: a body
+      // iteration that matched empty re-arrives at a fresh pc, so its
+      // exit leg (carrying the iteration's ISave captures) survives
+      // the per-step dedup. With a `jmp` back, that thread would die
+      // at the already-seen entry split and a group matching only
+      // empty would wrongly read as non-participating —
+      // `(a?)*b` on "b" must capture group 1 = [0,0], like
+      // Go/RE2/Perl. (The dedup still kills a SECOND empty
+      // iteration, so nullable bodies terminate.)
+      var s1: i32 = prog.len();
+      var pst: RInst[] = prog.append(__rx_split(0, 0));  // placeholder
+      pst = __rx_emit(pst, inner);
+      var s2: i32 = pst.len();
+      pst = pst.append(__rx_split(0, 0));  // placeholder
+      var send: i32 = pst.len();
+      pst = pst.with(s1, __rx_split(s1 + 1, send));
+      return pst.with(s2, __rx_split(s1 + 1, send));
+    },
+    RPlus(inner) => {
+      // body; split(body, next) — looping again is preferred (greedy).
+      var b1: i32 = prog.len();
+      var pp: RInst[] = __rx_emit(prog, inner);
+      var sp2: i32 = pp.len();
+      pp = pp.append(__rx_split(0, 0));  // placeholder
+      return pp.with(sp2, __rx_split(b1, sp2 + 1));
+    },
+    ROpt(inner) => {
+      // split(body, next) — taking the body is preferred (greedy).
+      var s3: i32 = prog.len();
+      var po: RInst[] = prog.append(__rx_split(0, 0));  // placeholder
+      po = __rx_emit(po, inner);
+      return po.with(s3, __rx_split(s3 + 1, po.len()));
     }
+  }
 }
 
 // __rx_cprog compiles a parsed tree to the full capture program:
 // `save 0; <body>; save 1; match`, so slots 0/1 always hold the whole
 // match's span.
 function __rx_cprog(root: RNode): RInst[] {
-    var prog: RInst[] = [];
-    prog = prog.append(ISave(0));
-    prog = __rx_emit(prog, root);
-    prog = prog.append(ISave(1));
-    return prog.append(IMatch);
+  var prog: RInst[] = [];
+  prog = prog.append(ISave(0));
+  prog = __rx_emit(prog, root);
+  prog = prog.append(ISave(1));
+  return prog.append(IMatch);
 }
 
 // __rx_assert_ok evaluates a zero-width assertion at text position `ti`
 // (same definitions as the span matcher's RStart / REnd / RBound arms).
 function __rx_assert_ok(k: i32, t: string, ti: i32): boolean {
-    if (k == 0) { return ti == 0; }
-    if (k == 1) { return ti >= t.len(); }
-    var before: boolean = false;
-    if (ti > 0) { before = __rx_is_word((t[ti - 1] as i32)); }
-    var after: boolean = false;
-    if (ti < t.len()) { after = __rx_is_word((t[ti] as i32)); }
-    if (k == 2) { return before != after; }   // \b
-    return before == after;                   // \B
+  if (k == 0) {
+    return ti == 0;
+  }
+  if (k == 1) {
+    return ti >= t.len();
+  }
+  var before: boolean = false;
+  if (ti > 0) {
+    before = __rx_is_word(t[ti - 1] as i32);
+  }
+  var after: boolean = false;
+  if (ti < t.len()) {
+    after = __rx_is_word(t[ti] as i32);
+  }
+  if (k == 2) {  // \b
+    return before != after;
+  }
+  return before == after;  // \B
 }
 
 function __rx_fill(n: i32, v: i32): i32[] {
-    var out: i32[] = [];
-    var i: i32 = 0;
-    while (i < n) { out = out.append(v); i = i + 1; }
-    return out;
+  var out: i32[] = [];
+  var i: i32 = 0;
+  while (i < n) {
+    out = out.append(v);
+    i = i + 1;
+  }
+  return out;
 }
 
 // RThread is one VM thread: its instruction pointer and its private copy
@@ -890,6 +1129,7 @@ function __rx_fill(n: i32, v: i32): i32[] {
 // step so one seen array serves the whole run without re-zeroing),
 // `threads` is the priority-ordered runnable list being built.
 struct RThread { pc: i32, caps: i32[] }
+
 struct RAdd { seen: i32[], gen: i32, threads: RThread[] }
 
 // __rx_addthread adds the thread at `pc` to the step's list, eagerly
@@ -899,30 +1139,40 @@ struct RAdd { seen: i32[], gen: i32, threads: RThread[] }
 // `(a?)*`) terminate, and implements thread priority: a lower-priority
 // path reaching an already-seen instruction is dropped.
 function __rx_addthread(st: RAdd, prog: RInst[], pc: i32, caps: i32[], t: string, ti: i32): RAdd {
-    // Destructure the state up front: `st` is dead after these reads, so
-    // under RC the arrays are uniquely referenced and the `.with` /
-    // `.append` below update in place rather than copying the whole seen
-    // array on every epsilon step.
-    var sn: i32[] = st.seen;
-    var g: i32 = st.gen;
-    var ths: RThread[] = st.threads;
-    if (sn[pc] == g) { return RAdd { seen: sn, gen: g, threads: ths }; }
-    sn = sn.with(pc, g);
-    match (prog[pc]) {
-        IJmp(a) => { return __rx_addthread(RAdd { seen: sn, gen: g, threads: ths }, prog, a, caps, t, ti); },
-        ISplit(sp) => {
-            var st2: RAdd = __rx_addthread(RAdd { seen: sn, gen: g, threads: ths }, prog, sp.a, caps, t, ti);
-            return __rx_addthread(st2, prog, sp.b, caps, t, ti);
-        },
-        ISave(slot) => { return __rx_addthread(RAdd { seen: sn, gen: g, threads: ths }, prog, pc + 1, caps.with(slot, ti), t, ti); },
-        IAssert(k) => {
-            if (__rx_assert_ok(k, t, ti)) { return __rx_addthread(RAdd { seen: sn, gen: g, threads: ths }, prog, pc + 1, caps, t, ti); }
-            return RAdd { seen: sn, gen: g, threads: ths };
-        },
-        // Everything else (IChar / IAny / IClass / IMatch) is runnable:
-        // append in priority order.
-        _ => { return RAdd { seen: sn, gen: g, threads: ths.append(RThread { pc: pc, caps: caps }) }; }
+  // Destructure the state up front: `st` is dead after these reads, so
+  // under RC the arrays are uniquely referenced and the `.with` /
+  // `.append` below update in place rather than copying the whole seen
+  // array on every epsilon step.
+  var sn: i32[] = st.seen;
+  var g: i32 = st.gen;
+  var ths: RThread[] = st.threads;
+  if (sn[pc] == g) {
+    return RAdd { seen: sn, gen: g, threads: ths };
+  }
+  sn = sn.with(pc, g);
+  match (prog[pc]) {
+    IJmp(a) => {
+      return __rx_addthread(RAdd { seen: sn, gen: g, threads: ths }, prog, a, caps, t, ti);
+    },
+    ISplit(sp) => {
+      var st2: RAdd = __rx_addthread(RAdd { seen: sn, gen: g, threads: ths }, prog, sp.a, caps, t, ti);
+      return __rx_addthread(st2, prog, sp.b, caps, t, ti);
+    },
+    ISave(slot) => {
+      return __rx_addthread(RAdd { seen: sn, gen: g, threads: ths }, prog, pc + 1, caps.with(slot, ti), t, ti);
+    },
+    IAssert(k) => {
+      if (__rx_assert_ok(k, t, ti)) {
+        return __rx_addthread(RAdd { seen: sn, gen: g, threads: ths }, prog, pc + 1, caps, t, ti);
+      }
+      return RAdd { seen: sn, gen: g, threads: ths };
+    },
+    _ => {
+      // Everything else (IChar / IAny / IClass / IMatch) is runnable:
+      // append in priority order.
+      return RAdd { seen: sn, gen: g, threads: ths.append(RThread { pc: pc, caps: caps }) };
     }
+  }
 }
 
 // __rx_cvm_at runs the capture program anchored at start position `ti0`,
@@ -933,54 +1183,62 @@ function __rx_addthread(st: RAdd, prog: RInst[], pc: i32, caps: i32[], t: string
 // priority — thread on a tie), so the span agrees with
 // `__rx_search_from`'s leftmost-longest result.
 function __rx_cvm_at(prog: RInst[], t: string, ti0: i32, ci: boolean, init: i32[]): i32[] {
-    var seen: i32[] = __rx_fill(prog.len(), 0);
-    var gen: i32 = 1;
-    var st: RAdd = __rx_addthread(RAdd { seen: seen, gen: gen, threads: [] }, prog, 0, init, t, ti0);
-    var clist: RThread[] = st.threads;
-    seen = st.seen;
-    var best: i32[] = [];
-    var pos: i32 = ti0;
-    while (clist.len() > 0) {
-        gen = gen + 1;
-        var nst: RAdd = RAdd { seen: seen, gen: gen, threads: [] };
-        var k: i32 = 0;
-        while (k < clist.len()) {
-            var th: RThread = clist[k];
-            match (prog[th.pc]) {
-                IChar(c) => {
-                    if (pos < t.len() && __rx_fold((t[pos] as i32), ci) == __rx_fold(c, ci)) {
-                        nst = __rx_addthread(nst, prog, th.pc + 1, th.caps, t, pos + 1);
-                    }
-                },
-                IAny => {
-                    if (pos < t.len()) { nst = __rx_addthread(nst, prog, th.pc + 1, th.caps, t, pos + 1); }
-                },
-                IClass(tok) => {
-                    if (pos < t.len() && __rx_class(tok, (t[pos] as i32), ci)) {
-                        nst = __rx_addthread(nst, prog, th.pc + 1, th.caps, t, pos + 1);
-                    }
-                },
-                // Slot 1 (whole-match end) was saved during __rx_addthread's
-                // epsilon closure, so caps[1] == pos for this thread.
-                IMatch => { if (best.len() == 0 || pos > best[1]) { best = th.caps; } },
-                // Zero-width instructions never appear in the runnable list —
-                // __rx_addthread resolves them eagerly. Kept as explicit
-                // empty arms (not `_`) so a future consuming RInst variant
-                // fails exhaustiveness here instead of silently dropping
-                // threads.
-                IAssert(_) => { },
-                ISplit(_) => { },
-                IJmp(_) => { },
-                ISave(_) => { }
-            }
-            k = k + 1;
-        }
-        clist = nst.threads;
-        seen = nst.seen;
-        if (pos >= t.len()) { clist = []; }   // final position processed — done
-        pos = pos + 1;
+  var seen: i32[] = __rx_fill(prog.len(), 0);
+  var gen: i32 = 1;
+  var st: RAdd = __rx_addthread(RAdd { seen: seen, gen: gen, threads: [] }, prog, 0, init, t, ti0);
+  var clist: RThread[] = st.threads;
+  seen = st.seen;
+  var best: i32[] = [];
+  var pos: i32 = ti0;
+  while (clist.len() > 0) {
+    gen = gen + 1;
+    var nst: RAdd = RAdd { seen: seen, gen: gen, threads: [] };
+    var k: i32 = 0;
+    while (k < clist.len()) {
+      var th: RThread = clist[k];
+      match (prog[th.pc]) {
+        IChar(c) => {
+          if (pos < t.len() && __rx_fold(t[pos] as i32, ci) == __rx_fold(c, ci)) {
+            nst = __rx_addthread(nst, prog, th.pc + 1, th.caps, t, pos + 1);
+          }
+        },
+        IAny => {
+          if (pos < t.len()) {
+            nst = __rx_addthread(nst, prog, th.pc + 1, th.caps, t, pos + 1);
+          }
+        },
+        IClass(tok) => {
+          if (pos < t.len() && __rx_class(tok, t[pos] as i32, ci)) {
+            nst = __rx_addthread(nst, prog, th.pc + 1, th.caps, t, pos + 1);
+          }
+        },
+        IMatch => {
+          // Slot 1 (whole-match end) was saved during __rx_addthread's
+          // epsilon closure, so caps[1] == pos for this thread.
+          if (best.len() == 0 || pos > best[1]) {
+            best = th.caps;
+          }
+        },
+        IAssert(_) => {},
+        ISplit(_) => {},
+        IJmp(_) => {},
+        ISave(_) => {}
+      }
+      // Zero-width instructions never appear in the runnable list —
+      // __rx_addthread resolves them eagerly. Kept as explicit
+      // empty arms (not `_`) so a future consuming RInst variant
+      // fails exhaustiveness here instead of silently dropping
+      // threads.
+      k = k + 1;
     }
-    return best;
+    clist = nst.threads;
+    seen = nst.seen;
+    if (pos >= t.len()) {  // final position processed — done
+      clist = [];
+    }
+    pos = pos + 1;
+  }
+  return best;
 }
 
 // __rx_csearch_from scans left to right for the leftmost start position
@@ -988,14 +1246,16 @@ function __rx_cvm_at(prog: RInst[], t: string, ti0: i32, ci: boolean, init: i32[
 // returns its capture slots, or an empty array when the pattern matches
 // nowhere at or after `from`.
 function __rx_csearch_from(prog: RInst[], t: string, from: i32, ci: boolean, nslots: i32): i32[] {
-    var init: i32[] = __rx_fill(nslots, 0 - 1);
-    var ti: i32 = from;
-    while (ti <= t.len()) {
-        var caps: i32[] = __rx_cvm_at(prog, t, ti, ci, init);
-        if (caps.len() > 0) { return caps; }
-        ti = ti + 1;
+  var init: i32[] = __rx_fill(nslots, 0 - 1);
+  var ti: i32 = from;
+  while (ti <= t.len()) {
+    var caps: i32[] = __rx_cvm_at(prog, t, ti, ci, init);
+    if (caps.len() > 0) {
+      return caps;
     }
-    return [];
+    ti = ti + 1;
+  }
+  return [];
 }
 
 // RCaps is the result of `regex_captures`: whether the pattern matched,
@@ -1013,28 +1273,34 @@ pub struct RCaps { found: boolean, text: string, starts: i32[], ends: i32[], nam
 // (not counting group 0, and regardless of which participated). 0 when the
 // match failed.
 pub function (c: RCaps) group_count(): i32 {
-    if (!c.found) { return 0; }
-    return c.starts.len() - 1;
+  if (!c.found) {
+    return 0;
+  }
+  return c.starts.len() - 1;
 }
 
 // `.group_start(i)` / `.group_end(i)` — group `i`'s half-open byte span in
 // the text, or -1 when the group didn't participate in the match, `i` is
 // out of range, or the match failed. Group 0 is the whole match.
 pub function (c: RCaps) group_start(i: i32): i32 {
-    if (!c.found || i < 0 || i >= c.starts.len()) { return 0 - 1; }
-    return c.starts[i];
+  if (!c.found || i < 0 || i >= c.starts.len()) {
+    return 0 - 1;
+  }
+  return c.starts[i];
 }
 
 pub function (c: RCaps) group_end(i: i32): i32 {
-    if (!c.found || i < 0 || i >= c.ends.len()) { return 0 - 1; }
-    return c.ends[i];
+  if (!c.found || i < 0 || i >= c.ends.len()) {
+    return 0 - 1;
+  }
+  return c.ends[i];
 }
 
 // `.has_group(i)` — true when group `i` participated in the match (its
 // span is set; an empty span still counts — `(a*)` can match "" AT a
 // position, which is participation with `start == end`).
 pub function (c: RCaps) has_group(i: i32): boolean {
-    return c.group_start(i) >= 0;
+  return c.group_start(i) >= 0;
 }
 
 // `.group(i)` — the text group `i` matched, or "" when it didn't
@@ -1042,22 +1308,26 @@ pub function (c: RCaps) has_group(i: i32): boolean {
 // substring. "" is ambiguous between "matched empty" and "didn't
 // participate" — use `.has_group(i)` to tell them apart.
 pub function (c: RCaps) group(i: i32): string {
-    var s: i32 = c.group_start(i);
-    var e: i32 = c.group_end(i);
-    if (s < 0 || e < 0) { return ""; }
-    return slice_unchecked(c.text, s, e) + "";
+  var s: i32 = c.group_start(i);
+  var e: i32 = c.group_end(i);
+  if (s < 0 || e < 0) {
+    return "";
+  }
+  return slice_unchecked(c.text, s, e) + "";
 }
 
 // `.group_index(name)` — the 1-based index of the `(?<name>…)` group, or -1
 // when no group has that name. The lookup behind the `_named` accessors;
 // exposed so callers can map a name to `.group_start(i)` etc. themselves.
 pub function (c: RCaps) group_index(name: string): i32 {
-    var i: i32 = 0;
-    while (i < c.names.len()) {
-        if (c.names[i] == name) { return i + 1; }   // names[i] is group i+1
-        i = i + 1;
+  var i: i32 = 0;
+  while (i < c.names.len()) {
+    if (c.names[i] == name) {  // names[i] is group i+1
+      return i + 1;
     }
-    return 0 - 1;
+    i = i + 1;
+  }
+  return 0 - 1;
 }
 
 // `.group_named(name)` — the text the `(?<name>…)` group matched, or "" when
@@ -1065,36 +1335,40 @@ pub function (c: RCaps) group_index(name: string): i32 {
 // `.group_named_start(name)` / `.group_named_end(name)` mirror the positional
 // accessors. On a duplicate name the first (lowest-index) group wins.
 pub function (c: RCaps) group_named(name: string): string {
-    return c.group(c.group_index(name));
+  return c.group(c.group_index(name));
 }
 
 pub function (c: RCaps) group_named_start(name: string): i32 {
-    return c.group_start(c.group_index(name));
+  return c.group_start(c.group_index(name));
 }
 
 pub function (c: RCaps) group_named_end(name: string): i32 {
-    return c.group_end(c.group_index(name));
+  return c.group_end(c.group_index(name));
 }
 
 pub function (c: RCaps) has_group_named(name: string): boolean {
-    var idx: i32 = c.group_index(name);
-    if (idx < 0) { return false; }
-    return c.has_group(idx);
+  var idx: i32 = c.group_index(name);
+  if (idx < 0) {
+    return false;
+  }
+  return c.has_group(idx);
 }
 
 // __rx_caps_wrap converts a raw capture-slot array (empty = no match) to
 // the public RCaps shape, attaching the compiled name table.
 function __rx_caps_wrap(caps: i32[], text: string, ngroups: i32, names: string[]): RCaps {
-    if (caps.len() == 0) { return RCaps { found: false, text: text, starts: [], ends: [], names: names }; }
-    var starts: i32[] = [];
-    var ends: i32[] = [];
-    var i: i32 = 0;
-    while (i <= ngroups) {
-        starts = starts.append(caps[i + i]);
-        ends = ends.append(caps[i + i + 1]);
-        i = i + 1;
-    }
-    return RCaps { found: true, text: text, starts: starts, ends: ends, names: names };
+  if (caps.len() == 0) {
+    return RCaps { found: false, text: text, starts: [], ends: [], names: names };
+  }
+  var starts: i32[] = [];
+  var ends: i32[] = [];
+  var i: i32 = 0;
+  while (i <= ngroups) {
+    starts = starts.append(caps[i + i]);
+    ends = ends.append(caps[i + i + 1]);
+    i = i + 1;
+  }
+  return RCaps { found: true, text: text, starts: starts, ends: ends, names: names };
 }
 
 // `regex_captures(pattern, text)` — find the leftmost-longest match (the
@@ -1103,11 +1377,11 @@ function __rx_caps_wrap(caps: i32[], text: string, ngroups: i32, names: string[]
 // iteration; on paths of equal span, greedy / earlier-alternative captures
 // win. `found` is false on no match.
 pub function regex_captures(pattern: string, text: string): RCaps {
-    var prog: RProg = __rx_compile(pattern);
-    var insts: RInst[] = __rx_cprog(prog.root);
-    var nslots: i32 = (prog.ngroups + 1) * 2;
-    var caps: i32[] = __rx_csearch_from(insts, text, 0, prog.ci, nslots);
-    return __rx_caps_wrap(caps, text, prog.ngroups, prog.names);
+  var prog: RProg = __rx_compile(pattern);
+  var insts: RInst[] = __rx_cprog(prog.root);
+  var nslots: i32 = (prog.ngroups + 1) * 2;
+  var caps: i32[] = __rx_csearch_from(insts, text, 0, prog.ci, nslots);
+  return __rx_caps_wrap(caps, text, prog.ngroups, prog.names);
 }
 
 // `regex_captures_all(pattern, text)` — the captures of every
@@ -1115,20 +1389,22 @@ pub function regex_captures(pattern: string, text: string): RCaps {
 // counterpart of `regex_find_all`, with the same zero-width advance rule).
 // Empty when nothing matches.
 pub function regex_captures_all(pattern: string, text: string): RCaps[] {
-    var prog: RProg = __rx_compile(pattern);
-    var insts: RInst[] = __rx_cprog(prog.root);
-    var nslots: i32 = (prog.ngroups + 1) * 2;
-    var out: RCaps[] = [];
-    var pos: i32 = 0;
-    while (pos <= text.len()) {
-        var caps: i32[] = __rx_csearch_from(insts, text, pos, prog.ci, nslots);
-        if (caps.len() == 0) { return out; }
-        out = out.append(__rx_caps_wrap(caps, text, prog.ngroups, prog.names));
-        // Slots 0/1 are the whole-match span; advance through the shared
-        // helper so this stays mechanically in step with regex_find_all.
-        pos = __rx_advance(RMatch { found: true, start: caps[0], end: caps[1] });
+  var prog: RProg = __rx_compile(pattern);
+  var insts: RInst[] = __rx_cprog(prog.root);
+  var nslots: i32 = (prog.ngroups + 1) * 2;
+  var out: RCaps[] = [];
+  var pos: i32 = 0;
+  while (pos <= text.len()) {
+    var caps: i32[] = __rx_csearch_from(insts, text, pos, prog.ci, nslots);
+    if (caps.len() == 0) {
+      return out;
     }
-    return out;
+    out = out.append(__rx_caps_wrap(caps, text, prog.ngroups, prog.names));
+    // Slots 0/1 are the whole-match span; advance through the shared
+    // helper so this stays mechanically in step with regex_find_all.
+    pos = __rx_advance(RMatch { found: true, start: caps[0], end: caps[1] });
+  }
+  return out;
 }
 
 // __rx_expand expands a `$`-template against one match's captures:
@@ -1139,41 +1415,50 @@ pub function regex_captures_all(pattern: string, text: string): RCaps[] {
 // `$12` is group 1 followed by a literal `2`; use `${12}`-style names only
 // for actual `(?<…>)` labels.
 function __rx_expand(tmpl: string, c: RCaps): string {
-    var parts: string[] = [];
-    var total: i32 = 0;
-    var lit: i32 = 0;              // start of the pending literal run
-    var i: i32 = 0;
-    while (i < tmpl.len()) {
-        var take: boolean = false;
-        var adv: i32 = 2;          // bytes consumed by the token ($X = 2)
-        var rep: string = "";
-        if (tmpl[i] == 36 && i + 1 < tmpl.len()) {          // '$'
-            var d: i32 = tmpl[i + 1] as i32;
-            if (d == 36) { rep = "$"; take = true; }         // $$ → literal $
-            else if (d >= 48 && d <= 57) { rep = c.group(d - 48); take = true; }   // $0-$9
-            else if (d == 123) {                             // '{' → ${name}
-                var ne: i32 = i + 2;
-                while (ne < tmpl.len() && tmpl[ne] != 125) { ne = ne + 1; }   // scan to '}'
-                if (ne < tmpl.len()) {                       // found '}'
-                    rep = c.group_named(slice_unchecked(tmpl, i + 2, ne) + "");
-                    take = true;
-                    adv = (ne + 1) - i;                      // consume through '}'
-                }
-            }
+  var parts: string[] = [];
+  var total: i32 = 0;
+  var lit: i32 = 0;  // start of the pending literal run
+  var i: i32 = 0;
+  while (i < tmpl.len()) {
+    var take: boolean = false;
+    var adv: i32 = 2;  // bytes consumed by the token ($X = 2)
+    var rep: string = "";
+    if (tmpl[i] == 36 && i + 1 < tmpl.len()) {  // '$'
+      var d: i32 = tmpl[i + 1] as i32;
+      if (d == 36) {  // $$ → literal $
+        rep = "$";
+        take = true;
+      } else if (d >= 48 && d <= 57) {  // $0-$9
+        rep = c.group(d - 48);
+        take = true;
+      } else if (d == 123) {  // '{' → ${name}
+        var ne: i32 = i + 2;
+        while (ne < tmpl.len() && tmpl[ne] != 125) {  // scan to '}'
+          ne = ne + 1;
         }
-        if (take) {
-            var seg: string = slice_unchecked(tmpl, lit, i) + "";
-            parts = parts.append(seg); total = total + seg.len();
-            parts = parts.append(rep); total = total + rep.len();
-            i = i + adv;
-            lit = i;
-        } else {
-            i = i + 1;
+        if (ne < tmpl.len()) {  // found '}'
+          rep = c.group_named(slice_unchecked(tmpl, i + 2, ne) + "");
+          take = true;
+          adv = ne + 1 - i;  // consume through '}'
         }
+      }
     }
-    var tail: string = slice_unchecked(tmpl, lit, tmpl.len()) + "";
-    parts = parts.append(tail); total = total + tail.len();
-    return __rx_join(parts, total);
+    if (take) {
+      var seg: string = slice_unchecked(tmpl, lit, i) + "";
+      parts = parts.append(seg);
+      total = total + seg.len();
+      parts = parts.append(rep);
+      total = total + rep.len();
+      i = i + adv;
+      lit = i;
+    } else {
+      i = i + 1;
+    }
+  }
+  var tail: string = slice_unchecked(tmpl, lit, tmpl.len()) + "";
+  parts = parts.append(tail);
+  total = total + tail.len();
+  return __rx_join(parts, total);
 }
 
 // `regex_replace_groups(pattern, text, tmpl)` — replace the FIRST match of
@@ -1183,9 +1468,11 @@ function __rx_expand(tmpl: string, c: RCaps): string {
 // there is no match. The group-substituting counterpart to
 // `regex_replace`.
 pub function regex_replace_groups(pattern: string, text: string, tmpl: string): string {
-    var c: RCaps = regex_captures(pattern, text);
-    if (!c.found) { return text; }
-    return slice_unchecked(text, 0, c.group_start(0)) + __rx_expand(tmpl, c) + slice_unchecked(text, c.group_end(0), text.len());
+  var c: RCaps = regex_captures(pattern, text);
+  if (!c.found) {
+    return text;
+  }
+  return slice_unchecked(text, 0, c.group_start(0)) + __rx_expand(tmpl, c) + slice_unchecked(text, c.group_end(0), text.len());
 }
 
 // `regex_replace_all_groups(pattern, text, tmpl)` — replace every
@@ -1195,25 +1482,30 @@ pub function regex_replace_groups(pattern: string, text: string, tmpl: string): 
 // `regex_replace_all`); output assembly is the same exact-size single
 // buffer as `regex_replace_all`.
 pub function regex_replace_all_groups(pattern: string, text: string, tmpl: string): string {
-    var all: RCaps[] = regex_captures_all(pattern, text);
-    if (all.len() == 0) { return text; }
-    var parts: string[] = [];
-    var total: i32 = 0;
-    var last: i32 = 0;             // end of the text already emitted
-    var mi: i32 = 0;
-    while (mi < all.len()) {
-        var m: RCaps = all[mi];
-        // A zero-width match has start == end == last-or-later; the bytes
-        // between `last` and this match's start (including any byte a
-        // zero-width advance skipped) are carried in `seg`.
-        var seg: string = slice_unchecked(text, last, m.group_start(0)) + "";
-        parts = parts.append(seg); total = total + seg.len();
-        var rep: string = __rx_expand(tmpl, m);
-        parts = parts.append(rep); total = total + rep.len();
-        last = m.group_end(0);
-        mi = mi + 1;
-    }
-    var tail: string = slice_unchecked(text, last, text.len()) + "";
-    parts = parts.append(tail); total = total + tail.len();
-    return __rx_join(parts, total);
+  var all: RCaps[] = regex_captures_all(pattern, text);
+  if (all.len() == 0) {
+    return text;
+  }
+  var parts: string[] = [];
+  var total: i32 = 0;
+  var last: i32 = 0;  // end of the text already emitted
+  var mi: i32 = 0;
+  while (mi < all.len()) {
+    var m: RCaps = all[mi];
+    // A zero-width match has start == end == last-or-later; the bytes
+    // between `last` and this match's start (including any byte a
+    // zero-width advance skipped) are carried in `seg`.
+    var seg: string = slice_unchecked(text, last, m.group_start(0)) + "";
+    parts = parts.append(seg);
+    total = total + seg.len();
+    var rep: string = __rx_expand(tmpl, m);
+    parts = parts.append(rep);
+    total = total + rep.len();
+    last = m.group_end(0);
+    mi = mi + 1;
+  }
+  var tail: string = slice_unchecked(text, last, text.len()) + "";
+  parts = parts.append(tail);
+  total = total + tail.len();
+  return __rx_join(parts, total);
 }

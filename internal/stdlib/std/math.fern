@@ -4,7 +4,6 @@
 // No prelude: these are in scope only after a program
 // declares `import "std/math";` (docs/PRELUDE-TO-MODULES.md,
 // Phase 5).
-
 // `random_int(lo, hi)` — random i32 in [lo, hi). Returns `lo`
 // when hi <= lo (empty range fallback). Pulls 4 bytes from
 // random_bytes (kernel CSPRNG on natives, wasi_random on
@@ -40,19 +39,21 @@
 // earlier `rng` rename worked around that; the loader now resolves
 // the shadow correctly, so the natural name is restored.
 pub function random_int(lo: i32, hi: i32): i32 {
-    if (hi <= lo) { return lo; }
-    var range: u32 = (hi - lo) as u32;
-    return lo + (__random_below(range) as i32);
+  if (hi <= lo) {
+    return lo;
+  }
+  var range: u32 = (hi - lo) as u32;
+  return lo + __random_below(range) as i32;
 }
 
 // __random_u32 draws a full 32-bit value from the platform CSPRNG
 // (kernel getrandom on natives, wasi_random on wasm).
 function __random_u32(): u32 {
-    var b: u8[] = random_bytes(4);
-    return ((b[0] as u32) << (24 as u32)) |
-           ((b[1] as u32) << (16 as u32)) |
-           ((b[2] as u32) << (8 as u32)) |
-           (b[3] as u32);
+  var b: u8[] = random_bytes(4);
+  return b[0] as u32 << 24 as u32
+    | b[1] as u32 << 16 as u32
+    | b[2] as u32 << 8 as u32
+    | b[3] as u32;
 }
 
 // __random_below(range) — a uniformly distributed u32 in [0, range),
@@ -78,80 +79,100 @@ function __random_u32(): u32 {
 // `1 - (2^32 mod range)/2^32 > 1/2`, so the loop ends with
 // probability 1 and takes under two iterations on average.
 function __random_below(range: u32): u32 {
-    var wide: u64 = range as u64;
-    var mask: u64 = ((1 as u64) << (32 as u64)) - (1 as u64);
-    var product: u64 = (__random_u32() as u64) * wide;
-    var low: u64 = product & mask;
-    if (low < wide) {
-        // 2^32 mod range — the size of the surplus zone to reject.
-        var threshold: u64 = (((1 as u64) << (32 as u64)) - wide) % wide;
-        while (low < threshold) {
-            product = (__random_u32() as u64) * wide;
-            low = product & mask;
-        }
+  var wide: u64 = range as u64;
+  var mask: u64 = (1 as u64 << 32 as u64) - 1 as u64;
+  var product: u64 = __random_u32() as u64 * wide;
+  var low: u64 = product & mask;
+  if (low < wide) {
+    // 2^32 mod range — the size of the surplus zone to reject.
+    var threshold: u64 = ((1 as u64 << 32 as u64) - wide) % wide;
+    while (low < threshold) {
+      product = __random_u32() as u64 * wide;
+      low = product & mask;
     }
-    return (product >> (32 as u64)) as u32;
+  }
+  return (product >> 32 as u64) as u32;
 }
 
 // `range(start, end)` — i32[] of [start, end). Empty if
 // start >= end. Standard half-open range.
 pub function range(start: i32, end: i32): i32[] {
-    var out: i32[] = [];
-    var i: i32 = start;
-    while (i < end) {
-        out = out.append(i);
-        i = i + 1;
-    }
-    return out;
+  var out: i32[] = [];
+  var i: i32 = start;
+  while (i < end) {
+    out = out.append(i);
+    i = i + 1;
+  }
+  return out;
 }
 
 // `range_step(start, end, step)` — same as range but with
 // arbitrary positive step. Step <= 0 returns empty (no
 // reverse ranges — use a manual while loop for that).
 pub function range_step(start: i32, end: i32, step: i32): i32[] {
-    var out: i32[] = [];
-    if (step <= 0) { return out; }
-    var i: i32 = start;
-    while (i < end) {
-        out = out.append(i);
-        i = i + step;
-    }
+  var out: i32[] = [];
+  if (step <= 0) {
     return out;
+  }
+  var i: i32 = start;
+  while (i < end) {
+    out = out.append(i);
+    i = i + step;
+  }
+  return out;
 }
 
 // Function-style accessors for the width boundaries. Plain
 // constants would be cleaner but lang doesn't have a const
 // declaration syntax yet; these constant-functions inline at
 // the call site via the IR's constant-folding pass.
-pub function i32_max(): i32 { return 2147483647; }
-pub function i32_min(): i32 { return 0 - 2147483647 - 1; }
-pub function i64_max(): i64 { return 9223372036854775807; }
-pub function i64_min(): i64 { return (0 as i64) - 9223372036854775807 - (1 as i64); }
+pub function i32_max(): i32 {
+  return 2147483647;
+}
+
+pub function i32_min(): i32 {
+  return 0 - 2147483647 - 1;
+}
+
+pub function i64_max(): i64 {
+  return 9223372036854775807;
+}
+
+pub function i64_min(): i64 {
+  return 0 as i64 - 9223372036854775807 - 1 as i64;
+}
 
 // --- floating-point angle + interpolation helpers ---
 //
 // Pure f64 arithmetic (no libm / transcendentals), so std/math keeps
 // its zero-dependency, every-backend-exact posture.
-
 // `pi()` — the ratio of a circle's circumference to its diameter, as the
 // closest f64 to π. A function (not a constant) to match how std/math
 // exposes all its values.
-pub function pi(): f64 { return 3.141592653589793; }
+pub function pi(): f64 {
+  return 3.141592653589793;
+}
 
 // `tau()` — 2π, one whole turn in radians and the more natural base unit
 // for angular math (`tau() / 4.0` is a quarter turn). Exactly `2.0 *
 // pi()`, since scaling an f64 by two only bumps the exponent.
-pub function tau(): f64 { return 6.283185307179586; }
+pub function tau(): f64 {
+  return 6.283185307179586;
+}
 
 // `to_radians(deg)` — convert an angle from degrees to radians
 // (`deg × π / 180`). Inverse of `to_degrees`. `to_radians(0.0)` is
 // exactly 0.0; other conversions round to the nearest f64.
-pub function to_radians(deg: f64): f64 { return deg * (pi() / 180.0); }
+pub function to_radians(deg: f64): f64 {
+  return deg * (pi() / 180.0);
+}
 
 // `to_degrees(rad)` — convert an angle from radians to degrees
 // (`rad × 180 / π`). Inverse of `to_radians`. `to_degrees(0.0)` is
 // exactly 0.0; other conversions round to the nearest f64.
-pub function to_degrees(rad: f64): f64 { return rad * (180.0 / pi()); }
+pub function to_degrees(rad: f64): f64 {
+  return rad * (180.0 / pi());
+}
 
 // `lerp(a, b, t)` — linear interpolation from `a` to `b` by fraction `t`:
 // `t == 0.0` returns `a`, `t == 1.0` returns `b`, and `t` outside [0, 1]
@@ -159,7 +180,9 @@ pub function to_degrees(rad: f64): f64 { return rad * (180.0 / pi()); }
 // endpoints exactly (the cheaper `a + (b−a)·t` form drifts off `b` at
 // `t == 1.0`); in exchange it is not guaranteed monotonic for `a`, `b` of
 // wildly different magnitude — the standard trade for endpoint fidelity.
-pub function lerp(a: f64, b: f64, t: f64): f64 { return a * (1.0 - t) + b * t; }
+pub function lerp(a: f64, b: f64, t: f64): f64 {
+  return a * (1.0 - t) + b * t;
+}
 
 // `pack_rgb(r, g, b)` — pack three 0..255 components into a
 // 24-bit i32. Inverse of `(n).to_rgb_hex()`'s shifts. Each
@@ -167,16 +190,22 @@ pub function lerp(a: f64, b: f64, t: f64): f64 { return a * (1.0 - t) + b * t; }
 // 0..255 silently wrap. Pairs with `to_rgb_hex` for the
 // "construct then format" colour pipeline.
 pub function pack_rgb(r: i32, g: i32, b: i32): i32 {
-    return ((r & 255) << 16) | ((g & 255) << 8) | (b & 255);
+  return (r & 255) << 16 | (g & 255) << 8 | b & 255;
 }
 
 // __hex_digit(b) — value 0..15 of an ASCII hex byte, or -1 if it isn't
 // one. Self-contained so std/math keeps zero module dependencies.
 function __hex_digit(b: i32): i32 {
-    if (b >= 48 && b <= 57) { return b - 48; }        // '0'..'9'
-    if (b >= 97 && b <= 102) { return b - 97 + 10; }  // 'a'..'f'
-    if (b >= 65 && b <= 70) { return b - 65 + 10; }   // 'A'..'F'
-    return -1;
+  if (b >= 48 && b <= 57) {  // '0'..'9'
+    return b - 48;
+  }
+  if (b >= 97 && b <= 102) {  // 'a'..'f'
+    return b - 97 + 10;
+  }
+  if (b >= 65 && b <= 70) {  // 'A'..'F'
+    return b - 65 + 10;
+  }
+  return -1;
 }
 
 // `parse_rgb_hex(s)` — parse a hex colour string into a packed RGB i32
@@ -187,29 +216,35 @@ function __hex_digit(b: i32): i32 {
 // and both the 6-digit form (`#rrggbb`) and 3-digit shorthand (`#rgb`,
 // each nibble doubled so `#f80` == `#ff8800`). Hex is case-insensitive.
 pub function parse_rgb_hex(s: string): Option[i32] {
-    var start: i32 = 0;
-    if (s.len() > 0 && s[0] == 35) { start = 1; }   // optional '#'
-    var body: i32 = s.len() - start;
-    if (body == 6) {
-        var v: i32 = 0;
-        var i: i32 = 0;
-        while (i < 6) {
-            var d: i32 = __hex_digit((s[start + i] as i32));
-            if (d < 0) { return None; }
-            v = (v << 4) | d;
-            i = i + 1;
-        }
-        return Some(v);
+  var start: i32 = 0;
+  if (s.len() > 0 && s[0] == 35) {  // optional '#'
+    start = 1;
+  }
+  var body: i32 = s.len() - start;
+  if (body == 6) {
+    var v: i32 = 0;
+    var i: i32 = 0;
+    while (i < 6) {
+      var d: i32 = __hex_digit(s[start + i] as i32);
+      if (d < 0) {
+        return None;
+      }
+      v = v << 4 | d;
+      i = i + 1;
     }
-    if (body == 3) {
-        var r: i32 = __hex_digit((s[start] as i32));
-        var g: i32 = __hex_digit((s[start + 1] as i32));
-        var b: i32 = __hex_digit((s[start + 2] as i32));
-        if (r < 0 || g < 0 || b < 0) { return None; }
-        // Double each nibble: 0xF -> 0xFF.
-        return Some((((r << 4) | r) << 16) | (((g << 4) | g) << 8) | ((b << 4) | b));
+    return Some(v);
+  }
+  if (body == 3) {
+    var r: i32 = __hex_digit(s[start] as i32);
+    var g: i32 = __hex_digit(s[start + 1] as i32);
+    var b: i32 = __hex_digit(s[start + 2] as i32);
+    if (r < 0 || g < 0 || b < 0) {
+      return None;
     }
-    return None;
+    // Double each nibble: 0xF -> 0xFF.
+    return Some((r << 4 | r) << 16 | (g << 4 | g) << 8 | (b << 4 | b));
+  }
+  return None;
 }
 
 // `rgb_luminance(rgb)` — perceived brightness (0..255) of a packed RGB
@@ -218,10 +253,10 @@ pub function parse_rgb_hex(s: string): Option[i32] {
 // every backend. The standard cheap "how bright does this look?"
 // measure — brighter greens read lighter than equally-valued blues.
 pub function rgb_luminance(rgb: i32): i32 {
-    var r: i32 = (rgb >> 16) & 255;
-    var g: i32 = (rgb >> 8) & 255;
-    var b: i32 = rgb & 255;
-    return (r * 299 + g * 587 + b * 114) / 1000;
+  var r: i32 = rgb >> 16 & 255;
+  var g: i32 = rgb >> 8 & 255;
+  var b: i32 = rgb & 255;
+  return (r * 299 + g * 587 + b * 114) / 1000;
 }
 
 // `rgb_is_dark(rgb)` — true when a colour is dark enough that white text
@@ -229,5 +264,5 @@ pub function rgb_luminance(rgb: i32): i32 {
 // The one-call helper for picking a readable foreground over a coloured
 // background: `if (rgb_is_dark(bg)) { white } else { black }`.
 pub function rgb_is_dark(rgb: i32): boolean {
-    return rgb_luminance(rgb) < 128;
+  return rgb_luminance(rgb) < 128;
 }

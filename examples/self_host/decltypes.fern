@@ -11,21 +11,31 @@ function declined(name: string): ast.ParamDecl {
 }
 
 pub function param_from_type(name: string, t: typeinfo.Type): ast.ParamDecl {
-  if let typeinfo.TypeFunc(f) = t { return fn_param_from_type(name, t); }
+  if let typeinfo.TypeFunc(f) = t {
+    return fn_param_from_type(name, t);
+  }
   return ast.ParamDecl { ...declined(name), type_name: parser.erase_str_spelling(typeinfo.spelling(t)) };
 }
 
 pub function fn_param_decl(name: string, tys: string[], ret: string): ast.ParamDecl {
-  if (ret.len() == 0) { return declined(name); }
+  if (ret.len() == 0) {
+    return declined(name);
+  }
   var ptys: string = "";
   var dyns: string = "";
   var i: i32 = 0;
   while (i < tys.len()) {
-    if (tys[i].len() == 0) { return declined(name); }
-    if (i > 0) { ptys = ptys + ","; }
+    if (tys[i].len() == 0) {
+      return declined(name);
+    }
+    if (i > 0) {
+      ptys = ptys + ",";
+    }
     ptys = ptys + tys[i];
     if (tys[i].len() > 4 && slice_unchecked(tys[i], 0, 4) == "dyn ") {
-      if (dyns.len() > 0) { dyns = dyns + ","; }
+      if (dyns.len() > 0) {
+        dyns = dyns + ",";
+      }
       dyns = dyns + util.i32_to_string(i);
     }
     i = i + 1;
@@ -35,7 +45,9 @@ pub function fn_param_decl(name: string, tys: string[], ret: string): ast.ParamD
 
 pub function fn_param_from_spelling(name: string, sp: string): ast.ParamDecl {
   var r: parser.TypeRef = parser.parse_type_ref(sp);
-  if (!parser.ref_is_fn_value(r)) { return declined(name); }
+  if (!parser.ref_is_fn_value(r)) {
+    return declined(name);
+  }
   var f: parser.TypeRef = parser.ref_ungroup(r);
   var params: string[] = [];
   var i: i32 = 0;
@@ -48,9 +60,13 @@ pub function fn_param_from_spelling(name: string, sp: string): ast.ParamDecl {
 
 pub function fn_param_from_type(name: string, t: typeinfo.Type): ast.ParamDecl {
   if let typeinfo.TypeFunc(f) = t {
-    if (!f.params_known) { return declined(name); }
+    if (!f.params_known) {
+      return declined(name);
+    }
     var params: string[] = [];
-    for param in f.param_types { params = params.append(typeinfo.spelling(param)); }
+    for param in f.param_types {
+      params = params.append(typeinfo.spelling(param));
+    }
     return fn_param_decl(name, params, typeinfo.spelling(f.ret_type));
   }
   return declined(name);

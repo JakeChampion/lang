@@ -29,7 +29,6 @@
 // Arithmetic is evaluated in i64 and the types the operands can have decide
 // whether the answer may be emitted — see fits. This pass runs on EVERY
 // build, so a fold that changes the answer is a miscompile.
-
 import "./ast";
 import "./lexer";
 import "./parser";
@@ -37,7 +36,6 @@ import "./util";
 import "./astwalk";
 
 // =================== INT / FOLD HELPERS ====================
-
 // A folded literal is built in the shape the PARSER produces. A number
 // literal's TEXT never carries a sign — irlower.literal_is_i64 classifies by
 // MAGNITUDE alone — so a negative result is unary minus over the
@@ -50,13 +48,15 @@ import "./astwalk";
 // from negating the value, so INT64_MIN — which has no negation — needs no
 // case of its own.
 function lit_int(v: i64, suffix: string): ast.Expr {
-    var s: string = util.i64_to_string(v);
-    if (v >= 0) { return num_lit(s, suffix); }
-    return ast.ExprUnary { op: "-", operand: num_lit(slice_unchecked(s, 1, s.len()), suffix), line: 0, col: 0, ty: "" };
+  var s: string = util.i64_to_string(v);
+  if (v >= 0) {
+    return num_lit(s, suffix);
+  }
+  return ast.ExprUnary { op: "-", operand: num_lit(slice_unchecked(s, 1, s.len()), suffix), line: 0, col: 0, ty: "" };
 }
 
 function num_lit(text: string, suffix: string): ast.Expr {
-    return ast.ExprNumber { text: text, suffix: suffix, raw: "", is_float: false, line: 0, col: 0 };
+  return ast.ExprNumber { text: text, suffix: suffix, raw: "", is_float: false, line: 0, col: 0 };
 }
 
 // fits reports whether `v` is exact in every type its literals can have.
@@ -82,19 +82,27 @@ function num_lit(text: string, suffix: string): ast.Expr {
 // literal carries its source spelling in `raw`, which a rebuilt literal would
 // lose. Declining leaves the runtime op, which is always right.
 function fits(v: i64, suffix: string, peak: i64): boolean {
-    if (suffix == "") { return v >= 0 && (v <= 255i64 || (peak > 255i64 && v <= 2147483647i64)); }
-    if (suffix == "i32") { return v >= 0 - 2147483648i64 && v <= 2147483647i64; }
-    if (suffix == "u32") { return v >= 0 && v <= 4294967295i64; }
-    if (suffix == "u8") { return v >= 0 && v <= 255i64; }
-    return false;
+  if (suffix == "") {
+    return v >= 0 && (v <= 255i64 || peak > 255i64 && v <= 2147483647i64);
+  }
+  if (suffix == "i32") {
+    return v >= 0 - 2147483648i64 && v <= 2147483647i64;
+  }
+  if (suffix == "u32") {
+    return v >= 0 && v <= 4294967295i64;
+  }
+  if (suffix == "u8") {
+    return v >= 0 && v <= 255i64;
+  }
+  return false;
 }
 
 function lit_bool(b: boolean): ast.Expr {
-    return ast.ExprBool { value: b, line: 0, col: 0 };
+  return ast.ExprBool { value: b, line: 0, col: 0 };
 }
 
 function lit_string(s: string): ast.Expr {
-    return ast.ExprString { value: s, line: 0, col: 0 };
+  return ast.ExprString { value: s, line: 0, col: 0 };
 }
 
 // Optional-Int sentinel: Fern-port has no Option in the stdlib
@@ -105,53 +113,66 @@ function lit_string(s: string): ast.Expr {
 struct OptInt { ok: boolean, v: i64, suffix: string }
 
 function as_int_lit(e: ast.Expr): OptInt {
-    match (e) {
-        ast.ExprNumber(n) => {
-            if (n.is_float) { return OptInt { ok: false, v: 0, suffix: "" }; }
-            // lit_to_i64 (hex/binary-aware): digits_to_i32 stopped at the
-            // `x`/`b` prefix and read every `0x`/`0b` operand as 0, so `-O`
-            // mis-folded `0x10 + 1` to 1 (#4341, constfold sibling). The i64
-            // accumulation is what lets fits see a u32-range literal's real
-            // value instead of the wrapped one.
-            return OptInt { ok: true, v: util.lit_to_i64(n.text), suffix: n.suffix };
-        },
-        ast.ExprUnary(u) => {
-            // The negated form lit_int produces, so a chain still folds all the
-            // way: `0i32 - 2147483647i32 - 1i32` needs the inner fold's result to
-            // be readable by the outer one.
-            if (u.op == "-") {
-                var inner: OptInt = as_int_lit(u.operand);
-                if (inner.ok) { return OptInt { ok: true, v: 0 - inner.v, suffix: inner.suffix }; }
-            }
-            return OptInt { ok: false, v: 0, suffix: "" };
-        },
-        _ => { return OptInt { ok: false, v: 0, suffix: "" }; }
+  match (e) {
+    ast.ExprNumber(n) => {
+      if (n.is_float) {
+        return OptInt { ok: false, v: 0, suffix: "" };
+      }
+      // lit_to_i64 (hex/binary-aware): digits_to_i32 stopped at the
+      // `x`/`b` prefix and read every `0x`/`0b` operand as 0, so `-O`
+      // mis-folded `0x10 + 1` to 1 (#4341, constfold sibling). The i64
+      // accumulation is what lets fits see a u32-range literal's real
+      // value instead of the wrapped one.
+      return OptInt { ok: true, v: util.lit_to_i64(n.text), suffix: n.suffix };
+    },
+    ast.ExprUnary(u) => {
+      // The negated form lit_int produces, so a chain still folds all the
+      // way: `0i32 - 2147483647i32 - 1i32` needs the inner fold's result to
+      // be readable by the outer one.
+      if (u.op == "-") {
+        var inner: OptInt = as_int_lit(u.operand);
+        if (inner.ok) {
+          return OptInt { ok: true, v: 0 - inner.v, suffix: inner.suffix };
+        }
+      }
+      return OptInt { ok: false, v: 0, suffix: "" };
+    },
+    _ => {
+      return OptInt { ok: false, v: 0, suffix: "" };
     }
-    return OptInt { ok: false, v: 0, suffix: "" };
+  }
+  return OptInt { ok: false, v: 0, suffix: "" };
 }
 
 struct OptBool { ok: boolean, v: boolean }
 
 function as_bool_lit(e: ast.Expr): OptBool {
-    match (e) {
-        ast.ExprBool(b) => { return OptBool { ok: true, v: b.value }; },
-        _ => { return OptBool { ok: false, v: false }; }
+  match (e) {
+    ast.ExprBool(b) => {
+      return OptBool { ok: true, v: b.value };
+    },
+    _ => {
+      return OptBool { ok: false, v: false };
     }
-    return OptBool { ok: false, v: false };
+  }
+  return OptBool { ok: false, v: false };
 }
 
 struct OptString { ok: boolean, v: string }
 
 function as_string_lit(e: ast.Expr): OptString {
-    match (e) {
-        ast.ExprString(s) => { return OptString { ok: true, v: s.value }; },
-        _ => { return OptString { ok: false, v: "" }; }
+  match (e) {
+    ast.ExprString(s) => {
+      return OptString { ok: true, v: s.value };
+    },
+    _ => {
+      return OptString { ok: false, v: "" };
     }
-    return OptString { ok: false, v: "" };
+  }
+  return OptString { ok: false, v: "" };
 }
 
 // =================== EXPR FOLDING ====================
-
 // fold_expr returns a possibly-rewritten expression. The output
 // has the same ast.Expr shape; what may change is "constants
 // folded one level up." Multiple passes aren't needed — the
@@ -159,7 +180,7 @@ function as_string_lit(e: ast.Expr): OptString {
 // look at a parent binary node both operands are already in
 // their folded form.
 pub function fold_expr(e: ast.Expr): ast.Expr {
-    return astwalk.map_expr(e, fold_node);
+  return astwalk.map_expr(e, fold_node);
 }
 
 // fold_node is this pass minus the walk: one node, whose children the
@@ -167,114 +188,162 @@ pub function fold_expr(e: ast.Expr): ast.Expr {
 // Only the two arithmetic shapes contribute; every other node is its own
 // rebuilt form.
 function fold_node(e: ast.Expr): ast.Expr {
-    match (e) {
-        ast.ExprBinary(b) => { return fold_binary(b.op, b.left, b.right); },
-        ast.ExprUnary(u) => { return fold_unary(u.op, u.operand); },
-        _ => { return e; }
+  match (e) {
+    ast.ExprBinary(b) => {
+      return fold_binary(b.op, b.left, b.right);
+    },
+    ast.ExprUnary(u) => {
+      return fold_unary(u.op, u.operand);
+    },
+    _ => {
+      return e;
     }
-    return e;
+  }
+  return e;
 }
 
 function fold_binary(op: string, lhs: ast.Expr, rhs: ast.Expr): ast.Expr {
-    var unfolded: ast.Expr = ast.ExprBinary { op: op, left: lhs, right: rhs, line: 0, col: 0, ty: "" };
-    // Integer arithmetic + comparison + equality, evaluated in i64 so a u32
-    // operand keeps its value. Both operands must name the SAME type: mixing
-    // widths is the checker's business, and picking one of them here would
-    // decide it arbitrarily. Both must also be representable in it, or the
-    // parse already wrapped and every answer below is built on the wrong
-    // number.
-    var li: OptInt = as_int_lit(lhs);
-    var ri: OptInt = as_int_lit(rhs);
-    if (li.ok && ri.ok && li.suffix == ri.suffix && fits(li.v, li.suffix, li.v) && fits(ri.v, ri.suffix, ri.v)) {
-        var sfx: string = li.suffix;
-        var peak: i64 = li.v;
-        if (ri.v > peak) { peak = ri.v; }
-        // An arithmetic result that overflows its width is NOT folded: the
-        // runtime op wraps and this pass does not, so folding it would change
-        // the answer. Comparisons cannot overflow, so they always fold.
-        if (op == "+") { return fold_arith(li.v + ri.v, sfx, peak, unfolded); }
-        if (op == "-") { return fold_arith(li.v - ri.v, sfx, peak, unfolded); }
-        if (op == "*") { return fold_arith(li.v * ri.v, sfx, peak, unfolded); }
-        if (op == "/") {
-            if (ri.v == 0) { return unfolded; }
-            return fold_arith(li.v / ri.v, sfx, peak, unfolded);
-        }
-        if (op == "%") {
-            if (ri.v == 0) { return unfolded; }
-            return fold_arith(li.v % ri.v, sfx, peak, unfolded);
-        }
-        if (op == "<") { return lit_bool(li.v < ri.v); }
-        if (op == "<=") { return lit_bool(li.v <= ri.v); }
-        if (op == ">") { return lit_bool(li.v > ri.v); }
-        if (op == ">=") { return lit_bool(li.v >= ri.v); }
-        if (op == "==") { return lit_bool(li.v == ri.v); }
-        if (op == "!=") { return lit_bool(li.v != ri.v); }
+  var unfolded: ast.Expr = ast.ExprBinary { op: op, left: lhs, right: rhs, line: 0, col: 0, ty: "" };
+  // Integer arithmetic + comparison + equality, evaluated in i64 so a u32
+  // operand keeps its value. Both operands must name the SAME type: mixing
+  // widths is the checker's business, and picking one of them here would
+  // decide it arbitrarily. Both must also be representable in it, or the
+  // parse already wrapped and every answer below is built on the wrong
+  // number.
+  var li: OptInt = as_int_lit(lhs);
+  var ri: OptInt = as_int_lit(rhs);
+  if (li.ok && ri.ok && li.suffix == ri.suffix && fits(li.v, li.suffix, li.v) && fits(ri.v, ri.suffix, ri.v)) {
+    var sfx: string = li.suffix;
+    var peak: i64 = li.v;
+    if (ri.v > peak) {
+      peak = ri.v;
     }
-    // bool && / ||.
-    var lb: OptBool = as_bool_lit(lhs);
-    var rb: OptBool = as_bool_lit(rhs);
-    if (lb.ok && rb.ok) {
-        if (op == "&&") { return lit_bool(lb.v && rb.v); }
-        if (op == "||") { return lit_bool(lb.v || rb.v); }
-        if (op == "==") { return lit_bool(lb.v == rb.v); }
-        if (op == "!=") { return lit_bool(lb.v != rb.v); }
+    // An arithmetic result that overflows its width is NOT folded: the
+    // runtime op wraps and this pass does not, so folding it would change
+    // the answer. Comparisons cannot overflow, so they always fold.
+    if (op == "+") {
+      return fold_arith(li.v + ri.v, sfx, peak, unfolded);
     }
-    // String concatenation when both sides are literals.
-    var ls: OptString = as_string_lit(lhs);
-    var rs: OptString = as_string_lit(rhs);
-    if (ls.ok && rs.ok) {
-        if (op == "+") { return lit_string(ls.v + rs.v); }
-        if (op == "==") { return lit_bool(ls.v == rs.v); }
-        if (op == "!=") { return lit_bool(ls.v != rs.v); }
+    if (op == "-") {
+      return fold_arith(li.v - ri.v, sfx, peak, unfolded);
     }
-    // Nothing to fold — rebuild with folded children.
-    return unfolded;
+    if (op == "*") {
+      return fold_arith(li.v * ri.v, sfx, peak, unfolded);
+    }
+    if (op == "/") {
+      if (ri.v == 0) {
+        return unfolded;
+      }
+      return fold_arith(li.v / ri.v, sfx, peak, unfolded);
+    }
+    if (op == "%") {
+      if (ri.v == 0) {
+        return unfolded;
+      }
+      return fold_arith(li.v % ri.v, sfx, peak, unfolded);
+    }
+    if (op == "<") {
+      return lit_bool(li.v < ri.v);
+    }
+    if (op == "<=") {
+      return lit_bool(li.v <= ri.v);
+    }
+    if (op == ">") {
+      return lit_bool(li.v > ri.v);
+    }
+    if (op == ">=") {
+      return lit_bool(li.v >= ri.v);
+    }
+    if (op == "==") {
+      return lit_bool(li.v == ri.v);
+    }
+    if (op == "!=") {
+      return lit_bool(li.v != ri.v);
+    }
+  }
+  // bool && / ||.
+  var lb: OptBool = as_bool_lit(lhs);
+  var rb: OptBool = as_bool_lit(rhs);
+  if (lb.ok && rb.ok) {
+    if (op == "&&") {
+      return lit_bool(lb.v && rb.v);
+    }
+    if (op == "||") {
+      return lit_bool(lb.v || rb.v);
+    }
+    if (op == "==") {
+      return lit_bool(lb.v == rb.v);
+    }
+    if (op == "!=") {
+      return lit_bool(lb.v != rb.v);
+    }
+  }
+  // String concatenation when both sides are literals.
+  var ls: OptString = as_string_lit(lhs);
+  var rs: OptString = as_string_lit(rhs);
+  if (ls.ok && rs.ok) {
+    if (op == "+") {
+      return lit_string(ls.v + rs.v);
+    }
+    if (op == "==") {
+      return lit_bool(ls.v == rs.v);
+    }
+    if (op == "!=") {
+      return lit_bool(ls.v != rs.v);
+    }
+  }
+  // Nothing to fold — rebuild with folded children.
+  return unfolded;
 }
 
 // fold_arith emits the folded literal, or leaves the expression alone when the
 // value is not representable in the operands' type.
 function fold_arith(v: i64, suffix: string, peak: i64, unfolded: ast.Expr): ast.Expr {
-    if (!fits(v, suffix, peak)) { return unfolded; }
-    return lit_int(v, suffix);
+  if (!fits(v, suffix, peak)) {
+    return unfolded;
+  }
+  return lit_int(v, suffix);
 }
 
 function fold_unary(op: string, operand: ast.Expr): ast.Expr {
-    if (op == "-") {
-        var oi: OptInt = as_int_lit(operand);
-        // The operand of a unary minus is a MAGNITUDE, so it is the negated
-        // result that has to be representable — 2147483648 alone does not fit
-        // i32, but `-2147483648` is exactly i32::MIN.
-        if (oi.ok && fits(0 - oi.v, oi.suffix, oi.v)) { return lit_int(0 - oi.v, oi.suffix); }
+  if (op == "-") {
+    var oi: OptInt = as_int_lit(operand);
+    // The operand of a unary minus is a MAGNITUDE, so it is the negated
+    // result that has to be representable — 2147483648 alone does not fit
+    // i32, but `-2147483648` is exactly i32::MIN.
+    if (oi.ok && fits(0 - oi.v, oi.suffix, oi.v)) {
+      return lit_int(0 - oi.v, oi.suffix);
     }
-    if (op == "!") {
-        var ob: OptBool = as_bool_lit(operand);
-        if (ob.ok) { return lit_bool(!ob.v); }
+  }
+  if (op == "!") {
+    var ob: OptBool = as_bool_lit(operand);
+    if (ob.ok) {
+      return lit_bool(!ob.v);
     }
-    return ast.ExprUnary { op: op, operand: operand, line: 0, col: 0, ty: "" };
+  }
+  return ast.ExprUnary { op: op, operand: operand, line: 0, col: 0, ty: "" };
 }
 
 // =================== STMT / MODULE FOLDING ====================
-
 function fold_stmt(st: ast.Stmt): ast.Stmt {
-    return astwalk.map_stmt(st, fold_node);
+  return astwalk.map_stmt(st, fold_node);
 }
 
 function fold_block(body: ast.Stmt[]): ast.Stmt[] {
-    return astwalk.map_stmts(body, fold_node);
+  return astwalk.map_stmts(body, fold_node);
 }
 
 pub function fold_module(mod: parser.Module): parser.Module {
-    var funcs: parser.FuncDecl[] = [];
-    var i: i32 = 0;
-    while (i < mod.funcs.len()) {
-        funcs = funcs.append(parser.FuncDecl { ...mod.funcs[i], body: fold_block(mod.funcs[i].body) });
-        i = i + 1;
-    }
-    return parser.Module { ...mod, funcs: funcs, top_stmts: fold_block(mod.top_stmts) };
+  var funcs: parser.FuncDecl[] = [];
+  var i: i32 = 0;
+  while (i < mod.funcs.len()) {
+    funcs = funcs.append(parser.FuncDecl { ...mod.funcs[i], body: fold_block(mod.funcs[i].body) });
+    i = i + 1;
+  }
+  return parser.Module { ...mod, funcs: funcs, top_stmts: fold_block(mod.top_stmts) };
 }
 
 // =================== TARGET NAME ====================
-
 // The two halves of the compile target's name as string literals:
 // `target_os()` is the environment — "linux", "darwin", "android" or "wasi"
 // — and `target_arch()` is the ISA — "arm64", "x86-64" or "wasm32". Neither
@@ -283,6 +352,7 @@ pub function fold_module(mod: parser.Module): parser.Module {
 // knows the target, and asmcore's builtin table types the calls for a bare
 // -check.
 const TARGET_OS_BUILTIN: string = "target_os";
+
 const TARGET_ARCH_BUILTIN: string = "target_arch";
 
 // TargetAcc carries the two halves through astwalk's accumulator spine. The
@@ -293,52 +363,57 @@ struct TargetAcc { env: string, arch: string }
 // with `env` and every `target_arch()` with `arch`. A call with arguments is
 // left alone: the checker's arity error names the declared signature.
 pub function fold_target_name(mod: parser.Module, env: string, arch: string): parser.Module {
-    // No environment (a target the descriptor table does not know) leaves the
-    // calls alone, as native does; the driver's own -target check reports it.
-    if (env.len() == 0) { return mod; }
-    var acc: TargetAcc = TargetAcc { env: env, arch: arch };
-    var funcs: parser.FuncDecl[] = [];
-    for fd in mod.funcs {
-        var (body, a2) = astwalk.map_stmts_acc(fd.body, acc, to_keep_stmt, to_expr);
-        acc = a2;
-        funcs = funcs.append(parser.FuncDecl { ...fd, body: body });
-    }
-    var (tops, a3) = astwalk.map_stmts_acc(mod.top_stmts, acc, to_keep_stmt, to_expr);
-    return parser.Module { ...mod, funcs: funcs, top_stmts: tops };
+  // No environment (a target the descriptor table does not know) leaves the
+  // calls alone, as native does; the driver's own -target check reports it.
+  if (env.len() == 0) {
+    return mod;
+  }
+  var acc: TargetAcc = TargetAcc { env: env, arch: arch };
+  var funcs: parser.FuncDecl[] = [];
+  for fd in mod.funcs {
+    let (body, a2) = astwalk.map_stmts_acc(fd.body, acc, to_keep_stmt, to_expr);
+    acc = a2;
+    funcs = funcs.append(parser.FuncDecl { ...fd, body: body });
+  }
+  let (tops, a3) = astwalk.map_stmts_acc(mod.top_stmts, acc, to_keep_stmt, to_expr);
+  return parser.Module { ...mod, funcs: funcs, top_stmts: tops };
 }
 
 // to_keep_stmt declines every statement, which is how a caller with nothing
 // to say about statements asks the spine to descend into their expressions.
 function to_keep_stmt(s: ast.Stmt, a: TargetAcc): (ast.Stmt, TargetAcc, boolean) {
-    return (s, a, false);
+  return (s, a, false);
 }
 
 // to_expr claims a `target_os()` / `target_arch()` call, so the spine never
 // walks it again.
 function to_expr(e: ast.Expr, a: TargetAcc): (ast.Expr, TargetAcc, boolean) {
-    match (e) {
-        ast.ExprCall(c) => {
-            if (c.args.len() != 0) { return (e, a, false); }
-            match (c.callee) {
-                ast.ExprIdent(id) => {
-                    if (id.name == TARGET_OS_BUILTIN) {
-                        return (ast.ExprString { value: a.env, line: c.line, col: c.col }, a, true);
-                    }
-                    if (id.name == TARGET_ARCH_BUILTIN) {
-                        return (ast.ExprString { value: a.arch, line: c.line, col: c.col }, a, true);
-                    }
-                },
-                _ => {}
-            }
-            return (e, a, false);
+  match (e) {
+    ast.ExprCall(c) => {
+      if (c.args.len() != 0) {
+        return (e, a, false);
+      }
+      match (c.callee) {
+        ast.ExprIdent(id) => {
+          if (id.name == TARGET_OS_BUILTIN) {
+            return (ast.ExprString { value: a.env, line: c.line, col: c.col }, a, true);
+          }
+          if (id.name == TARGET_ARCH_BUILTIN) {
+            return (ast.ExprString { value: a.arch, line: c.line, col: c.col }, a, true);
+          }
         },
-        _ => { return (e, a, false); }
+        _ => {}
+      }
+      return (e, a, false);
+    },
+    _ => {
+      return (e, a, false);
     }
-    return (e, a, false);
+  }
+  return (e, a, false);
 }
 
 // =================== ASSERT ELISION ====================
-
 // elide_asserts drops every `assert(...)` check from the program — the `-O`
 // release-build behaviour, and the only thing native spends that flag on
 // (internal/constfold.ElideAsserts, #4416). The parser desugars an assert to
@@ -350,29 +425,33 @@ function to_expr(e: ast.Expr, a: TargetAcc): (ast.Expr, TargetAcc, boolean) {
 // every gate, the IR-eligibility one included: deleting a statement can only
 // widen what compiles (#7170).
 pub function elide_asserts(mod: parser.Module): parser.Module {
-    var funcs: parser.FuncDecl[] = [];
-    var i: i32 = 0;
-    while (i < mod.funcs.len()) {
-        funcs = funcs.append(parser.FuncDecl { ...mod.funcs[i], body: astwalk.splice_stmts_with_lambda(mod.funcs[i].body, drop_assert, elided_lambda_captures) });
-        i = i + 1;
-    }
-    return parser.Module { ...mod, funcs: funcs, top_stmts: astwalk.splice_stmts_with_lambda(mod.top_stmts, drop_assert, elided_lambda_captures) };
+  var funcs: parser.FuncDecl[] = [];
+  var i: i32 = 0;
+  while (i < mod.funcs.len()) {
+    funcs = funcs.append(parser.FuncDecl { ...mod.funcs[i], body: astwalk.splice_stmts_with_lambda(mod.funcs[i].body, drop_assert, elided_lambda_captures) });
+    i = i + 1;
+  }
+  return parser.Module { ...mod, funcs: funcs, top_stmts: astwalk.splice_stmts_with_lambda(mod.top_stmts, drop_assert, elided_lambda_captures) };
 }
 
 // Elision removes reads but cannot introduce a new captured binding or type.
 function elided_lambda_captures(lm: ast.ExprLambda): ast.ExprLambda {
-    if (!lm.captures_known || lm.captures.len() == 0) { return lm; }
-    var captures: ast.TypedBinding[] = [];
-    var seen: string[] = [];
-    for name in astwalk.collect_lambda_idents(lm, []) {
-        if (!util.has_str(seen, name)) {
-            seen = seen.append(name);
-            for cap in lm.captures {
-                if (cap.name == name) { captures = captures.append(cap); }
-            }
+  if (!lm.captures_known || lm.captures.len() == 0) {
+    return lm;
+  }
+  var captures: ast.TypedBinding[] = [];
+  var seen: string[] = [];
+  for name in astwalk.collect_lambda_idents(lm, []) {
+    if (!util.has_str(seen, name)) {
+      seen = seen.append(name);
+      for cap in lm.captures {
+        if (cap.name == name) {
+          captures = captures.append(cap);
         }
+      }
     }
-    return ast.ExprLambda { ...lm, captures: captures };
+  }
+  return ast.ExprLambda { ...lm, captures: captures };
 }
 
 // has_asserts reports whether elide_asserts would remove anything — the same
@@ -380,375 +459,591 @@ function elided_lambda_captures(lm: ast.ExprLambda): ast.ExprLambda {
 // before paying for the `-O` eligibility pre-gate, so a release build of a
 // program with no assert in it costs one AST walk instead of one lowering.
 pub function has_asserts(mod: parser.Module): boolean {
-    var found: boolean = stmts_have_assert(mod.top_stmts);
-    var i: i32 = 0;
-    while (i < mod.funcs.len()) {
-        if (stmts_have_assert(mod.funcs[i].body)) { found = true; }
-        i = i + 1;
+  var found: boolean = stmts_have_assert(mod.top_stmts);
+  var i: i32 = 0;
+  while (i < mod.funcs.len()) {
+    if (stmts_have_assert(mod.funcs[i].body)) {
+      found = true;
     }
-    return found;
+    i = i + 1;
+  }
+  return found;
 }
 
 function stmts_have_assert(stmts: ast.Stmt[]): boolean {
-    var found: boolean = false;
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        found = astwalk.fold_stmt_nodes(stmts[i], found,
-            (st: ast.Stmt, own acc: boolean) => acc || is_assert_stmt(st),
-            (e: ast.Expr, own acc: boolean) => acc,
-            (e: ast.Expr) => true);
-        i = i + 1;
-    }
-    return found;
+  var found: boolean = false;
+  var i: i32 = 0;
+  while (i < stmts.len()) {
+    found = astwalk.fold_stmt_nodes(
+      stmts[i], found,
+      (st: ast.Stmt, own acc: boolean) => acc || is_assert_stmt(st),
+      (e: ast.Expr, own acc: boolean) => acc,
+      (e: ast.Expr) => true,
+    );
+    i = i + 1;
+  }
+  return found;
 }
 
 function is_assert_stmt(st: ast.Stmt): boolean {
-    match (st) {
-        ast.StmtIf(f) => { return f.origin == parser.ORIGIN_ASSERT; },
-        _ => { return false; }
+  match (st) {
+    ast.StmtIf(f) => {
+      return f.origin == parser.ORIGIN_ASSERT;
+    },
+    _ => {
+      return false;
     }
-    return false;
+  }
+  return false;
 }
 
 // drop_assert keeps every statement but the assert desugar. The splicing fold
 // carries it into nested blocks, lambda bodies and match arms, so no shape
 // needs a case here.
 function drop_assert(st: ast.Stmt): ast.Stmt[] {
-    var keep: ast.Stmt[] = [st];
-    match (st) {
-        ast.StmtIf(f) => {
-            if (f.origin == parser.ORIGIN_ASSERT) {
-                var gone: ast.Stmt[] = [];
-                return gone;
-            }
-            return keep;
-        },
-        _ => { return keep; }
+  var keep: ast.Stmt[] = [st];
+  match (st) {
+    ast.StmtIf(f) => {
+      if (f.origin == parser.ORIGIN_ASSERT) {
+        var gone: ast.Stmt[] = [];
+        return gone;
+      }
+      return keep;
+    },
+    _ => {
+      return keep;
     }
-    return keep;
+  }
+  return keep;
 }
 
 // =================== VALIDATION ====================
-
 // Convenience: parse a source, fold, return the folded module.
 // is_binary_init reports whether the module's first statement binds an
 // unfolded `op`.
 function is_binary_init(mod: parser.Module, op: string): boolean {
-    if let ast.StmtVar(v) = mod.top_stmts[0] {
-        if let ast.ExprBinary(b) = v.init { return b.op == op; }
+  if let ast.StmtVar(v) = mod.top_stmts[0] {
+    if let ast.ExprBinary(b) = v.init {
+      return b.op == op;
     }
-    return false;
+  }
+  return false;
 }
 
 function fold_source(src: string): parser.Module {
-    return fold_module(parser.parse_module(lexer.tokenize(src)));
+  return fold_module(parser.parse_module(lexer.tokenize(src)));
 }
 
 function main(): i32 {
-    // `1 + 2 * 3` should fold to literal 7. Verify the var
-    // init is a single ExprNumber whose text reads "7".
-    var mod1: parser.Module = fold_source("var a = 1 + 2 * 3; return a;");
-    match (mod1.top_stmts[0]) {
-        ast.StmtVar(v) => {
-            match (v.init) {
-                ast.ExprNumber(n) => { if (n.text != "7") { return 10; } },
-                _ => { return 11; }
-            }
+  // `1 + 2 * 3` should fold to literal 7. Verify the var
+  // init is a single ExprNumber whose text reads "7".
+  var mod1: parser.Module = fold_source("var a = 1 + 2 * 3; return a;");
+  match (mod1.top_stmts[0]) {
+    ast.StmtVar(v) => {
+      match (v.init) {
+        ast.ExprNumber(n) => {
+          if (n.text != "7") {
+            return 10;
+          }
         },
-        _ => { return 12; }
+        _ => {
+          return 11;
+        }
+      }
+    },
+    _ => {
+      return 12;
     }
+  }
 
-    // `(1 + 2) * 3` folds to 9.
-    var mod2: parser.Module = fold_source("var a = (1 + 2) * 3; return a;");
-    match (mod2.top_stmts[0]) {
-        ast.StmtVar(v) => {
-            match (v.init) {
-                ast.ExprNumber(n) => { if (n.text != "9") { return 20; } },
-                _ => { return 21; }
-            }
+  // `(1 + 2) * 3` folds to 9.
+  var mod2: parser.Module = fold_source("var a = (1 + 2) * 3; return a;");
+  match (mod2.top_stmts[0]) {
+    ast.StmtVar(v) => {
+      match (v.init) {
+        ast.ExprNumber(n) => {
+          if (n.text != "9") {
+            return 20;
+          }
         },
-        _ => { return 22; }
+        _ => {
+          return 21;
+        }
+      }
+    },
+    _ => {
+      return 22;
     }
+  }
 
-    // Comparison folds to bool: `5 < 10` → true.
-    var mod3: parser.Module = fold_source("var b = 5 < 10; return 0;");
-    match (mod3.top_stmts[0]) {
-        ast.StmtVar(v) => {
-            match (v.init) {
-                ast.ExprBool(b) => { if (!b.value) { return 30; } },
-                _ => { return 31; }
-            }
+  // Comparison folds to bool: `5 < 10` → true.
+  var mod3: parser.Module = fold_source("var b = 5 < 10; return 0;");
+  match (mod3.top_stmts[0]) {
+    ast.StmtVar(v) => {
+      match (v.init) {
+        ast.ExprBool(b) => {
+          if (!b.value) {
+            return 30;
+          }
         },
-        _ => { return 32; }
+        _ => {
+          return 31;
+        }
+      }
+    },
+    _ => {
+      return 32;
     }
+  }
 
-    // Boolean: `true && false` → false. `!true` → false.
-    var mod4: parser.Module = fold_source("var a = true && false; var b = !true; return 0;");
-    match (mod4.top_stmts[0]) {
-        ast.StmtVar(v) => {
-            match (v.init) {
-                ast.ExprBool(b) => { if (b.value) { return 40; } },
-                _ => { return 41; }
-            }
+  // Boolean: `true && false` → false. `!true` → false.
+  var mod4: parser.Module = fold_source("var a = true && false; var b = !true; return 0;");
+  match (mod4.top_stmts[0]) {
+    ast.StmtVar(v) => {
+      match (v.init) {
+        ast.ExprBool(b) => {
+          if (b.value) {
+            return 40;
+          }
         },
-        _ => { return 42; }
+        _ => {
+          return 41;
+        }
+      }
+    },
+    _ => {
+      return 42;
     }
-    match (mod4.top_stmts[1]) {
-        ast.StmtVar(v) => {
-            match (v.init) {
-                ast.ExprBool(b) => { if (b.value) { return 43; } },
-                _ => { return 44; }
-            }
+  }
+  match (mod4.top_stmts[1]) {
+    ast.StmtVar(v) => {
+      match (v.init) {
+        ast.ExprBool(b) => {
+          if (b.value) {
+            return 43;
+          }
         },
-        _ => { return 45; }
+        _ => {
+          return 44;
+        }
+      }
+    },
+    _ => {
+      return 45;
     }
+  }
 
-    // String concat folds: `"hi " + "there"` → single ExprString.
-    var mod5: parser.Module = fold_source("var s = \"hi \" + \"there\"; return 0;");
-    match (mod5.top_stmts[0]) {
-        ast.StmtVar(v) => {
-            match (v.init) {
-                ast.ExprString(s) => { if (s.value != "hi there") { return 50; } },
-                _ => { return 51; }
-            }
+  // String concat folds: `"hi " + "there"` → single ExprString.
+  var mod5: parser.Module = fold_source("var s = \"hi \" + \"there\"; return 0;");
+  match (mod5.top_stmts[0]) {
+    ast.StmtVar(v) => {
+      match (v.init) {
+        ast.ExprString(s) => {
+          if (s.value != "hi there") {
+            return 50;
+          }
         },
-        _ => { return 52; }
+        _ => {
+          return 51;
+        }
+      }
+    },
+    _ => {
+      return 52;
     }
+  }
 
-    // Non-constant operand prevents folding: `1 + x` stays as
-    // an ExprBinary. Confirms the pass leaves unknowns alone.
-    var mod6: parser.Module = fold_source("var a = 1 + x; return 0;");
-    match (mod6.top_stmts[0]) {
-        ast.StmtVar(v) => {
-            match (v.init) {
-                ast.ExprBinary(b) => { if (b.op != "+") { return 60; } },
-                _ => { return 61; }
-            }
+  // Non-constant operand prevents folding: `1 + x` stays as
+  // an ExprBinary. Confirms the pass leaves unknowns alone.
+  var mod6: parser.Module = fold_source("var a = 1 + x; return 0;");
+  match (mod6.top_stmts[0]) {
+    ast.StmtVar(v) => {
+      match (v.init) {
+        ast.ExprBinary(b) => {
+          if (b.op != "+") {
+            return 60;
+          }
         },
-        _ => { return 62; }
+        _ => {
+          return 61;
+        }
+      }
+    },
+    _ => {
+      return 62;
     }
+  }
 
-    // Division by zero stays unfolded (the runtime should surface
-    // the error, not the folder).
-    var mod7: parser.Module = fold_source("var a = 1 / 0; return 0;");
-    match (mod7.top_stmts[0]) {
-        ast.StmtVar(v) => {
-            match (v.init) {
-                ast.ExprBinary(b) => { if (b.op != "/") { return 70; } },
-                _ => { return 71; }
-            }
+  // Division by zero stays unfolded (the runtime should surface
+  // the error, not the folder).
+  var mod7: parser.Module = fold_source("var a = 1 / 0; return 0;");
+  match (mod7.top_stmts[0]) {
+    ast.StmtVar(v) => {
+      match (v.init) {
+        ast.ExprBinary(b) => {
+          if (b.op != "/") {
+            return 70;
+          }
         },
-        _ => { return 72; }
+        _ => {
+          return 71;
+        }
+      }
+    },
+    _ => {
+      return 72;
     }
+  }
 
-    // Nested foldings cascade: `(2 + 3) * (4 + 5)` → 45 in one pass.
-    var mod8: parser.Module = fold_source("var a = (2 + 3) * (4 + 5); return 0;");
-    match (mod8.top_stmts[0]) {
-        ast.StmtVar(v) => {
-            match (v.init) {
-                ast.ExprNumber(n) => { if (n.text != "45") { return 80; } },
-                _ => { return 81; }
-            }
+  // Nested foldings cascade: `(2 + 3) * (4 + 5)` → 45 in one pass.
+  var mod8: parser.Module = fold_source("var a = (2 + 3) * (4 + 5); return 0;");
+  match (mod8.top_stmts[0]) {
+    ast.StmtVar(v) => {
+      match (v.init) {
+        ast.ExprNumber(n) => {
+          if (n.text != "45") {
+            return 80;
+          }
         },
-        _ => { return 82; }
+        _ => {
+          return 81;
+        }
+      }
+    },
+    _ => {
+      return 82;
     }
+  }
 
-    // Folds inside function-decl bodies too.
-    var mod9: parser.Module = fold_source("function add(): i32 { return 1 + 2; } function main(): i32 { return add(); }");
-    if (mod9.funcs.len() != 2) { return 90; }
-    match (mod9.funcs[0].body[0]) {
-        ast.StmtReturn(r) => {
-            match (r.value) {
-                ast.ExprNumber(n) => { if (n.text != "3") { return 91; } },
-                _ => { return 92; }
-            }
+  // Folds inside function-decl bodies too.
+  var mod9: parser.Module = fold_source("function add(): i32 { return 1 + 2; } function main(): i32 { return add(); }");
+  if (mod9.funcs.len() != 2) {
+    return 90;
+  }
+  match (mod9.funcs[0].body[0]) {
+    ast.StmtReturn(r) => {
+      match (r.value) {
+        ast.ExprNumber(n) => {
+          if (n.text != "3") {
+            return 91;
+          }
         },
-        _ => { return 93; }
+        _ => {
+          return 92;
+        }
+      }
+    },
+    _ => {
+      return 93;
     }
+  }
 
-    // Unsigned operands fold with UNSIGNED semantics, because the arithmetic
-    // runs in i64 and a u32 literal keeps its value there. Read as signed i32
-    // this answered -677 (#6261's fixture value). The suffix is copied onto the
-    // folded literal, so the result is still a u32.
-    var mod10: parser.Module = fold_source("var a = 2147484527u32 % 861u32; return 0;");
-    match (mod10.top_stmts[0]) {
-        ast.StmtVar(v) => {
-            match (v.init) {
-                ast.ExprNumber(n) => {
-                    if (n.text != "713") { return 100; }
-                    if (n.suffix != "u32") { return 101; }
+  // Unsigned operands fold with UNSIGNED semantics, because the arithmetic
+  // runs in i64 and a u32 literal keeps its value there. Read as signed i32
+  // this answered -677 (#6261's fixture value). The suffix is copied onto the
+  // folded literal, so the result is still a u32.
+  var mod10: parser.Module = fold_source("var a = 2147484527u32 % 861u32; return 0;");
+  match (mod10.top_stmts[0]) {
+    ast.StmtVar(v) => {
+      match (v.init) {
+        ast.ExprNumber(n) => {
+          if (n.text != "713") {
+            return 100;
+          }
+          if (n.suffix != "u32") {
+            return 101;
+          }
+        },
+        _ => {
+          return 102;
+        }
+      }
+    },
+    _ => {
+      return 103;
+    }
+  }
+
+  // A result outside the operands' width is NOT folded: `5u32 - 10u32` wraps
+  // to 4294967291 at runtime and this pass does not wrap, so folding it to
+  // -5 would change the answer.
+  var mod11: parser.Module = fold_source("var a = 5u32 - 10u32; return 0;");
+  match (mod11.top_stmts[0]) {
+    ast.StmtVar(v) => {
+      match (v.init) {
+        ast.ExprBinary(b) => {
+          if (b.op != "-") {
+            return 110;
+          }
+        },
+        _ => {
+          return 111;
+        }
+      }
+    },
+    _ => {
+      return 112;
+    }
+  }
+
+  // Same rule one width up on the signed side: `2000000000 + 2000000000`
+  // overflows i32, so it stays a runtime add.
+  var mod12: parser.Module = fold_source("var a = 2000000000 + 2000000000; return 0;");
+  match (mod12.top_stmts[0]) {
+    ast.StmtVar(v) => {
+      match (v.init) {
+        ast.ExprBinary(b) => {
+          if (b.op != "+") {
+            return 120;
+          }
+        },
+        _ => {
+          return 121;
+        }
+      }
+    },
+    _ => {
+      return 122;
+    }
+  }
+
+  // Mixed widths are the checker's business — folding would have to pick one
+  // of the two types, so it picks neither.
+  var mod13: parser.Module = fold_source("var a = 5u32 + 5; return 0;");
+  match (mod13.top_stmts[0]) {
+    ast.StmtVar(v) => {
+      match (v.init) {
+        ast.ExprBinary(b) => {
+          if (b.op != "+") {
+            return 130;
+          }
+        },
+        _ => {
+          return 131;
+        }
+      }
+    },
+    _ => {
+      return 132;
+    }
+  }
+
+  // i32::MIN: the one magnitude with no i32 representation, so it is spelled
+  // `0 - 2147483647 - 1`. Suffixed, the chain folds all the way, and the sign
+  // lands on a unary minus rather than in the literal's text, whose 10-digit
+  // "2147483648" reads as an i64 (irlower.literal_is_i64 measures magnitude).
+  var mod14: parser.Module = fold_source("var a = 0i32 - 2147483647i32 - 1i32; return 0;");
+  match (mod14.top_stmts[0]) {
+    ast.StmtVar(v) => {
+      match (v.init) {
+        ast.ExprUnary(u) => {
+          if (u.op != "-") {
+            return 140;
+          }
+          match (u.operand) {
+            ast.ExprNumber(n) => {
+              if (n.text != "2147483648") {
+                return 141;
+              }
+            },
+            _ => {
+              return 142;
+            }
+          }
+        },
+        _ => {
+          return 143;
+        }
+      }
+    },
+    _ => {
+      return 144;
+    }
+  }
+
+  // Unsuffixed, the same chain is 2147483648 in a u32 context, so it stays a
+  // runtime chain, as does any negative answer.
+  if (!is_binary_init(fold_source("var a = 0 - 2147483647 - 1; return 0;"), "-")) {
+    return 145;
+  }
+  if (!is_binary_init(fold_source("var a = 0 - 1; return 0;"), "-")) {
+    return 146;
+  }
+  // Operands a u8 can hold may be u8s, and `(255 + 1) / 2` is 0 there.
+  if (!is_binary_init(fold_source("var a = (255 + 1) / 2; return 0;"), "/")) {
+    return 147;
+  }
+  if (!is_binary_init(fold_source("var a = 16 * 16; return 0;"), "*")) {
+    return 148;
+  }
+  // An operand above 255 rules u8 out, so an answer within i32 folds.
+  match (fold_source("var a = 1024 * 1024; return 0;").top_stmts[0]) {
+    ast.StmtVar(v) => {
+      match (v.init) {
+        ast.ExprNumber(n) => {
+          if (n.text != "1048576") {
+            return 149;
+          }
+        },
+        _ => {
+          return 133;
+        }
+      }
+    },
+    _ => {
+      return 134;
+    }
+  }
+
+  // -O's assert elision. The desugar is marked by the parser, so the pass
+  // finds it again; a hand-written `if` of the same shape is untouched.
+  var mod15: parser.Module = elide_asserts(fold_source(
+    "function main(): i32 { assert(1 > 2); return 0; }",
+  ));
+  if (mod15.funcs[0].body.len() != 1) {
+    return 150;
+  }
+  match (mod15.funcs[0].body[0]) {
+    ast.StmtReturn(_) => {},
+    _ => {
+      return 151;
+    }
+  }
+
+  var mod16: parser.Module = elide_asserts(fold_source(
+    "function main(): i32 { if (1 > 2) { return 3; } return 0; }",
+  ));
+  if (mod16.funcs[0].body.len() != 2) {
+    return 152;
+  }
+
+  // The three places a top-level filter misses. Each nests one assert; all
+  // three have to go, and the enclosing statement has to stay.
+  var mod17: parser.Module = elide_asserts(fold_source(
+    "function main(): i32 { while (false) { assert(1 > 2); } return 0; }",
+  ));
+  match (mod17.funcs[0].body[0]) {
+    ast.StmtWhile(w) => {
+      if (w.body.len() != 0) {
+        return 160;
+      }
+    },
+    _ => {
+      return 161;
+    }
+  }
+
+  var mod18: parser.Module = elide_asserts(fold_source(
+    "function main(): i32 { var f = (): i32 => { assert(1 > 2); return 1; }; return 0; }",
+  ));
+  match (mod18.funcs[0].body[0]) {
+    ast.StmtVar(v) => {
+      match (v.init) {
+        ast.ExprLambda(lm) => {
+          if (lm.body.len() != 1) {
+            return 170;
+          }
+        },
+        _ => {
+          return 171;
+        }
+      }
+    },
+    _ => {
+      return 172;
+    }
+  }
+
+  var mod19: parser.Module = elide_asserts(fold_source(
+    "enum E { A(i32) } function main(): i32 { var e: E = E.A(1); match (e) { E.A(v) => { assert(v > 2); }, _ => { return 9; } } return 0; }",
+  ));
+  match (mod19.funcs[0].body[1]) {
+    ast.StmtMatch(mt) => {
+      if (mt.arms[0].body.len() != 0) {
+        return 180;
+      }
+    },
+    _ => {
+      return 181;
+    }
+  }
+
+  // A lambda nested in a lambda: the splice must reach it, and reach it
+  // ONCE — a body visited twice would splice an expanding rewrite twice.
+  var mod20: parser.Module = elide_asserts(fold_source(
+    "function main(): i32 { var f = (): i32 => { var g = (): i32 => { assert(1 > 2); return 1; }; return 2; }; return 0; }",
+  ));
+  match (mod20.funcs[0].body[0]) {
+    ast.StmtVar(v) => {
+      match (v.init) {
+        ast.ExprLambda(outer) => {
+          if (outer.body.len() != 2) {
+            return 190;
+          }
+          match (outer.body[0]) {
+            ast.StmtVar(iv) => {
+              match (iv.init) {
+                ast.ExprLambda(inner) => {
+                  if (inner.body.len() != 1) {
+                    return 191;
+                  }
                 },
-                _ => { return 102; }
+                _ => {
+                  return 192;
+                }
+              }
+            },
+            _ => {
+              return 193;
             }
+          }
         },
-        _ => { return 103; }
+        _ => {
+          return 194;
+        }
+      }
+    },
+    _ => {
+      return 195;
     }
+  }
 
-    // A result outside the operands' width is NOT folded: `5u32 - 10u32` wraps
-    // to 4294967291 at runtime and this pass does not wrap, so folding it to
-    // -5 would change the answer.
-    var mod11: parser.Module = fold_source("var a = 5u32 - 10u32; return 0;");
-    match (mod11.top_stmts[0]) {
-        ast.StmtVar(v) => {
-            match (v.init) {
-                ast.ExprBinary(b) => { if (b.op != "-") { return 110; } },
-                _ => { return 111; }
-            }
-        },
-        _ => { return 112; }
-    }
+  // has_asserts must answer for exactly the statements elide_asserts removes,
+  // so it is asked over the same shapes: the plain one, the hand-written `if`
+  // that is not an assert, and each nesting the top-level filter misses.
+  if (!has_asserts(fold_source("function main(): i32 { assert(1 > 2); return 0; }"))) {
+    return 196;
+  }
+  if (has_asserts(fold_source("function main(): i32 { if (1 > 2) { return 3; } return 0; }"))) {
+    return 197;
+  }
+  if (!has_asserts(fold_source("function main(): i32 { while (false) { assert(1 > 2); } return 0; }"))) {
+    return 198;
+  }
+  if (!has_asserts(fold_source("function main(): i32 { var f = (): i32 => { assert(1 > 2); return 1; }; return 0; }"))) {
+    return 199;
+  }
+  if (!has_asserts(fold_source("enum E { A(i32) } function main(): i32 { var e: E = E.A(1); match (e) { E.A(v) => { assert(v > 2); }, _ => { return 9; } } return 0; }"))) {
+    return 202;
+  }
+  if (has_asserts(elide_asserts(fold_source("function main(): i32 { while (false) { assert(1 > 2); } return 0; }")))) {
+    return 203;
+  }
 
-    // Same rule one width up on the signed side: `2000000000 + 2000000000`
-    // overflows i32, so it stays a runtime add.
-    var mod12: parser.Module = fold_source("var a = 2000000000 + 2000000000; return 0;");
-    match (mod12.top_stmts[0]) {
-        ast.StmtVar(v) => {
-            match (v.init) {
-                ast.ExprBinary(b) => { if (b.op != "+") { return 120; } },
-                _ => { return 121; }
-            }
-        },
-        _ => { return 122; }
-    }
+  // fold_module rebuilds every FuncDecl, so it has to carry every field
+  // across. It used to spell them out and reset bound_traits to empty in the
+  // process; the checker and the printer both read that field, and both run
+  // before this pass, so nothing observed the loss — until something after
+  // it does.
+  var mod21: parser.Module = fold_module(parser.parse_module(lexer.tokenize(
+    "function pick[T: Ord](a: T, b: T): T { if (a < b) { return a; } return b; }",
+  )));
+  if (mod21.funcs[0].bound_traits.len() != 1) {
+    return 200;
+  }
+  if (mod21.funcs[0].bound_traits[0] != "Ord") {
+    return 201;
+  }
 
-    // Mixed widths are the checker's business — folding would have to pick one
-    // of the two types, so it picks neither.
-    var mod13: parser.Module = fold_source("var a = 5u32 + 5; return 0;");
-    match (mod13.top_stmts[0]) {
-        ast.StmtVar(v) => {
-            match (v.init) {
-                ast.ExprBinary(b) => { if (b.op != "+") { return 130; } },
-                _ => { return 131; }
-            }
-        },
-        _ => { return 132; }
-    }
-
-    // i32::MIN: the one magnitude with no i32 representation, so it is spelled
-    // `0 - 2147483647 - 1`. Suffixed, the chain folds all the way, and the sign
-    // lands on a unary minus rather than in the literal's text, whose 10-digit
-    // "2147483648" reads as an i64 (irlower.literal_is_i64 measures magnitude).
-    var mod14: parser.Module = fold_source("var a = 0i32 - 2147483647i32 - 1i32; return 0;");
-    match (mod14.top_stmts[0]) {
-        ast.StmtVar(v) => {
-            match (v.init) {
-                ast.ExprUnary(u) => {
-                    if (u.op != "-") { return 140; }
-                    match (u.operand) {
-                        ast.ExprNumber(n) => { if (n.text != "2147483648") { return 141; } },
-                        _ => { return 142; }
-                    }
-                },
-                _ => { return 143; }
-            }
-        },
-        _ => { return 144; }
-    }
-
-    // Unsuffixed, the same chain is 2147483648 in a u32 context, so it stays a
-    // runtime chain, as does any negative answer.
-    if (!is_binary_init(fold_source("var a = 0 - 2147483647 - 1; return 0;"), "-")) { return 145; }
-    if (!is_binary_init(fold_source("var a = 0 - 1; return 0;"), "-")) { return 146; }
-    // Operands a u8 can hold may be u8s, and `(255 + 1) / 2` is 0 there.
-    if (!is_binary_init(fold_source("var a = (255 + 1) / 2; return 0;"), "/")) { return 147; }
-    if (!is_binary_init(fold_source("var a = 16 * 16; return 0;"), "*")) { return 148; }
-    // An operand above 255 rules u8 out, so an answer within i32 folds.
-    match (fold_source("var a = 1024 * 1024; return 0;").top_stmts[0]) {
-        ast.StmtVar(v) => {
-            match (v.init) {
-                ast.ExprNumber(n) => { if (n.text != "1048576") { return 149; } },
-                _ => { return 133; }
-            }
-        },
-        _ => { return 134; }
-    }
-
-    // -O's assert elision. The desugar is marked by the parser, so the pass
-    // finds it again; a hand-written `if` of the same shape is untouched.
-    var mod15: parser.Module = elide_asserts(fold_source(
-        "function main(): i32 { assert(1 > 2); return 0; }"));
-    if (mod15.funcs[0].body.len() != 1) { return 150; }
-    match (mod15.funcs[0].body[0]) {
-        ast.StmtReturn(_) => { },
-        _ => { return 151; }
-    }
-
-    var mod16: parser.Module = elide_asserts(fold_source(
-        "function main(): i32 { if (1 > 2) { return 3; } return 0; }"));
-    if (mod16.funcs[0].body.len() != 2) { return 152; }
-
-    // The three places a top-level filter misses. Each nests one assert; all
-    // three have to go, and the enclosing statement has to stay.
-    var mod17: parser.Module = elide_asserts(fold_source(
-        "function main(): i32 { while (false) { assert(1 > 2); } return 0; }"));
-    match (mod17.funcs[0].body[0]) {
-        ast.StmtWhile(w) => { if (w.body.len() != 0) { return 160; } },
-        _ => { return 161; }
-    }
-
-    var mod18: parser.Module = elide_asserts(fold_source(
-        "function main(): i32 { var f = (): i32 => { assert(1 > 2); return 1; }; return 0; }"));
-    match (mod18.funcs[0].body[0]) {
-        ast.StmtVar(v) => {
-            match (v.init) {
-                ast.ExprLambda(lm) => { if (lm.body.len() != 1) { return 170; } },
-                _ => { return 171; }
-            }
-        },
-        _ => { return 172; }
-    }
-
-    var mod19: parser.Module = elide_asserts(fold_source(
-        "enum E { A(i32) } function main(): i32 { var e: E = E.A(1); match (e) { E.A(v) => { assert(v > 2); }, _ => { return 9; } } return 0; }"));
-    match (mod19.funcs[0].body[1]) {
-        ast.StmtMatch(mt) => { if (mt.arms[0].body.len() != 0) { return 180; } },
-        _ => { return 181; }
-    }
-
-    // A lambda nested in a lambda: the splice must reach it, and reach it
-    // ONCE — a body visited twice would splice an expanding rewrite twice.
-    var mod20: parser.Module = elide_asserts(fold_source(
-        "function main(): i32 { var f = (): i32 => { var g = (): i32 => { assert(1 > 2); return 1; }; return 2; }; return 0; }"));
-    match (mod20.funcs[0].body[0]) {
-        ast.StmtVar(v) => {
-            match (v.init) {
-                ast.ExprLambda(outer) => {
-                    if (outer.body.len() != 2) { return 190; }
-                    match (outer.body[0]) {
-                        ast.StmtVar(iv) => {
-                            match (iv.init) {
-                                ast.ExprLambda(inner) => { if (inner.body.len() != 1) { return 191; } },
-                                _ => { return 192; }
-                            }
-                        },
-                        _ => { return 193; }
-                    }
-                },
-                _ => { return 194; }
-            }
-        },
-        _ => { return 195; }
-    }
-
-    // has_asserts must answer for exactly the statements elide_asserts removes,
-    // so it is asked over the same shapes: the plain one, the hand-written `if`
-    // that is not an assert, and each nesting the top-level filter misses.
-    if (!has_asserts(fold_source("function main(): i32 { assert(1 > 2); return 0; }"))) { return 196; }
-    if (has_asserts(fold_source("function main(): i32 { if (1 > 2) { return 3; } return 0; }"))) { return 197; }
-    if (!has_asserts(fold_source("function main(): i32 { while (false) { assert(1 > 2); } return 0; }"))) { return 198; }
-    if (!has_asserts(fold_source("function main(): i32 { var f = (): i32 => { assert(1 > 2); return 1; }; return 0; }"))) { return 199; }
-    if (!has_asserts(fold_source("enum E { A(i32) } function main(): i32 { var e: E = E.A(1); match (e) { E.A(v) => { assert(v > 2); }, _ => { return 9; } } return 0; }"))) { return 202; }
-    if (has_asserts(elide_asserts(fold_source("function main(): i32 { while (false) { assert(1 > 2); } return 0; }")))) { return 203; }
-
-    // fold_module rebuilds every FuncDecl, so it has to carry every field
-    // across. It used to spell them out and reset bound_traits to empty in the
-    // process; the checker and the printer both read that field, and both run
-    // before this pass, so nothing observed the loss — until something after
-    // it does.
-    var mod21: parser.Module = fold_module(parser.parse_module(lexer.tokenize(
-        "function pick[T: Ord](a: T, b: T): T { if (a < b) { return a; } return b; }")));
-    if (mod21.funcs[0].bound_traits.len() != 1) { return 200; }
-    if (mod21.funcs[0].bound_traits[0] != "Ord") { return 201; }
-
-    return 0;
+  return 0;
 }

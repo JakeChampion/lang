@@ -1,4 +1,5 @@
 import "std/test";
+
 // examples/tests/array_at_and_f32_range_test.fern — batch 28
 // additions to std/test:
 //   * `test.assert_at(arr, idx, expected)` — generic single-
@@ -6,166 +7,185 @@ import "std/test";
 //   * `test.assert_in_range_f32(v, lo, hi)` — f32 mirror of
 //     the existing `_i32` / `_i64` / `_f64` range
 //     helpers; NaN inputs always fail.
-
 function test_at_i32_pass(): test.TestOutcome {
-    return test.assert_at([10, 20, 30, 40], 2, 30);
+  return test.assert_at([10, 20, 30, 40], 2, 30);
 }
 
 function test_at_i32_first(): test.TestOutcome {
-    return test.assert_at([10, 20, 30], 0, 10);
+  return test.assert_at([10, 20, 30], 0, 10);
 }
 
 function test_at_i32_last(): test.TestOutcome {
-    return test.assert_at([10, 20, 30], 2, 30);
+  return test.assert_at([10, 20, 30], 2, 30);
 }
 
 function test_at_i32_wrong_value(): test.TestOutcome {
-    match (test.assert_at([10, 20, 30], 1, 99)) {
-        Pass => { return test.fail("wrong value should fail"); },
-        Fail(msg) => {
-            if (!msg.contains("at index 1") || !msg.contains("expected 99") || !msg.contains("got 20")) {
-                return test.fail("expected index + both values: " + msg);
-            }
-            return test.pass();
-        }
+  match (test.assert_at([10, 20, 30], 1, 99)) {
+    Pass => {
+      return test.fail("wrong value should fail");
+    },
+    Fail(msg) => {
+      if (!msg.contains("at index 1") || !msg.contains("expected 99") || !msg.contains("got 20")) {
+        return test.fail("expected index + both values: " + msg);
+      }
+      return test.pass();
     }
+  }
 }
 
 function test_at_i32_out_of_bounds_high(): test.TestOutcome {
-    match (test.assert_at([10, 20, 30], 5, 0)) {
-        Pass => { return test.fail("OOB high should fail"); },
-        Fail(msg) => {
-            // Distinct diagnostic from value-mismatch so the
-            // mode is obvious in CI logs.
-            if (!msg.contains("out of bounds") || !msg.contains("length 3")) {
-                return test.fail("expected 'out of bounds' + 'length 3': " + msg);
-            }
-            return test.pass();
-        }
+  match (test.assert_at([10, 20, 30], 5, 0)) {
+    Pass => {
+      return test.fail("OOB high should fail");
+    },
+    Fail(msg) => {
+      // Distinct diagnostic from value-mismatch so the
+      // mode is obvious in CI logs.
+      if (!msg.contains("out of bounds") || !msg.contains("length 3")) {
+        return test.fail("expected 'out of bounds' + 'length 3': " + msg);
+      }
+      return test.pass();
     }
+  }
 }
 
 function test_at_i32_out_of_bounds_negative(): test.TestOutcome {
-    match (test.assert_at([10, 20, 30], 0 - 1, 0)) {
-        Pass => { return test.fail("negative OOB should fail"); },
-        Fail(msg) => {
-            if (!msg.contains("out of bounds")) {
-                return test.fail("expected 'out of bounds': " + msg);
-            }
-            return test.pass();
-        }
+  match (test.assert_at([10, 20, 30], 0 - 1, 0)) {
+    Pass => {
+      return test.fail("negative OOB should fail");
+    },
+    Fail(msg) => {
+      if (!msg.contains("out of bounds")) {
+        return test.fail("expected 'out of bounds': " + msg);
+      }
+      return test.pass();
     }
+  }
 }
 
 function test_at_i32_empty_array(): test.TestOutcome {
-    var empty: i32[] = [];
-    match (test.assert_at(empty, 0, 0)) {
-        Pass => { return test.fail("empty array, idx 0 should fail OOB"); },
-        Fail(_) => { return test.pass(); }
+  var empty: i32[] = [];
+  match (test.assert_at(empty, 0, 0)) {
+    Pass => {
+      return test.fail("empty array, idx 0 should fail OOB");
+    },
+    Fail(_) => {
+      return test.pass();
     }
+  }
 }
 
 function test_at_string_pass(): test.TestOutcome {
-    return test.assert_at(["alpha", "beta", "gamma"], 1, "beta");
+  return test.assert_at(["alpha", "beta", "gamma"], 1, "beta");
 }
 
 function test_at_string_wrong_value_embeds_both(): test.TestOutcome {
-    // The generic `assert_at` renders values via Display (no quoting,
-    // matching the scalar `assert_eq` collapse) — the message embeds
-    // both the expected and actual element.
-    match (test.assert_at(["alpha", "beta"], 0, "ALPHA")) {
-        Pass => { return test.fail("wrong value should fail"); },
-        Fail(msg) => {
-            if (!msg.contains("ALPHA") || !msg.contains("alpha")) {
-                return test.fail("expected both values in message: " + msg);
-            }
-            return test.pass();
-        }
+  // The generic `assert_at` renders values via Display (no quoting,
+  // matching the scalar `assert_eq` collapse) — the message embeds
+  // both the expected and actual element.
+  match (test.assert_at(["alpha", "beta"], 0, "ALPHA")) {
+    Pass => {
+      return test.fail("wrong value should fail");
+    },
+    Fail(msg) => {
+      if (!msg.contains("ALPHA") || !msg.contains("alpha")) {
+        return test.fail("expected both values in message: " + msg);
+      }
+      return test.pass();
     }
+  }
 }
 
 function test_at_i64_pass(): test.TestOutcome {
-    var arr: i64[] = [100 as i64, 200 as i64, 300 as i64];
-    return test.assert_at(arr, 2, 300 as i64);
+  var arr: i64[] = [100 as i64, 200 as i64, 300 as i64];
+  return test.assert_at(arr, 2, 300 as i64);
 }
 
 function test_at_i64_wrong_value(): test.TestOutcome {
-    var arr: i64[] = [100 as i64, 200 as i64];
-    match (test.assert_at(arr, 0, 999 as i64)) {
-        Pass => { return test.fail("expected mismatch fail"); },
-        Fail(msg) => {
-            if (!msg.contains("expected 999") || !msg.contains("got 100")) {
-                return test.fail("expected both values: " + msg);
-            }
-            return test.pass();
-        }
+  var arr: i64[] = [100 as i64, 200 as i64];
+  match (test.assert_at(arr, 0, 999 as i64)) {
+    Pass => {
+      return test.fail("expected mismatch fail");
+    },
+    Fail(msg) => {
+      if (!msg.contains("expected 999") || !msg.contains("got 100")) {
+        return test.fail("expected both values: " + msg);
+      }
+      return test.pass();
     }
+  }
 }
 
 function test_in_range_f32_pass(): test.TestOutcome {
-    var v: f32 = 1.5 as f32;
-    var lo: f32 = 1.0 as f32;
-    var hi: f32 = 2.0 as f32;
-    return test.assert_in_range_f32(v, lo, hi);
+  var v: f32 = 1.5 as f32;
+  var lo: f32 = 1.0 as f32;
+  var hi: f32 = 2.0 as f32;
+  return test.assert_in_range_f32(v, lo, hi);
 }
 
 function test_in_range_f32_inclusive_bounds(): test.TestOutcome {
-    var lo: f32 = 1.0 as f32;
-    var hi: f32 = 2.0 as f32;
-    match (test.assert_in_range_f32(lo, lo, hi)) {
-        Fail(msg) => { return test.fail("lo should be in range: " + msg); },
-        Pass => {}
-    }
-    return test.assert_in_range_f32(hi, lo, hi);
+  var lo: f32 = 1.0 as f32;
+  var hi: f32 = 2.0 as f32;
+  match (test.assert_in_range_f32(lo, lo, hi)) {
+    Fail(msg) => {
+      return test.fail("lo should be in range: " + msg);
+    },
+    Pass => {}
+  }
+  return test.assert_in_range_f32(hi, lo, hi);
 }
 
 function test_in_range_f32_below(): test.TestOutcome {
-    var v: f32 = 0.5 as f32;
-    var lo: f32 = 1.0 as f32;
-    var hi: f32 = 2.0 as f32;
-    match (test.assert_in_range_f32(v, lo, hi)) {
-        Pass => { return test.fail("below-range should fail"); },
-        Fail(msg) => {
-            if (!msg.contains("lower bound")) {
-                return test.fail("expected 'lower bound': " + msg);
-            }
-            return test.pass();
-        }
+  var v: f32 = 0.5 as f32;
+  var lo: f32 = 1.0 as f32;
+  var hi: f32 = 2.0 as f32;
+  match (test.assert_in_range_f32(v, lo, hi)) {
+    Pass => {
+      return test.fail("below-range should fail");
+    },
+    Fail(msg) => {
+      if (!msg.contains("lower bound")) {
+        return test.fail("expected 'lower bound': " + msg);
+      }
+      return test.pass();
     }
+  }
 }
 
 function test_in_range_f32_nan_fails(): test.TestOutcome {
-    var z: f32 = 0.0 as f32;
-    var nan: f32 = z / z;
-    var lo: f32 = 0.0 as f32;
-    var hi: f32 = 1.0 as f32;
-    match (test.assert_in_range_f32(nan, lo, hi)) {
-        Pass => { return test.fail("NaN should fail range check"); },
-        Fail(msg) => {
-            if (!msg.contains("NaN")) {
-                return test.fail("expected 'NaN' in failure: " + msg);
-            }
-            return test.pass();
-        }
+  var z: f32 = 0.0 as f32;
+  var nan: f32 = z / z;
+  var lo: f32 = 0.0 as f32;
+  var hi: f32 = 1.0 as f32;
+  match (test.assert_in_range_f32(nan, lo, hi)) {
+    Pass => {
+      return test.fail("NaN should fail range check");
+    },
+    Fail(msg) => {
+      if (!msg.contains("NaN")) {
+        return test.fail("expected 'NaN' in failure: " + msg);
+      }
+      return test.pass();
     }
+  }
 }
 
 function main(): i32 {
-    var r: test.TestRunner = test.test_new("array_at + in_range_f32");
-    r = r.it("at_i32 middle",                test_at_i32_pass);
-    r = r.it("at_i32 first",                 test_at_i32_first);
-    r = r.it("at_i32 last",                  test_at_i32_last);
-    r = r.it("at_i32 wrong value diag",      test_at_i32_wrong_value);
-    r = r.it("at_i32 out-of-bounds high",    test_at_i32_out_of_bounds_high);
-    r = r.it("at_i32 negative index",        test_at_i32_out_of_bounds_negative);
-    r = r.it("at_i32 empty array OOB",       test_at_i32_empty_array);
-    r = r.it("at_string pass",               test_at_string_pass);
-    r = r.it("at_string embeds both",        test_at_string_wrong_value_embeds_both);
-    r = r.it("at_i64 pass",                  test_at_i64_pass);
-    r = r.it("at_i64 wrong value",           test_at_i64_wrong_value);
-    r = r.it("in_range_f32 pass",            test_in_range_f32_pass);
-    r = r.it("in_range_f32 inclusive bounds", test_in_range_f32_inclusive_bounds);
-    r = r.it("in_range_f32 below names side", test_in_range_f32_below);
-    r = r.it("in_range_f32 NaN fails",        test_in_range_f32_nan_fails);
-    return r.finish();
+  var r: test.TestRunner = test.test_new("array_at + in_range_f32");
+  r = r.it("at_i32 middle", test_at_i32_pass);
+  r = r.it("at_i32 first", test_at_i32_first);
+  r = r.it("at_i32 last", test_at_i32_last);
+  r = r.it("at_i32 wrong value diag", test_at_i32_wrong_value);
+  r = r.it("at_i32 out-of-bounds high", test_at_i32_out_of_bounds_high);
+  r = r.it("at_i32 negative index", test_at_i32_out_of_bounds_negative);
+  r = r.it("at_i32 empty array OOB", test_at_i32_empty_array);
+  r = r.it("at_string pass", test_at_string_pass);
+  r = r.it("at_string embeds both", test_at_string_wrong_value_embeds_both);
+  r = r.it("at_i64 pass", test_at_i64_pass);
+  r = r.it("at_i64 wrong value", test_at_i64_wrong_value);
+  r = r.it("in_range_f32 pass", test_in_range_f32_pass);
+  r = r.it("in_range_f32 inclusive bounds", test_in_range_f32_inclusive_bounds);
+  r = r.it("in_range_f32 below names side", test_in_range_f32_below);
+  r = r.it("in_range_f32 NaN fails", test_in_range_f32_nan_fails);
+  return r.finish();
 }
