@@ -315,6 +315,24 @@ var semProductionPrograms = []struct {
 	// the array moves into the write and is written in place rather than
 	// copied (#9849); TestSelfHostSemanticAllocationParity pins the count.
 	{name: "element-read-outlives-the-array-write", atLeast: 2, noLeak: true, src: semHeldElementSource},
+	// A bodied `async function` is an ordinary function; on this path the bit
+	// only keeps it alive as a tree-shake root. semsource refused the
+	// modifier (#10794).
+	{name: "async-function", atLeast: 4, noLeak: true, want: "16|4 squares ending 9\n\n", astAnswers: "16|4 squares ending 9\n\n", src: `
+import "std/i32";
+async function compute(): i32 { return 7; }
+pub async function squares(n: i32): i32[] {
+    var out: i32[] = [];
+    for i in 0..n { out = out.append(i * i); }
+    return out;
+}
+async function label(xs: i32[]): string { return f"{xs.len()} squares ending {xs[xs.len() - 1]}"; }
+function main(): i32 {
+    var xs: i32[] = squares(4);
+    print(label(xs) + "\n");
+    return compute() + xs[3];
+}
+`},
 	// A lambda the SOURCE wrote, with an explicit callable return annotation.
 	// parse_type_name coarsens that annotation to the tag "fn" and the lambda
 	// parse discarded the contract, so e_lambda_at built every source lambda
@@ -4571,6 +4589,138 @@ function build(s: string, n: i32): str[] {
 }
 function main(): i32 { return build("abcdefgh", 5).len(); }
 `},
+	// A `str` local assigned, in a branch or a bare block, a view of a string
+	// declared there. The phi at the join read a source only one incoming path
+	// defines, and was refused as "dependency unavailable at use" (#10796);
+	// the operand is now copied on its edge.
+	{name: "a-str-local-assigned-a-view-of-a-branch-local-is-produced", atLeast: 4, noLeak: true, src: `
+function mk(n: i32): string {
+    var s: string = "stamp:";
+    var i: i32 = 0;
+    while (i < n) { s = s + "x"; i = i + 1; }
+    return s;
+}
+function branch(n: i32): string {
+    var tail: str = "";
+    if (n != 0) {
+        var s: string = mk(n);
+        tail = slice_unchecked(s, 4, 8);
+    }
+    return "<" + tail + ">";
+}
+function block(n: i32): string {
+    var tail: str = "none";
+    {
+        var s: string = mk(n);
+        tail = slice_unchecked(s, 2, 7);
+    }
+    return tail + "!";
+}
+function main(): i32 {
+    print(branch(3) + branch(0) + block(4));
+    return branch(5).len() + block(1).len();
+}
+`},
+	// The same through a loop, whose header phi carries the view of the
+	// previous round's local.
+	{name: "a-str-local-assigned-a-view-of-a-loop-body-local-is-produced", atLeast: 3, noLeak: true, src: `
+function mk(n: i32): string {
+    var s: string = "ab";
+    var i: i32 = 0;
+    while (i < n) { s = s + "c"; i = i + 1; }
+    return s;
+}
+function last(k: i32): string {
+    var t: str = "-";
+    var i: i32 = 0;
+    while (i < k) {
+        var s: string = mk(i);
+        t = slice_unchecked(s, 1, s.len());
+        i = i + 1;
+    }
+    return "[" + t + "]";
+}
+function main(): i32 {
+    print(last(4) + last(0));
+    return last(6).len();
+}
+`},
+	// A container built in a branch or a loop body around a view of a string
+	// declared there: its views are copied where the construction takes them.
+	{name: "a-str-array-built-from-a-view-of-a-branch-local-is-produced", atLeast: 3, noLeak: true, src: `
+function mk(n: i32): string {
+    var s: string = "ab";
+    var i: i32 = 0;
+    while (i < n) { s = s + "c"; i = i + 1; }
+    return s;
+}
+function f(n: i32): string {
+    var a: str[] = [];
+    if (n != 0) {
+        var s: string = mk(n);
+        a = a.append(slice_unchecked(s, 0, 2));
+    }
+    var out: string = "";
+    for v in a { out = out + v + "|"; }
+    return out;
+}
+function main(): i32 { print(f(3) + f(0)); return f(2).len(); }
+`},
+	// The control: the source declared above the branch dominates the join.
+	{name: "a-str-array-built-from-a-view-of-a-dominating-local-is-produced", atLeast: 3, noLeak: true, src: `
+function mk(n: i32): string {
+    var s: string = "ab";
+    var i: i32 = 0;
+    while (i < n) { s = s + "c"; i = i + 1; }
+    return s;
+}
+function f(n: i32): string {
+    var a: str[] = [];
+    var s: string = mk(n);
+    if (n != 0) {
+        a = a.append(slice_unchecked(s, 0, 2));
+    }
+    var out: string = "";
+    for v in a { out = out + v + "|"; }
+    return out;
+}
+function main(): i32 { print(f(3) + f(0)); return f(2).len(); }
+`},
+	{name: "a-tuple-option-and-array-of-views-of-a-loop-body-local-is-produced", atLeast: 3, noLeak: true, src: `
+function mk(n: i32): string {
+    var s: string = "ab";
+    var i: i32 = 0;
+    while (i < n) { s = s + "c"; i = i + 1; }
+    return s;
+}
+function f(n: i32): string {
+    var t: (str, i32) = ("x", 0);
+    var o: Option[str] = None;
+    var a: str[] = ["lit"];
+    var i: i32 = 0;
+    while (i < n) {
+        var s: string = mk(i + 1);
+        t = (slice_unchecked(s, 0, 3), i);
+        o = Some(slice_unchecked(s, 0, 1));
+        a = a.append(slice_unchecked(s, 2, 3));
+        i = i + 1;
+    }
+    var out: string = t.0 + "|";
+    match (o) { Some(v) => { out = out + v; }, None => { out = out + "-"; } }
+    for v in a { out = out + "," + v; }
+    return out;
+}
+function main(): i32 { print(f(3) + " " + f(0)); return f(2).len(); }
+`},
+	// std/time's Zoned.format_rfc3339 is that branch shape (#10796).
+	{name: "std-time-format-rfc3339-is-produced", atLeast: 77, noLeak: true, src: `
+import "std/time";
+function main(): i32 {
+    var s: string = time.instant_from_unix(90061 as i64).format_rfc3339();
+    print(s);
+    return s.len();
+}
+`},
 	// An array of views of one parameter is anchored to it as a single view
 	// result is, whether it is built by append, in a loop, or by a literal and
 	// .with. The AST lowering leaked the view boxes (#10215).
@@ -5643,6 +5793,33 @@ function main(): i32 {
     return (s * 4.0) as i32 + (t / 1000000000) as i32 + (w * 4.0) as i32 + (tu.0 * 2.0) as i32 + tu.1;
 }
 `},
+	// A map that reaches the program only as JObject's payload. JsonValue's
+	// variants are injected after the tree shake, which kept none of the
+	// routed map functions, so the typed lowering's map iteration called
+	// `__map_iter_impl` and the module was refused (#10796).
+	{name: "a-map-reached-only-through-a-jsonvalue-is-produced", atLeast: 81, noLeak: true, src: `
+import "core/map";
+function width(v: JsonValue): i32 {
+    match (v) {
+        JObject(m) => {
+            var n: i32 = 0;
+            for (k, x) in m { n = n + k.len() + width(x); }
+            return n;
+        },
+        JString(s) => { return s.len(); },
+        _ => { return 1; }
+    }
+}
+function main(): i32 { return width(JString("abc")) + width(JNull); }
+`},
+	{name: "std-json-encode-is-produced", atLeast: 139, noLeak: true, src: `
+import "std/json";
+function main(): i32 {
+    var s: string = json.json_encode(JNumber("42"));
+    print(s);
+    return s.len();
+}
+`},
 	// A module the program imports does not see the program's enums (#10139):
 	// std/json's bare `Ok` is Result's though the program declares one, while
 	// a helper the compiler synthesises for the program's own map key still
@@ -5879,9 +6056,6 @@ function main(): i32 {
     return make(7);
 }
 `},
-	// The lambda binds only the variable its type mentions, so its one
-	// instance `__lam_0$wrap0$i32` is built by both instances of `__lam_0`,
-	// whose names carry a second binding it does not spell.
 	// An instance of a lifted generic lambda that returns a call to another
 	// lifted lambda reads that callee's result under its own binding, not as
 	// the template's `T`.
@@ -5961,6 +6135,9 @@ function main(): i32 {
     return g(3) + boxed(3) + listed(7, 1);
 }
 `},
+	// The lambda binds only the variable its type mentions, so its one
+	// instance `__lam_0$wrap0$i32` is built by both instances of `__lam_0`,
+	// whose names carry a second binding it does not spell.
 	{name: "a-lambda-binding-fewer-variables-than-its-creator", atLeast: 2, src: `
 pub function make[A, B](a: A, b: B): A {
     function idmaker(base: A, other: B): (A) => A {
@@ -6024,6 +6201,57 @@ function main(): i32 {
     var b: i32 = 0;
     match (u.1) { Has(v) => { b = v + u.0; }, Non => { b = 0; } }
     return a + run((k: i32): Opt[string] => { if (k > 1) { return Has("x" + "yz"); } return Non; }, 2) + pick(t) + b;
+}
+`},
+	// A generic enum whose payload is a generic struct at its own parameter:
+	// the struct pass leaves `Box[U]` for the enum pass to substitute, and a
+	// second struct pass clones the `Box__string` it names (#10762).
+	{name: "a-generic-enum-with-a-generic-struct-payload", atLeast: 8, noLeak: true, src: `
+struct Box[T] { v: T, n: i32 }
+impl[T] Box[T] {
+  function size(self: Self): i32 { return self.n * 2; }
+}
+enum E[U] { A(Box[U]), B(i32) }
+impl[U] E[U] {
+  function boxed(self: Self, d: Box[U]): Box[U] { match (self) { A(b) => { return b; }, B(k) => { return d; } } }
+  function weight(self: Self): i32 { match (self) { A(b) => { return b.size(); }, B(k) => { return k; } } }
+}
+enum Holder[T] { Has(T), Empty }
+function first(h: Holder[string[]]): string { match (h) { Has(xs) => { return xs[0]; }, Empty => { return ""; } } }
+function main(): i32 {
+  var e: E[string] = A(Box { v: "abc" + "d", n: 3 });
+  var f: E[i32] = A(Box { v: 7, n: 5 });
+  var g: E[i32] = B(9);
+  var names: string[] = ["x" + "yz", "w"];
+  var h = Has(names);
+  print(first(h));
+  return e.boxed(Box { v: "", n: 0 }).v.len() + g.boxed(Box { v: 11, n: 0 }).v + e.weight() + f.weight() + g.weight();
+}
+`},
+	// A generic enum instantiated at an array, annotated or inferred from the
+	// payload, including a closure payload returning the enum: std/async's
+	// `Future[u8[]]` shape (#10762).
+	{name: "a-generic-enum-at-an-array-type-argument", atLeast: 7, noLeak: true, src: `
+enum Fut[T] { Ready(T), Pending(i32, (i32) => Fut[T]) }
+enum Holder[T] { Has(T), Empty }
+function step(fd: i32): Fut[u8[]] { var b: u8[] = [1 as u8, 2 as u8, fd as u8]; return Ready(b); }
+function run(f: Fut[u8[]]): i32 {
+    match (f) { Ready(b) => { return b.len() + (b[2] as i32); }, Pending(k, g) => { return run(g(k)); } }
+}
+function mk(n: i32): i32[] {
+    var a: i32[] = [];
+    var i: i32 = 0;
+    while (i < n) { a = a.append(i * 3); i = i + 1; }
+    return a;
+}
+function probe(h: Holder[i32[]]): i32 { match (h) { Has(xs) => { return xs[1]; }, Empty => { return 0; } } }
+function first(h: Holder[string[]]): string { match (h) { Has(xs) => { return xs[0]; }, Empty => { return "-"; } } }
+function main(): i32 {
+    var names: string[] = ["x" + "yz", "w"];
+    var h = Has(names);
+    print(first(h) + first(Empty));
+    var bound: Holder[i32[]] = Has(mk(4));
+    return run(Pending(5, step)) * 10 + probe(Has(mk(8))) + probe(bound) + probe(Empty);
 }
 `},
 }
@@ -6173,6 +6401,32 @@ function main(): i32 {
 }
 `
 
+// semDominatingViewSource merges views of `s`, declared above the loop, at
+// the loop's joins: a copy of either would allocate once per round.
+const semDominatingViewSource = `
+function mk(n: i32): string {
+    var s: string = "ab";
+    var i: i32 = 0;
+    while (i < n) { s = s + "c"; i = i + 1; }
+    return s;
+}
+function pick(n: i32): i32 {
+    var s: string = mk(n);
+    var tail: str = "";
+    var a: str[] = [];
+    var i: i32 = 0;
+    while (i < n) {
+        if (i % 2 == 0) {
+            tail = slice_unchecked(s, 1, 3);
+            a = a.append(slice_unchecked(s, 0, 2));
+        }
+        i = i + 1;
+    }
+    return tail.len() + a.len();
+}
+function main(): i32 { return pick(9); }
+`
+
 // semHeldElementSource sorts by length with the insertion sort's body: the
 // element read into `v` is live across the inner loop's `.with`.
 const semHeldElementSource = `
@@ -6229,6 +6483,8 @@ func TestSelfHostSemanticAllocationParity(t *testing.T) {
 	fernBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
 	for _, prog := range []struct{ name, src string }{
 		{"element-read-outlives-the-array-write", semHeldElementSource},
+		// A view merged past a source that dominates the join stays a view.
+		{"a-view-of-a-dominating-source-is-not-copied", semDominatingViewSource},
 	} {
 		t.Run(prog.name, func(t *testing.T) {
 			src := filepath.Join(t.TempDir(), "main.fern")

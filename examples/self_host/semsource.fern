@@ -1125,7 +1125,7 @@ function binary(e: ast.Expr, b: ast.ExprBinary, s: State, expected: typeinfo.Typ
     // one expression.
     var key: string = composite_key(b.op, s.values[left.id], s);
     if (key != "") { return composite_compare(b, left, key, s); }
-    var arith: string = nominal_method_key(arithmetic_verb(b.op), s.values[left.id], s);
+    var arith: string = nominal_method_key(ast.operator_method(b.op), s.values[left.id], s);
     if (arith != "") { return operator_method(left, [b.right], arith, s); }
     var right: Value = address_widen(expr(b.right, s, want), want);
     s = right.s;
@@ -1190,18 +1190,6 @@ function nominal_method_key(verb: string, t: typeinfo.Type, s: State): string {
     var key: string = owner + "." + verb;
     if (ssasem.find_contract(s.contracts, key) < 0) { return ""; }
     return key;
-}
-
-// An arithmetic operator on a struct or an enum is the method its `impl`
-// supplies: `a + b` is `a.add(b)` and `-a` is `a.neg()`, the desugar the
-// native checker applies (#2706). The result is whatever the method answers.
-function arithmetic_verb(op: string): string {
-    if (op == "+") { return "add"; }
-    if (op == "-") { return "sub"; }
-    if (op == "*") { return "mul"; }
-    if (op == "/") { return "div"; }
-    if (op == "%") { return "rem"; }
-    return "";
 }
 
 function operator_method(recv: Value, args: ast.Expr[], key: string, s: State): Value {
@@ -2479,6 +2467,9 @@ function widen(v: Value, expected: typeinfo.Type): Value {
     var s: State = v.s;
     if (semtypes.equal(s.values[v.id], expected)) { return v; }
     if (ssasem.is_view(expected) && ssasem.is_string(s.values[v.id])) { return define(s, ssasem.str_as(), [v.id], 0, "", expected); }
+    // An owned string[] lends to a str[] destination as one string lends to a
+    // str: the same retag, over the array (`var gs: str[] = s.graphemes()`).
+    if (ssasem.is_view(element_type(expected)) && ssasem.is_string_array(s.values[v.id])) { return define(s, ssasem.str_as(), [v.id], 0, "", expected); }
     if (ssasem.is_dyn(expected) && (struct_name(s.values[v.id]) != "" || union_name(s.values[v.id]) != "")) {
         return define(s, ssasem.dyn_up(), [v.id], 0, "", expected);
     }
@@ -3536,19 +3527,10 @@ function renumber(blocks: ssa.SBlock[], map: i32[], values: typeinfo.Type[]): ss
         out = out.append(ssa.SBlock { ...b, insts: insts, term: term });
     }
     var graph: ssa.SFunc = ssa.SFunc { name: "", nparams: 0, nvals: kept.len(), blocks: out, entry: 0, takes_env: false };
-    return ssasem.Func { graph: graph, values: kept, params: [], result: t_void(), records: [], enums: [], calls: [], envs: [], anchors: [], dyns: [], shadows: [] };
+    return ssasem.Func { graph: graph, values: kept, params: [], result: t_void(), records: [], enums: [], calls: [], envs: [], anchors: [], dyns: [], shadows: [], finalizers: [] };
 }
 
 // ---- functions --------------------------------------------------------------
-
-// A generic declaration is a template, produced once per instantiation its
-// callers bind (docs/SEMANTIC-GENERICS.md). A generic METHOD is refused
-// outright: its receiver spelling is what the checker's dispatch resolves, and
-// the binding here is read off a free function's parameters.
-function unsupported_declaration(fd: parser.FuncDecl, scope: checker.Scope): string {
-    if (fd.async) { return "unsupported async function"; }
-    return "";
-}
 
 // An `@import` extern is a declaration with a contract and no body: its
 // callers are produced against the signature it declares, and the wasm
@@ -3825,7 +3807,7 @@ function parameters(fd: parser.FuncDecl, s: State): State {
 
 function refuse(why: string): Produced {
     var graph: ssa.SFunc = ssa.SFunc { name: "", nparams: 0, nvals: 0, blocks: [], entry: 0, takes_env: false };
-    return Produced { ok: false, why: why, func: ssasem.Func { graph: graph, values: [], params: [], result: t_void(), records: [], enums: [], calls: [], envs: [], anchors: [], dyns: [], shadows: [] }, modes: [], template: false, key: "", requests: [], bodyless: false };
+    return Produced { ok: false, why: why, func: ssasem.Func { graph: graph, values: [], params: [], result: t_void(), records: [], enums: [], calls: [], envs: [], anchors: [], dyns: [], shadows: [], finalizers: [] }, modes: [], template: false, key: "", requests: [], bodyless: false };
 }
 
 function initial(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Contract[], binding: ssasem.Binding, name: string, handers: string[], shadows: string[], funcs: parser.FuncDecl[], impls: parser.ImplInfo[]): State {
@@ -4252,6 +4234,16 @@ function generic_clones(base: string, s: State): typeinfo.Type[] {
 // string method only when std/string is not loaded. std/string's own methods
 // are what the runtime helpers stand in for, and native rejects a second
 // declaration of one beside them (E006).
+// The types an `impl mem.Drop` gives a finalizer. The trait is matched by its
+// simple name, as native's hasDropImpl matches it.
+function finalized_types(impls: parser.ImplInfo[]): string[] {
+    var out: string[] = [];
+    for imp in impls {
+        if (imp.trait_name == "Drop") { out = out.append(util.base_type_name(imp.impl_type)); }
+    }
+    return out;
+}
+
 function shadowed_builtins(mod: parser.Module): string[] {
     var out: string[] = [];
     var keys: string[] = [];
@@ -4389,7 +4381,7 @@ function complete(fd: parser.FuncDecl, s: State, name: string): Produced {
     var table: Schemas = closed.table;
     if (!table.ok) { return refuse(table.why); }
     var graph: ssa.SFunc = ssa.SFunc { ...f.graph, name: name, nparams: params.len() };
-    f = ssasem.Func { ...f, graph: graph, params: params, result: s.result, records: table.records, enums: table.enums, calls: s.calls, envs: closed.rows, dyns: closed.dyns, shadows: s.shadows };
+    f = ssasem.Func { ...f, graph: graph, params: params, result: s.result, records: table.records, enums: table.enums, calls: s.calls, envs: closed.rows, dyns: closed.dyns, shadows: s.shadows, finalizers: finalized_types(s.impls) };
     // Before the verifier in anchor_module, so the rewritten graph is the one
     // it checks, and before anything downstream plans ownership over it (#9692).
     f = ssasem.tail_recursion(f, name);
@@ -4415,8 +4407,6 @@ function unresolved_result_spelling(fd: parser.FuncDecl, s: State): string {
 // template — the instantiation to produce it under, named `name`. Unsupported
 // constructs are explicit refusals, never a partial graph.
 function build(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Contract[], binding: ssasem.Binding, name: string, handers: string[], shadows: string[], funcs: parser.FuncDecl[], impls: parser.ImplInfo[]): Produced {
-    var why: string = unsupported_declaration(fd, scope);
-    if (why != "") { return refuse(why); }
     if (fd.import_iface.len() > 0) { return external_entry(); }
     var s: State = initial(fd, scope, contracts, binding, name, handers, shadows, funcs, impls);
     if (!semtypes.concrete(s.result, true)) { return refuse("unresolved result type: " + unresolved_result_spelling(fd, s)); }
@@ -4465,7 +4455,6 @@ function prebind(s: State): State {
 // template's contract keeps its variables, for the call site to bind.
 function contract(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Contract[]): ssasem.Contract {
     var none: ssasem.Contract = ssasem.Contract { name: "", params: [], modes: [], result: t_void() };
-    if (unsupported_declaration(fd, scope) != "") { return none; }
     var result: typeinfo.Type = result_type(fd, scope, ssasem.unbound(), contracts);
     if (!semtypes.shaped(result, true)) { return none; }
     var params: typeinfo.Type[] = [];
@@ -5269,6 +5258,8 @@ function anchor_module(all: Produced[], names: string[]): Produced[] {
         }
         if (p.ok && !p.template) {
             p = Produced { ...p, func: ssasem.Func { ...p.func, anchors: anchors } };
+            var copies: ssasem.MergeCopy[] = ssasem.merge_copies(p.func);
+            if (copies.len() > 0) { p = Produced { ...p, func: ssasem.with_merge_copies(p.func, copies) }; }
             var analysis: ssasem.Analysis = ssasem.analyze(p.func);
             if (!analysis.ok) { p = Produced { ...refuse("produced graph fails semantic verification: " + analysis.why), key: p.key }; }
         }
@@ -5285,12 +5276,11 @@ function copy_returned_views(f: ssasem.Func): ssasem.Func {
     for b in f.graph.blocks {
         var v: i32 = b.term.value;
         if (b.term.kind_tag == 1 && v >= 0 && ssasem.is_view(values[v])) {
-            var empty: i32 = values.len();
-            var copy: i32 = empty + 1;
-            var view: i32 = empty + 2;
-            values = values.append(t_string()).append(t_string()).append(t_str());
-            var insts: ssa.SInst[] = b.insts.append(inst(5, empty, [], 0, "")).append(inst(9, copy, [v, empty], 0, "+")).append(inst(ssasem.str_as(), view, [copy], 0, ""));
-            b = ssa.SBlock { ...b, insts: insts, term: t_ret(view) };
+            var first: i32 = values.len();
+            for t in ssasem.view_copy_types() { values = values.append(t); }
+            var insts: ssa.SInst[] = b.insts;
+            for ci in ssasem.view_copy(first, v) { insts = insts.append(ci); }
+            b = ssa.SBlock { ...b, insts: insts, term: t_ret(first + 2) };
         }
         blocks = blocks.append(b);
     }

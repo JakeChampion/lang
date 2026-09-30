@@ -1,6 +1,9 @@
 package interp
 
-import "syscall"
+import (
+	"os"
+	"syscall"
+)
 
 func reactorCreate() (int, error) {
 	return syscall.Kqueue()
@@ -52,4 +55,34 @@ func (r *reactor) wait(cap int, timeoutMs int) ([]reactorEvent, error) {
 		out[k] = reactorEvent{raw: int(evs[k].Ident), ready: ready}
 	}
 	return out, nil
+}
+
+// watchParent raises SIGTERM, which the SIGTERM watch reports, once the
+// parent exits: a kqueue of its own holds the EVFILT_PROC NOTE_EXIT. A
+// parent already gone is ESRCH.
+func watchParent() error {
+	ppid := os.Getppid()
+	if ppid == 1 {
+		return syscall.ESRCH
+	}
+	kq, err := syscall.Kqueue()
+	if err != nil {
+		return err
+	}
+	ch := syscall.Kevent_t{Ident: uint64(ppid), Filter: syscall.EVFILT_PROC, Flags: syscall.EV_ADD | syscall.EV_ONESHOT, Fflags: syscall.NOTE_EXIT}
+	if _, err := syscall.Kevent(kq, []syscall.Kevent_t{ch}, nil, nil); err != nil {
+		syscall.Close(kq)
+		return err
+	}
+	go func() {
+		ev := make([]syscall.Kevent_t, 1)
+		for {
+			if _, err := syscall.Kevent(kq, nil, ev, nil); err != syscall.EINTR {
+				break
+			}
+		}
+		syscall.Close(kq)
+		syscall.Kill(os.Getpid(), syscall.SIGTERM)
+	}()
+	return nil
 }

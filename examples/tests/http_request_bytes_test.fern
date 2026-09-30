@@ -119,7 +119,7 @@ function test_caps_admit_what_fits(): test.TestOutcome {
     if (accepted(block_of(32769))) { return test.fail("a header block of 32769 bytes accepted"); }
     if (!accepted("POST / HTTP/1.1\r\nHost: h\r\nContent-Length: 1048576\r\n\r\n" + repeat("b", 1048576))) { return test.fail("a body of 1 MiB refused"); }
     if (accepted("POST / HTTP/1.1\r\nHost: h\r\nContent-Length: 1048577\r\n\r\n" + repeat("b", 1048577))) { return test.fail("a body a byte over 1 MiB accepted"); }
-    if (http.http_request_bytes_cap() != 32768 + 4 + 1048576 + 32768) { return test.fail("request cap: " + http.http_request_bytes_cap().to_string()); }
+    if (http.http_request_bytes_cap(http.http_limits()) != 32768 + 4 + 1048576 + 32768) { return test.fail("request cap: " + http.http_request_bytes_cap(http.http_limits()).to_string()); }
     return test.pass();
 }
 
@@ -247,7 +247,7 @@ function test_chunked_body_is_decoded(): test.TestOutcome {
         Some(f) => { if (f.len != wire_chunked().len()) { return test.fail("framed len: " + f.len.to_string()); } },
         None => { return test.fail("the chunked request was not framed"); }
     }
-    match (http.http_parse_request_framed_from(wire.bytes(), wire_chunked().len())) {
+    match (http.http_parse_request_framed_from(wire.bytes(), wire_chunked().len(), http.http_limits())) {
         http.Framed(f) => { if (f.request.path != "/next") { return test.fail("behind the chunked request: " + f.request.path); } },
         http.Incomplete => { return test.fail("the request behind is incomplete"); },
         http.Continue => { return test.fail("the request behind expects 100"); },
@@ -325,10 +325,11 @@ function status_of(wire: string): i32 {
 }
 
 // Each refusal names the status the serve loop answers it with: 400 for
-// the grammar and the Host rule, 413 for a body past its cap, 414 for a
-// request line past its cap, 431 for a header block past its byte or
-// field cap or chunk framing past its budget, 501 for a coding the
-// parser cannot decode.
+// the grammar, the Host rule and a coding list that does not end in
+// `chunked`, 413 for a body past its cap, 414 for a request line past its
+// cap, 431 for a header block past its byte or field cap or chunk framing
+// past its budget, 501 for a coding under the final `chunked` the parser
+// cannot decode.
 function test_refusal_statuses(): test.TestOutcome {
     if (status_of("GET  / HTTP/1.1\r\nHost: h\r\n\r\n") != 400) { return test.fail("an empty target: " + status_of("GET  / HTTP/1.1\r\nHost: h\r\n\r\n").to_string()); }
     if (status_of("GET / HTTP/1.1\r\nnocolon\r\nHost: h\r\n\r\n") != 400) { return test.fail("a header line without a colon"); }
@@ -342,6 +343,8 @@ function test_refusal_statuses(): test.TestOutcome {
     if (status_of(chunked("5;" + repeat("e", 32768))) != 431) { return test.fail("chunk framing past its budget"); }
     if (status_of(chunked("0\r\n" + fields(101) + "\r\n")) != 431) { return test.fail("101 trailers"); }
     if (status_of("POST / HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: gzip, chunked\r\n\r\n0\r\n\r\n") != 501) { return test.fail("a coding the parser cannot decode"); }
+    if (status_of("POST / HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: chunked, gzip\r\n\r\n0\r\n\r\n") != 400) { return test.fail("chunked that is not the final coding"); }
+    if (status_of("POST / HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: gzip\r\n\r\n") != 400) { return test.fail("a coding list without chunked"); }
     if (status_of("POST / HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: chunked\r\nContent-Length: 5\r\n\r\n") != 400) { return test.fail("Transfer-Encoding beside Content-Length"); }
     if (status_of(chunked("5\r\nhelloX")) != 400) { return test.fail("a byte where a chunk's CR must be"); }
     if (status_of("POST / HTTP/1.1\r\nHost: h\r\nExpect: nope\r\nContent-Length: 5\r\n\r\n") != 417) { return test.fail("an expectation the server cannot meet"); }
@@ -350,8 +353,8 @@ function test_refusal_statuses(): test.TestOutcome {
 
 // `Expect: 100-continue` (RFC 9110 §10.1.1) is answered while the body is
 // still to come, and only then: a request whose body has arrived is
-// framed, one whose body is short says so, and the field is read
-// case-insensitively.
+// framed, one whose body is short says so, the field is read
+// case-insensitively, and an HTTP/1.0 request's expectation is ignored.
 function test_expect_continue(): test.TestOutcome {
     var head: string = "POST / HTTP/1.1\r\nHost: h\r\nExpect: 100-continue\r\nContent-Length: 5\r\n\r\n";
     if (framing_of(head) != 3) { return test.fail("headers alone do not ask for 100"); }
@@ -360,6 +363,7 @@ function test_expect_continue(): test.TestOutcome {
     if (framing_of("POST / HTTP/1.1\r\nHost: h\r\nExpect: 100-Continue\r\nTransfer-Encoding: chunked\r\n\r\n") != 3) { return test.fail("a chunked body does not ask for 100"); }
     if (framing_of("POST / HTTP/1.1\r\nHost: h\r\nExpect: 100-continue\r\nContent-Length: 5\r\n") != 1) { return test.fail("an unterminated block asks for 100"); }
     if (framing_of("POST / HTTP/1.1\r\nHost: h\r\nContent-Length: 5\r\n\r\n") != 1) { return test.fail("a request without Expect asks for 100"); }
+    if (framing_of("POST / HTTP/1.0\r\nExpect: 100-continue\r\nContent-Length: 5\r\n\r\n") != 1) { return test.fail("an HTTP/1.0 request asks for 100"); }
     return test.pass();
 }
 
@@ -390,7 +394,7 @@ function test_framed_length_covers_headers_and_body(): test.TestOutcome {
 
 function test_framed_from_reads_the_request_behind(): test.TestOutcome {
     var wire: string = wire_post() + "GET /next HTTP/1.1\r\nHost: h\r\n\r\n";
-    match (http.http_parse_request_framed_from(wire.bytes(), wire_post().len())) {
+    match (http.http_parse_request_framed_from(wire.bytes(), wire_post().len(), http.http_limits())) {
         http.Framed(f) => {
             if (f.request.path != "/next") { return test.fail("the request behind the offset was not the one parsed: " + f.request.path); }
             if (f.request.body_len() != 0) { return test.fail("a body from the request in front"); }

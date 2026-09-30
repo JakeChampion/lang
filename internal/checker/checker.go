@@ -597,6 +597,11 @@ func builtinStructDecls() []*ast.StructDecl {
 				// so a manual `resp.headers.set("Connection", ...)`
 				// wins).
 				{Name: "headers", Type: ast.StructType{Name: "HeaderMap"}},
+				// `trailers` follow a chunked body's last chunk
+				// (std/tcp's serve loop); a body with a length has
+				// nowhere to carry them, and the wasi-http wrapper
+				// finishes the outgoing body without them.
+				{Name: "trailers", Type: ast.StructType{Name: "HeaderMap"}},
 			},
 		},
 		// Platform — the capability bag threaded as the second

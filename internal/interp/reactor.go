@@ -169,6 +169,11 @@ func builtinReactorCtl(i *Interp, args []Value) (Value, error) {
 			return Number(errnoOf(err)), nil
 		}
 		return Number(0), nil
+	case 6:
+		if err := watchParent(); err != nil {
+			return Number(errnoOf(err)), nil
+		}
+		return Number(0), nil
 	case 1, 2:
 		raw, ok := i.rawFd(n[2])
 		if !ok {

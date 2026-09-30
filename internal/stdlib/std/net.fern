@@ -780,7 +780,9 @@ pub enum Shutdown {
 }
 
 // `set_nodelay(sock, on)` — send segments as they are written instead of
-// waiting to coalesce them (`TCP_NODELAY`).
+// waiting to coalesce them (`TCP_NODELAY`). On by default for every socket
+// `connect`, `connect_start` and `accept` answer, as Go and Node have it;
+// `false` turns Nagle's coalescing back on.
 pub function set_nodelay(sock: i32, on: boolean): Result[(), NetError] {
     return __socket_ctl(sock, 1, on);
 }
@@ -916,7 +918,7 @@ pub function recv(sock: i32, buf: u8[]): Result[i32, NetError] {
 
 // `connect(addr)` — a connection to `addr`, or the error the dial reported.
 pub function connect(addr: SocketAddr): Result[i32, NetError] {
-    return __socket_count(tcp_connect_with(addr.ip.bytes(), addr.port, false));
+    return __tcp_socket(tcp_connect_with(addr.ip.bytes(), addr.port, false));
 }
 
 // `connect_start(addr)` — a non-blocking socket whose connect to `addr` is
@@ -924,7 +926,7 @@ pub function connect(addr: SocketAddr): Result[i32, NetError] {
 // starting. `connect_result` says how it ended; until then the socket is
 // not one to send on.
 pub function connect_start(addr: SocketAddr): Result[i32, NetError] {
-    return __socket_count(tcp_connect_with(addr.ip.bytes(), addr.port, true));
+    return __tcp_socket(tcp_connect_with(addr.ip.bytes(), addr.port, true));
 }
 
 // `connect_result(sock)` — how a started connect ended: `Ok(())` once the
@@ -939,7 +941,15 @@ pub function connect_result(sock: i32): Result[(), NetError] {
 // `accept(sock)` — the next connection a listener has queued, or the error
 // the accept reported.
 pub function accept(sock: i32): Result[i32, NetError] {
-    return __socket_count(tcp_accept(sock));
+    return __tcp_socket(tcp_accept(sock));
+}
+
+// __tcp_socket(r) — `__socket_count` for a stream socket just made, with
+// TCP_NODELAY on. Where the option is not the program's (wasm, a Unix
+// socket) the refusal leaves the socket as it was.
+function __tcp_socket(r: i32): Result[i32, NetError] {
+    if (r >= 0) { tcp_socket_ctl(r, 1, 1); }
+    return __socket_count(r);
 }
 
 // ---------------------------------------------------------------------------
