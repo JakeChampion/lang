@@ -1817,7 +1817,7 @@ pub function (s: string) swap_case(): string {
 // `["", "a", "b", ""]`). An empty separator splits into
 // CHARACTERS — one string per codepoint, the same units
 // `chars()` yields, so no piece is ever half a multibyte
-// sequence. (`to_array()` is the per-byte split.) Result
+// sequence. (`to_array()` is the same scalar split.) Result
 // is built incrementally via `__array_append_string`.
 //
 // Every piece in this family — split, splitn, chunks, lines, fields,
@@ -2543,25 +2543,15 @@ pub function (s: string) at(i: i32): Option[i32] {
     return Some((s[i] as i32));
 }
 
-// `s.to_array()` — string[] one element per byte (each a
-// single-byte string). The string-element sibling of
-// bytes(); useful when later operations need string
-// semantics rather than raw byte values.
+// `s.to_array()` returns one string per Unicode scalar, like split("").
+// Use bytes() or as_bytes() for bytes, and chars() for char values.
 pub function (s: string) to_array(): string[] {
-    var n: i32 = s.len();
-    var out: string[] = [];
-    var i: i32 = 0;
-    while (i < n) {
-        out = out.append(slice_unchecked(s, i, i + 1) + "");
-        i = i + 1;
-    }
-    return out;
+    return s.split("");
 }
 
 // --- UTF-8 codepoint layer -------------------------------------------------
 //
-// Strings are byte-indexed; `bytes()` and `to_array()` above work at that
-// level, so anything non-ASCII is fragile through them. These decode/encode
+// Strings are byte-indexed; `bytes()` exposes those bytes. These decode/encode
 // the UTF-8 content as Unicode scalar values (`char`), the eager-array form
 // the roadmap asks for (#4416 ROADMAP #6). Ill-formed input never throws: a
 // malformed lead, a truncated or bad continuation, an overlong encoding, a
@@ -2666,7 +2656,7 @@ function __utf8_decode_at(s: string, i: i32, step: i32): i32 {
 // the layer note).
 // This is the codepoint layer, matching what `chars` means in Rust, Swift
 // and Go's `[]rune`: iterating it never splits a multibyte sequence. For
-// the byte layer reach for `bytes()` (u8) or `to_array()` (1-byte strings).
+// the byte layer reach for `bytes()` or `as_bytes()`.
 pub function (s: string) chars(): char[] {
     var n: i32 = s.len();
     var out: char[] = [];
@@ -3565,19 +3555,11 @@ pub function (s: string) parse_float(): Option[f64] {
     return Some(v);
 }
 
-// `repeat_char(ch, n)` — fresh string of n copies of the byte
-// `ch`. Faster than `(c).chr().repeat(n)` would be (no chr
-// helper exists yet; this is the substitute). `n <= 0`
-// returns empty.
-pub function repeat_char(ch: i32, n: i32): string {
+// `repeat_char(ch, n)` repeats a Unicode scalar n times. Nonpositive n
+// returns empty. Use a byte array when the repeated value is a raw byte.
+pub function repeat_char(ch: char, n: i32): string {
     if (n <= 0) { return ""; }
-    var buf: u8[] = __alloc_u8(n);
-    var i: i32 = 0;
-    while (i < n) {
-        buf = buf.with(i, ch as u8);
-        i = i + 1;
-    }
-    return string_from_bytes_unchecked(buf);
+    return string_from_codepoint(ch).repeat(n);
 }
 
 // `__is_ascii_ws(b)` — true for SP / TAB / LF / CR / VT / FF
@@ -3587,17 +3569,19 @@ pub function __is_ascii_ws(b: i32): boolean {
     return b == 32 || b >= 9 && b <= 13;
 }
 
-// `s.replace_at(i, new)` — return a copy of s with the byte at
-// index i replaced by the first byte of `new`. If new is empty,
-// the byte at i is dropped. Out-of-range i (negative or >=
-// len(s)) is a no-op and returns s unchanged.
+// `s.replace_at(i, new)` replaces the scalar at byte offset i with the first
+// scalar of new, or removes it when new is empty. An out-of-range offset or
+// an offset inside a scalar leaves s unchanged.
 pub function (s: string) replace_at(i: i32, new: string): string {
     var n: i32 = s.len();
     if (i < 0 || i >= n) { return s; }
+    if (__floor_boundary(s, i) != i) { return s; }
+    var end: i32 = i + __utf8_step(s, i, n);
     if (new.len() == 0) {
-        return slice_unchecked(s, 0, i) + slice_unchecked(s, i + 1, n);
+        return slice_unchecked(s, 0, i) + slice_unchecked(s, end, n);
     }
-    return slice_unchecked(s, 0, i) + slice_unchecked(new, 0, 1) + slice_unchecked(s, i + 1, n);
+    var width: i32 = __utf8_step(new, 0, new.len());
+    return slice_unchecked(s, 0, i) + slice_unchecked(new, 0, width) + slice_unchecked(s, end, n);
 }
 
 // `s.without_byte(b)` — copy of s with every byte equal to b

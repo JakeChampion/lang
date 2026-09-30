@@ -8169,7 +8169,7 @@ function main(): i32 {
     match ("".at(0)) { Some(_) => { return 17; }, None => { } }
 
     // String chars — char[] one element per CODEPOINT, so a multibyte
-    // sequence stays one element (the byte layer is bytes() / to_array()).
+    // sequence stays one element (the byte layer is bytes() / as_bytes()).
     var cs: char[] = "abc".chars();
     if (cs.len() != 3) { return 18; }
     if (cs[0] != (97 as char) || cs[1] != (98 as char) || cs[2] != (99 as char)) { return 19; }

@@ -7903,23 +7903,46 @@ pub function arr_push_helper(): string {
     o = o + "    (local.get $na))\n";
     return o;
 }
-// str_split_helper emits the IR-path string→string[] runtime: a private
-// $__fern_arr_push (via arr_push_helper) plus $__fern_str_split, which builds
-// the result array by appending and slices each segment via $__fern_substr (the
-// IR runtime emits substr_helper alongside this). It defines $__fern_arr_push
-// itself, so a program that ALSO uses `.append` must emit the standalone
-// arr_push_helper only when str_split is absent (otherwise the function is
-// defined twice). Depends on $__fern_str_box / $__fern_arr_box from the heap
-// runtime (module_allocates) and on $__fern_arr_push_owned, which the runtime
-// emitter pulls in for str_split / str_lines.
-//
-// The appends go through the OWNED wrapper because the intermediate buffers are
-// the helper's own: every growth step reallocates, and nothing outside this
-// function can ever reach — or release — the buffer it left behind.
+// Match std/string.__utf8_step: one scalar or one malformed maximal subpart.
+// The caller supplies a byte pointer and a valid index below n.
+function utf8_step_func(): string {
+    var o: string = "  (func $__fern_utf8_step (param $p i32) (param $i i32) (param $n i32) (result i32)\n";
+    o = o + "    (local $b i32) (local $want i32) (local $lo i32) (local $hi i32) (local $c i32) (local $k i32)\n";
+    o = o + "    (local.set $b (i32.load8_u (i32.add (local.get $p) (local.get $i))))\n";
+    o = o + "    (if (i32.or (i32.lt_u (local.get $b) (i32.const 194)) (i32.gt_u (local.get $b) (i32.const 244))) (then (return (i32.const 1))))\n";
+    o = o + "    (local.set $want (i32.const 2))\n";
+    o = o + "    (if (i32.ge_u (local.get $b) (i32.const 224)) (then (local.set $want (i32.const 3))))\n";
+    o = o + "    (if (i32.ge_u (local.get $b) (i32.const 240)) (then (local.set $want (i32.const 4))))\n";
+    o = o + "    (if (i32.ge_u (i32.add (local.get $i) (i32.const 1)) (local.get $n)) (then (return (i32.const 1))))\n";
+    o = o + "    (local.set $lo (i32.const 128)) (local.set $hi (i32.const 191))\n";
+    o = o + "    (if (i32.eq (local.get $b) (i32.const 224)) (then (local.set $lo (i32.const 160))))\n";
+    o = o + "    (if (i32.eq (local.get $b) (i32.const 240)) (then (local.set $lo (i32.const 144))))\n";
+    o = o + "    (if (i32.eq (local.get $b) (i32.const 237)) (then (local.set $hi (i32.const 159))))\n";
+    o = o + "    (if (i32.eq (local.get $b) (i32.const 244)) (then (local.set $hi (i32.const 143))))\n";
+    o = o + "    (local.set $c (i32.load8_u (i32.add (local.get $p) (i32.add (local.get $i) (i32.const 1)))))\n";
+    o = o + "    (if (i32.or (i32.lt_u (local.get $c) (local.get $lo)) (i32.gt_u (local.get $c) (local.get $hi))) (then (return (i32.const 1))))\n";
+    o = o + "    (local.set $k (i32.const 2))\n";
+    o = o + "    (block $done (loop $next\n";
+    o = o + "      (br_if $done (i32.ge_u (local.get $k) (local.get $want)))\n";
+    o = o + "      (if (i32.ge_u (i32.add (local.get $i) (local.get $k)) (local.get $n)) (then (return (local.get $k))))\n";
+    o = o + "      (local.set $c (i32.load8_u (i32.add (local.get $p) (i32.add (local.get $i) (local.get $k)))))\n";
+    o = o + "      (if (i32.or (i32.lt_u (local.get $c) (i32.const 128)) (i32.gt_u (local.get $c) (i32.const 191))) (then (return (local.get $k))))\n";
+    o = o + "      (local.set $k (i32.add (local.get $k) (i32.const 1))) (br $next)))\n";
+    o = o + "    (local.get $want))\n";
+    return o;
+}
+
+// str_split_helper emits the IR-path string-to-array runtime. It includes
+// arr_push_helper and utf8_step_func, and slices through $__fern_substr.
+// Emit standalone arr_push_helper only when str_split is absent to avoid a
+// duplicate definition. The heap runtime supplies str_box and arr_box; the
+// runtime emitter supplies arr_push_owned for str_split / str_lines.
+// Appends use the owned wrapper because no caller can reach or release the
+// intermediate buffers after a growth step replaces them.
 pub function str_split_helper(): string {
-    var o: string = arr_push_helper();
+    var o: string = arr_push_helper() + utf8_step_func();
     o = o + "  (func $__fern_str_split (param $s i32) (param $sep i32) (result i32)\n";
-    o = o + "    (local $sl i32) (local $sepl i32) (local $i i32) (local $start i32) (local $arr i32) (local $piece i32) (local $j i32) (local $match i32)\n";
+    o = o + "    (local $sl i32) (local $sepl i32) (local $i i32) (local $start i32) (local $arr i32) (local $piece i32) (local $j i32) (local $match i32) (local $step i32)\n";
     o = o + "    (local.set $sl (i32.load (local.get $s)))\n";
     o = o + "    (local.set $sepl (i32.load (local.get $sep)))\n";
     // rc-HEADERED, not a bare $__fern_alloc: $__fern_arr_push reads the rc word
@@ -7936,9 +7959,10 @@ pub function str_split_helper(): string {
     o = o + "      (local.set $i (i32.const 0))\n";
     o = o + "      (block $d0 (loop $c0\n";
     o = o + "        (br_if $d0 (i32.ge_s (local.get $i) (local.get $sl)))\n";
-    o = o + "        (local.set $piece (call $__fern_substr (local.get $s) (local.get $i) (i32.add (local.get $i) (i32.const 1))))\n";
+    o = o + "        (local.set $step (call $__fern_utf8_step (i32.add (local.get $s) (i32.const 4)) (local.get $i) (local.get $sl)))\n";
+    o = o + "        (local.set $piece (call $__fern_substr (local.get $s) (local.get $i) (i32.add (local.get $i) (local.get $step))))\n";
     o = o + "        (local.set $arr (call $__fern_arr_push_owned (local.get $arr) (local.get $piece)))\n";
-    o = o + "        (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
+    o = o + "        (local.set $i (i32.add (local.get $i) (local.get $step)))\n";
     o = o + "        (br $c0)))\n";
     o = o + "      (return (local.get $arr))))\n";
     o = o + "    (local.set $start (i32.const 0))\n";

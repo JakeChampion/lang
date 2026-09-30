@@ -511,7 +511,7 @@ think they're free additions to make.
   UTF-8 will scramble). The name `reverse_bytes` carries the
   warning. (`s.chars()` was here as an `i32[]` of byte values
   until #7231 made it the codepoint layer — `char[]`, matching
-  Rust; the byte layer is `bytes()` / `to_array()`.)
+  Rust; the byte layer is `bytes()` / `as_bytes()`.)
 - **Byte classifiers**: `(b).is_ascii_punct()` (Python's string.
   punctuation set), `(b).hex_digit()` (numeric → single-byte
   string).
@@ -564,8 +564,8 @@ think they're free additions to make.
   `\r` `\0` get their two-char escape forms. Other bytes
   pass through. Useful for emitting source-ready string
   literals.
-- **`repeat_char(ch, n)`**: fresh string of n copies of the
-  byte `ch`. Faster than `chr(c).repeat(n)` would be.
+- **`repeat_char(ch, n)`**: repeat a `char` value n times using
+  its complete UTF-8 encoding. Nonpositive n returns empty.
 - **`http_status_text(code)`**: IANA reason phrase for the
   common HTTP status codes (RFC 9110). `""` for unknown.
 - **i32 saturating + checked arithmetic**: `saturating_add` /
@@ -775,8 +775,8 @@ think they're free additions to make.
 - **`(n: i32).reverse_digits()`**: 1234 → 4321 with sign
   preserved.
 - **`(n: i32).is_palindrome()`**: decimal-palindrome check.
-- **`(s: string).to_array()`**: string[] of single-byte
-  strings — the string-element sibling of `bytes()`.
+- **`(s: string).to_array()`**: string[] with one whole Unicode
+  scalar per element. Use `chars()` for char values or `bytes()` for bytes.
 - **`s.remove_all(needle)`**: sugar for `replace(needle, "")`.
 - **`s.before(sep)` / `s.after(sep)`**: substring around the
   FIRST `sep`. before returns s on no-match; after returns
