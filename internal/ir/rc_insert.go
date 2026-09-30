@@ -1011,7 +1011,8 @@ func (b *builder) bindingUsesExcused(body ast.Node, name string, bt ast.Type, co
 				}
 				if b.readOnlyCallArg(x, i) || (countedAliasOK && b.indirectCallArg(x)) ||
 					(countedAliasOK && b.borrowedCallArg(x, i)) ||
-					(countedAliasOK && b.variantRetainsPayload(x, id, bt)) {
+					(countedAliasOK && b.variantRetainsPayload(x, id, bt)) ||
+					(countedAliasOK && b.sinkRetainsArg(x, i, bt)) {
 					excused[id] = true
 				}
 			}
@@ -1026,6 +1027,28 @@ func (b *builder) bindingUsesExcused(body ast.Node, name string, bt ast.Type, co
 		return true
 	})
 	return confined
+}
+
+// sinkRetainsArg reports whether a container sink's store of argument i is
+// counted, so the container holds a reference of its own: `Array.append`'s
+// element under emitArrayPush's alias inc, and `Map.insert`'s key and value
+// under emitMapSetRetains. `bt` is the argument's type, which exprType cannot
+// supply for a match binding. A move site hands over the binding's reference
+// instead.
+func (b *builder) sinkRetainsArg(c *ast.Call, i int, bt ast.Type) bool {
+	id, ok := c.Callee.(*ast.Ident)
+	if !ok || b.rc.moveSites[c.Args[i]] {
+		return false
+	}
+	switch {
+	case id.Name == "__method_Array_push" && i == 1:
+		return b.retainsOnAlias(bt)
+	case id.Name == "__method_Map_set" && len(c.Args) == 3 && len(c.TypeArgs) >= 2 && i == 2:
+		return b.mapSetValueCountedBy(c.Args[i], c.TypeArgs[1], b.retainsOnAlias(bt))
+	case id.Name == "__method_Map_set" && len(c.Args) == 3 && len(c.TypeArgs) >= 1 && i == 1:
+		return b.mapSetKeyCountedBy(c.Args[i], c.TypeArgs[0], b.retainsOnAlias(bt))
+	}
+	return false
 }
 
 // variantRetainsPayload reports whether the variant construction `c` retains
