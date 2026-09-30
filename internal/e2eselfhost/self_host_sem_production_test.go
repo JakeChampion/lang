@@ -5879,6 +5879,57 @@ function main(): i32 {
     return make(7);
 }
 `},
+	// A value block, if-expression or match-expression no path leaves by its
+	// end: the enclosing expression is unreachable, including from inside a
+	// loop whose join and exit the block's `break` still reaches (#10793).
+	{name: "a-value-block-that-leaves-only-by-return-or-break", atLeast: 6, noLeak: true, src: `
+function f(c: boolean): i32 { var x: i32 = { if (c) { return 1; } return 2; }; return x + 100; }
+function g(n: i32): string {
+    var s: string = "a";
+    var i: i32 = 0;
+    while (i < 5) {
+        if (i == n) { var t: string = { if (n > 2) { return s + "!"; } break; }; s = s + t; }
+        s = s + "b";
+        i = i + 1;
+    }
+    return s;
+}
+function h(c: boolean): i32 { var x: i32 = if (c) { return 1; } else { return 2; }; return x + 100; }
+function k(n: i32): string { var x: string = match (n) { 0 => { return "zero"; }, _ => { return "many"; } }; return x + "?"; }
+function j(c: boolean, stop: boolean): i32 {
+    var i: i32 = 0;
+    while (i < 4) {
+        i = i + 1;
+        if (c) { var t: i32 = { if (stop) { return 0; } continue; }; i = i + t; }
+    }
+    return i;
+}
+function main(): i32 {
+    print(g(1));
+    print(g(3));
+    print(k(0) + k(4));
+    return f(true) * 10 + f(false) + h(true) * 30 + h(false) * 40 + j(true, false) + j(false, false) * 2 + j(true, true);
+}
+`},
+	// A generic enum instance spelled inside a function type or a tuple type:
+	// the enum pass rewrites those spellings to the instance, so a fn value's
+	// result and a tuple element are the same type as the values put there
+	// (#10795).
+	{name: "a-generic-enum-from-a-function-value-or-a-tuple-element", atLeast: 5, noLeak: true, src: `
+enum Opt[T] { Non, Has(T) }
+function run(f: (i32) => Opt[string], k: i32): i32 { match (f(k)) { Has(s) => { return s.len(); }, Non => { return 0; } } }
+function pick(t: (Opt[string], i32)): i32 { var e: Opt[string] = t.0; match (e) { Has(s) => { return s.len() + t.1; }, Non => { return t.1; } } }
+function main(): i32 {
+    var g: (i32) => Opt[i32] = (k: i32): Opt[i32] => { if (k > 0) { return Has(k * 6); } return Non; };
+    var a: i32 = 0;
+    match (g(7)) { Has(v) => { a = v; }, Non => { a = 1; } }
+    var t: (Opt[string], i32) = (Has("abc" + "de"), 2);
+    var u: (i32, Opt[i32]) = (3, Has(4));
+    var b: i32 = 0;
+    match (u.1) { Has(v) => { b = v + u.0; }, Non => { b = 0; } }
+    return a + run((k: i32): Opt[string] => { if (k > 1) { return Has("x" + "yz"); } return Non; }, 2) + pick(t) + b;
+}
+`},
 }
 
 // semDynShapes is a trait with a record and an enum implementation, each

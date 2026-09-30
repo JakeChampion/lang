@@ -13247,9 +13247,9 @@ function keyed_by_mangle(t: string): boolean {
 
 // ge_tuple_mangle names a tuple type argument as native's mangleArg does:
 // `tup`, then each element after a `_`, an array element suffixed `_arr`.
-// Only nominal elements, arrays and tuples of them are named. A generic enum
-// inside the tuple would stay unrewritten in the clone's substituted field
-// types, so such a tuple has no name and its enum stays out of the pass.
+// Only nominal elements, arrays and tuples of them are named. A tuple holding
+// a generic enum gets no name, so the enclosing instantiation bails; the enum
+// inside it is still collected and rewritten through the tuple's elements.
 function ge_tuple_mangle(arg: string): string {
     if (arg.len() < 2 || arg[0] != b'(' || arg[arg.len() - 1] != b')') { return ""; }
     var parts: string[] = split_top_commas(slice_unchecked(arg, 1, arg.len() - 1));
@@ -13274,37 +13274,80 @@ function ge_tuple_elem_mangle(e: string): string {
     return e;
 }
 
-// me_rewrite_ty rewrites a generic-enum type spelling to its mangled clone
-// name (`Opt[i32]` → `Opt__i32`); other spellings (incl. the `[]` array of
-// a generic enum) pass through, recursing on the array element.
-function me_rewrite_ty(ty: string, enums: EnumDecl[]): string {
-    if (type_ends_arr(ty)) {
-        return me_rewrite_ty(slice_unchecked(ty, 0, ty.len() - 2), enums) + "[]";
-    }
-    var gi: GEInst = ge_inst_of(ty, enums);
-    if (gi.ok) { return gi.mang; }
-    return ty;
+// A type reference's own spelling, without its array suffixes or `own` mode:
+// what names a generic-enum instantiation at that level.
+function me_ref_spelling(t: TypeRef): string {
+    return spelling_without_own(render_type_ref(TypeRef { ...t, array_depth: 0 }));
 }
 
-// me_collect_anno records the instantiation a type spelling names (if any),
-// recursing into a nested generic-enum argument (`Opt[Opt[i32]]` enqueues
-// both `Opt[Opt[i32]]` and the inner `Opt[i32]`) so every clone the outer
-// references gets generated in phase 2.
-function me_collect_anno(ty: string, enums: EnumDecl[], ins: Insts): Insts {
-    var t: string = ty;
-    if (type_ends_arr(t)) { t = slice_unchecked(t, 0, t.len() - 2) + ""; }
-    var gi: GEInst = ge_inst_of(t, enums);
-    if (!gi.ok) { return ins; }
-    var cur: Insts = ins.iadd_arg(gi.base, gi.key, genum_single_arg(t));
-    var lb: i32 = first_bracket(t);
-    if (lb > 0 && slice_unchecked(t, t.len() - 1, t.len()) == "]") {
-        var parts: string[] = split_top_commas(slice_unchecked(t, lb + 1, t.len() - 1));
-        var j: i32 = 0;
-        while (j < parts.len()) {
-            cur = me_collect_anno(parts[j], enums, cur);
-            j = j + 1;
-        }
+// me_rewrite_ty rewrites every generic-enum instantiation a type spelling
+// names, at any depth — an array or tuple element, a function's parameter or
+// result, a generic argument — to its mangled clone name (`(Opt[i32], i32)` →
+// `(Opt__i32, i32)`). A spelling that names none is returned as written.
+function me_rewrite_ty(ty: string, enums: EnumDecl[]): string {
+    if (ty.len() == 0) { return ty; }
+    var t: TypeRef = parse_type_ref(ty);
+    var out: string = render_type_ref(me_rewrite_ref(t, enums));
+    if (out == render_type_ref(t)) { return ty; }
+    return out;
+}
+
+function me_rewrite_ref(t: TypeRef, enums: EnumDecl[]): TypeRef {
+    var gi: GEInst = ge_inst_of(me_ref_spelling(t), enums);
+    if (gi.ok) {
+        var base: string = gi.mang;
+        if (spelling_is_own(t.base)) { base = "own " + base; }
+        return TypeRef { base: base, args: [], array_depth: t.array_depth, is_tuple: false, is_fn: false };
     }
+    var args: TypeRef[] = [];
+    for a in t.args { args = args.append(me_rewrite_ref(a, enums)); }
+    return TypeRef { ...t, args: args };
+}
+
+// A function type's parameter sidecar, comma-separated.
+function me_rewrite_list(list: string, enums: EnumDecl[]): string {
+    if (list.len() == 0) { return list; }
+    var out: string = "";
+    var changed: boolean = false;
+    for seg in split_top_commas(list) {
+        var r: string = me_rewrite_ty(seg, enums);
+        if (r != seg) { changed = true; }
+        if (out.len() > 0) { out = out + ", "; }
+        out = out + r;
+    }
+    if (!changed) { return list; }
+    return out;
+}
+
+// A declared slot's type and its function-type sidecars, rewritten.
+struct MeSlot { ty: string, fn_ret: string, fn_params: string }
+
+function me_rewrite_slot(ty: string, fn_ret: string, fn_params: string, enums: EnumDecl[]): MeSlot {
+    return MeSlot { ty: me_rewrite_ty(ty, enums), fn_ret: me_rewrite_ty(fn_ret, enums), fn_params: me_rewrite_list(fn_params, enums) };
+}
+
+// me_collect_anno records every instantiation a type spelling names, at the
+// depths me_rewrite_ty rewrites (`Opt[Opt[i32]]` enqueues both `Opt[Opt[i32]]`
+// and the inner `Opt[i32]`), so every clone a rewritten spelling references
+// gets generated in phase 2.
+function me_collect_anno(ty: string, enums: EnumDecl[], ins: Insts): Insts {
+    if (ty.len() == 0) { return ins; }
+    return me_collect_ref(parse_type_ref(ty), enums, ins);
+}
+
+function me_collect_ref(t: TypeRef, enums: EnumDecl[], ins: Insts): Insts {
+    var spelled: string = me_ref_spelling(t);
+    var gi: GEInst = ge_inst_of(spelled, enums);
+    var cur: Insts = ins;
+    if (gi.ok) { cur = cur.iadd_arg(gi.base, gi.key, genum_single_arg(spelled)); }
+    for a in t.args { cur = me_collect_ref(a, enums, cur); }
+    return cur;
+}
+
+function me_collect_slot(ty: string, fn_ret: string, fn_params: string, enums: EnumDecl[], ins: Insts): Insts {
+    var cur: Insts = me_collect_anno(ty, enums, me_collect_anno(fn_ret, enums, ins));
+    if (fn_params.len() == 0) { return cur; }
+    for seg in split_top_commas(fn_params) { cur = me_collect_anno(seg, enums, cur); }
     return cur;
 }
 
@@ -13645,7 +13688,10 @@ function me_expr(e: ast.Expr, expected: string, env: MEnv, enums: EnumDecl[], st
         },
         ast.ExprLambda(lm) => {
             var lb: RStmts = me_stmts(lm.body, env, lm.ret_type, enums, structs, funcs, ins);
-            return RExpr { rexpr: ast.ExprLambda { ...lm, ret_type: me_rewrite_ty(lm.ret_type, enums), body: lb.rstmts }, rins: lb.rins3 };
+            var lins: Insts = me_collect_slot(lm.ret_type, lm.ret_fn_ret, lm.ret_fn_param_types, enums, lb.rins3);
+            for lp in lm.params { lins = me_collect_slot(lp.type_name, lp.fn_ret, lp.fn_param_types, enums, lins); }
+            var lret: MeSlot = me_rewrite_slot(lm.ret_type, lm.ret_fn_ret, lm.ret_fn_param_types, enums);
+            return RExpr { rexpr: ast.ExprLambda { ...lm, params: me_rewrite_params(lm.params, enums), ret_type: lret.ty, ret_fn_ret: lret.fn_ret, ret_fn_param_types: lret.fn_params, body: lb.rstmts }, rins: lins };
         },
         _ => { return RExpr { rexpr: e, rins: ins }; }
     }
@@ -13895,8 +13941,8 @@ function me_stmt(st: ast.Stmt, env: MEnv, ret_ty: string, enums: EnumDecl[], str
     match (st) {
         ast.StmtVar(v) => {
             var iv: RExpr = me_expr(v.init, v.type_name, env, enums, structs, funcs, ins);
-            var cins: Insts = me_collect_anno(v.type_name, enums, iv.rins);
-            var nty: string = me_rewrite_ty(v.type_name, enums);
+            var cins: Insts = me_collect_slot(v.type_name, v.fn_ret, v.fn_param_types, enums, iv.rins);
+            var nslot: MeSlot = me_rewrite_slot(v.type_name, v.fn_ret, v.fn_param_types, enums);
             // Track the var's type for a later `match`: the annotation if
             // present, else the init's recovered type (a call result, so
             // `var o = wrap(4); match (o)` resolves like `match (wrap(4))`).
@@ -13933,7 +13979,7 @@ function me_stmt(st: ast.Stmt, env: MEnv, ret_ty: string, enums: EnumDecl[], str
                 }
             }
             if (vty.len() == 0) { vty = me_scrutinee_type(v.init, env, enums, structs, funcs); }
-            return RStmtOne { rstmt: ast.StmtVar { name: v.name, type_name: nty, init: iv.rexpr, line: v.line, col: v.col, is_view: v.is_view, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types }, renv: env.ebind(v.name, vty), rins2: cins };
+            return RStmtOne { rstmt: ast.StmtVar { name: v.name, type_name: nslot.ty, init: iv.rexpr, line: v.line, col: v.col, is_view: v.is_view, fn_ret: nslot.fn_ret, fn_param_types: nslot.fn_params }, renv: env.ebind(v.name, vty), rins2: cins };
         },
         ast.StmtReturn(r) => {
             var rv: RExpr = me_expr(r.value, ret_ty, env, enums, structs, funcs, ins);
@@ -14035,7 +14081,8 @@ function me_rewrite_params(params: ast.ParamDecl[], enums: EnumDecl[]): ast.Para
     var i: i32 = 0;
     while (i < params.len()) {
         var p: ast.ParamDecl = params[i];
-        out = out.append(ast.ParamDecl { name: p.name, type_name: me_rewrite_ty(p.type_name, enums), is_view: p.is_view, own: p.own, has_default: p.has_default, default_value: p.default_value, ret_arr: p.ret_arr, fn_ret: p.fn_ret, fn_param_dyn: p.fn_param_dyn, fn_param_types: p.fn_param_types });
+        var slot: MeSlot = me_rewrite_slot(p.type_name, p.fn_ret, p.fn_param_types, enums);
+        out = out.append(ast.ParamDecl { ...p, type_name: slot.ty, fn_ret: slot.fn_ret, fn_param_types: slot.fn_params });
         i = i + 1;
     }
     return out;
@@ -14068,15 +14115,16 @@ function clone_enum_method(m: FuncDecl, ed: EnumDecl, cts: string[], mname: stri
         var p: ast.ParamDecl = m.params[i];
         var pt: string = enum_self_ty(subst_ty(p.type_name, tps, cts), ed.name, recv);
         var pr: string = enum_self_ty(subst_ty(p.fn_ret, tps, cts), ed.name, recv);
-        cur = me_collect_anno(pt, mod.enums, cur);
-        cur = me_collect_anno(pr, mod.enums, cur);
-        nparams = nparams.append(ast.ParamDecl { ...p, type_name: pt, fn_ret: pr, fn_param_types: subst_ty_list(p.fn_param_types, tps, cts) });
+        var pps: string = subst_ty_list(p.fn_param_types, tps, cts);
+        cur = me_collect_slot(pt, pr, pps, mod.enums, cur);
+        nparams = nparams.append(ast.ParamDecl { ...p, type_name: pt, fn_ret: pr, fn_param_types: pps });
         i = i + 1;
     }
     var rt: string = enum_self_ty(subst_ty(m.ret_type, tps, cts), ed.name, recv);
     cur = me_collect_anno(rt, mod.enums, cur);
     var rfr: string = enum_self_ty(subst_ty(m.ret_fn_ret, tps, cts), ed.name, recv);
-    cur = me_collect_anno(rfr, mod.enums, cur);
+    var rfps: string = subst_ty_list(m.ret_fn_param_types, tps, cts);
+    cur = me_collect_slot("", rfr, rfps, mod.enums, cur);
     var env: MEnv = me_env_from_params(nparams);
     if (m.receiver_name.len() > 0) { env = env.ebind(m.receiver_name, recv); }
     var rb: RStmts = me_stmts(subst_stmts(m.body, tps, cts), env, rt, mod.enums, mod.structs, efns, cur);
@@ -14085,7 +14133,7 @@ function clone_enum_method(m: FuncDecl, ed: EnumDecl, cts: string[], mname: stri
         params: me_rewrite_params(nparams, mod.enums),
         ret_type: me_rewrite_ty(rt, mod.enums),
         ret_fn_ret: me_rewrite_ty(rfr, mod.enums),
-        ret_fn_param_types: subst_ty_list(m.ret_fn_param_types, tps, cts),
+        ret_fn_param_types: me_rewrite_list(rfps, mod.enums),
         body: rb.rstmts };
     return FRes { ffn: fn, fins: rb.rins3 };
 }
@@ -14109,16 +14157,19 @@ function enum_self_ty(ty: string, name: string, recv: string): string {
 struct MeUses { enums: EnumDecl[], bases: string[] }
 
 function me_use_spelling(ty: string, own u: MeUses): MeUses {
-    var t: string = ty;
-    while (type_ends_arr(t)) { t = slice_unchecked(t, 0, t.len() - 2) + ""; }
-    var lb: i32 = first_bracket(t);
-    if (lb <= 0 || slice_unchecked(t, t.len() - 1, t.len()) != "]") { return u; }
-    var base: string = slice_unchecked(t, 0, lb) + "";
-    var parts: string[] = split_top_commas(slice_unchecked(t, lb + 1, t.len() - 1));
-    if (genum_index(u.enums, base) >= 0 && !str_in(u.bases, base) && !mono_ty_mentions_var(t) && genum_key_from_anno(t, base, u.enums).len() == 0) {
-        u = MeUses { ...u, bases: u.bases.append(base) };
+    if (ty.len() == 0) { return u; }
+    return me_use_ref(parse_type_ref(ty), u);
+}
+
+function me_use_ref(r: TypeRef, own u: MeUses): MeUses {
+    if (!r.is_tuple && !r.is_fn && r.args.len() > 0) {
+        var t: string = me_ref_spelling(r);
+        var base: string = slice_unchecked(t, 0, first_bracket(t)) + "";
+        if (genum_index(u.enums, base) >= 0 && !str_in(u.bases, base) && !mono_ty_mentions_var(t) && genum_key_from_anno(t, base, u.enums).len() == 0) {
+            u = MeUses { ...u, bases: u.bases.append(base) };
+        }
     }
-    for p in parts { u = me_use_spelling(p, u); }
+    for a in r.args { u = me_use_ref(a, u); }
     return u;
 }
 
@@ -14207,15 +14258,12 @@ pub function monomorphize_enums(mod: Module): Module {
         if (fn.receiver_name.len() > 0) { env = env.ebind(fn.receiver_name, fn.receiver_type); }
         var rb: RStmts = me_stmts(fn.body, env, fn.ret_type, menums, mod.structs, efns, ins);
         ins = rb.rins3;
-        ins = me_collect_anno(fn.ret_type, menums, ins);
-        var pj: i32 = 0;
-        while (pj < fn.params.len()) {
-            ins = me_collect_anno(fn.params[pj].type_name, menums, ins);
-            pj = pj + 1;
-        }
+        ins = me_collect_slot(fn.ret_type, fn.ret_fn_ret, fn.ret_fn_param_types, menums, ins);
+        for fp in fn.params { ins = me_collect_slot(fp.type_name, fp.fn_ret, fp.fn_param_types, menums, ins); }
+        var fret: MeSlot = me_rewrite_slot(fn.ret_type, fn.ret_fn_ret, fn.ret_fn_param_types, menums);
         var rfn: FuncDecl = FuncDecl { ...fn,
             params: me_rewrite_params(fn.params, menums),
-            ret_type: me_rewrite_ty(fn.ret_type, menums), body: rb.rstmts };
+            ret_type: fret.ty, ret_fn_ret: fret.fn_ret, ret_fn_param_types: fret.fn_params, body: rb.rstmts };
         if (owner.len() > 0) { held = held.append(rfn); held_base = held_base.append(owner); }
         else { nfuncs = nfuncs.append(rfn); }
         fi = fi + 1;
@@ -14235,7 +14283,7 @@ pub function monomorphize_enums(mod: Module): Module {
         var sfd: StructFieldDecl[] = mod.structs[sfi].fields;
         var sfj: i32 = 0;
         while (sfj < sfd.len()) {
-            ins = me_collect_anno(sfd[sfj].type_name, menums, ins);
+            ins = me_collect_slot(sfd[sfj].type_name, sfd[sfj].fn_ret, sfd[sfj].fn_param_types, menums, ins);
             sfj = sfj + 1;
         }
         sfi = sfi + 1;
@@ -14363,7 +14411,8 @@ pub function monomorphize_enums(mod: Module): Module {
             var rf: StructFieldDecl[] = [];
             var rfj: i32 = 0;
             while (rfj < sd.fields.len()) {
-                rf = rf.append(StructFieldDecl { name: sd.fields[rfj].name, type_name: me_rewrite_ty(sd.fields[rfj].type_name, menums), fn_ret: me_rewrite_ty(sd.fields[rfj].fn_ret, menums), fn_param_types: sd.fields[rfj].fn_param_types });
+                var fslot: MeSlot = me_rewrite_slot(sd.fields[rfj].type_name, sd.fields[rfj].fn_ret, sd.fields[rfj].fn_param_types, menums);
+                rf = rf.append(StructFieldDecl { name: sd.fields[rfj].name, type_name: fslot.ty, fn_ret: fslot.fn_ret, fn_param_types: fslot.fn_params });
                 rfj = rfj + 1;
             }
             out_structs = out_structs.append(StructDecl { name: sd.name, fields: rf, type_params: sd.type_params, derives: sd.derives, line: sd.line, col: sd.col, enum_owner: sd.enum_owner, must_consume: sd.must_consume, variant_field_names: sd.variant_field_names , is_pub: sd.is_pub , is_package: false });

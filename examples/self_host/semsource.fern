@@ -2080,7 +2080,10 @@ function value_block(e: ast.Expr, c: ast.ExprCall, s: State, expected: typeinfo.
     var i: i32 = 0;
     while (i < body.len() - 1) { s = stmt(body[i], s); i = i + 1; }
     if (!s.ok) { return Value { s: s, id: 0 - 1 }; }
-    if (!s.live) { return refused(s, "value block leaves no live edge"); }
+    if (!s.live) {
+        var z: Value = unreachable_value(s, ty);
+        return Value { s: leave(z.s, count, scope), id: z.id };
+    }
     var last: ast.Stmt = body[body.len() - 1];
     var v: Value = refused(s, "unsupported value block: " + block_stmt_kind(last));
     if let ast.StmtIf(f) = last { v = value_if(f, s, ty); }
@@ -2088,6 +2091,14 @@ function value_block(e: ast.Expr, c: ast.ExprCall, s: State, expected: typeinfo.
     if let ast.StmtReturn(_) = last { v = arm_value(last, s, ty); }
     if (!v.s.ok) { return v; }
     return Value { s: leave(v.s, count, scope), id: v.id };
+}
+
+// The value of a value block no path leaves by its end: the enclosing
+// expression goes on in a block nothing branches to, which `complete` prunes.
+function unreachable_value(s: State, ty: typeinfo.Type): Value {
+    var dead: i32 = s.next_block;
+    s = open(State { ...s, next_block: dead + 1 }, dead, []);
+    return define(s, ssasem.zero(), [], 0, "", ty);
 }
 
 // A value block's type: what its destination expects, where the destination
@@ -2184,7 +2195,7 @@ function value_if(f: ast.StmtIf, s: State, ty: typeinfo.Type): Value {
     var values: i32[] = [];
     if (t.live) { preds = preds.append(t.end); envs = envs.append(t.env); values = values.append(t.value); }
     if (el.live) { preds = preds.append(el.end); envs = envs.append(el.env); values = values.append(el.value); }
-    if (preds.len() == 0) { return refused(el.s, "value block has no live arm"); }
+    if (preds.len() == 0) { return unreachable_value(el.s, ty); }
     s = merge_env(open(el.s, join, preds), envs, count);
     return define(s, 8, values, 0, "", ty);
 }
@@ -3146,7 +3157,7 @@ function value_match(m: ast.StmtMatch, s: State, ty: typeinfo.Type): Value {
     s = c.arms.s;
     if (!s.ok) { return Value { s: s, id: 0 - 1 }; }
     if (s.live) { return refused(s, "value block match falls through"); }
-    if (c.arms.preds.len() == 0) { return refused(s, "value block match has no arm"); }
+    if (c.arms.preds.len() == 0) { return unreachable_value(s, ty); }
     s = merge_env(open(s, c.join, c.arms.preds), c.arms.envs, c.count);
     return define(s, 8, c.arms.values, 0, "", ty);
 }
@@ -3431,6 +3442,69 @@ function mapped_term(t: ssa.STerm, map: i32[]): ssa.STerm {
     if (t.kind_tag == 1 && t.value >= 0) { return ssa.STerm { ...t, value: resolve(map, t.value) }; }
     if (t.kind_tag == 3) { return ssa.STerm { ...t, cond: resolve(map, t.cond) }; }
     return t;
+}
+
+function successors(t: ssa.STerm): i32[] {
+    if (t.kind_tag == 2) { return [t.target]; }
+    if (t.kind_tag == 3) { return [t.t, t.f]; }
+    return [];
+}
+
+// Each block's position in `blocks`, indexed by id; -1 for an id with none.
+function block_positions(blocks: ssa.SBlock[]): i32[] {
+    var at: i32[] = [];
+    var i: i32 = 0;
+    while (i < blocks.len()) {
+        while (at.len() <= blocks[i].id) { at = at.append(0 - 1); }
+        at = at.with(blocks[i].id, i);
+        i = i + 1;
+    }
+    return at;
+}
+
+// Whether the entry reaches each block id.
+function reached(blocks: ssa.SBlock[], at: i32[]): boolean[] {
+    var seen: boolean[] = [];
+    for _ in at { seen = seen.append(false); }
+    seen = seen.with(blocks[0].id, true);
+    var work: i32[] = [blocks[0].id];
+    var head: i32 = 0;
+    while (head < work.len()) {
+        for next in successors(blocks[at[work[head]]].term) {
+            if (next < at.len() && at[next] >= 0 && !seen[next]) { seen = seen.with(next, true); work = work.append(next); }
+        }
+        head = head + 1;
+    }
+    return seen;
+}
+
+// A reached block keeps only the edges from reached blocks, and each phi the
+// inputs those edges supply.
+function live_edges(b: ssa.SBlock, seen: boolean[]): ssa.SBlock {
+    var keep: i32[] = [];
+    var k: i32 = 0;
+    while (k < b.preds.len()) { if (seen[b.preds[k]]) { keep = keep.append(k); } k = k + 1; }
+    if (keep.len() == b.preds.len()) { return b; }
+    var preds: i32[] = [];
+    for j in keep { preds = preds.append(b.preds[j]); }
+    var insts: ssa.SInst[] = [];
+    for ins in b.insts {
+        if (ins.kind_tag != 8) { insts = insts.append(ins); continue; }
+        var args: i32[] = [];
+        for j in keep { args = args.append(ins.args[j]); }
+        insts = insts.append(ssa.SInst { ...ins, args: args });
+    }
+    return ssa.SBlock { ...b, insts: insts, preds: preds };
+}
+
+// The blocks the entry reaches. ssa.fern's thread_forwarding and
+// trim_phi_edges do the same trim later; both rely on a phi's args being
+// parallel to its preds, and here a phi always has one arg per pred.
+function reachable(blocks: ssa.SBlock[]): ssa.SBlock[] {
+    var seen: boolean[] = reached(blocks, block_positions(blocks));
+    var out: ssa.SBlock[] = [];
+    for b in blocks { if (seen[b.id]) { out = out.append(live_edges(b, seen)); } }
+    return out;
 }
 
 // Removed phis leave no gaps: surviving definitions are renumbered densely
@@ -4296,8 +4370,9 @@ function complete(fd: parser.FuncDecl, s: State, name: string): Produced {
     if (!s.ok) { return refuse(s.why); }
     if (s.live && !is_void(s.result)) { s = terminate(s, t_unreachable()); }
     s = terminate(s, t_ret(0 - 1));
-    var map: i32[] = trivial_phis(s.blocks, s.values.len());
-    var f: ssasem.Func = renumber(s.blocks, map, s.values);
+    var blocks: ssa.SBlock[] = reachable(s.blocks);
+    var map: i32[] = trivial_phis(blocks, s.values.len());
+    var f: ssasem.Func = renumber(blocks, map, s.values);
     var params: typeinfo.Type[] = [];
     var modes: i32[] = s.modes;
     var at: i32 = 0;
