@@ -955,12 +955,13 @@ function __kqueue_wait_into(kq: i64, events: usize, cap: i32, timeout_ms: i32): 
             ready = 1;
             fd = 0 - fd;
         }
+        if ((__load_u8(e + 11) & 192) != 0) { ready = ready | 4; }
         if (__load_u8(e + 8) == 251) {
-            // EVFILT_PROC (-5): the parent's exit, reported as SIGTERM.
+            // EVFILT_PROC (-5): the parent's exit, reported as SIGTERM; the
+            // EV_EOF XNU sets on NOTE_EXIT is not a hang-up.
             ready = 1;
             fd = 0 - 15;
         }
-        if ((__load_u8(e + 11) & 192) != 0) { ready = ready | 4; }
         __reactor_event(events, i, fd, ready);
         i = i + 1;
     }
