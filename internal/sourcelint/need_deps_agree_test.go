@@ -141,18 +141,26 @@ func parseRuntimeNeedDeps(t *testing.T, text string) map[string][]string {
 			out[m[1]] = []string{"heap"}
 		}
 	}
-	// Every other arm is `if (name == "x") { ... var d: string[] = [...]; return d; }`.
-	arms := regexp.MustCompile(`if \(name == "([a-z0-9_]+)"\) \{([\s\S]*?)\breturn [a-z0-9_]+;`).FindAllStringSubmatch(body, -1)
-	for _, a := range arms {
-		lit := regexp.MustCompile(`string\[\] = \[([^\]]*)\]`).FindStringSubmatch(a[2])
-		if lit == nil {
-			continue
+	// Every other arm is `if (name == "x") { ... var d: string[] = [...]; return d; }`,
+	// ending at the first `}` indented as far as its `if` line.
+	head := regexp.MustCompile(`(?m)^([ \t]*)if \(name == "([a-z0-9_]+)"\)\s*\{`)
+	lit := regexp.MustCompile(`string\[\] = \[([^\]]*)\]`)
+	for _, m := range head.FindAllStringSubmatchIndex(body, -1) {
+		name := body[m[4]:m[5]]
+		rest := body[m[1]:]
+		end := strings.Index(rest, "\n"+body[m[2]:m[3]]+"}")
+		if end < 0 {
+			t.Fatalf("runtime_need_deps arm %q has no closing brace at its own indent", name)
+		}
+		l := lit.FindStringSubmatch(rest[:end])
+		if l == nil {
+			t.Fatalf("runtime_need_deps arm %q declares no string[] literal — the parse cannot read its deps", name)
 		}
 		var deps []string
-		for _, q := range regexp.MustCompile(`"([a-z0-9_]+)"`).FindAllStringSubmatch(lit[1], -1) {
+		for _, q := range regexp.MustCompile(`"([a-z0-9_]+)"`).FindAllStringSubmatch(l[1], -1) {
 			deps = append(deps, q[1])
 		}
-		out[a[1]] = deps
+		out[name] = deps
 	}
 	if len(out) < 10 {
 		t.Fatalf("parsed only %d runtime_need_deps arms — the parse no longer matches the source", len(out))
