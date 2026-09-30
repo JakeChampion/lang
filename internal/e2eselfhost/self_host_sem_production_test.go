@@ -4510,6 +4510,67 @@ function main(): i32 {
     return xs.len() + ys.len() + ws.len() + zs.len() + g.names.len() + junk.len();
 }
 `},
+	// A call result holding views that flows back into a loop phi. A body is
+	// verified once it carries the anchor table: without it the call result
+	// is its own root, which the phi cannot depend on, and `build` was
+	// refused as "dependency unavailable at use" (#10724).
+	{name: "a-loop-phi-over-an-anchored-call-result-is-produced", atLeast: 3, noLeak: true, src: `
+import "std/i32";
+function id(xs: str[]): str[] { return xs; }
+function build(s: string, k: i32): str[] {
+    var xs: str[] = [slice_unchecked(s, 0, 3)];
+    var i: i32 = 0;
+    while (i < k) { xs = id(xs); i = i + 1; }
+    return xs;
+}
+function main(): i32 {
+    var s: string = "abcdefgh" + 7.to_string();
+    var r: str[] = build(s, 5);
+    var junk: string = "zzzzzzzzzz" + 8.to_string();
+    print(r[0]);
+    return r.len() + junk.len();
+}
+`},
+	// The same through `keep`, whose result is anchored to both its view
+	// parameter and its array, so the loop's array holds views of two sources.
+	{name: "a-loop-keeping-views-of-two-sources-through-a-call-is-produced", atLeast: 3, noLeak: true, src: `
+import "std/i32";
+function keep(v: str, xs: str[]): str[] { return xs.append(v); }
+function build(a: string, b: string, k: i32): str[] {
+    var xs: str[] = [];
+    var i: i32 = 0;
+    while (i < k) {
+        var t: str = slice_unchecked(a, i, i + 2);
+        xs = keep(t, xs);
+        xs = keep(slice_unchecked(b, i, i + 1), xs);
+        i = i + 1;
+    }
+    return xs;
+}
+function main(): i32 {
+    var a: string = "abcdefgh" + 1.to_string();
+    var b: string = "ABCDEFGH" + 2.to_string();
+    var xs: str[] = build(a, b, 5);
+    var junk: string = "zzzzzzzzzz" + 3.to_string();
+    var line: string = "";
+    for x in xs { line = line + x + ","; }
+    print(line);
+    return xs.len() + junk.len();
+}
+`},
+	// #10738's program: an anonymous slice kept through `keep` in a loop. It
+	// failed verification the same way as #10724 and is produced by that fix.
+	// The AST lowering answers the same and leaks the views.
+	{name: "a-loop-keeping-an-anonymous-slice-through-a-call-is-produced", atLeast: 3, noLeak: true, src: `
+function keep(v: str, xs: str[]): str[] { return xs.append(v); }
+function build(s: string, n: i32): str[] {
+    var xs: str[] = [];
+    var i: i32 = 0;
+    while (i < n) { xs = keep(slice_unchecked(s, i, i + 2), xs); i = i + 1; }
+    return xs;
+}
+function main(): i32 { return build("abcdefgh", 5).len(); }
+`},
 	// An array of views of one parameter is anchored to it as a single view
 	// result is, whether it is built by append, in a loop, or by a literal and
 	// .with. The AST lowering leaked the view boxes (#10215).

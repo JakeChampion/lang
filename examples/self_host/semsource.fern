@@ -4247,8 +4247,6 @@ function complete(fd: parser.FuncDecl, s: State, name: string): Produced {
     // Before the verifier, so the rewritten graph is the one it checks, and
     // before anything downstream plans ownership over it (#9692).
     f = ssasem.tail_recursion(f, name);
-    var analysis: ssasem.Analysis = ssasem.analyze(f);
-    if (!analysis.ok) { return refuse("produced graph fails semantic verification: " + analysis.why); }
     return Produced { ok: true, why: "", func: f, modes: modes, template: false, key: "", requests: s.requests, bodyless: false };
 }
 
@@ -5058,7 +5056,8 @@ function close_module(all: Produced[], names: string[]): Produced[] {
 // result holding such a view escapes its source, and is refused along with its
 // callers.
 // Every body then carries the whole table, which is what anchors a call's
-// result in the caller's graph.
+// result in the caller's graph, and is verified only then: unanchored, a call
+// result is its own root, which a loop phi it flows back into cannot depend on.
 function anchor_module(all: Produced[], names: string[]): Produced[] {
     var anchors: ssasem.Anchor[] = [];
     var copied: boolean = true;
@@ -5101,16 +5100,15 @@ function anchor_module(all: Produced[], names: string[]): Produced[] {
         if (p.ok && semtypes.holds_view(p.func.result) && !ssasem.anchored(anchors, names[i])) {
             p = Produced { ...refuse("view result escapes its source"), key: p.key };
         }
+        if (p.ok && !p.template) {
+            p = Produced { ...p, func: ssasem.Func { ...p.func, anchors: anchors } };
+            var analysis: ssasem.Analysis = ssasem.analyze(p.func);
+            if (!analysis.ok) { p = Produced { ...refuse("produced graph fails semantic verification: " + analysis.why), key: p.key }; }
+        }
         out = out.append(p);
         i = i + 1;
     }
-    out = close_module(out, names);
-    var anchored: Produced[] = [];
-    for p in out {
-        if (p.ok) { p = Produced { ...p, func: ssasem.Func { ...p.func, anchors: anchors } }; }
-        anchored = anchored.append(p);
-    }
-    return anchored;
+    return close_module(out, names);
 }
 
 // Each `return v` of a view becomes `return (v + "") as str`.
