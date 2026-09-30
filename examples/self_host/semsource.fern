@@ -3828,7 +3828,9 @@ function list_var_uses(stmts: ast.Stmt[], own acc: string[]): string[] {
     }
     if (names.len() == 0) { return acc; }
     for n in names { acc = acc.append("=" + n); }
-    // Every name is unique, so a use in this list can only follow its `var`.
+    // Counting the whole list, not just what follows each `var`, can only add
+    // in-list uses, so it never marks a binding escaping; a defer replay's use
+    // sits in an enclosing list either way.
     var ix: util.NameIndex = util.name_index(names);
     for u in uses_in(stmts, []) {
         if (ix.has(u)) { acc = acc.append(u); }
