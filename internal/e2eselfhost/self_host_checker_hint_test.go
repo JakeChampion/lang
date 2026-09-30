@@ -68,6 +68,20 @@ impl Greet for Dog { function hi(self: Self): i32 { return 7; } }
     }
     return n;
 }`, 4},
+		// A function using a builtin struct (FileStat) before the one the
+		// checker cannot type: the hint checks the module check_module typed,
+		// builtins included, so it names the second (#10752).
+		{"builtin-struct-before-fallback", `function isdir(p: string): boolean {
+    var d: boolean = false;
+    match (stat(p)) { Ok(st) => { d = st.is_dir; }, Err(e) => { } }
+    return d;
+}
+function main(): i32 { if (isdir(".")) { return 0; } return ((x: i32): i32 => { return x * 2; })(4); }`, 6},
+		// An empty literal at a type parameter leaves it to the function
+		// value beside it, so iterating the result types its elements.
+		{"generic-empty-literal-and-fn-value", `function fold[T](n: i32, acc: T, visit: (i32, T) => T): T { return visit(n, acc); }
+function add(n: i32, acc: i32[]): i32[] { return acc.append(n); }
+function main(): i32 { var t = 0; for u in fold(3, [], add) { t = t + u; } return t; }`, 0},
 		// A variant assigned to a union-typed local widens, as it does in a
 		// declaration or a return.
 		{"union-variant-reassign", `struct Circle { r: i32 }

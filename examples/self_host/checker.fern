@@ -3559,15 +3559,31 @@ function call_through_fn_value(c: ast.ExprCall, s: Scope): typeinfo.Type {
 function ret_typevar_arg_type(sig: FuncSig, c: ast.ExprCall, s: Scope): (typeinfo.Type, boolean) {
   var rt: typeinfo.Type = t_unknown("no parameter names " + sig.ret_type_name);
   var bound: boolean = false;
+  // An empty literal binds nothing, as in gc_bind_param (#10499), so another
+  // argument (a function value, say) still can; it answers only when no
+  // other argument there does.
+  var empty: typeinfo.Type = rt;
+  var has_empty: boolean = false;
   var k: i32 = 0;
   while (k < sig.param_type_names.len()) {
     if (sig.param_type_names[k] == sig.ret_type_name && k < c.args.len()) {
       var kt: typeinfo.Type = check_expr(c.args[k], s);
-      if (bound) { rt = wider_int(rt, kt); } else { rt = kt; bound = true; }
+      if (elemless_array(kt)) {
+        if (!has_empty) { empty = kt; has_empty = true; }
+      } else if (bound) { rt = wider_int(rt, kt); } else { rt = kt; bound = true; }
     }
     k = k + 1;
   }
+  if (!bound && has_empty && !call_binds_elsewhere(sig, c, s)) { return (empty, true); }
   return (rt, bound);
+}
+
+// call_binds_elsewhere: some argument binds the call's return type parameter
+// through a parameter other than one spelled as that parameter alone — a
+// function value's signature, an array's element.
+function call_binds_elsewhere(sig: FuncSig, c: ast.ExprCall, s: Scope): boolean {
+  let (bn, _) = arg_bindings(sig, c, s);
+  return util.index_of_str(bn, sig.ret_type_name) >= 0;
 }
 
 // shared_literal_typevar_width: when type parameter `tp` of a generic call is
@@ -18949,7 +18965,11 @@ function unknown_site_within(st: ast.Stmt, s: Scope): UnknownSite {
 // Reports the first function whose body has an un-inferable expression (at its
 // declaration), else the first offending top-level statement, else a
 // module-level note.
-pub function ill_typed_hint(mod: parser.Module): util.Diag[] {
+pub function ill_typed_hint(raw_mod: parser.Module): util.Diag[] {
+  // The module check_module typed, builtin structs (FileStat, …) included;
+  // without them a function using one reads as the ill-typed one.
+  var (filled, _) = parser.fill_default_args_with_diags(raw_mod);
+  var mod: parser.Module = prepared_module(filled);
   var env: ModuleEnv = module_env(mod);
   for func in mod.funcs {
     var fs: Scope = build_func_scope(func, env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs);
