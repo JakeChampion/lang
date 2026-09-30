@@ -25,6 +25,37 @@ func TestDriverCompilerKeyCoversTheCompilerAndTheStdlib(t *testing.T) {
 	}
 }
 
+// A driver build is cached by its sources and compiler alone, so a FERN_* knob
+// set in the test process must not reach the compiler that builds it:
+// FERN_SANITIZE there once built an instrumented asm_modload_run that every
+// later test in the shard reused.
+func TestCompileWithSelfHostDropsFernKnobs(t *testing.T) {
+	t.Setenv("FERN_SANITIZE", "1")
+	t.Setenv("FERN_LEAKCHECK", "1")
+	dir := t.TempDir()
+	compiler := filepath.Join(dir, "fake-compiler")
+	// The fake compiler writes its environment to the -o path.
+	if err := os.WriteFile(compiler, []byte("#!/bin/sh\nwhile [ \"$1\" != \"-o\" ]; do shift; done\nenv > \"$2\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, "driver")
+	if err := CompileWithSelfHost(t, compiler, TargetX86_64Linux, filepath.Join(dir, "main.fern"), out, 1); err != nil {
+		t.Fatal(err)
+	}
+	env, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(env), "PATH=") {
+		t.Fatalf("the compiler saw no environment at all:\n%s", env)
+	}
+	for _, line := range strings.Split(string(env), "\n") {
+		if strings.HasPrefix(line, "FERN_") {
+			t.Errorf("the driver build saw %s", line)
+		}
+	}
+}
+
 func TestTreeHashSeesEveryKindOfEdit(t *testing.T) {
 	root := t.TempDir()
 	write := func(rel, body string) {
