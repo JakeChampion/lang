@@ -380,7 +380,7 @@ function ast_built_value(r: Rows, mod: parser.Module, built: semsource.Built, i:
     if (creator.len() == 0) { return ""; }
     var at: i32 = util.index_of_str(r.n1, creator);
     if (at < 0) { at = util.index_of_str(r.n2, creator); }
-    if (at >= 0 && r.keep[at]) { return ""; }
+    if (at >= 0 && !ast_lowered(built, r, at)) { return ""; }
     return "is a function value " + creator + " builds, which the AST lowering defines";
 }
 
@@ -472,6 +472,8 @@ function ast_indirect_cone(r: Rows, mod: parser.Module, built: semsource.Built):
                     report(r.n1[callee], "is reached by a direct call from " + r.n1[row] + ", which the AST lowering calls through a box");
                     r = Rows { ...r, keep: r.keep.with(callee, false) };
                 }
+                // A template never seeds, but an AST-lowered caller calls its
+                // erased body, so the cone continues through it.
                 pending = pending.append(callee);
             }
         }

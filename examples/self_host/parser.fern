@@ -9208,7 +9208,7 @@ pub function parse_type_ref(sin: string): TypeRef {
                 while (pi < psegs.len()) { fargs = fargs.append(parse_type_ref(fn_parameter_type(psegs[pi]))); pi = pi + 1; }
             }
             fargs = fargs.append(parse_type_ref(rhs));
-            return TypeRef { base: "", args: fargs, array_depth: depth, is_tuple: false, is_fn: true };
+            return TypeRef { base: "", args: fargs, array_depth: 0, is_tuple: false, is_fn: true };
         }
     }
     // Only peel array suffixes after ruling out an outer arrow. In
@@ -11129,7 +11129,7 @@ pub function subst_ty(name: string, tparams: string[], cts: string[]): string {
     // substitutes to itself is handed back verbatim.
     if (name.len() > 0 && name[0] == b'(' && util.contains(name, "=>")) {
         var fref: TypeRef = parse_type_ref(name);
-        if (fref.is_fn && fref.array_depth == 0) {
+        if (fref.is_fn) {
             var parts: string[] = [];
             var changed: boolean = false;
             for a in fref.args {
@@ -12267,7 +12267,7 @@ function mg_ty(ty: string, gstructs: StructDecl[], ins: Insts): TyIns {
     // itself is handed back verbatim rather than respelled.
     if (ty.len() > 0 && ty[0] == b'(' && util.contains(ty, "=>")) {
         var fref: TypeRef = parse_type_ref(ty);
-        if (fref.is_fn && fref.array_depth == 0) {
+        if (fref.is_fn) {
             var fcur: Insts = ins;
             var fout: string = "";
             var fchanged: boolean = false;
