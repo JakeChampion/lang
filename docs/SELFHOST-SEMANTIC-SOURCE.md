@@ -807,29 +807,71 @@ to reach takes the header in the entry slot of its predecessor list so the phi
 operands stay parallel. The pass runs before `ssasem.analyze`, so the verifier
 checks what it produced.
 
-Two shapes are DECLINED, and both are soundness preconditions rather than
-conservatism:
+An anchored ARGUMENT crosses the jump only as a counted payload read out of
+its anchor — a variant, record, tuple or array projection whose type holds no
+view and is not a map. The phi it reaches is owned, so the edge retains it
+before the anchor's release. Anything else anchored declines the one BLOCK,
+and a call that stays a call keeps holding what it holds. A view is the case
+that forces the rule: the call kept its anchor alive for the callee's frame, a
+jump re-enters the loop with the anchor already replaced by the phi, and a
+view's retain is a no-op against the immortal sentinel.
+`irlower.rc_consumed_drop_wired` is the shape — it recurses on
+`slice_unchecked(t, 0, t.len() - 2)`, a view of the very parameter the
+argument replaces — and rewriting it corrupted the heap of every compiler
+built through this path. Until #10462 every anchored argument was declined,
+so a walk down a list's tail (`return last(t, h)`) grew the stack.
 
-- A tail call whose ARGUMENT is a view. The call kept the anchor alive,
-  because the anchor is the caller's and the caller's frame stands until the
-  callee returns; a jump re-enters the loop with the anchor already replaced
-  by the phi. `irlower.rc_consumed_drop_wired` is the shape — it recurses on
-  `slice_unchecked(t, 0, t.len() - 2)`, a view of the very parameter the
-  argument replaces — and rewriting it corrupted the heap of every compiler
-  built through this path. This declines the one BLOCK: a call that stays a
-  call keeps holding what it holds.
-- A function with a view PARAMETER. Every parameter gains a phi, the planner
-  marks a reference-typed phi owned, and the entry edge then supplies it by
-  RETAINING — which on a view is a no-op, since a view's box carries the
-  immortal sentinel rather than a count, while the matching release frees the
-  box. The loop would give back a unit it was never able to take. The
-  asymmetry is the planner's (#9802); what this pass contributed was the only
-  way to reach it, a phi whose operand is a borrowed parameter, since a loop
-  that rebuilds its view each round merges fresh values and is correct.
+A view PARAMETER is carried: its phi merges the incoming view with the
+parameters each tail call passes whole, all borrowed, and the planner leaves
+such a phi unowned (#9802).
 
-The cost of the second is that a deep self-tail recursion on a `str` parameter
-still grows the stack here while the AST lowering optimises it. It shows on
-wasm, whose stack is small, and not natively.
+### Modulo cons
+
+A self-call whose result is a payload of the variant the block returns —
+`return Cons(h + 1, inc_all(t))` — is a tail call modulo cons, and the same
+pass makes it a loop (#10462). The loop carries two more phis: `r`, the result
+built so far, and `h`, the address of its last node, whose payload at the HOLE
+index holds a zero placeholder. The entry edge passes an empty chain and a
+null address.
+
+- A cons block keeps its construction, built over the placeholder its call's
+  result became, then `hole_at` takes the node's address and
+  `hole_fill(r, h, node)` links it: the node goes into the hole of the node at
+  `h`, or becomes the chain when `h` is null. The call's arguments go to the
+  header with the new chain and the node's address.
+- A plain self-tail block passes `r` and `h` through unchanged: the filter
+  shape, whose hole stays put.
+- Every other return fills the hole with its value and returns the chain.
+
+The rc argument is that each node's unit moves exactly once. `variant_new`
+makes it; `hole_fill` takes it, into the field the previous fill left as the
+placeholder or into the chain itself, and takes the chain's unit to hand it
+back. The field it writes held the zero word, so nothing is released. `h`
+owns nothing — it is a `usize`, and the node it names is owned by the chain —
+so the planner sees one owned phi and a word, and brackets the loop like any
+other. Every path out fills the one open hole, so the result has no
+placeholder left in it.
+
+Every cons block has to agree on the hole index, since a fill writes the node
+the previous round built without knowing which variant that was; a payload
+sits in a slot of its own in every variant, so the index is the whole address.
+What runs between the call and the construction runs before the rest of the
+recursion once the call is gone, so it must be something whose order cannot
+show: a constant, a copy, a scalar operator other than a division or a
+remainder, a cast, or a read of an immutable value. A function whose blocks
+disagree keeps its plain self-tail calls and its recursive cons calls.
+
+The ownership inference reads the rewritten loop as the recursion it was. Each
+parameter's phi names the call and the slot it stands for (`imm`, `str`), and
+`ownership.slot_carried` carries its back-edge operands as `call_carried`
+would carry the call's arguments, and the parameter with the phi. Read as a
+plain loop, `inc_all` over a temporary list stayed borrowed, and its peak was
+the input and the output rather than the output alone.
+
+`TestSelfHostSemanticTrmc` runs each shape 300,000 deep on every target, with
+nothing held at exit on the sanitizer leg and no self-call of a rewritten
+function left in the listing; `TestSelfHostSemanticSourcePrint` pins the
+graphs.
 
 ## Validation
 
@@ -2339,8 +2381,9 @@ emitter. It already meant the drivers refuse the module, and it is now
 spelled `refused`, as is the `-ir-probe` report's `module:` line; step 3
 does not change the gate.
 
-`TestSelfHostSSALoopTailBlockEmittedOnce` checks self-tail calls, which
-only the AST lowering performs, so the typed path needs that first.
+`TestSelfHostSSALoopTailBlockEmittedOnce` pins a loop shape only the AST
+lowering's TCO wrapper builds, and runs a typed leg beside it; its AST leg goes
+with the lowering.
 
 **Other checked-in state:**
 

@@ -245,13 +245,28 @@ function map_release_fns(t: typeinfo.Type): string[] {
 }
 
 // The runtime's key kind: 0 a string column, whose unit the insert hands over
-// for the column to hold, 1 an integer column, which holds no unit, and 2 a
+// for the column to hold, 1 an integer column, which holds no unit, 2 a
 // keyed column of boxes, hashed and compared through the key type's derived
-// methods and owning one unit per entry as a string column does.
+// methods and owning one unit per entry as a string column does, and 3 a
+// wide integer column (i64 / u64), which the register backends treat as 1
+// and wasm keeps as cells it owns and compares by value (#10005).
 function map_key_kind(t: typeinfo.Type): i32 {
     if (ssasem.is_string(ssasem.map_key(t))) { return 0; }
     if (ssasem.keyed_map_key(ssasem.map_key(t))) { return 2; }
+    if (ssasem.wide_map_key(ssasem.map_key(t))) { return 3; }
     return 1;
+}
+
+// Whether the typed insert hands the key column a unit: a string or keyed
+// column takes one per entry; the integer columns, narrow or wide, hold none
+// (wasm's wide-key cells are the runtime's own, taken on the insert).
+function key_column_counted(kkind: i32): boolean { return kkind == 0 || kkind == 2; }
+
+// The key-width flag of op_map_keys, op_map_iter and op_mapiter_key: 1 for
+// an i64 / u64 key column.
+function map_keywide(t: typeinfo.Type): i32 {
+    if (ssasem.wide_map_key(ssasem.map_key(t))) { return 1; }
+    return 0;
 }
 
 // The derived equality a keyed column's probes compare through, named as the
@@ -1747,7 +1762,7 @@ function container_op(k: i32): boolean {
         ssasem.array_get(), ssasem.tuple_get(), ssasem.record_get(),
         ssasem.length(), ssasem.append(), ssasem.with(), ssasem.slice(), ssasem.str_index(),
         ssasem.str_bytes(), ssasem.arr_join(), ssasem.arr_slice()], k)
-        || variant_op(k) || ssasem.is_cell_op(k) || ssasem.is_map_op(k) || ssasem.is_map_iter_op(k);
+        || variant_op(k) || ssasem.is_cell_op(k) || ssasem.is_map_op(k) || ssasem.is_map_iter_op(k) || ssasem.is_hole_op(k);
 }
 
 function variant_op(k: i32): boolean {
@@ -2171,12 +2186,12 @@ function map_op(own r: irlower.LowerResult, ins: ssa.SInst, f: ssasem.Func): irl
     if (vkind == 3) { vrel = release_helper_name(ssasem.map_value(t)); }
     if (kkind == 2) { krel = release_helper_name(ssasem.map_key(t)); }
     if (ins.kind_tag == ssasem.map_insert()) {
-        return emit(r, ir.op_map_set(kkind, vkind != 0, vkind != 0, kkind != 1, true, false, ir.map_op_packed(eq, vrel, krel), map_widekind(t), vkind));
+        return emit(r, ir.op_map_set(kkind, vkind != 0, vkind != 0, key_column_counted(kkind), true, false, ir.map_op_packed(eq, vrel, krel), map_widekind(t), vkind));
     }
     if (ins.kind_tag == ssasem.map_has()) { return emit(r, ir.op_map_has(kkind, eq)); }
     if (ins.kind_tag == ssasem.map_get()) { return map_get(r, ins, kkind, eq, vkind != 0, map_widekind(t)); }
     if (ins.kind_tag == ssasem.map_keys()) {
-        r = emit(r, ir.op_map_keys(column_flag(ssasem.map_key(t))));
+        r = emit(r, ir.op_map_keys(column_flag(ssasem.map_key(t)), map_keywide(t)));
         if (ssasem.is_u8(ssasem.map_key(t))) { return packed_snapshot(r, f); }
         return r;
     }
@@ -2186,7 +2201,7 @@ function map_op(own r: irlower.LowerResult, ins: ssa.SInst, f: ssasem.Func): irl
         return r;
     }
     if (ins.kind_tag == ssasem.map_delete()) {
-        return emit(r, ir.op_map_delete(kkind, ir.map_op_packed(eq, vrel, krel), kkind != 1, vkind));
+        return emit(r, ir.op_map_delete(kkind, ir.map_op_packed(eq, vrel, krel), key_column_counted(kkind), vkind));
     }
     r = emit(r, ir.op_map_get_or(kkind, eq, map_widekind(t)));
     if (vkind == 0) { return r; }
@@ -2674,6 +2689,7 @@ function instruction(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Pla
     r = negation_zero(r, f, ins);
     if (ins.kind_tag == ssasem.with()) { r = with_update(r, f, p, ins, defer0); return emit(r, ir.op_store_local(ins.result)); }
     if (ssasem.is_cell_op(ins.kind_tag)) { return cell_site(r, f, ins); }
+    if (ssasem.is_hole_op(ins.kind_tag)) { return hole_site(r, ins); }
     if (routed_map_op(f, ins)) { r = routed_map_site(r, f, ins); return emit(r, ir.op_store_local(ins.result)); }
     if (ssasem.is_map_iter_op(ins.kind_tag)) { return map_iter_site(r, f, ins); }
     if (ssasem.is_function_op(ins.kind_tag)) { r = function_site(r, f, ins); return emit(r, ir.op_store_local(ins.result)); }
@@ -3235,11 +3251,13 @@ function with_field(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan
 function map_iter_site(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
     r = emit(r, ir.op_load_local(ins.args[0]));
     if (ins.kind_tag == ssasem.map_iter()) {
-        r = emit(r, ir.op_map_iter(map_widekind(f.values[ins.args[0]])));
+        r = emit(r, ir.op_map_iter(map_widekind(f.values[ins.args[0]]), map_keywide(f.values[ins.args[0]])));
     } else if (ins.kind_tag == ssasem.mapiter_has_next()) {
         r = emit(r, ir.op_mapiter_has_next());
     } else if (ins.kind_tag == ssasem.mapiter_key()) {
-        r = emit(r, ir.op_mapiter_key());
+        var kw: i32 = 0;
+        if (ssasem.wide_map_key(semtypes.map_iter_key(f.values[ins.args[0]]))) { kw = 1; }
+        r = emit(r, ir.op_mapiter_key(kw));
     } else if (ins.kind_tag == ssasem.mapiter_value()) {
         r = emit(r, ir.op_mapiter_value(value_widekind(semtypes.map_iter_value(f.values[ins.args[0]]))));
     } else {
@@ -3256,6 +3274,29 @@ function cell_site(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): 
     r = emit(r, ir.op_load_local(ins.args[0]));
     r = emit(r, arr_make_op(semtypes.cell_elem(f.values[ins.result]), 1));
     return emit(r, ir.op_store_local(ins.result));
+}
+
+// A node's address is the box's own word. A fill writes the node at the hole
+// over its zero placeholder, so nothing is released, and answers the chain;
+// the first fill has no node to write and answers the value itself.
+function hole_site(own r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerResult {
+    if (ins.kind_tag == ssasem.hole_at()) {
+        r = emit(r, ir.op_load_local(ins.args[0]));
+        return emit(r, ir.op_store_local(ins.result));
+    }
+    r = emit(r, ir.op_load_local(ins.args[1]));
+    r = emit(r, ir.op_const_i32(0));
+    r = emit(r, ir.op_bin("eq", ir.width_ptr(), true));
+    r = emit(r, ir.op_if(0));
+    r = emit(r, ir.op_load_local(ins.args[2]));
+    r = emit(r, ir.op_store_local(ins.result));
+    r = emit(r, ir.op_else());
+    r = emit(r, ir.op_load_local(ins.args[1]));
+    r = emit(r, ir.op_load_local(ins.args[2]));
+    r = emit(r, ir.op_struct_set(ins.imm, 0));
+    r = emit(r, ir.op_load_local(ins.args[0]));
+    r = emit(r, ir.op_store_local(ins.result));
+    return emit(r, ir.op_end());
 }
 
 // A read hands out a unit of the element: the slot is loaded and, for a
@@ -3368,11 +3409,16 @@ function unshared_map(own r: irlower.LowerResult, f: ssasem.Func, slot: i32, box
     var keys: i32 = box + 1;
     var vals: i32 = box + 2;
     var index: i32 = box + 3;
+    // The key and value slots are one per width: the slots are the frame's,
+    // shared by every rebuild in it, and a slot's type is declared once, so
+    // a narrow column and a wide one in the same function cannot share a
+    // slot (wasm refuses an i32 stored into an i64 local).
     var key: i32 = box + 4;
     var value: i32 = box + 5;
-    r = reserve(r, value + 1);
-    if (map_widekind(t) == 1) { r = irlower.LowerResult { ...r, i64_slots: r.i64_slots.append(value) }; }
-    if (map_widekind(t) == 2) { r = irlower.LowerResult { ...r, f64_slots: r.f64_slots.append(value) }; }
+    if (map_keywide(t) == 1) { key = box + 6; r = irlower.LowerResult { ...r, i64_slots: r.i64_slots.append(key) }; }
+    if (map_widekind(t) == 1) { value = box + 7; r = irlower.LowerResult { ...r, i64_slots: r.i64_slots.append(value) }; }
+    if (map_widekind(t) == 2) { value = box + 8; r = irlower.LowerResult { ...r, f64_slots: r.f64_slots.append(value) }; }
+    r = reserve(r, box + 9);
     r = emit(r, ir.op_load_local(slot));
     r = emit(r, ir.op_call_direct("__fern_rc_is_unique", 1));
     r = emit(r, ir.op_if(0));
@@ -3384,7 +3430,7 @@ function unshared_map(own r: irlower.LowerResult, f: ssasem.Func, slot: i32, box
     r = emit(r, ir.op_map_new(kkind, map_key_fns(t)));
     r = emit(r, ir.op_store_local(box));
     r = emit(r, ir.op_load_local(slot));
-    r = emit(r, ir.op_map_keys(0));
+    r = emit(r, ir.op_map_keys(0, map_keywide(t)));
     r = emit(r, ir.op_store_local(keys));
     r = emit(r, ir.op_load_local(slot));
     r = emit(r, ir.op_map_values(0, map_widekind(t)));
@@ -3400,13 +3446,13 @@ function unshared_map(own r: irlower.LowerResult, f: ssasem.Func, slot: i32, box
     r = emit(r, ir.op_brif(1));
     r = emit(r, ir.op_load_local(keys));
     r = emit(r, ir.op_load_local(index));
-    r = emit(r, ir.op_arr_get_nc(32));
+    if (map_keywide(t) == 1) { r = emit(r, arr_get_op(ssasem.map_key(t), true)); } else { r = emit(r, ir.op_arr_get_nc(32)); }
     r = emit(r, ir.op_store_local(key));
     r = emit(r, ir.op_load_local(vals));
     r = emit(r, ir.op_load_local(index));
     r = emit(r, arr_get_op(ssasem.map_value(t), true));
     r = emit(r, ir.op_store_local(value));
-    if (kkind != 1) { r = helper(r, key, "__fern_rc_inc"); }
+    if (key_column_counted(kkind)) { r = helper(r, key, "__fern_rc_inc"); }
     if (vkind != 0) { r = helper(r, value, "__fern_rc_inc"); }
     r = emit(r, ir.op_load_local(box));
     r = emit(r, ir.op_load_local(key));
