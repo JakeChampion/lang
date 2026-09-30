@@ -1129,9 +1129,9 @@ func ElemSizeBytes(t Type) int {
 
 // ElemSizeBytesFor is the target-aware variant. `ptrW` is the
 // pointer width in bytes for the current target (4 on wasm32,
-// 8 on arm64). Pointer-shaped types return `ptrW` so their full
-// heap address survives on arm64-darwin (heap >= 4 GiB). Scalar
-// types ignore ptrW.
+// 8 on arm64). Pointer-shaped types and `usize` return `ptrW` so
+// their full heap address survives on arm64-darwin (heap >= 4 GiB).
+// Other scalar types ignore ptrW.
 //
 // `StringType` is special-cased on wasm32 (ptrW=4): a string
 // element is two i32 slots `(data, len)` under the two-word
@@ -1149,6 +1149,8 @@ func ElemSizeBytesFor(t Type, ptrW int) int {
 			return 1
 		case 64:
 			return 8
+		case WidthPtr:
+			return ptrW
 		}
 		return 4
 	case FloatType:

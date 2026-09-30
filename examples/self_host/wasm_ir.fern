@@ -11298,6 +11298,11 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
         parts = parts.append(lc_report_and_exit_wrapper());
         parts = parts.append("  (func $_start (call $proc_exit (call $main)))\n");
         parts = parts.append(xps);
+        // `main` is exported beside `_start` so a host can read its result
+        // directly (`wasmtime run --invoke main`): proc_exit refuses a status
+        // outside [0..126), so through `_start` alone a result of 126 or more
+        // is unreadable.
+        parts = parts.append("  (export \"main\" (func $main))\n");
         parts = parts.append("  (export \"_start\" (func $_start)))\n");
         return util.str_join_chunks(parts);
     }
