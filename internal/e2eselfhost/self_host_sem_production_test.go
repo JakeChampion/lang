@@ -4712,6 +4712,282 @@ function f(n: i32): string {
 }
 function main(): i32 { print(f(3) + " " + f(0)); return f(2).len(); }
 `},
+	// A `.with` and a map insert take a view of a branch local: copied where
+	// each takes it.
+	{name: "an-array-with-a-view-of-a-branch-local-is-produced", atLeast: 3, noLeak: true, src: `
+function mk(n: i32): string {
+    var s: string = "ab";
+    var i: i32 = 0;
+    while (i < n) { s = s + "c"; i = i + 1; }
+    return s;
+}
+function f(n: i32): string {
+    var a: str[] = ["zz"];
+    if (n != 0) {
+        var s: string = mk(n);
+        a = a.with(0, slice_unchecked(s, 0, 2));
+    }
+    var out: string = "";
+    for v in a { out = out + v + "|"; }
+    return out;
+}
+function main(): i32 { print(f(3) + " " + f(0)); return f(2).len(); }
+`},
+	{name: "a-map-inserted-a-view-of-a-branch-local-is-produced", atLeast: 3, noLeak: true, src: `
+import "core/map";
+import "std/i32";
+function mk(n: i32): string {
+    var s: string = "ab";
+    var i: i32 = 0;
+    while (i < n) { s = s + "c"; i = i + 1; }
+    return s;
+}
+function f(n: i32): string {
+    var m: Map[string, str] = Map {};
+    if (n != 0) {
+        var s: string = mk(n);
+        m = m.insert("k", slice_unchecked(s, 0, 2));
+    }
+    var out: string = "";
+    for k in m.keys() { out = out + k + "|"; }
+    return out + m.len().to_string();
+}
+function main(): i32 { print(f(3) + " " + f(0)); return f(2).len(); }
+`},
+	// A container a call returns, anchored to a string declared in the branch or
+	// loop body it merges out of, is copied whole at the merge (#10815).
+	{name: "a-str-array-a-call-returns-from-a-branch-local-is-produced", atLeast: 4, noLeak: true, src: `
+function mk(n: i32): string {
+    var s: string = "ab";
+    var i: i32 = 0;
+    while (i < n) { s = s + "c"; i = i + 1; }
+    return s;
+}
+function heads(s: string): str[] { return [slice_unchecked(s, 0, 1), slice_unchecked(s, 1, 2)]; }
+function f(n: i32): string {
+    var a: str[] = [];
+    if (n != 0) {
+        var s: string = mk(n);
+        a = heads(s);
+    }
+    var out: string = "";
+    for v in a { out = out + v + "|"; }
+    return out;
+}
+function main(): i32 { print(f(3) + f(0)); return f(2).len(); }
+`},
+	{name: "a-tuple-a-call-returns-from-a-branch-local-is-produced", atLeast: 4, noLeak: true, src: `
+function mk(n: i32): string {
+    var s: string = "ab";
+    var i: i32 = 0;
+    while (i < n) { s = s + "c"; i = i + 1; }
+    return s;
+}
+function split2(s: string): (str, str) { return (slice_unchecked(s, 0, 1), slice_unchecked(s, 1, 3)); }
+function f(n: i32): string {
+    var p: (str, str) = ("-", "-");
+    if (n != 0) {
+        var s: string = mk(n);
+        p = split2(s);
+    }
+    return p.0 + "/" + p.1;
+}
+function main(): i32 { print(f(3) + " " + f(0)); return f(2).len(); }
+`},
+	{name: "an-option-a-call-returns-from-a-loop-body-local-is-produced", atLeast: 4, noLeak: true, src: `
+function mk(n: i32): string {
+    var s: string = "ab";
+    var i: i32 = 0;
+    while (i < n) { s = s + "c"; i = i + 1; }
+    return s;
+}
+function first(s: string, n: i32): Option[str] {
+    if (n > 2) { return Some(slice_unchecked(s, 0, 2)); }
+    return None;
+}
+function f(n: i32): string {
+    var o: Option[str] = None;
+    var i: i32 = 0;
+    while (i < n) {
+        var s: string = mk(i);
+        o = first(s, i);
+        i = i + 1;
+    }
+    match (o) { Some(v) => { return "some:" + v; }, None => { return "none"; } }
+}
+function main(): i32 { print(f(5) + " " + f(2) + " " + f(0)); return f(4).len(); }
+`},
+	// A declared enum of three variants, one carrying two views: the copy
+	// reads the second field by its index, chains a second test, and rebuilds
+	// the last variant by exclusion. Each call reaches a different variant and
+	// reads every field it carries, so a wrong index or a phi operand paired
+	// with the wrong arm changes the answer.
+	{name: "a-three-variant-enum-a-call-returns-from-a-branch-local-is-produced", atLeast: 4, noLeak: true, src: `
+enum Tri { A(str, str), B(str), C }
+function mk(n: i32): string {
+    var s: string = "ab";
+    var i: i32 = 0;
+    while (i < n) { s = s + "c"; i = i + 1; }
+    return s;
+}
+function pick(s: string, which: i32): Tri {
+    if (which == 1) { return A(slice_unchecked(s, 0, 2), slice_unchecked(s, 1, 3)); }
+    if (which == 2) { return B(slice_unchecked(s, 0, 1)); }
+    return C;
+}
+function f(n: i32): string {
+    var t: Tri = C;
+    if (n != 0) {
+        var s: string = mk(n + 2);
+        t = pick(s, n);
+    }
+    var out: string = "";
+    match (t) { A(a, b) => { out = a + "/" + b; }, B(x) => { out = "b:" + x; }, C => { out = "c"; } }
+    return out;
+}
+function main(): i32 { print(f(1) + " " + f(2) + " " + f(3)); return f(1).len(); }
+`},
+	// The same enum with no merge: the call's result is read after a loop
+	// that churns the allocator. The result holds views of the temporary it
+	// was handed, so it anchors that temporary until its last read; read as
+	// holding no view, the temporary was released at the call and the views
+	// read what the churn reissued.
+	{name: "a-declared-enum-of-views-keeps-its-source-alive", atLeast: 4, noLeak: true, src: `
+import "std/i32";
+enum Tri { A(str, str), B(str), C }
+function mk(n: i32): string {
+    var s: string = "ab";
+    var i: i32 = 0;
+    while (i < n) { s = s + "c"; i = i + 1; }
+    return s;
+}
+function pick(s: string, which: i32): Tri {
+    if (which == 1) { return A(slice_unchecked(s, 0, 2), slice_unchecked(s, 1, 3)); }
+    if (which == 2) { return B(slice_unchecked(s, 0, 1)); }
+    return C;
+}
+function f(n: i32): string {
+    var t: Tri = pick(mk(n + 2), n);
+    var junk: string[] = [];
+    var i: i32 = 0;
+    while (i < 50) { junk = junk.append("zz" + i.to_string()); i = i + 1; }
+    var out: string = "";
+    match (t) { A(a, b) => { out = a + "/" + b; }, B(x) => { out = "b:" + x; }, C => { out = "c"; } }
+    return out;
+}
+function main(): i32 { print(f(1) + " " + f(2) + " " + f(3)); return 0; }
+`},
+	// A declared record with view fields, merged from a branch: rebuilt field
+	// by field, the scalar read out and the views copied.
+	{name: "a-record-a-call-returns-from-a-branch-local-is-produced", atLeast: 4, noLeak: true, src: `
+import "std/i32";
+struct Pair { a: str, b: str, n: i32 }
+function mk(n: i32): string {
+    var s: string = "ab";
+    var i: i32 = 0;
+    while (i < n) { s = s + "c"; i = i + 1; }
+    return s;
+}
+function halves(s: string, n: i32): Pair { return Pair { a: slice_unchecked(s, 0, 1), b: slice_unchecked(s, 1, 3), n: n }; }
+function f(n: i32): string {
+    var p: Pair = Pair { a: "-", b: "-", n: 0 };
+    if (n != 0) {
+        var s: string = mk(n);
+        p = halves(s, n);
+    }
+    return p.a + "/" + p.b + "/" + p.b.len().to_string() + "/" + p.n.to_string();
+}
+function main(): i32 { print(f(3) + " " + f(0)); return f(2).len(); }
+`},
+	// A dyn holds a view when a box it can be holding does: `wrap`'s result is
+	// a `P` over its argument's bytes behind `dyn Size`, so the caller keeps the
+	// temporary it passed alive while the dyn lives, through allocator churn.
+	{name: "a-dyn-holding-a-view-keeps-its-source-alive", atLeast: 4, noLeak: true, src: `
+import "std/i32";
+trait Size { function size(self: Self): i32; }
+struct P { a: str }
+impl Size for P { function size(self: P): i32 { return self.a.len() * 10 + (self.a[0] as i32) - 97; } }
+function mk(n: i32): string {
+    var s: string = "ab";
+    var i: i32 = 0;
+    while (i < n) { s = s + "c"; i = i + 1; }
+    return s;
+}
+function wrap(s: string): dyn Size { var p: P = P { a: slice_unchecked(s, 1, 4) }; return p; }
+function g(n: i32): i32 {
+    var d: dyn Size = wrap(mk(n));
+    var junk: string[] = [];
+    var i: i32 = 0;
+    while (i < 50) { junk = junk.append("zz" + i.to_string()); i = i + 1; }
+    return d.size();
+}
+function main(): i32 { print(g(3).to_string() + " " + g(2).to_string()); return 0; }
+`},
+	{name: "a-nested-array-a-call-returns-from-a-branch-local-is-produced", atLeast: 4, noLeak: true, src: `
+function mk(n: i32): string {
+    var s: string = "ab";
+    var i: i32 = 0;
+    while (i < n) { s = s + "c"; i = i + 1; }
+    return s;
+}
+function grid(s: string): str[][] { return [[slice_unchecked(s, 0, 1)], [slice_unchecked(s, 1, 2), slice_unchecked(s, 2, 3)]]; }
+function f(n: i32): string {
+    var g: str[][] = [];
+    if (n != 0) {
+        var s: string = mk(n);
+        g = grid(s);
+    }
+    var out: string = "";
+    for row in g { for v in row { out = out + v; } out = out + ";"; }
+    return out;
+}
+function main(): i32 { print(f(3) + "|" + f(0)); return f(2).len(); }
+`},
+	// A call anchored to the array it extends and to a loop-body local: each
+	// round copies what the join would otherwise read past the local.
+	{name: "an-array-a-call-extends-with-a-loop-body-local-is-produced", atLeast: 4, noLeak: true, src: `
+function mk(n: i32): string {
+    var s: string = "ab";
+    var i: i32 = 0;
+    while (i < n) { s = s + "c"; i = i + 1; }
+    return s;
+}
+function both(a: str[], s: string): str[] { return a.append(slice_unchecked(s, 0, 3)); }
+function f(n: i32): string {
+    var a: str[] = [];
+    var i: i32 = 0;
+    while (i < n) {
+        var s: string = mk(i + 1);
+        a = both(a, s);
+        i = i + 1;
+    }
+    var out: string = "";
+    for v in a { out = out + v + ","; }
+    return out;
+}
+function main(): i32 { print(f(3) + "|" + f(0)); return f(2).len(); }
+`},
+	// The control: the source above the loop dominates every join.
+	{name: "a-str-array-a-call-returns-from-a-dominating-local-is-produced", atLeast: 4, noLeak: true, src: `
+function mk(n: i32): string {
+    var s: string = "ab";
+    var i: i32 = 0;
+    while (i < n) { s = s + "c"; i = i + 1; }
+    return s;
+}
+function heads(s: string): str[] { return [slice_unchecked(s, 0, 1), slice_unchecked(s, 1, 2)]; }
+function pick(n: i32): i32 {
+    var s: string = mk(n);
+    var a: str[] = [];
+    var i: i32 = 0;
+    while (i < n) {
+        if (i % 2 == 0) { a = heads(s); }
+        i = i + 1;
+    }
+    return a.len();
+}
+function main(): i32 { return pick(9); }
+`},
 	// std/time's Zoned.format_rfc3339 is that branch shape (#10796).
 	{name: "std-time-format-rfc3339-is-produced", atLeast: 77, noLeak: true, src: `
 import "std/time";
@@ -6479,7 +6755,8 @@ function main(): i32 {
 `
 
 // semDominatingViewSource merges views of `s`, declared above the loop, at
-// the loop's joins: a copy of either would allocate once per round.
+// the loop's joins, one set built in the loop and one a call returns: a copy
+// of any would allocate once per round.
 const semDominatingViewSource = `
 function mk(n: i32): string {
     var s: string = "ab";
@@ -6487,19 +6764,22 @@ function mk(n: i32): string {
     while (i < n) { s = s + "c"; i = i + 1; }
     return s;
 }
+function heads(s: string): str[] { return [slice_unchecked(s, 0, 1), slice_unchecked(s, 1, 2)]; }
 function pick(n: i32): i32 {
     var s: string = mk(n);
     var tail: str = "";
     var a: str[] = [];
+    var b: str[] = [];
     var i: i32 = 0;
     while (i < n) {
         if (i % 2 == 0) {
             tail = slice_unchecked(s, 1, 3);
             a = a.append(slice_unchecked(s, 0, 2));
+            b = heads(s);
         }
         i = i + 1;
     }
-    return tail.len() + a.len();
+    return tail.len() + a.len() + b.len();
 }
 function main(): i32 { return pick(9); }
 `
@@ -6578,14 +6858,16 @@ func TestSelfHostSemanticAllocationParity(t *testing.T) {
 }
 
 // semAllocations compiles the program under FERN_LEAKCHECK on x86-64 with the
-// semantic path on or off and answers the run's allocation count.
+// semantic path on or off and answers the run's allocation count. The typed
+// leg is strict, so a refusal fails the compile instead of measuring the AST
+// lowering twice.
 func semAllocations(t *testing.T, fernBin, stdlibRoot, src string, sem bool) int64 {
 	t.Helper()
 	out := filepath.Join(t.TempDir(), "prog")
 	cmd := exec.Command(fernBin, "-target", "x86-64-linux", src, stdlibRoot, "-o", out)
 	cmd.Env = append(os.Environ(), "FERN_LEAKCHECK=1")
 	if sem {
-		cmd.Env = append(cmd.Env, "FERN_SEM_IR=1")
+		cmd.Env = append(cmd.Env, "FERN_SEM_IR=1", "FERN_SEM_IR_STRICT=1")
 	} else {
 		cmd.Env = append(cmd.Env, "FERN_SEM_IR=")
 	}

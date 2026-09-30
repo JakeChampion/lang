@@ -273,9 +273,9 @@ function main(): i32 {
     // declaration, and a schema field this vocabulary cannot WALK refuses the
     // whole schema; a plain record with an array field lowers.
     var wideType: typeinfo.Type = typeinfo.TypeStruct { name: "Box", args: [wide] };
-    var wideSchema = semrecords.Record { ty: wideType, fields: [semrecords.Field { name: "xs", ty: f.result }] };
+    var wideSchema = semrecords.Record { views: false, ty: wideType, fields: [semrecords.Field { name: "xs", ty: f.result }] };
     var recordType: typeinfo.Type = typeinfo.TypeStruct { name: "Box", args: [] };
-    var schema = semrecords.Record { ty: recordType, fields: [semrecords.Field { name: "xs", ty: f.result }] };
+    var schema = semrecords.Record { views: false, ty: recordType, fields: [semrecords.Field { name: "xs", ty: f.result }] };
     var recordGraph = ssa.SFunc { name: "record", nparams: 1, nvals: 2, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(ssasem.record_new(), 1, [0], 0)], term: ret(1) }] };
     var genericFunc = ssasem.Func { envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], graph: recordGraph, values: [f.result, wideType], params: [f.result], result: wideType, records: [wideSchema], enums: [], calls: [] };
@@ -285,7 +285,7 @@ function main(): i32 {
     // A wide array is not such a field. The walk visits only the REFERENCE
     // fields, and an array of scalars has no element to visit, so it needs its
     // own box released and nothing more.
-    var wideField = semrecords.Record { ty: recordType, fields: [semrecords.Field { name: "xs", ty: f.result },
+    var wideField = semrecords.Record { views: false, ty: recordType, fields: [semrecords.Field { name: "xs", ty: f.result },
         semrecords.Field { name: "ns", ty: wide }] };
     var wideFieldFunc = ssasem.Func { envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], graph: g, values: [recordType], params: [recordType], result: recordType, records: [wideField], enums: [], calls: [] };
     var wideFieldPlan = ssaunits.plan(wideFieldFunc, [2]);
@@ -301,7 +301,7 @@ function main(): i32 {
     var shapeType: typeinfo.Type = typeinfo.TypeUnion { name: "Shape", args: [] };
     var enumGraph = ssa.SFunc { name: "enum", nparams: 1, nvals: 2, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), ssa.SInst { kind_tag: ssasem.variant_new(), result: 1, args: [0], imm: 0, str: "W" }], term: ret(1) }] };
-    var wideEnum = semrecords.Enum { ty: shapeType, variants: [semrecords.Variant { name: "W", fields: [semrecords.Field { name: "__ev", ty: f.result }] },
+    var wideEnum = semrecords.Enum { views: false, ty: shapeType, variants: [semrecords.Variant { name: "W", fields: [semrecords.Field { name: "__ev", ty: f.result }] },
         semrecords.Variant { name: "N", fields: [semrecords.Field { name: "__ev", ty: wideType }] }], layout: semrecords.layout_variant() };
     var wideEnumFunc = ssasem.Func { envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], graph: enumGraph, values: [f.result, shapeType], params: [f.result], result: shapeType, records: [wideSchema], enums: [wideEnum], calls: [] };
     var wideEnumPlan = ssaunits.plan(wideEnumFunc, [2]);
@@ -311,7 +311,7 @@ function main(): i32 {
         semrecords.Variant { name: "N", fields: [semrecords.Field { name: "__ev", ty: wide }] }] };
     var walkableEnumFunc = ssasem.Func { ...wideEnumFunc, enums: [walkableEnum] };
     if (!ssarc.lower(walkableEnumFunc, [2], ssaunits.plan(walkableEnumFunc, [2]), irlower.struct_tab_empty(), []).ok) { return 59; }
-    var arrayEnum = semrecords.Enum { ty: shapeType, variants: [semrecords.Variant { name: "W", fields: [semrecords.Field { name: "__ev", ty: f.result }] }], layout: semrecords.layout_variant() };
+    var arrayEnum = semrecords.Enum { views: false, ty: shapeType, variants: [semrecords.Variant { name: "W", fields: [semrecords.Field { name: "__ev", ty: f.result }] }], layout: semrecords.layout_variant() };
     var enumFunc = ssasem.Func { envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], graph: enumGraph, values: [f.result, shapeType], params: [f.result], result: shapeType, records: [], enums: [arrayEnum], calls: [] };
     var enumPlan = ssaunits.plan(enumFunc, [2]);
     if (!enumPlan.ok) { eprint(enumPlan.why); return 15; }
@@ -321,7 +321,7 @@ function main(): i32 {
     // releases the whole value through a second one. The pair calls each other,
     // which is what makes the descent finite.
     var selfType: typeinfo.Type = typeinfo.TypeStruct { name: "Node", args: [] };
-    var selfSchema = semrecords.Record { ty: selfType, fields: [semrecords.Field { name: "kid", ty: selfType }] };
+    var selfSchema = semrecords.Record { views: false, ty: selfType, fields: [semrecords.Field { name: "kid", ty: selfType }] };
     var selfGraph = ssa.SFunc { name: "cycle", nparams: 1, nvals: 1, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0)], term: ret(0) }] };
     var selfFunc = ssasem.Func { envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], graph: selfGraph, values: [selfType], params: [selfType], result: selfType, records: [selfSchema], enums: [], calls: [] };
@@ -348,7 +348,7 @@ function main(): i32 {
     // A schema with no reference field needs no helper, so none is emitted:
     // a body exists exactly when a call to it does.
     var flatType: typeinfo.Type = typeinfo.TypeStruct { name: "Flat", args: [] };
-    var flatSchema = semrecords.Record { ty: flatType, fields: [semrecords.Field { name: "n", ty: typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false } }] };
+    var flatSchema = semrecords.Record { views: false, ty: flatType, fields: [semrecords.Field { name: "n", ty: typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false } }] };
     var flatFunc = ssasem.Func { envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], graph: selfGraph, values: [flatType], params: [flatType], result: flatType, records: [flatSchema], enums: [], calls: [] };
     if (ssarc.drop_helpers(flatFunc).len() != 0) { return 24; }
     // Two views of one type merge to a single tail entry rather than two.
@@ -384,14 +384,14 @@ function main(): i32 {
     // walk to run, or to a result every return builds.
     var i32ty: typeinfo.Type = typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false };
     var boxOnly: typeinfo.Type = typeinfo.TypeStruct { name: "BoxOnly", args: [] };
-    var boxOnlySchema = semrecords.Record { ty: boxOnly, fields: [semrecords.Field { name: "n", ty: i32ty }] };
+    var boxOnlySchema = semrecords.Record { views: false, ty: boxOnly, fields: [semrecords.Field { name: "n", ty: i32ty }] };
     var boxOnlyFunc = ssasem.Func { envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], graph: selfGraph, values: [boxOnly], params: [boxOnly], result: boxOnly, records: [boxOnlySchema], enums: [], calls: [] };
     if (util.index_of_str(ssarc.caller_sigs(irlower.fn_sigs_empty(), [ssarc.Callee { name: "mk", f: boxOnlyFunc, modes: [3], plan: ssaunits.refused("no plan"), receiver: false }]).return_fresh_struct_ret_fns, "mk") < 0) { return 30; }
     // A reference field is exactly what makes that sweep dangerous, so the same
     // shape one field over gets nothing and keeps the leak floor — here the
     // result is the borrowed parameter, a box its caller still owns.
     var withKids: typeinfo.Type = typeinfo.TypeStruct { name: "WithKids", args: [] };
-    var withKidsSchema = semrecords.Record { ty: withKids, fields: [semrecords.Field { name: "xs", ty: f.result }] };
+    var withKidsSchema = semrecords.Record { views: false, ty: withKids, fields: [semrecords.Field { name: "xs", ty: f.result }] };
     var withKidsFunc = ssasem.Func { envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], graph: selfGraph, values: [withKids], params: [withKids], result: withKids, records: [withKidsSchema], enums: [], calls: [] };
     if (util.index_of_str(ssarc.caller_sigs(irlower.fn_sigs_empty(), [ssarc.Callee { name: "mk", f: withKidsFunc, modes: [3], plan: ssaunits.refused("no plan"), receiver: false }]).return_fresh_struct_ret_fns, "mk") >= 0) { return 31; }
     var passPlan = ssaunits.plan(withKidsFunc, [2]);
@@ -534,7 +534,7 @@ function main(): i32 {
     // on the identity arm. The same graph with a second read of the appended
     // field after the push is refused, and takes the retain-then-copy form.
     var growType: typeinfo.Type = typeinfo.TypeStruct { name: "Grow", args: [] };
-    var growSchema = semrecords.Record { ty: growType, fields: [semrecords.Field { name: "xs", ty: f.result }, semrecords.Field { name: "n", ty: i32ty }] };
+    var growSchema = semrecords.Record { views: false, ty: growType, fields: [semrecords.Field { name: "xs", ty: f.result }, semrecords.Field { name: "n", ty: i32ty }] };
     var growGraph = ssa.SFunc { name: "grow", nparams: 2, nvals: 6, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1),
             ssa.SInst { kind_tag: ssasem.record_get(), result: 2, args: [0], imm: 0, str: "xs" },
@@ -798,7 +798,7 @@ function main(): i32 {
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(1, 1, [], 0)], term: ret(1) }] };
     var f64ty: typeinfo.Type = typeinfo.TypeFloat { width: 64, polymorphic: false };
     var wideRec: typeinfo.Type = typeinfo.TypeStruct { name: "Wide", args: [] };
-    var wideRecSchema = semrecords.Record { ty: wideRec, fields: [semrecords.Field { name: "d", ty: f64ty },
+    var wideRecSchema = semrecords.Record { views: false, ty: wideRec, fields: [semrecords.Field { name: "d", ty: f64ty },
         semrecords.Field { name: "s", ty: strTy }] };
     var wideFunc = ssasem.Func { envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], graph: dropGraph, values: [wideRec, i32ty], params: [wideRec], result: i32ty,
         records: [wideRecSchema], enums: [], calls: [] };
@@ -980,7 +980,7 @@ function main(): i32 {
     // A record's field width comes from its declaration, which construction
     // must resolve even though the drop walk never reads scalar fields.
     var wide64Ty: typeinfo.Type = typeinfo.TypeStruct { name: "Wide64", args: [] };
-    var wide64Schema = semrecords.Record { ty: wide64Ty, fields: [semrecords.Field { name: "n", ty: i64ty }] };
+    var wide64Schema = semrecords.Record { views: false, ty: wide64Ty, fields: [semrecords.Field { name: "n", ty: i64ty }] };
     var wide64Graph = ssa.SFunc { name: "mkwide", nparams: 1, nvals: 2, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0),
             inst(ssasem.record_new(), 1, [0], 0)], term: ret(1) }] };
@@ -1002,7 +1002,7 @@ function main(): i32 {
     // A variant resolves within its own enum: two enums declare W here, and
     // the by-name answer is the first-declared one's, whose payload is narrow.
     var spanTy: typeinfo.Type = typeinfo.TypeUnion { name: "Span", args: [] };
-    var spanEnum = semrecords.Enum { ty: spanTy, variants: [semrecords.Variant { name: "W", fields: [semrecords.Field { name: "__ev", ty: i64ty }] }], layout: semrecords.layout_variant() };
+    var spanEnum = semrecords.Enum { views: false, ty: spanTy, variants: [semrecords.Variant { name: "W", fields: [semrecords.Field { name: "__ev", ty: i64ty }] }], layout: semrecords.layout_variant() };
     var spanGraph = ssa.SFunc { name: "mkspan", nparams: 1, nvals: 2, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0),
             ssa.SInst { kind_tag: ssasem.variant_new(), result: 1, args: [0], imm: 0, str: "W" }], term: ret(1) }] };
@@ -1209,7 +1209,7 @@ function main(): i32 {
     var getGraph = ssa.SFunc { name: "map_get", nparams: 2, nvals: 3, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1),
             ssa.SInst { kind_tag: ssasem.map_get(), result: 2, args: [0, 1], imm: 0, str: "" }], term: ret(2) }] };
-    var optEnum = semrecords.Enum { ty: optI32Ty, variants: [semrecords.Variant { name: "Some", fields: [semrecords.Field { name: "__ev", ty: i32ty }] },
+    var optEnum = semrecords.Enum { views: false, ty: optI32Ty, variants: [semrecords.Variant { name: "Some", fields: [semrecords.Field { name: "__ev", ty: i32ty }] },
         semrecords.Variant { name: "None", fields: [] }], layout: semrecords.layout_option() };
     var getMap = ssasem.Func { envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], graph: getGraph, values: [intMapTy, i32ty, optI32Ty], params: [intMapTy, i32ty], result: optI32Ty, records: [], enums: [optEnum], calls: [] };
     var getPlan = ssaunits.plan(getMap, [3, 1]);

@@ -80,6 +80,8 @@ struct State {
     handers: string[],
     // The builtin names a module declaration takes over (`shadowed_builtins`).
     shadows: string[],
+    // The module's declared records and unions that hold a view (`view_types`).
+    views: string[],
     // The symbol this body defines: the declaration's name, or the instance's.
     name: string,
     // Each parameter's declared mode, in order. A parameter's value id is its
@@ -3808,11 +3810,11 @@ function refuse(why: string): Produced {
     return Produced { ok: false, why: why, func: ssasem.Func { graph: graph, values: [], params: [], result: t_void(), records: [], enums: [], calls: [], envs: [], anchors: [], dyns: [], shadows: [], finalizers: [] }, modes: [], template: false, key: "", requests: [], bodyless: false };
 }
 
-function initial(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Contract[], binding: ssasem.Binding, name: string, handers: string[], shadows: string[], funcs: parser.FuncDecl[], impls: parser.ImplInfo[]): State {
+function initial(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Contract[], binding: ssasem.Binding, name: string, handers: string[], shadows: string[], views: string[], funcs: parser.FuncDecl[], impls: parser.ImplInfo[]): State {
     var entry: ssa.SBlock = ssa.SBlock { id: 0, insts: [], term: t_none(), preds: [] };
     return State { ok: true, why: "", blocks: [], cur: entry, live: true, next_block: 1, values: [],
         names: [], vals: [], scope: scope, result: result_type(fd, scope, binding, contracts), loops: [], contracts: contracts, calls: [],
-        template: generic_decl(fd), binding: binding, requests: [], foreign: [], handers: handers, shadows: shadows,
+        template: generic_decl(fd), binding: binding, requests: [], foreign: [], handers: handers, shadows: shadows, views: views,
         name: name, modes: [], funcs: funcs, impls: impls, try_cleanup: try_cleanup(fd.body), escaping: escaping_bindings(fd.body), learned: [], learned_types: [] };
 }
 
@@ -3941,6 +3943,66 @@ function try_cleanup(body: ast.Stmt[]): ast.Stmt[] {
 
 // ---- record schemas ---------------------------------------------------------
 
+// The module's declared records and unions whose values hold a `str` view, by
+// name, to a fixpoint over the declaration tables every scope shares. Asked
+// once per module; each schema entry then carries its answer, so a value's
+// question stops at the first record or enum it meets rather than walking a
+// declaration graph again (`ssasem.holds_view`).
+function view_types(scope: checker.Scope, impls: parser.ImplInfo[]): string[] {
+    var names: string[] = [];
+    var changed: boolean = true;
+    while (changed) {
+        changed = false;
+        for sig in scope.structs.structs {
+            if (sig.type_params.len() > 0 || util.index_of_str(names, sig.name) >= 0) { continue; }
+            if (types_hold_view(sig.field_types, names, impls)) { names = names.append(sig.name); changed = true; }
+        }
+        for sig in scope.structs.structs {
+            if (sig.enum_owner.len() > 0 && util.index_of_str(names, sig.name) >= 0 && util.index_of_str(names, sig.enum_owner) < 0) {
+                names = names.append(sig.enum_owner);
+                changed = true;
+            }
+        }
+        for u in scope.unions.unions {
+            if (util.index_of_str(names, u.name) >= 0) { continue; }
+            for v in u.variants {
+                if (util.index_of_str(names, v) >= 0 && util.index_of_str(names, u.name) < 0) { names = names.append(u.name); changed = true; }
+            }
+        }
+    }
+    return names;
+}
+
+function fields_hold_view(fields: semrecords.Field[], views: string[], impls: parser.ImplInfo[]): boolean {
+    for fl in fields { if (type_holds_view(fl.ty, views, impls)) { return true; } }
+    return false;
+}
+
+function types_hold_view(ts: typeinfo.Type[], views: string[], impls: parser.ImplInfo[]): boolean {
+    for t in ts { if (type_holds_view(t, views, impls)) { return true; } }
+    return false;
+}
+
+// A type's views through its structure, with a record or union answered by
+// name from `views`, and a dyn by the types implementing its traits (a
+// generic's by its clones, `W__string`). A function value holds none: a
+// closure that captures a view is refused ("closure capture type").
+function type_holds_view(t: typeinfo.Type, views: string[], impls: parser.ImplInfo[]): boolean {
+    if let typeinfo.TypeString(st) = t { return st.tag == 1; }
+    if let typeinfo.TypeArray(a) = t { return type_holds_view(a.elem, views, impls); }
+    if let typeinfo.TypeTuple(tup) = t { return types_hold_view(tup.elements, views, impls); }
+    if (semtypes.is_cell(t)) { return type_holds_view(semtypes.cell_elem(t), views, impls); }
+    if let typeinfo.TypeMap(m) = t { return type_holds_view(m.key, views, impls) || type_holds_view(m.value, views, impls); }
+    if let typeinfo.TypeStruct(r) = t { return util.index_of_str(views, r.name) >= 0; }
+    if let typeinfo.TypeUnion(u) = t { return util.index_of_str(views, u.name) >= 0 || types_hold_view(u.args, views, impls); }
+    if (ssasem.is_dyn(t)) {
+        for n in dyn_impl_names(t, impls) {
+            for v in views { if (v == n || util.str_has_prefix(v, n + "__")) { return true; } }
+        }
+    }
+    return false;
+}
+
 struct Schemas { ok: boolean, why: string, records: semrecords.Record[], enums: semrecords.Enum[] }
 
 // Every record and enum type a function's values, contracts and result name
@@ -4014,7 +4076,7 @@ function schema_of(t: typeinfo.Type, s: State, out: Schemas): Schemas {
         // record and nothing to walk.
         if (semtypes.is_handle(t)) { return out; }
         if (semrecords.find(out.records, t) >= 0) { return out; }
-        if (semtypes.is_env(t)) { return env_entry(t, out); }
+        if (semtypes.is_env(t)) { return env_entry(t, s.views, s.impls, out); }
         return record_entry(t, r, s, out);
     }
     if let typeinfo.TypeUnion(u) = t {
@@ -4041,21 +4103,21 @@ function fields_of(sig: checker.StructSig): semrecords.Field[] {
 
 // An environment's schema is its type: the address word, then one field per
 // capture, named by its slot the way `environment_read` projects it.
-function env_entry(t: typeinfo.Type, out: Schemas): Schemas {
+function env_entry(t: typeinfo.Type, views: string[], impls: parser.ImplInfo[], out: Schemas): Schemas {
     var fields: semrecords.Field[] = [semrecords.Field { name: "code", ty: t_i32() }];
     var i: i32 = 0;
     for cap in semtypes.env_captures(t) {
         i = i + 1;
         fields = fields.append(semrecords.Field { name: "c" + util.i32_to_string(i), ty: cap });
     }
-    return Schemas { ...out, records: out.records.append(semrecords.Record { ty: t, fields: fields }) };
+    return Schemas { ...out, records: out.records.append(semrecords.Record { ty: t, fields: fields, views: fields_hold_view(fields, views, impls) }) };
 }
 
 function record_entry(t: typeinfo.Type, r: typeinfo.TypeStruct, s: State, out: Schemas): Schemas {
     var sig: checker.StructSig = record_schema(r.name, s);
     if (sig.name.len() == 0 || r.args.len() > 0) { return Schemas { ...out, ok: false, why: "unsupported record type" }; }
     if (!fields_resolved(sig)) { return Schemas { ...out, ok: false, why: "unresolved record field type" }; }
-    return Schemas { ...out, records: out.records.append(semrecords.Record { ty: t, fields: fields_of(sig) }) };
+    return Schemas { ...out, records: out.records.append(semrecords.Record { ty: t, fields: fields_of(sig), views: util.index_of_str(s.views, r.name) >= 0 }) };
 }
 
 // A union is a declared enum, whose variants it owns, or a struct-union, whose
@@ -4072,7 +4134,7 @@ function enum_entry(t: typeinfo.Type, u: typeinfo.TypeUnion, s: State, out: Sche
         if (!fields_resolved(vs)) { return Schemas { ...out, ok: false, why: "unresolved variant field type" }; }
         variants = variants.append(semrecords.Variant { name: name, fields: fields_of(vs) });
     }
-    var table: Schemas = Schemas { ...out, enums: out.enums.append(semrecords.Enum { ty: t, variants: variants, layout: layout }) };
+    var table: Schemas = Schemas { ...out, enums: out.enums.append(semrecords.Enum { ty: t, variants: variants, layout: layout, views: util.index_of_str(s.views, u.name) >= 0 }) };
     if (layout != semrecords.layout_member()) { return table; }
     // A member's box is read through its own record, so the table must carry
     // one whether or not any value in this function has the member's type.
@@ -4097,7 +4159,9 @@ function builtin_enum_entry(t: typeinfo.Type, s: State, out: Schemas): Schemas {
             if (!semtypes.concrete(field.ty, false)) { return Schemas { ...out, ok: false, why: "unresolved variant field type" }; }
         }
     }
-    return Schemas { ...out, enums: out.enums.append(semrecords.Enum { ty: t, variants: variants, layout: semrecords.layout_option() }) };
+    var views: boolean = false;
+    for v in variants { if (fields_hold_view(v.fields, s.views, s.impls)) { views = true; } }
+    return Schemas { ...out, enums: out.enums.append(semrecords.Enum { ty: t, variants: variants, layout: semrecords.layout_option(), views: views }) };
 }
 
 // A frame that merely HOLDS a function value never built the box, so its own
@@ -4187,20 +4251,27 @@ function dyn_types_in(t: typeinfo.Type, out: typeinfo.Type[]): typeinfo.Type[] {
 // made of it (`W__string`), which replace it.
 function dyn_concretes(t: typeinfo.Type, s: State): typeinfo.Type[] {
     var out: typeinfo.Type[] = [];
-    var traits: string[] = parser.dyn_trait_set(typeinfo.spelling(t));
-    if (traits.len() == 0) { return out; }
-    var seen: string[] = [];
-    for imp in s.impls {
-        var n: string = util.base_type_name(imp.impl_type);
-        if (util.base_type_name(imp.trait_name) != util.base_type_name(traits[0]) || util.index_of_str(seen, n) >= 0) { continue; }
-        seen = seen.append(n);
-        if (!implements_traits(s.impls, n, traits)) { continue; }
+    for n in dyn_impl_names(t, s.impls) {
         if (n == "string") { out = out.append(t_string()); }
         else if (record_schema(n, s).name.len() > 0) { out = out.append(typeinfo.TypeStruct { name: n, args: [] }); }
         else if (union_layout(s, n) == semrecords.layout_variant()) { out = out.append(typeinfo.TypeUnion { name: n, args: [] }); }
         else if (erased_generic(n, s)) {
             for c in generic_clones(n, s) { out = out.append(c); }
         }
+    }
+    return out;
+}
+
+// The base names of every type the module implements each trait of `t`'s set
+// for.
+function dyn_impl_names(t: typeinfo.Type, impls: parser.ImplInfo[]): string[] {
+    var out: string[] = [];
+    var traits: string[] = parser.dyn_trait_set(typeinfo.spelling(t));
+    if (traits.len() == 0) { return out; }
+    for imp in impls {
+        var n: string = util.base_type_name(imp.impl_type);
+        if (util.base_type_name(imp.trait_name) != util.base_type_name(traits[0]) || util.index_of_str(out, n) >= 0) { continue; }
+        if (implements_traits(impls, n, traits)) { out = out.append(n); }
     }
     return out;
 }
@@ -4404,9 +4475,9 @@ function unresolved_result_spelling(fd: parser.FuncDecl, s: State): string {
 // the checker's function scope, the module's call contracts and — for a
 // template — the instantiation to produce it under, named `name`. Unsupported
 // constructs are explicit refusals, never a partial graph.
-function build(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Contract[], binding: ssasem.Binding, name: string, handers: string[], shadows: string[], funcs: parser.FuncDecl[], impls: parser.ImplInfo[]): Produced {
+function build(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Contract[], binding: ssasem.Binding, name: string, handers: string[], shadows: string[], views: string[], funcs: parser.FuncDecl[], impls: parser.ImplInfo[]): Produced {
     if (fd.import_iface.len() > 0) { return external_entry(); }
-    var s: State = initial(fd, scope, contracts, binding, name, handers, shadows, funcs, impls);
+    var s: State = initial(fd, scope, contracts, binding, name, handers, shadows, views, funcs, impls);
     if (!semtypes.concrete(s.result, true)) { return refuse("unresolved result type: " + unresolved_result_spelling(fd, s)); }
     // A cursor escapes the same way, and worse: it is anchored to a map this
     // frame may own, so a returned one outlives the columns it reads. The
@@ -5221,7 +5292,7 @@ function anchor_module(all: Produced[], names: string[]): Produced[] {
             changed = false;
             var i: i32 = 0;
             while (i < all.len()) {
-                if (all[i].ok && semtypes.holds_view(all[i].func.result) && !ssasem.anchored(anchors, names[i])) {
+                if (all[i].ok && ssasem.holds_view(all[i].func, all[i].func.result) && !ssasem.anchored(anchors, names[i])) {
                     var k: ssasem.ResultAnchor = ssasem.result_anchor(all[i].func, anchors, names);
                     if (!k.escapes && !k.pending) {
                         anchors = anchors.append(ssasem.Anchor { name: names[i], params: k.params });
@@ -5251,7 +5322,7 @@ function anchor_module(all: Produced[], names: string[]): Produced[] {
     var i: i32 = 0;
     while (i < all.len()) {
         var p: Produced = all[i];
-        if (p.ok && semtypes.holds_view(p.func.result) && !ssasem.anchored(anchors, names[i])) {
+        if (p.ok && ssasem.holds_view(p.func, p.func.result) && !ssasem.anchored(anchors, names[i])) {
             p = Produced { ...refuse("view result escapes its source"), key: p.key };
         }
         if (p.ok && !p.template) {
@@ -5507,6 +5578,8 @@ pub function build_module(mod: parser.Module): Built {
     var table: ssasem.Contract[] = contracts(mod, scopes);
     var handed_back: string[] = handers(mod);
     var shadows: string[] = shadowed_builtins(mod);
+    var views: string[] = [];
+    if (scopes.len() > 0) { views = view_types(scopes[0], mod.impls); }
     var decls: Produced[] = [];
     var names: string[] = [];
     var pending: Request[] = [];
@@ -5514,7 +5587,7 @@ pub function build_module(mod: parser.Module): Built {
     while (i < mod.funcs.len()) {
         var fd: parser.FuncDecl = mod.funcs[i];
         var p: Produced = template_entry(decl_key(fd), false, "uninstantiated generic", true);
-        if (!generic_decl(fd)) { p = build(fd, scopes[i], table, ssasem.unbound(), fd.name, handed_back, shadows, mod.funcs, mod.impls); }
+        if (!generic_decl(fd)) { p = build(fd, scopes[i], table, ssasem.unbound(), fd.name, handed_back, shadows, views, mod.funcs, mod.impls); }
         pending = queue(pending, p.requests);
         decls = decls.append(p);
         names = names.append(decl_key(fd));
@@ -5526,7 +5599,7 @@ pub function build_module(mod: parser.Module): Built {
         var r: Request = pending[at];
         var di: i32 = util.index_of_str(names, r.key);
         var p: Produced = refuse("unbounded instantiation");
-        if (at < instance_limit()) { p = build(mod.funcs[di], scopes[di], table, r.binding, r.name, handed_back, shadows, mod.funcs, mod.impls); }
+        if (at < instance_limit()) { p = build(mod.funcs[di], scopes[di], table, r.binding, r.name, handed_back, shadows, views, mod.funcs, mod.impls); }
         pending = queue(pending, p.requests);
         instances = instances.append(Produced { ...p, key: r.key });
         names = names.append(r.name);
