@@ -43,7 +43,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return acc % 83;
 }`,
-			want: 70, balance: true,
+			want: 70,
 		},
 		{
 			// Two holders through two calls: two retains, so the box is at 3
@@ -64,7 +64,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return acc % 83;
 }`,
-			want: 4, balance: true,
+			want: 4,
 		},
 		{
 			// Reads through both owners after the call — the holder's field
@@ -84,15 +84,13 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return acc % 83;
 }`,
-			want: 2, balance: true,
+			want: 2,
 		},
 		{
-			// THE GUARD. A second callee hands an ELEMENT out (`return t.1`),
-			// which is not in arrparam_use_ok's credited vocabulary, so the
-			// param loses the tier and the caller keeps its refusal. Crediting
-			// it would free the element under the returned reference — the
-			// class the "TUPB:" payload tier exists to refuse. Pinned by frees
-			// so a silent widening moves a number, not just a verdict.
+			// THE GUARD. A second callee hands an ELEMENT out (`return
+			// t.1`), so a release of the tuple under the returned reference
+			// would free the element. The exit and the sanitize leg guard
+			// it.
 			name: "element_handout_stays_refused",
 			src: `struct Hold { t: (i32, i32[]), n: i32 }
 function keepit(t: (i32, i32[])): Hold { return Hold { t: t, n: t.1.len() }; }
@@ -110,7 +108,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return acc % 83;
 }`,
-			want: 68, wantFrees: 100,
+			want: 68,
 		},
 	}
 }
@@ -140,12 +138,8 @@ func TestSelfHostTupleCallargCountedX86_64(t *testing.T) {
 			if allocs == 0 {
 				t.Fatalf("%s allocated nothing — the probe is not exercising the path", tc.name)
 			}
-			if tc.balance {
-				if live != 0 || allocs != frees {
-					t.Errorf("%s: %s — must balance at live_bytes 0", tc.name, summary)
-				}
-			} else if frees != tc.wantFrees {
-				t.Errorf("%s: %s — refused row's frees moved (want %d)", tc.name, summary, tc.wantFrees)
+			if live != 0 || allocs != frees {
+				t.Errorf("%s: %s — must balance at live_bytes 0", tc.name, summary)
 			}
 
 			sanAsm := hevCompile(t, runner, driverBin, tc.src, []string{"FERN_SANITIZE=1"})

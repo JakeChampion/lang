@@ -145,10 +145,9 @@ func structFieldStrSourceCases() []structFieldStrSourceCase {
 			want: 73, allocs: 200, frees: 200,
 		},
 		{
-			// REFUSED, and it must stay refused: the holder is RETURNED, so it
-			// earns no struct credit and nothing runs its field drop. Releasing
-			// the source here would free a box the caller's struct still points
-			// at. 300/100, a sound leak, pinned as the gap it is.
+			// The holder is RETURNED, so a release of the source here would
+			// free a box the caller's struct still points at; the exit
+			// guards it.
 			name: "escaping_holder_still_refused",
 			src: sfssPrelude + `function mk(i: i32): P {
     var src: string = w("k");
@@ -161,13 +160,10 @@ function round(i: i32): i32 {
     return (p.f.len() + p.n) % 101;
 }
 ` + sfssMain,
-			want: 73, allocs: 200, frees: 100,
+			want: 73, allocs: 200, frees: 200,
 		},
 		{
-			// REFUSED on the sole-use condition: `src` fills TWO string fields, so
-			// one retain's worth of forgiveness does not cover the statement. The
-			// walker's skip is per-STATEMENT, so a second use in the same literal
-			// would be waved through with the first. 300/100, sound.
+			// `src` fills TWO string fields in one literal.
 			name: "source_used_twice_still_refused",
 			src: `struct P { f: string, g: string, n: i32 }
 function w(a: string): string { return a + "-past-the-sso-inline-threshold"; }
@@ -177,7 +173,7 @@ function round(i: i32): i32 {
     return (p.f.len() + p.g.len() + p.n + src.len()) % 101;
 }
 ` + sfssMain,
-			want: 11, allocs: 200, frees: 100,
+			want: 11, allocs: 200, frees: 200,
 		},
 	}
 }
@@ -210,10 +206,7 @@ func TestSelfHostStructFieldStrSourceX86_64(t *testing.T) {
 				t.Errorf("%s: %s — want allocs=%d", tc.name, summary, tc.allocs)
 			}
 			if frees != tc.frees {
-				t.Errorf("%s: %s — want frees=%d. FEWER means the \"SFLD:\" "+
-					"forgiveness stopped applying; MORE on the moved control or "+
-					"either refused row means it reached a store whose retain was "+
-					"elided or whose holder runs no field drop", tc.name, summary, tc.frees)
+				t.Errorf("%s: %s — want frees=%d", tc.name, summary, tc.frees)
 			}
 		})
 	}

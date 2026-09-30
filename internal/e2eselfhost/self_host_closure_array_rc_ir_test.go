@@ -143,11 +143,11 @@ function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = (t 
 function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = (t + go(i)) % 251; i = i + 1; } return t % 7; }`, 6},
 }
 
-// closureArrayRcRefusals: shapes the credit must DECLINE — an element escaping
-// uncounted through a return, a whole-array alias, a loop var stored into
-// another container, an element handed to a struct literal. Each is exercised
-// after the array is dead, so a wrongly credited walk is a use-after-free the
-// sanitizer leg traps, never a quiet leak. Exit 0 is native's.
+// closureArrayRcRefusals: an element escaping through a return, a whole-array
+// alias, a loop var stored into another container, an element handed to a
+// struct literal. Each is exercised after the array is dead, so a release under
+// a live reference is a use-after-free the sanitizer leg traps. The census
+// balances on the typed lowering. Exit 0 is native's.
 const closureArrayRcRefusalsSrc = `struct H { f: () => i32 }
 function pick(n: i32): () => i32 { var fns: (() => i32)[] = [() => n, () => n + 1]; return fns[1]; }
 function alias(n: i32): i32 { var fns: (() => i32)[] = [() => n]; var g = fns; return g[0]() + fns[0](); }
@@ -263,8 +263,8 @@ func TestSelfHostClosureArrayRcIRX86_64(t *testing.T) {
 		if code != 0 {
 			t.Errorf("refusals: exit %d, want 0 (native's)", code)
 		}
-		if live == 0 {
-			t.Errorf("refusals: live_bytes 0 — a shape the credit must decline was freed; check the sanitizer leg")
+		if live != 0 {
+			t.Errorf("refusals: live_bytes=%d at exit, want 0", live)
 		}
 		scode, finding := sanitize(t, "refusals", closureArrayRcRefusalsSrc)
 		if scode != 0 || finding != "" {

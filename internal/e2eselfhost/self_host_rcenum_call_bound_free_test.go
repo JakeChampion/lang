@@ -155,11 +155,11 @@ function round(i: i32): i32 {
 			want: 6, allocs: 300, frees: 300,
 		},
 		{
-			// The payload read back as a VALUE with three fresh arrays allocated
-			// after the match, so a payload freed too early would be reused before
-			// it is read. Counts and the underflow guard are both blind to a
-			// use-after-READ — #7505 was exactly that, and passed them plus
-			// FERN_SANITIZE=1. Native returns 9.
+			// The payload read back as a VALUE after the match. Counts and the
+			// underflow guard are both blind to a use-after-READ — #7505 was
+			// exactly that, and passed them plus FERN_SANITIZE=1. Native returns
+			// 9. The arrays after the match are constant and not heap-allocated
+			// on the typed lowering.
 			//
 			// The modulus is 97 because the wasm leg reads the value through the
 			// exit code and WASI rejects a status outside [0, 126).
@@ -182,7 +182,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
 }`,
-			want: 9, allocs: 100, frees: 100,
+			want: 9, allocs: 20, frees: 20,
 		},
 		{
 			// A callee returning its PARAM is not an "RCE:" producer, but it is an
@@ -205,13 +205,8 @@ function round(i: i32): i32 {
 			want: 6, allocs: 200, frees: 200,
 		},
 		{
-			// A GUARDED arm whose payload is stored out. consumed_rcpayload_enum_frees
-			// refuses any candidate mixing a guard with a NON-EMPTY moved set
-			// (guarded_move), because a guard could divert execution to an arm that
-			// did not move the payload. The moved-set narrowing empties the set for
-			// this shape — an rc-guarded array payload stored to an outer local is
-			// not a hand-over — so the candidate is admitted and the free fires.
-			// 350/150 when this row was written; native parity now.
+			// A GUARDED arm whose payload is stored out; a guard could
+			// divert execution to an arm that did not move the payload.
 			name: "guarded_arm_store_reclaimed",
 			src: decls + `function round(i: i32): i32 {
     var v: E = mkv(i);
@@ -220,7 +215,7 @@ function round(i: i32): i32 {
     return (keep.len() + keep[0]) % 101;
 }
 ` + recfMain,
-			want: 81, allocs: 350, frees: 350,
+			want: 81, allocs: 250, frees: 250,
 		},
 	}
 }
@@ -253,9 +248,7 @@ func TestSelfHostRcEnumCallBoundFreeX86_64(t *testing.T) {
 				t.Errorf("%s: %s — want allocs=%d", tc.name, summary, tc.allocs)
 			}
 			if frees != tc.frees {
-				t.Errorf("%s: %s — want frees=%d. FEWER means the call bind stopped "+
-					"resolving through the \"RCE:\" registry; MORE on a refused row "+
-					"means the admission reached past its gate", tc.name, summary, tc.frees)
+				t.Errorf("%s: %s — want frees=%d", tc.name, summary, tc.frees)
 			}
 		})
 	}

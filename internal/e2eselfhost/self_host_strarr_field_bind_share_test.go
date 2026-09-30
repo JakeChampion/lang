@@ -25,22 +25,15 @@ import (
 // strarr_unsafe_for_alias is the proof, reused rather than rewritten: it is the
 // classifier the local "SARR:" credit already applies to the identical
 // question, and its `sfld_ok` carve-out exists for exactly the struct-literal
-// share this needs forgiven. Everything else stays a hazard, which is what the
-// five `refused_*` rows below hold in place.
+// share this needs forgiven. Everything else is a hazard, which the
+// `refused_*` rows below exercise.
 //
 // THE FAILURE MODE IS AN OVER-RELEASE, not a leak, so those rows are
 // essential rather than decorative: each one escapes something (an element,
 // the array, a bound element) or mutates `tt`, then reads every value back
 // after 200 rounds of churn have recycled the freelist. They answer identically
-// on native x86-64, `bin/fern -interp` and the self-host, and stay pinned at
-// their LEAKING counts — the conservative direction.
-//
-// One of them stopped being a refusal. `iterated_now_clean` was pinned leaking
-// because the walker refused an iterated array outright; a transient for-in
-// binder no longer does that, so the share behind it is admitted and the row
-// balances. Its exit never moved.
-// `appended_now_clean` followed once a copying push retained the elements its
-// copy shares (#9209).
+// on native x86-64, `bin/fern -interp` and the self-host. On the typed
+// lowering every row balances.
 //
 // `escaping_holder_now_clean` is the one row that moved further than the pin
 // predicted: through the bind the returned literal's field value is a bare
@@ -93,7 +86,7 @@ func strarrBindShareCases() []arrenumShareCase {
     var p: P = P { f: tt, n: i };
     return (p.f.len() + p.f[0].len() + p.n + q.n) % 101;
 }` + strarrBindPlainMain,
-			want: 72, balance: true,
+			want: 72,
 		},
 		{
 			// The holder escapes with the bind inside the callee. The walk can
@@ -114,7 +107,7 @@ function round(i: i32): i32 {
     if (p.f[0].len() != want) { return 0 - 2; }
     return (p.f[1].len() + junk) % 101;
 }` + strarrBindChurnMain,
-			want: 8, balance: true,
+			want: 8,
 		},
 		{
 			// Control: a local-to-local bind of a FRESH array, clean before
@@ -127,10 +120,10 @@ function round(i: i32): i32 {
     var p: P = P { f: tt, n: i };
     return (p.f.len() + p.f[0].len() + p.n) % 101;
 }` + strarrBindPlainMain,
-			want: 71, balance: true,
+			want: 71,
 		},
 		{
-			// REFUSED: an ELEMENT of `tt` escapes the frame. The holders' deep
+			// An ELEMENT of `tt` escapes the frame. The holders' deep
 			// free would dangle it, so the read stays marked.
 			name: "refused_element_escapes",
 			src: strarrBindShareDecl + `function grab(i: i32): string {
@@ -149,7 +142,7 @@ function round(i: i32): i32 {
 			want: 8,
 		},
 		{
-			// REFUSED: the ARRAY itself escapes, so a second holder outlives
+			// The ARRAY itself escapes, so a second holder outlives
 			// both structs.
 			name: "refused_array_escapes",
 			src: strarrBindShareDecl + `function grab(i: i32): string[] {
@@ -169,7 +162,7 @@ function round(i: i32): i32 {
 			want: 8,
 		},
 		{
-			// REFUSED: an element is BOUND to a local and read after churn —
+			// An element is BOUND to a local and read after churn —
 			// the lasting element alias strarr_expr_unsafe exists to catch.
 			name: "refused_element_bound",
 			src: strarrBindShareDecl + `function round(i: i32): i32 {
@@ -197,7 +190,7 @@ function round(i: i32): i32 {
     var p: P = P { f: tt, n: i };
     return (p.f.len() + p.f[0].len() + q.f.len() + q.n) % 101;
 }` + strarrBindPlainMain,
-			want: 68, balance: true,
+			want: 68,
 		},
 		{
 			// Was REFUSED, and is not any more. `for s in tt` binds an element
@@ -215,10 +208,10 @@ function round(i: i32): i32 {
     for s in tt { acc = acc + s.len(); }
     return (acc + p.n + q.n) % 101;
 }` + strarrBindPlainMain,
-			want: 43, balance: true,
+			want: 43,
 		},
 		{
-			// REFUSED: `tt` is handed to a call. The borrowable registry is not
+			// `tt` is handed to a call. The borrowable registry is not
 			// built at admission time, so every call argument is a hazard —
 			// the direction that can only refuse.
 			name: "refused_call_argument",
@@ -264,12 +257,8 @@ func TestSelfHostStrArrFieldBindShareX86_64(t *testing.T) {
 			if allocs == 0 {
 				t.Fatalf("%s allocated nothing — the probe is not exercising the path", tc.name)
 			}
-			if tc.balance && (live != 0 || allocs != frees) {
+			if live != 0 || allocs != frees {
 				t.Errorf("%s: %s — must balance at live_bytes 0", tc.name, summary)
-			}
-			if !tc.balance && live == 0 && allocs == frees {
-				t.Errorf("%s: %s — pinned as REFUSED; if this now balances the admission "+
-					"widened, and the row belongs to whatever widened it", tc.name, summary)
 			}
 		})
 	}

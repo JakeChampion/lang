@@ -43,20 +43,8 @@ import (
 // callee, then reads every element back after 200 rounds of churn have recycled
 // the freelist.
 //
-// THE ESCAPING HOLDER was pinned leaking when the share landed, and its block
-// was never the share: the callee's `make` emitted __struct_drop_P for the
-// source and returned the target with the buffer at rc 1 — the leak was the
-// CALLER'S `var p: P = make(i)`, which earned no reclaim because the
-// strict-fresh return classifier (return_value_is_strictfresh_struct) read a
-// `q.f` field value as an alias and refused `make` as a producer. The bind
-// spelling was admitted there through its bare ident and balanced. The read is
-// now admitted on the same terms as that ident: the construction retains it,
-// so the returned box carries a counted reference of its own, the source's
-// drop releases only the source's count, and the caller's deep drop decs the
-// literal's. __fern_str_arr_free walks elements only at rc 1, so every holder
-// that outlives the frame — a second literal, a source that escaped and was
-// never dropped — leaves the count above 1 and costs a leak, never a free. The
-// `escaping_holder_*` rows below pin each case, leaking or balanced.
+// The `escaping_holder_*` rows return a holder that outlives the frame and read
+// every element back after churn. On the typed lowering every row balances.
 //
 // Every want was confirmed against native x86-64 AND `bin/fern -interp`, which
 // agree on every exit, and every row was re-run under FERN_SANITIZE=1 with
@@ -85,7 +73,7 @@ function main(): i32 {
     var p: P = P { f: q.f, n: i };
     return (p.f.len() + p.f[0].len() + p.n + q.n) % 101;
 }` + loop,
-			want: 72, balance: true,
+			want: 72,
 		},
 		{
 			// Control: the bare-ident store, already clean before this change.
@@ -96,7 +84,7 @@ function main(): i32 {
     var p: P = P { f: src, n: i };
     return (p.f.len() + p.f[0].len() + p.n) % 101;
 }` + loop,
-			want: 71, balance: true,
+			want: 71,
 		},
 		{
 			// The HOISTED spelling, closed by the local-BIND admission in
@@ -111,19 +99,18 @@ function main(): i32 {
     var p: P = P { f: tt, n: i };
     return (p.f.len() + p.f[0].len() + p.n + q.n) % 101;
 }` + loop,
-			want: 72, balance: true,
+			want: 72,
 		},
 		{
-			// THE SOUNDNESS CASE. The source holder dies inside `make` while the
-			// target is returned, and every element is read back after churn has
-			// recycled the freelist. An over-release here returns -1 or -2 (exit
-			// 100) or segfaults (139); native and interp both exit 8. Was pinned
-			// leaking (3000 allocs / 2200 frees against native's 3000/3000);
-			// balances now that `make` is a strict-fresh producer.
+			// THE SOUNDNESS CASE. The source holder dies inside `make`
+			// while the target is returned, and every element is read back
+			// after churn has recycled the freelist. An over-release here
+			// returns -1 or -2 (exit 100) or segfaults (139); native and
+			// interp both exit 8.
 			name: "escaping_holder",
 			src: strarrShareReadDecl + strarrEscapingChurn + `function make(i: i32): P { var q: P = P { f: mkv(i), n: i }; var p: P = P { f: q.f, n: i }; return p; }
 ` + strarrEscapingRound + strarrEscapingMain,
-			want: 8, balance: true,
+			want: 8,
 		},
 		{
 			// The field is read into TWO holders and one is returned. Three
@@ -138,13 +125,11 @@ function main(): i32 {
     return p;
 }
 ` + strarrEscapingRound + strarrEscapingMain,
-			want: 8, balance: true,
+			want: 8,
 		},
 		{
-			// The SOURCE is returned on one path and the target on the other.
-			// Both holders escape, so neither is dropped inside `make` and
-			// `make` is no producer: the count never reaches 1 in the caller,
-			// which is the leak this pins. Exit 8 on every engine.
+			// The SOURCE is returned on one path and the target on the
+			// other, so both holders escape `make`. Exit 8 on every engine.
 			name: "escaping_holder_source_returned",
 			src: strarrShareReadDecl + strarrEscapingChurn + `function make(i: i32): P {
     var q: P = P { f: mkv(i), n: i };
@@ -173,7 +158,7 @@ function round(i: i32): i32 {
     if (q.f[1].len() != want) { return 0 - 3; }
     return (p.f[1].len() + q.f.len() + junk) % 101;
 }` + strarrEscapingMain,
-			want: 76, balance: true,
+			want: 76,
 		},
 		{
 			// A local holder SHADOWS a parameter of the same name, and the
@@ -193,13 +178,11 @@ function round(i: i32): i32 {
     if (p.f[0].len() != want) { return 0 - 2; }
     return (p.f[1].len() + q0.f.len() + junk) % 101;
 }` + strarrEscapingMain,
-			want: 76, balance: true,
+			want: 76,
 		},
 		{
-			// An ELEMENT is bound inside `make` before the share. strarrfld_scan
-			// marks P.f, the type loses its field reclaim program-wide, and
-			// nothing walks the elements anywhere — the leak this pins. The
-			// admission here does not override that scan.
+			// An ELEMENT is bound inside `make` before the share, then read
+			// back after churn.
 			name: "escaping_holder_element_bound",
 			src: strarrShareReadDecl + strarrEscapingChurn + `function make(i: i32): P {
     var q: P = P { f: mkv(i), n: i };
@@ -264,12 +247,8 @@ func TestSelfHostStrArrFieldShareReadX86_64(t *testing.T) {
 			if allocs == 0 {
 				t.Fatalf("%s allocated nothing — the probe is not exercising the path", tc.name)
 			}
-			if tc.balance && (live != 0 || allocs != frees) {
+			if live != 0 || allocs != frees {
 				t.Errorf("%s: %s — must balance at live_bytes 0", tc.name, summary)
-			}
-			if !tc.balance && live == 0 && allocs == frees {
-				t.Errorf("%s: %s — pinned as LEAKING; if this now balances the pin is stale "+
-					"and the row belongs to whatever closed it", tc.name, summary)
 			}
 		})
 	}

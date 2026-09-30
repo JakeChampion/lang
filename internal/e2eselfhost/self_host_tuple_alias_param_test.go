@@ -19,14 +19,12 @@ import (
 // the census's business): a wrongly-admitted handout trips the quarantine,
 // not the census.
 
+// tupleAliasParamCase is one program whose run must exit want and balance at
+// live_bytes 0.
 type tupleAliasParamCase struct {
-	name    string
-	src     string
-	want    int
-	balance bool // flipped rows: allocs == frees at live_bytes 0
-	// refused rows pin their leaking frees so a silent widening (or a
-	// silent regression of the flip) moves a number, not just a verdict.
-	wantFrees int64 // asserted only when balance is false
+	name string
+	src  string
+	want int
 }
 
 const tupleAliasParamMain = `
@@ -54,7 +52,7 @@ func tupleAliasParamCases() []tupleAliasParamCase {
     t = (t + x.0 + x.1.len()) % 101;
     return t;
 }` + tupleAliasParamMain,
-			want: 43, balance: true,
+			want: 43,
 		},
 		{
 			// tuple_mixed__if_block__alias_param: the same alias inside a
@@ -70,19 +68,13 @@ func tupleAliasParamCases() []tupleAliasParamCase {
     }
     return t;
 }` + tupleAliasParamMain,
-			want: 75, balance: true,
+			want: 75,
 		},
 		{
-			// The v1-killer must stay refused: the alias hands the rc element
-			// out, so admitting this site would have the caller's deep free
-			// dangle every `out` the loop holds. The payload scan on x sees
-			// `return x.1` and refuses the site (ret_dup_ok=false on the
-			// alias vet — an unannotated alias slot could not retain), so
-			// keep's sweep stays denied. Since the dup-at-extract port, the
-			// annotated x's `return x.1` IS retained, so the element leaks
-			// WITH keep's box (frees = churn only, 100) instead of being
-			// freed under keep's live reference — strictly safer, one leak
-			// deeper. TUPB staying refused is what this row pins.
+			// The alias hands the rc element out, so a deep free of keep
+			// under it would dangle every `out` the loop holds; the exit
+			// and the sanitize leg guard that. The typed lowering reclaims
+			// everything.
 			name: "handout_elem_keeps_refused",
 			src: `function get(src: (i32, i32[]), i: i32): i32[] {
     var x: (i32, i32[]) = src;
@@ -102,12 +94,10 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return acc % 83;
 }`,
-			want: 20, wantFrees: 100,
+			want: 20,
 		},
 		{
-			// A chained alias refuses: vetting x scans `var y = x` as a
-			// bare-ident escape of x, so the site never reaches alias_ok.
-			// Conservative — keep stays a constant leak.
+			// A chained alias: `var y = x`.
 			name: "chained_alias_keeps_refused",
 			src: `function round(src: (i32, i32[]), i: i32): i32 {
     var x: (i32, i32[]) = src;
@@ -117,12 +107,8 @@ function main(): i32 {
 			want: 43,
 		},
 		{
-			// A reassigned alias: the payload scan on x sees only reads of
-			// src's payloads plus a fresh-tuple rebind, and the rebind ends
-			// the aliasing, so the flag may stay 1 (same box-level reasoning
-			// as param_alias_bind_sites). Whatever the callee leaks of its
-			// own fresh tuple is its business — the pinned exit and the
-			// sanitize leg hold either way.
+			// A reassigned alias: the rebind ends the aliasing. The pinned
+			// exit and the sanitize leg hold.
 			name: "reassigned_alias_sound",
 			src: `function round(src: (i32, i32[]), i: i32): i32 {
     var x: (i32, i32[]) = src;
@@ -131,7 +117,7 @@ function main(): i32 {
     t = (t + x.1.len()) % 101;
     return t;
 }` + tupleAliasParamMain,
-			want: 11, wantFrees: 2,
+			want: 11,
 		},
 	}
 }
@@ -161,12 +147,8 @@ func TestSelfHostTupleAliasParamX86_64(t *testing.T) {
 			if allocs == 0 {
 				t.Fatalf("%s allocated nothing — the probe is not exercising the path", tc.name)
 			}
-			if tc.balance {
-				if live != 0 || allocs != frees {
-					t.Errorf("%s: %s — must balance at live_bytes 0", tc.name, summary)
-				}
-			} else if frees != tc.wantFrees {
-				t.Errorf("%s: %s — refused row's frees moved (want %d): a widening or a flip that belongs to its own change", tc.name, summary, tc.wantFrees)
+			if live != 0 || allocs != frees {
+				t.Errorf("%s: %s — must balance at live_bytes 0", tc.name, summary)
 			}
 
 			// Sanitize leg: same program, all three detectors on. Must exit

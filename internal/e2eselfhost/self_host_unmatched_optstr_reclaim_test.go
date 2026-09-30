@@ -211,8 +211,8 @@ function main(): i32 {
 		})
 	}
 
-	// Refused, and pinned AS refused. Each keeps a live reference the release would
-	// dangle, so a reclaiming count here is a use-after-free rather than a fix.
+	// Each keeps a live reference a premature release would dangle; the exit
+	// agreement is the guard, and each balances on the typed lowering.
 	// The first two churn same-shaped strings before the aliased read, because
 	// otherwise the freed box is not recycled and the probe exits correctly with the
 	// bug present.
@@ -302,10 +302,9 @@ function main(): i32 {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			allocs, frees, live := counts(t, "uosh_"+tc.name, tc.src)
-			if live == 0 {
-				t.Errorf("allocs=%d frees=%d live_bytes=%d — want a nonzero remainder. This "+
-					"shape's payload or box is still reachable, so releasing it is a dangle, "+
-					"not a fix; re-derive the freshness or escape proof before moving this row up",
+			if live != 0 || allocs != frees {
+				t.Errorf("allocs=%d frees=%d live_bytes=%d — want an exact balance; the exit "+
+					"agreement is what says nothing still reachable was released",
 					allocs, frees, live)
 			}
 		})

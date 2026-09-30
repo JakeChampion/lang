@@ -817,3 +817,13 @@ function substitution_of(im: parser.Module): ircore.Sub {
     var sub: ircore.Sub = substitution(im, lowered.funcs, stab, ircore.wp_fn_sigs(lowered.funcs, stab));
     return ircore.Sub { ...sub, rt_lower: runtime_bodies };
 }
+
+// Driven is what a driver hands an emit entry for a module it parsed without
+// the CLI's front end: the module to emit and the typed lowering of it.
+pub struct Driven { full: parser.Module, sub: ircore.Sub }
+
+pub function driven(mod: parser.Module, target: string): Driven {
+    if (!sem_ir_on()) { return Driven { full: parser.module_with_builtins(mod), sub: ircore.no_sub() }; }
+    var typed: parser.Module = parser.module_with_builtins_typed(checker.annotate_module(mod));
+    return Driven { full: parser.erase_str_module(typed), sub: target_substitution(typed, target) };
+}

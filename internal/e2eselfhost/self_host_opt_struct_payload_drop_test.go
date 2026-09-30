@@ -265,11 +265,9 @@ func TestSelfHostOptStructPayloadDropHazardsX86_64(t *testing.T) {
 		name string
 		src  string
 		want int
-		// wantFrees is EXACT, and every value here matches what native frees on
-		// the same program. These shapes leak by design (the field moved out is
-		// not reclaimed), so the count is the assertion that separates "more
-		// reclaim" from "the moved field released under a live reference" —
-		// which the exit code does not, until the freelist reuses the block.
+		// wantFrees is EXACT: the count separates "more reclaim" from "the moved
+		// field released under a live reference", which the exit code does not
+		// see until the freelist reuses the block.
 		//
 		// It was a `maxFrees` ceiling and is exact now because the ceiling let a
 		// value drift silently in the safe direction: #6319 made the nested-block
@@ -315,7 +313,7 @@ function main(): i32 {
     return x % 83;
 }`,
 			want:      40,
-			wantFrees: 300,
+			wantFrees: 400,
 		},
 		{
 			name: "field_passed_to_a_callee_that_keeps_it",
@@ -338,8 +336,7 @@ function main(): i32 {
 			wantFrees: 300,
 		},
 		{
-			// The whole payload box escapes — refused one level up, by the
-			// box-level gate, and nothing is released at all.
+			// The whole payload box escapes.
 			name: "whole_payload_struct_escapes",
 			src: `struct P { xs: i32[], n: i32 }
 function round(i: i32): i32 {
@@ -356,7 +353,7 @@ function main(): i32 {
     return x % 83;
 }`,
 			want:      40,
-			wantFrees: 0,
+			wantFrees: 400,
 		},
 		{
 			// The consuming match in a NESTED block routes through the precise-drop

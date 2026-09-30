@@ -106,9 +106,9 @@ function drive(n: i32): i32 {
 func heapFlatMain(iters string) string {
 	return `function main(): i32 {
     if (drive(50) != 0) { return 90; }
-    var lo: i32 = __heap_bump_bytes();
+    var lo: i32 = (__heap_bump_bytes() as i32);
     if (drive(` + iters + `) != 0) { return 91; }
-    var hi: i32 = __heap_bump_bytes();
+    var hi: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     var d: i32 = hi - lo;
     if (d != 0) { return 1; }

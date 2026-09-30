@@ -169,9 +169,8 @@ function main(): i32 {
 }
 `
 
-// The sibling branch mentions the local. The caller skips the WHOLE enclosing
-// statement in its escape check, so this mention is invisible to it and the
-// shape has to be refused here.
+// The sibling branch mentions the local, so a release inside the match arm
+// would free it under that mention.
 const nmElseMentionsSrc = `import "core/int";
 function mk(i: i32): Option[string] {
     if (i < 0) { return None; }
@@ -274,54 +273,27 @@ func TestSelfHostNestedMatchReclaimX86_64(t *testing.T) {
 
 	// An exact balance, not just live_bytes == 0: the free lands after a
 	// statement the local outlives, so an over-release matters as much as a leak
-	// and only allocs == frees catches both.
+	// and only allocs == frees catches both. The *_mentions and used_after rows
+	// reach the local outside the match, and nested_escape_churn binds the arm's
+	// payload to an outer local; for those the exit agreement inside counts() is
+	// what says nothing was freed under a live reference.
 	for _, tc := range []struct{ name, src string }{
 		{"flat_arr_control", nmFlatArrSrc},
 		{"if_nested_arr", nmIfArrSrc},
 		{"flat_str_control", nmFlatStrSrc},
 		{"if_nested_str", nmIfStrSrc},
 		{"while_nested_str", nmWhileStrSrc},
+		{"else_branch_mentions", nmElseMentionsSrc},
+		{"used_after_enclosing_if", nmUsedAfterSrc},
+		{"if_cond_mentions", nmCondMentionsSrc},
+		{"nested_escape_churn", nmEscapeChurnSrc},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			allocs, frees, live := counts(t, tc.name, tc.src)
 			if live != 0 || allocs != frees {
-				t.Errorf("%s: allocs=%d frees=%d live_bytes=%d — want an exact balance. "+
-					"The nested spelling leaked the whole box and payload (35200 for the "+
-					"array shape, 25600 for the string) while the flat control was 0",
+				t.Errorf("%s: allocs=%d frees=%d live_bytes=%d — want an exact balance",
 					tc.name, allocs, frees, live)
 			}
 		})
 	}
-
-	// Refused, so the correct outcome is a leak. Each mention below is one the
-	// caller's own escape check cannot see, because it skips the whole enclosing
-	// statement.
-	for _, tc := range []struct{ name, src string }{
-		{"else_branch_mentions", nmElseMentionsSrc},
-		{"used_after_enclosing_if", nmUsedAfterSrc},
-		{"if_cond_mentions", nmCondMentionsSrc},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			allocs, frees, live := counts(t, tc.name, tc.src)
-			if frees != 0 || live == 0 {
-				t.Errorf("%s: allocs=%d frees=%d live_bytes=%d — want frees=0 and a nonzero "+
-					"remainder. The local is reachable outside the match, so reclaiming it "+
-					"here is a dangle, not a fix", tc.name, allocs, frees, live)
-			}
-		})
-	}
-
-	// The escaping arm binding. Exit agreement inside counts() is the real
-	// detector — freeing here returns a wrong answer once the churn loop recycles
-	// the box (46 against the oracle's 24 when the arm analyses are fed the
-	// enclosing `if` instead of the match).
-	t.Run("nested_escape_churn", func(t *testing.T) {
-		allocs, frees, live := counts(t, "nested_escape_churn", nmEscapeChurnSrc)
-		if live == 0 || frees >= allocs {
-			t.Errorf("nested_escape_churn: allocs=%d frees=%d live_bytes=%d — the arm "+
-				"binding escapes to an outer local, so the payload must be stranded, not "+
-				"released. A full balance here means the escape gate was bypassed and the "+
-				"string freed under its other holder", allocs, frees, live)
-		}
-	})
 }

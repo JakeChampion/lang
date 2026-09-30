@@ -61,7 +61,7 @@ function round(i: i32): i32 {
     return (v[0] as i32 + clobber.len() + i) % 101;
 }
 function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }`,
-			want: 17, allocs: 300, frees: 300,
+			want: 17, allocs: 400, frees: 400,
 		},
 		{
 			// The control: no recycler, one call. Used to read 0 — the freed
@@ -75,7 +75,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return (v[0] as i32) % 101;
 }`,
-			want: 11, allocs: 2, frees: 2,
+			want: 11, allocs: 3, frees: 3,
 		},
 		{
 			// Same-frame trim + receiver used after — the shape that was

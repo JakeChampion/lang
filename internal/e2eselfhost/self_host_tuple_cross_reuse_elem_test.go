@@ -165,7 +165,7 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
     return a + u.1[1];
 }
 function main(): i32 { var xs: i32[] = [7, 11]; var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + feed(xs, r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
-			want: 57, allocs: 201,
+			want: 57, allocs: 200,
 		},
 		{
 			// A LOOP-CARRIED recipient: `u`'s slot is re-bound every iteration, so

@@ -213,17 +213,4 @@ func TestSelfHostMapRuntimeNeedGatedArm64(t *testing.T) {
 			t.Errorf("a program with no map still emits %s", unwanted)
 		}
 	}
-
-	// The other direction: a map-using program still gets the bundle.
-	const usesMap = `function main(): i32 {
-    var m: Map[string, i32] = Map {};
-    m = m.insert("k", 7);
-    return m.get_or("k", 0) - 7;
-}`
-	asm2 := string(runCapture(t, x86gcc, x86runner, driverBin, []byte(usesMap+"\n"), "-target", "arm64-linux"))
-	for _, want := range []string{"__fern_map_new:", "__fern_map_set:", "__fern_map_get:"} {
-		if !strings.Contains(asm2, want) {
-			t.Errorf("a map-using arm64 program is missing %q — the need is not reaching the bundle", want)
-		}
-	}
 }

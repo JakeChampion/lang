@@ -155,12 +155,10 @@ function round(i: i32): i32 {
 			want: 93, allocs: 300, frees: 300,
 		},
 		{
-			// A REAL lambda whose body mentions the local: the value-block
-			// narrowing must not treat it as a non-capture. The row balances
-			// because the lambda's box is released once the borrowing call
-			// returns and the captured local keeps its own release, not through
-			// the narrowing. A free under a live closure fails it loudly: 99
-			// from the underflow count.
+			// A REAL lambda whose body mentions the local may run after
+			// this frame, so a release under a live closure would show as a
+			// wrong value or exit 99. The typed lowering reclaims the local
+			// after the closure is done with it.
 			name: "real_lambda_capture_refused",
 			src: arrDecls + `function apply(f: () => i32): i32 { return f(); }
 function round(i: i32): i32 {
@@ -205,8 +203,7 @@ func TestSelfHostMatchExprBorrowX86_64(t *testing.T) {
 				t.Errorf("%s: %s — want allocs=%d", tc.name, summary, tc.allocs)
 			}
 			if frees != tc.frees {
-				t.Errorf("%s: %s — want frees=%d. FEWER on a value-block row means the "+
-					"IIFE body reads as a capture again",
+				t.Errorf("%s: %s — want frees=%d",
 					tc.name, summary, tc.frees)
 			}
 		})

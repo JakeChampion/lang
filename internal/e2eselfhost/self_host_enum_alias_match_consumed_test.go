@@ -17,11 +17,10 @@ import (
 // match is not the cause; the earlier diagnosis blamed the wrong gate. Both
 // halves are kept as cases so a regression says which one moved.
 //
-// The forgiveness is keyed by the SAME proof as #7687
-// (rcenum_alias_bind_sites_of), so its payload-out half still refuses the
-// shapes that would over-release. Those cases gate on the exit code, not the
-// census: an over-release here balances the census and shows up as
-// __rc_underflow_count() (exit 99).
+// The payload-out and escaping-alias shapes are the ones that could
+// over-release. They gate on the exit code as well as the census: an
+// over-release balances the census and shows up as __rc_underflow_count()
+// (exit 99) and in the sanitizer leg. On the typed lowering every row balances.
 //
 // Exits confirmed on BOTH oracles (bin/fern -interp and native x86-64).
 
@@ -40,7 +39,7 @@ function round(i: i32): i32 {
     return t;
 }
 function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }`,
-			want: 34, balance: true,
+			want: 34,
 		},
 		{
 			// The matrix cell: both the alias and the source are matched.
@@ -55,7 +54,7 @@ function round(i: i32): i32 {
     return t;
 }
 function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }`,
-			want: 68, balance: true,
+			want: 68,
 		},
 		{
 			// The bisect's control: two matches on the source, NO alias. Was
@@ -71,15 +70,13 @@ function round(i: i32): i32 {
     return t;
 }
 function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }`,
-			want: 68, balance: true,
+			want: 68,
 		},
 		{
-			// THE FREE-SAFETY GUARD. The alias's arm moves the payload OUT, so
-			// the source's deep release would free a buffer the frame still
-			// holds. Refused by the shared proof's !enum_body_binds_rc_payload
-			// half. #7687 measured this firing __rc_underflow_count when admitted —
-			// with a balanced census either way — so the EXIT is the assertion
-			// that matters here, not the frees.
+			// THE FREE-SAFETY GUARD. The alias's arm moves the payload OUT,
+			// so a release of the source under it would free a buffer the
+			// frame still holds. An over-release here balances the census,
+			// so the EXIT (99 on underflow) is the assertion that matters.
 			name: "payload_out_via_alias_refused",
 			src: `enum E { Full(i32[]), None }
 function round(i: i32): i32 {
@@ -91,11 +88,10 @@ function round(i: i32): i32 {
     return out.len();
 }
 function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }`,
-			want: 68, wantFrees: 100,
+			want: 68,
 		},
 		{
-			// The alias ESCAPES the frame (returned), so it is not confined and
-			// the source keeps its refusal.
+			// The alias ESCAPES the frame (returned).
 			name: "returned_alias_refused",
 			src: `enum E { Full(i32[]), None }
 function mk(i: i32): E {
@@ -111,7 +107,7 @@ function round(i: i32): i32 {
     return t;
 }
 function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }`,
-			want: 34, wantFrees: 0,
+			want: 34,
 		},
 	}
 }
@@ -144,12 +140,8 @@ func TestSelfHostEnumAliasMatchConsumedX86_64(t *testing.T) {
 			if allocs == 0 {
 				t.Fatalf("%s allocated nothing — the probe is not exercising the path", tc.name)
 			}
-			if tc.balance {
-				if live != 0 || allocs != frees {
-					t.Errorf("%s: %s — must balance at live_bytes 0", tc.name, summary)
-				}
-			} else if frees != tc.wantFrees {
-				t.Errorf("%s: %s — refused row's frees moved (want %d)", tc.name, summary, tc.wantFrees)
+			if live != 0 || allocs != frees {
+				t.Errorf("%s: %s — must balance at live_bytes 0", tc.name, summary)
 			}
 
 			sanAsm := hevCompile(t, runner, driverBin, tc.src, []string{"FERN_SANITIZE=1"})

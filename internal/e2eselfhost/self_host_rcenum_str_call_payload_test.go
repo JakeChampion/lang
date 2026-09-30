@@ -26,20 +26,14 @@ import (
 // applies where the registry is out of reach (struct-literal enum fields, array
 // elements, the RCE: registration proof).
 //
-// The refusal row is half the point: a callee that returns its PARAMETER is not
-// in the registry, stays refused, and its box keeps its sound leak — MORE frees
-// there would mean the sweep freeing a box the caller still owns.
+// The alias row is half the point: a callee that returns its PARAMETER hands
+// back a box the caller still owns; a release under it exits 99.
 //
 // Every want was confirmed against BOTH oracles (bin/fern -interp and the
 // native x86-64 backend agreed on each); alloc/free counts are the self-host
 // build's own, pinned exactly (the 3-vs-1 allocs-per-string ratio against
 // native is #7351, not this change).
 //
-// Counts here are ONE block per heap string: #7351 fused the box into the
-// buffer's reserved header. Every row was re-measured against main, and every
-// live_bytes is unchanged — the clean rows stayed clean and each refusal-leak
-// row leaks the same bytes it did — so what moved is block volume, not
-// behaviour. A pre-fusion number quoted in a row note below is the older one.
 
 type rcEnumStrCallCase struct {
 	name   string
@@ -108,12 +102,9 @@ function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t +
 			want: 50, allocs: 50, frees: 50,
 		},
 		{
-			// REFUSED — the callee returns its PARAMETER, so the payload
-			// aliases `keep`, a live local this frame's own sweep releases.
-			// str_fresh_ret_fns refuses a bare-ident return, the enum stays
-			// uncredited, and the box keeps its sound leak. MORE frees here is
-			// the over-release this gate exists to prevent; exit 99 would be
-			// the underflow counter catching exactly that.
+			// The callee returns its PARAMETER, so the payload aliases
+			// `keep`, a live local this frame releases. An over-release
+			// here would exit 99.
 			name: "refused_alias_returning_callee",
 			src: `enum R { Full(string), Empty }
 function w(a: string): string { return a + "!"; }
@@ -126,13 +117,14 @@ function round(i: i32): i32 {
     return t;
 }
 function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
-			want: 52, allocs: 150, frees: 0,
+			want: 52, allocs: 150, frees: 150,
 		}}
 }
 
 // TestSelfHostRcEnumStrCallPayloadX86_64 — a string payload from a
 // str_fresh_ret_fns producer call earns the enum the same reclaim credit an
-// inline concat does, and an alias-returning callee stays refused.
+// inline concat does, and an alias-returning callee is never released under its
+// caller.
 func TestSelfHostRcEnumStrCallPayloadX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -163,9 +155,7 @@ func TestSelfHostRcEnumStrCallPayloadX86_64(t *testing.T) {
 				t.Errorf("%s: %s — want allocs=%d", tc.name, summary, tc.allocs)
 			}
 			if frees != tc.frees {
-				t.Errorf("%s: %s — want frees=%d. MORE on the refused row means the "+
-					"credit reached an aliasing callee; FEWER on an admitted row means "+
-					"the registry consultation stopped resolving", tc.name, summary, tc.frees)
+				t.Errorf("%s: %s — want frees=%d", tc.name, summary, tc.frees)
 			}
 		})
 	}

@@ -46,7 +46,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return acc % 83;
 }`,
-			want: 23, balance: true,
+			want: 23,
 		},
 		{
 			// TWO holders of one box — the shape that exposed the move. Only
@@ -68,7 +68,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return acc % 83;
 }`,
-			want: 10, balance: true,
+			want: 10,
 		},
 		{
 			// Reads through BOTH owners after the store: the field read
@@ -89,7 +89,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return acc % 83;
 }`,
-			want: 38, balance: true,
+			want: 38,
 		},
 		{
 			// A FRESH tuple literal in the field takes no inc — the struct
@@ -108,7 +108,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return acc % 83;
 }`,
-			want: 23, balance: true,
+			want: 23,
 		},
 		{
 			// The struct ESCAPES the frame that built it. The literal is the
@@ -134,15 +134,11 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return acc % 83;
 }`,
-			want: 23, balance: true,
+			want: 23,
 		},
 		{
-			// Adversarial, stays REFUSED: the holders are built inside an
-			// ARRAY literal, which rctuple_counted_field_share never reaches
-			// (it matches a struct literal in a value position, not one
-			// nested in a container). The source keeps its escape verdict and
-			// the tuple leaks — conservative, and pinned by frees so a silent
-			// widening moves a number rather than only a verdict.
+			// Adversarial: the holders are built inside an ARRAY literal.
+			// The exit and the sanitize leg guard the shared tuple.
 			name: "array_of_holders_stays_refused",
 			src: `struct Hold { t: (i32, i32[]), n: i32 }
 function round(i: i32): i32 {
@@ -157,7 +153,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return acc % 83;
 }`,
-			want: 4, wantFrees: 300,
+			want: 4,
 		},
 	}
 }
@@ -187,12 +183,8 @@ func TestSelfHostTupleStructFieldStoreX86_64(t *testing.T) {
 			if allocs == 0 {
 				t.Fatalf("%s allocated nothing — the probe is not exercising the path", tc.name)
 			}
-			if tc.balance {
-				if live != 0 || allocs != frees {
-					t.Errorf("%s: %s — must balance at live_bytes 0", tc.name, summary)
-				}
-			} else if frees != tc.wantFrees {
-				t.Errorf("%s: %s — refused row's frees moved (want %d)", tc.name, summary, tc.wantFrees)
+			if live != 0 || allocs != frees {
+				t.Errorf("%s: %s — must balance at live_bytes 0", tc.name, summary)
 			}
 
 			// Sanitize leg. Free-safety is what this pair can get wrong: a
@@ -209,22 +201,20 @@ func TestSelfHostTupleStructFieldStoreX86_64(t *testing.T) {
 				t.Fatalf("%s sanitize leg reported:\n%s", tc.name, sanErr)
 			}
 
-			if tc.balance {
-				// Nothing here is plan-routed, so FERN_SELFHOST_RC_PLAN=0
-				// must change nothing.
-				offAsm := hevCompile(t, runner, driverBin, tc.src, []string{"FERN_LEAKCHECK=1", "FERN_SELFHOST_RC_PLAN=0"})
-				offBin := buildBin(t, gcc, dir, "tupsfs_off_"+tc.name, offAsm)
-				offErr, offExit := hevRun(t, runner, offBin)
-				if offExit != tc.want {
-					t.Fatalf("%s plan-off exited %d, want %d", tc.name, offExit, tc.want)
-				}
-				var oa, of, ol int64
-				if _, err := fmtSscan(leakSummaryLine(offErr), &oa, &of, &ol); err != nil {
-					t.Fatalf("%s plan-off: parse: %v", tc.name, err)
-				}
-				if ol != 0 || oa != of {
-					t.Errorf("%s plan-off: %s — must balance without the plan", tc.name, leakSummaryLine(offErr))
-				}
+			// Nothing here is plan-routed, so FERN_SELFHOST_RC_PLAN=0
+			// must change nothing.
+			offAsm := hevCompile(t, runner, driverBin, tc.src, []string{"FERN_LEAKCHECK=1", "FERN_SELFHOST_RC_PLAN=0"})
+			offBin := buildBin(t, gcc, dir, "tupsfs_off_"+tc.name, offAsm)
+			offErr, offExit := hevRun(t, runner, offBin)
+			if offExit != tc.want {
+				t.Fatalf("%s plan-off exited %d, want %d", tc.name, offExit, tc.want)
+			}
+			var oa, of, ol int64
+			if _, err := fmtSscan(leakSummaryLine(offErr), &oa, &of, &ol); err != nil {
+				t.Fatalf("%s plan-off: parse: %v", tc.name, err)
+			}
+			if ol != 0 || oa != of {
+				t.Errorf("%s plan-off: %s — must balance without the plan", tc.name, leakSummaryLine(offErr))
 			}
 		})
 	}

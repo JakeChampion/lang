@@ -31,13 +31,13 @@ func syscall6Source(t *testing.T, dir, target string) string {
 	}
 	return fmt.Sprintf(`function main(): i32 {
     var path: string = "%s\0";
-    var fd: i32 = __syscall4(%d, %d, __raw_data(path), 0, 0);
+    var fd: i64 = __syscall4(%d, %d, __raw_data(path) as i64, 0, 0);
     if (fd < 0) { return 1; }
-    var p: i32 = __syscall6(%d, 0, 65536, 1, 2, fd, 65536);
+    var p: usize = __syscall6(%d, 0, 65536, 1, 2, fd, 65536) as usize;
     var first: i32 = __raw_load8(p, 0);
     var last: i32 = __raw_load8(p, 65535);
-    var unmapped: i32 = __syscall3(%d, p, 65536, 0);
-    var closed: i32 = __syscall3(%d, fd, 0, 0);
+    var unmapped: i64 = __syscall3(%d, p as i64, 65536, 0);
+    var closed: i64 = __syscall3(%d, fd, 0, 0);
     if (first != 91 || last != 37) { return 2; }
     if (unmapped != 0 || closed != 0) { return 3; }
     if (__syscall6(%d, 0, 65536, 1, 2, 0 - 1, 65536) != 0 - 9) { return 4; }

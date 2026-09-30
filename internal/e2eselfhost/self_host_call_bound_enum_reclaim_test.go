@@ -428,31 +428,18 @@ func TestSelfHostCallBoundEnumReclaimX86_64(t *testing.T) {
 		}
 	})
 
-	// The Err arm TAKEN, on half the iterations. This is what licenses the
-	// widening, so it asserts the split exactly rather than just "some frees":
-	// 100 rounds x 4 iterations allocates 400 boxes and, on the two even `i`s per
-	// round, 200 Err strings. Every box must be freed and precisely the 200
-	// strings stranded.
-	//
-	// A change that makes the free variant-aware or deep should drive
-	// allocs == frees here and will fail this case — that is the intended
-	// signal, not a regression. A change that pushes frees BELOW 400 has lost
-	// the box credit and is a real regression. Either way the exit code, which
-	// is `fern -interp`'s, must not move: a wrong answer means the shallow free
-	// reached a payload, which is the one thing it must never do.
+	// The Err arm TAKEN, on half the iterations: 100 rounds x 4 iterations
+	// allocates 400 boxes. Every box must be freed. The exit code, which is
+	// `fern -interp`'s, must not move: a wrong answer means a free reached a
+	// payload still in use.
 	t.Run("mixed_result_err_path_strands_only_the_payload", func(t *testing.T) {
 		allocs, frees, live := counts(t, "mixed_result_err_path", cbeMixedErrPathSrc, 72)
 		if frees != 400 {
 			t.Errorf("frees=%d, want 400 — every box must be released regardless of which arm ran "+
 				"(allocs=%d live=%d)", frees, allocs, live)
 		}
-		// This asserted exactly 200 stranded until #7080. The 200 were boxes for
-		// the `Err("neg")` payload, one per construction; a literal is static data
-		// now, so there is no payload box to strand and the balance is exact. That
-		// is the "drive allocs == frees" outcome the comment above predicted — by a
-		// different route than it guessed, since the free did not become deep.
-		// cbeMixedErrFreshPathSrc keeps the stranding case, on a payload that
-		// really allocates.
+		// The `Err("neg")` payload is a literal, which is static data, so the
+		// balance is exact.
 		if allocs != frees {
 			t.Errorf("allocs=%d frees=%d live=%d — want an exact balance. The Err payload is a literal, "+
 				"so it allocates nothing and there is nothing for the shallow free to leave behind",
@@ -460,20 +447,13 @@ func TestSelfHostCallBoundEnumReclaimX86_64(t *testing.T) {
 		}
 	})
 
-	// The stranding case, on a payload the compiler must actually allocate. The
-	// shallow free releases every Result box and never reaches into the payload,
-	// so the payload's allocations survive — which is what licenses the widening.
-	// An exit code that moves means the free DID reach a payload, the one thing it
-	// must never do.
+	// The same shape on an Err payload the compiler must actually allocate. The
+	// typed lowering releases every Result box and its computed payload; an exit
+	// code that moves means a release reached a payload still in use.
 	t.Run("mixed_result_fresh_err_path_strands_only_the_payload", func(t *testing.T) {
 		allocs, frees, live := counts(t, "mixed_result_fresh_err_path", cbeMixedErrFreshPathSrc, 72)
-		if frees != 400 {
-			t.Errorf("frees=%d, want 400 — every box must be released regardless of which arm ran "+
-				"(allocs=%d live=%d)", frees, allocs, live)
-		}
-		if allocs <= frees {
-			t.Errorf("allocs=%d frees=%d live=%d — a computed Err payload must still be stranded by the "+
-				"shallow free; an exact balance here means the probe stopped allocating one",
+		if allocs != 600 || frees != 600 || live != 0 {
+			t.Errorf("allocs=%d frees=%d live=%d — want 600/600/0: every box and payload released",
 				allocs, frees, live)
 		}
 	})
