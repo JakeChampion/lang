@@ -23352,12 +23352,19 @@ func (b *builder) emitMapSetRetains(keyArg, valArg ast.Expr, kType, vType ast.Ty
 // the two-word helper on those ABIs, but the single-word __fern_rc_inc path
 // never covered it.
 func (b *builder) mapSetValueCounted(valArg ast.Expr, vType ast.Type) bool {
+	return b.mapSetValueCountedBy(valArg, vType, needsRcIncOnAlias(valArg, b))
+}
+
+// mapSetValueCountedBy is mapSetValueCounted with needsRcIncOnAlias's answer
+// for valArg supplied, for a caller that knows the argument's type when
+// exprType does not (a match binding).
+func (b *builder) mapSetValueCountedBy(valArg ast.Expr, vType ast.Type, aliasInc bool) bool {
 	if vType == nil {
 		return false
 	}
 	if _, isStr := vType.(ast.StringType); isStr {
 		if ast.UseTwoWordStrings(b.ptrW) {
-			return needsRcIncOnAlias(valArg, b)
+			return aliasInc
 		}
 		if b.ptrW != 8 {
 			return false
@@ -23369,7 +23376,7 @@ func (b *builder) mapSetValueCounted(valArg ast.Expr, vType ast.Type) bool {
 		return false
 	}
 	if mapValKindTag(vType, b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW) >= 2 {
-		return needsRcIncOnAlias(valArg, b)
+		return aliasInc
 	}
 	return false
 }
@@ -23379,6 +23386,12 @@ func (b *builder) mapSetValueCounted(valArg ast.Expr, vType ast.Type) bool {
 // (__drop_map_str_keys). A struct / enum key (kind 3) is stored as a raw
 // pointer the column never retains nor drops, so its source is uncounted.
 func (b *builder) mapSetKeyCounted(keyArg ast.Expr, kType ast.Type) bool {
+	return b.mapSetKeyCountedBy(keyArg, kType, needsRcIncOnAlias(keyArg, b))
+}
+
+// mapSetKeyCountedBy is mapSetKeyCounted with needsRcIncOnAlias's answer for
+// keyArg supplied, as mapSetValueCountedBy.
+func (b *builder) mapSetKeyCountedBy(keyArg ast.Expr, kType ast.Type, aliasInc bool) bool {
 	if kType == nil {
 		return false
 	}
@@ -23386,7 +23399,7 @@ func (b *builder) mapSetKeyCounted(keyArg ast.Expr, kType ast.Type) bool {
 		return false
 	}
 	if ast.UseTwoWordStrings(b.ptrW) {
-		return needsRcIncOnAlias(keyArg, b)
+		return aliasInc
 	}
 	if b.ptrW != 8 {
 		return false
