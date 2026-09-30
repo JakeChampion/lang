@@ -14,8 +14,8 @@ of work.
 
 Both estimates come from the repository rather than a guess. The token density
 was remeasured after #10854 reformatted every tracked `.fern` to two-space
-indentation, which took it from 7.46 bytes per token (120 sources, 12.5 MB,
-1.68 M tokens) to the figure below.
+indentation. When this note was first written it was 7.46 bytes per token
+(12.5 MB, 1.68 M tokens), over a population this note did not record.
 
 | Quantity | Measured over | Value |
 |---|---|---|
