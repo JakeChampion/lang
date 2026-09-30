@@ -1,5 +1,6 @@
 import "std/test";
 import "std/http";
+
 // examples/tests/runner_self_test.fern — meta-test of the
 // `std/test` runner itself. Verifies that:
 //   - passing assertions return Pass
@@ -13,14 +14,17 @@ import "std/http";
 // shell out and parse TAP output. This is the smallest end-
 // to-end harness that confirms the runner's failure-reporting
 // contract holds.
-
 // Helper: assert that a TestOutcome is Pass (i.e. an
 // assertion that should have passed actually did).
 function expect_pass(o: test.TestOutcome): test.TestOutcome {
-    match (o) {
-        Pass => { return test.pass(); },
-        Fail(msg) => { return test.fail("expected Pass, got Fail(" + msg + ")"); }
+  match (o) {
+    Pass => {
+      return test.pass();
+    },
+    Fail(msg) => {
+      return test.fail("expected Pass, got Fail(" + msg + ")");
     }
+  }
 }
 
 // Helper: assert that a TestOutcome is Fail(...) and that
@@ -28,174 +32,194 @@ function expect_pass(o: test.TestOutcome): test.TestOutcome {
 // the failure message's predicate name without pinning the
 // exact wording).
 function expect_fail_containing(o: test.TestOutcome, needle: string): test.TestOutcome {
-    match (o) {
-        Fail(msg) => {
-            if (msg.contains(needle)) { return test.pass(); }
-            return test.fail("Fail(\"" + msg + "\") does not contain \"" + needle + "\"");
-        },
-        Pass => { return test.fail("expected Fail, got Pass"); }
+  match (o) {
+    Fail(msg) => {
+      if (msg.contains(needle)) {
+        return test.pass();
+      }
+      return test.fail("Fail(\"" + msg + "\") does not contain \"" + needle + "\"");
+    },
+    Pass => {
+      return test.fail("expected Fail, got Pass");
     }
+  }
 }
 
 // Each assertion helper has a passing case and a failing case.
 // The passing case must return test.pass(); the failing case must
 // return Fail with the assertion's predicate name in the
 // message.
-
 function test_assert_true_pass(): test.TestOutcome {
-    return expect_pass(test.assert_true(true));
+  return expect_pass(test.assert_true(true));
 }
 
 function test_assert_true_fail(): test.TestOutcome {
-    return expect_fail_containing(test.assert_true(false), "assert_true");
+  return expect_fail_containing(test.assert_true(false), "assert_true");
 }
 
 function test_assert_false_pass(): test.TestOutcome {
-    return expect_pass(test.assert_false(false));
+  return expect_pass(test.assert_false(false));
 }
 
 function test_assert_false_fail(): test.TestOutcome {
-    return expect_fail_containing(test.assert_false(true), "assert_false");
+  return expect_fail_containing(test.assert_false(true), "assert_false");
 }
 
 function test_eq_i32_pass(): test.TestOutcome {
-    return expect_pass(test.assert_eq(42, 42));
+  return expect_pass(test.assert_eq(42, 42));
 }
 
 function test_eq_i32_fail_message(): test.TestOutcome {
-    // The message must contain BOTH values, quoted — that's the
-    // contract callers will read in CI logs.
-    var o: test.TestOutcome = test.assert_eq(4, 5);
-    match (o) {
-        Fail(msg) => {
-            if (!msg.contains("expected \"5\"")) {
-                return test.fail("missing 'expected \"5\"' in \"" + msg + "\"");
-            }
-            if (!msg.contains("got \"4\"")) {
-                return test.fail("missing 'got \"4\"' in \"" + msg + "\"");
-            }
-            return test.pass();
-        },
-        Pass => { return test.fail("assert_eq(4, 5) should fail"); }
+  // The message must contain BOTH values, quoted — that's the
+  // contract callers will read in CI logs.
+  var o: test.TestOutcome = test.assert_eq(4, 5);
+  match (o) {
+    Fail(msg) => {
+      if (!msg.contains("expected \"5\"")) {
+        return test.fail("missing 'expected \"5\"' in \"" + msg + "\"");
+      }
+      if (!msg.contains("got \"4\"")) {
+        return test.fail("missing 'got \"4\"' in \"" + msg + "\"");
+      }
+      return test.pass();
+    },
+    Pass => {
+      return test.fail("assert_eq(4, 5) should fail");
     }
+  }
 }
 
 function test_eq_fail_quotes_empty_actual(): test.TestOutcome {
-    // Unquoted, an empty actual left the message ending after
-    // "got " with nothing behind it — a truncated-looking
-    // diagnostic instead of a visible empty value.
-    var o: test.TestOutcome = test.assert_eq("", "x");
-    match (o) {
-        Fail(msg) => {
-            if (!msg.contains("expected \"x\"")) {
-                return test.fail("missing 'expected \"x\"' in \"" + msg + "\"");
-            }
-            if (!msg.contains("got \"\"")) {
-                return test.fail("missing 'got \"\"' in \"" + msg + "\"");
-            }
-            return test.pass();
-        },
-        Pass => { return test.fail("assert_eq(\"\", \"x\") should fail"); }
+  // Unquoted, an empty actual left the message ending after
+  // "got " with nothing behind it — a truncated-looking
+  // diagnostic instead of a visible empty value.
+  var o: test.TestOutcome = test.assert_eq("", "x");
+  match (o) {
+    Fail(msg) => {
+      if (!msg.contains("expected \"x\"")) {
+        return test.fail("missing 'expected \"x\"' in \"" + msg + "\"");
+      }
+      if (!msg.contains("got \"\"")) {
+        return test.fail("missing 'got \"\"' in \"" + msg + "\"");
+      }
+      return test.pass();
+    },
+    Pass => {
+      return test.fail("assert_eq(\"\", \"x\") should fail");
     }
+  }
 }
 
 function test_neq_fail_quotes_both(): test.TestOutcome {
-    return expect_fail_containing(test.assert_neq("a", "a"),
-                                  "assert_neq: expected != \"a\", got \"a\"");
+  return expect_fail_containing(
+    test.assert_neq("a", "a"),
+    "assert_neq: expected != \"a\", got \"a\"",
+  );
 }
 
 function test_lt_pass(): test.TestOutcome {
-    return expect_pass(test.assert_lt(1, 2));
+  return expect_pass(test.assert_lt(1, 2));
 }
 
 function test_lt_fail_quotes_both(): test.TestOutcome {
-    return expect_fail_containing(test.assert_lt(2, 1),
-                                  "assert_lt: expected \"2\" < \"1\"");
+  return expect_fail_containing(
+    test.assert_lt(2, 1),
+    "assert_lt: expected \"2\" < \"1\"",
+  );
 }
 
 function test_le_pass(): test.TestOutcome {
-    return expect_pass(test.assert_le(2, 2));
+  return expect_pass(test.assert_le(2, 2));
 }
 
 function test_le_fail_quotes_both(): test.TestOutcome {
-    return expect_fail_containing(test.assert_le(3, 2),
-                                  "assert_le: expected \"3\" <= \"2\"");
+  return expect_fail_containing(
+    test.assert_le(3, 2),
+    "assert_le: expected \"3\" <= \"2\"",
+  );
 }
 
 function test_gt_pass(): test.TestOutcome {
-    return expect_pass(test.assert_gt(2, 1));
+  return expect_pass(test.assert_gt(2, 1));
 }
 
 function test_gt_fail_quotes_both(): test.TestOutcome {
-    return expect_fail_containing(test.assert_gt(1, 2),
-                                  "assert_gt: expected \"1\" > \"2\"");
+  return expect_fail_containing(
+    test.assert_gt(1, 2),
+    "assert_gt: expected \"1\" > \"2\"",
+  );
 }
 
 function test_ge_pass(): test.TestOutcome {
-    return expect_pass(test.assert_ge(2, 2));
+  return expect_pass(test.assert_ge(2, 2));
 }
 
 function test_ge_fail_quotes_both(): test.TestOutcome {
-    return expect_fail_containing(test.assert_ge(1, 2),
-                                  "assert_ge: expected \"1\" >= \"2\"");
+  return expect_fail_containing(
+    test.assert_ge(1, 2),
+    "assert_ge: expected \"1\" >= \"2\"",
+  );
 }
 
 function test_eq_string_pass(): test.TestOutcome {
-    return expect_pass(test.assert_eq("hello", "hello"));
+  return expect_pass(test.assert_eq("hello", "hello"));
 }
 
 function test_eq_string_fail(): test.TestOutcome {
-    var o: test.TestOutcome = test.assert_eq("a", "b");
-    return expect_fail_containing(o, "assert_eq");
+  var o: test.TestOutcome = test.assert_eq("a", "b");
+  return expect_fail_containing(o, "assert_eq");
 }
 
 function test_neq_i32(): test.TestOutcome {
-    return expect_pass(test.assert_neq(1, 2));
+  return expect_pass(test.assert_neq(1, 2));
 }
 
 function test_contains_pass(): test.TestOutcome {
-    return expect_pass(test.assert_contains("hello world", "world"));
+  return expect_pass(test.assert_contains("hello world", "world"));
 }
 
 function test_contains_fail(): test.TestOutcome {
-    return expect_fail_containing(
-        test.assert_contains("hello world", "xyz"),
-        "assert_contains");
+  return expect_fail_containing(
+    test.assert_contains("hello world", "xyz"),
+    "assert_contains",
+  );
 }
 
 function test_starts_with_pass(): test.TestOutcome {
-    return expect_pass(test.assert_starts_with("foobar", "foo"));
+  return expect_pass(test.assert_starts_with("foobar", "foo"));
 }
 
 function test_starts_with_fail(): test.TestOutcome {
-    return expect_fail_containing(
-        test.assert_starts_with("foobar", "bar"),
-        "assert_starts_with");
+  return expect_fail_containing(
+    test.assert_starts_with("foobar", "bar"),
+    "assert_starts_with",
+  );
 }
 
 function test_ends_with_pass(): test.TestOutcome {
-    return expect_pass(test.assert_ends_with("foobar", "bar"));
+  return expect_pass(test.assert_ends_with("foobar", "bar"));
 }
 
 function test_len_i32_pass(): test.TestOutcome {
-    return expect_pass(test.assert_len_i32([1, 2, 3], 3));
+  return expect_pass(test.assert_len_i32([1, 2, 3], 3));
 }
 
 function test_len_i32_fail(): test.TestOutcome {
-    return expect_fail_containing(
-        test.assert_len_i32([1, 2, 3], 5),
-        "expected length 5");
+  return expect_fail_containing(
+    test.assert_len_i32([1, 2, 3], 5),
+    "expected length 5",
+  );
 }
 
 function test_eq_i32_array_pass(): test.TestOutcome {
-    return expect_pass(test.assert_eq_array([1, 2, 3], [1, 2, 3]));
+  return expect_pass(test.assert_eq_array([1, 2, 3], [1, 2, 3]));
 }
 
 function test_eq_i32_array_fail_index(): test.TestOutcome {
-    // First mismatch is at index 1 (2 vs 9); the message
-    // must localise that index.
-    var o: test.TestOutcome = test.assert_eq_array([1, 2, 3], [1, 9, 3]);
-    return expect_fail_containing(o, "index 1");
+  // First mismatch is at index 1 (2 vs 9); the message
+  // must localise that index.
+  var o: test.TestOutcome = test.assert_eq_array([1, 2, 3], [1, 9, 3]);
+  return expect_fail_containing(o, "index 1");
 }
 
 // Range assertions. The float pair's dangerous input is a NaN
@@ -204,101 +228,156 @@ function test_eq_i32_array_fail_index(): test.TestOutcome {
 // nothing (#8469). An inverted range is the same shape of caller
 // bug and gets its own message rather than being blamed on
 // whichever side the value fell outside.
-
 function test_in_range_i32_pass(): test.TestOutcome {
-    return expect_pass(test.assert_in_range_i32(5, 0, 10));
+  return expect_pass(test.assert_in_range_i32(5, 0, 10));
 }
 
 function test_in_range_i32_fail(): test.TestOutcome {
-    return expect_fail_containing(test.assert_in_range_i32(11, 0, 10),
-                                  "assert_in_range_i32: 11 > upper bound 10");
+  return expect_fail_containing(
+    test.assert_in_range_i32(11, 0, 10),
+    "assert_in_range_i32: 11 > upper bound 10",
+  );
 }
 
 function test_in_range_i64_pass(): test.TestOutcome {
-    return expect_pass(test.assert_in_range_i64(5 as i64, 0 as i64, 10 as i64));
+  return expect_pass(test.assert_in_range_i64(5 as i64, 0 as i64, 10 as i64));
 }
 
 function test_in_range_i64_fail(): test.TestOutcome {
-    return expect_fail_containing(
-        test.assert_in_range_i64(0 as i64 - 1 as i64, 0 as i64, 10 as i64),
-        "assert_in_range_i64: -1 < lower bound 0");
+  return expect_fail_containing(
+    test.assert_in_range_i64(0 as i64 - 1 as i64, 0 as i64, 10 as i64),
+    "assert_in_range_i64: -1 < lower bound 0",
+  );
 }
 
 function test_in_range_f64_pass(): test.TestOutcome {
-    return expect_pass(test.assert_in_range_f64(0.5, 0.0, 1.0));
+  return expect_pass(test.assert_in_range_f64(0.5, 0.0, 1.0));
 }
 
 function test_in_range_f64_fail(): test.TestOutcome {
-    return expect_fail_containing(test.assert_in_range_f64(1.5, 0.0, 1.0),
-                                  "assert_in_range_f64: 1.5 > upper bound 1");
+  return expect_fail_containing(
+    test.assert_in_range_f64(1.5, 0.0, 1.0),
+    "assert_in_range_f64: 1.5 > upper bound 1",
+  );
 }
 
 function test_in_range_f64_nan_fails(): test.TestOutcome {
-    var nan: f64 = 0.0 / 0.0;
-    var o: test.TestOutcome = expect_fail_containing(
-        test.assert_in_range_f64(nan, 0.0, 1.0), "value is NaN");
-    match (o) { Fail(m) => { return test.fail(m); }, Pass => {} }
-    o = expect_fail_containing(test.assert_in_range_f64(0.5, nan, 1.0),
-                               "lower bound is NaN");
-    match (o) { Fail(m) => { return test.fail(m); }, Pass => {} }
-    return expect_fail_containing(test.assert_in_range_f64(0.5, 0.0, nan),
-                                  "upper bound is NaN");
+  var nan: f64 = 0.0 / 0.0;
+  var o: test.TestOutcome = expect_fail_containing(
+    test.assert_in_range_f64(nan, 0.0, 1.0), "value is NaN",
+  );
+  match (o) {
+    Fail(m) => {
+      return test.fail(m);
+    },
+    Pass => {}
+  }
+  o = expect_fail_containing(
+    test.assert_in_range_f64(0.5, nan, 1.0),
+    "lower bound is NaN",
+  );
+  match (o) {
+    Fail(m) => {
+      return test.fail(m);
+    },
+    Pass => {}
+  }
+  return expect_fail_containing(
+    test.assert_in_range_f64(0.5, 0.0, nan),
+    "upper bound is NaN",
+  );
 }
 
 function test_in_range_f32_pass(): test.TestOutcome {
-    return expect_pass(test.assert_in_range_f32(0.5 as f32, 0.0 as f32, 1.0 as f32));
+  return expect_pass(test.assert_in_range_f32(0.5 as f32, 0.0 as f32, 1.0 as f32));
 }
 
 function test_in_range_f32_fail(): test.TestOutcome {
-    return expect_fail_containing(
-        test.assert_in_range_f32(1.5 as f32, 0.0 as f32, 1.0 as f32),
-        "assert_in_range_f32: 1.5 > upper bound 1");
+  return expect_fail_containing(
+    test.assert_in_range_f32(1.5 as f32, 0.0 as f32, 1.0 as f32),
+    "assert_in_range_f32: 1.5 > upper bound 1",
+  );
 }
 
 function test_in_range_f32_nan_fails(): test.TestOutcome {
-    var z: f32 = 0.0 as f32;
-    var nan: f32 = z / z;
-    var one: f32 = 1.0 as f32;
-    var half: f32 = 0.5 as f32;
-    var o: test.TestOutcome = expect_fail_containing(
-        test.assert_in_range_f32(nan, z, one), "value is NaN");
-    match (o) { Fail(m) => { return test.fail(m); }, Pass => {} }
-    o = expect_fail_containing(test.assert_in_range_f32(half, nan, one),
-                               "lower bound is NaN");
-    match (o) { Fail(m) => { return test.fail(m); }, Pass => {} }
-    return expect_fail_containing(test.assert_in_range_f32(half, z, nan),
-                                  "upper bound is NaN");
+  var z: f32 = 0.0 as f32;
+  var nan: f32 = z / z;
+  var one: f32 = 1.0 as f32;
+  var half: f32 = 0.5 as f32;
+  var o: test.TestOutcome = expect_fail_containing(
+    test.assert_in_range_f32(nan, z, one), "value is NaN",
+  );
+  match (o) {
+    Fail(m) => {
+      return test.fail(m);
+    },
+    Pass => {}
+  }
+  o = expect_fail_containing(
+    test.assert_in_range_f32(half, nan, one),
+    "lower bound is NaN",
+  );
+  match (o) {
+    Fail(m) => {
+      return test.fail(m);
+    },
+    Pass => {}
+  }
+  return expect_fail_containing(
+    test.assert_in_range_f32(half, z, nan),
+    "upper bound is NaN",
+  );
 }
 
 function test_in_range_inverted_fails(): test.TestOutcome {
-    var o: test.TestOutcome = expect_fail_containing(
-        test.assert_in_range_i32(5, 10, 0), "assert_in_range_i32: inverted range");
-    match (o) { Fail(m) => { return test.fail(m); }, Pass => {} }
-    o = expect_fail_containing(
-        test.assert_in_range_i64(5 as i64, 10 as i64, 0 as i64),
-        "assert_in_range_i64: inverted range");
-    match (o) { Fail(m) => { return test.fail(m); }, Pass => {} }
-    o = expect_fail_containing(test.assert_in_range_f64(0.5, 1.0, 0.0),
-                               "assert_in_range_f64: inverted range");
-    match (o) { Fail(m) => { return test.fail(m); }, Pass => {} }
-    return expect_fail_containing(
-        test.assert_in_range_f32(0.5 as f32, 1.0 as f32, 0.0 as f32),
-        "assert_in_range_f32: inverted range");
+  var o: test.TestOutcome = expect_fail_containing(
+    test.assert_in_range_i32(5, 10, 0), "assert_in_range_i32: inverted range",
+  );
+  match (o) {
+    Fail(m) => {
+      return test.fail(m);
+    },
+    Pass => {}
+  }
+  o = expect_fail_containing(
+    test.assert_in_range_i64(5 as i64, 10 as i64, 0 as i64),
+    "assert_in_range_i64: inverted range",
+  );
+  match (o) {
+    Fail(m) => {
+      return test.fail(m);
+    },
+    Pass => {}
+  }
+  o = expect_fail_containing(
+    test.assert_in_range_f64(0.5, 1.0, 0.0),
+    "assert_in_range_f64: inverted range",
+  );
+  match (o) {
+    Fail(m) => {
+      return test.fail(m);
+    },
+    Pass => {}
+  }
+  return expect_fail_containing(
+    test.assert_in_range_f32(0.5 as f32, 1.0 as f32, 0.0 as f32),
+    "assert_in_range_f32: inverted range",
+  );
 }
 
 // A case body that always fails — the child runners above need
 // a real failing case to record, where `test_fail_returns_fail`
 // asserts ABOUT a failure and therefore passes.
 function test_fail_returns_fail_case(): test.TestOutcome {
-    return test.fail("deliberate failure recorded through a dropped handle");
+  return test.fail("deliberate failure recorded through a dropped handle");
 }
 
 function test_pass_returns_pass(): test.TestOutcome {
-    return expect_pass(test.pass());
+  return expect_pass(test.pass());
 }
 
 function test_fail_returns_fail(): test.TestOutcome {
-    return expect_fail_containing(test.fail("custom message"), "custom message");
+  return expect_fail_containing(test.fail("custom message"), "custom message");
 }
 
 // A TestRunner is a value: `it()` returns a new one, and a caller that
@@ -313,57 +392,56 @@ function test_fail_returns_fail(): test.TestOutcome {
 // Each uses an isolated quiet child runner so its `not ok` lines and
 // summary do not decide this suite's own exit code — the same shape
 // fail_fast_test.fern uses.
-
 function test_dropped_it_result_still_counts(): test.TestOutcome {
-    var sub: test.TestRunner = test.test_new_quiet("dropped-it");
-    // Both results are DISCARDED — the mistake the runner has to
-    // survive. The passing path and the failing path are covered
-    // in one child so the stream count has to get both right.
-    sub.it("dropped pass", test_pass_returns_pass);
-    sub.it("dropped fail", test_fail_returns_fail_case);
-    if (sub.emitted.get() != 2) {
-        return test.fail("dropped cases lost: emitted=" + sub.emitted.get().to_string());
-    }
-    if (sub.emitted_failed.get() != 1) {
-        return test.fail("dropped fail lost: emitted_failed=" + sub.emitted_failed.get().to_string());
-    }
-    return test.pass();
+  var sub: test.TestRunner = test.test_new_quiet("dropped-it");
+  // Both results are DISCARDED — the mistake the runner has to
+  // survive. The passing path and the failing path are covered
+  // in one child so the stream count has to get both right.
+  sub.it("dropped pass", test_pass_returns_pass);
+  sub.it("dropped fail", test_fail_returns_fail_case);
+  if (sub.emitted.get() != 2) {
+    return test.fail("dropped cases lost: emitted=" + sub.emitted.get().to_string());
+  }
+  if (sub.emitted_failed.get() != 1) {
+    return test.fail("dropped fail lost: emitted_failed=" + sub.emitted_failed.get().to_string());
+  }
+  return test.pass();
 }
 
 function test_unused_subsuite_handle_still_counts(): test.TestOutcome {
-    var sub: test.TestRunner = test.test_new_quiet("unused-subsuite");
-    sub = sub.it("parent pass", test_pass_returns_pass);
-    // A subsuite handle that is never merged back: the child shares
-    // the parent's cells, so its cases still reach the parent's plan.
-    var child: test.TestRunner = sub.subsuite("child");
-    child = child.it("child pass", test_pass_returns_pass);
-    child = child.it("child fail", test_fail_returns_fail_case);
-    if (sub.emitted.get() != 3) {
-        return test.fail("subsuite cases lost: emitted=" + sub.emitted.get().to_string());
-    }
-    if (sub.emitted_failed.get() != 1) {
-        return test.fail("subsuite fail lost: emitted_failed=" + sub.emitted_failed.get().to_string());
-    }
-    return test.pass();
+  var sub: test.TestRunner = test.test_new_quiet("unused-subsuite");
+  sub = sub.it("parent pass", test_pass_returns_pass);
+  // A subsuite handle that is never merged back: the child shares
+  // the parent's cells, so its cases still reach the parent's plan.
+  var child: test.TestRunner = sub.subsuite("child");
+  child = child.it("child pass", test_pass_returns_pass);
+  child = child.it("child fail", test_fail_returns_fail_case);
+  if (sub.emitted.get() != 3) {
+    return test.fail("subsuite cases lost: emitted=" + sub.emitted.get().to_string());
+  }
+  if (sub.emitted_failed.get() != 1) {
+    return test.fail("subsuite fail lost: emitted_failed=" + sub.emitted_failed.get().to_string());
+  }
+  return test.pass();
 }
 
 function test_finish_exits_nonzero_for_dropped_result(): test.TestOutcome {
-    // finish() compares the stream against the counters, so a dropped
-    // result is exit 1 even when it passed; a dropped failure is exit 1
-    // through the fail count as well. An assigned-back child stays 0.
-    var kept: test.TestRunner = test.test_new_quiet("kept");
-    kept = kept.it("kept pass", test_pass_returns_pass);
-    if (kept.finish() != 0) {
-        return test.fail("assigned all-passing child exited non-zero");
-    }
-    var dropped: test.TestRunner = test.test_new_quiet("dropped-exit");
-    dropped.it("dropped pass", test_pass_returns_pass);
-    if (dropped.finish() != 1) {
-        return test.fail("a dropped passing result exited 0");
-    }
-    var bad: test.TestRunner = test.test_new_quiet("dropped-exit-fail");
-    bad.it("dropped fail", test_fail_returns_fail_case);
-    return test.assert_eq(bad.finish(), 1);
+  // finish() compares the stream against the counters, so a dropped
+  // result is exit 1 even when it passed; a dropped failure is exit 1
+  // through the fail count as well. An assigned-back child stays 0.
+  var kept: test.TestRunner = test.test_new_quiet("kept");
+  kept = kept.it("kept pass", test_pass_returns_pass);
+  if (kept.finish() != 0) {
+    return test.fail("assigned all-passing child exited non-zero");
+  }
+  var dropped: test.TestRunner = test.test_new_quiet("dropped-exit");
+  dropped.it("dropped pass", test_pass_returns_pass);
+  if (dropped.finish() != 1) {
+    return test.fail("a dropped passing result exited 0");
+  }
+  var bad: test.TestRunner = test.test_new_quiet("dropped-exit-fail");
+  bad.it("dropped fail", test_fail_returns_fail_case);
+  return test.assert_eq(bad.finish(), 1);
 }
 
 // NaN and the generic assertion helpers (#8588). These four are bounded by
@@ -371,160 +449,168 @@ function test_finish_exits_nonzero_for_dropped_result(): test.TestOutcome {
 // the answer has to come from core/cmp's instances, and before the total order
 // landed every one of these PASSED while asserting nothing: `cmp` answered 0
 // for any NaN comparison, and 0 satisfies both `<= 0` and `>= 0`.
-
 function nan_f64(): f64 {
-    var z: f64 = 0.0;
-    return z / z;
+  var z: f64 = 0.0;
+  return z / z;
 }
 
 function test_le_nan_fails(): test.TestOutcome {
-    return expect_fail_containing(test.assert_le(nan_f64(), 1.0), "assert_le");
+  return expect_fail_containing(test.assert_le(nan_f64(), 1.0), "assert_le");
 }
 
 function test_le_nan_bound_passes(): test.TestOutcome {
-    // The mirror of the `assert_ge` case below: NaN is the top of the order,
-    // so `1.0 <= nan` HOLDS. What matters is that each of the four now asserts
-    // something — before, both directions passed for the same empty reason.
-    return expect_pass(test.assert_le(1.0, nan_f64()));
+  // The mirror of the `assert_ge` case below: NaN is the top of the order,
+  // so `1.0 <= nan` HOLDS. What matters is that each of the four now asserts
+  // something — before, both directions passed for the same empty reason.
+  return expect_pass(test.assert_le(1.0, nan_f64()));
 }
 
 function test_le_pass_still_passes(): test.TestOutcome {
-    return expect_pass(test.assert_le(1.0, 2.0));
+  return expect_pass(test.assert_le(1.0, 2.0));
 }
 
 function test_ge_nan_fails(): test.TestOutcome {
-    return expect_fail_containing(test.assert_ge(1.0, nan_f64()), "assert_ge");
+  return expect_fail_containing(test.assert_ge(1.0, nan_f64()), "assert_ge");
 }
 
 function test_ge_nan_lhs_passes(): test.TestOutcome {
-    // NaN sorts after every number, so `nan >= 1.0` is TRUE under the total
-    // order — the assertion holds rather than being vacuous.
-    return expect_pass(test.assert_ge(nan_f64(), 1.0));
+  // NaN sorts after every number, so `nan >= 1.0` is TRUE under the total
+  // order — the assertion holds rather than being vacuous.
+  return expect_pass(test.assert_ge(nan_f64(), 1.0));
 }
 
 function test_sorted_asc_nan_middle_fails(): test.TestOutcome {
-    return expect_fail_containing(
-        test.assert_sorted_asc([3.0, nan_f64(), 1.0]),
-        "assert_sorted_asc");
+  return expect_fail_containing(
+    test.assert_sorted_asc([3.0, nan_f64(), 1.0]),
+    "assert_sorted_asc",
+  );
 }
 
 function test_sorted_asc_nan_last_passes(): test.TestOutcome {
-    // The order NaN actually has: after every number.
-    return expect_pass(test.assert_sorted_asc([1.0, 3.0, nan_f64()]));
+  // The order NaN actually has: after every number.
+  return expect_pass(test.assert_sorted_asc([1.0, 3.0, nan_f64()]));
 }
 
 function test_unique_two_nans_fails(): test.TestOutcome {
-    return expect_fail_containing(
-        test.assert_unique([nan_f64(), nan_f64()]),
-        "assert_unique");
+  return expect_fail_containing(
+    test.assert_unique([nan_f64(), nan_f64()]),
+    "assert_unique",
+  );
 }
 
 function test_unique_one_nan_passes(): test.TestOutcome {
-    return expect_pass(test.assert_unique([1.0, nan_f64(), 2.0]));
+  return expect_pass(test.assert_unique([1.0, nan_f64(), 2.0]));
 }
 
 // HTTP assertions: a response built by std/http's constructors.
 function http_resp(): HttpResponse {
-    return http.ok("hello").with_header("X-Kind", "greeting");
+  return http.ok("hello").with_header("X-Kind", "greeting");
 }
 
 function test_assert_status_pass(): test.TestOutcome {
-    return expect_pass(test.assert_status(http_resp(), 200));
+  return expect_pass(test.assert_status(http_resp(), 200));
 }
 
 function test_assert_status_fail(): test.TestOutcome {
-    return expect_fail_containing(test.assert_status(http_resp(), 404), "assert_status: got 200, expected 404");
+  return expect_fail_containing(test.assert_status(http_resp(), 404), "assert_status: got 200, expected 404");
 }
 
 function test_assert_header_pass(): test.TestOutcome {
-    return expect_pass(test.assert_header(http_resp(), "x-kind", "greeting"));
+  return expect_pass(test.assert_header(http_resp(), "x-kind", "greeting"));
 }
 
 function test_assert_header_fail(): test.TestOutcome {
-    var wrong: test.TestOutcome = expect_fail_containing(test.assert_header(http_resp(), "X-Kind", "farewell"), "assert_header: X-Kind is \"greeting\", expected \"farewell\"");
-    match (wrong) { Fail(m) => { return test.fail(m); }, Pass => {} }
-    return expect_fail_containing(test.assert_header(http_resp(), "X-Other", "x"), "assert_header: no X-Other header");
+  var wrong: test.TestOutcome = expect_fail_containing(test.assert_header(http_resp(), "X-Kind", "farewell"), "assert_header: X-Kind is \"greeting\", expected \"farewell\"");
+  match (wrong) {
+    Fail(m) => {
+      return test.fail(m);
+    },
+    Pass => {}
+  }
+  return expect_fail_containing(test.assert_header(http_resp(), "X-Other", "x"), "assert_header: no X-Other header");
 }
 
 function test_assert_no_header_pass(): test.TestOutcome {
-    return expect_pass(test.assert_no_header(http_resp(), "X-Other"));
+  return expect_pass(test.assert_no_header(http_resp(), "X-Other"));
 }
 
 function test_assert_no_header_fail(): test.TestOutcome {
-    return expect_fail_containing(test.assert_no_header(http_resp(), "x-kind"), "assert_no_header: x-kind is \"greeting\"");
+  return expect_fail_containing(test.assert_no_header(http_resp(), "x-kind"), "assert_no_header: x-kind is \"greeting\"");
 }
 
 function test_assert_body_pass(): test.TestOutcome {
-    return expect_pass(test.assert_body(http_resp(), "hello"));
+  return expect_pass(test.assert_body(http_resp(), "hello"));
 }
 
 function test_assert_body_fail(): test.TestOutcome {
-    return expect_fail_containing(test.assert_body(http_resp(), "bye"), "assert_body: got \"hello\", expected \"bye\"");
+  return expect_fail_containing(test.assert_body(http_resp(), "bye"), "assert_body: got \"hello\", expected \"bye\"");
 }
 
 function main(): i32 {
-    var r: test.TestRunner = test.test_new("runner self-test");
-    r = r.it("assert_status pass", test_assert_status_pass);
-    r = r.it("assert_status fail names both", test_assert_status_fail);
-    r = r.it("assert_header pass", test_assert_header_pass);
-    r = r.it("assert_header fail quotes the value or names the miss", test_assert_header_fail);
-    r = r.it("assert_no_header pass", test_assert_no_header_pass);
-    r = r.it("assert_no_header fail quotes the value", test_assert_no_header_fail);
-    r = r.it("assert_body pass", test_assert_body_pass);
-    r = r.it("assert_body fail quotes both", test_assert_body_fail);
-    r = r.it("assert_true pass", test_assert_true_pass);
-    r = r.it("assert_true fail message", test_assert_true_fail);
-    r = r.it("assert_false pass", test_assert_false_pass);
-    r = r.it("assert_false fail message", test_assert_false_fail);
-    r = r.it("assert_eq pass", test_eq_i32_pass);
-    r = r.it("assert_eq fail embeds both values", test_eq_i32_fail_message);
-    r = r.it("assert_eq fail quotes an empty actual", test_eq_fail_quotes_empty_actual);
-    r = r.it("assert_eq pass", test_eq_string_pass);
-    r = r.it("assert_eq fail", test_eq_string_fail);
-    r = r.it("assert_neq", test_neq_i32);
-    r = r.it("assert_neq fail quotes both values", test_neq_fail_quotes_both);
-    r = r.it("assert_lt pass", test_lt_pass);
-    r = r.it("assert_lt fail quotes both values", test_lt_fail_quotes_both);
-    r = r.it("assert_le pass", test_le_pass);
-    r = r.it("assert_le fail quotes both values", test_le_fail_quotes_both);
-    r = r.it("assert_gt pass", test_gt_pass);
-    r = r.it("assert_gt fail quotes both values", test_gt_fail_quotes_both);
-    r = r.it("assert_ge pass", test_ge_pass);
-    r = r.it("assert_ge fail quotes both values", test_ge_fail_quotes_both);
-    r = r.it("assert_in_range_i32 pass", test_in_range_i32_pass);
-    r = r.it("assert_in_range_i32 fail", test_in_range_i32_fail);
-    r = r.it("assert_in_range_i64 pass", test_in_range_i64_pass);
-    r = r.it("assert_in_range_i64 fail", test_in_range_i64_fail);
-    r = r.it("assert_in_range_f64 pass", test_in_range_f64_pass);
-    r = r.it("assert_in_range_f64 fail", test_in_range_f64_fail);
-    r = r.it("assert_in_range_f64 fails on NaN value or bound", test_in_range_f64_nan_fails);
-    r = r.it("assert_in_range_f32 pass", test_in_range_f32_pass);
-    r = r.it("assert_in_range_f32 fail", test_in_range_f32_fail);
-    r = r.it("assert_in_range_f32 fails on NaN value or bound", test_in_range_f32_nan_fails);
-    r = r.it("assert_in_range rejects an inverted range", test_in_range_inverted_fails);
-    r = r.it("assert_contains pass", test_contains_pass);
-    r = r.it("assert_contains fail", test_contains_fail);
-    r = r.it("assert_starts_with pass", test_starts_with_pass);
-    r = r.it("assert_starts_with fail", test_starts_with_fail);
-    r = r.it("assert_ends_with pass", test_ends_with_pass);
-    r = r.it("assert_len_i32 pass", test_len_i32_pass);
-    r = r.it("assert_len_i32 fail", test_len_i32_fail);
-    r = r.it("assert_eq_array pass", test_eq_i32_array_pass);
-    r = r.it("assert_eq_array fail localises index", test_eq_i32_array_fail_index);
-    r = r.it("pass() returns Pass", test_pass_returns_pass);
-    r = r.it("fail(msg) returns Fail(msg)", test_fail_returns_fail);
-    r = r.it("dropped it() result still counts", test_dropped_it_result_still_counts);
-    r = r.it("unused subsuite handle still counts", test_unused_subsuite_handle_still_counts);
-    r = r.it("finish() exits 1 for a dropped result",
-             test_finish_exits_nonzero_for_dropped_result);
-    r = r.it("assert_le rejects a NaN actual", test_le_nan_fails);
-    r = r.it("assert_le holds against a NaN bound", test_le_nan_bound_passes);
-    r = r.it("assert_le still passes on numbers", test_le_pass_still_passes);
-    r = r.it("assert_ge rejects a NaN bound", test_ge_nan_fails);
-    r = r.it("assert_ge holds for a NaN actual", test_ge_nan_lhs_passes);
-    r = r.it("assert_sorted_asc rejects a NaN inversion", test_sorted_asc_nan_middle_fails);
-    r = r.it("assert_sorted_asc accepts NaN last", test_sorted_asc_nan_last_passes);
-    r = r.it("assert_unique rejects two NaNs", test_unique_two_nans_fails);
-    r = r.it("assert_unique accepts one NaN", test_unique_one_nan_passes);
-    return r.finish();
+  var r: test.TestRunner = test.test_new("runner self-test");
+  r = r.it("assert_status pass", test_assert_status_pass);
+  r = r.it("assert_status fail names both", test_assert_status_fail);
+  r = r.it("assert_header pass", test_assert_header_pass);
+  r = r.it("assert_header fail quotes the value or names the miss", test_assert_header_fail);
+  r = r.it("assert_no_header pass", test_assert_no_header_pass);
+  r = r.it("assert_no_header fail quotes the value", test_assert_no_header_fail);
+  r = r.it("assert_body pass", test_assert_body_pass);
+  r = r.it("assert_body fail quotes both", test_assert_body_fail);
+  r = r.it("assert_true pass", test_assert_true_pass);
+  r = r.it("assert_true fail message", test_assert_true_fail);
+  r = r.it("assert_false pass", test_assert_false_pass);
+  r = r.it("assert_false fail message", test_assert_false_fail);
+  r = r.it("assert_eq pass", test_eq_i32_pass);
+  r = r.it("assert_eq fail embeds both values", test_eq_i32_fail_message);
+  r = r.it("assert_eq fail quotes an empty actual", test_eq_fail_quotes_empty_actual);
+  r = r.it("assert_eq pass", test_eq_string_pass);
+  r = r.it("assert_eq fail", test_eq_string_fail);
+  r = r.it("assert_neq", test_neq_i32);
+  r = r.it("assert_neq fail quotes both values", test_neq_fail_quotes_both);
+  r = r.it("assert_lt pass", test_lt_pass);
+  r = r.it("assert_lt fail quotes both values", test_lt_fail_quotes_both);
+  r = r.it("assert_le pass", test_le_pass);
+  r = r.it("assert_le fail quotes both values", test_le_fail_quotes_both);
+  r = r.it("assert_gt pass", test_gt_pass);
+  r = r.it("assert_gt fail quotes both values", test_gt_fail_quotes_both);
+  r = r.it("assert_ge pass", test_ge_pass);
+  r = r.it("assert_ge fail quotes both values", test_ge_fail_quotes_both);
+  r = r.it("assert_in_range_i32 pass", test_in_range_i32_pass);
+  r = r.it("assert_in_range_i32 fail", test_in_range_i32_fail);
+  r = r.it("assert_in_range_i64 pass", test_in_range_i64_pass);
+  r = r.it("assert_in_range_i64 fail", test_in_range_i64_fail);
+  r = r.it("assert_in_range_f64 pass", test_in_range_f64_pass);
+  r = r.it("assert_in_range_f64 fail", test_in_range_f64_fail);
+  r = r.it("assert_in_range_f64 fails on NaN value or bound", test_in_range_f64_nan_fails);
+  r = r.it("assert_in_range_f32 pass", test_in_range_f32_pass);
+  r = r.it("assert_in_range_f32 fail", test_in_range_f32_fail);
+  r = r.it("assert_in_range_f32 fails on NaN value or bound", test_in_range_f32_nan_fails);
+  r = r.it("assert_in_range rejects an inverted range", test_in_range_inverted_fails);
+  r = r.it("assert_contains pass", test_contains_pass);
+  r = r.it("assert_contains fail", test_contains_fail);
+  r = r.it("assert_starts_with pass", test_starts_with_pass);
+  r = r.it("assert_starts_with fail", test_starts_with_fail);
+  r = r.it("assert_ends_with pass", test_ends_with_pass);
+  r = r.it("assert_len_i32 pass", test_len_i32_pass);
+  r = r.it("assert_len_i32 fail", test_len_i32_fail);
+  r = r.it("assert_eq_array pass", test_eq_i32_array_pass);
+  r = r.it("assert_eq_array fail localises index", test_eq_i32_array_fail_index);
+  r = r.it("pass() returns Pass", test_pass_returns_pass);
+  r = r.it("fail(msg) returns Fail(msg)", test_fail_returns_fail);
+  r = r.it("dropped it() result still counts", test_dropped_it_result_still_counts);
+  r = r.it("unused subsuite handle still counts", test_unused_subsuite_handle_still_counts);
+  r = r.it(
+    "finish() exits 1 for a dropped result",
+    test_finish_exits_nonzero_for_dropped_result,
+  );
+  r = r.it("assert_le rejects a NaN actual", test_le_nan_fails);
+  r = r.it("assert_le holds against a NaN bound", test_le_nan_bound_passes);
+  r = r.it("assert_le still passes on numbers", test_le_pass_still_passes);
+  r = r.it("assert_ge rejects a NaN bound", test_ge_nan_fails);
+  r = r.it("assert_ge holds for a NaN actual", test_ge_nan_lhs_passes);
+  r = r.it("assert_sorted_asc rejects a NaN inversion", test_sorted_asc_nan_middle_fails);
+  r = r.it("assert_sorted_asc accepts NaN last", test_sorted_asc_nan_last_passes);
+  r = r.it("assert_unique rejects two NaNs", test_unique_two_nans_fails);
+  r = r.it("assert_unique accepts one NaN", test_unique_one_nan_passes);
+  return r.finish();
 }

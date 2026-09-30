@@ -35,12 +35,10 @@
 //
 // No prelude: a program `import "std/sort";` explicitly. The generic sorts live
 // in `core/cmp`, so reach for `cmp.sort` via `import "core/cmp";`.
-
 // `string_cmp_ci` folds each BYTE through `(u8) .to_ascii_lower()`, which
 // lives in std/i32 — declare it so the receiver method registers under
 // no-prelude rather than arriving by luck through core/cmp's own imports.
 import "std/i32";
-
 // `sort_key` compares projected keys via `core/cmp`'s `Ord.cmp`, so
 // declare it to register the `.cmp()` method under no-prelude.
 import "core/cmp";
@@ -49,9 +47,13 @@ import "core/cmp";
 // byte-order comparison, for the comparator-taking sorts. Returns
 // -1 / 0 / 1.
 pub function string_cmp(a: string, b: string): i32 {
-    if (a < b) { return 0 - 1; }
-    if (a > b) { return 1; }
-    return 0;
+  if (a < b) {
+    return 0 - 1;
+  }
+  if (a > b) {
+    return 1;
+  }
+  return 0;
 }
 
 // `string_cmp_ci(a, b)` — `string_cmp`'s ordering with each ASCII
@@ -60,21 +62,31 @@ pub function string_cmp(a: string, b: string): i32 {
 // into fresh lowercase strings first would allocate twice per
 // comparison, inside a sort's O(n log n) inner loop.
 pub function string_cmp_ci(a: string, b: string): i32 {
-    var n: i32 = a.len();
-    var m: i32 = b.len();
-    var min: i32 = n;
-    if (m < n) { min = m; }
-    var i: i32 = 0;
-    while (i < min) {
-        var ca: i32 = a[i].to_ascii_lower() as i32;
-        var cb: i32 = b[i].to_ascii_lower() as i32;
-        if (ca < cb) { return 0 - 1; }
-        if (ca > cb) { return 1; }
-        i = i + 1;
+  var n: i32 = a.len();
+  var m: i32 = b.len();
+  var min: i32 = n;
+  if (m < n) {
+    min = m;
+  }
+  var i: i32 = 0;
+  while (i < min) {
+    var ca: i32 = a[i].to_ascii_lower() as i32;
+    var cb: i32 = b[i].to_ascii_lower() as i32;
+    if (ca < cb) {
+      return 0 - 1;
     }
-    if (n < m) { return 0 - 1; }
-    if (n > m) { return 1; }
-    return 0;
+    if (ca > cb) {
+      return 1;
+    }
+    i = i + 1;
+  }
+  if (n < m) {
+    return 0 - 1;
+  }
+  if (n > m) {
+    return 1;
+  }
+  return 0;
 }
 
 // `sort_strings_asc_ci(arr)` — case-insensitive ascending
@@ -87,7 +99,7 @@ pub function string_cmp_ci(a: string, b: string): i32 {
 // comparator also keeps the wasm direct-call + closure-target ABI
 // reconciliation (#4829) exercised through the real std/sort module.
 pub function sort_strings_asc_ci(arr: string[]): string[] {
-    return sort_by(arr, string_cmp_ci);
+  return sort_by(arr, string_cmp_ci);
 }
 
 // --- In-place (`own`) sorts ------------------------------------------------
@@ -114,40 +126,39 @@ pub function sort_strings_asc_ci(arr: string[]): string[] {
 // This dogfoods the `own` consuming-parameter feature in the stdlib: real code
 // whose ownership transfer (the returned array IS the input box) is pinned by
 // the differential e2e gates.
-
 // `sort_i32_inplace_asc(own arr)` — ascending insertion-sort performed directly
 // on the (owned) input buffer; returns that same buffer, now sorted.
 pub fip function sort_i32_inplace_asc(own arr: i32[]): i32[] {
-    var n: i32 = arr.len();
-    var k: i32 = 1;
-    while (k < n) {
-        var key: i32 = arr[k];
-        var j: i32 = k - 1;
-        while (j >= 0 && arr[j] > key) {
-            arr = arr.with(j + 1, arr[j]);
-            j = j - 1;
-        }
-        arr = arr.with(j + 1, key);
-        k = k + 1;
+  var n: i32 = arr.len();
+  var k: i32 = 1;
+  while (k < n) {
+    var key: i32 = arr[k];
+    var j: i32 = k - 1;
+    while (j >= 0 && arr[j] > key) {
+      arr = arr.with(j + 1, arr[j]);
+      j = j - 1;
     }
-    return arr;
+    arr = arr.with(j + 1, key);
+    k = k + 1;
+  }
+  return arr;
 }
 
 // `sort_i32_inplace_desc(own arr)` — as above, descending.
 pub fip function sort_i32_inplace_desc(own arr: i32[]): i32[] {
-    var n: i32 = arr.len();
-    var k: i32 = 1;
-    while (k < n) {
-        var key: i32 = arr[k];
-        var j: i32 = k - 1;
-        while (j >= 0 && arr[j] < key) {
-            arr = arr.with(j + 1, arr[j]);
-            j = j - 1;
-        }
-        arr = arr.with(j + 1, key);
-        k = k + 1;
+  var n: i32 = arr.len();
+  var k: i32 = 1;
+  while (k < n) {
+    var key: i32 = arr[k];
+    var j: i32 = k - 1;
+    while (j >= 0 && arr[j] < key) {
+      arr = arr.with(j + 1, arr[j]);
+      j = j - 1;
     }
-    return arr;
+    arr = arr.with(j + 1, key);
+    k = k + 1;
+  }
+  return arr;
 }
 
 // `sort_by[T](arr, cmp)` — return a fresh copy of `arr` sorted by the
@@ -185,100 +196,118 @@ pub fip function sort_i32_inplace_desc(own arr: i32[]): i32[] {
 // self-host AST emitter, deleted since (#3457/#5972), and append-only output
 // cannot alias its input on any backend regardless.
 pub function sort_by[T](arr: T[], cmp: (T, T) => i32): T[] {
-    var n: i32 = arr.len();
-    if (n < 2) { return arr; }
+  var n: i32 = arr.len();
+  if (n < 2) {
+    return arr;
+  }
 
-    // Own a copy: the descending-run reversal writes in place.
-    var a: T[] = [];
-    var c: i32 = 0;
-    while (c < n) { a = a.append(arr[c]); c = c + 1; }
+  // Own a copy: the descending-run reversal writes in place.
+  var a: T[] = [];
+  var c: i32 = 0;
+  while (c < n) {
+    a = a.append(arr[c]);
+    c = c + 1;
+  }
 
-    if (n <= 32) {
-        a = __sort_insertion_by(a, 0, n, cmp);
-        return a;
-    }
-
-    // Pass 1 — natural runs. `bounds` holds each run's start, terminated by n.
-    var bounds: i32[] = [];
-    var i: i32 = 0;
-    while (i < n) {
-        bounds = bounds.append(i);
-        var e: i32 = i + 1;
-        if (e < n) {
-            if (cmp(a[i], a[e]) > 0) {
-                // Strictly descending: extend, then reverse into order.
-                var falling: boolean = true;
-                while (falling) {
-                    e = e + 1;
-                    falling = false;
-                    if (e < n) {
-                        if (cmp(a[e - 1], a[e]) > 0) { falling = true; }
-                    }
-                }
-                var lo: i32 = i;
-                var hi: i32 = e - 1;
-                while (lo < hi) {
-                    var t: T = a[lo];
-                    a = a.with(lo, a[hi]);
-                    a = a.with(hi, t);
-                    lo = lo + 1;
-                    hi = hi - 1;
-                }
-            } else {
-                var rising: boolean = true;
-                while (rising) {
-                    e = e + 1;
-                    rising = false;
-                    if (e < n) {
-                        if (cmp(a[e - 1], a[e]) <= 0) { rising = true; }
-                    }
-                }
-            }
-        }
-        i = e;
-    }
-    bounds = bounds.append(n);
-
-    // Pass 2 — merge adjacent runs in rounds until one remains. Each round
-    // rebuilds the array by appending merged segments, so the output never
-    // aliases the input it is reading.
-    while (bounds.len() > 2) {
-        var out: T[] = [];
-        var next: i32[] = [];
-        var r: i32 = 0;
-        while (r + 1 < bounds.len()) {
-            var mlo: i32 = bounds[r];
-            next = next.append(mlo);
-            if (r + 2 < bounds.len()) {
-                var mmid: i32 = bounds[r + 1];
-                var mhi: i32 = bounds[r + 2];
-                var p: i32 = mlo;
-                var q: i32 = mmid;
-                while (p < mmid && q < mhi) {
-                    if (cmp(a[p], a[q]) > 0) {
-                        out = out.append(a[q]);
-                        q = q + 1;
-                    } else {
-                        out = out.append(a[p]);
-                        p = p + 1;
-                    }
-                }
-                while (p < mmid) { out = out.append(a[p]); p = p + 1; }
-                while (q < mhi) { out = out.append(a[q]); q = q + 1; }
-                r = r + 2;
-            } else {
-                // Odd run out: carry it forward untouched.
-                var mend: i32 = bounds[r + 1];
-                var mk: i32 = mlo;
-                while (mk < mend) { out = out.append(a[mk]); mk = mk + 1; }
-                r = r + 1;
-            }
-        }
-        next = next.append(n);
-        a = out;
-        bounds = next;
-    }
+  if (n <= 32) {
+    a = __sort_insertion_by(a, 0, n, cmp);
     return a;
+  }
+
+  // Pass 1 — natural runs. `bounds` holds each run's start, terminated by n.
+  var bounds: i32[] = [];
+  var i: i32 = 0;
+  while (i < n) {
+    bounds = bounds.append(i);
+    var e: i32 = i + 1;
+    if (e < n) {
+      if (cmp(a[i], a[e]) > 0) {
+        // Strictly descending: extend, then reverse into order.
+        var falling: boolean = true;
+        while (falling) {
+          e = e + 1;
+          falling = false;
+          if (e < n) {
+            if (cmp(a[e - 1], a[e]) > 0) {
+              falling = true;
+            }
+          }
+        }
+        var lo: i32 = i;
+        var hi: i32 = e - 1;
+        while (lo < hi) {
+          var t: T = a[lo];
+          a = a.with(lo, a[hi]);
+          a = a.with(hi, t);
+          lo = lo + 1;
+          hi = hi - 1;
+        }
+      } else {
+        var rising: boolean = true;
+        while (rising) {
+          e = e + 1;
+          rising = false;
+          if (e < n) {
+            if (cmp(a[e - 1], a[e]) <= 0) {
+              rising = true;
+            }
+          }
+        }
+      }
+    }
+    i = e;
+  }
+  bounds = bounds.append(n);
+
+  // Pass 2 — merge adjacent runs in rounds until one remains. Each round
+  // rebuilds the array by appending merged segments, so the output never
+  // aliases the input it is reading.
+  while (bounds.len() > 2) {
+    var out: T[] = [];
+    var next: i32[] = [];
+    var r: i32 = 0;
+    while (r + 1 < bounds.len()) {
+      var mlo: i32 = bounds[r];
+      next = next.append(mlo);
+      if (r + 2 < bounds.len()) {
+        var mmid: i32 = bounds[r + 1];
+        var mhi: i32 = bounds[r + 2];
+        var p: i32 = mlo;
+        var q: i32 = mmid;
+        while (p < mmid && q < mhi) {
+          if (cmp(a[p], a[q]) > 0) {
+            out = out.append(a[q]);
+            q = q + 1;
+          } else {
+            out = out.append(a[p]);
+            p = p + 1;
+          }
+        }
+        while (p < mmid) {
+          out = out.append(a[p]);
+          p = p + 1;
+        }
+        while (q < mhi) {
+          out = out.append(a[q]);
+          q = q + 1;
+        }
+        r = r + 2;
+      } else {
+        // Odd run out: carry it forward untouched.
+        var mend: i32 = bounds[r + 1];
+        var mk: i32 = mlo;
+        while (mk < mend) {
+          out = out.append(a[mk]);
+          mk = mk + 1;
+        }
+        r = r + 1;
+      }
+    }
+    next = next.append(n);
+    a = out;
+    bounds = next;
+  }
+  return a;
 }
 
 // `__sort_insertion_by[T](a, lo, hi, cmp)` — insertion-sort `a[lo:hi]` in
@@ -296,37 +325,39 @@ pub function sort_by[T](arr: T[], cmp: (T, T) => i32): T[] {
 // caller moves in as `a = __sort_insertion_by(a, ...)`; a borrowed array
 // would be copied whole on the first `.with`, once per call.
 function __sort_insertion_by[T](own a: T[], lo: i32, hi: i32, cmp: (T, T) => i32): T[] {
-    var i: i32 = lo + 1;
-    while (i < hi) {
-        var v: T = a[i];
-        var j: i32 = i - 1;
-        var moving: boolean = j >= lo;
-        while (moving) {
-            if (cmp(a[j], v) > 0) {
-                a = a.with(j + 1, a[j]);
-                j = j - 1;
-                moving = j >= lo;
-            } else {
-                moving = false;
-            }
-        }
-        a = a.with(j + 1, v);
-        i = i + 1;
+  var i: i32 = lo + 1;
+  while (i < hi) {
+    var v: T = a[i];
+    var j: i32 = i - 1;
+    var moving: boolean = j >= lo;
+    while (moving) {
+      if (cmp(a[j], v) > 0) {
+        a = a.with(j + 1, a[j]);
+        j = j - 1;
+        moving = j >= lo;
+      } else {
+        moving = false;
+      }
     }
-    return a;
+    a = a.with(j + 1, v);
+    i = i + 1;
+  }
+  return a;
 }
 
 // `is_sorted_by[T](arr, cmp)` — true iff `arr` is in non-decreasing order
 // under the comparator `cmp` (no adjacent pair where the later sorts
 // strictly before the earlier). The verification companion to `sort_by`.
 pub function is_sorted_by[T](arr: T[], cmp: (T, T) => i32): boolean {
-    var i: i32 = 1;
-    var n: i32 = arr.len();
-    while (i < n) {
-        if (cmp(arr[i], arr[i - 1]) < 0) { return false; }
-        i = i + 1;
+  var i: i32 = 1;
+  var n: i32 = arr.len();
+  while (i < n) {
+    if (cmp(arr[i], arr[i - 1]) < 0) {
+      return false;
     }
-    return true;
+    i = i + 1;
+  }
+  return true;
 }
 
 // `sort_by_i32_key[T](arr, key)` — return a fresh copy of `arr` sorted
@@ -337,7 +368,7 @@ pub function is_sorted_by[T](arr: T[], cmp: (T, T) => i32): boolean {
 // `sort_key` with `K` fixed to `i32`: `impl Ord for i32` is `<` / `>`, so the
 // two order identically, stability included.
 pub function sort_by_i32_key[T](arr: T[], key: (T) => i32): T[] {
-    return sort_key(arr, key);
+  return sort_key(arr, key);
 }
 
 // `sort_key[T, K: cmp.Ord](arr, key)` — return a fresh copy of `arr`
@@ -359,41 +390,67 @@ pub function sort_by_i32_key[T](arr: T[], key: (T) => i32): T[] {
 // `.cmp(...) < 0`). Fresh scratch copies per pass — see the file-header
 // aliasing rule.
 pub function sort_key[T, K: cmp.Ord](arr: T[], key: (T) => K): T[] {
-    var srcv: T[] = arr;
-    var srck: K[] = [];
-    for x in srcv { srck = srck.append(key(x)); }
-    var n: i32 = srcv.len();
-    if (n < 2) { return srcv; }
-    var width: i32 = 1;
-    while (width < n) {
-        var dstv: T[] = [];
-        var dstk: K[] = [];
-        var c: i32 = 0;
-        while (c < n) { dstv = dstv.append(srcv[c]); dstk = dstk.append(srck[c]); c = c + 1; }
-        var lo: i32 = 0;
-        while (lo < n) {
-            var mid: i32 = lo + width;
-            if (mid > n) { mid = n; }
-            var hi: i32 = lo + width + width;
-            if (hi > n) { hi = n; }
-            var i: i32 = lo;
-            var j: i32 = mid;
-            var k: i32 = lo;
-            while (i < mid && j < hi) {
-                if (srck[j].cmp(srck[i]) < 0) {
-                    dstv = dstv.with(k, srcv[j]); dstk = dstk.with(k, srck[j]); j = j + 1;
-                } else {
-                    dstv = dstv.with(k, srcv[i]); dstk = dstk.with(k, srck[i]); i = i + 1;
-                }
-                k = k + 1;
-            }
-            while (i < mid) { dstv = dstv.with(k, srcv[i]); dstk = dstk.with(k, srck[i]); i = i + 1; k = k + 1; }
-            while (j < hi) { dstv = dstv.with(k, srcv[j]); dstk = dstk.with(k, srck[j]); j = j + 1; k = k + 1; }
-            lo = lo + width + width;
-        }
-        srcv = dstv;
-        srck = dstk;
-        width = width + width;
-    }
+  var srcv: T[] = arr;
+  var srck: K[] = [];
+  for x in srcv {
+    srck = srck.append(key(x));
+  }
+  var n: i32 = srcv.len();
+  if (n < 2) {
     return srcv;
+  }
+  var width: i32 = 1;
+  while (width < n) {
+    var dstv: T[] = [];
+    var dstk: K[] = [];
+    var c: i32 = 0;
+    while (c < n) {
+      dstv = dstv.append(srcv[c]);
+      dstk = dstk.append(srck[c]);
+      c = c + 1;
+    }
+    var lo: i32 = 0;
+    while (lo < n) {
+      var mid: i32 = lo + width;
+      if (mid > n) {
+        mid = n;
+      }
+      var hi: i32 = lo + width + width;
+      if (hi > n) {
+        hi = n;
+      }
+      var i: i32 = lo;
+      var j: i32 = mid;
+      var k: i32 = lo;
+      while (i < mid && j < hi) {
+        if (srck[j].cmp(srck[i]) < 0) {
+          dstv = dstv.with(k, srcv[j]);
+          dstk = dstk.with(k, srck[j]);
+          j = j + 1;
+        } else {
+          dstv = dstv.with(k, srcv[i]);
+          dstk = dstk.with(k, srck[i]);
+          i = i + 1;
+        }
+        k = k + 1;
+      }
+      while (i < mid) {
+        dstv = dstv.with(k, srcv[i]);
+        dstk = dstk.with(k, srck[i]);
+        i = i + 1;
+        k = k + 1;
+      }
+      while (j < hi) {
+        dstv = dstv.with(k, srcv[j]);
+        dstk = dstk.with(k, srck[j]);
+        j = j + 1;
+        k = k + 1;
+      }
+      lo = lo + width + width;
+    }
+    srcv = dstv;
+    srck = dstk;
+    width = width + width;
+  }
+  return srcv;
 }

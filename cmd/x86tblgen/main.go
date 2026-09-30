@@ -18,6 +18,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/jakechampion/lang/internal/fmtsource"
 	"github.com/jakechampion/lang/internal/native/x86tbl"
 )
 
@@ -272,6 +273,7 @@ func genCondTable() string {
 // Rewrite replaces every marked block present in src. A file carrying none is
 // returned unchanged.
 func Rewrite(src string) (string, error) {
+	found := false
 	for _, b := range blocks {
 		i := strings.Index(src, b.begin)
 		if i < 0 {
@@ -282,8 +284,12 @@ func Rewrite(src string) (string, error) {
 			return "", fmt.Errorf("end marker %q not found after its begin marker", b.end)
 		}
 		src = src[:i] + b.begin + "\n" + b.generate() + src[j:]
+		found = true
 	}
-	return src, nil
+	if !found {
+		return src, nil
+	}
+	return fmtsource.Format(src)
 }
 
 func main() {

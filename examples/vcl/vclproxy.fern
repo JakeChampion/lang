@@ -62,7 +62,9 @@ function real_fetch(b: machine.Backend, t: runtime.Txn): machine.FetchOut {
   // that must pass binary bodies through needs a byte-domain wire parser.
   var raw: string = "";
   match (utf8.from_bytes(raw_bytes)) {
-    Some(text) => { raw = text; },
+    Some(text) => {
+      raw = text;
+    },
     None => {
       return machine.FetchOut { status: 0, reason: "", headers: empty, body: "", ttl: 0.0 - 1.0, ok: false, err: "backend '" + b.name + "' returned a response that is not valid UTF-8" };
     }
@@ -160,16 +162,16 @@ function serve(decls: ast.Decl[], port: i32): i32 {
   // and decoded on the way in. See store.fern for why, and for the cost.
   var cache: Cell[string] = cell_new("");
   var handler: (HttpRequest, Platform) => HttpResponse = (req: HttpRequest, plat: Platform): HttpResponse => {
-  var names: string[] = req.headers.names;
-  var values: string[] = req.headers.values;
-  var o: machine.Outcome = machine.run_request(d, req.method, req.path, client_ip_of(req.headers), names, values, req.body_string(), store.decode(cache.get()));
-  if (!o.ok) {
-    eprint("vclproxy: " + o.err);
-    return error_response(o);
-  }
-  cache.set(store.encode(o.cache));
-  return to_response(o);
-};
+    var names: string[] = req.headers.names;
+    var values: string[] = req.headers.values;
+    var o: machine.Outcome = machine.run_request(d, req.method, req.path, client_ip_of(req.headers), names, values, req.body_string(), store.decode(cache.get()));
+    if (!o.ok) {
+      eprint("vclproxy: " + o.err);
+      return error_response(o);
+    }
+    cache.set(store.encode(o.cache));
+    return to_response(o);
+  };
   return tcp.tcp_serve(port, handler);
 }
 

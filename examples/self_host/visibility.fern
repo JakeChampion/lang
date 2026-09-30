@@ -6,7 +6,6 @@
 // small source list. Putting the rule there widened modloader's import closure
 // and broke those drivers; a separate module keeps the loader's dependencies
 // as narrow as they were and costs the full driver one import.
-
 import "./ast";
 import "./parser";
 import "./flatten";
@@ -27,18 +26,20 @@ import "./checker";
 // `bigint____bi_make`, so a bundle-level rule cannot tell an outside caller
 // from the module's own internals — and core/bigint, whose methods call its
 // private helpers by bare name, is exactly the shape that exposes it.
-
 // import_quals returns the qualifiers a module's source may write: the import's
 // alias when it has one, else the path's basename (`import "std/io_buffered" as
 // io` → `io`; `import "./lexer"` → `lexer`). Built by concatenation rather than
 // slicing — a slice is a `str` view of the path, and this outlives it.
 function import_quals(mod: parser.Module): string[] {
-    var out: string[] = [];
-    for im in mod.imports {
-        if (im.alias.len() > 0) { out = out.append(im.alias); }
-        else { out = out.append(base_name_of(im.path)); }
+  var out: string[] = [];
+  for im in mod.imports {
+    if (im.alias.len() > 0) {
+      out = out.append(im.alias);
+    } else {
+      out = out.append(base_name_of(im.path));
     }
-    return out;
+  }
+  return out;
 }
 
 // base_name_of is modloader.base_name, duplicated rather than imported: this
@@ -46,23 +47,27 @@ function import_quals(mod: parser.Module): string[] {
 // eight-line helper would drag the loader's whole closure back in — the
 // dependency widening that broke six minimal drivers the first time.
 function base_name_of(path: string): string {
-    var start: i32 = 0;
-    var i: i32 = 0;
-    while (i < path.len()) {
-        if (path[i] == b'/') { start = i + 1; }
-        i = i + 1;
+  var start: i32 = 0;
+  var i: i32 = 0;
+  while (i < path.len()) {
+    if (path[i] == b'/') {
+      start = i + 1;
     }
-    return slice_unchecked(path, start, path.len()) + "";
+    i = i + 1;
+  }
+  return slice_unchecked(path, start, path.len()) + "";
 }
 
 // module_named finds a loaded module by its namespace name.
 function module_named(loaded: flatten.LoadedModule[], name: string): i32 {
-    var i: i32 = 0;
-    while (i < loaded.len()) {
-        if (loaded[i].name == name) { return i; }
-        i = i + 1;
+  var i: i32 = 0;
+  while (i < loaded.len()) {
+    if (loaded[i].name == name) {
+      return i;
     }
-    return 0 - 1;
+    i = i + 1;
+  }
+  return 0 - 1;
 }
 
 // declares_private reports whether `mod` has a top-level function `name` that is
@@ -79,27 +84,31 @@ function module_named(loaded: flatten.LoadedModule[], name: string): i32 {
 // Keying on the private names only makes the scanned list a small fraction of
 // the declarations, since most are exported.
 function private_keys(loaded: flatten.LoadedModule[]): string[] {
-    var out: string[] = [];
-    for lm in loaded {
-        for f in lm.mod.funcs {
-            if (!f.is_pub && f.receiver_name.len() == 0 && f.name.len() > 0) {
-                out = out.append(lm.name + "." + f.name);
-            }
-        }
-        for sd in lm.mod.structs {
-            // A variant defers to its enum, so it contributes no key of its own.
-            if (!sd.is_pub && sd.enum_owner.len() == 0 && sd.name.len() > 0) {
-                out = out.append(lm.name + "." + sd.name);
-            }
-        }
-        for en in lm.mod.enums {
-            if (!en.is_pub) { out = out.append(lm.name + "." + en.name); }
-        }
-        for al in lm.mod.aliases {
-            if (!al.is_pub) { out = out.append(lm.name + "." + al.name); }
-        }
+  var out: string[] = [];
+  for lm in loaded {
+    for f in lm.mod.funcs {
+      if (!f.is_pub && f.receiver_name.len() == 0 && f.name.len() > 0) {
+        out = out.append(lm.name + "." + f.name);
+      }
     }
-    return out;
+    for sd in lm.mod.structs {
+      // A variant defers to its enum, so it contributes no key of its own.
+      if (!sd.is_pub && sd.enum_owner.len() == 0 && sd.name.len() > 0) {
+        out = out.append(lm.name + "." + sd.name);
+      }
+    }
+    for en in lm.mod.enums {
+      if (!en.is_pub) {
+        out = out.append(lm.name + "." + en.name);
+      }
+    }
+    for al in lm.mod.aliases {
+      if (!al.is_pub) {
+        out = out.append(lm.name + "." + al.name);
+      }
+    }
+  }
+  return out;
 }
 
 // private_const_keys is private_keys' const subset. The keyword the message
@@ -109,15 +118,15 @@ function private_keys(loaded: flatten.LoadedModule[]): string[] {
 // as a FuncDecl carrying `is_const`, so it is in private_keys already; this
 // picks it out.
 function private_const_keys(loaded: flatten.LoadedModule[]): string[] {
-    var out: string[] = [];
-    for lm in loaded {
-        for f in lm.mod.funcs {
-            if (f.is_const && !f.is_pub && f.receiver_name.len() == 0 && f.name.len() > 0) {
-                out = out.append(lm.name + "." + f.name);
-            }
-        }
+  var out: string[] = [];
+  for lm in loaded {
+    for f in lm.mod.funcs {
+      if (f.is_const && !f.is_pub && f.receiver_name.len() == 0 && f.name.len() > 0) {
+        out = out.append(lm.name + "." + f.name);
+      }
     }
-    return out;
+  }
+  return out;
 }
 
 // package_of returns the PACKAGE a module belongs to: its directory. Two
@@ -125,16 +134,24 @@ function private_const_keys(loaded: flatten.LoadedModule[]): string[] {
 // whole embedded stdlib (`std/…` + `core/…`) counts as one. See
 // docs/PUB-PACKAGE.md.
 function package_of(module_name: string): string {
-    if (module_name.len() >= 4 && slice_unchecked(module_name, 0, 4) == "std/") { return "stdlib"; }
-    if (module_name.len() >= 5 && slice_unchecked(module_name, 0, 5) == "core/") { return "stdlib"; }
-    var cut: i32 = 0 - 1;
-    var i: i32 = 0;
-    while (i < module_name.len()) {
-        if (module_name[i] == b'/') { cut = i; }
-        i = i + 1;
+  if (module_name.len() >= 4 && slice_unchecked(module_name, 0, 4) == "std/") {
+    return "stdlib";
+  }
+  if (module_name.len() >= 5 && slice_unchecked(module_name, 0, 5) == "core/") {
+    return "stdlib";
+  }
+  var cut: i32 = 0 - 1;
+  var i: i32 = 0;
+  while (i < module_name.len()) {
+    if (module_name[i] == b'/') {
+      cut = i;
     }
-    if (cut < 0) { return ""; }
-    return slice_unchecked(module_name, 0, cut) + "";
+    i = i + 1;
+  }
+  if (cut < 0) {
+    return "";
+  }
+  return slice_unchecked(module_name, 0, cut) + "";
 }
 
 // package_keys is private_keys' `pub(package)` sibling: declarations visible
@@ -143,85 +160,97 @@ function package_of(module_name: string): string {
 // check consults this list only when the referring module is in a DIFFERENT
 // package.
 function package_keys(loaded: flatten.LoadedModule[]): string[] {
-    var out: string[] = [];
-    for lm in loaded {
-        for f in lm.mod.funcs {
-            if (f.is_package && f.receiver_name.len() == 0 && f.name.len() > 0) {
-                out = out.append(lm.name + "." + f.name);
-            }
-        }
-        for sd in lm.mod.structs {
-            if (sd.is_package && sd.enum_owner.len() == 0 && sd.name.len() > 0) {
-                out = out.append(lm.name + "." + sd.name);
-            }
-        }
-        for en in lm.mod.enums {
-            if (en.is_package) { out = out.append(lm.name + "." + en.name); }
-        }
-        for al in lm.mod.aliases {
-            if (al.is_package) { out = out.append(lm.name + "." + al.name); }
-        }
+  var out: string[] = [];
+  for lm in loaded {
+    for f in lm.mod.funcs {
+      if (f.is_package && f.receiver_name.len() == 0 && f.name.len() > 0) {
+        out = out.append(lm.name + "." + f.name);
+      }
     }
-    return out;
+    for sd in lm.mod.structs {
+      if (sd.is_package && sd.enum_owner.len() == 0 && sd.name.len() > 0) {
+        out = out.append(lm.name + "." + sd.name);
+      }
+    }
+    for en in lm.mod.enums {
+      if (en.is_package) {
+        out = out.append(lm.name + "." + en.name);
+      }
+    }
+    for al in lm.mod.aliases {
+      if (al.is_package) {
+        out = out.append(lm.name + "." + al.name);
+      }
+    }
+  }
+  return out;
 }
 
 // module_name_of returns the loaded module `qual` resolves to, or "" when the
 // qualifier names nothing loaded.
 function module_name_of(loaded: flatten.LoadedModule[], qual: string): string {
-    for lm in loaded {
-        if (lm.name == qual) { return lm.name; }
+  for lm in loaded {
+    if (lm.name == qual) {
+      return lm.name;
     }
-    for lm in loaded {
-        if (package_of(lm.name).len() > 0 && lm.name.len() > qual.len()) {
-            var tail: string = slice_unchecked(lm.name, lm.name.len() - qual.len(), lm.name.len()) + "";
-            if (tail == qual) { return lm.name; }
-        }
+  }
+  for lm in loaded {
+    if (package_of(lm.name).len() > 0 && lm.name.len() > qual.len()) {
+      var tail: string = slice_unchecked(lm.name, lm.name.len() - qual.len(), lm.name.len()) + "";
+      if (tail == qual) {
+        return lm.name;
+      }
     }
-    return "";
+  }
+  return "";
 }
 
 // module_diags reports every `<qual>.<name>` in `src`'s own functions that names
 // a private top-level declaration of the module `qual` resolves to.
 function module_diags(src_name: string, src: parser.Module, loaded: flatten.LoadedModule[], priv: string[], priv_consts: string[], pkg: string[]): util.Diag[] {
-    var out: util.Diag[] = [];
-    var quals: string[] = import_quals(src);
-    if (quals.len() == 0) { return out; }
-    var refs: astwalk.QualRef[] = [];
-    for fd in src.funcs {
-        for st in fd.body {
-            refs = astwalk.collect_qualrefs_stmt(st, quals, refs);
-        }
-    }
-    for r in refs {
-        var key: string = r.qual + "." + r.name;
-        // A `pub(package)` declaration is out of reach only from OUTSIDE its
-        // package. An unknown referrer (src_name "") is left alone rather than
-        // guessed at: a false "not exported" on a legal sibling reference is
-        // worse than the missed diagnostic, and matches the checker's
-        // zero-false-positive stance elsewhere.
-        if (src_name.len() > 0 && util.has_str(pkg, key)) {
-            var owner: string = module_name_of(loaded, r.qual);
-            if (owner.len() > 0 && package_of(owner) != package_of(src_name)) {
-                out = out.append(util.Diag {
-                    code: "",
-                    message: key + " is package-scoped: it is visible only inside " + package_of(owner) + " (declare it as `pub " + r.name + " …` to export it)",
-                    line: r.line,
-                    col: r.col
-                });
-            }
-        }
-        if (util.has_str(priv, key)) {
-            var kw: string = "function";
-            if (util.has_str(priv_consts, key)) { kw = "const"; }
-            out = out.append(util.Diag {
-                code: "",
-                message: key + " is not exported (declare it as `pub " + kw + " " + r.name + " …` to make it accessible from other modules)",
-                line: r.line,
-                col: r.col
-            });
-        }
-    }
+  var out: util.Diag[] = [];
+  var quals: string[] = import_quals(src);
+  if (quals.len() == 0) {
     return out;
+  }
+  var refs: astwalk.QualRef[] = [];
+  for fd in src.funcs {
+    for st in fd.body {
+      refs = astwalk.collect_qualrefs_stmt(st, quals, refs);
+    }
+  }
+  for r in refs {
+    var key: string = r.qual + "." + r.name;
+    // A `pub(package)` declaration is out of reach only from OUTSIDE its
+    // package. An unknown referrer (src_name "") is left alone rather than
+    // guessed at: a false "not exported" on a legal sibling reference is
+    // worse than the missed diagnostic, and matches the checker's
+    // zero-false-positive stance elsewhere.
+    if (src_name.len() > 0 && util.has_str(pkg, key)) {
+      var owner: string = module_name_of(loaded, r.qual);
+      if (owner.len() > 0 && package_of(owner) != package_of(src_name)) {
+        out = out.append(util.Diag {
+          code: "",
+          message: key + " is package-scoped: it is visible only inside " + package_of(owner) + " (declare it as `pub " + r.name + " …` to export it)",
+          line: r.line,
+          col: r.col,
+        });
+      }
+    }
+    if (util.has_str(priv, key)) {
+      var kw: string = "function";
+      if (util.has_str(priv_consts, key)) {
+        kw = "const";
+      }
+      out = out.append(util.Diag {
+        code: "",
+        message: key + " is not exported (declare it as `pub " + kw + " " + r.name + " …` to make it accessible from other modules)",
+        line: r.line,
+        col: r.col,
+      });
+    }
+  }
+  return out;
 }
 
 // export_diags checks the entry and every loaded module against the visibility
@@ -230,17 +259,23 @@ function module_diags(src_name: string, src: parser.Module, loaded: flatten.Load
 // which is what makes this formulation immune to the false positives the
 // bundle-level one produced.
 pub function export_diags(entry: parser.Module, loaded: flatten.LoadedModule[]): util.Diag[] {
-    var priv: string[] = private_keys(loaded);
-    var priv_consts: string[] = private_const_keys(loaded);
-    var pkg: string[] = package_keys(loaded);
-    var out: util.Diag[] = module_diags("", entry, loaded, priv, priv_consts, pkg);
-    var td: util.Diag[] = type_diags(entry, loaded, priv);
-    for d in td { out = out.append(d); }
-    for lm in loaded {
-        for d in module_diags(lm.name, lm.mod, loaded, priv, priv_consts, pkg) { out = out.append(d); }
-        for d in type_diags(lm.mod, loaded, priv) { out = out.append(d); }
+  var priv: string[] = private_keys(loaded);
+  var priv_consts: string[] = private_const_keys(loaded);
+  var pkg: string[] = package_keys(loaded);
+  var out: util.Diag[] = module_diags("", entry, loaded, priv, priv_consts, pkg);
+  var td: util.Diag[] = type_diags(entry, loaded, priv);
+  for d in td {
+    out = out.append(d);
+  }
+  for lm in loaded {
+    for d in module_diags(lm.name, lm.mod, loaded, priv, priv_consts, pkg) {
+      out = out.append(d);
     }
-    return out;
+    for d in type_diags(lm.mod, loaded, priv) {
+      out = out.append(d);
+    }
+  }
+  return out;
 }
 
 // --- qualified TYPE references (#6723) ------------------------------------
@@ -251,29 +286,36 @@ pub function export_diags(entry: parser.Module, loaded: flatten.LoadedModule[]):
 // (`lib.Secret { … }` carries the qualifier in the literal, not in an
 // expression). So this half is a scan over those strings, splitting on the
 // first `.` the way flatten.rewrite_type_name does.
-
 // qual_type_parts splits `mod.Name` into its two halves, with any generic or
 // array suffix stripped off the name — `facade.Point[]` looks up `Point`, and
 // `m.Box[T]` looks up `Box`. Without that cut the lookup asks for `Point[]`,
 // finds nothing, and the rule silently never fires. Returns "" for `qual` when
 // the string carries no qualifier.
 function qual_type_parts(tn: string): (string, string) {
-    var dot: i32 = 0 - 1;
-    var i: i32 = 0;
-    while (i < tn.len()) {
-        if (tn[i] == b'.') { dot = i; i = tn.len(); }   // first only
-        i = i + 1;
+  var dot: i32 = 0 - 1;
+  var i: i32 = 0;
+  while (i < tn.len()) {
+    if (tn[i] == b'.') {  // first only
+      dot = i;
+      i = tn.len();
     }
-    if (dot < 0) { return ("", ""); }
-    var q: string = slice_unchecked(tn, 0, dot) + "";
-    var rest: string = slice_unchecked(tn, dot + 1, tn.len()) + "";
-    var cut: i32 = rest.len();
-    var j: i32 = 0;
-    while (j < rest.len()) {
-        if (rest[j] == b'[') { cut = j; j = rest.len(); }
-        j = j + 1;
+    i = i + 1;
+  }
+  if (dot < 0) {
+    return ("", "");
+  }
+  var q: string = slice_unchecked(tn, 0, dot) + "";
+  var rest: string = slice_unchecked(tn, dot + 1, tn.len()) + "";
+  var cut: i32 = rest.len();
+  var j: i32 = 0;
+  while (j < rest.len()) {
+    if (rest[j] == b'[') {
+      cut = j;
+      j = rest.len();
     }
-    return (q, slice_unchecked(rest, 0, cut) + "");
+    j = j + 1;
+  }
+  return (q, slice_unchecked(rest, 0, cut) + "");
 }
 
 // declares_private_type reports whether `mod` declares `name` as a NON-pub
@@ -285,99 +327,121 @@ function qual_type_parts(tn: string): (string, string) {
 // variant carries no `pub` of its own — would reject every qualified variant
 // construction in the stdlib.
 function declares_private_type(mod: parser.Module, name: string): boolean {
-    var i: i32 = 0;
-    while (i < mod.structs.len()) {
-        if (mod.structs[i].name == name) {
-            var owner: string = mod.structs[i].enum_owner;
-            if (owner.len() > 0) { return declares_private_type(mod, owner); }
-            return !mod.structs[i].is_pub;
-        }
-        i = i + 1;
+  var i: i32 = 0;
+  while (i < mod.structs.len()) {
+    if (mod.structs[i].name == name) {
+      var owner: string = mod.structs[i].enum_owner;
+      if (owner.len() > 0) {
+        return declares_private_type(mod, owner);
+      }
+      return !mod.structs[i].is_pub;
     }
-    var e: i32 = 0;
-    while (e < mod.enums.len()) {
-        if (mod.enums[e].name == name) { return !mod.enums[e].is_pub; }
-        e = e + 1;
+    i = i + 1;
+  }
+  var e: i32 = 0;
+  while (e < mod.enums.len()) {
+    if (mod.enums[e].name == name) {
+      return !mod.enums[e].is_pub;
     }
-    var a: i32 = 0;
-    while (a < mod.aliases.len()) {
-        if (mod.aliases[a].name == name) { return !mod.aliases[a].is_pub; }
-        a = a + 1;
+    e = e + 1;
+  }
+  var a: i32 = 0;
+  while (a < mod.aliases.len()) {
+    if (mod.aliases[a].name == name) {
+      return !mod.aliases[a].is_pub;
     }
-    return false;   // not declared here — somebody else's diagnostic
+    a = a + 1;
+  }
+  return false;  // not declared here — somebody else's diagnostic
 }
 
 // type_kind_word names the declaration kind in the message, so the hint tells
 // the reader which keyword to put `pub` in front of, as native's does.
 function type_kind_word(mod: parser.Module, name: string): string {
-    var i: i32 = 0;
-    while (i < mod.structs.len()) {
-        if (mod.structs[i].name == name) { return "struct"; }
-        i = i + 1;
+  var i: i32 = 0;
+  while (i < mod.structs.len()) {
+    if (mod.structs[i].name == name) {
+      return "struct";
     }
-    var e: i32 = 0;
-    while (e < mod.enums.len()) {
-        if (mod.enums[e].name == name) { return "enum"; }
-        e = e + 1;
+    i = i + 1;
+  }
+  var e: i32 = 0;
+  while (e < mod.enums.len()) {
+    if (mod.enums[e].name == name) {
+      return "enum";
     }
-    return "type";
+    e = e + 1;
+  }
+  return "type";
 }
 
 // check_type_name appends a diagnostic when `tn` is a qualified reference to a
 // private type of a loaded module.
 function check_type_name(tn: string, quals: string[], loaded: flatten.LoadedModule[], priv: string[], line: i32, col: i32, acc: util.Diag[]): util.Diag[] {
-    var (q, base) = qual_type_parts(tn);
-    if (q.len() == 0 || base.len() == 0) { return acc; }
-    if (!util.has_str(quals, q)) { return acc; }
-    if (!util.has_str(priv, q + "." + base)) { return acc; }
-    var mi: i32 = module_named(loaded, q);
-    if (mi < 0) { return acc; }
-    // Only reached for a name already known private, so the declaration scan
-    // behind the kind word runs once per DIAGNOSTIC, not once per reference.
-    if (!declares_private_type(loaded[mi].mod, base)) { return acc; }
-    var kind: string = type_kind_word(loaded[mi].mod, base);
-    return acc.append(util.Diag {
-        code: "",
-        message: q + "." + base + " is not exported (declare it as `pub " + kind + " " + base + " …` to make it accessible from other modules)",
-        line: line,
-        col: col
-    });
+  let (q, base) = qual_type_parts(tn);
+  if (q.len() == 0 || base.len() == 0) {
+    return acc;
+  }
+  if (!util.has_str(quals, q)) {
+    return acc;
+  }
+  if (!util.has_str(priv, q + "." + base)) {
+    return acc;
+  }
+  var mi: i32 = module_named(loaded, q);
+  if (mi < 0) {
+    return acc;
+  }
+  // Only reached for a name already known private, so the declaration scan
+  // behind the kind word runs once per DIAGNOSTIC, not once per reference.
+  if (!declares_private_type(loaded[mi].mod, base)) {
+    return acc;
+  }
+  var kind: string = type_kind_word(loaded[mi].mod, base);
+  return acc.append(util.Diag {
+    code: "",
+    message: q + "." + base + " is not exported (declare it as `pub " + kind + " " + base + " …` to make it accessible from other modules)",
+    line: line,
+    col: col,
+  });
 }
 
 // type_diags scans every type-name position a module writes: each function's
 // params and return type, each local `var`'s declared type, and each struct
 // literal's type name. Struct FIELD types are covered through the decl walk.
 function type_diags(src: parser.Module, loaded: flatten.LoadedModule[], priv: string[]): util.Diag[] {
-    var out: util.Diag[] = [];
-    var quals: string[] = import_quals(src);
-    if (quals.len() == 0) { return out; }
-    var i: i32 = 0;
-    while (i < src.funcs.len()) {
-        var f: parser.FuncDecl = src.funcs[i];
-        var pi: i32 = 0;
-        while (pi < f.params.len()) {
-            out = check_type_name(f.params[pi].type_name, quals, loaded, priv, f.line, f.col, out);
-            pi = pi + 1;
-        }
-        out = check_type_name(f.ret_type, quals, loaded, priv, f.line, f.col, out);
-        var bi: i32 = 0;
-        while (bi < f.body.len()) {
-            out = stmt_type_diags(f.body[bi], quals, loaded, priv, out);
-            bi = bi + 1;
-        }
-        i = i + 1;
-    }
-    var si: i32 = 0;
-    while (si < src.structs.len()) {
-        var sd: parser.StructDecl = src.structs[si];
-        var fi: i32 = 0;
-        while (fi < sd.fields.len()) {
-            out = check_type_name(sd.fields[fi].type_name, quals, loaded, priv, sd.line, sd.col, out);
-            fi = fi + 1;
-        }
-        si = si + 1;
-    }
+  var out: util.Diag[] = [];
+  var quals: string[] = import_quals(src);
+  if (quals.len() == 0) {
     return out;
+  }
+  var i: i32 = 0;
+  while (i < src.funcs.len()) {
+    var f: parser.FuncDecl = src.funcs[i];
+    var pi: i32 = 0;
+    while (pi < f.params.len()) {
+      out = check_type_name(f.params[pi].type_name, quals, loaded, priv, f.line, f.col, out);
+      pi = pi + 1;
+    }
+    out = check_type_name(f.ret_type, quals, loaded, priv, f.line, f.col, out);
+    var bi: i32 = 0;
+    while (bi < f.body.len()) {
+      out = stmt_type_diags(f.body[bi], quals, loaded, priv, out);
+      bi = bi + 1;
+    }
+    i = i + 1;
+  }
+  var si: i32 = 0;
+  while (si < src.structs.len()) {
+    var sd: parser.StructDecl = src.structs[si];
+    var fi: i32 = 0;
+    while (fi < sd.fields.len()) {
+      out = check_type_name(sd.fields[fi].type_name, quals, loaded, priv, sd.line, sd.col, out);
+      fi = fi + 1;
+    }
+    si = si + 1;
+  }
+  return out;
 }
 
 // stmt_type_diags walks a statement for declared type names and struct-literal
@@ -385,92 +449,142 @@ function type_diags(src: parser.Module, loaded: flatten.LoadedModule[], priv: st
 // expression carrying a type NAME, and it is reached through the statement
 // positions that can hold one.
 function stmt_type_diags(st: ast.Stmt, quals: string[], loaded: flatten.LoadedModule[], priv: string[], acc: util.Diag[]): util.Diag[] {
-    match (st) {
-        ast.StmtVar(v) => {
-            acc = check_type_name(v.type_name, quals, loaded, priv, v.line, v.col, acc);
-            return expr_type_diags(v.init, quals, loaded, priv, acc);
-        },
-        ast.StmtReturn(r) => { return expr_type_diags(r.value, quals, loaded, priv, acc); },
-        ast.StmtExpr(e) => { return expr_type_diags(e.value, quals, loaded, priv, acc); },
-        ast.StmtAssign(a) => { return expr_type_diags(a.value, quals, loaded, priv, acc); },
-        ast.StmtDefer(d) => { return stmt_type_diags(d.action, quals, loaded, priv, acc); },
-        ast.StmtIf(i) => {
-            acc = expr_type_diags(i.cond, quals, loaded, priv, acc);
-            var ti: i32 = 0;
-            while (ti < i.then_body.len()) { acc = stmt_type_diags(i.then_body[ti], quals, loaded, priv, acc); ti = ti + 1; }
-            var ei: i32 = 0;
-            while (ei < i.else_body.len()) { acc = stmt_type_diags(i.else_body[ei], quals, loaded, priv, acc); ei = ei + 1; }
-            return acc;
-        },
-        ast.StmtWhile(w) => {
-            acc = expr_type_diags(w.cond, quals, loaded, priv, acc);
-            var wi: i32 = 0;
-            while (wi < w.body.len()) { acc = stmt_type_diags(w.body[wi], quals, loaded, priv, acc); wi = wi + 1; }
-            return acc;
-        },
-        ast.StmtFor(f) => {
-            acc = expr_type_diags(f.iter, quals, loaded, priv, acc);
-            var fi: i32 = 0;
-            while (fi < f.body.len()) { acc = stmt_type_diags(f.body[fi], quals, loaded, priv, acc); fi = fi + 1; }
-            return acc;
-        },
-        ast.StmtMatch(m) => {
-            acc = expr_type_diags(m.scrutinee, quals, loaded, priv, acc);
-            var ai: i32 = 0;
-            while (ai < m.arms.len()) {
-                var bi: i32 = 0;
-                while (bi < m.arms[ai].body.len()) { acc = stmt_type_diags(m.arms[ai].body[bi], quals, loaded, priv, acc); bi = bi + 1; }
-                ai = ai + 1;
-            }
-            return acc;
-        },
-        ast.StmtBreak(_) => { return acc; },
-        ast.StmtContinue(_) => { return acc; },
-        ast.StmtUnknown(_) => { return acc; }
+  match (st) {
+    ast.StmtVar(v) => {
+      acc = check_type_name(v.type_name, quals, loaded, priv, v.line, v.col, acc);
+      return expr_type_diags(v.init, quals, loaded, priv, acc);
+    },
+    ast.StmtReturn(r) => {
+      return expr_type_diags(r.value, quals, loaded, priv, acc);
+    },
+    ast.StmtExpr(e) => {
+      return expr_type_diags(e.value, quals, loaded, priv, acc);
+    },
+    ast.StmtAssign(a) => {
+      return expr_type_diags(a.value, quals, loaded, priv, acc);
+    },
+    ast.StmtDefer(d) => {
+      return stmt_type_diags(d.action, quals, loaded, priv, acc);
+    },
+    ast.StmtIf(i) => {
+      acc = expr_type_diags(i.cond, quals, loaded, priv, acc);
+      var ti: i32 = 0;
+      while (ti < i.then_body.len()) {
+        acc = stmt_type_diags(i.then_body[ti], quals, loaded, priv, acc);
+        ti = ti + 1;
+      }
+      var ei: i32 = 0;
+      while (ei < i.else_body.len()) {
+        acc = stmt_type_diags(i.else_body[ei], quals, loaded, priv, acc);
+        ei = ei + 1;
+      }
+      return acc;
+    },
+    ast.StmtWhile(w) => {
+      acc = expr_type_diags(w.cond, quals, loaded, priv, acc);
+      var wi: i32 = 0;
+      while (wi < w.body.len()) {
+        acc = stmt_type_diags(w.body[wi], quals, loaded, priv, acc);
+        wi = wi + 1;
+      }
+      return acc;
+    },
+    ast.StmtFor(f) => {
+      acc = expr_type_diags(f.iter, quals, loaded, priv, acc);
+      var fi: i32 = 0;
+      while (fi < f.body.len()) {
+        acc = stmt_type_diags(f.body[fi], quals, loaded, priv, acc);
+        fi = fi + 1;
+      }
+      return acc;
+    },
+    ast.StmtMatch(m) => {
+      acc = expr_type_diags(m.scrutinee, quals, loaded, priv, acc);
+      var ai: i32 = 0;
+      while (ai < m.arms.len()) {
+        var bi: i32 = 0;
+        while (bi < m.arms[ai].body.len()) {
+          acc = stmt_type_diags(m.arms[ai].body[bi], quals, loaded, priv, acc);
+          bi = bi + 1;
+        }
+        ai = ai + 1;
+      }
+      return acc;
+    },
+    ast.StmtBreak(_) => {
+      return acc;
+    },
+    ast.StmtContinue(_) => {
+      return acc;
+    },
+    ast.StmtUnknown(_) => {
+      return acc;
     }
-    return acc;
+  }
+  return acc;
 }
 
 // expr_type_diags finds struct-literal type names inside an expression.
 function expr_type_diags(e: ast.Expr, quals: string[], loaded: flatten.LoadedModule[], priv: string[], acc: util.Diag[]): util.Diag[] {
-    match (e) {
-        ast.ExprStructLit(sl) => {
-            acc = check_type_name(sl.type_name, quals, loaded, priv, sl.line, sl.col, acc);
-            if (sl.has_base) { acc = expr_type_diags(sl.base, quals, loaded, priv, acc); }
-            var i: i32 = 0;
-            while (i < sl.field_values.len()) { acc = expr_type_diags(sl.field_values[i], quals, loaded, priv, acc); i = i + 1; }
-            return acc;
-        },
-        ast.ExprBinary(b) => {
-            acc = expr_type_diags(b.left, quals, loaded, priv, acc);
-            return expr_type_diags(b.right, quals, loaded, priv, acc);
-        },
-        ast.ExprUnary(u) => { return expr_type_diags(u.operand, quals, loaded, priv, acc); },
-        ast.ExprCall(c) => {
-            var i: i32 = 0;
-            while (i < c.args.len()) { acc = expr_type_diags(c.args[i], quals, loaded, priv, acc); i = i + 1; }
-            return acc;
-        },
-        ast.ExprArray(a) => {
-            var i: i32 = 0;
-            while (i < a.elements.len()) { acc = expr_type_diags(a.elements[i], quals, loaded, priv, acc); i = i + 1; }
-            return acc;
-        },
-        ast.ExprTuple(t) => {
-            var i: i32 = 0;
-            while (i < t.elements.len()) { acc = expr_type_diags(t.elements[i], quals, loaded, priv, acc); i = i + 1; }
-            return acc;
-        },
-        ast.ExprIndex(x) => {
-            acc = expr_type_diags(x.array, quals, loaded, priv, acc);
-            return expr_type_diags(x.index, quals, loaded, priv, acc);
-        },
-        ast.ExprLambda(lm) => {
-            var i: i32 = 0;
-            while (i < lm.body.len()) { acc = stmt_type_diags(lm.body[i], quals, loaded, priv, acc); i = i + 1; }
-            return acc;
-        },
-        _ => { return acc; }
+  match (e) {
+    ast.ExprStructLit(sl) => {
+      acc = check_type_name(sl.type_name, quals, loaded, priv, sl.line, sl.col, acc);
+      if (sl.has_base) {
+        acc = expr_type_diags(sl.base, quals, loaded, priv, acc);
+      }
+      var i: i32 = 0;
+      while (i < sl.field_values.len()) {
+        acc = expr_type_diags(sl.field_values[i], quals, loaded, priv, acc);
+        i = i + 1;
+      }
+      return acc;
+    },
+    ast.ExprBinary(b) => {
+      acc = expr_type_diags(b.left, quals, loaded, priv, acc);
+      return expr_type_diags(b.right, quals, loaded, priv, acc);
+    },
+    ast.ExprUnary(u) => {
+      return expr_type_diags(u.operand, quals, loaded, priv, acc);
+    },
+    ast.ExprCall(c) => {
+      var i: i32 = 0;
+      while (i < c.args.len()) {
+        acc = expr_type_diags(c.args[i], quals, loaded, priv, acc);
+        i = i + 1;
+      }
+      return acc;
+    },
+    ast.ExprArray(a) => {
+      var i: i32 = 0;
+      while (i < a.elements.len()) {
+        acc = expr_type_diags(a.elements[i], quals, loaded, priv, acc);
+        i = i + 1;
+      }
+      return acc;
+    },
+    ast.ExprTuple(t) => {
+      var i: i32 = 0;
+      while (i < t.elements.len()) {
+        acc = expr_type_diags(t.elements[i], quals, loaded, priv, acc);
+        i = i + 1;
+      }
+      return acc;
+    },
+    ast.ExprIndex(x) => {
+      acc = expr_type_diags(x.array, quals, loaded, priv, acc);
+      return expr_type_diags(x.index, quals, loaded, priv, acc);
+    },
+    ast.ExprLambda(lm) => {
+      var i: i32 = 0;
+      while (i < lm.body.len()) {
+        acc = stmt_type_diags(lm.body[i], quals, loaded, priv, acc);
+        i = i + 1;
+      }
+      return acc;
+    },
+    _ => {
+      return acc;
     }
-    return acc;
+  }
+  return acc;
 }
