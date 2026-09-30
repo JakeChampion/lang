@@ -72,3 +72,57 @@ func TestLeakCheckPairPayloadBorrowedArgArm64(t *testing.T) {
 		t.Fatalf("code=%d allocs=%d frees=%d live_bytes=%d: the payload handed to the borrowing append is not released", code, allocs, frees, live)
 	}
 }
+
+// The same payload handed to a container sink (#10696): `Array.append` and
+// `Map.insert` retain an aliased element, key or value, so the container holds
+// a count of its own and the arm releases the payload's. The program's exit
+// carries `__rc_underflow_count()`, since admitting a sink that does not
+// retain would be a double free.
+func pairPayloadSinkSrc(decl, body, tail string) string {
+	return `import "core/map";
+function mk(i: i32): Option[string] {
+    if (i < 0) { return None; }
+    var b: u8[] = __alloc_u8(8);
+    return Some(string_from_bytes_unchecked(b));
+}
+function main(): i32 {
+    ` + decl + `
+    var i: i32 = 0;
+    while (i < 100) {
+        match (mk(i)) { Some(v) => { ` + body + ` }, None => { return 1; } }
+        i = i + 1;
+    }
+    return ` + tail + ` + __rc_underflow_count();
+}
+`
+}
+
+var pairPayloadSinkCases = []struct{ name, src string }{
+	{"array-append", pairPayloadSinkSrc(`var xs: string[] = [];`, `xs = xs.append(v);`, `xs.len() - 100`)},
+	{"map-value", pairPayloadSinkSrc(`var m: Map[string, string] = map_new(4);`, `m = m.insert("k", v);`, `m.len() - 1`)},
+	{"map-key", pairPayloadSinkSrc(`var m: Map[string, i32] = map_new(4);`, `m = m.insert(v, i);`, `m.len() - 1`)},
+}
+
+func TestLeakCheckPairPayloadSinkX86_64(t *testing.T) {
+	for _, tc := range pairPayloadSinkCases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, stderr, code := runLeakCheckX86_64(t, tc.src)
+			allocs, frees, live := leakSummaryIn(t, stderr)
+			if code != 0 || allocs != frees || live != 0 {
+				t.Fatalf("code=%d allocs=%d frees=%d live_bytes=%d", code, allocs, frees, live)
+			}
+		})
+	}
+}
+
+func TestLeakCheckPairPayloadSinkWasm(t *testing.T) {
+	for _, tc := range pairPayloadSinkCases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, stderr, code := runLeakCheckWasm(t, tc.src, false)
+			allocs, frees, live := parseWasmLeakCheckLine(t, stderr)
+			if code != 0 || allocs != frees || live != 0 {
+				t.Fatalf("code=%d allocs=%d frees=%d live_bytes=%d", code, allocs, frees, live)
+			}
+		})
+	}
+}

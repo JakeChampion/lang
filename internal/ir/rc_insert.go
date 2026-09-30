@@ -310,29 +310,34 @@ func (b *builder) freshOwnedRcTempType(e ast.Expr) (ast.Type, bool) {
 			return t, true
 		}
 	case *ast.IfExpr:
-		return b.countedConditionalType(x, []ast.Expr{x.Then, x.Else})
+		return b.countedConditionalType(x, []ast.Expr{x.Then, x.Else},
+			[]bool{needsRcIncOnAlias(x.Then, b), needsRcIncOnAlias(x.Else, b)})
 	case *ast.MatchExpr:
 		arms := make([]ast.Expr, len(x.Arms))
+		counted := make([]bool, len(x.Arms))
 		for i, arm := range x.Arms {
 			arms[i] = arm.Body
+			counted[i] = b.matchArmYieldCounted(arm)
 		}
-		return b.countedConditionalType(x, arms)
+		return b.countedConditionalType(x, arms, counted)
 	}
 	return nil, false
 }
 
 // countedConditionalType reports an if- or match-expression whose value is an
 // owned reference whichever arm runs: emitCountedYield retains every arm that
-// yields an alias, so each remaining arm has to be owned by construction. Both
-// sides ask needsRcIncOnAlias of the same arm node and must keep doing so; the
-// assign path's moveSites classification is a different contract.
-func (b *builder) countedConditionalType(e ast.Expr, arms []ast.Expr) (ast.Type, bool) {
+// yields an alias, so each remaining arm has to be owned by construction.
+// `counted` marks the arms that retain: needsRcIncOnAlias of the arm node, the
+// question emitCountedYield asks, or matchArmYieldCounted for a match arm
+// yielding its own binding, which is out of exprType's scope here. The assign
+// path's moveSites classification is a different contract.
+func (b *builder) countedConditionalType(e ast.Expr, arms []ast.Expr, counted []bool) (ast.Type, bool) {
 	t := b.exprType(e)
 	if !b.retainsOnAlias(t) {
 		return nil, false
 	}
-	for _, arm := range arms {
-		if needsRcIncOnAlias(arm, b) {
+	for i, arm := range arms {
+		if counted[i] {
 			continue
 		}
 		v := blockValue(arm)
@@ -1006,7 +1011,8 @@ func (b *builder) bindingUsesExcused(body ast.Node, name string, bt ast.Type, co
 				}
 				if b.readOnlyCallArg(x, i) || (countedAliasOK && b.indirectCallArg(x)) ||
 					(countedAliasOK && b.borrowedCallArg(x, i)) ||
-					(countedAliasOK && b.variantRetainsPayload(x, id, bt)) {
+					(countedAliasOK && b.variantRetainsPayload(x, id, bt)) ||
+					(countedAliasOK && b.sinkRetainsArg(x, i, bt)) {
 					excused[id] = true
 				}
 			}
@@ -1021,6 +1027,28 @@ func (b *builder) bindingUsesExcused(body ast.Node, name string, bt ast.Type, co
 		return true
 	})
 	return confined
+}
+
+// sinkRetainsArg reports whether a container sink's store of argument i is
+// counted, so the container holds a reference of its own: `Array.append`'s
+// element under emitArrayPush's alias inc, and `Map.insert`'s key and value
+// under emitMapSetRetains. `bt` is the argument's type, which exprType cannot
+// supply for a match binding. A move site hands over the binding's reference
+// instead.
+func (b *builder) sinkRetainsArg(c *ast.Call, i int, bt ast.Type) bool {
+	id, ok := c.Callee.(*ast.Ident)
+	if !ok || b.rc.moveSites[c.Args[i]] {
+		return false
+	}
+	switch {
+	case id.Name == "__method_Array_push" && i == 1:
+		return b.retainsOnAlias(bt)
+	case id.Name == "__method_Map_set" && len(c.Args) == 3 && len(c.TypeArgs) >= 2 && i == 2:
+		return b.mapSetValueCountedBy(c.Args[i], c.TypeArgs[1], b.retainsOnAlias(bt))
+	case id.Name == "__method_Map_set" && len(c.Args) == 3 && len(c.TypeArgs) >= 1 && i == 1:
+		return b.mapSetKeyCountedBy(c.Args[i], c.TypeArgs[0], b.retainsOnAlias(bt))
+	}
+	return false
 }
 
 // variantRetainsPayload reports whether the variant construction `c` retains
@@ -1381,15 +1409,12 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 		// to the buffer-only dec below and leaked every element (cell +
 		// concrete + transitively-owned strings) on each call. `eligible`
 		// (computeFreeEligible) plus __drop_arr_dyn's own rc==1 gate keep an
-		// aliased/escaping array a sound leak, never a double-free. NATIVES
-		// ONLY (ptrW==8): wasm's inline two-word `dyn` elements double-drop
-		// when an element was bound out (`for s in xs` + a call arg) — the
-		// same hazard dropStructField's dyn arm documents — so wasm keeps
-		// the buffer-only dec here (status-quo sound leak; its loop-reinit
-		// element walk is unchanged).
+		// aliased/escaping array a sound leak, never a double-free. An
+		// element bound out takes its own unit (emitDynRetain), on wasm's
+		// inline two-word elements as on the natives' cells.
 		if at, ok := t.(ast.ArrayType); ok {
 			_, elemIsDyn := at.Elem.(ast.DynTraitType)
-			if arrElemIsRcTracked(at.Elem) || (elemIsDyn && b.ptrW == 8 && b.dynReclaim() && ast.RcFreeEnabled && eligible) {
+			if arrElemIsRcTracked(at.Elem) || (elemIsDyn && b.dynReclaim() && ast.RcFreeEnabled && eligible) {
 				b.emit(Op{Kind: OpLoadLocal, I32: slot})
 				decValueOnStack(t, eligible)
 				return

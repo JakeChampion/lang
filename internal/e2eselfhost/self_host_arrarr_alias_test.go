@@ -57,6 +57,22 @@ function main(): i32 {
     return acc;
 }
 `, 46, false},
+	// A string[][] field bind whose holder is rebound first (#10548).
+	{"field_bind_strings", `struct Names { n: i32, names: string[][] }
+function main(): i32 {
+    var i: i32 = 0;
+    var n: i32 = 0;
+    while (i < 4) {
+        var r: Names = Names { n: i, names: [["a" + "b", "c"], ["d" + ""]] };
+        var p = r.names;
+        r = Names { n: 0, names: [["z" + ""]] };
+        var junk: string[][] = [["x" + "y"]];
+        n = n + p.len() + p[0][0].len() + r.names.len() + junk.len();
+        i = i + 1;
+    }
+    return n;
+}
+`, 24, false},
 	{"alias_outlives_source", `function main(): i32 {
     var g: i32[][] = [[3, 1], [2, 3]];
     var h: i32[][] = g;

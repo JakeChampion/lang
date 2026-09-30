@@ -64,6 +64,15 @@ function main(): i32 { var a: Cell[i32] = cell_new(0); return f(a); }`, 13},
 	// string, bound at the top of f at its zero and replaced in the arm.
 	{"match_arm_in_loop_string", `function f(a: Cell[i32]): i32 { var i: i32 = 0; while (i < 3) { var o: Option[string] = if (i == 1) { None } else { Some("ab" + "c") }; match (o) { Some(v) => { defer a.set(a.get() * 10 + v.len()); }, None => { } } i = i + 1; } return a.get(); }
 function main(): i32 { var a: Cell[i32] = cell_new(0); return f(a); }`, 33},
+	// A struct-union MEMBER arm binds the member itself, so the slot the replay
+	// reads is the member type, not its first field's (#10466): 0 -> 5 -> 55,
+	// with i == 1 taking the other member's arm.
+	{"match_arm_in_loop_member", `struct A { name: string, x: i32 }
+struct B { y: i32 }
+type E = A | B;
+function g(e: E): i32 { match (e) { A(p) => { return p.x + p.name.len(); }, B(q) => { return q.y; } } return 0; }
+function f(a: Cell[i32]): i32 { var i: i32 = 0; while (i < 3) { var o: E = A { name: "ab" + "c", x: 2 }; if (i == 1) { o = B { y: 7 }; } match (o) { A(m) => { defer a.set(a.get() * 10 + g(m)); }, B(n) => { } } i = i + 1; } return a.get(); }
+function main(): i32 { var a: Cell[i32] = cell_new(0); return f(a); }`, 55},
 	// A labelled `continue` ends the inner iteration AND the outer one, so both
 	// run, innermost first: 0 -> 1 -> 5, then 16 -> 50.
 	{"labelled_continue_ends_both_iterations", `function f(a: Cell[i32]): i32 { var i: i32 = 0; outer: while (i < 2) { defer a.set(a.get() * 3 + 2); i = i + 1; var j: i32 = 0; while (j < 3) { defer a.set(a.get() * 3 + 1); if (j == 0) { continue outer; } j = j + 1; } } return a.get(); }

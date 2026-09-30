@@ -539,10 +539,10 @@ function build(i: i32): i32[][] {
 }
 
 // A closure handing back a value it captured (#10740). The lifted body reads
-// the capture out of the env box, which keeps the reference, so returning it
-// retains: the caller binds a closure call's array result as a count it owns.
-// Without the retain the caller's release took the env box's count, and the
-// owner's own release underflowed.
+// the capture out of the env box as a borrow of the captured local, so
+// returning it retains: the caller binds a closure call's array result as a
+// count it owns. Without the retain the caller's release took the local's
+// count, and the owner's own release underflowed.
 func closureCaptureReturnCases() []ownParamReleaseCase {
 	return []ownParamReleaseCase{
 		{
@@ -550,7 +550,7 @@ func closureCaptureReturnCases() []ownParamReleaseCase {
 			src: `@noinline
 function usr(f: (i32) => i32[][], i: i32): i32 {
     var g: i32[][] = f(i);
-    return g.len() + 1;
+    return g.len() + g[0][0];
 }
 @noinline
 function round(keep: i32[][], i: i32): i32 {
@@ -558,19 +558,22 @@ function round(keep: i32[][], i: i32): i32 {
     return usr(f, i);
 }
 function main(): i32 {
-    var keep: i32[][] = [];
+    var keep: i32[][] = [[5], [6], [7]];
     var x: i32 = 0;
     var i: i32 = 0;
     while (i < 100) { x = x + round(keep, i); i = i + 1; }
-    if (keep.len() != 0) { return 77; }
+    if (keep[1][0] != 6) { return 77; }
     if (__rc_underflow_count() != 0) { return 99; }
     return x % 83;
 }`,
-			want: 17,
+			want: 53,
 		},
 		{
 			name: "closure_hands_back_captured_strarr",
-			src: `@noinline
+			src: `import "std/i32";
+@noinline
+function w(i: i32): string { return "s-a-wide-payload-past-any-inline-threshold-" + i.to_string(); }
+@noinline
 function usr(hb: (string[]) => string[], i: i32): i32 {
     var xs: string[] = ["ab", "cd"];
     xs = hb(xs);
@@ -582,7 +585,7 @@ function round(keep: string[], i: i32): i32 {
     return usr(hb, i);
 }
 function main(): i32 {
-    var keep: string[] = ["s-a-wide-payload-past-any-inline-threshold-1", "s-a-wide-payload-past-any-inline-threshold-2"];
+    var keep: string[] = [w(1), w(2)];
     var x: i32 = 0;
     var i: i32 = 0;
     while (i < 100) { x = x + round(keep, i); i = i + 1; }
@@ -652,13 +655,20 @@ function main(): i32 {
 // at live_bytes 0 with no rc underflow, and clean under the quarantining
 // allocator.
 func TestSelfHostOwnHandbackReturnX86_64(t *testing.T) {
+	runBalancedRows(t, "ownhb", append(append(ownHandbackReturnCases(), ownHandbackHeapCases()...), closureCaptureReturnCases()...))
+}
+
+// runBalancedRows runs every case on both lowerings: the exit code is the
+// value check (99 is the rc underflow gate), the leakcheck must balance at
+// live_bytes 0, and the sanitize leg must be clean.
+func runBalancedRows(t *testing.T, prefix string, cases []ownParamReleaseCase) {
 	cli := newStrictCLI(t)
 	dir := t.TempDir()
 	for _, lw := range []struct{ name, env string }{{"semantic", "FERN_SEM_IR=1"}, {"ast", "FERN_SEM_IR="}} {
-		for _, tc := range append(append(ownHandbackReturnCases(), ownHandbackHeapCases()...), closureCaptureReturnCases()...) {
+		for _, tc := range cases {
 			t.Run(lw.name+"/"+tc.name, func(t *testing.T) {
 				asm := cli.emit(t, "x86-64-linux", tc.src, lw.env, "FERN_LEAKCHECK=1")
-				progBin := buildBin(t, cli.gcc, dir, "ownhb_"+lw.name+"_"+tc.name, asm)
+				progBin := buildBin(t, cli.gcc, dir, prefix+"_"+lw.name+"_"+tc.name, asm)
 				stderr, exit := hevRun(t, cli.runner, progBin)
 				if exit != tc.want {
 					t.Fatalf("exited %d, want %d (99 = rc underflow; 77 = a read through a freed buffer)", exit, tc.want)
@@ -679,7 +689,7 @@ func TestSelfHostOwnHandbackReturnX86_64(t *testing.T) {
 				}
 
 				sanAsm := cli.emit(t, "x86-64-linux", tc.src, lw.env, "FERN_SANITIZE=1")
-				sanBin := buildBin(t, cli.gcc, dir, "ownhb_san_"+lw.name+"_"+tc.name, sanAsm)
+				sanBin := buildBin(t, cli.gcc, dir, prefix+"_san_"+lw.name+"_"+tc.name, sanAsm)
 				sanErr, sanExit := hevRun(t, cli.runner, sanBin)
 				if sanExit != tc.want {
 					t.Fatalf("sanitize leg exited %d, want %d (124 = fatal sanitizer check)", sanExit, tc.want)

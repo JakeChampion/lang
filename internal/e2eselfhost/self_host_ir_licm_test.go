@@ -11,14 +11,15 @@ import (
 )
 
 // TestSelfHostIRLICM pins the self-hosted stack IR's loop-invariant code motion
-// (examples/self_host/ir.fern's hoist_loop_invariants — the op-list twin of
+// (examples/self_host/ir.fern's hoist_loop_invariants — the op-list port of
 // native's internal/ir/licm.go, #8245) and the slot growth it depends on (#8247).
 //
 // The ir_licm_run driver builds the op list irlower emits for each `while`
-// shape, runs the pass, and prints the ops AND the frame count. Every line
-// below is the mirror of a case in internal/ir/licm_test.go; the refusals are
-// the essential half, since each one is a read the original program would
-// not have made.
+// shape, runs the pass, and prints the ops AND the frame count. The lines
+// mirror the cases in internal/ir/licm_test.go, except the typed-lowering
+// rows: native's header still stops at `block`, so licm_typed_block_header is
+// a hoist native does not perform. The refusals are the essential half, since each one is a read
+// the original program would not have made.
 func TestSelfHostIRLICM(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -42,9 +43,14 @@ func TestSelfHostIRLICM(t *testing.T) {
 		"licm_two_slots: block ; load_local 0 ; str_len ; store_local 3 ; load_local 1 ; str_len ; store_local 4 ; loop ; load_local 2 ; load_local 3 ; load_local 4 ; add ; lt_s ; not ; brif 1 ; load_local 2 ; const_i32 1 ; add ; store_local 2 ; br 0 ; end ; end | n_locals=5\n" +
 		"licm_two_slots_stack_neutral=1\n" +
 		"licm_same_operand_once: block ; load_local 0 ; str_len ; store_local 3 ; loop ; load_local 1 ; load_local 3 ; load_local 3 ; add ; lt_s ; not ; brif 1 ; load_local 1 ; const_i32 1 ; add ; store_local 1 ; br 0 ; end ; end | n_locals=4\n" +
-		// `&&` opens a block that ends the header: the guarded length stays.
+		// `&&` branches before the second read: the guarded length stays.
 		"licm_short_circuit: block ; load_local 0 ; str_len ; store_local 4 ; loop ; load_local 2 ; load_local 4 ; lt_s ; store_local 3 ; block ; load_local 3 ; not ; brif 0 ; load_local 2 ; load_local 1 ; str_len ; lt_s ; store_local 3 ; end ; load_local 3 ; not ; brif 1 ; load_local 2 ; const_i32 1 ; add ; store_local 2 ; br 0 ; end ; end | n_locals=5\n" +
 		"licm_short_circuit_stack_neutral=1\n" +
+		// A block between `loop` and the condition does not end the header.
+		"licm_typed_block_header: block ; load_local 0 ; str_len ; store_local 4 ; loop ; block ; load_local 4 ; store_local 3 ; load_local 1 ; load_local 3 ; lt_s ; not ; brif 2 ; end ; load_local 1 ; const_i32 1 ; add ; store_local 1 ; br 0 ; end ; end | n_locals=5\n" +
+		"licm_typed_block_header_stack_neutral=1\n" +
+		// `exit` ends the header: the read after it is never reached.
+		"licm_exit_refused: block ; loop ; block ; const_i32 134 ; exit ; load_local 1 ; load_local 0 ; str_len ; lt_s ; not ; brif 2 ; end ; load_local 1 ; const_i32 1 ; add ; store_local 1 ; br 0 ; end ; end | n_locals=3\n" +
 		// Later loops first: the inner loop takes slot 4, the outer slot 5, and
 		// each prologue sits directly before its own `loop`.
 		"licm_nested: block ; load_local 0 ; str_len ; store_local 5 ; loop ; load_local 2 ; load_local 5 ; lt_s ; not ; brif 1 ; block ; load_local 1 ; str_len ; store_local 4 ; loop ; load_local 3 ; load_local 4 ; lt_s ; not ; brif 1 ; load_local 3 ; const_i32 1 ; add ; store_local 3 ; br 0 ; end ; end ; load_local 2 ; const_i32 1 ; add ; store_local 2 ; br 0 ; end ; end | n_locals=6\n" +

@@ -5717,7 +5717,7 @@ pub function enum_arr_field_read_type(e: ast.Expr, s: LowerState): string {
 
 // nested_arr_field_read_type is the ARRAY-OF-ARRAY twin of the three classifiers
 // above: it returns the field type of a `T[][]` struct field read (`a.rows`
-// where rows: i32[][]), else "". Without it such a receiver was the ONE array
+// where rows: i32[][] or string[][]), else "". Without it such a receiver was the ONE array
 // field shape no classifier claimed, so `a.rows.append(r)` fell through the
 // array-method intercepts to the primitive-receiver cascade, which answers "i32"
 // for anything it cannot type — dispatching `i32.append` and refusing the whole
@@ -5733,7 +5733,7 @@ pub function nested_arr_field_read_type(e: ast.Expr, s: LowerState): string {
             var oty: string = expr_struct_type(fa.obj, s);
             if (oty == "") { return ""; }
             var ft: string = decl_field_type(s.frame.structs, oty, fa.field);
-            if (is_nested_array_field_type(s.frame.structs, ft)) { return ft; }
+            if (is_row_array_field_type(s.frame.structs, ft)) { return ft; }
             return "";
         },
         _ => { return ""; }
@@ -13696,7 +13696,10 @@ function lower_call_named_generic(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIde
                     ast.ExprCall(lac) => {
                         match (lac.callee) {
                             ast.ExprIdent(lacid) => {
-                                arrlit_arg = scalar_arr_producer_call(c.args[ai], sc);
+                                // A capturing lambda's env box: a fresh box only this
+                                // argument holds.
+                                arrlit_arg = scalar_arr_producer_call(c.args[ai], sc)
+                                    || (lac.args.len() > 0 && mkclo_funcval(lacid.name).len() > 0);
                                 // A "STRARR:" producer — a POINTER-element array
                                 // — is stashable only at a COUNTED-RETAIN
                                 // position. The release here is a shallow buffer
@@ -19355,11 +19358,10 @@ function vb_iife_body(e: ast.Expr): ast.Stmt[] {
     return none;
 }
 
-// vb_arms_defer: a defer is armed at the block's top level.
+// vb_arms_defer: a defer is armed anywhere in the block, nested statements
+// included; the replay runs after the block and reads its locals.
 function vb_arms_defer(body: ast.Stmt[]): boolean {
-    var armed: string[] = [];
-    for st in body { armed = armed_defer_flag_at(st, armed); }
-    return armed.len() > 0;
+    return armed_defer_flags(body, []).len() > 0;
 }
 
 // vb_moved_tail is the body of a value block initializer and the index of the
@@ -19391,6 +19393,21 @@ function vb_tail_structarr_fresh(e: ast.Expr, fresh_ret: string[], shares: strin
         return structarr_lit_is_fresh(q.init) && !structarr_unsafe_for(after, q.name, none, fresh_ret) && !structarr_elem_escapes(after, q.name, none, shares) && !structarr_arg_hands_out(after, q.name, none, none, ret_types, fresh_ret);
     }
     return false;
+}
+
+// vb_tail_arrarr_fresh is the array-of-arrays sibling: 1 when the tail local
+// is a fresh arr-of-arr literal nothing after its binding lets escape, 2 when
+// its strings are fresh as well, 0 otherwise.
+function vb_tail_arrarr_fresh(e: ast.Expr, ofr: SigReg): i32 {
+    let (body, k) = vb_moved_tail(e);
+    if (k < 0) { return 0; }
+    if let ast.StmtVar(q) = body[k] {
+        var none: string[] = [];
+        if (!arrarr_lit_is_fresh(q.init, body, k) || arrarr_owner_unsafe(vb_after_decl(body, k), q.name, none, ofr, none)) { return 0; }
+        if (arrarr_lit_strings_fresh(q.init, body, k)) { return 2; }
+        return 1;
+    }
+    return 0;
 }
 
 // vb_tail_strarr_fresh is the string[] sibling: a literal of fresh strings.
@@ -21733,7 +21750,7 @@ function lower_stmt_return(r0: ast.StmtReturn, s: LowerState): LowerState {
         // to the move-on-return path below.
         //
         // A hoisted closure's capture extract (`var <cap> = __env[1+i]`,
-        // "ENVCAP:") is the same borrow: the env box keeps the reference.
+        // "ENVCAP:") is the same borrow: the captured local keeps the reference.
         // E049 refuses assigning a reference-typed capture, so the slot still
         // holds what was captured. A captured closure takes ret_closure_uncounted's
         // retain below instead.
@@ -25052,7 +25069,7 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
     // array (so `for x in row` flows). One nesting level (depth 2).
     var is_arrarr: boolean = false;
     if (is_array_type_name(v.type_name) && v.type_name.len() >= 4 && is_array_type_name(slice_unchecked(v.type_name, 0, v.type_name.len() - 2))) { is_arrarr = true; }
-    is_arrarr = arrarr_from_init_shape(s, se, v, is_arrarr);
+    is_arrarr = arrarr_from_init_shape(s, se, v, is_arrarr) || vbl.is_arrarr;
     // Inner element kind of a T[][] binding ("i64"/"f64"/"string"/"") so a
     // nested read m[i][j] picks the right load (8-byte instead of
     // truncating, #2691) AND `.len()` on a nested string element dispatches
@@ -25061,6 +25078,7 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
     // dependent garbage length). expr_is_strarr's ExprIndex case keys off
     // the "string" tag to recognise `m[i]` of a string[][] as a string[].
     var arrarr_e: string = arrarr_elem_kind_of_init(is_arrarr, se, v);
+    if (arrarr_e == "" && vbl.is_arrarr) { arrarr_e = vbl.arrarr_elem; }
     // #4365 ARRTUP: an `(<tuple-with-array>)[]` array-of-tuples slot stays plain
     // is_arr (its elements are tuple boxes, not arrays, so is_arrarr is false) but
     // records its ELEMENT TUPLE TYPE in arrarr_elem so slot_is_reclaimable_arrtup's
@@ -52785,6 +52803,9 @@ function collect_fresh_arrarr_names(stmts: ast.Stmt[], ofr: SigReg, acc: string[
                     // EVERY appended row strings-fresh.
                     a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
                     if (arrarr_appends_strings_fresh(stmts, v.name, ofr)) { a = push_str_unique(a, "S|" + reclaim_site_key_of(v.name, v.line, v.col)); }
+                } else if (vb_tail_arrarr_fresh(v.init, ofr) > 0) {
+                    a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
+                    if (vb_tail_arrarr_fresh(v.init, ofr) == 2) { a = push_str_unique(a, "S|" + reclaim_site_key_of(v.name, v.line, v.col)); }
                 } else {
                     // Call init `var g: T[][] = mk(..)` of an AAC-registered
                     // producer: same credits the literal it returns would earn.
@@ -53606,21 +53627,18 @@ function slot_is_reclaimable_arrarr(s: LowerState, i: i32): boolean {
     if (i < s.frame.n_params) { return false; }
     if (i >= s.locals.len()) { return false; }
     if (!s.locals[i].is_arrarr) { return false; }
-    // String-kind inners (type-aware arrarr_elem) need the STRICT credit —
-    // every inner element proved a fresh string, so freeing their pointers
-    // can't dangle a live local. Scalar-kind inners value-copy their
-    // elements, so the lax rows-are-literals credit suffices.
-    if (s.arrarr_elem_of_slot(i) == "string") {
-        return reclaim_has(s.frame.reclaimable_names, "ARRARRS:", s.reclaim_site_key(i));
-    }
+    // The lax rows-are-counted credit frees the rows; only the STRICT one,
+    // every inner element proved a fresh string, frees a string-kind slot's
+    // strings too (arrarr_free_helper_of).
     return reclaim_has(s.frame.reclaimable_names, "ARRARR:", s.reclaim_site_key(i));
 }
 
-// arrarr_free_helper_of picks the release helper from the slot's INNER element
-// kind: string inners need the per-element __fern_str_arr_free walk; scalar
-// inners are fully freed by one arr_dec each.
+// arrarr_free_helper_of picks the release helper: a string-kind slot holding
+// the strict credit walks each row's strings through __fern_str_arr_free;
+// every other slot frees its rows with one arr_dec each, leaving any strings
+// in them to their other owners.
 function arrarr_free_helper_of(s: LowerState, i: i32): string {
-    if (s.arrarr_elem_of_slot(i) == "string") { return "__fern_strarrarr_free"; }
+    if (s.arrarr_elem_of_slot(i) == "string" && reclaim_has(s.frame.reclaimable_names, "ARRARRS:", s.reclaim_site_key(i))) { return "__fern_strarrarr_free"; }
     return "__fern_arrarr_free";
 }
 
@@ -63657,10 +63675,11 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
     }
     // Hoisted-closure capture extracts are BORROWS (#4354): make_clo_func
     // synthesizes `var <cap> = __env[1+i]` reads at the top of a `$clo`/`$wrap`
-    // body, but the env box owns those references — the exit sweep's shallow
-    // dec released them EVERY CALL (rc==1 captures were freed out from under
-    // the box's owner: a per-call over-dec/UAF, 2 underflow ticks on the
-    // 2-call escaping shape). Register them under the "ENVCAP:" prefix so the
+    // body, but the captured locals of the frame that built the box own those
+    // references — the exit sweep's shallow dec released them EVERY CALL
+    // (rc==1 captures were freed out from under their owner: a per-call
+    // over-dec/UAF, 2 underflow ticks on the 2-call escaping shape).
+    // Register them under the "ENVCAP:" prefix so the
     // sweep's array loop skips them; the env box itself (owned by the CALLER)
     // keeps its normal release path.
     //
@@ -70705,6 +70724,177 @@ function seed_flags(fn: parser.FuncDecl): string {
     return out;
 }
 
+// A closure box (`__mkclo$<clo>(caps…)`) is keyed in the borrowability
+// registry like a call to `<clo>`, one flag per capture: the box holds each
+// capture as a borrow, so passing a local there is a borrow while the box dies
+// before the local and the closure body keeps the capture no longer than the
+// box. CloSite is one such box: the function `host` builds it and `clo` is the
+// lifted body.
+struct CloSite { key: string, host: i32, clo: i32, caps: i32 }
+
+// clo_sites: every capturing closure box the module builds, with its host and
+// its lifted body.
+function clo_sites(funcs: parser.FuncDecl[]): CloSite[] {
+    var out: CloSite[] = [];
+    var hi: i32 = 0;
+    while (hi < funcs.len()) {
+        var found: CloScan = CloScan { markers: [], caps: [] };
+        for st in funcs[hi].body { found = astwalk.fold_stmt(st, found, clo_marker_visit); }
+        var k: i32 = 0;
+        while (k < found.markers.len()) {
+            var ci: i32 = func_index_named(funcs, mkclo_funcval(found.markers[k]));
+            if (ci >= 0) { out = out.append(CloSite { key: found.markers[k], host: hi, clo: ci, caps: found.caps[k] }); }
+            k = k + 1;
+        }
+        hi = hi + 1;
+    }
+    return out;
+}
+
+struct CloScan { markers: string[], caps: i32[] }
+
+function clo_marker_visit(e: ast.Expr, own sc: CloScan): CloScan {
+    if let ast.ExprCall(c) = e {
+        var nm: string = ident_name_or_empty(c.callee);
+        if (c.args.len() > 0 && mkclo_funcval(nm).len() > 0) {
+            return CloScan { markers: sc.markers.append(nm), caps: sc.caps.append(c.args.len()) };
+        }
+    }
+    return sc;
+}
+
+function func_index_named(funcs: parser.FuncDecl[], name: string): i32 {
+    var i: i32 = 0;
+    while (i < funcs.len()) {
+        if (funcs[i].receiver_type.len() == 0 && funcs[i].name == name) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// clo_site_flags: the flags the box `site` earns under `reg`, or "" when it
+// earns none. The box must die in its host — bound once to a local that only
+// calls it or lends it at borrowable positions, or passed straight to a
+// borrowable position, where the call's own release frees it — and no captured
+// local may be reassigned while the box could read it. Each capture is then a
+// borrow unless the body lets it escape; a bare `return <cap>` retains it.
+function clo_site_flags(site: CloSite, funcs: parser.FuncDecl[], reg: string[]): string {
+    var host: parser.FuncDecl = funcs[site.host];
+    var seen: CloUse = CloUse { key: site.key, reg: reg, total: 0, lent: false, bound: "" };
+    for st in host.body { seen = astwalk.fold_stmt(st, seen, clo_use_visit); }
+    for st in host.body { seen = astwalk.fold_stmt_spine(st, seen, clo_bind_visit); }
+    if (seen.total != 1) { return ""; }
+    var reasg: string[] = body_assign_targets(host.body);
+    if (seen.bound.len() > 0) {
+        if (local_decl_count(host.body, seen.bound) != 1 || util.has_str(reasg, seen.bound)
+            || body_unsafe_for(host.body, seen.bound, reg, [])) { return ""; }
+    } else if (!seen.lent) { return ""; }
+    var body: ast.Stmt[] = funcs[site.clo].body;
+    var cloreasg: string[] = body_assign_targets(body);
+    var flags: string = "";
+    var any: boolean = false;
+    var k: i32 = 0;
+    while (k < site.caps) {
+        var cap: string = env_capture_name(body, k);
+        if (cap.len() > 0 && !util.has_str(cloreasg, cap) && !body_unsafe_for_allow_ret(body, cap, reg, [])) {
+            flags = flags + "1";
+            any = true;
+        } else { flags = flags + "0"; }
+        k = k + 1;
+    }
+    if (!any || clo_site_captures_reassigned(host.body, site.key, reasg)) { return ""; }
+    return flags;
+}
+
+// flags_meet: the positions set in both `a` and `b`, either of which may be ""
+// (none set).
+function flags_meet(a: string, b: string): string {
+    if (a.len() == 0 || b.len() == 0) { return ""; }
+    var out: string = "";
+    var any: boolean = false;
+    var i: i32 = 0;
+    while (i < a.len()) {
+        if (i < b.len() && a[i] == b'1' && b[i] == b'1') { out = out + "1"; any = true; } else { out = out + "0"; }
+        i = i + 1;
+    }
+    if (!any) { return ""; }
+    return out;
+}
+
+function i32_or(a: i32[], b: i32[]): i32[] {
+    var out: i32[] = a;
+    var i: i32 = 0;
+    while (i < b.len()) { if (b[i] == 1) { out = out.with(i, 1); } i = i + 1; }
+    return out;
+}
+
+struct CloUse { key: string, reg: string[], total: i32, lent: boolean, bound: string }
+
+function clo_use_visit(e: ast.Expr, own u: CloUse): CloUse {
+    if let ast.ExprCall(c) = e {
+        var nm: string = ident_name_or_empty(c.callee);
+        if (nm == u.key) { return CloUse { ...u, total: u.total + 1 }; }
+        var i: i32 = 0;
+        while (i < c.args.len()) {
+            if let ast.ExprCall(ac) = c.args[i] {
+                if (ident_name_or_empty(ac.callee) == u.key && nm.len() > 0 && param_is_borrowable(u.reg, nm, i)) {
+                    return CloUse { ...u, lent: true };
+                }
+            }
+            i = i + 1;
+        }
+    }
+    return u;
+}
+
+function clo_bind_visit(st: ast.Stmt, own u: CloUse): CloUse {
+    if let ast.StmtVar(v) = st {
+        if let ast.ExprCall(c) = v.init {
+            if (ident_name_or_empty(c.callee) == u.key) { return CloUse { ...u, bound: v.name }; }
+        }
+    }
+    return u;
+}
+
+// env_capture_name: the local the lifted body reads capture `k` into — its
+// `var <cap> = __env[1+k]` extract — or "".
+function env_capture_name(body: ast.Stmt[], k: i32): string {
+    for st in body {
+        if let ast.StmtVar(v) = st {
+            if let ast.ExprIndex(ix) = v.init {
+                if (ident_name_or_empty(ix.array) == "__env") {
+                    if let ast.ExprNumber(n) = ix.index {
+                        if (n.text == util.i32_to_string(k + 1)) { return v.name; }
+                    }
+                }
+            }
+        }
+    }
+    return "";
+}
+
+// clo_site_captures_reassigned: some local the box `key` captures is reassigned
+// in the host, which could free the buffer the box still reads.
+function clo_site_captures_reassigned(body: ast.Stmt[], key: string, reasg: string[]): boolean {
+    var caps: CloCaps = CloCaps { key: key, names: [] };
+    for st in body { caps = astwalk.fold_stmt(st, caps, clo_caps_visit); }
+    for n in caps.names { if (util.has_str(reasg, n)) { return true; } }
+    return false;
+}
+
+struct CloCaps { key: string, names: string[] }
+
+function clo_caps_visit(e: ast.Expr, own cc: CloCaps): CloCaps {
+    if let ast.ExprCall(c) = e {
+        if (ident_name_or_empty(c.callee) == cc.key) {
+            var names: string[] = cc.names;
+            for a in c.args { names = names.append(ident_name_or_empty(a)); }
+            return CloCaps { key: cc.key, names: names };
+        }
+    }
+    return cc;
+}
+
 pub function borrowable_params_interproc(funcs: parser.FuncDecl[], structs: StructTab): string[] {
     // Greatest-fixpoint FROM ABOVE (the native `inferParamEscapes`, ir.go): start
     // OPTIMISTIC — EVERY param borrowable — then repeatedly re-run the escape
@@ -70767,6 +70957,18 @@ pub function borrowable_params_interproc(funcs: parser.FuncDecl[], structs: Stru
         rows = rows.append(borrow_reg_record(ck, copying_builtin_flags(ck)));
         row_bucket = row_bucket.append(util.hash_bucket(ck, nb));
     }
+    // Closure boxes follow, seeded borrowable at every capture like a function.
+    var sites: CloSite[] = clo_sites(funcs);
+    var site_row0: i32 = rows.len();
+    var site_flags: string[] = [];
+    for site in sites {
+        var sflags: string = "";
+        var sk: i32 = 0;
+        while (sk < site.caps) { sflags = sflags + "1"; sk = sk + 1; }
+        site_flags = site_flags.append(sflags);
+        rows = rows.append(borrow_reg_row(site.key, sflags));
+        row_bucket = row_bucket.append(util.hash_bucket(site.key, nb));
+    }
     var reg: string[] = borrow_reg_rebuild(borrow_reg_new(), i32_filled(nb, 1), rows, row_bucket);
     var deps: CallDeps = call_deps_of(funcs, false, false);
     var dirty: i32[] = i32_filled(n, 1);
@@ -70779,6 +70981,22 @@ pub function borrowable_params_interproc(funcs: parser.FuncDecl[], structs: Stru
     while (iter < cap && any_i32_set(dirty)) {
         var changed: i32[] = i32_filled(n, 0);
         var stale: i32[] = i32_filled(nb, 0);
+        // A box's flags only fall, and its host re-reads the ones that did.
+        var hosts: i32[] = i32_filled(n, 0);
+        var si: i32 = 0;
+        while (si < sites.len()) {
+            var nf: string = flags_meet(site_flags[si], clo_site_flags(sites[si], funcs, reg));
+            if (nf != site_flags[si]) {
+                site_flags = site_flags.with(si, nf);
+                rows = rows.with(site_row0 + si, borrow_reg_row(sites[si].key, nf));
+                stale = stale.with(row_bucket[site_row0 + si], 1);
+                hosts = hosts.with(sites[si].host, 1);
+                dirty = dirty.with(sites[si].host, 1);
+            }
+            si = si + 1;
+        }
+        reg = borrow_reg_rebuild(reg, stale, rows, row_bucket);
+        stale = i32_filled(nb, 0);
         fi = 0;
         while (fi < n) {
             if (dirty[fi] == 1 && funcs[fi].params.len() > 0) {
@@ -70808,7 +71026,7 @@ pub function borrowable_params_interproc(funcs: parser.FuncDecl[], structs: Stru
         }
         reg = borrow_reg_rebuild(reg, stale, rows, row_bucket);
         iter = iter + 1;
-        dirty = worklist_next(deps, changed);
+        dirty = i32_or(worklist_next(deps, changed), hosts);
     }
     return reg;
 }
@@ -82021,6 +82239,9 @@ match (v.init) {
     // A `T[][]` struct FIELD read (`var rows = a.xs`): no slot records that
     // level, but the field's declaration does (#7208).
     ast.ExprFieldAccess(_) => { if (nested_arr_field_read_type(v.init, se) != "") { is_arrarr = true; } },
+    // A call to a function declared to return `T[][]`, a lifted value block's
+    // `__lam_N` included.
+    ast.ExprCall(_) => { if (call_ret_arrarr_type(v.init, se) != "") { is_arrarr = true; } },
     _ => {}
 }
 
@@ -82051,11 +82272,27 @@ if (is_arrarr) {
             var nfk: string = arrarr_elem_kind_of_type(nested_arr_field_read_type(v.init, se));
             if (nfk != "") { arrarr_e = nfk; }
         },
+        ast.ExprCall(_) => {
+            var cfk: string = arrarr_elem_kind_of_type(call_ret_arrarr_type(v.init, se));
+            if (cfk != "") { arrarr_e = cfk; }
+        },
         _ => {}
     }
 }
 
     return arrarr_e;
+}
+
+// call_ret_arrarr_type: the declared `T[][]` return type of a direct call to a
+// non-generic function, or "".
+function call_ret_arrarr_type(e: ast.Expr, s: LowerState): string {
+    if let ast.ExprCall(c) = e {
+        if let ast.ExprIdent(cid) = c.callee {
+            var t: string = sig_reg_value_of(s.frame.sigs.ret_type_fns, cid.name);
+            if (t.len() >= 4 && is_array_type_name(t) && is_array_type_name(slice_unchecked(t, 0, t.len() - 2))) { return t; }
+        }
+    }
+    return "";
 }
 
 function arrtup_elem_tag_of_init(is_arr: boolean, is_arrarr: boolean, se: LowerState, v: ast.StmtVar, arrarr_e: string): string {
@@ -83443,8 +83680,8 @@ function arrarr_owner_unsafe(body: ast.Stmt[], name: string, borrowable: string[
     return arrarr_unsafe_for(body, name, borrowable, ofr, alias_ok) || arrarr_row_escapes_iter(body, name, borrowable);
 }
 
-// collect_arrarr_field_bind_sites: `var p = r.f` binds of a nested scalar-array
-// struct field, `r` a parameter or a single-declaration local. The bind retains
+// collect_arrarr_field_bind_sites: `var p = r.f` binds of a nested-array struct
+// field (`i32[][]`, `string[][]`), `r` a parameter or a single-declaration local. The bind retains
 // the field's buffer and the rows in it are counted — __struct_drop_<T> walks
 // them — so `p` is one more counted owner and may take the arr-of-arr release
 // on the same terms as an alias.
@@ -83453,7 +83690,7 @@ function collect_arrarr_field_bind_sites(stmts: ast.Stmt[], body: ast.Stmt[], pa
     for stmt in stmts {
         match (stmt) {
             ast.StmtVar(v) => {
-                if (is_scalar_rows_type(arrarr_field_bind_type(v, body, params, structs))) {
+                if (is_counted_rows_type(arrarr_field_bind_type(v, body, params, structs))) {
                     a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
                 }
             },
@@ -83477,7 +83714,7 @@ function collect_arrarr_field_bind_sites(stmts: ast.Stmt[], body: ast.Stmt[], pa
 // type the body states once. An annotation is that type, and is read first
 // because resolving the holder walks the body.
 function arrarr_field_bind_type(v: ast.StmtVar, body: ast.Stmt[], params: ast.ParamDecl[], structs: StructTab): string {
-    if (v.type_name.len() > 0 && !is_scalar_rows_type(v.type_name)) { return ""; }
+    if (v.type_name.len() > 0 && !is_counted_rows_type(v.type_name)) { return ""; }
     match (v.init) {
         ast.ExprFieldAccess(fa) => {
             if (util.is_all_digits(fa.field)) { return ""; }
@@ -83501,6 +83738,12 @@ function arrarr_field_bind_type(v: ast.StmtVar, body: ast.Stmt[], params: ast.Pa
 function is_scalar_rows_type(t: string): boolean {
     if (t.len() < 5 || slice_unchecked(t, t.len() - 2, t.len()) != "[]") { return false; }
     return is_leaksafe_array_field(slice_unchecked(t, 0, t.len() - 2));
+}
+
+// is_counted_rows_type: a nested-array field type whose rows __struct_drop_<T>
+// releases with one dec each: scalar rows, or `string[][]`'s string[] rows.
+function is_counted_rows_type(t: string): boolean {
+    return t == "string[][]" || is_scalar_rows_type(t);
 }
 
 function reclaimable_optaarr(body: ast.Stmt[], borrowable: string[], oaas: string[], plan_fe: string[], plan_on: boolean, reassigned: string[], recv_borrow: string[], out: string[]): string[] {

@@ -238,6 +238,58 @@ function main(): i32 {
     return t;
 }`
 	checkBalancedOnEveryBackend(t, "conditional-consumers", src, 130)
+	// A match over a fresh Option whose arm yields the payload binding: the
+	// binding is out of exprType's scope when the analysis asks, so the
+	// counted yield read as a borrow and neither the bound result nor the
+	// argument temp was released (#10552).
+	checkBalancedOnEveryBackend(t, "match-payload-yield", `function sum(xs: i32[]): i32 { var t: i32 = 0; for x in xs { t = t + x; } return t; }
+function opt(j: i32): Option[i32[]] { if (j > 0) { return Some([j, 1]); } return None; }
+function main(): i32 {
+    var t: i32 = 0;
+    var j: i32 = 0;
+    while (j < 4) {
+        var a = [j, 5];
+        a = a.append(1);
+        var v = match (opt(j)) { Some(xs) => xs, None => a };
+        var o = opt(j);
+        var w = match (o) { Some(xs) => xs, None => [9] };
+        t = t + sum(v) + sum(w) + sum(match (opt(j)) { Some(xs) => xs, None => [2] });
+        j = j + 1;
+    }
+    return t;
+}`, 44)
+	// An array-view arm of a conditional argument borrows its source no longer
+	// than the call, as a bare view argument does, so the source keeps its
+	// release (#10553).
+	checkBalancedOnEveryBackend(t, "lent-view-arms", `function sumv(xs: [i32]): i32 { return xs[0] + xs.len(); }
+function main(): i32 {
+    var t: i32 = 0;
+    var j: i32 = 0;
+    while (j < 4) {
+        var a = [j, 5];
+        a = a.append(1);
+        t = t + sumv(if (j > 1) { a[0:2] } else { a[1:3] });
+        t = t + sumv(match (j) { 0 => a[0:1], _ => a[1:2] });
+        j = j + 1;
+    }
+    return t;
+}`, 42)
+	// An owned dyn receiver temp is released once its method call returns
+	// (#10554).
+	checkBalancedOnEveryBackend(t, "dyn-owned-receiver", dynShapesPrelude+`function mkd(j: i32): dyn Shape { return Rect { w: j, h: 2, tag: "q" + "r" }; }
+function main(): i32 {
+    var t: i32 = 0;
+    var j: i32 = 0;
+    var d1: dyn Shape = Rect { w: 5, h: 1, tag: "s" + "" };
+    while (j < 3) {
+        t = t + mkd(j).area();
+        t = t + (if (j > 1) { d1 } else { mkd(j) }).area();
+        t = t + (match (j) { 0 => mkd(1), _ => d1 }).area();
+        t = t + d1.area();
+        j = j + 1;
+    }
+    return t;
+}`, 58)
 	checkBalancedOnEveryBackend(t, "dyn-conditional-args", dynShapesPrelude+`function mkd(j: i32): dyn Shape { return Rect { w: j, h: 2, tag: "q" + "r" }; }
 function main(): i32 {
     var t: i32 = 0;
