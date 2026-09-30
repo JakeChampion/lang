@@ -28,3 +28,12 @@ func TestHeldConnectionsHeapBoundX86_64(t *testing.T) {
 			e2eharness.HeldConnectionsBatch, per, e2eharness.HeldConnectionsBytesPerConnection)
 	}
 }
+
+// Keep-alive requests reuse what earlier ones freed (#9853): the bump
+// high-water mark at request 200 is the one at request 2000.
+func TestBumpPerRequestX86_64(t *testing.T) {
+	port := freeLoopbackPort(t)
+	bin, runner := buildSupervisedServeBin(t, e2eharness.BumpPerRequestServerSource(port))
+	startSupervisedServer(t, bin, runner)
+	e2eharness.CheckBumpPerRequest(t, fmt.Sprintf("127.0.0.1:%d", port))
+}
