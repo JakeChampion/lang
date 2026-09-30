@@ -345,3 +345,9 @@ func TestSelfHostSupervisedServeHandlerStallsItsWorker(t *testing.T) {
 	e2eharness.StartServerProcess(t, binCmd(runner, bin))
 	e2eharness.CheckHandlerStallsItsWorker(t, fmt.Sprintf("127.0.0.1:%d", port))
 }
+
+func TestSelfHostFetchDeadline(t *testing.T) {
+	silentPort, livePort := e2eharness.FetchDeadlineUpstreams(t)
+	bin, runner := selfHostServer(t, e2eharness.FetchDeadlineSource(silentPort, livePort))
+	e2eharness.CheckFetchDeadline(t, binCmd(runner, bin))
+}
