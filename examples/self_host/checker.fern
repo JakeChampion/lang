@@ -5178,8 +5178,9 @@ function uninferred_call_diags(sig: FuncSig, c: ast.ExprCall, bn: string[], name
 }
 
 // empty_array_positions reads the values whose declared type spells `tp`:
-// whether any does, and whether every one is an empty array literal, which
-// binds nothing (#10499). An empty spelling declares no type.
+// whether any does, and whether every one binds nothing: an empty array
+// literal (#10499), or a `use` callback whose binding has no type (#10833).
+// An empty spelling declares no type.
 function empty_array_positions(spellings: string[], values: ast.Expr[], tp: string): (boolean, boolean) {
   var named: boolean = false;
   var all_empty: boolean = true;
@@ -5187,17 +5188,28 @@ function empty_array_positions(spellings: string[], values: ast.Expr[], tp: stri
   while (k < spellings.len() && k < values.len()) {
     if (spellings[k].len() > 0 && type_ref_names_any(parser.parse_type_ref(spellings[k]), [tp])) {
       named = true;
-      var empty: boolean = false;
-      if let ast.ExprArray(arr) = values[k] {
-        empty = arr.elements.len() == 0;
-      }
-      if (!empty) {
+      if (!binds_nothing(values[k])) {
         all_empty = false;
       }
     }
     k = k + 1;
   }
   return (named, all_empty);
+}
+
+function binds_nothing(e: ast.Expr): boolean {
+  match (e) {
+    ast.ExprArray(arr) => {
+      return arr.elements.len() == 0;
+    },
+    ast.ExprLambda(lm) => {
+      return lm.use_infer && lm.params.len() > 0 && lm.params[0].type_name.len() == 0;
+    },
+    _ => {
+      return false;
+    }
+  }
+  return false;
 }
 
 // bound_names_tp: a bound on one of `sig`'s type parameters spells `tp`, so
@@ -18769,6 +18781,14 @@ function e032_call_check(c: ast.ExprCall, lastfn: string[], cur: Scope): util.Di
       out = out.append(dg_at("E032", "use: callee \"" + callee_name + "\"'s last parameter isn't a function — add an explicit `: TYPE` annotation", c.line, c.col));
     } else if (sig.all_type_params.len() > 0 && is_unknown(use_binding_type(c, cur))) {
       out = out.append(dg_at("E032", "use: could not infer binding type for \"" + callee_name + "\" from its arguments — add an explicit `: TYPE` annotation", c.line, c.col));
+      // The callback's parameter stays unknown, so it does not fit the
+      // callee's parameter either, which native reports as it is declared.
+      var last: i32 = sig.param_types.len() - 1;
+      var expected: string = "fn";
+      if (last < sig.param_type_names.len()) {
+        expected = sig.param_type_names[last];
+      }
+      out = out.append(dg_at("E038", "argument " + util.i32_to_string(c.args.len()) + ": expected " + expected + ", got " + use_callback_label(c.args[c.args.len() - 1], cur), c.line, c.col));
     }
     return out;
   }
@@ -18794,6 +18814,27 @@ function e032_call_check(c: ast.ExprCall, lastfn: string[], cur: Scope): util.Di
   }
   out = out.append(dg_at("E032", "use: callee \"" + callee_name + "\" has no signature; add an explicit `: TYPE` annotation", c.line, c.col));
   return out;
+}
+
+// use_callback_label spells a synthesised `use` callback whose binding has no
+// type: each parameter unknown, and the return its body settled.
+function use_callback_label(e: ast.Expr, s: Scope): string {
+  var params: string = "";
+  if let ast.ExprLambda(lm) = e {
+    var i: i32 = 0;
+    while (i < lm.params.len()) {
+      if (i > 0) {
+        params = params + ", ";
+      }
+      params = params + "<unknown>";
+      i = i + 1;
+    }
+  }
+  var ret: string = "unknown";
+  if let typeinfo.TypeFunc(ft) = check_expr(e, s) {
+    ret = type_label(ft.ret_type);
+  }
+  return "(" + params + ") => " + ret;
 }
 
 // e032_expr collects the E032 diagnostics an expression contributes — a `use`
