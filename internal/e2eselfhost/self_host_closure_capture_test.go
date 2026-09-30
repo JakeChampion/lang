@@ -309,6 +309,14 @@ function main(): i32 {
 			want: 0,
 		},
 		{
+			// A usize capture is a scalar the box holds no count of: past the
+			// below-heap guard (256 MiB, and past 4 GiB) a retain read it as an
+			// address.
+			name: "returned_closure_usize_capture",
+			src:  closureUsizeCaptureSrc,
+			want: 177,
+		},
+		{
 			// The two-closure shape #9657 was filed with.
 			name: "returned_closures_in_one_loop",
 			src: `function array_capture(n: i32): (i32) => i32 {
@@ -441,6 +449,37 @@ function main(): i32 {
 }`,
 			want: 51,
 		},
+	}
+}
+
+const closureUsizeCaptureSrc = `@noinline
+function mk(n: usize): (i32) => i32 {
+    var u: usize = n;
+    return (x: i32): i32 => x + ((u / 1000000) as i32);
+}
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 50) {
+        var g = mk(3000000000 as usize);
+        var h = mk(5000000017 as usize);
+        t = (t + g(i) % 97 + h(i) % 89) % 1000;
+        i = i + 1;
+    }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return t % 251 + 100;
+}`
+
+// TestSelfHostClosureUsizeCaptureArm64: the usize capture row on arm64, both
+// lowerings, value and underflow gate (interpreter-confirmed 177; the division
+// reads the capture's full width).
+func TestSelfHostClosureUsizeCaptureArm64(t *testing.T) {
+	gcc, qemu := arm64Tooling(t)
+	cli := newStrictCLI(t)
+	for _, env := range []string{"FERN_SEM_IR=1", "FERN_SEM_IR="} {
+		if code, _ := runArm64(t, gcc, qemu, cli.emit(t, "arm64-linux", closureUsizeCaptureSrc, env)); code != 177 {
+			t.Errorf("%s: exited %d, want 177 (99 = rc underflow; 139 = a capture retained as an address)", env, code)
+		}
 	}
 }
 
