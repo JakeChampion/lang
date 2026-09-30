@@ -127,7 +127,7 @@ func sigSpelling(t ast.Type) string {
 
 var (
 	selfHostBuiltinSigsRE = regexp.MustCompile(
-		`(?s)function builtin_sigs\(\): string\[\] \{\s*return \[(.*?)\n  \];`)
+		`(?s)function builtin_sigs\(\): string\[\] \{\s*return \[(.*?)\n\s*\];`)
 	sigRowRE = regexp.MustCompile(`"([^"]*)"`)
 )
 

@@ -5,10 +5,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
-	"strconv"
 	"testing"
 
+	"github.com/jakechampion/lang/internal/lexer"
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
@@ -127,9 +126,10 @@ func findWITDir() (string, error) {
 }
 
 // TestProxyWorldFernPayload pins the self-host compiler's copy of the proxy
-// world (examples/self_host/wit_proxy_world.fern, a Fern string literal
-// spelled one \xNN escape per byte) to proxy.bin, so the two cannot drift
-// when the WIT is regenerated.
+// world (examples/self_host/wit_proxy_world.fern, the concatenated Fern string
+// literals of proxy_world_payload) to proxy.bin, so the two cannot drift when
+// the WIT is regenerated. The literals are read through the lexer, so any
+// spelling of a byte counts.
 func TestProxyWorldFernPayload(t *testing.T) {
 	want, err := componenttype.PayloadFor("proxy")
 	if err != nil {
@@ -139,13 +139,15 @@ func TestProxyWorldFernPayload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	toks, _, err := lexer.Tokenize(string(src))
+	if err != nil {
+		t.Fatal(err)
+	}
 	var got []byte
-	for _, m := range regexp.MustCompile(`\\x([0-9a-f]{2})`).FindAllStringSubmatch(string(src), -1) {
-		b, err := strconv.ParseUint(m[1], 16, 8)
-		if err != nil {
-			t.Fatal(err)
+	for _, tok := range toks {
+		if tok.Kind == lexer.String {
+			got = append(got, tok.Text...)
 		}
-		got = append(got, byte(b))
 	}
 	if !bytes.Equal(got, want) {
 		t.Fatalf("wit_proxy_world.fern carries %d bytes that differ from proxy.bin (%d bytes); regenerate it per doc.go", len(got), len(want))

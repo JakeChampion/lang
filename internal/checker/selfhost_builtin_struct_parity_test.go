@@ -102,16 +102,22 @@ func parseInjectedStructDecls(t *testing.T, src string) map[string]string {
 	t.Helper()
 	// The guard is `name_declared`, which answers for an enum of that name
 	// as well as a struct; `struct_declared` is the struct-only half it calls.
-	block := regexp.MustCompile(`if \(!(?:name|struct)_declared\(structs, "([A-Za-z_][A-Za-z0-9_]*)"\)\) \{([\s\S]*?)\n    \}`)
+	// A block ends at the first `}` indented as far as its `if` line.
+	head := regexp.MustCompile(`(?m)^([ \t]*)if \(!(?:name|struct)_declared\(structs, "([A-Za-z_][A-Za-z0-9_]*)"\)\) \{`)
 	field := regexp.MustCompile(`StructFieldDecl \{[^}]*\}`)
 	out := map[string]string{}
-	for _, m := range block.FindAllStringSubmatch(src, -1) {
+	for _, m := range head.FindAllStringSubmatchIndex(src, -1) {
+		rest := src[m[1]:]
+		end := strings.Index(rest, "\n"+src[m[2]:m[3]]+"}")
+		if end < 0 {
+			t.Fatalf("the injection block for %s has no closing brace at its own indent", src[m[4]:m[5]])
+		}
 		var parts []string
-		for _, f := range field.FindAllString(m[2], -1) {
+		for _, f := range field.FindAllString(rest[:end], -1) {
 			parts = append(parts, injectedFieldSpelling(f))
 		}
 		if len(parts) > 0 {
-			out[m[1]] = strings.Join(parts, ", ")
+			out[src[m[4]:m[5]]] = strings.Join(parts, ", ")
 		}
 	}
 	if len(out) == 0 {
