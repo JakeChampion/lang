@@ -872,6 +872,11 @@ function record_field(fa: ast.ExprFieldAccess, s: State): Value {
     var container: Value = expr(fa.obj, s, typeinfo.unchecked());
     s = container.s;
     if (!s.ok) { return container; }
+    // `r.fd` on a stream handle: the handle is its descriptor, so the
+    // projection is the value itself read as the i32.
+    if (fa.field == "fd" && semtypes.is_handle(s.values[container.id])) {
+        return define(s, ssasem.cast(), [container.id], 0, "", t_i32());
+    }
     var name: string = "";
     if let typeinfo.TypeStruct(r) = s.values[container.id] { name = r.name; }
     var sig: checker.StructSig = record_schema(name, s);
@@ -2362,6 +2367,9 @@ function type_head(obj: ast.Expr, s: State): string {
             return id.name;
         }
         if (union_variants(s, id.name).len() > 0 || builtin_union_layout(id.name) != 0) { return id.name; }
+        // A primitive's impl may declare an associated function
+        // (`i32.from_json_value(v)`); the name is never a value.
+        if (typeinfo.is_primitive_type_name(id.name)) { return id.name; }
     }
     return "";
 }
@@ -4770,6 +4778,7 @@ function os_floor_contracts(done: typeinfo.Type, strs: typeinfo.Type): ssasem.Co
         ssasem.Contract { name: "tcp_pollable", params: [t_i32()], modes: [v], result: t_i32() },
         ssasem.Contract { name: "tcp_listen_with", params: [bytes, t_i32(), t_i32(), t_bool()], modes: [b, v, v, v], result: t_i32() },
         ssasem.Contract { name: "tcp_socket_ctl", params: [t_i32(), t_i32(), t_i32()], modes: [v, v, v], result: t_i32() },
+        ssasem.Contract { name: "tcp_sendfile", params: [t_i32(), t_i32(), t_i32()], modes: [v, v, v], result: t_i32() },
         ssasem.Contract { name: "udp_bind", params: [bytes, t_i32()], modes: [b, v], result: t_i32() },
         ssasem.Contract { name: "udp_connect", params: [t_i32(), bytes, t_i32()], modes: [v, b, v], result: t_i32() },
         ssasem.Contract { name: "udp_sendto", params: [t_i32(), bytes, t_i32(), t_string()], modes: [v, b, v, b], result: t_i32() },

@@ -20,3 +20,6 @@
 !/.claude/hooks/
 /unicodegen
 /x86tblgen
+
+# cargo's build directory when the hyper bench server is built in place
+scripts/net-bench.d/hyperhello/target/

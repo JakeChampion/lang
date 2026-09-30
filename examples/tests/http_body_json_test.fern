@@ -1,0 +1,96 @@
+import "std/test";
+import "std/http";
+import "std/json";
+import "std/mock_platform";
+
+// examples/tests/http_body_json_test.fern — a typed JSON body (#9854):
+// `http.body_json[T](req)` decodes the body as a `T` deriving
+// `json.FromJson`, and the three ways it fails each answer with their own
+// status through `BodyError`'s `ToResponse`.
+
+@derive(json.Json, json.FromJson)
+struct Item { name: string, qty: i32, tags: string[] }
+
+// Decode-only: an `Option` field is `None` when missing or null.
+@derive(json.FromJson)
+struct Note { text: Option[string] }
+
+// The handler under test fails with `?`: a decode error becomes the reply.
+function create(req: HttpRequest): Result[HttpResponse, http.BodyError] {
+    var item: Item = http.body_json[Item](req)?;
+    return Ok(http.json_status(201, item.to_json()));
+}
+
+function handle(req: HttpRequest, plat: Platform): HttpResponse {
+    return http.respond(create(req));
+}
+
+function test_a_json_body_decodes(): test.TestOutcome {
+    var m: MockPlatform = mock_platform.mock_platform_new();
+    var req: HttpRequest = http.request("POST", "/items").with_json("{\"name\":\"axe\",\"qty\":2,\"tags\":[\"iron\",\"oak\"]}");
+    var resp: HttpResponse = handle(req, m.as_platform());
+    match (test.assert_status(resp, 201)) { Fail(msg) => { return test.fail(msg); }, Pass => {} }
+    return test.assert_body(resp, "{\"name\":\"axe\",\"qty\":2,\"tags\":[\"iron\",\"oak\"]}");
+}
+
+function test_the_media_type_must_be_json(): test.TestOutcome {
+    var m: MockPlatform = mock_platform.mock_platform_new();
+    var resp: HttpResponse = handle(http.request("POST", "/items").with_body("{\"name\":\"axe\",\"qty\":2,\"tags\":[]}"), m.as_platform());
+    match (test.assert_status(resp, 415)) { Fail(msg) => { return test.fail(msg); }, Pass => {} }
+    match (test.assert_header(resp, "content-type", "application/problem+json")) { Fail(msg) => { return test.fail(msg); }, Pass => {} }
+    var typed: HttpRequest = http.request("POST", "/items").with_body("{\"name\":\"axe\",\"qty\":2,\"tags\":[]}").with_header("Content-Type", "application/vnd.shop+JSON; charset=utf-8");
+    return test.assert_status(handle(typed, m.as_platform()), 201);
+}
+
+function test_malformed_json_is_400(): test.TestOutcome {
+    var m: MockPlatform = mock_platform.mock_platform_new();
+    var resp: HttpResponse = handle(http.request("POST", "/items").with_json("{\"name\":"), m.as_platform());
+    match (test.assert_status(resp, 400)) { Fail(msg) => { return test.fail(msg); }, Pass => {} }
+    var body: string = resp.body_string();
+    if (!body.contains("\"title\":\"Malformed JSON\"") || !body.contains("1:9")) { return test.fail("problem body: " + body); }
+    return test.pass();
+}
+
+function test_the_wrong_shape_is_422(): test.TestOutcome {
+    var m: MockPlatform = mock_platform.mock_platform_new();
+    var resp: HttpResponse = handle(http.request("POST", "/items").with_json("{\"name\":\"axe\",\"qty\":\"two\",\"tags\":[]}"), m.as_platform());
+    match (test.assert_status(resp, 422)) { Fail(msg) => { return test.fail(msg); }, Pass => {} }
+    var body: string = resp.body_string();
+    if (!body.contains("field \\\"qty\\\": expected an integer, got a string")) { return test.fail("problem body: " + body); }
+    var missing: HttpResponse = handle(http.request("POST", "/items").with_json("{\"name\":\"axe\"}"), m.as_platform());
+    match (test.assert_status(missing, 422)) { Fail(msg) => { return test.fail(msg); }, Pass => {} }
+    if (!missing.body_string().contains("missing field \\\"qty\\\"")) { return test.fail("problem body: " + missing.body_string()); }
+    return test.pass();
+}
+
+function test_decode_reads_text_directly(): test.TestOutcome {
+    match (json.decode[Note]("{\"text\":\"sharp\"}")) {
+        Ok(note) => {
+            match (note.text) {
+                Some(n) => { if (n != "sharp") { return test.fail("text: " + n); } },
+                None => { return test.fail("the text was dropped"); }
+            }
+        },
+        Err(why) => { return test.fail(why); }
+    }
+    match (Note.from_json("{}")) {
+        Ok(note) => {
+            match (note.text) {
+                Some(n) => { return test.fail("a missing text read as " + n); },
+                None => { return test.pass(); }
+            }
+        },
+        Err(why) => { return test.fail(why); }
+    }
+    return test.fail("unreachable");
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("Typed JSON bodies");
+    r = r.it("a JSON body decodes", test_a_json_body_decodes);
+    r = r.it("the media type must be JSON", test_the_media_type_must_be_json);
+    r = r.it("malformed JSON is 400", test_malformed_json_is_400);
+    r = r.it("the wrong shape is 422", test_the_wrong_shape_is_422);
+    r = r.it("decode reads text directly", test_decode_reads_text_directly);
+    return r.finish();
+}

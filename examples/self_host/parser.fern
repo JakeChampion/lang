@@ -8525,7 +8525,7 @@ pub function builtin_function_names(): string[] {
         "tcp_listen", "tcp_accept", "tcp_local_port", "tcp_recv", "tcp_send", "tcp_close",
         "udp_send", "tcp_connect", "tcp_pollable", "tcp_listen_with", "tcp_socket_ctl",
         "udp_bind", "udp_connect", "udp_sendto", "udp_recvfrom", "tcp_connect_with", "unix_listen", "unix_connect",
-        "reactor_new", "reactor_ctl", "reactor_wait", "tcp_recv_into"
+        "reactor_new", "reactor_ctl", "reactor_wait", "tcp_recv_into", "tcp_sendfile"
     ];
 }
 
@@ -8553,6 +8553,11 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
     structs = add_builtin_variant(structs, "InvalidUtf8", "string", "IoError");
     structs = add_builtin_variant(structs, "Interrupted", "", "IoError");
     structs = add_builtin_variant(structs, "Unsupported", "", "IoError");
+    structs = add_builtin_variant(structs, "BodyText", "string", "Body");
+    structs = add_builtin_variant(structs, "BodyBytes", "u8[]", "Body");
+    structs = add_builtin_variant(structs, "BodyStream", "Stream", "Body");
+    structs = add_builtin_variant(structs, "BodyFile", "string", "Body");
+    structs = add_builtin_variant(structs, "BodyChunks", "ChunkProducer", "Body");
     // Other carries TWO payloads (path, message) like native's declaration
     // (#4370) — open-coded because add_builtin_variant takes one payload.
     // Field naming matches the user-enum desugar: `__ev`, `__ev1`.
@@ -8656,6 +8661,13 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
         stf = stf.append(StructFieldDecl { name: "pos", type_name: "i32", fn_ret: "", fn_param_types: "" });
         structs = structs.append(StructDecl { name: "Stream", fields: stf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [] , is_pub: true , is_package: false });
     }
+    // ChunkProducer is what a `BodyChunks` carries, so it has to be here for
+    // `resp.body`'s payload to resolve its `next` field.
+    if (!name_declared(structs, "ChunkProducer")) {
+        var cpf: StructFieldDecl[] = [];
+        cpf = cpf.append(StructFieldDecl { name: "next", type_name: "fn", fn_ret: "Option[u8[]]", fn_param_types: "i32" });
+        structs = structs.append(StructDecl { name: "ChunkProducer", fields: cpf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [] , is_pub: true , is_package: false });
+    }
     if (!name_declared(structs, "HttpRequest")) {
         var hrf: StructFieldDecl[] = [];
         hrf = hrf.append(StructFieldDecl { name: "method", type_name: "string", fn_ret: "", fn_param_types: "" });
@@ -8668,7 +8680,7 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
     if (!name_declared(structs, "HttpResponse")) {
         var hsf: StructFieldDecl[] = [];
         hsf = hsf.append(StructFieldDecl { name: "status", type_name: "i32", fn_ret: "", fn_param_types: "" });
-        hsf = hsf.append(StructFieldDecl { name: "body", type_name: "string", fn_ret: "", fn_param_types: "" });
+        hsf = hsf.append(StructFieldDecl { name: "body", type_name: "Body", fn_ret: "", fn_param_types: "" });
         hsf = hsf.append(StructFieldDecl { name: "headers", type_name: "HeaderMap", fn_ret: "", fn_param_types: "" });
         structs = structs.append(StructDecl { name: "HttpResponse", fields: hsf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [] , is_pub: true , is_package: false });
     }
@@ -8746,6 +8758,11 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
     // strings (leaf-safe).
     structs = add_builtin_struct2(structs, "MockCall", "name", "string", "args", "string");
     structs = add_builtin_struct2(structs, "Stream", "data", "u8[]", "pos", "i32");
+    if (!name_declared(structs, "ChunkProducer")) {
+        var cpf: StructFieldDecl[] = [];
+        cpf = cpf.append(StructFieldDecl { name: "next", type_name: "fn", fn_ret: "Option[u8[]]", fn_param_types: "i32" });
+        structs = structs.append(StructDecl { name: "ChunkProducer", fields: cpf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [] , is_pub: true , is_package: false });
+    }
     if (!name_declared(structs, "BytesWriter")) {
         var bwf: StructFieldDecl[] = [];
         bwf = bwf.append(StructFieldDecl { name: "data", type_name: "u8[]", fn_ret: "", fn_param_types: "" });
@@ -9029,6 +9046,42 @@ pub function split_top_commas(s: string): string[] {
         i = i + 1;
     }
     out = out.append(slice_unchecked(s, start, s.len()) + "");
+    return out;
+}
+
+// is_serve_options_type reports whether the type text is std/tcp's
+// `ServeOptions`: bare (a flat load), qualified as the entry imports the
+// module (`tcp.ServeOptions`), or mangled once the bundle has run
+// (`tcp__ServeOptions`).
+pub function is_serve_options_type(t: string): boolean {
+    var s: string = strip_type_spaces(t);
+    if (s == "ServeOptions") { return true; }
+    var n: i32 = s.len();
+    if (n > 13 && slice_unchecked(s, n - 13, n) + "" == ".ServeOptions") { return true; }
+    return n > 14 && slice_unchecked(s, n - 14, n) + "" == "__ServeOptions";
+}
+
+// init_return_kind classifies what a handler program's `init` answers, by
+// its return type text: 0 nothing, 1 a state for the handler to carry, 2
+// the serve options, 3 the serve options beside a state (`(ServeOptions, S)`).
+pub function init_return_kind(rt: string): i32 {
+    var s: string = strip_type_spaces(rt);
+    if (s.len() == 0 || s == "void") { return 0; }
+    if (is_serve_options_type(s)) { return 2; }
+    if (s.len() > 2 && s[0] == b'(' && s[s.len() - 1] == b')') {
+        var parts: string[] = split_top_commas(slice_unchecked(s, 1, s.len() - 1) + "");
+        if (parts.len() == 2 && is_serve_options_type(parts[0])) { return 3; }
+    }
+    return 1;
+}
+
+function strip_type_spaces(t: string): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < t.len()) {
+        if (t[i] != b' ') { out = out + slice_unchecked(t, i, i + 1); }
+        i = i + 1;
+    }
     return out;
 }
 
@@ -9531,6 +9584,32 @@ function lambda_ret_of(e: ast.Expr, env: MEnv, funcs: MFns): string {
 function infer_inst(fd: FuncDecl, args: ast.Expr[], env: MEnv, funcs: MFns): string {
     if (fd.type_params.len() == 0) { return ""; }
     return binds_to_key(fd.type_params, full_ret_binds(fd, args, env, funcs, fd.type_params));
+}
+
+// explicit_inst_key is the instantiation a call spells itself (`f[i32](x)`),
+// keyed as infer_inst keys one, or "" when the call writes none or not one
+// per type parameter. It is read before the arguments and the destination
+// are: a type parameter that appears only in the result, or one forwarded
+// from the caller's own (`decode[T](s)` in a generic body, substituted by
+// the clone), binds from nothing else.
+function explicit_inst_key(fd: FuncDecl, type_args: string[]): string {
+    if (fd.type_params.len() == 0 || type_args.len() != fd.type_params.len()) { return ""; }
+    var key: string = "";
+    var j: i32 = 0;
+    while (j < type_args.len()) {
+        if (type_args[j].len() == 0) { return ""; }
+        if (j > 0) { key = key + ";"; }
+        key = key + type_args[j];
+        j = j + 1;
+    }
+    return key;
+}
+
+// key_parts splits an instantiation key for `fd` the way clone_bg does: a
+// single type parameter's key is the one type verbatim.
+function key_parts(fd: FuncDecl, key: string): string[] {
+    if (fd.type_params.len() == 1) { return [key]; }
+    return split_inst_key(key);
 }
 
 // binds_to_key joins a resolved binding env into the ';'-separated
@@ -10157,6 +10236,13 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
         ast.ExprCall(c) => {
             match (c.callee) {
                 ast.ExprIdent(cid) => {
+                    if (c.type_args.len() > 0) {
+                        var xbi: i32 = bg_find(funcs, cid.name);
+                        if (xbi >= 0) {
+                            var xkey: string = explicit_inst_key(funcs.decls[xbi], c.type_args);
+                            if (xkey.len() > 0) { return subst_ty(funcs.decls[xbi].ret_type, funcs.decls[xbi].type_params, key_parts(funcs.decls[xbi], xkey)); }
+                        }
+                    }
                     var crt: string = call_ret_type(funcs, cid.name, c.args, env);
                     if (crt.len() == 0) { crt = func_ret_of(funcs.decls, cid.name); }
                     // A bare type variable as the inferred call type — `A` from a
@@ -10340,7 +10426,8 @@ function mono_expr(e: ast.Expr, env: MEnv, funcs: MFns, ins: Insts): RExpr {
                 ast.ExprIdent(cid) => {
                     var bi: i32 = bg_find(funcs, cid.name);
                     if (bi >= 0) {
-                        var ct: string = infer_inst(funcs.decls[bi], c.args, env, funcs);
+                        var ct: string = explicit_inst_key(funcs.decls[bi], c.type_args);
+                        if (ct.len() == 0) { ct = infer_inst(funcs.decls[bi], c.args, env, funcs); }
                         if (ct.len() > 0) {
                             // The clone NAME must be symbol-safe: a key that is a
                             // generic-struct instantiation (`iter__ArrayIter[i32]`,
@@ -10366,7 +10453,8 @@ function mono_expr(e: ast.Expr, env: MEnv, funcs: MFns, ins: Insts): RExpr {
                             var qn: string = modid.name + "." + fac.field;
                             var bi2: i32 = bg_find(funcs, qn);
                             if (bi2 >= 0) {
-                                var ct2: string = infer_inst(funcs.decls[bi2], c.args, env, funcs);
+                                var ct2: string = explicit_inst_key(funcs.decls[bi2], c.type_args);
+                                if (ct2.len() == 0) { ct2 = infer_inst(funcs.decls[bi2], c.args, env, funcs); }
                                 if (ct2.len() > 0) {
                                     cur = cur.iadd(qn, ct2);
                                     return RExpr { rexpr: ast.ExprCall { callee: ast.ExprFieldAccess { obj: fac.obj, field: fac.field + "__" + sanitize_key(ct2), line: fac.line, col: fac.col, ty: fac.ty }, args: nargs, line: c.line, col: c.col, type_args: c.type_args, ty: c.ty }, rins: cur };
@@ -10562,7 +10650,8 @@ function mono_call_expected(e: ast.Expr, expected: string, env: MEnv, funcs: MFn
                     ast.ExprIdent(cid) => {
                         var bi: i32 = bg_find(funcs, cid.name);
                         if (bi >= 0) {
-                            var key: string = infer_inst_ret(funcs.decls[bi], c.args, expected, env, funcs);
+                            var key: string = explicit_inst_key(funcs.decls[bi], c.type_args);
+                            if (key.len() == 0) { key = infer_inst_ret(funcs.decls[bi], c.args, expected, env, funcs); }
                             if (key.len() > 0) {
                                 var nargs: ast.Expr[] = [];
                                 var cur: Insts = ins;
@@ -10594,7 +10683,8 @@ function mono_call_expected(e: ast.Expr, expected: string, env: MEnv, funcs: MFn
                                 var qn: string = modid.name + "." + fac.field;
                                 var bq: i32 = bg_find(funcs, qn);
                                 if (bq >= 0) {
-                                    var qkey: string = infer_inst_ret(funcs.decls[bq], c.args, expected, env, funcs);
+                                    var qkey: string = explicit_inst_key(funcs.decls[bq], c.type_args);
+                                    if (qkey.len() == 0) { qkey = infer_inst_ret(funcs.decls[bq], c.args, expected, env, funcs); }
                                     if (qkey.len() > 0) {
                                         var qargs: ast.Expr[] = [];
                                         var qcur: Insts = ins;
@@ -10980,6 +11070,14 @@ function subst_ty_join(parts: string[], sep: string, tparams: string[], cts: str
     return out;
 }
 
+// subst_ty_each is subst_ty over a list of spellings — the type arguments a
+// call writes, which a clone substitutes like its annotations.
+function subst_ty_each(tys: string[], tparams: string[], cts: string[]): string[] {
+    var out: string[] = [];
+    for t in tys { out = out.append(subst_ty(t, tparams, cts)); }
+    return out;
+}
+
 pub function subst_ty(name: string, tparams: string[], cts: string[]): string {
     var k: i32 = tp_index(name, tparams);
     if (k >= 0) { return cts[k]; }
@@ -11072,7 +11170,7 @@ function subst_expr(e: ast.Expr, tparams: string[], cts: string[]): ast.Expr {
             var na: ast.Expr[] = [];
             var ci: i32 = 0;
             while (ci < c.args.len()) { na = na.append(subst_expr(c.args[ci], tparams, cts)); ci = ci + 1; }
-            return ast.ExprCall { callee: subst_expr(c.callee, tparams, cts), args: na, line: c.line, col: c.col, type_args: c.type_args, ty: c.ty };
+            return ast.ExprCall { callee: subst_expr(c.callee, tparams, cts), args: na, line: c.line, col: c.col, type_args: subst_ty_each(c.type_args, tparams, cts), ty: c.ty };
         },
         ast.ExprStructLit(sl) => {
             var nv: ast.Expr[] = [];
@@ -16577,7 +16675,10 @@ pub function resolve_variant_fields_module(mod: Module): Module {
 
 // or named args), so it is evaluated once on the incoming module and gates the
 // per-body fda step — reproducing fill_default_args_module's early-return.
-pub function desugar_prepass_module(mod: Module): Module {
+pub function desugar_prepass_module(raw: Module): Module {
+    // `f[Name](x)` parses as an index until the names are known; the checker
+    // settles it on its own route, and the stack-IR route settles it here.
+    var mod: Module = retag_type_arg_indexes(raw);
     var need_fda: boolean = module_has_default_params(mod) || module_has_named_args(mod);
     var none: string[] = [];
     var funcs: FuncDecl[] = [];
@@ -17164,9 +17265,10 @@ function rta_call_of(x: ast.Expr, generics: string[], types: string[], shadow: s
     if let ast.ExprCall(c) = x {
         if (c.type_args.len() > 0) { return x; }
         if let ast.ExprIndex(ix) = c.callee {
-            if let ast.ExprIdent(fid) = ix.array {
-                if let ast.ExprIdent(tid) = ix.index {
-                    if (util.has_str(generics, fid.name) && util.has_str(types, tid.name) && !util.has_str(shadow, fid.name) && !util.has_str(shadow, tid.name)) {
+            if let ast.ExprIdent(tid) = ix.index {
+                if (util.has_str(types, tid.name) && !util.has_str(shadow, tid.name)) {
+                    var fname: string = rta_callee_name(ix.array, shadow);
+                    if (fname.len() > 0 && util.has_str(generics, fname)) {
                         return ast.ExprCall { ...c, callee: ix.array, type_args: [tid.name] };
                     }
                 }
@@ -17174,6 +17276,23 @@ function rta_call_of(x: ast.Expr, generics: string[], types: string[], shadow: s
         }
     }
     return x;
+}
+
+// rta_callee_name is the declaration name an indexed callee would resolve
+// to: a bare name, or `mod.f` for a module-qualified one, as a flattened
+// bundle names an imported function; "" when a value shadows it.
+function rta_callee_name(callee: ast.Expr, shadow: string[]): string {
+    if let ast.ExprIdent(fid) = callee {
+        if (util.has_str(shadow, fid.name)) { return ""; }
+        return fid.name;
+    }
+    if let ast.ExprFieldAccess(fa) = callee {
+        if let ast.ExprIdent(mid) = fa.obj {
+            if (util.has_str(shadow, mid.name)) { return ""; }
+            return mid.name + "." + fa.field;
+        }
+    }
+    return "";
 }
 
 function fda_fill(mod: Module): Module {
@@ -18803,47 +18922,35 @@ function synth_struct_json(sd: StructDecl): FuncDecl {
     return FuncDecl { no_inline: false, name: "to_json", receiver_name: "self", receiver_type: sd.name, type_params: notp, params: noparams, ret_type: "string", body: body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "" , is_package: false, module: "" };
 }
 
-// fromjson_accessor returns the `json.json_get_*` accessor for a field
-// type, or "" when the type has none — the gate `from_json_derivable`
-// uses to decide whether the deserialise companion can be synthesised.
-// Mirrors the native synthFromJson switch: 64-bit ints go through the
-// i64 accessor, narrower ints through i32, plus bool / string. Any other
-// field type (nested struct, array, Option, f64) has no flat accessor —
-// serialise still works, deserialise is a documented follow-up (#2695).
-function fromjson_accessor(tn: string): string {
-    if (tn == "i64" || tn == "u64") { return "json_get_i64"; }
-    if (tn == "i32" || tn == "u32") { return "json_get_i32"; }
-    if (tn == "boolean") { return "json_get_bool"; }
-    if (tn == "string") { return "json_get_string"; }
+// fromjson_container names the container a FromJson field's type is —
+// "array" for `E[]`, "option" for `Option[E]` — and "" for any other type;
+// fromjson_elem is the type the field's decoder is called on: the
+// container's element, else the field type itself.
+pub function fromjson_container(t: string): string {
+    if (t.len() > 2 && slice_unchecked(t, t.len() - 2, t.len()) == "[]") { return "array"; }
+    if (t.len() > 8 && slice_unchecked(t, 0, 7) == "Option[" && t[t.len() - 1] == b']') { return "option"; }
     return "";
 }
 
-// from_json_derivable reports whether every field of `sd` has a flat
-// `json.json_get_*` accessor — the precondition for synth_from_json. A
-// struct with a single unsupported field gets `to_json` only.
-function from_json_derivable(sd: StructDecl): boolean {
-    var i: i32 = 0;
-    while (i < sd.fields.len()) {
-        if (fromjson_accessor(sd.fields[i].type_name).len() == 0) { return false; }
-        i = i + 1;
-    }
-    return true;
+pub function fromjson_elem(t: string): string {
+    var c: string = fromjson_container(t);
+    if (c == "array") { return slice_unchecked(t, 0, t.len() - 2) + ""; }
+    if (c == "option") { return slice_unchecked(t, 7, t.len() - 1) + ""; }
+    return t;
 }
 
-// synth_from_json builds the deserialise companion to synth_struct_json:
-// a receiver-less associated `from_json(s: string): Result[Self, string]`
-// that parses the JSON text and extracts each field by name, returning
-// `Err(...)` on invalid JSON or a missing field. The body nests one
-// `match` per field over its `json.json_get_*` accessor `Option`, so a
-// missing field short-circuits to `Err("missing field: <name>")` without
-// a `?` operator; the innermost arm returns `Ok(Self { … })`. The
-// `json.*` calls resolve through the `@derive(json.Json)` site's own
-// `import "std/json"` (basename alias `json`) — modload rewrites them to
-// the flat `json__*`. Mirrors the native synthFromJson (#2695). Only
-// called when from_json_derivable(sd) holds, so every field's accessor
-// is non-empty.
-function synth_from_json(sd: StructDecl): FuncDecl {
-    // Innermost: return Ok(Self { f: __fj_f, … }).
+// synth_from_json_value builds a struct's derived `from_json_value(v:
+// JsonValue): Result[Self, string]`: one nested match per field, reading
+// the field with std/json's `from_json_field` (`from_json_optional_field`
+// for an `Option`, `None` when the field is missing or null) and decoding
+// it through the field type's own `from_json_value`, an array through
+// `from_json_array[E]` and an Option through `from_json_option[E]`. A
+// field's shape error comes back prefixed with the field's name
+// (`from_json_at`); the innermost arm returns `Ok(Self { … })`. The
+// `json.*` calls resolve through the `@derive(json.FromJson)` site's own
+// `import "std/json"` — modload rewrites them to the flat `json__*`.
+// Mirrors the native synthFromJsonValue.
+function synth_from_json_value(sd: StructDecl): FuncDecl {
     var fnames: string[] = [];
     var fvals: ast.Expr[] = [];
     var k: i32 = 0;
@@ -18854,28 +18961,53 @@ function synth_from_json(sd: StructDecl): FuncDecl {
     }
     var lit: ast.Expr = e_struct_lit(sd.name, fnames, fvals, 0, 0);
     var body: ast.Stmt[] = [s_return(e_call(e_ident("Ok"), [lit]))];
-    // Wrap each field's accessor match, inner-to-outer.
     var fi: i32 = sd.fields.len() - 1;
     while (fi >= 0) {
         var fname: string = sd.fields[fi].name;
-        var acc: string = fromjson_accessor(sd.fields[fi].type_name);
-        var accessor_call: ast.Expr = e_call(e_field_access(e_ident("json"), acc), [e_ident("__fj_jv"), e_string(fname)]);
-        var missing: ast.Stmt[] = [s_return(e_call(e_ident("Err"), [e_string("missing field: " + fname)]))];
-        var arms: ast.MatchArm[] = [];
-        arms = arms.append(ast.MatchArm { pattern: p_variant("Some", "__fj_" + fname), body: body, line: 0, col: 0, guard: e_bool(true), has_guard: false, alt_cont: false });
-        arms = arms.append(ast.MatchArm { pattern: p_variant("None", ""), body: missing, line: 0, col: 0, guard: e_bool(true), has_guard: false, alt_cont: false });
-        body = [s_match(accessor_call, arms)];
+        var fty: string = sd.fields[fi].type_name;
+        var value: string = "__fj_v_" + fname;
+        var ebind: string = "__fj_e_" + fname;
+        var cont: string = fromjson_container(fty);
+        var elem: string = fromjson_elem(fty);
+        var getter: string = "from_json_field";
+        if (cont == "option") { getter = "from_json_optional_field"; }
+        var decode: ast.Expr = e_call(e_field_access(e_ident(elem), "from_json_value"), [e_ident(value)]);
+        if (cont == "array") { decode = ast.ExprCall { callee: e_field_access(e_ident("json"), "from_json_array"), args: [e_ident(value)], line: 0, col: 0, type_args: [elem], ty: "" }; }
+        if (cont == "option") { decode = ast.ExprCall { callee: e_field_access(e_ident("json"), "from_json_option"), args: [e_ident(value)], line: 0, col: 0, type_args: [elem], ty: "" }; }
+        var at_err: ast.Expr = e_call(e_ident("Err"), [e_call(e_field_access(e_ident("json"), "from_json_at"), [e_string(fname), e_ident(ebind)])]);
+        var inner_arms: ast.MatchArm[] = [];
+        inner_arms = inner_arms.append(ast.MatchArm { pattern: p_variant("Ok", "__fj_" + fname), body: body, line: 0, col: 0, guard: e_bool(true), has_guard: false, alt_cont: false });
+        inner_arms = inner_arms.append(ast.MatchArm { pattern: p_variant("Err", ebind), body: [s_return(at_err)], line: 0, col: 0, guard: e_bool(true), has_guard: false, alt_cont: false });
+        var inner: ast.Stmt = s_match(decode, inner_arms);
+        var outer_arms: ast.MatchArm[] = [];
+        outer_arms = outer_arms.append(ast.MatchArm { pattern: p_variant("Ok", value), body: [inner], line: 0, col: 0, guard: e_bool(true), has_guard: false, alt_cont: false });
+        outer_arms = outer_arms.append(ast.MatchArm { pattern: p_variant("Err", ebind), body: [s_return(e_call(e_ident("Err"), [e_ident(ebind)]))], line: 0, col: 0, guard: e_bool(true), has_guard: false, alt_cont: false });
+        body = [s_match(e_call(e_field_access(e_ident("json"), getter), [e_ident("v"), e_string(fname)]), outer_arms)];
         fi = fi - 1;
     }
-    // Outermost: parse the string, then run the field chain.
-    var parse_fail: ast.Stmt[] = [s_return(e_call(e_ident("Err"), [e_string("invalid JSON")]))];
-    var oarms: ast.MatchArm[] = [];
-    oarms = oarms.append(ast.MatchArm { pattern: p_variant("Some", "__fj_jv"), body: body, line: 0, col: 0, guard: e_bool(true), has_guard: false, alt_cont: false });
-    oarms = oarms.append(ast.MatchArm { pattern: p_variant("None", ""), body: parse_fail, line: 0, col: 0, guard: e_bool(true), has_guard: false, alt_cont: false });
-    var obody: ast.Stmt[] = [s_match(e_call(e_field_access(e_ident("json"), "json_parse"), [e_ident("s")]), oarms)];
+    var params: ast.ParamDecl[] = [ast.ParamDecl { name: "v", type_name: "JsonValue", is_view: false, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }];
+    var notp: string[] = [];
+    return FuncDecl { no_inline: false, name: "from_json_value", receiver_name: "", receiver_type: sd.name, type_params: notp, params: params, ret_type: "Result[" + sd.name + ", string]", body: body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "" , is_package: false, module: "" };
+}
+
+// synth_from_json_text builds the derived `from_json(s: string):
+// Result[Self, string]`: `json.decode[Self](s)` under the type's own name.
+function synth_from_json_text(sd: StructDecl): FuncDecl {
+    var self_ty: string = sd.name;
+    if (sd.type_params.len() > 0) {
+        var tps: string = "";
+        var ti: i32 = 0;
+        while (ti < sd.type_params.len()) {
+            if (ti > 0) { tps = tps + ", "; }
+            tps = tps + sd.type_params[ti];
+            ti = ti + 1;
+        }
+        self_ty = sd.name + "[" + tps + "]";
+    }
+    var call: ast.Expr = ast.ExprCall { callee: e_field_access(e_ident("json"), "decode"), args: [e_ident("s")], line: 0, col: 0, type_args: [self_ty], ty: "" };
     var params: ast.ParamDecl[] = [ast.ParamDecl { name: "s", type_name: "string", is_view: false, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }];
     var notp: string[] = [];
-    return FuncDecl { no_inline: false, name: "from_json", receiver_name: "", receiver_type: sd.name, type_params: notp, params: params, ret_type: "Result[" + sd.name + ", string]", body: obody, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "" , is_package: false, module: "" };
+    return FuncDecl { no_inline: false, name: "from_json", receiver_name: "", receiver_type: sd.name, type_params: notp, params: params, ret_type: "Result[" + sd.name + ", string]", body: [s_return(call)], line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "" , is_package: false, module: "" };
 }
 
 // synth_enum_display: variant-wise `to_string` rendering `Variant(p)` /
@@ -19343,11 +19475,11 @@ function synth_struct_default(sd: StructDecl): FuncDecl {
 }
 
 // synth_derives appends the synthesised methods for each derivable trait
-// (`Eq` / `Display` / `Ord` / `Hash` / `Json` / `Default`) named in
-// `derives` for struct `sd` onto `funcs`. Non-derivable / unknown trait
-// names are ignored (the Go checker is the strict gate). `Default` is the
-// only associated (receiver-less) one — and only synthesised when every
-// field is itself default-derivable.
+// (`Eq` / `Display` / `Ord` / `Hash` / `Json` / `FromJson` / `Default`)
+// named in `derives` for struct `sd` onto `funcs`. Non-derivable / unknown
+// trait names are ignored (the Go checker is the strict gate). `Default`
+// and `FromJson` synthesise associated (receiver-less) functions; `Default`
+// only when every field is itself default-derivable.
 function synth_derives(declared: StructDecl, derives: string[], funcs: FuncDecl[], has_json_import: boolean): FuncDecl[] {
     // A derive reads each field by the box it lowers to: a `str` field
     // derives exactly as a `string` one.
@@ -19360,16 +19492,13 @@ function synth_derives(declared: StructDecl, derives: string[], funcs: FuncDecl[
         if (kind == "Eq") { funcs = funcs.append(synth_struct_eq(sd)); }
         if (kind == "Ord") { funcs = funcs.append(synth_struct_ord(sd)); }
         if (kind == "Hash") { funcs = funcs.append(synth_struct_hash(sd)); }
-        if (kind == "Json") {
-            funcs = funcs.append(synth_struct_json(sd));
-            // The deserialise companion `from_json` calls `json.json_parse` /
-            // `json.json_get_*`, so it is ONLY synthesised when the real
-            // std/json is imported (mirrors native's `json__json_parse in
-            // prog.Funcs` gate). A module deriving a user's OWN inline `trait
-            // Json` — or one that never imports std/json — gets serialise-only,
-            // so those `json.*` calls are never emitted into an unresolved
-            // module.
-            if (has_json_import && from_json_derivable(sd)) { funcs = funcs.append(synth_from_json(sd)); }
+        if (kind == "Json") { funcs = funcs.append(synth_struct_json(sd)); }
+        // A derived decoder calls std/json's readers, so it is only
+        // synthesised when std/json is imported (native's `json__json_parse
+        // in prog.Funcs` gate); the checker reports the missing import.
+        if (kind == "FromJson" && has_json_import) {
+            funcs = funcs.append(synth_from_json_value(sd));
+            funcs = funcs.append(synth_from_json_text(sd));
         }
         if (kind == "Default") { if (struct_default_derivable(declared)) { funcs = funcs.append(synth_struct_default(sd)); } }
         di = di + 1;
@@ -19378,8 +19507,8 @@ function synth_derives(declared: StructDecl, derives: string[], funcs: FuncDecl[
 }
 
 // imports_have_std_json reports whether the module's parsed imports include
-// std/json — the precondition for synthesising a `@derive(Json)` struct's
-// `from_json` (whose body calls std/json's json_parse / json_get_*). Imports
+// std/json — the precondition for synthesising a `@derive(FromJson)` struct's
+// decoder (whose body calls std/json's field readers). Imports
 // are conventionally at the top of a module, so they are already accumulated
 // by the time a `@derive` struct decl is reached in parse_module.
 function imports_have_std_json(imports: Import[]): boolean {

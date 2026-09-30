@@ -117,7 +117,7 @@ func TestSelfHostCheckerCodeSequenceX86_64(t *testing.T) {
 		// that guard: the outer lambda captures x transitively through the
 		// inner one, so BOTH are reported and the count is exactly two. Lose
 		// the prune and the inner one is counted again.
-		{"two-sibling-lambdas-bad-capture", "function f[T](x: T): i32 {\n  var g = () => x;\n  var h = () => x;\n  return 0;\n}\nfunction main(): i32 { return f(1); }\n", "E044,E044", false},
+		{"two-sibling-lambdas-bad-capture", "function v(): void { return; }\nfunction main(): i32 {\n  var x = v();\n  var g = () => x;\n  var h = () => x;\n  return 0;\n}\n", "E044,E044", false},
 		// UNDER-REPORT, pinned so it cannot drift: the Go checker reports E044
 		// twice here — the inner lambda captures x directly, the outer captures
 		// it transitively — and the self-host reports once. Same code SET
@@ -133,13 +133,12 @@ func TestSelfHostCheckerCodeSequenceX86_64(t *testing.T) {
 		// double-reporting, but that is about the SAME lambda twice; reaching
 		// the inner one yields two DIFFERENT lambdas, which is what Go does.
 		//
-		// Not fixed here because the fix is not the mechanical sweep E049's
-		// was: e044_lambda_check reports at the STATEMENT's position against a
-		// suspects/labels list e044_stmts computed for the enclosing scope, so
-		// reaching a nested lambda needs a decision about whether it reuses
+		// Not fixed here because it is the E049 shape exactly, and the fix
+		// wants to land once for both — the descent is shared, and making it
+		// reach a nested lambda needs a decision about whether it reuses
 		// those suspects minus accumulated param shadowing, or recomputes them
 		// for the inner scope. That choice changes which diagnostics appear.
-		{"nested-lambda-bad-capture", "function f[T](x: T): i32 {\n  var g = (): i32 => { var h = () => x; return 0; };\n  return 0;\n}\nfunction main(): i32 { return f(1); }\n", "E044", false},
+		{"nested-lambda-bad-capture", "function v(): void { return; }\nfunction main(): i32 {\n  var x = v();\n  var g = (): i32 => { var h = () => x; return 0; };\n  return 0;\n}\n", "E044", false},
 		// E032 from e032_expr, which prunes at ExprLambda and hands the body to
 		// e032_stmts — the same prune-and-delegate shape as vref_expr. The
 		// lambda row exercises that path. These also pin how two SEPARATE

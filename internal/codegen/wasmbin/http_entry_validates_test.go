@@ -34,7 +34,7 @@ func TestHttpHandlerModuleIsValidWasm(t *testing.T) {
 import "std/http";
 import "std/tcp";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
-    return http.http_response_ok(req.body_string());
+    return http.ok(req.body_string());
 }
 `
 	prog, info := loadAndCheckModule(t, src)

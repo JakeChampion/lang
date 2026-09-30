@@ -1662,6 +1662,19 @@ func TestReservedBuiltinNamesCannotBeShadowed(t *testing.T) {
 	}
 }
 
+// A redeclared builtin is reported once. An injected declaration naming it
+// with type arguments (ChunkProducer's `Option[u8[]]`) finds the user's
+// shape once the builtin is dropped, and that is not a second error.
+func TestReservedShadowIsReportedOnce(t *testing.T) {
+	err := checkSource(t, "enum Option { A, B }\nfunction main(): i32 { return 0; }\n")
+	if err == nil || !strings.Contains(err.Error(), "reserved built-in name") {
+		t.Fatalf("want the reserved-name error, got %v", err)
+	}
+	if strings.Contains(err.Error(), "type parameter(s)") {
+		t.Fatalf("the redeclaration was reported again as an arity mismatch: %v", err)
+	}
+}
+
 func TestBuiltinPutchar(t *testing.T) {
 	if err := checkSource(t, `function f(): void { putchar(65); }`); err != nil {
 		t.Errorf("putchar(65) should type-check: %v", err)
@@ -2150,6 +2163,28 @@ func TestNestedPointerCaptureWriteBackRejected(t *testing.T) {
 	}`
 	if err := checkSource(t, src); err == nil || !strings.Contains(err.Error(), "reference-typed closure capture") {
 		t.Errorf("expected E049 for nested pointer capture write-back, got: %v", err)
+	}
+}
+
+// A closure may capture a value whose type is a type parameter of the
+// enclosing function: it is concrete once the function is instantiated,
+// so E044 is for a captured `void` alone.
+func TestClosureCapturesGenericValue(t *testing.T) {
+	if err := checkSource(t, `function apply[S](init: S, f: (S) => i32): i32 {
+    var run: () => i32 = (): i32 => f(init);
+    return run();
+}
+function main(): i32 { return apply(7, (n: i32): i32 => n + 1); }`); err != nil {
+		t.Fatalf("a generic-typed capture should be accepted, got: %v", err)
+	}
+	err := checkSource(t, `function log(): void { print("x"); }
+function main(): i32 {
+    var done = log();
+    var f = () => done;
+    return 0;
+}`)
+	if err == nil || !hasCode(err, "E044") {
+		t.Fatalf("want E044 on a captured void, got: %v", err)
 	}
 }
 
@@ -4168,17 +4203,66 @@ func TestCheckContextBackgroundBehavesLikeOldCheck(t *testing.T) {
 	}
 }
 
+// serveStubDecls stands in for std/tcp's supervised entries and the
+// helpers the synthesised main of a handler program calls.
+const serveStubDecls = `struct ServeOptions { backlog: i32 }
+function serve_options(): ServeOptions { return ServeOptions { backlog: 128 }; }
+function __init_platform(): Platform { return Platform { version: 3, mode: 0, sink: cell_new(""), handle: 0 }; }
+function tcp_serve_supervised_opts(port: i32, opts: ServeOptions, handler: (HttpRequest, Platform) => HttpResponse): i32 { return 0; }
+function tcp_serve_supervised_shutdown(port: i32, opts: ServeOptions, handler: (HttpRequest, Platform) => HttpResponse, shutdown: (string) => void): i32 { return 0; }
+function tcp_serve_supervised_with[S](port: i32, opts: ServeOptions, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse)): i32 { return 0; }
+function tcp_serve_supervised_with_shutdown[S](port: i32, opts: ServeOptions, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse), shutdown: (string, S) => void): i32 { return 0; }
+function tcp_serve_opts(port: i32, opts: ServeOptions, handler: (HttpRequest, Platform) => HttpResponse): i32 { return 0; }
+function tcp_serve_shutdown(port: i32, opts: ServeOptions, handler: (HttpRequest, Platform) => HttpResponse, shutdown: (string) => void): i32 { return 0; }
+function tcp_serve_with_opts[S](port: i32, opts: ServeOptions, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse)): i32 { return 0; }
+function tcp_serve_with_shutdown[S](port: i32, opts: ServeOptions, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse), shutdown: (string, S) => void): i32 { return 0; }
+function __port_from_env(name: string, def: i32): i32 { return def; }
+`
+
+// A target without processes (wasm32-wasi) gets the single-process entries
+// of the same arity; the hosted targets and an unnamed one the supervisor.
+func TestSynthesisedHandleMainFollowsTargetProcesses(t *testing.T) {
+	const response = `HttpResponse { status: 200, body: BodyText("ok"), headers: HeaderMap { names: [], values: [] } }`
+	cases := []struct{ name, src, target, entry string }{
+		{"stateless on wasi", serveStubDecls + `function handle(req: HttpRequest, plat: Platform): HttpResponse { return ` + response + `; }`, "wasm32-wasi", "tcp_serve_opts"},
+		{"stateful hook on wasi", serveStubDecls + `function init(): i32 { return 7; }
+function handle(n: i32, req: HttpRequest, plat: Platform): (i32, HttpResponse) { return (n, ` + response + `); }
+function shutdown(reason: string, n: i32): void { print(reason); }`, "wasm32-wasi", "tcp_serve_with_shutdown"},
+		{"stateful on linux", serveStubDecls + `function init(): i32 { return 7; }
+function handle(n: i32, req: HttpRequest, plat: Platform): (i32, HttpResponse) { return (n, ` + response + `); }`, "x86-64-linux", "tcp_serve_supervised_with"},
+		{"stateless hook on darwin", serveStubDecls + `function handle(req: HttpRequest, plat: Platform): HttpResponse { return ` + response + `; }
+function shutdown(reason: string): void { print(reason); }`, "arm64-darwin", "tcp_serve_supervised_shutdown"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			prog, err := parser.Parse(tc.src)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			if _, err := CheckTarget(prog, tc.target); err != nil {
+				t.Fatalf("check: %v", err)
+			}
+			main := findDecl(prog, "main")
+			if main == nil || !main.IsSynthesisedHandlerMain {
+				t.Fatal("no synthesised main")
+			}
+			call := main.Body.Stmts[len(main.Body.Stmts)-1].(*ast.Return).Value.(*ast.Call)
+			if id, ok := call.Callee.(*ast.Ident); !ok || id.Name != tc.entry {
+				t.Fatalf("synth main for %s calls %v, want %s", tc.target, call.Callee, tc.entry)
+			}
+		})
+	}
+}
+
 // TestSynthesisedHandleMainRunsInitFirst pins the
 // docs/PLATFORM-RESEARCH.md Rec §3 init() ordering: when the
 // program defines both `handle` and `init`, the auto-main
 // synthesis prepends a call to `init()` BEFORE the
 // `tcp_serve` accept loop.
 func TestSynthesisedHandleMainRunsInitFirst(t *testing.T) {
-	prog, err := parser.Parse(`function tcp_serve(port: i32, handler: (HttpRequest, Platform) => HttpResponse): i32 { return 0; }
-function __port_from_env(name: string, def: i32): i32 { return def; }
-function init(): void { print("starting"); }
+	prog, err := parser.Parse(serveStubDecls + `function init(): void { print("starting"); }
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
-    return HttpResponse { status: 200, body: "ok", headers: HeaderMap { names: [], values: [] } };
+    return HttpResponse { status: 200, body: BodyText("ok"), headers: HeaderMap { names: [], values: [] } };
 }`)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
@@ -4197,7 +4281,7 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 		t.Fatal("no synthesised main found")
 	}
 	if len(main.Body.Stmts) != 2 {
-		t.Fatalf("synth main has %d stmts, want 2 (init + tcp_serve return)", len(main.Body.Stmts))
+		t.Fatalf("synth main has %d stmts, want 2 (init + the serve return)", len(main.Body.Stmts))
 	}
 	es, ok := main.Body.Stmts[0].(*ast.ExprStmt)
 	if !ok {
@@ -4217,10 +4301,8 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 // compat: programs without init() still get the original
 // single-stmt synth main (just the tcp_serve return).
 func TestSynthesisedHandleMainNoInitElidesPrepend(t *testing.T) {
-	prog, err := parser.Parse(`function tcp_serve(port: i32, handler: (HttpRequest, Platform) => HttpResponse): i32 { return 0; }
-function __port_from_env(name: string, def: i32): i32 { return def; }
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
-    return HttpResponse { status: 200, body: "ok", headers: HeaderMap { names: [], values: [] } };
+	prog, err := parser.Parse(serveStubDecls + `function handle(req: HttpRequest, plat: Platform): HttpResponse {
+    return HttpResponse { status: 200, body: BodyText("ok"), headers: HeaderMap { names: [], values: [] } };
 }`)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
@@ -4239,22 +4321,19 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 		t.Fatal("no synthesised main found")
 	}
 	if len(main.Body.Stmts) != 1 {
-		t.Errorf("synth main has %d stmts, want 1 (just the tcp_serve return; no init prepended)", len(main.Body.Stmts))
+		t.Errorf("synth main has %d stmts, want 1 (just the serve return; no init prepended)", len(main.Body.Stmts))
 	}
 }
 
 // A value-returning `init` paired with a state-taking `handle` is the
 // two-phase lifecycle of docs/PLATFORM-RESEARCH.md Rec §3: the
-// synthesised main hands `init()`'s result to `tcp_serve_with`, which
-// owns it in the accept loop's frame and threads it through every
+// synthesised main hands `init()`'s result to `tcp_serve_supervised_with`,
+// which owns it in each worker's loop frame and threads it through every
 // request. No `init();` statement of its own — the value IS the call.
 func TestSynthesisedHandleMainThreadsInitState(t *testing.T) {
-	prog, err := parser.Parse(`function tcp_serve(port: i32, handler: (HttpRequest, Platform) => HttpResponse): i32 { return 0; }
-function tcp_serve_with[S](port: i32, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse)): i32 { return 0; }
-function __port_from_env(name: string, def: i32): i32 { return def; }
-function init(): i32 { return 7; }
+	prog, err := parser.Parse(serveStubDecls + `function init(): i32 { return 7; }
 function handle(hits: i32, req: HttpRequest, plat: Platform): (i32, HttpResponse) {
-    return (hits + 1, HttpResponse { status: 200, body: "ok", headers: HeaderMap { names: [], values: [] } });
+    return (hits + 1, HttpResponse { status: 200, body: BodyText("ok"), headers: HeaderMap { names: [], values: [] } });
 }`)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
@@ -4273,7 +4352,7 @@ function handle(hits: i32, req: HttpRequest, plat: Platform): (i32, HttpResponse
 		t.Fatal("no synthesised main found")
 	}
 	if len(main.Body.Stmts) != 1 {
-		t.Fatalf("synth main has %d stmts, want 1 (the tcp_serve_with return; init is an argument, not a statement)",
+		t.Fatalf("synth main has %d stmts, want 1 (the serve return; init is an argument, not a statement)",
 			len(main.Body.Stmts))
 	}
 	ret, ok := main.Body.Stmts[0].(*ast.Return)
@@ -4285,18 +4364,102 @@ function handle(hits: i32, req: HttpRequest, plat: Platform): (i32, HttpResponse
 		t.Fatalf("returned expression = %T, want *ast.Call", ret.Value)
 	}
 	id, ok := call.Callee.(*ast.Ident)
-	if !ok || id.Name != "tcp_serve_with" {
-		t.Fatalf("synth main calls %v, want tcp_serve_with", call.Callee)
+	if !ok || id.Name != "tcp_serve_supervised_with" {
+		t.Fatalf("synth main calls %v, want tcp_serve_supervised_with", call.Callee)
 	}
-	if len(call.Args) != 3 {
-		t.Fatalf("tcp_serve_with call has %d args, want 3 (port, init(), handle)", len(call.Args))
+	if len(call.Args) != 4 {
+		t.Fatalf("tcp_serve_supervised_with call has %d args, want 4 (port, serve_options(), init(), handle)", len(call.Args))
 	}
-	initArg, ok := call.Args[1].(*ast.Call)
+	initArg, ok := call.Args[2].(*ast.Call)
 	if !ok {
-		t.Fatalf("second argument = %T, want the *ast.Call to init", call.Args[1])
+		t.Fatalf("third argument = %T, want the *ast.Call to init", call.Args[2])
 	}
 	if id, ok := initArg.Callee.(*ast.Ident); !ok || id.Name != "init" {
-		t.Errorf("second argument calls %v, want init", initArg.Callee)
+		t.Errorf("third argument calls %v, want init", initArg.Callee)
+	}
+}
+
+// `init` may take the platform and answer the serve options beside the
+// state (#9854): the synthesised main hands it `__init_platform()`,
+// destructures the pair, and serves with both.
+func TestSynthesisedHandleMainTakesInitOptions(t *testing.T) {
+	const response = `HttpResponse { status: 200, body: BodyText("ok"), headers: HeaderMap { names: [], values: [] } }`
+	t.Run("options beside the state", func(t *testing.T) {
+		prog, err := parser.Parse(serveStubDecls + `function init(plat: Platform): (ServeOptions, i32) { return (serve_options(), 7); }
+function handle(hits: i32, req: HttpRequest, plat: Platform): (i32, HttpResponse) { return (hits + 1, ` + response + `); }
+function shutdown(reason: string, hits: i32): void { print(reason); }`)
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		if _, err := Check(prog); err != nil {
+			t.Fatalf("check: %v", err)
+		}
+		main := findDecl(prog, "main")
+		if main == nil || !main.IsSynthesisedHandlerMain || len(main.Body.Stmts) != 2 {
+			t.Fatalf("want a synthesised main of 2 statements (the destructure, the return), got %v", main)
+		}
+		pair, ok := main.Body.Stmts[0].(*ast.Destructure)
+		if !ok || len(pair.Names) != 2 || pair.Names[0] != "__fern_opts" || pair.Names[1] != "__fern_state" {
+			t.Fatalf("first statement = %#v, want the (__fern_opts, __fern_state) destructure", main.Body.Stmts[0])
+		}
+		initCall, ok := pair.Init.(*ast.Call)
+		if !ok || len(initCall.Args) != 1 {
+			t.Fatalf("the destructure's value = %#v, want init(__init_platform())", pair.Init)
+		}
+		if plat, ok := initCall.Args[0].(*ast.Call); !ok {
+			t.Fatalf("init's argument = %T, want the __init_platform() call", initCall.Args[0])
+		} else if id, ok := plat.Callee.(*ast.Ident); !ok || id.Name != "__init_platform" {
+			t.Fatalf("init's argument calls %v, want __init_platform", plat.Callee)
+		}
+		call := main.Body.Stmts[1].(*ast.Return).Value.(*ast.Call)
+		if id, ok := call.Callee.(*ast.Ident); !ok || id.Name != "tcp_serve_supervised_with_shutdown" {
+			t.Fatalf("synth main calls %v, want tcp_serve_supervised_with_shutdown", call.Callee)
+		}
+		if opts, ok := call.Args[1].(*ast.Ident); !ok || opts.Name != "__fern_opts" {
+			t.Fatalf("the options argument is %#v, want __fern_opts", call.Args[1])
+		}
+		if state, ok := call.Args[2].(*ast.Ident); !ok || state.Name != "__fern_state" {
+			t.Fatalf("the state argument is %#v, want __fern_state", call.Args[2])
+		}
+	})
+	t.Run("options alone", func(t *testing.T) {
+		prog, err := parser.Parse(serveStubDecls + `function init(): ServeOptions { return ServeOptions { backlog: 4 }; }
+function handle(req: HttpRequest, plat: Platform): HttpResponse { return ` + response + `; }`)
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		if _, err := Check(prog); err != nil {
+			t.Fatalf("check: %v", err)
+		}
+		main := findDecl(prog, "main")
+		if main == nil || len(main.Body.Stmts) != 1 {
+			t.Fatalf("want a synthesised main of 1 statement, got %v", main)
+		}
+		call := main.Body.Stmts[0].(*ast.Return).Value.(*ast.Call)
+		if id, ok := call.Callee.(*ast.Ident); !ok || id.Name != "tcp_serve_supervised_opts" {
+			t.Fatalf("synth main calls %v, want tcp_serve_supervised_opts", call.Callee)
+		}
+		if opts, ok := call.Args[1].(*ast.Call); !ok {
+			t.Fatalf("the options argument is %T, want the init() call", call.Args[1])
+		} else if id, ok := opts.Callee.(*ast.Ident); !ok || id.Name != "init" || len(opts.Args) != 0 {
+			t.Fatalf("the options argument calls %v with %d args, want init()", opts.Callee, len(opts.Args))
+		}
+	})
+	for name, src := range map[string]string{
+		"a parameter that is not the platform": `function init(n: i32): i32 { return n; }`,
+		"two parameters":                       `function init(plat: Platform, n: i32): i32 { return n; }`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			prog, err := parser.Parse(serveStubDecls + src + `
+function handle(hits: i32, req: HttpRequest, plat: Platform): (i32, HttpResponse) { return (hits + 1, ` + response + `); }`)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			_, err = Check(prog)
+			if err == nil || !hasCode(err, "E075") || !strings.Contains(err.Error(), "it takes none, or the platform alone") {
+				t.Fatalf("want E075 on init's parameters, got %v", err)
+			}
+		})
 	}
 }
 
@@ -4304,21 +4467,14 @@ function handle(hits: i32, req: HttpRequest, plat: Platform): (i32, HttpResponse
 // handed the default options and the hook; a hook whose state parameter
 // disagrees with the handler's is E075.
 func TestSynthesisedHandleMainWiresShutdown(t *testing.T) {
-	const decls = `struct ServeOptions { backlog: i32 }
-function serve_options(): ServeOptions { return ServeOptions { backlog: 128 }; }
-function tcp_serve(port: i32, handler: (HttpRequest, Platform) => HttpResponse): i32 { return 0; }
-function tcp_serve_with[S](port: i32, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse)): i32 { return 0; }
-function tcp_serve_shutdown(port: i32, opts: ServeOptions, handler: (HttpRequest, Platform) => HttpResponse, shutdown: (string) => void): i32 { return 0; }
-function tcp_serve_with_shutdown[S](port: i32, opts: ServeOptions, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse), shutdown: (string, S) => void): i32 { return 0; }
-function __port_from_env(name: string, def: i32): i32 { return def; }
-`
-	const response = `HttpResponse { status: 200, body: "ok", headers: HeaderMap { names: [], values: [] } }`
+	const decls = serveStubDecls
+	const response = `HttpResponse { status: 200, body: BodyText("ok"), headers: HeaderMap { names: [], values: [] } }`
 	cases := []struct{ name, src, entry, message string }{
 		{"stateless", decls + `function handle(req: HttpRequest, plat: Platform): HttpResponse { return ` + response + `; }
-function shutdown(reason: string): void { print(reason); }`, "tcp_serve_shutdown", ""},
+function shutdown(reason: string): void { print(reason); }`, "tcp_serve_supervised_shutdown", ""},
 		{"stateful", decls + `function init(): i32 { return 7; }
 function handle(n: i32, req: HttpRequest, plat: Platform): (i32, HttpResponse) { return (n, ` + response + `); }
-function shutdown(reason: string, n: i32): void { print(reason); }`, "tcp_serve_with_shutdown", ""},
+function shutdown(reason: string, n: i32): void { print(reason); }`, "tcp_serve_supervised_with_shutdown", ""},
 		{"state hook without init", decls + `function handle(req: HttpRequest, plat: Platform): HttpResponse { return ` + response + `; }
 function shutdown(reason: string, n: i32): void { print(reason); }`, "", "`shutdown` takes a state parameter, but no `init` produces the state to hand it"},
 		{"stateless hook drops the state", decls + `function init(): i32 { return 7; }
@@ -4366,10 +4522,7 @@ function shutdown(reason: string): void { print(reason); }`, "", "`shutdown` tak
 // plain shape every consumer calls, and the wrapper hands the user's answer
 // to std/http's `respond` (or `respond_with` with state).
 func TestResultHandlerIsAdapted(t *testing.T) {
-	const decls = `function tcp_serve(port: i32, handler: (HttpRequest, Platform) => HttpResponse): i32 { return 0; }
-function tcp_serve_with[S](port: i32, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse)): i32 { return 0; }
-function __port_from_env(name: string, def: i32): i32 { return def; }
-function respond(r: Result[HttpResponse, string]): HttpResponse { return HttpResponse { status: 500, body: "", headers: HeaderMap { names: [], values: [] } }; }
+	const decls = serveStubDecls + `function respond(r: Result[HttpResponse, string]): HttpResponse { return HttpResponse { status: 500, body: BodyText(""), headers: HeaderMap { names: [], values: [] } }; }
 function respond_with(pair: (i32, Result[HttpResponse, string])): (i32, HttpResponse) { return (pair.0, respond(pair.1)); }
 `
 	cases := []struct {
@@ -4426,21 +4579,18 @@ function handle(n: i32, req: HttpRequest, plat: Platform): (i32, Result[HttpResp
 // nothing taking it, are both E075 — the second used to be accepted
 // with the value silently dropped.
 func TestHandlerInitStateMismatchIsRejected(t *testing.T) {
-	const decls = `function tcp_serve(port: i32, handler: (HttpRequest, Platform) => HttpResponse): i32 { return 0; }
-function tcp_serve_with[S](port: i32, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse)): i32 { return 0; }
-function __port_from_env(name: string, def: i32): i32 { return def; }
-`
+	const decls = serveStubDecls
 	cases := map[string]string{
 		"handler takes state nobody produces": decls + `function handle(hits: i32, req: HttpRequest, plat: Platform): (i32, HttpResponse) {
-    return (hits + 1, HttpResponse { status: 200, body: "ok", headers: HeaderMap { names: [], values: [] } });
+    return (hits + 1, HttpResponse { status: 200, body: BodyText("ok"), headers: HeaderMap { names: [], values: [] } });
 }`,
 		"void init produces no state": decls + `function init(): void { print("starting"); }
 function handle(hits: i32, req: HttpRequest, plat: Platform): (i32, HttpResponse) {
-    return (hits + 1, HttpResponse { status: 200, body: "ok", headers: HeaderMap { names: [], values: [] } });
+    return (hits + 1, HttpResponse { status: 200, body: BodyText("ok"), headers: HeaderMap { names: [], values: [] } });
 }`,
 		"init produces state nobody takes": decls + `function init(): i32 { return 7; }
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
-    return HttpResponse { status: 200, body: "ok", headers: HeaderMap { names: [], values: [] } };
+    return HttpResponse { status: 200, body: BodyText("ok"), headers: HeaderMap { names: [], values: [] } };
 }`,
 	}
 	for name, src := range cases {
@@ -4462,7 +4612,7 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 func TestHandlerInitStateMismatchAllowedUnderUserMain(t *testing.T) {
 	err := checkSource(t, `function init(): i32 { return 7; }
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
-    return HttpResponse { status: 200, body: "ok", headers: HeaderMap { names: [], values: [] } };
+    return HttpResponse { status: 200, body: BodyText("ok"), headers: HeaderMap { names: [], values: [] } };
 }
 function main(): i32 { return init(); }`)
 	if err != nil {
@@ -4475,11 +4625,9 @@ function main(): i32 { return init(); }`)
 // The wasi-http entry wrapper calls it in place of building the struct out
 // of raw memory, so its absence is a wrapper that has to know the layout.
 func TestPlatformConstructorIsSynthesisedForHandlers(t *testing.T) {
-	const decls = `function tcp_serve(port: i32, handler: (HttpRequest, Platform) => HttpResponse): i32 { return 0; }
-function __port_from_env(name: string, def: i32): i32 { return def; }
-`
+	const decls = serveStubDecls
 	const handler = `function handle(req: HttpRequest, plat: Platform): HttpResponse {
-    return HttpResponse { status: 200, body: "ok", headers: HeaderMap { names: [], values: [] } };
+    return HttpResponse { status: 200, body: BodyText("ok"), headers: HeaderMap { names: [], values: [] } };
 }`
 	cases := map[string]struct {
 		src  string
@@ -4521,11 +4669,9 @@ function __port_from_env(name: string, def: i32): i32 { return def; }
 // A program that declares the constructor itself keeps its own: the
 // synthesis fills a gap, it does not overwrite a definition.
 func TestPlatformConstructorNotSynthesisedOverUserDefinition(t *testing.T) {
-	prog, err := parser.Parse(`function tcp_serve(port: i32, handler: (HttpRequest, Platform) => HttpResponse): i32 { return 0; }
-function __port_from_env(name: string, def: i32): i32 { return def; }
-function __fern_platform_new(): Platform { return Platform { version: 7, mode: 0, sink: cell_new(""), handle: 0 }; }
+	prog, err := parser.Parse(serveStubDecls + `function __fern_platform_new(): Platform { return Platform { version: 7, mode: 0, sink: cell_new(""), handle: 0 }; }
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
-    return HttpResponse { status: 200, body: "ok", headers: HeaderMap { names: [], values: [] } };
+    return HttpResponse { status: 200, body: BodyText("ok"), headers: HeaderMap { names: [], values: [] } };
 }`)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
@@ -4560,7 +4706,7 @@ func funcNamesOf(prog *ast.Program) []string {
 func TestUserDefinedMainSkipsSynthEvenWithInit(t *testing.T) {
 	prog, err := parser.Parse(`function init(): void { print("starting"); }
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
-    return HttpResponse { status: 200, body: "ok", headers: HeaderMap { names: [], values: [] } };
+    return HttpResponse { status: 200, body: BodyText("ok"), headers: HeaderMap { names: [], values: [] } };
 }
 function main(): i32 { return 0; }`)
 	if err != nil {
@@ -5528,7 +5674,7 @@ func TestDeriveErrors(t *testing.T) {
 		{`trait Foo { function bar(self: Self): i32; }
 @derive(Foo)
 struct S { x: i32 }
-function main(): i32 { return 0; }`, "only Eq, Display, Debug, Ord, Hash, Json, and Default are derivable"},
+function main(): i32 { return 0; }`, "only Eq, Display, Debug, Ord, Hash, Json, FromJson, and Default are derivable"},
 		// Unknown trait in derive.
 		{`@derive(Nope)
 struct S { x: i32 }
@@ -5829,6 +5975,29 @@ function main(): i32 { return 0; }`
 	}
 }
 
+// @derive(FromJson) is a struct's derive whose decoder is std/json's: the
+// checker refuses it on an enum, and without std/json in the program.
+func TestDeriveFromJson(t *testing.T) {
+	const fromJsonTrait = `trait FromJson { function from_json_value(v: JsonValue): Result[Self, string]; }
+`
+	cases := []struct{ src, want string }{
+		{fromJsonTrait + `@derive(FromJson) enum E { A, B }
+function main(): i32 { return 0; }`, "only Eq, Display, Debug, Ord, Hash, Json, and Default are derivable for enums"},
+		{fromJsonTrait + `@derive(FromJson) struct P { x: i32 }
+function main(): i32 { return 0; }`, "the decoder is std/json's"},
+	}
+	for _, c := range cases {
+		err := checkSource(t, c.src)
+		if err == nil {
+			t.Errorf("expected an E021 for %s, got nil", c.src)
+			continue
+		}
+		if !strings.Contains(err.Error(), c.want) {
+			t.Errorf("error %q does not contain %q", err.Error(), c.want)
+		}
+	}
+}
+
 // Associated functions: a trait method with no `self` receiver
 // (`function f(): Self`) is called as `Type.f(args)` rather than
 // `value.f(args)` — the constructor / static-method shape. The impl
@@ -5868,6 +6037,15 @@ struct Box { v: i32 }
 impl From for Box { function of(n: i32): Self { return Box { v: n }; } }
 function build[T: From](n: i32): T { return T.of(n); }
 function main(): i32 { var b: Box = build(7); return b.v; }`,
+		// The trait's parameter names an enum: the signature is resolved
+		// like every other type position, so the argument (an EnumType)
+		// matches it rather than the parser's bare StructType spelling.
+		`enum V { A(i32), B }
+trait Mk { function mk(v: V): Result[Self, string]; }
+struct Box { v: i32 }
+impl Mk for Box { function mk(v: V): Result[Self, string] { match (v) { A(n) => { return Ok(Box { v: n }); }, B => { return Err("b"); } } return Err(""); } }
+function build[T: Mk](v: V): Result[T, string] { return T.mk(v); }
+function main(): i32 { var b: Result[Box, string] = build[Box](A(7)); return 0; }`,
 	}
 	for _, src := range ok {
 		if err := checkSource(t, src); err != nil {

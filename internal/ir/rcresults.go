@@ -239,6 +239,7 @@ var rcResultOwned = map[string]bool{
 	"reactor_ctl":       true,
 	"reactor_wait":      true,
 	"tcp_recv_into":     true,
+	"tcp_sendfile":      true,
 	"write_file_exec":   true,
 	"chmod":             true,
 	"chmod_at":          true,
@@ -576,7 +577,7 @@ var rcResultNonPointer = map[string]bool{
 	"__fern_udp_bind": true, "__fern_udp_connect": true,
 	"__fern_udp_sendto": true, "__fern_udp_recvfrom": true, "__fern_udp_close": true,
 	"__fern_tcp_listen_with": true, "__fern_tcp_socket_ctl": true, "__fern_tcp_connect_with": true, "__fern_ip_flat": true,
-	"__fern_reactor_new": true, "__fern_reactor_ctl": true, "__fern_reactor_wait": true, "__fern_tcp_recv_into": true,
+	"__fern_reactor_new": true, "__fern_reactor_ctl": true, "__fern_reactor_wait": true, "__fern_tcp_recv_into": true, "__fern_tcp_sendfile": true,
 	"__fern_tcp_local_port": true,
 
 	// Opaque host handles. Pointer-SHAPED and not memory: a wasi

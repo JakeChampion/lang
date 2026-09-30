@@ -13,7 +13,7 @@ func TestCheckRefusesAmbientEffectInHandler(t *testing.T) {
 function helper(): void { eprint("hit"); }
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
     helper();
-    return http.http_response_ok("");
+    return http.ok("");
 }
 function main(): i32 { return 0; }
 `)
@@ -37,7 +37,7 @@ import "std/platform";
 function helper(plat: Platform): void { plat.log("hit"); }
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
     helper(plat);
-    return http.http_response_ok("");
+    return http.ok("");
 }
 function main(): i32 { return 0; }
 `)

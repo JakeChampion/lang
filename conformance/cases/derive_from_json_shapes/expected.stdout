@@ -1,0 +1,12 @@
+ok id=7 tags=2 nick=gl city=Erebor zip=42 score=1.5 big=9000000000 wide=4000000000 huge=18446744073709551615 ok=y
+ok id=7 tags=0 nick=- city=Erebor zip=42 score=1.5 big=9000000000 wide=4000000000 huge=18446744073709551615 ok=y
+err field "id": expected an integer, got a string
+err field "tags": [1]: expected a string, got a number
+err field "home": missing field "zip"
+err field "home": field "zip": expected an integer in the i32 range, got 99999999999
+err field "wide": expected an integer in the u32 range, got -1
+err field "huge": expected an integer in the u64 range, got 18446744073709551616
+err field "ok": expected a boolean, got a string
+err expected an object, got an array
+err invalid JSON: 1:7: unexpected end of input
+{"city":"Dale","zip":3}

@@ -111,10 +111,9 @@ consumer, not before.
   against the inherited listener fd. `tcp_serve` itself stays
   exactly as-is behaviourally (single-process, dev-friendly,
   debuggable).
-- The synthesised handler `main` keeps calling plain `tcp_serve`
-  — supervision is opt-in by writing your own `main`. Flipping
-  the synthesised default is a separate decision once D2' has
-  soaked.
+- The synthesised handler `main` serves under the supervisor
+  (`tcp_serve_supervised_opts` and its `_with` / `_shutdown` twins,
+  #9854); `tcp_serve` is for a `main` you write yourself.
 
 ## Test bar (D2' exit criteria)
 
@@ -147,9 +146,16 @@ the native supervised path and the interp fallback.
   wait instead of blocking in accept), and the supervisor reaps whichever dies
   (`proc_waitpid(-1)`, the dead one found by a non-blocking probe of
   each) and forks its replacement under the same backoff and
-  fast-death count. Per-worker `SO_REUSEPORT` listeners, and the accept
-  distribution the one-listener shape gives under load, are not
-  measured yet.
+  fast-death count. The accept distribution the one-listener shape
+  gives is measured (`TestServeAcceptDistributionX86_64` and its
+  self-host twin, `docs/benchmarks/net-hello-2026-09-29.md`): 4,096
+  connections dialled in a burst from one client over four workers land
+  on every worker, but unevenly, the busiest taking 44 to 48 percent
+  and the idlest 2 to 8 percent on the Go compiler's build, since the
+  worker a wake-up reaches keeps accepting from a queue that never
+  empties while the rest sleep. Every worker serves, which is what the
+  default needs; per-worker `SO_REUSEPORT` listeners, the opt-in for a
+  kernel-balanced spread, are not built.
 - Graceful drain exists (#9854): SIGTERM is a readiness event on the
   reactor, the supervisor forwards it to its workers and waits for them,
   and each worker keeps accepting for a grace, fails its readiness path,

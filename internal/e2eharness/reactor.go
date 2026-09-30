@@ -58,6 +58,10 @@ function main(): i32 {
     var port: i32 = tcp_local_port(ln);
     if (reactor_ctl(r, 1, ln, 1) != 0) { return fail(6); }
     if (reactor_wait(r, events, 20) != 0) { return fail(7); }
+    // Interest 4 is EPOLLEXCLUSIVE, which the kernel refuses on a
+    // modification: asking it of a descriptor already in the set proves
+    // the bit reached epoll_ctl rather than being masked off.
+    if (target_os() == "linux" && reactor_ctl(r, 1, ln, 5) != 0 - einval()) { return fail(31); }
     var c: i32 = tcp_connect(16777343, port);
     if (c < 0) { return fail(8); }
     if (expect_ready(r, ln, 1, 2000, 9) != 0) { return 9; }

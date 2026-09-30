@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -89,7 +90,7 @@ function handle(hits: Map[string, i32], req: HttpRequest, plat: Platform): (Map[
         None => {}
     }
     return (hits.insert(req.path, n),
-            http.http_response_ok(req.path + "=" + int.int_to_string(n)));
+            http.ok(req.path + "=" + int.int_to_string(n)));
 }
 
 function main(): i32 {
@@ -129,7 +130,7 @@ func LargeResponseServerSource(port int) string {
 import "std/string";
 import "std/tcp";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
-    return http.http_response_ok("x".repeat(%d));
+    return http.ok("x".repeat(%d));
 }
 function main(): i32 {
     return tcp.tcp_serve(%d, handle);
@@ -178,7 +179,7 @@ func RecvDeadlineServerSource(port int) string {
 import "std/time";
 import "std/tcp";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
-    return http.http_response_ok("ok");
+    return http.ok("ok");
 }
 function main(): i32 {
     return tcp.tcp_serve_deadline(%d, handle, time.duration_millis(400));
@@ -228,9 +229,9 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
         var a: i32[] = [1, 2, 3];
         var i: i32 = a.len() + 5;
         var x: i32 = a[i];
-        return http.http_response_ok("unreachable " + int.int_to_string(x));
+        return http.ok("unreachable " + int.int_to_string(x));
     }
-    return http.http_response_ok("ok");
+    return http.ok("ok");
 }
 function main(): i32 {
     return tcp.tcp_serve_supervised_opts(%d, tcp.ServeOptions { ...tcp.serve_options(), workers: 1 }, handle);
@@ -258,12 +259,82 @@ func CheckSurvivesHandlerTrap(t *testing.T, addr, stderrPath string) {
 	}
 }
 
+// ReusePortServerSource serves through tcp_serve_opts with a backlog of
+// 4 and SO_REUSEPORT on the listener, in place of tcp_listen's fixed
+// 128 and one listener per port.
+func ReusePortServerSource(port int) string {
+	return fmt.Sprintf(`import "std/http";
+import "std/tcp";
+function handle(req: HttpRequest, plat: Platform): HttpResponse {
+    return http.ok("ok");
+}
+function main(): i32 {
+    var opts: tcp.ServeOptions = tcp.ServeOptions { ...tcp.serve_options(), backlog: 4, reuse_port: true };
+    return tcp.tcp_serve_opts(%d, opts, handle);
+}
+`, port)
+}
+
+// soReusePort is SO_REUSEPORT, which Go's syscall package spells only on
+// the BSDs: 15 on Linux.
+const soReusePort = 15
+
+// CheckReusePortReachesListener drives ReusePortServerSource: the proof
+// that the option reached the kernel is a second SO_REUSEPORT socket
+// binding the served port while the loop holds it, which a plain
+// listener refuses with EADDRINUSE; the loop still answers 200 through
+// the first.
+func CheckReusePortReachesListener(t *testing.T, port int) {
+	t.Helper()
+	addr := fmt.Sprintf("127.0.0.1:%d", port)
+	WaitServerReady(t, addr, 10*time.Second)
+	fd, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_STREAM, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer syscall.Close(fd)
+	if err := syscall.SetsockoptInt(fd, syscall.SOL_SOCKET, soReusePort, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Bind(fd, &syscall.SockaddrInet4{Port: port, Addr: [4]byte{127, 0, 0, 1}}); err != nil {
+		t.Fatalf("a second SO_REUSEPORT socket could not bind the served port, so reuse_port did not reach the listener: %v", err)
+	}
+	if resp := HTTPRoundTrip(t, addr, "/ok", 3*time.Second); !ContainsStatus200(resp) {
+		t.Fatalf("the loop did not answer 200:\n%s", resp)
+	}
+}
+
+// StalledSurvivorServerSource is TrappingServerSource over two workers
+// sharing the supervisor's listener, with /stall holding its worker in
+// the handler for a minute: the worker the crash loop never reaches.
+func StalledSurvivorServerSource(port int) string {
+	src := strings.Replace(TrappingServerSource(port), "workers: 1 }", "workers: 2 }", 1)
+	return strings.Replace(src, `    return http.ok("ok");`, `    if (req.path == "/stall") { sleep_ms(60000 as i64); }
+    return http.ok("ok");`, 1)
+}
+
+// CheckCrashLoopStopsSurvivor drives StalledSurvivorServerSource: one
+// worker is held in /stall while the other and its replacements
+// crash-loop on /boom; at the give-up the stalled worker is alive and
+// holding the listener, and the supervisor stops it (SIGTERM, which a
+// handler-held worker cannot act on, then SIGKILL five seconds later)
+// before exiting, so the port refuses connections afterwards.
+func CheckCrashLoopStopsSurvivor(t *testing.T, cmd *exec.Cmd, addr, stderrPath string) {
+	t.Helper()
+	WaitServerReady(t, addr, 10*time.Second)
+	stalled := rawRequest(t, addr, "/stall", "")
+	defer stalled.Close()
+	time.Sleep(200 * time.Millisecond)
+	CheckCrashLoopGivesUp(t, cmd, addr, stderrPath)
+}
+
 // CheckCrashLoopGivesUp drives TrappingServerSource with /boom in a
 // reconnect loop: each queued connection is accepted by the next worker
 // as soon as it forks and kills it within the 100 ms fast-death window,
 // and after eight such deaths the supervisor exits with the child's
-// code (134) instead of reforking forever. The doubling backoff sleeps
-// sum to about 11 s before the give-up.
+// code (134) instead of reforking forever, with no worker left holding
+// the port. The doubling backoff waits sum to about 11 s before the
+// give-up.
 func CheckCrashLoopGivesUp(t *testing.T, cmd *exec.Cmd, addr, stderrPath string) {
 	t.Helper()
 	WaitServerReady(t, addr, 10*time.Second)
@@ -304,21 +375,72 @@ func CheckCrashLoopGivesUp(t *testing.T, cmd *exec.Cmd, addr, stderrPath string)
 	if n := strings.Count(stderr, "worker died with exit code 134"); n < 8 {
 		t.Errorf("worker-death lines = %d, want at least 8:\n%s", n, stderr)
 	}
+	// The fast deaths are counted over every worker, so another may have
+	// been alive at the give-up: the supervisor stops it before exiting,
+	// and nothing is left to accept.
+	if conn, err := net.DialTimeout("tcp", addr, 2*time.Second); err == nil {
+		conn.Close()
+		t.Errorf("the port still accepts after the supervisor gave up: a worker survived it\n--- stderr ---\n%s", stderr)
+	}
+}
+
+// CheckTrapThenShutdownExitsClean drives TrappingServerSource through a
+// trap and a refork, then SIGTERM: the exit is the shutdown's 0, not
+// the earlier death's 134.
+func CheckTrapThenShutdownExitsClean(t *testing.T, cmd *exec.Cmd, addr, stderrPath string) {
+	t.Helper()
+	CheckSurvivesHandlerTrap(t, addr, stderrPath)
+	sigterm(t, cmd)
+	if code := waitExit(t, cmd, 10*time.Second); code != 0 {
+		t.Fatalf("supervisor exit code %d after a clean shutdown, want 0: the reforked worker's death leaked into it\n--- stderr ---\n%s", code, readFileString(stderrPath))
+	}
+}
+
+// MaxConnectionsFloorServerSource serves with `max_connections: 0`,
+// which the loop takes as 1: the listener is read whenever no
+// connection is held, so requests one at a time are answered.
+func MaxConnectionsFloorServerSource(port int) string {
+	return fmt.Sprintf(`import "std/http";
+import "std/tcp";
+function handle(req: HttpRequest, plat: Platform): HttpResponse {
+    return http.ok("ok");
+}
+function main(): i32 {
+    return tcp.tcp_serve_opts(%d, tcp.ServeOptions { ...tcp.serve_options(), max_connections: 0 }, handle);
+}
+`, port)
+}
+
+// CheckMaxConnectionsFloor drives MaxConnectionsFloorServerSource: three
+// requests in turn are each answered 200.
+func CheckMaxConnectionsFloor(t *testing.T, addr string) {
+	t.Helper()
+	WaitServerReady(t, addr, 10*time.Second)
+	for i := 0; i < 3; i++ {
+		if resp := HTTPRoundTrip(t, addr, "/ok", 5*time.Second); !ContainsStatus200(resp) {
+			t.Fatalf("request %d under max_connections: 0: want 200, got\n%s", i+1, resp)
+		}
+	}
 }
 
 // WorkersServerSource is a supervised server with two workers: /slow
-// burns pure work for well over a second, /boom traps, /ok answers at
+// burns pure work until 1.5 s of the bag's monotonic clock has passed, so
+// it holds its worker that long on any runner; /boom traps, /ok answers at
 // once.
 func WorkersServerSource(port int) string {
 	return fmt.Sprintf(`import "std/http";
 import "std/tcp";
+import "std/platform";
 import "core/int";
-function burn(n: i32): i32 {
+function burn(plat: Platform, ns: i64): i32 {
     var x: i32 = 12345;
-    var i: i32 = 0;
-    while (i < n) {
-        x = (x * 1103515245 + 12345) & 2147483647;
-        i = i + 1;
+    var until: i64 = plat.elapsed_ns() + ns;
+    while (plat.elapsed_ns() < until) {
+        var i: i32 = 0;
+        while (i < 100000) {
+            x = (x * 1103515245 + 12345) & 2147483647;
+            i = i + 1;
+        }
     }
     return x;
 }
@@ -327,18 +449,27 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
         var a: i32[] = [1, 2, 3];
         var i: i32 = a.len() + 5;
         var x: i32 = a[i];
-        return http.http_response_ok("unreachable " + int.int_to_string(x));
+        return http.ok("unreachable " + int.int_to_string(x));
     }
     if (req.path == "/slow") {
-        if (burn(400000000) == 0 - 1) { return http.http_response_ok("never"); }
-        return http.http_response_ok("slow");
+        if (burn(plat, 1500000000 as i64) == 0 - 1) { return http.ok("never"); }
+        return http.ok("slow");
     }
-    return http.http_response_ok("ok");
+    return http.ok("ok");
 }
 function main(): i32 {
     return tcp.tcp_serve_supervised_opts(%d, tcp.ServeOptions { ...tcp.serve_options(), workers: 2 }, handle);
 }
 `, port)
+}
+
+// ReusePortWorkersServerSource is TrappingServerSource over two workers
+// that each bind their own SO_REUSEPORT listener (`reuse_port`): a
+// worker's death takes its listener with it, and its replacement binds
+// anew, so CheckSurvivesHandlerTrap proves the service is back on the
+// port after a trap.
+func ReusePortWorkersServerSource(port int) string {
+	return strings.Replace(TrappingServerSource(port), "workers: 1 }", "workers: 2, reuse_port: true }", 1)
 }
 
 // CheckWorkersServeSideBySide drives WorkersServerSource: a request on a
@@ -388,16 +519,18 @@ func CheckWorkersServeSideBySide(t *testing.T, addr, stderrPath string) {
 
 // InitStateServerSource is ThreadedStateServerSource with no `main`: an
 // `init(): S` and a state-taking `handle` are the two-phase lifecycle the
-// compilers synthesise a main for, which serves on `PORT` and hands
-// init()'s value to the loop rather than building the state per request
-// or dropping it.
+// compilers synthesise a main for, which serves on `PORT` under the
+// supervisor and hands init()'s value to the loop rather than building
+// the state per request or dropping it. `init` takes the platform and
+// answers the serve options beside the state: one worker, so the count
+// every request sees is the one the request before it left.
 func InitStateServerSource() string {
 	return `import "std/http";
 import "std/tcp";
 import "core/int";
 
-function init(): Map[string, i32] {
-    return map_new(8);
+function init(plat: Platform): (tcp.ServeOptions, Map[string, i32]) {
+    return (tcp.ServeOptions { ...tcp.serve_options(), workers: 1 }, map_new(8));
 }
 
 function handle(hits: Map[string, i32], req: HttpRequest, plat: Platform): (Map[string, i32], HttpResponse) {
@@ -407,7 +540,7 @@ function handle(hits: Map[string, i32], req: HttpRequest, plat: Platform): (Map[
         None => {}
     }
     return (hits.insert(req.path, n),
-            http.http_response_ok(req.path + "=" + int.int_to_string(n)));
+            http.ok(req.path + "=" + int.int_to_string(n)));
 }
 `
 }
@@ -419,7 +552,7 @@ func HandleOnlyServerSource() string {
 import "std/tcp";
 
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
-    return http.http_response_ok("path=" + req.path);
+    return http.ok("path=" + req.path);
 }
 `
 }
@@ -462,7 +595,7 @@ function lookup(path: string): Result[string, http.HttpError] {
 
 function handle(req: HttpRequest, plat: Platform): Result[HttpResponse, http.HttpError] {
     var name: string = lookup(req.path)?;
-    return Ok(http.http_response_ok(name));
+    return Ok(http.ok(name));
 }
 `
 }
@@ -475,8 +608,8 @@ func StatefulResultHandlerServerSource() string {
 import "std/tcp";
 import "core/int";
 
-function init(): Map[string, i32] {
-    return map_new(8);
+function init(plat: Platform): (tcp.ServeOptions, Map[string, i32]) {
+    return (tcp.ServeOptions { ...tcp.serve_options(), workers: 1 }, map_new(8));
 }
 
 function handle(hits: Map[string, i32], req: HttpRequest, plat: Platform): (Map[string, i32], Result[HttpResponse, http.HttpError]) {
@@ -486,7 +619,7 @@ function handle(hits: Map[string, i32], req: HttpRequest, plat: Platform): (Map[
         Some(prev) => { n = prev + 1; },
         None => {}
     }
-    return (hits.insert(req.path, n), Ok(http.http_response_ok(req.path + "=" + int.int_to_string(n))));
+    return (hits.insert(req.path, n), Ok(http.ok(req.path + "=" + int.int_to_string(n))));
 }
 `
 }
@@ -535,12 +668,12 @@ func ShutdownHookServerSource() string {
 import "std/tcp";
 import "core/int";
 
-function init(): i32 {
-    return 0;
+function init(plat: Platform): (tcp.ServeOptions, i32) {
+    return (tcp.ServeOptions { ...tcp.serve_options(), workers: 1 }, 0);
 }
 
 function handle(hits: i32, req: HttpRequest, plat: Platform): (i32, HttpResponse) {
-    return (hits + 1, http.http_response_ok("hit " + int.int_to_string(hits + 1)));
+    return (hits + 1, http.ok("hit " + int.int_to_string(hits + 1)));
 }
 
 function shutdown(reason: string, hits: i32): void {
@@ -611,8 +744,8 @@ func CheckHandlerStallsItsWorker(t *testing.T, addr string) {
 	if r.err != nil || !strings.Contains(r.body, "slow") {
 		t.Fatalf("/slow itself: %q, %v", r.body, r.err)
 	}
-	// /slow is a CPU burn, so its length varies by runner; the proof is the
-	// order, and it needs /slow to outlast the 200 ms head start by far.
+	// The proof is the order; /slow's 1.5 s deadline keeps it well past the
+	// 200 ms head start, and this floor catches a source that loses that.
 	if held := r.done.Sub(started); held < 400*time.Millisecond {
 		t.Fatalf("/slow held its worker for only %v; too short to show /ok waited behind it", held)
 	}

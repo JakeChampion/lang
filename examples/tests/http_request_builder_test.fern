@@ -12,19 +12,19 @@ import "std/mock_platform";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
     if (req.method == "POST" && req.path == "/items") {
         match (req.headers.get("content-type")) {
-            Some(ct) => { if (ct != "application/json") { return http.http_response_text(415, ""); } },
-            None => { return http.http_response_text(415, ""); }
+            Some(ct) => { if (ct != "application/json") { return http.text(415, ""); } },
+            None => { return http.text(415, ""); }
         }
         plat.log("created " + req.body_string());
-        return http.http_response_json(req.body_string()).with_header("Location", "/items/1").with_header("X-Status", "created");
+        return http.json(req.body_string()).with_header("Location", "/items/1").with_header("X-Status", "created");
     }
     if (req.method == "GET" && req.path == "/whoami") {
         match (req.headers.get("x-caller")) {
-            Some(who) => { return http.http_response_ok("you are " + who); },
-            None => { return http.http_response_text(401, ""); }
+            Some(who) => { return http.ok("you are " + who); },
+            None => { return http.text(401, ""); }
         }
     }
-    return http.http_response_not_found();
+    return http.not_found();
 }
 
 function test_json_body_is_created(): test.TestOutcome {

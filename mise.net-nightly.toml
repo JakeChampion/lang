@@ -1,0 +1,6 @@
+# The extra tool net-nightly.yml needs beside mise.toml's: the Rust
+# toolchain that builds scripts/net-bench.d/hyperhello. In its own env file
+# (MISE_ENV=net-nightly) so the lanes that install everything mise.toml
+# lists do not fetch a toolchain only the nightly load uses.
+[tools]
+rust = "1.94.1"

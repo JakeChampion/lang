@@ -2857,6 +2857,7 @@ var CallDirectAliases = mergeCodegenAliases(map[string]string{
 	"tcp_close":       "__fern_tcp_close",
 	"tcp_listen_with": "__fern_tcp_listen_with",
 	"tcp_socket_ctl":  "__fern_tcp_socket_ctl",
+	"tcp_sendfile":    "__fern_tcp_sendfile",
 	"udp_send":        "__fern_udp_send",
 
 	// Map / MapIter dispatch is target-independent — it is a fact about where
