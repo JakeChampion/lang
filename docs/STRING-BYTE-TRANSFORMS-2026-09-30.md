@@ -7,8 +7,8 @@ should become text; it returns `None` for malformed bytes.
 
 The backward substring search previously used reversed strings for its
 Two-Way fallback. It now keeps those reversals as bytes. Two-Way and its
-factorization accept byte views, so the forward path borrows the source
-without copying it. The comparison budget, single-byte fast paths and
+factorization accept byte views, so the forward path passes borrowed views
+of the source. The comparison budget, single-byte fast paths and
 linear worst-case algorithm are unchanged.
 
 ## Validation
