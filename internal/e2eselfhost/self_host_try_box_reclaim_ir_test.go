@@ -18,11 +18,9 @@ import (
 //
 // Since #7910 (d) a match on a producer call reclaims its scrutinee box too,
 // so the hand-desugared baseline (innerB) frees what innerT frees and a
-// growth ratio between them measures nothing. Each churn case instead PINS
-// the try path's per-round residual: 40 bytes, the outer `var r = innerT(pre)`
-// box that the caller's own match still leaks, where without the `?` reclaim
-// it would be two boxes. The pin fails in EITHER direction, so an improvement
-// is rebanked rather than absorbed. innerB stays as the value cross-check
+// growth ratio between them measures nothing. Each churn case instead pins
+// the try path's residual at zero: the caller's own match frees the outer
+// `var r = innerT(pre)` box as well. innerB stays as the value cross-check
 // (w != x); over-release is caught by the __rc_underflow_count detector.
 func TestSelfHostTryBoxReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
@@ -51,7 +49,7 @@ func TestSelfHostTryBoxReclaimIRX86_64(t *testing.T) {
 		}
 		_ = cmd.Run()
 		if code := cmd.ProcessState.ExitCode(); code != want {
-			t.Errorf("%s exited %d, want %d (98 = above the pinned residual → box not reclaimed; 96 = below it → rebank the pin; 99 = over-release; 97 = value corrupted; 88 = aliased payload freed under caller)", name, code, want)
+			t.Errorf("%s exited %d, want %d (98 = heap grew → box not reclaimed; 99 = over-release; 97 = value corrupted; 88 = aliased payload freed under caller)", name, code, want)
 		}
 	}
 
@@ -70,8 +68,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     var gt: i32 = b2 - b1;
-    if (gt > 120000 + 256) { return 98; }
-    if (gt + 256 < 120000) { return 96; }
+    if (gt > 256) { return 98; }
     return 0;
 }`, "try-box-scalar-pin", 0)
 
@@ -91,8 +88,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     var gt: i32 = b2 - b1;
-    if (gt > 120000 + 256) { return 98; }
-    if (gt + 256 < 120000) { return 96; }
+    if (gt > 256) { return 98; }
     return 0;
 }`, "try-box-string-pin", 0)
 
@@ -111,8 +107,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     var gt: i32 = b2 - b1;
-    if (gt > 120000 + 256) { return 98; }
-    if (gt + 256 < 120000) { return 96; }
+    if (gt > 256) { return 98; }
     return 0;
 }`, "try-box-option-failure-pin", 0)
 

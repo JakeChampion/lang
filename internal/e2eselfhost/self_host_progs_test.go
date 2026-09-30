@@ -1,9 +1,7 @@
 package e2eselfhost
 
 import (
-	"os"
 	"os/exec"
-	"path/filepath"
 	"testing"
 )
 
@@ -133,19 +131,12 @@ function main(): i32 { var m: Map[string,i32] = map_new(8); m = m.insert("a",10)
 // x86-64 compiler and checks the exit code.
 func TestSelfHostProgsX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
-	dir := writeSelfHostAsmProject(t)
-	src, err := os.ReadFile("../../examples/self_host/asm_run.fern")
-	if err != nil {
-		t.Fatalf("read asm_run.fern: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "asm_run.fern"), src, 0o644); err != nil {
-		t.Fatalf("write asm_run.fern: %v", err)
-	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
+	l := newStdlibLoader(t)
+	dir := t.TempDir()
 
 	for _, tc := range selfHostProgCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src))
+			asm := []byte(l.emit(t, tc.src))
 			if len(asm) == 0 {
 				t.Fatal("self-host compiler emitted 0 bytes")
 			}

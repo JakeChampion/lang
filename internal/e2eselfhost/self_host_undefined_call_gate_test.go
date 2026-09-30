@@ -38,9 +38,10 @@ func runDriverAllowFail(t *testing.T, runner []string, bin string, stdin string,
 // every qualified call into it dangles; that case gets the module named.
 //
 // The accept cases are the gate's real risk: they pin that the admit list
-// (builtins, the emitter-only free-function spellings, variant constructors,
-// closure locals, receiver methods) never rejects a valid program, and that an
-// accepted program still routes through the IR path and runs.
+// (builtins, variant constructors, closure locals, receiver methods, and the
+// emitter-only free-function spellings the AST lowering lowers) never rejects
+// a valid program, and that an accepted program still routes through the IR
+// path and runs.
 func TestSelfHostUndefinedCallGate(t *testing.T) {
 	gcc, runner, driverBin := buildModloadDriverX86(t)
 
@@ -111,11 +112,9 @@ func TestSelfHostUndefinedCallGate(t *testing.T) {
 		})
 	}
 
-	// One accept program exercising most admit-list arms at once: builtins
-	// (`print`), the emitter-only free-function spellings
-	// (`i32_to_string` / `str_to_upper`, which native's checker rejects but
-	// every self-host emitter lowers), an Option constructor, a user enum
-	// variant constructor, and a receiver method.
+	// One accept program exercising most admit-list arms at once: a builtin
+	// (`print`), an Option constructor, a user enum variant constructor, and a
+	// receiver method.
 	const acceptSrc = `enum Shape { Circle(i32), Square(i32) }
 struct P { x: i32, y: i32 }
 function (p: P) sum(): i32 { return p.x + p.y; }
@@ -129,7 +128,7 @@ function area(s: Shape): i32 {
 function main(): i32 {
     var p: P = P { x: 4, y: 3 };
     var xs: i32[] = [1, 2, 3];
-    print(i32_to_string(area(Circle(2))) + str_to_upper("ok"));
+    if (area(Circle(2)) == 6) { print("6OK"); }
     match (Some(dbl(p.sum()))) {
         Some(v) => { return v + xs.len() + xs.len(); },
         None => { return 1; },
@@ -157,6 +156,27 @@ function main(): i32 {
 		}
 		if !strings.Contains(out, "6OK") {
 			t.Errorf("stdout = %q, want it to contain %q", out, "6OK")
+		}
+	})
+
+	// The emitter-only free-function spellings (`i32_to_string` /
+	// `str_to_upper`) are not language surface: native's checker rejects them
+	// and only the AST lowering lowers them, so they are admitted on that path.
+	t.Run("accept-emitter-spellings-on-the-ast-lowering", func(t *testing.T) {
+		t.Setenv("FERN_SEM_IR", "")
+		asm, errOut, code, dir := compile(t, "function main(): i32 {\n    print(i32_to_string(6) + str_to_upper(\"ok\"));\n    return 0;\n}\n")
+		if code != 0 {
+			t.Fatalf("driver exited %d (stderr %q), want 0 (accept)", code, errOut)
+		}
+		bin := buildBin(t, gcc, dir, "emitter_spellings", string(asm))
+		var cmd *exec.Cmd
+		if len(runner) == 0 {
+			cmd = exec.Command(bin)
+		} else {
+			cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), bin)...)
+		}
+		if out, exit := runBin(cmd, ""); exit != 0 || !strings.Contains(out, "6OK") {
+			t.Errorf("program exited %d with stdout %q, want 0 and %q", exit, out, "6OK")
 		}
 	})
 

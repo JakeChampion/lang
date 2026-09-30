@@ -64,7 +64,8 @@ func TestSelfHostBorrowedFieldRetainIRX86_64(t *testing.T) {
 			t.Fatalf("%s: self-host compiler emitted 0 bytes", name)
 		}
 		if wantDrop != "" {
-			has := userCodeCalls(string(asm), wantDrop)
+			// The admission is the AST lowering's, so its drop is read from that lowering.
+			has := userCodeCalls(string(runCaptureAST(t, runner, driverBin, []byte(prog))), wantDrop)
 			if !has {
 				t.Fatalf("%s: caller emits no `call %s` — the borrowed-parameter field store was not admitted, so the returned struct earns no drop", name, wantDrop)
 			}

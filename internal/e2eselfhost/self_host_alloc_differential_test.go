@@ -198,18 +198,6 @@ function churn(n: i32): i32 {
 		// nothing measures how MUCH either compiler allocates for it — a
 		// credit that fires but releases only the box would leak the element
 		// buffer every round while every leak cell still reads clean.
-		//
-		// Recorded LEAKING: ~77 B/round (15 KB at n=200) that the Go backend
-		// gave back entirely. Isolated to the combination: a tuple local alone
-		// and a struct with a plain array field alone are both 0 KB; only the
-		// tuple-inside-a-struct-field shape leaks, so the composed path
-		// releases the box but not everything in it. The leak matrix cannot
-		// see it (the credit fires and the box comes back, which is all a
-		// per-round verdict asks); volume is the half only this gate measures
-		// (#7259 tuple wave). Recorded rather than fixed because the composed
-		// path spans two mechanisms landed by different sessions — the counted
-		// struct-field store and the "TCNT:" tier. The row fails once the
-		// leak shrinks below half of this figure, so it cannot rot.
 		name: "tuple-in-struct-field",
 		decls: `struct Hold { t: (i32, i32[]), n: i32 }
 function churn(n: i32): i32 {
@@ -225,7 +213,7 @@ function churn(n: i32): i32 {
 }`,
 		n:        200,
 		cliff:    false,
-		bumpKB:   15,
+		bumpKB:   0,
 		maxRatio: 8,
 	},
 	{
@@ -257,15 +245,6 @@ function churn(n: i32): i32 {
 		// COMPILE at all until #7745 — the self-host refused the module the
 		// moment such a struct was constructed — so a compile failure, not a
 		// regression, is what this row replaced.
-		//
-		// Recorded LEAKING: ~80 B/round (15 KB at n=200), the same family and
-		// root cause as tuple-in-struct-field (#7259): the store sits in a
-		// LOOP BODY, so it is never classified a move — lower_func seeds
-		// moved_names and move_sites from the top-level-only sets — the
-		// construction therefore takes the retain, the source is never swept,
-		// and the reclaim's __fern_rc_is_unique gate reads "shared" and
-		// declines the child walk. moved_locals_toplevel_of documents why the
-		// loop half is deferred: the rebind site has to agree first.
 		name: "option-array-struct-field",
 		decls: `struct H { o: Option[i32[]], n: i32 }
 function churn(n: i32): i32 {
@@ -280,7 +259,7 @@ function churn(n: i32): i32 {
 }`,
 		n:        200,
 		cliff:    false,
-		bumpKB:   15,
+		bumpKB:   0,
 		maxRatio: 8,
 	},
 	{

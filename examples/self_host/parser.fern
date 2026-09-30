@@ -8047,7 +8047,15 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
     // on either binding, and promotes EVERY still-erased var of the function at
     // once — only when each is bindable from a param (the clause-(b) test), so
     // the clone is fully concrete and the call site can resolve it.
-    if (receiver_type.len() == 0 && body_binds_bare_var(fbody, params, unbounded_tps, bounded_tps)) {
+    // (e) the BODY sibling of clause (a): a body that spells a user generic type
+    // at one of the function's erased vars (`var c: Slot[T]`, `Slot[T] { … }`,
+    // a lambda's `(b: Box[T])`) has the front end clone that struct at the var
+    // itself, `Slot__0_T`, whose fields keep the var. The AST lowering's erased
+    // slot cannot say how wide a field is, and the typed lowering's instances
+    // cannot share the one record between bindings. Cloning the function per
+    // binding clones the struct with it. Same all-bindable guard as (d).
+    if (receiver_type.len() == 0 && (body_binds_bare_var(fbody, params, unbounded_tps, bounded_tps)
+        || body_feeds_user_parametric(fbody, erased_only(unbounded_tps, bounded_tps)))) {
         var all_bindable: boolean = true;
         var di: i32 = 0;
         while (di < unbounded_tps.len()) {
@@ -20122,6 +20130,56 @@ function body_binds_bare_var(stmts: ast.Stmt[], params: ast.ParamDecl[], tps: st
         }
     }
     return false;
+}
+
+function erased_only(tps: string[], bounded: string[]): string[] {
+    var out: string[] = [];
+    for t in tps { if (util.index_of_str(bounded, t) < 0) { out = out.append(t); } }
+    return out;
+}
+
+struct ParScan { vars: string[], hit: boolean }
+
+// body_feeds_user_parametric reports whether any type the body spells feeds one
+// of `vars` to a user generic type — feeds_user_parametric over every annotation,
+// struct literal, zero value, lambda signature and explicit type argument.
+function body_feeds_user_parametric(stmts: ast.Stmt[], vars: string[]): boolean {
+    if (vars.len() == 0) { return false; }
+    var scan: ParScan = ParScan { vars: vars, hit: false };
+    for st in stmts { scan = astwalk.fold_stmt_nodes(st, scan, par_scan_stmt, par_scan_expr, astwalk.descend_all); }
+    return scan.hit;
+}
+
+function spelled_feeds(t: string, vars: string[]): boolean {
+    for v in vars { if (feeds_user_parametric(t, v)) { return true; } }
+    return false;
+}
+
+function par_scan_stmt(st: ast.Stmt, own acc: ParScan): ParScan {
+    if (acc.hit) { return acc; }
+    if let ast.StmtVar(v) = st {
+        if (spelled_feeds(v.type_name, acc.vars) || spelled_feeds(v.fn_ret, acc.vars) || spelled_feeds(v.fn_param_types, acc.vars)) { return ParScan { ...acc, hit: true }; }
+    }
+    return acc;
+}
+
+function par_scan_expr(e: ast.Expr, own acc: ParScan): ParScan {
+    if (acc.hit) { return acc; }
+    var hit: boolean = false;
+    match (e) {
+        ast.ExprStructLit(sl) => { hit = spelled_feeds(sl.type_name, acc.vars); },
+        ast.ExprZero(z) => { hit = spelled_feeds(z.type_name, acc.vars); },
+        ast.ExprCall(c) => { for t in c.type_args { if (spelled_feeds(t, acc.vars)) { hit = true; } } },
+        ast.ExprLambda(lm) => {
+            hit = spelled_feeds(lm.ret_type, acc.vars) || spelled_feeds(lm.ret_fn_ret, acc.vars) || spelled_feeds(lm.ret_fn_param_types, acc.vars);
+            for lp in lm.params {
+                if (spelled_feeds(lp.type_name, acc.vars) || spelled_feeds(lp.fn_ret, acc.vars) || spelled_feeds(lp.fn_param_types, acc.vars)) { hit = true; }
+            }
+        },
+        _ => {}
+    }
+    if (hit) { return ParScan { ...acc, hit: true }; }
+    return acc;
 }
 
 // has_fn_param_arg_var reports whether some fn-typed param declares `name` in an

@@ -24,10 +24,10 @@ const crossTypeReuseDeadDonor = `struct Point { x: i32, y: i32 } struct Pair { a
 const crossTypeReuseLiveDonor = `struct Point { x: i32, y: i32 } struct Pair { a: i32, b: i32 } function main(): i32 { var k = 1; var p = Point { x: 3 * k, y: 4 }; var q = Pair { a: 5 * k, b: 9 }; return q.a + q.b + p.x + p.y; }`
 
 // Array-field cross-type pair: a dead Holder{id,items} reused for Bag{tag,data}
-// (identical [i32, i32[]] layout). Dead donor → the struct box is reused (3
-// __fern_arr_box: donor box + donor items array + recipient data array); with the
-// donor read after the recipient, no reuse fires (4: both struct boxes + both
-// arrays). The delta proves the array-field cross-type reuse lowers in place.
+// (identical [i32, i32[]] layout). The array literals are static constants, so
+// only the struct boxes reach __fern_arr_box: one when the dead donor's box is
+// reused, two when the donor is read after the recipient. The delta proves the
+// array-field cross-type reuse lowers in place.
 const crossTypeReuseArrDeadDonor = `struct Holder { id: i32, items: i32[] } struct Bag { tag: i32, data: i32[] } function main(): i32 { var h = Holder { id: 1, items: [1, 2] }; var s = h.id + h.items[0]; var b = Bag { tag: s, data: [3, 4] }; return b.tag + b.data[0]; }`
 const crossTypeReuseArrLiveDonor = `struct Holder { id: i32, items: i32[] } struct Bag { tag: i32, data: i32[] } function main(): i32 { var h = Holder { id: 1, items: [1, 2] }; var b = Bag { tag: 5, data: [3, 4] }; return b.tag + b.data[0] + h.id + h.items[1]; }`
 
@@ -120,12 +120,12 @@ func TestSelfHostCrossTypeReuseFiresX86_64(t *testing.T) {
 	if got := countAllocs(crossTypeReuseLiveDonor); got != 2 {
 		t.Errorf("live cross-type donor: got %d struct-box allocs, want 2 (reuse must NOT fire)", got)
 	}
-	// Array-field cross-type: dead donor reuses the box (3 arr_box: donor box +
-	// donor items + recipient data); live donor allocates both boxes (4).
-	if got := countAllocs(crossTypeReuseArrDeadDonor); got != 3 {
-		t.Errorf("dead array-field cross-type donor: got %d arr_box, want 3 (reuse should fire)", got)
+	// Array-field cross-type: the dead donor's box is reused (1 arr_box); the
+	// live donor keeps both boxes (2).
+	if got := countAllocs(crossTypeReuseArrDeadDonor); got != 1 {
+		t.Errorf("dead array-field cross-type donor: got %d arr_box, want 1 (reuse should fire)", got)
 	}
-	if got := countAllocs(crossTypeReuseArrLiveDonor); got != 4 {
-		t.Errorf("live array-field cross-type donor: got %d arr_box, want 4 (reuse must NOT fire)", got)
+	if got := countAllocs(crossTypeReuseArrLiveDonor); got != 2 {
+		t.Errorf("live array-field cross-type donor: got %d arr_box, want 2 (reuse must NOT fire)", got)
 	}
 }

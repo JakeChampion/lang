@@ -101,8 +101,9 @@ func TestSelfHostEnumCrossReuseFiresX86_64(t *testing.T) {
 	}
 	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
 
+	// The reuse is the AST lowering's, so the asm is read from that lowering.
 	countAllocs := func(prog string) int {
-		asm := runCapture(t, gcc, runner, driverBin, []byte(prog))
+		asm := runCaptureAST(t, runner, driverBin, []byte(prog))
 		return countUserArrBoxAllocs(asm)
 	}
 	if got := countAllocs(enumCrossReuseFiresDeadDonor); got != 3 {
@@ -118,7 +119,7 @@ func TestSelfHostEnumCrossReuseFiresX86_64(t *testing.T) {
 	// The degrade arm is unreachable from any statically admitted program
 	// (sole-owner donors only), so it is pinned structurally here and at scale
 	// by the self-compile fixpoints.
-	asm := string(runCapture(t, gcc, runner, driverBin, []byte(enumCrossReuseFiresDeadDonor)))
+	asm := string(runCaptureAST(t, runner, driverBin, []byte(enumCrossReuseFiresDeadDonor)))
 	if rcIsUniqueSites(asm) == 0 {
 		t.Error("enum-cross reuse site emitted no __fern_rc_is_unique guard")
 	}

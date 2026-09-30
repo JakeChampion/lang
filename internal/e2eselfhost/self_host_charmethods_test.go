@@ -1,20 +1,15 @@
 package e2eselfhost
 
 import (
-	"os"
 	"os/exec"
-	"path/filepath"
 	"testing"
 )
 
-// charMethodCases exercise the inline scalar methods the self-hosted asm
-// backends emit without a runtime helper. Two receiver types share the block:
-// the ascii classifiers (to_ascii_lower/upper, is_ascii_digit/alpha/alnum/
-// lower/upper/hex_digit) take a `u8`, matching the std/i32 byte classifiers
-// std/sort and std/string call now that `s[i]` yields u8 (#5629); the numeric
-// ones (gcd/lcm) stay on i32. A fold returns a u8, so the cases that return
-// one widen explicitly — Fern has no implicit unsigned widening.
-// Cross-checked vs Go.
+// charMethodCases exercise std/i32's byte classifiers on a `u8` receiver
+// (to_ascii_lower/upper, is_ascii_digit/alpha/alnum/lower/upper/hex_digit),
+// the ones std/sort and std/string call now that `s[i]` yields u8 (#5629). A
+// fold returns a u8, so the cases that return one widen explicitly — Fern has
+// no implicit unsigned widening. Cross-checked vs Go.
 var charMethodCases = []struct {
 	name string
 	src  string
@@ -32,29 +27,13 @@ var charMethodCases = []struct {
 }
 
 // TestSelfHostCharMethodsX86_64 compiles the char-method programs with
-// the self-hosted compiler and checks exit codes.
+// the self-hosted load driver and checks exit codes.
 func TestSelfHostCharMethodsX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := writeSelfHostAsmProject(t)
-	src, err := os.ReadFile("../../examples/self_host/asm_run.fern")
-	if err != nil {
-		t.Fatalf("read asm_run.fern: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "asm_run.fern"), src, 0o644); err != nil {
-		t.Fatalf("write asm_run.fern: %v", err)
-	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
-
+	l := newStdlibLoader(t)
 	for _, tc := range charMethodCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src))
-			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(progBin)
-			} else {
-				cmd = exec.Command(runner[0], append(runner[1:], progBin)...)
-			}
+			asm := l.emit(t, tc.src)
+			cmd := runX86_64Bin(l.runner, buildBin(t, l.gcc, t.TempDir(), tc.name, asm))
 			_ = cmd.Run()
 			if code := cmd.ProcessState.ExitCode(); code != tc.exit {
 				t.Errorf("%s exited %d, want %d", tc.name, code, tc.exit)

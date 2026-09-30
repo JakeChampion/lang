@@ -1,9 +1,7 @@
 package e2eselfhost
 
 import (
-	"os"
 	"os/exec"
-	"path/filepath"
 	"testing"
 )
 
@@ -231,7 +229,8 @@ var freshRecvLenLeakCases = []struct {
 	src  string
 }{
 	// A FRESH box return.
-	{"freshrecv-len-leak-flat", `function (s: string) tails(n: i32): string {
+	{"freshrecv-len-leak-flat", `import "std/i32";
+function (s: string) tails(n: i32): string {
     if (n <= 0) { return s; }
     var sLen: i32 = s.len();
     if (n >= sLen) { return ""; }
@@ -256,7 +255,8 @@ function main(): i32 {
 	// itself cannot be a row here — this driver resolves no imports — and was
 	// measured flat through the CLI instead (docs/RC-PERCEUS-SELF-HOST-PORT.md
 	// §9).
-	{"freshrecv-len-view-leak-flat", `function (s: string) tails(n: i32): str {
+	{"freshrecv-len-view-leak-flat", `import "std/i32";
+function (s: string) tails(n: i32): str {
     if (n <= 0) { return s; }
     var sLen: i32 = s.len();
     if (n >= sLen) { return ""; }
@@ -284,7 +284,8 @@ function main(): i32 {
 	// allocations (a view box, the outer box, and the outer's data buffer).
 	// Measured 71 B/round before, 22 after; the bound sits between with ~2x
 	// margin either way.
-	{"freshrecv-len-chain-bounded", `function (s: string) tails(n: i32): str {
+	{"freshrecv-len-chain-bounded", `import "std/i32";
+function (s: string) tails(n: i32): str {
     if (n <= 0) { return s; }
     var sLen: i32 = s.len();
     if (n >= sLen) { return ""; }
@@ -311,15 +312,8 @@ function main(): i32 {
 // fresh box leaked, 99 = over-release, 95/96 = a value went wrong.
 func TestSelfHostFreshRecvLenReclaimX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
-	dir := writeSelfHostAsmProject(t)
-	src, err := os.ReadFile("../../examples/self_host/asm_run.fern")
-	if err != nil {
-		t.Fatalf("read asm_run.fern: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "asm_run.fern"), src, 0o644); err != nil {
-		t.Fatalf("write asm_run.fern: %v", err)
-	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
+	l := newStdlibLoader(t)
+	dir := t.TempDir()
 
 	cases := append([]struct {
 		name     string
@@ -335,7 +329,7 @@ func TestSelfHostFreshRecvLenReclaimX86_64(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src))
+			asm := []byte(l.emit(t, tc.src))
 			if len(asm) == 0 {
 				t.Fatal("self-host compiler emitted 0 bytes")
 			}
