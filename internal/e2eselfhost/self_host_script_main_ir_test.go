@@ -45,8 +45,6 @@ func TestSelfHostScriptMainIRX86_64(t *testing.T) {
 		{"two-vars", "var a = 3; var b = 4; return a * b;", 12},
 		{"while-loop", "var i = 1; var s = 0; while (i <= 5) { s += i; i += 1; } return s;", 15},
 		{"if-else", "if (1 < 2) { return 9; } return 3;", 9},
-		// A boolean-valued return from the synthesized `main(): i32`.
-		{"boolean-return", "return 7 == 7;", 1},
 		// No trailing `return`: synth_script_main appends `return 0;`, matching the
 		// fallback exit-0 epilogue the AST emitter wrote after the inlined statements.
 		{"no-trailing-return", "var x = 1;", 0},

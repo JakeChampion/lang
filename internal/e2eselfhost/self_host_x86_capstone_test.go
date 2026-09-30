@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -115,8 +116,14 @@ func TestSelfHostX86Capstone(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			// Stage A.
-			asmText := runCapture(t, gcc, runner, asmRun, []byte(tc.prog))
+			// Stage A. The map cases use the built-in map runtime, which only
+			// the AST lowering calls.
+			var asmText []byte
+			if strings.HasPrefix(tc.name, "map") {
+				asmText = runCaptureAST(t, runner, asmRun, []byte(tc.prog))
+			} else {
+				asmText = runCapture(t, gcc, runner, asmRun, []byte(tc.prog))
+			}
 			if len(asmText) == 0 {
 				t.Fatal("asm.fern produced no assembly")
 			}

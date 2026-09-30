@@ -56,7 +56,8 @@ function walk_b(n: Node, d: i32): i32 { if (d <= 0) { return n.items[0]; } retur
 		if len(asm) == 0 {
 			t.Fatalf("%s: self-host compiler emitted 0 bytes", name)
 		}
-		if wantAsmSubstr != "" && !strings.Contains(string(asm), wantAsmSubstr) {
+		// The borrow inference is the AST lowering's, so its drop is read from that lowering.
+		if wantAsmSubstr != "" && !strings.Contains(string(runCaptureAST(t, runner, driverBin, []byte(prog))), wantAsmSubstr) {
 			t.Fatalf("%s: emitted asm missing %q — the mutual-recursive borrow was not recognised (regressed to the least-fixpoint?)", name, wantAsmSubstr)
 		}
 		bin := buildBin(t, gcc, dir, name, string(asm))

@@ -309,7 +309,6 @@ TestSelfHostHexIR 3
 TestSelfHostHttpHandlerRoutesIRX86_64 2
 TestSelfHostHttpHandlerServesX86_64 2
 TestSelfHostI32OverflowIR 2
-TestSelfHostI32PredicatesIRX86_64 2
 TestSelfHostI64ArrElemWidthIR 2
 TestSelfHostI64CallWidthIR 2
 TestSelfHostI64FieldWidthIR 2

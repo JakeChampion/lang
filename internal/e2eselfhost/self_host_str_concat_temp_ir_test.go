@@ -1,9 +1,7 @@
 package e2eselfhost
 
 import (
-	"os"
 	"os/exec"
-	"path/filepath"
 	"testing"
 )
 
@@ -67,7 +65,8 @@ var strConcatTempIRCases = []struct {
 	// was the one producer is_fresh_str_temp missed, leaking the temp per
 	// evaluation). Heap-bump flat across 5000 iterations.
 	{"tostring-operand-churn",
-		`function main(): i32 {
+		`import "std/i32";
+function main(): i32 {
     var acc: i32 = 0;
     var w: i32 = 0;
     while (w < 200) { var r: string = "n" + w.to_string(); acc = (acc + r.len()) % 251; w = w + 1; }
@@ -84,11 +83,13 @@ var strConcatTempIRCases = []struct {
 	// Value shape: "n" + 47.to_string() = "n47", len 3 (scalar-receiver
 	// admission via the ident-slot arm; the cast arm gets its own case).
 	{"tostring-operand-len",
-		`function main(): i32 { var w: i32 = 47; return ("n" + w.to_string()).len(); }`,
+		`import "std/i32";
+function main(): i32 { var w: i32 = 47; return ("n" + w.to_string()).len(); }`,
 		3, -1, ""},
 	// Cast-receiver form `(k as u32).to_string()` — the as_* scalar arm.
 	{"tostring-cast-operand-len",
-		`function main(): i32 { var k: i32 = 12; return ("v" + (k as u32).to_string()).len(); }`,
+		`import "std/i32";
+function main(): i32 { var k: i32 = 12; return ("v" + (k as u32).to_string()).len(); }`,
 		3, -1, ""},
 	// Arithmetic receiver `(i % 8).to_string()` — the scalar proof is inductive
 	// over the operator, so a COMBINATION of scalars admits exactly as a bare
@@ -96,7 +97,8 @@ var strConcatTempIRCases = []struct {
 	// evaluation, which is 32 bytes per iteration of the dominant `"lit" +
 	// (i % 8).to_string()` shape (#6544).
 	{"arith-tostring-operand-churn",
-		`function main(): i32 {
+		`import "std/i32";
+function main(): i32 {
     var acc: i32 = 0;
     var w: i32 = 0;
     while (w < 200) { var r: string = "n" + (w % 8).to_string(); acc = (acc + r.len()) % 251; w = w + 1; }
@@ -112,7 +114,8 @@ var strConcatTempIRCases = []struct {
 		0, -1, ""},
 	// Unary negation is the same proof. "v" + "-12" = len 4.
 	{"neg-tostring-operand-churn",
-		`function main(): i32 {
+		`import "std/i32";
+function main(): i32 {
     var acc: i32 = 0;
     var w: i32 = 1;
     while (w < 200) { var r: string = "v" + (-w).to_string(); acc = (acc + r.len()) % 251; w = w + 1; }
@@ -132,7 +135,8 @@ var strConcatTempIRCases = []struct {
 	// box the outer concat still reads; the underflow detector is the direct
 	// witness.
 	{"arith-tostring-string-operand-alias-safe",
-		`function main(): i32 {
+		`import "std/i32";
+function main(): i32 {
     var s: string = "abcd";
     if (("x" + ("a" + s).to_string()).len() != 6) { return 97; }
     if (s.len() != 4) { return 96; }
@@ -146,7 +150,8 @@ var strConcatTempIRCases = []struct {
 	// would mean the aliased identity result was mis-freed — the over-release
 	// this case exists to catch); the exit code proves s survives the concat.
 	{"tostring-string-recv-alias-safe",
-		`function main(): i32 {
+		`import "std/i32";
+function main(): i32 {
     var s: string = "abcd";
     if (("x" + s.to_string()).len() != 5) { return 97; }
     if (s.len() != 4) { return 96; }
@@ -161,19 +166,12 @@ var strConcatTempIRCases = []struct {
 // string, so a `call __fn___fern_str_free` would be an aliased-operand over-release.
 func TestSelfHostStrConcatTempIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
-	dir := writeSelfHostAsmProject(t)
-	src, err := os.ReadFile("../../examples/self_host/asm_run.fern")
-	if err != nil {
-		t.Fatalf("read asm_run.fern: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "asm_run.fern"), src, 0o644); err != nil {
-		t.Fatalf("write asm_run.fern: %v", err)
-	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
+	l := newStdlibLoader(t)
+	dir := t.TempDir()
 
 	for _, tc := range strConcatTempIRCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src))
+			asm := []byte(l.emit(t, tc.src))
 			if len(asm) == 0 {
 				t.Fatal("self-host compiler emitted 0 bytes")
 			}

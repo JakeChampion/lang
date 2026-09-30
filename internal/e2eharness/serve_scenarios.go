@@ -1,6 +1,7 @@
 package e2eharness
 
 import (
+	"bufio"
 	"fmt"
 	"io"
 	"net"
@@ -687,18 +688,33 @@ function shutdown(reason: string, hits: i32): void {
 // with the reason and the count.
 func CheckShutdownHook(t *testing.T, cmd *exec.Cmd, addr, stderrPath string) {
 	t.Helper()
+	checkShutdownHookOn(t, cmd, addr, stderrPath, syscall.SIGTERM, "sigterm")
+}
+
+// CheckShutdownHookOnSigint is CheckShutdownHook with SIGINT, what Ctrl-C
+// sends: the supervisor forwards it, the worker drains the same way, and
+// the hook's reason names it.
+func CheckShutdownHookOnSigint(t *testing.T, cmd *exec.Cmd, addr, stderrPath string) {
+	t.Helper()
+	checkShutdownHookOn(t, cmd, addr, stderrPath, syscall.SIGINT, "sigint")
+}
+
+func checkShutdownHookOn(t *testing.T, cmd *exec.Cmd, addr, stderrPath string, sig syscall.Signal, reason string) {
+	t.Helper()
 	WaitServerReady(t, addr, 10*time.Second)
 	for i := 1; i <= 2; i++ {
 		if got := ResponseBodyTail(HTTPRoundTrip(t, addr, "/", 5*time.Second)); got != fmt.Sprintf("hit %d", i) {
 			t.Fatalf("request %d: body %q, want \"hit %d\"", i, got, i)
 		}
 	}
-	sigterm(t, cmd)
+	if err := cmd.Process.Signal(sig); err != nil {
+		t.Fatal(err)
+	}
 	if code := waitExit(t, cmd, 10*time.Second); code != 0 {
 		t.Fatalf("exit code %d, want 0", code)
 	}
-	if stderr := readFileString(stderrPath); !strings.Contains(stderr, "shutdown reason=sigterm hits=2") {
-		t.Fatalf("the shutdown hook did not report on stderr:\n%s", stderr)
+	if stderr := readFileString(stderrPath); !strings.Contains(stderr, "shutdown reason="+reason+" hits=2") {
+		t.Fatalf("the shutdown hook did not report %s on stderr:\n%s", reason, stderr)
 	}
 }
 
@@ -751,5 +767,180 @@ func CheckHandlerStallsItsWorker(t *testing.T, addr string) {
 	}
 	if okDone.Before(r.done.Add(-50 * time.Millisecond)) {
 		t.Fatalf("/ok was answered %v before /slow finished, so the one worker did not run /slow to completion first", r.done.Sub(okDone))
+	}
+}
+
+// ListenFailureServerSource serves on `port` through the single loop
+// (`tcp_serve_opts`) or the supervisor (`tcp_serve_supervised_opts`).
+func ListenFailureServerSource(port int, supervised bool) string {
+	entry := "tcp_serve_opts"
+	if supervised {
+		entry = "tcp_serve_supervised_opts"
+	}
+	return fmt.Sprintf(`import "std/http";
+import "std/tcp";
+function handle(req: HttpRequest, plat: Platform): HttpResponse {
+    return http.ok("ok");
+}
+function main(): i32 {
+    return tcp.%s(%d, tcp.serve_options(), handle);
+}
+`, entry, port)
+}
+
+// CheckListenFailure runs a server built from ListenFailureServerSource
+// on a port something else holds: it exits 98, and stderr names the
+// address and the error in words.
+func CheckListenFailure(t *testing.T, cmd *exec.Cmd, port int) {
+	t.Helper()
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	done := make(chan error, 1)
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	go func() { done <- cmd.Wait() }()
+	select {
+	case <-done:
+	case <-time.After(20 * time.Second):
+		_ = cmd.Process.Kill()
+		t.Fatalf("the server did not exit on a port already in use\n--- stderr ---\n%s", stderr.String())
+	}
+	if code := cmd.ProcessState.ExitCode(); code != 98 {
+		t.Errorf("exit code %d, want 98\n--- stderr ---\n%s", code, stderr.String())
+	}
+	want := fmt.Sprintf("serve: cannot listen on 0.0.0.0:%d: Address already in use", port)
+	if !strings.Contains(stderr.String(), want) {
+		t.Errorf("stderr lacks %q:\n%s", want, stderr.String())
+	}
+}
+
+// FetchDeadlineUpstreams starts two loopback upstreams for
+// FetchDeadlineSource: one that accepts and never replies, and one that
+// answers one canned 200 per connection. A loopback listener that cannot
+// be had is a failure, not a skip: every networking lane has one.
+func FetchDeadlineUpstreams(t *testing.T) (silentPort, livePort int) {
+	t.Helper()
+	silent, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("no loopback listener: %v", err)
+	}
+	t.Cleanup(func() { silent.Close() })
+	var held []net.Conn
+	go func() {
+		for {
+			c, err := silent.Accept()
+			if err != nil {
+				return
+			}
+			held = append(held, c)
+		}
+	}()
+	live, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("no loopback listener: %v", err)
+	}
+	t.Cleanup(func() { live.Close() })
+	go func() {
+		for {
+			c, err := live.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				buf := make([]byte, 4096)
+				_, _ = c.Read(buf)
+				_, _ = c.Write([]byte("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nhi"))
+				c.Close()
+			}(c)
+		}
+	}()
+	return silent.Addr().(*net.TCPAddr).Port, live.Addr().(*net.TCPAddr).Port
+}
+
+// FetchDeadlineSource is a `fetch_get_deadline` client (#4385): against
+// the silent upstream it must answer `None` at its 400 ms deadline, and
+// against the live one `Some` with a 200 in time. Exit 0 when both hold.
+func FetchDeadlineSource(silentPort, livePort int) string {
+	return fmt.Sprintf(`import "std/fetch";
+import "std/time";
+function main(): i32 {
+    var slow: Option[u8[]] = fetch.fetch_get_deadline(fetch.ipv4(127,0,0,1), %d, "/", time.duration_millis(400));
+    var slow_ok: boolean = false;
+    match (slow) {
+        Some(s) => { },
+        None => { slow_ok = true; },
+    }
+    if (!slow_ok) { return 1; }
+    var fast: Option[u8[]] = fetch.fetch_get_deadline(fetch.ipv4(127,0,0,1), %d, "/", time.duration_millis(5000));
+    match (fast) {
+        Some(resp) => {
+            if (fetch.http_status(resp) == 200) { return 0; }
+            return 2;
+        },
+        None => { return 3; },
+    }
+    return 4;
+}
+`, silentPort, livePort)
+}
+
+// CheckFetchDeadline runs a FetchDeadlineSource client: it exits 0, and
+// well before the silent upstream could have been waited out.
+func CheckFetchDeadline(t *testing.T, cmd *exec.Cmd) {
+	t.Helper()
+	start := time.Now()
+	out, err := cmd.CombinedOutput()
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("fetch deadline client failed (elapsed %v): %v\n%s", elapsed, err, out)
+	}
+	if elapsed >= 30*time.Second {
+		t.Fatalf("fetch deadline client took %v: the deadline was not enforced", elapsed)
+	}
+}
+
+// LimitsServerSource serves with the parser's caps lowered through
+// `ServeOptions.limits`: a 16-byte body and three header fields.
+func LimitsServerSource(port int) string {
+	return fmt.Sprintf(`import "std/http";
+import "std/tcp";
+function handle(req: HttpRequest, plat: Platform): HttpResponse {
+    return http.ok("ok");
+}
+function main(): i32 {
+    var limits: http.HttpLimits = http.HttpLimits { ...http.http_limits(), body: 16, header_fields: 3 };
+    return tcp.tcp_serve_opts(%d, tcp.ServeOptions { ...tcp.serve_options(), limits: limits }, handle);
+}
+`, port)
+}
+
+// CheckServeLimits drives LimitsServerSource: a request inside the caps
+// is answered 200, a body past 16 bytes 413 and a fourth header field
+// 431, each before the handler runs.
+func CheckServeLimits(t *testing.T, addr string) {
+	t.Helper()
+	WaitServerReady(t, addr, 10*time.Second)
+	ask := func(req string) string {
+		conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer conn.Close()
+		_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+		if _, err := io.WriteString(conn, req); err != nil {
+			t.Fatal(err)
+		}
+		line, _ := bufio.NewReader(conn).ReadString('\n')
+		return strings.TrimSpace(line)
+	}
+	if got := ask("POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 16\r\nConnection: close\r\n\r\n0123456789abcdef"); got != "HTTP/1.1 200 OK" {
+		t.Errorf("a 16-byte body: %q, want 200", got)
+	}
+	if got := ask("POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 17\r\nConnection: close\r\n\r\n0123456789abcdefg"); !strings.HasPrefix(got, "HTTP/1.1 413") {
+		t.Errorf("a 17-byte body: %q, want 413", got)
+	}
+	if got := ask("GET / HTTP/1.1\r\nHost: x\r\nA: 1\r\nB: 2\r\nC: 3\r\n\r\n"); !strings.HasPrefix(got, "HTTP/1.1 431") {
+		t.Errorf("four header fields: %q, want 431", got)
 	}
 }

@@ -102,7 +102,7 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 	}
 	asm := string(out)
 
-	for _, leaf := range []string{"random_bytes", "read_file", "write_file", "remove_file", "temp_dir", "env", "stat",
+	for _, leaf := range []string{"random_bytes_u8", "read_file", "write_file", "remove_file", "temp_dir", "env", "stat",
 		"arr_slice",
 		// The clocks (#2649): now_unix_ms / now_ns are Fern on every native
 		// target. monotonic_ns is NOT in this list — it is Fern on Linux but
@@ -143,7 +143,7 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 		"tcp_connect",
 		// read(2) into a fresh buffer, boxed as a u8[] — the floor goes
 		// this direction, which is why recv migrates and send cannot.
-		"tcp_recv",
+		"tcp_recv_u8",
 		// execve over an argv built from the args array. The one leaf whose
 		// contract is that it does NOT return on success.
 		"proc_exec",
@@ -438,7 +438,7 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 	// read_line and reader_read_chunk join them (#2649): the same read(2), one
 	// byte at a time from fd 0 for read_line and up to n from the Reader's own fd
 	// for read_chunk.
-	for _, sym := range []string{"__fn___fern_tcp_recv",
+	for _, sym := range []string{"__fn___fern_tcp_recv_u8",
 		"__fn___fern_read_line", "__fn___fern_reader_read_chunk"} {
 		body := extractFuncBody(asm, sym)
 		if body == "" {

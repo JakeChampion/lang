@@ -612,6 +612,14 @@ func TestSelfHostIRVerifyProvidedCompilerClean(t *testing.T) {
 	}
 	dir := writeSelfHostModloadProject(t)
 	bin := buildSelfHostBin(t, gcc, dir, "asm_modload_run.fern", "provided_compiler")
+	// The compiler imports core/map; the modload driver resolves it beside the
+	// entry, as the corpus sweep's staging does.
+	stdRoot := langSrcAbs(t, filepath.Join("internal", "stdlib"))
+	for _, lib := range []string{"std", "core"} {
+		if err := os.Symlink(filepath.Join(stdRoot, lib), filepath.Join(dir, lib)); err != nil {
+			t.Fatalf("linking stdlib %s: %v", lib, err)
+		}
+	}
 
 	cmd := exec.Command(bin, filepath.Join(dir, "asm_modload_run.fern"), "-verifyprovided")
 	out, _ := cmd.Output()
@@ -716,6 +724,11 @@ func testProvidedCorpus(t *testing.T, bin string) {
 				results[i].ran = true
 				stage := stageProvidedFixture(t, stdRoot, filepath.Dir(main))
 				cmd := exec.Command(bin, filepath.Join(stage, "main.fern"), "-verifyprovided")
+				// A fixture the checker rejects has no typed lowering; only the
+				// AST lowering lowers it.
+				if _, err := os.Stat(filepath.Join(filepath.Dir(main), "expected.error")); err == nil {
+					cmd.Env = append(os.Environ(), "FERN_SEM_IR=")
+				}
 				var out []byte
 				// The verifier lowers a whole imported program. Share the
 				// existing process-wide memory budget with driver builds.

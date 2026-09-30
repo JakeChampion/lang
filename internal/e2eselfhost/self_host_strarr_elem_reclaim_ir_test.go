@@ -1,9 +1,7 @@
 package e2eselfhost
 
 import (
-	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -27,15 +25,8 @@ import (
 // asm-shape assertion on the __fn___fern_str_arr_free CALL site.
 func TestSelfHostStrArrElemReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
-	dir := writeSelfHostAsmProject(t)
-	src, err := os.ReadFile("../../examples/self_host/asm_run.fern")
-	if err != nil {
-		t.Fatalf("read asm_run.fern: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "asm_run.fern"), src, 0o644); err != nil {
-		t.Fatalf("write asm_run.fern: %v", err)
-	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
+	l := newStdlibLoader(t)
+	dir := t.TempDir()
 
 	// userCodeCalls reports whether a `call <helper>` appears inside a USER
 	// function — i.e. under a `__fn_<name>:` label that is not itself a
@@ -72,11 +63,13 @@ func TestSelfHostStrArrElemReclaimIRX86_64(t *testing.T) {
 	// excluded it — the shallow dec still runs).
 	run := func(t *testing.T, prog, name string, want int, wantCall string) {
 		t.Helper()
-		asm := runCapture(t, gcc, runner, driverBin, []byte(prog))
+		asm := []byte(l.emit(t, prog))
 		if len(asm) == 0 {
 			t.Fatalf("%s: self-host compiler emitted 0 bytes", name)
 		}
-		hasCall := userCodeCalls(string(asm), "__fn___fern_str_arr_free")
+		// The SARR admission is the AST lowering's, so it is read from that lowering.
+		astAsm := l.emitAST(t, prog)
+		hasCall := userCodeCalls(astAsm, "__fn___fern_str_arr_free")
 		if wantCall == "yes" && !hasCall {
 			t.Fatalf("%s: emitted asm has no __fn___fern_str_arr_free call — the string[] was not admitted to the SARR reclaim set", name)
 		}
@@ -85,7 +78,7 @@ func TestSelfHostStrArrElemReclaimIRX86_64(t *testing.T) {
 		}
 		if wantCall == "forwarded" {
 			const call = "call __fn___fern_str_arr_free"
-			if !strings.Contains(asmFuncBody(t, string(asm), "__fn_churn"), call) {
+			if !strings.Contains(asmFuncBody(t, astAsm, "__fn_churn"), call) {
 				t.Fatal("consumer must release the counted elements received through the forwarder")
 			}
 		}
@@ -265,7 +258,8 @@ function main(): i32 { var v: i32 = churn(2000); var before = __heap_bump_bytes(
 	// rebind admissible: the sweep element-walks and the loop is flat. `v` is
 	// another ELEMENT here, so without the retain the walk would free one box
 	// through two slots → 99.
-	run(t, `function mks(pre: string): string[] { var out: string[] = []; var i: i32 = 0; while (i < 8) { out = out.append(pre + "kkkkkkkkkkkkkkkkkkkk" + i.to_string()); i = i + 1; } return out; }
+	run(t, `import "std/i32";
+function mks(pre: string): string[] { var out: string[] = []; var i: i32 = 0; while (i < 8) { out = out.append(pre + "kkkkkkkkkkkkkkkkkkkk" + i.to_string()); i = i + 1; } return out; }
 function build(pre: string): i32 { var a: string[] = mks(pre); a = a.with(3, a[5]); return a.len() + a[3].len() + a[5].len(); }
 function churn(n: i32): i32 { var pre: string = "ab"; var acc: i32 = 0; var i: i32 = 0; while (i < n) { acc = (acc + build(pre)) % 251; i = i + 1; } return acc; }
 function main(): i32 { var w0: i32 = churn(5000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(5000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w0 != x) { return 97; } return 0; }`,
@@ -276,7 +270,8 @@ function main(): i32 { var w0: i32 = churn(5000); var b1: i32 = (__heap_bump_byt
 	// the store and the element walk decs rather than frees. A long string is
 	// built between the store and the reads so a wrongly freed block is really
 	// recycled first. 37 + 37 + 23 correct, underflow 0.
-	run(t, `function mks(pre: string): string[] { var out: string[] = []; var i: i32 = 0; while (i < 8) { out = out.append(pre + "kkkkkkkkkkkkkkkkkkkk" + i.to_string()); i = i + 1; } return out; }
+	run(t, `import "std/i32";
+function mks(pre: string): string[] { var out: string[] = []; var i: i32 = 0; while (i < 8) { out = out.append(pre + "kkkkkkkkkkkkkkkkkkkk" + i.to_string()); i = i + 1; } return out; }
 function churn(n: i32): string { var s: string = ""; var i: i32 = 0; while (i < n) { s = s + "0123456789012345678901234567890123456789"; i = i + 1; } return s; }
 function build(pre: string): i32 { var xs: string[] = mks(pre); var nm: string = pre + "-a-distinct-live-local-string-value"; xs = xs.with(1, nm); var junk: string = churn(20); if (junk.len() < 0) { return 0; } return nm.len() + xs[1].len() + xs[0].len(); }
 function run2(n: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { if (build(pre) != 97) { bad = 1; } i = i + 1; } return bad; }
@@ -286,7 +281,8 @@ function main(): i32 { var v: i32 = run2(3000); if (__rc_underflow_count() != 0)
 	// `.with` SELF-STORE `a.with(i, a[i])`: the release is cow-guarded on the
 	// old element differing from the stored value, so the store never frees the
 	// pointer it is about to write. 23 correct over 3000 rounds, underflow 0.
-	run(t, `function mks(pre: string): string[] { var out: string[] = []; var i: i32 = 0; while (i < 8) { out = out.append(pre + "kkkkkkkkkkkkkkkkkkkk" + i.to_string()); i = i + 1; } return out; }
+	run(t, `import "std/i32";
+function mks(pre: string): string[] { var out: string[] = []; var i: i32 = 0; while (i < 8) { out = out.append(pre + "kkkkkkkkkkkkkkkkkkkk" + i.to_string()); i = i + 1; } return out; }
 function churn(n: i32): string { var s: string = ""; var i: i32 = 0; while (i < n) { s = s + "0123456789012345678901234567890123456789"; i = i + 1; } return s; }
 function build(pre: string): i32 { var xs: string[] = mks(pre); xs = xs.with(3, xs[3]); var junk: string = churn(20); if (junk.len() < 0) { return 0; } return xs[3].len(); }
 function run2(n: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { if (build(pre) != 23) { bad = 1; } i = i + 1; } return bad; }

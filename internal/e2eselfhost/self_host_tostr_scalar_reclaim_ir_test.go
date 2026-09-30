@@ -333,22 +333,15 @@ function main(): i32 {
 }
 
 // TestSelfHostTostrScalarReclaimIRX86_64 drives the cases through the self-hosted
-// x86-64 compiler (asm_run), heap-bump + underflow guarded.
+// x86-64 compiler (asm_load_run), heap-bump + underflow guarded.
 func TestSelfHostTostrScalarReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
-	dir := writeSelfHostAsmProject(t)
-	src, err := os.ReadFile("../../examples/self_host/asm_run.fern")
-	if err != nil {
-		t.Fatalf("read asm_run.fern: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "asm_run.fern"), src, 0o644); err != nil {
-		t.Fatalf("write asm_run.fern: %v", err)
-	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
+	l := newStdlibLoader(t)
+	dir := t.TempDir()
 
 	for _, tc := range tostrScalarReclaimCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src+"\n"))
+			asm := []byte(l.emit(t, tc.src+"\n"))
 			if len(asm) == 0 {
 				t.Fatal("self-host compiler emitted 0 bytes")
 			}

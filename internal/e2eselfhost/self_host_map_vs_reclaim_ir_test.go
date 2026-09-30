@@ -24,6 +24,9 @@ import (
 // a HELPER (freed at the callee's exit sweep every call) because a map declared
 // directly in a loop is not freed per iteration (a separate pre-existing gap).
 func TestSelfHostMapVsReclaimIRX86_64(t *testing.T) {
+	// These programs pin the AST lowering's built-in map runtime; the typed lowering
+	// takes maps from core/map.
+	t.Setenv("FERN_SEM_IR", "")
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
 	src, err := os.ReadFile("../../examples/self_host/asm_run.fern")

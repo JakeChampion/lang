@@ -1,9 +1,7 @@
 package e2eselfhost
 
 import (
-	"os"
 	"os/exec"
-	"path/filepath"
 	"testing"
 )
 
@@ -183,7 +181,8 @@ function main(): i32 {
 	// one (__fern_str_arr_free: every element box, then the buffer) preceded by a
 	// retain of the element that survives it. Leaked the whole 4-string container
 	// per evaluation — 17256 B / 50 rounds, exactly doubling.
-	{"fresh-strarr-index-bound", `function wide(n: i32): string { return "a-string-well-past-the-inline-threshold-" + n.to_string(); }
+	{"fresh-strarr-index-bound", `import "std/i32";
+function wide(n: i32): string { return "a-string-well-past-the-inline-threshold-" + n.to_string(); }
 function strs(n: i32): string[] {
     var out: string[] = [];
     var i: i32 = 0;
@@ -213,7 +212,8 @@ function main(): i32 {
 	// `.len()`. The container reclaim alone would strand the element it kept
 	// alive, so the receiver position frees it after the read — the binding
 	// credit's twin.
-	{"fresh-strarr-index-borrowed", `function wide(n: i32): string { return "a-string-well-past-the-inline-threshold-" + n.to_string(); }
+	{"fresh-strarr-index-borrowed", `import "std/i32";
+function wide(n: i32): string { return "a-string-well-past-the-inline-threshold-" + n.to_string(); }
 function strs(n: i32): string[] {
     var out: string[] = [];
     var i: i32 = 0;
@@ -243,7 +243,8 @@ function main(): i32 {
 	// is a MOVE and not a retain-and-drop: the strict-fresh admission plus the
 	// per-field freshness proof mean the box holds the string's only reference,
 	// so the read hands it on and the box dec is the whole release.
-	{"fresh-struct-field-string", `struct Box { name: string, k: i32 }
+	{"fresh-struct-field-string", `import "std/i32";
+struct Box { name: string, k: i32 }
 function wide(n: i32): string { return "a-string-well-past-the-inline-threshold-" + n.to_string(); }
 function boxed(n: i32): Box { return Box { name: wide(n), k: n }; }
 function rounds(n: i32): i32 {
@@ -270,7 +271,8 @@ function main(): i32 {
 	// frame's own allocation — the free-function cases above with the receiver
 	// the registry already keys ("<Base>.<method>"). The struct box AND its
 	// fresh tag leaked per round before.
-	{"fresh-struct-method-field-string", `struct Box { tag: string, n: i32 }
+	{"fresh-struct-method-field-string", `import "std/i32";
+struct Box { tag: string, n: i32 }
 function (b: Box) bump(): Box { return Box { tag: b.tag + "!", n: b.n + 1 }; }
 function rounds(n: i32): i32 {
     var acc: i32 = 0;
@@ -325,7 +327,8 @@ function main(): i32 {
 	// receiver's type from the local's annotation. Until it did, the string
 	// survived the box it was moved out of with nothing left to free it: 72 B a
 	// round, where the free-function spelling of the same binding is flat.
-	{"method-field-string-bound", `struct Box { tag: string, n: i32 }
+	{"method-field-string-bound", `import "std/i32";
+struct Box { tag: string, n: i32 }
 function (b: Box) bump(): Box { return Box { tag: b.tag + "!", n: b.n + 1 }; }
 function rounds(n: i32): i32 {
     var acc: i32 = 0;
@@ -424,7 +427,8 @@ function main(): i32 {
 	// A release that skipped the compare — or got its sense backwards — frees it
 	// a hundred times over; the churn re-fills the freed bytes, so the surviving
 	// read reports 90 rather than passing by luck.
-	{"freshself-identity-path-not-freed", `struct Box { tag: string, n: i32 }
+	{"freshself-identity-path-not-freed", `import "std/i32";
+struct Box { tag: string, n: i32 }
 function wide(n: i32): string { return "a-string-well-past-the-inline-threshold-" + n.to_string(); }
 function (b: Box) relabel(t: string): Box {
     if (t.len() == 0) { return b; }
@@ -456,7 +460,8 @@ function main(): i32 {
 	// receiver's slot. `keep`'s box and its moved-out tag are untouched either way,
 	// which is the safety this case pins — the mechanism moved from a pointer
 	// guard to the count itself.
-	{"method-identity-return-not-released", `struct Box { tag: string, n: i32 }
+	{"method-identity-return-not-released", `import "std/i32";
+struct Box { tag: string, n: i32 }
 function wide(n: i32): string { return "a-string-well-past-the-inline-threshold-" + n.to_string(); }
 function (b: Box) me(): Box { return b; }
 function main(): i32 {
@@ -475,7 +480,8 @@ function main(): i32 {
 	// The RECEIVER-FIELD refusal, the method sibling of strfld-param-value-refused:
 	// `same()` builds a fresh box around the receiver's own string, so moving that
 	// string out and freeing it would release `keep`'s tag underneath it.
-	{"method-receiver-field-value-refused", `struct Box { tag: string, n: i32 }
+	{"method-receiver-field-value-refused", `import "std/i32";
+struct Box { tag: string, n: i32 }
 function wide(n: i32): string { return "a-string-well-past-the-inline-threshold-" + n.to_string(); }
 function (b: Box) same(): Box { return Box { tag: b.tag, n: b.n }; }
 function main(): i32 {
@@ -496,7 +502,8 @@ function main(): i32 {
 	// does not retain — so if the producer were admitted, the deep free would
 	// release `keep`'s own string box. The churn re-uses the freed bytes, so a
 	// widened admission reads a corrupted length and reports 90.
-	{"strarr-aliased-element-refused", `struct Box { name: string, k: i32 }
+	{"strarr-aliased-element-refused", `import "std/i32";
+struct Box { name: string, k: i32 }
 function wide(n: i32): string { return "a-string-well-past-the-inline-threshold-" + n.to_string(); }
 function pair(b: Box): string[] { return [b.name, b.name]; }
 function main(): i32 {
@@ -515,7 +522,8 @@ function main(): i32 {
 	// The FIELD-side refusal. `wrap` stores its own PARAMETER in the returned
 	// struct, so the box does not own that string — moving it out and letting the
 	// destination free it would release main's `live` underneath it.
-	{"strfld-param-value-refused", `struct Box { name: string, k: i32 }
+	{"strfld-param-value-refused", `import "std/i32";
+struct Box { name: string, k: i32 }
 function wide(n: i32): string { return "a-string-well-past-the-inline-threshold-" + n.to_string(); }
 function wrap(s: string, n: i32): Box { return Box { name: s, k: n }; }
 function main(): i32 {
@@ -589,19 +597,12 @@ function main(): i32 {
 // self-hosted x86-64 compiler.
 func TestSelfHostFreshContainerReadReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
-	dir := writeSelfHostAsmProject(t)
-	src, err := os.ReadFile("../../examples/self_host/asm_run.fern")
-	if err != nil {
-		t.Fatalf("read asm_run.fern: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "asm_run.fern"), src, 0o644); err != nil {
-		t.Fatalf("write asm_run.fern: %v", err)
-	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
+	l := newStdlibLoader(t)
+	dir := t.TempDir()
 
 	for _, tc := range freshContainerReadReclaimCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src+"\n"))
+			asm := []byte(l.emit(t, tc.src+"\n"))
 			if len(asm) == 0 {
 				t.Fatal("self-host compiler emitted 0 bytes")
 			}

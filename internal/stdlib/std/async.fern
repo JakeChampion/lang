@@ -67,6 +67,12 @@ pub enum Future[T] {
 // ending the process (signalfd behind a blocked signal on Linux, kqueue's
 // EVFILT_SIGNAL behind an ignored one on Darwin; -ENOTSUP on wasm, which
 // has no signals), and `unwatch_signal(sig)` restores its default.
+// `watch_parent()` reports the exit of the process's parent the way a
+// watched SIGTERM is reported, as (-15, 1): -ESRCH when the parent is
+// already gone, -ENOTSUP on wasm. Linux delivers it as SIGTERM
+// (PR_SET_PDEATHSIG), Darwin as kqueue's EVFILT_PROC. A parent that dies
+// before the call is caught by finding the process reparented to init, so a
+// subreaper other than init hides that early death on Linux.
 // `close()` releases the set.
 pub trait Driver {
     function poll_ready(self: Self, toks: i32[], timeout_ms: i32): i32;
@@ -78,6 +84,7 @@ pub trait Driver {
     function wait(self: Self, max: i32, timeout_ms: i32): i32[];
     function watch_signal(self: Self, sig: i32): i32;
     function unwatch_signal(self: Self, sig: i32): i32;
+    function watch_parent(self: Self): i32;
     function close(self: Self): i32;
 }
 
@@ -180,6 +187,11 @@ impl Driver for RealDriver {
         }
         self.signals.set(kept);
         return reactor_ctl(self.reactor.get(), 5, sig, sfd);
+    }
+    function watch_parent(self: Self): i32 {
+        var watched: i32 = self.watch_signal(15);
+        if (watched < 0) { return watched; }
+        return reactor_ctl(__real_reactor(self), 6, 0, 0);
     }
     function close(self: Self): i32 {
         var r: i32 = self.reactor.get();

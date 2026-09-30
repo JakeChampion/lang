@@ -657,6 +657,8 @@ pub function sysno(t: string, name: string): string {
         if (name == "getpriority") { return "140"; }
         if (name == "setpriority") { return "141"; }
         if (name == "kill") { return "62"; }
+        if (name == "prctl") { return "157"; }
+        if (name == "getppid") { return "110"; }
         if (name == "setpgid") { return "109"; }
         if (name == "getrlimit") { return "97"; }
         if (name == "statfs") { return "137"; }
@@ -768,6 +770,7 @@ pub function sysno(t: string, name: string): string {
         if (name == "getpriority") { return "100"; }
         if (name == "setpriority") { return "101"; }
         if (name == "kill") { return "37"; }
+        if (name == "getppid") { return "39"; }
         if (name == "setpgid") { return "82"; }
         if (name == "getrlimit") { return "194"; }
         // 345 rather than 157: arm64 macOS ships only the 64-bit-inode
@@ -863,6 +866,8 @@ pub function sysno(t: string, name: string): string {
     if (name == "setpriority") { return "140"; }
     if (name == "getpriority") { return "141"; }
     if (name == "kill") { return "129"; }
+    if (name == "prctl") { return "167"; }
+    if (name == "getppid") { return "173"; }
     if (name == "setpgid") { return "154"; }
     if (name == "getrlimit") { return "163"; }
     if (name == "statfs") { return "43"; }
@@ -2042,12 +2047,25 @@ function signal_watch_src(t: string): string {
         + "var ev2: usize = __raw_scratch(16); __syscall4(" + sysno(t, "epoll_ctl") + ", r_fd as i64, 2, arg as i64, ev2 as i64); __syscall3(" + sysno(t, "close") + ", arg as i64, 0, 0); return __syscall4(" + sysno(t, "rt_sigprocmask") + ", 1, set as i64, 0, 8) as i32; } ";
 }
 
+// Op 6 reports the parent's exit as a SIGTERM: PR_SET_PDEATHSIG on Linux,
+// an EVFILT_PROC NOTE_EXIT (EV_ADD with EV_ONESHOT) on Darwin that the
+// wait maps to (-15, 1). A parent already gone, found reparented to init,
+// is -ESRCH.
+function parent_watch_src(t: string): string {
+    if (t == "arm64-darwin") {
+        return "if (op == 6) { var ppid: i32 = __syscall3(" + sysno(t, "getppid") + ", 0, 0, 0) as i32; if (ppid == 1) { return 0 - 3; } var pch: usize = __raw_scratch(32); var proc_filter: i32 = 0 - 5; var proc_flags: i32 = 17; "
+            + kevent_change_src("pch", "ppid", "proc_filter", "proc_flags") + " __raw_store8(pch, 15, 128); return __syscall6(" + sysno(t, "kevent") + ", r_fd as i64, pch as i64, 1, 0, 0, 0) as i32; } ";
+    }
+    return "if (op == 6) { var pdeath: i32 = __syscall3(" + sysno(t, "prctl") + ", 1, 15, 0) as i32; if (pdeath < 0) { return pdeath; } if ((__syscall3(" + sysno(t, "getppid") + ", 0, 0, 0) as i32) == 1) { return 0 - 3; } return 0; } ";
+}
+
 pub function rt_src_reactor_ctl(t: string): string {
     var watch: string = epoll_watch_src(t);
     if (t == "arm64-darwin") { watch = kqueue_watch_src(t); }
     return "function __fern_reactor_ctl(r_fd: i32, op: i32, fd: i32, arg: i32): i32 { "
         + "if (op == 3) { return __syscall3(" + sysno(t, "close") + ", r_fd as i64, 0, 0) as i32; } "
         + signal_watch_src(t)
+        + parent_watch_src(t)
         + "if (op != 1 && op != 2) { return 0 - 22; } var interest: i32 = arg & 7; if (op == 2) { interest = 0; } " + watch + " }";
 }
 
@@ -2073,7 +2091,7 @@ function kqueue_wait_src(t: string): string {
         + "var b: usize = __raw_arr_ptr(events); var i: i32 = 0; while (i < n) { var e: i32 = i * 32; var ready: i32 = 2; if (__raw_load8(buf, e + 8) == 255) { ready = 1; } "
         + "if ((__raw_load8(buf, e + 11) & 192) != 0) { ready = ready | 4; } "
         + "var fd: i32 = __raw_load8(buf, e) | (__raw_load8(buf, e + 1) << 8) | (__raw_load8(buf, e + 2) << 16) | (__raw_load8(buf, e + 3) << 24); "
-        + "if (__raw_load8(buf, e + 8) == 250) { ready = 1; fd = 0 - fd; } "
+        + "if (__raw_load8(buf, e + 8) == 250) { ready = 1; fd = 0 - fd; } if (__raw_load8(buf, e + 8) == 251) { ready = 1; fd = 0 - 15; } "
         + "__raw_store_ptr(b, i * 2 + 1, fd as usize); __raw_store_ptr(b, i * 2 + 2, ready as usize); i = i + 1; } "
         + "var buf_own: string = __raw_string(buf, cap * 32 + 16); return n;";
 }
@@ -2794,9 +2812,10 @@ pub function rt_src_write_file_exec(t: string): string {
 // rt_src_write_file_mode is the shared body, parameterised by emitted function
 // name, creation mode (DECIMAL, as the emitted source is Fern: 420 = 0644,
 // 493 = 0755) and an optional statement spliced in before close(2). One body so
-// the two cannot drift.
+// the two cannot drift. A failed write(2) closes the file and answers its errno,
+// as native does: a full disk is an error, not a short file.
 pub function rt_src_write_file_mode(t: string, fname: string, mode: string, fixup: string): string {
-    return "function " + fname + "(path: string, contents: string): Result[void, IoError] { var plen: i32 = path.len(); var pathz: usize = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i] as i32); i = i + 1; } __raw_store8(pathz, plen, 0); var fd: i32 = __syscall4(" + sysno(t, "openat") + ", " + at_fdcwd(t) + ", pathz as i64, " + oflag(t, "wr_creat_trunc") + ", " + mode + ") as i32; var pathz_own: string = __raw_string(pathz, plen + 1); if (fd < 0) { return Err(__fern_io_error(0 - fd, __fern_path_copy(pathz_own, plen))); } var clen: i32 = contents.len(); var cbuf: usize = __raw_alloc(clen + 1); var j: i32 = 0; while (j < clen) { __raw_store8(cbuf, j, contents[j] as i32); j = j + 1; } var put: i32 = 0; while (put < clen) { var w: i32 = __syscall3(" + sysno(t, "write") + ", fd as i64, __raw_addr(cbuf, put) as i64, (clen - put) as i64) as i32; if (w <= 0) { put = clen; } else { put = put + w; } } var cbuf_own: string = __raw_string(cbuf, clen + 1); " + fixup + "__syscall3(" + sysno(t, "close") + ", fd as i64, 0, 0); return Ok(()); }";
+    return "function " + fname + "(path: string, contents: string): Result[void, IoError] { var plen: i32 = path.len(); var pathz: usize = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i] as i32); i = i + 1; } __raw_store8(pathz, plen, 0); var fd: i32 = __syscall4(" + sysno(t, "openat") + ", " + at_fdcwd(t) + ", pathz as i64, " + oflag(t, "wr_creat_trunc") + ", " + mode + ") as i32; var pathz_own: string = __raw_string(pathz, plen + 1); if (fd < 0) { return Err(__fern_io_error(0 - fd, __fern_path_copy(pathz_own, plen))); } var clen: i32 = contents.len(); var cbuf: usize = __raw_alloc(clen + 1); var j: i32 = 0; while (j < clen) { __raw_store8(cbuf, j, contents[j] as i32); j = j + 1; } var cbuf_own: string = __raw_string(cbuf, clen + 1); var put: i32 = 0; while (put < clen) { var w: i32 = __syscall3(" + sysno(t, "write") + ", fd as i64, __raw_addr(cbuf, put) as i64, (clen - put) as i64) as i32; if (w < 0) { __syscall3(" + sysno(t, "close") + ", fd as i64, 0, 0); return Err(__fern_io_error(0 - w, __fern_path_copy(pathz_own, plen))); } if (w == 0) { put = clen; } else { put = put + w; } } " + fixup + "__syscall3(" + sysno(t, "close") + ", fd as i64, 0, 0); return Ok(()); }";
 }
 
 // rt_src_env backs `env(name)` (#2649) → Option[string]. Walks the process envp
@@ -6499,6 +6518,14 @@ pub function check_func(fd: parser.FuncDecl, s: EmitState): util.Diag[] {
     var ctx: CheckCtx = CheckCtx { st: s2, diags: [] };
     ctx = check_stmts(fd.body, want, fd.name, ctx);
     return ctx.diags;
+}
+
+// entry_check_errors is check_module over `tm` against the state an emit entry
+// checks with; `tm` is the module as the checker annotated it.
+pub function entry_check_errors(tm: parser.Module): util.Diag[] {
+    var s: EmitState = new_state();
+    s = EmitState { ...s, struct_decls: irlower.struct_tab(tm.structs), funcs: tm.funcs };
+    return check_module(tm, s);
 }
 
 pub function check_module(mod: parser.Module, s: EmitState): util.Diag[] {

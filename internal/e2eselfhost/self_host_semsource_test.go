@@ -804,6 +804,19 @@ function tm_line(k: i32): i32 { var t = (k, 2); return match (t) { (1, b) => b *
 // the type names, which is the target's, and the native checker refuses it.
 function refused_usize_sat(a: usize, b: usize): usize { return a +| b; }
 function refused_usize_chk(a: usize, b: usize): i32 { match (a *? b) { Some(_) => { return 1; }, None => { return 0; } } }
+// A self-call whose result is a payload of the variant returned is a tail call
+// modulo cons: the loop carries the chain built so far and fills its hole, so
+// no call to the function is left. A bare self-tail call beside one leaves the
+// hole where it is. A payload read out of a parameter crosses the jump as a
+// counted unit, so the plain tail call through one is a loop too.
+enum Ints { More(i32, Ints), Done }
+function bumped(xs: Ints): Ints { match (xs) { More(h, t) => { return More(h + 1, bumped(t)); }, Done => { return Done; } } }
+function positives(xs: Ints): Ints { match (xs) { More(h, t) => { if (h < 0) { return positives(t); } return More(h, positives(t)); }, Done => { return Done; } } }
+function last_of(xs: Ints, d: i32): i32 { match (xs) { More(h, t) => { return last_of(t, h); }, Done => { return d; } } }
+// Holes at different payload positions cannot share one fill, so both calls
+// stay calls.
+enum Swap { Front(Swap, i32), Back(i32, Swap), Stop }
+function flipped(m: Swap): Swap { match (m) { Front(n, k) => { return Back(k, flipped(n)); }, Back(k, n) => { return Front(flipped(n), k); }, Stop => { return Stop; } } }
 `
 
 const semsourcePrintDriver = `import "./semsource"; import "./ssa"; import "./ssaunits"; import "./typeinfo";

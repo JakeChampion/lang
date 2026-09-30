@@ -20,6 +20,9 @@ import (
 // leaf-safe and the driver refuses the module; the exit code proves the
 // round-trip.
 func TestSelfHostMapStructFieldIRX86_64(t *testing.T) {
+	// These programs pin the AST lowering's built-in map runtime; the typed lowering
+	// takes maps from core/map.
+	t.Setenv("FERN_SEM_IR", "")
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
 	src, err := os.ReadFile("../../examples/self_host/asm_run.fern")

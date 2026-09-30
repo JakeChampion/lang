@@ -1073,7 +1073,13 @@ serializer.
   `var item: Item = http.body_json[Item](req)?;`.
 - **Header methods:** `(resp).with_header(name, value)` (set) /
   `(resp).with_appended_header(name, value)` (append) /
-  `(resp).with_content_type(ct)`
+  `(resp).with_content_type(ct)`, and `(resp).with_trailer(name, value)`
+  for `HttpResponse.trailers`: fields the serve loop sends after a
+  `chunks` body's last chunk, named in the head's `Trailer` field (RFC
+  9110 §6.5). A body with a length, an HTTP/1.0 client's close-delimited
+  stream and the wasi-http wrapper's outgoing body carry none, so there
+  they are dropped. `http_serialize_fields(map)` writes a map as field
+  lines.
 - **Request builder:** `request(method, path)` is a request to hand a
   handler in a test (no headers, no body), and `(req).with_header(name,
   value)`, `(req).with_body(body)` (with the `Content-Length` a client
@@ -1118,7 +1124,8 @@ serializer.
   persistent connection needs, answering `Framed(HttpFramed)`,
   `Incomplete` (keep reading), `Continue` (the header block has arrived
   and says `Expect: 100-continue`, the body has not: the loop sends
-  `100 Continue` once and keeps reading, RFC 9110 §10.1.1) or
+  `100 Continue` once and keeps reading, RFC 9110 §10.1.1; an HTTP/1.0
+  request's expectation is ignored, as that section asks) or
   `Malformed(status)` (the loop answers `status` with an empty body and
   `Connection: close`, then closes; a malformed request behind an
   answered one gets no answer, since that answer already said close,
@@ -1162,11 +1169,14 @@ serializer.
   a body over 1 MiB is malformed, and a violation is refused as soon as it
   is known: a request past a cap once the cap is passed, a bad request
   line once its CRLF has arrived, before the rest of the request. The
-  status names the violation: 400 for the grammar and the `Host` rule,
+  status names the violation: 400 for the grammar, the `Host` rule and a
+  `Transfer-Encoding` list whose last coding is not `chunked` (RFC 9112
+  §6.3),
   413 for a body past its cap, 414 for a request line past its cap, 417
   for an `Expect` other than `100-continue`, 431
   for a header block past its byte or field cap or chunk framing past its
-  budget, 501 for a transfer coding the parser cannot decode, 505 for
+  budget, 501 for a coding under the final `chunked` the parser cannot
+  decode, 505 for
   another major version. One empty line before the request line is
   ignored, as §2.2 asks, and counted in `len`; a second is refused. A
   chunked body (§7.1, HTTP/1.1 only) is decoded into `request.body`:
@@ -1177,11 +1187,15 @@ serializer.
   the headers (nothing knows their semantics, so none may merge,
   RFC 9110 §6.5.1; a Content-Length body's are empty), the decoded bytes are held to
   the body cap, and the framing (chunk-size lines, extensions, CRLFs and
-  the trailer section) to another `http_header_bytes_cap()`, so a
-  chunk-flood cannot hold more buffer than any other request.
-  `http_header_bytes_cap()`, `http_body_cap()` and
-  `http_request_bytes_cap()` (header block, blank line, body and chunk
-  framing, each at its cap) name the caps for the serve loop's buffer.
+  the trailer section) to another header block's bytes, so a
+  chunk-flood cannot hold more buffer than any other request. The caps
+  are an `HttpLimits { request_line, header_bytes, header_fields, body }`:
+  `http_limits()` is 8 KiB, 32 KiB, 100 fields and 1 MiB, what
+  `http_parse_request_framed` uses; `http_parse_request_framed_from(buf,
+  from, limits)` takes them, and a serve loop reads them from
+  `ServeOptions.limits`. `http_request_bytes_cap(limits)` (header block,
+  blank line, body and chunk framing, each at its cap) is the most a
+  connection buffers without a complete request.
   `http_header_value(block, key)` reads a raw header block by the same
   rules, so a block the parser would refuse names no header.
   `http_serialize_response(resp): string` writes `Connection: close`;
@@ -1225,7 +1239,10 @@ The socket controls are typed faces over the descriptor builtins
   listener per port), or the `NetError` the bind or listen reported.
 - `set_nodelay(sock, on)`, `set_keepalive(sock, on)`,
   `set_nonblocking(sock, on)` — `TCP_NODELAY`, `SO_KEEPALIVE` and
-  `O_NONBLOCK`, each `Result[(), NetError]`. A non-blocking `tcp_recv`
+  `O_NONBLOCK`, each `Result[(), NetError]`. `TCP_NODELAY` is already on
+  for every socket `connect`, `connect_start` and `accept` answer and every
+  connection the serve loop accepts, as Go and Node have it; `false` turns
+  Nagle's coalescing back on. A non-blocking `tcp_recv`
   answers the empty array at once when nothing is queued, and a
   non-blocking `tcp_send` what the kernel took, or `-EAGAIN` when it had
   no room.
@@ -1298,7 +1315,10 @@ loop and `std/fetch` the client.
   pipelined on one connection are answered in order, 32 per readiness
   event before the loop returns to the wait (the rest are answered on
   the next wait, which returns at once, so one pipeline cannot hold
-  the other connections off the reactor), and every response names
+  the other connections off the reactor), the responses to one event
+  corked into a single write (a response with a streamed or file body,
+  or one behind which no complete request is buffered, ends the cork),
+  and every response names
   the outcome in its `Connection` header: once the peer's end of
   stream has been read, the last buffered request's response says
   `close`, since the close follows it. A partial request behind a
@@ -1345,13 +1365,25 @@ loop and `std/fetch` the client.
   cap), and
   how many workers `tcp_serve_supervised_opts` forks (`workers`; 0, the
   default, is one per processing unit the process may use, what
-  `cpu_count()` answers), and the shutdown SIGTERM starts: the loop keeps
+  `cpu_count()` answers), and the shutdown SIGTERM or SIGINT starts (SIGHUP
+  keeps its default, ending the process): the loop keeps
   accepting for `shutdown_grace` (2 s, since whoever routes to it removes
   it in parallel), answers 503 on `readiness_path` ("" for none), then
   closes the listener, ends keep-alive, closes the connections with
   nothing in flight and gives the rest `drain_deadline` (30 s) from the
   signal to finish before closing them; the loop returns 0 once every
   connection is gone and 1 when it cut one off, so `main` exits with it.
+  `limits` (`http.http_limits()`) are the parser's caps on each request,
+  so `ServeOptions { ...serve_options(), limits: http.HttpLimits {
+  ...http.http_limits(), body: 65536 } }` refuses a body past 64 KiB with
+  413 before the handler runs. `stop_with_parent` (false) starts the same
+  shutdown when the process's parent exits, as a SIGTERM would; each
+  worker `tcp_serve_supervised_opts` forks has it set, so a supervisor
+  killed outright (SIGKILL, a crash) takes its workers down rather than
+  leaving them serving as orphans.
+  A listener it cannot bind is `serve: cannot listen on 0.0.0.0:PORT:`
+  and the error's text on stderr, and the entry returns 98 (every
+  `tcp_serve*` entry, and a supervised worker that binds its own).
   A listener the process was started with (`LISTEN_FDS` at least 1,
   descriptor 3) is served instead of a fresh one.
 - `tcp_serve_shutdown(port, opts, handler, shutdown)` and
@@ -1359,9 +1391,9 @@ loop and `std/fetch` the client.
   `tcp_serve_opts` and `tcp_serve_with_opts` with a hook the loop calls
   once it has stopped, before returning: `shutdown(reason)`, or
   `shutdown(reason, state)` with the state as the last request left it,
-  where a counter is flushed or a store closed. The reason is "sigterm"
-  when every request in flight was answered after the signal and
-  "drain-deadline" when one was cut off.
+  where a counter is flushed or a store closed. The reason is the signal
+  that started the shutdown, "sigterm" or "sigint", when every request in
+  flight was answered after it and "drain-deadline" when one was cut off.
 - `tcp_serve_deadline(port, handler, recv_deadline)` —
   `tcp_serve` with an explicit per-request read deadline; a
   client that hasn't delivered a complete request in time is
@@ -1381,8 +1413,8 @@ loop and `std/fetch` the client.
   (one per processing unit by default), each running its own loop over
   the one listener, watched exclusively (epoll's `EPOLLEXCLUSIVE`) so a
   connection wakes one of them, or with `reuse_port` over a listener of
-  its own; whichever dies is replaced, and SIGTERM is forwarded to every
-  worker and waited for, the exit being the worst code a worker answered
+  its own; whichever dies is replaced, and SIGTERM or SIGINT is forwarded
+  to every worker and waited for, the exit being the worst code a worker answered
   it with. Eight deaths in a row within 100 ms of a fork are a give-up:
   the workers still serving are stopped the same way, and the exit is
   the last death's code. `tcp_serve_supervised_with(port, opts, init,
@@ -1463,7 +1495,7 @@ use case). Hosts are literal IPv4 (no DNS / TLS yet).
 
 HTTP `HeaderMap` with case-insensitive lookup, multi-valued
 entries, and insertion-ordered iteration. Backs `HttpRequest`'s
-`headers` and `trailers` and `HttpResponse`'s `headers`.
+`headers` and `trailers` and `HttpResponse`'s `headers` and `trailers`.
 
 - `header_map_new()` — empty map.
 - `(h).set(name, value)` / `(h).append(name, value)` — replace vs.
@@ -1550,6 +1582,10 @@ old `concurrent { … }` / `await` keyword surface.
   signal a readiness event, reported as the pair (-sig, 1) and no longer
   ending the process (-ENOTSUP on wasm), `unwatch_signal(sig)` restores
   its default; in the sim `ready_at(-sig, at_ms, 1)` scripts a delivery.
+  `watch_parent()` reports the parent's exit the way a watched SIGTERM is
+  reported, (-15, 1): -ESRCH when the parent is already gone, found
+  reparented to init (a subreaper other than init, Linux, hides that),
+  -ENOTSUP on wasm; the sim's parent never exits.
   `std/tcp`'s serve loops run on it.
 
 ### `std/platform`

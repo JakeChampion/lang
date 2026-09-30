@@ -441,12 +441,13 @@ function main(): i32 {
     }
     if (target == "arm64-linux") {
         // IR-or-error (#3457 slice 5): the arm64 leg has no fallback either.
-        // asm_arm64_ir.emit_module_or_error runs the same prologue asm_arm64
+        // asm_arm64_ir.emit_module_or_error_sub runs the same prologue asm_arm64
         // .emit_module did and errors where the fallback used to be. Note the arm64
         // merged path shares the 512-function budget (#5949 corrected the old "arm64
         // needs none of this"), so an over-budget program errors here exactly as it
         // does on x86 — the per-module path is what compiles those.
-        write(asm_arm64_ir.emit_module_or_error(parser.module_with_builtins(merged), false));
+        var d64: semlower.Driven = semlower.driven_annotated(merged, target);
+        write(asm_arm64_ir.emit_module_or_error_sub(d64.full, false, d64.sub));
         return 0;
     }
     if (target == "arm64-darwin") {
@@ -454,10 +455,10 @@ function main(): i32 {
         // to the Mach-O dialect — the GAS text `fern.fern -target arm64-darwin`
         // hands to its in-process assembler. Emitted here so a harness can
         // inspect the darwinized output without building the whole CLI.
-        write(asm_arm64_ir.darwinize(asm_arm64_ir.emit_module_or_error(parser.module_with_builtins(merged), true)));
+        var dd: semlower.Driven = semlower.driven_annotated(merged, target);
+        write(asm_arm64_ir.darwinize(asm_arm64_ir.emit_module_or_error_sub(dd.full, true, dd.sub)));
         return 0;
     }
-    var mwb: parser.Module = parser.module_with_builtins(merged);
     // OVER the merged 512-function IR budget but small enough to fit one process:
     // route per-module (each module is under budget → IR) instead of failing the
     // whole program (#3457). The lower bound is the budget the
@@ -469,7 +470,7 @@ function main(): i32 {
     // set the per-module emit prunes each module to; emit_per_module_concat
     // returns "" if a reachable module is genuinely IR-ineligible, so such
     // programs fall through to the merged emit below.
-    var nfuncs: i32 = ircore.lift_lambdas(mwb).funcs.len();
+    var nfuncs: i32 = ircore.lift_lambdas(parser.module_with_builtins(merged)).funcs.len();
     if (nfuncs > 512 && nfuncs < 1500) {
         var reach: string[] = [];
         var ri: i32 = 0;
@@ -480,6 +481,7 @@ function main(): i32 {
     // Last resort, and no longer a fallback: a module the per-module concat rescue
     // above declined (or one past its 1500-function ceiling) is an ERROR, not a
     // silent drop to the legacy AST emitter (#3457 slice 5).
-    write(asm_ir.emit_module_or_error(mwb));
+    var d: semlower.Driven = semlower.driven_annotated(merged, target);
+    write(asm_ir.emit_module_or_error_sub(d.full, d.sub));
     return 0;
 }

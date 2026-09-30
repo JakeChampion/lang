@@ -1,9 +1,7 @@
 package e2eselfhost
 
 import (
-	"os"
 	"os/exec"
-	"path/filepath"
 	"testing"
 )
 
@@ -22,16 +20,19 @@ var strFreshRetIRCases = []struct {
 }{
 	// f returns a concat (fresh); r = fmt(42) reclaimed. "n=42" len 4.
 	{"freshret-concat",
-		`function fmt(n: i32): string { return "n=" + i32_to_string(n); } function main(): i32 { var r: string = fmt(42); return r.len(); }`,
+		`import "std/i32";
+function fmt(n: i32): string { return "n=" + n.to_string(); } function main(): i32 { var r: string = fmt(42); return r.len(); }`,
 		4, true},
 	// Un-annotated binding of a fresh-string-returning method-forwarder. len 3.
 	{"freshret-unannotated",
-		`function up(s: string): string { return s.to_ascii_upper(); } function main(): i32 { var r = up("abc"); return r.len(); }`,
+		`import "std/string";
+function up(s: string): string { return s.to_ascii_upper(); } function main(): i32 { var r = up("abc"); return r.len(); }`,
 		3, true},
 	// Memory-safety at scale: r = build() reclaimed every iteration (flat heap). A
 	// double-free would corrupt the freelist and crash / return garbage. exit 0.
 	{"freshret-churn-safe",
-		`function build(n: i32): string { return "x=" + i32_to_string(n); } function main(): i32 { var t: i32 = 0; var k: i32 = 0; while (k < 3000000) { var r: string = build(k); if (r.len() < 3) { t = 1; } k = k + 1; } return t; }`,
+		`import "std/i32";
+function build(n: i32): string { return "x=" + n.to_string(); } function main(): i32 { var t: i32 = 0; var k: i32 = 0; while (k < 3000000) { var r: string = build(k); if (r.len() < 3) { t = 1; } k = k + 1; } return t; }`,
 		0, true},
 	// NEGATIVE: id() returns its PARAM (an alias of the caller's arg), so it is not
 	// fresh-returning — r must NOT be reclaimed (freeing it could double-free the
@@ -42,27 +43,21 @@ var strFreshRetIRCases = []struct {
 }
 
 // TestSelfHostStrFreshRetIRX86_64 compiles each case through the self-hosted x86-64
-// driver (asm_run, IR default-on), asserting the exit code and that the fresh-ret
+// load driver, asserting the exit code and that the fresh-ret
 // -call reclaim (call __fn___fern_str_free) is (or isn't) emitted.
 func TestSelfHostStrFreshRetIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
-	dir := writeSelfHostAsmProject(t)
-	src, err := os.ReadFile("../../examples/self_host/asm_run.fern")
-	if err != nil {
-		t.Fatalf("read asm_run.fern: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "asm_run.fern"), src, 0o644); err != nil {
-		t.Fatalf("write asm_run.fern: %v", err)
-	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
+	l := newStdlibLoader(t)
+	dir := t.TempDir()
 
 	for _, tc := range strFreshRetIRCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src))
+			asm := []byte(l.emit(t, tc.src))
 			if len(asm) == 0 {
 				t.Fatal("self-host compiler emitted 0 bytes")
 			}
-			reclaims := countUserStrFreeReclaims(asm)
+			// The fresh-ret reclaim is the AST lowering's decision.
+			reclaims := countUserStrFreeReclaims([]byte(l.emitAST(t, tc.src)))
 			if tc.mustReclaim && reclaims == 0 {
 				t.Errorf("%s: expected a fresh-ret-call reclaim (call __fn___fern_str_free), found none — r leaks", tc.name)
 			}

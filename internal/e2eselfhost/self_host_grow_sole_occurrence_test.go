@@ -58,6 +58,8 @@ import (
 //
 // The loop/lambda exclusion and the params-only restriction are both carried over
 // from native and are required; `grow_sole_exempt_names_of` says why.
+//
+// The grow bracket is the AST lowering's, so the corpus compiles on it.
 type growSoleCase struct {
 	name    string
 	g       string
@@ -129,7 +131,7 @@ func TestSelfHostGrowSoleOccurrenceX86_64(t *testing.T) {
 
 	for _, tc := range growSoleCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src()+"\n"))
+			asm := runCaptureAST(t, runner, driverBin, []byte(tc.src()+"\n"))
 			if len(asm) == 0 {
 				t.Fatal("self-host compiler emitted 0 bytes")
 			}

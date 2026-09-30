@@ -58,6 +58,28 @@ func TestSupervisedServeShutsDownAfterBurst(t *testing.T) {
 	e2eharness.CheckShutdownAfterBurst(t, cmd, fmt.Sprintf("127.0.0.1:%d", port))
 }
 
+// A supervisor killed outright (#10789): its workers see its exit
+// themselves, drain and exit, rather than serving on as orphans.
+func TestSupervisedServeWorkersStopWithSupervisor(t *testing.T) {
+	port := freeLoopbackPort(t)
+	bin, runner := buildSupervisedServeBin(t, e2eharness.OrphanedWorkersServerSource(port))
+	cmd, _ := startSupervisedServer(t, bin, runner)
+	e2eharness.CheckWorkersStopWithSupervisor(t, cmd, fmt.Sprintf("127.0.0.1:%d", port))
+}
+
+// A worker whose supervisor died before it watched for that (#10789):
+// watch_parent finds it reparented to init and answers -ESRCH.
+func TestWatchParentGoneX86_64(t *testing.T) {
+	bin, runner := buildSupervisedServeBin(t, e2eharness.ParentGoneProbe())
+	cmd := e2eharness.RunX86_64Bin(runner, bin)
+	out, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	e2eharness.StartServerProcess(t, cmd)
+	e2eharness.CheckParentGone(t, cmd, out)
+}
+
 // The minimum data rate on the write side (#9854): a reader that stalls
 // is cut off after the grace, one that keeps reading above the rate gets
 // the whole response.
@@ -82,4 +104,13 @@ func TestServeShutdownHookX86_64(t *testing.T) {
 	bin, runner := buildSupervisedServeBin(t, e2eharness.ShutdownHookServerSource())
 	cmd, stderrPath := startSupervisedServer(t, bin, runner, fmt.Sprintf("PORT=%d", port))
 	e2eharness.CheckShutdownHook(t, cmd, fmt.Sprintf("127.0.0.1:%d", port), stderrPath)
+}
+
+// SIGINT, what Ctrl-C sends, stops the server gracefully as SIGTERM does
+// (#9853): the supervisor forwards it and the hook's reason names it.
+func TestServeShutdownHookSigintX86_64(t *testing.T) {
+	port := freeLoopbackPort(t)
+	bin, runner := buildSupervisedServeBin(t, e2eharness.ShutdownHookServerSource())
+	cmd, stderrPath := startSupervisedServer(t, bin, runner, fmt.Sprintf("PORT=%d", port))
+	e2eharness.CheckShutdownHookOnSigint(t, cmd, fmt.Sprintf("127.0.0.1:%d", port), stderrPath)
 }
