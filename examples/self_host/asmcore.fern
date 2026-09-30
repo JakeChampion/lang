@@ -618,6 +618,7 @@ pub function sysno(t: string, name: string): string {
         if (name == "pipe2") { return "293"; }
         if (name == "dup3") { return "292"; }
         if (name == "splice") { return "275"; }
+        if (name == "sendfile") { return "40"; }
         if (name == "timerfd_create") { return "283"; }
         if (name == "timerfd_settime") { return "286"; }
         if (name == "ioctl") { return "16"; }
@@ -656,6 +657,8 @@ pub function sysno(t: string, name: string): string {
         if (name == "getpriority") { return "140"; }
         if (name == "setpriority") { return "141"; }
         if (name == "kill") { return "62"; }
+        if (name == "prctl") { return "157"; }
+        if (name == "getppid") { return "110"; }
         if (name == "setpgid") { return "109"; }
         if (name == "getrlimit") { return "97"; }
         if (name == "statfs") { return "137"; }
@@ -666,6 +669,7 @@ pub function sysno(t: string, name: string): string {
         if (name == "write") { return "4"; }
         if (name == "close") { return "6"; }
         if (name == "lseek") { return "199"; }
+        if (name == "sendfile") { return "337"; }
         if (name == "fstat") { return "339"; }
         if (name == "openat") { return "463"; }
         if (name == "fcntl") { return "92"; }
@@ -766,6 +770,7 @@ pub function sysno(t: string, name: string): string {
         if (name == "getpriority") { return "100"; }
         if (name == "setpriority") { return "101"; }
         if (name == "kill") { return "37"; }
+        if (name == "getppid") { return "39"; }
         if (name == "setpgid") { return "82"; }
         if (name == "getrlimit") { return "194"; }
         // 345 rather than 157: arm64 macOS ships only the 64-bit-inode
@@ -824,6 +829,7 @@ pub function sysno(t: string, name: string): string {
     if (name == "pipe2") { return "59"; }
     if (name == "dup3") { return "24"; }
     if (name == "splice") { return "76"; }
+    if (name == "sendfile") { return "71"; }
     if (name == "timerfd_create") { return "85"; }
     if (name == "timerfd_settime") { return "86"; }
     if (name == "ioctl") { return "29"; }
@@ -860,6 +866,8 @@ pub function sysno(t: string, name: string): string {
     if (name == "setpriority") { return "140"; }
     if (name == "getpriority") { return "141"; }
     if (name == "kill") { return "129"; }
+    if (name == "prctl") { return "167"; }
+    if (name == "getppid") { return "173"; }
     if (name == "setpgid") { return "154"; }
     if (name == "getrlimit") { return "163"; }
     if (name == "statfs") { return "43"; }
@@ -1879,8 +1887,11 @@ pub function rt_src_tcp_listen_with(t: string, packed: boolean): string {
 // SO_NWRITE on Darwin); op 7 is the peer's address as one 32-bit key (an
 // IPv4 address packed as tcp_connect takes it, a v4-mapped IPv6 address
 // its IPv4 one, any other IPv6 address the two words of its first eight
-// bytes XORed and never 0; 0 with no peer). 0 or the count, -errno, or
-// -EINVAL for an op that names no control.
+// bytes XORed and never 0; 0 with no peer); op 8 steers the listener's
+// SO_REUSEPORT group by CPU (the filter `ld cpu; ret a` attached with
+// SO_ATTACH_REUSEPORT_CBPF, shared by the group; Linux only, -ENOTSUP on
+// Darwin). 0 or the count, -errno, or -EINVAL for an op that names no
+// control.
 pub function rt_src_tcp_socket_ctl(t: string): string {
     var fc: string = sysno(t, "fcntl");
     var nb: string = sockopt(t, "o_nonblock");
@@ -1891,7 +1902,28 @@ pub function rt_src_tcp_socket_ctl(t: string): string {
     if (t == "arm64-darwin") {
         queue = "__raw_store8(q, 4, 4); var r: i32 = __syscall5(" + sysno(t, "getsockopt") + ", fd as i64, " + sockopt(t, "sol_socket") + ", 4132, q as i64, __raw_addr(q, 4) as i64) as i32;";
     }
-    return "function __fern_tcp_socket_ctl(fd: i32, op: i32, arg: i32): i32 { " + peer + " if (op == 6) { var q: usize = __raw_scratch(8); var z: i32 = 0; while (z < 8) { __raw_store8(q, z, 0); z = z + 1; } " + queue + " if (r < 0) { return r; } return __raw_load8(q, 0) | (__raw_load8(q, 1) << 8) | (__raw_load8(q, 2) << 16) | (__raw_load8(q, 3) << 24); } if (op == 5) { var sa: usize = __raw_scratch(20); __raw_store8(sa, 16, 16); __raw_store8(sa, 17, 0); __raw_store8(sa, 18, 0); __raw_store8(sa, 19, 0); if (__syscall3(" + sysno(t, "getpeername") + ", fd as i64, sa as i64, __raw_addr(sa, 16) as i64) >= 0) { return 0; } __raw_store8(sa, 16, 4); var g: i32 = __syscall5(" + sysno(t, "getsockopt") + ", fd as i64, " + sockopt(t, "sol_socket") + ", " + sockopt(t, "so_error") + ", sa as i64, __raw_addr(sa, 16) as i64) as i32; if (g < 0) { return g; } var pending: i32 = __raw_load8(sa, 0) | (__raw_load8(sa, 1) << 8) | (__raw_load8(sa, 2) << 16) | (__raw_load8(sa, 3) << 24); if (pending != 0) { return 0 - pending; } return 0 - " + sockopt(t, "einprogress") + "; } if (op == 1 || op == 2) { var v: usize = __raw_scratch(4); __raw_store8(v, 0, arg & 255); __raw_store8(v, 1, 0); __raw_store8(v, 2, 0); __raw_store8(v, 3, 0); if (op == 1) { return __syscall5(" + sysno(t, "setsockopt") + ", fd as i64, 6, 1, v as i64, 4) as i32; } return __syscall5(" + sysno(t, "setsockopt") + ", fd as i64, " + sockopt(t, "sol_socket") + ", " + sockopt(t, "so_keepalive") + ", v as i64, 4) as i32; } if (op == 3) { var flags: i32 = __syscall3(" + fc + ", fd as i64, 3, 0) as i32; if (flags < 0) { return flags; } var want: i32 = flags | " + nb + "; if (arg == 0) { want = flags & (0 - 1 - " + nb + "); } return __syscall3(" + fc + ", fd as i64, 4, want as i64) as i32; } if (op == 4) { return __syscall3(" + sysno(t, "shutdown") + ", fd as i64, arg as i64, 0) as i32; } return 0 - 22; }";
+    var steer: string = "if (op == 8) { return 0 - 45; }";
+    if (t != "arm64-darwin") {
+        // Two sock_filter { u16 code; u8 jt; u8 jf; u32 k } (BPF_LD|BPF_W|BPF_ABS
+        // of SKF_AD_OFF + SKF_AD_CPU, 0xfffff024, then BPF_RET|BPF_A) at f, and
+        // the sock_fprog { u16 len; struct sock_filter *filter } at f + 16.
+        steer = "if (op == 8) { var f: usize = __raw_scratch(32); var z: i32 = 0; while (z < 32) { __raw_store8(f, z, 0); z = z + 1; } __raw_store8(f, 0, 32); __raw_store8(f, 4, 36); __raw_store8(f, 5, 240); __raw_store8(f, 6, 255); __raw_store8(f, 7, 255); __raw_store8(f, 8, 22); __raw_store8(f, 16, 2); __raw_store_ptr(f, 3, f); return __syscall5(" + sysno(t, "setsockopt") + ", fd as i64, " + sockopt(t, "sol_socket") + ", 51, __raw_addr(f, 16) as i64, 16) as i32; }";
+    }
+    return "function __fern_tcp_socket_ctl(fd: i32, op: i32, arg: i32): i32 { " + peer + " " + steer + " if (op == 6) { var q: usize = __raw_scratch(8); var z: i32 = 0; while (z < 8) { __raw_store8(q, z, 0); z = z + 1; } " + queue + " if (r < 0) { return r; } return __raw_load8(q, 0) | (__raw_load8(q, 1) << 8) | (__raw_load8(q, 2) << 16) | (__raw_load8(q, 3) << 24); } if (op == 5) { var sa: usize = __raw_scratch(20); __raw_store8(sa, 16, 16); __raw_store8(sa, 17, 0); __raw_store8(sa, 18, 0); __raw_store8(sa, 19, 0); if (__syscall3(" + sysno(t, "getpeername") + ", fd as i64, sa as i64, __raw_addr(sa, 16) as i64) >= 0) { return 0; } __raw_store8(sa, 16, 4); var g: i32 = __syscall5(" + sysno(t, "getsockopt") + ", fd as i64, " + sockopt(t, "sol_socket") + ", " + sockopt(t, "so_error") + ", sa as i64, __raw_addr(sa, 16) as i64) as i32; if (g < 0) { return g; } var pending: i32 = __raw_load8(sa, 0) | (__raw_load8(sa, 1) << 8) | (__raw_load8(sa, 2) << 16) | (__raw_load8(sa, 3) << 24); if (pending != 0) { return 0 - pending; } return 0 - " + sockopt(t, "einprogress") + "; } if (op == 1 || op == 2) { var v: usize = __raw_scratch(4); __raw_store8(v, 0, arg & 255); __raw_store8(v, 1, 0); __raw_store8(v, 2, 0); __raw_store8(v, 3, 0); if (op == 1) { return __syscall5(" + sysno(t, "setsockopt") + ", fd as i64, 6, 1, v as i64, 4) as i32; } return __syscall5(" + sysno(t, "setsockopt") + ", fd as i64, " + sockopt(t, "sol_socket") + ", " + sockopt(t, "so_keepalive") + ", v as i64, 4) as i32; } if (op == 3) { var flags: i32 = __syscall3(" + fc + ", fd as i64, 3, 0) as i32; if (flags < 0) { return flags; } var want: i32 = flags | " + nb + "; if (arg == 0) { want = flags & (0 - 1 - " + nb + "); } return __syscall3(" + fc + ", fd as i64, 4, want as i64) as i32; } if (op == 4) { return __syscall3(" + sysno(t, "shutdown") + ", fd as i64, arg as i64, 0) as i32; } return 0 - 22; }";
+}
+
+// rt_src_tcp_sendfile backs `tcp_sendfile(fd, file, max)`: up to max bytes
+// of the open file, from its position, moved to the socket by sendfile(2)
+// — the bytes sent (0 at the file's end) or -errno, -EAGAIN when a
+// non-blocking socket took none. Linux advances the file itself; Darwin's
+// sendfile takes an explicit offset and an in-out length, so the position
+// is read and moved around the call.
+pub function rt_src_tcp_sendfile(t: string): string {
+    var head: string = "function __fern_tcp_sendfile(fd: i32, file: i32, max: i32): i32 { if (max <= 0) { return 0; } ";
+    if (t == "arm64-darwin") {
+        return head + "var pos: i64 = __syscall3(" + sysno(t, "lseek") + ", file as i64, 0, 1); if (pos < (0 as i64)) { return pos as i32; } var lenp: usize = __raw_scratch(8); __store_i64(lenp, max as i64); var r: i64 = __syscall6(" + sysno(t, "sendfile") + ", file as i64, fd as i64, pos, lenp as i64, 0, 0); var sent: i64 = __load_i64(lenp); if (sent > (0 as i64)) { __syscall3(" + sysno(t, "lseek") + ", file as i64, pos + sent, 0); return sent as i32; } if (r < (0 as i64)) { return r as i32; } return 0; }";
+    }
+    return head + "return __syscall4(" + sysno(t, "sendfile") + ", fd as i64, file as i64, 0, max as i64) as i32; }";
 }
 
 // Four address bytes of the scratch sockaddr `sa` from `at`, as one word
@@ -1984,8 +2016,8 @@ function kqueue_watch_src(t: string): string {
 function epoll_watch_src(t: string): string {
     var data_at: string = "8";
     if (t == "x86_64") { data_at = "4"; }
-    return "var ev: usize = __raw_scratch(16); var bits: i32 = 0; if ((interest & 1) != 0) { bits = bits | 1; } if ((interest & 2) != 0) { bits = bits | 4; } "
-        + "__raw_store8(ev, 0, bits & 255); __raw_store8(ev, 1, 0); __raw_store8(ev, 2, 0); __raw_store8(ev, 3, 0); "
+    return "var ev: usize = __raw_scratch(16); var bits: i32 = 0; if ((interest & 1) != 0) { bits = bits | 1; } if ((interest & 2) != 0) { bits = bits | 4; } if ((interest & 4) != 0) { bits = bits | 268435456; } "
+        + "__raw_store8(ev, 0, bits & 255); __raw_store8(ev, 1, (bits >> 8) & 255); __raw_store8(ev, 2, (bits >> 16) & 255); __raw_store8(ev, 3, (bits >> 24) & 255); "
         + "__raw_store8(ev, " + data_at + ", fd & 255); __raw_store8(ev, " + data_at + " + 1, (fd >> 8) & 255); __raw_store8(ev, " + data_at + " + 2, (fd >> 16) & 255); __raw_store8(ev, " + data_at + " + 3, (fd >> 24) & 255); "
         + "__raw_store8(ev, " + data_at + " + 4, 0); __raw_store8(ev, " + data_at + " + 5, 0); __raw_store8(ev, " + data_at + " + 6, 0); __raw_store8(ev, " + data_at + " + 7, 0); "
         + "var r: i32 = 0; if (interest == 0) { r = __syscall4(" + sysno(t, "epoll_ctl") + ", r_fd as i64, 2, fd as i64, ev as i64) as i32; } else { "
@@ -2015,13 +2047,26 @@ function signal_watch_src(t: string): string {
         + "var ev2: usize = __raw_scratch(16); __syscall4(" + sysno(t, "epoll_ctl") + ", r_fd as i64, 2, arg as i64, ev2 as i64); __syscall3(" + sysno(t, "close") + ", arg as i64, 0, 0); return __syscall4(" + sysno(t, "rt_sigprocmask") + ", 1, set as i64, 0, 8) as i32; } ";
 }
 
+// Op 6 reports the parent's exit as a SIGTERM: PR_SET_PDEATHSIG on Linux,
+// an EVFILT_PROC NOTE_EXIT (EV_ADD with EV_ONESHOT) on Darwin that the
+// wait maps to (-15, 1). A parent already gone, found reparented to init,
+// is -ESRCH.
+function parent_watch_src(t: string): string {
+    if (t == "arm64-darwin") {
+        return "if (op == 6) { var ppid: i32 = __syscall3(" + sysno(t, "getppid") + ", 0, 0, 0) as i32; if (ppid == 1) { return 0 - 3; } var pch: usize = __raw_scratch(32); var proc_filter: i32 = 0 - 5; var proc_flags: i32 = 17; "
+            + kevent_change_src("pch", "ppid", "proc_filter", "proc_flags") + " __raw_store8(pch, 15, 128); return __syscall6(" + sysno(t, "kevent") + ", r_fd as i64, pch as i64, 1, 0, 0, 0) as i32; } ";
+    }
+    return "if (op == 6) { var pdeath: i32 = __syscall3(" + sysno(t, "prctl") + ", 1, 15, 0) as i32; if (pdeath < 0) { return pdeath; } if ((__syscall3(" + sysno(t, "getppid") + ", 0, 0, 0) as i32) == 1) { return 0 - 3; } return 0; } ";
+}
+
 pub function rt_src_reactor_ctl(t: string): string {
     var watch: string = epoll_watch_src(t);
     if (t == "arm64-darwin") { watch = kqueue_watch_src(t); }
     return "function __fern_reactor_ctl(r_fd: i32, op: i32, fd: i32, arg: i32): i32 { "
         + "if (op == 3) { return __syscall3(" + sysno(t, "close") + ", r_fd as i64, 0, 0) as i32; } "
         + signal_watch_src(t)
-        + "if (op != 1 && op != 2) { return 0 - 22; } var interest: i32 = arg & 3; if (op == 2) { interest = 0; } " + watch + " }";
+        + parent_watch_src(t)
+        + "if (op != 1 && op != 2) { return 0 - 22; } var interest: i32 = arg & 7; if (op == 2) { interest = 0; } " + watch + " }";
 }
 
 // The pairs are written one word per slot into the caller's array through
@@ -2046,7 +2091,7 @@ function kqueue_wait_src(t: string): string {
         + "var b: usize = __raw_arr_ptr(events); var i: i32 = 0; while (i < n) { var e: i32 = i * 32; var ready: i32 = 2; if (__raw_load8(buf, e + 8) == 255) { ready = 1; } "
         + "if ((__raw_load8(buf, e + 11) & 192) != 0) { ready = ready | 4; } "
         + "var fd: i32 = __raw_load8(buf, e) | (__raw_load8(buf, e + 1) << 8) | (__raw_load8(buf, e + 2) << 16) | (__raw_load8(buf, e + 3) << 24); "
-        + "if (__raw_load8(buf, e + 8) == 250) { ready = 1; fd = 0 - fd; } "
+        + "if (__raw_load8(buf, e + 8) == 250) { ready = 1; fd = 0 - fd; } if (__raw_load8(buf, e + 8) == 251) { ready = 1; fd = 0 - 15; } "
         + "__raw_store_ptr(b, i * 2 + 1, fd as usize); __raw_store_ptr(b, i * 2 + 2, ready as usize); i = i + 1; } "
         + "var buf_own: string = __raw_string(buf, cap * 32 + 16); return n;";
 }
@@ -2767,9 +2812,10 @@ pub function rt_src_write_file_exec(t: string): string {
 // rt_src_write_file_mode is the shared body, parameterised by emitted function
 // name, creation mode (DECIMAL, as the emitted source is Fern: 420 = 0644,
 // 493 = 0755) and an optional statement spliced in before close(2). One body so
-// the two cannot drift.
+// the two cannot drift. A failed write(2) closes the file and answers its errno,
+// as native does: a full disk is an error, not a short file.
 pub function rt_src_write_file_mode(t: string, fname: string, mode: string, fixup: string): string {
-    return "function " + fname + "(path: string, contents: string): Result[void, IoError] { var plen: i32 = path.len(); var pathz: usize = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i] as i32); i = i + 1; } __raw_store8(pathz, plen, 0); var fd: i32 = __syscall4(" + sysno(t, "openat") + ", " + at_fdcwd(t) + ", pathz as i64, " + oflag(t, "wr_creat_trunc") + ", " + mode + ") as i32; var pathz_own: string = __raw_string(pathz, plen + 1); if (fd < 0) { return Err(__fern_io_error(0 - fd, __fern_path_copy(pathz_own, plen))); } var clen: i32 = contents.len(); var cbuf: usize = __raw_alloc(clen + 1); var j: i32 = 0; while (j < clen) { __raw_store8(cbuf, j, contents[j] as i32); j = j + 1; } var put: i32 = 0; while (put < clen) { var w: i32 = __syscall3(" + sysno(t, "write") + ", fd as i64, __raw_addr(cbuf, put) as i64, (clen - put) as i64) as i32; if (w <= 0) { put = clen; } else { put = put + w; } } var cbuf_own: string = __raw_string(cbuf, clen + 1); " + fixup + "__syscall3(" + sysno(t, "close") + ", fd as i64, 0, 0); return Ok(()); }";
+    return "function " + fname + "(path: string, contents: string): Result[void, IoError] { var plen: i32 = path.len(); var pathz: usize = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i] as i32); i = i + 1; } __raw_store8(pathz, plen, 0); var fd: i32 = __syscall4(" + sysno(t, "openat") + ", " + at_fdcwd(t) + ", pathz as i64, " + oflag(t, "wr_creat_trunc") + ", " + mode + ") as i32; var pathz_own: string = __raw_string(pathz, plen + 1); if (fd < 0) { return Err(__fern_io_error(0 - fd, __fern_path_copy(pathz_own, plen))); } var clen: i32 = contents.len(); var cbuf: usize = __raw_alloc(clen + 1); var j: i32 = 0; while (j < clen) { __raw_store8(cbuf, j, contents[j] as i32); j = j + 1; } var cbuf_own: string = __raw_string(cbuf, clen + 1); var put: i32 = 0; while (put < clen) { var w: i32 = __syscall3(" + sysno(t, "write") + ", fd as i64, __raw_addr(cbuf, put) as i64, (clen - put) as i64) as i32; if (w < 0) { __syscall3(" + sysno(t, "close") + ", fd as i64, 0, 0); return Err(__fern_io_error(0 - w, __fern_path_copy(pathz_own, plen))); } if (w == 0) { put = clen; } else { put = put + w; } } " + fixup + "__syscall3(" + sysno(t, "close") + ", fd as i64, 0, 0); return Ok(()); }";
 }
 
 // rt_src_env backs `env(name)` (#2649) → Option[string]. Walks the process envp
@@ -4947,6 +4993,8 @@ function builtin_i32_names(): string[] {
         // tcp_socket_ctl(fd, op, arg) -> 0 / -errno.
         "tcp_listen_with",
         "tcp_socket_ctl",
+        // tcp_sendfile(fd, file, max) -> the bytes sent / -errno.
+        "tcp_sendfile",
         // The datagram sockets: a socket fd, 0, and two byte counts, each
         // -errno when refused.
         "udp_bind",
@@ -7413,7 +7461,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
         "__fn___fern_udp_send", "__fn___fern_tcp_recv", "__fn___fern_tcp_send", "__fn___fern_tcp_listen", "__fn___fern_tcp_accept", "__fn___fern_tcp_local_port",
         "__fn___fern_udp_bind", "__fn___fern_udp_connect", "__fn___fern_udp_sendto", "__fn___fern_udp_recvfrom",
         "__fn___fern_tcp_connect_with", "__fn___fern_unix_listen", "__fn___fern_unix_connect",
-        "__fn___fern_reactor_new", "__fn___fern_reactor_ctl", "__fn___fern_reactor_wait", "__fn___fern_tcp_recv_into",
+        "__fn___fern_reactor_new", "__fn___fern_reactor_ctl", "__fn___fern_reactor_wait", "__fn___fern_tcp_recv_into", "__fn___fern_tcp_sendfile",
         "__fn___fern_open_res", "__fn___fern_writer_write",
         "__fern_now_unix_ms", "__fn___fern_sleep_ms", "__fn___fern_sleep_ns", "__fern_map_new",
         "__fern_map_set", "__fern_map_get", "__fern_map_has", "__fn___fern_map_delete",

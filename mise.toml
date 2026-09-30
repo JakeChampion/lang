@@ -38,3 +38,5 @@ wasmtime = "46.0.1"
 wasm-tools = "1.253.0"
 actionlint = "1.7.10"
 gotestsum = "1.13.0"
+# The HTTP load generator of the net-nightly lane (scripts/net-bench).
+oha = "1.16.0"

@@ -13,3 +13,5 @@ func (r *reactor) watch(raw int, interest int) error { return syscall.ENOSYS }
 func (r *reactor) wait(cap int, timeoutMs int) ([]reactorEvent, error) {
 	return nil, syscall.ENOSYS
 }
+
+func watchParent() error { return syscall.ENOSYS }

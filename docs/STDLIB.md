@@ -1006,7 +1006,21 @@ Percent-encoding, URL parsing, query parsing.
   human-readable JSON (`indent` spaces per level; empty arrays/objects
   stay on one line). Same value tokens as `json_encode` — only
   whitespace differs.
-- `json_parse(s: string): Option[JsonValue]`
+- `json_parse(s: string): Option[JsonValue]`;
+  `json_parse_result(s): Result[JsonValue, JsonError]` with where the text
+  broke
+- **Typed decode:** `FromJson` is the decode half of `Json`:
+  `T.from_json_value(v: JsonValue): Result[T, string]`, implemented for the
+  integers, floats, `boolean` and `string`, and derived for a struct by
+  `@derive(json.FromJson)` (fields decode through their own `FromJson`; an
+  `E[]` field through `from_json_array[E]`, an `Option[E]` field through
+  `from_json_option[E]`, `None` when the field is missing or null; a
+  container nested in another is E021). `json.decode[T](text)` parses and
+  decodes in one call, and a derived type also has `T.from_json(text)`. A
+  shape error says where: `missing field "id"`, `field "id": expected an
+  integer, got a string`, `field "tags": [1]: expected a string, got null`;
+  a parse failure reads `invalid JSON: <line>:<col>: <why>`. `json_kind(v)`
+  names a value's kind for such messages.
 - `json_escape(s: string): string` — escape a raw string for embedding
   inside a JSON string literal (caller supplies the quotes): `\` `"`
   backslash-escaped, `\n` `\r` `\t` short escapes, other C0 controls as
@@ -1019,16 +1033,53 @@ Percent-encoding, URL parsing, query parsing.
 HTTP/1.1 request parsing, response builders, wire-format
 serializer.
 
-- **Response builders:** `http_response_ok`,
-  `http_response_text`, `http_response_not_found`,
-  `http_response_bad_request`, `http_response_internal_error`,
-  `http_response_redirect`, `http_response_no_content`; typed-body
-  variants that set `Content-Type` up front:
-  `http_response_json` / `http_response_json_status` /
-  `http_response_html` / `http_response_plain`
+- **Response builders:** `http.ok(body)`, `http.created(body)`,
+  `http.text(status, body)`, `http.not_found()`, `http.bad_request(body)`,
+  `http.internal_error(body)`, `http.redirect(location)`,
+  `http.no_content()`; typed-body variants that set `Content-Type` up
+  front: `http.json(body)` / `http.json_status(status, body)` /
+  `http.html(body)` / `http.plain(body)`; `http.problem(status, title,
+  detail)` for an RFC 9457 problem document
+- **Bodies:** `HttpResponse.body` is a `Body`: `BodyText(string)`,
+  `BodyBytes(u8[])`, `BodyStream(Stream)` (the stream's remainder),
+  `BodyFile(string)` (a path) or `BodyChunks((i32) => Option[u8[]])` (a
+  producer asked for chunk 0, 1, 2, … until it answers None).
+  `http.bytes(status, bytes)`, `http.stream(status, stream)`,
+  `http.file(path)` and `http.chunks(status, next)` build
+  the last four. `(resp).body_string()`, `(resp).body_bytes()` and
+  `(resp).body_len()` read whichever a response carries, a producer's chunks
+  joined; a `BodyFile` reads as empty from a handler, since a handler may not
+  reach the file system (E080), and `http_materialize(resp)` reads one whole
+  for a test. The serve loop produces a file body and a chunks body as the
+  socket takes them, after the handler has answered: a file is opened and
+  streamed from a `Reader` under its size as the `Content-Length`, moved
+  from the file to the socket by `sendfile(2)` where the target has it
+  (Linux and Darwin; `tcp_sendfile(fd, file, max)` is the builtin, -ENOTSUP
+  on wasm, where the loop reads and sends each piece), or answered 404 when
+  it cannot be opened; chunks go out under chunked transfer
+  coding to an HTTP/1.1 client, and close-delimited (the connection ending
+  with the body) to an HTTP/1.0 one, so the length need not be known up
+  front. A response to HEAD, or with a 1xx, 204 or 304 status, produces no
+  body either way. `http_serialize_response_head(resp, keep_alive, framing)`
+  is the head alone, the framing line (`Content-Length` or
+  `Transfer-Encoding`) the caller's.
+- **Typed JSON body:** `body_json[T](req): Result[T, BodyError]` decodes the
+  body as a `T: json.FromJson` and tells the failures apart:
+  `UnsupportedMediaType(ct)` when the `Content-Type` is not
+  `application/json` or a `+json` type (or is missing), `MalformedJson(e)`
+  with std/json's `JsonError`, `WrongShape(why)` naming the field.
+  `BodyError` is `ToResponse` (415 / 400 / 422, as RFC 9457 problems), so a
+  handler declared as `Result[HttpResponse, http.BodyError]` reads
+  `var item: Item = http.body_json[Item](req)?;`.
 - **Header methods:** `(resp).with_header(name, value)` (set) /
   `(resp).with_appended_header(name, value)` (append) /
-  `(resp).with_content_type(ct)`
+  `(resp).with_content_type(ct)`, and `(resp).with_trailer(name, value)`
+  for `HttpResponse.trailers`: fields the serve loop sends after a
+  `chunks` body's last chunk, named in the head's `Trailer` field (RFC
+  9110 §6.5). A body with a length, an HTTP/1.0 client's close-delimited
+  stream and the wasi-http wrapper's outgoing body carry none, so there
+  they are dropped. `http_serialize_fields(map)` writes a map as field
+  lines.
 - **Request builder:** `request(method, path)` is a request to hand a
   handler in a test (no headers, no body), and `(req).with_header(name,
   value)`, `(req).with_body(body)` (with the `Content-Length` a client
@@ -1073,7 +1124,8 @@ serializer.
   persistent connection needs, answering `Framed(HttpFramed)`,
   `Incomplete` (keep reading), `Continue` (the header block has arrived
   and says `Expect: 100-continue`, the body has not: the loop sends
-  `100 Continue` once and keeps reading, RFC 9110 §10.1.1) or
+  `100 Continue` once and keeps reading, RFC 9110 §10.1.1; an HTTP/1.0
+  request's expectation is ignored, as that section asks) or
   `Malformed(status)` (the loop answers `status` with an empty body and
   `Connection: close`, then closes; a malformed request behind an
   answered one gets no answer, since that answer already said close,
@@ -1083,7 +1135,10 @@ serializer.
   the next pipelined request can be found behind it) and whether the
   connection outlives it (RFC 9112 §9.3: HTTP/1.1 unless `Connection:
   close`, HTTP/1.0 only with `Connection: keep-alive`; `Connection` is
-  read as a comma-separated token list and only a whole token counts;
+  read as a comma-separated token list and only a whole token counts,
+  so `Connection: upgrade` with an `Upgrade` header is ignored, the
+  request answered as HTTP/1.1 on a connection that persists, as RFC
+  9110 §7.8 allows a server with no protocol to switch to;
   a higher HTTP/1 minor version is read as HTTP/1.1, RFC 9112 §2.3).
   `http_parse_request_framed_from(buf, from)` is the same parse over
   `buf[from, len)`, so a loop answering pipelined requests moves an
@@ -1114,11 +1169,14 @@ serializer.
   a body over 1 MiB is malformed, and a violation is refused as soon as it
   is known: a request past a cap once the cap is passed, a bad request
   line once its CRLF has arrived, before the rest of the request. The
-  status names the violation: 400 for the grammar and the `Host` rule,
+  status names the violation: 400 for the grammar, the `Host` rule and a
+  `Transfer-Encoding` list whose last coding is not `chunked` (RFC 9112
+  §6.3),
   413 for a body past its cap, 414 for a request line past its cap, 417
   for an `Expect` other than `100-continue`, 431
   for a header block past its byte or field cap or chunk framing past its
-  budget, 501 for a transfer coding the parser cannot decode, 505 for
+  budget, 501 for a coding under the final `chunked` the parser cannot
+  decode, 505 for
   another major version. One empty line before the request line is
   ignored, as §2.2 asks, and counted in `len`; a second is refused. A
   chunked body (§7.1, HTTP/1.1 only) is decoded into `request.body`:
@@ -1129,11 +1187,15 @@ serializer.
   the headers (nothing knows their semantics, so none may merge,
   RFC 9110 §6.5.1; a Content-Length body's are empty), the decoded bytes are held to
   the body cap, and the framing (chunk-size lines, extensions, CRLFs and
-  the trailer section) to another `http_header_bytes_cap()`, so a
-  chunk-flood cannot hold more buffer than any other request.
-  `http_header_bytes_cap()`, `http_body_cap()` and
-  `http_request_bytes_cap()` (header block, blank line, body and chunk
-  framing, each at its cap) name the caps for the serve loop's buffer.
+  the trailer section) to another header block's bytes, so a
+  chunk-flood cannot hold more buffer than any other request. The caps
+  are an `HttpLimits { request_line, header_bytes, header_fields, body }`:
+  `http_limits()` is 8 KiB, 32 KiB, 100 fields and 1 MiB, what
+  `http_parse_request_framed` uses; `http_parse_request_framed_from(buf,
+  from, limits)` takes them, and a serve loop reads them from
+  `ServeOptions.limits`. `http_request_bytes_cap(limits)` (header block,
+  blank line, body and chunk framing, each at its cap) is the most a
+  connection buffers without a complete request.
   `http_header_value(block, key)` reads a raw header block by the same
   rules, so a block the parser would refuse names no header.
   `http_serialize_response(resp): string` writes `Connection: close`;
@@ -1177,7 +1239,10 @@ The socket controls are typed faces over the descriptor builtins
   listener per port), or the `NetError` the bind or listen reported.
 - `set_nodelay(sock, on)`, `set_keepalive(sock, on)`,
   `set_nonblocking(sock, on)` — `TCP_NODELAY`, `SO_KEEPALIVE` and
-  `O_NONBLOCK`, each `Result[(), NetError]`. A non-blocking `tcp_recv`
+  `O_NONBLOCK`, each `Result[(), NetError]`. `TCP_NODELAY` is already on
+  for every socket `connect`, `connect_start` and `accept` answer and every
+  connection the serve loop accepts, as Go and Node have it; `false` turns
+  Nagle's coalescing back on. A non-blocking `tcp_recv`
   answers the empty array at once when nothing is queued, and a
   non-blocking `tcp_send` what the kernel took, or `-EAGAIN` when it had
   no room.
@@ -1250,7 +1315,10 @@ loop and `std/fetch` the client.
   pipelined on one connection are answered in order, 32 per readiness
   event before the loop returns to the wait (the rest are answered on
   the next wait, which returns at once, so one pipeline cannot hold
-  the other connections off the reactor), and every response names
+  the other connections off the reactor), the responses to one event
+  corked into a single write (a response with a streamed or file body,
+  or one behind which no complete request is buffered, ends the cork),
+  and every response names
   the outcome in its `Connection` header: once the peer's end of
   stream has been read, the last buffered request's response says
   `close`, since the close follows it. A partial request behind a
@@ -1268,7 +1336,14 @@ loop and `std/fetch` the client.
   one listener per port, the 10 s deadline, 240 bytes per second after
   5 s, 130 s, 1000, 1024 and 100): the accept queue
   depth, port sharing between listeners (`SO_REUSEPORT`, ignored on
-  wasm), the read deadline, the least rate a request body must keep
+  wasm; under `tcp_serve_supervised_opts` each worker then binds a
+  listener of its own instead of inheriting the supervisor's, the group
+  steered by the CPU a connection arrived on where the host can, Linux,
+  and by the kernel's hash elsewhere; what a worker's listener holds
+  unaccepted when the worker dies is lost with it unless the kernel
+  migrates it, `net.ipv4.tcp_migrate_req=1`, where the inherited
+  listener keeps it for the next worker; a listener handed in through
+  `LISTEN_FDS` stays the shared one), the read deadline, the least rate a request body must keep
   arriving at once its header block is in and a response must keep
   being drained at once a write came up short (after the grace, the body
   may take as long as its bytes buy at that rate beyond the read
@@ -1278,7 +1353,8 @@ loop and `std/fetch` the client.
   off after the grace; 0 turns the rate off), how long an idle persistent connection waits for
   its next request, how many requests one connection may carry before
   its last response says `Connection: close` (a value below 1 behaves as
-  1), how many connections the loop holds open at once (at the cap the
+  1), how many connections the loop holds open at once (a value below 1
+  behaves as 1; at the cap the
   listener is not read, so further connections wait in its accept queue,
   `backlog` deep, the kernel refusing past it, until one closes), how
   many of them one client may hold (`max_connections_per_ip`, counted by
@@ -1289,13 +1365,25 @@ loop and `std/fetch` the client.
   cap), and
   how many workers `tcp_serve_supervised_opts` forks (`workers`; 0, the
   default, is one per processing unit the process may use, what
-  `cpu_count()` answers), and the shutdown SIGTERM starts: the loop keeps
+  `cpu_count()` answers), and the shutdown SIGTERM or SIGINT starts (SIGHUP
+  keeps its default, ending the process): the loop keeps
   accepting for `shutdown_grace` (2 s, since whoever routes to it removes
   it in parallel), answers 503 on `readiness_path` ("" for none), then
   closes the listener, ends keep-alive, closes the connections with
   nothing in flight and gives the rest `drain_deadline` (30 s) from the
   signal to finish before closing them; the loop returns 0 once every
   connection is gone and 1 when it cut one off, so `main` exits with it.
+  `limits` (`http.http_limits()`) are the parser's caps on each request,
+  so `ServeOptions { ...serve_options(), limits: http.HttpLimits {
+  ...http.http_limits(), body: 65536 } }` refuses a body past 64 KiB with
+  413 before the handler runs. `stop_with_parent` (false) starts the same
+  shutdown when the process's parent exits, as a SIGTERM would; each
+  worker `tcp_serve_supervised_opts` forks has it set, so a supervisor
+  killed outright (SIGKILL, a crash) takes its workers down rather than
+  leaving them serving as orphans.
+  A listener it cannot bind is `serve: cannot listen on 0.0.0.0:PORT:`
+  and the error's text on stderr, and the entry returns 98 (every
+  `tcp_serve*` entry, and a supervised worker that binds its own).
   A listener the process was started with (`LISTEN_FDS` at least 1,
   descriptor 3) is served instead of a fresh one.
 - `tcp_serve_shutdown(port, opts, handler, shutdown)` and
@@ -1303,9 +1391,9 @@ loop and `std/fetch` the client.
   `tcp_serve_opts` and `tcp_serve_with_opts` with a hook the loop calls
   once it has stopped, before returning: `shutdown(reason)`, or
   `shutdown(reason, state)` with the state as the last request left it,
-  where a counter is flushed or a store closed. The reason is "sigterm"
-  when every request in flight was answered after the signal and
-  "drain-deadline" when one was cut off.
+  where a counter is flushed or a store closed. The reason is the signal
+  that started the shutdown, "sigterm" or "sigint", when every request in
+  flight was answered after it and "drain-deadline" when one was cut off.
 - `tcp_serve_deadline(port, handler, recv_deadline)` —
   `tcp_serve` with an explicit per-request read deadline; a
   client that hasn't delivered a complete request in time is
@@ -1324,23 +1412,43 @@ loop and `std/fetch` the client.
   opts, handler)` takes the `ServeOptions` and forks `workers` workers
   (one per processing unit by default), each running its own loop over
   the one listener, watched exclusively (epoll's `EPOLLEXCLUSIVE`) so a
-  connection wakes one of them; whichever dies is replaced, and SIGTERM
-  is forwarded to every worker and waited for. No threaded-state variant
-  — a refork resets the loop frame.
+  connection wakes one of them, or with `reuse_port` over a listener of
+  its own; whichever dies is replaced, and SIGTERM or SIGINT is forwarded
+  to every worker and waited for, the exit being the worst code a worker answered
+  it with. Eight deaths in a row within 100 ms of a fork are a give-up:
+  the workers still serving are stopped the same way, and the exit is
+  the last death's code. `tcp_serve_supervised_with(port, opts, init,
+  handler)` threads a state as `tcp_serve_with` does: built once before
+  the first fork, every worker inherits a copy, and a worker forked
+  again after a death starts from that copy, not from where the dead one
+  left it — a counter is per worker and lost on refork; state that must
+  outlive a crash belongs in a store the handler reaches through `plat`.
+  `tcp_serve_supervised_shutdown(port, opts, handler, shutdown)` and
+  `tcp_serve_supervised_with_shutdown(port, opts, init, handler, shutdown)`
+  take the hook of the `_shutdown` entries, which each worker's loop calls
+  on its way out. Where there is no fork (the interpreter) every one of
+  them serves single-process.
 - `tcp_recv_deadline(fd, max, deadline): Option[u8[]]` —
   recv bounded by a readability deadline: `Some(chunk)` in time
   (empty chunk = EOF), `None` at the deadline. On interp (where
   `poll` is a stub) it degrades to a blocking recv.
 - `__port_from_env(name, fallback)` — env-var port lookup used
   by the auto-`main`-from-`handle()` synthesis so handler-shaped
-  programs can be tuned via `PORT=N ./bin`. That synthesis picks
-  `tcp_serve_with` over `tcp_serve` when the program defines
-  `init(): S` alongside a state-taking `handle`
-  (docs/PLATFORM-RESEARCH.md Rec §3); mismatching the two is
-  E075. A top-level `shutdown(reason)`, or `shutdown(reason, state)`
-  beside a state-threading handler, sends the synthesis to
-  `tcp_serve_shutdown` / `tcp_serve_with_shutdown` with `serve_options()`
-  and the hook; a hook whose state parameter disagrees with the
+  programs can be tuned via `PORT=N ./bin`. That synthesis serves
+  `handle` under the supervisor: `tcp_serve_supervised_opts` with
+  `serve_options()`, or `tcp_serve_supervised_with` when the program
+  defines an `init` answering the state a state-taking `handle` threads
+  (docs/PLATFORM-RESEARCH.md Rec §3). `init` takes nothing or the
+  platform (`__init_platform()`, the host bag with no reactor, since it
+  runs once in the supervising parent), and answers nothing, the state
+  `S`, the `ServeOptions` alone, or `(ServeOptions, S)`; options it
+  answers replace the defaults. On a target without processes
+  (wasm32-wasi) the synthesis serves through `tcp_serve_opts` and its
+  `_with` / `_shutdown` twins instead. Mismatching `init` and `handle` about the
+  state, or an `init` taking anything else, is E075. A top-level
+  `shutdown(reason)`, or `shutdown(reason, state)` beside a
+  state-threading handler, sends the synthesis to the `_shutdown` entries
+  with the hook; a hook whose state parameter disagrees with the
   handler's is E075 too. A `handle` declared as `Result[HttpResponse, E]` (or
   `(S, Result[HttpResponse, E])` with state), so its body fails with
   `?`, is accepted by both compilers: they rename it
@@ -1387,7 +1495,7 @@ use case). Hosts are literal IPv4 (no DNS / TLS yet).
 
 HTTP `HeaderMap` with case-insensitive lookup, multi-valued
 entries, and insertion-ordered iteration. Backs `HttpRequest`'s
-`headers` and `trailers` and `HttpResponse`'s `headers`.
+`headers` and `trailers` and `HttpResponse`'s `headers` and `trailers`.
 
 - `header_map_new()` — empty map.
 - `(h).set(name, value)` / `(h).append(name, value)` — replace vs.
@@ -1474,6 +1582,10 @@ old `concurrent { … }` / `await` keyword surface.
   signal a readiness event, reported as the pair (-sig, 1) and no longer
   ending the process (-ENOTSUP on wasm), `unwatch_signal(sig)` restores
   its default; in the sim `ready_at(-sig, at_ms, 1)` scripts a delivery.
+  `watch_parent()` reports the parent's exit the way a watched SIGTERM is
+  reported, (-15, 1): -ESRCH when the parent is already gone, found
+  reparented to init (a subreaper other than init, Linux, hides that),
+  -ENOTSUP on wasm; the sim's parent never exits.
   `std/tcp`'s serve loops run on it.
 
 ### `std/platform`
@@ -1502,7 +1614,7 @@ import "std/platform";
 
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
     plat.log(req.method + " " + req.path);
-    return http.http_response_ok("ok");
+    return http.ok("ok");
 }
 ```
 
@@ -1512,7 +1624,7 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
   serving worker that built the bag, 0 for one built by `platform_new` or
   the wasi-http wrapper. Per-worker mutable state a capability needs lives
   behind it, since a bag's fields are frozen and a cell holds only a scalar
-  or a string. `plat.version` is 2 since it was added.
+  or a string. `plat.version` is 3 since `HttpResponse.body` became a `Body`.
 - `(plat).log(msg)` — one line to the platform's log sink (`log`).
 - `(plat).now_ms()` — wall-clock ms since the epoch (`now`).
 - `(plat).elapsed_ns()` — monotonic ns, for measuring (`now`).

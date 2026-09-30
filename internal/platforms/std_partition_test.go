@@ -55,7 +55,7 @@ var stdModuleReach = map[string]string{
 	"std/csv":           "",
 	"std/dotenv":        "",
 	"std/error":         "",
-	"std/fetch":         "env,log,now,proc,random,reactor,sysinfo,tcp",
+	"std/fetch":         "env,fs,log,now,proc,random,reactor,sysinfo,tcp,unix",
 	"std/float":         "",
 	"std/format":        "",
 	"std/fuzz":          "env,fs,log,now,random",
@@ -63,7 +63,7 @@ var stdModuleReach = map[string]string{
 	"std/hash":          "",
 	"std/headers":       "",
 	"std/hex":           "",
-	"std/http":          "",
+	"std/http":          "fs",
 	"std/i32":           "",
 	"std/i64":           "",
 	"std/io":            "fs,stdin",
@@ -97,7 +97,7 @@ var stdModuleReach = map[string]string{
 	"std/stream":        "",
 	"std/string":        "",
 	"std/table":         "",
-	"std/tcp":           "env,log,now,proc,reactor,sysinfo,tcp",
+	"std/tcp":           "env,fs,log,now,proc,reactor,sysinfo,tcp,unix",
 	"std/test":          "env,fs,log,now",
 	"std/textwrap":      "",
 	"std/time":          "now",
@@ -107,7 +107,7 @@ var stdModuleReach = map[string]string{
 	"std/url":           "",
 	"std/utf8":          "",
 	"std/uuid":          "now,random",
-	"std/wasi_http":     "env,log,now,random",
+	"std/wasi_http":     "env,fs,log,now,random",
 }
 
 // TestStdPartitionIsDerivedNotAsserted computes each `std/` module's host

@@ -7664,7 +7664,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irlower.LowerResult, s: 
         s = s.write("    popq %rdx\n    popq %rsi\n    popq %rdi\n    pushq %rdx\n    pushq %rsi\n    pushq %rdi\n");
         s = s.write("    call __fn___fern_tcp_socket_ctl\n    addq $24, %rsp\n    pushq %rax\n");
         s = s.need("tcp_socket_ctl");
-    } else if (o.kind_tag == 332 || (o.kind_tag >= 334 && o.kind_tag <= 344)) {  // tcp_listen_with, udp_bind .. udp_recvfrom, tcp_connect_with, unix_*, reactor_*, tcp_recv_into
+    } else if (o.kind_tag == 332 || (o.kind_tag >= 334 && o.kind_tag <= 344) || o.kind_tag == 346) {  // tcp_listen_with, udp_bind .. udp_recvfrom, tcp_connect_with, unix_*, reactor_*, tcp_recv_into, tcp_sendfile
         // [args] with the last on top; pop and re-push reversed, as udp_send
         // does. recvfrom spreads the datagram into the caller's array from a
         // raw buffer, so it needs the heap.
@@ -9934,7 +9934,7 @@ function emit_entry_runtime(s: asmcore.EmitState, all_structs: irlower.StructTab
         "sleep_ns", "set_file_times", "statfs", "poll", "proc_waitpid",
         "proc_waitpid_nohang",
         "timer_fd", "tcp_listen", "tcp_local_port", "tcp_connect", "putchar",
-        "eprint", "udp_send", "tcp_listen_with", "tcp_socket_ctl", "udp_bind", "udp_connect", "udp_sendto", "udp_recvfrom", "tcp_connect_with", "unix_listen", "unix_connect", "reactor_new", "reactor_ctl", "reactor_wait", "tcp_recv_into",
+        "eprint", "udp_send", "tcp_listen_with", "tcp_socket_ctl", "udp_bind", "udp_connect", "udp_sendto", "udp_recvfrom", "tcp_connect_with", "unix_listen", "unix_connect", "reactor_new", "reactor_ctl", "reactor_wait", "tcp_recv_into", "tcp_sendfile",
         "tcp_listen_with_u8", "udp_bind_u8", "udp_connect_u8", "udp_sendto_u8", "udp_recvfrom_u8", "tcp_connect_with_u8",
         "isatty", "window_size", "set_window_size", "termios_get", "termios_set",
         "rlimit_nofile", "signal_ignore", "signal_default", "signal_mask",
@@ -10153,6 +10153,10 @@ function emit_entry_runtime(s: asmcore.EmitState, all_structs: irlower.StructTab
     if (s.has_need("tcp_socket_ctl")) {
         s = s.write("    .text\n");
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_socket_ctl("x86_64"), all_structs, s);
+    }
+    if (s.has_need("tcp_sendfile")) {
+        s = s.write("    .text\n");
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_sendfile("x86_64"), all_structs, s);
     }
     if (s.has_need("udp_bind")) {
         s = s.write("    .text\n");

@@ -162,16 +162,7 @@ func runExampleTraced(t *testing.T, gcc string, runner []string, rel string) (in
 	// Empty stdin rather than the test's: a filter program reading the
 	// terminal would block until the timeout for no reason.
 	cmd.Stdin = strings.NewReader("")
-	if err := cmd.Start(); err != nil {
-		return 0, exampleUnmeasured
-	}
-	done := make(chan error, 1)
-	go func() { done <- cmd.Wait() }()
-	select {
-	case <-done:
-	case <-time.After(examplesCensusRunTimeout):
-		_ = cmd.Process.Kill()
-		<-done
+	if timedOut, _ := runBounded(cmd, examplesCensusRunTimeout); timedOut || cmd.ProcessState == nil {
 		return 0, exampleUnmeasured
 	}
 	if cmd.ProcessState.ExitCode() == -1 {

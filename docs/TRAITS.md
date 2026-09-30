@@ -582,7 +582,7 @@ impls. The checker already walks field layouts; generation is mechanical.
 This is what makes traits *ergonomic* and is the lever that finally
 collapses the `assert_eq_*` family.
 
-Seven traits are derivable today (`deriveKind`, `synthesizeDerives`):
+Eight traits are derivable today (`deriveKind`, `synthesizeDerives`):
 
 | Trait     | Synthesised method      | Shape |
 |-----------|-------------------------|-------|
@@ -592,6 +592,7 @@ Seven traits are derivable today (`deriveKind`, `synthesizeDerives`):
 | `Debug`   | `to_debug(self): string`| structural like `Display`, but strings render QUOTED (`label: "hi"`, `Tag("ab")`) — the `{:?}` half of the Display/Debug split |
 | `Hash`    | `hash(self): i32`       | `h = h*31 + f.hash()`; enum seeds with the variant tag |
 | `Json`    | `to_json(self): string` | JSON object; enums externally tagged |
+| `FromJson` | `from_json_value(v: JsonValue): Result[Self, string]` | structs only: each field read by name and decoded through its type's `FromJson` (an `E[]` field through `json.from_json_array[E]`, an `Option[E]` through `json.from_json_option[E]`, `None` when missing or null); a shape error names the field. The companion `from_json(s: string)` parses the text first (`json.decode[Self](s)`). Needs `import "std/json"` |
 | `Default` | `default(): Self`       | zero value — scalars' zero literal, nominal fields delegate to *their* `default()`; an enum defaults to its first variant (payloads defaulted) |
 
 Each composes through the same trait on every field/payload, so a type is
@@ -641,11 +642,10 @@ carrying only a `Debug` impl still disagrees. The differential cases use a
 nominal field to stay clear of it.
 
 `Eq`/`Ord`/`Display`/`Debug`/`Hash`/`Default` live in `core/cmp`;
-`Json` in `std/json` (it returns canonical JSON text and reuses the
-`JsonValue` encoder's string escaper). `Eq`/`Ord`/`Display`/`Debug`/`Hash`/
-`Json` are mirrored in the self-hosted compiler's `synth_*`; `Default` is
-native-only so far (its trait method is an *associated function* — see §6.8
-— which the self-host frontend doesn't parse yet).
+`Json` and `FromJson` in `std/json` (`to_json` returns canonical JSON text
+and reuses the `JsonValue` encoder's string escaper; `from_json_value`
+composes std/json's field readers). All eight are mirrored in the
+self-hosted compiler's `synth_*`.
 
 `Debug`'s self-host `synth_*` renders **type-directed** (numeric/boolean
 scalars via `to_string`, strings quoted inline, nominal fields via their

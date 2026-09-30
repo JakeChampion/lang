@@ -18,6 +18,10 @@
 # unpaired allocations. The median leaking fixture is 2, and the largest,
 # enum_payload_aliases_container, is 35.
 #
+# The derive_from_json* rows rose when the derived decoder became a caller
+# of `json.decode` (#10714): a fresh Result's payload handed to a call in a
+# function returning a Result is never released, one parsed tree per call.
+#
 # The foreach_* and map_* rows fell when a MapIter cursor became a counted
 # box its frame frees (#9562): every `for (k, v) in m` stranded one.
 #
@@ -220,6 +224,7 @@ char_cast_receiver                                   0
 closure_adder                                        0
 closure_capture_shared_cell                          0
 closure_captures_defining_scope                      0
+closure_captures_generic_value                       0
 closure_field_match                                  0
 closure_field_rebind                                 0
 closure_returns_composite                            0
@@ -262,8 +267,9 @@ defer_in_loop                                        0
 derive_debug                                         0
 derive_default                                       0
 derive_default_generic_primitive                     0
-derive_from_json                                     6
-derive_from_json_i64                                 2
+derive_from_json                                     23
+derive_from_json_i64                                 9
+derive_from_json_shapes                              174
 derive_json                                          0
 derive_multi_payload                                 0
 div_modulo                                           0
@@ -424,6 +430,7 @@ map_struct_key_grow                                  26
 map_struct_value_field                               2
 map_u8_column                                        0
 map_values_str                                       0
+map_wide_int_keys                                    0
 match_arm_tuple                                      0
 match_expr_arm_width                                 1
 match_expr_array                                     0
@@ -633,8 +640,8 @@ to_string_round_trip                                 0
 trailing_commas                                      0
 trait_method_bound_wins                              0
 trmc_map                                             0
-try_op_in_closure                                    0
 try_binding_takes_its_success_payload                0
+try_op_in_closure                                    0
 try_result_struct_payload                            0
 tuple_basics                                         0
 tuple_binder_shadows_module_decl                     0

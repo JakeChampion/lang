@@ -1908,7 +1908,7 @@ function is_builtin_variant(name: string): boolean {
 // front-end injects as built-ins (see checker.go's builtinEnumDecls). A
 // user `enum` declaration shadowing one of these is E010.
 function is_reserved_enum_name(name: string): boolean {
-  return name == "Option" || name == "Result" || name == "IoError" || name == "JsonValue";
+  return name == "Option" || name == "Result" || name == "IoError" || name == "JsonValue" || name == "Body";
 }
 
 // is_reserved_struct_name reports whether `name` is one of the structs the
@@ -1921,7 +1921,7 @@ function is_reserved_enum_name(name: string): boolean {
 // against builtinStructDecls() so the two cannot drift.
 function is_reserved_struct_name(name: string): boolean {
   var reserved: string[] = [
-    "BytesWriter", "Cell", "Date", "DateTime", "Duration", "FileStat",
+    "BytesWriter", "Cell", "ChunkProducer", "Date", "DateTime", "Duration", "FileStat",
     "FsStat", "HeaderMap", "HttpRequest", "HttpResponse", "Instant", "Map",
     "MapIter", "MockCall", "MockPlatform", "Platform", "ProcessResult",
     "Reader", "Span", "Stream", "Time", "TimeZone", "Url", "WinSize", "Writer",
@@ -3814,6 +3814,7 @@ function builtin_sigs(): string[] {
     "tcp_recv(i32, i32): u8[]",
     "tcp_send(i32, string): i32",
     "tcp_socket_ctl(i32, i32, i32): i32",
+    "tcp_sendfile(i32, i32, i32): i32",
     "temp_dir(string): Result[string, IoError]",
     "reactor_ctl(i32, i32, i32, i32): i32",
     "reactor_new(): i32",
@@ -8347,7 +8348,7 @@ function mx_is_numeric(t: typeinfo.Type): boolean {
 }
 
 // mx_builtin_enum_of returns the built-in enum a variant name belongs to
-// (Option / Result / JsonValue / IoError), or "" if it isn't a built-in
+// (Option / Result / JsonValue / IoError / Body), or "" if it isn't a built-in
 // variant. Two struct arms in the same non-empty family unify.
 function mx_builtin_enum_of(name: string): string {
   if (name == "Some" || name == "None") {
@@ -8361,6 +8362,9 @@ function mx_builtin_enum_of(name: string): string {
   }
   if (name == "NotFound" || name == "PermissionDenied" || name == "AlreadyExists" || name == "InvalidUtf8" || name == "Interrupted" || name == "Unsupported" || name == "Other") {
     return "IoError";
+  }
+  if (name == "BodyText" || name == "BodyBytes" || name == "BodyStream" || name == "BodyFile" || name == "BodyChunks") {
+    return "Body";
   }
   return "";
 }
@@ -10588,7 +10592,7 @@ function type_assoc_req(s: Scope, tyname: string, field: string): AssocHit {
 // with no receiver NAME but a receiver TYPE — as impl-table entries, which is
 // the record `Type.f()` resolution reads. An inherent `impl` already lands
 // there; a `@derive` does not, and its synthesised functions are not trait
-// requirements either (`@derive(json.Json)` supplies `from_json`, which the
+// requirements either (`@derive(json.FromJson)` supplies `from_json`, which the
 // `Json` trait never declares), so the declaration is the only trace of them.
 // Without this `Wrap.default()` and `User.from_json(s)` reported an undefined
 // name for their own type (#8461). The blank trait name matches no declared
@@ -13120,8 +13124,12 @@ function handler_state_diags(mod: parser.Module): util.Diag[] {
   if (handle_idx < 0) { return []; }
   var returns_state: boolean = false;
   if (init_idx >= 0) {
-    var rt: string = mod.funcs[init_idx].ret_type;
-    returns_state = rt.len() > 0 && rt != "void";
+    var init_fd: parser.FuncDecl = mod.funcs[init_idx];
+    if (init_fd.params.len() > 1 || (init_fd.params.len() == 1 && init_fd.params[0].type_name != "Platform")) {
+      return [dg_at("E075", "`init` takes " + util.i32_to_string(init_fd.params.len()) + " parameters; it takes none, or the platform alone", init_fd.line, init_fd.col)];
+    }
+    var kind: i32 = parser.init_return_kind(init_fd.ret_type);
+    returns_state = kind == 1 || kind == 3;
   }
   var handle: parser.FuncDecl = mod.funcs[handle_idx];
   var takes_state: boolean = handle.params.len() == 3;
@@ -15923,28 +15931,22 @@ function e057_var_annot_diags(an: Annot[]): util.Diag[] {
 }
 
 // E044Walk is what every step of the capture walk needs and none of it
-// changes: the enclosing function's genericity and the three name sets that
-// decide whether an annotation is an erased type variable. It is a record
-// rather than four more parameters because the walk now recurses through
-// EXPRESSIONS as well as statements, and the expression side has twenty-five
-// recursive call sites.
-struct E044Walk { is_generic: boolean, tn: TypeNames, void_fns: string[] }
+// changes: the declared free functions returning `void`. It is a record
+// rather than a parameter because the walk recurses through EXPRESSIONS as
+// well as statements, and the expression side has twenty-five recursive call
+// sites.
+struct E044Walk { void_fns: string[] }
 
 // e044_diags ports the Go checker's capture-eligibility rule (E044): a
 // closure may capture scalars and pointer-shaped values, but NOT a value
-// with no runtime representation — natively ast.VoidType (a `void` call
-// result bound to a var) or ast.ParamType (an erased generic type
-// parameter), the only two shapes the native captureSink rejects
-// (checker.go E044). The self-host type model erases both to `unknown`, so
+// with no runtime representation — natively ast.VoidType, a `void` call
+// result bound to a var, the one shape the native captureSink rejects
+// (checker.go E044). The self-host type model erases it to `unknown`, so
 // the suspects are identified SYNTACTICALLY and the rule stays deliberately
-// narrow (it must never false-positive on the bundle):
-//   - void suspect: a body `var x = f();` whose callee is a declared free
-//     function with an explicit `void` return type;
-//   - param-type suspect: in a GENERIC function only, a parameter or body
-//     var whose annotation is a bare unknown identifier — a generic's
-//     `x: T` is exactly the shape the native checker types as ParamType.
-// A lambda that CAPTURES a suspect draws E044 at the enclosing statement,
-// naming the suspect's annotation spelling like native ("T" / "void").
+// narrow (it must never false-positive on the bundle): a body
+// `var x = f();` whose callee is a declared free function with an explicit
+// `void` return type. A lambda that CAPTURES a suspect draws E044 at the
+// enclosing statement, labelled "void" like native.
 // is_written_lambda_origin decides which lambdas this reaches: a bare one, a
 // desugared local `function`, a `use` callback. Nested blocks re-walk with a
 // copy of the suspect set so block-scoped vars don't leak.
@@ -15960,29 +15962,6 @@ function e044_lambda_check(lam: ast.ExprLambda, line: i32, col: i32, wk: E044Wal
       out = out.append(dg_at("E044", "captured variable \"" + suspects[i] + "\" has unsupported type " + labels[i], line, col));
     }
     i = i + 1;
-  }
-  return out;
-}
-
-// A lambda's own parameters seed its scope the way a generic function's do:
-// inside a generic, `(x: T) => …` binds a value with no runtime
-// representation, and a lambda nested in that body capturing `x` is the same
-// E044 native reports for the enclosing function's parameter. Outside a
-// generic there are no such parameters and the scope starts empty.
-function lambda_suspects(lm: ast.ExprLambda, wk: E044Walk): string[] {
-  var out: string[] = [];
-  if (!wk.is_generic) { return out; }
-  for param in lm.params {
-    if (e064_unknown_bare(param.type_name, wk.tn)) { out = out.append(param.name); }
-  }
-  return out;
-}
-
-function lambda_labels(lm: ast.ExprLambda, wk: E044Walk): string[] {
-  var out: string[] = [];
-  if (!wk.is_generic) { return out; }
-  for param in lm.params {
-    if (e064_unknown_bare(param.type_name, wk.tn)) { out = out.append(param.type_name); }
   }
   return out;
 }
@@ -16010,7 +15989,7 @@ function e044_expr(e: ast.Expr, line: i32, col: i32, wk: E044Walk, suspects: str
       // spelling by simply not being in the set (#9777).
       if (parser.is_written_lambda_origin(lm.origin)) {
         out = util.append_diags(out, e044_lambda_check(lm, line, col, wk, suspects, labels));
-        out = util.append_diags(out, e044_stmts(lm.body, wk, lambda_suspects(lm, wk), lambda_labels(lm, wk)));
+        out = util.append_diags(out, e044_stmts(lm.body, wk, [], []));
       }
     },
     ast.ExprBinary(b) => {
@@ -16089,9 +16068,6 @@ function e044_stmts(stmts: ast.Stmt[], wk: E044Walk, suspects0: string[], labels
         if (is_void_init && v.type_name.len() == 0) {
           suspects = suspects.append(v.name);
           labels = labels.append("void");
-        } else if (wk.is_generic && e064_unknown_bare(v.type_name, wk.tn)) {
-          suspects = suspects.append(v.name);
-          labels = labels.append(v.type_name);
         }
       },
       ast.StmtReturn(r) => {
@@ -16132,20 +16108,8 @@ function e044_stmts(stmts: ast.Stmt[], wk: E044Walk, suspects0: string[], labels
   return out;
 }
 
-function e044_diags(efn: parser.FuncDecl, tn: TypeNames, void_fns: string[]): util.Diag[] {
-  var suspects: string[] = [];
-  var labels: string[] = [];
-  var is_generic: boolean = efn.type_params.len() > 0 || efn.all_type_params.len() > 0;
-  if (is_generic) {
-    for param in efn.params {
-      if (e064_unknown_bare(param.type_name, tn)) {
-        suspects = suspects.append(param.name);
-        labels = labels.append(param.type_name);
-      }
-    }
-  }
-  var wk: E044Walk = E044Walk { is_generic: is_generic, tn: tn, void_fns: void_fns };
-  return e044_stmts(efn.body, wk, suspects, labels);
+function e044_diags(efn: parser.FuncDecl, void_fns: string[]): util.Diag[] {
+  return e044_stmts(efn.body, E044Walk { void_fns: void_fns }, [], []);
 }
 
 // ---- E053: `fip` fully-in-place verification -------------------------------
@@ -17371,15 +17335,35 @@ function e021_derive_one_diag(mod: parser.Module, tr: string, tname: string, lab
     }
     return [dg_at("E021", "@derive(" + tr + "): unknown trait", ln, cl)];
   }
-  if (kind != "Eq" && kind != "Ord" && kind != "Hash" && kind != "Display" && kind != "Debug" && kind != "Json" && kind != "Default") {
-    return [dg_at("E021", "cannot @derive(" + tr + "): only Eq, Display, Debug, Ord, Hash, Json, and Default are derivable", ln, cl)];
+  if (kind != "Eq" && kind != "Ord" && kind != "Hash" && kind != "Display" && kind != "Debug" && kind != "Json" && kind != "FromJson" && kind != "Default") {
+    return [dg_at("E021", "cannot @derive(" + tr + "): only Eq, Display, Debug, Ord, Hash, Json, FromJson, and Default are derivable", ln, cl)];
   }
   if (kind == "Default") {
     return [];
   }
+  // A FromJson derive decodes an array or Option field through its
+  // element, so the element is what must conform; a container nested in
+  // another has no decoder. Its body calls std/json's readers, so the
+  // import is required.
+  var ctys: string[] = ftys;
+  if (kind == "FromJson") {
+    if (!module_imports_std_json(mod)) {
+      return [dg_at("E021", "cannot @derive(" + tr + "): the decoder is std/json's; import \"std/json\"", ln, cl)];
+    }
+    ctys = [];
+    var ei: i32 = 0;
+    while (ei < ftys.len()) {
+      var elem: string = parser.fromjson_elem(ftys[ei]);
+      if (parser.fromjson_container(elem).len() > 0 || elem.len() == 0 || elem[0] == b'(' || (elem.len() > 3 && slice_unchecked(elem, 0, 3) == "fn(")) {
+        return [dg_at("E021", "cannot @derive(" + tr + ") for " + tname + ": " + labels[ei] + " has type " + ftys[ei] + "; FromJson decodes a field of a FromJson type, an array of one or an Option of one", ln, cl)];
+      }
+      ctys = ctys.append(elem);
+      ei = ei + 1;
+    }
+  }
   var fi: i32 = 0;
-  while (fi < ftys.len()) {
-    var fty: string = receiver_namespace(ftys[fi]);
+  while (fi < ctys.len()) {
+    var fty: string = receiver_namespace(ctys[fi]);
     if (!name_in(fty, tps) && e021_derive_field_known(mod, fty)) {
       if (!e021_derive_conforms(mod, tr, tidx, fty)) {
         return [dg_at("E021", "cannot @derive(" + tr + ") for " + tname + ": " + labels[fi] + " of type " + fty + " does not implement " + tr + " — add `impl " + tr + " for " + fty + "` (or remove the derive)", ln, cl)];
@@ -17388,6 +17372,17 @@ function e021_derive_one_diag(mod: parser.Module, tr: string, tname: string, lab
     fi = fi + 1;
   }
   return [];
+}
+
+// module_imports_std_json reports whether the module imports std/json, whose
+// readers a derived decoder calls.
+function module_imports_std_json(mod: parser.Module): boolean {
+  for im in mod.imports {
+    if (im.path == "std/json") {
+      return true;
+    }
+  }
+  return false;
 }
 
 // derive_method_name maps a derivable trait kind to the method name its
@@ -17404,6 +17399,9 @@ function derive_method_name(kind: string): string {
   }
   if (kind == "Json") {
     return "to_json";
+  }
+  if (kind == "FromJson") {
+    return "from_json_value";
   }
   if (kind == "Eq") {
     return "eq";
@@ -17491,6 +17489,10 @@ function e021_derive_field_diags(mod: parser.Module): (util.Diag[], string[]) {
       }
     }
     for ederive in ederives {
+      if (parser.derive_simple_name(ederive) == "FromJson") {
+        out = out.append(dg_at("E021", "cannot @derive(" + ederive + "): only Eq, Display, Debug, Ord, Hash, Json, and Default are derivable for enums", ed.line, ed.col));
+        continue;
+      }
       var edd: util.Diag[] = e021_derive_one_diag(mod, ederive, ed.name, elabels, eftys, ed.type_params, ed.line, ed.col);
       if (edd.len() > 0) {
         var emn: string = derive_method_name(parser.derive_simple_name(ederive));
@@ -18587,9 +18589,8 @@ function check_module_pass(mod: parser.Module, fda_diags: util.Diag[], focus: st
       body_diags = util.append_diags(body_diags, e057_var_annot_diags(efn_annots));
     }
   }
-  // E044: a closure capture of a value with no runtime representation —
-  // a `void` call result or an erased generic type parameter. Runs for
-  // EVERY function (generic ones are where the ParamType shape lives).
+  // E044: a closure capture of a value with no runtime representation, a
+  // `void` call result.
   var e044_void_fns: string[] = [];
   for func in mod.funcs {
     if (func.receiver_name.len() == 0 && func.ret_type == "void") {
@@ -18598,7 +18599,7 @@ function check_module_pass(mod: parser.Module, fda_diags: util.Diag[], focus: st
   }
   for func in mod.funcs {
     if (in_focus(focus, func)) {
-      body_diags = util.append_diags(body_diags, e044_diags(func, tn, e044_void_fns));
+      body_diags = util.append_diags(body_diags, e044_diags(func, e044_void_fns));
     }
   }
   // E053 (`fip` no-allocation verification), E065 (`str` view escaping a

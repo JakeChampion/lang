@@ -601,10 +601,10 @@ Deferred to a follow-up:
     Fern doesn't yet expose (raw byte-buffer alloc, manual
     byte-stride pokes for the bucket / entries arrays),
     so the boxing shape ships first.
-  - Wide K (i64 / u64 / f64 keys) is still deferred —
-    needs an 8-byte-stride entry layout (the current
-    helpers hard-code 4-byte K) and a key-comparison path
-    that branches on width, so it's a bigger surgery.
+  - Wide K (i64 / u64 keys): the same boxing shape, on both
+    compilers — the key is a cell the map owns, hashed and
+    compared through the cell (the self-host's `_k64` helpers,
+    #10005). An f64 key is refused by the checker (E045).
 - Map literals: TBD syntax. `{ "k": v }` collides with struct
   literals. Candidates: `#{ "k": v }`, `Map { "k": v }`,
   `Map.from([("k", v)])`. Lean `Map { ... }` — it reads naturally
@@ -1689,7 +1689,7 @@ function handle(req: HttpRequest): HttpResponse <io, throws[BadRequest]> {
         throw BadRequest("method not allowed");
     }
     var body = read_body(req);  // <io, suspend> bubbles up
-    return HttpResponse { status: 200, body: body };
+    return HttpResponse { status: 200, body: BodyText(body) };
 }
 ```
 

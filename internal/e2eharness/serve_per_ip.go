@@ -15,7 +15,7 @@ func PerIPCapServerSource(port int) string {
 	return fmt.Sprintf(`import "std/http";
 import "std/tcp";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
-    return http.http_response_ok("ok");
+    return http.ok("ok");
 }
 function main(): i32 {
     return tcp.tcp_serve_supervised_opts(%d, tcp.ServeOptions { ...tcp.serve_options(), workers: 1, max_connections_per_ip: 2 }, handle);

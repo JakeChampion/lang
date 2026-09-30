@@ -264,9 +264,12 @@ Linux the signal is blocked and read through a signalfd the set holds
 beside -signal in its event's data word; on Darwin it is ignored, so its
 default action cannot end the process, and kqueue's EVFILT_SIGNAL records
 each delivery; the interpreter turns os/signal deliveries into bytes on a
-pipe the set watches; wasm, which has no signals, answers -ENOTSUP. The
+pipe the set watches; wasm, which has no signals, answers -ENOTSUP. Op 6
+reports the parent's exit as that SIGTERM pair: PR_SET_PDEATHSIG on
+Linux, EVFILT_PROC's NOTE_EXIT on Darwin (the interpreter waits on it in
+a kqueue of its own and raises SIGTERM), -ENOTSUP on wasm. The
 Driver seam wraps the floor as `watch`, `unwatch`, `wait`, `watch_signal`,
-`unwatch_signal` and `close` (std/async), std/sim scripts readiness for
+`unwatch_signal`, `watch_parent` and `close` (std/async), std/sim scripts readiness for
 its leg with `ready_at`, and the serve loops run on it.
 
 Per target, every socket primitive is provided as follows. "Fern body" is
@@ -284,6 +287,7 @@ time there.
 | `tcp_listen_with`, `tcp_connect_with` (byte address) | Fern body | Fern body | `__fern_ip_flat` then start-bind or start-connect; a started connect is kind 4 | E066 | net package, `JoinHostPort`; a started connect is finished before answering |
 | `tcp_socket_ctl` | Fern body; op 7 answers 0 on a datagram socket | Fern body; op 7 answers 0 on a datagram socket | ops 2, 4, 5 and 7 through wasi:sockets; 1, 3 and 6 `-ENOTSUP`; every op `-ENOTSUP` on a datagram record, op 7 0 | E066 | net package controls; op 3 makes `tcp_recv` and `tcp_send` one read(2) or write(2) on the descriptor, so a send answers what the kernel took or -EAGAIN; op 5 answers 0 at once; op 6 reads the host's send queue; op 7 keys `RemoteAddr`, 0 on a datagram socket |
 | `tcp_recv_into` | Fern body, `read(2)` | Fern body | non-blocking read on the input stream, `-EAGAIN` when empty | E066 | a read through the descriptor |
+| `tcp_sendfile` | Fern body, `sendfile(2)`, the file advanced by what the socket took | Fern body, the position read and moved around Darwin's offset-and-length form | `-ENOTSUP`: the serve loop reads the file and sends the piece | E066 | a read of the open file then one socket write, the file moved back over what the socket did not take |
 | `udp_send` | Fern body, dotted-quad parse | Fern body | `udp_bind` then `udp_sendto` then close | E066 | net package |
 | `udp_bind`, `udp_connect`, `udp_sendto`, `udp_recvfrom` (byte address) | Fern body | Fern body; `EISCONN` for a named address on a connected socket | wasi:sockets/udp bodies (`wasi_udp.go`, `wasm_ir.fern`); `recvfrom` blocks on the incoming pollable | E066 | raw descriptors, the kernel's errnos |
 | `unix_listen`, `unix_connect` | Fern body | Fern body, `sun_len` head | E066: no `unix` | E066 | net package |

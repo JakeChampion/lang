@@ -140,6 +140,7 @@ var gatedBuiltins = map[string]string{
 	"tcp_connect":      "tcp",
 	"tcp_recv":         "tcp",
 	"tcp_send":         "tcp",
+	"tcp_sendfile":     "tcp",
 	"tcp_close":        "tcp",
 	"tcp_pollable":     "tcp",
 	"udp_send":         "tcp",

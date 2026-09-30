@@ -595,6 +595,11 @@ pub struct FnSigs {
     // is in here resolves to that user function and must NOT be intercepted as
     // a same-named builtin (`len` / `exit` / `chr` / …).
     fn_names: SigReg,
+    // assoc_fns: every associated function (a receiver type, no receiver
+    // name) under its "<Type>.<f>" call name, so `i32.from_json_value(v)` —
+    // a primitive's impl — is recognised as an associated call; a struct's is
+    // known by its declaration and an enum's by its registered return type.
+    assoc_fns: SigReg,
     // fresh_struct_ret_fns: functions returning a fresh struct box. Looser than
     // return_fresh_struct_ret_fns — inner element buffers may alias live locals.
     fresh_struct_ret_fns: string[],
@@ -721,6 +726,7 @@ pub struct FnSigs {
 // b.tuple_ret_fns b.arrtup_ret_fns b.map_ret_fns b.f64_ret_fns b.f64arr_ret_fns
 // b.i64arr_ret_fns b.erased_elem_ret_fns b.ret_type_fns b.ret_fn_sigs
 // b.closure_fns b.const_fns b.fn_names b.own_positions b.own_scalar_arr_positions
+// b.assoc_fns
 pub function wp_fact_rows(b: FnSigs, all_funcs: parser.FuncDecl[], all_stab: StructTab): string[] {
     var regs: SigReg[] = [b.str_ret_fns, b.i64_ret_fns, b.struct_ret_fns, b.fn_param_sigs, b.noesc_ret_fns, b.opt_fresh_ret_fns];
     var cols: string[][] = [b.closurearr_ret_fns, b.borrowable_params, b.borrow_bare, b.fresh_struct_ret_fns, b.consume_safe_params, b.return_fresh_struct_ret_fns, b.recv_borrow_fns, b.str_fresh_ret_fns, b.strfld_ok_types, b.tuple_fresh_ret_fns, b.own_consumed_positions, b.consumed_arr_positions, b.param_counted, b.trmc_consume_fns, b.handback_params, b.cnt_struct_ret_fns, b.cnt_handback_params, b.handback_carry_params, b.str_handback_ret, b.grow_recv_fns, b.grow_field_positions, structfld_reclaim_ok_types_of(all_funcs, all_stab, b.borrowable_params)];
@@ -2989,6 +2995,16 @@ function closure_init_opt_ret(init: ast.Expr, s: LowerState): string {
                 },
                 _ => { return ""; }
             }
+        },
+        // A fn-typed struct FIELD read (`var next = producer.next`): the
+        // field's declared return, the sidecar the match lowering reads for
+        // the direct `match (producer.next(i))` form.
+        ast.ExprFieldAccess(fa) => {
+            var oty: string = expr_struct_type(fa.obj, s);
+            if (oty == "") { return ""; }
+            var fr: string = decl_field_fn_ret(s.frame.structs, oty, fa.field);
+            if (fr.len() >= 8 && (slice_unchecked(fr, 0, 7) == "Option[" || slice_unchecked(fr, 0, 7) == "Result[")) { return fr; }
+            return "";
         },
         _ => { return ""; }
     }
@@ -6008,18 +6024,6 @@ function decl_is_leaksafe_at_d(structs: StructTab, decl_index: i32, depth: i32, 
     return true;
 }
 
-// is_prim_type_name reports whether `t` is a PRIMITIVE type spelling — one that
-// can never name a struct or an enum. The same set checker.e060_is_primitive_name
-// gates `as?` on, plus `str` (the borrowed-string view: the parser erases a BARE
-// `str` to "string", but the spelling survives verbatim inside a generic
-// argument) and `void`. asmcore.is_enum_recv asks the same question of the Ty
-// decoding (is_int_tag); this is the spelling-level form irlower works in.
-function is_prim_type_name(t: string): boolean {
-    return t == "i32" || t == "i64" || t == "u8" || t == "u32" || t == "u64" || t == "usize"
-        || t == "f32" || t == "f64" || t == "float"
-        || t == "boolean" || t == "bool"
-        || t == "string" || t == "str" || t == "char" || t == "void";
-}
 
 // is_enum_like_name reports whether type name `t` denotes a (nominal) enum:
 // not a primitive, struct, array, or bracketed/tuple generic. Mirrors the AST
@@ -6036,7 +6040,7 @@ function is_prim_type_name(t: string): boolean {
 // care exclude it themselves (enum_ret_recordable).
 pub function is_enum_like_name(t: string, structs: StructTab): boolean {
     if (t.len() == 0) { return false; }
-    if (is_prim_type_name(t)) { return false; }
+    if (typeinfo.is_primitive_type_name(t)) { return false; }
     // "clo" is the compiler's closure-BOX tag spelling (a boxed fn-valued
     // tuple element / Option payload) — never a user enum name. Without this
     // exclusion an Option[clo] payload's match bind was claimed by the enum
@@ -11983,9 +11987,14 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
         // data rather than a fresh box per evaluation (#9839).
         if (c.args.len() == 0) { return s.emit(ir.op_const_closure(clonm)); }
         var mks: LowerState = s.emit(ir.op_const_func(0, clonm));
+        // A box that outlives its frame takes a count of each capture.
+        var mkkinds: string = owned_capture_kinds(s.frame.sigs.closure_fns, clonm + "");
+        var mki: i32 = 0;
         for arg in c.args {
             mks = lower_expr(arg, mks);
             if (!mks.ok) { return mks; }
+            if (mki < mkkinds.len() && mkkinds[mki] != b'.') { mks = mks.retain_tos("owned-capture"); }
+            mki = mki + 1;
         }
         return mks.emit(ir.op_arr_make(c.args.len() + 1, 32));
     }
@@ -13291,7 +13300,7 @@ function is_socket_call(name: string, argc: i32): boolean {
 function socket_call_arity(name: string): i32 {
     if (util.has_str(["tcp_close", "tcp_pollable", "tcp_listen", "tcp_accept", "tcp_local_port", "unix_connect"], name)) { return 1; }
     if (util.has_str(["tcp_connect", "tcp_send", "tcp_recv", "udp_bind", "unix_listen", "tcp_recv_into"], name)) { return 2; }
-    if (util.has_str(["udp_send", "tcp_socket_ctl", "udp_connect", "udp_recvfrom", "tcp_connect_with", "reactor_wait"], name)) { return 3; }
+    if (util.has_str(["udp_send", "tcp_socket_ctl", "udp_connect", "udp_recvfrom", "tcp_connect_with", "reactor_wait", "tcp_sendfile"], name)) { return 3; }
     if (util.has_str(["udp_sendto", "reactor_ctl", "tcp_listen_with"], name)) { return 4; }
     return 0;
 }
@@ -13325,6 +13334,7 @@ function lower_call_socket(c: ast.ExprCall, cid: ast.ExprIdent, s: LowerState): 
     var a2: LowerState = lower_expr(c.args[2], a1);
     if (!a2.ok) { return a2; }
     if (cid.name == "tcp_socket_ctl") { return a2.emit(ir.op_tcp_socket_ctl()); }
+    if (cid.name == "tcp_sendfile") { return a2.emit(ir.op_tcp_sendfile()); }
     if (cid.name == "udp_connect") { return a2.emit(ir.op_udp_connect()); }
     if (cid.name == "udp_recvfrom") { return a2.emit(ir.op_udp_recvfrom()); }
     if (cid.name == "tcp_connect_with") { return a2.emit(ir.op_tcp_connect_with()); }
@@ -13738,7 +13748,8 @@ function lower_call_named_generic(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIde
             // after the call, so an array-returning callee would hand the caller
             // freed memory.
             var arg_releasable: boolean = call_arg_borrowable(sc, cid.name, ai)
-                || arr_param_counted_at(sc.frame.sigs.param_counted, cid.name, ai);
+                || arr_param_counted_at(sc.frame.sigs.param_counted, cid.name, ai)
+                || param_counted_at(sc.frame.sigs.param_counted, "FCNT:", cid.name, ai);
             // A CONSUMED-THREADED position (consumed_arr_positions) admits the
             // same temp on different grounds: the callee's ownership flag
             // starts clear, so it never releases the buffer it was handed,
@@ -14189,9 +14200,20 @@ function lower_call_struct_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, rty:
 function lower_call_fn_field(c: ast.ExprCall, fa: ast.ExprFieldAccess, rty: string, s: LowerState): LowerState {
     var ffidx: i32 = s.field_index_in(rty, fa.field);
     if (ffidx < 0) { return s.fail(); }
-    // Evaluate the receiver, read the field box, stash it.
+    // Evaluate the receiver, read the field box, stash it. A receiver that is
+    // a strict-fresh producer's result is this frame's to release once the
+    // call returns; it holds the field box until then.
     var ffs: LowerState = lower_expr(fa.obj, s);
     if (!ffs.ok) { return ffs; }
+    var ffrecv: i32 = 0 - 1;
+    if (owned_fresh_call_callee(fa.obj, "", s) != "") {
+        var frn: string = "$fnrecv" + util.i32_to_string(ffs.locals.len());
+        ffs = ffs.add_local(frn);
+        ffrecv = ffs.slot_of(frn);
+        ffs = ffs.mark_struct_type(ffrecv, rty);
+        ffs = ffs.emit(ir.op_store_local(ffrecv));
+        ffs = ffs.emit(ir.op_load_local(ffrecv));
+    }
     ffs = ffs.emit(ir.op_struct_get(ffidx, struct_field_width(s.frame.structs, rty, ffidx)));
     var fbtmp: string = "$fnfield" + util.i32_to_string(ffs.locals.len());
     ffs = ffs.add_local(fbtmp);
@@ -14212,7 +14234,10 @@ function lower_call_fn_field(c: ast.ExprCall, fa: ast.ExprFieldAccess, rty: stri
     ffs = ffs.emit(ir.op_load_local(fbslot));
     ffs = ffs.emit(ir.op_const_i32(0));
     ffs = ffs.emit(ir.op_arr_get(32));   // box[0] -> funcval
-    return ffs.emit(ir.op_call_indirect_sig(c.args.len() + 1, callee_fn_sig_declared(fsig, c, true)));
+    ffs = ffs.emit(ir.op_call_indirect_sig(c.args.len() + 1, callee_fn_sig_declared(fsig, c, true)));
+    if (ffrecv < 0) { return ffs; }
+    ffs = emit_struct_field_drops_gated(ffs, ffrecv, true);
+    return ffs.release(ffrecv, "__fern_rc_dec", "fnfield-fresh-recv");
 }
 
 // lower_call_dyn_method dispatches `recv.m(args)` on a `dyn Trait` receiver,
@@ -14980,7 +15005,7 @@ function lower_call_map_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, mtype: 
         // → raw-buffer alias (owncols stays clear).
         var mks: LowerState = lower_expr(fa.obj, s);
         if (!mks.ok) { return mks; }
-        return mks.emit(ir.op_map_keys(map_kv_elem_flag(mtype, "keys")));
+        return mks.emit(ir.op_map_keys(map_kv_elem_flag(mtype, "keys"), 0));
     }
     if (fa.field == "values" && c.args.len() == 0) {
         var mvs: LowerState = lower_expr(fa.obj, s);
@@ -14994,7 +15019,7 @@ function lower_call_map_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, mtype: 
         // here we just emit the box-building op.
         var mit: LowerState = lower_expr(fa.obj, s);
         if (!mit.ok) { return mit; }
-        return mit.emit(ir.op_map_iter(map_value_widekind(map_value_of(mtype))));
+        return mit.emit(ir.op_map_iter(map_value_widekind(map_value_of(mtype)), 0));
     }
     // Not a built-in map op — a USER method on Map[K, V]
     // (`m.merge(other)`, `m.extend(...)`). Dispatch to the
@@ -15308,7 +15333,7 @@ function lower_call_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerSta
         if (fa.field == "key" && c.args.len() == 0) {
             var ik: LowerState = lower_expr(fa.obj, s);
             if (!ik.ok) { return ik; }
-            return ik.emit(ir.op_mapiter_key());
+            return ik.emit(ir.op_mapiter_key(0));
         }
         if (fa.field == "value" && c.args.len() == 0) {
             var iv2: LowerState = lower_expr(fa.obj, s);
@@ -15918,8 +15943,9 @@ function lower_call_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerSta
     // Lower the args with NO receiver and dispatch to the
     // "<Type>.<f>" label (the associated FuncDecl is keyed there by
     // module_has_func). The target is recognised as a STRUCT name
-    // (decl_is_struct) or, for an enum / type-returning associated
-    // fn, by a registered "<Type>.<f>" return type — never via
+    // (decl_is_struct), for an enum / type-returning associated
+    // fn by a registered "<Type>.<f>" return type, or for a
+    // primitive's impl by the assoc_fns registry — never via
     // is_enum_like_name, which also matches MODULE names
     // (util/parser) and would hijack every `mod.func()` call. A
     // UNIT VARIANT is excluded (variant_enum_owner != "") — `Nil.m()`
@@ -15928,7 +15954,7 @@ function lower_call_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerSta
     // enum-method dispatch below.
     match (fa.obj) {
         ast.ExprIdent(tid) => {
-            if (s.slot_of(tid.name) < 0 && variant_enum_owner(s.frame.structs, tid.name) == "" && (decl_is_struct(s.frame.structs, tid.name) || s.struct_ret_type(tid.name + "." + fa.field) != "")) {
+            if (s.slot_of(tid.name) < 0 && variant_enum_owner(s.frame.structs, tid.name) == "" && (decl_is_struct(s.frame.structs, tid.name) || s.struct_ret_type(tid.name + "." + fa.field) != "" || s.prim_assoc_call(tid.name, fa.field))) {
                 var asf: LowerState = s;
                 var afi: i32 = 0;
                 while (afi < c.args.len()) {
@@ -16163,7 +16189,10 @@ function owned_fresh_call_callee(e: ast.Expr, kind: string, s: LowerState): stri
         ast.ExprCall(c) => {
             match (c.callee) {
                 ast.ExprIdent(cid) => {
-                    if (s.slot_of(cid.name) >= 0) { return ""; }
+                    if (s.slot_of(cid.name) >= 0) {
+                        if (kind == "ARROWN:" && fn_value_arr_call(e, s)) { return cid.name; }
+                        return "";
+                    }
                     if (util.index_of_str(s.frame.sigs.return_fresh_struct_ret_fns, kind + cid.name) < 0) { return ""; }
                     return cid.name;
                 },
@@ -16185,6 +16214,15 @@ function owned_fresh_call_callee(e: ast.Expr, kind: string, s: LowerState): stri
         _ => { return ""; }
     }
     return "";
+}
+
+// fn_value_arr_call: `e` calls an array-returning function VALUE held in a
+// slot. Such a call hands this frame one counted reference, the contract a
+// `var g = f(x)` binding already relies on (the fn-parameter rows of
+// arr_ret_fns), so its result is "ARROWN:" in every sense but the registry.
+function fn_value_arr_call(e: ast.Expr, s: LowerState): boolean {
+    var cn: string = direct_call_callee_name(e);
+    return cn.len() > 0 && s.slot_of(cn) >= 0 && s.is_arr_ret_fn(cn);
 }
 
 // emit_counted_result_release: release the temp box parked in `boxslot`, the
@@ -17230,6 +17268,12 @@ function lower_expr_field_access(fa: ast.ExprFieldAccess, s: LowerState): LowerS
         // pin — so refusing would reject programs that compile today. The
         // remaining wrong-width reads are all downstream of that erasure.
         return so0.emit(ir.op_tuple_get(tgi));
+    }
+    // `r.fd` on a Reader / Writer: the handle IS its fd (see stdin()), so
+    // the field read is the receiver's own value.
+    if (fa.field == "fd") {
+        var hty: string = expr_struct_type(fa.obj, s);
+        if (hty == "Reader" || hty == "Writer") { return lower_expr(fa.obj, s); }
     }
     // Qualified built-in `Option.None` (no call) — the same value as the
     // bare `None`: the canonical none box (op_opt_none). The native
@@ -22349,7 +22393,8 @@ function discard_free_call(own se: LowerState, s: LowerState, es: ast.StmtExpr, 
         se = emit_enum_variant_drops_gated(se, deslot, dety, [], true);
         se = se.emit(ir.op_load_local(deslot));   // the shared tail drop consumes this
     } else if (util.index_of_str(s.frame.sigs.return_fresh_struct_ret_fns, "ARR:" + dcid.name) >= 0
-            || util.index_of_str(s.frame.sigs.return_fresh_struct_ret_fns, "ARROWN:" + dcid.name) >= 0) {
+            || util.index_of_str(s.frame.sigs.return_fresh_struct_ret_fns, "ARROWN:" + dcid.name) >= 0
+            || fn_value_arr_call(es.value, s)) {
         // A discarded call to an ARRAY-returning free function
         // that leaves this frame owning one reference: an "ARR:"
         // producer (every return a direct scalar-element array
@@ -26632,7 +26677,7 @@ function lower_stmt_for(fr: ast.StmtFor, s: LowerState): LowerState {
             mkf = lower_expr(mki_recv, mkf);
             if (!mkf.ok) { return mkf; }
             var mki_flag: i32 = map_kv_elem_flag(mkimty, mki_method);
-            if (mki_method == "keys") { mkf = mkf.emit(ir.op_map_keys(mki_flag)); }
+            if (mki_method == "keys") { mkf = mkf.emit(ir.op_map_keys(mki_flag, 0)); }
             else { mkf = mkf.emit(ir.op_map_values(mki_flag, map_value_widekind(map_value_of(mkimty)))); }
             mkf = mkf.emit(ir.op_store_local(mkisslot));
             // hidden index
@@ -26867,7 +26912,7 @@ function lower_stmt_for(fr: ast.StmtFor, s: LowerState): LowerState {
         var fm: LowerState = s.add_local(ksn);
         var ksslot: i32 = fm.slot_of(ksn);
         fm = fm.emit(ir.op_load_local(mslot));
-        fm = fm.emit(ir.op_map_keys(mkv_kflag));
+        fm = fm.emit(ir.op_map_keys(mkv_kflag, 0));
         fm = fm.emit(ir.op_store_local(ksslot));
         // values column -> hidden local
         var vsn: string = "$forvs" + util.i32_to_string(fm.locals.len());
@@ -30171,6 +30216,7 @@ pub function emit_arr_store_from(se: LowerState, slot: i32, alias_inc: boolean, 
         var sst: LowerState = se.add_local(sscratch);
         var stmp: i32 = sst.slot_of(sscratch);
         sst = sst.emit(ir.op_store_local(stmp));
+        sst = emit_closure_slot_release_prelude(sst, slot);
         sst = sst.release(slot, "__fern_rc_dec", "arr-store-old");
         sst = sst.emit(ir.op_load_local(stmp));
         return sst.emit(ir.op_store_local(slot));
@@ -30187,6 +30233,7 @@ pub function emit_arr_store_from(se: LowerState, slot: i32, alias_inc: boolean, 
         st = st.retain(tmp, "arr-store-alias");
     }
     if (release_old && alias_inc) {
+        st = emit_closure_slot_release_prelude(st, slot);
         st = st.emit(ir.op_load_local(slot));      // OLD value the slot holds
         st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
         st = st.emit(ir.op_drop());
@@ -30195,6 +30242,7 @@ pub function emit_arr_store_from(se: LowerState, slot: i32, alias_inc: boolean, 
         st = st.emit(ir.op_load_local(tmp));       // new value
         st = st.emit(ir.op_bin("ne", 0, false));   // old != new (cow guard)
         st = st.emit(ir.op_if(0));
+        st = emit_closure_slot_release_prelude(st, slot);
         st = st.emit(ir.op_load_local(slot));
         st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
         st = st.emit(ir.op_drop());
@@ -30393,8 +30441,10 @@ function emit_arrarr_reclaim_store(se: LowerState, slot: i32, alias_inc: boolean
     var st: LowerState = se.add_local(scratch);
     var tmp: i32 = st.slot_of(scratch);
     st = st.emit(ir.op_store_local(tmp));
+    var cloarr: boolean = slot_is_reclaimable_cloarr(st, slot);
     if (alias_inc) {
         st = st.retain(tmp, "arrarr-store-alias");
+        if (cloarr) { st = emit_cloarr_owned_captures(st, slot); }
         st = st.emit(ir.op_load_local(slot));
         st = st.emit(ir.op_call_direct(arrarr_free_helper_of(st, slot), 1));
         st = st.emit(ir.op_drop());
@@ -30405,6 +30455,7 @@ function emit_arrarr_reclaim_store(se: LowerState, slot: i32, alias_inc: boolean
     st = st.emit(ir.op_load_local(tmp));         // new value
     st = st.emit(ir.op_bin("ne", 0, false));     // old != new (cow guard)
     st = st.emit(ir.op_if(0));
+    if (cloarr) { st = emit_cloarr_owned_captures(st, slot); }
     st = st.emit(ir.op_load_local(slot));
     st = st.emit(ir.op_call_direct(arrarr_free_helper_of(st, slot), 1));
     st = st.emit(ir.op_drop());
@@ -31766,9 +31817,84 @@ function emit_struct_field_drops(s: LowerState, slot: i32): LowerState {
     // Direct tuple fields: no k_* arm of __struct_drop_<sty> matches a "(…)"
     // type, so they are released here, before the box.
     var st: LowerState = emit_struct_tuple_field_drops(s, slot, sty);
+    st = emit_struct_clo_field_captures(st, slot, sty);
     st = st.emit(ir.op_load_local(slot));    // box (arg0)
     st = st.emit(ir.op_call_direct("__struct_drop_" + sty, 1));   // deep-drops the rc-array fields; returns box
     return st.emit(ir.op_drop());
+}
+
+// emit_struct_clo_field_captures gives back the owned captures of each closure
+// field's box ahead of __struct_drop_<sty>, whose closure arm frees the box
+// alone. Only a box the field holds the last reference to has them released.
+function emit_struct_clo_field_captures(se: LowerState, slot: i32, sty: string): LowerState {
+    if (owned_capture_kinds_any(se.frame.sigs.closure_fns) == false) { return se; }
+    var st: LowerState = se;
+    var n: i32 = decl_field_count(st.frame.structs, sty);
+    var fi: i32 = 0;
+    while (fi < n) {
+        if (decl_field_type_at(st.frame.structs, sty, fi) == "fn") {
+            var csc: string = "$sclo" + util.i32_to_string(st.locals.len());
+            st = st.add_local(csc);
+            var ctmp: i32 = st.slot_of(csc);
+            st = st.emit(ir.op_load_local(slot));
+            st = st.emit(ir.op_const_i32(0));
+            st = st.emit(ir.op_bin("ne", 0, false));                                      // struct box != 0
+            st = st.emit(ir.op_if(0));
+            st = st.emit(ir.op_load_local(slot));
+            st = st.emit(ir.op_struct_get(fi, struct_field_width(st.frame.structs, sty, fi)));   // closure box
+            st = st.emit(ir.op_store_local(ctmp));
+            st = emit_owned_capture_release(st, ctmp);
+            st = st.emit(ir.op_end());
+        }
+        fi = fi + 1;
+    }
+    return st;
+}
+
+// emit_cloarr_owned_captures gives back the owned captures of each element box
+// of the closure array in `slot` ahead of its element walk, which frees the
+// boxes alone. Gated as that walk is: a buffer this frame holds the last
+// reference to, each element at rc 1. Net-zero on the stack.
+function emit_cloarr_owned_captures(se: LowerState, slot: i32): LowerState {
+    if (!owned_capture_kinds_any(se.frame.sigs.closure_fns)) { return se; }
+    var st: LowerState = se;
+    var idxn: string = "$cloi" + util.i32_to_string(st.locals.len());
+    st = st.add_local(idxn);
+    var idxslot: i32 = st.slot_of(idxn);
+    var eln: string = "$cloe" + util.i32_to_string(st.locals.len());
+    st = st.add_local(eln);
+    var elslot: i32 = st.slot_of(eln);
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_call_direct("__fern_rc_is_unique", 1));   // sole owner (and null-safe)
+    st = st.emit(ir.op_if(0));
+    st = st.emit(ir.op_const_i32(0 - 1));
+    st = st.emit(ir.op_store_local(idxslot));
+    st = st.emit(ir.op_block(0)).enter_loop();
+    st = st.emit(ir.op_loop(0));
+    st = st.emit(ir.op_load_local(idxslot));
+    st = st.emit(ir.op_const_i32(1));
+    st = st.emit(ir.op_bin("add", 0, false));
+    st = st.emit(ir.op_store_local(idxslot));
+    st = st.emit(ir.op_load_local(idxslot));
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_arr_len());
+    st = st.emit(ir.op_bin("lt_s", 0, false));
+    st = st.emit(ir.op_bin("not", 0, false));
+    st = st.emit(ir.op_brif(1));
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_load_local(idxslot));
+    st = st.emit(ir.op_arr_get(32));
+    st = st.emit(ir.op_store_local(elslot));
+    st = emit_owned_capture_release(st, elslot);
+    st = st.emit(ir.op_br(0));
+    st = st.emit(ir.op_end());
+    st = st.emit(ir.op_end()).exit_loop();
+    return st.emit(ir.op_end());
+}
+
+function owned_capture_kinds_any(closure_fns: string[]): boolean {
+    for row in closure_fns { if (row.len() > 6 && slice_unchecked(row, 0, 6) == "CLOWN:") { return true; } }
+    return false;
 }
 
 // struct_has_deep_tuple_field: `sty` has a direct tuple field whose shape
@@ -34156,7 +34282,9 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
                 // Closure-ARRAY element reclaim (#4354): each element is a
                 // lambda's own env box — an rc-headered array holding only
                 // borrowed captures — so the arr-of-arr helper's rc-guarded
-                // per-element arr_dec is exactly its drop, then the buffer.
+                // per-element arr_dec is exactly its drop, then the buffer. An
+                // element box that owns its captures gives them back first.
+                st = emit_cloarr_owned_captures(st, i);
                 st = st.emit(ir.op_call_direct("__fern_arrarr_free", 1));
             } else if (slot_is_reclaimable_structarr(st, i) && st.struct_routes_field_reclaim(st.struct_type_of_slot(i))) {
                 // The element struct ROUTES FIELD RECLAIM (#6127) — since the
@@ -34196,6 +34324,7 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
                     // buffer-only dec (elements leak — sound).
                     st = st.emit(ir.op_call_direct(strarr_free_helper(st, i), 1));
                 } else {
+                    st = emit_closure_slot_release_prelude(st, i);
                     st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
                 }
             }
@@ -44557,7 +44686,7 @@ function reclaimable_names_of(body: ast.Stmt[], reassigned: string[], structs: S
         if (mvsty == "") { mvsty = declared_struct_type_of(body, mvnmk, structs); }
         var mvnm: string[] = recv_borrow_methods_of(recv_borrow, mvsty);
         mvnm = append_all(mvnm, recv_ident_methods_of(recv_borrow, mvsty, body, mvnmk, borrowable));
-        if (mvty != "") { mvnm = append_all(mvnm, clo_field_names_of(structs, mvty)); }
+        if (mvsty != "") { mvnm = append_all(mvnm, clo_field_names_of(structs, mvsty)); }
         var mv_moves: boolean = moves_fields_stmts(body, mvnmk, mvnm, mvsty != "" && spread_copy_counted(structs, sfok, mvsty));
         // A BARE NON-SCALAR FIELD READ moves the field out just as surely as a
         // receiver use does, and moves_fields_expr cannot see it: its
@@ -68677,6 +68806,25 @@ pub function fn_names_of(funcs: parser.FuncDecl[]): string[] {
     return out;
 }
 
+// assoc_fn_names_of records every associated function under the
+// "<Type>.<f>" name a call_direct op spells it with.
+pub function assoc_fn_names_of(funcs: parser.FuncDecl[]): string[] {
+    var out: string[] = [];
+    for fn in funcs {
+        if (fn.receiver_type.len() > 0 && fn.receiver_name.len() == 0) {
+            out = out.append(util.base_type_name(fn.receiver_type) + "." + fn.name);
+        }
+    }
+    return out;
+}
+
+// prim_assoc_call reports whether `Type.f` names an associated function of a
+// primitive type's impl (`i32.from_json_value`, `string.zero`), which no
+// declaration or return-type registry would otherwise recognise as a type.
+pub function (s: LowerState) prim_assoc_call(tname: string, field: string): boolean {
+    return typeinfo.is_primitive_type_name(tname) && sig_reg_has_exact(s.frame.sigs.assoc_fns, tname + "." + field);
+}
+
 // fn_sig_index records every declared function's parameter count under the
 // name a `call_direct` op spells it with — `<BaseType>.<method>` for a
 // receiver method, the bare name otherwise, the same key lower_module stores an
@@ -69746,6 +69894,9 @@ function arrparam_use_ok(e: ast.Expr, pn: string, counted: boolean, reg: string[
             // unconditional and unaffected.
             var scnt: boolean = true;
             if ((pfx == "SCNT:" || pfx == "ECNT:" || pfx == "TCNT:") && !struct_routes_field_reclaim_at(structs, sfok, sl.type_name)) { scnt = false; }
+            // A closure field retains a bare ident only under the type's "clo:"
+            // admission (clo_field_ident_counted).
+            if (pfx == "FCNT:" && !reclaim_has(sfok, "clo:", sl.type_name)) { scnt = false; }
             // The STRUCT tier credits ONLY the counted append store below. A
             // bare param in a field slot takes the construction-side retain
             // just for a type that routes field reclaim, and crediting it
@@ -69913,7 +70064,7 @@ function borrow_reg_with_counted(reg: string[], pcnt: string[]): string[] {
         var bar: i32 = 0;
         while (bar < row.len() && row[bar] != b'|') { bar = bar + 1; }
         // Every tier key is five bytes ("ACNT:" / "SCNT:" / "ECNT:" / "DCNT:" /
-        // "TCNT:" / "PCNT:") — the slice below hard-codes that width;
+        // "TCNT:" / "PCNT:" / "FCNT:") — the slice below hard-codes that width;
         // a row with no key or no '|' is not one param_counted_of wrote.
         if (bar < row.len() && bar > 5) {
             var key: string = "CNT:" + slice_unchecked(row, 5, bar);
@@ -70099,6 +70250,8 @@ function param_counted_entries_of(fn: parser.FuncDecl, reg: string[], structs: S
     var tany: boolean = false;
     var pflags: string = "";
     var pany: boolean = false;
+    var fflags: string = "";
+    var fany: boolean = false;
     var ret_routes: boolean = struct_routes_field_reclaim_at(structs, sfok, fn.ret_type);
     var pj: i32 = 0;
     while (pj < fn.params.len()) {
@@ -70192,6 +70345,16 @@ function param_counted_entries_of(fn: parser.FuncDecl, reg: string[], structs: S
             && !fn.params[pj].own
             && arrparam_uses_ok_stmts(fn.body, fn.params[pj].name, reg, "PCNT:", structs, sfok, ret_hb)) { pok = true; }
         if (pok) { pflags = pflags + "1"; pany = true; } else { pflags = pflags + "0"; }
+        // CLOSURE tier. `keepit(f) { return Box { f: f } }` stores a borrowed
+        // closure into an admitted closure field, which retains it, so the
+        // caller's own release and the holder's field drop net to one owner.
+        // The result must not be the closure itself.
+        var fok: boolean = false;
+        if ((scalar_result || ret_routes)
+            && fn.params[pj].type_name == "fn"
+            && !fn.params[pj].own
+            && arrparam_uses_ok_stmts(fn.body, fn.params[pj].name, reg, "FCNT:", structs, sfok, false)) { fok = true; }
+        if (fok) { fflags = fflags + "1"; fany = true; } else { fflags = fflags + "0"; }
         pj = pj + 1;
     }
     if (aany) {
@@ -70218,6 +70381,7 @@ function param_counted_entries_of(fn: parser.FuncDecl, reg: string[], structs: S
         var pent: string = "PCNT:" + borrowable_key(fn) + "|" + pflags;
         ents = ents.append(pent);
     }
+    if (fany) { ents = ents.append("FCNT:" + borrowable_key(fn) + "|" + fflags); }
     return ents;
 }
 
@@ -70774,22 +70938,15 @@ function func_index_named(funcs: parser.FuncDecl[], name: string): i32 {
 }
 
 // clo_site_flags: the flags the box `site` earns under `reg`, or "" when it
-// earns none. The box must die in its host — bound once to a local that only
-// calls it or lends it at borrowable positions, or passed straight to a
-// borrowable position, where the call's own release frees it — and no captured
-// local may be reassigned while the box could read it. Each capture is then a
-// borrow unless the body lets it escape; a bare `return <cap>` retains it.
-function clo_site_flags(site: CloSite, funcs: parser.FuncDecl[], reg: string[]): string {
+// earns none. A box that dies in its host (clo_box_dies_in_host) borrows its
+// captures, so none of them may be reassigned while it could read them. A box
+// that outlives its host holds a count of each (owned_capture_rows), which
+// leaves the host's own reference its own to release — for the kinds whose
+// release there is rc-gated. Either way a capture is a borrow only while the
+// body keeps it no longer than the box; a bare `return <cap>` retains it.
+function clo_site_flags(site: CloSite, funcs: parser.FuncDecl[], reg: string[], structs: StructTab): string {
+    var dies: boolean = clo_box_dies_in_host(site, funcs, reg);
     var host: parser.FuncDecl = funcs[site.host];
-    var seen: CloUse = CloUse { key: site.key, reg: reg, total: 0, lent: false, bound: "" };
-    for st in host.body { seen = astwalk.fold_stmt(st, seen, clo_use_visit); }
-    for st in host.body { seen = astwalk.fold_stmt_spine(st, seen, clo_bind_visit); }
-    if (seen.total != 1) { return ""; }
-    var reasg: string[] = body_assign_targets(host.body);
-    if (seen.bound.len() > 0) {
-        if (local_decl_count(host.body, seen.bound) != 1 || util.has_str(reasg, seen.bound)
-            || body_unsafe_for(host.body, seen.bound, reg, [])) { return ""; }
-    } else if (!seen.lent) { return ""; }
     var body: ast.Stmt[] = funcs[site.clo].body;
     var cloreasg: string[] = body_assign_targets(body);
     var flags: string = "";
@@ -70797,14 +70954,157 @@ function clo_site_flags(site: CloSite, funcs: parser.FuncDecl[], reg: string[]):
     var k: i32 = 0;
     while (k < site.caps) {
         var cap: string = env_capture_name(body, k);
-        if (cap.len() > 0 && !util.has_str(cloreasg, cap) && !body_unsafe_for_allow_ret(body, cap, reg, [])) {
+        var ok: boolean = cap.len() > 0 && !util.has_str(cloreasg, cap) && !body_unsafe_for_allow_ret(body, cap, reg, []);
+        if (ok && !dies) { ok = owned_capture_shares(capture_kind(env_capture_type(body, k), structs)); }
+        if (ok) {
             flags = flags + "1";
             any = true;
         } else { flags = flags + "0"; }
         k = k + 1;
     }
-    if (!any || clo_site_captures_reassigned(host.body, site.key, reasg)) { return ""; }
+    if (!any) { return ""; }
+    if (dies && clo_site_captures_reassigned(host.body, site.key, body_assign_targets(host.body))) { return ""; }
     return flags;
+}
+
+// owned_capture_shares: an owning box's count of a capture of this kind leaves
+// the host free to keep its own release, which for these kinds is rc-gated.
+function owned_capture_shares(kind: string): boolean {
+    return kind == "s" || kind == "S" || kind == "r" || kind == "a";
+}
+
+// clo_box_dies_in_host: the box `site` builds is released by the frame that
+// built it — bound once to a local that is only called or lent to borrowable
+// positions, or passed straight to a borrowable position, where the call's own
+// release frees it.
+function clo_box_dies_in_host(site: CloSite, funcs: parser.FuncDecl[], reg: string[]): boolean {
+    var host: parser.FuncDecl = funcs[site.host];
+    var seen: CloUse = CloUse { key: site.key, reg: reg, total: 0, lent: false, bound: "" };
+    for st in host.body { seen = astwalk.fold_stmt(st, seen, clo_use_visit); }
+    for st in host.body { seen = astwalk.fold_stmt_spine(st, seen, clo_bind_visit); }
+    if (seen.total != 1) { return false; }
+    if (seen.bound.len() > 0) {
+        return local_decl_count(host.body, seen.bound) == 1 && !util.has_str(body_assign_targets(host.body), seen.bound)
+            && !body_unsafe_for(host.body, seen.bound, reg, []);
+    }
+    return seen.lent;
+}
+
+// owned_capture_rows: "CLOWN:<clo>|<kinds>" for every box that outlives the
+// frame building it. Such a box cannot borrow its captures, so it takes a count
+// of each at construction and gives it back when it is freed; `kinds` holds
+// one character per capture naming that release (capture_kind).
+function owned_capture_rows(funcs: parser.FuncDecl[], reg: string[], structs: StructTab): string[] {
+    var out: string[] = [];
+    for site in clo_sites(funcs) {
+        if (clo_box_dies_in_host(site, funcs, reg)) { continue; }
+        var body: ast.Stmt[] = funcs[site.clo].body;
+        var kinds: string = "";
+        var k: i32 = 0;
+        while (k < site.caps) { kinds = kinds + capture_kind(env_capture_type(body, k), structs); k = k + 1; }
+        out = out.append("CLOWN:" + mkclo_funcval(site.key) + "|" + kinds);
+    }
+    return out;
+}
+
+// capture_kind: how an owning box releases a capture of type `t` — 's' a
+// string, 'S' a string[], 'r' an array of arrays, 'a' a scalar array or
+// scalar cell, 'p' a struct, enum or closure (one shallow dec each), 'k' a
+// counted kind with no release here, whose count it keeps and leaks, and '.'
+// anything it holds no count of. Only a type known to be a counted pointer
+// takes a count: retaining a scalar reads its value as an address.
+function capture_kind(t: string, structs: StructTab): string {
+    if (t == "string") { return "s"; }
+    if (t == "string[]") { return "S"; }
+    if (t == "fn" || is_fn_payload_spelling(t)) { return "p"; }
+    if (decl_is_struct(structs, t) || decl_is_enum(structs, t)) { return "p"; }
+    if (is_cell_type_name(t)) {
+        if (is_scalar_cell_elem(cell_elem_of_type_name(t))) { return "a"; }
+        return "k";
+    }
+    if (t.len() > 4 && slice_unchecked(t, t.len() - 4, t.len()) == "[][]") { return "r"; }
+    if (is_leaksafe_array_field(t)) { return "a"; }
+    if (is_array_type_name(t) || is_map_type_name(t) || util.is_tuple_type_name(t)) { return "k"; }
+    return ".";
+}
+
+// env_capture_type: the declared type of capture `k`'s extract, or "".
+function env_capture_type(body: ast.Stmt[], k: i32): string {
+    var nm: string = env_capture_name(body, k);
+    for st in body {
+        if let ast.StmtVar(v) = st { if (v.name == nm) { return v.type_name; } }
+    }
+    return "";
+}
+
+// owned_capture_kinds: the kinds an owning box built from `<clo>` releases, or
+// "" when that box borrows its captures.
+function owned_capture_kinds(closure_fns: string[], clo: string): string {
+    var key: string = "CLOWN:" + clo + "|";
+    for row in closure_fns {
+        if (row.len() > key.len() && slice_unchecked(row, 0, key.len()) == key) { return slice_unchecked(row, key.len(), row.len()) + ""; }
+    }
+    return "";
+}
+
+// emit_owned_capture_release gives back the captures an owning box holds when
+// the closure value in `slot` is about to be freed: at rc 1, the box's body
+// address picks the owning closure it was built for. Net-zero on the stack.
+function emit_owned_capture_release(st: LowerState, slot: i32): LowerState {
+    var rows: string[] = [];
+    for row in st.frame.sigs.closure_fns { if (row.len() > 6 && slice_unchecked(row, 0, 6) == "CLOWN:") { rows = rows.append(row); } }
+    if (rows.len() == 0) { return st; }
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_call_direct("__fern_rc_is_unique", 1));
+    st = st.emit(ir.op_if(0));
+    for row in rows {
+        var bar: i32 = 6;
+        while (bar < row.len() && row[bar] != b'|') { bar = bar + 1; }
+        var clo: string = slice_unchecked(row, 6, bar) + "";
+        var kinds: string = slice_unchecked(row, bar + 1, row.len()) + "";
+        st = st.emit(ir.op_load_local(slot));
+        st = st.emit(ir.op_const_i32(0));
+        st = st.emit(ir.op_arr_get(32));
+        st = st.emit(ir.op_const_func(0, clo));
+        st = st.emit(ir.op_bin("eq", 0, false));
+        st = st.emit(ir.op_if(0));
+        var k: i32 = 0;
+        while (k < kinds.len()) {
+            var rel: string = capture_release_fn(kinds[k]);
+            if (rel.len() > 0) {
+                st = st.emit(ir.op_load_local(slot));
+                st = st.emit(ir.op_const_i32(k + 1));
+                st = st.emit(ir.op_arr_get(32));
+                st = st.emit(ir.op_call_direct(rel, 1));
+                st = st.emit(ir.op_drop());
+            }
+            k = k + 1;
+        }
+        st = st.emit(ir.op_end());
+    }
+    return st.emit(ir.op_end());
+}
+
+function is_scalar_cell_elem(t: string): boolean {
+    return is_scalar_type_name(t) || t == "bool" || t == "boolean" || t == "char" || t == "u8" || t == "usize";
+}
+
+function capture_release_fn(kind: u8): string {
+    if (kind == b's') { return "__fern_str_free"; }
+    if (kind == b'S') { return "__fern_str_arr_free"; }
+    if (kind == b'r') { return "__fern_arrarr_free"; }
+    if (kind == b'a' || kind == b'p') { return "__fern_rc_dec"; }
+    return "";
+}
+
+// emit_closure_slot_release_prelude: the owned-capture release, when `slot`
+// is a closure local, retired from its block or not.
+function emit_closure_slot_release_prelude(st: LowerState, slot: i32): LowerState {
+    if (slot < 0 || slot >= st.locals.len()) { return st; }
+    var nm: string = st.locals[slot].slot_name;
+    if (slot_name_retired(nm)) { nm = slice_unchecked(nm, 9, nm.len()) + ""; }
+    if (!st.is_closure_local(nm)) { return st; }
+    return emit_owned_capture_release(st, slot);
 }
 
 // flags_meet: the positions set in both `a` and `b`, either of which may be ""
@@ -70986,7 +71286,7 @@ pub function borrowable_params_interproc(funcs: parser.FuncDecl[], structs: Stru
         var hosts: i32[] = i32_filled(n, 0);
         var si: i32 = 0;
         while (si < sites.len()) {
-            var nf: string = flags_meet(site_flags[si], clo_site_flags(sites[si], funcs, reg));
+            var nf: string = flags_meet(site_flags[si], clo_site_flags(sites[si], funcs, reg, structs));
             if (nf != site_flags[si]) {
                 site_flags = site_flags.with(si, nf);
                 rows = rows.with(site_row0 + si, borrow_reg_row(sites[si].key, nf));
@@ -71245,7 +71545,7 @@ pub function fn_sigs_without_ownership(sg: FnSigs): FnSigs {
 pub function fn_sigs_empty(): FnSigs {
     var e: string[] = [];
     var r: SigReg = sig_reg_empty();
-    return FnSigs { enum_regions: [], arr_ret_fns: r, str_ret_fns: r, bool_ret_fns: r, strarr_ret_fns: r, arr_method_fns: e, ret_type_fns: r, ret_fn_sigs: r, noesc_ret_fns: r,
+    return FnSigs { enum_regions: [], arr_ret_fns: r, str_ret_fns: r, bool_ret_fns: r, strarr_ret_fns: r, arr_method_fns: e, ret_type_fns: r, ret_fn_sigs: r, noesc_ret_fns: r, assoc_fns: r,
         opt_ret_fns: r, i64_ret_fns: r, tuple_ret_fns: r, arrtup_ret_fns: r, struct_ret_fns: r, map_ret_fns: r,
         f64_ret_fns: r, f64arr_ret_fns: r, i64arr_ret_fns: r, erased_elem_ret_fns: r, fn_param_sigs: r, closure_fns: e,
         closurearr_ret_fns: e, const_fns: e, borrowable_params: e, borrow_bare: e, fn_names: r,
@@ -71715,12 +72015,13 @@ pub function fn_sigs_for_borrow(funcs: parser.FuncDecl[], structs: StructTab, ar
         i64arr_ret_fns: sig_reg_of(i64arr_ret_fns_of(funcs)),
         erased_elem_ret_fns: sig_reg_of(erased_elem_ret_fns_of(funcs, structs)),
         fn_param_sigs: sig_reg_of(fn_param_sigs_of(funcs, structs, growflags)),
-        closure_fns: closure_fns_of(funcs),
+        closure_fns: util.append_all(closure_fns_of(funcs), owned_capture_rows(funcs, bparams, structs)),
         closurearr_ret_fns: closurearr_ret_fns_of(funcs),
         const_fns: const_fns_of(funcs),
         borrowable_params: breg,
         borrow_bare: bbare,
         fn_names: sig_reg_of(fn_names_of(funcs)),
+        assoc_fns: sig_reg_of(assoc_fn_names_of(funcs)),
         fresh_struct_ret_fns: fresh_struct_ret_fns_of(funcs, structs),
         consume_safe_params: [],
         return_fresh_struct_ret_fns: rf,

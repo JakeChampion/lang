@@ -727,7 +727,7 @@ same code(s) the Go checker does — restricted to
   now parses to a real `StmtSwitch` node (desugared to the if/else chain
   only at emit), so the checker sees the shape. The genuinely-remaining
   codes are E044 (typed closure captures — Go only emits it for a captured
-  `void`/generic-placeholder value, near-unreachable), E023 (unknown-enum
+  `void` value, near-unreachable), E023 (unknown-enum
   scrutinee — already surfaces as E035 here), and E032 (`use` binding
   inference) / E053 (`fip` allocation analysis) — each needing a language
   feature or analysis the self-host doesn't yet model end-to-end.
@@ -1190,10 +1190,10 @@ picks them up with the right prerequisite, not as a lone checker tweak:
   case can't pin it alone. (Probing this surfaced + fixed a Go-checker
   nil-pointer panic formatting the un-inferred callback type for E038 —
   see `ast.FuncType.String` and `TestUseWithoutAnnotationDoesNotPanicFormatting`.)
-- **E044** (closure captures a void / generic-param-typed var) — fires
-  only on an unrepresentable capture type. The self-host `Ty` system has
-  no generic-parameter type (generics are out of scope); a captured
-  generic reads as `unknown`, indistinguishable from an unresolved type.
+- **E044** (closure captures a void-typed var) — fires only on an
+  unrepresentable capture type. A captured generic parameter is concrete
+  once the function is instantiated, so both compilers accept it
+  (`conformance/cases/closure_captures_generic_value`).
   Needs generics modelling.
 - **E057** (`Cell[T]` element must be scalar/string) — **done for both
   forms** (#4363 item 2). *Value form:* `cell_new(v)` is a recognised
@@ -1294,11 +1294,9 @@ slice:
   resolution), and the match walk reports E023 when `lookup_union` misses
   a non-reserved name. E064 additionally checks generic BASES (native
   `knownTypeName` parity), with declared traits/resources allowlisted.
-- **E044** — the two native shapes (captured `void` call result, captured
-  erased generic param) are detectable syntactically: `e044_diags` tracks
-  void-call-initialised vars plus bare-unknown-annotated params/vars in
-  generic functions, and flags a lambda mentioning one (modulo shadowing
-  lambda params).
+- **E044** — the one native shape (a captured `void` call result) is
+  detectable syntactically: `e044_diags` tracks void-call-initialised vars
+  and flags a lambda capturing one (modulo shadowing lambda params).
 - **E053** — `fip` is now parsed (`FuncDecl.fip`, same
   directly-before-`function` contextual rule as native) and
   `e053_diags` ports checkFipFunctions: array/tuple/struct literals,

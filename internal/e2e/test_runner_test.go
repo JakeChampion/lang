@@ -3863,6 +3863,40 @@ func TestRunnerHttpRequestBytesExample(t *testing.T) {
 	}
 }
 
+// `examples/tests/http_body_json_test.fern` pins the typed JSON body
+// (#9854): `http.body_json[T](req)` decoding a derived `FromJson` struct,
+// and the 415 / 400 / 422 answers its three failures carry.
+func TestRunnerHttpBodyJsonExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/http_body_json_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: Typed JSON bodies", "# pass 5", "# fail 0", "1..5"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `examples/tests/http_body_test.fern` pins the four bodies an HttpResponse
+// carries (#9854): text, bytes, a Stream's remainder, and a file the loop
+// reads through `http_materialize`, a missing one answered 404.
+func TestRunnerHttpBodyExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/http_body_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: HttpResponse bodies", "# pass 7", "# fail 0", "1..7"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `examples/tests/mock_platform_canned_test.fern` pins the mock's canned
 // answers (#9854): `env_set`, `now_set`, `random_set` and `fetch_set` reach
 // the handler through the bag, the fixed values apply without them, a

@@ -317,7 +317,7 @@ pub function needs_of(cache: irlower.LowerResult[]): string[] {
         "str_split", "tcp_accept", "tcp_close", "tcp_connect", "tcp_listen", "tcp_listen_with",
         "tcp_local_port", "tcp_pollable", "tcp_recv", "tcp_send", "tcp_socket_ctl", "temp_dir",
         "udp_bind", "udp_connect", "udp_recvfrom", "udp_send", "udp_sendto", "tcp_connect_with", "wasm_block",
-        "reactor_new", "reactor_ctl", "reactor_wait", "tcp_recv_into",
+        "reactor_new", "reactor_ctl", "reactor_wait", "tcp_recv_into", "tcp_sendfile",
         "wasm_poll", "wasm_pollable_drop", "wasm_timer_pollable", "write_file", "open_file",
         "writer_write", "write_some"
     ];
@@ -360,6 +360,7 @@ pub function needs_of(cache: irlower.LowerResult[]): string[] {
     if (module_uses_i64_udivrem(cache)) { out = out.append("@uses_i64_udivrem"); }
     if (module_uses_maps(cache)) { out = out.append("@uses_maps"); }
     if (module_uses_map_w64(cache)) { out = out.append("@uses_map_w64"); }
+    if (module_uses_map_k64(cache)) { out = out.append("@uses_map_k64"); }
     if (module_uses_random(cache)) { out = out.append("@uses_random"); }
     if (module_uses_str_case(cache)) { out = out.append("@uses_str_case"); }
     if (module_uses_str_cmp(cache)) { out = out.append("@uses_str_cmp"); }
@@ -1237,6 +1238,19 @@ pub function module_uses_map_iter(cache: irlower.LowerResult[]): boolean {
 pub function module_uses_map_w64(cache: irlower.LowerResult[]): boolean {
     function is_map_w64(o: ir.Op): boolean { return (o.kind_tag == 125 || o.kind_tag == 129 || o.kind_tag == 132 || o.kind_tag == 127 || o.kind_tag == 133 || o.kind_tag == 136) && o.i64_imm != 0; }
     return any_op(cache, is_map_w64);
+}
+
+// module_uses_map_k64 reports whether any function emits an 8-byte-KEYED map op
+// (key kind 3 on map_new 124, map_set 125, map_get 127, map_has 128, map_get_or
+// 129 or map_delete 130, or the key-wide flag on map_keys 131, map_iter 133 or
+// mapiter_key 135), so emit_ir_module_units emits map_k64_helpers (#10005).
+pub function module_uses_map_k64(cache: irlower.LowerResult[]): boolean {
+    return any_op(cache, is_map_k64_op);
+}
+
+function is_map_k64_op(o: ir.Op): boolean {
+    if ((o.kind_tag == 124 || o.kind_tag == 125 || o.kind_tag == 127 || o.kind_tag == 128 || o.kind_tag == 129 || o.kind_tag == 130) && o.i32_imm == 3) { return true; }
+    return (o.kind_tag == 131 || o.kind_tag == 133 || o.kind_tag == 135) && o.width == 1;
 }
 
 // module_uses_str_case reports whether any function emits an ASCII case-transform
@@ -2905,7 +2919,8 @@ function tcp_listen_wat(name: string, params: string, with_backlog: boolean): st
 // $__fern_tcp_socket_ctl(conn, op, arg) -> 0, or -errno. Keep-alive (op 2)
 // shutdown (op 4) and the peer's address (op 7, through remote-address)
 // are the controls wasi:sockets 0.2 has; no-delay (op 1), non-blocking
-// (op 3) and the send queue (op 6) have none and answer -ENOTSUP (58), so
+// (op 3), the send queue (op 6) and the reuseport steering (op 8) have
+// none and answer -ENOTSUP (58), so
 // a caller learns the host owns Nagle, the blocking mode and the queue
 // rather than believing it set or read them. Any other op is -EINVAL (28).
 //
@@ -2923,7 +2938,7 @@ pub function tcp_socket_ctl_func(): string {
     var o: string = "";
     o = o + "  (func $__fern_tcp_socket_ctl (param $c i32) (param $op i32) (param $arg i32) (result i32)\n";
     o = o + "    (local $ret i32) (local $e i32)\n";
-    o = o + "    (if (i32.or (i32.or (i32.eq (local.get $op) (i32.const 1)) (i32.eq (local.get $op) (i32.const 3))) (i32.eq (local.get $op) (i32.const 6))) (then (return (i32.const -58))))\n";
+    o = o + "    (if (i32.or (i32.or (i32.eq (local.get $op) (i32.const 1)) (i32.eq (local.get $op) (i32.const 3))) (i32.or (i32.eq (local.get $op) (i32.const 6)) (i32.eq (local.get $op) (i32.const 8)))) (then (return (i32.const -58))))\n";
     o = o + "    (if (i32.eq (local.get $op) (i32.const 7)) (then\n";
     o = o + "      (if (i32.lt_u (i32.sub (i32.load offset=12 (local.get $c)) (i32.const 2)) (i32.const 2)) (then (return (i32.const 0))))\n";
     o = o + "      (local.set $ret (call $__fern_alloc (i32.const 36)))\n";
@@ -3037,6 +3052,13 @@ pub function wasi_sockets_local_address_import(): string {
 // the FIRST field of both the ipv4 and the ipv6 case, so the u16 at +8 is the
 // port whichever family the host answered with. The ipv6 case is 28 bytes, so
 // the retptr is 4 + 4 + 28 = 36.
+// $__fern_tcp_sendfile(conn, file, max) -> -ENOTSUP (58): wasi:sockets moves
+// bytes through streams only, so the serve loop reads the file and sends the
+// piece itself.
+pub function tcp_sendfile_func(): string {
+    return "  (func $__fern_tcp_sendfile (param $c i32) (param $file i32) (param $max i32) (result i32)\n    (i32.const -58))\n";
+}
+
 pub function tcp_local_port_func(udp: boolean): string {
     var o: string = "";
     o = o + "  (func $__fern_tcp_local_port (param $c i32) (result i32)\n";
@@ -3188,7 +3210,7 @@ pub function reactor_ctl_func(): string {
     o = o + "      (call $__fern_raw_free (local.get $ents) (i32.mul (local.get $cap) (i32.const 16)))\n";
     o = o + "      (call $__fern_raw_free (local.get $r) (i32.const 12))\n";
     o = o + "      (return (i32.const 0))))\n";
-    o = o + "    (if (i32.lt_u (i32.sub (local.get $op) (i32.const 4)) (i32.const 2)) (then (return (i32.const -58))))\n";
+    o = o + "    (if (i32.lt_u (i32.sub (local.get $op) (i32.const 4)) (i32.const 3)) (then (return (i32.const -58))))\n";
     o = o + "    (if (i32.ge_u (i32.sub (local.get $op) (i32.const 1)) (i32.const 2)) (then (return (i32.const -28))))\n";
     o = o + "    (if (i32.eq (local.get $op) (i32.const 1)) (then (local.set $interest (i32.and (local.get $arg) (i32.const 3)))))\n";
     o = o + "    (local.set $kind (i32.load offset=12 (local.get $fd)))\n";
@@ -3868,12 +3890,6 @@ pub function pipe_after(s: string): string {
     return slice_unchecked(s, i + 1, s.len()) + "";
 }
 
-// map_set_vkind3: the op's value column is a column of boxes (width bits 4 and
-// 5 both set), whose release `str` names.
-pub function map_set_vkind3(o: ir.Op): boolean {
-    return o.kind_tag == 125 && (o.width / 16) % 2 == 1 && (o.width / 32) % 2 == 1;
-}
-
 pub function fn_value_table(cache: irlower.LowerResult[]): string[] {
     var out: string[] = [];
     var fi: i32 = 0;
@@ -4109,8 +4125,14 @@ function emit_map_op_wat(o: ir.Op, cx: WasmOpCtx): string {
         // $__fern_map_iter materializes the live keys/values (map snapshots)
         // and boxes them. An 8-byte VALUE column (i64_imm != 0, #5253) snapshots
         // the raw 8-byte values via $__fern_map_iter_w64 (serving i64/u64 AND
-        // f64 — mapiter_value reinterprets f64). Otherwise the narrow snapshot.
-        if (o.i64_imm != 0) {
+        // f64 — mapiter_value reinterprets f64). An 8-byte KEY column (width 1,
+        // #10005) snapshots the key cells into an i64[] through the _k64 forms.
+        // Otherwise the narrow snapshot.
+        if (o.width == 1 && o.i64_imm != 0) {
+            parts = parts.append("    call $__fern_map_iter_k64w64\n");
+        } else if (o.width == 1) {
+            parts = parts.append("    call $__fern_map_iter_k64\n");
+        } else if (o.i64_imm != 0) {
             parts = parts.append("    call $__fern_map_iter_w64\n");
         } else {
             parts = parts.append("    call $__fern_map_iter\n");
@@ -4122,7 +4144,13 @@ function emit_map_op_wat(o: ir.Op, cx: WasmOpCtx): string {
         return util.str_join_chunks(parts);
     }
     if (o.kind_tag == 135) {  // mapiter_key
-        parts = parts.append("    call $__fern_mapiter_key\n");
+        // An 8-byte KEY column (width 1, #10005) reads the i64 element of the
+        // key snapshot.
+        if (o.width == 1) {
+            parts = parts.append("    call $__fern_mapiter_key_w64\n");
+        } else {
+            parts = parts.append("    call $__fern_mapiter_key\n");
+        }
         return util.str_join_chunks(parts);
     }
     if (o.kind_tag == 136) {  // mapiter_value
@@ -4168,8 +4196,13 @@ function emit_map_op_wat(o: ir.Op, cx: WasmOpCtx): string {
         // dereferences the boxed cell into a 16-byte Option box [tag@0][payload@8]
         // via $__fern_map_get_w64 — the raw 8 payload bytes serve i64/u64 AND f64
         // (opt_payload reads them i64.load / f64.load per the Option's V type).
-        // Otherwise the narrow i32-payload path.
-        if (o.i64_imm != 0) {
+        // An 8-byte KEY (key kind 3, #10005) is an i64 on the stack, probed by
+        // value through the _k64 forms. Otherwise the narrow i32-payload path.
+        if (o.i32_imm == 3 && o.i64_imm != 0) {
+            parts = parts.append("    call $__fern_map_get_k64w64\n");
+        } else if (o.i32_imm == 3) {
+            parts = parts.append("    call $__fern_map_get_k64\n");
+        } else if (o.i64_imm != 0) {
             parts = parts.append("    call $__fern_map_get_w64\n");
         } else {
             parts = parts.append("    call $__fern_map_get\n");
@@ -4177,7 +4210,11 @@ function emit_map_op_wat(o: ir.Op, cx: WasmOpCtx): string {
         return util.str_join_chunks(parts);
     }
     if (o.kind_tag == 128) {  // map_has
-        parts = parts.append("    call $__fern_map_has\n");
+        if (o.i32_imm == 3) {
+            parts = parts.append("    call $__fern_map_has_k64\n");
+        } else {
+            parts = parts.append("    call $__fern_map_has\n");
+        }
         return util.str_join_chunks(parts);
     }
     if (o.kind_tag == 130) {  // map_delete
@@ -4189,7 +4226,13 @@ function emit_map_op_wat(o: ir.Op, cx: WasmOpCtx): string {
         // The releases the removed entry is owed are named as map_set names
         // them: `vdeep` / `vf` for the value column, `kdeep` / `kf` for a
         // keyed column, from the op's vkind bits and its packed symbols.
-        parts = parts.append(map_delete_releases_wat(o, cx) + "    call $__fern_map_delete\n");
+        // A wide key (key kind 3, #10005) is an i64 on the stack and its column
+        // owes no release the op names: the runtime frees the removed cell itself.
+        if (o.i32_imm == 3) {
+            parts = parts.append(map_value_release_wat(o, cx) + "    call $__fern_map_delete_k64\n");
+        } else {
+            parts = parts.append(map_value_release_wat(o, cx) + map_key_release_wat(o, cx) + "    call $__fern_map_delete\n");
+        }
         return util.str_join_chunks(parts);
     }
     if (o.kind_tag == 129) {  // map_get_or
@@ -4197,12 +4240,15 @@ function emit_map_op_wat(o: ir.Op, cx: WasmOpCtx): string {
         // cell via $__fern_map_get_or_w64 (i64 result). i64/u64 (i64_imm 1) push
         // an i64 default (lower_i64); f64 (i64_imm 2) has an f64 default,
         // reinterpreted to i64 in and the i64 result reinterpreted back to f64. #5253.
+        var wide: string = "_w64";
+        var narrow: string = "";
+        if (o.i32_imm == 3) { wide = "_k64w64"; narrow = "_k64"; }
         if (o.i64_imm == 2) {
-            parts = parts.append("    i64.reinterpret_f64\n    call $__fern_map_get_or_w64\n    f64.reinterpret_i64\n");
+            parts = parts.append("    i64.reinterpret_f64\n    call $__fern_map_get_or" + wide + "\n    f64.reinterpret_i64\n");
         } else if (o.i64_imm == 1) {
-            parts = parts.append("    call $__fern_map_get_or_w64\n");
+            parts = parts.append("    call $__fern_map_get_or" + wide + "\n");
         } else {
-            parts = parts.append("    call $__fern_map_get_or\n");
+            parts = parts.append("    call $__fern_map_get_or" + narrow + "\n");
         }
         return util.str_join_chunks(parts);
     }
@@ -4212,7 +4258,11 @@ function emit_map_op_wat(o: ir.Op, cx: WasmOpCtx): string {
         // RETAINING snapshot — each element rc-inc'd on copy — so the
         // shared post-loop deep release ($__fern_arr_dec_ptr) balances
         // and the per-loop string-column snapshot no longer leaks.
-        if (o.i32_imm == 2) {
+        // An 8-byte KEY column (width 1, #10005) dereferences the key cells
+        // into a fresh i64[].
+        if (o.width == 1) {
+            parts = parts.append("    call $__fern_map_keys_k64\n");
+        } else if (o.i32_imm == 2) {
             parts = parts.append("    call $__fern_map_keys_inc\n");
         } else {
             parts = parts.append("    call $__fern_map_keys\n");
@@ -4812,6 +4862,9 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     } else if (o.kind_tag == 333) {  // tcp_socket_ctl
         // tcp_socket_ctl(conn, op, arg) -> 0, or -errno. Three args on the stack.
         parts = parts.append("    call $__fern_tcp_socket_ctl\n");
+    } else if (o.kind_tag == 346) {  // tcp_sendfile
+        // tcp_sendfile(conn, file, max) -> -ENOTSUP: wasi:sockets has no sendfile.
+        parts = parts.append("    call $__fern_tcp_sendfile\n");
     } else if (o.kind_tag == 201) {  // tcp_accept
         // tcp_accept(listener) -> a fresh connection struct, or -errno.
         parts = parts.append("    call $__fern_tcp_accept\n");
@@ -5084,6 +5137,8 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
         // no args -> snapshot the builder into a fresh string box and reset it
         // (a value op, allocates). Pushes the box ptr.
         parts = parts.append("    call $__fern_strbuf_take\n");
+    } else if (o.kind_tag == 125 && o.i32_imm == 3) {  // map_set, 8-byte KEY
+        parts = emit_wasm_map_set_k64(o, cx, parts);
     } else if (o.kind_tag == 125 && o.i64_imm != 0) {  // map_set, 8-byte VALUE
         // stack: map, k, v(8-byte) -> push kcons -> $__fern_map_set_w64 -> map.
         // The 8-byte value is boxed into a cell and stored as a vis-managed
@@ -9261,6 +9316,10 @@ pub function map_helpers(): string {
     // bytes; i32 keys use a Fibonacci-ish multiply. Masked to cap-1 (cap is
     // always a power of two).
     o = o + "  (func $__fern_map_hk (param $k i32) (param $cap i32) (param $kis i32) (param $hashidx i32) (result i32)\n";
+    // A wide key (kis 3, #10005) is a cell holding the 8-byte value: fold its
+    // two halves and multiply as the i32 arm does, so the cell's address never
+    // reaches the hash.
+    o = o + "    (if (i32.eq (local.get $kis) (i32.const 3)) (then (return (call $__fern_map_hk64 (i64.load (local.get $k)) (local.get $cap)))))\n";
     o = o + "    (if (result i32) (i32.eq (local.get $kis) (i32.const 2))\n";
     // Struct/enum key (kis 2): the derived hash via the funcref table (#2671).
     o = o + "      (then (i32.and (call_indirect (type $fn1) (local.get $k) (local.get $hashidx)) (i32.sub (local.get $cap) (i32.const 1))))\n";
@@ -9270,12 +9329,21 @@ pub function map_helpers(): string {
     // $__fern_map_keq(a, b, kis) → key equality. String keys (kis=1) compare
     // by content via $__fern_streq; i32 keys by value.
     o = o + "  (func $__fern_map_keq (param $a i32) (param $b i32) (param $kis i32) (param $eqidx i32) (result i32)\n";
+    o = o + "    (if (i32.eq (local.get $kis) (i32.const 3)) (then (return (i64.eq (i64.load (local.get $a)) (i64.load (local.get $b))))))\n";
     o = o + "    (if (result i32) (i32.eq (local.get $kis) (i32.const 2))\n";
     // Struct/enum key (kis 2): the derived eq via the funcref table (#2671).
     o = o + "      (then (call_indirect (type $fn2) (local.get $a) (local.get $b) (local.get $eqidx)))\n";
     o = o + "      (else (if (result i32) (local.get $kis)\n";
     o = o + "        (then (call $__fern_streq (local.get $a) (local.get $b)))\n";
     o = o + "        (else (i32.eq (local.get $a) (local.get $b)))))))\n";
+    // $__fern_map_hk64(k, cap) → bucket of an 8-byte key: the halves folded,
+    // then the i32 column's multiply. Shared by hk's kis-3 arm (through the
+    // cell) and the _k64 probes (from the value in hand).
+    o = o + "  (func $__fern_map_hk64 (param $k i64) (param $cap i32) (result i32)\n";
+    o = o + "    (i32.and (i32.mul (i32.xor (i32.wrap_i64 (local.get $k)) (i32.wrap_i64 (i64.shr_u (local.get $k) (i64.const 32)))) (i32.const -1640531527)) (i32.sub (local.get $cap) (i32.const 1))))\n";
+    // $__fern_map_new_wide(hint) → empty box whose keys are 8-byte cells (kis=3).
+    o = o + "  (func $__fern_map_new_wide (param $hint i32) (result i32)\n";
+    o = o + "    (return (call $__fern_map_new_k (local.get $hint) (i32.const 3) (i32.const 0) (i32.const 0))))\n";
     // $__fern_map_new(hint) → empty i32-keyed box with cap 8 (kis=0 @ +20).
     o = o + "  (func $__fern_map_new (param $hint i32) (result i32)\n";
     o = o + "    (return (call $__fern_map_new_k (local.get $hint) (i32.const 0) (i32.const 0) (i32.const 0))))\n";
@@ -9562,9 +9630,12 @@ pub function map_helpers(): string {
     // whose units are gone can be reclaimed by a later insert without a second
     // release.
     o = o + "  (func $__fern_map_delete (param $box i32) (param $k i32) (param $vdeep i32) (param $vf i32) (param $kdeep i32) (param $kf i32) (result i32)\n";
-    o = o + "    (local $idx i32) (local $existed i32) (local $tup i32)\n";
+    o = o + "    (return (call $__fern_map_delete_at (local.get $box) (call $__fern_map_find (local.get $box) (local.get $k)) (local.get $vdeep) (local.get $vf) (local.get $kdeep) (local.get $kf))))\n";
+    // $__fern_map_delete_at(box, idx, ...): the removal at a found slot (-1 for
+    // a miss), shared with the wide-key probe.
+    o = o + "  (func $__fern_map_delete_at (param $box i32) (param $idx i32) (param $vdeep i32) (param $vf i32) (param $kdeep i32) (param $kf i32) (result i32)\n";
+    o = o + "    (local $existed i32) (local $tup i32)\n";
     o = o + "    (local $ord i32) (local $oi i32) (local $n i32) (local $gone i32)\n";
-    o = o + "    (local.set $idx (call $__fern_map_find (local.get $box) (local.get $k)))\n";
     o = o + "    (if (i32.ge_s (local.get $idx) (i32.const 0)) (then\n";
     o = o + "      (if (i32.ne (i32.load (i32.add (local.get $box) (i32.const 20))) (i32.const 0)) (then\n";
     o = o + "        (local.set $gone (i32.load (i32.add (i32.load (i32.add (local.get $box) (i32.const 8))) (i32.mul (local.get $idx) (i32.const 4)))))\n";
@@ -10278,6 +10349,142 @@ pub function arr_slice8_helper(): string {
     o = o + "    (local.get $na))\n";
     return o;
 }
+// map_k64_helpers emits the wasm IR runtime for i64/u64-KEYED maps (#10005):
+// the key cell is four bytes, so a wide key is boxed into an 8-byte cell the
+// map owns (kis 3; $__fern_map_hk / $__fern_map_keq hash and compare through
+// the cell), and every probe that takes a key in hand takes it as an i64 and
+// compares it against the cells. The snapshot and the iterator's key read
+// dereference the cells into a fresh i64[]. Emitted when a module carries a
+// map op with key kind 3 or a key-wide keys / iter / key read.
+pub function map_k64_helpers(): string {
+    var o: string = "";
+    // $__fern_map_find_k64(box, k) → entry index, or -1 if absent: the
+    // $__fern_map_find probe with the key compared by value.
+    o = o + "  (func $__fern_map_find_k64 (param $box i32) (param $k i64) (result i32)\n";
+    o = o + "    (local $cap i32) (local $keys i32) (local $used i32) (local $idx i32) (local $start i32)\n";
+    o = o + "    (local.set $cap (i32.load (i32.add (local.get $box) (i32.const 4))))\n";
+    o = o + "    (local.set $keys (i32.load (i32.add (local.get $box) (i32.const 8))))\n";
+    o = o + "    (local.set $used (i32.load (i32.add (local.get $box) (i32.const 16))))\n";
+    o = o + "    (local.set $idx (call $__fern_map_hk64 (local.get $k) (local.get $cap)))\n";
+    o = o + "    (local.set $start (local.get $idx))\n";
+    o = o + "    (block $d (loop $c\n";
+    o = o + "      (br_if $d (i32.eqz (i32.load (i32.add (local.get $used) (i32.mul (local.get $idx) (i32.const 4))))))\n";
+    o = o + "      (if (i32.eq (i32.load (i32.add (local.get $used) (i32.mul (local.get $idx) (i32.const 4)))) (i32.const 1)) (then\n";
+    o = o + "        (if (i64.eq (i64.load (i32.load (i32.add (local.get $keys) (i32.mul (local.get $idx) (i32.const 4))))) (local.get $k)) (then\n";
+    o = o + "          (return (local.get $idx))))))\n";
+    o = o + "      (local.set $idx (i32.and (i32.add (local.get $idx) (i32.const 1)) (i32.sub (local.get $cap) (i32.const 1))))\n";
+    o = o + "      (br_if $d (i32.eq (local.get $idx) (local.get $start)))\n";
+    o = o + "      (br $c)))\n";
+    o = o + "    (i32.const -1))\n";
+    // $__fern_map_set_k64(box, k, v, vis, vconsume, vdeep, vf) → box: box the
+    // key into a fresh cell the map takes (kconsume 1: no retain, and an
+    // overwrite frees the discarded cell as it frees a fresh string key).
+    o = o + "  (func $__fern_map_set_k64 (param $box i32) (param $k i64) (param $v i32) (param $vis i32) (param $vconsume i32) (param $vdeep i32) (param $vf i32) (result i32)\n";
+    o = o + "    (local $cell i32)\n";
+    o = o + "    (local.set $cell (call $__fern_str_box (i32.const 8)))\n";
+    o = o + "    (i64.store (local.get $cell) (local.get $k))\n";
+    o = o + "    (return (call $__fern_map_set (local.get $box) (local.get $cell) (local.get $v) (local.get $vis) (local.get $vconsume) (i32.const 1) (local.get $vdeep) (local.get $vf) (i32.const 0) (i32.const 0))))\n";
+    // $__fern_map_get_or_k64(box, k, d) → the value at k, or d on a miss.
+    o = o + "  (func $__fern_map_get_or_k64 (param $box i32) (param $k i64) (param $d i32) (result i32)\n";
+    o = o + "    (local $idx i32)\n";
+    o = o + "    (local.set $idx (call $__fern_map_find_k64 (local.get $box) (local.get $k)))\n";
+    o = o + "    (if (i32.lt_s (local.get $idx) (i32.const 0)) (then (return (local.get $d))))\n";
+    o = o + "    (i32.load (i32.add (i32.load (i32.add (local.get $box) (i32.const 12))) (i32.mul (local.get $idx) (i32.const 4)))))\n";
+    // $__fern_map_get_k64(box, k) → Option box [tag@0][payload@4] (Some=0).
+    o = o + "  (func $__fern_map_get_k64 (param $box i32) (param $k i64) (result i32)\n";
+    o = o + "    (local $idx i32) (local $bx i32)\n";
+    o = o + "    (local.set $idx (call $__fern_map_find_k64 (local.get $box) (local.get $k)))\n";
+    o = o + "    (local.set $bx (call $__fern_str_box (i32.const 8)))\n";
+    o = o + "    (if (i32.lt_s (local.get $idx) (i32.const 0)) (then\n";
+    o = o + "      (i32.store (local.get $bx) (i32.const 1))\n";
+    o = o + "      (i32.store (i32.add (local.get $bx) (i32.const 4)) (i32.const 0))\n";
+    o = o + "      (return (local.get $bx))))\n";
+    o = o + "    (i32.store (local.get $bx) (i32.const 0))\n";
+    o = o + "    (i32.store (i32.add (local.get $bx) (i32.const 4)) (i32.load (i32.add (i32.load (i32.add (local.get $box) (i32.const 12))) (i32.mul (local.get $idx) (i32.const 4)))))\n";
+    o = o + "    (local.get $bx))\n";
+    // $__fern_map_has_k64(box, k) → bool.
+    o = o + "  (func $__fern_map_has_k64 (param $box i32) (param $k i64) (result i32)\n";
+    o = o + "    (i32.ge_s (call $__fern_map_find_k64 (local.get $box) (local.get $k)) (i32.const 0)))\n";
+    // $__fern_map_delete_k64(box, k, vdeep, vf) → [map, existed] tuple box. The
+    // key column is kis 3, so $__fern_map_delete_at frees the removed cell.
+    o = o + "  (func $__fern_map_delete_k64 (param $box i32) (param $k i64) (param $vdeep i32) (param $vf i32) (result i32)\n";
+    o = o + "    (return (call $__fern_map_delete_at (local.get $box) (call $__fern_map_find_k64 (local.get $box) (local.get $k)) (local.get $vdeep) (local.get $vf) (i32.const 0) (i32.const 0))))\n";
+    // $__fern_map_keys_k64(box) → a fresh i64[] of the live keys in insertion
+    // order, each cell dereferenced ([len@0][cap@4][elems@8], 8-byte elements).
+    o = o + "  (func $__fern_map_keys_k64 (param $box i32) (result i32)\n";
+    o = o + "    (local $n i32) (local $arr i32) (local $ord i32) (local $keys i32) (local $i i32)\n";
+    o = o + "    (local.set $n (i32.load (local.get $box)))\n";
+    o = o + "    (local.set $arr (call $__fern_arr_box (i32.mul (local.get $n) (i32.const 8))))\n";
+    o = o + "    (i32.store (local.get $arr) (local.get $n))\n";
+    o = o + "    (i32.store (i32.add (local.get $arr) (i32.const 4)) (local.get $n))\n";
+    o = o + "    (local.set $ord (i32.load (i32.add (local.get $box) (i32.const 40))))\n";
+    o = o + "    (local.set $keys (i32.load (i32.add (local.get $box) (i32.const 8))))\n";
+    o = o + "    (local.set $i (i32.const 0))\n";
+    o = o + "    (block $d (loop $c\n";
+    o = o + "      (br_if $d (i32.ge_s (local.get $i) (local.get $n)))\n";
+    o = o + "      (i64.store (i32.add (i32.add (local.get $arr) (i32.const 8)) (i32.mul (local.get $i) (i32.const 8))) (i64.load (i32.load (i32.add (local.get $keys) (i32.mul (i32.load (i32.add (local.get $ord) (i32.mul (local.get $i) (i32.const 4)))) (i32.const 4))))))\n";
+    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
+    o = o + "      (br $c)))\n";
+    o = o + "    (local.get $arr))\n";
+    // $__fern_map_iter_k64(map) → a MapIter box [keys@0][values@4][cursor@8]
+    // whose KEY snapshot is the fresh i64[] above; the value snapshot is the
+    // narrow one.
+    o = o + "  (func $__fern_map_iter_k64 (param $map i32) (result i32)\n";
+    o = o + "    (local $box i32)\n";
+    o = o + "    (local.set $box (call $__fern_arr_box (i32.const 12)))\n";
+    o = o + "    (i32.store (local.get $box) (call $__fern_map_keys_k64 (local.get $map)))\n";
+    o = o + "    (i32.store (i32.add (local.get $box) (i32.const 4)) (call $__fern_map_values (local.get $map)))\n";
+    o = o + "    (i32.store (i32.add (local.get $box) (i32.const 8)) (i32.const 0))\n";
+    o = o + "    (local.get $box))\n";
+    // $__fern_mapiter_key_w64(box) → keys[cursor] as an 8-byte i64 (keys = a
+    // $__fern_map_keys_k64 snapshot, elements at keys + 8 + cursor*8).
+    o = o + "  (func $__fern_mapiter_key_w64 (param $box i32) (result i64)\n";
+    o = o + "    (i64.load (i32.add (i32.add (i32.load (local.get $box)) (i32.const 8)) (i32.mul (i32.load (i32.add (local.get $box) (i32.const 8))) (i32.const 8)))))\n";
+    return o;
+}
+
+// map_k64w64_helpers emits the helpers a map with BOTH an 8-byte key and an
+// 8-byte value column needs, over map_k64_helpers and map_w64_helpers; on its
+// own because each body names a function of the other family.
+pub function map_k64w64_helpers(): string {
+    var o: string = "";
+    // $__fern_map_set_k64w64(box, k, v) → box: the value boxed into its cell
+    // (vis 1, vconsume 1, as $__fern_map_set_w64 does), then the wide-key insert.
+    o = o + "  (func $__fern_map_set_k64w64 (param $box i32) (param $k i64) (param $v i64) (result i32)\n";
+    o = o + "    (local $cell i32)\n";
+    o = o + "    (local.set $cell (call $__fern_str_box (i32.const 8)))\n";
+    o = o + "    (i64.store (local.get $cell) (local.get $v))\n";
+    o = o + "    (return (call $__fern_map_set_k64 (local.get $box) (local.get $k) (local.get $cell) (i32.const 1) (i32.const 1) (i32.const 0) (i32.const 0))))\n";
+    // $__fern_map_get_or_k64w64(box, k, d) → the 8-byte value at k, or d.
+    o = o + "  (func $__fern_map_get_or_k64w64 (param $box i32) (param $k i64) (param $d i64) (result i64)\n";
+    o = o + "    (local $idx i32)\n";
+    o = o + "    (local.set $idx (call $__fern_map_find_k64 (local.get $box) (local.get $k)))\n";
+    o = o + "    (if (i32.lt_s (local.get $idx) (i32.const 0)) (then (return (local.get $d))))\n";
+    o = o + "    (i64.load (i32.load (i32.add (i32.load (i32.add (local.get $box) (i32.const 12))) (i32.mul (local.get $idx) (i32.const 4))))))\n";
+    // $__fern_map_get_k64w64(box, k) → a 16-byte Option[i64] box [tag@0][payload@8].
+    o = o + "  (func $__fern_map_get_k64w64 (param $box i32) (param $k i64) (result i32)\n";
+    o = o + "    (local $idx i32) (local $bx i32)\n";
+    o = o + "    (local.set $idx (call $__fern_map_find_k64 (local.get $box) (local.get $k)))\n";
+    o = o + "    (local.set $bx (call $__fern_str_box (i32.const 16)))\n";
+    o = o + "    (if (i32.lt_s (local.get $idx) (i32.const 0)) (then\n";
+    o = o + "      (i32.store (local.get $bx) (i32.const 1))\n";
+    o = o + "      (i64.store (i32.add (local.get $bx) (i32.const 8)) (i64.const 0))\n";
+    o = o + "      (return (local.get $bx))))\n";
+    o = o + "    (i32.store (local.get $bx) (i32.const 0))\n";
+    o = o + "    (i64.store (i32.add (local.get $bx) (i32.const 8)) (i64.load (i32.load (i32.add (i32.load (i32.add (local.get $box) (i32.const 12))) (i32.mul (local.get $idx) (i32.const 4))))))\n";
+    o = o + "    (local.get $bx))\n";
+    // $__fern_map_iter_k64w64(map) → a MapIter box over the i64[] key snapshot
+    // and the i64[] value snapshot.
+    o = o + "  (func $__fern_map_iter_k64w64 (param $map i32) (result i32)\n";
+    o = o + "    (local $box i32)\n";
+    o = o + "    (local.set $box (call $__fern_arr_box (i32.const 12)))\n";
+    o = o + "    (i32.store (local.get $box) (call $__fern_map_keys_k64 (local.get $map)))\n";
+    o = o + "    (i32.store (i32.add (local.get $box) (i32.const 4)) (call $__fern_map_values_w64 (local.get $map)))\n";
+    o = o + "    (i32.store (i32.add (local.get $box) (i32.const 8)) (i32.const 0))\n";
+    o = o + "    (local.get $box))\n";
+    return o;
+}
+
 // map_w64_helpers emits the wasm IR runtime for i64/u64-VALUED maps (#5253).
 // The i32-celled value column can't hold an 8-byte value inline, so a wide value
 // is boxed into a fresh 8-byte rc cell and the cell's i32 pointer is stored in the
@@ -11126,6 +11333,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     if (need(needs, "tcp_listen")) { parts = parts.append(tcp_listen_func()); }
     if (need(needs, "tcp_listen_with")) { parts = parts.append(tcp_listen_with_func()); }
     if (need(needs, "tcp_socket_ctl")) { parts = parts.append(tcp_socket_ctl_func()); }
+    if (need(needs, "tcp_sendfile")) { parts = parts.append(tcp_sendfile_func()); }
     if (need(needs, "tcp_accept")) { parts = parts.append(tcp_accept_func()); }
     if (need(needs, "tcp_local_port")) { parts = parts.append(tcp_local_port_func(need(needs, "udp_bind"))); }
     if (need(needs, "tcp_pollable")) { parts = parts.append(tcp_pollable_func()); }
@@ -11235,6 +11443,10 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     // (#5253), over the map_helpers primitives above. Emitted when a module
     // inserts/reads an 8-byte i64/u64 map value.
     if (need(needs, "@uses_map_w64")) { parts = parts.append(map_w64_helpers()); }
+    // The i64/u64-KEYED map runtime (#10005), and the helpers a map wide on
+    // both columns needs, which name functions of both families.
+    if (need(needs, "@uses_map_k64")) { parts = parts.append(map_k64_helpers()); }
+    if (need(needs, "@uses_map_k64") && need(needs, "@uses_map_w64")) { parts = parts.append(map_k64w64_helpers()); }
     // $__fern_map_iter + accessors: the wasm map-iterator runtime (materializes
     // keys/values via map_helpers above, so gated after it). Emitted when the
     // module iterates a map (m.iter() / for-in-map).
@@ -14568,7 +14780,8 @@ function emit_wasm_map_new(fn_table: string[], ns: string, o: ir.Op, parts: stri
         parts = parts.append("    global.get " + fn_base_global(ns) + "\n    i32.const " + util.i32_to_string(util.index_of_str(fn_table, pipe_before(o.str)) - fn_table_base()) + "\n    i32.add\n");
         parts = parts.append("    global.get " + fn_base_global(ns) + "\n    i32.const " + util.i32_to_string(util.index_of_str(fn_table, pipe_after(o.str)) - fn_table_base()) + "\n    i32.add\n");
         parts = parts.append("    call $__fern_map_new_struct\n");
-    } else if (o.i32_imm == 1) { parts = parts.append("    call $__fern_map_new\n"); }
+    } else if (o.i32_imm == 3) { parts = parts.append("    call $__fern_map_new_wide\n"); }
+    else if (o.i32_imm == 1) { parts = parts.append("    call $__fern_map_new\n"); }
     else { parts = parts.append("    call $__fern_map_new_str\n"); }
 
     return parts;
@@ -14622,42 +14835,51 @@ function emit_wasm_map_set(o: ir.Op, cx: WasmOpCtx, parts: string[]): string[] {
     // for the same purpose.
     // A keyed column (keykind 2) names the key release the same way, called
     // through its slot on a discarded consumed key (kdeep 2, the slot in kf).
-    var syms: string[] = ir.map_op_symbols(o);
-    var vdeep: string = "0";
-    var vf: string = "    i32.const 0\n";
-    if (map_set_vkind3(o)) {
-        vdeep = "2";
-        vf = fn_slot_push(cx, syms[1]);
-    } else if ((o.width / 32) % 2 == 1) { vdeep = "1"; }
-    var kdeep: string = "0";
-    var kf: string = "    i32.const 0\n";
-    if (o.i32_imm == 2 && syms[2] != "") {
-        kdeep = "2";
-        kf = fn_slot_push(cx, syms[2]);
-    }
-    parts = parts.append("    i32.const " + vis + "\n    i32.const " + vcons + "\n    i32.const " + kcons + "\n    i32.const " + vdeep + "\n" + vf + "    i32.const " + kdeep + "\n" + kf + "    call $__fern_map_set\n");
+    parts = parts.append("    i32.const " + vis + "\n    i32.const " + vcons + "\n    i32.const " + kcons + "\n" + map_value_release_wat(o, cx) + map_key_release_wat(o, cx) + "    call $__fern_map_set\n");
 
     return parts;
 }
 
-// map_delete_releases_wat pushes the four release operands $__fern_map_delete
-// takes after the map and the key: `vdeep` and `vf` as map_set spells them,
-// then `kdeep` and `kf` for a keyed column.
-function map_delete_releases_wat(o: ir.Op, cx: WasmOpCtx): string {
-    var syms: string[] = ir.map_op_symbols(o);
+// map_value_release_wat pushes what the map owes a value it lets go of, on an
+// overwrite or a delete: `vdeep` and `vf` — a string column (vkind 1) takes the
+// shallow dec (0), a column of string ARRAYS (vkind 2) the deep one (1), and a
+// column of boxes (vkind 3) the function the op's symbols name, through its
+// table slot (2).
+function map_value_release_wat(o: ir.Op, cx: WasmOpCtx): string {
     var vdeep: string = "0";
     var vf: string = "    i32.const 0\n";
     if ((o.width / 16) % 2 == 1 && (o.width / 32) % 2 == 1) {
         vdeep = "2";
-        vf = fn_slot_push(cx, syms[1]);
+        vf = fn_slot_push(cx, ir.map_op_symbols(o)[1]);
     } else if ((o.width / 32) % 2 == 1) { vdeep = "1"; }
-    var kdeep: string = "0";
-    var kf: string = "    i32.const 0\n";
+    return "    i32.const " + vdeep + "\n" + vf;
+}
+
+// map_key_release_wat is the key half: a keyed column (keykind 2) calls the
+// release its symbols name through its table slot (`kdeep` 2, the slot in `kf`).
+function map_key_release_wat(o: ir.Op, cx: WasmOpCtx): string {
+    var syms: string[] = ir.map_op_symbols(o);
     if (o.i32_imm == 2 && syms[2] != "") {
-        kdeep = "2";
-        kf = fn_slot_push(cx, syms[2]);
+        return "    i32.const 2\n" + fn_slot_push(cx, syms[2]);
     }
-    return "    i32.const " + vdeep + "\n" + vf + "    i32.const " + kdeep + "\n" + kf;
+    return "    i32.const 0\n    i32.const 0\n";
+}
+
+// emit_wasm_map_set_k64 is emit_wasm_map_set for an 8-byte KEY column (#10005):
+// stack: map, k (i64), v -> the value's flags -> $__fern_map_set_k64 -> map.
+// The key's own flags are the runtime's: it boxes the key into a cell it
+// takes. An 8-byte VALUE beside it (i64_imm != 0) goes through
+// $__fern_map_set_k64w64, which boxes the value as $__fern_map_set_w64 does.
+function emit_wasm_map_set_k64(o: ir.Op, cx: WasmOpCtx, parts: string[]): string[] {
+    if (o.i64_imm != 0) {
+        if (o.i64_imm == 2) { parts = parts.append("    i64.reinterpret_f64\n"); }
+        return parts.append("    call $__fern_map_set_k64w64\n");
+    }
+    var vis: string = "0";
+    if (o.unsigned) { vis = "1"; }
+    var vcons: string = "0";
+    if (o.width % 2 == 1) { vcons = "1"; }
+    return parts.append("    i32.const " + vis + "\n    i32.const " + vcons + "\n" + map_value_release_wat(o, cx) + "    call $__fern_map_set_k64\n");
 }
 
 // fn_slot_push pushes the funcref-table slot of the function `name` spells.

@@ -29,7 +29,7 @@ import "std/string";
 import "std/tcp";
 import "std/time";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
-    return http.http_response_ok("x".repeat(%d));
+    return http.ok("x".repeat(%d));
 }
 function main(): i32 {
     var opts: tcp.ServeOptions = tcp.ServeOptions { ...tcp.serve_options(), min_data_rate: 100000, data_rate_grace: time.duration_millis(300 as i64) };

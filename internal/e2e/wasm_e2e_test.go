@@ -463,7 +463,7 @@ func TestWASMHttpSerializeResponse(t *testing.T) {
 	src := `
 import "std/http";
 function main(): i32 {
-    var resp: HttpResponse = http.http_response_ok("hi");
+    var resp: HttpResponse = http.ok("hi");
     var wire: string = http.http_serialize_response(resp);
     var expected: string = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nhi";
     if (wire != expected) { return 1; }
@@ -480,7 +480,7 @@ func TestWASMHttpSerializeResponse404(t *testing.T) {
 	src := `
 import "std/http";
 function main(): i32 {
-    var resp: HttpResponse = http.http_response_text(404, "not found");
+    var resp: HttpResponse = http.text(404, "not found");
     var wire: string = http.http_serialize_response(resp);
     if (!wire.starts_with("HTTP/1.1 404 Not Found\r\n")) { return 1; }
     return 42;

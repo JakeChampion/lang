@@ -321,3 +321,4 @@ reactor_ctl=342
 reactor_wait=343
 tcp_recv_into=344
 str_data=345
+tcp_sendfile=346

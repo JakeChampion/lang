@@ -65,7 +65,7 @@ targets).
 | #10737 (closed by #10741 after this measurement; re-measure before planning it) | typed lowering: `usize / usize`, `f64 as usize` | 4 |
 | #10759 | typed lowering: for-each pattern bindings are not semantic values | 4 |
 | #10764 | union type aliases: members have no semantic contract; the generic form does not parse | 4 |
-| #10765 | typed lowering: `async` functions; a `dyn` std Error's `message` | 4 |
+| #10765 (the `async` half closed by #10804) | typed lowering: `async` functions; a `dyn` std Error's `message` | 4 |
 | #10762 | typed lowering: a generic enum's struct payload; the rc-correctness corpus probe | 4 |
 | #10770 | wasm: four programs answer wrongly (payloadless Result box, `std/platform`, scratch slots, split on `""`) | 4 |
 | #10761 | typed lowering: reading a `str` map value | 3 |
