@@ -8,7 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
+	"strings"
 	"testing"
 )
 
@@ -30,53 +30,37 @@ func WriteSelfHostModloadProject(t *testing.T) string {
 func WriteSelfHostModloadProjectTyped(t *testing.T) string {
 	t.Helper()
 	dir := WriteSelfHostModloadProject(t)
-	VendorStdlibImports(t, dir)
+	CopyStdlibTree(t, dir)
 	return dir
 }
 
-var stdlibImport = regexp.MustCompile(`(?m)^import "((?:core|std)/[a-z0-9_/]+)";`)
-
-// VendorStdlibImports copies every stdlib module the sources in dir import to
-// dir/<path>.fern, where asm_modload_run's loader resolves `import "core/map"`.
-// The typed lowering reads those modules' bodies; nothing else supplies them.
-func VendorStdlibImports(t *testing.T, dir string) {
+// CopyStdlibTree copies the stdlib source tree into dst, where a program at
+// dst's root resolves `std/…` and `core/…` imports.
+func CopyStdlibTree(t *testing.T, dst string) {
 	t.Helper()
-	root := SelfHostStdlibRoot(t)
-	var queue []string
-	ents, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, e := range ents {
-		if filepath.Ext(e.Name()) == ".fern" {
-			queue = append(queue, filepath.Join(dir, e.Name()))
-		}
-	}
-	seen := map[string]bool{}
-	for len(queue) > 0 {
-		src, err := os.ReadFile(queue[0])
-		queue = queue[1:]
+	src := SelfHostStdlibRoot(t)
+	err := filepath.WalkDir(src, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
-			t.Fatal(err)
+			return err
 		}
-		for _, m := range stdlibImport.FindAllStringSubmatch(string(src), -1) {
-			if seen[m[1]] {
-				continue
-			}
-			seen[m[1]] = true
-			body, err := os.ReadFile(filepath.Join(root, m[1]+".fern"))
-			if err != nil {
-				t.Fatalf("vendor %s: %v", m[1], err)
-			}
-			dst := filepath.Join(dir, m[1]+".fern")
-			if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(dst, body, 0o644); err != nil {
-				t.Fatal(err)
-			}
-			queue = append(queue, dst)
+		rel, rerr := filepath.Rel(src, path)
+		if rerr != nil {
+			return rerr
 		}
+		if d.IsDir() {
+			return os.MkdirAll(filepath.Join(dst, rel), 0o755)
+		}
+		if !strings.HasSuffix(path, ".fern") {
+			return nil
+		}
+		b, rerr := os.ReadFile(path)
+		if rerr != nil {
+			return rerr
+		}
+		return os.WriteFile(filepath.Join(dst, rel), b, 0o644)
+	})
+	if err != nil {
+		t.Fatalf("copy stdlib tree: %v", err)
 	}
 }
 

@@ -1462,44 +1462,6 @@ pub function sub_cache(sub: Sub, cache: irlower.LowerResult[]): irlower.LowerRes
   return out;
 }
 
-// lowered_key hashes everything an emit reads from these bodies, so two caches
-// with one key emit the same text against the same view.
-pub function lowered_key(cache: irlower.LowerResult[]): string {
-  var key: string = "";
-  for r in cache {
-    var s: string = r.name + "|" + util.i32_to_string(r.n_locals) + "," + util.i32_to_string(r.n_params)
-      + "," + util.i32_to_string(r.result_kind) + "," + flags_text([r.ok, r.erased_wide, r.superseded])
-      + "|" + ints_text(r.arr_slots) + "|" + ints_text(r.i64_slots) + "|" + ints_text(r.f64_slots) + "|" + ints_text(r.str_slots) + "|";
-    for o in r.ops {
-      s = s + util.i32_to_string(o.kind_tag) + " " + util.i32_to_string(o.i32_imm) + " " + util.i64_to_string(o.i64_imm)
-        + " " + util.i64_to_string(f64_bits(o.f64_imm)) + " " + util.i32_to_string(o.width) + " " + flags_text([o.unsigned])
-        + " " + util.i32_to_string(o.decl) + " " + util.i32_to_string(o.str.len()) + ":" + o.str + ";";
-    }
-    key = key + util.hash_key(s);
-  }
-  return util.hash_key(key);
-}
-
-function flags_text(bs: boolean[]): string {
-  var s: string = "";
-  for b in bs {
-    if (b) {
-      s = s + "1";
-    } else {
-      s = s + "0";
-    }
-  }
-  return s;
-}
-
-function ints_text(ns: i32[]): string {
-  var s: string = "";
-  for n in ns {
-    s = s + util.i32_to_string(n) + ",";
-  }
-  return s;
-}
-
 // Lowered is lower_gated's result: `ok` is the module's IR-eligibility verdict,
 // and when it holds `cache[i]` is mod.funcs[i]'s LowerResult, ready to emit
 // from. A separate flag rather than an empty cache, because a function-less
@@ -1715,7 +1677,7 @@ pub function lowered_digest(cache: irlower.LowerResult[]): string {
   var d: Digest = Digest { a: 208357, b: 5381 };
   for r in cache {
     d = roll(roll(roll(roll(d, r.n_locals), r.n_params), r.result_kind), r.ops.len());
-    d = roll_text(roll(d, digest_flags(r.superseded, r.erased_wide)), r.name);
+    d = roll_text(roll(roll(d, digest_flags(r.superseded, r.erased_wide)), digest_flags(r.ok, false)), r.name);
     for o in r.ops {
       d = roll(roll(roll(roll(roll(d, o.kind_tag), o.i32_imm), o.width), o.decl), digest_flags(o.unsigned, false));
       d = roll_text(roll_wide(roll_wide(d, o.i64_imm), f64_bits(o.f64_imm)), o.str);

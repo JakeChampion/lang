@@ -2354,7 +2354,7 @@ into five groups:
   clones, instances and drop helpers are the entry's. The typed lowering
   inlines and infers ownership across modules, so a unit's cache key
   (`modloader.typed_unit_cache_key`) hashes its lowered bodies
-  (`ircore.lowered_key`), and a body edit re-emits every unit its code reached.
+  (`ircore.lowered_digest`), and a body edit re-emits every unit its code reached.
   `-per-module-emit-all` emits a whole link plan from one lowering, which is
   how the whole-compiler link test builds the compiler. With `FERN_SEM_IR=`
   the units lower their window through `wasm_ir.lower_all_for_view` as

@@ -44,7 +44,7 @@ pub function score(words: string[]): i32 {
 
 function main(): i32 { return leaf.score(["ab", "cb", "abc"]); }
 `)
-	vendorStdlibImports(t, proj)
+	copyStdlibTree(t, proj)
 	entry := filepath.Join(proj, "main.fern")
 	helpers := []string{
 		"__fern_alloc_bytes", "__fern_arr_push_u8", "__fern_arr_push_owned_u8",
