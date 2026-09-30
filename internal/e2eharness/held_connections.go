@@ -3,7 +3,9 @@ package e2eharness
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"net"
+	"net/http"
 	"strconv"
 	"strings"
 	"testing"
@@ -115,4 +117,55 @@ func heapBumpBytes(t *testing.T, addr string) int64 {
 	}
 	t.Fatalf("server at %s never answered the heap probe", addr)
 	return 0
+}
+
+// BumpPerRequestServerSource is a single-loop server whose handler
+// answers the bump allocator's high-water mark, `__heap_bump_bytes()`,
+// with room for 5000 requests on one connection.
+func BumpPerRequestServerSource(port int) string {
+	return fmt.Sprintf(`import "std/http";
+import "std/tcp";
+function handle(req: HttpRequest, plat: Platform): HttpResponse {
+    return http.ok(__heap_bump_bytes().to_string());
+}
+function main(): i32 {
+    return tcp.tcp_serve_opts(%d, tcp.ServeOptions { ...tcp.serve_options(), keep_alive_requests: 5000 }, handle);
+}
+`, port)
+}
+
+// CheckBumpPerRequest drives BumpPerRequestServerSource over one
+// keep-alive connection: once the first requests have warmed the
+// allocator's free lists, requests reuse what earlier ones freed, so the
+// bump high-water mark reported at request 200 is the one reported at
+// request 2000 (#9853's per-request gate, bump half).
+func CheckBumpPerRequest(t *testing.T, addr string) {
+	t.Helper()
+	WaitServerReady(t, addr, 10*time.Second)
+	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(60 * time.Second))
+	reader := bufio.NewReader(conn)
+	var at200, last string
+	for i := 1; i <= 2000; i++ {
+		if _, err := io.WriteString(conn, "GET / HTTP/1.1\r\nHost: x\r\n\r\n"); err != nil {
+			t.Fatalf("request %d: %v", i, err)
+		}
+		resp, err := http.ReadResponse(reader, nil)
+		if err != nil {
+			t.Fatalf("response %d: %v", i, err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		last = string(body)
+		if i == 200 {
+			at200 = last
+		}
+	}
+	if last != at200 {
+		t.Fatalf("bump high-water mark %s bytes at request 200 but %s at request 2000: a keep-alive request grows the heap", at200, last)
+	}
 }
