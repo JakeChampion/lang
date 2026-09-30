@@ -126,6 +126,55 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 			want: nil,
 		},
 		{
+			name: "a nested function named like a function",
+			src: `import "std/http";
+function noisy(): void { eprint("hit"); }
+function handle(req: HttpRequest, plat: Platform): HttpResponse {
+    function noisy(): void {}
+    noisy();` + tail,
+			want: nil,
+		},
+		{
+			name: "a nested function's own effects",
+			src: `import "std/http";
+function handle(req: HttpRequest, plat: Platform): HttpResponse {
+    function helper(): void { eprint("hit"); }
+    helper();` + tail,
+			want: []string{"2:1 handle eprint log"},
+		},
+		{
+			// std/http's respond_error calls `plat.log`; std/fuzz and std/log
+			// declare a free `log` that prints.
+			name: "a free function spelled like a bag method",
+			src: `import "std/http";
+import "std/platform";
+function log(msg: string): void { eprint(msg); }
+function handle(req: HttpRequest, plat: Platform): HttpResponse {
+    plat.log("hit");` + tail,
+			want: nil,
+		},
+		{
+			name: "a method spelled like a bag method on another type",
+			src: `import "std/http";
+import "std/platform";
+struct Sink { n: i32 }
+function (s: Sink) log(msg: string): void { eprint(msg); }
+function handle(req: HttpRequest, plat: Platform): HttpResponse {
+    plat.log("hit");` + tail,
+			want: nil,
+		},
+		{
+			name: "a method reached on a typed receiver",
+			src: `import "std/http";
+import "std/platform";
+struct Sink { n: i32 }
+function (s: Sink) log(msg: string): void { eprint(msg); }
+function handle(req: HttpRequest, plat: Platform): HttpResponse {
+    var s: Sink = Sink { n: 1 };
+    s.log("hit");` + tail,
+			want: []string{"5:1 handle eprint log"},
+		},
+		{
 			name: "a function without a bag",
 			src: `function helper(): i32 { eprint("hit"); return 0; }
 function main(): i32 { return helper(); }

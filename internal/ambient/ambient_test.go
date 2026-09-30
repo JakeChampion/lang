@@ -131,6 +131,53 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 			want: nil,
 		},
 		{
+			name: "a nested function spelled like an effectful function is not that function",
+			src: `import "std/http";
+function noisy(): void { eprint("hit"); }
+function handle(req: HttpRequest, plat: Platform): HttpResponse {
+    function noisy(): void {}
+    noisy();` + handlerTail,
+			want: nil,
+		},
+		{
+			name: "a nested function's own effects are the handler's",
+			src: `import "std/http";
+function handle(req: HttpRequest, plat: Platform): HttpResponse {
+    function helper(): void { eprint("hit"); }
+    helper();` + handlerTail,
+			want: []string{"eprint@log"},
+		},
+		{
+			name: "a free function spelled like a bag method is not reached by the method call",
+			src: `import "std/http";
+import "std/platform";
+function log(msg: string): void { eprint(msg); }
+function handle(req: HttpRequest, plat: Platform): HttpResponse {
+    plat.log("hit");` + handlerTail,
+			want: nil,
+		},
+		{
+			name: "a method spelled like a bag method on another type is not reached by the bag call",
+			src: `import "std/http";
+import "std/platform";
+struct Sink { n: i32 }
+function (s: Sink) log(msg: string): void { eprint(msg); }
+function handle(req: HttpRequest, plat: Platform): HttpResponse {
+    plat.log("hit");` + handlerTail,
+			want: nil,
+		},
+		{
+			name: "a method reached on a typed receiver is followed",
+			src: `import "std/http";
+import "std/platform";
+struct Sink { n: i32 }
+function (s: Sink) log(msg: string): void { eprint(msg); }
+function handle(req: HttpRequest, plat: Platform): HttpResponse {
+    var s: Sink = Sink { n: 1 };
+    s.log("hit");` + handlerTail,
+			want: []string{"eprint@log"},
+		},
+		{
 			name: "a value whose target the walk cannot name charges nothing",
 			src: `import "std/http";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {

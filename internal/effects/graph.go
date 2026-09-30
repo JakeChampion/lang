@@ -133,7 +133,16 @@ func Build(prog *ast.Program, isBuiltin func(name string) bool) *Graph {
 				case *ast.Ident:
 					calleeIdent[callee] = true
 					switch {
+					case locals[callee.Name]:
+						// A function declared as a statement inside this
+						// body. closureconv has not hoisted it yet, so it
+						// has no top-level name — but its body is walked
+						// as part of this one, so its reach is already
+						// counted here.
 					case callee.Local:
+						// A parameter, local or capture holding a function
+						// value, whatever top-level function it is spelled
+						// like.
 						g.Indirect[name] = true
 					case g.Funcs[callee.Name] != nil:
 						addEdge(callee.Name)
@@ -142,12 +151,6 @@ func Build(prog *ast.Program, isBuiltin func(name string) bool) *Graph {
 							seenBuiltin[callee.Name] = true
 							g.Builtins[name] = append(g.Builtins[name], callee.Name)
 						}
-					case locals[callee.Name]:
-						// A function declared as a statement inside this
-						// body. closureconv has not hoisted it yet, so it
-						// has no top-level name — but its body is walked
-						// as part of this one, so its reach is already
-						// counted here.
 					default:
 						// A local, a parameter, or a struct field
 						// holding a function value.
