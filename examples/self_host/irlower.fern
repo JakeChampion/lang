@@ -70944,7 +70944,7 @@ function func_index_named(funcs: parser.FuncDecl[], name: string): i32 {
 // leaves the host's own reference its own to release — for the kinds whose
 // release there is rc-gated. Either way a capture is a borrow only while the
 // body keeps it no longer than the box; a bare `return <cap>` retains it.
-function clo_site_flags(site: CloSite, funcs: parser.FuncDecl[], reg: string[]): string {
+function clo_site_flags(site: CloSite, funcs: parser.FuncDecl[], reg: string[], structs: StructTab): string {
     var dies: boolean = clo_box_dies_in_host(site, funcs, reg);
     var host: parser.FuncDecl = funcs[site.host];
     var body: ast.Stmt[] = funcs[site.clo].body;
@@ -70955,7 +70955,7 @@ function clo_site_flags(site: CloSite, funcs: parser.FuncDecl[], reg: string[]):
     while (k < site.caps) {
         var cap: string = env_capture_name(body, k);
         var ok: boolean = cap.len() > 0 && !util.has_str(cloreasg, cap) && !body_unsafe_for_allow_ret(body, cap, reg, []);
-        if (ok && !dies) { ok = owned_capture_shares(capture_kind(env_capture_type(body, k))); }
+        if (ok && !dies) { ok = owned_capture_shares(capture_kind(env_capture_type(body, k), structs)); }
         if (ok) {
             flags = flags + "1";
             any = true;
@@ -70994,14 +70994,14 @@ function clo_box_dies_in_host(site: CloSite, funcs: parser.FuncDecl[], reg: stri
 // frame building it. Such a box cannot borrow its captures, so it takes a count
 // of each at construction and gives it back when it is freed; `kinds` holds
 // one character per capture naming that release (capture_kind).
-function owned_capture_rows(funcs: parser.FuncDecl[], reg: string[]): string[] {
+function owned_capture_rows(funcs: parser.FuncDecl[], reg: string[], structs: StructTab): string[] {
     var out: string[] = [];
     for site in clo_sites(funcs) {
         if (clo_box_dies_in_host(site, funcs, reg)) { continue; }
         var body: ast.Stmt[] = funcs[site.clo].body;
         var kinds: string = "";
         var k: i32 = 0;
-        while (k < site.caps) { kinds = kinds + capture_kind(env_capture_type(body, k)); k = k + 1; }
+        while (k < site.caps) { kinds = kinds + capture_kind(env_capture_type(body, k), structs); k = k + 1; }
         out = out.append("CLOWN:" + mkclo_funcval(site.key) + "|" + kinds);
     }
     return out;
@@ -71009,21 +71009,23 @@ function owned_capture_rows(funcs: parser.FuncDecl[], reg: string[]): string[] {
 
 // capture_kind: how an owning box releases a capture of type `t` — 's' a
 // string, 'S' a string[], 'r' an array of arrays, 'a' a scalar array or
-// scalar cell, 'p' a
-// struct, enum or closure (one shallow dec each), '.' a scalar it holds no
-// count of, and 'k' a count it keeps (a kind with no release here, which leaks).
-function capture_kind(t: string): string {
-    if (t.len() == 0) { return "k"; }
+// scalar cell, 'p' a struct, enum or closure (one shallow dec each), 'k' a
+// counted kind with no release here, whose count it keeps and leaks, and '.'
+// anything it holds no count of. Only a type known to be a counted pointer
+// takes a count: retaining a scalar reads its value as an address.
+function capture_kind(t: string, structs: StructTab): string {
     if (t == "string") { return "s"; }
     if (t == "string[]") { return "S"; }
-    if (is_scalar_type_name(t) || t == "bool" || t == "boolean" || t == "char" || t == "u8" || t == "f32") { return "."; }
     if (t == "fn" || is_fn_payload_spelling(t)) { return "p"; }
-    // A mutated scalar capture's 1-element cell: one shallow dec, as its frame gives it.
-    if (is_cell_type_name(t) && is_scalar_cell_elem(cell_elem_of_type_name(t))) { return "a"; }
+    if (decl_is_struct(structs, t) || decl_is_enum(structs, t)) { return "p"; }
+    if (is_cell_type_name(t)) {
+        if (is_scalar_cell_elem(cell_elem_of_type_name(t))) { return "a"; }
+        return "k";
+    }
     if (t.len() > 4 && slice_unchecked(t, t.len() - 4, t.len()) == "[][]") { return "r"; }
     if (is_leaksafe_array_field(t)) { return "a"; }
-    if (util.contains(t, "[") || util.contains(t, "(") || util.contains(t, "Map") || util.contains(t, "dyn")) { return "k"; }
-    return "p";
+    if (is_array_type_name(t) || is_map_type_name(t) || util.is_tuple_type_name(t)) { return "k"; }
+    return ".";
 }
 
 // env_capture_type: the declared type of capture `k`'s extract, or "".
@@ -71084,7 +71086,7 @@ function emit_owned_capture_release(st: LowerState, slot: i32): LowerState {
 }
 
 function is_scalar_cell_elem(t: string): boolean {
-    return is_scalar_type_name(t) || t == "bool" || t == "boolean" || t == "char" || t == "u8";
+    return is_scalar_type_name(t) || t == "bool" || t == "boolean" || t == "char" || t == "u8" || t == "usize";
 }
 
 function capture_release_fn(kind: u8): string {
@@ -71284,7 +71286,7 @@ pub function borrowable_params_interproc(funcs: parser.FuncDecl[], structs: Stru
         var hosts: i32[] = i32_filled(n, 0);
         var si: i32 = 0;
         while (si < sites.len()) {
-            var nf: string = flags_meet(site_flags[si], clo_site_flags(sites[si], funcs, reg));
+            var nf: string = flags_meet(site_flags[si], clo_site_flags(sites[si], funcs, reg, structs));
             if (nf != site_flags[si]) {
                 site_flags = site_flags.with(si, nf);
                 rows = rows.with(site_row0 + si, borrow_reg_row(sites[si].key, nf));
@@ -72013,7 +72015,7 @@ pub function fn_sigs_for_borrow(funcs: parser.FuncDecl[], structs: StructTab, ar
         i64arr_ret_fns: sig_reg_of(i64arr_ret_fns_of(funcs)),
         erased_elem_ret_fns: sig_reg_of(erased_elem_ret_fns_of(funcs, structs)),
         fn_param_sigs: sig_reg_of(fn_param_sigs_of(funcs, structs, growflags)),
-        closure_fns: util.append_all(closure_fns_of(funcs), owned_capture_rows(funcs, bparams)),
+        closure_fns: util.append_all(closure_fns_of(funcs), owned_capture_rows(funcs, bparams, structs)),
         closurearr_ret_fns: closurearr_ret_fns_of(funcs),
         const_fns: const_fns_of(funcs),
         borrowable_params: breg,
