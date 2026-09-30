@@ -3812,18 +3812,18 @@ function lambda_var_uses(e: ast.Expr, own acc: string[]): string[] {
 }
 
 function list_var_uses(stmts: ast.Stmt[], own acc: string[]): string[] {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        if let ast.StmtVar(v) = stmts[i] {
-            if (!destructures(v)) {
-                acc = acc.append("=" + v.name);
-                var rest: ast.Stmt[] = [];
-                var j: i32 = i + 1;
-                while (j < stmts.len()) { rest = rest.append(stmts[j]); j = j + 1; }
-                for u in uses_in(rest, []) { if (u == v.name) { acc = acc.append(u); } }
-            }
+    var names: string[] = [];
+    for st in stmts {
+        if let ast.StmtVar(v) = st {
+            if (!destructures(v)) { names = names.append(v.name); }
         }
-        i = i + 1;
+    }
+    if (names.len() == 0) { return acc; }
+    for n in names { acc = acc.append("=" + n); }
+    // Every name is unique, so a use in this list can only follow its `var`.
+    var ix: util.NameIndex = util.name_index(names);
+    for u in uses_in(stmts, []) {
+        if (ix.has(u)) { acc = acc.append(u); }
     }
     return acc;
 }
