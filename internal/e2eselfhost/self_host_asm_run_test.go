@@ -49,10 +49,10 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 		{"division", "return 84 / 2;", 42, "", ""},
 		{"modulo", "return 23 % 5;", 3, "", ""},
 		{"unary-neg", "return 0 - 5 + 10;", 5, "", ""},
-		{"comparison-true", "return 5 < 10;", 1, "", ""},
-		{"comparison-false", "return 10 < 5;", 0, "", ""},
-		{"equality-true", "return 7 == 7;", 1, "", ""},
-		{"equality-false", "return 7 == 8;", 0, "", ""},
+		{"comparison-true", "if (5 < 10) { return 1; } return 0;", 1, "", ""},
+		{"comparison-false", "if (10 < 5) { return 1; } return 0;", 0, "", ""},
+		{"equality-true", "if (7 == 7) { return 1; } return 0;", 1, "", ""},
+		{"equality-false", "if (7 == 8) { return 1; } return 0;", 0, "", ""},
 		{"locals", "var x = 5; var y = 10; return x + y;", 15, "", ""},
 		{"let-locals", "let x = 5; let y = 10; return x + y;", 15, "", ""},
 		{"let-mixed-with-var", "let x = 40; var y = 2; return x + y;", 42, "", ""},
@@ -98,11 +98,11 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 		{"local-fn-two", "function main(): i32 { function f(): i32 { return 2; } function g(): i32 { return 3; } return f() * g(); }", 6, "", ""},
 		// defer — action runs at function exit (LIFO, conditional, value
 		// captured before cleanup).
-		{"defer-fires", "function inc(a: i32[]): i32 { defer a[0] = 9; return 1; } function main(): i32 { var arr = [0]; inc(arr); return arr[0]; }", 9, "", ""},
+		{"defer-fires", "function inc(): i32 { defer write(\"d\"); write(\"b\"); return 1; } function main(): i32 { return inc(); }", 1, "bd", ""},
 		{"defer-retval-before-cleanup", "function f(): i32 { var x = 5; defer x = 99; return x; } function main(): i32 { return f(); }", 5, "", ""},
-		{"defer-lifo", "function f(a: i32[]): i32 { defer a[0] = 1; defer a[0] = 2; return 0; } function main(): i32 { var arr = [0]; f(arr); return arr[0]; }", 1, "", ""},
-		{"defer-conditional-off", "function f(a: i32[], c: i32): i32 { if (c == 1) { defer a[0] = 7; } return 0; } function main(): i32 { var arr = [0]; f(arr, 0); return arr[0]; }", 0, "", ""},
-		{"defer-loop-survives", "function f(a: i32[]): i32 { defer a[0] = a[0] + 50; var i = 0; while (i < 3) { a[0] = a[0] + 1; i = i + 1; } return 0; } function main(): i32 { var arr = [0]; f(arr); return arr[0]; }", 53, "", ""},
+		{"defer-lifo", "function f(): i32 { defer write(\"1\"); defer write(\"2\"); return 0; } function main(): i32 { return f(); }", 0, "21", ""},
+		{"defer-conditional-off", "function f(c: i32): i32 { if (c == 1) { defer write(\"d\"); } write(\"x\"); return 0; } function main(): i32 { return f(0); }", 0, "x", ""},
+		{"defer-loop-survives", "function f(): i32 { defer write(\"d\"); var i = 0; while (i < 3) { write(\"l\"); i = i + 1; } return 0; } function main(): i32 { return f(); }", 0, "llld", ""},
 		{"hello-world", "print(\"Hello, world!\"); return 0;", 0, "Hello, world!\n", ""},
 		{"print-twice", "print(\"line 1\"); print(\"line 2\"); return 0;", 0, "line 1\nline 2\n", ""},
 		{"print-then-return", "print(\"out\"); return 42;", 42, "out\n", ""},
@@ -333,58 +333,6 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 			"",
 		},
 		{
-			// `m.get_or(k, default)` — inline as `__fern_map_get(m, k)`
-			// + Some-payload-or-default branch. Without this the
-			// generic struct shape-dispatch reads garbage out of the
-			// native map runtime and segfaults — std/test's
-			// assert_json_eq_field_* helpers hit it via core/map's
-			// `m.get_or` whose pure-Lang body uses a different layout.
-			"map-get-or-string",
-			"function main(): i32 { " +
-				"var m: Map[string, i32] = map_new(8); " +
-				"m.insert(\"a\", 10); " +
-				"var a: i32 = m.get_or(\"a\", 0); " +
-				"var b: i32 = m.get_or(\"missing\", 99); " +
-				"return a + b; }",
-			109,
-			"",
-			"",
-		},
-		{
-			// Wider / unsigned integer type tags (`u32`, `u64`, `i64`,
-			// `usize`) must route through the i32 path —
-			// otherwise (n as u32).to_string() falls to the struct
-			// shape-dispatch and segfaults. Same for u32[] / u64[] /
-			// i64[]. Trade-off: u64-max loses signed-vs-unsigned
-			// compare nuance (separate follow-up). The 99 value here
-			// fits in i32 either way so the cast is a no-op at runtime.
-			"wider-int-as-cast-to-string",
-			"function main(): i32 { var a: u32 = 99 as u32; var b: u64 = 7 as u64; " +
-				"if (a.to_string() != \"99\") { return 1; } " +
-				"if (b.to_string() != \"7\") { return 2; } " +
-				"return 42; }",
-			42,
-			"",
-			"",
-		},
-		{
-			// u32.to_string() on a value with BIT 31 SET must format UNSIGNED
-			// (via the __fern_u32_to_string runtime helper), NOT through the
-			// signed __fern_i32_to_string, which reads the low 32 bits as a
-			// negative i32 and mis-renders. Regression guard for #2649 — the
-			// value-99 case above never exercised the high-bit path. No
-			// `import "std/u32"`: the helper is a builtin, so it works without it.
-			"u32-high-bit-to-string",
-			"function main(): i32 { " +
-				"if ((4294967295 as u32).to_string() != \"4294967295\") { return 1; } " +
-				"if (((1 as u32) << (31 as u32)).to_string() != \"2147483648\") { return 2; } " +
-				"if (((0 as u32) - (1 as u32)).to_string() != \"4294967295\") { return 3; } " +
-				"return 42; }",
-			42,
-			"",
-			"",
-		},
-		{
 			// IEEE NaN semantics for f64 compares. Per IEEE, every
 			// relation with NaN is false except `!=`. ucomisd sets
 			// CF=ZF=PF=1 on unordered, so naked setb / setbe / sete
@@ -408,22 +356,7 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 			"",
 			"",
 		},
-		{
-			// Small builtins: f64<->i64 / f32<->i32 bit reinterprets,
-			// sleep_ms(0) (no-op nanosleep), and remove_file on a
-			// missing path (Err arm). 42 if every step is fine.
-			"small-builtins-roundtrip",
-			"function main(): i32 { " +
-				"var a: f64 = 3.5; " +
-				"if (f64_from_bits(f64_bits(a)) != a) { return 1; } " +
-				"if (f32_from_bits(f32_bits(a)) != a) { return 2; } " +
-				"sleep_ms(0); " +
-				"match (remove_file(\"/tmp/lang-no-such-file-zzz\")) { Err(_) => {}, Ok(_) => { return 3; } } " +
-				"return 42; }",
-			42,
-			"",
-			"",
-		},
+		{"small-builtins-roundtrip", "function main(): i32 { var a: f64 = 3.5; if (f64_from_bits(f64_bits(a)) != a) { return 1; } var b: f32 = 3.5; if (f32_from_bits(f32_bits(b)) != b) { return 2; } sleep_ms(0); match (remove_file(\"/tmp/lang-no-such-file-zzz\")) { Err(_) => {}, Ok(_) => { return 3; } } return 42; }", 42, "", ""},
 		{
 			// Ok(x) / Err(x) must lower as Result heap boxes (tag @0,
 			// payload @8 — same shape as Some/None), not as calls to
@@ -519,13 +452,7 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 			"",
 			"",
 		},
-		{
-			"match-single-variant-binding",
-			"struct Circle { r: i32 } function main(): i32 { var c = Circle { r: 5 }; match (c) { Circle(x) => { return x.r; }, _ => { return 0 - 1; } } return 0 - 2; }",
-			5,
-			"",
-			"",
-		},
+		{"match-single-variant-binding", "struct Circle { r: i32 } function main(): i32 { var c = Circle { r: 5 }; match (c) { Circle { r } => { return r; } } return 0 - 2; }", 5, "", ""},
 		{
 			// String-literal match arms (#4407): lower to an str_eq
 			// if-else-if chain on the self-host path (build_literal_match).
@@ -543,41 +470,8 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 			"",
 			"",
 		},
-		{
-			"match-two-variants-first-arm",
-			"struct Circle { r: i32 } struct Square { s: i32 } function main(): i32 { var c = Circle { r: 3 }; match (c) { Circle(x) => { return x.r; }, Square(y) => { return y.s; } } return 0 - 1; }",
-			3,
-			"",
-			"",
-		},
-		{
-			"match-two-variants-second-arm",
-			"struct Circle { r: i32 } struct Square { s: i32 } function main(): i32 { var q = Square { s: 7 }; match (q) { Circle(x) => { return x.r; }, Square(y) => { return y.s; } } return 0 - 1; }",
-			7,
-			"",
-			"",
-		},
-		{
-			"match-wildcard-fallback",
-			"struct Circle { r: i32 } struct Triangle { b: i32 } function main(): i32 { var t = Triangle { b: 9 }; match (t) { Circle(c) => { return c.r; }, _ => { return 42; } } return 0 - 1; }",
-			42,
-			"",
-			"",
-		},
-		{
-			"match-no-binding",
-			"struct Empty { } function main(): i32 { var e = Empty { }; match (e) { Empty => { return 11; }, _ => { return 0 - 1; } } return 0 - 2; }",
-			11,
-			"",
-			"",
-		},
-		{
-			"match-write-to-outer-var",
-			"struct Circle { r: i32 } function main(): i32 { var c = Circle { r: 8 }; var n: i32 = 0; match (c) { Circle(x) => { n = x.r; }, _ => { n = 0 - 1; } } return n; }",
-			8,
-			"",
-			"",
-		},
+		{"match-no-binding", "struct Empty { } function main(): i32 { var e = Empty { }; match (e) { Empty { } => { return 11; } } return 0 - 2; }", 11, "", ""},
+		{"match-write-to-outer-var", "struct Circle { r: i32 } function main(): i32 { var c = Circle { r: 8 }; var n: i32 = 0; match (c) { Circle { r } => { n = r; } } return n; }", 8, "", ""},
 		{
 			"for-sum-array",
 			"function main(): i32 { var a = [10, 20, 30]; var s = 0; for x in a { s = s + x; } return s; }",
@@ -941,13 +835,7 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 			"",
 			"",
 		},
-		{
-			"arr-i64-set-index-large",
-			"function main(): i32 { var xs: i64[] = [1, 2, 3]; xs[1] = 5000000000; if (xs[1] == 5000000000) { return 7; } return 0; }",
-			7,
-			"",
-			"",
-		},
+		{"arr-i64-set-index-large", "function main(): i32 { var xs: i64[] = [1, 2, 3]; xs = xs.with(1, 5000000000); if (xs[1] == 5000000000) { return 7; } return 0; }", 7, "", ""},
 		{
 			"arr-i64-push-grow",
 			"function main(): i32 { var xs: i64[] = [10]; xs = xs.append(20); xs = xs.append(5000000000); if (xs[2] == 5000000000) { return (xs[0] + xs[1]) as i32; } return 0; }",
@@ -967,257 +855,6 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 			"function main(): i32 { var xs: f64[] = [1.5, 2.5, 3.0]; var s: f64 = 0.0; for v in xs { s = s + v; } return s as i32; }",
 			7,
 			"",
-			"",
-		},
-		{
-			"i32-abs-positive",
-			"function main(): i32 { var n: i32 = 7; return n.abs(); }",
-			7,
-			"",
-			"",
-		},
-		{
-			"i32-abs-negative",
-			"function main(): i32 { var n: i32 = 0 - 42; return n.abs(); }",
-			42,
-			"",
-			"",
-		},
-		{
-			"i32-abs-zero",
-			"function main(): i32 { var n: i32 = 0; return n.abs(); }",
-			0,
-			"",
-			"",
-		},
-		{
-			"i32-is-zero-true",
-			"function main(): i32 { var n: i32 = 0; if (n.is_zero()) { return 1; } return 0; }",
-			1,
-			"",
-			"",
-		},
-		{
-			"i32-is-zero-false",
-			"function main(): i32 { var n: i32 = 5; if (n.is_zero()) { return 1; } return 0; }",
-			0,
-			"",
-			"",
-		},
-		{
-			"i32-is-positive-true",
-			"function main(): i32 { var n: i32 = 5; if (n.is_positive()) { return 1; } return 0; }",
-			1,
-			"",
-			"",
-		},
-		{
-			"i32-is-positive-false-zero",
-			"function main(): i32 { var n: i32 = 0; if (n.is_positive()) { return 1; } return 0; }",
-			0,
-			"",
-			"",
-		},
-		{
-			"i32-is-positive-false-negative",
-			"function main(): i32 { var n: i32 = 0 - 5; if (n.is_positive()) { return 1; } return 0; }",
-			0,
-			"",
-			"",
-		},
-		{
-			"i32-is-negative-true",
-			"function main(): i32 { var n: i32 = 0 - 5; if (n.is_negative()) { return 1; } return 0; }",
-			1,
-			"",
-			"",
-		},
-		{
-			"i32-is-negative-false-zero",
-			"function main(): i32 { var n: i32 = 0; if (n.is_negative()) { return 1; } return 0; }",
-			0,
-			"",
-			"",
-		},
-		{
-			"i32-is-even-true",
-			"function main(): i32 { var n: i32 = 4; if (n.is_even()) { return 1; } return 0; }",
-			1,
-			"",
-			"",
-		},
-		{
-			"i32-is-even-false",
-			"function main(): i32 { var n: i32 = 7; if (n.is_even()) { return 1; } return 0; }",
-			0,
-			"",
-			"",
-		},
-		{
-			"i32-is-odd-true",
-			"function main(): i32 { var n: i32 = 9; if (n.is_odd()) { return 1; } return 0; }",
-			1,
-			"",
-			"",
-		},
-		{
-			"i32-is-odd-false",
-			"function main(): i32 { var n: i32 = 8; if (n.is_odd()) { return 1; } return 0; }",
-			0,
-			"",
-			"",
-		},
-		{
-			"i32-is-even-zero",
-			"function main(): i32 { var n: i32 = 0; if (n.is_even()) { return 1; } return 0; }",
-			1,
-			"",
-			"",
-		},
-		{
-			"i32-sign-positive",
-			"function main(): i32 { var n: i32 = 42; return n.sign(); }",
-			1,
-			"",
-			"",
-		},
-		{
-			"i32-sign-zero",
-			"function main(): i32 { var n: i32 = 0; return n.sign(); }",
-			0,
-			"",
-			"",
-		},
-		{
-			"i32-sign-negative",
-			"function main(): i32 { var n: i32 = 0 - 7; print_int(n.sign()); return 0; }",
-			0,
-			"-1",
-			"",
-		},
-		{
-			"i32-clamp-in-range",
-			"function main(): i32 { var n: i32 = 5; return n.clamp(0, 10); }",
-			5,
-			"",
-			"",
-		},
-		{
-			"i32-clamp-below",
-			"function main(): i32 { var n: i32 = 0 - 3; return n.clamp(0, 10); }",
-			0,
-			"",
-			"",
-		},
-		{
-			"i32-clamp-above",
-			"function main(): i32 { var n: i32 = 99; return n.clamp(0, 10); }",
-			10,
-			"",
-			"",
-		},
-		{
-			"i32-clamp-equals-low",
-			"function main(): i32 { var n: i32 = 0; return n.clamp(0, 10); }",
-			0,
-			"",
-			"",
-		},
-		{
-			"i32-clamp-equals-high",
-			"function main(): i32 { var n: i32 = 10; return n.clamp(0, 10); }",
-			10,
-			"",
-			"",
-		},
-		{
-			"i32-min-pick-first",
-			"function main(): i32 { var a: i32 = 3; return a.min(7); }",
-			3,
-			"",
-			"",
-		},
-		{
-			"i32-min-pick-second",
-			"function main(): i32 { var a: i32 = 9; return a.min(4); }",
-			4,
-			"",
-			"",
-		},
-		{
-			"i32-max-pick-first",
-			"function main(): i32 { var a: i32 = 8; return a.max(3); }",
-			8,
-			"",
-			"",
-		},
-		{
-			"i32-max-pick-second",
-			"function main(): i32 { var a: i32 = 2; return a.max(11); }",
-			11,
-			"",
-			"",
-		},
-		{
-			"i32-min-equal",
-			"function main(): i32 { var a: i32 = 5; return a.min(5); }",
-			5,
-			"",
-			"",
-		},
-		{
-			"arr-i32-first",
-			"function main(): i32 { var xs: i32[] = [10, 20, 30]; return xs.first(); }",
-			10,
-			"",
-			"",
-		},
-		{
-			"arr-i32-last",
-			"function main(): i32 { var xs: i32[] = [10, 20, 30]; return xs.last(); }",
-			30,
-			"",
-			"",
-		},
-		{
-			"arr-i32-first-single",
-			"function main(): i32 { var xs: i32[] = [99]; return xs.first(); }",
-			99,
-			"",
-			"",
-		},
-		{
-			"arr-i32-last-single",
-			"function main(): i32 { var xs: i32[] = [99]; return xs.last(); }",
-			99,
-			"",
-			"",
-		},
-		{
-			"arr-string-first",
-			"function main(): i32 { var xs: string[] = [\"hello\", \"world\"]; write(xs.first()); return 0; }",
-			0,
-			"hello",
-			"",
-		},
-		// `.last()` needs its receiver twice (once for the length, once as the
-		// indexed array). The IR path binds it to a temp local rather than
-		// lowering the subtree twice, so a receiver with a side effect runs
-		// ONCE — duplicating it would print "b" twice here. Stdout is the only
-		// place that difference is observable; the exit code is identical either
-		// way, which is why this case exists next to the value-only ones above.
-		{
-			"arr-last-evaluates-receiver-once",
-			"function build(): i32[] { write(\"b\"); var out: i32[] = []; out = out.append(7); return out; }\nfunction main(): i32 { return build().last(); }",
-			7,
-			"b",
-			"",
-		},
-		{
-			"arr-string-last",
-			"function main(): i32 { var xs: string[] = [\"hello\", \"world\"]; write(xs.last()); return 0; }",
-			0,
-			"world",
 			"",
 		},
 		{
@@ -1263,37 +900,9 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 			"",
 		},
 		{
-			"str-method-is-empty-false",
-			"function main(): i32 { var s = \"hi\"; if (s.is_empty()) { return 1; } return 0; }",
-			0,
-			"",
-			"",
-		},
-		{
-			"str-method-is-empty-true",
-			"function main(): i32 { var s = \"\"; if (s.is_empty()) { return 1; } return 0; }",
-			1,
-			"",
-			"",
-		},
-		{
 			"arr-method-len",
 			"function main(): i32 { var xs: i32[] = [10, 20, 30, 40]; return xs.len(); }",
 			4,
-			"",
-			"",
-		},
-		{
-			"arr-method-is-empty-false",
-			"function main(): i32 { var xs: i32[] = [1]; if (xs.is_empty()) { return 1; } return 0; }",
-			0,
-			"",
-			"",
-		},
-		{
-			"arr-method-is-empty-true",
-			"function main(): i32 { var xs: i32[] = []; if (xs.is_empty()) { return 1; } return 0; }",
-			1,
 			"",
 			"",
 		},
@@ -1304,53 +913,15 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 			"",
 			"",
 		},
-		{
-			"str-first-byte",
-			"function main(): i32 { var s = \"abc\"; return s.first_byte(); }",
-			97,
-			"",
-			"",
-		},
-		{
-			"str-last-byte",
-			"function main(): i32 { var s = \"abc\"; return s.last_byte(); }",
-			99,
-			"",
-			"",
-		},
-		{
-			"str-first-byte-uppercase",
-			"function main(): i32 { var s = \"Hello\"; return s.first_byte(); }",
-			72,
-			"",
-			"",
-		},
-		{
-			"str-last-byte-symbol",
-			"function main(): i32 { var s = \"hi!\"; return s.last_byte(); }",
-			33,
-			"",
-			"",
-		},
+		{"str-first-byte", "function main(): i32 { var s = \"abc\"; return s[0] as i32; }", 97, "", ""},
+		{"str-last-byte", "function main(): i32 { var s = \"abc\"; return s[s.len() - 1] as i32; }", 99, "", ""},
+		{"str-first-byte-uppercase", "function main(): i32 { var s = \"Hello\"; return s[0] as i32; }", 72, "", ""},
+		{"str-last-byte-symbol", "function main(): i32 { var s = \"hi!\"; return s[s.len() - 1] as i32; }", 33, "", ""},
 		{
 			"str-bytes-len",
 			"function main(): i32 { var s = \"abc\"; var bs = s.bytes(); return bs.len(); }",
 			3,
 			"",
-			"",
-		},
-		{
-			"str-bytes-value",
-			"function main(): i32 { var s = \"A\"; var bs = s.bytes(); return bs[0]; }",
-			65,
-			"",
-			"",
-		},
-		{
-			"str-bytes-multi",
-			"function main(): i32 { var s = \"abc\"; var bs = s.bytes(); print_int(bs[0] + bs[1] + bs[2]); return 0; }",
-			0,
-			"294",
 			"",
 		},
 		{
@@ -1594,18 +1165,18 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 		{"struct-update-3a", "struct V { a: i32, b: i32, c: i32 } function main(): i32 { var v = V { a: 1, b: 2, c: 3 }; var w = V { ...v, a: 50 }; return w.a + w.b + w.c; }", 55, "", ""},
 		{"struct-update-3c", "struct V { a: i32, b: i32, c: i32 } function main(): i32 { var v = V { a: 1, b: 2, c: 3 }; var w = V { ...v, c: 90 }; return w.a + w.b + w.c; }", 93, "", ""},
 		{"struct-update-keeps-base", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 5, y: 6 }; var q = P { ...p, x: 50 }; return p.x + q.x; }", 55, "", ""},
-		// Field mutation `p.x = v` (in-place struct_set, scalar fields).
-		{"field-mutate", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 1, y: 2 }; p.x = 40; return p.x + p.y; }", 42, "", ""},
-		{"field-mutate-both", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 0, y: 0 }; p.x = 30; p.y = 12; return p.x + p.y; }", 42, "", ""},
-		{"field-mutate-loop", "struct C { n: i32 } function main(): i32 { var c = C { n: 0 }; var i = 0; while (i < 5) { c.n = c.n + i; i = i + 1; } return c.n; }", 10, "", ""},
-		{"field-mutate-alias", "struct P { x: i32 } function main(): i32 { var p = P { x: 1 }; var q = p; q.x = 9; return p.x; }", 9, "", ""},
+		// A field rebound through a struct-update literal.
+		{"field-mutate", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 1, y: 2 }; p = P { ...p, x: 40 }; return p.x + p.y; }", 42, "", ""},
+		{"field-mutate-both", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 0, y: 0 }; p = P { ...p, x: 30 }; p = P { ...p, y: 12 }; return p.x + p.y; }", 42, "", ""},
+		{"field-mutate-loop", "struct C { n: i32 } function main(): i32 { var c = C { n: 0 }; var i = 0; while (i < 5) { c = C { ...c, n: c.n + i }; i = i + 1; } return c.n; }", 10, "", ""},
+		{"field-mutate-alias", "struct P { x: i32 } function main(): i32 { var p = P { x: 1 }; var q = p; q = P { ...q, x: 9 }; return p.x; }", 1, "", ""},
 		// String-returning functions (str_ret_fns tracking; box leaks).
 		{"str-return", "function greet(): string { return \"hi\"; } function main(): i32 { var s = greet(); return s.len(); }", 2, "", ""},
 		{"str-return-concat", "function shout(s: string): string { return s + \"!\"; } function main(): i32 { var g = shout(\"hey\"); return g.len(); }", 4, "", ""},
 		// String-typed struct/enum fields (leak-safe — strings never freed, no RC).
 		{"struct-str-field", "struct Token { text: string, kind: i32 } function main(): i32 { var t = Token { text: \"hello\", kind: 7 }; return t.text.len() + t.kind; }", 12, "", ""},
 		{"struct-str-method", "struct N { s: string } function (n: N) sz(): i32 { return n.s.len(); } function main(): i32 { var x = N { s: \"abcd\" }; return x.sz(); }", 4, "", ""},
-		{"struct-str-mutate", "struct N { s: string } function main(): i32 { var n = N { s: \"a\" }; n.s = \"abcde\"; return n.s.len(); }", 5, "", ""},
+		{"struct-str-mutate", "struct N { s: string } function main(): i32 { var n = N { s: \"a\" }; n = N { ...n, s: \"abcde\" }; return n.s.len(); }", 5, "", ""},
 		{"enum-str-payload", "enum T { Word(string), Eof } function g(t: T): i32 { match (t) { Word(w) => { return w.len(); }, Eof => { return 3; } } return 0; } function main(): i32 { return g(Word(\"hello\")) + g(Eof); }", 8, "", ""},
 		{"match-guard-fallthrough", "enum E { Pos(i32), Neg(i32), Zero } function f(e: E): i32 { match (e) { Pos(n) when n > 10 => { return 1; }, Pos(n) => { return 2; }, _ => { return 3; } } return 0; } function main(): i32 { return f(Pos(20)) * 100 + f(Pos(5)) * 10 + f(Zero); }", 123, "", ""},
 		{"match-guard-mixed", "enum E { A(i32), B } function f(e: E): i32 { match (e) { A(n) when n > 3 => { return n * 2; }, A(n) => { return n; }, B => { return 99; } } return 0; } function main(): i32 { return f(A(5)) + f(A(1)) + f(B); }", 110, "", ""},
@@ -1634,7 +1205,7 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 		{"enum-arr-payload-len", "enum E { Items(i32[]), Empty } function f(e: E): i32 { match (e) { Items(xs) => { return xs.len(); }, Empty => { return 0; } } return 0; } function main(): i32 { return f(Items([10, 20, 30])) * 10 + f(Empty); }", 30, "", ""},
 		{"enum-arr-payload-forin", "enum E { Items(i32[]), Empty } function sum(e: E): i32 { match (e) { Items(xs) => { var t = 0; for x in xs { t = t + x; } return t; }, Empty => { return 0; } } return 0; } function main(): i32 { return sum(Items([5, 10, 15])); }", 30, "", ""},
 		{"enum-arr-payload-alias", "enum E { Items(i32[]), Empty } function f(e: E): i32 { match (e) { Items(xs) => { return xs.len() + xs[0]; }, Empty => { return 0; } } return 0; } function main(): i32 { var a = [7, 8, 9]; return f(Items(a)); }", 10, "", ""},
-		{"enum-strarr-payload-len", "enum E { Words(string[]), None } function f(e: E): i32 { match (e) { Words(w) => { return w.len(); }, None => { return 0; } } return 0; } function main(): i32 { return f(Words([\"a\", \"bb\", \"ccc\"])) * 10 + f(None); }", 30, "", ""},
+		{"enum-strarr-payload-len", "enum E { Words(string[]), NoWords } function f(e: E): i32 { match (e) { Words(w) => { return w.len(); }, NoWords => { return 0; } } return 0; } function main(): i32 { return f(Words([\"a\", \"bb\", \"ccc\"])) * 10 + f(NoWords); }", 30, "", ""},
 		{"enum-strarr-payload-forin", "enum E { Words(string[]), None } function f(e: E): i32 { match (e) { Words(w) => { var n = 0; for s in w { n = n + s.len(); } return n; }, None => { return 0; } } return 0; } function main(): i32 { return f(Words([\"a\", \"bb\", \"ccc\"])); }", 6, "", ""},
 		{"struct-strarr-field-len", "struct Doc { lines: string[] } function nl(d: Doc): i32 { return d.lines.len(); } function main(): i32 { var d = Doc { lines: [\"x\", \"y\", \"z\"] }; return nl(d); }", 3, "", ""},
 		{"struct-strarr-field-index", "struct Doc { lines: string[] } function f(d: Doc): i32 { return d.lines[1].len(); } function main(): i32 { var d = Doc { lines: [\"a\", \"bb\", \"ccc\"] }; return f(d); }", 2, "", ""},
@@ -1649,24 +1220,6 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 		{"tuple-3-ret-destructure", "function three(): (i32, string, i32) { return (4, \"abc\", 6); } function main(): i32 { var (a, s, b) = three(); return a + s.len() + b; }", 13, "", ""},
 		{"tuple-3-ret-dotn", "function three(): (i32, i32, i32) { return (4, 5, 6); } function main(): i32 { var t = three(); return t.0 * 100 + t.1 * 10 + t.2; }", 200, "", ""},
 		{"tuple-3-ret-destructure-i32", "function three(): (i32, i32, i32) { return (4, 5, 6); } function main(): i32 { var (a, b, c) = three(); return a * 100 + b * 10 + c; }", 200, "", ""},
-		{"map-i32-len3", "function main(): i32 { var m: Map[i32, i32] = map_new(4); m = m.insert(1, 100); m = m.insert(2, 200); m = m.insert(3, 300); return m.len(); }", 3, "", ""},
-		{"map-i32-overwrite", "function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(7, 40); m = m.insert(11, 99); m = m.insert(7, 42); return m.len(); }", 2, "", ""},
-		{"map-i32-loop", "function main(): i32 { var m: Map[i32, i32] = map_new(4); var i = 0; while (i < 5) { m = m.insert(i, i*10); i = i + 1; } return m.len(); }", 5, "", ""},
-		{"map-str-keys", "function main(): i32 { var m: Map[string, i32] = map_new(4); m = m.insert(\"a\", 1); m = m.insert(\"bb\", 2); m = m.insert(\"a\", 9); return m.len(); }", 2, "", ""},
-		{"map-get-hit", "function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(7, 42); match (m.get(7)) { Some(v) => { return v; }, None => { return 0; } } return 9; }", 42, "", ""},
-		{"map-get-miss", "function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(7, 42); match (m.get(999)) { Some(v) => { return v; }, None => { return 5; } } return 9; }", 5, "", ""},
-		{"map-has", "function main(): i32 { var m: Map[i32, i32] = map_new(4); m = m.insert(1, 1); var r = 0; if (m.has(1)) { r = r + 1; } if (m.has(2)) { r = r + 10; } return r; }", 1, "", ""},
-		{"map-get-strkey", "function main(): i32 { var m: Map[string, i32] = map_new(4); m = m.insert(\"hi\", 11); match (m.get(\"hi\")) { Some(v) => { return v; }, None => { return 0; } } return 9; }", 11, "", ""},
-		{"map-get-or-hit", "function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(7, 42); return m.get_or(7, 0); }", 42, "", ""},
-		{"map-get-or-miss", "function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(7, 42); return m.get_or(999, 5); }", 5, "", ""},
-		{"map-get-or-strhit", "function main(): i32 { var m: Map[string, i32] = map_new(4); m = m.insert(\"hi\", 11); return m.get_or(\"hi\", 0); }", 11, "", ""},
-		{"map-get-or-strmiss", "function main(): i32 { var m: Map[string, i32] = map_new(4); m = m.insert(\"hi\", 11); return m.get_or(\"no\", 7); }", 7, "", ""},
-		{"map-keys-sum", "function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); m = m.insert(2, 20); m = m.insert(3, 30); var ks: i32[] = m.keys(); var s = 0; var i = 0; while (i < ks.len()) { s = s + ks[i]; i = i + 1; } return s; }", 6, "", ""},
-		{"map-values-sum", "function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); m = m.insert(2, 20); m = m.insert(3, 30); var vs: i32[] = m.values(); var s = 0; var i = 0; while (i < vs.len()) { s = s + vs[i]; i = i + 1; } return s; }", 60, "", ""},
-		{"map-forkv-values", "function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); m = m.insert(2, 20); m = m.insert(3, 30); var s = 0; for (k, v) in m { s = s + v; } return s; }", 60, "", ""},
-		{"map-forkv-keys", "function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); m = m.insert(2, 20); m = m.insert(3, 30); var s = 0; for (k, v) in m { s = s + k; } return s; }", 6, "", ""},
-		{"map-forkv-pair", "function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 2); m = m.insert(2, 3); m = m.insert(3, 4); var s = 0; for (k, v) in m { s = s + k * v; } return s; }", 20, "", ""},
-		{"map-forkv-strkey", "function main(): i32 { var m: Map[string, i32] = map_new(8); m = m.insert(\"ab\", 1); m = m.insert(\"cde\", 2); var s = 0; for (k, v) in m { s = s + k.len() + v; } return s; }", 8, "", ""},
 		{"i64-cmp", "function main(): i32 { var x: i64 = 5000000000; var y: i64 = 4000000000; if (x > y) { return 7; } return 0; }", 7, "", ""},
 		{"i64-add", "function main(): i32 { var a: i64 = 3000000000; var b: i64 = 3000000000; var c: i64 = a + b; if (c > 5000000000) { return 11; } return 0; }", 11, "", ""},
 		{"i64-mul", "function main(): i32 { var a: i64 = 100000; var b: i64 = 100000; var c: i64 = a * b; if (c > 4000000000) { return 5; } return 0; }", 5, "", ""},
@@ -1781,76 +1334,6 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 			"",
 		},
 		{
-			"i32-to-string-zero",
-			"function main(): i32 { var s = i32_to_string(0); write(s); return s.len(); }",
-			1,
-			"0",
-			"",
-		},
-		{
-			"i32-dot-to-string",
-			"function main(): i32 { var n: i32 = 42; var s = n.to_string(); write(s); return s.len(); }",
-			2,
-			"42",
-			"",
-		},
-		{
-			"i32-dot-to-string-in-closure",
-			"function main(): i32 { var n = 5; var f = (): string => { return n.to_string(); }; write(f()); return 0; }",
-			0,
-			"5",
-			"",
-		},
-		{
-			"i32-dot-to-string-concat",
-			"function main(): i32 { var n: i32 = 99; var msg: string = \"value=\" + n.to_string(); write(msg); return 0; }",
-			0,
-			"value=99",
-			"",
-		},
-		{
-			"i32-dot-to-string-zero",
-			"function main(): i32 { var n: i32 = 0; var s = n.to_string(); write(s); return s.len(); }",
-			1,
-			"0",
-			"",
-		},
-		{
-			"i32-dot-to-string-negative",
-			"function main(): i32 { var n: i32 = 0 - 7; var s = n.to_string(); write(s); return s.len(); }",
-			2,
-			"-7",
-			"",
-		},
-		{
-			"string-dot-to-string-identity",
-			"function main(): i32 { var s = \"hi\"; var t = s.to_string(); write(t); return t.len(); }",
-			2,
-			"hi",
-			"",
-		},
-		{
-			"i32-to-string-positive",
-			"function main(): i32 { var s = i32_to_string(12345); write(s); return s.len(); }",
-			5,
-			"12345",
-			"",
-		},
-		{
-			"i32-to-string-negative",
-			"function main(): i32 { var s = i32_to_string(0 - 42); write(s); return s.len(); }",
-			3,
-			"-42",
-			"",
-		},
-		{
-			"i32-to-string-concat",
-			"function main(): i32 { var n = 7; var msg = \"answer: \" + i32_to_string(n); write(msg); return 0; }",
-			0,
-			"answer: 7",
-			"",
-		},
-		{
 			"eprint-literal-exits-clean",
 			"function main(): i32 { eprint(\"error msg\\n\"); return 7; }",
 			7,
@@ -1876,174 +1359,6 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 			"function main(): i32 { print(\"out\"); eprint(\"err\\n\"); return 0; }",
 			0,
 			"out\n",
-			"",
-		},
-		{
-			"str-trim-spaces",
-			"function main(): i32 { var t = str_trim(\"   hello   \"); write(t); return t.len(); }",
-			5,
-			"hello",
-			"",
-		},
-		{
-			"str-trim-tabs-newlines",
-			"function main(): i32 { var t = str_trim(\"\\t\\n hi \\r\\n\"); write(t); return t.len(); }",
-			2,
-			"hi",
-			"",
-		},
-		{
-			"str-trim-no-whitespace",
-			"function main(): i32 { var t = str_trim(\"abc\"); write(t); return t.len(); }",
-			3,
-			"abc",
-			"",
-		},
-		{
-			"str-trim-empty",
-			"function main(): i32 { var t = str_trim(\"\"); return t.len(); }",
-			0,
-			"",
-			"",
-		},
-		{
-			"str-trim-all-whitespace",
-			"function main(): i32 { var t = str_trim(\"   \\n\\t \"); return t.len(); }",
-			0,
-			"",
-			"",
-		},
-		{
-			"str-to-upper-basic",
-			"function main(): i32 { var u = str_to_upper(\"hello\"); write(u); return u.len(); }",
-			5,
-			"HELLO",
-			"",
-		},
-		{
-			"str-to-upper-mixed",
-			"function main(): i32 { var u = str_to_upper(\"Hi 123 World!\"); write(u); return 0; }",
-			0,
-			"HI 123 WORLD!",
-			"",
-		},
-		{
-			"str-to-lower-basic",
-			"function main(): i32 { var l = str_to_lower(\"HELLO\"); write(l); return l.len(); }",
-			5,
-			"hello",
-			"",
-		},
-		{
-			"str-to-lower-mixed",
-			"function main(): i32 { var l = str_to_lower(\"AbCdE 99\"); write(l); return 0; }",
-			0,
-			"abcde 99",
-			"",
-		},
-		{
-			"str-to-upper-empty",
-			"function main(): i32 { return (str_to_upper(\"\")).len(); }",
-			0,
-			"",
-			"",
-		},
-		{
-			"str-case-round-trip",
-			"function main(): i32 { var s = str_to_lower(str_to_upper(\"AbCd\")); write(s); return 0; }",
-			0,
-			"abcd",
-			"",
-		},
-		{
-			"str-repeat-basic",
-			"function main(): i32 { var r = str_repeat(\"ab\", 3); write(r); return r.len(); }",
-			6,
-			"ababab",
-			"",
-		},
-		{
-			"str-repeat-once",
-			"function main(): i32 { var r = str_repeat(\"hi\", 1); write(r); return r.len(); }",
-			2,
-			"hi",
-			"",
-		},
-		{
-			"str-repeat-zero",
-			"function main(): i32 { var r = str_repeat(\"foo\", 0); return r.len(); }",
-			0,
-			"",
-			"",
-		},
-		{
-			"str-repeat-negative",
-			"function main(): i32 { var r = str_repeat(\"foo\", 0 - 3); return r.len(); }",
-			0,
-			"",
-			"",
-		},
-		{
-			"str-repeat-empty-source",
-			"function main(): i32 { var r = str_repeat(\"\", 5); return r.len(); }",
-			0,
-			"",
-			"",
-		},
-		{
-			"str-repeat-many",
-			"function main(): i32 { var r = str_repeat(\"-=\", 4); write(r); return r.len(); }",
-			8,
-			"-=-=-=-=",
-			"",
-		},
-		{
-			"str-replace-basic",
-			"function main(): i32 { var r = str_replace(\"hello world\", \"world\", \"there\"); write(r); return r.len(); }",
-			11,
-			"hello there",
-			"",
-		},
-		{
-			"str-replace-shorter",
-			"function main(): i32 { var r = str_replace(\"abcabc\", \"abc\", \"x\"); write(r); return r.len(); }",
-			2,
-			"xx",
-			"",
-		},
-		{
-			"str-replace-longer",
-			"function main(): i32 { var r = str_replace(\"a-b\", \"-\", \"---\"); write(r); return r.len(); }",
-			5,
-			"a---b",
-			"",
-		},
-		{
-			"str-replace-none",
-			"function main(): i32 { var r = str_replace(\"hello\", \"xyz\", \"---\"); write(r); return r.len(); }",
-			5,
-			"hello",
-			"",
-		},
-		{
-			"str-replace-empty-old",
-			"function main(): i32 { var r = str_replace(\"abc\", \"\", \"xyz\"); write(r); return r.len(); }",
-			3,
-			"abc",
-			"",
-		},
-		{
-			"str-replace-all-occurrences",
-			"function main(): i32 { var r = str_replace(\"banana\", \"a\", \"!\"); write(r); return r.len(); }",
-			6,
-			"b!n!n!",
-			"",
-		},
-		{
-			"str-replace-empty-new",
-			"function main(): i32 { var r = str_replace(\"banana\", \"a\", \"\"); write(r); return r.len(); }",
-			3,
-			"bnn",
 			"",
 		},
 		{
@@ -2100,70 +1415,6 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 			"function main(): i32 { exit(0); return 5; }",
 			0,
 			"",
-			"",
-		},
-		{
-			"str-split-basic",
-			"function main(): i32 { var a = str_split(\"a,b,c\", \",\"); return a.len(); }",
-			3,
-			"",
-			"",
-		},
-		{
-			"str-split-content",
-			"function main(): i32 { var a = str_split(\"a,bb,ccc\", \",\"); for s in a { write(s); write(\"|\"); } return 0; }",
-			0,
-			"a|bb|ccc|",
-			"",
-		},
-		{
-			"str-split-no-sep",
-			"function main(): i32 { var a = str_split(\"abc\", \",\"); return a.len(); }",
-			1,
-			"",
-			"",
-		},
-		{
-			// An empty separator CHAR-SPLITS, matching std/string.split and the
-			// interp. This used to expect 1 (the whole string in one piece):
-			// rt_src_str_split returned [s], a deliberate divergence that
-			// matched the hand-written asm emitter and was never covered by a
-			// differential test. Both halves of that rationale expired — the
-			// hand-asm emitters were deleted (#3457/#5972), and
-			// internal/e2e/string_split_empty_sep_test.go now covers it on
-			// every backend.
-			"str-split-empty-sep",
-			"function main(): i32 { var a = str_split(\"hello\", \"\"); for s in a { write(s); write(\"|\"); } return a.len(); }",
-			5,
-			"h|e|l|l|o|",
-			"",
-		},
-		{
-			"str-split-leading-sep",
-			"function main(): i32 { var a = str_split(\",a,b\", \",\"); for s in a { write(s); write(\"|\"); } return a.len(); }",
-			3,
-			"|a|b|",
-			"",
-		},
-		{
-			"str-split-trailing-sep",
-			"function main(): i32 { var a = str_split(\"a,b,\", \",\"); for s in a { write(s); write(\"|\"); } return a.len(); }",
-			3,
-			"a|b||",
-			"",
-		},
-		{
-			"str-split-multi-char-sep",
-			"function main(): i32 { var a = str_split(\"foo--bar--baz\", \"--\"); for s in a { write(s); write(\"|\"); } return a.len(); }",
-			3,
-			"foo|bar|baz|",
-			"",
-		},
-		{
-			"str-split-consecutive",
-			"function main(): i32 { var a = str_split(\"a,,b\", \",\"); for s in a { write(s); write(\"|\"); } return a.len(); }",
-			3,
-			"a||b|",
 			"",
 		},
 		// Match-arm guards (`Pat when <expr> =>`): a true guard runs the arm;

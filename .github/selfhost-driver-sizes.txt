@@ -378,12 +378,17 @@
 # lowers through the typed path (semlower) and links both lowerings until the
 # AST one retires (#10659). The other rows are unchanged. Number pasted from
 # driver-sizes' own report on run 36612302644.
+# 2026-09-30 — asm_run 6765464 -> 8648888 (+27.8%), asm_load_run 8099152 ->
+# 9294032 (+14.8%), asm_modload_run 7556384 -> 9438224 (+24.9%). The three
+# drivers' merged emit lowers through the typed path (semlower) and links
+# both lowerings until the AST one retires. Measured with
+# TestSelfHostWarmStockDriver on the pinned stage0.
 fern.fern/stage2 12346536
 fern.fern 12346536
-asm_load_run.fern 8099152
-asm_modload_run.fern 7556384
+asm_load_run.fern 9294032
+asm_modload_run.fern 9438224
 asm_ir_run.fern 9080328
-asm_run.fern 6765464
+asm_run.fern 8648888
 wasm_ir_run.fern 6704912
 wasm_run.fern 6702024
 wasm_runio_run.fern 6671832

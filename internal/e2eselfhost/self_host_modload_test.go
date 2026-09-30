@@ -23,7 +23,8 @@ import (
 //     the synthetic injection has NEVER heard of, used bare in the
 //     program. It can only compile if the driver actually read+merged
 //     builtins.fern — the decisive proof that real modules supply the
-//     built-in types.
+//     built-in types. Only the AST lowering reads builtins.fern; the typed
+//     path injects the built-in types, as the CLI does.
 //   - "no-builtins": the same IoError program with NO builtins.fern in the
 //     tree, confirming module_with_builtins' idempotent injection still
 //     fills the types in (the legacy path is untouched).
@@ -49,7 +50,7 @@ func TestSelfHostModloadX86_64(t *testing.T) {
 		"function classify(e: IoError): i32 {\n" +
 		"    match (e) {\n" +
 		"        NotFound(m) => { return 1; },\n" +
-		"        Other(m) => { return 2; },\n" +
+		"        Other(p, m) => { return 2; },\n" +
 		"        _ => { return 0; },\n" +
 		"    }\n" +
 		"}\n" +
@@ -64,6 +65,8 @@ func TestSelfHostModloadX86_64(t *testing.T) {
 		entryRel string            // entry file relative to the program dir (default main.fern)
 		lockDeps map[string]string // dep name → target dir (rel to progDir), written into fern.lock with abs paths
 		cacheDir bool              // point FERN_CACHE_DIR at <progDir>/cache (url-dep store cases, #4949)
+		// ast compiles on the AST lowering, the only one that reads builtins.fern.
+		ast      bool
 		wantExit int
 	}{
 		{
@@ -92,6 +95,7 @@ func TestSelfHostModloadX86_64(t *testing.T) {
 					"    return 0;\n" +
 					"}\n",
 			},
+			ast:      true,
 			wantExit: 42,
 		},
 		{
@@ -228,6 +232,9 @@ func TestSelfHostModloadX86_64(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			progDir := t.TempDir()
+			if tc.ast {
+				t.Setenv("FERN_SEM_IR", "")
+			}
 			if tc.cacheDir {
 				// The driver inherits the test process env, so the
 				// self-host loader's env("FERN_CACHE_DIR") sees the

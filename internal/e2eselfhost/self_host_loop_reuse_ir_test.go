@@ -238,6 +238,8 @@ var loopReuseIRCases = []struct {
 // driver (asm_run, IR default-on), asserting the exit code and the exact box
 // allocation count (the loop-reuse emission contract).
 func TestSelfHostLoopReuseIRX86_64(t *testing.T) {
+	// The box counts pin the AST lowering's loop-reuse emission.
+	t.Setenv("FERN_SEM_IR", "")
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
 	src, err := os.ReadFile("../../examples/self_host/asm_run.fern")

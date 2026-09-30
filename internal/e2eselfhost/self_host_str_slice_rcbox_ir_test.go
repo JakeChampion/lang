@@ -28,6 +28,9 @@ import (
 //     over-releases (a view is never freed, and nothing double-frees it), so the
 //     underflow counter stays 0 and the value is correct -> exit 0.
 func TestSelfHostStrSliceRcBoxIRX86_64(t *testing.T) {
+	// The slice-view box these pin is the AST lowering's str_slice op; the churn case
+	// also leans on its built-in trim and a str view held in a string.
+	t.Setenv("FERN_SEM_IR", "")
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
 	src, err := os.ReadFile("../../examples/self_host/asm_run.fern")

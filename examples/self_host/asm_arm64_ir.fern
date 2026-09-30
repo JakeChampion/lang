@@ -10095,9 +10095,7 @@ pub function emit_module_or_error_sub(mod: parser.Module, darwin: boolean, sub: 
     // The checked boundary first, as asm_ir.emit_module_or_error_sub: asmcore's
     // Display gate reads the module the checker rewrote.
     var tm: parser.Module = checker.ensure_annotated(mod);
-    var s: asmcore.EmitState = asmcore.new_state();
-    s = asmcore.EmitState { ...s, struct_decls: irlower.struct_tab(tm.structs), funcs: tm.funcs };
-    var check_errs: util.Diag[] = asmcore.check_module(tm, s);
+    var check_errs: util.Diag[] = asmcore.entry_check_errors(tm);
     if (check_errs.len() > 0) {
         eprint(util.format_diags(check_errs));
         exit(1);
