@@ -656,10 +656,12 @@ enum __BodyFraming { Length(i32), Chunked }
 // `__http_body_framing(h)` — the body's framing from the parsed headers,
 // or the status that refuses the request (RFC 9112 §6.1, §6.3): 400 for
 // `Transfer-Encoding` beside `Content-Length` (the request-smuggling
-// shape), for `chunked` applied twice, or for a `Content-Length` the
-// parser cannot read; 501 for a coding other than `chunked`, which this
-// parser cannot decode. A lenient reading of any of them would be a
-// framing disagreement with the next parser on the path.
+// shape), for a coding list whose last coding is not `chunked` (its
+// length cannot be determined), for `chunked` applied twice, or for a
+// `Content-Length` the parser cannot read; 501 for a coding applied
+// under the final `chunked`, which this parser cannot decode. A lenient
+// reading of any of them would be a framing disagreement with the next
+// parser on the path.
 function __http_body_framing(h: HeaderMap): Result[__BodyFraming, i32] {
     var te: string[] = h.get_all("transfer-encoding");
     if (te.len() == 0) {
@@ -670,7 +672,14 @@ function __http_body_framing(h: HeaderMap): Result[__BodyFraming, i32] {
         return Err(400);
     }
     if (h.get_all("content-length").len() > 0 || te.len() > 1) { return Err(400); }
-    if (!__token_is(te[0], "chunked")) { return Err(501); }
+    var codings: string[] = te[0].split(",");
+    if (!__token_is(codings[codings.len() - 1], "chunked")) { return Err(400); }
+    var i: i32 = 0;
+    while (i + 1 < codings.len()) {
+        if (__token_is(codings[i], "chunked")) { return Err(400); }
+        i = i + 1;
+    }
+    if (codings.len() > 1) { return Err(501); }
     return Ok(Chunked);
 }
 
@@ -1020,13 +1029,14 @@ function __header_rules(h: HeaderMap, version: string): i32 {
     return 0;
 }
 
-// `__unframed(kind, h)` — the answer for a body that has not framed:
-// `Malformed` with `kind` when it is a status, `Continue` when the
-// request expects `100 Continue` before sending its body, `Incomplete`
-// otherwise.
-function __unframed(kind: i32, h: HeaderMap): HttpFraming {
+// `__unframed(kind, h, version)` — the answer for a body that has not
+// framed: `Malformed` with `kind` when it is a status, `Continue` when an
+// HTTP/1.1 request expects `100 Continue` before sending its body,
+// `Incomplete` otherwise. An HTTP/1.0 request's `100-continue` is
+// ignored (RFC 9110 §10.1.1): its client cannot read the interim answer.
+function __unframed(kind: i32, h: HeaderMap, version: string): HttpFraming {
     if (kind >= 400) { return Malformed(kind); }
-    if (__expectation(h) == 1) { return Continue; }
+    if (version != "HTTP/1.0" && __expectation(h) == 1) { return Continue; }
     return Incomplete;
 }
 
@@ -1117,7 +1127,7 @@ pub function http_parse_request_framed_from(buf: u8[], from: i32): HttpFraming {
         Err(status) => { return Malformed(status); }
     }
     var body: (i32, u8[], i32, HeaderMap) = __framed_body(buf, from + headers_len, framing, version);
-    if (body.0 != 2) { return __unframed(body.0, req_headers); }
+    if (body.0 != 2) { return __unframed(body.0, req_headers, version); }
     var req: HttpRequest = HttpRequest {
         method: __bytes_string(buf, from, sp1),
         path: path,
