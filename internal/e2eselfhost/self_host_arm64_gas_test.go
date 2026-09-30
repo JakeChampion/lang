@@ -284,6 +284,6 @@ const arm64MachOGasDriverMain = "\n" +
 	"    var a: Arm64Asm = arm64_gas_assemble(asm);\n" +
 	"    var none: i32[] = [];\n" +
 	"    var bin: i32[] = macho_executable(a.code, none, none, \"fern\", macho_entry_off(a), 0, none);\n" +
-	"    write(string_from_bytes_unchecked(bin));\n" +
+	"    write(string_from_bytes_unchecked(to_u8(bin)));\n" +
 	"    return 0;\n" +
 	"}\n"

@@ -15,8 +15,15 @@ func arm64NativeSrc(t *testing.T) string {
 	if err != nil {
 		t.Fatalf("read arm64_native.fern: %v", err)
 	}
-	return string(b)
+	return string(b) + toU8Src
 }
+
+// toU8Src is the byte conversion the native-backend fixtures write an image
+// through: arm64_native, x86_native and elf build bytes as i32[], and
+// string_from_bytes_unchecked takes u8[].
+const toU8Src = `
+function to_u8(b: i32[]): u8[] { var o: u8[] = []; var i: i32 = 0; while (i < b.len()) { o = o.append(b[i] as u8); i = i + 1; } return o; }
+`
 
 // TestSelfHostArm64Encode exercises the self-hosted AArch64 machine-code
 // encoder (examples/self_host/arm64_encode.fern) — the assembler half of
@@ -131,7 +138,7 @@ function main(): i32 {
     code = arm64_svc(code, 128);                  // svc #0x80
     var none: i32[] = [];
     var bin: i32[] = macho_executable(code, none, none, "fern", 0, 0, none);
-    write(string_from_bytes_unchecked(bin));
+    write(string_from_bytes_unchecked(to_u8(bin)));
     return 0;
 }
 `

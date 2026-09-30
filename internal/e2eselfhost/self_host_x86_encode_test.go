@@ -176,7 +176,7 @@ func runX86NativeDriver(t *testing.T, name, driverMain string, wantExit int) {
 	if err != nil {
 		t.Fatalf("read elf.fern: %v", err)
 	}
-	source := string(nat) + "\n" + string(elf) + "\n" + driverMain
+	source := string(nat) + "\n" + string(elf) + toU8Src + driverMain
 
 	// Stage 1: compile the driver source to WAT via the self-host emitter.
 	wat := runCapture(t, gcc, runner, driverBin, []byte(source))
@@ -675,7 +675,7 @@ function main(): i32 {
     code = x86_mov_r32_imm32(code, x86_rax(), 60); // __NR_exit
     code = x86_syscall(code);
     var bin: i32[] = elf_static_executable_x86(code); // R+X, text-only
-    write(string_from_bytes_unchecked(bin));
+    write(string_from_bytes_unchecked(to_u8(bin)));
     return 0;
 }
 `
@@ -701,7 +701,7 @@ function main(): i32 {
     code = x86_mov_r32_imm32(code, x86_rax(), 60);  // __NR_exit
     code = x86_syscall(code);
     var bin: i32[] = elf_static_executable_x86(code);
-    write(string_from_bytes_unchecked(bin));
+    write(string_from_bytes_unchecked(to_u8(bin)));
     return 0;
 }
 `
@@ -730,7 +730,7 @@ function main(): i32 {
     code = x86_mov_r32_imm32(code, x86_rax(), 60);
     code = x86_syscall(code);
     var bin: i32[] = elf_static_executable_x86(code);
-    write(string_from_bytes_unchecked(bin));
+    write(string_from_bytes_unchecked(to_u8(bin)));
     return 0;
 }
 `
@@ -755,7 +755,7 @@ function main(): i32 {
     code = x86_mov_r32_imm32(code, x86_rax(), 42); // setval: result = 42
     code = x86_ret(code);
     var bin: i32[] = elf_static_executable_x86(code);
-    write(string_from_bytes_unchecked(bin));
+    write(string_from_bytes_unchecked(to_u8(bin)));
     return 0;
 }
 `
@@ -880,7 +880,7 @@ function main(): i32 {
     a.code = x86_ret(a.code);
     a = x86_resolve(a);
     var bin: i32[] = elf_static_executable_x86(a.code);
-    write(string_from_bytes_unchecked(bin));
+    write(string_from_bytes_unchecked(to_u8(bin)));
     return 0;
 }
 `
@@ -909,7 +909,7 @@ function main(): i32 {
     code = x86_mov_r32_imm32(code, x86_rax(), 60);
     code = x86_syscall(code);
     var bin: i32[] = elf_static_executable_x86(code);
-    write(string_from_bytes_unchecked(bin));
+    write(string_from_bytes_unchecked(to_u8(bin)));
     return 0;
 }
 `
@@ -933,7 +933,7 @@ function main(): i32 {
     a = x86_rodata_quad(a, 42i64);                          // .quad 42
     a = x86_resolve(a);
     var bin: i32[] = elf_static_executable_data_x86(a.code, a.rodata);
-    write(string_from_bytes_unchecked(bin));
+    write(string_from_bytes_unchecked(to_u8(bin)));
     return 0;
 }
 `
