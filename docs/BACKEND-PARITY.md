@@ -264,9 +264,12 @@ Linux the signal is blocked and read through a signalfd the set holds
 beside -signal in its event's data word; on Darwin it is ignored, so its
 default action cannot end the process, and kqueue's EVFILT_SIGNAL records
 each delivery; the interpreter turns os/signal deliveries into bytes on a
-pipe the set watches; wasm, which has no signals, answers -ENOTSUP. The
+pipe the set watches; wasm, which has no signals, answers -ENOTSUP. Op 6
+reports the parent's exit as that SIGTERM pair: PR_SET_PDEATHSIG on
+Linux, EVFILT_PROC's NOTE_EXIT on Darwin (the interpreter waits on it in
+a kqueue of its own and raises SIGTERM), -ENOTSUP on wasm. The
 Driver seam wraps the floor as `watch`, `unwatch`, `wait`, `watch_signal`,
-`unwatch_signal` and `close` (std/async), std/sim scripts readiness for
+`unwatch_signal`, `watch_parent` and `close` (std/async), std/sim scripts readiness for
 its leg with `ready_at`, and the serve loops run on it.
 
 Per target, every socket primitive is provided as follows. "Fern body" is

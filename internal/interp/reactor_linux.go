@@ -1,6 +1,9 @@
 package interp
 
-import "syscall"
+import (
+	"os"
+	"syscall"
+)
 
 func reactorCreate() (int, error) {
 	return syscall.EpollCreate1(syscall.EPOLL_CLOEXEC)
@@ -50,4 +53,16 @@ func (r *reactor) wait(cap int, timeoutMs int) ([]reactorEvent, error) {
 		out[k] = reactorEvent{raw: int(evs[k].Fd), ready: ready}
 	}
 	return out, nil
+}
+
+// watchParent has the kernel send SIGTERM when the parent exits, which the
+// SIGTERM watch reports. A parent already gone is ESRCH.
+func watchParent() error {
+	if _, _, e := syscall.RawSyscall(syscall.SYS_PRCTL, syscall.PR_SET_PDEATHSIG, uintptr(syscall.SIGTERM), 0); e != 0 {
+		return e
+	}
+	if os.Getppid() == 1 {
+		return syscall.ESRCH
+	}
+	return nil
 }
