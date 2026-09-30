@@ -2595,7 +2595,7 @@ function bind_projection(s: State, name: string, id: i32, after: checker.Scope):
     var want: typeinfo.Type = bound_type(s, name, after);
     if (!semtypes.concrete(want, true)) { return fail(s, "unresolved type of binding " + name + ": " + type_detail(want)); }
     if (!semtypes.equal(want, s.values[id])) { return fail(s, mismatch(name, want, s.values[id])); }
-    return bind(s, name, id);
+    return bind_var(s, name, id);
 }
 
 function destructure_tuple(encoded: string, whole: i32, s: State, after: checker.Scope): State {
@@ -3347,12 +3347,12 @@ function iterate_array(fo: ast.StmtFor, s: State): State {
     // this boundary reads from the checker is read in s.scope. A pattern header
     // destructures the element the way a declaration does.
     var inner: checker.Scope = checker.for_body_scope(fo, scope);
-    var body_state: State = bind(item.s, fo.var_name, item.id);
+    var body_state: State = bind_var(item.s, fo.var_name, item.id);
     if (vals >= 0) {
         var names: string[] = checker.split_pattern_names(fo.var_name);
         if (names.len() != 2) { return fail(s, "unsupported loop binding"); }
         var vitem: Value = define(item.s, ssasem.array_get(), [vals, step.id], 1, "", vtype);
-        body_state = bind(bind(vitem.s, names[0], item.id), names[1], vitem.id);
+        body_state = bind_position(bind_position(vitem.s, names[0], item.id, inner), names[1], vitem.id, inner);
     } else if (util.contains(fo.var_name, ",")) { body_state = destructure_tuple(fo.var_name, item.id, item.s, inner); }
     if (!body_state.ok) { return body_state; }
     body_state = State { ...body_state, scope: inner };
@@ -3369,6 +3369,13 @@ function iterate_array(fo: ast.StmtFor, s: State): State {
     for e in l.breaks { preds = preds.append(e.block); envs = envs.append(e.env); }
     s = merge_env(open(s, exit_id, preds), envs, count);
     return leave(s, before, outer);
+}
+
+// A map header's key and value positions are each a name or a nested tuple
+// pattern, as a declaration's are.
+function bind_position(s: State, name: string, id: i32, after: checker.Scope): State {
+    if (name.len() > 0 && name[0] == b'(') { return destructure_tuple(slice_unchecked(name, 1, name.len() - 1) + "", id, s, after); }
+    return bind_var(s, name, id);
 }
 
 function prefix_loops(xs: Loop[], n: i32): Loop[] {
@@ -3881,6 +3888,31 @@ function arm_local_uses(st: ast.Stmt, own acc: string[]): string[] {
     return acc;
 }
 
+// A `for` header's bindings, nested ones included, are local to its body.
+function for_local_uses(st: ast.Stmt, own acc: string[]): string[] {
+    if let ast.StmtFor(fr) = st {
+        var local: string[] = uses_in(fr.body, []);
+        for n in header_names(fr.var_name) {
+            if (n == "" || n == "_") { continue; }
+            acc = acc.append("=" + n);
+            for u in local { if (u == n) { acc = acc.append(n); } }
+        }
+    }
+    return acc;
+}
+
+function header_names(encoded: string): string[] {
+    var out: string[] = [];
+    for n in checker.split_pattern_names(encoded) {
+        if (n.len() > 1 && n[0] == b'(') {
+            for m in header_names(slice_unchecked(n, 1, n.len() - 1) + "") { out = out.append(m); }
+        } else {
+            out = out.append(n);
+        }
+    }
+    return out;
+}
+
 // A `var` the desugar could not lift (it has no annotation to zero) is local
 // to the statements that follow it in its own list.
 function var_local_uses(st: ast.Stmt, own acc: string[]): string[] {
@@ -3922,14 +3954,15 @@ function list_var_uses(stmts: ast.Stmt[], own acc: string[]): string[] {
 
 function keep_names(e: ast.Expr, own acc: string[]): string[] { return acc; }
 
-// The pattern bindings used outside the arm that binds them, and the `var`s
-// used outside the statements that follow them. Lexical resolution gives every
+// The pattern bindings used outside the arm or loop that binds them, and the
+// `var`s used outside the statements that follow them. Lexical resolution gives every
 // binding a symbol of its own, so such a use can only be the defer desugar's
 // replay of an action the scope armed.
 function escaping_bindings(body: ast.Stmt[]): string[] {
     var local: string[] = list_var_uses(body, []);
     for st in body {
         local = astwalk.fold_stmt_nodes(st, local, arm_local_uses, keep_names, descend_all);
+        local = astwalk.fold_stmt_nodes(st, local, for_local_uses, keep_names, descend_all);
         local = astwalk.fold_stmt_nodes(st, local, var_local_uses, lambda_var_uses, descend_all);
     }
     if (local.len() == 0) { return []; }
@@ -4544,11 +4577,11 @@ function build(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Cont
 }
 
 // The defer desugar replays an action at every exit the arming scope can
-// reach, after the arm that armed it has closed, and it cannot lift a pattern
-// binding the action names as it lifts a `var`: it runs before the checker, and
-// the binding has no written type. So the binding is bound here instead, at the
-// top of the body and at the zero of its payload type, as a lifted `var` is;
-// the arm replaces the slot. Each probe lowers the body until its first
+// reach, after the arm or loop body that armed it has closed, and it cannot
+// lift a pattern binding the action names as it lifts a `var`: it runs before
+// the checker, and the binding has no written type. So the binding is bound here
+// instead, at the top of the body and at the zero of its type, as a lifted
+// `var` is; the arm or loop replaces the slot. Each probe lowers the body until its first
 // refusal, which is past the match that shows the next type.
 function learn_body(fd: parser.FuncDecl, body: ast.Stmt[], s: State): State {
     var known: i32 = 0 - 1;
