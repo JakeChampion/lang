@@ -2223,9 +2223,9 @@ What is left, in order:
    and the release step), the fixture corpus on all three targets
    (`fixtureCompile`), and the four scripts that measure the self-hosted
    compiler (`perf-bench-selfhost`, `cliff-bench`, `selfhost-alloc-bench`,
-   `coreutils-bench`). The CLI is the only driver that builds a
-   typed-path substitution; the other drivers never reach the typed path
-   (see below). The semantic differential legs fail a seed that compiles as
+   `coreutils-bench`). The CLI, `asm_ir_run` and the wasm drivers other
+   than `wasm_modload_run` build a typed-path substitution; the other
+   drivers never reach the typed path (see below). The semantic differential legs fail a seed that compiles as
    a mixed module. The production rows' `FERN_SEM_IR_SKIP` leg and
    `TestSelfHostSemIRStrict`'s off leg keep the AST lowering on purpose.
 3. The AST lowering is deleted, along with the differential legs that compare
@@ -2237,12 +2237,19 @@ What is left, in order:
 the typed path, through `semlower.target_substitution`. The other drivers fall
 into four groups:
 
-- Emitting drivers, which call the backends' plain entry points
-  (`asm_ir.emit_module_or_error`, `wasm_ir.emit_module_mode_or_error` and the
-  rest). Those entry points pass `ircore.no_sub()`, so these compiles take the
-  AST lowering whatever the environment says. The drivers are `asm_ir_run`,
-  `asm_run`, `asm_load_run`, `asm_modload_run`, `wasm_ir_run`, `wasm_run`,
-  `wasm_runio_run` and `wasm_modload_run`. The per-module and
+- Emitting drivers. `asm_ir_run`, `wasm_ir_run`, `wasm_run` and
+  `wasm_runio_run` hand their emit entry the typed path's substitution
+  through `semlower.driven`; `asm_ir_run -ir` and `wasm_ir_run -ir`, which
+  force the AST lowering's gated emit, run only with the typed path off, and
+  the wasm drivers' `-decide` asks `wasm_ir.ir_route_ok` with the same
+  substitution. `asm_run`, `asm_load_run` and `asm_modload_run` call the
+  backends' plain entry points (`asm_ir.emit_module_or_error` and the rest),
+  which pass `ircore.no_sub()`, so they take the AST lowering whatever the
+  environment says. `wasm_modload_run` is per-module only: each unit lowers
+  its window through `wasm_ir.lower_all_for_view`, which takes no
+  substitution, so it is AST-lowered too; moving it needs a typed lowering of
+  one module against the whole program's view, as the asm drivers'
+  per-module modes do. The per-module and
   modload whole-compiler fixpoints build the compiler through the load and
   modload drivers, and `asm_modload_run` also calls `irlower.lower_module`
   directly for its provided-symbol check. The plan below says which of
@@ -2250,13 +2257,10 @@ into four groups:
 - Gate probes: `asm_pathprobe_run` and `asm_ir_elig_run`. They run
   `ircore.all_eligible` and emit nothing, so they need no substitution. The
   verdict `asm_pathprobe_run` and `-decide` print is `ir` or `refused`.
-- `wasm_units_probe`, which lowers through `wasm_ir.lower_all_for_view` /
-  `lower_all_for_base`. Those take no substitution at all, so it is AST-lowered
-  unconditionally.
-- `ir_const_numeric_run`, which builds a substitution of its own: it lowers
-  with `no_sub()`, rewrites the constants in the result, and hands that back
-  as a `Sub`. It needs rewriting against a typed-path substitution, not
-  threading.
+- `wasm_units_probe`, which lowers the whole program once through the typed
+  substitution and splits that cache between its two units.
+- `ir_const_numeric_run`, which rewrites the constants in the typed path's
+  substitution and emits through each target's CLI entry.
 
 **The plan for the drivers.** The emitting drivers take the typed path's
 substitution (`semlower.target_substitution`), and their tests stay where
@@ -2266,11 +2270,6 @@ AST lowering, but the lowering is about a quarter of `asm_ir_run`'s 174,000
 source lines and the typed path adds about 16,600, so once step 3 lands each
 driver is smaller than it is today. A test that exists to inspect the AST
 lowering's own output goes with the lowering.
-
-`ir_const_numeric_run` rewrites the constants in the substitution it is given,
-so it needs a typed-path substitution rather than threading.
-`wasm_units_probe`'s lowering (`lower_all_for_view` / `lower_all_for_base`)
-gains a substitution parameter.
 
 **`irlower.fern`.** About 44,600 of its 80,000 lines are reachable only from
 `lower_func`, `lower_func_for` and `lower_module`. That covers `LowerState`
