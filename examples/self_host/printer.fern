@@ -723,7 +723,7 @@ function print_expr_c(e: ast.Expr, parent_prec: i32, depth: i32, f: Fmt): (strin
                 i = i + 1;
             }
             var lns: i32[] = elem_lines(vals, sl.line);
-            if (vals.len() > 0 && inner_comment_pending(f, sl.line, lns[lns.len() - 1])) {
+            if (vals.len() > 0 && keep_list_lines(f, sl.line, lns[lns.len() - 1])) {
                 var (lines, lf) = print_list_lines(vals, lns, prefixes, depth, f);
                 return (sl.type_name + " {" + lines + indent_str(depth) + "}", lf);
             }
@@ -818,13 +818,13 @@ function elem_lines(elems: ast.Expr[], open_line: i32): i32[] {
 }
 
 // print_list renders a call's arguments or an array's elements, without the
-// brackets: one line when no comment sits inside the list, and print_list_lines'
-// form, closed at `depth`'s indent, when one does.
+// brackets: one line unless keep_list_lines holds, and print_list_lines' form,
+// closed at `depth`'s indent, when it does.
 function print_list(elems: ast.Expr[], open_line: i32, prefix: string, depth: i32, f: Fmt): (string, Fmt) {
     var prefixes: string[] = [];
     for x in elems { prefixes = prefixes.append(prefix); }
     var lns: i32[] = elem_lines(elems, open_line);
-    if (elems.len() > 0 && inner_comment_pending(f, open_line, lns[lns.len() - 1])) {
+    if (elems.len() > 0 && keep_list_lines(f, open_line, lns[lns.len() - 1])) {
         var (lines, lf) = print_list_lines(elems, lns, prefixes, depth, f);
         return (lines + indent_str(depth), lf);
     }
@@ -960,6 +960,15 @@ function emit_trailing(f: Fmt, line: i32): (string, Fmt) {
         return ("  //" + f.comments[f.ci].text, Fmt { ...f, ci: f.ci + 1 });
     }
     return ("", f);
+}
+
+// keep_list_lines: does a list opened on line `open`, whose last element is on
+// line `last`, print as it was written rather than on one line? It does when it
+// was written across lines, or when a comment sits inside it, which the
+// one-line rendering has nowhere to put. A desugared list has no opener line
+// and no written layout to keep.
+function keep_list_lines(f: Fmt, open: i32, last: i32): boolean {
+    return open > 0 && last > open || inner_comment_pending(f, open, last);
 }
 
 // inner_comment_pending: is a queued comment written INSIDE a declaration's
@@ -2427,7 +2436,7 @@ function print_struct_decl(sd: parser.StructDecl, flines: parser.FieldLines[], f
     // above the NEXT declaration, which is where they stop describing the field
     // they were written on.
     var lns: i32[] = field_lines_for(flines, sd.name, sd.line);
-    if (lns.len() == sd.fields.len() && lns.len() > 0 && inner_comment_pending(f, sd.line, lns[lns.len() - 1])) {
+    if (lns.len() == sd.fields.len() && lns.len() > 0 && keep_list_lines(f, sd.line, lns[lns.len() - 1])) {
         out = out + " {\n";
         var mi: i32 = 0;
         while (mi < sd.fields.len()) {
@@ -2537,7 +2546,7 @@ function print_enum_decl(ed: parser.EnumDecl, structs: parser.StructDecl[], flin
     // One variant per line whenever a comment was written inside the braces,
     // for the same reason print_struct_decl does it.
     var lns: i32[] = field_lines_for(flines, ed.name, ed.line);
-    if (lns.len() == ed.variant_names.len() && lns.len() > 0 && inner_comment_pending(f, ed.line, lns[lns.len() - 1])) {
+    if (lns.len() == ed.variant_names.len() && lns.len() > 0 && keep_list_lines(f, ed.line, lns[lns.len() - 1])) {
         out = out + " {\n";
         var mvi: i32 = 0;
         while (mvi < ed.variant_names.len()) {

@@ -249,12 +249,21 @@ func (f *formatter) innerCommentPending(declLine, last int) bool {
 	return false
 }
 
+// keepListLines reports whether a list opened on line open, whose last element
+// is on line last, prints as it was written rather than on one line: when it
+// was written across lines, or when a comment sits inside it. The one-line
+// rendering has nowhere to put such a comment, so it would be stranded for the
+// next statement to pick up (#6335, #10143). A desugared list has no opener
+// line and no written layout to keep.
+func (f *formatter) keepListLines(open, last int) bool {
+	return open > 0 && last > open || f.innerCommentPending(open, last)
+}
+
 // writeListLines prints the n elements of a bracketed list one SOURCE line per
 // output line: elements that shared a line in the source share one here, each
 // line's leading comments go above it and its trailing comment after its comma.
-// It is the form a list takes when a comment sits inside it (#10143), since the
-// one-line rendering has nowhere to put the comment and would strand it for the
-// next statement to pick up. The caller has written the opener.
+// It is the form a list takes when keepListLines holds. The caller has written
+// the opener.
 func (f *formatter) writeListLines(n int, line func(int) int, write func(int), closer string) {
 	f.b.WriteByte('\n')
 	f.depth++
@@ -345,12 +354,11 @@ func (f *formatter) formatEnumDecl(ed *ast.EnumDecl) {
 		}
 		f.b.WriteByte(']')
 	}
-	// A comment inside the braces forces the MULTI-LINE form: the one-liner
-	// has nowhere to put it, so it would be stranded in the queue and
-	// re-emitted above the next declaration (#6335). One variant per line
-	// gives each its own drainLeading / emitTrailing pair, which is what
-	// keeps `Unclosed(i32),  // opener never closed` on `Unclosed`.
-	if len(ed.Variants) > 0 && f.innerCommentPending(ed.P.Line, ed.Variants[len(ed.Variants)-1].P.Line) {
+	// Written across lines, or with a comment inside the braces, the enum
+	// prints one variant per line (keepListLines). One variant per line gives
+	// each its own drainLeading / emitTrailing pair, which is what keeps
+	// `Unclosed(i32),  // opener never closed` on `Unclosed`.
+	if len(ed.Variants) > 0 && f.keepListLines(ed.P.Line, ed.Variants[len(ed.Variants)-1].P.Line) {
 		f.b.WriteString(" {\n")
 		for _, v := range ed.Variants {
 			f.drainLeading(v.P.Line, 1)
@@ -510,12 +518,11 @@ func (f *formatter) formatStructDecl(sd *ast.StructDecl) {
 	f.b.WriteString("struct ")
 	f.b.WriteString(sd.Name)
 	f.writeTypeParams(sd.TypeParams, nil, nil)
-	// A comment inside the braces forces the MULTI-LINE form, for the same
-	// reason the enum printer does — see #6335 and innerCommentPending. A
-	// synthetic field (NamePos zero) has no line to attach to, so a struct
+	// Written across lines, or with a comment inside the braces, the struct
+	// prints one field per line, as the enum printer does. A synthetic field (NamePos zero) has no line to attach to, so a struct
 	// carrying one keeps the one-liner.
 	if n := len(sd.Fields); n > 0 && sd.Fields[n-1].NamePos.Line > 0 &&
-		f.innerCommentPending(sd.P.Line, sd.Fields[n-1].NamePos.Line) {
+		f.keepListLines(sd.P.Line, sd.Fields[n-1].NamePos.Line) {
 		f.b.WriteString(" {\n")
 		for _, fld := range sd.Fields {
 			f.drainLeading(fld.NamePos.Line, 1)
@@ -1852,7 +1859,7 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 		f.formatExpr(x.Callee, precPrimary)
 		f.writeCallTypeArgs(x)
 		f.b.WriteByte('(')
-		if n := len(x.Args); n > 0 && f.innerCommentPending(x.P.Line, x.Args[n-1].Pos().Line) {
+		if n := len(x.Args); n > 0 && f.keepListLines(x.P.Line, x.Args[n-1].Pos().Line) {
 			f.writeListLines(n, func(i int) int { return x.Args[i].Pos().Line },
 				func(i int) { f.writeCallArg(x, i, x.Args[i]) }, ")")
 			break
@@ -1882,7 +1889,7 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 		f.b.WriteByte(']')
 	case *ast.ArrayLit:
 		f.b.WriteByte('[')
-		if n := len(x.Elems); n > 0 && f.innerCommentPending(x.P.Line, x.Elems[n-1].Pos().Line) {
+		if n := len(x.Elems); n > 0 && f.keepListLines(x.P.Line, x.Elems[n-1].Pos().Line) {
 			f.writeListLines(n, func(i int) int { return x.Elems[i].Pos().Line },
 				func(i int) { f.formatExpr(x.Elems[i], precLowest) }, "]")
 			break
@@ -1970,7 +1977,7 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 			}
 			return x.Fields[i-nb].NamePos.Line
 		}
-		if n := nb + len(x.Fields); n > 0 && f.innerCommentPending(x.P.Line, elemLine(n-1)) {
+		if n := nb + len(x.Fields); n > 0 && f.keepListLines(x.P.Line, elemLine(n-1)) {
 			f.b.WriteString(" {")
 			f.writeListLines(n, elemLine, func(i int) {
 				if i < nb {

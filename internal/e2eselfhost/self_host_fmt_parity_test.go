@@ -1439,6 +1439,43 @@ return tup((1, 2)) + strct(P { x: 1, y: 2 }) + block_arm((0, 3)) + sub_pattern_s
 function g(): i32 { return 1; }  // one
 function main(): i32 { return f(3) + g(); }
 `},
+	// A list written across lines keeps its lines with no comment inside
+	// (#8475): a table written one entry per line does not collapse onto one.
+	// The written grouping survives, as it does for a commented list. A list
+	// written on one line stays one line, and struct and enum declarations
+	// written across lines print one member per line.
+	{"list-written-across-lines", `struct S {
+  a: i32,
+  b: i32
+}
+struct T { a: i32 }
+enum E {
+  A,
+  B(i32)
+}
+const NAMES: string[] = [
+  "a", "b",
+  "c"
+];
+function g(a: i32, b: i32): i32 {
+  return a + b;
+}
+function main(): i32 {
+  var s: S = S { a: 1,
+    b: 2 };
+  var t: S = S {
+    ...s,
+    a: 3
+  };
+  var xs: i32[] = [1,
+    2, 3];
+  var flat: i32[] = [1, 2];
+  var n: i32 = g(xs[0],
+    t.a + s.b + flat[0]);
+  return n + NAMES.len() + xs
+    .len();
+}
+`},
 	{"list-interior-comments", `struct S { a: i32, b: i32 }
 const NAMES: string[] = [
   // group one
