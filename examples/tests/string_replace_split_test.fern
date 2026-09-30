@@ -37,7 +37,7 @@ function test_replace_n(): test.TestOutcome {
 
 function test_replace_byte(): test.TestOutcome {
     // 45 is '-', 95 is '_'.
-    return test.assert_eq("a-b-c".replace_byte(45, 95), "a_b_c");
+    return test.assert_eq_array("a-b-c".replace_byte(45, 95), "a_b_c".bytes());
 }
 
 // ---- deletion ----
@@ -48,7 +48,7 @@ function test_remove_all(): test.TestOutcome {
 
 function test_without_byte(): test.TestOutcome {
     // 108 is 'l'.
-    return test.assert_eq("hello".without_byte(108), "heo");
+    return test.assert_eq_array("hello".without_byte(108), "heo".bytes());
 }
 
 function test_without_chars(): test.TestOutcome {

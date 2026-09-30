@@ -6532,6 +6532,7 @@ function main(): i32 {
 func TestArm64StdlibBundle30(t *testing.T) {
 	src := `
 import "std/string";
+import "std/array";
 function main(): i32 {
     if ("aXbXc".replace_first("X", "_") != "a_bXc") { return 1; }
     if ("none here".replace_first("x", "y") != "none here") { return 2; }
@@ -6590,10 +6591,10 @@ function main(): i32 {
     if ((100).is_prime()) { return 67; }
     if ((0 - 7).is_prime()) { return 68; }
 
-    if ("abc".shift_byte(1) != "bcd") { return 70; }
-    if ("xyz".shift_byte(0 - 1) != "wxy") { return 71; }
-    if ("".shift_byte(5) != "") { return 72; }
-    if ("a".shift_byte(0) != "a") { return 73; }
+    if (!"abc".shift_byte(1).equal("bcd".bytes())) { return 70; }
+    if (!"xyz".shift_byte(0 - 1).equal("wxy".bytes())) { return 71; }
+    if ("".shift_byte(5).len() != 0) { return 72; }
+    if (!"a".shift_byte(0).equal("a".bytes())) { return 73; }
     return 0;
 }`
 	_, code := compileAndRunArm64(t, src)
@@ -6817,10 +6818,10 @@ function main(): i32 {
     if (!((0 - 6)).is_multiple_of(3)) { return 24; }
 
     // replace_byte
-    if ("a-b-c".replace_byte(45, 95) != "a_b_c") { return 30; }
-    if ("xxx".replace_byte(120, 121) != "yyy") { return 31; }
-    if ("".replace_byte(65, 66) != "") { return 32; }
-    if ("abc".replace_byte(122, 65) != "abc") { return 33; }
+    if (!"a-b-c".replace_byte(45, 95).equal("a_b_c".bytes())) { return 30; }
+    if (!"xxx".replace_byte(120, 121).equal("yyy".bytes())) { return 31; }
+    if ("".replace_byte(65, 66).len() != 0) { return 32; }
+    if (!"abc".replace_byte(122, 65).equal("abc".bytes())) { return 33; }
 
     // join_with_last
     if (["a", "b", "c", "d"].join_with_last(", ", " and ") != "a, b, c and d") { return 40; }
@@ -8143,6 +8144,7 @@ import "std/i64";
 import "std/u32";
 import "std/u64";
 import "std/string";
+import "std/array";
 function main(): i32 {
     // i64 abs / min / max / clamp.
     var i: i64 = 0 - 42 as i64;
@@ -8179,10 +8181,10 @@ function main(): i32 {
     if ((mixed[1] as i32) != 233 || (mixed[2] as i32) != 128512) { return 25; }
     if ("aé😀".bytes().len() != 7) { return 26; }
 
-    // String reverse_bytes — ASCII only.
-    if ("hello".reverse_bytes() != "olleh") { return 21; }
-    if ("a".reverse_bytes() != "a") { return 22; }
-    if ("".reverse_bytes() != "") { return 23; }
+    // String reverse_bytes returns bytes even for ASCII.
+    if (!"hello".reverse_bytes().equal("olleh".bytes())) { return 21; }
+    if (!"a".reverse_bytes().equal("a".bytes())) { return 22; }
+    if ("".reverse_bytes().len() != 0) { return 23; }
     return 0;
 }`
 	_, code := compileAndRunArm64(t, src)
