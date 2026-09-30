@@ -183,74 +183,14 @@ function size_max(): u64 {
   return 18446744073709551615 as u64;
 }
 
-// gnulib's posix2_version(): `_POSIX2_VERSION` when the whole variable
-// is a number, else the edition this build targets.
-function posix2_version(): i32 {
-  match (env("_POSIX2_VERSION")) {
-    Some(s) => {
-      if (s.len() > 0) {
-        match (parse_long(s)) {
-          Some(v) => {
-            return v;
-          },
-          None => {}
-        }
-      }
-    },
-    None => {}
-  }
-  return 200809;
-}
-
 // Whether `+N` is still the obsolete skip-chars operand rather than a
 // file name. POSIX withdrew the form in 1003.1-2001 and allowed it
 // again in 2008, so the window that refuses it is bounded at BOTH ends:
 // `_POSIX2_VERSION=200112` makes `uniq +2 f` read a file called `+2`
 // and `=200809` does not.
 function obsolete_plus_allowed(): boolean {
-  var v: i32 = posix2_version();
-  return v < 200112 || v >= 200809;
-}
-
-// strtol over the WHOLE string, saturating at the i32 ends the way
-// posix2_version clamps to INT_MIN/INT_MAX. None when anything is left
-// over, which is when gnulib keeps its default.
-function parse_long(s: string): Option[i32] {
-  var i: i32 = 0;
-  while (i < s.len() && is_space(s[i] as i32)) {
-    i = i + 1;
-  }
-  var neg: boolean = false;
-  if (i < s.len() && (s[i] as i32 == 43 || s[i] as i32 == 45)) {
-    neg = s[i] as i32 == 45;
-    i = i + 1;
-  }
-  if (i >= s.len() || !is_digit(s[i] as i32)) {
-    return None;
-  }
-  var v: i64 = 0 as i64;
-  var over: boolean = false;
-  while (i < s.len() && is_digit(s[i] as i32)) {
-    if (v > 999999999 as i64) {
-      over = true;
-    } else {
-      v = v * (10 as i64) + (s[i] as i32 - 48) as i64;
-    }
-    i = i + 1;
-  }
-  if (i != s.len()) {
-    return None;
-  }
-  if (over) {
-    if (neg) {
-      return Some(0 - 2147483647 - 1);
-    }
-    return Some(2147483647);
-  }
-  if (neg) {
-    return Some(0 - v as i32);
-  }
-  return Some(v as i32);
+  var v: i64 = gnu.posix2_version();
+  return v < 200112 as i64 || v >= 200809 as i64;
 }
 
 // ---- how a group is reported -----------------------------------------------

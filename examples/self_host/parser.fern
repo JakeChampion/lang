@@ -9747,7 +9747,7 @@ function variant_arg_binds(pattern: string, arg: ast.Expr, env: MEnv, funcs: MFn
         var vname: string = ctor_variant_name(c.callee, funcs.enums);
         if (vname.len() > 0) {
             var owner: i32 = genum_owner_of_variant(funcs.enums, vname);
-            if (owner < 0) { return builtin_variant_arg_binds(pattern, vname, c.args, env, funcs, vars, binds); }
+            if (owner < 0) { return builtin_variant_arg_binds(pattern, c, env, funcs, vars, binds); }
             var ed: EnumDecl = funcs.enums[owner];
             var own: MEnv = me_variant_binds(ed, vname, c.args, env, funcs.structs, funcs);
             if (str_list_contains(vars, pattern)) {
@@ -9773,25 +9773,26 @@ function variant_arg_binds(pattern: string, arg: ast.Expr, env: MEnv, funcs: MFn
     return binds;
 }
 
-// builtin_variant_arg_binds is variant_arg_binds for `Ok(x)`, `Err(x)` and
-// `Some(x)`, whose enums are not declared anywhere: the payload's inferred
-// type binds the variables the parameter names in that half of its
-// `Result[..]` / `Option[..]`. A number literal payload binds nothing, as
-// its width is the parameter's to decide.
-function builtin_variant_arg_binds(pattern: string, vname: string, args: ast.Expr[], env: MEnv, funcs: MFns, vars: string[], binds: MEnv): MEnv {
-    if (args.len() != 1 || number_literal_tree(args[0])) { return binds; }
+// builtin_variant_arg_binds is variant_arg_binds for the builtin `Some`, `Ok`
+// and `Err`: the payload binds the matching argument of an `Option[..]` or
+// `Result[..]` parameter, and the other half stays for another argument. A
+// number literal payload binds nothing, as its width is the parameter's to
+// decide.
+function builtin_variant_arg_binds(pattern: string, c: ast.ExprCall, env: MEnv, funcs: MFns, vars: string[], binds: MEnv): MEnv {
+    if (c.args.len() != 1 || number_literal_tree(c.args[0])) { return binds; }
     var slot: i32 = 0 - 1;
     var base: string = "";
-    if (vname == "Some") { base = "Option"; slot = 0; }
-    if (vname == "Ok") { base = "Result"; slot = 0; }
-    if (vname == "Err") { base = "Result"; slot = 1; }
-    if (slot < 0) { return binds; }
+    if let ast.ExprIdent(cid) = c.callee {
+        if (cid.name == "Some") { base = "Option"; slot = 0; }
+        if (cid.name == "Ok") { base = "Result"; slot = 0; }
+        if (cid.name == "Err") { base = "Result"; slot = 1; }
+    }
     var pb: i32 = first_bracket(pattern);
-    if (pb <= 0 || slice_unchecked(pattern, pattern.len() - 1, pattern.len()) != "]") { return binds; }
+    if (slot < 0 || pb <= 0 || slice_unchecked(pattern, pattern.len() - 1, pattern.len()) != "]") { return binds; }
     if (slice_unchecked(pattern, 0, pb) != base) { return binds; }
     var pargs: string[] = split_top_commas(slice_unchecked(pattern, pb + 1, pattern.len() - 1));
     if (slot >= pargs.len()) { return binds; }
-    var pt: string = mono_infer(args[0], env, funcs);
+    var pt: string = mono_infer(c.args[0], env, funcs);
     if (pt.len() == 0) { return binds; }
     return bind_unify(strip_ws(pargs[slot]), pt, vars, binds);
 }
@@ -10292,15 +10293,13 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
         ast.ExprFieldAccess(fa) => {
             var ot: string = mono_infer(fa.obj, env, funcs);
             if (ot.len() == 0) { return ""; }
-            // `p.1` on a tuple value: that element's type (#10683), which is
-            // what lets a call in a generic's body bind on a tuple element.
-            // Only the element read may not mention a type variable: an
-            // erased, unbounded `S` beside it in `(S, Result[i32, E])` is no
-            // reason to leave the call generic.
-            if (util.is_tuple_type_name(ot)) {
-                var k: i32 = tuple_index_field(fa.field);
-                if (k < 0) { return ""; }
+            // A tuple index reads that element of a tuple-typed value
+            // (#10683). Only the element read may not mention a type
+            // variable: an erased, unbounded `S` beside it in
+            // `(S, Result[i32, E])` is no reason to leave the call generic.
+            if (util.is_all_digits(fa.field) && util.is_tuple_type_name(ot)) {
                 var elems: string[] = split_top_commas(slice_unchecked(ot, 1, ot.len() - 1) + "");
+                var k: i32 = util.digits_to_i32(fa.field);
                 if (k >= elems.len() || mono_ty_mentions_var(elems[k])) { return ""; }
                 return elems[k];
             }
@@ -10312,21 +10311,6 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
         _ => { return ""; }
     }
     return "";
-}
-
-// tuple_index_field is the element a field access names on a tuple
-// (`.0`, `.1`, ...), or -1 for a field that is not all digits.
-function tuple_index_field(field: string): i32 {
-    if (field.len() == 0) { return 0 - 1; }
-    var k: i32 = 0;
-    var i: i32 = 0;
-    while (i < field.len()) {
-        var b: i32 = field[i] as i32;
-        if (b < 48 || b > 57) { return 0 - 1; }
-        k = k * 10 + (b - 48);
-        i = i + 1;
-    }
-    return k;
 }
 
 // mono_expr rebuilds `e`, rewriting any call to a bounded generic into
@@ -12354,33 +12338,41 @@ function ms_expr(e: ast.Expr, env: MEnv, gstructs: StructDecl[], funcs: MFns, in
             return RExpr { rexpr: ast.ExprFieldAccess { obj: o.rexpr, field: fa.field, line: fa.line, col: fa.col, ty: fa.ty }, rins: o.rins };
         },
         ast.ExprStructLit(s) => { return ms_struct_lit(s, "", env, gstructs, funcs, ins); },
-        ast.ExprLambda(lm) => {
-            var bodyr: RStmts = ms_stmts(lm.body, env, gstructs, funcs, ins, "");
-            var rt: TyIns = mg_ty(lm.ret_type, gstructs, bodyr.rins3);
-            var nparams: ast.ParamDecl[] = [];
-            var pcur: Insts = rt.mins;
-            var pi: i32 = 0;
-            while (pi < lm.params.len()) {
-                var pt: TyIns = mg_ty(lm.params[pi].type_name, gstructs, pcur);
-                pcur = pt.mins;
-                var pr: TyIns = mg_ty(lm.params[pi].fn_ret, gstructs, pcur);
-                pcur = pr.mins;
-                var pl: TyIns = mg_ty_list(lm.params[pi].fn_param_types, gstructs, pcur);
-                pcur = pl.mins;
-                nparams = nparams.append(ast.ParamDecl { ...lm.params[pi], type_name: pt.ty, fn_ret: pr.ty, fn_param_types: pl.ty });
-                pi = pi + 1;
-            }
-            // The lambda's own callable RESULT lives in the same sidecar pair
-            // FuncDecl carries, and the `...lm` spread would copy it verbatim.
-            var lrr: TyIns = mg_ty(lm.ret_fn_ret, gstructs, pcur);
-            pcur = lrr.mins;
-            var lrl: TyIns = mg_ty_list(lm.ret_fn_param_types, gstructs, pcur);
-            pcur = lrl.mins;
-            return RExpr { rexpr: ast.ExprLambda { ...lm, params: nparams, ret_type: rt.ty, ret_fn_ret: lrr.ty, ret_fn_param_types: lrl.ty, body: bodyr.rstmts, use_infer: false }, rins: pcur };
-        },
+        ast.ExprLambda(lm) => { return ms_lambda(lm, "", env, gstructs, funcs, ins); },
         _ => { return RExpr { rexpr: e, rins: ins }; }
     }
     return RExpr { rexpr: e, rins: ins };
+}
+
+// ms_lambda rewrites a lambda's annotations and body. Its `return`s are bound
+// to `dest` when one is given — a value-position if/match is a lambda called
+// at once, and the binding it initializes is its arms' result — and else to
+// the result type the lambda declares.
+function ms_lambda(lm: ast.ExprLambda, dest: string, env: MEnv, gstructs: StructDecl[], funcs: MFns, ins: Insts): RExpr {
+    var rt: TyIns = mg_ty(lm.ret_type, gstructs, ins);
+    var rdest: string = dest;
+    if (rdest.len() == 0 && !mono_ty_mentions_var(lm.ret_type)) { rdest = rt.ty; }
+    var bodyr: RStmts = ms_stmts(lm.body, env, gstructs, funcs, rt.mins, rdest);
+    var nparams: ast.ParamDecl[] = [];
+    var pcur: Insts = bodyr.rins3;
+    var pi: i32 = 0;
+    while (pi < lm.params.len()) {
+        var pt: TyIns = mg_ty(lm.params[pi].type_name, gstructs, pcur);
+        pcur = pt.mins;
+        var pr: TyIns = mg_ty(lm.params[pi].fn_ret, gstructs, pcur);
+        pcur = pr.mins;
+        var pl: TyIns = mg_ty_list(lm.params[pi].fn_param_types, gstructs, pcur);
+        pcur = pl.mins;
+        nparams = nparams.append(ast.ParamDecl { ...lm.params[pi], type_name: pt.ty, fn_ret: pr.ty, fn_param_types: pl.ty });
+        pi = pi + 1;
+    }
+    // The lambda's own callable RESULT lives in the same sidecar pair
+    // FuncDecl carries, and the `...lm` spread would copy it verbatim.
+    var lrr: TyIns = mg_ty(lm.ret_fn_ret, gstructs, pcur);
+    pcur = lrr.mins;
+    var lrl: TyIns = mg_ty_list(lm.ret_fn_param_types, gstructs, pcur);
+    pcur = lrl.mins;
+    return RExpr { rexpr: ast.ExprLambda { ...lm, params: nparams, ret_type: rt.ty, ret_fn_ret: lrr.ty, ret_fn_param_types: lrl.ty, body: bodyr.rstmts, use_infer: false }, rins: pcur };
 }
 
 // ms_struct_lit rewrites a struct literal of a generic struct to its mangled
@@ -12394,7 +12386,14 @@ function ms_struct_lit(s: ast.ExprStructLit, dest: string, env: MEnv, gstructs: 
     var vals: ast.Expr[] = [];
     var i: i32 = 0;
     while (i < s.field_values.len()) {
-        var rv: RExpr = ms_expr(s.field_values[i], env, gstructs, funcs, cur);
+        var fdest: string = "";
+        var fty: string = lit_field_decl_type(funcs.structs, s.type_name, s.field_names[i]);
+        if (fty.len() > 0 && !mono_ty_mentions_var(fty)) {
+            var fm: TyIns = mg_ty(fty, gstructs, cur);
+            cur = fm.mins;
+            fdest = fm.ty;
+        }
+        var rv: RExpr = ms_expr_to(s.field_values[i], fdest, env, gstructs, funcs, cur);
         cur = rv.rins;
         vals = vals.append(rv.rexpr);
         i = i + 1;
@@ -12415,6 +12414,19 @@ function ms_struct_lit(s: ast.ExprStructLit, dest: string, env: MEnv, gstructs: 
     return RExpr { rexpr: ast.ExprStructLit { type_name: tn, field_names: s.field_names, field_values: vals, has_base: s.has_base, base: rb.rexpr, line: s.line, col: s.col }, rins: cur };
 }
 
+// lit_field_decl_type is the declared type of field `field` of the
+// non-generic struct `name`, or "": a generic struct's field names a type
+// variable the literal's own instantiation settles.
+function lit_field_decl_type(structs: StructDecl[], name: string, field: string): string {
+    for sd in structs {
+        if (sd.name == name && sd.type_params.len() == 0) {
+            for f in sd.fields { if (f.name == field) { return f.type_name; } }
+            return "";
+        }
+    }
+    return "";
+}
+
 // is_clone_of: `mangled` names a monomorphised clone of generic struct `base`.
 function is_clone_of(mangled: string, base: string): boolean {
     var pfx: string = base + "__";
@@ -12423,10 +12435,19 @@ function is_clone_of(mangled: string, base: string): boolean {
 
 // ms_expr_to is ms_expr for an expression bound to the mangled type `dest`: a
 // generic struct literal takes its instantiation from `dest`, and so does each
-// element of an array literal bound to `dest`'s array type.
+// element of an array literal bound to `dest`'s array type and each arm of a
+// value-position if/match.
 function ms_expr_to(e: ast.Expr, dest: string, env: MEnv, gstructs: StructDecl[], funcs: MFns, ins: Insts): RExpr {
     if (dest.len() == 0) { return ms_expr(e, env, gstructs, funcs, ins); }
     if let ast.ExprStructLit(s) = e { return ms_struct_lit(s, dest, env, gstructs, funcs, ins); }
+    if let ast.ExprCall(c) = e {
+        if let ast.ExprLambda(lm) = c.callee {
+            if (c.args.len() == 0 && lm.params.len() == 0) {
+                var rl: RExpr = ms_lambda(lm, dest, env, gstructs, funcs, ins);
+                return RExpr { rexpr: ast.ExprCall { ...c, callee: rl.rexpr }, rins: rl.rins };
+            }
+        }
+    }
     if let ast.ExprArray(a) = e {
         if (type_ends_arr(dest)) {
             var el: string = slice_unchecked(dest, 0, dest.len() - 2) + "";
@@ -12444,8 +12465,8 @@ function ms_expr_to(e: ast.Expr, dest: string, env: MEnv, gstructs: StructDecl[]
 }
 
 // ms_call rewrites a call's callee and arguments. An argument to a plain
-// function is bound to that parameter's declared type when the type names no
-// type variable.
+// function or to a method of a non-generic receiver is bound to that
+// parameter's declared type when the type names no type variable.
 function ms_call(c: ast.ExprCall, env: MEnv, gstructs: StructDecl[], funcs: MFns, ins: Insts): RExpr {
     var rc: RExpr = ms_expr(c.callee, env, gstructs, funcs, ins);
     var cur: Insts = rc.rins;
@@ -12453,12 +12474,14 @@ function ms_call(c: ast.ExprCall, env: MEnv, gstructs: StructDecl[], funcs: MFns
     if let ast.ExprIdent(cid) = c.callee {
         if (env.elook(cid.name).len() == 0) { fname = cid.name; }
     }
+    var mdecl: i32 = method_decl_at(c.callee, env, funcs);
     var nargs: ast.Expr[] = [];
     var i: i32 = 0;
     while (i < c.args.len()) {
         var dest: string = "";
         var pty: string = "";
         if (fname.len() > 0) { pty = func_param_type_at(funcs.decls, fname, i); }
+        else if (mdecl >= 0 && i < funcs.decls[mdecl].params.len()) { pty = funcs.decls[mdecl].params[i].type_name; }
         if (pty.len() > 0 && !mono_ty_mentions_var(pty)) {
             var pm: TyIns = mg_ty(pty, gstructs, cur);
             cur = pm.mins;
@@ -12470,6 +12493,22 @@ function ms_call(c: ast.ExprCall, env: MEnv, gstructs: StructDecl[], funcs: MFns
         i = i + 1;
     }
     return RExpr { rexpr: ast.ExprCall { callee: rc.rexpr, args: nargs, line: c.line, col: c.col, type_args: c.type_args, ty: c.ty }, rins: cur };
+}
+
+// method_decl_at is the index in funcs.decls of the method `recv.m` names,
+// for a receiver whose type the monomorphiser can read, or -1.
+function method_decl_at(callee: ast.Expr, env: MEnv, funcs: MFns): i32 {
+    if let ast.ExprFieldAccess(fa) = callee {
+        var rt: string = mono_infer(fa.obj, env, funcs);
+        if (rt.len() == 0) { return 0 - 1; }
+        var i: i32 = 0;
+        while (i < funcs.decls.len()) {
+            var d: FuncDecl = funcs.decls[i];
+            if (d.name == fa.field && d.receiver_name.len() > 0 && d.receiver_type == rt && d.all_type_params.len() == 0) { return i; }
+            i = i + 1;
+        }
+    }
+    return 0 - 1;
 }
 
 // retype_assoc_ctor rewrites a receiver-less associated call on a GENERIC
@@ -17011,6 +17050,10 @@ function retag_type_arg_indexes(mod: Module): Module {
     for sd in mod.structs { types = types.append(sd.name); }
     for ed in mod.enums { types = types.append(ed.name); }
     for rd in mod.resources { types = types.append(rd.name); }
+    // A module const is a value in the bracket, as native's const folding
+    // makes it before the retag (#10427).
+    var consts: string[] = [];
+    for fd in mod.funcs { if (fd.is_const) { consts = consts.append(fd.name); } }
     // Most bodies hold no `f[Name](…)` at all; rebuilding them would copy the
     // whole module for nothing.
     var funcs: FuncDecl[] = [];
@@ -17019,7 +17062,7 @@ function retag_type_arg_indexes(mod: Module): Module {
             funcs = funcs.append(fd);
             continue;
         }
-        var shadow: string[] = astwalk.collect_bound_stmts(fd.body, []);
+        var shadow: string[] = astwalk.collect_bound_stmts(fd.body, consts);
         for pd in fd.params { shadow = shadow.append(pd.name); }
         // Unbounded type parameters are erased from the decl, but every name
         // the signature's types mention is a type or one of them.
@@ -17032,7 +17075,7 @@ function retag_type_arg_indexes(mod: Module): Module {
         funcs = funcs.append(FuncDecl { ...fd, body: astwalk.map_stmts(fd.body, rw) });
     }
     if (!rta_has_index_call(mod.top_stmts)) { return Module { ...mod, funcs: funcs }; }
-    var top_shadow: string[] = astwalk.collect_bound_stmts(mod.top_stmts, []);
+    var top_shadow: string[] = astwalk.collect_bound_stmts(mod.top_stmts, consts);
     function top_rw(x: ast.Expr): ast.Expr { return rta_call_of(x, generics, types, top_shadow); }
     return Module { ...mod, funcs: funcs, top_stmts: astwalk.map_stmts(mod.top_stmts, top_rw) };
 }
@@ -18060,10 +18103,11 @@ pub function written_type_vars_module(mod: Module): Module {
 }
 
 function respell_type_vars_module(mod: Module, written: boolean): Module {
+    var mvals: string[] = module_value_names(mod);
     var funcs: FuncDecl[] = [];
     for fd in mod.funcs {
         var fvars: string[] = fn_type_vars(fd, mod, written);
-        funcs = funcs.append(rename_fn_type_vars(fd, fvars, tvar_respellings(fvars, written)));
+        funcs = funcs.append(rename_fn_type_vars(fd, fvars, tvar_respellings(fvars, written), mvals));
     }
     var structs: StructDecl[] = [];
     for sd in mod.structs {
@@ -18080,6 +18124,19 @@ function respell_type_vars_module(mod: Module, written: boolean): Module {
         impls = impls.append(rename_impl_type_vars(im, ivars, tvar_respellings(ivars, written)));
     }
     return Module { ...mod, funcs: funcs, structs: structs, enums: enums, impls: impls };
+}
+
+// module_value_names is every module-level name the checker resolves as a
+// value or a qualifier: a const, a function used as a value, a variant, and an
+// enum, struct or alias qualifying a variant or an associated call. A type
+// variable of the same name does not reach those positions (#10427).
+function module_value_names(mod: Module): string[] {
+    var out: string[] = [];
+    for fd in mod.funcs { if (fd.receiver_type.len() == 0) { out = out.append(fd.name); } }
+    for sd in mod.structs { out = out.append(sd.name); }
+    for ed in mod.enums { out = out.append(ed.name); }
+    for al in mod.aliases { out = out.append(al.name); }
+    return out;
 }
 
 // tvar_respellings maps each variable to its reserved spelling, or with
@@ -18170,9 +18227,10 @@ function rename_param_type_vars(pd: ast.ParamDecl, vars: string[], cts: string[]
     return ast.ParamDecl { ...pd, type_name: subst_ty(pd.type_name, vars, cts), fn_ret: subst_ty(pd.fn_ret, vars, cts), fn_param_types: subst_ty_list(pd.fn_param_types, vars, cts), default_value: dv };
 }
 
-function rename_fn_type_vars(fd: FuncDecl, vars: string[], cts: string[]): FuncDecl {
+function rename_fn_type_vars(fd: FuncDecl, vars: string[], cts: string[], mvals: string[]): FuncDecl {
     if (vars.len() == 0) { return fd; }
     var values: string[] = [];
+    for v in vars { if (str_in(mvals, v)) { values = values.append(v); } }
     if (fd.receiver_name.len() > 0) { values = values.append(fd.receiver_name); }
     for pd in fd.params { values = astwalk.append_bound_name(values, pd.name); }
     var sc: TvScope = TvScope { vars: vars, cts: cts, values: values };
@@ -18236,8 +18294,9 @@ function rename_tv_expr(e: ast.Expr, vars: string[], cts: string[]): ast.Expr {
 // A type variable also reaches two expression positions: the object of
 // `T.default()`, and the bracket of `f[T](x)`, which parses as an index until
 // retag_type_arg_indexes settles it as a type argument. A value binding of the
-// same name shadows it in both, as in native, so that respelling walks the
-// body with the value names in scope. TvScope is the
+// same name shadows it in both, and so does a module-level name the checker
+// resolves in either position (module_value_names), so that respelling walks
+// the body with the value names in scope. TvScope is the
 // walk's accumulator: the declaration's variables, their respellings, and the
 // value names bound so far.
 struct TvScope { vars: string[], cts: string[], values: string[] }

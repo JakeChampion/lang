@@ -1,6 +1,7 @@
 package coreutils
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"sync"
 	"syscall"
 	"testing"
+	"time"
 	"unsafe"
 )
 
@@ -154,7 +156,7 @@ func ioctl(fd, req, arg uintptr) error {
 //
 // The drain has to be concurrent: a terminal buffers only a few kilobytes,
 // so a child writing more than that into a master nobody is reading blocks
-// for ever. `wait` returns what arrived, once every slave copy is closed.
+// for ever. `finish` returns what arrived, once the child has exited.
 type ptyReader struct {
 	done chan struct{}
 	buf  []byte
@@ -162,8 +164,10 @@ type ptyReader struct {
 }
 
 // drainPty starts the goroutine. Reading a master whose last slave has closed
-// answers EIO on Linux rather than EOF, so any error ends the drain: what
-// arrived before it is the output either way.
+// answers EIO on Linux rather than EOF, so any error ends the drain. That EIO
+// can arrive with the child's last writes still queued between the two ends,
+// which is why the end of the output is marked by finish rather than read off
+// the slave's close (#9807).
 func drainPty(master *os.File) *ptyReader {
 	r := &ptyReader{done: make(chan struct{})}
 	go func() {
@@ -184,11 +188,37 @@ func drainPty(master *os.File) *ptyReader {
 	return r
 }
 
-func (r *ptyReader) wait() []byte {
+// ptyEndMark is written into a slave once its child has exited. It queues
+// behind everything the child wrote, so reading it back means the output is
+// all in. No output processing a case's stty can switch on rewrites it: it
+// holds no letter, no newline or return, and no tab or other delayed control.
+const ptyEndMark = "\x1f#9807#\x1f"
+
+// ptyEndWait bounds the wait for the mark, for a terminal whose output a case
+// left stopped.
+const ptyEndWait = 10 * time.Second
+
+// finish ends the capture of a child that has exited: marks the end through
+// the parent's own copy of the slave, reads up to the mark, then closes that
+// copy and reads to the end, so a descendant still holding the slave is
+// captured as before. Returns the output with the mark taken out.
+func (r *ptyReader) finish(slave *os.File) []byte {
+	go func() { _, _ = slave.Write([]byte(ptyEndMark)) }()
+	deadline := time.Now().Add(ptyEndWait)
+	for !r.holds(ptyEndMark) && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	slave.Close()
 	<-r.done
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.buf
+	return bytes.Replace(r.buf, []byte(ptyEndMark), nil, 1)
+}
+
+func (r *ptyReader) holds(mark string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return bytes.Contains(r.buf, []byte(mark))
 }
 
 // feedPty writes `text` into a master and follows it with ^D, the terminal's

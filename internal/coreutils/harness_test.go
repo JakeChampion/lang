@@ -1090,10 +1090,11 @@ func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 	// answer every isatty the same way.
 	var ptySlaves []*os.File
 	var ptyOut, ptyErr *ptyReader
-	// The parent's own copy of each slave has to go once the child holds
-	// it: while any is open, a read of the master cannot see the end of
-	// the child's output and the drain never finishes. Called right after
-	// the fork, and again on the way out for the paths that never started.
+	// The parent keeps its copy of an OUTPUT slave until the child has
+	// exited, and ptyReader.finish marks the end of the output through it;
+	// the input slave's copy goes right after the fork. closeSlaves runs
+	// then, and again on the way out for the paths that never started.
+	var outSlave, errSlave *os.File
 	closeSlaves := func() {
 		for _, f := range ptySlaves {
 			f.Close()
@@ -1101,6 +1102,13 @@ func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 		ptySlaves = nil
 	}
 	defer closeSlaves()
+	defer func() {
+		for _, f := range []*os.File{outSlave, errSlave} {
+			if f != nil {
+				f.Close()
+			}
+		}
+	}()
 	var ptyIn *os.File
 	if inv.ttyIn {
 		master, slave := openPty(t)
@@ -1116,14 +1124,14 @@ func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 	if inv.ttyOut {
 		master, slave := openPty(t)
 		defer master.Close()
-		ptySlaves = append(ptySlaves, slave)
+		outSlave = slave
 		cmd.Stdout = slave
 		ptyOut = drainPty(master)
 	}
 	if inv.ttyErr {
 		master, slave := openPty(t)
 		defer master.Close()
-		ptySlaves = append(ptySlaves, slave)
+		errSlave = slave
 		cmd.Stderr = slave
 		ptyErr = drainPty(master)
 	}
@@ -1236,7 +1244,8 @@ func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 		}
 		overran = inv.runBounded(cmd, closeSlaves)
 		if inv.ttyOut {
-			out = ptyOut.wait()
+			out = ptyOut.finish(outSlave)
+			outSlave = nil
 		} else {
 			out = outBuf.Bytes()
 		}
@@ -1251,7 +1260,8 @@ func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 	}
 	stderr := errBuf.Bytes()
 	if inv.ttyErr {
-		stderr = ptyErr.wait()
+		stderr = ptyErr.finish(errSlave)
+		errSlave = nil
 	}
 	res := outcome{
 		stdout:  out,

@@ -37,8 +37,7 @@ function main(): i32 {
 // Interpreter-confirmed.
 const vblockTailMoveWant = 41
 
-// The move through a nested value block. The semantic lowering refuses this
-// main (#10436), so only the AST lowering runs it.
+// The move through a nested value block, on both lowerings (#10436).
 const vblockNestedTailMoveSrc = `function main(): i32 {
     var t: i32 = 0;
     var j: i32 = 0;
@@ -96,6 +95,45 @@ function main(): i32 {
 // Interpreter-confirmed.
 const closureRebindReleaseWant = 76
 
+// A defer inside a value block names an unannotated local of that block, which
+// the desugar cannot lift, and replays at the function's exit, so the block
+// keeps the local rather than moving it out (#10496).
+const vblockDeferUnliftedSrc = `function main(): i32 {
+    var r = 0;
+    var c = 1;
+    var d = { var q = [1, 2, 3]; if (c > 0) { defer { r = q[0] + q.len() } } q };
+    var e = { var s = ["ab", "c"]; if (c > 5) { defer { r = r + s.len() } } s };
+    return d[0] + r * 10 + e[0].len() * 50;
+}
+`
+
+// Interpreter-confirmed: the replays run after the return value is read.
+const vblockDeferUnliftedWant = 101
+
+// An unannotated binding of an array of arrays that a value block yields, or
+// that a call returns, takes the array-of-arrays class and its rows' credit
+// (#10497): a block that captures nothing is lifted to a `__lam_N` call, and
+// `c` is inlined because it captures `j`.
+const vblockArrArrSrc = `function mk(j: i32): i32[][] { return [[j, 1], [2]]; }
+function main(): i32 {
+    var t = 0;
+    var j = 0;
+    while (j < 5) {
+        var a = { var q = [[3, 2], [3, 4]]; q };
+        var b = { var q = [["ab", "c"], ["def"]]; q };
+        var c = { var q = [[j * 2, 5], [6]]; q };
+        var m = mk(j);
+        var f = { var q = [[1.5, 2.5]]; q };
+        t = t + a[0][0] + a[1].len() + b[1][0].len() + c[0][0] + c[1].len() + m[0][0] + m[1].len() + (f[0][1] * 2.0) as i32;
+        j = j + 1;
+    }
+    return t % 101;
+}
+`
+
+// Interpreter-confirmed.
+const vblockArrArrWant = 4
+
 type vblockClosureLowering struct{ name, env string }
 
 var (
@@ -110,8 +148,10 @@ var vblockClosureReleaseCases = []struct {
 	lowerings []vblockClosureLowering
 }{
 	{"vblock_tail_move", vblockTailMoveSrc, vblockTailMoveWant, vblockClosureBoth},
-	{"vblock_nested_tail_move", vblockNestedTailMoveSrc, vblockNestedTailMoveWant, vblockClosureAST},
+	{"vblock_nested_tail_move", vblockNestedTailMoveSrc, vblockNestedTailMoveWant, vblockClosureBoth},
 	{"closure_rebind_release", closureRebindReleaseSrc, closureRebindReleaseWant, vblockClosureBoth},
+	{"vblock_defer_unlifted_local", vblockDeferUnliftedSrc, vblockDeferUnliftedWant, vblockClosureBoth},
+	{"vblock_arrarr", vblockArrArrSrc, vblockArrArrWant, vblockClosureBoth},
 }
 
 func TestSelfHostVblockClosureReleaseX86_64(t *testing.T) {

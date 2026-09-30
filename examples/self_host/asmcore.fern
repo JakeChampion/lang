@@ -7262,9 +7262,12 @@ pub function emit_const_agg_blocks(s: EmitState, first: i32, only: i32): EmitSta
 }
 
 // A packed byte constant: its length word, then its bytes padded to whole
-// words, with the capacity in those words as a packed box's is.
+// words. Its capacity is 0 — no spare room — so a push copies rather than
+// writing into the padding: the immortal rc takes the in-place path, and a
+// constant with room would be grown in place, every later evaluation seeing
+// the bytes and the length an earlier one appended (#10647).
 function emit_const_bytes_block(st: EmitState, i: i32, vals: string[]): EmitState {
-    st = st.write("    .quad " + util.i32_to_string((vals.len() + 7) / 8) + "\n");
+    st = st.write("    .quad 0\n");
     st = st.write("    .quad -1\n");
     st = st.write(const_agg_label(st, i) + ":\n");
     st = st.write("    .quad " + util.i32_to_string(vals.len()) + "\n");

@@ -14559,6 +14559,9 @@ func (b *builder) call(n *ast.Call) error {
 			params = append(params, resolve(p.Type))
 		}
 		sig := &ast.FuncType{Params: params, Result: resolve(meth.Result)}
+		// An owned receiver temp (`mkd(j).area()`) is the call's to release
+		// once it returns, unless the result could be the receiver itself.
+		lowerRecv, releaseRecv := b.dynReceiverLowering(fa.Target, sig.Result)
 		// OpCallDyn's stack contract is uniform across backends:
 		// `[data, args..., vtable]`. Only how `data` and `vtable` are
 		// obtained from the receiver differs by representation
@@ -14568,7 +14571,7 @@ func (b *builder) call(n *ast.Call) error {
 			// pointer to a `{data @0, vtable @ptrW}` cell. Stash the cell
 			// pointer, deref `data` (+0), lower args, deref `vtable`
 			// (+ptrW), then dispatch.
-			if err := b.expr(fa.Target); err != nil {
+			if err := lowerRecv(); err != nil {
 				return err
 			}
 			cellTmp := b.allocSlot()
@@ -14589,12 +14592,13 @@ func (b *builder) call(n *ast.Call) error {
 			b.emit(Op{Kind: OpAdd})
 			b.emit(Op{Kind: OpLoad, Width: WidthPtr})
 			b.emit(Op{Kind: OpCallDyn, I32: int32(slot), Ext: &OpExt{Sig: sig}})
+			releaseRecv()
 			return nil
 		}
 		// Inline two-word (wasm, §4.2.1): lower the receiver →
 		// [data, vtable]; pop the vtable word into a fresh i32 temp
 		// (OpStoreLocal pops one word, leaving [data]).
-		if err := b.expr(fa.Target); err != nil {
+		if err := lowerRecv(); err != nil {
 			return err
 		}
 		vtmp := b.allocSlot()
@@ -14609,6 +14613,7 @@ func (b *builder) call(n *ast.Call) error {
 		// Push the vtable back → [data, args..., vtable], then dispatch.
 		b.emit(Op{Kind: OpLoadLocal, I32: vtmp})
 		b.emit(Op{Kind: OpCallDyn, I32: int32(slot), Ext: &OpExt{Sig: sig}})
+		releaseRecv()
 		return nil
 	}
 	if cr, ok := n.Callee.(*ast.CaptureRef); ok {
@@ -16902,6 +16907,43 @@ func (b *builder) stashOwnedArgTemp(a ast.Expr) (int32, ast.Type, bool, error) {
 	return slot, tt, true, nil
 }
 
+// dynReceiverLowering returns how a dyn method call lowers its receiver, and
+// what it runs once the call returns. An owned receiver temp — a fresh call
+// result or an owned conditional — is parked in a slot and released after the
+// call, as an argument temp is (#10554); an exit taken while the arguments are
+// lowered releases it too. A result that could be the receiver keeps it.
+func (b *builder) dynReceiverLowering(recv ast.Expr, result ast.Type) (func() error, func()) {
+	plain := func() error { return b.expr(recv) }
+	if !b.dynReclaim() || !resultCannotAliasArg(result) {
+		return plain, func() {}
+	}
+	t, ok := b.freshOwnedRcTempType(recv)
+	if !ok {
+		t, ok = b.ownedCallResultType(recv)
+	}
+	if _, isDyn := t.(ast.DynTraitType); !ok || !isDyn {
+		return plain, func() {}
+	}
+	slot := b.allocSlot()
+	b.locals[fmt.Sprintf("__dynrecv_%d", slot)] = slot
+	b.scratchType[slot] = t
+	pop := func() {}
+	lower := func() error {
+		if err := b.expr(recv); err != nil {
+			return err
+		}
+		b.emit(Op{Kind: OpStoreLocal, I32: slot})
+		b.emit(Op{Kind: OpLoadLocal, I32: slot})
+		pop = b.pushPendingDrop(func() { b.emitArgTempDrop(slot, t) })
+		return nil
+	}
+	release := func() {
+		pop()
+		b.emitArgTempDrop(slot, t)
+	}
+	return lower, release
+}
+
 // emitArgTempDrops releases the temps emitIndirectCallArgs stashed. Net-zero
 // on the operand stack, so the call's result sitting underneath is untouched.
 func (b *builder) emitArgTempDrops(slots []int32, types []ast.Type) {
@@ -18276,10 +18318,9 @@ func (b *builder) decValueOnStack(t ast.Type, mayFree bool) {
 		// releases its elements through the dedicated __drop_arr_dyn_<set>
 		// walk (arrElemStructDropName's dyn arm, gated on the backend's
 		// dyn-RC capability there). Without this the function-exit sweep fell
-		// to the plain box dec below and leaked every element. NATIVES ONLY
-		// (ptrW==8) — see the exit-sweep arm's wasm caveat.
+		// to the plain box dec below and leaked every element.
 		_, elemIsDyn := at.Elem.(ast.DynTraitType)
-		if arrElemIsRcTracked(at.Elem) || (elemIsDyn && b.ptrW == 8 && b.dynReclaim()) {
+		if arrElemIsRcTracked(at.Elem) || (elemIsDyn && b.dynReclaim()) {
 			// Transitive reclamation Stage B: an array of CONCRETE structs drops
 			// each element box deeply (via __drop_arr_struct_<Elem> →
 			// __drop_struct_<Elem> per element) before freeing the buffer, instead
@@ -23311,12 +23352,19 @@ func (b *builder) emitMapSetRetains(keyArg, valArg ast.Expr, kType, vType ast.Ty
 // the two-word helper on those ABIs, but the single-word __fern_rc_inc path
 // never covered it.
 func (b *builder) mapSetValueCounted(valArg ast.Expr, vType ast.Type) bool {
+	return b.mapSetValueCountedBy(valArg, vType, needsRcIncOnAlias(valArg, b))
+}
+
+// mapSetValueCountedBy is mapSetValueCounted with needsRcIncOnAlias's answer
+// for valArg supplied, for a caller that knows the argument's type when
+// exprType does not (a match binding).
+func (b *builder) mapSetValueCountedBy(valArg ast.Expr, vType ast.Type, aliasInc bool) bool {
 	if vType == nil {
 		return false
 	}
 	if _, isStr := vType.(ast.StringType); isStr {
 		if ast.UseTwoWordStrings(b.ptrW) {
-			return needsRcIncOnAlias(valArg, b)
+			return aliasInc
 		}
 		if b.ptrW != 8 {
 			return false
@@ -23328,7 +23376,7 @@ func (b *builder) mapSetValueCounted(valArg ast.Expr, vType ast.Type) bool {
 		return false
 	}
 	if mapValKindTag(vType, b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW) >= 2 {
-		return needsRcIncOnAlias(valArg, b)
+		return aliasInc
 	}
 	return false
 }
@@ -23338,6 +23386,12 @@ func (b *builder) mapSetValueCounted(valArg ast.Expr, vType ast.Type) bool {
 // (__drop_map_str_keys). A struct / enum key (kind 3) is stored as a raw
 // pointer the column never retains nor drops, so its source is uncounted.
 func (b *builder) mapSetKeyCounted(keyArg ast.Expr, kType ast.Type) bool {
+	return b.mapSetKeyCountedBy(keyArg, kType, needsRcIncOnAlias(keyArg, b))
+}
+
+// mapSetKeyCountedBy is mapSetKeyCounted with needsRcIncOnAlias's answer for
+// keyArg supplied, as mapSetValueCountedBy.
+func (b *builder) mapSetKeyCountedBy(keyArg ast.Expr, kType ast.Type, aliasInc bool) bool {
 	if kType == nil {
 		return false
 	}
@@ -23345,7 +23399,7 @@ func (b *builder) mapSetKeyCounted(keyArg ast.Expr, kType ast.Type) bool {
 		return false
 	}
 	if ast.UseTwoWordStrings(b.ptrW) {
-		return needsRcIncOnAlias(keyArg, b)
+		return aliasInc
 	}
 	if b.ptrW != 8 {
 		return false

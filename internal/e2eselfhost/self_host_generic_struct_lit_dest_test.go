@@ -4,9 +4,11 @@ import "testing"
 
 // genericStructLitDestCases bind a generic struct literal to a destination
 // that names its instantiation: a `var` annotation, a function's return type,
-// an array annotation, or a parameter reached through an array-literal
-// argument. The destination fixes the type argument even where an untyped
-// field literal (`a: 3`) would default it to i32 (#10452, #10481).
+// an array annotation, a parameter reached through an array-literal argument,
+// a struct field, a method parameter, a value-position if's arms, or a
+// lambda's declared result. The destination fixes the type argument even where
+// an untyped field literal (`a: 3`) would default it to i32 (#10452, #10481,
+// #10537).
 var genericStructLitDestCases = []struct {
 	name string
 	src  string
@@ -58,6 +60,42 @@ function main(): i32 {
     return take([Same { a: 3, b: 4 }, Same { a: 1, b: 2 }]);
 }
 `, 10},
+	{"struct-field", `struct Same[T] { a: T, b: T }
+struct Holder { s: Same[i64] }
+function main(): i32 {
+    var y: i64 = 4294967296;
+    var h: Holder = Holder { s: Same { a: 3, b: y } };
+    return (h.s.b / 1073741824 + h.s.a) as i32;
+}
+`, 7},
+	{"method-parameter", `struct Same[T] { a: T, b: T }
+struct S { xs: Same[i64][] }
+impl S {
+    function take(self: S, xs: Same[i64][]): i32 {
+        return (xs[0].b / 1073741824 + xs[0].a) as i32;
+    }
+}
+function main(): i32 {
+    var y: i64 = 4294967296;
+    var s: S = S { xs: [] };
+    return s.take([Same { a: 3, b: y }]);
+}
+`, 7},
+	{"value-block-arms", `struct Same[T] { a: T, b: T }
+function main(): i32 {
+    var y: i64 = 4294967296;
+    var p: Same[i64] = if (true) { Same { a: 3, b: y } } else { Same { a: 1, b: 2 } };
+    return (p.b / 1073741824 + p.a) as i32;
+}
+`, 7},
+	{"lambda-result", `struct Same[T] { a: T, b: T }
+function main(): i32 {
+    var y: i64 = 4294967296;
+    var f = (): Same[i64] => { return Same { a: 3, b: y }; };
+    var p: Same[i64] = f();
+    return (p.b / 1073741824 + p.a) as i32;
+}
+`, 7},
 }
 
 // TestSelfHostGenericStructLitDest compiles each case with the self-host CLI

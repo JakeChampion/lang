@@ -646,16 +646,12 @@ against normalization's ~58 KB. Binary cost when used is 24 KB
 a program importing `std/unicode` without segmenting is byte-identical
 to one built before these tables existed.
 
-Data comes from `uniseg` (PyPI) via `cmd/unicodegen/gen_gcbdata.py`,
-since neither Go's `unicode` nor CPython's `unicodedata` exposes these
-properties and unicode.org is unreachable from the build environment.
-It is a regeneration-time dependency only. Note it tracks a **newer UCD
-(16.0)** than the module's other tables (case 15.0, normalization 14.0);
-segmentation is self-contained — boundaries never consult the case or
-normalization tables — so this is internally consistent rather than a
-mismatch, but unlike canonical decompositions the GCB assignments are
-*not* frozen by a stability policy, so the emitted table records its
-version.
+Data comes from the UCD's `GraphemeBreakProperty.txt` and `emoji-data.txt`
+via `cmd/unicodegen/gen_gcbdata.py VERSION`, at the release Go's `unicode`
+tracks, since neither Go's `unicode` nor CPython's `unicodedata` exposes
+these properties. It is a regeneration-time input only. The GCB
+assignments are *not* frozen by a stability policy, so the emitted table
+records its version.
 
 ### D7 — Unicode tables become static data. This is a prerequisite, not a follow-up. — **LANDED (#5627)**
 
