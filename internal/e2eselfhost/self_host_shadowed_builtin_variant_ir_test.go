@@ -180,6 +180,8 @@ func TestSelfHostShadowedBuiltinVariantIRX86_64(t *testing.T) {
 }
 
 func TestSelfHostBareShadowedConstructionIRX86_64(t *testing.T) {
+	// The checker refuses these programs (E036), so only the AST lowering reaches them.
+	t.Setenv("FERN_SEM_IR", "")
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
 	src, err := os.ReadFile(filepath.Join("../../examples/self_host", "asm_run.fern"))

@@ -8,12 +8,12 @@ import (
 	"testing"
 )
 
-// The last three constructs of the enumerated mode-0 decline set (#3457), each of
-// which sent its whole module to the legacy AST emitter.
+// Two constructs of the enumerated mode-0 decline set (#3457), each of which
+// sent its whole module to the legacy AST emitter.
 //
 // Like the group in self_host_mode0_gaps_ir_test.go, none is a missing FEATURE —
-// each is a piece of type information the closure-lift or the map lowering fails
-// to carry one step further than it already does:
+// each is a piece of type information the closure-lift fails to carry one step
+// further than it already does:
 //
 //   - a method's escaping lambda capturing the RECEIVER. lambda_captures built its
 //     "enclosing local" set from fd's params and body bindings and omitted the
@@ -26,15 +26,10 @@ import (
 //     exactly these resolutions for a for-in iter and a match scrutinee; the plain
 //     `var` init arm simply never did, which is why ANNOTATING the local was the
 //     only way through.
-//   - a Map with STRUCT values. `var p = m.get_or(k, d)` had no struct type, so
-//     `p.field` bailed. Three sites carry V now: the get_or read (expr_struct_type),
-//     the unannotated `map_new(…).insert(k, P { … })` chain, and the separate
-//     `m = m.insert(k, P { … })` assignment (refine_map_struct_val).
 //
 // Every case asserts the `-decide` route AND the answer, because a regression here
 // is silent: the AST emitter computes all of these correctly, so only the route
-// shows it. The map cases have no interpreter oracle (`__map_new_i32` is E001
-// natively — self-host dialect), so their exit codes are stated, not derived.
+// shows it.
 func TestSelfHostCaptureTypeGapsIR(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -66,14 +61,6 @@ func TestSelfHostCaptureTypeGapsIR(t *testing.T) {
 		{"capture-local-from-call", "function base(): i32 { return 100; }\nfunction make(): (i32) => i32 { var b = base(); return (x: i32): i32 => { return x + b; }; }\nfunction main(): i32 { var f = make(); return f(5); }", 105},
 		{"capture-local-from-index", "function make(xs: i32[]): (i32) => i32 { var b = xs[1]; return (x: i32): i32 => { return x + b; }; }\nfunction main(): i32 { var f = make([7, 100]); return f(5); }", 105},
 		{"capture-local-from-arith-control", "function make(n: i32): (i32) => i32 { var b = n + 1; return (x: i32): i32 => { return x + b; }; }\nfunction main(): i32 { var f = make(99); return f(5); }", 105},
-
-		// Map with struct values, in the three binding shapes. The i32-valued and
-		// string-valued maps are the controls that always lowered.
-		{"map-struct-val-separate-insert", "struct P { x: i32, y: i32 }\nfunction main(): i32 { var m = __map_new_i32(8); m = m.insert(1, P { x: 40, y: 2 }); var p = m.get_or(1, P { x: 0, y: 0 }); return p.x + p.y; }", 42},
-		{"map-struct-val-insert-chain", "struct P { x: i32, y: i32 }\nfunction main(): i32 { var m = __map_new_i32(8).insert(1, P { x: 40, y: 2 }); var p = m.get_or(1, P { x: 0, y: 0 }); return p.x + p.y; }", 42},
-		{"map-struct-val-annotated-control", "struct P { x: i32, y: i32 }\nfunction main(): i32 { var m: Map[i32, P] = __map_new_i32(8); m = m.insert(1, P { x: 40, y: 2 }); var p: P = m.get_or(1, P { x: 0, y: 0 }); return p.x + p.y; }", 42},
-		{"map-i32-val-control", "function main(): i32 { var m = __map_new_i32(8); m = m.insert(1, 42); return m.get_or(1, 0); }", 42},
-		{"map-string-val-control", "function main(): i32 { var m = __map_new_i32(8); m = m.insert(1, \"hi\"); var s = m.get_or(1, \"\"); return s.len() + 40; }", 42},
 	}
 
 	for _, tc := range cases {

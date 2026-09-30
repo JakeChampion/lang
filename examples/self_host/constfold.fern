@@ -70,7 +70,9 @@ function num_lit(text: string, suffix: string): ast.Expr {
 // any type that holds every operand is possible, `peak` being the largest of
 // them. So the value must be non-negative (an unsigned type is possible), and
 // within u8 while every operand is: `var r: u8 = (255 + 1) / 2` is 0, and
-// folding it at i32 made it 128.
+// folding it at i32 made it 128. Every operand has to pass the same test as
+// the result, not just the result: `(0 - 1) / 2` has a legal answer, but it is
+// 127 at u8 and 0 at i32, and it is the negative operand that declines it.
 //
 // i64 / u64 are declined rather than folded in range. Downstream, a literal's
 // width is re-derived from its text MAGNITUDE (irlower.literal_is_i64), which

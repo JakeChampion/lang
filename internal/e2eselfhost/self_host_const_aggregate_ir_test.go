@@ -59,15 +59,17 @@ var constAggCases = []struct {
 		64, 1, 1},
 	// SOUNDNESS at scale: 100k updates threaded off a constant, then the
 	// constant is read again. A single write-through would corrupt `fresh`.
+	// The first update copies the constant; the rest reuse that copy in place.
 	{"churn-does-not-corrupt",
 		`struct P { a: i32, b: i32 } function mk(): P { return P { a: 1, b: 2 }; } function main(): i32 { var p: P = mk(); var i: i32 = 0; while (i < 100000) { p = P { ...p, a: (p.a + p.b) % 977 }; i = i + 1; } var fresh: P = mk(); return (p.a % 100) * 2 + fresh.a * 10 + fresh.b; }`,
-		198, 100000, 1},
+		198, 1, 1},
 	// A constant moved into a container: the array owns a pointer to the shared
 	// block, and the exit sweep must not free it (the sentinel is what stops it).
-	// The one allocation is the array: `[]` is allocated with room for four.
+	// The empty `[]` is a static constant as well; the one allocation is the
+	// first append's.
 	{"constant-into-container",
 		`struct P { a: i32, b: i32 } function mk(): P { return P { a: 5, b: 9 }; } function main(): i32 { var ps: P[] = []; var i: i32 = 0; while (i < 4) { ps = ps.append(mk()); i = i + 1; } var s: i32 = 0; var j: i32 = 0; while (j < ps.len()) { s = s + ps[j].a + ps[j].b; j = j + 1; } return s % 200; }`,
-		56, 1, 1},
+		56, 1, 2},
 	// The constant/REUSE interaction, in the shape the reuse suites test: two
 	// same-block literals where the second would otherwise reuse the first's dead
 	// box. TWO blocks and ZERO allocations — the reuse scanners run per STATEMENT
@@ -88,12 +90,11 @@ var constAggCases = []struct {
 	{"reuse-shape-all-constant",
 		`struct P { x: i32, y: i32 } function main(): i32 { var cond: i32 = 1; var r: i32 = 0; if (cond > 0) { var a: P = P { x: 10, y: 20 }; var s: i32 = a.x + a.y; var b: P = P { x: 3, y: 4 }; r = s + b.x + b.y; } return r; }`,
 		37, 0, 2},
-	// NOT admitted: a field value that is not a literal keeps the whole literal
-	// on struct_make. `0 - 3` is a binary expression, not a unary minus, so this
-	// is also the control that the admission is syntactic and narrow.
-	{"non-literal-field-not-admitted",
+	// A field computed from literals (`0 - 3`) folds to a constant, so the
+	// literal is static too.
+	{"folded-field-admitted",
 		`struct P { a: i32, b: i32 } function mk(): P { return P { a: 0 - 3, b: 0x10 }; } function main(): i32 { var p: P = mk(); return (p.a + p.b + 100) % 200; }`,
-		113, 1, 0},
+		113, 0, 1},
 	// NOT admitted: a wide (i64) field. The static block writes one word per
 	// field, so a field whose box slot is 8 bytes of a different kind stays on
 	// struct_make until the encoding widens.

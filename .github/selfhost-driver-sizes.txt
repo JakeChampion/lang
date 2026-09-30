@@ -378,15 +378,27 @@
 # lowers through the typed path (semlower) and links both lowerings until the
 # AST one retires (#10659). The other rows are unchanged. Number pasted from
 # driver-sizes' own report on run 36612302644.
+# 2026-09-30 — asm_run 6765464 -> 8648888 (+27.8%), asm_load_run 8099152 ->
+# 9294032 (+14.8%), asm_modload_run 7556384 -> 9438224 (+24.9%). The three
+# drivers' merged emit lowers through the typed path (semlower) and links
+# both lowerings until the AST one retires. Measured with
+# TestSelfHostWarmStockDriver on the pinned stage0.
+# 2026-09-30 — wasm_ir_run 6704912 -> 8820144 (+31.5%), wasm_run 6702024 ->
+# 8817328 (+31.6%), wasm_runio_run 6671832 -> 8816656 (+32.1%),
+# asm_load_run 9294032 -> 10514488 (+13.1%). The wasm drivers emit through
+# the typed path (semlower) and link both lowerings until the AST one
+# retires; asm_load_run's wasm32-wasi leg emits over the typed path too, and
+# gains -emit component-core. Measured with TestSelfHostWarmStockDriver on
+# the pinned stage0, on main at 083167101 with this change merged.
 fern.fern/stage2 12346536
 fern.fern 12346536
-asm_load_run.fern 8099152
-asm_modload_run.fern 7556384
+asm_load_run.fern 10514488
+asm_modload_run.fern 9438224
 asm_ir_run.fern 9080328
-asm_run.fern 6765464
-wasm_ir_run.fern 6704912
-wasm_run.fern 6702024
-wasm_runio_run.fern 6671832
+asm_run.fern 8648888
+wasm_ir_run.fern 8820144
+wasm_run.fern 8817328
+wasm_runio_run.fern 8816656
 asm_pathprobe_run.fern 5454560
 asm_ir_elig_run.fern 4627344
 irlower_run.fern 5314192

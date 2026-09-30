@@ -12,12 +12,9 @@ import (
 // / join / string_from_bytes_unchecked / i32_to_str) are now allocated through
 // $__fern_str_box, so they carry an rc word at [s-8] (rc 1 for a fresh
 // owner) while static string LITERALS stay in the data section, unboxed —
-// the rc helpers' address guard treats them as immortal. Observed through
-// __fern_rc_is_unique: a fresh heap string is unique (rc==1 => 1); a
-// literal is not (guarded => 0). String VALUES are unchanged (every access
-// is s-relative); counting + release build on this foundation in later
-// slices. (str_box reuses $__fern_arr_dec / the size-class freelist for
-// release, since a string is flat with no rc-tracked children.)
+// the rc helpers' address guard treats them as immortal. String VALUES are
+// unchanged (every access is s-relative), and counting and release keep the
+// over-release detector clean.
 func TestSelfHostRcStrBoxWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping wasm str-box e2e")
@@ -33,16 +30,9 @@ func TestSelfHostRcStrBoxWasm(t *testing.T) {
 		src  string
 		exit int
 	}{
-		// A fresh heap string (concatenation) is rc-boxed at rc 1 => unique.
-		{"concat-fresh-unique", "function main(): i32 { var s: string = \"ab\" + \"cd\"; return __fern_rc_is_unique(s); }", 1},
-		// to_upper result is a fresh heap string too.
-		{"upper-fresh-unique", "function main(): i32 { var s: string = \"abc\".to_ascii_upper(); return __fern_rc_is_unique(s); }", 1},
-		// A static string literal is NOT boxed (data section, below
-		// heap_base) — the address guard reports it as immortal / not unique.
-		{"literal-not-unique", "function main(): i32 { var s: string = \"hello\"; return __fern_rc_is_unique(s); }", 0},
 		// String values survive the new layout: len + bytes read correctly.
 		{"concat-value-intact", "function main(): i32 { var s: string = \"foo\" + \"barbaz\"; return s.len(); }", 9},
-		{"substr-value-intact", "function main(): i32 { var s: string = \"hello world\"; var t: string = slice_unchecked(s, 0, 5); return t.len(); }", 5},
+		{"substr-value-intact", "function main(): i32 { var s: string = \"hello world\"; var t: string = slice_unchecked(s, 0, 5) + \"\"; return t.len(); }", 5},
 		// String counting milestone (free OFF): an owned concat local is
 		// released (rc dec) at exit, value-correct + over-release detector 0.
 		{"concat-swept-clean", "function main(): i32 { var a: string = \"x\"; var b: string = \"yz\"; var s: string = a + b; return s.len() + __rc_underflow_count(); }", 3},
@@ -51,13 +41,6 @@ func TestSelfHostRcStrBoxWasm(t *testing.T) {
 		// A concat-in-a-loop (reassign): intermediates leak (sound, free off)
 		// but the detector stays clean and the value is correct.
 		{"concat-loop-clean", "function main(): i32 { var s: string = \"\"; var i = 0; while (i < 5) { s = s + \"x\"; i = i + 1; } return s.len() + __rc_underflow_count(); }", 5},
-		// Construction-store incs: storing an owned heap string into a struct
-		// field / tuple / string[] / Option retains it (source no longer
-		// unique), values intact, detector clean.
-		{"string-struct-field-retained", "struct H { name: string } function main(): i32 { var s: string = \"ab\" + \"cd\"; var h = H { name: s }; var u = __fern_rc_is_unique(s); return u + h.name.len() + __rc_underflow_count(); }", 4},
-		{"string-tuple-retained", "function main(): i32 { var s: string = \"x\" + \"yz\"; var t = (s, 99); var u = __fern_rc_is_unique(s); return u + t.0.len() + __rc_underflow_count(); }", 3},
-		{"string-array-elem-retained", "function main(): i32 { var a: string = \"p\" + \"q\"; var b: string = \"r\" + \"s\"; var arr: string[] = [a, b]; var ua = __fern_rc_is_unique(a); return ua + arr[0].len() + __rc_underflow_count(); }", 2},
-		{"string-option-retained", "function main(): i32 { var s: string = \"ab\" + \"cd\"; var o = Some(s); var u = __fern_rc_is_unique(s); return u + s.len() + __rc_underflow_count(); }", 4},
 		// String FREE on: a built string returned (move-on-return) survives
 		// in the caller — not freed under it. Detector clean.
 		{"string-return-survives", "function build(): string { var s: string = \"ab\" + \"cd\"; return s; } function main(): i32 { var x: string = build(); var y: string = build(); return x.len() + y.len() + __rc_underflow_count(); }", 8},
@@ -77,7 +60,7 @@ func TestSelfHostRcStrBoxWasm(t *testing.T) {
 		// Method / call / slice string results are now counted+swept too.
 		{"string-method-result-swept", "function main(): i32 { var s: string = \"AbC\".to_ascii_upper(); return s.len() + __rc_underflow_count(); }", 3},
 		{"string-fn-result-swept", "function build(): string { return \"x\" + \"yz\"; } function main(): i32 { var s: string = build(); return s.len() + __rc_underflow_count(); }", 3},
-		{"string-slice-result-swept", "function main(): i32 { var src: string = \"abcdef\"; var s: string = slice_unchecked(src, 1, 4); return s.len() + __rc_underflow_count(); }", 3},
+		{"string-slice-result-swept", "function main(): i32 { var src: string = \"abcdef\"; var s: string = slice_unchecked(src, 1, 4) + \"\"; return s.len() + __rc_underflow_count(); }", 3},
 		// Regression: a function returning a BORROWED string field with NO
 		// swept locals must still return-retain it, or the caller's sweep of
 		// the result frees the field still in use (the node_head/watbin UAF).

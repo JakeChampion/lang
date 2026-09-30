@@ -9348,9 +9348,7 @@ pub function emit_module_or_error_sub(mod: parser.Module, sub: ircore.Sub): stri
     // checker rewrote (`print(q)` to `q.to_string()`, docs/TRAITS.md §3a) or
     // it refuses every non-string argument.
     var tm: parser.Module = checker.ensure_annotated(mod);
-    var chk: asmcore.EmitState = asmcore.new_state();
-    chk = asmcore.EmitState { ...chk, struct_decls: irlower.struct_tab(tm.structs), funcs: tm.funcs };
-    var check_errs: util.Diag[] = asmcore.check_module(tm, chk);
+    var check_errs: util.Diag[] = asmcore.entry_check_errors(tm);
     if (check_errs.len() > 0) {
         eprint(util.format_diags(check_errs));
         exit(1);
@@ -9371,8 +9369,8 @@ pub function emit_module_ir_gated(mod: parser.Module, known: string[]): string {
 }
 
 // emit_module_ir_gated_sub is the same gate with a caller-supplied semantic
-// lowering substituted into it (ircore.Sub): the `fern` CLI's semantic
-// lowering, or ir_const_numeric_run's rebuilt one. ircore.no_sub() is this
+// lowering substituted into it (ircore.Sub): the typed lowering, or
+// ir_const_numeric_run's rebuilt copy of it. ircore.no_sub() is this
 // function behaving exactly as it did before the seam existed.
 pub function emit_module_ir_gated_sub(mod: parser.Module, known: string[], sub: ircore.Sub): string {
     var sm: parser.Module = ircore.script_normalized(mod);

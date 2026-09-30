@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -45,7 +46,7 @@ func TestSelfHostX86Capstone(t *testing.T) {
 	wasmRun := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 	nat := mustRead(t, "../../examples/self_host/x86_native.fern")
 	elf := mustRead(t, "../../examples/self_host/elf.fern")
-	prelude := string(nat) + "\n" + string(elf) + "\n"
+	prelude := string(nat) + "\n" + string(elf) + toU8Src
 
 	// Build the (constant) driver once.
 	driverWat := runCapture(t, gcc, runner, wasmRun, []byte(prelude+x86CapstoneDriver))
@@ -115,8 +116,14 @@ func TestSelfHostX86Capstone(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			// Stage A.
-			asmText := runCapture(t, gcc, runner, asmRun, []byte(tc.prog))
+			// Stage A. The map cases use the built-in map runtime, which only
+			// the AST lowering calls.
+			var asmText []byte
+			if strings.HasPrefix(tc.name, "map") {
+				asmText = runCaptureAST(t, runner, asmRun, []byte(tc.prog))
+			} else {
+				asmText = runCapture(t, gcc, runner, asmRun, []byte(tc.prog))
+			}
 			if len(asmText) == 0 {
 				t.Fatal("asm.fern produced no assembly")
 			}
@@ -204,7 +211,7 @@ function main(): i32 {
             var ev: i64 = elf_eh_frame_vaddr_x86(a.code.len(), hdr_len) as i64;
             var eh: i32[] = x86_eh_frame(a, tv, ev);
             var hdr: i32[] = x86_eh_frame_hdr(a, tv, ev, hv);
-            write(string_from_bytes_unchecked(elf_program_x86(a.code, hdr, eh, a.rodata, a.bss_size, entry)));
+            write(string_from_bytes_unchecked(to_u8(elf_program_x86(a.code, hdr, eh, a.rodata, a.bss_size, entry))));
             return 0;
         }
     }

@@ -1,6 +1,7 @@
 // examples/self_host/wasm_run.fern — stdin-driven driver for the
 // self-hosted wasm emitter. Reads Fern source from stdin, runs it
-// through lexer + parser + wasm_ir.emit_module_mode_or_error, and prints the
+// through lexer + parser + the typed lowering (semlower.driven) +
+// wasm_ir.emit_module_mode_or_error_sub, and prints the
 // WASI core module (WAT text) to stdout. Companion to asm_run.fern
 // (x86-64) and asm_ir_run.fern (which serves arm64 / arm64-darwin via
 // `-target`): the same front end feeding the wasm backend.
@@ -16,6 +17,7 @@ import "./rundriver";
 import "./asmcore";
 import "./wasm_ir";
 import "./util";
+import "./semlower";
 
 function main(): i32 {
     // `-decide`: print the ROUTING verdict ("ir" / "refused") instead of emitting.
@@ -66,16 +68,16 @@ function main(): i32 {
         eprint(wasm_ir.wasm_unsupported_message(unsupported));
         return 1;
     }
-    var mwb: parser.Module = parser.module_with_builtins(mod);
+    var d: semlower.Driven = semlower.driven(mod, "wasm32-wasi");
     if (decide) {
-        // The same decision emit_module_mode_or_error makes, in its default
+        // The same decision emit_module_mode_or_error_sub makes, in its default
         // (non-component) mode — reused from wasm_ir rather than restated, so
         // the probe cannot drift from the emitter it describes.
-        var plm: parser.Module = wasm_ir.route_normalized(mwb);
-        if (wasm_ir.ir_route_ok(plm, false, false)) { print("ir\n"); } else { print("refused\n"); }
+        var plm: parser.Module = wasm_ir.route_normalized(d.full);
+        if (wasm_ir.ir_route_ok(plm, false, false, d.sub)) { print("ir\n"); } else { print("refused\n"); }
         return 0;
     }
-    var emitted: string = wasm_ir.emit_module_mode_or_error(mwb, false, false);
+    var emitted: string = wasm_ir.emit_module_mode_or_error_sub(d.full, false, false, d.sub);
     write(emitted);
     return 0;
 }

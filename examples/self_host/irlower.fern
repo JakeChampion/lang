@@ -80763,7 +80763,7 @@ pub function prepare_lambda_parts(mods: parser.Module[]): parser.Module[] {
 // per-module and stdin drivers that never reach module_with_builtins, so its
 // result has each `str` erased. A test-driver leg that lowers a parsed module
 // without it still sees `str`: irlower_run's default, -rc-plan, -str-own and
-// -verify* legs, and ir_const_numeric_run's x86-64 and arm64 legs.
+// -verify* legs.
 pub function lift_lambdas_view(raw_mod: parser.Module, view: parser.FuncDecl[]): parser.Module {
     return parser.erase_str_module(lift_lambdas_view_typed(raw_mod, view));
 }

@@ -2,9 +2,12 @@
 // self-host compiler driver. Takes an entry .fern file path on the
 // command line, follows its `import "./x"` declarations to sibling
 // files (x.fern in the entry's directory), loads them transitively,
-// flattens the whole set into one module, and prints its x86-64 asm.
+// flattens the whole set into one module, and prints its x86-64 asm, or
+// with `-target` its arm64 asm or wasm32-wasi WAT.
 //
 //     $ asm_load_run prog.fern > prog.s
+//     $ asm_load_run prog.fern <stdlib-root> -target wasm32-wasi > prog.wat
+//     $ asm_load_run prog.fern <stdlib-root> -target wasm32-wasi -emit component-core > core.wat
 //
 // This retires the stdin marker-bundle (bundle_run): modules are
 // resolved from the filesystem the way a real compiler driver works,
@@ -19,10 +22,12 @@ import "./flatten";
 import "./checker";
 import "./asm_arm64_ir";
 import "./asm_ir";
+import "./wasm_ir";
 import "./asmcore";
 import "./treeshake";
 import "./ircore";
 import "./irlower";
+import "./semlower";
 
 // add_imports appends each of mod's loadable import paths to paths
 // (deduped by full path), returning the grown list.
@@ -167,12 +172,16 @@ function main(): i32 {
     // ineligible).
     var no_treeshake: boolean = false;
     var do_decide: boolean = false;
-    // `-target x86_64|arm64` selects the emit backend (#4398 part 1: the fold
-    // that retired the asm_arm64_load_run mirror). Default x86_64 keeps every
+    // `-target` selects the emit backend: x86-64-linux, arm64-linux,
+    // arm64-darwin (#4398 part 1: the fold that retired the
+    // asm_arm64_load_run mirror) or wasm32-wasi. Default x86_64 keeps every
     // pre-fold caller byte-identical. Loading, treeshake, -decide, -ir-probe
     // and the immutability gate are target-agnostic; the per-module modes
     // remain x86-64-only (the mirror never had them).
     var target: string = "x86-64-linux";
+    // `-emit component-core` (wasm32-wasi only): the core the CLI frames into a
+    // wasi:cli/run component, rather than the preview1 command core.
+    var emit_form: string = "";
     var ag: i32 = 2;
     while (ag < av.len()) {
         if (av[ag] == "-ir-probe") { probe = true; }
@@ -180,6 +189,7 @@ function main(): i32 {
         else if (av[ag] == "-no-treeshake") { no_treeshake = true; }
         else if (av[ag] == "-decide") { do_decide = true; }
         else if (av[ag] == "-target" && ag + 1 < av.len()) { target = av[ag + 1]; ag = ag + 1; }
+        else if (av[ag] == "-emit" && ag + 1 < av.len()) { emit_form = av[ag + 1]; ag = ag + 1; }
         else if (av[ag] == "-per-module-count") { pm_mode = "count"; }
         else if (av[ag] == "-per-module-needs") { pm_mode = "needs"; }
         else if (av[ag] == "-per-module-emit" && ag + 1 < av.len()) { pm_mode = "emit"; pm_index = util.digits_to_i32(av[ag + 1]); ag = ag + 1; }
@@ -211,8 +221,12 @@ function main(): i32 {
     // as a successful emit for the WRONG machine — the arm64 leg of #6710 was
     // handed x86-64 text and surfaced as "unknown mnemonic `movq'" from the
     // aarch64 assembler, which reads as a codegen bug rather than a typo.
-    if (target != "x86-64-linux" && target != "arm64-linux" && target != "arm64-darwin") {
-        eprint("asm_load_run: unknown -target: " + target + " (want x86-64-linux, arm64-linux, arm64-darwin)\n");
+    if (target != "x86-64-linux" && target != "arm64-linux" && target != "arm64-darwin" && target != "wasm32-wasi") {
+        eprint("asm_load_run: unknown -target: " + target + " (want x86-64-linux, arm64-linux, arm64-darwin, wasm32-wasi)\n");
+        return 2;
+    }
+    if (emit_form != "" && (emit_form != "component-core" || target != "wasm32-wasi")) {
+        eprint("asm_load_run: -emit " + emit_form + " is not an output form for " + target + " (want component-core with -target wasm32-wasi)\n");
         return 2;
     }
 
@@ -428,14 +442,30 @@ function main(): i32 {
     // reads c.ty. A no-op on drivers that skip it (asm_ir_run leaves ty "").
     merged = shaken_program(checker.annotate_module(merged), prune);
 
+    if (target == "wasm32-wasi") {
+        // The preview1 command core, or the component core, as the CLI emits it.
+        var dw: semlower.Driven = semlower.driven_annotated(merged, target);
+        if (emit_form == "component-core") {
+            var shape: i32 = wasm_ir.component_shape(dw.full);
+            if (shape < 0) {
+                eprint("asm_load_run: the program uses WASI imports the component wrapper does not frame\n");
+                return 1;
+            }
+            write(wasm_ir.emit_module_mode_or_error_sub(dw.full, true, shape != 0, dw.sub));
+            return 0;
+        }
+        write(wasm_ir.emit_module_mode_or_error_sub(dw.full, false, false, dw.sub));
+        return 0;
+    }
     if (target == "arm64-linux") {
         // IR-or-error (#3457 slice 5): the arm64 leg has no fallback either.
-        // asm_arm64_ir.emit_module_or_error runs the same prologue asm_arm64
+        // asm_arm64_ir.emit_module_or_error_sub runs the same prologue asm_arm64
         // .emit_module did and errors where the fallback used to be. Note the arm64
         // merged path shares the 512-function budget (#5949 corrected the old "arm64
         // needs none of this"), so an over-budget program errors here exactly as it
         // does on x86 — the per-module path is what compiles those.
-        write(asm_arm64_ir.emit_module_or_error(parser.module_with_builtins(merged), false));
+        var d64: semlower.Driven = semlower.driven_annotated(merged, target);
+        write(asm_arm64_ir.emit_module_or_error_sub(d64.full, false, d64.sub));
         return 0;
     }
     if (target == "arm64-darwin") {
@@ -443,10 +473,10 @@ function main(): i32 {
         // to the Mach-O dialect — the GAS text `fern.fern -target arm64-darwin`
         // hands to its in-process assembler. Emitted here so a harness can
         // inspect the darwinized output without building the whole CLI.
-        write(asm_arm64_ir.darwinize(asm_arm64_ir.emit_module_or_error(parser.module_with_builtins(merged), true)));
+        var dd: semlower.Driven = semlower.driven_annotated(merged, target);
+        write(asm_arm64_ir.darwinize(asm_arm64_ir.emit_module_or_error_sub(dd.full, true, dd.sub)));
         return 0;
     }
-    var mwb: parser.Module = parser.module_with_builtins(merged);
     // OVER the merged 512-function IR budget but small enough to fit one process:
     // route per-module (each module is under budget → IR) instead of failing the
     // whole program (#3457). The lower bound is the budget the
@@ -458,7 +488,7 @@ function main(): i32 {
     // set the per-module emit prunes each module to; emit_per_module_concat
     // returns "" if a reachable module is genuinely IR-ineligible, so such
     // programs fall through to the merged emit below.
-    var nfuncs: i32 = ircore.lift_lambdas(mwb).funcs.len();
+    var nfuncs: i32 = ircore.lift_lambdas(parser.module_with_builtins(merged)).funcs.len();
     if (nfuncs > 512 && nfuncs < 1500) {
         var reach: string[] = [];
         var ri: i32 = 0;
@@ -469,6 +499,7 @@ function main(): i32 {
     // Last resort, and no longer a fallback: a module the per-module concat rescue
     // above declined (or one past its 1500-function ceiling) is an ERROR, not a
     // silent drop to the legacy AST emitter (#3457 slice 5).
-    write(asm_ir.emit_module_or_error(mwb));
+    var d: semlower.Driven = semlower.driven_annotated(merged, target);
+    write(asm_ir.emit_module_or_error_sub(d.full, d.sub));
     return 0;
 }

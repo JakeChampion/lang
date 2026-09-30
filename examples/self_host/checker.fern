@@ -417,6 +417,24 @@ function canon_trait_set(traits: string): string {
   return out;
 }
 
+// A handle names a declared resource: `own R`, `borrow R`, or the bare `R`,
+// which is an owned handle. Only a declared resource makes `own R` a handle;
+// elsewhere `own T` is a consuming parameter's spelling.
+function names_resource_handle(name: string, tn: TypeNames): boolean {
+  return tn.resources.has(handle_resource(name));
+}
+
+function handle_resource(name: string): string {
+  if (name.len() > 4 && slice_unchecked(name, 0, 4) == "own ") { return slice_unchecked(name, 4, name.len()) + ""; }
+  if (name.len() > 7 && slice_unchecked(name, 0, 7) == "borrow ") { return slice_unchecked(name, 7, name.len()) + ""; }
+  return name;
+}
+
+function resource_handle(name: string): typeinfo.Type {
+  var borrowed: boolean = name.len() > 7 && slice_unchecked(name, 0, 7) == "borrow ";
+  return typeinfo.TypeHandle { resource: handle_resource(name), borrowed: borrowed };
+}
+
 function t_dyn(traits: string): typeinfo.Type {
   return typeinfo.TypeDyn { traits: canon_trait_set(traits) };
 }
@@ -743,6 +761,9 @@ pub function type_debug(t: typeinfo.Type): string {
     typeinfo.TypeDyn(d) => {
       return "dyn:" + d.traits;
     },
+    typeinfo.TypeHandle(h) => {
+      return "handle:" + typeinfo.handle_spelling(h);
+    },
     typeinfo.TypeVoid(_) => {
       return "void";
     },
@@ -984,6 +1005,10 @@ function type_eq(a: typeinfo.Type, b: typeinfo.Type): boolean {
           return false;
         }
       }
+    },
+    typeinfo.TypeHandle(ah) => {
+      if let typeinfo.TypeHandle(bh) = b { return ah.resource == bh.resource && ah.borrowed == bh.borrowed; }
+      return false;
     },
     typeinfo.TypeVoid(_) => {
       match (b) {
@@ -1489,6 +1514,8 @@ pub struct StructTable {
   // The declared names, in `structs` order, which is also what the type
   // resolvers read (TypeNames).
   index: util.NameIndex,
+  // The module's declared `resource` names, which a handle type names.
+  resources: util.NameIndex,
 }
 
 // TypeNames is the declared struct and union names a type spelling resolves
@@ -1497,17 +1524,24 @@ pub struct StructTable {
 pub struct TypeNames {
   structs: util.NameIndex,
   unions: util.NameIndex,
+  resources: util.NameIndex,
 }
 
-function type_names(struct_names: string[], union_names: string[]): TypeNames {
-  return TypeNames { structs: util.name_index(struct_names), unions: util.name_index(union_names) };
+function type_names(struct_names: string[], union_names: string[], resource_names: string[]): TypeNames {
+  return TypeNames { structs: util.name_index(struct_names), unions: util.name_index(union_names), resources: util.name_index(resource_names) };
 }
 
 // struct_table indexes `structs` by name.
-function struct_table(structs: StructSig[]): StructTable {
+function struct_table(structs: StructSig[], resources: string[]): StructTable {
   var names: string[] = [];
   for sd in structs { names = names.append(sd.name); }
-  return StructTable { structs: structs, index: util.name_index(names) };
+  return StructTable { structs: structs, index: util.name_index(names), resources: util.name_index(resources) };
+}
+
+function resource_names(mod: parser.Module): string[] {
+  var out: string[] = [];
+  for r in parser.registered_resources(mod) { out = out.append(r.name); }
+  return out;
 }
 
 // UnionTable is the module's union/enum-alias table plus a bucket index over
@@ -1665,7 +1699,7 @@ function new_scope(): Scope {
   var ss: StructSig[] = [];
   var us: UnionSig[] = [];
   var ms: MethodSig[] = [];
-  return Scope { names: ns, types: ts, sigs: sig_table(fs), structs: struct_table(ss), unions: union_table(us), methods: method_table(ms), imports: [], loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: [], trait_reqs: [], tparams: [], tbounds: [], tpvars: [], tpvar_tps: [] };
+  return Scope { names: ns, types: ts, sigs: sig_table(fs), structs: struct_table(ss, []), unions: union_table(us), methods: method_table(ms), imports: [], loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: [], trait_reqs: [], tparams: [], tbounds: [], tpvars: [], tpvar_tps: [] };
 }
 
 // new_scope_full is a module's scope. The impl table rides on every one:
@@ -1696,7 +1730,7 @@ function (s: Scope) with_tparams(tparams: string[], tbounds: string[]): Scope {
 // a cast — so a type parameter cannot be captured by a same-named declared type
 // at one of them.
 function (s: Scope) type_names(): TypeNames {
-  return TypeNames { structs: s.structs.index, unions: s.unions.index };
+  return TypeNames { structs: s.structs.index, unions: s.unions.index, resources: s.structs.resources };
 }
 
 function (s: Scope) resolve_type(name: string): typeinfo.Type {
@@ -1883,32 +1917,6 @@ function bind_names(s: Scope, name: string): Scope {
 // builtin-variant list lives in exactly one place (SH-046).
 function is_builtin_variant(name: string): boolean {
   return mx_builtin_enum_of(name).len() > 0;
-}
-
-// is_reserved_enum_name reports whether `name` is one of the enums the
-// front-end injects as built-ins (see checker.go's builtinEnumDecls). A
-// user `enum` declaration shadowing one of these is E010.
-function is_reserved_enum_name(name: string): boolean {
-  return name == "Option" || name == "Result" || name == "IoError" || name == "JsonValue" || name == "Body";
-}
-
-// is_reserved_struct_name reports whether `name` is one of the structs the
-// front end injects as built-ins (checker.go's builtinStructDecls). A user
-// `struct` declaration shadowing one of these is E010, the struct half of the
-// rule is_reserved_enum_name above carries for enums.
-//
-// A LIST rather than an `||` chain: 25 names is where the chain stops reading,
-// and it gives the parity test in internal/checker one thing to compare
-// against builtinStructDecls() so the two cannot drift.
-function is_reserved_struct_name(name: string): boolean {
-  var reserved: string[] = [
-    "BytesWriter", "Cell", "ChunkProducer", "Date", "DateTime", "Duration", "FileStat",
-    "FsStat", "HeaderMap", "HttpRequest", "HttpResponse", "Instant", "Map",
-    "MapIter", "MockCall", "MockPlatform", "Platform", "ProcessResult",
-    "Reader", "Span", "Stream", "Time", "TimeZone", "Url", "WinSize", "Writer",
-    "Zoned"
-  ];
-  return util.index_of_str(reserved, name) >= 0;
 }
 
 // variant_in_unions reports whether `name` is a variant of ANY declared
@@ -3471,6 +3479,13 @@ function type_assignable(from: typeinfo.Type, to: typeinfo.Type, unions: UnionSi
         }
       }
     },
+    typeinfo.TypeHandle(th) => {
+      // An owned handle may be lent where a borrow of the same resource is
+      // taken. A borrow never becomes an owned handle, and no integer becomes
+      // either.
+      if let typeinfo.TypeHandle(fh) = from { return th.borrowed && !fh.borrowed && th.resource == fh.resource; }
+      return false;
+    },
     typeinfo.TypeDyn(_) => {
       // A direct coercion site accepts any value here; whether the concrete
       // implements the traits needs the impl table, which `coercible`
@@ -3498,7 +3513,7 @@ function type_assignable(from: typeinfo.Type, to: typeinfo.Type, unions: UnionSi
 // to a width-tagged TypeI32 (see the struct comment), which is what lets a
 // receiver method on one pass the E021 gate and a call site recover the width.
 function type_from_name(name: string): typeinfo.Type {
-  return type_from_spelling(name, type_names([], []));
+  return type_from_spelling(name, type_names([], [], []));
 }
 
 // =================== CHECKER ====================
@@ -4910,6 +4925,14 @@ function check_number_expr(n: ast.ExprNumber, s: Scope): typeinfo.Type {
   if (parser.is_unit_literal(n)) {
     return t_void();
   }
+  // A float SUFFIX names the type outright, as an integer one does below;
+  // only an unsuffixed float adapts to its context.
+  if (n.is_float && n.suffix == "f32") {
+    return t_f32();
+  }
+  if (n.is_float && n.suffix == "f64") {
+    return typeinfo.TypeFloat { width: 64, polymorphic: false };
+  }
   if (n.is_float) {
     return typeinfo.TypeFloat { width: 64, polymorphic: true };
   }
@@ -6075,7 +6098,7 @@ function collect_method_sigs(funcs: parser.FuncDecl[], tn: TypeNames): MethodSig
 // type_from_name path used for function params — bare strings
 // like "i32" / "boolean" / "string", plus references to other
 // declared structs.
-function collect_struct_sigs(structs: parser.StructDecl[], union_names: string[]): StructSig[] {
+function collect_struct_sigs(structs: parser.StructDecl[], union_names: string[], resources: string[]): StructSig[] {
   var out: StructSig[] = [];
   // First pass: build a name-only table so type_from_name
   // can resolve struct → struct references (e.g. a `Box`
@@ -6084,7 +6107,7 @@ function collect_struct_sigs(structs: parser.StructDecl[], union_names: string[]
   for sd in structs {
     names = names.append(sd.name);
   }
-  var tn: TypeNames = type_names(names, union_names);
+  var tn: TypeNames = type_names(names, union_names, resources);
   // Second pass: resolve fields with the full name set
   // available. Struct-to-struct field references resolve via
   // the name set; union-typed fields (`f: SomeUnion`, `xs:
@@ -6119,22 +6142,22 @@ function collect_struct_sigs(structs: parser.StructDecl[], union_names: string[]
 // disagreeing about a SHAPE: a resolver modelling fewer of them answers
 // `unknown`, and an unknown type widens silently into every consumer (#8459).
 pub function type_from_name_with_structs(name: string, structs: StructSig[]): typeinfo.Type {
-  return type_from_spelling(name, type_names(struct_sig_names(structs), []));
+  return type_from_spelling(name, type_names(struct_sig_names(structs), [], []));
 }
 
 pub function type_from_name_with_struct_names(name: string, struct_names: string[]): typeinfo.Type {
-  return type_from_spelling(name, type_names(struct_names, []));
+  return type_from_spelling(name, type_names(struct_names, [], []));
 }
 
 // The two `_unions` resolvers are the context that can also name a union alias.
 // A struct name and an alias name can't collide — collect_union_sigs rejects the
 // overlap at module build time.
 pub function type_from_name_with_structs_unions(name: string, structs: StructSig[], unions: UnionSig[]): typeinfo.Type {
-  return type_from_spelling(name, type_names(struct_sig_names(structs), union_sig_names(unions)));
+  return type_from_spelling(name, type_names(struct_sig_names(structs), union_sig_names(unions), []));
 }
 
 pub function type_from_name_with_names_and_unions(name: string, struct_names: string[], union_names: string[]): typeinfo.Type {
-  return type_from_spelling(name, type_names(struct_names, union_names));
+  return type_from_spelling(name, type_names(struct_names, union_names, []));
 }
 
 function struct_sig_names(structs: StructSig[]): string[] {
@@ -6180,6 +6203,9 @@ function type_from_ref_names(r: parser.TypeRef, tn: TypeNames): typeinfo.Type {
   // parameters, tuples and containers obey the same rule as a top-level type.
   if (name.len() >= 5 && slice_unchecked(name, 0, 4) == "dyn ") {
     return t_dyn(slice_unchecked(name, 4, name.len()) + "");
+  }
+  if (names_resource_handle(name, tn)) {
+    return resource_handle(name);
   }
   if (name == "i32") {
     return t_i32();
@@ -6267,7 +6293,7 @@ function type_from_ref_names(r: parser.TypeRef, tn: TypeNames): typeinfo.Type {
   // both `Option` and `Option[i32]` land here. Without this the full
   // spelling `Option[i32]` matches no struct/union below and the annotation
   // collapsed to unknown, over-rejecting every `var o: Option[i32] = …`.
-  if (is_reserved_enum_name(r.base)) {
+  if (parser.is_reserved_enum_name(r.base)) {
     // Capture the instantiation args (Option[i32] → args [i32]) so the
     // typed-IR annotation can reconstruct the full "Option[T]"/"Result[T,E]"
     // tag. Checker-behaviour-neutral: type_eq/assignability ignore union args.
@@ -6328,7 +6354,7 @@ function type_from_ref_names(r: parser.TypeRef, tn: TypeNames): typeinfo.Type {
   // an argless spelling of either names no layout. Resolving those two here
   // would make `var m: Map = map_new(4)` — which native accepts — an E003
   // against a nominal nothing produces.
-  if (is_reserved_struct_name(name) && name != "Map" && name != "Cell") {
+  if (parser.is_reserved_struct_name(name) && name != "Map" && name != "Cell") {
     return t_struct(name);
   }
   // Unknown-BASE generic `Foo[T]` (non-tuple, non-Map, base declared
@@ -6559,13 +6585,6 @@ function gc_bind_param(r: parser.TypeRef, at: typeinfo.Type, tparams: string[], 
   return (ns, ts);
 }
 
-// collect_union_sigs builds the union-alias table from the
-// module's TypeAlias list. Variants are stored as bare names;
-// resolution-time validation (each variant must be a declared
-// struct) happens in `validate_union_sigs` after both tables
-// exist. An alias whose name collides with a declared struct
-// is silently dropped — collect_struct_sigs runs first and the
-// duplicate-name check would otherwise need a tri-state.
 // declared_union_names is the names-only union set the STRUCT table is built
 // with: type aliases and enums both name a union, and a field typed by either
 // resolves through it. The full UnionSig table (with variants) comes after,
@@ -6577,23 +6596,17 @@ function declared_union_names(mod: parser.Module): string[] {
   return out;
 }
 
-function collect_union_sigs(aliases: parser.TypeAlias[], struct_names: string[]): UnionSig[] {
+// collect_union_sigs is one union per alias that registers as an enum; a
+// refused one (E016 or E006) leaves its name to whatever else declares it.
+function collect_union_sigs(mod: parser.Module): UnionSig[] {
   var out: UnionSig[] = [];
-  for a in aliases {
-    // Skip aliases that shadow a declared struct — the
-    // struct wins, and the alias is treated as a no-op.
-    var k: i32 = 0;
-    var dup: boolean = false;
-    while (k < struct_names.len()) {
-      if (struct_names[k] == a.name) {
-        dup = true;
-        break;
-      }
-      k = k + 1;
-    }
-    if (!dup) {
+  var i: i32 = 0;
+  while (i < mod.aliases.len()) {
+    var a: parser.TypeAlias = mod.aliases[i];
+    if (parser.alias_registers(mod, i)) {
       out = out.append(UnionSig { name: a.name, variants: a.variants, is_try: false, is_enum: false, module: a.module, type_params: [] });
     }
+    i = i + 1;
   }
   return out;
 }
@@ -6867,6 +6880,9 @@ function type_label(t: typeinfo.Type): string {
     },
     typeinfo.TypeDyn(d) => {
       return "dyn " + d.traits;
+    },
+    typeinfo.TypeHandle(h) => {
+      return typeinfo.handle_spelling(h);
     },
     typeinfo.TypeVoid(_) => {
       return "void";
@@ -10350,7 +10366,7 @@ function qual_enum_name(obj: ast.Expr, s: Scope): string {
       if (s.lookup_union(oid.name).name.len() > 0) {
         return oid.name;
       }
-      if (is_reserved_enum_name(oid.name)) {
+      if (parser.is_reserved_enum_name(oid.name)) {
         return oid.name;
       }
       return "";
@@ -12376,7 +12392,7 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
               // E023 at the source and skips the binding checks.
               // Reserved builtin enums (Option/Result/…) are
               // always known to the Go checker — never E023.
-              if (cur.lookup_union(su.name).name.len() == 0 && !is_reserved_enum_name(su.name)) {
+              if (cur.lookup_union(su.name).name.len() == 0 && !parser.is_reserved_enum_name(su.name)) {
                 src_unknown_enum = true;
                 out = out.append(dg_at("E023", "unknown enum \"" + su.name + "\"", expr_line(m.scrutinee), expr_col(m.scrutinee)));
               }
@@ -12443,7 +12459,7 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
             // checkMatch/checkMatchExpr; the arm checks below are
             // skipped (usig missed). if-let / let-else report
             // theirs in the origin block above — don't double up.
-            if (usig.name.len() == 0 && !is_reserved_enum_name(mun.name) && m.origin == "") {
+            if (usig.name.len() == 0 && !parser.is_reserved_enum_name(mun.name) && m.origin == "") {
               out = out.append(dg_at("E023", "unknown enum \"" + mun.name + "\"", expr_line(m.scrutinee), expr_col(m.scrutinee)));
             }
             if (usig.name.len() > 0) {
@@ -13015,7 +13031,7 @@ function receiver_type_ok(rt: string, mod: parser.Module): boolean {
     return true;
   }
   var base: string = util.base_type_name(rt);
-  if (is_reserved_struct_name(base)) {
+  if (parser.is_reserved_struct_name(base)) {
     return true;
   }
   for sd in mod.structs {
@@ -13382,10 +13398,7 @@ function collect_decl_diags(mod: parser.Module): util.Diag[] {
   // E006: a free function redeclared (same name, both receiver-less), or
   // a method redeclared (same name AND receiver type). The redeclaration
   // SITE — the second + occurrences — is flagged, matching the Go
-  // checker. Enum / struct redeclaration aren't covered yet: the parser
-  // desugars enums into variant structs and drops the enum name, so a
-  // struct name in `mod.structs` can't be told apart from a variant (a
-  // later slice handles them once that grouping is recovered).
+  // checker.
   var di: i32 = 0;
   while (di < mod.funcs.len()) {
     var f2: parser.FuncDecl = mod.funcs[di];
@@ -13404,8 +13417,7 @@ function collect_decl_diags(mod: parser.Module): util.Diag[] {
     }
     di = di + 1;
   }
-  // E006: struct redeclared (#4363 item 4 — the func/method/enum forms
-  // below predate it). mod.structs is the FLAT table: enum variant
+  // E006: struct redeclared. mod.structs is the FLAT table: enum variant
   // payloads land there too (tagged with their owning enum via
   // enum_owner), and desugars synthesize `__`-prefixed entries — both are
   // skipped so only genuine user struct declarations collide.
@@ -13429,7 +13441,7 @@ function collect_decl_diags(mod: parser.Module): util.Diag[] {
       // line guard is native's `existing.P == ast.Position{}` check: a
       // synthetic re-entry carries no position and is the compiler's own
       // injection, not a user redeclaration.
-      if (s2.line > 0 && is_reserved_struct_name(s2.name)) {
+      if (s2.line > 0 && parser.is_reserved_struct_name(s2.name)) {
         out = out.append(dg_at("E010", "struct \"" + s2.name + "\" is a reserved built-in name and cannot be redeclared", s2.line, s2.col));
       }
     }
@@ -13453,7 +13465,7 @@ function collect_decl_diags(mod: parser.Module): util.Diag[] {
       out = out.append(dg_at("E006", "enum \"" + mod.enums[en].name + "\" redeclared", mod.enums[en].line, mod.enums[en].col));
     }
     // E010: a user enum shadowing a reserved built-in enum name.
-    if (is_reserved_enum_name(mod.enums[en].name)) {
+    if (parser.is_reserved_enum_name(mod.enums[en].name)) {
       out = out.append(dg_at("E010", "enum \"" + mod.enums[en].name + "\" is a reserved built-in name and cannot be redeclared", mod.enums[en].line, mod.enums[en].col));
     }
     var vn: string[] = mod.enums[en].variant_names;
@@ -13465,6 +13477,21 @@ function collect_decl_diags(mod: parser.Module): util.Diag[] {
       vk = vk + 1;
     }
     en = en + 1;
+  }
+  // E006: a resource redeclared, or named like a struct, enum or union alias.
+  // registered_resources leaves it out, so the name keeps its other meaning.
+  var rn: i32 = 0;
+  while (rn < mod.resources.len()) {
+    var rclash: string = parser.resource_collision(mod, rn);
+    var rdecl: parser.ResourceDecl = mod.resources[rn];
+    if (rclash == "resource") {
+      out = out.append(dg_at("E006", "resource \"" + rdecl.name + "\" redeclared", rdecl.line, rdecl.col));
+    } else if (rclash.len() > 0) {
+      var article: string = "a ";
+      if (rclash == "enum") { article = "an "; }
+      out = out.append(dg_at("E006", "resource \"" + rdecl.name + "\" conflicts with " + article + rclash + " of the same name", rdecl.line, rdecl.col));
+    }
+    rn = rn + 1;
   }
   // E070: a named function that declares no return type. Every function
   // writes its return type — `: void` when it returns nothing — so an
@@ -13478,22 +13505,19 @@ function collect_decl_diags(mod: parser.Module): util.Diag[] {
       out = out.append(dg_at("E070", "missing return type on function \"" + func.name + "\"; declare it explicitly (use `: void` if it returns nothing)", func.line, func.col));
     }
   }
-  // E016: a `type X = …` union alias whose name collides with a declared
-  // struct of the same name, reported at the alias's `type` keyword (the
-  // struct wins; the alias is otherwise dropped). A collision with an
-  // enum is the Go checker's E006 (enum redeclared), not E016, so only
-  // the struct case is handled here.
-  for alias in mod.aliases {
-    var aname: string = alias.name;
-    var hit_struct: boolean = false;
-    for sd in mod.structs {
-      if (sd.name == aname) {
-        hit_struct = true;
-      }
+  // E016: a `type X = …` union alias the Go checker refuses to desugar, and
+  // E006: one that desugars into an enum whose name is taken. Both are reported
+  // at the alias's `type` keyword, and the alias is then not an enum.
+  var ak: i32 = 0;
+  while (ak < mod.aliases.len()) {
+    var alias: parser.TypeAlias = mod.aliases[ak];
+    for msg in parser.union_alias_errors(mod, alias) {
+      out = out.append(dg_at("E016", msg, alias.line, alias.col));
     }
-    if (hit_struct) {
-      out = out.append(dg_at("E016", "union \"" + aname + "\" collides with a struct of the same name", alias.line, alias.col));
+    if (parser.alias_redeclares_enum(mod, ak)) {
+      out = out.append(dg_at("E006", "enum \"" + alias.name + "\" redeclared", alias.line, alias.col));
     }
+    ak = ak + 1;
   }
   // E054: an `@export(...)` function bound to a WIT world export cannot be
   // generic (a world export is lifted with a single concrete canonical
@@ -14854,7 +14878,7 @@ function ow_type_is_pointer_name(tn: string, structs: parser.StructDecl[]): bool
   if (tn[0] == b'(') { return true; }
   if (tn.len() >= 4 && slice_unchecked(tn, 0, 4) == "dyn ") { return true; }
   var base: string = util.base_type_name(tn);
-  if (is_reserved_struct_name(base) || is_reserved_enum_name(base)) { return true; }
+  if (parser.is_reserved_struct_name(base) || parser.is_reserved_enum_name(base)) { return true; }
   for sd in structs {
     if (sd.name == base || sd.enum_owner == base) { return true; }
   }
@@ -15719,7 +15743,7 @@ function e064_unknown_bare(type_name: string, tn: TypeNames): boolean {
   // carrying the injected decls: they are opaque handles whose methods the
   // checker resolves as builtins, so declaring them would turn every
   // `r.read_line()` into a field read (E043).
-  if (is_reserved_struct_name(type_name) || is_reserved_enum_name(type_name)) {
+  if (parser.is_reserved_struct_name(type_name) || parser.is_reserved_enum_name(type_name)) {
     return false;
   }
   for byte in type_name {
@@ -15777,7 +15801,7 @@ function e064_unknown_name_tref(tr: parser.TypeRef, tn: TypeNames, extra_known: 
   // allowlisted here; declared traits and resources arrive via extra_known
   // (they aren't in the struct/union name sets this resolver models).
   if (tr.args.len() > 0) {
-    if (!is_reserved_struct_name(tr.base) && !is_reserved_enum_name(tr.base)) {
+    if (!parser.is_reserved_struct_name(tr.base) && !parser.is_reserved_enum_name(tr.base)) {
       var kx: boolean = false;
       for elem in extra_known {
         if (elem == tr.base) {
@@ -16913,9 +16937,8 @@ function lent_place(e: ast.Expr, params: string[]): boolean {
 // the synthesised callback lambda with use_infer; this walk verifies the
 // inference has a signature to read: the callee must be a bare identifier
 // with a known signature whose last parameter is a function type taking at
-// least one argument. (The native generic-unification failure arm is not
-// ported — the self-host's erased-generics model has no substitution to
-// fail; that arm stays native-only until the checker grows unification.)
+// least one argument, and a generic callee's written arguments must bind
+// the type parameters the callback's first parameter names.
 function e032_call_check(c: ast.ExprCall, lastfn: string[], cur: Scope): util.Diag[] {
   var out: util.Diag[] = [];
   if (c.args.len() == 0) {
@@ -16949,7 +16972,8 @@ function e032_call_check(c: ast.ExprCall, lastfn: string[], cur: Scope): util.Di
   // is not retained), so the last-parameter-is-a-function test reads
   // the `lastfn` side table built from the parsed decls; the native
   // "callback takes no arguments" arity arm is not decidable here and
-  // stays native-only (like the generic-unification arm).
+  // stays native-only. A generic callee whose written arguments leave the
+  // callback's parameter unbound is use_binding_type's unknown.
   var sig: FuncSig = cur.lookup_sig(callee_name);
   var have_sig: boolean = sig.name.len() > 0;
   if (have_sig) {
@@ -16965,6 +16989,8 @@ function e032_call_check(c: ast.ExprCall, lastfn: string[], cur: Scope): util.Di
     }
     if (!lf) {
       out = out.append(dg_at("E032", "use: callee \"" + callee_name + "\"'s last parameter isn't a function — add an explicit `: TYPE` annotation", c.line, c.col));
+    } else if (sig.all_type_params.len() > 0 && is_unknown(use_binding_type(c, cur))) {
+      out = out.append(dg_at("E032", "use: could not infer binding type for \"" + callee_name + "\" from its arguments — add an explicit `: TYPE` annotation", c.line, c.col));
     }
     return out;
   }
@@ -18336,12 +18362,13 @@ function check_module_pass(mod: parser.Module, fda_diags: util.Diag[], focus: st
   // typed as a union (or union array) resolves rather than going
   // unknown. The full UnionSig table (with variants) still comes after.
   var import_paths: string[] = import_paths_of(mod);
-  var structs: StructSig[] = collect_struct_sigs(mod.structs, declared_union_names(mod));
+  var rnames: string[] = resource_names(mod);
+  var structs: StructSig[] = collect_struct_sigs(mod.structs, declared_union_names(mod), rnames);
   var struct_names: string[] = [];
   for sd in structs {
     struct_names = struct_names.append(sd.name);
   }
-  var unions: UnionSig[] = collect_union_sigs(mod.aliases, struct_names);
+  var unions: UnionSig[] = collect_union_sigs(mod);
   // Register enum decls as union sigs (variants = variant names) so an
   // enum-typed scrutinee types to TypeUnion and the E030 exhaustiveness
   // check (plus union-variant assignability) covers enums the same way
@@ -18356,10 +18383,10 @@ function check_module_pass(mod: parser.Module, fda_diags: util.Diag[], focus: st
     well_typed = false;
   }
   var union_names: string[] = union_sig_names(unions);
-  var tn: TypeNames = type_names(struct_names, union_names);
+  var tn: TypeNames = type_names(struct_names, union_names, rnames);
   var sigs: FuncSig[] = collect_func_sigs(mod.funcs, tn);
   var st: SigTable = sig_table(sigs);
-  var stt: StructTable = struct_table(structs);
+  var stt: StructTable = struct_table(structs, rnames);
   var ut: UnionTable = union_table(unions);
   var methods: MethodTable = method_table(collect_method_sigs(mod.funcs, tn));
   var body_diags: util.Diag[] = [];
@@ -18780,21 +18807,22 @@ function check_module_pass(mod: parser.Module, fda_diags: util.Diag[], focus: st
 struct ModuleEnv { sigs: SigTable, structs: StructTable, unions: UnionTable, methods: MethodTable, imports: string[], impls: parser.ImplInfo[], trait_reqs: parser.TraitReq[] }
 
 function module_env(mod: parser.Module): ModuleEnv {
-  var structs: StructSig[] = collect_struct_sigs(mod.structs, declared_union_names(mod));
+  var rnames: string[] = resource_names(mod);
+  var structs: StructSig[] = collect_struct_sigs(mod.structs, declared_union_names(mod), rnames);
   var struct_names: string[] = [];
   for sd in structs {
     struct_names = struct_names.append(sd.name);
   }
-  var unions: UnionSig[] = collect_union_sigs(mod.aliases, struct_names);
+  var unions: UnionSig[] = collect_union_sigs(mod);
   for ed in mod.enums {
     unions = unions.append(enum_union_sig(ed));
   }
   var union_names: string[] = union_sig_names(unions);
-  var tn: TypeNames = type_names(struct_names, union_names);
+  var tn: TypeNames = type_names(struct_names, union_names, rnames);
   var sigs: FuncSig[] = collect_func_sigs(mod.funcs, tn);
   return ModuleEnv {
     sigs: sig_table(sigs),
-    structs: struct_table(structs),
+    structs: struct_table(structs, rnames),
     unions: union_table(unions),
     methods: method_table(collect_method_sigs(mod.funcs, tn)),
     imports: import_paths_of(mod),
@@ -19877,20 +19905,21 @@ function import_paths_of(mod: parser.Module): string[] {
 }
 
 function build_module_tables(mod: parser.Module): ModuleTables {
-  var structs: StructSig[] = collect_struct_sigs(mod.structs, declared_union_names(mod));
+  var rnames: string[] = resource_names(mod);
+  var structs: StructSig[] = collect_struct_sigs(mod.structs, declared_union_names(mod), rnames);
   var struct_names: string[] = [];
   for sd in structs {
     struct_names = struct_names.append(sd.name);
   }
-  var unions: UnionSig[] = collect_union_sigs(mod.aliases, struct_names);
+  var unions: UnionSig[] = collect_union_sigs(mod);
   for ed in mod.enums {
     unions = unions.append(enum_union_sig(ed));
   }
   var union_names: string[] = union_sig_names(unions);
-  var tn: TypeNames = type_names(struct_names, union_names);
+  var tn: TypeNames = type_names(struct_names, union_names, rnames);
   var sigs: FuncSig[] = collect_func_sigs(mod.funcs, tn);
   var methods: MethodTable = method_table(collect_method_sigs(mod.funcs, tn));
-  return ModuleTables { structs: struct_table(structs), unions: union_table(unions), sigs: sig_table(sigs), methods: methods, imports: import_paths_of(mod), impls: assoc_func_impls(mod.impls, mod.funcs), trait_reqs: mod.trait_reqs };
+  return ModuleTables { structs: struct_table(structs, rnames), unions: union_table(unions), sigs: sig_table(sigs), methods: methods, imports: import_paths_of(mod), impls: assoc_func_impls(mod.impls, mod.funcs), trait_reqs: mod.trait_reqs };
 }
 
 // settle_int_tree records a contextual integer type on the compile-only AST.

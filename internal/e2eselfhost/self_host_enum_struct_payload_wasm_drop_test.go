@@ -9,15 +9,13 @@ import (
 )
 
 // TestSelfHostEnumStructPayloadDropWasm is the wasm mirror of the enum-payload
-// struct deep-drop (the x86 sibling is TestSelfHostEnumStructPayloadDropIRX86_64).
-// The reclaim is emitted in the shared irlower lowering (an IR
-// call_direct("__struct_drop_<Inner>")), so wasm gets it for free; wasm_ir's
-// struct_drop_types scan (plus the deep-drop transitive closure) emits the
-// $__struct_drop_Inner body. Reclaim is proven by a memory-cap differential: a long
+// struct deep-drop (the x86 sibling is TestSelfHostEnumStructPayloadDropIRX86_64):
+// the typed lowering's $__sem_drop_Box releases its payload through
+// $__sem_drop_Inner. Reclaim is proven by a memory-cap differential: a long
 // consume-by-match churn over a fresh `Full(Inner{items:[..]})` stays bounded under a
 // tight max-memory-size cap with trap-on-grow-failure (the payload buffer + boxes are
 // reclaimed onto the freelist and reused); a regression to the leak exceeds the cap
-// and traps. The WAT assertion pins that the recursive $__struct_drop_Inner is emitted.
+// and traps. The WAT assertion pins that $__sem_drop_Inner is emitted.
 func TestSelfHostEnumStructPayloadDropWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping wasm enum-struct-payload e2e")
@@ -47,8 +45,8 @@ function main(): i32 {
 	if len(wat) == 0 {
 		t.Fatal("wasm emitter produced 0 bytes")
 	}
-	if !strings.Contains(string(wat), "$__struct_drop_Inner") {
-		t.Fatalf("emitted WAT missing $__struct_drop_Inner — the enum struct payload did not deep-drop\n--- WAT ---\n%s", wat)
+	if !strings.Contains(string(wat), "$__sem_drop_Inner") {
+		t.Fatalf("emitted WAT missing $__sem_drop_Inner — the enum struct payload did not deep-drop\n--- WAT ---\n%s", wat)
 	}
 	watPath := filepath.Join(dir, "enum_struct_payload.wat")
 	if err := os.WriteFile(watPath, wat, 0o644); err != nil {

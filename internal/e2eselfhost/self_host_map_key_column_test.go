@@ -161,8 +161,9 @@ func TestSelfHostMapKeyWithNoColumnRefusesEverySurface(t *testing.T) {
 			// act on is the state #10032 reported: the whole-module message
 			// says to set FERN_STRICT_IR=1, and what that then printed named
 			// the statement the bail unwound to and nothing about the key.
+			// The message is irlower's, so the compile runs on the AST lowering.
 			cmd := exec.Command(driver, entry, root)
-			cmd.Env = append(os.Environ(), "FERN_STRICT_IR=1")
+			cmd.Env = append(os.Environ(), "FERN_STRICT_IR=1", "FERN_SEM_IR=")
 			var stderr strings.Builder
 			cmd.Stderr = &stderr
 			_ = cmd.Run()

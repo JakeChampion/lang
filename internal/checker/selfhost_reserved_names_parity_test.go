@@ -9,8 +9,8 @@ import (
 	"testing"
 )
 
-// The self-host checker carries its own copy of "which type names are
-// reserved", because it has no access to builtinStructDecls /
+// The self-host front end (parser.fern) carries its own copy of "which type
+// names are reserved", because it has no access to builtinStructDecls /
 // builtinEnumDecls. Two copies of one list drift, and the drift is silent in
 // the direction that matters: a name added here and not there means the
 // self-host quietly ACCEPTS a redeclaration native refuses, which is how the
@@ -29,14 +29,17 @@ var (
 		`(?s)function is_reserved_struct_name\(name: string\): boolean \{.*?var reserved: string\[\] = \[(.*?)\]`)
 	selfHostReservedEnumsRE = regexp.MustCompile(
 		`(?s)function is_reserved_enum_name\(name: string\): boolean \{(.*?)\n\}`)
-	fernStringRE = regexp.MustCompile(`"([A-Za-z_][A-Za-z0-9_]*)"`)
+	fernStringRE              = regexp.MustCompile(`"([A-Za-z_][A-Za-z0-9_]*)"`)
+	selfHostReservedTParamsRE = regexp.MustCompile(
+		`(?s)function reserved_struct_tparams\(name: string\): string\[\] \{(.*?)\n\}`)
+	fernTParamsArmRE = regexp.MustCompile(`if \(name == "(\w+)"\) \{ return \[(.*?)\]; \}`)
 )
 
-func selfHostCheckerSource(t *testing.T) string {
+func selfHostReservedNamesSource(t *testing.T) string {
 	t.Helper()
-	b, err := os.ReadFile(filepath.Join("..", "..", "examples", "self_host", "checker.fern"))
+	b, err := os.ReadFile(filepath.Join("..", "..", "examples", "self_host", "parser.fern"))
 	if err != nil {
-		t.Fatalf("read self-host checker.fern: %v", err)
+		t.Fatalf("read self-host parser.fern: %v", err)
 	}
 	return string(b)
 }
@@ -59,7 +62,7 @@ func namesIn(t *testing.T, src string, re *regexp.Regexp, what string) []string 
 }
 
 func TestSelfHostReservedTypeNamesMatchBuiltins(t *testing.T) {
-	src := selfHostCheckerSource(t)
+	src := selfHostReservedNamesSource(t)
 
 	t.Run("structs", func(t *testing.T) {
 		var want []string
@@ -70,6 +73,35 @@ func TestSelfHostReservedTypeNamesMatchBuiltins(t *testing.T) {
 		got := namesIn(t, src, selfHostReservedStructsRE, "is_reserved_struct_name")
 		if strings.Join(got, ",") != strings.Join(want, ",") {
 			t.Errorf("is_reserved_struct_name disagrees with builtinStructDecls()\n self-host: %v\n    native: %v\na name in native but not the self-host is a redeclaration the self-host accepts and native refuses", got, want)
+		}
+	})
+
+	t.Run("struct-type-params", func(t *testing.T) {
+		want := map[string]string{}
+		for _, sd := range builtinStructDecls() {
+			if len(sd.TypeParams) > 0 {
+				want[sd.Name] = strings.Join(sd.TypeParams, ",")
+			}
+		}
+		m := selfHostReservedTParamsRE.FindStringSubmatch(src)
+		if m == nil {
+			t.Fatal("cannot find the self-host reserved_struct_tparams arms — the pattern no longer matches, so this test proves nothing")
+		}
+		got := map[string]string{}
+		for _, arm := range fernTParamsArmRE.FindAllStringSubmatch(m[1], -1) {
+			var params []string
+			for _, q := range fernStringRE.FindAllStringSubmatch(arm[2], -1) {
+				params = append(params, q[1])
+			}
+			got[arm[1]] = strings.Join(params, ",")
+		}
+		if len(got) != len(want) {
+			t.Errorf("reserved_struct_tparams has %d generic built-ins, builtinStructDecls() %d\n self-host: %v\n    native: %v", len(got), len(want), got, want)
+		}
+		for name, params := range want {
+			if got[name] != params {
+				t.Errorf("reserved_struct_tparams(%q) = [%s], builtinStructDecls() has [%s]", name, got[name], params)
+			}
 		}
 	})
 

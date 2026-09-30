@@ -149,11 +149,9 @@ func TestSelfHostStrArrayWithReclaimWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH")
 	}
-	gcc, runner := x86_64Tooling(t)
+	l := newWasmStdlibLoader(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driver := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
-	src := strings.Replace(strArrayWithChurnSrc(32, true), "a = a.with(3, a[5]);", `a = a.with(3, a[3]); if (a[3] != "kkkkkkkkkkkkkkkkkkkk3") { return 88; }`, 1)
+	src := "import \"std/i32\";\n" + strings.Replace(strArrayWithChurnSrc(32, true), "a = a.with(3, a[5]);", `a = a.with(3, a[3]); if (a[3] != "kkkkkkkkkkkkkkkkkkkk3") { return 88; }`, 1)
 	src = strings.Replace(src, "function main(): i32", "function churn(): i32", 1)
 	src += `
 function main(): i32 {
@@ -165,7 +163,7 @@ function main(): i32 {
     if (after != before) { return 98; }
     return 0;
 }`
-	wat := runCapture(t, gcc, runner, driver, []byte(src), "-ir")
+	wat := l.emit(t, src)
 	path := filepath.Join(dir, "self-store.wat")
 	if err := os.WriteFile(path, wat, 0o644); err != nil {
 		t.Fatal(err)

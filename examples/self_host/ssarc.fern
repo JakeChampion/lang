@@ -98,7 +98,7 @@ function arr_push_borrowed_op(elem: typeinfo.Type): ir.Op {
 }
 // The types whose stack representation needs no declaration looked up: a
 // boolean and a void occupy one word, a string is its own box, a function
-// value is the env box its captures are stored in, and a stream handle is the
+// value is the env box its captures are stored in, and a handle is the
 // descriptor word. The handle is read here rather than under the nominal
 // ladder below, which would look for a schema no handle has.
 function supported_leaf(t: typeinfo.Type): boolean {
@@ -583,7 +583,7 @@ function scratch_base(f: ssasem.Func): i32 { return f.graph.nvals + 1; }
 // their own unit; the final parent release walks children before its box.
 // Array/tuple/struct opcodes preserve the production native/Wasm layouts.
 function has_children(t: typeinfo.Type, f: ssasem.Func): boolean {
-    // A stream handle has no box, so there is nothing under it to walk — and
+    // A handle has no box, so there is nothing under it to walk — and
     // no schema either, which is what the record arm below would go looking
     // for. `caller_sigs` asks this of every parameter type, so a handle
     // reaches here on any program that opens one.
@@ -1512,7 +1512,7 @@ function walkable(t: typeinfo.Type, f: ssasem.Func): boolean {
     if let typeinfo.TypeArray(a) = t { return walkable(a.elem, f); }
     if let typeinfo.TypeTuple(tup) = t { return walkable_tuple(tup, f); }
     if (ssasem.reference(t)) { return supported(t, f); }
-    // A stream handle stores as the descriptor word and its release walks
+    // A handle stores as the descriptor word and its release walks
     // nothing, so a field or payload of one is walkable without a schema.
     if (semtypes.is_handle(t)) { return true; }
     if let typeinfo.TypeI32(_) = t { return true; }
@@ -2043,7 +2043,7 @@ function cast(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlow
     // wrap for it.
     if (ssasem.is_usize(from) && ssasem.reference(to)) { return r; }
     if (ssasem.reference(from) && ssasem.is_usize(to)) { return r; }
-    // A stream handle is its descriptor, so reading it as the i32 moves nothing.
+    // A handle is its descriptor, so reading it as the i32 moves nothing.
     if (semtypes.is_handle(from)) { return r; }
     if (ssasem.is_float(to)) { return into_float(r, from, to); }
     if (ssasem.is_float(from)) { return out_of_float(r, to); }

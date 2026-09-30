@@ -45,7 +45,7 @@ func TestSelfHostWasmComponentIRPath(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 
-	copySelfHostDriver(t, dir, "wasm_ir.fern")
+	copySelfHostDriver(t, dir, "wasm_ir.fern", "semlower.fern")
 	// The no-I/O run core (emit_module_run) and the stdout run core
 	// (emit_module_run_io) — the two component modes with an IR leg.
 	if err := os.WriteFile(filepath.Join(dir, "wasm_run_p2.fern"), []byte(p2Driver), 0o644); err != nil {
@@ -56,6 +56,9 @@ func TestSelfHostWasmComponentIRPath(t *testing.T) {
 	}
 	runBin := buildSelfHostBin(t, gcc, dir, "wasm_run_p2.fern", "wasm_run_p2")
 	ioBin := buildSelfHostBin(t, gcc, dir, "wasm_run_io.fern", "wasm_run_io")
+	// A row that imports the stdlib compiles through asm_load_run, as the CLI
+	// would frame it; the inline drivers load no imports.
+	std := newWasmStdlibLoader(t)
 
 	emit := func(t *testing.T, bin, src string) string {
 		t.Helper()
@@ -106,7 +109,7 @@ func TestSelfHostWasmComponentIRPath(t *testing.T) {
 			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush"}},
 		{"io-putchar", true, `function main(): i32 { putchar(72); putchar(105); return 0; }`, true,
 			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush"}},
-		{"io-fstring", true, `function main(): i32 { var n: i32 = 21; write(f"answer={n * 2}"); return 0; }`, true,
+		{"io-fstring", true, "import \"std/i32\";\nfunction main(): i32 { var n: i32 = 21; write(f\"answer={n * 2}\"); return 0; }", true,
 			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush"}},
 		// eprint reorders the trio (get-stderr first) to match
 		// component_full_io_eprint, and keeps stdout imported even when the
@@ -166,7 +169,7 @@ func TestSelfHostWasmComponentIRPath(t *testing.T) {
 		// now_unix_ms() is an i64, so this composes the clock import with the
 		// wide `.to_string()` formatter ($__fern_i64_to_str, #5826) — the last
 		// per-function IR gap a component core hit.
-		{"clock-tostring", true, `function main(): i32 { write(now_unix_ms().to_string()); return 0; }`, true,
+		{"clock-tostring", true, "import \"std/i64\";\nfunction main(): i32 { write(now_unix_ms().to_string()); return 0; }", true,
 			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:clocks/wall-clock@0.2.0 now"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -184,7 +187,12 @@ func TestSelfHostWasmComponentIRPath(t *testing.T) {
 				}
 				return
 			}
-			wat := emit(t, bin, tc.source)
+			var wat string
+			if strings.Contains(tc.source, "import \"") {
+				wat = string(std.emit(t, tc.source, "-emit", "component-core"))
+			} else {
+				wat = emit(t, bin, tc.source)
+			}
 
 			// Every component core exports main + _lang_run and none exports
 			// _start, whichever emitter produced it.

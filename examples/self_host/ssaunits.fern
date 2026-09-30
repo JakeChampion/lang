@@ -215,8 +215,8 @@ function supported_tuple(tup: typeinfo.TypeTuple, f: ssasem.Func): boolean {
     for t in tup.elements { if (!supported(t, f)) { return false; } }
     return true;
 }
-// The types that carry no unit at all: the scalars, and a stream handle, which
-// is its descriptor.
+// The types that carry no unit at all: the scalars, and a handle, which is
+// its descriptor.
 function unit_free(t: typeinfo.Type): boolean {
     if let typeinfo.TypeI32(_) = t { return true; }
     if let typeinfo.TypeBool(_) = t { return true; }

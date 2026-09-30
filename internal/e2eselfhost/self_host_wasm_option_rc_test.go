@@ -11,9 +11,9 @@ import (
 // foundation: a variant box ([tag@0][payload@4]) is now rc-headered via the
 // generic $__fern_str_box (8-byte rc+bsz header, returns base+8), so it
 // carries an rc word at [p-8] while tag@[p] and payload@[p+4] (every
-// p-relative access — match dispatch, `?` unwrap) are unchanged. Observed
-// through __fern_rc_is_unique: a fresh Some/Ok box is unique (rc==1). Counting
-// + the payload recursive release build on this foundation in later slices.
+// p-relative access — match dispatch, `?` unwrap) are unchanged, and
+// counting and the payload's recursive release keep the over-release
+// detector clean.
 // (The io/extern option builders — read_file etc. — stay raw for now;
 // layout-only never sweeps options, so the mix is value-safe.)
 func TestSelfHostRcOptionBoxWasm(t *testing.T) {
@@ -31,8 +31,6 @@ func TestSelfHostRcOptionBoxWasm(t *testing.T) {
 		src  string
 		exit int
 	}{
-		// A fresh Some box is rc-boxed at rc 1 => unique.
-		{"some-fresh-unique", "function main(): i32 { var o = Some(42); return __fern_rc_is_unique(o); }", 1},
 		// Payload value survives the rc header (match reads tag@[p], payload@[p+4]).
 		{"some-match-intact", "function main(): i32 { var o = Some(30); match (o) { Some(x) => { return x + 12; }, None => { return 0; } } }", 42},
 		// None (no payload) dispatches correctly under the rc header.

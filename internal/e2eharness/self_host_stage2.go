@@ -7,6 +7,7 @@ package e2eharness
 import (
 	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -25,7 +26,11 @@ func RunCapture(t *testing.T, gcc string, runner []string, bin string, stdin []b
 	}
 	out, err := cmd.Output()
 	if err != nil {
-		t.Fatalf("run %s: %v", bin, err)
+		var stderr []byte
+		if ee, ok := err.(*exec.ExitError); ok {
+			stderr = ee.Stderr
+		}
+		t.Fatalf("run %s: %v\n%s", bin, err, stderr)
 	}
 	return out
 }
