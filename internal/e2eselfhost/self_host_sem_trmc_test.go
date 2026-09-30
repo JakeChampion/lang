@@ -16,10 +16,13 @@ import (
 //
 // `keep` is lent to every walk and scored again at the end, so a walk that
 // released cells its caller still holds answers a different `after`; `g`
-// hands the walk a temporary it may consume as it goes. The answer was
-// confirmed at 3,000 cells against `fern -interp`, whose own recursion is too
-// slow at this depth, and matches the native compiler at 300,000 on
-// everything but `mirror`, which native does not rewrite and overflows on.
+// hands the walk a temporary it may consume as it goes. Most exits fill the
+// hole with a node built there; `mirror`'s hands back the node it was given,
+// and `append_to`'s an element of an array it borrows, so `tails` is read back
+// afterwards. The answer was confirmed at 3,000 cells against `fern -interp`,
+// whose own recursion is too slow at this depth, and matches the native
+// compiler at 300,000 on everything but `mirror`, which native does not
+// rewrite and overflows on.
 const selfHostTrmcSource = `import "std/i32";
 
 enum List { Cons(i32, List), Neg(i32, List), Nil }
@@ -82,13 +85,24 @@ function last_of(xs: List, d: i32): i32 {
     }
 }
 
+// The base case hands back an element of an array the frame only borrows: an
+// array parameter is never counted, and this one is passed along whole every
+// round. So the exit fill stores a unit it has to retain rather than move.
+function append_to(xs: List, tails: List[]): List {
+    match (xs) {
+        Cons(h, t) => { return Cons(h, append_to(t, tails)); },
+        Neg(h, t) => { return Neg(h, append_to(t, tails)); },
+        Nil => { return tails[0]; },
+    }
+}
+
 // Two self-calls: the first stays a call, and the second, whose result is the
 // payload the construction returns, is the hole. The input leans left, so it
-// is the second that goes deep.
+// is the second that goes deep. A leaf is handed back as it came in.
 function mirror(t: Tree): Tree {
     match (t) {
         Fork(l, r) => { return Fork(mirror(r), mirror(l)); },
-        Leaf(v) => { return Leaf(v * 2); },
+        Leaf(v) => { return t; },
     }
 }
 
@@ -176,16 +190,20 @@ function main(): i32 {
     // A temporary input the walk may consume as it goes.
     var g: i32 = score(inc_all(build(n)));
     var m: i32 = right_spine(mirror(leaning(n)));
+    var tails: List[] = [build(10)];
+    var j: i32 = score(append_to(keep, tails));
+    var tail_after: i32 = score(tails[0]);
     var after: i32 = score(keep);
     print("before=" + before.to_string() + " a=" + a.to_string() + " b=" + b.to_string()
         + " c=" + c.to_string() + " d=" + d.to_string() + " e=" + e.to_string()
         + " f=" + f.to_string() + " g=" + g.to_string() + " m=" + m.to_string()
+        + " j=" + j.to_string() + " tail=" + tail_after.to_string()
         + " after=" + after.to_string() + " underflow=" + __rc_underflow_count().to_string());
     return __rc_underflow_count();
 }
 `
 
-const selfHostTrmcWant = "0|before=1000021 a=3100021 b=3000000 c=999974 d=300003 e=900000 f=0 g=3100021 m=2399982 after=1000021 underflow=0\n"
+const selfHostTrmcWant = "0|before=1000021 a=3100021 b=3000000 c=999974 d=300003 e=900000 f=0 g=3100021 m=1199991 j=1000080 tail=59 after=1000021 underflow=0\n"
 
 // TestSelfHostSemanticTrmc runs that program on every target through the
 // typed lowering and pins the answer, a clean sanitizer leg with nothing held
@@ -223,7 +241,7 @@ func TestSelfHostSemanticTrmc(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for name, want := range map[string]int{"inc_all": 2, "drop_neg": 1, "take": 1, "to_rev": 1, "tag_all": 1, "last_of": 1, "mirror": 2} {
+		for name, want := range map[string]int{"inc_all": 2, "drop_neg": 1, "take": 1, "to_rev": 1, "tag_all": 1, "last_of": 1, "mirror": 2, "append_to": 1} {
 			if got := countSelfCalls(string(asm), name); got != want {
 				t.Errorf("%d call sites to %s in the listing, want %d", got, name, want)
 			}
