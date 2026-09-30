@@ -6332,6 +6332,49 @@ function main(): i32 {
     return make(7);
 }
 `},
+	// A generic struct a generic function's body spells at its own variable is
+	// cloned with the function per binding (parser clause (e)), so the string
+	// clone's record has a field of its own to release and the i64 clone's a
+	// field wasm stores at its width.
+	{name: "a-generic-struct-inside-a-generic-function", atLeast: 3, noLeak: true, src: `
+struct Slot[T] { v: T }
+
+pub function make[T](seed: T): T {
+    var c: Slot[T] = Slot[T] { v: seed };
+    return c.v;
+}
+
+function main(): i32 {
+    var s: string = make("ab" + "c");
+    var w: i64 = make(5000000000 as i64);
+    if (w != 5000000000 as i64) { return 1; }
+    return make(7) + s.len();
+}
+`},
+	// The same for a function-typed field, and for a lambda field built inside
+	// another one.
+	{name: "a-generic-struct-with-a-function-field-inside-a-generic-function", atLeast: 7, noLeak: true, src: `
+struct Box[T] { f: (T) => T }
+
+pub function apply[T](seed: T): T {
+    var b: Box[T] = Box[T] { f: (x: T): T => x };
+    return b.f(seed);
+}
+
+pub function nested[T](seed: T): T {
+    var b: Box[T] = Box[T] { f: (x: T): T => {
+        var c: Box[T] = Box[T] { f: (y: T): T => y };
+        return c.f(x);
+    } };
+    return b.f(seed);
+}
+
+function main(): i32 {
+    var s: string = apply("ab" + "c");
+    var t: string = nested("de" + "f");
+    return apply(7) + nested(2) + s.len() + t.len();
+}
+`},
 	// An instance of a lifted generic lambda that returns a call to another
 	// lifted lambda reads that callee's result under its own binding, not as
 	// the template's `T`.
