@@ -12,7 +12,6 @@
 // identical inline `exp_run.fern` literal in six test files; it is a
 // stock driver so the CI warm cache covers it (see the `warm` matrix in
 // .github/workflows/test-e2e-selfhost.yml) and the copies cannot drift.
-
 import "./lexer";
 import "./parser";
 import "./rundriver";
@@ -21,29 +20,37 @@ import "./asmcore";
 import "./semlower";
 
 function main(): i32 {
-    // `-decide`: print the routing verdict ("ir" / "refused") instead of emitting —
-    // the COMPONENT-mode sibling of wasm_run's probe. Mode 0 has been swept over
-    // the harvested corpus since #5977; component mode never had a probe at all,
-    // so its decline set was unmeasured, and those declines are exactly what an
-    // IR-or-error reroute turns into hard errors.
-    var decide: boolean = false;
-    var av: string[] = args();
-    var ai: i32 = 1;
-    while (ai < av.len()) {
-        if (av[ai] == "-decide") { decide = true; }
-        ai = ai + 1;
+  // `-decide`: print the routing verdict ("ir" / "refused") instead of emitting —
+  // the COMPONENT-mode sibling of wasm_run's probe. Mode 0 has been swept over
+  // the harvested corpus since #5977; component mode never had a probe at all,
+  // so its decline set was unmeasured, and those declines are exactly what an
+  // IR-or-error reroute turns into hard errors.
+  var decide: boolean = false;
+  var av: string[] = args();
+  var ai: i32 = 1;
+  while (ai < av.len()) {
+    if (av[ai] == "-decide") {
+      decide = true;
     }
-    var mod: parser.Module = rundriver.parse_stdin("wasm_runio_run");
-    if (asmcore.refuse_parse_unknowns([mod]) || asmcore.refuse_decl_names([mod])) { return 1; }
-    var d: semlower.Driven = semlower.driven(mod, "wasm32-wasi");
-    if (decide) {
-        // The emit's own decision (component=true, io=true), reused from
-        // wasm_ir rather than restated so the probe cannot drift from the
-        // emitter it describes.
-        var plm: parser.Module = wasm_ir.route_normalized(d.full);
-        if (wasm_ir.ir_route_ok(plm, true, true, d.sub)) { print("ir\n"); } else { print("refused\n"); }
-        return 0;
+    ai = ai + 1;
+  }
+  var mod: parser.Module = rundriver.parse_stdin("wasm_runio_run");
+  if (asmcore.refuse_parse_unknowns([mod]) || asmcore.refuse_decl_names([mod])) {
+    return 1;
+  }
+  var d: semlower.Driven = semlower.driven(mod, "wasm32-wasi");
+  if (decide) {
+    // The emit's own decision (component=true, io=true), reused from
+    // wasm_ir rather than restated so the probe cannot drift from the
+    // emitter it describes.
+    var plm: parser.Module = wasm_ir.route_normalized(d.full);
+    if (wasm_ir.ir_route_ok(plm, true, true, d.sub)) {
+      print("ir\n");
+    } else {
+      print("refused\n");
     }
-    write(wasm_ir.emit_module_mode_or_error_sub(d.full, true, true, d.sub));
     return 0;
+  }
+  write(wasm_ir.emit_module_mode_or_error_sub(d.full, true, true, d.sub));
+  return 0;
 }

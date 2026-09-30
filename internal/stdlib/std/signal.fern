@@ -13,7 +13,6 @@
 // component grants it and both calls do nothing there: nothing in either WASI
 // world can deliver a signal, so there is no disposition to change. A
 // freestanding target has no process to deliver to and does not get it at all.
-
 // SIGINT — the terminal's interrupt (^C). 2 on Linux and Darwin alike.
 pub const SIGINT: i32 = 2;
 
@@ -29,7 +28,9 @@ pub const SIGPIPE: i32 = 13;
 // SIGHUP / SIGQUIT / SIGTERM — the other three a long-running program
 // usually has an opinion about. Same numbers on Linux and Darwin.
 pub const SIGHUP: i32 = 1;
+
 pub const SIGQUIT: i32 = 3;
+
 pub const SIGTERM: i32 = 15;
 
 // `ignore(sig)` — set `sig` to SIG_IGN, so delivering it does nothing.
@@ -43,14 +44,14 @@ pub const SIGTERM: i32 = 15;
 // way libc's `signal(3)` is routinely called for effect. The five constants
 // above are the numbers this is meant for.
 pub function ignore(sig: i32): i32 {
-    return signal_ignore(sig);
+  return signal_ignore(sig);
 }
 
 // `default(sig)` — put `sig` back to SIG_DFL, undoing an earlier `ignore`.
 // A utility that suppresses a signal for one stretch of work restores it
 // with this rather than leaving the whole process changed. Same return.
 pub function default(sig: i32): i32 {
-    return signal_default(sig);
+  return signal_default(sig);
 }
 
 // `blocked()` — the set of signals currently blocked from delivery, a bit per
@@ -62,38 +63,40 @@ pub function default(sig: i32): i32 {
 // then unblocked is delivered on the unblock, which is the difference
 // `env --block-signal` trades on.
 pub function blocked(): i64 {
-    return signal_mask(HOW_BLOCK, 0 as i64);
+  return signal_mask(HOW_BLOCK, 0 as i64);
 }
 
 pub function block(mask: i64): i64 {
-    return signal_mask(HOW_BLOCK, mask);
+  return signal_mask(HOW_BLOCK, mask);
 }
 
 pub function unblock(mask: i64): i64 {
-    return signal_mask(HOW_UNBLOCK, mask);
+  return signal_mask(HOW_UNBLOCK, mask);
 }
 
 // `set_blocked(mask)` — replace the blocked set outright rather than adding to
 // or removing from it.
 pub function set_blocked(mask: i64): i64 {
-    return signal_mask(HOW_SETMASK, mask);
+  return signal_mask(HOW_SETMASK, mask);
 }
 
 // `bit(sig)` — `sig`'s place in a mask. Signal numbers start at 1, so this is
 // not `1 << sig`; getting that wrong shifts every signal by one.
 pub function bit(sig: i32): i64 {
-    return (1 as i64) << ((sig - 1) as i64);
+  return 1 as i64 << (sig - 1) as i64;
 }
 
 // What `sig` currently does when delivered: DFL, IGN, or HANDLER for one
 // installed before this process started, since a disposition survives exec.
 // A negative errno for a signal number the kernel rejects.
 pub const DFL: i32 = 0;
+
 pub const IGN: i32 = 1;
+
 pub const HANDLER: i32 = 2;
 
 pub function disposition(sig: i32): i32 {
-    return signal_disposition(sig);
+  return signal_disposition(sig);
 }
 
 // The three `how` values `signal_mask` takes. Fern's own numbering, which the
@@ -101,5 +104,7 @@ pub function disposition(sig: i32): i32 {
 // a program that passed a kernel constant straight through would silently
 // perform a different operation on one of them.
 const HOW_BLOCK: i32 = 0;
+
 const HOW_UNBLOCK: i32 = 1;
+
 const HOW_SETMASK: i32 = 2;

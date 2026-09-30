@@ -18,23 +18,26 @@ import "std/string";
 // answers every sparse case correctly. A sparse haystack would measure the
 // scan and miss the bug.
 function haystack(): string {
-    var s: string = "abcdefghijklmnopqrstuvwxyz012345";
-    var k: i32 = 0;
-    while (k < 10) { s = s + s; k = k + 1; }   // 32 B -> 32 KiB
-    return s;
+  var s: string = "abcdefghijklmnopqrstuvwxyz012345";
+  var k: i32 = 0;
+  while (k < 10) {  // 32 B -> 32 KiB
+    s = s + s;
+    k = k + 1;
+  }
+  return s;
 }
 
 function main(): i32 {
-    var hay: string = haystack();
-    var acc: i32 = 0;
-    var r: i32 = 0;
-    while (r < 6000) {
-        // 'a', 'b', 'c' and 'd' each occur once per 32-byte cycle, so each
-        // call counts 1024 matches spread evenly over the input — the count
-        // scales with the round count, and a hoisted call would show up as a
-        // count that does not.
-        acc = acc + hay.count_byte(97) + hay.count_byte(98);
-        r = r + 1;
-    }
-    return acc % 97;
+  var hay: string = haystack();
+  var acc: i32 = 0;
+  var r: i32 = 0;
+  while (r < 6000) {
+    // 'a', 'b', 'c' and 'd' each occur once per 32-byte cycle, so each
+    // call counts 1024 matches spread evenly over the input — the count
+    // scales with the round count, and a hoisted call would show up as a
+    // count that does not.
+    acc = acc + hay.count_byte(97) + hay.count_byte(98);
+    r = r + 1;
+  }
+  return acc % 97;
 }

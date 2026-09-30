@@ -32,6 +32,8 @@ import (
 	"math/big"
 	"os"
 	"strings"
+
+	"github.com/jakechampion/lang/internal/fmtsource"
 )
 
 // ---------------------------------------------------------------- alphabet
@@ -284,6 +286,7 @@ function _el_pow5(): string {
 // generated content, leaving files that carry neither block untouched. It
 // reports an error if a begin marker has no matching end marker.
 func Rewrite(src string) (string, error) {
+	found := false
 	for _, b := range blocks {
 		i := strings.Index(src, b.begin)
 		if i < 0 {
@@ -294,8 +297,12 @@ func Rewrite(src string) (string, error) {
 			return "", fmt.Errorf("end marker %q not found after its begin marker", b.end)
 		}
 		src = src[:i] + b.begin + "\n" + b.generate() + src[j:]
+		found = true
 	}
-	return src, nil
+	if !found {
+		return src, nil
+	}
+	return fmtsource.Format(src)
 }
 
 func main() {

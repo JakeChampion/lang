@@ -18,7 +18,6 @@
 // which the D9 invariant forbids (docs/STRINGS-SOTA.md). Callers that
 // want text decode explicitly: `utf8.from_bytes(fetch.http_body(resp))`
 // returns `None` when the body is not valid UTF-8.
-
 import "std/string";
 import "std/async";
 import "std/time";
@@ -32,7 +31,7 @@ import "core/int";
 // i32 that tcp_connect wants in sin_addr. ipv4(127,0,0,1) addresses
 // loopback.
 pub function ipv4(a: i32, b: i32, c: i32, d: i32): i32 {
-    return (a & 255) | ((b & 255) << 8) | ((c & 255) << 16) | ((d & 255) << 24);
+  return a & 255 | (b & 255) << 8 | (c & 255) << 16 | (d & 255) << 24;
 }
 
 // __join_bytes(chunks) — the chunk list flattened into one buffer, sized
@@ -45,26 +44,26 @@ pub function ipv4(a: i32, b: i32, c: i32, d: i32): i32 {
 // captures it — and `__arr_push_shared_count()` is what makes that
 // visible: one crossing per chunk, each copying the whole response so far.
 function __join_bytes(chunks: u8[][]): u8[] {
-    var total: i32 = 0;
-    var k: i32 = 0;
-    while (k < chunks.len()) {
-        total = total + chunks[k].len();
-        k = k + 1;
+  var total: i32 = 0;
+  var k: i32 = 0;
+  while (k < chunks.len()) {
+    total = total + chunks[k].len();
+    k = k + 1;
+  }
+  var out: u8[] = __alloc_u8(total);
+  var w: i32 = 0;
+  var j: i32 = 0;
+  while (j < chunks.len()) {
+    var i: i32 = 0;
+    var n: i32 = chunks[j].len();
+    while (i < n) {
+      out = out.with(w, chunks[j][i]);
+      w = w + 1;
+      i = i + 1;
     }
-    var out: u8[] = __alloc_u8(total);
-    var w: i32 = 0;
-    var j: i32 = 0;
-    while (j < chunks.len()) {
-        var i: i32 = 0;
-        var n: i32 = chunks[j].len();
-        while (i < n) {
-            out = out.with(w, chunks[j][i]);
-            w = w + 1;
-            i = i + 1;
-        }
-        j = j + 1;
-    }
-    return out;
+    j = j + 1;
+  }
+  return out;
 }
 
 // fetch_raw(host_be, port, request) — open a connection, send `request`
@@ -73,25 +72,25 @@ function __join_bytes(chunks: u8[][]): u8[] {
 // bytes, or the empty array if the connection or send failed. Blocking;
 // for overlap, use `fetch_future` through `async.gather` / `async.race`.
 pub function fetch_raw(host_be: i32, port: i32, request: string): u8[] {
-    var empty: u8[] = [];
-    var c: i32 = tcp_connect(host_be, port);
-    if (c < 0) {
-        return empty;
-    }
-    if (tcp_send(c, request) < 0) {
-        tcp_close(c);
-        return empty;
-    }
-    var chunks: u8[][] = [];
-    while (true) {
-        var chunk: u8[] = tcp_recv(c, 4096);
-        if (chunk.len() == 0) {
-            break;
-        }
-        chunks = chunks.append(chunk);
-    }
+  var empty: u8[] = [];
+  var c: i32 = tcp_connect(host_be, port);
+  if (c < 0) {
+    return empty;
+  }
+  if (tcp_send(c, request) < 0) {
     tcp_close(c);
-    return __join_bytes(chunks);
+    return empty;
+  }
+  var chunks: u8[][] = [];
+  while (true) {
+    var chunk: u8[] = tcp_recv(c, 4096);
+    if (chunk.len() == 0) {
+      break;
+    }
+    chunks = chunks.append(chunk);
+  }
+  tcp_close(c);
+  return __join_bytes(chunks);
 }
 
 // fetch_get(host_be, port, path) — issue `GET <path>` against the
@@ -99,8 +98,8 @@ pub function fetch_raw(host_be: i32, port: i32, request: string): u8[] {
 // headers + body). `Connection: close` so the read terminates at EOF.
 // Use `http_body(resp)` to peel the body off.
 pub function fetch_get(host_be: i32, port: i32, path: string): u8[] {
-    var request: string = "GET " + path + " HTTP/1.1\r\nHost: fern\r\nConnection: close\r\n\r\n";
-    return fetch_raw(host_be, port, request);
+  var request: string = "GET " + path + " HTTP/1.1\r\nHost: fern\r\nConnection: close\r\n\r\n";
+  return fetch_raw(host_be, port, request);
 }
 
 // fetch_raw_deadline(host_be, port, request, deadline) — `fetch_raw`
@@ -115,49 +114,53 @@ pub function fetch_get(host_be: i32, port: i32, path: string): u8[] {
 // the kernel SYN timeout. On interp the deadline degrades to blocking
 // reads (see `tcp_recv_deadline`).
 pub function fetch_raw_deadline(host_be: i32, port: i32, request: string, deadline: Duration): Option[u8[]] {
-    var empty: u8[] = [];
-    var c: i32 = tcp_connect(host_be, port);
-    if (c < 0) {
-        return Some(empty);
-    }
-    if (tcp_send(c, request) < 0) {
-        tcp_close(c);
-        return Some(empty);
-    }
-    var start_ns: i64 = monotonic_ns();
-    var deadline_ns: i64 = deadline.as_nanos();
-    var chunks: u8[][] = [];
-    while (true) {
-        var remaining_ns: i64 = deadline_ns - (monotonic_ns() - start_ns);
-        if (remaining_ns <= 0) {
-            tcp_close(c);
-            return None;
-        }
-        var chunk: u8[] = [];
-        var timed_out: boolean = false;
-        match (tcp.tcp_recv_deadline(c, 4096, time.duration_nanos(remaining_ns))) {
-            Some(got) => { chunk = got; },
-            None => { timed_out = true; },
-        }
-        if (timed_out) {
-            tcp_close(c);
-            return None;
-        }
-        if (chunk.len() == 0) {
-            break;
-        }
-        chunks = chunks.append(chunk);
-    }
+  var empty: u8[] = [];
+  var c: i32 = tcp_connect(host_be, port);
+  if (c < 0) {
+    return Some(empty);
+  }
+  if (tcp_send(c, request) < 0) {
     tcp_close(c);
-    return Some(__join_bytes(chunks));
+    return Some(empty);
+  }
+  var start_ns: i64 = monotonic_ns();
+  var deadline_ns: i64 = deadline.as_nanos();
+  var chunks: u8[][] = [];
+  while (true) {
+    var remaining_ns: i64 = deadline_ns - (monotonic_ns() - start_ns);
+    if (remaining_ns <= 0) {
+      tcp_close(c);
+      return None;
+    }
+    var chunk: u8[] = [];
+    var timed_out: boolean = false;
+    match (tcp.tcp_recv_deadline(c, 4096, time.duration_nanos(remaining_ns))) {
+      Some(got) => {
+        chunk = got;
+      },
+      None => {
+        timed_out = true;
+      }
+    }
+    if (timed_out) {
+      tcp_close(c);
+      return None;
+    }
+    if (chunk.len() == 0) {
+      break;
+    }
+    chunks = chunks.append(chunk);
+  }
+  tcp_close(c);
+  return Some(__join_bytes(chunks));
 }
 
 // fetch_get_deadline(host_be, port, path, deadline) — `fetch_get`
 // with a total read deadline. `Some(raw response bytes)` in time (use
 // `http_body` / `http_status`), `None` when the upstream was too slow.
 pub function fetch_get_deadline(host_be: i32, port: i32, path: string, deadline: Duration): Option[u8[]] {
-    var request: string = "GET " + path + " HTTP/1.1\r\nHost: fern\r\nConnection: close\r\n\r\n";
-    return fetch_raw_deadline(host_be, port, request, deadline);
+  var request: string = "GET " + path + " HTTP/1.1\r\nHost: fern\r\nConnection: close\r\n\r\n";
+  return fetch_raw_deadline(host_be, port, request, deadline);
 }
 
 // fetch_future(host_be, port, path) — the AWAITABLE fetch: open a
@@ -185,18 +188,18 @@ pub function fetch_get_deadline(host_be: i32, port: i32, path: string, deadline:
 // woken token, which differs by backend). On interp the `poll` stub
 // means the `Pending` never resolves (consistent with std/async).
 pub function fetch_future(host_be: i32, port: i32, path: string): async.Future[u8[]] {
-    var request: string = "GET " + path + " HTTP/1.1\r\nHost: fern\r\nConnection: close\r\n\r\n";
-    var empty: u8[] = [];
-    var c: i32 = tcp_connect(host_be, port);
-    if (c < 0) {
-        return Ready(empty);
-    }
-    if (tcp_send(c, request) < 0) {
-        tcp_close(c);
-        return Ready(empty);
-    }
-    var no_chunks: u8[][] = [];
-    return __fetch_drain(c, no_chunks);
+  var request: string = "GET " + path + " HTTP/1.1\r\nHost: fern\r\nConnection: close\r\n\r\n";
+  var empty: u8[] = [];
+  var c: i32 = tcp_connect(host_be, port);
+  if (c < 0) {
+    return Ready(empty);
+  }
+  if (tcp_send(c, request) < 0) {
+    tcp_close(c);
+    return Ready(empty);
+  }
+  var no_chunks: u8[][] = [];
+  return __fetch_drain(c, no_chunks);
 }
 
 // __fetch_drain(c, chunks) — one step of the streaming response read: a `Future`
@@ -218,51 +221,51 @@ pub function fetch_future(host_be: i32, port: i32, path: string): async.Future[u
 // the chunk POINTER is quadratic only in the chunk COUNT, and `__join_bytes`
 // pays one linear pass at EOF.
 function __fetch_drain(c: i32, chunks: u8[][]): async.Future[u8[]] {
-    function resume(woken: i32): async.Future[u8[]] {
-        var dropped: i32 = wasm_pollable_drop(woken);
-        var chunk: u8[] = tcp_recv(c, 4096);
-        if (chunk.len() == 0) {
-            tcp_close(c);
-            return Ready(http_body(__join_bytes(chunks)));
-        }
-        return __fetch_drain(c, chunks.append(chunk));
+  function resume(woken: i32): async.Future[u8[]] {
+    var dropped: i32 = wasm_pollable_drop(woken);
+    var chunk: u8[] = tcp_recv(c, 4096);
+    if (chunk.len() == 0) {
+      tcp_close(c);
+      return Ready(http_body(__join_bytes(chunks)));
     }
-    return Pending(tcp_pollable(c), resume);
+    return __fetch_drain(c, chunks.append(chunk));
+  }
+  return Pending(tcp_pollable(c), resume);
 }
 
 // http_status(resp) — parse the numeric status code from an HTTP/1.1 response's
 // status line (`HTTP/1.1 200 OK` → 200), or -1 if the response is empty or the
 // status line is malformed. The code is the run of digits after the first space.
 pub function http_status(resp: u8[]): i32 {
-    var n: i32 = resp.len();
-    var sp: i32 = -1;
-    var i: i32 = 0;
-    while (i < n) {
-        if ((resp[i] as i32) == 32) {
-            sp = i;
-            break;
-        }
-        i = i + 1;
+  var n: i32 = resp.len();
+  var sp: i32 = -1;
+  var i: i32 = 0;
+  while (i < n) {
+    if (resp[i] as i32 == 32) {
+      sp = i;
+      break;
     }
-    if (sp < 0) {
-        return -1;
+    i = i + 1;
+  }
+  if (sp < 0) {
+    return -1;
+  }
+  var j: i32 = sp + 1;
+  var code: i32 = 0;
+  var have: boolean = false;
+  while (j < n) {
+    var ch: i32 = resp[j] as i32;
+    if (ch < 48 || ch > 57) {
+      break;
     }
-    var j: i32 = sp + 1;
-    var code: i32 = 0;
-    var have: boolean = false;
-    while (j < n) {
-        var ch: i32 = resp[j] as i32;
-        if (ch < 48 || ch > 57) {
-            break;
-        }
-        code = code * 10 + (ch - 48);
-        have = true;
-        j = j + 1;
-    }
-    if (!have) {
-        return -1;
-    }
-    return code;
+    code = code * 10 + (ch - 48);
+    have = true;
+    j = j + 1;
+  }
+  if (!have) {
+    return -1;
+  }
+  return code;
 }
 
 // http_body(resp) — return the body of an HTTP response (everything
@@ -272,59 +275,67 @@ pub function http_status(resp: u8[]): i32 {
 // headers. Decode with `utf8.from_bytes` when the body is meant to be
 // text — an upstream can serve anything.
 pub function http_body(resp: u8[]): u8[] {
-    var out: u8[] = [];
-    var n: i32 = resp.len();
-    var sep: i32 = -1;
-    var i: i32 = 0;
-    while (i + 3 < n) {
-        if ((resp[i] as i32) == 13 && (resp[i + 1] as i32) == 10
-            && (resp[i + 2] as i32) == 13 && (resp[i + 3] as i32) == 10) {
-            sep = i;
-            break;
-        }
-        i = i + 1;
+  var out: u8[] = [];
+  var n: i32 = resp.len();
+  var sep: i32 = -1;
+  var i: i32 = 0;
+  while (i + 3 < n) {
+    if (resp[i] as i32 == 13 && resp[i + 1] as i32 == 10
+      && resp[i + 2] as i32 == 13 && resp[i + 3] as i32 == 10) {
+      sep = i;
+      break;
     }
-    if (sep < 0) {
-        return out;
-    }
-    var start: i32 = sep + 4;
-    out = __alloc_u8(n - start);
-    var j: i32 = start;
-    while (j < n) {
-        out = out.with(j - start, resp[j]);
-        j = j + 1;
-    }
+    i = i + 1;
+  }
+  if (sep < 0) {
     return out;
+  }
+  var start: i32 = sep + 4;
+  out = __alloc_u8(n - start);
+  var j: i32 = start;
+  while (j < n) {
+    out = out.with(j - start, resp[j]);
+    j = j + 1;
+  }
+  return out;
 }
 
 // parse_ipv4(s) — parse a dotted-quad "a.b.c.d" into the network-byte-
 // order i32 tcp_connect wants, or -1 if it isn't four 0..255 octets.
 // No DNS — a literal address only.
 pub function parse_ipv4(s: string): i32 {
-    var octets: i32[] = [];
-    var cur: i32 = 0;
-    var have: boolean = false;
-    var i: i32 = 0;
-    while (i < s.len()) {
-        var ch: i32 = s[i] as i32;
-        if (ch == 46) { // '.'
-            if (!have) { return -1; }
-            octets = octets.append(cur);
-            cur = 0;
-            have = false;
-        } else if (ch >= 48 && ch <= 57) {
-            cur = cur * 10 + (ch - 48);
-            if (cur > 255) { return -1; }
-            have = true;
-        } else {
-            return -1;
-        }
-        i = i + 1;
+  var octets: i32[] = [];
+  var cur: i32 = 0;
+  var have: boolean = false;
+  var i: i32 = 0;
+  while (i < s.len()) {
+    var ch: i32 = s[i] as i32;
+    if (ch == 46) {  // '.'
+      if (!have) {
+        return -1;
+      }
+      octets = octets.append(cur);
+      cur = 0;
+      have = false;
+    } else if (ch >= 48 && ch <= 57) {
+      cur = cur * 10 + (ch - 48);
+      if (cur > 255) {
+        return -1;
+      }
+      have = true;
+    } else {
+      return -1;
     }
-    if (!have) { return -1; }
-    octets = octets.append(cur);
-    if (octets.len() != 4) { return -1; }
-    return ipv4(octets[0], octets[1], octets[2], octets[3]);
+    i = i + 1;
+  }
+  if (!have) {
+    return -1;
+  }
+  octets = octets.append(cur);
+  if (octets.len() != 4) {
+    return -1;
+  }
+  return ipv4(octets[0], octets[1], octets[2], octets[3]);
 }
 
 // (plat: Platform).fetch(host, port, path) — the capability-scoped outbound GET
@@ -341,22 +352,31 @@ pub function parse_ipv4(s: string): i32 {
 // for that summary (std/mock_platform's `fetch_set`), else -1, the same
 // value a real fetch gives for a host it could not reach.
 pub function (plat: Platform) fetch(host: string, port: i32, path: string): i32 {
-    if (plat.is_mock()) {
-        var summary: string = host + ":" + int.int_to_string(port) + " " + path;
-        plat.record("fetch", summary);
-        match (plat.canned("fetch " + summary)) {
-            Some(v) => {
-                match (int.parse_int_radix(v, 10)) { Some(status) => { return status; }, None => { return -1; } }
-            },
-            None => { return -1; }
+  if (plat.is_mock()) {
+    var summary: string = host + ":" + int.int_to_string(port) + " " + path;
+    plat.record("fetch", summary);
+    match (plat.canned("fetch " + summary)) {
+      Some(v) => {
+        match (int.parse_int_radix(v, 10)) {
+          Some(status) => {
+            return status;
+          },
+          None => {
+            return -1;
+          }
         }
+      },
+      None => {
         return -1;
+      }
     }
-    var h: i32 = parse_ipv4(host);
-    if (h < 0) {
-        return -1;
-    }
-    return http_status(fetch_get(h, port, path));
+    return -1;
+  }
+  var h: i32 = parse_ipv4(host);
+  if (h < 0) {
+    return -1;
+  }
+  return http_status(fetch_get(h, port, path));
 }
 
 // get_url(url) — fetch a full `http://HOST[:PORT]/PATH` URL in one
@@ -366,37 +386,45 @@ pub function (plat: Platform) fetch(host: string, port: i32, path: string): i32 
 // path becomes "/". Returns the empty array on a malformed URL or a
 // connect failure.
 pub function get_url(url: string): u8[] {
-    var empty: u8[] = [];
-    // Require and strip the http:// scheme.
-    var prefix: string = "http://";
-    if (!url.starts_with(prefix)) { return empty; }
-    var rest: str = slice_unchecked(url, prefix.len(), url.len());
-    // authority is up to the first '/'; the rest (incl. the '/') is the path.
-    var slash: i32 = rest.index_of("/");
-    var authority: str = rest;
-    var path: str = "/";
-    if (slash >= 0) {
-        authority = slice_unchecked(rest, 0, slash);
-        path = slice_unchecked(rest, slash, rest.len());
+  var empty: u8[] = [];
+  // Require and strip the http:// scheme.
+  var prefix: string = "http://";
+  if (!url.starts_with(prefix)) {
+    return empty;
+  }
+  var rest: str = slice_unchecked(url, prefix.len(), url.len());
+  // authority is up to the first '/'; the rest (incl. the '/') is the path.
+  var slash: i32 = rest.index_of("/");
+  var authority: str = rest;
+  var path: str = "/";
+  if (slash >= 0) {
+    authority = slice_unchecked(rest, 0, slash);
+    path = slice_unchecked(rest, slash, rest.len());
+  }
+  // authority = HOST[:PORT].
+  var host: str = authority;
+  var port: i32 = 80;
+  var colon: i32 = authority.index_of(":");
+  if (colon >= 0) {
+    host = slice_unchecked(authority, 0, colon);
+    var portstr: str = slice_unchecked(authority, colon + 1, authority.len());
+    port = 0;
+    var i: i32 = 0;
+    while (i < portstr.len()) {
+      var ch: i32 = portstr[i] as i32;
+      if (ch < 48 || ch > 57) {
+        return empty;
+      }
+      port = port * 10 + (ch - 48);
+      i = i + 1;
     }
-    // authority = HOST[:PORT].
-    var host: str = authority;
-    var port: i32 = 80;
-    var colon: i32 = authority.index_of(":");
-    if (colon >= 0) {
-        host = slice_unchecked(authority, 0, colon);
-        var portstr: str = slice_unchecked(authority, colon + 1, authority.len());
-        port = 0;
-        var i: i32 = 0;
-        while (i < portstr.len()) {
-            var ch: i32 = portstr[i] as i32;
-            if (ch < 48 || ch > 57) { return empty; }
-            port = port * 10 + (ch - 48);
-            i = i + 1;
-        }
-        if (i == 0) { return empty; }
+    if (i == 0) {
+      return empty;
     }
-    var h: i32 = parse_ipv4(host);
-    if (h < 0) { return empty; }
-    return fetch_get(h, port, path);
+  }
+  var h: i32 = parse_ipv4(host);
+  if (h < 0) {
+    return empty;
+  }
+  return fetch_get(h, port, path);
 }

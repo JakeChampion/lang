@@ -23,43 +23,42 @@
 // out-of-range branch depth is reported here and only here. Callee
 // RESOLUTION is irverifyprovided.fern (slice 4), which reports the callee this
 // file's arity check deliberately leaves alone.
-
 import "./ir";
 import "./util";
 
 // ---- problems ----------------------------------------------------------
-
 // Problem is one violation, located precisely enough to fix. `op` indexes
 // into the function's op stream, or is -1 for a whole-function problem.
 pub struct Problem {
-    fn_name: string,
-    op: i32,
-    kind: string,
-    msg: string,
+  fn_name: string,
+  op: i32,
+  kind: string,
+  msg: string,
 }
 
 pub function problem_str(p: Problem): string {
-    if (p.op < 0) { return p.fn_name + ": " + p.msg; }
-    return p.fn_name + ": op " + util.i32_to_string(p.op) + " (" + p.kind + "): " + p.msg;
+  if (p.op < 0) {
+    return p.fn_name + ": " + p.msg;
+  }
+  return p.fn_name + ": op " + util.i32_to_string(p.op) + " (" + p.kind + "): " + p.msg;
 }
 
 // format_problems renders problems for a failure message, capped so a
 // systemic break reports a readable sample rather than thousands of lines.
 pub function format_problems(ps: Problem[], max: i32): string {
-    var out: string = "";
-    var i: i32 = 0;
-    while (i < ps.len()) {
-        if (i == max) {
-            return out + "\n    ... and " + util.i32_to_string(ps.len() - max) + " more";
-        }
-        out = out + "\n    " + problem_str(ps[i]);
-        i = i + 1;
+  var out: string = "";
+  var i: i32 = 0;
+  while (i < ps.len()) {
+    if (i == max) {
+      return out + "\n    ... and " + util.i32_to_string(ps.len() - max) + " more";
     }
-    return out;
+    out = out + "\n    " + problem_str(ps[i]);
+    i = i + 1;
+  }
+  return out;
 }
 
 // ---- callee signatures -------------------------------------------------
-
 // FnSig is the arity of a function the program declares. Only DECLARED
 // functions are listed: an unresolved callee name is left alone rather than
 // reported here, because one program's function list cannot tell a runtime
@@ -69,7 +68,6 @@ pub function format_problems(ps: Problem[], max: i32): string {
 pub struct FnSig { name: string, n_params: i32 }
 
 // ---- the name index ----------------------------------------------------
-
 // NameIndex is a lookup over the program's declared names. The self-host
 // compiler declares ~3000 functions and emits tens of thousands of calls, so a
 // linear scan per call op makes a pass quadratic on the one program it most
@@ -84,93 +82,107 @@ pub struct FnSig { name: string, n_params: i32 }
 // for membership — which is also what a miss reads as, so index_params answers
 // "absent" and "membership-only" the same way by construction.
 pub struct NameIndex {
-    // head[b] is the first row in bucket b (-1 when empty); next[i] chains to
-    // the next row in the same bucket, ascending.
-    head: i32[],
-    next: i32[],
-    names: string[],
-    params: i32[],
+  // head[b] is the first row in bucket b (-1 when empty); next[i] chains to
+  // the next row in the same bucket, ascending.
+  head: i32[],
+  next: i32[],
+  names: string[],
+  params: i32[],
 }
 
 // Fixed rather than sized from the input: the index is built once per module
 // and probed per call op, so the chains matter and the header does not.
-function name_index_buckets(): i32 { return 1021; }
+function name_index_buckets(): i32 {
+  return 1021;
+}
 
 // chain_names builds the index over parallel `names` / `params` columns.
 // Walking BACKWARD pushes each row onto the front of its bucket, which leaves
 // every chain in ascending row order without a per-bucket tail — and that is
 // what makes index_row's forward walk answer with the FIRST declaration.
 function chain_names(names: string[], params: i32[]): NameIndex {
-    var nb: i32 = name_index_buckets();
-    var head: i32[] = [];
-    var b: i32 = 0;
-    while (b < nb) { head = head.append(0 - 1); b = b + 1; }
-    var next: i32[] = [];
-    var j: i32 = 0;
-    while (j < names.len()) { next = next.append(0 - 1); j = j + 1; }
-    var k: i32 = names.len() - 1;
-    while (k >= 0) {
-        var bk: i32 = util.hash_bucket(names[k], nb);
-        next = next.with(k, head[bk]);
-        head = head.with(bk, k);
-        k = k - 1;
-    }
-    return NameIndex { head: head, next: next, names: names, params: params };
+  var nb: i32 = name_index_buckets();
+  var head: i32[] = [];
+  var b: i32 = 0;
+  while (b < nb) {
+    head = head.append(0 - 1);
+    b = b + 1;
+  }
+  var next: i32[] = [];
+  var j: i32 = 0;
+  while (j < names.len()) {
+    next = next.append(0 - 1);
+    j = j + 1;
+  }
+  var k: i32 = names.len() - 1;
+  while (k >= 0) {
+    var bk: i32 = util.hash_bucket(names[k], nb);
+    next = next.with(k, head[bk]);
+    head = head.with(bk, k);
+    k = k - 1;
+  }
+  return NameIndex { head: head, next: next, names: names, params: params };
 }
 
 // index_row is the row for `name`, or -1. The modulus comes from head.len()
 // rather than the constant, so a probe cannot pick a different bucket count
 // than the build did.
 function index_row(ix: NameIndex, name: string): i32 {
-    var i: i32 = ix.head[util.hash_bucket(name, ix.head.len())];
-    while (i >= 0) {
-        if (ix.names[i] == name) { return i; }
-        i = ix.next[i];
+  var i: i32 = ix.head[util.hash_bucket(name, ix.head.len())];
+  while (i >= 0) {
+    if (ix.names[i] == name) {
+      return i;
     }
-    return 0 - 1;
+    i = ix.next[i];
+  }
+  return 0 - 1;
 }
 
 // name_index builds a membership-only index: every entry's arity is -1, so
 // index_has answers and index_params declines. A name already present keeps its
 // first entry, so a duplicated name resolves to its first declaration.
 pub function name_index(names: string[]): NameIndex {
-    var params: i32[] = [];
-    var i: i32 = 0;
-    while (i < names.len()) { params = params.append(0 - 1); i = i + 1; }
-    return chain_names(names, params);
+  var params: i32[] = [];
+  var i: i32 = 0;
+  while (i < names.len()) {
+    params = params.append(0 - 1);
+    i = i + 1;
+  }
+  return chain_names(names, params);
 }
 
 // sig_index builds the callee-arity index the call check consults. First
 // declaration wins, as in name_index: two entries can disagree about arity, and
 // the call check reads whichever the index kept.
 pub function sig_index(sigs: FnSig[]): NameIndex {
-    var names: string[] = [];
-    var params: i32[] = [];
-    var i: i32 = 0;
-    while (i < sigs.len()) {
-        names = names.append(sigs[i].name);
-        params = params.append(sigs[i].n_params);
-        i = i + 1;
-    }
-    return chain_names(names, params);
+  var names: string[] = [];
+  var params: i32[] = [];
+  var i: i32 = 0;
+  while (i < sigs.len()) {
+    names = names.append(sigs[i].name);
+    params = params.append(sigs[i].n_params);
+    i = i + 1;
+  }
+  return chain_names(names, params);
 }
 
 // index_has reports membership.
 pub function index_has(ix: NameIndex, name: string): boolean {
-    return index_row(ix, name) >= 0;
+  return index_row(ix, name) >= 0;
 }
 
 // index_params is the declared parameter count for `name`, or -1 when the
 // index does not carry it — either the name is absent or it was indexed for
 // membership only.
 pub function index_params(ix: NameIndex, name: string): i32 {
-    var r: i32 = index_row(ix, name);
-    if (r < 0) { return 0 - 1; }
-    return ix.params[r];
+  var r: i32 = index_row(ix, name);
+  if (r < 0) {
+    return 0 - 1;
+  }
+  return ix.params[r];
 }
 
 // ---- the pass ----------------------------------------------------------
-
 // verify_fn checks one lowered function's op stream and returns every
 // problem found, in op order.
 //
@@ -183,135 +195,135 @@ pub function index_params(ix: NameIndex, name: string): i32 {
 //
 // `sigs` may be empty, which skips the call-arity check.
 pub function verify_fn(fn_name: string, ops: ir.Op[], n_params: i32, n_locals: i32, sigs: NameIndex): Problem[] {
-    var out: Problem[] = [];
+  var out: Problem[] = [];
 
-    var k_load: i32 = ir.kind_id("load_local");
-    var k_store: i32 = ir.kind_id("store_local");
-    var k_tee: i32 = ir.kind_id("tee_local");
-    var k_block: i32 = ir.kind_id("block");
-    var k_loop: i32 = ir.kind_id("loop");
-    var k_if: i32 = ir.kind_id("if");
-    var k_else: i32 = ir.kind_id("else");
-    var k_end: i32 = ir.kind_id("end");
-    var k_br: i32 = ir.kind_id("br");
-    var k_brif: i32 = ir.kind_id("brif");
-    var k_calld: i32 = ir.kind_id("call_direct");
-    var k_calli: i32 = ir.kind_id("call_indirect");
-    var k_callc: i32 = ir.kind_id("call_closure_direct");
+  var k_load: i32 = ir.kind_id("load_local");
+  var k_store: i32 = ir.kind_id("store_local");
+  var k_tee: i32 = ir.kind_id("tee_local");
+  var k_block: i32 = ir.kind_id("block");
+  var k_loop: i32 = ir.kind_id("loop");
+  var k_if: i32 = ir.kind_id("if");
+  var k_else: i32 = ir.kind_id("else");
+  var k_end: i32 = ir.kind_id("end");
+  var k_br: i32 = ir.kind_id("br");
+  var k_brif: i32 = ir.kind_id("brif");
+  var k_calld: i32 = ir.kind_id("call_direct");
+  var k_calli: i32 = ir.kind_id("call_indirect");
+  var k_callc: i32 = ir.kind_id("call_closure_direct");
 
-    // The open-scope stack, as parallel arrays with an explicit depth so a
-    // pop is O(1) — an array-slice pop would make the walk quadratic on the
-    // compiler's own long functions.
-    var st_kind: i32[] = [];
-    var st_at: i32[] = [];
-    var st_else: i32[] = [];
-    var depth: i32 = 0;
+  // The open-scope stack, as parallel arrays with an explicit depth so a
+  // pop is O(1) — an array-slice pop would make the walk quadratic on the
+  // compiler's own long functions.
+  var st_kind: i32[] = [];
+  var st_at: i32[] = [];
+  var st_else: i32[] = [];
+  var depth: i32 = 0;
 
-    var i: i32 = 0;
-    while (i < ops.len()) {
-        var op: ir.Op = ops[i];
-        var kt: i32 = op.kind_tag;
+  var i: i32 = 0;
+  while (i < ops.len()) {
+    var op: ir.Op = ops[i];
+    var kt: i32 = op.kind_tag;
 
-        if (kt == k_load || kt == k_store || kt == k_tee) {
-            if (op.i32_imm < 0 || op.i32_imm >= n_locals) {
-                out = out.append(Problem {
-                    fn_name: fn_name, op: i, kind: ir.kind_name(kt),
-                    msg: "local index " + util.i32_to_string(op.i32_imm)
-                        + " is outside the frame (" + util.i32_to_string(n_params)
-                        + " params + " + util.i32_to_string(n_locals - n_params)
-                        + " locals = " + util.i32_to_string(n_locals) + " slots)"
-                });
-            }
-        } else if (kt == k_block || kt == k_loop || kt == k_if) {
-            if (depth < st_kind.len()) {
-                st_kind = st_kind.with(depth, kt);
-                st_at = st_at.with(depth, i);
-                st_else = st_else.with(depth, 0 - 1);
-            } else {
-                st_kind = st_kind.append(kt);
-                st_at = st_at.append(i);
-                st_else = st_else.append(0 - 1);
-            }
-            depth = depth + 1;
-        } else if (kt == k_else) {
-            if (depth == 0) {
-                out = out.append(Problem { fn_name: fn_name, op: i, kind: "else", msg: "else with no open scope" });
-            } else if (st_kind[depth - 1] != k_if) {
-                out = out.append(Problem {
-                    fn_name: fn_name, op: i, kind: "else",
-                    msg: "else closes a " + ir.kind_name(st_kind[depth - 1])
-                        + " opened at op " + util.i32_to_string(st_at[depth - 1]) + ", not an if"
-                });
-            } else if (st_else[depth - 1] >= 0) {
-                out = out.append(Problem {
-                    fn_name: fn_name, op: i, kind: "else",
-                    msg: "second else for the if opened at op " + util.i32_to_string(st_at[depth - 1])
-                        + " (first at op " + util.i32_to_string(st_else[depth - 1]) + ")"
-                });
-            } else {
-                st_else = st_else.with(depth - 1, i);
-            }
-        } else if (kt == k_end) {
-            if (depth == 0) {
-                out = out.append(Problem { fn_name: fn_name, op: i, kind: "end", msg: "end with no open scope" });
-            } else {
-                depth = depth - 1;
-            }
-        } else if (kt == k_br || kt == k_brif) {
-            // A branch names a scope by RELATIVE depth: 0 is the innermost
-            // open scope. depth == the number of open scopes targets the
-            // implicit function-body scope, which is how a lowered
-            // `return`-shaped branch leaves the outermost block; anything
-            // beyond that has no target at all, and a backend will emit a
-            // jump to whatever happens to be there.
-            if (op.i32_imm < 0 || op.i32_imm > depth) {
-                out = out.append(Problem {
-                    fn_name: fn_name, op: i, kind: ir.kind_name(kt),
-                    msg: "branch depth " + util.i32_to_string(op.i32_imm)
-                        + " has no target - only " + util.i32_to_string(depth) + " scopes are open"
-                });
-            }
-        } else if (kt == k_calld) {
-            if (op.i32_imm < 0) {
-                // Report the impossible count and stop: an arity comparison
-                // against it would only add noise.
-                out = out.append(Problem {
-                    fn_name: fn_name, op: i, kind: "call_direct",
-                    msg: "negative argument count " + util.i32_to_string(op.i32_imm)
-                });
-            } else if (op.str.len() == 0) {
-                out = out.append(Problem { fn_name: fn_name, op: i, kind: "call_direct", msg: "call with no callee name" });
-            } else {
-                var np: i32 = index_params(sigs, op.str);
-                // A closure target also receives its environment pointer, so
-                // the callee may declare one more parameter than the call
-                // site pushes.
-                if (np >= 0 && op.i32_imm != np && op.i32_imm != np - 1) {
-                    out = out.append(Problem {
-                        fn_name: fn_name, op: i, kind: "call_direct",
-                        msg: "calls " + op.str + " with " + util.i32_to_string(op.i32_imm)
-                            + " args, but it declares " + util.i32_to_string(np) + " parameters"
-                    });
-                }
-            }
-        } else if (kt == k_calli || kt == k_callc) {
-            if (op.i32_imm < 0) {
-                out = out.append(Problem {
-                    fn_name: fn_name, op: i, kind: ir.kind_name(kt),
-                    msg: "negative argument count " + util.i32_to_string(op.i32_imm)
-                });
-            }
-        }
-        i = i + 1;
-    }
-
-    var d: i32 = 0;
-    while (d < depth) {
+    if (kt == k_load || kt == k_store || kt == k_tee) {
+      if (op.i32_imm < 0 || op.i32_imm >= n_locals) {
         out = out.append(Problem {
-            fn_name: fn_name, op: st_at[d], kind: ir.kind_name(st_kind[d]),
-            msg: "scope is never closed - the function ends with it still open"
+          fn_name: fn_name, op: i, kind: ir.kind_name(kt),
+          msg: "local index " + util.i32_to_string(op.i32_imm)
+            + " is outside the frame (" + util.i32_to_string(n_params)
+            + " params + " + util.i32_to_string(n_locals - n_params)
+            + " locals = " + util.i32_to_string(n_locals) + " slots)",
         });
-        d = d + 1;
+      }
+    } else if (kt == k_block || kt == k_loop || kt == k_if) {
+      if (depth < st_kind.len()) {
+        st_kind = st_kind.with(depth, kt);
+        st_at = st_at.with(depth, i);
+        st_else = st_else.with(depth, 0 - 1);
+      } else {
+        st_kind = st_kind.append(kt);
+        st_at = st_at.append(i);
+        st_else = st_else.append(0 - 1);
+      }
+      depth = depth + 1;
+    } else if (kt == k_else) {
+      if (depth == 0) {
+        out = out.append(Problem { fn_name: fn_name, op: i, kind: "else", msg: "else with no open scope" });
+      } else if (st_kind[depth - 1] != k_if) {
+        out = out.append(Problem {
+          fn_name: fn_name, op: i, kind: "else",
+          msg: "else closes a " + ir.kind_name(st_kind[depth - 1])
+            + " opened at op " + util.i32_to_string(st_at[depth - 1]) + ", not an if",
+        });
+      } else if (st_else[depth - 1] >= 0) {
+        out = out.append(Problem {
+          fn_name: fn_name, op: i, kind: "else",
+          msg: "second else for the if opened at op " + util.i32_to_string(st_at[depth - 1])
+            + " (first at op " + util.i32_to_string(st_else[depth - 1]) + ")",
+        });
+      } else {
+        st_else = st_else.with(depth - 1, i);
+      }
+    } else if (kt == k_end) {
+      if (depth == 0) {
+        out = out.append(Problem { fn_name: fn_name, op: i, kind: "end", msg: "end with no open scope" });
+      } else {
+        depth = depth - 1;
+      }
+    } else if (kt == k_br || kt == k_brif) {
+      // A branch names a scope by RELATIVE depth: 0 is the innermost
+      // open scope. depth == the number of open scopes targets the
+      // implicit function-body scope, which is how a lowered
+      // `return`-shaped branch leaves the outermost block; anything
+      // beyond that has no target at all, and a backend will emit a
+      // jump to whatever happens to be there.
+      if (op.i32_imm < 0 || op.i32_imm > depth) {
+        out = out.append(Problem {
+          fn_name: fn_name, op: i, kind: ir.kind_name(kt),
+          msg: "branch depth " + util.i32_to_string(op.i32_imm)
+            + " has no target - only " + util.i32_to_string(depth) + " scopes are open",
+        });
+      }
+    } else if (kt == k_calld) {
+      if (op.i32_imm < 0) {
+        // Report the impossible count and stop: an arity comparison
+        // against it would only add noise.
+        out = out.append(Problem {
+          fn_name: fn_name, op: i, kind: "call_direct",
+          msg: "negative argument count " + util.i32_to_string(op.i32_imm),
+        });
+      } else if (op.str.len() == 0) {
+        out = out.append(Problem { fn_name: fn_name, op: i, kind: "call_direct", msg: "call with no callee name" });
+      } else {
+        var np: i32 = index_params(sigs, op.str);
+        // A closure target also receives its environment pointer, so
+        // the callee may declare one more parameter than the call
+        // site pushes.
+        if (np >= 0 && op.i32_imm != np && op.i32_imm != np - 1) {
+          out = out.append(Problem {
+            fn_name: fn_name, op: i, kind: "call_direct",
+            msg: "calls " + op.str + " with " + util.i32_to_string(op.i32_imm)
+              + " args, but it declares " + util.i32_to_string(np) + " parameters",
+          });
+        }
+      }
+    } else if (kt == k_calli || kt == k_callc) {
+      if (op.i32_imm < 0) {
+        out = out.append(Problem {
+          fn_name: fn_name, op: i, kind: ir.kind_name(kt),
+          msg: "negative argument count " + util.i32_to_string(op.i32_imm),
+        });
+      }
     }
-    return out;
+    i = i + 1;
+  }
+
+  var d: i32 = 0;
+  while (d < depth) {
+    out = out.append(Problem {
+      fn_name: fn_name, op: st_at[d], kind: ir.kind_name(st_kind[d]),
+      msg: "scope is never closed - the function ends with it still open",
+    });
+    d = d + 1;
+  }
+  return out;
 }

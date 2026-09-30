@@ -10,7 +10,6 @@
 // result. The companion Go test pins the exact mapping, so a regression in the
 // decode (or in parse_type_ref feeding it) fails the golden here rather than
 // mis-tagging a tuple-destructure or a Result's OK type downstream.
-
 import "./asmcore";
 import "./util";
 
@@ -18,40 +17,40 @@ import "./util";
 // two-letter `st` helper miscompiles: the native x86-64 backend doesn't escape a
 // function label that collides with the x87 `st` register name.)
 function split_line(tt: string): string {
-    var r: asmcore.TwoTags = asmcore.split_tuple_ret(tt);
-    return "split(" + tt + ") = {" + asmcore.ty_tag(r.a) + ", " + asmcore.ty_tag(r.b) + "}";
+  var r: asmcore.TwoTags = asmcore.split_tuple_ret(tt);
+  return "split(" + tt + ") = {" + asmcore.ty_tag(r.a) + ", " + asmcore.ty_tag(r.b) + "}";
 }
 
 // at_line renders tuple_ret_tag_at(tt, idx) as its tag.
 function at_line(tt: string, idx: i32): string {
-    return "at(" + tt + "," + util.i32_to_string(idx) + ") = " + asmcore.ty_tag(asmcore.tuple_ret_tag_at(tt, idx));
+  return "at(" + tt + "," + util.i32_to_string(idx) + ") = " + asmcore.ty_tag(asmcore.tuple_ret_tag_at(tt, idx));
 }
 
 function main(): i32 {
-    var out: string = "";
-    // split_tuple_ret: 2-element OK/first+second, nested-generic element, a
-    // nested-tuple element (→ unknown), non-tuple / single-element fallbacks,
-    // and the 3+-element "first + rejoined rest" path.
-    out = out + split_line("(i32, string)") + "\n";
-    out = out + split_line("(string, i32)") + "\n";
-    out = out + split_line("(Map[string, i32], Err)") + "\n";
-    out = out + split_line("(i32, Option[string])") + "\n";
-    out = out + split_line("(string, (i32, bool))") + "\n";
-    out = out + split_line("i32") + "\n";
-    out = out + split_line("(i32)") + "\n";
-    out = out + split_line("") + "\n";
-    out = out + split_line("(i32, string, bool)") + "\n";
-    // tuple_ret_tag_at: each index of an N-tuple, out-of-range, nested-generic
-    // element, single-element, and a non-tuple.
-    out = out + at_line("(i32, string, bool)", 0) + "\n";
-    out = out + at_line("(i32, string, bool)", 1) + "\n";
-    out = out + at_line("(i32, string, bool)", 2) + "\n";
-    out = out + at_line("(i32, string, bool)", 3) + "\n";
-    out = out + at_line("(Map[a, b], Option[i32])", 0) + "\n";
-    out = out + at_line("(Map[a, b], Option[i32])", 1) + "\n";
-    out = out + at_line("(string)", 0) + "\n";
-    out = out + at_line("(string)", 1) + "\n";
-    out = out + at_line("i32", 0) + "\n";
-    write(out);
-    return 0;
+  var out: string = "";
+  // split_tuple_ret: 2-element OK/first+second, nested-generic element, a
+  // nested-tuple element (→ unknown), non-tuple / single-element fallbacks,
+  // and the 3+-element "first + rejoined rest" path.
+  out = out + split_line("(i32, string)") + "\n";
+  out = out + split_line("(string, i32)") + "\n";
+  out = out + split_line("(Map[string, i32], Err)") + "\n";
+  out = out + split_line("(i32, Option[string])") + "\n";
+  out = out + split_line("(string, (i32, bool))") + "\n";
+  out = out + split_line("i32") + "\n";
+  out = out + split_line("(i32)") + "\n";
+  out = out + split_line("") + "\n";
+  out = out + split_line("(i32, string, bool)") + "\n";
+  // tuple_ret_tag_at: each index of an N-tuple, out-of-range, nested-generic
+  // element, single-element, and a non-tuple.
+  out = out + at_line("(i32, string, bool)", 0) + "\n";
+  out = out + at_line("(i32, string, bool)", 1) + "\n";
+  out = out + at_line("(i32, string, bool)", 2) + "\n";
+  out = out + at_line("(i32, string, bool)", 3) + "\n";
+  out = out + at_line("(Map[a, b], Option[i32])", 0) + "\n";
+  out = out + at_line("(Map[a, b], Option[i32])", 1) + "\n";
+  out = out + at_line("(string)", 0) + "\n";
+  out = out + at_line("(string)", 1) + "\n";
+  out = out + at_line("i32", 0) + "\n";
+  write(out);
+  return 0;
 }

@@ -7,20 +7,29 @@ import "std/tcp";
 import "core/int";
 
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
-    return http.ok("hello");
+  return http.ok("hello");
 }
 
 function port(): i32 {
-    match (env("PORT")) {
-        Some(p) => {
-            match (int.parse_int_radix(p, 10)) { Some(n) => { return n; }, None => { return 8080; } }
+  match (env("PORT")) {
+    Some(p) => {
+      match (int.parse_int_radix(p, 10)) {
+        Some(n) => {
+          return n;
         },
-        None => { return 8080; }
+        None => {
+          return 8080;
+        }
+      }
+    },
+    None => {
+      return 8080;
     }
-    return 8080;
+  }
+  return 8080;
 }
 
 function main(): i32 {
-    var opts: tcp.ServeOptions = tcp.ServeOptions { ...tcp.serve_options(), max_connections: 16384, max_connections_per_ip: 0 };
-    return tcp.tcp_serve_supervised_opts(port(), opts, handle);
+  var opts: tcp.ServeOptions = tcp.ServeOptions { ...tcp.serve_options(), max_connections: 16384, max_connections_per_ip: 0 };
+  return tcp.tcp_serve_supervised_opts(port(), opts, handle);
 }

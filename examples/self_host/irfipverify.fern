@@ -49,13 +49,11 @@
 // decision. Its siblings are irverify.fern (structure, slice 1) and
 // irverifystack.fern (operand-stack discipline, slice 2); it reuses their
 // `Problem` so a driver can report all three from one list.
-
 import "./ir";
 import "./irverify";
 import "./util";
 
 // ---- the claim ---------------------------------------------------------
-
 // FipClaim is what a function declared about itself. Built from the FuncDecl
 // by the caller, so this module stays a leaf over `ir` (the same reason
 // irverify takes an `FnSig[]` rather than importing the parser).
@@ -64,36 +62,34 @@ import "./util";
 // one — and a claim with neither is verified vacuously, which is how a caller
 // can hand the whole module in without filtering it first.
 pub struct FipClaim {
-    fn_name: string,
-    is_fip: boolean,
-    is_fbip: boolean,
-    allowance: i32,
+  fn_name: string,
+  is_fip: boolean,
+  is_fbip: boolean,
+  allowance: i32,
 }
 
 pub function claim_none(name: string): FipClaim {
-    return FipClaim { fn_name: name, is_fip: false, is_fbip: false, allowance: 0 };
+  return FipClaim { fn_name: name, is_fip: false, is_fbip: false, allowance: 0 };
 }
 
 // ---- the result --------------------------------------------------------
-
 // FipResult carries the verdict plus the two counts behind it. The counts are
 // reported for the reason native's verifystack reports coverage: a clean
 // verdict means little on its own — "0 fresh, 0 paired" is a function that
 // constructs nothing, "0 fresh, 7 paired" is the reuse layer actually working,
 // and only the second is evidence.
 pub struct FipResult {
-    problems: irverify.Problem[],
-    fresh: i32,
-    paired: i32,
-    // elided counts the carried fields a self-overwrite reuse site
-    // (`p = T { ...p, f: v }`) left untouched on its reuse arm — the fresh
-    // arm copies each one out of the donor, so the copies are what is
-    // counted (elided_carried_at).
-    elided: i32,
+  problems: irverify.Problem[],
+  fresh: i32,
+  paired: i32,
+  // elided counts the carried fields a self-overwrite reuse site
+  // (`p = T { ...p, f: v }`) left untouched on its reuse arm — the fresh
+  // arm copies each one out of the donor, so the copies are what is
+  // counted (elided_carried_at).
+  elided: i32,
 }
 
 // ---- the op table ------------------------------------------------------
-
 // fresh_alloc_what names the construct an op allocates a FRESH box for, or ""
 // when the op allocates nothing at this point in the program.
 //
@@ -103,36 +99,54 @@ pub struct FipResult {
 // static data, heap_bump_bytes only reads the cursor. Counting those would
 // report a budget overrun for a function that allocates nothing.
 pub function fresh_alloc_what(o: ir.Op): string {
-    var t: i32 = o.kind_tag;
-    // Constructor expressions: what E053 lets any tier write — it admits the
-    // shape and leaves the verdict here (#9602) — and therefore what this pass
-    // has to count on every claim's behalf. A
-    // reuse-paired site is NOT here — it lowers to a `__fern_alloc_reuse` call
-    // plus in-place field stores, and never emits its constructor op.
-    if (t == 138) {
-        if (o.str.len() > 0) { return "struct/enum construction \"" + o.str + "\""; }
-        return "struct/enum construction";
+  var t: i32 = o.kind_tag;
+  // Constructor expressions: what E053 lets any tier write — it admits the
+  // shape and leaves the verdict here (#9602) — and therefore what this pass
+  // has to count on every claim's behalf. A
+  // reuse-paired site is NOT here — it lowers to a `__fern_alloc_reuse` call
+  // plus in-place field stores, and never emits its constructor op.
+  if (t == 138) {
+    if (o.str.len() > 0) {
+      return "struct/enum construction \"" + o.str + "\"";
     }
-    if (t == 198) { return "functional struct update"; }
-    if (t == 142) { return "tuple literal"; }
-    if (t == 87) { return "array literal"; }
-    if (t == 120) { return "Option construction"; }
-    if (t == 146) { return "dyn box"; }
-    // Never admitted by E053 under any grading, so an occurrence is drift:
-    // a construct the checker believed heap-neutral that lowers to an
-    // allocation anyway.
-    if (t == 98) { return "string concatenation"; }
-    if (t == 76) { return "heap allocation"; }
-    if (t == 77) { return "byte-buffer allocation"; }
-    // A std/array `map` E053 admitted on an `own` receiver (#9733). Native
-    // writes it through the donor when R7 of docs/REUSE-CONTRACT.md holds and
-    // counts the ones it declines; this compiler has no in-place map at all,
-    // so every one it emits builds a fresh array by append and is counted as
-    // such, with the reason — the honest half of "which compiler checks what".
-    if (t == ir.kind_id("call_direct") && util.str_has_prefix(o.str, "__arrm_map__")) {
-        return "`map` materialized by the combinator: the self-hosted compiler has no in-place map (R7 is native-only until the reuse port)";
-    }
-    return "";
+    return "struct/enum construction";
+  }
+  if (t == 198) {
+    return "functional struct update";
+  }
+  if (t == 142) {
+    return "tuple literal";
+  }
+  if (t == 87) {
+    return "array literal";
+  }
+  if (t == 120) {
+    return "Option construction";
+  }
+  if (t == 146) {
+    return "dyn box";
+  }
+  // Never admitted by E053 under any grading, so an occurrence is drift:
+  // a construct the checker believed heap-neutral that lowers to an
+  // allocation anyway.
+  if (t == 98) {
+    return "string concatenation";
+  }
+  if (t == 76) {
+    return "heap allocation";
+  }
+  if (t == 77) {
+    return "byte-buffer allocation";
+  }
+  // A std/array `map` E053 admitted on an `own` receiver (#9733). Native
+  // writes it through the donor when R7 of docs/REUSE-CONTRACT.md holds and
+  // counts the ones it declines; this compiler has no in-place map at all,
+  // so every one it emits builds a fresh array by append and is counted as
+  // such, with the reason — the honest half of "which compiler checks what".
+  if (t == ir.kind_id("call_direct") && util.str_has_prefix(o.str, "__arrm_map__")) {
+    return "`map` materialized by the combinator: the self-hosted compiler has no in-place map (R7 is native-only until the reuse port)";
+  }
+  return "";
 }
 
 // is_paired_alloc reports whether an op IS a reuse-paired construction — the
@@ -140,7 +154,7 @@ pub function fresh_alloc_what(o: ir.Op): string {
 // charged: it is the evidence that the fbip claim is being earned rather than
 // merely tolerated.
 pub function is_paired_alloc(o: ir.Op): boolean {
-    return o.kind_tag == ir.kind_id("call_direct") && o.str == "__fern_alloc_reuse";
+  return o.kind_tag == ir.kind_id("call_direct") && o.str == "__fern_alloc_reuse";
 }
 
 // elided_carried_at counts the carried fields elided by the reuse site whose
@@ -154,87 +168,109 @@ pub function is_paired_alloc(o: ir.Op): boolean {
 // so their fresh arm has no `struct_set` and no raw shape copy, and they
 // count 0 here.
 pub function elided_carried_at(ops: ir.Op[], at: i32): i32 {
-    var k_if: i32 = ir.kind_id("if");
-    var k_else: i32 = ir.kind_id("else");
-    var k_end: i32 = ir.kind_id("end");
-    var k_block: i32 = ir.kind_id("block");
-    var k_loop: i32 = ir.kind_id("loop");
-    var k_store: i32 = ir.kind_id("struct_set");
-    var k_shape_copy: i32 = ir.kind_id("raw_store_ptr");
-    var i: i32 = at + 1;
-    // The uniqueness branch: the first `if` after the call.
-    while (i < ops.len() && ops[i].kind_tag != k_if) {
-        if (ops[i].kind_tag == k_end || ops[i].kind_tag == k_else) { return 0; }
-        i = i + 1;
+  var k_if: i32 = ir.kind_id("if");
+  var k_else: i32 = ir.kind_id("else");
+  var k_end: i32 = ir.kind_id("end");
+  var k_block: i32 = ir.kind_id("block");
+  var k_loop: i32 = ir.kind_id("loop");
+  var k_store: i32 = ir.kind_id("struct_set");
+  var k_shape_copy: i32 = ir.kind_id("raw_store_ptr");
+  var i: i32 = at + 1;
+  // The uniqueness branch: the first `if` after the call.
+  while (i < ops.len() && ops[i].kind_tag != k_if) {
+    if (ops[i].kind_tag == k_end || ops[i].kind_tag == k_else) {
+      return 0;
     }
-    // Its fresh arm: the `else` at the branch's own depth.
-    var depth: i32 = 0;
     i = i + 1;
-    while (i < ops.len()) {
-        var t: i32 = ops[i].kind_tag;
-        if (t == k_if || t == k_block || t == k_loop) { depth = depth + 1; }
-        else if (t == k_end) { if (depth == 0) { return 0; } depth = depth - 1; }
-        else if (t == k_else && depth == 0) { break; }
-        i = i + 1;
+  }
+  // Its fresh arm: the `else` at the branch's own depth.
+  var depth: i32 = 0;
+  i = i + 1;
+  while (i < ops.len()) {
+    var t: i32 = ops[i].kind_tag;
+    if (t == k_if || t == k_block || t == k_loop) {
+      depth = depth + 1;
+    } else if (t == k_end) {
+      if (depth == 0) {
+        return 0;
+      }
+      depth = depth - 1;
+    } else if (t == k_else && depth == 0) {
+      break;
     }
-    var stores: i32 = 0;
-    var shape_copied: boolean = false;
     i = i + 1;
-    while (i < ops.len()) {
-        var t2: i32 = ops[i].kind_tag;
-        if (t2 == k_if || t2 == k_block || t2 == k_loop) { depth = depth + 1; }
-        else if (t2 == k_end) { if (depth == 0) { break; } depth = depth - 1; }
-        else if (t2 == k_shape_copy) { shape_copied = true; }
-        else if (t2 == k_store && depth == 0) { stores = stores + 1; }
-        i = i + 1;
+  }
+  var stores: i32 = 0;
+  var shape_copied: boolean = false;
+  i = i + 1;
+  while (i < ops.len()) {
+    var t2: i32 = ops[i].kind_tag;
+    if (t2 == k_if || t2 == k_block || t2 == k_loop) {
+      depth = depth + 1;
+    } else if (t2 == k_end) {
+      if (depth == 0) {
+        break;
+      }
+      depth = depth - 1;
+    } else if (t2 == k_shape_copy) {
+      shape_copied = true;
+    } else if (t2 == k_store && depth == 0) {
+      stores = stores + 1;
     }
-    if (!shape_copied) { return 0; }
-    return stores;
+    i = i + 1;
+  }
+  if (!shape_copied) {
+    return 0;
+  }
+  return stores;
 }
 
 // ---- the pass ----------------------------------------------------------
-
 // verify_fip_fn checks one lowered function's ops against its claim. Returns
 // at most one problem — native reports a single E068 naming every offending
 // site, and a per-site list would bury the count, which is the actual verdict.
 pub function verify_fip_fn(claim: FipClaim, ops: ir.Op[]): FipResult {
-    var out: irverify.Problem[] = [];
-    var fresh: i32 = 0;
-    var paired: i32 = 0;
-    var elided: i32 = 0;
-    var sites: string = "";
-    var i: i32 = 0;
-    while (i < ops.len()) {
-        if (is_paired_alloc(ops[i])) {
-            paired = paired + 1;
-            elided = elided + elided_carried_at(ops, i);
-        } else {
-            var what: string = fresh_alloc_what(ops[i]);
-            if (what.len() > 0) {
-                if (fresh > 0) { sites = sites + "; "; }
-                sites = sites + what + " at op " + util.i32_to_string(i);
-                fresh = fresh + 1;
-            }
+  var out: irverify.Problem[] = [];
+  var fresh: i32 = 0;
+  var paired: i32 = 0;
+  var elided: i32 = 0;
+  var sites: string = "";
+  var i: i32 = 0;
+  while (i < ops.len()) {
+    if (is_paired_alloc(ops[i])) {
+      paired = paired + 1;
+      elided = elided + elided_carried_at(ops, i);
+    } else {
+      var what: string = fresh_alloc_what(ops[i]);
+      if (what.len() > 0) {
+        if (fresh > 0) {
+          sites = sites + "; ";
         }
-        i = i + 1;
+        sites = sites + what + " at op " + util.i32_to_string(i);
+        fresh = fresh + 1;
+      }
     }
-    if (!claim.is_fip && !claim.is_fbip) {
-        return FipResult { problems: out, fresh: fresh, paired: paired, elided: elided };
-    }
-    if (fresh <= claim.allowance) {
-        return FipResult { problems: out, fresh: fresh, paired: paired, elided: elided };
-    }
-    var kw: string = "fip";
-    if (claim.is_fbip) { kw = "fbip"; }
-    // One remedy for every tier now that the checker admits the constructor
-    // shape everywhere (#9602): a site here is an un-paired construction the
-    // author can pair or grade, in a bare `fip` exactly as in an `fbip`.
-    var remedy: string = "pair each construction with a dead uniquely-owned donor of the same shape, or grade the claim (`" + kw + "(n)`)";
-    out = out.append(irverify.Problem {
-        fn_name: claim.fn_name, op: 0 - 1, kind: "E068",
-        msg: "`" + kw + "` function \"" + claim.fn_name + "\" allocates: "
-            + util.i32_to_string(fresh) + " un-reused allocation site(s) exceed the allowance of "
-            + util.i32_to_string(claim.allowance) + ": " + sites + " — " + remedy
-    });
+    i = i + 1;
+  }
+  if (!claim.is_fip && !claim.is_fbip) {
     return FipResult { problems: out, fresh: fresh, paired: paired, elided: elided };
+  }
+  if (fresh <= claim.allowance) {
+    return FipResult { problems: out, fresh: fresh, paired: paired, elided: elided };
+  }
+  var kw: string = "fip";
+  if (claim.is_fbip) {
+    kw = "fbip";
+  }
+  // One remedy for every tier now that the checker admits the constructor
+  // shape everywhere (#9602): a site here is an un-paired construction the
+  // author can pair or grade, in a bare `fip` exactly as in an `fbip`.
+  var remedy: string = "pair each construction with a dead uniquely-owned donor of the same shape, or grade the claim (`" + kw + "(n)`)";
+  out = out.append(irverify.Problem {
+    fn_name: claim.fn_name, op: 0 - 1, kind: "E068",
+    msg: "`" + kw + "` function \"" + claim.fn_name + "\" allocates: "
+      + util.i32_to_string(fresh) + " un-reused allocation site(s) exceed the allowance of "
+      + util.i32_to_string(claim.allowance) + ": " + sites + " — " + remedy,
+  });
+  return FipResult { problems: out, fresh: fresh, paired: paired, elided: elided };
 }

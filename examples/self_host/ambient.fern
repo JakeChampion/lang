@@ -15,7 +15,6 @@
 // to a fixpoint from the handler. That is the same over-approximation native
 // uses for its call graph, minus the row for calls through a value the walk
 // cannot name, which charges nothing on either compiler.
-
 import "./ast";
 import "./astwalk";
 import "./parser";
@@ -28,140 +27,160 @@ import "./util";
 // handler down to the builtin. `fn_module` is the module the handler came
 // from — empty for the entry module, whose names the bundle leaves bare.
 pub struct Violation {
-    handler: string,
-    bag: string,
-    builtin: string,
-    capability: string,
-    chain: string[],
-    line: i32,
-    col: i32,
-    fn_module: string,
+  handler: string,
+  bag: string,
+  builtin: string,
+  capability: string,
+  chain: string[],
+  line: i32,
+  col: i32,
+  fn_module: string,
 }
 
 function is_platform(type_name: string): boolean {
-    return util.base_type_name(type_name) == "Platform";
+  return util.base_type_name(type_name) == "Platform";
 }
 
 // is_bag_method reports whether `fd` is a method on the bag.
 pub function is_bag_method(fd: parser.FuncDecl): boolean {
-    return fd.receiver_type.len() > 0 && is_platform(fd.receiver_type);
+  return fd.receiver_type.len() > 0 && is_platform(fd.receiver_type);
 }
 
 // bag_param names `fd`'s `Platform` parameter, or "" when `fd` is not a
 // handler. The bag's methods are not handlers: their receiver is the bag,
 // and they are the route the rule sends a handler down.
 pub function bag_param(fd: parser.FuncDecl): string {
-    if (is_bag_method(fd)) { return ""; }
-    var i: i32 = 0;
-    while (i < fd.params.len()) {
-        if (is_platform(fd.params[i].type_name)) { return fd.params[i].name; }
-        i = i + 1;
-    }
+  if (is_bag_method(fd)) {
     return "";
+  }
+  var i: i32 = 0;
+  while (i < fd.params.len()) {
+    if (is_platform(fd.params[i].type_name)) {
+      return fd.params[i].name;
+    }
+    i = i + 1;
+  }
+  return "";
 }
 
 // gated_calls lists the gated builtins `fd`'s body calls directly, in source
 // order, each once. A same-named METHOD on a user type is a different callee.
 function gated_calls(fd: parser.FuncDecl, wanted: string[]): string[] {
-    var calls: astwalk.CallSite[] = [];
-    var bi: i32 = 0;
-    while (bi < fd.body.len()) {
-        calls = astwalk.collect_calls_stmt(fd.body[bi], wanted, calls);
-        bi = bi + 1;
+  var calls: astwalk.CallSite[] = [];
+  var bi: i32 = 0;
+  while (bi < fd.body.len()) {
+    calls = astwalk.collect_calls_stmt(fd.body[bi], wanted, calls);
+    bi = bi + 1;
+  }
+  var out: string[] = [];
+  var ci: i32 = 0;
+  while (ci < calls.len()) {
+    if (!calls[ci].method && !util.has_str(out, calls[ci].name)) {
+      out = out.append(calls[ci].name);
     }
-    var out: string[] = [];
-    var ci: i32 = 0;
-    while (ci < calls.len()) {
-        if (!calls[ci].method && !util.has_str(out, calls[ci].name)) { out = out.append(calls[ci].name); }
-        ci = ci + 1;
-    }
-    return out;
+    ci = ci + 1;
+  }
+  return out;
 }
 
 // chain_of walks the parent pointers back from `at` to the handler.
 function chain_of(mod: parser.Module, parent: i32[], at: i32): string[] {
-    var rev: string[] = [];
-    var n: i32 = at;
-    while (n >= 0) {
-        rev = rev.append(mod.funcs[n].name);
-        n = parent[n];
-    }
-    var out: string[] = [];
-    var i: i32 = rev.len() - 1;
-    while (i >= 0) {
-        out = out.append(rev[i]);
-        i = i - 1;
-    }
-    return out;
+  var rev: string[] = [];
+  var n: i32 = at;
+  while (n >= 0) {
+    rev = rev.append(mod.funcs[n].name);
+    n = parent[n];
+  }
+  var out: string[] = [];
+  var i: i32 = rev.len() - 1;
+  while (i >= 0) {
+    out = out.append(rev[i]);
+    i = i - 1;
+  }
+  return out;
 }
 
 // handler_violations appends the effects the handler at `hi` reaches: a
 // breadth-first walk from it, one violation per capability, the chain being
 // the first path the walk found.
 function handler_violations(mod: parser.Module, hi: i32, bag: string, wanted: string[], own out: Violation[]): Violation[] {
-    var parent: i32[] = [];
-    var pi: i32 = 0;
-    while (pi < mod.funcs.len()) { parent = parent.append(0 - 2); pi = pi + 1; }
-    parent = parent.with(hi, 0 - 1);
-    var queue: i32[] = [hi];
-    var seen_caps: string[] = [];
-    var qi: i32 = 0;
-    while (qi < queue.len()) {
-        var cur: i32 = queue[qi];
-        qi = qi + 1;
-        var fd: parser.FuncDecl = mod.funcs[cur];
-        var calls: string[] = gated_calls(fd, wanted);
-        var ci: i32 = 0;
-        while (ci < calls.len()) {
-            var cap: string = platforms.gated_capability(calls[ci]);
-            if (!util.has_str(seen_caps, cap)) {
-                seen_caps = seen_caps.append(cap);
-                out = out.append(Violation {
-                    handler: mod.funcs[hi].name,
-                    bag: bag,
-                    builtin: calls[ci],
-                    capability: cap,
-                    chain: chain_of(mod, parent, cur).append(calls[ci]),
-                    line: mod.funcs[hi].line,
-                    col: mod.funcs[hi].col,
-                    fn_module: util.mangled_module(mod.funcs[hi].name),
-                });
-            }
-            ci = ci + 1;
-        }
-        var rs: treeshake.BodyRefs = treeshake.body_refs(fd);
-        var fi: i32 = 0;
-        while (fi < mod.funcs.len()) {
-            if (parent[fi] == 0 - 2 && !is_bag_method(mod.funcs[fi]) && treeshake.refs_name(rs, mod.funcs[fi])) {
-                parent = parent.with(fi, cur);
-                queue = queue.append(fi);
-            }
-            fi = fi + 1;
-        }
+  var parent: i32[] = [];
+  var pi: i32 = 0;
+  while (pi < mod.funcs.len()) {
+    parent = parent.append(0 - 2);
+    pi = pi + 1;
+  }
+  parent = parent.with(hi, 0 - 1);
+  var queue: i32[] = [hi];
+  var seen_caps: string[] = [];
+  var qi: i32 = 0;
+  while (qi < queue.len()) {
+    var cur: i32 = queue[qi];
+    qi = qi + 1;
+    var fd: parser.FuncDecl = mod.funcs[cur];
+    var calls: string[] = gated_calls(fd, wanted);
+    var ci: i32 = 0;
+    while (ci < calls.len()) {
+      var cap: string = platforms.gated_capability(calls[ci]);
+      if (!util.has_str(seen_caps, cap)) {
+        seen_caps = seen_caps.append(cap);
+        out = out.append(Violation {
+          handler: mod.funcs[hi].name,
+          bag: bag,
+          builtin: calls[ci],
+          capability: cap,
+          chain: chain_of(mod, parent, cur).append(calls[ci]),
+          line: mod.funcs[hi].line,
+          col: mod.funcs[hi].col,
+          fn_module: util.mangled_module(mod.funcs[hi].name),
+        });
+      }
+      ci = ci + 1;
     }
-    return out;
+    var rs: treeshake.BodyRefs = treeshake.body_refs(fd);
+    var fi: i32 = 0;
+    while (fi < mod.funcs.len()) {
+      if (parent[fi] == 0 - 2 && !is_bag_method(mod.funcs[fi]) && treeshake.refs_name(rs, mod.funcs[fi])) {
+        parent = parent.with(fi, cur);
+        queue = queue.append(fi);
+      }
+      fi = fi + 1;
+    }
+  }
+  return out;
 }
 
 // by_capability orders one handler's violations by capability name, the
 // order native reports them in (its rows are a sorted vocabulary).
 function by_capability(vs: Violation[]): Violation[] {
-    var order: i32[] = [];
-    var i: i32 = 0;
-    while (i < vs.len()) {
-        var at: i32 = order.len();
-        while (at > 0 && util.str_less(vs[i].capability, vs[order[at - 1]].capability)) { at = at - 1; }
-        var shifted: i32[] = [];
-        var j: i32 = 0;
-        while (j < at) { shifted = shifted.append(order[j]); j = j + 1; }
-        shifted = shifted.append(i);
-        while (j < order.len()) { shifted = shifted.append(order[j]); j = j + 1; }
-        order = shifted;
-        i = i + 1;
+  var order: i32[] = [];
+  var i: i32 = 0;
+  while (i < vs.len()) {
+    var at: i32 = order.len();
+    while (at > 0 && util.str_less(vs[i].capability, vs[order[at - 1]].capability)) {
+      at = at - 1;
     }
-    var out: Violation[] = [];
-    var k: i32 = 0;
-    while (k < order.len()) { out = out.append(vs[order[k]]); k = k + 1; }
-    return out;
+    var shifted: i32[] = [];
+    var j: i32 = 0;
+    while (j < at) {
+      shifted = shifted.append(order[j]);
+      j = j + 1;
+    }
+    shifted = shifted.append(i);
+    while (j < order.len()) {
+      shifted = shifted.append(order[j]);
+      j = j + 1;
+    }
+    order = shifted;
+    i = i + 1;
+  }
+  var out: Violation[] = [];
+  var k: i32 = 0;
+  while (k < order.len()) {
+    out = out.append(vs[order[k]]);
+    k = k + 1;
+  }
+  return out;
 }
 
 // enforce reports every host effect a handler in `mod` reaches around its
@@ -169,22 +188,28 @@ function by_capability(vs: Violation[]): Violation[] {
 // Runs on the bundle before the tree-shake: a handler is judged on what its
 // body reaches, whether or not this program serves it.
 pub function enforce(mod: parser.Module): Violation[] {
-    var gates: platforms.Gate[] = platforms.gated_builtins();
-    var wanted: string[] = [];
-    var gi: i32 = 0;
-    while (gi < gates.len()) { wanted = wanted.append(gates[gi].builtin); gi = gi + 1; }
-    var out: Violation[] = [];
-    var hi: i32 = 0;
-    while (hi < mod.funcs.len()) {
-        var bag: string = bag_param(mod.funcs[hi]);
-        if (bag.len() > 0 && mod.funcs[hi].body.len() > 0) {
-            var mine: Violation[] = by_capability(handler_violations(mod, hi, bag, wanted, []));
-            var vi: i32 = 0;
-            while (vi < mine.len()) { out = out.append(mine[vi]); vi = vi + 1; }
-        }
-        hi = hi + 1;
+  var gates: platforms.Gate[] = platforms.gated_builtins();
+  var wanted: string[] = [];
+  var gi: i32 = 0;
+  while (gi < gates.len()) {
+    wanted = wanted.append(gates[gi].builtin);
+    gi = gi + 1;
+  }
+  var out: Violation[] = [];
+  var hi: i32 = 0;
+  while (hi < mod.funcs.len()) {
+    var bag: string = bag_param(mod.funcs[hi]);
+    if (bag.len() > 0 && mod.funcs[hi].body.len() > 0) {
+      var mine: Violation[] = by_capability(handler_violations(mod, hi, bag, wanted, []));
+      var vi: i32 = 0;
+      while (vi < mine.len()) {
+        out = out.append(mine[vi]);
+        vi = vi + 1;
+      }
     }
-    return out;
+    hi = hi + 1;
+  }
+  return out;
 }
 
 // bag_method names the `std/platform` method that is the same effect as a
@@ -192,29 +217,43 @@ pub function enforce(mod: parser.Module): Violation[] {
 // Only exact equivalents: a suggestion that changes what the call does is
 // worse than none.
 pub function bag_method(builtin: string): string {
-    if (builtin == "eprint") { return "log"; }
-    if (builtin == "now_unix_ms") { return "now_ms"; }
-    if (builtin == "monotonic_ns") { return "elapsed_ns"; }
-    if (builtin == "env") { return "env"; }
-    if (builtin == "random_i32") { return "random_i32"; }
-    return "";
+  if (builtin == "eprint") {
+    return "log";
+  }
+  if (builtin == "now_unix_ms") {
+    return "now_ms";
+  }
+  if (builtin == "monotonic_ns") {
+    return "elapsed_ns";
+  }
+  if (builtin == "env") {
+    return "env";
+  }
+  if (builtin == "random_i32") {
+    return "random_i32";
+  }
+  return "";
 }
 
 // violation_message renders E080's text, the way native's Message does.
 pub function violation_message(v: Violation): string {
-    var where: string = "";
-    if (v.fn_module.len() > 0) { where = " (declared in module \"" + v.fn_module + "\")"; }
-    var fix: string = "nothing on the bag stands in for it";
-    var m: string = bag_method(v.builtin);
-    if (m.len() > 0) {
-        fix = "call `" + v.bag + "." + m + "(…)` (`import \"std/platform\";`) so the effect comes from the platform the handler was handed";
+  var where: string = "";
+  if (v.fn_module.len() > 0) {
+    where = " (declared in module \"" + v.fn_module + "\")";
+  }
+  var fix: string = "nothing on the bag stands in for it";
+  var m: string = bag_method(v.builtin);
+  if (m.len() > 0) {
+    fix = "call `" + v.bag + "." + m + "(…)` (`import \"std/platform\";`) so the effect comes from the platform the handler was handed";
+  }
+  var chain: string = "";
+  var i: i32 = 0;
+  while (i < v.chain.len()) {
+    if (i > 0) {
+      chain = chain + " -> ";
     }
-    var chain: string = "";
-    var i: i32 = 0;
-    while (i < v.chain.len()) {
-        if (i > 0) { chain = chain + " -> "; }
-        chain = chain + v.chain[i];
-        i = i + 1;
-    }
-    return "handler `" + v.handler + "`" + where + " reaches `" + v.builtin + "` (`" + v.capability + "`) around its `Platform` bag `" + v.bag + "`: " + chain + "; " + fix;
+    chain = chain + v.chain[i];
+    i = i + 1;
+  }
+  return "handler `" + v.handler + "`" + where + " reaches `" + v.builtin + "` (`" + v.capability + "`) around its `Platform` bag `" + v.bag + "`: " + chain + "; " + fix;
 }

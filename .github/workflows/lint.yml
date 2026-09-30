@@ -22,7 +22,8 @@ name: Lint
 #   vet        — `go vet ./...` against the whole module.
 #   gofmt      — `make gofmt-check`. Nothing gated Go formatting before, so 21
 #                files across internal/ and cmd/ had drifted.
-#   fmt-check  — `make fmt-check` (== `fern -fmt -d` on every examples/*.fern).
+#   fmt-check  — `make fmt-check` (== `fern -fmt -d` on every tracked .fern
+#                outside conformance/ and testdata/).
 #                Fern sources only.
 #   check-sources — `make check-sources`: native `fern -check` over the
 #                self-host sources plus every stdlib module as a standalone

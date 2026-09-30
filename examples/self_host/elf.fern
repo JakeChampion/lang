@@ -23,88 +23,96 @@
 //   * 8-byte ELF fields are written via elf_le64 (an i64 value); the
 //     values we emit are all small (addresses < 2^31, sizes), but the
 //     full 8 bytes are always laid down per the ELF-64 layout.
-
 // ---- fixed layout constants (see internal/native/elf/elf.go) ----
-
 // elf_eh_size is the ELF-64 header size (e_ehsize).
-function elf_eh_size(): i32 { return 64; }
+function elf_eh_size(): i32 {
+  return 64;
+}
 
 // elf_ph_size is the ELF-64 program-header entry size (e_phentsize).
-function elf_ph_size(): i32 { return 56; }
+function elf_ph_size(): i32 {
+  return 56;
+}
 
 // elf_base_vaddr is the load address (0x400000), a multiple of the page
 // alignment below.
-function elf_base_vaddr(): i32 { return 4194304; }
+function elf_base_vaddr(): i32 {
+  return 4194304;
+}
 
 // elf_page_align is the arm64 max page size (16 KiB) used for p_align.
-function elf_page_align(): i32 { return 65536; }
+function elf_page_align(): i32 {
+  return 65536;
+}
 
 // elf_em_aarch64 is EM_AARCH64 (e_machine).
-pub function elf_em_aarch64(): i32 { return 183; }
+pub function elf_em_aarch64(): i32 {
+  return 183;
+}
 
 // elf_em_x86_64 is EM_X86_64 (e_machine).
-function elf_em_x86_64(): i32 { return 62; }
+function elf_em_x86_64(): i32 {
+  return 62;
+}
 
 // elf_text_vaddr is the virtual address at which .text begins in the
 // single-segment image (just past the ELF header + one program header).
 // A native assembler needs this to resolve PC-relative symbol references
 // (adrp / :lo12: on arm64, rip-relative on x86-64).
 pub function elf_text_vaddr(): i32 {
-    return elf_base_vaddr() + elf_eh_size() + elf_ph_size();
+  return elf_base_vaddr() + elf_eh_size() + elf_ph_size();
 }
 
 // ---- little-endian byte emitters ----
-
 // elf_le16 appends the low 2 bytes of `v`, little-endian.
 function elf_le16(buf: i32[], v: i32): i32[] {
-    buf = buf.append(v & 255);
-    buf = buf.append((v >> 8) & 255);
-    return buf;
+  buf = buf.append(v & 255);
+  buf = buf.append(v >> 8 & 255);
+  return buf;
 }
 
 // elf_le32 appends the 4 bytes of `v`, little-endian.
 function elf_le32(buf: i32[], v: i32): i32[] {
-    buf = buf.append(v & 255);
-    buf = buf.append((v >> 8) & 255);
-    buf = buf.append((v >> 16) & 255);
-    buf = buf.append((v >> 24) & 255);
-    return buf;
+  buf = buf.append(v & 255);
+  buf = buf.append(v >> 8 & 255);
+  buf = buf.append(v >> 16 & 255);
+  buf = buf.append(v >> 24 & 255);
+  return buf;
 }
 
 // elf_le64 appends the 8 bytes of a 64-bit `v`, little-endian. `>>` is an
 // arithmetic shift; the `& 255` after each shift discards any
 // sign-extended high bits, so the result is correct for any value.
 function elf_le64(buf: i32[], v: i64): i32[] {
-    buf = buf.append((v & 255) as i32);
-    buf = buf.append(((v >> 8) & 255) as i32);
-    buf = buf.append(((v >> 16) & 255) as i32);
-    buf = buf.append(((v >> 24) & 255) as i32);
-    buf = buf.append(((v >> 32) & 255) as i32);
-    buf = buf.append(((v >> 40) & 255) as i32);
-    buf = buf.append(((v >> 48) & 255) as i32);
-    buf = buf.append(((v >> 56) & 255) as i32);
-    return buf;
+  buf = buf.append((v & 255) as i32);
+  buf = buf.append((v >> 8 & 255) as i32);
+  buf = buf.append((v >> 16 & 255) as i32);
+  buf = buf.append((v >> 24 & 255) as i32);
+  buf = buf.append((v >> 32 & 255) as i32);
+  buf = buf.append((v >> 40 & 255) as i32);
+  buf = buf.append((v >> 48 & 255) as i32);
+  buf = buf.append((v >> 56 & 255) as i32);
+  return buf;
 }
 
 // ---- buffer helpers ----
-
 // elf_cat appends every byte of `src` to `buf`.
 pub function elf_cat(buf: i32[], src: i32[]): i32[] {
-    var i: i32 = 0;
-    while (i < src.len()) {
-        buf = buf.append(src[i]);
-        i = i + 1;
-    }
-    return buf;
+  var i: i32 = 0;
+  while (i < src.len()) {
+    buf = buf.append(src[i]);
+    i = i + 1;
+  }
+  return buf;
 }
 
 // elf_pad_to_8 appends zero bytes until the buffer length is a multiple
 // of 8 (so the data blob lands 8-byte aligned after .text).
 pub function elf_pad_to_8(b: i32[]): i32[] {
-    while ((b.len() % 8) != 0) {
-        b = b.append(0);
-    }
-    return b;
+  while (b.len() % 8 != 0) {
+    b = b.append(0);
+  }
+  return b;
 }
 
 // elf_u32_to_i64 zero-extends an i32 byte count to i64 (treating its bits
@@ -114,22 +122,23 @@ pub function elf_pad_to_8(b: i32[]): i32[] {
 // kernel cannot map. Masking off the sign-extended high word recovers the
 // intended unsigned size.
 function elf_u32_to_i64(v: i32): i64 {
-    var u: i64 = v as i64;
-    // `v as i64` SIGN-extends; for an overflowed (negative) byte count add
-    // 2^32 to recover the unsigned value. 2^32 is built via a shift because
-    // an integer *literal* that large is typed i32 and truncates to 0.
-    if (u < 0) { u = u + ((1 as i64) << 32); }
-    return u;
+  var u: i64 = v as i64;
+  // `v as i64` SIGN-extends; for an overflowed (negative) byte count add
+  // 2^32 to recover the unsigned value. 2^32 is built via a shift because
+  // an integer *literal* that large is typed i32 and truncates to 0.
+  if (u < 0) {
+    u = u + (1 as i64 << 32);
+  }
+  return u;
 }
 
 // ---- the image writer ----
-
 // elf_image emits the ELF header + one PT_LOAD (with the given p_flags)
 // covering the whole file, followed by `body`. `machine` selects
 // e_machine (EM_AARCH64 / EM_X86_64). Entry is the first instruction of
 // .text (elf_text_vaddr).
 function elf_image(body: i32[], flags: i32, machine: i32): i32[] {
-    return elf_image_entry(body, flags, machine, 0);
+  return elf_image_entry(body, flags, machine, 0);
 }
 
 // elf_image_entry is elf_image with an explicit entry offset within
@@ -137,7 +146,7 @@ function elf_image(body: i32[], flags: i32, machine: i32): i32[] {
 // entry is a label other than the first instruction (e.g. asm.fern emits
 // `__fn_main` before `_start`, so the entry is `_start`'s offset).
 function elf_image_entry(body: i32[], flags: i32, machine: i32, entry_off: i32): i32[] {
-    return elf_image_entry_bss(body, flags, machine, entry_off, 0);
+  return elf_image_entry_bss(body, flags, machine, entry_off, 0);
 }
 
 // elf_image_entry_bss is elf_image_entry plus a trailing .bss of `bss`
@@ -145,68 +154,67 @@ function elf_image_entry(body: i32[], flags: i32, machine: i32, entry_off: i32):
 // zero-fills that region in memory without it occupying any file bytes
 // (the standard way to reserve zero-init globals without bloating the file).
 pub function elf_image_entry_bss(body: i32[], flags: i32, machine: i32, entry_off: i32, bss: i32): i32[] {
-    var filesz: i64 = (elf_eh_size() + elf_ph_size() + body.len()) as i64;
-    var memsz: i64 = filesz + elf_u32_to_i64(bss);
-    var entry: i64 = (elf_text_vaddr() + entry_off) as i64;
-    var zero64: i64 = 0;
+  var filesz: i64 = (elf_eh_size() + elf_ph_size() + body.len()) as i64;
+  var memsz: i64 = filesz + elf_u32_to_i64(bss);
+  var entry: i64 = (elf_text_vaddr() + entry_off) as i64;
+  var zero64: i64 = 0;
 
-    var buf: i32[] = [];
+  var buf: i32[] = [];
 
-    // ---- ELF-64 header (64 bytes) ----
-    buf = buf.append(127);  // 0x7f  EI_MAG0
-    buf = buf.append(69);   // 'E'   EI_MAG1
-    buf = buf.append(76);   // 'L'   EI_MAG2
-    buf = buf.append(70);   // 'F'   EI_MAG3
-    buf = buf.append(2);    // EI_CLASS = ELFCLASS64
-    buf = buf.append(1);    // EI_DATA  = ELFDATA2LSB
-    buf = buf.append(1);    // EI_VERSION = EV_CURRENT
-    buf = buf.append(0);    // EI_OSABI = SysV
-    var p: i32 = 0;       // EI_PAD (8 bytes)
-    while (p < 8) {
-        buf = buf.append(0);
-        p = p + 1;
-    }
-    buf = elf_le16(buf, 2);                       // e_type    = ET_EXEC
-    buf = elf_le16(buf, machine);                 // e_machine
-    buf = elf_le32(buf, 1);                       // e_version = EV_CURRENT
-    buf = elf_le64(buf, entry);                   // e_entry
-    buf = elf_le64(buf, elf_eh_size() as i64);    // e_phoff (PHs follow the EH)
-    buf = elf_le64(buf, zero64);                  // e_shoff (no section headers)
-    buf = elf_le32(buf, 0);                       // e_flags
-    buf = elf_le16(buf, elf_eh_size());           // e_ehsize
-    buf = elf_le16(buf, elf_ph_size());           // e_phentsize
-    buf = elf_le16(buf, 1);                       // e_phnum
-    buf = elf_le16(buf, 0);                       // e_shentsize
-    buf = elf_le16(buf, 0);                       // e_shnum
-    buf = elf_le16(buf, 0);                       // e_shstrndx
+  // ---- ELF-64 header (64 bytes) ----
+  buf = buf.append(127);  // 0x7f  EI_MAG0
+  buf = buf.append(69);  // 'E'   EI_MAG1
+  buf = buf.append(76);  // 'L'   EI_MAG2
+  buf = buf.append(70);  // 'F'   EI_MAG3
+  buf = buf.append(2);  // EI_CLASS = ELFCLASS64
+  buf = buf.append(1);  // EI_DATA  = ELFDATA2LSB
+  buf = buf.append(1);  // EI_VERSION = EV_CURRENT
+  buf = buf.append(0);  // EI_OSABI = SysV
+  var p: i32 = 0;  // EI_PAD (8 bytes)
+  while (p < 8) {
+    buf = buf.append(0);
+    p = p + 1;
+  }
+  buf = elf_le16(buf, 2);  // e_type    = ET_EXEC
+  buf = elf_le16(buf, machine);  // e_machine
+  buf = elf_le32(buf, 1);  // e_version = EV_CURRENT
+  buf = elf_le64(buf, entry);  // e_entry
+  buf = elf_le64(buf, elf_eh_size() as i64);  // e_phoff (PHs follow the EH)
+  buf = elf_le64(buf, zero64);  // e_shoff (no section headers)
+  buf = elf_le32(buf, 0);  // e_flags
+  buf = elf_le16(buf, elf_eh_size());  // e_ehsize
+  buf = elf_le16(buf, elf_ph_size());  // e_phentsize
+  buf = elf_le16(buf, 1);  // e_phnum
+  buf = elf_le16(buf, 0);  // e_shentsize
+  buf = elf_le16(buf, 0);  // e_shnum
+  buf = elf_le16(buf, 0);  // e_shstrndx
 
-    // ---- Program header (56 bytes): one PT_LOAD covering the file ----
-    buf = elf_le32(buf, 1);                       // p_type  = PT_LOAD
-    buf = elf_le32(buf, flags);                   // p_flags
-    buf = elf_le64(buf, zero64);                  // p_offset
-    buf = elf_le64(buf, elf_base_vaddr() as i64); // p_vaddr
-    buf = elf_le64(buf, elf_base_vaddr() as i64); // p_paddr
-    buf = elf_le64(buf, filesz);                  // p_filesz
-    buf = elf_le64(buf, memsz);                   // p_memsz (incl. .bss)
-    buf = elf_le64(buf, elf_page_align() as i64); // p_align
+  // ---- Program header (56 bytes): one PT_LOAD covering the file ----
+  buf = elf_le32(buf, 1);  // p_type  = PT_LOAD
+  buf = elf_le32(buf, flags);  // p_flags
+  buf = elf_le64(buf, zero64);  // p_offset
+  buf = elf_le64(buf, elf_base_vaddr() as i64);  // p_vaddr
+  buf = elf_le64(buf, elf_base_vaddr() as i64);  // p_paddr
+  buf = elf_le64(buf, filesz);  // p_filesz
+  buf = elf_le64(buf, memsz);  // p_memsz (incl. .bss)
+  buf = elf_le64(buf, elf_page_align() as i64);  // p_align
 
-    return elf_cat(buf, body);
+  return elf_cat(buf, body);
 }
 
 // ---- public wrappers ----
-
 // elf_static_executable wraps a flat .text blob into a runnable static
 // ELF-64 executable for arm64 Linux (R+X). Execution begins at the first
 // byte of text; the program provides its own startup and exits via a
 // syscall (no libc / crt0).
 function elf_static_executable(text: i32[]): i32[] {
-    return elf_image(text, 5, elf_em_aarch64()); // PF_R | PF_X
+  return elf_image(text, 5, elf_em_aarch64());  // PF_R | PF_X
 }
 
 // elf_static_executable_x86 is the x86-64 counterpart of
 // elf_static_executable (R+X).
 function elf_static_executable_x86(text: i32[]): i32[] {
-    return elf_image(text, 5, elf_em_x86_64()); // PF_R | PF_X
+  return elf_image(text, 5, elf_em_x86_64());  // PF_R | PF_X
 }
 
 // elf_static_executable_data wraps .text + a data blob (rodata followed
@@ -216,20 +224,20 @@ function elf_static_executable_x86(text: i32[]): i32[] {
 // segment is mapped R+W+X: the .bss globals must be writable and a single
 // segment keeps the loader simple.
 function elf_static_executable_data(text: i32[], data: i32[]): i32[] {
-    var body: i32[] = elf_cat([], text);
-    body = elf_pad_to_8(body);
-    body = elf_cat(body, data);
-    return elf_image(body, 7, elf_em_aarch64()); // PF_R | PF_W | PF_X
+  var body: i32[] = elf_cat([], text);
+  body = elf_pad_to_8(body);
+  body = elf_cat(body, data);
+  return elf_image(body, 7, elf_em_aarch64());  // PF_R | PF_W | PF_X
 }
 
 // elf_static_executable_data_x86 is the x86-64 counterpart of
 // elf_static_executable_data (R+W+X), identical single-segment layout,
 // only e_machine differs (EM_X86_64).
 function elf_static_executable_data_x86(text: i32[], data: i32[]): i32[] {
-    var body: i32[] = elf_cat([], text);
-    body = elf_pad_to_8(body);
-    body = elf_cat(body, data);
-    return elf_image(body, 7, elf_em_x86_64()); // PF_R | PF_W | PF_X
+  var body: i32[] = elf_cat([], text);
+  body = elf_pad_to_8(body);
+  body = elf_cat(body, data);
+  return elf_image(body, 7, elf_em_x86_64());  // PF_R | PF_W | PF_X
 }
 
 // ---- the x86-64 program image: one R+W+X segment plus PT_GNU_EH_FRAME ----
@@ -239,26 +247,31 @@ function elf_static_executable_data_x86(text: i32[], data: i32[]): i32[] {
 // a second program header so a running program's unwinder can find the
 // .eh_frame the `.cfi_*` directives rendered. .text is therefore one
 // elf_ph_size() further in than elf_text_vaddr()'s single-header image.
-
 // elf_text_off_x86 is the file offset of .text in the x86-64 program image;
 // elf_text_vaddr_x86 its load address.
-pub function elf_text_off_x86(): i32 { return elf_eh_size() + 2 * elf_ph_size(); }
-pub function elf_text_vaddr_x86(): i32 { return elf_base_vaddr() + elf_text_off_x86(); }
+pub function elf_text_off_x86(): i32 {
+  return elf_eh_size() + 2 * elf_ph_size();
+}
+
+pub function elf_text_vaddr_x86(): i32 {
+  return elf_base_vaddr() + elf_text_off_x86();
+}
 
 // elf_eh_hdr_vaddr_x86 / elf_eh_frame_vaddr_x86 are where the x86-64 program
 // image loads .eh_frame_hdr and .eh_frame for a `text_len`-byte .text.
 pub function elf_eh_hdr_vaddr_x86(text_len: i32): i32 {
-    return elf_align4(elf_text_vaddr_x86() + text_len);
+  return elf_align4(elf_text_vaddr_x86() + text_len);
 }
+
 pub function elf_eh_frame_vaddr_x86(text_len: i32, hdr_len: i32): i32 {
-    return elf_align8(elf_eh_hdr_vaddr_x86(text_len) + hdr_len);
+  return elf_align8(elf_eh_hdr_vaddr_x86(text_len) + hdr_len);
 }
 
 // elf_x86_data_base is the text-relative offset of the data blob in the
 // x86-64 program image: 8-aligned past .text and whatever unwind data
 // follows it. x86_resolve reads it so the assembler and this writer agree.
 pub function elf_x86_data_base(text_len: i32, hdr_len: i32, eh_len: i32): i32 {
-    return elf_align8(elf_unwind_end(0, text_len, hdr_len, eh_len));
+  return elf_align8(elf_unwind_end(0, text_len, hdr_len, eh_len));
 }
 
 // elf_program_x86 writes the x86-64 program image: ELF header, PT_LOAD
@@ -266,79 +279,91 @@ pub function elf_x86_data_base(text_len: i32, hdr_len: i32, eh_len: i32): i32 {
 // (or PT_NULL without unwind data), then .text, .eh_frame_hdr, .eh_frame and
 // the data blob at the offsets elf_unwind_end / elf_x86_data_base name.
 pub function elf_program_x86(text: i32[], hdr: i32[], eh: i32[], data: i32[], bss: i32, entry_off: i32): i32[] {
-    var has_unwind: boolean = hdr.len() > 0 && eh.len() > 0;
-    var text_off: i32 = elf_text_off_x86();
-    var hdr_off: i32 = 0;
-    var eh_off: i32 = 0;
-    if (has_unwind) {
-        hdr_off = elf_align4(text_off + text.len());
-        eh_off = elf_align8(hdr_off + hdr.len());
+  var has_unwind: boolean = hdr.len() > 0 && eh.len() > 0;
+  var text_off: i32 = elf_text_off_x86();
+  var hdr_off: i32 = 0;
+  var eh_off: i32 = 0;
+  if (has_unwind) {
+    hdr_off = elf_align4(text_off + text.len());
+    eh_off = elf_align8(hdr_off + hdr.len());
+  }
+  var data_off: i32 = text_off + elf_x86_data_base(text.len(), hdr.len(), eh.len());
+  var filesz: i64 = (data_off + data.len()) as i64;
+  var memsz: i64 = filesz + elf_u32_to_i64(bss);
+  var entry: i64 = (elf_text_vaddr_x86() + entry_off) as i64;
+  var zero64: i64 = 0;
+
+  var buf: i32[] = [];
+  buf = buf.append(127);  // 0x7f  EI_MAG0
+  buf = buf.append(69);  // 'E'
+  buf = buf.append(76);  // 'L'
+  buf = buf.append(70);  // 'F'
+  buf = buf.append(2);  // EI_CLASS = ELFCLASS64
+  buf = buf.append(1);  // EI_DATA  = ELFDATA2LSB
+  buf = buf.append(1);  // EI_VERSION = EV_CURRENT
+  buf = buf.append(0);  // EI_OSABI = SysV
+  var p: i32 = 0;
+  while (p < 8) {  // EI_PAD
+    buf = buf.append(0);
+    p = p + 1;
+  }
+  buf = elf_le16(buf, 2);  // e_type = ET_EXEC
+  buf = elf_le16(buf, elf_em_x86_64());  // e_machine
+  buf = elf_le32(buf, 1);  // e_version
+  buf = elf_le64(buf, entry);  // e_entry
+  buf = elf_le64(buf, elf_eh_size() as i64);  // e_phoff
+  buf = elf_le64(buf, zero64);  // e_shoff
+  buf = elf_le32(buf, 0);  // e_flags
+  buf = elf_le16(buf, elf_eh_size());  // e_ehsize
+  buf = elf_le16(buf, elf_ph_size());  // e_phentsize
+  buf = elf_le16(buf, 2);  // e_phnum
+  buf = elf_le16(buf, 0);  // e_shentsize
+  buf = elf_le16(buf, 0);  // e_shnum
+  buf = elf_le16(buf, 0);  // e_shstrndx
+
+  // PT_LOAD: the whole file, R+W+X, plus .bss.
+  buf = elf_le32(buf, 1);
+  buf = elf_le32(buf, 7);
+  buf = elf_le64(buf, zero64);
+  buf = elf_le64(buf, elf_base_vaddr() as i64);
+  buf = elf_le64(buf, elf_base_vaddr() as i64);
+  buf = elf_le64(buf, filesz);
+  buf = elf_le64(buf, memsz);
+  buf = elf_le64(buf, elf_page_align() as i64);
+
+  // PT_GNU_EH_FRAME over .eh_frame_hdr, or PT_NULL.
+  if (has_unwind) {
+    buf = elf_le32(buf, 1685382480);  // 0x6474e550
+    buf = elf_le32(buf, 4);  // PF_R
+    buf = elf_le64(buf, hdr_off as i64);
+    buf = elf_le64(buf, (elf_base_vaddr() + hdr_off) as i64);
+    buf = elf_le64(buf, (elf_base_vaddr() + hdr_off) as i64);
+    buf = elf_le64(buf, hdr.len() as i64);
+    buf = elf_le64(buf, hdr.len() as i64);
+    buf = elf_le64(buf, 4 as i64);
+  } else {
+    var z: i32 = 0;
+    while (z < elf_ph_size()) {
+      buf = buf.append(0);
+      z = z + 1;
     }
-    var data_off: i32 = text_off + elf_x86_data_base(text.len(), hdr.len(), eh.len());
-    var filesz: i64 = (data_off + data.len()) as i64;
-    var memsz: i64 = filesz + elf_u32_to_i64(bss);
-    var entry: i64 = (elf_text_vaddr_x86() + entry_off) as i64;
-    var zero64: i64 = 0;
+  }
 
-    var buf: i32[] = [];
-    buf = buf.append(127);  // 0x7f  EI_MAG0
-    buf = buf.append(69);   // 'E'
-    buf = buf.append(76);   // 'L'
-    buf = buf.append(70);   // 'F'
-    buf = buf.append(2);    // EI_CLASS = ELFCLASS64
-    buf = buf.append(1);    // EI_DATA  = ELFDATA2LSB
-    buf = buf.append(1);    // EI_VERSION = EV_CURRENT
-    buf = buf.append(0);    // EI_OSABI = SysV
-    var p: i32 = 0;
-    while (p < 8) { buf = buf.append(0); p = p + 1; }  // EI_PAD
-    buf = elf_le16(buf, 2);                       // e_type = ET_EXEC
-    buf = elf_le16(buf, elf_em_x86_64());         // e_machine
-    buf = elf_le32(buf, 1);                       // e_version
-    buf = elf_le64(buf, entry);                   // e_entry
-    buf = elf_le64(buf, elf_eh_size() as i64);    // e_phoff
-    buf = elf_le64(buf, zero64);                  // e_shoff
-    buf = elf_le32(buf, 0);                       // e_flags
-    buf = elf_le16(buf, elf_eh_size());           // e_ehsize
-    buf = elf_le16(buf, elf_ph_size());           // e_phentsize
-    buf = elf_le16(buf, 2);                       // e_phnum
-    buf = elf_le16(buf, 0);                       // e_shentsize
-    buf = elf_le16(buf, 0);                       // e_shnum
-    buf = elf_le16(buf, 0);                       // e_shstrndx
-
-    // PT_LOAD: the whole file, R+W+X, plus .bss.
-    buf = elf_le32(buf, 1);
-    buf = elf_le32(buf, 7);
-    buf = elf_le64(buf, zero64);
-    buf = elf_le64(buf, elf_base_vaddr() as i64);
-    buf = elf_le64(buf, elf_base_vaddr() as i64);
-    buf = elf_le64(buf, filesz);
-    buf = elf_le64(buf, memsz);
-    buf = elf_le64(buf, elf_page_align() as i64);
-
-    // PT_GNU_EH_FRAME over .eh_frame_hdr, or PT_NULL.
-    if (has_unwind) {
-        buf = elf_le32(buf, 1685382480);  // 0x6474e550
-        buf = elf_le32(buf, 4);           // PF_R
-        buf = elf_le64(buf, hdr_off as i64);
-        buf = elf_le64(buf, (elf_base_vaddr() + hdr_off) as i64);
-        buf = elf_le64(buf, (elf_base_vaddr() + hdr_off) as i64);
-        buf = elf_le64(buf, hdr.len() as i64);
-        buf = elf_le64(buf, hdr.len() as i64);
-        buf = elf_le64(buf, 4 as i64);
-    } else {
-        var z: i32 = 0;
-        while (z < elf_ph_size()) { buf = buf.append(0); z = z + 1; }
+  buf = elf_cat(buf, text);
+  if (has_unwind) {
+    while (buf.len() < hdr_off) {
+      buf = buf.append(0);
     }
-
-    buf = elf_cat(buf, text);
-    if (has_unwind) {
-        while (buf.len() < hdr_off) { buf = buf.append(0); }
-        buf = elf_cat(buf, hdr);
-        while (buf.len() < eh_off) { buf = buf.append(0); }
-        buf = elf_cat(buf, eh);
+    buf = elf_cat(buf, hdr);
+    while (buf.len() < eh_off) {
+      buf = buf.append(0);
     }
-    while (buf.len() < data_off) { buf = buf.append(0); }
-    return elf_cat(buf, data);
+    buf = elf_cat(buf, eh);
+  }
+  while (buf.len() < data_off) {
+    buf = buf.append(0);
+  }
+  return elf_cat(buf, data);
 }
 
 // ---- W^X two-segment layout ----
@@ -352,17 +377,21 @@ pub function elf_program_x86(text: i32[], hdr: i32[], eh: i32[], data: i32[], bs
 // segment starts on the first page boundary past .text; an assembler must
 // resolve data-symbol references against that page-aligned address (the
 // Go reference does this in arm64.BytesProgramWX / x86_64.AssembleProgramWX).
-
 // elf_text_vaddr_wx is the .text virtual address for the W^X image: past
 // the ELF header + THREE program headers (code, data, and the
 // PT_GNU_EH_FRAME slot — see elf_wx_text_off). An assembler resolving
 // PC-relative fixups for a W^X image uses this as its textVAddr.
 pub function elf_text_vaddr_wx(): i32 {
-    return elf_base_vaddr() + elf_wx_text_off();
+  return elf_base_vaddr() + elf_wx_text_off();
 }
 
-function elf_align4(v: i32): i32 { return (v + 3) - ((v + 3) % 4); }
-function elf_align8(v: i32): i32 { return (v + 7) - ((v + 7) % 8); }
+function elf_align4(v: i32): i32 {
+  return v + 3 - (v + 3) % 4;
+}
+
+function elf_align8(v: i32): i32 {
+  return v + 7 - (v + 7) % 8;
+}
 
 // elf_unwind_end is the file offset just past the unwind sections that
 // follow a `text_len`-byte .text starting at `text_off`: .eh_frame_hdr
@@ -371,11 +400,11 @@ function elf_align8(v: i32): i32 { return (v + 7) - ((v + 7) % 8); }
 // copy (it is import-free by design) for its data-base arithmetic, held in
 // step by TestImportFreeModulesDoNotDrift.
 pub function elf_unwind_end(text_off: i32, text_len: i32, hdr_len: i32, eh_len: i32): i32 {
-    var end: i32 = text_off + text_len;
-    if (hdr_len > 0 && eh_len > 0) {
-        end = elf_align8(elf_align4(end) + hdr_len) + eh_len;
-    }
-    return end;
+  var end: i32 = text_off + text_len;
+  if (hdr_len > 0 && eh_len > 0) {
+    end = elf_align8(elf_align4(end) + hdr_len) + eh_len;
+  }
+  return end;
 }
 
 // elf_eh_hdr_vaddr_wx is where the W^X image loads .eh_frame_hdr for a
@@ -383,20 +412,23 @@ pub function elf_unwind_end(text_off: i32, text_len: i32, hdr_len: i32, eh_len: 
 // it. Both images are rendered against these (pcrel and datarel fields), so
 // they are only correct at the addresses the writer places them at.
 pub function elf_eh_hdr_vaddr_wx(text_len: i32): i32 {
-    return elf_align4(elf_text_vaddr_wx() + text_len);
+  return elf_align4(elf_text_vaddr_wx() + text_len);
 }
+
 pub function elf_eh_frame_vaddr_wx(text_len: i32, hdr_len: i32): i32 {
-    return elf_align8(elf_eh_hdr_vaddr_wx(text_len) + hdr_len);
+  return elf_align8(elf_eh_hdr_vaddr_wx(text_len) + hdr_len);
 }
 
 // elf_page_up rounds `v` up to the next elf_page_align() (16 KiB)
 // boundary — where the R+W data segment begins so it never shares a page
 // (and thus page protections) with the R+X code segment.
 function elf_page_up(v: i32): i32 {
-    var pa: i32 = elf_page_align();
-    var rem: i32 = v % pa;
-    if (rem == 0) { return v; }
-    return v + (pa - rem);
+  var pa: i32 = elf_page_align();
+  var rem: i32 = v % pa;
+  if (rem == 0) {
+    return v;
+  }
+  return v + (pa - rem);
 }
 
 // elf_data_vaddr_wx is the load address of the R+W data segment for a W^X
@@ -405,14 +437,14 @@ function elf_page_up(v: i32): i32 {
 // for a W^X image (e.g. arm64_gas_link's data vaddr) must use this so the
 // references line up with where elf_image_wx places the data blob.
 pub function elf_data_vaddr_wx(text_len: i32): i32 {
-    return elf_data_vaddr_wx_unwind(text_len, 0, 0);
+  return elf_data_vaddr_wx_unwind(text_len, 0, 0);
 }
 
 // elf_data_vaddr_wx_unwind is elf_data_vaddr_wx for an image carrying
 // hdr_len + eh_len bytes of unwind data after .text: the first page boundary
 // past those.
 pub function elf_data_vaddr_wx_unwind(text_len: i32, hdr_len: i32, eh_len: i32): i32 {
-    return elf_base_vaddr() + elf_page_up(elf_unwind_end(elf_wx_text_off(), text_len, hdr_len, eh_len));
+  return elf_base_vaddr() + elf_page_up(elf_unwind_end(elf_wx_text_off(), text_len, hdr_len, eh_len));
 }
 
 // elf_image_wx emits the ELF header (e_phnum = 3) + two PT_LOAD program
@@ -425,7 +457,7 @@ pub function elf_data_vaddr_wx_unwind(text_len: i32, hdr_len: i32, eh_len: i32):
 // congruent to its load address mod the page size — what the loader
 // requires.
 pub function elf_image_wx(text: i32[], data: i32[], machine: i32, entry_off: i32, bss: i32): i32[] {
-    return elf_image_wx_unwind(text, [], [], data, machine, entry_off, bss);
+  return elf_image_wx_unwind(text, [], [], data, machine, entry_off, bss);
 }
 
 // elf_image_wx_unwind is elf_image_wx carrying the unwind data the
@@ -437,7 +469,7 @@ pub function elf_image_wx(text: i32[], data: i32[], machine: i32, entry_off: i32
 // nothing scans for a section. Empty hdr/eh leave the slot as PT_NULL, which
 // the loader ignores, so .text sits at the same address either way.
 pub function elf_image_wx_unwind(text: i32[], hdr: i32[], eh: i32[], data: i32[], machine: i32, entry_off: i32, bss: i32): i32[] {
-    return elf_image_two_seg(text, hdr, eh, data, machine, entry_off, bss, elf_base_vaddr(), 2, true); // ET_EXEC
+  return elf_image_two_seg(text, hdr, eh, data, machine, entry_off, bss, elf_base_vaddr(), 2, true);  // ET_EXEC
 }
 
 // elf_image_two_seg is the shared W^X / PIE two-segment writer: an R+X code
@@ -450,107 +482,116 @@ pub function elf_image_wx_unwind(text: i32[], hdr: i32[], eh: i32[], data: i32[]
 // the PIE image keeps two. All vaddrs are base + offset, so the page-aligned
 // data offset stays congruent to its load address mod the page.
 function elf_image_two_seg(text: i32[], hdr: i32[], eh: i32[], data: i32[], machine: i32, entry_off: i32, bss: i32, base: i32, e_type: i32, unwind_ph: boolean): i32[] {
-    var nph: i32 = 2;
-    if (unwind_ph) { nph = 3; }
-    var headers: i32 = elf_eh_size() + nph * elf_ph_size(); // 176 or 232
-    var has_unwind: boolean = hdr.len() > 0 && eh.len() > 0;
-    var hdr_off: i32 = 0;
-    var eh_off: i32 = 0;
+  var nph: i32 = 2;
+  if (unwind_ph) {
+    nph = 3;
+  }
+  var headers: i32 = elf_eh_size() + nph * elf_ph_size();  // 176 or 232
+  var has_unwind: boolean = hdr.len() > 0 && eh.len() > 0;
+  var hdr_off: i32 = 0;
+  var eh_off: i32 = 0;
+  if (has_unwind) {
+    hdr_off = elf_align4(headers + text.len());
+    eh_off = elf_align8(hdr_off + hdr.len());
+  }
+  var text_end: i32 = elf_unwind_end(headers, text.len(), hdr.len(), eh.len());  // end of R+X segment
+  var data_off: i32 = elf_page_up(text_end);  // file offset == vaddr offset of data
+  var code_sz: i64 = text_end as i64;  // headers + .text (+ unwind) in one segment
+  var data_filesz: i64 = data.len() as i64;
+  var data_memsz: i64 = data_filesz + elf_u32_to_i64(bss);
+  var code_vaddr: i64 = base as i64;
+  var data_vaddr: i64 = (base + data_off) as i64;
+  var entry: i64 = (base + headers + entry_off) as i64;
+  var zero64: i64 = 0;
+
+  var buf: i32[] = [];
+
+  // ---- ELF-64 header (64 bytes) ----
+  buf = buf.append(127);  // 0x7f  EI_MAG0
+  buf = buf.append(69);  // 'E'
+  buf = buf.append(76);  // 'L'
+  buf = buf.append(70);  // 'F'
+  buf = buf.append(2);  // EI_CLASS = ELFCLASS64
+  buf = buf.append(1);  // EI_DATA  = ELFDATA2LSB
+  buf = buf.append(1);  // EI_VERSION = EV_CURRENT
+  buf = buf.append(0);  // EI_OSABI = SysV
+  var p: i32 = 0;  // EI_PAD (8 bytes)
+  while (p < 8) {
+    buf = buf.append(0);
+    p = p + 1;
+  }
+  buf = elf_le16(buf, e_type);  // e_type (ET_EXEC / ET_DYN)
+  buf = elf_le16(buf, machine);  // e_machine
+  buf = elf_le32(buf, 1);  // e_version = EV_CURRENT
+  buf = elf_le64(buf, entry);  // e_entry
+  buf = elf_le64(buf, elf_eh_size() as i64);  // e_phoff (PHs follow the EH)
+  buf = elf_le64(buf, zero64);  // e_shoff (no section headers)
+  buf = elf_le32(buf, 0);  // e_flags
+  buf = elf_le16(buf, elf_eh_size());  // e_ehsize
+  buf = elf_le16(buf, elf_ph_size());  // e_phentsize
+  buf = elf_le16(buf, nph);  // e_phnum (code + data [+ unwind])
+  buf = elf_le16(buf, 0);  // e_shentsize
+  buf = elf_le16(buf, 0);  // e_shnum
+  buf = elf_le16(buf, 0);  // e_shstrndx
+
+  // ---- Program header 0 (56 bytes): R+X code (headers + .text) ----
+  buf = elf_le32(buf, 1);  // p_type  = PT_LOAD
+  buf = elf_le32(buf, 5);  // p_flags = PF_R | PF_X
+  buf = elf_le64(buf, zero64);  // p_offset
+  buf = elf_le64(buf, code_vaddr);  // p_vaddr
+  buf = elf_le64(buf, code_vaddr);  // p_paddr
+  buf = elf_le64(buf, code_sz);  // p_filesz
+  buf = elf_le64(buf, code_sz);  // p_memsz
+  buf = elf_le64(buf, elf_page_align() as i64);  // p_align
+
+  // ---- Program header 1 (56 bytes): R+W data (.rodata + globals + .bss) ----
+  buf = elf_le32(buf, 1);  // p_type  = PT_LOAD
+  buf = elf_le32(buf, 6);  // p_flags = PF_R | PF_W
+  buf = elf_le64(buf, data_off as i64);  // p_offset
+  buf = elf_le64(buf, data_vaddr);  // p_vaddr
+  buf = elf_le64(buf, data_vaddr);  // p_paddr
+  buf = elf_le64(buf, data_filesz);  // p_filesz
+  buf = elf_le64(buf, data_memsz);  // p_memsz (incl. .bss)
+  buf = elf_le64(buf, elf_page_align() as i64);  // p_align
+
+  // ---- Program header 2 (56 bytes): PT_GNU_EH_FRAME over .eh_frame_hdr,
+  // or PT_NULL when the image carries no unwind data ----
+  if (unwind_ph) {
     if (has_unwind) {
-        hdr_off = elf_align4(headers + text.len());
-        eh_off = elf_align8(hdr_off + hdr.len());
-    }
-    var text_end: i32 = elf_unwind_end(headers, text.len(), hdr.len(), eh.len()); // end of R+X segment
-    var data_off: i32 = elf_page_up(text_end);            // file offset == vaddr offset of data
-    var code_sz: i64 = text_end as i64;                   // headers + .text (+ unwind) in one segment
-    var data_filesz: i64 = data.len() as i64;
-    var data_memsz: i64 = data_filesz + elf_u32_to_i64(bss);
-    var code_vaddr: i64 = base as i64;
-    var data_vaddr: i64 = (base + data_off) as i64;
-    var entry: i64 = (base + headers + entry_off) as i64;
-    var zero64: i64 = 0;
-
-    var buf: i32[] = [];
-
-    // ---- ELF-64 header (64 bytes) ----
-    buf = buf.append(127);  // 0x7f  EI_MAG0
-    buf = buf.append(69);   // 'E'
-    buf = buf.append(76);   // 'L'
-    buf = buf.append(70);   // 'F'
-    buf = buf.append(2);    // EI_CLASS = ELFCLASS64
-    buf = buf.append(1);    // EI_DATA  = ELFDATA2LSB
-    buf = buf.append(1);    // EI_VERSION = EV_CURRENT
-    buf = buf.append(0);    // EI_OSABI = SysV
-    var p: i32 = 0;       // EI_PAD (8 bytes)
-    while (p < 8) {
+      buf = elf_le32(buf, 1685382480);  // p_type = PT_GNU_EH_FRAME (0x6474e550)
+      buf = elf_le32(buf, 4);  // p_flags = PF_R
+      buf = elf_le64(buf, hdr_off as i64);  // p_offset
+      buf = elf_le64(buf, (base + hdr_off) as i64);  // p_vaddr
+      buf = elf_le64(buf, (base + hdr_off) as i64);  // p_paddr
+      buf = elf_le64(buf, hdr.len() as i64);  // p_filesz
+      buf = elf_le64(buf, hdr.len() as i64);  // p_memsz
+      buf = elf_le64(buf, 4 as i64);  // p_align: the table is sdata4 throughout
+    } else {
+      var z: i32 = 0;
+      while (z < elf_ph_size()) {
         buf = buf.append(0);
-        p = p + 1;
+        z = z + 1;
+      }
     }
-    buf = elf_le16(buf, e_type);                  // e_type (ET_EXEC / ET_DYN)
-    buf = elf_le16(buf, machine);                 // e_machine
-    buf = elf_le32(buf, 1);                       // e_version = EV_CURRENT
-    buf = elf_le64(buf, entry);                   // e_entry
-    buf = elf_le64(buf, elf_eh_size() as i64);    // e_phoff (PHs follow the EH)
-    buf = elf_le64(buf, zero64);                  // e_shoff (no section headers)
-    buf = elf_le32(buf, 0);                       // e_flags
-    buf = elf_le16(buf, elf_eh_size());           // e_ehsize
-    buf = elf_le16(buf, elf_ph_size());           // e_phentsize
-    buf = elf_le16(buf, nph);                     // e_phnum (code + data [+ unwind])
-    buf = elf_le16(buf, 0);                       // e_shentsize
-    buf = elf_le16(buf, 0);                       // e_shnum
-    buf = elf_le16(buf, 0);                       // e_shstrndx
+  }
 
-    // ---- Program header 0 (56 bytes): R+X code (headers + .text) ----
-    buf = elf_le32(buf, 1);          // p_type  = PT_LOAD
-    buf = elf_le32(buf, 5);          // p_flags = PF_R | PF_X
-    buf = elf_le64(buf, zero64);     // p_offset
-    buf = elf_le64(buf, code_vaddr); // p_vaddr
-    buf = elf_le64(buf, code_vaddr); // p_paddr
-    buf = elf_le64(buf, code_sz);    // p_filesz
-    buf = elf_le64(buf, code_sz);    // p_memsz
-    buf = elf_le64(buf, elf_page_align() as i64); // p_align
-
-    // ---- Program header 1 (56 bytes): R+W data (.rodata + globals + .bss) ----
-    buf = elf_le32(buf, 1);          // p_type  = PT_LOAD
-    buf = elf_le32(buf, 6);          // p_flags = PF_R | PF_W
-    buf = elf_le64(buf, data_off as i64); // p_offset
-    buf = elf_le64(buf, data_vaddr); // p_vaddr
-    buf = elf_le64(buf, data_vaddr); // p_paddr
-    buf = elf_le64(buf, data_filesz);// p_filesz
-    buf = elf_le64(buf, data_memsz); // p_memsz (incl. .bss)
-    buf = elf_le64(buf, elf_page_align() as i64); // p_align
-
-    // ---- Program header 2 (56 bytes): PT_GNU_EH_FRAME over .eh_frame_hdr,
-    // or PT_NULL when the image carries no unwind data ----
-    if (unwind_ph) {
-        if (has_unwind) {
-            buf = elf_le32(buf, 1685382480);  // p_type = PT_GNU_EH_FRAME (0x6474e550)
-            buf = elf_le32(buf, 4);           // p_flags = PF_R
-            buf = elf_le64(buf, hdr_off as i64);           // p_offset
-            buf = elf_le64(buf, (base + hdr_off) as i64);  // p_vaddr
-            buf = elf_le64(buf, (base + hdr_off) as i64);  // p_paddr
-            buf = elf_le64(buf, hdr.len() as i64);         // p_filesz
-            buf = elf_le64(buf, hdr.len() as i64);         // p_memsz
-            buf = elf_le64(buf, 4 as i64);                 // p_align: the table is sdata4 throughout
-        } else {
-            var z: i32 = 0;
-            while (z < elf_ph_size()) { buf = buf.append(0); z = z + 1; }
-        }
+  // ---- body: .text, the unwind sections, then page padding, then the
+  // data blob ----
+  buf = elf_cat(buf, text);
+  if (has_unwind) {
+    while (buf.len() < hdr_off) {
+      buf = buf.append(0);
     }
-
-    // ---- body: .text, the unwind sections, then page padding, then the
-    // data blob ----
-    buf = elf_cat(buf, text);
-    if (has_unwind) {
-        while (buf.len() < hdr_off) { buf = buf.append(0); }
-        buf = elf_cat(buf, hdr);
-        while (buf.len() < eh_off) { buf = buf.append(0); }
-        buf = elf_cat(buf, eh);
+    buf = elf_cat(buf, hdr);
+    while (buf.len() < eh_off) {
+      buf = buf.append(0);
     }
-    while (buf.len() < data_off) {
-        buf = buf.append(0);
-    }
-    return elf_cat(buf, data);
+    buf = elf_cat(buf, eh);
+  }
+  while (buf.len() < data_off) {
+    buf = buf.append(0);
+  }
+  return elf_cat(buf, data);
 }
 
 // elf_text_vaddr_pie is the .text vaddr for the position-independent
@@ -560,13 +601,13 @@ function elf_image_two_seg(text: i32[], hdr: i32[], eh: i32[], data: i32[], mach
 // PIE needs NO dynamic relocations: the kernel maps the ET_DYN at an
 // arbitrary base and the PC-relative code runs unchanged.
 pub function elf_text_vaddr_pie(): i32 {
-    return elf_eh_size() + 2 * elf_ph_size(); // 176, base 0
+  return elf_eh_size() + 2 * elf_ph_size();  // 176, base 0
 }
 
 // elf_data_vaddr_pie is the R+W data segment's base-0 vaddr for the PIE
 // image: the first page boundary past a `text_len`-byte .text.
 pub function elf_data_vaddr_pie(text_len: i32): i32 {
-    return elf_page_up(elf_eh_size() + 2 * elf_ph_size() + text_len);
+  return elf_page_up(elf_eh_size() + 2 * elf_ph_size() + text_len);
 }
 
 // elf_image_pie is elf_image_wx as a static position-independent executable:
@@ -587,7 +628,7 @@ pub function elf_data_vaddr_pie(text_len: i32): i32 {
 // native compiler's -target arm64-android (cmd/fern) is unaffected — it uses
 // 64-bit pointers + an mmap heap and runs at any base.
 pub function elf_image_pie(text: i32[], data: i32[], machine: i32, entry_off: i32, bss: i32): i32[] {
-    return elf_image_two_seg(text, [], [], data, machine, entry_off, bss, 0, 3, false); // base 0, ET_DYN
+  return elf_image_two_seg(text, [], [], data, machine, entry_off, bss, 0, 3, false);  // base 0, ET_DYN
 }
 
 // elf_static_executable_data_wx is the W^X counterpart of
@@ -595,7 +636,7 @@ pub function elf_image_pie(text: i32[], data: i32[], machine: i32, entry_off: i3
 // instruction, no .bss. Pair it with an assembler that page-aligns
 // .rodata (textVAddr = elf_text_vaddr_wx()).
 function elf_static_executable_data_wx(text: i32[], data: i32[]): i32[] {
-    return elf_image_wx(text, data, elf_em_aarch64(), 0, 0);
+  return elf_image_wx(text, data, elf_em_aarch64(), 0, 0);
 }
 
 // elf_static_executable_bss_x86_wx_at is the W^X counterpart of
@@ -604,7 +645,7 @@ function elf_static_executable_data_wx(text: i32[], data: i32[]): i32[] {
 // `bss` bytes in the R+W data segment (p_memsz = p_filesz + bss). This is
 // what asm.fern's mmap-free heap reservation lowers to under W^X.
 pub function elf_static_executable_bss_x86_wx_at(text: i32[], data: i32[], bss: i32, entry_off: i32): i32[] {
-    return elf_image_wx(text, data, elf_em_x86_64(), entry_off, bss);
+  return elf_image_wx(text, data, elf_em_x86_64(), entry_off, bss);
 }
 
 // ---- section headers + .symtab (#6637) ---------------------------------
@@ -622,59 +663,65 @@ pub function elf_static_executable_bss_x86_wx_at(text: i32[], data: i32[], bss: 
 // them past the last segment cannot disturb what is.
 //
 // Scope matches native's `-g` exactly: a static `.symtab`, not DWARF.
-
 // Elf64_Sym is 24 bytes; Elf64_Shdr is 64.
-pub function elf_sym_size(): i32 { return 24; }
-pub function elf_sh_size(): i32 { return 64; }
+pub function elf_sym_size(): i32 {
+  return 24;
+}
+
+pub function elf_sh_size(): i32 {
+  return 64;
+}
 
 // elf_align8_buf appends zero bytes until the length is a multiple of 8.
 // Both .symtab and the section-header table are 8-aligned structures.
 function elf_align8_buf(b: i32[]): i32[] {
-    var out: i32[] = b;
-    while ((out.len() % 8) != 0) { out = out.append(0); }
-    return out;
+  var out: i32[] = b;
+  while (out.len() % 8 != 0) {
+    out = out.append(0);
+  }
+  return out;
 }
 
 // elf_str_bytes appends `s`'s bytes and a NUL. Byte-at-a-time because
 // elf.fern is deliberately import-free.
 function elf_str_bytes(b: i32[], s: string): i32[] {
-    var out: i32[] = b;
-    var i: i32 = 0;
-    while (i < s.len()) {
-        out = out.append(s[i] as i32);
-        i = i + 1;
-    }
-    return out.append(0);
+  var out: i32[] = b;
+  var i: i32 = 0;
+  while (i < s.len()) {
+    out = out.append(s[i] as i32);
+    i = i + 1;
+  }
+  return out.append(0);
 }
 
 // elf_patch_le16 / elf_patch_le32 overwrite an already-emitted field.
 // Subscripts are read-only in Fern, so this rebuilds through `.with`.
 function elf_patch_le16(b: i32[], off: i32, v: i32): i32[] {
-    var out: i32[] = b.with(off, v & 255);
-    return out.with(off + 1, (v >> 8) & 255);
+  var out: i32[] = b.with(off, v & 255);
+  return out.with(off + 1, v >> 8 & 255);
 }
 
 function elf_patch_le32(b: i32[], off: i32, v: i32): i32[] {
-    var out: i32[] = b.with(off, v & 255);
-    out = out.with(off + 1, (v >> 8) & 255);
-    out = out.with(off + 2, (v >> 16) & 255);
-    return out.with(off + 3, (v >> 24) & 255);
+  var out: i32[] = b.with(off, v & 255);
+  out = out.with(off + 1, v >> 8 & 255);
+  out = out.with(off + 2, v >> 16 & 255);
+  return out.with(off + 3, v >> 24 & 255);
 }
 
 // elf_shdr appends one 64-byte Elf64_Shdr.
 function elf_shdr(b: i32[], name_off: i32, sh_type: i32, flags: i64, addr: i64, off: i64, size: i64, link: i32, info: i32, align: i64, entsize: i64): i32[] {
-    var out: i32[] = b;
-    out = elf_le32(out, name_off);
-    out = elf_le32(out, sh_type);
-    out = elf_le64(out, flags);
-    out = elf_le64(out, addr);
-    out = elf_le64(out, off);
-    out = elf_le64(out, size);
-    out = elf_le32(out, link);
-    out = elf_le32(out, info);
-    out = elf_le64(out, align);
-    out = elf_le64(out, entsize);
-    return out;
+  var out: i32[] = b;
+  out = elf_le32(out, name_off);
+  out = elf_le32(out, sh_type);
+  out = elf_le64(out, flags);
+  out = elf_le64(out, addr);
+  out = elf_le64(out, off);
+  out = elf_le64(out, size);
+  out = elf_le32(out, link);
+  out = elf_le32(out, info);
+  out = elf_le64(out, align);
+  out = elf_le64(out, entsize);
+  return out;
 }
 
 // elf_append_symtab appends a static `.symtab` to a finished ELF image,
@@ -696,91 +743,100 @@ function elf_shdr(b: i32[], name_off: i32, sh_type: i32, flags: i64, addr: i64, 
 // keeps a byte-identical image, and not by re-deriving one that ought to
 // match — by not touching it.
 pub function elf_append_symtab(img: i32[], text_vaddr: i32, text_off: i32, text_len: i32, sym_names: string[], sym_offs: i32[], sym_sizes: i32[]): i32[] {
-    if (sym_names.len() == 0) { return img; }
+  if (sym_names.len() == 0) {
+    return img;
+  }
 
-    var nsym: i32 = sym_names.len();
-    var zero64: i64 = 0;
+  var nsym: i32 = sym_names.len();
+  var zero64: i64 = 0;
 
-    // .strtab: index 0 is the empty name, then each symbol's, recording the
-    // st_name offset as it goes.
-    var strtab: i32[] = [0];
-    var name_offs: i32[] = [];
-    var si: i32 = 0;
-    while (si < nsym) {
-        name_offs = name_offs.append(strtab.len());
-        strtab = elf_str_bytes(strtab, sym_names[si]);
-        si = si + 1;
-    }
+  // .strtab: index 0 is the empty name, then each symbol's, recording the
+  // st_name offset as it goes.
+  var strtab: i32[] = [0];
+  var name_offs: i32[] = [];
+  var si: i32 = 0;
+  while (si < nsym) {
+    name_offs = name_offs.append(strtab.len());
+    strtab = elf_str_bytes(strtab, sym_names[si]);
+    si = si + 1;
+  }
 
-    // .shstrtab, laid out in section-index order.
-    var shstrtab: i32[] = [0];
-    var n_text: i32 = shstrtab.len();
-    shstrtab = elf_str_bytes(shstrtab, ".text");
-    var n_symtab: i32 = shstrtab.len();
-    shstrtab = elf_str_bytes(shstrtab, ".symtab");
-    var n_strtab: i32 = shstrtab.len();
-    shstrtab = elf_str_bytes(shstrtab, ".strtab");
-    var n_shstrtab: i32 = shstrtab.len();
-    shstrtab = elf_str_bytes(shstrtab, ".shstrtab");
+  // .shstrtab, laid out in section-index order.
+  var shstrtab: i32[] = [0];
+  var n_text: i32 = shstrtab.len();
+  shstrtab = elf_str_bytes(shstrtab, ".text");
+  var n_symtab: i32 = shstrtab.len();
+  shstrtab = elf_str_bytes(shstrtab, ".symtab");
+  var n_strtab: i32 = shstrtab.len();
+  shstrtab = elf_str_bytes(shstrtab, ".strtab");
+  var n_shstrtab: i32 = shstrtab.len();
+  shstrtab = elf_str_bytes(shstrtab, ".shstrtab");
 
-    var out: i32[] = elf_align8_buf(img);
+  var out: i32[] = elf_align8_buf(img);
 
-    var symtab_off: i32 = out.len();
-    var symtab_size: i32 = (nsym + 1) * elf_sym_size();
+  var symtab_off: i32 = out.len();
+  var symtab_size: i32 = (nsym + 1) * elf_sym_size();
 
-    // Entry 0 is the reserved null symbol: every field zero.
-    var z: i32 = 0;
-    while (z < elf_sym_size()) { out = out.append(0); z = z + 1; }
+  // Entry 0 is the reserved null symbol: every field zero.
+  var z: i32 = 0;
+  while (z < elf_sym_size()) {
+    out = out.append(0);
+    z = z + 1;
+  }
 
-    var k: i32 = 0;
-    while (k < nsym) {
-        out = elf_le32(out, name_offs[k]);                        // st_name
-        out = out.append(18);                                     // st_info = (STB_GLOBAL<<4)|STT_FUNC
-        out = out.append(0);                                      // st_other
-        out = elf_le16(out, 1);                                   // st_shndx = .text
-        out = elf_le64(out, (text_vaddr + sym_offs[k]) as i64);   // st_value
-        out = elf_le64(out, sym_sizes[k] as i64);                 // st_size
-        k = k + 1;
-    }
+  var k: i32 = 0;
+  while (k < nsym) {
+    out = elf_le32(out, name_offs[k]);  // st_name
+    out = out.append(18);  // st_info = (STB_GLOBAL<<4)|STT_FUNC
+    out = out.append(0);  // st_other
+    out = elf_le16(out, 1);  // st_shndx = .text
+    out = elf_le64(out, (text_vaddr + sym_offs[k]) as i64);  // st_value
+    out = elf_le64(out, sym_sizes[k] as i64);  // st_size
+    k = k + 1;
+  }
 
-    var strtab_off: i32 = out.len();
-    out = elf_cat(out, strtab);
-    var shstrtab_off: i32 = out.len();
-    out = elf_cat(out, shstrtab);
+  var strtab_off: i32 = out.len();
+  out = elf_cat(out, strtab);
+  var shstrtab_off: i32 = out.len();
+  out = elf_cat(out, shstrtab);
 
-    out = elf_align8_buf(out);
-    var sh_off: i32 = out.len();
+  out = elf_align8_buf(out);
+  var sh_off: i32 = out.len();
 
-    // NULL
-    out = elf_shdr(out, 0, 0, zero64, zero64, zero64, zero64, 0, 0, zero64, zero64);
-    // .text — SHT_PROGBITS, SHF_ALLOC|SHF_EXECINSTR
-    out = elf_shdr(out, n_text, 1, 6, text_vaddr as i64, text_off as i64, text_len as i64, 0, 0, 16, zero64);
-    // .symtab — sh_link is .strtab (3); sh_info is the first non-local
-    // symbol index, which is 1 because the null symbol is the only local.
-    out = elf_shdr(out, n_symtab, 2, zero64, zero64, symtab_off as i64, symtab_size as i64, 3, 1, 8, elf_sym_size() as i64);
-    // .strtab
-    out = elf_shdr(out, n_strtab, 3, zero64, zero64, strtab_off as i64, strtab.len() as i64, 0, 0, 1, zero64);
-    // .shstrtab
-    out = elf_shdr(out, n_shstrtab, 3, zero64, zero64, shstrtab_off as i64, shstrtab.len() as i64, 0, 0, 1, zero64);
+  // NULL
+  out = elf_shdr(out, 0, 0, zero64, zero64, zero64, zero64, 0, 0, zero64, zero64);
+  // .text — SHT_PROGBITS, SHF_ALLOC|SHF_EXECINSTR
+  out = elf_shdr(out, n_text, 1, 6, text_vaddr as i64, text_off as i64, text_len as i64, 0, 0, 16, zero64);
+  // .symtab — sh_link is .strtab (3); sh_info is the first non-local
+  // symbol index, which is 1 because the null symbol is the only local.
+  out = elf_shdr(out, n_symtab, 2, zero64, zero64, symtab_off as i64, symtab_size as i64, 3, 1, 8, elf_sym_size() as i64);
+  // .strtab
+  out = elf_shdr(out, n_strtab, 3, zero64, zero64, strtab_off as i64, strtab.len() as i64, 0, 0, 1, zero64);
+  // .shstrtab
+  out = elf_shdr(out, n_shstrtab, 3, zero64, zero64, shstrtab_off as i64, shstrtab.len() as i64, 0, 0, 1, zero64);
 
-    // Point the header at the table just written. e_shoff is 8 bytes at
-    // 0x28; an image this size never needs the high word.
-    out = elf_patch_le32(out, 40, sh_off);
-    out = elf_patch_le16(out, 58, elf_sh_size());   // e_shentsize
-    out = elf_patch_le16(out, 60, 5);               // e_shnum
-    out = elf_patch_le16(out, 62, 4);               // e_shstrndx = .shstrtab
-    return out;
+  // Point the header at the table just written. e_shoff is 8 bytes at
+  // 0x28; an image this size never needs the high word.
+  out = elf_patch_le32(out, 40, sh_off);
+  out = elf_patch_le16(out, 58, elf_sh_size());  // e_shentsize
+  out = elf_patch_le16(out, 60, 5);  // e_shnum
+  out = elf_patch_le16(out, 62, 4);  // e_shstrndx = .shstrtab
+  return out;
 }
 
 // elf_text_off is where .text begins in a SINGLE-segment image: just past
 // the ELF header and its one program header. The x86-64 binary path uses
 // this layout; arm64's W^X link uses elf_wx_text_off below.
-pub function elf_text_off(): i32 { return elf_eh_size() + elf_ph_size(); }
+pub function elf_text_off(): i32 {
+  return elf_eh_size() + elf_ph_size();
+}
 
 // elf_wx_text_off is where .text begins in a W^X two-segment image: just
 // past the ELF header and its two program headers. The symbol appender
 // needs it, and so does anything else locating .text in that layout.
-pub function elf_wx_text_off(): i32 { return elf_eh_size() + 3 * elf_ph_size(); }
+pub function elf_wx_text_off(): i32 {
+  return elf_eh_size() + 3 * elf_ph_size();
+}
 
 // elf_func_syms turns an assembler's parallel label tables into the symbol
 // arrays elf_append_symtab wants, applying native's FuncSyms rule:
@@ -801,37 +857,47 @@ pub function elf_wx_text_off(): i32 { return elf_eh_size() + 3 * elf_ph_size(); 
 // duplication is deliberate: a struct-of-arrays return type would have to be
 // declared in a module elf.fern is not allowed to import.
 pub function elf_func_sym_names(lab_names: string[], lab_offs: i32[], lab_secs: i32[], sec_filter: i32, text_end: i32): string[] {
-    var idx: i32[] = elf_func_sym_order(lab_names, lab_offs, lab_secs, sec_filter);
-    var out: string[] = [];
-    var i: i32 = 0;
-    while (i < idx.len()) { out = out.append(lab_names[idx[i]]); i = i + 1; }
-    return out;
+  var idx: i32[] = elf_func_sym_order(lab_names, lab_offs, lab_secs, sec_filter);
+  var out: string[] = [];
+  var i: i32 = 0;
+  while (i < idx.len()) {
+    out = out.append(lab_names[idx[i]]);
+    i = i + 1;
+  }
+  return out;
 }
 
 pub function elf_func_sym_offs(lab_names: string[], lab_offs: i32[], lab_secs: i32[], sec_filter: i32, text_end: i32): i32[] {
-    var idx: i32[] = elf_func_sym_order(lab_names, lab_offs, lab_secs, sec_filter);
-    var out: i32[] = [];
-    var i: i32 = 0;
-    while (i < idx.len()) { out = out.append(lab_offs[idx[i]]); i = i + 1; }
-    return out;
+  var idx: i32[] = elf_func_sym_order(lab_names, lab_offs, lab_secs, sec_filter);
+  var out: i32[] = [];
+  var i: i32 = 0;
+  while (i < idx.len()) {
+    out = out.append(lab_offs[idx[i]]);
+    i = i + 1;
+  }
+  return out;
 }
 
 // elf_func_sym_sizes is the reason the order matters: each entry spans to the
 // next symbol's offset, and the last to `text_end`.
 pub function elf_func_sym_sizes(lab_names: string[], lab_offs: i32[], lab_secs: i32[], sec_filter: i32, text_end: i32): i32[] {
-    var idx: i32[] = elf_func_sym_order(lab_names, lab_offs, lab_secs, sec_filter);
-    var out: i32[] = [];
-    var i: i32 = 0;
-    while (i < idx.len()) {
-        var here: i32 = lab_offs[idx[i]];
-        var end: i32 = text_end;
-        if (i + 1 < idx.len()) { end = lab_offs[idx[i + 1]]; }
-        var sz: i32 = end - here;
-        if (sz < 0) { sz = 0; }
-        out = out.append(sz);
-        i = i + 1;
+  var idx: i32[] = elf_func_sym_order(lab_names, lab_offs, lab_secs, sec_filter);
+  var out: i32[] = [];
+  var i: i32 = 0;
+  while (i < idx.len()) {
+    var here: i32 = lab_offs[idx[i]];
+    var end: i32 = text_end;
+    if (i + 1 < idx.len()) {
+      end = lab_offs[idx[i + 1]];
     }
-    return out;
+    var sz: i32 = end - here;
+    if (sz < 0) {
+      sz = 0;
+    }
+    out = out.append(sz);
+    i = i + 1;
+  }
+  return out;
 }
 
 // elf_func_sym_order returns the indices of the labels that become symbols,
@@ -839,47 +905,56 @@ pub function elf_func_sym_sizes(lab_names: string[], lab_offs: i32[], lab_secs: 
 // already close to offset-ordered, since labels are recorded as code is
 // emitted.
 function elf_func_sym_order(lab_names: string[], lab_offs: i32[], lab_secs: i32[], sec_filter: i32): i32[] {
-    var idx: i32[] = [];
-    var i: i32 = 0;
-    while (i < lab_names.len()) {
-        var keep: boolean = lab_names[i].len() > 0;
-        if (keep && slice_unchecked(lab_names[i], 0, 1) == ".") { keep = false; }
-        if (keep && sec_filter >= 0) {
-            if (i >= lab_secs.len() || lab_secs[i] != sec_filter) { keep = false; }
-        }
-        if (keep) { idx = idx.append(i); }
-        i = i + 1;
+  var idx: i32[] = [];
+  var i: i32 = 0;
+  while (i < lab_names.len()) {
+    var keep: boolean = lab_names[i].len() > 0;
+    if (keep && slice_unchecked(lab_names[i], 0, 1) == ".") {
+      keep = false;
     }
-    var a: i32 = 1;
-    while (a < idx.len()) {
-        var cur: i32 = idx[a];
-        var b: i32 = a - 1;
-        while (b >= 0) {
-            var prev: i32 = idx[b];
-            var after: boolean = lab_offs[prev] > lab_offs[cur];
-            if (!after && lab_offs[prev] == lab_offs[cur]) {
-                after = elf_str_gt(lab_names[prev], lab_names[cur]);
-            }
-            if (!after) { b = 0 - 1; }
-            else {
-                idx = idx.with(b + 1, prev);
-                idx = idx.with(b, cur);
-                b = b - 1;
-            }
-        }
-        a = a + 1;
+    if (keep && sec_filter >= 0) {
+      if (i >= lab_secs.len() || lab_secs[i] != sec_filter) {
+        keep = false;
+      }
     }
-    return idx;
+    if (keep) {
+      idx = idx.append(i);
+    }
+    i = i + 1;
+  }
+  var a: i32 = 1;
+  while (a < idx.len()) {
+    var cur: i32 = idx[a];
+    var b: i32 = a - 1;
+    while (b >= 0) {
+      var prev: i32 = idx[b];
+      var after: boolean = lab_offs[prev] > lab_offs[cur];
+      if (!after && lab_offs[prev] == lab_offs[cur]) {
+        after = elf_str_gt(lab_names[prev], lab_names[cur]);
+      }
+      if (!after) {
+        b = 0 - 1;
+      } else {
+        idx = idx.with(b + 1, prev);
+        idx = idx.with(b, cur);
+        b = b - 1;
+      }
+    }
+    a = a + 1;
+  }
+  return idx;
 }
 
 // elf_str_gt is `x > y` byte-wise, for the name tiebreak.
 function elf_str_gt(x: string, y: string): boolean {
-    var i: i32 = 0;
-    while (i < x.len() && i < y.len()) {
-        var cx: i32 = x[i] as i32;
-        var cy: i32 = y[i] as i32;
-        if (cx != cy) { return cx > cy; }
-        i = i + 1;
+  var i: i32 = 0;
+  while (i < x.len() && i < y.len()) {
+    var cx: i32 = x[i] as i32;
+    var cy: i32 = y[i] as i32;
+    if (cx != cy) {
+      return cx > cy;
     }
-    return x.len() > y.len();
+    i = i + 1;
+  }
+  return x.len() > y.len();
 }

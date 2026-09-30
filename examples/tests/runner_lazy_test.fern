@@ -16,24 +16,23 @@ import "std/i32";
 //
 // Run:
 //   fern -interp examples/tests/runner_lazy_test.fern
-
 function bump_then_pass(seen: Cell[i32]): test.TestOutcome {
-    seen.set(seen.get() + 1);
-    return Pass;
+  seen.set(seen.get() + 1);
+  return Pass;
 }
 
 function main(): i32 {
-    var seen: Cell[i32] = cell_new(0);
+  var seen: Cell[i32] = cell_new(0);
 
-    // The filter matches only "checks", so the first case is dropped.
-    var r: test.TestRunner = test.test_new_filtered("runner laziness", "checks");
-    r = r.it("dropped by the filter", () => bump_then_pass(seen));
-    r = r.it("checks the dropped body never ran", () => test.assert_eq(seen.get(), 0));
+  // The filter matches only "checks", so the first case is dropped.
+  var r: test.TestRunner = test.test_new_filtered("runner laziness", "checks");
+  r = r.it("dropped by the filter", () => bump_then_pass(seen));
+  r = r.it("checks the dropped body never ran", () => test.assert_eq(seen.get(), 0));
 
-    // And a case the filter KEEPS does run, so the laziness isn't just
-    // "nothing ever executes".
-    r = r.it("checks a kept body does run", () => bump_then_pass(seen));
-    r = r.it("checks the kept body ran once", () => test.assert_eq(seen.get(), 1));
+  // And a case the filter KEEPS does run, so the laziness isn't just
+  // "nothing ever executes".
+  r = r.it("checks a kept body does run", () => bump_then_pass(seen));
+  r = r.it("checks the kept body ran once", () => test.assert_eq(seen.get(), 1));
 
-    return r.finish();
+  return r.finish();
 }

@@ -26,19 +26,18 @@
 // anything at all — newlines, quotes, NUL. An escaping scheme has to be exactly
 // inverted by the decoder or literals corrupt silently; a byte count cannot be
 // got subtly wrong, it either reads the right span or fails the round-trip test.
-
 import "./util";
 
 pub struct UnitObj {
-    strs: string[],
-    caggs: string[],
-    fns: string[],
-    needs: string[],
-    fn_sigs: string[],
-    frt: string[],
-    sdt: string[],
-    aet: string[],
-    text: string,
+  strs: string[],
+  caggs: string[],
+  fns: string[],
+  needs: string[],
+  fn_sigs: string[],
+  frt: string[],
+  sdt: string[],
+  aet: string[],
+  text: string,
 }
 
 // Cursor threads a decode position alongside its result. The self-host language
@@ -50,20 +49,21 @@ pub struct MaybeUnit { found: boolean, obj: UnitObj }
 // empty_unit is the placeholder a MaybeUnit carries on a miss; never read when
 // found is false.
 pub function empty_unit(): UnitObj {
-    return UnitObj { strs: [], caggs: [], fns: [], needs: [], fn_sigs: [], frt: [], sdt: [], aet: [], text: "" };
+  return UnitObj { strs: [], caggs: [], fns: [], needs: [], fn_sigs: [], frt: [], sdt: [], aet: [], text: "" };
 }
 
 pub struct StrsAt { items: string[], pos: i32 }
+
 pub struct IntsAt { items: i32[], pos: i32 }
 
 function enc_strs(tag: string, xs: string[]): string {
-    var out: string = tag + util.i32_to_string(xs.len()) + "\n";
-    var i: i32 = 0;
-    while (i < xs.len()) {
-        out = out + util.i32_to_string(xs[i].len()) + "\n" + xs[i];
-        i = i + 1;
-    }
-    return out;
+  var out: string = tag + util.i32_to_string(xs.len()) + "\n";
+  var i: i32 = 0;
+  while (i < xs.len()) {
+    out = out + util.i32_to_string(xs[i].len()) + "\n" + xs[i];
+    i = i + 1;
+  }
+  return out;
 }
 
 // magic is the format's version tag. It is BUMPED on any layout change, and
@@ -71,56 +71,62 @@ function enc_strs(tag: string, xs: string[]): string {
 // module's sources and signatures, so nothing in the filename would otherwise
 // distinguish an object written by an older compiler — decode reads sections
 // positionally and a stale file would yield a wrong-but-plausible unit.
-pub function magic(): string { return "FERNWU3\n"; }
+pub function magic(): string {
+  return "FERNWU3\n";
+}
 
 // is_current reports whether `s` was written by this format version.
 pub function is_current(s: string): boolean {
-    if (s.len() < magic().len()) { return false; }
-    return slice_unchecked(s, 0, magic().len()) + "" == magic();
+  if (s.len() < magic().len()) {
+    return false;
+  }
+  return slice_unchecked(s, 0, magic().len()) + "" == magic();
 }
 
 pub function encode(u: UnitObj): string {
-    return magic()
-        + enc_strs("S", u.strs)
-        + enc_strs("K", u.caggs)
-        + enc_strs("F", u.fns)
-        + enc_strs("N", u.needs)
-        + enc_strs("A", u.fn_sigs)
-        + enc_strs("R", u.frt)
-        + enc_strs("D", u.sdt)
-        + enc_strs("E", u.aet)
-        + "U" + util.i32_to_string(u.text.len()) + "\n" + u.text;
+  return magic()
+    + enc_strs("S", u.strs)
+    + enc_strs("K", u.caggs)
+    + enc_strs("F", u.fns)
+    + enc_strs("N", u.needs)
+    + enc_strs("A", u.fn_sigs)
+    + enc_strs("R", u.frt)
+    + enc_strs("D", u.sdt)
+    + enc_strs("E", u.aet)
+    + "U" + util.i32_to_string(u.text.len()) + "\n" + u.text;
 }
 
 // scan_int reads decimal digits from `pos` up to the next newline and returns
 // the position just past it. Every count and length in the format is read this
 // way, so the decoder never has to search for a delimiter inside payload bytes.
 function scan_int(s: string, pos: i32): IntsAt {
-    var p: i32 = pos;
-    var v: i32 = 0;
-    while (p < s.len() && s[p] != b'\n') {
-        if ((s[p] as i32) >= 48 && (s[p] as i32) <= 57) { v = v * 10 + ((s[p] as i32) - 48); }
-        p = p + 1;
+  var p: i32 = pos;
+  var v: i32 = 0;
+  while (p < s.len() && s[p] != b'\n') {
+    if (s[p] as i32 >= 48 && s[p] as i32 <= 57) {
+      v = v * 10 + (s[p] as i32 - 48);
     }
-    return IntsAt { items: [v], pos: p + 1 };
+    p = p + 1;
+  }
+  return IntsAt { items: [v], pos: p + 1 };
 }
 
 // dec_strs reads one length-prefixed string section. `pos` must point at the
 // section's count (i.e. just past its tag byte).
 function dec_strs(s: string, pos: i32): StrsAt {
-    var hdr: IntsAt = scan_int(s, pos);
-    var n: i32 = hdr.items[0];
-    var p: i32 = hdr.pos;
-    var out: string[] = [];
-    var i: i32 = 0;
-    while (i < n) {
-        var lh: IntsAt = scan_int(s, p);
-        var len: i32 = lh.items[0];
-        out = out.append(slice_unchecked(s, lh.pos, lh.pos + len) + "");
-        p = lh.pos + len;
-        i = i + 1;
-    }
-    return StrsAt { items: out, pos: p };
+  var hdr: IntsAt = scan_int(s, pos);
+  var n: i32 = hdr.items[0];
+  var p: i32 = hdr.pos;
+  var out: string[] = [];
+  var i: i32 = 0;
+  while (i < n) {
+    var lh: IntsAt = scan_int(s, p);
+    var len: i32 = lh.items[0];
+    out = out.append(slice_unchecked(s, lh.pos, lh.pos + len) + "");
+    p = lh.pos + len;
+    i = i + 1;
+  }
+  return StrsAt { items: out, pos: p };
 }
 
 // decode inverts encode. Sections are read in the order encode writes them, so
@@ -128,25 +134,25 @@ function dec_strs(s: string, pos: i32): StrsAt {
 // or truncated file therefore yields wrong spans rather than a wrong-but-
 // plausible unit, which the round-trip test catches.
 pub function decode(s: string): UnitObj {
-    var p: i32 = magic().len();                  // past the magic
-    var st: StrsAt = dec_strs(s, p + 1);
-    var kg: StrsAt = dec_strs(s, st.pos + 1);
-    var fn: StrsAt = dec_strs(s, kg.pos + 1);
-    var nd: StrsAt = dec_strs(s, fn.pos + 1);
-    var ar: StrsAt = dec_strs(s, nd.pos + 1);
-    var r: StrsAt = dec_strs(s, ar.pos + 1);
-    var d: StrsAt = dec_strs(s, r.pos + 1);
-    var e: StrsAt = dec_strs(s, d.pos + 1);
-    var tl: IntsAt = scan_int(s, e.pos + 1);
-    return UnitObj {
-        strs: st.items,
-        caggs: kg.items,
-        fns: fn.items,
-        needs: nd.items,
-        fn_sigs: ar.items,
-        frt: r.items,
-        sdt: d.items,
-        aet: e.items,
-        text: slice_unchecked(s, tl.pos, tl.pos + tl.items[0]) + "",
-    };
+  var p: i32 = magic().len();  // past the magic
+  var st: StrsAt = dec_strs(s, p + 1);
+  var kg: StrsAt = dec_strs(s, st.pos + 1);
+  var fn: StrsAt = dec_strs(s, kg.pos + 1);
+  var nd: StrsAt = dec_strs(s, fn.pos + 1);
+  var ar: StrsAt = dec_strs(s, nd.pos + 1);
+  var r: StrsAt = dec_strs(s, ar.pos + 1);
+  var d: StrsAt = dec_strs(s, r.pos + 1);
+  var e: StrsAt = dec_strs(s, d.pos + 1);
+  var tl: IntsAt = scan_int(s, e.pos + 1);
+  return UnitObj {
+    strs: st.items,
+    caggs: kg.items,
+    fns: fn.items,
+    needs: nd.items,
+    fn_sigs: ar.items,
+    frt: r.items,
+    sdt: d.items,
+    aet: e.items,
+    text: slice_unchecked(s, tl.pos, tl.pos + tl.items[0]) + "",
+  };
 }
