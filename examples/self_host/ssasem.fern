@@ -2218,6 +2218,108 @@ pub function analyze(f: Func): Analysis {
     return analyze_parents(f, borrow_parents(f));
 }
 
+// ---- views merged past their source ----------------------------------------
+
+// A counted copy of view `v` in three fresh values from `first`: an empty
+// string, `v + ""`, and that string retagged as `str`, which anchors nothing.
+pub function view_copy(first: i32, v: i32): ssa.SInst[] {
+    return [ssa.SInst { kind_tag: 5, result: first, args: [], imm: 0, str: "" },
+        ssa.SInst { kind_tag: 9, result: first + 1, args: [v, first], imm: 0, str: "+" },
+        ssa.SInst { kind_tag: str_as(), result: first + 2, args: [first + 1], imm: 0, str: "" }];
+}
+
+pub function view_copy_types(): typeinfo.Type[] {
+    return [typeinfo.TypeString { tag: 0 }, typeinfo.TypeString { tag: 0 }, typeinfo.TypeString { tag: 1 }];
+}
+
+// One phi operand to replace with a copy made at the end of its incoming block.
+pub struct MergeCopy { pred: i32, phi: i32, slot: i32, value: i32, first: i32 }
+
+// merge_copies finds the `str` phi operands whose bytes are held by a value
+// that does not strictly dominate the join, and with_merge_copies copies each
+// on its edge. Such an operand outlives its source: the source is defined on
+// that incoming path alone, so nothing at the join can keep it alive. That is
+// a `str` local assigned, in a branch or a loop body, a view of a string
+// declared there. The copy is the one a returned view that outlives its
+// source gets (docs/STR-VIEW-CONTRACT.md §5). Both read a body carrying the
+// module's anchor table, through which a call's roots are found.
+pub function with_merge_copies(f: Func, copies: MergeCopy[]): Func {
+    var values: typeinfo.Type[] = f.values;
+    for _ in copies { for t in view_copy_types() { values = values.append(t); } }
+    var blocks: ssa.SBlock[] = [];
+    var pi: i32 = 0;
+    while (pi < f.graph.blocks.len()) {
+        var insts: ssa.SInst[] = [];
+        for ins in f.graph.blocks[pi].insts { insts = insts.append(with_copied_operands(ins, copies)); }
+        for c in copies { if (c.pred == pi) { for ci in view_copy(c.first, c.value) { insts = insts.append(ci); } } }
+        blocks = blocks.append(ssa.SBlock { ...f.graph.blocks[pi], insts: insts });
+        pi = pi + 1;
+    }
+    return Func { ...f, values: values, graph: ssa.SFunc { ...f.graph, blocks: blocks, nvals: values.len() } };
+}
+
+function with_copied_operands(ins: ssa.SInst, copies: MergeCopy[]): ssa.SInst {
+    if (ins.kind_tag != 8) { return ins; }
+    for c in copies { if (ins.result == c.phi) { ins = ssa.SInst { ...ins, args: ins.args.with(c.slot, c.first + 2) }; } }
+    return ins;
+}
+
+// The operands to copy, each given three fresh values after the last.
+pub function merge_copies(f: Func): MergeCopy[] {
+    var none: boolean[] = [];
+    for _ in f.values { none = none.append(false); }
+    var defs: ssa.SInst[] = definitions(f);
+    var m: MergeScan = MergeScan { at: ssadeps.position_of(f.graph), dom: ssadeps.dominates(f.graph), home: defining_positions(f), none: none };
+    var copies: MergeCopy[] = [];
+    var bi: i32 = 0;
+    while (bi < f.graph.blocks.len()) {
+        for ins in f.graph.blocks[bi].insts {
+            if (ins.kind_tag == 8 && is_view(f.values[ins.result])) { copies = phi_copies(f, defs, m, bi, ins, copies); }
+        }
+        bi = bi + 1;
+    }
+    return copies;
+}
+
+struct MergeScan { at: i32[], dom: ssadeps.Dom, home: i32[], none: boolean[] }
+
+function phi_copies(f: Func, defs: ssa.SInst[], m: MergeScan, bi: i32, phi: ssa.SInst, own copies: MergeCopy[]): MergeCopy[] {
+    var preds: i32[] = f.graph.blocks[bi].preds;
+    var k: i32 = 0;
+    while (k < phi.args.len() && k < preds.len()) {
+        var a: i32 = phi.args[k];
+        if (!counted_view(f, defs, a, m.none) && roots_outlived(f, defs, m, a, bi)) {
+            var first: i32 = f.values.len() + 3 * copies.len();
+            copies = copies.append(MergeCopy { pred: m.at[preds[k]], phi: phi.result, slot: k, value: a, first: first });
+        }
+        k = k + 1;
+    }
+    return copies;
+}
+
+// Whether some value holding the bytes `v` reads fails to strictly dominate
+// block position `bi`.
+function roots_outlived(f: Func, defs: ssa.SInst[], m: MergeScan, v: i32, bi: i32): boolean {
+    for r in bytes_roots(f, defs, v, m.none) {
+        var h: i32 = 0 - 1;
+        if (r >= 0 && r < m.home.len()) { h = m.home[r]; }
+        if (h < 0 || h == bi || !ssadeps.dom_holds(m.dom, bi, h)) { return true; }
+    }
+    return false;
+}
+
+// The block position each value is defined at, -1 for none.
+function defining_positions(f: Func): i32[] {
+    var out: i32[] = [];
+    for _ in f.values { out = out.append(0 - 1); }
+    var bi: i32 = 0;
+    while (bi < f.graph.blocks.len()) {
+        for ins in f.graph.blocks[bi].insts { if (ins.result >= 0 && ins.result < out.len()) { out = out.with(ins.result, bi); } }
+        bi = bi + 1;
+    }
+    return out;
+}
+
 // ---- self-tail recursion ----------------------------------------------------
 
 // A self-recursive call in tail position reuses its own activation on the AST

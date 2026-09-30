@@ -24,7 +24,7 @@ function contains(values: i32[], value: i32): boolean {
 
 // position_of maps a block id to its position in f.blocks, -1 for an id no
 // block carries: one table, so no walk below searches the block list.
-function position_of(f: ssa.SFunc): i32[] {
+pub function position_of(f: ssa.SFunc): i32[] {
     var top: i32 = 0;
     for b in f.blocks { if (b.id > top) { top = b.id; } }
     var out: i32[] = indices(top + 1);

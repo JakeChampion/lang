@@ -4589,6 +4589,71 @@ function build(s: string, n: i32): str[] {
 }
 function main(): i32 { return build("abcdefgh", 5).len(); }
 `},
+	// A `str` local assigned, in a branch or a bare block, a view of a string
+	// declared there. The phi at the join read a source only one incoming path
+	// defines, and was refused as "dependency unavailable at use" (#10796);
+	// the operand is now copied on its edge.
+	{name: "a-str-local-assigned-a-view-of-a-branch-local-is-produced", atLeast: 4, noLeak: true, src: `
+function mk(n: i32): string {
+    var s: string = "stamp:";
+    var i: i32 = 0;
+    while (i < n) { s = s + "x"; i = i + 1; }
+    return s;
+}
+function branch(n: i32): string {
+    var tail: str = "";
+    if (n != 0) {
+        var s: string = mk(n);
+        tail = slice_unchecked(s, 4, 8);
+    }
+    return "<" + tail + ">";
+}
+function block(n: i32): string {
+    var tail: str = "none";
+    {
+        var s: string = mk(n);
+        tail = slice_unchecked(s, 2, 7);
+    }
+    return tail + "!";
+}
+function main(): i32 {
+    print(branch(3) + branch(0) + block(4));
+    return branch(5).len() + block(1).len();
+}
+`},
+	// The same through a loop, whose header phi carries the view of the
+	// previous round's local.
+	{name: "a-str-local-assigned-a-view-of-a-loop-body-local-is-produced", atLeast: 3, noLeak: true, src: `
+function mk(n: i32): string {
+    var s: string = "ab";
+    var i: i32 = 0;
+    while (i < n) { s = s + "c"; i = i + 1; }
+    return s;
+}
+function last(k: i32): string {
+    var t: str = "-";
+    var i: i32 = 0;
+    while (i < k) {
+        var s: string = mk(i);
+        t = slice_unchecked(s, 1, s.len());
+        i = i + 1;
+    }
+    return "[" + t + "]";
+}
+function main(): i32 {
+    print(last(4) + last(0));
+    return last(6).len();
+}
+`},
+	// std/time's Zoned.format_rfc3339 is that branch shape (#10796).
+	{name: "std-time-format-rfc3339-is-produced", atLeast: 77, noLeak: true, src: `
+import "std/time";
+function main(): i32 {
+    var s: string = time.instant_from_unix(90061 as i64).format_rfc3339();
+    print(s);
+    return s.len();
+}
+`},
 	// An array of views of one parameter is anchored to it as a single view
 	// result is, whether it is built by append, in a loop, or by a literal and
 	// .with. The AST lowering leaked the view boxes (#10215).
