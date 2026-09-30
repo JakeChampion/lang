@@ -2419,7 +2419,9 @@ function i32_type(): typeinfo.Type { return typeinfo.TypeI32 { is_char: false, w
 // Whether a value of `t` holds a view anywhere in it. A declared record or
 // enum answers from its schema entry, which the module worked out once
 // (semsource.view_types), so a `str` payload of `enum E { A(str) }` counts as
-// the one in `Option[str]` does.
+// the one in `Option[str]` does. A dyn holds one when a box it can be holding
+// does (`dyns`), and a function value when an environment it can carry does
+// (`envs`).
 pub function holds_view(f: Func, t: typeinfo.Type): boolean {
     if let typeinfo.TypeString(st) = t { return st.tag == 1; }
     if let typeinfo.TypeArray(a) = t { return holds_view(f, a.elem); }
@@ -2436,6 +2438,15 @@ pub function holds_view(f: Func, t: typeinfo.Type): boolean {
     if let typeinfo.TypeUnion(u) = t {
         for a in u.args { if (holds_view(f, a)) { return true; } }
     }
+    if (is_dyn(t)) { return boxes_hold_view(f, f.dyns, t); }
+    if (is_func(t)) { return boxes_hold_view(f, f.envs, t); }
+    return false;
+}
+
+function boxes_hold_view(f: Func, rows: EnvRow[], t: typeinfo.Type): boolean {
+    for row in rows {
+        if (semtypes.equal(row.fn_ty, t) && !semtypes.equal(row.env_ty, t) && holds_view(f, row.env_ty)) { return true; }
+    }
     return false;
 }
 
@@ -2443,7 +2454,8 @@ pub function holds_view(f: Func, t: typeinfo.Type): boolean {
 // its views: a `str`, and an array, tuple, record or enum of such. A cell is
 // shared storage, which a copy would split, and a view in a map column is not
 // read out of it (semsource refuses the read), so a copy could not read it
-// either.
+// either. A dyn or a function value holding a view is a box this cannot
+// rebuild, so a value holding one is refused rather than copied past it.
 pub function copyable(f: Func, t: typeinfo.Type): boolean {
     if (!holds_view(f, t) || is_view(t)) { return true; }
     if let typeinfo.TypeArray(a) = t { return copyable(f, a.elem); }

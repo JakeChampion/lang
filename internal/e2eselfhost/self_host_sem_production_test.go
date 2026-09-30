@@ -4899,6 +4899,30 @@ function f(n: i32): string {
 }
 function main(): i32 { print(f(3) + " " + f(0)); return f(2).len(); }
 `},
+	// A dyn holds a view when a box it can be holding does: `wrap`'s result is
+	// a `P` over its argument's bytes behind `dyn Size`, so the caller keeps the
+	// temporary it passed alive while the dyn lives, through allocator churn.
+	{name: "a-dyn-holding-a-view-keeps-its-source-alive", atLeast: 4, noLeak: true, src: `
+import "std/i32";
+trait Size { function size(self: Self): i32; }
+struct P { a: str }
+impl Size for P { function size(self: P): i32 { return self.a.len() * 10 + (self.a[0] as i32) - 97; } }
+function mk(n: i32): string {
+    var s: string = "ab";
+    var i: i32 = 0;
+    while (i < n) { s = s + "c"; i = i + 1; }
+    return s;
+}
+function wrap(s: string): dyn Size { var p: P = P { a: slice_unchecked(s, 1, 4) }; return p; }
+function g(n: i32): i32 {
+    var d: dyn Size = wrap(mk(n));
+    var junk: string[] = [];
+    var i: i32 = 0;
+    while (i < 50) { junk = junk.append("zz" + i.to_string()); i = i + 1; }
+    return d.size();
+}
+function main(): i32 { print(g(3).to_string() + " " + g(2).to_string()); return 0; }
+`},
 	{name: "a-nested-array-a-call-returns-from-a-branch-local-is-produced", atLeast: 4, noLeak: true, src: `
 function mk(n: i32): string {
     var s: string = "ab";
