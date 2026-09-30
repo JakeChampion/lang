@@ -2,9 +2,11 @@
 // self-host compiler driver. Takes an entry .fern file path on the
 // command line, follows its `import "./x"` declarations to sibling
 // files (x.fern in the entry's directory), loads them transitively,
-// flattens the whole set into one module, and prints its x86-64 asm.
+// flattens the whole set into one module, and prints its x86-64 asm, or
+// with `-target` its arm64 asm or wasm32-wasi WAT.
 //
 //     $ asm_load_run prog.fern > prog.s
+//     $ asm_load_run prog.fern <stdlib-root> -target wasm32-wasi > prog.wat
 //
 // This retires the stdin marker-bundle (bundle_run): modules are
 // resolved from the filesystem the way a real compiler driver works,
@@ -19,10 +21,12 @@ import "./flatten";
 import "./checker";
 import "./asm_arm64_ir";
 import "./asm_ir";
+import "./wasm_ir";
 import "./asmcore";
 import "./treeshake";
 import "./ircore";
 import "./irlower";
+import "./semlower";
 
 // add_imports appends each of mod's loadable import paths to paths
 // (deduped by full path), returning the grown list.
@@ -167,8 +171,9 @@ function main(): i32 {
     // ineligible).
     var no_treeshake: boolean = false;
     var do_decide: boolean = false;
-    // `-target x86_64|arm64` selects the emit backend (#4398 part 1: the fold
-    // that retired the asm_arm64_load_run mirror). Default x86_64 keeps every
+    // `-target` selects the emit backend: x86-64-linux, arm64-linux,
+    // arm64-darwin (#4398 part 1: the fold that retired the
+    // asm_arm64_load_run mirror) or wasm32-wasi. Default x86_64 keeps every
     // pre-fold caller byte-identical. Loading, treeshake, -decide, -ir-probe
     // and the immutability gate are target-agnostic; the per-module modes
     // remain x86-64-only (the mirror never had them).
@@ -211,8 +216,8 @@ function main(): i32 {
     // as a successful emit for the WRONG machine — the arm64 leg of #6710 was
     // handed x86-64 text and surfaced as "unknown mnemonic `movq'" from the
     // aarch64 assembler, which reads as a codegen bug rather than a typo.
-    if (target != "x86-64-linux" && target != "arm64-linux" && target != "arm64-darwin") {
-        eprint("asm_load_run: unknown -target: " + target + " (want x86-64-linux, arm64-linux, arm64-darwin)\n");
+    if (target != "x86-64-linux" && target != "arm64-linux" && target != "arm64-darwin" && target != "wasm32-wasi") {
+        eprint("asm_load_run: unknown -target: " + target + " (want x86-64-linux, arm64-linux, arm64-darwin, wasm32-wasi)\n");
         return 2;
     }
 
@@ -428,6 +433,12 @@ function main(): i32 {
     // reads c.ty. A no-op on drivers that skip it (asm_ir_run leaves ty "").
     merged = shaken_program(checker.annotate_module(merged), prune);
 
+    if (target == "wasm32-wasi") {
+        // The preview1 command core, over the typed lowering, as the CLI emits it.
+        var typed: parser.Module = parser.module_with_builtins_typed(merged);
+        write(wasm_ir.emit_module_mode_or_error_sub(parser.erase_str_module(typed), false, false, semlower.target_substitution(typed, target)));
+        return 0;
+    }
     if (target == "arm64-linux") {
         // IR-or-error (#3457 slice 5): the arm64 leg has no fallback either.
         // asm_arm64_ir.emit_module_or_error runs the same prologue asm_arm64

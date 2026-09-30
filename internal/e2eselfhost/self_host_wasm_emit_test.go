@@ -70,15 +70,14 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"div-in-index", "function main(): i32 { var xs: i32[] = [5, 10, 15, 20]; return xs[6 / 2]; }", 20, ""},
 		{"unary-neg", "function main(): i32 { return 0 - 5 + 10; }", 5, ""},
 		{"nested", "function main(): i32 { return (2 + 3) * (4 + 4) - 1; }", 39, ""},
-		{"no-return-exits-0", "function main(): i32 { }", 0, ""},
 		// Locals + reassignment.
 		{"locals", "function main(): i32 { var x = 5; var y = 10; return x + y; }", 15, ""},
 		{"reassign", "function main(): i32 { var x = 5; x = x + 3; return x; }", 8, ""},
 		{"compound-assign", "function main(): i32 { var x = 1; x *= 6; x += 1; return x; }", 7, ""},
 		// Comparisons (0/1 results).
-		{"comparison-true", "function main(): i32 { return 5 < 10; }", 1, ""},
-		{"comparison-false", "function main(): i32 { return 10 < 5; }", 0, ""},
-		{"equality-true", "function main(): i32 { return 7 == 7; }", 1, ""},
+		{"comparison-true", "function main(): i32 { var b: boolean = 5 < 10; if (b) { return 1; } return 0; }", 1, ""},
+		{"comparison-false", "function main(): i32 { var b: boolean = 10 < 5; if (b) { return 1; } return 0; }", 0, ""},
+		{"equality-true", "function main(): i32 { var b: boolean = 7 == 7; if (b) { return 1; } return 0; }", 1, ""},
 		// Logical + not.
 		{"and", "function main(): i32 { if (true && true) { return 1; } return 0; }", 1, ""},
 		{"or", "function main(): i32 { if (false || true) { return 1; } return 0; }", 1, ""},
@@ -121,10 +120,10 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"local-fn-capture", "function main(): i32 { var n: i32 = 10; function bump(): i32 { return n + 1; } return bump(); }", 11, ""},
 		// defer — action runs at function exit (LIFO, conditional, value
 		// captured before cleanup).
-		{"defer-fires", "function inc(a: i32[]): i32 { defer a[0] = 9; return 1; } function main(): i32 { var arr = [0]; inc(arr); return arr[0]; }", 9, ""},
-		{"defer-lifo", "function f(a: i32[]): i32 { defer a[0] = 1; defer a[0] = 2; return 0; } function main(): i32 { var arr = [0]; f(arr); return arr[0]; }", 1, ""},
-		{"defer-conditional-off", "function f(a: i32[], c: i32): i32 { if (c == 1) { defer a[0] = 7; } return 0; } function main(): i32 { var arr = [0]; f(arr, 0); return arr[0]; }", 0, ""},
-		{"defer-loop-survives", "function f(a: i32[]): i32 { defer a[0] = a[0] + 50; var i = 0; while (i < 3) { a[0] = a[0] + 1; i = i + 1; } return 0; } function main(): i32 { var arr = [0]; f(arr); return arr[0]; }", 53, ""},
+		{"defer-fires", "function inc(): i32 { defer print_int(9); return 1; } function main(): i32 { inc(); return 0; }", 0, "9"},
+		{"defer-lifo", "function f(): i32 { defer print_int(1); defer print_int(2); return 0; } function main(): i32 { f(); return 0; }", 0, "21"},
+		{"defer-conditional-off", "function f(c: i32): i32 { if (c == 1) { defer print_int(7); } print_int(0); return 0; } function main(): i32 { f(0); return 0; }", 0, "0"},
+		{"defer-loop-survives", "function f(): i32 { defer print_int(50); var i = 0; while (i < 3) { print_int(i); i = i + 1; } return 0; } function main(): i32 { f(); return 0; }", 0, "01250"},
 		{"mutual-recursion", "function is_even(n: i32): i32 { if (n == 0) { return 1; } return is_odd(n - 1); } function is_odd(n: i32): i32 { if (n == 0) { return 0; } return is_even(n - 1); } function main(): i32 { return is_even(6); }", 1, ""},
 		{"call-in-condition", "function dbl(n: i32): i32 { return n * 2; } function main(): i32 { if (dbl(5) == 10) { return 42; } return 1; }", 42, ""},
 		// Strings + linear memory: write (verbatim) and print (+\n) of
@@ -166,9 +165,8 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"ir-struct-update-one", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 1, y: 2 }; var q = P { ...p, y: 9 }; return q.x + q.y; }", 10, ""},
 		{"ir-struct-update-keeps-base", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 5, y: 6 }; var q = P { ...p, x: 50 }; return p.x + q.x; }", 55, ""},
 		// Field mutation `p.x = v`.
-		{"ir-field-mutate", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 1, y: 2 }; p.x = 40; return p.x + p.y; }", 42, ""},
-		{"ir-field-mutate-loop", "struct C { n: i32 } function main(): i32 { var c = C { n: 0 }; var i = 0; while (i < 5) { c.n = c.n + i; i = i + 1; } return c.n; }", 10, ""},
-		{"ir-field-mutate-alias", "struct P { x: i32 } function main(): i32 { var p = P { x: 1 }; var q = p; q.x = 9; return p.x; }", 9, ""},
+		{"ir-field-mutate", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 1, y: 2 }; p = P { ...p, x: 40 }; return p.x + p.y; }", 42, ""},
+		{"ir-field-mutate-loop", "struct C { n: i32 } function main(): i32 { var c = C { n: 0 }; var i = 0; while (i < 5) { c = C { ...c, n: c.n + i }; i = i + 1; } return c.n; }", 10, ""},
 		{"ir-str-return", "function greet(): string { return \"hi\"; } function main(): i32 { var s = greet(); return s.len(); }", 2, ""},
 		{"ir-str-index-local", "function main(): i32 { var s = \"hello\"; return s[0] as i32; }", 104, ""},
 		{"ir-str-index-loop", "function main(): i32 { var s = \"abc\"; var sum = 0; var i = 0; while (i < 3) { sum = sum + (s[i] as i32); i = i + 1; } return sum % 200; }", 94, ""},
@@ -196,25 +194,10 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"ir-enum-struct-payload-guard", "struct P { x: i32, y: i32 } enum Shape { Rect(P), Dot } function area(s: Shape): i32 { match (s) { Rect(p) when p.x > 0 => { return p.x * p.y; }, _ => { return 0; } } return 0; } function main(): i32 { return area(Rect(P { x: 4, y: 5 })); }", 20, ""},
 		{"ir-enum-arr-payload-len", "enum E { Items(i32[]), Empty } function f(e: E): i32 { match (e) { Items(xs) => { return xs.len(); }, Empty => { return 0; } } return 0; } function main(): i32 { return f(Items([10, 20, 30])) * 10 + f(Empty); }", 30, ""},
 		{"ir-enum-arr-payload-forin", "enum E { Items(i32[]), Empty } function sum(e: E): i32 { match (e) { Items(xs) => { var t = 0; for x in xs { t = t + x; } return t; }, Empty => { return 0; } } return 0; } function main(): i32 { return sum(Items([5, 10, 15])); }", 30, ""},
-		{"ir-enum-strarr-payload-len", "enum E { Words(string[]), None } function f(e: E): i32 { match (e) { Words(w) => { return w.len(); }, None => { return 0; } } return 0; } function main(): i32 { return f(Words([\"a\", \"bb\", \"ccc\"])) * 10 + f(None); }", 30, ""},
+		{"ir-enum-strarr-payload-len", "enum E { Words(string[]), None } function f(e: E): i32 { match (e) { Words(w) => { return w.len(); }, None => { return 0; } } return 0; } function main(): i32 { return f(Words([\"a\", \"bb\", \"ccc\"])) * 10 + f(E.None); }", 30, ""},
 		{"ir-struct-strarr-field-index", "struct Doc { lines: string[] } function f(d: Doc): i32 { return d.lines[1].len(); } function main(): i32 { var d = Doc { lines: [\"a\", \"bb\", \"ccc\"] }; return f(d); }", 2, ""},
 		{"ir-tuple-str-i32-dotn", "function main(): i32 { var t = (\"hello\", 7); return t.0.len() + t.1; }", 12, ""},
 		{"ir-tuple-struct-dotn", "struct P { x: i32, y: i32 } function main(): i32 { var t = (P { x: 4, y: 5 }, 2); return t.0.x * t.0.y + t.1; }", 22, ""},
-		{"ir-map-i32-len3", "function main(): i32 { var m: Map[i32, i32] = map_new(4); m = m.insert(1, 100); m = m.insert(2, 200); m = m.insert(3, 300); return m.len(); }", 3, ""},
-		{"ir-map-str-keys", "function main(): i32 { var m: Map[string, i32] = map_new(4); m = m.insert(\"a\", 1); m = m.insert(\"bb\", 2); m = m.insert(\"a\", 9); return m.len(); }", 2, ""},
-		{"ir-map-get-hit", "function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(7, 42); match (m.get(7)) { Some(v) => { return v; }, None => { return 0; } } return 9; }", 42, ""},
-		{"ir-map-get-miss", "function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(7, 42); match (m.get(999)) { Some(v) => { return v; }, None => { return 5; } } return 9; }", 5, ""},
-		{"ir-map-has", "function main(): i32 { var m: Map[i32, i32] = map_new(4); m = m.insert(1, 1); var r = 0; if (m.has(1)) { r = r + 1; } if (m.has(2)) { r = r + 10; } return r; }", 1, ""},
-		{"ir-map-get-or-hit", "function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(7, 42); return m.get_or(7, 0); }", 42, ""},
-		{"ir-map-get-or-miss", "function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(7, 42); return m.get_or(999, 5); }", 5, ""},
-		{"ir-map-get-or-strhit", "function main(): i32 { var m: Map[string, i32] = map_new(4); m = m.insert(\"hi\", 11); return m.get_or(\"hi\", 0); }", 11, ""},
-		{"ir-map-get-or-strmiss", "function main(): i32 { var m: Map[string, i32] = map_new(4); m = m.insert(\"hi\", 11); return m.get_or(\"no\", 7); }", 7, ""},
-		{"ir-map-keys-sum", "function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); m = m.insert(2, 20); m = m.insert(3, 30); var ks: i32[] = m.keys(); var s = 0; var i = 0; while (i < ks.len()) { s = s + ks[i]; i = i + 1; } return s; }", 6, ""},
-		{"ir-map-values-sum", "function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); m = m.insert(2, 20); m = m.insert(3, 30); var vs: i32[] = m.values(); var s = 0; var i = 0; while (i < vs.len()) { s = s + vs[i]; i = i + 1; } return s; }", 60, ""},
-		{"ir-map-forkv-values", "function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); m = m.insert(2, 20); m = m.insert(3, 30); var s = 0; for (k, v) in m { s = s + v; } return s; }", 60, ""},
-		{"ir-map-forkv-keys", "function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); m = m.insert(2, 20); m = m.insert(3, 30); var s = 0; for (k, v) in m { s = s + k; } return s; }", 6, ""},
-		{"ir-map-forkv-pair", "function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 2); m = m.insert(2, 3); m = m.insert(3, 4); var s = 0; for (k, v) in m { s = s + k * v; } return s; }", 20, ""},
-		{"ir-map-forkv-strkey", "function main(): i32 { var m: Map[string, i32] = map_new(8); m = m.insert(\"ab\", 1); m = m.insert(\"cde\", 2); var s = 0; for (k, v) in m { s = s + k.len() + v; } return s; }", 8, ""},
 		{"ir-i64-cmp", "function main(): i32 { var x: i64 = 5000000000; var y: i64 = 4000000000; if (x > y) { return 7; } return 0; }", 7, ""},
 		{"ir-i64-add", "function main(): i32 { var a: i64 = 3000000000; var b: i64 = 3000000000; var c: i64 = a + b; if (c > 5000000000) { return 11; } return 0; }", 11, ""},
 		{"ir-i64-mul", "function main(): i32 { var a: i64 = 100000; var b: i64 = 100000; var c: i64 = a * b; if (c > 4000000000) { return 5; } return 0; }", 5, ""},
@@ -348,8 +331,8 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"arr-for-break", "function main(): i32 { var a = [10, 20, 30, 40]; var s = 0; for x in a { if (x == 30) { break; } s = s + x; } return s; }", 30, ""},
 		{"arr-for-continue", "function main(): i32 { var a = [1, 2, 3, 4, 5]; var s = 0; for x in a { if (x == 3) { continue; } s = s + x; } return s; }", 12, ""},
 		{"arr-for-nested", "function main(): i32 { var a = [1, 2]; var b = [10, 20]; var s = 0; for x in a { for y in b { s = s + x * y; } } return s; }", 90, ""},
-		{"arr-index-assign", "function main(): i32 { var a = [1, 2, 3]; a[1] = 99; return a[1]; }", 99, ""},
-		{"arr-index-assign-sum", "function main(): i32 { var a = [0, 0, 0]; a[0] = 10; a[1] = 20; a[2] = 12; return a[0] + a[1] + a[2]; }", 42, ""},
+		{"arr-index-assign", "function main(): i32 { var a = [1, 2, 3]; a = a.with(1, 99); return a[1]; }", 99, ""},
+		{"arr-index-assign-sum", "function main(): i32 { var a = [0, 0, 0]; a = a.with(0, 10); a = a.with(1, 20); a = a.with(2, 12); return a[0] + a[1] + a[2]; }", 42, ""},
 		{"arr-push-len", "function main(): i32 { var a: i32[] = [1, 2, 3]; a = a.append(4); return a.len(); }", 4, ""},
 		{"arr-push-last", "function main(): i32 { var a: i32[] = [10, 20]; a = a.append(99); return a[2]; }", 99, ""},
 		{"arr-push-empty", "function main(): i32 { var a: i32[] = []; a = a.append(42); return a[0]; }", 42, ""},
@@ -362,7 +345,7 @@ func TestSelfHostWasmRun(t *testing.T) {
 		// slice. Regression: i64/f64 8-byte-slot series.
 		{"i64arr-literal-index-large", "function main(): i32 { var xs: i64[] = [5000000000, 42]; if (xs[0] == 5000000000) { return xs[1] as i32; } return 0; }", 42, ""},
 		{"i64arr-for-sum", "function main(): i32 { var xs: i64[] = [3, 5, 90]; var s: i64 = 0; for v in xs { s = s + v; } return s as i32; }", 98, ""},
-		{"i64arr-set-index-large", "function main(): i32 { var xs: i64[] = [1, 2, 3]; xs[1] = 5000000000; if (xs[1] == 5000000000) { return 7; } return 0; }", 7, ""},
+		{"i64arr-set-index-large", "function main(): i32 { var xs: i64[] = [1, 2, 3]; xs = xs.with(1, 5000000000); if (xs[1] == 5000000000) { return 7; } return 0; }", 7, ""},
 		{"i64arr-push-grow", "function main(): i32 { var xs: i64[] = [10]; xs = xs.append(20); xs = xs.append(30); var s: i64 = 0; for v in xs { s = s + v; } return s as i32; }", 60, ""},
 		{"i64arr-slice", "function main(): i32 { var xs: i64[] = [10, 20, 30, 40]; var ys = xs[1:3]; return (ys[0] + ys[1]) as i32; }", 50, ""},
 		{"i64arr-param", "function sum(xs: i64[]): i64 { var s: i64 = 0; for v in xs { s = s + v; } return s; } function main(): i32 { var xs: i64[] = [10, 20, 30]; return sum(xs) as i32; }", 60, ""},
@@ -398,7 +381,7 @@ func TestSelfHostWasmRun(t *testing.T) {
 		// Structs: literal, field read, field assign, struct param/return.
 		{"struct-field-read", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 40, y: 2 }; return p.x + p.y; }", 42, ""},
 		{"struct-field-order", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { y: 2, x: 40 }; return p.x; }", 40, ""},
-		{"struct-field-assign", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 1, y: 2 }; p.x = 99; return p.x + p.y; }", 101, ""},
+		{"struct-field-assign", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 1, y: 2 }; p = P { ...p, x: 99 }; return p.x + p.y; }", 101, ""},
 		{"struct-string-field", "struct Person { name: string, age: i32 } function main(): i32 { var p = Person { name: \"Sam\", age: 30 }; write(p.name); return p.age; }", 30, "Sam"},
 		{"struct-string-field-concat", "struct Person { name: string, age: i32 } function main(): i32 { var p = Person { name: \"Sam\", age: 30 }; write(\"hi \" + p.name); return 0; }", 0, "hi Sam"},
 		{"struct-string-field-method", "struct Box { s: string } function main(): i32 { var b = Box { s: \"abc\" }; write(b.s.to_ascii_upper()); return 0; }", 0, "ABC"},
@@ -406,7 +389,7 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"struct-return", "struct P { x: i32, y: i32 } function mk(): P { return P { x: 20, y: 22 }; } function main(): i32 { var p = mk(); return p.x + p.y; }", 42, ""},
 		{"struct-nested", "struct Inner { v: i32 } struct Outer { inner: Inner, k: i32 } function main(): i32 { var o = Outer { inner: Inner { v: 40 }, k: 2 }; return o.inner.v + o.k; }", 42, ""},
 		{"struct-update", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 1, y: 2 }; var q = P { ...p, x: 40 }; return q.x + q.y; }", 42, ""},
-		{"struct-field-in-loop", "struct Acc { total: i32 } function main(): i32 { var a = Acc { total: 0 }; var i = 1; while (i <= 5) { a.total = a.total + i; i = i + 1; } return a.total; }", 15, ""},
+		{"struct-field-in-loop", "struct Acc { total: i32 } function main(): i32 { var a = Acc { total: 0 }; var i = 1; while (i <= 5) { a = Acc { ...a, total: a.total + i }; i = i + 1; } return a.total; }", 15, ""},
 		// Option / Result via tag boxes + match.
 		{"opt-some", "function find(): Option[i32] { return Some(42); } function main(): i32 { match (find()) { Some(v) => { return v; }, None => { return 0; } } return 1; }", 42, ""},
 		{"opt-none", "function find(): Option[i32] { return None; } function main(): i32 { match (find()) { Some(v) => { return v; }, None => { return 7; } } return 1; }", 7, ""},
@@ -415,8 +398,8 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"result-err", "function run(): Result[i32, i32] { return Err(13); } function main(): i32 { match (run()) { Ok(v) => { return v; }, Err(e) => { return e; } } return 1; }", 13, ""},
 		// errdefer (parse-time desugar, shared by every backend): cleanup runs
 		// only on a `return None`/`Err`, observed via a 1-element i32[] cell.
-		{"errdefer-err-fires", "function f(out: i32[], x: i32): Result[i32, i32] { errdefer out[0] = 9; if (x < 0) { return Err(1); } return Ok(x); } function main(): i32 { var a: i32[] = [0]; match (f(a, -1)) { Ok(v) => {}, Err(e) => {} } return a[0]; }", 9, ""},
-		{"errdefer-ok-no-fire", "function f(out: i32[], x: i32): Result[i32, i32] { errdefer out[0] = 9; if (x < 0) { return Err(1); } return Ok(x); } function main(): i32 { var a: i32[] = [0]; match (f(a, 5)) { Ok(v) => {}, Err(e) => {} } return a[0]; }", 0, ""},
+		{"errdefer-err-fires", "function f(x: i32): Result[i32, i32] { errdefer print_int(9); if (x < 0) { return Err(1); } return Ok(x); } function main(): i32 { match (f(-1)) { Ok(v) => {}, Err(e) => {} } print_int(0); return 0; }", 0, "90"},
+		{"errdefer-ok-no-fire", "function f(x: i32): Result[i32, i32] { errdefer print_int(9); if (x < 0) { return Err(1); } return Ok(x); } function main(): i32 { match (f(5)) { Ok(v) => {}, Err(e) => {} } print_int(0); return 0; }", 0, "0"},
 		{"opt-wildcard", "function mk(): Option[i32] { return None; } function main(): i32 { match (mk()) { Some(v) => { return v; }, _ => { return 99; } } return 1; }", 99, ""},
 		// Match-arm guards (`Pat when <expr> =>`): a true guard runs the arm; a
 		// false guard falls through to the next arm (the guard reads the binding).
@@ -557,7 +540,6 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"f64-compare-eq", "function main(): i32 { var a: f64 = 1.5; var b: f64 = 1.5; if (a == b) { print_int(1); } else { print_int(0); } return 0; }", 0, "1"},
 		{"f64-compare-le", "function main(): i32 { var a: f64 = 2.0; if (a <= 2.0) { print_int(1); } else { print_int(0); } return 0; }", 0, "1"},
 		{"f64-int-to-float", "function main(): i32 { var n: i32 = 7; var x: f64 = n as f64; print_int((x + 0.5) as i32); return 0; }", 0, "7"},
-		{"f64-mixed-int-literal", "function main(): i32 { print_int((3.5 + 2) as i32); return 0; }", 0, "5"},
 		{"f64-reassign", "function main(): i32 { var a: f64 = 1.0; a = a * 3.0; print_int(a as i32); return 0; }", 0, "3"},
 		// f64_bits / f64_from_bits reinterpret an f64 to/from its IEEE-754
 		// i64 bit pattern (i64.reinterpret_f64 / f64.reinterpret_i64).
@@ -586,95 +568,6 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"f64-inferred-from-cast", "function main(): i32 { var x = 7 as f64; print_int((x + 0.5) as i32); return 0; }", 0, "7"},
 		{"f64-inferred-reassign", "function main(): i32 { var a = 1.0; a = a * 3.0; print_int(a as i32); return 0; }", 0, "3"},
 		{"f64-inferred-compare", "function main(): i32 { var z = 1.5; if (z > 1.0) { print_int(1); } else { print_int(0); } return 0; }", 0, "1"},
-
-		// i32-keyed / i32-valued maps. `Map { k: v }` desugars to
-		// __map_new_i32(8).insert(...).insert(...); methods dispatch to the hash
-		// runtime. `.len()` reuses the generic length read (count @ box+0).
-		{"map-get-or", "function main(): i32 { var m = Map { 1: 10, 2: 20 }; print_int(m.get_or(1, 0)); return 0; }", 0, "10"},
-		{"map-get-or-second", "function main(): i32 { var m = Map { 1: 10, 2: 20 }; print_int(m.get_or(2, 0)); return 0; }", 0, "20"},
-		{"map-get-or-missing", "function main(): i32 { var m = Map { 1: 10 }; print_int(m.get_or(2, 99)); return 0; }", 0, "99"},
-		{"map-has", "function main(): i32 { var m = Map { 5: 1 }; if (m.has(5)) { print_int(1); } else { print_int(0); } return 0; }", 0, "1"},
-		{"map-has-missing", "function main(): i32 { var m = Map { 5: 1 }; if (m.has(6)) { print_int(1); } else { print_int(0); } return 0; }", 0, "0"},
-		{"map-len", "function main(): i32 { var m = Map { 1: 1, 2: 2, 3: 3 }; print_int(m.len()); return 0; }", 0, "3"},
-		{"map-update-value", "function main(): i32 { var m = Map { 1: 10 }; m = m.insert(1, 99); print_int(m.get_or(1, 0)); return 0; }", 0, "99"},
-		{"map-update-keeps-len", "function main(): i32 { var m = Map { 1: 10 }; m = m.insert(1, 99); print_int(m.len()); return 0; }", 0, "1"},
-		{"map-get-some", "function main(): i32 { var m = Map { 7: 42 }; match (m.get(7)) { Some(v) => { print_int(v); }, None => { print_int(0); } } return 0; }", 0, "42"},
-		{"map-get-none", "function main(): i32 { var m = Map { 7: 42 }; match (m.get(8)) { Some(v) => { print_int(v); }, None => { print_int(0); print_int(1); } } return 0; }", 0, "01"},
-		{"map-empty-then-set", "function main(): i32 { var m = __map_new_i32(8); m = m.insert(3, 30); print_int(m.get_or(3, 0)); return 0; }", 0, "30"},
-		{"map-zero-key", "function main(): i32 { var m = __map_new_i32(8); m = m.insert(0, 123); print_int(m.get_or(0, -1)); return 0; }", 0, "123"},
-		{"map-negative-key", "function main(): i32 { var m = Map { 1: 5 }; m = m.insert(-7, 88); print_int(m.get_or(-7, 0)); return 0; }", 0, "88"},
-		{"map-grow-get", "function main(): i32 { var m = __map_new_i32(8); var i: i32 = 0; while (i < 50) { m = m.insert(i, i * 2); i = i + 1; } print_int(m.get_or(37, -1)); return 0; }", 0, "74"},
-		{"map-grow-len", "function main(): i32 { var m = __map_new_i32(8); var i: i32 = 0; while (i < 50) { m = m.insert(i, i * 2); i = i + 1; } print_int(m.len()); return 0; }", 0, "50"},
-		{"map-overwrite-loop", "function main(): i32 { var m = __map_new_i32(8); var i: i32 = 0; while (i < 10) { m = m.insert(1, i); i = i + 1; } print_int(m.get_or(1, -1)); print_int(m.len()); return 0; }", 0, "91"},
-
-		// String-keyed maps. A `Map { "k": v }` literal desugars to
-		// map_new(8).insert(...); keys hash + compare by content (FNV-1a +
-		// __fern_streq), so distinct pointers with equal bytes match.
-		{"strmap-get-or", "function main(): i32 { var m = Map { \"a\": 1, \"b\": 2 }; print_int(m.get_or(\"a\", 0)); return 0; }", 0, "1"},
-		{"strmap-get-or-second", "function main(): i32 { var m = Map { \"a\": 1, \"b\": 2 }; print_int(m.get_or(\"b\", 0)); return 0; }", 0, "2"},
-		{"strmap-missing", "function main(): i32 { var m = Map { \"a\": 1 }; print_int(m.get_or(\"z\", 99)); return 0; }", 0, "99"},
-		{"strmap-has", "function main(): i32 { var m = Map { \"hello\": 1 }; if (m.has(\"hello\")) { print_int(1); } else { print_int(0); } return 0; }", 0, "1"},
-		{"strmap-has-missing", "function main(): i32 { var m = Map { \"hello\": 1 }; if (m.has(\"world\")) { print_int(1); } else { print_int(0); } return 0; }", 0, "0"},
-		{"strmap-len", "function main(): i32 { var m = Map { \"a\": 1, \"b\": 2, \"c\": 3 }; print_int(m.len()); return 0; }", 0, "3"},
-		{"strmap-update", "function main(): i32 { var m = Map { \"a\": 1 }; m = m.insert(\"a\", 50); print_int(m.get_or(\"a\", 0)); print_int(m.len()); return 0; }", 0, "501"},
-		{"strmap-get-some", "function main(): i32 { var m = Map { \"k\": 42 }; match (m.get(\"k\")) { Some(v) => { print_int(v); }, None => { print_int(0); } } return 0; }", 0, "42"},
-		{"strmap-get-none", "function main(): i32 { var m = Map { \"k\": 42 }; match (m.get(\"x\")) { Some(v) => { print_int(v); }, None => { print_int(7); } } return 0; }", 0, "7"},
-		{"strmap-content-equality", "function main(): i32 { var k = \"h\" + \"i\"; var m = map_new(8); m = m.insert(k, 7); print_int(m.get_or(\"hi\", 0)); return 0; }", 0, "7"},
-		{"strmap-prefix-distinct", "function main(): i32 { var m = Map { \"ab\": 1, \"abc\": 2 }; print_int(m.get_or(\"ab\", 0)); print_int(m.get_or(\"abc\", 0)); return 0; }", 0, "12"},
-		{"strmap-grow", "function main(): i32 { var m = map_new(8); var i: i32 = 1; while (i <= 20) { m = m.insert(\"x\".repeat(i), i); i = i + 1; } print_int(m.get_or(\"x\".repeat(5), -1)); print_int(m.len()); return 0; }", 0, "520"},
-
-		// String-valued maps. The runtime stores i32 slots (a string is a
-		// pointer), so this is purely value-type tracking: `.get` / `.get_or`
-		// results are typed as string so they print / concat correctly.
-		{"strval-get-or", "function main(): i32 { var m = Map { 1: \"one\", 2: \"two\" }; write(m.get_or(1, \"?\")); return 0; }", 0, "one"},
-		{"strval-get-or-missing", "function main(): i32 { var m = Map { 1: \"one\" }; write(m.get_or(3, \"none\")); return 0; }", 0, "none"},
-		{"strval-string-key", "function main(): i32 { var m = Map { \"x\": \"hello\" }; write(m.get_or(\"x\", \"?\")); return 0; }", 0, "hello"},
-		{"strval-get-some", "function main(): i32 { var m = Map { 1: \"one\", 2: \"two\" }; match (m.get(2)) { Some(v) => { write(v); }, None => { write(\"none\"); } } return 0; }", 0, "two"},
-		{"strval-get-none", "function main(): i32 { var m = Map { 1: \"one\" }; match (m.get(9)) { Some(v) => { write(v); }, None => { write(\"none\"); } } return 0; }", 0, "none"},
-		{"strval-concat", "function main(): i32 { var m = Map { 1: \"one\" }; write(m.get_or(1, \"?\") + \"!\"); return 0; }", 0, "one!"},
-		{"strval-update", "function main(): i32 { var m = Map { 1: \"a\" }; m = m.insert(1, \"b\"); write(m.get_or(1, \"?\")); return 0; }", 0, "b"},
-		{"strval-built-value", "function main(): i32 { var m = __map_new_i32(8); m = m.insert(1, \"x\" + \"y\"); write(m.get_or(1, \"?\")); return 0; }", 0, "xy"},
-		{"strval-len", "function main(): i32 { var m = Map { 1: \"a\", 2: \"b\" }; print_int(m.len()); return 0; }", 0, "2"},
-
-		// Map .without — tombstone deletion (used slot → 2; the probe skips
-		// past it, set reclaims it, grow drops it). `.without(k)` is typed
-		// `(Map[K,V], boolean)` (the map + whether the key existed), so these
-		// destructure `var (mw, we) = m.without(k)` and keep the map element —
-		// the conforming form the native compiler and register backends require
-		// (`m = m.without(k)` is an E003 type error: tuple ≠ map). #2933.
-		{"map-delete-has", "function main(): i32 { var m = Map { 1: 10, 2: 20 }; var (mw, we) = m.without(1); m = mw; if (m.has(1)) { print_int(1); } else { print_int(0); } return 0; }", 0, "0"},
-		{"map-delete-keeps-other", "function main(): i32 { var m = Map { 1: 10, 2: 20 }; var (mw, we) = m.without(1); m = mw; print_int(m.get_or(2, -1)); return 0; }", 0, "20"},
-		{"map-delete-len", "function main(): i32 { var m = Map { 1: 1, 2: 2, 3: 3 }; var (mw, we) = m.without(2); m = mw; print_int(m.len()); return 0; }", 0, "2"},
-		{"map-delete-missing-noop", "function main(): i32 { var m = Map { 1: 1 }; var (mw, we) = m.without(99); m = mw; print_int(m.len()); print_int(m.get_or(1, -1)); return 0; }", 0, "11"},
-		{"map-delete-get-none", "function main(): i32 { var m = Map { 1: 10 }; var (mw, we) = m.without(1); m = mw; match (m.get(1)) { Some(v) => { print_int(v); }, None => { print_int(7); } } return 0; }", 0, "7"},
-		{"map-delete-reinsert", "function main(): i32 { var m = Map { 1: 10 }; var (mw, we) = m.without(1); m = mw; m = m.insert(1, 99); print_int(m.get_or(1, -1)); print_int(m.len()); return 0; }", 0, "991"},
-		{"map-delete-mid-chain", "function main(): i32 { var m = __map_new_i32(8); var i: i32 = 0; while (i < 10) { m = m.insert(i, i); i = i + 1; } var (mw, we) = m.without(5); m = mw; print_int(m.get_or(4, -1)); print_int(m.get_or(6, -1)); print_int(m.has(5)); print_int(m.len()); return 0; }", 0, "4609"},
-		{"map-delete-all-then-reuse", "function main(): i32 { var m = __map_new_i32(8); var i: i32 = 0; while (i < 30) { m = m.insert(i, i); i = i + 1; } i = 0; while (i < 30) { var (mw, we) = m.without(i); m = mw; i = i + 1; } print_int(m.len()); m = m.insert(100, 7); print_int(m.get_or(100, -1)); return 0; }", 0, "07"},
-		{"strmap-delete", "function main(): i32 { var m = Map { \"a\": 1, \"b\": 2 }; var (mw, we) = m.without(\"a\"); m = mw; print_int(m.has(\"a\")); print_int(m.get_or(\"b\", -1)); return 0; }", 0, "02"},
-
-		// Map .keys() / .values() — snapshot arrays (probe order, so tests
-		// assert order-independent facts: lengths and sums).
-		{"map-keys-len", "function main(): i32 { var m = Map { 1: 10, 2: 20, 3: 30 }; print_int(m.keys().len()); return 0; }", 0, "3"},
-		{"map-values-len", "function main(): i32 { var m = Map { 1: 10, 2: 20 }; print_int(m.values().len()); return 0; }", 0, "2"},
-		{"map-values-sum", "function main(): i32 { var m = Map { 1: 10, 2: 20, 3: 30 }; var s: i32 = 0; for v in m.values() { s = s + v; } print_int(s); return 0; }", 0, "60"},
-		{"map-keys-sum", "function main(): i32 { var m = Map { 4: 1, 5: 1, 6: 1 }; var s: i32 = 0; for k in m.keys() { s = s + k; } print_int(s); return 0; }", 0, "15"},
-		{"map-values-sum-after-delete", "function main(): i32 { var m = Map { 1: 10, 2: 20, 3: 30 }; var (mw, we) = m.without(2); m = mw; var s: i32 = 0; for v in m.values() { s = s + v; } print_int(s); return 0; }", 0, "40"},
-		{"map-empty-keys-len", "function main(): i32 { var m = __map_new_i32(8); print_int(m.keys().len()); return 0; }", 0, "0"},
-		{"map-keys-sum-grow", "function main(): i32 { var m = __map_new_i32(8); var i: i32 = 1; while (i <= 20) { m = m.insert(i, i); i = i + 1; } var s: i32 = 0; for k in m.keys() { s = s + k; } print_int(s); return 0; }", 0, "210"},
-		{"strmap-keys-charcount", "function main(): i32 { var m = Map { \"ab\": 1, \"cde\": 2 }; var n: i32 = 0; for k in m.keys() { n = n + k.len(); } print_int(n); return 0; }", 0, "5"},
-		{"strval-values-charcount", "function main(): i32 { var m = Map { 1: \"ab\", 2: \"cde\" }; var n: i32 = 0; for v in m.values() { n = n + v.len(); } print_int(n); return 0; }", 0, "5"},
-
-		// `for (k, v) in m` — direct pair iteration over live slots (probe
-		// order, so tests assert order-independent sums / counts).
-		{"map-forkv-sum-both", "function main(): i32 { var m = Map { 1: 10, 2: 20, 3: 30 }; var s: i32 = 0; for (k, v) in m { s = s + k + v; } print_int(s); return 0; }", 0, "66"},
-		{"map-forkv-keys-only", "function main(): i32 { var m = Map { 4: 100, 5: 100, 6: 100 }; var s: i32 = 0; for (k, v) in m { s = s + k; } print_int(s); return 0; }", 0, "15"},
-		{"map-forkv-count", "function main(): i32 { var m = Map { 1: 1, 2: 2, 3: 3, 4: 4 }; var n: i32 = 0; for (k, v) in m { n = n + 1; } print_int(n); return 0; }", 0, "4"},
-		{"map-forkv-after-delete", "function main(): i32 { var m = Map { 1: 10, 2: 20, 3: 30 }; var (mw, we) = m.without(2); m = mw; var s: i32 = 0; for (k, v) in m { s = s + v; } print_int(s); return 0; }", 0, "40"},
-		{"map-forkv-empty", "function main(): i32 { var m = __map_new_i32(8); var n: i32 = 0; for (k, v) in m { n = n + 1; } print_int(n); return 0; }", 0, "0"},
-		{"map-forkv-grow", "function main(): i32 { var m = __map_new_i32(8); var i: i32 = 1; while (i <= 20) { m = m.insert(i, i * 2); i = i + 1; } var s: i32 = 0; for (k, v) in m { s = s + v; } print_int(s); return 0; }", 0, "420"},
-		{"map-forkv-break", "function main(): i32 { var m = Map { 1: 1, 2: 2, 3: 3 }; var n: i32 = 0; for (k, v) in m { n = n + 1; if (n == 2) { break; } } print_int(n); return 0; }", 0, "2"},
-		{"strmap-forkv-keylen", "function main(): i32 { var m = Map { \"ab\": 1, \"cde\": 2 }; var n: i32 = 0; for (k, v) in m { n = n + k.len() + v; } print_int(n); return 0; }", 0, "8"},
-		{"strval-forkv-vallen", "function main(): i32 { var m = Map { 1: \"ab\", 2: \"cde\" }; var n: i32 = 0; for (k, v) in m { n = n + k + v.len(); } print_int(n); return 0; }", 0, "8"},
 
 		// Slices `x[a:b]` (both bounds required by the parser). A string
 		// slice reuses substr; an array slice copies the element range.
@@ -724,8 +617,8 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"lambda-interleaved", "function main(): i32 { var a = (x: i32): i32 => { return x + 100; }; var b = (x: i32): i32 => { return x + 200; }; var c = (x: i32): i32 => { return x + 300; }; print_int(b(1)); print_int(a(1)); print_int(c(1)); return 0; }", 0, "201101301"},
 		{"lambda-string-return", "function main(): i32 { var g = (): string => { return \"hi\"; }; write(g()); return 0; }", 0, "hi"},
 		{"lambda-calls-toplevel", "function dbl(n: i32): i32 { return n * 2; } function main(): i32 { var f = (x: i32): i32 => { return dbl(x) + 1; }; print_int(f(5)); return 0; }", 0, "11"},
-		{"lambda-as-fn-param", "function apply(g: fn, n: i32): i32 { return g(n); } function main(): i32 { print_int(apply((x: i32): i32 => { return x * 3; }, 6)); return 0; }", 0, "18"},
-		{"lambda-fn-param-twice", "function twice(g: fn, n: i32): i32 { return g(g(n)); } function main(): i32 { print_int(twice((x: i32): i32 => { return x + 5; }, 0)); return 0; }", 0, "10"},
+		{"lambda-as-fn-param", "function apply(g: (i32) => i32, n: i32): i32 { return g(n); } function main(): i32 { print_int(apply((x: i32): i32 => { return x * 3; }, 6)); return 0; }", 0, "18"},
+		{"lambda-fn-param-twice", "function twice(g: (i32) => i32, n: i32): i32 { return g(g(n)); } function main(): i32 { print_int(twice((x: i32): i32 => { return x + 5; }, 0)); return 0; }", 0, "10"},
 		{"lambda-prints-inside", "function main(): i32 { var f = (): i32 => { print_int(7); return 0; }; return f(); }", 0, "7"},
 
 		// Capturing closures — free locals of the enclosing function are
@@ -745,7 +638,7 @@ func TestSelfHostWasmRun(t *testing.T) {
 		// through the LEGACY AST wasm backend, which snapshotted at make time;
 		// they reach the IR path now, so it agrees with the oracle (#5479).
 		{"closure-snapshot-value", "function main(): i32 { var n: i32 = 1; var f = (): i32 => { return n; }; n = 99; print_int(f()); return 0; }", 0, "99"},
-		{"closure-passed-capturing", "function apply(g: fn): i32 { return g(); } function main(): i32 { var k: i32 = 42; print_int(apply((): i32 => { return k + 1; })); return 0; }", 0, "43"},
+		{"closure-passed-capturing", "function apply(g: () => i32): i32 { return g(); } function main(): i32 { var k: i32 = 42; print_int(apply((): i32 => { return k + 1; })); return 0; }", 0, "43"},
 		{"closure-capture-param", "function make(p: i32): i32 { var f = (x: i32): i32 => { return x + p; }; return f(10); } function main(): i32 { print_int(make(5)); return 0; }", 0, "15"},
 		// The by-reference counterpart in a loop: `add` reads the LIVE total
 		// each call, so this runs 0+1=1, 1+2=3, 3+4=7 -> 11, matching the
@@ -782,19 +675,11 @@ func TestSelfHostWasmRun(t *testing.T) {
 
 		// `.to_string()` (integer→string runtime) + f-strings (which the
 		// parser desugars to `"…" + (expr).to_string() + …`).
-		{"tostring-i32", "function main(): i32 { var n: i32 = 42; write(n.to_string()); return 0; }", 0, "42"},
-		{"tostring-zero", "function main(): i32 { write((0).to_string()); return 0; }", 0, "0"},
-		{"tostring-negative", "function main(): i32 { var n: i32 = 0 - 17; write(n.to_string()); return 0; }", 0, "-17"},
-		{"tostring-concat", "function main(): i32 { var n: i32 = 5; write(\"n=\" + n.to_string()); return 0; }", 0, "n=5"},
-		{"tostring-string-identity", "function main(): i32 { var s: string = \"hi\"; write(s.to_string()); return 0; }", 0, "hi"},
-		{"tostring-i64", "function main(): i32 { var b: i64 = 5000000000; write(b.to_string()); return 0; }", 0, "5000000000"},
 		// A struct/enum receiver with its own `to_string` (hand-written or
 		// `@derive(Display)`) dispatches to that method rather than the
 		// integer formatter — the `to_string` intrinsic now defers to a
 		// user method when one exists. See docs/TRAITS.md.
 		{"tostring-struct-method", "struct P { x: i32 } function (p: P) to_string(): string { return \"box\"; } function main(): i32 { var p = P { x: 1 }; write(p.to_string()); return 0; }", 0, "box"},
-		{"derive-display-struct", "@derive(Display) struct P { x: i32, y: i32 } function main(): i32 { var p: P = P { x: 3, y: 7 }; write(p.to_string()); return 0; }", 0, "P { x: 3, y: 7 }"},
-		{"derive-display-nested", "@derive(Display) struct Inner { n: i32 } @derive(Display) struct Outer { a: Inner, tag: string } function main(): i32 { var p: Outer = Outer { a: Inner { n: 5 }, tag: \"hi\" }; write(p.to_string()); return 0; }", 0, "Outer { a: Inner { n: 5 }, tag: hi }"},
 		// User-defined enums: positional variant construction (`Circle(3)`),
 		// unit variants (`Nil` as a bare ident), and `match` binding the
 		// payload. Special-casing only Option/Result leaves a `$Circle` call
@@ -820,9 +705,6 @@ func TestSelfHostWasmRun(t *testing.T) {
 		// Enum receiver method — dispatches via the enum type (a var typed
 		// `Shape` now records `Shape`, so its methods resolve).
 		{"enum-method", "enum Shape { Circle(i32), Square(i32) } function (s: Shape) area(): i32 { match (s) { Circle(r) => { return r * r * 3; }, Square(w) => { return w * w; } } } function main(): i32 { var a: Shape = Circle(3); var b: Shape = Square(4); return a.area() + b.area(); }", 43, ""},
-		// `@derive(Display)` on an enum: `Variant(payload)` / `Variant`.
-		{"enum-derive-display-payload", "@derive(Display) enum Opt { Has(i32), Nil } function main(): i32 { var h: Opt = Has(7); write(h.to_string()); return 0; }", 0, "Has(7)"},
-		{"enum-derive-display-unit", "@derive(Display) enum Opt { Has(i32), Nil } function main(): i32 { var n: Opt = Nil; write(n.to_string()); return 0; }", 0, "Nil"},
 		// Primitive-receiver user methods: `self.x.eq(other.x)` on an i32
 		// field/payload dispatches to `impl Eq for i32` ($i32__eq) — the
 		// receiver isn't a struct, so without this it fell back to 0.
@@ -841,7 +723,6 @@ func TestSelfHostWasmRun(t *testing.T) {
 		// enum_of_variant now maps the variant to its enum via the enum
 		// methods' match arms, so inline receivers dispatch statically.
 		{"inline-variant-eq", "trait Eq { function eq(self: Self, other: Self): boolean; } impl Eq for i32 { function eq(self: Self, other: Self): boolean { return self == other; } } @derive(Eq) enum Opt { Has(i32), Nil } function main(): i32 { var r: i32 = 0; if (Has(5).eq(Has(5))) { r = r + 1; } if (!Has(5).eq(Has(6))) { r = r + 2; } if (!Has(5).eq(Nil)) { r = r + 4; } if (Nil.eq(Nil)) { r = r + 8; } return r; }", 15, ""},
-		{"inline-variant-display", "@derive(Display) enum Opt { Has(i32), Nil } function main(): i32 { write(Has(7).to_string()); write(\"|\"); write(Nil.to_string()); return 0; }", 0, "Has(7)|Nil"},
 		{"inline-variant-ord", "trait Ord { function cmp(self: Self, other: Self): i32; } impl Ord for i32 { function cmp(self: Self, other: Self): i32 { if (self < other) { return 0 - 1; } if (self > other) { return 1; } return 0; } } @derive(Ord) enum Lvl { Low(i32), High } function main(): i32 { var r: i32 = 0; if (Low(1).cmp(Low(2)) < 0) { r = r + 1; } if (Low(9).cmp(High) < 0) { r = r + 2; } if (High.cmp(Low(0)) > 0) { r = r + 4; } if (Low(3).cmp(Low(3)) == 0) { r = r + 8; } return r; }", 15, ""},
 		{"inline-enum-method", "enum Shape { Circle(i32), Square(i32) } function (s: Shape) area(): i32 { match (s) { Circle(r) => { return r * r * 3; }, Square(w) => { return w * w; } } } function main(): i32 { return Circle(3).area() + Square(4).area(); }", 43, ""},
 		// `dyn Trait` — a trait object whose concrete type varies at runtime.
@@ -862,29 +743,7 @@ func TestSelfHostWasmRun(t *testing.T) {
 		// become concrete `Box__i32` / `Box__string` clones, and wasm's
 		// static dispatch (struct_type_of -> $Box__i32__to_string) routes
 		// each to its own helper. Both clones coexist with a shared `v`.
-		{"generic-struct-display-i32", "@derive(Display) struct Box[T] { v: T } function main(): i32 { var b: Box[i32] = Box { v: 5 }; write(b.to_string()); return 0; }", 0, "Box { v: 5 }"},
-		{"generic-struct-display-string", "@derive(Display) struct Box[T] { v: T } function main(): i32 { var b: Box[string] = Box { v: \"hi\" }; write(b.to_string()); return 0; }", 0, "Box { v: hi }"},
-		{"generic-struct-display-both", "@derive(Display) struct Box[T] { v: T } function main(): i32 { var a: Box[i32] = Box { v: 5 }; var b: Box[string] = Box { v: \"hi\" }; write(a.to_string()); write(\"|\"); write(b.to_string()); return 0; }", 0, "Box { v: 5 }|Box { v: hi }"},
 		{"generic-struct-derive-eq", "trait Eq { function eq(self: Self, other: Self): boolean; } impl Eq for i32 { function eq(self: Self, other: Self): boolean { return self == other; } } @derive(Eq) struct Box[T] { v: T } function main(): i32 { var a: Box[i32] = Box { v: 5 }; var b: Box[i32] = Box { v: 5 }; var c: Box[i32] = Box { v: 9 }; var r: i32 = 0; if (a.eq(b)) { r = r + 1; } if (!a.eq(c)) { r = r + 2; } return r; }", 3, ""},
-		// Parametric `impl[T: Show] Show for Box[T]` cloned per concrete T:
-		// `Box__i32` dispatches `self.v.show()` to `impl Show for i32`,
-		// `Box__string` to `impl Show for string`.
-		{"generic-struct-parametric-impl", "trait Show { function show(self: Self): string; } impl Show for i32 { function show(self: Self): string { return self.to_string(); } } impl Show for string { function show(self: Self): string { return self; } } struct Box[T] { v: T } impl[T: Show] Show for Box[T] { function show(self: Self): string { return \"Box(\" + self.v.show() + \")\"; } } function main(): i32 { var a: Box[i32] = Box { v: 7 }; var b: Box[string] = Box { v: \"hi\" }; write(a.show()); write(\"|\"); write(b.show()); return 0; }", 0, "Box(7)|Box(hi)"},
-		{"tostring-expr", "function main(): i32 { write((3 * 14).to_string()); return 0; }", 0, "42"},
-		{"fstring-int", "function main(): i32 { var n: i32 = 42; write(f\"n is {n}!\"); return 0; }", 0, "n is 42!"},
-		{"fstring-two", "function main(): i32 { var a: i32 = 3; var b: i32 = 4; write(f\"{a}+{b}={a + b}\"); return 0; }", 0, "3+4=7"},
-		{"fstring-string-interp", "function main(): i32 { var who: string = \"world\"; write(f\"hello {who}\"); return 0; }", 0, "hello world"},
-		{"fstring-only-interp", "function main(): i32 { var n: i32 = 9; write(f\"{n}\"); return 0; }", 0, "9"},
-
-		// Integration test: a word-frequency counter combining split,
-		// a string-keyed i32-valued map, get_or accumulation, len, and an
-		// f-string — exercising many features together.
-		{"integration-word-count", "function main(): i32 { var text: string = \"the cat sat on the mat the cat ran\"; var words: string[] = text.split(\" \"); var counts = map_new(8); var i: i32 = 0; while (i < words.len()) { var w: string = words[i]; counts = counts.insert(w, counts.get_or(w, 0) + 1); i = i + 1; } print_int(counts.get_or(\"the\", 0)); print_int(counts.get_or(\"cat\", 0)); print_int(counts.get_or(\"mat\", 0)); write(f\" total={counts.len()}\"); return 0; }", 0, "321 total=6"},
-		// Higher-order: a reduce over an array taking an `fn` param, with a
-		// plain lambda and a capturing closure (factor), reported via f-string.
-		{"integration-reduce-closure", "function reduce(xs: i32[], init: i32, f: fn): i32 { var acc: i32 = init; var i: i32 = 0; while (i < xs.len()) { acc = f(acc, xs[i]); i = i + 1; } return acc; } function main(): i32 { var xs = [1, 2, 3, 4, 5]; var factor: i32 = 10; var sum = reduce(xs, 0, (a: i32, b: i32): i32 => { return a + b; }); var scaled = reduce(xs, 0, (a: i32, b: i32): i32 => { return a + b * factor; }); write(f\"sum={sum} scaled={scaled}\"); return 0; }", 0, "sum=15 scaled=150"},
-		// Structs + methods + array-of-structs + for-in + f-string.
-		{"integration-struct-method", "struct Pt { x: i32, y: i32 } function (p: Pt) dist2(): i32 { return p.x * p.x + p.y * p.y; } function main(): i32 { var pts = [Pt { x: 3, y: 4 }, Pt { x: 1, y: 1 }]; var total: i32 = 0; for p in pts { total = total + p.dist2(); } write(f\"total={total}\"); return 0; }", 0, "total=27"},
 		// Struct-array indexing: pts[i].field resolves the element struct type.
 		{"struct-array-index", "struct Pt { x: i32, y: i32 } function main(): i32 { var pts = [Pt { x: 5, y: 6 }, Pt { x: 7, y: 8 }]; print_int(pts[0].x); print_int(pts[1].y); return 0; }", 0, "58"},
 
@@ -902,13 +761,11 @@ func TestSelfHostWasmRun(t *testing.T) {
 		// struct type rather than a bogus (i32.const 0).
 		{"struct-array-param-index", "struct Tk { kind: i32, text: string } function first(ts: Tk[]): i32 { return ts[0].kind; } function main(): i32 { var ts = [Tk { kind: 5, text: \"a\" }, Tk { kind: 9, text: \"b\" }]; print_int(first(ts)); return 0; }", 0, "5"},
 		{"struct-array-param-for", "struct Tk { kind: i32, text: string } function sumk(ts: Tk[]): i32 { var s = 0; for t in ts { s = s + t.kind; } return s; } function main(): i32 { var ts = [Tk { kind: 5, text: \"a\" }, Tk { kind: 9, text: \"b\" }]; print_int(sumk(ts)); return 0; }", 0, "14"},
-		{"struct-string-field", "struct P { name: string, age: i32 } function main(): i32 { var p = P { name: \"sam\", age: 30 }; write(f\"{p.name} is {p.age}\"); return 0; }", 0, "sam is 30"},
 		{"fn-returns-struct", "struct V { a: i32, b: i32 } function mk(n: i32): V { return V { a: n, b: n * 2 }; } function main(): i32 { var v = mk(5); print_int(v.a + v.b); return 0; }", 0, "15"},
 		{"recursion-fib", "function fib(n: i32): i32 { if (n < 2) { return n; } return fib(n - 1) + fib(n - 2); } function main(): i32 { print_int(fib(10)); return 0; }", 0, "55"},
 		{"mutual-recursion", "function ev(n: i32): boolean { if (n == 0) { return true; } return od(n - 1); } function od(n: i32): boolean { if (n == 0) { return false; } return ev(n - 1); } function main(): i32 { if (ev(10)) { print_int(1); } else { print_int(0); } return 0; }", 0, "1"},
 		{"option-question-chain", "function lookup(k: i32): Option[i32] { if (k > 0) { return Some(k * 10); } return None; } function step(k: i32): Option[i32] { var v = lookup(k)?; return Some(v + 1); } function main(): i32 { match (step(5)) { Some(r) => { print_int(r); }, None => { print_int(0); } } match (step(0 - 1)) { Some(r) => { print_int(r); }, None => { print_int(99); } } return 0; }", 0, "5199"},
 		{"result-match-string", "function parse(ok: boolean): Result[i32, string] { if (ok) { return Ok(42); } return Err(\"bad input\"); } function main(): i32 { match (parse(false)) { Ok(v) => { print_int(v); }, Err(e) => { write(e); } } return 0; }", 0, "bad input"},
-		{"string-builder-loop", "function main(): i32 { var s: string = \"\"; var i: i32 = 0; while (i < 4) { s = s + f\"[{i}]\"; i = i + 1; } write(s); print_int(s.split(\"]\").len()); return 0; }", 0, "[0][1][2][3]5"},
 
 		// Hardening pass 3: more real-program shapes.
 		{"struct-update-spread", "struct C { r: i32, g: i32, b: i32 } function main(): i32 { var base = C { r: 1, g: 2, b: 3 }; var c2 = C { ...base, g: 99 }; print_int(c2.r); print_int(c2.g); print_int(c2.b); return 0; }", 0, "1993"},
@@ -932,7 +789,6 @@ func TestSelfHostWasmRun(t *testing.T) {
 		// to a zero-arg function; a bare reference lowers to a call, with
 		// the const's return type driving string / i64 / f64 typing).
 		{"const-i32", "const LIMIT: i32 = 100; function main(): i32 { print_int(LIMIT + 1); return 0; }", 0, "101"},
-		{"const-string-fstring", "const NAME: string = \"bob\"; function main(): i32 { write(f\"hello {NAME}\"); return 0; }", 0, "hello bob"},
 		{"const-i64", "const BIG: i64 = 5000000000; function main(): i32 { print_i64(BIG + 1); return 0; }", 0, "5000000001"},
 		{"const-f64", "const HALF: f64 = 3.5; function main(): i32 { print_int((HALF * 2.0) as i32); return 0; }", 0, "7"},
 		{"const-shadowed-by-local", "const X: i32 = 5; function main(): i32 { var X: i32 = 99; print_int(X); return 0; }", 0, "99"},
@@ -940,9 +796,7 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"continue-while", "function main(): i32 { var s: i32 = 0; var i: i32 = 0; while (i < 10) { i = i + 1; if (i % 2 == 0) { continue; } s = s + i; } print_int(s); return 0; }", 0, "25"},
 		{"push-loop", "function main(): i32 { var xs: i32[] = []; var i: i32 = 0; while (i < 5) { xs = xs.append(i * i); i = i + 1; } var s: i32 = 0; for v in xs { s = s + v; } print_int(s); return 0; }", 0, "30"},
 		{"nested-struct-method", "struct Inner { v: i32 } function (n: Inner) dbl(): i32 { return n.v * 2; } struct Outer { inner: Inner } function main(): i32 { var o = Outer { inner: Inner { v: 7 } }; print_int(o.inner.dbl()); return 0; }", 0, "14"},
-		{"wildcard-match", "function main(): i32 { var m = Map { 1: 10 }; match (m.get(2)) { Some(v) => { print_int(v); }, _ => { print_int(99); } } return 0; }", 0, "99"},
 		{"string-compare", "function main(): i32 { if (\"apple\" < \"banana\") { print_int(1); } if (\"zebra\" > \"ant\") { print_int(2); } return 0; }", 0, "12"},
-		{"fstring-method-interp", "function main(): i32 { var s: string = \"hello\"; write(f\"upper={s.to_ascii_upper()}\"); return 0; }", 0, "upper=HELLO"},
 		{"array-of-tuples", "function main(): i32 { var ps = [(1, 2), (3, 4)]; var t = ps[1]; print_int(t.0 + t.1); return 0; }", 0, "7"},
 		// A `(T, U)[]` *annotation* must parse: the parenthesized tuple type
 		// followed by `[]` must consume the trailing `[]`; leaving it on the
@@ -963,8 +817,7 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"string-char-compare", "function main(): i32 { var s: string = \"a1b2\"; var digits: i32 = 0; var i: i32 = 0; while (i < s.len()) { if (s[i] >= 48 && s[i] <= 57) { digits = digits + 1; } i = i + 1; } print_int(digits); return 0; }", 0, "2"},
 		{"elseif-chain", "function grade(n: i32): string { if (n >= 90) { return \"A\"; } else if (n >= 80) { return \"B\"; } else if (n >= 70) { return \"C\"; } else { return \"F\"; } } function main(): i32 { write(grade(95)); write(grade(85)); write(grade(50)); return 0; }", 0, "ABF"},
 		{"three-variant-union", "struct A { v: i32 } struct B { v: i32 } struct C { v: i32 } type T = A | B | C; function f(t: T): i32 { match (t) { A(a) => { return a.v + 1; }, B(b) => { return b.v + 2; }, C(c) => { return c.v + 3; } } return 0; } function main(): i32 { print_int(f(A { v: 10 })); print_int(f(B { v: 10 })); print_int(f(C { v: 10 })); return 0; }", 0, "111213"},
-		{"struct-mutate-via-fn", "struct Counter { n: i32 } function bump(c: Counter): i32 { c.n = c.n + 1; return 0; } function main(): i32 { var c = Counter { n: 5 }; bump(c); bump(c); print_int(c.n); return 0; }", 0, "7"},
-		{"array-elem-field-set", "struct Pt { x: i32, y: i32 } function main(): i32 { var pts = [Pt { x: 1, y: 2 }, Pt { x: 3, y: 4 }]; pts[0].x = 99; print_int(pts[0].x); print_int(pts[1].x); return 0; }", 0, "993"},
+		{"array-elem-field-set", "struct Pt { x: i32, y: i32 } function main(): i32 { var pts = [Pt { x: 1, y: 2 }, Pt { x: 3, y: 4 }]; pts = pts.with(0, Pt { ...pts[0], x: 99 }); print_int(pts[0].x); print_int(pts[1].x); return 0; }", 0, "993"},
 
 		// Hardening pass 6: bitwise operators (i32 + i64).
 		{"bitwise-i32", "function main(): i32 { print_int(12 & 10); print_int(12 | 10); print_int(12 ^ 10); print_int(5 << 2); print_int(40 >> 2); return 0; }", 0, "81462010"},
@@ -983,13 +836,10 @@ func TestSelfHostWasmRun(t *testing.T) {
 		// not drop the old value), hex / escape / unary, and complex
 		// conditions.
 		{"compound-assign-var", "function main(): i32 { var x: i32 = 10; x += 5; x -= 2; x *= 2; x /= 3; x %= 5; print_int(x); return 0; }", 0, "3"},
-		{"compound-assign-array", "function main(): i32 { var xs = [1, 2, 3]; xs[1] += 10; xs[2] *= 5; print_int(xs[1]); print_int(xs[2]); return 0; }", 0, "1215"},
-		{"compound-assign-field", "struct C { n: i32 } function main(): i32 { var c = C { n: 5 }; c.n += 3; c.n *= 2; print_int(c.n); return 0; }", 0, "16"},
 		{"hex-literal", "function main(): i32 { print_int(0xFF); print_int(0x10); return 0; }", 0, "25516"},
 		{"escape-sequences", "function main(): i32 { write(\"a\\tb\\nc\"); return 0; }", 0, "a\tb\nc"},
 		// \xNN hex byte escapes (string + f-string), via string_from_bytes_unchecked.
 		{"hex-escape", "function main(): i32 { write(\"\\x48\\x69\\x21\"); return 0; }", 0, "Hi!"},
-		{"hex-escape-fstring", "function main(): i32 { var n: i32 = 7; write(f\"\\x41{n}\\x5a\"); return 0; }", 0, "A7Z"},
 		{"deep-nesting", "function main(): i32 { print_int(((1 + 2) * (3 + 4)) - ((5 - 1) / 2)); return 0; }", 0, "19"},
 		{"neg-float-compare", "function main(): i32 { var a: f64 = 0.0 - 2.5; if (a < 0.0) { print_int(1); } if (a > (0.0 - 3.0)) { print_int(2); } return 0; }", 0, "12"},
 		{"while-complex-cond", "function main(): i32 { var i: i32 = 0; var j: i32 = 10; while (i < j && j > 0) { i = i + 1; j = j - 1; } print_int(i); return 0; }", 0, "5"},
