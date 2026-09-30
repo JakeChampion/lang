@@ -17,9 +17,8 @@ import (
 // The ir_licm_run driver builds the op list irlower emits for each `while`
 // shape, runs the pass, and prints the ops AND the frame count. The lines
 // mirror the cases in internal/ir/licm_test.go, except the typed-lowering
-// rows: native's header still stops at `block` (its `while` opens the break
-// block before the `loop`), so licm_typed_block_header is a hoist native does
-// not perform. The refusals are the essential half, since each one is a read
+// rows: native's header still stops at `block`, so licm_typed_block_header is
+// a hoist native does not perform. The refusals are the essential half, since each one is a read
 // the original program would not have made.
 func TestSelfHostIRLICM(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)

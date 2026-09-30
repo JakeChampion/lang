@@ -4311,9 +4311,11 @@ pub function optimize_ops(ops: Op[], n_params: i32, n_locals: i32): OptimizedOps
 // `while (i < s.len())` re-reads the length on every iteration.
 //
 // The header rule differs from native's: endsLoopHeader in
-// internal/ir/licm.go (frozen) also stops at `block`. Native's `while` opens
-// its break block before the `loop`, so it never needs to look past one; the
-// typed lowering opens blocks inside the loop, ahead of the condition.
+// internal/ir/licm.go (frozen) also stops at `block`. Native opens a `while`'s
+// break block before the `loop`, so its condition is never behind one; the
+// typed lowering opens blocks inside the loop, ahead of the condition. Native's
+// rotated `while` does open a block right after `loop`, and misses the hoist
+// of a body-head read (the `body-only` row of TestSelfHostLICMX86_64).
 //
 // The header is the only region this pass hoists FROM, and that is what makes
 // the transform safe rather than speculative. `loop` falls through into its
