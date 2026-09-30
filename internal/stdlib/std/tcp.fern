@@ -8,9 +8,9 @@
 // for Phase 1 it carries a single `version: i32` placeholder
 // and handler code typically ignores it.
 // Returns -errno when the listener can't be bound (e.g.
-// EADDRINUSE); on success the loop runs indefinitely until
-// the host kills the process (no clean-shutdown channel
-// exposed yet).
+// EADDRINUSE); on success the loop runs until SIGTERM, then
+// drains and returns `__stop_code`: 0 when every request in
+// flight was answered, 1 when one was cut off.
 //
 // The loop is a reactor (#9853): one readiness set from the Driver seam
 // (`async.real_driver()`: epoll, kqueue or wasi pollables) watches the
@@ -1212,11 +1212,11 @@ function __init_platform(): Platform {
 // it does NOT create: the supervising parent owns the listening socket
 // (created before the first fork, inherited by every worker), so the
 // kernel backlog — and any pending connections in it — survives a worker
-// death. Loops forever under normal operation; the i32 return only
-// materialises for the type system (no clean-shutdown channel exposed
-// yet), except that a listener the reactor cannot watch returns its
-// -errno like a failed bind. `opts` bounds each connection's request
-// read (see `tcp_serve_deadline`) and its persistence.
+// death. Runs until SIGTERM: the shutdown drains, `on_stop` is handed
+// `__stop_reason(stop)`, and the loop returns `__stop_code(stop)`; a
+// listener the reactor cannot watch returns its -errno like a failed
+// bind. `opts` bounds each connection's request read (see
+// `tcp_serve_deadline`) and its persistence.
 function __serve_loop(listener: i32, handler: (HttpRequest, Platform) => HttpResponse, opts: ServeOptions, on_stop: (string) => void): i32 {
     var drv: async.RealDriver = async.real_driver();
     var watched: i32 = drv.watch(listener, __listener_interest(opts));
