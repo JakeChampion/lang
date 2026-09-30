@@ -9,6 +9,7 @@ import (
 
 	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/diag"
+	"github.com/jakechampion/lang/internal/modload"
 	"github.com/jakechampion/lang/internal/parser"
 )
 
@@ -4525,28 +4526,46 @@ func TestResultHandlerIsAdapted(t *testing.T) {
 	const decls = serveStubDecls + `function respond(r: Result[HttpResponse, string]): HttpResponse { return HttpResponse { status: 500, body: BodyText(""), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] } }; }
 function respond_with(pair: (i32, Result[HttpResponse, string])): (i32, HttpResponse) { return (pair.0, respond(pair.1)); }
 `
-	const dynDecls = serveStubDecls + `trait Error { function message(self: Self): string; }
+	// The dyn cases load std/error as a program does, so the trait reaches
+	// the matcher under its bundled name; an alias and a program's own
+	// `trait Error` pin the two spellings that must not match it.
+	const dynDecls = serveStubDecls + `struct Oops { why: string }
+impl err.Error for Oops { function message(self: Self): string { return self.why; } }
+function respond_error(r: Result[HttpResponse, dyn err.Error], plat: Platform): HttpResponse { return HttpResponse { status: 500, body: BodyText(""), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] } }; }
+function respond_error_with(pair: (i32, Result[HttpResponse, dyn err.Error]), plat: Platform): (i32, HttpResponse) { return (pair.0, respond_error(pair.1, plat)); }
+`
+	const ownErrorDecls = serveStubDecls + `trait Error { function message(self: Self): string; }
 struct Oops { why: string }
 impl Error for Oops { function message(self: Self): string { return self.why; } }
-function respond_error(r: Result[HttpResponse, dyn Error], plat: Platform): HttpResponse { return HttpResponse { status: 500, body: BodyText(""), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] } }; }
-function respond_error_with(pair: (i32, Result[HttpResponse, dyn Error]), plat: Platform): (i32, HttpResponse) { return (pair.0, respond_error(pair.1, plat)); }
+function respond(r: Result[HttpResponse, dyn Error]): HttpResponse { return HttpResponse { status: 500, body: BodyText(""), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] } }; }
+function respond_error(r: Result[HttpResponse, dyn Error], plat: Platform): HttpResponse { return HttpResponse { status: 418, body: BodyText(""), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] } }; }
 `
 	cases := []struct {
 		name, src, adapter string
-		params             int
+		params, args       int
+		load               bool
 	}{
-		{"stateless", decls + `function handle(req: HttpRequest, plat: Platform): Result[HttpResponse, string] { return Err("no"); }`, "respond", 2},
+		{"stateless", decls + `function handle(req: HttpRequest, plat: Platform): Result[HttpResponse, string] { return Err("no"); }`, "respond", 2, 1, false},
 		{"stateful", decls + `function init(): i32 { return 0; }
-function handle(n: i32, req: HttpRequest, plat: Platform): (i32, Result[HttpResponse, string]) { return (n + 1, Err("no")); }`, "respond_with", 3},
-		{"dyn-error", dynDecls + `function handle(req: HttpRequest, plat: Platform): Result[HttpResponse, dyn Error] { return Err(Oops { why: "no" }); }`, "respond_error", 2},
-		{"dyn-error-stateful", dynDecls + `function init(): i32 { return 0; }
-function handle(n: i32, req: HttpRequest, plat: Platform): (i32, Result[HttpResponse, dyn Error]) { return (n + 1, Err(Oops { why: "no" })); }`, "respond_error_with", 3},
+function handle(n: i32, req: HttpRequest, plat: Platform): (i32, Result[HttpResponse, string]) { return (n + 1, Err("no")); }`, "respond_with", 3, 1, false},
+		{"dyn-error", `import "std/error" as err;
+` + dynDecls + `function handle(req: HttpRequest, plat: Platform): Result[HttpResponse, dyn err.Error] { return Err(Oops { why: "no" }); }`, "respond_error", 2, 2, true},
+		{"dyn-error-stateful", `import "std/error" as err;
+` + dynDecls + `function init(): i32 { return 0; }
+function handle(n: i32, req: HttpRequest, plat: Platform): (i32, Result[HttpResponse, dyn err.Error]) { return (n + 1, Err(Oops { why: "no" })); }`, "respond_error_with", 3, 2, true},
+		{"a program's own Error trait is not std/error's", ownErrorDecls + `function handle(req: HttpRequest, plat: Platform): Result[HttpResponse, dyn Error] { return Err(Oops { why: "no" }); }`, "respond", 2, 1, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			prog, err := parser.Parse(tc.src)
+			var prog *ast.Program
+			var err error
+			if tc.load {
+				prog, _, err = modload.LoadSource(tc.src)
+			} else {
+				prog, err = parser.Parse(tc.src)
+			}
 			if err != nil {
-				t.Fatalf("parse: %v", err)
+				t.Fatalf("load: %v", err)
 			}
 			if _, err := Check(prog); err != nil {
 				t.Fatalf("check: %v", err)
@@ -4569,8 +4588,8 @@ function handle(n: i32, req: HttpRequest, plat: Platform): (i32, Result[HttpResp
 			if id, ok := call.Callee.(*ast.Ident); !ok || id.Name != tc.adapter {
 				t.Fatalf("handle calls %v, want %s", call.Callee, tc.adapter)
 			}
-			if wantArgs := 1 + strings.Count(tc.adapter, "error"); len(call.Args) != wantArgs {
-				t.Fatalf("%s is handed %d args, want %d", tc.adapter, len(call.Args), wantArgs)
+			if len(call.Args) != tc.args {
+				t.Fatalf("%s is handed %d args, want %d", tc.adapter, len(call.Args), tc.args)
 			}
 			inner, ok := call.Args[0].(*ast.Call)
 			if !ok {

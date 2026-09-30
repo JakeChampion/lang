@@ -2,6 +2,7 @@ import "std/test";
 import "std/http";
 import "std/json";
 import "std/mock_platform";
+import "std/error";
 
 // examples/tests/http_respond_test.fern — a handler that fails with `?`
 // (#9854): its helpers answer `Result[HttpResponse, http.HttpError]`, and
@@ -94,6 +95,42 @@ function test_respond_with_keeps_the_state(): test.TestOutcome {
     return test.assert_status(bad.1, 409);
 }
 
+struct Boom { what: string }
+impl error.Error for Boom {
+    function message(self: Self): string { return "boom: " + self.what; }
+}
+
+function exploding(): Result[HttpResponse, dyn error.Error] {
+    return Err(Boom { what: "the cache" });
+}
+
+function test_dyn_error_answers_500_and_logs_the_message(): test.TestOutcome {
+    var m: MockPlatform = mock_platform.mock_platform_new();
+    var resp: HttpResponse = http.respond_error(exploding(), m.as_platform());
+    match (test.assert_status(resp, 500)) { Fail(msg) => { return test.fail(msg); }, Pass => {} }
+    match (test.assert_body(resp, "{\"type\":\"about:blank\",\"title\":\"Internal Server Error\",\"status\":500}")) { Fail(msg) => { return test.fail(msg); }, Pass => {} }
+    match (m.find_call("log")) {
+        Some(c) => { return test.assert_eq(c.args, "handler error: boom: the cache"); },
+        None => { return test.fail("nothing was logged"); }
+    }
+}
+
+function counted_dyn(n: i32, ok: boolean): (i32, Result[HttpResponse, dyn error.Error]) {
+    if (!ok) { return (n, Err(Boom { what: "the count" })); }
+    return (n + 1, Ok(http.ok("counted")));
+}
+
+function test_respond_error_with_keeps_the_state(): test.TestOutcome {
+    var m: MockPlatform = mock_platform.mock_platform_new();
+    var good: (i32, HttpResponse) = http.respond_error_with(counted_dyn(1, true), m.as_platform());
+    if (good.0 != 2) { return test.fail("state after Ok: " + good.0.to_string()); }
+    if (m.call_count() != 0) { return test.fail("an Ok answer was logged"); }
+    var bad: (i32, HttpResponse) = http.respond_error_with(counted_dyn(2, false), m.as_platform());
+    if (bad.0 != 2) { return test.fail("state after Err: " + bad.0.to_string()); }
+    match (test.assert_status(bad.1, 500)) { Fail(msg) => { return test.fail(msg); }, Pass => {} }
+    return test.assert_eq(m.call_count(), 1);
+}
+
 function main(): i32 {
     var t: test.TestRunner = test.test_new("HTTP respond");
     t = t.it("an Ok response passes through", test_ok_passes_through);
@@ -104,5 +141,7 @@ function main(): i32 {
     t = t.it("a JSON error answers 400 with where the text broke", test_json_error_answers_400);
     t = t.it("a string error answers 500 without the message", test_string_error_answers_500_without_the_message);
     t = t.it("respond_with keeps the state beside the answer", test_respond_with_keeps_the_state);
+    t = t.it("a dyn error.Error answers 500 and logs the message", test_dyn_error_answers_500_and_logs_the_message);
+    t = t.it("respond_error_with keeps the state beside the answer", test_respond_error_with_keeps_the_state);
     return t.finish();
 }

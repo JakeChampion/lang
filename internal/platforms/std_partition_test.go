@@ -26,10 +26,15 @@ import (
 //     numerics module and is in fact the random-number module
 //     (`random_int` over the platform CSPRNG). Derivation caught what a
 //     hand-written classification would have got wrong.
-//   - `std/test` is hosted on four capabilities, which is the answer to
+//   - `std/test` is hosted on five capabilities, which is the answer to
 //     the question the issue raises: a freestanding target cannot run
 //     the in-language test runner today, and `log` (its output sink) is
-//     only one of the four in the way.
+//     only one of the five in the way.
+//   - `std/http` calls one capability itself, `log`, through the platform
+//     `respond_error` is handed; the other four arrive with std/platform's
+//     methods it never calls, the same module-granular reach as the
+//     `std/mock_platform` entry below, and reach std/tcp and std/test
+//     through their import of it.
 //   - `std/jni` is hosted on `cabi` alone. It touches no OS surface at
 //     all; what it needs is a C calling convention to hand a JNIEnv
 //     method pointer to, which is a property of the target and not of

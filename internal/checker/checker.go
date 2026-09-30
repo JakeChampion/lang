@@ -21170,11 +21170,10 @@ func isDynErrorType(t ast.Type) bool {
 	if !ok || len(d.Traits) != 1 {
 		return false
 	}
-	switch d.Traits[0] {
-	case "Error", "error.Error", "error__Error":
-		return true
-	}
-	return false
+	// std/error's trait by its bundled identity: a program's own `trait
+	// Error` is another trait, and every import spelling of std/error's,
+	// aliased or re-exported, mangles to this one name.
+	return d.Traits[0] == "error__Error"
 }
 
 // platformCtorName is the compiler-owned Platform constructor. The `__fern_`
