@@ -4322,8 +4322,8 @@ pub function optimize_ops(ops: Op[], n_params: i32, n_locals: i32): OptimizedOps
 // internal/ir/licm.go (frozen) also stops at `block`. Native opens a `while`'s
 // break block before the `loop`, so its condition is never behind one; the
 // typed lowering opens blocks inside the loop, ahead of the condition. Native's
-// rotated `while` does open a block right after `loop`, and misses the hoist
-// of a body-head read (the `body-only` row of TestSelfHostLICMX86_64).
+// rotated `while` does open a block right after `loop`, which leaves its header
+// empty; the self-host does not rotate, so no fixture shows the difference.
 //
 // The header is the only region this pass hoists FROM, and that is what makes
 // the transform safe rather than speculative. `loop` falls through into its
