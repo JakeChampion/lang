@@ -120,7 +120,7 @@ func TestSelfHostIROpConstructorTags(t *testing.T) {
 	// A constructor whose name is not its kind's: str_index_nc is str_index
 	// with the bounds check off.
 	alias := map[string]string{"str_index_nc": "str_index"}
-	ctor := regexp.MustCompile(`(?m)^(?:pub )?function op_(\w+)\([^)]*\): Op \{\s*return (?:Op \{ \.\.\.)?op0\((\d+)\)`)
+	ctor := regexp.MustCompile(`(?m)^(?:pub )?function op_(\w+)\([^)]*\): Op \{\s*return (?:Op \{\s*\.\.\.)?op0\((\d+)\)`)
 	matches := ctor.FindAllStringSubmatch(string(src), -1)
 	if len(matches) < 200 {
 		t.Fatalf("found %d op0 constructors in ir.fern, want at least 200 — the pattern no longer matches", len(matches))
