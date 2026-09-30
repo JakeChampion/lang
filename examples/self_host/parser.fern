@@ -16132,9 +16132,50 @@ pub function is_reserved_struct_name(name: string): boolean {
     return util.index_of_str(reserved, name) >= 0;
 }
 
+// user_struct_tparams is the type parameters of the user struct `name` (an
+// enum variant is not one); `found` is false when there is none.
+function user_struct_tparams(mod: Module, name: string): (boolean, string[]) {
+    for sd in mod.structs {
+        if (sd.name == name && sd.enum_owner.len() == 0) { return (true, sd.type_params); }
+    }
+    var none: string[] = [];
+    return (false, none);
+}
+
+// union_alias_errors lists the E016 messages the Go checker reports while
+// desugaring a union alias into an enum. The alias is registered only when
+// the list is empty. A built-in struct member is taken as non-generic.
+pub function union_alias_errors(mod: Module, al: TypeAlias): string[] {
+    var out: string[] = [];
+    var (named_struct, _) = user_struct_tparams(mod, al.name);
+    if (named_struct || is_reserved_struct_name(al.name)) {
+        return out.append("union \"" + al.name + "\" collides with a struct of the same name");
+    }
+    var seen: string[] = [];
+    for m in al.variants {
+        if (util.has_str(seen, m)) {
+            out = out.append("duplicate member \"" + m + "\" in union " + al.name);
+            continue;
+        }
+        seen = seen.append(m);
+        var (found, tps) = user_struct_tparams(mod, m);
+        if (!found && !is_reserved_struct_name(m)) {
+            out = out.append("union " + al.name + " member \"" + m + "\" does not name a struct in scope");
+        } else if (tps.len() > 0) {
+            var params: string = "";
+            for tp in tps {
+                if (params.len() > 0) { params = params + ", "; }
+                params = params + tp;
+            }
+            out = out.append("union " + al.name + " member \"" + m + "\" takes " + util.i32_to_string(tps.len()) + " type argument(s), got 0; a generic struct member needs them supplied (e.g. `type " + al.name + "[" + params + "] = " + m + "[" + params + "] | …`)");
+        }
+    }
+    return out;
+}
+
 // resource_collision names what an earlier declaration makes resources[idx]'s
-// name already mean — "resource", "struct" or "enum" (a union alias is an enum,
-// and a built-in counts as declared) — or "" when the name is free. The Go checker registers only the free ones.
+// name already mean — "resource", "struct" or "enum" (a union alias that
+// registers is an enum, and a built-in counts as declared) — or "" when the name is free. The Go checker registers only the free ones.
 pub function resource_collision(mod: Module, idx: i32): string {
     var name: string = mod.resources[idx].name;
     var j: i32 = 0;
@@ -16151,7 +16192,7 @@ pub function resource_collision(mod: Module, idx: i32): string {
         if (ed.name == name) { return "enum"; }
     }
     for al in mod.aliases {
-        if (al.name == name) { return "enum"; }
+        if (al.name == name && union_alias_errors(mod, al).len() == 0) { return "enum"; }
     }
     return "";
 }

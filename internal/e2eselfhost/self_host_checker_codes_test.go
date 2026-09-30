@@ -2516,6 +2516,12 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"resource-beside-an-enum", "@import(\"wasi:io/poll@0.2.0\", \"pollable\")\nresource Pollable;\nenum Pollable { A, B }\nfunction main(): i32 { var p: Pollable = Pollable.A; return 0; }\n", []string{"E006"}},
 		{"resource-beside-a-generic-struct", "@import(\"local:test/res@0.1.0\", \"box\")\nresource Box;\nstruct Box[T] { v: T }\nfunction main(): i32 { var b: Box[i32] = Box { v: 1 }; return b.v; }\n", []string{"E006"}},
 		{"resource-beside-a-union-alias", "struct A { v: i32 }\nstruct B { w: i32 }\ntype X = A | B;\n@import(\"local:test/res@0.1.0\", \"x\")\nresource X;\nfunction main(): i32 { var x: X = A { v: 1 }; return 0; }\n", []string{"E006"}},
+		// A union whose members are not all distinct non-generic structs is E016
+		// and never becomes an enum, so a resource may take its name.
+		{"union-over-enums", "enum A { P, Q }\nenum B { R, T }\ntype X = A | B;\nfunction main(): i32 { return 0; }\n", []string{"E016"}},
+		{"union-duplicate-member", "struct A { v: i32 }\ntype X = A | A;\nfunction main(): i32 { return 0; }\n", []string{"E016"}},
+		{"union-generic-member-without-arguments", "struct Box[T] { v: T }\nstruct B { w: i32 }\ntype X = Box | B;\nfunction main(): i32 { return 0; }\n", []string{"E016"}},
+		{"resource-beside-a-union-over-enums", "enum A { P, Q }\nenum B { R, T }\ntype X = A | B;\n@import(\"local:test/res@0.1.0\", \"x\")\nresource X;\nfunction main(): i32 { return 0; }\n", []string{"E016"}},
 		// A built-in struct or enum name is taken before any resource.
 		{"resource-named-like-builtin-reader", "@import(\"local:test/res@0.1.0\", \"reader\")\nresource Reader;\nfunction f(r: Reader): i32 { return r.fd; }\nfunction main(): i32 { return 0; }\n", []string{"E006"}},
 		{"resource-named-like-builtin-cell", "@import(\"local:test/res@0.1.0\", \"cell\")\nresource Cell;\nfunction main(): i32 { return 0; }\n", []string{"E006"}},
