@@ -86,7 +86,7 @@ function main(): i32 {
 		// helpers in the SAME module — exercises the per-function dispatch.
 		{"arr-index", "function main(): i32 { var a = [10, 20, 30]; return a[0] + a[2]; }", 40},
 		{"arr-loop-sum", "function main(): i32 { var a = [5, 10, 15, 20, 25]; var i = 0; var s = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } return s; }", 75},
-		{"arr-set", "function main(): i32 { var a = [0, 0, 0]; a[1] = 99; return a[0] + a[1] + a[2]; }", 99},
+		{"arr-set", "function main(): i32 { var a = [0, 0, 0]; a = a.with(1, 99); return a[0] + a[1] + a[2]; }", 99},
 		// Scientific-notation f64 literal (#4342): the literal's SOURCE TEXT
 		// is carried by the IR (op_const_f64_text) into `f64.const 1e3` in the WAT, so
 		// watbin's parse_f64 must honour the exponent — the pre-fix parser
