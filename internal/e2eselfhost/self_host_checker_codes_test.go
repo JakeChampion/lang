@@ -1053,6 +1053,14 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"arr-elem-return-bad", "struct P { x: i32 }\nfunction f(): P[] { return [P { x: 1 }, 5]; }\nfunction main(): i32 { return 0; }\n", []string{"E034"}},
 		{"arr-elem-return-ok", "struct P { x: i32 }\nstruct Q { y: i32 }\ntype U = P | Q;\nfunction f(): U[] { return [P { x: 1 }, Q { y: 2 }]; }\nfunction main(): i32 { return 0; }\n", nil},
 		{"arr-elem-arg-bad", "struct P { x: i32 }\nfunction f(a: P[]): i32 { return 0; }\nfunction main(): i32 { return f([P { x: 1 }, 5]); }\n", []string{"E034"}},
+		// A float suffix names the literal's type outright (#10757): an f32
+		// literal sits beside an f32 value, and against an f64 it is E034 / E003.
+		{"f32-suffix-beside-f32-value", "function main(): i32 { var p: f32 = 1.0f32; var a: f32[] = [p, 1.5f32]; return a.len(); }\n", nil},
+		{"f32-suffix-before-f32-value", "function main(): i32 { var p: f32 = 1.0f32; var a: f32[] = [1.5f32, p]; return a.len(); }\n", nil},
+		{"f32-suffix-beside-f64-value", "function main(): i32 { var p: f64 = 1.0; var a: f64[] = [p, 1.5f32]; return a.len(); }\n", []string{"E034"}},
+		{"f32-suffix-into-f64", "function main(): i32 { var x: f64 = 1.5f32; return 0; }\n", []string{"E003"}},
+		{"f64-suffix-into-f32", "function main(): i32 { var x: f32 = 1.5f64; return 0; }\n", []string{"E003"}},
+		{"unsuffixed-float-adapts", "function main(): i32 { var x: f32 = 1.5; var y: f64 = 2.5; return 0; }\n", nil},
 		{"arr-elem-assign-bad", "struct P { x: i32 }\nfunction main(): i32 { var a: P[] = [P { x: 1 }]; a = [P { x: 1 }, 5]; return 0; }\n", []string{"E034"}},
 		// E034 at a struct-literal field of composite-array type: the field
 		// value's elements are checked against the field's element type (plain

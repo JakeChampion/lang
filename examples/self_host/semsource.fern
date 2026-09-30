@@ -1046,9 +1046,12 @@ function operand_type(t: typeinfo.Type): boolean { return ssasem.is_integer(t) |
 // since the checker types the tree alone at the default width. Otherwise an
 // arithmetic result is the width the checker's type for the whole expression
 // names; a comparison's is not, so it comes from whichever operand names one.
+// A float literal tree (`0.0 - 1.0`) is read at the destination's float width
+// the same way.
 function operand_width(e: ast.Expr, b: ast.ExprBinary, s: State, expected: typeinfo.Type): typeinfo.Type {
     if (ssasem.checked_arith(b.op)) { expected = option_payload(expected); }
     if (parser.int_literal_tree(e) && ssasem.is_integer(expected)) { return expected; }
+    if (parser.float_literal_tree(e) && ssasem.is_float(expected)) { return expected; }
     var addr: typeinfo.Type = address_width(b, s);
     if (ssasem.is_usize(addr)) { return addr; }
     var whole: typeinfo.Type = checked(e, s);

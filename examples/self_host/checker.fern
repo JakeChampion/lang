@@ -4925,6 +4925,14 @@ function check_number_expr(n: ast.ExprNumber, s: Scope): typeinfo.Type {
   if (parser.is_unit_literal(n)) {
     return t_void();
   }
+  // A float SUFFIX names the type outright, as an integer one does below;
+  // only an unsuffixed float adapts to its context.
+  if (n.is_float && n.suffix == "f32") {
+    return t_f32();
+  }
+  if (n.is_float && n.suffix == "f64") {
+    return typeinfo.TypeFloat { width: 64, polymorphic: false };
+  }
   if (n.is_float) {
     return typeinfo.TypeFloat { width: 64, polymorphic: true };
   }
