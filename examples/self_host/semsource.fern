@@ -2467,6 +2467,9 @@ function widen(v: Value, expected: typeinfo.Type): Value {
     var s: State = v.s;
     if (semtypes.equal(s.values[v.id], expected)) { return v; }
     if (ssasem.is_view(expected) && ssasem.is_string(s.values[v.id])) { return define(s, ssasem.str_as(), [v.id], 0, "", expected); }
+    // An owned string[] lends to a str[] destination as one string lends to a
+    // str: the same retag, over the array (`var gs: str[] = s.graphemes()`).
+    if (ssasem.is_view(element_type(expected)) && ssasem.is_string_array(s.values[v.id])) { return define(s, ssasem.str_as(), [v.id], 0, "", expected); }
     if (ssasem.is_dyn(expected) && (struct_name(s.values[v.id]) != "" || union_name(s.values[v.id]) != "")) {
         return define(s, ssasem.dyn_up(), [v.id], 0, "", expected);
     }

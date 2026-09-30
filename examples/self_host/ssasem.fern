@@ -346,6 +346,13 @@ pub function is_view(t: typeinfo.Type): boolean {
 // operator — is blind to which box holds them.
 pub function is_text(t: typeinfo.Type): boolean { return is_string(t) || is_view(t); }
 
+// An array of strings or of views: `string[]` retags as `str[]` element for
+// element, since each element is one box either way.
+pub function is_text_array(t: typeinfo.Type): boolean {
+    if let typeinfo.TypeArray(a) = t { return !a.view && is_text(a.elem); }
+    return false;
+}
+
 // A unicode scalar. Every integer predicate here excludes it, so without a key
 // of its own it spells what the fall-through leaf does.
 pub function is_char(t: typeinfo.Type): boolean {
@@ -861,15 +868,17 @@ function narrowing_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string
     return "";
 }
 
-// A retag between the two string types hands back the same box, so like a
-// widening it borrows its operand. Owned to view is a borrow of the source's
-// bytes anywhere a view is declared; view to owned is a borrow the producer
-// hands only to a borrowed parameter, which this verifier cannot see, so its
-// rule is the type pair alone.
+// A retag between the two string types, or between arrays of them, hands back
+// the same box, so like a widening it borrows its operand. Owned to view is a
+// borrow of the source's bytes anywhere a view is declared; view to owned is a
+// borrow the producer hands only to a borrowed parameter, which this verifier
+// cannot see, so its rule is the type pair alone.
 function retag_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     if (ins.args.len() != 1) { return "string retag arity"; }
     var from: typeinfo.Type = f.values[ins.args[0]];
-    if (!is_text(from) || !is_text(result) || semtypes.equal(from, result)) { return "string retag type"; }
+    var texts: boolean = is_text(from) && is_text(result);
+    var arrays: boolean = is_text_array(from) && is_text_array(result);
+    if ((!texts && !arrays) || semtypes.equal(from, result)) { return "string retag type"; }
     return "";
 }
 
