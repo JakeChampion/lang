@@ -96,6 +96,17 @@ graph = ssa.SFunc { name: "dies", nparams: 2, nvals: 4, entry: 7, takes_env: fal
 ] };
 `
 
+// `g(xs[i], xs)` with `xs` dead after the call: the element read is lent to
+// the call and borrows from `xs`, so `xs` is retained into the counted slot
+// and dropped after the call rather than moved in (#10832).
+const unitLentOwner = `
+calls = [contract("g", [st, sa], [2, 3], sa)];
+params = [sa, i32t]; types = [sa, i32t, st, sa]; result = sa; modes = [3, 1];
+graph = ssa.SFunc { name: "lent", nparams: 2, nvals: 4, entry: 7, takes_env: false, blocks: [
+    ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1), inst(ssasem.array_get(), 2, [0, 1], 0), call_inst(3, "g", [2, 0])], term: ret(3) }
+] };
+`
+
 type unitCase struct{ name, setup, check, mutate, want string }
 
 func unitCases() []unitCase {
@@ -160,6 +171,11 @@ if (!supply(second, 0, 0, 1, ssaunits.retain_unit()) || !drops(second, [])) { re
 		{"changed-call-contract", unitCall, "", `f = ssasem.Func { ...f, calls: [contract("g", [sa, sa], [2, 2], sa)] };`, "unit supply arity"},
 		{"call-contract-mode", unitCall, "", `f = ssasem.Func { ...f, calls: [contract("g", [sa, sa], [1, 3], sa)] };`, "reference parameter mode"},
 		{"dropped-call-contract", unitCall, "", `f = ssasem.Func { ...f, calls: [] };`, "missing call contract"},
+		{"call-lent-operand-owner", unitLentOwner, `
+var c = find(p, 7, 3, 0 - 1);
+if (c.supplies.len() != 1 || !supply(c, 0, 0, 1, ssaunits.retain_unit()) || !drops(c, [0])) { return 56; }
+`, "", ""},
+		{"call-moves-lent-owner", unitLentOwner, "", `var c = find(p, 7, 3, 0 - 1); var a = c.supplies[0]; p = replace(p, ssaunits.Step { ...c, supplies: [ssaunits.Supply { ...a, mode: 2 }], drops: [] });`, "a lent call operand borrows from a unit moved into the call"},
 		{"held-element", unitHeld, `
 if (!p.held[3] || p.held[4]) { return 35; }
 var w = find(p, 7, 4, 0 - 1);
