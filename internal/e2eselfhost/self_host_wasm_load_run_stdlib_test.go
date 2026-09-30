@@ -4,7 +4,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/e2eharness"
 )
 
 // wasmLoadRunStdlibCases import the standard library, so they compile through
@@ -247,14 +250,14 @@ func newWasmStdlibLoader(t *testing.T) *wasmStdlibLoader {
 	return &wasmStdlibLoader{runner: runner, bin: buildSelfHostBin(t, gcc, dir, "asm_load_run.fern", "asm_load_run"), root: root}
 }
 
-// emit compiles src and returns the WAT.
-func (l *wasmStdlibLoader) emit(t *testing.T, src string) []byte {
+// emit compiles src and returns the WAT; extra flags follow the target.
+func (l *wasmStdlibLoader) emit(t *testing.T, src string, extra ...string) []byte {
 	t.Helper()
 	mainPath := filepath.Join(t.TempDir(), "main.fern")
 	if err := os.WriteFile(mainPath, []byte(src), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	return runDriverFile(t, l.runner, l.bin, mainPath, l.root, "-target", "wasm32-wasi")
+	return runDriverFile(t, l.runner, l.bin, mainPath, append([]string{l.root, "-target", "wasm32-wasi"}, extra...)...)
 }
 
 // TestSelfHostWasmLoadRunStdlib compiles each case with asm_load_run -target
@@ -281,5 +284,25 @@ func TestSelfHostWasmLoadRunStdlib(t *testing.T) {
 				t.Errorf("stdout %q, want %q\n--- source ---\n%s", out, tc.stdout, tc.src)
 			}
 		})
+	}
+}
+
+// TestSelfHostAsmLoadRunEmitForm pins asm_load_run's `-emit component-core`:
+// the core it emits is the component-mode core (an _lang_run export, no
+// preview1 imports), and the form is refused off wasm32-wasi.
+func TestSelfHostAsmLoadRunEmitForm(t *testing.T) {
+	l := newWasmStdlibLoader(t)
+	wat := string(l.emit(t, "function main(): i32 { write(\"hi\"); return 0; }", "-emit", "component-core"))
+	if !strings.Contains(wat, `(export "_lang_run"`) || strings.Contains(wat, "wasi_snapshot_preview1") {
+		t.Errorf("-emit component-core did not emit a component core:\n%s", wat)
+	}
+	mainPath := filepath.Join(t.TempDir(), "main.fern")
+	if err := os.WriteFile(mainPath, []byte("function main(): i32 { return 0; }"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := e2eharness.RunX86_64Bin(l.runner, l.bin, mainPath, l.root, "-target", "x86-64-linux", "-emit", "component-core")
+	out, _ := cmd.CombinedOutput()
+	if code := cmd.ProcessState.ExitCode(); code != 2 || !strings.Contains(string(out), "-emit component-core is not an output form for x86-64-linux") {
+		t.Errorf("-emit component-core on x86-64-linux: exit %d, want 2 with the refusal\n%s", code, out)
 	}
 }
