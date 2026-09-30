@@ -18,12 +18,15 @@
 // log back into `MockCall` values; the mock itself stays a value you can
 // pass around.
 //
-// What a mocked capability RETURNS is fixed today: `now_ms` and
-// `elapsed_ns` answer 0, `env` answers None, `random_i32` answers 0, `log`
-// discards the line, and `fetch` answers -1 — the value a real fetch gives
-// for a host it could not reach, so a handler that already handles a failed
-// fetch handles a mocked one. Canned per-call responses are the next slice;
-// they want a second cell and a lookup, not a different shape.
+// What a mocked capability RETURNS is what the test canned for it, or a
+// fixed value: `env_set`, `now_set`, `elapsed_set`, `random_set` and
+// `fetch_set` record an answer the bag gives from then on; otherwise
+// `now_ms` and `elapsed_ns` answer 0, `env` answers None, `random_i32`
+// answers 0, `log` discards the line, and `fetch` answers -1 — the value a
+// real fetch gives for a host it could not reach, so a handler that
+// already handles a failed fetch handles a mocked one. A canned answer is
+// a row of the same cell the log lives in, which `calls()` skips and
+// `reset()` keeps.
 
 import "std/string";
 import "std/platform";
@@ -47,7 +50,36 @@ pub function (m: MockPlatform) record(name: string, args: string): void {
     m.as_platform().record(name, args);
 }
 
-// `(m: MockPlatform).calls()` — the recorded calls, in order.
+// `(m: MockPlatform).env_set(name, value)` — `plat.env(name)` answers
+// `Some(value)` from now on.
+pub function (m: MockPlatform) env_set(name: string, value: string): void {
+    m.as_platform().can("env " + name, value);
+}
+
+// `(m: MockPlatform).now_set(ms)` — `plat.now_ms()` answers `ms`.
+pub function (m: MockPlatform) now_set(ms: i64): void {
+    m.as_platform().can("now_ms", ms.to_string());
+}
+
+// `(m: MockPlatform).elapsed_set(ns)` — `plat.elapsed_ns()` answers `ns`.
+pub function (m: MockPlatform) elapsed_set(ns: i64): void {
+    m.as_platform().can("elapsed_ns", ns.to_string());
+}
+
+// `(m: MockPlatform).random_set(v)` — `plat.random_i32()` answers `v`.
+pub function (m: MockPlatform) random_set(v: i32): void {
+    m.as_platform().can("random_i32", v.to_string());
+}
+
+// `(m: MockPlatform).fetch_set(host, port, path, status)` —
+// `plat.fetch(host, port, path)` answers `status` for that host, port and
+// path; any other fetch still answers -1.
+pub function (m: MockPlatform) fetch_set(host: string, port: i32, path: string, status: i32): void {
+    m.as_platform().can("fetch " + host + ":" + port.to_string() + " " + path, status.to_string());
+}
+
+// `(m: MockPlatform).calls()` — the recorded calls, in order; the canned
+// answers sharing the cell are not calls.
 pub function (m: MockPlatform) calls(): MockCall[] {
     var out: MockCall[] = [];
     var log: string = m.sink.get();
@@ -62,6 +94,7 @@ pub function (m: MockPlatform) calls(): MockCall[] {
             out = out.append(MockCall { name: line, args: "" });
             continue;
         }
+        if (slice_unchecked(line, 0, tab) + "" == "canned") { continue; }
         out = out.append(MockCall {
             name: slice_unchecked(line, 0, tab) + "",
             args: slice_unchecked(line, tab + 1, line.len()) + ""
@@ -75,11 +108,15 @@ pub function (m: MockPlatform) call_count(): i32 {
     return m.calls().len();
 }
 
-// `(m: MockPlatform).reset()` — drop the log. Mutates through the shared
-// cell, so a bag already handed to a handler keeps recording into the
-// now-empty log rather than into a stale one.
+// `(m: MockPlatform).reset()` — drop the log, keeping the canned answers.
+// Mutates through the shared cell, so a bag already handed to a handler
+// keeps recording into the now-empty log rather than into a stale one.
 pub function (m: MockPlatform) reset(): void {
-    m.sink.set("");
+    var kept: string = "";
+    for line in m.sink.get().split("\n") {
+        if (line.len() > 7 && slice_unchecked(line, 0, 7) + "" == "canned\t") { kept = kept + line + "\n"; }
+    }
+    m.sink.set(kept);
 }
 
 // `(m: MockPlatform).has_call(name)` — did this effect happen at all?

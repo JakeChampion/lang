@@ -1037,6 +1037,19 @@ serializer.
   `MockPlatform`'s bag and `std/test`'s `assert_status` /
   `assert_header` / `assert_no_header` / `assert_body`, a handler is
   tested without a socket (`examples/tests/http_request_builder_test.fern`).
+- **Errors a handler answers with:** a handler's helpers fail with `?`
+  over `Result[T, E]` and `respond(result)` turns a
+  `Result[HttpResponse, E]` into the reply: `Ok(r)` is `r`, `Err(e)` is
+  `e.to_response()`, for any `E` implementing `ToResponse`
+  (`function to_response(self): HttpResponse`). `problem(status, title,
+  detail)` is the RFC 9457 problem-details response
+  (`application/problem+json`; a title of `""` reads as the status text,
+  a detail of `""` is left out); `HttpError { status, title, detail }`
+  carries one as an error value and `fail(status, detail)` builds it
+  titled with the status text. `json.JsonError` answers 400 titled
+  "Malformed JSON" with where the text broke, and a `string` error
+  answers 500 with the status text alone, since an internal message is
+  for the log rather than the peer (`examples/tests/http_respond_test.fern`).
 - **Cookies (RFC 6265):** `(req).cookie(name): Option[string]`;
   `SetCookie` built via `cookie_new(name, value)` (hardened
   defaults: `Path=/`, `HttpOnly`, `SameSite=Lax`) or
@@ -1173,6 +1186,12 @@ The socket controls are typed faces over the descriptor builtins
   `SO_NWRITE` on Darwin), as `Result[i32, NetError]`: how far the peer has
   got with what was written, which is what a minimum data rate on a
   response is judged by.
+- `peer_key(sock)` — the peer's address as one 32-bit key, or `None` for
+  a socket with no peer: an IPv4 address packed as `tcp_connect` takes
+  it (the first octet in the low byte), a v4-mapped IPv6 address its IPv4
+  one, any other IPv6 address the two words of its first eight bytes
+  XORed, so the peers of one /64 share a key. What
+  `ServeOptions.max_connections_per_ip` counts by.
 - `shutdown(sock, how)` — `Shutdown.Read`, `Write` or `Both`; a write-side
   shutdown is the end of stream the peer's `tcp_recv` reads as EOF.
 
@@ -1245,9 +1264,9 @@ loop and `std/fetch` the client.
 - `tcp_serve_opts(port, opts, handler)` — `tcp_serve` with
   `ServeOptions { backlog, reuse_port, recv_deadline, min_data_rate,
   data_rate_grace, keep_alive_idle, keep_alive_requests,
-  max_connections }` (`serve_options()` is 128, one listener per port,
-  the 10 s deadline, 240 bytes per second after 5 s, 130 s, 1000 and
-  1024): the accept queue
+  max_connections, max_connections_per_ip }` (`serve_options()` is 128,
+  one listener per port, the 10 s deadline, 240 bytes per second after
+  5 s, 130 s, 1000, 1024 and 100): the accept queue
   depth, port sharing between listeners (`SO_REUSEPORT`, ignored on
   wasm), the read deadline, the least rate a request body must keep
   arriving at once its header block is in and a response must keep
@@ -1261,7 +1280,13 @@ loop and `std/fetch` the client.
   its last response says `Connection: close` (a value below 1 behaves as
   1), how many connections the loop holds open at once (at the cap the
   listener is not read, so further connections wait in its accept queue,
-  `backlog` deep, the kernel refusing past it, until one closes), and
+  `backlog` deep, the kernel refusing past it, until one closes), how
+  many of them one client may hold (`max_connections_per_ip`, counted by
+  the peer's address key, `net.peer_key`, and by each worker's loop
+  alone: a connection past it is closed as it is accepted, without a
+  response; on by default at 100, which clients behind one NAT or one
+  reverse proxy share, so a server behind either sets it to 0 for no
+  cap), and
   how many workers `tcp_serve_supervised_opts` forks (`workers`; 0, the
   default, is one per processing unit the process may use, what
   `cpu_count()` answers), and the shutdown SIGTERM starts: the loop keeps
@@ -1273,6 +1298,14 @@ loop and `std/fetch` the client.
   connection is gone and 1 when it cut one off, so `main` exits with it.
   A listener the process was started with (`LISTEN_FDS` at least 1,
   descriptor 3) is served instead of a fresh one.
+- `tcp_serve_shutdown(port, opts, handler, shutdown)` and
+  `tcp_serve_with_shutdown(port, opts, init, handler, shutdown)` —
+  `tcp_serve_opts` and `tcp_serve_with_opts` with a hook the loop calls
+  once it has stopped, before returning: `shutdown(reason)`, or
+  `shutdown(reason, state)` with the state as the last request left it,
+  where a counter is flushed or a store closed. The reason is "sigterm"
+  when every request in flight was answered after the signal and
+  "drain-deadline" when one was cut off.
 - `tcp_serve_deadline(port, handler, recv_deadline)` —
   `tcp_serve` with an explicit per-request read deadline; a
   client that hasn't delivered a complete request in time is
@@ -1304,7 +1337,17 @@ loop and `std/fetch` the client.
   `tcp_serve_with` over `tcp_serve` when the program defines
   `init(): S` alongside a state-taking `handle`
   (docs/PLATFORM-RESEARCH.md Rec §3); mismatching the two is
-  E075.
+  E075. A top-level `shutdown(reason)`, or `shutdown(reason, state)`
+  beside a state-threading handler, sends the synthesis to
+  `tcp_serve_shutdown` / `tcp_serve_with_shutdown` with `serve_options()`
+  and the hook; a hook whose state parameter disagrees with the
+  handler's is E075 too. A `handle` declared as `Result[HttpResponse, E]` (or
+  `(S, Result[HttpResponse, E])` with state), so its body fails with
+  `?`, is accepted by both compilers: they rename it
+  `__fern_handle_result` and synthesise the plain `handle` calling
+  `http.respond` (or `respond_with`) over it, so every consumer, the
+  synthesised main and the wasi-http entry included, keeps the
+  HttpResponse-shaped entry.
 
 The raw socket primitives `tcp_listen` / `tcp_accept` /
 `tcp_local_port` / `tcp_recv` / `tcp_send` / `tcp_close` are
@@ -1492,10 +1535,20 @@ var resp: HttpResponse = handle(req, m.as_platform());
 assert_eq(m.calls()[0].name, "log");
 ```
 
-Mocked capabilities answer a fixed value — 0 for `now_ms` / `elapsed_ns` /
-`random_i32`, `None` for `env`, -1 for `fetch`, and `log` swallows the line.
+Mocked capabilities answer what the test canned, else a fixed value — 0
+for `now_ms` / `elapsed_ns` / `random_i32`, `None` for `env`, -1 for
+`fetch`, and `log` swallows the line.
 
 - `mock_platform_new()`; `(m).as_platform()`.
+- `(m).env_set(name, value)`, `(m).now_set(ms)`, `(m).elapsed_set(ns)`,
+  `(m).random_set(v)`, `(m).fetch_set(host, port, path, status)` — the
+  answer the bag gives from then on (the last one canned wins; a fetch of
+  another host, port or path still answers -1). A canned answer is a row
+  of the same cell the log lives in (`canned`, tab, key, tab, value, the
+  value escaped), which `calls()` skips and `reset()` keeps; the bag's
+  own `(plat).can(key, value)` / `(plat).canned(key)` are what the
+  setters and the capability methods use
+  (`examples/tests/mock_platform_canned_test.fern`).
 - `(m).record(name, args)`, `(m).reset()` — mutate through the shared cell,
   so a bag already handed to a handler writes to the same log.
 - `(m).calls()`, `(m).call_count()`, `(m).has_call(name)`,

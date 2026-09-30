@@ -109,7 +109,10 @@ pub function tcp_serve(port: i32, handler: (HttpRequest, Platform) => HttpRespon
 // request, how many requests one connection may carry before its
 // response says `Connection: close`, how many connections the loop
 // holds open at once (past it, the listener is not read and connections
-// wait in its accept queue until one closes), how many workers
+// wait in its accept queue until one closes), how many of them one
+// client may hold (by the peer's address key, `net.peer_key`, counted by
+// this loop alone; a connection past it is closed as it is accepted; 0
+// for no cap), how many workers
 // `tcp_serve_supervised_opts` forks, each running its own loop over the
 // one listener (below 1: one per processing unit the process may use,
 // what `cpu_count()` answers), and the shutdown a
@@ -127,6 +130,7 @@ pub struct ServeOptions {
     keep_alive_idle: Duration,
     keep_alive_requests: i32,
     max_connections: i32,
+    max_connections_per_ip: i32,
     workers: i32,
     shutdown_grace: Duration,
     readiness_path: string,
@@ -135,19 +139,28 @@ pub struct ServeOptions {
 
 // serve_options() — what `tcp_serve` uses: a backlog of 128, the port held
 // by one listener, the 10 s read deadline, a 130 s keep-alive idle span,
-// 1000 requests per connection and a worker per processing unit.
+// 1000 requests per connection, 1024 connections open and 100 of them per
+// client, and a worker per processing unit.
 pub function serve_options(): ServeOptions {
-    return ServeOptions { backlog: 128, reuse_port: false, recv_deadline: __recv_deadline_default(), min_data_rate: 240, data_rate_grace: time.duration_seconds(5 as i64), keep_alive_idle: time.duration_seconds(130 as i64), keep_alive_requests: 1000, max_connections: 1024, workers: 0, shutdown_grace: time.duration_seconds(2 as i64), readiness_path: "", drain_deadline: time.duration_seconds(30 as i64) };
+    return ServeOptions { backlog: 128, reuse_port: false, recv_deadline: __recv_deadline_default(), min_data_rate: 240, data_rate_grace: time.duration_seconds(5 as i64), keep_alive_idle: time.duration_seconds(130 as i64), keep_alive_requests: 1000, max_connections: 1024, max_connections_per_ip: 100, workers: 0, shutdown_grace: time.duration_seconds(2 as i64), readiness_path: "", drain_deadline: time.duration_seconds(30 as i64) };
 }
 
 // tcp_serve_opts(port, opts, handler) — `tcp_serve` with the listener and
 // the read deadline chosen by the caller.
 pub function tcp_serve_opts(port: i32, opts: ServeOptions, handler: (HttpRequest, Platform) => HttpResponse): i32 {
+    return tcp_serve_shutdown(port, opts, handler, (reason: string): void => {});
+}
+
+// tcp_serve_shutdown(port, opts, handler, shutdown) — `tcp_serve_opts`
+// with a hook the loop calls once it has stopped, before returning: with
+// "sigterm" when every request in flight was answered after SIGTERM, or
+// "drain-deadline" when one was cut off at the drain deadline.
+pub function tcp_serve_shutdown(port: i32, opts: ServeOptions, handler: (HttpRequest, Platform) => HttpResponse, shutdown: (string) => void): i32 {
     var listener: i32 = __serve_listener(port, opts);
     if (listener < 0) {
         return listener;
     }
-    return __serve_loop(listener, handler, opts);
+    return __serve_loop(listener, handler, opts, shutdown);
 }
 
 // __serve_listener(port, opts) — the listener a serve loop runs over: the
@@ -222,11 +235,20 @@ pub function tcp_serve_with[S](port: i32, init: S, handler: (S, HttpRequest, Pla
 // tcp_serve_with_opts(port, opts, init, handler) — `tcp_serve_with` with
 // the listener and the read deadline chosen by the caller.
 pub function tcp_serve_with_opts[S](port: i32, opts: ServeOptions, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse)): i32 {
+    return tcp_serve_with_shutdown(port, opts, init, handler, (reason: string, state: S): void => {});
+}
+
+// tcp_serve_with_shutdown(port, opts, init, handler, shutdown) —
+// `tcp_serve_with_opts` with a hook the loop calls once it has stopped,
+// before returning, with the reason `tcp_serve_shutdown` gives and the
+// state as the last request left it: where a counter is flushed or a
+// store is closed.
+pub function tcp_serve_with_shutdown[S](port: i32, opts: ServeOptions, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse), shutdown: (string, S) => void): i32 {
     var listener: i32 = __serve_listener(port, opts);
     if (listener < 0) {
         return listener;
     }
-    return __serve_loop_with(listener, init, handler, opts);
+    return __serve_loop_with(listener, init, handler, opts, shutdown);
 }
 
 // tcp_serve_with_deadline(port, init, handler, recv_deadline) —
@@ -324,8 +346,10 @@ function __recv_scratch(): u8[] {
 // was found complete (-1 while it is being read or nothing is) and how
 // many bytes the buffer held then, so the bytes since are the body's;
 // or, once a response is being drained, the time of its first short
-// write and how many bytes were pending then.
-struct __Conns { fds: i32[], bufs: u8[][], offs: i32[], pending: string[], deadlines: i64[], keep: boolean[], served: i32[], backlog: boolean[], continued: boolean[], rate_since: i64[], rate_base: i32[] }
+// write and how many bytes were pending then; and the peer's address key
+// (`tcp_socket_ctl` op 7; 0 when the host will not say), by which the
+// per-client cap counts.
+struct __Conns { fds: i32[], bufs: u8[][], offs: i32[], pending: string[], deadlines: i64[], keep: boolean[], served: i32[], backlog: boolean[], continued: boolean[], rate_since: i64[], rate_base: i32[], peers: i32[] }
 
 // __Clock — the `Date` every response carries (RFC 9110 §6.6.1),
 // formatted once per second: the wall-clock second it was formatted for,
@@ -360,9 +384,18 @@ function __conns_index(c: __Conns, fd: i32): i32 {
     return -1;
 }
 
-function __conns_add(c: __Conns, fd: i32, deadline: i64): __Conns {
+function __conns_add(c: __Conns, fd: i32, deadline: i64, peer: i32): __Conns {
     var empty: u8[] = [];
-    return __Conns { fds: c.fds.append(fd), bufs: c.bufs.append(empty), offs: c.offs.append(0), pending: c.pending.append(""), deadlines: c.deadlines.append(deadline), keep: c.keep.append(false), served: c.served.append(0), backlog: c.backlog.append(false), continued: c.continued.append(false), rate_since: c.rate_since.append(0 - (1 as i64)), rate_base: c.rate_base.append(0) };
+    return __Conns { fds: c.fds.append(fd), bufs: c.bufs.append(empty), offs: c.offs.append(0), pending: c.pending.append(""), deadlines: c.deadlines.append(deadline), keep: c.keep.append(false), served: c.served.append(0), backlog: c.backlog.append(false), continued: c.continued.append(false), rate_since: c.rate_since.append(0 - (1 as i64)), rate_base: c.rate_base.append(0), peers: c.peers.append(peer) };
+}
+
+// __conns_from_peer(c, peer) — how many open connections the peer holds.
+function __conns_from_peer(c: __Conns, peer: i32): i32 {
+    var n: i32 = 0;
+    for p in c.peers {
+        if (p == peer) { n = n + 1; }
+    }
+    return n;
 }
 
 function __conns_remove(c: __Conns, at: i32): __Conns {
@@ -377,6 +410,7 @@ function __conns_remove(c: __Conns, at: i32): __Conns {
     var continued: boolean[] = [];
     var rate_since: i64[] = [];
     var rate_base: i32[] = [];
+    var peers: i32[] = [];
     var i: i32 = 0;
     while (i < c.fds.len()) {
         if (i != at) {
@@ -391,10 +425,11 @@ function __conns_remove(c: __Conns, at: i32): __Conns {
             continued = continued.append(c.continued[i]);
             rate_since = rate_since.append(c.rate_since[i]);
             rate_base = rate_base.append(c.rate_base[i]);
+            peers = peers.append(c.peers[i]);
         }
         i = i + 1;
     }
-    return __Conns { fds: fds, bufs: bufs, offs: offs, pending: pending, deadlines: deadlines, keep: keep, served: served, backlog: backlog, continued: continued, rate_since: rate_since, rate_base: rate_base };
+    return __Conns { fds: fds, bufs: bufs, offs: offs, pending: pending, deadlines: deadlines, keep: keep, served: served, backlog: backlog, continued: continued, rate_since: rate_since, rate_base: rate_base, peers: peers };
 }
 
 // __conns_timeout(c, now) — the wait's timeout: the milliseconds until the
@@ -415,18 +450,27 @@ function __conns_timeout(c: __Conns, now: i64): i32 {
     return ms as i32;
 }
 
-// __serve_accept(drv, listener, c, deadline) — one accepted connection,
-// non-blocking and watched for reads; a refused watch closes it again.
+// __serve_accept(drv, listener, c, opts) — one accepted connection,
+// non-blocking and watched for reads; a refused watch closes it again,
+// and so does a peer already holding `max_connections_per_ip` of them.
 // wasm has no non-blocking mode to switch on and its reads never block.
-function __serve_accept[D: async.Driver](drv: D, listener: i32, c: __Conns, recv_deadline: Duration): __Conns {
+function __serve_accept[D: async.Driver](drv: D, listener: i32, c: __Conns, opts: ServeOptions): __Conns {
     var fd: i32 = tcp_accept(listener);
     if (fd < 0) { return c; }
+    var peer: i32 = 0;
+    if (opts.max_connections_per_ip > 0) {
+        peer = tcp_socket_ctl(fd, 7, 0);
+        if (peer != 0 && __conns_from_peer(c, peer) >= opts.max_connections_per_ip) {
+            tcp_close(fd);
+            return c;
+        }
+    }
     tcp_socket_ctl(fd, 3, 1);
     if (drv.watch(fd, 1) < 0) {
         tcp_close(fd);
         return c;
     }
-    return __conns_add(c, fd, monotonic_ns() + recv_deadline.as_nanos());
+    return __conns_add(c, fd, monotonic_ns() + opts.recv_deadline.as_nanos(), peer);
 }
 
 // __serve_close(drv, c, at) — the connection at `at` unwatched, closed
@@ -880,6 +924,14 @@ function __stop_code(stop: __Stop): i32 {
     return 0;
 }
 
+// __stop_reason(stop) — what a finished shutdown tells the program's
+// `shutdown` hook: "sigterm" when every request in flight was answered,
+// "drain-deadline" when one was cut off.
+function __stop_reason(stop: __Stop): string {
+    if (stop.aborted) { return "drain-deadline"; }
+    return "sigterm";
+}
+
 // __serve_not_ready(f, opts, stop) — whether the request is the
 // readiness probe of a loop that is stopping, to be answered 503 by the
 // loop itself so whoever routes to it stops.
@@ -944,7 +996,7 @@ function __host_platform(reactor: i32): Platform {
 // yet), except that a listener the reactor cannot watch returns its
 // -errno like a failed bind. `opts` bounds each connection's request
 // read (see `tcp_serve_deadline`) and its persistence.
-function __serve_loop(listener: i32, handler: (HttpRequest, Platform) => HttpResponse, opts: ServeOptions): i32 {
+function __serve_loop(listener: i32, handler: (HttpRequest, Platform) => HttpResponse, opts: ServeOptions, on_stop: (string) => void): i32 {
     var drv: async.RealDriver = async.real_driver();
     var watched: i32 = drv.watch(listener, __listener_interest(opts));
     if (watched < 0) { return watched; }
@@ -952,7 +1004,7 @@ function __serve_loop(listener: i32, handler: (HttpRequest, Platform) => HttpRes
     var stop: __Stop = __stop_none();
     drv.watch_signal(15);
     var plat: Platform = __host_platform(drv.handle());
-    var conns: __Conns = __Conns { fds: [], bufs: [], offs: [], pending: [], deadlines: [], keep: [], served: [], backlog: [], continued: [], rate_since: [], rate_base: [] };
+    var conns: __Conns = __Conns { fds: [], bufs: [], offs: [], pending: [], deadlines: [], keep: [], served: [], backlog: [], continued: [], rate_since: [], rate_base: [], peers: [] };
     var scratch: u8[] = __recv_scratch();
     var clk: __Clock = __Clock { sec: 0 as i64, date: "" };
     while (true) {
@@ -967,7 +1019,7 @@ function __serve_loop(listener: i32, handler: (HttpRequest, Platform) => HttpRes
                 continue;
             }
             if (fd == listener) {
-                conns = __serve_accept(drv, listener, conns, opts.recv_deadline);
+                conns = __serve_accept(drv, listener, conns, opts);
                 continue;
             }
             var ev: (__Conns, i32, boolean) = __serve_event(drv, conns, fd, scratch, opts, clk);
@@ -1011,6 +1063,7 @@ function __serve_loop(listener: i32, handler: (HttpRequest, Platform) => HttpRes
         accepting = ended.2;
         if (ended.3) {
             drv.close();
+            on_stop(__stop_reason(stop));
             return __stop_code(stop);
         }
     }
@@ -1025,7 +1078,7 @@ function __serve_loop(listener: i32, handler: (HttpRequest, Platform) => HttpRes
 // value through the handler chain. The state lives in the loop frame,
 // so it is process-lifetime without any language-level global: each
 // request sees the value the previous one returned.
-function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse), opts: ServeOptions): i32 {
+function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse), opts: ServeOptions, on_stop: (string, S) => void): i32 {
     var st: S = init;
     var drv: async.RealDriver = async.real_driver();
     var watched: i32 = drv.watch(listener, __listener_interest(opts));
@@ -1034,7 +1087,7 @@ function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, 
     var stop: __Stop = __stop_none();
     drv.watch_signal(15);
     var plat: Platform = __host_platform(drv.handle());
-    var conns: __Conns = __Conns { fds: [], bufs: [], offs: [], pending: [], deadlines: [], keep: [], served: [], backlog: [], continued: [], rate_since: [], rate_base: [] };
+    var conns: __Conns = __Conns { fds: [], bufs: [], offs: [], pending: [], deadlines: [], keep: [], served: [], backlog: [], continued: [], rate_since: [], rate_base: [], peers: [] };
     var scratch: u8[] = __recv_scratch();
     var clk: __Clock = __Clock { sec: 0 as i64, date: "" };
     while (true) {
@@ -1049,7 +1102,7 @@ function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, 
                 continue;
             }
             if (fd == listener) {
-                conns = __serve_accept(drv, listener, conns, opts.recv_deadline);
+                conns = __serve_accept(drv, listener, conns, opts);
                 continue;
             }
             var ev: (__Conns, i32, boolean) = __serve_event(drv, conns, fd, scratch, opts, clk);
@@ -1094,6 +1147,7 @@ function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, 
         accepting = ended.2;
         if (ended.3) {
             drv.close();
+            on_stop(__stop_reason(stop), st);
             return __stop_code(stop);
         }
     }
@@ -1180,12 +1234,12 @@ function __supervisor_fork(drv: async.RealDriver, listener: i32, handler: (HttpR
         drv.unwatch_signal(17);
         drv.unwatch_signal(15);
         drv.close();
-        return (sup, __serve_loop(listener, handler, ServeOptions { ...opts, workers: 1 }));
+        return (sup, __serve_loop(listener, handler, ServeOptions { ...opts, workers: 1 }, (reason: string): void => {}));
     }
     if (pid < 0) { return (sup, pid); }
     if (pid == 0) {
         drv.close();
-        exit(__serve_loop(listener, handler, opts));
+        exit(__serve_loop(listener, handler, opts, (reason: string): void => {}));
         return (sup, 0);
     }
     return (__Supervisor { ...sup, pids: sup.pids.append(pid), spawned: sup.spawned.append(now_unix_ms()) }, 0 - 1);

@@ -297,7 +297,10 @@ listener handed in through `LISTEN_FDS` is served. The scenarios are
 `TestSelfHostServeInheritsListenFds`) drive the same servers compiled by
 the self-host compiler.
 `TestSupervisedServeWorkersServeSideBySide` pins two workers over one
-listener answering side by side and surviving one worker's death;
+listener answering side by side and surviving one worker's death, and
+`TestSupervisedServeHandlerStallsItsWorker` (with its self-host twin) the
+converse on one worker: a request behind /slow waits for it, the pin
+#9857's multiplexing has to turn;
 `TestSupervisedServeOneWorkerPerCPU` counts the default worker set
 against the processing units, and `TestSupervisedServeShutsDownAfterBurst`
 requires every one of four workers to exit on SIGTERM after a burst of
@@ -317,10 +320,22 @@ and a client-side check, so `TestServeWithThreadedStateX86_64`,
 `TestSupervisedServeSurvivesHandlerTrap` and
 `TestSupervisedServeCrashLoopGivesUp` each have a `TestSelfHost` twin
 driving the same server compiled by the self-host compiler
-(`internal/e2eselfhost/self_host_serve_test.go`). The one server test
-without a twin is `TestServeInitProvidedStateX86_64`: its program has no
-`main`, and the self-host compiler does not synthesise one from `init`
-and `handle` yet.
+(`internal/e2eselfhost/self_host_serve_test.go`).
+`TestServeInitProvidedStateX86_64` and its twin
+`TestSelfHostServeInitProvidedState`, with `TestSelfHostServeHandleOnly`,
+pin the `main` both compilers synthesise for a handler program that
+writes none (`flatten.with_handler_main` in the self-host, the checker
+in native): it serves on `PORT` and threads `init`'s state.
+`TestServeResultHandlerX86_64`, `TestServeStatefulResultHandlerX86_64`
+and their self-host twins pin the handler that answers a Result: the
+compilers wrap it so `?` fails into an RFC 9457 problem and the state
+survives the failure; `TestResultHandlerIsAdapted` (`internal/checker`)
+pins the rename and the wrapper's shape. `TestServeShutdownHookX86_64`
+and `TestSelfHostServeShutdownHook` pin the `shutdown(reason, state)`
+hook: after two requests and SIGTERM the hook reports "sigterm" and the
+count; `TestSynthesisedHandleMainWiresShutdown` (`internal/checker`) and
+`TestSelfHostHandlerStateX86_64` pin the wiring and the E075 pairing on
+both compilers.
 
 `TestHTTPCorpus` runs the request fixtures of llhttp and httparse and this
 repository's request-smuggling cases (`internal/e2e/testdata/http-corpus`,

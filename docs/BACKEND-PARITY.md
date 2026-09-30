@@ -169,10 +169,16 @@ where it cannot.
 op, arg)` (op 1 `TCP_NODELAY`, 2 `SO_KEEPALIVE`, 3 `O_NONBLOCK`, 4
 `shutdown(2)` with `arg` its how, 5 the result of a connect under way, 6
 the bytes queued to send that the peer has not acknowledged, `SIOCOUTQ`
-on Linux and `SO_NWRITE` on Darwin) are the socket controls of #9853;
+on Linux and `SO_NWRITE` on Darwin, 7 the peer's address as one 32-bit
+key: an IPv4 address packed as `tcp_connect` takes it, a v4-mapped IPv6
+address its IPv4 one, any other IPv6 address the two words of its first
+eight bytes XORed and never 0, and 0 for a socket with no peer, so a key
+is never mistaken for an error) are the socket controls of #9853;
 std/net wraps them. On wasm, ops 1, 3 and 6 answer `-ENOTSUP` (58 in the
 WASI numbering) because wasi:sockets 0.2 has neither a Nagle switch nor a
-blocking mode to turn off nor a reading of the send queue, and
+blocking mode to turn off nor a reading of the send queue (op 7 reads
+`remote-address`, whose 16-bit IPv6 groups the u16 lowering byte-swaps
+into the same words), and
 `reuse_port` is ignored: a port is one socket's there. Every other op and the backlog behave the same on every
 target. A wasi:sockets `result<_, error-code>` puts the error-code at byte
 1 (a handle, tuple or address payload puts it at 4, a u64 count at 8);
@@ -276,7 +282,7 @@ time there.
 | `tcp_listen`, `tcp_accept`, `tcp_local_port`, `tcp_close`, `tcp_pollable`, `tcp_recv`, `tcp_send` | Fern body | Fern body | wasi:sockets/tcp bodies (`wasi_tcp.go`, `wasm_ir.fern`); a "fd" is the 16-byte record | E066 | net package |
 | `tcp_connect` (packed IPv4) | Fern body | Fern body | boxes the address for `tcp_connect_with` | E066 | net package |
 | `tcp_listen_with`, `tcp_connect_with` (byte address) | Fern body | Fern body | `__fern_ip_flat` then start-bind or start-connect; a started connect is kind 4 | E066 | net package, `JoinHostPort`; a started connect is finished before answering |
-| `tcp_socket_ctl` | Fern body | Fern body | ops 2, 4, 5 through wasi:sockets; 1, 3 and 6 `-ENOTSUP`; every op `-ENOTSUP` on a datagram record | E066 | net package controls; op 3 makes `tcp_recv` and `tcp_send` one read(2) or write(2) on the descriptor, so a send answers what the kernel took or -EAGAIN; op 5 answers 0 at once; op 6 reads the host's send queue |
+| `tcp_socket_ctl` | Fern body; op 7 answers 0 on a datagram socket | Fern body; op 7 answers 0 on a datagram socket | ops 2, 4, 5 and 7 through wasi:sockets; 1, 3 and 6 `-ENOTSUP`; every op `-ENOTSUP` on a datagram record, op 7 0 | E066 | net package controls; op 3 makes `tcp_recv` and `tcp_send` one read(2) or write(2) on the descriptor, so a send answers what the kernel took or -EAGAIN; op 5 answers 0 at once; op 6 reads the host's send queue; op 7 keys `RemoteAddr`, 0 on a datagram socket |
 | `tcp_recv_into` | Fern body, `read(2)` | Fern body | non-blocking read on the input stream, `-EAGAIN` when empty | E066 | a read through the descriptor |
 | `udp_send` | Fern body, dotted-quad parse | Fern body | `udp_bind` then `udp_sendto` then close | E066 | net package |
 | `udp_bind`, `udp_connect`, `udp_sendto`, `udp_recvfrom` (byte address) | Fern body | Fern body; `EISCONN` for a named address on a connected socket | wasi:sockets/udp bodies (`wasi_udp.go`, `wasm_ir.fern`); `recvfrom` blocks on the incoming pollable | E066 | raw descriptors, the kernel's errnos |

@@ -283,7 +283,7 @@ function prune_to_reachable(mod: parser.Module, reach: string[]): parser.Module 
 // rescue and dropped straight to the (since-deleted) AST emitter for the whole
 // single-process band x86 served via IR (#3457 slice 5).
 function emit_per_module_concat(dir: string, entry_path: string, entry_mod: parser.Module, loaded: flatten.LoadedModule[], reach: string[], target: string, cache_dir: string): string {
-    var parts: flatten.PerModule[] = flatten.bundle_per_module(entry_mod, loaded);
+    var parts: flatten.PerModule[] = flatten.bundle_per_module(entry_mod, loaded, target);
     var infmods: parser.Module[] = [];
     var all_funcs: parser.FuncDecl[] = [];
     var all_structs: parser.StructDecl[] = [];
@@ -543,7 +543,7 @@ function emit_per_module_spawned(dir: string, entry_path: string, entry: parser.
     if (self_exe.len() == 0) { return 1; }
     // Only the flat unit LIST is needed here (analysis, no codegen); each child
     // re-derives the same list and emits its slice of it.
-    var parts: flatten.PerModule[] = flatten.bundle_per_module(entry, loaded);
+    var parts: flatten.PerModule[] = flatten.bundle_per_module(entry, loaded, target);
     var rawmods: parser.Module[] = [];
     var pi: i32 = 0;
     while (pi < parts.len()) { rawmods = rawmods.append(parts[pi].mod); pi = pi + 1; }
@@ -714,7 +714,7 @@ function emit_window_size(funcs: i32, bytes: i32, func_budget: i32): i32 {
 }
 
 function run_per_module(dir: string, entry_path: string, entry: parser.Module, loaded: flatten.LoadedModule[], pm_mode: string, pm_index: i32, pm_extra: string[], cache_dir: string, pm_lo: i32, pm_hi: i32, target: string, out_dir: string, func_budget: i32, unit_lo: i32, unit_hi: i32, assume_eligible: boolean): i32 {
-    var parts: flatten.PerModule[] = flatten.bundle_per_module(entry, loaded);
+    var parts: flatten.PerModule[] = flatten.bundle_per_module(entry, loaded, target);
     if (pm_mode == "count") {
         print(util.i32_to_string(parts.len()) + "\n");
         return 0;
@@ -1142,7 +1142,7 @@ function main(): i32 {
             if (pm_mode.len() > 0) {
                 return run_per_module(dir, entry_path, entry, loaded, pm_mode, pm_index, pm_extra, cache_dir, pm_lo, pm_hi, target, out_dir, func_budget, unit_lo, unit_hi, assume_eligible);
             }
-            var merged: parser.Module = flatten.bundle(entry, loaded);
+            var merged: parser.Module = flatten.bundle(entry, loaded, target);
             merged = modloader.merge_builtins(dir, merged);
             // target_os() / target_arch() are the -target's environment and ISA
             // as string literals, not calls: the compile driver folds them here

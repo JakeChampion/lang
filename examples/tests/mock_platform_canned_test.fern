@@ -1,0 +1,98 @@
+import "std/test";
+import "std/http";
+import "std/fetch";
+import "std/mock_platform";
+import "std/i64";
+
+// examples/tests/mock_platform_canned_test.fern — a MockPlatform answers
+// what the test canned for each capability (#9854): the handler under
+// test reads a variable, the clock, a random number and an upstream's
+// status through its bag, and the test decides each answer.
+
+function handle(req: HttpRequest, plat: Platform): HttpResponse {
+    var region: string = "nowhere";
+    match (plat.env("REGION")) { Some(r) => { region = r; }, None => {} }
+    var upstream: i32 = plat.fetch("10.0.0.1", 8080, "/health");
+    return http.http_response_ok(region + " " + plat.now_ms().to_string() + " " + plat.random_i32().to_string() + " " + upstream.to_string());
+}
+
+function test_defaults_without_canned_answers(): test.TestOutcome {
+    var m: MockPlatform = mock_platform.mock_platform_new();
+    var resp: HttpResponse = handle(http.request("GET", "/"), m.as_platform());
+    return test.assert_body(resp, "nowhere 0 0 -1");
+}
+
+function test_canned_answers_reach_the_handler(): test.TestOutcome {
+    var m: MockPlatform = mock_platform.mock_platform_new();
+    m.env_set("REGION", "eu-west");
+    m.now_set(1700000000123 as i64);
+    m.random_set(42);
+    m.fetch_set("10.0.0.1", 8080, "/health", 204);
+    var resp: HttpResponse = handle(http.request("GET", "/"), m.as_platform());
+    return test.assert_body(resp, "eu-west 1700000000123 42 204");
+}
+
+function test_a_fetch_of_another_path_still_fails(): test.TestOutcome {
+    var m: MockPlatform = mock_platform.mock_platform_new();
+    m.fetch_set("10.0.0.1", 8080, "/other", 200);
+    var resp: HttpResponse = handle(http.request("GET", "/"), m.as_platform());
+    return test.assert_body(resp, "nowhere 0 0 -1");
+}
+
+function test_the_last_answer_wins(): test.TestOutcome {
+    var m: MockPlatform = mock_platform.mock_platform_new();
+    m.env_set("REGION", "one");
+    m.env_set("REGION", "two");
+    match (m.as_platform().env("REGION")) {
+        Some(r) => { if (r != "two") { return test.fail("env: " + r); } },
+        None => { return test.fail("env: None"); }
+    }
+    return test.pass();
+}
+
+function test_canned_rows_are_not_calls_and_survive_reset(): test.TestOutcome {
+    var m: MockPlatform = mock_platform.mock_platform_new();
+    m.env_set("REGION", "eu-west");
+    m.elapsed_set(5 as i64);
+    var plat: Platform = m.as_platform();
+    plat.env("REGION");
+    if (m.call_count() != 1) { return test.fail("calls: " + m.call_count().to_string()); }
+    if (!m.has_call("env")) { return test.fail("the env call was not recorded"); }
+    m.reset();
+    if (m.call_count() != 0) { return test.fail("calls after reset: " + m.call_count().to_string()); }
+    if (plat.elapsed_ns() != (5 as i64)) { return test.fail("the canned clock did not survive reset"); }
+    return test.pass();
+}
+
+function test_a_value_with_tabs_and_newlines_round_trips(): test.TestOutcome {
+    var m: MockPlatform = mock_platform.mock_platform_new();
+    m.env_set("MOTD", "a\tb\nc\\d");
+    match (m.as_platform().env("MOTD")) {
+        Some(v) => { if (v != "a\tb\nc\\d") { return test.fail("env: " + v); } },
+        None => { return test.fail("env: None"); }
+    }
+    if (m.call_count() != 1) { return test.fail("calls: " + m.call_count().to_string()); }
+    return test.pass();
+}
+
+function test_an_empty_value_round_trips(): test.TestOutcome {
+    var m: MockPlatform = mock_platform.mock_platform_new();
+    m.env_set("EMPTY", "");
+    match (m.as_platform().env("EMPTY")) {
+        Some(v) => { if (v != "") { return test.fail("env: " + v); } },
+        None => { return test.fail("env: None") ; }
+    }
+    return test.pass();
+}
+
+function main(): i32 {
+    var t: test.TestRunner = test.test_new("MockPlatform canned answers");
+    t = t.it("without canned answers the fixed values apply", test_defaults_without_canned_answers);
+    t = t.it("canned answers reach the handler", test_canned_answers_reach_the_handler);
+    t = t.it("a fetch of another path still fails", test_a_fetch_of_another_path_still_fails);
+    t = t.it("the last answer canned wins", test_the_last_answer_wins);
+    t = t.it("canned rows are not calls and survive reset", test_canned_rows_are_not_calls_and_survive_reset);
+    t = t.it("a value with tabs and newlines round-trips", test_a_value_with_tabs_and_newlines_round_trips);
+    t = t.it("an empty value round-trips", test_an_empty_value_round_trips);
+    return t.finish();
+}

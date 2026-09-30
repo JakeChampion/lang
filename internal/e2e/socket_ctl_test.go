@@ -20,6 +20,7 @@ var socketProbes = []struct {
 }{
 	{"raw", e2eharness.SocketCtlProbe},
 	{"send_queue", e2eharness.SendQueueProbe},
+	{"peer_key", e2eharness.PeerKeyProbe},
 	{"std_net", e2eharness.NetSocketOptsProbe},
 	{"udp", e2eharness.UdpSocketProbe},
 	{"std_net_udp", e2eharness.NetUdpProbe},

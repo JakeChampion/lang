@@ -257,7 +257,7 @@ function run(): i32 {
         return 1;
     }
 
-    var merged: parser.Module = flatten.bundle(entry, loaded);
+    var merged: parser.Module = flatten.bundle(entry, loaded, target);
     merged = parser.fill_default_args_module(merged);
     merged = parser.resolve_variant_fields_module(merged);
 

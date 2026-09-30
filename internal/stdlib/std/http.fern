@@ -30,6 +30,7 @@ import "std/string";
 // for the parse-request entry placeholder, append for populating
 // from the parsed header block.
 import "std/headers";
+import "std/json";
 // std/stream backs the HttpRequest.body field — stream_from_string
 // to wrap a parsed body, and the cursor readers the whole-body
 // shims below run over it.
@@ -173,6 +174,76 @@ pub function http_response_html(body: string): HttpResponse {
 // body is plain text rather than left to sniff it.
 pub function http_response_plain(body: string): HttpResponse {
     return __http_response_typed(200, body, "text/plain; charset=utf-8");
+}
+
+// ============================================================
+// Errors a handler answers with (#9854).
+//
+// `ToResponse` is the error side of a handler written as a
+// `Result[HttpResponse, E]`: `respond(result)` answers `Ok(r)` with `r`
+// and `Err(e)` with `e.to_response()`, so a handler's helpers fail with
+// `?` and one `respond` at the end turns the failure into the reply. A
+// `handle` declared with that return type needs no `respond` of its
+// own: both compilers rename it `__fern_handle_result` and synthesise
+// the plain `handle` calling `respond` (or `respond_with` for the
+// state-threading pair) over it.
+// `problem(status, title, detail)` is the RFC 9457 problem-details
+// answer (`application/problem+json`, a title of "" reading as the
+// status text, a detail of "" left out), `HttpError` the error value
+// carrying one, and `fail(status, detail)` builds it titled with the
+// status text. std/json's `JsonError` answers 400 with where the text
+// broke, and a `string` error answers 500 with the status text alone —
+// the message is dropped, so log it before the `?` when it matters, or
+// fail with an `HttpError` to put it on the wire.
+
+pub trait ToResponse {
+    function to_response(self: Self): HttpResponse;
+}
+
+pub function respond[E: ToResponse](result: Result[HttpResponse, E]): HttpResponse {
+    match (result) {
+        Ok(r) => { return r; },
+        Err(e) => { return e.to_response(); }
+    }
+    return problem(500, "", "");
+}
+
+// `respond_with(pair)` — `respond` for a state-threading handler: the
+// state passes through beside the answer.
+pub function respond_with[S, E: ToResponse](pair: (S, Result[HttpResponse, E])): (S, HttpResponse) {
+    return (pair.0, respond(pair.1));
+}
+
+pub function problem(status: i32, title: string, detail: string): HttpResponse {
+    var t: string = title;
+    if (t.len() == 0) { t = http_status_text(status); }
+    var body: string = "{\"type\":\"about:blank\",\"title\":\"" + json.json_escape(t) + "\",\"status\":" + int.int_to_string(status);
+    if (detail.len() > 0) { body = body + ",\"detail\":\"" + json.json_escape(detail) + "\""; }
+    return __http_response_typed(status, body + "}", "application/problem+json");
+}
+
+pub struct HttpError { status: i32, title: string, detail: string }
+
+pub function fail(status: i32, detail: string): HttpError {
+    return HttpError { status: status, title: http_status_text(status), detail: detail };
+}
+
+impl ToResponse for HttpError {
+    function to_response(self: Self): HttpResponse {
+        return problem(self.status, self.title, self.detail);
+    }
+}
+
+impl ToResponse for json.JsonError {
+    function to_response(self: Self): HttpResponse {
+        return problem(400, "Malformed JSON", self.message + " at line " + int.int_to_string(self.line) + ", column " + int.int_to_string(self.col));
+    }
+}
+
+impl ToResponse for string {
+    function to_response(self: Self): HttpResponse {
+        return problem(500, "", "");
+    }
 }
 
 // `http_path_segments(path)` — split an HTTP path into

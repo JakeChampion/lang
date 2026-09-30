@@ -3848,7 +3848,7 @@ function main(): i32 {
     // The program's imports resolve against the stdlib root (av[3], with its
     // trailing slash), merge in and are tree-shaken as the CLI does them: a
     // routed map calls core/map's functions, which the program has to carry.
-    var parsed = treeshake.treeshake(flatten.bundle(entry, modloader.load_imports(modloader.no_overlay(), av[3], entry)));
+    var parsed = treeshake.treeshake(flatten.bundle(entry, modloader.load_imports(modloader.no_overlay(), av[3], entry), ""));
     // The typed lowering reads typed; the AST lowering reads its erasure.
     var typed = irlower.lift_lambdas_typed(checker.annotate_module(parser.register_struct_method_generics(parser.register_map_method_generics(parser.register_array_method_generics(parser.Module { ...parsed, structs: parser.inject_builtin_enums(parsed.structs) })))));
     var mod = parser.erase_str_module(typed);

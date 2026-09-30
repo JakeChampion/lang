@@ -19,8 +19,12 @@ func TestSelfHostHandlerStateX86_64(t *testing.T) {
 	bin := buildSelfHostBin(t, gcc, dir, "checker_codes_run.fern", "checker_codes_run")
 	copySelfHostDriver(t, dir, "checker_run.fern")
 	formattedBin := buildSelfHostBin(t, gcc, dir, "checker_run.fern", "checker_run")
-	const decls = `function tcp_serve(port: i32, handler: (HttpRequest, Platform) => HttpResponse): i32 { return 0; }
+	const decls = `struct ServeOptions { backlog: i32 }
+function serve_options(): ServeOptions { return ServeOptions { backlog: 128 }; }
+function tcp_serve(port: i32, handler: (HttpRequest, Platform) => HttpResponse): i32 { return 0; }
 function tcp_serve_with[S](port: i32, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse)): i32 { return 0; }
+function tcp_serve_shutdown(port: i32, opts: ServeOptions, handler: (HttpRequest, Platform) => HttpResponse, shutdown: (string) => void): i32 { return 0; }
+function tcp_serve_with_shutdown[S](port: i32, opts: ServeOptions, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse), shutdown: (string, S) => void): i32 { return 0; }
 function __port_from_env(name: string, def: i32): i32 { return def; }
 `
 	const response = `HttpResponse { status: 200, body: "ok", headers: HeaderMap { names: [], values: [] } }`
@@ -28,6 +32,8 @@ function __port_from_env(name: string, def: i32): i32 { return def; }
 	const stateful = `function handle(state: i32, req: HttpRequest, plat: Platform): (i32, HttpResponse) { return (state, ` + response + `); }`
 	const missingState = "handler takes a state parameter, but no `init` produces the state to thread through it"
 	const droppedState = "`init` returns a value, but the handler takes no state parameter to thread it through"
+	const hookNeedsInit = "`shutdown` takes a state parameter, but no `init` produces the state to hand it"
+	const hookDropsState = "`shutdown` takes no state parameter, but the handler threads a state it would drop"
 	cases := []struct{ name, src, message string }{
 		{"missing init", stateful, missingState},
 		{"void init", "function init(): void {}\n" + stateful, missingState},
@@ -42,6 +48,10 @@ function __port_from_env(name: string, def: i32): i32 { return def; }
 		{"no handle", "function init(): i32 { return 7; }", ""},
 		{"method is not init", "struct S { n: i32 }\nfunction (s: S) init(): i32 { return s.n; }\n" + stateful, missingState},
 		{"method is not handle", "struct S { n: i32 }\nfunction init(): i32 { return 7; }\nfunction (s: S) handle(): i32 { return s.n; }", ""},
+		{"shutdown without state", stateless + "\nfunction shutdown(reason: string): void { print(reason); }", ""},
+		{"shutdown with state", "function init(): i32 { return 7; }\n" + stateful + "\nfunction shutdown(reason: string, n: i32): void { print(reason); }", ""},
+		{"stateful shutdown without init", stateless + "\nfunction shutdown(reason: string, n: i32): void { print(reason); }", hookNeedsInit},
+		{"stateless shutdown drops the state", "function init(): i32 { return 7; }\n" + stateful + "\nfunction shutdown(reason: string): void { print(reason); }", hookDropsState},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -74,6 +84,9 @@ function __port_from_env(name: string, def: i32): i32 { return def; }
 				decl := "\nfunction handle("
 				if tc.message == droppedState {
 					decl = "\nfunction init("
+				}
+				if tc.message == hookNeedsInit || tc.message == hookDropsState {
+					decl = "\nfunction shutdown("
 				}
 				at := strings.Index(src, decl)
 				if at < 0 {

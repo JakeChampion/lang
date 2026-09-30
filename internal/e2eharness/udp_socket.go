@@ -58,6 +58,8 @@ function main(): i32 {
     if (port_of(from) != pa) { return fail(9); }
     // b fixes a as its peer and answers without naming it.
     if (udp_connect(b, lo, pa) != 0) { return fail(10); }
+    // A datagram socket has no peer key, connected or not.
+    if (tcp_socket_ctl(b, 7, 0) != 0) { return fail(23); }
     if (udp_sendto(b, peer, 0, "pong!") != 5) { return fail(11); }
     if (udp_recvfrom(a, buf, from) != 5 || buf[4] != 33u8) { return fail(12); }
     if (port_of(from) != pb) { return fail(13); }

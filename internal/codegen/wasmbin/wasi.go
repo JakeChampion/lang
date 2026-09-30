@@ -942,6 +942,14 @@ var importSpecs = map[string]importSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
 		results: nil,
 	},
+	"wasi_sockets_tcp_remote_address": {
+		// (self, retptr) → (), the same 36-byte result area as
+		// local-address, for the peer of a connected socket.
+		module:  "wasi:sockets/tcp@0.2.0",
+		name:    "[method]tcp-socket.remote-address",
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: nil,
+	},
 	"wasi_sockets_tcp_subscribe": {
 		// (self) → pollable handle. Paired with pollable.block to
 		// wait until a connection is ready before calling accept.
@@ -2476,6 +2484,7 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 		in.add("wasi_sockets_tcp_set_keep_alive_enabled")
 		in.add("wasi_sockets_tcp_shutdown")
 		in.add("wasi_sockets_tcp_finish_connect")
+		in.add("wasi_sockets_tcp_remote_address")
 	}
 	if helpers.set["__fern_tcp_accept"] {
 		in.add("wasi_sockets_tcp_accept")
