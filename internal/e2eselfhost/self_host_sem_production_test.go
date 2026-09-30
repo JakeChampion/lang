@@ -5888,6 +5888,31 @@ function main(): i32 {
     return a + run((k: i32): Opt[string] => { if (k > 1) { return Has("x" + "yz"); } return Non; }, 2) + pick(t) + b;
 }
 `},
+	// A generic enum whose payload is a generic struct at its own parameter:
+	// the struct pass leaves `Box[U]` for the enum pass to substitute, and a
+	// second struct pass clones the `Box__string` it names (#10762).
+	{name: "a-generic-enum-with-a-generic-struct-payload", atLeast: 8, noLeak: true, src: `
+struct Box[T] { v: T, n: i32 }
+impl[T] Box[T] {
+  function size(self: Self): i32 { return self.n * 2; }
+}
+enum E[U] { A(Box[U]), B(i32) }
+impl[U] E[U] {
+  function boxed(self: Self, d: Box[U]): Box[U] { match (self) { A(b) => { return b; }, B(k) => { return d; } } }
+  function weight(self: Self): i32 { match (self) { A(b) => { return b.size(); }, B(k) => { return k; } } }
+}
+enum Holder[T] { Has(T), Empty }
+function first(h: Holder[string[]]): string { match (h) { Has(xs) => { return xs[0]; }, Empty => { return ""; } } }
+function main(): i32 {
+  var e: E[string] = A(Box { v: "abc" + "d", n: 3 });
+  var f: E[i32] = A(Box { v: 7, n: 5 });
+  var g: E[i32] = B(9);
+  var names: string[] = ["x" + "yz", "w"];
+  var h = Has(names);
+  print(first(h));
+  return e.boxed(Box { v: "", n: 0 }).v.len() + g.boxed(Box { v: 11, n: 0 }).v + e.weight() + f.weight() + g.weight();
+}
+`},
 	// A generic enum instantiated at an array, annotated or inferred from the
 	// payload, including a closure payload returning the enum: std/async's
 	// `Future[u8[]]` shape (#10762).
