@@ -1166,6 +1166,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 		},
 		variantOf:            map[string][]variantRef{},
 		shadowedGenericCalls: map[*ast.Call]bool{},
+		reservedShadows:      map[string]bool{},
 	}
 	// Map operations need core/map linked. If the program came through
 	// modload (LoadedStdlibPaths populated) but didn't pull core/map
@@ -1190,9 +1191,11 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 	// some synthetic builtin we never actually exposed.
 	for _, ed := range shadowedEnums {
 		c.errfCode(ed.P, "E010", "enum %q is a reserved built-in name and cannot be redeclared", ed.Name)
+		c.reservedShadows[ed.Name] = true
 	}
 	for _, sd := range shadowedStructs {
 		c.errfCode(sd.P, "E010", "struct %q is a reserved built-in name and cannot be redeclared", sd.Name)
+		c.reservedShadows[sd.Name] = true
 	}
 
 	// Register every struct declaration up front so that types
@@ -7848,6 +7851,11 @@ type checker struct {
 	// is checked; the later passes read the verdict from here.
 	shadowedGenericCalls map[*ast.Call]bool
 
+	// reservedShadows names the builtin types a program redeclared: E010
+	// flags each once, and an injected declaration's use of the name,
+	// which now finds the user's shape, is not flagged again.
+	reservedShadows map[string]bool
+
 	// elemHint carries the expected element type for an array literal
 	// being checked at a coercion site (var init / return / argument).
 	// It is set ONLY immediately around a checkExpr call whose argument
@@ -8380,7 +8388,7 @@ func (c *checker) resolveType(slot *ast.Type, params map[string]bool, pos ast.Po
 			c.resolveType(&args[i], params, pos)
 		}
 		if sd, ok := c.info.Structs[t.Name]; ok {
-			if len(sd.TypeParams) != len(args) {
+			if len(sd.TypeParams) != len(args) && !c.reservedShadows[t.Name] {
 				c.errfCode(sd.P, "E019", "struct %s has %d type parameter(s), %d supplied",
 					t.Name, len(sd.TypeParams), len(args))
 			}
@@ -8408,7 +8416,7 @@ func (c *checker) resolveType(slot *ast.Type, params map[string]bool, pos ast.Po
 			return
 		}
 		if ed, ok := c.info.Enums[t.Name]; ok {
-			if len(ed.TypeParams) != len(args) {
+			if len(ed.TypeParams) != len(args) && !c.reservedShadows[t.Name] {
 				c.errfCode(ed.P, "E019", "enum %s has %d type parameter(s), %d supplied",
 					t.Name, len(ed.TypeParams), len(args))
 			}
