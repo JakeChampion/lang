@@ -376,8 +376,9 @@ struct __Conns { fds: i32[], bufs: u8[][], offs: i32[], pending: string[], deadl
 // the bytes pending have gone: nothing; a file the loop reads as the
 // socket takes it, with the bytes its Content-Length still owes; or the
 // chunks a producer answers from the next index, under chunked transfer
-// coding, or close-delimited (`chunked` false) for an HTTP/1.0 client.
-enum __Tail { NoTail, FileTail(Reader, i64), ChunkTail(ChunkProducer, i32, boolean) }
+// coding with the last chunk and trailer section that end them, or
+// close-delimited (an empty ending) for an HTTP/1.0 client.
+enum __Tail { NoTail, FileTail(Reader, i64), ChunkTail(ChunkProducer, i32, string) }
 
 // __Wire — a response as the loop writes it: the head with whatever body
 // is held whole, the tail still to be produced, and whether the
@@ -437,9 +438,11 @@ function __serve_wire(method: string, version: string, answer: HttpResponse, kee
         BodyChunks(producer) => {
             if (headless) { return __Wire { head: http.http_serialize_response_head(resp, keep_alive, ""), tail: NoTail, keep: keep_alive }; }
             if (version == "HTTP/1.0") {
-                return __Wire { head: http.http_serialize_response_head(resp, false, ""), tail: ChunkTail(producer, 0, false), keep: false };
+                return __Wire { head: http.http_serialize_response_head(resp, false, ""), tail: ChunkTail(producer, 0, ""), keep: false };
             }
-            return __Wire { head: http.http_serialize_response_head(resp, keep_alive, "Transfer-Encoding: chunked\r\n"), tail: ChunkTail(producer, 0, true), keep: keep_alive };
+            var framing: string = "Transfer-Encoding: chunked\r\n";
+            if (resp.trailers.names.len() > 0) { framing = framing + "Trailer: " + resp.trailers.names.join(", ") + "\r\n"; }
+            return __Wire { head: http.http_serialize_response_head(resp, keep_alive, framing), tail: ChunkTail(producer, 0, "0\r\n" + http.http_serialize_fields(resp.trailers) + "\r\n"), keep: keep_alive };
         },
         _ => { return __Wire { head: http.http_serialize_response_to(method, resp, keep_alive), tail: NoTail, keep: keep_alive }; }
     }
@@ -500,7 +503,7 @@ function __tail_piece(c: __Conns, at: i32): (__Conns, string, boolean) {
             }
             return (c, "", false);
         },
-        ChunkTail(producer, index, chunked) => {
+        ChunkTail(producer, index, end) => {
             var next: (i32) => Option[u8[]] = producer.next;
             var i: i32 = index;
             while (true) {
@@ -508,13 +511,11 @@ function __tail_piece(c: __Conns, at: i32): (__Conns, string, boolean) {
                     Some(chunk) => {
                         if (chunk.len() > 0) {
                             var piece: string = string_from_bytes_unchecked(chunk);
-                            if (chunked) { piece = int.int_to_string_radix(chunk.len(), 16) + "\r\n" + piece + "\r\n"; }
-                            return (__Conns { ...c, tails: c.tails.with(at, ChunkTail(producer, i + 1, chunked)) }, piece, true);
+                            if (end.len() > 0) { piece = int.int_to_string_radix(chunk.len(), 16) + "\r\n" + piece + "\r\n"; }
+                            return (__Conns { ...c, tails: c.tails.with(at, ChunkTail(producer, i + 1, end)) }, piece, true);
                         }
                     },
                     None => {
-                        var end: string = "";
-                        if (chunked) { end = "0\r\n\r\n"; }
                         return (__Conns { ...c, tails: c.tails.with(at, NoTail) }, end, true);
                     }
                 }

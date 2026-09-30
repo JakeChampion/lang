@@ -8682,6 +8682,7 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
         hsf = hsf.append(StructFieldDecl { name: "status", type_name: "i32", fn_ret: "", fn_param_types: "" });
         hsf = hsf.append(StructFieldDecl { name: "body", type_name: "Body", fn_ret: "", fn_param_types: "" });
         hsf = hsf.append(StructFieldDecl { name: "headers", type_name: "HeaderMap", fn_ret: "", fn_param_types: "" });
+        hsf = hsf.append(StructFieldDecl { name: "trailers", type_name: "HeaderMap", fn_ret: "", fn_param_types: "" });
         structs = structs.append(StructDecl { name: "HttpResponse", fields: hsf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [] , is_pub: true , is_package: false });
     }
     // Platform — the capability bag threaded as every handler's second

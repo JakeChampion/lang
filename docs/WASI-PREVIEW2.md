@@ -196,8 +196,10 @@ Auto-injected struct shape:
   fields and leaves `trailers` empty: the body's trailers are a future
   the host settles after the body is finished, and nothing reads it
   yet.
-- `HttpResponse { status: number, body: string, headers: HeaderMap }` —
-  `status` is the i32 HTTP status code; `body` is written verbatim.
+- `HttpResponse { status: number, body: string, headers: HeaderMap,
+  trailers: HeaderMap }` — `status` is the i32 HTTP status code; `body`
+  is written verbatim; `trailers` are not sent, the outgoing body being
+  finished with none.
 For the targeted use cases (Fastly-Compute-style edge handlers
 that mostly consume the body, route by path, and emit JSON or
 HTML), this surface is enough to ship real programs.

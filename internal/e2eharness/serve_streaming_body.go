@@ -36,6 +36,7 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
     if (req.path == "/big") { return http.file(%q).with_content_type("application/octet-stream"); }
     if (req.path == "/chunks") { return http.chunks(200, chunk).with_content_type("text/plain"); }
     if (req.path == "/sparse") { return http.chunks(200, sparse); }
+    if (req.path == "/trailed") { return http.chunks(200, chunk).with_trailer("X-Chunks", "5").with_trailer("X-Done", "yes"); }
     return http.ok("ok");
 }
 function main(): i32 {
@@ -110,6 +111,19 @@ func CheckStreamingBody(t *testing.T, addr string) {
 	head.Body.Close()
 	if head.StatusCode != 200 || len(head.TransferEncoding) != 0 {
 		t.Fatalf("HEAD /chunks: status=%d transfer-encoding=%v, want a bare head", head.StatusCode, head.TransferEncoding)
+	}
+	if _, err := io.WriteString(conn, "GET /trailed HTTP/1.1\r\nHost: localhost\r\n\r\n"); err != nil {
+		t.Fatal(err)
+	}
+	resp = readResponseFrom(t, reader, "/trailed")
+	// net/http moves the head's Trailer field into resp.Trailer's keys,
+	// and fills their values once the body has been read.
+	if _, ok := resp.Trailer["X-Chunks"]; !ok || len(resp.Trailer) != 2 {
+		t.Fatalf("/trailed: announced trailers %v, want X-Chunks and X-Done", resp.Trailer)
+	}
+	body, _ = io.ReadAll(resp.Body)
+	if string(body) != StreamingBodyChunks || resp.Trailer.Get("X-Chunks") != "5" || resp.Trailer.Get("X-Done") != "yes" {
+		t.Fatalf("/trailed: body %q trailers %v, want the chunks then X-Chunks: 5 and X-Done: yes", body, resp.Trailer)
 	}
 	if _, err := io.WriteString(conn, "GET /ok HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"); err != nil {
 		t.Fatal(err)
