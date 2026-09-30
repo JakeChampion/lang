@@ -548,7 +548,7 @@ pub struct ParamDecl { name: string, type_name: string, is_view: boolean, own: b
 // `scrut >= lo && scrut <op> hi` instead of `scrut == lit`.
 // alt_cont — see MatchArm.alt_cont. `0 | 1 => …` parses to one LitArm per
 // alternative sharing a guard and body.
-pub struct LitArm { is_wild: boolean, lit: Expr, guard: Expr, has_guard: boolean, body: Stmt[], line: i32, col: i32, range_hi: Expr, has_range: boolean, range_inclusive: boolean, alt_cont: boolean }
+pub struct LitArm { is_wild: boolean, lit: Expr, guard: Expr, has_guard: boolean, body: Stmt[], line: i32, col: i32, range_hi: Expr, has_range: boolean, range_inclusive: boolean, alt_cont: boolean, at_binding: string }
 
 // ---- Tuple-pattern match (`match (pair) { (0, y) => …, (x, y) => … }`) ----
 //
