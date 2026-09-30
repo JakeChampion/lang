@@ -86,17 +86,21 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
 			want: 21, verdict: "balanced",
 		},
 		{
-			// A refused alias: leaks soundly per round, and the census must
-			// SAY so — the half a green exit cannot. The shape is a REASSIGNED
-			// alias, which is refused as a property of the class (every wired
-			// family carries `index_of_str(reassigned, …) < 0`), so it stays
-			// leaky. It used to be the alias CHAIN, which #7386 credits — an
-			// instrument row needs a shape that will not be fixed under it.
-			name: "leak_refused_alias",
+			// A reassigned alias: the typed lowering releases the superseded
+			// string, so the census balances.
+			name: "alias_reassign_balanced",
 			src: `function w(a: string): string { return a + "!"; }
 function round(i: i32): i32 { var t: string = w("ab"); var v: string = t; v = w("cd"); return v.len() + i; }
 function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } return x % 83; }`,
-			want: 21, verdict: "leaky",
+			want: 21, verdict: "balanced",
+		},
+		{
+			// A leak, and the census must SAY so — the half a green exit cannot.
+			// A raw __alloc block is never released, so every round leaks one.
+			name: "leak_raw_alloc",
+			src: `function round(i: i32): i32 { var p: usize = __alloc(24); return i; }
+function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } return x % 83; }`,
+			want: 53, verdict: "leaky",
 		},
 		{
 			// HEAP-FREE, returning main: the report goes through $_start's
