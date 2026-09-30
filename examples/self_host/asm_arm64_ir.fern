@@ -5204,9 +5204,10 @@ function arr_push_fast_u8(slow: string): string {
 
 // __fern_alloc_bytes(x0 = n) -> a zeroed packed u8[] of n bytes: a box of
 // ceil(n/8) words, whose length word __fern_arr_box writes as that word count
-// and this overwrites with n.
+// and this overwrites with n. A negative n aborts.
 function emit_alloc_bytes(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("__fern_alloc_bytes:\n");
+    s = s.write("    tbz w0, #31, .Lfern_alloc_bytes_sized\n    b __fern_alloc_size_abort\n.Lfern_alloc_bytes_sized:\n");
     s = s.write("    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n    stp x19, x20, [sp, #-16]!\n");
     s = s.write("    sxtw x19, w0\n    add x0, x19, #7\n    lsr x0, x0, #3\n    mov x20, x0\n");
     s = s.write("    bl __fern_arr_box\n");
@@ -6032,8 +6033,8 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    svc #0\n");
     s = s.write(".size __fern_oob_abort, .-__fern_oob_abort\n");
 
-    // __fern_alloc_size_abort — a raw_alloc size that is negative as an i32,
-    // which is how a helper's `la + lb` looks once it wraps past 2 GiB. The
+    // __fern_alloc_size_abort — a raw_alloc or __alloc_u8 size that is negative
+    // as an i32, which is how a helper's `la + lb` looks once it wraps past 2 GiB. The
     // message and exit 134 match the native backends' allocation-size abort.
     s = s.write("    .section .rodata\n");
     s = s.write(".Lalloc_size_msg:\n    .ascii \"fern: allocation size out of range\\n\"\n");
