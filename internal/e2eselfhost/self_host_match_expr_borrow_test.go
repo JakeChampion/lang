@@ -155,12 +155,12 @@ function round(i: i32): i32 {
 			want: 93, allocs: 300, frees: 300,
 		},
 		{
-			// REFUSED, and must stay refused: a REAL lambda whose body mentions
-			// the local may run after this frame, so the blanket capture test
-			// still applies and the local keeps leaking rather than being freed
-			// under a live closure. This is the row that fails loudly (99, or a
-			// free count that climbs) if the narrowing is ever widened past the
-			// value-block origins.
+			// A REAL lambda whose body mentions the local: the value-block
+			// narrowing must not treat it as a non-capture. The row balances
+			// because the lambda's box is released once the borrowing call
+			// returns and the captured local keeps its own release, not through
+			// the narrowing. A free under a live closure fails it loudly: 99
+			// from the underflow count.
 			name: "real_lambda_capture_refused",
 			src: arrDecls + `function apply(f: () => i32): i32 { return f(); }
 function round(i: i32): i32 {
@@ -169,7 +169,7 @@ function round(i: i32): i32 {
     return (apply(() => p.xs.len() + p.n)) % 101;
 }
 ` + mebMain,
-			want: 5, allocs: 300, frees: 0,
+			want: 5, allocs: 300, frees: 300,
 		},
 	}
 }
@@ -206,8 +206,7 @@ func TestSelfHostMatchExprBorrowX86_64(t *testing.T) {
 			}
 			if frees != tc.frees {
 				t.Errorf("%s: %s — want frees=%d. FEWER on a value-block row means the "+
-					"IIFE body reads as a capture again; MORE on the real-lambda row "+
-					"means the narrowing reached past the value-block origins",
+					"IIFE body reads as a capture again",
 					tc.name, summary, tc.frees)
 			}
 		})
