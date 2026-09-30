@@ -156,3 +156,7 @@ net/h2o/c4096.p50_us	12337
 net/h2o/c4096.p99_us	23612
 net/h2o/c4096.failed	0
 net/fern/held.bytes_per_connection	615
+
+# lane: append-cliff-x86_64
+x86_64/checker.cliff_bytes	265334380
+x86_64/checker.cliff_count	717494
