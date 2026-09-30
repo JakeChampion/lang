@@ -60,14 +60,14 @@ targets).
 | #10766 (closed by #10821 after this measurement) | parser: `@` binding with a braceless arm, braceless `if let`, `let … else` in a `var` | 6 |
 | #10763 (closed by #10828 after this measurement) | typed lowering: empty array literal at a view parameter, `?` on a unit-payload success, a value block with no live edge, a `use` callback wrapper | 6 |
 | #10757 (closed by #10835 after this measurement; the checker typed a suffixed float literal f64) | typed lowering: f32 values typed f64 | 5 |
-| #10768 | wasm: the core module exports only `_start`, so a main result of 126 or more is unreadable | 5 |
-| #10771 | runtime: allocation-size overflow does not abort with 134; `__memcpy` size classes copy the wrong count | 5 |
+| #10768 (closed by #10775 after this measurement) | wasm: the core module exports only `_start`, so a main result of 126 or more is unreadable | 5 |
+| #10771 (the negative `__alloc_u8` and `repeat` aborts landed after this measurement; the array-grow test pins native's 32-bit request, and the `__memcpy` test waits on #8799) | runtime: allocation-size overflow does not abort with 134; `__memcpy` size classes copy the wrong count | 5 |
 | #10737 (closed by #10741 after this measurement; re-measure before planning it) | typed lowering: `usize / usize`, `f64 as usize` | 4 |
 | #10759 (closed by #10835 after this measurement) | typed lowering: for-each pattern bindings are not semantic values | 4 |
 | #10816 (split from #10767; closed by #10844 after this measurement) | checker: an impl record names its trait without the trait's module, so same-named traits collide (E021) and `dyn cmp.Display` matches no impl (E034) | 4 |
 | #10764 | union type aliases: members have no semantic contract; the generic form does not parse | 4 |
 | #10765 (the `async` half closed by #10804) | typed lowering: `async` functions; a `dyn` std Error's `message` | 4 |
-| #10762 | typed lowering: a generic enum's struct payload; the rc-correctness corpus probe | 4 |
+| #10762 (closed by #10807 after this measurement) | typed lowering: a generic enum's struct payload; the rc-correctness corpus probe | 4 |
 | #10770 | wasm: four programs answer wrongly (payloadless Result box, `std/platform`, scratch slots, split on `""`) | 4 |
 | #10761 | typed lowering: reading a `str` map value | 3 |
 | #10769 | wasm: no instruction selection for `raw_store8` and `write_some`; one module fails wasmtime's compile | 3 |
