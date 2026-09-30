@@ -86,6 +86,27 @@ function main(): i32 {
     return 0;
 }
 `},
+		// A bare resource name is an owned handle, dropped like `own R`.
+		{name: "a-bare-named-owned-local-auto-drops", declared: 5, drops: 1, src: `
+@import("wasi:io/poll@0.2.0", "pollable")
+resource Pollable;
+
+@import("wasi:clocks/monotonic-clock@0.2.0", "subscribe-duration")
+function subscribe(ns: u64): own Pollable;
+
+@import("wasi:io/poll@0.2.0", "[method]pollable.block")
+function block(h: borrow Pollable);
+
+@import("wasi:io/poll@0.2.0", "[method]pollable.ready")
+function ready(h: borrow Pollable): boolean;
+
+function main(): i32 {
+    var p: Pollable = subscribe(0 as u64);
+    block(p);
+    if (ready(p)) { write("poll-ok"); } else { write("poll-bad"); }
+    return 0;
+}
+`},
 		// The program drops the handle itself: moved into the drop, so nothing else
 		// drops it.
 		{name: "an-explicit-drop-consumes-the-handle", declared: 5, drops: 1, src: `
