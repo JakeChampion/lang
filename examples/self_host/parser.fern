@@ -12158,14 +12158,16 @@ function stranded_fn_promotions(funcs: FuncDecl[], erased: string[]): string[] {
     return out;
 }
 
-// Every var promoted rather than declared bounded, and one bindable only
-// through a fn-typed param.
+// Every var promoted rather than declared bounded, and one that only a
+// fn-typed param binds: no plain param does, and the return is no clause
+// (b′) binding either, so clause (d) or (e) is what promoted it.
 function fn_param_promoted(fd: FuncDecl): boolean {
     for b in fd.bound_traits { if (b.len() > 0) { return false; } }
     for v in fd.type_params {
         var plain: boolean = false;
         for pd in fd.params { if (token_at_paren_depth0(pd.type_name, v) || token_in_tuple_param(pd.type_name, v)) { plain = true; } }
-        if (!plain) { return true; }
+        if (plain || feeds_user_parametric(fd.ret_type, v) || feeds_map_typearg(fd.ret_type, v)) { continue; }
+        if (has_fn_param_arg_var(fd.params, v) || has_fn_param_ret_var(fd.params, v)) { return true; }
     }
     return false;
 }

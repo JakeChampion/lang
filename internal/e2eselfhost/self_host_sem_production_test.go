@@ -6121,6 +6121,50 @@ function main(): i32 {
     return hold((): i32 => 7) + hold(() => "ab" + "c") + hold(seven) + hold(pick()) + hold(m.f);
 }
 `},
+	// A return-bound constructor (`stack_new[T](): Stack[T]`, clause (b′)) is
+	// called by name from generic-struct methods, which are rewritten only per
+	// struct instantiation. It is not a fn-param promotion, so it is cloned,
+	// not restored to erased: erased, its body named the generic enum's
+	// unmangled `Leaf` (std/pvec and std/pmap, #10829).
+	{name: "a-return-bound-constructor-called-from-generic-methods", atLeast: 11, noLeak: true, src: `
+enum Node[T] { Leaf(T[]), Branch(Node[T][]) }
+
+struct Stack[T] { root: Node[T], n: i32 }
+
+pub function stack_new[T](): Stack[T] {
+    return Stack[T] { root: Leaf([]), n: 0 };
+}
+
+function size_of[T](node: Node[T]): i32 {
+    match (node) {
+        Leaf(xs) => { return xs.len(); },
+        Branch(kids) => { return kids.len(); }
+    }
+}
+
+pub function (s: Stack[T]) pushed(x: T): Stack[T] {
+    match (s.root) {
+        Leaf(xs) => { return Stack[T] { root: Leaf(xs.append(x)), n: s.n + 1 }; },
+        Branch(kids) => { return s; }
+    }
+}
+
+pub function (s: Stack[T]) cleared(): Stack[T] {
+    return stack_new();
+}
+
+pub function (s: Stack[T]) size(): i32 {
+    return size_of(s.root);
+}
+
+function main(): i32 {
+    var s: Stack[string] = stack_new();
+    s = s.pushed("a" + "b").pushed("c");
+    var n: Stack[i32] = stack_new();
+    n = n.pushed(4);
+    return s.size() + n.size() + n.cleared().size() + s.cleared().size() + 5;
+}
+`},
 	// The same through a function-typed parameter's parameter.
 	{name: "a-generic-struct-over-a-function-parameters-parameter", atLeast: 5, noLeak: true, src: `
 struct Slot[T] { v: T[] }
