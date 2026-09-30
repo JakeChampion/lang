@@ -359,14 +359,26 @@ function creator_of(name: string): string {
     return "";
 }
 
+// The creator of row `i`. An instance of `<creator>$wrapN` is named with its
+// bindings after the template's key, and its creator is the instance of
+// `<creator>` under the same bindings.
+function row_creator(r: Rows, mod: parser.Module, built: semsource.Built, i: i32): string {
+    if (i < mod.funcs.len()) { return creator_of(r.n1[i]); }
+    var key: string = built.instances[i - mod.funcs.len()].key;
+    var creator: string = creator_of(key);
+    var name: string = r.n1[i];
+    if (creator.len() == 0 || !util.str_has_prefix(name, key)) { return creator; }
+    return creator + slice_unchecked(name, key.len(), name.len());
+}
+
 // A produced hoisted body whose value an AST-lowered creator builds is
 // called by the AST lowering through that box, under the AST convention:
 // the mirror of `ast_value_call`. Such a body keeps the AST lowering, and
 // what it calls directly is reached through the direct-call contracts
 // (ssarc.caller_sigs, irlower.consume_sigs) instead. A creator no row
 // names is read as AST-lowered.
-function ast_built_value(r: Rows, i: i32): string {
-    var creator: string = creator_of(r.n1[i]);
+function ast_built_value(r: Rows, mod: parser.Module, built: semsource.Built, i: i32): string {
+    var creator: string = row_creator(r, mod, built, i);
     if (creator.len() == 0) { return ""; }
     var at: i32 = util.index_of_str(r.n1, creator);
     if (at < 0) { at = util.index_of_str(r.n2, creator); }
@@ -463,7 +475,7 @@ function prune(r: Rows, mod: parser.Module, built: semsource.Built): Rows {
                 var bad: string = escaping_callee(r.body[i], reg, mod.funcs, mod.impls);
                 if (bad.len() > 0) { bad = "calls " + bad + ", which the AST lowering defines"; }
                 else { bad = ast_value_call(r.called[i], values); }
-                if (bad.len() == 0) { bad = ast_built_value(r, i); }
+                if (bad.len() == 0) { bad = ast_built_value(r, mod, built, i); }
                 if (bad.len() > 0) {
                     report(r.n1[i], bad);
                     r = Rows { ...r, keep: r.keep.with(i, false) };
@@ -709,13 +721,15 @@ pub function substitution(mod: parser.Module, lowered: parser.FuncDecl[], struct
     // the AST lowering whole, since a produced body beside an AST-lowered one
     // is two memory conventions on one module, sound only where the contracts
     // `prune` reads cover every crossing. The bisect knobs keep the mixed
-    // module, which is what they exist to halve.
-    if (n < mod.funcs.len() && sem_ir_only() == "" && sem_ir_skip() == "") {
+    // module, which is what they exist to halve. An instance has no AST body
+    // to fall back on, so a refused one is refused production too.
+    var refused_n: i32 = mod.funcs.len() - n + built.instances.len() - instances.len();
+    if (refused_n > 0 && sem_ir_only() == "" && sem_ir_skip() == "") {
         report("module", "produced 0 of " + util.i32_to_string(mod.funcs.len()) + " declarations and 0 of "
             + util.i32_to_string(built.instances.len()) + " instances: "
-            + util.i32_to_string(mod.funcs.len() - n) + " refused, the AST lowering stands");
+            + util.i32_to_string(refused_n) + " refused, the AST lowering stands");
         if (sem_strict_on()) {
-            eprint("FERN_SEM_IR_STRICT: the typed lowering refused " + util.i32_to_string(mod.funcs.len() - n) + " declarations; the FERN_SEM_IR lines above name each\n");
+            eprint("FERN_SEM_IR_STRICT: the typed lowering refused " + util.i32_to_string(refused_n) + " declarations and instances; the FERN_SEM_IR lines above name each\n");
             exit(3);
         }
         return ircore.no_sub();

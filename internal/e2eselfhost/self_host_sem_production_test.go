@@ -5862,6 +5862,23 @@ function main(): i32 {
     return 1;
 }
 `},
+	// A lambda a generic function's nested function returns is hoisted to
+	// `__lam_0$wrap0`, and the instance `__lam_0$wrap0$i32` is built by the
+	// instance `__lam_0$i32`: produced like its creator, not left to an AST
+	// body no instance has.
+	{name: "a-lambda-from-a-nested-function-in-a-generic", atLeast: 2, src: `
+pub function make[T](seed: T): T {
+    function idmaker(base: T): (T) => T {
+        return (x: T) => x;
+    }
+    var f: (T) => T = idmaker(seed);
+    return f(seed);
+}
+
+function main(): i32 {
+    return make(7);
+}
+`},
 }
 
 // semDynShapes is a trait with a record and an enum implementation, each
