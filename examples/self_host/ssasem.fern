@@ -2417,35 +2417,24 @@ function boolean_type(): typeinfo.Type { return typeinfo.TypeBool { tag: 0 }; }
 function i32_type(): typeinfo.Type { return typeinfo.TypeI32 { is_char: false, width: 32, unsigned: false }; }
 
 // Whether a value of `t` holds a view anywhere in it. A declared record or
-// enum is read through this body's schema tables, which close over every type
-// its values reach, so a `str` payload of `enum E { A(str) }` counts as the one
-// in `Option[str]` does.
-pub function holds_view(f: Func, t: typeinfo.Type): boolean { return view_within(f, t, []); }
-
-function view_within(f: Func, t: typeinfo.Type, seen: string[]): boolean {
+// enum answers from its schema entry, which the module worked out once
+// (semsource.view_types), so a `str` payload of `enum E { A(str) }` counts as
+// the one in `Option[str]` does.
+pub function holds_view(f: Func, t: typeinfo.Type): boolean {
     if let typeinfo.TypeString(st) = t { return st.tag == 1; }
-    if let typeinfo.TypeArray(a) = t { return view_within(f, a.elem, seen); }
+    if let typeinfo.TypeArray(a) = t { return holds_view(f, a.elem); }
     if let typeinfo.TypeTuple(tup) = t {
-        for e in tup.elements { if (view_within(f, e, seen)) { return true; } }
+        for e in tup.elements { if (holds_view(f, e)) { return true; } }
         return false;
     }
-    if (semtypes.is_cell(t)) { return view_within(f, semtypes.cell_elem(t), seen); }
-    if let typeinfo.TypeMap(m) = t { return view_within(f, m.key, seen) || view_within(f, m.value, seen); }
-    var key: string = type_key(t);
-    if (name_seen(seen, key)) { return false; }
-    var next: string[] = seen.append(key);
+    if (semtypes.is_cell(t)) { return holds_view(f, semtypes.cell_elem(t)); }
+    if let typeinfo.TypeMap(m) = t { return holds_view(f, m.key) || holds_view(f, m.value); }
     var r: i32 = semrecords.find(f.records, t);
-    if (r >= 0) {
-        for fl in f.records[r].fields { if (view_within(f, fl.ty, next)) { return true; } }
-        return false;
-    }
+    if (r >= 0) { return f.records[r].views; }
     var e: i32 = semrecords.find_enum(f.enums, t);
-    if (e >= 0) {
-        for v in f.enums[e].variants { for fl in v.fields { if (view_within(f, fl.ty, next)) { return true; } } }
-        return false;
-    }
+    if (e >= 0) { return f.enums[e].views; }
     if let typeinfo.TypeUnion(u) = t {
-        for a in u.args { if (view_within(f, a, next)) { return true; } }
+        for a in u.args { if (holds_view(f, a)) { return true; } }
     }
     return false;
 }
