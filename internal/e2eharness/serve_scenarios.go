@@ -592,14 +592,31 @@ func CheckHandlerStallsItsWorker(t *testing.T, addr string) {
 		t.Fatal(err)
 	}
 	started := time.Now()
+	type slowResult struct {
+		body string
+		err  error
+		done time.Time
+	}
+	slowCh := make(chan slowResult, 1)
+	go func() {
+		b, err := io.ReadAll(slow)
+		slowCh <- slowResult{string(b), err, time.Now()}
+	}()
 	time.Sleep(200 * time.Millisecond)
 	if resp := HTTPRoundTrip(t, addr, "/ok", 20*time.Second); !strings.Contains(resp, "HTTP/1.1 200") {
 		t.Fatalf("/ok behind /slow: want 200 once the worker is free, got\n%s", resp)
 	}
-	if waited := time.Since(started); waited < 500*time.Millisecond {
-		t.Fatalf("/ok behind /slow was answered after %v, before the one worker could have finished /slow", waited)
+	okDone := time.Now()
+	r := <-slowCh
+	if r.err != nil || !strings.Contains(r.body, "slow") {
+		t.Fatalf("/slow itself: %q, %v", r.body, r.err)
 	}
-	if b, err := io.ReadAll(slow); err != nil || !strings.Contains(string(b), "slow") {
-		t.Fatalf("/slow itself: %q, %v", b, err)
+	// /slow is a CPU burn, so its length varies by runner; the proof is the
+	// order, and it needs /slow to outlast the 200 ms head start by far.
+	if held := r.done.Sub(started); held < 400*time.Millisecond {
+		t.Fatalf("/slow held its worker for only %v; too short to show /ok waited behind it", held)
+	}
+	if okDone.Before(r.done.Add(-50 * time.Millisecond)) {
+		t.Fatalf("/ok was answered %v before /slow finished, so the one worker did not run /slow to completion first", r.done.Sub(okDone))
 	}
 }
