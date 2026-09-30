@@ -1,0 +1,189 @@
+package e2eselfhost
+
+import (
+	"bytes"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"testing"
+)
+
+// wideMapKeyCases pin an i64 / u64 key column on the typed lowering (#10005).
+// The register runtimes hold every key at eight bytes, so a wide key takes the
+// integer column; wasm's key cell is four bytes, so there each key is boxed
+// into a cell the map owns and probes through (the `_k64` helpers). Every key
+// is above 2^32 or below -2^32, so a column that kept 32 bits of it would
+// collide or miss. The interpreter and native answer both programs 42.
+var wideMapKeyCases = []struct {
+	name string
+	src  string
+}{
+	// Insert, has, get, get_or, keys, pair iteration, without, an i64 value
+	// column beside an i64 key, and a u64 key at the top of its range.
+	{"wide-keys", `import "core/map";
+function main(): i32 {
+    var m: Map[i64, i32] = map_new(4);
+    var big: i64 = 4294967296 + 7;
+    m = m.insert(big, 10);
+    m = m.insert(7 as i64, 20);
+    m = m.insert(0 - big, 30);
+    var r: i32 = 0;
+    if (m.len() != 3) { return 1; }
+    if (m.get_or(big, 0) != 10) { return 2; }
+    if (m.get_or(7 as i64, 0) != 20) { return 3; }
+    if (m.get_or(0 - big, 0) != 30) { return 4; }
+    if (m.has(4294967296 as i64)) { return 5; }
+    var ks: i64[] = m.keys();
+    if (ks.len() != 3) { return 6; }
+    if (ks[0] != big) { return 7; }
+    var s: i64 = 0;
+    for k in ks { s = s + k; }
+    if (s != 7 as i64) { return 8; }
+    var t: i32 = 0;
+    for (k, v) in m { if (k == big) { t = t + v; } }
+    if (t != 10) { return 9; }
+    var w: Map[i64, i64] = map_new(2);
+    w = w.insert(big, big * 2);
+    if (w.get_or(big, 0 as i64) != big * 2) { return 11; }
+    var u: Map[u64, i32] = map_new(2);
+    u = u.insert(18446744073709551615 as u64, 3);
+    if (u.get_or(18446744073709551615 as u64, 0) != 3) { return 12; }
+    match (m.get(big)) { Some(v) => { if (v != 10) { return 13; } }, None => { return 14; } }
+    var m2: Map[i64, i32] = m.without(big).0;
+    if (m2.has(big)) { return 15; }
+    if (m2.len() != 2) { return 16; }
+    return 42;
+}
+`},
+	// Growth past the initial capacity with cells to rehash, deletes that leave
+	// tombstones and reinserts over them, overwrites that discard the incoming
+	// key, an aliased map copied before its insert, and a u64-keyed map with a
+	// wide value column read back through iteration, keys and get.
+	// Five shared maps rebuilt in one function, their key and value columns
+	// of every width: the rebuild's scratch slots are one per width, so a
+	// narrow column and a wide one never share a slot's declared type
+	// (#10779).
+	{"mixed-width-rebuilds", `import "core/map";
+function main(): i32 {
+    var a: Map[string, u8] = map_new(2);
+    var a2: Map[string, u8] = a;
+    a = a.insert("x", 10);
+    var b: Map[string, i64] = map_new(2);
+    var b2: Map[string, i64] = b;
+    b = b.insert("y", 4294967296 + 5);
+    var c: Map[i64, i32] = map_new(2);
+    var c2: Map[i64, i32] = c;
+    c = c.insert(4294967296 + 9, 9);
+    var d: Map[i64, i64] = map_new(2);
+    var d2: Map[i64, i64] = d;
+    d = d.insert(4294967296 + 11, 4294967296 + 12);
+    var e: Map[string, f64] = map_new(2);
+    var e2: Map[string, f64] = e;
+    e = e.insert("z", 2.5);
+    if ((a.get_or("x", 0) as i32) != 10) { return 1; }
+    if (b.get_or("y", 0 as i64) != 4294967296 + 5) { return 2; }
+    if (c.get_or(4294967296 + 9, 0) != 9) { return 3; }
+    if (d.get_or(4294967296 + 11, 0 as i64) != 4294967296 + 12) { return 4; }
+    if (e.get_or("z", 0.0) != 2.5) { return 5; }
+    if (a2.len() + b2.len() + c2.len() + d2.len() + e2.len() != 0) { return 6; }
+    return 42;
+}
+`},
+	{"wide-keys-churn", `import "core/map";
+function fill(n: i32): Map[i64, i32] {
+    var m: Map[i64, i32] = map_new(2);
+    var i: i32 = 0;
+    while (i < n) { m = m.insert((i as i64) * 4294967296 + (i as i64), i); i = i + 1; }
+    return m;
+}
+function main(): i32 {
+    var m: Map[i64, i32] = fill(40);
+    if (m.len() != 40) { return 1; }
+    var i: i32 = 0;
+    while (i < 40) { if (m.get_or((i as i64) * 4294967296 + (i as i64), 0 - 1) != i) { return 2; } i = i + 1; }
+    if (m.has(1 as i64)) { return 3; }
+    i = 0;
+    while (i < 40) { m = m.without((i as i64) * 4294967296 + (i as i64)).0; i = i + 2; }
+    if (m.len() != 20) { return 4; }
+    i = 0;
+    while (i < 40) { m = m.insert((i as i64) * 4294967296 + (i as i64), i * 10); i = i + 2; }
+    if (m.len() != 40) { return 5; }
+    var s: i64 = 0;
+    var t: i32 = 0;
+    for (k, v) in m { s = s + k; t = t + v; }
+    if (t != 4200) { return 6; }
+    if (s != (0 as i64)) { s = s - s; }
+    var a: Map[i64, i32] = m;
+    var b: Map[i64, i32] = a.insert(99 as i64, 99);
+    if (b.len() != 41) { return 7; }
+    if (a.len() != 40) { return 8; }
+    if (m.len() != 40) { return 9; }
+    b = b.insert(99 as i64, 100);
+    b = b.insert(99 as i64, 101);
+    if (b.get_or(99 as i64, 0) != 101) { return 10; }
+    if (b.len() != 41) { return 11; }
+    var w: Map[u64, i64] = map_new(1);
+    i = 0;
+    while (i < 12) { w = w.insert((18446744073709551615 as u64) - (i as u64), (i as i64) * 4294967296); i = i + 1; }
+    var ws: i64 = 0;
+    for (k, v) in w { ws = ws + v; }
+    if (ws != (66 as i64) * 4294967296) { return 12; }
+    var ks: u64[] = w.keys();
+    if (ks.len() != 12) { return 13; }
+    if (ks[11] != (18446744073709551615 as u64) - (11 as u64)) { return 14; }
+    match (w.get((18446744073709551615 as u64) - (5 as u64))) { Some(v) => { if (v != (5 as i64) * 4294967296) { return 15; } }, None => { return 16; } }
+    return 42;
+}
+`},
+}
+
+func TestSelfHostMapWideKeyIRX86_64(t *testing.T) {
+	cli := newStrictCLI(t)
+	for _, tc := range wideMapKeyCases {
+		t.Run(tc.name, func(t *testing.T) {
+			if code, out := cli.runX86(t, cli.emit(t, "x86-64-linux", tc.src)); code != 42 {
+				t.Errorf("%s: exit %d, want 42 (the code names the failing step); out %q", tc.name, code, out)
+			}
+		})
+	}
+}
+
+func TestSelfHostMapWideKeyIRArm64(t *testing.T) {
+	gcc, qemu := arm64Tooling(t)
+	cli := newStrictCLI(t)
+	for _, tc := range wideMapKeyCases {
+		t.Run(tc.name, func(t *testing.T) {
+			if code, out := runArm64(t, gcc, qemu, cli.emit(t, "arm64-linux", tc.src)); code != 42 {
+				t.Errorf("%s arm64: exit %d, want 42; out %q", tc.name, code, out)
+			}
+		})
+	}
+}
+
+func TestSelfHostMapWideKeyWasmIR(t *testing.T) {
+	cli := newStrictCLI(t)
+	for _, tc := range wideMapKeyCases {
+		t.Run(tc.name, func(t *testing.T) {
+			wat := cli.emit(t, "wasm32-wasi", tc.src)
+			if code, out := runWasm(t, wat); code != 42 {
+				t.Errorf("%s wasm: exit %d, want 42; out %q\nstderr:\n%s", tc.name, code, out, wasmStderr(t, wat))
+			}
+		})
+	}
+}
+
+// wasmStderr runs wat under wasmtime and answers what it wrote to stderr: a
+// validation error or a trap names the failing site, which the exit code
+// alone does not.
+func wasmStderr(t *testing.T, wat string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "prog.wat")
+	if err := os.WriteFile(path, []byte(wat), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run := exec.Command("wasmtime", path)
+	var stderr bytes.Buffer
+	run.Stderr = &stderr
+	_ = run.Run()
+	return stderr.String()
+}
