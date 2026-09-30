@@ -363,7 +363,10 @@ pub struct RefSet { names: string[], head: i32[], next: i32[] }
 // a method or operator spelling: a bare name is a local or a free function, as
 // native's call graph reads it, so `var close` does not reach a `close` method.
 // A bare name `fd`'s own parameters, receiver or declarations bind reaches
-// nothing: a local spelled like a free function is not a reference to it.
+// nothing: a local spelled like a free function is not a reference to it. A
+// method spelled on a receiver of known declared type reaches that type's
+// method (`methods` holds the qualified root); its bare spelling stays in
+// `any` for the helpers only a bare name reaches.
 pub struct BodyRefs { any: RefSet, methods: RefSet }
 
 pub function body_refs(fd: parser.FuncDecl): BodyRefs {
@@ -372,9 +375,14 @@ pub function body_refs(fd: parser.FuncDecl): BodyRefs {
     return method_name_of(e, lt, acc);
   }
   var methods: string[] = [];
+  // The bare spellings too: an array-method helper (`__method_Array_join`)
+  // and an interposed trait method (`B.scale`) are reached by `.join` and
+  // `.scale` alone, which no qualified root names.
+  var bare: string[] = [];
   var i: i32 = 0;
   while (i < fd.body.len()) {
     methods = astwalk.fold_stmt(fd.body[i], methods, method_of);
+    bare = astwalk.fold_stmt(fd.body[i], bare, ts_method_name_of);
     i = i + 1;
   }
   var bound: string[] = [];
@@ -388,6 +396,7 @@ pub function body_refs(fd: parser.FuncDecl): BodyRefs {
   }
   var any: string[] = [];
   any = util.append_all(any, methods);
+  any = util.append_all(any, bare);
   var free: string[] = astwalk.collect_free_idents(bound, fd.body, []);
   var fi: i32 = 0;
   while (fi < free.len()) {
@@ -476,7 +485,11 @@ pub function refs_name(br: BodyRefs, fd: parser.FuncDecl): boolean {
     if (ts_kept_name(fd, br.methods)) {
       return true;
     }
-    return refset_has(br.methods, ts_qualified_root(util.base_type_name(fd.receiver_type), fd.name));
+    if (refset_has(br.methods, ts_qualified_root(util.base_type_name(fd.receiver_type), fd.name))) {
+      return true;
+    }
+    var im: string = ts_interposed_method_name(fd.name);
+    return im.len() > 0 && refset_has(br.any, im);
   }
   // A free function is named by a bare identifier: `plat.log` is a method
   // or a field whatever free `log` the program also declares, where the

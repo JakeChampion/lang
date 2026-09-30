@@ -178,6 +178,15 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 			want: []string{"eprint@log"},
 		},
 		{
+			name: "an array-method helper reached on a typed receiver is followed",
+			src: `import "std/http";
+function __method_Array_noisy(arr: i32[]): void { eprint("hit"); }
+function handle(req: HttpRequest, plat: Platform): HttpResponse {
+    var xs: i32[] = [1];
+    xs.noisy();` + handlerTail,
+			want: []string{"eprint@log"},
+		},
+		{
 			name: "a value whose target the walk cannot name charges nothing",
 			src: `import "std/http";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {

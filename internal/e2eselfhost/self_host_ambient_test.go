@@ -175,6 +175,15 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 			want: []string{"5:1 handle eprint log"},
 		},
 		{
+			name: "an array-method helper reached on a typed receiver",
+			src: `import "std/http";
+function __method_Array_noisy(arr: i32[]): void { eprint("hit"); }
+function handle(req: HttpRequest, plat: Platform): HttpResponse {
+    var xs: i32[] = [1];
+    xs.noisy();` + tail,
+			want: []string{"3:1 handle eprint log"},
+		},
+		{
 			name: "a function without a bag",
 			src: `function helper(): i32 { eprint("hit"); return 0; }
 function main(): i32 { return helper(); }
