@@ -44,6 +44,21 @@ function main(): i32 { build(); return 0; }
 		t.Fatalf("write entry: %v", err)
 	}
 
+	// The typed lowering replays the same actions on a `?` failure edge, and
+	// refuses the shape the same way.
+	for _, args := range [][]string{nil} {
+		_, stderr, code := runDriver(t, runner, driverBin, nil, true, append([]string{entry}, args...)...)
+		if code != 3 {
+			t.Fatalf("typed %v: exited %d, want 3 (a refusal) — a signal here is the recursion back\n%s", args, code, stderr)
+		}
+		if !strings.Contains(stderr, "build: `?` inside a defer action (E079)") {
+			t.Errorf("typed %v: refusal does not name build and the reason\n%s", args, stderr)
+		}
+	}
+
+	// The rest pins the AST lowering's bail.
+	t.Setenv("FERN_SEM_IR", "")
+
 	// `-assume-eligible` is what makes the bail observable: it skips the
 	// pre-check, so a function that does not lower reaches the emit and is
 	// refused BY NAME with the reason the lowering recorded (#8590). Without
