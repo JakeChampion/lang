@@ -4712,6 +4712,134 @@ function f(n: i32): string {
 }
 function main(): i32 { print(f(3) + " " + f(0)); return f(2).len(); }
 `},
+	// A container a call returns, anchored to a string declared in the branch or
+	// loop body it merges out of, is copied whole at the merge (#10815).
+	{name: "a-str-array-a-call-returns-from-a-branch-local-is-produced", atLeast: 4, noLeak: true, src: `
+function mk(n: i32): string {
+    var s: string = "ab";
+    var i: i32 = 0;
+    while (i < n) { s = s + "c"; i = i + 1; }
+    return s;
+}
+function heads(s: string): str[] { return [slice_unchecked(s, 0, 1), slice_unchecked(s, 1, 2)]; }
+function f(n: i32): string {
+    var a: str[] = [];
+    if (n != 0) {
+        var s: string = mk(n);
+        a = heads(s);
+    }
+    var out: string = "";
+    for v in a { out = out + v + "|"; }
+    return out;
+}
+function main(): i32 { print(f(3) + f(0)); return f(2).len(); }
+`},
+	{name: "a-tuple-a-call-returns-from-a-branch-local-is-produced", atLeast: 4, noLeak: true, src: `
+function mk(n: i32): string {
+    var s: string = "ab";
+    var i: i32 = 0;
+    while (i < n) { s = s + "c"; i = i + 1; }
+    return s;
+}
+function split2(s: string): (str, str) { return (slice_unchecked(s, 0, 1), slice_unchecked(s, 1, 3)); }
+function f(n: i32): string {
+    var p: (str, str) = ("-", "-");
+    if (n != 0) {
+        var s: string = mk(n);
+        p = split2(s);
+    }
+    return p.0 + "/" + p.1;
+}
+function main(): i32 { print(f(3) + " " + f(0)); return f(2).len(); }
+`},
+	{name: "an-option-a-call-returns-from-a-loop-body-local-is-produced", atLeast: 4, noLeak: true, src: `
+function mk(n: i32): string {
+    var s: string = "ab";
+    var i: i32 = 0;
+    while (i < n) { s = s + "c"; i = i + 1; }
+    return s;
+}
+function first(s: string, n: i32): Option[str] {
+    if (n > 2) { return Some(slice_unchecked(s, 0, 2)); }
+    return None;
+}
+function f(n: i32): string {
+    var o: Option[str] = None;
+    var i: i32 = 0;
+    while (i < n) {
+        var s: string = mk(i);
+        o = first(s, i);
+        i = i + 1;
+    }
+    match (o) { Some(v) => { return "some:" + v; }, None => { return "none"; } }
+}
+function main(): i32 { print(f(5) + " " + f(2) + " " + f(0)); return f(4).len(); }
+`},
+	{name: "a-nested-array-a-call-returns-from-a-branch-local-is-produced", atLeast: 4, noLeak: true, src: `
+function mk(n: i32): string {
+    var s: string = "ab";
+    var i: i32 = 0;
+    while (i < n) { s = s + "c"; i = i + 1; }
+    return s;
+}
+function grid(s: string): str[][] { return [[slice_unchecked(s, 0, 1)], [slice_unchecked(s, 1, 2), slice_unchecked(s, 2, 3)]]; }
+function f(n: i32): string {
+    var g: str[][] = [];
+    if (n != 0) {
+        var s: string = mk(n);
+        g = grid(s);
+    }
+    var out: string = "";
+    for row in g { for v in row { out = out + v; } out = out + ";"; }
+    return out;
+}
+function main(): i32 { print(f(3) + "|" + f(0)); return f(2).len(); }
+`},
+	// A call anchored to the array it extends and to a loop-body local: each
+	// round copies what the join would otherwise read past the local.
+	{name: "an-array-a-call-extends-with-a-loop-body-local-is-produced", atLeast: 4, noLeak: true, src: `
+function mk(n: i32): string {
+    var s: string = "ab";
+    var i: i32 = 0;
+    while (i < n) { s = s + "c"; i = i + 1; }
+    return s;
+}
+function both(a: str[], s: string): str[] { return a.append(slice_unchecked(s, 0, 3)); }
+function f(n: i32): string {
+    var a: str[] = [];
+    var i: i32 = 0;
+    while (i < n) {
+        var s: string = mk(i + 1);
+        a = both(a, s);
+        i = i + 1;
+    }
+    var out: string = "";
+    for v in a { out = out + v + ","; }
+    return out;
+}
+function main(): i32 { print(f(3) + "|" + f(0)); return f(2).len(); }
+`},
+	// The control: the source above the loop dominates every join.
+	{name: "a-str-array-a-call-returns-from-a-dominating-local-is-produced", atLeast: 4, noLeak: true, src: `
+function mk(n: i32): string {
+    var s: string = "ab";
+    var i: i32 = 0;
+    while (i < n) { s = s + "c"; i = i + 1; }
+    return s;
+}
+function heads(s: string): str[] { return [slice_unchecked(s, 0, 1), slice_unchecked(s, 1, 2)]; }
+function pick(n: i32): i32 {
+    var s: string = mk(n);
+    var a: str[] = [];
+    var i: i32 = 0;
+    while (i < n) {
+        if (i % 2 == 0) { a = heads(s); }
+        i = i + 1;
+    }
+    return a.len();
+}
+function main(): i32 { return pick(9); }
+`},
 	// std/time's Zoned.format_rfc3339 is that branch shape (#10796).
 	{name: "std-time-format-rfc3339-is-produced", atLeast: 77, noLeak: true, src: `
 import "std/time";
@@ -6264,7 +6392,8 @@ function main(): i32 {
 `
 
 // semDominatingViewSource merges views of `s`, declared above the loop, at
-// the loop's joins: a copy of either would allocate once per round.
+// the loop's joins, one set built in the loop and one a call returns: a copy
+// of any would allocate once per round.
 const semDominatingViewSource = `
 function mk(n: i32): string {
     var s: string = "ab";
@@ -6272,19 +6401,22 @@ function mk(n: i32): string {
     while (i < n) { s = s + "c"; i = i + 1; }
     return s;
 }
+function heads(s: string): str[] { return [slice_unchecked(s, 0, 1), slice_unchecked(s, 1, 2)]; }
 function pick(n: i32): i32 {
     var s: string = mk(n);
     var tail: str = "";
     var a: str[] = [];
+    var b: str[] = [];
     var i: i32 = 0;
     while (i < n) {
         if (i % 2 == 0) {
             tail = slice_unchecked(s, 1, 3);
             a = a.append(slice_unchecked(s, 0, 2));
+            b = heads(s);
         }
         i = i + 1;
     }
-    return tail.len() + a.len();
+    return tail.len() + a.len() + b.len();
 }
 function main(): i32 { return pick(9); }
 `
