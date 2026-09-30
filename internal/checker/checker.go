@@ -20404,8 +20404,50 @@ func (c *checker) widenCompositeByLiterals(t ast.Type, es ...ast.Expr) ast.Type 
 		if w := c.widenCompositeByLiterals(tt.Elem, arrayElemExprs(es)...); w != nil {
 			return ast.SliceType{Elem: w}
 		}
+	case ast.StructType:
+		// A generic struct literal whose type argument only literals bind:
+		// `Same { a: 1, b: 4611686018427387904 }` (#10453).
+		sd, ok := c.info.Structs[tt.Name]
+		if !ok || len(sd.TypeParams) != len(tt.Args) {
+			return nil
+		}
+		args := append([]ast.Type(nil), tt.Args...)
+		changed := false
+		for i, tp := range sd.TypeParams {
+			if w := c.widenCompositeByLiterals(args[i], structParamExprs(sd, tp, es)...); w != nil {
+				args[i], changed = w, true
+			}
+		}
+		if changed {
+			return ast.StructType{Name: tt.Name, Args: args}
+		}
 	}
 	return nil
+}
+
+// structParamExprs is the set of field values, across the struct literals es
+// produce, whose declared field type is the type parameter tp. A literal that
+// wrote its own type arguments is already settled and contributes nothing.
+func structParamExprs(sd *ast.StructDecl, tp string, es []ast.Expr) []ast.Expr {
+	byParam := map[string]bool{}
+	for _, f := range sd.Fields {
+		if pt, ok := f.Type.(ast.ParamType); ok && pt.Name == tp {
+			byParam[f.Name] = true
+		}
+	}
+	var out []ast.Expr
+	for _, e := range valueExprs(es) {
+		sl, ok := e.(*ast.StructLit)
+		if !ok || sl.TypeName != sd.Name || sl.TypeArgsWritten {
+			continue
+		}
+		for _, f := range sl.Fields {
+			if byParam[f.Name] {
+				out = append(out, f.Value)
+			}
+		}
+	}
+	return out
 }
 
 // valueExprs expands each expression to the value-producing trees behind it —

@@ -5455,12 +5455,48 @@ function struct_lit_args(sl: ast.ExprStructLit, ssig: StructSig, s: Scope): type
   for tp in ssig.type_params {
     var bi: i32 = util.index_of_str(bn, tp);
     if (bi >= 0) {
-      args = args.append(bt[bi]);
+      args = args.append(literal_bound_width(sl, ssig, tp, bt[bi]));
     } else {
       args = args.append(t_unknown("unbound " + tp));
     }
   }
   return args;
+}
+
+// literal_bound_width widens a type argument that untyped integer literals
+// bound to i64 when one of them has no i32 reading, as native's
+// widenCompositeByLiterals does: `Same { a: 1, b: 4611686018427387904 }` is a
+// Same[i64] (#10453). An argument a typed field bound first is left alone.
+function literal_bound_width(sl: ast.ExprStructLit, ssig: StructSig, tp: string, bound: typeinfo.Type): typeinfo.Type {
+  var first: boolean = true;
+  var wide: boolean = false;
+  var i: i32 = 0;
+  while (i < sl.field_names.len()) {
+    var fi: i32 = field_index(ssig, sl.field_names[i]);
+    if (fi >= 0 && fi < ssig.field_type_names.len() && ssig.field_type_names[fi] == tp) {
+      if (first && !int_literal_tree(sl.field_values[i])) {
+        return bound;
+      }
+      first = false;
+      wide = wide || wide_int_tree(sl.field_values[i]);
+    }
+    i = i + 1;
+  }
+  if (wide) {
+    return t_i64();
+  }
+  return bound;
+}
+
+// widened_field_type is field j's type under a generic literal's own
+// arguments when that reads it at i64, and unknown otherwise: only a widening
+// is the literal's to settle, a narrower width comes from its context.
+function widened_field_type(sig: StructSig, j: i32, largs: typeinfo.Type[], s: Scope): typeinfo.Type {
+  var want: typeinfo.Type = type_from_ref_subst(parser.parse_type_ref(sig.field_type_names[j]), sig.type_params, largs, s.type_names());
+  if (type_to_irtag(want) == "i64") {
+    return want;
+  }
+  return t_unknown("no field");
 }
 
 // lit_uninferable_param names a type parameter of a destination-less literal
@@ -21872,6 +21908,34 @@ function build_module_tables(mod: parser.Module): ModuleTables {
   return ModuleTables { structs: struct_table(structs, rnames), unions: union_table(unions), sigs: sig_table(sigs), methods: methods, imports: import_paths_of(mod), impls: assoc_func_impls(mod.impls, mod.funcs), trait_reqs: mod.trait_reqs };
 }
 
+// settle_generic_lit_fields settles at i64 each bare integer literal whose
+// field the literal's own arguments widen, so
+// `Same { a: 1, b: 4611686018427387904 }` reads both fields at i64 (#10453).
+function settle_generic_lit_fields(sl: ast.ExprStructLit, fields: ast.Expr[], s: Scope): ast.Expr[] {
+  var sig: StructSig = s.lookup_struct(sl.type_name);
+  if (sig.type_params.len() == 0) {
+    return fields;
+  }
+  var largs: typeinfo.Type[] = struct_lit_args(sl, sig, s);
+  var out: ast.Expr[] = [];
+  var i: i32 = 0;
+  while (i < fields.len()) {
+    var v: ast.Expr = fields[i];
+    var fi: i32 = -1;
+    if (i < sl.field_names.len()) {
+      fi = field_index(sig, sl.field_names[i]);
+    }
+    if (fi >= 0 && fi < sig.field_type_names.len() && int_literal_tree(sl.field_values[i])) {
+      if (type_to_irtag(widened_field_type(sig, fi, largs, s)) == "i64") {
+        v = settle_int_tree(v, "i64");
+      }
+    }
+    out = out.append(v);
+    i = i + 1;
+  }
+  return out;
+}
+
 // settle_int_tree records a contextual integer type on the compile-only AST.
 // Number nodes have no type tag, so their suffix carries the settled width.
 // Formatting uses the original parser tree, never this annotated copy.
@@ -21976,6 +22040,7 @@ function annotate_expr(e: ast.Expr, s: Scope): ast.Expr {
       for field_value in sli.field_values {
         nfv = nfv.append(annotate_expr(field_value, s));
       }
+      nfv = settle_generic_lit_fields(sli, nfv, s);
       var nbase: ast.Expr = sli.base;
       if (sli.has_base) {
         nbase = annotate_expr(sli.base, s);
@@ -23703,14 +23768,22 @@ function lit_array(arr: ast.ExprArray, s: Scope, st: LitInfer): LitInfer {
 function lit_struct_lit(sl: ast.ExprStructLit, s: Scope, st: LitInfer): LitInfer {
   var out: LitInfer = st;
   var sig: StructSig = s.lookup_struct(sl.type_name);
+  // A generic literal's wide field settles at the i64 its argument widens to.
+  var largs: typeinfo.Type[] = [];
+  if (sig.type_params.len() > 0) {
+    largs = struct_lit_args(sl, sig, s);
+  }
   var i: i32 = 0;
   while (i < sl.field_values.len()) {
     var want: typeinfo.Type = t_unknown("no field");
-    if (sig.type_params.len() == 0 && i < sl.field_names.len()) {
+    if (i < sl.field_names.len()) {
       var j: i32 = 0;
       while (j < sig.field_names.len()) {
         if (sig.field_names[j] == sl.field_names[i] && j < sig.field_types.len()) {
           want = sig.field_types[j];
+          if (sig.type_params.len() > 0 && j < sig.field_type_names.len()) {
+            want = widened_field_type(sig, j, largs, s);
+          }
         }
         j = j + 1;
       }
