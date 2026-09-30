@@ -70,9 +70,9 @@ func TestSelfHostCharMethodsX86_64(t *testing.T) {
 func TestSelfHostSortX86_64(t *testing.T) {
 	gcc, runner, driverBin := buildModloadDriverX86(t)
 
-	main := "import \"./sort\";\n" +
+	main := "import \"std/sort\";\n" +
 		"function main(): i32 { var r = sort.sort_i32_inplace_asc([5, 2, 8, 1, 9, 3]); return r[0] * 100 + r[5]; }\n"
-	asm, progDir := compileStdProgModload(t, runner, driverBin, []string{"sort"}, main)
+	asm, progDir := compileSourceModload(t, runner, driverBin, main)
 	progBin := buildBin(t, gcc, progDir, "sortprog", asm)
 	var cmd *exec.Cmd
 	if len(runner) == 0 {
@@ -105,9 +105,9 @@ func TestSelfHostCharMethodsArm64(t *testing.T) {
 func TestSelfHostSortArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	_, x86runner, driverBin := buildModloadArm64DriverX86(t)
-	main := "import \"./sort\";\n" +
+	main := "import \"std/sort\";\n" +
 		"function main(): i32 { var r = sort.sort_i32_inplace_asc([5, 2, 8, 1, 9, 3]); return r[0] * 100 + r[5]; }\n"
-	asm, progDir := compileStdProgModload(t, x86runner, driverBin, []string{"sort"}, main, "-target", "arm64-linux")
+	asm, progDir := compileSourceModload(t, x86runner, driverBin, main, "-target", "arm64-linux")
 	progBin := buildBin(t, arm64gcc, progDir, "sortprog", asm)
 	cmd := runArm64Bin(qemu, progBin)
 	_ = cmd.Run()

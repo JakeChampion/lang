@@ -29,7 +29,7 @@ import (
 // because this test ran import-free, where no f32 method existed and the
 // now-deleted builtin caught f32 and f64 alike. Restore the line as part of
 // fixing #5882 rather than pinning it to the wrong value here.
-const f64ToStringProgram = `import "./float";
+const f64ToStringProgram = `import "std/float";
 function main(): i32 {
     print((3.5 as f64).to_string());
     print((0.0 as f64 - 2.25).to_string());
@@ -60,22 +60,13 @@ const f64ToStringWant = "3.5\n" +
 	"-0.000125\n" +
 	"0.3333333333333333\n"
 
-// f64ToStringMods vendors std/float alone. Its own `import "std/i32"` /
-// `"std/i64"` are skipped as unresolved by the loader (the same set the old
-// marker bundle hand-picked), which is correct here: the only integer method
-// float's body calls is an i32 `.to_string()` (__float_sig_core renders its
-// decimal exponent with one), and that is still a register-backend builtin.
-// Vendoring i32/i64 instead FAILS — they import core/int, which this helper
-// does not carry, leaving `int__*` calls undefined.
-var f64ToStringMods = []string{"float"}
-
 // TestSelfHostF64ToStringX86_64 compiles the float-formatting program with
 // the self-hosted x86-64 emitter and checks its stdout against the native
 // interpreter's shortest-round-trip output.
 func TestSelfHostF64ToStringX86_64(t *testing.T) {
 	gcc, runner, driverBin := buildModloadDriverX86(t)
 
-	asm, progDir := compileStdProgModload(t, runner, driverBin, f64ToStringMods, f64ToStringProgram)
+	asm, progDir := compileSourceModload(t, runner, driverBin, f64ToStringProgram)
 	if len(asm) == 0 {
 		t.Fatal("self-host compiler emitted 0 bytes")
 	}
@@ -100,7 +91,7 @@ func TestSelfHostF64ToStringArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	_, x86runner, driverBin := buildModloadArm64DriverX86(t)
 
-	asm, progDir := compileStdProgModload(t, x86runner, driverBin, f64ToStringMods, f64ToStringProgram, "-target", "arm64-linux")
+	asm, progDir := compileSourceModload(t, x86runner, driverBin, f64ToStringProgram, "-target", "arm64-linux")
 	if len(asm) == 0 {
 		t.Fatal("self-host arm64 compiler emitted 0 bytes for the f64 program")
 	}

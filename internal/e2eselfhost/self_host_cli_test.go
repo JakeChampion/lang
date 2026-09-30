@@ -821,6 +821,32 @@ function main(): i32 {
 		}
 	})
 
+	// An inherent impl's associated function (`Pt.make(3, 4)`) has no trait
+	// requirement to read a return type from, and the checker typed the call
+	// unknown, so `-check` refused every annotated binding of one with the
+	// uncoded catch-all. It is typed from its own declaration now, with a
+	// generic impl's type variables bound from the arguments (#10767).
+	t.Run("check-accepts-inherent-assoc-call", func(t *testing.T) {
+		for _, tc := range []struct {
+			name string
+			src  string
+		}{
+			{"concrete", "struct Pt { x: i32, y: i32 }\nimpl Pt { function make(a: i32, b: i32): Pt { return Pt { x: a, y: b }; } }\nfunction main(): i32 { var p: Pt = Pt.make(3, 4); return p.x + p.y; }\n"},
+			{"generic", "struct Box[T] { v: T }\nimpl[T] Box[T] {\n    function of(v: T): Box[T] { return Box { v: v }; }\n    function get(self: Self): T { return self.v; }\n}\nfunction main(): i32 { var b: Box[i32] = Box.of(42); return b.get(); }\n"},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				srcPath := filepath.Join(dir, "inherent_assoc.fern")
+				if err := os.WriteFile(srcPath, []byte(tc.src), 0o644); err != nil {
+					t.Fatalf("write src: %v", err)
+				}
+				out, code := runDriver(t, "-check", srcPath)
+				if code != 0 {
+					t.Errorf("-check exited %d on a program native accepts, want 0:\n%s", code, out)
+				}
+			})
+		}
+	})
+
 	// #8739. The parser is permissive: where it cannot read the source it
 	// plants an ExprUnknown and carries on, so every later pass reasons about
 	// the MARKER. `-check` never ran the gate that turns those markers back

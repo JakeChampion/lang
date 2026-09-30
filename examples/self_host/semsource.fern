@@ -1125,7 +1125,7 @@ function binary(e: ast.Expr, b: ast.ExprBinary, s: State, expected: typeinfo.Typ
     // one expression.
     var key: string = composite_key(b.op, s.values[left.id], s);
     if (key != "") { return composite_compare(b, left, key, s); }
-    var arith: string = nominal_method_key(arithmetic_verb(b.op), s.values[left.id], s);
+    var arith: string = nominal_method_key(ast.operator_method(b.op), s.values[left.id], s);
     if (arith != "") { return operator_method(left, [b.right], arith, s); }
     var right: Value = address_widen(expr(b.right, s, want), want);
     s = right.s;
@@ -1190,18 +1190,6 @@ function nominal_method_key(verb: string, t: typeinfo.Type, s: State): string {
     var key: string = owner + "." + verb;
     if (ssasem.find_contract(s.contracts, key) < 0) { return ""; }
     return key;
-}
-
-// An arithmetic operator on a struct or an enum is the method its `impl`
-// supplies: `a + b` is `a.add(b)` and `-a` is `a.neg()`, the desugar the
-// native checker applies (#2706). The result is whatever the method answers.
-function arithmetic_verb(op: string): string {
-    if (op == "+") { return "add"; }
-    if (op == "-") { return "sub"; }
-    if (op == "*") { return "mul"; }
-    if (op == "/") { return "div"; }
-    if (op == "%") { return "rem"; }
-    return "";
 }
 
 function operator_method(recv: Value, args: ast.Expr[], key: string, s: State): Value {
@@ -2480,6 +2468,9 @@ function widen(v: Value, expected: typeinfo.Type): Value {
     if (semtypes.equal(s.values[v.id], expected)) { return v; }
     if (ssasem.is_view(expected) && ssasem.is_string(s.values[v.id])) { return define(s, ssasem.str_as(), [v.id], 0, "", expected); }
     if (ssasem.lends_handle(s.values[v.id], expected)) { return define(s, ssasem.cast(), [v.id], 0, "", expected); }
+    // An owned string[] lends to a str[] destination as one string lends to a
+    // str: the same retag, over the array (`var gs: str[] = s.graphemes()`).
+    if (ssasem.is_view(element_type(expected)) && ssasem.is_string_array(s.values[v.id])) { return define(s, ssasem.str_as(), [v.id], 0, "", expected); }
     if (ssasem.is_dyn(expected) && (struct_name(s.values[v.id]) != "" || union_name(s.values[v.id]) != "")) {
         return define(s, ssasem.dyn_up(), [v.id], 0, "", expected);
     }
@@ -3537,7 +3528,7 @@ function renumber(blocks: ssa.SBlock[], map: i32[], values: typeinfo.Type[]): ss
         out = out.append(ssa.SBlock { ...b, insts: insts, term: term });
     }
     var graph: ssa.SFunc = ssa.SFunc { name: "", nparams: 0, nvals: kept.len(), blocks: out, entry: 0, takes_env: false };
-    return ssasem.Func { graph: graph, values: kept, params: [], result: t_void(), records: [], enums: [], calls: [], envs: [], anchors: [], dyns: [], shadows: [] };
+    return ssasem.Func { graph: graph, values: kept, params: [], result: t_void(), records: [], enums: [], calls: [], envs: [], anchors: [], dyns: [], shadows: [], finalizers: [] };
 }
 
 // ---- functions --------------------------------------------------------------
@@ -3815,7 +3806,7 @@ function parameters(fd: parser.FuncDecl, s: State): State {
 
 function refuse(why: string): Produced {
     var graph: ssa.SFunc = ssa.SFunc { name: "", nparams: 0, nvals: 0, blocks: [], entry: 0, takes_env: false };
-    return Produced { ok: false, why: why, func: ssasem.Func { graph: graph, values: [], params: [], result: t_void(), records: [], enums: [], calls: [], envs: [], anchors: [], dyns: [], shadows: [] }, modes: [], template: false, key: "", requests: [], bodyless: false };
+    return Produced { ok: false, why: why, func: ssasem.Func { graph: graph, values: [], params: [], result: t_void(), records: [], enums: [], calls: [], envs: [], anchors: [], dyns: [], shadows: [], finalizers: [] }, modes: [], template: false, key: "", requests: [], bodyless: false };
 }
 
 function initial(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Contract[], binding: ssasem.Binding, name: string, handers: string[], shadows: string[], funcs: parser.FuncDecl[], impls: parser.ImplInfo[]): State {
@@ -4242,6 +4233,16 @@ function generic_clones(base: string, s: State): typeinfo.Type[] {
 // string method only when std/string is not loaded. std/string's own methods
 // are what the runtime helpers stand in for, and native rejects a second
 // declaration of one beside them (E006).
+// The types an `impl mem.Drop` gives a finalizer. The trait is matched by its
+// simple name, as native's hasDropImpl matches it.
+function finalized_types(impls: parser.ImplInfo[]): string[] {
+    var out: string[] = [];
+    for imp in impls {
+        if (imp.trait_name == "Drop") { out = out.append(util.base_type_name(imp.impl_type)); }
+    }
+    return out;
+}
+
 function shadowed_builtins(mod: parser.Module): string[] {
     var out: string[] = [];
     var keys: string[] = [];
@@ -4379,7 +4380,7 @@ function complete(fd: parser.FuncDecl, s: State, name: string): Produced {
     var table: Schemas = closed.table;
     if (!table.ok) { return refuse(table.why); }
     var graph: ssa.SFunc = ssa.SFunc { ...f.graph, name: name, nparams: params.len() };
-    f = ssasem.Func { ...f, graph: graph, params: params, result: s.result, records: table.records, enums: table.enums, calls: s.calls, envs: closed.rows, dyns: closed.dyns, shadows: s.shadows };
+    f = ssasem.Func { ...f, graph: graph, params: params, result: s.result, records: table.records, enums: table.enums, calls: s.calls, envs: closed.rows, dyns: closed.dyns, shadows: s.shadows, finalizers: finalized_types(s.impls) };
     // Before the verifier in anchor_module, so the rewritten graph is the one
     // it checks, and before anything downstream plans ownership over it (#9692).
     f = ssasem.tail_recursion(f, name);

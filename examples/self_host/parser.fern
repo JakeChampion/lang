@@ -1505,6 +1505,21 @@ function (p: Par) peek_is_literal(): boolean {
 // Only the GATE needs widening: every literal-pattern site parses through
 // parse_binary, which already handles unary minus, so the sign folds in with
 // no change to the arms themselves.
+// peek_at_literal reports an `n @ <literal or range>` head: a binder, `@`,
+// then a scalar pattern, which binds the whole scrutinee to `n`.
+function (p: Par) peek_at_literal(): boolean {
+    if (p.peek_ident().len() == 0 || p.peek2_punct() != "@") { return false; }
+    return p.advance().advance().peek_is_pat_literal();
+}
+
+// take_at_binding consumes an `n @` in front of a scalar pattern and answers
+// the binder, or "" with the cursor unmoved when there is none.
+function take_at_binding(p: Par): (string, Par) {
+    if (!p.peek_at_literal()) { return ("", p); }
+    var name: string = p.peek_ident();
+    return (name, p.advance().advance());
+}
+
 function (p: Par) peek_is_pat_literal(): boolean {
     if (p.peek_is_literal()) { return true; }
     if (p.peek_keyword() == "true" || p.peek_keyword() == "false") { return true; }
@@ -3072,7 +3087,9 @@ function build_literal_match(scrut: ast.Expr, arms: ast.LitArm[], mkline: i32, m
             var la: ast.LitArm = arms[mi];
             var pat: ast.Pattern = p_variant("", "");
             if (la.is_wild) { pat = p_wildcard(); }
-            marms = marms.append(ast.MatchArm { pattern: pat, body: la.body, line: la.line, col: la.col, guard: la.guard, has_guard: la.has_guard, alt_cont: false });
+            var lbody: ast.Stmt[] = la.body;
+            if (la.at_binding.len() > 0) { lbody = prepend_stmt(s_var_at(la.at_binding, "", scrut, la.line, la.col), la.body); }
+            marms = marms.append(ast.MatchArm { pattern: pat, body: lbody, line: la.line, col: la.col, guard: la.guard, has_guard: la.has_guard, alt_cont: false });
             mi = mi + 1;
         }
         return s_match_at(scrut, marms, mkline, mkcol);
@@ -3096,6 +3113,14 @@ function build_literal_match(scrut: ast.Expr, arms: ast.LitArm[], mkline: i32, m
                 else_body = a.body;
             }
         } else {
+            // `n @ <pattern>` binds the scrutinee for the body; a guard reads
+            // it as the scrutinee itself, which is a name by now.
+            var abody: ast.Stmt[] = a.body;
+            var aguard: ast.Expr = a.guard;
+            if (a.at_binding.len() > 0) {
+                abody = prepend_stmt(s_var_at(a.at_binding, "", scrut, a.line, a.col), a.body);
+                if let ast.ExprIdent(sid) = scrut { aguard = astwalk.subst_ident_expr(a.guard, a.at_binding, sid.name); }
+            }
             var cond: ast.Expr = e_binary("==", scrut, a.lit);
             if (a.has_range) {
                 // `lo..hi` / `lo..=hi` → `scrut >= lo && scrut <op> hi`.
@@ -3106,8 +3131,8 @@ function build_literal_match(scrut: ast.Expr, arms: ast.LitArm[], mkline: i32, m
                 if (a.range_inclusive) { hi_op = "<="; }
                 cond = e_binary("&&", e_binary(">=", scrut, a.lit), e_binary(hi_op, scrut, a.range_hi));
             }
-            if (a.has_guard) { cond = e_binary("&&", cond, a.guard); }
-            else_body = [s_if(cond, a.body, else_body)];
+            if (a.has_guard) { cond = e_binary("&&", cond, aguard); }
+            else_body = [s_if(cond, abody, else_body)];
         }
         i = i - 1;
     }
@@ -4134,13 +4159,15 @@ function parse_match_expr(p: Par): IfChain {
     // `_` and desugar to an if/else-if chain (build_literal_match). The
     // decision is made once, up front, so the common enum/variant match
     // takes the normal StmtMatch path below with no extra allocation.
-    if (p.peek_is_pat_literal()) {
+    if (p.peek_is_pat_literal() || p.peek_at_literal()) {
         var lit_arms: ast.LitArm[] = [];
         var lfirst: boolean = true;
         while (p.peek_punct() != "}" && !p.at_end()) {
             var laline: i32 = p.peek_line();
             var lacol: i32 = p.peek_col();
             var lwild: boolean = false;
+            var (lat, lat_p) = take_at_binding(p);
+            p = lat_p;
             var lalt_lits: ast.Expr[] = [];
             var lalt_his: ast.Expr[] = [];
             var lalt_hrs: boolean[] = [];
@@ -4185,12 +4212,12 @@ function parse_match_expr(p: Par): IfChain {
             }
             if (lfirst) { rt = lrt; lfirst = false; }
             if (lwild) {
-                lit_arms = lit_arms.append(ast.LitArm { is_wild: true, lit: e_bool(true), guard: lguard, has_guard: lhas_guard, body: lbody, line: laline, col: lacol, range_hi: e_bool(true), has_range: false, range_inclusive: false, alt_cont: false });
+                lit_arms = lit_arms.append(ast.LitArm { is_wild: true, lit: e_bool(true), guard: lguard, has_guard: lhas_guard, body: lbody, line: laline, col: lacol, range_hi: e_bool(true), has_range: false, range_inclusive: false, alt_cont: false, at_binding: "" });
             } else {
                 // One LitArm per `|` alternative, sharing the guard + body.
                 var lai: i32 = 0;
                 while (lai < lalt_lits.len()) {
-                    lit_arms = lit_arms.append(ast.LitArm { is_wild: false, lit: lalt_lits[lai], guard: lguard, has_guard: lhas_guard, body: lbody, line: laline, col: lacol, range_hi: lalt_his[lai], has_range: lalt_hrs[lai], range_inclusive: lalt_incs[lai], alt_cont: lai > 0 });
+                    lit_arms = lit_arms.append(ast.LitArm { is_wild: false, lit: lalt_lits[lai], guard: lguard, has_guard: lhas_guard, body: lbody, line: laline, col: lacol, range_hi: lalt_his[lai], has_range: lalt_hrs[lai], range_inclusive: lalt_incs[lai], alt_cont: lai > 0, at_binding: lat });
                     lai = lai + 1;
                 }
             }
@@ -4581,8 +4608,9 @@ function parse_block_body_nested(p: Par, tail_value: boolean): (ast.Stmt[], Par)
 // `parseStmt`, so `if (x == 0) x = 40;` is valid there; the self-host used
 // to require `{` and mis-parsed a braceless body into an
 // `/*unknown-stmt: missing { in block*/` with the real statement hoisted to
-// run unconditionally (#4337). Only the control-flow body sites route here;
-// function / match-arm / lambda blocks still require braces.
+// run unconditionally (#4337). Only the control-flow body sites route here,
+// `if let` among them; function / match-arm / lambda blocks still require
+// braces.
 function parse_block_or_stmt(p: Par): (ast.Stmt[], Par) {
     if (p.peek_punct() == "{") { return parse_block(p); }
     var (r_stmt, r_p) = parse_stmt(p);
@@ -5290,12 +5318,14 @@ function parse_match_stmt(p: Par): (ast.Stmt, Par) {
     // `_` and desugar to an if/else-if chain (build_literal_match). The
     // decision is made once, up front, so the common enum/variant match
     // takes the normal StmtMatch path below with no extra allocation.
-    if (p.peek_is_pat_literal()) {
+    if (p.peek_is_pat_literal() || p.peek_at_literal()) {
         var lit_arms: ast.LitArm[] = [];
         while (p.peek_punct() != "}" && !p.at_end()) {
             var laline: i32 = p.peek_line();
             var lacol: i32 = p.peek_col();
             var lwild: boolean = false;
+            var (lat, lat_p) = take_at_binding(p);
+            p = lat_p;
             var lalt_lits: ast.Expr[] = [];
             var lalt_his: ast.Expr[] = [];
             var lalt_hrs: boolean[] = [];
@@ -5325,12 +5355,12 @@ function parse_match_stmt(p: Par): (ast.Stmt, Par) {
             var (lbb_body, lbb_p) = parse_block(p);
             p = lbb_p;
             if (lwild) {
-                lit_arms = lit_arms.append(ast.LitArm { is_wild: true, lit: e_bool(true), guard: lguard, has_guard: lhas_guard, body: lbb_body, line: laline, col: lacol, range_hi: e_bool(true), has_range: false, range_inclusive: false, alt_cont: false });
+                lit_arms = lit_arms.append(ast.LitArm { is_wild: true, lit: e_bool(true), guard: lguard, has_guard: lhas_guard, body: lbb_body, line: laline, col: lacol, range_hi: e_bool(true), has_range: false, range_inclusive: false, alt_cont: false, at_binding: "" });
             } else {
                 // One LitArm per `|` alternative, sharing the guard + body.
                 var lai: i32 = 0;
                 while (lai < lalt_lits.len()) {
-                    lit_arms = lit_arms.append(ast.LitArm { is_wild: false, lit: lalt_lits[lai], guard: lguard, has_guard: lhas_guard, body: lbb_body, line: laline, col: lacol, range_hi: lalt_his[lai], has_range: lalt_hrs[lai], range_inclusive: lalt_incs[lai], alt_cont: lai > 0 });
+                    lit_arms = lit_arms.append(ast.LitArm { is_wild: false, lit: lalt_lits[lai], guard: lguard, has_guard: lhas_guard, body: lbb_body, line: laline, col: lacol, range_hi: lalt_his[lai], has_range: lalt_hrs[lai], range_inclusive: lalt_incs[lai], alt_cont: lai > 0, at_binding: lat });
                     lai = lai + 1;
                 }
             }
@@ -5931,12 +5961,12 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
                 var ils_saved: boolean = p.no_struct;
                 var (ils_scrut, ils_sp) = parse_expr(p.with_no_struct(true));
                 p = (ils_sp).with_no_struct(ils_saved);
-                var (ils_then, ils_tp) = parse_block(p);
+                var (ils_then, ils_tp) = parse_block_or_stmt(p);
                 p = ils_tp;
                 var ils_else: ast.Stmt[] = [];
                 if (p.peek_keyword() == "else") {
                     p = p.advance();
-                    var (ils_eb, ils_ep) = parse_block(p);
+                    var (ils_eb, ils_ep) = parse_block_or_stmt(p);
                     p = ils_ep;
                     ils_else = ils_eb;
                 }
@@ -5985,12 +6015,12 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
                 var ilt_saved: boolean = p.no_struct;
                 var (ilt_scrut, ilt_sp) = parse_expr(p.with_no_struct(true));
                 p = (ilt_sp).with_no_struct(ilt_saved);
-                var (ilt_then, ilt_tp) = parse_block(p);
+                var (ilt_then, ilt_tp) = parse_block_or_stmt(p);
                 p = ilt_tp;
                 var ilt_else: ast.Stmt[] = [];
                 if (p.peek_keyword() == "else") {
                     p = p.advance();
-                    var (ilt_eb, ilt_ep) = parse_block(p);
+                    var (ilt_eb, ilt_ep) = parse_block_or_stmt(p);
                     p = ilt_ep;
                     ilt_else = ilt_eb;
                 }
@@ -6013,31 +6043,33 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
             // the path a literal match arm already uses. parse_pattern reads
             // only variant patterns, so these reached the checker as an enum
             // match on a scalar scrutinee (E022).
-            if (p.peek_is_pat_literal()) {
+            if (p.peek_is_pat_literal() || p.peek_at_literal()) {
                 var ill_line: i32 = p.peek_line();
                 var ill_col: i32 = p.peek_col();
+                var (ill_at, ill_atp) = take_at_binding(p);
+                p = ill_atp;
                 var (ill_lits, ill_his, ill_hrs, ill_incs, ill_p) = parse_lit_alts(p);
                 p = ill_p;
                 if (p.peek_punct() == "=") { p = p.advance(); }
                 var ill_saved: boolean = p.no_struct;
                 var (ill_scrut, ill_sp) = parse_expr(p.with_no_struct(true));
                 p = (ill_sp).with_no_struct(ill_saved);
-                var (ill_then, ill_tp) = parse_block(p);
+                var (ill_then, ill_tp) = parse_block_or_stmt(p);
                 p = ill_tp;
                 var ill_else: ast.Stmt[] = [];
                 if (p.peek_keyword() == "else") {
                     p = p.advance();
-                    var (ill_eb, ill_ep) = parse_block(p);
+                    var (ill_eb, ill_ep) = parse_block_or_stmt(p);
                     p = ill_ep;
                     ill_else = ill_eb;
                 }
                 var ill_arms: ast.LitArm[] = [];
                 var ill_i: i32 = 0;
                 while (ill_i < ill_lits.len()) {
-                    ill_arms = ill_arms.append(ast.LitArm { is_wild: false, lit: ill_lits[ill_i], guard: e_bool(true), has_guard: false, body: ill_then, line: ill_line, col: ill_col, range_hi: ill_his[ill_i], has_range: ill_hrs[ill_i], range_inclusive: ill_incs[ill_i], alt_cont: ill_i > 0 });
+                    ill_arms = ill_arms.append(ast.LitArm { is_wild: false, lit: ill_lits[ill_i], guard: e_bool(true), has_guard: false, body: ill_then, line: ill_line, col: ill_col, range_hi: ill_his[ill_i], has_range: ill_hrs[ill_i], range_inclusive: ill_incs[ill_i], alt_cont: ill_i > 0, at_binding: ill_at });
                     ill_i = ill_i + 1;
                 }
-                ill_arms = ill_arms.append(ast.LitArm { is_wild: true, lit: e_bool(true), guard: e_bool(true), has_guard: false, body: ill_else, line: ill_line, col: ill_col, range_hi: e_bool(true), has_range: false, range_inclusive: false, alt_cont: false });
+                ill_arms = ill_arms.append(ast.LitArm { is_wild: true, lit: e_bool(true), guard: e_bool(true), has_guard: false, body: ill_else, line: ill_line, col: ill_col, range_hi: e_bool(true), has_range: false, range_inclusive: false, alt_cont: false, at_binding: "" });
                 return (with_sugar_origin(build_literal_match(ill_scrut, ill_arms, ill_line, ill_col), "if_let"), p);
             }
             // The head's line/col, captured where the three shaped paths above
@@ -6068,12 +6100,12 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
             var il_saved: boolean = p.no_struct;
             var (ilscrut_expr, ilscrut_p) = parse_expr(p.with_no_struct(true));
             p = (ilscrut_p).with_no_struct(il_saved);
-            var (ilthen_body, ilthen_p) = parse_block(p);
+            var (ilthen_body, ilthen_p) = parse_block_or_stmt(p);
             p = ilthen_p;
             var ilelse: ast.Stmt[] = [];
             if (p.peek_keyword() == "else") {
                 p = p.advance();
-                var (ileb_body, ileb_p) = parse_block(p);
+                var (ileb_body, ileb_p) = parse_block_or_stmt(p);
                 p = ileb_p;
                 ilelse = ileb_body;
             }
@@ -6203,8 +6235,9 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
         // Same shape as the variant-pattern let-else: the rest of the
         // enclosing block is the success arm, so the `else` block is the only
         // other arm, and build_literal_match lowers the pair.
-        if (p.peek_is_pat_literal()) {
-            var (lel_lits, lel_his, lel_hrs, lel_incs, lel_p) = parse_lit_alts(p);
+        if (p.peek_is_pat_literal() || p.peek_at_literal()) {
+            var (lel_at, lel_atp) = take_at_binding(p);
+            var (lel_lits, lel_his, lel_hrs, lel_incs, lel_p) = parse_lit_alts(lel_atp);
             if (lel_p.peek_punct() == "=") {
                 lel_p = lel_p.advance();
                 var (lel_init, lel_ip) = parse_expr(lel_p);
@@ -6224,10 +6257,10 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
                     var lel_arms: ast.LitArm[] = [];
                     var lel_i: i32 = 0;
                     while (lel_i < lel_lits.len()) {
-                        lel_arms = lel_arms.append(ast.LitArm { is_wild: false, lit: lel_lits[lel_i], guard: e_bool(true), has_guard: false, body: lel_rest, line: vline, col: vcol, range_hi: lel_his[lel_i], has_range: lel_hrs[lel_i], range_inclusive: lel_incs[lel_i], alt_cont: lel_i > 0 });
+                        lel_arms = lel_arms.append(ast.LitArm { is_wild: false, lit: lel_lits[lel_i], guard: e_bool(true), has_guard: false, body: lel_rest, line: vline, col: vcol, range_hi: lel_his[lel_i], has_range: lel_hrs[lel_i], range_inclusive: lel_incs[lel_i], alt_cont: lel_i > 0, at_binding: lel_at });
                         lel_i = lel_i + 1;
                     }
-                    lel_arms = lel_arms.append(ast.LitArm { is_wild: true, lit: e_bool(true), guard: e_bool(true), has_guard: false, body: lel_else, line: vline, col: vcol, range_hi: e_bool(true), has_range: false, range_inclusive: false, alt_cont: false });
+                    lel_arms = lel_arms.append(ast.LitArm { is_wild: true, lit: e_bool(true), guard: e_bool(true), has_guard: false, body: lel_else, line: vline, col: vcol, range_hi: e_bool(true), has_range: false, range_inclusive: false, alt_cont: false, at_binding: "" });
                     return (with_sugar_origin(build_literal_match(lel_init, lel_arms, vline, vcol), "let_else"), p);
                 }
             }
@@ -6254,12 +6287,13 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
         // grammar: parse_pattern gives it nested payloads, `@` bindings and
         // or-patterns, the same forms `if let` and the match arms accept.
         //
-        // A head spelled `NAME(`, `NAME@` or `NAME|` is never a plain binding,
-        // but only an `else` makes it a let-else, and that keyword sits past
-        // the initializer. Par is a value, so the whole head is parsed
+        // A head spelled `NAME(`, `NAME@`, `NAME|` or `NAME.` (a qualified
+        // variant, `Color.Red(n)`) is never a plain binding, but only an
+        // `else` makes it a let-else, and that keyword sits past the
+        // initializer. Par is a value, so the whole head is parsed
         // speculatively and thrown away when no `else` follows, leaving the
         // original cursor to the paths below.
-        if (p.peek_punct() == "(" || p.peek_punct() == "@" || p.peek_punct() == "|") {
+        if (p.peek_punct() == "(" || p.peek_punct() == "@" || p.peek_punct() == "|" || p.at_path_sep()) {
             var (lsp_pat, lsp_p) = parse_pattern(le_pat_start);
             var lsp_pats: ast.Pattern[] = [lsp_pat];
             while (lsp_p.peek_punct() == "|") {
@@ -19079,20 +19113,28 @@ function synth_from_json_text(sd: StructDecl): FuncDecl {
     return FuncDecl { no_inline: false, name: "from_json", receiver_name: "", receiver_type: sd.name, type_params: notp, params: params, ret_type: "Result[" + sd.name + ", string]", body: [s_return(call)], line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "" , is_package: false, module: "" };
 }
 
-// synth_enum_display: variant-wise `to_string` rendering `Variant(p)` /
-// `Variant` — the same shape the Go synthEnumDisplay emits. Self-host
-// enum variants carry at most one payload (`__ev`), so a payload
-// variant renders its single field.
+// synth_enum_display: variant-wise `to_string` rendering `Variant(p, …)`,
+// `Variant { f: p, … }` or `Variant` — the shapes the Go synthEnumDisplay emits.
 function synth_enum_display(ename: string, variants: StructDecl[]): FuncDecl {
     var arms: ast.MatchArm[] = [];
     var i: i32 = 0;
     while (i < variants.len()) {
         var v: StructDecl = variants[i];
         if (v.fields.len() > 0) {
+            // A record-form variant renders `Rect { w: 3, h: 4 }`, a positional
+            // one `Rect(3, 4)`: every payload, as the Go synthEnumDisplay does.
+            var named: boolean = v.variant_field_names.len() == v.fields.len();
             var e: ast.Expr = e_string(v.name + "(");
-            e = e_binary("+", e, dv_call0(e_ident("__p0"), "to_string"));
-            e = e_binary("+", e, e_string(")"));
-            arms = arms.append(ast.MatchArm { pattern: p_variant(v.name, "__p0"), body: [s_return(e)], line: 0, col: 0, guard: e_bool(true), has_guard: false, alt_cont: false });
+            if (named) { e = e_string(v.name + " { "); }
+            var dj: i32 = 0;
+            while (dj < v.fields.len()) {
+                if (dj > 0) { e = e_binary("+", e, e_string(", ")); }
+                if (named) { e = e_binary("+", e, e_string(v.variant_field_names[dj] + ": ")); }
+                e = e_binary("+", e, dv_call0(e_ident("__p" + dl_itoa(dj)), "to_string"));
+                dj = dj + 1;
+            }
+            if (named) { e = e_binary("+", e, e_string(" }")); } else { e = e_binary("+", e, e_string(")")); }
+            arms = arms.append(ast.MatchArm { pattern: p_variant_n(v.name, "__p", v.fields.len()), body: [s_return(e)], line: 0, col: 0, guard: e_bool(true), has_guard: false, alt_cont: false });
         } else {
             arms = arms.append(ast.MatchArm { pattern: p_variant(v.name, ""), body: [s_return(e_string(v.name))], line: 0, col: 0, guard: e_bool(true), has_guard: false, alt_cont: false });
         }
