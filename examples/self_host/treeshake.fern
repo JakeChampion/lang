@@ -39,7 +39,8 @@ import "./util";
 // dispatches to, so `a <op> b` keeps that method even before the operator-
 // overload desugar rewrites it to an explicit call. "" for non-overloadable.
 function ts_op_method(op: string): string {
-    if (ast.operator_method(op) != "") { return ast.operator_method(op); }
+    var named: string = ast.operator_method(op);
+    if (named != "") { return named; }
     if (op == "==" || op == "!=") { return "eq"; }
     if (op == "<" || op == "<=" || op == ">" || op == ">=") { return "cmp"; }
     return "";

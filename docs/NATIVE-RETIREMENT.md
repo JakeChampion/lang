@@ -53,12 +53,12 @@ targets).
 
 | issue | cause | tests |
 |---|---|---|
-| #10005 | typed lowering: a map key wider than 4 bytes (`Map[i64, i32]`, `Map[i64, i64]`, `Map[i64, f64]`) has no column | 17 |
-| #10767 | checker: six rejections native accepts (E009, E015, E038 x2, E042, E064) | 12 |
-| #10756 | typed lowering: `impl mem.Drop` finalizers never run | 8 |
-| #10760 | typed lowering: a declared `str[]` holds a `string[]` (`graphemes`, `words`) | 6 |
-| #10766 | parser: `@` binding with a braceless arm, braceless `if let`, `let … else` in a `var` | 6 |
-| #10763 | typed lowering: empty array literal at a view parameter, `?` on a unit-payload success, a value block with no live edge, a `use` callback wrapper | 6 |
+| #10005 (closed by #10780 after this measurement) | typed lowering: a map key wider than 4 bytes (`Map[i64, i32]`, `Map[i64, i64]`, `Map[i64, f64]`) has no column | 17 |
+| #10767 (closed by #10821 after this measurement) | checker: six rejections native accepts (E009, E015, E038 x2, E042, E064) | 12 |
+| #10756 (the mechanics landed in #10821; the finalizer timing is open) | typed lowering: `impl mem.Drop` finalizers never run | 8 |
+| #10760 (closed by #10821 after this measurement) | typed lowering: a declared `str[]` holds a `string[]` (`graphemes`, `words`) | 6 |
+| #10766 (closed by #10821 after this measurement) | parser: `@` binding with a braceless arm, braceless `if let`, `let … else` in a `var` | 6 |
+| #10763 (closed by this change after this measurement) | typed lowering: empty array literal at a view parameter, `?` on a unit-payload success, a value block with no live edge, a `use` callback wrapper | 6 |
 | #10757 | typed lowering: f32 values typed f64 | 5 |
 | #10768 | wasm: the core module exports only `_start`, so a main result of 126 or more is unreadable | 5 |
 | #10771 | runtime: allocation-size overflow does not abort with 134; `__memcpy` size classes copy the wrong count | 5 |
