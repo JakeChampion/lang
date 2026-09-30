@@ -27,3 +27,11 @@ func TestSelfHostNetNoDelay(t *testing.T) {
 	e2eharness.StartServerProcess(t, cmd)
 	e2eharness.CheckNetNoDelay(t, cmd, out)
 }
+
+func TestSelfHostServeCorksBurst(t *testing.T) {
+	port := selfHostFreePort(t)
+	bin, runner := selfHostServer(t, e2eharness.NoDelayServerSource(port))
+	cmd := binCmd(runner, bin)
+	e2eharness.StartServerProcess(t, cmd)
+	e2eharness.CheckServeCorksBurst(t, cmd, fmt.Sprintf("127.0.0.1:%d", port))
+}

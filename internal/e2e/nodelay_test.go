@@ -29,3 +29,12 @@ func TestNetNoDelayX86_64(t *testing.T) {
 	e2eharness.StartServerProcess(t, cmd)
 	e2eharness.CheckNetNoDelay(t, cmd, out)
 }
+
+// Responses corked per readable event (#9854): a burst of 32 pipelined
+// requests is answered in one write, counted in the server's own segments.
+func TestServeCorksBurstX86_64(t *testing.T) {
+	port := freeLoopbackPort(t)
+	bin, runner := buildSupervisedServeBin(t, e2eharness.NoDelayServerSource(port))
+	cmd, _ := startSupervisedServer(t, bin, runner)
+	e2eharness.CheckServeCorksBurst(t, cmd, fmt.Sprintf("127.0.0.1:%d", port))
+}
