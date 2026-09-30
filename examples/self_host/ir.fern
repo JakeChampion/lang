@@ -1660,7 +1660,11 @@ pub function map_delete_releases(o: Op): boolean { return o.width != 0; }
 //       (today's historical behaviour; the string-column snapshot is slice 3).
 // wasm always snapshots (hash map, no raw column) and ignores the flag.
 // Order is backend-defined, so consumers must be order-independent.
-pub function op_map_keys(elemptr: i32): Op { return Op { decl: 0 - 1, kind_tag: 131, i32_imm: elemptr, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" }; }
+// `keywide` (width) is 1 for an i64 / u64 KEY column, the twin of op_map_values'
+// widekind for the other column: on wasm the keys are boxed 8-byte cells, which
+// the snapshot dereferences into a fresh i64[] ($__fern_map_keys_k64). The
+// register backends hold every key at eight bytes and ignore it.
+pub function op_map_keys(elemptr: i32, keywide: i32): Op { return Op { decl: 0 - 1, kind_tag: 131, i32_imm: elemptr, i64_imm: 0, f64_imm: 0.0, width: keywide, unsigned: false, str: "" }; }
 // op_map_values: `widekind` (i64_imm) marks an 8-byte VALUE column — the twin of
 // op_map_set's: 0 narrow, 1 i64/u64, 2 f64. The register backends read the column
 // with the 8-byte forms regardless and ignore it. On wasm, widekind 1 snapshots
@@ -1683,14 +1687,18 @@ pub function op_map_values(elemptr: i32, widekind: i32): Op {
 // 1 i64/u64, 2 f64. On wasm, widekind 1 builds the iterator's value snapshot as a
 // fresh i64[] ($__fern_map_iter_w64 over $__fern_map_values_w64); widekind 2 (f64)
 // stays deferred (wasm_ir_deferrals_ok). The register backends ignore it. #5253.
-pub function op_map_iter(widekind: i32): Op {
+// `keywide` (width) is 1 for an i64 / u64 KEY column: on wasm the iterator's
+// key snapshot is then a fresh i64[] of the dereferenced key cells, and
+// `mapiter_key` reads its 8-byte element ($__fern_mapiter_key_w64). The
+// register backends ignore it.
+pub function op_map_iter(widekind: i32, keywide: i32): Op {
     var vw: i64 = 0;
     if (widekind == 1) { vw = 1; }
     if (widekind == 2) { vw = 2; }
-    return Op { decl: 0 - 1, kind_tag: 133, i32_imm: 0, i64_imm: vw, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+    return Op { decl: 0 - 1, kind_tag: 133, i32_imm: 0, i64_imm: vw, f64_imm: 0.0, width: keywide, unsigned: false, str: "" };
 }
 pub function op_mapiter_has_next(): Op { return op0(134); }
-pub function op_mapiter_key(): Op { return op0(135); }
+pub function op_mapiter_key(keywide: i32): Op { return Op { decl: 0 - 1, kind_tag: 135, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: keywide, unsigned: false, str: "" }; }
 // `widekind` (i64_imm) is 1 for an i64/u64 VALUE column and 2 for an f64 one: on
 // wasm the accessor reads the 8-byte element via $__fern_mapiter_value_w64, and
 // reinterprets it for f64. The register backends ignore it. #5253.

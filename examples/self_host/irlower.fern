@@ -14980,7 +14980,7 @@ function lower_call_map_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, mtype: 
         // → raw-buffer alias (owncols stays clear).
         var mks: LowerState = lower_expr(fa.obj, s);
         if (!mks.ok) { return mks; }
-        return mks.emit(ir.op_map_keys(map_kv_elem_flag(mtype, "keys")));
+        return mks.emit(ir.op_map_keys(map_kv_elem_flag(mtype, "keys"), 0));
     }
     if (fa.field == "values" && c.args.len() == 0) {
         var mvs: LowerState = lower_expr(fa.obj, s);
@@ -14994,7 +14994,7 @@ function lower_call_map_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, mtype: 
         // here we just emit the box-building op.
         var mit: LowerState = lower_expr(fa.obj, s);
         if (!mit.ok) { return mit; }
-        return mit.emit(ir.op_map_iter(map_value_widekind(map_value_of(mtype))));
+        return mit.emit(ir.op_map_iter(map_value_widekind(map_value_of(mtype)), 0));
     }
     // Not a built-in map op — a USER method on Map[K, V]
     // (`m.merge(other)`, `m.extend(...)`). Dispatch to the
@@ -15308,7 +15308,7 @@ function lower_call_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerSta
         if (fa.field == "key" && c.args.len() == 0) {
             var ik: LowerState = lower_expr(fa.obj, s);
             if (!ik.ok) { return ik; }
-            return ik.emit(ir.op_mapiter_key());
+            return ik.emit(ir.op_mapiter_key(0));
         }
         if (fa.field == "value" && c.args.len() == 0) {
             var iv2: LowerState = lower_expr(fa.obj, s);
@@ -26632,7 +26632,7 @@ function lower_stmt_for(fr: ast.StmtFor, s: LowerState): LowerState {
             mkf = lower_expr(mki_recv, mkf);
             if (!mkf.ok) { return mkf; }
             var mki_flag: i32 = map_kv_elem_flag(mkimty, mki_method);
-            if (mki_method == "keys") { mkf = mkf.emit(ir.op_map_keys(mki_flag)); }
+            if (mki_method == "keys") { mkf = mkf.emit(ir.op_map_keys(mki_flag, 0)); }
             else { mkf = mkf.emit(ir.op_map_values(mki_flag, map_value_widekind(map_value_of(mkimty)))); }
             mkf = mkf.emit(ir.op_store_local(mkisslot));
             // hidden index
@@ -26867,7 +26867,7 @@ function lower_stmt_for(fr: ast.StmtFor, s: LowerState): LowerState {
         var fm: LowerState = s.add_local(ksn);
         var ksslot: i32 = fm.slot_of(ksn);
         fm = fm.emit(ir.op_load_local(mslot));
-        fm = fm.emit(ir.op_map_keys(mkv_kflag));
+        fm = fm.emit(ir.op_map_keys(mkv_kflag, 0));
         fm = fm.emit(ir.op_store_local(ksslot));
         // values column -> hidden local
         var vsn: string = "$forvs" + util.i32_to_string(fm.locals.len());
