@@ -1,9 +1,7 @@
 package e2eselfhost
 
 import (
-	"os"
 	"os/exec"
-	"path/filepath"
 	"testing"
 )
 
@@ -43,7 +41,8 @@ var strReclaimIRCases = []struct {
 	// Loop-body fresh .to_ascii_upper() (a fresh copy), non-escaping: reclaimed each iter.
 	// base = "abc" (len 3); s.len() = 3; sum over 4 iters = 12.
 	{"loop-to-upper-nonescaping",
-		`function main(): i32 { var base: string = "abc"; var sum: i32 = 0; var i: i32 = 0; while (i < 4) { var s: string = base.to_ascii_upper(); sum = sum + s.len(); i = i + 1; } return sum; }`,
+		`import "std/string";
+function main(): i32 { var base: string = "abc"; var sum: i32 = 0; var i: i32 = 0; while (i < 4) { var s: string = base.to_ascii_upper(); sum = sum + s.len(); i = i + 1; } return sum; }`,
 		12, true, ""},
 	// Loop-body chr(..)+"x" concat: chr produces a fresh 1-char string, +"x" a fresh
 	// 2-char one bound to s. s.len() = 2; sum over 4 iters = 8.
@@ -84,18 +83,20 @@ var strReclaimIRCases = []struct {
 	{"returned-not-reclaimed",
 		`function h(x: string, y: string): string { var s: string = x + y; return s; } function main(): i32 { return h("xy", "z").len(); }`,
 		3, false, "h"},
-	// ANNOTATED i32_to_string in a loop: reclaimed each iter. On the self-host the
+	// ANNOTATED i32 `.to_string()` in a loop: reclaimed each iter. On the self-host the
 	// helper boxes at an allocation boundary (unlike native's mid-buffer emitter),
 	// so it is cleanly reclaimable. i in 0..12 → "0".."11"; sum of digit-lengths =
 	// 10*1 + 2*2 = 14.
 	{"loop-i32-to-string",
-		`function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 12) { var s: string = i32_to_string(i); sum = sum + s.len(); i = i + 1; } return sum; }`,
+		`import "std/i32";
+function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 12) { var s: string = i.to_string(); sum = sum + s.len(); i = i + 1; } return sum; }`,
 		14, true, ""},
-	// UN-ANNOTATED unambiguous producer (`var s = i32_to_string(i)`, inferred string):
+	// UN-ANNOTATED unambiguous producer (`var s = i.to_string()`, inferred string):
 	// reclaimed too — str_free_producer_ident admits it without the annotation, and
 	// expr_is_str marks the slot. Same value as above (14).
 	{"loop-unannotated-i32-to-string",
-		`function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 12) { var s = i32_to_string(i); sum = sum + s.len(); i = i + 1; } return sum; }`,
+		`import "std/i32";
+function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 12) { var s = i.to_string(); sum = sum + s.len(); i = i + 1; } return sum; }`,
 		14, true, ""},
 	// UN-ANNOTATED chr(..): reclaimed. s.len() == 1 each iter; sum over 5 = 5.
 	{"loop-unannotated-chr",
@@ -110,7 +111,8 @@ var strReclaimIRCases = []struct {
 		16, true, ""},
 	// UN-ANNOTATED string method (`var s = base.to_ascii_upper()`): reclaimed. len 3 × 4 = 12.
 	{"loop-unannotated-to-upper",
-		`function main(): i32 { var base: string = "abc"; var sum: i32 = 0; var i: i32 = 0; while (i < 4) { var s = base.to_ascii_upper(); sum = sum + s.len(); i = i + 1; } return sum; }`,
+		`import "std/string";
+function main(): i32 { var base: string = "abc"; var sum: i32 = 0; var i: i32 = 0; while (i < 4) { var s = base.to_ascii_upper(); sum = sum + s.len(); i = i + 1; } return sum; }`,
 		12, true, ""},
 	// NEGATIVE: an un-annotated INT `var n = a + b` matches the concat SHAPE but is
 	// not is_str, so it is never reclaimed (no __fern_str_free) and stays correct.
@@ -118,32 +120,26 @@ var strReclaimIRCases = []struct {
 	{"unannotated-int-add-not-reclaimed",
 		`function main(): i32 { var a: i32 = 3; var b: i32 = 4; var n = a + b; return n; }`,
 		7, false, ""},
-	// i32_to_string churn at scale: reclaimed per iteration (flat heap; a double
+	// i32 `.to_string()` churn at scale: reclaimed per iteration (flat heap; a double
 	// free would corrupt the freelist and crash / return garbage). `ok` stays 0
 	// because every decimal string has len >= 1, so exit 0 proves the balance.
 	{"i32-to-string-churn-safe",
-		`function main(): i32 { var ok: i32 = 0; var i: i32 = 0; while (i < 5000000) { var s: string = i32_to_string(i); if (s.len() < 1) { ok = 1; } i = i + 1; } return ok; }`,
+		`import "std/i32";
+function main(): i32 { var ok: i32 = 0; var i: i32 = 0; while (i < 5000000) { var s: string = i.to_string(); if (s.len() < 1) { ok = 1; } i = i + 1; } return ok; }`,
 		0, true, ""},
 }
 
 // TestSelfHostStrReclaimIRX86_64 compiles each case through the self-hosted x86-64
-// driver (asm_run, IR default-on), asserting the exit code and that the fresh
+// load driver (asm_load_run), asserting the exit code and that the fresh
 // heap-string reclaim (call __fn___fern_str_free) is (or isn't) emitted.
 func TestSelfHostStrReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
-	dir := writeSelfHostAsmProject(t)
-	src, err := os.ReadFile("../../examples/self_host/asm_run.fern")
-	if err != nil {
-		t.Fatalf("read asm_run.fern: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "asm_run.fern"), src, 0o644); err != nil {
-		t.Fatalf("write asm_run.fern: %v", err)
-	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
+	l := newStdlibLoader(t)
+	dir := t.TempDir()
 
 	for _, tc := range strReclaimIRCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src))
+			asm := []byte(l.emit(t, tc.src))
 			if len(asm) == 0 {
 				t.Fatal("self-host compiler emitted 0 bytes")
 			}

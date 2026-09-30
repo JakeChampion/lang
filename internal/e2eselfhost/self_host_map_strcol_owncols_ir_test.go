@@ -208,6 +208,9 @@ function main(): i32 {
 // `fern -interp` oracle (differential leg: every program is native-valid and
 // must exit identically on both).
 func TestSelfHostMapStrColOwncolsIRX86_64(t *testing.T) {
+	// These programs pin the AST lowering's built-in map runtime; the typed lowering
+	// takes maps from core/map.
+	t.Setenv("FERN_SEM_IR", "")
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
 	src, err := os.ReadFile(filepath.Join("../../examples/self_host", "asm_run.fern"))

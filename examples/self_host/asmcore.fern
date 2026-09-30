@@ -6520,6 +6520,14 @@ pub function check_func(fd: parser.FuncDecl, s: EmitState): util.Diag[] {
     return ctx.diags;
 }
 
+// entry_check_errors is check_module over `tm` against the state an emit entry
+// checks with; `tm` is the module as the checker annotated it.
+pub function entry_check_errors(tm: parser.Module): util.Diag[] {
+    var s: EmitState = new_state();
+    s = EmitState { ...s, struct_decls: irlower.struct_tab(tm.structs), funcs: tm.funcs };
+    return check_module(tm, s);
+}
+
 pub function check_module(mod: parser.Module, s: EmitState): util.Diag[] {
     var errs: util.Diag[] = parse_unknown_errors_module(mod);
     if (errs.len() > 0) { return errs; }

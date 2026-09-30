@@ -35,14 +35,18 @@ func TestSelfHostArm64LitPoolPerFunction(t *testing.T) {
 	_, x86runner, driverBin := buildModloadArm64DriverX86(t)
 
 	// Each of big/masked/main holds a literal the pool must carry, so a missing
-	// flush shows up as a load pending across a function boundary. `0xff` is
-	// there to keep the fixture valid if the movz fast path widens again: it
-	// admits only the canonical decimal of a value in [0, 65535], so a hex
-	// literal reaches the pool whatever the threshold does.
-	const src = `function twice(n: i32): i32 { return n * 2; }
-function big(): i32 { return 1000000 + 7; }
-function masked(n: i32): i32 { return n & 0xff; }
-function main(): i32 { return twice(big() - 999999) + masked(0x7f); }
+	// flush shows up as a load pending across a function boundary. Every one is
+	// past 65535, so no movz takes it, and each is combined with the argument
+	// count, which nothing knows before the program runs. `@noinline` keeps
+	// big and masked out of main, where the typed lowering would otherwise
+	// splice them and fold the whole program to one constant.
+	const src = `@noinline
+function twice(n: i32): i32 { return n * 2; }
+@noinline
+function big(n: i32): i32 { return n + 1000007; }
+@noinline
+function masked(n: i32): i32 { return n & 0xfffff0; }
+function main(): i32 { var k: i32 = args().len(); return twice(big(k) - 999999) + masked(k + 0x7f0000); }
 `
 	asm, _ := compileFilesModload(t, x86runner, driverBin,
 		map[string]string{"main.fern": src}, "-target", "arm64-linux")

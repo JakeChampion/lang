@@ -2,6 +2,7 @@ package e2eselfhost
 
 import (
 	"bytes"
+	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -73,10 +74,11 @@ func TestSelfHostRuntimeHelpersAreFern(t *testing.T) {
 		},
 		{
 			// str_bytes (s.bytes() / s.as_bytes()) — a Fern helper that appends each
-			// byte (arr_push). The old hand-asm (__fern_str_bytes: / .Lbytes_loop) gone.
+			// byte (arr_push) into a u8[]. The old hand-asm (__fern_str_bytes: /
+			// .Lbytes_loop) gone.
 			"str_bytes",
 			`function main(): i32 { return "abc".bytes().len(); }`,
-			"__fn___fern_str_bytes",
+			"__fn___fern_str_bytes_u8",
 			[]string{"\n__fern_str_bytes:", ".Lbytes_loop"},
 		},
 		{
@@ -146,10 +148,11 @@ func TestSelfHostRuntimeHelpersAreFern(t *testing.T) {
 			// string_from_bytes_unchecked(arr) — pack each element's low byte into a string,
 			// Tier-2 via the raw-memory intrinsics (#2649). The old register-ABI
 			// hand-asm (a bare __fern_string_from_bytes: label + .Lsfb_loop) is gone;
-			// the call site targets __fn___fern_string_from_bytes via the stack ABI.
+			// the call site targets the u8[] helper __fn___fern_string_from_bytes_u8
+			// via the stack ABI.
 			"string_from_bytes_unchecked",
 			`function main(): i32 { var b: u8[] = [104 as u8, 105 as u8]; return string_from_bytes_unchecked(b).len(); }`,
-			"__fn___fern_string_from_bytes",
+			"__fn___fern_string_from_bytes_u8",
 			[]string{"\n__fern_string_from_bytes:", ".Lsfb_loop"},
 		},
 		{
@@ -183,6 +186,11 @@ func TestSelfHostRuntimeHelpersAreFern(t *testing.T) {
 				cmd = exec.Command(runner[0], append(runner[1:], driverBin)...)
 			}
 			cmd.Stdin = bytes.NewReader([]byte(tc.src))
+			// The free i32_to_string is a builtin only the AST lowering calls; the
+			// language spells it std/i32's `.to_string()`, which asm_run cannot load.
+			if tc.name == "i32_to_string" {
+				cmd.Env = append(os.Environ(), "FERN_SEM_IR=")
+			}
 			asm, err := cmd.Output()
 			if err != nil {
 				t.Fatalf("driver run: %v", err)

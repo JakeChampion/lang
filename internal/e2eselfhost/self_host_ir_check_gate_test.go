@@ -28,7 +28,7 @@ func TestSelfHostIRCheckGate(t *testing.T) {
 	}
 	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
 
-	run := func(t *testing.T, src string) ([]byte, []byte, int) {
+	run := func(t *testing.T, src string, env ...string) ([]byte, []byte, int) {
 		t.Helper()
 		var cmd *exec.Cmd
 		if len(runner) == 0 {
@@ -37,6 +37,7 @@ func TestSelfHostIRCheckGate(t *testing.T) {
 			cmd = exec.Command(runner[0], append(runner[1:], driverBin)...)
 		}
 		cmd.Stdin = bytes.NewReader([]byte(src))
+		cmd.Env = append(os.Environ(), env...)
 		var stderr bytes.Buffer
 		cmd.Stderr = &stderr
 		out, _ := cmd.Output()
@@ -85,7 +86,9 @@ func TestSelfHostIRCheckGate(t *testing.T) {
 		// The Map{…} literal desugars to the SAME chain shape with a
 		// kind-consistent ctor (__map_new_i32 for number keys) — it must stay
 		// accepted and correct (the chain gate flags only mismatched kinds).
-		out, errOut, code := run(t, `function main(): i32 { var m: Map[i32, i32] = Map { 1: 40, 2: 2 }; return m.get_or(1, 0) + m.get_or(2, 0); }`)
+		// The chain is the built-in map runtime's, which only the AST lowering
+		// calls.
+		out, errOut, code := run(t, `function main(): i32 { var m: Map[i32, i32] = Map { 1: 40, 2: 2 }; return m.get_or(1, 0) + m.get_or(2, 0); }`, "FERN_SEM_IR=")
 		if code != 0 {
 			t.Fatalf("driver exited %d (stderr %q), want 0 — Map literal desugar false-positived the chain gate", code, errOut)
 		}

@@ -65,11 +65,16 @@ func TestSelfHostStage2FixpointArm64(t *testing.T) {
 	copySelfHostDriver(t, dir, "asm_load_run.fern")
 	driverSrc := filepath.Join(dir, "asm_load_run.fern")
 	mmc := buildSelfHostBin(t, x86gcc, dir, "asm_load_run.fern", "mmc")
+	stdlibRoot, err := filepath.Abs("../../internal/stdlib")
+	if err != nil {
+		t.Fatalf("abs stdlib root: %v", err)
+	}
 
 	// stage 1: the driver emits aarch64 for its own source, and that asm
 	// becomes a real aarch64 compiler. Reading the STAGED copy rather than
-	// examples/self_host keeps the two generations on identical bytes.
-	stage1Asm, err := exec.Command(mmc, driverSrc, "-target", "arm64-linux").Output()
+	// examples/self_host keeps the two generations on identical bytes. The
+	// compiler imports core/map, which only the stdlib root resolves.
+	stage1Asm, err := exec.Command(mmc, driverSrc, stdlibRoot, "-target", "arm64-linux").Output()
 	if err != nil {
 		t.Fatalf("stage 1: mmc could not emit aarch64 for its own source: %s", childFailure(err))
 	}
@@ -78,11 +83,6 @@ func TestSelfHostStage2FixpointArm64(t *testing.T) {
 	}
 	t.Logf("stage 1: self-hosted arm64 compiler asm = %d bytes", len(stage1Asm))
 	mmcArm64 := buildBinArm64(t, armgcc, dir, "mmc_arm64_stage2", string(stage1Asm))
-
-	stdlibRoot, err := filepath.Abs("../../internal/stdlib")
-	if err != nil {
-		t.Fatalf("abs stdlib root: %v", err)
-	}
 
 	// A span, not a sample. `lexer.fern` is a compiler module with no stdlib
 	// (cheap, and the shape gen1 itself is made of); the three test suites are
@@ -102,7 +102,7 @@ func TestSelfHostStage2FixpointArm64(t *testing.T) {
 		// is the case the deleted test measured at ~709 s on the AST path, and
 		// it is the strongest form of the property — but it is not worth its
 		// wall-clock on every run, so it is gated by an env var.
-		{name: "self", src: "examples/self_host/asm_load_run.fern", selfEnv: true},
+		{name: "self", src: "examples/self_host/asm_load_run.fern", stdlib: true, selfEnv: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

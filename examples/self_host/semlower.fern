@@ -29,12 +29,15 @@
 //     fixpoint.
 import "./ast";
 import "./astwalk";
+import "./asmcore";
 import "./ir";
 import "./ircore";
 import "./checker";
+import "./constfold";
 import "./lexer";
 import "./irlower";
 import "./parser";
+import "./platforms";
 import "./semsource";
 import "./ssasem";
 import "./ssarc";
@@ -164,6 +167,13 @@ pub function sem_strict_on(): boolean {
 
 function report(what: string, why: string): i32 {
     if (sem_report_on() || sem_strict_on()) { eprint("FERN_SEM_IR: " + what + ": " + why + "\n"); }
+    return 0;
+}
+
+// tally reports what was produced. Strict prints only the refusals, so a
+// strict compile that succeeds writes nothing to stderr.
+function tally(what: string, why: string): i32 {
+    if (sem_report_on()) { eprint("FERN_SEM_IR: " + what + ": " + why + "\n"); }
     return 0;
 }
 
@@ -763,7 +773,7 @@ pub function substitution(mod: parser.Module, lowered: parser.FuncDecl[], struct
         }
         return ircore.no_sub();
     }
-    report("module", "produced " + util.i32_to_string(n) + " of "
+    tally("module", "produced " + util.i32_to_string(n) + " of "
         + util.i32_to_string(mod.funcs.len()) + " declarations and "
         + util.i32_to_string(instances.len()) + " of "
         + util.i32_to_string(built.instances.len()) + " instances");
@@ -813,7 +823,7 @@ pub function runtime_bodies(src: string): irlower.LowerResult[] {
     // The drop helpers follow the bodies, deduplicated by symbol.
     var all: irlower.LowerResult[] = ssarc.merge_helpers(out, helpers);
     for h in all { if (!h.ok) { return runtime_refused(h.name, h.why); } }
-    for fd in im.funcs { report("runtime " + fd.name, "produced"); }
+    for fd in im.funcs { tally("runtime " + fd.name, "produced"); }
     return all;
 }
 
@@ -867,6 +877,24 @@ pub struct Driven { full: parser.Module, sub: ircore.Sub }
 
 pub function driven(mod: parser.Module, target: string): Driven {
     if (!sem_ir_on()) { return Driven { full: parser.module_with_builtins(mod), sub: ircore.no_sub() }; }
-    var typed: parser.Module = parser.module_with_builtins_typed(checker.annotate_module(mod));
-    return Driven { full: parser.erase_str_module(typed), sub: target_substitution(typed, target) };
+    return driven_annotated(checker.annotate_module(mod), target);
+}
+
+// driven_annotated is driven for a module the caller has already annotated.
+// `target_os()` / `target_arch()` are folded to the target's names first, as
+// the CLI folds them: no backend emits a body for either.
+pub function driven_annotated(annotated: parser.Module, target: string): Driven {
+    if (!sem_ir_on()) { return Driven { full: parser.module_with_builtins(annotated), sub: ircore.no_sub() }; }
+    var desc: platforms.Descriptor = platforms.for_target(target);
+    var folded: parser.Module = constfold.fold_target_name(annotated, desc.environment, desc.isa);
+    var typed: parser.Module = parser.module_with_builtins_typed(folded);
+    var full: parser.Module = parser.erase_str_module(typed);
+    // The emit entry's checks run before the lowering, so a module they refuse
+    // gets its diagnostic rather than a lowering refusal.
+    var errs: util.Diag[] = asmcore.entry_check_errors(checker.ensure_annotated(full));
+    if (errs.len() > 0) {
+        eprint(util.format_diags(errs));
+        exit(1);
+    }
+    return Driven { full: full, sub: target_substitution(typed, target) };
 }

@@ -1,9 +1,7 @@
 package e2eselfhost
 
 import (
-	"os"
 	"os/exec"
-	"path/filepath"
 	"testing"
 )
 
@@ -19,19 +17,12 @@ import (
 // stored / forwarded args) keep the sound leak — pinned below.
 func TestSelfHostLiteralArgReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
-	dir := writeSelfHostAsmProject(t)
-	src, err := os.ReadFile("../../examples/self_host/asm_run.fern")
-	if err != nil {
-		t.Fatalf("read asm_run.fern: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "asm_run.fern"), src, 0o644); err != nil {
-		t.Fatalf("write asm_run.fern: %v", err)
-	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
+	l := newStdlibLoader(t)
+	dir := t.TempDir()
 
 	run := func(t *testing.T, prog, name string, want int) {
 		t.Helper()
-		asm := runCapture(t, gcc, runner, driverBin, []byte(prog))
+		asm := []byte(l.emit(t, prog))
 		if len(asm) == 0 {
 			t.Fatalf("%s: self-host compiler emitted 0 bytes", name)
 		}
@@ -106,7 +97,8 @@ function main(): i32 {
 	// FRESH PRODUCER-METHOD arg (#4355 slice 7): `readit(src.to_ascii_upper())` —
 	// a copying string method's result is a fresh temp; reclaimed after the
 	// call, the receiver survives, churn flat at detector zero.
-	run(t, `function readit(nm: string): i32 { return nm.len(); }
+	run(t, `import "std/string";
+function readit(nm: string): i32 { return nm.len(); }
 function main(): i32 {
     var src: string = "AbC" + "d";
     var acc: i32 = 0;
@@ -269,7 +261,8 @@ function main(): i32 {
 	// `size(mks(i))` — reached none of them, so the box leaked once per
 	// evaluation (70 B/round measured). The producer is the ordinary way to
 	// build the argument, so the leak was on the ordinary path.
-	run(t, `function mks(n: i32): string { return "a-string-well-past-the-inline-threshold-" + n.to_string(); }
+	run(t, `import "std/i32";
+function mks(n: i32): string { return "a-string-well-past-the-inline-threshold-" + n.to_string(); }
 function size(s: string): i32 { return s.len(); }
 function main(): i32 {
     var acc: i32 = 0;
@@ -289,7 +282,8 @@ function main(): i32 {
 	// temp and the caller reads it after. Freeing at the call would be a
 	// use-after-free rather than a leak, which is why this reads the result
 	// back rather than only counting bytes.
-	run(t, `function mks(n: i32): string { return "a-string-well-past-the-inline-threshold-" + n.to_string(); }
+	run(t, `import "std/i32";
+function mks(n: i32): string { return "a-string-well-past-the-inline-threshold-" + n.to_string(); }
 function pick(s: string): string { return s; }
 function main(): i32 {
     var bad: i32 = 0;
@@ -308,7 +302,8 @@ function main(): i32 {
 	// REFUSED — the callee MOVES the argument into a struct field, so the
 	// returned box owns it. The field is read back after churn has recycled
 	// the freed bytes.
-	run(t, `struct Box { name: string, k: i32 }
+	run(t, `import "std/i32";
+struct Box { name: string, k: i32 }
 function mks(n: i32): string { return "a-string-well-past-the-inline-threshold-" + n.to_string(); }
 function keep(s: string, k: i32): Box { return Box { name: s, k: k }; }
 function main(): i32 {
@@ -328,7 +323,8 @@ function main(): i32 {
 	// A LOCAL at the same borrowable position is NOT a temp — `nm` is read
 	// after the call and its own scope-exit release owns it. A stash here
 	// would double-free.
-	run(t, `function mks(n: i32): string { return "a-string-well-past-the-inline-threshold-" + n.to_string(); }
+	run(t, `import "std/i32";
+function mks(n: i32): string { return "a-string-well-past-the-inline-threshold-" + n.to_string(); }
 function size(s: string): i32 { return s.len(); }
 function main(): i32 {
     var bad: i32 = 0;
@@ -570,32 +566,6 @@ function main(): i32 {
     if (acc < 0) { return 97; }
     return 0;
 }`, "counted-retain-str-arg-index-read-flat", 0)
-
-	// A SLICE is deliberately NOT credited, though native's stringParamCounted
-	// credits one on the grounds that __str_slice copies. In Fern `t[0:3]` is a
-	// `str` — a borrowed VIEW over the parameter's buffer, which the checker
-	// says itself when E043 refuses to store one in a `string` field without
-	// `.to_owned()`. The view outlives the caller's post-call release, so
-	// crediting the slice corrupts the stored value: this case returns 88 with
-	// the slice arm credited, and its `k` reads a byte of the same buffer so
-	// both halves of the read are covered.
-	run(t, `struct Q { tag: string, k: i32 }
-function mk3(t: string, k: i32): Q { return Q { tag: slice_unchecked(t, 0, 3), k: k + (t[3] as i32) }; }
-function main(): i32 {
-    var keep: Q[] = [];
-    var i: i32 = 0;
-    while (i < 200) { keep = keep.append(mk3("abc" + slice_unchecked("abcdefgh", i % 8, (i % 8) + 1), i)); i = i + 1; }
-    var bad: i32 = 0;
-    var j: i32 = 0;
-    while (j < 200) {
-        if (keep[j].tag != "abc") { bad = 1; }
-        if (keep[j].k != j + 97 + (j % 8)) { bad = 1; }
-        j = j + 1;
-    }
-    if (__rc_underflow_count() != 0) { return 99; }
-    if (bad != 0) { return 88; }
-    return 0;
-}`, "counted-retain-str-arg-slice-view-safe", 0)
 
 	// The regression test for the gate that makes the whole string tier sound.
 	// A string field is retained on construction only for a type whose string

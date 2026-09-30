@@ -3,6 +3,7 @@ package e2eselfhost
 import (
 	"bytes"
 	"fmt"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -601,4 +602,11 @@ func hevRows(t *testing.T, runner []string, bin string, wantFields int) ([][]uin
 		return nil, fmt.Errorf("no rctrace allocation lines")
 	}
 	return rows, nil
+}
+
+// runCaptureAST is runCapture on the AST lowering, for a check that reads
+// that lowering's own output.
+func runCaptureAST(t *testing.T, runner []string, bin string, stdin []byte, extraArgs ...string) []byte {
+	t.Helper()
+	return runCaptureEnv(t, runner, bin, stdin, append(os.Environ(), "FERN_SEM_IR="), extraArgs...)
 }

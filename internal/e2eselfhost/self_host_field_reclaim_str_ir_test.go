@@ -1,9 +1,7 @@
 package e2eselfhost
 
 import (
-	"os"
 	"os/exec"
-	"path/filepath"
 	"testing"
 )
 
@@ -21,19 +19,12 @@ import (
 // field-read alias would otherwise dangle when the rebind frees the field).
 func TestSelfHostFieldReclaimStrIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
-	dir := writeSelfHostAsmProject(t)
-	src, err := os.ReadFile("../../examples/self_host/asm_run.fern")
-	if err != nil {
-		t.Fatalf("read asm_run.fern: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "asm_run.fern"), src, 0o644); err != nil {
-		t.Fatalf("write asm_run.fern: %v", err)
-	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
+	l := newStdlibLoader(t)
+	dir := t.TempDir()
 
 	run := func(t *testing.T, prog, name string, want int) {
 		t.Helper()
-		asm := runCapture(t, gcc, runner, driverBin, []byte(prog))
+		asm := []byte(l.emit(t, prog))
 		if len(asm) == 0 {
 			t.Fatalf("%s: self-host compiler emitted 0 bytes", name)
 		}
@@ -194,18 +185,19 @@ function main(): i32 {
     return 0;
 }`, "field-reclaim-str-only-aliased-carried-safe", 0)
 
-	// i32_to_string as the replaced field's producer (the exclusion note on
-	// the issue): on the self-host IR path __fern_i32_to_string boxes at an
-	// alloc boundary, so the replaced field frees cleanly — churn flat.
-	run(t, `struct S { xs: i32[], name: string, n: i32 }
-function step(s: S): S { return S { xs: [s.n], name: i32_to_string(s.n), n: s.n + 1 }; }
+	// An i32 `.to_string()` as the replaced field's producer (the exclusion
+	// note on the issue): the string is boxed at an alloc boundary, so the
+	// replaced field frees cleanly — churn flat.
+	run(t, `import "std/i32";
+struct S { xs: i32[], name: string, n: i32 }
+function step(s: S): S { return S { xs: [s.n], name: s.n.to_string(), n: s.n + 1 }; }
 function main(): i32 {
-    var s: S = S { xs: [1], name: i32_to_string(7), n: 0 };
+    var s: S = S { xs: [1], name: (7).to_string(), n: 0 };
     var i: i32 = 0;
     while (i < 200) { s = step(s); i = i + 1; }
     var b1: i32 = (__heap_bump_bytes() as i32);
     var j: i32 = 0;
-    while (j < 2000) { s = S { xs: [1], name: i32_to_string(7), n: 0 }; var k: i32 = 0; while (k < 3) { s = step(s); k = k + 1; } j = j + 1; }
+    while (j < 2000) { s = S { xs: [1], name: (7).to_string(), n: 0 }; var k: i32 = 0; while (k < 3) { s = step(s); k = k + 1; } j = j + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 4096) { return 98; }

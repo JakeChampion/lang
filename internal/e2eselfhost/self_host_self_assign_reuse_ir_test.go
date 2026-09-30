@@ -141,10 +141,12 @@ func TestSelfHostSelfAssignReuseIRX86_64(t *testing.T) {
 			if len(asm) == 0 {
 				t.Fatal("self-host compiler emitted 0 bytes")
 			}
-			if got := countUserCalls(asm, "__fn___fern_alloc_reuse"); got != tc.reuse {
+			// The admission counted is the AST lowering's record-update emit.
+			astAsm := runCaptureAST(t, runner, driverBin, []byte(tc.src))
+			if got := countUserCalls(astAsm, "__fn___fern_alloc_reuse"); got != tc.reuse {
 				t.Errorf("%s: %d __fern_alloc_reuse sites, want %d — the record-update admission set moved", tc.name, got, tc.reuse)
 			}
-			if got := countUserCalls(asm, "__fn___fern_struct_copy"); got != tc.structCopy {
+			if got := countUserCalls(astAsm, "__fn___fern_struct_copy"); got != tc.structCopy {
 				t.Errorf("%s: %d __fern_struct_copy sites, want %d — an update that should have reused copied into a fresh box (or one that must copy stopped)", tc.name, got, tc.structCopy)
 			}
 			progBin := buildBin(t, gcc, dir, tc.name, string(asm))

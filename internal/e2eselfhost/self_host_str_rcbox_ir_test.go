@@ -2,15 +2,13 @@ package e2eselfhost
 
 import (
 	"bytes"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"testing"
 )
 
 // TestSelfHostStrRcBoxIRX86_64 pins the #2649 Option-A change: asm heap string boxes
 // are now rc-HEADERED. Every reclaimable box (a string literal via const_str, and every
-// fresh producer via the raw_string op — concat / chr / i32_to_string / str_to_* / …) is
+// fresh producer via the raw_string op — concat / chr / i32 `.to_string()` / str_to_* / …) is
 // built by the centralized __fern_str_box helper as [rc=1][data][len] (box = base+8, so
 // data@0 / len@8 are unchanged), and __fern_str_free is now rc-aware: it decrements the
 // rc, frees the data buffer + the 24-byte box only at rc==1, and a decrement below 1
@@ -26,19 +24,12 @@ import (
 //     over-release) over millions of allocate/reclaim cycles.
 func TestSelfHostStrRcBoxIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
-	dir := writeSelfHostAsmProject(t)
-	src, err := os.ReadFile("../../examples/self_host/asm_run.fern")
-	if err != nil {
-		t.Fatalf("read asm_run.fern: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "asm_run.fern"), src, 0o644); err != nil {
-		t.Fatalf("write asm_run.fern: %v", err)
-	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
+	l := newStdlibLoader(t)
+	dir := t.TempDir()
 
 	run := func(t *testing.T, prog, name string, want int, wantBox bool) {
 		t.Helper()
-		asm := runCapture(t, gcc, runner, driverBin, []byte(prog))
+		asm := []byte(l.emit(t, prog))
 		if len(asm) == 0 {
 			t.Fatalf("%s: self-host compiler emitted 0 bytes", name)
 		}
@@ -69,8 +60,9 @@ func TestSelfHostStrRcBoxIRX86_64(t *testing.T) {
 	run(t, `function mk(): i32 { var s: string = "hi" + "!"; return s.len(); } function main(): i32 { var r: i32 = mk(); if (__rc_underflow_count() != 0) { return 99; } return r; }`,
 		"rcbox-scope-exit", 3, true)
 
-	// i32_to_string churn: the digit-string box is rc-headered too; reclaimed each iter,
+	// i32 `.to_string()` churn: the digit-string box is rc-headered too; reclaimed each iter,
 	// no over-release. Every decimal string has len >= 1, so ok stays 0 -> exit 0.
-	run(t, `function churn(n: i32): i32 { var ok: i32 = 0; var i: i32 = 0; while (i < n) { var s: string = i32_to_string(i); if (s.len() < 1) { ok = 1; } i = i + 1; } return ok; } function main(): i32 { var r: i32 = churn(2000000); if (__rc_underflow_count() != 0) { return 99; } return r; }`,
+	run(t, `import "std/i32";
+function churn(n: i32): i32 { var ok: i32 = 0; var i: i32 = 0; while (i < n) { var s: string = i.to_string(); if (s.len() < 1) { ok = 1; } i = i + 1; } return ok; } function main(): i32 { var r: i32 = churn(2000000); if (__rc_underflow_count() != 0) { return 99; } return r; }`,
 		"rcbox-i32-to-string-churn", 0, true)
 }
