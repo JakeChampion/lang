@@ -1408,6 +1408,10 @@ pub function type_key(t: typeinfo.Type): string {
     if let typeinfo.TypeFunc(fn) = t { return key_args("$fn", fn.param_types.append(fn.ret_type)); }
     if let typeinfo.TypeMap(m) = t { return key_args("$map", [m.key, m.value]); }
     if let typeinfo.TypeDyn(d) = t { return "$dyn$" + trait_set_key(d.traits); }
+    if let typeinfo.TypeHandle(h) = t {
+        if (h.borrowed) { return "$borrow$" + h.resource; }
+        return "$own$" + h.resource;
+    }
     return leaf_key(t);
 }
 
@@ -1636,7 +1640,7 @@ pub function cast_admits(from: typeinfo.Type, to: typeinfo.Type): boolean {
 
 function cast_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     if (ins.args.len() != 1) { return "cast arity"; }
-    if (!converts_as_integer(result) && !is_float(result) && !reference(result) && !semtypes.is_handle(result)) { return "cast result type"; }
+    if (!converts_as_integer(result) && !is_float(result) && !reference(result) && !semtypes.is_resource_handle(result)) { return "cast result type"; }
     if (!cast_admits(f.values[ins.args[0]], result)) { return "cast operand type"; }
     return "";
 }

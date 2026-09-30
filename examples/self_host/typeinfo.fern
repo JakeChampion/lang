@@ -148,6 +148,10 @@ pub struct TypeUnion { name: string, args: Type[] }
 // `d.hi()` still infers unknown — a deliberately-deferred follow-up.
 pub struct TypeDyn { traits: string }
 
+// A WIT resource handle, `own R` or `borrow R`: the i32 the host names a
+// resource by. A borrowed handle is lent, and its holder never drops it.
+pub struct TypeHandle { resource: string, borrowed: boolean }
+
 // The type of an expression that yields no value: a call of a `: void`
 // function, and a bare `return;`. It is distinct from TypeUnknown, which
 // means "this checker could not work the type out" — conflating the two made
@@ -163,10 +167,6 @@ pub struct TypeUnknown { reason: string }
 // produced value ever carries one (docs/SEMANTIC-GENERICS.md). Distinct from
 // TypeUnknown, which means the checker could not work a type out at all.
 pub struct TypeErased { name: string }
-
-// A WIT resource handle, `own R` or `borrow R`: the i32 the host names a
-// resource by. A borrowed handle is lent, and its holder never drops it.
-pub struct TypeHandle { resource: string, borrowed: boolean }
 
 pub type Type = TypeI32 | TypeBool | TypeString | TypeFloat | TypeArray | TypeStruct | TypeTuple | TypeFunc | TypeMap | TypeUnion | TypeDyn | TypeHandle | TypeVoid | TypeUnknown | TypeErased;
 

@@ -193,9 +193,11 @@ pub function cell_elem(t: typeinfo.Type): typeinfo.Type {
 // (`own R` / `borrow R`) is the i32 the host names the resource by; dropping
 // an owned one is a call to its `[resource-drop]` import, which the front end
 // inserts, not a release.
-pub function is_handle(t: typeinfo.Type): boolean {
+pub function is_handle(t: typeinfo.Type): boolean { return is_resource_handle(t) || is_stream(t); }
+
+pub function is_resource_handle(t: typeinfo.Type): boolean {
     if let typeinfo.TypeHandle(_) = t { return true; }
-    return is_stream(t);
+    return false;
 }
 
 pub function is_stream(t: typeinfo.Type): boolean {

@@ -235,6 +235,29 @@ function on_request(t: borrow Thing): void {
 	return;
 }
 `},
+		// A generic instantiated at an owned handle and at a boolean: two
+		// instances, which share no key.
+		{name: "a-generic-instantiated-at-a-handle", declared: 6, drops: 1, src: `
+@import("wasi:io/poll@0.2.0", "pollable")
+resource Pollable;
+
+@import("wasi:clocks/monotonic-clock@0.2.0", "subscribe-duration")
+function subscribe(ns: u64): own Pollable;
+
+@import("wasi:io/poll@0.2.0", "[method]pollable.block")
+function block(h: borrow Pollable);
+
+@import("wasi:io/poll@0.2.0", "[method]pollable.ready")
+function ready(h: borrow Pollable): boolean;
+function pass[T](x: T): T { return x; }
+
+function main(): i32 {
+    var p: own Pollable = pass(subscribe(0 as u64));
+    block(p);
+    var ok: boolean = pass(ready(p));
+    if (ok) { write("poll-ok"); } else { write("poll-bad"); }
+    return 0;
+}`},
 	} {
 		t.Run(row.name, func(t *testing.T) {
 			got, report := emit(t, row.src, true)

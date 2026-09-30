@@ -4714,7 +4714,9 @@ function main(): i32 { print(f(3) + " " + f(0)); return f(2).len(); }
 `},
 	// A void function with a `defer` and a `return;`: the defer expansion's
 	// return temp is never written on a void return, and is not declared.
-	{name: "a-void-function-with-a-defer-and-a-return-is-produced", atLeast: 2, noLeak: true, src: `
+	// Both legs share that expansion, so each is pinned to the interpreter's
+	// answer rather than to the other.
+	{name: "a-void-function-with-a-defer-and-a-return-is-produced", atLeast: 2, noLeak: true, want: "0|adbd", astAnswers: "0|adbd", src: `
 function f(n: i32): void {
     defer write("d");
     if (n > 0) { write("a"); return; }

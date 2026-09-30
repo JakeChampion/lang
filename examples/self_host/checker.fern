@@ -18357,7 +18357,8 @@ function check_module_pass(mod: parser.Module, fda_diags: util.Diag[], focus: st
   // typed as a union (or union array) resolves rather than going
   // unknown. The full UnionSig table (with variants) still comes after.
   var import_paths: string[] = import_paths_of(mod);
-  var structs: StructSig[] = collect_struct_sigs(mod.structs, declared_union_names(mod), resource_names(mod));
+  var rnames: string[] = resource_names(mod);
+  var structs: StructSig[] = collect_struct_sigs(mod.structs, declared_union_names(mod), rnames);
   var struct_names: string[] = [];
   for sd in structs {
     struct_names = struct_names.append(sd.name);
@@ -18377,10 +18378,10 @@ function check_module_pass(mod: parser.Module, fda_diags: util.Diag[], focus: st
     well_typed = false;
   }
   var union_names: string[] = union_sig_names(unions);
-  var tn: TypeNames = type_names(struct_names, union_names, resource_names(mod));
+  var tn: TypeNames = type_names(struct_names, union_names, rnames);
   var sigs: FuncSig[] = collect_func_sigs(mod.funcs, tn);
   var st: SigTable = sig_table(sigs);
-  var stt: StructTable = struct_table(structs, resource_names(mod));
+  var stt: StructTable = struct_table(structs, rnames);
   var ut: UnionTable = union_table(unions);
   var methods: MethodTable = method_table(collect_method_sigs(mod.funcs, tn));
   var body_diags: util.Diag[] = [];
@@ -18800,7 +18801,8 @@ function check_module_pass(mod: parser.Module, fda_diags: util.Diag[], focus: st
 struct ModuleEnv { sigs: SigTable, structs: StructTable, unions: UnionTable, methods: MethodTable, imports: string[], impls: parser.ImplInfo[], trait_reqs: parser.TraitReq[] }
 
 function module_env(mod: parser.Module): ModuleEnv {
-  var structs: StructSig[] = collect_struct_sigs(mod.structs, declared_union_names(mod), resource_names(mod));
+  var rnames: string[] = resource_names(mod);
+  var structs: StructSig[] = collect_struct_sigs(mod.structs, declared_union_names(mod), rnames);
   var struct_names: string[] = [];
   for sd in structs {
     struct_names = struct_names.append(sd.name);
@@ -18810,11 +18812,11 @@ function module_env(mod: parser.Module): ModuleEnv {
     unions = unions.append(enum_union_sig(ed));
   }
   var union_names: string[] = union_sig_names(unions);
-  var tn: TypeNames = type_names(struct_names, union_names, resource_names(mod));
+  var tn: TypeNames = type_names(struct_names, union_names, rnames);
   var sigs: FuncSig[] = collect_func_sigs(mod.funcs, tn);
   return ModuleEnv {
     sigs: sig_table(sigs),
-    structs: struct_table(structs, resource_names(mod)),
+    structs: struct_table(structs, rnames),
     unions: union_table(unions),
     methods: method_table(collect_method_sigs(mod.funcs, tn)),
     imports: import_paths_of(mod),
@@ -19897,7 +19899,8 @@ function import_paths_of(mod: parser.Module): string[] {
 }
 
 function build_module_tables(mod: parser.Module): ModuleTables {
-  var structs: StructSig[] = collect_struct_sigs(mod.structs, declared_union_names(mod), resource_names(mod));
+  var rnames: string[] = resource_names(mod);
+  var structs: StructSig[] = collect_struct_sigs(mod.structs, declared_union_names(mod), rnames);
   var struct_names: string[] = [];
   for sd in structs {
     struct_names = struct_names.append(sd.name);
@@ -19907,10 +19910,10 @@ function build_module_tables(mod: parser.Module): ModuleTables {
     unions = unions.append(enum_union_sig(ed));
   }
   var union_names: string[] = union_sig_names(unions);
-  var tn: TypeNames = type_names(struct_names, union_names, resource_names(mod));
+  var tn: TypeNames = type_names(struct_names, union_names, rnames);
   var sigs: FuncSig[] = collect_func_sigs(mod.funcs, tn);
   var methods: MethodTable = method_table(collect_method_sigs(mod.funcs, tn));
-  return ModuleTables { structs: struct_table(structs, resource_names(mod)), unions: union_table(unions), sigs: sig_table(sigs), methods: methods, imports: import_paths_of(mod), impls: assoc_func_impls(mod.impls, mod.funcs), trait_reqs: mod.trait_reqs };
+  return ModuleTables { structs: struct_table(structs, rnames), unions: union_table(unions), sigs: sig_table(sigs), methods: methods, imports: import_paths_of(mod), impls: assoc_func_impls(mod.impls, mod.funcs), trait_reqs: mod.trait_reqs };
 }
 
 // settle_int_tree records a contextual integer type on the compile-only AST.
