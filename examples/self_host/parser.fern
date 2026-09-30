@@ -333,7 +333,7 @@ function block_spans(toks: lexer.Token[]): BlockSpans {
 // from an `@import("iface", "wit-resource-name")` attribute (empty for an
 // unbound resource). lower_defers_prepass_module uses the binding to synthesize the
 // `[resource-drop]` import an owned handle is released through.
-pub struct ResourceDecl { name: string, iface: string, wit: string }
+pub struct ResourceDecl { name: string, iface: string, wit: string, line: i32, col: i32 }
 
 // ExportBinding records an `@export("iface", "wit-name") function f {…}` binding
 // (P6 — docs/WIT-BRING-YOUR-OWN.md): the function `func_name` implements the WIT
@@ -15972,8 +15972,9 @@ function lower_defers_body(body0: ast.Stmt[], params: string[], ret: string, fn_
     var cleanup_err: ast.Stmt[] = dl_cleanup_kind(cr.actions, cr.flags, 1);
     var expanded: ast.Stmt[] = dl_expand_returns(cr.stmts, cleanup, cleanup_err);
     var body: ast.Stmt[] = [];
-    // The shared return temp, and a boolean flag per defer.
-    body = body.append(dl_defret_decl(ret, fn_ret, fn_param_types));
+    // The shared return temp, which a void return never writes, and a
+    // boolean flag per defer.
+    if (ret != "void") { body = body.append(dl_defret_decl(ret, fn_ret, fn_param_types)); }
     var i: i32 = 0;
     while (i < cr.actions.len()) {
         body = body.append(s_var("__dfa" + dl_itoa(i), "boolean", e_bool(false)));
@@ -16110,8 +16111,8 @@ pub function lower_defers_module(mod: Module): Module {
 }
 
 // ---- automatic resource-handle drop (P5 slice 3) --------------------
-// Mirrors the Go internal/ir/insert_resource_drops.go. For each owned `own R`
-// local that is not moved, insert `defer __resource_drop_R(slot);` right after
+// Mirrors the Go internal/ir/insert_resource_drops.go. For each owned local
+// (`own R`, or a bare R) of a WIT-bound resource that is not moved, insert `defer __resource_drop_R(slot);` right after
 // the declaration — the fused defer expansion then runs it on every exit path
 // (see drop_slot_name for the slot) — and synthesize one body-less
 // `@import("<iface>","[resource-drop]<wit>")` drop
@@ -16126,12 +16127,160 @@ function resource_drop_fn_name(res: string): string { return "__resource_drop_" 
 // name_in_list is a local membership test (contains_str lives in other modules).
 // name_in_list -> util.has_str (SH-020).
 
-// handle_resource_of returns R for an owned-handle spelling "own R", else "".
-function handle_resource_of(type_name: string): string {
+// handle_resource_of returns R for an owned-handle spelling — "own R", or a
+// bare R that names a registered resource — else "".
+function handle_resource_of(type_name: string, resources: ResourceDecl[]): string {
     if (type_name.len() >= 4 && slice_unchecked(type_name, 0, 4) == "own ") {
         return slice_unchecked(type_name, 4, type_name.len()) + "";
     }
+    for rd in resources {
+        if (rd.name == type_name) { return type_name; }
+    }
     return "";
+}
+
+// is_reserved_enum_name reports whether `name` is one of the enums the
+// front-end injects as built-ins (see checker.go's builtinEnumDecls). A
+// user `enum` declaration shadowing one of these is E010.
+pub function is_reserved_enum_name(name: string): boolean {
+    return name == "Option" || name == "Result" || name == "IoError" || name == "JsonValue" || name == "Body";
+}
+
+// is_reserved_struct_name reports whether `name` is one of the structs the
+// front end injects as built-ins (checker.go's builtinStructDecls). A user
+// `struct` declaration shadowing one of these is E010, the struct half of the
+// rule is_reserved_enum_name above carries for enums.
+//
+// A LIST rather than an `||` chain: at 27 names the chain stops reading,
+// and it gives the parity test in internal/checker one thing to compare
+// against builtinStructDecls() so the two cannot drift.
+pub function is_reserved_struct_name(name: string): boolean {
+    var reserved: string[] = [
+        "BytesWriter", "Cell", "ChunkProducer", "Date", "DateTime", "Duration", "FileStat",
+        "FsStat", "HeaderMap", "HttpRequest", "HttpResponse", "Instant", "Map",
+        "MapIter", "MockCall", "MockPlatform", "Platform", "ProcessResult",
+        "Reader", "Span", "Stream", "Time", "TimeZone", "Url", "WinSize", "Writer",
+        "Zoned"
+    ];
+    return util.index_of_str(reserved, name) >= 0;
+}
+
+// reserved_struct_tparams is the type parameters of a generic built-in struct
+// (builtinStructDecls again, pinned by the same parity test); empty otherwise.
+pub function reserved_struct_tparams(name: string): string[] {
+    if (name == "Cell") { return ["T"]; }
+    if (name == "Map") { return ["K", "V"]; }
+    if (name == "MapIter") { return ["K", "V"]; }
+    var none: string[] = [];
+    return none;
+}
+
+// user_struct_tparams is the type parameters of the user struct `name` (an
+// enum variant is not one); `found` is false when there is none.
+function user_struct_tparams(mod: Module, name: string): (boolean, string[]) {
+    for sd in mod.structs {
+        if (sd.name == name && sd.enum_owner.len() == 0) { return (true, sd.type_params); }
+    }
+    var none: string[] = [];
+    return (false, none);
+}
+
+// union_alias_errors lists the E016 messages the Go checker reports while
+// desugaring a union alias into an enum; the alias desugars only when the list
+// is empty. A desugared alias can still be refused as E006, which
+// alias_redeclares_enum reports.
+pub function union_alias_errors(mod: Module, al: TypeAlias): string[] {
+    var out: string[] = [];
+    var (named_struct, _) = user_struct_tparams(mod, al.name);
+    if (named_struct || is_reserved_struct_name(al.name)) {
+        return out.append("union \"" + al.name + "\" collides with a struct of the same name");
+    }
+    var seen: string[] = [];
+    for m in al.variants {
+        if (util.has_str(seen, m)) {
+            out = out.append("duplicate member \"" + m + "\" in union " + al.name);
+            continue;
+        }
+        seen = seen.append(m);
+        var (found, tps) = user_struct_tparams(mod, m);
+        if (!found && is_reserved_struct_name(m)) {
+            found = true;
+            tps = reserved_struct_tparams(m);
+        }
+        if (!found) {
+            out = out.append("union " + al.name + " member \"" + m + "\" does not name a struct in scope");
+        } else if (tps.len() > 0) {
+            var params: string = "";
+            for tp in tps {
+                if (params.len() > 0) { params = params + ", "; }
+                params = params + tp;
+            }
+            out = out.append("union " + al.name + " member \"" + m + "\" takes " + util.i32_to_string(tps.len()) + " type argument(s), got 0; a generic struct member needs them supplied (e.g. `type " + al.name + "[" + params + "] = " + m + "[" + params + "] | …`)");
+        }
+    }
+    return out;
+}
+
+// alias_redeclares_enum reports whether mod.aliases[idx] desugars into an enum
+// whose name is already an enum's: a user or built-in enum, or an earlier alias
+// that registers. The Go checker adds desugared unions after the declared
+// enums, so the alias is the one refused, as E006, whatever the source order.
+pub function alias_redeclares_enum(mod: Module, idx: i32): boolean {
+    var al: TypeAlias = mod.aliases[idx];
+    if (union_alias_errors(mod, al).len() > 0) { return false; }
+    if (is_reserved_enum_name(al.name)) { return true; }
+    for ed in mod.enums {
+        if (ed.name == al.name) { return true; }
+    }
+    var j: i32 = 0;
+    while (j < idx) {
+        if (mod.aliases[j].name == al.name && alias_registers(mod, j)) { return true; }
+        j = j + 1;
+    }
+    return false;
+}
+
+// alias_registers reports whether mod.aliases[idx] becomes an enum.
+pub function alias_registers(mod: Module, idx: i32): boolean {
+    return union_alias_errors(mod, mod.aliases[idx]).len() == 0 && !alias_redeclares_enum(mod, idx);
+}
+
+// resource_collision names what an earlier declaration makes resources[idx]'s
+// name already mean — "resource", "struct" or "enum" (a union alias that
+// registers is an enum, and a built-in counts as declared) — or "" when the name is free. The Go checker registers only the free ones.
+pub function resource_collision(mod: Module, idx: i32): string {
+    var name: string = mod.resources[idx].name;
+    var j: i32 = 0;
+    while (j < idx) {
+        if (mod.resources[j].name == name) { return "resource"; }
+        j = j + 1;
+    }
+    if (is_reserved_struct_name(name)) { return "struct"; }
+    for sd in mod.structs {
+        if (sd.name == name && sd.enum_owner.len() == 0) { return "struct"; }
+    }
+    if (is_reserved_enum_name(name)) { return "enum"; }
+    for ed in mod.enums {
+        if (ed.name == name) { return "enum"; }
+    }
+    var ai: i32 = 0;
+    while (ai < mod.aliases.len()) {
+        if (mod.aliases[ai].name == name && alias_registers(mod, ai)) { return "enum"; }
+        ai = ai + 1;
+    }
+    return "";
+}
+
+// registered_resources is mod.resources less the declarations
+// resource_collision refuses, so a colliding name keeps its other meaning.
+pub function registered_resources(mod: Module): ResourceDecl[] {
+    var out: ResourceDecl[] = [];
+    var i: i32 = 0;
+    while (i < mod.resources.len()) {
+        if (resource_collision(mod, i).len() == 0) { out = out.append(mod.resources[i]); }
+        i = i + 1;
+    }
+    return out;
 }
 
 function resource_binding_iface(resources: ResourceDecl[], name: string): string {
@@ -16240,7 +16389,7 @@ function stmts_move_handle(stmts: ast.Stmt[], funcs: FuncDecl[], name: string): 
 // no WIT binding to drop through, or the handle is moved. `body` is the WHOLE
 // enclosing function body — a nested declaration's uses can be anywhere.
 function kept_handle_res(v: ast.StmtVar, body: ast.Stmt[], resources: ResourceDecl[], funcs: FuncDecl[]): string {
-    var res: string = handle_resource_of(v.type_name);
+    var res: string = handle_resource_of(v.type_name, resources);
     if (res.len() == 0) { return ""; }
     if (resource_binding_iface(resources, res).len() == 0) { return ""; }
     if (stmts_move_handle(body, funcs, v.name)) { return ""; }
@@ -16347,15 +16496,16 @@ pub function lower_defers_prepass_module(mod: Module): Module {
         pass = pass + 1;
     }
     // (2) Per function: resource-drop insertion, skipped without resources.
-    var has_res: boolean = mod.resources.len() > 0;
+    var resources: ResourceDecl[] = registered_resources(mod);
+    var has_res: boolean = resources.len() > 0;
     var out_funcs: FuncDecl[] = [];
     var needed: string[] = [];
     var i: i32 = 0;
     while (i < funcs.len()) {
         var f: FuncDecl = funcs[i];
         if (!has_res || f.import_iface.len() > 0) { out_funcs = out_funcs.append(f); i = i + 1; continue; }
-        needed = collect_dropped_resources(f.body, f.body, mod.resources, funcs, needed);
-        var nbody: ast.Stmt[] = insert_drop_defers(f.body, f.body, mod.resources, funcs);
+        needed = collect_dropped_resources(f.body, f.body, resources, funcs, needed);
+        var nbody: ast.Stmt[] = insert_drop_defers(f.body, f.body, resources, funcs);
         out_funcs = out_funcs.append(FuncDecl { ...f, body: nbody });
         i = i + 1;
     }
@@ -16364,8 +16514,8 @@ pub function lower_defers_prepass_module(mod: Module): Module {
     var k: i32 = 0;
     while (k < needed.len()) {
         var rn: string = needed[k];
-        var iface2: string = resource_binding_iface(mod.resources, rn);
-        var wit2: string = resource_binding_wit(mod.resources, rn);
+        var iface2: string = resource_binding_iface(resources, rn);
+        var wit2: string = resource_binding_wit(resources, rn);
         var hp: ast.ParamDecl[] = [ast.ParamDecl { name: "h", type_name: "own " + rn, is_view: false, own: true, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }];
         out_funcs = out_funcs.append(lower_defers_func(FuncDecl { no_inline: false,
             name: resource_drop_fn_name(rn), receiver_name: "", receiver_type: "",
@@ -21362,9 +21512,11 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
                     // `@import(iface, wit) resource Name;` binds a WIT resource
                     // handle type to its WIT identity (P5). Record it so
                     // lower_defers_prepass_module can synthesize the [resource-drop].
+                    var rnr_line: i32 = p.peek_line();
+                    var rnr_col: i32 = p.peek_col();
                     var (rnr_name, rnr_p) = parse_resource_decl_name(p);
                     p = rnr_p;
-                    resources = resources.append(ResourceDecl { name: rnr_name, iface: iar_iface, wit: iar_wit });
+                    resources = resources.append(ResourceDecl { name: rnr_name, iface: iar_iface, wit: iar_wit, line: rnr_line, col: rnr_col });
                 } else {
                     top_stmts = top_stmts.append(decl_sentinel(p, "@import only applies to a function or resource declaration"));
                 }
@@ -21666,9 +21818,11 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
         if (p.peek_ident() == "resource") {
             var pr: Par = p.advance();
             if (pr.peek_ident().len() > 0) {
+                var rnr2_line: i32 = p.peek_line();
+                var rnr2_col: i32 = p.peek_col();
                 var (rnr2_name, rnr2_p) = parse_resource_decl_name(p);
                 p = rnr2_p;
-                resources = resources.append(ResourceDecl { name: rnr2_name, iface: "", wit: "" });
+                resources = resources.append(ResourceDecl { name: rnr2_name, iface: "", wit: "", line: rnr2_line, col: rnr2_col });
                 continue;
             }
         }
@@ -21797,7 +21951,7 @@ pub function merge_module_prefixed(into: Module, from: Module, prefix: string): 
     var ri: i32 = 0;
     while (ri < from.resources.len()) {
         var rd: ResourceDecl = from.resources[ri];
-        nresources = nresources.append(ResourceDecl { name: prefix + "." + rd.name, iface: rd.iface, wit: rd.wit });
+        nresources = nresources.append(ResourceDecl { ...rd, name: prefix + "." + rd.name });
         ri = ri + 1;
     }
     var nexports: ExportBinding[] = into.exports;

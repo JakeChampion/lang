@@ -686,6 +686,22 @@ Unsupported constructs refuse the whole function with a reason.
   `get` and `set`, is NOT here: a body naming one is refused at the callee, so
   a produced function receives, stores, projects and drops cells but never
   makes or reads one.
+- A WIT resource handle, `own R` or `borrow R` for a declared `resource R`
+  (`typeinfo.TypeHandle`); a bare `R` is an owned handle. It is the i32 the
+  host names the resource by, so like a stream handle it holds no box and
+  carries no unit (`semtypes.is_handle`). An owned handle lent to a borrow
+  parameter is a `cast` between the two; a borrow never becomes an owned
+  handle, and neither converts to or from an integer. Dropping one is not a
+  release: the front end inserts `defer __resource_drop_R(h)` after each
+  owned local that is not moved, when `R` carries an `@import` WIT binding,
+  with the `[resource-drop]` import it calls
+  (`parser.lower_defers_prepass_module`), so both lowerings see an ordinary
+  extern call. An owned local is spelled `own R` or bare `R`; both are
+  dropped. An owned parameter is not dropped there. A resource named like
+  another resource, a struct or an enum (built-in ones included, and a union
+  alias the checker accepts) is E006 and is not registered
+  (`parser.registered_resources`), so the name keeps its other meaning and is
+  never taken for a handle.
 
 - A GENERIC declaration, as a TEMPLATE produced once per instantiation
   (`docs/SEMANTIC-GENERICS.md`). A declaration is generic when it declares

@@ -876,7 +876,7 @@ function record_field(fa: ast.ExprFieldAccess, s: State): Value {
     if (!s.ok) { return container; }
     // `r.fd` on a stream handle: the handle is its descriptor, so the
     // projection is the value itself read as the i32.
-    if (fa.field == "fd" && semtypes.is_handle(s.values[container.id])) {
+    if (fa.field == "fd" && semtypes.is_stream(s.values[container.id])) {
         return define(s, ssasem.cast(), [container.id], 0, "", t_i32());
     }
     var name: string = "";
@@ -2489,6 +2489,7 @@ function widen(v: Value, expected: typeinfo.Type): Value {
     var s: State = v.s;
     if (semtypes.equal(s.values[v.id], expected)) { return v; }
     if (ssasem.is_view(expected) && ssasem.is_string(s.values[v.id])) { return define(s, ssasem.str_as(), [v.id], 0, "", expected); }
+    if (ssasem.lends_handle(s.values[v.id], expected)) { return define(s, ssasem.cast(), [v.id], 0, "", expected); }
     // An owned string[] lends to a str[] destination as one string lends to a
     // str: the same retag, over the array (`var gs: str[] = s.graphemes()`).
     if (ssasem.is_view(element_type(expected)) && ssasem.is_string_array(s.values[v.id])) { return define(s, ssasem.str_as(), [v.id], 0, "", expected); }
@@ -5443,7 +5444,7 @@ function same_bits(a: boolean[], b: boolean[]): boolean {
 // as the CHILDREN of an admitted box, which is where a vector node's buffer
 // sits.
 //
-// A cell, a map, a stream handle and a closure environment are excluded for
+// A cell, a map, a handle and a closure environment are excluded for
 // the reasons `ssaunits` already gives them: the frame is not their only
 // holder, or the box is one nothing can state a mode for.
 function owned_shape(t: typeinfo.Type): boolean {

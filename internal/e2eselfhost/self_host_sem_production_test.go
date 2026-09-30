@@ -4712,6 +4712,19 @@ function f(n: i32): string {
 }
 function main(): i32 { print(f(3) + " " + f(0)); return f(2).len(); }
 `},
+	// A void function with a `defer` and a `return;`: the defer expansion's
+	// return temp is never written on a void return, and is not declared.
+	// Both legs share that expansion, so each is pinned to the interpreter's
+	// answer rather than to the other.
+	{name: "a-void-function-with-a-defer-and-a-return-is-produced", atLeast: 2, noLeak: true, want: "0|adbd", astAnswers: "0|adbd", src: `
+function f(n: i32): void {
+    defer write("d");
+    if (n > 0) { write("a"); return; }
+    write("b");
+    return;
+}
+function main(): i32 { f(1); f(0); return 0; }
+`},
 	// A `.with` and a map insert take a view of a branch local: copied where
 	// each takes it.
 	{name: "an-array-with-a-view-of-a-branch-local-is-produced", atLeast: 3, noLeak: true, src: `
