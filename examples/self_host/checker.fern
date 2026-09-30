@@ -20832,8 +20832,9 @@ function use_untyped(c: ast.ExprCall): boolean {
 // into (native inferUseParam). A value binding shadows a module function of
 // the same name (#6302), so it is read first. Unknown when the callee is not a
 // bare name, is not callable, or its trailing parameter is not a callable
-// taking a parameter; E032 reports those, and a type parameter of a generic
-// callee erases to unknown here, so its binding stays unannotated as well.
+// taking a parameter; E032 reports those. A generic callee's type parameters
+// are bound from the arguments written before the callback, and one they leave
+// unbound leaves the binding unannotated as well.
 function use_binding_type(c: ast.ExprCall, s: Scope): typeinfo.Type {
   if let ast.ExprIdent(id) = c.callee {
     var last: typeinfo.Type = t_unknown("use: callee has no signature");
@@ -20841,13 +20842,35 @@ function use_binding_type(c: ast.ExprCall, s: Scope): typeinfo.Type {
       if (ft.param_types.len() > 0) { last = ft.param_types[ft.param_types.len() - 1]; }
     } else {
       var sig: FuncSig = s.lookup_sig(id.name);
-      if (sig.param_types.len() > 0) { last = sig.param_types[sig.param_types.len() - 1]; }
+      if (sig.param_types.len() > 0) { last = use_callback_slot(sig, c, s); }
     }
     if let typeinfo.TypeFunc(cb) = last {
       if (cb.params_known && cb.param_types.len() > 0) { return cb.param_types[0]; }
     }
   }
   return t_unknown("use: callee has no signature");
+}
+
+// use_callback_slot is the callback parameter of `sig`, the last, instantiated
+// by the arguments written before it (native inferUseParam):
+// `each[T](items: T[], cb: (T) => i32)` given an i32[] takes an (i32) => i32.
+function use_callback_slot(sig: FuncSig, c: ast.ExprCall, s: Scope): typeinfo.Type {
+  var at: i32 = sig.param_types.len() - 1;
+  if (sig.all_type_params.len() == 0 || at >= sig.param_type_names.len()) { return sig.param_types[at]; }
+  var written: ast.Expr[] = [];
+  var i: i32 = 0;
+  while (i + 1 < c.args.len()) {
+    written = written.append(c.args[i]);
+    i = i + 1;
+  }
+  let (bn, bt) = arg_bindings(sig, ast.ExprCall { ...c, args: written }, s);
+  var slot: parser.TypeRef = parser.parse_type_ref(sig.param_type_names[at]);
+  var f: parser.TypeRef = parser.ref_ungroup(slot);
+  if (!parser.ref_is_fn_value(slot) || f.args.len() < 2) { return sig.param_types[at]; }
+  var unbound: string[] = [];
+  for tp in sig.all_type_params { if (!util.has_str(bn, tp)) { unbound = unbound.append(tp); } }
+  if (type_ref_names_any(f.args[0], unbound)) { return t_unknown("use: callback parameter names an unbound type parameter"); }
+  return type_from_ref_subst(slot, bn, bt, s.type_names());
 }
 
 // use_typed stamps the `use` binding's parameter with its inferred type, so
