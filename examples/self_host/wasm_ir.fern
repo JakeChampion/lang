@@ -8949,7 +8949,9 @@ pub function readfile_bytes_func(): string {
 // — create/truncate the path (oflags O_CREAT|O_TRUNC = 9), write the
 // content block's bytes via fd_write until every one is out, fd_close.
 // Returns Ok(()) (tag 0) on success or Err(errno) (tag 1) when path_open or a
-// write fails; a failed write closes the fd first. rights_base =
+// write fails; a failed write builds the Err, closes the fd and returns it. A
+// zero-byte write with bytes still outstanding ends the loop and answers Ok,
+// as native does and as writer_write_func's loop does. rights_base =
 // FD_WRITE (64) | FD_SEEK (4) = 68.
 pub function writefile_func(): string {
     var o: string = "";
@@ -8969,10 +8971,10 @@ pub function writefile_func(): string {
     o = o + "      (i32.store (i32.const 4) (i32.sub (local.get $n) (local.get $cur)))\n";
     o = o + "      (local.set $err (call $fd_write (local.get $fd) (i32.const 0) (i32.const 1) (i32.const 8)))\n";
     o = o + "      (if (i32.ne (local.get $err) (i32.const 0)) (then\n";
-    o = o + "        (drop (call $fd_close (local.get $fd)))\n";
     o = o + "        (local.set $tmp (call $__fern_str_box (i32.const 8)))\n";
     o = o + "        (i32.store (local.get $tmp) (i32.const 1))\n";
     o = o + "        (i32.store (i32.add (local.get $tmp) (i32.const 4)) (call $__fern_build_io_error (local.get $err) (local.get $np)))\n";
+    o = o + "        (drop (call $fd_close (local.get $fd)))\n";
     o = o + "        (return (local.get $tmp))))\n";
     o = o + "      (br_if $wd (i32.eqz (i32.load (i32.const 8))))\n";
     o = o + "      (local.set $cur (i32.add (local.get $cur) (i32.load (i32.const 8))))\n";
