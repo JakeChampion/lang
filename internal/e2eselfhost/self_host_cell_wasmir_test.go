@@ -89,14 +89,14 @@ var cellWasmIRCases = []struct {
 }
 
 // TestSelfHostCellWasmIR runs each case through the self-host CLI on
-// wasm32-wasi and checks it against the native backend as the oracle.
+// wasm32-wasi and checks it against the interpreter as the oracle.
 func TestSelfHostCellWasmIR(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range cellWasmIRCases {
 		t.Run(tc.name, func(t *testing.T) {
 			src := tc.src + "\n"
-			if _, code := compileAndRunX86_64(t, tc.src+"\n"); code != tc.want {
-				t.Fatalf("native x86-64 exited %d, want %d", code, tc.want)
+			if code := runInterpExit(t, tc.src+"\n"); code != tc.want {
+				t.Fatalf("interpreter exited %d, want %d", code, tc.want)
 			}
 			for _, target := range []string{"wasm32-wasi"} {
 				if stderr, code := cli.exitOf(t, src, target); code != tc.want {

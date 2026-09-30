@@ -12,6 +12,10 @@ import (
 // would read back 0x2A05F205 and fail the first check. A negative i64 covers the
 // sign-bit path. Success returns 42. The address comes from __alloc (a raw usize
 // bump-heap pointer, like core/map's packed-entry buffer users).
+// storeI64Want is the round-trip's answer. It is pinned rather than asked of
+// the interpreter, which has no __store_i64 / __load_i64.
+const storeI64Want = 42
+
 const storeI64Src = `function main(): i32 {
     var p: usize = __alloc(16);
     __store_i64(p, 5000000005 as i64);
@@ -30,9 +34,9 @@ const storeI64Src = `function main(): i32 {
 // lowers to op_store_i64 (kind 199): the value routes through lower_i64 (8-byte)
 // and the x86 backend emits an 8-byte movq (shared with store_ptr).
 //
-// Oracle is the NATIVE x86-64 compiler, which implements __store_i64
-// (x86_64.go): a truncating store would diverge from native's full-width one, so
-// IR == native also proves the program took the IR path.
+// The answer is pinned (storeI64Want): the interpreter has no __store_i64, and
+// a truncating store would diverge from the full-width round-trip, so the
+// pinned answer also proves the program took the IR path.
 func TestSelfHostStoreI64IRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -61,9 +65,8 @@ func TestSelfHostStoreI64IRX86_64(t *testing.T) {
 	if run.ProcessState == nil || !run.ProcessState.Exited() {
 		t.Fatal("store_i64 IR binary did not exit normally (segfault?)")
 	}
-	_, want := compileAndRunX86_64(t, storeI64Src+"\n") // native = the correct oracle
-	if got := run.ProcessState.ExitCode(); got != want {
-		t.Errorf("store_i64 IR exit = %d, want %d (native); a truncating store would give a different value", got, want)
+	if got := run.ProcessState.ExitCode(); got != storeI64Want {
+		t.Errorf("store_i64 IR exit = %d, want %d; a truncating store would give a different value", got, storeI64Want)
 	}
 }
 

@@ -69,8 +69,8 @@ function main(): i32 { var k: i32 = 5; var c = (x: i32) => x * k; return apply1(
 }`, 77},
 }
 
-// TestSelfHostClosureAliasIRX86_64 cross-checks native, pins the "ir"
-// routing, then runs the self-host-compiled binary.
+// TestSelfHostClosureAliasIRX86_64 cross-checks the interpreter, pins the
+// "ir" routing, then runs the self-host-compiled binary.
 func TestSelfHostClosureAliasIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -81,8 +81,8 @@ func TestSelfHostClosureAliasIRX86_64(t *testing.T) {
 	for _, tc := range closureAliasIRCases {
 		t.Run(tc.name, func(t *testing.T) {
 			src := []byte(tc.src + "\n")
-			if _, code := compileAndRunX86_64(t, tc.src+"\n"); code != tc.want {
-				t.Fatalf("%s native exited %d, want %d", tc.name, code, tc.want)
+			if code := runInterpExit(t, tc.src+"\n"); code != tc.want {
+				t.Fatalf("%s interpreter exited %d, want %d", tc.name, code, tc.want)
 			}
 			path := strings.TrimSpace(string(runCapture(t, gcc, runner, probeBin, src)))
 			if path != "ir" {

@@ -7,9 +7,8 @@ import (
 )
 
 // procExecAsPrograms pin `proc_exec_as(path, argv, envp)` on the self-host IR
-// path (#9090). Differential against the NATIVE backend rather than the interp
-// oracle: the interpreter's exec answers -ENOSYS, so it cannot judge a real
-// execve.
+// path (#9090). Each row carries its expected exit code rather than asking the
+// interpreter: its exec answers -ENOSYS, so it cannot judge a real execve.
 //
 //   - argv0-and-envp: `sh -c SCRIPT` with no command_name operand takes $0 from
 //     the shell's own argv[0], so the script reads back slot 0 exactly as the
@@ -87,11 +86,6 @@ func TestSelfHostProcExecAsIRX86_64(t *testing.T) {
 			_ = cmd.Run()
 			if got := cmd.ProcessState.ExitCode(); got != tc.want {
 				t.Errorf("self-host binary exited %d, want %d", got, tc.want)
-			}
-			// Differential against the native backend — the oracle for a
-			// builtin the interpreter deliberately cannot execute.
-			if _, native := compileAndRunX86_64(t, tc.src); native != tc.want {
-				t.Errorf("native backend exited %d, want %d (oracle disagrees — fix the test, not the backend)", native, tc.want)
 			}
 		})
 	}

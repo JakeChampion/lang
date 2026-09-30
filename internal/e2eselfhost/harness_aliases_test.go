@@ -22,9 +22,6 @@ var buildSelfHostBinFor = e2eharness.BuildSelfHostBinFor
 var childEnv = e2eharness.ChildEnv
 var cachedDriverBin = e2eharness.CachedDriverBin
 var cachedLink = e2eharness.CachedLink
-var compileAndRunArm64 = e2eharness.CompileAndRunArm64
-var compileAndRunWasmbinMain = e2eharness.CompileAndRunWasmbinMain
-var compileAndRunX86_64 = e2eharness.CompileAndRunX86_64
 var compileFilesModload = e2eharness.CompileFilesModload
 var compileSourceModload = e2eharness.CompileSourceModload
 var writeSourceModloadProject = e2eharness.WriteSourceModloadProject
@@ -49,6 +46,7 @@ var runDriverFile = e2eharness.RunDriverFile
 var runDriverStdinExits = e2eharness.RunDriverStdinExits
 var runFixtureInterp = e2eharness.RunFixtureInterp
 var runInterpExit = e2eharness.RunInterpExit
+var runInterp = e2eharness.RunInterp
 var runX86_64Bin = e2eharness.RunX86_64Bin
 var selfHostImportClosure = e2eharness.SelfHostImportClosure
 

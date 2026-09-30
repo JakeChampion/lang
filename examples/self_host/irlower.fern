@@ -9495,6 +9495,13 @@ pub function ascription_target(init: ast.Expr): string {
     }
 }
 
+// A 64-bit value cast to usize is a conversion on wasm, where the address is
+// 32 bits, so its binding keeps the cast rather than taking the rebind.
+function wraps_to_address(init: ast.Expr, s: LowerState): boolean {
+    if let ast.ExprUnary(u) = init { return u.op == "as_usize" && infer_expr_width(u.operand, s) == 64; }
+    return false;
+}
+
 // ascription_rebind rewrites `var x = E as T` to the equivalent annotated
 // binding `var x: T = E` (the `as` ascription is identity). Caller guards
 // with `ascription_target(v.init) != ""`, so v.init is always an ascription
@@ -10440,6 +10447,8 @@ pub function expr_is_usize(e: ast.Expr, s: LowerState): boolean {
     match (e) {
         ast.ExprIdent(id) => { return s.is_usize_slot(s.slot_of(id.name)) || id.ty == "usize"; },
         ast.ExprUnary(u) => { return u.op == "as_usize"; },
+        ast.ExprIndex(x) => { return x.ty == "usize"; },
+        ast.ExprFieldAccess(fa) => { return fa.ty == "usize"; },
         ast.ExprBinary(b) => { return b.ty == "usize" || (util.has_str(["+", "-"], b.op) && expr_is_usize(b.left, s)); },
         ast.ExprCall(c) => {
             if (c.ty == "usize") { return true; }
@@ -13539,6 +13548,7 @@ function lower_call_named_generic(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIde
     var lat_guard: i32[] = [];
     var laa_slots: i32[] = [];
     var lsa_slots: i32[] = [];
+    var loa_slots: i32[] = [];
     var lca_slots: i32[] = [];
     var own_arr_moves: i32[] = [];
     var lsl_slots: i32[] = [];
@@ -13766,6 +13776,29 @@ function lower_call_named_generic(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIde
                     _ => {}
                 }
             }
+            // A fresh pointer-element literal at an `own` position its callee
+            // does not consume stays this frame's to release
+            // (own_array_flag_param), and a callee whose result can hold no
+            // buffer cannot hand it back.
+            if (!arrlit_arg && sc.ok && own_arg_left_to_caller(sc, cid.name, ai)) {
+                var olrel: string = "";
+                match (c.args[ai]) {
+                    ast.ExprArray(ola) => {
+                        if (arrarr_lit_is_fresh(c.args[ai], [], 0 - 1)) { olrel = "__fern_arrarr_free"; }
+                        else if (fresh_or_literal_strarr_lit(ola, sc)) { olrel = "__fern_str_arr_free"; }
+                    },
+                    _ => {}
+                }
+                if (olrel.len() > 0) {
+                    var olan: string = "$ola" + util.i32_to_string(sc.locals.len());
+                    sc = sc.add_local(olan);
+                    var olas: i32 = sc.slot_of(olan);
+                    sc = sc.emit(ir.op_store_local(olas));
+                    sc = sc.emit(ir.op_load_local(olas));
+                    if (olrel == "__fern_arrarr_free") { loa_slots = loa_slots.append(olas); }
+                    else { lsa_slots = lsa_slots.append(olas); }
+                }
+            }
             // A fresh STRUCT argument — a literal or a strict-fresh producer
             // call. Both stash and free on the same terms as the array arm
             // above; stash_fresh_struct_arg holds the reasoning.
@@ -13897,6 +13930,7 @@ function lower_call_named_generic(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIde
         scr = scr.release(lsa_slots[lsf], "__fern_str_arr_free", "stashed-strarr-arg");
         lsf = lsf + 1;
     }
+    for los in loa_slots { scr = scr.release(los, "__fern_arrarr_free", "stashed-own-arrarr-arg"); }
     scr = release_consumed_arg_temps(scr, lca_slots, cid.name);
     scr = free_stashed_struct_args(scr, lsl_slots);
     // #5464: a bare-typevar-RETURN pass-through fn (`id[T](x:T):T`,
@@ -16804,6 +16838,13 @@ function lower_expr_unary(u: ast.ExprUnary, s: LowerState): LowerState {
         if (!sn.ok) { return sn; }
         return sn.emit(ir.op_int_cast(cty));
     }
+    // A 64-bit value wraps to the address, which moves nothing on the
+    // register backends and is the i64-to-i32 wrap on wasm.
+    if (u.op == "as_usize" && infer_expr_width(u.operand, s) == 64) {
+        var wa: LowerState = lower_i64(u.operand, s);
+        if (!wa.ok) { return wa; }
+        return wa.emit(ir.op_int_wrap_ptr());
+    }
     // `E as T` type ascription (#2669) in a non-binding position
     // (return / argument / nested expr): the `as` is a zero-cost
     // identity annotation, so the value of `E as T` is exactly the
@@ -17072,10 +17113,10 @@ function lower_expr_binary(b: ast.ExprBinary, e: ast.Expr, s: LowerState): Lower
     // An address operand makes the op pointer-width: the natives compute
     // it in the full register and wasm32 in an i32, and it never takes the
     // i32 wrap below, which sign-extended `base + n` from 32 bits and so
-    // faulted on any mapping above 2 GiB (#10454). Addresses compare and
-    // divide unsigned, as u32 does.
+    // faulted on any mapping above 2 GiB (#10454). Addresses compare,
+    // divide and shift right unsigned, as u32 does.
     var addr: boolean = expr_is_usize(b.left, s) || expr_is_usize(b.right, s);
-    if (b.op == ">>" && left_u32) { ek = "shr_u"; }
+    if (b.op == ">>" && (left_u32 || expr_is_usize(b.left, s))) { ek = "shr_u"; }
     // u32 ORDERING compares need the UNSIGNED IR kind (lt_u/le_u/gt_u/
     // ge_u): a u32 value ≥ 2^31 is signed-negative in a 32-bit slot, so a
     // signed compare gives the wrong answer on wasm. Remap via the same
@@ -19726,6 +19767,16 @@ function iife_free_fn_ret_i32(name: string, s: LowerState): boolean {
     return true;
 }
 
+// own_arg_left_to_caller: position `ai` of `callee` is an `own` array
+// position the callee does not consume, and the callee's declared result can
+// hold no buffer.
+function own_arg_left_to_caller(s: LowerState, callee: string, ai: i32): boolean {
+    if (util.index_of_str(s.frame.sigs.own_positions, callee + "|" + util.i32_to_string(ai)) < 0) { return false; }
+    if (s.callee_consumes_own_array(callee, ai)) { return false; }
+    var rt: string = sig_reg_value_of(s.frame.sigs.ret_type_fns, callee);
+    return rt.len() > 0 && ret_type_cannot_hold_buffer(rt);
+}
+
 // iife_arg_is_payload_borrow reports whether `arg` is a BORROW read of the bound
 // payload `name` — the bare payload itself, or a field- / tuple- / index-access
 // chain rooted at it (`name`, `name.f`, `name.0.x`, `name[i]`). Such an argument
@@ -21680,8 +21731,16 @@ function lower_stmt_return(r0: ast.StmtReturn, s: LowerState): LowerState {
         // on top strands the buffer, since the caller's dec then lands on
         // the extra claim instead of on zero. Such a return falls through
         // to the move-on-return path below.
-        if (rps >= s.frame.n_params && s.is_borrowed_arr_slot(rps)
-            && (!s.is_moved_claim_slot(rps) || s.ownflag_slot_of(rps) >= 0)) {
+        //
+        // A hoisted closure's capture extract (`var <cap> = __env[1+i]`,
+        // "ENVCAP:") is the same borrow: the env box keeps the reference.
+        // E049 refuses assigning a reference-typed capture, so the slot still
+        // holds what was captured. A captured closure takes ret_closure_uncounted's
+        // retain below instead.
+        var rpenv: boolean = rps >= s.frame.n_params && s.is_arr_slot(rps) && !s.is_closure_local(rpid)
+            && reclaim_has(s.frame.reclaimable_names, "ENVCAP:", s.reclaim_site_key(rps));
+        if (rpenv || (rps >= s.frame.n_params && s.is_borrowed_arr_slot(rps)
+            && (!s.is_moved_claim_slot(rps) || s.ownflag_slot_of(rps) >= 0))) {
             var rbl: LowerState = lower_expr(r.value, s);
             if (!rbl.ok) { return rbl; }
             if ((!s.is_moved_claim_slot(rps) || s.ownflag_slot_of(rps) >= 0) && !s.locals[rps].own_handback) {
@@ -23827,7 +23886,7 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
     // run off the real value — leaving the slot untyped dropped the
     // alias-inc and broke `__rc`. Kept out of line so this huge arm
     // doesn't grow (oversized functions miscompile — cf. #2720).
-    if (ascription_target(v.init) != "") { return lower_stmt(ascription_rebind(v), s); }
+    if (ascription_target(v.init) != "" && !wraps_to_address(v.init, s)) { return lower_stmt(ascription_rebind(v), s); }
     // Struct destructure `let Point { x, y } = E;` — parse_struct_destructure
     // encodes it as a StmtVar whose type_name is "@sd:<Struct>:<fields>" and
     // whose name is the comma-joined bindings. Expand it into per-field binds.
@@ -40708,7 +40767,6 @@ function owned_container_read_str_binding(init: ast.Expr, body: ast.Stmt[], para
         _ => {}
     }
     if (callee.len() == 0) { return false; }
-    if (body_declares_name(body, callee)) { return false; }
     return util.index_of_str(fresh_ret, kind + callee) >= 0;
 }
 
@@ -41889,9 +41947,8 @@ function collect_fresh_strarr_in_stmt(st: ast.Stmt, body: ast.Stmt[], fresh_ret:
                     if (vb_tail_strarr_fresh(v.init, str_fresh)) { return push_str_unique(acc, reclaim_site_key_of(v.name, v.line, v.col)); }
                     match (c.callee) {
                         ast.ExprIdent(cid) => {
-                            if ((util.index_of_str(fresh_ret, "STRARR:" + cid.name) >= 0
-                                    || util.index_of_str(fresh_ret, "SARRC:" + cid.name) >= 0)
-                                    && !body_declares_name(body, cid.name)) {
+                            if (util.index_of_str(fresh_ret, "STRARR:" + cid.name) >= 0
+                                    || util.index_of_str(fresh_ret, "SARRC:" + cid.name) >= 0) {
                                 return push_str_unique(acc, reclaim_site_key_of(v.name, v.line, v.col));
                             }
                         },
@@ -42104,30 +42161,22 @@ function strarr_expr_unsafe(e: ast.Expr, name: string, borrowable: string[]): bo
 // that doesn't otherwise leak `name`. `for x in name` binds an element per
 // iteration (a lasting alias the walker can't see through) — conservatively
 // unsafe.
-// strarr_producer_names_of: the whole-program `"STRARR:"` producers this frame
-// can actually see — registered as returning a freshly-built string[] on every
-// path, and not shadowed by a local or a parameter of the same name here. The
-// declaration collector asks the registry and `body_declares_name` separately;
-// the rebind gate below is inside a walker that carries neither, so the list is
-// filtered once at the entry point instead, as the string[]-field admission
-// filters its own producers.
-function strarr_producer_names_of(fresh_ret: string[], body: ast.Stmt[]): string[] {
+// strarr_producer_names_of: the whole-program string[] producers — the
+// `"STRARR:"` and `"SARRC:"` names, registered as returning a freshly-built
+// string[] on every path — plus the threader and handback rows whole. A local or
+// parameter cannot shadow one: lexical.resolve_func has renamed every binding.
+function strarr_producer_names_of(fresh_ret: string[]): string[] {
     var out: string[] = [];
     var i: i32 = 0;
     while (i < fresh_ret.len()) {
         if (fresh_ret[i].len() > 7 && slice_unchecked(fresh_ret[i], 0, 7) == "STRARR:") {
-            var nm: string = slice_unchecked(fresh_ret[i], 7, fresh_ret[i].len()) + "";
-            if (!body_declares_name(body, nm)) { out = push_str_unique(out, nm); }
+            out = push_str_unique(out, slice_unchecked(fresh_ret[i], 7, fresh_ret[i].len()) + "");
         }
         if (fresh_ret[i].len() > 6 && slice_unchecked(fresh_ret[i], 0, 6) == "SARRC:") {
-            var nm: string = slice_unchecked(fresh_ret[i], 6, fresh_ret[i].len()) + "";
-            if (!body_declares_name(body, nm)) { out = push_str_unique(out, nm); }
+            out = push_str_unique(out, slice_unchecked(fresh_ret[i], 6, fresh_ret[i].len()) + "");
         }
         // A threader or handback row rides along whole; no bare name can match it.
-        var thr: string = thread_row_name(fresh_ret[i]);
-        if (thr.len() > 0 && !body_declares_name(body, thr)) { out = push_str_unique(out, fresh_ret[i]); }
-        var hbk: string = handback_row_name(fresh_ret[i]);
-        if (hbk.len() > 0 && !body_declares_name(body, hbk)) { out = push_str_unique(out, fresh_ret[i]); }
+        if (thread_row_name(fresh_ret[i]).len() > 0 || handback_row_name(fresh_ret[i]).len() > 0) { out = push_str_unique(out, fresh_ret[i]); }
         i = i + 1;
     }
     return out;
@@ -44270,10 +44319,7 @@ function arrstruct_credit_rows(body: ast.Stmt[], structs: StructTab, borrowable:
     // `keep = ps[i].xs` array-field extraction; a scalar read `ps[i].n`, indexed read
     // `ps[i].xs[j]`, `ps[i].xs.len()` and their nested forms `ps[i].f.g`,
     // `ps[i].f.g.h[j]` and `ps[i].f.g.h.len()` are borrows).
-    // The "ARRSTRUCTF:" pass vetoes shadowed prefixed rows; the "" pass vetoes shadowed
-    // bare producer names, which producer_elem_is_fresh looks up.
-    var producers: string[] = unshadowed_producer_rows(unshadowed_producer_rows(fresh_ret, body, "ARRSTRUCTF:"), body, "");
-    var asts: string[] = collect_fresh_arrstruct_names(body, body, structs, producers, [], msites, sfok);
+    var asts: string[] = collect_fresh_arrstruct_names(body, body, structs, fresh_ret, [], msites, sfok);
     var asti: i32 = 0;
     while (asti < asts.len()) {
         // "A|" rows are append-BUILT markers, not candidates.
@@ -44285,9 +44331,9 @@ function arrstruct_credit_rows(body: ast.Stmt[], structs: StructTab, borrowable:
         var marker: boolean = asts[asti].len() > 2 && asts[asti][0] == b'A' && asts[asti][1] == b'|';
         if (!marker) { asty = arrstruct_elem_type_of_decl(body, asnm, structs); }
         if (!marker
-            && !arrstruct_unsafe_for(body, asnm, borrowable, structs, msites, sfok, producers)
+            && !arrstruct_unsafe_for(body, asnm, borrowable, structs, msites, sfok, fresh_ret)
             && !arrstruct_row_escapes(body, asnm, asty, structs, borrowable)
-            && !arrstruct_elem_payload_escapes(body, asnm, asty, structs, msites, borrowable, sfok, producers)) {
+            && !arrstruct_elem_payload_escapes(body, asnm, asty, structs, msites, borrowable, sfok, fresh_ret)) {
             // arrstruct_unsafe_for subsumes the former body_unsafe_for + the
             // blunt not-reassigned exclusion, validating each rebind
             // individually (#6535) — the self-append is sanctioned, any other
@@ -44719,7 +44765,7 @@ function reclaimable_names_of(body: ast.Stmt[], reassigned: string[], structs: S
     // __fern_str_arr_free walk frees each element box exactly once. NOT excluded
     // on `reassigned` — the self-append rebind IS a reassignment; the gate
     // validates each one individually.
-    var sarr_producers: string[] = strarr_producer_names_of(fresh_ret, body);
+    var sarr_producers: string[] = strarr_producer_names_of(fresh_ret);
     var sarrs: string[] = collect_fresh_strarr_names(body, body, fresh_ret, str_fresh_ret, []);
     out = reclaimable_strarr(body, borrowable, emit_msites, sarrs, sfok, str_fresh_ret, sarr_producers, structs, out);
     // The builtin string[] producers (`s.split(sep)` / `s.lines()`), under their
@@ -45373,8 +45419,6 @@ function return_value_is_strictfresh_struct(e: ast.Expr, structs: StructTab, fnb
                     // `arr_fresh` carries the scalar-element registry under bare
                     // names and the string[] one under an "SA:" prefix, inert
                     // for every bare lookup (the reclaimable_names convention).
-                    // A local or parameter of the callee's name holds an unknown
-                    // body: refused, exactly as the forwarding arm below does.
                     match (v) {
                         ast.ExprCall(vc) => {
                             match (vc.callee) {
@@ -45382,15 +45426,7 @@ function return_value_is_strictfresh_struct(e: ast.Expr, structs: StructTab, fnb
                                     var known: boolean = false;
                                     if (ft == "string[]") { known = util.index_of_str(arr_fresh, "SA:" + vcid.name) >= 0; }
                                     else { known = util.index_of_str(arr_fresh, vcid.name) >= 0; }
-                                    if (known && !body_declares_name(fnbody, vcid.name)) {
-                                        var vp: i32 = 0;
-                                        var shadowed: boolean = false;
-                                        while (vp < fnparams.len()) {
-                                            if (fnparams[vp].name == vcid.name) { shadowed = true; }
-                                            vp = vp + 1;
-                                        }
-                                        if (!shadowed) { ok = true; }
-                                    }
+                                    if (known) { ok = true; }
                                 },
                                 _ => {}
                             }
@@ -45443,22 +45479,9 @@ function return_value_is_strictfresh_struct(e: ast.Expr, structs: StructTab, fnb
         // Without this the caller's binding earned no reclaim credit at all and
         // the box leaked whole: 48 B a round on a scalar-only struct, where the
         // direct call to the same producer is flat (#7062).
-        //
-        // Refused when the name is not the DECLARATION the registry is keyed by
-        // — a local or a parameter of that name holds an unknown closure body,
-        // the same refusal owned_fresh_call_callee makes at the call site.
         ast.ExprCall(fc) => {
             match (fc.callee) {
-                ast.ExprIdent(fcid) => {
-                    if (util.index_of_str(fwd, fcid.name) < 0) { return false; }
-                    if (body_declares_name(fnbody, fcid.name)) { return false; }
-                    var pi: i32 = 0;
-                    while (pi < fnparams.len()) {
-                        if (fnparams[pi].name == fcid.name) { return false; }
-                        pi = pi + 1;
-                    }
-                    return true;
-                },
+                ast.ExprIdent(fcid) => { return util.index_of_str(fwd, fcid.name) >= 0; },
                 _ => { return false; }
             }
         },
@@ -46032,9 +46055,6 @@ function counted_strarr_value(e: ast.Expr, fn: parser.FuncDecl, sources: StringA
     }
     if let ast.ExprCall(c) = e {
         var nm: string = ident_name_or_empty(c.callee);
-        if (fn_has_param_named(fn, nm) || body_declares_name(fn.body, nm)) {
-            return false;
-        }
         if (util.has_str(owned, nm)) {
             return true;
         }
@@ -46094,9 +46114,6 @@ function counted_strarr_handback(e: ast.Expr, name: string, fn: parser.FuncDecl,
     }
     if let ast.ExprCall(c) = e {
         var callee: string = ident_name_or_empty(c.callee);
-        if (fn_has_param_named(fn, callee) || body_declares_name(fn.body, callee)) {
-            return false;
-        }
         var i: i32 = 0;
         while (i < c.args.len()) {
             if (i != k) {
@@ -52324,12 +52341,11 @@ function stmt_structarr_unsafe_for(st: ast.Stmt, name: string, borrowable: strin
 }
 
 // struct_arr_producer_rebind: `name = g(..)` rebuilds the struct-array candidate
-// from a producer registered under `tag` that the frame does not shadow
-// (`producers` is unshadowed_producer_rows' list), and the call reads `name` at
+// from a producer `rows` registers under `tag`, and the call reads `name` at
 // most as a borrow. The producer's elements are its own, so the new array shares
 // nothing with the old and the rebind store frees the old one whole (#10360).
-function struct_arr_producer_rebind(e: ast.Expr, name: string, borrowable: string[], producers: string[], tag: string): boolean {
-    return producer_call_row(e, producers, tag) && !expr_unsafe_for(e, name, borrowable, []);
+function struct_arr_producer_rebind(e: ast.Expr, name: string, borrowable: string[], rows: string[], tag: string): boolean {
+    return producer_call_row(e, rows, tag) && !expr_unsafe_for(e, name, borrowable, []);
 }
 
 // producer_call_row: `e` is a direct call to a function `rows` lists under `tag`.
@@ -52338,21 +52354,6 @@ function producer_call_row(e: ast.Expr, rows: string[], tag: string): boolean {
         if let ast.ExprIdent(cid) = c.callee { return util.index_of_str(rows, tag + cid.name) >= 0; }
     }
     return false;
-}
-
-// unshadowed_producer_rows: `rows` less the `tag` rows and the threader rows
-// naming a function that a local of `body` shadows — a call through that name
-// reaches the local's value.
-function unshadowed_producer_rows(rows: string[], body: ast.Stmt[], tag: string): string[] {
-    var out: string[] = [];
-    for row in rows {
-        var shadowed: boolean = row.len() > tag.len() && slice_unchecked(row, 0, tag.len()) == tag
-            && body_declares_name(body, slice_unchecked(row, tag.len(), row.len()) + "");
-        var thr: string = thread_row_name(row);
-        if (thr.len() > 0 && body_declares_name(body, thr)) { shadowed = true; }
-        if (!shadowed) { out = out.append(row); }
-    }
-    return out;
 }
 
 // ProducerRebindScan / producer_rebind_visit: the astwalk.fold_stmt_spine state
@@ -52725,13 +52726,13 @@ function collect_fresh_structarr_names(stmts: ast.Stmt[], body: ast.Stmt[], stru
                 // so the binding earns exactly the credit the literal it returns
                 // would have earned one frame in.
                 else if (structarr_elem_struct_type(v.type_name, structs) != ""
-                    && struct_arr_call_producer(v.init, body, fresh_ret, "STRUCTARRF:")) {
+                    && struct_arr_call_producer(v.init, fresh_ret, "STRUCTARRF:")) {
                     a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
                 }
                 // An EMPTY seed the body rebinds from a producer (#10360): each
                 // rebind earns what the producer init above does.
                 else if (structarr_elem_struct_type(v.type_name, structs) != "" && arrarr_lit_is_empty(v.init)
-                    && name_rebound_by_producer(stmts, v.name, unshadowed_producer_rows(fresh_ret, body, "STRUCTARRF:"), "STRUCTARRF:")) {
+                    && name_rebound_by_producer(stmts, v.name, fresh_ret, "STRUCTARRF:")) {
                     a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
                 }
                 // An EMPTY seed grown only through a threader (#10420): append-built
@@ -55905,8 +55906,7 @@ function collect_fresh_arrtup_names(stmts: ast.Stmt[], body: ast.Stmt[], structs
                         ast.ExprCall(c) => {
                             match (c.callee) {
                                 ast.ExprIdent(cid) => {
-                                    if (util.index_of_str(fresh_ret, "ARRTUPF:" + cid.name) >= 0
-                                            && !body_declares_name(body, cid.name)) { a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col)); }
+                                    if (util.index_of_str(fresh_ret, "ARRTUPF:" + cid.name) >= 0) { a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col)); }
                                 },
                                 _ => {}
                             }
@@ -56593,11 +56593,11 @@ function expr_spread_sites(e: ast.Expr, structs: StructTab, acc: string[]): stri
 // sound because this class's own element hazards (an element alias, an element
 // field-payload extraction) are checked separately by arrstruct_row_escapes and
 // arrstruct_elem_payload_escapes, applied alongside this gate.
-function arrstruct_unsafe_for(stmts: ast.Stmt[], name: string, borrowable: string[], structs: StructTab, msites: string[], sfok: string[], producers: string[]): boolean {
-    for stmt in stmts { if (stmt_arrstruct_unsafe_for(stmt, name, borrowable, structs, msites, sfok, producers)) { return true; } }
+function arrstruct_unsafe_for(stmts: ast.Stmt[], name: string, borrowable: string[], structs: StructTab, msites: string[], sfok: string[], rows: string[]): boolean {
+    for stmt in stmts { if (stmt_arrstruct_unsafe_for(stmt, name, borrowable, structs, msites, sfok, rows)) { return true; } }
     return false;
 }
-function stmt_arrstruct_unsafe_for(st: ast.Stmt, name: string, borrowable: string[], structs: StructTab, msites: string[], sfok: string[], producers: string[]): boolean {
+function stmt_arrstruct_unsafe_for(st: ast.Stmt, name: string, borrowable: string[], structs: StructTab, msites: string[], sfok: string[], rows: string[]): boolean {
     match (st) {
         ast.StmtVar(v) => {
             if (arrstruct_counted_field_share(v.init, name, structs, msites)) { return false; }
@@ -56613,19 +56613,19 @@ function stmt_arrstruct_unsafe_for(st: ast.Stmt, name: string, borrowable: strin
         },
         ast.StmtAssign(a) => {
             if (a.target == name) {
-                if (arrstruct_self_store_elem(a.value, name, structs, msites, sfok, producers) || thread_rebind(a.value, name, borrowable, producers, false)) { return false; }
-                return !struct_arr_producer_rebind(a.value, name, borrowable, producers, "ARRSTRUCTF:");
+                if (arrstruct_self_store_elem(a.value, name, structs, msites, sfok, rows) || thread_rebind(a.value, name, borrowable, rows, false)) { return false; }
+                return !struct_arr_producer_rebind(a.value, name, borrowable, rows, "ARRSTRUCTF:");
             }
             if (arrstruct_counted_field_share(a.value, name, structs, msites)) { return false; }
             return expr_unsafe_for(a.value, name, borrowable, []);
         },
         ast.StmtIf(f) => {
             if (expr_unsafe_for(f.cond, name, borrowable, [])) { return true; }
-            return arrstruct_unsafe_for(f.then_body, name, borrowable, structs, msites, sfok, producers) || arrstruct_unsafe_for(f.else_body, name, borrowable, structs, msites, sfok, producers);
+            return arrstruct_unsafe_for(f.then_body, name, borrowable, structs, msites, sfok, rows) || arrstruct_unsafe_for(f.else_body, name, borrowable, structs, msites, sfok, rows);
         },
         ast.StmtWhile(w) => {
             if (expr_unsafe_for(w.cond, name, borrowable, [])) { return true; }
-            return arrstruct_unsafe_for(w.body, name, borrowable, structs, msites, sfok, producers);
+            return arrstruct_unsafe_for(w.body, name, borrowable, structs, msites, sfok, rows);
         },
         ast.StmtFor(fo) => {
             var iter_unsafe: boolean = true;
@@ -56634,17 +56634,17 @@ function stmt_arrstruct_unsafe_for(st: ast.Stmt, name: string, borrowable: strin
                 _ => { iter_unsafe = expr_unsafe_for(fo.iter, name, borrowable, []); }
             }
             if (iter_unsafe) { return true; }
-            return arrstruct_unsafe_for(fo.body, name, borrowable, structs, msites, sfok, producers);
+            return arrstruct_unsafe_for(fo.body, name, borrowable, structs, msites, sfok, rows);
         },
         ast.StmtMatch(m) => {
             if (expr_unsafe_for(m.scrutinee, name, borrowable, [])) { return true; }
             for arm in m.arms {
                 if (arm.has_guard && expr_unsafe_for(arm.guard, name, borrowable, [])) { return true; }
-                if (arrstruct_unsafe_for(arm.body, name, borrowable, structs, msites, sfok, producers)) { return true; }
+                if (arrstruct_unsafe_for(arm.body, name, borrowable, structs, msites, sfok, rows)) { return true; }
             }
             return false;
         },
-        ast.StmtDefer(d) => { return stmt_arrstruct_unsafe_for(d.action, name, borrowable, structs, msites, sfok, producers); },
+        ast.StmtDefer(d) => { return stmt_arrstruct_unsafe_for(d.action, name, borrowable, structs, msites, sfok, rows); },
         _ => { return stmt_unsafe_for(st, name, borrowable, []); }
     }
     return false;
@@ -56676,17 +56676,6 @@ function producer_lit_is_fresh(e: ast.Expr, structs: StructTab, sfok: string[], 
     return false;
 }
 
-// producer_fresh_callees: the strict-fresh producers `fn` can call by bare name —
-// `fwd` minus any name a parameter or a local of `fn` shadows.
-function producer_fresh_callees(fn: parser.FuncDecl, fwd: string[]): string[] {
-    var out: string[] = [];
-    for nm in fwd {
-        var shadowed: boolean = body_declares_name(fn.body, nm);
-        for pd in fn.params { if (pd.name == nm) { shadowed = true; } }
-        if (!shadowed) { out = out.append(nm); }
-    }
-    return out;
-}
 
 // body_has_nonfresh_arrstruct_return: any return whose value is NOT a fresh
 // array-of-structs the callee owns outright — a fresh literal, or a local this
@@ -56810,15 +56799,12 @@ function arrstruct_fresh_store_elem(e: ast.Expr, name: string, structs: StructTa
 
 // struct_arr_call_producer: `e` is a direct call to a producer registered under
 // `tag` ("ARRSTRUCTF:" for the deep class, "STRUCTARRF:" for the scalar-field
-// one) that the body does not shadow with a local of the same name.
-function struct_arr_call_producer(e: ast.Expr, body: ast.Stmt[], fresh_ret: string[], tag: string): boolean {
+// one).
+function struct_arr_call_producer(e: ast.Expr, fresh_ret: string[], tag: string): boolean {
     match (e) {
         ast.ExprCall(c) => {
             match (c.callee) {
-                ast.ExprIdent(cid) => {
-                    return util.index_of_str(fresh_ret, tag + cid.name) >= 0
-                        && !body_declares_name(body, cid.name);
-                },
+                ast.ExprIdent(cid) => { return util.index_of_str(fresh_ret, tag + cid.name) >= 0; },
                 _ => { return false; }
             }
         },
@@ -56833,7 +56819,7 @@ function fn_returns_fresh_arrstruct(fn: parser.FuncDecl, structs: StructTab, sfo
     if (fn.receiver_type.len() > 0) { return false; }
     if (arrstruct_elem_struct_type(fn.ret_type, structs) == "") { return false; }
     if (!body_has_return(fn.body)) { return false; }
-    return !body_has_nonfresh_arrstruct_return(fn.body, fn.body, structs, sfok, producer_fresh_callees(fn, fwd));
+    return !body_has_nonfresh_arrstruct_return(fn.body, fn.body, structs, sfok, fwd);
 }
 
 // fn_returns_fresh_structarr: the SCALAR-FIELD sibling of the above, registered
@@ -56845,7 +56831,7 @@ function fn_returns_fresh_structarr(fn: parser.FuncDecl, structs: StructTab, sfo
     if (fn.receiver_type.len() > 0) { return false; }
     if (structarr_elem_struct_type(fn.ret_type, structs) == "") { return false; }
     if (!body_has_return(fn.body)) { return false; }
-    return !body_has_nonfresh_arrstruct_return(fn.body, fn.body, structs, sfok, producer_fresh_callees(fn, fwd));
+    return !body_has_nonfresh_arrstruct_return(fn.body, fn.body, structs, sfok, fwd);
 }
 
 // collect_fresh_arrstruct_names: LOCAL names bound from a fresh `(<struct-with-array>)[]`
@@ -56861,7 +56847,7 @@ function collect_fresh_arrstruct_names(stmts: ast.Stmt[], body: ast.Stmt[], stru
                 // A producer CALL, the "ARRSTRUCTF:" sibling of the ARRTUP arm:
                 // the annotation supplies the element struct type and the registry
                 // proves every returned element box is the callee's own.
-                else if (arrstruct_elem_struct_type(v.type_name, structs) != "" && struct_arr_call_producer(v.init, body, fresh_ret, "ARRSTRUCTF:")) { a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col)); }
+                else if (arrstruct_elem_struct_type(v.type_name, structs) != "" && struct_arr_call_producer(v.init, fresh_ret, "ARRSTRUCTF:")) { a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col)); }
                 // APPEND-BUILT candidate (#6535): `var vals: Val[] = []` grown by
                 // `vals = vals.append(Val { .. })`. arrstruct_lit_is_fresh rejects
                 // `[]` (no elements to prove fresh), which left every append-built
@@ -57896,7 +57882,7 @@ function collect_fresh_arrenum_names(stmts: ast.Stmt[], fn_reassigned: string[],
                 // would: the "ARENUMF:" registry proved every returned element
                 // box is the callee's own, and the ANNOTATION supplies the
                 // element enum, which an `E[]` slot records nowhere.
-                if (owner.len() == 0) { owner = arrenum_call_producer_enum(v.init, v.type_name, body, fresh_ret); }
+                if (owner.len() == 0) { owner = arrenum_call_producer_enum(v.init, v.type_name, fresh_ret); }
                 if (owner.len() > 0 && !block_reassigns(stmts, fn_reassigned, nested, v.name)) {
                     a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col) + "#" + owner);
                 }
@@ -57924,14 +57910,13 @@ function collect_fresh_arrenum_names(stmts: ast.Stmt[], fn_reassigned: string[],
     return a;
 }
 
-// arrenum_call_producer_enum: `e` is a direct call to an "ARENUMF:" producer that
-// the body does not shadow with a local of the same name, and `tname` annotates
-// the binding as that producer's `E[]`. Returns the element enum, else "".
+// arrenum_call_producer_enum: `e` is a direct call to an "ARENUMF:" producer,
+// and `tname` annotates the binding as that producer's `E[]`. Returns the element enum, else "".
 //
 // The annotation is required, not a convenience: the credit carries the element
 // enum in its own entry because an `E[]` slot records it in neither arrarr_elem
 // nor struct_type, and an unannotated binding leaves nothing to carry.
-function arrenum_call_producer_enum(e: ast.Expr, tname: string, body: ast.Stmt[], fresh_ret: string[]): string {
+function arrenum_call_producer_enum(e: ast.Expr, tname: string, fresh_ret: string[]): string {
     if (tname.len() < 3) { return ""; }
     if (slice_unchecked(tname, tname.len() - 2, tname.len()) != "[]") { return ""; }
     var ename: string = slice_unchecked(tname, 0, tname.len() - 2) + "";
@@ -57939,8 +57924,7 @@ function arrenum_call_producer_enum(e: ast.Expr, tname: string, body: ast.Stmt[]
         ast.ExprCall(c) => {
             match (c.callee) {
                 ast.ExprIdent(cid) => {
-                    if (util.index_of_str(fresh_ret, "ARENUMF:" + cid.name + "|" + ename) >= 0
-                        && !body_declares_name(body, cid.name)) { return ename; }
+                    if (util.index_of_str(fresh_ret, "ARENUMF:" + cid.name + "|" + ename) >= 0) { return ename; }
                     return "";
                 },
                 _ => { return ""; }
@@ -65353,7 +65337,8 @@ function direct_call_callee_name(e: ast.Expr): string {
 
 pub function opt_fresh_ret_fns_of(funcs: parser.FuncDecl[], structs: StructTab, str_fresh: string[]): string[] {
     var out: string[] = [];
-    var aac: string[] = aac_rows_of(funcs, sig_reg_of(row_producer_rows_of(funcs)));
+    var arc: string[] = row_producer_rows_of(funcs);
+    var aac: string[] = aac_rows_of(funcs, sig_reg_of(arc));
     for fn in funcs {
         var rt: string = fn.ret_type;
         if (rt.len() >= 8 && (slice_unchecked(rt, 0, 7) == "Option[" || slice_unchecked(rt, 0, 7) == "Result[")
@@ -65387,35 +65372,25 @@ pub function opt_fresh_ret_fns_of(funcs: parser.FuncDecl[], structs: StructTab, 
                 && !body_has_nonqualifying_rcenum_return(fn.body, fn.body, fn.params, structs, rt, str_fresh, [])) {
             out = out.append("RCE:" + fn.name + "|" + rt);
         }
-        // #4355 slice 10: fresh arr-of-arr RETURN fns, tagged "AAC:<name>|<flag>"
-        // in the SAME list (the no-new-threading trick RCE: uses above);
-        // aac_rows_of proves them. A qualifying return hands the caller a
-        // structure it solely owns (the self-host IR path has no
-        // return-transfer inc). collect_fresh_arrarr_names admits
-        // `var g: T[][] = mk(..)` call inits exactly like literal inits off
-        // these entries. Deeper nesting (`string[][][]`) may register, but the
-        // consuming slot's arrarr_elem is "" for those, so only the lax
-        // shallow-row free applies (sound), mirroring the literal-init path.
-        else if (util.has_str(aac, "AAC:" + fn.name + "|s") || util.has_str(aac, "AAC:" + fn.name + "|p")) {}
-        // #6102: fresh ROW producers, "ARC:<name>|<flag>" — the single-level
-        // sibling of AAC above, consumed by arrarr_self_append_row so an
-        // append-built arr-of-arr can take `g = g.append(make_row())`. Return
-        // type is one level of `[]` and NOT `[][]` (the AAC arm owns that
-        // shape, and this branch is an `else if` behind it anyway).
-        else if (fn.receiver_type.len() == 0
-                && rt.len() >= 2 && slice_unchecked(rt, rt.len() - 2, rt.len()) == "[]"
-                && row_producer_kind(fn.body) >= 0) {
-            var rflag: string = "p";
-            if (row_producer_kind(fn.body) == 1) { rflag = "s"; }
-            out = out.append("ARC:" + fn.name + "|" + rflag);
-        }
     }
-    out = append_all(out, aac);
+    // #4355 slice 10: fresh arr-of-arr RETURN fns, tagged "AAC:<name>|<flag>" in
+    // the SAME list (the no-new-threading trick RCE: uses above); aac_rows_of
+    // proves them. A qualifying return hands the caller a structure it solely
+    // owns (the self-host IR path has no return-transfer inc).
+    // collect_fresh_arrarr_names admits `var g: T[][] = mk(..)` call inits
+    // exactly like literal inits off these entries. Deeper nesting
+    // (`string[][][]`) may register, but the consuming slot's arrarr_elem is ""
+    // for those, so only the lax shallow-row free applies (sound), mirroring the
+    // literal-init path. #6102: the fresh ROW producers, "ARC:<name>|<flag>",
+    // are the single-level sibling, consumed by arrarr_self_append_row so an
+    // append-built arr-of-arr can take `g = g.append(make_row())`.
+    out = append_all(append_all(out, aac), arc);
     return append_all(out, strict_closure_enum_rows(funcs, structs, str_fresh, out));
 }
 
 // row_producer_rows_of: the "ARC:" rows of the free functions returning one
-// level of array, which the "AAC:" proof reads before the arm above writes them.
+// level of array, which the "AAC:" proof reads as its ground facts. A `[][]`
+// return is AAC-only: one that fails that proof registers no "ARC:" row.
 function row_producer_rows_of(funcs: parser.FuncDecl[]): string[] {
     var out: string[] = [];
     for fn in funcs {
@@ -65806,7 +65781,13 @@ function aac_body_kind(stmts: ast.Stmt[], fn: parser.FuncDecl, rows: string[], a
             ast.StmtWhile(w) => { k = aac_body_kind(w.body, fn, rows, arc); },
             ast.StmtFor(fo) => { k = aac_body_kind(fo.body, fn, rows, arc); },
             ast.StmtMatch(m) => { for arm in m.arms { k = min_i32(k, aac_body_kind(arm.body, fn, rows, arc)); } },
-            _ => {}
+            ast.StmtDefer(d) => { k = aac_body_kind([d.action], fn, rows, arc); },
+            ast.StmtVar(_) => {},
+            ast.StmtAssign(_) => {},
+            ast.StmtExpr(_) => {},
+            ast.StmtBreak(_) => {},
+            ast.StmtContinue(_) => {},
+            ast.StmtUnknown(_) => { return 0 - 1; }
         }
         if (k < 0) { return 0 - 1; }
         worst = min_i32(worst, k);
@@ -65839,7 +65820,7 @@ function aac_value_kind(e: ast.Expr, stmts: ast.Stmt[], k: i32, fn: parser.FuncD
 // "AAC:" producer or a handback whose every handback argument is fresh.
 function aac_call_kind(c: ast.ExprCall, fn: parser.FuncDecl, rows: string[], arc: SigReg): i32 {
     var cn: string = ident_name_or_empty(c.callee);
-    if (cn.len() == 0 || fn_has_param_named(fn, cn) || body_declares_name(fn.body, cn)) { return 0 - 1; }
+    if (cn.len() == 0) { return 0 - 1; }
     if (util.has_str(rows, "AAC:" + cn + "|s")) { return 1; }
     if (util.has_str(rows, "AAC:" + cn + "|p")) { return 0; }
     if (!util.has_str(rows, "AACH:" + cn)) { return 0 - 1; }
@@ -65913,7 +65894,6 @@ function aac_handback_kind(e: ast.Expr, name: string, fn: parser.FuncDecl, rows:
     var worst: i32 = 0;
     if let ast.ExprCall(c) = e {
         var cn: string = ident_name_or_empty(c.callee);
-        if (fn_has_param_named(fn, cn) || body_declares_name(fn.body, cn)) { return 0 - 1; }
         if (util.has_str(rows, "AACHS:" + cn)) { worst = 1; }
         var i: i32 = 0;
         while (i < c.args.len()) {
@@ -83707,7 +83687,7 @@ while (sa2i < sarrs2.len()) {
     // As above: site keys, with the "A|" marker carried in the same key.
     var sanm: string = reclaim_site_name(sarrs2[sa2i]);
     if (!(sarrs2[sa2i].len() > 2 && sarrs2[sa2i][0] == b'A' && sarrs2[sa2i][1] == b'|')
-        && !structarr_unsafe_for(body, sanm, borrowable, unshadowed_producer_rows(fresh_ret, body, "STRUCTARRF:"))
+        && !structarr_unsafe_for(body, sanm, borrowable, fresh_ret)
         && !structarr_elem_escapes(body, sanm, borrowable, shares)
         && !structarr_arg_hands_out(body, sanm, borrowable, cntret, ret_types, fresh_ret)) {
         // Append-built candidates take the SEPARATE STRUCTARRA: credit,

@@ -250,9 +250,9 @@ function main(): i32 {
 }`, 41},
 }
 
-// TestSelfHostOuterMutCaptureIRX86_64 cross-checks native (now oracle-
-// matching), pins the "ir" routing (these shapes all bailed to AST before),
-// then runs the self-host-compiled binary.
+// TestSelfHostOuterMutCaptureIRX86_64 cross-checks the interpreter, pins the
+// "ir" routing (these shapes all bailed to AST before), then runs the
+// self-host-compiled binary.
 func TestSelfHostOuterMutCaptureIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -263,8 +263,8 @@ func TestSelfHostOuterMutCaptureIRX86_64(t *testing.T) {
 	for _, tc := range outerMutCaptureIRCases {
 		t.Run(tc.name, func(t *testing.T) {
 			src := []byte(tc.src + "\n")
-			if _, code := compileAndRunX86_64(t, tc.src+"\n"); code != tc.want {
-				t.Fatalf("%s native exited %d, want %d (interp oracle)", tc.name, code, tc.want)
+			if code := runInterpExit(t, tc.src+"\n"); code != tc.want {
+				t.Fatalf("%s interpreter exited %d, want %d", tc.name, code, tc.want)
 			}
 			path := strings.TrimSpace(string(runCapture(t, gcc, runner, probeBin, src)))
 			if path != "ir" {

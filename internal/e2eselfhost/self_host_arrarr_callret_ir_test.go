@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -131,9 +132,10 @@ function main(): i32 {
     return 0;
 }`, "arrarr-callret-param-embed-safe", 0)
 
-	// LOCAL-RETURN exclusion: mk3 returns a local (`return t;`), not a
-	// literal — it never registers, the call init earns no credit, and the
-	// structure keeps its prior sound leak (correct reads, detector zero).
+	// LOCAL-RETURN credit: mk3 returns a local built from a fresh literal and
+	// never escaping but by that return, so it registers "AAC:mk3|s" and the call
+	// init earns the strict credit. Flat at detector zero, with the reads
+	// correct: a withdrawn credit leaks (98), an over-wide one over-releases (99).
 	run(t, `function mk3(i: i32): string[][] {
     var t: string[][] = [["a" + "b"], ["c" + "d"]];
     return t;
@@ -141,15 +143,82 @@ function main(): i32 {
 function main(): i32 {
     var bad: i32 = 0;
     var i: i32 = 0;
-    while (i < 300) {
+    while (i < 200) {
         var g: string[][] = mk3(i);
         if (g[0][0].len() != 2) { bad = 1; }
         i = i + 1;
     }
+    var b1: i32 = (__heap_bump_bytes() as i32);
+    var j: i32 = 0;
+    while (j < 2000) {
+        var g2: string[][] = mk3(j);
+        if (g2[1][0] != "cd") { bad = 1; }
+        j = j + 1;
+    }
+    var b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (bad != 0) { return 88; }
+    if (b2 - b1 >= 4096) { return 98; }
     return 0;
-}`, "arrarr-callret-local-ret-safe", 0)
+}`, "arrarr-callret-local-ret-credit", 0)
+
+	// A returned local GROWN by a self-append before the return: only the
+	// returned-local proof (aac_local_kind) admits it, so "AAC:mk4|s" and the
+	// strict credit rest on it alone.
+	run(t, `function mk4(i: i32): string[][] {
+    var t: string[][] = [["a" + "b"]];
+    t = t.append(["c" + "d"]);
+    return t;
+}
+function main(): i32 {
+    var bad: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) {
+        var g: string[][] = mk4(i);
+        if (g[0][0].len() != 2) { bad = 1; }
+        i = i + 1;
+    }
+    var b1: i32 = (__heap_bump_bytes() as i32);
+    var j: i32 = 0;
+    while (j < 2000) {
+        var g2: string[][] = mk4(j);
+        if (g2[1][0] != "cd") { bad = 1; }
+        j = j + 1;
+    }
+    var b2: i32 = (__heap_bump_bytes() as i32);
+    if (__rc_underflow_count() != 0) { return 99; }
+    if (bad != 0) { return 88; }
+    if (b2 - b1 >= 4096) { return 98; }
+    return 0;
+}`, "arrarr-callret-local-grown-credit", 0)
+
+	// The same returned-local shape one level down, appended: mk3r registers
+	// "ARC:mk3r|s", so `g = g.append(mk3r(i))` is a sanctioned self-append and
+	// the append-built g frees its rows and their strings.
+	run(t, `function mk3r(i: i32): string[] {
+    var t: string[] = ["a" + "b", "c" + "d"];
+    return t;
+}
+function round(i: i32): i32 {
+    var g: string[][] = [];
+    g = g.append(mk3r(i));
+    g = g.append(mk3r(i + 1));
+    if (g[1][1] != "cd") { return 0 - 1000; }
+    return g.len();
+}
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) { acc = acc + round(i); i = i + 1; }
+    var b1: i32 = (__heap_bump_bytes() as i32);
+    var j: i32 = 0;
+    while (j < 2000) { acc = acc + round(j); j = j + 1; }
+    var b2: i32 = (__heap_bump_bytes() as i32);
+    if (__rc_underflow_count() != 0) { return 99; }
+    if (acc != 4400) { return 97; }
+    if (b2 - b1 >= 4096) { return 98; }
+    return 0;
+}`, "arrarr-callret-local-row-append", 0)
 
 	// FN-SCOPE exit sweep, one free per slot (the slice-9 double-sweep fix):
 	// each work() call sweeps its fn-scope literal arrarr on return — the
@@ -173,4 +242,79 @@ function main(): i32 {
     if (acc < 0) { return 97; }
     return 0;
 }`, "arrarr-fnscope-sweep-flat", 0)
+}
+
+// TestSelfHostArrArrReturnProofX86_64 pins the arr-of-arr registry itself:
+// the "AAC:" rows of a function every return of which is fresh, and the
+// "AACH:" / "AACHS:" rows of a handback, fresh when its `own` arguments are. A
+// run-time check cannot see a refusal, which is only a leak.
+func TestSelfHostArrArrReturnProofX86_64(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	dir := t.TempDir()
+	copySelfHostDriver(t, dir, "asm_ir_run.fern")
+	const probe = `import "./rundriver";
+import "./irlower";
+import "./lexical";
+import "./parser";
+function main(): i32 {
+    var m = rundriver.parse_stdin("arrarr-proof");
+    // Resolved as the lowering sees them: every binding renamed.
+    var funcs: parser.FuncDecl[] = [];
+    for f in m.funcs { funcs = funcs.append(lexical.resolve_func(f).func); }
+    var rows = irlower.opt_fresh_ret_fns_of(funcs, irlower.struct_tab(m.structs), []);
+    for row in rows { print(row); }
+    return 0;
+}`
+	if err := os.WriteFile(filepath.Join(dir, "proof.fern"), []byte(probe), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bin := buildSelfHostBin(t, gcc, dir, "proof.fern", "proof")
+	native := buildLangBinForInterp(t)
+	// A lax handback: its appended row holds a borrowed string.
+	const laxH = `function h(own g: string[][], s: string): string[][] { g = g.append([s]); return g; } `
+	// A strict handback: every string it adds is fresh.
+	const strictH = `function h(own g: string[][]): string[][] { g = g.append(["a" + "b"]); return g; } `
+	cases := []struct {
+		name, source string
+		want, refuse []string
+	}{
+		{"literal", `function build(i: i32): string[][] { return [["a" + "b"]]; }`, []string{"AAC:build|s"}, nil},
+		{"literal-borrowed-string", `function build(s: string): string[][] { return [[s]]; }`, []string{"AAC:build|p"}, []string{"AAC:build|s"}},
+		{"returned-local", `function build(i: i32): string[][] { var t: string[][] = [["a" + "b"], ["c" + "d"]]; return t; }`, []string{"AAC:build|s"}, nil},
+		{"append-built-local", `function build(i: i32): i32[][] { var t: i32[][] = []; t = t.append([i]); return t; }`, []string{"AAC:build|p"}, nil},
+		{"forward-producer", `function mk(i: i32): string[][] { return [["a" + "b"]]; } function build(i: i32): string[][] { return mk(i); }`, []string{"AAC:build|s"}, nil},
+		{"handback-strict", strictH + `function build(own g: string[][]): string[][] { return h(g); }`, []string{"AACH:build", "AACH:build|0", "AACHS:build"}, []string{"AAC:build|s", "AAC:build|p"}},
+		{"handback-lax", laxH + `function build(own g: string[][]): string[][] { return h(g, "x"); }`, []string{"AACH:build", "AACH:build|0"}, []string{"AACHS:build"}},
+		{"handback-self", `function build(own g: i32[][]): i32[][] { g = g.append([1]); return g; }`, []string{"AACH:build", "AACH:build|0"}, nil},
+		{"handback-unfresh-local", `function build(own g: string[][], q: string[][]): string[][] { var t: string[][] = q; return t; }`, nil, []string{"AAC:build|s", "AAC:build|p", "AACH:build"}},
+		{"parameter-return", `function build(g: string[][]): string[][] { return g; }`, nil, []string{"AAC:build|s", "AAC:build|p", "AACH:build"}},
+		{"arrarr-not-a-row-producer", `function build(q: i32[][], i: i32): i32[][] { return [q[0], [i]]; }`, nil, []string{"AAC:build|s", "AAC:build|p", "ARC:build|s", "ARC:build|p"}},
+		{"local-escapes", `function build(q: string[][][]): string[][] { var t: string[][] = [["a" + "b"]]; q = q.append(t); return t; }`, nil, []string{"AAC:build|s", "AAC:build|p"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "proof-input.fern")
+			if err := os.WriteFile(path, []byte(tc.source), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if out, err := exec.Command(native, "-check", path).CombinedOutput(); err != nil {
+				t.Fatalf("native source validity: %v\n%s", err, out)
+			}
+			out := runCapture(t, gcc, runner, bin, []byte(tc.source))
+			rows := map[string]bool{}
+			for _, row := range strings.Fields(string(out)) {
+				rows[row] = true
+			}
+			for _, r := range tc.want {
+				if !rows[r] {
+					t.Errorf("missing %s; registry:\n%s", r, out)
+				}
+			}
+			for _, r := range tc.refuse {
+				if rows[r] {
+					t.Errorf("published %s; registry:\n%s", r, out)
+				}
+			}
+		})
+	}
 }

@@ -12,7 +12,10 @@ import (
 	"testing"
 )
 
-func RunInterpExit(t *testing.T, src string) int {
+// RunInterp runs src under the interpreter (`fern -interp`) and returns its
+// stdout and exit code: the oracle a self-host answer is compared against
+// (docs/NATIVE-CONVERGENCE.md §3).
+func RunInterp(t testing.TB, src string) (stdout string, exitCode int) {
 	t.Helper()
 	bin := BuildLangBinForInterp(t)
 	dir := t.TempDir()
@@ -27,5 +30,11 @@ func RunInterpExit(t *testing.T, src string) int {
 	if cmd.ProcessState == nil {
 		t.Fatalf("interp did not run\nstderr: %s", errb.String())
 	}
-	return cmd.ProcessState.ExitCode()
+	return out.String(), cmd.ProcessState.ExitCode()
+}
+
+func RunInterpExit(t *testing.T, src string) int {
+	t.Helper()
+	_, code := RunInterp(t, src)
+	return code
 }

@@ -4972,6 +4972,21 @@ function main(): i32 {
     return 0;
 }
 `},
+	// Division, remainder, the shifts and the orderings on an address, with
+	// bit 31 set so wasm's 32-bit address needs the unsigned forms (#10737).
+	{name: "usize-unsigned-operators", atLeast: 1, noLeak: true, src: semUsizeOperatorsSource},
+	// The same operators past 32 bits, where the register backends must run
+	// them at 64: a 32-bit divide or a count masked mod 32 truncates. u64
+	// rides along as the width's reference.
+	{name: "usize-operators-at-register-width", atLeast: 3, nativeOnly: true, noLeak: true, src: semUsizeWideOperatorsSource},
+	// A literal past 32 bits cast to an address wraps on wasm on both
+	// lowerings (#10743).
+	{name: "usize-wide-literal", atLeast: 1, noLeak: true, src: semUsizeWideLiteralSource},
+	{name: "usize-wide-product", atLeast: 2, noLeak: true, src: semUsizeWideProductSource},
+	// The FFI trampolines, reached behind a test that never holds so no C
+	// pointer is called: the typed path produces each caller and the shims
+	// link (#10736).
+	{name: "c-call-trampolines", atLeast: 7, nativeOnly: true, noLeak: true, src: semCCallSource},
 	// The floor's three static words, taken with no runtime helper to mark
 	// the need that defines them: each address pulls in its own definition.
 	{name: "raw-floor-symbols-link-without-a-helper", atLeast: 1, nativeOnly: true, noLeak: true, src: `
@@ -5860,6 +5875,112 @@ function make(i: i32): dyn Show {
     if (i % 3 == 0) { return i; }
     if (i % 3 == 1) { return "s" + i.to_string(); }
     return Sq { side: i, tag: "t" + i.to_string() };
+}
+`
+
+// semUsizeOperatorsSource checks each unsigned operator on addresses that stay
+// inside 32 bits, so it answers 63 on every target. The last check reads its
+// operands through an index and a field rather than a local.
+const semUsizeOperatorsSource = `
+struct Region { base: usize }
+function main(): i32 {
+    var n: i32 = args().len() + 69;
+    var one: usize = (n - 69) as usize;
+    var top: usize = one << (n - 39);
+    var a: usize = top + (n as usize);
+    var b: usize = (n - 59) as usize;
+    var got: i32 = 0;
+    if ((a / b) as i64 == 195225792i64) { got = got + 1; }
+    if ((a % b) as i32 == 6) { got = got + 2; }
+    if ((top >> (n - 40)) as i32 == 2 && (a >> 28) as i32 == 8) { got = got + 4; }
+    if (top > b && a >= top && b < a && !(a <= b)) { got = got + 8; }
+    if (a / (0 as usize) == (0 as usize) && a % (0 as usize) == a) { got = got + 16; }
+    var words: usize[] = [top, a];
+    var s: Region = Region { base: top };
+    var t: Region = Region { base: b };
+    if ((words[0] >> (n - 40)) as i32 == 2 && (words[1] / b) as i64 == 195225792i64 && s.base > t.base) { got = got + 32; }
+    return got;
+}
+`
+
+// semUsizeWideOperatorsSource is semUsizeOperatorsSource past 32 bits, beside
+// the same checks on u64; it answers 255 on the register backends, as the
+// interpreter does.
+const semUsizeWideOperatorsSource = `
+struct Region { base: usize }
+function scaled(n: i32): usize { return ((n as i64) * 1000000000i64) as usize; }
+function addresses(n: i32): i32 {
+    var a: usize = scaled(n);
+    var b: usize = scaled(1);
+    var one: usize = (n - 69) as usize;
+    var top: usize = one << (n - 7);
+    var got: i32 = 0;
+    if ((a / b) as i32 == 70) { got = got + 1; }
+    if ((a % (b + (7 as usize))) as i64 == 999999517i64) { got = got + 2; }
+    if (((one << (n - 30)) >> (n - 32)) as i32 == 4) { got = got + 4; }
+    if ((top >> 62) as i32 == 2) { got = got + 8; }
+    if (top > a && a >= b && b < top && !(a <= b)) { got = got + 16; }
+    var words: usize[] = [top, a];
+    var s: Region = Region { base: a };
+    var t: Region = Region { base: b };
+    if ((words[0] >> 62) as i32 == 2 && (s.base / t.base) as i32 == 70 && words[0] > s.base) { got = got + 32; }
+    return got;
+}
+function wide(n: i32): i32 {
+    var one: u64 = (n - 69) as u64;
+    var top: u64 = one << ((n - 7) as u64);
+    var a: u64 = top + (70 as u64);
+    var b: u64 = (n - 60) as u64;
+    var got: i32 = 0;
+    if (((a / b) >> 59) as i32 == 1 && (a % b) as i32 == 8) { got = got + 1; }
+    if ((top >> 62) as i32 == 2 && a > b && !(top < b)) { got = got + 2; }
+    return got;
+}
+function main(): i32 {
+    var n: i32 = args().len() + 69;
+    return addresses(n) + wide(n) * 64;
+}
+`
+
+// semUsizeWideLiteralSource binds a literal past 32 bits as an address: 70 on
+// the register backends, and 1 on wasm, whose address is 32 bits.
+const semUsizeWideLiteralSource = `
+function main(): i32 {
+    var a: usize = 70000000000 as usize;
+    var b: usize = 1000000000 as usize;
+    return (a / b) as i32;
+}
+`
+
+// semUsizeWideProductSource casts computed i64 values past 32 bits to usize,
+// in a binding and in a return. wasm keeps the low 32 bits of each.
+const semUsizeWideProductSource = `
+function addr(x: i64): usize { return x as usize; }
+function main(): i32 {
+    var n: i64 = (args().len() as i64) * 70000000000i64;
+    var a: usize = n as usize;
+    var b: usize = addr(n * 2i64);
+    var unit: usize = 100000000 as usize;
+    return ((a / unit) + (b / unit) * (4 as usize)) as i32;
+}
+`
+
+// semCCallSource reaches every __c_call arity and both float results behind a
+// test that never holds, so it answers 0 without calling a C pointer.
+const semCCallSource = `
+function run0(cb: usize): i32 { return __c_call0(cb) as i32; }
+function run1(cb: usize, a: usize): i32 { return __c_call1(cb, a) as i32; }
+function run2(cb: usize, a: usize, b: usize): i32 { return __c_call2(cb, a, b) as i32; }
+function run3(cb: usize, a: usize, b: usize, c: usize): i32 { return __c_call3(cb, a, b, c) as i32; }
+function run4(cb: usize, a: usize, b: usize, c: usize, d: usize): i32 { return __c_call4(cb, a, b, c, d) as i32; }
+function runf(cb: usize, a: usize): f64 { return __c_call1_f64(cb, a) + (__c_call2_f32(cb, a, a) as f64); }
+function main(): i32 {
+    var n: i32 = args().len();
+    if (n > 100) {
+        var cb: usize = n as usize;
+        return run0(cb) + run1(cb, cb) + run2(cb, cb, cb) + run3(cb, cb, cb, cb) + run4(cb, cb, cb, cb, cb) + (runf(cb, cb) as i32);
+    }
+    return 0;
 }
 `
 

@@ -17,10 +17,10 @@ import (
 // the fixpoint is structurally blind to a stable over-allocation (a compiler
 // that leaks identically in both generations still reproduces itself).
 //
-// Each row is measured against the compiler's own reclaim, not against native's
-// number: the two allocate different amounts for the same program (different
-// box sizes and temp strategies), so the contract is FLATNESS, with native
-// asserted flat alongside as the oracle that the shape is reclaimable at all.
+// Each row is measured against the compiler's own reclaim, never against an
+// absolute number: box sizes and temp strategies move the totals, so the
+// contract is FLATNESS, and the retained control below is what proves a flat
+// row still allocates.
 //
 // Rows deliberately absent:
 //
@@ -260,16 +260,6 @@ func TestSelfHostHeapBumpFlatIRX86_64(t *testing.T) {
 				t.Errorf("%s is not flat: N=%s bumped %d bytes, N=%s bumped %d — the mark tracks the "+
 					"iteration count, so the shape strands one allocation per round",
 					tc.name, heapBumpFlatSmallN, small, heapBumpFlatLargeN, large)
-			}
-			// Native is the oracle that the shape is reclaimable at all: if it
-			// stops being flat there, this row is pinning a whole-project leak
-			// rather than a self-host one, and the row (not the compiler) is
-			// what needs revisiting.
-			_, nsmall := compileAndRunX86_64(t, tc.src(heapBumpFlatSmallN)+"\n")
-			_, nlarge := compileAndRunX86_64(t, tc.src(heapBumpFlatLargeN)+"\n")
-			if nsmall != nlarge {
-				t.Errorf("%s is not flat on NATIVE either (%d vs %d) — the row is gating a leak both "+
-					"compilers have, not a self-host divergence", tc.name, nsmall, nlarge)
 			}
 		})
 	}

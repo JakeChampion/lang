@@ -69,16 +69,14 @@ function main(): i32 { match (step()) { Some(v) => { return v - 35; }, None => {
 }
 
 // TestSelfHostTryFailCleanupIR runs each case through the self-host CLI on
-// x86-64 and wasm and cross-checks the native exit code. Wasm's sweep uses
+// x86-64 and wasm against each row's expected exit code; the rows read the
+// bump allocator, which the interpreter has no model of. Wasm's sweep uses
 // __fern_rc_dec / __fern_str_free the same way.
 func TestSelfHostTryFailCleanupIR(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range tryFailCleanupIRCases {
 		t.Run(tc.name, func(t *testing.T) {
 			src := tc.main + "\n"
-			if _, code := compileAndRunX86_64(t, tc.main+"\n"); code != tc.want {
-				t.Fatalf("%s native exited %d, want %d", tc.name, code, tc.want)
-			}
 			for _, target := range []string{"x86-64-linux", "wasm32-wasi"} {
 				if stderr, code := cli.exitOf(t, src, target); code != tc.want {
 					t.Errorf("%s on %s exited %d, want %d\n%s", tc.name, target, code, tc.want, stderr)

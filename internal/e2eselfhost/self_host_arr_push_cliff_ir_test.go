@@ -17,9 +17,9 @@ import (
 // missing instrumentation. The shared case is what proves the
 // counter can fire.
 //
-// The native backend is the oracle (interp has no refcounts and copies
-// nothing, so it reports 0 for both). Exit codes stay well under the
-// wasmtime clamp.
+// The rows are the oracle: the interpreter has no refcounts and copies
+// nothing, so it reports 0 for both and cannot judge the counter. Exit codes
+// stay well under the wasmtime clamp.
 var arrPushCliffIRCases = []struct {
 	name string
 	main string
@@ -80,17 +80,14 @@ function main(): i32 {
 }
 
 // TestSelfHostArrPushCliffIR runs each case through the self-host CLI on
-// x86-64 and wasm and cross-checks the native backend, which lowers the same
-// builtin over its own BSS counter. Wasm keeps the counter in a fixed
-// low-memory slot (`arr_push_shared_addr`) instead.
+// x86-64 and wasm against each row's expected count. Wasm keeps the counter in
+// a fixed low-memory slot (`arr_push_shared_addr`) instead of a BSS word; the
+// interpreter has no cliff counter, so the rows are the oracle.
 func TestSelfHostArrPushCliffIR(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range arrPushCliffIRCases {
 		t.Run(tc.name, func(t *testing.T) {
 			src := tc.main + "\n"
-			if _, code := compileAndRunX86_64(t, tc.main+"\n"); code != tc.want {
-				t.Fatalf("%s native exited %d, want %d", tc.name, code, tc.want)
-			}
 			for _, target := range []string{"x86-64-linux", "wasm32-wasi"} {
 				if stderr, code := cli.exitOf(t, src, target); code != tc.want {
 					t.Errorf("%s on %s exited %d, want %d\n%s", tc.name, target, code, tc.want, stderr)

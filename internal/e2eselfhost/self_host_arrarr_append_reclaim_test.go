@@ -245,3 +245,85 @@ function main(): i32 {
 		})
 	}
 }
+
+// A parameter named like an "ARC:" producer is not that producer. Every
+// binding reaches the lowering renamed (lexical.resolve_func), so the call
+// through the parameter never spells a registered name: usr's arr-of-arr earns
+// no credit and keeps its rows, while ctl, calling the producer itself, frees
+// them. The value is right and nothing is over-released on either lowering;
+// the typed lowering, which counts the call's result, balances.
+func TestSelfHostArrArrShadowedProducerX86_64(t *testing.T) {
+	cli := newStrictCLI(t)
+	dir := t.TempDir()
+	const src = `@noinline
+function row(i: i32): i32[] { return [i, i + 1]; }
+@noinline
+function pick(j: i32): i32[] { return [j * 3, j * 5]; }
+@noinline
+function usr(row: (i32) => i32[], i: i32): i32 {
+    var g: i32[][] = [];
+    g = g.append(row(i));
+    return g.len() + g[0][1];
+}
+@noinline
+function ctl(i: i32): i32 {
+    var g: i32[][] = [];
+    g = g.append(row(i));
+    return g.len() + g[0][1];
+}
+function main(): i32 {
+    var x: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) { x = x + usr(pick, i) + ctl(i); i = i + 1; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return x % 83;
+}`
+	const want = 37
+	fnAsm := func(asm, name string) string {
+		start := strings.Index(asm, "\n__fn_"+name+":")
+		if start < 0 {
+			t.Fatalf("no __fn_%s in the assembly", name)
+		}
+		end := strings.Index(asm[start:], ".cfi_endproc")
+		if end < 0 {
+			t.Fatalf("__fn_%s has no end", name)
+		}
+		return asm[start : start+end]
+	}
+	for _, lw := range []struct{ name, env string }{{"semantic", "FERN_SEM_IR=1"}, {"ast", "FERN_SEM_IR="}} {
+		t.Run(lw.name, func(t *testing.T) {
+			asm := cli.emit(t, "x86-64-linux", src, lw.env, "FERN_LEAKCHECK=1")
+			if lw.name == "ast" {
+				if strings.Contains(fnAsm(asm, "usr"), "__fern_arrarr_free") {
+					t.Errorf("usr credits the call through its parameter as the producer")
+				}
+				if !strings.Contains(fnAsm(asm, "ctl"), "__fern_arrarr_free") {
+					t.Errorf("ctl does not credit the producer call — the probe is not exercising the credit")
+				}
+			}
+			stderr, exit := hevRun(t, cli.runner, buildBin(t, cli.gcc, dir, "shadowarc_"+lw.name, asm))
+			if exit != want {
+				t.Fatalf("exited %d, want %d (99 = rc underflow)", exit, want)
+			}
+			summary := leakSummaryLine(stderr)
+			var allocs, frees, live int64
+			if _, err := fmtSscan(summary, &allocs, &frees, &live); err != nil {
+				t.Fatalf("parse %q: %v", summary, err)
+			}
+			if allocs == 0 {
+				t.Fatalf("allocated nothing — the probe is not exercising the path")
+			}
+			if lw.name == "semantic" && (live != 0 || allocs != frees) {
+				t.Errorf("%s — must balance at live_bytes 0", summary)
+			}
+			sanAsm := cli.emit(t, "x86-64-linux", src, lw.env, "FERN_SANITIZE=1")
+			sanErr, sanExit := hevRun(t, cli.runner, buildBin(t, cli.gcc, dir, "shadowarc_san_"+lw.name, sanAsm))
+			if sanExit != want {
+				t.Fatalf("sanitize leg exited %d, want %d (124 = fatal sanitizer check)", sanExit, want)
+			}
+			if strings.Contains(sanErr, "rc over-release") || strings.Contains(sanErr, "use-after-free") {
+				t.Fatalf("sanitize leg reported:\n%s", sanErr)
+			}
+		})
+	}
+}

@@ -25,8 +25,8 @@ import (
 //
 // The existing try-defer suite (self_host_try_defer_ir_test.go) routes through
 // `-ir` only, which skips this gate — this test drives the legacy AST route
-// specifically, the one the bug lived on. Native x86-64 is the spec: each
-// program is cross-checked before asserting the self-host result.
+// specifically, the one the bug lived on. The interpreter is the spec: each
+// program is cross-checked against it before asserting the self-host result.
 func TestSelfHostDeferResultStrictChecker(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -95,11 +95,11 @@ function main(): i32 { match (f(0 - 9)) { Ok(v) => { return v; }, Err(e) => { re
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			src := tc.src + "\n"
-			// Native x86-64 is the spec.
-			_, nativeCode := compileAndRunX86_64(t, src)
+			// The interpreter is the spec.
+			_, want := runInterp(t, src)
 			got := emitAstAndRun(t, src)
-			if got != nativeCode {
-				t.Errorf("%s strict-checker route: exit %d, native %d", tc.name, got, nativeCode)
+			if got != want {
+				t.Errorf("%s strict-checker route: exit %d, interpreter %d", tc.name, got, want)
 			}
 		})
 	}

@@ -3829,7 +3829,7 @@ function builtin_sigs(): string[] {
 
 // builtin_sig is `name`'s signature from builtin_sigs() as a TypeFunc, or
 // unknown when no surface builtin has that name.
-function builtin_sig(name: string): typeinfo.Type {
+pub function builtin_sig(name: string): typeinfo.Type {
   var head: string = name + "(";
   for row in builtin_sigs() {
     if (row.len() > head.len() && slice_unchecked(row, 0, head.len()) == head) {

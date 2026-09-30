@@ -132,17 +132,19 @@ Unsupported constructs refuse the whole function with a reason.
   and the whole 64-bit slot on the register backends, which the checker now
   resolves (`t_usize`, native's `WidthPtr`) where it resolved the spelling to
   unknown. It rides the narrow slot, which is the address's own width on every
-  backend, and converts to and from the 64-bit integers and nothing else: the
-  conversion is the stack IR's extend or wrap carrying `width_ptr()`, which
-  wasm emits as the i32 forms and the register emitters as nothing, since an
-  address already fills the slot (the i32 forms there mask the low word, which
-  is what truncates a pointer). An operator at it is refused: it would run at
-  the i32's width on a register backend, which is not the address's; so is a
-  literal at it. The string builder's handle is one, and its seven builtins
-  have contracts: the handle is a value with no unit and no drop, the pushes
-  read the string they copy, and `buf_take` hands back a fresh string of the
-  caller's own (`handle_out`, `handle_in`, `built`; the RC leg runs the
-  builder and round-trips a live handle through an i64 on every target).
+  backend, and converts to and from every integer width through the 64-bit
+  one: the pointer-width half is the stack IR's extend or wrap carrying
+  `width_ptr()`, which wasm emits as the i32 forms and the register emitters
+  as nothing, since an address already fills the slot (the i32 forms there
+  mask the low word, which is what truncates a pointer). An operator at it
+  carries `width_ptr()` too, which the SSA lift resolves to 64 on the register
+  backends; the saturating and checked operators are refused, as native's
+  checker refuses them, and so is a literal past the immediate. The string
+  builder's handle is one, and its seven builtins have contracts: the handle
+  is a value with no unit and no drop, the pushes read the string they copy,
+  and `buf_take` hands back a fresh string of the caller's own (`handle_out`,
+  `handle_in`, `built`; the RC leg runs the builder and round-trips a live
+  handle through an i64 on every target).
 
 - A cast between the integer types, or between one of the four 32- and 64-bit
   ones and the f64, as the semantic `cast` kind. `e as T` reaches the producer
@@ -574,11 +576,15 @@ Unsupported constructs refuse the whole function with a reason.
   counted like any other array. Every other answer is a scalar, and every
   argument is a scalar the op reads except the scans' string, which is lent.
 
-  `__alloc_reuse` and the `__c_callN` trampolines are absent: the self-hosted
-  IR does not lower them on any backend, so a contract would only move the
-  failure from the bail site to the linker. That is a lowering gap behind the
-  name, which is the half `TestSelfHostKnowsEveryNativeBuiltin` describes as
-  self-reporting.
+  `__alloc_reuse` is absent: the self-hosted IR does not lower it on any
+  backend, so a contract would only move the failure from the bail site to the
+  linker. That is a lowering gap behind the name, which is the half
+  `TestSelfHostKnowsEveryNativeBuiltin` describes as self-reporting.
+
+  The `__c_callN` trampolines are the exception to the op rule: each is a
+  direct call of the shim the native backends emit for the name, typed from
+  the checker's `builtin_sigs`, every argument a value and the result a
+  scalar.
 
 - `Map[K, V]` at a string or narrow integer `K` and a `V` the runtime's free
   family releases: a NARROW SCALAR column freed whole, a string column or a
