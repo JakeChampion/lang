@@ -421,29 +421,57 @@ function ts_grow(mod: parser.Module, rs0: RefSet, pending0: i32[]): TsGrown {
 function ts_reaches_map(mod: parser.Module, rs: RefSet): boolean {
     if (refset_has(rs, "map_new") || refset_has(rs, ts_free_root("map_new"))
         || refset_has(rs, "__map_new_i32") || refset_has(rs, ts_free_root("__map_new_i32"))) { return true; }
+    var map_types: string[] = ts_map_types(mod.structs);
     for fd in mod.funcs {
-        if (!ts_kept_name(fd, rs)) { continue; }
-        if (ts_sig_mentions_map(fd.params, fd.ret_type)) { return true; }
-        var lambdas: string[] = [];
-        for st in fd.body { lambdas = astwalk.fold_stmt(st, lambdas, ts_map_lambda); }
-        if (lambdas.len() > 0) { return true; }
+        if (ts_kept_name(fd, rs) && ts_mentions_any(ts_sig_types(fd), map_types)) { return true; }
     }
     for st in mod.structs {
-        for fl in st.fields { if (util.contains(fl.type_name, "Map[")) { return true; } }
+        for fl in st.fields { if (ts_mentions_any([fl.type_name], map_types)) { return true; } }
     }
     return false;
 }
 
-function ts_sig_mentions_map(params: ast.ParamDecl[], ret_type: string): boolean {
-    if (util.contains(ret_type, "Map[")) { return true; }
-    for p in params { if (util.contains(p.type_name, "Map[")) { return true; } }
+// ts_map_types are the spellings that name a map: `Map[`, and each builtin
+// enum a variant of which holds one. Those variants are injected after this
+// pass (parser.inject_builtin_enums), so `mod.structs` does not show them.
+function ts_map_types(declared: parser.StructDecl[]): string[] {
+    var out: string[] = ["Map["];
+    var all: parser.StructDecl[] = parser.inject_builtin_enums(declared);
+    var i: i32 = declared.len();
+    while (i < all.len()) {
+        var st: parser.StructDecl = all[i];
+        i = i + 1;
+        var owner: string = st.enum_owner;
+        if (owner.len() == 0) { owner = st.name; }
+        for fl in st.fields {
+            if (util.contains(fl.type_name, "Map[") && util.index_of_str(out, owner) < 0) { out = out.append(owner); }
+        }
+    }
+    return out;
+}
+
+function ts_mentions_any(types: string[], names: string[]): boolean {
+    for t in types {
+        for n in names { if (util.contains(t, n)) { return true; } }
+    }
     return false;
 }
 
-// ts_map_lambda notes a lambda or nested function that takes or returns a map.
-function ts_map_lambda(e: ast.Expr, own acc: string[]): string[] {
+// ts_sig_types are the parameter and return types of a function and of every
+// lambda or nested function in its body.
+function ts_sig_types(fd: parser.FuncDecl): string[] {
+    var types: string[] = [fd.ret_type];
+    for p in fd.params { types = types.append(p.type_name); }
+    for st in fd.body { types = astwalk.fold_stmt(st, types, ts_lambda_sig_types); }
+    return types;
+}
+
+// ts_lambda_sig_types collects the parameter and return types of a lambda or
+// nested function.
+function ts_lambda_sig_types(e: ast.Expr, own acc: string[]): string[] {
     if let ast.ExprLambda(l) = e {
-        if (ts_sig_mentions_map(l.params, l.ret_type)) { return acc.append("map"); }
+        acc = acc.append(l.ret_type);
+        for p in l.params { acc = acc.append(p.type_name); }
     }
     return acc;
 }
