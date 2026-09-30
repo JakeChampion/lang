@@ -432,6 +432,13 @@ Unsupported constructs refuse the whole function with a reason.
   taking their units, and a view parameter the result keeps, or any other
   value keeps, is a fresh view of its bytes (`semsource.kept_view`).
 
+  A `str` phi operand whose source does not strictly dominate the join is
+  copied at the end of its incoming block (`ssasem.merge_copies`, `ssasem.with_merge_copies`): a
+  `str` local assigned, in a branch or a loop body, a view of a string
+  declared there. The join cannot keep alive a source that only one incoming
+  path defines. The pass runs in `anchor_module` once the anchor table is
+  attached, so a call's roots are read through it.
+
   An anchor is an edge in `Analysis.parents`, and `Analysis.dependencies` is
   its transitive closure (`ssasem.closure`). A value with one parent has that
   parent's chain behind it, nearest first, which is what `ssaunits.first_hop`

@@ -5183,6 +5183,8 @@ function anchor_module(all: Produced[], names: string[]): Produced[] {
         }
         if (p.ok && !p.template) {
             p = Produced { ...p, func: ssasem.Func { ...p.func, anchors: anchors } };
+            var copies: ssasem.MergeCopy[] = ssasem.merge_copies(p.func);
+            if (copies.len() > 0) { p = Produced { ...p, func: ssasem.with_merge_copies(p.func, copies) }; }
             var analysis: ssasem.Analysis = ssasem.analyze(p.func);
             if (!analysis.ok) { p = Produced { ...refuse("produced graph fails semantic verification: " + analysis.why), key: p.key }; }
         }
@@ -5199,12 +5201,11 @@ function copy_returned_views(f: ssasem.Func): ssasem.Func {
     for b in f.graph.blocks {
         var v: i32 = b.term.value;
         if (b.term.kind_tag == 1 && v >= 0 && ssasem.is_view(values[v])) {
-            var empty: i32 = values.len();
-            var copy: i32 = empty + 1;
-            var view: i32 = empty + 2;
-            values = values.append(t_string()).append(t_string()).append(t_str());
-            var insts: ssa.SInst[] = b.insts.append(inst(5, empty, [], 0, "")).append(inst(9, copy, [v, empty], 0, "+")).append(inst(ssasem.str_as(), view, [copy], 0, ""));
-            b = ssa.SBlock { ...b, insts: insts, term: t_ret(view) };
+            var first: i32 = values.len();
+            for t in ssasem.view_copy_types() { values = values.append(t); }
+            var insts: ssa.SInst[] = b.insts;
+            for ci in ssasem.view_copy(first, v) { insts = insts.append(ci); }
+            b = ssa.SBlock { ...b, insts: insts, term: t_ret(first + 2) };
         }
         blocks = blocks.append(b);
     }
