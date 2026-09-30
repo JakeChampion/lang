@@ -5861,6 +5861,25 @@ function main(): i32 {
     return f(true) * 10 + f(false) + h(true) * 30 + h(false) * 40;
 }
 `},
+	// A generic enum instance spelled inside a function type or a tuple type:
+	// the enum pass rewrites those spellings to the instance, so a fn value's
+	// result and a tuple element are the same type as the values put there
+	// (#10795).
+	{name: "a-generic-enum-from-a-function-value-or-a-tuple-element", atLeast: 5, noLeak: true, src: `
+enum Opt[T] { Non, Has(T) }
+function run(f: (i32) => Opt[string], k: i32): i32 { match (f(k)) { Has(s) => { return s.len(); }, Non => { return 0; } } }
+function pick(t: (Opt[string], i32)): i32 { var e: Opt[string] = t.0; match (e) { Has(s) => { return s.len() + t.1; }, Non => { return t.1; } } }
+function main(): i32 {
+    var g: (i32) => Opt[i32] = (k: i32): Opt[i32] => { if (k > 0) { return Has(k * 6); } return Non; };
+    var a: i32 = 0;
+    match (g(7)) { Has(v) => { a = v; }, Non => { a = 1; } }
+    var t: (Opt[string], i32) = (Has("abc" + "de"), 2);
+    var u: (i32, Opt[i32]) = (3, Has(4));
+    var b: i32 = 0;
+    match (u.1) { Has(v) => { b = v + u.0; }, Non => { b = 0; } }
+    return a + run((k: i32): Opt[string] => { if (k > 1) { return Has("x" + "yz"); } return Non; }, 2) + pick(t) + b;
+}
+`},
 }
 
 // semDynShapes is a trait with a record and an enum implementation, each
