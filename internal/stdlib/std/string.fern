@@ -2431,14 +2431,11 @@ pub function (s: string) find_ci(needle: string): Option[i32] {
     return Some(idx);
 }
 
-// `s.pad_start_str(width, fill)` / `pad_end_str(width, fill)`
-// — left- and right-pad to a minimum BYTE width using the
-// multi-byte `fill` string as the padding unit. The pad
-// repeats; if the byte-count overshoots, the LAST occurrence
-// is truncated at the boundary. The simpler `pad_start(n, ch)`
-// from earlier always uses a single-byte fill — these are
-// the cousins for prefix dashes / line rules / "....." kinds
-// of decorative padding.
+// `s.pad_start_str(width, fill)` / `pad_end_str(width, fill)` repeat the
+// whole fill string within a byte-width budget. The final partial fill
+// ends at a Unicode scalar boundary, so the result may be shorter than
+// width. Existing content is never truncated. Empty fill is a no-op.
+// `pad_start` / `pad_end` instead repeat only the first character of fill.
 pub function (s: string) pad_start_str(width: i32, fill: string): string {
     var sLen: i32 = s.len();
     if (sLen >= width || fill.len() == 0) { return s; }
@@ -2447,7 +2444,7 @@ pub function (s: string) pad_start_str(width: i32, fill: string): string {
         pad = pad + fill;
     }
     if (pad.len() < width - sLen) {
-        pad = pad + slice_unchecked(fill, 0, width - sLen - pad.len());
+        pad = pad + fill.take(width - sLen - pad.len());
     }
     return pad + s;
 }
@@ -2460,7 +2457,7 @@ pub function (s: string) pad_end_str(width: i32, fill: string): string {
         pad = pad + fill;
     }
     if (pad.len() < width - sLen) {
-        pad = pad + slice_unchecked(fill, 0, width - sLen - pad.len());
+        pad = pad + fill.take(width - sLen - pad.len());
     }
     return s + pad;
 }
