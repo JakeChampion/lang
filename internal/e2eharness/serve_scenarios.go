@@ -808,3 +808,88 @@ func CheckListenFailure(t *testing.T, cmd *exec.Cmd, port int) {
 		t.Errorf("stderr lacks %q:\n%s", want, stderr.String())
 	}
 }
+
+// FetchDeadlineUpstreams starts two loopback upstreams for
+// FetchDeadlineSource: one that accepts and never replies, and one that
+// answers one canned 200 per connection. A loopback listener that cannot
+// be had is a failure, not a skip: every networking lane has one.
+func FetchDeadlineUpstreams(t *testing.T) (silentPort, livePort int) {
+	t.Helper()
+	silent, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("no loopback listener: %v", err)
+	}
+	t.Cleanup(func() { silent.Close() })
+	var held []net.Conn
+	go func() {
+		for {
+			c, err := silent.Accept()
+			if err != nil {
+				return
+			}
+			held = append(held, c)
+		}
+	}()
+	live, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("no loopback listener: %v", err)
+	}
+	t.Cleanup(func() { live.Close() })
+	go func() {
+		for {
+			c, err := live.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				buf := make([]byte, 4096)
+				_, _ = c.Read(buf)
+				_, _ = c.Write([]byte("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nhi"))
+				c.Close()
+			}(c)
+		}
+	}()
+	return silent.Addr().(*net.TCPAddr).Port, live.Addr().(*net.TCPAddr).Port
+}
+
+// FetchDeadlineSource is a `fetch_get_deadline` client (#4385): against
+// the silent upstream it must answer `None` at its 400 ms deadline, and
+// against the live one `Some` with a 200 in time. Exit 0 when both hold.
+func FetchDeadlineSource(silentPort, livePort int) string {
+	return fmt.Sprintf(`import "std/fetch";
+import "std/time";
+function main(): i32 {
+    var slow: Option[u8[]] = fetch.fetch_get_deadline(fetch.ipv4(127,0,0,1), %d, "/", time.duration_millis(400));
+    var slow_ok: boolean = false;
+    match (slow) {
+        Some(s) => { },
+        None => { slow_ok = true; },
+    }
+    if (!slow_ok) { return 1; }
+    var fast: Option[u8[]] = fetch.fetch_get_deadline(fetch.ipv4(127,0,0,1), %d, "/", time.duration_millis(5000));
+    match (fast) {
+        Some(resp) => {
+            if (fetch.http_status(resp) == 200) { return 0; }
+            return 2;
+        },
+        None => { return 3; },
+    }
+    return 4;
+}
+`, silentPort, livePort)
+}
+
+// CheckFetchDeadline runs a FetchDeadlineSource client: it exits 0, and
+// well before the silent upstream could have been waited out.
+func CheckFetchDeadline(t *testing.T, cmd *exec.Cmd) {
+	t.Helper()
+	start := time.Now()
+	out, err := cmd.CombinedOutput()
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("fetch deadline client failed (elapsed %v): %v\n%s", elapsed, err, out)
+	}
+	if elapsed >= 30*time.Second {
+		t.Fatalf("fetch deadline client took %v: the deadline was not enforced", elapsed)
+	}
+}
