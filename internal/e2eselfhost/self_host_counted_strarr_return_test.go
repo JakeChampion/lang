@@ -20,9 +20,14 @@ func TestSelfHostCountedStrArrReturnProofX86_64(t *testing.T) {
 	copySelfHostDriver(t, dir, "asm_ir_run.fern")
 	const probe = `import "./rundriver";
 import "./irlower";
+import "./lexical";
+import "./parser";
 function main(): i32 {
     var m = rundriver.parse_stdin("counted-strarr-proof");
-    var rows = irlower.return_fresh_struct_ret_fns_of(m.funcs, irlower.struct_tab(m.structs), []);
+    // Resolved as the lowering sees them: every binding renamed.
+    var funcs: parser.FuncDecl[] = [];
+    for f in m.funcs { funcs = funcs.append(lexical.resolve_func(f).func); }
+    var rows = irlower.return_fresh_struct_ret_fns_of(funcs, irlower.struct_tab(m.structs), []);
     for row in rows { print(row); }
     return 0;
 }`
