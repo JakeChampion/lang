@@ -123,8 +123,9 @@ pub function tcp_serve(port: i32, handler: (HttpRequest, Platform) => HttpRespon
 // SIGTERM starts (`__serve_stopping`): how long the loop keeps accepting
 // after the signal, since whoever routes to it removes it in parallel,
 // the path it answers 503 from the signal on (a readiness probe; "" for
-// none), and how long the requests in flight get to finish once the
-// listener is closed before the loop gives up on them.
+// none), how long the requests in flight get to finish once the
+// listener is closed before the loop gives up on them, and the parser's
+// caps on each request (`http.HttpLimits`).
 pub struct ServeOptions {
     backlog: i32,
     reuse_port: boolean,
@@ -139,14 +140,15 @@ pub struct ServeOptions {
     shutdown_grace: Duration,
     readiness_path: string,
     drain_deadline: Duration,
+    limits: http.HttpLimits,
 }
 
 // serve_options() — what `tcp_serve` uses: a backlog of 128, the port held
 // by one listener, the 10 s read deadline, a 130 s keep-alive idle span,
 // 1000 requests per connection, 1024 connections open and 100 of them per
-// client, and a worker per processing unit.
+// client, a worker per processing unit, and the parser's `http_limits()`.
 pub function serve_options(): ServeOptions {
-    return ServeOptions { backlog: 128, reuse_port: false, recv_deadline: __recv_deadline_default(), min_data_rate: 240, data_rate_grace: time.duration_seconds(5 as i64), keep_alive_idle: time.duration_seconds(130 as i64), keep_alive_requests: 1000, max_connections: 1024, max_connections_per_ip: 100, workers: 0, shutdown_grace: time.duration_seconds(2 as i64), readiness_path: "", drain_deadline: time.duration_seconds(30 as i64) };
+    return ServeOptions { backlog: 128, reuse_port: false, recv_deadline: __recv_deadline_default(), min_data_rate: 240, data_rate_grace: time.duration_seconds(5 as i64), keep_alive_idle: time.duration_seconds(130 as i64), keep_alive_requests: 1000, max_connections: 1024, max_connections_per_ip: 100, workers: 0, shutdown_grace: time.duration_seconds(2 as i64), readiness_path: "", drain_deadline: time.duration_seconds(30 as i64), limits: http.http_limits() };
 }
 
 // tcp_serve_opts(port, opts, handler) — `tcp_serve` with the listener and
@@ -662,7 +664,7 @@ function __serve_read(c: __Conns, at: i32, scratch: u8[], opts: ServeOptions): (
         // A connection holds at most the parser's largest request unread;
         // past that the peer is treated as finished: what is complete is
         // answered, then the connection is closed.
-        if (buf.len() > http.http_request_bytes_cap()) {
+        if (buf.len() > http.http_request_bytes_cap(opts.limits)) {
             return (__Conns { ...c, bufs: c.bufs.with(at, buf) }, true);
         }
     }
@@ -711,7 +713,7 @@ function __serve_took(c: __Conns, at: i32, f: http.HttpFramed, opts: ServeOption
     var served: i32 = c.served[at] + 1;
     var keep: boolean = f.keep_alive && served < opts.keep_alive_requests && !__serve_stopping(stop);
     c = __Conns { ...c, offs: c.offs.with(at, c.offs[at] + f.len), served: c.served.with(at, served), backlog: c.backlog.with(at, false), continued: c.continued.with(at, false) };
-    var tail: http.HttpFraming = http.http_parse_request_framed_from(c.bufs[at], c.offs[at]);
+    var tail: http.HttpFraming = http.http_parse_request_framed_from(c.bufs[at], c.offs[at], opts.limits);
     if (keep) { keep = __tail_persists(tail, eof); }
     return (__Conns { ...c, keep: c.keep.with(at, keep) }, keep, tail);
 }
@@ -757,7 +759,7 @@ function __body_deadline(c: __Conns, at: i32, opts: ServeOptions, now: i64): __C
     var base: i32 = c.rate_base[at];
     var buf: u8[] = c.bufs[at];
     if (since < (0 as i64)) {
-        if (buf.len() <= c.offs[at] || !http.http_header_block_complete(buf, c.offs[at])) { return c; }
+        if (buf.len() <= c.offs[at] || !http.http_header_block_complete(buf, c.offs[at], opts.limits)) { return c; }
         since = now;
         base = buf.len();
     }
@@ -880,7 +882,7 @@ function __serve_drain[D: async.Driver](drv: D, c: __Conns, at: i32, opts: Serve
     }
     if (!c.keep[at]) { return (__serve_close(drv, c, at), -1, false); }
     if (drv.watch(c.fds[at], 1) < 0) { return (__serve_close(drv, c, at), -1, false); }
-    var tail: http.HttpFraming = http.http_parse_request_framed_from(c.bufs[at], c.offs[at]);
+    var tail: http.HttpFraming = http.http_parse_request_framed_from(c.bufs[at], c.offs[at], opts.limits);
     var ready: (__Conns, boolean) = __serve_ready(drv, __Conns { ...c, pending: c.pending.with(at, "") }, at, opts, tail, clk);
     if (!ready.1) { return (ready.0, -1, false); }
     return (ready.0, at, false);
@@ -1274,7 +1276,7 @@ function __serve_loop(listener: i32, handler: (HttpRequest, Platform) => HttpRes
             if (at < 0) { continue; }
             var more: boolean = true;
             var count: i32 = 0;
-            var framing: http.HttpFraming = http.http_parse_request_framed_from(conns.bufs[at], conns.offs[at]);
+            var framing: http.HttpFraming = http.http_parse_request_framed_from(conns.bufs[at], conns.offs[at], opts.limits);
             while (more) {
                 var next: http.HttpFraming = http.Incomplete;
                 match (framing) {
@@ -1359,7 +1361,7 @@ function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, 
             if (at < 0) { continue; }
             var more: boolean = true;
             var count: i32 = 0;
-            var framing: http.HttpFraming = http.http_parse_request_framed_from(conns.bufs[at], conns.offs[at]);
+            var framing: http.HttpFraming = http.http_parse_request_framed_from(conns.bufs[at], conns.offs[at], opts.limits);
             while (more) {
                 var next: http.HttpFraming = http.Incomplete;
                 match (framing) {

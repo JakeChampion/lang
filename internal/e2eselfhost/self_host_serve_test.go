@@ -351,3 +351,10 @@ func TestSelfHostFetchDeadline(t *testing.T) {
 	bin, runner := selfHostServer(t, e2eharness.FetchDeadlineSource(silentPort, livePort))
 	e2eharness.CheckFetchDeadline(t, binCmd(runner, bin))
 }
+
+func TestSelfHostServeLimits(t *testing.T) {
+	port := selfHostFreePort(t)
+	bin, runner := selfHostServer(t, e2eharness.LimitsServerSource(port))
+	e2eharness.StartServerProcess(t, binCmd(runner, bin))
+	e2eharness.CheckServeLimits(t, fmt.Sprintf("127.0.0.1:%d", port))
+}

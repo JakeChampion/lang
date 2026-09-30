@@ -379,7 +379,7 @@ pub function http_user_agent_is_bot(ua: string): boolean {
 // want `http_parse_request` and `get_all`.
 pub function http_header_value(block: string, key: string): Option[string] {
     var bs: u8[] = block.bytes();
-    match (__parse_header_bytes(bs, 0, bs.len())) {
+    match (__parse_header_bytes(bs, 0, bs.len(), http_limits().header_fields)) {
         Ok(h) => { return h.get(key); },
         Err(_) => { return None; }
     }
@@ -423,23 +423,28 @@ function __bytes_string(buf: u8[], from: i32, end: i32): string {
     return string_from_bytes_unchecked(__bytes_range(buf, from, end));
 }
 
-// The parser's caps (RFC 9112 §2.3 leaves them to the server): a request
-// line of at most 8 KiB, a header block, request line included, of at
-// most 32 KiB and 100 fields, a body of at most 1 MiB, and the framing
-// of a chunked body (chunk-size lines, the CRLFs, the trailer section)
-// of at most another 32 KiB. A request past any of them is malformed,
-// refused before a handler sees any of it.
-function __request_line_cap(): i32 { return 8192; }
-pub function http_header_bytes_cap(): i32 { return 32768; }
-function __header_count_cap(): i32 { return 100; }
-pub function http_body_cap(): i32 { return 1048576; }
+// HttpLimits — the parser's caps (RFC 9112 §2.3 leaves them to the
+// server): the bytes of the request line, of the header block (request
+// line included) and the number of its fields, and the bytes of the
+// body; the framing of a chunked body (chunk-size lines, the CRLFs, the
+// trailer section) gets another `header_bytes`, and its trailers the
+// same field count. A request past any of them is malformed, refused
+// before a handler sees any of it.
+pub struct HttpLimits { request_line: i32, header_bytes: i32, header_fields: i32, body: i32 }
 
-// `http_request_bytes_cap()` — the most bytes one request occupies on the
-// wire: a header block at its cap, the CRLF CRLF that ends it, a body at
-// its cap and its chunk framing at its cap. A connection buffering more
-// than this without a complete request in it holds nothing the parser
-// would frame.
-pub function http_request_bytes_cap(): i32 { return http_header_bytes_cap() + 4 + http_body_cap() + http_header_bytes_cap(); }
+// `http_limits()` — the caps `http_parse_request_framed` and a serve loop
+// use unless told otherwise: an 8 KiB request line, a 32 KiB header block
+// of at most 100 fields, and a 1 MiB body.
+pub function http_limits(): HttpLimits {
+    return HttpLimits { request_line: 8192, header_bytes: 32768, header_fields: 100, body: 1048576 };
+}
+
+// `http_request_bytes_cap(limits)` — the most bytes one request occupies
+// on the wire: a header block at its cap, the CRLF CRLF that ends it, a
+// body at its cap and its chunk framing at its cap. A connection
+// buffering more than this without a complete request in it holds
+// nothing the parser would frame.
+pub function http_request_bytes_cap(limits: HttpLimits): i32 { return limits.header_bytes + 4 + limits.body + limits.header_bytes; }
 
 // `__is_tchar(b)` — a byte of a token (RFC 9110 §5.6.2): a letter, a
 // digit, or one of `!#$%&'*+-.^_`|~`, split at `@` to keep each half's
@@ -528,7 +533,7 @@ function __field_value(buf: u8[], from: i32, end: i32): Option[string] {
 // (RFC 9110 §5.5), 431 for more fields than the cap. Names are
 // case-folded by HeaderMap.append; a value loses the SP and HTAB around
 // it (`__field_value`).
-function __parse_header_bytes(buf: u8[], from: i32, end: i32): Result[HeaderMap, i32] {
+function __parse_header_bytes(buf: u8[], from: i32, end: i32, fields: i32): Result[HeaderMap, i32] {
     var h: HeaderMap = headers.header_map_new();
     var count: i32 = 0;
     var at: i32 = from;
@@ -538,7 +543,7 @@ function __parse_header_bytes(buf: u8[], from: i32, end: i32): Result[HeaderMap,
         var col: i32 = __find_byte(buf, at, e, 58 as u8);
         if (col < 0 || !__is_token(buf, at, col)) { return Err(400); }
         count = count + 1;
-        if (count > __header_count_cap()) { return Err(431); }
+        if (count > fields) { return Err(431); }
         match (__field_value(buf, col + 1, e)) {
             Some(v) => { h = h.append(__bytes_string(buf, at, col), v); },
             None => { return Err(400); }
@@ -571,8 +576,8 @@ function __crlf_terminated(buf: u8[], from: i32, end: i32): boolean {
 // -1 while the buffer holds less than a line, or -2 once it holds more
 // than the cap without one. `__header_block_end` is the same for the
 // CRLF CRLF that ends the header block.
-function __request_line_end(buf: u8[], from: i32): i32 {
-    var limit: i32 = from + __request_line_cap() + 2;
+function __request_line_end(buf: u8[], from: i32, cap: i32): i32 {
+    var limit: i32 = from + cap + 2;
     var end: i32 = buf.len();
     if (limit < end) { end = limit; }
     var at: i32 = __find_crlf(buf, from, end);
@@ -581,8 +586,8 @@ function __request_line_end(buf: u8[], from: i32): i32 {
     return -1;
 }
 
-function __header_block_end(buf: u8[], from: i32): i32 {
-    var limit: i32 = from + http_header_bytes_cap() + 4;
+function __header_block_end(buf: u8[], from: i32, cap: i32): i32 {
+    var limit: i32 = from + cap + 4;
     var n: i32 = buf.len();
     var end: i32 = n;
     if (limit < end) { end = limit; }
@@ -592,13 +597,13 @@ function __header_block_end(buf: u8[], from: i32): i32 {
     return -1;
 }
 
-// `http_header_block_complete(buf, from)` — whether the request at `from`
-// has its whole header block buffered: the CRLF CRLF that ends it lies
-// within the header cap. What follows is the body, and a serve loop times
+// `http_header_block_complete(buf, from, limits)` — whether the request
+// at `from` has its whole header block buffered: the CRLF CRLF that ends
+// it lies within the header cap. What follows is the body, and a serve loop times
 // the body by how fast it arrives rather than by the deadline the header
 // block had.
-pub function http_header_block_complete(buf: u8[], from: i32): boolean {
-    return __header_block_end(buf, __past_empty_line(buf, from)) >= 0;
+pub function http_header_block_complete(buf: u8[], from: i32, limits: HttpLimits): boolean {
+    return __header_block_end(buf, __past_empty_line(buf, from), limits.header_bytes) >= 0;
 }
 
 // `__find_crlf_crlf(buf, from, end)` — where the first CRLF CRLF whose
@@ -712,9 +717,9 @@ function __hex_digit(b: u8): i32 {
 // checks the framing and records where each chunk's data lies, so the
 // copy is one allocation of the decoded length rather than one per
 // chunk. The framing — chunk-size lines, extensions, the CRLFs and the
-// trailer section — shares a budget of `http_header_bytes_cap()` bytes,
+// trailer section — shares a budget of `limits.header_bytes` bytes,
 // so what a connection holds for a chunked request is bounded like the
-// rest of it, and the decoded body is held to `http_body_cap()`. Every
+// rest of it, and the decoded body is held to `limits.body`. Every
 // violation is refused as soon as it is known: a chunk that could not
 // fit under the cap before its data arrives, a byte where a chunk's
 // CRLF must be before the CRLF is complete, a line past the budget
@@ -729,11 +734,11 @@ function __hex_digit(b: u8): i32 {
 // is complete, with `end` the offset past the trailer section's
 // terminator, `spans` the (start, len) pairs of the chunk data and
 // `trailers` the trailer section's fields.
-function __chunked_walk(buf: u8[], from: i32): (i32, i32, i32[], HeaderMap) {
+function __chunked_walk(buf: u8[], from: i32, limits: HttpLimits): (i32, i32, i32[], HeaderMap) {
     var n: i32 = buf.len();
     var at: i32 = from;
-    var budget: i32 = http_header_bytes_cap();
-    var room: i32 = http_body_cap();
+    var budget: i32 = limits.header_bytes;
+    var room: i32 = limits.body;
     var spans: i32[] = [];
     var none: HeaderMap = headers.header_map_new();
     while (true) {
@@ -743,7 +748,7 @@ function __chunked_walk(buf: u8[], from: i32): (i32, i32, i32[], HeaderMap) {
         var size: i32 = line.2;
         budget = budget - (data - at) - 2;
         if (budget < 0) { return (431, 0, spans, none); }
-        if (size == 0) { return __chunked_trailers(buf, data, budget + 2, spans); }
+        if (size == 0) { return __chunked_trailers(buf, data, budget + 2, spans, limits.header_fields); }
         var crlf: i32 = __crlf_at(buf, data + size);
         if (crlf == 0) { return (400, 0, spans, none); }
         if (crlf == 1) { return (1, 0, spans, none); }
@@ -872,7 +877,7 @@ function __is_quoted_byte(b: u8): boolean {
     return b == (9 as u8) || (b >= (32 as u8) && b != (127 as u8));
 }
 
-// `__chunked_trailers(buf, at, budget, spans)` — the trailer section that
+// `__chunked_trailers(buf, at, budget, spans, fields)` — the trailer section that
 // follows the last chunk's CRLF, at `at`, through the CRLF that ends it:
 // `(2, end, spans, trailers)` with `end` past that CRLF, `(1, _, _, _)`
 // while it has not arrived; refused with `__parse_header_bytes`'s status
@@ -881,7 +886,7 @@ function __is_quoted_byte(b: u8): boolean {
 // fields are the request's `trailers`, kept apart from its headers:
 // nothing here knows a trailer's semantics, so none may merge (RFC 9110
 // §6.5.1).
-function __chunked_trailers(buf: u8[], at: i32, budget: i32, spans: i32[]): (i32, i32, i32[], HeaderMap) {
+function __chunked_trailers(buf: u8[], at: i32, budget: i32, spans: i32[], fields: i32): (i32, i32, i32[], HeaderMap) {
     var n: i32 = buf.len();
     var trailers: HeaderMap = headers.header_map_new();
     var limit: i32 = at + budget;
@@ -897,7 +902,7 @@ function __chunked_trailers(buf: u8[], at: i32, budget: i32, spans: i32[]): (i32
         return (1, 0, spans, trailers);
     }
     if (sep > at) {
-        match (__parse_header_bytes(buf, at, sep)) {
+        match (__parse_header_bytes(buf, at, sep, fields)) {
             Ok(h) => { trailers = h; },
             Err(status) => { return (status, 0, spans, trailers); }
         }
@@ -939,18 +944,18 @@ function __chunked_body(buf: u8[], spans: i32[]): u8[] {
 // HTTP/1.1 (§6.1 gives the coding to HTTP/1.1; an older peer cannot have
 // sent it, and reading its body as empty would be a framing
 // disagreement). Only a chunked body has trailers.
-function __framed_body(buf: u8[], at: i32, framing: __BodyFraming, version: string): (i32, u8[], i32, HeaderMap) {
+function __framed_body(buf: u8[], at: i32, framing: __BodyFraming, version: string, limits: HttpLimits): (i32, u8[], i32, HeaderMap) {
     var empty: u8[] = [];
     var none: HeaderMap = headers.header_map_new();
     match (framing) {
         Length(content_length) => {
-            if (content_length > http_body_cap()) { return (413, empty, 0, none); }
+            if (content_length > limits.body) { return (413, empty, 0, none); }
             if (at + content_length > buf.len()) { return (1, empty, 0, none); }
             return (2, __bytes_range(buf, at, at + content_length), at + content_length, none);
         },
         Chunked => {
             if (version != "HTTP/1.1") { return (400, empty, 0, none); }
-            var walk: (i32, i32, i32[], HeaderMap) = __chunked_walk(buf, at);
+            var walk: (i32, i32, i32[], HeaderMap) = __chunked_walk(buf, at, limits);
             if (walk.0 != 2) { return (walk.0, empty, 0, none); }
             return (2, __chunked_body(buf, walk.2), walk.1, walk.3);
         }
@@ -1061,29 +1066,30 @@ function __request_line(buf: u8[], from: i32, end: i32): (i32, i32, i32, string)
 }
 
 // `http_parse_request_framed(buf)` — `http_parse_request_bytes` with the
-// framing a persistent connection needs, and the three-way answer.
+// framing a persistent connection needs, and the three-way answer, under
+// `http_limits()`.
 pub function http_parse_request_framed(buf: u8[]): HttpFraming {
-    return http_parse_request_framed_from(buf, 0);
+    return http_parse_request_framed_from(buf, 0, http_limits());
 }
 
-// `http_parse_request_framed_from(buf, from)` — the same parse over
-// buf[from, len): the request behind the ones a serve loop has already
-// answered, without copying the rest of the buffer forward. `len` counts
-// from `from`.
-pub function http_parse_request_framed_from(buf: u8[], from: i32): HttpFraming {
+// `http_parse_request_framed_from(buf, from, limits)` — the same parse
+// over buf[from, len) under `limits`: the request behind the ones a serve
+// loop has already answered, without copying the rest of the buffer
+// forward. `len` counts from `from`.
+pub function http_parse_request_framed_from(buf: u8[], from: i32, limits: HttpLimits): HttpFraming {
     var n: i32 = buf.len();
     var start: i32 = from;
     from = __past_empty_line(buf, from);
-    var first_crlf: i32 = __request_line_end(buf, from);
+    var first_crlf: i32 = __request_line_end(buf, from, limits.request_line);
     if (first_crlf == -2) { return Malformed(414); }
-    var headers_end: i32 = __header_block_end(buf, from);
+    var headers_end: i32 = __header_block_end(buf, from, limits.header_bytes);
     if (headers_end == -2) { return Malformed(431); }
     // What is buffered of the header block, whether or not its end has
     // arrived: the bytes before `from` are answered requests, and the
     // bytes after the block are a body, which may hold anything.
     var scanned: i32 = headers_end;
     if (scanned < 0) {
-        scanned = from + http_header_bytes_cap() + 4;
+        scanned = from + limits.header_bytes + 4;
         if (n < scanned) { scanned = n; }
     }
     if (!__crlf_terminated(buf, from, scanned)) { return Malformed(400); }
@@ -1114,7 +1120,7 @@ pub function http_parse_request_framed_from(buf: u8[], from: i32): HttpFraming {
         hdr_start = headers_end;
     }
     var req_headers: HeaderMap = headers.header_map_new();
-    match (__parse_header_bytes(buf, hdr_start, headers_end)) {
+    match (__parse_header_bytes(buf, hdr_start, headers_end, limits.header_fields)) {
         Ok(h) => { req_headers = h; },
         Err(status) => { return Malformed(status); }
     }
@@ -1126,7 +1132,7 @@ pub function http_parse_request_framed_from(buf: u8[], from: i32): HttpFraming {
         Ok(f) => { framing = f; },
         Err(status) => { return Malformed(status); }
     }
-    var body: (i32, u8[], i32, HeaderMap) = __framed_body(buf, from + headers_len, framing, version);
+    var body: (i32, u8[], i32, HeaderMap) = __framed_body(buf, from + headers_len, framing, version, limits);
     if (body.0 != 2) { return __unframed(body.0, req_headers, version); }
     var req: HttpRequest = HttpRequest {
         method: __bytes_string(buf, from, sp1),

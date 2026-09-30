@@ -1181,11 +1181,15 @@ serializer.
   the headers (nothing knows their semantics, so none may merge,
   RFC 9110 §6.5.1; a Content-Length body's are empty), the decoded bytes are held to
   the body cap, and the framing (chunk-size lines, extensions, CRLFs and
-  the trailer section) to another `http_header_bytes_cap()`, so a
-  chunk-flood cannot hold more buffer than any other request.
-  `http_header_bytes_cap()`, `http_body_cap()` and
-  `http_request_bytes_cap()` (header block, blank line, body and chunk
-  framing, each at its cap) name the caps for the serve loop's buffer.
+  the trailer section) to another header block's bytes, so a
+  chunk-flood cannot hold more buffer than any other request. The caps
+  are an `HttpLimits { request_line, header_bytes, header_fields, body }`:
+  `http_limits()` is 8 KiB, 32 KiB, 100 fields and 1 MiB, what
+  `http_parse_request_framed` uses; `http_parse_request_framed_from(buf,
+  from, limits)` takes them, and a serve loop reads them from
+  `ServeOptions.limits`. `http_request_bytes_cap(limits)` (header block,
+  blank line, body and chunk framing, each at its cap) is the most a
+  connection buffers without a complete request.
   `http_header_value(block, key)` reads a raw header block by the same
   rules, so a block the parser would refuse names no header.
   `http_serialize_response(resp): string` writes `Connection: close`;
@@ -1360,6 +1364,10 @@ loop and `std/fetch` the client.
   nothing in flight and gives the rest `drain_deadline` (30 s) from the
   signal to finish before closing them; the loop returns 0 once every
   connection is gone and 1 when it cut one off, so `main` exits with it.
+  `limits` (`http.http_limits()`) are the parser's caps on each request,
+  so `ServeOptions { ...serve_options(), limits: http.HttpLimits {
+  ...http.http_limits(), body: 65536 } }` refuses a body past 64 KiB with
+  413 before the handler runs.
   A listener it cannot bind is `serve: cannot listen on 0.0.0.0:PORT:`
   and the error's text on stderr, and the entry returns 98 (every
   `tcp_serve*` entry, and a supervised worker that binds its own).

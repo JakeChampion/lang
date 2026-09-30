@@ -119,7 +119,7 @@ function test_caps_admit_what_fits(): test.TestOutcome {
     if (accepted(block_of(32769))) { return test.fail("a header block of 32769 bytes accepted"); }
     if (!accepted("POST / HTTP/1.1\r\nHost: h\r\nContent-Length: 1048576\r\n\r\n" + repeat("b", 1048576))) { return test.fail("a body of 1 MiB refused"); }
     if (accepted("POST / HTTP/1.1\r\nHost: h\r\nContent-Length: 1048577\r\n\r\n" + repeat("b", 1048577))) { return test.fail("a body a byte over 1 MiB accepted"); }
-    if (http.http_request_bytes_cap() != 32768 + 4 + 1048576 + 32768) { return test.fail("request cap: " + http.http_request_bytes_cap().to_string()); }
+    if (http.http_request_bytes_cap(http.http_limits()) != 32768 + 4 + 1048576 + 32768) { return test.fail("request cap: " + http.http_request_bytes_cap(http.http_limits()).to_string()); }
     return test.pass();
 }
 
@@ -247,7 +247,7 @@ function test_chunked_body_is_decoded(): test.TestOutcome {
         Some(f) => { if (f.len != wire_chunked().len()) { return test.fail("framed len: " + f.len.to_string()); } },
         None => { return test.fail("the chunked request was not framed"); }
     }
-    match (http.http_parse_request_framed_from(wire.bytes(), wire_chunked().len())) {
+    match (http.http_parse_request_framed_from(wire.bytes(), wire_chunked().len(), http.http_limits())) {
         http.Framed(f) => { if (f.request.path != "/next") { return test.fail("behind the chunked request: " + f.request.path); } },
         http.Incomplete => { return test.fail("the request behind is incomplete"); },
         http.Continue => { return test.fail("the request behind expects 100"); },
@@ -394,7 +394,7 @@ function test_framed_length_covers_headers_and_body(): test.TestOutcome {
 
 function test_framed_from_reads_the_request_behind(): test.TestOutcome {
     var wire: string = wire_post() + "GET /next HTTP/1.1\r\nHost: h\r\n\r\n";
-    match (http.http_parse_request_framed_from(wire.bytes(), wire_post().len())) {
+    match (http.http_parse_request_framed_from(wire.bytes(), wire_post().len(), http.http_limits())) {
         http.Framed(f) => {
             if (f.request.path != "/next") { return test.fail("the request behind the offset was not the one parsed: " + f.request.path); }
             if (f.request.body_len() != 0) { return test.fail("a body from the request in front"); }

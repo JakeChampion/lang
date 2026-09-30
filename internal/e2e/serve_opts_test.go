@@ -47,3 +47,12 @@ func TestServePerIPCapInterp(t *testing.T) {
 	})
 	e2eharness.CheckPerIPCap(t, fmt.Sprintf("127.0.0.1:%d", port))
 }
+
+// `ServeOptions.limits` (#9854) lowers the parser's caps: past them a
+// request is refused with the cap's status before the handler runs.
+func TestServeLimitsX86_64(t *testing.T) {
+	port := freeLoopbackPort(t)
+	bin, runner := buildSupervisedServeBin(t, e2eharness.LimitsServerSource(port))
+	startSupervisedServer(t, bin, runner)
+	e2eharness.CheckServeLimits(t, fmt.Sprintf("127.0.0.1:%d", port))
+}
