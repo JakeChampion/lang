@@ -113,15 +113,16 @@ function all_true(n: i32): boolean[] {
 }
 
 // The operations that put a value somewhere this frame does not control: a
-// container or box built here and handed back, and a store into a cell or a
-// map the frame may not be the only holder of. An `append` or a `with` answers
-// a NEW container holding the stored value, so the value goes out with it —
-// the receiver does not, which is why those two are read operand by operand
-// below rather than whole.
+// container or box built here and handed back, and a store into a cell, into
+// a map the frame may not be the only holder of, or into a hole. An `append` or
+// a `with` answers a NEW container holding the stored value, so the value goes
+// out with it — the receiver does not, which is why those two are read operand
+// by operand below rather than whole.
 function builds_out(kind: i32): boolean {
     return kind == ssasem.array_new() || kind == ssasem.tuple_new() || kind == ssasem.record_new()
         || kind == ssasem.variant_new() || kind == ssasem.closure_new() || kind == ssasem.cell_new()
-        || kind == ssasem.cell_set() || kind == ssasem.map_insert() || kind == ssasem.dyn_box();
+        || kind == ssasem.cell_set() || kind == ssasem.map_insert() || kind == ssasem.dyn_box()
+        || kind == ssasem.hole_fill();
 }
 
 // A store whose RECEIVER is operand 0 and whose stored value is every operand
@@ -172,8 +173,39 @@ function indirect_carried(out: boolean[], f: ssasem.Func, a: ssasem.Analysis, in
     return next;
 }
 
+// A phi `ssasem.tail_recursion` left for parameter `imm` of the call `str` is
+// that call's slot: every operand after the first is an argument a call
+// passed, carried as `call_carried` would carry it, and the first is the
+// parameter itself, which whatever carries the phi carries too (`continued`).
+// Read as a plain loop instead, a walk that rebuilds its input would never
+// consume it.
+function slot_carried(out: boolean[], f: ssasem.Func, a: ssasem.Analysis, ins: ssa.SInst, rows: Escapes[], ix: Index): boolean[] {
+    if (ins.str == f.graph.name && !ssasem.reference(f.result)) { return out; }
+    if (!consumed(rows, ix, ins.str, ins.imm)) { return out; }
+    var next: boolean[] = out;
+    var i: i32 = 1;
+    while (i < ins.args.len()) {
+        if (ssasem.reference(f.values[ins.args[i]])) { next = carry(next, a, ins.args[i]); }
+        i = i + 1;
+    }
+    return next;
+}
+
+function slot_phi(ins: ssa.SInst): boolean { return ins.kind_tag == 8 && ins.str != ""; }
+
+function continued(out: boolean[], f: ssasem.Func, a: ssasem.Analysis): boolean[] {
+    var next: boolean[] = out;
+    for b in f.graph.blocks {
+        for ins in b.insts {
+            if (slot_phi(ins) && next[ins.result]) { next = carry(next, a, ins.args[0]); }
+        }
+    }
+    return next;
+}
+
 function instruction_carried(out: boolean[], f: ssasem.Func, a: ssasem.Analysis, ins: ssa.SInst, rows: Escapes[], ix: Index): boolean[] {
     if (ins.kind_tag == ssasem.call()) { return call_carried(out, f, a, ins, rows, ix); }
+    if (slot_phi(ins)) { return slot_carried(out, f, a, ins, rows, ix); }
     if (ins.kind_tag == ssasem.call_value()) { return indirect_carried(out, f, a, ins); }
     var next: boolean[] = out;
     if (builds_out(ins.kind_tag)) {
@@ -243,7 +275,7 @@ function carried_values(f: ssasem.Func, a: ssasem.Analysis, rows: Escapes[], ix:
         for ins in b.insts { out = instruction_carried(out, f, a, ins, rows, ix); }
         if (b.term.kind_tag == 1 && b.term.value >= 0) { out = out.with(b.term.value, true); }
     }
-    return out;
+    return continued(out, f, a);
 }
 
 // Parameter `i` is value `i` — `ssasem`'s parameter instruction pins
