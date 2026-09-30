@@ -687,18 +687,33 @@ function shutdown(reason: string, hits: i32): void {
 // with the reason and the count.
 func CheckShutdownHook(t *testing.T, cmd *exec.Cmd, addr, stderrPath string) {
 	t.Helper()
+	checkShutdownHookOn(t, cmd, addr, stderrPath, syscall.SIGTERM, "sigterm")
+}
+
+// CheckShutdownHookOnSigint is CheckShutdownHook with SIGINT, what Ctrl-C
+// sends: the supervisor forwards it, the worker drains the same way, and
+// the hook's reason names it.
+func CheckShutdownHookOnSigint(t *testing.T, cmd *exec.Cmd, addr, stderrPath string) {
+	t.Helper()
+	checkShutdownHookOn(t, cmd, addr, stderrPath, syscall.SIGINT, "sigint")
+}
+
+func checkShutdownHookOn(t *testing.T, cmd *exec.Cmd, addr, stderrPath string, sig syscall.Signal, reason string) {
+	t.Helper()
 	WaitServerReady(t, addr, 10*time.Second)
 	for i := 1; i <= 2; i++ {
 		if got := ResponseBodyTail(HTTPRoundTrip(t, addr, "/", 5*time.Second)); got != fmt.Sprintf("hit %d", i) {
 			t.Fatalf("request %d: body %q, want \"hit %d\"", i, got, i)
 		}
 	}
-	sigterm(t, cmd)
+	if err := cmd.Process.Signal(sig); err != nil {
+		t.Fatal(err)
+	}
 	if code := waitExit(t, cmd, 10*time.Second); code != 0 {
 		t.Fatalf("exit code %d, want 0", code)
 	}
-	if stderr := readFileString(stderrPath); !strings.Contains(stderr, "shutdown reason=sigterm hits=2") {
-		t.Fatalf("the shutdown hook did not report on stderr:\n%s", stderr)
+	if stderr := readFileString(stderrPath); !strings.Contains(stderr, "shutdown reason="+reason+" hits=2") {
+		t.Fatalf("the shutdown hook did not report %s on stderr:\n%s", reason, stderr)
 	}
 }
 
