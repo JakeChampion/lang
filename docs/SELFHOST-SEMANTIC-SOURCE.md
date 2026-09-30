@@ -698,8 +698,8 @@ Unsupported constructs refuse the whole function with a reason.
   (`parser.lower_defers_prepass_module`), so both lowerings see an ordinary
   extern call. An owned local is spelled `own R` or bare `R`; both are
   dropped. An owned parameter is not dropped there. A resource named like
-  another resource, a struct, an enum or a union alias is E006 and is not
-  registered (`parser.registered_resources`), so the name keeps its other
+  another resource, a struct or an enum (built-in ones included, and a union
+  alias the checker accepts) is E006 and is not registered (`parser.registered_resources`), so the name keeps its other
   meaning and is never taken for a handle.
 
 - A GENERIC declaration, as a TEMPLATE produced once per instantiation
