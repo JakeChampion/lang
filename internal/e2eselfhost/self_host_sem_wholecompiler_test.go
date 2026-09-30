@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -20,10 +21,9 @@ import (
 // Two things are pinned, in the order they are cheapest to lose:
 //
 //   - Coverage. gen1 is fern.fern compiled by the native-built driver with
-//     FERN_SEM_IR=1, and its report must say every declaration produced. A
-//     body that stops producing keeps the AST lowering and the module becomes
-//     mixed, which is where every crash in this path's history lived; the
-//     tally is the one line that says whether that happened.
+//     FERN_SEM_IR=1, and its report must say every declaration and instance
+//     produced. One refusal puts its whole module back on the AST lowering;
+//     the tally is the one line per module that says whether that happened.
 //   - Output. gen1 compiles lexer.fern, parser.fern, checker.fern and the
 //     whole tree byte-identically to the driver, whose lowering of the same
 //     inputs is the AST one. This is the primary gate: a fixpoint is blind to
@@ -145,7 +145,7 @@ func TestSelfHostSemanticWholeCompilerX86_64(t *testing.T) {
 	}
 	produced, total := semTally(t, report)
 	if produced != total {
-		t.Fatalf("gen1 produced %d of %d declarations; every refusal is a body the AST lowering emits into a mixed module:\n%s",
+		t.Fatalf("gen1 produced %d of %d declarations and instances; a refusal keeps its whole module on the AST lowering:\n%s",
 			produced, total, report)
 	}
 
@@ -215,19 +215,28 @@ func semSelfBuild(compiler, entry, stdlibRoot, out string) (string, error) {
 	return stderr.String(), nil
 }
 
-var semTallyLine = regexp.MustCompile(`module: produced (\d+) of (\d+) declarations`)
+var semTallyLine = regexp.MustCompile(`module: produced (\d+) of (\d+) declarations and (\d+) of (\d+) instances`)
 
-// semTally reads the produced and total declaration counts out of the report.
+// semTally sums the produced and total counts, declarations and instances,
+// over every module line of the report.
 func semTally(t *testing.T, report string) (int, int) {
 	t.Helper()
-	m := semTallyLine.FindStringSubmatch(report)
-	if m == nil {
+	lines := semTallyLine.FindAllStringSubmatch(report, -1)
+	if lines == nil {
 		t.Fatalf("no production tally in the report:\n%s", report)
 	}
 	var produced, total int
-	for i, dst := range []*int{&produced, &total} {
-		for _, c := range m[i+1] {
-			*dst = *dst*10 + int(c-'0')
+	for _, m := range lines {
+		for i, c := range m[1:] {
+			n, err := strconv.Atoi(c)
+			if err != nil {
+				t.Fatalf("unreadable tally %q: %v", m[0], err)
+			}
+			if i%2 == 0 {
+				produced += n
+			} else {
+				total += n
+			}
 		}
 	}
 	return produced, total

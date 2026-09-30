@@ -1451,6 +1451,7 @@ function print_sugared_if_let(sg: ast.MatchSugar, depth: i32, f: Fmt): (string, 
 // print_lit_pat renders one literal arm pattern: `_`, a literal, or a range.
 function print_lit_pat(a: ast.LitArm): string {
     if (a.is_wild) { return "_"; }
+    if (a.at_binding.len() > 0 && !a.alt_cont) { return a.at_binding + " @ " + print_lit_pat(ast.LitArm { ...a, at_binding: "" }); }
     if (a.has_range) {
         var dots: string = "..";
         if (a.range_inclusive) { dots = "..="; }

@@ -6014,6 +6014,97 @@ function main(): i32 {
     return pick(zs, true) + pick(zs, false) + ws[0](1) + qs[0](1);
 }
 `},
+	// Methods std/i32 and std/i64 declare on a scalar receiver: keyed by the
+	// receiver's spelling (`u8.to_ascii_lower`, `i64.to_string`) and called
+	// with the receiver at argument 0, chained and in a condition.
+	{name: "std-i32-methods-on-a-scalar-receiver", atLeast: 2, src: `
+import "std/i32";
+import "std/i64";
+function fold(s: string): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < s.len()) {
+        var b: u8 = s[i];
+        out = out + b.to_ascii_lower().to_ascii_string();
+        i = i + 1;
+    }
+    return out;
+}
+function main(): i32 {
+    var n: i32 = 0 - 42;
+    var w: i64 = 9000000000i64;
+    var c: u8 = 90;
+    print(fold("MiXeD") + " " + n.to_string() + " " + w.to_string());
+    if (c.to_ascii_lower().is_ascii_lower()) { return 3; }
+    return 1;
+}
+`},
+	// A lambda a generic function's nested function returns is hoisted to
+	// `__lam_0$wrap0`, and the instance `__lam_0$wrap0$i32` is built by the
+	// instance `__lam_0$i32`: produced like its creator, not left to an AST
+	// body no instance has.
+	{name: "a-lambda-from-a-nested-function-in-a-generic", atLeast: 2, src: `
+pub function make[T](seed: T): T {
+    function idmaker(base: T): (T) => T {
+        return (x: T) => x;
+    }
+    var f: (T) => T = idmaker(seed);
+    return f(seed);
+}
+
+function main(): i32 {
+    return make(7);
+}
+`},
+	// A body hoisted out of a hoisted body is named `<creator>$clo0$clo0`;
+	// its creator is the body before the last marker, not the declaration
+	// before the first.
+	{name: "a-lambda-lifted-out-of-a-lifted-lambda", atLeast: 7, src: `
+struct Box { f: (i32) => i32 }
+
+function adder(n: i32): (i32) => (i32) => i32 {
+    return (x: i32) => (y: i32) => x + y + n;
+}
+
+function boxed(n: i32): i32 {
+    var b: Box = Box { f: (x: i32): i32 => {
+        var c: Box = Box { f: (y: i32): i32 => y + x + n };
+        return c.f(x);
+    } };
+    return b.f(n);
+}
+
+function listed(seed: i32, n: i32): i32 {
+    var fs: ((i32) => i32)[] = [((k: i32): i32 => {
+        var gs: ((i32) => i32)[] = [((j: i32): i32 => seed + j)];
+        return gs[0](k + n);
+    })];
+    return fs[0](0);
+}
+
+function main(): i32 {
+    var f: (i32) => (i32) => i32 = adder(1);
+    var g: (i32) => i32 = f(2);
+    return g(3) + boxed(3) + listed(7, 1);
+}
+`},
+	// The lambda binds only the variable its type mentions, so its one
+	// instance `__lam_0$wrap0$i32` is built by both instances of `__lam_0`,
+	// whose names carry a second binding it does not spell.
+	{name: "a-lambda-binding-fewer-variables-than-its-creator", atLeast: 2, src: `
+pub function make[A, B](a: A, b: B): A {
+    function idmaker(base: A, other: B): (A) => A {
+        return (x: A) => x;
+    }
+    var f: (A) => A = idmaker(a, b);
+    return f(a);
+}
+
+function main(): i32 {
+    var s: string = "x";
+    return make(7, s) + make(2, true);
+}
+`},
 	// A value block, if-expression or match-expression no path leaves by its
 	// end: the enclosing expression is unreachable, including from inside a
 	// loop whose join and exit the block's `break` still reaches (#10793).
