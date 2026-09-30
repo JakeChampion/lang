@@ -20072,6 +20072,41 @@ function has_bare_array_param(params: ast.ParamDecl[], name: string): boolean {
 // body_binds_bare_var reports whether `stmts` declares a local whose type is a
 // still-erased type variable, or assigns to a parameter typed as one — the two
 // bindings clause (d) of the promotion loop fires on.
+function body_binds_bare_var(stmts: ast.Stmt[], params: ast.ParamDecl[], tps: string[], bounded: string[]): boolean {
+    for st in stmts {
+        match (st) {
+            ast.StmtVar(v) => {
+                if (util.index_of_str(tps, v.type_name) >= 0 && util.index_of_str(bounded, v.type_name) < 0) { return true; }
+            },
+            ast.StmtAssign(a) => {
+                var pi: i32 = 0;
+                while (pi < params.len()) {
+                    if (params[pi].name == a.target && util.index_of_str(tps, params[pi].type_name) >= 0
+                        && util.index_of_str(bounded, params[pi].type_name) < 0) { return true; }
+                    pi = pi + 1;
+                }
+            },
+            ast.StmtIf(f) => {
+                if (body_binds_bare_var(f.then_body, params, tps, bounded)) { return true; }
+                if (body_binds_bare_var(f.else_body, params, tps, bounded)) { return true; }
+            },
+            ast.StmtWhile(w) => { if (body_binds_bare_var(w.body, params, tps, bounded)) { return true; } },
+            ast.StmtFor(fr) => { if (body_binds_bare_var(fr.body, params, tps, bounded)) { return true; } },
+            ast.StmtMatch(m) => {
+                for arm in m.arms {
+                    if (body_binds_bare_var(arm.body, params, tps, bounded)) { return true; }
+                }
+            },
+            ast.StmtDefer(d) => {
+                var one: ast.Stmt[] = [d.action];
+                if (body_binds_bare_var(one, params, tps, bounded)) { return true; }
+            },
+            _ => {}
+        }
+    }
+    return false;
+}
+
 function erased_only(tps: string[], bounded: string[]): string[] {
     var out: string[] = [];
     for t in tps { if (util.index_of_str(bounded, t) < 0) { out = out.append(t); } }
@@ -20111,48 +20146,15 @@ function par_scan_expr(e: ast.Expr, own acc: ParScan): ParScan {
         ast.ExprZero(z) => { hit = spelled_feeds(z.type_name, acc.vars); },
         ast.ExprCall(c) => { for t in c.type_args { if (spelled_feeds(t, acc.vars)) { hit = true; } } },
         ast.ExprLambda(lm) => {
-            hit = spelled_feeds(lm.ret_type, acc.vars) || spelled_feeds(lm.ret_fn_ret, acc.vars);
-            for lp in lm.params { if (spelled_feeds(lp.type_name, acc.vars)) { hit = true; } }
+            hit = spelled_feeds(lm.ret_type, acc.vars) || spelled_feeds(lm.ret_fn_ret, acc.vars) || spelled_feeds(lm.ret_fn_param_types, acc.vars);
+            for lp in lm.params {
+                if (spelled_feeds(lp.type_name, acc.vars) || spelled_feeds(lp.fn_ret, acc.vars) || spelled_feeds(lp.fn_param_types, acc.vars)) { hit = true; }
+            }
         },
         _ => {}
     }
     if (hit) { return ParScan { ...acc, hit: true }; }
     return acc;
-}
-
-function body_binds_bare_var(stmts: ast.Stmt[], params: ast.ParamDecl[], tps: string[], bounded: string[]): boolean {
-    for st in stmts {
-        match (st) {
-            ast.StmtVar(v) => {
-                if (util.index_of_str(tps, v.type_name) >= 0 && util.index_of_str(bounded, v.type_name) < 0) { return true; }
-            },
-            ast.StmtAssign(a) => {
-                var pi: i32 = 0;
-                while (pi < params.len()) {
-                    if (params[pi].name == a.target && util.index_of_str(tps, params[pi].type_name) >= 0
-                        && util.index_of_str(bounded, params[pi].type_name) < 0) { return true; }
-                    pi = pi + 1;
-                }
-            },
-            ast.StmtIf(f) => {
-                if (body_binds_bare_var(f.then_body, params, tps, bounded)) { return true; }
-                if (body_binds_bare_var(f.else_body, params, tps, bounded)) { return true; }
-            },
-            ast.StmtWhile(w) => { if (body_binds_bare_var(w.body, params, tps, bounded)) { return true; } },
-            ast.StmtFor(fr) => { if (body_binds_bare_var(fr.body, params, tps, bounded)) { return true; } },
-            ast.StmtMatch(m) => {
-                for arm in m.arms {
-                    if (body_binds_bare_var(arm.body, params, tps, bounded)) { return true; }
-                }
-            },
-            ast.StmtDefer(d) => {
-                var one: ast.Stmt[] = [d.action];
-                if (body_binds_bare_var(one, params, tps, bounded)) { return true; }
-            },
-            _ => {}
-        }
-    }
-    return false;
 }
 
 // has_fn_param_arg_var reports whether some fn-typed param declares `name` in an
