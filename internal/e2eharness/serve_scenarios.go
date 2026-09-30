@@ -605,13 +605,24 @@ function handle(req: HttpRequest, plat: Platform): Result[HttpResponse, http.Htt
 // `Result[HttpResponse, dyn error.Error]`, failing with a concrete error
 // that `?` boxes: the compilers adapt it with `respond_error`.
 func DynErrorHandlerServerSource() string {
+	return dynErrorHandlerSource(`import "std/error";`, "error")
+}
+
+// DynErrorHandlerAliasedServerSource is DynErrorHandlerServerSource with
+// std/error imported under an alias: the adapter is chosen by the trait's
+// identity, not by the spelling the entry gives it.
+func DynErrorHandlerAliasedServerSource() string {
+	return dynErrorHandlerSource(`import "std/error" as err;`, "err")
+}
+
+func dynErrorHandlerSource(imp, q string) string {
 	return `import "std/http";
 import "std/tcp";
-import "std/error";
+` + imp + `
 
 struct NotFound { path: string }
 
-impl error.Error for NotFound {
+impl ` + q + `.Error for NotFound {
     function message(self: Self): string { return "no item at " + self.path; }
 }
 
@@ -620,7 +631,7 @@ function lookup(path: string): Result[string, NotFound] {
     return Err(NotFound { path: path });
 }
 
-function handle(req: HttpRequest, plat: Platform): Result[HttpResponse, dyn error.Error] {
+function handle(req: HttpRequest, plat: Platform): Result[HttpResponse, dyn ` + q + `.Error] {
     var name: string = lookup(req.path)?;
     return Ok(http.ok(name));
 }

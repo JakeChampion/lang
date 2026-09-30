@@ -45,6 +45,13 @@ func TestServeDynErrorHandlerX86_64(t *testing.T) {
 	e2eharness.CheckDynErrorHandler(t, fmt.Sprintf("127.0.0.1:%d", port), stderrPath)
 }
 
+func TestServeDynErrorHandlerAliasedX86_64(t *testing.T) {
+	port := freeLoopbackPort(t)
+	bin, runner := buildSupervisedServeBin(t, e2eharness.DynErrorHandlerAliasedServerSource())
+	_, stderrPath := startSupervisedServer(t, bin, runner, fmt.Sprintf("PORT=%d", port))
+	e2eharness.CheckDynErrorHandler(t, fmt.Sprintf("127.0.0.1:%d", port), stderrPath)
+}
+
 // A handler answering a Result (#9854): the checker wraps it so `?`
 // works in the handler and the failure is answered as a problem, with
 // and without state.

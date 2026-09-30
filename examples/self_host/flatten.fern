@@ -332,8 +332,7 @@ pub function resolve_imports(mod: parser.Module, dir: string, root: string): par
 // mispaired `init`, `handle` and `shutdown` is left alone: E075 is the
 // checker's, and a main calling the wrong serve would only add a second
 // error.
-pub function with_handler_main(entry0: parser.Module, target: string): parser.Module {
-    var entry: parser.Module = with_result_handler(entry0);
+pub function with_handler_main(entry: parser.Module, target: string): parser.Module {
     if (top_fn_index(entry, "main") >= 0) { return entry; }
     // A wasi-http world serves through its incoming-handler export, which
     // the wasm emit wires to `handle`; a serve loop there would only hold
@@ -424,40 +423,47 @@ function top_fn_index(mod: parser.Module, name: string): i32 {
 // does: a `handle` answering `Result[HttpResponse, E]` (or
 // `(S, Result[HttpResponse, E])` with state) is renamed to
 // `__fern_handle_result` and a `handle` of the plain shape is synthesised
-// over it, `return http.respond(__fern_handle_result(req, plat));`, or
-// `http.respond_with` for the stateful pair; `http` is whatever the entry
-// imports std/http as. A handler whose errors are `dyn error.Error` is
-// adapted with `respond_error` / `respond_error_with`, handed the
-// handler's platform too.
-pub function with_result_handler(entry: parser.Module): parser.Module {
+// over it, `return http__respond(__fern_handle_result(req, plat));`, or
+// `http__respond_with` for the stateful pair. A handler whose errors are
+// std/error's `dyn Error` is adapted with `respond_error` /
+// `respond_error_with`, handed the handler's platform too.
+//
+// It runs on the FLATTENED entry, where a type is spelled by the module
+// that declares it — `dyn error.Error` under std/error's bundle prefix
+// however the program imported the trait, and never a program's own
+// `trait Error` — so
+// `error_pfx` and `http_pfx` are the bundle prefixes of std/error and
+// std/http, "" for one the program does not load.
+pub function with_result_handler(entry: parser.Module, error_pfx: string, http_pfx: string): parser.Module {
     var hi: i32 = top_fn_index(entry, "handle");
     if (hi < 0) { return entry; }
     var handle: parser.FuncDecl = entry.funcs[hi];
     var ret: string = "";
-    var adapter: string = "";
+    var with_state: string = "";
     var result: string = "";
     if (handle.params.len() == 2 && result_of_response(handle.ret_type)) {
         ret = "HttpResponse";
-        adapter = "respond";
         result = handle.ret_type;
     } else if (handle.params.len() == 3) {
         var (state, second) = tuple_halves(handle.ret_type);
         if (state.len() > 0 && result_of_response(second)) {
             ret = "(" + state + ", HttpResponse)";
-            adapter = "respond_with";
+            with_state = "_with";
             result = second;
         }
     }
-    if (adapter.len() == 0) { return entry; }
+    if (ret.len() == 0) { return entry; }
     var args: ast.Expr[] = [];
     for p in handle.params { args = args.append(ast.ExprIdent { name: p.name, line: 0, col: 0, ty: "" }); }
     var inner: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: "__fern_handle_result", line: 0, col: 0, ty: "" }, args: args, line: 0, col: 0, type_args: [], ty: "" };
+    var adapter: string = "respond" + with_state;
     var adapter_args: ast.Expr[] = [inner];
-    if (result_err_is_dyn_error(entry, result)) {
-        adapter = "respond_error" + slice_unchecked(adapter, 7, adapter.len());
+    if (result_err_is_dyn_error(error_pfx, result)) {
+        adapter = "respond_error" + with_state;
         adapter_args = adapter_args.append(ast.ExprIdent { name: handle.params[handle.params.len() - 1].name, line: 0, col: 0, ty: "" });
     }
-    var call: ast.Expr = ast.ExprCall { callee: tcp_ref(std_qualifier(entry, "http"), adapter), args: adapter_args, line: 0, col: 0, type_args: [], ty: "" };
+    if (http_pfx.len() > 0) { adapter = mangled_name(http_pfx, adapter); }
+    var call: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: adapter, line: 0, col: 0, ty: "" }, args: adapter_args, line: 0, col: 0, type_args: [], ty: "" };
     var wrapper: parser.FuncDecl = parser.FuncDecl { ...handle, name: "handle", ret_type: ret, body: [ast.StmtReturn { value: call, line: 0, col: 0 }], type_params: [], all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_slice: false, async: false, is_const: false, ret_fn_ret: "", ret_fn_param_types: "" };
     var funcs: parser.FuncDecl[] = [];
     var i: i32 = 0;
@@ -469,13 +475,33 @@ pub function with_result_handler(entry: parser.Module): parser.Module {
     return parser.Module { ...entry, funcs: funcs.append(wrapper) };
 }
 
-// result_err_is_dyn_error reports whether the type text `Result[HttpResponse, E]`
-// has an `E` of `dyn error.Error`, spelled through whatever the entry imports
-// std/error as.
-function result_err_is_dyn_error(entry: parser.Module, result: string): boolean {
-    var q: string = std_qualifier(entry, "error");
-    if (q.len() == 0) { return false; }
-    return strip_spaces(result) == "Result[HttpResponse,dyn" + q + ".Error]";
+// result_err_is_dyn_error reports whether the flattened type text
+// `Result[HttpResponse, E]` has an `E` of std/error's `dyn Error`: a trait
+// is spelled `<prefix>.<name>` there (canon_trait), and `error_pfx` is
+// std/error's bundle prefix.
+function result_err_is_dyn_error(error_pfx: string, result: string): boolean {
+    if (error_pfx.len() == 0) { return false; }
+    return strip_spaces(result) == "Result[HttpResponse,dyn" + error_pfx + ".Error]";
+}
+
+// loaded_prefix is the bundle prefix of the loaded module at `path`
+// (`std/error`), or "" when the program does not load it. A loader that
+// resolves no paths leaves `ident` empty, and then the module's name is
+// the best available answer, as everywhere else in the bundler.
+function loaded_prefix(imports: LoadedModule[], pfxs: string[], path: string): string {
+    var i: i32 = 0;
+    while (i < imports.len()) {
+        var hit: boolean = imports[i].name == util.module_name(path);
+        if (imports[i].ident.len() > 0) { hit = path_is(imports[i].ident, path); }
+        if (hit) { return pfxs[i]; }
+        i = i + 1;
+    }
+    return "";
+}
+
+// path_is reports whether module path `p` is `want`, bare or under a root.
+function path_is(p: string, want: string): boolean {
+    return p == want || (p.len() > want.len() + 1 && slice_unchecked(p, p.len() - want.len() - 1, p.len()) + "" == "/" + want);
 }
 
 // result_of_response reports whether the type text is `Result[HttpResponse, E]`.
@@ -516,10 +542,8 @@ function strip_spaces(t: string): string {
 // std_qualifier is the name the entry refers to `std/<name>` by, or ""
 // when it does not import it.
 function std_qualifier(mod: parser.Module, name: string): string {
-    var want: string = "std/" + name;
     for imp in mod.imports {
-        var p: string = imp.path;
-        if (p == want || (p.len() > want.len() + 1 && slice_unchecked(p, p.len() - want.len() - 1, p.len()) + "" == "/" + want)) {
+        if (path_is(imp.path, "std/" + name)) {
             if (imp.alias.len() > 0) { return imp.alias; }
             return name;
         }
@@ -1048,7 +1072,10 @@ function canon_trait(d: string, ctx: RewriteCtx): string {
     }
     var k: i32 = util.index_of_str(ctx.modnames, slice_unchecked(d, 0, dot) + "");
     if (k < 0) { return d; }
-    return ctx.modprefixes[k] + "." + slice_unchecked(d, dot + 1, d.len());
+    var name: string = slice_unchecked(d, dot + 1, d.len()) + "";
+    // A trait reached through a `pub use` facade is the origin module's.
+    var origin: string = lookup_reexport(ctx.modprefixes[k] + "__" + name, ctx);
+    return slice_unchecked(origin, 0, origin.len() - name.len() - 2) + "." + name;
 }
 
 function canon_derives(derives: string[], ctx: RewriteCtx): string[] {
@@ -1512,7 +1539,8 @@ pub function bundle(entry0: parser.Module, imports: LoadedModule[], target: stri
         while (mdi < m.trait_decls.len()) { trait_decls = trait_decls.append(m.trait_decls[mdi]); mdi = mdi + 1; }
         i = i + 1;
     }
-    var e: parser.Module = disambiguate_methods(flatten_qualified(entry, ids, pfxs, ivar_names, ivar_mangled, rx.keys, rx.targets), "__entry", mclaims).mod;
+    var flat: parser.Module = with_result_handler(flatten_qualified(entry, ids, pfxs, ivar_names, ivar_mangled, rx.keys, rx.targets), loaded_prefix(imports, pfxs, "std/error"), loaded_prefix(imports, pfxs, "std/http"));
+    var e: parser.Module = disambiguate_methods(flat, "__entry", mclaims).mod;
     funcs = util.append_all(funcs, e.funcs);
     structs = util.append_all(structs, e.structs);
     aliases = util.append_all(aliases, e.aliases);
@@ -1698,7 +1726,8 @@ pub function bundle_per_module(entry0: parser.Module, imports: LoadedModule[], t
         all_funcs = util.append_all(all_funcs, md.mod.funcs);
         i = i + 1;
     }
-    var e: parser.Module = disambiguate_methods(flatten_qualified(entry, ids, pfxs, ivar_names, ivar_mangled, rx.keys, rx.targets), "__entry", mclaims).mod;
+    var flat: parser.Module = with_result_handler(flatten_qualified(entry, ids, pfxs, ivar_names, ivar_mangled, rx.keys, rx.targets), loaded_prefix(imports, pfxs, "std/error"), loaded_prefix(imports, pfxs, "std/http"));
+    var e: parser.Module = disambiguate_methods(flat, "__entry", mclaims).mod;
     all_funcs = util.append_all(all_funcs, e.funcs);
     // A unit reads a const another unit declares, so the table spans them all.
     var table: parser.ConstTable = merged_const_table(all_funcs, inferred);

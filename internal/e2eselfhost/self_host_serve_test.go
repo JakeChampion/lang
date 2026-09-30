@@ -244,6 +244,15 @@ func TestSelfHostServeDynErrorHandler(t *testing.T) {
 	e2eharness.CheckDynErrorHandler(t, fmt.Sprintf("127.0.0.1:%d", port), stderrPath)
 }
 
+func TestSelfHostServeDynErrorHandlerAliased(t *testing.T) {
+	port := selfHostFreePort(t)
+	bin, runner := selfHostServer(t, e2eharness.DynErrorHandlerAliasedServerSource())
+	cmd := binCmd(runner, bin)
+	cmd.Env = append(cmd.Environ(), fmt.Sprintf("PORT=%d", port))
+	stderrPath := e2eharness.StartServerProcess(t, cmd)
+	e2eharness.CheckDynErrorHandler(t, fmt.Sprintf("127.0.0.1:%d", port), stderrPath)
+}
+
 func TestSelfHostServeResultHandler(t *testing.T) {
 	port := selfHostFreePort(t)
 	bin, runner := selfHostServer(t, e2eharness.ResultHandlerServerSource())
