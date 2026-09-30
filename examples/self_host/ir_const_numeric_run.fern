@@ -1,8 +1,9 @@
-// examples/self_host/ir_const_numeric_run.fern — compiles stdin with every
-// i64 and f64 constant the lowering produced as text rebuilt from its value
-// (ir.op_const_i64 / ir.op_const_f64), then emits it. The program has to
-// behave exactly as it does when compiled normally: a backend reading only one
-// of the two constant forms emits an empty immediate for the other (#8996).
+// examples/self_host/ir_const_numeric_run.fern — compiles stdin through the
+// typed lowering with every i64 and f64 constant it produced as text rebuilt
+// from its value (ir.op_const_i64 / ir.op_const_f64), then emits it. The program
+// has to behave exactly as it does when compiled normally: a backend reading
+// only one of the two constant forms emits an empty immediate for the other
+// (#8996).
 //
 //   ir_const_numeric_run -target x86-64-linux < prog.fern > prog.s
 //   ir_const_numeric_run -target arm64-linux  < prog.fern > prog.s
@@ -16,6 +17,7 @@ import "./rundriver";
 import "./ir";
 import "./irlower";
 import "./ircore";
+import "./semlower";
 import "./asm_ir";
 import "./asm_arm64_ir";
 import "./wasm_ir";
@@ -45,11 +47,12 @@ function rebuild(cache: irlower.LowerResult[]): Rebuilt {
     return Rebuilt { cache: out, i64s: n64, f64s: nf };
 }
 
-// sub_of hands the rebuilt lowering to the emit the way the CLI hands it a
-// semantic one: every declaration's body substituted, over the same registry.
-function sub_of(rb: Rebuilt, base: irlower.FnSigs): ircore.Sub {
-    eprint("rebuilt i64=" + util.i32_to_string(rb.i64s) + " f64=" + util.i32_to_string(rb.f64s) + "\n");
-    return ircore.Sub { ...ircore.no_sub(), on: true, bodies: rb.cache, extra: [], sigs: base };
+// rebuilt is `sub` with the constants in its bodies rebuilt.
+function rebuilt(sub: ircore.Sub): ircore.Sub {
+    var rb: Rebuilt = rebuild(sub.bodies);
+    var rx: Rebuilt = rebuild(sub.extra);
+    eprint("rebuilt i64=" + util.i32_to_string(rb.i64s + rx.i64s) + " f64=" + util.i32_to_string(rb.f64s + rx.f64s) + "\n");
+    return ircore.Sub { ...sub, bodies: rb.cache, extra: rx.cache };
 }
 
 // bits_round_trip checks the patterns no source literal spells: a NaN's
@@ -69,22 +72,11 @@ function main(): i32 {
     if (av.len() > 2 && av[1] == "-target") { target = av[2]; }
     var mod: parser.Module = rundriver.parse_stdin("ir_const_numeric_run");
     if (asmcore.refuse_parse_unknowns([mod]) || asmcore.refuse_decl_names([mod])) { return 1; }
-    if (target == "wasm32-wasi") {
-        var lm: parser.Module = wasm_ir.route_normalized(mod);
-        var stab: irlower.StructTab = irlower.struct_tab(lm.structs);
-        var base: irlower.FnSigs = ircore.wp_fn_sigs(lm.funcs, stab);
-        var g: ircore.Lowered = wasm_ir.lower_all_gated(lm, stab, base, ircore.no_sub());
-        if (!g.ok) { eprint("ir_const_numeric_run: the module did not lower\n"); return 1; }
-        write(wasm_ir.emit_module_mode_or_error_sub(mod, false, false, sub_of(rebuild(g.cache), base)));
-        return 0;
-    }
-    var im: parser.Module = parser.infer_ret_types_module(ircore.script_normalized(mod));
-    var imtab: irlower.StructTab = irlower.struct_tab(im.structs);
-    var ibase: irlower.FnSigs = ircore.wp_fn_sigs(im.funcs, imtab);
-    var ig: ircore.Lowered = ircore.lower_gated(im, imtab, irlower.fn_sigs_with_dyn(ibase, im.trait_reqs), [], false, ircore.no_sub());
-    if (!ig.ok) { eprint("ir_const_numeric_run: the module did not lower\n"); return 1; }
-    var sub: ircore.Sub = sub_of(rebuild(ig.cache), ibase);
-    if (target == "arm64-linux") { write(asm_arm64_ir.emit_module_ir_gated_sub(mod, false, sub)); }
-    else { write(asm_ir.emit_module_ir_gated_sub(mod, [], sub)); }
+    var d: semlower.Driven = semlower.driven(mod, target);
+    if (!d.sub.on) { eprint("ir_const_numeric_run: the typed lowering did not produce the module\n"); return 1; }
+    var sub: ircore.Sub = rebuilt(d.sub);
+    if (target == "wasm32-wasi") { write(wasm_ir.emit_module_mode_or_error_sub(d.full, false, false, sub)); }
+    else if (target == "arm64-linux") { write(asm_arm64_ir.emit_module_or_error_sub(d.full, false, sub)); }
+    else { write(asm_ir.emit_module_or_error_sub(d.full, sub)); }
     return 0;
 }

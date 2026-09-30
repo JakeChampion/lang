@@ -9371,8 +9371,8 @@ pub function emit_module_ir_gated(mod: parser.Module, known: string[]): string {
 }
 
 // emit_module_ir_gated_sub is the same gate with a caller-supplied semantic
-// lowering substituted into it (ircore.Sub): the `fern` CLI's semantic
-// lowering, or ir_const_numeric_run's rebuilt one. ircore.no_sub() is this
+// lowering substituted into it (ircore.Sub): the typed lowering, or
+// ir_const_numeric_run's rebuilt copy of it. ircore.no_sub() is this
 // function behaving exactly as it did before the seam existed.
 pub function emit_module_ir_gated_sub(mod: parser.Module, known: string[], sub: ircore.Sub): string {
     var sm: parser.Module = ircore.script_normalized(mod);
