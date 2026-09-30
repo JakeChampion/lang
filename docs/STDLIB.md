@@ -1073,7 +1073,13 @@ serializer.
   `var item: Item = http.body_json[Item](req)?;`.
 - **Header methods:** `(resp).with_header(name, value)` (set) /
   `(resp).with_appended_header(name, value)` (append) /
-  `(resp).with_content_type(ct)`
+  `(resp).with_content_type(ct)`, and `(resp).with_trailer(name, value)`
+  for `HttpResponse.trailers`: fields the serve loop sends after a
+  `chunks` body's last chunk, named in the head's `Trailer` field (RFC
+  9110 §6.5). A body with a length, an HTTP/1.0 client's close-delimited
+  stream and the wasi-http wrapper's outgoing body carry none, so there
+  they are dropped. `http_serialize_fields(map)` writes a map as field
+  lines.
 - **Request builder:** `request(method, path)` is a request to hand a
   handler in a test (no headers, no body), and `(req).with_header(name,
   value)`, `(req).with_body(body)` (with the `Content-Length` a client
@@ -1482,7 +1488,7 @@ use case). Hosts are literal IPv4 (no DNS / TLS yet).
 
 HTTP `HeaderMap` with case-insensitive lookup, multi-valued
 entries, and insertion-ordered iteration. Backs `HttpRequest`'s
-`headers` and `trailers` and `HttpResponse`'s `headers`.
+`headers` and `trailers` and `HttpResponse`'s `headers` and `trailers`.
 
 - `header_map_new()` — empty map.
 - `(h).set(name, value)` / `(h).append(name, value)` — replace vs.

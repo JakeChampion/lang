@@ -85,7 +85,7 @@ struct HeaderMap { names: string[], values: string[] }
 // HttpRequest.body (docs/PLATFORM-RESEARCH.md Rec §4).
 struct Stream { data: u8[], pos: i32 }
 struct HttpRequest { method: string, path: string, body: Stream, headers: HeaderMap, trailers: HeaderMap }
-struct HttpResponse { status: i32, body: Body, headers: HeaderMap }
+struct HttpResponse { status: i32, body: Body, headers: HeaderMap, trailers: HeaderMap }
 
 // Platform — the capability bag threaded as the second parameter of every
 // handler (docs/PLATFORM-RESEARCH.md Rec §1). Native declares it in the

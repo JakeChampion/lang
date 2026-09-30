@@ -90,28 +90,28 @@ pub function http_is_error(code: i32): boolean {
 // Saves the `HttpResponse { status: 200, body: ... }` boiler-
 // plate at every handler call site.
 pub function ok(body: string): HttpResponse {
-    return HttpResponse { status: 200, body: BodyText(body), headers: headers.header_map_new() };
+    return HttpResponse { status: 200, body: BodyText(body), headers: headers.header_map_new() , trailers: headers.header_map_new() };
 }
 
 pub function text(status: i32, body: string): HttpResponse {
-    return HttpResponse { status: status, body: BodyText(body), headers: headers.header_map_new() };
+    return HttpResponse { status: status, body: BodyText(body), headers: headers.header_map_new() , trailers: headers.header_map_new() };
 }
 
 pub function not_found(): HttpResponse {
-    return HttpResponse { status: 404, body: BodyText("Not Found"), headers: headers.header_map_new() };
+    return HttpResponse { status: 404, body: BodyText("Not Found"), headers: headers.header_map_new() , trailers: headers.header_map_new() };
 }
 
 // `bad_request(body)` — 400 with the given
 // body. Common shape for validation-failure responses.
 pub function bad_request(body: string): HttpResponse {
-    return HttpResponse { status: 400, body: BodyText(body), headers: headers.header_map_new() };
+    return HttpResponse { status: 400, body: BodyText(body), headers: headers.header_map_new() , trailers: headers.header_map_new() };
 }
 
 // `internal_error(body)` — 500. The default
 // body shape for unhandled / unexpected exceptions in a
 // handler.
 pub function internal_error(body: string): HttpResponse {
-    return HttpResponse { status: 500, body: BodyText(body), headers: headers.header_map_new() };
+    return HttpResponse { status: 500, body: BodyText(body), headers: headers.header_map_new() , trailers: headers.header_map_new() };
 }
 
 // `redirect(location)` — 302 Found with the
@@ -120,21 +120,21 @@ pub function internal_error(body: string): HttpResponse {
 pub function redirect(location: string): HttpResponse {
     var h: HeaderMap = headers.header_map_new();
     h = h.set("Location", location);
-    return HttpResponse { status: 302, body: BodyText(location), headers: h };
+    return HttpResponse { status: 302, body: BodyText(location), headers: h , trailers: headers.header_map_new() };
 }
 
 // `no_content()` — 204 No Content, empty
 // body. The standard "I handled it, nothing to say"
 // response for DELETE / PUT / etc.
 pub function no_content(): HttpResponse {
-    return HttpResponse { status: 204, body: BodyText(""), headers: headers.header_map_new() };
+    return HttpResponse { status: 204, body: BodyText(""), headers: headers.header_map_new() , trailers: headers.header_map_new() };
 }
 
 // `created(body)` — 201 Created with the given body: what a POST that
 // made something answers, the new resource's address in the body or
 // set on `Location` by the caller.
 pub function created(body: string): HttpResponse {
-    return HttpResponse { status: 201, body: BodyText(body), headers: headers.header_map_new() };
+    return HttpResponse { status: 201, body: BodyText(body), headers: headers.header_map_new() , trailers: headers.header_map_new() };
 }
 
 // ============================================================
@@ -151,7 +151,7 @@ pub function created(body: string): HttpResponse {
 function __http_response_typed(status: i32, body: string, ct: string): HttpResponse {
     var h: HeaderMap = headers.header_map_new();
     h = h.set("Content-Type", ct);
-    return HttpResponse { status: status, body: BodyText(body), headers: h };
+    return HttpResponse { status: status, body: BodyText(body), headers: h , trailers: headers.header_map_new() };
 }
 
 // `json(body)` — 200 with `Content-Type:
@@ -1483,6 +1483,18 @@ pub function http_bodiless(status: i32): boolean {
 // `Transfer-Encoding` line, or none for a close-delimited or bodiless
 // response) and `keep_alive` decide. The serve loop writes a streamed
 // body behind this head.
+// `http_serialize_fields(fields)` — the map as field lines, `name: value`
+// and CRLF each, in the map's order: a trailer section's body.
+pub function http_serialize_fields(fields: HeaderMap): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < fields.names.len()) {
+        out = out + fields.names[i] + ": " + fields.values[i] + "\r\n";
+        i = i + 1;
+    }
+    return out;
+}
+
 pub function http_serialize_response_head(resp: HttpResponse, keep_alive: boolean, framing: string): string {
     var connection: string = "Connection: close\r\n";
     if (keep_alive) { connection = "Connection: keep-alive\r\n"; }
@@ -1671,14 +1683,14 @@ pub function http_materialize(r: HttpResponse): HttpResponse {
 // `u8[]` (an image, a decoded frame, bytes read off a request
 // Stream) does not have to spell the conversion itself.
 pub function bytes(status: i32, bs: u8[]): HttpResponse {
-    return HttpResponse { status: status, body: BodyBytes(bs), headers: headers.header_map_new() };
+    return HttpResponse { status: status, body: BodyBytes(bs), headers: headers.header_map_new() , trailers: headers.header_map_new() };
 }
 
 // `stream(status, s)` — a response whose body is what
 // is left of a Stream: bytes already in memory, drained to the wire
 // from its cursor.
 pub function stream(status: i32, s: Stream): HttpResponse {
-    return HttpResponse { status: status, body: BodyStream(s), headers: headers.header_map_new() };
+    return HttpResponse { status: status, body: BodyStream(s), headers: headers.header_map_new() , trailers: headers.header_map_new() };
 }
 
 // `file(path)` — a 200 whose body is the file at `path`,
@@ -1687,7 +1699,7 @@ pub function stream(status: i32, s: Stream): HttpResponse {
 // the loop cannot open is answered 404 in its place. The
 // `Content-Type` is the caller's to set.
 pub function file(path: string): HttpResponse {
-    return HttpResponse { status: 200, body: BodyFile(path), headers: headers.header_map_new() };
+    return HttpResponse { status: 200, body: BodyFile(path), headers: headers.header_map_new() , trailers: headers.header_map_new() };
 }
 
 // `chunks(status, next)` — a response whose body is what
@@ -1698,7 +1710,7 @@ pub function file(path: string): HttpResponse {
 // up front; a `Content-Length` the handler set is dropped. The
 // `Content-Type` is the caller's to set.
 pub function chunks(status: i32, next: (i32) => Option[u8[]]): HttpResponse {
-    return HttpResponse { status: status, body: BodyChunks(ChunkProducer { next: next }), headers: headers.header_map_new() };
+    return HttpResponse { status: status, body: BodyChunks(ChunkProducer { next: next }), headers: headers.header_map_new() , trailers: headers.header_map_new() };
 }
 
 // ============================================================
@@ -1716,6 +1728,16 @@ pub function chunks(status: i32, next: (i32) => Option[u8[]]): HttpResponse {
 // updated response. Rebind: `r = r.with_header(k, v);`.
 pub function (r: HttpResponse) with_header(name: string, value: string): HttpResponse {
     return HttpResponse { ...r, headers: r.headers.set(name, value) };
+}
+
+// `(r: HttpResponse).with_trailer(name, value)` — set (replace) a trailer
+// field, sent after a chunked body's last chunk and announced in the
+// head's `Trailer` field (RFC 9110 §6.5). Only a body the serve loop
+// sends chunked, `chunks(status, next)`, carries them: a body with a
+// length, an HTTP/1.0 client's close-delimited stream and the wasi-http
+// wrapper's outgoing body go without.
+pub function (r: HttpResponse) with_trailer(name: string, value: string): HttpResponse {
+    return HttpResponse { ...r, trailers: r.trailers.set(name, value) };
 }
 
 // `(r: HttpResponse).with_appended_header(name, value)` — add
