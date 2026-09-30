@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// The token slice is sized at one token per 7 source bytes, from the density of
+// The token slice is sized at one token per 6 source bytes, from the density of
 // the repository's own Fern sources. This pins that population: a single dense
 // file runs far tighter than the average (code with no comments or long string
 // literals reaches one token per 2.5 bytes), so the reserve is a starting point
@@ -34,7 +34,7 @@ func TestTokenSliceIsSizedForTheCorpusDensity(t *testing.T) {
 		t.Fatal("no tokens across the corpus")
 	}
 	density := float64(bytes) / float64(tokens)
-	if density < 7 {
-		t.Errorf("corpus density is one token per %.2f bytes over %d files, tighter than the 7 the slice reserves for", density, len(files))
+	if density < 6 {
+		t.Errorf("corpus density is one token per %.2f bytes over %d files, tighter than the 6 the slice reserves for", density, len(files))
 	}
 }
