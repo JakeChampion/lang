@@ -6910,14 +6910,14 @@ pub function expr_struct_type(e: ast.Expr, s: LowerState): string {
             // declared return (`struct_ret_type("<T>.<method>")`) is authoritative;
             // for the Num-style Self-returning overloads it equals the left
             // operand's struct type, the fallback when the registry has no entry.
-            if (binop_overload_method(opb.op) != "") {
+            if (ast.operator_method(opb.op) != "") {
                 var olt: string = expr_struct_type(opb.left, s);
                 if (decl_is_struct(s.frame.structs, olt)) {
                     // A struct result only when the type actually defines the
                     // overload method (struct-returning). No method ⇒ "" — an
                     // invalid program the lowering bails on, kept consistent
                     // here so a consumer never types the result as a struct.
-                    return s.struct_ret_type(olt + "." + binop_overload_method(opb.op));
+                    return s.struct_ret_type(olt + "." + ast.operator_method(opb.op));
                 }
             }
             // typed-IR (#5986): a struct-returning overload whose LEFT operand's
@@ -9375,21 +9375,6 @@ pub function map_binop(op: string): string {
     return "";
 }
 
-// binop_overload_method maps an arithmetic operator to the conventionally-
-// named method that overloads it on a composite (struct / enum) operand —
-// `a + b` → `a.add(b)`, etc. (#2706, mirroring the native checker desugar at
-// checker.go:9723). Comparison / logical / bitwise ops are intentionally not
-// here: arithmetic is the Num-trait surface this covers, and `==`/`<` composite
-// overloads use their own eq/cmp path. Returns "" for a non-arithmetic op.
-pub function binop_overload_method(op: string): string {
-    if (op == "+") { return "add"; }
-    if (op == "-") { return "sub"; }
-    if (op == "*") { return "mul"; }
-    if (op == "/") { return "div"; }
-    if (op == "%") { return "rem"; }
-    return "";
-}
-
 // binop_cmp_method maps a comparison operator to the method that gives it
 // STRUCTURAL meaning on a composite operand: `==` / `!=` go through `Eq`'s
 // `eq`, the four ordering ops through `Ord`'s `cmp` (which returns -1/0/1).
@@ -11240,7 +11225,7 @@ pub function lower_i64(e: ast.Expr, s: LowerState): LowerState {
             // 64 here off the same tag, so the load has to agree or the two
             // halves disagree and the module fails to validate.
             if ((b.ty == "i64" || b.ty == "u64")
-                && binop_overload_method(b.op) != ""
+                && ast.operator_method(b.op) != ""
                 && decl_is_struct(s.frame.structs, expr_struct_type(b.left, s))) {
                 return lower_expr(e, s);
             }
@@ -16935,14 +16920,14 @@ function lower_expr_binary(b: ast.ExprBinary, e: ast.Expr, s: LowerState): Lower
     // struct pointers as scalar arithmetic. Scalars /
     // strings / f64 return "" from expr_struct_type, so they're
     // untouched and fall through to the numeric/string dispatch below.
-    if (binop_overload_method(b.op) != "") {
+    if (ast.operator_method(b.op) != "") {
         var blt: string = expr_struct_type(b.left, s);
         // Only a real struct/enum operand is an overload — expr_struct_type
         // also reports a typed scalar's name (e.g. a `u8` local returns
         // "u8"), which must fall through to the normal numeric/sub-word
         // lowering below, NOT be treated as a composite (#2706 regression).
         if (decl_is_struct(s.frame.structs, blt)) {
-            var ovm: string = binop_overload_method(b.op);
+            var ovm: string = ast.operator_method(b.op);
             // The method must exist — without one this is an invalid
             // program (native rejects it E009), so bail rather than
             // mis-lower the struct pointers as scalar arithmetic.
