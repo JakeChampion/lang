@@ -2433,7 +2433,8 @@ function invoke_method(recv: Value, args: ast.Expr[], contract: ssasem.Contract,
 }
 
 // The arguments from `base` onward, each produced at its parameter's type
-// under the bindings the earlier ones made.
+// under the bindings the earlier ones made; a parameter they leave open takes
+// what the destination (`seed`) or a later argument binds.
 function invoke_rest(ids: i32[], bound: ssasem.Binding, args: ast.Expr[], base: i32, contract: ssasem.Contract, s: State, seed: ssasem.Binding): Value {
     var i: i32 = 0;
     while (i < args.len()) {
