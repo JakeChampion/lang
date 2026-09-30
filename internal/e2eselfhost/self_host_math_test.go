@@ -13,9 +13,9 @@ var mathCases = []struct {
 	main string
 	exit int
 }{
-	{"range-sum", "import \"./math\";\nfunction main(): i32 { var r = math.range(0, 5); var s: i32 = 0; var i: i32 = 0; while (i < r.len()) { s = s + r[i]; i = i + 1; } return s; }\n", 10},
-	{"range-step-sum", "import \"./math\";\nfunction main(): i32 { var r = math.range_step(0, 10, 2); var s: i32 = 0; var i: i32 = 0; while (i < r.len()) { s = s + r[i]; i = i + 1; } return s; }\n", 20},
-	{"random-bytes-len", "import \"./math\";\nfunction main(): i32 { var b: u8[] = random_bytes(7); return b.len(); }\n", 7},
+	{"range-sum", "import \"std/math\";\nfunction main(): i32 { var r = math.range(0, 5); var s: i32 = 0; var i: i32 = 0; while (i < r.len()) { s = s + r[i]; i = i + 1; } return s; }\n", 10},
+	{"range-step-sum", "import \"std/math\";\nfunction main(): i32 { var r = math.range_step(0, 10, 2); var s: i32 = 0; var i: i32 = 0; while (i < r.len()) { s = s + r[i]; i = i + 1; } return s; }\n", 20},
+	{"random-bytes-len", "import \"std/math\";\nfunction main(): i32 { var b: u8[] = random_bytes(7); return b.len(); }\n", 7},
 }
 
 // TestSelfHostMathX86_64 proves the self-hosted compiler compiles the
@@ -26,7 +26,7 @@ func TestSelfHostMathX86_64(t *testing.T) {
 
 	for _, tc := range mathCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm, progDir := compileStdProgModload(t, runner, driverBin, []string{"math"}, tc.main)
+			asm, progDir := compileSourceModload(t, runner, driverBin, tc.main)
 			progBin := buildBin(t, gcc, progDir, tc.name, asm)
 			var cmd *exec.Cmd
 			if len(runner) == 0 {
@@ -50,7 +50,7 @@ func TestSelfHostMathArm64(t *testing.T) {
 
 	for _, tc := range mathCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm, progDir := compileStdProgModload(t, x86runner, driverBin, []string{"math"}, tc.main, "-target", "arm64-linux")
+			asm, progDir := compileSourceModload(t, x86runner, driverBin, tc.main, "-target", "arm64-linux")
 			progBin := buildBin(t, arm64gcc, progDir, tc.name, asm)
 			cmd := runArm64Bin(qemu, progBin)
 			_ = cmd.Run()

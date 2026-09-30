@@ -61,6 +61,29 @@ var fmtParityCases = []struct {
 	name string
 	src  string
 }{
+	// `k @` in front of a literal or range, in a match, an `if let` and a
+	// `let … else`, and the braceless `if let` body.
+	{"at-binding-scalar-heads", `function classify(n: i32): i32 {
+  match (n) {
+    k @ 1..10 => { return k * 2; },
+    k @ 20 => { return k + 1; },
+    k @ 30..=31 when k > 30 => { return k; },
+    _ => { return 0; },
+  }
+}
+function main(): i32 {
+  return classify(5) + classify(20) + classify(31) + classify(30) + classify(99);
+}
+function a(n: i32): i32 { if let k @ 1..10 = n { return k * 2; } return 0; }
+function b(n: i32): i32 { let k @ 20..30 = n else { return 0; }; return k + 1; }
+`},
+	{"if-let-braceless-then", `enum Box { Full(i32), Empty }
+function main(): i32 {
+  var b: Box = Full(8);
+  if let Full(v) = b return v;
+  return 99;
+}
+`},
 	// `pub(package)` — the third visibility level (docs/PUB-PACKAGE.md). The
 	// self-host consumed the `pub` and left `(package)` on the cursor, so the
 	// declaration lost its visibility and the leftover became a stray

@@ -24,7 +24,10 @@ pub struct Func {
     // The builtin names the module's own declarations take over
     // (semsource.shadowed_builtins): a call to one is an ordinary call, never
     // the builtin's op.
-    shadows: string[]
+    shadows: string[],
+    // The records and enums an `impl mem.Drop` gives a finalizer, by name. The
+    // whole module's, so every function's drop helper for a type agrees.
+    finalizers: string[]
 }
 
 // The parameters whose storage a callee's result reads, so a caller keeps
@@ -33,6 +36,17 @@ pub struct Func {
 // whose views read nothing the caller passed. Read off the whole module
 // (`semsource.anchor_module`).
 pub struct Anchor { name: string, params: i32[] }
+
+// The `drop` method an `impl mem.Drop` gives a record or an enum, or "". A
+// value of such a type is always a counted box, so the finalizer runs at the
+// free: never a static constant, never a box handed on for reuse.
+pub function finalizer_of(f: Func, t: typeinfo.Type): string {
+    var n: string = "";
+    if let typeinfo.TypeStruct(r) = t { n = r.name; }
+    if let typeinfo.TypeUnion(u) = t { n = u.name; }
+    if (n != "" && util.index_of_str(f.finalizers, n) >= 0) { return n + ".drop"; }
+    return "";
+}
 
 // Whether the callee named `name` has a row.
 pub function anchored(anchors: Anchor[], name: string): boolean {
@@ -339,6 +353,13 @@ pub function is_view(t: typeinfo.Type): boolean {
 // Either string type. A read of the bytes — the length, a byte, a window, an
 // operator — is blind to which box holds them.
 pub function is_text(t: typeinfo.Type): boolean { return is_string(t) || is_view(t); }
+
+// An array of strings or of views: `string[]` retags as `str[]` element for
+// element, since each element is one box either way.
+pub function is_text_array(t: typeinfo.Type): boolean {
+    if let typeinfo.TypeArray(a) = t { return !a.view && is_text(a.elem); }
+    return false;
+}
 
 // A unicode scalar. Every integer predicate here excludes it, so without a key
 // of its own it spells what the fall-through leaf does.
@@ -855,15 +876,17 @@ function narrowing_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string
     return "";
 }
 
-// A retag between the two string types hands back the same box, so like a
-// widening it borrows its operand. Owned to view is a borrow of the source's
-// bytes anywhere a view is declared; view to owned is a borrow the producer
-// hands only to a borrowed parameter, which this verifier cannot see, so its
-// rule is the type pair alone.
+// A retag between the two string types, or between arrays of them, hands back
+// the same box, so like a widening it borrows its operand. Owned to view is a
+// borrow of the source's bytes anywhere a view is declared; view to owned is a
+// borrow the producer hands only to a borrowed parameter, which this verifier
+// cannot see, so its rule is the type pair alone.
 function retag_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     if (ins.args.len() != 1) { return "string retag arity"; }
     var from: typeinfo.Type = f.values[ins.args[0]];
-    if (!is_text(from) || !is_text(result) || semtypes.equal(from, result)) { return "string retag type"; }
+    var texts: boolean = is_text(from) && is_text(result);
+    var arrays: boolean = is_text_array(from) && is_text_array(result);
+    if ((!texts && !arrays) || semtypes.equal(from, result)) { return "string retag type"; }
     return "";
 }
 

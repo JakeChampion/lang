@@ -14842,14 +14842,8 @@ function emit_wasm_map_set(o: ir.Op, cx: WasmOpCtx, parts: string[]): string[] {
     if (o.width % 2 == 1) { vcons = "1"; }
     var kcons: string = "0";
     if ((o.width / 2) % 2 == 1) { kcons = "1"; }
-    // vkind (width bits 4/5, #9303) names what the map owns in its value
-    // column. A string column (kind 1) takes the shallow dec on an overwrite;
-    // a column of string ARRAYS (kind 2) the deep one (vdeep 1); a column of
-    // boxes (kind 3) the function o.str names, called through its table slot
-    // (vdeep 2, the slot in vf). The register backends read the same two bits
-    // for the same purpose.
-    // A keyed column (keykind 2) names the key release the same way, called
-    // through its slot on a discarded consumed key (kdeep 2, the slot in kf).
+    // What the map owes a superseded value and a discarded key is
+    // map_value_release_wat's and map_key_release_wat's to say.
     parts = parts.append("    i32.const " + vis + "\n    i32.const " + vcons + "\n    i32.const " + kcons + "\n" + map_value_release_wat(o, cx) + map_key_release_wat(o, cx) + "    call $__fern_map_set\n");
 
     return parts;

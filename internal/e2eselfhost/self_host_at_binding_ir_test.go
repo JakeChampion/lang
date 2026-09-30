@@ -5,7 +5,9 @@ import "testing"
 // `@` bindings through the self-hosted CLI: `match (b) { n @ Full(v) => … }`,
 // `w @ Point { x, y }` and `w @ (a, b)` bind the whole matched value alongside
 // the payload, field or element binds, and a guard may read the whole-value
-// name. Every answer comes from the interpreter.
+// name. `k @ 1..10` binds a scalar scrutinee in front of a literal or range,
+// in a match, an `if let` and a `let … else`. Every answer comes from the
+// interpreter.
 var selfHostAtBindingCases = []struct {
 	name string
 	src  string
@@ -104,6 +106,33 @@ function main(): i32 { return f((1, 5)); }`},
   };
 }
 function main(): i32 { return f((4, 6)); }`},
+	{"scalar_match_stmt", `function classify(n: i32): i32 {
+  match (n) {
+    k @ 1..10 => { return k * 2; },
+    k @ 20 => { return k + 1; },
+    k @ 30..=31 when k > 30 => { return k; },
+    _ => { return 0; },
+  }
+}
+function main(): i32 {
+  return classify(5) + classify(20) + classify(31) + classify(30) + classify(99);
+}`},
+	{"scalar_match_expr", `function pick(n: i32): i32 {
+  return match (n) { k @ 5..7 => k * 3, k @ 40 => k, _ => 7 };
+}
+function main(): i32 { return pick(6) + pick(40) + pick(99); }`},
+	{"scalar_if_let", `function a(n: i32): i32 { if let k @ 1..10 = n { return k * 2; } return 0; }
+function main(): i32 { return a(5) + a(99); }`},
+	{"scalar_let_else", `function b(n: i32): i32 { let k @ 20..30 = n else { return 0; }; return k + 1; }
+function main(): i32 { return b(25) + b(99); }`},
+	{"scalar_negative_bounds", `function c(n: i32): i32 {
+  match (n) { k @ -10..0 => { return 0 - k; }, k @ -20 => { return k; }, _ => { return 0; } }
+}
+function main(): i32 { return c(-5) + c(-20) + c(50) + 20; }`},
+	{"scalar_string_scrutinee", `function d(s: string): i32 {
+  match (s) { k @ "yes" => { return k.len(); }, _ => { return 0; } }
+}
+function main(): i32 { return d("yes") + d("no"); }`},
 }
 
 func TestSelfHostAtBindingX86_64(t *testing.T) {

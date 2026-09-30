@@ -165,7 +165,9 @@ function main(): i32 {
     if (s.get_or(big * 99, "").len() != w(4).len()) { return 4; }
     var total: i32 = 0;
     for (k, v) in s { total = total + v.len(); }
-    if (total == 0) { return 5; }
+    // Keys 0 and 2..19 keep w(i) and big*99 holds w(4): ten payloads of
+    // 45 bytes, nine of 44 and one more of 45.
+    if (total != 891) { return 5; }
     var a: Map[i64, string[]] = map_new(2);
     a = a.insert(big * 3, [w(1), w(2)]);
     a = a.insert(big * 3, [w(5)]);

@@ -221,13 +221,13 @@ function str_copy_hint(from: typeinfo.Type, to: typeinfo.Type): string {
 
 // view_arg_borrow mirrors native argAssignable's carve-outs: params are
 // borrowed by default, so a `str` view may flow into a `string` PARAMETER, and
-// an owned `T[]` lends into a `[T]` parameter of the same element type
-// (isArrayViewLend) — and nowhere else.
+// an owned `T[]` lends into a `[T]` parameter of the same element type, or
+// of an erased type parameter's (isArrayViewLend) — and nowhere else.
 function view_arg_borrow(from: typeinfo.Type, to: typeinfo.Type): boolean {
   if (is_str_view(from) && is_owned_string(to)) { return true; }
   if let typeinfo.TypeArray(fa) = from {
     if let typeinfo.TypeArray(ta) = to {
-      return !fa.view && ta.view && type_eq(fa.elem, ta.elem);
+      return !fa.view && ta.view && (type_eq(fa.elem, ta.elem) || is_unknown(ta.elem));
     }
   }
   return false;
@@ -1156,29 +1156,6 @@ function cmp_method_receiver(t: typeinfo.Type): string {
   return "";
 }
 
-// binop_overload_method maps an arithmetic operator to the method a composite
-// operand dispatches it through. The same map irlower's own
-// binop_overload_method holds, and the same desugar native's checker applies
-// (`a + b` on a struct is `a.add(b)`). "" for an operator with no overload form.
-function binop_overload_method(op: string): string {
-  if (op == "+") {
-    return "add";
-  }
-  if (op == "-") {
-    return "sub";
-  }
-  if (op == "*") {
-    return "mul";
-  }
-  if (op == "/") {
-    return "div";
-  }
-  if (op == "%") {
-    return "rem";
-  }
-  return "";
-}
-
 // binop_overload_ret returns the DECLARED return type of the overload that `lt`
 // dispatches `op` through — unknown when the operator has no overload form, the
 // operand is not a nominal type, or that type does not define the method.
@@ -1196,7 +1173,7 @@ function binop_overload_method(op: string): string {
 // struct_ret_fns registry records only STRUCT returns, so it cannot answer this
 // one — which is why the answer has to come from here.
 function (s: Scope) binop_overload_ret(op: string, lt: typeinfo.Type): typeinfo.Type {
-  return s.overload_ret(binop_overload_method(op), lt);
+  return s.overload_ret(ast.operator_method(op), lt);
 }
 
 // unop_overload_ret is the unary sibling: `-a` on a composite is `a.neg()`.
@@ -1296,7 +1273,7 @@ function as_cast_allowed(src: typeinfo.Type, tgt: typeinfo.Type): boolean {
 // `+`-joined trait bound(s) when parameter i's declared type is exactly a
 // bounded type parameter (`x: T` where `T: Tr`), else "". Drives the E021
 // generic-bound conformance check at call sites (#4842) — see call_diags.
-pub struct FuncSig { name: string, param_types: typeinfo.Type[], param_own: boolean[], ret_type: typeinfo.Type, all_type_params: string[], type_params: string[], param_bound: string[], type_bounds: string[], ret_type_name: string, param_type_names: string[], param_names: string[], is_const: boolean }
+pub struct FuncSig { name: string, param_types: typeinfo.Type[], param_own: boolean[], ret_type: typeinfo.Type, all_type_params: string[], type_params: string[], param_bound: string[], type_bounds: string[], ret_type_name: string, param_type_names: string[], param_names: string[], is_const: boolean, receiver: string }
 
 // StructSig: nominal handle for a declared struct. Parallel
 // arrays describe the field list in declaration order: each
@@ -1366,6 +1343,10 @@ pub struct Scope {
   // "no enclosing function" (top-level stmts) — returns there
   // skip the check.
   ret_type: typeinfo.Type,
+  // try_ret is the return type a `?` propagates to: the enclosing function's
+  // or lambda's. A value block takes a ret_type of its own for its value, but
+  // a `?` inside it still returns from the function around it.
+  try_ret: typeinfo.Type,
   // impls / trait_reqs carry the module's `impl … for …` table and its
   // trait requirement records, set on every module scope. They drive the E021 generic-bound conformance check at
   // call sites (#4842) and the traits a value coerced into a `dyn` slot
@@ -1684,7 +1665,7 @@ function new_scope(): Scope {
   var ss: StructSig[] = [];
   var us: UnionSig[] = [];
   var ms: MethodSig[] = [];
-  return Scope { names: ns, types: ts, sigs: sig_table(fs), structs: struct_table(ss), unions: union_table(us), methods: method_table(ms), imports: [], loop_depth: 0, ret_type: t_unknown("no enclosing function"), impls: [], trait_reqs: [], tparams: [], tbounds: [], tpvars: [], tpvar_tps: [] };
+  return Scope { names: ns, types: ts, sigs: sig_table(fs), structs: struct_table(ss), unions: union_table(us), methods: method_table(ms), imports: [], loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: [], trait_reqs: [], tparams: [], tbounds: [], tpvars: [], tpvar_tps: [] };
 }
 
 // new_scope_full is a module's scope. The impl table rides on every one:
@@ -1693,19 +1674,19 @@ function new_scope(): Scope {
 function new_scope_full(st: SigTable, structs: StructTable, unions: UnionTable, methods: MethodTable, imports: string[], impls: parser.ImplInfo[], trait_reqs: parser.TraitReq[]): Scope {
   var ns: string[] = [];
   var ts: typeinfo.Type[] = [];
-  return Scope { names: ns, types: ts, sigs: st, structs: structs, unions: unions, methods: methods, imports: imports, loop_depth: 0, ret_type: t_unknown("no enclosing function"), impls: impls, trait_reqs: trait_reqs, tparams: [], tbounds: [], tpvars: [], tpvar_tps: [] };
+  return Scope { names: ns, types: ts, sigs: st, structs: structs, unions: unions, methods: methods, imports: imports, loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: impls, trait_reqs: trait_reqs, tparams: [], tbounds: [], tpvars: [], tpvar_tps: [] };
 }
 
 function (s: Scope) bind(name: string, t: typeinfo.Type): Scope {
   var ns: string[] = s.names.append(name);
   var ts: typeinfo.Type[] = s.types.append(t);
-  return Scope { names: ns, types: ts, sigs: s.sigs, structs: s.structs, unions: s.unions, methods: s.methods, imports: s.imports, loop_depth: s.loop_depth, ret_type: s.ret_type, impls: s.impls, trait_reqs: s.trait_reqs, tparams: s.tparams, tbounds: s.tbounds, tpvars: s.tpvars, tpvar_tps: s.tpvar_tps };
+  return Scope { names: ns, types: ts, sigs: s.sigs, structs: s.structs, unions: s.unions, methods: s.methods, imports: s.imports, loop_depth: s.loop_depth, ret_type: s.ret_type, try_ret: s.try_ret, impls: s.impls, trait_reqs: s.trait_reqs, tparams: s.tparams, tbounds: s.tbounds, tpvars: s.tpvars, tpvar_tps: s.tpvar_tps };
 }
 
 // with_tparams attaches the enclosing function's type parameters and their
 // trait bounds. Read by assoc_call_req to resolve `T.zero()`.
 function (s: Scope) with_tparams(tparams: string[], tbounds: string[]): Scope {
-  return Scope { names: s.names, types: s.types, sigs: s.sigs, structs: s.structs, unions: s.unions, methods: s.methods, imports: s.imports, loop_depth: s.loop_depth, ret_type: s.ret_type, impls: s.impls, trait_reqs: s.trait_reqs, tparams: tparams, tbounds: tbounds, tpvars: s.tpvars, tpvar_tps: s.tpvar_tps };
+  return Scope { names: s.names, types: s.types, sigs: s.sigs, structs: s.structs, unions: s.unions, methods: s.methods, imports: s.imports, loop_depth: s.loop_depth, ret_type: s.ret_type, try_ret: s.try_ret, impls: s.impls, trait_reqs: s.trait_reqs, tparams: tparams, tbounds: tbounds, tpvars: s.tpvars, tpvar_tps: s.tpvar_tps };
 }
 
 // resolve_type resolves a type SPELLING as written in this scope: the enclosing
@@ -1728,7 +1709,7 @@ function (s: Scope) resolve_type(name: string): typeinfo.Type {
 function (s: Scope) bind_tpvar(name: string, tp: string): Scope {
   var vs: string[] = s.tpvars.append(name);
   var ps: string[] = s.tpvar_tps.append(tp);
-  return Scope { names: s.names, types: s.types, sigs: s.sigs, structs: s.structs, unions: s.unions, methods: s.methods, imports: s.imports, loop_depth: s.loop_depth, ret_type: s.ret_type, impls: s.impls, trait_reqs: s.trait_reqs, tparams: s.tparams, tbounds: s.tbounds, tpvars: vs, tpvar_tps: ps };
+  return Scope { names: s.names, types: s.types, sigs: s.sigs, structs: s.structs, unions: s.unions, methods: s.methods, imports: s.imports, loop_depth: s.loop_depth, ret_type: s.ret_type, try_ret: s.try_ret, impls: s.impls, trait_reqs: s.trait_reqs, tparams: s.tparams, tbounds: s.tbounds, tpvars: vs, tpvar_tps: ps };
 }
 
 // tpvar_of returns the type parameter a value binding was declared with, or ""
@@ -2099,11 +2080,17 @@ function for_iter_is_range(iter: ast.Expr): boolean {
 }
 
 function (s: Scope) enter_loop(): Scope {
-  return Scope { names: s.names, types: s.types, sigs: s.sigs, structs: s.structs, unions: s.unions, methods: s.methods, imports: s.imports, loop_depth: s.loop_depth + 1, ret_type: s.ret_type, impls: s.impls, trait_reqs: s.trait_reqs, tparams: s.tparams, tbounds: s.tbounds, tpvars: s.tpvars, tpvar_tps: s.tpvar_tps };
+  return Scope { names: s.names, types: s.types, sigs: s.sigs, structs: s.structs, unions: s.unions, methods: s.methods, imports: s.imports, loop_depth: s.loop_depth + 1, ret_type: s.ret_type, try_ret: s.try_ret, impls: s.impls, trait_reqs: s.trait_reqs, tparams: s.tparams, tbounds: s.tbounds, tpvars: s.tpvars, tpvar_tps: s.tpvar_tps };
 }
 
 function (s: Scope) with_ret_type(rt: typeinfo.Type): Scope {
-  return Scope { names: s.names, types: s.types, sigs: s.sigs, structs: s.structs, unions: s.unions, methods: s.methods, imports: s.imports, loop_depth: s.loop_depth, ret_type: rt, impls: s.impls, trait_reqs: s.trait_reqs, tparams: s.tparams, tbounds: s.tbounds, tpvars: s.tpvars, tpvar_tps: s.tpvar_tps };
+  return Scope { names: s.names, types: s.types, sigs: s.sigs, structs: s.structs, unions: s.unions, methods: s.methods, imports: s.imports, loop_depth: s.loop_depth, ret_type: rt, try_ret: rt, impls: s.impls, trait_reqs: s.trait_reqs, tparams: s.tparams, tbounds: s.tbounds, tpvars: s.tpvars, tpvar_tps: s.tpvar_tps };
+}
+
+// with_block_ret is with_ret_type for a value block: its ret_type is the
+// block's value, and a `?` inside it still propagates to try_ret.
+function (s: Scope) with_block_ret(rt: typeinfo.Type): Scope {
+  return Scope { ...s, ret_type: rt };
 }
 
 // Linear scan — newest binding wins so shadowing works
@@ -2133,6 +2120,18 @@ function (s: Scope) is_bound(name: string): boolean {
   return false;
 }
 
+// lookup_assoc_sig finds the associated function `field` of the type `tyname`:
+// a declaration with no receiver name whose receiver type is that type. The
+// empty sig when there is none.
+function (s: Scope) lookup_assoc_sig(tyname: string, field: string): FuncSig {
+  for sig in s.sigs.sigs {
+    if (sig.name == field && sig.receiver.len() > 0 && util.base_type_name(sig.receiver) == tyname) {
+      return sig;
+    }
+  }
+  return s.lookup_sig("");
+}
+
 function (s: Scope) lookup_sig(name: string): FuncSig {
   var i: i32 = s.sigs.head[sig_name_bucket(name)];
   while (i >= 0) {
@@ -2148,7 +2147,7 @@ function (s: Scope) lookup_sig(name: string): FuncSig {
   var empty: typeinfo.Type[] = [];
   var nob: string[] = [];
   var non: string[] = [];
-  return FuncSig { name: "", param_types: empty, param_own: [], ret_type: t_unknown("undefined function"), all_type_params: [], type_params: [], param_bound: nob, type_bounds: [], ret_type_name: "", param_type_names: non, param_names: [], is_const: false };
+  return FuncSig { receiver: "", name: "", param_types: empty, param_own: [], ret_type: t_unknown("undefined function"), all_type_params: [], type_params: [], param_bound: nob, type_bounds: [], ret_type_name: "", param_type_names: non, param_names: [], is_const: false };
 }
 
 // tp_bound_for returns the `+`-joined trait bound(s) on the type parameter
@@ -3189,9 +3188,9 @@ function try_able_union(s: Scope, name: string): boolean {
 function try_success_type(s: Scope, ot: typeinfo.Type): typeinfo.Type {
   if let typeinfo.TypeUnion(tu) = ot {
     var same_ret: boolean = false;
-    if let typeinfo.TypeUnion(ru) = s.ret_type { same_ret = ru.name == tu.name; }
+    if let typeinfo.TypeUnion(ru) = s.try_ret { same_ret = ru.name == tu.name; }
     // An inferred result takes the operand's enum from this `?` (#9515).
-    if let typeinfo.TypeUnknown(ru) = s.ret_type { same_ret = ru.reason == INFERRED_RESULT; }
+    if let typeinfo.TypeUnknown(ru) = s.try_ret { same_ret = ru.reason == INFERRED_RESULT; }
     if (!same_ret) {
       return t_unknown("`?` outside a function returning " + tu.name);
     }
@@ -4086,6 +4085,16 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
       if (!qhandled) {
         var ah: AssocHit = assoc_call_req(fa.obj, fa.field, s);
         if (ah.found) {
+          // An inherent impl's associated function has no trait requirement to
+          // read its return from, so it is typed from its own declaration.
+          if (ah.ret.len() == 0) {
+            if let ast.ExprIdent(aoid) = fa.obj {
+              var asig: FuncSig = s.lookup_assoc_sig(aoid.name, fa.field);
+              if (asig.name.len() > 0) {
+                return sig_call_type(asig, fa.field, c, s);
+              }
+            }
+          }
           return assoc_hit_type(ah, fa.obj, s);
         }
       }
@@ -4413,7 +4422,13 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
   if (!s.has_sig(name)) {
     return undeclared_call_type(name, s, c.args);
   }
-  var sig: FuncSig = s.lookup_sig(name);
+  return sig_call_type(s.lookup_sig(name), name, c, s);
+}
+
+// sig_call_type types a call of the function `sig` describes: its arity and
+// argument types, then its return, with a generic one's type variables bound
+// from the arguments. `name` is what a refusal names.
+function sig_call_type(sig: FuncSig, name: string, c: ast.ExprCall, s: Scope): typeinfo.Type {
   if (c.args.len() != sig.param_types.len()) {
     return t_unknown("arity mismatch calling `" + name + "`");
   }
@@ -4966,8 +4981,9 @@ function check_ident_expr(id: ast.ExprIdent, s: Scope): typeinfo.Type {
   // (#4346 piece 2). Restricted to the no-payload set so a payload
   // builtin (`Some` / `Ok` / …) stays unknown here and is typed at
   // its constructor call in check_call_expr — resolving it bare would
-  // mistype a `Some(3)` callee as a value.
-  if (is_nopayload_builtin_variant(id.name)) {
+  // mistype a `Some(3)` callee as a value. A function of the same name
+  // shadows the builtin, as native resolves it (#10394).
+  if (is_nopayload_builtin_variant(id.name) && !s.has_sig(id.name)) {
     return t_union(mx_builtin_enum_of(id.name));
   }
   // A top-level `const` reaches the parser as a zero-parameter FuncDecl
@@ -5066,10 +5082,14 @@ function check_binary_expr(b: ast.ExprBinary, s: Scope): typeinfo.Type {
     if (is_integer(lt) && is_integer(rt)) {
       return int_result(lt, rt, b.left, b.right);
     }
+    var bovt: typeinfo.Type = s.binop_overload_ret(b.op, lt);
+    if (!is_unknown(bovt)) { return bovt; }
     return t_unknown("bitwise operands must both be integers");
   }
   if (b.op == "<<" || b.op == ">>") {
     if (is_integer(lt) && is_integer(rt)) { return lt; }
+    var sovt: typeinfo.Type = s.binop_overload_ret(b.op, lt);
+    if (!is_unknown(sovt)) { return sovt; }
     return t_unknown("shift operands must both be integers");
   }
   if (b.op == "<" || b.op == "<=" || b.op == ">" || b.op == ">=") {
@@ -5841,7 +5861,7 @@ function collect_func_sigs(funcs: parser.FuncDecl[], tn: TypeNames): FuncSig[] {
       pbnd = pbnd.append(tp_bound_for(param.type_name, fd.type_params, fd.bound_traits));
       ptn = ptn.append(parser.fn_tag_spelling(param.type_name, param.fn_ret, param.fn_param_types));
     }
-    out = out.append(FuncSig { name: fd.name, param_types: pts, param_own: typeinfo.own_flags(powns, pts), ret_type: func_ret_type(fd, tn), all_type_params: fd.all_type_params, type_params: fd.type_params, param_bound: pbnd, type_bounds: fd.bound_traits, ret_type_name: parser.fn_tag_spelling(fd.ret_type, fd.ret_fn_ret, fd.ret_fn_param_types), param_type_names: ptn, param_names: param_decl_names(fd.params), is_const: fd.is_const });
+    out = out.append(FuncSig { receiver: fd.receiver_type, name: fd.name, param_types: pts, param_own: typeinfo.own_flags(powns, pts), ret_type: func_ret_type(fd, tn), all_type_params: fd.all_type_params, type_params: fd.type_params, param_bound: pbnd, type_bounds: fd.bound_traits, ret_type_name: parser.fn_tag_spelling(fd.ret_type, fd.ret_fn_ret, fd.ret_fn_param_types), param_type_names: ptn, param_names: param_decl_names(fd.params), is_const: fd.is_const });
     i = i + 1;
   }
   return out;
@@ -11532,11 +11552,14 @@ function call_diags_binary(b: ast.ExprBinary, s: Scope, out: util.Diag[]): util.
   if (b.op == "<<" || b.op == ">>" || b.op == "&" || b.op == "|" || b.op == "^") {
     var slt: typeinfo.Type = check_expr(b.left, s);
     var srt: typeinfo.Type = check_expr(b.right, s);
-    if (!is_unknown(slt) && !is_integer(slt)) {
+    // A composite carrying the operator's method is well-formed: `a & b` is
+    // `a.bitand(b)`, as check_expr types it.
+    var sov: boolean = !is_unknown(s.binop_overload_ret(b.op, slt));
+    if (!sov && !is_unknown(slt) && !is_integer(slt)) {
       out = out.append(dg_at("E009", "operator \"" + b.op + "\" requires an integer type, got " + type_label(slt), b.line, b.col));
-    } else if (!is_unknown(srt) && !is_integer(srt)) {
+    } else if (!sov && !is_unknown(srt) && !is_integer(srt)) {
       out = out.append(dg_at("E009", "operator \"" + b.op + "\" requires an integer type, got " + type_label(srt), b.line, b.col));
-    } else if (!is_unknown(slt) && !is_unknown(srt) && !int_operands_agree(slt, srt, b.left, b.right)) {
+    } else if (!sov && !is_unknown(slt) && !is_unknown(srt) && !int_operands_agree(slt, srt, b.left, b.right)) {
       out = out.append(mixed_int_diag(b.op, slt, srt, b.line, b.col));
     }
   }
@@ -11697,8 +11720,8 @@ function call_diags_unary(u: ast.ExprUnary, s: Scope, out: util.Diag[]): util.Di
             // return shape. Naming the enum rather than a placeholder
             // matches native, which prints the operand's enum in both
             // slots (#9344).
-            if (is_primitive_type(s.ret_type)) {
-              out = out.append(dg_at("E042", "`?` on " + tu.name + " requires the surrounding function to return " + tu.name + ", got " + type_label(s.ret_type), u.line, u.col));
+            if (is_primitive_type(s.try_ret)) {
+              out = out.append(dg_at("E042", "`?` on " + tu.name + " requires the surrounding function to return " + tu.name + ", got " + type_label(s.try_ret), u.line, u.col));
             }
           } else {
             // E042 not-a-`?`-type (#9331). The conservatism above covers a
@@ -11973,6 +11996,9 @@ pub function lambda_body_scope(lm: ast.ExprLambda, s: Scope): Scope {
   var lsc: Scope = s;
   for param in lm.params {
     lsc = lsc.bind(param.name, s.resolve_param(param));
+  }
+  if (parser.is_value_block_origin(lm.origin)) {
+    return lsc.with_block_ret(lambda_ret_type(lm, s));
   }
   return lsc.with_ret_type(lambda_ret_type(lm, s));
 }
@@ -18566,8 +18592,9 @@ function check_module_pass(mod: parser.Module, fda_diags: util.Diag[], focus: st
     // Skip generic functions: unbounded generics (`id[T]`) record their
     // parameters in all_type_params rather than type_params, so both must
     // be empty. Methods are skipped too — their receiver may bind type
-    // parameters that aren't in scope for this resolver.
-    if (in_focus(focus, efn) && efn.type_params.len() == 0 && efn.all_type_params.len() == 0 && efn.receiver_name.len() == 0) {
+    // parameters that aren't in scope for this resolver — and so is an
+    // associated function whose `impl[T] Box[T]` binds them the same way.
+    if (in_focus(focus, efn) && efn.all_type_params.len() == 0 && func_scope_tparams(efn).len() == 0 && efn.receiver_name.len() == 0) {
       for param in efn.params {
         var pu: string = e064_unknown_name(param.type_name, tn, e064_extra);
         if (pu.len() > 0) {
@@ -19993,7 +20020,8 @@ function annotate_lambda_expr(lm: ast.ExprLambda, s: Scope, self_name: string): 
     pts = pts.append(s.resolve_param(param));
   }
   var rt: typeinfo.Type = lambda_ret_type(lm, s);
-  var ls: Scope = Scope { ...s, loop_depth: 0, ret_type: rt };
+  var ls: Scope = Scope { ...s, loop_depth: 0, ret_type: rt, try_ret: rt };
+  if (parser.is_value_block_origin(lm.origin)) { ls = Scope { ...s, loop_depth: 0, ret_type: rt }; }
   if (self_name.len() > 0) { ls = ls.bind(self_name, t_func_own(pts, lambda_owns(lm), rt)); }
   var i: i32 = 0;
   while (i < lm.params.len()) {
@@ -21204,7 +21232,7 @@ function gcall_sig(c: ast.ExprCall, s: Scope): FuncSig {
   if let ast.ExprIdent(cid) = c.callee {
     if (s.has_sig(cid.name)) { return s.lookup_sig(cid.name); }
   }
-  return FuncSig { name: "", param_types: [], param_own: [], ret_type: t_unknown("no callee"), all_type_params: [], type_params: [], param_bound: [], type_bounds: [], ret_type_name: "", param_type_names: [], param_names: [], is_const: false };
+  return FuncSig { receiver: "", name: "", param_types: [], param_own: [], ret_type: t_unknown("no callee"), all_type_params: [], type_params: [], param_bound: [], type_bounds: [], ret_type_name: "", param_type_names: [], param_names: [], is_const: false };
 }
 
 // gcall_tvars: the type variables a signature declares some parameter AS —
@@ -21334,7 +21362,7 @@ function lit_call(c: ast.ExprCall, s: Scope, st: LitInfer): LitInfer {
 // ahead of it are walked with no result type.
 function lit_value_block(c: ast.ExprCall, want: typeinfo.Type, s: Scope, st: LitInfer): LitInfer {
   if let ast.ExprLambda(vb) = c.callee {
-    var cur: Scope = lambda_body_scope(vb, s).with_ret_type(t_unknown("value block"));
+    var cur: Scope = lambda_body_scope(vb, s).with_block_ret(t_unknown("value block"));
     var out: LitInfer = st;
     var last: i32 = vb.body.len() - 1;
     var i: i32 = 0;
