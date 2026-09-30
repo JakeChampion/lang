@@ -3948,7 +3948,7 @@ function try_cleanup(body: ast.Stmt[]): ast.Stmt[] {
 // once per module; each schema entry then carries its answer, so a value's
 // question stops at the first record or enum it meets rather than walking a
 // declaration graph again (`ssasem.holds_view`).
-function view_types(scope: checker.Scope, impls: parser.ImplInfo[]): string[] {
+function view_types(scope: checker.Scope, impls: parser.ImplInfo[], closures: ssasem.Contract[]): string[] {
     var names: string[] = [];
     var changed: boolean = true;
     while (changed) {
@@ -3963,6 +3963,15 @@ function view_types(scope: checker.Scope, impls: parser.ImplInfo[]): string[] {
                 changed = true;
             }
         }
+        // A function type holds a view when a closure of that type captures
+        // one, however deep in a captured record: its environment is its
+        // contract's first parameter, whose type arguments are the captures.
+        for c in closures {
+            if (c.params.len() == 0 || !semtypes.is_env(c.params[0])) { continue; }
+            var key: string = func_view_key(ssasem.closure_type(c));
+            if (util.index_of_str(names, key) >= 0) { continue; }
+            if (types_hold_view(semtypes.env_captures(c.params[0]), names, impls)) { names = names.append(key); changed = true; }
+        }
         for u in scope.unions.unions {
             if (util.index_of_str(names, u.name) >= 0) { continue; }
             for v in u.variants {
@@ -3972,6 +3981,10 @@ function view_types(scope: checker.Scope, impls: parser.ImplInfo[]): string[] {
     }
     return names;
 }
+
+// A function type's entry in `view_types`' answer, which no declaration name
+// can spell.
+function func_view_key(t: typeinfo.Type): string { return "fn " + ssasem.type_key(t); }
 
 function fields_hold_view(fields: semrecords.Field[], views: string[], impls: parser.ImplInfo[]): boolean {
     for fl in fields { if (type_holds_view(fl.ty, views, impls)) { return true; } }
@@ -3984,9 +3997,9 @@ function types_hold_view(ts: typeinfo.Type[], views: string[], impls: parser.Imp
 }
 
 // A type's views through its structure, with a record or union answered by
-// name from `views`, and a dyn by the types implementing its traits (a
-// generic's by its clones, `W__string`). A function value holds none: a
-// closure that captures a view is refused ("closure capture type").
+// name from `views`, a dyn by the types implementing its traits (a generic's by
+// its clones, `W__string`), and a function type by whether a closure of that
+// type captures one (`view_types`).
 function type_holds_view(t: typeinfo.Type, views: string[], impls: parser.ImplInfo[]): boolean {
     if let typeinfo.TypeString(st) = t { return st.tag == 1; }
     if let typeinfo.TypeArray(a) = t { return type_holds_view(a.elem, views, impls); }
@@ -3995,6 +4008,7 @@ function type_holds_view(t: typeinfo.Type, views: string[], impls: parser.ImplIn
     if let typeinfo.TypeMap(m) = t { return type_holds_view(m.key, views, impls) || type_holds_view(m.value, views, impls); }
     if let typeinfo.TypeStruct(r) = t { return util.index_of_str(views, r.name) >= 0; }
     if let typeinfo.TypeUnion(u) = t { return util.index_of_str(views, u.name) >= 0 || types_hold_view(u.args, views, impls); }
+    if (ssasem.is_func(t)) { return util.index_of_str(views, func_view_key(t)) >= 0; }
     if (ssasem.is_dyn(t)) {
         for n in dyn_impl_names(t, impls) {
             for v in views { if (v == n || util.str_has_prefix(v, n + "__")) { return true; } }
@@ -5579,7 +5593,7 @@ pub function build_module(mod: parser.Module): Built {
     var handed_back: string[] = handers(mod);
     var shadows: string[] = shadowed_builtins(mod);
     var views: string[] = [];
-    if (scopes.len() > 0) { views = view_types(scopes[0], mod.impls); }
+    if (scopes.len() > 0) { views = view_types(scopes[0], mod.impls, table); }
     var decls: Produced[] = [];
     var names: string[] = [];
     var pending: Request[] = [];
