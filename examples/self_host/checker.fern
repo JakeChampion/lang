@@ -16921,9 +16921,8 @@ function lent_place(e: ast.Expr, params: string[]): boolean {
 // the synthesised callback lambda with use_infer; this walk verifies the
 // inference has a signature to read: the callee must be a bare identifier
 // with a known signature whose last parameter is a function type taking at
-// least one argument. (The native generic-unification failure arm is not
-// ported — the self-host's erased-generics model has no substitution to
-// fail; that arm stays native-only until the checker grows unification.)
+// least one argument, and a generic callee's written arguments must bind
+// the type parameters the callback's first parameter names.
 function e032_call_check(c: ast.ExprCall, lastfn: string[], cur: Scope): util.Diag[] {
   var out: util.Diag[] = [];
   if (c.args.len() == 0) {
@@ -16957,7 +16956,8 @@ function e032_call_check(c: ast.ExprCall, lastfn: string[], cur: Scope): util.Di
   // is not retained), so the last-parameter-is-a-function test reads
   // the `lastfn` side table built from the parsed decls; the native
   // "callback takes no arguments" arity arm is not decidable here and
-  // stays native-only (like the generic-unification arm).
+  // stays native-only. A generic callee whose written arguments leave the
+  // callback's parameter unbound is use_binding_type's unknown.
   var sig: FuncSig = cur.lookup_sig(callee_name);
   var have_sig: boolean = sig.name.len() > 0;
   if (have_sig) {
@@ -16973,6 +16973,8 @@ function e032_call_check(c: ast.ExprCall, lastfn: string[], cur: Scope): util.Di
     }
     if (!lf) {
       out = out.append(dg_at("E032", "use: callee \"" + callee_name + "\"'s last parameter isn't a function — add an explicit `: TYPE` annotation", c.line, c.col));
+    } else if (sig.all_type_params.len() > 0 && is_unknown(use_binding_type(c, cur))) {
+      out = out.append(dg_at("E032", "use: could not infer binding type for \"" + callee_name + "\" from its arguments — add an explicit `: TYPE` annotation", c.line, c.col));
     }
     return out;
   }
