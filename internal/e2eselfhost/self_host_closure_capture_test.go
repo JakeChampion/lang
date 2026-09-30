@@ -182,6 +182,70 @@ function main(): i32 {
 	}
 }
 
+// The array result of a call through a function value is a count the caller
+// owns (#10754), whether it is bound or only read and dropped.
+func fnValueArrResultCases() []ownParamReleaseCase {
+	return []ownParamReleaseCase{
+		{
+			// Read through `.len()` and an index, from a fresh lambda and one
+			// returning its capture.
+			name: "fn_value_result_read",
+			src: `@noinline
+function usr(f: (i32) => i32[], i: i32): i32 {
+    return f(i).len() + f(i)[1];
+}
+@noinline
+function keepref(keep: i32[], i: i32): i32 { return usr((j: i32): i32[] => keep, i); }
+function main(): i32 {
+    var keep: i32[] = [7, 8];
+    var x: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) {
+        x = x + usr((j: i32): i32[] => [j, j + 1], i) + keepref(keep, i);
+        i = i + 1;
+    }
+    if (keep[1] != 8) { return 77; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return x % 83;
+}`,
+			want: 25,
+		},
+		{
+			// Dropped as a statement, from a producer and from a function that
+			// returns its argument.
+			name: "fn_value_result_dropped",
+			src: `@noinline
+function pair(j: i32): i32[] { return [j, j * 2]; }
+@noinline
+function same(xs: i32[]): i32[] { return xs; }
+@noinline
+function usr(f: (i32) => i32[], i: i32): i32 {
+    f(i);
+    return 1;
+}
+@noinline
+function over(g: (i32[]) => i32[], xs: i32[]): i32 {
+    g(xs);
+    return g(xs).len();
+}
+function main(): i32 {
+    var keep: i32[] = [7, 8];
+    var x: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) {
+        x = x + usr(pair, i) + over(same, keep);
+        i = i + 1;
+    }
+    if (keep[1] != 8) { return 77; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return x % 83;
+}`,
+			want: 51,
+		},
+	}
+}
+
 func TestSelfHostClosureCaptureX86_64(t *testing.T) {
-	runBalancedRows(t, "clocap", append(closureArgBoxCases(), closureCaptureCreditCases()...))
+	cases := append(closureArgBoxCases(), closureCaptureCreditCases()...)
+	runBalancedRows(t, "clocap", append(cases, fnValueArrResultCases()...))
 }

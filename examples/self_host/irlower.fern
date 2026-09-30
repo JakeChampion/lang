@@ -16169,7 +16169,10 @@ function owned_fresh_call_callee(e: ast.Expr, kind: string, s: LowerState): stri
         ast.ExprCall(c) => {
             match (c.callee) {
                 ast.ExprIdent(cid) => {
-                    if (s.slot_of(cid.name) >= 0) { return ""; }
+                    if (s.slot_of(cid.name) >= 0) {
+                        if (kind == "ARROWN:" && fn_value_arr_call(e, s)) { return cid.name; }
+                        return "";
+                    }
                     if (util.index_of_str(s.frame.sigs.return_fresh_struct_ret_fns, kind + cid.name) < 0) { return ""; }
                     return cid.name;
                 },
@@ -16191,6 +16194,15 @@ function owned_fresh_call_callee(e: ast.Expr, kind: string, s: LowerState): stri
         _ => { return ""; }
     }
     return "";
+}
+
+// fn_value_arr_call: `e` calls an array-returning function VALUE held in a
+// slot. Such a call hands this frame one counted reference, the contract a
+// `var g = f(x)` binding already relies on (the fn-parameter rows of
+// arr_ret_fns), so its result is "ARROWN:" in every sense but the registry.
+function fn_value_arr_call(e: ast.Expr, s: LowerState): boolean {
+    var cn: string = direct_call_callee_name(e);
+    return cn.len() > 0 && s.slot_of(cn) >= 0 && s.is_arr_ret_fn(cn);
 }
 
 // emit_counted_result_release: release the temp box parked in `boxslot`, the
@@ -22361,7 +22373,8 @@ function discard_free_call(own se: LowerState, s: LowerState, es: ast.StmtExpr, 
         se = emit_enum_variant_drops_gated(se, deslot, dety, [], true);
         se = se.emit(ir.op_load_local(deslot));   // the shared tail drop consumes this
     } else if (util.index_of_str(s.frame.sigs.return_fresh_struct_ret_fns, "ARR:" + dcid.name) >= 0
-            || util.index_of_str(s.frame.sigs.return_fresh_struct_ret_fns, "ARROWN:" + dcid.name) >= 0) {
+            || util.index_of_str(s.frame.sigs.return_fresh_struct_ret_fns, "ARROWN:" + dcid.name) >= 0
+            || fn_value_arr_call(es.value, s)) {
         // A discarded call to an ARRAY-returning free function
         // that leaves this frame owning one reference: an "ARR:"
         // producer (every return a direct scalar-element array
