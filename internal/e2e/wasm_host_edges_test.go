@@ -1,7 +1,12 @@
 package e2e
 
 import (
+	"bytes"
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -76,5 +81,41 @@ function main(): i32 {
 	// directory to look in nothing is.
 	if !strings.Contains(stdout, "remove_dir_all ok\n") {
 		t.Errorf("remove_dir_all without a preopen: want ok, stdout:\n%s", stdout)
+	}
+}
+
+// A write that fails is an error on the preview 1 command module too. Its
+// write_file dropped fd_write's errno, so a full device answered Ok over a
+// short file where the component and native answer Err. Preopening /dev hands
+// the guest /dev/full, whose every write fails with ENOSPC (#10813).
+func TestWASMCommandModuleWriteFileReportsFullDevice(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("/dev/full is a Linux device")
+	}
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	fern := buildFernCLI(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "main.fern")
+	if err := os.WriteFile(src, []byte(`function main(): i32 {
+    match (write_file("full", "hello")) {
+        Ok(_) => { print("ok"); return 1; },
+        Err(e) => { print("err"); return 0; }
+    }
+    return 2;
+}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mod := filepath.Join(dir, "main.wasm")
+	if out, err := exec.Command(fern, "-target", "wasm32-wasi", "-emit", "command-module", "-o", mod, src).CombinedOutput(); err != nil {
+		t.Fatalf("compile: %v\n%s", err, out)
+	}
+	cmd := exec.Command("wasmtime", "run", "--dir", "/dev::/", mod)
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+	_ = cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code != 0 || stdout.String() != "err\n" {
+		t.Fatalf("answered %q exit %d, want %q exit 0", stdout.String(), code, "err\n")
 	}
 }

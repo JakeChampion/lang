@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -374,6 +375,51 @@ func TestBuildWriteFile(t *testing.T) {
 	}
 	if string(written) != content {
 		t.Errorf("write_file produced %q, want %q", written, content)
+	}
+}
+
+// TestBuildWriteFileReportsFullDevice — a failed fd_write is an Err, not
+// an Ok over a short file. /dev/full, preopened as the guest's root, fails
+// every write with ENOSPC (#10813).
+func TestBuildWriteFileReportsFullDevice(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("/dev/full is a Linux device")
+	}
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	src := `function main(): i32 {
+    match (write_file("full", "hello")) {
+        Err(_) => { return 0; },
+        Ok(_) => { return 1; }
+    }
+    return -1;
+}`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	bin, err := Build(prog, info)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	p := filepath.Join(t.TempDir(), "prog.wasm")
+	if err := os.WriteFile(p, bin, 0o644); err != nil {
+		t.Fatalf("write wasm: %v", err)
+	}
+	cmd := exec.Command("wasmtime", "run", "--dir", "/dev::/", "--invoke", "main", p)
+	var so, se bytes.Buffer
+	cmd.Stdout = &so
+	cmd.Stderr = &se
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("wasmtime: %v\nstderr:%s\nstdout:%s", err, se.String(), so.String())
+	}
+	if got := strings.TrimSpace(so.String()); got != "0" {
+		t.Fatalf("write_file to /dev/full returned %q, want 0 (Err)\nstderr: %s", got, se.String())
 	}
 }
 
