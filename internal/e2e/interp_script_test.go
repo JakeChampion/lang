@@ -1806,7 +1806,7 @@ function main(): i32 {
     var s: Stream = stream.stream_from_string("hello world");
     print(s.len().to_string());
     var (text, s2) = s.read_all_string();
-    print(text);
+    match (text) { Some(value) => { print(value); }, None => { return 1; }, }
     if (s2.is_empty()) { print("done"); }
     return 0;
 }`,
