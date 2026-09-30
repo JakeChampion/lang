@@ -59,6 +59,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -100,8 +101,16 @@ type ssaTally struct {
 
 // runBounded starts cmd and waits at most timeout for it. A child that
 // outlives the timeout is killed and reported as timedOut with no error;
-// otherwise the Wait error comes back as it would from cmd.Run.
+// otherwise the Wait error comes back as it would from cmd.Run. The child
+// runs in its own process group and the timeout kills the group, so it
+// reaches what the child forked (a handler program's serve workers) as
+// well: they hold its output pipes, and Wait returns only once every
+// holder is gone.
 func runBounded(cmd *exec.Cmd, timeout time.Duration) (timedOut bool, err error) {
+	if cmd.SysProcAttr == nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{}
+	}
+	cmd.SysProcAttr.Setpgid = true
 	if err := cmd.Start(); err != nil {
 		return false, err
 	}
@@ -111,7 +120,7 @@ func runBounded(cmd *exec.Cmd, timeout time.Duration) (timedOut bool, err error)
 	case err := <-done:
 		return false, err
 	case <-time.After(timeout):
-		_ = cmd.Process.Kill()
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 		<-done
 		return true, nil
 	}
