@@ -1,7 +1,7 @@
 // examples/self_host/asm_run.fern — bootstrap-demo driver. Reads
-// Fern source from stdin, wires it through lexer + parser +
-// asm_ir.emit_module_or_error, and prints the resulting AT&T x86_64
-// assembly to stdout. The companion Go-side test
+// Fern source from stdin, wires it through lexer + parser + the typed
+// lowering (semlower.driven) + asm_ir.emit_module_or_error_sub, and prints
+// the resulting AT&T x86_64 assembly to stdout. The companion Go-side test
 // (self_host_asm_run_test.go) pipes a source program in, captures
 // the asm, assembles it with gcc -nostdlib, and runs the
 // resulting binary — asserting the exit code matches the
@@ -27,12 +27,14 @@ import "./parser";
 import "./rundriver";
 import "./asm_ir";
 import "./asmcore";
+import "./semlower";
 
 function main(): i32 {
     var mod: parser.Module = rundriver.parse_stdin("asm_run");
     if (asmcore.refuse_parse_unknowns([mod])) { return 1; }
     if (asmcore.refuse_decl_names([mod])) { return 1; }
-    var emitted: string = asm_ir.emit_module_or_error(parser.module_with_builtins(mod));
+    var d: semlower.Driven = semlower.driven(mod, "x86-64-linux");
+    var emitted: string = asm_ir.emit_module_or_error_sub(d.full, d.sub);
     print(emitted);
     return 0;
 }

@@ -39,6 +39,7 @@ import "./treeshake";
 import "./ircore";
 import "./constfold";
 import "./platforms";
+import "./semlower";
 
 // ---- callee resolution (#6639 slice 4) ---------------------------------
 
@@ -50,27 +51,59 @@ import "./platforms";
 // over the conformance corpus found ~200 of 255 distinct unresolved names were
 // stdlib methods reached through an import. The declared set is only complete
 // once the bundle is.
-function verify_provided_module(merged: parser.Module): i32 {
-    var vmod: parser.Module = ircore.lift_lambdas(parser.module_with_builtins(merged));
+function verify_provided_module(merged: parser.Module, target: string): i32 {
+    var d: semlower.Driven = semlower.driven(merged, target);
+    var names: string[] = [];
+    var bodies: ir.Op[][] = [];
+    var declared: string[] = [];
+    if (d.sub.on) {
+        // The bodies the emit reads: the typed lowering's, over the module
+        // emit_module_ir_gated_sub gates, and the instances and drop helpers
+        // it defines beside the declarations.
+        var im: parser.Module = parser.infer_ret_types_module(ircore.script_normalized(ircore.sub_lifted(d.sub, d.full)));
+        var stab: irlower.StructTab = irlower.struct_tab(im.structs);
+        var sg: irlower.FnSigs = irlower.fn_sigs_with_dyn(ircore.sub_base(d.sub, im.funcs, stab), im.trait_reqs);
+        var i: i32 = 0;
+        while (i < im.funcs.len()) {
+            declared = declared.append(irlower.grow_fn_key(im.funcs[i]));
+            var r: irlower.LowerResult = ircore.produced_or_lowered(d.sub, i, im.funcs[i], stab, sg, false);
+            if (r.ok && !r.superseded) {
+                names = names.append(irlower.grow_fn_key(im.funcs[i]));
+                bodies = bodies.append(r.ops);
+            }
+            i = i + 1;
+        }
+        for x in d.sub.extra {
+            declared = declared.append(x.name);
+            if (x.ok) {
+                names = names.append(x.name);
+                bodies = bodies.append(x.ops);
+            }
+        }
+    } else {
+        var vmod: parser.Module = ircore.lift_lambdas(d.full);
+        for fd in vmod.funcs { declared = declared.append(irlower.grow_fn_key(fd)); }
+        for f in irlower.lower_module(vmod.funcs, irlower.struct_tab(vmod.structs)) {
+            if (f.ok) {
+                names = names.append(f.name);
+                bodies = bodies.append(f.ops);
+            }
+        }
+    }
     // Every function the WHOLE program declares, keyed the way a call_direct
     // names it. `@import` externs are ordinary FuncDecls, so the host-supplied
     // half needs no separate arm.
-    var ix: irverify.NameIndex = irlower.fn_sig_index(vmod.funcs);
-    var fns: ir.LoweredFn[] = irlower.lower_module(vmod.funcs, irlower.struct_tab(vmod.structs));
+    var ix: irverify.NameIndex = irverify.name_index(declared);
     var probs: irverify.Problem[] = [];
     var calls: i32 = 0;
-    var checked: i32 = 0;
-    var i: i32 = 0;
-    while (i < fns.len()) {
-        if (fns[i].ok) {
-            checked = checked + 1;
-            var r: irverifyprovided.ProvidedResult = irverifyprovided.verify_provided_fn(fns[i].name, fns[i].ops, ix);
-            calls = calls + r.calls;
-            var k: i32 = 0;
-            while (k < r.problems.len()) { probs = probs.append(r.problems[k]); k = k + 1; }
-        }
-        i = i + 1;
+    var k: i32 = 0;
+    while (k < names.len()) {
+        var r: irverifyprovided.ProvidedResult = irverifyprovided.verify_provided_fn(names[k], bodies[k], ix);
+        calls = calls + r.calls;
+        for p in r.problems { probs = probs.append(p); }
+        k = k + 1;
     }
+    var checked: i32 = names.len();
     var tally: string = "checked " + util.i32_to_string(checked) + " functions, "
         + util.i32_to_string(calls) + " direct calls";
     if (probs.len() == 0) {
@@ -1152,7 +1185,7 @@ function main(): i32 {
             // the modules it brings in are folded here rather than there.
             var md: platforms.Descriptor = platforms.for_target(target);
             merged = constfold.fold_target_name(merged, md.environment, md.isa);
-            if (vprovided) { return verify_provided_module(merged); }
+            if (vprovided) { return verify_provided_module(merged, target); }
             if (probe) {
                 // Probe the module codegen actually routes on: run the same
                 // module_with_builtins pipeline the emit path below uses
@@ -1180,8 +1213,7 @@ function main(): i32 {
                 // the first attempt (#5937) emitted a dangling __fn_i32__gcd and
                 // was reverted, which is why that test asserts through the LINK.
                 // The batched spawned path stays x86-only for now.
-                var amwb: parser.Module = parser.module_with_builtins(merged);
-                var anfuncs: i32 = ircore.lift_lambdas(amwb).funcs.len();
+                var anfuncs: i32 = ircore.lift_lambdas(parser.module_with_builtins(merged)).funcs.len();
                 if (anfuncs > 512 || force_spawned) {
                     if (anfuncs < single_process_max && !force_spawned) {
                         var ashaken: parser.Module = treeshake.treeshake(checker.annotate_module(merged));
@@ -1209,7 +1241,8 @@ function main(): i32 {
                     }
                 }
                 // IR-or-error (#3457 slice 5) — see asm_load_run's arm64 leg.
-                write(asm_arm64_ir.emit_module_or_error(amwb, false));
+                var d64: semlower.Driven = semlower.driven(merged, target);
+                write(asm_arm64_ir.emit_module_or_error_sub(d64.full, false, d64.sub));
                 return 0;
             }
             // OVER the merged 512-function IR budget: route per-module (each
@@ -1240,8 +1273,7 @@ function main(): i32 {
             // WORKLOAD, not the emitted function count; it stays the switch-over
             // point only because it is the one cheap signal available before any
             // emit happens.
-            var mwb: parser.Module = parser.module_with_builtins(merged);
-            var nfuncs: i32 = ircore.lift_lambdas(mwb).funcs.len();
+            var nfuncs: i32 = ircore.lift_lambdas(parser.module_with_builtins(merged)).funcs.len();
             if (nfuncs > 512 || force_spawned) {
                 if (nfuncs < single_process_max && !force_spawned) {
                     var shaken: parser.Module = treeshake.treeshake(checker.annotate_module(merged));
@@ -1264,7 +1296,8 @@ function main(): i32 {
             // whole-compiler merged bundle lands here, which is why the env-gated
             // merged fixpoints retire with this change — their own header says they
             // "go with" asm.fern.
-            write(asm_ir.emit_module_or_error(mwb));
+            var d: semlower.Driven = semlower.driven(merged, target);
+            write(asm_ir.emit_module_or_error_sub(d.full, d.sub));
             return 0;
         },
         Err(e) => {

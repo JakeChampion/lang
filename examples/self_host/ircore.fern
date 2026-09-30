@@ -1301,7 +1301,7 @@ pub function sub_lifted(sub: Sub, annotated: parser.Module): parser.Module {
 
 // The body the substitution produced for declaration `i`, else the AST
 // lowering's.
-function produced_or_lowered(sub: Sub, i: i32, fd: parser.FuncDecl, structs: irlower.StructTab, sg: irlower.FnSigs, for_wasm: boolean): irlower.LowerResult {
+pub function produced_or_lowered(sub: Sub, i: i32, fd: parser.FuncDecl, structs: irlower.StructTab, sg: irlower.FnSigs, for_wasm: boolean): irlower.LowerResult {
     if (sub.on && i < sub.bodies.len() && sub.bodies[i].ok) { return sub.bodies[i]; }
     return irlower.lower_func(fd, structs, sg, for_wasm);
 }
