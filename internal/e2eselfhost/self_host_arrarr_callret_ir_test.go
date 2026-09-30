@@ -254,9 +254,14 @@ func TestSelfHostArrArrReturnProofX86_64(t *testing.T) {
 	copySelfHostDriver(t, dir, "asm_ir_run.fern")
 	const probe = `import "./rundriver";
 import "./irlower";
+import "./lexical";
+import "./parser";
 function main(): i32 {
     var m = rundriver.parse_stdin("arrarr-proof");
-    var rows = irlower.opt_fresh_ret_fns_of(m.funcs, irlower.struct_tab(m.structs), []);
+    // Resolved as the lowering sees them: every binding renamed.
+    var funcs: parser.FuncDecl[] = [];
+    for f in m.funcs { funcs = funcs.append(lexical.resolve_func(f).func); }
+    var rows = irlower.opt_fresh_ret_fns_of(funcs, irlower.struct_tab(m.structs), []);
     for row in rows { print(row); }
     return 0;
 }`
@@ -283,6 +288,7 @@ function main(): i32 {
 		{"handback-self", `function build(own g: i32[][]): i32[][] { g = g.append([1]); return g; }`, []string{"AACH:build", "AACH:build|0"}, nil},
 		{"handback-unfresh-local", `function build(own g: string[][], q: string[][]): string[][] { var t: string[][] = q; return t; }`, nil, []string{"AAC:build|s", "AAC:build|p", "AACH:build"}},
 		{"parameter-return", `function build(g: string[][]): string[][] { return g; }`, nil, []string{"AAC:build|s", "AAC:build|p", "AACH:build"}},
+		{"arrarr-not-a-row-producer", `function build(q: i32[][], i: i32): i32[][] { return [q[0], [i]]; }`, nil, []string{"AAC:build|s", "AAC:build|p", "ARC:build|s", "ARC:build|p"}},
 		{"local-escapes", `function build(q: string[][][]): string[][] { var t: string[][] = [["a" + "b"]]; q = q.append(t); return t; }`, nil, []string{"AAC:build|s", "AAC:build|p"}},
 	}
 	for _, tc := range cases {
