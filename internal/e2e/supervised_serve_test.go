@@ -132,6 +132,16 @@ func TestSupervisedServeSurvivesHandlerTrap(t *testing.T) {
 	e2eharness.CheckSurvivesHandlerTrap(t, fmt.Sprintf("127.0.0.1:%d", port), stderrPath)
 }
 
+// Per-worker SO_REUSEPORT listeners (#9854): two workers bind their own,
+// a trap takes one worker and its listener, and the replacement binds
+// anew, so /ok answers again.
+func TestSupervisedServeReusePortWorkers(t *testing.T) {
+	port := freeLoopbackPort(t)
+	bin, runner := buildSupervisedServeBin(t, e2eharness.ReusePortWorkersServerSource(port))
+	_, stderrPath := startSupervisedServer(t, bin, runner)
+	e2eharness.CheckSurvivesHandlerTrap(t, fmt.Sprintf("127.0.0.1:%d", port), stderrPath)
+}
+
 // A crash-looping worker makes the supervisor give up with the child's
 // code instead of reforking forever. Slow by design: the doubling
 // backoff sleeps sum to about 11 s.
@@ -143,6 +153,37 @@ func TestSupervisedServeCrashLoopGivesUp(t *testing.T) {
 	bin, runner := buildSupervisedServeBin(t, e2eharness.TrappingServerSource(port))
 	cmd, stderrPath := startSupervisedServer(t, bin, runner)
 	e2eharness.CheckCrashLoopGivesUp(t, cmd, fmt.Sprintf("127.0.0.1:%d", port), stderrPath)
+}
+
+// Two workers over one listener, one crash-looping while the other is
+// held in a handler: the give-up stops the worker the count did not
+// come from, so nothing holds the port after the supervisor exits.
+func TestSupervisedServeCrashLoopStopsSurvivor(t *testing.T) {
+	if testing.Short() {
+		t.Skip("crash-loop giveup waits out ~11s of supervisor backoff")
+	}
+	port := freeLoopbackPort(t)
+	bin, runner := buildSupervisedServeBin(t, e2eharness.StalledSurvivorServerSource(port))
+	cmd, stderrPath := startSupervisedServer(t, bin, runner)
+	e2eharness.CheckCrashLoopStopsSurvivor(t, cmd, fmt.Sprintf("127.0.0.1:%d", port), stderrPath)
+}
+
+// A worker's death while serving is not the exit code of the clean
+// shutdown that follows it.
+func TestSupervisedServeTrapThenShutdownExitsClean(t *testing.T) {
+	port := freeLoopbackPort(t)
+	bin, runner := buildSupervisedServeBin(t, e2eharness.TrappingServerSource(port))
+	cmd, stderrPath := startSupervisedServer(t, bin, runner)
+	e2eharness.CheckTrapThenShutdownExitsClean(t, cmd, fmt.Sprintf("127.0.0.1:%d", port), stderrPath)
+}
+
+// `max_connections: 0` serves as 1 rather than never reading the
+// listener.
+func TestServeMaxConnectionsFloor(t *testing.T) {
+	port := freeLoopbackPort(t)
+	bin, runner := buildSupervisedServeBin(t, e2eharness.MaxConnectionsFloorServerSource(port))
+	startSupervisedServer(t, bin, runner)
+	e2eharness.CheckMaxConnectionsFloor(t, fmt.Sprintf("127.0.0.1:%d", port))
 }
 
 // Design-doc "interp parity": the interpreter cannot bare-fork

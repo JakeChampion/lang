@@ -70,6 +70,72 @@ func TestMatchBindingsAreProjectionsOfTheParam(t *testing.T) {
 	}
 }
 
+// A projection of any depth handed to a counted position, an operand of an
+// operator, and the scrutinee of a match all read the parameter without
+// retaining it: `r.headers.names` is appended into a fresh field,
+// `h.names[i] == key` compares an element, and `match (c.tails[at])` binds
+// the element's payload under the rules the parameter is held to.
+// Both refused the parameter before, and the refusal cascaded to every caller
+// handing such a function a fresh argument, which was then never released:
+// five blocks per response through `with_header` on the serve loop's own
+// refusal path.
+const nestedProjectionCreditSrc = `
+struct H { names: string[], values: string[] }
+struct R { status: i32, headers: H }
+
+function retitle(r: R, n: string): R {
+    return R { ...r, headers: H { names: r.headers.names.append(n), values: r.headers.values.append(n) } };
+}
+function has(h: H, key: string): boolean {
+    var i: i32 = 0;
+    while (i < h.names.len()) {
+        if (h.names[i] == key) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+function label(r: R, sep: string): string {
+    return r.headers.names[0] + sep;
+}
+enum Tail { NoTail, Some_(string) }
+struct Conns { fds: i32[], tails: Tail[] }
+function tail_len(c: Conns, at: i32): i32 {
+    match (c.tails[at]) {
+        Some_(s) => { return s.len(); },
+        _ => { return 0; }
+    }
+    return 0;
+}
+function main(): i32 {
+    var t: string[] = [];
+    var r: R = R { status: 1, headers: H { names: t, values: [] } };
+    if (has(retitle(r, "x").headers, "x")) { return label(r, ":").len(); }
+    return tail_len(Conns { fds: [1], tails: [Some_("t")] }, 0);
+}`
+
+func TestNestedProjectionsAndOperandsAreNonRetainingReads(t *testing.T) {
+	cases := map[string][]bool{
+		"retitle": {true, true},
+		"has":     {true, true},
+		"label":   {true, true},
+		// The match is over an element of a field; its binding is confined
+		// to a scalar read.
+		"tail_len": {true, true},
+	}
+	for fn, want := range cases {
+		got := paramCountedFor(t, nestedProjectionCreditSrc, fn)
+		if len(got) != len(want) {
+			t.Errorf("paramCountedRetain[%s] = %v, want %v", fn, got, want)
+			continue
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Errorf("paramCountedRetain[%s][%d] = %v, want %v (%v)", fn, i, got[i], want[i], got)
+			}
+		}
+	}
+}
+
 // The op-level half of the closure-argument reclaim: a lambda in argument
 // position is stashed and released through the pair's drop-fn pointer once
 // the call has returned, so the pair and env it allocated per call are freed.

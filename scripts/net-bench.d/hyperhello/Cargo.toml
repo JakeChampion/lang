@@ -1,0 +1,19 @@
+# The hyper hello server scripts/net-bench measures beside the Fern and Go
+# ones: hyper 1's http1 server on a multi-threaded tokio runtime, one task
+# per connection, the same static body on PORT. Cargo.lock pins every
+# crate; the bench builds with --locked.
+[package]
+name = "hyperhello"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+hyper = { version = "1", features = ["http1", "server"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
+tokio = { version = "1", features = ["rt-multi-thread", "net", "macros"] }
+
+[profile.release]
+codegen-units = 1
+lto = true

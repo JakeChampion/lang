@@ -32,7 +32,7 @@ import "std/time";
 import "std/tcp";
 
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
-    return http.http_response_ok(__heap_bump_bytes().to_string());
+    return http.ok(__heap_bump_bytes().to_string());
 }
 
 function main(): i32 {

@@ -36,16 +36,16 @@ function main(): i32 { var a = S { name: "hi", n: 1 }; var b = S { name: "hi", n
 @derive(json.Json)
 struct P { x: i32, name: string }
 function main(): i32 { var a = P { x: 7, name: "hi" }; return a.to_json().len(); }`},
-	// `@derive(json.Json)` also synthesises the deserialise companion
-	// `from_json(s): Result[Self, string]` (#2695 / #4416) — the self-host
-	// twin of native's synthFromJson. Each case exercises a distinct way the
-	// associated call `User.from_json(...)` is consumed, all of which must
-	// route IR (the associated-call Option/Result return-type recovery in
-	// irlower's four scrutinee/binding sites) and match the interpreter.
-	// A direct `match (User.from_json(...))` over valid / missing-field /
-	// invalid-JSON inputs → 9 + 7 + 5 = 21.
+	// `@derive(json.FromJson)` synthesises the decoder `from_json_value(v)`
+	// and its text-taking companion `from_json(s): Result[Self, string]` —
+	// the self-host twin of native's synthFromJsonValue. Each case exercises
+	// a distinct way the associated call `User.from_json(...)` is consumed,
+	// all of which must route IR (the associated-call Option/Result
+	// return-type recovery in irlower's four scrutinee/binding sites) and
+	// match the interpreter. A direct `match (User.from_json(...))` over
+	// valid / missing-field / invalid-JSON inputs → 9 + 7 + 5 = 21.
 	{"json-from-struct", `import "std/json";
-@derive(json.Json) struct User { id: i32, name: string }
+@derive(json.FromJson) struct User { id: i32, name: string }
 function main(): i32 {
     var sum: i32 = 0;
     match (User.from_json("{\"id\":9,\"name\":\"x\"}")) { Ok(u) => { sum = sum + u.id; }, Err(e) => { sum = sum + 100; } }
@@ -53,10 +53,10 @@ function main(): i32 {
     match (User.from_json("nope")) { Ok(u3) => { sum = sum + 100; }, Err(e) => { sum = sum + 5; } }
     return sum;
 }`},
-	// A boolean field extracts through json_get_bool on the from_json (parse)
-	// side → 14.
+	// A boolean field decodes through std/json's `impl FromJson for
+	// boolean` → 14.
 	{"json-from-bool", `import "std/json";
-@derive(json.Json) struct Flag { id: i32, on: boolean }
+@derive(json.FromJson) struct Flag { id: i32, on: boolean }
 function main(): i32 {
     match (Flag.from_json("{\"id\":4,\"on\":true}")) { Ok(f) => { if (f.on) { return f.id + 10; } return f.id; }, Err(e) => { return 1; } }
 }`},
@@ -66,7 +66,7 @@ function main(): i32 {
 	// → 5 + 10 (on) + 100 (!off) = 115. Fails without the boolean-dispatch fix
 	// (to_json would emit `"on":1`, which json_get_bool then rejects → Err).
 	{"json-roundtrip-bool", `import "std/json";
-@derive(json.Json) struct Flag { id: i32, on: boolean, off: boolean }
+@derive(json.Json, json.FromJson) struct Flag { id: i32, on: boolean, off: boolean }
 function main(): i32 {
     var f = Flag { id: 5, on: true, off: false };
     match (Flag.from_json(f.to_json())) { Ok(g) => { var r = g.id; if (g.on) { r = r + 10; } if (!g.off) { r = r + 100; } return r; }, Err(e) => { return 1; } }
@@ -74,7 +74,7 @@ function main(): i32 {
 	// The `var r = User.from_json(...)` binding form AND `?`-propagation of an
 	// associated-call Result through a helper → 8 + 3 = 11.
 	{"json-from-var-try", `import "std/json";
-@derive(json.Json) struct User { id: i32, name: string }
+@derive(json.FromJson) struct User { id: i32, name: string }
 function pick(s: string): Result[i32, string] { var u: User = User.from_json(s)?; return Ok(u.id); }
 function main(): i32 {
     var r = User.from_json("{\"id\":8,\"name\":\"y\"}");
@@ -85,7 +85,7 @@ function main(): i32 {
 }`},
 	// A full serialise→deserialise round-trip over i32 / string fields → 7.
 	{"json-roundtrip", `import "std/json";
-@derive(json.Json) struct P { x: i32, name: string }
+@derive(json.Json, json.FromJson) struct P { x: i32, name: string }
 function main(): i32 {
     var p = P { x: 7, name: "hi" };
     match (P.from_json(p.to_json())) { Ok(q) => { return q.x; }, Err(e) => { return 1; } }

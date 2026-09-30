@@ -175,9 +175,9 @@ The Fern program declares:
 ```
 function handle(req: HttpRequest): HttpResponse {
     if (req.path == "/hello") {
-        return HttpResponse { status: 200, body: "world" };
+        return HttpResponse { status: 200, body: BodyText("world") };
     }
-    return HttpResponse { status: 404, body: "not found" };
+    return HttpResponse { status: 404, body: BodyText("not found") };
 }
 ```
 

@@ -990,14 +990,14 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
     if (req.path == "/hello") {
         // Functional header update: with_header returns a new
         // response with the header set (immutable data structures).
-        return http.http_response_ok("hello, world")
+        return http.ok("hello, world")
             .with_header("x-served-by", "fern");
     }
     if (req.method == "POST") {
         // Echo the request body back.
-        return http.http_response_ok(req.body_string());
+        return http.ok(req.body_string());
     }
-    return http.http_response_text(404, "not found");
+    return http.text(404, "not found");
 }`,
 };
 

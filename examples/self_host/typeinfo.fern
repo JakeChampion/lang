@@ -20,6 +20,19 @@ pub struct TypeI32 { is_char: boolean, width: i32, unsigned: boolean }
 // rather than named here (native's ir.WidthPtr).
 pub function width_ptr(): i32 { return 0 - 1; }
 
+// is_primitive_type_name reports whether `t` is a PRIMITIVE type spelling —
+// one that can never name a struct or an enum, so as a path head
+// (`i32.f(...)`) it names an impl's associated function and never a value.
+// The same set checker.e060_is_primitive_name gates `as?` on, plus `str` (the
+// borrowed-string view: the parser erases a BARE `str` to "string", but the
+// spelling survives verbatim inside a generic argument) and `void`.
+pub function is_primitive_type_name(t: string): boolean {
+    return t == "i32" || t == "i64" || t == "u8" || t == "u32" || t == "u64" || t == "usize"
+        || t == "f32" || t == "f64" || t == "float"
+        || t == "boolean" || t == "bool"
+        || t == "string" || t == "str" || t == "char" || t == "void";
+}
+
 pub struct TypeBool { tag: i32 }
 
 pub struct TypeString { tag: i32 }

@@ -465,20 +465,12 @@ func runSSADiffBinary(runner, bin string) ssaDiffRun {
 	so, se := &cappedBuffer{limit: ssaDiffMaxCapture}, &cappedBuffer{limit: ssaDiffMaxCapture}
 	cmd.Stdin = strings.NewReader("")
 	cmd.Stdout, cmd.Stderr = so, se
-	if err := cmd.Start(); err != nil {
+	started := time.Now()
+	timedOut, err := runBounded(cmd, ssaDiffRunTimeout)
+	if cmd.ProcessState == nil && err != nil {
 		return ssaDiffRun{stderr: err.Error(), exit: -1, state: err.Error()}
 	}
-	started := time.Now()
-	done := make(chan error, 1)
-	go func() { done <- cmd.Wait() }()
-	r := ssaDiffRun{exit: -1}
-	select {
-	case <-done:
-	case <-time.After(ssaDiffRunTimeout):
-		r.timedOut = true
-		_ = cmd.Process.Kill()
-		<-done
-	}
+	r := ssaDiffRun{exit: -1, timedOut: timedOut}
 	r.elapsed = time.Since(started)
 	r.stdout, r.stderr = so.String(), se.String()
 	if ps := cmd.ProcessState; ps != nil {

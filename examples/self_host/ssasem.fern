@@ -1613,6 +1613,8 @@ pub function cast_ascribes(to: typeinfo.Type): boolean {
 
 pub function cast_admits(from: typeinfo.Type, to: typeinfo.Type): boolean {
     if (reinterprets(from, to)) { return true; }
+    // A stream handle's descriptor read (`r.fd`): the handle IS the i32.
+    if (semtypes.is_handle(from) && is_i32(to)) { return true; }
     if (is_usize(from)) { return converts_as_integer(to); }
     if (is_usize(to)) { return converts_as_integer(from); }
     if (converts_as_integer(from) && converts_as_integer(to)) { return true; }

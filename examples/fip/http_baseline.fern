@@ -23,13 +23,13 @@ import "std/string";
 // the id, anything else is a 404; a served response carries the request id
 // back.
 function route(req: HttpRequest): HttpResponse {
-    var resp: HttpResponse = http.http_response_text(404, "not found");
+    var resp: HttpResponse = http.text(404, "not found");
     if (req.path == "/") {
-        resp = http.http_response_ok("ok");
+        resp = http.ok("ok");
     } else if (req.path == "/echo" && req.method == "POST") {
-        resp = http.http_response_ok(req.body_string());
+        resp = http.ok(req.body_string());
     } else if (req.path.starts_with("/users/")) {
-        resp = http.http_response_ok(slice_unchecked(req.path, 7, req.path.len()).to_owned());
+        resp = http.ok(slice_unchecked(req.path, 7, req.path.len()).to_owned());
     }
     match (req.headers.get("x-request-id")) {
         Some(v) => { resp = HttpResponse { ...resp, headers: resp.headers.set("X-Request-Id", v) }; },
@@ -43,7 +43,7 @@ function route(req: HttpRequest): HttpResponse {
 function serve(wire: u8[], wire_len: i32): string {
     match (http.http_parse_request(string_from_bytes_unchecked(wire.take(wire_len)))) {
         Some(req) => { return http.http_serialize_response(route(req)); },
-        None => { return http.http_serialize_response(http.http_response_bad_request("bad request")); }
+        None => { return http.http_serialize_response(http.bad_request("bad request")); }
     }
 }
 
