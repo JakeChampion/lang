@@ -3026,6 +3026,20 @@ func (b *builder) computeFreeEligible() map[string]bool {
 		}
 		escape(e)
 	}
+	// A conditional that is itself an argument of a user-function call is
+	// lent to the call and dead once it returns, exactly as a bare argument
+	// is, so an array-view arm borrows its source no longer than the call.
+	lentConditional := b.lentConditionalArgs()
+	escapeArmYield := func(cond ast.Expr, e ast.Expr) {
+		if lentConditional[cond] {
+			if sl, ok := blockValue(e).(*ast.SliceExpr); ok && !sl.IsString {
+				if _, isView := b.exprType(sl).(ast.SliceType); isView {
+					return
+				}
+			}
+		}
+		escapeCountedYield(e)
+	}
 	// escapeMapEntry is the map-store variant (#4399 sink 5): a key or
 	// value the store retains (mapSetKeyCounted / mapSetValueCounted —
 	// the predicate emitMapSetRetains itself runs) is co-owned by the
@@ -3099,8 +3113,8 @@ func (b *builder) computeFreeEligible() map[string]bool {
 			// taint: a slice yield is an uncounted view into its source,
 			// and a scalar / untracked projection falls through escape's
 			// pointer gate as before.
-			escapeCountedYield(s.Then)
-			escapeCountedYield(s.Else)
+			escapeArmYield(s, s.Then)
+			escapeArmYield(s, s.Else)
 		case *ast.Destructure:
 			// Destructure bindings are NOT tainted: the lowering dups
 			// (rc_inc) each extracted pointer-shaped element, so the
@@ -3134,7 +3148,7 @@ func (b *builder) computeFreeEligible() map[string]bool {
 				// escape taint; slice yields and untracked shapes keep
 				// it. Arm BINDINGS stay tainted above — they alias enum
 				// payloads with no projection dup.
-				escapeCountedYield(arm.Body)
+				escapeArmYield(s, arm.Body)
 			}
 		case *ast.Call:
 			// Retain sinks the checker lowers to Calls. Each is a
@@ -6304,6 +6318,41 @@ func needsRcIncOnAlias(e ast.Expr, b *builder) bool {
 		return false
 	}
 	return b.retainsOnAlias(b.exprType(e))
+}
+
+// lentConditionalArgs: the if- and match-expressions passed directly as an
+// argument of a call to a user function whose result cannot alias it. Variant
+// constructors and the container sinks (`insert`, `append`, `with`) store
+// their arguments instead.
+func (b *builder) lentConditionalArgs() map[ast.Expr]bool {
+	out := map[ast.Expr]bool{}
+	ast.Walk(b.fn.Body, func(n ast.Node) bool {
+		c, ok := n.(*ast.Call)
+		if !ok {
+			return true
+		}
+		id, ok := c.Callee.(*ast.Ident)
+		if !ok {
+			return true
+		}
+		if _, isLocal := b.locals[id.Name]; isLocal {
+			return true
+		}
+		if _, _, _, isVariant := b.lookupVariantOn(id.Name, id.EnumName); isVariant {
+			return true
+		}
+		if _, isUser := b.paramNoUncountedAlias[id.Name]; !isUser || !resultCannotAliasArg(b.exprType(c)) {
+			return true
+		}
+		for _, a := range c.Args {
+			switch a.(type) {
+			case *ast.IfExpr, *ast.MatchExpr:
+				out[a] = true
+			}
+		}
+		return true
+	})
+	return out
 }
 
 // matchArmYieldCounted: emitCountedYield retains the arm's value, so the

@@ -258,6 +258,22 @@ function main(): i32 {
     }
     return t;
 }`, 44)
+	// An array-view arm of a conditional argument borrows its source no longer
+	// than the call, as a bare view argument does, so the source keeps its
+	// release (#10553).
+	checkBalancedOnEveryBackend(t, "lent-view-arms", `function sumv(xs: [i32]): i32 { return xs[0] + xs.len(); }
+function main(): i32 {
+    var t: i32 = 0;
+    var j: i32 = 0;
+    while (j < 4) {
+        var a = [j, 5];
+        a = a.append(1);
+        t = t + sumv(if (j > 1) { a[0:2] } else { a[1:3] });
+        t = t + sumv(match (j) { 0 => a[0:1], _ => a[1:2] });
+        j = j + 1;
+    }
+    return t;
+}`, 42)
 	checkBalancedOnEveryBackend(t, "dyn-conditional-args", dynShapesPrelude+`function mkd(j: i32): dyn Shape { return Rect { w: j, h: 2, tag: "q" + "r" }; }
 function main(): i32 {
     var t: i32 = 0;
