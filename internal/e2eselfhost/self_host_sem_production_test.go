@@ -6377,7 +6377,8 @@ function main(): i32 {
 `},
 	// A variable only a function-typed parameter carries binds from what each
 	// call passes for it: a lambda, a named function, a call returning a
-	// function, a function-typed field. The generic is cloned per binding with
+	// function, a function-typed field of a plain or a generic struct. The
+	// generic is cloned per binding with
 	// its struct, as a parameter-bound one is (#10824).
 	{name: "a-generic-struct-over-a-function-parameters-result", atLeast: 7, noLeak: true, src: `
 struct Slot[T] { v: T }
@@ -6389,12 +6390,16 @@ pub function hold[T](f: () => T): i32 {
 
 struct Maker { f: () => string }
 
+struct Box[U] { f: () => U }
+
 function seven(): i32 { return 7; }
 function pick(): () => string { return (): string => "de" + "f"; }
 
 function main(): i32 {
     var m: Maker = Maker { f: (): string => "gh" + "i" };
-    return hold((): i32 => 7) + hold(() => "ab" + "c") + hold(seven) + hold(pick()) + hold(m.f);
+    var b: Box[i32] = Box[i32] { f: (): i32 => 3 };
+    var w: Box[string] = Box[string] { f: (): string => "j" + "k" };
+    return hold((): i32 => 7) + hold(() => "ab" + "c") + hold(seven) + hold(pick()) + hold(m.f) + hold(b.f) + hold(w.f);
 }
 `},
 	// A return-bound constructor (`stack_new[T](): Stack[T]`, clause (b′)) is

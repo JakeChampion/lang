@@ -9804,18 +9804,22 @@ function fn_value_spelling(e: ast.Expr, env: MEnv, funcs: MFns): string {
         if let ast.ExprIdent(id) = c.callee {
             if (env.elook(id.name).len() > 0) { return ""; }
             for fd in funcs.decls {
-                if (fd.name == id.name && fd.receiver_type.len() == 0 && fd.ret_type == "fn" && fd.ret_fn_ret.len() > 0) {
+                // A generic callee's signature is spelled in its own variables,
+                // which would key the clone on a bare var.
+                if (fd.name == id.name && fd.receiver_type.len() == 0 && fd.ret_type == "fn" && fd.ret_fn_ret.len() > 0
+                    && !spelling_mentions_tparam(fd.ret_fn_ret, fd.type_params) && !spelling_mentions_tparam(fd.ret_fn_param_types, fd.type_params)) {
                     return "(" + fd.ret_fn_param_types + ") => " + fd.ret_fn_ret;
                 }
             }
         }
     }
     if let ast.ExprFieldAccess(fa) = e {
-        var owner: string = mono_infer(fa.obj, env, funcs);
-        for sd in funcs.structs {
-            if (sd.name == owner) {
-                for f in sd.fields {
-                    if (f.name == fa.field && f.type_name == "fn" && f.fn_ret.len() > 0) { return "(" + f.fn_param_types + ") => " + f.fn_ret; }
+        var owner: InstStruct = inst_struct(mono_infer(fa.obj, env, funcs), funcs.structs);
+        if (owner.at >= 0) {
+            var sd: StructDecl = funcs.structs[owner.at];
+            for f in sd.fields {
+                if (f.name == fa.field && f.type_name == "fn" && f.fn_ret.len() > 0) {
+                    return "(" + subst_ty_join(split_top_commas(f.fn_param_types), ", ", sd.type_params, owner.cts) + ") => " + subst_ty(f.fn_ret, sd.type_params, owner.cts);
                 }
             }
         }
@@ -10965,6 +10969,20 @@ function mono_variant_field_tys(sty: string, vname: string, fns: MFns): string[]
 // pass has renamed the value, from its mangled clone name
 // (`Split__string__i32`). "" when the struct or field is unknown.
 function struct_field_ty_inst(ot: string, fname: string, structs: StructDecl[]): string {
+    var owner: InstStruct = inst_struct(ot, structs);
+    if (owner.at < 0) { return ""; }
+    for f in structs[owner.at].fields {
+        if (f.name == fname) { return subst_ty(f.type_name, structs[owner.at].type_params, owner.cts); }
+    }
+    return "";
+}
+
+// The declaration an instantiated struct spelling names (`Box[i32]`, or the
+// clone's `Box__i32`) and the types its parameters take there; `at` is -1
+// when no declaration matches with that many arguments.
+struct InstStruct { at: i32, cts: string[] }
+
+function inst_struct(ot: string, structs: StructDecl[]): InstStruct {
     var base: string = strip_struct_base(ot);
     var cts: string[] = type_args_of(ot);
     var si: i32 = 0 - 1;
@@ -10984,14 +11002,8 @@ function struct_field_ty_inst(ot: string, fname: string, structs: StructDecl[]):
         }
         i = i + 1;
     }
-    if (si < 0 || cts.len() != structs[si].type_params.len()) { return ""; }
-    var fs: StructFieldDecl[] = structs[si].fields;
-    var j: i32 = 0;
-    while (j < fs.len()) {
-        if (fs[j].name == fname) { return subst_ty(fs[j].type_name, structs[si].type_params, cts); }
-        j = j + 1;
-    }
-    return "";
+    if (si < 0 || cts.len() != structs[si].type_params.len()) { return InstStruct { at: 0 - 1, cts: [] }; }
+    return InstStruct { at: si, cts: cts };
 }
 
 // menv_bind_destructure binds each binder of a comma-joined destructure spelling

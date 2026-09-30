@@ -114,6 +114,23 @@ function main(): i32 {
 		t.Fatalf("the same without strict: exit %d, want the AST lowering's compile\n%s", code, out)
 	}
 
+	// A generic callee's result spells the callee's own variable, so it binds
+	// nothing: no clone is keyed on `0_K`, and hold stays erased as above.
+	genericPick := `struct Slot[T] { v: T }
+
+pub function pick[K](x: K): () => K { return (): K => x; }
+
+pub function hold[T](f: () => T): i32 {
+    var c: Slot[T] = Slot[T] { v: f() };
+    return 1;
+}
+
+function main(): i32 { return hold(pick(1)) + hold((): string => "x"); }
+`
+	if code, out := compile(genericPick, "FERN_SEM_IR_STRICT=1"); code != 3 || !strings.Contains(out, "FERN_SEM_IR: hold$i32: record field type") || strings.Contains(out, "hold__0_K") {
+		t.Fatalf("a generic callee's function result: exit %d under strict, want 3 refusing hold$i32 and no clone keyed on its variable\n%s", code, out)
+	}
+
 	// A value that holds a view behind a dyn cannot be rebuilt at a merge
 	// (ssasem.copyable), so one merged past its source is refused rather than
 	// read after the source is released. A closure that captures a view is
