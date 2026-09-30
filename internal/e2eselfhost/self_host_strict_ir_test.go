@@ -794,10 +794,10 @@ func TestSelfHostStrictIRNamesUnresolvedFunctionValue(t *testing.T) {
 		if code != 3 {
 			t.Fatalf("driver exited %d with %d bytes, want a strict-IR refusal (3)\n%s", code, len(out), stderr)
 		}
-		if !strings.Contains(stderr, "FERN_STRICT_IR: main ") {
+		if !strings.Contains(stderr, "FERN_SEM_IR: main: ") {
 			t.Errorf("refusal did not name main as the bailing function:\n%s", stderr)
 		}
-		if !strings.Contains(stderr, "function value bfoo not defined") {
+		if !strings.Contains(stderr, "unbound name is not a semantic value: bfoo") {
 			t.Errorf("refusal did not name the offending function value:\n%s", stderr)
 		}
 	})

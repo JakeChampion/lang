@@ -20,48 +20,19 @@ import (
 //	if (i % 2 == 1) { var v: P = base;                            … }   // an alias
 //
 // The alias holds the CALLER's box. Releasing it frees memory a live parameter
-// still owns, which the rc detector reports at exit 99 — self-host 99 against 34
-// on native and interp, with `allocs=204 frees=204 live_bytes=0` on both sides.
-// The byte census is useless for this bug, as it is for every over-release: a
-// doubly-released block goes straight back to the freelist.
-//
-// This class is the one where the collision is not merely a leak. #7335 and
-// #7281 hit the same defect on name-keyed ARRAY and TUPLE classes and got a
-// counted double free; here the shape is a use-after-free, and once the credit
-// is widened at all (the #7343 producer-local case) the same program SIGSEGVs
-// rather than reporting anything.
-//
-// The fix is #7253's step 1 for this family: a `StmtVar` carries line and col,
-// `bind_var_slot` records `name@line:col` on the slot, and both struct
-// predicates resolve the credit their own binding earned. No credit is widened
-// here — every shape that was refused before is still refused, `producer_local`
-// included, which is #7343's job and needs this landed first.
-//
-// THE SET MUST NOT MOVE OTHERWISE, and that is what most of the rows below are
-// for. Two failure modes look nothing alike: the one being fixed is loud in the
-// underflow counter, and the one a key migration introduces — a binding whose
-// slot carries no site key, so it resolves NO credit — is silent there and shows
-// only as a leak. `block_scoped` is the row that caught exactly that during
-// development: the "NODEEP:" / "FLDCHECKED:" markers are derived from the same
-// entries, and leaving their readers on the name key cost every block-scoped
-// struct local its deep drop (400/100, 7200 bytes) while every exit code stayed
-// correct.
+// still owns, which the rc detector reports at exit 99; the byte census cannot
+// see it, because a doubly-released block goes straight back to the freelist.
+// So each colliding row is asserted on the exit code, and must match its rename
+// control's census exactly. On the typed lowering every row balances.
 //
 // Every want was confirmed against BOTH oracles — bin/fern -interp and the native
 // x86-64 backend agreed on each — never read off the self-host run under test.
-//
-// Counts here are ONE block per heap string: #7351 fused the box into the
-// buffer's reserved header. A pre-fusion number quoted in a row note below is
-// twice its pin.
 
 type structKeyCase struct {
 	name string
 	src  string
 	want int
-	// allocs/frees the self-host must report, or -1 to assert nothing. These are
-	// the SELF-HOST's numbers, not native's: several of these shapes carry
-	// residual leaks that belong to other issues (#7343, #7351) and would be
-	// pinned wrongly by asserting a balance.
+	// allocs/frees the self-host must report, or -1 to assert nothing.
 	allocs int64
 	frees  int64
 }
@@ -87,13 +58,10 @@ function main(): i32 { var t: i32 = 0; var i: i32 = 0; ` +
 func structKeyCases() []structKeyCase {
 	return []structKeyCase{
 		{
-			// THE BUG. Two `var v` in sibling `if` arms: the first is a fresh
-			// struct literal and earns the credit, the second aliases a param and
-			// must not. Base: 99, `204/204 live_bytes=0` — the census cannot see
-			// it; the underflow guard is what pins it. frees moved 200 -> 204
-			// with the struct routing: main's call-arg struct is now swept (the
-			// alias_param grant), which is the +4 — the collision guard is the
-			// exit, unchanged.
+			// Two `var v` in sibling `if` arms: the first is a fresh struct
+			// literal, the second aliases a param. The census cannot see a
+			// collision here; the underflow guard (exit 99) is what pins
+			// it.
 			name: "collide_literal",
 			src: structKeyP + `function round(base: P, i: i32): i32 {
     var t: i32 = 0;
@@ -101,22 +69,12 @@ func structKeyCases() []structKeyCase {
     if (i % 2 == 1) { var v: P = base;  t = t + v.xs.len(); }
     return t;
 }` + structKeyMainB,
-			want: 34, allocs: 153, frees: 153,
+			want: 34, allocs: 152, frees: 152,
 		},
 		{
-			// THE PAIRWISE CONTROL, and the assertion that carries the most weight:
-			// the same program with the second local renamed `u`. It never
-			// collided, so it was already correct at base — and after the fix the
-			// COLLIDING program measures identically to it, exit code and census
-			// alike. That is checkable without deciding whether the residual 4
-			// blocks are correct, which they are not.
-			//
-			// Those 4 blocks are `main`'s own `b`, escape-flagged into the call
-			// argument and never released at exit. They are FLAT — 120 bytes at
-			// 100, 200 and 400 rounds alike — and they grow with `b` rather than
-			// with the loop: widening its array to 8 elements moves them to 168.
-			// So they are neither this bug nor a per-round one, which is why the
-			// row asserts counts rather than a balance.
+			// THE PAIRWISE CONTROL: the same program with the second local
+			// renamed `u`. The COLLIDING program must measure identically
+			// to it, exit code and census alike.
 			name: "collide_literal_renamed",
 			src: structKeyP + `function round(base: P, i: i32): i32 {
     var t: i32 = 0;
@@ -124,12 +82,12 @@ func structKeyCases() []structKeyCase {
     if (i % 2 == 1) { var u: P = base;  t = t + u.xs.len(); }
     return t;
 }` + structKeyMainB,
-			want: 34, allocs: 153, frees: 153,
+			want: 34, allocs: 152, frees: 152,
 		},
 		{
-			// The same collision reached through a LOOP rather than two `if`s, so
-			// the two bindings are the same statement pair on different iterations.
-			// Base: 99, `404/404`.
+			// The same collision reached through a LOOP rather than two
+			// `if`s, so the two bindings are the same statement pair on
+			// different iterations.
 			name: "collide_loop",
 			src: structKeyP + `function round(base: P, i: i32): i32 {
     var t: i32 = 0;
@@ -141,7 +99,7 @@ func structKeyCases() []structKeyCase {
     }
     return t;
 }` + structKeyMainB,
-			want: 68, allocs: 303, frees: 303,
+			want: 68, allocs: 302, frees: 302,
 		},
 		{
 			// CONTROL — a BLOCK-SCOPED struct local, credited through
@@ -217,11 +175,6 @@ function round(i: i32): i32 {
 			// `want` carries it rather than the frees column.
 			//
 			// Confirmed against both oracles: interp and native x86-64 each exit 51.
-			//
-			// The counts fell 800 -> 600 with #8224: the two `s.ops.append(x)`
-			// per round grow the field's own buffer instead of cloning it, so
-			// the two clones a round used to allocate are gone. The balance is
-			// what this column pins, and the exit code still carries NODEEP.
 			name: "builder_nodeep",
 			src: `struct B { ops: i32[] }
 function (b: B) emit(x: i32): B { return B { ops: b.ops.append(x) }; }
@@ -231,7 +184,7 @@ function round(i: i32): i32 {
     s = s.emit(i + 1);
     return s.ops.len();
 }` + structKeyMain,
-			want: 51, allocs: 600, frees: 600,
+			want: 51, allocs: 500, frees: 500,
 		},
 	}
 }
@@ -276,9 +229,7 @@ func TestSelfHostStructCreditSiteKeyX86_64(t *testing.T) {
 					"probe stopped measuring this shape", tc.name, summary, tc.allocs)
 			}
 			if tc.frees >= 0 && frees != tc.frees {
-				t.Errorf("%s: %s — want frees=%d. Fewer means a binding resolved no credit "+
-					"at all (the silent half of a key migration); more means one was widened, "+
-					"which this change deliberately does not do", tc.name, summary, tc.frees)
+				t.Errorf("%s: %s — want frees=%d", tc.name, summary, tc.frees)
 			}
 		})
 	}

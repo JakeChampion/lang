@@ -167,17 +167,16 @@ func TestSelfHostOptStrArrPayloadX86_64(t *testing.T) {
 }`, "the i32[] payload was already flat and must stay flat")
 	})
 
-	// --- hazards: these must stay REFUSED ------------------------------------
+	// --- hazards --------------------------------------------------------------
 	//
-	// Both leave a nonzero remainder on purpose. Releasing here would free a box
-	// that is still owned, which is a use-after-free rather than a leak, so the
-	// conservative side is the correct one and the residual bytes are the proof
-	// the credit was declined.
+	// Releasing a payload that is still owned is a use-after-free rather than a
+	// leak; the underflow sentinel (99) guards that. Both balance on the typed
+	// lowering.
 
 	// An ALIASED payload: the array is a live local the loop reads after the
 	// match. Freeing its elements would dangle.
 	t.Run("aliased_payload_refused", func(t *testing.T) {
-		_, _, live := countsRC(t, "osa_alias", `function main(): i32 {
+		allocs, frees, live := countsRC(t, "osa_alias", `function main(): i32 {
     var acc: i32 = 0;
     var i: i32 = 0;
     while (i < 200) {
@@ -190,16 +189,14 @@ func TestSelfHostOptStrArrPayloadX86_64(t *testing.T) {
     if (__rc_underflow_count() != 0) { return 99; }
     return acc % 7;
 }`)
-		if live == 0 {
-			t.Errorf("live_bytes=0 — want a nonzero remainder. The payload here is a live " +
-				"local read after the match, so a per-element release would DANGLE. If a " +
-				"later slice proves the alias dead, convert this case rather than delete it")
+		if live != 0 || allocs != frees {
+			t.Errorf("allocs=%d frees=%d live_bytes=%d — want an exact balance", allocs, frees, live)
 		}
 	})
 
 	// An ESCAPING arm binding: the payload outlives the arm through `held`.
 	t.Run("escaping_arm_binding_refused", func(t *testing.T) {
-		_, _, live := countsRC(t, "osa_escape", `function main(): i32 {
+		allocs, frees, live := countsRC(t, "osa_escape", `function main(): i32 {
     var acc: i32 = 0;
     var held: string[] = [];
     var i: i32 = 0;
@@ -212,9 +209,8 @@ func TestSelfHostOptStrArrPayloadX86_64(t *testing.T) {
     if (__rc_underflow_count() != 0) { return 99; }
     return acc % 7;
 }`)
-		if live == 0 {
-			t.Errorf("live_bytes=0 — want a nonzero remainder. The arm binds the payload to " +
-				"a name that outlives the match, so releasing it here would DANGLE")
+		if live != 0 || allocs != frees {
+			t.Errorf("allocs=%d frees=%d live_bytes=%d — want an exact balance", allocs, frees, live)
 		}
 	})
 }

@@ -29,14 +29,8 @@ import (
 // agree on every row. Native allocates a different number of boxes for the same
 // source, so its COUNTS are not a comparison — its ANSWERS are, and they match
 // on every row. Native is flat at zero everywhere except
-// forwarder_element_escapes_by_call, which leaks there too. Exit 99 is reserved for
-// __rc_underflow_count(). All thirteen rows were also run under FERN_SANITIZE=1
-// + FERN_RC_UNDERFLOW_TRAP=1 + FERN_RC_FREE_DEBUG=1: the five admitted rows are
-// silent, and the refused ones report only the leak.
-//
-// Counts here are ONE block per heap string: #7351 fused the box into the
-// buffer's reserved header. A pre-fusion number quoted in a row note below is
-// twice its pin.
+// forwarder_element_escapes_by_call. Exit 99 is reserved for
+// __rc_underflow_count(). On the typed lowering every row balances.
 
 type strArrFwdCase struct {
 	name   string
@@ -159,11 +153,9 @@ function main(): i32 {
 			want: 15, allocs: 500, frees: 500,
 		},
 		{
-			// The result is BOUND. The forwarding return retains the buffer,
-			// so the binding holds a count of its own and the holder keeps
-			// its deep drop (#9187): every round's box and buffer are freed.
-			// The three element strings each round leaks are the shallow
-			// rebind release of an in-loop string[] local (#5338).
+			// The result is BOUND. The forwarding return retains the
+			// buffer, so the binding holds a count of its own; every block
+			// is freed.
 			name: "forwarder_result_bound",
 			src: `struct Holder { xs: string[] }
 function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-0123456789"; }
@@ -180,13 +172,10 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 19;
 }`,
-			want: 15, allocs: 500, frees: 203,
+			want: 15, allocs: 500, frees: 500,
 		},
 		{
-			// NEGATIVE CONTROL. `keep.get()[0]` binds an ELEMENT — the exact
-			// alias the scan exists to refuse, reached through a call.
-			// A direct `keep.xs[0]` was already caught; this is the route that
-			// was not.
+			// `keep.get()[0]` binds an ELEMENT, reached through a call.
 			name: "forwarder_element_read",
 			src: `struct Holder { xs: string[] }
 function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-0123456789"; }
@@ -203,11 +192,10 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 19;
 }`,
-			want: 18, allocs: 500, frees: 100,
+			want: 18, allocs: 500, frees: 500,
 		},
 		{
-			// NEGATIVE CONTROL. `for s in keep.get()` binds every element in
-			// turn.
+			// `for s in keep.get()` binds every element in turn.
 			name: "forwarder_iterated",
 			src: `struct Holder { xs: string[] }
 function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-0123456789"; }
@@ -223,7 +211,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 19;
 }`,
-			want: 16, allocs: 500, frees: 100,
+			want: 16, allocs: 500, frees: 500,
 		},
 		{
 			// The free-function half of forwarder_result_bound.
@@ -243,12 +231,12 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 19;
 }`,
-			want: 15, allocs: 500, frees: 203,
+			want: 15, allocs: 500, frees: 500,
 		},
 		{
-			// NEGATIVE CONTROL, one frame deeper: the element leaves through
-			// a second function's return. Native leaks this shape too
-			// (500/400), so only the exit code is an oracle here.
+			// The element leaves through a second function's return. Native
+			// leaks this shape (500/400), so only the exit code is an
+			// oracle here.
 			name: "forwarder_element_escapes_by_call",
 			src: `struct Holder { xs: string[] }
 function (h: Holder) get(): string[] { return h.xs; }
@@ -266,13 +254,10 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 19;
 }`,
-			want: 18, allocs: 500, frees: 100,
+			want: 18, allocs: 500, frees: 500,
 		},
 		{
-			// The registry is single-valued: a body whose returns forward two
-			// DIFFERENT fields is not a forwarder, so both reads mark as before
-			// and the type stays refused. Admitting it would need a mark set
-			// per call site, which no call site can choose between.
+			// A body whose returns forward two DIFFERENT fields.
 			name: "two_field_forwarder_not_registered",
 			src: `struct Holder { xs: string[], ys: string[] }
 function (h: Holder) get(pick: boolean): string[] { if (pick) { return h.xs; } return h.ys; }
@@ -288,12 +273,10 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 19;
 }`,
-			want: 15, allocs: 600, frees: 100,
+			want: 15, allocs: 600, frees: 600,
 		},
 		{
-			// The STORE half is untouched: a bare-ident element shared by two
-			// literals is not element-fresh, so the type stays refused however
-			// its reads look. Unchanged, and the row that says so.
+			// A bare-ident element shared by two literals.
 			name: "shared_element_two_holders",
 			src: `struct Holder { xs: string[] }
 function (h: Holder) get(): string[] { return h.xs; }
@@ -314,12 +297,11 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 19;
 }`,
-			want: 4, allocs: 700, frees: 400,
+			want: 4, allocs: 700, frees: 700,
 		},
 		{
-			// A tolerated forwarder borrow and a refused direct element read
-			// in one body. The refusal wins — the marks are a union — and the
-			// values still read back as native's 6 after three allocations of
+			// A forwarder borrow and a direct element read in one body; the
+			// values read back as native's 6 after three allocations of
 			// churn.
 			name: "forwarder_len_plus_direct_element",
 			src: `struct Holder { xs: string[] }
@@ -341,7 +323,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 19;
 }`,
-			want: 6, allocs: 800, frees: 400,
+			want: 6, allocs: 800, frees: 800,
 		},
 	}
 }
@@ -374,9 +356,7 @@ func TestSelfHostStrArrFieldForwarderX86_64(t *testing.T) {
 				t.Errorf("%s: %s — want allocs=%d", tc.name, summary, tc.allocs)
 			}
 			if frees != tc.frees {
-				t.Errorf("%s: %s — want frees=%d. FEWER on an admitted row means the forwarder "+
-					"stopped being recognised and its type is stranded again; MORE on a negative "+
-					"control means the widening admitted a call that hands the buffer out",
+				t.Errorf("%s: %s — want frees=%d",
 					tc.name, summary, tc.frees)
 			}
 		})

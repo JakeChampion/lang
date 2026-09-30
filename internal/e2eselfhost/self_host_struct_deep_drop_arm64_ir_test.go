@@ -1,7 +1,6 @@
 package e2eselfhost
 
 import (
-	"strings"
 	"testing"
 )
 
@@ -19,10 +18,8 @@ import (
 // necessarily carries a nested-struct field, so its field edge stays shallow.
 //
 // Under qemu the reclaim is proven by CORRECTNESS (a wrong free of a live buffer
-// corrupts the read-back) plus an asm-shape assertion that the recursive
-// `bl __fn___struct_drop_Inner` (and its is_unique gate) is emitted — the same
-// signal the x86 churn-exhaustion test pins at runtime. Heavy 150M-iteration churn
-// is left to the x86 path (too slow under qemu).
+// corrupts the read-back) plus the arm64 census balancing at live_bytes 0. Heavy
+// 150M-iteration churn is left to the x86 path (too slow under qemu).
 func TestSelfHostStructDeepDropIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -30,19 +27,9 @@ func TestSelfHostStructDeepDropIRArm64(t *testing.T) {
 	copySelfHostDriver(t, dir, "asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
 
-	run := func(t *testing.T, prog, name string, want int, wantAsmSubstr string) {
+	run := func(t *testing.T, prog, name string, want int) {
 		t.Helper()
-		asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(prog), "-target", "arm64-linux")
-		if len(asm) == 0 {
-			t.Fatalf("%s: self-host arm64 compiler emitted 0 bytes", name)
-		}
-		if wantAsmSubstr != "" && !strings.Contains(string(asm), wantAsmSubstr) {
-			t.Fatalf("%s: emitted arm64 asm missing %q — the nested-struct field did not deep-drop", name, wantAsmSubstr)
-		}
-		bin := buildBinArm64(t, arm64gcc, dir, name, string(asm))
-		cmd := runArm64Bin(qemu, bin)
-		_ = cmd.Run()
-		if code := cmd.ProcessState.ExitCode(); code != want {
+		if code := arm64CensusRun(t, x86runner, driverBin, arm64gcc, qemu, name, prog); code != want {
 			t.Errorf("%s exited %d, want %d", name, code, want)
 		}
 	}
@@ -51,7 +38,6 @@ func TestSelfHostStructDeepDropIRArm64(t *testing.T) {
 	// so the is_unique gate passes and `__struct_drop_Inner` releases `inner.items`
 	// before the inner box is freed. The inner is read back before the drop; a wrong
 	// free of the live buffer would corrupt it. items[0..15] sum to 136, + tag 7 = 143.
-	// Asserts the recursive `bl __fn___struct_drop_Inner` is emitted.
 	run(t, `struct Inner { items: i32[] }
 struct Outer { inner: Inner, tag: i32 }
 function main(): i32 {
@@ -59,7 +45,7 @@ function main(): i32 {
     var sum: i32 = 0; var j: i32 = 0;
     while (j < 16) { sum = sum + o.inner.items[j]; j = j + 1; }
     return sum + o.tag;
-}`, "struct_deep_drop_arm64_value", 143, "bl __fn___struct_drop_Inner")
+}`, "struct_deep_drop_arm64_value", 143)
 
 	// CYCLE SAFETY: a tree (`Node { kids: Node[] }`) must NOT infinitely recurse.
 	// `kids` is an array-of-struct (the k_box element walk, shallow per element);
@@ -75,5 +61,5 @@ function main(): i32 {
     var s: i32 = 0; var f: i32 = 0;
     while (f < 200000) { s = mk(); f = f + 1; }
     return s - 8;
-}`, "struct_deep_drop_arm64_cyclic_safe", 0, "")
+}`, "struct_deep_drop_arm64_cyclic_safe", 0)
 }

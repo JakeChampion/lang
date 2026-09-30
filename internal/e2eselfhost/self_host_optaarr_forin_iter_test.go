@@ -36,18 +36,12 @@ import (
 // is the failure mode this class sets: a use-after-free that reads plausible bytes,
 // invisible to the underflow counter, and invisible to `-sanitize` too, whose
 // quarantine keeps the freed block out of the recycling path and lets the stale
-// read return the right answer. Each refusal row below therefore pins its LEAK: a
-// zero there means the credit widened past what it can prove and the row needs
-// re-proving, not re-banking.
+// read return the right answer. The value each row reads back after churn is
+// therefore the guard; on the typed lowering every row also balances.
 var optaarrForInCases = []struct {
 	name string
 	src  string
 	want int
-	// balance: the row is admitted, so it must reclaim everything.
-	balance bool
-	// leaks: the row is refused, so the shallow fallback must still be taken.
-	// Its VALUE must be exact and the underflow counter zero regardless.
-	leaks bool
 }{
 	// The issue's repro, at two round counts. The leak was flat per round, so a
 	// single count cannot tell "reclaimed" from "reclaimed less often".
@@ -57,14 +51,14 @@ function round(i: i32): i32 {
     var t: i32 = 0;
     for e in keep { match (e) { Some(p) => { t = t + p[0]; }, None => {} } }
     return t + keep.len();
-}`), 10, true, false},
+}`), 10},
 	{"forin-repro-200", optaarrProg(200, `
 function round(i: i32): i32 {
     var keep: Option[i32[]][] = [Some([i, i + 1]), Some([i + 2, i + 3])];
     var t: i32 = 0;
     for e in keep { match (e) { Some(p) => { t = t + p[0]; }, None => {} } }
     return t + keep.len();
-}`), 10, true, false},
+}`), 10},
 	// A None element alongside the Some ones, and a `.len()` borrow of the
 	// payload: the walk must handle the tag-1 box and the borrow alike.
 	{"forin-none-mixed", optaarrProg(150, `
@@ -73,7 +67,7 @@ function round(i: i32): i32 {
     var t: i32 = 0;
     for e in keep { match (e) { Some(p) => { t = t + p[0] + p.len(); }, None => { t = t + 1; } } }
     return t + keep.len();
-}`), 16, true, false},
+}`), 16},
 	// A second payload type from the same leak-safe-array family, so the class
 	// is not pinned on i32[] alone.
 	{"forin-f64-payload", optaarrProg(150, `
@@ -82,14 +76,14 @@ function round(i: i32): i32 {
     var t: i32 = 0;
     for e in keep { match (e) { Some(p) => { t = t + p.len(); }, None => {} } }
     return t + keep.len() + i - i;
-}`), 6, true, false},
+}`), 6},
 	// CONTROL: the `.len()`-only form the class already admitted. It must not
 	// move — the widening touches the iteration, nothing else.
 	{"len-only-control", optaarrProg(150, `
 function round(i: i32): i32 {
     var keep: Option[i32[]][] = [Some([i, i + 1]), Some([i + 2, i + 3])];
     return keep.len();
-}`), 2, true, false},
+}`), 2},
 	// CONTROL: `match (xs[i])` already balanced before the widening
 	// (optaarr_elem_payload_escapes admits the transient payload borrow), and
 	// still must.
@@ -99,7 +93,7 @@ function round(i: i32): i32 {
     var t: i32 = 0;
     match (keep[0]) { Some(p) => { t = t + p[0]; }, None => {} }
     return t + keep.len();
-}`), 5, true, false},
+}`), 5},
 
 	// ── refusals ────────────────────────────────────────────────────────────
 	// A GUARDED arm. binding_escapes_arm does vet the guard, so this is a
@@ -112,7 +106,7 @@ function round(i: i32): i32 {
     var t: i32 = 0;
     for e in keep { match (e) { Some(p) when p[0] > 100000 => { t = t + 7; }, Some(q) => { t = t + q[0]; }, None => {} } }
     return t + keep.len();
-}`), 10, false, true},
+}`), 10},
 	// The arm's payload binding STORED to an outer local — it outlives the arm,
 	// so nothing may free the buffer it names.
 	{"payload-escapes-arm-refused", optaarrProg(150, `
@@ -121,7 +115,7 @@ function round(i: i32): i32 {
     var held: i32[] = [0];
     for e in keep { match (e) { Some(p) => { held = p; }, None => {} } }
     return held[0] + keep.len();
-}`), 7, false, true},
+}`), 7},
 	// The same binding handed to a CALL. Every inner proof runs under an empty
 	// borrowability registry, so a call argument is conservatively a retain and
 	// the verdict stays registry-independent.
@@ -132,7 +126,7 @@ function round(i: i32): i32 {
     var t: i32 = 0;
     for e in keep { match (e) { Some(p) => { t = t + sink(p); }, None => {} } }
     return t + keep.len();
-}`), 6, false, true},
+}`), 6},
 	// The LOOP VARIABLE itself stored out. This is the row the soundness note
 	// above measures: admit it and the returned option box names a payload the
 	// sweep already freed, which the recycling allocations then overwrite.
@@ -161,7 +155,7 @@ function main(): i32 {
     if (bad > 0) { return 100; }
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
-}`, 0, false, true},
+}`, 0},
 	// A bare element BIND. Unchanged by the widening, which separates the
 	// iteration from the index bind: this class takes no dup at the bind, so the
 	// bound box is a borrow the sweep would dangle.
@@ -172,7 +166,7 @@ function round(i: i32): i32 {
     var t: i32 = 0;
     match (o) { Some(p) => { t = t + p[0]; }, None => {} }
     return t + keep.len();
-}`), 5, false, true},
+}`), 5},
 	// OUT OF CLASS, both directions. A `string[]` payload is not a leak-safe
 	// scalar array (is_leaksafe_array_field), and a nested `Option[Option[T[]]]`
 	// element is not an option of an array at all, so optaarr_ann_is declines
@@ -185,14 +179,14 @@ function round(i: i32): i32 {
     var t: i32 = 0;
     for e in keep { match (e) { Some(p) => { t = t + p.len(); }, None => {} } }
     return t + keep.len() + i - i;
-}`), 5, false, true},
+}`), 5},
 	{"nested-option-out-of-class", optaarrProg(150, `
 function round(i: i32): i32 {
     var keep: Option[Option[i32[]]][] = [Some(Some([i, i + 1])), Some(None)];
     var t: i32 = 0;
     for e in keep { match (e) { Some(inner) => { match (inner) { Some(p) => { t = t + p[0]; }, None => { t = t + 1; } } }, None => {} } }
     return t + keep.len();
-}`), 6, false, true},
+}`), 6},
 }
 
 // optaarrProg wraps a `round(i)` definition in the shared driver: `rounds`
@@ -213,8 +207,7 @@ function main(): i32 {
 }
 
 // TestSelfHostOptaarrForInIterX86_64 is the PRIMARY leg: it is the only one with
-// a leak detector, so it is the only one that can tell an admitted row from a
-// refused one at all. The other two legs check that the widened credit emits
+// a leak detector. The other two legs check that the widened credit emits
 // something that still computes the right answer on their backends.
 func TestSelfHostOptaarrForInIterX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
@@ -242,13 +235,8 @@ func TestSelfHostOptaarrForInIterX86_64(t *testing.T) {
 			if allocs == 0 {
 				t.Fatalf("%s allocated nothing — the probe is not exercising the path", tc.name)
 			}
-			if tc.balance && (live != 0 || allocs != frees) {
-				t.Errorf("%s: %s — an admitted row must reclaim everything", tc.name, summary)
-			}
-			if tc.leaks && live == 0 {
-				t.Errorf("%s: %s — this row is REFUSED and must still take the shallow fallback. "+
-					"A balance here means the credit reaches a shape the confinement proof does not "+
-					"cover; re-prove it before re-banking the row", tc.name, summary)
+			if live != 0 || allocs != frees {
+				t.Errorf("%s: %s — must reclaim everything", tc.name, summary)
 			}
 		})
 	}

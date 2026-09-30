@@ -89,7 +89,7 @@ function main(): i32 {
 
 // The hazard `opttup_payload_escapes` exists for: the arm binds the tuple's ARRAY
 // element out to an outer local, so the buffer is live where the deep drop would
-// walk it. Measured at 1201/1 — refused, exit agreeing with the oracle.
+// walk it.
 const otPayloadEscapesSrc = `import "core/int";
 function main(): i32 {
     var held: i32[] = [0, 0];
@@ -155,24 +155,17 @@ func TestSelfHostOptTupNestedMatchX86_64(t *testing.T) {
 		{"fn_scoped_flat_control", otFlatFnSrc},
 		{"block_scoped_nested", otNestedBlockSrc},
 		{"block_scoped_flat_control", otFlatBlockSrc},
+		// The arm binds the tuple's array element out to an outer local; the
+		// exit agreement inside counts() is what says it was not freed under it.
+		{"tuple_element_escapes_the_arm", otPayloadEscapesSrc},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			allocs, frees, live := counts(t, tc.name, tc.src)
 			if live != 0 || allocs != frees {
-				t.Errorf("%s: allocs=%d frees=%d live_bytes=%d — want an exact balance. "+
-					"The nested spelling leaked with frees=0 (12000 fn-scoped, 48000 "+
-					"block-scoped) while both flat controls were 0", tc.name, allocs, frees, live)
+				t.Errorf("%s: allocs=%d frees=%d live_bytes=%d — want an exact balance",
+					tc.name, allocs, frees, live)
 			}
 		})
 	}
 
-	t.Run("tuple_element_escapes_the_arm", func(t *testing.T) {
-		allocs, frees, live := counts(t, "tuple_element_escapes_the_arm", otPayloadEscapesSrc)
-		if live == 0 {
-			t.Errorf("tuple_element_escapes_the_arm: allocs=%d frees=%d live_bytes=%d — the "+
-				"arm binds the tuple's array element out to an outer local, so the deep "+
-				"drop must be withheld. Exit agreement above is the real detector",
-				allocs, frees, live)
-		}
-	})
 }

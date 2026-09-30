@@ -12,22 +12,13 @@ import (
 // keys-taken flatness (no double free: __rc_underflow_count() == 0), and the
 // post-loop release of the `for (k, v) in m` column snapshots.
 func TestSelfHostMapKeysSnapshotIRArm64(t *testing.T) {
-	arm64gcc, qemu := arm64Tooling(t)
-	x86gcc, x86runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
+	gcc, qemu := arm64Tooling(t)
+	cli := newStrictCLI(t)
 
 	run := func(t *testing.T, prog, name string, want int) {
 		t.Helper()
-		asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(prog), "-target", "arm64-linux")
-		if len(asm) == 0 {
-			t.Fatalf("%s: self-host arm64 compiler emitted 0 bytes", name)
-		}
-		bin := buildBinArm64(t, arm64gcc, dir, name, string(asm))
-		cmd := runArm64Bin(qemu, bin)
-		_ = cmd.Run()
-		if code := cmd.ProcessState.ExitCode(); code != want {
+		asm := cli.emit(t, "arm64-linux", "import \"core/map\";\n"+prog)
+		if code, _ := runArm64(t, gcc, qemu, asm); code != want {
 			t.Errorf("%s exited %d, want %d (1 = leak; 99 = over-release/double free; other = correctness step)", name, code, want)
 		}
 	}

@@ -1020,6 +1020,10 @@ func TestSelfHostFieldAppendInPlaceShapeX86_64(t *testing.T) {
 	dir := t.TempDir()
 	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+	// The static clone-or-in-place decision read here is the AST lowering's;
+	// the typed lowering guards every in-place write with a runtime
+	// uniqueness check instead.
+	t.Setenv("FERN_SEM_IR", "")
 
 	cases := []struct {
 		name      string

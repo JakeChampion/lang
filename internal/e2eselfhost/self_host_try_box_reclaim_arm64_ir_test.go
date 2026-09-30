@@ -6,12 +6,9 @@ import (
 
 // TestSelfHostTryBoxReclaimIRArm64 is the arm64 port of the #4355
 // `?`-consumed source-box reclaim (x86 sibling:
-// TestSelfHostTryBoxReclaimIRX86_64). Same irlower-level frees; the box dec
-// and string sweep route through the arm64 runtime helpers. Lighter churn
-// under qemu, so the pinned per-round residual — the outer `var r = ...` box
-// the caller's own match still leaks, 40 bytes as on x86 — is half the x86
-// count. The pin fails in EITHER direction, so an improvement is rebanked
-// rather than absorbed.
+// TestSelfHostTryBoxReclaimIRX86_64). The heap stays flat across the `?`
+// churn: the typed lowering also reclaims the outer `var r = ...` box the
+// caller matches on. Lighter churn under qemu.
 func TestSelfHostTryBoxReclaimIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -29,11 +26,11 @@ func TestSelfHostTryBoxReclaimIRArm64(t *testing.T) {
 		cmd := runArm64Bin(qemu, bin)
 		_ = cmd.Run()
 		if code := cmd.ProcessState.ExitCode(); code != want {
-			t.Errorf("%s exited %d, want %d (98 = above the pinned residual → box not reclaimed; 96 = below it → rebank the pin; 99 = over-release; 97 = value corrupted; 88 = aliased payload freed)", name, code, want)
+			t.Errorf("%s exited %d, want %d (98 = heap grew → box not reclaimed; 99 = over-release; 97 = value corrupted; 88 = aliased payload freed)", name, code, want)
 		}
 	}
 
-	// SCALAR Result payload — the residual is the outer box alone.
+	// SCALAR Result payload.
 	run(t, `function mk(pre: string): Result[i32, i32] { return Ok(pre.len()); }
 function innerT(pre: string): Result[i32, i32] { var v: i32 = mk(pre)?; return Ok(v + 1); }
 function innerB(pre: string): Result[i32, i32] { var t: i32 = 0; match (mk(pre)) { Ok(v) => { t = v + 1; }, Err(e) => { t = e; }, } return Ok(t); }
@@ -47,13 +44,11 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     var gt: i32 = b2 - b1;
-    if (gt > 60000 + 256) { return 98; }
-    if (gt + 256 < 60000) { return 96; }
+    if (gt > 256) { return 98; }
     return 0;
 }`, "try-box-scalar-pin-arm64", 0)
 
-	// STRING payload — box and moved payload both recycle, so the
-	// residual matches the scalar leg's.
+	// STRING payload — box and moved payload both recycle.
 	run(t, `function mk(pre: string): Result[string, i32] { return Ok(pre + "abc"); }
 function innerT(pre: string): Result[i32, i32] { var s: string = mk(pre)?; return Ok(s.len()); }
 function innerB(pre: string): Result[i32, i32] { var t: i32 = 0; match (mk(pre)) { Ok(s) => { t = s.len(); }, Err(e) => { t = e; }, } return Ok(t); }
@@ -67,8 +62,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     var gt: i32 = b2 - b1;
-    if (gt > 60000 + 256) { return 98; }
-    if (gt + 256 < 60000) { return 96; }
+    if (gt > 256) { return 98; }
     return 0;
 }`, "try-box-string-pin-arm64", 0)
 

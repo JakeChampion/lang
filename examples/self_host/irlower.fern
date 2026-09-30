@@ -52798,6 +52798,7 @@ function collect_fresh_arrarr_names(stmts: ast.Stmt[], ofr: SigReg, acc: string[
     while (i < stmts.len()) {
         match (stmts[i]) {
             ast.StmtVar(v) => {
+                var vb_fresh: i32 = vb_tail_arrarr_fresh(v.init, ofr);
                 if (arrarr_lit_is_fresh(v.init, stmts, i)) {
                     a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
                     // strings-fresh marker: lets the crediting loop grant the
@@ -52814,9 +52815,9 @@ function collect_fresh_arrarr_names(stmts: ast.Stmt[], ofr: SigReg, acc: string[
                     // EVERY appended row strings-fresh.
                     a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
                     if (arrarr_appends_strings_fresh(stmts, v.name, ofr)) { a = push_str_unique(a, "S|" + reclaim_site_key_of(v.name, v.line, v.col)); }
-                } else if (vb_tail_arrarr_fresh(v.init, ofr) > 0) {
+                } else if (vb_fresh > 0) {
                     a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
-                    if (vb_tail_arrarr_fresh(v.init, ofr) == 2) { a = push_str_unique(a, "S|" + reclaim_site_key_of(v.name, v.line, v.col)); }
+                    if (vb_fresh == 2) { a = push_str_unique(a, "S|" + reclaim_site_key_of(v.name, v.line, v.col)); }
                 } else {
                     // Call init `var g: T[][] = mk(..)` of an AAC-registered
                     // producer: same credits the literal it returns would earn.

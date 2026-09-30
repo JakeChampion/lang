@@ -1,10 +1,7 @@
 package e2eselfhost
 
 import (
-	"bytes"
-	"os"
 	"os/exec"
-	"strings"
 	"testing"
 )
 
@@ -112,40 +109,34 @@ func TestSelfHostPrimNameNotEnumX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostUsizeArrayFieldRefused pins the one admission the narrowing turns
-// off. A `usize[]` struct field used to be admitted as an array-of-enum, which
-// put a box walk over 8-byte integers on the drop path — the same silent heap
-// corruption the u64[] payload above faults on. usize[] is NOT leak-safe-array
-// classified: unlike u64[] it has no 8-byte field-tag plumbing, so admitting it
-// as a 4-byte-element array would read half of every element. Refusing it, with
-// a bail site the diagnostic names, is the correct answer until that plumbing
-// lands; this test fails the day it does, which is when the row moves.
+// TestSelfHostUsizeArrayFieldRefused runs a `usize[]` struct field, which the
+// AST lowering once admitted as an array-of-enum and walked as boxes. The typed
+// lowering reads its 8-byte elements and reclaims every array; the want is
+// bin/fern -interp's.
 func TestSelfHostUsizeArrayFieldRefused(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
+	copySelfHostDriver(t, dir, "asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
 
-	const src = "struct U { ps: usize[] }\n" +
-		"function main(): i32 {\n    var u: U = U { ps: [1 as usize, 2 as usize] };\n    return u.ps.len() - 2;\n}"
-
-	cmd := exec.Command(driverBin, "-ir")
-	if len(runner) > 0 {
-		cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), driverBin, "-ir")...)
+	const src = `struct U { ps: usize[] }
+function main(): i32 {
+    var n: i32 = 0;
+    var r: i32 = 0;
+    while (r < 50) { var u: U = U { ps: [r as usize, 4294967300 as usize] }; n = n + ((u.ps[1] - 4294967296 as usize) as i32) + (u.ps[0] as i32) + u.ps.len(); r = r + 1; }
+    return n % 256;
+}
+`
+	asm := hevCompile(t, runner, driverBin, src, []string{"FERN_SEM_IR_STRICT=1", "FERN_LEAKCHECK=1"})
+	stderr, exit := hevRun(t, runner, buildBin(t, gcc, dir, "usize_field", asm))
+	if exit != 245 {
+		t.Fatalf("usize[] field exited %d, want 245", exit)
 	}
-	cmd.Stdin = bytes.NewReader([]byte(src))
-	cmd.Env = append(os.Environ(), "FERN_STRICT_IR=1")
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	cmd.Stdout = &bytes.Buffer{}
-	_ = cmd.Run()
-	if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
-		t.Fatalf("driver did not exit normally: %v", cmd.ProcessState)
+	var allocs, frees, live int64
+	if _, err := fmtSscan(leakSummaryLine(stderr), &allocs, &frees, &live); err != nil {
+		t.Fatalf("parse leakcheck summary from %q: %v", stderr, err)
 	}
-	if code := cmd.ProcessState.ExitCode(); code != 3 {
-		t.Fatalf("usize[] field: driver exited %d under FERN_STRICT_IR=1, want 3 (a named bail)\n%s", code, stderr.String())
-	}
-	if got := stderr.String(); !strings.Contains(got, "FERN_STRICT_IR:") || !strings.Contains(got, "struct literal `U`") {
-		t.Errorf("bail diagnostic does not name the site:\n%s", got)
+	if allocs != 100 || frees != 100 || live != 0 {
+		t.Errorf("usize[] field: allocs=%d frees=%d live_bytes=%d, want 100/100/0", allocs, frees, live)
 	}
 }

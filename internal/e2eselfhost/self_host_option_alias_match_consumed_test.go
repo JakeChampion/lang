@@ -19,12 +19,9 @@ import (
 //	  of the BOX and false of the PAYLOAD, so an alias whose arm carries the
 //	  payload out must still be refused.
 //
-// EVERY case here gates on the EXIT CODE, and the refused ones deliberately do
-// not assert balance. Removing the payload-out half makes
-// payload_out_via_alias exit 99 with allocs=300 frees=300 live_bytes=0 — a
-// PERFECTLY BALANCED census on a build that over-releases, cleaner-looking than
-// the correct build's 300/100 with 8000 live. A balance assertion would pass
-// the unsafe build and fail the safe one.
+// EVERY case here gates on the EXIT CODE and the sanitizer leg, not the census
+// alone: an over-releasing build exits 99 with a PERFECTLY BALANCED census. On
+// the typed lowering every row balances with the right exit.
 // See docs/rc-log/2026-08-28-option-alias-match-consumed.md.
 //
 // Exits confirmed on BOTH oracles (bin/fern -interp and native x86-64).
@@ -44,7 +41,7 @@ func optionAliasMatchConsumedCases() []tupleAliasParamCase {
     return t;
 }
 function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }`,
-			want: 68, balance: true,
+			want: 68,
 		},
 		{
 			// A DEAD alias with the source matched — the shape the plain
@@ -59,7 +56,7 @@ function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc =
     return t;
 }
 function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }`,
-			want: 34, balance: true,
+			want: 34,
 		},
 		{
 			// The alias handed to a BORROWING callee stays confined.
@@ -73,14 +70,13 @@ function round(i: i32): i32 {
     return t;
 }
 function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }`,
-			want: 68, wantFrees: 0,
+			want: 68,
 		},
 		{
-			// THE FREE-SAFETY GUARD, and the reason this file asserts exits.
-			// The alias's arm moves the payload out, so the source's release
-			// would free a buffer the frame still holds. With
-			// opt_body_binds_rc_payload removed this exits 99 with a balanced
-			// census — do NOT convert this to a balance assertion.
+			// THE FREE-SAFETY GUARD. The alias's arm moves the payload out,
+			// so a release of the source under it would free a buffer the
+			// frame still holds. An over-release exits 99 with a balanced
+			// census, so the exit is what guards it.
 			name: "payload_out_via_alias_refused",
 			src: `function round(i: i32): i32 {
     var src: Option[i32[]] = Some([i, i + 1]);
@@ -91,14 +87,10 @@ function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc =
     return out.len();
 }
 function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }`,
-			// 100 since the Some binding is spelled as an array (#9190): the
-			// carried-out payload is a counted reference, and the refused box
-			// keeps it, as it always did under a call scrutinee.
-			want: 68, wantFrees: 100,
+			want: 68,
 		},
 		{
-			// The alias ESCAPES the frame; not confined, source keeps its
-			// refusal.
+			// The alias ESCAPES the frame.
 			name: "returned_alias_refused",
 			src: `function mk(i: i32): Option[i32[]] {
     var src: Option[i32[]] = Some([i, i + 1]);
@@ -113,7 +105,7 @@ function round(i: i32): i32 {
     return t;
 }
 function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }`,
-			want: 34, wantFrees: 0,
+			want: 34,
 		},
 		{
 			// A REASSIGNED alias is not confined.
@@ -128,7 +120,7 @@ function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc =
     return t;
 }
 function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }`,
-			want: 2, wantFrees: 0,
+			want: 2,
 		},
 	}
 }
@@ -160,12 +152,8 @@ func TestSelfHostOptionAliasMatchConsumedX86_64(t *testing.T) {
 			if allocs == 0 {
 				t.Fatalf("%s allocated nothing — the probe is not exercising the path", tc.name)
 			}
-			if tc.balance {
-				if live != 0 || allocs != frees {
-					t.Errorf("%s: %s — must balance at live_bytes 0", tc.name, summary)
-				}
-			} else if frees != tc.wantFrees {
-				t.Errorf("%s: %s — refused row's frees moved (want %d)", tc.name, summary, tc.wantFrees)
+			if live != 0 || allocs != frees {
+				t.Errorf("%s: %s — must balance at live_bytes 0", tc.name, summary)
 			}
 
 			sanAsm := hevCompile(t, runner, driverBin, tc.src, []string{"FERN_SANITIZE=1"})
