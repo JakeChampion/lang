@@ -2251,7 +2251,12 @@ function e021_scope_has_impl(impls: parser.ImplInfo[], trait_name: string, impl_
 // Written for map keys (E045) and now also the generic-bound check (E021),
 // which are the same question asked twice.
 function conforms_by_impl_or_derive(s: Scope, tyname: string, tr: string): boolean {
-  if (e021_scope_has_impl(s.impls, tr, tyname)) { return true; }
+  return e021_scope_has_impl(s.impls, tr, tyname) || derives_trait(s, tyname, tr);
+}
+
+// derives_trait: a `@derive` of trait `tr` (by simple name) on `tyname`'s
+// declaration, or for an enum on any variant, which carries the owner's derives.
+function derives_trait(s: Scope, tyname: string, tr: string): boolean {
   for sd in s.structs.structs {
     if (sd.name == tyname || sd.enum_owner == tyname) {
       for derive in sd.derives {
@@ -2260,6 +2265,17 @@ function conforms_by_impl_or_derive(s: Scope, tyname: string, tr: string): boole
     }
   }
   return false;
+}
+
+// conforms_to_dyn_trait: `tyname` implements the trait a dyn set spells as
+// `tr`, which flatten spells by the module that declares it — an impl of that
+// trait, not of another module's trait of the same name — or derives it.
+function conforms_to_dyn_trait(s: Scope, tyname: string, tr: string): boolean {
+  var key: string = util.base_type_name(tr);
+  for imp in s.impls {
+    if (parser.impl_trait_key(imp) == key && util.base_type_name(imp.impl_type) == tyname) { return true; }
+  }
+  return derives_trait(s, tyname, parser.derive_simple_name(key));
 }
 
 // map_key_type_error returns the E045 message describing why `kt` cannot be a
@@ -3260,7 +3276,7 @@ function dyn_conforms(from: typeinfo.Type, to: typeinfo.Type, s: Scope): boolean
   var tn: string = util.base_type_name(type_label(from));
   if (tn.len() == 0) { return true; }
   for tr in parser.dyn_trait_set("dyn " + traits) {
-    if (!conforms_by_impl_or_derive(s, tn, util.base_type_name(tr))) { return false; }
+    if (!conforms_to_dyn_trait(s, tn, tr)) { return false; }
   }
   return true;
 }
@@ -6662,7 +6678,10 @@ function build_func_scope(fd: parser.FuncDecl, st: SigTable, structs: StructTabl
       }
     }
   }
-  var tbs: string[] = fd.bound_traits;
+  var tbs: string[] = [];
+  for b in fd.bound_traits {
+    tbs = tbs.append(bounds_in_module(b, fd.module));
+  }
   while (tbs.len() < tps.len()) {
     tbs = tbs.append("");
   }
@@ -10430,6 +10449,10 @@ function assoc_miss(): AssocHit {
 // while a bound may be written module-qualified (`T: num.Zero`) — try the
 // spelling first, then its simple name.
 function trait_req_idx(tr: string, reqs: parser.TraitReq[]): i32 {
+  var exact: i32 = derive_trait_idx(util.base_type_name(tr), reqs);
+  if (exact >= 0) {
+    return exact;
+  }
   var i: i32 = e021_trait_idx(tr, reqs);
   if (i >= 0) {
     return i;
@@ -10439,6 +10462,27 @@ function trait_req_idx(tr: string, reqs: parser.TraitReq[]): i32 {
     return 0 - 1;
   }
   return e021_trait_idx(simple, reqs);
+}
+
+// bounds_in_module spells each bare trait of a `+`-joined bound by `module`, the
+// bundle prefix of the module that wrote it, as flatten spells a derive: a bare
+// `Ord` in core/cmp is `cmp.Ord`, whatever the program itself declares.
+function bounds_in_module(b: string, module: string): string {
+  if (module.len() == 0) {
+    return b;
+  }
+  var out: string = "";
+  for part in parser.split_plus_bounds(b) {
+    if (out.len() > 0) {
+      out = out + " + ";
+    }
+    if (util.index_of_sub(util.base_type_name(part), ".") < 0) {
+      out = out + module + "." + part;
+    } else {
+      out = out + part;
+    }
+  }
+  return out;
 }
 
 // trait_assoc_req resolves trait `tr`'s ASSOCIATED (receiver-less) function,
@@ -10638,7 +10682,7 @@ function assoc_func_impls(impls: parser.ImplInfo[], funcs: parser.FuncDecl[]): p
   for fd in funcs {
     if (fd.receiver_name.len() == 0 && fd.receiver_type.len() > 0) {
       var noargs: string[] = [];
-      out = out.append(parser.ImplInfo { trait_name: "", impl_type: util.base_type_name(fd.receiver_type), type_params: noargs, all_type_params: noargs, bounds: noargs, method_names: [fd.name], trait_spelling: "", trait_ref: "", assoc_names: noargs, assoc_values: noargs });
+      out = out.append(parser.ImplInfo { trait_name: "", impl_type: util.base_type_name(fd.receiver_type), type_params: noargs, all_type_params: noargs, bounds: noargs, method_names: [fd.name], trait_spelling: "", trait_ref: "", assoc_names: noargs, assoc_values: noargs, trait_module: "" });
     }
   }
   return out;
@@ -17200,7 +17244,7 @@ function e021_diags(mod: parser.Module): util.Diag[] {
   var out: util.Diag[] = [];
   for im in mod.impls {
     for trait_req in mod.trait_reqs {
-      if (trait_req.trait_name == im.trait_name) {
+      if (trait_req.trait_name == im.trait_name && trait_req.module == im.trait_module) {
         // Supertrait conformance: `impl B for T` where `trait B: A`
         // requires a separate `impl A for T` (#4347 slice 3).
         var sup: string[] = trait_req.supertraits;

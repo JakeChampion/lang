@@ -4359,7 +4359,7 @@ function dyn_impl_names(t: typeinfo.Type, impls: parser.ImplInfo[]): string[] {
     if (traits.len() == 0) { return out; }
     for imp in impls {
         var n: string = util.base_type_name(imp.impl_type);
-        if (util.base_type_name(imp.trait_name) != util.base_type_name(traits[0]) || util.index_of_str(out, n) >= 0) { continue; }
+        if (parser.impl_trait_key(imp) != util.base_type_name(traits[0]) || util.index_of_str(out, n) >= 0) { continue; }
         if (implements_traits(impls, n, traits)) { out = out.append(n); }
     }
     return out;
@@ -4432,7 +4432,7 @@ function implements_traits(impls: parser.ImplInfo[], n: string, traits: string[]
 // the instantiation `tr` pins by position (`Pair[i32, u32]`) if it pins one,
 // and the associated type each `Name = Type` entry pins (`Iter[Item = i32]`).
 function implements_trait(imp: parser.ImplInfo, tr: string): boolean {
-    if (util.base_type_name(imp.trait_name) != util.base_type_name(tr)) { return false; }
+    if (parser.impl_trait_key(imp) != util.base_type_name(tr)) { return false; }
     var positional: string[] = [];
     for entry in bracket_entries(tr) {
         var eq: i32 = util.index_of_sub(entry, "=");
