@@ -19689,7 +19689,9 @@ func (c *checker) settleIntSigned(e ast.Expr, hn ast.NumberType, negated bool) {
 			// Reached via the Call case below, which settles every argument
 			// bound to a bare `T` — so a `T: Eq` generic returning i32 called
 			// as `xs.index_of("a" + "b") != 1` settled a string argument.
-			if x.FloatWidth != 0 || x.IsStringConcat {
+			// A float binary of unsettled literals has no FloatWidth yet,
+			// but it is no less a float (#10609).
+			if x.FloatWidth != 0 || x.IsFloat || x.IsStringConcat {
 				return
 			}
 			if x.IntWidth == 0 {
