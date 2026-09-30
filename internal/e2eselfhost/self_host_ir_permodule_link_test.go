@@ -54,8 +54,7 @@ func TestSelfHostIRPerModuleLink(t *testing.T) {
 	}
 
 	// Library module B: defines bfoo. Emitted as a non-entry unit.
-	// @noinline, or the entry splices bfoo in and there is no call to link.
-	libSrc := "@noinline function bfoo(x: i32): i32 { return x * 7; }"
+	libSrc := "function bfoo(x: i32): i32 { return x * 7; }"
 	libAsm := emit(t, libSrc, "-ir-unit", "lib")
 	if !strings.Contains(libAsm, ".globl __fn_bfoo") {
 		t.Fatalf("lib unit did not export __fn_bfoo as .globl\n--- lib.s ---\n%s", libAsm)

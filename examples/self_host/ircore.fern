@@ -1569,8 +1569,8 @@ pub struct Units { mods: parser.Module[], caches: irlower.LowerResult[][] }
 // to the part declaring it, and a method the front end added to the part
 // declaring its receiver type. Anything else the front end or the lambda lift
 // made goes to the part of the first function whose body names it, and failing
-// that to the entry. Units are not inlined into each other: a spliced leaf is
-// culled from its own unit while another may still call it.
+// that to the entry. A leaf seminline spliced into a caller in another module
+// keeps its body in its own unit, for the callers that still call it.
 pub function split_units(g: Gated, parts: parser.Module[], entry: i32): Units {
   var owner: i32[] = unit_owners(g, parts, entry);
   var mods: parser.Module[] = [];

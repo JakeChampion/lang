@@ -52,7 +52,7 @@ import (
 // emit+link+self-compile mechanics on every run.
 func TestSelfHostModloadPerModuleWholeCompilerX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
-	dir := writeSelfHostModloadProject(t)
+	dir := writeSelfHostModloadProjectTyped(t)
 
 	// Build the driver (asm_modload_run) as an x86 host binary via the native
 	// toolchain, exactly as the fixpoint harness does.
@@ -270,14 +270,21 @@ func planWholeCompilerUnits(t *testing.T, drive func(...string) (string, error),
 	modBytes := make([]int, len(shape))
 	for i, module := range shape {
 		funcCounts[i] = module.functions
-		// A module without a staged file (the synthesized "__entry") weighs 0:
-		// its window stays func-count based, so the entry is never sharded
-		// (the exactly-one-_start link assertion depends on that).
 		if fi, serr := os.Stat(filepath.Join(dir, module.namespace+".fern")); serr == nil {
 			modBytes[i] = int(fi.Size())
 		}
 	}
-	return planPmEmitWindows(funcCounts, modBytes, pmFuncBudget)
+	return planPmEmitWindows(funcCounts, modBytes, pmEntryIndex(shape), pmFuncBudget)
+}
+
+// pmEntryIndex is the position of the synthesized entry module in a shape.
+func pmEntryIndex(shape []pmModuleShape) int {
+	for i, m := range shape {
+		if m.namespace == "__entry" {
+			return i
+		}
+	}
+	return -1
 }
 
 type pmModuleShape struct {
@@ -310,11 +317,12 @@ func parsePMModuleShape(out string) ([]pmModuleShape, error) {
 // planPmEmitWindows expands per-module function counts + source bytes into the
 // ordered window plan, module-major and window-minor — the same flat order the
 // driver's own unit list uses, so -unit-range [b,hi) emits exactly jobs[b:hi].
-func planPmEmitWindows(funcCounts, modBytes []int, funcBudget int) []*pmEmitJob {
+// The module at `entry` is never sharded, as the driver's flat_unit_list does.
+func planPmEmitWindows(funcCounts, modBytes []int, entry, funcBudget int) []*pmEmitJob {
 	var jobs []*pmEmitJob
 	for i := range funcCounts {
 		window := emitWindowSize(funcCounts[i], modBytes[i], funcBudget)
-		if funcCounts[i] <= window {
+		if funcCounts[i] <= window || i == entry {
 			jobs = append(jobs, &pmEmitJob{modIdx: i, lo: 0, hi: funcCounts[i], count: funcCounts[i]})
 			continue
 		}

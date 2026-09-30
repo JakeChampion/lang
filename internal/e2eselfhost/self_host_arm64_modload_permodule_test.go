@@ -33,7 +33,7 @@ import (
 func TestSelfHostModloadPerModuleWholeCompilerArm64(t *testing.T) {
 	armgcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
-	dir := writeSelfHostModloadProject(t)
+	dir := writeSelfHostModloadProjectTyped(t)
 
 	// Build the arm64 driver as an x86 host binary (mirrors the fixpoint harness).
 	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_modload_run.fern", "arm64driver")

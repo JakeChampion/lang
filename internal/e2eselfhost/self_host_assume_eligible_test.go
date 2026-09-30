@@ -48,11 +48,6 @@ func TestSelfHostAssumeEligibleByteIdenticalX86_64(t *testing.T) {
 	// and TestSelfHostPerModuleRoutesAgree covers the per-process route there.
 	// Set after the build, which stage0 would otherwise run on the AST lowering.
 	t.Setenv("FERN_SEM_IR", "")
-	// The AST lowering lowers a Map itself and cannot lower core/map's generic
-	// bodies as a unit of their own, so its program leaves the vendored copy out.
-	if err := os.RemoveAll(filepath.Join(dir, "core")); err != nil {
-		t.Fatal(err)
-	}
 	entry := filepath.Join(dir, "asm_modload_run.fern")
 
 	drive := func(args ...string) (string, error) {

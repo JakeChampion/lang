@@ -2337,9 +2337,12 @@ into four groups:
   a declaration goes to the module declaring it, a method the front end added
   to the module declaring its receiver type, anything else the front end or
   the lambda lift made to the module of the first function naming it, and the
-  instances and drop helpers to the entry. Units are not inlined into each
-  other. `-ir-unit` lowers its module together with its `-ir-sigs` siblings,
-  so a call to a sibling it was not given is the checker's error. A unit's
+  instances and drop helpers to the entry, which is never sharded. A leaf
+  `seminline` splices into a caller in another module keeps its body in its
+  own unit. `-ir-unit` lowers its module together with its `-ir-sigs`
+  siblings, so a call to a sibling it was not given is the checker's error,
+  and marks the siblings' declarations `@noinline`, so whether a sibling's
+  leaf is spliced in never depends on which siblings it was given. A unit's
   object-cache key folds in `ircore.lowered_digest` of its bodies, since a
   typed body can depend on another module's (an inferred parameter mode, an
   instance). With `FERN_SEM_IR=` each module is still lowered on its own by

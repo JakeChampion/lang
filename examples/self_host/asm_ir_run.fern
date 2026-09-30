@@ -267,13 +267,18 @@ function run(): i32 {
 // typed_unit emits `mod` as one unit of a per-module build over the typed
 // lowering. The typed lowering checks a whole program, so it lowers `mod`
 // together with its `-ir-sigs` siblings and emits `mod`'s share; a call to a
-// sibling it was not given is the checker's undefined-name error.
+// sibling it was not given is the checker's undefined-name error. Siblings are
+// never inlined, so which of them were passed cannot change `mod`'s code.
 function typed_unit(mod: parser.Module, siblings: parser.Module[], is_entry: boolean, ns: string, extra: string[], target: string): string {
   var whole: parser.Module = mod;
   for sm in siblings {
+    var calls: parser.FuncDecl[] = [];
+    for fd in sm.funcs {
+      calls = calls.append(parser.FuncDecl { ...fd, no_inline: true });
+    }
     whole = parser.Module {
       ...whole,
-      funcs: util.append_all(whole.funcs, sm.funcs),
+      funcs: util.append_all(whole.funcs, calls),
       structs: util.append_all(whole.structs, sm.structs),
       aliases: util.append_all(whole.aliases, sm.aliases),
       enums: util.append_all(whole.enums, sm.enums),

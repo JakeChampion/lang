@@ -21,6 +21,15 @@ func WriteSelfHostModloadProject(t *testing.T) string {
 	// treeshake backs the over-budget per-module rescue: the driver derives
 	// the reachable-name set from it before pruning each unit.
 	CopySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifyprovided.fern", "irverifygate.fern", "asm_ir.fern", "asm_arm64_ir.fern", "flatten.fern", "modloader.fern", "fern_toml.fern", "builtins.fern", "asm_modload_run.fern", "treeshake.fern", "rundriver.fern")
+	return dir
+}
+
+// WriteSelfHostModloadProjectTyped is WriteSelfHostModloadProject for a test
+// whose driver compiles the compiler's own sources over the typed lowering,
+// which reads the stdlib modules' bodies.
+func WriteSelfHostModloadProjectTyped(t *testing.T) string {
+	t.Helper()
+	dir := WriteSelfHostModloadProject(t)
 	VendorStdlibImports(t, dir)
 	return dir
 }

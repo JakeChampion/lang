@@ -35,7 +35,7 @@ func TestSelfHostPerModuleEmitAllFixpointX86_64(t *testing.T) {
 	// COMPILER, not the windowing.
 	batchUnits := pmEmitAllBatch()
 	gcc, runner := x86_64Tooling(t)
-	dir := writeSelfHostModloadProject(t)
+	dir := writeSelfHostModloadProjectTyped(t)
 	entry := filepath.Join(dir, "asm_modload_run.fern")
 
 	gen0Bin := buildSelfHostBin(t, gcc, dir, "asm_modload_run.fern", "eafix_gen0")

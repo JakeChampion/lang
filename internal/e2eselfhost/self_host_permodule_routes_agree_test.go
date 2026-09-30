@@ -15,7 +15,9 @@ import (
 // (`-per-module-emit-all`) cut their units from the same typed lowering of the
 // whole program, so every unit is byte-identical between them. A one-function
 // window budget shards the library modules, so the windowed cut is compared as
-// well, and the batched units link and run.
+// well, and the batched units link and run. The entry is never sharded, so the
+// bodies on its tail (`first`'s instances, the drop helpers) and `_start` are
+// emitted once.
 func TestSelfHostPerModuleRoutesAgree(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostModloadProject(t)
@@ -38,7 +40,8 @@ pub function picked(): i32 { return shapes.first([7, 8], 0) + shapes.first(["a",
 `)
 	mustWrite(t, proj, "main.fern", `import "./shapes";
 import "./mid";
-function main(): i32 { return mid.total([shapes.make(1, 2), shapes.make(3, 4)]) + mid.scaled(2) + mid.picked(); }
+function picks(): i32 { return mid.picked(); }
+function main(): i32 { return mid.total([shapes.make(1, 2), shapes.make(3, 4)]) + mid.scaled(2) + picks(); }
 `)
 	entry := filepath.Join(proj, "main.fern")
 	const budget = 1
@@ -67,11 +70,12 @@ function main(): i32 { return mid.total([shapes.make(1, 2), shapes.make(3, 4)]) 
 		if fi, serr := os.Stat(filepath.Join(proj, m.namespace+".fern")); serr == nil && m.namespace != "__entry" {
 			sizes[i] = int(fi.Size())
 		}
-		if m.namespace == "__entry" && m.functions != 1 {
-			t.Fatalf("the entry unit has %d functions; a one-function budget would shard it", m.functions)
-		}
 	}
-	jobs := planPmEmitWindows(counts, sizes, budget)
+	entryIdx := pmEntryIndex(shape)
+	if entryIdx < 0 || counts[entryIdx] < 2 {
+		t.Fatalf("the entry must have several functions for a one-function budget to test its exemption: %+v", shape)
+	}
+	jobs := planPmEmitWindows(counts, sizes, entryIdx, budget)
 	sharded := false
 	for _, j := range jobs {
 		if j.lo > 0 {
@@ -93,6 +97,42 @@ function main(): i32 { return mid.total([shapes.make(1, 2), shapes.make(3, 4)]) 
 		t.Fatal(err)
 	}
 	drive("-per-module-emit-all", "-out-dir", outDir, "-func-budget", strconv.Itoa(budget))
+	written, err := filepath.Glob(filepath.Join(outDir, "unit_*.s"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(written) != len(jobs) {
+		t.Fatalf("emit-all wrote %d units, the plan has %d", len(written), len(jobs))
+	}
+	var all strings.Builder
+	for _, w := range written {
+		b, err := os.ReadFile(w)
+		if err != nil {
+			t.Fatal(err)
+		}
+		all.Write(b)
+	}
+	defs := map[string]int{}
+	for _, ln := range strings.Split(all.String(), "\n") {
+		if strings.HasSuffix(ln, ":") && (ln == "_start:" || strings.HasPrefix(ln, "__fn_shapes__first__") || strings.HasPrefix(ln, "__fn___sem_")) {
+			defs[ln]++
+		}
+	}
+	if defs["_start:"] != 1 {
+		t.Errorf("_start is defined %d times across the units, want 1", defs["_start:"])
+	}
+	instances := 0
+	for d, n := range defs {
+		if strings.HasPrefix(d, "__fn_shapes__first__") {
+			instances++
+		}
+		if n != 1 {
+			t.Errorf("%s is defined %d times across the units, want 1", strings.TrimSuffix(d, ":"), n)
+		}
+	}
+	if instances == 0 {
+		t.Errorf("no instance of first was emitted, so the entry's tail went unchecked")
+	}
 
 	var objs []string
 	for _, j := range jobs {

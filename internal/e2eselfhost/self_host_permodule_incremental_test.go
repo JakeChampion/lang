@@ -51,6 +51,7 @@ func TestSelfHostPerModuleIncrementalCodegenX86_64(t *testing.T) {
 			t.Fatalf("write leaf.fern: %v", err)
 		}
 	}
+	// @noinline: the per-module route inlines across modules, which would put leaf's body in mid's key.
 	const leafI32 = "@noinline pub function leaf_val(): i32 { return 40; }\n"
 	const leafI32Body = "@noinline pub function leaf_val(): i32 { return 41; }\n" // body-only change, signature identical
 	const leafI64 = "@noinline pub function leaf_val(): i64 { return 40i64; }\n"  // signature change
@@ -383,6 +384,7 @@ func TestSelfHostPerModuleObjectCacheX86_64(t *testing.T) {
 			t.Fatalf("write leaf.fern: %v", err)
 		}
 	}
+	// @noinline: the per-module route inlines across modules, which would put leaf's body in mid's key.
 	writeLeaf("@noinline pub function leaf_val(): i32 { return 40; }\n")
 	if err := os.WriteFile(filepath.Join(proj, "mid.fern"), []byte(
 		"import \"./leaf\";\n"+

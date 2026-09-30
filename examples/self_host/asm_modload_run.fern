@@ -664,7 +664,9 @@ function emit_per_module_spawned(dir: string, entry_path: string, entry: parser.
     return 1;
   }
   // Only the flat unit LIST is needed here (no codegen); each child derives
-  // the same units and emits its slice of them.
+  // the same units and emits its slice of them. Over the typed lowering the
+  // list still costs a whole-program lowering (about 52 s and 4.4 GB for the
+  // compiler), paid here and again in every batch child.
   var parts: flatten.PerModule[] = flatten.bundle_per_module(entry, loaded, target);
   var units: string[] = flat_unit_list(dir, parts, per_module_view(dir, entry, loaded, parts, target, []).mods, func_budget);
   if (units.len() == 0) {
@@ -827,6 +829,11 @@ function flat_unit_list(dir: string, parts: flatten.PerModule[], infmods: parser
       Err(e_fu) => {}
     }
     var window: i32 = emit_window_size(fcount, sbytes, func_budget);
+    // The entry emits `_start`, the runtime and the declaration-less bodies,
+    // which only one unit may.
+    if (parts[idx].is_entry && fcount > window) {
+      window = fcount;
+    }
     var wlo: i32 = 0;
     var more: boolean = true;
     while (more) {
@@ -1056,6 +1063,10 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
   var extra: string[] = [];
   if (parts[pm_index].is_entry) {
     extra = pm_extra;
+    if (pm_lo > 0 || pm_hi >= 0 && pm_hi < infmods[pm_index].funcs.len()) {
+      eprint("per-module: the entry is emitted whole, not in a -func-range window\n");
+      return 1;
+    }
   }
   // Incremental object cache (#3451 step 6 / #3458). With -cache-dir set, the
   // driver computes this unit's content-addressed key (its module's source
@@ -1087,13 +1098,10 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
   }
   // The pre-check covers the window this process emits: a sharded module's
   // windows are separate processes, so each checking the whole module would
-  // lower it once per window. The entry is never sharded.
+  // lower it once per window. The entry is never sharded (refused above).
   var elig: boolean = true;
   if (!v.typed && !assume_eligible) {
     elig = ircore.all_eligible_view_base_range(infmods[pm_index], v.known, v.stab, v.base, pm_lo, pm_hi);
-    if (parts[pm_index].is_entry) {
-      elig = ircore.all_eligible_view_base(infmods[pm_index], v.known, v.stab, v.base);
-    }
   }
   if (!elig) {
     eprint("per-module: module not IR-eligible: ");
