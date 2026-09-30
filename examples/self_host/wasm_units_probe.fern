@@ -20,9 +20,10 @@
 // cross-unit calls in both directions and shared literals. If this passes, the
 // module-boundary case is easier.
 //
-// The one thing that must NOT be split is the whole-program VIEW: both the
-// lowering and the emit of each half take `im.funcs` / `im.structs`, because a
-// call is shaped by its CALLEE, which now routinely lives in the other unit.
+// The one thing that must NOT be split is the whole-program VIEW: the lowering
+// is of the whole program, and the emit of each half takes `im.funcs` /
+// `im.structs`, because a call is shaped by its CALLEE, which now routinely
+// lives in the other unit.
 // Passing a half's own functions there is exactly the bug this driver exists to
 // catch, and it fails loudly rather than subtly — a mis-tagged cross-unit call
 // miscompiles at runtime.
@@ -33,6 +34,8 @@ import "./rundriver";
 import "./asmcore";
 import "./wasm_ir";
 import "./irlower";
+import "./ircore";
+import "./semlower";
 import "./util";
 
 // slice_funcs returns funcs[lo:hi] — the self-host language has no slice
@@ -42,6 +45,16 @@ function slice_funcs(fs: parser.FuncDecl[], lo: i32, hi: i32): parser.FuncDecl[]
     var i: i32 = lo;
     while (i < hi) {
         out = out.append(fs[i]);
+        i = i + 1;
+    }
+    return out;
+}
+
+function slice_cache(c: irlower.LowerResult[], lo: i32, hi: i32): irlower.LowerResult[] {
+    var out: irlower.LowerResult[] = [];
+    var i: i32 = lo;
+    while (i < hi) {
+        out = out.append(c[i]);
         i = i + 1;
     }
     return out;
@@ -84,7 +97,8 @@ function main(): i32 {
     // `$<fn>$wrap<N>` thunks a function VALUE is taken through, so skipping it
     // leaves the funcref table naming functions the units never emit — which
     // traps at call_indirect rather than failing to link.
-    var im: parser.Module = parser.infer_ret_types_module(wasm_ir.lift_lambdas(parser.module_with_builtins(mod)));
+    var d: semlower.Driven = semlower.driven(mod, "wasm32-wasi");
+    var im: parser.Module = parser.infer_ret_types_module(wasm_ir.route_normalized(d.full));
 
     var n: i32 = im.funcs.len();
     if (n < 2) {
@@ -96,10 +110,19 @@ function main(): i32 {
     var mod_b: parser.Module = with_funcs(im, slice_funcs(im.funcs, half, n));
 
     // Whole-program view for both halves — see the header. Both halves index the
-    // same struct set, so the table is built once (#8178).
+    // same struct set, so the table is built once (#8178). The whole program is
+    // lowered once and its cache split with the functions; the bodies with no
+    // declaration of their own (generic instances, drop helpers) go with the
+    // second half.
     var stab: irlower.StructTab = irlower.struct_tab(im.structs);
-    var cache_a: irlower.LowerResult[] = wasm_ir.lower_all_for_view(mod_a, im.funcs, stab);
-    var cache_b: irlower.LowerResult[] = wasm_ir.lower_all_for_view(mod_b, im.funcs, stab);
+    var g: ircore.Lowered = wasm_ir.lower_all_gated(im, stab, ircore.sub_base(d.sub, im.funcs, stab), d.sub);
+    if (!g.ok) {
+        ircore.eprint_ir_ineligible();
+        return 1;
+    }
+    var whole: irlower.LowerResult[] = ircore.sub_cache(d.sub, g.cache);
+    var cache_a: irlower.LowerResult[] = slice_cache(whole, 0, half);
+    var cache_b: irlower.LowerResult[] = slice_cache(whole, half, whole.len());
 
     var unit_a: string = wasm_ir.emit_functions_view("", mod_a, cache_a, im.funcs, stab);
     var unit_b: string = wasm_ir.emit_functions_view("$u1", mod_b, cache_b, im.funcs, stab);

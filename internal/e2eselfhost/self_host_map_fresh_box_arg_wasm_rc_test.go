@@ -26,6 +26,9 @@ import (
 // never showed it. Freshness is the whole discriminator, so every case here
 // constructs its argument in the insert and reads the heap across 1000 rounds.
 func TestSelfHostMapFreshBoxArgWasmRC(t *testing.T) {
+	// These programs pin the AST lowering's built-in map runtime; the typed lowering
+	// takes maps from core/map.
+	t.Setenv("FERN_SEM_IR", "")
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host fresh box-arg map wasm rc e2e")
 	}

@@ -91,8 +91,9 @@ func TestWasmRouteProbe(t *testing.T) {
 		"    if (s == 5000000000) { return 42; }\n" +
 		"    return 1;\n" +
 		"}\n"
-	// STILL declined, and the probe needs a case that is: a TWO-typevar generic
-	// over a wide-element array. `U` is bound only by the callback's return, not
+	// Declined by the AST lowering, and the refusal test needs a case that is:
+	// a TWO-typevar generic over a wide-element array. The typed lowering
+	// instantiates both vars and produces it. `U` is bound only by the callback's return, not
 	// by any bare-scalar or bare-array param, so promoting `T` alone would leave
 	// `U` erased in the clone — the stranded-sibling hazard the `all_tp_count == 1`
 	// guard exists for. Left erased, the callee indexes an 8-byte-element array at
@@ -121,7 +122,7 @@ func TestWasmRouteProbe(t *testing.T) {
 		{"erased-wide-uses-typevar", usesTypevar, "ir"},
 		{"erased-wide-two-typevars", twoTypevars, "ir"},
 		{"erased-wide-fold-shape", foldShape, "ir"},
-		{"erased-wide-two-var-array", twoVarArrayShape, "refused"},
+		{"erased-wide-two-var-array", twoVarArrayShape, "ir"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := strings.TrimSpace(string(runCaptureArgs(t, runner, driverBin, []byte(tc.src), "-decide")))
@@ -144,6 +145,7 @@ func TestWasmRouteProbe(t *testing.T) {
 		// The former declined case. Asserting its VALUE is the point: it returned
 		// 1 through the AST emitter, so pinning that emit would have pinned a bug.
 		{"erased-wide-fold-shape-runs", foldShape},
+		{"erased-wide-two-var-array-runs", twoVarArrayShape},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if _, err := exec.LookPath("wasmtime"); err != nil {
@@ -171,6 +173,8 @@ func TestWasmRouteProbe(t *testing.T) {
 	// which is why twoVarArrayShape replaced foldShape when the latter started
 	// lowering — a refusal test whose subject no longer refuses proves nothing.
 	t.Run("declined-route-refuses", func(t *testing.T) {
+		// The AST lowering declines this shape; the typed lowering produces it.
+		t.Setenv("FERN_SEM_IR", "")
 		// Not runCapture: that helper fatals on a non-zero exit, and a non-zero
 		// exit is exactly the contract here.
 		wat, stderr, code := runDeclined(t, runner, driverBin, []byte(twoVarArrayShape))

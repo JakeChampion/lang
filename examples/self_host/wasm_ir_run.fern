@@ -1,8 +1,9 @@
 // examples/self_host/wasm_ir_run.fern — differential driver for the wasm IR
 // code path (the wasm sibling of asm_ir_run, whose -target flag also covers arm64).
 // `-ir` FORCES the IR path (wasm_ir.emit_ir_module: AST -> stack IR -> WAT) past
-// the routing gates; without it the driver takes the ordinary ROUTED path, the
-// same one wasm_run takes. The companion Go test pipes each program through both
+// the routing gates when the typed lowering is off (FERN_SEM_IR=); otherwise the
+// driver takes the ordinary ROUTED path over the typed lowering, the same one
+// wasm_run takes. The companion Go test pipes each program through both
 // ways and asserts identical exit codes.
 //
 // The two sides used to be IR-vs-AST, which is what made this a differential
@@ -20,6 +21,7 @@ import "./asmcore";
 import "./irlower";
 import "./ircore";
 import "./wasm_ir";
+import "./semlower";
 
 // main wraps `run` in the shared rc-over-release guard — see
 // util.rc_underflow_guard. Every self-host driver run self-checks its own
@@ -70,6 +72,20 @@ function run(): i32 {
         return 1;
     }
     var emitted: string = "";
+    // The forced path lowers from the AST, so it runs only with the typed
+    // lowering off.
+    if (use_ir && !semlower.sem_ir_on()) { emitted = forced_emit(mod); }
+    if (emitted == "") {
+        var d: semlower.Driven = semlower.driven(mod, "wasm32-wasi");
+        emitted = wasm_ir.emit_module_mode_or_error_sub(d.full, false, false, d.sub);
+    }
+    write(emitted);
+    return 0;
+}
+
+// forced_emit is the `-ir` path: the AST lowering's emit, past the routing
+// gates. "" when the module is not eligible for it.
+function forced_emit(mod: parser.Module): string {
     var lm: parser.Module = wasm_ir.lift_lambdas(mod);
     // Eligibility must be judged with the builtin structs/enums injected
     // (FileStat / ProcessResult / IoError variants) — a struct-returning builtin
@@ -104,36 +120,31 @@ function run(): i32 {
     // monomorphised module the emit uses makes eligibility match what is emitted.
     var mono_ok: boolean = false;
     if (!lm_ok && !elm_ok) { mono_ok = wasm_ir.wasm_eligible(mmod); }
-    if (use_ir && (lm_ok || elm_ok || mono_ok)) {
-        mod = mmod;
-        // Inject the builtin structs/enums (FileStat / ProcessResult / IoError
-        // variants) ONLY when they're what made the module eligible — i.e. a
-        // struct-returning builtin like stat() that the un-injected module can't
-        // lower (`!lm_ok && elm_ok`). Without them stat() has no FileStat layout,
-        // so the match arm `Ok(s) => s.size` can't resolve its field offsets AND
-        // the module_emits_op("stat") gate bails, so the $__fern_stat runtime +
-        // import are never emitted (invalid module). For every program that was
-        // already eligible un-injected (`lm_ok`), skip the injection so its IR
-        // output stays byte-identical to before — appending the builtin structs
-        // perturbs the emitter even when they're unused.
-        if (!lm_ok && elm_ok) {
-            mod = parser.Module { funcs: mod.funcs, structs: parser.inject_builtin_enums(mod.structs), aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs, trait_decls: mod.trait_decls, inferred_consts: mod.inferred_consts };
-        }
-        // Force the IR path. Lower every function ONCE and hand the cache to
-        // emit_ir_module, which queries module_emits_op / module_uses_* /
-        // str_values ~50× — re-lowering per query is the O(functions²) ×
-        // O(passes) blowup that OOMed large modules (#4652).
-        var fstab: irlower.StructTab = irlower.struct_tab(mod.structs);
-        var fbase: irlower.FnSigs = ircore.wp_fn_sigs(mod.funcs, fstab);
-        // The module emission itself lives in wasm_ir.emit_ir_module — the SINGLE
-        // source of truth shared with the routed entry point. This driver used to
-        // inline its own near-identical copy; the two drifted and the routed copy
-        // lost the whole WASI env/args/clock/fs surface, emitting calls to helpers
-        // it never defined (#4801).
-        emitted = wasm_ir.emit_ir_module(mod, wasm_ir.lower_all_for_base(mod, fstab, fbase), fbase);
-    } else {
-        emitted = wasm_ir.emit_module_mode_or_error(parser.module_with_builtins(mod), false, false);
+    if (!(lm_ok || elm_ok || mono_ok)) { return ""; }
+    mod = mmod;
+    // Inject the builtin structs/enums (FileStat / ProcessResult / IoError
+    // variants) ONLY when they're what made the module eligible — i.e. a
+    // struct-returning builtin like stat() that the un-injected module can't
+    // lower (`!lm_ok && elm_ok`). Without them stat() has no FileStat layout,
+    // so the match arm `Ok(s) => s.size` can't resolve its field offsets AND
+    // the module_emits_op("stat") gate bails, so the $__fern_stat runtime +
+    // import are never emitted (invalid module). For every program that was
+    // already eligible un-injected (`lm_ok`), skip the injection so its IR
+    // output stays byte-identical to before — appending the builtin structs
+    // perturbs the emitter even when they're unused.
+    if (!lm_ok && elm_ok) {
+        mod = parser.Module { funcs: mod.funcs, structs: parser.inject_builtin_enums(mod.structs), aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs, trait_decls: mod.trait_decls, inferred_consts: mod.inferred_consts };
     }
-    write(emitted);
-    return 0;
+    // Force the IR path. Lower every function ONCE and hand the cache to
+    // emit_ir_module, which queries module_emits_op / module_uses_* /
+    // str_values ~50× — re-lowering per query is the O(functions²) ×
+    // O(passes) blowup that OOMed large modules (#4652).
+    var fstab: irlower.StructTab = irlower.struct_tab(mod.structs);
+    var fbase: irlower.FnSigs = ircore.wp_fn_sigs(mod.funcs, fstab);
+    // The module emission itself lives in wasm_ir.emit_ir_module — the SINGLE
+    // source of truth shared with the routed entry point. This driver used to
+    // inline its own near-identical copy; the two drifted and the routed copy
+    // lost the whole WASI env/args/clock/fs surface, emitting calls to helpers
+    // it never defined (#4801).
+    return wasm_ir.emit_ir_module(mod, wasm_ir.lower_all_for_base(mod, fstab, fbase), fbase);
 }

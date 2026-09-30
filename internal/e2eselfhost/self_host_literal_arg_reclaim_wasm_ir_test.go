@@ -1,7 +1,6 @@
 package e2eselfhost
 
 import (
-	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,10 +18,8 @@ func TestSelfHostLiteralArgReclaimWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host literal-arg-reclaim wasm IR e2e")
 	}
-	gcc, runner := x86_64Tooling(t)
+	l := newWasmStdlibLoader(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
 
 	cases := []struct {
 		name     string
@@ -56,7 +53,8 @@ function main(): i32 {
     if (bad != 0) { return 88; }
     return 0;
 }`, 0},
-		{"producer-call-arg-borrowable-wasm", `function mks(n: i32): string { return "a-string-well-past-the-inline-threshold-" + n.to_string(); }
+		{"producer-call-arg-borrowable-wasm", `import "std/i32";
+function mks(n: i32): string { return "a-string-well-past-the-inline-threshold-" + n.to_string(); }
 function size(s: string): i32 { return s.len(); }
 function main(): i32 {
     var bad: i32 = 0;
@@ -68,7 +66,8 @@ function main(): i32 {
 }`, 0},
 		// Refused: the callee returns the argument, so the result aliases the
 		// temp and is read back.
-		{"producer-call-arg-returned-safe-wasm", `function mks(n: i32): string { return "a-string-well-past-the-inline-threshold-" + n.to_string(); }
+		{"producer-call-arg-returned-safe-wasm", `import "std/i32";
+function mks(n: i32): string { return "a-string-well-past-the-inline-threshold-" + n.to_string(); }
 function pick(s: string): string { return s; }
 function main(): i32 {
     var bad: i32 = 0;
@@ -202,16 +201,9 @@ function main(): i32 {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(driverBin, "-ir")
-			} else {
-				cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
-			}
-			cmd.Stdin = bytes.NewReader([]byte(tc.src))
-			wat, err := cmd.Output()
-			if err != nil || len(wat) == 0 {
-				t.Fatalf("driver failed for %q: %v", tc.src, err)
+			wat := l.emit(t, tc.src)
+			if len(wat) == 0 {
+				t.Fatalf("no WAT for %q", tc.src)
 			}
 			watFile := filepath.Join(dir, tc.name+".wat")
 			if err := os.WriteFile(watFile, wat, 0o644); err != nil {

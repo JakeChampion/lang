@@ -176,7 +176,7 @@ func runX86NativeDriver(t *testing.T, name, driverMain string, wantExit int) {
 	if err != nil {
 		t.Fatalf("read elf.fern: %v", err)
 	}
-	source := string(nat) + "\n" + string(elf) + "\n" + driverMain
+	source := string(nat) + "\n" + string(elf) + toU8Src + driverMain
 
 	// Stage 1: compile the driver source to WAT via the self-host emitter.
 	wat := runCapture(t, gcc, runner, driverBin, []byte(source))
@@ -675,7 +675,7 @@ function main(): i32 {
     code = x86_mov_r32_imm32(code, x86_rax(), 60); // __NR_exit
     code = x86_syscall(code);
     var bin: i32[] = elf_static_executable_x86(code); // R+X, text-only
-    write(string_from_bytes_unchecked(bin));
+    write(string_from_bytes_unchecked(to_u8(bin)));
     return 0;
 }
 `
@@ -701,7 +701,7 @@ function main(): i32 {
     code = x86_mov_r32_imm32(code, x86_rax(), 60);  // __NR_exit
     code = x86_syscall(code);
     var bin: i32[] = elf_static_executable_x86(code);
-    write(string_from_bytes_unchecked(bin));
+    write(string_from_bytes_unchecked(to_u8(bin)));
     return 0;
 }
 `
@@ -730,7 +730,7 @@ function main(): i32 {
     code = x86_mov_r32_imm32(code, x86_rax(), 60);
     code = x86_syscall(code);
     var bin: i32[] = elf_static_executable_x86(code);
-    write(string_from_bytes_unchecked(bin));
+    write(string_from_bytes_unchecked(to_u8(bin)));
     return 0;
 }
 `
@@ -755,7 +755,7 @@ function main(): i32 {
     code = x86_mov_r32_imm32(code, x86_rax(), 42); // setval: result = 42
     code = x86_ret(code);
     var bin: i32[] = elf_static_executable_x86(code);
-    write(string_from_bytes_unchecked(bin));
+    write(string_from_bytes_unchecked(to_u8(bin)));
     return 0;
 }
 `
@@ -770,11 +770,11 @@ const x86LabelsSelfTestMain = `
 function main(): i32 {
     // forward conditional: cmp then jge done (placeholder, resolved later).
     var a: X86Asm = x86_asm_new();
-    a.code = x86_mov_r32_imm32(a.code, x86_rax(), 42);
-    a.code = x86_mov_r32_imm32(a.code, x86_rcx(), 17);
-    a.code = x86_cmp_r64_r64(a.code, x86_rax(), x86_rcx());
+    a = X86Asm { ...a, code: x86_mov_r32_imm32(a.code, x86_rax(), 42) };
+    a = X86Asm { ...a, code: x86_mov_r32_imm32(a.code, x86_rcx(), 17) };
+    a = X86Asm { ...a, code: x86_cmp_r64_r64(a.code, x86_rax(), x86_rcx()) };
     a = x86_jcc_label(a, x86_cc_ge(), "done");
-    a.code = x86_mov_r64_r64(a.code, x86_rax(), x86_rcx());
+    a = X86Asm { ...a, code: x86_mov_r64_r64(a.code, x86_rax(), x86_rcx()) };
     a = x86_label(a, "done");
     a = x86_resolve(a);
     if (a.code.len() != 22 || a.code[13] != 15 || a.code[14] != 141) { return 1; }
@@ -783,7 +783,7 @@ function main(): i32 {
     // backward conditional: label loop, body, jne loop (patched immediately).
     var b: X86Asm = x86_asm_new();
     b = x86_label(b, "loop");
-    b.code = x86_add_r64_imm32(b.code, x86_rax(), 6);
+    b = X86Asm { ...b, code: x86_add_r64_imm32(b.code, x86_rax(), 6) };
     b = x86_jcc_label(b, x86_cc_ne(), "loop");
     if (b.code.len() != 13 || b.code[7] != 15 || b.code[8] != 133) { return 3; }
     if (b.code[9] != 243 || b.code[10] != 255 || b.code[11] != 255 || b.code[12] != 255) { return 4; }
@@ -791,7 +791,7 @@ function main(): i32 {
     // forward call: call sub, ret, label sub, resolve.
     var c: X86Asm = x86_asm_new();
     c = x86_call_label(c, "sub");
-    c.code = x86_ret(c.code);
+    c = X86Asm { ...c, code: x86_ret(c.code) };
     c = x86_label(c, "sub");
     c = x86_resolve(c);
     if (c.code.len() != 6 || c.code[0] != 232 || c.code[1] != 1 || c.code[2] != 0) { return 5; }
@@ -807,7 +807,7 @@ function main(): i32 {
     if (d.code[3] != 0 || d.code[4] != 0 || d.code[5] != 0 || d.code[6] != 0) { return 9; }
     // resolve a rip ref to a .rodata quad: lea(7)+mov(3)=10 text, padded 16,
     // S0 at 16; disp32 = 16 - (3+4) = 9.
-    d.code = x86_mov_load_r64(d.code, x86_rax(), x86_rax(), 0);
+    d = X86Asm { ...d, code: x86_mov_load_r64(d.code, x86_rax(), x86_rax(), 0) };
     d = x86_rodata_label(d, "S0");
     d = x86_rodata_quad(d, 42i64);
     d = x86_resolve(d);
@@ -828,9 +828,9 @@ function main(): i32 {
     // with the second one — so this pins the insertion-order walk, not a
     // property of the input.
     var f: X86Asm = x86_asm_new();
-    f.code = x86_ret(f.code);
+    f = X86Asm { ...f, code: x86_ret(f.code) };
     f = x86_label(f, "dup");
-    f.code = x86_ret(f.code);
+    f = X86Asm { ...f, code: x86_ret(f.code) };
     f = x86_label(f, "dup");
     if (x86_label_off(f, "dup") != 1) { return 15; }
 
@@ -843,7 +843,7 @@ function main(): i32 {
     while (i < 26) {
         var j: i32 = 0;
         while (j < 26) {
-            g.code = g.code.append(0);
+            g = X86Asm { ...g, code: g.code.append(0) };
             g = x86_label(g, slice_unchecked(alpha, i, i + 1) + slice_unchecked(alpha, j, j + 1));
             j = j + 1;
         }
@@ -866,21 +866,21 @@ const x86ElfLabelDriverMain = `
 function main(): i32 {
     var a: X86Asm = x86_asm_new();
     a = x86_call_label(a, "compute");              // forward call
-    a.code = x86_mov_r64_r64(a.code, x86_rdi(), x86_rax()); // exit code = result
-    a.code = x86_mov_r32_imm32(a.code, x86_rax(), 60);
-    a.code = x86_syscall(a.code);
+    a = X86Asm { ...a, code: x86_mov_r64_r64(a.code, x86_rdi(), x86_rax()) }; // exit code = result
+    a = X86Asm { ...a, code: x86_mov_r32_imm32(a.code, x86_rax(), 60) };
+    a = X86Asm { ...a, code: x86_syscall(a.code) };
     a = x86_label(a, "compute");
-    a.code = x86_mov_r32_imm32(a.code, x86_rax(), 0); // acc = 0
-    a.code = x86_mov_r32_imm32(a.code, x86_rcx(), 7); // counter = 7
+    a = X86Asm { ...a, code: x86_mov_r32_imm32(a.code, x86_rax(), 0) }; // acc = 0
+    a = X86Asm { ...a, code: x86_mov_r32_imm32(a.code, x86_rcx(), 7) }; // counter = 7
     a = x86_label(a, "loop");
-    a.code = x86_add_r64_imm32(a.code, x86_rax(), 6); // acc += 6
-    a.code = x86_sub_r64_imm32(a.code, x86_rcx(), 1); // counter -= 1
-    a.code = x86_cmp_r64_imm32(a.code, x86_rcx(), 0);
+    a = X86Asm { ...a, code: x86_add_r64_imm32(a.code, x86_rax(), 6) }; // acc += 6
+    a = X86Asm { ...a, code: x86_sub_r64_imm32(a.code, x86_rcx(), 1) }; // counter -= 1
+    a = X86Asm { ...a, code: x86_cmp_r64_imm32(a.code, x86_rcx(), 0) };
     a = x86_jcc_label(a, x86_cc_ne(), "loop");     // backward branch
-    a.code = x86_ret(a.code);
+    a = X86Asm { ...a, code: x86_ret(a.code) };
     a = x86_resolve(a);
     var bin: i32[] = elf_static_executable_x86(a.code);
-    write(string_from_bytes_unchecked(bin));
+    write(string_from_bytes_unchecked(to_u8(bin)));
     return 0;
 }
 `
@@ -909,7 +909,7 @@ function main(): i32 {
     code = x86_mov_r32_imm32(code, x86_rax(), 60);
     code = x86_syscall(code);
     var bin: i32[] = elf_static_executable_x86(code);
-    write(string_from_bytes_unchecked(bin));
+    write(string_from_bytes_unchecked(to_u8(bin)));
     return 0;
 }
 `
@@ -925,15 +925,15 @@ const x86ElfRodataDriverMain = `
 function main(): i32 {
     var a: X86Asm = x86_asm_new();
     a = x86_lea_rip_label(a, x86_rax(), "answer");          // rax = &answer
-    a.code = x86_mov_load_r64(a.code, x86_rax(), x86_rax(), 0); // rax = *answer
-    a.code = x86_mov_r64_r64(a.code, x86_rdi(), x86_rax());  // exit code = answer
-    a.code = x86_mov_r32_imm32(a.code, x86_rax(), 60);
-    a.code = x86_syscall(a.code);
+    a = X86Asm { ...a, code: x86_mov_load_r64(a.code, x86_rax(), x86_rax(), 0) }; // rax = *answer
+    a = X86Asm { ...a, code: x86_mov_r64_r64(a.code, x86_rdi(), x86_rax()) };  // exit code = answer
+    a = X86Asm { ...a, code: x86_mov_r32_imm32(a.code, x86_rax(), 60) };
+    a = X86Asm { ...a, code: x86_syscall(a.code) };
     a = x86_rodata_label(a, "answer");
     a = x86_rodata_quad(a, 42i64);                          // .quad 42
     a = x86_resolve(a);
     var bin: i32[] = elf_static_executable_data_x86(a.code, a.rodata);
-    write(string_from_bytes_unchecked(bin));
+    write(string_from_bytes_unchecked(to_u8(bin)));
     return 0;
 }
 `

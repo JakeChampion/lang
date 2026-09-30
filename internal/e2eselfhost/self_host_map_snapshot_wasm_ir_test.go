@@ -19,6 +19,9 @@ import (
 // the loop (they were leaked per loop on wasm before), so the iteration churn
 // case asserts differential flatness against a no-iteration baseline.
 func TestSelfHostMapKeysSnapshotWasmIR(t *testing.T) {
+	// These programs pin the AST lowering's built-in map runtime; the typed lowering
+	// takes maps from core/map.
+	t.Setenv("FERN_SEM_IR", "")
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host map-keys-snapshot wasm IR e2e")
 	}

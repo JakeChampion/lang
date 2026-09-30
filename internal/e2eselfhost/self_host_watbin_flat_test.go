@@ -86,7 +86,7 @@ function main(): i32 {
 		// helpers in the SAME module — exercises the per-function dispatch.
 		{"arr-index", "function main(): i32 { var a = [10, 20, 30]; return a[0] + a[2]; }", 40},
 		{"arr-loop-sum", "function main(): i32 { var a = [5, 10, 15, 20, 25]; var i = 0; var s = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } return s; }", 75},
-		{"arr-set", "function main(): i32 { var a = [0, 0, 0]; a[1] = 99; return a[0] + a[1] + a[2]; }", 99},
+		{"arr-set", "function main(): i32 { var a = [0, 0, 0]; a = a.with(1, 99); return a[0] + a[1] + a[2]; }", 99},
 		// Scientific-notation f64 literal (#4342): the literal's SOURCE TEXT
 		// is carried by the IR (op_const_f64_text) into `f64.const 1e3` in the WAT, so
 		// watbin's parse_f64 must honour the exponent — the pre-fix parser
@@ -116,8 +116,8 @@ function main(): i32 {
 		// enc_instr path had it), so the indirect call was DROPPED — the module
 		// validated but computed garbage. Pins the flat call_indirect encoding
 		// (#4801).
-		{"closure-capture-return", "function adder(n: i32): fn { return (x: i32): i32 => { return x + n; }; } function main(): i32 { var a = adder(10); return a(5); }", 15},
-		{"lambda-as-arg", "function apply(f: fn, v: i32): i32 { return f(v); } function main(): i32 { return apply((x: i32): i32 => { return x * 7; }, 6); }", 42},
+		{"closure-capture-return", "function adder(n: i32): (i32) => i32 { return (x: i32): i32 => { return x + n; }; } function main(): i32 { var a = adder(10); return a(5); }", 15},
+		{"lambda-as-arg", "function apply(f: (i32) => i32, v: i32): i32 { return f(v); } function main(): i32 { return apply((x: i32): i32 => { return x * 7; }, 6); }", 42},
 	}
 
 	for _, tc := range cases {

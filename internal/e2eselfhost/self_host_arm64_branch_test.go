@@ -101,7 +101,7 @@ function main(): i32 {
     code = arm64_svc(code, 128);                  // svc #0x80
     var none: i32[] = [];
     var bin: i32[] = macho_executable(code, none, none, "fern", 0, 0, none);
-    write(string_from_bytes_unchecked(bin));
+    write(string_from_bytes_unchecked(to_u8(bin)));
     return 0;
 }
 `

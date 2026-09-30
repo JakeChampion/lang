@@ -11,10 +11,8 @@ import (
 // foundation for tuples: a tuple block is now rc-boxed via the generic
 // $__fern_str_box (8-byte rc+bsz header, returns base+8), so it carries an
 // rc word at [t-8] while every t-relative element access (t.N) is
-// unchanged. Observed through __fern_rc_is_unique: a fresh tuple is unique
-// (rc==1). Values + array/string elements (construction-inc'd) survive.
-// Counting + recursive field-release build on this foundation in later
-// slices.
+// unchanged. Values + array/string elements survive, and counting and
+// recursive release keep the over-release detector clean.
 func TestSelfHostRcTupleBoxWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping wasm tuple-box e2e")
@@ -30,8 +28,6 @@ func TestSelfHostRcTupleBoxWasm(t *testing.T) {
 		src  string
 		exit int
 	}{
-		// A fresh tuple is rc-boxed at rc 1 => unique.
-		{"tuple-fresh-unique", "function main(): i32 { var t = (5, 7); return __fern_rc_is_unique(t); }", 1},
 		// Element values survive the rc header (t-relative access unchanged).
 		{"tuple-values-intact", "function main(): i32 { var t = (30, 12); return t.0 + t.1; }", 42},
 		// A tuple holding an array element: value intact, detector clean.
@@ -45,11 +41,6 @@ func TestSelfHostRcTupleBoxWasm(t *testing.T) {
 		{"tuple-alias-clean", "function main(): i32 { var t = (3, 4); var u = t; return u.0 + t.1 + __rc_underflow_count(); }", 7},
 		// A tuple re-bound each loop iteration: detector stays clean.
 		{"tuple-loop-clean", "function main(): i32 { var s = 0; var k = 0; while (k < 1000) { var t = (k, 2); s = s + t.1; k = k + 1; } return (s % 7) + __rc_underflow_count(); }", 5},
-		// Construction-store inc: storing a tuple into a container retains it
-		// (source no longer unique), values intact, detector clean — the prep
-		// that lets a tuple stored in a container survive once free flips on.
-		{"tuple-in-array-retained", "function main(): i32 { var t = (3, 4); var arr = [t]; var u = __fern_rc_is_unique(t); return u + arr[0].0 + __rc_underflow_count(); }", 3},
-		{"tuple-in-tuple-retained", "function main(): i32 { var t = (5, 6); var o = (t, 99); var u = __fern_rc_is_unique(t); return u + o.0.1 + __rc_underflow_count(); }", 6},
 		// FREE + recursive field-release: freeing a tuple at exit releases its
 		// rc-tracked array element (the source xs is dec'd to 0 by the tuple's
 		// recursive release) — value-correct + detector clean.

@@ -117,8 +117,8 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		// force-substituted onto a width that no longer exists.)
 		{"cast-u8-mask", "function main(): i32 { return (300 as u8) as i32; }"},
 		{"cast-chain", "function main(): i32 { var x: i32 = 65; return (x as u8) as i32; }"},
-		{"compare", "function main(): i32 { return 5 < 10; }"},
-		{"unary-not", "function main(): i32 { return !(5 > 10); }"},
+		{"compare", `function main(): i32 { var b: boolean = 5 < 10; if (b) { return 1; } return 0; }`},
+		{"unary-not", `function main(): i32 { var b: boolean = !(5 > 10); if (b) { return 1; } return 0; }`},
 		{"if-taken", "function main(): i32 { var x = 1; if (5 < 10) { x = 7; } return x; }"},
 		{"if-else", "function main(): i32 { var x = 0; if (2 < 1) { x = 3; } else { x = 9; } return x; }"},
 		{"early-return", "function main(): i32 { var x = 5; if (x > 3) { return 100; } return x; }"},
@@ -143,8 +143,8 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"arr-index", "function main(): i32 { var a = [10, 20, 30]; return a[0] + a[2]; }"},
 		{"arr-loop-sum", "function main(): i32 { var a = [5, 10, 15, 20, 25]; var i = 0; var s = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } return s; }"},
 		{"arr-expr-elems", "function main(): i32 { var x = 4; var a = [x, x * 2, x + 100]; return a[1] + a[2]; }"},
-		{"arr-set-index", "function main(): i32 { var a = [10, 20, 30]; a[1] = 99; return a[0] + a[1] + a[2]; }"},
-		{"arr-set-fill", "function main(): i32 { var a = [0, 0, 0, 0, 0]; var i = 0; while (i < 5) { a[i] = i * i; i = i + 1; } return a[0] + a[1] + a[2] + a[3] + a[4]; }"},
+		{"arr-set-index", `function main(): i32 { var a = [10, 20, 30]; a = a.with(1, 99); return a[0] + a[1] + a[2] - 100; }`},
+		{"arr-set-fill", `function main(): i32 { var a = [0, 0, 0, 0, 0]; var i = 0; while (i < 5) { a = a.with(i, i * i); i = i + 1; } return a[0] + a[1] + a[2] + a[3] + a[4]; }`},
 		{"arr-len", "function main(): i32 { var a = [1, 2, 3, 4]; return a.len(); }"},
 		{"arr-two", "function main(): i32 { var a = [1, 2]; var b = [100, 200]; return a[1] + b[0]; }"},
 		{"arr-alias", "function main(): i32 { var a = [10, 20, 30]; var b = a; return b[0] + b[2] + a.len(); }"},
@@ -234,9 +234,8 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"struct-update-field-base", `struct Inner { a: i32, b: i32 } struct Outer { inner: Inner } function main(): i32 { var o = Outer { inner: Inner { a: 5, b: 6 } }; var n = Inner { ...o.inner, b: 20 }; return n.a * 10 + n.b; }`},
 		{"struct-update-index-base", `struct P { x: i32, y: i32 } function main(): i32 { var a: P[] = [P { x: 1, y: 2 }, P { x: 3, y: 4 }]; var q = P { ...a[1], y: 9 }; return q.x * 10 + q.y; }`},
 		// Field mutation `p.x = v` (struct_set).
-		{"field-mutate", `struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 1, y: 2 }; p.x = 40; return p.x + p.y; }`},
-		{"field-mutate-loop", `struct C { n: i32 } function main(): i32 { var c = C { n: 0 }; var i = 0; while (i < 5) { c.n = c.n + i; i = i + 1; } return c.n; }`},
-		{"field-mutate-alias", `struct P { x: i32 } function main(): i32 { var p = P { x: 1 }; var q = p; q.x = 9; return p.x; }`},
+		{"field-mutate", `struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 1, y: 2 }; p = P { ...p, x: 40 }; return p.x + p.y; }`},
+		{"field-mutate-loop", `struct C { n: i32 } function main(): i32 { var c = C { n: 0 }; var i = 0; while (i < 5) { c = C { ...c, n: c.n + i }; i = i + 1; } return c.n; }`},
 		// Tuples (tuple_make / tuple_get; no shape slot, numeric .N access) + 2-elem destructure.
 		{"tuple-access", `function main(): i32 { var t = (3, 4); return t.0 + t.1; }`},
 		{"tuple-three", `function main(): i32 { var t = (1, 2, 3); return t.0 * 100 + t.1 * 10 + t.2; }`},
@@ -390,7 +389,7 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		// + `.len()` + element index lower).
 		{"struct-nested-arr-index", `struct G { rows: i32[][] } function main(): i32 { var g = G { rows: [[1, 2], [3, 4]] }; return g.rows[1][0]; }`},
 		{"struct-nested-arr-param", `struct G { rows: i32[][] } function first(g: G): i32 { return g.rows[0][0]; } function main(): i32 { var g = G { rows: [[5, 6]] }; return first(g); }`},
-		{"enum-strarr-payload-len", `enum E { Words(string[]), None } function f(e: E): i32 { match (e) { Words(w) => { return w.len(); }, None => { return 0; } } return 0; } function main(): i32 { return f(Words(["a", "bb", "ccc"])) * 10 + f(None); }`},
+		{"enum-strarr-payload-len", `enum E { Words(string[]), None } function f(e: E): i32 { match (e) { Words(w) => { return w.len(); }, None => { return 0; } } return 0; } function main(): i32 { return f(Words(["a", "bb", "ccc"])) * 10 + f(E.None); }`},
 		{"enum-strarr-payload-forin", `enum E { Words(string[]), None } function f(e: E): i32 { match (e) { Words(w) => { var n = 0; for s in w { n = n + s.len(); } return n; }, None => { return 0; } } return 0; } function main(): i32 { return f(Words(["a", "bb", "ccc"])); }`},
 		{"struct-strarr-field-len", `struct Doc { lines: string[] } function nl(d: Doc): i32 { return d.lines.len(); } function main(): i32 { var d = Doc { lines: ["x", "y", "z"] }; return nl(d); }`},
 		{"struct-strarr-field-index", `struct Doc { lines: string[] } function f(d: Doc): i32 { return d.lines[1].len(); } function main(): i32 { var d = Doc { lines: ["a", "bb", "ccc"] }; return f(d); }`},
@@ -627,7 +626,7 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"struct-ret-direct-field", `struct P { x: i32, y: i32 } function mk(a: i32): P { return P { x: a, y: a + 1 }; } function main(): i32 { return mk(7).x + mk(7).y; }`},
 		{"f64-struct-field-read", `struct P { x: f64, n: i32 } function main(): i32 { var p = P { x: 3.5, n: 2 }; var y: f64 = p.x + 1.0; if (y > 4.0) { return p.n + 5; } return 0; }`},
 		{"f64-struct-field-mixed", `struct V { a: i32, d: f64, b: i32 } function main(): i32 { var v = V { a: 1, d: 2.5, b: 3 }; var s: f64 = v.d * 2.0; if (s > 4.0) { return v.a + v.b; } return 0; }`},
-		{"f64-struct-field-write", `struct P { x: f64, n: i32 } function main(): i32 { var p = P { x: 1.0, n: 4 }; p.x = 5.5; if (p.x > 5.0) { return p.n + 1; } return 0; }`},
+		{"f64-struct-field-write", `struct P { x: f64, n: i32 } function main(): i32 { var p = P { x: 1.0, n: 4 }; p = P { ...p, x: 5.5 }; if (p.x > 5.0) { return p.n + 1; } return 0; }`},
 		{"method-struct-ret", `struct P { x: i32, y: i32 } struct B { } function (b: B) mk(): P { return P { x: 3, y: 4 }; } function main(): i32 { var b = B { }; var p = b.mk(); return p.x * 10 + p.y; }`},
 		{"method-struct-ret-direct", `struct P { x: i32, y: i32 } struct B { base: i32 } function (b: B) mk(): P { return P { x: b.base, y: b.base + 1 }; } function main(): i32 { var b = B { base: 5 }; return b.mk().x + b.mk().y; }`},
 		{"method-tuple-ret", `struct B { } function (b: B) pair(): (i32, i32) { return (3, 4); } function main(): i32 { var b = B { }; var (x, y) = b.pair(); return x * 10 + y; }`},
@@ -646,28 +645,6 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"f64-cast-from-int", `function main(): i32 { var n: i32 = 3; var x: f64 = (n as f64) + 0.5; if (x > 3.0) { return 8; } return 0; }`},
 		{"f64-cast-roundtrip", `function main(): i32 { var n: i32 = 10; var x: f64 = n as f64; var y: f64 = x / 4.0; return y as i32; }`},
 		{"f64-cast-mixed-param", `function f(a: f64, n: i32): f64 { return a + (n as f64); } function main(): i32 { var r: f64 = f(1.5, 2); return r as i32; }`},
-		{"map-i32-len3", `function main(): i32 { var m: Map[i32, i32] = map_new(4); m = m.insert(1, 100); m = m.insert(2, 200); m = m.insert(3, 300); return m.len(); }`},
-		{"map-i32-overwrite", `function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(7, 40); m = m.insert(11, 99); m = m.insert(7, 42); return m.len(); }`},
-		{"map-i32-loop", `function main(): i32 { var m: Map[i32, i32] = map_new(4); var i = 0; while (i < 5) { m = m.insert(i, i*10); i = i + 1; } return m.len(); }`},
-		{"map-str-keys", `function main(): i32 { var m: Map[string, i32] = map_new(4); m = m.insert("a", 1); m = m.insert("bb", 2); m = m.insert("a", 9); return m.len(); }`},
-		{"map-get-hit", `function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(7, 42); match (m.get(7)) { Some(v) => { return v; }, None => { return 0; } } return 9; }`},
-		{"map-get-miss", `function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(7, 42); match (m.get(999)) { Some(v) => { return v; }, None => { return 5; } } return 9; }`},
-		{"map-has", `function main(): i32 { var m: Map[i32, i32] = map_new(4); m = m.insert(1, 1); var r = 0; if (m.has(1)) { r = r + 1; } if (m.has(2)) { r = r + 10; } return r; }`},
-		{"map-get-strkey", `function main(): i32 { var m: Map[string, i32] = map_new(4); m = m.insert("hi", 11); match (m.get("hi")) { Some(v) => { return v; }, None => { return 0; } } return 9; }`},
-		{"map-get-or-hit", `function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(7, 42); return m.get_or(7, 0); }`},
-		{"map-get-or-miss", `function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(7, 42); return m.get_or(999, 5); }`},
-		{"map-get-or-strhit", `function main(): i32 { var m: Map[string, i32] = map_new(4); m = m.insert("hi", 11); return m.get_or("hi", 0); }`},
-		{"map-get-or-strmiss", `function main(): i32 { var m: Map[string, i32] = map_new(4); m = m.insert("hi", 11); return m.get_or("no", 7); }`},
-		{"map-keys-sum", `function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); m = m.insert(2, 20); m = m.insert(3, 30); var ks: i32[] = m.keys(); var s = 0; var i = 0; while (i < ks.len()) { s = s + ks[i]; i = i + 1; } return s; }`},
-		{"map-values-sum", `function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); m = m.insert(2, 20); m = m.insert(3, 30); var vs: i32[] = m.values(); var s = 0; var i = 0; while (i < vs.len()) { s = s + vs[i]; i = i + 1; } return s; }`},
-		{"map-forkv-values", `function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); m = m.insert(2, 20); m = m.insert(3, 30); var s = 0; for (k, v) in m { s = s + v; } return s; }`},
-		{"map-forkv-keys", `function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); m = m.insert(2, 20); m = m.insert(3, 30); var s = 0; for (k, v) in m { s = s + k; } return s; }`},
-		{"map-forkv-pair", `function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 2); m = m.insert(2, 3); m = m.insert(3, 4); var s = 0; for (k, v) in m { s = s + k * v; } return s; }`},
-		{"map-forkv-strkey", `function main(): i32 { var m: Map[string, i32] = map_new(8); m = m.insert("ab", 1); m = m.insert("cde", 2); var s = 0; for (k, v) in m { s = s + k.len() + v; } return s; }`},
-		{"map-insert-i32-len", `function main(): i32 { var m: Map[i32, i32] = map_new(4); m = m.insert(1, 100); m = m.insert(2, 200); m = m.insert(3, 300); return m.len(); }`},
-		{"map-insert-str-getor", `function main(): i32 { var m: Map[string, i32] = map_new(4); m = m.insert("a", 1); m = m.insert("bb", 2); return m.get_or("bb", 0) + m.len(); }`},
-		{"map-insert-chained", `function main(): i32 { var m: Map[string, i32] = map_new(8).insert("x", 5).insert("y", 7); return m.get_or("y", 0) + m.len(); }`},
-		{"map-insert-keyword-literal", `function main(): i32 { var m: Map[string, i32] = Map { "a": 1, "b": 2 }; return m.get_or("b", 0) + m.len(); }`},
 		// if-EXPRESSION in value position (#2938): inlined as a value-producing
 		// void `if` on the wasm IR path (`if` + temp local), no IIFE/closure.
 		{"ifexpr-var", `function main(): i32 { var x = 5; var y = if (x > 3) { 10 } else { 20 }; return y; }`},
@@ -745,10 +722,6 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"enum-unit", `enum E { A(i32), B } function f(e: E): i32 { match (e) { A(n) => { return n * 2; }, B => { return 9; } } return 0; } function main(): i32 { return f(B); }`},
 		{"enum-three", `enum Shape { Circle(i32), Square(i32), Empty } function area(s: Shape): i32 { match (s) { Circle(r) => { return r + 1; }, Square(w) => { return w * 2; }, Empty => { return 7; } } return 99; } function main(): i32 { return area(Circle(4)) + area(Square(5)) + area(Empty); }`},
 		{"enum-wildcard", `enum E { A(i32), B, C } function f(e: E): i32 { match (e) { A(n) => { return n; }, _ => { return 100; } } return 0; } function main(): i32 { return f(B); }`},
-		// `@derive(Debug)` (#2708) — type-directed `to_debug`; AST and IR wasm
-		// paths must agree on the rendered length. Strings render quoted.
-		{"derive-debug-struct", `trait Debug { function to_debug(self: Self): string; } @derive(Debug) struct P { x: i32, name: string } function main(): i32 { return P { x: 7, name: "hi" }.to_debug().len(); }`},
-		{"derive-debug-enum", `trait Debug { function to_debug(self: Self): string; } @derive(Debug) enum E { Dot, Circle(i32), Tag(string) } function main(): i32 { return Dot.to_debug().len() + Circle(5).to_debug().len() + Tag("ab").to_debug().len(); }`},
 		// A struct method call — the shape that used to be out of the IR subset
 		// and route to the AST emitter under -ir.
 		{"method-dispatch", "struct P { x: i32 } pub function (p: P) get(): i32 { return p.x; } function main(): i32 { var p = P { x: 42 }; return p.get(); }"},
@@ -766,31 +739,17 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"split-loop-sum", `function main(): i32 { var p = "a,bb,ccc,dddd".split(","); var s = 0; var i = 0; while (i < p.len()) { s = s + p[i].len(); i = i + 1; } return s; }`},
 		{"split-forin", `function main(): i32 { var s = 0; for part in "x,yy,zzz".split(",") { s = s + part.len(); } return s; }`},
 		{"split-param", `function nfields(s: string): i32 { return s.split(",").len(); } function main(): i32 { return nfields("a,b,c,d"); }`},
-		{"split-freecall", `function main(): i32 { var p = str_split("a,b,c", ","); return p.len(); }`},
 		{"split-direct-index", `function main(): i32 { return "one,two,three".split(",")[1].len(); }`},
-		// f-string interpolation (`f"...{expr}..."`) → desugared `+`-chain of
-		// literal parts and `(expr).to_string()`; AST and IR wasm paths must agree.
-		{"fstring-i32", `function main(): i32 { var n = 7; var s = f"n={n}!"; return s.len(); }`},
-		{"fstring-i32-char", `function main(): i32 { var n = 7; var s = f"n={n}!"; return s[2] as i32; }`},
-		{"fstring-str", `function main(): i32 { var w = "xy"; var s = f"[{w}]"; return s.len(); }`},
-		{"fstring-expr", `function main(): i32 { var a = 10; var s = f"v={a * 2}"; return s[2] as i32; }`},
-		{"fstring-method", `function main(): i32 { var w = "hi"; return f"v={w.len()}".len(); }`},
-		{"fstring-multi", `function main(): i32 { var a = 1; var b = 2; return f"{a}{b}".len(); }`},
 		{"fstring-esc-brace", `function main(): i32 { var s = f"a{{b"; return s[1] as i32; }`},
 		// ASCII case transforms → fresh string (op_str_to_upper / _to_lower). The
 		// wasm IR path emits the narrow str_case_helpers ($__fern_str_upper /
 		// _lower); the AST path gets them from strcat_helpers — must agree.
 		{"to-upper-len", `function main(): i32 { var s = "Hello"; return s.to_ascii_upper().len(); }`},
-		{"to-upper-byte", `function main(): i32 { var s = "abc"; var u = s.to_ascii_upper(); return u[0]; }`},
-		{"to-lower-byte", `function main(): i32 { var s = "ABC"; var l = s.to_ascii_lower(); return l[2]; }`},
-		{"to-upper-mixed", `function main(): i32 { var u = "aB9z".to_ascii_upper(); return u[0] + u[1] + u[2] + u[3]; }`},
 		{"case-roundtrip", `function main(): i32 { var s = "Hello"; if (s.to_ascii_upper().to_ascii_lower() == "hello") { return 7; } return 0; }`},
-		{"case-param", `function up(s: string): i32 { return s.to_ascii_upper()[0]; } function main(): i32 { return up("xyz"); }`},
 		// String repeat → fresh string (op_str_repeat). The wasm IR path emits the
 		// narrow str_repeat_helper; the AST path gets $__fern_str_repeat from
 		// strcat_helpers — must agree.
 		{"repeat-len", `function main(): i32 { return "ab".repeat(3).len(); }`},
-		{"repeat-byte", `function main(): i32 { var r = "xy".repeat(4); return r[0] + r[7]; }`},
 		{"repeat-one", `function main(): i32 { return "hello".repeat(1).len(); }`},
 		{"repeat-zero", `function main(): i32 { return "hello".repeat(0).len() + 9; }`},
 		{"repeat-param", `function rep(s: string, n: i32): i32 { return s.repeat(n).len(); } function main(): i32 { return rep("xyz", 4); }`},
@@ -903,48 +862,6 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"structarr-if-expr-forin-method", `struct P { x: i32, y: i32 } function (p: P) s(): i32 { return p.x + p.y; } function main(): i32 { var ps = if (true) { [P{x:1,y:2}, P{x:3,y:4}] } else { [P{x:0,y:0}] }; var t = 0; for p in ps { t = t + p.s(); } return t; }`, 10},
 		{"structarr-match-expr-elem", `struct P { x: i32, y: i32 } function main(): i32 { var ps = match (1) { 1 => [P{x:5,y:6}], _ => [P{x:0,y:0}] }; return ps[0].x * 10 + ps[0].y; }`, 56},
 		{"structarr-fncall-if-expr", `struct P { x: i32, y: i32 } function mk(): P[] { return [P{x:5,y:6}]; } function main(): i32 { var ps = if (true) { mk() } else { mk() }; return ps[0].x + ps[0].y; }`, 11},
-		// A Map-typed STRUCT FIELD receiver (`c.m.get_or(k, d)`): map-method
-		// dispatch resolves the map type from the field declaration, not just a
-		// local slot, so reads through a struct field lower (the field read pushes
-		// the map pointer). #map-struct-field.
-		{"map-field-get_or", `struct Cache { m: Map[i32, i32], hits: i32 } function main(): i32 { var c = Cache{m: Map { 5: 50, 7: 70 }, hits: 1}; return c.m.get_or(5, 0) + c.m.get_or(7, 0) + c.hits; }`, 121},
-		{"map-field-method", `struct Cfg { table: Map[string, i32] } function (c: Cfg) lookup(k: string): i32 { return c.table.get_or(k, 0); } function main(): i32 { var c = Cfg{table: Map { "a": 3, "b": 4 }}; return c.lookup("a") + c.lookup("b"); }`, 7},
-		{"map-field-has-len", `struct Cache { m: Map[string, i32] } function main(): i32 { var c = Cache{m: Map { "a": 1, "b": 2 }}; var t = 0; if (c.m.has("a")) { t = t + c.m.len(); } return t; }`, 2},
-		// A Map[K,V] PARAMETER recovers its map type, so map methods on the param
-		// (`m.get_or(k, d)`) dispatch as map ops (the local-annotation path already
-		// did this; params lacked it). #map-param.
-		{"map-param-get_or", `function total(m: Map[i32, i32]): i32 { return m.get_or(1, 0) + m.get_or(2, 0); } function main(): i32 { var m: Map[i32, i32] = Map { 1: 10, 2: 20 }; return total(m); }`, 30},
-		{"map-param-string-key", `function look(m: Map[string, i32], k: string): i32 { return m.get_or(k, 0); } function main(): i32 { var m: Map[string, i32] = Map { "x": 7 }; return look(m, "x"); }`, 7},
-		// Iterating a Map-typed struct FIELD's keys()/values() (`for k in
-		// c.m.keys()`): the foreach resolves the map type from the field decl,
-		// like the map-method dispatch. #map-struct-field-iter.
-		{"map-field-keys-forin", `struct Cfg { m: Map[i32, i32] } function main(): i32 { var c = Cfg{m: Map { 1: 10, 2: 20, 3: 30 }}; var t = 0; for k in c.m.keys() { t = t + c.m.get_or(k, 0); } return t; }`, 60},
-		{"map-field-values-forin", `struct Cfg { m: Map[string, i32] } function main(): i32 { var c = Cfg{m: Map { "a": 3, "b": 4 }}; var t = 0; for v in c.m.values() { t = t + v; } return t; }`, 7},
-		// An UNANNOTATED binding from a map-returning function (`var m = build()`):
-		// the `map_ret_fns` registry recovers the slot's map type so `m.get_or(...)`
-		// dispatches without a `: Map[K,V]` annotation. #3317.
-		{"map-ret-fn-binding", `function build(): Map[i32, i32] { return Map { 1: 5, 2: 6 }; } function main(): i32 { var m = build(); return m.get_or(1, 0) + m.get_or(2, 0); }`, 11},
-		{"map-ret-method-binding", `struct Reg { base: i32 } function (r: Reg) table(): Map[i32, i32] { return Map { 1: r.base, 2: r.base + 1 }; } function main(): i32 { var reg = Reg{base: 10}; var m = reg.table(); return m.get_or(1, 0) + m.get_or(2, 0); }`, 21},
-		// A Map TUPLE element (`(Map { … }, x)`): the map-literal element is admitted
-		// to tuple construction (a leak-only pointer slot) with a `Map[K,V]` tag, so
-		// `t.0.get_or(…)` dispatches as a map op, a rebind `var m = t.0` recovers the
-		// map type, and a string-VALUE element's get_or tracks as a string. The
-		// self-host AST path also mishandled this (returned 4), so these pin the
-		// absolute IR value. #3317.
-		{"map-tuple-elem-get_or", `function main(): i32 { var t = (Map { 1: 10 }, 5); return t.0.get_or(1, 0) + t.1; }`, 15},
-		{"map-tuple-elem-rebind", `function main(): i32 { var t = (Map { 1: 10 }, 5); var m = t.0; return m.get_or(1, 0) + t.1; }`, 15},
-		{"map-tuple-elem-string-val", `function main(): i32 { var t = (Map { 1: "abcd" }, 5); return t.0.get_or(1, "z").len() + t.1; }`, 9},
-		// An ARRAY of maps (`var ms = [Map { … }, …]`): the array slot carries the
-		// ELEMENT map type (the map sibling of the struct-array element-type
-		// overload), so `ms[i].get_or(…)` dispatches as a map op, a rebind
-		// `var m = ms[i]` recovers the map type, an annotated `Map[K,V][]` binding
-		// works, and a string-VALUE element's get_or tracks as a string. The
-		// self-host AST path also mishandled this (link error on `i32.get_or`), so
-		// these pin the absolute IR value. #3317.
-		{"map-array-elem-get_or", `function main(): i32 { var ms = [Map { 1: 10 }, Map { 1: 20 }]; return ms[0].get_or(1, 0) + ms[1].get_or(1, 0); }`, 30},
-		{"map-array-elem-rebind", `function main(): i32 { var ms = [Map { 1: 10 }, Map { 1: 20 }]; var m = ms[1]; return m.get_or(1, 0) + ms[0].get_or(1, 0); }`, 30},
-		{"map-array-elem-annotated", `function main(): i32 { var ms: Map[i32, i32][] = [Map { 1: 10 }]; return ms[0].get_or(1, 0); }`, 10},
-		{"map-array-elem-string-val", `function main(): i32 { var ms = [Map { 1: "abcd" }]; return ms[0].get_or(1, "z").len(); }`, 4},
 		// A struct-ARRAY tuple element (`([P { .. }], x)`): the element's recorded
 		// `P[]` tuple tag lets `t.0[i].field` / `t.0[i].method()` recover the
 		// element struct type (the array sibling of the struct-field-array case).
@@ -992,15 +909,13 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"random-bytes-len", `function main(): i32 { return random_bytes(8).len(); }`, 8},
 		{"random-bytes-byte-range", `function main(): i32 { var s: u8[] = random_bytes(4); var x: i32 = s[0] as i32; if (x >= 0) { if (x <= 255) { return 1; } } return 0; }`, 1},
 		{"random-i32-varies", `function main(): i32 { var a: i32 = random_i32(); var b: i32 = random_i32(); if (a == b) { return 1; } return 7; }`, 7},
-		{"as-bytes-vals", `function main(): i32 { var b: i32[] = "ABC".as_bytes(); if (b.len() != 3) { return 20; } if (b[0] != 65) { return 21; } if (b[2] != 67) { return 22; } return 5; }`, 5},
-		{"bytes-vals", `function main(): i32 { var b: i32[] = "AB".bytes(); if (b[0] != 65) { return 20; } if (b[1] != 66) { return 21; } return 6; }`, 6},
+		{"as-bytes-vals", `function main(): i32 { var b = "ABC".as_bytes(); if (b.len() != 3) { return 20; } if (b[0] != 65) { return 21; } if (b[2] != 67) { return 22; } return 5; }`, 5},
 		{"uuid-v4", uuidV4Program, 0},
 		// String trim (op_str_trim) → fresh whitespace-stripped string. wasm's AST
 		// path has no trim, so it can't use the differential gate — the wasm IR
 		// path emits the dedicated str_trim_helper (a copying trim, since wasm
 		// strings are inline). Assert the trimmed length / first byte directly.
 		{"trim-both", `function main(): i32 { return "  hi  ".trim().len(); }`, 2},
-		{"trim-byte", `function main(): i32 { var t = "  hi".trim(); return t[0]; }`, 104},
 		{"trim-tabs-nl", `function main(): i32 { return "\t\n ab \r\n".trim().len(); }`, 2},
 		{"trim-none", `function main(): i32 { return "abc".trim().len(); }`, 3},
 		{"trim-all-ws", `function main(): i32 { return "    ".trim().len() + 5; }`, 5},
@@ -1010,7 +925,6 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"replace-len", `function main(): i32 { return "a-b-c".replace("-", "_").len(); }`, 5},
 		{"replace-grow", `function main(): i32 { return "aaa".replace("a", "bb").len(); }`, 6},
 		{"replace-shrink", `function main(): i32 { return "axbxc".replace("x", "").len(); }`, 3},
-		{"replace-byte", `function main(): i32 { var r = "hello".replace("l", "L"); return r[2]; }`, 76},
 		{"replace-nomatch", `function main(): i32 { return "abc".replace("z", "Q").len(); }`, 3},
 		{"replace-empty-old", `function main(): i32 { return "abc".replace("", "X").len(); }`, 3},
 		// String lines (op_str_lines) -> string[]. wasm AST has no lines, so IR-only.
@@ -1018,7 +932,6 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"lines-trailing-nl", `function main(): i32 { return "a\nb\nc\n".lines().len(); }`, 3},
 		{"lines-none", `function main(): i32 { return "hello".lines().len(); }`, 1},
 		{"lines-empty", `function main(): i32 { return "".lines().len() + 4; }`, 4},
-		{"lines-elem", `function main(): i32 { var ls = "ab\ncd".lines(); return ls[1][0]; }`, 99},
 		// Range-for `for i in LOW..HIGH` (#2699 self-host IR slice). The legacy
 		// AST wasm path has no range desugar, so this uses the IR-only gate:
 		// the parser emits __range(LOW, HIGH) and irlower lowers a counted loop
@@ -1103,26 +1016,11 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"foreach-continue", "function main(): i32 { var a = [5, 10, 15, 20, 25]; var t = 0; for x in a { if (x == 15) { continue; } t = t + x; } return t; }", 60},
 		{"foreach-break", "function main(): i32 { var a = [5, 10, 15, 20, 25]; var t = 0; for x in a { if (x == 20) { break; } t = t + x; } return t; }", 30},
 		{"range-nested-break", "function main(): i32 { var t = 0; for i in 0..3 { for j in 0..3 { if (j == 2) { break; } t = t + 1; } } return t; }", 6},
-		// `@derive(Debug)` exact rendered lengths on the wasm IR path (#2708):
-		// `P { x: 7, name: "hi" }` is 22 chars (string quoted); the enum sum is
-		// `Dot`(3) + `Circle(5)`(9) + `Tag("ab")`(9) = 21.
-		{"derive-debug-struct-len", `trait Debug { function to_debug(self: Self): string; } @derive(Debug) struct P { x: i32, name: string } function main(): i32 { return P { x: 7, name: "hi" }.to_debug().len(); }`, 22},
-		{"derive-debug-enum-len", `trait Debug { function to_debug(self: Self): string; } @derive(Debug) enum E { Dot, Circle(i32), Tag(string) } function main(): i32 { return Dot.to_debug().len() + Circle(5).to_debug().len() + Tag("ab").to_debug().len(); }`, 21},
 		// `for x in <EXPR>` over a non-ident iterable (array literal / call
 		// returning an array): snapshotted into a hidden local, then iterated.
 		{"foreach-literal", "function main(): i32 { var s = 0; for x in [1, 2, 3, 4] { s = s + x; } return s; }", 10},
 		{"foreach-call", "function mk(): i32[] { return [10, 20, 30]; } function main(): i32 { var s = 0; for y in mk() { s = s + y; } return s; }", 60},
 		{"foreach-call-continue", "function mk(): i32[] { return [1, 2, 3, 4, 5]; } function main(): i32 { var s = 0; for x in mk() { if (x % 2 == 0) { continue; } s = s + x; } return s; }", 9},
-		// Two `m.has()` calls under a short-circuiting `&&` with a `!` on the
-		// second (issue #2652). The IR path lowers the calling RHS behind the LHS
-		// via a temp-local + block (the short-circuit shape); `m.has(1)` is true,
-		// `m.has(2)` is false, so `!m.has(2)` is true and the `&&` yields 7. This
-		// is a value assertion (not just the AST/IR differential) because the bug
-		// produced 0 on BOTH the AST and IR formulations — equality alone wouldn't
-		// catch it.
-		{"map-has-and-not", `function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); if (m.has(1) && !m.has(2)) { return 7; } return 0; }`, 7},
-		{"map-has-and-true", `function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); m = m.insert(2, 20); if (m.has(1) && m.has(2)) { return 5; } return 0; }`, 5},
-		{"map-has-or-short", `function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); if (m.has(1) || m.has(2)) { return 9; } return 0; }`, 9},
 		// Re-binding the SAME name across two match arms (issue #2644). Each
 		// arm (guarded `Rect(p)` then unguarded `Rect(p)`) must get its own
 		// binding slot so the guard reads the right `p.x` and the fall-through

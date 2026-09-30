@@ -361,20 +361,18 @@ func TestSelfHostTostrScalarReclaimIRX86_64(t *testing.T) {
 }
 
 // TestSelfHostTostrScalarReclaimWasmIR drives the same cases through the self-hosted
-// wasm backend, where a string box carries an rc header and an over-release ticks
+// wasm backend (asm_load_run -target wasm32-wasi), where a string box carries an rc header and an over-release ticks
 // the underflow counter (exit 99) instead of passing silently.
 func TestSelfHostTostrScalarReclaimWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host to_string reclaim wasm IR e2e")
 	}
-	gcc, runner := x86_64Tooling(t)
+	l := newWasmStdlibLoader(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
 
 	for _, tc := range tostrScalarReclaimCases {
 		t.Run(tc.name, func(t *testing.T) {
-			wat := runCapture(t, gcc, runner, driverBin, []byte(tc.src+"\n"), "-ir")
+			wat := l.emit(t, tc.src+"\n")
 			if len(wat) == 0 {
 				t.Fatal("self-host wasm driver emitted 0 bytes")
 			}
