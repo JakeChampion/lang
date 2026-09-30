@@ -39,7 +39,7 @@ func TestSelfHostX86ScaleProbe(t *testing.T) {
 	wasmRun := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 	nat := mustRead(t, "../../examples/self_host/x86_native.fern")
 	elf := mustRead(t, "../../examples/self_host/elf.fern")
-	prelude := string(nat) + "\n" + string(elf) + "\n"
+	prelude := string(nat) + "\n" + string(elf) + toU8Src
 
 	driverWat := runCapture(t, gcc, runner, wasmRun, []byte(prelude+x86CapstoneDriver))
 	driverPath := filepath.Join(dir, "scale_driver.wat")
