@@ -11089,6 +11089,31 @@ pub function subst_ty(name: string, tparams: string[], cts: string[]): string {
     if (type_ends_arr(name)) {
         return subst_ty(slice_unchecked(name, 0, name.len() - 2), tparams, cts) + "[]";
     }
+    // A callable `(P, Q) => R` substitutes through its parameters and result;
+    // the tuple arm below would read it as a malformed tuple. A spelling that
+    // substitutes to itself is handed back verbatim.
+    if (name.len() > 0 && name[0] == b'(' && util.contains(name, "=>")) {
+        var fref: TypeRef = parse_type_ref(name);
+        if (fref.is_fn && fref.array_depth == 0) {
+            var parts: string[] = [];
+            var changed: boolean = false;
+            for a in fref.args {
+                var sp: string = render_type_ref(a);
+                var sub: string = subst_ty(sp, tparams, cts);
+                if (sub != sp) { changed = true; }
+                parts = parts.append(sub);
+            }
+            if (!changed) { return name; }
+            var out: string = "(";
+            var i: i32 = 0;
+            while (i + 1 < parts.len()) {
+                if (i > 0) { out = out + ", "; }
+                out = out + parts[i];
+                i = i + 1;
+            }
+            return out + ") => " + parts[parts.len() - 1];
+        }
+    }
     if (util.is_tuple_type_name(name) && slice_unchecked(name, name.len() - 1, name.len()) == ")") {
         return "(" + subst_ty_join(split_top_commas(slice_unchecked(name, 1, name.len() - 1)), ", ", tparams, cts) + ")";
     }
