@@ -1136,7 +1136,17 @@ func (l *lifter) handle(i int, op ir.Op) error {
 		callArgs := append([]Value(nil), l.stack[len(l.stack)-1-argc:len(l.stack)-1]...)
 		l.stack = l.stack[:len(l.stack)-argc-1]
 		all := append(callArgs, vtable)
-		if sig.Result != nil && l.twoWordType(sig.Result) {
+		void := false
+		switch sig.Result.(type) {
+		case nil, ast.VoidType, ast.NeverType:
+			void = true
+		}
+		if void {
+			l.out.AddOpNoResult(l.cur, OpCallDyn, all...)
+			l.cur.Ops[len(l.cur.Ops)-1].Imm = int64(op.I32)
+			break
+		}
+		if l.twoWordType(sig.Result) {
 			a, b := l.out.AddCallDynPair(l.cur, all...)
 			l.cur.Ops[len(l.cur.Ops)-1].Imm = int64(op.I32)
 			l.stack = append(l.stack, a, b)
@@ -1145,11 +1155,9 @@ func (l *lifter) handle(i int, op ir.Op) error {
 		result := l.out.AddOp(l.cur, OpCallDyn, all...)
 		o := l.cur.Ops[len(l.cur.Ops)-1]
 		o.Imm = int64(op.I32) // method slot
-		if sig.Result != nil {
-			o.Width = widthOfAstType(sig.Result)
-			o.Addr = isAddressAstType(sig.Result)
-			l.stack = append(l.stack, result)
-		}
+		o.Width = widthOfAstType(sig.Result)
+		o.Addr = isAddressAstType(sig.Result)
+		l.stack = append(l.stack, result)
 	case ir.OpMakeSomeI32, ir.OpMakeOkI32:
 		// (payload) → (tag=0, payload)
 		if len(l.stack) < 1 {
