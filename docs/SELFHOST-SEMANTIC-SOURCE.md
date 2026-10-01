@@ -749,9 +749,7 @@ Unsupported constructs refuse the whole function with a reason.
   (`irlower.LowerResult.superseded`): nothing calls it, since every produced
   caller calls an instance, so no emit writes it and no gate judges it — the
   AST lowering of an erased `__arrm_map__i64` clone carried the wasm route's
-  only `erased_wide` verdict and declined the module (#9838). Under the
-  bisect knobs an AST-lowered caller may still call the template, so there
-  its AST lowering stands.
+  only `erased_wide` verdict and declined the module (#9838).
 
   A generic signature spelled only through a function type (`f: () => T`)
   reads the parser's `fn_ret` / `fn_param_types` sidecars, since the type
@@ -840,8 +838,7 @@ one by hand.
 A self-recursive call in tail position reuses its own activation on the AST
 lowering, which gets `irlower.tco_self_tail` out of `lower_func`. A produced
 body never reaches `lower_func`, so until #9692 it grew the stack once per
-round and a deep enough recursion took the program out — on the DEFAULT path,
-since `semlower.sem_ir_on` is true unless `FERN_SEM_IR` is set empty.
+round and a deep enough recursion took the program out — on the default path.
 
 `ssasem.tail_recursion` rewrites it on the graph, before the unit planner and
 the RC lowering see it, and that placement is the design rather than a
@@ -1563,16 +1560,13 @@ feeds `caller_sigs` to the remaining AST callers is below.
 ## The production consumer
 
 `examples/self_host/semlower.fern` is where a whole-program emit path asks for
-this pipeline instead of a test driver. It is the default; `FERN_SEM_IR=` (the
-empty value) turns it off, and `FERN_SEM_IR_REPORT=1` prints a line per
-refusal and a per-module tally. Off, a backend receives what it received
-before, op for op — the substitution is the only thing the path adds. On, a
-module is produced whole or the compile fails, and `ircore.lower_gated` reads
-the produced bodies in place of lowering them.
+this pipeline instead of a test driver. It is the only lowering a
+whole-program emit has: a module is produced whole or the compile fails
+(exit 3), and `ircore.lower_gated` reads the produced bodies in place of
+lowering them. `FERN_SEM_IR_REPORT=1` prints a per-module tally.
 
 All three whole-program paths take one: `asm_ir`, `asm_arm64_ir` and `wasm_ir`
-each gained a `_sub` sibling of their gated entry that threads an `ircore.Sub`
-through it, and the old name calls it with `ircore.no_sub()`. The registry set
+each thread an `ircore.Sub` through their gated entry. The registry set
 inside comes from that value rather than from the caller's own base, since
 `caller_sigs` rewrote rows in it and the emit has to read the same set the
 lowering did.
@@ -1587,9 +1581,10 @@ eight drivers growing **6.7% to 10.2%**, among them `wasm_run`, `asm_run` and
 inverted those three link **4,096 bytes** more than main, one page of
 alignment, and the CLI carries the 601 KB alone.
 
-Only the bisect knobs (`FERN_SEM_IR_ONLY` / `FERN_SEM_IR_SKIP`) build a mixed
-module. Three rules hold one together, and the third is the one that was not
-obvious:
+A MIXED module — produced bodies beside AST-lowered ones — was what the
+bisect knobs (`FERN_SEM_IR_ONLY` / `FERN_SEM_IR_SKIP`, deleted with the
+`FERN_SEM_IR=` off switch) built. Three rules held one together, and the third
+is the one that was not obvious:
 
 - **An AST-lowered caller of a produced callee** reads registries derived from
   that callee's syntax. `ssarc.caller_sigs` rewrites them from the verified
@@ -1600,7 +1595,7 @@ obvious:
 - **A produced caller of an AST-lowered callee has no repair at all**, because
   the callee's parameter modes are whatever the interprocedural fixpoints
   concluded rather than what its declaration says. So such a body keeps the AST
-  lowering, and dropping it takes its own callers with it: `semlower.prune` is
+  lowering, and dropping it took its own callers with it: `semlower.prune` was
   that fixpoint, run over the produced bodies' `call_direct` and `const_func`
   operands with the runtime helpers, the C calls and this boundary's own
   `__sem_drop_*` set excluded. The same body can arrive as a FUNCTION VALUE
@@ -1630,10 +1625,9 @@ that do not fail identically on BOTH paths** (`alloc_flat_bytes_roundtrip` and
 to the substitution).
 
 Getting there is the part worth recording, because the first differential was
-green and measured nothing. `FERN_SEM_IR=` — the empty value a harness writes
+green and measured nothing. `FERN_SEM_IR=` — the empty value a harness wrote
 for its control leg — read as "set, therefore on", so both columns were the
-semantic path. The flag treats an empty value as off now; the rule for any
-flag added beside it is the same.
+semantic path. An empty value has to read as off for any flag of that kind.
 
 With a real control, four defects showed, and three of them were one cause:
 
@@ -1718,7 +1712,7 @@ schedule: a green corpus and a stable miscompile. What found it was not a suite;
 it was running the thing.
 
 `FERN_SEM_IR_ONLY` and `FERN_SEM_IR_SKIP` — prefix lists, the second an
-exclusion — are the bisect knob. Halving with ONLY isolates nothing here,
+exclusion — were the bisect knob (since deleted). Halving with ONLY isolates nothing here,
 because either half prunes the call between a produced caller and a produced
 callee; removing one prefix at a time from the whole set does. Against a
 lexer-plus-parser probe rather than the whole compiler, which takes the loop
@@ -1750,7 +1744,7 @@ function main(): i32 { return scan("12345 abc").len(); }
 ```
 
 x86-64, `FERN_SANITIZE=1` at compile time: the AST build exits 3 and reports
-only the known leak, and `FERN_SEM_IR=1` faults. It is a fault of the produced
+only the known leak, and the semantic build faulted. It is a fault of the produced
 lowering alone, which is what makes it the check the eventual fix answers to.
 
 Three shapes separate it, and the separation is the finding: a callee returning
@@ -1828,9 +1822,9 @@ and does not work: on wasm the two pointers are equal and the retain was real,
 so skipping the release leaks, and the guard has no way to ask which world it is
 in without reading the box it may already have freed.
 
-**A note on the bisect.** `semlower.prune` turns off every produced body that
-calls one this boundary is not emitting, to a fixpoint, so `FERN_SEM_IR_SKIP` of
-a LEAF removes its whole caller cone. That is why three unrelated-looking
+**A note on the bisect.** `semlower.prune` turned off every produced body that
+called one this boundary was not emitting, to a fixpoint, so `FERN_SEM_IR_SKIP`
+of a LEAF removed its whole caller cone. That is why three unrelated-looking
 exclusions (`advance`, `advance_to`, `at_end`) each cleared the lexer probe: they
 are the cone, not the cause. Read a clearing exclusion as "the fault is inside
 this cone", and intersect cones rather than trusting the smallest one.
@@ -1864,7 +1858,7 @@ noise. The front end is not it either — the lexer-plus-parser probe built
 through this path peaks at 30 MB against the AST build's 107 MB on
 `parser.fern`. That leaves the back end.
 
-The bisect knob is `FERN_SEM_IR_SKIP` with peak RSS as the oracle, one rebuild
+The bisect knob was `FERN_SEM_IR_SKIP` with peak RSS as the oracle, one rebuild
 of `fern.fern` per step (about 7 minutes each). Module functions are matched by
 their BARE name, so `lexer.` matches nothing and single letters are the coarse
 cut:
@@ -1952,7 +1946,7 @@ memory, and segfaults the produced compiler on almost every module.
 which for a declared `own` position the checker's E051 guarantees and for an
 inferred one nothing does; an AST-lowered caller passing a borrowed value
 supplies nothing, and the produced callee releases what it was never given.
-`FERN_SEM_IR_SKIP=<caller name>` reproduces it in one step. A parameter mode is
+`FERN_SEM_IR_SKIP=<caller name>` reproduced it in one step. A parameter mode is
 half of a contract whose other half the checker enforces on source the user
 wrote, so it is not free to be inferred.
 
@@ -2156,16 +2150,13 @@ instance fails the compile: `semlower.substitution` prints a `FERN_SEM_IR:
 <name>: <reason>` line per refusal, then `FERN_SEM_IR: the typed lowering
 refused K declarations and instances`, and exits 3. A produced body beside an AST-lowered one is
 two memory conventions on one module — every crash this path has had was a
-mixed module — and the contracts `prune` reads cover the crossings it can
+mixed module — and the contracts `prune` read covered the crossings it could
 see, not every data structure that crosses. A TEMPLATE's row is no body of
 the module's — its produced instances stand for it, and one nothing
 instantiates is called by nobody — so a template with produced instances,
 or an uninstantiated one, is accounted as kept without a body; only a
 template with a refused instance is a refusal, reported under the
-template's name. The bisect knobs
-(`FERN_SEM_IR_ONLY` / `FERN_SEM_IR_SKIP`) keep the mixed module, which is
-what they exist to halve, and the production suite's skip legs run under
-them. The other half of the same decision: a declaration the substitution
+template's name. The other half of the same decision: a declaration the substitution
 produced is not lowered by the AST lowering at all (`ircore.lower_gated`
 takes the substitution and reads the produced body in its place), so the
 AST lowering's verdict is not asked for it, and a module the semantic
@@ -2245,12 +2236,12 @@ function type nested in a function value's signature.
 
 ## Retiring the AST lowering
 
-The typed path is the default, and a refusal is a compile error, for a
-program's module and for each runtime helper it appends: the refusals are
-printed as `FERN_SEM_IR_REPORT` would print them, and the compile exits 3.
-The AST lowering (`irlower`) still lowers everything with `FERN_SEM_IR=`
-(the typed path off), the declarations a bisect knob leaves out, and the
-runtime helpers of a driver that supplies no `rt_lower`.
+The typed path is the only lowering a compile has, and a refusal is a compile
+error, for a program's module and for each runtime helper it appends: the
+refusals are printed as `FERN_SEM_IR_REPORT` would print them, and the compile
+exits 3. There is no off switch and no bisect knob. The AST lowering
+(`irlower`) still lowers an `@import` extern, the claim checks, and the
+drivers that never build a substitution (`irlower_run` and its dumps).
 
 What the typed path produced whole, 2026-09-24:
 
@@ -2291,8 +2282,8 @@ The x86-64 and arm64 backends ask for a helper's typed lowering first:
 `emit_ir_runtime_fern_fn` calls `EmitState.rt_lower`, which the CLI sets to
 `semlower.runtime_bodies` through `ircore.Sub`, so no backend links the
 pipeline. A source that does not type-check, or that the typed path does not
-produce whole, fails the compile; under a bisect knob it keeps the AST
-lowering (`runtime_ast_bodies`), as it does with the typed path off. `FERN_SEM_IR_REPORT` prints `runtime <name>: produced` for each
+produce whole, fails the compile, and so does a helper appended by a driver
+that set no `rt_lower` (`asmcore.no_rt_lower`). `FERN_SEM_IR_REPORT` prints `runtime <name>: produced` for each
 helper it took. Wasm compiles no
 Fern-source helper; it serves them as hand-written WAT.
 
@@ -2313,9 +2304,7 @@ What is left, in order:
    `__raw_call1` / `__raw_call2`. 112 of the 114 helper sources check on their
    own; the rest are listed below.
 
-   The AST lowering still lowers every helper when the typed path is off, so
-   it takes the retyped spellings as well: a 64-bit syscall operand lowers at
-   64 bits, and `usize as i64` widens without masking. `runtime_bodies`
+   `runtime_bodies`
    checks a source with the builtin enums injected, as a program's module
    has them, and returns the drop helpers a body defines after the bodies;
    the backends emit each named body once per file. A typed body can call a
@@ -2334,12 +2323,15 @@ What is left, in order:
    drivers build a typed-path substitution for what they emit; the rest of
    the drivers never reach the typed path (see below). The semantic
    differential legs fail a seed the typed lowering refuses rather than
-   skipping it as a coverage gap. The bisect knobs keep a mixed module, and
-   with them a refused runtime helper keeps the AST lowering. The production
-   rows pin their own answers and leak figures, so none of them runs the AST
-   lowering.
-3. The AST lowering is deleted, along with the differential legs that compare
-   against it.
+   skipping it as a coverage gap. The production rows pin their own answers
+   and leak figures, so none of them runs the AST lowering.
+3. Done: the switches that turned the typed path off are deleted —
+   `FERN_SEM_IR=`, the bisect knobs `FERN_SEM_IR_ONLY` / `FERN_SEM_IR_SKIP`
+   and the mixed module they built (`semlower.prune`), the AST fallback for
+   runtime helpers (`runtime_ast_bodies`), `-assume-eligible` and the
+   modload drivers' per-module AST view. The differential legs run the typed
+   path only, and the tests' AST legs went with the switch.
+4. The AST lowering itself is deleted.
 
 ### What deleting the AST lowering touches, 2026-09-26
 
@@ -2353,9 +2345,7 @@ into five groups:
   `semlower.driven` (or `driven_annotated` for a module the driver already
   annotated, which includes `asm_load_run -target wasm32-wasi`), which runs
   the emit entry's checks first so an ill-typed program gets its diagnostic
-  rather than a lowering refusal. `asm_ir_run -ir` and `wasm_ir_run -ir`,
-  which force the AST lowering's gated emit, run only with the typed path
-  off, and the wasm drivers' `-decide` asks `wasm_ir.ir_route_ok` with the
+  rather than a lowering refusal. The wasm drivers' `-decide` asks `wasm_ir.ir_route_ok` with the
   same substitution. `asm_modload_run -verifyprovided` checks the bodies that
   emit reads. The asm drivers' per-module modes (`asm_ir_run -ir-unit`,
   `-per-module-emit*` and the concat rescue for a 512–1500-function program)
@@ -2378,8 +2368,7 @@ into five groups:
   on another module's (an inferred parameter mode, an instance), and
   `UnitKeys.view`, a hash of the loose functions' signatures and the whole
   struct table, which any unit's emit can read. A window covering the whole
-  unit is keyed as the whole unit. With `FERN_SEM_IR=` each module is still lowered on its own by
-  the AST lowering.
+  unit is keyed as the whole unit.
 - `wasm_modload_run`, whose per-module units take the typed lowering the way
   `wasm_units_probe`'s do: each `-per-module-emit` and `-link` lowers the
   whole program once through `semlower.driven` and keeps the units it asked
@@ -2389,9 +2378,7 @@ into five groups:
   asm entry folds in. A unit's lowered bodies are in its key, so a body edit
   re-emits every unit its code reached.
   `-per-module-emit-all` emits a whole link plan from one lowering, which is
-  how the whole-compiler link test builds the compiler. With `FERN_SEM_IR=`
-  the units lower their window through `wasm_ir.lower_all_for_view` as
-  before.
+  how the whole-compiler link test builds the compiler.
 - Verdict probes: `asm_pathprobe_run`, `asm_load_run -decide`, and
   `-ir-probe` on `asm_ir_run`, `asm_load_run` and `asm_modload_run`. They ask
   `semlower.verdict`, which runs the emit entry's checks and the typed
@@ -2439,25 +2426,14 @@ AST-lowered caller can call a produced callee, and they go with the lowering.
 **Other sites that lower a body from the AST:**
 
 - `ircore.produced_or_lowered`, which lowers what the substitution leaves:
-  an `@import` extern, a declaration a bisect knob leaves out, or everything
-  with the typed path off;
+  an `@import` extern;
 - `ircore.claim_lowering`, for the FIP and E068 claim checks;
-- `ircore.all_eligible_view_base` (`func_eligible`), the per-module gate the
-  modload drivers run with the typed path off, and `wasm_ir.wasm_eligible`,
-  the gate of `wasm_ir_run -ir`;
-- `runtime_ast_bodies` in `asm_ir` and `asm_arm64_ir`, for a runtime helper
-  under a bisect knob, with the typed path off, or in a driver without
-  `rt_lower`;
 - `emit_function_via_ir` when the cache is empty.
 
 `interp.fern` and `irexec.fern` do not depend on the AST lowering.
 
 **Tests.** These go with the lowering, or change with it:
 
-- the three AST differential legs, and their known-divergence files
-  (`internal/e2e/testdata/selfhost-diff-{x86_64,arm64,wasm}-known-divergences.txt`);
-- the whole-compiler test's AST self-build;
-- about twenty tests with an `ast` or `FERN_SEM_IR_SKIP` leg;
 - the `irlower_run` suites: IR round trip, IR verify, and the rc-plan and
   ownership dumps.
 

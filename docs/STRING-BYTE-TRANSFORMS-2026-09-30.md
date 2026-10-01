@@ -244,8 +244,8 @@ This local report covers three of the thirteen drivers; CI checks the full
 set. The full wasm module-loader suite passes, as does the additional
 bare-view closure refusal check.
 
-The lowering-mode audit found that `FERN_SEM_IR=0` enables semantic IR:
-only an empty value disables it. The earlier pair of `0`/`1` census runs
+The lowering-mode audit found that `FERN_SEM_IR=0` enabled semantic IR:
+only an empty value disabled it (the switch has since been deleted). The earlier pair of `0`/`1` census runs
 therefore tested semantic lowering twice. The corrected tests retain the
 strict semantic census and add actual AST behavior and sanitizer coverage.
 They do not claim balanced AST ownership.
