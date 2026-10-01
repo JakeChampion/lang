@@ -289,12 +289,37 @@ function call_carried(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis, in
   }
   var i: i32 = 0;
   while (i < ins.args.len()) {
-    if (ssasem.reference(f.values[ins.args[i]]) && consumed(rows, ix, ins.str, i)) {
+    // Passing the same parameter to the same slot supplies no independent
+    // reason to consume it. Any other escaping use still carries it.
+    var unchanged: boolean = ins.str == f.graph.name && unchanged_slot(f, ins.args[i], i);
+    if (!unchanged && ssasem.reference(f.values[ins.args[i]]) && consumed(rows, ix, ins.str, i)) {
       out = carry(out, a, ins.args[i]);
     }
     i = i + 1;
   }
   return out;
+}
+
+// Tail recursion replaces parameters with named phis even when another
+// recursive call remains in the body. A phi fed only by its parameter and
+// itself still forwards exactly that parameter, without advancing through it.
+function unchanged_slot(f: ssasem.Func, value: i32, slot: i32): boolean {
+  if (value == slot) {
+    return true;
+  }
+  for b in f.graph.blocks {
+    for ins in b.insts {
+      if (ins.result == value && slot_phi(ins) && ins.str == f.graph.name && ins.imm == slot) {
+        for arg in ins.args {
+          if (arg != value && arg != slot) {
+            return false;
+          }
+        }
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 // A call THROUGH a function value reads its slots off the type the box hands
@@ -324,7 +349,9 @@ function slot_carried(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis, in
   }
   var i: i32 = 1;
   while (i < ins.args.len()) {
-    if (ssasem.reference(f.values[ins.args[i]])) {
+    // A backedge that just forwards its own phi is the loop form of an
+    // unchanged recursive argument, not an escaping use of that parameter.
+    if (ins.args[i] != ins.result && ssasem.reference(f.values[ins.args[i]])) {
       out = carry(out, a, ins.args[i]);
     }
     i = i + 1;

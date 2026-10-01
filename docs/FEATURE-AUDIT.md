@@ -217,7 +217,7 @@ per-function bugs in the audit log.
 | `std/csv` | ✅ | ✅ | ✅ | ✅ | | ✅ | parse_line/join/escape — `audit_std_textfmt`; self-host via the IR path (x86-64 + wasm): `csv_parse_line` (`TestSelfHostCsvParseLineIR`); `csv_escape`/`csv_join` reach `std/string`'s `index_of`, which the single-program IR drivers cannot load, so they are covered by the CLI-driven suites |
 | `std/log` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | leveled `Logger`/`LogEntry` (#2683) plain-text + JSON-lines `render` — native via `log_leveled` fixture (all four backends); self-host via the IR path (x86-64 + wasm): `TestSelfHostLogLeveledIR` — structs with i32/boolean/string fields, chained struct-returning receiver methods, the threshold-filter branch, byte-indexed JSON escaping (hardcoded expectations: `.to_string()` is a self-host builtin the importless interp can't resolve, cf. format_bytes) |
 | `std/io` | | | | | | ⬜ | |
-| `std/io_buffered` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | in-memory `BytesWriter` (`data: u8[]`) — `write_string` / `write_bytes` / `write_byte` / `len` / `is_empty` / `into_string` / `reset` — native via the `bytes_writer` fixture (interp / x86-64 / arm64 / wasm); self-host via the IR path (x86-64 + wasm): `TestSelfHostBytesWriterIR` — struct with a `u8[]` field, functional struct-spread append, `u8[].append` with `as u8` casts, indexed string-byte reads, and `string_from_bytes_unchecked` via `into_string` (inlined as `BW`, since `BytesWriter` is a reserved builtin type name; `write_string` uses `s[i] as u8` in place of the module's `s.bytes()`, a std/string method the importless driver can't import). The fd-backed buffered Reader/Writer is Phase 2 (effectful, separate) |
+| `std/io_buffered` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | In-memory BytesWriter: byte writes, extraction and reset. into_string returns Option[string] after UTF-8 validation. Actual module coverage on bootstrap interp/x86/ARM/wasm/Darwin and primary compiler x86/ARM/wasm: TestSelfHostBytesWriterIR and the shared BytesWriterUTF8Program corpus. The prior copied BW fixture has been removed. |
 | `std/path` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | join/file_name/extension — `audit_std_path_numeric` + `self_host_audit_stdpath_test` |
 | `std/base64` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `prop_codec_roundtrip` — 300 random inputs, full byte range; self-host IR path: `base64_encode`/`base64_decode` lower end-to-end (real std/base64 source, routing-pinned `TestSelfHostBase64IR`, x86-64 + wasm + arm64 oracle-checked) |
 | `std/hex` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `prop_codec_roundtrip`; self-host IR path: `hex_encode`/`hex_decode` lower end-to-end (real std/hex source, routing-pinned `TestSelfHostHexIR`, x86-64 + wasm + arm64 oracle-checked) — unblocked by the wasm `string_from_bytes_unchecked` helper-gate fix |
@@ -3296,6 +3296,16 @@ driver resolves no imports). The **`to_string`** direction (`int_to_string` /
 `int_to_string_radix`) stays on the AST path — it pokes raw memory via
 `__alloc_u8` / `__memcpy` / `usize`, the same low-level concern that keeps
 std/u64 `to_string` off the IR path; row marked 🔧 (parse on IR, to_string AST).
+
+### 2026-09-30: BytesWriter validates its text conversion
+
+`BytesWriter.into_string()` returns `Option[string]`: complete valid UTF-8
+yields `Some`, malformed bytes yield `None`. The byte buffer remains unchanged.
+`TestSelfHostBytesWriterIR` now imports the actual module on x86/ARM/wasm;
+the copied `BW` implementation described below has been removed.
+`TestSelfHostBytesWriterUTF8` shares its boundary corpus with the bootstrap
+interpreter/native/wasm/Darwin tests, covering all single bytes, split writes,
+malformed sequences and preserved snapshots. The June entry records history.
 
 ### 2026-06-20 — std/io_buffered BytesWriter on the self-host IR path + native audit
 
