@@ -872,6 +872,13 @@ x86 directory is ~105 MB uncompressed (the rows of
 `.github/selfhost-driver-sizes.txt`), stored zstd-compressed by
 actions/cache; with three savers, up to three directories per tree.
 
+Measured on the change's own first run (36917972646), before any cache had
+been saved, so from the shared disk directory alone: `diff-selfhost-x86_64`
+17.3 to 5.4 minutes and `diff-selfhost-arm64` 14.5 to 5.7, the three
+`go test` invocations of each job no longer each rebuilding the drivers.
+Splitting those jobs into seed shards was prepared and dropped on that
+number: two more runner slots for about two minutes.
+
 What it cannot do: the first run on a tree whose self-host sources or
 stdlib changed builds cold on every shard as before, and saves; the next
 run at that tree (a merge-main push, the main validation when it is not
@@ -897,14 +904,14 @@ third of the wall plus the leaf's queue wait. The `test-e2e-other` aarch64
 leg, one shard of 9.9-12.2 minutes and the longest job outside the self-host
 lane, is two shards by the same arithmetic.
 
-The `diff-selfhost-x86_64` and `-arm64` jobs, 17.3 and 14.5 minutes, were
-the longest jobs outside the shards and ran their 512 seeds in one job per
-target. Each is two seed shards now through the differential lane's own
-`DIFF_ORACLE_SHARD` knob; the wasm leg (0.8 minutes) stays one job.
-
 `selfhost-fixpoints-x86_64` ran four whole-compiler proofs in one job, 2.0,
 2.4, 2.6 and 3.6 minutes of them after a shared fern.fern build: two jobs of
 two proofs each now, the build coming from the driver cache in both.
+
+`test-e2e-wasm` ran its 9.0-9.8 minutes in one serial process per host
+while every test waited on a wasmtime subprocess; it runs in two isolated
+worker processes now, as the other e2e lanes do. The self-host lane's single
+aarch64 shard (8.5 minutes) is two.
 
 Lint, the other required check, spent 2.0 of its 4.7 minutes in
 `fern -check sources`, and 146 of those seconds locally were

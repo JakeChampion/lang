@@ -55,9 +55,9 @@ name: Test e2e self-host
 # the refresh procedure.
 #
 # The aarch64 runner skips the x86 self-host driver builds (and vice-versa),
-# so the x86 lane is the long pole and the aarch64 lane runs ONE shard: its
-# per-shard cost is dominated by job setup, so near-empty shards would only
-# take runner slots from the x86 fan-out.
+# so the x86 lane is the long pole and the aarch64 lane runs TWO shards: one
+# was 8.5 minutes, and a shard's setup is about a minute, so more than two
+# would mostly take runner slots from the x86 fan-out.
 #
 # The `verify` job reads every shard's outcome artifact off-machine, so a
 # shard whose runner vanished (no outcome at all) is a failure with a
@@ -456,7 +456,8 @@ jobs:
           - { runner: ubuntu-latest, host: x86_64, nshard: 12, shard: 9 }
           - { runner: ubuntu-latest, host: x86_64, nshard: 12, shard: 10 }
           - { runner: ubuntu-latest, host: x86_64, nshard: 12, shard: 11 }
-          - { runner: ubuntu-24.04-arm, host: aarch64, nshard: 1, shard: 0 }
+          - { runner: ubuntu-24.04-arm, host: aarch64, nshard: 2, shard: 0 }
+          - { runner: ubuntu-24.04-arm, host: aarch64, nshard: 2, shard: 1 }
     name: test-e2e-selfhost-${{ matrix.host }}-shard${{ matrix.shard }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
@@ -465,11 +466,11 @@ jobs:
       - uses: ./.github/actions/setup-fern
         with:
           wasmtime: "true"
-      # The aarch64 shard is the one Linux ARM64 job that builds the stock
-      # drivers natively, so it is the job that saves that arch's cache.
+      # The aarch64 shards are the Linux ARM64 jobs that build the stock
+      # drivers natively, so the first of them saves that arch's cache.
       - uses: ./.github/actions/selfhost-driver-cache
         with:
-          save: ${{ matrix.host == 'aarch64' && 'true' || 'false' }}
+          save: ${{ matrix.host == 'aarch64' && matrix.shard == 0 && 'true' || 'false' }}
       - name: aarch64 cross toolchain (x86 shards — arm64 cross-emit tests)
         if: matrix.host == 'x86_64'
         uses: ./.github/actions/apt-cross-toolchain
@@ -566,7 +567,7 @@ jobs:
           merge-multiple: true
       - name: verify every shard reported success
         id: verify
-        run: scripts/ci-verify-shard-outcomes shard-outcomes x86_64=12 aarch64=1
+        run: scripts/ci-verify-shard-outcomes shard-outcomes x86_64=12 aarch64=2
       - name: why did a shard leave no outcome
         if: failure() && steps.verify.outcome == 'failure'
         env:
