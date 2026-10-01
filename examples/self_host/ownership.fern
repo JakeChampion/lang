@@ -20,15 +20,12 @@
 // whichever answer this reaches, and an escape is far easier to see on the
 // typed IR than on the AST.
 //
-// It is a GREATEST fixpoint: every reference parameter starts escaping and is
-// demoted once a round finds no escaping use. A least fixpoint would answer
-// "borrowed" for every recursive traversal, since the only use that carries
-// the parameter out is the recursive call whose own slot is counted only if
-// the parameter is — the cycle never starts from below. That is right for a
-// walk that rebuilds (`std/pvec`'s `__pv_with_in` takes its child out of a
-// unique node), and wrong for one whose result holds no reference: nothing a
-// take frees can leave such a frame, so its own recursive call carries nothing
-// (#10352).
+// The least fixpoint starts parameters lent and counts the uses that carry
+// them out. Read-only call cycles stay lent. A constructor-tail loop also
+// counts the parameter it advances through: releasing each visited cell
+// lets the next output allocation recycle it instead of retaining the whole
+// input until the call returns. The typed loop's phis and hole operations
+// identify that case without changing unrelated read-only parameters.
 import "./ssa";
 import "./ssasem";
 import "./util";
@@ -182,14 +179,39 @@ function call_carried(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis, in
   if (ins.str == f.graph.name && !ssasem.reference(f.result)) {
     return out;
   }
+  var rebuilds: boolean = ins.str == f.graph.name && constructed_result(f, ins.result);
   var i: i32 = 0;
   while (i < ins.args.len()) {
-    if (ssasem.reference(f.values[ins.args[i]]) && consumed(rows, ix, ins.str, i)) {
+    if (ssasem.reference(f.values[ins.args[i]]) && (consumed(rows, ix, ins.str, i)
+      || rebuilds && projected_parameter(f, a, ins.args[i]))) {
       out = carry(out, a, ins.args[i]);
     }
     i = i + 1;
   }
   return out;
+}
+
+// A recursive result stored in a newly built value is a rebuilding walk.
+// Count only arguments projected from a parameter, leaving unchanged reader
+// arguments lent. The normal lent-out guard still protects borrowed results.
+function constructed_result(f: ssasem.Func, value: i32): boolean {
+  for b in f.graph.blocks {
+    for ins in b.insts {
+      if (builds_out(ins.kind_tag) && util.index_of_i32(ins.args, value) >= 0) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function projected_parameter(f: ssasem.Func, a: ssasem.Analysis, value: i32): boolean {
+  for dep in a.dependencies[value] {
+    if (dep >= 0 && dep < f.params.len() && dep != value) {
+      return true;
+    }
+  }
+  return false;
 }
 
 // A call THROUGH a function value reads its slots off the type the box hands
@@ -210,11 +232,11 @@ function indirect_carried(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis
 // parameter itself, which whatever carries the phi carries too (`continued`).
 // Read as a plain loop instead, a walk that rebuilds its input would never
 // consume it.
-function slot_carried(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis, ins: ssa.SInst, rows: Escapes[], ix: Index): boolean[] {
+function slot_carried(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis, ins: ssa.SInst, rows: Escapes[], ix: Index, rebuilds: boolean): boolean[] {
   if (ins.str == f.graph.name && !ssasem.reference(f.result)) {
     return out;
   }
-  if (!consumed(rows, ix, ins.str, ins.imm)) {
+  if (!consumed(rows, ix, ins.str, ins.imm) && !recycling_slot(f, a, ins, rebuilds)) {
     return out;
   }
   var i: i32 = 1;
@@ -231,6 +253,37 @@ function slot_phi(ins: ssa.SInst): boolean {
   return ins.kind_tag == 8 && ins.str != "";
 }
 
+// The constructor-tail rewrite marks the chain with hole_fill and each
+// parameter phi with the original call slot. A projected next argument is
+// anchored to that phi; an unchanged parameter is the phi itself and must
+// remain lent. This preference is independent of the call-graph fixpoint.
+function recycling_slot(f: ssasem.Func, a: ssasem.Analysis, ins: ssa.SInst, rebuilds: boolean): boolean {
+  if (!rebuilds || ins.str != f.graph.name) {
+    return false;
+  }
+  var i: i32 = 1;
+  while (i < ins.args.len()) {
+    var arg: i32 = ins.args[i];
+    if (arg >= 0 && arg != ins.result && ssasem.reference(f.values[arg])
+      && util.index_of_i32(a.dependencies[arg], ins.result) >= 0) {
+      return true;
+    }
+    i = i + 1;
+  }
+  return false;
+}
+
+function rebuilds_chain(f: ssasem.Func): boolean {
+  for b in f.graph.blocks {
+    for ins in b.insts {
+      if (ins.kind_tag == ssasem.hole_fill()) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 function continued(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis): boolean[] {
   for b in f.graph.blocks {
     for ins in b.insts {
@@ -242,12 +295,12 @@ function continued(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis): bool
   return out;
 }
 
-function instruction_carried(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis, ins: ssa.SInst, rows: Escapes[], ix: Index): boolean[] {
+function instruction_carried(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis, ins: ssa.SInst, rows: Escapes[], ix: Index, rebuilds: boolean): boolean[] {
   if (ins.kind_tag == ssasem.call()) {
     return call_carried(out, f, a, ins, rows, ix);
   }
   if (slot_phi(ins)) {
-    return slot_carried(out, f, a, ins, rows, ix);
+    return slot_carried(out, f, a, ins, rows, ix, rebuilds);
   }
   if (ins.kind_tag == ssasem.call_value()) {
     return indirect_carried(out, f, a, ins);
@@ -332,9 +385,10 @@ function carried_values(f: ssasem.Func, a: ssasem.Analysis, rows: Escapes[], ix:
     out = out.append(false);
     i = i + 1;
   }
+  var rebuilds: boolean = rebuilds_chain(f);
   for b in f.graph.blocks {
     for ins in b.insts {
-      out = instruction_carried(out, f, a, ins, rows, ix);
+      out = instruction_carried(out, f, a, ins, rows, ix, rebuilds);
     }
     if (b.term.kind_tag == 1 && b.term.value >= 0) {
       out = out.with(b.term.value, true);
