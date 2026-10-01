@@ -14,6 +14,7 @@ import "std/array";
 // self-host compiler (the pointer-payload gap class, same as min/max_index).
 // The Go-side TestArrayAllEqual exercises a string[] on all four native
 // backends.
+
 function test_all_equal(): test.TestOutcome {
   return test.assert_true([7, 7, 7].all_equal());
 }

@@ -45,6 +45,7 @@ import "./decltypes";
 
 // =================== TYPE SYSTEM ====================
 // Semantic type definitions live in typeinfo, shared with typed consumers.
+
 // Helper wraps: same pattern as elsewhere in the port — putting
 // the struct literal in return-position lets the implicit
 // struct→union wrap fire. Inline `var t: Type = TypeI32 { ... };`
@@ -3366,6 +3367,7 @@ function (s: Scope) has_sig(name: string): boolean {
 // `join` for string[] side by side) and this checker has no bound solver to do
 // it with; the unfiltered list would advertise an API the receiver does not
 // have, which native's own note calls worse than the bare typo.
+
 // retired_collection_spelling: the value-returning name that replaced a
 // mutable-looking collection method removed by the pure-collection API, or ""
 // for a name that was never one. They resolve to nothing now, so the reader is
@@ -7979,6 +7981,7 @@ function name_in(name: string, list: string[]): boolean {
 // A summary is keyed the way str_ret_fns is — bare for a free function,
 // "<BaseType>.<name>" for a method — because a method name can collide
 // across receiver types whose bodies view different things.
+
 pub struct ViewSum { key: string, flags: boolean[], fresh: boolean }
 
 // ViewIndex is a name index over a ViewSum table — the StructTable idiom.
@@ -15167,6 +15170,7 @@ function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
 // The source order of two occurrences is their position, where native numbers
 // idents in walk order; the two agree wherever the parser leaves source order
 // alone.
+
 struct LuOcc { name: string, line: i32, col: i32 }
 
 struct LuVar { name: string, init: ast.Expr }
@@ -22498,6 +22502,7 @@ pub function ensure_annotated_parts(mods: parser.Module[]): parser.Module[] {
 // The pass is conservative in both directions: it rewrites only when every
 // store agrees on one resolved type that has a literal zero, and leaves the
 // parser's declaration alone otherwise.
+
 // vb_local_name returns the value local a value block routes its arm values
 // through — a body shaped `[var v = <zero>; <chain>; return v;]` — or "" for
 // any other body.
@@ -23130,6 +23135,7 @@ function pretype_module_in(mod: parser.Module, mt: ModuleTables): parser.Module 
 // 2)` is `both(1u64, 2u64)`. The pass records that width against each literal
 // argument (cargs / ctags) and writes it as the literal's suffix. A call no
 // position types keeps its default: i32, or i64 for a wide literal argument.
+
 // pend holds the open generic reads a literal local was compared or combined
 // with: each takes the width pend_id's class settles at, once the body is walked.
 struct LitInfer { parent: i32[], width: typeinfo.Type[], keys: string[], cargs: string[], ctags: string[], pend: ast.Expr[], pend_id: i32[], pend_scope: Scope[] }

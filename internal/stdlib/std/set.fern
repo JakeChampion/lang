@@ -33,6 +33,7 @@
 //   s.contains(2);   // true
 //   s.len();         // 4  (the duplicate 2 collapsed)
 //   s.to_array();    // [1, 2, 3, 4]  (insertion order)
+
 import "core/cmp";
 
 // The distinct elements, in first-inserted order. The `xs` field is an

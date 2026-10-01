@@ -18,6 +18,7 @@
 // No prelude: these are in scope only after a program
 // declares `import "std/hex";` (docs/PRELUDE-TO-MODULES.md,
 // Phase 5).
+
 function __hex_lower_char(d: i32): i32 {
   if (d < 10) {  // '0' + d
     return d + 48;

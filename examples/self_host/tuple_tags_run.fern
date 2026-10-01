@@ -10,6 +10,7 @@
 // result. The companion Go test pins the exact mapping, so a regression in the
 // decode (or in parse_type_ref feeding it) fails the golden here rather than
 // mis-tagging a tuple-destructure or a Result's OK type downstream.
+
 import "./asmcore";
 import "./util";
 

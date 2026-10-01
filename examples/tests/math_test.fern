@@ -8,6 +8,7 @@ import "std/math" as math;
 // deterministic and is asserted below (in-bounds, full range reachable,
 // empty-range fallback). The Go-side suites unit-test the prelude origins;
 // this is the migration-shaped (pure-Fern, std/test-driven) companion.
+
 function test_range(): test.TestOutcome {
   return test.assert_eq_array(math.range(2, 5), [2, 3, 4]);
 }

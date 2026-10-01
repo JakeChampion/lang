@@ -15,6 +15,7 @@
 //
 // The app writes its report to stderr; stdout carries TAP-13 from
 // std/test, so the file is its own test suite.
+
 import "std/test";
 import "std/i32";
 import "std/i64";
@@ -174,6 +175,7 @@ function gridlock(cells: i32): Flow {
 }
 
 // ---------------------------------------------------------------- tests
+
 function densities(): i32[] {
   return [2, 5, 10, 20, 30, 40, 60, 80];
 }
@@ -341,6 +343,7 @@ function test_runs_are_deterministic(): test.TestOutcome {
 }
 
 // ----------------------------------------------------------------- app
+
 function main(): i32 {
   defer eprint("(simulation complete)");
   eprint("traffic — Nagel-Schreckenberg on a one-lane ring");

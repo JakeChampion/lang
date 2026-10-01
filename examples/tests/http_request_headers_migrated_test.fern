@@ -15,6 +15,7 @@ import "std/http";
 // program. The migrated form folds them into one Fern
 // file with assertions on the parsed shape directly —
 // no subprocess, no print-then-grep.
+
 function test_parsed_headers_reachable_on_req(): test.TestOutcome {
   var wire: string = "GET /x HTTP/1.1\r\nHost: example.com\r\nContent-Type: application/json\r\nContent-Length: 0\r\n\r\n";
   match (http.http_parse_request(wire)) {
@@ -96,6 +97,7 @@ function test_get_all_on_missing_is_empty(): test.TestOutcome {
 }
 
 // ---- request-smuggling / framing hardening (#4383) ----
+
 // An `X-*-Content-Length` header must NOT be mistaken for the real
 // Content-Length. The wire has no real CL, so the body is empty —
 // the trailing bytes are not consumed as this request's body. (The

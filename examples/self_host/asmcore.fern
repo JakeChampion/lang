@@ -17,7 +17,9 @@ import "./ssa_lift";
 // this file). The backends import this and add only their
 // instruction-selection (emit_*). What decides WHETHER a module
 // lowers, rather than what it emits, lives in ircore.fern.
+
 // base_type_name -> util.base_type_name (SH-020).
+
 pub function sanitize_label(name: string): string {
   var out: string = "";
   var i: i32 = 0;
@@ -34,12 +36,19 @@ pub function sanitize_label(name: string): string {
 }
 
 // i32_to_string now lives in util.fern (imported as `util`). See SH-020.
+
 // digits_to_i32 now lives in util.fern (imported as `util`). See SH-020.
+
 // is_all_digits now lives in util.fern (imported as `util`). See SH-020.
+
 // has_str -> util.has_str (SH-020).
+
 // collect_idents_expr -> astwalk.collect_idents_expr (SH-022).
+
 // collect_idents_stmt -> astwalk.collect_idents_stmt (SH-022).
+
 // collect_bound_stmt -> astwalk.collect_bound_stmt (SH-022).
+
 pub function lambda_captures(lm: ast.ExprLambda, outer: EmitState): string[] {
   var refs: string[] = astwalk.collect_lambda_idents(lm, []);
   var caps: string[] = [];
@@ -2921,6 +2930,7 @@ pub function rt_src_tcp_recv(t: string): string {
 // fd, the byte count and the buffer are the same three arguments everywhere.
 // Each returns write's result, which every op site drops — the value exists only
 // so the statement-level drop balances.
+
 // rt_src_print_str backs `print_str(s)` / `write(s)` → the string's bytes on fd 1,
 // no newline. `s` is read-only, so the borrow analysis keeps it borrowed and the
 // helper copies nothing: __raw_data(s) is slot 0 of the box the caller already
@@ -2966,6 +2976,7 @@ pub function rt_src_putchar(t: string): string {
 // Ordinary Some(__raw_string(...)) lowering keeps the payload at offset 8 and the
 // tag at 0 exactly where they were, and puts a real rc=1 at box-8. Nothing reads
 // that header today; anything that later does now reads a valid one.
+
 // rt_src_reader_read_chunk backs `r.read_chunk(n)` → up to n bytes from fd,
 // Ok("") at end of input, or the errno that stopped the read. A directory reads
 // EISDIR, and a utility streaming a file operand has to tell that from EOF, so
@@ -4014,6 +4025,7 @@ function stat_fields_src(t: string): string {
 // record has no name-length member at all, so the two length limits are real
 // `pathconf(2)` calls there; Linux's record has `f_namelen` and Linux has no
 // pathconf syscall, so PATH_MAX is the kernel's own constant.
+
 // statfs_linux_path_max is PATH_MAX, the longest pathname the Linux kernel will
 // resolve. A constant rather than a lookup because Linux has no pathconf
 // syscall — glibc computes it from statfs plus constants — and `getconf
@@ -8688,6 +8700,7 @@ pub function check_map_new_chain(mod: parser.Module): util.Diag[] {
 // struct (an enum-variant constructor is a struct with enum_owner set) plus
 // the injected builtin variants, and Some / None / Ok / Err, which the
 // emitters special-case and never declare. What is left cannot link.
+
 // CallGate is the shared walk's parameter block: the free-function arity table
 // (`names` / `argc`, parallel arrays), the undefined rule's admit list
 // (`known`), and which of the two rules are live.
@@ -9235,6 +9248,7 @@ pub function check_undefined_calls(mod: parser.Module): util.Diag[] {
 }
 
 // contains -> util.contains (SH-020).
+
 // ---------------------------------------------------------------------------
 // Shared GAS text emission — what the x86-64 and arm64 IR backends emit
 // IDENTICALLY: the literal / constant / shape label names, the `.data` blocks
@@ -9242,6 +9256,7 @@ pub function check_undefined_calls(mod: parser.Module): util.Diag[] {
 // keeping it in one backend is what let the pre-#3457 emitter twins drift.
 // wasm does not use any of it (its own linear-memory layout replaces the lot).
 // ---------------------------------------------------------------------------
+
 // emit_str_box_data_from flushes one static box per interned literal as a GAS
 // `.data` block — shared verbatim by the x86-64 and arm64 emitters, whose string
 // box layout is identical (data@box+0, len@box+8, rc at box-8).
@@ -9622,6 +9637,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
 // locals + re-passed — the RC-miscount blocker fixed in step 1). The bundle is a
 // SINGLE param rather than 23 individual params so flat's arm64 stack frame stays
 // within `stur`'s ±256 offset range (23 params overflowed it).
+
 // ---- RC emission directives (#7736) -----------------------------------------
 //
 // The three IR backends each hand-wrote the field walk inside

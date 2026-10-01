@@ -10,6 +10,7 @@ import "std/test";
 // either declare the value with an explicit `var x: f64 = …`
 // or annotate with `as f64`. f32 receiver methods exist too;
 // each wraps the f64 primitive (promote, apply, demote).
+
 function test_abs_negative(): test.TestOutcome {
   var x: f64 = 0.0 - 3.5;
   return test.assert_eq_f64_near(x.abs(), 3.5, 0.0);

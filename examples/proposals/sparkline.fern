@@ -9,6 +9,7 @@
 //
 // The app writes its report to stderr; stdout carries TAP-13 from
 // std/test, so the file is its own test suite.
+
 import "std/test";
 import "std/utf8";
 import "std/i32";
@@ -69,6 +70,7 @@ function spark(xs: i32[]): string {
 }
 
 // ---------------------------------------------------------------- tests
+
 // One bar per sample, counted in CODEPOINTS. The byte length is three
 // times that, and asserting both is the point: a renderer that silently
 // truncated a multi-byte block would still pass a byte-length check.
@@ -217,6 +219,7 @@ function test_rendering_is_shift_invariant(): test.TestOutcome {
 }
 
 // ----------------------------------------------------------------- app
+
 function main(): i32 {
   eprint("sparkline — a numeric series in one line of blocks");
   eprint("  rising   " + spark([1, 2, 3, 4, 5, 6, 7, 8]));

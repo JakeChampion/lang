@@ -36,11 +36,13 @@ import "std/i32";
 import "std/string";
 
 // ------------------------------------------------------------------ model ---
+
 struct Group { text: string, lines: i32[] }
 
 struct Report { groups: Group[], dup_lines: i32 }
 
 // ---------------------------------------------------------------- the tool ---
+
 // The map holds text -> index into `all`, and is only ever READ. Order comes
 // from `all`, which is appended to in first-occurrence order — so the report is
 // deterministic without depending on anything about the map's iteration.
@@ -78,6 +80,7 @@ function find_dups(lines: string[]): Report {
 }
 
 // ------------------------------------------------------------- generators ---
+
 struct Spec { text: string, times: i32 }
 
 struct Built { lines: string[], want: Group[] }
@@ -203,6 +206,7 @@ function groups_equal(a: Group[], b: Group[]): boolean {
 }
 
 // ------------------------------------------------------------------ tests ---
+
 // The generative core: the report must equal the groups the file was built
 // from, including their order and the line numbers inside them.
 function test_the_report_matches_the_file_it_was_built_from(): test.TestOutcome {

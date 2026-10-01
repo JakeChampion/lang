@@ -13,6 +13,7 @@ import "std/time";
 // they need real sockets.
 //
 // Run:  fern -interp examples/tests/async_combinators_test.fern
+
 // gather collects every future's value in input order.
 function test_gather_all(): test.TestOutcome {
   var fs: async.Future[i32][] = [Ready(5), Ready(7), Ready(30)];

@@ -27,6 +27,7 @@ import "std/i32";
 import "std/i64";
 
 // ===================== CAPACITIES =====================
+
 fip function max_entries(): i32 {
   return 256;
 }
@@ -97,6 +98,7 @@ fip function rsp_value(): i64 {
 }
 
 // ===================== INITIALIZATION (allocating, once) =====================
+
 function zeros(n: i32): i64[] {
   var xs: i64[] = [];
   var i: i32 = 0;
@@ -257,6 +259,7 @@ fbip function reset_metrics(own s: State): State {
 //
 // Identical to the `fip` variant's, verbatim, so the two runs differ in how
 // state is held and in nothing else.
+
 fip function event_id(n: i64): i64 {
   var x: i64 = n * (2654435761 as i64);
   x = x ^ x >> 15 as i64;
@@ -307,6 +310,7 @@ fbip function round(own s: State, seed: i64, batch: i32): State {
 }
 
 // ===================== DRIVER =====================
+
 function main(): i32 {
   var s: State = new_state();
   s = prefill(s);

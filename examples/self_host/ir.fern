@@ -23,7 +23,9 @@ import "./util";
 // SCOPE: the `Op` value and its constructor helpers. AST -> IR lowering
 // lives in irlower.fern (mirroring the native `builder`); the backends
 // consume the resulting `Op[]` from their asm_*_ir modules.
+
 // ---- Op ----------------------------------------------------------------
+
 // Op is one stack-machine instruction. Field meanings mirror native's
 // `ir.Op` (internal/ir/ir.go:515):
 //   kind_tag — the opcode id (see kind_id and the constructors below).
@@ -138,6 +140,7 @@ pub function width_ptr(): i32 {
 // One helper per opcode, mirroring the names native gives its OpKind
 // constants. Every field the opcode does not use is zeroed, so an Op is
 // always fully initialised (the value-semantics discipline ssa.fern uses).
+
 function op0(tag: i32): Op {
   return Op { decl: 0 - 1, kind_tag: tag, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
@@ -2948,6 +2951,7 @@ pub function op_return(): Op {
 // is compiled by that backend under the arm64 fixpoint self-compile. Each
 // chunk stays near render_op's proven-safe size. kind_id's length/first-byte
 // dispatch keeps every function far smaller than that.
+
 // kind_count is the number of registered op kinds (ids 1..kind_count()), which
 // must stay DENSE — ir_kind_run sweeps every id in that range and a hole reads
 // as a half-registered op. Retiring one therefore moves the last entry into its
@@ -5368,6 +5372,7 @@ pub function kind_name(id: i32): string {
 // no string traffic. Written against `kind_id("...")` rather than raw literal
 // ids so they stay correct if the vocabulary is reordered — the ids are an
 // implementation detail, the tags are the contract.
+
 // ---- the stack effect of one op ----------------------------------------
 //
 // The tables below are keyed on kind_id's integer tags, and they are the
@@ -5380,6 +5385,7 @@ pub function kind_name(id: i32): string {
 //
 // Two consumers: the operand-stack verifier, and any pass that has to know
 // whether an op sits at statement position.
+
 // pops0 lists the ops that consume nothing: the constants, the nullary
 // value-producing builtins (clocks, argv, the runtime counters), and the
 // scope-opening / scope-closing control ops. `dyn_dispatch` is here because
@@ -6249,6 +6255,7 @@ function fold_bool64(c: boolean): i64 {
 // Scope is i32 width, like fold_const_binaries: the replacement constants are
 // op_const_i32, and splicing one beside a 64-bit or pointer-width op would
 // hand the backend a mismatched-width operand.
+
 // StrengthResult is what reduce_strength_ex returns: the rewritten op list
 // plus whether any site fired, so optimize_ops can stop at a fixpoint without
 // diffing two op lists.
@@ -6311,6 +6318,7 @@ function log2_i32(n: i32): i32 {
 // width, which is the width's own wraparound. Which backend uses them is
 // instruction selection (asm_ir.fern's ir_div_const); only the derivation is
 // shared.
+
 // MagicS is the signed reciprocal for d at width w. The quotient is
 //
 //     q  = mulhi_s(x, m)          // high w bits of the 2w-bit product
@@ -6638,6 +6646,7 @@ pub function eliminate_dead_code(ops: Op[]): Op[] {
 // entry by the BACKEND prologue (asm_ir's `rep stosq`, asm_arm64_ir's store
 // loop, wasm's spec-zeroed locals, irexec's zeroed frame), which is not an op
 // in this list. Params are excluded — they arrive with the caller's values.
+
 // zg_mark records `at` as slot `sl`'s first non-zero write, when the slot is in
 // range and has none earlier.
 function zg_mark(first: i32[], sl: i32, at: i32): i32[] {
@@ -7975,6 +7984,7 @@ pub function is_str_op_kind(tag: i32): boolean {
 // stream to find the scope it means. Both native backends and the IR
 // interpreter need that walk, and it reads nothing but ops and kind tags —
 // so it belongs with the op model rather than with lowering.
+
 // is_opener reports whether an op kind opens a structured scope (if / block
 // / loop) — used for the nesting counts below.
 function is_opener(k: string): boolean {

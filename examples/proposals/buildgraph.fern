@@ -38,6 +38,7 @@
 //     it ends up strictly newer than everything it depends on.
 //
 // The app writes its report to stderr; stdout carries TAP-13 from std/test.
+
 import "std/test";
 import "std/i32";
 import "std/string";
@@ -49,6 +50,7 @@ struct Node { name: string, deps: string[], mtime: i32, exists: boolean }
 struct Plan { order: string[], rebuilt: string[], cyclic: boolean }
 
 // ------------------------------------------------------------- utilities
+
 function index_of(ns: Node[], name: string): i32 {
   var i: i32 = 0;
   while (i < ns.len()) {
@@ -122,6 +124,7 @@ function show(xs: string[]): string {
 }
 
 // --------------------------------------------------- topological ordering
+
 // Kahn's algorithm, peeling nodes whose dependencies are all placed. Ties are
 // broken by declaration order so the result is deterministic across backends.
 function topo_order(ns: Node[]): Plan {
@@ -202,6 +205,7 @@ function dfs_cyclic(ns: Node[]): boolean {
 }
 
 // ---------------------------------------------------------------- staleness
+
 // Missing, or strictly older than a dependency. Equal timestamps are up to
 // date.
 function initially_stale(ns: Node[], at: i32): boolean {
@@ -260,6 +264,7 @@ function rebuild_closure(ns: Node[]): string[] {
 }
 
 // ------------------------------------------------------------------ build
+
 struct Built { nodes: Node[], plan: Plan }
 
 // One pass in topological order: a target is rebuilt when it is stale or when
@@ -310,6 +315,7 @@ function build(ns: Node[]): Built {
 }
 
 // ---------------------------------------------------------------- corpus
+
 function node(name: string, deps: string[], mtime: i32, exists: boolean): Node {
   return Node { name: name, deps: deps, mtime: mtime, exists: exists };
 }
@@ -403,6 +409,7 @@ function cyclic_graphs(): Node[][] {
 }
 
 // ----------------------------------------------------------------- tests
+
 // Soundness: afterwards, nothing is missing and nothing is older than a
 // dependency. Read off the finished graph, not off the planner's report.
 function test_after_building_everything_is_up_to_date(): test.TestOutcome {

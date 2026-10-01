@@ -6,6 +6,7 @@ import "./util";
 // backend's closure/capture analysis. asmcore / ssa / vm carried
 // byte-identical copies of these; they now live here once. Imports
 // only parser, so any frontend module can depend on it.
+
 // The accumulator is CONSUMING: the fold hands its unit to the visitor at each
 // step and takes back the one the call returns, so exactly one unit is live at
 // every point and the fold releases nothing. The function type spells it —

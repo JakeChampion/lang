@@ -16,11 +16,13 @@ import "std/json" as json;
 // variant, the path the assert_json_* helpers don't reach. The Go-side suite
 // unit-tests these; this is the migration-shaped (pure-Fern, std/test-driven,
 // self-host-gated) companion.
+
 function doc(): string {
   return "{\"name\":\"fern\",\"age\":3,\"active\":true,\"tags\":[\"a\",\"b\"],\"meta\":null}";
 }
 
 // ---- typed field extraction ----
+
 function test_get_string(): test.TestOutcome {
   match (json.json_parse(doc())) {
     Some(obj) => {
@@ -113,6 +115,7 @@ function test_get_wrong_type(): test.TestOutcome {
 }
 
 // ---- null predicate ----
+
 function test_is_null(): test.TestOutcome {
   match (json.json_parse(doc())) {
     Some(obj) => {
@@ -132,6 +135,7 @@ function test_is_null(): test.TestOutcome {
 }
 
 // ---- array navigation (JArray payload) ----
+
 function test_get_array(): test.TestOutcome {
   match (json.json_parse(doc())) {
     Some(obj) => {
@@ -152,6 +156,7 @@ function test_get_array(): test.TestOutcome {
 }
 
 // ---- encode (the parse inverse) ----
+
 function test_encode_array_round_trip(): test.TestOutcome {
   // Array order is deterministic, so the round-trip is exact.
   match (json.json_parse("[1,2,3]")) {
@@ -353,6 +358,7 @@ function test_depth_limit(): test.TestOutcome {
 }
 
 // ---- float accessor + integer overflow signalling (#4384 item 4) ----
+
 // json_get_f64 extracts a fractional number the integer getters reject.
 function test_get_f64(): test.TestOutcome {
   match (json.json_parse("{\"x\":3.5}")) {

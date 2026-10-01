@@ -3523,6 +3523,7 @@ pub function analyze(f: Func): Analysis {
 }
 
 // ---- views merged past their source ----------------------------------------
+
 // A counted copy of view `v` in three fresh values from `first`: an empty
 // string, `v + ""`, and that string retagged as `str`, which anchors nothing.
 pub function view_copy(first: i32, v: i32): ssa.SInst[] {
@@ -3657,6 +3658,7 @@ function with_copied_operands(ins: ssa.SInst, copies: MergeCopy[], made: i32[]):
 }
 
 // ---- copying a value that holds views --------------------------------------
+
 // A graph being extended: the finished blocks, the open block's id,
 // predecessors and instructions, and the next free block id.
 struct CopySplice { values: typeinfo.Type[], done: ssa.SBlock[], id: i32, preds: i32[], insts: ssa.SInst[], next_block: i32 }
@@ -4111,6 +4113,7 @@ function defining_positions(f: Func): i32[] {
 }
 
 // ---- self-tail recursion ----------------------------------------------------
+
 // A self-recursive call in tail position reuses its own activation on the AST
 // lowering, which gets `irlower.tco_self_tail` out of `lower_func`. A produced
 // body never reaches `lower_func`, so until now it grew the stack once per

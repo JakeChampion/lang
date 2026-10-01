@@ -9,6 +9,7 @@ import "std/option";
 // ordinary generic methods on Option[T] with closure args. The Go-side suite
 // unit-tests these; this is the migration-shaped (pure-Fern, std/test-driven,
 // self-host-gated) companion.
+
 function test_is_some_is_none(): test.TestOutcome {
   var s: Option[i32] = Some(5);
   var n: Option[i32] = None;

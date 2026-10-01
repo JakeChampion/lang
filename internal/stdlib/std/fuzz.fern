@@ -48,6 +48,7 @@
 // counter-example bytes are included in the failure
 // diagnostics so CI logs preserve enough state to reproduce
 // locally without re-running the whole loop.
+
 import "std/i32";
 import "std/string";
 import "std/array";
@@ -84,6 +85,7 @@ function __fuzz_pick_seed(seeds: u8[][], iter: i32): u8[] {
 // A slice expression (`xs[a:b]`) lends a view of `xs`; every
 // mutation result must own its bytes, so these build fresh
 // arrays instead.
+
 // __fuzz_bytes_slice — owned copy of `xs[lo:hi)`.
 function __fuzz_bytes_slice(xs: u8[], lo: i32, hi: i32): u8[] {
   var out: u8[] = [];
@@ -561,6 +563,7 @@ pub function (r: test.TestRunner) fuzz_shrink(name: string, seeds: u8[][], itera
 // order regardless of the OS-level directory enumeration
 // order. Hidden / `_`-prefixed entries are skipped so
 // scratch metadata doesn't get treated as fuzz input.
+
 // fuzz_corpus_from_dir(path) — load every regular file under
 // `path` as a raw byte seed. Returns the seeds via Result so
 // the caller can fall back to inline seeds when the corpus

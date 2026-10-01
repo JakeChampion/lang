@@ -25,6 +25,7 @@
 // No prelude: these are in scope only after a program
 // declares `import "std/url";` (docs/PRELUDE-TO-MODULES.md,
 // Phase 5).
+
 import "core/map";
 
 function __url_unreserved(b: i32): boolean {
@@ -565,6 +566,7 @@ function __query_pair(m: Map[string, string[]], s: string, start: i32, end: i32)
 // just to read one value. Key/value decoding matches query_parse
 // exactly (form_decode on both sides, so `a%20b=1` has key "a b"), a
 // pair with no `=` has value "", and empty pairs (`&&`) are skipped.
+
 // __query_eq_pos — index of the first '=' in [start, end), or -1.
 function __query_eq_pos(s: string, start: i32, end: i32): i32 {
   var j: i32 = start;

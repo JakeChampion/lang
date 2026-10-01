@@ -31,6 +31,7 @@ import "std/i32";
 import "std/string";
 
 // ------------------------------------------------------------------ model ---
+
 function is_blank(c: u8): boolean {
   return c == 32 || c == 9 || c == 10 || c == 13;
 }
@@ -64,6 +65,7 @@ function words_of(text: string): string[] {
 }
 
 // --------------------------------------------------------------- wrapping ---
+
 // Greedy: a word joins the current line when it still fits with one space
 // before it. A word wider than the whole column gets a line to itself rather
 // than being split — hyphenation is a different program.
@@ -88,6 +90,7 @@ function wrap(words: string[], width: i32): i32[] {
 }
 
 // ------------------------------------------------------------ justifying ---
+
 // The whole definition of "evenly", in four lines: `base` everywhere, one extra
 // on the first `extra` gaps. Distributing the remainder anywhere else still
 // satisfies "differ by at most one" and still looks wrong, which is why the
@@ -164,6 +167,7 @@ function layout(text: string, width: i32): string[] {
 }
 
 // ------------------------------------------------------------------ oracle ---
+
 // The gap widths on a rendered line, read back without reference to how they
 // were produced.
 function gaps_of(line: string): i32[] {
@@ -203,6 +207,7 @@ function join_words(ws: string[]): string {
 }
 
 // ------------------------------------------------------------- generators ---
+
 function paragraphs(): string[] {
   return [
     "the quick brown fox jumps over the lazy dog and keeps on running past the fence",
@@ -220,6 +225,7 @@ function widths(): i32[] {
 }
 
 // ------------------------------------------------------------------ tests ---
+
 // Exactly the target width, not approximately — for every line that is neither
 // the last nor a lone word too wide to pad.
 function test_every_full_line_is_exactly_the_width(): test.TestOutcome {

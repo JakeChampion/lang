@@ -49,6 +49,7 @@
 // so `main` lists the tests it runs. That's the same shape
 // Zig's `test` blocks compile down to and the same shape any
 // future macro / build-step driven discovery would lower to.
+
 // std/test reaches for (i32).to_string() in the f-string
 // failure messages and (string).contains / .starts_with /
 // .ends_with in the substring assertion helpers, so it
@@ -695,6 +696,7 @@ pub function (r: TestRunner) finish(): i32 {
 // express "any printable value" in a generic signature today.
 // As soon as a `Display`/`ToString` trait lands, these collapse
 // into one generic helper per family (eq, neq, contains, ...).
+
 // `pass()` — explicit Pass for cases that need an early
 // successful return (eg a test that walks a list and bails
 // out on the first interesting state).
@@ -809,6 +811,7 @@ pub function assert_ge[T: cmp.Ord + cmp.Display](a: T, b: T): TestOutcome {
 // default; `assert_eq_f32_exact` is the escape hatch for
 // canonicalisation tests (NaN bit patterns, f32_bits round-
 // trips) where you genuinely want bitwise equality.
+
 // `assert_eq_f64_near(actual, expected, epsilon)` — passes if
 // `|actual - expected| <= epsilon`. NaN inputs always fail
 // (NaN != anything, including itself); the message names
@@ -946,6 +949,7 @@ pub function assert_is_nan_f32(v: f32): TestOutcome {
 // `assert_neq` above (boolean and string both implement
 // cmp.Eq + cmp.Display). For whitespace-sensitive string comparisons
 // where quoted diffs help, reach for `assert_eq_string_diff`.
+
 // `assert_contains(haystack, needle)` — substring search.
 // Empty needle always passes (mirrors `(s).contains("")` which
 // returns true everywhere). Failure embeds the haystack so the
@@ -993,6 +997,7 @@ pub function assert_ends_with(s: string, suffix: string): TestOutcome {
 // assertion shape (`Fail(msg)` on mismatch) and quote
 // both sides in the diagnostic so a case-mismatch
 // failure is unambiguous.
+
 // `assert_eq_string_ci(actual, expected)` — ASCII case-
 // insensitive equality. Failure embeds both raw values
 // (no case-folding applied for display) so the reader
@@ -1230,15 +1235,20 @@ pub function assert_len_string(arr: string[], n: i32): TestOutcome {
 // check the index. Out-of-bounds `idx` reports the
 // problem distinctly from a value mismatch so the
 // regression mode is readable.
+
 // `assert_at_string(arr, idx, expected)` — string-typed
 // mirror. Quotes both sides of the diff in the failure
 // message.
+
 // `assert_at_i64(arr, idx, expected)` — i64-element mirror.
+
 // `assert_at_u32(arr, idx, expected)` — u32-element mirror.
 // Unsigned eq so callers don't have to cast at the call
 // site; failure message dispatches through `.to_string`
 // which respects the unsigned formatting.
+
 // `assert_at_u64(arr, idx, expected)` — u64-element mirror.
+
 // `assert_at_f64(arr, idx, expected, epsilon)` — f64
 // element with tolerance (mirrors `assert_eq_f64_near`'s
 // semantics). NaN inputs always fail. The `epsilon`
@@ -1376,20 +1386,24 @@ pub function assert_at_f32(arr: f32[], idx: i32, expected: f32, epsilon: f32): T
 // `assert_eq_i32_array(actual, expected)` — element-wise i32[]
 // equality. Returns the first mismatching index so the failure
 // localises a long array diff.
+
 // `assert_eq_i64_array(actual, expected)` — element-wise
 // i64 array equality. The width-narrow `_i32_array` won't
 // implicitly accept i64 element types (lang has no
 // numeric-array covariance), so widening the test to i64
 // timestamps / sizes / process IDs needs this dedicated
 // helper rather than a cast at every call site.
+
 // `assert_eq_u32_array(actual, expected)` — element-wise
 // unsigned i32 array equality. Distinct from `_i32_array`
 // because lang treats u32 / i32 as different types under
 // `==` for the array element check (and the failure
 // message's `to_string` dispatches to the unsigned
 // formatter).
+
 // `assert_eq_u64_array(actual, expected)` — element-wise
 // u64 array equality.
+
 // `assert_eq_f64_array_near(actual, expected, epsilon)` —
 // element-wise float array compare. Each pair must satisfy
 // `|actual[i] - expected[i]| <= epsilon`. NaN anywhere fails
@@ -1478,18 +1492,22 @@ pub function assert_eq_f32_array_near(actual: f32[], expected: f32[], epsilon: f
 // Failure messages name the FIRST element that's missing /
 // extra so the diff against the fixture is localised, same
 // shape as the multi-substring assertions.
+
 // `assert_set_eq_i32(actual, expected)` — multiset
 // equality for i32[]. Sorts both inputs ascending via
 // `cmp.sort` then delegates to the ordered comparison
 // — O(n²) on the sort but n is bounded by the array size
 // the test produced.
+
 // `assert_set_eq_string(actual, expected)` — multiset
 // equality for string[]. Sorts both via `cmp.sort`
 // then delegates to ordered compare.
+
 // `assert_subset_i32(superset, subset)` — every element of
 // `subset` must appear in `superset` (with multiplicity).
 // O(n*m) over the two lengths; fine for the modest sizes
 // that come up in test fixtures.
+
 // =================== PROCESS ASSERTIONS ===================
 //
 // The migrated e2e suite spawns the compiler binary under test
@@ -1498,6 +1516,7 @@ pub function assert_eq_f32_array_near(actual: f32[], expected: f32[], epsilon: f
 // struct; these helpers turn the most common assertions into
 // one-liners that fold cleanly into the runner's
 // TestOutcome result shape.
+
 // assert_exit(actual: ProcessResult, expected: i32) — verify
 // the spawned process exited with the given code. Failure
 // message embeds stdout + stderr (truncated to keep CI logs
@@ -1642,6 +1661,7 @@ pub function assert_stderr_line_count(actual: ProcessResult, n: i32): TestOutcom
 // that with `assert_contains` per substring inflates the case
 // count and obscures the actual contract; these collapse the
 // check to one assertion with a substring vector.
+
 // `assert_contains_all(haystack, needles)` — every entry in
 // `needles` must appear somewhere in `haystack` (order is NOT
 // required; if order matters, use a sequence of substring
@@ -1707,6 +1727,7 @@ pub function assert_contains_in_order(haystack: string, needles: string[]): Test
 // the first mismatch. `assert_eq_string_diff` walks both sides
 // line-by-line and reports the first differing line with its
 // line number + surrounding context.
+
 // `__diff_lines(a, b)` — return the 1-based line number where
 // `a` and `b` first differ, or 0 if they match. Counts a length
 // difference past end-of-shorter as a difference at the
@@ -1793,6 +1814,7 @@ pub function assert_lines_eq(actual: string, expected_lines: string[]): TestOutc
 // anything (`lo > hi`) is the caller's bug, not a value
 // mismatch, so it is reported as such rather than blamed on
 // whichever side `v` fell outside.
+
 // `assert_in_range_i32(v, lo, hi)` — `lo <= v <= hi`.
 pub function assert_in_range_i32(v: i32, lo: i32, hi: i32): TestOutcome {
   if (lo > hi) {
@@ -1892,34 +1914,43 @@ pub function assert_in_range_f32(v: f32, lo: f32, hi: f32): TestOutcome {
 // no repeated elements (`assert_unique_*`). Pair with sort
 // / dedup helpers in production code so the test pins the
 // post-condition rather than the implementation detail.
+
 // `assert_sorted_asc_i32(arr)` — `arr[i] <= arr[i+1]` for
 // every adjacent pair. Empty / single-element arrays are
 // vacuously sorted. Failure message names the first
 // inversion + its index so the diagnostic is grep-able.
+
 // `assert_sorted_asc_string(arr)` — lexicographic
 // non-decreasing order on strings. Delegates to the
 // `sort.string_cmp` ordering used elsewhere in the stdlib
 // so "sorted" here means the same thing as
 // `cmp.sort(arr)` would produce.
+
 // `assert_sorted_desc_i32(arr)` — strictly the inverse of
 // `_asc_i32`: every adjacent pair must satisfy
 // `arr[i-1] >= arr[i]`. Use this to pin `cmp.sort_desc(...)`
 // output or any reverse-sorted-by-construction code path.
+
 // `assert_sorted_desc_string(arr)` — descending lexicographic.
+
 // `assert_strictly_sorted_asc_i32(arr)` — `arr[i-1] < arr[i]`
 // (strict). Use when the contract is "sorted AND unique" —
 // equal adjacent pairs are a violation here, unlike the
 // non-strict `_asc_i32`. Saves writing `assert_sorted_asc +
 // assert_unique` separately.
+
 // `assert_strictly_sorted_asc_string(arr)` — strict
 // lexicographic order on strings (same "sorted + unique"
 // contract as the i32 variant).
+
 // `assert_unique_i32(arr)` — every element appears at most
 // once. Implementation sorts a copy then walks adjacent
 // pairs (O(n log n)) — simpler than a hash set and works
 // without any extra stdlib dependency. Failure message
 // names the first repeated value so the bug is grep-able.
+
 // `assert_unique_string(arr)` — same pattern for strings.
+
 // =================== FILESYSTEM ASSERTIONS ===================
 //
 // File-state assertions for tests that build a fixture tree
@@ -1928,6 +1959,7 @@ pub function assert_in_range_f32(v: f32, lo: f32, hi: f32): TestOutcome {
 // `fern -interp`. Names are deliberately verbose
 // (`assert_file_exists` rather than `file_exists`) to keep them
 // clearly distinguishable from `read_file` itself in user code.
+
 // `assert_file_exists(path)` — the path must be a readable
 // file. The check goes through `read_file`, so a path that
 // exists but isn't readable surfaces as a failure too.
@@ -2169,6 +2201,7 @@ pub function must_temp_dir(r: TestRunner, prefix: string): (string, TestRunner) 
 // function (`my_workload`) or a tiny shim that drives the
 // real workload. Iteration count of 10-100 is typical;
 // each iteration runs the whole `fn` body once.
+
 // __bench_sort_us — Sort the elapsed-time samples ascending
 // so percentile lookups are straightforward. Selection sort
 // because lang's `+` doesn't concatenate non-string arrays
@@ -2315,6 +2348,7 @@ pub function (r: TestRunner) bench_max_ms(name: string, iterations: i32, fn: () 
 // Use `monotonic_ns` for the timestamps (not `now_unix_ms`)
 // so NTP-style wall-clock adjustments don't shift the
 // deadline mid-test.
+
 // `assert_elapsed_lt_ms(start_ns, max_ms)` — passes if the
 // elapsed time since `start_ns` (a `monotonic_ns()` stamp)
 // is below `max_ms`. The failure message embeds both the
@@ -2377,6 +2411,7 @@ pub function assert_close_to_now_ms(actual_ms: i64, max_skew_ms: i64): TestOutco
 // formatting all vary across emitters; `assert_json_eq`
 // parses both sides via `std/json` and walks the JsonValue
 // trees in order-independent fashion.
+
 // __json_value_eq compares two JsonValue trees recursively.
 // JObject is order-independent (Map iteration order isn't
 // observable); arrays, strings, numbers, booleans, null all
@@ -2496,6 +2531,7 @@ function __json_value_eq(a: JsonValue, b: JsonValue): boolean {
 // MUST fail on a missing golden file (the writer side is a
 // developer-time convenience); `assert_matches_golden_strict`
 // surfaces that distinction.
+
 // `assert_matches_golden(path, actual)` — if `path` exists,
 // compare byte-exactly via the line-diff helper. If `path`
 // doesn't exist, write `actual` to it and pass with a TAP
@@ -2549,6 +2585,7 @@ pub function assert_matches_golden_strict(path: string, actual: string): TestOut
 // boilerplate every time. Useful for verifying that a
 // subprocess inherited the expected environment, or that a
 // `setenv` shim took effect.
+
 // `assert_env_set(name)` — `env(name)` returns Some(_). The
 // value isn't checked; use `assert_env_eq` when the exact
 // content matters.
@@ -2614,6 +2651,7 @@ pub function assert_env_eq(name: string, expected: string): TestOutcome {
 // backend — including the self-hosted compiler, whose monomorphiser
 // infers both K and V from a single `Map[K, V]` argument. Values render
 // via Display, so a string-valued failure prints unquoted.
+
 // `assert_map_len(m, n)` — map length matches.
 pub function assert_map_len[K: cmp.Eq + cmp.Display, V: cmp.Eq + cmp.Display](m: Map[K, V], n: i32): TestOutcome {
   var got: i32 = m.len();
@@ -2704,6 +2742,7 @@ pub function assert_eq_map[K: cmp.Eq + cmp.Display, V: cmp.Eq + cmp.Display](act
 // lambda inline. Failure messages embed the offending
 // element's value + 0-based index so a long-array failure
 // localises.
+
 // `assert_all_i32(arr, pred)` — every element returns true.
 // Vacuously holds for an empty array (matches the
 // mathematical convention `∀ x ∈ ∅ : P(x)`).
@@ -2772,15 +2811,20 @@ pub function assert_any_string(arr: string[], pred: (string) => boolean): TestOu
 // have to roll their own loop or pass the value through
 // `assert_any_*` + a `== needle` lambda. The failure
 // message embeds the needle so the diagnostic is grep-able.
+
 // `assert_array_contains_i32(arr, needle)` — `needle`
 // appears at least once in `arr` (linear scan). Empty
 // arrays fail vacuously — there's no element to match.
+
 // `assert_array_contains_string(arr, needle)` — same for
 // string elements. Empty array fails vacuously.
+
 // `assert_array_not_contains_i32(arr, needle)` — negative
 // membership; useful after a delete / filter operation.
+
 // `assert_array_not_contains_string(arr, needle)` — negative
 // membership for string arrays.
+
 // `assert_count_i32(arr, pred, expected_count)` — exactly
 // `expected_count` elements of `arr` satisfy `pred`. Sits
 // between `assert_all` (every element) and `assert_any` (at
@@ -2829,6 +2873,7 @@ pub function assert_count_string(arr: string[], pred: (string) => boolean, expec
 // 201, 204]" or "the error class is NOT one of the
 // transient ones". Beats writing N OR'd assertions or
 // abusing `assert_any_*` with an equality lambda.
+
 // `assert_one_of_i32(actual, allowed)` — `actual ∈ allowed`
 // (linear scan on the allowed list — fine for the typical
 // 2–10 element allowed sets these helpers target).
@@ -2926,6 +2971,7 @@ pub function assert_none_of_string(actual: string, forbidden: string[]): TestOut
 // to be specialised by element type — i32 and string cover
 // the bulk of practical Option usage; widen later as
 // needed.
+
 // `assert_is_some_i32(opt)` — Option must be `Some(_)`,
 // payload value is irrelevant (use `_eq` variant when
 // the value also matters).
@@ -3027,6 +3073,7 @@ pub function assert_is_some_eq_string(opt: Option[string], expected: string): Te
 // For a handler under test: hand it a request from `http.request` and a
 // `MockPlatform`'s bag, then read the response back with these. Each
 // names what it asked and quotes what it found.
+
 // `assert_status(resp, expected)` — the response's status.
 pub function assert_status(resp: HttpResponse, expected: i32): TestOutcome {
   if (resp.status == expected) {
@@ -3083,6 +3130,7 @@ pub function assert_body(resp: HttpResponse, expected: string): TestOutcome {
 // only — string and string[] are the practical Ok shapes
 // today; widen later as the stdlib grows new fallible
 // Result-returning operations.
+
 // `assert_is_ok_string(res)` — Result must be `Ok(_)`,
 // payload string is irrelevant.
 pub function assert_is_ok_string(res: Result[string, IoError]): TestOutcome {
@@ -3171,6 +3219,7 @@ pub function assert_is_err_string_array(res: Result[string[], IoError]): TestOut
 // remaining standard set-relation tests:
 // "do these share any element" / "are these completely
 // disjoint".
+
 // `assert_array_intersects_i32(a, b)` — at least one
 // element of `a` also appears in `b`. Empty array on
 // either side always fails (intersection with empty is
@@ -3257,6 +3306,7 @@ pub function assert_array_disjoint_string(a: string[], b: string[]): TestOutcome
 // begins with the same header rows", "the buffer ends in
 // the EOF sentinel", "the emitted opcodes contain this
 // sequence somewhere".
+
 // `assert_array_starts_with_i32(arr, prefix)` —
 // `arr[0..len(prefix)] == prefix` (element-wise). Empty
 // prefix vacuously passes (every array starts with the
@@ -3454,6 +3504,7 @@ pub function assert_array_contains_subseq_string(arr: string[], needle: string[]
 // element and embed both the offending index AND the
 // offending value in the failure message so a long-array
 // failure localises immediately.
+
 // `assert_all_starts_with(arr, prefix)` — every element of
 // `arr` has `prefix` at byte 0. Empty array vacuously
 // passes (∀ over ∅). Empty prefix vacuously passes for
@@ -3509,6 +3560,7 @@ pub function assert_all_contain(arr: string[], needle: string): TestOutcome {
 // single-string + multiple options. Complement to
 // `assert_starts_with(s, prefix)` (single option) and the
 // `_all_` family above (every-element + single option).
+
 // `assert_starts_with_any(s, prefixes)` — `s` starts with
 // at least one prefix in `prefixes`. Empty `prefixes`
 // list always fails (nothing to match).
@@ -3586,6 +3638,7 @@ pub function assert_json_eq(actual: string, expected: string): TestOutcome {
 // `assert_json_eq` is full-document compare. These helpers
 // pin narrower properties so tests don't have to commit to
 // pinning every field of a response.
+
 // `assert_json_has_key(json_text, key)` — top-level JObject
 // contains `key`. Fails if `json_text` doesn't parse OR
 // the top-level value isn't a JObject OR the key is
@@ -3759,6 +3812,7 @@ pub function assert_json_object_size(json_text: string, n: i32): TestOutcome {
 // diagnostics for invalid JSON / non-object top-level /
 // missing key / wrong value type at that key / wrong
 // value.
+
 // `assert_json_eq_field_string(json_text, key, expected)`
 // — top-level object's `key` is a JString equal to
 // `expected`. Failure cases (each distinct in the

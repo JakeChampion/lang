@@ -11,6 +11,7 @@ import "std/test";
 //   * `assert_any_i32` / `_string` — at least one element
 //     satisfies the predicate. Vacuously FAILS on [] (∃
 //     over ∅).
+
 function test_map_i32_eq_pass(): test.TestOutcome {
   var a: Map[i32, i32] = map_new(4);
   a = a.insert(1, 10);

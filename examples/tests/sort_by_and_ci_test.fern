@@ -17,6 +17,7 @@ import "core/cmp";
 // arg over a generic `T[]`. The Go-side suite unit-tests these; this is
 // the migration-shaped (pure-Fern, std/test-driven, self-host-gated)
 // companion.
+
 function test_string_cmp(): test.TestOutcome {
   // "apple" < "banana" → negative; equal → 0; reverse → positive.
   var lt: boolean = sort.string_cmp("apple", "banana") < 0;

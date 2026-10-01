@@ -18,6 +18,7 @@
 // No prelude: these are in scope only after a program
 // declares `import "std/base64";` (docs/PRELUDE-TO-MODULES.md,
 // Phase 5).
+
 function __b64_alphabet(v: i32): i32 {
   if (v < 26) {  // A-Z (0..25 → 65..90)
     return v + 65;
@@ -210,6 +211,7 @@ pub function base64_decode_strict(s: string): Option[u8[]] {
 // and handing off to `base64_decode`, which already tolerates missing
 // padding (it decodes the leading run of valid characters). Round-trips
 // with `base64url_encode` for any byte content.
+
 function __b64_std_to_url(s: string): string {
   var out: u8[] = [];
   var i: i32 = 0;

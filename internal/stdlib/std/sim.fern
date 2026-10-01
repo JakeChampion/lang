@@ -325,6 +325,7 @@ pub function future_chain[T](drv: Sim, at_ns: i64, step_ns: i64, resuspends: i32
 // body is a program value and is well-formed by construction, so the D9
 // invariant the real transport has to respect does not bind here, and the
 // combinator timing these tests pin reads better against text.
+
 // Endpoint — one scripted upstream. A registered `path` of "" matches any
 // path on its host:port. `hits` is a shared Cell (struct fields are frozen —
 // E048 — but a Cell[i64] mutates through), counting fetches routed here
@@ -437,6 +438,7 @@ pub function (n: Net) hits(host_be: i32, port: i32, path: string): i64 {
 // ALREADY-registered endpoint and compose with its scripted latency /
 // chunking; a fault registration for an unknown endpoint is a no-op (that
 // endpoint is already a dead upstream). Faulted fetches still count as hits.
+
 // __with_fault(n, host_be, port, path, mode, k, pct) — Net with the first
 // matching endpoint's fault fields replaced (the shared `hits` Cell carries
 // over), or `n` unchanged when nothing matches.

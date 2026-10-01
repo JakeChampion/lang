@@ -20,6 +20,7 @@
 // buf.append(<opcode>);` — is intentional: each function is
 // individually trivial and the whole module reads as a printed
 // opcode table.
+
 // ---- i32 unary ------------------------------------------------
 pub function inst_i32_clz(buf: u8[]): u8[] {  // 0x67
   return buf.append(103u8);

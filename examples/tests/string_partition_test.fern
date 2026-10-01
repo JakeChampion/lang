@@ -10,6 +10,7 @@ import "std/string";
 // asm_ir IR budget; uses assert_true (no scalar assert_eq[i32]). The Go-side
 // TestStringPartition pins these across all four backends; this is the
 // migration-shaped (pure-Fern, std/test-driven) companion.
+
 function triple_is(t: (string, string, string), a: string, b: string, c: string): boolean {
   return t.0 == a && t.1 == b && t.2 == c;
 }

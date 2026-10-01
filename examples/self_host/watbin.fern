@@ -7,6 +7,7 @@
 // unit tests rely on. The lone public entry is wat_to_binary(); the rest
 // is module-internal. The per-stage sections below (LEB128 / wat_lex /
 // wat_parse / wat_encode / wat_emit_bin) keep their original headers.
+
 // examples/self_host/leb128.fern — LEB128 byte encoders for the
 // self-hosted *binary* wasm emitter (the first slice of the binary
 // backend; the WAT-text emitter lives in wasm.fern).
@@ -30,6 +31,7 @@
 //     it is correct for the full unsigned 32-bit range (not just small
 //     non-negative values); `leb_i32` / `leb_i64` rely on the arithmetic
 //     shift, which is exactly what signed LEB128 needs.
+
 // MASK25 = (1 << 25) - 1 keeps bits 0..24, clearing the 7 bits a `>> 7`
 // may have sign-extended — turning the arithmetic shift into a logical
 // one for the unsigned encoder.
@@ -112,6 +114,7 @@ function leb_i64(buf: i32[], value: i64): i32[] {
 // Import-free on purpose (like leb128.fern): the assembler can
 // `import "./wat_lex"`, and the unit test can concatenate this file with a
 // driver (the single-module wasm_run driver doesn't resolve imports).
+
 // WatTok.kind: 0 = "(", 1 = ")", 2 = atom, 3 = string. For a string token
 // `text` is the raw content between the quotes, escapes left verbatim
 // (`\0a` stays `\0a`) — they are resolved when the data section is encoded.
@@ -184,6 +187,7 @@ function wat_tokenize(src: string): WatTok[] {
 // the encoder can `import` both and the unit test can concatenate
 // wat_lex.fern + this file + a driver (the single-module wasm_run driver
 // doesn't resolve imports).
+
 // SExpr.kind: 0 = list (children in `items`, `text` empty), 2 = atom,
 // 3 = string (token text in `text`, `items` empty).
 pub struct SExpr { kind: i32, text: string, items: SExpr[] }
@@ -233,6 +237,7 @@ function wat_parse(toks: WatTok[]): SExpr {
 // Depends on leb128.fern's leb_u32 / leb_i32 but is otherwise import-free,
 // so the encoder can `import` both and the unit test can concatenate
 // leb128.fern + this file + a driver (wasm_run doesn't resolve imports).
+
 // wcat appends every byte of `src` to `buf`.
 pub function wcat(buf: i32[], src: i32[]): i32[] {
   var i: i32 = 0;
@@ -352,7 +357,9 @@ function wmagic(): i32[] {
 // Depends on leb128.fern, wat_lex.fern (WatTok) and wat_parse.fern (SExpr)
 // but is otherwise import-free, so the encoder driver imports all of them
 // and the unit test concatenates the sources + a driver.
+
 // ---- small helpers -------------------------------------------------------
+
 // index_of_str returns the index of `n` in `xs`, or -1. (A local copy so
 // this module stays usable on its own / concatenated.)
 function index_of_str(xs: string[], n: string): i32 {
@@ -784,6 +791,7 @@ function data_bytes(s: string): i32[] {
 }
 
 // ---- function inventory --------------------------------------------------
+
 // func_node returns the actual `(func …)` node for a module child: the
 // child itself for a defined func, or the inner func of an import.
 function func_node(child: SExpr): SExpr {
@@ -950,6 +958,7 @@ function local_decl_types(fnode: SExpr): string[] {
 }
 
 // ---- instruction encoding ------------------------------------------------
+
 // arith_opcode maps a binary/unary arithmetic / comparison / conversion op to
 // its wasm byte (0 if not one of them). Binary ops take two stack operands;
 // the unary ones (eqz, clz/ctz/popcnt, every conversion) take one.
@@ -1746,6 +1755,7 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
 }
 
 // ---- section builders ----------------------------------------------------
+
 // flat_idx resolves a local index operand: a numeric index (the IR emitter's
 // form) is used directly; a `$name` resolves through lnames.
 function flat_idx(text: string, names: string[]): i32 {
@@ -2340,6 +2350,7 @@ pub function wat_to_binary(wat: string): i32[] {
 // Later slices add the core-instance, the `canon lift`, and the
 // `wasi:cli/run` instance export. Depends on leb128.fern + wat_encode.fern
 // (wcat / wsection) but is otherwise import-free.
+
 // component_preamble: "\0asm" + component version (13) / layer (1).
 pub function component_preamble(): i32[] {
   var o: i32[] = [];
@@ -2421,6 +2432,7 @@ pub function component_full(core: i32[]): i32[] {
 // (as \xNN byte strings) around the core, which is spliced into the
 // core-module section slot. (stdout only; file I/O would need more
 // framing.)
+
 // ---- per-interface component type-import blocks --------------------------
 //
 // Phase 1 of the generative component builder (docs/WASM-COMPONENT-GENERATOR.md):
@@ -2430,6 +2442,7 @@ pub function component_full(core: i32[]): i32[] {
 // (e.g. tb_io_error is byte-identical at the head of every prefix). The
 // component preamble is component_preamble(); these are the post-preamble
 // type/import/alias sections.
+
 // tb_io_error: the wasi:io/error interface (the `error` resource). Always the
 // first type import (io/streams depends on it).
 function tb_io_error(): string {
@@ -2585,6 +2598,7 @@ pub function component_full_io(core: i32[]): i32[] {
 // As with component_full_io the framing (wasi type imports, the canon-lower
 // shim cores, canon-lift/instance/export) is constant for this fixed shape,
 // so it is embedded verbatim as \xNN blobs around the core.
+
 pub function component_full_io_fs(core: i32[]): i32[] {
   var o: i32[] = io_fs_read_head();
   o = wcat(o, wsection(1, core));
@@ -2600,6 +2614,7 @@ pub function component_full_io_fs(core: i32[]): i32[] {
 // import set differs from the read shape (write-via-stream replaces
 // read-via-stream + blocking-read), so it carries its own constant framing
 // blobs around the core.
+
 pub function component_full_io_fs_write(core: i32[]): i32[] {
   var o: i32[] = io_fs_write_head();
   o = wcat(o, wsection(1, core));
@@ -2616,6 +2631,7 @@ pub function component_full_io_fs_write(core: i32[]): i32[] {
 // read_file and write_file; the framing differs from the read-only and
 // write-only shapes (it lowers all of read-via + blocking-read + write-via),
 // so it carries its own constant \xNN blobs.
+
 pub function component_full_io_fs_rw(core: i32[]): i32[] {
   var o: i32[] = io_fs_rw_head();
   o = wcat(o, wsection(1, core));
@@ -2630,6 +2646,7 @@ pub function component_full_io_fs_rw(core: i32[]): i32[] {
 // wasi:cli/run component. get-random-u64 returns a scalar (no list), so unlike
 // the file shapes this framing needs no cabi_realloc. Constant for the shape,
 // so embedded as \xNN blobs around the core.
+
 pub function component_full_io_random(core: i32[]): i32[] {
   var o: i32[] = io_stdout_head();
   o = wcat(o, blob_to_bytes(tb_random()));
@@ -2644,6 +2661,7 @@ pub function component_full_io_random(core: i32[]): i32[] {
 // blocking-write-and-flush, get-environment) and exports `_lang_run` +
 // `cabi_realloc` (get-environment returns a host-allocated list) into a
 // wasi:cli/run component. Constant for the shape, so embedded as \xNN blobs.
+
 pub function component_full_io_env(core: i32[]): i32[] {
   var o: i32[] = io_stdout_head();
   o = wcat(o, blob_to_bytes(tb_cli_environment_env()));
@@ -2658,6 +2676,7 @@ pub function component_full_io_env(core: i32[]): i32[] {
 // blocking-write-and-flush, get-arguments) and exports `_lang_run` +
 // `cabi_realloc` (get-arguments returns a host-allocated list) into a
 // wasi:cli/run component. Constant for the shape, embedded as \xNN blobs.
+
 pub function component_full_io_args(core: i32[]): i32[] {
   var o: i32[] = io_stdout_head();
   o = wcat(o, blob_to_bytes(tb_cli_environment_args()));
@@ -2673,6 +2692,7 @@ pub function component_full_io_args(core: i32[]): i32[] {
 // returns a fixed datetime record (no list), so no cabi_realloc. Backs the
 // now_unix_ms / now_ns builtins. Constant for the shape, embedded as \xNN
 // blobs.
+
 pub function component_full_io_clock(core: i32[]): i32[] {
   var o: i32[] = io_stdout_head();
   o = wcat(o, blob_to_bytes(tb_wall_clock()));
@@ -2688,6 +2708,7 @@ pub function component_full_io_clock(core: i32[]): i32[] {
 // component. monotonic-clock now returns a u64 instant directly (no record,
 // no list -> no cabi_realloc). Backs the monotonic_ns builtin. Constant for
 // the shape, embedded as \xNN blobs.
+
 pub function component_full_io_clock_mono(core: i32[]): i32[] {
   var o: i32[] = io_stdout_head();
   o = wcat(o, blob_to_bytes(tb_monotonic_clock()));
@@ -2705,6 +2726,7 @@ pub function component_full_io_clock_mono(core: i32[]): i32[] {
 // the native compiler's canonical order (stdout, bwf, get-environment, then
 // the fs read chain), so this combined framing wires up byte-identically to
 // native. Exports `_lang_run` + `cabi_realloc` (env + fs lists).
+
 pub function component_full_io_fs_read_env(core: i32[]): i32[] {
   var o: i32[] = io_fs_read_head();
   o = wcat(o, blob_to_bytes(tb_fsread_env_tail()));
@@ -2721,6 +2743,7 @@ pub function component_full_io_fs_read_env(core: i32[]): i32[] {
 // secrets, write an output/log file, respond. The self-host emits imports in
 // the native compiler's canonical order, so this combined framing wires up
 // byte-identically to native. Exports `_lang_run` + `cabi_realloc`.
+
 pub function component_full_io_fs_rw_env(core: i32[]): i32[] {
   var o: i32[] = io_fs_rw_head();
   o = wcat(o, blob_to_bytes(tb_fsrw_env_tail()));
@@ -2737,6 +2760,7 @@ pub function component_full_io_fs_rw_env(core: i32[]): i32[] {
 // (lowered without memory) while the fs imports are mem-dependent, so this
 // mixes both lowering kinds; canonical import order keeps it byte-identical
 // to native. Exports `_lang_run` + `cabi_realloc` (fs lists).
+
 pub function component_full_io_random_write(core: i32[]): i32[] {
   var o: i32[] = io_fs_write_head();
   o = wcat(o, blob_to_bytes(tb_fswrite_random_tail()));
@@ -2753,6 +2777,7 @@ pub function component_full_io_random_write(core: i32[]): i32[] {
 // present on the io path, so this single framing covers both eprint+stdout
 // and eprint-only programs (the latter just leaves the stdout import unused).
 // Exports `_lang_run`; no list results, so no cabi_realloc.
+
 pub function component_full_io_eprint(core: i32[]): i32[] {
   var o: i32[] = io_stdout_head();
   o = wcat(o, blob_to_bytes(tb_cli_stderr()));
@@ -2767,6 +2792,7 @@ pub function component_full_io_eprint(core: i32[]): i32[] {
 // 0, 1 = err -> exit 1) plus the stdout pair (get-stdout,
 // blocking-write-and-flush, exit). exit sits right after the stdout pair in
 // the native compiler's canonical order. No list results, so no cabi_realloc.
+
 pub function component_full_io_exit(core: i32[]): i32[] {
   var o: i32[] = io_stdout_head();
   o = wcat(o, blob_to_bytes(tb_cli_exit()));
@@ -2782,6 +2808,7 @@ pub function component_full_io_exit(core: i32[]): i32[] {
 // CLI-tool shape: read a filename from argv, read that file, print it (like
 // `cat $1`). Canonical import order keeps it byte-identical to native.
 // Exports `_lang_run` + `cabi_realloc` (args + fs lists).
+
 pub function component_full_io_fs_args_read(core: i32[]): i32[] {
   var o: i32[] = io_fs_read_head();
   o = wcat(o, blob_to_bytes(tb_fsread_args_tail()));
@@ -2796,6 +2823,7 @@ pub function component_full_io_fs_args_read(core: i32[]): i32[] {
 // args. Its prefix is io_fs_rw_head() + a small args tail (demonstrating the
 // phase-3 prefix composition); the suffix is captured (per the design doc, the
 // suffix wiring is not yet generative).
+
 function tb_fsrw_args_tail(): string {
   return "\x07\x1d\x01B\x03\x01ps\x01@\x00\x00\x00\x04\x00\rget-arguments\x01\x01\n\x1f\x01\x00\x1awasi:cli/environment@0.2.0\x05\t";
 }
@@ -2819,6 +2847,7 @@ pub function component_full_io_fs_rw_args(core: i32[]): i32[] {
 //     elem writes func 0 into slot 0.
 // These reproduce the native compiler's shim cores byte-for-byte (validated by
 // TestSelfHostWasmShimCore against the stdout blocking-write-and-flush shape).
+
 // functype emits a core wasm functype: 0x60, vec(params), vec(results), where
 // each param/result is a valtype byte (i32=0x7f, i64=0x7e, f32=0x7d, f64=0x7c).
 function functype(params: i32[], results: i32[]): i32[] {
@@ -2888,6 +2917,7 @@ function shim_tablefill_core(params: i32[], results: i32[]): i32[] {
 // Together with the shim cores above they regenerate a CLI component's whole
 // suffix from the import list. The component section ids: 1 core-module,
 // 2 core-instance, 5 instance, 6 alias, 7 type, 8 canon, 11 export.
+
 pub function comp_core_module_section(mod: i32[]): i32[] {
   return wsection(1, mod);
 }

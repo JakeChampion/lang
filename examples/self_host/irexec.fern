@@ -8,6 +8,7 @@
 //
 // Only irlower_run.fern imports it, so a driver that just compiles never
 // carries the interpreter.
+
 import "./ir";
 import "./util";
 
@@ -115,6 +116,7 @@ function eval_expand_const_structs(fns: ir.LoweredFn[]): ir.LoweredFn[] {
 // eval_ops runs the lowered op stream on an operand stack + a locals frame,
 // returning the value carried by the first `return`. `args` seed the param
 // slots. This validates lowering without a backend (the ssa.fern pattern).
+
 // shape_id interns a struct / enum-variant name to a deterministic non-zero
 // i32 — the round-trip evaluator's slot-0 box identity that `variant_is`
 // compares (struct_make writes it, variant_is reads + tests it). A polynomial

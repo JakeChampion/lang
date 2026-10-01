@@ -46,6 +46,7 @@ import "std/json";
 import "std/string";
 
 // ===================== THE ALLOCATION MARK =====================
+
 // A mark is "steady state starts now": everything the program did to set
 // itself up is behind it, and what follows is the part a zero-allocation
 // claim is about. It is a pair of SCALARS and never a struct.
@@ -61,6 +62,7 @@ import "std/string";
 // `Mark { allocs: __heap_alloc_count(), … }` and nothing else (#9611).
 //
 // A scalar has no such box, so the snapshot is exact everywhere.
+
 // A `Delta` is what the allocator did between a mark and now.
 pub struct Delta {
   allocs: i64,
@@ -110,6 +112,7 @@ pub function (d: Delta) describe(): string {
 }
 
 // ===================== THE REPORT =====================
+
 // A `Report` is one benchmark's result. `samples_ns` is kept sorted so the
 // percentile readers are an index rather than a scan, and kept at all so a
 // caller can compute a statistic this module does not offer.
@@ -274,6 +277,7 @@ pub function (r: Report) bytes_per_op_milli(): i64 {
 }
 
 // ===================== MACHINE-READABLE OUTPUT =====================
+
 // `to_json()` — one flat object per report, so a run's output is a stream of
 // them and a consumer needs no schema beyond the key names. Integers
 // throughout: every figure here is a count or a nanosecond, and a float would
@@ -342,6 +346,7 @@ pub function (r: Report) describe(): string {
 }
 
 // ===================== REPEATED RUNS =====================
+
 // One run of a benchmark is a sample of the machine, not of the program: a
 // shared box, a migrated thread or a neighbour's build moves a p50 by more
 // than most changes worth measuring do. `run_repeated` takes the whole

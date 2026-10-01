@@ -13,6 +13,7 @@
 // parses the result, and asserts the round-trip preserved the
 // AST shape. Exit code 0 means every assertion passed; non-
 // zero codes identify which arm failed.
+
 import "./ast";
 import "./lexer";
 import "./parser";
@@ -20,6 +21,7 @@ import "./util";
 import "core/map";
 
 // =================== EXPRESSIONS ====================
+
 // hex_digit is one lowercase hex digit as its ASCII byte.
 function hex_digit(d: i32): u8 {
   if (d < 10) {
@@ -1101,6 +1103,7 @@ function print_list_lines(elems: ast.Expr[], lns: i32[], prefixes: string[], dep
 }
 
 // =================== STATEMENTS ====================
+
 // indent_str returns `depth` copies of "  " — two spaces per level, the width
 // native's formatter uses and the one `make fmt-check` gates the tree against.
 function indent_str(depth: i32): string {
@@ -3034,6 +3037,7 @@ function print_stmt_body(st: ast.Stmt, depth: i32, f: Fmt): (string, Fmt) {
 }
 
 // =================== MODULE ====================
+
 // print_type_params renders `[T, K: cmp.Ord]`, or "" when the decl has none.
 // The trait bound matters: dropping it turns a constrained generic into an
 // unconstrained one, which the checker then refuses at the call site.
@@ -3912,6 +3916,7 @@ function format_module_with_inline(mod: parser.Module, traits: parser.TraitDecl[
 }
 
 // =================== VALIDATION ====================
+
 // Round-trip: parse → print → parse again → assert the same
 // shape comes back. Catches printer bugs that would silently
 // drop or mangle nodes.
@@ -5361,6 +5366,7 @@ function func_index(funcs: parser.FuncDecl[], name: string): i32 {
 // Unified-diff half of `-fmt -d`. The two drivers' `-d` output is compared
 // byte-for-byte, so the alignment, the tie-breaks and the three-line context
 // window here are internal/printer/diff.go's rather than a re-derivation.
+
 // diff_split_lines breaks s on '\n' with the newline kept on each line, so the
 // hunk emitter reproduces a "no newline at end of file" tail verbatim. The
 // phantom empty entry a trailing '\n' would produce is dropped.
@@ -5846,6 +5852,7 @@ pub function unified_diff(before: string, after: string, path_before: string, pa
 // the two properties that hold whatever the tie-breaks are: the script
 // reproduces both of its inputs, and it is as short as an LCS table says the
 // shortest is.
+
 // diff_replay rebuilds one side of an edit script — `keep` is 1 for `a` and 2
 // for `b`; a shared line belongs to both.
 function diff_replay(sc: DiffScript, keep: i32): string {

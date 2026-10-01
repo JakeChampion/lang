@@ -38,6 +38,7 @@ import "std/i32";
 import "std/string";
 
 // ------------------------------------------------------------------ model ---
+
 // `keep` is what this segment contributes to the expected output. Stating it
 // per-segment rather than deriving it from a kind is what makes the line-comment
 // newline policy explicit: the stripper keeps the newline that ENDS a line
@@ -57,6 +58,7 @@ function no_fault(): Fault {
 }
 
 // ----------------------------------------------------------------- stripper ---
+
 // A single pass with four states, which is the only way to get this right: the
 // meaning of `/` depends on whether we are inside a literal, and the meaning of
 // `"` depends on whether we are inside a comment. Tracking one without the
@@ -144,6 +146,7 @@ function strip(src: string): StripR {
 }
 
 // ---------------------------------------------------------------- segments ---
+
 // Every segment is adversarial about the thing it is not: the literals contain
 // comment openers, the comments contain quotes, and the code contains slashes
 // that begin nothing.
@@ -228,6 +231,7 @@ function is_subsequence(sub: string, sup: string): boolean {
 }
 
 // ------------------------------------------------------------------ tests ---
+
 // The generative core: over every assembled document, the output must equal the
 // concatenation of the non-comment segments, exactly.
 function test_exactly_the_comments_are_removed(): test.TestOutcome {

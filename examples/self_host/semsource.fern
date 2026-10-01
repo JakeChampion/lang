@@ -231,6 +231,7 @@ function t_unreachable(): ssa.STerm {
 }
 
 // ---- graph construction ---------------------------------------------------
+
 function emit(s: State, ins: ssa.SInst): State {
   return State { ...s, cur: ssa.SBlock { ...s.cur, insts: s.cur.insts.append(ins) } };
 }
@@ -255,6 +256,7 @@ function terminate(s: State, term: ssa.STerm): State {
 }
 
 // ---- bindings ---------------------------------------------------------------
+
 function lookup(s: State, name: string): i32 {
   var i: i32 = s.names.len() - 1;
   while (i >= 0) {
@@ -316,6 +318,7 @@ function merge_env(s: State, envs: i32[][], count: i32): State {
 }
 
 // ---- erasure ----------------------------------------------------------------
+
 // A declaration that spells type variables is a TEMPLATE. The parser keeps only
 // the BOUNDED names in `type_params` and counts the rest, so either field marks
 // one — and a HOISTED closure body marks neither: the lift copies the
@@ -506,6 +509,7 @@ function settled_payload(t: typeinfo.Type): typeinfo.Type {
 }
 
 // ---- expressions ------------------------------------------------------------
+
 function checked(e: ast.Expr, s: State): typeinfo.Type {
   return settled(resolved(checker.expr_type(e, s.scope), s.template, s.binding));
 }
@@ -2817,6 +2821,7 @@ function bound_call(c: ast.ExprCall, bound: i32, s: State, statement: boolean): 
 }
 
 // ---- value blocks -----------------------------------------------------------
+
 // A value-position `{ … }` block is a zero-argument call of a zero-parameter
 // lambda the parser marks with an origin, and every backend INLINES it rather
 // than calling one: the statements run in the enclosing function and only the
@@ -3573,6 +3578,7 @@ function produce(e: ast.Expr, s: State, expected: typeinfo.Type): Value {
 }
 
 // ---- statements -------------------------------------------------------------
+
 function destructures(v: ast.StmtVar): boolean {
   var i: i32 = 0;
   while (i < v.name.len()) {
@@ -3992,6 +3998,7 @@ function branch(f: ast.StmtIf, s: State): State {
 }
 
 // ---- match ------------------------------------------------------------------
+
 struct Arms { s: State, preds: i32[], envs: i32[][], values: i32[] }
 
 function collect(arms: Arms, done: Arm): Arms {
@@ -4737,6 +4744,7 @@ function stmts(body: ast.Stmt[], s: State): State {
 }
 
 // ---- simplification ---------------------------------------------------------
+
 function resolve(map: i32[], v: i32): i32 {
   while (map[v] != v) {
     v = map[v];
@@ -4943,6 +4951,7 @@ function renumber(blocks: ssa.SBlock[], map: i32[], values: typeinfo.Type[]): ss
 }
 
 // ---- functions --------------------------------------------------------------
+
 // An `@import` extern is a declaration with a contract and no body: its
 // callers are produced against the signature it declares, and the wasm
 // bridge emits the function itself from the declaration.
@@ -5509,6 +5518,7 @@ function try_cleanup(body: ast.Stmt[]): ast.Stmt[] {
 }
 
 // ---- record schemas ---------------------------------------------------------
+
 // The module's declared records and unions whose values hold a `str` view, by
 // name, and its function types that do, as `fn <type_key>`, to a fixpoint over
 // the declaration tables every scope shares and the contract table. Asked once

@@ -30,6 +30,7 @@
 // report.
 //
 // The app writes its report to stderr; stdout carries TAP-13 from std/test.
+
 import "std/test";
 import "std/i32";
 import "std/string";
@@ -45,6 +46,7 @@ struct Entry {
 }
 
 // ------------------------------------------------------------- tokenizing
+
 // One token starting at `at`, honouring the two grouping forms. Returns the
 // token text and the index just past it, or None if a group is unclosed.
 //
@@ -109,6 +111,7 @@ function to_int(s: string): i32 {
 }
 
 // --------------------------------------------------------------- parsing
+
 // A line parses completely or not at all. There is no partial Entry: a record
 // built from four good fields and three guessed ones would be counted in the
 // report as though it were real.
@@ -163,6 +166,7 @@ function format_line(e: Entry): string {
 }
 
 // ---------------------------------------------------------------- report
+
 // `info` exists because 1xx did not, and every line has to land in exactly
 // one band or the report's own arithmetic stops adding up. The first draft
 // tested `status >= 200` downwards and counted a 100 Continue in the total
@@ -248,6 +252,7 @@ function pct(bp: i32): string {
 }
 
 // ----------------------------------------------------------------- corpus
+
 function good_lines(): string[] {
   return [
     "127.0.0.1 - frank [10/Oct/2000:13:55:36 -0700] \"GET /apache_pb.gif HTTP/1.0\" 200 2326",
@@ -274,6 +279,7 @@ function bad_lines(): string[] {
 }
 
 // ------------------------------------------------------------------ tests
+
 // THE test. Reformatting a parsed line must return the original, byte for
 // byte, for every well-formed input. It checks every field at once — a parser
 // that drops one, mis-splits a group, or trims something it should have kept
@@ -539,6 +545,7 @@ function test_awkward_requests_survive(): test.TestOutcome {
 }
 
 // ------------------------------------------------------------------- app
+
 function main(): i32 {
   eprint("logparse — common log format, with grouping honoured");
   var ls: string[] = good_lines();

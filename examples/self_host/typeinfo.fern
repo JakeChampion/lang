@@ -1,6 +1,7 @@
 // Shared semantic types for the self-hosted compiler.
 // Keep this module independent of AST, parser, checker and physical IR so
 // checked syntax and pre-RC semantic values can carry the same type directly.
+
 // TypeI32 models EVERY integer width — i32 / i64 / u32 / u64 — distinguished
 // by (width, unsigned). The checker stays width-LENIENT for assignability
 // (type_eq treats all integer types as interchangeable, matching the port's

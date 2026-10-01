@@ -23,6 +23,7 @@
 //
 // The app writes its report to stderr; stdout carries TAP-13 from
 // std/test, so the file is its own test suite.
+
 import "std/test";
 import "std/string";
 import "std/i32";
@@ -62,6 +63,7 @@ function status_not_found(): i32 {
 }
 
 // ------------------------------------------------------------ entity tags
+
 function is_weak(tag: string): boolean {
   return tag.starts_with("W/");
 }
@@ -128,6 +130,7 @@ function list_matches(h: string, etag: string, strong: boolean): boolean {
 }
 
 // ------------------------------------------------------------- evaluation
+
 function is_safe(method: string): boolean {
   return method == "GET" || method == "HEAD";
 }
@@ -179,6 +182,7 @@ function evaluate(req: Request, res: Resource): i32 {
 }
 
 // --------------------------------------------------------------- freshness
+
 struct CacheControl {
   no_store: boolean,
   no_cache: boolean,
@@ -217,6 +221,7 @@ function is_fresh(cc: CacheControl, expires: i32, date: i32, age: i32, shared: b
 }
 
 // ---------------------------------------------------------------- helpers
+
 function req_get(): Request {
   return Request {
     method: "GET", if_none_match: "", if_match: "",
@@ -229,6 +234,7 @@ function res_at(etag: string, modified: i32): Resource {
 }
 
 // ---------------------------------------------------------------- tests
+
 // RFC 9110 §13.2.2 step 3/5: when If-None-Match is present, If-Modified-Since
 // is not evaluated. Each row sets the date header to a value that WOULD give
 // the other answer, so an implementation that consults it fails here while
@@ -528,6 +534,7 @@ function test_every_combination_is_decided(): test.TestOutcome {
 }
 
 // ------------------------------------------------------------------ app
+
 function describe(label: string, r: Request, res: Resource): void {
   eprint("  " + label + " -> " + evaluate(r, res).to_string());
 }

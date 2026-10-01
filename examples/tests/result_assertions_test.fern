@@ -13,6 +13,7 @@ import "std/test";
 // I/O in the stdlib (read_file / read_dir / temp_dir /
 // fuzz_corpus_from_dir), which is what the helpers
 // specialise for.
+
 function test_is_ok_string_pass(r: test.TestRunner): test.TestRunner {
   let (dir, rr) = test.must_temp_dir(r, "ok-string");
   if (dir == "") {

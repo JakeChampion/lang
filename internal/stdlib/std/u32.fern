@@ -5,6 +5,7 @@
 // No prelude: a program sees these methods only after it
 // declares `import "std/u32";` (docs/PRELUDE-TO-MODULES.md,
 // Phase 5).
+
 import "core/int";
 
 pub function (n: u32) min(other: u32): u32 {
@@ -110,6 +111,7 @@ pub function (n: u32) pow(exp: i32): u32 {
 // when the wrapped result is smaller than an operand; a sub underflows
 // when the subtrahend exceeds the minuend. `saturating_*` clamps to
 // u32::MAX / 0; `checked_*` returns None.
+
 pub function (n: u32) saturating_add(other: u32): u32 {
   var r: u32 = n + other;
   if (r < n) {  // wrapped → clamp to MAX
@@ -390,6 +392,7 @@ pub function (n: u32) log10_floor(): i32 {
 // BMI1 and SSE4.2 both.
 //
 // Zero is defined: leading_zeros / trailing_zeros of 0 return the width.
+
 // `count_ones()` — the number of set bits in `n`.
 pub function (n: u32) count_ones(): i32 {
   return __popcount32(n);

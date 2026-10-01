@@ -8,6 +8,7 @@ import "std/float" as float;
 // under the asm_ir IR budget; uses assert_eq_f64_near (tolerance-banded). The
 // Go-side TestFloatRoundTo pins these across all four backends; this is the
 // migration-shaped companion.
+
 function test_two_places(): test.TestOutcome {
   return test.assert_eq_f64_near(3.14159.round_to(2), 3.14, 0.0001);
 }

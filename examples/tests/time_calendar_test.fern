@@ -16,7 +16,9 @@ import "std/time" as time;
 // on the real Hinnant serial-day algorithms. The Go-side suite unit-tests these;
 // this is the migration-shaped (pure-Fern, std/test-driven, self-host-gated)
 // companion.
+
 // ---- Gregorian rules ----
+
 function test_is_leap_year(): test.TestOutcome {
   var yes: boolean = time.is_leap_year(2000) && time.is_leap_year(2024);
   var no: boolean = !time.is_leap_year(1900) && !time.is_leap_year(2100) && !time.is_leap_year(2023);
@@ -35,6 +37,7 @@ function test_days_in_month_others(): test.TestOutcome {
 }
 
 // ---- construction + validation ----
+
 function test_is_valid_true(): test.TestOutcome {
   // Feb 29 in a leap year is real.
   return test.assert_true(time.date_make(2024, 2, 29).is_valid());
@@ -48,6 +51,7 @@ function test_is_valid_false(): test.TestOutcome {
 }
 
 // ---- add_days (returns Date) ----
+
 function test_add_days_within(): test.TestOutcome {
   var d = time.date_make(2024, 1, 1).add_days(10);
   return test.assert_true(d.year == 2024 && d.month == 1 && d.day == 11);
@@ -70,6 +74,7 @@ function test_add_days_backward(): test.TestOutcome {
 }
 
 // ---- days_since (struct-typed arg) ----
+
 function test_days_since_year(): test.TestOutcome {
   // 2023 is not a leap year → 365 days.
   return test.assert_eq(time.date_make(2024, 1, 1).days_since(time.date_make(2023, 1, 1)), 365);
@@ -81,6 +86,7 @@ function test_days_since_leap_feb(): test.TestOutcome {
 }
 
 // ---- day_of_year ----
+
 function test_day_of_year(): test.TestOutcome {
   var jan1: boolean = time.date_make(2024, 1, 1).day_of_year() == 1;
   var dec31_leap: boolean = time.date_make(2024, 12, 31).day_of_year() == 366;
@@ -89,6 +95,7 @@ function test_day_of_year(): test.TestOutcome {
 }
 
 // ---- weekday (0..6, Sunday=0) ----
+
 function test_weekday(): test.TestOutcome {
   // 2024-01-01 was a Monday (1); 1970-01-01 was a Thursday (4).
   var mon: boolean = time.date_make(2024, 1, 1).weekday() == 1;
@@ -97,6 +104,7 @@ function test_weekday(): test.TestOutcome {
 }
 
 // ---- format_iso (zero-padded YYYY-MM-DD) ----
+
 function test_format_iso_basic(): test.TestOutcome {
   return test.assert_eq(time.date_make(2024, 2, 29).format_iso(), "2024-02-29");
 }

@@ -7,6 +7,7 @@ import "std/float" as float;
 // libm primitive, so unlike the transcendentals these lower on all four
 // backends. Both f64 and f32. The Go-side TestFloatClamp01AbsDiffMulAdd pins
 // these across all four backends; this is the migration-shaped companion.
+
 function test_clamp01(): test.TestOutcome {
   if (!float_near(0.5.clamp01(), 0.5)) {
     return test.fail("0.5 in range");

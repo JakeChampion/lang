@@ -13,6 +13,7 @@
 // component grants it and both calls do nothing there: nothing in either WASI
 // world can deliver a signal, so there is no disposition to change. A
 // freestanding target has no process to deliver to and does not get it at all.
+
 // SIGINT — the terminal's interrupt (^C). 2 on Linux and Darwin alike.
 pub const SIGINT: i32 = 2;
 

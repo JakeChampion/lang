@@ -13,6 +13,7 @@ import "std/array";
 // failure-shape Go gate
 // (`TestRunnerFuzzShrinkSurfacesMinimisedInput`) and in
 // the dedicated reducer probes below.
+
 // Property that holds: `input.len() >= 0` for every byte
 // array. This shouldn't ever fire — the shrinker still runs
 // the mutation pass but never gets to minimise anything.

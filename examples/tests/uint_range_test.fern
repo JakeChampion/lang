@@ -10,6 +10,7 @@ import "std/u64";
 // use UNSIGNED comparison (a signed compare would treat u32::MAX / u64::MAX as
 // negative). The Go-side TestUintAbsDiffRange pins these across all four
 // backends; this is the migration-shaped (pure-Fern, std/test-driven) companion.
+
 function test_u32_abs_diff(): test.TestOutcome {
   return test.assert_true((5 as u32).abs_diff(8 as u32) == 3 as u32
     && (8 as u32).abs_diff(5 as u32) == 3 as u32);

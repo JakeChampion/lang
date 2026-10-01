@@ -16,6 +16,7 @@ import "std/string";
 // both observables — so what is asserted here is the SHAPE of the accounting,
 // and the conformance case `alloc_count_sees_recycling` pins the numbers on
 // the backends that have an allocator.
+
 // report_of builds a Report with known samples, so every percentile has one
 // right answer.
 function report_of(name: string, samples: i64[], allocs: i64): bench.Report {

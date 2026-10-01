@@ -28,6 +28,7 @@
 // subtract lambda-local bindings — for reachability, keeping an extra
 // same-named function is harmless; dropping a referenced one is not.
 // Over-keeping only costs IR budget; it never changes behaviour.
+
 import "./ast";
 import "./astwalk";
 import "./lexer";

@@ -15,6 +15,7 @@
 // to a fixpoint from the handler. That is the same over-approximation native
 // uses for its call graph, minus the row for calls through a value the walk
 // cannot name, which charges nothing on either compiler.
+
 import "./ast";
 import "./astwalk";
 import "./parser";

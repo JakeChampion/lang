@@ -6,9 +6,11 @@
 // cross-module bare references — the same reason arm64_native.fern is one
 // module. The container half is elf.fern. The pieces stay logically
 // separable; the section banners below mark the former file boundaries.
+
 // ============================================================
 // PART 1 — x86-64 encoder + named-label assembler
 // ============================================================
+
 // Formerly examples/self_host/x86_encode.fern — x86-64 machine-code
 // encoding primitives for the self-hosted *native* backend (slice 2a of the
 // native-binary track; the container half is elf.fern). This is the
@@ -34,6 +36,7 @@
 // operand size). Slice 2a covers the 8 base registers (0..7); the
 // extended registers r8..r15 (which need REX.R / REX.B) come in a later
 // slice.
+
 function x86_rax(): i32 {
   return 0;
 }
@@ -114,6 +117,7 @@ function x86_modrm(md: i32, reg: i32, rm: i32): i32 {
 }
 
 // ---- instruction encoders ----
+
 // x86_mov_r32_imm32: `mov <reg32>, imm32` — opcode 0xB8+rd then imm32.
 // The 32-bit write zero-extends into the full 64-bit register, which is
 // the cheapest way to load a small constant (e.g. a syscall number). For
@@ -203,6 +207,7 @@ function x86_ret(own buf: i32[]): i32[] {
 // 16-bit op carries the 0x66 prefix, an 8-bit op selects the byte opcode
 // (opbase without |1), and a byte register 4..7 (spl..dil) forces an
 // otherwise-empty REX — unprefixed, the same numbers select ah..bh.
+
 // x86_opsel returns the width-selected opcode: opbase for 8-bit, opbase|1
 // for the wider sizes.
 function x86_opsel(opbase: i32, size: i32): i32 {
@@ -397,6 +402,7 @@ function x86_cqo(own buf: i32[]): i32[] {
 // mod selects the displacement size: 00 = none, 01 = disp8, 10 = disp32.
 // Slice 2e covers the base registers (0..7); index/scale addressing is a
 // later need.
+
 // x86_sib builds a SIB byte: (scale << 6) | (index << 3) | base.
 function x86_sib(scale: i32, index: i32, base: i32): i32 {
   return (scale & 3) << 6 | (index & 7) << 3 | base & 7;
@@ -452,6 +458,7 @@ function x86_mov_store_r64(own buf: i32[], base: i32, disp: i32, src: i32): i32[
 // `[base + index*scale + disp]` needs a SIB byte (ModR/M rm = 100). The
 // scale field encodes 1/2/4/8 as 0/1/2/3. base rbp/r13 still forces a
 // disp8 (no mod=00 form), as in x86_emit_mem.
+
 // x86_lea_idx_nobase: `lea disp(,%index,scale), <dst>` — REX.W 8D with a
 // SIB whose base field is 101 (no base) and mod=00, so a disp32 always
 // follows. Element-offset computation.
@@ -548,6 +555,7 @@ function x86_mov_store_r64_idx(own buf: i32[], base: i32, index: i32, scale: i32
 // (an extended reg/base/index, or — for a byte register operand — when it
 // is spl..dil (4..7), which require a REX to disambiguate from ah..bh).
 // movzbq's destination is 64-bit, so it always carries REX.W.
+
 // x86_byte_mem_rex emits the (optional) REX for a byte memory op.
 function x86_byte_mem_rex(own buf: i32[], w: i32, reg: i32, has_index: boolean, index: i32, base: i32): i32[] {
   var ix: i32 = 0;
@@ -640,6 +648,7 @@ function x86_movext_reg(own buf: i32[], op: i32, w: i32, dst: i32, src: i32): i3
 }
 
 // ---- push/pop memory (slice 2l) ----
+
 // x86_push_mem: `push mem` (0xFF /6) — push a memory operand.
 function x86_push_mem(own buf: i32[], base: i32, has_index: boolean, index: i32, scale: i32, disp: i32): i32[] {
   var ix: i32 = 0;
@@ -702,6 +711,7 @@ function x86_alu_load_r64(own buf: i32[], opcode: i32, dst: i32, base: i32, has_
 // with `movq %xmm,%gpr` / `movq %gpr,%xmm`, arithmetic with
 // addsd/subsd/mulsd/divsd, and int<->float conversions cvttsd2si /
 // cvtsi2sd. xmm registers are numbered 0..15 (REX.R/.B for xmm8..15).
+
 // x86_le64_i64 appends the 8 little-endian bytes of an i64 (e.g. the
 // IEEE-754 bits of a .double constant).
 function x86_le64_i64(own buf: i32[], v: i64): i32[] {
@@ -808,6 +818,7 @@ function x86_movd_xmm_to_gpr(own buf: i32[], xmm: i32, gpr: i32): i32[] {
 //
 // SSE2 is inside the declared x86-64 baseline (Haswell-class), so a selected
 // instruction is a hard requirement and there is nothing to feature-detect.
+
 // x86_bitscan_r32: the `[REX] 0F <op> /r` direct-ModR/M shape shared by bsf
 // (0xBC) and bsr (0xBD). Both set ZF when the source is zero and leave the
 // destination undefined, which is why callers branch on ZF first.
@@ -915,6 +926,7 @@ function x86_cvtsi2sd(own buf: i32[], w: i32, xmm: i32, gpr: i32): i32[] {
 }
 
 // ---- immediate ALU (slice 2b) ----
+
 // x86_alu_r64_imm32 encodes the `<op> <reg>, imm32` group-1 form:
 // REX.W + 0x81 /digit, where `slash` is the opcode-extension in the
 // ModR/M reg field (0 = add, 5 = sub, 7 = cmp). imm32 little-endian.
@@ -956,6 +968,7 @@ function x86_cmp_r64_r64(own buf: i32[], a: i32, b: i32): i32[] {
 // instruction: rel32 = target_offset - (branch_offset + branch_length).
 // Backward branches (target already emitted) can compute this directly;
 // forward branches need a fixup pass (a later slice's label table).
+
 // Condition codes for the 0F 8x near-jcc opcodes.
 function x86_cc_e(): i32 {  // je  / jz
   return 4;
@@ -1023,6 +1036,7 @@ function x86_movabsq(own buf: i32[], reg: i32, imm: i64): i32[] {
 // map probing / byte-string scanning, plus cmov for min/max and the
 // sign/zero-extend loads. 32-bit ops carry a REX only when an operand is
 // r8..r15 (no REX.W); the result zero-extends into the full 64-bit reg.
+
 // x86_mov_load_rip_label: `movq sym(%rip), <dst>` (REX.W 8B /r, ModR/M
 // mod=00 rm=101) with a deferred rip-relative fixup — the form asm.fern
 // uses to load a .bss/.data global (e.g. the heap pointer).
@@ -1284,6 +1298,7 @@ function x86_branch_rel(target_off: i32, branch_off: i32, branch_len: i32): i32 
 // remember where the rel32 field starts, and patch it once the target
 // offset is known. x86_patch_rel32 is that patch; the label/fixup table a
 // text assembler needs is built on top of it.
+
 // x86_call_rel32: a near `call` (0xE8 cd) with a 32-bit signed
 // displacement. 5 bytes total — same rel math as jmp.
 function x86_call_rel32(own buf: i32[], rel: i32): i32[] {
@@ -1334,6 +1349,7 @@ function x86_rel_to(target_off: i32, patch_off: i32): i32 {
 // instructions still go straight through the encoders into `a.code`
 // (`a.code = x86_mov_r32_imm32(a.code, ...)`); only branches that target a
 // label go through this layer.
+
 pub struct X86Asm {
   code: i32[],
   rodata: i32[],
@@ -1860,11 +1876,13 @@ function x86_resolve(own a: X86Asm): X86Asm {
 // ============================================================
 // PART 2 — GAS-text front-end
 // ============================================================
+
 // ---- string helpers ----
 //
 // Hand-rolled rather than taken from std/string, as arm64_native.fern does:
 // this module must work both as an import and concatenated into a driver by
 // its unit tests, and an `import "std/string"` breaks the second.
+
 function x86_str_indexof(s: string, sub: string): i32 {
   var n: i32 = s.len();
   var m: i32 = sub.len();
@@ -1982,6 +2000,7 @@ function x86_str_split(s: string, sep: string): string[] {
 //
 // Import-free, like the other native-binary modules: the eventual emitter
 // `import`s x86_encode + this, and the unit test concatenates them.
+
 // GasMem is a parsed memory operand: rip-relative (`sym(%rip)`, carrying
 // the label), or `disp(%base)`, or `disp(%base,%index,scale)` (has_index).
 struct GasMem {
@@ -3367,6 +3386,7 @@ function x86_gas_sse38_op(mnem: string): i32 {
 }
 
 // END GENERATED NAMED VOCABULARY
+
 // x86_gas_movext assembles one extend, register or memory source. The source
 // register is parsed at the width the opcode reads — a byte for B6/BE, a word
 // for B7/BF — so a token of the wrong width is refused rather than folded in.
@@ -3417,6 +3437,7 @@ function x86_gas_movext(own a: X86Asm, op: i32, size: i32, src: string, dst: str
 // mirroring internal/native/x86_64's per-family encoders. Anything a
 // family cannot encode is RECORDED (SH-005) — a wrong-width encode is the
 // silent-widening class the native side fixed in #3544/#7886.
+
 // x86_gas_bad records an unsupported instruction shape (SH-005).
 function x86_gas_bad(own a: X86Asm, what: string): X86Asm {
   return X86Asm { ...a, unknown: a.unknown.append(what) };
@@ -3780,6 +3801,7 @@ function x86_gas_lockable(mnem: string): boolean {
 }
 
 // END GENERATED GPR GROUP TABLES
+
 // BEGIN GENERATED CONDITION TABLE (cmd/x86tblgen) — do not edit by hand.
 // x86_gas_cc_code maps a condition-suffix spelling to its 4-bit condition
 // code, shared by jcc 0F 80+cc, setcc 0F 90+cc and cmovcc 0F 40+cc. Returns
@@ -3878,6 +3900,7 @@ function x86_gas_cc_code(cond: string): i32 {
 }
 
 // END GENERATED CONDITION TABLE
+
 // ---- AVX2: the five VEX-encoded forms the byte kernels use ----
 //
 // The same narrow vocabulary as native's avx.go — vmovdqu (load),
@@ -3885,6 +3908,7 @@ function x86_gas_cc_code(cond: string): i32 {
 // kept out of the shared x86tbl tables, which assume legacy encoding
 // throughout. AVX2 is inside the x86-64-v3 baseline, so nothing here is
 // guarded.
+
 // x86_vex appends the VEX prefix: the 2-byte form (C5) whenever it can
 // carry the instruction — the 0F map, W clear, neither X nor B needed —
 // which is what GNU as emits, and the 3-byte form (C4) otherwise. rex_r,
@@ -4007,6 +4031,7 @@ function x86_gas_vpcmpeqb(own a: X86Asm, mnem: string, rest: string): X86Asm {
 }
 
 // ---- fixed-byte mnemonics ----
+
 function x86_pack1(b0: i32): i32 {
   return 16777216 + b0;
 }
@@ -4257,6 +4282,7 @@ function x86_gas_rep_ok(mnem: string): boolean {
 }
 
 // END GENERATED FIXED-OP TABLE
+
 // x86_gas_emit_packed appends a packed fixed-byte sequence.
 function x86_gas_emit_packed(own a: X86Asm, packed: i32): X86Asm {
   var n: i32 = packed / 16777216;
@@ -4271,6 +4297,7 @@ function x86_gas_emit_packed(own a: X86Asm, packed: i32): X86Asm {
 }
 
 // ---- integer families ----
+
 // x86_gas_alu_family assembles one sized ALU instruction (AT&T src, dst):
 // reg/reg, memory source, memory destination, and the immediate forms with
 // the 83 short-immediate selection — mirroring the native alu().
@@ -4748,6 +4775,7 @@ function x86_gas_crc32_family(own a: X86Asm, size: i32, src: string, dst: string
 }
 
 // ---- SSE tables and emitters ----
+
 // BEGIN GENERATED SSE TABLES (cmd/x86tblgen) — do not edit by hand.
 // x86_gas_sse_fp_op: the scalar/packed FLOAT half of the two-byte-opcode
 // SSE table (`[pfx] 0F op /r`, xmm destination), packed as pfx*256+op;
@@ -5082,6 +5110,7 @@ function x86_gas_sse_int_op(mnem: string): i32 {
 }
 
 // END GENERATED SSE TABLES
+
 // x86_gas_sse_op consults both halves of the SSE table.
 function x86_gas_sse_op(mnem: string): i32 {
   var v: i32 = x86_gas_sse_fp_op(mnem);
@@ -6216,6 +6245,7 @@ function x86_gas_assemble_pass_prepared(pl: GasLine[], longs: boolean[]): X86Asm
 // seen. Neither self-host assembler moves code after parsing — the x86 one
 // re-emits to a fixpoint rather than remapping, the arm64 one flushes its
 // literal pool inline — so no remap step exists here.
+
 // DWARF call-frame opcodes. Only the ones this module emits.
 function cfi_op_nop(): i32 {
   return 0;
@@ -6344,6 +6374,7 @@ pub function cfi_empty(s: CfiState): boolean {
 }
 
 // ---- small helpers -----------------------------------------------------
+
 function cfi_trim(s: string): string {
   var i: i32 = 0;
   var j: i32 = s.len();
@@ -6494,6 +6525,7 @@ function cfi_le64_i64(own b: i32[], v: i64): i32[] {
 }
 
 // ---- recording ---------------------------------------------------------
+
 // The recorder OWNS its state: the rule arrays hold one row per directive
 // for the whole program, and an append through a borrowed spread copies the
 // whole buffer, quadratically, on every relaxation pass (#8172).
@@ -6654,6 +6686,7 @@ function cfi_reg_directive(own s: CfiState, d: string, ops: string[], rest: stri
 }
 
 // ---- rendering ---------------------------------------------------------
+
 // cfi_advance appends the DW_CFA_advance_loc form covering a byte delta, in
 // units of the code alignment factor. A delta that is not a multiple of it
 // is reported through `bad`, so the caller passes it back.

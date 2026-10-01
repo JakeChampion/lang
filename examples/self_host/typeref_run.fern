@@ -19,6 +19,7 @@
 // The companion Go test (internal/e2e/self_host_typeref_test.go) asserts the
 // exact stdout and an exit code of 0 (zero round-trip failures), pinning the
 // contract end-to-end through the self-host -> native pipeline.
+
 import "./ast";
 import "./parser";
 import "./util";

@@ -4,6 +4,7 @@
 // The wasi:cli/run component framing chooses a wrapper from the program's WASI
 // usage; a playground must build the same component the CLI writes, so the
 // choice is made once.
+
 import "./ircore";
 import "./parser";
 import "./wasm_ir";

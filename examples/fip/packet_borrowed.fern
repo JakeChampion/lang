@@ -236,6 +236,7 @@ function pow256(k: i32): i64 {
 }
 
 // ===================== THE ENCODE (allocating) =====================
+
 function encode(req: Request, body: u8[]): u8[] {
   var out: u8[] = [];
   var plen: i32 = body.len();
@@ -271,6 +272,7 @@ function encode(req: Request, body: u8[]): u8[] {
 // bytes are held and in nothing else. Every 17th request is malformed, cycling
 // through the six rejections, so the error ladder is exercised in the steady
 // state rather than in a separate test that proves nothing about throughput.
+
 function gen_payload_len(n: i64): i32 {
   return (n * (37 as i64) % (241 as i64)) as i32;
 }

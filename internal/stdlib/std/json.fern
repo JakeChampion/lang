@@ -15,6 +15,7 @@
 // No prelude: these are in scope only after a program
 // declares `import "std/json";` (docs/PRELUDE-TO-MODULES.md,
 // Phase 5).
+
 // === JSON encoding ===
 //
 // `json_encode(v)` walks the `JsonValue` tree and produces
@@ -22,6 +23,7 @@
 // encoded; arrays / objects recurse. Numbers emit their
 // payload string verbatim — the responsibility for valid
 // numeric formatting sits with the caller.
+
 // json_encode walks Map[string, JsonValue] for JObject values
 // via `.iter()` / `.has_next()` / `.key()` / `.value()`;
 // json_parse builds one with `map_new` / `.insert(...)`. Declare
@@ -221,6 +223,7 @@ pub function json_encode(v: JsonValue): string {
 // escaping are identical to `json_encode`, so the two agree on every
 // value token — only whitespace differs. `indent` is spaces per level
 // (2 is the common default; 0 yields newlines with no indentation).
+
 // __json_spaces returns a string of `n` spaces.
 function __json_spaces(n: i32): string {
   var b: u8[] = [];
@@ -332,6 +335,7 @@ pub function json_encode_pretty(v: JsonValue, indent: i32): string {
 // (`\"`, `\\`, `\/`, `\b`, `\f`, `\n`, `\r`, `\t`,
 // `\uXXXX` for BMP code points). Surrogate pairs aren't
 // combined yet.
+
 struct __JsonParser {
   s: string,
   pos: i32,
@@ -954,6 +958,7 @@ pub function json_parse(s: string): Option[JsonValue] {
 //
 //   var u: CreateUser = json_parse[CreateUser](req.body_bytes())?;
 // ============================================================
+
 // `json_get(obj, key)` — look up `key` in a JObject. Returns
 // None when `obj` isn't a JObject or `key` isn't present.
 // Foundation for the typed getters below.

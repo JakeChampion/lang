@@ -5,6 +5,7 @@ import "std/glob" as glob;
 // shell-style matcher: literals, `*` (non-separator), `?`, `**`
 // (globstar, incl. the zero-directory elision), and `[...]` character
 // classes with ranges and negation.
+
 function test_literal(): test.TestOutcome {
   return test.assert_true(glob.glob_match("abc", "abc")
     && !glob.glob_match("abc", "abd"));

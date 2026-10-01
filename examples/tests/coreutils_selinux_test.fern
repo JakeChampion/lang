@@ -13,6 +13,7 @@ import "../../coreutils/lib/selinux" as selinux;
 // aarch64 runner writes a context ending in one. The two sides agreed on the
 // first and differed by a byte on the second, in every no-command runcon
 // case at once. So the rule gets a test that supplies the bytes itself.
+
 // getcon strips the terminating NUL and nothing else.
 function test_trailing_nul_goes(): test.TestOutcome {
   return test.assert_eq(selinux.trim_context("unconfined_u:unconfined_r:unconfined_t:s0\x00"), "unconfined_u:unconfined_r:unconfined_t:s0");

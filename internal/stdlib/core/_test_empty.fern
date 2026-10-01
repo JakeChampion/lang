@@ -6,6 +6,7 @@
 // std/_test_empty (which imports this file back) to form the
 // minimal stdlib-cycle test fixture; the cycle gate in
 // modload.loadRecursive lets the back-edge through.
+
 import "std/_test_empty";
 
 pub function core_test_marker(): i32 {

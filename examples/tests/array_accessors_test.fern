@@ -13,6 +13,7 @@ import "std/array";
 // a string[] on all four native backends) because the self-host compiler
 // mishandles the generic Option[T] return over pointer-payload (string)
 // elements — the same gap that keeps array_rotate's string case native-only.
+
 function uw(o: Option[i32]): i32 {
   match (o) {
     Some(v) => {

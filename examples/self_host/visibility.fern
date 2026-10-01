@@ -6,6 +6,7 @@
 // small source list. Putting the rule there widened modloader's import closure
 // and broke those drivers; a separate module keeps the loader's dependencies
 // as narrow as they were and costs the full driver one import.
+
 import "./ast";
 import "./parser";
 import "./flatten";
@@ -26,6 +27,7 @@ import "./checker";
 // `bigint____bi_make`, so a bundle-level rule cannot tell an outside caller
 // from the module's own internals — and core/bigint, whose methods call its
 // private helpers by bare name, is exactly the shape that exposes it.
+
 // import_quals returns the qualifiers a module's source may write: the import's
 // alias when it has one, else the path's basename (`import "std/io_buffered" as
 // io` → `io`; `import "./lexer"` → `lexer`). Built by concatenation rather than
@@ -286,6 +288,7 @@ pub function export_diags(entry: parser.Module, loaded: flatten.LoadedModule[]):
 // (`lib.Secret { … }` carries the qualifier in the literal, not in an
 // expression). So this half is a scan over those strings, splitting on the
 // first `.` the way flatten.rewrite_type_name does.
+
 // qual_type_parts splits `mod.Name` into its two halves, with any generic or
 // array suffix stripped off the name — `facade.Point[]` looks up `Point`, and
 // `m.Box[T]` looks up `Box`. Without that cut the lookup asks for `Point[]`,

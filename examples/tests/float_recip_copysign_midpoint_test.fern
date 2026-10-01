@@ -8,6 +8,7 @@ import "std/float" as float;
 // these lower on all four backends including wasmbin. Both f64 and f32. The
 // Go-side TestFloatRecipCopysignMidpoint pins these across all four backends;
 // this is the migration-shaped companion.
+
 function test_recip(): test.TestOutcome {
   if (!float_near(4.0.recip(), 0.25)) {
     return test.fail("recip 4");

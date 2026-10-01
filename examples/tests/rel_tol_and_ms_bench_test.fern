@@ -11,6 +11,7 @@ import "std/test";
 //     millisecond-budget wrapper around `bench_max_us` so
 //     test authors writing frame-budget-shaped assertions
 //     ("under 16 ms") don't have to hand-multiply by 1000.
+
 function test_rel_tol_passes_within_ratio(): test.TestOutcome {
   // 1% relative tolerance: 100.0 vs 100.5 is 0.5%.
   return test.assert_eq_f64_rel(100.5, 100.0, 0.01);

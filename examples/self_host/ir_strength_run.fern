@@ -11,6 +11,7 @@
 //
 // The last cases cover optimize_ops, where folding and strength reduction feed
 // each other, and assert the pass is idempotent (a second run is a no-op).
+
 import "./ir";
 import "./util";
 

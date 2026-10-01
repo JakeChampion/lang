@@ -22,11 +22,13 @@
 //
 // The app writes its report to stderr; stdout carries TAP-13 from
 // std/test, so the file is its own test suite.
+
 import "std/test";
 import "std/i32";
 import "std/i64";
 
 // ------------------------------------------------------------ statistics
+
 struct Summary {
   n: i32,
   min: i64,
@@ -124,6 +126,7 @@ function render(name: string, m: Summary): string {
 }
 
 // -------------------------------------------------------------- stopwatch
+
 // The nondeterministic half. `monotonic_ns` is the right clock for this: a
 // wall clock can step backwards under NTP, which shows up as a negative
 // duration rather than as an obviously wrong one.
@@ -147,6 +150,7 @@ function bench(name: string, reps: i32, work: i32): Run {
 }
 
 // ------------------------------------------------------------- fixtures
+
 function longs(xs: i32[]): i64[] {
   var out: i64[] = [];
   for i in 0..xs.len() {
@@ -156,6 +160,7 @@ function longs(xs: i32[]): i64[] {
 }
 
 // ---------------------------------------------------------------- tests
+
 // Every expected value here was computed independently of this
 // implementation. The odd/even split, the single- and two-element cases and
 // the three-element case (where Tukey's hinges are at their most surprising:
@@ -370,6 +375,7 @@ function test_the_stopwatch_is_monotonic(): test.TestOutcome {
 }
 
 // ------------------------------------------------------------------ app
+
 function main(): i32 {
   eprint("bench_stats — median and IQR, because a benchmark sample is not normal");
   var runs: Run[] = [
