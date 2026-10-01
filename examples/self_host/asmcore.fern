@@ -7613,7 +7613,7 @@ pub function runtime_need_deps(name: string): string[] {
     || name == "str_from_bytes" || name == "alloc_u8" || name == "strbuf" || name == "buf"
     || name == "read_file_bytes_u8" || name == "random_bytes_u8" || name == "tcp_recv_u8"
     || name == "str_bytes_u8" || name == "str_from_bytes_u8" || name == "arr_slice_u8" || name == "alloc_bytes"
-    || name == "arr_push" || name == "arr_slice" || name == "str_own"
+    || name == "arr_push" || name == "arr_slice" || name == "str_own" || name == "str_grow"
     || name == "str_case" || name == "str_repeat"
     || name == "str_replace"
     || name == "arrarr_free" || name == "strarrarr_free" || name == "optarrarr_free"
@@ -7943,7 +7943,7 @@ pub function synth_script_main(mod: parser.Module): parser.Module {
     name: "main", receiver_name: "", receiver_type: "", type_params: [],
     params: [], ret_type: "i32", body: body, line: 0, col: 0,
     import_iface: "", import_wit: "", all_type_params: [],
-    bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_slice: false, async: false,
+    bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false,
     is_pub: true,
     is_const: false, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "",
   };
@@ -9605,7 +9605,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
     // owns the definitions.
     "__fern_map_snapshot_col", "__fern_map_snapshot_col_str",
     "__fn___fern_rc_inc", "__fn___fern_arr_dec", "__fn___fern_rc_is_unique", "__fn___fern_arr_inc_elems", "__fn___fern_arr_own_elems",
-    "__fn___fern_str_own",
+    "__fn___fern_str_own", "__fn___fern_str_grow",
     "__fn___fern_alloc_reuse",
     "__fn___fern_rc_underflow_count", "__fn___fern_i32_to_string", "__fn___fern_u32_to_string",
     "__fn___fern_i64_to_string", "__fn___fern_u64_to_string",

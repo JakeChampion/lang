@@ -2722,7 +2722,7 @@ function run(): i32 {
   }
 
   var typed: parser.Module = parser.module_with_builtins_typed(merged);
-  var full: parser.Module = parser.erase_str_module(typed);
+  var full: parser.Module = parser.erase_view_module(typed);
   // The typed semantic lowering, threaded into whichever emit path runs.
   var sub: ircore.Sub = semlower.target_substitution(typed, target);
   var out_asm: string = "";

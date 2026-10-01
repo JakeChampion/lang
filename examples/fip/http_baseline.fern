@@ -27,7 +27,14 @@ function route(req: HttpRequest): HttpResponse {
   if (req.path == "/") {
     resp = http.ok("ok");
   } else if (req.path == "/echo" && req.method == "POST") {
-    resp = http.ok(req.body_string());
+    match (req.body_string()) {
+      Ok(text) => {
+        resp = http.ok(text);
+      },
+      Err(e) => {
+        resp = e.to_response();
+      }
+    }
   } else if (req.path.starts_with("/users/")) {
     resp = http.ok(slice_unchecked(req.path, 7, req.path.len()).to_owned());
   }

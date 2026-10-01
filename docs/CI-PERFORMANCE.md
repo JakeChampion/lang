@@ -829,9 +829,120 @@ runs in the window were that kind, on pull requests that were pushed to five
 to ten times. The gate collapses the queued ones; the trigger decides how
 many are dispatched.
 
+## Tenth change: the stage0-built drivers are carried between runs
+
+Since 2026-09-29 the self-host test drivers are compiled by the pinned
+stage0 compiler instead of the Go backend (docs/LOCAL-DEV-LOOP.md): 139 s
+for `asm_run.fern` on the 4-core container, measured for this change, where
+the Go backend took ~9 s. That is the whole of the shard doubling in the
+ninth measurement. Every job built its drivers from nothing: the 12 x86
+shards each build the stock drivers their slice touches (`asm_ir_run.fern`
+has 671 build sites in the package, `wasm_ir_run.fern` 323, `asm_run.fern`
+263, `fern.fern` 148), the three `diff-selfhost` and three
+`fixtures-selfhost` jobs run `go test` with no disk cache at all, and the
+`test-e2e-other`, `test-e2e-arm64`, `test-e2e-wasm` and macOS jobs run
+`internal/e2e` tests with 46 driver build sites, also with none.
+
+The harness already keys a driver on its source closure, the target, the
+stage0 binary's bytes and the stdlib tree (`CachedDriverBinFor`), so the
+same key is the same bytes on any runner. `.github/actions/selfhost-driver-cache`
+restores the harness's disk cache directory from the Actions cache under a
+key that hashes the same inputs (`bootstrap/stage0.lock`,
+`examples/self_host/**`, `internal/stdlib/**`), with a prefix fallback to
+the newest earlier directory, in which every driver whose own closure did
+not change still matches. Only `*.driverbin` files travel; entries older
+than seven days are dropped after the restore. Every job that builds
+drivers restores; one job per lane saves, the one that builds every stock
+driver anyway (`driver-sizes` on Linux x86, the macOS shard that runs the
+self-host arm64-darwin tests), so the shards do not each upload a
+near-identical directory per tree. Measured locally against a populated
+directory, the same build is 0.64 s.
+
+The cache is one directory per runner OS and arch, not per target, and that
+is enough: a driver is the self-host compiler built to run on the job's
+host, whatever target it then emits for, so the arm64 and wasm legs on an
+x86 runner (`diff-selfhost-arm64` builds `asm_modload_run.fern` as an x86
+binary) want the same x86-64-linux stock drivers `driver-sizes` saves.
+Across both e2e packages only 11 build sites ask for another target (9
+arm64-linux, 1 wasm32-wasi, 1 arm64-darwin), each a per-test program rather
+than a stock driver; those build cold on every run, as before. On a Linux
+ARM64 runner the shards skip the x86 drivers and build arm64-linux ones
+natively, and the self-host lane's aarch64 shard saves that directory. An
+x86 directory is ~105 MB uncompressed (the rows of
+`.github/selfhost-driver-sizes.txt`), stored zstd-compressed by
+actions/cache; with three savers, up to three directories per tree.
+
+Measured on the change's own first run (36917972646), before any cache had
+been saved, so from the shared disk directory alone: `diff-selfhost-x86_64`
+17.3 to 5.4 minutes and `diff-selfhost-arm64` 14.5 to 5.7, the three
+`go test` invocations of each job no longer each rebuilding the drivers.
+Splitting those jobs into seed shards was prepared and dropped on that
+number: two more runner slots for about two minutes.
+
+What it cannot do: the first run on a tree whose self-host sources or
+stdlib changed builds cold on every shard as before, and saves; the next
+run at that tree (a merge-main push, the main validation when it is not
+adopted) hits. A pull request's run restores caches saved on its own
+branch and on main; main's cache is refreshed only by a main run that
+runs the lane. Branch-scoped caches and the 10 GB repository limit are
+why the shards do not save.
+
+## Eleventh change: the arm64 gate is three shards
+
+The main ruleset requires two checks, `Lint / lint` and
+`Full suite / Test e2e arm64 / test-e2e-arm64`, and pull requests here merge
+when those two are green. Lint is 3.5-4.7 minutes. The arm64 job was one
+job running ~690 `TestArm64*` tests in two worker processes: 8.0-9.1 minutes
+of wall on the three green runs of the ninth measurement, after 7-10 minutes
+queued for an arm64 runner. So the merge gate was that one job.
+
+It is now three shards of equal count (`scripts/shard-tests` with no weights
+file), each in two workers, behind a leaf job that keeps the required check's
+exact name and fails unless every shard succeeded, a vanished runner
+included. Three arm64 runner slots instead of one, for a gate of roughly a
+third of the wall plus the leaf's queue wait. The `test-e2e-other` aarch64
+leg, one shard of 9.9-12.2 minutes and the longest job outside the self-host
+lane, is two shards by the same arithmetic.
+
+`selfhost-fixpoints-x86_64` ran four whole-compiler proofs in one job, 2.0,
+2.4, 2.6 and 3.6 minutes of them after a shared fern.fern build: two jobs of
+two proofs each now, the build coming from the driver cache in both.
+
+`test-e2e-wasm` ran its 9.0-9.8 minutes in one serial process per host
+while every test waited on a wasmtime subprocess; it runs in two isolated
+worker processes now, as the other e2e lanes do. The self-host lane's single
+aarch64 shard (8.5 minutes) is two.
+
+Lint, the other required check, spent 2.0 of its 4.7 minutes in
+`fern -check sources`, and 146 of those seconds locally were
+`tools/selfhost_driver_check.sh` type-checking 47 drivers one after another,
+each reading the compiler's closure again. The loop runs one check per core
+now (`xargs -P`): 44 s on the 4-core container, and the stdlib loop beside it
+16 s to 5 s. The `fern test cache` step (1.2 minutes) stays serial: its two
+probes edit sources and read `go test`'s cache verdicts, so running them at
+once would have each probe invalidating the other's cached result.
+
+Sharding it found a bug in `scripts/shard-tests`: with an empty weights file
+(the `/dev/null` fallback a lane without weights gets, or a file of comments)
+awk's `NR == FNR` idiom read every test name as a weight row, and every shard
+printed nothing. The self-host lane's shard step then exited 0 on an empty
+selection, which would have been thirteen green shards running no tests.
+The weights are now read in `BEGIN`, the partition is unchanged when the
+weights file has rows (checked on the live self-host list), the empty
+selection exits 1 in every lane, and `TestShardTestsCoversTheListWithAndWithoutWeights`
+runs the script with an empty, a comment-only, a missing and a real weights
+file and checks the buckets partition the input.
+
 ### Next measurements
 
-Confirm on the first day's main runs how many adopted a pull request's run,
+Read the `selfhost-driver-cache` step's line on the first shards after
+this merges: "N driver(s) restored" against the job's test-step time. A
+shard that restores its stock drivers and still runs 15 minutes has its
+time in tests, and the next target is sharing the per-test driver variants
+or the tests themselves.
+
+Confirm on the first day's main runs how many
+adopted a pull request's run,
 and how long the selector waited: the `changes` job's log and summary say
 both. The self-host lane's growth is the next cost to attack and it is in
 the tests, not the workflow: each 100-180 s test builds a driver of its own

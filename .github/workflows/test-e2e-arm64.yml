@@ -34,72 +34,83 @@ on:
   workflow_dispatch:
 
 jobs:
-  test:
-    name: test-e2e-arm64
+  # THREE SHARDS, then a leaf named `test-e2e-arm64`. The leaf carries the
+  # name because `Full suite / Test e2e arm64 / test-e2e-arm64` is a required
+  # status check in the main ruleset, and the one the repository merges on:
+  # one job of ~690 tests took 8-9 minutes in two worker processes, so the
+  # merge gate was that job. Three shards of equal count (scripts/shard-tests,
+  # no weights file: a name with no entry weighs 1) are each ~3 minutes, and
+  # the leaf is seconds, so the gate is the slowest shard plus the leaf's
+  # queue wait. The leaf fails unless every shard succeeded, a vanished
+  # runner included.
+  shards:
+    name: test-e2e-arm64-shard${{ matrix.shard }}
     runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { nshard: 3, shard: 0 }
+          - { nshard: 3, shard: 1 }
+          - { nshard: 3, shard: 2 }
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
+      - uses: ./.github/actions/selfhost-driver-cache
       - name: build native test runners
         run: |
           go test -c -o "$RUNNER_TEMP/e2e-arm64.test" ./internal/e2e/
           go build -o "$RUNNER_TEMP/ci-test-workers" ./cmd/ci-test-workers
-      - name: go test (arm64 e2e)
+      - name: go test (arm64 e2e, shard ${{ matrix.shard }}/${{ matrix.nshard }}, two workers)
         id: tests
-        working-directory: internal/e2e
-        # `^TestArm64` covers internal/e2e/arm64_test.go +
-        # cross_module_variant_test.go's Arm64 subset + arm64_ssa_test.go
-        # (the experimental `-target arm64-linux -backend ssa` round-trip). Anchored at
-        # the top so it doesn't pick up `TestX86_64`-named tests that
-        # happen to mention arm64 in subtest names.
-        #
-        # The arm64-ssa round-trip ran NOWHERE until it learned to exec
-        # its binaries natively: it required qemu-aarch64, which this
-        # native lane has no reason to install, and no other lane matches
-        # the prefix. It silently asserted unmet behaviour for as long as
-        # it existed — missing float bit-reinterprets (#5725) and i64[]
-        # element corruption (#5729) both slipped past it.
-        #
-        # FERN_REQUIRE_ARM64_SSA_DIFF makes TestArm64SSABackendDifferential
-        # FAIL rather than skip when nothing here can execute an arm64 binary.
-        # On this runner that is satisfied by the host arch itself, so the flag
-        # costs nothing and turns "the corpus differential is running" from an
-        # assumption into a red build if the lane is ever moved off arm64 —
-        # which is precisely how its neighbour spent its whole existence
-        # asserting nothing.
         env:
           FERN_REQUIRE_ARM64_SSA_DIFF: "1"
-        run: >-
-          "$RUNNER_TEMP/ci-test-workers"
-          -binary "$RUNNER_TEMP/e2e-arm64.test"
-          -output "$RUNNER_TEMP/arm64-test-results"
-          -workers 2 -timeout 10m -run '^TestArm64'
+        run: |
+          set -euo pipefail
+          mapfile -t MINE < <(
+            go test -list '^TestArm64' ./internal/e2e/ |
+              grep -E '^Test' |
+              sort |
+              scripts/shard-tests "${{ matrix.shard }}" "${{ matrix.nshard }}" /dev/null
+          )
+          if [ ${#MINE[@]} -eq 0 ]; then
+            echo "no tests for shard ${{ matrix.shard }}/${{ matrix.nshard }} — the list or the filter is wrong" >&2
+            exit 1
+          fi
+          echo "shard ${{ matrix.shard }}/${{ matrix.nshard }}: ${#MINE[@]} tests"
+          PAT="^($(IFS='|'; echo "${MINE[*]}"))\$"
+          cd internal/e2e
+          "$RUNNER_TEMP/ci-test-workers" \
+            -binary "$RUNNER_TEMP/e2e-arm64.test" \
+            -output "$RUNNER_TEMP/arm64-test-results" \
+            -workers 2 -timeout 10m -run "$PAT"
       - name: retain native test outcomes
         if: ${{ !cancelled() && (steps.tests.outcome == 'success' || steps.tests.outcome == 'failure') }}
         uses: actions/upload-artifact@v7
         with:
-          name: native-arm64-test-outcomes-${{ github.run_attempt }}
+          name: native-arm64-test-outcomes-shard${{ matrix.shard }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/arm64-test-results
           retention-days: 7
           if-no-files-found: error
 
-  # The fifteen cross-compiler-on-host tests — see the header comment. The
-  # heavyweight is the native-mmc equivalence gate (the Go arm64 backend's
-  # full driver emit + in-process assemble, run under qemu against the x86
-  # cross driver); everything else is a light IR-path element test.
-  #
-  # This comment used to open by naming an arm64 stage-2 fixed point (mmc2
-  # recompiling the whole compiler under qemu, "~10-20 min emulated") as the
-  # reason for a 55-minute budget. That test (added in #1671) was driven by
-  # `asm_arm64_load_run.fern` and went with the AST emitters in #5972; the
-  # regex, the weights file and this budget were never updated, so `-run`
-  # silently selected nothing for it and the lane spent its life sized 15x
-  # its real cost (#6310). Nothing replaced it — the arm64 stage-2 fixpoint
-  # is UNCOVERED today, where the x86 side has the per-module gen0==gen1
-  # fixpoints as successors. Writing an IR-path replacement is its own
-  # piece of work; sizing a lane for a test it does not run is not the way
-  # to hold the space open. Measured on runs 31111127744 / 31114366935: the
-  # job takes 3m55s / 3m32s end to end, the test step 3m16s / 3m07s.
+  test:
+    name: test-e2e-arm64
+    needs: shards
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: every shard succeeded
+        env:
+          RESULT: ${{ needs.shards.result }}
+        run: |
+          if [ "$RESULT" != "success" ]; then
+            echo "::error::the arm64 e2e shards concluded '$RESULT'; see the shard jobs"
+            exit 1
+          fi
+          echo "all shards succeeded"
+
   cross-host:
     name: test-e2e-arm64-cross-host
     runs-on: ubuntu-latest
@@ -107,6 +118,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
+      - uses: ./.github/actions/selfhost-driver-cache
       - name: install aarch64 cross toolchain + qemu
         uses: ./.github/actions/apt-cross-toolchain
         with:
