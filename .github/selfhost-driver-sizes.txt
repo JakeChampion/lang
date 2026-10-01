@@ -23,12 +23,7 @@
 #
 # HOW THIS IS MEASURED. The `driver-sizes` job of test-e2e-selfhost.yml reads
 # the driver names out of this file, builds every one of them
-# (TestSelfHostWarmStockDriver; # 2026-10-01 — asm_pathprobe_run 5753440 -> 3960864 (-31.2%): #10929 answers the
-# eligibility probes from the typed lowering, so the probe driver no longer
-# links the AST lowering's eligibility walk; measured the same on main at
-# 93d9278c7 (3959936) and on the branch. Number pasted from driver-sizes' own
-# report on run 36889782177.
-fern.fern/stage2 is the warmed fern.fern run
+# (TestSelfHostWarmStockDriver; fern.fern/stage2 is the warmed fern.fern run
 # over its own source), stats each into FERN_DRIVER_SIZE_REPORT, and compares
 # that report against this file. Both compilers' output is deterministic per
 # input, so a given commit yields the same byte count on any runner — a
@@ -428,6 +423,10 @@ fern.fern/stage2 is the warmed fern.fern run
 # 2026-10-01 — asm_modload_run 9438224 -> 9917048 (+5.1%) once this branch
 # took main's 48 commits since its base; the other rows stay inside 5%.
 # Number pasted from driver-sizes' own report on run 36854942099.
+# 2026-10-01 — asm_pathprobe_run 5753440 -> 3965592 (-31.1%), main's #10929
+# taking the typed eligibility verdict out of the probe's closure; the other
+# rows stay inside 5%. Number pasted from driver-sizes' own report on run
+# 36888675074.
 fern.fern/stage2 13040616
 fern.fern 13040616
 asm_load_run.fern 10866392
@@ -437,6 +436,6 @@ asm_run.fern 9123464
 wasm_ir_run.fern 9120048
 wasm_run.fern 9117408
 wasm_runio_run.fern 9116728
-asm_pathprobe_run.fern 3960864
+asm_pathprobe_run.fern 3965592
 irlower_run.fern 5578848
 checker_modload_run.fern 2386128
