@@ -10,10 +10,9 @@ import (
 	"testing"
 )
 
-// FERN_SEM_IR_STRICT makes the self-hosted CLI refuse a module the typed
-// lowering does not produce whole: exit 3, after a `FERN_SEM_IR: <function>:
-// <reason>` line for each refused declaration. Without it the CLI keeps the AST
-// lowering for that module.
+// The self-hosted CLI refuses a module the typed lowering does not produce
+// whole: exit 3, after a `FERN_SEM_IR: <function>: <reason>` line for each
+// refused declaration.
 //
 // Two halves, and both are essential:
 //
@@ -645,21 +644,13 @@ func strictExit(t *testing.T, err error) int {
 	return exit.ExitCode()
 }
 
-// TestSelfHostStrictIRX86_64 asserts the corpus is produced whole under
-// FERN_SEM_IR_STRICT, that the flag is otherwise inert (byte-identical asm),
-// and that each program still runs to its expected exit code.
+// TestSelfHostStrictIRX86_64 asserts the corpus is produced whole and that
+// each program runs to its expected exit code.
 func TestSelfHostStrictIRX86_64(t *testing.T) {
 	cli := newStrictCLI(t)
 	for _, tc := range strictIRCorpus {
 		t.Run(tc.name, func(t *testing.T) {
 			on := cli.emit(t, "x86-64-linux", tc.src)
-			off, diags, err := cli.tryEmit(t, "x86-64-linux", tc.src, "FERN_SEM_IR_STRICT=")
-			if err != nil {
-				t.Fatalf("compile without FERN_SEM_IR_STRICT: %v\n%s", err, diags)
-			}
-			if off != on {
-				t.Fatalf("%s: FERN_SEM_IR_STRICT changed the emitted asm (%d vs %d bytes); the flag must only affect a refusal", tc.name, len(off), len(on))
-			}
 			if code, _ := cli.runX86(t, on); code != tc.want {
 				t.Errorf("%s exited %d, want %d", tc.name, code, tc.want)
 			}
@@ -668,23 +659,17 @@ func TestSelfHostStrictIRX86_64(t *testing.T) {
 }
 
 // TestSelfHostStrictIRRefusesBail is the gate: a program the typed lowering
-// refuses must fail the compile under FERN_SEM_IR_STRICT with exit 3, naming
-// the function. Without this, a green corpus is consistent with the flag doing
-// nothing at all. Without the flag the same program compiles on the AST
-// lowering.
+// refuses fails the compile with exit 3, naming the function, with no FERN_
+// variable set. Without this, a green corpus is consistent with a refusal
+// passing silently.
 func TestSelfHostStrictIRRefusesBail(t *testing.T) {
 	cli := newStrictCLI(t)
 	tc := strictIRBailReasons[0]
-	src := tc.src
-
-	if _, diags, err := cli.tryEmit(t, "x86-64-linux", src, "FERN_SEM_IR_STRICT="); err != nil {
-		t.Fatalf("unset: compile failed, want the AST lowering's compile: %v\n%s", err, diags)
-	}
-	_, diags, err := cli.tryEmit(t, "x86-64-linux", src)
+	_, diags, err := cli.tryEmit(t, "x86-64-linux", tc.src)
 	if code := strictExit(t, err); code != 3 {
-		t.Fatalf("FERN_SEM_IR_STRICT=1: exited %d, want a refusal (3)\n%s", code, diags)
+		t.Fatalf("exited %d, want a refusal (3)\n%s", code, diags)
 	}
-	if !strings.Contains(diags, "FERN_SEM_IR: "+tc.fn+": ") || !strings.Contains(diags, "FERN_SEM_IR_STRICT:") {
+	if !strings.Contains(diags, "FERN_SEM_IR: "+tc.fn+": ") || !strings.Contains(diags, "FERN_SEM_IR: the typed lowering refused") {
 		t.Errorf("refusal did not name the refused function:\n%s", diags)
 	}
 }
@@ -763,7 +748,7 @@ func TestSelfHostStrictIRNamesBailReason(t *testing.T) {
 			}
 			_, diags, err := cli.tryEmit(t, "x86-64-linux", tc.src)
 			if code := strictExit(t, err); code != 3 {
-				t.Fatalf("exited %d, want a strict refusal (3)\n%s", code, diags)
+				t.Fatalf("exited %d, want a refusal (3)\n%s", code, diags)
 			}
 			if !strings.Contains(diags, "FERN_SEM_IR: "+tc.fn+": ") {
 				t.Errorf("refusal did not name %q as the refused function:\n%s", tc.fn, diags)
@@ -792,8 +777,7 @@ func nativeCheck(t *testing.T, langBin, src string) ([]byte, error) {
 	return exec.Command(langBin, "-check", f).CombinedOutput()
 }
 
-// TestSelfHostStrictIRWasm runs the corpus through the CLI's wasm32-wasi target
-// under FERN_SEM_IR_STRICT.
+// TestSelfHostStrictIRWasm runs the corpus through the CLI's wasm32-wasi target.
 func TestSelfHostStrictIRWasm(t *testing.T) {
 	cli := newStrictCLI(t)
 	for _, tc := range strictIRCorpus {
@@ -834,7 +818,7 @@ func TestSelfHostStrictIRNamesUnresolvedFunctionValue(t *testing.T) {
 	t.Run("missing", func(t *testing.T) {
 		out, stderr, code := runDriver(t, runner, driverBin, []byte(apply), true)
 		if code != 3 {
-			t.Fatalf("driver exited %d with %d bytes, want a strict-IR refusal (3)\n%s", code, len(out), stderr)
+			t.Fatalf("driver exited %d with %d bytes, want a refusal (3)\n%s", code, len(out), stderr)
 		}
 		if !strings.Contains(stderr, "FERN_SEM_IR: main: ") {
 			t.Errorf("refusal did not name main as the bailing function:\n%s", stderr)

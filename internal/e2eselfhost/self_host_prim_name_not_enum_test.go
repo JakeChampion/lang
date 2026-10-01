@@ -127,7 +127,7 @@ function main(): i32 {
     return n % 256;
 }
 `
-	asm := hevCompile(t, runner, driverBin, src, []string{"FERN_SEM_IR_STRICT=1", "FERN_LEAKCHECK=1"})
+	asm := hevCompile(t, runner, driverBin, src, []string{"FERN_LEAKCHECK=1"})
 	stderr, exit := hevRun(t, runner, buildBin(t, gcc, dir, "usize_field", asm))
 	if exit != 245 {
 		t.Fatalf("usize[] field exited %d, want 245", exit)

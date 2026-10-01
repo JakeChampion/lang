@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -116,9 +115,6 @@ func TestSelfHostSemanticFileHandles(t *testing.T) {
 		}
 		if got != "0|" {
 			t.Fatalf("FERN_SEM_IR answered %q, want %q\nreport: %s", got, "0|", report)
-		}
-		if strings.Contains(report, "the AST lowering stands") {
-			t.Fatalf("the module did not produce whole:\n%s", report)
 		}
 		if n := semProducedCount(t, report); n < 1 {
 			t.Fatalf("produced %d declarations:\n%s", n, report)

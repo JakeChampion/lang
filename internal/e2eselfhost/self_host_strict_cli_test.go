@@ -8,9 +8,9 @@ import (
 	"testing"
 )
 
-// strictCLI is the self-hosted CLI (`fern.fern`) built for the x86-64 host.
-// It compiles under FERN_SEM_IR_STRICT, so a declaration the typed lowering
-// refuses fails the compile rather than falling back to the AST lowering.
+// strictCLI is the self-hosted CLI (`fern.fern`) built for the x86-64 host,
+// run with no FERN_ variable of the caller's, so a declaration the typed
+// lowering refuses fails the compile.
 type strictCLI struct {
 	bin, stdlib, gcc string
 	runner           []string
@@ -29,7 +29,7 @@ func newStrictCLI(t *testing.T) *strictCLI {
 }
 
 // tryEmit compiles src for target and returns the assembly, or the CLI's
-// diagnostics and error when it refuses. env is added to the strict one.
+// diagnostics and error when it refuses. env is the compile's FERN_ variables.
 func (c *strictCLI) tryEmit(t *testing.T, target, src string, env ...string) (string, string, error) {
 	t.Helper()
 	proj := t.TempDir()
@@ -39,7 +39,7 @@ func (c *strictCLI) tryEmit(t *testing.T, target, src string, env ...string) (st
 	}
 	asmPath := filepath.Join(proj, "main.s")
 	cmd := runX86_64Bin(c.runner, c.bin, "-target", target, "-emit", "asm", mainPath, c.stdlib, "-o", asmPath)
-	cmd.Env = childEnv(append([]string{"FERN_SEM_IR_STRICT=1"}, env...)...)
+	cmd.Env = childEnv(env...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {

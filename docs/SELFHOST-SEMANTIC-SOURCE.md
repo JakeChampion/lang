@@ -1555,9 +1555,8 @@ this pipeline instead of a test driver. It is the default; `FERN_SEM_IR=` (the
 empty value) turns it off, and `FERN_SEM_IR_REPORT=1` prints a line per
 refusal and a per-module tally. Off, a backend receives what it received
 before, op for op — the substitution is the only thing the path adds. On, a
-module is produced whole or not at all, and `ircore.lower_gated` reads the
-produced bodies in place of lowering them, so the AST lowering's verdict is
-asked only of a module that fell back to it.
+module is produced whole or the compile fails, and `ircore.lower_gated` reads
+the produced bodies in place of lowering them.
 
 All three whole-program paths take one: `asm_ir`, `asm_arm64_ir` and `wasm_ir`
 each gained a `_sub` sibling of their gated entry that threads an `ircore.Sub`
@@ -1576,8 +1575,9 @@ eight drivers growing **6.7% to 10.2%**, among them `wasm_run`, `asm_run` and
 inverted those three link **4,096 bytes** more than main, one page of
 alignment, and the CLI carries the 601 KB alone.
 
-Three rules hold a mixed module together, and the third is the one that was
-not obvious:
+Only the bisect knobs (`FERN_SEM_IR_ONLY` / `FERN_SEM_IR_SKIP`) build a mixed
+module. Three rules hold one together, and the third is the one that was not
+obvious:
 
 - **An AST-lowered caller of a produced callee** reads registries derived from
   that callee's syntax. `ssarc.caller_sigs` rewrites them from the verified
@@ -2140,12 +2140,10 @@ lowering, with the output byte-identical. What remains is `semsource` +
 `ssaunits` + `ssarc` running once per declaration on top of the AST lowering
 that still runs for the eligibility verdict.
 
-**Production is all or nothing.** A module with a refused declaration or a
-refused instance keeps the AST lowering whole: `semlower.substitution`
-reports the refusals and the tally as `produced 0 of N declarations and 0 of
-M instances … K refused, the AST lowering stands` and hands the emit
-`no_sub()`. An instance has no AST body to stand in for it, so dropping one
-alone would leave its symbol undefined. A produced body beside an AST-lowered one is
+**Production is whole.** A module with a refused declaration or a refused
+instance fails the compile: `semlower.substitution` prints a `FERN_SEM_IR:
+<name>: <reason>` line per refusal, then `FERN_SEM_IR: the typed lowering
+refused K declarations and instances`, and exits 3. A produced body beside an AST-lowered one is
 two memory conventions on one module — every crash this path has had was a
 mixed module — and the contracts `prune` reads cover the crossings it can
 see, not every data structure that crosses. A TEMPLATE's row is no body of
@@ -2236,13 +2234,12 @@ function type nested in a function value's signature.
 
 ## Retiring the AST lowering
 
-The typed path is the default, and a module it does not produce whole falls
-back to the AST lowering (`irlower`) with nothing to say so.
-`FERN_SEM_IR_STRICT=1` makes that fallback a hard error instead, for a
-program's module and for each runtime helper it appends. The refusals are
+The typed path is the default, and a refusal is a compile error, for a
+program's module and for each runtime helper it appends: the refusals are
 printed as `FERN_SEM_IR_REPORT` would print them, and the compile exits 3.
-It is the measurement the retirement waits on: the AST lowering can go when
-nothing needs it.
+The AST lowering (`irlower`) still lowers everything with `FERN_SEM_IR=`
+(the typed path off), the declarations a bisect knob leaves out, and the
+runtime helpers of a driver that supplies no `rt_lower`.
 
 What the typed path produced whole, 2026-09-24:
 
@@ -2252,7 +2249,7 @@ What the typed path produced whole, 2026-09-24:
 | the compiler compiling itself | every declaration |
 | `examples/` outside the compiler | every program, once `word_freq` copies what it stores (`rc-log/2026-09-24-g-…`) |
 | `coreutils/` | all 106 programs |
-| e2eselfhost under strict, 2026-09-25 | 2737 tests, the one failure #10291 (since fixed); a later sweep ran into the local 3 h timeout with no refusal |
+| e2eselfhost with refusals fatal, 2026-09-25 | 2737 tests, the one failure #10291 (since fixed); a later sweep ran into the local 3 h timeout with no refusal |
 
 `TestSelfHostOverReleaseReportArm64`'s `__rc_dec` produces now
 (`rc-log/2026-09-24-i-…`), and so does `TestSelfHostStrEqSymbolTypeChecks`
@@ -2283,8 +2280,8 @@ The x86-64 and arm64 backends ask for a helper's typed lowering first:
 `emit_ir_runtime_fern_fn` calls `EmitState.rt_lower`, which the CLI sets to
 `semlower.runtime_bodies` through `ircore.Sub`, so no backend links the
 pipeline. A source that does not type-check, or that the typed path does not
-produce whole, keeps the AST lowering, or under `FERN_SEM_IR_STRICT` fails
-the compile. `FERN_SEM_IR_REPORT` prints `runtime <name>: produced` for each
+produce whole, fails the compile; under a bisect knob it keeps the AST
+lowering (`runtime_ast_bodies`), as it does with the typed path off. `FERN_SEM_IR_REPORT` prints `runtime <name>: produced` for each
 helper it took. Wasm compiles no
 Fern-source helper; it serves them as hand-written WAT.
 
@@ -2321,20 +2318,14 @@ What is left, in order:
    outside their own source (`open_with` calls `__fern_open_res`, `read_file`
    calls `__fern_utf8_valid`), so they fail when checked alone and check inside
    the bundle.
-2. Strict mode goes green over every suite. The fallback then becomes the
-   error, and `FERN_SEM_IR=` loses its off column. Gated: every `fern.fern`
-   CLI compile in `internal/e2eselfhost` and `internal/e2e` runs strict (each
-   package's `TestMain`), and so do the coreutils self-host builds, the
-   multicall binary a release ships (`TestSelfHostMulticallCompilesWhole`
-   and the release step), the fixture corpus on all three targets
-   (`fixtureCompile`), and the four scripts that measure the self-hosted
-   compiler (`perf-bench-selfhost`, `cliff-bench`, `selfhost-alloc-bench`,
-   `coreutils-bench`). The CLI, the four asm drivers and the wasm drivers
-   build a typed-path substitution for what they emit; the rest of the
-   drivers never reach the typed path (see below). The semantic differential
-   legs fail a seed that compiles as a mixed module. The production rows'
-   `FERN_SEM_IR_SKIP` leg and
-   `TestSelfHostSemIRStrict`'s off leg keep the AST lowering on purpose.
+2. Done: a refusal is the error by default (`rc-log/2026-10-01-b-…`), and
+   `FERN_SEM_IR_STRICT` is gone. The CLI, the four asm drivers and the wasm
+   drivers build a typed-path substitution for what they emit; the rest of
+   the drivers never reach the typed path (see below). The semantic
+   differential legs fail a seed the typed lowering refuses rather than
+   skipping it as a coverage gap. The bisect knobs keep a mixed module, and
+   with them a refused runtime helper keeps the AST lowering; the production
+   rows' `FERN_SEM_IR_SKIP` leg keeps it on purpose.
 3. The AST lowering is deleted, along with the differential legs that compare
    against it.
 
@@ -2427,11 +2418,14 @@ AST-lowered caller can call a produced callee, and they go with the lowering.
 
 **Other sites that lower a body from the AST:**
 
-- `ircore.produced_or_lowered`, the per-declaration fallback;
+- `ircore.produced_or_lowered`, which lowers what the substitution leaves:
+  an `@import` extern, a declaration a bisect knob leaves out, or everything
+  with the typed path off;
 - `ircore.claim_lowering`, for the FIP and E068 claim checks;
 - the eligibility probes in `ircore` (`func_eligible` and the reports);
 - `runtime_ast_bodies` in `asm_ir` and `asm_arm64_ir`, for a runtime helper
-  the typed path refuses or a driver without `rt_lower`;
+  under a bisect knob, with the typed path off, or in a driver without
+  `rt_lower`;
 - `emit_function_via_ir` when the cache is empty.
 
 `interp.fern` and `irexec.fern` do not depend on the AST lowering.
@@ -2441,7 +2435,6 @@ AST-lowered caller can call a produced callee, and they go with the lowering.
 - the three AST differential legs, and their known-divergence files
   (`internal/e2e/testdata/selfhost-diff-{x86_64,arm64,wasm}-known-divergences.txt`);
 - the production test's base, skip and `semRefusedByAST` legs;
-- `TestSelfHostSemIRStrict`'s off leg;
 - the whole-compiler test's AST self-build;
 - about twenty tests with an `ast` or `FERN_SEM_IR_SKIP` leg;
 - the `irlower_run` suites: IR round trip, IR verify, and the rc-plan and

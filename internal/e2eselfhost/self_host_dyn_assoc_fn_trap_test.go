@@ -58,7 +58,7 @@ func TestSelfHostDynAssocFnDispatchX86_64(t *testing.T) {
 		driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
 		cmd := runX86_64Bin(runner, driverBin)
 		cmd.Stdin = strings.NewReader(dynAssocFnSrc)
-		cmd.Env = childEnv("FERN_SEM_IR_STRICT=1")
+		cmd.Env = childEnv()
 		var stderr strings.Builder
 		cmd.Stderr = &stderr
 		_ = cmd.Run()

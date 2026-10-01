@@ -16,8 +16,8 @@ import (
 var dropCallRE = regexp.MustCompile(`(?m)call \$(__resource_drop_\w+|drop_\w+)$`)
 
 // TestSelfHostSemanticResourceHandles drives WIT resource handles (`own R` /
-// `borrow R`) through the CLI's typed lowering to wasm under
-// FERN_SEM_IR_STRICT, so every declaration must be produced. Each program's
+// `borrow R`) through the CLI's typed lowering to wasm, which must produce
+// every declaration. Each program's
 // drops are pinned by counting resource-drop call sites against the AST
 // lowering of the same program. Running them needs the poll world composed
 // around a component core (the P5 tests in self_host_p5_resource_handle_test.go),
@@ -42,7 +42,7 @@ func TestSelfHostSemanticResourceHandles(t *testing.T) {
 		cmd := exec.Command(fernBin, "-target", "wasm32-wasi", "-emit", "asm", path, stdlibRoot, "-o", out)
 		cmd.Env = append(os.Environ(), "FERN_SEM_IR_REPORT=1")
 		if sem {
-			cmd.Env = append(cmd.Env, "FERN_SEM_IR=1", "FERN_SEM_IR_STRICT=1")
+			cmd.Env = append(cmd.Env, "FERN_SEM_IR=1")
 		} else {
 			cmd.Env = append(cmd.Env, "FERN_SEM_IR=")
 		}

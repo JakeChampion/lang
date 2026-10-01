@@ -24,7 +24,7 @@ func seqArrays(n int, tail string) (string, int) {
 }
 
 // TestSelfHostRcPreciseDropX86IR pins drop-on-last-use and in-place reuse on
-// x86-64, compiled through the self-hosted CLI under FERN_SEM_IR_STRICT. Each
+// x86-64, compiled through the self-hosted CLI. Each
 // case asserts the value the program computes, or that the over-release
 // detector (`__rc_underflow_count()`) reads 0, so the drop is sound. The
 // byte-identical fixpoint and std-test gates separately prove soundness on the

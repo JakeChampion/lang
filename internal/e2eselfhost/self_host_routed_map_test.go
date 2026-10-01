@@ -499,9 +499,8 @@ func routedMapAsm(t *testing.T, fernBin, stdlibRoot, src string, env ...string) 
 	return string(b)
 }
 
-// routedMapRun compiles src for target with the typed lowering held to
-// production (FERN_SEM_IR_STRICT), runs it and returns trimmed stdout and
-// stderr. `env` joins the compile's environment.
+// routedMapRun compiles src for target through the typed lowering, runs it
+// and returns trimmed stdout and stderr. `env` joins the compile's environment.
 func routedMapRun(t *testing.T, fernBin, stdlibRoot, src, target string, env ...string) (string, string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -516,7 +515,7 @@ func routedMapRun(t *testing.T, fernBin, stdlibRoot, src, target string, env ...
 		args = []string{"-target", target, "-emit", "asm", in, stdlibRoot, "-o", out}
 	}
 	cmd := exec.Command(fernBin, args...)
-	cmd.Env = append(append(os.Environ(), "FERN_STRICT_IR=1", "FERN_SEM_IR_STRICT=1"), env...)
+	cmd.Env = append(append(os.Environ(), "FERN_STRICT_IR=1"), env...)
 	if msg, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("compile (%s): %v\n%s", target, err, msg)
 	}

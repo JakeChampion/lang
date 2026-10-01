@@ -203,7 +203,7 @@ func semCompileRun(t *testing.T, gcc string, runner []string, fernBin, stdlibRoo
 		cmd.Env = append(cmd.Env, "FERN_SEM_IR=1")
 		if skip != "" {
 			// A skipped declaration keeps the AST lowering on purpose.
-			cmd.Env = append(cmd.Env, "FERN_SEM_IR_SKIP="+skip, "FERN_SEM_IR_STRICT=")
+			cmd.Env = append(cmd.Env, "FERN_SEM_IR_SKIP="+skip)
 		}
 	} else {
 		cmd.Env = append(cmd.Env, "FERN_SEM_IR=")
@@ -7159,7 +7159,7 @@ func semAllocations(t *testing.T, fernBin, stdlibRoot, src string, sem bool) int
 	cmd := exec.Command(fernBin, "-target", "x86-64-linux", src, stdlibRoot, "-o", out)
 	cmd.Env = append(os.Environ(), "FERN_LEAKCHECK=1")
 	if sem {
-		cmd.Env = append(cmd.Env, "FERN_SEM_IR=1", "FERN_SEM_IR_STRICT=1")
+		cmd.Env = append(cmd.Env, "FERN_SEM_IR=1")
 	} else {
 		cmd.Env = append(cmd.Env, "FERN_SEM_IR=")
 	}

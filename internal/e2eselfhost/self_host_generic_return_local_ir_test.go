@@ -7,8 +7,8 @@ import "testing"
 // has to bind those parameters from the call's arguments to type the match,
 // whether the call is the scrutinee itself, the initialiser of a local, a
 // for-loop iterable, nested, or reached through a tuple element (#10330). Each
-// exit code is the native interpreter's. TestMain sets FERN_SEM_IR_STRICT, so a
-// regression is reported first by the typed lowering (`unknown variant`).
+// exit code is the native interpreter's. A regression is reported first by the
+// typed lowering (`unknown variant`).
 var genericReturnLocalCases = []struct {
 	name     string
 	src      string

@@ -401,13 +401,13 @@ func runSelfHostFixtureLeg(t *testing.T, leg selfHostLeg) {
 		leg.backend, ran, expectedFail, skipped, skipReasons)
 }
 
-// fixtureCompile runs the self-host compiler under FERN_SEM_IR_STRICT, so a
-// fixture the typed path does not produce whole fails rather than keeping the
-// AST lowering. The typed path is spelled on too: an ambient FERN_SEM_IR=
-// would otherwise turn it off and leave the gate asserting nothing.
+// fixtureCompile runs the self-host compiler on the typed path, so a fixture
+// it does not produce whole fails the compile. The typed path is spelled on:
+// an ambient FERN_SEM_IR= would otherwise turn it off and leave the gate
+// asserting nothing.
 func fixtureCompile(fernBin string, args ...string) *exec.Cmd {
 	cmd := exec.Command(fernBin, args...)
-	cmd.Env = append(os.Environ(), "FERN_SEM_IR=1", "FERN_SEM_IR_STRICT=1")
+	cmd.Env = append(os.Environ(), "FERN_SEM_IR=1")
 	return cmd
 }
 
