@@ -20,4 +20,4 @@ bare_str_heap        1   1   above the inline threshold: one block per heap stri
 str_field_heap       2   2   struct box + one string block
 capture_free_fn_value 1  1   the struct box alone: native folds a capture-free function value to a static cell before emit, and the self-host now does too (#9839)
 arr_and_str_heap     3   3   struct box + array buffer + one string block
-str_self_append_chain 4  6   eight `+` per round: native grows the unique accumulator in place through __fern_str_append (#5637) and allocates only the two fresh operands and the two class changes; the self-host grows it in place through __fern_str_grow since #9077 (down from a fresh __fern_str_concat box per `+`, #10532) and still allocates two blocks more per round; which two `+` fall back to the concatenation is not yet attributed
+str_self_append_chain 4  6   eight `+` per round: native grows the unique accumulator in place through __fern_str_append (#5637) and allocates only the two fresh operands and the two class changes; the self-host grows it in place as well since #10960 (__fern_str_grow, else a fresh __fern_str_concat box) and still makes two blocks a round more than native
