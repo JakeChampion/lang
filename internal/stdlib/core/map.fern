@@ -936,6 +936,77 @@ pub function __map_i32_column(m: usize, kvOffset: i32): i32[] {
   return out;
 }
 
+// A wide key or value, an i64 or u64 or a float's bits, crosses core/map's
+// pointer-wide slot as a cell holding its eight bytes. The typed self-host
+// lowering emits one IR for every target, so it boxes on all of them, as
+// wasm32 does for a wide key (keyKind 2) and native for a wide value: it
+// boxes with __map_cell, reads back with __map_cell_load, and returns a cell
+// no column took with __map_cell_free.
+pub function __map_cell(v: i64): usize {
+  var c: usize = __alloc(8);
+  __store_i64(c, v);
+  return c;
+}
+
+pub function __map_cell_load(c: usize): i64 {
+  return __load_i64(c);
+}
+
+pub function __map_cell_free(c: usize): usize {
+  __free(c, 8);
+  return c;
+}
+
+// __map_get_cell_impl is __map_get_impl for a cell-boxed value column, which
+// answers the value out of the cell rather than the cell.
+pub function __map_get_cell_impl(m: usize, k: usize): Option[i64] {
+  var idx: i32 = __map_lookup(m, k);
+  if (idx == 0 - 1) {
+    return None;
+  }
+  return Some(__load_i64(__map_val_at(m, idx)));
+}
+
+pub function __map_get_cell_f64_impl(m: usize, k: usize): Option[f64] {
+  var idx: i32 = __map_lookup(m, k);
+  if (idx == 0 - 1) {
+    return None;
+  }
+  return Some(f64_from_bits(__load_i64(__map_val_at(m, idx))));
+}
+
+// __map_cell_column / __map_cell_f64_column snapshot a cell-boxed column into
+// a fresh typed array, built in the reading compiler's own layout.
+pub function __map_cell_column(m: usize, kvOffset: i32): i64[] {
+  var buf: usize = __load_ptr(m);
+  var cap: i32 = __load_i32(buf);
+  var len_: i32 = __load_i32(buf + 4);
+  var entryStride: i32 = 2 * __ptr_width();
+  var entriesBase: usize = buf + __map_hdr(buf) + cap * 4;
+  var out: i64[] = [];
+  var i: i32 = 0;
+  while (i < len_) {
+    out = out.append(__load_i64(__load_ptr(entriesBase + i * entryStride + kvOffset)));
+    i = i + 1;
+  }
+  return out;
+}
+
+pub function __map_cell_f64_column(m: usize, kvOffset: i32): f64[] {
+  var buf: usize = __load_ptr(m);
+  var cap: i32 = __load_i32(buf);
+  var len_: i32 = __load_i32(buf + 4);
+  var entryStride: i32 = 2 * __ptr_width();
+  var entriesBase: usize = buf + __map_hdr(buf) + cap * 4;
+  var out: f64[] = [];
+  var i: i32 = 0;
+  while (i < len_) {
+    out = out.append(f64_from_bits(__load_i64(__load_ptr(entriesBase + i * entryStride + kvOffset))));
+    i = i + 1;
+  }
+  return out;
+}
+
 pub function __map_bool_column(m: usize, kvOffset: i32): boolean[] {
   var buf: usize = __load_ptr(m);
   var cap: i32 = __load_i32(buf);
@@ -1212,10 +1283,11 @@ pub function __map_key_of(m: usize, k: usize): usize {
   return __load_ptr(entriesBase + idx * (2 * __ptr_width()));
 }
 
-// __map_drop_strcols_impl is __map_drop_impl for a map whose string columns
-// hold their strings in the slots themselves: the last reference releases
-// every live key of a string key column (keyKind 1) and every live value of a
-// string value column (valKind 5) before the buffer and the handle go.
+// __map_drop_strcols_impl is __map_drop_impl for a map whose columns own what
+// their slots name, strings or cells: the last reference releases every live key of a string
+// key column (keyKind 1) and every live value of a string value column
+// (valKind 5), and frees every boxed key and value cell, before the buffer
+// and the handle go.
 pub function __map_drop_strcols_impl(m: usize): usize {
   if (m == 0) {
     return m;
@@ -1232,9 +1304,13 @@ pub function __map_drop_strcols_impl(m: usize): usize {
       var slot: usize = entriesBase + i * (2 * ptrW);
       if (keys) {
         __fern_str_dec(__load_ptr(slot) as string);
+      } else {
+        __map_free_key_cell(buf, __load_ptr(slot));
       }
       if (vals) {
         __fern_str_dec(__load_ptr(slot + ptrW) as string);
+      } else {
+        __map_free_val_cell(buf, __load_ptr(slot + ptrW));
       }
       i = i + 1;
     }
@@ -1245,8 +1321,8 @@ pub function __map_drop_strcols_impl(m: usize): usize {
 // __map_drop_boxes_impl is __map_drop_impl for a map whose value column holds
 // counted boxes (valKind 4), which core/map retains on every read and copy
 // but never releases: the last reference hands every live value to
-// `release`, and releases every live key of a string key column, before the
-// buffer and the handle go.
+// `release`, and releases every live key of a string key column or frees
+// every boxed key cell, before the buffer and the handle go.
 pub function __map_drop_boxes_impl(m: usize, release: (usize) => usize): usize {
   if (m == 0) {
     return m;
@@ -1262,6 +1338,8 @@ pub function __map_drop_boxes_impl(m: usize, release: (usize) => usize): usize {
       var slot: usize = entriesBase + i * (2 * ptrW);
       if (keys) {
         __fern_str_dec(__load_ptr(slot) as string);
+      } else {
+        __map_free_key_cell(buf, __load_ptr(slot));
       }
       release(__load_ptr(slot + ptrW));
       i = i + 1;
