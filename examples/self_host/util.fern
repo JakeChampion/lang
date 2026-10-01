@@ -393,6 +393,56 @@ pub function digits_to_i32(s: string): i32 {
   return acc;
 }
 
+// is_decimal_i32 reports whether `s` is i32_to_string of some i32: an
+// optional `-`, then digits with no leading zero, within range. It answers
+// `i32_to_string(digits_to_i32(s)) == s` without rendering anything.
+pub function is_decimal_i32(s: string): boolean {
+  return decimal_within(s, "2147483647", "2147483648");
+}
+
+pub function is_decimal_i64(s: string): boolean {
+  return decimal_within(s, "9223372036854775807", "9223372036854775808");
+}
+
+// decimal_within is the digit check the two share: `pos` bounds a number
+// without a sign and `neg` one with it, each written out so a number of the
+// bound's length compares digit by digit.
+function decimal_within(s: string, pos: string, neg: string): boolean {
+  var start: i32 = 0;
+  if (s.len() > 0 && s[0] == b'-') {
+    start = 1;
+  }
+  var n: i32 = s.len() - start;
+  if (n == 0) {
+    return false;
+  }
+  var i: i32 = start;
+  while (i < s.len()) {
+    if (s[i] < b'0' || s[i] > b'9') {
+      return false;
+    }
+    i = i + 1;
+  }
+  if (s[start] == b'0') {
+    return n == 1 && start == 0;
+  }
+  var limit: string = pos;
+  if (start == 1) {
+    limit = neg;
+  }
+  if (n != limit.len()) {
+    return n < limit.len();
+  }
+  i = 0;
+  while (i < n) {
+    if (s[start + i] != limit[i]) {
+      return s[start + i] < limit[i];
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
 // digits_to_i64 is the i64-accumulating sibling of digits_to_i32: leading
 // optional `-` then a run of decimal digits, accumulating in 64 bits so a
 // decimal literal beyond i32 range (`5000000000`) survives instead of
