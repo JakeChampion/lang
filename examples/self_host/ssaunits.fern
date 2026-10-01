@@ -601,13 +601,16 @@ function owned_values(f: ssasem.Func, modes: i32[]): boolean[] {
 }
 
 // A phi owns a unit unless every operand is lent whole: a borrowed parameter,
-// a string literal, or another phi that is. Such a phi holds nothing its edges could supply --
-// asking them retains a view with a no-op and releases it with a free
-// (#9802), and retains a counted box for nothing. Any other operand makes the
-// phi owned as before: a projection of an owned record is anchored to its
-// root, and the retain the edge supplies is what keeps the child alive past
-// the root's release. To a fixpoint, since ownership reaches a phi through a
-// phi.
+// a string literal, another phi that is, or a projection of one of those. Such
+// a phi holds nothing its edges could supply -- asking them retains a view
+// with a no-op and releases it with a free (#9802), and retains a counted box
+// for nothing. A projection of a lent value is a part of a box its holder
+// keeps alive for the whole call, so it lends on the same terms; the loop a
+// self tail call becomes (`ssasem.tail_recursion`) rebinds every parameter to
+// such a projection. Any other operand makes the phi owned: a projection of
+// an owned record is anchored to its root, and the retain the edge supplies
+// is what keeps the child alive past the root's release. To a fixpoint, since
+// ownership reaches a phi through a phi, and through a projection of one.
 function phi_ownership(f: ssasem.Func, owned: boolean[]): boolean[] {
   var defs: ssa.SInst[] = definitions(f);
   var out: boolean[] = owned;
@@ -621,10 +624,11 @@ function phi_ownership(f: ssasem.Func, owned: boolean[]): boolean[] {
         if (a < 0) {
           continue;
         }
-        if (defs[a].kind_tag == 8 || defs[a].kind_tag == 5) {
+        var r: i32 = lent_root(f, defs, a);
+        if (defs[r].kind_tag == 8 || defs[r].kind_tag == 5) {
           continue;
         }
-        if (defs[a].kind_tag == 6 && !out[a]) {
+        if (defs[r].kind_tag == 6 && !out[r]) {
           continue;
         }
         lent = false;
@@ -643,7 +647,7 @@ function phi_ownership(f: ssasem.Func, owned: boolean[]): boolean[] {
           continue;
         }
         for a in ins.args {
-          if (a >= 0 && out[a]) {
+          if (a >= 0 && out[lent_root(f, defs, a)]) {
             out = out.with(ins.result, true);
             grown = true;
           }
@@ -652,6 +656,28 @@ function phi_ownership(f: ssasem.Func, owned: boolean[]): boolean[] {
     }
   }
   return out;
+}
+
+// The value `v` is a part of, through every projection of a plain reference
+// it was read by: a record field, a variant payload or member, a tuple
+// element or an array element. A view holder and a map stop the walk, as
+// they stop the tail-call rewrite (`ssasem.crosses_jump`): a view's box has
+// no count to lend, and a map read answers a unit of its own.
+function lent_root(f: ssasem.Func, defs: ssa.SInst[], v: i32): i32 {
+  var at: i32 = v;
+  while (part_read(defs[at].kind_tag) && defs[at].args.len() > 0) {
+    var t: typeinfo.Type = f.values[at];
+    if (!ssasem.reference(t) || ssasem.holds_view(f, t) || ssasem.is_map(t)) {
+      return at;
+    }
+    at = defs[at].args[0];
+  }
+  return at;
+}
+
+function part_read(kind: i32): boolean {
+  return kind == ssasem.variant_get() || kind == ssasem.variant_as() || kind == ssasem.record_get()
+    || kind == ssasem.tuple_get() || kind == ssasem.array_get();
 }
 
 // A view is lent, never retained: its box carries the immortal sentinel
