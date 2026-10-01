@@ -182,38 +182,14 @@ function main(): i32 { return hold(pick(1)) + hold((): string => "x"); }
 		t.Fatalf("a generic callee's function result: exit %d under strict, want 3 refusing hold$i32 and no clone keyed on its variable\n%s", code, out)
 	}
 
-	// A value that holds a view behind a dyn or a closure cannot be rebuilt at
-	// a merge (ssasem.copyable), so one merged past its source is refused
-	// rather than read after the source is released. A closure capturing a
-	// bare view is refused where it is built; one reaching a view through a
-	// captured record is built and holds that view. Merged past its source in a
-	// record, it compiled whole until view_types answered function types;
-	// returned past it, it was already refused through Func.envs.
+	// A value holding a view merged past its source is copied there
+	// (ssasem.deep_copy). Two kinds have no copy and are refused by name
+	// (ssasem.copy_refusal): a function value, whose environment no test can
+	// find, and a type that holds itself, whose copy would recurse. A closure
+	// capturing a bare view is refused where it is built; one reaching a view
+	// through a captured record is built and holds that view, and returned
+	// past its source it is refused through Func.envs.
 	for _, c := range []struct{ name, src, why string }{
-		{"dyn-view-merged", `import "std/i32";
-trait Size { function size(self: Self): i32; }
-struct P { a: str }
-impl Size for P { function size(self: P): i32 { return self.a.len() * 10 + (self.a[0] as i32) - 97; } }
-function mk(n: i32): string {
-    var s: string = "ab";
-    var i: i32 = 0;
-    while (i < n) { s = s + "c"; i = i + 1; }
-    return s;
-}
-function wrap(s: string): dyn Size { var p: P = P { a: slice_unchecked(s, 1, 4) }; return p; }
-function g(n: i32): i32 {
-    var d: dyn Size = P { a: "q" };
-    if (n != 0) {
-        var s: string = mk(n);
-        d = wrap(s);
-    }
-    var junk: string[] = [];
-    var i: i32 = 0;
-    while (i < 50) { junk = junk.append("zz" + i.to_string()); i = i + 1; }
-    return d.size();
-}
-function main(): i32 { print(g(3).to_string() + " " + g(0).to_string()); return 0; }
-`, "FERN_SEM_IR: g: produced graph fails semantic verification: dependency unavailable at use"},
 		{"closure-in-a-record-merged", `import "std/i32";
 struct P { a: str }
 struct Holder { f: () => i32, n: i32 }
@@ -236,7 +212,27 @@ function g(n: i32): i32 {
     return h.f() * 10 + h.n;
 }
 function main(): i32 { print(g(3).to_string() + " " + g(0).to_string()); return 0; }
-`, "FERN_SEM_IR: g: produced graph fails semantic verification: dependency unavailable at use"},
+`, "FERN_SEM_IR: g: a value merged past its source has no copy: a function value (() => i32) has no shape to rebuild its environment by"},
+		{"recursive-enum-merged", `import "std/i32";
+enum L { Cons(str, L), Nil }
+function mk(n: i32): string {
+    var s: string = "ab";
+    var i: i32 = 0;
+    while (i < n) { s = s + "c"; i = i + 1; }
+    return s;
+}
+function two(s: string): L { return Cons(slice_unchecked(s, 0, 1), Cons(slice_unchecked(s, 1, 3), Nil)); }
+function count(l: L): i32 { match (l) { Cons(h, t) => { return h.len() + count(t); }, Nil => { return 0; } } return 0; }
+function g(n: i32): i32 {
+    var l: L = Nil;
+    if (n != 0) {
+        var s: string = mk(n);
+        l = two(s);
+    }
+    return count(l);
+}
+function main(): i32 { print(g(3).to_string() + " " + g(0).to_string()); return 0; }
+`, "FERN_SEM_IR: g: a value merged past its source has no copy: L holds itself, so its copy would recurse"},
 		{"closure-over-a-record-returned", `import "std/i32";
 function mk(n: i32): string {
     var s: string = "ab";

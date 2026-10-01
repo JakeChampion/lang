@@ -443,11 +443,23 @@ Unsupported constructs refuse the whole function with a reason.
   through projections, so the container holds counted strings. A container
   the body did not build, a call's result, is rebuilt whole at that point
   (`ssasem.deep_copy`): an array in a loop over its elements, a tuple element
-  by element, a record field by field, an enum by a test per variant, each
-  view in it copied. A view that is a literal or a retagged string
-  (`ssasem.counted_view`) anchors nothing and is not copied. A cell is shared
-  storage that a copy would split, and `deep_copy` rebuilds no map, so a
-  call's result holding either is still refused (`ssasem.copyable`). Whether a type holds a view at all is
+  by element, a record field by field, an enum by a test per variant, a map
+  in a loop over its two column snapshots, and a dyn by a test per concrete
+  holding a view, each narrowed, copied and widened back, each view in it
+  copied. A dyn box that is none of those concretes holds no view and is kept,
+  retagged by a `dyn_as` naming no shape, which the verifier admits only where
+  tests refuted every such concrete. A view that is a literal or a retagged
+  string (`ssasem.counted_view`) anchors nothing and is not copied. Three
+  kinds have no copy, and a value holding one is refused by name
+  (`ssasem.copy_refusal`): a cell, which is shared storage a copy would split
+  (and holds no view in practice, since E049 keeps a reference-typed capture
+  read-only); a function value, whose environment no test in the typed graph
+  can find (capture of a view is an escape position STR-VIEW-CONTRACT.md §3
+  step 3 assigns to the checker, #8635); and a type that holds itself, whose
+  copy would have to recurse. A value read out of a map holding views (`get`,
+  `get_or`, `values()`) is anchored to the map, and `get_or`'s also to its
+  default (`ssasem.map_read_sources`), since its views read the entries'
+  bytes. Whether a type holds a view at all is
   `ssasem.holds_view`, which reads a declared record's fields and an enum's
   payloads through the body's schema tables. The pass runs in
   `anchor_module` once the anchor table is attached, so a call's roots are
