@@ -1228,6 +1228,40 @@ pub function connect_unix(path: string): Result[i32, NetError] {
   return __socket_count(unix_connect(path));
 }
 
+// `local_addr(sock)` — the address and port a socket is bound to: the
+// address the host picked for a connected socket, `0.0.0.0` or `::` for
+// a listener bound to every interface. Control op 9 answers the address
+// as 16-bit groups, two for an IPv4 address and eight for an IPv6 one.
+pub function local_addr(sock: i32): Result[SocketAddr, NetError] {
+  var fam: i32 = tcp_socket_ctl(sock, 9, 8);
+  if (fam < 0) {
+    return Err(error_from_errno(fam));
+  }
+  var groups: i32 = 2;
+  if (fam == 6) {
+    groups = 8;
+  }
+  var b: u8[] = [];
+  var i: i32 = 0;
+  while (i < groups) {
+    var g: i32 = tcp_socket_ctl(sock, 9, i);
+    if (g < 0) {
+      return Err(error_from_errno(g));
+    }
+    b = b.append((g >> 8) as u8);
+    b = b.append((g & 255) as u8);
+    i = i + 1;
+  }
+  var port: i32 = tcp_local_port(sock);
+  if (port < 0) {
+    return Err(error_from_errno(port));
+  }
+  if (fam == 6) {
+    return Ok(socket_addr(V6(b), port));
+  }
+  return Ok(socket_addr(V4(b), port));
+}
+
 // `local_port(sock)` — the port a socket is bound to, which is how a
 // socket bound to port 0 learns the one the host picked.
 pub function local_port(sock: i32): Result[i32, NetError] {

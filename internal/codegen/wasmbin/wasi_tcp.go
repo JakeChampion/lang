@@ -1065,9 +1065,9 @@ func buildTcpSendfileBody(_ map[string]uint32) []byte {
 }
 
 // buildTcpSocketCtlBody assembles __fern_tcp_socket_ctl over a connection
-// or listener record. op 2 (keep-alive), op 4 (shutdown) and op 7 (the
-// peer's address, through remote-address) are the controls wasi:sockets
-// 0.2 has; op 1 (no-delay), op 3 (non-blocking) and op 6 (the send queue)
+// or listener record. op 2 (keep-alive), op 4 (shutdown), op 7 (the
+// peer's address, through remote-address) and op 9 (the local address,
+// through local-address) are the controls wasi:sockets 0.2 has; op 1 (no-delay), op 3 (non-blocking) and op 6 (the send queue)
 // have none and answer -ENOTSUP (58), so a caller learns the host owns
 // Nagle, the blocking mode and the queue rather than believing it set or
 // read them. Any other op is -EINVAL (28).
@@ -1197,6 +1197,103 @@ func buildTcpSocketCtlBody(idxs map[string]uint32) []byte {
 			body = inst.InstElse(body)
 			body = word(body, 10, false)
 			body = inst.InstLocalSet(body, key)
+			body = inst.InstEnd(body)
+		}
+		body = inst.InstEnd(body)
+		body = inst.InstLocalGet(body, retptr)
+		body = inst.InstI32Const(body, 36)
+		body = inst.InstCall(body, idxs["__free"])
+		body = inst.InstLocalGet(body, key)
+		body = inst.InstReturn(body)
+	}
+	body = inst.InstEnd(body)
+
+	// op 9: the local address as 16-bit groups, through local-address
+	// (the udp method for a datagram record), in the 36-byte area op 7
+	// reads: arg 0..7 is the group in network order (an ipv4 address
+	// fills 0 and 1 from its four bytes at +10, the rest are 0; an ipv6
+	// group is the u16 at +16 + 2*arg), 8 the family as 4 or 6; -EINVAL
+	// (28) outside that range.
+	body = opIs(body, 9)
+	{
+		body = inst.InstLocalGet(body, 2)
+		body = inst.InstI32Const(body, 8)
+		body = numeric.InstI32GtU(body)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		body = inst.InstI32Const(body, -28)
+		body = inst.InstReturn(body)
+		body = inst.InstEnd(body)
+		body = inst.InstI32Const(body, 36)
+		body = inst.InstCall(body, idxs["__fern_alloc"])
+		body = inst.InstLocalSet(body, retptr)
+		query := func(body []byte, method uint32) []byte {
+			body = inst.InstLocalGet(body, 0)
+			body = memory.InstI32Load(body, 2, 0)
+			body = inst.InstLocalGet(body, retptr)
+			return inst.InstCall(body, method)
+		}
+		if udpLocalAddress, ok := idxs["wasi_sockets_udp_local_address"]; ok {
+			body = emitIsUdpRecord(body, 0)
+			body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+			body = query(body, udpLocalAddress)
+			body = inst.InstElse(body)
+			body = query(body, idxs["wasi_sockets_tcp_local_address"])
+			body = inst.InstEnd(body)
+		} else {
+			body = query(body, idxs["wasi_sockets_tcp_local_address"])
+		}
+		body = inst.InstLocalGet(body, retptr)
+		body = memory.InstI32Load8U(body, 0, 0)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		body = emitErrnoNegReturnReclaim(body, retptr, 4, 36, idxs)
+		body = inst.InstEnd(body)
+		body = inst.InstI32Const(body, 0)
+		body = inst.InstLocalSet(body, key)
+		// retptr + 2*arg, the base the group loads add their offset to.
+		groupAt := func(body []byte) []byte {
+			body = inst.InstLocalGet(body, retptr)
+			body = inst.InstLocalGet(body, 2)
+			body = inst.InstI32Const(body, 1)
+			body = numeric.InstI32Shl(body)
+			return numeric.InstI32Add(body)
+		}
+		body = inst.InstLocalGet(body, 2)
+		body = inst.InstI32Const(body, 8)
+		body = numeric.InstI32Eq(body)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		{
+			body = inst.InstLocalGet(body, retptr)
+			body = memory.InstI32Load8U(body, 0, 4)
+			body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+			body = inst.InstI32Const(body, 6)
+			body = inst.InstLocalSet(body, key)
+			body = inst.InstElse(body)
+			body = inst.InstI32Const(body, 4)
+			body = inst.InstLocalSet(body, key)
+			body = inst.InstEnd(body)
+		}
+		body = inst.InstElse(body)
+		{
+			body = inst.InstLocalGet(body, retptr)
+			body = memory.InstI32Load8U(body, 0, 4)
+			body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+			body = groupAt(body)
+			body = memory.InstI32Load16U(body, 1, 16)
+			body = inst.InstLocalSet(body, key)
+			body = inst.InstElse(body)
+			body = inst.InstLocalGet(body, 2)
+			body = inst.InstI32Const(body, 2)
+			body = numeric.InstI32LtU(body)
+			body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+			body = groupAt(body)
+			body = memory.InstI32Load8U(body, 0, 10)
+			body = inst.InstI32Const(body, 8)
+			body = numeric.InstI32Shl(body)
+			body = groupAt(body)
+			body = memory.InstI32Load8U(body, 0, 11)
+			body = numeric.InstI32Or(body)
+			body = inst.InstLocalSet(body, key)
+			body = inst.InstEnd(body)
 			body = inst.InstEnd(body)
 		}
 		body = inst.InstEnd(body)
