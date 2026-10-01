@@ -136,10 +136,7 @@ const vblockArrArrWant = 4
 
 type vblockClosureLowering struct{ name, env string }
 
-var (
-	vblockClosureBoth = []vblockClosureLowering{{"semantic", "FERN_SEM_IR=1"}, {"ast", "FERN_SEM_IR="}}
-	vblockClosureAST  = []vblockClosureLowering{{"ast", "FERN_SEM_IR="}}
-)
+var vblockClosureBoth = []vblockClosureLowering{{"semantic", "FERN_SEM_IR=1"}, {"ast", "FERN_SEM_IR="}}
 
 var vblockClosureReleaseCases = []struct {
 	name      string

@@ -5429,14 +5429,7 @@ function parameters(fd: parser.FuncDecl, s: State): State {
     if (!semtypes.concrete(ty, true)) {
       return fail(s, "unresolved parameter type");
     }
-    // A function value is lent across a call, never handed over: its box
-    // is walked by the frame that built it, the only one whose schema
-    // names the captures, so a parameter that would take the unit and
-    // release the box here has no contract.
     var m: i32 = decl_param_mode(fd, at, ty);
-    if (ssasem.is_func(ty) && m == ssaunits.counted_mode()) {
-      return fail(s, "owning function parameter");
-    }
     var p: Value = define(s, 6, [], at, "", ty);
     s = bind(State { ...p.s, modes: p.s.modes.append(m) }, names[at], p.id);
     at = at + 1;

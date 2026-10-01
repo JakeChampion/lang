@@ -535,10 +535,9 @@ function inferred_plain(n: i32): i32 { return apply_int((x: i32) => x + 1, n); }
 // literal is.
 function float_binding(n: i32): i32 { var f = 2.5; var g = f + 1.5; if (g > 3.0) { return n; } return 0; }
 function inferred_ret(k: i32, n: i32): i32 { return apply_int((x: i32) => { var m: i32 = x * k; return m + 1; }, n); }
-// A function value is lent, never handed over: a parameter that would take
-// its box and release it here has no contract, since only the frame that
-// built the box knows the captures its release must walk.
-function refused_own_fn(own f: (i32) => i32, n: i32): i32 { return f(n); }
+// An own function value is this frame's to release, from a box another
+// frame built (#10958).
+function own_fn(own f: (i32) => i32, n: i32): i32 { return f(n); }
 // A closure TAKES a captured function value, like every other reference it
 // holds, so the box's release walks that field. The capture is a parameter
 // here and a local closure below, and neither is a special case.
