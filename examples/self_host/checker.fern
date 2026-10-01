@@ -10346,22 +10346,37 @@ function variant_pattern_owner(name: string): string {
 }
 
 // type_arity_diag checks one type annotation: if it supplies an explicit
-// `[...]` argument list whose count doesn't match the named struct's
-// declared type-parameter count, it's E019. Checked at every annotation
-// position: parameter, struct field, return and body `var`. At the last
-// two the Go checker adds an E003 / E002 on the mismatched value as well;
-// this reports the E019 alone.
-function type_arity_diag(t: string, structs: parser.StructDecl[]): util.Diag[] {
+// `[...]` argument list whose count doesn't match the named struct's or
+// enum's declared type-parameter count, it's E019. Checked at every
+// annotation position: parameter, struct field, return and body `var`. At
+// the last two the Go checker adds an E003 / E002 on the mismatched value as
+// well; this reports the E019 alone.
+function type_arity_diag(t: string, structs: parser.StructDecl[], enums: parser.EnumDecl[]): util.Diag[] {
   var out: util.Diag[] = [];
   // An array of an instantiation (`Pair[i32][]`) names the same head.
   while (t.len() > 2 && slice_unchecked(t, t.len() - 2, t.len()) == "[]") {
     t = slice_unchecked(t, 0, t.len() - 2) + "";
   }
   var nargs: i32 = count_type_args(t);
-  if (nargs >= 0) {
-    var tpc: i32 = struct_type_param_count(structs, util.base_type_name(t));
-    if (tpc >= 0 && nargs != tpc) {
-      out = out.append(dg_at("E019", "struct " + util.base_type_name(t) + " has " + util.i32_to_string(tpc) + " type parameter(s), " + util.i32_to_string(nargs) + " supplied", struct_decl_line(structs, util.base_type_name(t)), struct_decl_col(structs, util.base_type_name(t))));
+  if (nargs < 0) {
+    return out;
+  }
+  var base: string = util.base_type_name(t);
+  var tpc: i32 = struct_type_param_count(structs, base);
+  if (tpc >= 0) {
+    if (nargs != tpc) {
+      out = out.append(dg_at("E019", "struct " + base + " has " + util.i32_to_string(tpc) + " type parameter(s), " + util.i32_to_string(nargs) + " supplied", struct_decl_line(structs, base), struct_decl_col(structs, base)));
+    }
+    return out;
+  }
+  // A declaration shadowing a built-in's name is E010, and the annotation
+  // may still mean the built-in, so its arity is not checked against it.
+  if (parser.is_reserved_struct_name(base) || parser.is_reserved_enum_name(base)) {
+    return out;
+  }
+  for ed in enums {
+    if (ed.name == base && ed.type_params.len() != nargs) {
+      return out.append(dg_at("E019", "enum " + base + " has " + util.i32_to_string(ed.type_params.len()) + " type parameter(s), " + util.i32_to_string(nargs) + " supplied", ed.line, ed.col));
     }
   }
   return out;
@@ -20487,12 +20502,12 @@ function check_module_pass(mod: parser.Module, fda_diags: util.Diag[], focus: st
     // in a parameter type.
     var pai2: i32 = 0;
     while (pai2 < mod.funcs[i].params.len()) {
-      body_diags = util.append_diags(body_diags, type_arity_diag(mod.funcs[i].params[pai2].type_name, mod.structs));
+      body_diags = util.append_diags(body_diags, type_arity_diag(mod.funcs[i].params[pai2].type_name, mod.structs, mod.enums));
       pai2 = pai2 + 1;
     }
-    body_diags = util.append_diags(body_diags, type_arity_diag(mod.funcs[i].ret_type, mod.structs));
+    body_diags = util.append_diags(body_diags, type_arity_diag(mod.funcs[i].ret_type, mod.structs, mod.enums));
     for annot in collect_annots(mod.funcs[i].body) {
-      body_diags = util.append_diags(body_diags, type_arity_diag(annot.type_name, mod.structs));
+      body_diags = util.append_diags(body_diags, type_arity_diag(annot.type_name, mod.structs, mod.enums));
     }
     // E036: unqualified reference to a variant shared by 2+ enums.
     if (ambig.len() > 0) {
@@ -20529,7 +20544,7 @@ function check_module_pass(mod: parser.Module, fda_diags: util.Diag[], focus: st
   // E019: generic-struct type-argument arity in struct field types.
   for sd in mod.structs {
     for field in sd.fields {
-      body_diags = util.append_diags(body_diags, type_arity_diag(field.type_name, mod.structs));
+      body_diags = util.append_diags(body_diags, type_arity_diag(field.type_name, mod.structs, mod.enums));
     }
   }
   // E064: a type annotation that names no declared type (the self-host

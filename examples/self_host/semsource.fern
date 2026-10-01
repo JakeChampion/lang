@@ -3486,14 +3486,47 @@ function widen(v: Value, expected: typeinfo.Type): Value {
     return define(s, ssasem.dyn_box(), [v.id], 0, typeinfo.spelling(s.values[v.id]), expected);
   }
   var owner: string = union_name(expected);
-  if (owner == "" || union_layout(s, owner) != semrecords.layout_member()) {
-    return v;
-  }
   var member: string = struct_name(s.values[v.id]);
-  if (member == "" || checker.variant_shape_sig(s.scope, member, owner).name.len() == 0) {
+  if (owner == "" || member == "") {
     return v;
   }
-  return define(s, ssasem.variant_up(), [v.id], 0, member, expected);
+  var layout: i32 = union_layout(s, owner);
+  if (layout == semrecords.layout_member()) {
+    if (checker.variant_shape_sig(s.scope, member, owner).name.len() == 0) {
+      return v;
+    }
+    return define(s, ssasem.variant_up(), [v.id], 0, member, expected);
+  }
+  // A struct named like an enum's variant whose one payload is that struct
+  // is wrapped into the variant, the shape every union alias desugars to.
+  // A generic enum's or struct's clone suffixes the name with the
+  // instantiation key, so the names are matched up to that suffix.
+  if (layout == semrecords.layout_variant()) {
+    for vn in union_variants(s, owner) {
+      if (clone_base(vn) != clone_base(member)) {
+        continue;
+      }
+      var shape: Payloads = literal_payloads(s, expected, vn, layout);
+      if (shape.found && shape.types.len() == 1 && semtypes.equal(shape.types[0], s.values[v.id])) {
+        var payload: Value = kept_view(unaliased_view(v));
+        return define(payload.s, ssasem.variant_new(), [payload.id], 0, vn, expected);
+      }
+    }
+  }
+  return v;
+}
+
+// The declared name a monomorphised clone was made from: `Pair__i32` is
+// `Pair`'s, and a name with no key is its own.
+function clone_base(name: string): string {
+  var i: i32 = 1;
+  while (i + 1 < name.len()) {
+    if (name[i] == b'_' && name[i + 1] == b'_') {
+      return slice_unchecked(name, 0, i) + "";
+    }
+    i = i + 1;
+  }
+  return name;
 }
 
 function expr(e: ast.Expr, s: State, expected: typeinfo.Type): Value {
