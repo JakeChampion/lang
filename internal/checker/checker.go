@@ -19987,6 +19987,19 @@ func (c *checker) elemSettleable(have, want ast.Type) bool {
 			return c.elemSettleable(h.Elem, w.Elem)
 		}
 	}
+	// So does a generic struct whose arguments literals bound: `[Same { a:
+	// 1, b: 2^62 }]` widens to `Same[i64][]` and settles its elements there
+	// (#10453).
+	if h, ok := have.(ast.StructType); ok {
+		if w, ok := want.(ast.StructType); ok && h.Name == w.Name && len(h.Args) == len(w.Args) && len(h.Args) > 0 {
+			for i := range h.Args {
+				if !c.elemSettleable(h.Args[i], w.Args[i]) {
+					return false
+				}
+			}
+			return true
+		}
+	}
 	// Which destinations a polymorphic element settles to depends on WHICH
 	// polymorphic it is, so split on `have` before looking at `want`.
 	switch h := have.(type) {
@@ -20406,6 +20419,83 @@ func (c *checker) widenCompositeByLiterals(t ast.Type, es ...ast.Expr) ast.Type 
 		if w := c.widenCompositeByLiterals(tt.Elem, arrayElemExprs(es)...); w != nil {
 			return ast.SliceType{Elem: w}
 		}
+	case ast.StructType:
+		// A generic struct literal whose type argument only literals bind:
+		// `Same { a: 1, b: 4611686018427387904 }` (#10453).
+		sd, ok := c.info.Structs[tt.Name]
+		if !ok || len(sd.TypeParams) != len(tt.Args) {
+			return nil
+		}
+		args := append([]ast.Type(nil), tt.Args...)
+		changed := false
+		for i, tp := range sd.TypeParams {
+			if w := c.widenCompositeByLiterals(args[i], c.structParamExprs(sd, tp, es)...); w != nil {
+				args[i], changed = w, true
+			}
+		}
+		if changed {
+			return ast.StructType{Name: tt.Name, Args: args}
+		}
+	}
+	return nil
+}
+
+// structParamExprs is the set of expressions, across the struct literals es
+// produce, that occupy the type parameter tp: a field declared `T`, an element
+// of one declared `T[]` or `(T, string)`, a field of a nested `Box[T]`. A
+// literal that wrote its own type arguments is already settled and
+// contributes nothing.
+func (c *checker) structParamExprs(sd *ast.StructDecl, tp string, es []ast.Expr) []ast.Expr {
+	var out []ast.Expr
+	for _, f := range sd.Fields {
+		var vals []ast.Expr
+		for _, e := range valueExprs(es) {
+			sl, ok := e.(*ast.StructLit)
+			if !ok || sl.TypeName != sd.Name || sl.TypeArgsWritten {
+				continue
+			}
+			for _, lf := range sl.Fields {
+				if lf.Name == f.Name {
+					vals = append(vals, lf.Value)
+				}
+			}
+		}
+		out = append(out, c.paramExprs(f.Type, tp, vals)...)
+	}
+	return out
+}
+
+// paramExprs is the set of expressions within es, values of declared type t,
+// that occupy the type parameter tp.
+func (c *checker) paramExprs(t ast.Type, tp string, es []ast.Expr) []ast.Expr {
+	if len(es) == 0 {
+		return nil
+	}
+	switch tt := t.(type) {
+	case ast.ParamType:
+		if tt.Name == tp {
+			return es
+		}
+	case ast.ArrayType:
+		return c.paramExprs(tt.Elem, tp, arrayElemExprs(es))
+	case ast.SliceType:
+		return c.paramExprs(tt.Elem, tp, arrayElemExprs(es))
+	case ast.TupleType:
+		var out []ast.Expr
+		for i, et := range tt.Elems {
+			out = append(out, c.paramExprs(et, tp, tupleElemExprs(es, i))...)
+		}
+		return out
+	case ast.StructType:
+		sd, ok := c.info.Structs[tt.Name]
+		if !ok || len(sd.TypeParams) != len(tt.Args) {
+			return nil
+		}
+		var out []ast.Expr
+		for i, inner := range sd.TypeParams {
+			out = append(out, c.paramExprs(tt.Args[i], tp, c.structParamExprs(sd, inner, es))...)
+		}
+		return out
 	}
 	return nil
 }

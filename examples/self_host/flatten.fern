@@ -752,6 +752,15 @@ function mangle_bare(name: string, ctx: RewriteCtx): string {
 //   * bare `Base` (Base is an own decl) → `prefix__Base`, preserving
 //     any `[]` / `[..]` suffix (`Token[]` → `prefix__Token[]`)
 //   * everything else (i32, Map[string,i32], other.Thing) untouched
+// rewrite_written mangles a struct literal's written instantiation as
+// rewrite_type_name does its type name; "" stays "".
+function rewrite_written(w: string, ctx: RewriteCtx): string {
+  if (w.len() == 0) {
+    return w;
+  }
+  return rewrite_type_name(w, ctx);
+}
+
 pub function rewrite_type_name(tn: string, ctx: RewriteCtx): string {
   // A tuple type `(A, B, …)` — mangle each ELEMENT type, preserving nesting.
   // Without this, rewrite_type_name's bare/bracket logic treats the whole
@@ -1041,6 +1050,7 @@ pub function rewrite_expr(e: ast.Expr, ctx: RewriteCtx): ast.Expr {
         has_base: slit.has_base,
         base: new_base,
         line: slit.line, col: slit.col,
+        written: rewrite_written(slit.written, ctx),
       };
     },
     ast.ExprLambda(lm) => {
