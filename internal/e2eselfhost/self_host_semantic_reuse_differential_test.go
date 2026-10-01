@@ -356,6 +356,26 @@ function main(): i32 {
     return a.n * 10 + a.names.len() + a.tag.len();
 }`, 189, 1, 0, 3, 9, false, false},
 
+	// An update in an arm that returns, then a keeping update of the same
+	// donor after it. The keep clears its donor only after the allocation, so
+	// the two sites are exclusive by the `return` alone, which the IR
+	// verifier's double-claim walk must honour (#10983).
+	{"update-keeps-after-returning-arm", `struct Line { mode: i32, cursor: i32, buf: u8[] }
+function put(own l: Line, p: i32): Line {
+    if (l.mode == 2) {
+        return Line { ...l, buf: l.buf.append(p as u8) };
+    }
+    return Line { ...l, cursor: p };
+}
+function main(): i32 {
+    var a: Line = Line { mode: 0, cursor: 0, buf: [1 as u8] };
+    var b: Line = Line { mode: 2, cursor: 3, buf: [] };
+    var i: i32 = 0;
+    while (i < 4) { a = put(a, i + 5); b = put(b, i); i = i + 1; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return a.cursor * 10 + a.buf.len() + b.buf.len() * 4 + b.buf[3] as i32 + b.cursor;
+}`, 103, 2, 2, 4, 12, false, false},
+
 	// A field carried over into its own slot AND copied into another. The two
 	// are distinct reads of slot 0: the carried-over one is kept in place, and
 	// the copy, placed at slot 1, is not a read of its own slot, so it takes

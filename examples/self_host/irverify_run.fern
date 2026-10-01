@@ -1038,6 +1038,43 @@ function rc_checks(): i32 {
     return 220;
   }
 
+  // A keep site clears its donor after the allocation, so a walk from an
+  // earlier site on the same donor meets no rebind before it. An arm that
+  // returns after its site never reaches the keep; one a branch can leave
+  // before the return still does.
+  var falls: ir.Op[] = concat_ops([ir.op_const_i32(1), ir.op_if(0)], selfhost_reuse(1, 1));
+  falls = concat_ops(falls, [ir.op_end()]);
+  var fr: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", concat_ops(falls, keep_reuse(1, 1, 1)));
+  if (fr.checked != 2 || fr.problems.len() != 1 || !util.contains(fr.problems[0].msg, "two recipients")) {
+    return 221;
+  }
+  var rets: ir.Op[] = concat_ops([ir.op_const_i32(1), ir.op_if(0)], selfhost_reuse(1, 1));
+  rets = concat_ops(rets, [ir.op_return(), ir.op_end()]);
+  var rr: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", concat_ops(rets, keep_reuse(1, 1, 1)));
+  if (rr.checked != 2 || rr.problems.len() != 0) {
+    return 222;
+  }
+  var leaves: ir.Op[] = concat_ops([ir.op_block(0), ir.op_const_i32(1), ir.op_if(0)], selfhost_reuse(1, 1));
+  leaves = concat_ops(leaves, [ir.op_const_i32(1), ir.op_brif(1), ir.op_return(), ir.op_end(), ir.op_end()]);
+  var lr: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", concat_ops(leaves, keep_reuse(1, 1, 1)));
+  if (lr.checked != 2 || lr.problems.len() != 1 || !util.contains(lr.problems[0].msg, "two recipients")) {
+    return 223;
+  }
+  // A branch landing at an `end` the walk passes before the return still
+  // returns; one back to an enclosing loop re-enters the body and can fall out.
+  var joins: ir.Op[] = concat_ops([ir.op_block(0), ir.op_block(0), ir.op_const_i32(1), ir.op_if(0)], selfhost_reuse(1, 1));
+  joins = concat_ops(joins, [ir.op_const_i32(1), ir.op_brif(1), ir.op_end(), ir.op_end(), ir.op_return(), ir.op_end()]);
+  var jr: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", concat_ops(joins, keep_reuse(1, 1, 1)));
+  if (jr.checked != 2 || jr.problems.len() != 0) {
+    return 224;
+  }
+  var loops: ir.Op[] = concat_ops([ir.op_loop(0), ir.op_const_i32(1), ir.op_if(0)], selfhost_reuse(1, 1));
+  loops = concat_ops(loops, [ir.op_const_i32(1), ir.op_brif(1), ir.op_return(), ir.op_end(), ir.op_end()]);
+  var lp: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", concat_ops(loops, keep_reuse(1, 1, 1)));
+  if (lp.checked != 2 || lp.problems.len() != 1 || !util.contains(lp.problems[0].msg, "two recipients")) {
+    return 225;
+  }
+
   // ---- coverage renders the tally and the grouped reasons ------------
   if (!util.contains(irverifyrc.rc_coverage_str(sh), "reuse sites modelled 1/1")) {
     return 209;
