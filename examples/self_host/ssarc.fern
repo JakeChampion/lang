@@ -467,11 +467,13 @@ function helper(own r: irlower.LowerResult, slot: i32, name: string): irlower.Lo
 // `defer0` holds an append's or a with's receiver's retain back, so the
 // operation's own rc gate reads the box rather than this supply — see `deferred_retain` for why the
 // order is the whole of it.
-function supplies(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan, step: ssaunits.Step, defer0: boolean, kept: i32[]): irlower.LowerResult {
+function supplies(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan, step: ssaunits.Step, defer0: boolean, kept: i32[], late: i32[]): irlower.LowerResult {
   var j: i32 = 0;
   for supply in step.supplies {
-    // A string literal's retain is the immortal guard's no-op.
-    if (supply.mode == ssaunits.retain_unit() && !(defer0 && supply.slot == 0) && !p.literal[supply.value]) {
+    // A string literal's retain is the immortal guard's no-op; a late kept
+    // read is retained where the construction copies it.
+    if (supply.mode == ssaunits.retain_unit() && !(defer0 && supply.slot == 0) && !p.literal[supply.value]
+      && util.index_of_i32(late, supply.value) < 0) {
       if (util.index_of_i32(kept, supply.value) >= 0) {
         r = unless_unique(r, token_slot(f), supply.value, "__fern_rc_inc");
       } else {
@@ -1521,10 +1523,15 @@ function reuse_token(own r: irlower.LowerResult, f: ssasem.Func, donor: i32): ir
 // The token slot is held from that first read to the construction, so a donor
 // is kept only where no other pairing's token is live in between. `start` is
 // the position of the first kept read, `taken` the donor's drop.
-struct Keeps { donors: i32[], slots: boolean[][], values: i32[][], start: i32[], taken: i32[], built: i32[] }
+//
+// A kept field the construction alone reads is not read at all while the
+// donor is unique: its slot is already the construction's. `late` holds those
+// values; the construction copies them from the donor, retained, under the
+// token's null arm, where its box is fresh (reuse_construct).
+struct Keeps { donors: i32[], slots: boolean[][], values: i32[][], late: i32[][], start: i32[], taken: i32[], built: i32[] }
 
-function keep_slots(f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], b: ssa.SBlock, ins: ssa.SInst, built: i32, donor: i32, taken: i32): Keeps {
-  var none: Keeps = Keeps { donors: [], slots: [], values: [], start: [], taken: [], built: [] };
+function keep_slots(f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], b: ssa.SBlock, ins: ssa.SInst, built: i32, donor: i32, taken: i32, uses: i32[]): Keeps {
+  var none: Keeps = Keeps { donors: [], slots: [], values: [], late: [], start: [], taken: [], built: [] };
   if (ins.kind_tag != ssasem.record_new() || !semtypes.equal(f.values[ins.result], f.values[donor])) {
     return none;
   }
@@ -1533,6 +1540,7 @@ function keep_slots(f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], b: ssa.SBloc
     slots = slots.append(false);
   }
   var values: i32[] = [];
+  var late: i32[] = [];
   var start: i32 = 0 - 1;
   var retained: i32[] = [];
   for supply in at(p, idx, b.id, built, 0 - 1).supplies {
@@ -1553,6 +1561,9 @@ function keep_slots(f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], b: ssa.SBloc
       if (i == get.imm && !slots[i] && ssaunits.occurrences(ins.args, get.result) == 1) {
         values = values.append(get.result);
         slots = slots.with(i, true);
+        if (uses[get.result] == 1 && !held_read(p, get)) {
+          late = late.append(get.result);
+        }
         if (start < 0) {
           start = pos;
         }
@@ -1563,7 +1574,37 @@ function keep_slots(f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], b: ssa.SBloc
   if (start < 0) {
     return none;
   }
-  return Keeps { donors: [donor], slots: [slots], values: [values], start: [start], taken: [taken], built: [] };
+  return Keeps { donors: [donor], slots: [slots], values: [values], late: [late], start: [start], taken: [taken], built: [] };
+}
+
+// A read the plan gives an effect of its own at its position: a take that
+// nulls a tuple slot, or a hold that retains the element.
+function held_read(p: ssaunits.Plan, ins: ssa.SInst): boolean {
+  return ins.result < p.takes.len() && p.takes[ins.result] >= 0
+    || ins.result < p.held.len() && p.held[ins.result];
+}
+
+// How many operands name each value, over every instruction and terminator
+// of the function.
+function use_counts(f: ssasem.Func): i32[] {
+  var out: i32[] = [];
+  while (out.len() < f.graph.nvals) {
+    out = out.append(0);
+  }
+  for b in f.graph.blocks {
+    for ins in b.insts {
+      for a in ins.args {
+        out = out.with(a, out[a] + 1);
+      }
+    }
+    if (b.term.kind_tag == 1 && b.term.value >= 0) {
+      out = out.with(b.term.value, out[b.term.value] + 1);
+    }
+    if (b.term.kind_tag == 3) {
+      out = out.with(b.term.cond, out[b.term.cond] + 1);
+    }
+  }
+  return out;
 }
 
 // Every pairing's token interval in the block: `from` where the token is taken,
@@ -1587,8 +1628,8 @@ function token_busy(pairs: ReusePairs, from: i32, to: i32, own_build: i32): bool
   return false;
 }
 
-function block_keeps(f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], b: ssa.SBlock, pairs: ReusePairs): Keeps {
-  var out: Keeps = Keeps { donors: [], slots: [], values: [], start: [], taken: [], built: [] };
+function block_keeps(f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], b: ssa.SBlock, pairs: ReusePairs, uses: i32[]): Keeps {
+  var out: Keeps = Keeps { donors: [], slots: [], values: [], late: [], start: [], taken: [], built: [] };
   var pos: i32 = 0;
   while (pos < b.insts.len()) {
     var donor: i32 = pairs.selfs[pos];
@@ -1598,12 +1639,12 @@ function block_keeps(f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], b: ssa.SBlo
       taken = util.index_of_i32(pairs.tokens, donor);
     }
     if (donor >= 0 && taken >= 0) {
-      var k: Keeps = keep_slots(f, p, idx, b, b.insts[pos], pos, donor, taken);
+      var k: Keeps = keep_slots(f, p, idx, b, b.insts[pos], pos, donor, taken, uses);
       if (k.donors.len() > 0 && !token_busy(pairs, k.start[0], pos, pos)) {
         out = Keeps {
           donors: out.donors.append(donor), slots: out.slots.append(k.slots[0]),
-          values: out.values.append(k.values[0]), start: out.start.append(k.start[0]),
-          taken: out.taken.append(taken), built: out.built.append(pos),
+          values: out.values.append(k.values[0]), late: out.late.append(k.late[0]),
+          start: out.start.append(k.start[0]), taken: out.taken.append(taken), built: out.built.append(pos),
         };
       }
     }
@@ -1615,6 +1656,29 @@ function block_keeps(f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], b: ssa.SBlo
 function kept_values(k: Keeps): i32[] {
   var out: i32[] = [];
   for vs in k.values {
+    for v in vs {
+      out = out.append(v);
+    }
+  }
+  return out;
+}
+
+// Whether a keep's donor dies at `pos` for a construction later in the block:
+// its box is released at that construction, not here.
+function token_kept(k: Keeps, pos: i32): boolean {
+  var i: i32 = 0;
+  while (i < k.taken.len()) {
+    if (k.taken[i] == pos && k.built[i] != pos) {
+      return true;
+    }
+    i = i + 1;
+  }
+  return false;
+}
+
+function late_values(k: Keeps): i32[] {
+  var out: i32[] = [];
+  for vs in k.late {
     for v in vs {
       out = out.append(v);
     }
@@ -1670,7 +1734,14 @@ function drop_fields_except(own r: irlower.LowerResult, slot: i32, fields: semre
   return r;
 }
 
-function reuse_construct(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
+// A construction with a keep (block_keeps, `at` its row) stores the kept
+// slots only under the token's null arm, where its box is fresh: a late read
+// is copied from the donor there, retained, and any other kept operand is
+// stored from its local. The donor's drop follows, inside the same
+// construction: a unique donor gives up the children the construction
+// replaces before their slots are overwritten, and a shared one is released
+// once its kept fields are copied. The replaced slots are stored last.
+function reuse_construct(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, k: Keeps, at: i32): irlower.LowerResult {
   if (ins.kind_tag == ssasem.tuple_new()) {
     return reuse_tuple(r, f, ins);
   }
@@ -1698,18 +1769,49 @@ function reuse_construct(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SI
   r = emit(r, ir.op_load_local(ins.result));
   r = emit(r, ir.op_struct_set_shape(shape));
   r = emit(r, ir.op_drop());
+  var kept: boolean[] = [];
+  if (at >= 0) {
+    kept = k.slots[at];
+    r = emit(r, ir.op_load_local(token_slot(f)));
+    r = emit(r, ir.op_const_i32(0));
+    r = emit(r, ir.op_bin("eq", 0, false));
+    r = emit(r, ir.op_if(0));
+    var ki: i32 = 0;
+    while (ki < ins.args.len() && ki < fields.len()) {
+      if (ki < kept.len() && kept[ki]) {
+        r = emit(r, ir.op_load_local(ins.result));
+        if (util.index_of_i32(k.late[at], ins.args[ki]) >= 0) {
+          r = emit(r, ir.op_load_local(k.donors[at]));
+          r = field_get(r, f, ssa.SInst { kind_tag: ssasem.record_get(), result: ins.args[ki], args: [k.donors[at]], imm: ki, str: "" });
+          r = emit(r, ir.op_call_direct("__fern_rc_inc", 1));
+        } else {
+          r = emit(r, ir.op_load_local(ins.args[ki]));
+        }
+        r = field_store(r, fields, ki);
+      }
+      ki = ki + 1;
+    }
+    r = emit(r, ir.op_end());
+    r = keep_release(r, f, k.donors[at], kept);
+  }
   var i: i32 = 0;
   while (i < ins.args.len() && i < fields.len()) {
-    r = emit(r, ir.op_load_local(ins.result));
-    r = emit(r, ir.op_load_local(ins.args[i]));
-    if (ssasem.is_wide(fields[i].ty)) {
-      r = emit(r, ir.op_struct_set_i64(i));
-    } else {
-      r = emit(r, ir.op_struct_set(i, load_width(fields[i].ty)));
+    if (!(i < kept.len() && kept[i])) {
+      r = emit(r, ir.op_load_local(ins.result));
+      r = emit(r, ir.op_load_local(ins.args[i]));
+      r = field_store(r, fields, i);
     }
     i = i + 1;
   }
   return r;
+}
+
+// The store of field `i` from the box and the value on the stack.
+function field_store(own r: irlower.LowerResult, fields: semrecords.Field[], i: i32): irlower.LowerResult {
+  if (ssasem.is_wide(fields[i].ty)) {
+    return emit(r, ir.op_struct_set_i64(i));
+  }
+  return emit(r, ir.op_struct_set(i, load_width(fields[i].ty)));
 }
 
 // A tuple box has no shape word: element i is slot i, so the box is one word
@@ -1782,7 +1884,7 @@ function successors(t: ssa.STerm): i32[] {
 function edge(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], links: i32[], from: i32, target: i32): irlower.LowerResult {
   var step: ssaunits.Step = at(p, idx, from, ssaunits.edge_point(), target);
   var dest: ssa.SBlock = f.graph.blocks[block_index(f.graph, target)];
-  r = supplies(r, f, p, owed_on_entry(step, dest, links), false, []);
+  r = supplies(r, f, p, owed_on_entry(step, dest, links), false, [], []);
   var pi: i32 = 0;
   while (dest.preds[pi] != from) {
     pi = pi + 1;
@@ -5489,12 +5591,13 @@ function builtin_site(own r: irlower.LowerResult, ins: ssa.SInst): irlower.Lower
   return emit(r, ir.op_call_direct(ins.str, ins.args.len()));
 }
 
-function block_body(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], links: i32[], b: ssa.SBlock, structs: irlower.StructTab, grows: ssaunits.GrowRow[], no_reuse: boolean): irlower.LowerResult {
+function block_body(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], links: i32[], b: ssa.SBlock, structs: irlower.StructTab, grows: ssaunits.GrowRow[], no_reuse: boolean, uses: i32[]): irlower.LowerResult {
   r = drops(r, at(p, idx, b.id, ssaunits.entry_point(), 0 - 1), f);
   var pos: i32 = 0;
   var pairs: ReusePairs = reuse_pairs(f, p, idx, b, no_reuse);
-  var keeps: Keeps = block_keeps(f, p, idx, b, pairs);
+  var keeps: Keeps = block_keeps(f, p, idx, b, pairs, uses);
   var kept: i32[] = kept_values(keeps);
+  var late: i32[] = late_values(keeps);
   for ins in b.insts {
     if (ins.kind_tag != 6 && ins.kind_tag != 8) {
       var step: ssaunits.Step = at(p, idx, b.id, pos, 0 - 1);
@@ -5507,27 +5610,25 @@ function block_body(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan
       if (k >= 0) {
         r = keep_token(r, f, keeps.donors[k]);
       }
-      r = supplies(r, f, p, step, defer0, kept);
+      r = supplies(r, f, p, step, defer0, kept, late);
       r = bracket_take(r, f, held);
       // A box superseded by the construction at this same instruction is
       // taken BEFORE it, where an earlier drop's token was taken at the
       // drop and is already in the slot. Either way `reuse_construct`
-      // reads one token slot and the runtime decides.
-      var kt: i32 = util.index_of_i32(keeps.taken, pos);
-      if (pairs.selfs[pos] >= 0 && kt >= 0) {
-        r = keep_release(r, f, keeps.donors[kt], keeps.slots[kt]);
-      } else if (pairs.selfs[pos] >= 0) {
+      // reads one token slot and the runtime decides. A kept donor's token
+      // was taken at its first kept read, and its drop is the
+      // construction's.
+      var kb: i32 = util.index_of_i32(keeps.built, pos);
+      if (pairs.selfs[pos] >= 0 && kb < 0) {
         r = reuse_token(r, f, pairs.selfs[pos]);
       }
       if (pairs.builds[pos] >= 0 || pairs.selfs[pos] >= 0) {
-        r = reuse_construct(r, f, ins);
-      } else {
+        r = reuse_construct(r, f, ins, keeps, kb);
+      } else if (util.index_of_i32(late, ins.result) < 0) {
         r = instruction(r, f, p, ins, structs, defer0, link_at(f, links, ins), util.index_of_i32(kept, ins.result) >= 0);
       }
       r = bracket_give(r, f, held);
-      if (pairs.tokens[pos] >= 0 && kt >= 0) {
-        r = keep_release(r, f, keeps.donors[kt], keeps.slots[kt]);
-      } else if (pairs.tokens[pos] >= 0) {
+      if (pairs.tokens[pos] >= 0 && !token_kept(keeps, pos)) {
         r = reuse_token(r, f, pairs.tokens[pos]);
       }
       r = drops_less(r, step, f, pairs.tokens[pos], pairs.selfs[pos], ssaunits.shell_root(f, p, ins));
@@ -5544,7 +5645,7 @@ function block_body(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan
 // no_reuse is the #4350 §6.5 differential switch, which the AST path's reuse
 // layer answers too: with it set every construction allocates, so a program's
 // observable behaviour can be compared against its own reusing build.
-struct Emit { r: irlower.LowerResult, labels: i32[], why: string, steps: i32[][], links: i32[], no_reuse: boolean }
+struct Emit { r: irlower.LowerResult, labels: i32[], why: string, steps: i32[][], links: i32[], no_reuse: boolean, uses: i32[] }
 
 function label_if(): i32 {
   return 0 - 1;
@@ -5605,7 +5706,7 @@ function terminator(own e: Emit, f: ssasem.Func, p: ssaunits.Plan, order: i32[],
   var b: ssa.SBlock = f.graph.blocks[order[position]];
   if (b.term.kind_tag == 1 || b.term.kind_tag == 4) {
     var ret: ssaunits.Step = at(p, e.steps, b.id, ssaunits.return_point(), 0 - 1);
-    e = Emit { ...e, r: supplies(e.r, f, p, ret, false, []) };
+    e = Emit { ...e, r: supplies(e.r, f, p, ret, false, [], []) };
     if (b.term.kind_tag == 1 && b.term.value >= 0 && e.links[b.term.value] >= 0) {
       e = Emit { ...e, r: take_owed(e.r, b.term.value, e.links[b.term.value]) };
     }
@@ -5680,7 +5781,7 @@ function region(own e: Emit, f: ssasem.Func, p: ssaunits.Plan, l: ssalayout.Layo
       e = region(e, f, p, l, position, l.loop_end[position], true, structs, grows);
       position = l.loop_end[position] + 1;
     } else {
-      e = Emit { ...e, r: block_body(e.r, f, p, e.steps, e.links, f.graph.blocks[l.order[position]], structs, grows, e.no_reuse) };
+      e = Emit { ...e, r: block_body(e.r, f, p, e.steps, e.links, f.graph.blocks[l.order[position]], structs, grows, e.no_reuse, e.uses) };
       e = terminator(e, f, p, l.order, position);
       position = position + 1;
     }
@@ -6274,7 +6375,7 @@ pub function lower(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, structs: irlo
     return empty("physical RC needs reducible graph");
   }
   var steps: i32[][] = ssaunits.step_index(p);
-  var e: Emit = region(Emit { r: frame(f), labels: [], why: "", steps: steps, links: links_of(f, p, steps), no_reuse: irlower.reuse_layer_disabled() }, f, p, layout, 0, layout.order.len() - 1, false, structs, grows);
+  var e: Emit = region(Emit { r: frame(f), labels: [], why: "", steps: steps, links: links_of(f, p, steps), no_reuse: irlower.reuse_layer_disabled(), uses: use_counts(f) }, f, p, layout, 0, layout.order.len() - 1, false, structs, grows);
   if (e.why != "") {
     return empty(e.why);
   }

@@ -237,8 +237,8 @@ function is_kind(op: ir.Op, name: string): boolean {
 
 // ---- bracket matching --------------------------------------------------
 
-// IfSpan locates the `if` that an `end` closes, and that scope's `else`.
-struct IfSpan { ok: boolean, if_at: i32, else_at: i32 }
+// IfSpan is an `if` scope: its `if`, its `else` (-1 when none) and its `end`.
+struct IfSpan { ok: boolean, if_at: i32, else_at: i32, end_at: i32 }
 
 // match_if_backwards walks back from the `end` at end_at to the `if` it
 // closes, tracking nesting, and records the `else` at the scope's own depth.
@@ -252,12 +252,12 @@ function match_if_backwards(ops: ir.Op[], end_at: i32): IfSpan {
       depth = depth + 1;
     } else if (k == ir.kind_id("block") || k == ir.kind_id("loop")) {
       if (depth == 0) {
-        return IfSpan { ok: false, if_at: 0, else_at: 0 - 1 };
+        return IfSpan { ok: false, if_at: 0, else_at: 0 - 1, end_at: end_at };
       }
       depth = depth - 1;
     } else if (k == ir.kind_id("if")) {
       if (depth == 0) {
-        return IfSpan { ok: true, if_at: i, else_at: else_at };
+        return IfSpan { ok: true, if_at: i, else_at: else_at, end_at: end_at };
       }
       depth = depth - 1;
     } else if (k == ir.kind_id("else")) {
@@ -267,7 +267,7 @@ function match_if_backwards(ops: ir.Op[], end_at: i32): IfSpan {
     }
     i = i - 1;
   }
-  return IfSpan { ok: false, if_at: 0, else_at: 0 - 1 };
+  return IfSpan { ok: false, if_at: 0, else_at: 0 - 1, end_at: end_at };
 }
 
 // SlotFind is a located local, or a miss.
@@ -476,18 +476,39 @@ function no_keep(): Site {
 }
 
 // read_keep_site recognises the self-host's kept-field reuse (ssarc.keep_token,
-// keep_release). There the select before the allocation releases the donor on
-// `token != 0` rather than on a uniqueness flag: the proof is an earlier select
-// that tested the donor and stored it, or null, into the token slot. That
-// earlier select supplies the gate and the token source, and the later one's
-// else arm the decline release.
-function read_keep_site(ops: ir.Op[], span: IfSpan, end_at: i32, token_slot: i32): Site {
-  var at: i32 = span.if_at;
-  if (at < 3 || !is_kind(ops[at - 1], "ne") || !is_kind(ops[at - 2], "const_i32") || ops[at - 2].i32_imm != 0
-    || !is_kind(ops[at - 3], "load_local") || ops[at - 3].i32_imm != token_slot) {
+// reuse_construct, keep_release). The donor's drop there FOLLOWS the
+// allocation: after the call, the result stored and its shape written, the
+// construction copies the kept fields under the token's null arm, then
+// selects on `token != 0` and releases the donor on the decline arm. The
+// proof of the token is an earlier select that tested the donor and stored
+// it, or null, into the token slot; it supplies the gate and the token
+// source, and the later select's else arm the decline release.
+function read_keep_site(ops: ir.Op[], call: i32, token_slot: i32): Site {
+  var at: i32 = call + 1;
+  if (at + 3 >= ops.len() || !is_kind(ops[at], "store_local") || !is_kind(ops[at + 1], "load_local")
+    || !is_kind(ops[at + 2], "struct_set_shape") || !is_kind(ops[at + 3], "drop")) {
     return no_keep();
   }
-  var k: i32 = at - 4;
+  at = at + 4;
+  if (at + 3 < ops.len() && is_kind(ops[at], "load_local") && ops[at].i32_imm == token_slot
+    && is_kind(ops[at + 1], "const_i32") && ops[at + 1].i32_imm == 0 && is_kind(ops[at + 2], "eq")
+    && is_kind(ops[at + 3], "if")) {
+    at = skip_to_matching_end(ops, at + 3);
+    if (at < 0) {
+      return no_keep();
+    }
+    at = at + 1;
+  }
+  if (at + 3 >= ops.len() || !is_kind(ops[at], "load_local") || ops[at].i32_imm != token_slot
+    || !is_kind(ops[at + 1], "const_i32") || ops[at + 1].i32_imm != 0 || !is_kind(ops[at + 2], "ne")
+    || !is_kind(ops[at + 3], "if")) {
+    return no_keep();
+  }
+  var span: IfSpan = match_if_forwards(ops, at + 3);
+  if (!span.ok || span.else_at < 0) {
+    return no_keep();
+  }
+  var k: i32 = call - 1;
   while (k >= 2) {
     if (is_kind(ops[k], "end") && is_kind(ops[k - 1], "store_local") && ops[k - 1].i32_imm == token_slot
       && is_kind(ops[k - 2], "const_i32") && ops[k - 2].i32_imm == 0) {
@@ -503,7 +524,7 @@ function read_keep_site(ops: ir.Op[], span: IfSpan, end_at: i32, token_slot: i32
       if (!tok.ok) {
         return no_keep();
       }
-      var dec: DeclineRead = sole_decline(ops, span.else_at + 1, end_at);
+      var dec: DeclineRead = sole_decline(ops, span.else_at + 1, span.end_at);
       if (!dec.ok) {
         return no_keep();
       }
@@ -517,6 +538,28 @@ function read_keep_site(ops: ir.Op[], span: IfSpan, end_at: i32, token_slot: i32
   return no_keep();
 }
 
+// match_if_forwards walks from the `if` at if_at to the `end` closing it,
+// recording the `else` at the scope's own depth.
+function match_if_forwards(ops: ir.Op[], if_at: i32): IfSpan {
+  var else_at: i32 = 0 - 1;
+  var depth: i32 = 0;
+  var i: i32 = if_at + 1;
+  while (i < ops.len()) {
+    if (is_kind(ops[i], "block") || is_kind(ops[i], "loop") || is_kind(ops[i], "if")) {
+      depth = depth + 1;
+    } else if (is_kind(ops[i], "end")) {
+      if (depth == 0) {
+        return IfSpan { ok: true, if_at: if_at, else_at: else_at, end_at: i };
+      }
+      depth = depth - 1;
+    } else if (is_kind(ops[i], "else") && depth == 0) {
+      else_at = i;
+    }
+    i = i + 1;
+  }
+  return IfSpan { ok: false, if_at: 0, else_at: 0 - 1, end_at: 0 - 1 };
+}
+
 // read_site recognises the reuse site whose allocator call is at `call`.
 function read_site(ops: ir.Op[], call: i32): Site {
   var tok_at: i32 = token_arg_slot(ops, call);
@@ -525,6 +568,10 @@ function read_site(ops: ir.Op[], call: i32): Site {
   }
   var token_slot: i32 = ops[tok_at].i32_imm;
 
+  var kept: Site = read_keep_site(ops, call, token_slot);
+  if (kept.ok) {
+    return kept;
+  }
   var end_at: i32 = select_end_at(ops, tok_at);
   if (end_at < 0) {
     return site_skip("no token select before the reuse call");
@@ -539,12 +586,6 @@ function read_site(ops: ir.Op[], call: i32): Site {
   }
 
   var gate: GateRead = gate_slot(ops, span.if_at);
-  if (gate.code == 2) {
-    var kept: Site = read_keep_site(ops, span, end_at, token_slot);
-    if (kept.ok) {
-      return kept;
-    }
-  }
   if (gate.code == 1) {
     return site_skip("no uniqueness gate before the token select");
   }
