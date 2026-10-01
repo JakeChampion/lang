@@ -2560,15 +2560,19 @@ function dyn_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s: St
   var receiver: typeinfo.Type = s.values[recv.id];
   var traits: string[] = parser.dyn_trait_set(typeinfo.spelling(receiver));
   var arms: string[] = dyn_arms(s.funcs, s.impls, fa.field, traits);
-  if (arms.len() == 0) {
+  if (arms.len() == 0 && !any_implementer(s.impls, traits)) {
     // No type implements the trait, so no value of the receiver's type
     // exists and the call cannot execute; native emits the dispatch over
-    // an empty vtable.
+    // an empty vtable. An implementer with no arm for the name is an
+    // associated function reached through dyn, which the checker refuses.
     var ty: typeinfo.Type = checked(c, s);
     if (statement) {
       ty = t_void();
     }
     return unreachable_value(terminate(s, t_unreachable()), ty);
+  }
+  if (arms.len() == 0) {
+    return refused(s, "dyn method has no implementation: " + fa.field);
   }
   var shape: ssasem.Contract = ssasem.Contract { name: "", params: [], modes: [], result: t_void() };
   for arm in arms {
@@ -6039,6 +6043,16 @@ function shadowed_builtins(mod: parser.Module): string[] {
     }
   }
   return out;
+}
+
+// any_implementer reports whether some type implements every trait of a dyn set.
+function any_implementer(impls: parser.ImplInfo[], traits: string[]): boolean {
+  for imp in impls {
+    if (implements_traits(impls, util.base_type_name(imp.impl_type), traits)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function implements_traits(impls: parser.ImplInfo[], n: string, traits: string[]): boolean {
