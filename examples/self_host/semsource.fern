@@ -2220,17 +2220,30 @@ function map_column(s: State, recv: Value, kind: i32, elem: typeinfo.Type): Valu
 // hashed and compared, and `operation_supplies` counts no unit for it, so a view is an
 // ordinary lend and takes the same retag a borrowed parameter offers.
 function map_key_value(e: ast.Expr, s: State, t: typeinfo.Type, stored: boolean): Value {
-  var k: Value = expr(e, s, ssasem.map_key(t));
+  var column: typeinfo.Type = ssasem.map_key(t);
+  var k: Value = expr(e, s, column);
   if (!k.s.ok) {
     return k;
   }
   if (!stored) {
-    k = lend(k, ssasem.map_key(t), ssaunits.borrow_mode(), false);
+    k = lend(k, column, ssaunits.borrow_mode(), false);
   }
+  // A `str` key column holds an owned copy of each key: a view's box cannot
+  // be counted, and `keys` would otherwise hand out the column's own box. A
+  // view stored into a `string` column is refused.
   if (ssasem.is_view(k.s.values[k.id])) {
-    return refused(k.s, "view element escapes its source");
+    if (!ssasem.is_view(column)) {
+      return refused(k.s, "view element escapes its source");
+    }
+    if (stored) {
+      k = lend(k, t_string(), ssaunits.borrow_mode(), true);
+    }
+    return k;
   }
-  if (!semtypes.equal(k.s.values[k.id], ssasem.map_key(t))) {
+  if (ssasem.is_view(column) && ssasem.is_string(k.s.values[k.id])) {
+    return k;
+  }
+  if (!semtypes.equal(k.s.values[k.id], column)) {
     return refused(k.s, "map key type");
   }
   return k;

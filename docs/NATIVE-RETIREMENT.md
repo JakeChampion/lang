@@ -69,9 +69,9 @@ targets).
 | #10765 (the `async` half closed by #10804; the `message` half by #10844, pinned after this measurement) | typed lowering: `async` functions; a `dyn` std Error's `message` | 4 |
 | #10762 (closed by #10807 after this measurement) | typed lowering: a generic enum's struct payload; the rc-correctness corpus probe | 4 |
 | #10770 (three rows were the measuring harness failing on stderr; the split fixed after this measurement) | wasm: four programs answer wrongly (payloadless Result box, `std/platform`, scratch slots, split on `""`) | 4 |
-| #10761 | typed lowering: reading a `str` map value | 3 |
+| #10761 (fixed after this measurement, with #10701: a read of a view map value takes a fresh box) | typed lowering: reading a `str` map value | 3 |
 | #10769 (the selection and the missing helper fixed after this measurement; `TestBytesFloorWasm` then waits on #8799, the self-host's word-per-element `u8[]`) | wasm: no instruction selection for `raw_store8` and `write_some`; one module fails wasmtime's compile | 3 |
-| #10773 | arm64: the termios round trip fails at step 21 | 2 |
+| #10773 (closed: qemu-user drops the two unnamed `c_cc` slots for native's binaries too; the arm64 lane runs on real hardware) | arm64: the termios round trip fails at step 21 | 2 |
 | #10758 (closed by #10828 after this measurement; the cause was the AST folder, not the typed lowering) | typed lowering: unary minus on u32 | 1 |
 | #10772 (fixed after this measurement: the tree shaker dropped core/map behind a builtin enum's variant; the assembler names the symbol) | x86-64: the in-process assembler cannot encode an instruction in a string-payload `match`, and names nothing | 1 |
 
