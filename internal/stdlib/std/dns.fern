@@ -23,19 +23,25 @@
 //     stands.
 //   - `exchange(ns, q, timeout_ms)` is one query to one nameserver: UDP,
 //     the reply awaited up to the timeout, a reply with another id
-//     ignored, and a truncated reply asked again over TCP. `ask(conf, q)`
-//     is res_send over the nameservers: each is tried in turn, `attempts`
-//     times round, from a rotating start when `rotate` is set, a server
-//     that fails, refuses or stays silent handing the query to the next.
+//     ignored, and a truncated reply asked again over TCP;
+//     `exchange_many` sends several queries at once and awaits their
+//     replies together. `ask(conf, q)` and `ask_many` are res_send over
+//     the nameservers: each is tried in turn, `attempts` times round,
+//     from a rotating start when `rotate` is set, a server that fails,
+//     refuses or stays silent handing the query to the next.
 //   - `lookup_a`, `lookup_aaaa` and `canonical_name` walk the search plan
 //     over `ask` and read the answer section, following a CNAME chain to
 //     the owner of the records; `lookup_records_with` takes the asker as
 //     a function, which is how the walk is tested without a socket.
+//     `lookup_addresses` asks for the A and AAAA records together.
+//   - `order_addresses` is the destination address selection of RFC
+//     6724, over the source address the host would use for each
+//     destination (`source_for`); `sort_addresses` probes and orders.
 //   - `system_conf()` and `system_hosts()` read the machine's files, and
 //     `resolve(name)` is the lookup a program wants by default: an address
-//     literal as it is, then the hosts file, then DNS. Its A records come
-//     before its AAAA records; the RFC 6724 sort and the parallel query
-//     are the next slice of #9855, as are Happy Eyeballs and NAT64.
+//     literal as it is, then the hosts file, then DNS, the addresses in
+//     RFC 6724 order. The Happy Eyeballs dialer and NAT64 are the next
+//     slice of #9855.
 //
 // `.local` names are not special here: there is no mDNS, so they go to
 // the nameservers like any other name, which is what a resolver without
@@ -1036,12 +1042,8 @@ function now_ms(): i64 {
   return monotonic_ns() / 1000000i64;
 }
 
-// Whether `fd` is readable within `wait_ms`: the poll shape std/tcp's
-// recv-with-deadline uses. A native poll(2) honours the timeout; wasm
-// ignores its argument and the timer pollable fires at the deadline; the
-// interpreter's poll is a stub that answers -1 at once, which is told
-// from a native timeout by the time that passed, and reads as readable
-// so the receive that follows blocks as it always did there.
+// Whether `fd` is readable within `wait_ms`: `first_readable` for one
+// socket, as the TCP reads use it.
 function readable_within(fd: i32, wait_ms: i32): boolean {
   var ms: i32 = wait_ms;
   if (ms < 1) {
@@ -1078,19 +1080,93 @@ function local_for(ns: net.SocketAddr): net.SocketAddr {
 // question) is ignored and the wait goes on. A truncated reply is asked
 // again over TCP, where the reply is read whole behind its length. A
 // server that stays silent is `NoReply`, one that cannot be reached
-// `Socket`, a reply that does not parse `Malformed`; the reply's own
-// rcode is left to the caller.
+// `Socket(e)`.
 pub function exchange(ns: net.SocketAddr, q: Message, timeout_ms: i32): Result[Message, DnsError] {
-  var bytes: u8[] = encode(with_edns(q))?;
-  var sock: i32 = send_udp(ns, bytes)?;
+  return exchange_many(ns, [q], timeout_ms)[0];
+}
+
+// `exchange_many(ns, qs, timeout_ms)` — `exchange` for several queries at
+// once: each goes on its own socket and the replies are awaited
+// together, so the queries cost one round trip between them rather
+// than one each. The answers are parallel to `qs`.
+pub function exchange_many(ns: net.SocketAddr, qs: Message[], timeout_ms: i32): Result[Message, DnsError][] {
   var deadline: i64 = now_ms() + timeout_ms as i64;
-  var got: Result[Message, DnsError] = await_udp_reply(sock, q, deadline);
-  var closed: Result[void, net.NetError] = net.close(sock);
-  var reply: Message = got?;
-  if (reply.truncated) {
-    return exchange_tcp(ns, q, (deadline - now_ms()) as i32);
+  var slots: Slot[] = [];
+  var i: i32 = 0;
+  while (i < qs.len()) {
+    slots = slots.append(opened_slot(ns, qs[i]));
+    i = i + 1;
   }
-  return Ok(reply);
+  slots = await_udp_replies(slots, deadline);
+  var out: Result[Message, DnsError][] = [];
+  i = 0;
+  while (i < slots.len()) {
+    if (slots[i].sock >= 0) {
+      var closed: Result[void, net.NetError] = net.close(slots[i].sock);
+    }
+    out = out.append(slot_result(ns, slots[i], deadline));
+    i = i + 1;
+  }
+  return out;
+}
+
+// One query in flight: its socket (-1 when none could be opened), its
+// reply once one came, and otherwise its failure.
+struct Slot { q: Message, sock: i32, reply: Option[Message], err: DnsError }
+
+// Whether a slot is still waiting: it has a socket and no reply yet.
+function waiting(s: Slot): boolean {
+  if (s.sock < 0) {
+    return false;
+  }
+  match (s.reply) {
+    Some(_) => {
+      return false;
+    },
+    None => {
+      return true;
+    }
+  }
+  return true;
+}
+
+// A slot with `q` sent to `ns`, or one carrying the failure to send it.
+function opened_slot(ns: net.SocketAddr, q: Message): Slot {
+  var bytes: u8[] = [];
+  match (encode(with_edns(q))) {
+    Ok(b) => {
+      bytes = b;
+    },
+    Err(e) => {
+      return Slot { q: q, sock: 0 - 1, reply: None, err: e };
+    }
+  }
+  match (send_udp(ns, bytes)) {
+    Ok(sock) => {
+      return Slot { q: q, sock: sock, reply: None, err: NoReply };
+    },
+    Err(e) => {
+      return Slot { q: q, sock: 0 - 1, reply: None, err: e };
+    }
+  }
+  return Slot { q: q, sock: 0 - 1, reply: None, err: NoReply };
+}
+
+// A slot's reply as the query's result: a truncated reply is asked again
+// over TCP within what is left of the deadline.
+function slot_result(ns: net.SocketAddr, s: Slot, deadline: i64): Result[Message, DnsError] {
+  match (s.reply) {
+    Some(reply) => {
+      if (reply.truncated) {
+        return exchange_tcp(ns, s.q, (deadline - now_ms()) as i32);
+      }
+      return Ok(reply);
+    },
+    None => {
+      return Err(s.err);
+    }
+  }
+  return Err(s.err);
 }
 
 // A datagram socket of the nameserver's family with `bytes` sent to it.
@@ -1116,30 +1192,129 @@ function send_udp(ns: net.SocketAddr, bytes: u8[]): Result[i32, DnsError] {
   return Ok(sock);
 }
 
-// The reply to `q` on `sock` before `deadline`, datagrams that are not
-// one ignored; `NoReply` once the deadline passes.
-function await_udp_reply(sock: i32, q: Message, deadline: i64): Result[Message, DnsError] {
+// The indexes of the slots still waiting.
+function pending_slots(slots: Slot[]): i32[] {
+  var out: i32[] = [];
+  var i: i32 = 0;
+  while (i < slots.len()) {
+    if (waiting(slots[i])) {
+      out = out.append(i);
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+// The replies to the waiting slots' queries before `deadline`, datagrams
+// that are not one ignored; a slot still waiting at the deadline keeps
+// `NoReply`. The sockets are polled as one set, so the replies are taken
+// in whichever order the server sends them; where the host has no poll
+// (the interpreter) the sockets are made non-blocking and tried in turn
+// instead, a millisecond's pause between rounds.
+function await_udp_replies(slots: Slot[], deadline: i64): Slot[] {
+  var out: Slot[] = slots;
+  var pending: i32[] = pending_slots(out);
   var left: i32 = (deadline - now_ms()) as i32;
-  while (left > 0) {
-    if (!readable_within(sock, left)) {
-      return Err(NoReply);
+  while (pending.len() > 0 && left > 0) {
+    var ready: i32 = first_readable(out, pending, left);
+    if (ready == 0 - 1) {
+      return out;
     }
-    match (take_reply(sock, q)) {
-      Ok(found) => {
-        match (found) {
-          Some(reply) => {
-            return Ok(reply);
-          },
-          None => {}
-        }
-      },
-      Err(e) => {
-        return Err(e);
-      }
+    if (ready == 0 - 2) {
+      out = sweep_replies(out, pending);
+    } else {
+      out = taken(out, pending[ready]);
     }
+    pending = pending_slots(out);
     left = (deadline - now_ms()) as i32;
   }
-  return Err(NoReply);
+  return out;
+}
+
+// Slot `k` with the datagram its socket holds taken: its reply when the
+// datagram is one, or its socket closed on a receive error.
+function taken(slots: Slot[], k: i32): Slot[] {
+  match (take_reply(slots[k].sock, slots[k].q)) {
+    Ok(found) => {
+      match (found) {
+        Some(reply) => {
+          return slots.with(k, Slot { ...slots[k], reply: Some(reply) });
+        },
+        None => {
+          return slots;
+        }
+      }
+    },
+    Err(e) => {
+      return slots.with(k, Slot { ...slots[k], sock: closed_slot(slots[k].sock), err: e });
+    }
+  }
+  return slots;
+}
+
+// One round over the pending slots without a poll: each socket is made
+// non-blocking and tried, a round that found nothing pausing a
+// millisecond so the wait does not spin.
+function sweep_replies(slots: Slot[], pending: i32[]): Slot[] {
+  var out: Slot[] = slots;
+  var i: i32 = 0;
+  while (i < pending.len()) {
+    var k: i32 = pending[i];
+    var nb: Result[void, net.NetError] = net.set_nonblocking(out[k].sock, true);
+    out = taken(out, k);
+    i = i + 1;
+  }
+  if (pending_slots(out).len() == pending.len()) {
+    sleep_ms(1i64);
+  }
+  return out;
+}
+
+// The socket closed, and -1 for the slot that held it.
+function closed_slot(sock: i32): i32 {
+  var closed: Result[void, net.NetError] = net.close(sock);
+  return 0 - 1;
+}
+
+// Which of the pending slots is readable within `wait_ms`, as an index
+// into `pending`; -1 at the deadline, -2 where the host has no poll: the
+// poll shape std/tcp's recv-with-deadline uses. A native poll(2) honours
+// the timeout and answers the first readable socket; wasm ignores its
+// argument and the timer pollable fires at the deadline; the
+// interpreter's poll is a stub that answers -1 at once, which is told
+// from a native timeout by the time that passed.
+function first_readable(slots: Slot[], pending: i32[], wait_ms: i32): i32 {
+  var ms: i32 = wait_ms;
+  if (ms < 1) {
+    ms = 1;
+  }
+  var ns_per_ms: i64 = 1000000i64;
+  var start: i64 = monotonic_ns();
+  var pollset: i32[] = [];
+  var i: i32 = 0;
+  while (i < pending.len()) {
+    pollset = pollset.append(tcp_pollable(slots[pending[i]].sock));
+    i = i + 1;
+  }
+  var timer: i32 = wasm_timer_pollable(ms as i64 * ns_per_ms);
+  pollset = pollset.append(timer);
+  var ready: i32 = poll(pollset, ms);
+  i = 0;
+  while (i < pollset.len()) {
+    var dropped: i32 = wasm_pollable_drop(pollset[i]);
+    i = i + 1;
+  }
+  if (ready >= 0 && ready < pending.len()) {
+    return ready;
+  }
+  if (ready == pending.len()) {
+    return 0 - 1;
+  }
+  var waited: i64 = monotonic_ns() - start;
+  if (waited * 2i64 >= ms as i64 * ns_per_ms) {
+    return 0 - 1;
+  }
+  return 0 - 2;
 }
 
 // One datagram off `sock`: the reply to `q` when it is one, `None` when
@@ -1236,44 +1411,119 @@ function read_framed(sock: i32, deadline: i64): Result[u8[], DnsError] {
 }
 
 // `ask(conf, q)` — res_send: `q` put to the nameservers of `conf` in
-// turn, `attempts` times round, starting from a server chosen at random
-// when `rotate` is set. A server's reply ends the walk unless it is
-// SERVFAIL or REFUSED, which hand the query to the next server, as does
-// one that stays silent, cannot be reached, or answers nonsense. When
-// every server has been tried, the walk reports a failure a server
-// gave over the silence of the rest: `ServerFailure`, then `Refused`,
-// then `NoReply`, then what the last try reported.
+// turn, `attempts` times round, from a rotating start under `rotate`,
+// until one answers. A reply with SERVFAIL or REFUSED, silence, and an
+// unreachable server each hand the query to the next; when every server
+// has been tried the failure reported is SERVFAIL if any said so, else
+// REFUSED, else silence, else the last socket error.
 pub function ask(conf: ResolvConf, q: Message): Result[Message, DnsError] {
+  return ask_many(conf, [q])[0];
+}
+
+// `ask_many(conf, qs)` — `ask` for several queries at once: the queries
+// still unanswered go to each server together (`exchange_many`), and a
+// server's answer to one is kept while the others go on to the next.
+// The answers are parallel to `qs`.
+pub function ask_many(conf: ResolvConf, qs: Message[]): Result[Message, DnsError][] {
   var n: i32 = conf.nameservers.len();
-  if (n == 0) {
-    return Err(NoNameserver);
+  var asked: Asked[] = [];
+  var i: i32 = 0;
+  while (i < qs.len()) {
+    asked = asked.append(Asked { reply: None, tally: Tally { servfail: false, refused: false, silent: false, last: NoNameserver } });
+    i = i + 1;
   }
-  var start: i32 = 0;
-  if (conf.rotate) {
-    start = (random_i32() & 2147483647) % n;
-  }
-  var tally: Tally = Tally { servfail: false, refused: false, silent: false, last: NoReply };
-  var round: i32 = 0;
-  while (round < conf.attempts) {
-    var k: i32 = 0;
-    while (k < n) {
-      var ns: net.SocketAddr = conf.nameservers[(start + k) % n];
-      k = k + 1;
-      match (exchange(ns, q, conf.timeout_ms)) {
-        Ok(reply) => {
-          if (reply.rcode != rcode_server_failure() && reply.rcode != rcode_refused()) {
-            return Ok(reply);
-          }
-          tally = noted_rcode(tally, reply.rcode);
-        },
-        Err(e) => {
-          tally = noted_failure(tally, e);
-        }
-      }
+  if (n > 0) {
+    var start: i32 = 0;
+    if (conf.rotate) {
+      start = (random_i32() & 2147483647) % n;
     }
-    round = round + 1;
+    var round: i32 = 0;
+    while (round < conf.attempts) {
+      var k: i32 = 0;
+      while (k < n) {
+        asked = ask_server(conf.nameservers[(start + k) % n], qs, asked, conf.timeout_ms);
+        k = k + 1;
+      }
+      round = round + 1;
+    }
   }
-  return Err(tally_error(tally));
+  var out: Result[Message, DnsError][] = [];
+  i = 0;
+  while (i < asked.len()) {
+    out = out.append(asked_result(asked[i]));
+    i = i + 1;
+  }
+  return out;
+}
+
+// One query's progress through the servers: its answer once a server
+// gave one, else what the servers said so far.
+struct Asked { reply: Option[Message], tally: Tally }
+
+function asked_result(a: Asked): Result[Message, DnsError] {
+  match (a.reply) {
+    Some(reply) => {
+      return Ok(reply);
+    },
+    None => {
+      return Err(tally_error(a.tally));
+    }
+  }
+  return Err(tally_error(a.tally));
+}
+
+function unanswered(a: Asked): boolean {
+  match (a.reply) {
+    Some(_) => {
+      return false;
+    },
+    None => {
+      return true;
+    }
+  }
+  return true;
+}
+
+// The unanswered queries put to one server, their replies noted.
+function ask_server(ns: net.SocketAddr, qs: Message[], asked: Asked[], timeout_ms: i32): Asked[] {
+  var open: i32[] = [];
+  var open_qs: Message[] = [];
+  var i: i32 = 0;
+  while (i < asked.len()) {
+    if (unanswered(asked[i])) {
+      open = open.append(i);
+      open_qs = open_qs.append(qs[i]);
+    }
+    i = i + 1;
+  }
+  if (open.len() == 0) {
+    return asked;
+  }
+  var replies: Result[Message, DnsError][] = exchange_many(ns, open_qs, timeout_ms);
+  var out: Asked[] = asked;
+  i = 0;
+  while (i < open.len()) {
+    out = out.with(open[i], noted(out[open[i]], replies[i]));
+    i = i + 1;
+  }
+  return out;
+}
+
+// A server's answer to one query folded into its progress: a usable
+// reply settles it, SERVFAIL, REFUSED and a failure are tallied.
+function noted(a: Asked, r: Result[Message, DnsError]): Asked {
+  match (r) {
+    Ok(reply) => {
+      if (reply.rcode != rcode_server_failure() && reply.rcode != rcode_refused()) {
+        return Asked { ...a, reply: Some(reply) };
+      }
+      return Asked { ...a, tally: noted_rcode(a.tally, reply.rcode) };
+    },
+    Err(e) => {
+      return Asked { ...a, tally: noted_failure(a.tally, e) };
+    }
+  }
+  return a;
 }
 
 // What the servers said while none answered: the failures seen, and the
@@ -1497,6 +1747,383 @@ pub function canonical_name(conf: ResolvConf, name: string): Result[string, DnsE
   return Ok(a.canonical);
 }
 
+// `lookup_addresses(conf, name)` — every address of `name`: its A and
+// AAAA records asked together at each step of the search walk, the
+// result in RFC 6724 order. A candidate name is passed over only when
+// both record types pass it over (`NoSuchName`, `NoData`); a failure on
+// either ends the walk as it does for one query.
+pub function lookup_addresses(conf: ResolvConf, name: string): Result[net.IpAddr[], DnsError] {
+  var a: Answer = search_with(search_plan(name, conf), (qname: string): Result[Answer, DnsError] => ask_pair(conf, qname))?;
+  return Ok(sort_addresses(addresses_of(a.records)));
+}
+
+// One step of the paired walk: `qname`'s A and AAAA queries put to the
+// nameservers together, their replies read and combined.
+function ask_pair(conf: ResolvConf, qname: string): Result[Answer, DnsError] {
+  var replies: Result[Message, DnsError][] = ask_many(conf, [query(new_id(), qname, type_a()), query(new_id(), qname, type_aaaa())]);
+  return combine_pair(reply_records(replies[0], qname, type_a()), reply_records(replies[1], qname, type_aaaa()));
+}
+
+function reply_records(r: Result[Message, DnsError], qname: string, rtype: i32): Result[Answer, DnsError] {
+  var reply: Message = r?;
+  return answer_records(reply, qname, rtype);
+}
+
+// `combine_pair(a, aaaa)` — the two record types' results as one: the
+// records of both when either has some, under the A query's canonical
+// name when it has one. When neither has, a failure that ends a search
+// (silence, a socket error, SERVFAIL, REFUSED) is reported over one that
+// passes a name over, the A query's first; both passing it over is
+// `NoSuchName` only when both said so, else `NoData`.
+pub function combine_pair(a: Result[Answer, DnsError], aaaa: Result[Answer, DnsError]): Result[Answer, DnsError] {
+  match (a) {
+    Ok(ra) => {
+      match (aaaa) {
+        Ok(r6) => {
+          return Ok(Answer { canonical: ra.canonical, records: ra.records.concat(r6.records) });
+        },
+        Err(_) => {
+          return Ok(ra);
+        }
+      }
+    },
+    Err(ea) => {
+      match (aaaa) {
+        Ok(r6) => {
+          return Ok(r6);
+        },
+        Err(e6) => {
+          return Err(pair_failure(ea, e6));
+        }
+      }
+    }
+  }
+  return a;
+}
+
+function pair_failure(ea: DnsError, e6: DnsError): DnsError {
+  if (!passes_over(ea)) {
+    return ea;
+  }
+  if (!passes_over(e6)) {
+    return e6;
+  }
+  if (is_no_such_name(ea) && is_no_such_name(e6)) {
+    return NoSuchName;
+  }
+  return NoData;
+}
+
+// Whether a failure passes a search candidate over rather than ending
+// the walk.
+function passes_over(e: DnsError): boolean {
+  match (e) {
+    NoSuchName => {
+      return true;
+    },
+    NoData => {
+      return true;
+    },
+    _ => {
+      return false;
+    }
+  }
+  return false;
+}
+
+function is_no_such_name(e: DnsError): boolean {
+  match (e) {
+    NoSuchName => {
+      return true;
+    },
+    _ => {
+      return false;
+    }
+  }
+  return false;
+}
+
+// ---------------------------------------------------------------------------
+// Address ordering (RFC 6724 §6)
+//
+// A name with several addresses is tried in the order the destination
+// address selection rules give, each destination judged beside the
+// source address the host would use for it: an address the host has no
+// route to goes last, then matching scope, matching label, higher
+// precedence, smaller scope and the longest common prefix decide, and
+// what they leave tied keeps the order the server gave. The rules for
+// deprecated and home addresses and for native transport need what no
+// socket reports and are skipped, as Go skips them.
+
+// `Policy` — an address's row of the RFC 6724 §2.1 policy table.
+pub struct Policy { precedence: i32, label: i32 }
+
+// `policy_of(ip)` — the policy table row for `ip`, an IPv4 address read
+// as its v4-mapped form: `::1` 50/0, `::/0` 40/1, `::ffff:0:0/96` 35/4,
+// `2002::/16` 30/2, `2001::/32` 5/5, `fc00::/7` 3/13, `::/96` 1/3,
+// `fec0::/10` 1/11, `3ffe::/16` 1/12.
+pub function policy_of(ip: net.IpAddr): Policy {
+  if (ip.is_v4()) {
+    return Policy { precedence: 35, label: 4 };
+  }
+  if (ip.is_loopback()) {
+    return Policy { precedence: 50, label: 0 };
+  }
+  var b: u8[] = ip.bytes();
+  if (leading_zero_bytes(b) >= 10) {
+    return policy_embedded(b);
+  }
+  return policy_prefixed(b);
+}
+
+// The rows for an address whose first ten bytes are zero: v4-mapped and
+// IPv4-compatible, else the default.
+function policy_embedded(b: u8[]): Policy {
+  if (b[10] == 255u8 && b[11] == 255u8) {
+    return Policy { precedence: 35, label: 4 };
+  }
+  if (b[10] == 0u8 && b[11] == 0u8) {
+    return Policy { precedence: 1, label: 3 };
+  }
+  return Policy { precedence: 40, label: 1 };
+}
+
+// The rows keyed on a leading prefix: 6to4, Teredo and 6bone here, the
+// local prefixes in policy_local, else the default.
+function policy_prefixed(b: u8[]): Policy {
+  if (b[0] == 32u8 && b[1] == 2u8) {
+    return Policy { precedence: 30, label: 2 };
+  }
+  if (b[0] == 32u8 && b[1] == 1u8 && b[2] == 0u8 && b[3] == 0u8) {
+    return Policy { precedence: 5, label: 5 };
+  }
+  if (b[0] == 63u8 && b[1] == 254u8) {
+    return Policy { precedence: 1, label: 12 };
+  }
+  return policy_local(b);
+}
+
+// Unique local (`fc00::/7`) and site-local (`fec0::/10`) addresses, else
+// the default row.
+function policy_local(b: u8[]): Policy {
+  if ((b[0] & 254u8) == 252u8) {
+    return Policy { precedence: 3, label: 13 };
+  }
+  if (b[0] == 254u8 && (b[1] & 192u8) == 192u8) {
+    return Policy { precedence: 1, label: 11 };
+  }
+  return Policy { precedence: 40, label: 1 };
+}
+
+// How many of the address's bytes are zero before the first that is not.
+function leading_zero_bytes(b: u8[]): i32 {
+  var n: i32 = 0;
+  while (n < b.len() && b[n] == 0u8) {
+    n = n + 1;
+  }
+  return n;
+}
+
+// `scope_of(ip)` — the address's scope as RFC 6724 §3 reads it, in the
+// IPv6 multicast scope numbers: link-local is 2 (loopback and
+// `fe80::/10`, `127/8` and `169.254/16`), site-local 5 (`fec0::/10`),
+// global 14, and a multicast address its own nibble.
+pub function scope_of(ip: net.IpAddr): i32 {
+  if (ip.is_v4()) {
+    return scope_v4(ip.bytes());
+  }
+  return scope_v6(ip, ip.bytes());
+}
+
+function scope_v4(b: u8[]): i32 {
+  if (b[0] == 127u8 || b[0] == 169u8 && b[1] == 254u8) {
+    return 2;
+  }
+  if (b[0] == 224u8 && b[1] == 0u8 && b[2] == 0u8) {
+    return 2;
+  }
+  if (b[0] == 239u8) {
+    return 5;
+  }
+  return 14;
+}
+
+function scope_v6(ip: net.IpAddr, b: u8[]): i32 {
+  if (b[0] == 255u8) {
+    return (b[1] & 15u8) as i32;
+  }
+  if (ip.is_loopback() || b[0] == 254u8 && (b[1] & 192u8) == 128u8) {
+    return 2;
+  }
+  if (b[0] == 254u8 && (b[1] & 192u8) == 192u8) {
+    return 5;
+  }
+  return 14;
+}
+
+// `common_prefix_len(a, b)` — how many leading bits two IPv6 addresses
+// share, at most 64 since the interface identifier says nothing about
+// the route; 0 when either is IPv4. The RFC's rule 9 reads both families,
+// but Go does not compare it for IPv4 (go.dev/issue/13283), and this
+// follows Go.
+pub function common_prefix_len(a: net.IpAddr, b: net.IpAddr): i32 {
+  if (a.is_v4() || b.is_v4()) {
+    return 0;
+  }
+  var ab: u8[] = a.bytes();
+  var bb: u8[] = b.bytes();
+  var bits: i32 = 0;
+  var i: i32 = 0;
+  while (i < 8) {
+    var x: i32 = (ab[i] ^ bb[i]) as i32;
+    if (x != 0) {
+      var m: i32 = 128;
+      while (m > 0 && (x & m) == 0) {
+        bits = bits + 1;
+        m = m >> 1;
+      }
+      return bits;
+    }
+    bits = bits + 8;
+    i = i + 1;
+  }
+  return bits;
+}
+
+// `source_for(dst)` — the address the host would send to `dst` from: a
+// datagram socket connected to it, which picks the route without a
+// packet, asked for its local address; `None` when the host has no
+// route, which is what makes `dst` unusable.
+pub function source_for(dst: net.IpAddr): Option[net.IpAddr] {
+  var probe: net.SocketAddr = net.socket_addr(dst, 9);
+  var sock: i32 = 0;
+  match (net.udp_socket(local_for(probe))) {
+    Ok(s) => {
+      sock = s;
+    },
+    Err(_) => {
+      return None;
+    }
+  }
+  var found: Option[net.IpAddr] = None;
+  match (net.set_peer(sock, probe)) {
+    Ok(_) => {
+      match (net.local_addr(sock)) {
+        Ok(local) => {
+          found = Some(local.ip);
+        },
+        Err(_) => {}
+      }
+    },
+    Err(_) => {}
+  }
+  var closed: Result[void, net.NetError] = net.close(sock);
+  return found;
+}
+
+// `order_addresses(dsts, srcs)` — `dsts` in RFC 6724 order, `srcs[i]`
+// being the source the host would use for `dsts[i]` (`None` for no
+// route). A stable sort, so what the rules leave tied keeps its order.
+pub function order_addresses(dsts: net.IpAddr[], srcs: Option[net.IpAddr][]): net.IpAddr[] {
+  var out: net.IpAddr[] = [];
+  var taken: boolean[] = [];
+  var i: i32 = 0;
+  while (i < dsts.len()) {
+    taken = taken.append(false);
+    i = i + 1;
+  }
+  var placed: i32 = 0;
+  while (placed < dsts.len()) {
+    var best: i32 = 0 - 1;
+    i = 0;
+    while (i < dsts.len()) {
+      if (!taken[i] && (best < 0 || prefers(dsts[i], srcs[i], dsts[best], srcs[best]) < 0)) {
+        best = i;
+      }
+      i = i + 1;
+    }
+    taken = taken.with(best, true);
+    out = out.append(dsts[best]);
+    placed = placed + 1;
+  }
+  return out;
+}
+
+// `sort_addresses(dsts)` — `order_addresses` over the source the host
+// would use for each destination.
+pub function sort_addresses(dsts: net.IpAddr[]): net.IpAddr[] {
+  var srcs: Option[net.IpAddr][] = [];
+  var i: i32 = 0;
+  while (i < dsts.len()) {
+    srcs = srcs.append(source_for(dsts[i]));
+    i = i + 1;
+  }
+  return order_addresses(dsts, srcs);
+}
+
+// The rules in order, for two destinations beside their sources:
+// negative when `a` goes first, positive when `b` does, 0 when they tie.
+function prefers(a: net.IpAddr, sa: Option[net.IpAddr], b: net.IpAddr, sb: Option[net.IpAddr]): i32 {
+  match (sa) {
+    Some(src_a) => {
+      match (sb) {
+        Some(src_b) => {
+          return prefers_routed(a, src_a, b, src_b);
+        },
+        None => {
+          return 0 - 1;
+        }
+      }
+    },
+    None => {
+      match (sb) {
+        Some(_) => {
+          return 1;
+        },
+        None => {
+          return 0;
+        }
+      }
+    }
+  }
+  return 0;
+}
+
+// Rules 2, 5, 6, 8 and 9 for two destinations the host can reach.
+function prefers_routed(a: net.IpAddr, sa: net.IpAddr, b: net.IpAddr, sb: net.IpAddr): i32 {
+  var scope_a: i32 = scope_of(a);
+  var scope_b: i32 = scope_of(b);
+  var r: i32 = prefer_true(scope_a == scope_of(sa), scope_b == scope_of(sb));
+  if (r != 0) {
+    return r;
+  }
+  var pa: Policy = policy_of(a);
+  var pb: Policy = policy_of(b);
+  r = prefer_true(pa.label == policy_of(sa).label, pb.label == policy_of(sb).label);
+  if (r != 0) {
+    return r;
+  }
+  if (pa.precedence != pb.precedence) {
+    return pb.precedence - pa.precedence;
+  }
+  if (scope_a != scope_b) {
+    return scope_a - scope_b;
+  }
+  return common_prefix_len(b, sb) - common_prefix_len(a, sa);
+}
+
+// Which of two destinations a rule's test singles out: the one it holds
+// for, when it holds for exactly one.
+function prefer_true(for_a: boolean, for_b: boolean): i32 {
+  if (for_a && !for_b) {
+    return 0 - 1;
+  }
+  if (for_b && !for_a) {
+    return 1;
+  }
+  return 0;
+}
+
 // `system_conf()` — the resolver this machine is configured with: its
 // `/etc/resolv.conf` over its hostname, the defaults when the file is
 // missing.
@@ -1527,10 +2154,9 @@ pub function system_hosts(): HostsEntry[] {
 }
 
 // `resolve(name)` — the addresses of `name` on this machine: an address
-// literal as it is, then the hosts file, then DNS, its A records before
-// its AAAA records. The first source with an address answers; DNS
-// reports its failure when the hosts file has none, `NoData` when both
-// record types are empty.
+// literal as it is, then the hosts file, then DNS. The first source with
+// an address answers, the addresses in RFC 6724 order; DNS reports its
+// failure when the hosts file has none.
 pub function resolve(name: string): Result[net.IpAddr[], DnsError] {
   match (net.ip_parse(name)) {
     Some(ip) => {
@@ -1540,48 +2166,7 @@ pub function resolve(name: string): Result[net.IpAddr[], DnsError] {
   }
   var hosts: net.IpAddr[] = hosts_lookup(system_hosts(), name);
   if (hosts.len() > 0) {
-    return Ok(hosts);
+    return Ok(sort_addresses(hosts));
   }
-  return resolve_dns(system_conf(), name);
-}
-
-// Both record types of `name` from the nameservers, A before AAAA; the A
-// query's failure when neither answers, unless it was only `NoData` and
-// the AAAA query failed otherwise.
-function resolve_dns(conf: ResolvConf, name: string): Result[net.IpAddr[], DnsError] {
-  var out: net.IpAddr[] = [];
-  var failure: DnsError = NoData;
-  match (lookup_a(conf, name)) {
-    Ok(v4) => {
-      out = out.concat(v4);
-    },
-    Err(e) => {
-      failure = e;
-    }
-  }
-  match (lookup_aaaa(conf, name)) {
-    Ok(v6) => {
-      out = out.concat(v6);
-    },
-    Err(e) => {
-      failure = worse_of(failure, e);
-    }
-  }
-  if (out.len() == 0) {
-    return Err(failure);
-  }
-  return Ok(out);
-}
-
-// `e` over `current` when `current` is only `NoData`.
-function worse_of(current: DnsError, e: DnsError): DnsError {
-  match (current) {
-    NoData => {
-      return e;
-    },
-    _ => {
-      return current;
-    }
-  }
-  return current;
+  return lookup_addresses(system_conf(), name);
 }
