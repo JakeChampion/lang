@@ -83,6 +83,9 @@ on:
 # BOTH the `cli` job's -run filter and the `test` shards' -test.list exclusion,
 # so the two cannot drift.
 env:
+  # gotestsum reads this as --jsonfile: the event stream the
+  # failure-annotation step names the failed tests from.
+  GOTESTSUM_JSONFILE: /tmp/gotestsum.jsonl
   ISOLATED_DRIVER_TESTS: "TestSelfHostCLIX86_64|TestSelfHostArm64NativeViaGoBackend|TestSelfHostArm64LinuxBuilds|TestSelfHostArm64DarwinBuilds|TestSelfHostPubVisibilityX86_64|TestSelfHostConstGrammarX86_64|TestSelfHostConstRefCheckX86_64|TestSelfHostConstAggregateArm64PIE|TestSelfHostWasmHostedCompilerMatchesNativeOnNestedArith|TestSelfHostWholeCompilerArm64SingleProcessEmit"
   # OWN_JOB_TESTS: heavy whole-compiler proofs that RUN in CI but in a job of
   # their own, so their minutes do not lengthen whichever shard the LPT
@@ -155,6 +158,9 @@ jobs:
           cd internal/e2eselfhost
           "$RUNNER_TEMP/ci-test-workers" -binary "$BIN" -output "$RUNNER_TEMP/cli-results" -format standard-verbose \
             -weights "$WEIGHTS" -workers 2 -timeout 18m -run "^($ISOLATED_DRIVER_TESTS)\$"
+      - name: name the failed tests as annotations
+        if: failure()
+        run: scripts/ci-annotate-failures "$RUNNER_TEMP"/cli-results/worker-*.jsonl "$GOTESTSUM_JSONFILE"
       # These tests' weights steer the split above and no shard measures them,
       # so their durations ride up to `verify`'s weight audit like a shard's.
       - name: record the isolated tests' durations
@@ -219,6 +225,9 @@ jobs:
           gotestsum --format standard-verbose --raw-command -- \
             go tool test2json -t -p e2eselfhost "$BIN" -test.run '^TestSelfHostWarmStockDriver$' -test.v -test.timeout 32m
           cat "$FERN_DRIVER_SIZE_REPORT"
+      - name: name the failed tests as annotations
+        if: failure()
+        run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"
       - name: check every baselined driver against the baseline
         env:
           FERN_SIZE_REPORT_COMPLETE: "1"
@@ -292,6 +301,9 @@ jobs:
           cd internal/e2eselfhost
           gotestsum --format standard-verbose --raw-command -- \
             go tool test2json -t -p e2eselfhost "$BIN" -test.run '^TestSelfHostPerModuleEmitAllFixpointX86_64$' -test.v -test.timeout 23m
+      - name: name the failed tests as annotations
+        if: failure()
+        run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"
 
   # The byte-identity proof between the two whole-compiler emit routes: 83
   # checked per-process emits on a four-worker pool, each paying the
@@ -315,6 +327,9 @@ jobs:
           cd internal/e2eselfhost
           gotestsum --format standard-verbose --raw-command -- \
             go tool test2json -t -p e2eselfhost "$BIN" -test.run '^TestSelfHostAssumeEligibleByteIdenticalX86_64$' -test.v -test.timeout 28m
+      - name: name the failed tests as annotations
+        if: failure()
+        run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"
 
   wasm-wholecompiler-link:
     name: wasm-wholecompiler-link-x86_64
@@ -335,6 +350,9 @@ jobs:
           cd internal/e2eselfhost
           gotestsum --format standard-verbose --raw-command -- \
             go tool test2json -t -p e2eselfhost "$BIN" -test.run '^TestSelfHostWasmWholeCompilerShardedLink$' -test.v -test.timeout 28m
+      - name: name the failed tests as annotations
+        if: failure()
+        run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"
 
   arm64-permodule-wholecompiler:
     name: arm64-permodule-wholecompiler-x86_64
@@ -355,6 +373,9 @@ jobs:
           cd internal/e2eselfhost
           gotestsum --format standard-verbose --raw-command -- \
             go tool test2json -t -p e2eselfhost "$BIN" -test.run '^TestSelfHostModloadPerModuleWholeCompilerArm64$' -test.v -test.timeout 33m
+      - name: name the failed tests as annotations
+        if: failure()
+        run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"
 
   # The longest single test in the suite: gen1 (fern.fern compiled by the
   # native-built driver through the semantic lowering) must compile the tree
@@ -378,6 +399,9 @@ jobs:
           cd internal/e2eselfhost
           gotestsum --format standard-verbose --raw-command -- \
             go tool test2json -t -p e2eselfhost "$BIN" -test.run '^TestSelfHostSemanticWholeCompilerX86_64$' -test.v -test.timeout 43m
+      - name: name the failed tests as annotations
+        if: failure()
+        run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"
 
   # THE FIXTURE CORPUS THROUGH THE SELF-HOST COMPILER, one leg per target.
   fixtures-selfhost:
@@ -543,6 +567,9 @@ jobs:
             ( cd internal/e2e && "$WORKERS" -binary "$E2E_BIN" -output "$RUNNER_TEMP/shard-residual" -format standard-verbose \
                 -weights "$WEIGHTS" -workers "$(workers ${#SEL_RES[@]})" -timeout 28m -run "$PAT" )
           fi
+      - name: name the failed tests as annotations
+        if: failure()
+        run: scripts/ci-annotate-failures "$RUNNER_TEMP"/shard-selfhost/worker-*.jsonl "$RUNNER_TEMP"/shard-residual/worker-*.jsonl
       # The outcome marker plus the per-test durations `verify` audits the
       # weights against. `!cancelled()` so a failed run step still records
       # `failure` rather than leaving the marker absent.
