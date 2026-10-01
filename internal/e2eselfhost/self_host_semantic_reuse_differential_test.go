@@ -340,7 +340,7 @@ function main(): i32 {
     while (i < 6) { a = add(a, "x"); i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return a.n * 10 + a.names.len() + a.tag.len();
-}`, 189, 1, 0, 3, 9, false, false},
+}`, 189, 1, 3, 9, false, false},
 
 	// A field carried over into its own slot AND copied into another. The two
 	// are distinct reads of slot 0: the carried-over one is kept in place, and
