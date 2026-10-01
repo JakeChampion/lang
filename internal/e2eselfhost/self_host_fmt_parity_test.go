@@ -2,6 +2,7 @@ package e2eselfhost
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1961,7 +1962,7 @@ func TestSelfHostFmtCorpusParityX86_64(t *testing.T) {
 		diverged[rel] = true
 		if _, known := selfHostFmtKnownDivergences[rel]; !known {
 			t.Errorf("%s: self-host -fmt differs from native and is not a known divergence\n%s",
-				rel, firstDiffLines(want, string(got)))
+				rel, firstDiffLines("native", want, "self-host", string(got)))
 		}
 	}
 	for rel, why := range selfHostFmtKnownDivergences {
@@ -2021,7 +2022,7 @@ func TestSelfHostFmtDiffCorpusParityX86_64(t *testing.T) {
 			}
 		}
 		if got := string(out); got != want {
-			t.Errorf("%s: self-host -fmt -d differs from native's\n%s", rel, firstDiffLines(want, got))
+			t.Errorf("%s: self-host -fmt -d differs from native's\n%s", rel, firstDiffLines("native", want, "self-host", got))
 		}
 	}
 }
@@ -2077,9 +2078,10 @@ func corpusFernFiles(t *testing.T, root string) []string {
 	return out
 }
 
-// firstDiffLines reports the first differing line of two formatter outputs, with
-// its neighbours — a whole 50 kloc module is not a test failure message.
-func firstDiffLines(want, got string) string {
+// firstDiffLines reports the first differing line of two outputs, with its
+// neighbours, under each side's name — a whole 50 kloc module is not a test
+// failure message.
+func firstDiffLines(wantName, want, gotName, got string) string {
 	w := strings.Split(want, "\n")
 	g := strings.Split(got, "\n")
 	for i := 0; i < len(w) && i < len(g); i++ {
@@ -2092,11 +2094,11 @@ func firstDiffLines(want, got string) string {
 		}
 		hi := i + 3
 		var b strings.Builder
-		b.WriteString("--- native ---\n")
+		fmt.Fprintf(&b, "--- %s, first difference at line %d ---\n", wantName, i+1)
 		for j := lo; j < hi && j < len(w); j++ {
 			b.WriteString(w[j] + "\n")
 		}
-		b.WriteString("--- self-host ---\n")
+		fmt.Fprintf(&b, "--- %s ---\n", gotName)
 		for j := lo; j < hi && j < len(g); j++ {
 			b.WriteString(g[j] + "\n")
 		}
