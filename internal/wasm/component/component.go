@@ -1659,6 +1659,7 @@ func WasiSocketsUdpInstanceTypeBody(networkT, errorCodeT, ipSockAddrT, pollableT
 	method("[method]outgoing-datagram-stream.send", []string{"self", "datagrams"}, []byte{byte(bOut), byte(listDatagram)}, byte(resU64))
 	method("[method]outgoing-datagram-stream.subscribe", []string{"self"}, []byte{byte(bOut)}, byte(ownPoll))
 	method("[method]udp-socket.local-address", []string{"self"}, []byte{byte(bUdp)}, byte(resAddr))
+	method("[method]udp-socket.remote-address", []string{"self"}, []byte{byte(bUdp)}, byte(resAddr))
 	method("[method]incoming-datagram-stream.receive", []string{"self", "max-results"}, []byte{byte(bIn), CValtypeU64}, byte(resListIn))
 	method("[method]incoming-datagram-stream.subscribe", []string{"self"}, []byte{byte(bIn)}, byte(ownPoll))
 

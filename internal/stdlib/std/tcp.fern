@@ -194,12 +194,14 @@ function __serve_listener(port: i32, opts: ServeOptions): i32 {
 // address and the error's text on stderr, and 98, the exit code a serve
 // entry answers for it.
 function __listen_failed(port: i32, r: i32): i32 {
-  eprint("serve: cannot listen on 0.0.0.0:" + int.int_to_string(port) + ": " + net.error_from_errno(r).message());
+  eprint("serve: cannot listen on port " + int.int_to_string(port) + ": " + net.error_from_errno(r).message());
   return 98;
 }
 
 // __listener_of(port, opts) — the listener handed in through LISTEN_FDS,
-// or a fresh one on `port`.
+// or a fresh one on `port`: on `::` for both families, or on `0.0.0.0`
+// where the host has no IPv6 (the family refused, or the address not
+// there to bind) and on wasm, whose `::` listener would be IPv6-only.
 function __listener_of(port: i32, opts: ServeOptions): i32 {
   match (env("LISTEN_FDS")) {
     Some(n) => {
@@ -214,7 +216,28 @@ function __listener_of(port: i32, opts: ServeOptions): i32 {
     },
     None => {}
   }
+  if (target_os() != "wasi") {
+    var both: i32 = tcp_listen_with(__every_v6(), port, opts.backlog, opts.reuse_port);
+    if (both >= 0 || !__no_v6(both)) {
+      return both;
+    }
+  }
   return tcp_listen_with(__every_v4(), port, opts.backlog, opts.reuse_port);
+}
+
+// __no_v6(r) — a `::` listener refused because the host has no IPv6:
+// -EAFNOSUPPORT from socket(2), or -EADDRNOTAVAIL from a bind where the
+// family exists but is switched off.
+function __no_v6(r: i32): boolean {
+  var e: net.NetError = net.error_from_errno(r);
+  return e.eq(net.AddrNotAvailable) || r == 0 - __eafnosupport();
+}
+
+function __eafnosupport(): i32 {
+  if (target_os() == "darwin") {
+    return 47;
+  }
+  return 97;
 }
 
 // tcp_serve_deadline(port, handler, recv_deadline) — `tcp_serve`
@@ -334,9 +357,13 @@ pub function tcp_recv_deadline(fd: i32, max: i32, deadline: Duration): Option[u8
 // __eagain() — EAGAIN as this target numbers it: what a non-blocking read
 // answers while nothing is queued. wasm's reads never block and use the
 // same answer.
-// 0.0.0.0: the serve loops listen on every IPv4 interface.
+// 0.0.0.0 and ::, the unspecified address of each family.
 function __every_v4(): u8[] {
   return [0u8, 0u8, 0u8, 0u8];
+}
+
+function __every_v6(): u8[] {
+  return [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8];
 }
 
 function __eagain(): i32 {

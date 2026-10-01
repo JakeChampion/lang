@@ -4,7 +4,7 @@ package interp
 
 import "syscall"
 
-// The socket-option names and the local-address query the socket builtins
+// The socket-option names and the address queries the socket builtins
 // use, which the js/wasm syscall package the playground is built against
 // does not define (sockopt_other.go).
 const (
@@ -15,6 +15,10 @@ const (
 
 func getsockname(fd int) (syscall.Sockaddr, error) {
 	return syscall.Getsockname(fd)
+}
+
+func getpeername(fd int) (syscall.Sockaddr, error) {
+	return syscall.Getpeername(fd)
 }
 
 // connectResult is how a connect under way on fd ended: nil once a peer is

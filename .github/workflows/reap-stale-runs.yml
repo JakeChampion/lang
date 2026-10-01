@@ -56,6 +56,7 @@ on:
 
 permissions:
   actions: write
+  contents: read
   pull-requests: read
 
 # NO CONCURRENCY GROUP, deliberately — and this is the third time today that
@@ -120,14 +121,75 @@ jobs:
             core.info(`${candidates.size} pull_request run(s) not yet finished`);
             await snapshot();
 
+            // A CI run at the merged head of a pull request whose merge pushed
+            // that exact tree, with its suite under way, is the run the main
+            // validation is waiting for (ci.yml's lane selector adopts it
+            // instead of re-running its lanes). Spared for 45 minutes after
+            // the merge, which outlasts that wait; cancel-on-merge.yml spares
+            // the same run on the close event.
+            const treeOf = async (sha) =>
+              (await github.rest.git.getCommit({ owner, repo, commit_sha: sha })).data.tree.sha;
+            const adoptedByMain = async (run) => {
+              if (run.path !== ".github/workflows/ci.yml") return "";
+              const prs = (await github.rest.repos.listPullRequestsAssociatedWithCommit({
+                owner, repo, commit_sha: run.head_sha,
+              })).data.filter((p) => p.merged_at && p.base.ref === "main" && p.merge_commit_sha && p.head.sha === run.head_sha);
+              for (const p of prs) {
+                const age = Math.round((Date.now() - Date.parse(p.merged_at)) / 60000);
+                if (age > 45) continue;
+                if ((await treeOf(p.merge_commit_sha)) !== (await treeOf(run.head_sha))) continue;
+                const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
+                  owner, repo, run_id: run.id, filter: "latest", per_page: 100,
+                });
+                if (jobs.some((j) => j.name.startsWith("Full suite / "))) {
+                  return `#${p.number} merged this exact tree ${age} min ago and the main validation adopts the run`;
+                }
+              }
+              return "";
+            };
             const doomed = [];
             for (const run of candidates.values()) {
               const live = open.get(run.head_branch);
+              let why = "";
               if (!live) {
-                doomed.push([run, "its pull request is closed"]);
+                why = "its pull request is closed";
               } else if (!live.has(run.head_sha)) {
-                doomed.push([run, "superseded by a later push"]);
+                why = "superseded by a later push";
               }
+              if (!why) continue;
+              let adopted = "";
+              try {
+                adopted = await adoptedByMain(run);
+              } catch (e) {
+                core.warning(`could not tell whether run ${run.id} is main's evidence: ${e.message}`);
+              }
+              if (adopted) {
+                core.info(`keeping ${run.name} @ ${run.head_sha.slice(0, 8)}: ${adopted}`);
+                continue;
+              }
+              doomed.push([run, why]);
+            }
+            // Pullfrog reviews waiting on a pull request that has since closed.
+            // They are dispatched on main and named for the PR, so the
+            // pull_request listing above never sees them. A review that starts
+            // after its PR closed is read by nobody.
+            try {
+              const state = new Map();
+              for (const status of ["requested", "waiting", "pending", "queued", "in_progress"]) {
+                for (const run of await github.paginate(github.rest.actions.listWorkflowRuns, {
+                  owner, repo, workflow_id: "pullfrog.yml", status, per_page: 100,
+                })) {
+                  const m = /#(\d+)/.exec(run.display_title || "");
+                  if (!m) continue;
+                  if (!state.has(m[1])) {
+                    const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: Number(m[1]) });
+                    state.set(m[1], pr.state);
+                  }
+                  if (state.get(m[1]) === "closed") doomed.push([run, `pull request #${m[1]} is closed`]);
+                }
+              }
+            } catch (e) {
+              core.warning(`could not sweep the Pullfrog reviews: ${e.message}`);
             }
 
             let cancelled = 0;
@@ -148,7 +210,7 @@ jobs:
             }
 
             core.notice(
-              `reaped ${cancelled} of ${candidates.size} unfinished pull_request run(s)`,
+              `reaped ${cancelled} of ${doomed.length} doomed run(s) among ${candidates.size} unfinished pull_request run(s) and the Pullfrog queue`,
             );
             const summary = core.summary.addHeading("Reap stale runs", 3);
             if (reaped.length) {

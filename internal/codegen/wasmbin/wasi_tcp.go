@@ -1066,8 +1066,9 @@ func buildTcpSendfileBody(_ map[string]uint32) []byte {
 
 // buildTcpSocketCtlBody assembles __fern_tcp_socket_ctl over a connection
 // or listener record. op 2 (keep-alive), op 4 (shutdown), op 7 (the
-// peer's address, through remote-address) and op 9 (the local address,
-// through local-address) are the controls wasi:sockets 0.2 has; op 1 (no-delay), op 3 (non-blocking) and op 6 (the send queue)
+// peer's address as a key, through remote-address), op 9 (the local
+// address, through local-address) and op 10 (the peer's, through
+// remote-address) are the controls wasi:sockets 0.2 has; op 1 (no-delay), op 3 (non-blocking) and op 6 (the send queue)
 // have none and answer -ENOTSUP (58), so a caller learns the host owns
 // Nagle, the blocking mode and the queue rather than believing it set or
 // read them. Any other op is -EINVAL (28).
@@ -1208,16 +1209,17 @@ func buildTcpSocketCtlBody(idxs map[string]uint32) []byte {
 	}
 	body = inst.InstEnd(body)
 
-	// op 9: the local address as 16-bit groups, through local-address
-	// (the udp method for a datagram record), in the 36-byte area op 7
-	// reads: arg 0..7 is the group in network order (an ipv4 address
-	// fills 0 and 1 from its four bytes at +10, the rest are 0; an ipv6
-	// group is the u16 at +16 + 2*arg), 8 the family as 4 or 6; -EINVAL
-	// (28) outside that range.
-	body = opIs(body, 9)
-	{
+	// op 9: the local address, through local-address (the udp method for
+	// a datagram record), and op 10: the peer's, through remote-address,
+	// each as 16-bit groups in the 36-byte area op 7 reads: arg 0..7 is
+	// the group in network order (an ipv4 address fills 0 and 1 from its
+	// four bytes at +10, the rest are 0; an ipv6 group is the u16 at +16 +
+	// 2*arg), 8 the family as 4 or 6, 9 the port at +8; -EINVAL (28)
+	// outside that range.
+	nameGroups := func(body []byte, op int32, tcpMethod, udpMethod string) []byte {
+		body = opIs(body, op)
 		body = inst.InstLocalGet(body, 2)
-		body = inst.InstI32Const(body, 8)
+		body = inst.InstI32Const(body, 9)
 		body = numeric.InstI32GtU(body)
 		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 		body = inst.InstI32Const(body, -28)
@@ -1232,15 +1234,15 @@ func buildTcpSocketCtlBody(idxs map[string]uint32) []byte {
 			body = inst.InstLocalGet(body, retptr)
 			return inst.InstCall(body, method)
 		}
-		if udpLocalAddress, ok := idxs["wasi_sockets_udp_local_address"]; ok {
+		if udpAddress, ok := idxs[udpMethod]; ok {
 			body = emitIsUdpRecord(body, 0)
 			body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-			body = query(body, udpLocalAddress)
+			body = query(body, udpAddress)
 			body = inst.InstElse(body)
-			body = query(body, idxs["wasi_sockets_tcp_local_address"])
+			body = query(body, idxs[tcpMethod])
 			body = inst.InstEnd(body)
 		} else {
-			body = query(body, idxs["wasi_sockets_tcp_local_address"])
+			body = query(body, idxs[tcpMethod])
 		}
 		body = inst.InstLocalGet(body, retptr)
 		body = memory.InstI32Load8U(body, 0, 0)
@@ -1257,6 +1259,16 @@ func buildTcpSocketCtlBody(idxs map[string]uint32) []byte {
 			body = numeric.InstI32Shl(body)
 			return numeric.InstI32Add(body)
 		}
+		body = inst.InstLocalGet(body, 2)
+		body = inst.InstI32Const(body, 9)
+		body = numeric.InstI32Eq(body)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		{
+			body = inst.InstLocalGet(body, retptr)
+			body = memory.InstI32Load16U(body, 1, 8)
+			body = inst.InstLocalSet(body, key)
+		}
+		body = inst.InstElse(body)
 		body = inst.InstLocalGet(body, 2)
 		body = inst.InstI32Const(body, 8)
 		body = numeric.InstI32Eq(body)
@@ -1297,13 +1309,16 @@ func buildTcpSocketCtlBody(idxs map[string]uint32) []byte {
 			body = inst.InstEnd(body)
 		}
 		body = inst.InstEnd(body)
+		body = inst.InstEnd(body)
 		body = inst.InstLocalGet(body, retptr)
 		body = inst.InstI32Const(body, 36)
 		body = inst.InstCall(body, idxs["__free"])
 		body = inst.InstLocalGet(body, key)
 		body = inst.InstReturn(body)
+		return inst.InstEnd(body)
 	}
-	body = inst.InstEnd(body)
+	body = nameGroups(body, 9, "wasi_sockets_tcp_local_address", "wasi_sockets_udp_local_address")
+	body = nameGroups(body, 10, "wasi_sockets_tcp_remote_address", "wasi_sockets_udp_remote_address")
 
 	// A datagram record (wasi_udp.go) has neither control either.
 	body = emitIsUdpRecord(body, 0)

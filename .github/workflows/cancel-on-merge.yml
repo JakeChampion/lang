@@ -10,7 +10,8 @@ name: Cancel superseded runs
 #
 # This reaps them: on PR close, cancel every run for the PR's head
 # branch that has not reached a terminal state — EXCEPT the ones a
-# still-open PR is relying on. A branch here routinely outlives the PR
+# still-open PR is relying on, and except the one run the main
+# validation adopts (below). The PR's queued Pullfrog reviews go too. A branch here routinely outlives the PR
 # that first used it (successive PRs get opened from the same
 # `claude/…` branch), and every PR's runs are filed under that one
 # branch name, so a blind branch-scoped cancel reaps the live PR's CI
@@ -31,6 +32,7 @@ on:
 
 permissions:
   actions: write
+  contents: read
   pull-requests: read
 
 concurrency:
@@ -82,11 +84,64 @@ jobs:
               core.info(`keeping runs at ${sha.slice(0, 8)} — PR #${number} is still open on ${branch}`);
             }
 
+            // A MERGED pull request's CI run at the merged head is the main
+            // validation's evidence when the merge pushed that head's exact
+            // tree (the ruleset keeps branches level, so it usually did) and
+            // the run's suite is already under way: ci.yml's lane selector
+            // waits for that run on the main push and skips every lane it
+            // passes, so cancelling it would hand main the whole suite from
+            // zero. A run whose suite is still queued is cancelled as before;
+            // main alone is faster than the queue.
+            const pr = context.payload.pull_request;
+            const spared = new Set();
+            if (pr?.merged && pr.merge_commit_sha) {
+              try {
+                const treeOf = async (sha) =>
+                  (await github.rest.git.getCommit({ owner, repo, commit_sha: sha })).data.tree.sha;
+                if ((await treeOf(pr.merge_commit_sha)) === (await treeOf(pr.head.sha))) {
+                  for (const run of candidates.values()) {
+                    if (run.head_sha !== pr.head.sha || run.event !== "pull_request" ||
+                        run.path !== ".github/workflows/ci.yml") continue;
+                    const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
+                      owner, repo, run_id: run.id, filter: "latest", per_page: 100,
+                    });
+                    if (jobs.some((j) => j.name.startsWith("Full suite / "))) {
+                      spared.add(run.id);
+                      core.info(`keeping CI run ${run.id}: #${pr.number} merged this exact tree with its suite ` +
+                        `under way, so the main validation adopts it`);
+                    }
+                  }
+                }
+              } catch (e) {
+                core.warning(`could not tell whether #${pr.number}'s run is main's evidence: ${e.message}`);
+              }
+            }
+
+            // The PR's Pullfrog reviews still waiting their turn. They are
+            // dispatched on main, so the branch listing above never sees them;
+            // they are found by the PR number in the run name. A review that
+            // starts after the PR closed is read by nobody — 43 of 60 sampled
+            // reviews started after their PR had merged (docs/CI-PERFORMANCE.md).
+            if (pr) {
+              const names = new RegExp(`#${pr.number}(?!\\d)`);
+              try {
+                for (const status of ["requested", "waiting", "pending", "queued", "in_progress"]) {
+                  for (const run of await github.paginate(github.rest.actions.listWorkflowRuns, {
+                    owner, repo, workflow_id: "pullfrog.yml", status, per_page: 100,
+                  })) {
+                    if (names.test(run.display_title || "")) candidates.set(run.id, run);
+                  }
+                }
+              } catch (e) {
+                core.warning(`could not list the Pullfrog reviews of #${pr.number}: ${e.message}`);
+              }
+            }
+
             let cancelled = 0;
             let kept = 0;
             let denied = false;
             for (const run of candidates.values()) {
-              if (keep.has(run.head_sha)) {
+              if (keep.has(run.head_sha) || spared.has(run.id)) {
                 kept++;
                 continue;
               }
@@ -105,7 +160,7 @@ jobs:
                 core.warning(`could not cancel ${run.id}: ${e.message}`);
               }
             }
-            core.notice(`cancelled ${cancelled} run(s) for ${branch}, kept ${kept} belonging to a still-open PR`);
+            core.notice(`cancelled ${cancelled} run(s) for ${branch}, kept ${kept} (a still-open PR's, or the main validation's evidence)`);
             if (denied) {
               core.setFailed(
                 "the token may not cancel runs — a fork pull request gets a read-only " +
