@@ -19,6 +19,11 @@ on:
   workflow_call:
   workflow_dispatch:
 
+env:
+  # gotestsum reads this as --jsonfile: the event stream the
+  # failure-annotation step names the failed tests from.
+  GOTESTSUM_JSONFILE: /tmp/gotestsum.jsonl
+
 jobs:
   # Two shards of equal count (scripts/shard-tests with no weights file): one
   # job of the ^TestX86_64 set in two workers was 13.3 minutes, the longest
@@ -107,6 +112,9 @@ jobs:
         env:
           FERN_NATIVE_ASM: "1"
         run: gotestsum --format pkgname-and-test-fails -- -run '^TestFernFixtures$' ./internal/e2e/
+      - name: name the failed tests as annotations
+        if: failure()
+        run: scripts/ci-annotate-failures "$RUNNER_TEMP"/x86_64-test-results/worker-*.jsonl "$GOTESTSUM_JSONFILE"
 
   seccomp-corpus-x86_64:
     # #6071's over-tightness gate at corpus scale, and the precondition for
@@ -125,3 +133,6 @@ jobs:
         env:
           RUN_SECCOMP_CORPUS: "1"
         run: gotestsum --format pkgname-and-test-fails -- -run '^TestSeccompFixtureCorpus$' ./internal/e2e/ -timeout 30m
+      - name: name the failed tests as annotations
+        if: failure()
+        run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"

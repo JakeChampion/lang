@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+# ci-annotate-failures JSONFILE... — name each failed test as a GitHub Actions
+# error annotation, with the tail of its output.
+#
+# WHY. A failed job's log is the only place the failing test's name and output
+# live, and a log is not reachable from everywhere a failure is read: the
+# Checks tab shows annotations, not logs; the REST API serves annotations but
+# redirects logs to blob storage some networks refuse; and a run cancelled by
+# the failure reaper keeps its annotations where its log scrolls. One
+# `::error` line per failed test puts the name and the last lines of output
+# in all of those places. Reads the test2json event streams gotestsum writes
+# with --jsonfile (the worker-*.jsonl files cmd/ci-test-workers leaves behind
+# are the same format). GitHub keeps ten error annotations per step, so the
+# first ten failures are annotated and the rest counted.
+#
+# Prints nothing and exits 0 when no test failed; the step that runs it is
+# `if: failure()` so a green step costs no process.
+set -euo pipefail
+
+if [ "$#" -eq 0 ]; then
+  echo "usage: ci-annotate-failures JSONFILE..." >&2
+  exit 2
+fi
+
+# A step that runs on any failure may run before the tests wrote a stream;
+# an argument naming no file is skipped, not an error.
+FILES=()
+for f in "$@"; do
+  if [ -f "$f" ]; then FILES+=("$f"); fi
+done
+if [ ${#FILES[@]} -eq 0 ]; then
+  echo "no test event streams to annotate" >&2
+  exit 0
+fi
+
+# A test's output events arrive before its fail event, so the output is
+# gathered per (package, test) and flushed when the fail arrives. Only lines
+# a human reads are kept: the harness's own `=== RUN` / `--- FAIL` framing is
+# dropped, and the message is cut to the last 24 lines and ~1,500 bytes, the
+# size an annotation displays without truncating the beginning.
+exec awk '
+  function strip(s) { sub(/\\n$/, "", s); return s }
+  function unescape(s,   out) {
+    out = s
+    gsub(/\\t/, "\t", out); gsub(/\\"/, "\"", out); gsub(/\\\\/, "\\", out)
+    return out
+  }
+  function field(line, key,   re, m) {
+    re = "\"" key "\":\"(([^\"\\\\]|\\\\.)*)\""
+    if (match(line, re)) { m = substr(line, RSTART, RLENGTH); sub("^\"" key "\":\"", "", m); sub("\"$", "", m); return m }
+    return ""
+  }
+  {
+    action = field($0, "Action"); if (action == "") next
+    pkg = field($0, "Package"); test = field($0, "Test")
+    if (test == "") next
+    key = pkg "\t" test
+    if (action == "output") {
+      line = unescape(strip(field($0, "Output")))
+      if (line ~ /^(=== (RUN|PAUSE|CONT)|--- (PASS|FAIL|SKIP)|    --- (PASS|FAIL|SKIP))/) next
+      n[key]++; out[key, n[key]] = line
+      if (n[key] > 24) { delete out[key, n[key] - 24] }
+      next
+    }
+    if (action != "fail") next
+    # A parent whose subtests failed fails with them and says nothing of its
+    # own: the subtests carry the message, so the parent is not a row.
+    parent = test; if (sub(/\/[^\/]*$/, "", parent)) childfailed[pkg "\t" parent] = 1
+    if ((key in childfailed) && n[key] == 0) next
+    failed++
+    if (failed > 10) next
+    msg = ""
+    for (i = (n[key] > 24 ? n[key] - 23 : 1); i <= n[key]; i++) {
+      if ((key, i) in out) msg = msg out[key, i] "%0A"
+    }
+    if (length(msg) > 1500) msg = "…" substr(msg, length(msg) - 1499)
+    # A message is one line: %0A is the newline GitHub decodes in annotations.
+    gsub(/::/, ": :", msg)
+    short = pkg; sub(/.*\//, "", short)
+    printf "::error title=FAIL %s.%s::%s\n", short, test, msg
+  }
+  END {
+    if (failed > 10) printf "::error title=%d tests failed::%d failed in all; the first 10 are annotated, the log has the rest\n", failed, failed
+  }
+' "${FILES[@]}"

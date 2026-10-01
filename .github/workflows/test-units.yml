@@ -32,6 +32,11 @@ on:
   workflow_call:
   workflow_dispatch:
 
+env:
+  # gotestsum reads this as --jsonfile: the event stream the
+  # failure-annotation step names the failed tests from.
+  GOTESTSUM_JSONFILE: /tmp/gotestsum.jsonl
+
 jobs:
   test:
     strategy:
@@ -198,6 +203,9 @@ jobs:
           # shellcheck disable=SC2046 # the package list is deliberately word-split
           gotestsum --format pkgname-and-test-fails -- -timeout 25m \
             $(scripts/unit-test-packages)
+      - name: name the failed tests as annotations
+        if: failure()
+        run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"
       # PUBLISH the cache every other job restores. Main only: a save per PR
       # job would be ~85 multi-gigabyte writes per push against a 10 GB
       # repository budget, which is the failure mode that made the previous

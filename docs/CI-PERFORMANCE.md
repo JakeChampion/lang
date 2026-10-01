@@ -954,6 +954,22 @@ them; `check-sources` and `fern-test-cache` keep their steps, the first
 because it is the long one and the second because its probe edits a source
 file while it runs.
 
+### A failed test is readable without its log
+
+Every test job now ends its test steps with `scripts/ci-annotate-failures`
+on the test2json streams gotestsum writes (`GOTESTSUM_JSONFILE`, set once
+per workflow) and the `worker-*.jsonl` files `cmd/ci-test-workers` leaves
+behind. It runs only after a failure and prints one `::error` annotation
+per failed test, with the last lines of that test's output, up to the ten
+GitHub keeps per step. The annotations are what the Checks tab shows and
+what the REST API serves without a redirect to blob storage, so a failure
+is readable from the places a job log is not: a cancelled run after the
+failure reaper, a network that refuses the log redirect, a phone. Before
+this, the coreutils lane's red on main could be seen but not read from
+here, and root-causing it meant reproducing locally against a different
+coreutils oracle. `TestTestRunningJobsAnnotateTheirFailures` pins one step
+per test-running job, after its last test step.
+
 ### Next measurements
 
 Read the `selfhost-driver-cache` step's line on the first shards after
