@@ -43,8 +43,12 @@ const suiteYml = fs.readFileSync(path.join(root, ".github/workflows/ci-suite.yml
 // a main push reads about the pull request it merged: the pushed tree, the
 // associated PRs with their head trees, and each head's successful runs and
 // their jobs. `proofThrows` makes the first of those calls fail.
-async function decide({ event = "pull_request", files = [], throwOn = false, lanes = table, proof = null, proofThrows = false } = {}) {
+async function decide({ event = "pull_request", files = [], throwOn = false, lanes = table, proof = null, proofThrows = false, waitMinutes = 30 } = {}) {
   process.env.LANES = typeof lanes === "string" ? lanes : JSON.stringify(lanes);
+  // A poll is a millisecond here; `proof.poll` is the status each successive
+  // poll of the in-flight run reports.
+  process.env.CI_CHANGES_POLL_MS = "1";
+  process.env.CI_CHANGES_WAIT_MINUTES = String(waitMinutes);
   const outputs = {}, warnings = [], failed = [], infos = [];
   let listings = 0;
   const core = {
@@ -63,6 +67,7 @@ async function decide({ event = "pull_request", files = [], throwOn = false, lan
       : { before: "a".repeat(40), after: "b".repeat(40) },
   };
   const p = proof || { tree: "t", prs: [], runs: {}, jobs: {} };
+  const poll = [...(p.poll || [])];
   const trees = { [context.sha]: p.tree, ...Object.fromEntries(p.prs.map((pr) => [pr.head.sha, pr.tree])) };
   const github = {
     rest: {
@@ -88,6 +93,7 @@ async function decide({ event = "pull_request", files = [], throwOn = false, lan
           }
           return { data: { workflow_runs: p.runs[head_sha] || [] } };
         },
+        getWorkflowRun: async ({ run_id }) => ({ data: { id: run_id, status: poll.shift() || "completed" } }),
         listJobsForWorkflowRun: "listJobs",
       },
     },
@@ -162,9 +168,10 @@ const laneKeys = Object.keys(JSON.parse(table));
 check("every lane has a Full suite name to prove it by", laneKeys.filter((l) => !display[l]), []);
 const jobsFor = (keys, conclusion = "success") => keys.map((l) => ({ name: `Full suite / ${display[l]} / job`, conclusion }));
 const merged = (tree) => ({ number: 7, merged_at: "2026-09-23T00:00:00Z", base: { ref: "main" }, head: { sha: "h".repeat(40) }, tree });
-const proofOf = ({ tree = "t", headTree = "t", jobs = jobsFor(laneKeys), prs } = {}) => ({
-  tree, prs: prs || [merged(headTree)], runs: { ["h".repeat(40)]: [{ id: 99 }] }, jobs: { 99: jobs },
+const proofOf = ({ tree = "t", headTree = "t", jobs = jobsFor(laneKeys), prs, status = "completed", poll } = {}) => ({
+  tree, prs: prs || [merged(headTree)], runs: { ["h".repeat(40)]: [{ id: 99, status }] }, jobs: { 99: jobs }, poll,
 });
+const trimmedTo = (r) => Object.keys(r.lanes).filter((l) => r.lanes[l]);
 r = await decide({ event: "push", proof: proofOf() });
 check("identical tree: every passed lane skips, perf runs",
   Object.keys(r.lanes).filter((l) => r.lanes[l]), ["perf"]);
@@ -175,8 +182,27 @@ r = await decide({ event: "push", proof: proofOf({ prs: [] }) });
 check("no associated PR: every lane runs, and says why",
   [all(r), r.infos.some((m) => m.includes("no merged pull request is associated"))], [true, true]);
 r = await decide({ event: "push", proof: { ...proofOf(), runs: {} } });
-check("no successful PR run: every lane runs, and says why",
-  [all(r), r.infos.some((m) => m.includes("#7's head has no successful CI run"))], [true, true]);
+check("no PR run: every lane runs, and says why",
+  [all(r), r.infos.some((m) => m.includes("#7's head has no CI run"))], [true, true]);
+// The run is read lane by lane whatever it concluded as a whole: a lane red
+// on it runs here, the lanes green on it do not.
+r = await decide({ event: "push", proof: proofOf({ jobs: [...jobsFor(laneKeys.filter((l) => l !== "test-units")), ...jobsFor(["test-units"], "failure")] }) });
+check("a lane red on the PR run runs, the lanes green on it skip", [r.lanes["test-units"], r.lanes["test-coreutils"]], [true, false]);
+// The run is adopted while in flight: waited for once its suite is under
+// way, not waited for while the suite is still queued, and given up on when
+// the wait budget runs out.
+r = await decide({ event: "push", proof: proofOf({ status: "in_progress", poll: ["in_progress", "in_progress", "completed"] }) });
+check("in-flight run with its suite under way: waited for, then every passed lane skips",
+  [trimmedTo(r), r.infos.some((m) => m.includes("is in flight at this exact tree: waiting up to 30 min")), r.infos.some((m) => m.includes("at this exact tree (waited"))],
+  [["perf"], true, true]);
+r = await decide({ event: "push", proof: proofOf({ status: "in_progress", jobs: [{ name: "Lint / lint", conclusion: null }], poll: ["completed"] }) });
+check("in-flight run whose suite has not started: every lane runs, and says why",
+  [all(r), r.infos.some((m) => m.includes("#7's run 99 has not started its suite"))], [true, true]);
+r = await decide({ event: "push", waitMinutes: 0, proof: proofOf({ status: "in_progress", poll: ["in_progress"] }) });
+check("wait budget spent: every lane runs, and says why",
+  [all(r), r.infos.some((m) => m.includes("#7's run 99 did not finish within 0 min"))], [true, true]);
+r = await decide({ event: "push", proof: { ...proofOf(), runs: { ["h".repeat(40)]: [{ id: 100, status: "completed" }, { id: 99, status: "completed" }] }, jobs: { 100: jobsFor(laneKeys, "failure"), 99: jobsFor(laneKeys) } } });
+check("the newest run at the head is the one read", all(r), true);
 r = await decide({ event: "push", proof: proofOf({ jobs: jobsFor(laneKeys.filter((l) => l !== "macos")) }) });
 check("a lane the PR run did not run still runs on main", [r.lanes.macos, r.lanes["test-units"]], [true, false]);
 r = await decide({ event: "push", proof: proofOf({ jobs: [...jobsFor(laneKeys), { name: `Full suite / ${display["test-units"]} / extra`, conclusion: "skipped" }] }) });

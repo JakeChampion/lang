@@ -45,4 +45,27 @@ func TestCancelOnMergeReapsSafely(t *testing.T) {
 			t.Errorf("status %q is never swept: runs in it outlive the PR that queued them", status)
 		}
 	}
+
+	// The one run on a merged PR's branch that is NOT reaped: its CI run at the
+	// merged head, when the merge pushed that exact tree and the run's suite is
+	// under way. ci.yml's lane selector waits for that run on the main push and
+	// skips every lane it passes, so reaping it hands main the whole suite from
+	// zero. The three conditions are each a needle, because dropping any one
+	// either reaps main's evidence or spares a run testing a tree main never got.
+	for _, want := range []struct{ needle, why string }{
+		{"pr.merge_commit_sha", "the merge commit's tree is what decides whether the run tested what landed"},
+		{`run.path !== ".github/workflows/ci.yml"`, "only the CI run is main's evidence; the branch's other runs are reaped as before"},
+		{`j.name.startsWith("Full suite / ")`, "a run whose suite is still queued is reaped: main alone is faster than the queue"},
+		{"spared.has(run.id)", "the spared run has to be excluded from the cancel loop, not only logged"},
+	} {
+		if !strings.Contains(src, want.needle) {
+			t.Errorf("cancel-on-merge.yml no longer contains %q — %s", want.needle, want.why)
+		}
+	}
+
+	// The closed PR's queued Pullfrog reviews go with it: they are dispatched on
+	// main and named for the PR, so the branch listing never sees them.
+	if !strings.Contains(src, `workflow_id: "pullfrog.yml"`) {
+		t.Error("cancel-on-merge.yml no longer lists the closed PR's Pullfrog reviews, so a review nobody will read keeps its place in the review queue")
+	}
 }
