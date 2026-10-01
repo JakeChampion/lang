@@ -17,73 +17,83 @@ import "std/http";
 // no subprocess, no print-then-grep.
 
 function test_parsed_headers_reachable_on_req(): test.TestOutcome {
-    var wire: string = "GET /x HTTP/1.1\r\nHost: example.com\r\nContent-Type: application/json\r\nContent-Length: 0\r\n\r\n";
-    match (http.http_parse_request(wire)) {
-        Some(req) => {
-            // Case-insensitive get against "content-type"
-            // (request had "Content-Type") returns the
-            // value.
-            return test.assert_is_some_eq_string(
-                req.headers.get("content-type"),
-                "application/json");
-        },
-        None => {
-            return test.fail("parse failed on well-formed request");
-        }
+  var wire: string = "GET /x HTTP/1.1\r\nHost: example.com\r\nContent-Type: application/json\r\nContent-Length: 0\r\n\r\n";
+  match (http.http_parse_request(wire)) {
+    Some(req) => {
+      // Case-insensitive get against "content-type"
+      // (request had "Content-Type") returns the
+      // value.
+      return test.assert_is_some_eq_string(
+        req.headers.get("content-type"),
+        "application/json",
+      );
+    },
+    None => {
+      return test.fail("parse failed on well-formed request");
     }
-    return test.fail("unreachable");
+  }
+  return test.fail("unreachable");
 }
 
 function test_parsed_header_count_is_3(): test.TestOutcome {
-    var wire: string = "GET /x HTTP/1.1\r\nHost: example.com\r\nContent-Type: application/json\r\nContent-Length: 0\r\n\r\n";
-    match (http.http_parse_request(wire)) {
-        Some(req) => {
-            // Three headers in the wire (Host, Content-
-            // Type, Content-Length) → size() == 3.
-            return test.assert_eq(req.headers.len(), 3);
-        },
-        None => { return test.fail("parse failed"); }
+  var wire: string = "GET /x HTTP/1.1\r\nHost: example.com\r\nContent-Type: application/json\r\nContent-Length: 0\r\n\r\n";
+  match (http.http_parse_request(wire)) {
+    Some(req) => {
+      // Three headers in the wire (Host, Content-
+      // Type, Content-Length) → size() == 3.
+      return test.assert_eq(req.headers.len(), 3);
+    },
+    None => {
+      return test.fail("parse failed");
     }
-    return test.fail("unreachable");
+  }
+  return test.fail("unreachable");
 }
 
 function test_duplicate_header_insertion_order(): test.TestOutcome {
-    var wire: string = "GET / HTTP/1.1\r\nHost: h\r\nSet-Cookie: a=1\r\nSet-Cookie: b=2\r\nContent-Length: 0\r\n\r\n";
-    match (http.http_parse_request(wire)) {
-        Some(req) => {
-            // Original verified via print-each + grep on
-            // stdout; here we assert the array shape
-            // directly so a divergence localises by
-            // index.
-            return test.assert_eq_array(
-                req.headers.get_all("Set-Cookie"),
-                ["a=1", "b=2"]);
-        },
-        None => { return test.fail("parse failed"); }
+  var wire: string = "GET / HTTP/1.1\r\nHost: h\r\nSet-Cookie: a=1\r\nSet-Cookie: b=2\r\nContent-Length: 0\r\n\r\n";
+  match (http.http_parse_request(wire)) {
+    Some(req) => {
+      // Original verified via print-each + grep on
+      // stdout; here we assert the array shape
+      // directly so a divergence localises by
+      // index.
+      return test.assert_eq_array(
+        req.headers.get_all("Set-Cookie"),
+        ["a=1", "b=2"],
+      );
+    },
+    None => {
+      return test.fail("parse failed");
     }
-    return test.fail("unreachable");
+  }
+  return test.fail("unreachable");
 }
 
 function test_missing_header_returns_none(): test.TestOutcome {
-    var wire: string = "GET / HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\n\r\n";
-    match (http.http_parse_request(wire)) {
-        Some(req) => {
-            return test.assert_is_none_string(req.headers.get("X-Absent"));
-        },
-        None => { return test.fail("parse failed"); }
+  var wire: string = "GET / HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\n\r\n";
+  match (http.http_parse_request(wire)) {
+    Some(req) => {
+      return test.assert_is_none_string(req.headers.get("X-Absent"));
+    },
+    None => {
+      return test.fail("parse failed");
     }
-    return test.fail("unreachable");
+  }
+  return test.fail("unreachable");
 }
 
 function test_get_all_on_missing_is_empty(): test.TestOutcome {
-    var wire: string = "GET / HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\n\r\n";
-    match (http.http_parse_request(wire)) {
-        Some(req) => {
-            return test.assert_eq((req.headers.get_all("X-Absent")).len(), 0);
-        },
-        None => { return test.fail("parse failed"); }
+  var wire: string = "GET / HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\n\r\n";
+  match (http.http_parse_request(wire)) {
+    Some(req) => {
+      return test.assert_eq(req.headers.get_all("X-Absent").len(), 0);
+    },
+    None => {
+      return test.fail("parse failed");
     }
-    return test.fail("unreachable");
+  }
+  return test.fail("unreachable");
 }
 
 // ---- request-smuggling / framing hardening (#4383) ----
@@ -94,54 +104,69 @@ function test_get_all_on_missing_is_empty(): test.TestOutcome {
 // old raw substring scan matched `X-Custom-Content-Length:` first
 // and read a 5-byte body — the classic desync.)
 function test_x_prefixed_cl_not_content_length(): test.TestOutcome {
-    var wire: string = "GET / HTTP/1.1\r\nHost: h\r\nX-Custom-Content-Length: 5\r\n\r\nhello";
-    match (http.http_parse_request(wire)) {
-        Some(req) => { return test.assert_eq(req.body_string(), ""); },
-        None => { return test.fail("well-formed request wrongly rejected"); }
+  var wire: string = "GET / HTTP/1.1\r\nHost: h\r\nX-Custom-Content-Length: 5\r\n\r\nhello";
+  match (http.http_parse_request(wire)) {
+    Some(req) => {
+      return test.assert_eq(req.body_string(), "");
+    },
+    None => {
+      return test.fail("well-formed request wrongly rejected");
     }
-    return test.fail("unreachable");
+  }
+  return test.fail("unreachable");
 }
 
 // Duplicate Content-Length is an unrecoverable framing error → reject.
 function test_duplicate_content_length_rejected(): test.TestOutcome {
-    var wire: string = "POST / HTTP/1.1\r\nHost: h\r\nContent-Length: 5\r\nContent-Length: 6\r\n\r\nhello!";
-    match (http.http_parse_request(wire)) {
-        Some(req) => { return test.fail("duplicate Content-Length must be rejected"); },
-        None => { return test.pass(); }
+  var wire: string = "POST / HTTP/1.1\r\nHost: h\r\nContent-Length: 5\r\nContent-Length: 6\r\n\r\nhello!";
+  match (http.http_parse_request(wire)) {
+    Some(req) => {
+      return test.fail("duplicate Content-Length must be rejected");
+    },
+    None => {
+      return test.pass();
     }
-    return test.fail("unreachable");
+  }
+  return test.fail("unreachable");
 }
 
 // Transfer-Encoding beside Content-Length (the desync vector) → reject.
 function test_transfer_encoding_rejected(): test.TestOutcome {
-    var wire: string = "POST / HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: chunked\r\nContent-Length: 5\r\n\r\nhello";
-    match (http.http_parse_request(wire)) {
-        Some(req) => { return test.fail("Transfer-Encoding beside Content-Length must be rejected"); },
-        None => { return test.pass(); }
+  var wire: string = "POST / HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: chunked\r\nContent-Length: 5\r\n\r\nhello";
+  match (http.http_parse_request(wire)) {
+    Some(req) => {
+      return test.fail("Transfer-Encoding beside Content-Length must be rejected");
+    },
+    None => {
+      return test.pass();
     }
-    return test.fail("unreachable");
+  }
+  return test.fail("unreachable");
 }
 
 // http_header_value now routes through the same HeaderMap the
 // request parser builds (#4381): case-insensitive, value trimmed,
 // first match — no parallel raw re-scan.
 function test_http_header_value_via_headermap(): test.TestOutcome {
-    var block: string = "Host: example.com\r\nContent-Type:  application/json  ";
-    return test.assert_is_some_eq_string(
-        http.http_header_value(block, "content-type"),
-        "application/json");
+  var block: string = "Host: example.com\r\nContent-Type:  application/json  ";
+  return test.assert_is_some_eq_string(
+    http.http_header_value(block, "content-type"),
+    "application/json",
+  );
 }
 
 function test_http_header_value_missing_is_none(): test.TestOutcome {
-    return test.assert_is_none_string(
-        http.http_header_value("Host: e\r\n", "X-Absent"));
+  return test.assert_is_none_string(
+    http.http_header_value("Host: e\r\n", "X-Absent"),
+  );
 }
 
 // A block the request parser would refuse names no header, even one on
 // a well-formed line.
 function test_http_header_value_refuses_a_malformed_block(): test.TestOutcome {
-    return test.assert_is_none_string(
-        http.http_header_value("Host: e\r\nno colon\r\n", "host"));
+  return test.assert_is_none_string(
+    http.http_header_value("Host: e\r\nno colon\r\n", "host"),
+  );
 }
 
 // A request with NO header block at all: the request line's own
@@ -151,48 +176,82 @@ function test_http_header_value_refuses_a_malformed_block(): test.TestOutcome {
 // process with "string index out of range" rather than returning a
 // header-free request.
 function test_no_headers_at_all_parses(): test.TestOutcome {
-    match (http.http_parse_request("GET /bare HTTP/1.0\r\n\r\n")) {
-        Some(req) => { return test.assert_eq(req.path, "/bare"); },
-        None => { return test.fail("a header-free request is well-formed"); }
+  match (http.http_parse_request("GET /bare HTTP/1.0\r\n\r\n")) {
+    Some(req) => {
+      return test.assert_eq(req.path, "/bare");
+    },
+    None => {
+      return test.fail("a header-free request is well-formed");
     }
-    return test.fail("unreachable");
+  }
+  return test.fail("unreachable");
 }
 
 function test_no_headers_at_all_has_no_headers(): test.TestOutcome {
-    match (http.http_parse_request("GET /bare HTTP/1.0\r\n\r\n")) {
-        Some(req) => { return test.assert_eq(req.headers.len(), 0); },
-        None => { return test.fail("a header-free request is well-formed"); }
+  match (http.http_parse_request("GET /bare HTTP/1.0\r\n\r\n")) {
+    Some(req) => {
+      return test.assert_eq(req.headers.len(), 0);
+    },
+    None => {
+      return test.fail("a header-free request is well-formed");
     }
-    return test.fail("unreachable");
+  }
+  return test.fail("unreachable");
 }
 
 function main(): i32 {
-    var r: test.TestRunner = test.test_new("HTTP request headers (migrated)");
-    r = r.it("Content-Type reachable case-insensitively",
-             test_parsed_headers_reachable_on_req);
-    r = r.it("3 wire headers -> size() = 3",
-             test_parsed_header_count_is_3);
-    r = r.it("duplicate Set-Cookie preserves insertion order",
-             test_duplicate_header_insertion_order);
-    r = r.it("missing header returns None",
-             test_missing_header_returns_none);
-    r = r.it("get_all on missing returns []",
-             test_get_all_on_missing_is_empty);
-    r = r.it("X-*-Content-Length is not the body length",
-             test_x_prefixed_cl_not_content_length);
-    r = r.it("duplicate Content-Length rejected",
-             test_duplicate_content_length_rejected);
-    r = r.it("Transfer-Encoding beside Content-Length rejected",
-             test_transfer_encoding_rejected);
-    r = r.it("http_header_value via HeaderMap",
-             test_http_header_value_via_headermap);
-    r = r.it("http_header_value missing returns None",
-             test_http_header_value_missing_is_none);
-    r = r.it("http_header_value refuses a malformed block",
-             test_http_header_value_refuses_a_malformed_block);
-    r = r.it("a request with no headers parses",
-             test_no_headers_at_all_parses);
-    r = r.it("a request with no headers has none",
-             test_no_headers_at_all_has_no_headers);
-    return r.finish();
+  var r: test.TestRunner = test.test_new("HTTP request headers (migrated)");
+  r = r.it(
+    "Content-Type reachable case-insensitively",
+    test_parsed_headers_reachable_on_req,
+  );
+  r = r.it(
+    "3 wire headers -> size() = 3",
+    test_parsed_header_count_is_3,
+  );
+  r = r.it(
+    "duplicate Set-Cookie preserves insertion order",
+    test_duplicate_header_insertion_order,
+  );
+  r = r.it(
+    "missing header returns None",
+    test_missing_header_returns_none,
+  );
+  r = r.it(
+    "get_all on missing returns []",
+    test_get_all_on_missing_is_empty,
+  );
+  r = r.it(
+    "X-*-Content-Length is not the body length",
+    test_x_prefixed_cl_not_content_length,
+  );
+  r = r.it(
+    "duplicate Content-Length rejected",
+    test_duplicate_content_length_rejected,
+  );
+  r = r.it(
+    "Transfer-Encoding beside Content-Length rejected",
+    test_transfer_encoding_rejected,
+  );
+  r = r.it(
+    "http_header_value via HeaderMap",
+    test_http_header_value_via_headermap,
+  );
+  r = r.it(
+    "http_header_value missing returns None",
+    test_http_header_value_missing_is_none,
+  );
+  r = r.it(
+    "http_header_value refuses a malformed block",
+    test_http_header_value_refuses_a_malformed_block,
+  );
+  r = r.it(
+    "a request with no headers parses",
+    test_no_headers_at_all_parses,
+  );
+  r = r.it(
+    "a request with no headers has none",
+    test_no_headers_at_all_has_no_headers,
+  );
+  return r.finish();
 }

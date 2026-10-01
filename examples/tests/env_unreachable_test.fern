@@ -1,4 +1,5 @@
 import "std/test";
+
 // examples/tests/env_unreachable_test.fern — exercises the
 // `assert_env_*` env-var assertion family and the
 // `test.unreachable(label)` convenience.
@@ -14,67 +15,73 @@ import "std/test";
 // label so the diagnostic is grep-able.
 
 function test_path_is_set(): test.TestOutcome {
-    // PATH is set on every POSIX-shaped OS Fern targets. If a
-    // CI image somehow has it unset, this test will fail — but
-    // that's the diagnostic we want.
-    return test.assert_env_set("PATH");
+  // PATH is set on every POSIX-shaped OS Fern targets. If a
+  // CI image somehow has it unset, this test will fail — but
+  // that's the diagnostic we want.
+  return test.assert_env_set("PATH");
 }
 
 function test_dummy_var_is_unset(): test.TestOutcome {
-    // A clearly-fake name no rational caller would set in their
-    // shell. If a CI image happens to set this, that's the diff
-    // to surface.
-    return test.assert_env_unset("LANG_TEST_DUMMY_VAR_8329_NOT_REAL");
+  // A clearly-fake name no rational caller would set in their
+  // shell. If a CI image happens to set this, that's the diff
+  // to surface.
+  return test.assert_env_unset("LANG_TEST_DUMMY_VAR_8329_NOT_REAL");
 }
 
 function test_env_set_failure_message(): test.TestOutcome {
-    match (test.assert_env_set("LANG_TEST_DEFINITELY_MISSING_38247")) {
-        Fail(msg) => {
-            if (!msg.contains("is not set")) {
-                return test.fail("failure msg missing reason: " + msg);
-            }
-            return test.pass();
-        },
-        Pass => { return test.fail("expected env-not-set to fail"); }
+  match (test.assert_env_set("LANG_TEST_DEFINITELY_MISSING_38247")) {
+    Fail(msg) => {
+      if (!msg.contains("is not set")) {
+        return test.fail("failure msg missing reason: " + msg);
+      }
+      return test.pass();
+    },
+    Pass => {
+      return test.fail("expected env-not-set to fail");
     }
-    return test.pass();
+  }
+  return test.pass();
 }
 
 function test_env_eq_distinguishes_missing_vs_wrong_value(): test.TestOutcome {
-    // Missing var → distinct message.
-    match (test.assert_env_eq("LANG_TEST_NOT_SET_837642", "value")) {
-        Fail(msg) => {
-            if (!msg.contains("is not set")) {
-                return test.fail("missing-var message wrong: " + msg);
-            }
-        },
-        Pass => { return test.fail("expected missing var to fail"); }
+  // Missing var → distinct message.
+  match (test.assert_env_eq("LANG_TEST_NOT_SET_837642", "value")) {
+    Fail(msg) => {
+      if (!msg.contains("is not set")) {
+        return test.fail("missing-var message wrong: " + msg);
+      }
+    },
+    Pass => {
+      return test.fail("expected missing var to fail");
     }
-    return test.pass();
+  }
+  return test.pass();
 }
 
 function test_unreachable_embeds_label(): test.TestOutcome {
-    match (test.unreachable("dispatch hit default arm")) {
-        Fail(msg) => {
-            if (!msg.contains("unreachable: ")) {
-                return test.fail("unreachable msg missing prefix: " + msg);
-            }
-            if (!msg.contains("dispatch hit default arm")) {
-                return test.fail("unreachable msg missing label: " + msg);
-            }
-            return test.pass();
-        },
-        Pass => { return test.fail("unreachable must fail"); }
+  match (test.unreachable("dispatch hit default arm")) {
+    Fail(msg) => {
+      if (!msg.contains("unreachable: ")) {
+        return test.fail("unreachable msg missing prefix: " + msg);
+      }
+      if (!msg.contains("dispatch hit default arm")) {
+        return test.fail("unreachable msg missing label: " + msg);
+      }
+      return test.pass();
+    },
+    Pass => {
+      return test.fail("unreachable must fail");
     }
-    return test.pass();
+  }
+  return test.pass();
 }
 
 function main(): i32 {
-    var r: test.TestRunner = test.test_new("env + unreachable");
-    r = r.it("PATH is set",                          test_path_is_set);
-    r = r.it("fake var is unset",                    test_dummy_var_is_unset);
-    r = r.it("env_set failure message names var",    test_env_set_failure_message);
-    r = r.it("env_eq distinguishes missing",         test_env_eq_distinguishes_missing_vs_wrong_value);
-    r = r.it("unreachable() embeds label + prefix",  test_unreachable_embeds_label);
-    return r.finish();
+  var r: test.TestRunner = test.test_new("env + unreachable");
+  r = r.it("PATH is set", test_path_is_set);
+  r = r.it("fake var is unset", test_dummy_var_is_unset);
+  r = r.it("env_set failure message names var", test_env_set_failure_message);
+  r = r.it("env_eq distinguishes missing", test_env_eq_distinguishes_missing_vs_wrong_value);
+  r = r.it("unreachable() embeds label + prefix", test_unreachable_embeds_label);
+  return r.finish();
 }

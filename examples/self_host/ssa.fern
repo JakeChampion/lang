@@ -15,7 +15,6 @@
 //   - a function (SFunc) is a list of blocks with an entry index.
 //
 
-
 import "./ast";
 import "./parser";
 import "./astwalk";
@@ -66,51 +65,128 @@ pub struct SBlock { id: i32, insts: SInst[], term: STerm, preds: i32[] }
 // ignore it (their indirect calls tolerate an unused trailing arg).
 pub struct SFunc { name: string, nparams: i32, nvals: i32, blocks: SBlock[], entry: i32, takes_env: boolean }
 
-function t_ret(value: i32): STerm { return STerm { kind_tag: 1, cond: 0, target: 0, t: 0, f: 0, value: value }; }
-function t_brif(cond: i32, t: i32, f: i32): STerm { return STerm { kind_tag: 3, cond: cond, target: 0, t: t, f: f, value: 0 }; }
+function t_ret(value: i32): STerm {
+  return STerm { kind_tag: 1, cond: 0, target: 0, t: 0, f: 0, value: value };
+}
+
+function t_brif(cond: i32, t: i32, f: i32): STerm {
+  return STerm { kind_tag: 3, cond: cond, target: 0, t: t, f: f, value: 0 };
+}
 
 function buf_kind_name(id: i32): string {
-    if (id == 28) { return "buf_new"; }
-    if (id == 29) { return "buf_push"; }
-    if (id == 30) { return "buf_push_range"; }
-    if (id == 31) { return "buf_push_byte"; }
-    if (id == 32) { return "buf_len"; }
-    if (id == 33) { return "buf_take"; }
-    return "buf_free";
+  if (id == 28) {
+    return "buf_new";
+  }
+  if (id == 29) {
+    return "buf_push";
+  }
+  if (id == 30) {
+    return "buf_push_range";
+  }
+  if (id == 31) {
+    return "buf_push_byte";
+  }
+  if (id == 32) {
+    return "buf_len";
+  }
+  if (id == 33) {
+    return "buf_take";
+  }
+  return "buf_free";
 }
 
 pub function kind_name(id: i32): string {
-    if (id < 0) { return semantic_kind_name(id); }
-    if (id == 1) { return "const_int"; }
-    if (id == 2) { return "const_bool"; }
-    if (id == 3) { return "const_i64"; }
-    if (id == 4) { return "const_float"; }
-    if (id == 5) { return "const_str"; }
-    if (id == 6) { return "param"; }
-    if (id == 7) { return "copy"; }
-    if (id == 8) { return "phi"; }
-    if (id == 9) { return "binary"; }
-    if (id == 10) { return "unary"; }
-    if (id == 11) { return "call"; }
-    if (id == 12) { return "call_indirect"; }
-    if (id == 13) { return "funcaddr"; }
-    if (id == 14) { return "alloc"; }
-    if (id == 15) { return "load_elem"; }
-    if (id == 16) { return "store_elem"; }
-    if (id == 17) { return "concat"; }
-    if (id == 18) { return "streq"; }
-    if (id == 19) { return "print"; }
-    if (id == 20) { return "write"; }
-    if (id == 21) { return "exit"; }
-    if (id == 22) { return "args"; }
-    if (id == 23) { return "strbuf_reset"; }
-    if (id == 24) { return "strbuf_append"; }
-    if (id == 25) { return "strbuf_take"; }
-    if (id == 26) { return "read_file"; }
-    if (id == 27) { return "write_file"; }
-    if (id >= 28 && id <= 34) { return buf_kind_name(id); }
-    if (id >= 40 && id <= 60) { return prod_kind_name(id); }
-    return "invalid";
+  if (id < 0) {
+    return semantic_kind_name(id);
+  }
+  if (id == 1) {
+    return "const_int";
+  }
+  if (id == 2) {
+    return "const_bool";
+  }
+  if (id == 3) {
+    return "const_i64";
+  }
+  if (id == 4) {
+    return "const_float";
+  }
+  if (id == 5) {
+    return "const_str";
+  }
+  if (id == 6) {
+    return "param";
+  }
+  if (id == 7) {
+    return "copy";
+  }
+  if (id == 8) {
+    return "phi";
+  }
+  if (id == 9) {
+    return "binary";
+  }
+  if (id == 10) {
+    return "unary";
+  }
+  if (id == 11) {
+    return "call";
+  }
+  if (id == 12) {
+    return "call_indirect";
+  }
+  if (id == 13) {
+    return "funcaddr";
+  }
+  if (id == 14) {
+    return "alloc";
+  }
+  if (id == 15) {
+    return "load_elem";
+  }
+  if (id == 16) {
+    return "store_elem";
+  }
+  if (id == 17) {
+    return "concat";
+  }
+  if (id == 18) {
+    return "streq";
+  }
+  if (id == 19) {
+    return "print";
+  }
+  if (id == 20) {
+    return "write";
+  }
+  if (id == 21) {
+    return "exit";
+  }
+  if (id == 22) {
+    return "args";
+  }
+  if (id == 23) {
+    return "strbuf_reset";
+  }
+  if (id == 24) {
+    return "strbuf_append";
+  }
+  if (id == 25) {
+    return "strbuf_take";
+  }
+  if (id == 26) {
+    return "read_file";
+  }
+  if (id == 27) {
+    return "write_file";
+  }
+  if (id >= 28 && id <= 34) {
+    return buf_kind_name(id);
+  }
+  if (id >= 40 && id <= 60) {
+    return prod_kind_name(id);
+  }
+  return "invalid";
 }
 
 // The semantic operations whose str names something: a call names its callee,
@@ -118,8 +194,8 @@ pub function kind_name(id: i32): string {
 // address its box holds. `length` names nothing, so the set is listed rather
 // than taken as a range over the tags below call's.
 function semantic_names_symbol(id: i32): boolean {
-    return id == 0 - 7 || id == 0 - 8 || id == 0 - 9 || id == 0 - 10
-        || id == 0 - 11 || id == 0 - 12 || id == 0 - 20;
+  return id == 0 - 7 || id == 0 - 8 || id == 0 - 9 || id == 0 - 10
+    || id == 0 - 11 || id == 0 - 12 || id == 0 - 20;
 }
 
 // What an instruction prints after its kind. A constant too wide for the
@@ -127,48 +203,60 @@ function semantic_names_symbol(id: i32): boolean {
 // it rather than the zero its immediate holds; the other kinds print the
 // immediate, the operator, or the symbol they name.
 function carries_imm(kind: i32): boolean {
-    return kind == 1 || kind == 2 || kind == 6 || kind == 0 - 4 || kind == 0 - 6 || kind == 0 - 10 || kind == 0 - 49;
+  return kind == 1 || kind == 2 || kind == 6 || kind == 0 - 4 || kind == 0 - 6 || kind == 0 - 10 || kind == 0 - 49;
 }
 
 function carries_str(kind: i32): boolean {
-    return kind == 9 || kind == 10 || kind == 11 || semantic_names_symbol(kind);
+  return kind == 9 || kind == 10 || kind == 11 || semantic_names_symbol(kind);
 }
 
 // A variant projection carries BOTH: the field index and the variant name.
 function inst_detail(ins: SInst): string {
-    if (ins.kind_tag == 1 && ins.str != "") { return " " + ins.str; }
-    var out: string = "";
-    if (carries_imm(ins.kind_tag)) { out = out + " " + util.i32_to_string(ins.imm); }
-    if (carries_str(ins.kind_tag)) { out = out + " " + ins.str; }
-    return out;
+  if (ins.kind_tag == 1 && ins.str != "") {
+    return " " + ins.str;
+  }
+  var out: string = "";
+  if (carries_imm(ins.kind_tag)) {
+    out = out + " " + util.i32_to_string(ins.imm);
+  }
+  if (carries_str(ins.kind_tag)) {
+    out = out + " " + ins.str;
+  }
+  return out;
 }
 
 pub function print_func(f: SFunc): string {
-    var out: string = "func " + f.name + " {\n";
-    var bi: i32 = 0;
-    while (bi < f.blocks.len()) {
-        var blk: SBlock = f.blocks[bi];
-        out = out + "  b" + util.i32_to_string(blk.id) + ":\n";
-        var k: i32 = 0;
-        while (k < blk.insts.len()) {
-            var ins: SInst = blk.insts[k];
-            out = out + "    v" + util.i32_to_string(ins.result) + " = " + kind_name(ins.kind_tag) + inst_detail(ins);
-            var ai: i32 = 0;
-            while (ai < ins.args.len()) {
-                out = out + " v" + util.i32_to_string(ins.args[ai]);
-                ai = ai + 1;
-            }
-            out = out + "\n";
-            k = k + 1;
-        }
-        if (blk.term.kind_tag == 4) { out = out + "    unreachable\n"; }
-        else if (blk.term.kind_tag == 1 && blk.term.value < 0) { out = out + "    ret\n"; }
-        else if (blk.term.kind_tag == 1) { out = out + "    ret v" + util.i32_to_string(blk.term.value) + "\n"; }
-        else if (blk.term.kind_tag == 2) { out = out + "    br b" + util.i32_to_string(blk.term.target) + "\n"; }
-        else if (blk.term.kind_tag == 3) { out = out + "    brif v" + util.i32_to_string(blk.term.cond) + " b" + util.i32_to_string(blk.term.t) + " b" + util.i32_to_string(blk.term.f) + "\n"; }
-        bi = bi + 1;
+  var out: string = "func " + f.name + " {\n";
+  var bi: i32 = 0;
+  while (bi < f.blocks.len()) {
+    var blk: SBlock = f.blocks[bi];
+    out = out + "  b" + util.i32_to_string(blk.id) + ":\n";
+    var k: i32 = 0;
+    while (k < blk.insts.len()) {
+      var ins: SInst = blk.insts[k];
+      out = out + "    v" + util.i32_to_string(ins.result) + " = " + kind_name(ins.kind_tag) + inst_detail(ins);
+      var ai: i32 = 0;
+      while (ai < ins.args.len()) {
+        out = out + " v" + util.i32_to_string(ins.args[ai]);
+        ai = ai + 1;
+      }
+      out = out + "\n";
+      k = k + 1;
     }
-    return out + "}\n";
+    if (blk.term.kind_tag == 4) {
+      out = out + "    unreachable\n";
+    } else if (blk.term.kind_tag == 1 && blk.term.value < 0) {
+      out = out + "    ret\n";
+    } else if (blk.term.kind_tag == 1) {
+      out = out + "    ret v" + util.i32_to_string(blk.term.value) + "\n";
+    } else if (blk.term.kind_tag == 2) {
+      out = out + "    br b" + util.i32_to_string(blk.term.target) + "\n";
+    } else if (blk.term.kind_tag == 3) {
+      out = out + "    brif v" + util.i32_to_string(blk.term.cond) + " b" + util.i32_to_string(blk.term.t) + " b" + util.i32_to_string(blk.term.f) + "\n";
+    }
+    bi = bi + 1;
+  }
+  return out + "}\n";
 }
 
 // Kinds 40..48 are the production lift's memory vocabulary
@@ -197,9 +285,11 @@ pub function print_func(f: SFunc): string {
 //   56 call_ind   args [target, a0..]   a call through a function value, on the stack ABI
 //   57 agg_lit    str = packed constant a static record or variant box (ir.const_struct_*), by address
 function prod_kind_name(id: i32): string {
-    var names: string[] = ["ld_at", "st_at", "arr_at", "arr_st", "str_at", "fn_addr", "shape_addr", "str_lit", "arr_box", "str_call", "rt_call", "str_view",
-        "ld_idx", "st_idx", "ld_byte", "st_byte", "call_ind", "agg_lit", "sym_addr", "flat_op", "dyn_dispatch"];
-    return names[id - 40];
+  var names: string[] = [
+    "ld_at", "st_at", "arr_at", "arr_st", "str_at", "fn_addr", "shape_addr", "str_lit", "arr_box", "str_call", "rt_call", "str_view",
+    "ld_idx", "st_idx", "ld_byte", "st_byte", "call_ind", "agg_lit", "sym_addr", "flat_op", "dyn_dispatch",
+  ];
+  return names[id - 40];
 }
 
 // Negative ids are the typed semantic phase's operations (ssasem.fern owns
@@ -207,18 +297,22 @@ function prod_kind_name(id: i32): string {
 // run from -1 downward without gaps, so the table is indexed by -id - 1; an id
 // outside it names nothing, exactly as an unknown id always did.
 function semantic_kind_name(id: i32): string {
-    var names: string[] = ["array_new", "tuple_new", "array_get", "tuple_get",
-        "record_new", "record_get", "call", "variant_new", "variant_is",
-        "variant_get", "variant_up", "variant_as", "length", "append", "slice",
-        "str_index", "cast", "str_as", "with", "closure_new", "call_value", "cell_new", "cell_get", "cell_set",
-        "map_new", "map_insert", "map_has", "map_get_or", "map_len", "map_get",
-        "map_keys", "map_values", "map_delete", "map_cleared", "zero", "str_bytes",
-        "arr_join", "arr_slice", "map_iter", "mapiter_has_next",
-        "mapiter_key", "mapiter_value", "mapiter_advance", "dyn_up", "dyn_box",
-        "dyn_is", "dyn_as", "hole_at", "hole_fill"];
-    var at: i32 = 0 - id - 1;
-    if (at < 0 || at >= names.len()) { return "invalid"; }
-    return names[at];
+  var names: string[] = [
+    "array_new", "tuple_new", "array_get", "tuple_get",
+    "record_new", "record_get", "call", "variant_new", "variant_is",
+    "variant_get", "variant_up", "variant_as", "length", "append", "slice",
+    "str_index", "cast", "str_as", "with", "closure_new", "call_value", "cell_new", "cell_get", "cell_set",
+    "map_new", "map_insert", "map_has", "map_get_or", "map_len", "map_get",
+    "map_keys", "map_values", "map_delete", "map_cleared", "zero", "str_bytes",
+    "arr_join", "arr_slice", "map_iter", "mapiter_has_next",
+    "mapiter_key", "mapiter_value", "mapiter_advance", "dyn_up", "dyn_box",
+    "dyn_is", "dyn_as", "hole_at", "hole_fill",
+  ];
+  var at: i32 = 0 - id - 1;
+  if (at < 0 || at >= names.len()) {
+    return "invalid";
+  }
+  return names[at];
 }
 
 // ---- integer kind registry (#4394 lever 2 / #5351, foundation slice) ----
@@ -238,38 +332,96 @@ function semantic_kind_name(id: i32): string {
 // the stack-IR registry and vice versa).
 
 // kind_count is the number of registered SInst kinds (ids 1..kind_count()).
-pub function kind_count(): i32 { return 34; }
+pub function kind_count(): i32 {
+  return 34;
+}
 
 pub function kind_id(name: string): i32 {
-    if (name == "const_int") { return 1; }
-    if (name == "const_bool") { return 2; }
-    if (name == "const_i64") { return 3; }
-    if (name == "const_float") { return 4; }
-    if (name == "const_str") { return 5; }
-    if (name == "param") { return 6; }
-    if (name == "copy") { return 7; }
-    if (name == "phi") { return 8; }
-    if (name == "binary") { return 9; }
-    if (name == "unary") { return 10; }
-    if (name == "call") { return 11; }
-    if (name == "call_indirect") { return 12; }
-    if (name == "funcaddr") { return 13; }
-    if (name == "alloc") { return 14; }
-    if (name == "load_elem") { return 15; }
-    if (name == "store_elem") { return 16; }
-    if (name == "concat") { return 17; }
-    if (name == "streq") { return 18; }
-    if (name == "print") { return 19; }
-    if (name == "write") { return 20; }
-    if (name == "exit") { return 21; }
-    if (name == "args") { return 22; }
-    if (name == "strbuf_reset") { return 23; }
-    if (name == "strbuf_append") { return 24; }
-    if (name == "strbuf_take") { return 25; }
-    if (name == "read_file") { return 26; }
-    if (name == "write_file") { return 27; }
-    if (name.len() >= 7 && name[0] == b'b') { return buf_kind_id(name); }
-    return 0;
+  if (name == "const_int") {
+    return 1;
+  }
+  if (name == "const_bool") {
+    return 2;
+  }
+  if (name == "const_i64") {
+    return 3;
+  }
+  if (name == "const_float") {
+    return 4;
+  }
+  if (name == "const_str") {
+    return 5;
+  }
+  if (name == "param") {
+    return 6;
+  }
+  if (name == "copy") {
+    return 7;
+  }
+  if (name == "phi") {
+    return 8;
+  }
+  if (name == "binary") {
+    return 9;
+  }
+  if (name == "unary") {
+    return 10;
+  }
+  if (name == "call") {
+    return 11;
+  }
+  if (name == "call_indirect") {
+    return 12;
+  }
+  if (name == "funcaddr") {
+    return 13;
+  }
+  if (name == "alloc") {
+    return 14;
+  }
+  if (name == "load_elem") {
+    return 15;
+  }
+  if (name == "store_elem") {
+    return 16;
+  }
+  if (name == "concat") {
+    return 17;
+  }
+  if (name == "streq") {
+    return 18;
+  }
+  if (name == "print") {
+    return 19;
+  }
+  if (name == "write") {
+    return 20;
+  }
+  if (name == "exit") {
+    return 21;
+  }
+  if (name == "args") {
+    return 22;
+  }
+  if (name == "strbuf_reset") {
+    return 23;
+  }
+  if (name == "strbuf_append") {
+    return 24;
+  }
+  if (name == "strbuf_take") {
+    return 25;
+  }
+  if (name == "read_file") {
+    return 26;
+  }
+  if (name == "write_file") {
+    return 27;
+  }
+  if (name.len() >= 7 && name[0] == b'b') {
+    return buf_kind_id(name);
+  }
+  return 0;
 }
 
 // The capacity-carrying string builder's block (#8773), split out so the seven
@@ -283,63 +435,104 @@ pub function kind_id(name: string): i32 {
 // An unknown callee bails calls_all_known, so a module using it takes the IR
 // path — the same answer wasm's SSA lowering gives the family entire.
 function buf_kind_id(name: string): i32 {
-    if (name == "buf_new") { return 28; }
-    if (name == "buf_push") { return 29; }
-    if (name == "buf_push_range") { return 30; }
-    if (name == "buf_push_byte") { return 31; }
-    if (name == "buf_len") { return 32; }
-    if (name == "buf_take") { return 33; }
-    if (name == "buf_free") { return 34; }
-    return 0;
+  if (name == "buf_new") {
+    return 28;
+  }
+  if (name == "buf_push") {
+    return 29;
+  }
+  if (name == "buf_push_range") {
+    return 30;
+  }
+  if (name == "buf_push_byte") {
+    return 31;
+  }
+  if (name == "buf_len") {
+    return 32;
+  }
+  if (name == "buf_take") {
+    return 33;
+  }
+  if (name == "buf_free") {
+    return 34;
+  }
+  return 0;
 }
 
 // term_count is the number of registered STerm kinds (ids 1..term_count()).
 // Id 0 is the "no terminator" sentinel (t_none's empty-string kind today):
 // term_id("") == 0 and term_name(0) == "" by construction, so the eventual
 // `terminated()` check becomes `term.kind_tag != 0`.
-pub function term_count(): i32 { return 3; }
+pub function term_count(): i32 {
+  return 3;
+}
 
 pub function term_id(name: string): i32 {
-    if (name == "ret") { return 1; }
-    if (name == "br") { return 2; }
-    if (name == "brif") { return 3; }
-    return 0;
+  if (name == "ret") {
+    return 1;
+  }
+  if (name == "br") {
+    return 2;
+  }
+  if (name == "brif") {
+    return 3;
+  }
+  return 0;
 }
 
 pub function term_name(id: i32): string {
-    if (id == 1) { return "ret"; }
-    if (id == 2) { return "br"; }
-    if (id == 3) { return "brif"; }
-    return "";
+  if (id == 1) {
+    return "ret";
+  }
+  if (id == 2) {
+    return "br";
+  }
+  if (id == 3) {
+    return "brif";
+  }
+  return "";
 }
 
 function index_of_i32(xs: i32[], n: i32): i32 {
-    var i: i32 = 0;
-    while (i < xs.len()) {
-        if (xs[i] == n) { return i; }
-        i = i + 1;
+  var i: i32 = 0;
+  while (i < xs.len()) {
+    if (xs[i] == n) {
+      return i;
     }
-    return 0 - 1;
+    i = i + 1;
+  }
+  return 0 - 1;
 }
 
 // zeros returns an n-long i32 array of 0s (scratch flag/value tables).
 function zeros(n: i32): i32[] {
-    var out: i32[] = [];
-    var i: i32 = 0;
-    while (i < n) { out = out.append(0); i = i + 1; }
-    return out;
+  var out: i32[] = [];
+  var i: i32 = 0;
+  while (i < n) {
+    out = out.append(0);
+    i = i + 1;
+  }
+  return out;
 }
 
 function rewrite_args(ins: SInst, resolved: i32[]): SInst {
-    var na: i32[] = [];
-    var i: i32 = 0;
-    while (i < ins.args.len()) { na = na.append(resolved[ins.args[i]]); i = i + 1; }
-    return SInst { kind_tag: ins.kind_tag, result: ins.result, args: na, imm: ins.imm, str: ins.str };
+  var na: i32[] = [];
+  var i: i32 = 0;
+  while (i < ins.args.len()) {
+    na = na.append(resolved[ins.args[i]]);
+    i = i + 1;
+  }
+  return SInst { kind_tag: ins.kind_tag, result: ins.result, args: na, imm: ins.imm, str: ins.str };
 }
+
 function rewrite_term(t: STerm, resolved: i32[]): STerm {
-    if (t.kind_tag == 1) { return t_ret(resolved[t.value]); }
-    if (t.kind_tag == 3) { return t_brif(resolved[t.cond], t.t, t.f); }
-    return t;
+  if (t.kind_tag == 1) {
+    return t_ret(resolved[t.value]);
+  }
+  if (t.kind_tag == 3) {
+    return t_brif(resolved[t.cond], t.t, t.f);
+  }
+  return t;
 }
 
 // ---- register allocation ------------------------------------------------
@@ -358,8 +551,10 @@ function rewrite_term(t: STerm, resolved: i32[]): STerm {
 // the calls proper, the toy runtime's string / output / file / buffer
 // helpers, and the production lift's box allocation.
 function inst_is_call(k: i32): boolean {
-    if (k == 11 || k == 12 || k == 17 || k == 18 || k == 48 || k == 49 || k == 50 || k == 51 || k == 56 || k == 59 || k == 60) { return true; }
-    return k >= 19 && k <= 27;
+  if (k == 11 || k == 12 || k == 17 || k == 18 || k == 48 || k == 49 || k == 50 || k == 51 || k == 56 || k == 59 || k == 60) {
+    return true;
+  }
+  return k >= 19 && k <= 27;
 }
 
 // rc_inlined names a call both register-path emitters render at the site
@@ -372,8 +567,10 @@ function inst_is_call(k: i32): boolean {
 // not pay: it frees six caller-saved registers to more values at once, and
 // over examples/bench that came out between 0.5% worse and unchanged.
 pub function rc_inlined(ins: SInst): boolean {
-    if (ins.kind_tag != 11 || ins.args.len() != 1) { return false; }
-    return ins.str == "__fern_rc_is_unique" || ins.str == "__fern_rc_inc";
+  if (ins.kind_tag != 11 || ins.args.len() != 1) {
+    return false;
+  }
+  return ins.str == "__fern_rc_is_unique" || ins.str == "__fern_rc_inc";
 }
 
 // calls_before counts, for every position p, the calls at positions below
@@ -381,151 +578,195 @@ pub function rc_inlined(ins: SInst): boolean {
 // ran once per value, which on a function with thousands of calls and tens
 // of thousands of values was most of the allocator's time.
 function calls_before(calls: i32[], total_pos: i32): i32[] {
-    var cum: i32[] = zeros(total_pos + 2);
-    var ci: i32 = 0;
-    var p: i32 = 0;
-    while (p <= total_pos + 1) {
-        cum = cum.with(p, ci);
-        while (ci < calls.len() && calls[ci] < p + 1) { ci = ci + 1; }
-        p = p + 1;
+  var cum: i32[] = zeros(total_pos + 2);
+  var ci: i32 = 0;
+  var p: i32 = 0;
+  while (p <= total_pos + 1) {
+    cum = cum.with(p, ci);
+    while (ci < calls.len() && calls[ci] < p + 1) {
+      ci = ci + 1;
     }
-    return cum;
+    p = p + 1;
+  }
+  return cum;
 }
 
 // spans_call is true when some call position lies strictly inside (lo, hi).
 function spans_call(cum: i32[], lo: i32, hi: i32): boolean {
-    if (hi <= lo + 1) { return false; }
-    var a: i32 = lo + 1;
-    if (a >= cum.len()) { return false; }
-    var b: i32 = hi;
-    if (b >= cum.len()) { b = cum.len() - 1; }
-    return cum[b] - cum[a] > 0;
+  if (hi <= lo + 1) {
+    return false;
+  }
+  var a: i32 = lo + 1;
+  if (a >= cum.len()) {
+    return false;
+  }
+  var b: i32 = hi;
+  if (b >= cum.len()) {
+    b = cum.len() - 1;
+  }
+  return cum[b] - cum[a] > 0;
 }
+
 // order_by_lo returns value ids 0..n-1 sorted ascending by lo, ids ascending
 // within one lo. A counting sort over the positions: the insertion sort this
 // replaces rebuilt the output array once per value, which on a function with
 // tens of thousands of values was a quadratic number of allocations the arena
 // never returns.
 function order_by_lo(n: i32, lo: i32[]): i32[] {
-    var maxp: i32 = 0;
-    var v: i32 = 0;
-    while (v < n) { if (lo[v] < 2000000000 && lo[v] > maxp) { maxp = lo[v]; } v = v + 1; }
-    // Bucket maxp + 1 holds the values never referenced (lo left at the sentinel).
-    var starts: i32[] = zeros(maxp + 3);
-    v = 0;
-    while (v < n) {
-        var b: i32 = order_bucket(lo[v], maxp);
-        starts = starts.with(b + 1, starts[b + 1] + 1);
-        v = v + 1;
+  var maxp: i32 = 0;
+  var v: i32 = 0;
+  while (v < n) {
+    if (lo[v] < 2000000000 && lo[v] > maxp) {
+      maxp = lo[v];
     }
-    var b2: i32 = 1;
-    while (b2 < starts.len()) { starts = starts.with(b2, starts[b2] + starts[b2 - 1]); b2 = b2 + 1; }
-    var out: i32[] = zeros(n);
-    v = 0;
-    while (v < n) {
-        var bk: i32 = order_bucket(lo[v], maxp);
-        out = out.with(starts[bk], v);
-        starts = starts.with(bk, starts[bk] + 1);
-        v = v + 1;
-    }
-    return out;
+    v = v + 1;
+  }
+  // Bucket maxp + 1 holds the values never referenced (lo left at the sentinel).
+  var starts: i32[] = zeros(maxp + 3);
+  v = 0;
+  while (v < n) {
+    var b: i32 = order_bucket(lo[v], maxp);
+    starts = starts.with(b + 1, starts[b + 1] + 1);
+    v = v + 1;
+  }
+  var b2: i32 = 1;
+  while (b2 < starts.len()) {
+    starts = starts.with(b2, starts[b2] + starts[b2 - 1]);
+    b2 = b2 + 1;
+  }
+  var out: i32[] = zeros(n);
+  v = 0;
+  while (v < n) {
+    var bk: i32 = order_bucket(lo[v], maxp);
+    out = out.with(starts[bk], v);
+    starts = starts.with(bk, starts[bk] + 1);
+    v = v + 1;
+  }
+  return out;
 }
 
 function order_bucket(lo: i32, maxp: i32): i32 {
-    if (lo >= 2000000000) { return maxp + 1; }
-    return lo;
+  if (lo >= 2000000000) {
+    return maxp + 1;
+  }
+  return lo;
 }
 
 function extend_loop_invariant_intervals(f: SFunc, def_pos: i32[], hi: i32[]): i32[] {
-    // Loop-invariant fix: a value defined BEFORE a loop header and used inside
-    // the loop is live across the whole loop (re-read every iteration), so its
-    // interval must reach the back-edge — otherwise the scan expires it at its
-    // textual last use and a loop-body temp reuses its register, corrupting it
-    // on the next iteration. (A loop-CARRIED value is covered by the phi's
-    // read on the back edge; this covers loop-INVARIANT ones.) Block start
-    // positions are recomputed with the same per-block stride (insts + one
-    // terminator slot); a terminator targeting a block at or before its own
-    // block is a back-edge, and the loop spans [header_start, terminator_pos].
-    //
-    // Each value's extension reads only the back edges, in block order, so the
-    // values are independent: one with no header in (def, hi] cannot extend,
-    // and a binary search over the sorted header starts rules most out.
-    var top: i32 = 0 - 1;
-    for b in f.blocks { if (b.id > top) { top = b.id; } }
-    var start_of: i32[] = [];
-    while (start_of.len() <= top) { start_of = start_of.append(0 - 1); }
-    var rpos: i32 = 0;
-    for b in f.blocks {
-        if (b.id >= 0) { start_of = start_of.with(b.id, rpos); }
-        rpos = rpos + b.insts.len() + 1;
+  // Loop-invariant fix: a value defined BEFORE a loop header and used inside
+  // the loop is live across the whole loop (re-read every iteration), so its
+  // interval must reach the back-edge — otherwise the scan expires it at its
+  // textual last use and a loop-body temp reuses its register, corrupting it
+  // on the next iteration. (A loop-CARRIED value is covered by the phi's
+  // read on the back edge; this covers loop-INVARIANT ones.) Block start
+  // positions are recomputed with the same per-block stride (insts + one
+  // terminator slot); a terminator targeting a block at or before its own
+  // block is a back-edge, and the loop spans [header_start, terminator_pos].
+  //
+  // Each value's extension reads only the back edges, in block order, so the
+  // values are independent: one with no header in (def, hi] cannot extend,
+  // and a binary search over the sorted header starts rules most out.
+  var top: i32 = 0 - 1;
+  for b in f.blocks {
+    if (b.id > top) {
+      top = b.id;
     }
-    var edge_head: i32[] = [];
-    var edge_end: i32[] = [];
-    var lstart: i32 = 0;
-    for lblk in f.blocks {
-        var lterm_pos: i32 = lstart + lblk.insts.len();
-        var th: i32 = 0;
-        while (th < 2) {
-            var tgt: i32 = 0 - 1;
-            if (th == 0) {
-                if (lblk.term.kind_tag == 2) { tgt = lblk.term.target; }
-                else if (lblk.term.kind_tag == 3) { tgt = lblk.term.t; }
-            } else if (lblk.term.kind_tag == 3) { tgt = lblk.term.f; }
-            if (tgt >= 0 && tgt <= top) {
-                var hstart: i32 = start_of[tgt];
-                if (hstart >= 0 && hstart <= lstart) {
-                    edge_head = edge_head.append(hstart);
-                    edge_end = edge_end.append(lterm_pos);
-                }
-            }
-            th = th + 1;
+  }
+  var start_of: i32[] = [];
+  while (start_of.len() <= top) {
+    start_of = start_of.append(0 - 1);
+  }
+  var rpos: i32 = 0;
+  for b in f.blocks {
+    if (b.id >= 0) {
+      start_of = start_of.with(b.id, rpos);
+    }
+    rpos = rpos + b.insts.len() + 1;
+  }
+  var edge_head: i32[] = [];
+  var edge_end: i32[] = [];
+  var lstart: i32 = 0;
+  for lblk in f.blocks {
+    var lterm_pos: i32 = lstart + lblk.insts.len();
+    var th: i32 = 0;
+    while (th < 2) {
+      var tgt: i32 = 0 - 1;
+      if (th == 0) {
+        if (lblk.term.kind_tag == 2) {
+          tgt = lblk.term.target;
+        } else if (lblk.term.kind_tag == 3) {
+          tgt = lblk.term.t;
         }
-        lstart = lterm_pos + 1;
-    }
-    if (edge_head.len() == 0) { return hi; }
-    var heads: i32[] = sorted_i32(edge_head);
-    var vv: i32 = 0;
-    while (vv < f.nvals && vv < hi.len()) {
-        var d: i32 = def_pos[vv];
-        if (d >= 0) {
-            var first: i32 = first_above(heads, d);
-            if (first < heads.len() && heads[first] <= hi[vv]) {
-                var e: i32 = 0;
-                while (e < edge_head.len()) {
-                    if (d < edge_head[e] && hi[vv] >= edge_head[e] && edge_end[e] > hi[vv]) { hi = hi.with(vv, edge_end[e]); }
-                    e = e + 1;
-                }
-            }
+      } else if (lblk.term.kind_tag == 3) {
+        tgt = lblk.term.f;
+      }
+      if (tgt >= 0 && tgt <= top) {
+        var hstart: i32 = start_of[tgt];
+        if (hstart >= 0 && hstart <= lstart) {
+          edge_head = edge_head.append(hstart);
+          edge_end = edge_end.append(lterm_pos);
         }
-        vv = vv + 1;
+      }
+      th = th + 1;
     }
+    lstart = lterm_pos + 1;
+  }
+  if (edge_head.len() == 0) {
     return hi;
+  }
+  var heads: i32[] = sorted_i32(edge_head);
+  var vv: i32 = 0;
+  while (vv < f.nvals && vv < hi.len()) {
+    var d: i32 = def_pos[vv];
+    if (d >= 0) {
+      var first: i32 = first_above(heads, d);
+      if (first < heads.len() && heads[first] <= hi[vv]) {
+        var e: i32 = 0;
+        while (e < edge_head.len()) {
+          if (d < edge_head[e] && hi[vv] >= edge_head[e] && edge_end[e] > hi[vv]) {
+            hi = hi.with(vv, edge_end[e]);
+          }
+          e = e + 1;
+        }
+      }
+    }
+    vv = vv + 1;
+  }
+  return hi;
 }
 
 // sorted_i32 is xs in ascending order (an insertion sort; the lists are a
 // function's back edges).
 function sorted_i32(xs: i32[]): i32[] {
-    var out: i32[] = [];
-    for x in xs {
-        out = out.append(x);
-        var i: i32 = out.len() - 1;
-        while (i > 0 && out[i - 1] > x) { out = out.with(i, out[i - 1]); i = i - 1; }
-        out = out.with(i, x);
+  var out: i32[] = [];
+  for x in xs {
+    out = out.append(x);
+    var i: i32 = out.len() - 1;
+    while (i > 0 && out[i - 1] > x) {
+      out = out.with(i, out[i - 1]);
+      i = i - 1;
     }
-    return out;
+    out = out.with(i, x);
+  }
+  return out;
 }
 
 // first_above is the index of the first element of ascending xs greater than
 // v, or xs.len() when there is none.
 function first_above(xs: i32[], v: i32): i32 {
-    var lo: i32 = 0;
-    var hi: i32 = xs.len();
-    while (lo < hi) {
-        var mid: i32 = (lo + hi) / 2;
-        if (xs[mid] > v) { hi = mid; } else { lo = mid + 1; }
+  var lo: i32 = 0;
+  var hi: i32 = xs.len();
+  while (lo < hi) {
+    var mid: i32 = (lo + hi) / 2;
+    if (xs[mid] > v) {
+      hi = mid;
+    } else {
+      lo = mid + 1;
     }
-    return lo;
+  }
+  return lo;
 }
+
 // An instruction can also fix a register without being a call: x86-64's idiv
 // takes its dividend in %rax and writes %rdx, so a division clobbers the ABI
 // result register while remaining an ordinary binary. A value may only be
@@ -533,7 +774,7 @@ function first_above(xs: i32[], v: i32): i32 {
 // registry's (kind ids 24-27); arm64's sdiv/udiv take any registers, so its
 // emitter names none.
 pub function binary_fixes_abi(op: string): boolean {
-    return op == "div_s" || op == "div_u" || op == "rem_s" || op == "rem_u";
+  return op == "div_s" || op == "div_u" || op == "rem_s" || op == "rem_u";
 }
 
 // `abi_reg` is the pool index of the register the target's ABI returns a
@@ -544,28 +785,45 @@ pub function binary_fixes_abi(op: string): boolean {
 // Returns -1 when no caller-saved register this value may use is free, so the
 // caller falls through to the callee-saved pool or to a spill.
 function pick_caller_reg(free: i32[], abi_reg: i32, want_abi: boolean, abi_ok: boolean): i32 {
-    if (free.len() == 0) { return 0 - 1; }
-    if (abi_reg < 0) { return free[free.len() - 1]; }
-    if (want_abi) {
-        for r in free { if (r == abi_reg) { return abi_reg; } }
+  if (free.len() == 0) {
+    return 0 - 1;
+  }
+  if (abi_reg < 0) {
+    return free[free.len() - 1];
+  }
+  if (want_abi) {
+    for r in free {
+      if (r == abi_reg) {
+        return abi_reg;
+      }
     }
-    var i: i32 = free.len() - 1;
-    while (i >= 0) {
-        if (free[i] != abi_reg) { return free[i]; }
-        i = i - 1;
+  }
+  var i: i32 = free.len() - 1;
+  while (i >= 0) {
+    if (free[i] != abi_reg) {
+      return free[i];
     }
-    if (!abi_ok) { return 0 - 1; }
-    return abi_reg;
+    i = i - 1;
+  }
+  if (!abi_ok) {
+    return 0 - 1;
+  }
+  return abi_reg;
 }
 
 function remove_reg(free: i32[], reg: i32): i32[] {
-    var out: i32[] = [];
-    var dropped: boolean = false;
-    for r in free {
-        if (r == reg && !dropped) { dropped = true; } else { out = out.append(r); }
+  var out: i32[] = [];
+  var dropped: boolean = false;
+  for r in free {
+    if (r == reg && !dropped) {
+      dropped = true;
+    } else {
+      out = out.append(r);
     }
-    return out;
+  }
+  return out;
 }
+
 // cheapest_active is the index of the active interval, among those holding a
 // register of the class this value needs, whose spill costs least per
 // position it covers (the latest ending on a tie), or -1. A spilled value pays
@@ -573,84 +831,110 @@ function remove_reg(free: i32[], reg: i32): i32[] {
 // spilled should be what is referenced least for the span it holds, weighted
 // by loop depth.
 function cheapest_active(act_val: i32[], act_reg: i32[], act_hi: i32[], shared_with: i32[], weight: i32[], lo: i32[], nregs: i32, need_saved: boolean): i32 {
-    var best: i32 = 0 - 1;
-    var best_w: i32 = 0;
-    var best_len: i32 = 1;
-    var i: i32 = 0;
-    while (i < act_val.len()) {
-        if ((act_reg[i] >= nregs) == need_saved) {
-            var w: i32 = chain_weight(act_val[i], shared_with, weight);
-            var len: i32 = act_hi[i] - chain_lo(act_val[i], shared_with, lo) + 1;
-            var cmp: i32 = cmp_density(w, len, best_w, best_len);
-            if (best < 0 || cmp < 0 || (cmp == 0 && act_hi[i] > act_hi[best])) { best = i; best_w = w; best_len = len; }
-        }
-        i = i + 1;
+  var best: i32 = 0 - 1;
+  var best_w: i32 = 0;
+  var best_len: i32 = 1;
+  var i: i32 = 0;
+  while (i < act_val.len()) {
+    if (act_reg[i] >= nregs == need_saved) {
+      var w: i32 = chain_weight(act_val[i], shared_with, weight);
+      var len: i32 = act_hi[i] - chain_lo(act_val[i], shared_with, lo) + 1;
+      var cmp: i32 = cmp_density(w, len, best_w, best_len);
+      if (best < 0 || cmp < 0 || cmp == 0 && act_hi[i] > act_hi[best]) {
+        best = i;
+        best_w = w;
+        best_len = len;
+      }
     }
-    return best;
+    i = i + 1;
+  }
+  return best;
 }
 
 // cmp_density orders two spill costs by weight per position covered:
 // negative when w1 / len1 is the smaller.
 function cmp_density(w1: i32, len1: i32, w2: i32, len2: i32): i32 {
-    var a: i64 = (w1 as i64) * (len2 as i64);
-    var b: i64 = (w2 as i64) * (len1 as i64);
-    if (a < b) { return 0 - 1; }
-    if (a > b) { return 1; }
-    return 0;
+  var a: i64 = w1 as i64 * (len2 as i64);
+  var b: i64 = w2 as i64 * (len1 as i64);
+  if (a < b) {
+    return 0 - 1;
+  }
+  if (a > b) {
+    return 1;
+  }
+  return 0;
 }
 
 // chain_lo is where the first of the values sharing v's register begins.
 function chain_lo(v: i32, shared_with: i32[], lo: i32[]): i32 {
-    var m: i32 = lo[v];
-    var ev: i32 = shared_with[v];
-    while (ev >= 0) { if (lo[ev] < m) { m = lo[ev]; } ev = shared_with[ev]; }
-    return m;
+  var m: i32 = lo[v];
+  var ev: i32 = shared_with[v];
+  while (ev >= 0) {
+    if (lo[ev] < m) {
+      m = lo[ev];
+    }
+    ev = shared_with[ev];
+  }
+  return m;
 }
 
 // chain_weight sums the spill weights of a register's holder and of the
 // values that shared the register before it, which an eviction spills too.
 function chain_weight(v: i32, shared_with: i32[], weight: i32[]): i32 {
-    var w: i32 = 0;
-    var ev: i32 = v;
-    while (ev >= 0) { w = w + weight[ev]; ev = shared_with[ev]; }
-    return w;
+  var w: i32 = 0;
+  var ev: i32 = v;
+  while (ev >= 0) {
+    w = w + weight[ev];
+    ev = shared_with[ev];
+  }
+  return w;
 }
 
 // block_loop_weights gives each block, by position, the weight of one
 // reference inside it: 8 per enclosing loop, up to three. A loop is the span
 // of block positions from a back edge's target to its source.
 function block_loop_weights(f: SFunc): i32[] {
-    var at: i32[] = block_positions(f);
-    var depth: i32[] = [];
-    for blk in f.blocks { depth = depth.append(0); }
-    var bi: i32 = 0;
-    while (bi < f.blocks.len()) {
-        for tgt in successor_positions(f, at, bi) {
-            if (tgt >= 0 && tgt <= bi) {
-                var k: i32 = tgt;
-                while (k <= bi) { depth = depth.with(k, depth[k] + 1); k = k + 1; }
-            }
+  var at: i32[] = block_positions(f);
+  var depth: i32[] = [];
+  for blk in f.blocks {
+    depth = depth.append(0);
+  }
+  var bi: i32 = 0;
+  while (bi < f.blocks.len()) {
+    for tgt in successor_positions(f, at, bi) {
+      if (tgt >= 0 && tgt <= bi) {
+        var k: i32 = tgt;
+        while (k <= bi) {
+          depth = depth.with(k, depth[k] + 1);
+          k = k + 1;
         }
-        bi = bi + 1;
+      }
     }
-    var out: i32[] = [];
-    for d in depth {
-        var w: i32 = 1;
-        var n: i32 = 0;
-        while (n < d && n < 3) { w = w * 8; n = n + 1; }
-        out = out.append(w);
+    bi = bi + 1;
+  }
+  var out: i32[] = [];
+  for d in depth {
+    var w: i32 = 1;
+    var n: i32 = 0;
+    while (n < d && n < 3) {
+      w = w * 8;
+      n = n + 1;
     }
-    return out;
+    out = out.append(w);
+  }
+  return out;
 }
 
 function drop_active_at(a: i32[], k: i32): i32[] {
-    var out: i32[] = [];
-    var i: i32 = 0;
-    while (i < a.len()) {
-        if (i != k) { out = out.append(a[i]); }
-        i = i + 1;
+  var out: i32[] = [];
+  var i: i32 = 0;
+  while (i < a.len()) {
+    if (i != k) {
+      out = out.append(a[i]);
     }
-    return out;
+    i = i + 1;
+  }
+  return out;
 }
 
 // regalloc_linear assigns each value a register index or a spill slot. The
@@ -665,231 +949,351 @@ function drop_active_at(a: i32[], k: i32): i32[] {
 // is taken when free and v does not live across a call; an empty `pref` asks
 // for nothing.
 pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, abi_fixed_by_div: boolean, no_home: boolean[], pref: i32[]): i32[] {
-    var big: i32 = 2000000000;
-    var lo: i32[] = [];
-    var hi: i32[] = [];
-    var i: i32 = 0;
-    while (i < f.nvals) { lo = lo.append(big); hi = hi.append(0 - 1); i = i + 1; }
-    var calls: i32[] = [];
-    var abi_cl: i32[] = [];
+  var big: i32 = 2000000000;
+  var lo: i32[] = [];
+  var hi: i32[] = [];
+  var i: i32 = 0;
+  while (i < f.nvals) {
+    lo = lo.append(big);
+    hi = hi.append(0 - 1);
+    i = i + 1;
+  }
+  var calls: i32[] = [];
+  var abi_cl: i32[] = [];
 
-    // Number instructions and record each value's def/use positions.
-    var def_pos: i32[] = [];
-    var def_blk: i32[] = [];
-    var call_def: i32[] = [];
-    var reads_mate: boolean[] = [];
-    var def_a: i32[] = [];
-    var def_b: i32[] = [];
-    i = 0;
-    while (i < f.nvals) { def_pos = def_pos.append(0 - 1); def_blk = def_blk.append(0 - 1); call_def = call_def.append(0); reads_mate = reads_mate.append(false); def_a = def_a.append(0 - 1); def_b = def_b.append(0 - 1); i = i + 1; }
-    var blk_start: i32[] = [];
-    var pos: i32 = 0;
-    var bi: i32 = 0;
-    while (bi < f.blocks.len()) {
-        var blk: SBlock = f.blocks[bi];
-        blk_start = blk_start.append(pos);
-        var k: i32 = 0;
-        while (k < blk.insts.len()) {
-            var ins: SInst = blk.insts[k];
-            if (ins.result >= 0 && ins.result < lo.len() && pos < lo[ins.result]) { lo = lo.with(ins.result, pos); } if (ins.result >= 0 && ins.result < hi.len() && pos > hi[ins.result]) { hi = hi.with(ins.result, pos); }
-            if (ins.result >= 0 && ins.result < def_pos.len()) {
-                def_pos = def_pos.with(ins.result, pos);
-                def_blk = def_blk.with(ins.result, bi);
-                // A call reads its arguments before it writes its result, so
-                // the result may take a dying argument's register.
-                if (ins.kind_tag == 8 || ins.kind_tag == 10 || ins.kind_tag == 11 || (ins.kind_tag == 9 && shares_operand_home(ins.str))) {
-                    reads_mate = reads_mate.with(ins.result, true);
-                    if (ins.kind_tag != 8 && ins.args.len() > 0) { def_a = def_a.with(ins.result, ins.args[0]); }
-                    if (ins.kind_tag != 8 && ins.args.len() > 1) { def_b = def_b.with(ins.result, ins.args[1]); }
-                }
-            }
-            var a: i32 = 0;
-            while (a < ins.args.len() && ins.kind_tag != 8) {
-                if (ins.args[a] >= 0 && ins.args[a] < lo.len() && pos < lo[ins.args[a]]) { lo = lo.with(ins.args[a], pos); } if (ins.args[a] >= 0 && ins.args[a] < hi.len() && pos > hi[ins.args[a]]) { hi = hi.with(ins.args[a], pos); }
-                a = a + 1;
-            }
-            if (inst_is_call(ins.kind_tag)) {
-                calls = calls.append(pos);
-                if (ins.result >= 0 && ins.result < call_def.len()) { call_def = call_def.with(ins.result, 1); }
-            }
-            if (abi_fixed_by_div && ins.kind_tag == 9 && binary_fixes_abi(ins.str)) { abi_cl = abi_cl.append(pos); }
-            pos = pos + 1;
-            k = k + 1;
+  // Number instructions and record each value's def/use positions.
+  var def_pos: i32[] = [];
+  var def_blk: i32[] = [];
+  var call_def: i32[] = [];
+  var reads_mate: boolean[] = [];
+  var def_a: i32[] = [];
+  var def_b: i32[] = [];
+  i = 0;
+  while (i < f.nvals) {
+    def_pos = def_pos.append(0 - 1);
+    def_blk = def_blk.append(0 - 1);
+    call_def = call_def.append(0);
+    reads_mate = reads_mate.append(false);
+    def_a = def_a.append(0 - 1);
+    def_b = def_b.append(0 - 1);
+    i = i + 1;
+  }
+  var blk_start: i32[] = [];
+  var pos: i32 = 0;
+  var bi: i32 = 0;
+  while (bi < f.blocks.len()) {
+    var blk: SBlock = f.blocks[bi];
+    blk_start = blk_start.append(pos);
+    var k: i32 = 0;
+    while (k < blk.insts.len()) {
+      var ins: SInst = blk.insts[k];
+      if (ins.result >= 0 && ins.result < lo.len() && pos < lo[ins.result]) {
+        lo = lo.with(ins.result, pos);
+      }
+      if (ins.result >= 0 && ins.result < hi.len() && pos > hi[ins.result]) {
+        hi = hi.with(ins.result, pos);
+      }
+      if (ins.result >= 0 && ins.result < def_pos.len()) {
+        def_pos = def_pos.with(ins.result, pos);
+        def_blk = def_blk.with(ins.result, bi);
+        // A call reads its arguments before it writes its result, so
+        // the result may take a dying argument's register.
+        if (ins.kind_tag == 8 || ins.kind_tag == 10 || ins.kind_tag == 11 || ins.kind_tag == 9 && shares_operand_home(ins.str)) {
+          reads_mate = reads_mate.with(ins.result, true);
+          if (ins.kind_tag != 8 && ins.args.len() > 0) {
+            def_a = def_a.with(ins.result, ins.args[0]);
+          }
+          if (ins.kind_tag != 8 && ins.args.len() > 1) {
+            def_b = def_b.with(ins.result, ins.args[1]);
+          }
         }
-        if (blk.term.kind_tag == 1) { if (blk.term.value >= 0 && blk.term.value < lo.len() && pos < lo[blk.term.value]) { lo = lo.with(blk.term.value, pos); } if (blk.term.value >= 0 && blk.term.value < hi.len() && pos > hi[blk.term.value]) { hi = hi.with(blk.term.value, pos); } }
-        else if (blk.term.kind_tag == 3) { if (blk.term.cond >= 0 && blk.term.cond < lo.len() && pos < lo[blk.term.cond]) { lo = lo.with(blk.term.cond, pos); } if (blk.term.cond >= 0 && blk.term.cond < hi.len() && pos > hi[blk.term.cond]) { hi = hi.with(blk.term.cond, pos); } }
-        pos = pos + 1;
-        bi = bi + 1;
+      }
+      var a: i32 = 0;
+      while (a < ins.args.len() && ins.kind_tag != 8) {
+        if (ins.args[a] >= 0 && ins.args[a] < lo.len() && pos < lo[ins.args[a]]) {
+          lo = lo.with(ins.args[a], pos);
+        }
+        if (ins.args[a] >= 0 && ins.args[a] < hi.len() && pos > hi[ins.args[a]]) {
+          hi = hi.with(ins.args[a], pos);
+        }
+        a = a + 1;
+      }
+      if (inst_is_call(ins.kind_tag)) {
+        calls = calls.append(pos);
+        if (ins.result >= 0 && ins.result < call_def.len()) {
+          call_def = call_def.with(ins.result, 1);
+        }
+      }
+      if (abi_fixed_by_div && ins.kind_tag == 9 && binary_fixes_abi(ins.str)) {
+        abi_cl = abi_cl.append(pos);
+      }
+      pos = pos + 1;
+      k = k + 1;
     }
-    var total_pos: i32 = pos;
-    var at: i32[] = block_positions(f);
-    // A phi reads its operand on the edge from the predecessor, at that
-    // block's terminator, not at its own position inside the header. Read
-    // there, an operand arriving from before a loop ends before the loop
-    // rather than looking live through it, and a loop-carried operand lives
-    // from its definition to the back edge it is read on, and no further:
-    // what follows the loop, calls included, is not on its interval.
-    bi = 0;
-    while (bi < f.blocks.len()) {
-        var pb: SBlock = f.blocks[bi];
-        var pk: i32 = 0;
-        while (pk < pb.insts.len()) {
-            var ph: SInst = pb.insts[pk];
-            if (ph.kind_tag == 8) {
-                var sl: i32 = 0;
-                while (sl < ph.args.len()) {
-                    var upos: i32 = blk_start[bi] + pk;
-                    if (sl < pb.preds.len() && pb.preds[sl] >= 0 && pb.preds[sl] < at.len() && at[pb.preds[sl]] >= 0) {
-                        var pi: i32 = at[pb.preds[sl]];
-                        upos = blk_start[pi] + f.blocks[pi].insts.len();
-                    }
-                    var pa: i32 = ph.args[sl];
-                    if (pa >= 0 && pa < lo.len() && upos < lo[pa]) { lo = lo.with(pa, upos); }
-                    if (pa >= 0 && pa < hi.len() && upos > hi[pa]) { hi = hi.with(pa, upos); }
-                    sl = sl + 1;
-                }
-            }
-            pk = pk + 1;
-        }
-        bi = bi + 1;
+    if (blk.term.kind_tag == 1) {
+      if (blk.term.value >= 0 && blk.term.value < lo.len() && pos < lo[blk.term.value]) {
+        lo = lo.with(blk.term.value, pos);
+      }
+      if (blk.term.value >= 0 && blk.term.value < hi.len() && pos > hi[blk.term.value]) {
+        hi = hi.with(blk.term.value, pos);
+      }
+    } else if (blk.term.kind_tag == 3) {
+      if (blk.term.cond >= 0 && blk.term.cond < lo.len() && pos < lo[blk.term.cond]) {
+        lo = lo.with(blk.term.cond, pos);
+      }
+      if (blk.term.cond >= 0 && blk.term.cond < hi.len() && pos > hi[blk.term.cond]) {
+        hi = hi.with(blk.term.cond, pos);
+      }
     }
-    // A value with no home has no interval; the extensions below leave it
-    // alone because it is never a phi operand and never live into a loop.
-    i = 0;
-    while (i < no_home.len() && i < f.nvals) { if (no_home[i]) { hi = hi.with(i, 0 - 1); } i = i + 1; }
-
-    hi = extend_loop_invariant_intervals(f, def_pos, hi);
-    var cum: i32[] = calls_before(calls, total_pos);
-    var cum_abi: i32[] = calls_before(abi_cl, total_pos);
-    var mates: Mates = phi_mates(f, def_pos);
-    var weight: i32[] = spill_weights(f, at);
-
-    var reg_of: i32[] = [];
-    var shared_with: i32[] = [];
-    i = 0;
-    while (i < f.nvals) { reg_of = reg_of.append(0 - 1); shared_with = shared_with.append(0 - 1); i = i + 1; }
-
-    // Linear scan in order of interval start.
-    var order: i32[] = order_by_lo(f.nvals, lo);
-    var act_val: i32[] = [];
-    var act_hi: i32[] = [];
-    var act_reg: i32[] = [];
-    var free: i32[] = [];
-    var r: i32 = nregs - 1;
-    while (r >= 0) { free = free.append(r); r = r - 1; }
-    var free_s: i32[] = [];
-    r = nregs + nsaved - 1;
-    while (r >= nregs) { free_s = free_s.append(r); r = r - 1; }
-
-    var oi: i32 = 0;
-    while (oi < order.len()) {
-        var v: i32 = order[oi];
-        if (hi[v] < 0) { oi = oi + 1; continue; }   // never referenced
-        // Expire active intervals that end before v begins.
-        var nv: i32[] = []; var nh: i32[] = []; var nr: i32[] = [];
-        var ai: i32 = 0;
-        while (ai < act_val.len()) {
-            if (act_hi[ai] < lo[v]) {
-                if (act_reg[ai] >= nregs) { free_s = free_s.append(act_reg[ai]); } else { free = free.append(act_reg[ai]); }
-            } else { nv = nv.append(act_val[ai]); nh = nh.append(act_hi[ai]); nr = nr.append(act_reg[ai]); }
-            ai = ai + 1;
+    pos = pos + 1;
+    bi = bi + 1;
+  }
+  var total_pos: i32 = pos;
+  var at: i32[] = block_positions(f);
+  // A phi reads its operand on the edge from the predecessor, at that
+  // block's terminator, not at its own position inside the header. Read
+  // there, an operand arriving from before a loop ends before the loop
+  // rather than looking live through it, and a loop-carried operand lives
+  // from its definition to the back edge it is read on, and no further:
+  // what follows the loop, calls included, is not on its interval.
+  bi = 0;
+  while (bi < f.blocks.len()) {
+    var pb: SBlock = f.blocks[bi];
+    var pk: i32 = 0;
+    while (pk < pb.insts.len()) {
+      var ph: SInst = pb.insts[pk];
+      if (ph.kind_tag == 8) {
+        var sl: i32 = 0;
+        while (sl < ph.args.len()) {
+          var upos: i32 = blk_start[bi] + pk;
+          if (sl < pb.preds.len() && pb.preds[sl] >= 0 && pb.preds[sl] < at.len() && at[pb.preds[sl]] >= 0) {
+            var pi: i32 = at[pb.preds[sl]];
+            upos = blk_start[pi] + f.blocks[pi].insts.len();
+          }
+          var pa: i32 = ph.args[sl];
+          if (pa >= 0 && pa < lo.len() && upos < lo[pa]) {
+            lo = lo.with(pa, upos);
+          }
+          if (pa >= 0 && pa < hi.len() && upos > hi[pa]) {
+            hi = hi.with(pa, upos);
+          }
+          sl = sl + 1;
         }
-        act_val = nv; act_hi = nh; act_reg = nr;
+      }
+      pk = pk + 1;
+    }
+    bi = bi + 1;
+  }
+  // A value with no home has no interval; the extensions below leave it
+  // alone because it is never a phi operand and never live into a loop.
+  i = 0;
+  while (i < no_home.len() && i < f.nvals) {
+    if (no_home[i]) {
+      hi = hi.with(i, 0 - 1);
+    }
+    i = i + 1;
+  }
 
-        var abi_ok: boolean = !spans_call(cum_abi, lo[v], hi[v]);
-        // A value takes the register of its phi mate, or of an operand of
-        // its definition, when it can: the register is free, or its holder
-        // dies at this very definition and the emitter reads before it
-        // writes, or the holder is the phi this loop-carried value feeds and
-        // the two never live at once. First fit wins; the phi mate first.
-        var placed: boolean = false;
-        // -2 stands for `pref[v]`, which names a register rather than a value.
-        var cands: i32[] = [mates.hint[v], 0 - 2, def_a[v], def_b[v]];
-        var ci: i32 = 0;
-        while (ci < cands.len() && !placed) {
-            var h: i32 = cands[ci];
-            ci = ci + 1;
-            if (h == 0 - 2) {
-                var pr: i32 = 0 - 1;
-                if (v < pref.len()) { pr = pref[v]; }
-                if (pr < 0 || spans_call(cum, lo[v], hi[v]) || (pr == abi_reg && !abi_ok) || index_of_reg(free, pr) < 0) { continue; }
-                free = remove_reg(free, pr);
-                reg_of = reg_of.with(v, pr);
-                act_val = act_val.append(v); act_hi = act_hi.append(hi[v]); act_reg = act_reg.append(pr);
-                placed = true;
-                continue;
-            }
-            if (h < 0 || reg_of[h] < 0) { continue; }
-            var hr: i32 = reg_of[h];
-            // A call's result arrives in abi_reg, so an argument's register
-            // saves a move only when it is that one.
-            if (call_def[v] == 1 && h != mates.hint[v] && hr != abi_reg) { continue; }
-            if ((spans_call(cum, lo[v], hi[v]) && hr < nregs) || (hr == abi_reg && !abi_ok)) { continue; }
-            var fi: i32 = index_of_reg(free, hr);
-            var fsi: i32 = index_of_reg(free_s, hr);
-            if (fi >= 0 || fsi >= 0) {
-                if (fi >= 0) { free = remove_reg(free, hr); } else { free_s = remove_reg(free_s, hr); }
-                reg_of = reg_of.with(v, hr);
-                shared_with = shared_with.with(v, h);
-                act_val = act_val.append(v); act_hi = act_hi.append(hi[v]); act_reg = act_reg.append(hr);
-                placed = true;
-                continue;
-            }
-            var ha: i32 = index_of_reg(act_reg, hr);
-            if (ha < 0) { continue; }
-            var share: boolean = act_hi[ha] == lo[v] && reads_mate[v];
-            if (!share && h == mates.hint[v] && mates.carried[v] && act_val[ha] == h) {
-                share = !mate_interferes(f, at, blk_start, h, v, def_blk[h], def_blk[v], def_pos[v]);
-            }
-            if (!share) { continue; }
-            var top: i32 = act_hi[ha];
-            if (hi[v] > top) { top = hi[v]; }
-            var holder: i32 = act_val[ha];
-            act_val = drop_active_at(act_val, ha);
-            act_hi = drop_active_at(act_hi, ha);
-            act_reg = drop_active_at(act_reg, ha);
-            reg_of = reg_of.with(v, hr);
-            shared_with = shared_with.with(v, holder);
-            act_val = act_val.append(v); act_hi = act_hi.append(top); act_reg = act_reg.append(hr);
-            placed = true;
-        }
-        if (placed) { oi = oi + 1; continue; }
-        var pick: i32 = pick_caller_reg(free, abi_reg, call_def[v] == 1 && abi_ok, abi_ok);
-        var from_caller: boolean = !spans_call(cum, lo[v], hi[v]) && pick >= 0;
-        if (!from_caller && free_s.len() == 0) {
-            // Nothing free: take the register from the active interval whose
-            // spill costs least, if that is less than this one's, and spill it
-            // instead. `need_saved` keeps the two pools apart, since a value
-            // live across a call may only sit in a callee-saved register.
-            var need_saved: boolean = spans_call(cum, lo[v], hi[v]);
-            var fa: i32 = cheapest_active(act_val, act_reg, act_hi, shared_with, weight, lo, nregs, need_saved);
-            var cmp: i32 = 0;
-            if (fa >= 0) {
-                var fw: i32 = chain_weight(act_val[fa], shared_with, weight);
-                cmp = cmp_density(fw, act_hi[fa] - chain_lo(act_val[fa], shared_with, lo) + 1, weight[v], hi[v] - lo[v] + 1);
-            }
-            if (fa >= 0 && (cmp < 0 || (cmp == 0 && act_hi[fa] > hi[v]))) {
-                var taken: i32 = act_reg[fa];
-                var ev: i32 = act_val[fa];
-                while (ev >= 0) { reg_of = reg_of.with(ev, 0 - 1); var nx: i32 = shared_with[ev]; shared_with = shared_with.with(ev, 0 - 1); ev = nx; }
-                act_val = drop_active_at(act_val, fa);
-                act_hi = drop_active_at(act_hi, fa);
-                act_reg = drop_active_at(act_reg, fa);
-                reg_of = reg_of.with(v, taken);
-                act_val = act_val.append(v); act_hi = act_hi.append(hi[v]); act_reg = act_reg.append(taken);
-            } else {
-                reg_of = reg_of.with(v, 0 - 1);   // spill
-            }
+  hi = extend_loop_invariant_intervals(f, def_pos, hi);
+  var cum: i32[] = calls_before(calls, total_pos);
+  var cum_abi: i32[] = calls_before(abi_cl, total_pos);
+  var mates: Mates = phi_mates(f, def_pos);
+  var weight: i32[] = spill_weights(f, at);
+
+  var reg_of: i32[] = [];
+  var shared_with: i32[] = [];
+  i = 0;
+  while (i < f.nvals) {
+    reg_of = reg_of.append(0 - 1);
+    shared_with = shared_with.append(0 - 1);
+    i = i + 1;
+  }
+
+  // Linear scan in order of interval start.
+  var order: i32[] = order_by_lo(f.nvals, lo);
+  var act_val: i32[] = [];
+  var act_hi: i32[] = [];
+  var act_reg: i32[] = [];
+  var free: i32[] = [];
+  var r: i32 = nregs - 1;
+  while (r >= 0) {
+    free = free.append(r);
+    r = r - 1;
+  }
+  var free_s: i32[] = [];
+  r = nregs + nsaved - 1;
+  while (r >= nregs) {
+    free_s = free_s.append(r);
+    r = r - 1;
+  }
+
+  var oi: i32 = 0;
+  while (oi < order.len()) {
+    var v: i32 = order[oi];
+    if (hi[v] < 0) {  // never referenced
+      oi = oi + 1;
+      continue;
+    }
+    // Expire active intervals that end before v begins.
+    var nv: i32[] = [];
+    var nh: i32[] = [];
+    var nr: i32[] = [];
+    var ai: i32 = 0;
+    while (ai < act_val.len()) {
+      if (act_hi[ai] < lo[v]) {
+        if (act_reg[ai] >= nregs) {
+          free_s = free_s.append(act_reg[ai]);
         } else {
-            var reg: i32 = 0;
-            if (from_caller) { reg = pick; free = remove_reg(free, reg); }
-            else { reg = free_s[free_s.len() - 1]; free_s = drop_last_i(free_s); }
-            reg_of = reg_of.with(v, reg);
-            act_val = act_val.append(v); act_hi = act_hi.append(hi[v]); act_reg = act_reg.append(reg);
+          free = free.append(act_reg[ai]);
         }
-        oi = oi + 1;
+      } else {
+        nv = nv.append(act_val[ai]);
+        nh = nh.append(act_hi[ai]);
+        nr = nr.append(act_reg[ai]);
+      }
+      ai = ai + 1;
     }
-    return assign_spill_slots(lo, hi, def_pos, reg_of, slot_hints(f, at, blk_start, def_blk, def_pos, reg_of, mates));
+    act_val = nv;
+    act_hi = nh;
+    act_reg = nr;
+
+    var abi_ok: boolean = !spans_call(cum_abi, lo[v], hi[v]);
+    // A value takes the register of its phi mate, or of an operand of
+    // its definition, when it can: the register is free, or its holder
+    // dies at this very definition and the emitter reads before it
+    // writes, or the holder is the phi this loop-carried value feeds and
+    // the two never live at once. First fit wins; the phi mate first.
+    var placed: boolean = false;
+    // -2 stands for `pref[v]`, which names a register rather than a value.
+    var cands: i32[] = [mates.hint[v], 0 - 2, def_a[v], def_b[v]];
+    var ci: i32 = 0;
+    while (ci < cands.len() && !placed) {
+      var h: i32 = cands[ci];
+      ci = ci + 1;
+      if (h == 0 - 2) {
+        var pr: i32 = 0 - 1;
+        if (v < pref.len()) {
+          pr = pref[v];
+        }
+        if (pr < 0 || spans_call(cum, lo[v], hi[v]) || pr == abi_reg && !abi_ok || index_of_reg(free, pr) < 0) {
+          continue;
+        }
+        free = remove_reg(free, pr);
+        reg_of = reg_of.with(v, pr);
+        act_val = act_val.append(v);
+        act_hi = act_hi.append(hi[v]);
+        act_reg = act_reg.append(pr);
+        placed = true;
+        continue;
+      }
+      if (h < 0 || reg_of[h] < 0) {
+        continue;
+      }
+      var hr: i32 = reg_of[h];
+      // A call's result arrives in abi_reg, so an argument's register
+      // saves a move only when it is that one.
+      if (call_def[v] == 1 && h != mates.hint[v] && hr != abi_reg) {
+        continue;
+      }
+      if (spans_call(cum, lo[v], hi[v]) && hr < nregs || hr == abi_reg && !abi_ok) {
+        continue;
+      }
+      var fi: i32 = index_of_reg(free, hr);
+      var fsi: i32 = index_of_reg(free_s, hr);
+      if (fi >= 0 || fsi >= 0) {
+        if (fi >= 0) {
+          free = remove_reg(free, hr);
+        } else {
+          free_s = remove_reg(free_s, hr);
+        }
+        reg_of = reg_of.with(v, hr);
+        shared_with = shared_with.with(v, h);
+        act_val = act_val.append(v);
+        act_hi = act_hi.append(hi[v]);
+        act_reg = act_reg.append(hr);
+        placed = true;
+        continue;
+      }
+      var ha: i32 = index_of_reg(act_reg, hr);
+      if (ha < 0) {
+        continue;
+      }
+      var share: boolean = act_hi[ha] == lo[v] && reads_mate[v];
+      if (!share && h == mates.hint[v] && mates.carried[v] && act_val[ha] == h) {
+        share = !mate_interferes(f, at, blk_start, h, v, def_blk[h], def_blk[v], def_pos[v]);
+      }
+      if (!share) {
+        continue;
+      }
+      var top: i32 = act_hi[ha];
+      if (hi[v] > top) {
+        top = hi[v];
+      }
+      var holder: i32 = act_val[ha];
+      act_val = drop_active_at(act_val, ha);
+      act_hi = drop_active_at(act_hi, ha);
+      act_reg = drop_active_at(act_reg, ha);
+      reg_of = reg_of.with(v, hr);
+      shared_with = shared_with.with(v, holder);
+      act_val = act_val.append(v);
+      act_hi = act_hi.append(top);
+      act_reg = act_reg.append(hr);
+      placed = true;
+    }
+    if (placed) {
+      oi = oi + 1;
+      continue;
+    }
+    var pick: i32 = pick_caller_reg(free, abi_reg, call_def[v] == 1 && abi_ok, abi_ok);
+    var from_caller: boolean = !spans_call(cum, lo[v], hi[v]) && pick >= 0;
+    if (!from_caller && free_s.len() == 0) {
+      // Nothing free: take the register from the active interval whose
+      // spill costs least, if that is less than this one's, and spill it
+      // instead. `need_saved` keeps the two pools apart, since a value
+      // live across a call may only sit in a callee-saved register.
+      var need_saved: boolean = spans_call(cum, lo[v], hi[v]);
+      var fa: i32 = cheapest_active(act_val, act_reg, act_hi, shared_with, weight, lo, nregs, need_saved);
+      var cmp: i32 = 0;
+      if (fa >= 0) {
+        var fw: i32 = chain_weight(act_val[fa], shared_with, weight);
+        cmp = cmp_density(fw, act_hi[fa] - chain_lo(act_val[fa], shared_with, lo) + 1, weight[v], hi[v] - lo[v] + 1);
+      }
+      if (fa >= 0 && (cmp < 0 || cmp == 0 && act_hi[fa] > hi[v])) {
+        var taken: i32 = act_reg[fa];
+        var ev: i32 = act_val[fa];
+        while (ev >= 0) {
+          reg_of = reg_of.with(ev, 0 - 1);
+          var nx: i32 = shared_with[ev];
+          shared_with = shared_with.with(ev, 0 - 1);
+          ev = nx;
+        }
+        act_val = drop_active_at(act_val, fa);
+        act_hi = drop_active_at(act_hi, fa);
+        act_reg = drop_active_at(act_reg, fa);
+        reg_of = reg_of.with(v, taken);
+        act_val = act_val.append(v);
+        act_hi = act_hi.append(hi[v]);
+        act_reg = act_reg.append(taken);
+      } else {
+        reg_of = reg_of.with(v, 0 - 1);  // spill
+      }
+    } else {
+      var reg: i32 = 0;
+      if (from_caller) {
+        reg = pick;
+        free = remove_reg(free, reg);
+      } else {
+        reg = free_s[free_s.len() - 1];
+        free_s = drop_last_i(free_s);
+      }
+      reg_of = reg_of.with(v, reg);
+      act_val = act_val.append(v);
+      act_hi = act_hi.append(hi[v]);
+      act_reg = act_reg.append(reg);
+    }
+    oi = oi + 1;
+  }
+  return assign_spill_slots(lo, hi, def_pos, reg_of, slot_hints(f, at, blk_start, def_blk, def_pos, reg_of, mates));
 }
 
 // A spilled value keeps its phi mate's hint for a slot, a loop-carried one
@@ -899,60 +1303,79 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
 struct SlotHints { hint: i32[], take_over: boolean[] }
 
 function slot_hints(f: SFunc, at: i32[], blk_start: i32[], def_blk: i32[], def_pos: i32[], reg_of: i32[], mates: Mates): SlotHints {
-    var hint: i32[] = [];
-    var take_over: boolean[] = [];
-    var i: i32 = 0;
-    while (i < f.nvals) {
-        var sh: i32 = mates.hint[i];
-        if (reg_of[i] >= 0 || sh < 0 || reg_of[sh] >= 0) { sh = 0 - 1; }
-        var free: boolean = sh >= 0 && def_pos[sh] >= 0 && !mate_interferes(f, at, blk_start, sh, i, def_blk[sh], def_blk[i], def_pos[i]);
-        if (sh >= 0 && mates.carried[i] && !free) { sh = 0 - 1; }
-        hint = hint.append(sh);
-        take_over = take_over.append(free);
-        i = i + 1;
+  var hint: i32[] = [];
+  var take_over: boolean[] = [];
+  var i: i32 = 0;
+  while (i < f.nvals) {
+    var sh: i32 = mates.hint[i];
+    if (reg_of[i] >= 0 || sh < 0 || reg_of[sh] >= 0) {
+      sh = 0 - 1;
     }
-    return SlotHints { hint: hint, take_over: take_over };
+    var free: boolean = sh >= 0 && def_pos[sh] >= 0 && !mate_interferes(f, at, blk_start, sh, i, def_blk[sh], def_blk[i], def_pos[i]);
+    if (sh >= 0 && mates.carried[i] && !free) {
+      sh = 0 - 1;
+    }
+    hint = hint.append(sh);
+    take_over = take_over.append(free);
+    i = i + 1;
+  }
+  return SlotHints { hint: hint, take_over: take_over };
 }
 
 // spill_weights counts, per value, its definition and every read, each at the
 // loop weight of the block it happens in; a phi operand is read at the end of
 // the predecessor it arrives from. A spilled value pays a load or store at each.
 function spill_weights(f: SFunc, at: i32[]): i32[] {
-    var bw: i32[] = block_loop_weights(f);
-    var w: i32[] = [];
-    var i: i32 = 0;
-    while (i < f.nvals) { w = w.append(0); i = i + 1; }
-    var bi: i32 = 0;
-    while (bi < f.blocks.len()) {
-        var blk: SBlock = f.blocks[bi];
-        for ins in blk.insts {
-            if (ins.result >= 0 && ins.result < f.nvals) { w = w.with(ins.result, w[ins.result] + bw[bi]); }
-            var sl: i32 = 0;
-            while (sl < ins.args.len()) {
-                var a: i32 = ins.args[sl];
-                var rb: i32 = bi;
-                if (ins.kind_tag == 8) {
-                    rb = 0 - 1;
-                    if (sl < blk.preds.len()) { rb = position_of(at, blk.preds[sl]); }
-                }
-                if (a >= 0 && a < f.nvals && rb >= 0) { w = w.with(a, w[a] + bw[rb]); }
-                sl = sl + 1;
-            }
+  var bw: i32[] = block_loop_weights(f);
+  var w: i32[] = [];
+  var i: i32 = 0;
+  while (i < f.nvals) {
+    w = w.append(0);
+    i = i + 1;
+  }
+  var bi: i32 = 0;
+  while (bi < f.blocks.len()) {
+    var blk: SBlock = f.blocks[bi];
+    for ins in blk.insts {
+      if (ins.result >= 0 && ins.result < f.nvals) {
+        w = w.with(ins.result, w[ins.result] + bw[bi]);
+      }
+      var sl: i32 = 0;
+      while (sl < ins.args.len()) {
+        var a: i32 = ins.args[sl];
+        var rb: i32 = bi;
+        if (ins.kind_tag == 8) {
+          rb = 0 - 1;
+          if (sl < blk.preds.len()) {
+            rb = position_of(at, blk.preds[sl]);
+          }
         }
-        var tv: i32 = 0 - 1;
-        if (blk.term.kind_tag == 1) { tv = blk.term.value; }
-        if (blk.term.kind_tag == 3) { tv = blk.term.cond; }
-        if (tv >= 0 && tv < f.nvals) { w = w.with(tv, w[tv] + bw[bi]); }
-        bi = bi + 1;
+        if (a >= 0 && a < f.nvals && rb >= 0) {
+          w = w.with(a, w[a] + bw[rb]);
+        }
+        sl = sl + 1;
+      }
     }
-    return w;
+    var tv: i32 = 0 - 1;
+    if (blk.term.kind_tag == 1) {
+      tv = blk.term.value;
+    }
+    if (blk.term.kind_tag == 3) {
+      tv = blk.term.cond;
+    }
+    if (tv >= 0 && tv < f.nvals) {
+      w = w.with(tv, w[tv] + bw[bi]);
+    }
+    bi = bi + 1;
+  }
+  return w;
 }
 
 // kept_for_mate says the slot `holder` last held is wanted by its phi mate,
 // which is not `v` and has no slot yet.
 function kept_for_mate(wanted_by: i32[], reg_of: i32[], holder: i32, v: i32): boolean {
-    var w: i32 = wanted_by[holder];
-    return w >= 0 && w != v && reg_of[w] == 0 - 1;
+  var w: i32 = wanted_by[holder];
+  return w >= 0 && w != v && reg_of[w] == 0 - 1;
 }
 
 // A value's home after allocation is a register index, or `spill_code(slot)`
@@ -961,26 +1384,44 @@ function kept_for_mate(wanted_by: i32[], reg_of: i32[], holder: i32, v: i32): bo
 // frame by `spill_count` rather than by the id space, which the lift's phi per
 // local per merge makes hundreds of times larger than what survives pruning.
 function drop_last_i(a: i32[]): i32[] {
-    var out: i32[] = [];
-    var i: i32 = 0;
-    while (i < a.len() - 1) { out = out.append(a[i]); i = i + 1; }
-    return out;
+  var out: i32[] = [];
+  var i: i32 = 0;
+  while (i < a.len() - 1) {
+    out = out.append(a[i]);
+    i = i + 1;
+  }
+  return out;
 }
 
-pub function spill_code(slot: i32): i32 { return 0 - 2 - slot; }
-pub function spill_slot(code: i32): i32 { return 0 - 2 - code; }
-pub function spill_count(reg_of: i32[]): i32 {
-    var n: i32 = 0;
-    for h in reg_of { if (h < 0 - 1 && spill_slot(h) + 1 > n) { n = spill_slot(h) + 1; } }
-    return n;
+pub function spill_code(slot: i32): i32 {
+  return 0 - 2 - slot;
 }
+
+pub function spill_slot(code: i32): i32 {
+  return 0 - 2 - code;
+}
+
+pub function spill_count(reg_of: i32[]): i32 {
+  var n: i32 = 0;
+  for h in reg_of {
+    if (h < 0 - 1 && spill_slot(h) + 1 > n) {
+      n = spill_slot(h) + 1;
+    }
+  }
+  return n;
+}
+
 // The two-operand integer ops whose result may take the register of an
 // operand that dies at them: both emitters read the operands before writing
 // the destination, or swap them when the right one lives there.
 function shares_operand_home(op: string): boolean {
-    var ops: string[] = ["add", "sub", "mul", "and", "or", "xor", "eq", "ne", "lt_s", "le_s", "gt_s", "ge_s", "lt_u", "le_u", "gt_u", "ge_u"];
-    for o in ops { if (o == op) { return true; } }
-    return false;
+  var ops: string[] = ["add", "sub", "mul", "and", "or", "xor", "eq", "ne", "lt_s", "le_s", "gt_s", "ge_s", "lt_u", "le_u", "gt_u", "ge_u"];
+  for o in ops {
+    if (o == op) {
+      return true;
+    }
+  }
+  return false;
 }
 
 // Mates pairs each phi with its operands for register sharing: `hint[r]` for
@@ -992,71 +1433,103 @@ function shares_operand_home(op: string): boolean {
 struct Mates { hint: i32[], carried: boolean[] }
 
 function phi_mates(f: SFunc, def_pos: i32[]): Mates {
-    var hint: i32[] = [];
-    var carried: boolean[] = [];
-    var i: i32 = 0;
-    while (i < f.nvals) { hint = hint.append(0 - 1); carried = carried.append(false); i = i + 1; }
-    var pos: i32 = 0;
-    for blk in f.blocks {
-        for ins in blk.insts {
-            if (ins.kind_tag == 8 && ins.result >= 0 && ins.result < hint.len()) {
-                for a in ins.args {
-                    if (a < 0 || a >= hint.len()) { continue; }
-                    if (def_pos[a] < pos) {
-                        if (hint[ins.result] < 0) { hint = hint.with(ins.result, a); }
-                    } else if (hint[a] < 0) {
-                        hint = hint.with(a, ins.result);
-                        carried = carried.with(a, true);
-                    }
-                }
+  var hint: i32[] = [];
+  var carried: boolean[] = [];
+  var i: i32 = 0;
+  while (i < f.nvals) {
+    hint = hint.append(0 - 1);
+    carried = carried.append(false);
+    i = i + 1;
+  }
+  var pos: i32 = 0;
+  for blk in f.blocks {
+    for ins in blk.insts {
+      if (ins.kind_tag == 8 && ins.result >= 0 && ins.result < hint.len()) {
+        for a in ins.args {
+          if (a < 0 || a >= hint.len()) {
+            continue;
+          }
+          if (def_pos[a] < pos) {
+            if (hint[ins.result] < 0) {
+              hint = hint.with(ins.result, a);
             }
-            pos = pos + 1;
+          } else if (hint[a] < 0) {
+            hint = hint.with(a, ins.result);
+            carried = carried.with(a, true);
+          }
         }
-        pos = pos + 1;
+      }
+      pos = pos + 1;
     }
-    return Mates { hint: hint, carried: carried };
+    pos = pos + 1;
+  }
+  return Mates { hint: hint, carried: carried };
 }
 
 // block_positions maps a block id to its position in f.blocks, -1 for an id
 // no block carries.
 function block_positions(f: SFunc): i32[] {
-    var most: i32 = 0;
-    for blk in f.blocks { if (blk.id > most) { most = blk.id; } }
-    var out: i32[] = [];
-    var i: i32 = 0;
-    while (i <= most) { out = out.append(0 - 1); i = i + 1; }
-    i = 0;
-    while (i < f.blocks.len()) { out = out.with(f.blocks[i].id, i); i = i + 1; }
-    return out;
+  var most: i32 = 0;
+  for blk in f.blocks {
+    if (blk.id > most) {
+      most = blk.id;
+    }
+  }
+  var out: i32[] = [];
+  var i: i32 = 0;
+  while (i <= most) {
+    out = out.append(0 - 1);
+    i = i + 1;
+  }
+  i = 0;
+  while (i < f.blocks.len()) {
+    out = out.with(f.blocks[i].id, i);
+    i = i + 1;
+  }
+  return out;
 }
 
 // successor_positions lists the positions of bi's successors; an edge to an
 // id no block carries contributes -1.
 function successor_positions(f: SFunc, at: i32[], bi: i32): i32[] {
-    var t: STerm = f.blocks[bi].term;
-    var out: i32[] = [];
-    if (t.kind_tag == 2) { out = out.append(position_of(at, t.target)); }
-    if (t.kind_tag == 3) {
-        out = out.append(position_of(at, t.t));
-        if (t.f != t.t) { out = out.append(position_of(at, t.f)); }
+  var t: STerm = f.blocks[bi].term;
+  var out: i32[] = [];
+  if (t.kind_tag == 2) {
+    out = out.append(position_of(at, t.target));
+  }
+  if (t.kind_tag == 3) {
+    out = out.append(position_of(at, t.t));
+    if (t.f != t.t) {
+      out = out.append(position_of(at, t.f));
     }
-    return out;
+  }
+  return out;
 }
 
 function position_of(at: i32[], id: i32): i32 {
-    if (id < 0 || id >= at.len()) { return 0 - 1; }
-    return at[id];
+  if (id < 0 || id >= at.len()) {
+    return 0 - 1;
+  }
+  return at[id];
 }
 
 pub function reads_value(ins: SInst, v: i32): boolean {
-    for a in ins.args { if (a == v) { return true; } }
-    return false;
+  for a in ins.args {
+    if (a == v) {
+      return true;
+    }
+  }
+  return false;
 }
 
 pub function term_reads_value(t: STerm, v: i32): boolean {
-    if (t.kind_tag == 1) { return t.value == v; }
-    if (t.kind_tag == 3) { return t.cond == v; }
-    return false;
+  if (t.kind_tag == 1) {
+    return t.value == v;
+  }
+  if (t.kind_tag == 3) {
+    return t.cond == v;
+  }
+  return false;
 }
 
 // mate_interferes says whether r is live anywhere its phi mate a is, where
@@ -1068,50 +1541,76 @@ pub function term_reads_value(t: STerm, v: i32): boolean {
 // read before the write and does not count, unless a's block reaches itself
 // again without `hdr`.
 function mate_interferes(f: SFunc, at: i32[], blk_start: i32[], r: i32, a: i32, hdr: i32, ablk: i32, apos: i32): boolean {
-    var reach: boolean[] = [];
-    var i: i32 = 0;
-    while (i < f.blocks.len()) { reach = reach.append(false); i = i + 1; }
-    var work: i32[] = successor_positions(f, at, ablk);
-    while (work.len() > 0) {
-        var b: i32 = work[work.len() - 1];
-        work = drop_last_i(work);
-        if (b < 0 || b == hdr || reach[b]) { continue; }
-        reach = reach.with(b, true);
-        for s in successor_positions(f, at, b) { work = work.append(s); }
+  var reach: boolean[] = [];
+  var i: i32 = 0;
+  while (i < f.blocks.len()) {
+    reach = reach.append(false);
+    i = i + 1;
+  }
+  var work: i32[] = successor_positions(f, at, ablk);
+  while (work.len() > 0) {
+    var b: i32 = work[work.len() - 1];
+    work = drop_last_i(work);
+    if (b < 0 || b == hdr || reach[b]) {
+      continue;
     }
-    var bi: i32 = 0;
-    while (bi < f.blocks.len()) {
-        var blk: SBlock = f.blocks[bi];
-        var from: boolean = reach[bi] || bi == ablk;
-        if (reach[bi] && bi != ablk) {
-            for ins in blk.insts { if (ins.kind_tag != 8 && reads_value(ins, r)) { return true; } }
-        }
-        if (bi == ablk) {
-            var k: i32 = 0;
-            while (k < blk.insts.len()) {
-                var ki: SInst = blk.insts[k];
-                if ((reach[bi] || blk_start[bi] + k > apos) && ki.kind_tag != 8 && reads_value(ki, r)) { return true; }
-                k = k + 1;
-            }
-        }
-        if (from) {
-            if (term_reads_value(blk.term, r)) { return true; }
-            for s in successor_positions(f, at, bi) {
-                if (s < 0) { continue; }
-                var sb: SBlock = f.blocks[s];
-                var slot: i32 = pred_slot(sb, blk.id);
-                for ins in sb.insts { if (ins.kind_tag == 8 && slot < ins.args.len() && ins.args[slot] == r) { return true; } }
-            }
-        }
-        bi = bi + 1;
+    reach = reach.with(b, true);
+    for s in successor_positions(f, at, b) {
+      work = work.append(s);
     }
-    return false;
+  }
+  var bi: i32 = 0;
+  while (bi < f.blocks.len()) {
+    var blk: SBlock = f.blocks[bi];
+    var from: boolean = reach[bi] || bi == ablk;
+    if (reach[bi] && bi != ablk) {
+      for ins in blk.insts {
+        if (ins.kind_tag != 8 && reads_value(ins, r)) {
+          return true;
+        }
+      }
+    }
+    if (bi == ablk) {
+      var k: i32 = 0;
+      while (k < blk.insts.len()) {
+        var ki: SInst = blk.insts[k];
+        if ((reach[bi] || blk_start[bi] + k > apos) && ki.kind_tag != 8 && reads_value(ki, r)) {
+          return true;
+        }
+        k = k + 1;
+      }
+    }
+    if (from) {
+      if (term_reads_value(blk.term, r)) {
+        return true;
+      }
+      for s in successor_positions(f, at, bi) {
+        if (s < 0) {
+          continue;
+        }
+        var sb: SBlock = f.blocks[s];
+        var slot: i32 = pred_slot(sb, blk.id);
+        for ins in sb.insts {
+          if (ins.kind_tag == 8 && slot < ins.args.len() && ins.args[slot] == r) {
+            return true;
+          }
+        }
+      }
+    }
+    bi = bi + 1;
+  }
+  return false;
 }
 
 function index_of_reg(a: i32[], x: i32): i32 {
-    var i: i32 = 0;
-    while (i < a.len()) { if (a[i] == x) { return i; } i = i + 1; }
-    return 0 - 1;
+  var i: i32 = 0;
+  while (i < a.len()) {
+    if (a[i] == x) {
+      return i;
+    }
+    i = i + 1;
+  }
+  return 0 - 1;
 }
 
 // assign_spill_slots gives the spilled values frame slots, sharing one between
@@ -1125,60 +1624,86 @@ function index_of_reg(a: i32[], x: i32): i32 {
 // operand arriving from before them dies at the edge, so the first phi would
 // otherwise take the slot a later one wants.
 function assign_spill_slots(lo: i32[], hi: i32[], def_pos: i32[], reg_of: i32[], hints: SlotHints): i32[] {
-    var from: i32[] = spill_starts(lo, def_pos);
-    var wanted_by: i32[] = mates_wanted(hi, reg_of, hints.hint);
-    var slot_end: i32[] = [];
-    var holder: i32[] = [];
-    for v in order_by_lo(reg_of.len(), from) {
-        if (hi[v] < 0 || reg_of[v] >= 0) { continue; }
-        var s: i32 = hinted_slot(slot_end, holder, reg_of, hints.hint[v], from[v], hints.take_over[v]);
-        if (s < 0) { s = free_slot(slot_end, holder, wanted_by, reg_of, from[v], v); }
-        var end: i32 = hi[v];
-        if (s < slot_end.len() && slot_end[s] > end) { end = slot_end[s]; }
-        if (s == slot_end.len()) { slot_end = slot_end.append(end); holder = holder.append(v); }
-        else { slot_end = slot_end.with(s, end); holder = holder.with(s, v); }
-        reg_of = reg_of.with(v, spill_code(s));
+  var from: i32[] = spill_starts(lo, def_pos);
+  var wanted_by: i32[] = mates_wanted(hi, reg_of, hints.hint);
+  var slot_end: i32[] = [];
+  var holder: i32[] = [];
+  for v in order_by_lo(reg_of.len(), from) {
+    if (hi[v] < 0 || reg_of[v] >= 0) {
+      continue;
     }
-    return reg_of;
+    var s: i32 = hinted_slot(slot_end, holder, reg_of, hints.hint[v], from[v], hints.take_over[v]);
+    if (s < 0) {
+      s = free_slot(slot_end, holder, wanted_by, reg_of, from[v], v);
+    }
+    var end: i32 = hi[v];
+    if (s < slot_end.len() && slot_end[s] > end) {
+      end = slot_end[s];
+    }
+    if (s == slot_end.len()) {
+      slot_end = slot_end.append(end);
+      holder = holder.append(v);
+    } else {
+      slot_end = slot_end.with(s, end);
+      holder = holder.with(s, v);
+    }
+    reg_of = reg_of.with(v, spill_code(s));
+  }
+  return reg_of;
 }
 
 function spill_starts(lo: i32[], def_pos: i32[]): i32[] {
-    var from: i32[] = [];
-    var i: i32 = 0;
-    while (i < lo.len()) {
-        if (def_pos[i] < 0) { from = from.append(0); } else { from = from.append(lo[i]); }
-        i = i + 1;
+  var from: i32[] = [];
+  var i: i32 = 0;
+  while (i < lo.len()) {
+    if (def_pos[i] < 0) {
+      from = from.append(0);
+    } else {
+      from = from.append(lo[i]);
     }
-    return from;
+    i = i + 1;
+  }
+  return from;
 }
 
 // wanted_by[m] is the spilled value whose phi mate is m, or -1.
 function mates_wanted(hi: i32[], reg_of: i32[], hint: i32[]): i32[] {
-    var wanted_by: i32[] = [];
-    var i: i32 = 0;
-    while (i < reg_of.len()) { wanted_by = wanted_by.append(0 - 1); i = i + 1; }
-    i = 0;
-    while (i < reg_of.len()) {
-        var m: i32 = hint[i];
-        if (m >= 0 && hi[i] >= 0 && reg_of[i] == 0 - 1 && reg_of[m] == 0 - 1) { wanted_by = wanted_by.with(m, i); }
-        i = i + 1;
+  var wanted_by: i32[] = [];
+  var i: i32 = 0;
+  while (i < reg_of.len()) {
+    wanted_by = wanted_by.append(0 - 1);
+    i = i + 1;
+  }
+  i = 0;
+  while (i < reg_of.len()) {
+    var m: i32 = hint[i];
+    if (m >= 0 && hi[i] >= 0 && reg_of[i] == 0 - 1 && reg_of[m] == 0 - 1) {
+      wanted_by = wanted_by.with(m, i);
     }
-    return wanted_by;
+    i = i + 1;
+  }
+  return wanted_by;
 }
 
 // The slot of the mate h, when it is free at `from` or the value may take it
 // over from h; -1 otherwise.
 function hinted_slot(slot_end: i32[], holder: i32[], reg_of: i32[], h: i32, from: i32, take_over: boolean): i32 {
-    if (h < 0 || reg_of[h] >= 0 - 1) { return 0 - 1; }
-    var hs: i32 = spill_slot(reg_of[h]);
-    if (slot_end[hs] < from || take_over && holder[hs] == h) { return hs; }
+  if (h < 0 || reg_of[h] >= 0 - 1) {
     return 0 - 1;
+  }
+  var hs: i32 = spill_slot(reg_of[h]);
+  if (slot_end[hs] < from || take_over && holder[hs] == h) {
+    return hs;
+  }
+  return 0 - 1;
 }
 
 function free_slot(slot_end: i32[], holder: i32[], wanted_by: i32[], reg_of: i32[], from: i32, v: i32): i32 {
-    var s: i32 = 0;
-    while (s < slot_end.len() && (slot_end[s] >= from || kept_for_mate(wanted_by, reg_of, holder[s], v))) { s = s + 1; }
-    return s;
+  var s: i32 = 0;
+  while (s < slot_end.len() && (slot_end[s] >= from || kept_for_mate(wanted_by, reg_of, holder[s], v))) {
+    s = s + 1;
+  }
+  return s;
 }
 
 // Imms marks the integer constants an emitter reads as immediate operands and
@@ -1196,64 +1721,105 @@ function free_slot(slot_end: i32[], holder: i32[], wanted_by: i32[], reg_of: i32
 pub struct Imms { is_imm: boolean[], konst: boolean[], value: i64[] }
 
 pub function imm_operands(f: SFunc, lo: i64, hi: i64, right: string[], left: string[]): Imms {
-    var is_imm: boolean[] = [];
-    var konst: boolean[] = [];
-    var value: i64[] = [];
-    var i: i32 = 0;
-    while (i < f.nvals) { is_imm = is_imm.append(false); konst = konst.append(false); value = value.append(0i64); i = i + 1; }
-    for blk in f.blocks {
-        for ins in blk.insts {
-            if (ins.kind_tag != 1 && ins.kind_tag != 3) { continue; }
-            konst = konst.with(ins.result, true);
-            var c: i64 = ins.imm as i64;
-            if (ins.kind_tag == 3) { c = util.lit_to_i64(ins.str); }
-            value = value.with(ins.result, c);
-            if (c < lo || c > hi) { continue; }
-            is_imm = is_imm.with(ins.result, true);
-        }
+  var is_imm: boolean[] = [];
+  var konst: boolean[] = [];
+  var value: i64[] = [];
+  var i: i32 = 0;
+  while (i < f.nvals) {
+    is_imm = is_imm.append(false);
+    konst = konst.append(false);
+    value = value.append(0i64);
+    i = i + 1;
+  }
+  for blk in f.blocks {
+    for ins in blk.insts {
+      if (ins.kind_tag != 1 && ins.kind_tag != 3) {
+        continue;
+      }
+      konst = konst.with(ins.result, true);
+      var c: i64 = ins.imm as i64;
+      if (ins.kind_tag == 3) {
+        c = util.lit_to_i64(ins.str);
+      }
+      value = value.with(ins.result, c);
+      if (c < lo || c > hi) {
+        continue;
+      }
+      is_imm = is_imm.with(ins.result, true);
     }
-    for blk in f.blocks {
-        for ins in blk.insts {
-            var a: i32 = 0;
-            while (a < ins.args.len()) {
-                var v: i32 = ins.args[a];
-                if (v >= 0 && v < is_imm.len() && is_imm[v] && !imm_use(ins, a, konst, right, left)) { is_imm = is_imm.with(v, false); }
-                a = a + 1;
-            }
+  }
+  for blk in f.blocks {
+    for ins in blk.insts {
+      var a: i32 = 0;
+      while (a < ins.args.len()) {
+        var v: i32 = ins.args[a];
+        if (v >= 0 && v < is_imm.len() && is_imm[v] && !imm_use(ins, a, konst, right, left)) {
+          is_imm = is_imm.with(v, false);
         }
-        var t: STerm = blk.term;
-        if (t.kind_tag == 1 && t.value >= 0 && t.value < is_imm.len()) { is_imm = is_imm.with(t.value, false); }
-        if (t.kind_tag == 3 && t.cond >= 0 && t.cond < is_imm.len()) { is_imm = is_imm.with(t.cond, false); }
+        a = a + 1;
+      }
     }
-    return Imms { is_imm: is_imm, konst: konst, value: value };
+    var t: STerm = blk.term;
+    if (t.kind_tag == 1 && t.value >= 0 && t.value < is_imm.len()) {
+      is_imm = is_imm.with(t.value, false);
+    }
+    if (t.kind_tag == 3 && t.cond >= 0 && t.cond < is_imm.len()) {
+      is_imm = is_imm.with(t.cond, false);
+    }
+  }
+  return Imms { is_imm: is_imm, konst: konst, value: value };
 }
+
 function imm_use(ins: SInst, a: i32, konst: boolean[], right: string[], left: string[]): boolean {
-    if (ins.kind_tag != 9 || ins.args.len() != 2) { return false; }
-    var other: i32 = ins.args[1 - a];
-    if (other < 0 || other >= konst.len()) { return false; }
-    if (a == 0 && konst[other]) { return false; }
-    var names: string[] = left;
-    if (a == 1) { names = right; }
-    for n in names { if (n == ins.str) { return true; } }
+  if (ins.kind_tag != 9 || ins.args.len() != 2) {
     return false;
+  }
+  var other: i32 = ins.args[1 - a];
+  if (other < 0 || other >= konst.len()) {
+    return false;
+  }
+  if (a == 0 && konst[other]) {
+    return false;
+  }
+  var names: string[] = left;
+  if (a == 1) {
+    names = right;
+  }
+  for n in names {
+    if (n == ins.str) {
+      return true;
+    }
+  }
+  return false;
 }
 
 // use_counts is how many instruction operands and terminators read each
 // value; a value read once by the branch that ends its block can be
 // consumed as flags rather than materialised.
 pub function use_counts(f: SFunc): i32[] {
-    var uses: i32[] = [];
-    var i: i32 = 0;
-    while (i < f.nvals) { uses = uses.append(0); i = i + 1; }
-    for blk in f.blocks {
-        for ins in blk.insts {
-            for a in ins.args { if (a >= 0 && a < uses.len()) { uses = uses.with(a, uses[a] + 1); } }
+  var uses: i32[] = [];
+  var i: i32 = 0;
+  while (i < f.nvals) {
+    uses = uses.append(0);
+    i = i + 1;
+  }
+  for blk in f.blocks {
+    for ins in blk.insts {
+      for a in ins.args {
+        if (a >= 0 && a < uses.len()) {
+          uses = uses.with(a, uses[a] + 1);
         }
-        var t: STerm = blk.term;
-        if (t.kind_tag == 1 && t.value >= 0 && t.value < uses.len()) { uses = uses.with(t.value, uses[t.value] + 1); }
-        if (t.kind_tag == 3 && t.cond >= 0 && t.cond < uses.len()) { uses = uses.with(t.cond, uses[t.cond] + 1); }
+      }
     }
-    return uses;
+    var t: STerm = blk.term;
+    if (t.kind_tag == 1 && t.value >= 0 && t.value < uses.len()) {
+      uses = uses.with(t.value, uses[t.value] + 1);
+    }
+    if (t.kind_tag == 3 && t.cond >= 0 && t.cond < uses.len()) {
+      uses = uses.with(t.cond, uses[t.cond] + 1);
+    }
+  }
+  return uses;
 }
 
 // A phi whose operands are all one value IS that value. The production lift
@@ -1270,48 +1836,62 @@ pub function use_counts(f: SFunc): i32[] {
 // phi_sole_operand is the one value a phi collapses to, or -1. `repl`
 // resolves operands folded in an earlier round.
 function phi_sole_operand(ins: SInst, repl: i32[]): i32 {
-    var only: i32 = 0 - 1;
-    var i: i32 = 0;
-    while (i < ins.args.len()) {
-        var a: i32 = resolve_repl(repl, ins.args[i]);
-        if (a != ins.result) {
-            if (only < 0) { only = a; } else if (only != a) { return 0 - 1; }
-        }
-        i = i + 1;
+  var only: i32 = 0 - 1;
+  var i: i32 = 0;
+  while (i < ins.args.len()) {
+    var a: i32 = resolve_repl(repl, ins.args[i]);
+    if (a != ins.result) {
+      if (only < 0) {
+        only = a;
+      } else if (only != a) {
+        return 0 - 1;
+      }
     }
-    return only;
+    i = i + 1;
+  }
+  return only;
 }
 
 function resolve_repl(repl: i32[], v: i32): i32 {
-    var seen: i32 = 0;
-    while (repl[v] != v && seen < 1000) { v = repl[v]; seen = seen + 1; }
-    return v;
+  var seen: i32 = 0;
+  while (repl[v] != v && seen < 1000) {
+    v = repl[v];
+    seen = seen + 1;
+  }
+  return v;
 }
 
 // trivial_phi_repl builds the value-to-value map, to a fixpoint: folding one
 // phi can make the next trivial.
 function trivial_phi_repl(f: SFunc): i32[] {
-    var repl: i32[] = [];
-    var i: i32 = 0;
-    while (i < f.nvals) { repl = repl.append(i); i = i + 1; }
-    var rounds: i32 = 0;
-    var changed: boolean = true;
-    while (changed && rounds < 100) {
-        changed = false;
-        rounds = rounds + 1;
-        for blk in f.blocks {
-            for ins in blk.insts {
-                if (ins.kind_tag != 8) { continue; }
-                if (repl[ins.result] != ins.result) { continue; }
-                var only: i32 = phi_sole_operand(ins, repl);
-                if (only >= 0 && only != ins.result) {
-                    repl = repl.with(ins.result, only);
-                    changed = true;
-                }
-            }
+  var repl: i32[] = [];
+  var i: i32 = 0;
+  while (i < f.nvals) {
+    repl = repl.append(i);
+    i = i + 1;
+  }
+  var rounds: i32 = 0;
+  var changed: boolean = true;
+  while (changed && rounds < 100) {
+    changed = false;
+    rounds = rounds + 1;
+    for blk in f.blocks {
+      for ins in blk.insts {
+        if (ins.kind_tag != 8) {
+          continue;
         }
+        if (repl[ins.result] != ins.result) {
+          continue;
+        }
+        var only: i32 = phi_sole_operand(ins, repl);
+        if (only >= 0 && only != ins.result) {
+          repl = repl.with(ins.result, only);
+          changed = true;
+        }
+      }
     }
-    return repl;
+  }
+  return repl;
 }
 
 // ---- inlining ------------------------------------------------------------
@@ -1324,46 +1904,64 @@ function trivial_phi_repl(f: SFunc): i32[] {
 // `name` is the callee name a call to it carries.
 pub struct Leaf { name: string, func: SFunc }
 
-function leaf_limit(): i32 { return 12; }
+function leaf_limit(): i32 {
+  return 12;
+}
 
 function leaf_kind(k: i32): boolean {
-    return k == 1 || k == 2 || k == 3 || k == 6 || k == 7 || k == 9 || k == 10;
+  return k == 1 || k == 2 || k == 3 || k == 6 || k == 7 || k == 9 || k == 10;
 }
 
 // leaf_of is the leaf `f` is, as one block, or none.
 pub function leaf_of(name: string, f: SFunc): Leaf[] {
-    if (f.takes_env || f.blocks.len() == 0) { return []; }
-    var at: i32[] = block_positions(f);
-    var insts: SInst[] = [];
-    var bi: i32 = position_of(at, f.entry);
-    var seen: i32 = 0;
-    while (bi >= 0 && seen < f.blocks.len()) {
-        var b: SBlock = f.blocks[bi];
-        for ins in b.insts { insts = insts.append(ins); }
-        seen = seen + 1;
-        if (b.term.kind_tag == 1) {
-            if (seen != f.blocks.len()) { return []; }
-            return returning_leaf(name, f, insts, b.term);
-        }
-        if (b.term.kind_tag != 2) { return []; }
-        bi = position_of(at, b.term.target);
-    }
+  if (f.takes_env || f.blocks.len() == 0) {
     return [];
+  }
+  var at: i32[] = block_positions(f);
+  var insts: SInst[] = [];
+  var bi: i32 = position_of(at, f.entry);
+  var seen: i32 = 0;
+  while (bi >= 0 && seen < f.blocks.len()) {
+    var b: SBlock = f.blocks[bi];
+    for ins in b.insts {
+      insts = insts.append(ins);
+    }
+    seen = seen + 1;
+    if (b.term.kind_tag == 1) {
+      if (seen != f.blocks.len()) {
+        return [];
+      }
+      return returning_leaf(name, f, insts, b.term);
+    }
+    if (b.term.kind_tag != 2) {
+      return [];
+    }
+    bi = position_of(at, b.term.target);
+  }
+  return [];
 }
 
 // returning_leaf is the leaf of `f`'s instructions, flattened into one block
 // that ends in `term`, or none when they return no value, include an op a leaf
 // may not, or are too many.
 function returning_leaf(name: string, f: SFunc, insts: SInst[], term: STerm): Leaf[] {
-    if (term.value < 0) { return []; }
-    var n: i32 = 0;
-    for ins in insts {
-        if (!leaf_kind(ins.kind_tag)) { return []; }
-        if (ins.kind_tag != 6) { n = n + 1; }
+  if (term.value < 0) {
+    return [];
+  }
+  var n: i32 = 0;
+  for ins in insts {
+    if (!leaf_kind(ins.kind_tag)) {
+      return [];
     }
-    if (n > leaf_limit()) { return []; }
-    var one: SBlock = SBlock { id: f.entry, insts: insts, term: term, preds: [] };
-    return [Leaf { name: name, func: SFunc { ...f, blocks: [one] } }];
+    if (ins.kind_tag != 6) {
+      n = n + 1;
+    }
+  }
+  if (n > leaf_limit()) {
+    return [];
+  }
+  var one: SBlock = SBlock { id: f.entry, insts: insts, term: term, preds: [] };
+  return [Leaf { name: name, func: SFunc { ...f, blocks: [one] } }];
 }
 
 // inline_leaves replaces each direct call to a leaf with the leaf's
@@ -1371,71 +1969,94 @@ function returning_leaf(name: string, f: SFunc, insts: SInst[], term: STerm): Le
 // arguments, its other values are renumbered past the caller's, and the call's
 // result becomes a copy of the value the leaf returns.
 pub function inline_leaves(f: SFunc, leaves: Leaf[]): SFunc {
-    if (leaves.len() == 0) { return f; }
-    var nvals: i32 = f.nvals;
-    var blocks: SBlock[] = [];
-    for b in f.blocks {
-        var insts: SInst[] = [];
-        for ins in b.insts {
-            var at: i32 = 0 - 1;
-            if (ins.kind_tag == 11) { at = leaf_index(leaves, ins.str, ins.args.len()); }
-            if (at < 0) {
-                insts = insts.append(ins);
-                continue;
-            }
-            var leaf: SFunc = leaves[at].func;
-            var map: i32[] = [];
-            var i: i32 = 0;
-            while (i < leaf.nvals) { map = map.append(0 - 1); i = i + 1; }
-            for li in leaf.blocks[0].insts {
-                if (li.kind_tag == 6) {
-                    map = map.with(li.result, ins.args[li.imm]);
-                } else {
-                    map = map.with(li.result, nvals);
-                    var args: i32[] = [];
-                    for a in li.args { args = args.append(map[a]); }
-                    insts = insts.append(SInst { ...li, result: nvals, args: args });
-                    nvals = nvals + 1;
-                }
-            }
-            if (ins.result >= 0) {
-                insts = insts.append(SInst { kind_tag: 7, result: ins.result, args: [map[leaf.blocks[0].term.value]], imm: 0, str: "" });
-            }
+  if (leaves.len() == 0) {
+    return f;
+  }
+  var nvals: i32 = f.nvals;
+  var blocks: SBlock[] = [];
+  for b in f.blocks {
+    var insts: SInst[] = [];
+    for ins in b.insts {
+      var at: i32 = 0 - 1;
+      if (ins.kind_tag == 11) {
+        at = leaf_index(leaves, ins.str, ins.args.len());
+      }
+      if (at < 0) {
+        insts = insts.append(ins);
+        continue;
+      }
+      var leaf: SFunc = leaves[at].func;
+      var map: i32[] = [];
+      var i: i32 = 0;
+      while (i < leaf.nvals) {
+        map = map.append(0 - 1);
+        i = i + 1;
+      }
+      for li in leaf.blocks[0].insts {
+        if (li.kind_tag == 6) {
+          map = map.with(li.result, ins.args[li.imm]);
+        } else {
+          map = map.with(li.result, nvals);
+          var args: i32[] = [];
+          for a in li.args {
+            args = args.append(map[a]);
+          }
+          insts = insts.append(SInst { ...li, result: nvals, args: args });
+          nvals = nvals + 1;
         }
-        blocks = blocks.append(SBlock { ...b, insts: insts });
+      }
+      if (ins.result >= 0) {
+        insts = insts.append(SInst { kind_tag: 7, result: ins.result, args: [map[leaf.blocks[0].term.value]], imm: 0, str: "" });
+      }
     }
-    return SFunc { ...f, nvals: nvals, blocks: blocks };
+    blocks = blocks.append(SBlock { ...b, insts: insts });
+  }
+  return SFunc { ...f, nvals: nvals, blocks: blocks };
 }
 
 function leaf_index(leaves: Leaf[], name: string, argc: i32): i32 {
-    var i: i32 = 0;
-    while (i < leaves.len()) {
-        if (leaves[i].name == name && leaves[i].func.nparams == argc) { return i; }
-        i = i + 1;
+  var i: i32 = 0;
+  while (i < leaves.len()) {
+    if (leaves[i].name == name && leaves[i].func.nparams == argc) {
+      return i;
     }
-    return 0 - 1;
+    i = i + 1;
+  }
+  return 0 - 1;
 }
 
 // prune_trivial_phis drops the folded phis and rewrites every reader.
 pub function prune_trivial_phis(f: SFunc): SFunc {
-    var repl: i32[] = trivial_phi_repl(f);
-    var any: boolean = false;
-    var i: i32 = 0;
-    while (i < f.nvals) { if (repl[i] != i) { any = true; } i = i + 1; }
-    if (!any) { return f; }
-    var flat: i32[] = [];
-    i = 0;
-    while (i < f.nvals) { flat = flat.append(resolve_repl(repl, i)); i = i + 1; }
-    var nblocks: SBlock[] = [];
-    for blk in f.blocks {
-        var ninsts: SInst[] = [];
-        for ins in blk.insts {
-            if (ins.kind_tag == 8 && flat[ins.result] != ins.result) { continue; }
-            ninsts = ninsts.append(rewrite_args(ins, flat));
-        }
-        nblocks = nblocks.append(SBlock { id: blk.id, insts: ninsts, term: rewrite_term(blk.term, flat), preds: blk.preds });
+  var repl: i32[] = trivial_phi_repl(f);
+  var any: boolean = false;
+  var i: i32 = 0;
+  while (i < f.nvals) {
+    if (repl[i] != i) {
+      any = true;
     }
-    return SFunc { name: f.name, nparams: f.nparams, nvals: f.nvals, blocks: nblocks, entry: f.entry, takes_env: f.takes_env };
+    i = i + 1;
+  }
+  if (!any) {
+    return f;
+  }
+  var flat: i32[] = [];
+  i = 0;
+  while (i < f.nvals) {
+    flat = flat.append(resolve_repl(repl, i));
+    i = i + 1;
+  }
+  var nblocks: SBlock[] = [];
+  for blk in f.blocks {
+    var ninsts: SInst[] = [];
+    for ins in blk.insts {
+      if (ins.kind_tag == 8 && flat[ins.result] != ins.result) {
+        continue;
+      }
+      ninsts = ninsts.append(rewrite_args(ins, flat));
+    }
+    nblocks = nblocks.append(SBlock { id: blk.id, insts: ninsts, term: rewrite_term(blk.term, flat), preds: blk.preds });
+  }
+  return SFunc { name: f.name, nparams: f.nparams, nvals: f.nvals, blocks: nblocks, entry: f.entry, takes_env: f.takes_env };
 }
 
 // repeated_block_id names the first block id that appears twice in `f.blocks`,
@@ -1443,16 +2064,25 @@ pub function prune_trivial_phis(f: SFunc): SFunc {
 // per entry, so a repeat spells one label twice and the assembler rejects the
 // whole module without naming the pass that produced it (#9688).
 pub function repeated_block_id(f: SFunc): i32 {
-    var top: i32 = 0;
-    for blk in f.blocks { if (blk.id > top) { top = blk.id; } }
-    var seen: i32[] = [];
-    var i: i32 = 0;
-    while (i <= top) { seen = seen.append(0); i = i + 1; }
-    for blk in f.blocks {
-        if (seen[blk.id] == 1) { return blk.id; }
-        seen = seen.with(blk.id, 1);
+  var top: i32 = 0;
+  for blk in f.blocks {
+    if (blk.id > top) {
+      top = blk.id;
     }
-    return 0 - 1;
+  }
+  var seen: i32[] = [];
+  var i: i32 = 0;
+  while (i <= top) {
+    seen = seen.append(0);
+    i = i + 1;
+  }
+  for blk in f.blocks {
+    if (seen[blk.id] == 1) {
+      return blk.id;
+    }
+    seen = seen.with(blk.id, 1);
+  }
+  return 0 - 1;
 }
 
 // prune_dead drops every pure instruction (const / copy / binary / unary /
@@ -1468,56 +2098,79 @@ pub function repeated_block_id(f: SFunc): i32 {
 // carried only values nothing read. A block with phis keeps every edge into
 // it, since the phis' operands are per predecessor.
 pub function thread_forwarding(f: SFunc): SFunc {
-    var at: i32[] = block_positions(f);
-    var nblocks: SBlock[] = [];
-    for blk in f.blocks {
-        var t: STerm = blk.term;
-        if (t.kind_tag == 2) { t = STerm { ...t, target: forwarded(f, at, t.target) }; }
-        if (t.kind_tag == 3) { t = STerm { ...t, t: forwarded(f, at, t.t), f: forwarded(f, at, t.f) }; }
-        nblocks = nblocks.append(SBlock { id: blk.id, insts: blk.insts, term: t, preds: blk.preds });
+  var at: i32[] = block_positions(f);
+  var nblocks: SBlock[] = [];
+  for blk in f.blocks {
+    var t: STerm = blk.term;
+    if (t.kind_tag == 2) {
+      t = STerm { ...t, target: forwarded(f, at, t.target) };
     }
-    var g: SFunc = SFunc { name: f.name, nparams: f.nparams, nvals: f.nvals, blocks: nblocks, entry: f.entry, takes_env: f.takes_env };
-    var live: boolean[] = [];
-    var i: i32 = 0;
-    while (i < g.blocks.len()) { live = live.append(false); i = i + 1; }
-    var work: i32[] = [position_of(at, g.entry)];
-    while (work.len() > 0) {
-        var b: i32 = work[work.len() - 1];
-        work = drop_last_i(work);
-        if (b < 0 || live[b]) { continue; }
-        live = live.with(b, true);
-        for s in successor_positions(g, at, b) { work = work.append(s); }
+    if (t.kind_tag == 3) {
+      t = STerm { ...t, t: forwarded(f, at, t.t), f: forwarded(f, at, t.f) };
     }
-    var kept: SBlock[] = [];
-    i = 0;
-    while (i < g.blocks.len()) {
-        if (live[i]) { kept = kept.append(g.blocks[i]); }
-        i = i + 1;
+    nblocks = nblocks.append(SBlock { id: blk.id, insts: blk.insts, term: t, preds: blk.preds });
+  }
+  var g: SFunc = SFunc { name: f.name, nparams: f.nparams, nvals: f.nvals, blocks: nblocks, entry: f.entry, takes_env: f.takes_env };
+  var live: boolean[] = [];
+  var i: i32 = 0;
+  while (i < g.blocks.len()) {
+    live = live.append(false);
+    i = i + 1;
+  }
+  var work: i32[] = [position_of(at, g.entry)];
+  while (work.len() > 0) {
+    var b: i32 = work[work.len() - 1];
+    work = drop_last_i(work);
+    if (b < 0 || live[b]) {
+      continue;
     }
-    var out: SFunc = SFunc { ...g, blocks: kept };
-    return SFunc { ...out, blocks: refreshed_preds(out) };
+    live = live.with(b, true);
+    for s in successor_positions(g, at, b) {
+      work = work.append(s);
+    }
+  }
+  var kept: SBlock[] = [];
+  i = 0;
+  while (i < g.blocks.len()) {
+    if (live[i]) {
+      kept = kept.append(g.blocks[i]);
+    }
+    i = i + 1;
+  }
+  var out: SFunc = SFunc { ...g, blocks: kept };
+  return SFunc { ...out, blocks: refreshed_preds(out) };
 }
 
 // forwarded follows a chain of empty forwarding blocks from `id` to the
 // first block that is not one; a cycle of them ends the walk where it is.
 function forwarded(f: SFunc, at: i32[], id: i32): i32 {
-    var cur: i32 = id;
-    var steps: i32 = 0;
-    while (steps <= f.blocks.len()) {
-        if (cur < 0 || cur >= at.len() || at[cur] < 0) { return cur; }
-        var b: SBlock = f.blocks[at[cur]];
-        if (b.insts.len() != 0 || b.term.kind_tag != 2 || b.term.target == cur) { return cur; }
-        var nt: i32 = b.term.target;
-        if (nt < 0 || nt >= at.len() || at[nt] < 0 || has_phi(f.blocks[at[nt]])) { return cur; }
-        cur = nt;
-        steps = steps + 1;
+  var cur: i32 = id;
+  var steps: i32 = 0;
+  while (steps <= f.blocks.len()) {
+    if (cur < 0 || cur >= at.len() || at[cur] < 0) {
+      return cur;
     }
-    return cur;
+    var b: SBlock = f.blocks[at[cur]];
+    if (b.insts.len() != 0 || b.term.kind_tag != 2 || b.term.target == cur) {
+      return cur;
+    }
+    var nt: i32 = b.term.target;
+    if (nt < 0 || nt >= at.len() || at[nt] < 0 || has_phi(f.blocks[at[nt]])) {
+      return cur;
+    }
+    cur = nt;
+    steps = steps + 1;
+  }
+  return cur;
 }
 
 function has_phi(b: SBlock): boolean {
-    for ins in b.insts { if (ins.kind_tag == 8) { return true; } }
-    return false;
+  for ins in b.insts {
+    if (ins.kind_tag == 8) {
+      return true;
+    }
+  }
+  return false;
 }
 
 // refreshed_preds recomputes the predecessor list of every block without
@@ -1525,56 +2178,78 @@ function has_phi(b: SBlock): boolean {
 // whose order the phis' operands follow, less the entries no edge backs any
 // more: a dropped block, or a folded branch that no longer comes this way.
 function refreshed_preds(f: SFunc): SBlock[] {
-    var at: i32[] = block_positions(f);
-    var preds: i32[][] = [];
-    var i: i32 = 0;
-    while (i < f.blocks.len()) { preds = preds.append([]); i = i + 1; }
-    i = 0;
-    while (i < f.blocks.len()) {
-        for s in successor_positions(f, at, i) {
-            if (s >= 0 && !has_pred(preds[s], f.blocks[i].id)) { preds = preds.with(s, preds[s].append(f.blocks[i].id)); }
-        }
-        i = i + 1;
+  var at: i32[] = block_positions(f);
+  var preds: i32[][] = [];
+  var i: i32 = 0;
+  while (i < f.blocks.len()) {
+    preds = preds.append([]);
+    i = i + 1;
+  }
+  i = 0;
+  while (i < f.blocks.len()) {
+    for s in successor_positions(f, at, i) {
+      if (s >= 0 && !has_pred(preds[s], f.blocks[i].id)) {
+        preds = preds.with(s, preds[s].append(f.blocks[i].id));
+      }
     }
-    var out: SBlock[] = [];
-    i = 0;
-    while (i < f.blocks.len()) {
-        var b: SBlock = f.blocks[i];
-        if (has_phi(b)) { out = out.append(trim_phi_edges(b, preds[i])); } else { out = out.append(SBlock { ...b, preds: preds[i] }); }
-        i = i + 1;
+    i = i + 1;
+  }
+  var out: SBlock[] = [];
+  i = 0;
+  while (i < f.blocks.len()) {
+    var b: SBlock = f.blocks[i];
+    if (has_phi(b)) {
+      out = out.append(trim_phi_edges(b, preds[i]));
+    } else {
+      out = out.append(SBlock { ...b, preds: preds[i] });
     }
-    return out;
+    i = i + 1;
+  }
+  return out;
 }
 
 // trim_phi_edges drops the predecessor slots of b, and each phi's operand
 // for them, whose predecessor is not among `edges`, the blocks that branch
 // to b now.
 function trim_phi_edges(b: SBlock, edges: i32[]): SBlock {
-    var keep: boolean[] = [];
-    var npreds: i32[] = [];
-    for p in b.preds {
-        var k: boolean = has_pred(edges, p);
-        keep = keep.append(k);
-        if (k) { npreds = npreds.append(p); }
+  var keep: boolean[] = [];
+  var npreds: i32[] = [];
+  for p in b.preds {
+    var k: boolean = has_pred(edges, p);
+    keep = keep.append(k);
+    if (k) {
+      npreds = npreds.append(p);
     }
-    if (npreds.len() == b.preds.len()) { return b; }
-    var ninsts: SInst[] = [];
-    for ins in b.insts {
-        if (ins.kind_tag != 8) { ninsts = ninsts.append(ins); continue; }
-        var nargs: i32[] = [];
-        var i: i32 = 0;
-        while (i < ins.args.len()) {
-            if (i >= keep.len() || keep[i]) { nargs = nargs.append(ins.args[i]); }
-            i = i + 1;
-        }
-        ninsts = ninsts.append(SInst { ...ins, args: nargs });
+  }
+  if (npreds.len() == b.preds.len()) {
+    return b;
+  }
+  var ninsts: SInst[] = [];
+  for ins in b.insts {
+    if (ins.kind_tag != 8) {
+      ninsts = ninsts.append(ins);
+      continue;
     }
-    return SBlock { id: b.id, insts: ninsts, term: b.term, preds: npreds };
+    var nargs: i32[] = [];
+    var i: i32 = 0;
+    while (i < ins.args.len()) {
+      if (i >= keep.len() || keep[i]) {
+        nargs = nargs.append(ins.args[i]);
+      }
+      i = i + 1;
+    }
+    ninsts = ninsts.append(SInst { ...ins, args: nargs });
+  }
+  return SBlock { id: b.id, insts: ninsts, term: b.term, preds: npreds };
 }
 
 function has_pred(ps: i32[], id: i32): boolean {
-    for p in ps { if (p == id) { return true; } }
-    return false;
+  for p in ps {
+    if (p == id) {
+      return true;
+    }
+  }
+  return false;
 }
 
 // fuse_rotates rewrites `(x >> n) | (x << (W - n))`, the only spelling Fern
@@ -1582,218 +2257,351 @@ function has_pred(ps: i32[], id: i32): boolean {
 // value zero-extended, so its left half carries a u32_wrap and its right half
 // needs none; a 64-bit rotate has neither. The shifts are left to prune_dead.
 pub function fuse_rotates(f: SFunc): SFunc {
-    var defs: SInst[] = [];
-    var none: SInst = SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
-    var i: i32 = 0;
-    while (i < f.nvals) { defs = defs.append(none); i = i + 1; }
-    for blk in f.blocks {
-        for ins in blk.insts { if (ins.result >= 0 && ins.result < f.nvals) { defs = defs.with(ins.result, ins); } }
+  var defs: SInst[] = [];
+  var none: SInst = SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
+  var i: i32 = 0;
+  while (i < f.nvals) {
+    defs = defs.append(none);
+    i = i + 1;
+  }
+  for blk in f.blocks {
+    for ins in blk.insts {
+      if (ins.result >= 0 && ins.result < f.nvals) {
+        defs = defs.with(ins.result, ins);
+      }
     }
-    var changed: boolean = false;
-    var nblocks: SBlock[] = [];
-    for blk in f.blocks {
-        var ninsts: SInst[] = [];
-        for ins in blk.insts {
-            var r: SInst = ins;
-            if (ins.kind_tag == 9 && ins.str == "or" && ins.args.len() == 2) {
-                var m: SInst = rotate_half_pair(defs, ins, ins.args[0], ins.args[1]);
-                if (m.kind_tag == 0) { m = rotate_half_pair(defs, ins, ins.args[1], ins.args[0]); }
-                if (m.kind_tag != 0) { r = m; changed = true; }
-            }
-            ninsts = ninsts.append(r);
+  }
+  var changed: boolean = false;
+  var nblocks: SBlock[] = [];
+  for blk in f.blocks {
+    var ninsts: SInst[] = [];
+    for ins in blk.insts {
+      var r: SInst = ins;
+      if (ins.kind_tag == 9 && ins.str == "or" && ins.args.len() == 2) {
+        var m: SInst = rotate_half_pair(defs, ins, ins.args[0], ins.args[1]);
+        if (m.kind_tag == 0) {
+          m = rotate_half_pair(defs, ins, ins.args[1], ins.args[0]);
         }
-        nblocks = nblocks.append(SBlock { ...blk, insts: ninsts });
+        if (m.kind_tag != 0) {
+          r = m;
+          changed = true;
+        }
+      }
+      ninsts = ninsts.append(r);
     }
-    if (!changed) { return f; }
-    return SFunc { ...f, blocks: nblocks };
+    nblocks = nblocks.append(SBlock { ...blk, insts: ninsts });
+  }
+  if (!changed) {
+    return f;
+  }
+  return SFunc { ...f, blocks: nblocks };
 }
 
 // rotate_half_pair is the rotate `or` computes when `rv` is the logical right
 // shift and `lv` the left one, or an instruction of kind 0 when it is not one.
 function rotate_half_pair(defs: SInst[], or: SInst, rv: i32, lv: i32): SInst {
-    var no: SInst = SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
-    var rs: SInst = def_of(defs, rv);
-    var ls: SInst = def_of(defs, lv);
-    var w: i32 = 64;
-    if (zero_extends_u32(ls)) { w = 32; ls = def_of(defs, ls.args[0]); }
-    if (rs.kind_tag != 9 || rs.str != "shr_u" || ls.kind_tag != 9 || ls.str != "shl") { return no; }
-    if (shift_width(rs.imm) != w || shift_width(ls.imm) != w) { return no; }
-    if (copy_root(defs, rs.args[0]) != copy_root(defs, ls.args[0])) { return no; }
-    var n: i64 = const_value(defs, rs.args[1]);
-    var k: i64 = const_value(defs, ls.args[1]);
-    if (n <= 0i64 || k <= 0i64 || n + k != (w as i64)) { return no; }
-    return SInst { kind_tag: 10, result: or.result, args: [rs.args[0]], imm: 0, str: "rotr:" + util.i32_to_string(w) + ":" + util.i64_to_string(n) };
+  var no: SInst = SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
+  var rs: SInst = def_of(defs, rv);
+  var ls: SInst = def_of(defs, lv);
+  var w: i32 = 64;
+  if (zero_extends_u32(ls)) {
+    w = 32;
+    ls = def_of(defs, ls.args[0]);
+  }
+  if (rs.kind_tag != 9 || rs.str != "shr_u" || ls.kind_tag != 9 || ls.str != "shl") {
+    return no;
+  }
+  if (shift_width(rs.imm) != w || shift_width(ls.imm) != w) {
+    return no;
+  }
+  if (copy_root(defs, rs.args[0]) != copy_root(defs, ls.args[0])) {
+    return no;
+  }
+  var n: i64 = const_value(defs, rs.args[1]);
+  var k: i64 = const_value(defs, ls.args[1]);
+  if (n <= 0i64 || k <= 0i64 || n + k != w as i64) {
+    return no;
+  }
+  return SInst { kind_tag: 10, result: or.result, args: [rs.args[0]], imm: 0, str: "rotr:" + util.i32_to_string(w) + ":" + util.i64_to_string(n) };
 }
 
 // zero_extends_u32 is a unary the emitters render as a 32-bit zero extension.
 function zero_extends_u32(ins: SInst): boolean {
-    if (ins.kind_tag != 10 || ins.args.len() != 1) { return false; }
-    if (ins.str == "u32_wrap" || ins.str == "int_cast:u32") { return true; }
-    return (ins.str == "int_wrap" || ins.str == "int_extend") && ins.imm == 1;
+  if (ins.kind_tag != 10 || ins.args.len() != 1) {
+    return false;
+  }
+  if (ins.str == "u32_wrap" || ins.str == "int_cast:u32") {
+    return true;
+  }
+  return (ins.str == "int_wrap" || ins.str == "int_extend") && ins.imm == 1;
 }
 
 function def_of(defs: SInst[], v: i32): SInst {
-    if (v < 0 || v >= defs.len()) { return SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" }; }
-    return defs[v];
+  if (v < 0 || v >= defs.len()) {
+    return SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
+  }
+  return defs[v];
 }
 
 // A shift's imm is its operand width; anything but 64 is the 32-bit form.
 function shift_width(imm: i32): i32 {
-    if (imm == 64) { return 64; }
-    return 32;
+  if (imm == 64) {
+    return 64;
+  }
+  return 32;
 }
 
 // copy_root follows `copy` instructions back to the value they alias.
 function copy_root(defs: SInst[], v: i32): i32 {
-    var r: i32 = v;
-    var steps: i32 = 0;
-    while (steps < defs.len()) {
-        var d: SInst = def_of(defs, r);
-        if (d.kind_tag != 7 || d.args.len() != 1) { return r; }
-        r = d.args[0];
-        steps = steps + 1;
+  var r: i32 = v;
+  var steps: i32 = 0;
+  while (steps < defs.len()) {
+    var d: SInst = def_of(defs, r);
+    if (d.kind_tag != 7 || d.args.len() != 1) {
+      return r;
     }
-    return r;
+    r = d.args[0];
+    steps = steps + 1;
+  }
+  return r;
 }
 
 // const_value is an integer constant's value, or -1 for anything else (no
 // rotate count is negative).
 function const_value(defs: SInst[], v: i32): i64 {
-    var d: SInst = def_of(defs, copy_root(defs, v));
-    if (d.kind_tag == 1) { return d.imm as i64; }
-    if (d.kind_tag == 3) { return util.lit_to_i64(d.str); }
-    return 0i64 - 1i64;
+  var d: SInst = def_of(defs, copy_root(defs, v));
+  if (d.kind_tag == 1) {
+    return d.imm as i64;
+  }
+  if (d.kind_tag == 3) {
+    return util.lit_to_i64(d.str);
+  }
+  return 0i64 - 1i64;
 }
 
 // rotr_width and rotr_count read a `rotr:W:n` unary's name back.
 pub function rotr_width(what: string): i32 {
-    if (util.str_has_prefix(what, "rotr:64:")) { return 64; }
-    return 32;
+  if (util.str_has_prefix(what, "rotr:64:")) {
+    return 64;
+  }
+  return 32;
 }
+
 pub function rotr_count(what: string): i32 {
-    var n: i32 = 0;
-    var i: i32 = 8;
-    while (i < what.len()) { n = n * 10 + ((what[i] as i32) - 48); i = i + 1; }
-    return n;
+  var n: i32 = 0;
+  var i: i32 = 8;
+  while (i < what.len()) {
+    n = n * 10 + (what[i] as i32 - 48);
+    i = i + 1;
+  }
+  return n;
 }
 
 pub function prune_dead(f: SFunc): SFunc {
-    var live: i32[] = prune_mark(f, prune_roots(f));
-    var nblocks: SBlock[] = [];
-    for blk in f.blocks {
-        var ninsts: SInst[] = [];
-        for ins in blk.insts {
-            if (inst_has_effect(ins.kind_tag) || live[ins.result] == 1) { ninsts = ninsts.append(ins); }
-        }
-        nblocks = nblocks.append(SBlock { id: blk.id, insts: ninsts, term: blk.term, preds: blk.preds });
+  var live: i32[] = prune_mark(f, prune_roots(f));
+  var nblocks: SBlock[] = [];
+  for blk in f.blocks {
+    var ninsts: SInst[] = [];
+    for ins in blk.insts {
+      if (inst_has_effect(ins.kind_tag) || live[ins.result] == 1) {
+        ninsts = ninsts.append(ins);
+      }
     }
-    return SFunc { name: f.name, nparams: f.nparams, nvals: f.nvals, blocks: nblocks, entry: f.entry, takes_env: f.takes_env };
+    nblocks = nblocks.append(SBlock { id: blk.id, insts: ninsts, term: blk.term, preds: blk.preds });
+  }
+  return SFunc { name: f.name, nparams: f.nparams, nvals: f.nvals, blocks: nblocks, entry: f.entry, takes_env: f.takes_env };
 }
 
 // inst_has_effect names the instructions kept whether or not their result is
 // read: params, calls, allocation and stores, and the output and buffer ops.
 function inst_has_effect(k: i32): boolean {
-    // Below 19: params, calls, allocation, stores and concat. From 19 on
-    // everything but a load (40) and a label address (45..47) has one: the
-    // output, file and buffer ops, a store, a bounds-checked read (it may
-    // abort) and the box allocation.
-    var below: i32[] = [6, 11, 12, 14, 16, 17];
-    for e in below { if (k == e) { return true; } }
-    var pure: i32[] = [40, 45, 46, 47, 52, 54, 57, 58];
-    for q in pure { if (k == q) { return false; } }
-    return k >= 19;
+  // Below 19: params, calls, allocation, stores and concat. From 19 on
+  // everything but a load (40) and a label address (45..47) has one: the
+  // output, file and buffer ops, a store, a bounds-checked read (it may
+  // abort) and the box allocation.
+  var below: i32[] = [6, 11, 12, 14, 16, 17];
+  for e in below {
+    if (k == e) {
+      return true;
+    }
+  }
+  var pure: i32[] = [40, 45, 46, 47, 52, 54, 57, 58];
+  for q in pure {
+    if (k == q) {
+      return false;
+    }
+  }
+  return k >= 19;
 }
 
 // prune_roots is every value an effectful instruction or a terminator reads.
 function prune_roots(f: SFunc): i32[] {
-    var work: i32[] = [];
-    for blk in f.blocks {
-        for ins in blk.insts {
-            if (inst_has_effect(ins.kind_tag)) { for a in ins.args { work = work.append(a); } }
+  var work: i32[] = [];
+  for blk in f.blocks {
+    for ins in blk.insts {
+      if (inst_has_effect(ins.kind_tag)) {
+        for a in ins.args {
+          work = work.append(a);
         }
-        if (blk.term.kind_tag == 1) { work = work.append(blk.term.value); }
-        if (blk.term.kind_tag == 3) { work = work.append(blk.term.cond); }
+      }
     }
-    return work;
+    if (blk.term.kind_tag == 1) {
+      work = work.append(blk.term.value);
+    }
+    if (blk.term.kind_tag == 3) {
+      work = work.append(blk.term.cond);
+    }
+  }
+  return work;
 }
 
 // prune_mark marks the roots and, through the pure instructions that define
 // them, everything they read.
 function prune_mark(f: SFunc, work: i32[]): i32[] {
-    var live: i32[] = zeros(f.nvals);
-    var def_b: i32[] = zeros(f.nvals);
-    var def_k: i32[] = zeros(f.nvals);
-    var bi: i32 = 0;
-    while (bi < f.blocks.len()) {
-        var k: i32 = 0;
-        while (k < f.blocks[bi].insts.len()) {
-            var r: i32 = f.blocks[bi].insts[k].result;
-            def_b = def_b.with(r, bi + 1);
-            def_k = def_k.with(r, k);
-            k = k + 1;
-        }
-        bi = bi + 1;
+  var live: i32[] = zeros(f.nvals);
+  var def_b: i32[] = zeros(f.nvals);
+  var def_k: i32[] = zeros(f.nvals);
+  var bi: i32 = 0;
+  while (bi < f.blocks.len()) {
+    var k: i32 = 0;
+    while (k < f.blocks[bi].insts.len()) {
+      var r: i32 = f.blocks[bi].insts[k].result;
+      def_b = def_b.with(r, bi + 1);
+      def_k = def_k.with(r, k);
+      k = k + 1;
     }
-    var at: i32 = 0;
-    while (at < work.len()) {
-        var v: i32 = work[at];
-        at = at + 1;
-        if (v < 0 || v >= f.nvals || live[v] == 1) { continue; }
-        live = live.with(v, 1);
-        if (def_b[v] == 0) { continue; }
-        for a in f.blocks[def_b[v] - 1].insts[def_k[v]].args { work = work.append(a); }
+    bi = bi + 1;
+  }
+  var at: i32 = 0;
+  while (at < work.len()) {
+    var v: i32 = work[at];
+    at = at + 1;
+    if (v < 0 || v >= f.nvals || live[v] == 1) {
+      continue;
     }
-    return live;
+    live = live.with(v, 1);
+    if (def_b[v] == 0) {
+      continue;
+    }
+    for a in f.blocks[def_b[v] - 1].insts[def_k[v]].args {
+      work = work.append(a);
+    }
+  }
+  return live;
 }
 
 // count_insts totals the instructions across all blocks (used by tests to
 // confirm the optimiser actually shrinks the IR).
 pub function count_insts(f: SFunc): i32 {
-    var n: i32 = 0;
-    var bi: i32 = 0;
-    while (bi < f.blocks.len()) {
-        n = n + f.blocks[bi].insts.len();
-        bi = bi + 1;
-    }
-    return n;
+  var n: i32 = 0;
+  var bi: i32 = 0;
+  while (bi < f.blocks.len()) {
+    n = n + f.blocks[bi].insts.len();
+    bi = bi + 1;
+  }
+  return n;
 }
 
 pub function block_index(f: SFunc, id: i32): i32 {
-    var i: i32 = 0;
-    while (i < f.blocks.len()) {
-        if (f.blocks[i].id == id) { return i; }
-        i = i + 1;
+  var i: i32 = 0;
+  while (i < f.blocks.len()) {
+    if (f.blocks[i].id == id) {
+      return i;
     }
-    return 0 - 1;
+    i = i + 1;
+  }
+  return 0 - 1;
 }
 
 pub function pred_slot(blk: SBlock, prev: i32): i32 {
-    var i: i32 = 0;
-    while (i < blk.preds.len()) {
-        if (blk.preds[i] == prev) { return i; }
-        i = i + 1;
+  var i: i32 = 0;
+  while (i < blk.preds.len()) {
+    if (blk.preds[i] == prev) {
+      return i;
     }
-    return 0;
+    i = i + 1;
+  }
+  return 0;
 }
 
 function eval_binary(op: string, l: i32, r: i32): i32 {
-    if (op == "+") { return l + r; }
-    if (op == "-") { return l - r; }
-    if (op == "*") { return l * r; }
-    if (op == "/") { return l / r; }
-    if (op == "%") { return l % r; }
-    if (op == "==") { if (l == r) { return 1; } return 0; }
-    if (op == "!=") { if (l != r) { return 1; } return 0; }
-    if (op == "<") { if (l < r) { return 1; } return 0; }
-    if (op == "<=") { if (l <= r) { return 1; } return 0; }
-    if (op == ">") { if (l > r) { return 1; } return 0; }
-    if (op == ">=") { if (l >= r) { return 1; } return 0; }
-    if (op == "&&") { if (l != 0 && r != 0) { return 1; } return 0; }
-    if (op == "||") { if (l != 0 || r != 0) { return 1; } return 0; }
-    if (op == "&") { return l & r; }
-    if (op == "|") { return l | r; }
-    if (op == "^") { return l ^ r; }
-    if (op == "<<") { return l << r; }
-    if (op == ">>") { return l >> r; }
+  if (op == "+") {
+    return l + r;
+  }
+  if (op == "-") {
+    return l - r;
+  }
+  if (op == "*") {
+    return l * r;
+  }
+  if (op == "/") {
+    return l / r;
+  }
+  if (op == "%") {
+    return l % r;
+  }
+  if (op == "==") {
+    if (l == r) {
+      return 1;
+    }
     return 0;
+  }
+  if (op == "!=") {
+    if (l != r) {
+      return 1;
+    }
+    return 0;
+  }
+  if (op == "<") {
+    if (l < r) {
+      return 1;
+    }
+    return 0;
+  }
+  if (op == "<=") {
+    if (l <= r) {
+      return 1;
+    }
+    return 0;
+  }
+  if (op == ">") {
+    if (l > r) {
+      return 1;
+    }
+    return 0;
+  }
+  if (op == ">=") {
+    if (l >= r) {
+      return 1;
+    }
+    return 0;
+  }
+  if (op == "&&") {
+    if (l != 0 && r != 0) {
+      return 1;
+    }
+    return 0;
+  }
+  if (op == "||") {
+    if (l != 0 || r != 0) {
+      return 1;
+    }
+    return 0;
+  }
+  if (op == "&") {
+    return l & r;
+  }
+  if (op == "|") {
+    return l | r;
+  }
+  if (op == "^") {
+    return l ^ r;
+  }
+  if (op == "<<") {
+    return l << r;
+  }
+  if (op == ">>") {
+    return l >> r;
+  }
+  return 0;
 }

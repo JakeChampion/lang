@@ -1,6 +1,7 @@
 // examples/self_host/wasm_runio_run.fern — stdin-driven driver for the
 // self-hosted wasm emitter's run_io wrapper. Reads Fern source from
-// stdin, runs it through lexer + parser + wasm_ir.emit_module_mode_or_error, and
+// stdin, runs it through lexer + parser + the typed lowering (semlower.driven) +
+// wasm_ir.emit_module_mode_or_error_sub, and
 // prints the resulting WASI core module (WAT text, wrapped for the
 // full-io component path) to stdout. Companion to wasm_run.fern (the
 // plain emit_module driver): same front end, io-wrapped emit.
@@ -17,35 +18,40 @@ import "./parser";
 import "./rundriver";
 import "./wasm_ir";
 import "./asmcore";
+import "./semlower";
 
 function main(): i32 {
-    // `-decide`: print the routing verdict ("ir" / "refused") instead of emitting —
-    // the COMPONENT-mode sibling of wasm_run's probe. Mode 0 has been swept over
-    // the harvested corpus since #5977; component mode never had a probe at all,
-    // so its decline set was unmeasured, and those declines are exactly what an
-    // IR-or-error reroute turns into hard errors.
-    var decide: boolean = false;
-    var av: string[] = args();
-    var ai: i32 = 1;
-    while (ai < av.len()) {
-        if (av[ai] == "-decide") { decide = true; }
-        ai = ai + 1;
+  // `-decide`: print the routing verdict ("ir" / "refused") instead of emitting —
+  // the COMPONENT-mode sibling of wasm_run's probe. Mode 0 has been swept over
+  // the harvested corpus since #5977; component mode never had a probe at all,
+  // so its decline set was unmeasured, and those declines are exactly what an
+  // IR-or-error reroute turns into hard errors.
+  var decide: boolean = false;
+  var av: string[] = args();
+  var ai: i32 = 1;
+  while (ai < av.len()) {
+    if (av[ai] == "-decide") {
+      decide = true;
     }
-    var mod: parser.Module = rundriver.parse_stdin("wasm_runio_run");
-    if (asmcore.refuse_parse_unknowns([mod]) || asmcore.refuse_decl_names([mod])) { return 1; }
-    var mwb: parser.Module = parser.module_with_builtins(mod);
-    if (decide) {
-        // emit_module_run_io's own decision (component=true, io=true), reused
-        // from wasm_ir rather than restated so the probe cannot drift from the
-        // emitter it describes.
-        var plm: parser.Module = wasm_ir.route_normalized(mwb);
-        if (wasm_ir.ir_route_ok(plm, true, true)) { print("ir\n"); } else { print("refused\n"); }
-        return 0;
+    ai = ai + 1;
+  }
+  var mod: parser.Module = rundriver.parse_stdin("wasm_runio_run");
+  if (asmcore.refuse_parse_unknowns([mod]) || asmcore.refuse_decl_names([mod])) {
+    return 1;
+  }
+  var d: semlower.Driven = semlower.driven(mod, "wasm32-wasi");
+  if (decide) {
+    // The emit's own decision (component=true, io=true), reused from
+    // wasm_ir rather than restated so the probe cannot drift from the
+    // emitter it describes.
+    var plm: parser.Module = wasm_ir.route_normalized(d.full);
+    if (wasm_ir.ir_route_ok(plm, true, true, d.sub)) {
+      print("ir\n");
+    } else {
+      print("refused\n");
     }
-    // Still the AST entry: rerouting the wasm drivers IR-or-error is a separate
-    // slice, gated on the mode-0 decline set being empty (see
-    // docs/SELFHOST-AST-RETIREMENT.md). The blocker THIS slice removes is the
-    // extern/export one — component mode no longer refuses such modules.
-    write(wasm_ir.emit_module_mode_or_error(mwb, true, true));
     return 0;
+  }
+  write(wasm_ir.emit_module_mode_or_error_sub(d.full, true, true, d.sub));
+  return 0;
 }

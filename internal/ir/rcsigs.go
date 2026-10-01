@@ -493,7 +493,7 @@ var rcInert = map[string]bool{
 	// input. The RESULT is counted, in rcResultOwned.
 	"__fern_scale_f64": true,
 	"__fern_ceil_f64":  true, "__fern_cos_f64": true,
-	"__fern_create_dir_all": true, "__fern_env": true, "__fern_env_at": true,
+	"__fern_create_dir_all": true, "__fern_env": true, "__fern_config_get": true, "__fern_env_at": true,
 	"__fern_env_count": true, "__fern_eprint": true, "__fern_exit": true,
 	"__fern_exp_f64": true, "__fern_floor_f64": true,
 	"__fern_heap_alloc_count": true, "__fern_heap_bump_bytes": true,

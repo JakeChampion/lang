@@ -858,6 +858,11 @@ func (f *Func) AddCallIndirectPair(b *Block, args ...Value) (Value, Value) {
 	return f.addPair(b, OpCallIndirect, args)
 }
 
+// AddCallDynPair is AddCallIndirectPair for a dyn method call.
+func (f *Func) AddCallDynPair(b *Block, args ...Value) (Value, Value) {
+	return f.addPair(b, OpCallDyn, args)
+}
+
 func (f *Func) addPair(b *Block, kind OpKind, args []Value) (Value, Value) {
 	first := f.NewValue()
 	second := f.NewValue()

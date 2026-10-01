@@ -12,15 +12,21 @@ import "./rundriver";
 import "./interp";
 
 function main(): i32 {
-    var mod: parser.Module = rundriver.parse_stdin("interp_run");
-    var result: interp.Value = interp.eval_module(mod);
-    match (result) {
-        interp.VInt(i) => { return i.v; },
-        interp.VBool(b) => {
-            if (b.v) { return 1; }
-            return 0;
-        },
-        _ => { return 254; }
+  var mod: parser.Module = rundriver.parse_stdin("interp_run");
+  var result: interp.Value = interp.eval_module(mod);
+  match (result) {
+    interp.VInt(i) => {
+      return i.v;
+    },
+    interp.VBool(b) => {
+      if (b.v) {
+        return 1;
+      }
+      return 0;
+    },
+    _ => {
+      return 254;
     }
-    return 254;
+  }
+  return 254;
 }

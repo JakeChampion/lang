@@ -847,6 +847,22 @@ function main(): i32 {
 		}
 	})
 
+	// A `use` into a generic callee whose written arguments leave the
+	// callback's parameter unbound (`T` reaches `apply` only through `cb`) has
+	// no binding type to infer: E032, and E038 for the callback that then
+	// fits no parameter, as native reports them (#10833).
+	t.Run("check-refuses-use-with-unbound-callback-parameter", func(t *testing.T) {
+		srcPath := filepath.Join(dir, "use_unbound.fern")
+		src := "function apply[T, I](it: I, cb: (T) => i32): i32 { return 0; }\nfunction main(): i32 {\n    use n <- apply(5);\n    return 1;\n}\n"
+		if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+			t.Fatalf("write src: %v", err)
+		}
+		out, err := exec.Command(fernBin, "-check", srcPath).CombinedOutput()
+		if err == nil || !strings.Contains(string(out), "E032") || !strings.Contains(string(out), "E038") {
+			t.Errorf("-check (err %v) did not report E032 and E038, the refusals native reports:\n%s", err, out)
+		}
+	})
+
 	// #8739. The parser is permissive: where it cannot read the source it
 	// plants an ExprUnknown and carries on, so every later pass reasons about
 	// the MARKER. `-check` never ran the gate that turns those markers back

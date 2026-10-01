@@ -1,5 +1,6 @@
 import "std/test";
 import "std/math" as math;
+
 // examples/tests/math_test.fern — pure-Fern coverage of the deterministic
 // std/math surface: range / range_step (half-open i32 ranges), the numeric-
 // width constants (i32_max/min, i64_max/min) and the pack_rgb bit-packer.
@@ -9,92 +10,118 @@ import "std/math" as math;
 // this is the migration-shaped (pure-Fern, std/test-driven) companion.
 
 function test_range(): test.TestOutcome {
-    return test.assert_eq_array(math.range(2, 5), [2, 3, 4]);
+  return test.assert_eq_array(math.range(2, 5), [2, 3, 4]);
 }
 
 function test_range_empty(): test.TestOutcome {
-    // start >= end yields the empty range.
-    return test.assert_eq(math.range(5, 2).len(), 0);
+  // start >= end yields the empty range.
+  return test.assert_eq(math.range(5, 2).len(), 0);
 }
 
 function test_range_single(): test.TestOutcome {
-    return test.assert_eq_array(math.range(7, 8), [7]);
+  return test.assert_eq_array(math.range(7, 8), [7]);
 }
 
 function test_range_step(): test.TestOutcome {
-    return test.assert_eq_array(math.range_step(0, 10, 3), [0, 3, 6, 9]);
+  return test.assert_eq_array(math.range_step(0, 10, 3), [0, 3, 6, 9]);
 }
 
 function test_range_step_exact(): test.TestOutcome {
-    // end lands exactly on a step boundary — half-open excludes it.
-    return test.assert_eq_array(math.range_step(0, 9, 3), [0, 3, 6]);
+  // end lands exactly on a step boundary — half-open excludes it.
+  return test.assert_eq_array(math.range_step(0, 9, 3), [0, 3, 6]);
 }
 
 function test_range_step_nonpositive(): test.TestOutcome {
-    // step <= 0 is the empty range (no reverse ranges).
-    return test.assert_eq(math.range_step(0, 10, 0).len(), 0);
+  // step <= 0 is the empty range (no reverse ranges).
+  return test.assert_eq(math.range_step(0, 10, 0).len(), 0);
 }
 
 function test_i32_bounds(): test.TestOutcome {
-    return test.assert_true(math.i32_max() == 2147483647 &&
-                            math.i32_min() == (0 - 2147483647 - 1));
+  return test.assert_true(math.i32_max() == 2147483647
+    && math.i32_min() == 0 - 2147483647 - 1);
 }
 
 function test_i64_bounds(): test.TestOutcome {
-    return test.assert_eq(math.i64_max(), 9223372036854775807);
+  return test.assert_eq(math.i64_max(), 9223372036854775807);
 }
 
 function test_pack_rgb(): test.TestOutcome {
-    // 0xFF8040 = 16744512.
-    return test.assert_eq(math.pack_rgb(255, 128, 64), 16744512);
+  // 0xFF8040 = 16744512.
+  return test.assert_eq(math.pack_rgb(255, 128, 64), 16744512);
 }
 
 function test_pack_rgb_wraps(): test.TestOutcome {
-    // Components are masked to their low 8 bits; 256 & 255 == 0.
-    return test.assert_eq(math.pack_rgb(256, 256, 256), 0);
+  // Components are masked to their low 8 bits; 256 & 255 == 0.
+  return test.assert_eq(math.pack_rgb(256, 256, 256), 0);
 }
 
 // parse_rgb_hex is the inverse of the pack_rgb / to_rgb_hex pipeline.
 function pr(s: string): i32 {
-    match (math.parse_rgb_hex(s)) {
-        Some(v) => { return v; },
-        None => { return -1; },
+  match (math.parse_rgb_hex(s)) {
+    Some(v) => {
+      return v;
+    },
+    None => {
+      return -1;
     }
+  }
 }
 
 function test_parse_rgb_hex(): test.TestOutcome {
-    // 6-digit, optional '#', case-insensitive — all pack the same.
-    if (pr("#ff8800") != math.pack_rgb(255, 136, 0)) { return test.fail("#ff8800"); }
-    if (pr("ff8800") != math.pack_rgb(255, 136, 0)) { return test.fail("no hash"); }
-    if (pr("#FF8800") != math.pack_rgb(255, 136, 0)) { return test.fail("uppercase"); }
-    // 3-digit shorthand doubles each nibble: #f80 == #ff8800.
-    return test.assert_eq(pr("#f80"), math.pack_rgb(255, 136, 0));
+  // 6-digit, optional '#', case-insensitive — all pack the same.
+  if (pr("#ff8800") != math.pack_rgb(255, 136, 0)) {
+    return test.fail("#ff8800");
+  }
+  if (pr("ff8800") != math.pack_rgb(255, 136, 0)) {
+    return test.fail("no hash");
+  }
+  if (pr("#FF8800") != math.pack_rgb(255, 136, 0)) {
+    return test.fail("uppercase");
+  }
+  // 3-digit shorthand doubles each nibble: #f80 == #ff8800.
+  return test.assert_eq(pr("#f80"), math.pack_rgb(255, 136, 0));
 }
 
 function test_parse_rgb_hex_invalid(): test.TestOutcome {
-    // Wrong length, bad digit, and empty all return None (pr → -1).
-    if (pr("#12345") != -1) { return test.fail("short"); }
-    if (pr("#gg0000") != -1) { return test.fail("bad digit"); }
-    if (pr("") != -1) { return test.fail("empty"); }
-    return test.assert_eq(pr("#"), -1);
+  // Wrong length, bad digit, and empty all return None (pr → -1).
+  if (pr("#12345") != -1) {
+    return test.fail("short");
+  }
+  if (pr("#gg0000") != -1) {
+    return test.fail("bad digit");
+  }
+  if (pr("") != -1) {
+    return test.fail("empty");
+  }
+  return test.assert_eq(pr("#"), -1);
 }
 
 function test_rgb_luminance(): test.TestOutcome {
-    // Extremes, and the BT.601 weighting (green > red > blue at equal value).
-    if (math.rgb_luminance(math.pack_rgb(255, 255, 255)) != 255) { return test.fail("white"); }
-    if (math.rgb_luminance(math.pack_rgb(0, 0, 0)) != 0) { return test.fail("black"); }
-    var green: i32 = math.rgb_luminance(math.pack_rgb(0, 255, 0));
-    var red: i32 = math.rgb_luminance(math.pack_rgb(255, 0, 0));
-    var blue: i32 = math.rgb_luminance(math.pack_rgb(0, 0, 255));
-    return test.assert_true(green > red && red > blue);
+  // Extremes, and the BT.601 weighting (green > red > blue at equal value).
+  if (math.rgb_luminance(math.pack_rgb(255, 255, 255)) != 255) {
+    return test.fail("white");
+  }
+  if (math.rgb_luminance(math.pack_rgb(0, 0, 0)) != 0) {
+    return test.fail("black");
+  }
+  var green: i32 = math.rgb_luminance(math.pack_rgb(0, 255, 0));
+  var red: i32 = math.rgb_luminance(math.pack_rgb(255, 0, 0));
+  var blue: i32 = math.rgb_luminance(math.pack_rgb(0, 0, 255));
+  return test.assert_true(green > red && red > blue);
 }
 
 function test_rgb_is_dark(): test.TestOutcome {
-    // Dark backgrounds want white text; light ones want black.
-    if (!math.rgb_is_dark(math.pack_rgb(0, 0, 0))) { return test.fail("black is dark"); }
-    if (!math.rgb_is_dark(math.pack_rgb(0, 0, 255))) { return test.fail("blue is dark"); }
-    if (math.rgb_is_dark(math.pack_rgb(255, 255, 255))) { return test.fail("white is light"); }
-    return test.assert_false(math.rgb_is_dark(math.pack_rgb(255, 136, 0)));
+  // Dark backgrounds want white text; light ones want black.
+  if (!math.rgb_is_dark(math.pack_rgb(0, 0, 0))) {
+    return test.fail("black is dark");
+  }
+  if (!math.rgb_is_dark(math.pack_rgb(0, 0, 255))) {
+    return test.fail("blue is dark");
+  }
+  if (math.rgb_is_dark(math.pack_rgb(255, 255, 255))) {
+    return test.fail("white is light");
+  }
+  return test.assert_false(math.rgb_is_dark(math.pack_rgb(255, 136, 0)));
 }
 
 // random_int's contract — deterministic even though the draw isn't.
@@ -106,55 +133,57 @@ function test_rgb_is_dark(): test.TestOutcome {
 // does so with p ~ 0.9916); the truncating impl NEVER does. We also
 // assert every draw is in-bounds and small ranges stay in-range.
 function test_random_int_range(): test.TestOutcome {
-    var i: i32 = 0;
-    var over: i32 = 0;
-    while (i < 4000) {
-        var v: i32 = math.random_int(0, 2000000000);
-        if (v < 0 || v >= 2000000000) {
-            return test.fail("random_int(0, 2e9) out of range: " + v.to_string());
-        }
-        if (v > 16777215) { over = over + 1; }   // above 2^24 - 1
-        i = i + 1;
+  var i: i32 = 0;
+  var over: i32 = 0;
+  while (i < 4000) {
+    var v: i32 = math.random_int(0, 2000000000);
+    if (v < 0 || v >= 2000000000) {
+      return test.fail("random_int(0, 2e9) out of range: " + v.to_string());
     }
-    // Full 32-bit draw ⇒ the upper range is reachable (truncating impl: over == 0).
-    if (over == 0) {
-        return test.fail("random_int never exceeded 2^24 over 4000 draws (24-bit truncation)");
+    if (v > 16777215) {  // above 2^24 - 1
+      over = over + 1;
     }
-    // Small range stays strictly in [5, 8).
-    i = 0;
-    while (i < 500) {
-        var w: i32 = math.random_int(5, 8);
-        if (w < 5 || w >= 8) {
-            return test.fail("random_int(5, 8) out of range: " + w.to_string());
-        }
-        i = i + 1;
+    i = i + 1;
+  }
+  // Full 32-bit draw ⇒ the upper range is reachable (truncating impl: over == 0).
+  if (over == 0) {
+    return test.fail("random_int never exceeded 2^24 over 4000 draws (24-bit truncation)");
+  }
+  // Small range stays strictly in [5, 8).
+  i = 0;
+  while (i < 500) {
+    var w: i32 = math.random_int(5, 8);
+    if (w < 5 || w >= 8) {
+      return test.fail("random_int(5, 8) out of range: " + w.to_string());
     }
-    return test.pass();
+    i = i + 1;
+  }
+  return test.pass();
 }
 
 function test_random_int_empty(): test.TestOutcome {
-    // hi <= lo returns lo (empty-range fallback), deterministic.
-    return test.assert_true(math.random_int(4, 4) == 4 &&
-                            math.random_int(9, 2) == 9);
+  // hi <= lo returns lo (empty-range fallback), deterministic.
+  return test.assert_true(math.random_int(4, 4) == 4
+    && math.random_int(9, 2) == 9);
 }
 
 function main(): i32 {
-    var r: test.TestRunner = test.test_new("std/math");
-    r = r.it("range",                   test_range);
-    r = r.it("range empty",             test_range_empty);
-    r = r.it("range single",            test_range_single);
-    r = r.it("range_step",              test_range_step);
-    r = r.it("range_step exact end",    test_range_step_exact);
-    r = r.it("range_step nonpositive",  test_range_step_nonpositive);
-    r = r.it("i32 bounds",              test_i32_bounds);
-    r = r.it("i64 bounds",              test_i64_bounds);
-    r = r.it("pack_rgb",                test_pack_rgb);
-    r = r.it("pack_rgb wraps",          test_pack_rgb_wraps);
-    r = r.it("parse_rgb_hex",           test_parse_rgb_hex);
-    r = r.it("parse_rgb_hex invalid",   test_parse_rgb_hex_invalid);
-    r = r.it("rgb_luminance",           test_rgb_luminance);
-    r = r.it("rgb_is_dark",             test_rgb_is_dark);
-    r = r.it("random_int range",        test_random_int_range);
-    r = r.it("random_int empty",        test_random_int_empty);
-    return r.finish();
+  var r: test.TestRunner = test.test_new("std/math");
+  r = r.it("range", test_range);
+  r = r.it("range empty", test_range_empty);
+  r = r.it("range single", test_range_single);
+  r = r.it("range_step", test_range_step);
+  r = r.it("range_step exact end", test_range_step_exact);
+  r = r.it("range_step nonpositive", test_range_step_nonpositive);
+  r = r.it("i32 bounds", test_i32_bounds);
+  r = r.it("i64 bounds", test_i64_bounds);
+  r = r.it("pack_rgb", test_pack_rgb);
+  r = r.it("pack_rgb wraps", test_pack_rgb_wraps);
+  r = r.it("parse_rgb_hex", test_parse_rgb_hex);
+  r = r.it("parse_rgb_hex invalid", test_parse_rgb_hex_invalid);
+  r = r.it("rgb_luminance", test_rgb_luminance);
+  r = r.it("rgb_is_dark", test_rgb_is_dark);
+  r = r.it("random_int range", test_random_int_range);
+  r = r.it("random_int empty", test_random_int_empty);
+  return r.finish();
 }

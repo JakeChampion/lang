@@ -34,10 +34,10 @@ function main(): i32 {
   // and counts across requests.
   var served: Cell[i32] = cell_new(0);
   var handler: (HttpRequest, Platform) => HttpResponse = (req: HttpRequest, plat: Platform): HttpResponse => {
-  served.set(served.get() + 1);
-  var body: string = "origin-hit=" + served.get().to_string() + " path=" + req.path + "\n";
-  return http.ok(body).with_header("Cache-Control", "max-age=60");
-};
+    served.set(served.get() + 1);
+    var body: string = "origin-hit=" + served.get().to_string() + " path=" + req.path + "\n";
+    return http.ok(body).with_header("Cache-Control", "max-age=60");
+  };
   eprint("origin: serving on port " + port.to_string());
   return tcp.tcp_serve(port, handler);
 }

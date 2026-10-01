@@ -26,43 +26,45 @@ import "core/int";
 // Stream. The Stream owns the buffer; subsequent reads
 // advance the cursor.
 pub function stream_from_bytes(bs: u8[]): Stream {
-    return Stream { data: bs, pos: 0 };
+  return Stream { data: bs, pos: 0 };
 }
 
 // `stream_from_string(s)` — wrap a string's bytes as a
 // Stream. Cheap byte conversion (`s.bytes()` returns the
 // fresh `u8[]`).
 pub function stream_from_string(s: string): Stream {
-    return Stream { data: s.bytes(), pos: 0 };
+  return Stream { data: s.bytes(), pos: 0 };
 }
 
 // `stream_empty()` — zero-length Stream. Useful as a default
 // / placeholder.
 pub function stream_empty(): Stream {
-    var empty: u8[] = [];
-    return Stream { data: empty, pos: 0 };
+  var empty: u8[] = [];
+  return Stream { data: empty, pos: 0 };
 }
 
 // `(s: Stream).len()` — total byte count of the Stream's
 // backing buffer (independent of the read cursor).
 pub function (s: Stream) len(): i32 {
-    return s.data.len();
+  return s.data.len();
 }
 
 // `(s: Stream).remaining()` — bytes between the cursor and
 // the end of the buffer. Zero when the Stream is fully
 // consumed.
 pub function (s: Stream) remaining(): i32 {
-    var total: i32 = s.data.len();
-    if (s.pos >= total) { return 0; }
-    return total - s.pos;
+  var total: i32 = s.data.len();
+  if (s.pos >= total) {
+    return 0;
+  }
+  return total - s.pos;
 }
 
 // `(s: Stream).is_empty()` — whether the Stream has any
 // unread bytes left. The dual of `.remaining() == 0`;
 // reads better at call sites that gate on "any more data?"
 pub function (s: Stream) is_empty(): boolean {
-    return s.pos >= s.data.len();
+  return s.pos >= s.data.len();
 }
 
 // `(s: Stream).read_all()` — consume the remaining bytes
@@ -75,19 +77,19 @@ pub function (s: Stream) is_empty(): boolean {
 // side reads can fail; Phase 1's in-memory buffer can't
 // fail so the bare bytes return is fine.
 pub function (s: Stream) read_all(): (u8[], Stream) {
-    var rem: i32 = s.remaining();
-    if (rem == 0) {
-        var empty: u8[] = [];
-        return (empty, s);
-    }
-    var out: u8[] = [];
-    var i: i32 = s.pos;
-    var end: i32 = s.data.len();
-    while (i < end) {
-        out = out.append(s.data[i]);
-        i = i + 1;
-    }
-    return (out, Stream { ...s, pos: end });
+  var rem: i32 = s.remaining();
+  if (rem == 0) {
+    var empty: u8[] = [];
+    return (empty, s);
+  }
+  var out: u8[] = [];
+  var i: i32 = s.pos;
+  var end: i32 = s.data.len();
+  while (i < end) {
+    out = out.append(s.data[i]);
+    i = i + 1;
+  }
+  return (out, Stream { ...s, pos: end });
 }
 
 // `(s: Stream).read_all_string()` — consume the remaining
@@ -99,8 +101,8 @@ pub function (s: Stream) read_all(): (u8[], Stream) {
 // take `read_all` and pass the bytes to `std/utf8.from_bytes`, which
 // validates and returns `Option[string]` (#5634, D9).
 pub function (s: Stream) read_all_string(): (string, Stream) {
-    var (bytes, s2) = s.read_all();
-    return (string_from_bytes_unchecked(bytes), s2);
+  let (bytes, s2) = s.read_all();
+  return (string_from_bytes_unchecked(bytes), s2);
 }
 
 // ============================================================
@@ -129,9 +131,11 @@ pub function (s: Stream) read_all_string(): (string, Stream) {
 // + a Stream advanced past it, or None + the unchanged
 // Stream when exhausted. Rebind: `var (b, s) = s.read_byte();`.
 pub function (s: Stream) read_byte(): (Option[i32], Stream) {
-    if (s.pos >= s.data.len()) { return (None, s); }
-    var b: i32 = s.data[s.pos] as i32;
-    return (Some(b), Stream { ...s, pos: s.pos + 1 });
+  if (s.pos >= s.data.len()) {
+    return (None, s);
+  }
+  var b: i32 = s.data[s.pos] as i32;
+  return (Some(b), Stream { ...s, pos: s.pos + 1 });
 }
 
 // `(s: Stream).read_n(n)` — read up to `n` bytes from the
@@ -139,16 +143,20 @@ pub function (s: Stream) read_byte(): (Option[i32], Stream) {
 // holds the actual bytes consumed (possibly fewer than `n` at
 // EOF); empty when already exhausted or `n <= 0`.
 pub function (s: Stream) read_n(n: i32): (u8[], Stream) {
-    var out: u8[] = [];
-    if (n <= 0) { return (out, s); }
-    var pos: i32 = s.pos;
-    var end: i32 = pos + n;
-    if (end > s.data.len()) { end = s.data.len(); }
-    while (pos < end) {
-        out = out.append(s.data[pos]);
-        pos = pos + 1;
-    }
-    return (out, Stream { ...s, pos: pos });
+  var out: u8[] = [];
+  if (n <= 0) {
+    return (out, s);
+  }
+  var pos: i32 = s.pos;
+  var end: i32 = pos + n;
+  if (end > s.data.len()) {
+    end = s.data.len();
+  }
+  while (pos < end) {
+    out = out.append(s.data[pos]);
+    pos = pos + 1;
+  }
+  return (out, Stream { ...s, pos: pos });
 }
 
 // `(s: Stream).read_line()` — read up to and including the
@@ -159,29 +167,31 @@ pub function (s: Stream) read_n(n: i32): (u8[], Stream) {
 // final unterminated line returns Some(line) + the advanced
 // Stream, then None on the subsequent call.
 pub function (s: Stream) read_line(): (Option[string], Stream) {
-    if (s.pos >= s.data.len()) { return (None, s); }
-    var line_bytes: u8[] = [];
-    var pos: i32 = s.pos;
-    while (pos < s.data.len()) {
-        var b: i32 = s.data[pos] as i32;
-        pos = pos + 1;
-        if (b == 10) {
-            // \n — strip a trailing \r if present.
-            var n: i32 = line_bytes.len();
-            if (n > 0) {
-                if ((line_bytes[n - 1] as i32) == 13) {
-                    var stripped: u8[] = [];
-                    var i: i32 = 0;
-                    while (i < n - 1) {
-                        stripped = stripped.append(line_bytes[i]);
-                        i = i + 1;
-                    }
-                    return (Some(string_from_bytes_unchecked(stripped)), Stream { ...s, pos: pos });
-                }
-            }
-            return (Some(string_from_bytes_unchecked(line_bytes)), Stream { ...s, pos: pos });
+  if (s.pos >= s.data.len()) {
+    return (None, s);
+  }
+  var line_bytes: u8[] = [];
+  var pos: i32 = s.pos;
+  while (pos < s.data.len()) {
+    var b: i32 = s.data[pos] as i32;
+    pos = pos + 1;
+    if (b == 10) {
+      // \n — strip a trailing \r if present.
+      var n: i32 = line_bytes.len();
+      if (n > 0) {
+        if (line_bytes[n - 1] as i32 == 13) {
+          var stripped: u8[] = [];
+          var i: i32 = 0;
+          while (i < n - 1) {
+            stripped = stripped.append(line_bytes[i]);
+            i = i + 1;
+          }
+          return (Some(string_from_bytes_unchecked(stripped)), Stream { ...s, pos: pos });
         }
-        line_bytes = line_bytes.append(b as u8);
+      }
+      return (Some(string_from_bytes_unchecked(line_bytes)), Stream { ...s, pos: pos });
     }
-    return (Some(string_from_bytes_unchecked(line_bytes)), Stream { ...s, pos: pos });
+    line_bytes = line_bytes.append(b as u8);
+  }
+  return (Some(string_from_bytes_unchecked(line_bytes)), Stream { ...s, pos: pos });
 }

@@ -32,7 +32,7 @@ import "./util";
 // required — analyze emits a row's uses in this order rather than sorting
 // them afterwards.
 pub function capabilities(): string[] {
-    return ["env", "fs", "net", "random", "subprocess", "time"];
+  return ["env", "fs", "net", "random", "subprocess", "time"];
 }
 
 // BuiltinCap pairs a capability-relevant runtime builtin with the capability
@@ -53,109 +53,107 @@ pub struct BuiltinCap { builtin: string, capability: string }
 //     invoker already handed the process, not ambient authority a dependency
 //     escalates through.
 pub function builtin_caps(): BuiltinCap[] {
-    return [
-        BuiltinCap { builtin: "tcp_listen", capability: "net" },
-        BuiltinCap { builtin: "tcp_accept", capability: "net" },
-        BuiltinCap { builtin: "tcp_local_port", capability: "net" },
-        BuiltinCap { builtin: "tcp_connect", capability: "net" },
-        BuiltinCap { builtin: "tcp_recv", capability: "net" },
-        BuiltinCap { builtin: "tcp_send", capability: "net" },
-        BuiltinCap { builtin: "tcp_close", capability: "net" },
-        BuiltinCap { builtin: "tcp_pollable", capability: "net" },
-        BuiltinCap { builtin: "udp_send", capability: "net" },
-        BuiltinCap { builtin: "tcp_listen_with", capability: "net" },
-        BuiltinCap { builtin: "tcp_socket_ctl", capability: "net" },
-        BuiltinCap { builtin: "tcp_sendfile", capability: "net" },
-        BuiltinCap { builtin: "udp_bind", capability: "net" },
-        BuiltinCap { builtin: "udp_connect", capability: "net" },
-        BuiltinCap { builtin: "udp_sendto", capability: "net" },
-        BuiltinCap { builtin: "udp_recvfrom", capability: "net" },
-        BuiltinCap { builtin: "tcp_connect_with", capability: "net" },
-        BuiltinCap { builtin: "unix_listen", capability: "net" },
-        BuiltinCap { builtin: "unix_connect", capability: "net" },
-        BuiltinCap { builtin: "tcp_recv_into", capability: "net" },
-
-        BuiltinCap { builtin: "read_file", capability: "fs" },
-        BuiltinCap { builtin: "read_file_bytes", capability: "fs" },
-        BuiltinCap { builtin: "write_file", capability: "fs" },
-        BuiltinCap { builtin: "write_file_exec", capability: "fs" },
-        BuiltinCap { builtin: "open_reader", capability: "fs" },
-        BuiltinCap { builtin: "open_writer", capability: "fs" },
-        BuiltinCap { builtin: "open_appender", capability: "fs" },
-        BuiltinCap { builtin: "open_exclusive", capability: "fs" },
-        BuiltinCap { builtin: "open_reader_with", capability: "fs" },
-        BuiltinCap { builtin: "open_writer_with", capability: "fs" },
-        BuiltinCap { builtin: "stat", capability: "fs" },
-        BuiltinCap { builtin: "lstat", capability: "fs" },
-        BuiltinCap { builtin: "access", capability: "fs" },
-        BuiltinCap { builtin: "read_dir", capability: "fs" },
-        BuiltinCap { builtin: "read_dir_all", capability: "fs" },
-        BuiltinCap { builtin: "remove_file", capability: "fs" },
-        BuiltinCap { builtin: "remove_dir_all", capability: "fs" },
-        BuiltinCap { builtin: "create_dir_all", capability: "fs" },
-        BuiltinCap { builtin: "create_dir", capability: "fs" },
-        BuiltinCap { builtin: "remove_dir", capability: "fs" },
-        BuiltinCap { builtin: "create_link", capability: "fs" },
-        BuiltinCap { builtin: "create_symlink", capability: "fs" },
-        BuiltinCap { builtin: "read_link", capability: "fs" },
-        BuiltinCap { builtin: "rename", capability: "fs" },
-        BuiltinCap { builtin: "chmod", capability: "fs" },
-        BuiltinCap { builtin: "chmod_at", capability: "fs" },
-        BuiltinCap { builtin: "set_file_times", capability: "fs" },
-        BuiltinCap { builtin: "truncate", capability: "fs" },
-        BuiltinCap { builtin: "mknod", capability: "fs" },
-        BuiltinCap { builtin: "sync", capability: "fs" },
-        // Setting an entry's owner or group rewrites who may reach it. For
-        // the package question that is filesystem reach like any other, so
-        // it sits beside `chmod` rather than getting a split of its own.
-        BuiltinCap { builtin: "chown_at", capability: "fs" },
-        // The process file-mode creation mask. Reading it reaches nothing,
-        // but SETTING it changes the mode of every file and directory
-        // anything creates afterwards, so it sits with the rest of the
-        // filesystem surface rather than in ungated().
-        BuiltinCap { builtin: "umask", capability: "fs" },
-        BuiltinCap { builtin: "statfs", capability: "fs" },
-        BuiltinCap { builtin: "temp_dir", capability: "fs" },
-        BuiltinCap { builtin: "getcwd", capability: "fs" },
-
-        BuiltinCap { builtin: "env", capability: "env" },
-        // The whole list is the same capability as one lookup: a caller
-        // that can ask for a name can ask for every name it can guess.
-        BuiltinCap { builtin: "environ", capability: "env" },
-        // The machine's name is ambient information about where the
-        // process runs, like its environment.
-        BuiltinCap { builtin: "hostname", capability: "env" },
-        // The kernel's utsname record and the machine's usable processor
-        // count are the same kind of ambient fact.
-        BuiltinCap { builtin: "uname_field", capability: "env" },
-        BuiltinCap { builtin: "cpu_count", capability: "env" },
-
-        BuiltinCap { builtin: "subprocess", capability: "subprocess" },
-        BuiltinCap { builtin: "proc_fork", capability: "subprocess" },
-        BuiltinCap { builtin: "proc_waitpid", capability: "subprocess" },
-        BuiltinCap { builtin: "proc_waitpid_nohang", capability: "subprocess" },
-        BuiltinCap { builtin: "proc_exec", capability: "subprocess" },
-        BuiltinCap { builtin: "proc_exec_as", capability: "subprocess" },
-        BuiltinCap { builtin: "chdir", capability: "fs" },
-        BuiltinCap { builtin: "chroot", capability: "fs" },
-        BuiltinCap { builtin: "setuid", capability: "fs" },
-        BuiltinCap { builtin: "setgid", capability: "fs" },
-        BuiltinCap { builtin: "setgroups", capability: "fs" },
-        BuiltinCap { builtin: "process_alive", capability: "subprocess" },
-        BuiltinCap { builtin: "signal_send", capability: "subprocess" },
-        BuiltinCap { builtin: "set_process_group", capability: "subprocess" },
-
-        BuiltinCap { builtin: "now_unix_ms", capability: "time" },
-        BuiltinCap { builtin: "now_ns", capability: "time" },
-        BuiltinCap { builtin: "monotonic_ns", capability: "time" },
-        BuiltinCap { builtin: "sleep_ms", capability: "time" },
-        BuiltinCap { builtin: "sleep_ns", capability: "time" },
-        BuiltinCap { builtin: "timer_fd", capability: "time" },
-        BuiltinCap { builtin: "wasm_timer_pollable", capability: "time" },
-
-        BuiltinCap { builtin: "random_bytes", capability: "random" },
-        BuiltinCap { builtin: "random_i32", capability: "random" }
-    ];
+  return [
+    BuiltinCap { builtin: "tcp_listen", capability: "net" },
+    BuiltinCap { builtin: "tcp_accept", capability: "net" },
+    BuiltinCap { builtin: "tcp_local_port", capability: "net" },
+    BuiltinCap { builtin: "tcp_connect", capability: "net" },
+    BuiltinCap { builtin: "tcp_recv", capability: "net" },
+    BuiltinCap { builtin: "tcp_send", capability: "net" },
+    BuiltinCap { builtin: "tcp_close", capability: "net" },
+    BuiltinCap { builtin: "tcp_pollable", capability: "net" },
+    BuiltinCap { builtin: "udp_send", capability: "net" },
+    BuiltinCap { builtin: "tcp_listen_with", capability: "net" },
+    BuiltinCap { builtin: "tcp_socket_ctl", capability: "net" },
+    BuiltinCap { builtin: "tcp_sendfile", capability: "net" },
+    BuiltinCap { builtin: "udp_bind", capability: "net" },
+    BuiltinCap { builtin: "udp_connect", capability: "net" },
+    BuiltinCap { builtin: "udp_sendto", capability: "net" },
+    BuiltinCap { builtin: "udp_recvfrom", capability: "net" },
+    BuiltinCap { builtin: "tcp_connect_with", capability: "net" },
+    BuiltinCap { builtin: "unix_listen", capability: "net" },
+    BuiltinCap { builtin: "unix_connect", capability: "net" },
+    BuiltinCap { builtin: "tcp_recv_into", capability: "net" },
+    BuiltinCap { builtin: "read_file", capability: "fs" },
+    BuiltinCap { builtin: "read_file_bytes", capability: "fs" },
+    BuiltinCap { builtin: "write_file", capability: "fs" },
+    BuiltinCap { builtin: "write_file_exec", capability: "fs" },
+    BuiltinCap { builtin: "open_reader", capability: "fs" },
+    BuiltinCap { builtin: "open_writer", capability: "fs" },
+    BuiltinCap { builtin: "open_appender", capability: "fs" },
+    BuiltinCap { builtin: "open_exclusive", capability: "fs" },
+    BuiltinCap { builtin: "open_reader_with", capability: "fs" },
+    BuiltinCap { builtin: "open_writer_with", capability: "fs" },
+    BuiltinCap { builtin: "stat", capability: "fs" },
+    BuiltinCap { builtin: "lstat", capability: "fs" },
+    BuiltinCap { builtin: "access", capability: "fs" },
+    BuiltinCap { builtin: "read_dir", capability: "fs" },
+    BuiltinCap { builtin: "read_dir_all", capability: "fs" },
+    BuiltinCap { builtin: "remove_file", capability: "fs" },
+    BuiltinCap { builtin: "remove_dir_all", capability: "fs" },
+    BuiltinCap { builtin: "create_dir_all", capability: "fs" },
+    BuiltinCap { builtin: "create_dir", capability: "fs" },
+    BuiltinCap { builtin: "remove_dir", capability: "fs" },
+    BuiltinCap { builtin: "create_link", capability: "fs" },
+    BuiltinCap { builtin: "create_symlink", capability: "fs" },
+    BuiltinCap { builtin: "read_link", capability: "fs" },
+    BuiltinCap { builtin: "rename", capability: "fs" },
+    BuiltinCap { builtin: "chmod", capability: "fs" },
+    BuiltinCap { builtin: "chmod_at", capability: "fs" },
+    BuiltinCap { builtin: "set_file_times", capability: "fs" },
+    BuiltinCap { builtin: "truncate", capability: "fs" },
+    BuiltinCap { builtin: "mknod", capability: "fs" },
+    BuiltinCap { builtin: "sync", capability: "fs" },
+    // Setting an entry's owner or group rewrites who may reach it. For
+    // the package question that is filesystem reach like any other, so
+    // it sits beside `chmod` rather than getting a split of its own.
+    BuiltinCap { builtin: "chown_at", capability: "fs" },
+    // The process file-mode creation mask. Reading it reaches nothing,
+    // but SETTING it changes the mode of every file and directory
+    // anything creates afterwards, so it sits with the rest of the
+    // filesystem surface rather than in ungated().
+    BuiltinCap { builtin: "umask", capability: "fs" },
+    BuiltinCap { builtin: "statfs", capability: "fs" },
+    BuiltinCap { builtin: "temp_dir", capability: "fs" },
+    BuiltinCap { builtin: "getcwd", capability: "fs" },
+    BuiltinCap { builtin: "env", capability: "env" },
+    // Deploy-time configuration reads what the deployment put in the
+    // environment, or its proxy-world equivalent: the same reach.
+    BuiltinCap { builtin: "config_get", capability: "env" },
+    // The whole list is the same capability as one lookup: a caller
+    // that can ask for a name can ask for every name it can guess.
+    BuiltinCap { builtin: "environ", capability: "env" },
+    // The machine's name is ambient information about where the
+    // process runs, like its environment.
+    BuiltinCap { builtin: "hostname", capability: "env" },
+    // The kernel's utsname record and the machine's usable processor
+    // count are the same kind of ambient fact.
+    BuiltinCap { builtin: "uname_field", capability: "env" },
+    BuiltinCap { builtin: "cpu_count", capability: "env" },
+    BuiltinCap { builtin: "subprocess", capability: "subprocess" },
+    BuiltinCap { builtin: "proc_fork", capability: "subprocess" },
+    BuiltinCap { builtin: "proc_waitpid", capability: "subprocess" },
+    BuiltinCap { builtin: "proc_waitpid_nohang", capability: "subprocess" },
+    BuiltinCap { builtin: "proc_exec", capability: "subprocess" },
+    BuiltinCap { builtin: "proc_exec_as", capability: "subprocess" },
+    BuiltinCap { builtin: "chdir", capability: "fs" },
+    BuiltinCap { builtin: "chroot", capability: "fs" },
+    BuiltinCap { builtin: "setuid", capability: "fs" },
+    BuiltinCap { builtin: "setgid", capability: "fs" },
+    BuiltinCap { builtin: "setgroups", capability: "fs" },
+    BuiltinCap { builtin: "process_alive", capability: "subprocess" },
+    BuiltinCap { builtin: "signal_send", capability: "subprocess" },
+    BuiltinCap { builtin: "set_process_group", capability: "subprocess" },
+    BuiltinCap { builtin: "now_unix_ms", capability: "time" },
+    BuiltinCap { builtin: "now_ns", capability: "time" },
+    BuiltinCap { builtin: "monotonic_ns", capability: "time" },
+    BuiltinCap { builtin: "sleep_ms", capability: "time" },
+    BuiltinCap { builtin: "sleep_ns", capability: "time" },
+    BuiltinCap { builtin: "timer_fd", capability: "time" },
+    BuiltinCap { builtin: "wasm_timer_pollable", capability: "time" },
+    BuiltinCap { builtin: "random_bytes", capability: "random" },
+    BuiltinCap { builtin: "random_i32", capability: "random" },
+  ];
 }
 
 // ungated lists the user-callable builtins known to require NO capability:
@@ -177,25 +175,27 @@ pub function builtin_caps(): BuiltinCap[] {
 // timing.
 // Mirrors native's Ungated exactly.
 pub function ungated(): string[] {
-    return ["putchar", "print", "write", "eprint", "read_line",
-            "stdin", "stdout", "stderr", "isatty", "window_size", "set_window_size", "termios_get", "termios_set", "target_os", "target_arch", "args", "exit",
-            "signal_ignore", "signal_default",
-            // Reading a disposition or the blocked mask reaches even less far
-            // than setting one does; signal_mask writes to the same
-            // process-wide state the two setters already reach.
-            "signal_mask", "signal_disposition",
-            "priority", "set_priority",
-            "geteuid", "getegid", "getuid", "getgid", "getgroups",
-            "rlimit_nofile",
-            "strbuf_reset", "strbuf_append", "strbuf_take",
-            "buf_new", "buf_push", "buf_push_range", "buf_push_mapped", "buf_push_filtered", "buf_push_expanded", "buf_push_byte", "buf_push_u64",
-            "buf_len", "buf_take", "buf_free",
-            "f32_bits", "f32_from_bits", "f64_bits", "f64_from_bits",
-            "poll", "wasm_block", "wasm_poll", "wasm_pollable_drop",
-            "reactor_new", "reactor_ctl", "reactor_wait",
-            "map_new", "cell_new", "string_from_bytes_unchecked",
-            "slice_unchecked",
-            "int_to_string"];
+  return [
+    "putchar", "print", "write", "eprint", "read_line",
+    "stdin", "stdout", "stderr", "isatty", "window_size", "set_window_size", "termios_get", "termios_set", "target_os", "target_arch", "args", "exit",
+    "signal_ignore", "signal_default",
+    // Reading a disposition or the blocked mask reaches even less far
+    // than setting one does; signal_mask writes to the same
+    // process-wide state the two setters already reach.
+    "signal_mask", "signal_disposition",
+    "priority", "set_priority",
+    "geteuid", "getegid", "getuid", "getgid", "getgroups",
+    "rlimit_nofile",
+    "strbuf_reset", "strbuf_append", "strbuf_take",
+    "buf_new", "buf_push", "buf_push_range", "buf_push_mapped", "buf_push_filtered", "buf_push_expanded", "buf_push_byte", "buf_push_u64",
+    "buf_len", "buf_take", "buf_free",
+    "f32_bits", "f32_from_bits", "f64_bits", "f64_from_bits",
+    "poll", "wasm_block", "wasm_poll", "wasm_pollable_drop",
+    "reactor_new", "reactor_ctl", "reactor_wait",
+    "map_new", "cell_new", "string_from_bytes_unchecked",
+    "slice_unchecked",
+    "int_to_string",
+  ];
 }
 
 // frontend_ungated is the self-host's own extension to that list: names in
@@ -207,19 +207,21 @@ pub function ungated(): string[] {
 // Every one is a channel or a pure computation, by the same rules as the list
 // above: __map_new_i32 / chr allocate or compute.
 pub function frontend_ungated(): string[] {
-    return ["__map_new_i32", "chr"];
+  return ["__map_new_i32", "chr"];
 }
 
 // capability_of returns the capability a builtin reaches, or "" when the name
 // is not tagged (ungated, or not a builtin at all).
 pub function capability_of(name: string): string {
-    var bs: BuiltinCap[] = builtin_caps();
-    var i: i32 = 0;
-    while (i < bs.len()) {
-        if (bs[i].builtin == name) { return bs[i].capability; }
-        i = i + 1;
+  var bs: BuiltinCap[] = builtin_caps();
+  var i: i32 = 0;
+  while (i < bs.len()) {
+    if (bs[i].builtin == name) {
+      return bs[i].capability;
     }
-    return "";
+    i = i + 1;
+  }
+  return "";
 }
 
 // classified reports whether `name` is accounted for by this table — tagged,
@@ -227,10 +229,16 @@ pub function capability_of(name: string): string {
 // whole builtin registry, so an I/O-shaped addition cannot silently dodge the
 // classification.
 pub function classified(name: string): boolean {
-    if (name.len() >= 2 && name[0] == b'_' && name[1] == b'_') { return true; }   // internal
-    if (capability_of(name).len() > 0) { return true; }
-    if (util.has_str(ungated(), name)) { return true; }
-    return util.has_str(frontend_ungated(), name);
+  if (name.len() >= 2 && name[0] == b'_' && name[1] == b'_') {  // internal
+    return true;
+  }
+  if (capability_of(name).len() > 0) {
+    return true;
+  }
+  if (util.has_str(ungated(), name)) {
+    return true;
+  }
+  return util.has_str(frontend_ungated(), name);
 }
 
 // ---- packages ----------------------------------------------------------
@@ -251,32 +259,36 @@ pub function classified(name: string): boolean {
 // never roots, so a stdlib module's tcp_connect shows up on the row of
 // whichever package calls into it.
 pub struct Pkg {
-    module: string,
-    name: string,
-    root: boolean,
-    governed: boolean,
-    grants: string[],
+  module: string,
+  name: string,
+  root: boolean,
+  governed: boolean,
+  grants: string[],
 }
 
 // pkg_of names the package owning a bundle module prefix, or "" for a
 // fold-through module.
 pub function pkg_of(pkgs: Pkg[], module: string): string {
-    var i: i32 = 0;
-    while (i < pkgs.len()) {
-        if (pkgs[i].module == module) { return pkgs[i].name; }
-        i = i + 1;
+  var i: i32 = 0;
+  while (i < pkgs.len()) {
+    if (pkgs[i].module == module) {
+      return pkgs[i].name;
     }
-    return "";
+    i = i + 1;
+  }
+  return "";
 }
 
 // pkg_index finds a package by NAME (several modules can share one), or -1.
 function pkg_index(pkgs: Pkg[], name: string): i32 {
-    var i: i32 = 0;
-    while (i < pkgs.len()) {
-        if (pkgs[i].name == name) { return i; }
-        i = i + 1;
+  var i: i32 = 0;
+  while (i < pkgs.len()) {
+    if (pkgs[i].name == name) {
+      return i;
     }
-    return 0 - 1;
+    i = i + 1;
+  }
+  return 0 - 1;
 }
 
 // enforceable reports whether any function in the bundle belongs to a
@@ -284,16 +296,18 @@ function pkg_index(pkgs: Pkg[], name: string): i32 {
 // skipped: there is no dependency to enforce or warn about, which is the
 // common single-package compile.
 pub function enforceable(mod: parser.Module, pkgs: Pkg[]): boolean {
-    var i: i32 = 0;
-    while (i < mod.funcs.len()) {
-        var p: string = pkg_of(pkgs, util.mangled_module(mod.funcs[i].name));
-        if (p.len() > 0) {
-            var k: i32 = pkg_index(pkgs, p);
-            if (k >= 0 && !pkgs[k].root) { return true; }
-        }
-        i = i + 1;
+  var i: i32 = 0;
+  while (i < mod.funcs.len()) {
+    var p: string = pkg_of(pkgs, util.mangled_module(mod.funcs[i].name));
+    if (p.len() > 0) {
+      var k: i32 = pkg_index(pkgs, p);
+      if (k >= 0 && !pkgs[k].root) {
+        return true;
+      }
     }
-    return false;
+    i = i + 1;
+  }
+  return false;
 }
 
 // ---- report ------------------------------------------------------------
@@ -308,12 +322,14 @@ pub struct Use { capability: string, chain: string[] }
 pub struct Row { pkg: string, uses: Use[] }
 
 function has_i32(xs: i32[], v: i32): boolean {
-    var i: i32 = 0;
-    while (i < xs.len()) {
-        if (xs[i] == v) { return true; }
-        i = i + 1;
+  var i: i32 = 0;
+  while (i < xs.len()) {
+    if (xs[i] == v) {
+      return true;
     }
-    return false;
+    i = i + 1;
+  }
+  return false;
 }
 
 // func_index finds a top-level function by bundle name, or -1. A method's
@@ -321,12 +337,14 @@ function has_i32(xs: i32[], v: i32): boolean {
 // method_edges instead, which is why this returns the first match rather than
 // pretending the name is unique.
 function func_index(mod: parser.Module, name: string): i32 {
-    var i: i32 = 0;
-    while (i < mod.funcs.len()) {
-        if (mod.funcs[i].name == name) { return i; }
-        i = i + 1;
+  var i: i32 = 0;
+  while (i < mod.funcs.len()) {
+    if (mod.funcs[i].name == name) {
+      return i;
     }
-    return 0 - 1;
+    i = i + 1;
+  }
+  return 0 - 1;
 }
 
 // analysis_want is the callee-name filter astwalk collects against: every
@@ -335,37 +353,42 @@ function func_index(mod: parser.Module, name: string): i32 {
 // method dispatch during emit rather than rewriting the call to its hoisted
 // name in the AST, so the walk has to do the resolution itself.
 function analysis_want(mod: parser.Module): string[] {
-    var want: string[] = [];
-    var bs: BuiltinCap[] = builtin_caps();
-    var i: i32 = 0;
-    while (i < bs.len()) { want = want.append(bs[i].builtin); i = i + 1; }
-    var fi: i32 = 0;
-    while (fi < mod.funcs.len()) {
-        if (mod.funcs[fi].receiver_type.len() > 0) {
-            var sn: string = util.mangled_name(mod.funcs[fi].name);
-            if (!util.has_str(want, sn)) { want = want.append(sn); }
-        }
-        fi = fi + 1;
+  var want: string[] = [];
+  var bs: BuiltinCap[] = builtin_caps();
+  var i: i32 = 0;
+  while (i < bs.len()) {
+    want = want.append(bs[i].builtin);
+    i = i + 1;
+  }
+  var fi: i32 = 0;
+  while (fi < mod.funcs.len()) {
+    if (mod.funcs[fi].receiver_type.len() > 0) {
+      var sn: string = util.mangled_name(mod.funcs[fi].name);
+      if (!util.has_str(want, sn)) {
+        want = want.append(sn);
+      }
     }
-    return want;
+    fi = fi + 1;
+  }
+  return want;
 }
 
 // chain_of renders the call chain reaching `builtin` at BFS position `at`:
 // the path back to the package function the walk started from, in call order.
 function chain_of(mod: parser.Module, order: i32[], parent: i32[], at: i32, builtin: string): string[] {
-    var rev: string[] = [];
-    var p: i32 = at;
-    while (p >= 0) {
-        rev = rev.append(mod.funcs[order[p]].name);
-        p = parent[p];
-    }
-    var out: string[] = [];
-    var i: i32 = rev.len() - 1;
-    while (i >= 0) {
-        out = out.append(rev[i]);
-        i = i - 1;
-    }
-    return out.append(builtin);
+  var rev: string[] = [];
+  var p: i32 = at;
+  while (p >= 0) {
+    rev = rev.append(mod.funcs[order[p]].name);
+    p = parent[p];
+  }
+  var out: string[] = [];
+  var i: i32 = rev.len() - 1;
+  while (i >= 0) {
+    out = out.append(rev[i]);
+    i = i - 1;
+  }
+  return out.append(builtin);
 }
 
 // walk BFSes from a package's declared functions and returns the capabilities
@@ -381,121 +404,126 @@ function chain_of(mod: parser.Module, order: i32[], parent: i32[], at: i32, buil
 // the functions REACHED. That is affordable because it runs on a program with
 // dependency packages (enforceable() is the gate) or on an explicit
 // -capabilities request, never on the ordinary single-package compile.
-function walk(mod: parser.Module, roots: i32[], want: string[]): Use[] {
-    var order: i32[] = [];
-    var parent: i32[] = [];
-    var ri: i32 = 0;
-    while (ri < roots.len()) {
-        if (!has_i32(order, roots[ri])) {
-            order = order.append(roots[ri]);
-            parent = parent.append(0 - 1);
-        }
-        ri = ri + 1;
+function walk(mod: parser.Module, roots: i32[], want: util.NameIndex): Use[] {
+  var order: i32[] = [];
+  var parent: i32[] = [];
+  var ri: i32 = 0;
+  while (ri < roots.len()) {
+    if (!has_i32(order, roots[ri])) {
+      order = order.append(roots[ri]);
+      parent = parent.append(0 - 1);
     }
+    ri = ri + 1;
+  }
 
-    var found_cap: string[] = [];
-    var found_at: i32[] = [];
-    var found_builtin: string[] = [];
+  var found_cap: string[] = [];
+  var found_at: i32[] = [];
+  var found_builtin: string[] = [];
 
-    var qi: i32 = 0;
-    while (qi < order.len()) {
-        var fd: parser.FuncDecl = mod.funcs[order[qi]];
+  var qi: i32 = 0;
+  while (qi < order.len()) {
+    var fd: parser.FuncDecl = mod.funcs[order[qi]];
 
-        // Calls: a tagged builtin is a direct use, a method call is an edge to
-        // every method of that simple name. Builtins count only in call
-        // position (they are free functions and cannot be taken as values), so
-        // a local shadowing a builtin name never misreports a capability.
-        var calls: astwalk.CallSite[] = [];
-        var bi: i32 = 0;
-        while (bi < fd.body.len()) {
-            calls = astwalk.collect_calls_stmt(fd.body[bi], want, calls);
-            bi = bi + 1;
-        }
-        var ci: i32 = 0;
-        while (ci < calls.len()) {
-            if (calls[ci].method) {
-                var mi: i32 = 0;
-                while (mi < mod.funcs.len()) {
-                    if (mod.funcs[mi].receiver_type.len() > 0 && util.mangled_name(mod.funcs[mi].name) == calls[ci].name) {
-                        if (!has_i32(order, mi)) {
-                            order = order.append(mi);
-                            parent = parent.append(qi);
-                        }
-                    }
-                    mi = mi + 1;
-                }
-            } else {
-                var cap: string = capability_of(calls[ci].name);
-                if (cap.len() > 0 && !util.has_str(found_cap, cap)) {
-                    found_cap = found_cap.append(cap);
-                    found_at = found_at.append(qi);
-                    found_builtin = found_builtin.append(calls[ci].name);
-                }
+    // Calls: a tagged builtin is a direct use, a method call is an edge to
+    // every method of that simple name. Builtins count only in call
+    // position (they are free functions and cannot be taken as values), so
+    // a local shadowing a builtin name never misreports a capability.
+    var calls: astwalk.CallSite[] = [];
+    var bi: i32 = 0;
+    while (bi < fd.body.len()) {
+      calls = astwalk.collect_calls_stmt(fd.body[bi], want, calls);
+      bi = bi + 1;
+    }
+    var ci: i32 = 0;
+    while (ci < calls.len()) {
+      if (calls[ci].method) {
+        var mi: i32 = 0;
+        while (mi < mod.funcs.len()) {
+          if (mod.funcs[mi].receiver_type.len() > 0 && util.mangled_name(mod.funcs[mi].name) == calls[ci].name) {
+            if (!has_i32(order, mi)) {
+              order = order.append(mi);
+              parent = parent.append(qi);
             }
-            ci = ci + 1;
+          }
+          mi = mi + 1;
         }
-
-        // Identifiers: every bare name that resolves to a top-level function
-        // is an edge, which covers both ordinary calls and function VALUES
-        // passed to higher-order code. A lambda's body is walked as part of
-        // the enclosing function, so a callback package A hands to package B
-        // stays A's usage even though B invokes it.
-        var ids: string[] = [];
-        var si: i32 = 0;
-        while (si < fd.body.len()) {
-            ids = astwalk.collect_idents_stmt(fd.body[si], ids);
-            si = si + 1;
+      } else {
+        var cap: string = capability_of(calls[ci].name);
+        if (cap.len() > 0 && !util.has_str(found_cap, cap)) {
+          found_cap = found_cap.append(cap);
+          found_at = found_at.append(qi);
+          found_builtin = found_builtin.append(calls[ci].name);
         }
-        var ii: i32 = 0;
-        while (ii < ids.len()) {
-            var fx: i32 = func_index(mod, ids[ii]);
-            if (fx >= 0 && !has_i32(order, fx)) {
-                order = order.append(fx);
-                parent = parent.append(qi);
-            }
-            ii = ii + 1;
-        }
-        qi = qi + 1;
+      }
+      ci = ci + 1;
     }
 
-    // Emit in vocabulary order — which is sorted, so the row is deterministic
-    // without a comparator, and a capability outside the vocabulary would
-    // simply never render (caps_run.fern pins the two tables together).
-    var uses: Use[] = [];
-    var vocab: string[] = capabilities();
-    var vi: i32 = 0;
-    while (vi < vocab.len()) {
-        var k: i32 = util.index_of_str(found_cap, vocab[vi]);
-        if (k >= 0) {
-            uses = uses.append(Use { capability: vocab[vi], chain: chain_of(mod, order, parent, found_at[k], found_builtin[k]) });
-        }
-        vi = vi + 1;
+    // Identifiers: every bare name that resolves to a top-level function
+    // is an edge, which covers both ordinary calls and function VALUES
+    // passed to higher-order code. A lambda's body is walked as part of
+    // the enclosing function, so a callback package A hands to package B
+    // stays A's usage even though B invokes it.
+    var ids: string[] = [];
+    var si: i32 = 0;
+    while (si < fd.body.len()) {
+      ids = astwalk.collect_idents_stmt(fd.body[si], ids);
+      si = si + 1;
     }
-    return uses;
+    var ii: i32 = 0;
+    while (ii < ids.len()) {
+      var fx: i32 = func_index(mod, ids[ii]);
+      if (fx >= 0 && !has_i32(order, fx)) {
+        order = order.append(fx);
+        parent = parent.append(qi);
+      }
+      ii = ii + 1;
+    }
+    qi = qi + 1;
+  }
+
+  // Emit in vocabulary order — which is sorted, so the row is deterministic
+  // without a comparator, and a capability outside the vocabulary would
+  // simply never render (caps_run.fern pins the two tables together).
+  var uses: Use[] = [];
+  var vocab: string[] = capabilities();
+  var vi: i32 = 0;
+  while (vi < vocab.len()) {
+    var k: i32 = util.index_of_str(found_cap, vocab[vi]);
+    if (k >= 0) {
+      uses = uses.append(Use { capability: vocab[vi], chain: chain_of(mod, order, parent, found_at[k], found_builtin[k]) });
+    }
+    vi = vi + 1;
+  }
+  return uses;
 }
 
 // sort_rows orders rows by package name (selection sort — one row per package
 // in the program, so the list is short).
 function sort_rows(rows: Row[]): Row[] {
-    var taken: i32[] = [];
-    var i: i32 = 0;
-    while (i < rows.len()) { taken = taken.append(0); i = i + 1; }
-    var out: Row[] = [];
-    var k: i32 = 0;
-    while (k < rows.len()) {
-        var best: i32 = 0 - 1;
-        var j: i32 = 0;
-        while (j < rows.len()) {
-            if (taken[j] == 0) {
-                if (best < 0 || util.str_less(rows[j].pkg, rows[best].pkg)) { best = j; }
-            }
-            j = j + 1;
+  var taken: i32[] = [];
+  var i: i32 = 0;
+  while (i < rows.len()) {
+    taken = taken.append(0);
+    i = i + 1;
+  }
+  var out: Row[] = [];
+  var k: i32 = 0;
+  while (k < rows.len()) {
+    var best: i32 = 0 - 1;
+    var j: i32 = 0;
+    while (j < rows.len()) {
+      if (taken[j] == 0) {
+        if (best < 0 || util.str_less(rows[j].pkg, rows[best].pkg)) {
+          best = j;
         }
-        taken = taken.with(best, 1);
-        out = out.append(rows[best]);
-        k = k + 1;
+      }
+      j = j + 1;
     }
-    return out;
+    taken = taken.with(best, 1);
+    out = out.append(rows[best]);
+    k = k + 1;
+  }
+  return out;
 }
 
 // analyze computes per-package capability usage for a bundled program by
@@ -507,40 +535,46 @@ function sort_rows(rows: Row[]): Row[] {
 //
 // Rows come back sorted by package name, uses by capability.
 pub function analyze(mod: parser.Module, pkgs: Pkg[]): Row[] {
-    var want: string[] = analysis_want(mod);
-    var names: string[] = [];
-    var fi: i32 = 0;
-    while (fi < mod.funcs.len()) {
-        var p: string = pkg_of(pkgs, util.mangled_module(mod.funcs[fi].name));
-        if (p.len() > 0 && !util.has_str(names, p)) { names = names.append(p); }
-        fi = fi + 1;
+  var want: util.NameIndex = util.name_index(analysis_want(mod));
+  var names: string[] = [];
+  var fi: i32 = 0;
+  while (fi < mod.funcs.len()) {
+    var p: string = pkg_of(pkgs, util.mangled_module(mod.funcs[fi].name));
+    if (p.len() > 0 && !util.has_str(names, p)) {
+      names = names.append(p);
     }
+    fi = fi + 1;
+  }
 
-    var rows: Row[] = [];
-    var pi: i32 = 0;
-    while (pi < names.len()) {
-        var roots: i32[] = [];
-        var fj: i32 = 0;
-        while (fj < mod.funcs.len()) {
-            if (pkg_of(pkgs, util.mangled_module(mod.funcs[fj].name)) == names[pi]) { roots = roots.append(fj); }
-            fj = fj + 1;
-        }
-        rows = rows.append(Row { pkg: names[pi], uses: walk(mod, roots, want) });
-        pi = pi + 1;
+  var rows: Row[] = [];
+  var pi: i32 = 0;
+  while (pi < names.len()) {
+    var roots: i32[] = [];
+    var fj: i32 = 0;
+    while (fj < mod.funcs.len()) {
+      if (pkg_of(pkgs, util.mangled_module(mod.funcs[fj].name)) == names[pi]) {
+        roots = roots.append(fj);
+      }
+      fj = fj + 1;
     }
-    return sort_rows(rows);
+    rows = rows.append(Row { pkg: names[pi], uses: walk(mod, roots, want) });
+    pi = pi + 1;
+  }
+  return sort_rows(rows);
 }
 
 // join renders a chain as `a → b → c`.
 function join_chain(chain: string[]): string {
-    var out: string = "";
-    var i: i32 = 0;
-    while (i < chain.len()) {
-        if (i > 0) { out = out + " → "; }
-        out = out + chain[i];
-        i = i + 1;
+  var out: string = "";
+  var i: i32 = 0;
+  while (i < chain.len()) {
+    if (i > 0) {
+      out = out + " → ";
     }
-    return out;
+    out = out + chain[i];
+    i = i + 1;
+  }
+  return out;
 }
 
 // format_rows renders the report: one line per package —
@@ -550,24 +584,26 @@ function join_chain(chain: string[]): string {
 // with the example chain belonging to the row's first (alphabetical)
 // capability, and `-` for a package that reaches none.
 pub function format_rows(rows: Row[]): string {
-    var out: string = "";
-    var i: i32 = 0;
-    while (i < rows.len()) {
-        if (rows[i].uses.len() == 0) {
-            out = out + rows[i].pkg + "  -\n";
-        } else {
-            var names: string = "";
-            var u: i32 = 0;
-            while (u < rows[i].uses.len()) {
-                if (u > 0) { names = names + ","; }
-                names = names + rows[i].uses[u].capability;
-                u = u + 1;
-            }
-            out = out + rows[i].pkg + "  " + names + "  (example: " + join_chain(rows[i].uses[0].chain) + ")\n";
+  var out: string = "";
+  var i: i32 = 0;
+  while (i < rows.len()) {
+    if (rows[i].uses.len() == 0) {
+      out = out + rows[i].pkg + "  -\n";
+    } else {
+      var names: string = "";
+      var u: i32 = 0;
+      while (u < rows[i].uses.len()) {
+        if (u > 0) {
+          names = names + ",";
         }
-        i = i + 1;
+        names = names + rows[i].uses[u].capability;
+        u = u + 1;
+      }
+      out = out + rows[i].pkg + "  " + names + "  (example: " + join_chain(rows[i].uses[0].chain) + ")\n";
     }
-    return out;
+    i = i + 1;
+  }
+  return out;
 }
 
 // ---- enforcement -------------------------------------------------------
@@ -576,10 +612,10 @@ pub function format_rows(rows: Row[]): string {
 // `governed` selects the severity: true is a checker-grade error (E070),
 // false a warn-and-allow diagnostic.
 pub struct Violation {
-    pkg: string,
-    capability: string,
-    chain: string[],
-    governed: boolean,
+  pkg: string,
+  capability: string,
+  chain: string[],
+  governed: boolean,
 }
 
 // enforce filters analyze's rows against the per-package grants — the same
@@ -588,44 +624,48 @@ pub struct Violation {
 // order (package, then capability); the caller splits them by `governed`,
 // which is the severity.
 pub function enforce(rows: Row[], pkgs: Pkg[]): Violation[] {
-    var out: Violation[] = [];
-    var ri: i32 = 0;
-    while (ri < rows.len()) {
-        var k: i32 = pkg_index(pkgs, rows[ri].pkg);
-        var is_root: boolean = k >= 0 && pkgs[k].root;
-        if (!is_root) {
-            var governed: boolean = k >= 0 && pkgs[k].governed;
-            var ui: i32 = 0;
-            while (ui < rows[ri].uses.len()) {
-                var u: Use = rows[ri].uses[ui];
-                var granted: boolean = false;
-                if (governed) { granted = util.has_str(pkgs[k].grants, u.capability); }
-                if (!granted) {
-                    out = out.append(Violation {
-                        pkg: rows[ri].pkg,
-                        capability: u.capability,
-                        chain: u.chain,
-                        governed: governed,
-                    });
-                }
-                ui = ui + 1;
-            }
+  var out: Violation[] = [];
+  var ri: i32 = 0;
+  while (ri < rows.len()) {
+    var k: i32 = pkg_index(pkgs, rows[ri].pkg);
+    var is_root: boolean = k >= 0 && pkgs[k].root;
+    if (!is_root) {
+      var governed: boolean = k >= 0 && pkgs[k].governed;
+      var ui: i32 = 0;
+      while (ui < rows[ri].uses.len()) {
+        var u: Use = rows[ri].uses[ui];
+        var granted: boolean = false;
+        if (governed) {
+          granted = util.has_str(pkgs[k].grants, u.capability);
         }
-        ri = ri + 1;
+        if (!granted) {
+          out = out.append(Violation {
+            pkg: rows[ri].pkg,
+            capability: u.capability,
+            chain: u.chain,
+            governed: governed,
+          });
+        }
+        ui = ui + 1;
+      }
     }
-    return out;
+    ri = ri + 1;
+  }
+  return out;
 }
 
 // violation_message renders the diagnostic's text, without the
 // `error[E070]:` / `warning:` label — the caller owns severity rendering.
 pub function violation_message(v: Violation): string {
-    var builtin: string = "";
-    if (v.chain.len() > 0) { builtin = v.chain[v.chain.len() - 1]; }
-    var head: string = "package \"" + v.pkg + "\" reaches '" + v.capability + "' (" + builtin + ")";
-    if (v.governed) {
-        return head + " without a capability grant: " + join_chain(v.chain)
-            + "; add \"" + v.capability + "\" to its capabilities in fern.toml or remove the call";
-    }
-    return head + " but no capabilities key governs it: " + join_chain(v.chain)
-        + "; add capabilities = [...] to its dependency entry in fern.toml (ungoverned packages will become errors once default-deny lands)";
+  var builtin: string = "";
+  if (v.chain.len() > 0) {
+    builtin = v.chain[v.chain.len() - 1];
+  }
+  var head: string = "package \"" + v.pkg + "\" reaches '" + v.capability + "' (" + builtin + ")";
+  if (v.governed) {
+    return head + " without a capability grant: " + join_chain(v.chain)
+      + "; add \"" + v.capability + "\" to its capabilities in fern.toml or remove the call";
+  }
+  return head + " but no capabilities key governs it: " + join_chain(v.chain)
+    + "; add capabilities = [...] to its dependency entry in fern.toml (ungoverned packages will become errors once default-deny lands)";
 }

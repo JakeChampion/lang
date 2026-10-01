@@ -47,9 +47,13 @@
 // is_hspace — horizontal whitespace (space or tab). Lines are split
 // on '\n' before any trimming, so newlines never reach here; '\r' is
 // folded in so CRLF documents trim cleanly.
-function is_hspace(b: i32): boolean { return b == 32 || b == 9 || b == 13; }
+function is_hspace(b: i32): boolean {
+  return b == 32 || b == 9 || b == 13;
+}
 
-function is_backtick(b: u8): boolean { return b == b'`'; }
+function is_backtick(b: u8): boolean {
+  return b == b'`';
+}
 
 // ─── small string helpers ──────────────────────────────────────────
 // The self-hosted modules are deliberately import-free (cf. lexer.fern),
@@ -57,79 +61,97 @@ function is_backtick(b: u8): boolean { return b == b'`'; }
 // rather than pulled from std/string.
 
 function starts_with(s: string, prefix: string): boolean {
-    var pn: i32 = prefix.len();
-    if (pn > s.len()) { return false; }
-    return slice_unchecked(s, 0, pn) == prefix;
+  var pn: i32 = prefix.len();
+  if (pn > s.len()) {
+    return false;
+  }
+  return slice_unchecked(s, 0, pn) == prefix;
 }
 
 function ends_with(s: string, suffix: string): boolean {
-    var sn: i32 = suffix.len();
-    var n: i32 = s.len();
-    if (sn > n) { return false; }
-    return slice_unchecked(s, n - sn, n) == suffix;
+  var sn: i32 = suffix.len();
+  var n: i32 = s.len();
+  if (sn > n) {
+    return false;
+  }
+  return slice_unchecked(s, n - sn, n) == suffix;
 }
 
 // contains reports whether `sub` occurs anywhere in `s` (used to
 // reject a `>>` inside a chunk name).
 function contains(s: string, sub: string): boolean {
-    var sn: i32 = sub.len();
-    var n: i32 = s.len();
-    if (sn == 0) { return true; }
-    if (sn > n) { return false; }
-    var i: i32 = 0;
-    while (i + sn <= n) {
-        if (slice_unchecked(s, i, i + sn) == sub) { return true; }
-        i = i + 1;
-    }
+  var sn: i32 = sub.len();
+  var n: i32 = s.len();
+  if (sn == 0) {
+    return true;
+  }
+  if (sn > n) {
     return false;
+  }
+  var i: i32 = 0;
+  while (i + sn <= n) {
+    if (slice_unchecked(s, i, i + sn) == sub) {
+      return true;
+    }
+    i = i + 1;
+  }
+  return false;
 }
 
 // trim strips leading and trailing horizontal whitespace.
 function trim(s: string): string {
-    var a: i32 = 0;
-    var b: i32 = s.len();
-    while (a < b && is_hspace((s[a] as i32))) { a = a + 1; }
-    while (b > a && is_hspace((s[b - 1] as i32))) { b = b - 1; }
-    return slice_unchecked(s, a, b) + "";
+  var a: i32 = 0;
+  var b: i32 = s.len();
+  while (a < b && is_hspace(s[a] as i32)) {
+    a = a + 1;
+  }
+  while (b > a && is_hspace(s[b - 1] as i32)) {
+    b = b - 1;
+  }
+  return slice_unchecked(s, a, b) + "";
 }
 
 // leading_ws returns the run of leading spaces/tabs (the indentation
 // prepended to a chunk reference's expansion).
 function leading_ws(s: string): string {
-    var k: i32 = 0;
-    var n: i32 = s.len();
-    while (k < n && (s[k] == b' ' || s[k] == b'\t')) { k = k + 1; }
-    return slice_unchecked(s, 0, k) + "";
+  var k: i32 = 0;
+  var n: i32 = s.len();
+  while (k < n && (s[k] == b' ' || s[k] == b'\t')) {
+    k = k + 1;
+  }
+  return slice_unchecked(s, 0, k) + "";
 }
 
 // split_lines splits on '\n', mirroring Go's strings.Split: a trailing
 // newline yields a trailing empty line, so 1-based line numbers line up
 // with the source.
 function split_lines(src: string): string[] {
-    var lines: string[] = [];
-    var start: i32 = 0;
-    var i: i32 = 0;
-    var n: i32 = src.len();
-    while (i < n) {
-        if (src[i] == b'\n') {
-            lines = lines.append(slice_unchecked(src, start, i) + "");
-            start = i + 1;
-        }
-        i = i + 1;
+  var lines: string[] = [];
+  var start: i32 = 0;
+  var i: i32 = 0;
+  var n: i32 = src.len();
+  while (i < n) {
+    if (src[i] == b'\n') {
+      lines = lines.append(slice_unchecked(src, start, i) + "");
+      start = i + 1;
     }
-    lines = lines.append(slice_unchecked(src, start, n) + "");
-    return lines;
+    i = i + 1;
+  }
+  lines = lines.append(slice_unchecked(src, start, n) + "");
+  return lines;
 }
 
 function join_lines(lines: string[]): string {
-    var s: string = "";
-    var i: i32 = 0;
-    while (i < lines.len()) {
-        if (i > 0) { s = s + "\n"; }
-        s = s + lines[i];
-        i = i + 1;
+  var s: string = "";
+  var i: i32 = 0;
+  while (i < lines.len()) {
+    if (i > 0) {
+      s = s + "\n";
     }
-    return s;
+    s = s + lines[i];
+    i = i + 1;
+  }
+  return s;
 }
 
 // ─── fence + chunk-marker recognition ──────────────────────────────
@@ -138,117 +160,152 @@ function join_lines(lines: string[]): string {
 // fenced code block (>= 3), or 0 if the line isn't a fence opener.
 // Leading indentation is allowed.
 function fence_open_len(line: string): i32 {
-    var ws: string = leading_ws(line);
-    var i: i32 = ws.len();
-    var n: i32 = line.len();
-    var count: i32 = 0;
-    while (i < n && is_backtick(line[i])) { count = count + 1; i = i + 1; }
-    if (count >= 3) { return count; }
-    return 0;
+  var ws: string = leading_ws(line);
+  var i: i32 = ws.len();
+  var n: i32 = line.len();
+  var count: i32 = 0;
+  while (i < n && is_backtick(line[i])) {
+    count = count + 1;
+    i = i + 1;
+  }
+  if (count >= 3) {
+    return count;
+  }
+  return 0;
 }
 
 // fence_lang returns the info-string language token of a fence opener
 // (the first word after the backtick run).
 function fence_lang(line: string): string {
-    var ws: string = leading_ws(line);
-    var i: i32 = ws.len();
-    var n: i32 = line.len();
-    while (i < n && is_backtick(line[i])) { i = i + 1; }
-    var info: string = trim(slice_unchecked(line, i, n));
-    var j: i32 = 0;
-    var m: i32 = info.len();
-    while (j < m && info[j] != b' ' && info[j] != b'\t') { j = j + 1; }
-    return slice_unchecked(info, 0, j) + "";
+  var ws: string = leading_ws(line);
+  var i: i32 = ws.len();
+  var n: i32 = line.len();
+  while (i < n && is_backtick(line[i])) {
+    i = i + 1;
+  }
+  var info: string = trim(slice_unchecked(line, i, n));
+  var j: i32 = 0;
+  var m: i32 = info.len();
+  while (j < m && info[j] != b' ' && info[j] != b'\t') {
+    j = j + 1;
+  }
+  return slice_unchecked(info, 0, j) + "";
 }
 
 // fence_info returns the trimmed info string after a fence's backtick
 // run — the language token plus any directives (`file=…`, `entry`).
 function fence_info(line: string): string {
-    var ws: string = leading_ws(line);
-    var i: i32 = ws.len();
-    var n: i32 = line.len();
-    while (i < n && is_backtick(line[i])) { i = i + 1; }
-    return trim(slice_unchecked(line, i, n));
+  var ws: string = leading_ws(line);
+  var i: i32 = ws.len();
+  var n: i32 = line.len();
+  while (i < n && is_backtick(line[i])) {
+    i = i + 1;
+  }
+  return trim(slice_unchecked(line, i, n));
 }
 
 // split_ws splits a string on runs of spaces/tabs into non-empty words.
 function split_ws(s: string): string[] {
-    var words: string[] = [];
-    var n: i32 = s.len();
-    var i: i32 = 0;
-    while (i < n) {
-        while (i < n && (s[i] == b' ' || s[i] == b'\t')) { i = i + 1; }
-        var start: i32 = i;
-        while (i < n && s[i] != b' ' && s[i] != b'\t') { i = i + 1; }
-        if (i > start) { words = words.append(slice_unchecked(s, start, i) + ""); }
+  var words: string[] = [];
+  var n: i32 = s.len();
+  var i: i32 = 0;
+  while (i < n) {
+    while (i < n && (s[i] == b' ' || s[i] == b'\t')) {
+      i = i + 1;
     }
-    return words;
+    var start: i32 = i;
+    while (i < n && s[i] != b' ' && s[i] != b'\t') {
+      i = i + 1;
+    }
+    if (i > start) {
+      words = words.append(slice_unchecked(s, start, i) + "");
+    }
+  }
+  return words;
 }
 
 // fence_file returns the `file=PATH` directive value of a fence opener,
 // or "" when the fence has no `file=` directive.
 function fence_file(line: string): string {
-    var words: string[] = split_ws(fence_info(line));
-    var i: i32 = 0;
-    while (i < words.len()) {
-        if (starts_with(words[i], "file=")) { return slice_unchecked(words[i], 5, words[i].len()) + ""; }
-        i = i + 1;
+  var words: string[] = split_ws(fence_info(line));
+  var i: i32 = 0;
+  while (i < words.len()) {
+    if (starts_with(words[i], "file=")) {
+      return slice_unchecked(words[i], 5, words[i].len()) + "";
     }
-    return "";
+    i = i + 1;
+  }
+  return "";
 }
 
 // fence_is_entry reports whether a fence opener carries a bare `entry`
 // directive, marking its file-root as the compile entry.
 function fence_is_entry(line: string): boolean {
-    var words: string[] = split_ws(fence_info(line));
-    var i: i32 = 0;
-    while (i < words.len()) {
-        if (words[i] == "entry") { return true; }
-        i = i + 1;
+  var words: string[] = split_ws(fence_info(line));
+  var i: i32 = 0;
+  while (i < words.len()) {
+    if (words[i] == "entry") {
+      return true;
     }
-    return false;
+    i = i + 1;
+  }
+  return false;
 }
 
 // is_fence_close reports whether `line` closes a block opened with a
 // run of `open_len` backticks — a line whose only content is a
 // backtick run at least that long.
 function is_fence_close(line: string, open_len: i32): boolean {
-    var t: string = trim(line);
-    var n: i32 = t.len();
-    if (n < open_len) { return false; }
-    var i: i32 = 0;
-    while (i < n) {
-        if (!is_backtick(t[i])) { return false; }
-        i = i + 1;
+  var t: string = trim(line);
+  var n: i32 = t.len();
+  if (n < open_len) {
+    return false;
+  }
+  var i: i32 = 0;
+  while (i < n) {
+    if (!is_backtick(t[i])) {
+      return false;
     }
-    return true;
+    i = i + 1;
+  }
+  return true;
 }
 
 // is_header reports whether a trimmed line is a chunk-definition
 // header `<<NAME>>=` with a non-empty NAME free of `>>`.
 function is_header(t: string): boolean {
-    if (!starts_with(t, "<<") || !ends_with(t, ">>=")) { return false; }
-    var inner: str = slice_unchecked(t, 2, t.len() - 3);
-    if (contains(inner, ">>")) { return false; }
-    return trim(inner).len() > 0;
+  if (!starts_with(t, "<<") || !ends_with(t, ">>=")) {
+    return false;
+  }
+  var inner: str = slice_unchecked(t, 2, t.len() - 3);
+  if (contains(inner, ">>")) {
+    return false;
+  }
+  return trim(inner).len() > 0;
 }
 
 function header_name(t: string): string {
-    return trim(slice_unchecked(t, 2, t.len() - 3));
+  return trim(slice_unchecked(t, 2, t.len() - 3));
 }
 
 // is_ref reports whether a trimmed line is a chunk reference `<<NAME>>`.
 // A header ends in `>>=` (not `>>`), so headers are excluded here.
 function is_ref(t: string): boolean {
-    if (!starts_with(t, "<<") || !ends_with(t, ">>")) { return false; }
-    var inner: str = slice_unchecked(t, 2, t.len() - 2);
-    if (inner.len() == 0) { return false; }
-    if (contains(inner, "<<") || contains(inner, ">>")) { return false; }
-    return true;
+  if (!starts_with(t, "<<") || !ends_with(t, ">>")) {
+    return false;
+  }
+  var inner: str = slice_unchecked(t, 2, t.len() - 2);
+  if (inner.len() == 0) {
+    return false;
+  }
+  if (contains(inner, "<<") || contains(inner, ">>")) {
+    return false;
+  }
+  return true;
 }
 
 function ref_name(t: string): string {
-    return trim(slice_unchecked(t, 2, t.len() - 2));
+  return trim(slice_unchecked(t, 2, t.len() - 2));
 }
 
 // ─── document model ────────────────────────────────────────────────
@@ -264,143 +321,163 @@ pub struct Piece { chunk: string, text: string, line: i32 }
 // fern block's body lines (skipping leading blanks), or -1 when the
 // first non-blank line isn't a header (a display-only block).
 function header_index(body: string[]): i32 {
-    var i: i32 = 0;
-    while (i < body.len()) {
-        var t: string = trim(body[i]);
-        if (t.len() == 0) {
-            i = i + 1;
-        } else {
-            if (is_header(t)) { return i; }
-            return 0 - 1;
-        }
+  var i: i32 = 0;
+  while (i < body.len()) {
+    var t: string = trim(body[i]);
+    if (t.len() == 0) {
+      i = i + 1;
+    } else {
+      if (is_header(t)) {
+        return i;
+      }
+      return 0 - 1;
     }
-    return 0 - 1;
+  }
+  return 0 - 1;
 }
 
 // parse_pieces walks the document and collects every chunk-body line as
 // a tagged Piece. Prose, non-`fern` fences, and headerless `fern`
 // blocks contribute nothing to the tangle.
 pub function parse_pieces(src: string): Piece[] {
-    var pieces: Piece[] = [];
-    var lines: string[] = split_lines(src);
-    var n: i32 = lines.len();
-    var i: i32 = 0;
-    while (i < n) {
-        var open_len: i32 = fence_open_len(lines[i]);
-        if (open_len > 0) {
-            var lang: string = fence_lang(lines[i]);
-            // Gather the block's body lines (and their document line
-            // numbers) up to the closing fence.
-            var body: string[] = [];
-            var body_lines: i32[] = [];
-            var i2: i32 = i + 1;
-            while (i2 < n && !is_fence_close(lines[i2], open_len)) {
-                body = body.append(lines[i2]);
-                body_lines = body_lines.append(i2 + 1);
-                i2 = i2 + 1;
-            }
-            if (lang == "fern") {
-                var hidx: i32 = header_index(body);
-                if (hidx >= 0) {
-                    var name: string = header_name(trim(body[hidx]));
-                    var k: i32 = hidx + 1;
-                    while (k < body.len()) {
-                        pieces = pieces.append(Piece { chunk: name, text: body[k], line: body_lines[k] });
-                        k = k + 1;
-                    }
-                }
-            }
-            if (i2 < n) { i = i2 + 1; } else { i = i2; }
-        } else {
-            i = i + 1;
+  var pieces: Piece[] = [];
+  var lines: string[] = split_lines(src);
+  var n: i32 = lines.len();
+  var i: i32 = 0;
+  while (i < n) {
+    var open_len: i32 = fence_open_len(lines[i]);
+    if (open_len > 0) {
+      var lang: string = fence_lang(lines[i]);
+      // Gather the block's body lines (and their document line
+      // numbers) up to the closing fence.
+      var body: string[] = [];
+      var body_lines: i32[] = [];
+      var i2: i32 = i + 1;
+      while (i2 < n && !is_fence_close(lines[i2], open_len)) {
+        body = body.append(lines[i2]);
+        body_lines = body_lines.append(i2 + 1);
+        i2 = i2 + 1;
+      }
+      if (lang == "fern") {
+        var hidx: i32 = header_index(body);
+        if (hidx >= 0) {
+          var name: string = header_name(trim(body[hidx]));
+          var k: i32 = hidx + 1;
+          while (k < body.len()) {
+            pieces = pieces.append(Piece { chunk: name, text: body[k], line: body_lines[k] });
+            k = k + 1;
+          }
         }
+      }
+      if (i2 < n) {
+        i = i2 + 1;
+      } else {
+        i = i2;
+      }
+    } else {
+      i = i + 1;
     }
-    return pieces;
+  }
+  return pieces;
 }
 
 function chunk_defined(pieces: Piece[], name: string): boolean {
-    var i: i32 = 0;
-    while (i < pieces.len()) {
-        if (pieces[i].chunk == name) { return true; }
-        i = i + 1;
+  var i: i32 = 0;
+  while (i < pieces.len()) {
+    if (pieces[i].chunk == name) {
+      return true;
     }
-    return false;
+    i = i + 1;
+  }
+  return false;
 }
 
 function stack_has(stack: string[], name: string): boolean {
-    var i: i32 = 0;
-    while (i < stack.len()) {
-        if (stack[i] == name) { return true; }
-        i = i + 1;
+  var i: i32 = 0;
+  while (i < stack.len()) {
+    if (stack[i] == name) {
+      return true;
     }
-    return false;
+    i = i + 1;
+  }
+  return false;
 }
 
 // ─── expansion ─────────────────────────────────────────────────────
 
 pub struct ExpandOk { lines: string[] }
+
 pub struct ExpandErr { msg: string, line: i32 }
+
 pub type ExpandResult = ExpandOk | ExpandErr;
 
 // expand emits the expansion of chunk `name`, prefixing every line
 // with `indent`. `active` is the set of chunks currently being
 // expanded, for cycle detection.
 function expand(pieces: Piece[], name: string, indent: string, active: string[]): ExpandResult {
-    if (stack_has(active, name)) {
-        return ExpandErr { msg: "literate: chunk <<" + name + ">> is defined in terms of itself (cyclic chunk reference)", line: 0 };
-    }
-    var active2: string[] = active.append(name);
-    var out: string[] = [];
-    var i: i32 = 0;
-    while (i < pieces.len()) {
-        if (pieces[i].chunk == name) {
-            var text: string = pieces[i].text;
-            var t: string = trim(text);
-            if (is_ref(t)) {
-                var rn: string = ref_name(t);
-                if (!chunk_defined(pieces, rn)) {
-                    return ExpandErr { msg: "literate: reference to undefined chunk <<" + rn + ">>", line: pieces[i].line };
-                }
-                var sub: ExpandResult = expand(pieces, rn, indent + leading_ws(text), active2);
-                match (sub) {
-                    ExpandOk(o) => {
-                        var k: i32 = 0;
-                        while (k < o.lines.len()) {
-                            out = out.append(o.lines[k]);
-                            k = k + 1;
-                        }
-                    },
-                    _ => { return sub; }
-                }
-            } else {
-                out = out.append(indent + text);
-            }
+  if (stack_has(active, name)) {
+    return ExpandErr { msg: "literate: chunk <<" + name + ">> is defined in terms of itself (cyclic chunk reference)", line: 0 };
+  }
+  var active2: string[] = active.append(name);
+  var out: string[] = [];
+  var i: i32 = 0;
+  while (i < pieces.len()) {
+    if (pieces[i].chunk == name) {
+      var text: string = pieces[i].text;
+      var t: string = trim(text);
+      if (is_ref(t)) {
+        var rn: string = ref_name(t);
+        if (!chunk_defined(pieces, rn)) {
+          return ExpandErr { msg: "literate: reference to undefined chunk <<" + rn + ">>", line: pieces[i].line };
         }
-        i = i + 1;
+        var sub: ExpandResult = expand(pieces, rn, indent + leading_ws(text), active2);
+        match (sub) {
+          ExpandOk(o) => {
+            var k: i32 = 0;
+            while (k < o.lines.len()) {
+              out = out.append(o.lines[k]);
+              k = k + 1;
+            }
+          },
+          _ => {
+            return sub;
+          }
+        }
+      } else {
+        out = out.append(indent + text);
+      }
     }
-    return ExpandOk { lines: out };
+    i = i + 1;
+  }
+  return ExpandOk { lines: out };
 }
 
 // ─── tangle ────────────────────────────────────────────────────────
 
 pub struct TangleOk { code: string }
+
 pub struct TangleErr { msg: string, line: i32 }
+
 pub type TangleResult = TangleOk | TangleErr;
 
 // tangle expands the root chunk `<<*>>` into compilable Fern source.
 // Errors: no root chunk, reference to an undefined chunk, or a cyclic
 // chunk reference.
 pub function tangle(src: string): TangleResult {
-    var pieces: Piece[] = parse_pieces(src);
-    if (!chunk_defined(pieces, "*")) {
-        return TangleErr { msg: "literate: no root chunk <<*>> defined", line: 1 };
+  var pieces: Piece[] = parse_pieces(src);
+  if (!chunk_defined(pieces, "*")) {
+    return TangleErr { msg: "literate: no root chunk <<*>> defined", line: 1 };
+  }
+  var empty: string[] = [];
+  var r: ExpandResult = expand(pieces, "*", "", empty);
+  match (r) {
+    ExpandOk(o) => {
+      return TangleOk { code: join_lines(o.lines) };
+    },
+    ExpandErr(e) => {
+      return TangleErr { msg: e.msg, line: e.line };
     }
-    var empty: string[] = [];
-    var r: ExpandResult = expand(pieces, "*", "", empty);
-    match (r) {
-        ExpandOk(o) => { return TangleOk { code: join_lines(o.lines) }; },
-        ExpandErr(e) => { return TangleErr { msg: e.msg, line: e.line }; }
-    }
+  }
 }
 
 // tangle_chunk expands ONE named chunk instead of the root — what
@@ -408,16 +485,20 @@ pub function tangle(src: string): TangleResult {
 // out of a document. Same expansion as `tangle`, so a chunk that
 // references others pulls them in.
 pub function tangle_chunk(src: string, name: string): TangleResult {
-    var pieces: Piece[] = parse_pieces(src);
-    if (!chunk_defined(pieces, name)) {
-        return TangleErr { msg: "literate: no chunk \"<<" + name + ">>\" defined", line: 1 };
+  var pieces: Piece[] = parse_pieces(src);
+  if (!chunk_defined(pieces, name)) {
+    return TangleErr { msg: "literate: no chunk \"<<" + name + ">>\" defined", line: 1 };
+  }
+  var empty: string[] = [];
+  var r: ExpandResult = expand(pieces, name, "", empty);
+  match (r) {
+    ExpandOk(o) => {
+      return TangleOk { code: join_lines(o.lines) };
+    },
+    ExpandErr(e) => {
+      return TangleErr { msg: e.msg, line: e.line };
     }
-    var empty: string[] = [];
-    var r: ExpandResult = expand(pieces, name, "", empty);
-    match (r) {
-        ExpandOk(o) => { return TangleOk { code: join_lines(o.lines) }; },
-        ExpandErr(e) => { return TangleErr { msg: e.msg, line: e.line }; }
-    }
+  }
 }
 
 // ─── multi-file tangle ─────────────────────────────────────────────
@@ -437,92 +518,105 @@ pub struct FilePiece { path: string, text: string, line: i32, is_entry: boolean 
 // tagged FilePieces. Non-`fern` and directive-less fences contribute
 // nothing here (they go through parse_pieces as chunks / display-only).
 pub function parse_file_pieces(src: string): FilePiece[] {
-    var pieces: FilePiece[] = [];
-    var lines: string[] = split_lines(src);
-    var n: i32 = lines.len();
-    var i: i32 = 0;
-    while (i < n) {
-        var open_len: i32 = fence_open_len(lines[i]);
-        if (open_len > 0) {
-            var lang: string = fence_lang(lines[i]);
-            var path: string = fence_file(lines[i]);
-            var ent: boolean = fence_is_entry(lines[i]);
-            var i2: i32 = i + 1;
-            while (i2 < n && !is_fence_close(lines[i2], open_len)) {
-                if (lang == "fern" && path.len() > 0) {
-                    pieces = pieces.append(FilePiece { path: path, text: lines[i2], line: i2 + 1, is_entry: ent });
-                }
-                i2 = i2 + 1;
-            }
-            if (i2 < n) { i = i2 + 1; } else { i = i2; }
-        } else {
-            i = i + 1;
+  var pieces: FilePiece[] = [];
+  var lines: string[] = split_lines(src);
+  var n: i32 = lines.len();
+  var i: i32 = 0;
+  while (i < n) {
+    var open_len: i32 = fence_open_len(lines[i]);
+    if (open_len > 0) {
+      var lang: string = fence_lang(lines[i]);
+      var path: string = fence_file(lines[i]);
+      var ent: boolean = fence_is_entry(lines[i]);
+      var i2: i32 = i + 1;
+      while (i2 < n && !is_fence_close(lines[i2], open_len)) {
+        if (lang == "fern" && path.len() > 0) {
+          pieces = pieces.append(FilePiece { path: path, text: lines[i2], line: i2 + 1, is_entry: ent });
         }
+        i2 = i2 + 1;
+      }
+      if (i2 < n) {
+        i = i2 + 1;
+      } else {
+        i = i2;
+      }
+    } else {
+      i = i + 1;
     }
-    return pieces;
+  }
+  return pieces;
 }
 
 // file_paths returns the distinct output paths in first-definition order.
 function file_paths(fp: FilePiece[]): string[] {
-    var paths: string[] = [];
-    var i: i32 = 0;
-    while (i < fp.len()) {
-        if (!stack_has(paths, fp[i].path)) { paths = paths.append(fp[i].path); }
-        i = i + 1;
+  var paths: string[] = [];
+  var i: i32 = 0;
+  while (i < fp.len()) {
+    if (!stack_has(paths, fp[i].path)) {
+      paths = paths.append(fp[i].path);
     }
-    return paths;
+    i = i + 1;
+  }
+  return paths;
 }
 
 // path_is_entry reports whether any block contributing to `path` carried
 // the `entry` marker.
 function path_is_entry(fp: FilePiece[], path: string): boolean {
-    var i: i32 = 0;
-    while (i < fp.len()) {
-        if (fp[i].path == path && fp[i].is_entry) { return true; }
-        i = i + 1;
+  var i: i32 = 0;
+  while (i < fp.len()) {
+    if (fp[i].path == path && fp[i].is_entry) {
+      return true;
     }
-    return false;
+    i = i + 1;
+  }
+  return false;
 }
 
 // expand_file expands one file-root's body (the FilePieces for `path`),
 // resolving `<<ref>>` lines into the shared chunk table just like the
 // `<<*>>` root.
 function expand_file(fp: FilePiece[], chunks: Piece[], path: string): ExpandResult {
-    var out: string[] = [];
-    var i: i32 = 0;
-    while (i < fp.len()) {
-        if (fp[i].path == path) {
-            var text: string = fp[i].text;
-            var t: string = trim(text);
-            if (is_ref(t)) {
-                var rn: string = ref_name(t);
-                if (!chunk_defined(chunks, rn)) {
-                    return ExpandErr { msg: "literate: reference to undefined chunk <<" + rn + ">>", line: fp[i].line };
-                }
-                var empty: string[] = [];
-                var sub: ExpandResult = expand(chunks, rn, leading_ws(text), empty);
-                match (sub) {
-                    ExpandOk(o) => {
-                        var k: i32 = 0;
-                        while (k < o.lines.len()) {
-                            out = out.append(o.lines[k]);
-                            k = k + 1;
-                        }
-                    },
-                    _ => { return sub; }
-                }
-            } else {
-                out = out.append(text);
-            }
+  var out: string[] = [];
+  var i: i32 = 0;
+  while (i < fp.len()) {
+    if (fp[i].path == path) {
+      var text: string = fp[i].text;
+      var t: string = trim(text);
+      if (is_ref(t)) {
+        var rn: string = ref_name(t);
+        if (!chunk_defined(chunks, rn)) {
+          return ExpandErr { msg: "literate: reference to undefined chunk <<" + rn + ">>", line: fp[i].line };
         }
-        i = i + 1;
+        var empty: string[] = [];
+        var sub: ExpandResult = expand(chunks, rn, leading_ws(text), empty);
+        match (sub) {
+          ExpandOk(o) => {
+            var k: i32 = 0;
+            while (k < o.lines.len()) {
+              out = out.append(o.lines[k]);
+              k = k + 1;
+            }
+          },
+          _ => {
+            return sub;
+          }
+        }
+      } else {
+        out = out.append(text);
+      }
     }
-    return ExpandOk { lines: out };
+    i = i + 1;
+  }
+  return ExpandOk { lines: out };
 }
 
 pub struct FileResult { path: string, code: string, is_entry: boolean }
+
 pub struct FileTangleOk { files: FileResult[] }
+
 pub struct FileTangleErr { msg: string, line: i32 }
+
 pub type FileTangleResult = FileTangleOk | FileTangleErr;
 
 // tangle_files expands every `file=PATH` root into its own module. Chunk
@@ -530,49 +624,63 @@ pub type FileTangleResult = FileTangleOk | FileTangleErr;
 // in whichever it references. Errors (undefined / cyclic chunk) carry the
 // document line, exactly like single-file tangle.
 pub function tangle_files(src: string): FileTangleResult {
-    var chunks: Piece[] = parse_pieces(src);
-    var fp: FilePiece[] = parse_file_pieces(src);
-    var paths: string[] = file_paths(fp);
-    if (paths.len() == 0) {
-        return FileTangleErr { msg: "literate: no file=PATH blocks defined", line: 1 };
+  var chunks: Piece[] = parse_pieces(src);
+  var fp: FilePiece[] = parse_file_pieces(src);
+  var paths: string[] = file_paths(fp);
+  if (paths.len() == 0) {
+    return FileTangleErr { msg: "literate: no file=PATH blocks defined", line: 1 };
+  }
+  var results: FileResult[] = [];
+  var i: i32 = 0;
+  while (i < paths.len()) {
+    var p: string = paths[i];
+    var r: ExpandResult = expand_file(fp, chunks, p);
+    match (r) {
+      ExpandOk(o) => {
+        results = results.append(FileResult { path: p, code: join_lines(o.lines), is_entry: path_is_entry(fp, p) });
+      },
+      ExpandErr(e) => {
+        return FileTangleErr { msg: e.msg, line: e.line };
+      }
     }
-    var results: FileResult[] = [];
-    var i: i32 = 0;
-    while (i < paths.len()) {
-        var p: string = paths[i];
-        var r: ExpandResult = expand_file(fp, chunks, p);
-        match (r) {
-            ExpandOk(o) => { results = results.append(FileResult { path: p, code: join_lines(o.lines), is_entry: path_is_entry(fp, p) }); },
-            ExpandErr(e) => { return FileTangleErr { msg: e.msg, line: e.line }; }
-        }
-        i = i + 1;
-    }
-    return FileTangleOk { files: results };
+    i = i + 1;
+  }
+  return FileTangleOk { files: results };
 }
 
 // entry_file picks the compile entry among tangled modules: the file
 // marked `entry`, the sole file, or the unique module defining `main`.
 // Returns "" when the choice is ambiguous.
 pub function entry_file(files: FileResult[]): string {
-    var marked: string[] = [];
-    var i: i32 = 0;
-    while (i < files.len()) {
-        if (files[i].is_entry) { marked = marked.append(files[i].path); }
-        i = i + 1;
+  var marked: string[] = [];
+  var i: i32 = 0;
+  while (i < files.len()) {
+    if (files[i].is_entry) {
+      marked = marked.append(files[i].path);
     }
-    if (marked.len() == 1) { return marked[0]; }
-    if (marked.len() > 1) { return ""; }
-    if (files.len() == 1) { return files[0].path; }
-    var mains: string[] = [];
-    var j: i32 = 0;
-    while (j < files.len()) {
-        if (contains(files[j].code, "function main") || contains(files[j].code, "fn main")) {
-            mains = mains.append(files[j].path);
-        }
-        j = j + 1;
-    }
-    if (mains.len() == 1) { return mains[0]; }
+    i = i + 1;
+  }
+  if (marked.len() == 1) {
+    return marked[0];
+  }
+  if (marked.len() > 1) {
     return "";
+  }
+  if (files.len() == 1) {
+    return files[0].path;
+  }
+  var mains: string[] = [];
+  var j: i32 = 0;
+  while (j < files.len()) {
+    if (contains(files[j].code, "function main") || contains(files[j].code, "fn main")) {
+      mains = mains.append(files[j].path);
+    }
+    j = j + 1;
+  }
+  if (mains.len() == 1) {
+    return mains[0];
+  }
+  return "";
 }
 
 // ─── self-test ─────────────────────────────────────────────────────
@@ -582,140 +690,197 @@ pub function entry_file(files: FileResult[]): string {
 // tangle_code runs tangle and returns the code on success or "" on
 // error (the success assertions compare against the expected code).
 function tangle_code(src: string): string {
-    var r: TangleResult = tangle(src);
-    match (r) {
-        TangleOk(o) => { return o.code; },
-        TangleErr(e) => { return ""; }
+  var r: TangleResult = tangle(src);
+  match (r) {
+    TangleOk(o) => {
+      return o.code;
+    },
+    TangleErr(e) => {
+      return "";
     }
+  }
 }
 
 function is_err(src: string): boolean {
-    var r: TangleResult = tangle(src);
-    match (r) {
-        TangleOk(o) => { return false; },
-        TangleErr(e) => { return true; }
+  var r: TangleResult = tangle(src);
+  match (r) {
+    TangleOk(o) => {
+      return false;
+    },
+    TangleErr(e) => {
+      return true;
     }
+  }
 }
 
 function err_line(src: string): i32 {
-    var r: TangleResult = tangle(src);
-    match (r) {
-        TangleOk(o) => { return 0 - 1; },
-        TangleErr(e) => { return e.line; }
+  var r: TangleResult = tangle(src);
+  match (r) {
+    TangleOk(o) => {
+      return 0 - 1;
+    },
+    TangleErr(e) => {
+      return e.line;
     }
+  }
 }
 
 // tf_files runs tangle_files and returns the modules ([] on error).
 function tf_files(src: string): FileResult[] {
-    var r: FileTangleResult = tangle_files(src);
-    match (r) {
-        FileTangleOk(o) => { return o.files; },
-        FileTangleErr(e) => { var empty: FileResult[] = []; return empty; }
+  var r: FileTangleResult = tangle_files(src);
+  match (r) {
+    FileTangleOk(o) => {
+      return o.files;
+    },
+    FileTangleErr(e) => {
+      var empty: FileResult[] = [];
+      return empty;
     }
+  }
 }
 
 // file_code returns the tangled code for `path` ("" if absent).
 function file_code(files: FileResult[], path: string): string {
-    var i: i32 = 0;
-    while (i < files.len()) {
-        if (files[i].path == path) { return files[i].code; }
-        i = i + 1;
+  var i: i32 = 0;
+  while (i < files.len()) {
+    if (files[i].path == path) {
+      return files[i].code;
     }
-    return "";
+    i = i + 1;
+  }
+  return "";
 }
 
 function main(): i32 {
-    // 1. Root chunk only.
-    var s1: string = "# Title\n\nProse.\n\n```fern\n<<*>>=\nfn main() {}\n```\n";
-    if (tangle_code(s1) != "fn main() {}") { return 1; }
+  // 1. Root chunk only.
+  var s1: string = "# Title\n\nProse.\n\n```fern\n<<*>>=\nfn main() {}\n```\n";
+  if (tangle_code(s1) != "fn main() {}") {
+    return 1;
+  }
 
-    // 2. Out-of-order reference: the helper is defined *after* its use.
-    var s2: string =
-        "```fern\n<<*>>=\n<<greeting>>\ncall();\n```\n"
-        + "\nDefined only now:\n\n"
-        + "```fern\n<<greeting>>=\nfn greeting() {}\n```\n";
-    if (tangle_code(s2) != "fn greeting() {}\ncall();") { return 2; }
+  // 2. Out-of-order reference: the helper is defined *after* its use.
+  var s2: string = "```fern\n<<*>>=\n<<greeting>>\ncall();\n```\n"
+    + "\nDefined only now:\n\n"
+    + "```fern\n<<greeting>>=\nfn greeting() {}\n```\n";
+  if (tangle_code(s2) != "fn greeting() {}\ncall();") {
+    return 2;
+  }
 
-    // 3. Same-name definitions concatenate in document order.
-    var s3: string =
-        "```fern\n<<*>>=\n<<body>>\n```\n"
-        + "```fern\n<<body>>=\nline one\n```\n"
-        + "```fern\n<<body>>=\nline two\n```\n";
-    if (tangle_code(s3) != "line one\nline two") { return 3; }
+  // 3. Same-name definitions concatenate in document order.
+  var s3: string = "```fern\n<<*>>=\n<<body>>\n```\n"
+    + "```fern\n<<body>>=\nline one\n```\n"
+    + "```fern\n<<body>>=\nline two\n```\n";
+  if (tangle_code(s3) != "line one\nline two") {
+    return 3;
+  }
 
-    // 4. A reference's indentation is prepended to its expansion.
-    var s4: string =
-        "```fern\n<<*>>=\nfn main() {\n    <<body>>\n}\n```\n"
-        + "```fern\n<<body>>=\nreturn 7;\n```\n";
-    if (tangle_code(s4) != "fn main() {\n    return 7;\n}") { return 4; }
+  // 4. A reference's indentation is prepended to its expansion.
+  var s4: string = "```fern\n<<*>>=\nfn main() {\n    <<body>>\n}\n```\n"
+    + "```fern\n<<body>>=\nreturn 7;\n```\n";
+  if (tangle_code(s4) != "fn main() {\n    return 7;\n}") {
+    return 4;
+  }
 
-    // 5. A headerless `fern` block is display-only — never tangled.
-    var s5: string =
-        "```fern\nnot a chunk, illustrative only\n```\n"
-        + "```fern\n<<*>>=\nfn main() {}\n```\n";
-    if (tangle_code(s5) != "fn main() {}") { return 5; }
-    if (contains(tangle_code(s5), "illustrative")) { return 6; }
+  // 5. A headerless `fern` block is display-only — never tangled.
+  var s5: string = "```fern\nnot a chunk, illustrative only\n```\n"
+    + "```fern\n<<*>>=\nfn main() {}\n```\n";
+  if (tangle_code(s5) != "fn main() {}") {
+    return 5;
+  }
+  if (contains(tangle_code(s5), "illustrative")) {
+    return 6;
+  }
 
-    // 6. Missing root chunk is an error.
-    if (!is_err("```fern\n<<helper>>=\nfn h() {}\n```\n")) { return 7; }
+  // 6. Missing root chunk is an error.
+  if (!is_err("```fern\n<<helper>>=\nfn h() {}\n```\n")) {
+    return 7;
+  }
 
-    // 7. Undefined reference is an error, reported at the ref's line.
-    var s7: string = "```fern\n<<*>>=\n<<nope>>\n```\n";
-    if (!is_err(s7)) { return 8; }
-    if (err_line(s7) != 3) { return 9; }
+  // 7. Undefined reference is an error, reported at the ref's line.
+  var s7: string = "```fern\n<<*>>=\n<<nope>>\n```\n";
+  if (!is_err(s7)) {
+    return 8;
+  }
+  if (err_line(s7) != 3) {
+    return 9;
+  }
 
-    // 8. Cyclic chunk reference is an error.
-    var s8: string =
-        "```fern\n<<*>>=\n<<a>>\n```\n"
-        + "```fern\n<<a>>=\n<<b>>\n```\n"
-        + "```fern\n<<b>>=\n<<a>>\n```\n";
-    if (!is_err(s8)) { return 10; }
+  // 8. Cyclic chunk reference is an error.
+  var s8: string = "```fern\n<<*>>=\n<<a>>\n```\n"
+    + "```fern\n<<a>>=\n<<b>>\n```\n"
+    + "```fern\n<<b>>=\n<<a>>\n```\n";
+  if (!is_err(s8)) {
+    return 10;
+  }
 
-    // 9. Longer fences (````) and a header after a blank line.
-    var s9: string = "````fern\n\n<<*>>=\nfn main() {}\n````\n";
-    if (tangle_code(s9) != "fn main() {}") { return 11; }
+  // 9. Longer fences (````) and a header after a blank line.
+  var s9: string = "````fern\n\n<<*>>=\nfn main() {}\n````\n";
+  if (tangle_code(s9) != "fn main() {}") {
+    return 11;
+  }
 
-    // 10. Multi-file: a `file=` document tangles to two modules, with a
-    // chunk shared across them. The entry module references the helper.
-    var m1: string =
-        "```fern file=main.fern entry\nimport \"./u\";\n<<g>>\n```\n"
-        + "```fern file=u.fern\n<<g>>\n```\n"
-        + "```fern\n<<g>>=\npub fn g() {}\n```\n";
-    var f1: FileResult[] = tf_files(m1);
-    if (f1.len() != 2) { return 12; }
-    if (file_code(f1, "main.fern") != "import \"./u\";\npub fn g() {}") { return 13; }
-    if (file_code(f1, "u.fern") != "pub fn g() {}") { return 14; }
-    if (entry_file(f1) != "main.fern") { return 15; }
+  // 10. Multi-file: a `file=` document tangles to two modules, with a
+  // chunk shared across them. The entry module references the helper.
+  var m1: string = "```fern file=main.fern entry\nimport \"./u\";\n<<g>>\n```\n"
+    + "```fern file=u.fern\n<<g>>\n```\n"
+    + "```fern\n<<g>>=\npub fn g() {}\n```\n";
+  var f1: FileResult[] = tf_files(m1);
+  if (f1.len() != 2) {
+    return 12;
+  }
+  if (file_code(f1, "main.fern") != "import \"./u\";\npub fn g() {}") {
+    return 13;
+  }
+  if (file_code(f1, "u.fern") != "pub fn g() {}") {
+    return 14;
+  }
+  if (entry_file(f1) != "main.fern") {
+    return 15;
+  }
 
-    // 11. Same `file=PATH` repeated concatenates in document order.
-    var m2: string =
-        "```fern file=a.fern\nL1\n```\n"
-        + "```fern file=a.fern\nL2\n```\n";
-    var f2: FileResult[] = tf_files(m2);
-    if (f2.len() != 1) { return 16; }
-    if (file_code(f2, "a.fern") != "L1\nL2") { return 17; }
+  // 11. Same `file=PATH` repeated concatenates in document order.
+  var m2: string = "```fern file=a.fern\nL1\n```\n"
+    + "```fern file=a.fern\nL2\n```\n";
+  var f2: FileResult[] = tf_files(m2);
+  if (f2.len() != 1) {
+    return 16;
+  }
+  if (file_code(f2, "a.fern") != "L1\nL2") {
+    return 17;
+  }
 
-    // 12. A lone file needs no `entry` marker.
-    var f3: FileResult[] = tf_files("```fern file=only.fern\nx\n```\n");
-    if (entry_file(f3) != "only.fern") { return 18; }
+  // 12. A lone file needs no `entry` marker.
+  var f3: FileResult[] = tf_files("```fern file=only.fern\nx\n```\n");
+  if (entry_file(f3) != "only.fern") {
+    return 18;
+  }
 
-    // 13. Ambiguous (two unmarked files, neither defines main) → "".
-    var f4: FileResult[] = tf_files("```fern file=a.fern\nx\n```\n```fern file=b.fern\ny\n```\n");
-    if (entry_file(f4) != "") { return 19; }
+  // 13. Ambiguous (two unmarked files, neither defines main) → "".
+  var f4: FileResult[] = tf_files("```fern file=a.fern\nx\n```\n```fern file=b.fern\ny\n```\n");
+  if (entry_file(f4) != "") {
+    return 19;
+  }
 
-    // 14. None marked but exactly one defines main → that module.
-    var m5: string =
-        "```fern file=lib.fern\npub fn h() {}\n```\n"
-        + "```fern file=app.fern\nfn main() {}\n```\n";
-    if (entry_file(tf_files(m5)) != "app.fern") { return 20; }
+  // 14. None marked but exactly one defines main → that module.
+  var m5: string = "```fern file=lib.fern\npub fn h() {}\n```\n"
+    + "```fern file=app.fern\nfn main() {}\n```\n";
+  if (entry_file(tf_files(m5)) != "app.fern") {
+    return 20;
+  }
 
-    // 15. An undefined chunk referenced from a file-root is an error,
-    // reported at the reference's document line.
-    var r6: FileTangleResult = tangle_files("```fern file=m.fern\n<<nope>>\n```\n");
-    match (r6) {
-        FileTangleOk(o) => { return 21; },
-        FileTangleErr(e) => { if (e.line != 2) { return 22; } }
+  // 15. An undefined chunk referenced from a file-root is an error,
+  // reported at the reference's document line.
+  var r6: FileTangleResult = tangle_files("```fern file=m.fern\n<<nope>>\n```\n");
+  match (r6) {
+    FileTangleOk(o) => {
+      return 21;
+    },
+    FileTangleErr(e) => {
+      if (e.line != 2) {
+        return 22;
+      }
     }
+  }
 
-    return 0;
+  return 0;
 }

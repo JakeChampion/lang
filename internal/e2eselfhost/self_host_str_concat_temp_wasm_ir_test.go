@@ -1,7 +1,6 @@
 package e2eselfhost
 
 import (
-	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,10 +19,8 @@ func TestSelfHostStrConcatTempWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host concat-temp wasm IR e2e")
 	}
-	gcc, runner := x86_64Tooling(t)
+	l := newWasmStdlibLoader(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
 
 	cases := []struct {
 		name     string
@@ -69,20 +66,14 @@ func TestSelfHostStrConcatTempWasmIR(t *testing.T) {
 		// builtin scalar producer just as a bare slot is, so its operand box is
 		// freed each iteration. wasm's $__fern_arr_dec ticks the over-release
 		// detector if that free were ever applied to an alias (#6544).
-		{"arith-tostring-operand-churn", `function churn(n: i32): i32 { var t: i32 = 0; var i: i32 = 0; while (i < n) { var r: string = "n" + (i % 8).to_string(); if (r.len() != 2) { t = 1; } i = i + 1; } return t; } function main(): i32 { var v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`, 0},
+		{"arith-tostring-operand-churn", `import "std/i32";
+function churn(n: i32): i32 { var t: i32 = 0; var i: i32 = 0; while (i < n) { var r: string = "n" + (i % 8).to_string(); if (r.len() != 2) { t = 1; } i = i + 1; } return t; } function main(): i32 { var v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(driverBin, "-ir")
-			} else {
-				cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
-			}
-			cmd.Stdin = bytes.NewReader([]byte(tc.src))
-			wat, err := cmd.Output()
-			if err != nil || len(wat) == 0 {
-				t.Fatalf("driver failed for %q: %v", tc.src, err)
+			wat := l.emit(t, tc.src)
+			if len(wat) == 0 {
+				t.Fatalf("no WAT for %q", tc.src)
 			}
 			if !strings.Contains(string(wat), "$__fern_str_box") {
 				t.Errorf("%q did not reach the IR box path (no box in WAT)", tc.name)

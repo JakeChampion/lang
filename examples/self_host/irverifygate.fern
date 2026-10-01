@@ -59,10 +59,14 @@ import "./irverifystack";
 // verify_on reports whether the gate runs. It is ON unless FERN_IR_VERIFY=0
 // opts out — #6994, the wasm-hosted corruption that kept it opt-in, is fixed.
 pub function verify_on(): boolean {
-    match (env("FERN_IR_VERIFY")) {
-        Some(v) => { return v != "0"; },
-        None => { return true; }
+  match (env("FERN_IR_VERIFY")) {
+    Some(v) => {
+      return v != "0";
+    },
+    None => {
+      return true;
     }
+  }
 }
 
 // verify_problems runs both verifiers over one lowered function and returns
@@ -76,22 +80,22 @@ pub function verify_on(): boolean {
 // Pure, and separate from the refusal below so the gate's verdict can be
 // asserted without the exit that acting on it entails.
 pub function verify_problems(fn_name: string, ops: ir.Op[], n_params: i32, n_locals: i32, sigs: irverify.NameIndex): irverify.Problem[] {
-    var out: irverify.Problem[] = irverify.verify_fn(fn_name, ops, n_params, n_locals, sigs);
-    var sr: irverifystack.StackResult = irverifystack.verify_stack_fn(fn_name, ops);
-    var i: i32 = 0;
-    while (i < sr.problems.len()) {
-        out = out.append(sr.problems[i]);
-        i = i + 1;
-    }
-    // The ownership half models one reuse site at a time, so it runs even for
-    // a function the stack pass had to abandon.
-    var rr: irverifyrc.RcResult = irverifyrc.verify_rc_fn(fn_name, ops);
-    var j: i32 = 0;
-    while (j < rr.problems.len()) {
-        out = out.append(rr.problems[j]);
-        j = j + 1;
-    }
-    return out;
+  var out: irverify.Problem[] = irverify.verify_fn(fn_name, ops, n_params, n_locals, sigs);
+  var sr: irverifystack.StackResult = irverifystack.verify_stack_fn(fn_name, ops);
+  var i: i32 = 0;
+  while (i < sr.problems.len()) {
+    out = out.append(sr.problems[i]);
+    i = i + 1;
+  }
+  // The ownership half models one reuse site at a time, so it runs even for
+  // a function the stack pass had to abandon.
+  var rr: irverifyrc.RcResult = irverifyrc.verify_rc_fn(fn_name, ops);
+  var j: i32 = 0;
+  while (j < rr.problems.len()) {
+    out = out.append(rr.problems[j]);
+    j = j + 1;
+  }
+  return out;
 }
 
 // verify_or_refuse is what the backends call: a hard exit naming what the
@@ -101,11 +105,15 @@ pub function verify_problems(fn_name: string, ops: ir.Op[], n_params: i32, n_loc
 // emitting the malformed stream anyway, which is exactly the behaviour the
 // flag exists to replace.
 pub function verify_or_refuse(fn_name: string, ops: ir.Op[], n_params: i32, n_locals: i32, sigs: irverify.NameIndex): i32 {
-    if (!verify_on()) { return 0; }
-    var ps: irverify.Problem[] = verify_problems(fn_name, ops, n_params, n_locals, sigs);
-    if (ps.len() == 0) { return 0; }
-    eprint("FERN_IR_VERIFY: " + fn_name + " lowered to malformed IR (#6639):"
-        + irverify.format_problems(ps, 20) + "\n");
-    exit(4);
+  if (!verify_on()) {
     return 0;
+  }
+  var ps: irverify.Problem[] = verify_problems(fn_name, ops, n_params, n_locals, sigs);
+  if (ps.len() == 0) {
+    return 0;
+  }
+  eprint("FERN_IR_VERIFY: " + fn_name + " lowered to malformed IR (#6639):"
+    + irverify.format_problems(ps, 20));
+  exit(4);
+  return 0;
 }

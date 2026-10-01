@@ -10,7 +10,7 @@ import (
 // tostrScalarReclaimCases pin #6599: `var s: string = i.to_string()` never freed its
 // box on the self-host, unbounded in a loop, while native was flat.
 //
-// `str_free_producer_ident` admits the free-function spelling `i32_to_string(n)` by
+// `str_free_producer_ident` admits the free-function spelling `n.to_string()` by
 // name and excludes the method form; `str_local_binding_is_fresh` lists `.to_string()`
 // under "receiver-identity fast-paths". That is right for a STRING receiver, where the
 // call returns the receiver itself so freeing the result would release a box the source
@@ -21,7 +21,7 @@ import (
 // Measured with FERN_LEAKCHECK=1 (allocs/frees/live_bytes), 200 iterations, self-host
 // x86-64 — `__heap_bump_bytes()` deltas cannot see this, see #5474's retraction:
 //
-//	var s = i32_to_string(i)   400/398/32     bounded, before and after (control)
+//	var s = i.to_string()   400/398/32     bounded, before and after (control)
 //	var s = i.to_string()      400/0/6400  -> 400/398/32
 //
 // Identical allocation counts in both spellings, which is what proves int_to_string's
@@ -62,7 +62,8 @@ function main(): i32 {
 	// parameter is a declaration that never appears as a `var` in the body — so
 	// until the harvesters were seeded with the function's ParamDecl[] this shape
 	// was refused and leaked (12800 over 400 rounds on x86-64, 9600 on wasm).
-	{"tostr-scalar-param-receiver", `function fmt(n: i32): i32 {
+	{"tostr-scalar-param-receiver", `import "std/i32";
+function fmt(n: i32): i32 {
     var s: string = n.to_string();
     return s.len();
 }
@@ -81,7 +82,9 @@ function main(): i32 {
 	// credit past the type test. A struct param whose user `to_string` returns an
 	// ALIAS of a field the receiver still owns is refused for the same reason the
 	// local-receiver case above is — the declared type is not a scalar.
-	{"tostr-param-user-method-uncredited", strProbeHelpers + `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
+	{"tostr-param-user-method-uncredited", `import "std/i32";
+` + strProbeHelpers + `import "std/i32";
+function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
 struct Holder { name: string, tag: string }
 function (h: Holder) to_string(): string { return h.tag; }
 function shown(h: Holder): i32 { var s: string = h.to_string(); return s.len() % 251; }
@@ -101,13 +104,14 @@ function main(): i32 {
 }`, 0},
 	// CONTROL: the free-function spelling was already credited and must stay bounded,
 	// so a regression here means the shared gates moved rather than this class.
-	{"tostr-freefn-control", `function main(): i32 {
+	{"tostr-freefn-control", `import "std/i32";
+function main(): i32 {
     var acc: i32 = 0;
     var i: i32 = 0;
-    while (i < 200) { var s: string = i32_to_string(i); acc = (acc + s.len()) % 251; i = i + 1; }
+    while (i < 200) { var s: string = i.to_string(); acc = (acc + s.len()) % 251; i = i + 1; }
     var b1: i32 = (__heap_bump_bytes() as i32);
     var j: i32 = 0;
-    while (j < 5000) { var t: string = i32_to_string(j); acc = (acc + t.len()) % 251; j = j + 1; }
+    while (j < 5000) { var t: string = j.to_string(); acc = (acc + t.len()) % 251; j = j + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 2048) { return 98; }
@@ -135,7 +139,8 @@ function main(): i32 {
 	// and the aliasing result), and the point of the case is that the source is still
 	// readable afterwards with the detector at zero. Crediting either would double-
 	// release one box. 200 rounds of 2 = 400, %251 = 149, %97 = 52.
-	{"tostr-string-recv-uncredited", `import "std/string";
+	{"tostr-string-recv-uncredited", `import "std/i32";
+import "std/string";
 function main(): i32 {
     var acc: i32 = 0;
     var i: i32 = 0;
@@ -220,7 +225,8 @@ function main(): i32 {
 	// STRING-RECEIVER negative for the field and reassign credits: the result is the
 	// receiver's own box, so neither credit may reach it. 200 rounds of 2+2 = 800,
 	// %251 = 47.
-	{"tostr-string-recv-field-uncredited", `import "std/string";
+	{"tostr-string-recv-field-uncredited", `import "std/i32";
+import "std/string";
 struct Rec { name: string }
 function main(): i32 {
     var acc: i32 = 0;
@@ -241,7 +247,8 @@ function main(): i32 {
 }`, 52},
 	// The receiver-typed `join` and `trim` locals are fresh string locals on the same
 	// terms, so they earn the same field and alias-reassign credits.
-	{"join-strarr-field-and-reassign", `struct Rec { name: string }
+	{"join-strarr-field-and-reassign", `import "std/array";
+struct Rec { name: string }
 function main(): i32 {
     var acc: i32 = 0;
     var b1: i32 = 0;
@@ -262,7 +269,8 @@ function main(): i32 {
     if (b2 - b1 >= 2048) { return 98; }
     return 0;
 }`, 0},
-	{"trim-local-field-and-reassign", `struct Rec { name: string }
+	{"trim-local-field-and-reassign", `import "std/string";
+struct Rec { name: string }
 function main(): i32 {
     var acc: i32 = 0;
     var b1: i32 = 0;
@@ -325,22 +333,15 @@ function main(): i32 {
 }
 
 // TestSelfHostTostrScalarReclaimIRX86_64 drives the cases through the self-hosted
-// x86-64 compiler (asm_run), heap-bump + underflow guarded.
+// x86-64 compiler (asm_load_run), heap-bump + underflow guarded.
 func TestSelfHostTostrScalarReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
-	dir := writeSelfHostAsmProject(t)
-	src, err := os.ReadFile("../../examples/self_host/asm_run.fern")
-	if err != nil {
-		t.Fatalf("read asm_run.fern: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "asm_run.fern"), src, 0o644); err != nil {
-		t.Fatalf("write asm_run.fern: %v", err)
-	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
+	l := newStdlibLoader(t)
+	dir := t.TempDir()
 
 	for _, tc := range tostrScalarReclaimCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src+"\n"))
+			asm := []byte(l.emit(t, tc.src+"\n"))
 			if len(asm) == 0 {
 				t.Fatal("self-host compiler emitted 0 bytes")
 			}
@@ -360,20 +361,18 @@ func TestSelfHostTostrScalarReclaimIRX86_64(t *testing.T) {
 }
 
 // TestSelfHostTostrScalarReclaimWasmIR drives the same cases through the self-hosted
-// wasm backend, where a string box carries an rc header and an over-release ticks
+// wasm backend (asm_load_run -target wasm32-wasi), where a string box carries an rc header and an over-release ticks
 // the underflow counter (exit 99) instead of passing silently.
 func TestSelfHostTostrScalarReclaimWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host to_string reclaim wasm IR e2e")
 	}
-	gcc, runner := x86_64Tooling(t)
+	l := newWasmStdlibLoader(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
 
 	for _, tc := range tostrScalarReclaimCases {
 		t.Run(tc.name, func(t *testing.T) {
-			wat := runCapture(t, gcc, runner, driverBin, []byte(tc.src+"\n"), "-ir")
+			wat := l.emit(t, tc.src+"\n")
 			if len(wat) == 0 {
 				t.Fatal("self-host wasm driver emitted 0 bytes")
 			}

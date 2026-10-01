@@ -12,11 +12,14 @@ of work.
 
 ## Measurements
 
-Both estimates come from the repository rather than a guess.
+Both estimates come from the repository rather than a guess. The token density
+was remeasured after #10854 reformatted every tracked `.fern` to two-space
+indentation. When this note was first written it was 7.46 bytes per token
+(12.5 MB, 1.68 M tokens), over a population this note did not record.
 
 | Quantity | Measured over | Value |
 |---|---|---|
-| Source bytes per token | 120 self-host sources, 12.5 MB, 1.68 M tokens | 7.46 |
+| Source bytes per token | 117 self-host sources, 13.2 MB, 1.91 M tokens | 6.94 |
 | Machine instructions per SSA op | the driver, 97,985 blocks, 697,696 ops | 1.38 |
 
 A block therefore holds about ten instructions, which an empty slice reaches
@@ -24,23 +27,23 @@ in five allocations and four copies.
 
 ## Change
 
-`Tokenize` reserves one token per 7 source bytes, just past the corpus average,
+`Tokenize` reserves one token per 6 source bytes, just past the corpus average,
 plus a floor of 16 for files too short for the division to reserve anything.
 
 The statistic that matters here is the byte-weighted mean, because what the
-reserve buys is measured over the whole corpus rather than per file: at 7.46
-bytes per token by volume, the reserve covers 106% of the corpus's tokens, so
+reserve buys is measured over the whole corpus rather than per file: at 6.94
+bytes per token by volume, the reserve covers 115% of the corpus's tokens, so
 nearly all the growth goes away in aggregate. It is not a per-file bound. The
-distribution over the 120 sources is wider than the mean suggests:
+distribution over the 117 sources is wider than the mean suggests:
 
 | Statistic | Bytes per token |
 |---|---|
-| mean (byte-weighted) | 7.46 |
-| median | 6.63 |
-| p25 / p75 | 5.61 / 8.99 |
-| min / max | 3.51 / 27.20 |
+| mean (byte-weighted) | 6.94 |
+| median | 6.35 |
+| p25 / p75 | 5.43 / 8.56 |
+| min / max | 3.51 / 46.20 |
 
-So 68 of the 120 files, 57%, sit under the divisor and still grow once. Sizing
+So 44 of the 117 files, 38%, sit under the divisor and still grow once. Sizing
 for them instead would over-reserve on every long file, which is the trade
 taken deliberately: the aggregate is what the collector sees.
 
@@ -59,14 +62,17 @@ under `GODEBUG=gctrace=1`:
 
 A first cut reserved one token per 8 bytes and moved the wall time not at all,
 because 8 sits on the wrong side of the 7.46 average: every file still paid a
-final growth. Seven covers it, and the same two lines are then worth 3.3 s.
+final growth. Seven covered it, and the same two lines were then worth 3.3 s.
+The reformat later moved the average under 7, and the divisor followed it to 6;
+with a token at 88 bytes, that reserves 185 MiB across the corpus for the
+160 MiB it uses, against 159 MiB at 7.
 The emitted assembly is byte-identical.
 
 ## Tests
 
 - `TestTokenSliceIsSizedForTheCorpusDensity` pins the population the estimate
   came from: if the repository's own sources drift denser than one token per
-  7 bytes, the divisor wants revisiting, and the failure says what the density
+  6 bytes, the divisor wants revisiting, and the failure says what the density
   now is.
 - The lexer, parser and both SSA backend packages cover the behaviour, which
   a capacity change cannot alter; the byte-identical driver assembly is the

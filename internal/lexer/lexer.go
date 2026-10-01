@@ -282,12 +282,12 @@ func Tokenize(src string) ([]Token, []ast.Comment, error) {
 		return nil, nil, err
 	}
 	l := &lexer{src: src, line: 1, col: 1}
-	// One token per 7 source bytes, plus a floor for files too short for the
-	// division to reserve anything. The repository's own Fern sources average
-	// 7.46 bytes per token by volume, so the reserve covers 106% of the
+	// One token per 6 source bytes, plus a floor for files too short for the
+	// division to reserve anything. The self-host compiler's sources average
+	// 6.94 bytes per token by volume, so the reserve covers 115% of the
 	// corpus's tokens and nearly all the growth goes away in aggregate. It is
-	// not a bound per file: the median file is denser, at 6.63, and grows once.
-	out := make([]Token, 0, len(src)/7+16)
+	// not a bound per file: 44 of the 117 sources are denser than 6 and grow once.
+	out := make([]Token, 0, len(src)/6+16)
 	for {
 		tok, err := l.next()
 		if err != nil {
@@ -408,13 +408,25 @@ func (l *lexer) skipTrivia() {
 				l.advance()
 			}
 			l.comments = append(l.comments, ast.Comment{
-				Pos:  start,
-				Text: l.src[textStart:l.i],
+				Pos:      start,
+				Text:     l.src[textStart:l.i],
+				Trailing: codeBefore(l.src, textStart-2),
 			})
 		default:
 			return
 		}
 	}
+}
+
+// codeBefore reports whether anything but whitespace precedes src[i] on its
+// line.
+func codeBefore(src string, i int) bool {
+	for j := i - 1; j >= 0 && src[j] != '\n'; j-- {
+		if !asciiSpace(rune(src[j])) {
+			return true
+		}
+	}
+	return false
 }
 
 func (l *lexer) next() (Token, error) {

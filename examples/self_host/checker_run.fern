@@ -12,11 +12,13 @@ import "./checker";
 import "./util";
 
 function main(): i32 {
-    var mod: parser.Module = rundriver.parse_stdin("checker_run");
-    var mt: checker.ModuleTypes = checker.check_module(mod);
-    if (mt.all_well_typed) { return 0; }
-    // Surface the rejection to stderr before exiting non-zero — the
-    // bootstrap error-reporting path (the self-host `fern -check`).
-    eprint(util.format_diags(mt.diags));
-    return 1;
+  var mod: parser.Module = rundriver.parse_stdin("checker_run");
+  var mt: checker.ModuleTypes = checker.check_module(mod);
+  if (mt.all_well_typed) {
+    return 0;
+  }
+  // Surface the rejection to stderr before exiting non-zero — the
+  // bootstrap error-reporting path (the self-host `fern -check`).
+  eprint(util.format_diags(mt.diags));
+  return 1;
 }

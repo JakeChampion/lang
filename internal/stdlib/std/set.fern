@@ -42,46 +42,48 @@ import "core/cmp";
 // only through `set_new` / `set_of`, never with a raw `Set { xs: … }`
 // literal (which would not dedup).
 pub struct Set[T] {
-    xs: T[],
+  xs: T[],
 }
 
 // `set_new()` — the empty set. No `Eq` bound: an empty set needs no
 // comparison. The element type is fixed by the annotation at the call
 // site (`var s: Set[i32] = set_new();`).
 pub function set_new[T](): Set[T] {
-    return Set { xs: [] };
+  return Set { xs: [] };
 }
 
 // `set_of(xs)` — the set of the distinct values in `xs`, keeping each
 // value's first occurrence (later duplicates are dropped).
 pub function set_of[T: cmp.Eq](xs: T[]): Set[T] {
-    var s: Set[T] = set_new();
-    var i: i32 = 0;
-    while (i < xs.len()) {
-        s = s.add(xs[i]);
-        i = i + 1;
-    }
-    return s;
+  var s: Set[T] = set_new();
+  var i: i32 = 0;
+  while (i < xs.len()) {
+    s = s.add(xs[i]);
+    i = i + 1;
+  }
+  return s;
 }
 
 // `contains(x)` — is `x` a member?
 pub function (s: Set[T]) contains[T: cmp.Eq](x: T): boolean {
-    var i: i32 = 0;
-    while (i < s.xs.len()) {
-        if (s.xs[i].eq(x)) { return true; }
-        i = i + 1;
+  var i: i32 = 0;
+  while (i < s.xs.len()) {
+    if (s.xs[i].eq(x)) {
+      return true;
     }
-    return false;
+    i = i + 1;
+  }
+  return false;
 }
 
 // `len()` — the number of distinct elements.
 pub function (s: Set[T]) len(): i32 {
-    return s.xs.len();
+  return s.xs.len();
 }
 
 // `is_empty()` — true when there are no elements.
 pub function (s: Set[T]) is_empty(): boolean {
-    return s.xs.len() == 0;
+  return s.xs.len() == 0;
 }
 
 // `add(x)` — the set with `x` added. Returns the receiver unchanged
@@ -95,114 +97,130 @@ pub function (s: Set[T]) is_empty(): boolean {
 // below follows the same rule (read the receiver's array, write a fresh
 // one), which is why they are all written as copy-into-`ys` loops.
 pub function (s: Set[T]) add[T: cmp.Eq](x: T): Set[T] {
-    if (s.contains(x)) { return s; }
-    var ys: T[] = [];
-    var i: i32 = 0;
-    while (i < s.xs.len()) {
-        ys = ys.append(s.xs[i]);
-        i = i + 1;
-    }
-    ys = ys.append(x);
-    return Set { xs: ys };
+  if (s.contains(x)) {
+    return s;
+  }
+  var ys: T[] = [];
+  var i: i32 = 0;
+  while (i < s.xs.len()) {
+    ys = ys.append(s.xs[i]);
+    i = i + 1;
+  }
+  ys = ys.append(x);
+  return Set { xs: ys };
 }
 
 // `remove(x)` — the set with `x` removed. Returns the receiver
 // unchanged when `x` is absent. Surviving elements keep their relative
 // (insertion) order.
 pub function (s: Set[T]) remove[T: cmp.Eq](x: T): Set[T] {
-    if (!s.contains(x)) { return s; }
-    var ys: T[] = [];
-    var i: i32 = 0;
-    while (i < s.xs.len()) {
-        if (!s.xs[i].eq(x)) { ys = ys.append(s.xs[i]); }
-        i = i + 1;
+  if (!s.contains(x)) {
+    return s;
+  }
+  var ys: T[] = [];
+  var i: i32 = 0;
+  while (i < s.xs.len()) {
+    if (!s.xs[i].eq(x)) {
+      ys = ys.append(s.xs[i]);
     }
-    return Set { xs: ys };
+    i = i + 1;
+  }
+  return Set { xs: ys };
 }
 
 // `to_array()` — the distinct elements in first-inserted order. The
 // returned array is a fresh copy the caller owns.
 pub function (s: Set[T]) to_array(): T[] {
-    var ys: T[] = [];
-    var i: i32 = 0;
-    while (i < s.xs.len()) {
-        ys = ys.append(s.xs[i]);
-        i = i + 1;
-    }
-    return ys;
+  var ys: T[] = [];
+  var i: i32 = 0;
+  while (i < s.xs.len()) {
+    ys = ys.append(s.xs[i]);
+    i = i + 1;
+  }
+  return ys;
 }
 
 // `union(other)` — every element in `s` or `other`. `s`'s elements keep
 // their order and come first; `other`'s new elements follow in their
 // own order.
 pub function (s: Set[T]) union[T: cmp.Eq](other: Set[T]): Set[T] {
-    var out: Set[T] = s;
-    var i: i32 = 0;
-    while (i < other.xs.len()) {
-        out = out.add(other.xs[i]);
-        i = i + 1;
-    }
-    return out;
+  var out: Set[T] = s;
+  var i: i32 = 0;
+  while (i < other.xs.len()) {
+    out = out.add(other.xs[i]);
+    i = i + 1;
+  }
+  return out;
 }
 
 // `intersect(other)` — the elements present in BOTH sets, in `s`'s
 // order.
 pub function (s: Set[T]) intersect[T: cmp.Eq](other: Set[T]): Set[T] {
-    var ys: T[] = [];
-    var i: i32 = 0;
-    while (i < s.xs.len()) {
-        if (other.contains(s.xs[i])) { ys = ys.append(s.xs[i]); }
-        i = i + 1;
+  var ys: T[] = [];
+  var i: i32 = 0;
+  while (i < s.xs.len()) {
+    if (other.contains(s.xs[i])) {
+      ys = ys.append(s.xs[i]);
     }
-    return Set { xs: ys };
+    i = i + 1;
+  }
+  return Set { xs: ys };
 }
 
 // `difference(other)` — the elements of `s` that are NOT in `other`, in
 // `s`'s order.
 pub function (s: Set[T]) difference[T: cmp.Eq](other: Set[T]): Set[T] {
-    var ys: T[] = [];
-    var i: i32 = 0;
-    while (i < s.xs.len()) {
-        if (!other.contains(s.xs[i])) { ys = ys.append(s.xs[i]); }
-        i = i + 1;
+  var ys: T[] = [];
+  var i: i32 = 0;
+  while (i < s.xs.len()) {
+    if (!other.contains(s.xs[i])) {
+      ys = ys.append(s.xs[i]);
     }
-    return Set { xs: ys };
+    i = i + 1;
+  }
+  return Set { xs: ys };
 }
 
 // `is_subset(other)` — is every element of `s` also in `other`? The
 // empty set is a subset of everything.
 pub function (s: Set[T]) is_subset[T: cmp.Eq](other: Set[T]): boolean {
-    var i: i32 = 0;
-    while (i < s.xs.len()) {
-        if (!other.contains(s.xs[i])) { return false; }
-        i = i + 1;
+  var i: i32 = 0;
+  while (i < s.xs.len()) {
+    if (!other.contains(s.xs[i])) {
+      return false;
     }
-    return true;
+    i = i + 1;
+  }
+  return true;
 }
 
 // `equals(other)` — do the two sets hold exactly the same elements,
 // regardless of insertion order? Order-insensitive by construction:
 // equal length plus mutual containment.
 pub function (s: Set[T]) equals[T: cmp.Eq](other: Set[T]): boolean {
-    if (s.xs.len() != other.xs.len()) { return false; }
-    return s.is_subset(other);
+  if (s.xs.len() != other.xs.len()) {
+    return false;
+  }
+  return s.is_subset(other);
 }
 
 // `is_superset(other)` — is every element of `other` also in `s`? The
 // mirror of `is_subset`; every set is a superset of the empty set.
 pub function (s: Set[T]) is_superset[T: cmp.Eq](other: Set[T]): boolean {
-    return other.is_subset(s);
+  return other.is_subset(s);
 }
 
 // `is_disjoint(other)` — do the two sets share NO element? True when the
 // intersection is empty (so the empty set is disjoint from everything).
 pub function (s: Set[T]) is_disjoint[T: cmp.Eq](other: Set[T]): boolean {
-    var i: i32 = 0;
-    while (i < s.xs.len()) {
-        if (other.contains(s.xs[i])) { return false; }
-        i = i + 1;
+  var i: i32 = 0;
+  while (i < s.xs.len()) {
+    if (other.contains(s.xs[i])) {
+      return false;
     }
-    return true;
+    i = i + 1;
+  }
+  return true;
 }
 
 // `symmetric_difference(other)` — the elements in EXACTLY ONE of the two
@@ -210,16 +228,20 @@ pub function (s: Set[T]) is_disjoint[T: cmp.Eq](other: Set[T]): boolean {
 // keep their order and come first, then `other`'s, matching `union`'s
 // ordering convention.
 pub function (s: Set[T]) symmetric_difference[T: cmp.Eq](other: Set[T]): Set[T] {
-    var ys: T[] = [];
-    var i: i32 = 0;
-    while (i < s.xs.len()) {
-        if (!other.contains(s.xs[i])) { ys = ys.append(s.xs[i]); }
-        i = i + 1;
+  var ys: T[] = [];
+  var i: i32 = 0;
+  while (i < s.xs.len()) {
+    if (!other.contains(s.xs[i])) {
+      ys = ys.append(s.xs[i]);
     }
-    var j: i32 = 0;
-    while (j < other.xs.len()) {
-        if (!s.contains(other.xs[j])) { ys = ys.append(other.xs[j]); }
-        j = j + 1;
+    i = i + 1;
+  }
+  var j: i32 = 0;
+  while (j < other.xs.len()) {
+    if (!s.contains(other.xs[j])) {
+      ys = ys.append(other.xs[j]);
     }
-    return Set { xs: ys };
+    j = j + 1;
+  }
+  return Set { xs: ys };
 }

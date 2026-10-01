@@ -557,6 +557,52 @@ function two(p: P): i32 {
   return p.x + p.y;
 }
 `},
+	// An import below a declaration prints where it was written; hoisting it
+	// drained every comment above it into the import block (#10870).
+	{"late-import", `import "core/map";
+
+// about one
+function one(): i32 {
+  return 1;
+}
+
+// about the late imports
+import "std/strings";
+pub use "./util".{helper};
+import "./lexer" as lx;
+
+// about two
+function two(): i32 {
+  return 2;
+}
+`},
+	// A blank line between a section comment and the doc comment below it, or
+	// between the last comment and the declaration, survives (#10870).
+	{"section-comment-apart", `// --- section one ---
+
+// about first
+function first(): i32 {
+  return 1;
+}
+
+// --- section two ---
+//
+// prose about the section
+
+// about Pair
+struct Pair { a: i32 }
+
+// a note about what follows
+
+const LIMIT: i32 = 3;
+
+// a note above an attribute
+
+@inline
+function third(): i32 {
+  return 3;
+}
+`},
 	// The modifiers and the shapes a formatter must not drop: `pub` on a
 	// function, type parameters, an aliased import, a cast, a void `return;`.
 	// The unexported struct pins the other half of the visibility rule that
@@ -1438,6 +1484,65 @@ return tup((1, 2)) + strct(P { x: 1, y: 2 }) + block_arm((0, 3)) + sub_pattern_s
 }
 function g(): i32 { return 1; }  // one
 function main(): i32 { return f(3) + g(); }
+`},
+	// A list written across lines keeps its lines with no comment inside
+	// (#8475): a table written one entry per line does not collapse onto one.
+	// The written grouping survives, as it does for a commented list. A list
+	// written on one line stays one line, and struct and enum declarations
+	// written across lines print one member per line.
+	{"list-written-across-lines", `struct S {
+  a: i32,
+  b: i32
+}
+struct T { a: i32 }
+enum E {
+  A,
+  B(i32)
+}
+const NAMES: string[] = [
+  "a", "b",
+  "c"
+];
+function g(a: i32, b: i32): i32 {
+  return a + b;
+}
+function main(): i32 {
+  var s: S = S { a: 1,
+    b: 2 };
+  var t: S = S {
+    ...s,
+    a: 3
+  };
+  var xs: i32[] = [1,
+    2, 3];
+  var flat: i32[] = [1, 2];
+  var n: i32 = g(xs[0],
+    t.a + s.b + flat[0]);
+  return n + NAMES.len() + xs
+    .len();
+}
+`},
+	// A binary chain written across lines keeps its breaks (#8475), with the
+	// operator leading each continuation line, whether the source broke
+	// before the operator or after it.
+	{"binary-written-across-lines", `function g(a: i32, b: boolean): i32 {
+  if (b) { return a; }
+  return 0;
+}
+function main(): i32 {
+  var a: i32 = 1;
+  var s: string = "x"
+    + "y" + a.to_string()
+    + "z";
+  var t: i32 = a +
+    2;
+  var u: i32 = a + t;
+  if (a > 0 &&
+      t > 0) { u = u + 1; }
+  return g(a,
+    a == 1
+      || t == 2) + s.len() + u;
+}
 `},
 	{"list-interior-comments", `struct S { a: i32, b: i32 }
 const NAMES: string[] = [

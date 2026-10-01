@@ -1,5 +1,6 @@
 import "std/test";
 import "std/string";
+
 // examples/tests/string_slice_extract_test.fern — pure-Fern coverage of the
 // std/string substring-extraction and manipulation surface left out by both
 // strings_test and string_classify_transform_test:
@@ -17,168 +18,197 @@ import "std/string";
 // ---- delimiter extraction ----
 
 function test_before(): test.TestOutcome {
-    return test.assert_eq("key=value".before("=").to_owned(), "key");
+  return test.assert_eq("key=value".before("=").to_owned(), "key");
 }
 
 function test_before_missing(): test.TestOutcome {
-    // sep absent → whole string unchanged.
-    return test.assert_eq("noeq".before("=").to_owned(), "noeq");
+  // sep absent → whole string unchanged.
+  return test.assert_eq("noeq".before("=").to_owned(), "noeq");
 }
 
 function test_after(): test.TestOutcome {
-    return test.assert_eq("key=value".after("=").to_owned(), "value");
+  return test.assert_eq("key=value".after("=").to_owned(), "value");
 }
 
 function test_after_missing(): test.TestOutcome {
-    // sep absent → empty string.
-    return test.assert_eq("noeq".after("=").to_owned(), "");
+  // sep absent → empty string.
+  return test.assert_eq("noeq".after("=").to_owned(), "");
 }
 
 function test_between(): test.TestOutcome {
-    match ("f(x)".between("(", ")")) {
-        Some(v) => { return test.assert_eq(v, "x"); },
-        None => { return test.fail("between expected Some(x)"); }
+  match ("f(x)".between("(", ")")) {
+    Some(v) => {
+      return test.assert_eq(v, "x");
+    },
+    None => {
+      return test.fail("between expected Some(x)");
     }
+  }
 }
 
 function test_between_missing(): test.TestOutcome {
-    match ("noparen".between("(", ")")) {
-        Some(v) => { return test.fail("expected None"); },
-        None => { return test.pass(); }
+  match ("noparen".between("(", ")")) {
+    Some(v) => {
+      return test.fail("expected None");
+    },
+    None => {
+      return test.pass();
     }
+  }
 }
 
 function test_split_once(): test.TestOutcome {
-    // splits at FIRST sep; the tail keeps later separators.
-    match ("a=b=c".split_once("=")) {
-        Some(p) => { return test.assert_true(p.0 == "a" && p.1 == "b=c"); },
-        None => { return test.fail("split_once expected Some"); }
+  // splits at FIRST sep; the tail keeps later separators.
+  match ("a=b=c".split_once("=")) {
+    Some(p) => {
+      return test.assert_true(p.0 == "a" && p.1 == "b=c");
+    },
+    None => {
+      return test.fail("split_once expected Some");
     }
+  }
 }
 
 function test_split_once_missing(): test.TestOutcome {
-    match ("noeq".split_once("=")) {
-        Some(p) => { return test.fail("expected None"); },
-        None => { return test.pass(); }
+  match ("noeq".split_once("=")) {
+    Some(p) => {
+      return test.fail("expected None");
+    },
+    None => {
+      return test.pass();
     }
+  }
 }
 
 // ---- affix stripping ----
 
 function test_remove_prefix(): test.TestOutcome {
-    var hit: boolean = "unhappy".remove_prefix("un") == "happy";
-    var miss: boolean = "happy".remove_prefix("un") == "happy";
-    return test.assert_true(hit && miss);
+  var hit: boolean = "unhappy".remove_prefix("un") == "happy";
+  var miss: boolean = "happy".remove_prefix("un") == "happy";
+  return test.assert_true(hit && miss);
 }
 
 function test_remove_suffix(): test.TestOutcome {
-    var hit: boolean = "file.txt".remove_suffix(".txt") == "file";
-    var miss: boolean = "file.txt".remove_suffix(".md") == "file.txt";
-    return test.assert_true(hit && miss);
+  var hit: boolean = "file.txt".remove_suffix(".txt") == "file";
+  var miss: boolean = "file.txt".remove_suffix(".md") == "file.txt";
+  return test.assert_true(hit && miss);
 }
 
 function test_strip_quotes(): test.TestOutcome {
-    match ("\"hi\"".strip_quotes()) {
-        Some(v) => { return test.assert_eq(v, "hi"); },
-        None => { return test.fail("strip_quotes expected Some(hi)"); }
+  match ("\"hi\"".strip_quotes()) {
+    Some(v) => {
+      return test.assert_eq(v, "hi");
+    },
+    None => {
+      return test.fail("strip_quotes expected Some(hi)");
     }
+  }
 }
 
 function test_strip_quotes_none(): test.TestOutcome {
-    match ("noquote".strip_quotes()) {
-        Some(v) => { return test.fail("expected None"); },
-        None => { return test.pass(); }
+  match ("noquote".strip_quotes()) {
+    Some(v) => {
+      return test.fail("expected None");
+    },
+    None => {
+      return test.pass();
     }
+  }
 }
 
 // ---- shared run ----
 
 function test_common_prefix(): test.TestOutcome {
-    var ok: boolean = "foobar".common_prefix("foobaz") == "fooba";
-    var none: boolean = "abc".common_prefix("xyz") == "";
-    return test.assert_true(ok && none);
+  var ok: boolean = "foobar".common_prefix("foobaz") == "fooba";
+  var none: boolean = "abc".common_prefix("xyz") == "";
+  return test.assert_true(ok && none);
 }
 
 function test_common_suffix(): test.TestOutcome {
-    var ok: boolean = "running".common_suffix("jumping") == "ing";
-    var none: boolean = "abc".common_suffix("xyz") == "";
-    return test.assert_true(ok && none);
+  var ok: boolean = "running".common_suffix("jumping") == "ing";
+  var none: boolean = "abc".common_suffix("xyz") == "";
+  return test.assert_true(ok && none);
 }
 
 // ---- construction ----
 
 function test_repeat(): test.TestOutcome {
-    return test.assert_true("ab".repeat(3) == "ababab" && "x".repeat(0) == "");
+  return test.assert_true("ab".repeat(3) == "ababab" && "x".repeat(0) == "");
 }
 
 function test_reverse_words(): test.TestOutcome {
-    return test.assert_eq("one two three".reverse_words(), "three two one");
+  return test.assert_eq("one two three".reverse_words(), "three two one");
 }
 
 function test_wrap(): test.TestOutcome {
-    return test.assert_eq("x".wrap("[", "]"), "[x]");
+  return test.assert_eq("x".wrap("[", "]"), "[x]");
 }
 
 function test_indent(): test.TestOutcome {
-    return test.assert_eq("a\nb".indent("  "), "  a\n  b");
+  return test.assert_eq("a\nb".indent("  "), "  a\n  b");
 }
 
 // A trailing newline is NOT followed by a prefix (it ends no further line);
 // consecutive newlines each get one. These stress the two-pass buffer's exact
 // size — a miscount would truncate or over-pad.
 function test_indent_trailing_newline(): test.TestOutcome {
-    return test.assert_eq("x\n".indent("+"), "+x\n");
+  return test.assert_eq("x\n".indent("+"), "+x\n");
 }
+
 function test_indent_consecutive_newlines(): test.TestOutcome {
-    return test.assert_eq("\n\ny".indent("-"), "-\n-\n-y");
+  return test.assert_eq("\n\ny".indent("-"), "-\n-\n-y");
 }
 
 // dedent is the inverse of indent: strip the common leading-whitespace
 // prefix shared by every non-blank line.
 function test_dedent(): test.TestOutcome {
-    // Common 4-space prefix removed; the deeper line keeps its extra 2.
-    if ("    hello\n      world".dedent() != "hello\n  world") { return test.fail("common prefix"); }
-    // A whitespace-only line normalizes to "" and doesn't defeat the prefix.
-    return test.assert_eq("    a\n  \n    b".dedent(), "a\n\nb");
+  // Common 4-space prefix removed; the deeper line keeps its extra 2.
+  if ("    hello\n      world".dedent() != "hello\n  world") {
+    return test.fail("common prefix");
+  }
+  // A whitespace-only line normalizes to "" and doesn't defeat the prefix.
+  return test.assert_eq("    a\n  \n    b".dedent(), "a\n\nb");
 }
 
 function test_dedent_edges(): test.TestOutcome {
-    // A column-0 line means no common prefix — unchanged.
-    if ("a\n    b".dedent() != "a\n    b") { return test.fail("no prefix"); }
-    // indent then dedent round-trips a flush-left block.
-    return test.assert_eq("x\ny".indent("    ").dedent(), "x\ny");
+  // A column-0 line means no common prefix — unchanged.
+  if ("a\n    b".dedent() != "a\n    b") {
+    return test.fail("no prefix");
+  }
+  // indent then dedent round-trips a flush-left block.
+  return test.assert_eq("x\ny".indent("    ").dedent(), "x\ny");
 }
 
 // ---- fixed-width slicing ----
 
 function test_chunks(): test.TestOutcome {
-    return test.assert_eq_array("abcdefg".chunks(3), ["abc", "def", "g"]);
+  return test.assert_eq_array("abcdefg".chunks(3), ["abc", "def", "g"]);
 }
 
 function main(): i32 {
-    var r: test.TestRunner = test.test_new("std/string slice + extract");
-    r = r.it("before",            test_before);
-    r = r.it("before missing",    test_before_missing);
-    r = r.it("after",             test_after);
-    r = r.it("after missing",     test_after_missing);
-    r = r.it("between",           test_between);
-    r = r.it("between missing",   test_between_missing);
-    r = r.it("split_once",        test_split_once);
-    r = r.it("split_once missing", test_split_once_missing);
-    r = r.it("remove_prefix",     test_remove_prefix);
-    r = r.it("remove_suffix",     test_remove_suffix);
-    r = r.it("strip_quotes",      test_strip_quotes);
-    r = r.it("strip_quotes none", test_strip_quotes_none);
-    r = r.it("common_prefix",     test_common_prefix);
-    r = r.it("common_suffix",     test_common_suffix);
-    r = r.it("repeat",            test_repeat);
-    r = r.it("reverse_words",     test_reverse_words);
-    r = r.it("wrap",              test_wrap);
-    r = r.it("indent",            test_indent);
-    r = r.it("indent trailing nl", test_indent_trailing_newline);
-    r = r.it("indent consec nl",  test_indent_consecutive_newlines);
-    r = r.it("dedent",            test_dedent);
-    r = r.it("dedent edges",      test_dedent_edges);
-    r = r.it("chunks",            test_chunks);
-    return r.finish();
+  var r: test.TestRunner = test.test_new("std/string slice + extract");
+  r = r.it("before", test_before);
+  r = r.it("before missing", test_before_missing);
+  r = r.it("after", test_after);
+  r = r.it("after missing", test_after_missing);
+  r = r.it("between", test_between);
+  r = r.it("between missing", test_between_missing);
+  r = r.it("split_once", test_split_once);
+  r = r.it("split_once missing", test_split_once_missing);
+  r = r.it("remove_prefix", test_remove_prefix);
+  r = r.it("remove_suffix", test_remove_suffix);
+  r = r.it("strip_quotes", test_strip_quotes);
+  r = r.it("strip_quotes none", test_strip_quotes_none);
+  r = r.it("common_prefix", test_common_prefix);
+  r = r.it("common_suffix", test_common_suffix);
+  r = r.it("repeat", test_repeat);
+  r = r.it("reverse_words", test_reverse_words);
+  r = r.it("wrap", test_wrap);
+  r = r.it("indent", test_indent);
+  r = r.it("indent trailing nl", test_indent_trailing_newline);
+  r = r.it("indent consec nl", test_indent_consecutive_newlines);
+  r = r.it("dedent", test_dedent);
+  r = r.it("dedent edges", test_dedent_edges);
+  r = r.it("chunks", test_chunks);
+  return r.finish();
 }

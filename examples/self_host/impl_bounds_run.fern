@@ -16,32 +16,40 @@ import "./rundriver";
 import "./util";
 
 function bound_at(bt: string[], i: i32): string {
-    if (i < bt.len()) { return bt[i]; }
-    // Short of type_params: the parser dropped this param's bound entirely.
-    return "<missing>";
+  if (i < bt.len()) {
+    return bt[i];
+  }
+  // Short of type_params: the parser dropped this param's bound entirely.
+  return "<missing>";
 }
 
 function pairs_of(fd: parser.FuncDecl): string {
-    var out: string = "";
-    var i: i32 = 0;
-    while (i < fd.type_params.len()) {
-        if (i > 0) { out = out + ","; }
-        out = out + fd.type_params[i] + "=" + bound_at(fd.bound_traits, i);
-        i = i + 1;
+  var out: string = "";
+  var i: i32 = 0;
+  while (i < fd.type_params.len()) {
+    if (i > 0) {
+      out = out + ",";
     }
-    if (out.len() == 0) { return "<none>"; }
-    return out;
+    out = out + fd.type_params[i] + "=" + bound_at(fd.bound_traits, i);
+    i = i + 1;
+  }
+  if (out.len() == 0) {
+    return "<none>";
+  }
+  return out;
 }
 
 function main(): i32 {
-    var mod: parser.Module = rundriver.parse_stdin("impl_bounds_run");
-    var i: i32 = 0;
-    while (i < mod.funcs.len()) {
-        var fd: parser.FuncDecl = mod.funcs[i];
-        var label: string = fd.name;
-        if (fd.receiver_type.len() > 0) { label = fd.receiver_type + "." + fd.name; }
-        print(util.show_type_vars(label + "\t" + pairs_of(fd)));
-        i = i + 1;
+  var mod: parser.Module = rundriver.parse_stdin("impl_bounds_run");
+  var i: i32 = 0;
+  while (i < mod.funcs.len()) {
+    var fd: parser.FuncDecl = mod.funcs[i];
+    var label: string = fd.name;
+    if (fd.receiver_type.len() > 0) {
+      label = fd.receiver_type + "." + fd.name;
     }
-    return 0;
+    print(util.show_type_vars(label + "\t" + pairs_of(fd)));
+    i = i + 1;
+  }
+  return 0;
 }

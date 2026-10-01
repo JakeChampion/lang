@@ -309,7 +309,6 @@ TestSelfHostHexIR 3
 TestSelfHostHttpHandlerRoutesIRX86_64 2
 TestSelfHostHttpHandlerServesX86_64 2
 TestSelfHostI32OverflowIR 2
-TestSelfHostI32PredicatesIRX86_64 2
 TestSelfHostI64ArrElemWidthIR 2
 TestSelfHostI64CallWidthIR 2
 TestSelfHostI64FieldWidthIR 2
@@ -513,7 +512,6 @@ TestSelfHostRawFree 2
 TestSelfHostRawIntrinsicsX86_64 2
 TestSelfHostRcArm64 3
 TestSelfHostRcFreeReclaimX86_64 2
-TestSelfHostRcMapGrowWasm 2
 TestSelfHostRcOptionBoxWasm 2
 TestSelfHostRcPreciseDropX86IR 6
 TestSelfHostRcStrBoxWasm 6

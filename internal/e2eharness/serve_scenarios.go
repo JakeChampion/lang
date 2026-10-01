@@ -601,6 +601,72 @@ function handle(req: HttpRequest, plat: Platform): Result[HttpResponse, http.Htt
 `
 }
 
+// DynErrorHandlerServerSource is a handler program whose `handle` answers
+// `Result[HttpResponse, dyn error.Error]`, failing with a concrete error
+// that `?` boxes: the compilers adapt it with `respond_error`.
+func DynErrorHandlerServerSource() string {
+	return dynErrorHandlerSource(`import "std/error";`, "error")
+}
+
+// DynErrorHandlerAliasedServerSource is DynErrorHandlerServerSource with
+// std/error imported under an alias: the adapter is chosen by the trait's
+// identity, not by the spelling the entry gives it.
+func DynErrorHandlerAliasedServerSource() string {
+	return dynErrorHandlerSource(`import "std/error" as err;`, "err")
+}
+
+func dynErrorHandlerSource(imp, q string) string {
+	return `import "std/http";
+import "std/tcp";
+` + imp + `
+
+struct NotFound { path: string }
+
+impl ` + q + `.Error for NotFound {
+    function message(self: Self): string { return "no item at " + self.path; }
+}
+
+function lookup(path: string): Result[string, NotFound] {
+    if (path == "/items/1") { return Ok("first"); }
+    return Err(NotFound { path: path });
+}
+
+function handle(req: HttpRequest, plat: Platform): Result[HttpResponse, dyn ` + q + `.Error] {
+    var name: string = lookup(req.path)?;
+    return Ok(http.ok(name));
+}
+`
+}
+
+// CheckDynErrorHandler drives DynErrorHandlerServerSource: /items/1
+// answers 200 with its name, another path a bare 500 problem that does not
+// carry the error's message, and the message is on the server's stderr.
+func CheckDynErrorHandler(t *testing.T, addr, stderrPath string) {
+	t.Helper()
+	WaitServerReady(t, addr, 10*time.Second)
+	if got := ResponseBodyTail(HTTPRoundTrip(t, addr, "/items/1", 5*time.Second)); got != "first" {
+		t.Fatalf("/items/1: body %q, want \"first\"", got)
+	}
+	resp := HTTPRoundTrip(t, addr, "/items/9", 5*time.Second)
+	if !strings.HasPrefix(resp, "HTTP/1.1 500") || !strings.Contains(resp, "application/problem+json") {
+		b, _ := os.ReadFile(stderrPath)
+		t.Fatalf("/items/9: want a 500 problem, got\n%s\nserver stderr:\n%s", resp, b)
+	}
+	if got := ResponseBodyTail(resp); got != `{"type":"about:blank","title":"Internal Server Error","status":500}` {
+		t.Fatalf("/items/9: body %q, want the bare 500 problem", got)
+	}
+	const logged = "handler error: no item at /items/9"
+	for limit := time.Now().Add(5 * time.Second); ; time.Sleep(50 * time.Millisecond) {
+		b, _ := os.ReadFile(stderrPath)
+		if strings.Contains(string(b), logged) {
+			return
+		}
+		if time.Now().After(limit) {
+			t.Fatalf("the server's stderr lacks %q:\n%s", logged, b)
+		}
+	}
+}
+
 // StatefulResultHandlerServerSource threads a count through a handler
 // answering `(Map[string, i32], Result[HttpResponse, http.HttpError])`:
 // a failure is answered as a problem and the state survives it.

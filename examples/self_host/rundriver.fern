@@ -19,8 +19,8 @@ import "./parser";
 // that warning. It is a no-op for an import-free program, which is what the
 // fixture corpus is almost entirely made of.
 pub function parse_stdin(driver: string): parser.Module {
-    var src: string = io.read_all_stdin();
-    var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
-    var _unresolved: boolean = parser.warn_unresolved_imports(mod, driver);
-    return mod;
+  var src: string = io.read_all_stdin();
+  var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
+  var _unresolved: boolean = parser.warn_unresolved_imports(mod, driver);
+  return mod;
 }

@@ -40,7 +40,7 @@ func TestSelfHostPerModuleSubdirCacheX86_64(t *testing.T) {
 			t.Fatalf("write sub/leaf.fern: %v", err)
 		}
 	}
-	writeLeaf("pub function leaf_val(): i32 { return 40; }\n")
+	writeLeaf("@noinline pub function leaf_val(): i32 { return 40; }\n")
 	if err := os.WriteFile(filepath.Join(proj, "mid.fern"), []byte(
 		"import \"./sub/leaf\";\npub function mid_val(): i32 { return leaf.leaf_val() + 2; }\n"), 0o644); err != nil {
 		t.Fatalf("write mid.fern: %v", err)
@@ -142,7 +142,7 @@ func TestSelfHostPerModuleSubdirCacheX86_64(t *testing.T) {
 	}
 
 	// Editing the subdir module's body must change its hash and re-emit only it.
-	writeLeaf("pub function leaf_val(): i32 { return 41; }\n")
+	writeLeaf("@noinline pub function leaf_val(): i32 { return 41; }\n")
 	if leafSrcHash() == h0 {
 		t.Fatal("subdir leaf body edit did not change its src_hash")
 	}

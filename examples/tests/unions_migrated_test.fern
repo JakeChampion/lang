@@ -1,4 +1,5 @@
 import "std/test";
+
 // examples/tests/unions_migrated_test.fern —
 // Fern port of `TestInterpScriptUnions` from
 // `internal/e2e/interp_script_test.go`.
@@ -20,66 +21,86 @@ import "std/test";
 // variants and their interaction.
 
 struct Add { l: i32, r: i32 }
+
 struct Lit { v: i32 }
+
 type Expr = Add | Lit;
 
 function eval(e: Expr): i32 {
-    match (e) {
-        Add(a) => { return a.l + a.r; },
-        Lit(l) => { return l.v; },
+  match (e) {
+    Add(a) => {
+      return a.l + a.r;
+    },
+    Lit(l) => {
+      return l.v;
     }
+  }
 }
 
 function test_add_two_positives(): test.TestOutcome {
-    var e: Expr = Add { l: 10, r: 32 };
-    return test.assert_eq(eval(e), 42);
+  var e: Expr = Add { l: 10, r: 32 };
+  return test.assert_eq(eval(e), 42);
 }
 
 function test_add_left_identity_zero(): test.TestOutcome {
-    var e: Expr = Add { l: 0, r: 7 };
-    return test.assert_eq(eval(e), 7);
+  var e: Expr = Add { l: 0, r: 7 };
+  return test.assert_eq(eval(e), 7);
 }
 
 function test_add_right_identity_zero(): test.TestOutcome {
-    var e: Expr = Add { l: 7, r: 0 };
-    return test.assert_eq(eval(e), 7);
+  var e: Expr = Add { l: 7, r: 0 };
+  return test.assert_eq(eval(e), 7);
 }
 
 function test_add_negatives_cancel(): test.TestOutcome {
-    var e: Expr = Add { l: 5, r: 0 - 5 };
-    return test.assert_eq(eval(e), 0);
+  var e: Expr = Add { l: 5, r: 0 - 5 };
+  return test.assert_eq(eval(e), 0);
 }
 
 function test_lit_positive(): test.TestOutcome {
-    var e: Expr = Lit { v: 99 };
-    return test.assert_eq(eval(e), 99);
+  var e: Expr = Lit { v: 99 };
+  return test.assert_eq(eval(e), 99);
 }
 
 function test_lit_zero(): test.TestOutcome {
-    var e: Expr = Lit { v: 0 };
-    return test.assert_eq(eval(e), 0);
+  var e: Expr = Lit { v: 0 };
+  return test.assert_eq(eval(e), 0);
 }
 
 function test_lit_negative(): test.TestOutcome {
-    var e: Expr = Lit { v: 0 - 100 };
-    return test.assert_eq(eval(e), 0 - 100);
+  var e: Expr = Lit { v: 0 - 100 };
+  return test.assert_eq(eval(e), 0 - 100);
 }
 
 function main(): i32 {
-    var r: test.TestRunner = test.test_new("unions + match (migrated)");
-    r = r.it("Add(10, 32) = 42",
-             test_add_two_positives);
-    r = r.it("Add(0, 7) = 7 (left identity)",
-             test_add_left_identity_zero);
-    r = r.it("Add(7, 0) = 7 (right identity)",
-             test_add_right_identity_zero);
-    r = r.it("Add(5, -5) = 0",
-             test_add_negatives_cancel);
-    r = r.it("Lit(99) = 99",
-             test_lit_positive);
-    r = r.it("Lit(0) = 0",
-             test_lit_zero);
-    r = r.it("Lit(-100) = -100",
-             test_lit_negative);
-    return r.finish();
+  var r: test.TestRunner = test.test_new("unions + match (migrated)");
+  r = r.it(
+    "Add(10, 32) = 42",
+    test_add_two_positives,
+  );
+  r = r.it(
+    "Add(0, 7) = 7 (left identity)",
+    test_add_left_identity_zero,
+  );
+  r = r.it(
+    "Add(7, 0) = 7 (right identity)",
+    test_add_right_identity_zero,
+  );
+  r = r.it(
+    "Add(5, -5) = 0",
+    test_add_negatives_cancel,
+  );
+  r = r.it(
+    "Lit(99) = 99",
+    test_lit_positive,
+  );
+  r = r.it(
+    "Lit(0) = 0",
+    test_lit_zero,
+  );
+  r = r.it(
+    "Lit(-100) = -100",
+    test_lit_negative,
+  );
+  return r.finish();
 }

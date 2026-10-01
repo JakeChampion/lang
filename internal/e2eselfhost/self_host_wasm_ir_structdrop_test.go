@@ -8,18 +8,13 @@ import (
 	"testing"
 )
 
-// TestSelfHostWasmIRStructDropEmitted pins the wasm IR driver's RC-helper
-// emission. The Perceus deep-drop work (#4083) inserts `call $__struct_drop_<T>`
-// into the lowered IR for any struct with rc fields at scope exit, and
-// emit_module's IR orchestration emits the matching `$__struct_drop_<T>`
-// FUNCTION BODY. The differential wasm_ir_run driver assembles its own helper
-// section, so it must emit the same bodies (via wasm.emit_ir_rc_bodies) —
-// otherwise the lowered `call $__struct_drop_<T>` references an undefined
-// function and wasmtime rejects the module ("unknown func $__struct_drop_<T>"),
-// trapping (exit 1) for EVERY struct program with a nested-struct or rc-array
-// field. This test feeds two such programs through the driver and asserts both
-// that the WAT carries the `(func $__struct_drop_<T>` DEFINITION (not just the
-// call) and that the module runs to the expected exit code.
+// TestSelfHostWasmIRStructDropEmitted pins the wasm driver's RC-helper
+// emission: a program that releases a struct with a nested-struct field at
+// scope exit calls `$__sem_release_<T>`, and the module must also DEFINE it, or
+// wasmtime rejects it ("unknown func"). This test feeds two such programs
+// through the driver and asserts both that the WAT carries the
+// `(func $__sem_release_<T>` DEFINITION (not just the call) and that the module
+// runs to the expected exit code.
 func TestSelfHostWasmIRStructDropEmitted(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host wasm IR struct-drop e2e")
@@ -31,21 +26,18 @@ func TestSelfHostWasmIRStructDropEmitted(t *testing.T) {
 
 	cases := []struct {
 		name string
-		// drop is the struct type whose `$__struct_drop_<drop>` definition the
+		// drop is the struct type whose `$__sem_release_<drop>` definition the
 		// WAT must contain.
 		drop string
 		want int
 		src  string
 	}{
-		// Nested-struct field: Box{p:Point} passed to bx() -> Perceus drops the
-		// owned param, and $__struct_drop_Box recursively struct_drops the nested
-		// Point (slice-3 deep-drop). This is the exact program that trapped with
-		// `unknown func $__struct_drop_Box` before the driver emitted the body.
+		// Nested-struct field: Box{p:Point} passed to bx() -> the caller releases
+		// the Box, nested Point and all.
 		{"nested-struct", "Box", 42,
 			`struct Point { x: i32, y: i32 } struct Box { p: Point } function bx(b: Box): i32 { return b.p.x + b.p.y; } function main(): i32 { var b = Box { p: Point { x: 30, y: 12 } }; return bx(b); }`},
-		// Three-deep nesting: Outer{Mid{Inner}} consumed by f() -> the drop chain
-		// $__struct_drop_Outer -> $__struct_drop_Mid -> $__struct_drop_Inner must
-		// all be DEFINED (the transitive deep-drop closure).
+		// Three-deep nesting: Outer{Mid{Inner}} consumed by f() -> the release
+		// chain through Outer and Mid must all be DEFINED.
 		{"deep-nested", "Outer", 105,
 			`struct Inner { v: i32 } struct Mid { inner: Inner, n: i32 } struct Outer { mid: Mid } function f(o: Outer): i32 { return o.mid.inner.v + o.mid.n; } function main(): i32 { var o = Outer { mid: Mid { inner: Inner { v: 100 }, n: 5 } }; return f(o); }`},
 	}
@@ -65,13 +57,13 @@ func TestSelfHostWasmIRStructDropEmitted(t *testing.T) {
 			}
 			// The CALL must be present (proving the program routed IR and the
 			// deep-drop fired) AND its DEFINITION must be emitted by the driver.
-			call := []byte("call $__struct_drop_" + tc.drop)
-			def := []byte("(func $__struct_drop_" + tc.drop)
+			call := []byte("call $__sem_release_" + tc.drop)
+			def := []byte("(func $__sem_release_" + tc.drop)
 			if !bytes.Contains(wat, call) {
-				t.Fatalf("no `%s` in WAT — program did not route through the IR struct-drop path\n%s", call, wat)
+				t.Fatalf("no `%s` in WAT — the struct is not released\n%s", call, wat)
 			}
 			if !bytes.Contains(wat, def) {
-				t.Fatalf("WAT calls $__struct_drop_%s but never defines it (driver missing emit_ir_rc_bodies)\n%s", tc.drop, wat)
+				t.Fatalf("WAT calls $__sem_release_%s but never defines it\n%s", tc.drop, wat)
 			}
 			watFile := filepath.Join(dir, "drop_"+tc.name+".wat")
 			if err := os.WriteFile(watFile, wat, 0o644); err != nil {

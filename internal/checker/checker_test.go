@@ -9,6 +9,7 @@ import (
 
 	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/diag"
+	"github.com/jakechampion/lang/internal/modload"
 	"github.com/jakechampion/lang/internal/parser"
 )
 
@@ -1030,6 +1031,78 @@ func TestGenericCallLiteralBoundTSettlesByPosition(t *testing.T) {
 				t.Errorf("%s: literal %s settled at width %d, want %d", c.body, lit.Raw, lit.Width, c.want.NormalWidth())
 			}
 		}
+	}
+}
+
+// An unannotated local bound to a generic struct literal whose type argument
+// only literals bind is a Same[i64] when one of them has no i32 reading, and
+// both field literals settle at i64 (#10453). Typing it Same[i32] truncated the
+// wide field on every native backend with no diagnostic.
+// The widening reaches a literal inside an array literal, whose elements it
+// settles at the widened type (the monomorph re-check refused it as
+// Same__i32[] against Same__i64[]), and never a literal that writes its own
+// instantiation: `Same[i32] { …, b: 2^62 }` is E047 (#10453).
+func TestGenericStructLiteralWideningInArrayAndWritten(t *testing.T) {
+	const decls = "struct Same[T] { a: T, b: T } "
+	if err := checkSource(t, decls+"function main(): i32 { var xs = [Same { a: 1, b: 4611686018427387904 }]; var r: i64 = xs[0].b; return 0; }"); err != nil {
+		t.Errorf("array of a wide literal: rejected, want accepted: %v", err)
+	}
+	err := checkSource(t, decls+"function main(): i32 { var q = Same[i32] { a: 1, b: 4611686018427387904 }; return 0; }")
+	if err == nil || !strings.Contains(err.Error(), "does not fit in i32") {
+		t.Errorf("written Same[i32] with a wide field: want the literal refused, got %v", err)
+	}
+	// A field that holds the parameter inside a composite widens it too.
+	for _, decl := range []string{
+		"struct Stack[T] { items: T[] } function main(): i32 { var q = Stack { items: [4611686018427387904] }; var r: i64 = q.items[0]; return 0; }",
+		"struct Tagged[T] { p: (T, string) } function main(): i32 { var q = Tagged { p: (4611686018427387904, \"x\") }; var r: i64 = q.p.0; return 0; }",
+	} {
+		prog, err := parser.Parse(decl)
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		if _, err := Check(prog); err != nil {
+			t.Errorf("%s: check: %v", decl, err)
+			continue
+		}
+		if got := prog.Funcs[0].Body.Stmts[0].(*ast.Var).Type.String(); !strings.HasSuffix(got, "[i64]") {
+			t.Errorf("%s: q is %s, want the i64 instantiation", decl, got)
+		}
+	}
+}
+
+func TestGenericStructLiteralLocalWidensByLiteral(t *testing.T) {
+	src := "struct Same[T] { a: T, b: T } function main(): i32 { " +
+		"var q = Same { a: 1, b: 4611686018427387904 }; var r: i64 = q.b; return 0; }"
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if _, err := Check(prog); err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	v := prog.Funcs[len(prog.Funcs)-1].Body.Stmts[0].(*ast.Var)
+	if got := v.Type.String(); got != "Same[i64]" {
+		t.Errorf("q: type %s, want Same[i64]", got)
+	}
+	sl := v.Init.(*ast.StructLit)
+	if len(sl.TypeArgs) != 1 || sl.TypeArgs[0].String() != "i64" {
+		t.Errorf("literal type args %v, want [i64]", sl.TypeArgs)
+	}
+	for _, f := range sl.Fields {
+		if lit, ok := f.Value.(*ast.NumberLit); ok && lit.Width != 64 {
+			t.Errorf("field %s: literal settled at width %d, want 64", f.Name, lit.Width)
+		}
+	}
+	// Literals that all read at i32 leave the default alone.
+	narrow, err := parser.Parse("struct Same[T] { a: T, b: T } function main(): i32 { var q = Same { a: 1, b: 2 }; return 0; }")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if _, err := Check(narrow); err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	if got := narrow.Funcs[len(narrow.Funcs)-1].Body.Stmts[0].(*ast.Var).Type.String(); got != "Same[i32]" {
+		t.Errorf("narrow q: type %s, want Same[i32]", got)
 	}
 }
 
@@ -4254,6 +4327,45 @@ function shutdown(reason: string): void { print(reason); }`, "arm64-darwin", "tc
 	}
 }
 
+// config_get is the environment wherever the target has one; only the
+// proxy world keeps the builtin, and Info records the target so a later
+// re-check (monomorph) applies the same rule.
+func TestConfigGetFollowsTheTargetsEnvironment(t *testing.T) {
+	const src = `function main(): i32 { match (config_get("GREETING")) { Some(v) => { return 0; }, None => { return 1; } } }`
+	for _, tc := range []struct{ target, callee string }{
+		{"", "env"},
+		{"x86-64-linux", "env"},
+		{"wasm32-wasi", "env"},
+		{"wasm32-wasi-http", "config_get"},
+	} {
+		t.Run(tc.target, func(t *testing.T) {
+			prog, err := parser.Parse(src)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			info, err := CheckTarget(prog, tc.target)
+			if err != nil {
+				t.Fatalf("check: %v", err)
+			}
+			if info.Target != tc.target {
+				t.Fatalf("info.Target = %q, want %q", info.Target, tc.target)
+			}
+			var got string
+			ast.WalkProgram(prog, func(n ast.Node) bool {
+				if call, ok := n.(*ast.Call); ok {
+					if id, ok := call.Callee.(*ast.Ident); ok && (id.Name == "env" || id.Name == "config_get") {
+						got = id.Name
+					}
+				}
+				return true
+			})
+			if got != tc.callee {
+				t.Fatalf("config_get on %q became %q, want %q", tc.target, got, tc.callee)
+			}
+		})
+	}
+}
+
 // TestSynthesisedHandleMainRunsInitFirst pins the
 // docs/PLATFORM-RESEARCH.md Rec §3 init() ordering: when the
 // program defines both `handle` and `init`, the auto-main
@@ -4525,19 +4637,46 @@ func TestResultHandlerIsAdapted(t *testing.T) {
 	const decls = serveStubDecls + `function respond(r: Result[HttpResponse, string]): HttpResponse { return HttpResponse { status: 500, body: BodyText(""), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] } }; }
 function respond_with(pair: (i32, Result[HttpResponse, string])): (i32, HttpResponse) { return (pair.0, respond(pair.1)); }
 `
+	// The dyn cases load std/error as a program does, so the trait reaches
+	// the matcher under its bundled name; an alias and a program's own
+	// `trait Error` pin the two spellings that must not match it.
+	const dynDecls = serveStubDecls + `struct Oops { why: string }
+impl err.Error for Oops { function message(self: Self): string { return self.why; } }
+function respond_error(r: Result[HttpResponse, dyn err.Error], plat: Platform): HttpResponse { return HttpResponse { status: 500, body: BodyText(""), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] } }; }
+function respond_error_with(pair: (i32, Result[HttpResponse, dyn err.Error]), plat: Platform): (i32, HttpResponse) { return (pair.0, respond_error(pair.1, plat)); }
+`
+	const ownErrorDecls = serveStubDecls + `trait Error { function message(self: Self): string; }
+struct Oops { why: string }
+impl Error for Oops { function message(self: Self): string { return self.why; } }
+function respond(r: Result[HttpResponse, dyn Error]): HttpResponse { return HttpResponse { status: 500, body: BodyText(""), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] } }; }
+function respond_error(r: Result[HttpResponse, dyn Error], plat: Platform): HttpResponse { return HttpResponse { status: 418, body: BodyText(""), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] } }; }
+`
 	cases := []struct {
 		name, src, adapter string
-		params             int
+		params, args       int
+		load               bool
 	}{
-		{"stateless", decls + `function handle(req: HttpRequest, plat: Platform): Result[HttpResponse, string] { return Err("no"); }`, "respond", 2},
+		{"stateless", decls + `function handle(req: HttpRequest, plat: Platform): Result[HttpResponse, string] { return Err("no"); }`, "respond", 2, 1, false},
 		{"stateful", decls + `function init(): i32 { return 0; }
-function handle(n: i32, req: HttpRequest, plat: Platform): (i32, Result[HttpResponse, string]) { return (n + 1, Err("no")); }`, "respond_with", 3},
+function handle(n: i32, req: HttpRequest, plat: Platform): (i32, Result[HttpResponse, string]) { return (n + 1, Err("no")); }`, "respond_with", 3, 1, false},
+		{"dyn-error", `import "std/error" as err;
+` + dynDecls + `function handle(req: HttpRequest, plat: Platform): Result[HttpResponse, dyn err.Error] { return Err(Oops { why: "no" }); }`, "respond_error", 2, 2, true},
+		{"dyn-error-stateful", `import "std/error" as err;
+` + dynDecls + `function init(): i32 { return 0; }
+function handle(n: i32, req: HttpRequest, plat: Platform): (i32, Result[HttpResponse, dyn err.Error]) { return (n + 1, Err(Oops { why: "no" })); }`, "respond_error_with", 3, 2, true},
+		{"a program's own Error trait is not std/error's", ownErrorDecls + `function handle(req: HttpRequest, plat: Platform): Result[HttpResponse, dyn Error] { return Err(Oops { why: "no" }); }`, "respond", 2, 1, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			prog, err := parser.Parse(tc.src)
+			var prog *ast.Program
+			var err error
+			if tc.load {
+				prog, _, err = modload.LoadSource(tc.src)
+			} else {
+				prog, err = parser.Parse(tc.src)
+			}
 			if err != nil {
-				t.Fatalf("parse: %v", err)
+				t.Fatalf("load: %v", err)
 			}
 			if _, err := Check(prog); err != nil {
 				t.Fatalf("check: %v", err)
@@ -4559,6 +4698,9 @@ function handle(n: i32, req: HttpRequest, plat: Platform): (i32, Result[HttpResp
 			}
 			if id, ok := call.Callee.(*ast.Ident); !ok || id.Name != tc.adapter {
 				t.Fatalf("handle calls %v, want %s", call.Callee, tc.adapter)
+			}
+			if len(call.Args) != tc.args {
+				t.Fatalf("%s is handed %d args, want %d", tc.adapter, len(call.Args), tc.args)
 			}
 			inner, ok := call.Args[0].(*ast.Call)
 			if !ok {

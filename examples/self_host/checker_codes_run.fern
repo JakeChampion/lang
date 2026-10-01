@@ -14,13 +14,15 @@ import "./rundriver";
 import "./checker";
 
 function main(): i32 {
-    var mod: parser.Module = rundriver.parse_stdin("checker_codes_run");
-    var mt: checker.ModuleTypes = checker.check_module(mod);
-    var i: i32 = 0;
-    while (i < mt.diags.len()) {
-        print(mt.diags[i].code + "\t" + mt.diags[i].message);
-        i = i + 1;
-    }
-    if (mt.diags.len() > 0) { return 1; }
-    return 0;
+  var mod: parser.Module = rundriver.parse_stdin("checker_codes_run");
+  var mt: checker.ModuleTypes = checker.check_module(mod);
+  var i: i32 = 0;
+  while (i < mt.diags.len()) {
+    print(mt.diags[i].code + "\t" + mt.diags[i].message);
+    i = i + 1;
+  }
+  if (mt.diags.len() > 0) {
+    return 1;
+  }
+  return 0;
 }

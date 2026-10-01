@@ -1,5 +1,6 @@
 import "std/test";
 import "std/string";
+
 // examples/tests/string_find_all_test.fern — pure-Fern coverage of
 // std/string.find_all: the start indices of every NON-overlapping occurrence of
 // a substring (the positions count() tallies). Covers multiple matches,
@@ -15,44 +16,44 @@ import "std/string";
 // iter_combinators precedent (interp-only for a self-host-compiler gap).
 
 function test_multiple(): test.TestOutcome {
-    var a: i32[] = "abcabcabc".find_all("bc");
-    return test.assert_eq_array(a, [1, 4, 7]);
+  var a: i32[] = "abcabcabc".find_all("bc");
+  return test.assert_eq_array(a, [1, 4, 7]);
 }
 
 function test_non_overlapping(): test.TestOutcome {
-    // After a match the scan resumes past it, so "aa" in "aaaa" is [0, 2].
-    return test.assert_eq_array("aaaa".find_all("aa"), [0, 2]);
+  // After a match the scan resumes past it, so "aa" in "aaaa" is [0, 2].
+  return test.assert_eq_array("aaaa".find_all("aa"), [0, 2]);
 }
 
 function test_no_match(): test.TestOutcome {
-    return test.assert_eq("hello".find_all("z").len(), 0);
+  return test.assert_eq("hello".find_all("z").len(), 0);
 }
 
 function test_empty_needle(): test.TestOutcome {
-    return test.assert_eq("hello".find_all("").len(), 0);
+  return test.assert_eq("hello".find_all("").len(), 0);
 }
 
 function test_leading(): test.TestOutcome {
-    return test.assert_eq_array("hello".find_all("he"), [0]);
+  return test.assert_eq_array("hello".find_all("he"), [0]);
 }
 
 function test_trailing(): test.TestOutcome {
-    return test.assert_eq_array("xyzend".find_all("end"), [3]);
+  return test.assert_eq_array("xyzend".find_all("end"), [3]);
 }
 
 function test_len_equals_count(): test.TestOutcome {
-    var s: string = "a.b.c.d";
-    return test.assert_eq(s.find_all(".").len(), s.count("."));
+  var s: string = "a.b.c.d";
+  return test.assert_eq(s.find_all(".").len(), s.count("."));
 }
 
 function main(): i32 {
-    var r: test.TestRunner = test.test_new("std/string find_all");
-    r = r.it("multiple matches",   test_multiple);
-    r = r.it("non-overlapping",    test_non_overlapping);
-    r = r.it("no match",           test_no_match);
-    r = r.it("empty needle",       test_empty_needle);
-    r = r.it("leading match",      test_leading);
-    r = r.it("trailing match",     test_trailing);
-    r = r.it("len equals count",   test_len_equals_count);
-    return r.finish();
+  var r: test.TestRunner = test.test_new("std/string find_all");
+  r = r.it("multiple matches", test_multiple);
+  r = r.it("non-overlapping", test_non_overlapping);
+  r = r.it("no match", test_no_match);
+  r = r.it("empty needle", test_empty_needle);
+  r = r.it("leading match", test_leading);
+  r = r.it("trailing match", test_trailing);
+  r = r.it("len equals count", test_len_equals_count);
+  return r.finish();
 }

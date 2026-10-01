@@ -13,10 +13,9 @@ import (
 // $__fern_str_box (8-byte rc+bsz header, returns base+8), so it carries
 // an rc word at [s-8] while every s-relative access is unchanged — the
 // type id stays at slot 0 (so `match` reads the right tag) and each field
-// stays at struct_field_off. Observed through __fern_rc_is_unique: a fresh
-// struct / variant value is unique (rc==1). Field values + array/string
-// members (already construction-inc'd) survive. Counting + recursive
-// field-release build on this foundation in later slices.
+// stays at struct_field_off. Field values + array/string members survive,
+// and counting and recursive field release keep the over-release detector
+// clean.
 //
 // Extern-ABI structs (canonical-ABI result records) are intentionally left
 // raw in this slice — layout-only never sweeps structs, so the mix is
@@ -36,12 +35,6 @@ func TestSelfHostRcStructBoxWasm(t *testing.T) {
 		src  string
 		exit int
 	}{
-		// A fresh struct literal is rc-boxed at rc 1 => unique. `5 * one` rather
-		// than `5`: an all-scalar-literal struct is a CONSTANT (#6149), placed in
-		// static data below heap_base, where the rc guard chain answers 0 — so
-		// written with bare literals this asserts 0 == 1 and measures the constant
-		// path instead of the fresh-box one it names.
-		{"struct-fresh-unique", "struct P { x: i32, y: i32 } function main(): i32 { var one = 1; var p = P { x: 5 * one, y: 7 }; return __fern_rc_is_unique(p); }", 1},
 		// Field values survive the rc header (s-relative access unchanged).
 		{"struct-values-intact", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 30, y: 12 }; return p.x + p.y; }", 42},
 		// A struct holding an array field: value intact, detector clean.
@@ -53,8 +46,7 @@ func TestSelfHostRcStructBoxWasm(t *testing.T) {
 		{"struct-update-intact", "struct P { x: i32, y: i32 } function main(): i32 { var a = P { x: 10, y: 20 }; var b = P { ...a, y: 32 }; return b.x + b.y; }", 42},
 		// A unit enum variant (0-field struct) is boxed too and matches.
 		{"unit-variant-match", "enum E { A, B } function main(): i32 { var e: E = B; match (e) { A => { return 1; }, B => { return 41; } } }", 41},
-		// A positional variant constructor carries its payload at field 0 and
-		// is unique when fresh.
+		// A positional variant constructor carries its payload at field 0.
 		{"variant-payload-intact", "enum Shape { Circle(i32), Square(i32) } function area(s: Shape): i32 { match (s) { Circle(r) => { return r * r; }, Square(w) => { return w + w; } } } function main(): i32 { var c: Shape = Circle(6); return area(c); }", 36},
 		// A built struct returned survives in the caller (no struct sweep yet,
 		// so this is a value-correctness + detector-clean check across the

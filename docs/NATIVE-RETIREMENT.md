@@ -55,25 +55,25 @@ targets).
 |---|---|---|
 | #10005 (closed by #10780 after this measurement) | typed lowering: a map key wider than 4 bytes (`Map[i64, i32]`, `Map[i64, i64]`, `Map[i64, f64]`) has no column | 17 |
 | #10767 (closed by #10821 after this measurement) | checker: six rejections native accepts (E009, E015, E038 x2, E042, E064) | 12 |
-| #10756 (the mechanics landed in #10821; the finalizer timing is open) | typed lowering: `impl mem.Drop` finalizers never run | 8 |
+| #10756 (closed after this measurement: the mechanics landed in #10821, and the tests check the documented contract, each finalizer once at the value's death, rather than native's release timing) | typed lowering: `impl mem.Drop` finalizers never run | 8 |
 | #10760 (closed by #10821 after this measurement) | typed lowering: a declared `str[]` holds a `string[]` (`graphemes`, `words`) | 6 |
 | #10766 (closed by #10821 after this measurement) | parser: `@` binding with a braceless arm, braceless `if let`, `let … else` in a `var` | 6 |
-| #10763 (closed by this change after this measurement) | typed lowering: empty array literal at a view parameter, `?` on a unit-payload success, a value block with no live edge, a `use` callback wrapper | 6 |
-| #10757 | typed lowering: f32 values typed f64 | 5 |
-| #10768 | wasm: the core module exports only `_start`, so a main result of 126 or more is unreadable | 5 |
-| #10771 | runtime: allocation-size overflow does not abort with 134; `__memcpy` size classes copy the wrong count | 5 |
+| #10763 (closed by #10828 after this measurement) | typed lowering: empty array literal at a view parameter, `?` on a unit-payload success, a value block with no live edge, a `use` callback wrapper | 6 |
+| #10757 (closed by #10835 after this measurement; the checker typed a suffixed float literal f64) | typed lowering: f32 values typed f64 | 5 |
+| #10768 (closed by #10775 after this measurement) | wasm: the core module exports only `_start`, so a main result of 126 or more is unreadable | 5 |
+| #10771 (the negative `__alloc_u8` and `repeat` aborts landed after this measurement; the array-grow test pins native's 32-bit request, and the `__memcpy` test is native-only by decision on #8799: it goes with the backends) | runtime: allocation-size overflow does not abort with 134; `__memcpy` size classes copy the wrong count | 5 |
 | #10737 (closed by #10741 after this measurement; re-measure before planning it) | typed lowering: `usize / usize`, `f64 as usize` | 4 |
-| #10759 | typed lowering: for-each pattern bindings are not semantic values | 4 |
-| #10816 (split from #10767) | checker: an impl record names its trait without the trait's module, so same-named traits collide (E021) and `dyn cmp.Display` matches no impl (E034) | 4 |
-| #10764 | union type aliases: members have no semantic contract; the generic form does not parse | 4 |
-| #10765 (the `async` half closed by #10804) | typed lowering: `async` functions; a `dyn` std Error's `message` | 4 |
-| #10762 | typed lowering: a generic enum's struct payload; the rc-correctness corpus probe | 4 |
-| #10770 | wasm: four programs answer wrongly (payloadless Result box, `std/platform`, scratch slots, split on `""`) | 4 |
-| #10761 | typed lowering: reading a `str` map value | 3 |
-| #10769 | wasm: no instruction selection for `raw_store8` and `write_some`; one module fails wasmtime's compile | 3 |
-| #10773 | arm64: the termios round trip fails at step 21 | 2 |
-| #10758 (closed by this change after this measurement; the cause was the AST folder, not the typed lowering) | typed lowering: unary minus on u32 | 1 |
-| #10772 | x86-64: the in-process assembler cannot encode an instruction in a string-payload `match`, and names nothing | 1 |
+| #10759 (closed by #10835 after this measurement) | typed lowering: for-each pattern bindings are not semantic values | 4 |
+| #10816 (split from #10767; closed by #10844 after this measurement) | checker: an impl record names its trait without the trait's module, so same-named traits collide (E021) and `dyn cmp.Display` matches no impl (E034) | 4 |
+| #10764 (fixed after this measurement: the member-name call in #10852; the generic form desugars into the generic enum the Go checker desugars every union into) | union type aliases: members have no semantic contract; the generic form does not parse | 4 |
+| #10765 (the `async` half closed by #10804; the `message` half by #10844, pinned after this measurement) | typed lowering: `async` functions; a `dyn` std Error's `message` | 4 |
+| #10762 (closed by #10807 after this measurement) | typed lowering: a generic enum's struct payload; the rc-correctness corpus probe | 4 |
+| #10770 (three rows were the measuring harness failing on stderr; the split fixed after this measurement) | wasm: four programs answer wrongly (payloadless Result box, `std/platform`, scratch slots, split on `""`) | 4 |
+| #10761 (fixed after this measurement, with #10701: a read of a view map value takes a fresh box) | typed lowering: reading a `str` map value | 3 |
+| #10769 (the selection and the missing helper fixed after this measurement; `TestBytesFloorWasm` then waits on #8799, the self-host's word-per-element `u8[]`) | wasm: no instruction selection for `raw_store8` and `write_some`; one module fails wasmtime's compile | 3 |
+| #10773 (closed: qemu-user drops the two unnamed `c_cc` slots for native's binaries too; the arm64 lane runs on real hardware) | arm64: the termios round trip fails at step 21 | 2 |
+| #10758 (closed by #10828 after this measurement; the cause was the AST folder, not the typed lowering) | typed lowering: unary minus on u32 | 1 |
+| #10772 (fixed after this measurement: the tree shaker dropped core/map behind a builtin enum's variant; the assembler names the symbol) | x86-64: the in-process assembler cannot encode an instruction in a string-payload `match`, and names nothing | 1 |
 
 The three fuzz differentials (`TestDifferential_LangsmithMain`,
 `TestDifferential_PrintableStdout`, `TestDropGuidedDifferential`,
@@ -140,10 +140,10 @@ group is one PR, after the re-point.
    Go link path), `cmd/dump_arm64`, the `FERN_NATIVE_ASM` leg, and
    `internal/sourcelint`'s codegen-boundary population. `docs/TEST-GATES.md`
    loses its native rows and `docs/BACKEND-PARITY.md` its per-backend table.
-6. **What `cmd/fern` becomes** is the decision #4451 still owes: a Go front
-   end (`-check`, `-interp`, `-fmt`, the LSP) that hands `-target` to the
-   self-host binary, or a thin launcher for it. It does not gate steps 1 to
-   4.
+6. **What `cmd/fern` becomes** is decided on #4451: as thin as possible. Go
+   keeps the parser, checker and interpreter, which the oracle needs;
+   `-fmt`, the LSP and every `-target` compile are the self-host's, reached
+   through the launcher `go install` builds. It does not gate steps 1 to 4.
 
 CI lanes keep their names: `test-e2e-x86_64`, `test-e2e-arm64` and
 `test-e2e-wasm` select by target prefix, which stays the right split when the

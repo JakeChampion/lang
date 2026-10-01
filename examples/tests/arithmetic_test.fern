@@ -1,4 +1,5 @@
 import "std/test";
+
 // examples/tests/arithmetic_test.fern — example Fern-native
 // test file using `std/test`. Demonstrates the shape we'll
 // adopt once the compiler is self-hosted and the Go-side
@@ -11,59 +12,70 @@ import "std/test";
 // if any case fails.
 
 function test_addition(): test.TestOutcome {
-    return test.assert_eq(2 + 2, 4);
+  return test.assert_eq(2 + 2, 4);
 }
 
 function test_subtraction(): test.TestOutcome {
-    return test.assert_eq(10 - 7, 3);
+  return test.assert_eq(10 - 7, 3);
 }
 
 function test_multiplication(): test.TestOutcome {
-    return test.assert_eq(6 * 7, 42);
+  return test.assert_eq(6 * 7, 42);
 }
 
 function test_integer_division(): test.TestOutcome {
-    return test.assert_eq(20 / 6, 3);
+  return test.assert_eq(20 / 6, 3);
 }
 
 function test_modulo(): test.TestOutcome {
-    return test.assert_eq(17 % 5, 2);
+  return test.assert_eq(17 % 5, 2);
 }
 
 // Tests that walk a fixture and bail out on the first
 // failure. Returns None ("pass") if every iteration
 // agrees with the table.
 function test_modulo_table(): test.TestOutcome {
-    var inputs: i32[] = [0, 1, 5, 10, 11, 100];
-    var expected: i32[] = [0, 1, 5, 0, 1, 0];
-    var i: i32 = 0;
-    while (i < inputs.len()) {
-        var got: i32 = inputs[i] % 10;
-        if (got != expected[i]) {
-            return test.fail("modulo table mismatch at " + i.to_string());
-        }
-        i = i + 1;
+  var inputs: i32[] = [0, 1, 5, 10, 11, 100];
+  var expected: i32[] = [0, 1, 5, 0, 1, 0];
+  var i: i32 = 0;
+  while (i < inputs.len()) {
+    var got: i32 = inputs[i] % 10;
+    if (got != expected[i]) {
+      return test.fail("modulo table mismatch at " + i.to_string());
     }
-    return test.pass();
+    i = i + 1;
+  }
+  return test.pass();
 }
 
 // Comparison predicates.
-function test_lt(): test.TestOutcome { return test.assert_lt(3, 7); }
-function test_le(): test.TestOutcome { return test.assert_le(7, 7); }
-function test_gt(): test.TestOutcome { return test.assert_gt(9, 1); }
-function test_ge(): test.TestOutcome { return test.assert_ge(9, 9); }
+function test_lt(): test.TestOutcome {
+  return test.assert_lt(3, 7);
+}
+
+function test_le(): test.TestOutcome {
+  return test.assert_le(7, 7);
+}
+
+function test_gt(): test.TestOutcome {
+  return test.assert_gt(9, 1);
+}
+
+function test_ge(): test.TestOutcome {
+  return test.assert_ge(9, 9);
+}
 
 function main(): i32 {
-    var r: test.TestRunner = test.test_new("arithmetic");
-    r = r.it("addition", test_addition);
-    r = r.it("subtraction", test_subtraction);
-    r = r.it("multiplication", test_multiplication);
-    r = r.it("integer division", test_integer_division);
-    r = r.it("modulo", test_modulo);
-    r = r.it("modulo table", test_modulo_table);
-    r = r.it("less than", test_lt);
-    r = r.it("less or equal", test_le);
-    r = r.it("greater than", test_gt);
-    r = r.it("greater or equal", test_ge);
-    return r.finish();
+  var r: test.TestRunner = test.test_new("arithmetic");
+  r = r.it("addition", test_addition);
+  r = r.it("subtraction", test_subtraction);
+  r = r.it("multiplication", test_multiplication);
+  r = r.it("integer division", test_integer_division);
+  r = r.it("modulo", test_modulo);
+  r = r.it("modulo table", test_modulo_table);
+  r = r.it("less than", test_lt);
+  r = r.it("less or equal", test_le);
+  r = r.it("greater than", test_gt);
+  r = r.it("greater or equal", test_ge);
+  return r.finish();
 }

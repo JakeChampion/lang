@@ -17,26 +17,26 @@ import "./asmcore";
 import "./util";
 
 function main(): i32 {
-    var corpus: string[] = [
-        "i32", "u32", "u64", "i64", "usize", "f64", "f32", "float", "bool", "boolean", "string",
-        "i32[]", "u32[]", "u64[]", "i64[]", "string[]", "bool[]", "boolean[]", "f64[]",
-        "i32[][]", "string[][]", "Foo[]", "Option[i32][]", "Map[string, i32][]",
-        "Map[string, i32]", "Map[i32, string]", "Map[i32, Option[i32]]", "Map[string, Map[i32, string]]",
-        "Map", "MapConfig", "Map[string]",
-        "MapIter[i32, string]", "MapIter[string]",
-        "Cell[i32]", "Cell[string]",
-        "Option[i32]", "Option[string]", "Option[Map[string, i32]]", "Option[(string, string)]",
-        "Result[string, Err]", "Result[i32, string]", "Result[Foo]",
-        "Vec[T]", "Foo[A, B]", "Bar[i32]",
-        "(i32, string)", "(string, (i32, bool))",
-        "Foo", "mod.Bar", "TestRunner", "", "dyn Shape"
-    ];
-    var out: string = "";
-    var i: i32 = 0;
-    while (i < corpus.len()) {
-        out = out + corpus[i] + " => " + asmcore.ty_tag(asmcore.ty_from_name(corpus[i])) + "\n";
-        i = i + 1;
-    }
-    write(out);
-    return 0;
+  var corpus: string[] = [
+    "i32", "u32", "u64", "i64", "usize", "f64", "f32", "float", "bool", "boolean", "string",
+    "i32[]", "u32[]", "u64[]", "i64[]", "string[]", "bool[]", "boolean[]", "f64[]",
+    "i32[][]", "string[][]", "Foo[]", "Option[i32][]", "Map[string, i32][]",
+    "Map[string, i32]", "Map[i32, string]", "Map[i32, Option[i32]]", "Map[string, Map[i32, string]]",
+    "Map", "MapConfig", "Map[string]",
+    "MapIter[i32, string]", "MapIter[string]",
+    "Cell[i32]", "Cell[string]",
+    "Option[i32]", "Option[string]", "Option[Map[string, i32]]", "Option[(string, string)]",
+    "Result[string, Err]", "Result[i32, string]", "Result[Foo]",
+    "Vec[T]", "Foo[A, B]", "Bar[i32]",
+    "(i32, string)", "(string, (i32, bool))",
+    "Foo", "mod.Bar", "TestRunner", "", "dyn Shape",
+  ];
+  var out: string = "";
+  var i: i32 = 0;
+  while (i < corpus.len()) {
+    out = out + corpus[i] + " => " + asmcore.ty_tag(asmcore.ty_from_name(corpus[i])) + "\n";
+    i = i + 1;
+  }
+  write(out);
+  return 0;
 }

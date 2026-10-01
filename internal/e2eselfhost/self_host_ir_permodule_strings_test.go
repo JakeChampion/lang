@@ -44,9 +44,15 @@ func TestSelfHostIRPerModuleLinkStrings(t *testing.T) {
 	}
 
 	// Library B: defines blen, with its own string literal "lib".
-	libAsm := emit(t, "function blen(): i32 { var s = \"lib\"; return s.len(); }", "-ir-unit", "lib", "-ir-ns", "b")
-	// Entry A: its own string literal "entrypoint" + a call into B's blen.
-	entryAsm := emit(t, "function main(): i32 { var s = \"entrypoint\"; return s.len() + blen(); }", "-ir-unit", "entry", "-ir-ns", "a", "-ir-extern", "blen")
+	libSrc := "function blen(): i32 { var s = \"lib\"; return s.len(); }"
+	libAsm := emit(t, libSrc, "-ir-unit", "lib", "-ir-ns", "b")
+	// Entry A: its own string literal "entrypoint" + a call into B's blen,
+	// checked against B's source (-ir-sigs).
+	sigPath := filepath.Join(dir, "pms_lib.fern")
+	if err := os.WriteFile(sigPath, []byte(libSrc), 0o644); err != nil {
+		t.Fatalf("write pms_lib.fern: %v", err)
+	}
+	entryAsm := emit(t, "function main(): i32 { var s = \"entrypoint\"; return s.len() + blen(); }", "-ir-unit", "entry", "-ir-ns", "a", "-ir-extern", "blen", "-ir-sigs", sigPath)
 
 	// Each module's string pool is namespaced — no bare `.S0` collision.
 	if !strings.Contains(entryAsm, ".Sa_0:") {

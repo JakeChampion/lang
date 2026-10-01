@@ -29,81 +29,301 @@
 
 import "core/iter";
 
-pub trait Add { function add(self: Self, o: Self): Self; }
-pub trait Sub { function sub(self: Self, o: Self): Self; }
-pub trait Mul { function mul(self: Self, o: Self): Self; }
-pub trait Div { function div(self: Self, o: Self): Self; }
-pub trait Neg { function neg(self: Self): Self; }
+pub trait Add {
+  function add(self: Self, o: Self): Self;
+}
+
+pub trait Sub {
+  function sub(self: Self, o: Self): Self;
+}
+
+pub trait Mul {
+  function mul(self: Self, o: Self): Self;
+}
+
+pub trait Div {
+  function div(self: Self, o: Self): Self;
+}
+
+pub trait Neg {
+  function neg(self: Self): Self;
+}
+
 // Zero is the additive identity (0) as an associated function, so generic
 // reducers can seed an accumulator without a caller-supplied init
 // (`var s = T.zero();`). Kept a STANDALONE trait — not folded into Num — so its
 // primitive impls register across module imports the same way Add/Sub/… do.
-pub trait Zero { function zero(): Self; }
+pub trait Zero {
+  function zero(): Self;
+}
+
 // One is the multiplicative identity (1) as an associated function — the
 // `product` counterpart to Zero. Standalone (like Zero) so its primitive
 // impls register across module imports.
-pub trait One { function one(): Self; }
+pub trait One {
+  function one(): Self;
+}
 
 // Num bundles the four binary arithmetic operators — the conventional bound for
 // "any number". Implementors get it for free once they impl Add/Sub/Mul/Div.
 pub trait Num: Add + Sub + Mul + Div {}
 
 // ---- i32 ----
-impl Add for i32 { function add(self: Self, o: Self): Self { return self + o; } }
-impl Sub for i32 { function sub(self: Self, o: Self): Self { return self - o; } }
-impl Mul for i32 { function mul(self: Self, o: Self): Self { return self * o; } }
-impl Div for i32 { function div(self: Self, o: Self): Self { return self / o; } }
-impl Neg for i32 { function neg(self: Self): Self { return 0 - self; } }
-impl Zero for i32 { function zero(): Self { return 0; } }
-impl One for i32 { function one(): Self { return 1; } }
+impl Add for i32 {
+  function add(self: i32, o: i32): i32 {
+    return self + o;
+  }
+}
+
+impl Sub for i32 {
+  function sub(self: i32, o: i32): i32 {
+    return self - o;
+  }
+}
+
+impl Mul for i32 {
+  function mul(self: i32, o: i32): i32 {
+    return self * o;
+  }
+}
+
+impl Div for i32 {
+  function div(self: i32, o: i32): i32 {
+    return self / o;
+  }
+}
+
+impl Neg for i32 {
+  function neg(self: i32): i32 {
+    return 0 - self;
+  }
+}
+
+impl Zero for i32 {
+  function zero(): i32 {
+    return 0;
+  }
+}
+
+impl One for i32 {
+  function one(): i32 {
+    return 1;
+  }
+}
+
 impl Num for i32 {}
 
 // ---- i64 ----
-impl Add for i64 { function add(self: Self, o: Self): Self { return self + o; } }
-impl Sub for i64 { function sub(self: Self, o: Self): Self { return self - o; } }
-impl Mul for i64 { function mul(self: Self, o: Self): Self { return self * o; } }
-impl Div for i64 { function div(self: Self, o: Self): Self { return self / o; } }
-impl Neg for i64 { function neg(self: Self): Self { return 0 - self; } }
-impl Zero for i64 { function zero(): Self { return 0; } }
-impl One for i64 { function one(): Self { return 1; } }
+impl Add for i64 {
+  function add(self: i64, o: i64): i64 {
+    return self + o;
+  }
+}
+
+impl Sub for i64 {
+  function sub(self: i64, o: i64): i64 {
+    return self - o;
+  }
+}
+
+impl Mul for i64 {
+  function mul(self: i64, o: i64): i64 {
+    return self * o;
+  }
+}
+
+impl Div for i64 {
+  function div(self: i64, o: i64): i64 {
+    return self / o;
+  }
+}
+
+impl Neg for i64 {
+  function neg(self: i64): i64 {
+    return 0 - self;
+  }
+}
+
+impl Zero for i64 {
+  function zero(): i64 {
+    return 0;
+  }
+}
+
+impl One for i64 {
+  function one(): i64 {
+    return 1;
+  }
+}
+
 impl Num for i64 {}
 
 // ---- f64 ----
-impl Add for f64 { function add(self: Self, o: Self): Self { return self + o; } }
-impl Sub for f64 { function sub(self: Self, o: Self): Self { return self - o; } }
-impl Mul for f64 { function mul(self: Self, o: Self): Self { return self * o; } }
-impl Div for f64 { function div(self: Self, o: Self): Self { return self / o; } }
-impl Neg for f64 { function neg(self: Self): Self { return 0.0 - self; } }
-impl Zero for f64 { function zero(): Self { return 0.0; } }
-impl One for f64 { function one(): Self { return 1.0; } }
+impl Add for f64 {
+  function add(self: f64, o: f64): f64 {
+    return self + o;
+  }
+}
+
+impl Sub for f64 {
+  function sub(self: f64, o: f64): f64 {
+    return self - o;
+  }
+}
+
+impl Mul for f64 {
+  function mul(self: f64, o: f64): f64 {
+    return self * o;
+  }
+}
+
+impl Div for f64 {
+  function div(self: f64, o: f64): f64 {
+    return self / o;
+  }
+}
+
+impl Neg for f64 {
+  function neg(self: f64): f64 {
+    return 0.0 - self;
+  }
+}
+
+impl Zero for f64 {
+  function zero(): f64 {
+    return 0.0;
+  }
+}
+
+impl One for f64 {
+  function one(): f64 {
+    return 1.0;
+  }
+}
+
 impl Num for f64 {}
 
 // ---- f32 ----
-impl Add for f32 { function add(self: Self, o: Self): Self { return self + o; } }
-impl Sub for f32 { function sub(self: Self, o: Self): Self { return self - o; } }
-impl Mul for f32 { function mul(self: Self, o: Self): Self { return self * o; } }
-impl Div for f32 { function div(self: Self, o: Self): Self { return self / o; } }
-impl Neg for f32 { function neg(self: Self): Self { return 0.0 - self; } }
-impl Zero for f32 { function zero(): Self { return 0.0; } }
-impl One for f32 { function one(): Self { return 1.0; } }
+impl Add for f32 {
+  function add(self: f32, o: f32): f32 {
+    return self + o;
+  }
+}
+
+impl Sub for f32 {
+  function sub(self: f32, o: f32): f32 {
+    return self - o;
+  }
+}
+
+impl Mul for f32 {
+  function mul(self: f32, o: f32): f32 {
+    return self * o;
+  }
+}
+
+impl Div for f32 {
+  function div(self: f32, o: f32): f32 {
+    return self / o;
+  }
+}
+
+impl Neg for f32 {
+  function neg(self: f32): f32 {
+    return 0.0 - self;
+  }
+}
+
+impl Zero for f32 {
+  function zero(): f32 {
+    return 0.0;
+  }
+}
+
+impl One for f32 {
+  function one(): f32 {
+    return 1.0;
+  }
+}
+
 impl Num for f32 {}
 
 // ---- u32 ---- (unsigned: no Neg)
-impl Add for u32 { function add(self: Self, o: Self): Self { return self + o; } }
-impl Sub for u32 { function sub(self: Self, o: Self): Self { return self - o; } }
-impl Mul for u32 { function mul(self: Self, o: Self): Self { return self * o; } }
-impl Div for u32 { function div(self: Self, o: Self): Self { return self / o; } }
-impl Zero for u32 { function zero(): Self { return 0; } }
-impl One for u32 { function one(): Self { return 1; } }
+impl Add for u32 {
+  function add(self: u32, o: u32): u32 {
+    return self + o;
+  }
+}
+
+impl Sub for u32 {
+  function sub(self: u32, o: u32): u32 {
+    return self - o;
+  }
+}
+
+impl Mul for u32 {
+  function mul(self: u32, o: u32): u32 {
+    return self * o;
+  }
+}
+
+impl Div for u32 {
+  function div(self: u32, o: u32): u32 {
+    return self / o;
+  }
+}
+
+impl Zero for u32 {
+  function zero(): u32 {
+    return 0;
+  }
+}
+
+impl One for u32 {
+  function one(): u32 {
+    return 1;
+  }
+}
+
 impl Num for u32 {}
 
 // ---- u64 ---- (unsigned: no Neg)
-impl Add for u64 { function add(self: Self, o: Self): Self { return self + o; } }
-impl Sub for u64 { function sub(self: Self, o: Self): Self { return self - o; } }
-impl Mul for u64 { function mul(self: Self, o: Self): Self { return self * o; } }
-impl Div for u64 { function div(self: Self, o: Self): Self { return self / o; } }
-impl Zero for u64 { function zero(): Self { return 0; } }
-impl One for u64 { function one(): Self { return 1; } }
+impl Add for u64 {
+  function add(self: u64, o: u64): u64 {
+    return self + o;
+  }
+}
+
+impl Sub for u64 {
+  function sub(self: u64, o: u64): u64 {
+    return self - o;
+  }
+}
+
+impl Mul for u64 {
+  function mul(self: u64, o: u64): u64 {
+    return self * o;
+  }
+}
+
+impl Div for u64 {
+  function div(self: u64, o: u64): u64 {
+    return self / o;
+  }
+}
+
+impl Zero for u64 {
+  function zero(): u64 {
+    return 0;
+  }
+}
+
+impl One for u64 {
+  function one(): u64 {
+    return 1;
+  }
+}
+
 impl Num for u64 {}
 
 // ---- generic numeric reducers ------------------------------------------------
@@ -128,17 +348,21 @@ impl Num for u64 {}
 // sum_with folds `xs` left with `.add`, starting from `zero`: the generic
 // element-wise total. Empty `xs` returns `zero` unchanged.
 pub function sum_with[T: Add](xs: T[], zero: T): T {
-    var acc = zero;
-    for x in xs { acc = acc.add(x); }
-    return acc;
+  var acc = zero;
+  for x in xs {
+    acc = acc.add(x);
+  }
+  return acc;
 }
 
 // product_with folds `xs` left with `.mul`, starting from `one`: the generic
 // element-wise product. Empty `xs` returns `one` unchanged.
 pub function product_with[T: Mul](xs: T[], one: T): T {
-    var acc = one;
-    for x in xs { acc = acc.mul(x); }
-    return acc;
+  var acc = one;
+  for x in xs {
+    acc = acc.mul(x);
+  }
+  return acc;
 }
 
 // sum / product are the implicit-identity forms — `sum_with` / `product_with`
@@ -152,17 +376,21 @@ pub function product_with[T: Mul](xs: T[], one: T): T {
 
 // sum totals `xs` from the additive identity; empty `xs` returns `T.zero()`.
 pub function sum[T: Add + Zero](xs: T[]): T {
-    var acc: T = T.zero();
-    for x in xs { acc = acc.add(x); }
-    return acc;
+  var acc: T = T.zero();
+  for x in xs {
+    acc = acc.add(x);
+  }
+  return acc;
 }
 
 // product multiplies `xs` from the multiplicative identity; empty `xs` returns
 // `T.one()`.
 pub function product[T: Mul + One](xs: T[]): T {
-    var acc: T = T.one();
-    for x in xs { acc = acc.mul(x); }
-    return acc;
+  var acc: T = T.one();
+  for x in xs {
+    acc = acc.mul(x);
+  }
+  return acc;
 }
 
 // `cumsum(xs)` — the running (prefix) sums: `out[i]` is the sum of
@@ -170,20 +398,26 @@ pub function product[T: Mul + One](xs: T[]): T {
 // specialisation of `scan(+)` — the cumulative sibling of `sum`. Empty in,
 // empty out. Same `Add + Zero` bound, so it works for every numeric width.
 pub function cumsum[T: Add + Zero](xs: T[]): T[] {
-    var out: T[] = [];
-    var run: T = T.zero();
-    for x in xs { run = run.add(x); out = out.append(run); }
-    return out;
+  var out: T[] = [];
+  var run: T = T.zero();
+  for x in xs {
+    run = run.add(x);
+    out = out.append(run);
+  }
+  return out;
 }
 
 // `cumproduct(xs)` — the running products: `out[i]` is the product of
 // `xs[0..=i]` (`cumproduct([1,2,3,4])` is `[1,2,6,24]`). The cumulative
 // sibling of `product`; same `Mul + One` bound.
 pub function cumproduct[T: Mul + One](xs: T[]): T[] {
-    var out: T[] = [];
-    var run: T = T.one();
-    for x in xs { run = run.mul(x); out = out.append(run); }
-    return out;
+  var out: T[] = [];
+  var run: T = T.one();
+  for x in xs {
+    run = run.mul(x);
+    out = out.append(run);
+  }
+  return out;
 }
 
 // `adjacent_diff(xs)` — the differences between consecutive elements:
@@ -193,10 +427,13 @@ pub function cumproduct[T: Mul + One](xs: T[]): T[] {
 // standard "convert running totals to per-step deltas" step. Fewer than two
 // elements in, empty out.
 pub function adjacent_diff[T: Sub](xs: T[]): T[] {
-    var out: T[] = [];
-    var i: i32 = 1;
-    while (i < xs.len()) { out = out.append(xs[i].sub(xs[i - 1])); i = i + 1; }
-    return out;
+  var out: T[] = [];
+  var i: i32 = 1;
+  while (i < xs.len()) {
+    out = out.append(xs[i].sub(xs[i - 1]));
+    i = i + 1;
+  }
+  return out;
 }
 
 // ---- iterator forms ----------------------------------------------------------
@@ -218,29 +455,39 @@ pub function adjacent_diff[T: Sub](xs: T[]): T[] {
 // sum_iter totals every value an iterator yields, starting from `zero`
 // (returned unchanged for an empty iterator).
 pub function sum_iter[T: Add, I: iter.Iterator[T]](it: I, zero: T): T {
-    var acc = zero;
-    var cur = it;
-    var go = true;
-    while (go) {
-        match (cur.next()) {
-            Some(t) => { acc = acc.add(t.0); cur = t.1; },
-            None => { go = false; },
-        }
+  var acc = zero;
+  var cur = it;
+  var go = true;
+  while (go) {
+    match (cur.next()) {
+      Some(t) => {
+        acc = acc.add(t.0);
+        cur = t.1;
+      },
+      None => {
+        go = false;
+      }
     }
-    return acc;
+  }
+  return acc;
 }
 
 // product_iter multiplies every value an iterator yields, starting from `one`
 // (returned unchanged for an empty iterator).
 pub function product_iter[T: Mul, I: iter.Iterator[T]](it: I, one: T): T {
-    var acc = one;
-    var cur = it;
-    var go = true;
-    while (go) {
-        match (cur.next()) {
-            Some(t) => { acc = acc.mul(t.0); cur = t.1; },
-            None => { go = false; },
-        }
+  var acc = one;
+  var cur = it;
+  var go = true;
+  while (go) {
+    match (cur.next()) {
+      Some(t) => {
+        acc = acc.mul(t.0);
+        cur = t.1;
+      },
+      None => {
+        go = false;
+      }
     }
-    return acc;
+  }
+  return acc;
 }

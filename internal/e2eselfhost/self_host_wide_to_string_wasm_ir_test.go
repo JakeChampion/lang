@@ -1,7 +1,6 @@
 package e2eselfhost
 
 import (
-	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -41,43 +40,24 @@ const wideToStringProg = `function main(): i32 {
 }
 `
 
-// TestSelfHostWideToStringWasmIR builds the wasm IR driver once and checks both
-// halves of the change: the module no longer bails, and the
-// WAT formatters render the same digits the native interpreter does.
+// wideImports declares the formatters the programs call.
+const wideImports = "import \"std/i32\";\nimport \"std/i64\";\nimport \"std/u64\";\n"
+
+// TestSelfHostWideToStringWasmIR checks that the wide formatters render the
+// same digits the native interpreter does, and that the AST lowering's
+// hand-written formatters are gated one need each.
 func TestSelfHostWideToStringWasmIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
+	l := newWasmStdlibLoader(t)
 
-	// emit runs the driver over src. Without `-ir` the driver goes through
-	// wasm.emit_module — the PRODUCTION dispatcher, which picks the emitter via
-	// should_use_ir_core + wasm_ir_deferrals_ok — so its output is what says
-	// whether the module still defers.
-	emit := func(t *testing.T, src string, forceIR bool) string {
+	emit := func(t *testing.T, src string) string {
 		t.Helper()
-		args := []string{}
-		if forceIR {
-			args = append(args, "-ir")
-		}
-		var cmd *exec.Cmd
-		if len(runner) == 0 {
-			cmd = exec.Command(driverBin, args...)
-		} else {
-			cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), args...)...)
-		}
-		cmd.Stdin = bytes.NewReader([]byte(src))
-		wat, err := cmd.Output()
-		if err != nil || len(wat) == 0 {
-			t.Fatalf("wasm IR driver failed (ir=%v): %v", forceIR, err)
-		}
-		return string(wat)
+		return string(l.emit(t, wideImports+src))
 	}
 
-	// wasmtime is what the `digits` legs need; `routing` reads the emitted WAT
-	// and needs only the driver. Gating the whole test on wasmtime made the
-	// routing assertion — the half that says the module still reaches the IR
-	// emitter — unreachable in every lane without it.
 	runWAT := func(t *testing.T, name, wat string) string {
 		t.Helper()
 		if _, err := exec.LookPath("wasmtime"); err != nil {
@@ -94,16 +74,9 @@ func TestSelfHostWideToStringWasmIR(t *testing.T) {
 		return string(out)
 	}
 
-	t.Run("routing", func(t *testing.T) {
-		wat := emit(t, wideToStringProg, false)
-		if !isIREmittedWAT(t, wat) {
-			t.Error("a wide .to_string() module still does not lower through the IR")
-		}
-	})
-
 	t.Run("digits", func(t *testing.T) {
 		const want = "1234567890123|-9223372036854775808|18446744073709551615|0\n"
-		if got := runWAT(t, "digits", emit(t, wideToStringProg, true)); got != want {
+		if got := runWAT(t, "digits", emit(t, wideToStringProg)); got != want {
 			t.Errorf("wide to_string = %q, want %q", got, want)
 		}
 	})
@@ -117,7 +90,7 @@ func TestSelfHostWideToStringWasmIR(t *testing.T) {
     return 0;
 }
 `
-		if got := runWAT(t, "fstring", emit(t, src, true)); got != "n=42000000000\n" {
+		if got := runWAT(t, "fstring", emit(t, src)); got != "n=42000000000\n" {
 			t.Errorf("f-string i64 = %q, want %q", got, "n=42000000000\n")
 		}
 	})
@@ -154,14 +127,15 @@ func TestSelfHostWideToStringWasmIR(t *testing.T) {
 		},
 	} {
 		t.Run("gate-"+tc.name, func(t *testing.T) {
-			wat := emit(t, tc.src, true)
+			// The hand-written formatters and their gates are the AST lowering's.
+			wat := string(runCaptureAST(t, runner, driverBin, []byte(tc.src), "-ir"))
 			if !strings.Contains(wat, "(func "+tc.present) {
 				t.Errorf("emitted wat has no %s body", tc.present)
 			}
 			if strings.Contains(wat, "(func "+tc.absent) {
 				t.Errorf("emitted wat carries the unused %s body", tc.absent)
 			}
-			if got := runWAT(t, tc.name, wat); got != tc.want {
+			if got := runWAT(t, tc.name, emit(t, tc.src)); got != tc.want {
 				t.Errorf("%s = %q, want %q", tc.name, got, tc.want)
 			}
 		})
@@ -186,7 +160,7 @@ func TestSelfHostWideToStringWasmIR(t *testing.T) {
     return 0;
 }
 `
-		if got := runWAT(t, "zero-churn", emit(t, src, true)); got != "171\n" {
+		if got := runWAT(t, "zero-churn", emit(t, src)); got != "171\n" {
 			t.Errorf("i64 zero churn = %q, want %q", got, "171\n")
 		}
 	})

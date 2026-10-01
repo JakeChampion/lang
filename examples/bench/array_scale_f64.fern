@@ -12,24 +12,24 @@ import "std/array" as array;
 // a different element each round, so a hoisted call or a result computed once
 // and reused shows up as a checksum that stops depending on the rounds.
 function vector(): f64[] {
-    var xs: f64[] = [];
-    var i: i32 = 0;
-    while (i < 4096) {
-        xs = xs.append(((i % 17) as f64) + 0.5);
-        i = i + 1;
-    }
-    return xs;
+  var xs: f64[] = [];
+  var i: i32 = 0;
+  while (i < 4096) {
+    xs = xs.append((i % 17) as f64 + 0.5);
+    i = i + 1;
+  }
+  return xs;
 }
 
 function main(): i32 {
-    var xs: f64[] = vector();
-    var acc: i64 = 0;
-    var r: i32 = 0;
-    while (r < 4000) {
-        var k: f64 = ((r % 5) + 1) as f64;
-        var ys: f64[] = array.scale_f64(xs, k);
-        acc = acc + (ys[r % 4096] as i64);
-        r = r + 1;
-    }
-    return (acc % 97i64) as i32;
+  var xs: f64[] = vector();
+  var acc: i64 = 0;
+  var r: i32 = 0;
+  while (r < 4000) {
+    var k: f64 = (r % 5 + 1) as f64;
+    var ys: f64[] = array.scale_f64(xs, k);
+    acc = acc + ys[r % 4096] as i64;
+    r = r + 1;
+  }
+  return (acc % 97i64) as i32;
 }

@@ -31,10 +31,11 @@ Two alternatives were rejected:
 A cell is shared storage a copy would split. A map holding a view is not
 rebuilt either: the typed lowering refuses to read a view out of a map column
 ("a read of a view map value would share the column's view box"), and a copy
-would have to read one. A dyn holding a view is a box this cannot rebuild. A
-call's result holding any of the three is still refused (`ssasem.copyable`).
-A closure never holds one: a closure that captures a view is refused where it
-is built ("closure capture type").
+would have to read one. A dyn or a function value holding a view is a box
+this cannot rebuild. A call's result holding any of these is still refused
+(`ssasem.copyable`). A closure capturing a bare view is refused where it is
+built ("closure capture type"), but one reaching a view through a captured
+record is built and holds that view.
 
 Whether a value holds a view is `ssasem.holds_view`. Before this, the
 predicate read only a type's structure and a union's type arguments, so a
@@ -43,7 +44,21 @@ holding none. Nothing anchored a call's result of such a type to the argument
 whose bytes it reads, and no copy was made at a merge. Each declared record
 and union now carries the answer, worked out once per module as a fixpoint
 over the declarations (`semsource.view_types`). A dyn holds one when a type
-implementing its traits does. The same predicate decides which self-tail
+implementing its traits does, and a function type when a closure of that type
+captures one. Without the function arm, a record holding a closure over a
+view-holding record counted as holding no view: merged past its source it
+answered 553 where the interpreter answers 313, and it is refused now. A closure
+over a view-holding record returned past its source was already refused, since
+`holds_view` reads the frame's own closure environments (`Func.envs`).
+
+The function answer is per module and per whole `type_key`, so one closure that
+captures a view marks every record with a field of that function type,
+whatever that field's own closures capture. That is the trade records make by
+name. The key is a conservative identity rather than an exact one: `type_key`
+collapses some leaf types, so distinct function types can share the answer,
+only ever toward holding a view.
+
+The same predicate decides which self-tail
 arguments cross a jump (`ssasem.crosses_jump`), so a recursive argument that
 holds views is now declined: a walk down a cons list of `str` payloads keeps a
 frame per cell.
@@ -78,8 +93,14 @@ went from 24 allocations to 39.
 - `a-record-a-call-returns-from-a-branch-local-is-produced`
 - `a-dyn-holding-a-view-keeps-its-source-alive`
 
-`TestSelfHostSemIRStrict`: a dyn holding a view merged past its source, and a
-closure capturing a view, are each refused.
+`TestSelfHostSemIRStrict`: each of these is refused:
+
+- a dyn holding a view merged past its source;
+- a closure capturing a bare view;
+- a record holding a closure over a view-holding record, merged past its
+  source (compiled whole before the function arm);
+- a closure over a view-holding record returned past its source (already
+  refused through `Func.envs`; pinned alongside).
 
 `TestSelfHostSemanticTrmc`: `count` over a cons list of `str` payloads keeps
 its self-call.

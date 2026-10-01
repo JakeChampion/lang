@@ -31,6 +31,8 @@ func (p Position) String() string { return fmt.Sprintf("%d:%d", p.Line, p.Col) }
 type Comment struct {
 	Pos  Position
 	Text string
+	// Trailing is set when code precedes the comment on its line.
+	Trailing bool
 }
 
 // ---------- Types ----------
@@ -2132,6 +2134,10 @@ type Ident struct {
 	// keeps variant resolution deterministic when two enums
 	// declare the same variant name.
 	EnumName string
+	// Local is set by the checker when the name resolved to a parameter,
+	// local or captured binding, so a pass that reads function references
+	// by name knows this one shadows any top-level function it spells.
+	Local bool
 }
 type ArrayLit struct {
 	P     Position

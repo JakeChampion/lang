@@ -1,5 +1,6 @@
 import "std/test";
 import "std/array";
+
 // examples/tests/array_all_equal_test.fern — pure-Fern coverage of std/array's
 // all_equal[T: cmp.Eq] (free + method forms): true iff every element equals the
 // first (≤ 1 distinct value), vacuously true for length < 2. Covers all-equal,
@@ -15,42 +16,42 @@ import "std/array";
 // backends.
 
 function test_all_equal(): test.TestOutcome {
-    return test.assert_true([7, 7, 7].all_equal());
+  return test.assert_true([7, 7, 7].all_equal());
 }
 
 function test_distinct(): test.TestOutcome {
-    return test.assert_true(![1, 2, 3].all_equal());
+  return test.assert_true(![1, 2, 3].all_equal());
 }
 
 function test_last_differs(): test.TestOutcome {
-    return test.assert_true(![1, 1, 2].all_equal());
+  return test.assert_true(![1, 1, 2].all_equal());
 }
 
 function test_first_differs(): test.TestOutcome {
-    return test.assert_true(![2, 1, 1].all_equal());
+  return test.assert_true(![2, 1, 1].all_equal());
 }
 
 function test_empty_vacuous(): test.TestOutcome {
-    var e: i32[] = [];
-    return test.assert_true(e.all_equal());
+  var e: i32[] = [];
+  return test.assert_true(e.all_equal());
 }
 
 function test_single(): test.TestOutcome {
-    return test.assert_true([5].all_equal());
+  return test.assert_true([5].all_equal());
 }
 
 function test_free_fn(): test.TestOutcome {
-    return test.assert_true(array.all_equal([9, 9]));
+  return test.assert_true(array.all_equal([9, 9]));
 }
 
 function main(): i32 {
-    var r: test.TestRunner = test.test_new("std/array all_equal");
-    r = r.it("all equal",     test_all_equal);
-    r = r.it("all distinct",  test_distinct);
-    r = r.it("last differs",  test_last_differs);
-    r = r.it("first differs", test_first_differs);
-    r = r.it("empty vacuous", test_empty_vacuous);
-    r = r.it("single",        test_single);
-    r = r.it("free fn",       test_free_fn);
-    return r.finish();
+  var r: test.TestRunner = test.test_new("std/array all_equal");
+  r = r.it("all equal", test_all_equal);
+  r = r.it("all distinct", test_distinct);
+  r = r.it("last differs", test_last_differs);
+  r = r.it("first differs", test_first_differs);
+  r = r.it("empty vacuous", test_empty_vacuous);
+  r = r.it("single", test_single);
+  r = r.it("free fn", test_free_fn);
+  return r.finish();
 }

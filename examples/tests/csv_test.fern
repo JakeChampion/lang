@@ -1,5 +1,6 @@
 import "std/test";
 import "std/csv" as csv;
+
 // examples/tests/csv_test.fern — pure-Fern coverage of std/csv's
 // RFC 4180 single-line surface: csv_escape (quote-wrap fields with
 // comma / quote / newline, interior quotes doubled), csv_join (escape
@@ -8,32 +9,32 @@ import "std/csv" as csv;
 // the prelude origin; this is the migration-shaped (pure-Fern) companion.
 
 function test_escape_plain(): test.TestOutcome {
-    return test.assert_eq(csv.csv_escape("hello"), "hello");
+  return test.assert_eq(csv.csv_escape("hello"), "hello");
 }
 
 function test_escape_comma(): test.TestOutcome {
-    return test.assert_eq(csv.csv_escape("a,b"), "\"a,b\"");
+  return test.assert_eq(csv.csv_escape("a,b"), "\"a,b\"");
 }
 
 function test_escape_quote(): test.TestOutcome {
-    // Interior quotes are doubled and the field is wrapped.
-    return test.assert_eq(csv.csv_escape("say \"hi\""), "\"say \"\"hi\"\"\"");
+  // Interior quotes are doubled and the field is wrapped.
+  return test.assert_eq(csv.csv_escape("say \"hi\""), "\"say \"\"hi\"\"\"");
 }
 
 function test_escape_newline(): test.TestOutcome {
-    return test.assert_eq(csv.csv_escape("l1\nl2"), "\"l1\nl2\"");
+  return test.assert_eq(csv.csv_escape("l1\nl2"), "\"l1\nl2\"");
 }
 
 function test_join(): test.TestOutcome {
-    return test.assert_eq(csv.csv_join(["a", "b", "c"]), "a,b,c");
+  return test.assert_eq(csv.csv_join(["a", "b", "c"]), "a,b,c");
 }
 
 function test_join_escapes(): test.TestOutcome {
-    return test.assert_eq(csv.csv_join(["a,b", "c"]), "\"a,b\",c");
+  return test.assert_eq(csv.csv_join(["a,b", "c"]), "\"a,b\",c");
 }
 
 function test_join_empty(): test.TestOutcome {
-    return test.assert_eq(csv.csv_join([]), "");
+  return test.assert_eq(csv.csv_join([]), "");
 }
 
 // Many fields mixing pass-through, comma-quoted, quote-doubled, empty,
@@ -41,32 +42,34 @@ function test_join_empty(): test.TestOutcome {
 // (#4379) growing path where csv_join used to recopy the whole record
 // per field.
 function test_join_many(): test.TestOutcome {
-    var row: string[] = ["plain", "has,comma", "has\"quote", "", "line\nbreak"];
-    return test.assert_eq(csv.csv_join(row),
-        "plain,\"has,comma\",\"has\"\"quote\",,\"line\nbreak\"");
+  var row: string[] = ["plain", "has,comma", "has\"quote", "", "line\nbreak"];
+  return test.assert_eq(
+    csv.csv_join(row),
+    "plain,\"has,comma\",\"has\"\"quote\",,\"line\nbreak\"",
+  );
 }
 
 function test_parse_plain(): test.TestOutcome {
-    return test.assert_eq_array(csv.csv_parse_line("a,b,c"), ["a", "b", "c"]);
+  return test.assert_eq_array(csv.csv_parse_line("a,b,c"), ["a", "b", "c"]);
 }
 
 function test_parse_quoted_comma(): test.TestOutcome {
-    // A quoted field may contain commas.
-    return test.assert_eq_array(csv.csv_parse_line("\"a,b\",c"), ["a,b", "c"]);
+  // A quoted field may contain commas.
+  return test.assert_eq_array(csv.csv_parse_line("\"a,b\",c"), ["a,b", "c"]);
 }
 
 function test_parse_doubled_quote(): test.TestOutcome {
-    // "" inside a quoted field decodes to a single ".
-    return test.assert_eq_array(csv.csv_parse_line("\"say \"\"hi\"\"\""), ["say \"hi\""]);
+  // "" inside a quoted field decodes to a single ".
+  return test.assert_eq_array(csv.csv_parse_line("\"say \"\"hi\"\"\""), ["say \"hi\""]);
 }
 
 function test_parse_empty(): test.TestOutcome {
-    // The empty input is a single empty field.
-    return test.assert_eq_array(csv.csv_parse_line(""), [""]);
+  // The empty input is a single empty field.
+  return test.assert_eq_array(csv.csv_parse_line(""), [""]);
 }
 
 function test_roundtrip(): test.TestOutcome {
-    return test.assert_eq_array(csv.csv_parse_line(csv.csv_join(["a,b", "c\"d"])), ["a,b", "c\"d"]);
+  return test.assert_eq_array(csv.csv_parse_line(csv.csv_join(["a,b", "c\"d"])), ["a,b", "c\"d"]);
 }
 
 // Exercises the field builder rewritten to a growable u8[] (#4379): a
@@ -74,67 +77,82 @@ function test_roundtrip(): test.TestOutcome {
 // leading empty field, and a long unquoted field that grows the buffer across
 // reallocations. Byte-identical to the old char-concat behaviour.
 function test_parse_multibyte_and_growth(): test.TestOutcome {
-    return test.assert_eq_array(
-        csv.csv_parse_line(",Glóin,aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,Þórin"),
-        ["", "Glóin", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "Þórin"]);
+  return test.assert_eq_array(
+    csv.csv_parse_line(",Glóin,aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,Þórin"),
+    ["", "Glóin", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "Þórin"],
+  );
 }
 
 // csv_parse — the full multi-record document parser.
 function test_doc_multi_record(): test.TestOutcome {
-    var rows: string[][] = csv.csv_parse("a,b,c\n1,2,3");
-    if (rows.len() != 2) { return test.fail("row count " + rows.len().to_string()); }
-    if (!(rows[0][0] == "a" && rows[0][1] == "b" && rows[0][2] == "c")) { return test.fail("row 0"); }
-    return test.assert_eq_array(rows[1], ["1", "2", "3"]);
+  var rows: string[][] = csv.csv_parse("a,b,c\n1,2,3");
+  if (rows.len() != 2) {
+    return test.fail("row count " + rows.len().to_string());
+  }
+  if (!(rows[0][0] == "a" && rows[0][1] == "b" && rows[0][2] == "c")) {
+    return test.fail("row 0");
+  }
+  return test.assert_eq_array(rows[1], ["1", "2", "3"]);
 }
 
 function test_doc_embedded_newline(): test.TestOutcome {
-    // A newline inside a quoted field does NOT end the record.
-    var rows: string[][] = csv.csv_parse("\"a,b\",\"line1\nline2\",z");
-    if (rows.len() != 1) { return test.fail("row count " + rows.len().to_string()); }
-    return test.assert_eq_array(rows[0], ["a,b", "line1\nline2", "z"]);
+  // A newline inside a quoted field does NOT end the record.
+  var rows: string[][] = csv.csv_parse("\"a,b\",\"line1\nline2\",z");
+  if (rows.len() != 1) {
+    return test.fail("row count " + rows.len().to_string());
+  }
+  return test.assert_eq_array(rows[0], ["a,b", "line1\nline2", "z"]);
 }
 
 function test_doc_crlf_and_trailing(): test.TestOutcome {
-    // CRLF separators + a trailing terminator → no spurious empty record.
-    var rows: string[][] = csv.csv_parse("a,b\r\nc,d\r\n");
-    if (rows.len() != 2) { return test.fail("row count " + rows.len().to_string()); }
-    return test.assert_eq_array(rows[1], ["c", "d"]);
+  // CRLF separators + a trailing terminator → no spurious empty record.
+  var rows: string[][] = csv.csv_parse("a,b\r\nc,d\r\n");
+  if (rows.len() != 2) {
+    return test.fail("row count " + rows.len().to_string());
+  }
+  return test.assert_eq_array(rows[1], ["c", "d"]);
 }
 
 function test_doc_empty_and_trailing_field(): test.TestOutcome {
-    if (csv.csv_parse("").len() != 0) { return test.fail("empty input"); }
-    // Trailing comma → a present empty final field.
-    return test.assert_eq_array(csv.csv_parse("a,")[0], ["a", ""]);
+  if (csv.csv_parse("").len() != 0) {
+    return test.fail("empty input");
+  }
+  // Trailing comma → a present empty final field.
+  return test.assert_eq_array(csv.csv_parse("a,")[0], ["a", ""]);
 }
 
 function test_doc_serialize_roundtrip(): test.TestOutcome {
-    var rows: string[][] = [["x", "y,z"], ["1", "two\nlines"]];
-    var back: string[][] = csv.csv_parse(csv.csv_serialize(rows));
-    if (back.len() != 2) { return test.fail("row count"); }
-    if (!(back[0][0] == "x" && back[0][1] == "y,z")) { return test.fail("row 0"); }
-    return test.assert_eq_array(back[1], ["1", "two\nlines"]);
+  var rows: string[][] = [["x", "y,z"], ["1", "two\nlines"]];
+  var back: string[][] = csv.csv_parse(csv.csv_serialize(rows));
+  if (back.len() != 2) {
+    return test.fail("row count");
+  }
+  if (!(back[0][0] == "x" && back[0][1] == "y,z")) {
+    return test.fail("row 0");
+  }
+  return test.assert_eq_array(back[1], ["1", "two\nlines"]);
 }
 
 function main(): i32 {
-    var r: test.TestRunner = test.test_new("std/csv");
-    r = r.it("escape plain",            test_escape_plain);
-    r = r.it("escape comma",            test_escape_comma);
-    r = r.it("escape quote",            test_escape_quote);
-    r = r.it("escape newline",          test_escape_newline);
-    r = r.it("join",                    test_join);
-    r = r.it("join escapes fields",     test_join_escapes);
-    r = r.it("join empty",              test_join_empty);
-    r = r.it("join many mixed",         test_join_many);
-    r = r.it("parse plain",             test_parse_plain);
-    r = r.it("parse quoted comma",      test_parse_quoted_comma);
-    r = r.it("parse doubled quote",     test_parse_doubled_quote);
-    r = r.it("parse empty",             test_parse_empty);
-    r = r.it("round-trip join/parse",   test_roundtrip);
-    r = r.it("parse multibyte + growth", test_parse_multibyte_and_growth);
-    r = r.it("doc multi-record",        test_doc_multi_record);
-    r = r.it("doc embedded newline",    test_doc_embedded_newline);
-    r = r.it("doc CRLF + trailing",     test_doc_crlf_and_trailing);
-    r = r.it("doc empty + trailing fld", test_doc_empty_and_trailing_field);
-    r = r.it("doc serialize roundtrip", test_doc_serialize_roundtrip);
-    return r.finish();
+  var r: test.TestRunner = test.test_new("std/csv");
+  r = r.it("escape plain", test_escape_plain);
+  r = r.it("escape comma", test_escape_comma);
+  r = r.it("escape quote", test_escape_quote);
+  r = r.it("escape newline", test_escape_newline);
+  r = r.it("join", test_join);
+  r = r.it("join escapes fields", test_join_escapes);
+  r = r.it("join empty", test_join_empty);
+  r = r.it("join many mixed", test_join_many);
+  r = r.it("parse plain", test_parse_plain);
+  r = r.it("parse quoted comma", test_parse_quoted_comma);
+  r = r.it("parse doubled quote", test_parse_doubled_quote);
+  r = r.it("parse empty", test_parse_empty);
+  r = r.it("round-trip join/parse", test_roundtrip);
+  r = r.it("parse multibyte + growth", test_parse_multibyte_and_growth);
+  r = r.it("doc multi-record", test_doc_multi_record);
+  r = r.it("doc embedded newline", test_doc_embedded_newline);
+  r = r.it("doc CRLF + trailing", test_doc_crlf_and_trailing);
+  r = r.it("doc empty + trailing fld", test_doc_empty_and_trailing_field);
+  r = r.it("doc serialize roundtrip", test_doc_serialize_roundtrip);
+  return r.finish();
 }

@@ -51,42 +51,42 @@ import "./util";
 // RcResult is one function's verdict plus the per-site coverage that makes an
 // empty problem list mean something.
 pub struct RcResult {
-    problems: irverify.Problem[],
-    sites: i32,
-    checked: i32,
-    skips: string[],
+  problems: irverify.Problem[],
+  sites: i32,
+  checked: i32,
+  skips: string[],
 }
 
 pub function rc_result_new(): RcResult {
-    var no_p: irverify.Problem[] = [];
-    var no_s: string[] = [];
-    return RcResult { problems: no_p, sites: 0, checked: 0, skips: no_s };
+  var no_p: irverify.Problem[] = [];
+  var no_s: string[] = [];
+  return RcResult { problems: no_p, sites: 0, checked: 0, skips: no_s };
 }
 
 // rc_coverage_str renders the tally with the skip reasons grouped by cause,
 // the same shape irverifystack.coverage_str uses.
 pub function rc_coverage_str(r: RcResult): string {
-    var out: string = "reuse sites modelled " + util.i32_to_string(r.checked)
-        + "/" + util.i32_to_string(r.sites);
-    var seen: string[] = [];
-    var count: i32[] = [];
-    var i: i32 = 0;
-    while (i < r.skips.len()) {
-        var at: i32 = util.index_of_str(seen, r.skips[i]);
-        if (at < 0) {
-            seen = seen.append(r.skips[i]);
-            count = count.append(1);
-        } else {
-            count = count.with(at, count[at] + 1);
-        }
-        i = i + 1;
+  var out: string = "reuse sites modelled " + util.i32_to_string(r.checked)
+    + "/" + util.i32_to_string(r.sites);
+  var seen: string[] = [];
+  var count: i32[] = [];
+  var i: i32 = 0;
+  while (i < r.skips.len()) {
+    var at: i32 = util.index_of_str(seen, r.skips[i]);
+    if (at < 0) {
+      seen = seen.append(r.skips[i]);
+      count = count.append(1);
+    } else {
+      count = count.with(at, count[at] + 1);
     }
-    var j: i32 = 0;
-    while (j < seen.len()) {
-        out = out + "\n    skipped " + util.i32_to_string(count[j]) + ": " + seen[j];
-        j = j + 1;
-    }
-    return out;
+    i = i + 1;
+  }
+  var j: i32 = 0;
+  while (j < seen.len()) {
+    out = out + "\n    skipped " + util.i32_to_string(count[j]) + ": " + seen[j];
+    j = j + 1;
+  }
+  return out;
 }
 
 // ---- op predicates -----------------------------------------------------
@@ -94,16 +94,18 @@ pub function rc_coverage_str(r: RcResult): string {
 // is_reuse_alloc reports whether a call names the reuse allocator. Both
 // spellings are accepted so the pass reads native-emitted streams too.
 function is_reuse_alloc(op: ir.Op): boolean {
-    if (op.kind_tag != ir.kind_id("call_direct")) { return false; }
-    return op.str == "__fern_alloc_reuse" || op.str == "__alloc_reuse";
+  if (op.kind_tag != ir.kind_id("call_direct")) {
+    return false;
+  }
+  return op.str == "__fern_alloc_reuse" || op.str == "__alloc_reuse";
 }
 
 function is_call_named(op: ir.Op, name: string): boolean {
-    return op.kind_tag == ir.kind_id("call_direct") && op.str == name;
+  return op.kind_tag == ir.kind_id("call_direct") && op.str == name;
 }
 
 function is_is_unique(op: ir.Op): boolean {
-    return is_call_named(op, "__fern_rc_is_unique");
+  return is_call_named(op, "__fern_rc_is_unique");
 }
 
 // rc_release_helpers are the runtime entry points that give up the caller's
@@ -121,23 +123,23 @@ function is_is_unique(op: ir.Op): boolean {
 // the shared path and hand back a replacement, so the caller's unit on the
 // operand is gone either way.
 function rc_release_helpers(): string[] {
-    return [
-        "__fern_rc_dec",
-        "__fern_str_dec",
-        "__fern_str_rc_dec",
-        "__fern_arr_dec",
-        "__fern_box_free",
-        "__fern_cell_free",
-        "__fern_closure_drop",
-        "__fern_drop_arr_ptr",
-        "__fern_drop_arr_str",
-        "__free",
-        "__fern_arr_cow_inplace",
-        "__fern_arr_cow_inplace_ptr",
-        "__fern_arr_cow_inplace_str",
-        "__fern_str_append",
-        "__fern_str_append_range",
-    ];
+  return [
+    "__fern_rc_dec",
+    "__fern_str_dec",
+    "__fern_str_rc_dec",
+    "__fern_arr_dec",
+    "__fern_box_free",
+    "__fern_cell_free",
+    "__fern_closure_drop",
+    "__fern_drop_arr_ptr",
+    "__fern_drop_arr_str",
+    "__free",
+    "__fern_arr_cow_inplace",
+    "__fern_arr_cow_inplace_ptr",
+    "__fern_arr_cow_inplace_str",
+    "__fern_str_append",
+    "__fern_str_append_range",
+  ];
 }
 
 // generated_drop_prefixes are the per-type drop functions lowering
@@ -149,74 +151,88 @@ function rc_release_helpers(): string[] {
 // arguments. A "dec" / "drop" / "free" substring rule is worse still — the
 // corpus holds user functions called `mk_free`, `map_inc` and `hex_decode`.
 function generated_drop_prefixes(): string[] {
-    return [
-        "__drop_struct_flat_",
-        "__drop_struct_",
-        "__drop_enum_",
-        "__drop_tuple_",
-        "__drop_dyn_",
-        "__drop_arr_struct_",
-        "__drop_arr_tuple_",
-        "__drop_arr_enum_",
-        "__drop_arr_dyn_",
-        "__drop_arr_arr_",
-        "__drop_arr_of_",
-        "__drop_map_",
-        "__drop_mapchain_",
-        "__closure_drop_",
-        "__sem_release_",
-    ];
+  return [
+    "__drop_struct_flat_",
+    "__drop_struct_",
+    "__drop_enum_",
+    "__drop_tuple_",
+    "__drop_dyn_",
+    "__drop_arr_struct_",
+    "__drop_arr_tuple_",
+    "__drop_arr_enum_",
+    "__drop_arr_dyn_",
+    "__drop_arr_arr_",
+    "__drop_arr_of_",
+    "__drop_map_",
+    "__drop_mapchain_",
+    "__closure_drop_",
+    "__sem_release_",
+  ];
 }
 
 // generated_drop_names are the generated drops whose name carries no type
 // suffix, so no prefix reaches them.
 function generated_drop_names(): string[] {
-    return ["__drop_arr_closure", "__drop_closure_value", "__map_drop_values", "__map_drop_impl"];
+  return ["__drop_arr_closure", "__drop_closure_value", "__map_drop_values", "__map_drop_impl"];
 }
 
 // name_has_prefix requires a non-empty suffix: a drop's suffix is the type
 // it drops, so a bare prefix names nothing and is not a drop.
 function name_has_prefix(name: string, prefix: string): boolean {
-    var m: i32 = prefix.len();
-    if (name.len() <= m) { return false; }
-    var i: i32 = 0;
-    while (i < m) {
-        if (name[i] != prefix[i]) { return false; }
-        i = i + 1;
+  var m: i32 = prefix.len();
+  if (name.len() <= m) {
+    return false;
+  }
+  var i: i32 = 0;
+  while (i < m) {
+    if (name[i] != prefix[i]) {
+      return false;
     }
-    return true;
+    i = i + 1;
+  }
+  return true;
 }
 
 function name_in(name: string, names: string[]): boolean {
-    var i: i32 = 0;
-    while (i < names.len()) {
-        if (name == names[i]) { return true; }
-        i = i + 1;
+  var i: i32 = 0;
+  while (i < names.len()) {
+    if (name == names[i]) {
+      return true;
     }
-    return false;
+    i = i + 1;
+  }
+  return false;
 }
 
 // releases_operand reports whether a call to `name` gives up the caller's
 // ownership unit on the pointer it is passed.
 function releases_operand(name: string): boolean {
-    if (name_in(name, rc_release_helpers())) { return true; }
-    if (name_in(name, generated_drop_names())) { return true; }
-    var prefixes: string[] = generated_drop_prefixes();
-    var i: i32 = 0;
-    while (i < prefixes.len()) {
-        if (name_has_prefix(name, prefixes[i])) { return true; }
-        i = i + 1;
+  if (name_in(name, rc_release_helpers())) {
+    return true;
+  }
+  if (name_in(name, generated_drop_names())) {
+    return true;
+  }
+  var prefixes: string[] = generated_drop_prefixes();
+  var i: i32 = 0;
+  while (i < prefixes.len()) {
+    if (name_has_prefix(name, prefixes[i])) {
+      return true;
     }
-    return false;
+    i = i + 1;
+  }
+  return false;
 }
 
 function is_rc_dec(op: ir.Op): boolean {
-    if (op.kind_tag != ir.kind_id("call_direct")) { return false; }
-    return releases_operand(op.str);
+  if (op.kind_tag != ir.kind_id("call_direct")) {
+    return false;
+  }
+  return releases_operand(op.str);
 }
 
 function is_kind(op: ir.Op, name: string): boolean {
-    return op.kind_tag == ir.kind_id(name);
+  return op.kind_tag == ir.kind_id(name);
 }
 
 // ---- bracket matching --------------------------------------------------
@@ -227,25 +243,31 @@ struct IfSpan { ok: boolean, if_at: i32, else_at: i32 }
 // match_if_backwards walks back from the `end` at end_at to the `if` it
 // closes, tracking nesting, and records the `else` at the scope's own depth.
 function match_if_backwards(ops: ir.Op[], end_at: i32): IfSpan {
-    var depth: i32 = 0;
-    var else_at: i32 = 0 - 1;
-    var i: i32 = end_at - 1;
-    while (i >= 0) {
-        var k: i32 = ops[i].kind_tag;
-        if (k == ir.kind_id("end")) {
-            depth = depth + 1;
-        } else if (k == ir.kind_id("block") || k == ir.kind_id("loop")) {
-            if (depth == 0) { return IfSpan { ok: false, if_at: 0, else_at: 0 - 1 }; }
-            depth = depth - 1;
-        } else if (k == ir.kind_id("if")) {
-            if (depth == 0) { return IfSpan { ok: true, if_at: i, else_at: else_at }; }
-            depth = depth - 1;
-        } else if (k == ir.kind_id("else")) {
-            if (depth == 0) { else_at = i; }
-        }
-        i = i - 1;
+  var depth: i32 = 0;
+  var else_at: i32 = 0 - 1;
+  var i: i32 = end_at - 1;
+  while (i >= 0) {
+    var k: i32 = ops[i].kind_tag;
+    if (k == ir.kind_id("end")) {
+      depth = depth + 1;
+    } else if (k == ir.kind_id("block") || k == ir.kind_id("loop")) {
+      if (depth == 0) {
+        return IfSpan { ok: false, if_at: 0, else_at: 0 - 1 };
+      }
+      depth = depth - 1;
+    } else if (k == ir.kind_id("if")) {
+      if (depth == 0) {
+        return IfSpan { ok: true, if_at: i, else_at: else_at };
+      }
+      depth = depth - 1;
+    } else if (k == ir.kind_id("else")) {
+      if (depth == 0) {
+        else_at = i;
+      }
     }
-    return IfSpan { ok: false, if_at: 0, else_at: 0 - 1 };
+    i = i - 1;
+  }
+  return IfSpan { ok: false, if_at: 0, else_at: 0 - 1 };
 }
 
 // SlotFind is a located local, or a miss.
@@ -254,9 +276,13 @@ struct SlotFind { ok: boolean, slot: i32, at: i32 }
 // scope_delta is how one op moves the nesting depth, so an arm scan can stay
 // at its own level.
 function scope_delta(op: ir.Op): i32 {
-    if (is_kind(op, "block") || is_kind(op, "loop") || is_kind(op, "if")) { return 1; }
-    if (is_kind(op, "end")) { return 0 - 1; }
-    return 0;
+  if (is_kind(op, "block") || is_kind(op, "loop") || is_kind(op, "if")) {
+    return 1;
+  }
+  if (is_kind(op, "end")) {
+    return 0 - 1;
+  }
+  return 0;
 }
 
 // sole_token_source returns the local whose value the reuse arm stores into
@@ -265,40 +291,44 @@ function scope_delta(op: ir.Op): i32 {
 // reach the box base (`load_local D; const_i32 hdr; sub`), the self-host
 // stores the pointer as it is.
 function sole_token_source(ops: ir.Op[], from: i32, to: i32, token_slot: i32): SlotFind {
-    var found: SlotFind = SlotFind { ok: false, slot: 0, at: 0 };
-    var depth: i32 = 0;
-    var i: i32 = from;
-    while (i < to) {
-        var d: i32 = scope_delta(ops[i]);
-        if (d != 0) {
-            depth = depth + d;
-            i = i + 1;
-            continue;
-        }
-        if (depth != 0 || !is_kind(ops[i], "store_local") || ops[i].i32_imm != token_slot) {
-            i = i + 1;
-            continue;
-        }
-        if (found.ok) { return SlotFind { ok: false, slot: 0, at: 0 }; }
-        var src: i32 = read_token_operand(ops, from, i);
-        if (src < 0) { return SlotFind { ok: false, slot: 0, at: 0 }; }
-        found = SlotFind { ok: true, slot: src, at: i };
-        i = i + 1;
+  var found: SlotFind = SlotFind { ok: false, slot: 0, at: 0 };
+  var depth: i32 = 0;
+  var i: i32 = from;
+  while (i < to) {
+    var d: i32 = scope_delta(ops[i]);
+    if (d != 0) {
+      depth = depth + d;
+      i = i + 1;
+      continue;
     }
-    return found;
+    if (depth != 0 || !is_kind(ops[i], "store_local") || ops[i].i32_imm != token_slot) {
+      i = i + 1;
+      continue;
+    }
+    if (found.ok) {
+      return SlotFind { ok: false, slot: 0, at: 0 };
+    }
+    var src: i32 = read_token_operand(ops, from, i);
+    if (src < 0) {
+      return SlotFind { ok: false, slot: 0, at: 0 };
+    }
+    found = SlotFind { ok: true, slot: src, at: i };
+    i = i + 1;
+  }
+  return found;
 }
 
 // read_token_operand returns the local whose load feeds the store at `at`, or
 // -1 when the value did not come from one local.
 function read_token_operand(ops: ir.Op[], from: i32, at: i32): i32 {
-    if (at - 1 >= from && is_kind(ops[at - 1], "load_local")) {
-        return ops[at - 1].i32_imm;
-    }
-    if (at - 3 >= from && is_kind(ops[at - 1], "sub")
-        && is_kind(ops[at - 2], "const_i32") && is_kind(ops[at - 3], "load_local")) {
-        return ops[at - 3].i32_imm;
-    }
-    return 0 - 1;
+  if (at - 1 >= from && is_kind(ops[at - 1], "load_local")) {
+    return ops[at - 1].i32_imm;
+  }
+  if (at - 3 >= from && is_kind(ops[at - 1], "sub")
+    && is_kind(ops[at - 2], "const_i32") && is_kind(ops[at - 3], "load_local")) {
+    return ops[at - 3].i32_imm;
+  }
+  return 0 - 1;
 }
 
 // DeclineRead is the decline arm's release: `found` when the arm holds one,
@@ -311,27 +341,27 @@ function read_token_operand(ops: ir.Op[], from: i32, at: i32): i32 {
 struct DeclineRead { ok: boolean, found: boolean, slot: i32, at: i32 }
 
 function sole_decline(ops: ir.Op[], from: i32, to: i32): DeclineRead {
-    var found: DeclineRead = DeclineRead { ok: true, found: false, slot: 0, at: 0 };
-    var depth: i32 = 0;
-    var i: i32 = from;
-    while (i < to) {
-        var d: i32 = scope_delta(ops[i]);
-        if (d != 0) {
-            depth = depth + d;
-            i = i + 1;
-            continue;
-        }
-        if (depth != 0 || !is_rc_dec(ops[i])) {
-            i = i + 1;
-            continue;
-        }
-        if (found.found || i - 1 < from || !is_kind(ops[i - 1], "load_local")) {
-            return DeclineRead { ok: false, found: false, slot: 0, at: 0 };
-        }
-        found = DeclineRead { ok: true, found: true, slot: ops[i - 1].i32_imm, at: i };
-        i = i + 1;
+  var found: DeclineRead = DeclineRead { ok: true, found: false, slot: 0, at: 0 };
+  var depth: i32 = 0;
+  var i: i32 = from;
+  while (i < to) {
+    var d: i32 = scope_delta(ops[i]);
+    if (d != 0) {
+      depth = depth + d;
+      i = i + 1;
+      continue;
     }
-    return found;
+    if (depth != 0 || !is_rc_dec(ops[i])) {
+      i = i + 1;
+      continue;
+    }
+    if (found.found || i - 1 < from || !is_kind(ops[i - 1], "load_local")) {
+      return DeclineRead { ok: false, found: false, slot: 0, at: 0 };
+    }
+    found = DeclineRead { ok: true, found: true, slot: ops[i - 1].i32_imm, at: i };
+    i = i + 1;
+  }
+  return found;
 }
 
 // ---- site recognition --------------------------------------------------
@@ -339,41 +369,47 @@ function sole_decline(ops: ir.Op[], from: i32, to: i32): DeclineRead {
 // Site is one recognised reuse site: the three locals its protocol names, and
 // where each was read from. `why` carries the skip reason when ok is false.
 struct Site {
-    ok: boolean,
-    why: string,
-    have_dec: boolean,
-    gate: i32,
-    token: i32,
-    dec: i32,
-    gate_at: i32,
-    token_at: i32,
-    dec_at: i32,
+  ok: boolean,
+  why: string,
+  have_dec: boolean,
+  gate: i32,
+  token: i32,
+  dec: i32,
+  gate_at: i32,
+  token_at: i32,
+  dec_at: i32,
 }
 
 function site_skip(why: string): Site {
-    return Site { ok: false, why: why, have_dec: false, gate: 0, token: 0, dec: 0, gate_at: 0, token_at: 0, dec_at: 0 };
+  return Site { ok: false, why: why, have_dec: false, gate: 0, token: 0, dec: 0, gate_at: 0, token_at: 0, dec_at: 0 };
 }
 
 // token_arg_slot walks back over the allocator's trailing size constants to
 // the load that pushed its first argument, so the arity does not matter.
 function token_arg_slot(ops: ir.Op[], call: i32): i32 {
-    var j: i32 = call - 1;
-    while (j >= 0 && is_kind(ops[j], "const_i32")) { j = j - 1; }
-    if (j < 0 || !is_kind(ops[j], "load_local")) { return 0 - 1; }
-    return j;
+  var j: i32 = call - 1;
+  while (j >= 0 && is_kind(ops[j], "const_i32")) {
+    j = j - 1;
+  }
+  if (j < 0 || !is_kind(ops[j], "load_local")) {
+    return 0 - 1;
+  }
+  return j;
 }
 
 // select_end_at finds the `end` that closes the token select, stepping over
 // the donor-slot zeroing native emits between the select and the call and the
 // self-host does not.
 function select_end_at(ops: ir.Op[], token_at: i32): i32 {
-    var k: i32 = token_at - 1;
-    if (k >= 1 && is_kind(ops[k], "store_local")
-        && is_kind(ops[k - 1], "const_i32") && ops[k - 1].i32_imm == 0) {
-        k = k - 2;
-    }
-    if (k < 0 || !is_kind(ops[k], "end")) { return 0 - 1; }
-    return k;
+  var k: i32 = token_at - 1;
+  if (k >= 1 && is_kind(ops[k], "store_local")
+    && is_kind(ops[k - 1], "const_i32") && ops[k - 1].i32_imm == 0) {
+    k = k - 2;
+  }
+  if (k < 0 || !is_kind(ops[k], "end")) {
+    return 0 - 1;
+  }
+  return k;
 }
 
 // GateRead is the donor the uniqueness gate tested. `code` is 0 on success, 1
@@ -398,35 +434,45 @@ struct GateRead { code: i32, slot: i32 }
 // In the last of those the donor is X, the slot the tee wrote, because that is
 // the slot the reuse arm loads for its token.
 function gate_slot(ops: ir.Op[], if_at: i32): GateRead {
-    var at: i32 = flag_source(ops, if_at);
-    if (at < 0) { return GateRead { code: 2, slot: 0 }; }
-    if (at < 1 || !is_is_unique(ops[at])) { return GateRead { code: 1, slot: 0 }; }
-    // The donor is whatever fed is_unique: a plain load, or a tee whose slot
-    // the reuse arm will load back.
-    if (!is_kind(ops[at - 1], "load_local") && !is_kind(ops[at - 1], "tee_local")) {
-        return GateRead { code: 1, slot: 0 };
-    }
-    return GateRead { code: 0, slot: ops[at - 1].i32_imm };
+  var at: i32 = flag_source(ops, if_at);
+  if (at < 0) {
+    return GateRead { code: 2, slot: 0 };
+  }
+  if (at < 1 || !is_is_unique(ops[at])) {
+    return GateRead { code: 1, slot: 0 };
+  }
+  // The donor is whatever fed is_unique: a plain load, or a tee whose slot
+  // the reuse arm will load back.
+  if (!is_kind(ops[at - 1], "load_local") && !is_kind(ops[at - 1], "tee_local")) {
+    return GateRead { code: 1, slot: 0 };
+  }
+  return GateRead { code: 0, slot: ops[at - 1].i32_imm };
 }
 
 // flag_source steps back over however the is_unique flag reached the branch
 // and returns the index the flag was produced at, or -1 when the select is
 // conditioned on something that is not a uniqueness flag.
 function flag_source(ops: ir.Op[], if_at: i32): i32 {
-    var at: i32 = if_at - 1;
-    if (at < 0) { return 0 - 1; }
-    if (is_is_unique(ops[at])) { return at; }
-    if (is_kind(ops[at], "tee_local")) { return at - 1; }
-    if (at >= 1 && is_kind(ops[at], "load_local")
-        && is_kind(ops[at - 1], "store_local") && ops[at - 1].i32_imm == ops[at].i32_imm) {
-        return at - 2;
-    }
+  var at: i32 = if_at - 1;
+  if (at < 0) {
     return 0 - 1;
+  }
+  if (is_is_unique(ops[at])) {
+    return at;
+  }
+  if (is_kind(ops[at], "tee_local")) {
+    return at - 1;
+  }
+  if (at >= 1 && is_kind(ops[at], "load_local")
+    && is_kind(ops[at - 1], "store_local") && ops[at - 1].i32_imm == ops[at].i32_imm) {
+    return at - 2;
+  }
+  return 0 - 1;
 }
 
 // A miss here falls through to read_site's own skip, so it carries no reason.
 function no_keep(): Site {
-    return Site { ok: false, why: "", have_dec: false, gate: 0, token: 0, dec: 0, gate_at: 0, token_at: 0, dec_at: 0 };
+  return Site { ok: false, why: "", have_dec: false, gate: 0, token: 0, dec: 0, gate_at: 0, token_at: 0, dec_at: 0 };
 }
 
 // read_keep_site recognises the self-host's kept-field reuse (ssarc.keep_token,
@@ -436,101 +482,129 @@ function no_keep(): Site {
 // earlier select supplies the gate and the token source, and the later one's
 // else arm the decline release.
 function read_keep_site(ops: ir.Op[], span: IfSpan, end_at: i32, token_slot: i32): Site {
-    var at: i32 = span.if_at;
-    if (at < 3 || !is_kind(ops[at - 1], "ne") || !is_kind(ops[at - 2], "const_i32") || ops[at - 2].i32_imm != 0
-        || !is_kind(ops[at - 3], "load_local") || ops[at - 3].i32_imm != token_slot) {
-        return no_keep();
-    }
-    var k: i32 = at - 4;
-    while (k >= 2) {
-        if (is_kind(ops[k], "end") && is_kind(ops[k - 1], "store_local") && ops[k - 1].i32_imm == token_slot
-            && is_kind(ops[k - 2], "const_i32") && ops[k - 2].i32_imm == 0) {
-            var sel: IfSpan = match_if_backwards(ops, k);
-            if (!sel.ok || sel.else_at < 0) { return no_keep(); }
-            var gate: GateRead = gate_slot(ops, sel.if_at);
-            if (gate.code != 0) { return no_keep(); }
-            var tok: SlotFind = sole_token_source(ops, sel.if_at + 1, sel.else_at, token_slot);
-            if (!tok.ok) { return no_keep(); }
-            var dec: DeclineRead = sole_decline(ops, span.else_at + 1, end_at);
-            if (!dec.ok) { return no_keep(); }
-            return Site { ok: true, why: "", have_dec: dec.found, gate: gate.slot, token: tok.slot, dec: dec.slot,
-                gate_at: sel.if_at - 3, token_at: tok.at, dec_at: dec.at };
-        }
-        k = k - 1;
-    }
+  var at: i32 = span.if_at;
+  if (at < 3 || !is_kind(ops[at - 1], "ne") || !is_kind(ops[at - 2], "const_i32") || ops[at - 2].i32_imm != 0
+    || !is_kind(ops[at - 3], "load_local") || ops[at - 3].i32_imm != token_slot) {
     return no_keep();
+  }
+  var k: i32 = at - 4;
+  while (k >= 2) {
+    if (is_kind(ops[k], "end") && is_kind(ops[k - 1], "store_local") && ops[k - 1].i32_imm == token_slot
+      && is_kind(ops[k - 2], "const_i32") && ops[k - 2].i32_imm == 0) {
+      var sel: IfSpan = match_if_backwards(ops, k);
+      if (!sel.ok || sel.else_at < 0) {
+        return no_keep();
+      }
+      var gate: GateRead = gate_slot(ops, sel.if_at);
+      if (gate.code != 0) {
+        return no_keep();
+      }
+      var tok: SlotFind = sole_token_source(ops, sel.if_at + 1, sel.else_at, token_slot);
+      if (!tok.ok) {
+        return no_keep();
+      }
+      var dec: DeclineRead = sole_decline(ops, span.else_at + 1, end_at);
+      if (!dec.ok) {
+        return no_keep();
+      }
+      return Site {
+        ok: true, why: "", have_dec: dec.found, gate: gate.slot, token: tok.slot, dec: dec.slot,
+        gate_at: sel.if_at - 3, token_at: tok.at, dec_at: dec.at,
+      };
+    }
+    k = k - 1;
+  }
+  return no_keep();
 }
 
 // read_site recognises the reuse site whose allocator call is at `call`.
 function read_site(ops: ir.Op[], call: i32): Site {
-    var tok_at: i32 = token_arg_slot(ops, call);
-    if (tok_at < 0) { return site_skip("token argument is not a local load"); }
-    var token_slot: i32 = ops[tok_at].i32_imm;
+  var tok_at: i32 = token_arg_slot(ops, call);
+  if (tok_at < 0) {
+    return site_skip("token argument is not a local load");
+  }
+  var token_slot: i32 = ops[tok_at].i32_imm;
 
-    var end_at: i32 = select_end_at(ops, tok_at);
-    if (end_at < 0) { return site_skip("no token select before the reuse call"); }
+  var end_at: i32 = select_end_at(ops, tok_at);
+  if (end_at < 0) {
+    return site_skip("no token select before the reuse call");
+  }
 
-    var span: IfSpan = match_if_backwards(ops, end_at);
-    if (!span.ok) { return site_skip("token select is not a well-formed if"); }
-    if (span.else_at < 0) { return site_skip("token select has no decline arm"); }
+  var span: IfSpan = match_if_backwards(ops, end_at);
+  if (!span.ok) {
+    return site_skip("token select is not a well-formed if");
+  }
+  if (span.else_at < 0) {
+    return site_skip("token select has no decline arm");
+  }
 
-    var gate: GateRead = gate_slot(ops, span.if_at);
-    if (gate.code == 2) {
-        var kept: Site = read_keep_site(ops, span, end_at, token_slot);
-        if (kept.ok) { return kept; }
+  var gate: GateRead = gate_slot(ops, span.if_at);
+  if (gate.code == 2) {
+    var kept: Site = read_keep_site(ops, span, end_at, token_slot);
+    if (kept.ok) {
+      return kept;
     }
-    if (gate.code == 1) { return site_skip("no uniqueness gate before the token select"); }
-    if (gate.code == 2) { return site_skip("token select is not conditioned on a local"); }
+  }
+  if (gate.code == 1) {
+    return site_skip("no uniqueness gate before the token select");
+  }
+  if (gate.code == 2) {
+    return site_skip("token select is not conditioned on a local");
+  }
 
-    var tok: SlotFind = sole_token_source(ops, span.if_at + 1, span.else_at, token_slot);
-    if (!tok.ok) { return site_skip("reuse arm does not derive the token from one local"); }
+  var tok: SlotFind = sole_token_source(ops, span.if_at + 1, span.else_at, token_slot);
+  if (!tok.ok) {
+    return site_skip("reuse arm does not derive the token from one local");
+  }
 
-    var dec: DeclineRead = sole_decline(ops, span.else_at + 1, end_at);
-    if (!dec.ok) { return site_skip("decline arm releases more than one local"); }
+  var dec: DeclineRead = sole_decline(ops, span.else_at + 1, end_at);
+  if (!dec.ok) {
+    return site_skip("decline arm releases more than one local");
+  }
 
-    return Site {
-        ok: true,
-        why: "",
-        have_dec: dec.found,
-        gate: gate.slot,
-        token: tok.slot,
-        dec: dec.slot,
-        gate_at: span.if_at - 3,
-        token_at: tok.at,
-        dec_at: dec.at,
-    };
+  return Site {
+    ok: true,
+    why: "",
+    have_dec: dec.found,
+    gate: gate.slot,
+    token: tok.slot,
+    dec: dec.slot,
+    gate_at: span.if_at - 3,
+    token_at: tok.at,
+    dec_at: dec.at,
+  };
 }
 
 // ---- the pass ----------------------------------------------------------
 
 // site_problems is what one recognised site is wrong about, if anything.
 function site_problems(fn_name: string, call: i32, s: Site): irverify.Problem[] {
-    var out: irverify.Problem[] = [];
-    if (s.gate != s.token) {
-        out = out.append(irverify.Problem {
-            fn_name: fn_name,
-            op: call,
-            kind: "call_direct",
-            msg: "reuse site takes local " + util.i32_to_string(s.token)
-                + "'s box as its allocation token, but tested local " + util.i32_to_string(s.gate)
-                + " for sole ownership (gate at op " + util.i32_to_string(s.gate_at)
-                + ", token at op " + util.i32_to_string(s.token_at)
-                + "): the box being written over was never proved unique",
-        });
-    }
-    if (s.have_dec && s.dec != s.gate) {
-        out = out.append(irverify.Problem {
-            fn_name: fn_name,
-            op: call,
-            kind: "call_direct",
-            msg: "reuse site's decline arm releases local " + util.i32_to_string(s.dec)
-                + ", but the uniqueness gate tested local " + util.i32_to_string(s.gate)
-                + " (gate at op " + util.i32_to_string(s.gate_at)
-                + ", release at op " + util.i32_to_string(s.dec_at)
-                + "): the tested donor leaks on the decline path",
-        });
-    }
-    return out;
+  var out: irverify.Problem[] = [];
+  if (s.gate != s.token) {
+    out = out.append(irverify.Problem {
+      fn_name: fn_name,
+      op: call,
+      kind: "call_direct",
+      msg: "reuse site takes local " + util.i32_to_string(s.token)
+        + "'s box as its allocation token, but tested local " + util.i32_to_string(s.gate)
+        + " for sole ownership (gate at op " + util.i32_to_string(s.gate_at)
+        + ", token at op " + util.i32_to_string(s.token_at)
+        + "): the box being written over was never proved unique",
+    });
+  }
+  if (s.have_dec && s.dec != s.gate) {
+    out = out.append(irverify.Problem {
+      fn_name: fn_name,
+      op: call,
+      kind: "call_direct",
+      msg: "reuse site's decline arm releases local " + util.i32_to_string(s.dec)
+        + ", but the uniqueness gate tested local " + util.i32_to_string(s.gate)
+        + " (gate at op " + util.i32_to_string(s.gate_at)
+        + ", release at op " + util.i32_to_string(s.dec_at)
+        + "): the tested donor leaks on the decline path",
+    });
+  }
+  return out;
 }
 
 // Claim is one recognised site's take of a donor's box.
@@ -539,18 +613,20 @@ struct Claim { at: i32, donor: i32 }
 // skip_to_matching_end returns the index of the `end` closing the scope whose
 // `else` is at else_at, or -1 when the stream is unbalanced.
 function skip_to_matching_end(ops: ir.Op[], else_at: i32): i32 {
-    var depth: i32 = 0;
-    var i: i32 = else_at + 1;
-    while (i < ops.len()) {
-        if (is_kind(ops[i], "block") || is_kind(ops[i], "loop") || is_kind(ops[i], "if")) {
-            depth = depth + 1;
-        } else if (is_kind(ops[i], "end")) {
-            if (depth == 0) { return i; }
-            depth = depth - 1;
-        }
-        i = i + 1;
+  var depth: i32 = 0;
+  var i: i32 = else_at + 1;
+  while (i < ops.len()) {
+    if (is_kind(ops[i], "block") || is_kind(ops[i], "loop") || is_kind(ops[i], "if")) {
+      depth = depth + 1;
+    } else if (is_kind(ops[i], "end")) {
+      if (depth == 0) {
+        return i;
+      }
+      depth = depth - 1;
     }
-    return 0 - 1;
+    i = i + 1;
+  }
+  return 0 - 1;
 }
 
 // reaches reports whether control can run from the claim at `from` to the one
@@ -562,26 +638,34 @@ function skip_to_matching_end(ops: ir.Op[], else_at: i32): i32 {
 // `from` and is skipped. Everything after an enclosing `end` is reachable,
 // because control leaves the scope and continues.
 function reaches(ops: ir.Op[], from: i32, to: i32, donor: i32): boolean {
-    var depth: i32 = 0;
-    var i: i32 = from + 1;
-    while (i < to) {
-        if (is_kind(ops[i], "block") || is_kind(ops[i], "loop") || is_kind(ops[i], "if")) {
-            depth = depth + 1;
-        } else if (is_kind(ops[i], "end")) {
-            if (depth > 0) { depth = depth - 1; }
-        } else if (is_kind(ops[i], "else")) {
-            if (depth == 0) {
-                var j: i32 = skip_to_matching_end(ops, i);
-                if (j < 0) { return false; }
-                if (to < j) { return false; }
-                i = j;
-            }
-        } else if (is_kind(ops[i], "store_local") || is_kind(ops[i], "tee_local")) {
-            if (ops[i].i32_imm == donor) { return false; }
+  var depth: i32 = 0;
+  var i: i32 = from + 1;
+  while (i < to) {
+    if (is_kind(ops[i], "block") || is_kind(ops[i], "loop") || is_kind(ops[i], "if")) {
+      depth = depth + 1;
+    } else if (is_kind(ops[i], "end")) {
+      if (depth > 0) {
+        depth = depth - 1;
+      }
+    } else if (is_kind(ops[i], "else")) {
+      if (depth == 0) {
+        var j: i32 = skip_to_matching_end(ops, i);
+        if (j < 0) {
+          return false;
         }
-        i = i + 1;
+        if (to < j) {
+          return false;
+        }
+        i = j;
+      }
+    } else if (is_kind(ops[i], "store_local") || is_kind(ops[i], "tee_local")) {
+      if (ops[i].i32_imm == donor) {
+        return false;
+      }
     }
-    return true;
+    i = i + 1;
+  }
+  return true;
 }
 
 // double_claim_problems reports a donor whose box two sites both take on one
@@ -597,62 +681,62 @@ function reaches(ops: ir.Op[], from: i32, to: i32, donor: i32): boolean {
 // Sites the recogniser skipped carry no donor and cannot participate, so this
 // is bounded by the same coverage the rest of the pass reports.
 function double_claim_problems(fn_name: string, ops: ir.Op[], claims: Claim[]): irverify.Problem[] {
-    var out: irverify.Problem[] = [];
-    var i: i32 = 0;
-    while (i < claims.len()) {
-        var j: i32 = i + 1;
-        while (j < claims.len()) {
-            if (claims[j].donor == claims[i].donor
-                && reaches(ops, claims[i].at, claims[j].at, claims[i].donor)) {
-                out = out.append(irverify.Problem {
-                    fn_name: fn_name,
-                    op: claims[j].at,
-                    kind: "call_direct",
-                    msg: "reuse site takes local " + util.i32_to_string(claims[j].donor)
-                        + "'s box, which the site at op " + util.i32_to_string(claims[i].at)
-                        + " already took and never rebound: one allocation handed to two recipients",
-                });
-            }
-            j = j + 1;
-        }
-        i = i + 1;
+  var out: irverify.Problem[] = [];
+  var i: i32 = 0;
+  while (i < claims.len()) {
+    var j: i32 = i + 1;
+    while (j < claims.len()) {
+      if (claims[j].donor == claims[i].donor
+        && reaches(ops, claims[i].at, claims[j].at, claims[i].donor)) {
+        out = out.append(irverify.Problem {
+          fn_name: fn_name,
+          op: claims[j].at,
+          kind: "call_direct",
+          msg: "reuse site takes local " + util.i32_to_string(claims[j].donor)
+            + "'s box, which the site at op " + util.i32_to_string(claims[i].at)
+            + " already took and never rebound: one allocation handed to two recipients",
+        });
+      }
+      j = j + 1;
     }
-    return out;
+    i = i + 1;
+  }
+  return out;
 }
 
 // verify_rc_fn checks every reuse site in one lowered function. Unlike the
 // stack pass it never abandons a whole function: a site it cannot model costs
 // only that site's coverage.
 pub function verify_rc_fn(fn_name: string, ops: ir.Op[]): RcResult {
-    var r: RcResult = rc_result_new();
-    var claims: Claim[] = [];
-    var i: i32 = 0;
-    while (i < ops.len()) {
-        if (is_reuse_alloc(ops[i])) {
-            r = RcResult { ...r, sites: r.sites + 1 };
-            var s: Site = read_site(ops, i);
-            if (s.ok) {
-                var ps: irverify.Problem[] = site_problems(fn_name, i, s);
-                var j: i32 = 0;
-                var acc: irverify.Problem[] = r.problems;
-                while (j < ps.len()) {
-                    acc = acc.append(ps[j]);
-                    j = j + 1;
-                }
-                r = RcResult { ...r, checked: r.checked + 1, problems: acc };
-                claims = claims.append(Claim { at: i, donor: s.gate });
-            } else {
-                r = RcResult { ...r, skips: r.skips.append(s.why) };
-            }
+  var r: RcResult = rc_result_new();
+  var claims: Claim[] = [];
+  var i: i32 = 0;
+  while (i < ops.len()) {
+    if (is_reuse_alloc(ops[i])) {
+      r = RcResult { ...r, sites: r.sites + 1 };
+      var s: Site = read_site(ops, i);
+      if (s.ok) {
+        var ps: irverify.Problem[] = site_problems(fn_name, i, s);
+        var j: i32 = 0;
+        var acc: irverify.Problem[] = r.problems;
+        while (j < ps.len()) {
+          acc = acc.append(ps[j]);
+          j = j + 1;
         }
-        i = i + 1;
+        r = RcResult { ...r, checked: r.checked + 1, problems: acc };
+        claims = claims.append(Claim { at: i, donor: s.gate });
+      } else {
+        r = RcResult { ...r, skips: r.skips.append(s.why) };
+      }
     }
-    var dp: irverify.Problem[] = double_claim_problems(fn_name, ops, claims);
-    var k: i32 = 0;
-    var all: irverify.Problem[] = r.problems;
-    while (k < dp.len()) {
-        all = all.append(dp[k]);
-        k = k + 1;
-    }
-    return RcResult { ...r, problems: all };
+    i = i + 1;
+  }
+  var dp: irverify.Problem[] = double_claim_problems(fn_name, ops, claims);
+  var k: i32 = 0;
+  var all: irverify.Problem[] = r.problems;
+  while (k < dp.len()) {
+    all = all.append(dp[k]);
+    k = k + 1;
+  }
+  return RcResult { ...r, problems: all };
 }

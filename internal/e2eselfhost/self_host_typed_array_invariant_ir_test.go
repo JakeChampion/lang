@@ -28,8 +28,7 @@ import (
 // fails here rather than years later.
 //
 // Half the fixtures are self-host dialect with no interpreter oracle
-// (`str_split` is E001 natively; `.bytes()` / `.lines()` need
-// `std/string` imported), so their exit codes are stated and were verified
+// (`.split()`, `.bytes()` and `.lines()` need `std/string` imported), so their exit codes are stated and were verified
 // against the emitted wasm. The three that ARE native-valid carry the same value
 // on both, which is what makes the stated ones credible.
 func TestSelfHostTypedArrayInvariantIR(t *testing.T) {
@@ -53,9 +52,9 @@ func TestSelfHostTypedArrayInvariantIR(t *testing.T) {
 		{"args-index", `function main(): i32 { var a = args(); return a.len(); }`, 3, []string{"A", "B"}},
 		{"args-for", `function main(): i32 { var a = args(); var n = 0; for s in a { n = n + 1; } return n; }`, 3, []string{"A", "B"}},
 
-		// string[] from the split builtin and from a declared return type.
-		{"split-index", `function main(): i32 { var xs = str_split("a-b-c", "-"); return xs.len(); }`, 3, nil},
-		{"split-for", `function main(): i32 { var xs = str_split("a-b-c", "-"); var n = 0; for s in xs { n = n + s.len(); } return n; }`, 3, nil},
+		// string[] from split and from a declared return type.
+		{"split-index", `function main(): i32 { var xs = "a-b-c".split("-"); return xs.len(); }`, 3, nil},
+		{"split-for", `function main(): i32 { var xs = "a-b-c".split("-"); var n = 0; for s in xs { n = n + s.len(); } return n; }`, 3, nil},
 		{"strret-index", "function mk(): string[] { return [\"ab\", \"cde\"]; }\nfunction main(): i32 { var xs = mk(); return xs[0].len() + xs[1].len(); }", 5, nil},
 		{"strret-for", "function mk(): string[] { return [\"ab\", \"cde\"]; }\nfunction main(): i32 { var xs = mk(); var n = 0; for s in xs { n = n + s.len(); } return n; }", 5, nil},
 

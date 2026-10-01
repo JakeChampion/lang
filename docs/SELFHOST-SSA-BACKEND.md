@@ -39,8 +39,9 @@ lowered function it:
    one `rotr:W:n` unary on x at either width (`ssa.fuse_rotates`; a u32's
    left half is recognised through the zero extension that follows it), then
    drops what nothing reads (`ssa.prune_dead`), which is the rotate's shifts,
-   most of the zeros the lift gives declared locals and most of the
-   loop-header phis;
+   most of the zeros the lift gives declared locals and the loop-header phis
+   nothing reads (the lift gives a header a phi only for the slots the loop's
+   body writes);
 4. allocates registers with `ssa.regalloc_linear` over two pools: the
    caller-saved registers (x0 and x9 to x15 on arm64; rax, rsi, rdi and r8
    to r10 on x86-64) and, for a value live across a call, the callee-saved

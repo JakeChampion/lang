@@ -62,21 +62,21 @@ import "core/map";
 // Pattern is the pattern algebra — see the module header for the
 // meaning of each variant. Variants are the public construction API.
 pub enum Pattern {
-    PLit(string),
-    PAny,
-    PRange(i32, i32),
-    PSet(string),
-    PNotSet(string),
-    PSeq(Pattern[]),
-    PChoice(Pattern[]),
-    PStar(Pattern),
-    PPlus(Pattern),
-    POpt(Pattern),
-    PNot(Pattern),
-    PAnd(Pattern),
-    PRef(string),
-    PCap(string, Pattern),
-    PEof
+  PLit(string),
+  PAny,
+  PRange(i32, i32),
+  PSet(string),
+  PNotSet(string),
+  PSeq(Pattern[]),
+  PChoice(Pattern[]),
+  PStar(Pattern),
+  PPlus(Pattern),
+  POpt(Pattern),
+  PNot(Pattern),
+  PAnd(Pattern),
+  PRef(string),
+  PCap(string, Pattern),
+  PEof,
 }
 
 // Grammar pairs the rule table with the start rule. Build via
@@ -102,20 +102,20 @@ struct PegState { tn: string[], ts: i32[], te: i32[], furthest: i32 }
 // returns the failure sentinel. Every failing arm routes through
 // here so PegResult.pos is meaningful on ok=false.
 function __peg_fail(st: PegState, pos: i32): (i32, PegState) {
-    if (pos > st.furthest) {
-        return (0 - 1, PegState { ...st, furthest: pos });
-    }
-    return (0 - 1, st);
+  if (pos > st.furthest) {
+    return (0 - 1, PegState { ...st, furthest: pos });
+  }
+  return (0 - 1, st);
 }
 
 // __peg_merge_furthest carries a failed attempt's watermark into the
 // state a backtracking construct resumes from (trail restored, the
 // furthest mark kept).
 function __peg_merge_furthest(keep: PegState, from: PegState): PegState {
-    if (from.furthest > keep.furthest) {
-        return PegState { ...keep, furthest: from.furthest };
-    }
-    return keep;
+  if (from.furthest > keep.furthest) {
+    return PegState { ...keep, furthest: from.furthest };
+  }
+  return keep;
 }
 
 // __peg_run matches pattern `p` at `pos`, returning (newPos, state):
@@ -134,198 +134,266 @@ function __peg_merge_furthest(keep: PegState, from: PegState): PegState {
 // stack — 8192 overflowed it, which is how the left-recursion test
 // SIGSEGV'd natively while the interpreter's growable stack passed).
 function __peg_run(g: Grammar, p: Pattern, input: string, pos: i32, st: PegState, depth: i32, seen_n: string[], seen_p: i32[]): (i32, PegState) {
-    match (p) {
-        PLit(s) => {
-            var n: i32 = s.len();
-            if (pos + n > input.len()) { return __peg_fail(st, pos); }
-            var i: i32 = 0;
-            while (i < n) {
-                if (input[pos + i] != s[i]) { return __peg_fail(st, pos); }
-                i = i + 1;
-            }
-            return (pos + n, st);
-        },
-        PAny => {
-            if (pos >= input.len()) { return __peg_fail(st, pos); }
-            return (pos + 1, st);
-        },
-        PRange(lo, hi) => {
-            if (pos >= input.len()) { return __peg_fail(st, pos); }
-            var c: i32 = input[pos] as i32;
-            if (c < lo || c > hi) { return __peg_fail(st, pos); }
-            return (pos + 1, st);
-        },
-        PSet(cs) => {
-            if (pos >= input.len()) { return __peg_fail(st, pos); }
-            var c: i32 = input[pos] as i32;
-            var i: i32 = 0;
-            while (i < cs.len()) {
-                if ((cs[i] as i32) == c) { return (pos + 1, st); }
-                i = i + 1;
-            }
-            return __peg_fail(st, pos);
-        },
-        PNotSet(cs) => {
-            if (pos >= input.len()) { return __peg_fail(st, pos); }
-            var c: i32 = input[pos] as i32;
-            var i: i32 = 0;
-            while (i < cs.len()) {
-                if ((cs[i] as i32) == c) { return __peg_fail(st, pos); }
-                i = i + 1;
-            }
-            return (pos + 1, st);
-        },
-        PSeq(ps) => {
-            var cur: i32 = pos;
-            var s2: PegState = st;
-            var i: i32 = 0;
-            while (i < ps.len()) {
-                var (r, s3) = __peg_run(g, ps[i], input, cur, s2, depth, seen_n, seen_p);
-                if (r < 0) { return (r, s3); }
-                cur = r;
-                s2 = s3;
-                i = i + 1;
-            }
-            return (cur, s2);
-        },
-        PChoice(ps) => {
-            var s2: PegState = st;
-            var i: i32 = 0;
-            while (i < ps.len()) {
-                var (r, s3) = __peg_run(g, ps[i], input, pos, s2, depth, seen_n, seen_p);
-                if (r >= 0) { return (r, s3); }
-                // Failed alternative: resume from the pre-attempt
-                // trail, keeping only the furthest watermark.
-                s2 = __peg_merge_furthest(s2, s3);
-                i = i + 1;
-            }
-            return __peg_fail(s2, pos);
-        },
-        PStar(sub) => {
-            var cur: i32 = pos;
-            var s2: PegState = st;
-            while (true) {
-                var (r, s3) = __peg_run(g, sub, input, cur, s2, depth, seen_n, seen_p);
-                if (r < 0) { return (cur, __peg_merge_furthest(s2, s3)); }
-                if (r == cur) { return (cur, s3); }  // nullable operand: stop, don't spin
-                cur = r;
-                s2 = s3;
-            }
-            return (cur, s2);
-        },
-        PPlus(sub) => {
-            var (first, s2) = __peg_run(g, sub, input, pos, st, depth, seen_n, seen_p);
-            if (first < 0) { return (first, s2); }
-            return __peg_run(g, PStar(sub), input, first, s2, depth, seen_n, seen_p);
-        },
-        POpt(sub) => {
-            var (r, s2) = __peg_run(g, sub, input, pos, st, depth, seen_n, seen_p);
-            if (r >= 0) { return (r, s2); }
-            return (pos, __peg_merge_furthest(st, s2));
-        },
-        PNot(sub) => {
-            var (r, s2) = __peg_run(g, sub, input, pos, st, depth, seen_n, seen_p);
-            if (r >= 0) { return __peg_fail(st, pos); }
-            // Note: a failure INSIDE a negative lookahead is the
-            // pattern succeeding — don't let the probe's watermark
-            // pollute error positions.
-            return (pos, st);
-        },
-        PAnd(sub) => {
-            var (r, s2) = __peg_run(g, sub, input, pos, st, depth, seen_n, seen_p);
-            if (r < 0) { return (r, s2); }
-            // Zero-width: keep captures from the lookahead's trail
-            // discarded — the text isn't consumed, so a capture
-            // spanning it would overlap whatever consumes it next.
-            return (pos, st);
-        },
-        PRef(name) => {
-            if (depth >= 2048) { return __peg_fail(st, pos); }
-            var si: i32 = 0;
-            while (si < seen_n.len()) {
-                if (seen_p[si] == pos && seen_n[si] == name) { return __peg_fail(st, pos); }
-                si = si + 1;
-            }
-            match (g.rules.get(name)) {
-                Some(rp) => { return __peg_run(g, rp, input, pos, st, depth + 1, seen_n.append(name), seen_p.append(pos)); },
-                None => { return __peg_fail(st, pos); }
-            }
-        },
-        PCap(name, sub) => {
-            var (r, s2) = __peg_run(g, sub, input, pos, st, depth, seen_n, seen_p);
-            if (r < 0) { return (r, s2); }
-            return (r, PegState {
-                tn: s2.tn.append(name),
-                ts: s2.ts.append(pos),
-                te: s2.te.append(r),
-                furthest: s2.furthest
-            });
-        },
-        PEof => {
-            if (pos == input.len()) { return (pos, st); }
-            return __peg_fail(st, pos);
+  match (p) {
+    PLit(s) => {
+      var n: i32 = s.len();
+      if (pos + n > input.len()) {
+        return __peg_fail(st, pos);
+      }
+      var i: i32 = 0;
+      while (i < n) {
+        if (input[pos + i] != s[i]) {
+          return __peg_fail(st, pos);
         }
+        i = i + 1;
+      }
+      return (pos + n, st);
+    },
+    PAny => {
+      if (pos >= input.len()) {
+        return __peg_fail(st, pos);
+      }
+      return (pos + 1, st);
+    },
+    PRange(lo, hi) => {
+      if (pos >= input.len()) {
+        return __peg_fail(st, pos);
+      }
+      var c: i32 = input[pos] as i32;
+      if (c < lo || c > hi) {
+        return __peg_fail(st, pos);
+      }
+      return (pos + 1, st);
+    },
+    PSet(cs) => {
+      if (pos >= input.len()) {
+        return __peg_fail(st, pos);
+      }
+      var c: i32 = input[pos] as i32;
+      var i: i32 = 0;
+      while (i < cs.len()) {
+        if (cs[i] as i32 == c) {
+          return (pos + 1, st);
+        }
+        i = i + 1;
+      }
+      return __peg_fail(st, pos);
+    },
+    PNotSet(cs) => {
+      if (pos >= input.len()) {
+        return __peg_fail(st, pos);
+      }
+      var c: i32 = input[pos] as i32;
+      var i: i32 = 0;
+      while (i < cs.len()) {
+        if (cs[i] as i32 == c) {
+          return __peg_fail(st, pos);
+        }
+        i = i + 1;
+      }
+      return (pos + 1, st);
+    },
+    PSeq(ps) => {
+      var cur: i32 = pos;
+      var s2: PegState = st;
+      var i: i32 = 0;
+      while (i < ps.len()) {
+        let (r, s3) = __peg_run(g, ps[i], input, cur, s2, depth, seen_n, seen_p);
+        if (r < 0) {
+          return (r, s3);
+        }
+        cur = r;
+        s2 = s3;
+        i = i + 1;
+      }
+      return (cur, s2);
+    },
+    PChoice(ps) => {
+      var s2: PegState = st;
+      var i: i32 = 0;
+      while (i < ps.len()) {
+        let (r, s3) = __peg_run(g, ps[i], input, pos, s2, depth, seen_n, seen_p);
+        if (r >= 0) {
+          return (r, s3);
+        }
+        // Failed alternative: resume from the pre-attempt
+        // trail, keeping only the furthest watermark.
+        s2 = __peg_merge_furthest(s2, s3);
+        i = i + 1;
+      }
+      return __peg_fail(s2, pos);
+    },
+    PStar(sub) => {
+      var cur: i32 = pos;
+      var s2: PegState = st;
+      while (true) {
+        let (r, s3) = __peg_run(g, sub, input, cur, s2, depth, seen_n, seen_p);
+        if (r < 0) {
+          return (cur, __peg_merge_furthest(s2, s3));
+        }
+        if (r == cur) {  // nullable operand: stop, don't spin
+          return (cur, s3);
+        }
+        cur = r;
+        s2 = s3;
+      }
+      return (cur, s2);
+    },
+    PPlus(sub) => {
+      let (first, s2) = __peg_run(g, sub, input, pos, st, depth, seen_n, seen_p);
+      if (first < 0) {
+        return (first, s2);
+      }
+      return __peg_run(g, PStar(sub), input, first, s2, depth, seen_n, seen_p);
+    },
+    POpt(sub) => {
+      let (r, s2) = __peg_run(g, sub, input, pos, st, depth, seen_n, seen_p);
+      if (r >= 0) {
+        return (r, s2);
+      }
+      return (pos, __peg_merge_furthest(st, s2));
+    },
+    PNot(sub) => {
+      let (r, s2) = __peg_run(g, sub, input, pos, st, depth, seen_n, seen_p);
+      if (r >= 0) {
+        return __peg_fail(st, pos);
+      }
+      // Note: a failure INSIDE a negative lookahead is the
+      // pattern succeeding — don't let the probe's watermark
+      // pollute error positions.
+      return (pos, st);
+    },
+    PAnd(sub) => {
+      let (r, s2) = __peg_run(g, sub, input, pos, st, depth, seen_n, seen_p);
+      if (r < 0) {
+        return (r, s2);
+      }
+      // Zero-width: keep captures from the lookahead's trail
+      // discarded — the text isn't consumed, so a capture
+      // spanning it would overlap whatever consumes it next.
+      return (pos, st);
+    },
+    PRef(name) => {
+      if (depth >= 2048) {
+        return __peg_fail(st, pos);
+      }
+      var si: i32 = 0;
+      while (si < seen_n.len()) {
+        if (seen_p[si] == pos && seen_n[si] == name) {
+          return __peg_fail(st, pos);
+        }
+        si = si + 1;
+      }
+      match (g.rules.get(name)) {
+        Some(rp) => {
+          return __peg_run(g, rp, input, pos, st, depth + 1, seen_n.append(name), seen_p.append(pos));
+        },
+        None => {
+          return __peg_fail(st, pos);
+        }
+      }
+    },
+    PCap(name, sub) => {
+      let (r, s2) = __peg_run(g, sub, input, pos, st, depth, seen_n, seen_p);
+      if (r < 0) {
+        return (r, s2);
+      }
+      return (r, PegState {
+        tn: s2.tn.append(name),
+        ts: s2.ts.append(pos),
+        te: s2.te.append(r),
+        furthest: s2.furthest,
+      });
+    },
+    PEof => {
+      if (pos == input.len()) {
+        return (pos, st);
+      }
+      return __peg_fail(st, pos);
     }
-    return __peg_fail(st, pos);
+  }
+  return __peg_fail(st, pos);
 }
 
 // __peg_check_refs walks a pattern and returns "" when every PRef
 // resolves in `rules`, else the first unknown rule name.
 function __peg_check_refs(p: Pattern, rules: Map[string, Pattern]): string {
-    match (p) {
-        PSeq(ps) => {
-            var i: i32 = 0;
-            while (i < ps.len()) {
-                var bad: string = __peg_check_refs(ps[i], rules);
-                if (bad.len() > 0) { return bad; }
-                i = i + 1;
-            }
-            return "";
-        },
-        PChoice(ps) => {
-            var i: i32 = 0;
-            while (i < ps.len()) {
-                var bad: string = __peg_check_refs(ps[i], rules);
-                if (bad.len() > 0) { return bad; }
-                i = i + 1;
-            }
-            return "";
-        },
-        PStar(sub) => { return __peg_check_refs(sub, rules); },
-        PPlus(sub) => { return __peg_check_refs(sub, rules); },
-        POpt(sub) => { return __peg_check_refs(sub, rules); },
-        PNot(sub) => { return __peg_check_refs(sub, rules); },
-        PAnd(sub) => { return __peg_check_refs(sub, rules); },
-        PCap(name, sub) => { return __peg_check_refs(sub, rules); },
-        PRef(name) => {
-            if (rules.has(name)) { return ""; }
-            return name;
-        },
-        _ => { return ""; }
+  match (p) {
+    PSeq(ps) => {
+      var i: i32 = 0;
+      while (i < ps.len()) {
+        var bad: string = __peg_check_refs(ps[i], rules);
+        if (bad.len() > 0) {
+          return bad;
+        }
+        i = i + 1;
+      }
+      return "";
+    },
+    PChoice(ps) => {
+      var i: i32 = 0;
+      while (i < ps.len()) {
+        var bad: string = __peg_check_refs(ps[i], rules);
+        if (bad.len() > 0) {
+          return bad;
+        }
+        i = i + 1;
+      }
+      return "";
+    },
+    PStar(sub) => {
+      return __peg_check_refs(sub, rules);
+    },
+    PPlus(sub) => {
+      return __peg_check_refs(sub, rules);
+    },
+    POpt(sub) => {
+      return __peg_check_refs(sub, rules);
+    },
+    PNot(sub) => {
+      return __peg_check_refs(sub, rules);
+    },
+    PAnd(sub) => {
+      return __peg_check_refs(sub, rules);
+    },
+    PCap(name, sub) => {
+      return __peg_check_refs(sub, rules);
+    },
+    PRef(name) => {
+      if (rules.has(name)) {
+        return "";
+      }
+      return name;
+    },
+    _ => {
+      return "";
     }
-    return "";
+  }
+  return "";
 }
 
 // peg_grammar validates and packages a rule table: the start rule
 // must exist and every PRef in every rule must resolve. Returns
 // Err("unknown rule: NAME") naming the first offender.
 pub function peg_grammar(rules: Map[string, Pattern], start: string): Result[Grammar, string] {
-    if (!rules.has(start)) {
-        return Err("unknown rule: " + start);
-    }
-    var names: string[] = rules.keys();
-    var i: i32 = 0;
-    while (i < names.len()) {
-        match (rules.get(names[i])) {
-            Some(p) => {
-                var bad: string = __peg_check_refs(p, rules);
-                if (bad.len() > 0) { return Err("unknown rule: " + bad); }
-            },
-            None => {}
+  if (!rules.has(start)) {
+    return Err("unknown rule: " + start);
+  }
+  var names: string[] = rules.keys();
+  var i: i32 = 0;
+  while (i < names.len()) {
+    match (rules.get(names[i])) {
+      Some(p) => {
+        var bad: string = __peg_check_refs(p, rules);
+        if (bad.len() > 0) {
+          return Err("unknown rule: " + bad);
         }
-        i = i + 1;
+      },
+      None => {}
     }
-    return Ok(Grammar { rules: rules, start: start });
+    i = i + 1;
+  }
+  return Ok(Grammar { rules: rules, start: start });
 }
 
 // __peg_result packages a finished run: on success the capture
@@ -333,43 +401,60 @@ pub function peg_grammar(rules: Map[string, Pattern], start: string): Result[Gra
 // same-name captures overwrite earlier ones); on failure caps is
 // empty and pos is the furthest watermark.
 function __peg_result(r: i32, st: PegState, input: string): PegResult {
-    var caps: Map[string, string] = map_new(8);
-    if (r < 0) {
-        return PegResult { ok: false, pos: st.furthest, caps: caps };
-    }
-    var i: i32 = 0;
-    while (i < st.tn.len()) {
-        // Each capture is materialised with `+ ""`: a bare slice views `input`,
-        // which the PegResult this map rides out in outlives.
-        caps = caps.insert(st.tn[i], slice_unchecked(input, st.ts[i], st.te[i]) + "");
-        i = i + 1;
-    }
-    return PegResult { ok: true, pos: r, caps: caps };
+  var caps: Map[string, string] = map_new(8);
+  if (r < 0) {
+    return PegResult { ok: false, pos: st.furthest, caps: caps };
+  }
+  var i: i32 = 0;
+  while (i < st.tn.len()) {
+    // Each capture is materialised with `+ ""`: a bare slice views `input`,
+    // which the PegResult this map rides out in outlives.
+    caps = caps.insert(st.tn[i], slice_unchecked(input, st.ts[i], st.te[i]) + "");
+    i = i + 1;
+  }
+  return PegResult { ok: true, pos: r, caps: caps };
 }
 
 // peg_match runs the grammar's start rule anchored at position 0.
 pub function peg_match(g: Grammar, input: string): PegResult {
-    var tn: string[] = [];
-    var ts: i32[] = [];
-    var te: i32[] = [];
-    var st: PegState = PegState { tn: tn, ts: ts, te: te, furthest: 0 };
-    var (r, s2) = __peg_run(g, PRef(g.start), input, 0, st, 0, [], []);
-    return __peg_result(r, s2, input);
+  var tn: string[] = [];
+  var ts: i32[] = [];
+  var te: i32[] = [];
+  var st: PegState = PegState { tn: tn, ts: ts, te: te, furthest: 0 };
+  let (r, s2) = __peg_run(g, PRef(g.start), input, 0, st, 0, [], []);
+  return __peg_result(r, s2, input);
 }
 
 // peg_match_pattern matches a standalone pattern (no rule table —
 // a PRef inside fails the match) anchored at position 0.
 pub function peg_match_pattern(p: Pattern, input: string): PegResult {
-    var rules: Map[string, Pattern] = map_new(2);
-    rules = rules.insert("__start", p);
-    var g: Grammar = Grammar { rules: rules, start: "__start" };
-    return peg_match(g, input);
+  var rules: Map[string, Pattern] = map_new(2);
+  rules = rules.insert("__start", p);
+  var g: Grammar = Grammar { rules: rules, start: "__start" };
+  return peg_match(g, input);
 }
 
 // Convenience atoms for the common ASCII classes.
-pub function peg_digit(): Pattern { return PRange(48, 57); }          // 0-9
-pub function peg_lower(): Pattern { return PRange(97, 122); }         // a-z
-pub function peg_upper(): Pattern { return PRange(65, 90); }          // A-Z
-pub function peg_alpha(): Pattern { return PChoice([PRange(65, 90), PRange(97, 122)]); }
-pub function peg_alnum(): Pattern { return PChoice([PRange(48, 57), PRange(65, 90), PRange(97, 122)]); }
-pub function peg_space(): Pattern { return PSet(" \t\r\n"); }
+pub function peg_digit(): Pattern {  // 0-9
+  return PRange(48, 57);
+}
+
+pub function peg_lower(): Pattern {  // a-z
+  return PRange(97, 122);
+}
+
+pub function peg_upper(): Pattern {  // A-Z
+  return PRange(65, 90);
+}
+
+pub function peg_alpha(): Pattern {
+  return PChoice([PRange(65, 90), PRange(97, 122)]);
+}
+
+pub function peg_alnum(): Pattern {
+  return PChoice([PRange(48, 57), PRange(65, 90), PRange(97, 122)]);
+}
+
+pub function peg_space(): Pattern {
+  return PSet(" \t\r\n");
+}

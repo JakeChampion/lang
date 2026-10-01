@@ -120,13 +120,17 @@ var gatedBuiltins = map[string]string{
 
 	// The ambient invocation environment. argv and envp are adjacent on
 	// the process stack and `_start` captures them together, but they
-	// are separate capabilities because the proxy world has envp and no
-	// argv: `wasi-http` grants `env` and cannot answer `args`. The
-	// lookup and the whole list are one capability: a caller that can
-	// ask for a name can ask for every name it can guess.
+	// are separate capabilities: wasi-cli answers both, and a platform
+	// could hand a component one without the other. The lookup and the
+	// whole list are one capability: a caller that can ask for a name
+	// can ask for every name it can guess.
 	"env":     "env",
 	"environ": "env",
 	"args":    "args",
+	// Deploy-time configuration: the environment where there is one (the
+	// checker renames the call to env there), wasi:config/store on the
+	// proxy world.
+	"config_get": "config",
 
 	// Entropy. A syscall on native (getrandom / getentropy) and a host
 	// import on wasm — never something the program can compute.

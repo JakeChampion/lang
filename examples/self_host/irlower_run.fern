@@ -50,22 +50,25 @@ import "./util";
 // be pointed at real modules — which is where a structural bug would
 // actually be, and the only way to know the pass does not fire on valid IR.
 function verify_all(funcs: parser.FuncDecl[], fns: ir.LoweredFn[]): irverify.Problem[] {
-    // The index the BACKENDS build, from the same declarations, so the corpus
-    // sweep gates the derivation the compile-path gate actually consults —
-    // including its receiver-counting rule, which an off-by-one would turn
-    // into a reported mismatch on every method call in the corpus.
-    var ix: irverify.NameIndex = irlower.fn_sig_index(funcs);
-    var out: irverify.Problem[] = [];
-    var j: i32 = 0;
-    while (j < fns.len()) {
-        if (fns[j].ok) {
-            var ps: irverify.Problem[] = irverify.verify_fn(fns[j].name, fns[j].ops, fns[j].n_params, fns[j].n_locals, ix);
-            var k: i32 = 0;
-            while (k < ps.len()) { out = out.append(ps[k]); k = k + 1; }
-        }
-        j = j + 1;
+  // The index the BACKENDS build, from the same declarations, so the corpus
+  // sweep gates the derivation the compile-path gate actually consults —
+  // including its receiver-counting rule, which an off-by-one would turn
+  // into a reported mismatch on every method call in the corpus.
+  var ix: irverify.NameIndex = irlower.fn_sig_index(funcs);
+  var out: irverify.Problem[] = [];
+  var j: i32 = 0;
+  while (j < fns.len()) {
+    if (fns[j].ok) {
+      var ps: irverify.Problem[] = irverify.verify_fn(fns[j].name, fns[j].ops, fns[j].n_params, fns[j].n_locals, ix);
+      var k: i32 = 0;
+      while (k < ps.len()) {
+        out = out.append(ps[k]);
+        k = k + 1;
+      }
     }
-    return out;
+    j = j + 1;
+  }
+  return out;
 }
 
 // StackSweep is one module's operand-stack verdict: the problems found, and
@@ -78,19 +81,22 @@ struct StackSweep { problems: irverify.Problem[], cov: irverifystack.Coverage }
 // a skip reason rather than a problem, so a widening op vocabulary shows up as
 // a coverage drop instead of a false failure.
 function verify_stack_all(fns: ir.LoweredFn[]): StackSweep {
-    var out: irverify.Problem[] = [];
-    var cov: irverifystack.Coverage = irverifystack.coverage_new();
-    var i: i32 = 0;
-    while (i < fns.len()) {
-        if (fns[i].ok) {
-            var r: irverifystack.StackResult = irverifystack.verify_stack_fn(fns[i].name, fns[i].ops);
-            cov = irverifystack.coverage_add(cov, fns[i].name, r.bail);
-            var k: i32 = 0;
-            while (k < r.problems.len()) { out = out.append(r.problems[k]); k = k + 1; }
-        }
-        i = i + 1;
+  var out: irverify.Problem[] = [];
+  var cov: irverifystack.Coverage = irverifystack.coverage_new();
+  var i: i32 = 0;
+  while (i < fns.len()) {
+    if (fns[i].ok) {
+      var r: irverifystack.StackResult = irverifystack.verify_stack_fn(fns[i].name, fns[i].ops);
+      cov = irverifystack.coverage_add(cov, fns[i].name, r.bail);
+      var k: i32 = 0;
+      while (k < r.problems.len()) {
+        out = out.append(r.problems[k]);
+        k = k + 1;
+      }
     }
-    return StackSweep { problems: out, cov: cov };
+    i = i + 1;
+  }
+  return StackSweep { problems: out, cov: cov };
 }
 
 // RcSweep is one module's reuse-donor verdict: the problems found, and the
@@ -104,27 +110,33 @@ struct RcSweep { problems: irverify.Problem[], cov: irverifyrc.RcResult }
 // verify_rc_all runs the ownership verifier (#7791) over every successfully
 // lowered function, folding the per-function results into one module verdict.
 function verify_rc_all(fns: ir.LoweredFn[]): RcSweep {
-    var out: irverify.Problem[] = [];
-    var cov: irverifyrc.RcResult = irverifyrc.rc_result_new();
-    var i: i32 = 0;
-    while (i < fns.len()) {
-        if (fns[i].ok) {
-            var r: irverifyrc.RcResult = irverifyrc.verify_rc_fn(fns[i].name, fns[i].ops);
-            var k: i32 = 0;
-            while (k < r.problems.len()) { out = out.append(r.problems[k]); k = k + 1; }
-            var sk: i32 = 0;
-            var skips: string[] = cov.skips;
-            while (sk < r.skips.len()) { skips = skips.append(r.skips[sk]); sk = sk + 1; }
-            cov = irverifyrc.RcResult {
-                ...cov,
-                sites: cov.sites + r.sites,
-                checked: cov.checked + r.checked,
-                skips: skips
-            };
-        }
-        i = i + 1;
+  var out: irverify.Problem[] = [];
+  var cov: irverifyrc.RcResult = irverifyrc.rc_result_new();
+  var i: i32 = 0;
+  while (i < fns.len()) {
+    if (fns[i].ok) {
+      var r: irverifyrc.RcResult = irverifyrc.verify_rc_fn(fns[i].name, fns[i].ops);
+      var k: i32 = 0;
+      while (k < r.problems.len()) {
+        out = out.append(r.problems[k]);
+        k = k + 1;
+      }
+      var sk: i32 = 0;
+      var skips: string[] = cov.skips;
+      while (sk < r.skips.len()) {
+        skips = skips.append(r.skips[sk]);
+        sk = sk + 1;
+      }
+      cov = irverifyrc.RcResult {
+        ...cov,
+        sites: cov.sites + r.sites,
+        checked: cov.checked + r.checked,
+        skips: skips,
+      };
     }
-    return RcSweep { problems: out, cov: cov };
+    i = i + 1;
+  }
+  return RcSweep { problems: out, cov: cov };
 }
 
 // FipSweep is one module's `fip` / `fbip` allocation-budget verdict: the
@@ -139,30 +151,37 @@ struct FipSweep { problems: irverify.Problem[], census: string }
 // successfully lowered function, pairing each with its declared claim.
 // `funcs` is the same list, in the same order, that `fns` was lowered from.
 function verify_fip_all(funcs: parser.FuncDecl[], fns: ir.LoweredFn[]): FipSweep {
-    var out: irverify.Problem[] = [];
-    var census: string = "";
-    var i: i32 = 0;
-    while (i < fns.len() && i < funcs.len()) {
-        if (fns[i].ok) {
-            var claim: irfipverify.FipClaim = irfipverify.FipClaim {
-                fn_name: fns[i].name, is_fip: funcs[i].fip, is_fbip: funcs[i].fbip,
-                allowance: funcs[i].fip_allowance
-            };
-            var r: irfipverify.FipResult = irfipverify.verify_fip_fn(claim, fns[i].ops);
-            var kw: string = "-";
-            if (funcs[i].fip) { kw = "fip"; }
-            if (funcs[i].fbip) { kw = "fbip"; }
-            census = census + fns[i].name + " claim=" + kw
-                + "(" + util.i32_to_string(funcs[i].fip_allowance) + ")"
-                + " fresh=" + util.i32_to_string(r.fresh)
-                + " paired=" + util.i32_to_string(r.paired)
-                + " elided=" + util.i32_to_string(r.elided) + "\n";
-            var k: i32 = 0;
-            while (k < r.problems.len()) { out = out.append(r.problems[k]); k = k + 1; }
-        }
-        i = i + 1;
+  var out: irverify.Problem[] = [];
+  var census: string = "";
+  var i: i32 = 0;
+  while (i < fns.len() && i < funcs.len()) {
+    if (fns[i].ok) {
+      var claim: irfipverify.FipClaim = irfipverify.FipClaim {
+        fn_name: fns[i].name, is_fip: funcs[i].fip, is_fbip: funcs[i].fbip,
+        allowance: funcs[i].fip_allowance,
+      };
+      var r: irfipverify.FipResult = irfipverify.verify_fip_fn(claim, fns[i].ops);
+      var kw: string = "-";
+      if (funcs[i].fip) {
+        kw = "fip";
+      }
+      if (funcs[i].fbip) {
+        kw = "fbip";
+      }
+      census = census + fns[i].name + " claim=" + kw
+        + "(" + util.i32_to_string(funcs[i].fip_allowance) + ")"
+        + " fresh=" + util.i32_to_string(r.fresh)
+        + " paired=" + util.i32_to_string(r.paired)
+        + " elided=" + util.i32_to_string(r.elided) + "\n";
+      var k: i32 = 0;
+      while (k < r.problems.len()) {
+        out = out.append(r.problems[k]);
+        k = k + 1;
+      }
     }
-    return FipSweep { problems: out, census: census };
+    i = i + 1;
+  }
+  return FipSweep { problems: out, census: census };
 }
 
 // clo_env_slot answers whether the call_indirect at `at` is reached through the
@@ -176,11 +195,19 @@ function verify_fip_all(funcs: parser.FuncDecl[], fns: ir.LoweredFn[]): FipSweep
 // call_indirect(argc)` with no box read, so the two dispatch shapes are
 // distinguishable from the op stream alone. Returns the box slot, or -1.
 function clo_env_slot(ops: ir.Op[], at: i32, k_load: i32, k_const: i32, k_arrget: i32): i32 {
-    if (at < 3) { return 0 - 1; }
-    if (ops[at - 1].kind_tag != k_arrget || ops[at - 1].width != 32) { return 0 - 1; }
-    if (ops[at - 2].kind_tag != k_const || ops[at - 2].i32_imm != 0) { return 0 - 1; }
-    if (ops[at - 3].kind_tag != k_load) { return 0 - 1; }
-    return ops[at - 3].i32_imm;
+  if (at < 3) {
+    return 0 - 1;
+  }
+  if (ops[at - 1].kind_tag != k_arrget || ops[at - 1].width != 32) {
+    return 0 - 1;
+  }
+  if (ops[at - 2].kind_tag != k_const || ops[at - 2].i32_imm != 0) {
+    return 0 - 1;
+  }
+  if (ops[at - 3].kind_tag != k_load) {
+    return 0 - 1;
+  }
+  return ops[at - 3].i32_imm;
 }
 
 // clo_sole_store returns the index of the ONLY write to `slot`, or -1 when the
@@ -190,33 +217,37 @@ function clo_env_slot(ops: ir.Op[], at: i32, k_load: i32, k_const: i32, k_arrget
 // write: a `var f = mk(); f(x)` binding lowers to a tee, so counting only
 // store_local would classify the commonest closure binding as unwritten.
 function clo_sole_store(ops: ir.Op[], slot: i32, k_store: i32, k_tee: i32): i32 {
-    var found: i32 = 0 - 1;
-    var i: i32 = 0;
-    while (i < ops.len()) {
-        if (ops[i].kind_tag == k_store || ops[i].kind_tag == k_tee) {
-            if (ops[i].i32_imm == slot) {
-                if (found >= 0) { return 0 - 1; }
-                found = i;
-            }
+  var found: i32 = 0 - 1;
+  var i: i32 = 0;
+  while (i < ops.len()) {
+    if (ops[i].kind_tag == k_store || ops[i].kind_tag == k_tee) {
+      if (ops[i].i32_imm == slot) {
+        if (found >= 0) {
+          return 0 - 1;
         }
-        i = i + 1;
+        found = i;
+      }
     }
-    return found;
+    i = i + 1;
+  }
+  return found;
 }
 
 // clo_copy_origin follows a sole store whose value is a load of another
 // single-written local back to that local's store, so a box parked in a
 // temp around the release of the slot's old value keeps its provenance.
 function clo_copy_origin(ops: ir.Op[], st: i32, k_load: i32, k_store: i32, k_tee: i32): i32 {
-    var cur: i32 = st;
-    var guard: i32 = 0;
-    while (cur > 0 && ops[cur - 1].kind_tag == k_load && guard < 8) {
-        var src: i32 = clo_sole_store(ops, ops[cur - 1].i32_imm, k_store, k_tee);
-        if (src <= 0) { return cur; }
-        cur = src;
-        guard = guard + 1;
+  var cur: i32 = st;
+  var guard: i32 = 0;
+  while (cur > 0 && ops[cur - 1].kind_tag == k_load && guard < 8) {
+    var src: i32 = clo_sole_store(ops, ops[cur - 1].i32_imm, k_store, k_tee);
+    if (src <= 0) {
+      return cur;
     }
-    return cur;
+    cur = src;
+    guard = guard + 1;
+  }
+  return cur;
 }
 
 // clo_flat_box answers whether ops[m] closes a closure-box construction of the
@@ -225,21 +256,33 @@ function clo_copy_origin(ops: ir.Op[], st: i32, k_load: i32, k_store: i32, k_tee
 // expressions rather than plain loads is NOT recognised: deciding those needs an
 // operand-stack walk, so the provable figure this yields is a floor.
 function clo_flat_box(ops: ir.Op[], m: i32, k_make: i32, k_load: i32, k_func: i32): boolean {
-    if (m < 0) { return false; }
-    // A CAPTURE-FREE value is the same box with no captures at all, folded to
-    // a static block (#9839). It names one target with even less to read than
-    // the flat shape below, so it belongs to the same bucket.
-    if (ops[m].kind_tag == ir.kind_id("const_struct") && ir.const_struct_fn_body(ops[m].str).len() > 0) { return true; }
-    if (ops[m].kind_tag != k_make || ops[m].width != 32) { return false; }
-    var k: i32 = ops[m].i32_imm;
-    if (k < 1 || m - k < 0) { return false; }
-    if (ops[m - k].kind_tag != k_func) { return false; }
-    var i: i32 = m - k + 1;
-    while (i < m) {
-        if (ops[i].kind_tag != k_load) { return false; }
-        i = i + 1;
-    }
+  if (m < 0) {
+    return false;
+  }
+  // A CAPTURE-FREE value is the same box with no captures at all, folded to
+  // a static block (#9839). It names one target with even less to read than
+  // the flat shape below, so it belongs to the same bucket.
+  if (ops[m].kind_tag == ir.kind_id("const_struct") && ir.const_struct_fn_body(ops[m].str).len() > 0) {
     return true;
+  }
+  if (ops[m].kind_tag != k_make || ops[m].width != 32) {
+    return false;
+  }
+  var k: i32 = ops[m].i32_imm;
+  if (k < 1 || m - k < 0) {
+    return false;
+  }
+  if (ops[m - k].kind_tag != k_func) {
+    return false;
+  }
+  var i: i32 = m - k + 1;
+  while (i < m) {
+    if (ops[i].kind_tag != k_load) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
 }
 
 // clo_census renders one module's closure-call-site population (#6638
@@ -271,344 +314,385 @@ function clo_flat_box(ops: ir.Op[], m: i32, k_make: i32, k_load: i32, k_func: i3
 // contributes no ops, so a census over a module that mostly bailed is a census
 // over almost nothing.
 function clo_census(fns: ir.LoweredFn[]): string {
-    var k_load: i32 = ir.kind_id("load_local");
-    var k_store: i32 = ir.kind_id("store_local");
-    var k_tee: i32 = ir.kind_id("tee_local");
-    var k_const: i32 = ir.kind_id("const_i32");
-    var k_func: i32 = ir.kind_id("const_func");
-    var k_arrget: i32 = ir.kind_id("arr_get");
-    var k_make: i32 = ir.kind_id("arr_make");
-    var k_ind: i32 = ir.kind_id("call_indirect");
-    var k_calld: i32 = ir.kind_id("call_direct");
+  var k_load: i32 = ir.kind_id("load_local");
+  var k_store: i32 = ir.kind_id("store_local");
+  var k_tee: i32 = ir.kind_id("tee_local");
+  var k_const: i32 = ir.kind_id("const_i32");
+  var k_func: i32 = ir.kind_id("const_func");
+  var k_arrget: i32 = ir.kind_id("arr_get");
+  var k_make: i32 = ir.kind_id("arr_make");
+  var k_ind: i32 = ir.kind_id("call_indirect");
+  var k_calld: i32 = ir.kind_id("call_direct");
 
-    var n_fns: i32 = 0;
-    var n_bail: i32 = 0;
-    var n_ops: i32 = 0;
-    var n_env: i32 = 0;
-    var n_local: i32 = 0;
-    var n_call: i32 = 0;
-    var n_param: i32 = 0;
-    var n_other: i32 = 0;
-    var n_plain: i32 = 0;
+  var n_fns: i32 = 0;
+  var n_bail: i32 = 0;
+  var n_ops: i32 = 0;
+  var n_env: i32 = 0;
+  var n_local: i32 = 0;
+  var n_call: i32 = 0;
+  var n_param: i32 = 0;
+  var n_other: i32 = 0;
+  var n_plain: i32 = 0;
 
-    var i: i32 = 0;
-    while (i < fns.len()) {
-        if (!fns[i].ok) {
-            n_bail = n_bail + 1;
-            i = i + 1;
-            continue;
-        }
-        n_fns = n_fns + 1;
-        var ops: ir.Op[] = fns[i].ops;
-        n_ops = n_ops + ops.len();
-        var j: i32 = 0;
-        while (j < ops.len()) {
-            if (ops[j].kind_tag == k_ind) {
-                var slot: i32 = clo_env_slot(ops, j, k_load, k_const, k_arrget);
-                if (slot < 0) {
-                    n_plain = n_plain + 1;
-                } else {
-                    n_env = n_env + 1;
-                    if (slot < fns[i].n_params) {
-                        n_param = n_param + 1;
-                    } else {
-                        var st: i32 = clo_copy_origin(ops, clo_sole_store(ops, slot, k_store, k_tee), k_load, k_store, k_tee);
-                        if (st > 0 && clo_flat_box(ops, st - 1, k_make, k_load, k_func)) {
-                            n_local = n_local + 1;
-                        } else if (st > 0 && ops[st - 1].kind_tag == k_calld) {
-                            n_call = n_call + 1;
-                        } else {
-                            n_other = n_other + 1;
-                        }
-                    }
-                }
-            }
-            j = j + 1;
-        }
-        i = i + 1;
+  var i: i32 = 0;
+  while (i < fns.len()) {
+    if (!fns[i].ok) {
+      n_bail = n_bail + 1;
+      i = i + 1;
+      continue;
     }
-    return "clocensus: fns=" + util.i32_to_string(n_fns)
-        + " bail=" + util.i32_to_string(n_bail)
-        + " ops=" + util.i32_to_string(n_ops)
-        + " env=" + util.i32_to_string(n_env)
-        + " env_local=" + util.i32_to_string(n_local)
-        + " env_call=" + util.i32_to_string(n_call)
-        + " env_param=" + util.i32_to_string(n_param)
-        + " env_other=" + util.i32_to_string(n_other)
-        + " plain=" + util.i32_to_string(n_plain) + "\n";
+    n_fns = n_fns + 1;
+    var ops: ir.Op[] = fns[i].ops;
+    n_ops = n_ops + ops.len();
+    var j: i32 = 0;
+    while (j < ops.len()) {
+      if (ops[j].kind_tag == k_ind) {
+        var slot: i32 = clo_env_slot(ops, j, k_load, k_const, k_arrget);
+        if (slot < 0) {
+          n_plain = n_plain + 1;
+        } else {
+          n_env = n_env + 1;
+          if (slot < fns[i].n_params) {
+            n_param = n_param + 1;
+          } else {
+            var st: i32 = clo_copy_origin(ops, clo_sole_store(ops, slot, k_store, k_tee), k_load, k_store, k_tee);
+            if (st > 0 && clo_flat_box(ops, st - 1, k_make, k_load, k_func)) {
+              n_local = n_local + 1;
+            } else if (st > 0 && ops[st - 1].kind_tag == k_calld) {
+              n_call = n_call + 1;
+            } else {
+              n_other = n_other + 1;
+            }
+          }
+        }
+      }
+      j = j + 1;
+    }
+    i = i + 1;
+  }
+  return "clocensus: fns=" + util.i32_to_string(n_fns)
+    + " bail=" + util.i32_to_string(n_bail)
+    + " ops=" + util.i32_to_string(n_ops)
+    + " env=" + util.i32_to_string(n_env)
+    + " env_local=" + util.i32_to_string(n_local)
+    + " env_call=" + util.i32_to_string(n_call)
+    + " env_param=" + util.i32_to_string(n_param)
+    + " env_other=" + util.i32_to_string(n_other)
+    + " plain=" + util.i32_to_string(n_plain) + "\n";
 }
 
 // slot_line renders one slot class, or nothing when the class is empty — so a
 // function with no strings has no `str` line rather than an empty one.
 function slot_line(kind: string, slots: i32[]): string {
-    if (slots.len() == 0) { return ""; }
-    var out: string = "  " + kind + ":";
-    var i: i32 = 0;
-    while (i < slots.len()) {
-        out = out + " " + util.i32_to_string(slots[i]);
-        i = i + 1;
-    }
-    return out + "\n";
+  if (slots.len() == 0) {
+    return "";
+  }
+  var out: string = "  " + kind + ":";
+  var i: i32 = 0;
+  while (i < slots.len()) {
+    out = out + " " + util.i32_to_string(slots[i]);
+    i = i + 1;
+  }
+  return out + "\n";
 }
 
 function main(): i32 {
-    var av: string[] = args();
-    var want_dump: boolean = false;
-    var want_rc_plan: boolean = false;
-    var want_str_own: boolean = false;
-    var want_verify: boolean = false;
-    var want_vstack: boolean = false;
-    var want_vfip: boolean = false;
-    var want_vrc: boolean = false;
-    var want_slots: boolean = false;
-    var want_clocensus: boolean = false;
-    // `-lifted` applies to `-dump` / `-slots`: lower what the backends lower.
-    var want_lifted: boolean = false;
-    // `-dump-fn <name>` dumps that function's op stream instead of `main`'s.
-    // The verifiers report per function, so the follow-up question is always
-    // "show me the ops of the one it named".
-    var dump_fn: string = "main";
-    var ai: i32 = 1;
-    while (ai < av.len()) {
-        if (av[ai] == "-dump") { want_dump = true; }
-        if (av[ai] == "-dump-fn" && ai + 1 < av.len()) {
-            want_dump = true;
-            dump_fn = av[ai + 1];
+  var av: string[] = args();
+  var want_dump: boolean = false;
+  var want_rc_plan: boolean = false;
+  var want_str_own: boolean = false;
+  var want_verify: boolean = false;
+  var want_vstack: boolean = false;
+  var want_vfip: boolean = false;
+  var want_vrc: boolean = false;
+  var want_slots: boolean = false;
+  var want_clocensus: boolean = false;
+  // `-lifted` applies to `-dump` / `-slots`: lower what the backends lower.
+  var want_lifted: boolean = false;
+  // `-dump-fn <name>` dumps that function's op stream instead of `main`'s.
+  // The verifiers report per function, so the follow-up question is always
+  // "show me the ops of the one it named".
+  var dump_fn: string = "main";
+  var ai: i32 = 1;
+  while (ai < av.len()) {
+    if (av[ai] == "-dump") {
+      want_dump = true;
+    }
+    if (av[ai] == "-dump-fn" && ai + 1 < av.len()) {
+      want_dump = true;
+      dump_fn = av[ai + 1];
+    }
+    if (av[ai] == "-rc-plan") {
+      want_rc_plan = true;
+    }
+    if (av[ai] == "-str-own") {
+      want_str_own = true;
+    }
+    if (av[ai] == "-verify") {
+      want_verify = true;
+    }
+    if (av[ai] == "-verifystack") {
+      want_vstack = true;
+    }
+    if (av[ai] == "-verifyfip") {
+      want_vfip = true;
+    }
+    if (av[ai] == "-verifyrc") {
+      want_vrc = true;
+    }
+    if (av[ai] == "-slots") {
+      want_slots = true;
+    }
+    if (av[ai] == "-clocensus") {
+      want_clocensus = true;
+    }
+    if (av[ai] == "-lifted") {
+      want_lifted = true;
+    }
+    ai = ai + 1;
+  }
+
+  var mod: parser.Module = rundriver.parse_stdin("irlower_run");
+  // One index over the module's structs, built once and handed to every
+  // lowering entry point below — rebuilding it per call is the scan #8178
+  // replaces. `mod` does not change after this point.
+  var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
+
+  // `-str-own` (#4297 CS4): print each function's slot-carried string-
+  // ownership facts (irlower.str_own_dump) instead of evaluating — the
+  // observable surface for the ownership-axis unit gate, format-mirroring
+  // `-rc-plan` (one `== <name>` header per function, then the dump lines).
+  if (want_str_own) {
+    var sout: string = "";
+    var sfi: i32 = 0;
+    while (sfi < mod.funcs.len()) {
+      var skey: string = mod.funcs[sfi].name;
+      if (mod.funcs[sfi].receiver_type.len() > 0) {
+        skey = util.base_type_name(mod.funcs[sfi].receiver_type) + "." + mod.funcs[sfi].name;
+      }
+      sout = sout + "== " + skey + "\n";
+      sout = sout + irlower.str_own_dump(mod.funcs[sfi], stab, mod.funcs);
+      sfi = sfi + 1;
+    }
+    write(sout);
+    return 0;
+  }
+
+  if (want_rc_plan) {
+    // The pure per-table analyses come from rc_plan_dump; the retain plan
+    // (aliasBindIncs) is an EMISSION-time record, so lower the module the
+    // way the eval path does and read each function's alias_incs off its
+    // LoweredFn. Same funcs order, so the two halves key together.
+    var pfns: ir.LoweredFn[] = irlower.lower_module(mod.funcs, stab);
+    var out: string = "";
+    var fi: i32 = 0;
+    while (fi < mod.funcs.len()) {
+      var key: string = mod.funcs[fi].name;
+      if (mod.funcs[fi].receiver_type.len() > 0) {
+        key = util.base_type_name(mod.funcs[fi].receiver_type) + "." + mod.funcs[fi].name;
+      }
+      out = out + "== " + key + "\n";
+      out = out + irlower.rc_plan_dump(mod.funcs[fi], stab, mod.funcs);
+      if (fi < pfns.len() && pfns[fi].ok && pfns[fi].alias_incs.len() > 0) {
+        // Lexicographic sort, mirroring native sort.Strings.
+        var abi: string[] = [];
+        var xi: i32 = 0;
+        while (xi < pfns[fi].alias_incs.len()) {
+          var entry: string = pfns[fi].alias_incs[xi];
+          var at: i32 = 0;
+          while (at < abi.len() && abi[at] < entry) {
+            at = at + 1;
+          }
+          var ns: string[] = [];
+          var q: i32 = 0;
+          while (q < at) {
+            ns = ns.append(abi[q]);
+            q = q + 1;
+          }
+          ns = ns.append(entry);
+          while (q < abi.len()) {
+            ns = ns.append(abi[q]);
+            q = q + 1;
+          }
+          abi = ns;
+          xi = xi + 1;
         }
-        if (av[ai] == "-rc-plan") { want_rc_plan = true; }
-        if (av[ai] == "-str-own") { want_str_own = true; }
-        if (av[ai] == "-verify") { want_verify = true; }
-        if (av[ai] == "-verifystack") { want_vstack = true; }
-        if (av[ai] == "-verifyfip") { want_vfip = true; }
-        if (av[ai] == "-verifyrc") { want_vrc = true; }
-        if (av[ai] == "-slots") { want_slots = true; }
-        if (av[ai] == "-clocensus") { want_clocensus = true; }
-        if (av[ai] == "-lifted") { want_lifted = true; }
-        ai = ai + 1;
-    }
-
-    var mod: parser.Module = rundriver.parse_stdin("irlower_run");
-    // One index over the module's structs, built once and handed to every
-    // lowering entry point below — rebuilding it per call is the scan #8178
-    // replaces. `mod` does not change after this point.
-    var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
-
-    // `-str-own` (#4297 CS4): print each function's slot-carried string-
-    // ownership facts (irlower.str_own_dump) instead of evaluating — the
-    // observable surface for the ownership-axis unit gate, format-mirroring
-    // `-rc-plan` (one `== <name>` header per function, then the dump lines).
-    if (want_str_own) {
-        var sout: string = "";
-        var sfi: i32 = 0;
-        while (sfi < mod.funcs.len()) {
-            var skey: string = mod.funcs[sfi].name;
-            if (mod.funcs[sfi].receiver_type.len() > 0) {
-                skey = util.base_type_name(mod.funcs[sfi].receiver_type) + "." + mod.funcs[sfi].name;
-            }
-            sout = sout + "== " + skey + "\n";
-            sout = sout + irlower.str_own_dump(mod.funcs[sfi], stab, mod.funcs);
-            sfi = sfi + 1;
+        out = out + "aliasBindIncs: ";
+        var ao: i32 = 0;
+        while (ao < abi.len()) {
+          if (ao > 0) {
+            out = out + ",";
+          }
+          out = out + abi[ao];
+          ao = ao + 1;
         }
-        write(sout);
-        return 0;
+        out = out + "\n";
+      }
+      fi = fi + 1;
     }
+    write(out);
+    return 0;
+  }
+  // `-clocensus` (#6638): count this module's closure call sites instead of
+  // evaluating. Lowered the way the BACKENDS lower — lift_lambdas (which
+  // fills defaults and hoists every capturing lambda to a `$clo` /
+  // `__mkclo$` pair) over a builtin-enum-injected struct table, exactly as
+  // ircore.lift_lambdas does. Lowering the raw module instead would count
+  // closure sites that lambda lifting has not created yet.
+  if (want_clocensus) {
+    var cmod: parser.Module = irlower.lift_lambdas(mod);
+    write(clo_census(irlower.lower_module(cmod.funcs, irlower.struct_tab(parser.inject_builtin_enums(cmod.structs)))));
+    return 0;
+  }
 
-    if (want_rc_plan) {
-        // The pure per-table analyses come from rc_plan_dump; the retain plan
-        // (aliasBindIncs) is an EMISSION-time record, so lower the module the
-        // way the eval path does and read each function's alias_incs off its
-        // LoweredFn. Same funcs order, so the two halves key together.
-        var pfns: ir.LoweredFn[] = irlower.lower_module(mod.funcs, stab);
-        var out: string = "";
-        var fi: i32 = 0;
-        while (fi < mod.funcs.len()) {
-            var key: string = mod.funcs[fi].name;
-            if (mod.funcs[fi].receiver_type.len() > 0) {
-                key = util.base_type_name(mod.funcs[fi].receiver_type) + "." + mod.funcs[fi].name;
-            }
-            out = out + "== " + key + "\n";
-            out = out + irlower.rc_plan_dump(mod.funcs[fi], stab, mod.funcs);
-            if (fi < pfns.len() && pfns[fi].ok && pfns[fi].alias_incs.len() > 0) {
-                // Lexicographic sort, mirroring native sort.Strings.
-                var abi: string[] = [];
-                var xi: i32 = 0;
-                while (xi < pfns[fi].alias_incs.len()) {
-                    var entry: string = pfns[fi].alias_incs[xi];
-                    var at: i32 = 0;
-                    while (at < abi.len() && abi[at] < entry) { at = at + 1; }
-                    var ns: string[] = [];
-                    var q: i32 = 0;
-                    while (q < at) { ns = ns.append(abi[q]); q = q + 1; }
-                    ns = ns.append(entry);
-                    while (q < abi.len()) { ns = ns.append(abi[q]); q = q + 1; }
-                    abi = ns;
-                    xi = xi + 1;
-                }
-                out = out + "aliasBindIncs: ";
-                var ao: i32 = 0;
-                while (ao < abi.len()) {
-                    if (ao > 0) { out = out + ","; }
-                    out = out + abi[ao];
-                    ao = ao + 1;
-                }
-                out = out + "\n";
-            }
-            fi = fi + 1;
-        }
-        write(out);
-        return 0;
-    }
-    // `-clocensus` (#6638): count this module's closure call sites instead of
-    // evaluating. Lowered the way the BACKENDS lower — lift_lambdas (which
-    // fills defaults and hoists every capturing lambda to a `$clo` /
-    // `__mkclo$` pair) over a builtin-enum-injected struct table, exactly as
-    // ircore.lift_lambdas does. Lowering the raw module instead would count
-    // closure sites that lambda lifting has not created yet.
-    if (want_clocensus) {
-        var cmod: parser.Module = irlower.lift_lambdas(mod);
-        write(clo_census(irlower.lower_module(cmod.funcs, irlower.struct_tab(parser.inject_builtin_enums(cmod.structs)))));
-        return 0;
-    }
+  // `-lifted` lowers the module the BACKENDS lower -- lift_lambdas over an
+  // enum-injected struct table, exactly as `-clocensus` does -- instead of
+  // the raw one. `-dump` and `-slots` read it.
+  //
+  // It is a SEPARATE mode rather than the default, and that is the whole of
+  // what this flag is for. A lambda does not survive to the IR: lift_lambdas
+  // hoists it to a top-level function, and a module lowered without that
+  // bails on every function containing one. `-dump` has no bail-tolerant
+  // path -- a bailed `main` is exit 200 and no output -- so without `-lifted`
+  // there is no way to see the ops of a function that contains a lambda,
+  // which is the shape whose lowering is least obvious.
+  //
+  // The default stays RAW because it is pinned, and rightly:
+  // TestSelfHostMoveOnConstructionIRX86_64 counts the incs this driver
+  // emits through `-dump-fn`, and its table says a closure-capture row would
+  // "pin a property of the driver rather than of the compiler" -- true only
+  // while the driver does not lift. Lifting is also not the no-op it looks
+  // like on a lambda-free module: lift_lambdas fills default arguments,
+  // infers fn-value locals and ensures capture types first, and those move
+  // that gate's counts on a program with no lambda in it at all.
+  var fns: ir.LoweredFn[] = irlower.lower_module(mod.funcs, stab);
+  if (want_lifted) {
+    var lmod: parser.Module = irlower.lift_lambdas(mod);
+    fns = irlower.lower_module(
+      lmod.funcs, irlower.struct_tab(parser.inject_builtin_enums(lmod.structs)),
+    );
+  }
 
-    // `-lifted` lowers the module the BACKENDS lower -- lift_lambdas over an
-    // enum-injected struct table, exactly as `-clocensus` does -- instead of
-    // the raw one. `-dump` and `-slots` read it.
-    //
-    // It is a SEPARATE mode rather than the default, and that is the whole of
-    // what this flag is for. A lambda does not survive to the IR: lift_lambdas
-    // hoists it to a top-level function, and a module lowered without that
-    // bails on every function containing one. `-dump` has no bail-tolerant
-    // path -- a bailed `main` is exit 200 and no output -- so without `-lifted`
-    // there is no way to see the ops of a function that contains a lambda,
-    // which is the shape whose lowering is least obvious.
-    //
-    // The default stays RAW because it is pinned, and rightly:
-    // TestSelfHostMoveOnConstructionIRX86_64 counts the incs this driver
-    // emits through `-dump-fn`, and its table says a closure-capture row would
-    // "pin a property of the driver rather than of the compiler" -- true only
-    // while the driver does not lift. Lifting is also not the no-op it looks
-    // like on a lambda-free module: lift_lambdas fills default arguments,
-    // infers fn-value locals and ensures capture types first, and those move
-    // that gate's counts on a program with no lambda in it at all.
-    var fns: ir.LoweredFn[] = irlower.lower_module(mod.funcs, stab);
-    if (want_lifted) {
-        var lmod: parser.Module = irlower.lift_lambdas(mod);
-        fns = irlower.lower_module(
-            lmod.funcs, irlower.struct_tab(parser.inject_builtin_enums(lmod.structs)));
+  // `-slots` (#6639 slice 1.5): print each lowered function's per-slot value
+  // kinds and declared return type — the facts LowerState knows and the op
+  // stream alone does not. One `<name> ret=<type> params=<n> locals=<n>`
+  // line, then one line per non-empty slot class. The Go-side gate reads it;
+  // nothing on the emit path does.
+  if (want_slots) {
+    var sl: string = "";
+    var si: i32 = 0;
+    while (si < fns.len()) {
+      var f: ir.LoweredFn = fns[si];
+      if (f.ok) {
+        sl = sl + f.name + " ret=" + f.ret_type
+          + " params=" + util.i32_to_string(f.n_params)
+          + " locals=" + util.i32_to_string(f.n_locals) + "\n";
+        sl = sl + slot_line("i64", f.i64_slots);
+        sl = sl + slot_line("f64", f.f64_slots);
+        sl = sl + slot_line("str", f.str_slots);
+        sl = sl + slot_line("arr", f.arr_slots);
+      }
+      si = si + 1;
     }
+    write(sl);
+    return 0;
+  }
 
-    // `-slots` (#6639 slice 1.5): print each lowered function's per-slot value
-    // kinds and declared return type — the facts LowerState knows and the op
-    // stream alone does not. One `<name> ret=<type> params=<n> locals=<n>`
-    // line, then one line per non-empty slot class. The Go-side gate reads it;
-    // nothing on the emit path does.
-    if (want_slots) {
-        var sl: string = "";
-        var si: i32 = 0;
-        while (si < fns.len()) {
-            var f: ir.LoweredFn = fns[si];
-            if (f.ok) {
-                sl = sl + f.name + " ret=" + f.ret_type
-                    + " params=" + util.i32_to_string(f.n_params)
-                    + " locals=" + util.i32_to_string(f.n_locals) + "\n";
-                sl = sl + slot_line("i64", f.i64_slots);
-                sl = sl + slot_line("f64", f.f64_slots);
-                sl = sl + slot_line("str", f.str_slots);
-                sl = sl + slot_line("arr", f.arr_slots);
-            }
-            si = si + 1;
-        }
-        write(sl);
-        return 0;
+  if (want_verify) {
+    // Lower from a defaults-FILLED module. The production backends reach
+    // the IR through lift_lambdas, which runs fill_default_args_module
+    // first, so `box(1)` against `box(w, h = 2, d = 3)` arrives as
+    // `box(1, 2, 3)`. Verifying the raw lower_module output instead would
+    // report a 1-arg call to a 3-param callee on every defaulted call in
+    // the corpus — a property of this driver's shortcut, not of the IR any
+    // backend is handed.
+    var vfilled: parser.Module = parser.fill_default_args_module(mod);
+    var vfns: ir.LoweredFn[] = irlower.lower_module(vfilled.funcs, stab);
+    var probs: irverify.Problem[] = verify_all(vfilled.funcs, vfns);
+    if (probs.len() == 0) {
+      write("irverify: clean\n");
+      return 0;
     }
+    write("irverify: " + util.i32_to_string(probs.len()) + " problem(s)"
+      + irverify.format_problems(probs, 20) + "\n");
+    return 1;
+  }
 
-    if (want_verify) {
-        // Lower from a defaults-FILLED module. The production backends reach
-        // the IR through lift_lambdas, which runs fill_default_args_module
-        // first, so `box(1)` against `box(w, h = 2, d = 3)` arrives as
-        // `box(1, 2, 3)`. Verifying the raw lower_module output instead would
-        // report a 1-arg call to a 3-param callee on every defaulted call in
-        // the corpus — a property of this driver's shortcut, not of the IR any
-        // backend is handed.
-        var vfilled: parser.Module = parser.fill_default_args_module(mod);
-        var vfns: ir.LoweredFn[] = irlower.lower_module(vfilled.funcs, stab);
-        var probs: irverify.Problem[] = verify_all(vfilled.funcs, vfns);
-        if (probs.len() == 0) {
-            write("irverify: clean\n");
-            return 0;
-        }
-        write("irverify: " + util.i32_to_string(probs.len()) + " problem(s)"
-            + irverify.format_problems(probs, 20) + "\n");
-        return 1;
+  if (want_vstack) {
+    // Same defaults-FILLED module as `-verify`, for the same reason: the
+    // production backends reach the IR through lift_lambdas, which runs
+    // fill_default_args_module first, so a defaulted call arrives with its
+    // arguments already pushed.
+    var sfns: ir.LoweredFn[] = irlower.lower_module(parser.fill_default_args_module(mod).funcs, stab);
+    var sw: StackSweep = verify_stack_all(sfns);
+    if (sw.problems.len() == 0) {
+      write("irverifystack: clean (" + irverifystack.coverage_str(sw.cov) + ")\n");
+      return 0;
     }
+    write("irverifystack: " + util.i32_to_string(sw.problems.len()) + " problem(s) ("
+      + irverifystack.coverage_str(sw.cov) + ")"
+      + irverify.format_problems(sw.problems, 20) + "\n");
+    return 1;
+  }
 
-    if (want_vstack) {
-        // Same defaults-FILLED module as `-verify`, for the same reason: the
-        // production backends reach the IR through lift_lambdas, which runs
-        // fill_default_args_module first, so a defaulted call arrives with its
-        // arguments already pushed.
-        var sfns: ir.LoweredFn[] = irlower.lower_module(parser.fill_default_args_module(mod).funcs, stab);
-        var sw: StackSweep = verify_stack_all(sfns);
-        if (sw.problems.len() == 0) {
-            write("irverifystack: clean (" + irverifystack.coverage_str(sw.cov) + ")\n");
-            return 0;
-        }
-        write("irverifystack: " + util.i32_to_string(sw.problems.len()) + " problem(s) ("
-            + irverifystack.coverage_str(sw.cov) + ")"
-            + irverify.format_problems(sw.problems, 20) + "\n");
-        return 1;
+  if (want_vrc) {
+    // Same defaults-FILLED module as `-verify`, for the same reason: the
+    // production backends reach the IR through lift_lambdas, which runs
+    // fill_default_args_module first.
+    var rfns: ir.LoweredFn[] = irlower.lower_module(parser.fill_default_args_module(mod).funcs, stab);
+    var rw: RcSweep = verify_rc_all(rfns);
+    if (rw.problems.len() == 0) {
+      write("irverifyrc: clean (" + irverifyrc.rc_coverage_str(rw.cov) + ")\n");
+      return 0;
     }
+    write("irverifyrc: " + util.i32_to_string(rw.problems.len()) + " problem(s) ("
+      + irverifyrc.rc_coverage_str(rw.cov) + ")"
+      + irverify.format_problems(rw.problems, 20) + "\n");
+    return 1;
+  }
 
-    if (want_vrc) {
-        // Same defaults-FILLED module as `-verify`, for the same reason: the
-        // production backends reach the IR through lift_lambdas, which runs
-        // fill_default_args_module first.
-        var rfns: ir.LoweredFn[] = irlower.lower_module(parser.fill_default_args_module(mod).funcs, stab);
-        var rw: RcSweep = verify_rc_all(rfns);
-        if (rw.problems.len() == 0) {
-            write("irverifyrc: clean (" + irverifyrc.rc_coverage_str(rw.cov) + ")\n");
-            return 0;
-        }
-        write("irverifyrc: " + util.i32_to_string(rw.problems.len()) + " problem(s) ("
-            + irverifyrc.rc_coverage_str(rw.cov) + ")"
-            + irverify.format_problems(rw.problems, 20) + "\n");
-        return 1;
+  if (want_vfip) {
+    // Same defaults-FILLED module as `-verify`, for the same reason: the
+    // production backends reach the IR through lift_lambdas, which runs
+    // fill_default_args_module first.
+    var ffilled: parser.Module = parser.fill_default_args_module(mod);
+    var ffns: ir.LoweredFn[] = irlower.lower_module(ffilled.funcs, stab);
+    var fw: FipSweep = verify_fip_all(ffilled.funcs, ffns);
+    write(fw.census);
+    if (fw.problems.len() == 0) {
+      write("irfipverify: clean\n");
+      return 0;
     }
+    write("irfipverify: " + util.i32_to_string(fw.problems.len()) + " problem(s)"
+      + irverify.format_problems(fw.problems, 20) + "\n");
+    return 1;
+  }
 
-    if (want_vfip) {
-        // Same defaults-FILLED module as `-verify`, for the same reason: the
-        // production backends reach the IR through lift_lambdas, which runs
-        // fill_default_args_module first.
-        var ffilled: parser.Module = parser.fill_default_args_module(mod);
-        var ffns: ir.LoweredFn[] = irlower.lower_module(ffilled.funcs, stab);
-        var fw: FipSweep = verify_fip_all(ffilled.funcs, ffns);
-        write(fw.census);
-        if (fw.problems.len() == 0) {
-            write("irfipverify: clean\n");
-            return 0;
-        }
-        write("irfipverify: " + util.i32_to_string(fw.problems.len()) + " problem(s)"
-            + irverify.format_problems(fw.problems, 20) + "\n");
-        return 1;
+  var wanted: string = "main";
+  if (want_dump) {
+    wanted = dump_fn;
+  }
+  var mi: i32 = irexec.find_fn(fns, wanted);
+  if (mi < 0) {
+    return 201;
+  }
+  var mainfn: ir.LoweredFn = fns[mi];
+  if (!mainfn.ok) {
+    return 200;
+  }
+
+  if (want_dump) {
+    var out: string = "";
+    var k: i32 = 0;
+    while (k < mainfn.ops.len()) {
+      if (k > 0) {
+        out = out + "\n";
+      }
+      out = out + ir.render_op(mainfn.ops[k]);
+      k = k + 1;
     }
-
-    var wanted: string = "main";
-    if (want_dump) { wanted = dump_fn; }
-    var mi: i32 = irexec.find_fn(fns, wanted);
-    if (mi < 0) { return 201; }
-    var mainfn: ir.LoweredFn = fns[mi];
-    if (!mainfn.ok) { return 200; }
-
-    if (want_dump) {
-        var out: string = "";
-        var k: i32 = 0;
-        while (k < mainfn.ops.len()) {
-            if (k > 0) { out = out + "\n"; }
-            out = out + ir.render_op(mainfn.ops[k]);
-            k = k + 1;
-        }
-        print(out);
-        return mainfn.ops.len();
-    }
-    return irexec.eval_program(fns);
+    print(out);
+    return mainfn.ops.len();
+  }
+  return irexec.eval_program(fns);
 }

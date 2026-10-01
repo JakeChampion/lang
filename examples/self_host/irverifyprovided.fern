@@ -61,82 +61,100 @@ import "./util";
 // Grouped as the emitters group them, so a reader comparing the two lists is
 // comparing like for like.
 pub function provided_names(): string[] {
-    return [
-        // reference counting, and the grow-bracket share pair
-        "__fern_rc_inc",
-        "__fern_rc_dec",
-        "__fern_rc_is_unique",
-        "__fern_arr_inc_elems",
-        "__fern_arr_own_elems",
-        "__fern_rc_underflow_get",
-        "__fern_arr_share_inc",
-        "__fern_arr_share_dec",
-        // reclaim: strings, arrays of them, arrays of arrays, maps
-        "__fern_str_free",
-        "__fern_str_view_free",
-        "__fern_str_arr_free",
-        "__fern_arrarr_free",
-        "__fern_strarrarr_free",
-        "__fern_optarrarr_free",
-        "__fern_map_free",
-        "__fern_map_free_vs",
-        "__fern_map_free_ks",
-        "__fern_map_free_kvs",
-        "__fern_map_free_va",
-        "__fern_map_free_ksva",
-        "__fern_map_free_vsa",
-        "__fern_map_free_ksvsa",
-        "__fern_map_free_ka",
-        "__fern_map_free_kavs",
-        "__fern_map_free_kava",
-        "__fern_map_free_kavsa",
-        "__fern_map_free_vf",
-        "__fern_map_free_ksvf",
-        "__fern_map_free_kf",
-        "__fern_map_free_kfvs",
-        "__fern_map_free_kfvsa",
-        "__fern_map_free_kfvf",
-        "__fern_snapshot_dec",
-        // FBIP reuse degrade
-        "__fern_alloc_reuse",
-        // stringifiers
-        "__fern_i32_to_string",
-        "__fern_u32_to_string",
-        "__fern_i64_to_string",
-        "__fern_u64_to_string",
-        "__fern_chr",
-        "__fern_arr_str_join"
-    ];
+  return [
+    // reference counting, and the grow-bracket share pair
+    "__fern_rc_inc",
+    "__fern_rc_dec",
+    "__fern_rc_is_unique",
+    "__fern_arr_inc_elems",
+    "__fern_arr_own_elems",
+    "__fern_str_own",
+    "__fern_rc_underflow_get",
+    "__fern_arr_share_inc",
+    "__fern_arr_share_dec",
+    // reclaim: strings, arrays of them, arrays of arrays, maps
+    "__fern_str_free",
+    "__fern_str_view_free",
+    "__fern_str_arr_free",
+    "__fern_arrarr_free",
+    "__fern_strarrarr_free",
+    "__fern_optarrarr_free",
+    "__fern_map_free",
+    "__fern_map_free_vs",
+    "__fern_map_free_ks",
+    "__fern_map_free_kvs",
+    "__fern_map_free_va",
+    "__fern_map_free_ksva",
+    "__fern_map_free_vsa",
+    "__fern_map_free_ksvsa",
+    "__fern_map_free_ka",
+    "__fern_map_free_kavs",
+    "__fern_map_free_kava",
+    "__fern_map_free_kavsa",
+    "__fern_map_free_vf",
+    "__fern_map_free_ksvf",
+    "__fern_map_free_kf",
+    "__fern_map_free_kfvs",
+    "__fern_map_free_kfvsa",
+    "__fern_map_free_kfvf",
+    "__fern_snapshot_dec",
+    "__fern_mapiter_free",
+    // FBIP reuse degrade
+    "__fern_alloc_reuse",
+    // stringifiers
+    "__fern_i32_to_string",
+    "__fern_u32_to_string",
+    "__fern_i64_to_string",
+    "__fern_u64_to_string",
+    "__fern_chr",
+    "__fern_arr_str_join",
+  ];
 }
 
 // is_generated_helper reports the per-TYPE helpers the emitters synthesise one
 // body per instantiated type for. They cannot be listed: the suffix is a type
 // name the program supplies, so the rule is a prefix and not an inventory.
 pub function is_generated_helper(name: string): boolean {
-    if (name.len() > 14 && slice_unchecked(name, 0, 14) == "__struct_drop_") { return true; }
-    if (name.len() > 11 && slice_unchecked(name, 0, 11) == "__sem_drop_") { return true; }
-    if (name.len() > 14 && slice_unchecked(name, 0, 14) == "__sem_release_") { return true; }
-    return name.len() > 16 && slice_unchecked(name, 0, 16) == "__field_reclaim_";
+  if (name.len() > 14 && slice_unchecked(name, 0, 14) == "__struct_drop_") {
+    return true;
+  }
+  if (name.len() > 11 && slice_unchecked(name, 0, 11) == "__sem_drop_") {
+    return true;
+  }
+  if (name.len() > 14 && slice_unchecked(name, 0, 14) == "__sem_release_") {
+    return true;
+  }
+  return name.len() > 16 && slice_unchecked(name, 0, 16) == "__field_reclaim_";
 }
 
 // is_c_call_shim reports the `__c_call<n>` FFI family — `__c_call0`..`_4` with
 // an optional `_f32` / `_f64` return suffix. Restated here rather than taken
 // from asm_ir for the same reason the inventory is: a second record.
 pub function is_c_call_shim(name: string): boolean {
-    if (name.len() < 9) { return false; }
-    if (slice_unchecked(name, 0, 8) != "__c_call") { return false; }
-    var d: str = slice_unchecked(name, 8, 9);
-    if (d != "0" && d != "1" && d != "2" && d != "3" && d != "4") { return false; }
-    var rest: str = slice_unchecked(name, 9, name.len());
-    return rest == "" || rest == "_f32" || rest == "_f64";
+  if (name.len() < 9) {
+    return false;
+  }
+  if (slice_unchecked(name, 0, 8) != "__c_call") {
+    return false;
+  }
+  var d: str = slice_unchecked(name, 8, 9);
+  if (d != "0" && d != "1" && d != "2" && d != "3" && d != "4") {
+    return false;
+  }
+  var rest: str = slice_unchecked(name, 9, name.len());
+  return rest == "" || rest == "_f32" || rest == "_f64";
 }
 
 // is_provided is the whole record: the inventory, the generated-helper
 // prefixes, and the FFI shims.
 pub function is_provided(name: string): boolean {
-    if (is_generated_helper(name)) { return true; }
-    if (is_c_call_shim(name)) { return true; }
-    return util.has_str(provided_names(), name);
+  if (is_generated_helper(name)) {
+    return true;
+  }
+  if (is_c_call_shim(name)) {
+    return true;
+  }
+  return util.has_str(provided_names(), name);
 }
 
 // ---- the pass ----------------------------------------------------------
@@ -155,22 +173,22 @@ pub struct ProvidedResult { problems: irverify.Problem[], calls: i32 }
 // An empty callee name is irverify.fern's problem, not this one — it reports
 // that already, and repeating it here would double every occurrence.
 pub function verify_provided_fn(fn_name: string, ops: ir.Op[], declared: irverify.NameIndex): ProvidedResult {
-    var out: irverify.Problem[] = [];
-    var calls: i32 = 0;
-    var k_calld: i32 = ir.kind_id("call_direct");
-    var i: i32 = 0;
-    while (i < ops.len()) {
-        if (ops[i].kind_tag == k_calld && ops[i].str.len() > 0) {
-            calls = calls + 1;
-            if (!irverify.index_has(declared, ops[i].str) && !is_provided(ops[i].str)) {
-                out = out.append(irverify.Problem {
-                    fn_name: fn_name, op: i, kind: "call_direct",
-                    msg: "calls " + ops[i].str
-                        + ", which the program does not declare and no backend provides"
-                });
-            }
-        }
-        i = i + 1;
+  var out: irverify.Problem[] = [];
+  var calls: i32 = 0;
+  var k_calld: i32 = ir.kind_id("call_direct");
+  var i: i32 = 0;
+  while (i < ops.len()) {
+    if (ops[i].kind_tag == k_calld && ops[i].str.len() > 0) {
+      calls = calls + 1;
+      if (!irverify.index_has(declared, ops[i].str) && !is_provided(ops[i].str)) {
+        out = out.append(irverify.Problem {
+          fn_name: fn_name, op: i, kind: "call_direct",
+          msg: "calls " + ops[i].str
+            + ", which the program does not declare and no backend provides",
+        });
+      }
     }
-    return ProvidedResult { problems: out, calls: calls };
+    i = i + 1;
+  }
+  return ProvidedResult { problems: out, calls: calls };
 }

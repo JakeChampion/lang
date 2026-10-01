@@ -10,5 +10,5 @@
 import "std/_test_empty";
 
 pub function core_test_marker(): i32 {
-    return 7;
+  return 7;
 }

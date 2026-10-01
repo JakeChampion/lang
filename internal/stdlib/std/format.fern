@@ -77,72 +77,83 @@ import "core/cmp" as cmp;
 // delegates to. To pass values raw, reach for `format_values` (one
 // element type) or `format1`..`format4` (mixed) below.
 pub function format(fmt: string, args: string[]): string {
-    var n: i32 = fmt.len();
-    // Accumulate into a growable u8[] and materialise once (#4379): the old
-    // `out = out + …` appended each literal byte / spec result onto an immutable
-    // string, recopying the whole growing result every step — O(output²) on the
-    // hot formatting path. `out` is a LOCAL, so `out = out.append(byte)` grows
-    // the buffer in place (amortized O(1), the rc-gated self-push); the byte
-    // copies are inlined rather than routed through a helper precisely so they
-    // stay on the local (a borrowed-param `buf.append` would copy the whole
-    // buffer per call, reintroducing the quadratic). Byte indexing (`fmt[i]`)
-    // and single-byte appends preserve the byte-for-byte (UTF-8-agnostic)
-    // behaviour of the old 1-byte `fmt[i:i+1]` slices.
-    var out: u8[] = [];
-    var i: i32 = 0;
-    var argi: i32 = 0;
-    while (i < n) {
-        // Escaped braces: `{{` -> literal `{`, `}}` -> literal `}` (the
-        // Python str.format() / Rust format!() convention this mirrors). Checked
-        // before the `{}` placeholder so `{{}}` renders the literal "{}" rather
-        // than consuming an arg, and `{{{}}}` renders "{<arg>}".
-        if (i + 1 < n && fmt[i] == 123 && fmt[i + 1] == 123) {
-            out = out.append(123 as u8);   // '{'
-            i = i + 2;
-        } else if (i + 1 < n && fmt[i] == 125 && fmt[i + 1] == 125) {
-            out = out.append(125 as u8);   // '}'
-            i = i + 2;
-        } else if (fmt[i] == 123) {
-            // Opening brace: scan for the matching `}` and decide whether the
-            // run is a placeholder. The content is a placeholder spec only when
-            // it is empty (`{}`) or starts with `:` (`{:>8}`); anything else
-            // (`{abc}`, JSON `{"k":1}`) renders literally and consumes no arg.
-            var j: i32 = i + 1;
-            while (j < n && fmt[j] != 125) { j = j + 1; }
-            var isPlaceholder: boolean = false;
-            var spec: str = "";
-            if (j < n) {
-                spec = slice_unchecked(fmt, i + 1, j);
-                if (spec.len() == 0) { isPlaceholder = true; }
-                else if (spec[0] == 58) { isPlaceholder = true; }
-            }
-            if (isPlaceholder) {
-                if (argi < args.len()) {
-                    var piece: string = __format_apply_spec(args[argi], spec);
-                    var pl: i32 = piece.len();
-                    var pk: i32 = 0;
-                    while (pk < pl) { out = out.append(piece[pk] as u8); pk = pk + 1; }
-                    argi = argi + 1;
-                } else {
-                    // Missing arg — emit the placeholder verbatim so callers
-                    // can spot the underflow at runtime.
-                    out = out.append(123 as u8);   // '{'
-                    var sl: i32 = spec.len();
-                    var sk: i32 = 0;
-                    while (sk < sl) { out = out.append(spec[sk] as u8); sk = sk + 1; }
-                    out = out.append(125 as u8);   // '}'
-                }
-                i = j + 1;
-            } else {
-                out = out.append(fmt[i] as u8);
-                i = i + 1;
-            }
-        } else {
-            out = out.append(fmt[i] as u8);
-            i = i + 1;
+  var n: i32 = fmt.len();
+  // Accumulate into a growable u8[] and materialise once (#4379): the old
+  // `out = out + …` appended each literal byte / spec result onto an immutable
+  // string, recopying the whole growing result every step — O(output²) on the
+  // hot formatting path. `out` is a LOCAL, so `out = out.append(byte)` grows
+  // the buffer in place (amortized O(1), the rc-gated self-push); the byte
+  // copies are inlined rather than routed through a helper precisely so they
+  // stay on the local (a borrowed-param `buf.append` would copy the whole
+  // buffer per call, reintroducing the quadratic). Byte indexing (`fmt[i]`)
+  // and single-byte appends preserve the byte-for-byte (UTF-8-agnostic)
+  // behaviour of the old 1-byte `fmt[i:i+1]` slices.
+  var out: u8[] = [];
+  var i: i32 = 0;
+  var argi: i32 = 0;
+  while (i < n) {
+    // Escaped braces: `{{` -> literal `{`, `}}` -> literal `}` (the
+    // Python str.format() / Rust format!() convention this mirrors). Checked
+    // before the `{}` placeholder so `{{}}` renders the literal "{}" rather
+    // than consuming an arg, and `{{{}}}` renders "{<arg>}".
+    if (i + 1 < n && fmt[i] == 123 && fmt[i + 1] == 123) {
+      out = out.append(123 as u8);  // '{'
+      i = i + 2;
+    } else if (i + 1 < n && fmt[i] == 125 && fmt[i + 1] == 125) {
+      out = out.append(125 as u8);  // '}'
+      i = i + 2;
+    } else if (fmt[i] == 123) {
+      // Opening brace: scan for the matching `}` and decide whether the
+      // run is a placeholder. The content is a placeholder spec only when
+      // it is empty (`{}`) or starts with `:` (`{:>8}`); anything else
+      // (`{abc}`, JSON `{"k":1}`) renders literally and consumes no arg.
+      var j: i32 = i + 1;
+      while (j < n && fmt[j] != 125) {
+        j = j + 1;
+      }
+      var isPlaceholder: boolean = false;
+      var spec: str = "";
+      if (j < n) {
+        spec = slice_unchecked(fmt, i + 1, j);
+        if (spec.len() == 0) {
+          isPlaceholder = true;
+        } else if (spec[0] == 58) {
+          isPlaceholder = true;
         }
+      }
+      if (isPlaceholder) {
+        if (argi < args.len()) {
+          var piece: string = __format_apply_spec(args[argi], spec);
+          var pl: i32 = piece.len();
+          var pk: i32 = 0;
+          while (pk < pl) {
+            out = out.append(piece[pk] as u8);
+            pk = pk + 1;
+          }
+          argi = argi + 1;
+        } else {
+          // Missing arg — emit the placeholder verbatim so callers
+          // can spot the underflow at runtime.
+          out = out.append(123 as u8);  // '{'
+          var sl: i32 = spec.len();
+          var sk: i32 = 0;
+          while (sk < sl) {
+            out = out.append(spec[sk] as u8);
+            sk = sk + 1;
+          }
+          out = out.append(125 as u8);  // '}'
+        }
+        i = j + 1;
+      } else {
+        out = out.append(fmt[i] as u8);
+        i = i + 1;
+      }
+    } else {
+      out = out.append(fmt[i] as u8);
+      i = i + 1;
     }
-    return string_from_bytes_unchecked(out);
+  }
+  return string_from_bytes_unchecked(out);
 }
 
 // `format_values(fmt, args)` — `format` over args that are NOT
@@ -158,13 +169,13 @@ pub function format(fmt: string, args: string[]): string {
 // An empty literal cannot infer `T` (`format_values("hi", [])` is E040);
 // that call is just `format("hi", [])`.
 pub function format_values[T: cmp.Display](fmt: string, args: T[]): string {
-    var strs: string[] = [];
-    var i: i32 = 0;
-    while (i < args.len()) {
-        strs = strs.append(args[i].to_string());
-        i = i + 1;
-    }
-    return format(fmt, strs);
+  var strs: string[] = [];
+  var i: i32 = 0;
+  while (i < args.len()) {
+    strs = strs.append(args[i].to_string());
+    i = i + 1;
+  }
+  return format(fmt, strs);
 }
 
 // `format1`..`format4` — `format` over a fixed number of args of
@@ -177,19 +188,19 @@ pub function format_values[T: cmp.Display](fmt: string, args: T[]): string {
 // heterogeneous. Beyond four args, stringify into a `string[]` and call
 // `format` directly.
 pub function format1[A: cmp.Display](fmt: string, a: A): string {
-    return format(fmt, [a.to_string()]);
+  return format(fmt, [a.to_string()]);
 }
 
 pub function format2[A: cmp.Display, B: cmp.Display](fmt: string, a: A, b: B): string {
-    return format(fmt, [a.to_string(), b.to_string()]);
+  return format(fmt, [a.to_string(), b.to_string()]);
 }
 
 pub function format3[A: cmp.Display, B: cmp.Display, C: cmp.Display](fmt: string, a: A, b: B, c: C): string {
-    return format(fmt, [a.to_string(), b.to_string(), c.to_string()]);
+  return format(fmt, [a.to_string(), b.to_string(), c.to_string()]);
 }
 
 pub function format4[A: cmp.Display, B: cmp.Display, C: cmp.Display, D: cmp.Display](fmt: string, a: A, b: B, c: C, d: D): string {
-    return format(fmt, [a.to_string(), b.to_string(), c.to_string(), d.to_string()]);
+  return format(fmt, [a.to_string(), b.to_string(), c.to_string(), d.to_string()]);
 }
 
 // __format_apply_spec applies a `:`-prefixed format spec to an
@@ -198,87 +209,103 @@ pub function format4[A: cmp.Display, B: cmp.Display, C: cmp.Display, D: cmp.Disp
 // `[[fill]align][sign]['0'][width][.precision]` grammar. Precision
 // truncates first, then width pads — matching Rust's ordering.
 function __format_apply_spec(s: string, spec: string): string {
-    if (spec.len() == 0) { return s; }
-    var m: i32 = spec.len();
-    var p: i32 = 1; // skip the leading ':'
-    // [fill]align — a fill char (a whole code point, possibly multibyte)
-    // only counts when an align char (`<>^`) follows it; a bare align
-    // char takes the default space fill.
-    var fill: str = " ";
-    var align: i32 = 1; // 1=left, 2=right, 3=center; strings default left.
-    var fw: i32 = 1; // byte width of the candidate fill char
-    match (utf8.utf8_decode_at(spec, p)) {
-        Some(pair) => { fw = pair.1; },
-        None => {}
-    }
-    if (p + fw < m && __is_align((spec[p + fw] as i32))) {
-        fill = slice_unchecked(spec, p, p + fw); // bounds from utf8_decode_at
-        align = __align_code((spec[p + fw] as i32));
-        p = p + fw + 1;
-    } else if (p < m && __is_align((spec[p] as i32))) {
-        align = __align_code((spec[p] as i32));
-        p = p + 1;
-    }
-    // sign — `+` forces a leading `+` on non-negative numbers; `-`
-    // is the default and a no-op. Consumed here so it precedes the
-    // `0` flag and width, per Rust's `[sign]['0'][width]` order.
-    var plus: boolean = false;
-    if (p < m && spec[p] == 43) { plus = true; p = p + 1; }      // '+'
-    else if (p < m && spec[p] == 45) { p = p + 1; }              // '-'
-    // `0` flag — a leading `0` before the width digits selects
-    // sign-aware zero-padding (overriding fill/align). The flag is
-    // consumed here; any further digits are the width.
-    var zero: boolean = false;
-    if (p < m && spec[p] == 48) { zero = true; p = p + 1; }      // '0'
-    // width — run of decimal digits.
-    var width: i32 = 0;
+  if (spec.len() == 0) {
+    return s;
+  }
+  var m: i32 = spec.len();
+  var p: i32 = 1;  // skip the leading ':'
+  // [fill]align — a fill char (a whole code point, possibly multibyte)
+  // only counts when an align char (`<>^`) follows it; a bare align
+  // char takes the default space fill.
+  var fill: str = " ";
+  var align: i32 = 1;  // 1=left, 2=right, 3=center; strings default left.
+  var fw: i32 = 1;  // byte width of the candidate fill char
+  match (utf8.utf8_decode_at(spec, p)) {
+    Some(pair) => {
+      fw = pair.1;
+    },
+    None => {}
+  }
+  if (p + fw < m && __is_align(spec[p + fw] as i32)) {
+    fill = slice_unchecked(spec, p, p + fw);  // bounds from utf8_decode_at
+    align = __align_code(spec[p + fw] as i32);
+    p = p + fw + 1;
+  } else if (p < m && __is_align(spec[p] as i32)) {
+    align = __align_code(spec[p] as i32);
+    p = p + 1;
+  }
+  // sign — `+` forces a leading `+` on non-negative numbers; `-`
+  // is the default and a no-op. Consumed here so it precedes the
+  // `0` flag and width, per Rust's `[sign]['0'][width]` order.
+  var plus: boolean = false;
+  if (p < m && spec[p] == 43) {  // '+'
+    plus = true;
+    p = p + 1;
+  } else if (p < m && spec[p] == 45) {  // '-'
+    p = p + 1;
+  }
+  // `0` flag — a leading `0` before the width digits selects
+  // sign-aware zero-padding (overriding fill/align). The flag is
+  // consumed here; any further digits are the width.
+  var zero: boolean = false;
+  if (p < m && spec[p] == 48) {  // '0'
+    zero = true;
+    p = p + 1;
+  }
+  // width — run of decimal digits.
+  var width: i32 = 0;
+  while (p < m && spec[p] >= 48 && spec[p] <= 57) {
+    width = width * 10 + (spec[p] as i32 - 48);
+    p = p + 1;
+  }
+  // .precision — fractional digits on a decimal numeral, max byte length
+  // (snapped back to a char boundary, so a code point is never split) on
+  // anything else. Same "does it look like a number" split the sign flag
+  // below uses: `format` sees only the stringified value, so the shape of
+  // the digits is the only signal for which meaning was intended.
+  var val: string = s;
+  if (p < m && spec[p] == 46) {
+    p = p + 1;
+    var prec: i32 = 0;
     while (p < m && spec[p] >= 48 && spec[p] <= 57) {
-        width = width * 10 + ((spec[p] as i32) - 48);
-        p = p + 1;
+      prec = prec * 10 + (spec[p] as i32 - 48);
+      p = p + 1;
     }
-    // .precision — fractional digits on a decimal numeral, max byte length
-    // (snapped back to a char boundary, so a code point is never split) on
-    // anything else. Same "does it look like a number" split the sign flag
-    // below uses: `format` sees only the stringified value, so the shape of
-    // the digits is the only signal for which meaning was intended.
-    var val: string = s;
-    if (p < m && spec[p] == 46) {
-        p = p + 1;
-        var prec: i32 = 0;
-        while (p < m && spec[p] >= 48 && spec[p] <= 57) {
-            prec = prec * 10 + ((spec[p] as i32) - 48);
-            p = p + 1;
-        }
-        // slice_snap: at most `prec` bytes, never a split code point.
-        if (__is_decimal_numeral(val)) { val = __round_to_places(val, prec); }
-        else if (val.len() > prec) { val = val.slice_snap(0, prec).to_owned(); }
+    // slice_snap: at most `prec` bytes, never a split code point.
+    if (__is_decimal_numeral(val)) {
+      val = __round_to_places(val, prec);
+    } else if (val.len() > prec) {
+      val = val.slice_snap(0, prec).to_owned();
     }
-    // sign flag — prefix `+` on a value that looks like a non-negative
-    // number (first byte a digit). A value already carrying `-`/`+`,
-    // or a non-numeric one, is left untouched.
-    if (plus && val.len() > 0 && val[0] >= 48 && val[0] <= 57) {
-        val = "+" + val;
+  }
+  // sign flag — prefix `+` on a value that looks like a non-negative
+  // number (first byte a digit). A value already carrying `-`/`+`,
+  // or a non-numeric one, is left untouched.
+  if (plus && val.len() > 0 && val[0] >= 48 && val[0] <= 57) {
+    val = "+" + val;
+  }
+  // width padding — never truncates.
+  var vlen: i32 = val.len();
+  if (vlen >= width) {
+    return val;
+  }
+  var pad: i32 = width - vlen;
+  // zero-pad — sign-aware: zeros go after a leading sign char, and
+  // the sign counts toward the width. Overrides fill/align.
+  if (zero) {
+    if (val.len() > 0 && (val[0] == 45 || val[0] == 43)) {
+      return slice_unchecked(val, 0, 1) + __repeat_char("0", pad) + slice_unchecked(val, 1, val.len());
     }
-    // width padding — never truncates.
-    var vlen: i32 = val.len();
-    if (vlen >= width) { return val; }
-    var pad: i32 = width - vlen;
-    // zero-pad — sign-aware: zeros go after a leading sign char, and
-    // the sign counts toward the width. Overrides fill/align.
-    if (zero) {
-        if (val.len() > 0 && (val[0] == 45 || val[0] == 43)) {
-            return slice_unchecked(val, 0, 1) + __repeat_char("0", pad) + slice_unchecked(val, 1, val.len());
-        }
-        return __repeat_char("0", pad) + val;
-    }
-    if (align == 2) {
-        return __repeat_char(fill, pad) + val;
-    }
-    if (align == 3) {
-        var left: i32 = pad / 2;
-        return __repeat_char(fill, left) + val + __repeat_char(fill, pad - left);
-    }
-    return val + __repeat_char(fill, pad);
+    return __repeat_char("0", pad) + val;
+  }
+  if (align == 2) {
+    return __repeat_char(fill, pad) + val;
+  }
+  if (align == 3) {
+    var left: i32 = pad / 2;
+    return __repeat_char(fill, left) + val + __repeat_char(fill, pad - left);
+  }
+  return val + __repeat_char(fill, pad);
 }
 
 // __is_decimal_numeral reports whether `s` is `[+-]?digits[.digits]` —
@@ -286,18 +313,32 @@ function __format_apply_spec(s: string, spec: string): string {
 // ("3.") and an exponent form ("1e30") are not numerals here, so they keep
 // the byte-truncation meaning.
 function __is_decimal_numeral(s: string): boolean {
-    var n: i32 = s.len();
-    var i: i32 = 0;
-    if (i < n && (s[i] == 43 || s[i] == 45)) { i = i + 1; }
-    var whole: i32 = 0;
-    while (i < n && s[i] >= 48 && s[i] <= 57) { i = i + 1; whole = whole + 1; }
-    if (whole == 0) { return false; }
-    if (i == n) { return true; }
-    if (s[i] != 46) { return false; }
+  var n: i32 = s.len();
+  var i: i32 = 0;
+  if (i < n && (s[i] == 43 || s[i] == 45)) {
     i = i + 1;
-    var frac: i32 = 0;
-    while (i < n && s[i] >= 48 && s[i] <= 57) { i = i + 1; frac = frac + 1; }
-    return i == n && frac > 0;
+  }
+  var whole: i32 = 0;
+  while (i < n && s[i] >= 48 && s[i] <= 57) {
+    i = i + 1;
+    whole = whole + 1;
+  }
+  if (whole == 0) {
+    return false;
+  }
+  if (i == n) {
+    return true;
+  }
+  if (s[i] != 46) {
+    return false;
+  }
+  i = i + 1;
+  var frac: i32 = 0;
+  while (i < n && s[i] >= 48 && s[i] <= 57) {
+    i = i + 1;
+    frac = frac + 1;
+  }
+  return i == n && frac > 0;
 }
 
 // __round_to_places renders the decimal numeral `s` with EXACTLY `places`
@@ -305,91 +346,123 @@ function __is_decimal_numeral(s: string): boolean {
 // bytes rather than round-tripping through f64, so a numeral with more
 // significant digits than a double can hold keeps the ones it arrived with.
 function __round_to_places(s: string, places: i32): string {
-    var n: i32 = s.len();
-    var i: i32 = 0;
-    var sign: string = "";
-    if (s[0] == 43 || s[0] == 45) {
-        if (s[0] == 45) { sign = "-"; }
-        i = 1;
+  var n: i32 = s.len();
+  var i: i32 = 0;
+  var sign: string = "";
+  if (s[0] == 43 || s[0] == 45) {
+    if (s[0] == 45) {
+      sign = "-";
     }
-    var dot: i32 = i;
-    while (dot < n && s[dot] != 46) { dot = dot + 1; }
-    var intLen: i32 = dot - i;
-    // One digit run: the integer digits followed by exactly `places`
-    // fractional ones, zero-filled where the value has fewer. Carry then
-    // propagates right-to-left across the whole run in one pass.
-    var digits: u8[] = [];
-    var k: i32 = i;
-    while (k < dot) { digits = digits.append(s[k] as u8); k = k + 1; }
-    var f: i32 = 0;
-    while (f < places) {
-        var src: i32 = dot + 1 + f;
-        if (src < n) { digits = digits.append(s[src] as u8); }
-        else { digits = digits.append(48 as u8); }   // '0'
-        f = f + 1;
+    i = 1;
+  }
+  var dot: i32 = i;
+  while (dot < n && s[dot] != 46) {
+    dot = dot + 1;
+  }
+  var intLen: i32 = dot - i;
+  // One digit run: the integer digits followed by exactly `places`
+  // fractional ones, zero-filled where the value has fewer. Carry then
+  // propagates right-to-left across the whole run in one pass.
+  var digits: u8[] = [];
+  var k: i32 = i;
+  while (k < dot) {
+    digits = digits.append(s[k] as u8);
+    k = k + 1;
+  }
+  var f: i32 = 0;
+  while (f < places) {
+    var src: i32 = dot + 1 + f;
+    if (src < n) {
+      digits = digits.append(s[src] as u8);
+    } else {  // '0'
+      digits = digits.append(48 as u8);
     }
-    var next: i32 = dot + 1 + places;
-    if (next < n && s[next] >= 53) {                 // first dropped digit >= '5'
-        var c: i32 = digits.len() - 1;
-        var carry: boolean = true;
-        while (carry && c >= 0) {
-            var d: i32 = (digits[c] as i32) + 1;
-            if (d > 57) { digits = digits.with(c, 48 as u8); c = c - 1; }
-            else { digits = digits.with(c, d as u8); carry = false; }
-        }
-        // Carry out of the leading digit widens the integer part: 9.9 at
-        // `.0` is "10", not "0".
-        if (carry) {
-            var grown: u8[] = [49 as u8];            // '1'
-            var g: i32 = 0;
-            while (g < digits.len()) { grown = grown.append(digits[g]); g = g + 1; }
-            digits = grown;
-            intLen = intLen + 1;
-        }
+    f = f + 1;
+  }
+  var next: i32 = dot + 1 + places;
+  if (next < n && s[next] >= 53) {  // first dropped digit >= '5'
+    var c: i32 = digits.len() - 1;
+    var carry: boolean = true;
+    while (carry && c >= 0) {
+      var d: i32 = digits[c] as i32 + 1;
+      if (d > 57) {
+        digits = digits.with(c, 48 as u8);
+        c = c - 1;
+      } else {
+        digits = digits.with(c, d as u8);
+        carry = false;
+      }
     }
-    var head: u8[] = [];
-    var j: i32 = 0;
-    while (j < intLen) { head = head.append(digits[j]); j = j + 1; }
-    var out: string = sign + string_from_bytes_unchecked(head);
-    if (places > 0) {
-        var tail: u8[] = [];
-        while (j < digits.len()) { tail = tail.append(digits[j]); j = j + 1; }
-        out = out + "." + string_from_bytes_unchecked(tail);
+    // Carry out of the leading digit widens the integer part: 9.9 at
+    // `.0` is "10", not "0".
+    if (carry) {
+      var grown: u8[] = [49 as u8];  // '1'
+      var g: i32 = 0;
+      while (g < digits.len()) {
+        grown = grown.append(digits[g]);
+        g = g + 1;
+      }
+      digits = grown;
+      intLen = intLen + 1;
     }
-    return out;
+  }
+  var head: u8[] = [];
+  var j: i32 = 0;
+  while (j < intLen) {
+    head = head.append(digits[j]);
+    j = j + 1;
+  }
+  var out: string = sign + string_from_bytes_unchecked(head);
+  if (places > 0) {
+    var tail: u8[] = [];
+    while (j < digits.len()) {
+      tail = tail.append(digits[j]);
+      j = j + 1;
+    }
+    out = out + "." + string_from_bytes_unchecked(tail);
+  }
+  return out;
 }
 
 function __is_align(c: i32): boolean {
-    return c == 60 || c == 62 || c == 94; // '<' '>' '^'
+  return c == 60 || c == 62 || c == 94;  // '<' '>' '^'
 }
 
 function __align_code(c: i32): i32 {
-    if (c == 60) { return 1; } // '<' left
-    if (c == 62) { return 2; } // '>' right
-    return 3;                  // '^' center
+  if (c == 60) {  // '<' left
+    return 1;
+  }
+  if (c == 62) {  // '>' right
+    return 2;
+  }
+  return 3;  // '^' center
 }
 
 function __repeat_char(s: string, count: i32): string {
-    if (count <= 0) { return ""; }
-    var sl: i32 = s.len();
-    if (sl == 0) { return ""; }
-    // Fill one exact-size (sl·count) buffer instead of `out = out + s`,
-    // which recopied the growing prefix on every step (O((sl·count)²) — #4379).
-    // Same two-pass idiom as std/string's `repeat`; keeps every padded/aligned
-    // format spec off the quadratic path.
-    var buf: u8[] = __alloc_u8(sl * count);
-    var pos: i32 = 0;
-    var k: i32 = 0;
-    while (k < count) {
-        var j: i32 = 0;
-        while (j < sl) {
-            buf = buf.with(pos, s[j] as u8);
-            pos = pos + 1;
-            j = j + 1;
-        }
-        k = k + 1;
+  if (count <= 0) {
+    return "";
+  }
+  var sl: i32 = s.len();
+  if (sl == 0) {
+    return "";
+  }
+  // Fill one exact-size (sl·count) buffer instead of `out = out + s`,
+  // which recopied the growing prefix on every step (O((sl·count)²) — #4379).
+  // Same two-pass idiom as std/string's `repeat`; keeps every padded/aligned
+  // format spec off the quadratic path.
+  var buf: u8[] = __alloc_u8(sl * count);
+  var pos: i32 = 0;
+  var k: i32 = 0;
+  while (k < count) {
+    var j: i32 = 0;
+    while (j < sl) {
+      buf = buf.with(pos, s[j] as u8);
+      pos = pos + 1;
+      j = j + 1;
     }
-    return string_from_bytes_unchecked(buf);
+    k = k + 1;
+  }
+  return string_from_bytes_unchecked(buf);
 }
 
 // `format_bytes(n)` — render an i32 byte count as "N B" /
@@ -402,21 +475,25 @@ function __repeat_char(s: string, count: i32): string {
 // CLI / log use case; callers needing larger sizes can
 // drop down to manual i64 div + to_string.
 pub function format_bytes(n: i32): string {
-    var neg: boolean = (n < 0);
-    var mag: i32 = n;
-    if (neg) { mag = n.abs(); }
-    var sign: string = "";
-    if (neg) { sign = "-"; }
-    if (mag < 1024) {
-        return sign + mag.to_string() + " B";
-    }
-    if (mag < 1024 * 1024) {
-        return sign + (mag / 1024).to_string() + " KiB";
-    }
-    if (mag < 1024 * 1024 * 1024) {
-        return sign + (mag / (1024 * 1024)).to_string() + " MiB";
-    }
-    return sign + (mag / (1024 * 1024 * 1024)).to_string() + " GiB";
+  var neg: boolean = n < 0;
+  var mag: i32 = n;
+  if (neg) {
+    mag = n.abs();
+  }
+  var sign: string = "";
+  if (neg) {
+    sign = "-";
+  }
+  if (mag < 1024) {
+    return sign + mag.to_string() + " B";
+  }
+  if (mag < 1024 * 1024) {
+    return sign + (mag / 1024).to_string() + " KiB";
+  }
+  if (mag < 1024 * 1024 * 1024) {
+    return sign + (mag / (1024 * 1024)).to_string() + " MiB";
+  }
+  return sign + (mag / (1024 * 1024 * 1024)).to_string() + " GiB";
 }
 
 // `format_duration_ms(ms)` — human-readable duration like
@@ -424,33 +501,47 @@ pub function format_bytes(n: i32): string {
 // non-zero, separated by spaces; "0" alone returns "0ms".
 // Negative ms gets a leading "-" before the magnitude.
 pub function format_duration_ms(ms: i32): string {
-    if (ms == 0) { return "0ms"; }
-    var neg: boolean = (ms < 0);
-    var mag: i32 = ms;
-    if (neg) { mag = ms.abs(); }
-    var sign: string = "";
-    if (neg) { sign = "-"; }
-    var h: i32 = mag / 3600000;
-    var rem: i32 = mag - h * 3600000;
-    var m: i32 = rem / 60000;
-    rem = rem - m * 60000;
-    var s: i32 = rem / 1000;
-    var msPart: i32 = rem - s * 1000;
-    var out: string = "";
-    if (h > 0) { out = out + h.to_string() + "h"; }
-    if (m > 0) {
-        if (out.len() > 0) { out = out + " "; }
-        out = out + m.to_string() + "m";
+  if (ms == 0) {
+    return "0ms";
+  }
+  var neg: boolean = ms < 0;
+  var mag: i32 = ms;
+  if (neg) {
+    mag = ms.abs();
+  }
+  var sign: string = "";
+  if (neg) {
+    sign = "-";
+  }
+  var h: i32 = mag / 3600000;
+  var rem: i32 = mag - h * 3600000;
+  var m: i32 = rem / 60000;
+  rem = rem - m * 60000;
+  var s: i32 = rem / 1000;
+  var msPart: i32 = rem - s * 1000;
+  var out: string = "";
+  if (h > 0) {
+    out = out + h.to_string() + "h";
+  }
+  if (m > 0) {
+    if (out.len() > 0) {
+      out = out + " ";
     }
-    if (s > 0) {
-        if (out.len() > 0) { out = out + " "; }
-        out = out + s.to_string() + "s";
+    out = out + m.to_string() + "m";
+  }
+  if (s > 0) {
+    if (out.len() > 0) {
+      out = out + " ";
     }
-    if (msPart > 0) {
-        if (out.len() > 0) { out = out + " "; }
-        out = out + msPart.to_string() + "ms";
+    out = out + s.to_string() + "s";
+  }
+  if (msPart > 0) {
+    if (out.len() > 0) {
+      out = out + " ";
     }
-    return sign + out;
+    out = out + msPart.to_string() + "ms";
+  }
+  return sign + out;
 }
 
 // `parse_duration_ms(s)` — the inverse of `format_duration_ms`: parse a
@@ -461,41 +552,48 @@ pub function format_duration_ms(ms: i32): string {
 // part with no number. The `i64` result holds durations far beyond the
 // i32 that `format_duration_ms` takes.
 pub function parse_duration_ms(s: string): Option[i64] {
-    var n: i32 = s.len();
-    var i: i32 = 0;
-    var total: i64 = 0;
-    var saw: boolean = false;
-    while (i < n) {
-        if (s[i] == 32) { i = i + 1; continue; }   // skip spaces
-        var start: i32 = i;
-        var num: i64 = 0;
-        while (i < n && s[i] >= 48 && s[i] <= 57) {
-            num = num * (10 as i64) + ((s[i] - 48) as i64);
-            i = i + 1;
-        }
-        if (i == start) { return None; }            // expected a number
-        var unit_ms: i64 = 0;
-        if (i + 1 < n && s[i] == 109 && s[i + 1] == 115) {   // "ms"
-            unit_ms = 1;
-            i = i + 2;
-        } else if (i < n && s[i] == 115) {                   // "s"
-            unit_ms = 1000;
-            i = i + 1;
-        } else if (i < n && s[i] == 109) {                   // "m"
-            unit_ms = 60000;
-            i = i + 1;
-        } else if (i < n && s[i] == 104) {                   // "h"
-            unit_ms = 3600000;
-            i = i + 1;
-        } else if (i < n && s[i] == 100) {                   // "d"
-            unit_ms = 86400000;
-            i = i + 1;
-        } else {
-            return None;                                     // missing/unknown unit
-        }
-        total = total + num * unit_ms;
-        saw = true;
+  var n: i32 = s.len();
+  var i: i32 = 0;
+  var total: i64 = 0;
+  var saw: boolean = false;
+  while (i < n) {
+    if (s[i] == 32) {  // skip spaces
+      i = i + 1;
+      continue;
     }
-    if (!saw) { return None; }
-    return Some(total);
+    var start: i32 = i;
+    var num: i64 = 0;
+    while (i < n && s[i] >= 48 && s[i] <= 57) {
+      num = num * (10 as i64) + (s[i] - 48) as i64;
+      i = i + 1;
+    }
+    if (i == start) {  // expected a number
+      return None;
+    }
+    var unit_ms: i64 = 0;
+    if (i + 1 < n && s[i] == 109 && s[i + 1] == 115) {  // "ms"
+      unit_ms = 1;
+      i = i + 2;
+    } else if (i < n && s[i] == 115) {  // "s"
+      unit_ms = 1000;
+      i = i + 1;
+    } else if (i < n && s[i] == 109) {  // "m"
+      unit_ms = 60000;
+      i = i + 1;
+    } else if (i < n && s[i] == 104) {  // "h"
+      unit_ms = 3600000;
+      i = i + 1;
+    } else if (i < n && s[i] == 100) {  // "d"
+      unit_ms = 86400000;
+      i = i + 1;
+    } else {
+      return None;  // missing/unknown unit
+    }
+    total = total + num * unit_ms;
+    saw = true;
+  }
+  if (!saw) {
+    return None;
+  }
+  return Some(total);
 }

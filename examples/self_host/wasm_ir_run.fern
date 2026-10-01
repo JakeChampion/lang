@@ -1,8 +1,9 @@
 // examples/self_host/wasm_ir_run.fern — differential driver for the wasm IR
 // code path (the wasm sibling of asm_ir_run, whose -target flag also covers arm64).
 // `-ir` FORCES the IR path (wasm_ir.emit_ir_module: AST -> stack IR -> WAT) past
-// the routing gates; without it the driver takes the ordinary ROUTED path, the
-// same one wasm_run takes. The companion Go test pipes each program through both
+// the routing gates when the typed lowering is off (FERN_SEM_IR=); otherwise the
+// driver takes the ordinary ROUTED path over the typed lowering, the same one
+// wasm_run takes. The companion Go test pipes each program through both
 // ways and asserts identical exit codes.
 //
 // The two sides used to be IR-vs-AST, which is what made this a differential
@@ -20,120 +21,140 @@ import "./asmcore";
 import "./irlower";
 import "./ircore";
 import "./wasm_ir";
+import "./semlower";
 
 // main wraps `run` in the shared rc-over-release guard — see
 // util.rc_underflow_guard. Every self-host driver run self-checks its own
 // heap accounting; a corrupted freelist is otherwise silent (#6021).
 function main(): i32 {
-    return util.rc_underflow_guard("wasm_ir_run", run());
+  return util.rc_underflow_guard("wasm_ir_run", run());
 }
 
 function run(): i32 {
-    var av: string[] = args();
-    var use_ir: boolean = false;
-    var ai: i32 = 1;
-    while (ai < av.len()) {
-        if (av[ai] == "-ir") { use_ir = true; }
-        ai = ai + 1;
+  var av: string[] = args();
+  var use_ir: boolean = false;
+  var ai: i32 = 1;
+  while (ai < av.len()) {
+    if (av[ai] == "-ir") {
+      use_ir = true;
     }
-    var mod: parser.Module = rundriver.parse_stdin("wasm_ir_run");
-    if (asmcore.refuse_parse_unknowns([mod])) { return 1; }
-    // Call-arity gate (#4360): shared with wasm_run — an arg-count mismatch
-    // must reject before either the IR or the AST-fallback emit runs, not
-    // miscompile. Checked on a default-filled COPY (the emit input is
-    // untouched; both emit paths fill defaults themselves).
-    var arity_errs: util.Diag[] = asmcore.check_call_arity(parser.fill_default_args_module(mod));
-    // Bare-map_new chain gate (native E038/E003 parity) — same
-    // reject-don't-miscompile rationale as the arity gate.
-    arity_errs = util.append_diags(arity_errs, asmcore.check_map_new_chain(mod));
-    // Undefined-callee gate (native E001, #5644): a callee naming nothing
-    // otherwise reaches the emitter's generic call path, which emits a call
-    // against a symbol nothing defines — an opaque load-time `unknown func`
-    // instead of a diagnostic pointing at the source.
-    arity_errs = util.append_diags(arity_errs, asmcore.check_undefined_calls(mod));
-    // Nameless-declaration gate: the permissive parser leaves an empty name
-    // where a keyword was used (`function use()`), and nothing downstream
-    // notices — see asmcore.check_decl_names for what that cost.
-    arity_errs = util.append_diags(arity_errs, asmcore.check_decl_names(mod));
-    if (arity_errs.len() > 0) {
-        eprint(util.format_diags(arity_errs));
-        return 1;
-    }
-    // Builtins with no wasm meaning at all (subprocess #4320, timer_fd #4317,
-    // the raw/syscall floor #6946) are error endpoints, not deferrals. This
-    // driver's IR path calls emit_ir_module directly, so the shared entry's copy
-    // of this gate does not cover it; without one the refusal comes from
-    // instruction selection and names an IR op instead of the builtin.
-    var unsupported: string = wasm_ir.wasm_unsupported_builtin(mod);
-    if (unsupported.len() > 0) {
-        eprint(wasm_ir.wasm_unsupported_message(unsupported));
-        return 1;
-    }
-    var emitted: string = "";
-    var lm: parser.Module = wasm_ir.lift_lambdas(mod);
-    // Eligibility must be judged with the builtin structs/enums injected
-    // (FileStat / ProcessResult / IoError variants) — a struct-returning builtin
-    // like stat() (whose match arm `Ok(s) => s.size` needs the FileStat layout to
-    // lower) is only judged eligible once FileStat is present; otherwise it is
-    // refused. Inject into a SEPARATE copy used only for the eligibility decision
-    // — `lm` itself stays un-injected so the monomorphise + post-monomorphize
-    // injection below assign struct type-ids in the order the AST path used
-    // (injecting before monomorphize would renumber user structs and break
-    // struct programs).
-    var elm: parser.Module = parser.Module { funcs: lm.funcs, structs: parser.inject_builtin_enums(lm.structs), aliases: lm.aliases, imports: lm.imports, top_stmts: lm.top_stmts, enums: lm.enums, resources: lm.resources, exports: lm.exports, impls: lm.impls, trait_reqs: lm.trait_reqs, trait_decls: lm.trait_decls, inferred_consts: lm.inferred_consts };
-    // Judge eligibility BOTH ways: `lm_ok` is the exact verdict the un-injected
-    // module gets (the main-path behaviour — every program that lowered before
-    // still lowers identically), `elm_ok` additionally lets a struct-returning
-    // builtin like stat() — only lowerable once FileStat is injected — qualify.
-    var lm_ok: boolean = wasm_ir.wasm_eligible(lm);
-    var elm_ok: boolean = wasm_ir.wasm_eligible(elm);
-    // Monomorphise bounded generics (functions + generic structs/enums) on the
-    // IR path — the same expansion module_with_builtins runs.
-    // Hoisted out of the emit block because it is ALSO what lets an erased-wide-
-    // container module qualify: an erased generic `some1[T](x: T): Option[T]`
-    // (or `Result` / `T[]`) is promoted to bounded (parser targeted promotion),
-    // so this pass CLONES it per concrete instantiation — `some1__i64` with a
-    // concrete `Option[i64]` return. After cloning, no call passes a wide value
-    // through a bare-typevar param (each targets a concrete clone), so
-    // `module_erased_wide` clears and the module lowers on the wasm IR path
-    // instead of being refused. Non-generic modules no-op (nothing bounded).
-    var mmod: parser.Module = parser.monomorphize_enum_structs(parser.monomorphize_enums(parser.monomorphize_structs(parser.monomorphize_module(parser.register_struct_method_generics(parser.register_map_method_generics(parser.register_array_method_generics(lm)))))));
-    // `mono_ok` is the erased-wide-container rescue: only consulted when the raw
-    // verdicts both say defer, so every program that already lowered keeps its
-    // exact IR/AST verdict (and byte-identical output). Judging the SAME
-    // monomorphised module the emit uses makes eligibility match what is emitted.
-    var mono_ok: boolean = false;
-    if (!lm_ok && !elm_ok) { mono_ok = wasm_ir.wasm_eligible(mmod); }
-    if (use_ir && (lm_ok || elm_ok || mono_ok)) {
-        mod = mmod;
-        // Inject the builtin structs/enums (FileStat / ProcessResult / IoError
-        // variants) ONLY when they're what made the module eligible — i.e. a
-        // struct-returning builtin like stat() that the un-injected module can't
-        // lower (`!lm_ok && elm_ok`). Without them stat() has no FileStat layout,
-        // so the match arm `Ok(s) => s.size` can't resolve its field offsets AND
-        // the module_emits_op("stat") gate bails, so the $__fern_stat runtime +
-        // import are never emitted (invalid module). For every program that was
-        // already eligible un-injected (`lm_ok`), skip the injection so its IR
-        // output stays byte-identical to before — appending the builtin structs
-        // perturbs the emitter even when they're unused.
-        if (!lm_ok && elm_ok) {
-            mod = parser.Module { funcs: mod.funcs, structs: parser.inject_builtin_enums(mod.structs), aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs, trait_decls: mod.trait_decls, inferred_consts: mod.inferred_consts };
-        }
-        // Force the IR path. Lower every function ONCE and hand the cache to
-        // emit_ir_module, which queries module_emits_op / module_uses_* /
-        // str_values ~50× — re-lowering per query is the O(functions²) ×
-        // O(passes) blowup that OOMed large modules (#4652).
-        var fstab: irlower.StructTab = irlower.struct_tab(mod.structs);
-        var fbase: irlower.FnSigs = ircore.wp_fn_sigs(mod.funcs, fstab);
-        // The module emission itself lives in wasm_ir.emit_ir_module — the SINGLE
-        // source of truth shared with the routed entry point. This driver used to
-        // inline its own near-identical copy; the two drifted and the routed copy
-        // lost the whole WASI env/args/clock/fs surface, emitting calls to helpers
-        // it never defined (#4801).
-        emitted = wasm_ir.emit_ir_module(mod, wasm_ir.lower_all_for_base(mod, fstab, fbase), fbase);
-    } else {
-        emitted = wasm_ir.emit_module_mode_or_error(parser.module_with_builtins(mod), false, false);
-    }
-    write(emitted);
-    return 0;
+    ai = ai + 1;
+  }
+  var mod: parser.Module = rundriver.parse_stdin("wasm_ir_run");
+  if (asmcore.refuse_parse_unknowns([mod])) {
+    return 1;
+  }
+  // Call-arity gate (#4360): shared with wasm_run — an arg-count mismatch
+  // must reject before either the IR or the AST-fallback emit runs, not
+  // miscompile. Checked on a default-filled COPY (the emit input is
+  // untouched; both emit paths fill defaults themselves).
+  var arity_errs: util.Diag[] = asmcore.check_call_arity(parser.fill_default_args_module(mod));
+  // Bare-map_new chain gate (native E038/E003 parity) — same
+  // reject-don't-miscompile rationale as the arity gate.
+  arity_errs = util.append_diags(arity_errs, asmcore.check_map_new_chain(mod));
+  // Undefined-callee gate (native E001, #5644): a callee naming nothing
+  // otherwise reaches the emitter's generic call path, which emits a call
+  // against a symbol nothing defines — an opaque load-time `unknown func`
+  // instead of a diagnostic pointing at the source.
+  arity_errs = util.append_diags(arity_errs, asmcore.check_undefined_calls(mod));
+  // Nameless-declaration gate: the permissive parser leaves an empty name
+  // where a keyword was used (`function use()`), and nothing downstream
+  // notices — see asmcore.check_decl_names for what that cost.
+  arity_errs = util.append_diags(arity_errs, asmcore.check_decl_names(mod));
+  if (arity_errs.len() > 0) {
+    eprint(util.format_diags(arity_errs));
+    return 1;
+  }
+  // Builtins with no wasm meaning at all (subprocess #4320, timer_fd #4317,
+  // the raw/syscall floor #6946) are error endpoints, not deferrals. This
+  // driver's IR path calls emit_ir_module directly, so the shared entry's copy
+  // of this gate does not cover it; without one the refusal comes from
+  // instruction selection and names an IR op instead of the builtin.
+  var unsupported: string = wasm_ir.wasm_unsupported_builtin(mod);
+  if (unsupported.len() > 0) {
+    eprint(wasm_ir.wasm_unsupported_message(unsupported));
+    return 1;
+  }
+  var emitted: string = "";
+  // The forced path lowers from the AST, so it runs only with the typed
+  // lowering off.
+  if (use_ir && !semlower.sem_ir_on()) {
+    emitted = forced_emit(mod);
+  }
+  if (emitted == "") {
+    var d: semlower.Driven = semlower.driven(mod, "wasm32-wasi");
+    emitted = wasm_ir.emit_module_mode_or_error_sub(d.full, false, false, d.sub);
+  }
+  write(emitted);
+  return 0;
+}
+
+// forced_emit is the `-ir` path: the AST lowering's emit, past the routing
+// gates. "" when the module is not eligible for it.
+function forced_emit(mod: parser.Module): string {
+  var lm: parser.Module = wasm_ir.lift_lambdas(mod);
+  // Eligibility must be judged with the builtin structs/enums injected
+  // (FileStat / ProcessResult / IoError variants) — a struct-returning builtin
+  // like stat() (whose match arm `Ok(s) => s.size` needs the FileStat layout to
+  // lower) is only judged eligible once FileStat is present; otherwise it is
+  // refused. Inject into a SEPARATE copy used only for the eligibility decision
+  // — `lm` itself stays un-injected so the monomorphise + post-monomorphize
+  // injection below assign struct type-ids in the order the AST path used
+  // (injecting before monomorphize would renumber user structs and break
+  // struct programs).
+  var elm: parser.Module = parser.Module { funcs: lm.funcs, structs: parser.inject_builtin_enums(lm.structs), aliases: lm.aliases, imports: lm.imports, top_stmts: lm.top_stmts, enums: lm.enums, resources: lm.resources, exports: lm.exports, impls: lm.impls, trait_reqs: lm.trait_reqs, trait_decls: lm.trait_decls, inferred_consts: lm.inferred_consts };
+  // Judge eligibility BOTH ways: `lm_ok` is the exact verdict the un-injected
+  // module gets (the main-path behaviour — every program that lowered before
+  // still lowers identically), `elm_ok` additionally lets a struct-returning
+  // builtin like stat() — only lowerable once FileStat is injected — qualify.
+  var lm_ok: boolean = wasm_ir.wasm_eligible(lm);
+  var elm_ok: boolean = wasm_ir.wasm_eligible(elm);
+  // Monomorphise bounded generics (functions + generic structs/enums) on the
+  // IR path — the same expansion module_with_builtins runs.
+  // Hoisted out of the emit block because it is ALSO what lets an erased-wide-
+  // container module qualify: an erased generic `some1[T](x: T): Option[T]`
+  // (or `Result` / `T[]`) is promoted to bounded (parser targeted promotion),
+  // so this pass CLONES it per concrete instantiation — `some1__i64` with a
+  // concrete `Option[i64]` return. After cloning, no call passes a wide value
+  // through a bare-typevar param (each targets a concrete clone), so
+  // `module_erased_wide` clears and the module lowers on the wasm IR path
+  // instead of being refused. Non-generic modules no-op (nothing bounded).
+  var mmod: parser.Module = parser.monomorphize_all(parser.register_struct_method_generics(parser.register_map_method_generics(parser.register_array_method_generics(lm))));
+  // `mono_ok` is the erased-wide-container rescue: only consulted when the raw
+  // verdicts both say defer, so every program that already lowered keeps its
+  // exact IR/AST verdict (and byte-identical output). Judging the SAME
+  // monomorphised module the emit uses makes eligibility match what is emitted.
+  var mono_ok: boolean = false;
+  if (!lm_ok && !elm_ok) {
+    mono_ok = wasm_ir.wasm_eligible(mmod);
+  }
+  if (!(lm_ok || elm_ok || mono_ok)) {
+    return "";
+  }
+  mod = mmod;
+  // Inject the builtin structs/enums (FileStat / ProcessResult / IoError
+  // variants) ONLY when they're what made the module eligible — i.e. a
+  // struct-returning builtin like stat() that the un-injected module can't
+  // lower (`!lm_ok && elm_ok`). Without them stat() has no FileStat layout,
+  // so the match arm `Ok(s) => s.size` can't resolve its field offsets AND
+  // the module_emits_op("stat") gate bails, so the $__fern_stat runtime +
+  // import are never emitted (invalid module). For every program that was
+  // already eligible un-injected (`lm_ok`), skip the injection so its IR
+  // output stays byte-identical to before — appending the builtin structs
+  // perturbs the emitter even when they're unused.
+  if (!lm_ok && elm_ok) {
+    mod = parser.Module { funcs: mod.funcs, structs: parser.inject_builtin_enums(mod.structs), aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs, trait_decls: mod.trait_decls, inferred_consts: mod.inferred_consts };
+  }
+  // Force the IR path. Lower every function ONCE and hand the cache to
+  // emit_ir_module, which queries module_emits_op / module_uses_* /
+  // str_values ~50× — re-lowering per query is the O(functions²) ×
+  // O(passes) blowup that OOMed large modules (#4652).
+  var fstab: irlower.StructTab = irlower.struct_tab(mod.structs);
+  var fbase: irlower.FnSigs = ircore.wp_fn_sigs(mod.funcs, fstab);
+  // The module emission itself lives in wasm_ir.emit_ir_module — the SINGLE
+  // source of truth shared with the routed entry point. This driver used to
+  // inline its own near-identical copy; the two drifted and the routed copy
+  // lost the whole WASI env/args/clock/fs surface, emitting calls to helpers
+  // it never defined (#4801).
+  return wasm_ir.emit_ir_module(mod, wasm_ir.lower_all_for_base(mod, fstab, fbase), fbase);
 }

@@ -63,9 +63,10 @@ var constAggWasmCases = []struct {
 	// block, and the exit sweep must not free it — here the low-address guard is
 	// what stops $__fern_arr_dec_ptr from pushing a data-section address onto a
 	// freelist, which would hand it back as a "fresh" box on the next alloc.
+	// The empty `[]` is a static constant as well.
 	{"constant-into-container",
 		`struct P { a: i32, b: i32 } function mk(): P { return P { a: 5, b: 9 }; } function main(): i32 { var ps: P[] = []; var i: i32 = 0; while (i < 4) { ps = ps.append(mk()); i = i + 1; } var s: i32 = 0; var j: i32 = 0; while (j < ps.len()) { s = s + ps[j].a + ps[j].b; j = j + 1; } return s % 200; }`,
-		56, 1, false},
+		56, 2, false},
 	// A negative field literal: written sign-extended across the whole 8-byte
 	// slot. Division-based byte extraction could not render it (`-1 / 256 % 256`
 	// does not name a byte), which is why le32_escape shifts and masks.
@@ -87,11 +88,11 @@ var constAggWasmCases = []struct {
 	{"reuse-shape-all-constant",
 		`struct P { x: i32, y: i32 } function main(): i32 { var cond: i32 = 1; var r: i32 = 0; if (cond > 0) { var a: P = P { x: 10, y: 20 }; var s: i32 = a.x + a.y; var b: P = P { x: 3, y: 4 }; r = s + b.x + b.y; } return r; }`,
 		37, 2, true},
-	// NOT admitted: `0 - 3` is a binary expression, not a unary minus, so the
-	// literal stays on struct_make and no constant is emitted at all.
-	{"non-literal-field-not-admitted",
+	// A field computed from literals (`0 - 3`) folds to a constant, so the
+	// literal is static too.
+	{"folded-field-admitted",
 		`struct P { a: i32, b: i32 } function mk(): P { return P { a: 0 - 3, b: 0x10 }; } function main(): i32 { var p: P = mk(); return (p.a + p.b + 100) % 200; }`,
-		113, 0, false},
+		113, 1, false},
 	// NOT admitted: a wide (i64) field. The block writes one 8-byte slot per
 	// field but the admission classifier only vouches for i32-width values.
 	{"wide-field-not-admitted",

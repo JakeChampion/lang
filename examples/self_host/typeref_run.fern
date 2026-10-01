@@ -25,8 +25,10 @@ import "./parser";
 import "./util";
 
 function b2s(b: boolean): string {
-    if (b) { return "1"; }
-    return "0";
+  if (b) {
+    return "1";
+  }
+  return "0";
 }
 
 // CheckResult carries a round-trip check's report line plus whether it failed
@@ -36,132 +38,159 @@ struct CheckResult { bad: i32, line: string }
 
 // check round-trips one spelling, returning the report line + a 0/1 fail flag.
 function check(s: string): CheckResult {
-    var r: string = parser.render_type_ref(parser.parse_type_ref(s));
-    if (r == s) { return CheckResult { bad: 0, line: "ok   " + s + "\n" }; }
-    return CheckResult { bad: 1, line: "BAD  " + s + " -> " + r + "\n" }; }
+  var r: string = parser.render_type_ref(parser.parse_type_ref(s));
+  if (r == s) {
+    return CheckResult { bad: 0, line: "ok   " + s + "\n" };
+  }
+  return CheckResult { bad: 1, line: "BAD  " + s + " -> " + r + "\n" };
+}
 
 function main(): i32 {
-    var corpus: string[] = [
-        "i32", "u32", "string", "bool", "f64",
-        "Foo", "mod.Bar",
-        "i32[]", "string[][]", "Foo[][][]",
-        "Option[i32]", "Map[string, i32]", "Result[string, Err]",
-        "Map[string, Option[i32]]", "Map[i32, Vec[string]][]", "Vec[T]",
-        "(i32, string)", "(string, (i32, bool))", "Option[(string, string)]",
-        "(i32, string)[]", "dyn Shape", "dyn Shape[]",
-        "() => P", "(i32) => i32", "(T, T) => i32", "(T) => U[]",
-        "(ast.Expr, T) => T", "(() => T) => U", "(i32) => (string, i32)",
-        "Vec[(T) => boolean]", "((T) => U)[]", "(T) => U[][]",
-        "(T) => () => U[]", "((((T) => U)))", "((() => U)[])",
-        "(((T) => U)[][])", "(() => T, () => U)", "() => (() => U[])[]"
-    ];
-    var out: string = "";
-    var bad: i32 = 0;
+  var corpus: string[] = [
+    "i32", "u32", "string", "bool", "f64",
+    "Foo", "mod.Bar",
+    "i32[]", "string[][]", "Foo[][][]",
+    "Option[i32]", "Map[string, i32]", "Result[string, Err]",
+    "Map[string, Option[i32]]", "Map[i32, Vec[string]][]", "Vec[T]",
+    "(i32, string)", "(string, (i32, bool))", "Option[(string, string)]",
+    "(i32, string)[]", "dyn Shape", "dyn Shape[]",
+    "() => P", "(i32) => i32", "(T, T) => i32", "(T) => U[]",
+    "(ast.Expr, T) => T", "(() => T) => U", "(i32) => (string, i32)",
+    "Vec[(T) => boolean]", "((T) => U)[]", "(T) => U[][]",
+    "(T) => () => U[]", "((((T) => U)))", "((() => U)[])",
+    "(((T) => U)[][])", "(() => T, () => U)", "() => (() => U[])[]",
+  ];
+  var out: string = "";
+  var bad: i32 = 0;
 
-    // 1. Full round-trip sweep over the type-string grammar.
-    var i: i32 = 0;
-    while (i < corpus.len()) {
-        var cr: CheckResult = check(corpus[i]);
-        bad = bad + cr.bad;
-        out = out + cr.line;
-        i = i + 1;
-    }
+  // 1. Full round-trip sweep over the type-string grammar.
+  var i: i32 = 0;
+  while (i < corpus.len()) {
+    var cr: CheckResult = check(corpus[i]);
+    bad = bad + cr.bad;
+    out = out + cr.line;
+    i = i + 1;
+  }
 
-    // 2. Structure spot-checks — a wrong tree that still round-trips fails here.
-    var mp: parser.TypeRef = parser.parse_type_ref("Map[string, Option[i32]]");
-    out = out + "struct Map base=" + mp.base
-        + " args=" + util.i32_to_string(mp.args.len())
-        + " depth=" + util.i32_to_string(mp.array_depth)
-        + " tuple=" + b2s(mp.is_tuple) + "\n";
-    var inner1: parser.TypeRef = mp.args[1];
-    out = out + "struct Map.arg1 base=" + inner1.base
-        + " args=" + util.i32_to_string(inner1.args.len()) + "\n";
+  // 2. Structure spot-checks — a wrong tree that still round-trips fails here.
+  var mp: parser.TypeRef = parser.parse_type_ref("Map[string, Option[i32]]");
+  out = out + "struct Map base=" + mp.base
+    + " args=" + util.i32_to_string(mp.args.len())
+    + " depth=" + util.i32_to_string(mp.array_depth)
+    + " tuple=" + b2s(mp.is_tuple) + "\n";
+  var inner1: parser.TypeRef = mp.args[1];
+  out = out + "struct Map.arg1 base=" + inner1.base
+    + " args=" + util.i32_to_string(inner1.args.len()) + "\n";
 
-    var tp: parser.TypeRef = parser.parse_type_ref("(i32, string)[]");
-    out = out + "struct tuparr base=" + tp.base
-        + " args=" + util.i32_to_string(tp.args.len())
-        + " depth=" + util.i32_to_string(tp.array_depth)
-        + " tuple=" + b2s(tp.is_tuple) + "\n";
+  var tp: parser.TypeRef = parser.parse_type_ref("(i32, string)[]");
+  out = out + "struct tuparr base=" + tp.base
+    + " args=" + util.i32_to_string(tp.args.len())
+    + " depth=" + util.i32_to_string(tp.array_depth)
+    + " tuple=" + b2s(tp.is_tuple) + "\n";
 
-    var ar: parser.TypeRef = parser.parse_type_ref("Foo[][][]");
-    out = out + "struct arr3 base=" + ar.base
-        + " args=" + util.i32_to_string(ar.args.len())
-        + " depth=" + util.i32_to_string(ar.array_depth) + "\n";
+  var ar: parser.TypeRef = parser.parse_type_ref("Foo[][][]");
+  out = out + "struct arr3 base=" + ar.base
+    + " args=" + util.i32_to_string(ar.args.len())
+    + " depth=" + util.i32_to_string(ar.array_depth) + "\n";
 
-    // A function type round-trips even when it is NOT decoded — an unrecognised
-    // spelling survives whole as `base` and renders back byte-identical. So the
-    // structure is what proves it is understood: `(A, B) => C` must decode to
-    // three args (the result last) rather than one opaque name.
-    var f2: parser.TypeRef = parser.parse_type_ref("(T, T) => i32");
-    out = out + "struct fn2 base=" + f2.base
-        + " args=" + util.i32_to_string(f2.args.len())
-        + " depth=" + util.i32_to_string(f2.array_depth)
-        + " tuple=" + b2s(f2.is_tuple)
-        + " fn=" + b2s(f2.is_fn)
-        + " ret=" + parser.render_type_ref(f2.args[f2.args.len() - 1]) + "\n";
+  // A function type round-trips even when it is NOT decoded — an unrecognised
+  // spelling survives whole as `base` and renders back byte-identical. So the
+  // structure is what proves it is understood: `(A, B) => C` must decode to
+  // three args (the result last) rather than one opaque name.
+  var f2: parser.TypeRef = parser.parse_type_ref("(T, T) => i32");
+  out = out + "struct fn2 base=" + f2.base
+    + " args=" + util.i32_to_string(f2.args.len())
+    + " depth=" + util.i32_to_string(f2.array_depth)
+    + " tuple=" + b2s(f2.is_tuple)
+    + " fn=" + b2s(f2.is_fn)
+    + " ret=" + parser.render_type_ref(f2.args[f2.args.len() - 1]) + "\n";
 
-    var f0: parser.TypeRef = parser.parse_type_ref("() => P");
-    out = out + "struct fn0 args=" + util.i32_to_string(f0.args.len())
-        + " fn=" + b2s(f0.is_fn)
-        + " ret=" + parser.render_type_ref(f0.args[0]) + "\n";
+  var f0: parser.TypeRef = parser.parse_type_ref("() => P");
+  out = out + "struct fn0 args=" + util.i32_to_string(f0.args.len())
+    + " fn=" + b2s(f0.is_fn)
+    + " ret=" + parser.render_type_ref(f0.args[0]) + "\n";
 
-    // The parameter's own arrow must not split the outer one.
-    var fh: parser.TypeRef = parser.parse_type_ref("(() => T) => U");
-    out = out + "struct fnho args=" + util.i32_to_string(fh.args.len())
-        + " fn=" + b2s(fh.is_fn)
-        + " p0fn=" + b2s(fh.args[0].is_fn)
-        + " ret=" + parser.render_type_ref(fh.args[1]) + "\n";
+  // The parameter's own arrow must not split the outer one.
+  var fh: parser.TypeRef = parser.parse_type_ref("(() => T) => U");
+  out = out + "struct fnho args=" + util.i32_to_string(fh.args.len())
+    + " fn=" + b2s(fh.is_fn)
+    + " p0fn=" + b2s(fh.args[0].is_fn)
+    + " ret=" + parser.render_type_ref(fh.args[1]) + "\n";
 
-    var fr: parser.TypeRef = parser.parse_type_ref("(T) => U[][]");
-    out = out + "struct fnarrret fn=" + b2s(parser.ref_is_fn_value(fr))
-        + " depth=" + util.i32_to_string(fr.array_depth)
-        + " retdepth=" + util.i32_to_string(parser.ref_fn_result(fr).array_depth) + "\n";
-    var fa: parser.TypeRef = parser.parse_type_ref("((T) => U)[]");
-    out = out + "struct arrfn fn=" + b2s(parser.ref_is_fn_value(fa))
-        + " depth=" + util.i32_to_string(fa.array_depth)
-        + " elemfn=" + b2s(parser.ref_is_fn_value(parser.elem_type_ref(fa))) + "\n";
-    var fg: parser.TypeRef = parser.parse_type_ref("((((T) => U)))");
-    out = out + "struct groupedfn fn=" + b2s(parser.ref_is_fn_value(fg))
-        + " params=" + parser.ref_fn_param_spellings(fg)
-        + " ret=" + parser.render_type_ref(parser.ref_fn_result(fg)) + "\n";
+  var fr: parser.TypeRef = parser.parse_type_ref("(T) => U[][]");
+  out = out + "struct fnarrret fn=" + b2s(parser.ref_is_fn_value(fr))
+    + " depth=" + util.i32_to_string(fr.array_depth)
+    + " retdepth=" + util.i32_to_string(parser.ref_fn_result(fr).array_depth) + "\n";
+  var fa: parser.TypeRef = parser.parse_type_ref("((T) => U)[]");
+  out = out + "struct arrfn fn=" + b2s(parser.ref_is_fn_value(fa))
+    + " depth=" + util.i32_to_string(fa.array_depth)
+    + " elemfn=" + b2s(parser.ref_is_fn_value(parser.elem_type_ref(fa))) + "\n";
+  var fg: parser.TypeRef = parser.parse_type_ref("((((T) => U)))");
+  out = out + "struct groupedfn fn=" + b2s(parser.ref_is_fn_value(fg))
+    + " params=" + parser.ref_fn_param_spellings(fg)
+    + " ret=" + parser.render_type_ref(parser.ref_fn_result(fg)) + "\n";
 
-    // A grouping must not unwrap through an array or turn a real tuple into
-    // a function. Right-associated arrows retain the innermost result array.
-    if (parser.ref_is_fn_value(parser.parse_type_ref("((() => U)[])"))) { bad = bad + 1; }
-    if (parser.ref_is_fn_value(parser.parse_type_ref("(((T) => U)[][])"))) { bad = bad + 1; }
-    if (parser.ref_is_fn_value(parser.parse_type_ref("(() => T, () => U)"))) { bad = bad + 1; }
-    if (parser.ref_is_fn_value(parser.parse_type_ref("fn"))) { bad = bad + 1; }
-    var chain: parser.TypeRef = parser.parse_type_ref("(T) => () => U[]");
-    var inner_fn: parser.TypeRef = parser.ref_fn_result(chain);
-    if (!parser.ref_is_fn_value(inner_fn)) { bad = bad + 1; }
-    if (parser.ref_fn_result(inner_fn).array_depth != 1) { bad = bad + 1; }
-    var array_result: parser.TypeRef = parser.ref_fn_result(parser.parse_type_ref("() => (() => U[])[]"));
-    if (array_result.array_depth != 1 || parser.ref_is_fn_value(array_result)) { bad = bad + 1; }
-    var element_fn: parser.TypeRef = parser.elem_type_ref(array_result);
-    if (!parser.ref_is_fn_value(element_fn)) { bad = bad + 1; }
-    if (parser.ref_fn_result(element_fn).array_depth != 1) { bad = bad + 1; }
+  // A grouping must not unwrap through an array or turn a real tuple into
+  // a function. Right-associated arrows retain the innermost result array.
+  if (parser.ref_is_fn_value(parser.parse_type_ref("((() => U)[])"))) {
+    bad = bad + 1;
+  }
+  if (parser.ref_is_fn_value(parser.parse_type_ref("(((T) => U)[][])"))) {
+    bad = bad + 1;
+  }
+  if (parser.ref_is_fn_value(parser.parse_type_ref("(() => T, () => U)"))) {
+    bad = bad + 1;
+  }
+  if (parser.ref_is_fn_value(parser.parse_type_ref("fn"))) {
+    bad = bad + 1;
+  }
+  var chain: parser.TypeRef = parser.parse_type_ref("(T) => () => U[]");
+  var inner_fn: parser.TypeRef = parser.ref_fn_result(chain);
+  if (!parser.ref_is_fn_value(inner_fn)) {
+    bad = bad + 1;
+  }
+  if (parser.ref_fn_result(inner_fn).array_depth != 1) {
+    bad = bad + 1;
+  }
+  var array_result: parser.TypeRef = parser.ref_fn_result(parser.parse_type_ref("() => (() => U[])[]"));
+  if (array_result.array_depth != 1 || parser.ref_is_fn_value(array_result)) {
+    bad = bad + 1;
+  }
+  var element_fn: parser.TypeRef = parser.elem_type_ref(array_result);
+  if (!parser.ref_is_fn_value(element_fn)) {
+    bad = bad + 1;
+  }
+  if (parser.ref_fn_result(element_fn).array_depth != 1) {
+    bad = bad + 1;
+  }
 
-    // The coarse "fn" / "fn[]" declaration tag and its sidecars rebuild the
-    // spelling they were split from, so a reader that wants the declared SHAPE
-    // gets a TypeRef rather than an opaque name. A tag with no recorded result
-    // has no signature to rebuild and stays itself.
-    out = out + "tag fn=" + parser.fn_tag_spelling("fn", "boolean", "T") + "\n";
-    out = out + "tag fn0=" + parser.fn_tag_spelling("fn", "U", "") + "\n";
-    out = out + "tag fn2=" + parser.fn_tag_spelling("fn", "(string, i32)", "T,Map[string, U]") + "\n";
-    out = out + "tag fnarr=" + parser.fn_tag_spelling("fn[]", "U", "T") + "\n";
-    out = out + "tag opaque=" + parser.fn_tag_spelling("fn", "", "") + "\n";
-    out = out + "tag plain=" + parser.fn_tag_spelling("i32[]", "", "") + "\n";
-    // Rebuilt spellings decode as function values, so `(T) => boolean` reaches
-    // a structural reader as a parameter T rather than the name "fn".
-    var tagged: parser.TypeRef = parser.parse_type_ref(parser.fn_tag_spelling("fn", "boolean", "T"));
-    if (!parser.ref_is_fn_value(tagged) || parser.ref_ungroup(tagged).args[0].base != "T") { bad = bad + 1; }
-    var tagarr: parser.TypeRef = parser.parse_type_ref(parser.fn_tag_spelling("fn[]", "U", "T"));
-    if (parser.ref_is_fn_value(tagarr) || tagarr.array_depth != 1) { bad = bad + 1; }
-    if (!parser.ref_is_fn_value(parser.elem_type_ref(tagarr))) { bad = bad + 1; }
+  // The coarse "fn" / "fn[]" declaration tag and its sidecars rebuild the
+  // spelling they were split from, so a reader that wants the declared SHAPE
+  // gets a TypeRef rather than an opaque name. A tag with no recorded result
+  // has no signature to rebuild and stays itself.
+  out = out + "tag fn=" + parser.fn_tag_spelling("fn", "boolean", "T") + "\n";
+  out = out + "tag fn0=" + parser.fn_tag_spelling("fn", "U", "") + "\n";
+  out = out + "tag fn2=" + parser.fn_tag_spelling("fn", "(string, i32)", "T,Map[string, U]") + "\n";
+  out = out + "tag fnarr=" + parser.fn_tag_spelling("fn[]", "U", "T") + "\n";
+  out = out + "tag opaque=" + parser.fn_tag_spelling("fn", "", "") + "\n";
+  out = out + "tag plain=" + parser.fn_tag_spelling("i32[]", "", "") + "\n";
+  // Rebuilt spellings decode as function values, so `(T) => boolean` reaches
+  // a structural reader as a parameter T rather than the name "fn".
+  var tagged: parser.TypeRef = parser.parse_type_ref(parser.fn_tag_spelling("fn", "boolean", "T"));
+  if (!parser.ref_is_fn_value(tagged) || parser.ref_ungroup(tagged).args[0].base != "T") {
+    bad = bad + 1;
+  }
+  var tagarr: parser.TypeRef = parser.parse_type_ref(parser.fn_tag_spelling("fn[]", "U", "T"));
+  if (parser.ref_is_fn_value(tagarr) || tagarr.array_depth != 1) {
+    bad = bad + 1;
+  }
+  if (!parser.ref_is_fn_value(parser.elem_type_ref(tagarr))) {
+    bad = bad + 1;
+  }
 
-    out = out + "round_trip_failures=" + util.i32_to_string(bad) + "\n";
-    write(out);
+  out = out + "round_trip_failures=" + util.i32_to_string(bad) + "\n";
+  write(out);
 
-    // Exit code is the round-trip failure count: 0 on a clean sweep.
-    return bad;
+  // Exit code is the round-trip failure count: 0 on a clean sweep.
+  return bad;
 }

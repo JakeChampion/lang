@@ -175,6 +175,7 @@ var rcResultOwned = map[string]bool{
 	// the helper built fresh is the caller's (rcOwnedPayloadBuiltins),
 	// while the IoError of a failure arm stays immortal.
 	"__fern_env":                 true,
+	"__fern_config_get":          true,
 	"__fern_read_line":           true,
 	"__fern_reader_read_line":    true, // delegates to __fern_read_line
 	"__fern_read_file":           true,

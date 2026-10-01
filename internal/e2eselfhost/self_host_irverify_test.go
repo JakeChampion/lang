@@ -610,7 +610,7 @@ func TestSelfHostIRVerifyProvidedCompilerClean(t *testing.T) {
 	if len(runner) != 0 {
 		t.Skip("modload driver runs natively; skipping under an exec runner")
 	}
-	dir := writeSelfHostModloadProject(t)
+	dir := writeSelfHostModloadProjectTyped(t)
 	bin := buildSelfHostBin(t, gcc, dir, "asm_modload_run.fern", "provided_compiler")
 
 	cmd := exec.Command(bin, filepath.Join(dir, "asm_modload_run.fern"), "-verifyprovided")
@@ -716,6 +716,11 @@ func testProvidedCorpus(t *testing.T, bin string) {
 				results[i].ran = true
 				stage := stageProvidedFixture(t, stdRoot, filepath.Dir(main))
 				cmd := exec.Command(bin, filepath.Join(stage, "main.fern"), "-verifyprovided")
+				// A fixture the checker rejects has no typed lowering; only the
+				// AST lowering lowers it.
+				if _, err := os.Stat(filepath.Join(filepath.Dir(main), "expected.error")); err == nil {
+					cmd.Env = append(os.Environ(), "FERN_SEM_IR=")
+				}
 				var out []byte
 				// The verifier lowers a whole imported program. Share the
 				// existing process-wide memory budget with driver builds.

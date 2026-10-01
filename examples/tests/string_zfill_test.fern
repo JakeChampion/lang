@@ -1,5 +1,6 @@
 import "std/test";
 import "std/string";
+
 // examples/tests/string_zfill_test.fern — pure-Fern coverage of
 // std/string.zfill(width): left-pad a numeric string with '0' to at least
 // `width` bytes, keeping a leading sign ('+' / '-') in FRONT of the zeros
@@ -10,49 +11,51 @@ import "std/string";
 // migration-shaped (pure-Fern, std/test-driven) companion.
 
 function test_unsigned(): test.TestOutcome {
-    return test.assert_true("42".zfill(5) == "00042");
+  return test.assert_true("42".zfill(5) == "00042");
 }
 
 function test_negative(): test.TestOutcome {
-    // Sign stays in front of the zeros.
-    return test.assert_true("-42".zfill(5) == "-0042");
+  // Sign stays in front of the zeros.
+  return test.assert_true("-42".zfill(5) == "-0042");
 }
 
 function test_positive_sign(): test.TestOutcome {
-    return test.assert_true("+42".zfill(5) == "+0042");
+  return test.assert_true("+42".zfill(5) == "+0042");
 }
 
 function test_already_wide(): test.TestOutcome {
-    if ("5".zfill(1) != "5") { return test.fail("width 1"); }
-    return test.assert_true("123".zfill(3) == "123");
+  if ("5".zfill(1) != "5") {
+    return test.fail("width 1");
+  }
+  return test.assert_true("123".zfill(3) == "123");
 }
 
 function test_empty(): test.TestOutcome {
-    return test.assert_true("".zfill(3) == "000");
+  return test.assert_true("".zfill(3) == "000");
 }
 
 function test_lone_sign(): test.TestOutcome {
-    return test.assert_true("-".zfill(4) == "-000");
+  return test.assert_true("-".zfill(4) == "-000");
 }
 
 function test_width_zero(): test.TestOutcome {
-    return test.assert_true("7".zfill(0) == "7");
+  return test.assert_true("7".zfill(0) == "7");
 }
 
 function test_non_numeric(): test.TestOutcome {
-    // No leading sign → plain zero-pad.
-    return test.assert_true("abc".zfill(5) == "00abc");
+  // No leading sign → plain zero-pad.
+  return test.assert_true("abc".zfill(5) == "00abc");
 }
 
 function main(): i32 {
-    var r: test.TestRunner = test.test_new("std/string zfill");
-    r = r.it("unsigned",      test_unsigned);
-    r = r.it("negative",      test_negative);
-    r = r.it("positive sign", test_positive_sign);
-    r = r.it("already wide",  test_already_wide);
-    r = r.it("empty",         test_empty);
-    r = r.it("lone sign",     test_lone_sign);
-    r = r.it("width zero",    test_width_zero);
-    r = r.it("non numeric",   test_non_numeric);
-    return r.finish();
+  var r: test.TestRunner = test.test_new("std/string zfill");
+  r = r.it("unsigned", test_unsigned);
+  r = r.it("negative", test_negative);
+  r = r.it("positive sign", test_positive_sign);
+  r = r.it("already wide", test_already_wide);
+  r = r.it("empty", test_empty);
+  r = r.it("lone sign", test_lone_sign);
+  r = r.it("width zero", test_width_zero);
+  r = r.it("non numeric", test_non_numeric);
+  return r.finish();
 }

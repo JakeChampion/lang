@@ -255,6 +255,21 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"array-argument-settles-its-literals", "struct Same[T] { a: T, b: T }\nfunction take(xs: Same[i64][]): i32 { return xs.len(); }\nfunction main(): i32 { return take([Same { a: 1, b: 2 }]); }\n", nil},
 		{"array-argument-field-settles-at-the-parameter", "struct Same[T] { a: T, b: T }\nfunction take(xs: Same[i64][]): i32 { return xs.len(); }\nfunction main(): i32 { var y: i64 = 5; return take([Same { a: 1, b: y }]); }\n", nil},
 		{"array-argument-literal-field-mismatch", "struct Same[T] { a: T, b: T }\nfunction take(xs: Same[i64][]): i32 { return xs.len(); }\nfunction main(): i32 { return take([Same { a: 1, b: \"x\" }]); }\n", []string{"E043"}},
+		// A literal that writes its instantiation is what it writes: the
+		// literal widening does not reach it, and a wrong argument count is
+		// E040 (#10453). The self-host dropped the written arguments.
+		{"struct-literal-written-instantiation-not-widened", "struct Same[T] { a: T, b: T }\nfunction main(): i32 { var q = Same[i32] { a: 1, b: 4611686018427387904 }; return 0; }\n", []string{"E047"}},
+		{"struct-literal-written-arity", "struct Same[T] { a: T, b: T }\nfunction main(): i32 { var q = Same[i64, i32] { a: 1, b: 2 }; return 0; }\n", []string{"E040"}},
+		{"struct-literal-written-i64-read-narrow", "struct Box[T] { v: T }\nfunction main(): i32 { var q = Box[i64] { v: 4 }; var r: i32 = q.v; return 0; }\n", []string{"E003"}},
+		// A written argument is validated as an annotation is, a type
+		// variable in it is the enclosing function's, and a struct-update
+		// base's instantiation outranks it, all as natively.
+		{"struct-literal-written-unknown-type", "struct Box[T] { v: i32 }\nfunction main(): i32 { var b = Box[Zzz] { v: 1 }; return 0; }\n", []string{"E064"}},
+		{"struct-literal-written-map-key", "import \"core/map\";\nstruct Box[T] { v: T }\nfunction main(): i32 { var b = Box[Map[f64, i32]] { v: map_new(4) }; return 0; }\n", []string{"E045"}},
+		{"struct-literal-written-type-variable", "struct T { z: i32 }\nstruct Box[T] { v: T }\nstruct Many[T] { xs: T[] }\nfunction wrap[T](x: T): Box[T] { return Box[T] { v: x }; }\nfunction many[T](x: T): Many[T] { return Many[T] { xs: [x] }; }\nfunction main(): i32 { var b = wrap(4294967296); var r: i64 = b.v; var m = many(4294967296); var k: i64 = m.xs[0]; return 0; }\n", nil},
+		{"struct-literal-update-base-outranks-written", "struct Pair[T] { a: T, b: T }\nfunction f(p: Pair[string]): Pair[string] { return Pair[i32] { ...p, a: \"x\" }; }\nfunction main(): i32 { return f(Pair { a: \"a\", b: \"b\" }).a.len(); }\n", nil},
+		{"struct-literal-wide-array-field", "struct Stack[T] { items: T[] }\nfunction main(): i32 { var q = Stack { items: [1, 4611686018427387904] }; var r: i64 = q.items[1]; return 0; }\n", nil},
+		{"struct-literal-wide-in-array", "struct Same[T] { a: T, b: T }\nfunction main(): i32 { var xs = [Same { a: 1, b: 4611686018427387904 }]; var r: i64 = xs[0].b; return 0; }\n", nil},
 		{"generic-literal-fields-clash-without-destination", "struct Same[T] { a: T, b: T }\nfunction take(xs: Same[i64][]): i32 { return xs.len(); }\nfunction main(): i32 { var y: i64 = 5; var q = Same { a: 1, b: y }; var r: i64 = q.a; return 0; }\n", []string{"E043"}},
 		// A literal whose fields clash has no instantiation, so its local
 		// reads as untyped and no use reports the clash again (#10453). Native
@@ -1053,6 +1068,14 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"arr-elem-return-bad", "struct P { x: i32 }\nfunction f(): P[] { return [P { x: 1 }, 5]; }\nfunction main(): i32 { return 0; }\n", []string{"E034"}},
 		{"arr-elem-return-ok", "struct P { x: i32 }\nstruct Q { y: i32 }\ntype U = P | Q;\nfunction f(): U[] { return [P { x: 1 }, Q { y: 2 }]; }\nfunction main(): i32 { return 0; }\n", nil},
 		{"arr-elem-arg-bad", "struct P { x: i32 }\nfunction f(a: P[]): i32 { return 0; }\nfunction main(): i32 { return f([P { x: 1 }, 5]); }\n", []string{"E034"}},
+		// A float suffix names the literal's type outright (#10757): an f32
+		// literal sits beside an f32 value, and against an f64 it is E034 / E003.
+		{"f32-suffix-beside-f32-value", "function main(): i32 { var p: f32 = 1.0f32; var a: f32[] = [p, 1.5f32]; return a.len(); }\n", nil},
+		{"f32-suffix-before-f32-value", "function main(): i32 { var p: f32 = 1.0f32; var a: f32[] = [1.5f32, p]; return a.len(); }\n", nil},
+		{"f32-suffix-beside-f64-value", "function main(): i32 { var p: f64 = 1.0; var a: f64[] = [p, 1.5f32]; return a.len(); }\n", []string{"E034"}},
+		{"f32-suffix-into-f64", "function main(): i32 { var x: f64 = 1.5f32; return 0; }\n", []string{"E003"}},
+		{"f64-suffix-into-f32", "function main(): i32 { var x: f32 = 1.5f64; return 0; }\n", []string{"E003"}},
+		{"unsuffixed-float-adapts", "function main(): i32 { var x: f32 = 1.5; var y: f64 = 2.5; return 0; }\n", nil},
 		{"arr-elem-assign-bad", "struct P { x: i32 }\nfunction main(): i32 { var a: P[] = [P { x: 1 }]; a = [P { x: 1 }, 5]; return 0; }\n", []string{"E034"}},
 		// E034 at a struct-literal field of composite-array type: the field
 		// value's elements are checked against the field's element type (plain
@@ -2281,6 +2304,10 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// A `use` callback is the other lambda the programmer wrote that the
 		// parser gives an origin. Native desugars `use` to a local function and
 		// runs the same capture sink over it, so the rule applies there too.
+		// A `use` into a generic callee whose type parameter nothing binds:
+		// E032 for the binding, E038 for the callback, E040 for the parameter
+		// (#10833).
+		{"use-unbound-generic-callback", "function apply[T, I](it: I, cb: (T) => i32): i32 { return 0; }\nfunction main(): i32 {\n    use n <- apply(5);\n    return 1;\n}\n", []string{"E032", "E038", "E040"}},
 		{"e044-capture-void-use-callback", "function v(): void { return; }\nfunction apply(n: i32, cb: (i32) => i32): i32 { return cb(n); }\nfunction main(): i32 {\n    var x = v();\n    use n <- apply(41);\n    x;\n    return n;\n}\n", []string{"E044"}},
 		{"e044-capture-generic-use-callback-ok", "function apply(n: i32, cb: (i32) => i32): i32 { return cb(n); }\nfunction f[T](x: T): i32 {\n    use n <- apply(41);\n    x;\n    return n;\n}\nfunction main(): i32 { return f(1); }\n", nil},
 		// A suspect declared AFTER the `use` lives inside the callback body, so
@@ -2501,6 +2528,52 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// done-flag if/else chain that falls through by construction, so
 		// reading the chain said every such function could fall off its end
 		// (E052). The `if` carries the arms as written.
+		// WIT resource handles: `own R` lends to `borrow R`, a bare `R` is an
+		// owned handle, and a handle and an integer convert in neither direction.
+		{"resource-handle-owned-lent-to-a-borrow", "@import(\"wasi:io/poll@0.2.0\", \"pollable\")\nresource Pollable;\n@import(\"wasi:clocks/monotonic-clock@0.2.0\", \"subscribe-duration\")\nfunction subscribe(ns: u64): own Pollable;\n@import(\"wasi:io/poll@0.2.0\", \"[method]pollable.ready\")\nfunction ready(h: borrow Pollable): boolean;\n@import(\"wasi:io/poll@0.2.0\", \"[resource-drop]pollable\")\nfunction drop_pollable(h: own Pollable): void;\n" + "function main(): i32 { var p: own Pollable = subscribe(0 as u64); if (ready(p)) { drop_pollable(p); return 1; } drop_pollable(p); return 0; }\n", nil},
+		{"resource-handle-bare-name-is-owned", "@import(\"wasi:io/poll@0.2.0\", \"pollable\")\nresource Pollable;\n@import(\"wasi:clocks/monotonic-clock@0.2.0\", \"subscribe-duration\")\nfunction subscribe(ns: u64): own Pollable;\n@import(\"wasi:io/poll@0.2.0\", \"[method]pollable.ready\")\nfunction ready(h: borrow Pollable): boolean;\n@import(\"wasi:io/poll@0.2.0\", \"[resource-drop]pollable\")\nfunction drop_pollable(h: own Pollable): void;\n" + "function f(): Pollable { return subscribe(0 as u64); }\nfunction main(): i32 { var p: Pollable = f(); drop_pollable(p); return 0; }\n", nil},
+		{"resource-handle-borrow-into-an-owned-parameter", "@import(\"wasi:io/poll@0.2.0\", \"pollable\")\nresource Pollable;\n@import(\"wasi:clocks/monotonic-clock@0.2.0\", \"subscribe-duration\")\nfunction subscribe(ns: u64): own Pollable;\n@import(\"wasi:io/poll@0.2.0\", \"[method]pollable.ready\")\nfunction ready(h: borrow Pollable): boolean;\n@import(\"wasi:io/poll@0.2.0\", \"[resource-drop]pollable\")\nfunction drop_pollable(h: own Pollable): void;\n" + "function f(b: borrow Pollable): void { drop_pollable(b); }\nfunction main(): i32 { return 0; }\n", []string{"E038"}},
+		{"resource-handle-into-an-integer", "@import(\"wasi:io/poll@0.2.0\", \"pollable\")\nresource Pollable;\n@import(\"wasi:clocks/monotonic-clock@0.2.0\", \"subscribe-duration\")\nfunction subscribe(ns: u64): own Pollable;\n@import(\"wasi:io/poll@0.2.0\", \"[method]pollable.ready\")\nfunction ready(h: borrow Pollable): boolean;\n@import(\"wasi:io/poll@0.2.0\", \"[resource-drop]pollable\")\nfunction drop_pollable(h: own Pollable): void;\n" + "function main(): i32 { var p: own Pollable = subscribe(0 as u64); var x: i32 = p; return x; }\n", []string{"E003"}},
+		{"resource-handle-lent-to-a-borrow-of-another-resource", "@import(\"wasi:io/poll@0.2.0\", \"pollable\")\nresource Pollable;\n@import(\"local:test/res@0.1.0\", \"thing\")\nresource Thing;\n@import(\"wasi:clocks/monotonic-clock@0.2.0\", \"subscribe-duration\")\nfunction subscribe(ns: u64): own Pollable;\n@import(\"local:test/res@0.1.0\", \"[method]thing.poke\")\nfunction poke(t: borrow Thing): void;\nfunction main(): i32 { var p: own Pollable = subscribe(0 as u64); poke(p); return 0; }\n", []string{"E038"}},
+		{"integer-into-a-resource-handle", "@import(\"wasi:io/poll@0.2.0\", \"pollable\")\nresource Pollable;\n@import(\"wasi:clocks/monotonic-clock@0.2.0\", \"subscribe-duration\")\nfunction subscribe(ns: u64): own Pollable;\n@import(\"wasi:io/poll@0.2.0\", \"[method]pollable.ready\")\nfunction ready(h: borrow Pollable): boolean;\n@import(\"wasi:io/poll@0.2.0\", \"[resource-drop]pollable\")\nfunction drop_pollable(h: own Pollable): void;\n" + "function main(): i32 { var p: own Pollable = 5; return 0; }\n", []string{"E003"}},
+		// A resource shares the nominal namespace with structs, enums and union
+		// aliases: a collision is E006 and the name keeps its other meaning.
+		{"resource-redeclared", "resource Pollable;\nresource Pollable;\nfunction main(): i32 { return 0; }\n", []string{"E006"}},
+		{"resource-beside-a-struct", "@import(\"wasi:io/poll@0.2.0\", \"pollable\")\nresource Pollable;\nstruct Pollable { v: i32 }\nfunction main(): i32 { var p: Pollable = Pollable { v: 1 }; return p.v; }\n", []string{"E006"}},
+		{"resource-beside-an-enum", "@import(\"wasi:io/poll@0.2.0\", \"pollable\")\nresource Pollable;\nenum Pollable { A, B }\nfunction main(): i32 { var p: Pollable = Pollable.A; return 0; }\n", []string{"E006"}},
+		{"resource-beside-a-generic-struct", "@import(\"local:test/res@0.1.0\", \"box\")\nresource Box;\nstruct Box[T] { v: T }\nfunction main(): i32 { var b: Box[i32] = Box { v: 1 }; return b.v; }\n", []string{"E006"}},
+		{"resource-beside-a-union-alias", "struct A { v: i32 }\nstruct B { w: i32 }\ntype X = A | B;\n@import(\"local:test/res@0.1.0\", \"x\")\nresource X;\nfunction main(): i32 { var x: X = A { v: 1 }; return 0; }\n", []string{"E006"}},
+		// A union whose members are not all distinct non-generic structs is E016
+		// and never becomes an enum, so a resource may take its name.
+		{"union-over-enums", "enum A { P, Q }\nenum B { R, T }\ntype X = A | B;\nfunction main(): i32 { return 0; }\n", []string{"E016"}},
+		{"union-duplicate-member", "struct A { v: i32 }\ntype X = A | A;\nfunction main(): i32 { return 0; }\n", []string{"E016"}},
+		{"union-generic-member-without-arguments", "struct Box[T] { v: T }\nstruct B { w: i32 }\ntype X = Box | B;\nfunction main(): i32 { return 0; }\n", []string{"E016"}},
+		{"union-plain-member-with-arguments", "struct A { v: i32 }\nstruct B { w: i32 }\ntype X = A[i32] | B;\nfunction main(): i32 { return 0; }\n", []string{"E016"}},
+		{"union-generic-member-arity", "struct Two[T, U] { a: T, b: U }\nstruct B { w: i32 }\ntype X = Two[i32] | B;\nfunction main(): i32 { return 0; }\n", []string{"E016"}},
+		{"union-generic-member-with-arguments", "struct Box[T] { v: T }\nstruct B { w: i32 }\ntype X = Box[i32] | B;\nfunction main(): i32 { return 0; }\n", nil},
+		{"union-generic-alias", "struct Leaf[T] { v: T }\nstruct Lit { v: i32 }\ntype Tree[T] = Leaf[T] | Lit;\nfunction main(): i32 { var t: Tree[i32] = Lit { v: 1 }; return 0; }\n", nil},
+		{"union-generic-alias-arity", "struct Leaf[T] { v: T }\nstruct Lit { v: i32 }\ntype Tree[T] = Leaf[T] | Lit;\nfunction main(): i32 { var t: Tree[i32, i32] = Lit { v: 1 }; return 0; }\n", []string{"E019"}},
+		{"enum-generic-arity", "struct Lit { v: i32 }\nenum Tree[T] { Leaf(T), Lit(Lit) }\nfunction f(t: Tree[i32, i32]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E019"}},
+		// A user enum shadowing a built-in's name leaves the annotation meaning
+		// the built-in: `Cell[i32]` is not checked against the enum's arity.
+		{"enum-shadows-builtin-arity", "enum Cell { Text(string), Num(i32) }\nfunction f(c: Cell[i32]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", nil},
+		{"union-bare-cell-member", "struct B { w: i32 }\ntype X = Cell | B;\nfunction main(): i32 { return 0; }\n", []string{"E016"}},
+		{"union-bare-map-member", "struct B { w: i32 }\ntype X = Map | B;\nfunction main(): i32 { return 0; }\n", []string{"E016"}},
+		{"union-bare-mapiter-member", "struct B { w: i32 }\ntype X = MapIter | B;\nfunction main(): i32 { return 0; }\n", []string{"E016"}},
+		// A union that desugars joins the enums after the declared ones, so a
+		// name already an enum's is E006 on the alias, in either source order.
+		{"union-alias-after-an-enum-of-its-name", "struct A { v: i32 }\nstruct B { w: i32 }\nenum X { P, Q }\ntype X = A | B;\nfunction main(): i32 { return 0; }\n", []string{"E006"}},
+		{"union-alias-after-an-enum-of-its-name-used", "struct A { v: i32 }\nstruct B { w: i32 }\nenum X { P, Q }\ntype X = A | B;\nfunction main(): i32 { var x: X = A { v: 1 }; return 0; }\n", []string{"E003", "E006"}},
+		{"union-alias-before-an-enum-of-its-name", "struct A { v: i32 }\nstruct B { w: i32 }\ntype X = A | B;\nenum X { P, Q }\nfunction main(): i32 { return 0; }\n", []string{"E006"}},
+		{"union-alias-named-option", "struct A { v: i32 }\nstruct B { w: i32 }\ntype Option = A | B;\nfunction main(): i32 { return 0; }\n", []string{"E006"}},
+		{"union-alias-redeclared", "struct A { v: i32 }\nstruct B { w: i32 }\ntype X = A | B;\ntype X = A | B;\nfunction main(): i32 { return 0; }\n", []string{"E006"}},
+		{"union-alias-after-a-refused-one", "enum A { P, Q }\nstruct B { w: i32 }\nstruct C { u: i32 }\ntype X = A | B;\ntype X = B | C;\nfunction main(): i32 { return 0; }\n", []string{"E016"}},
+		{"resource-beside-a-union-over-enums", "enum A { P, Q }\nenum B { R, T }\ntype X = A | B;\n@import(\"local:test/res@0.1.0\", \"x\")\nresource X;\nfunction main(): i32 { return 0; }\n", []string{"E016"}},
+		// A built-in struct or enum name is taken before any resource.
+		{"resource-named-like-builtin-reader", "@import(\"local:test/res@0.1.0\", \"reader\")\nresource Reader;\nfunction f(r: Reader): i32 { return r.fd; }\nfunction main(): i32 { return 0; }\n", []string{"E006"}},
+		{"resource-named-like-builtin-cell", "@import(\"local:test/res@0.1.0\", \"cell\")\nresource Cell;\nfunction main(): i32 { return 0; }\n", []string{"E006"}},
+		{"resource-named-like-builtin-option", "@import(\"local:test/res@0.1.0\", \"option\")\nresource Option;\nfunction main(): i32 { return 0; }\n", []string{"E006"}},
+		{"resource-named-like-builtin-map", "@import(\"local:test/res@0.1.0\", \"map\")\nresource Map;\nfunction main(): i32 { return 0; }\n", []string{"E006"}},
 		{"tuple-match-exhausts-the-function", "function f(t: (i32, i32)): i32 { match (t) { (0, b) => { return b; }, (a, _) => { return a; } } }\nfunction main(): i32 { return f((0, 7)); }\n", nil},
 	}
 	for _, tc := range cases {
@@ -3232,6 +3305,18 @@ func TestSelfHostCheckerBundleDifferentialX86_64(t *testing.T) {
 		{"derive-bare-with-cmp-imported", "import \"core/cmp\";\n@derive(Eq)\nstruct P { n: i32 }\nfunction main(): i32 { return 0; }\n"},
 		{"derive-qualified-ok", "import \"core/cmp\";\n@derive(cmp.Eq, cmp.Hash)\nstruct P { n: i32, s: string }\nfunction main(): i32 { var p: P = P { n: 1, s: \"x\" }; if (p.eq(p)) { return 3; } return 0; }\n"},
 		{"derive-aliased-import-ok", "import \"core/cmp\" as c;\n@derive(c.Eq)\nstruct P { n: i32 }\nfunction main(): i32 { return 0; }\n"},
+		// An impl names its trait by the module that declares it (#10816): a
+		// program's own `Ord` is not core/cmp's, whose impls for i32 do not
+		// answer its requirement; `dyn cmp.Display`, qualified directly or
+		// through an alias, takes what implements core/cmp's; and a program's
+		// own `Display` takes nothing core/cmp's impls cover. A bare bound names
+		// the trait of the module that wrote it, so `rank[T: Ord]` here reaches
+		// the program's `Ord` and core/cmp's generics still reach their own.
+		{"trait-same-name-as-imported-trait", "import \"std/i32\";\ntrait Eq { function eq(self: Self, other: Self): boolean; }\ntrait Ord: Eq { function lt(self: Self, other: Self): boolean; }\nstruct P { x: i32 }\nimpl Eq for P { function eq(self: Self, other: Self): boolean { return self.x == other.x; } }\nimpl Ord for P { function lt(self: Self, other: Self): boolean { return self.x < other.x; } }\nfunction main(): i32 { var p: P = P { x: 3 }; if (p.lt(P { x: 5 }) && !p.eq(P { x: 5 })) { return 0; } return 1; }\n"},
+		{"trait-bound-same-name-as-imported-trait", "import \"std/i32\";\ntrait Eq { function eq(self: Self, other: Self): boolean; }\ntrait Ord: Eq { function lt(self: Self, other: Self): boolean; }\nstruct P { x: i32 }\nimpl Eq for P { function eq(self: Self, other: Self): boolean { return self.x == other.x; } }\nimpl Ord for P { function lt(self: Self, other: Self): boolean { return self.x < other.x; } }\nfunction rank[T: Ord](a: T, b: T): string { if (a.eq(b)) { return \"eq\"; } if (a.lt(b)) { return \"lt\"; } return \"gt\"; }\nfunction main(): i32 { print(rank(P { x: 3 }, P { x: 5 })); return 0; }\n"},
+		{"dyn-qualified-imported-trait", "import \"core/cmp\";\nimport \"std/i32\";\nstruct Q { x: i32 }\nimpl cmp.Display for Q { function to_string(self: Self): string { return \"Q\"; } }\nfunction show(d: dyn cmp.Display): i32 { return d.to_string().len(); }\nfunction main(): i32 { var xs: dyn cmp.Display[] = [42, \"hi\", true]; var d: dyn cmp.Display = 42; var e: dyn cmp.Display = Q { x: 1 }; return show(42) + show(e) + xs.len() + d.to_string().len(); }\n"},
+		{"dyn-aliased-imported-trait", "import \"core/cmp\" as c;\nimport \"std/i32\";\nstruct Q { x: i32 }\nimpl c.Display for Q { function to_string(self: Self): string { return \"Q\"; } }\nfunction main(): i32 { var xs: dyn c.Display[] = [Q { x: 7 }, 42]; return xs.len(); }\n"},
+		{"dyn-own-trait-named-like-imported", "import \"core/cmp\";\nimport \"std/i32\";\ntrait Display { function show(self: Self): string; }\nfunction main(): i32 { var d: dyn Display = 42; return 0; }\n"},
 		{"derive-qualified-field-no-impl", "import \"core/cmp\";\nstruct Q { n: i32 }\n@derive(cmp.Eq)\nstruct P { q: Q }\nfunction main(): i32 { return 0; }\n"},
 		{"derive-aliased-bound-ok", "import \"core/cmp\" as c;\n@derive(c.Eq)\nstruct P { n: i32 }\nfunction same[T: c.Eq](a: T, b: T): boolean { return a.eq(b); }\nfunction main(): i32 { var p: P = P { n: 1 }; if (same(p, p)) { return 3; } return 0; }\n"},
 		{"derive-unknown-qualifier", "@derive(cmp.Eq)\nstruct P { n: i32 }\nfunction main(): i32 { return 0; }\n"},

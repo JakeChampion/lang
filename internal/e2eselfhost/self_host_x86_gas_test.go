@@ -200,7 +200,7 @@ func runX86GasNativeDriver(t *testing.T, name, driverMain string, wantExit int) 
 	if err != nil {
 		t.Fatalf("read elf.fern: %v", err)
 	}
-	source := string(nat) + "\n" + string(elf) + "\n" + driverMain
+	source := string(nat) + "\n" + string(elf) + toU8Src + driverMain
 
 	wat := runCapture(t, gcc, runner, driverBin, []byte(source))
 	if len(wat) == 0 {
@@ -458,7 +458,7 @@ function main(): i32 {
     var a: X86Asm = x86_gas_assemble(src);
     if (a.unknown.len() > 0) { return 2; }
     var bin: i32[] = elf_static_executable_data_x86(a.code, a.rodata);
-    write(string_from_bytes_unchecked(bin));
+    write(string_from_bytes_unchecked(to_u8(bin)));
     return 0;
 }
 `
@@ -471,7 +471,7 @@ function main(): i32 {
     var a: X86Asm = x86_gas_assemble(src);
     if (a.unknown.len() > 0) { return 2; }
     var bin: i32[] = elf_static_executable_data_x86(a.code, a.rodata);
-    write(string_from_bytes_unchecked(bin));
+    write(string_from_bytes_unchecked(to_u8(bin)));
     return 0;
 }
 `
@@ -482,7 +482,7 @@ function main(): i32 {
     var src: string = "\tmovq $6, %rax\n\tmovq $7, %rcx\n\timulq %rcx, %rax\n\tmovq %rax, %rdi\n\tmovq $60, %rax\n\tsyscall\n";
     var a: X86Asm = x86_gas_assemble(src);
     if (a.unknown.len() > 0) { return 2; }
-    write(string_from_bytes_unchecked(elf_static_executable_data_x86(a.code, a.rodata)));
+    write(string_from_bytes_unchecked(to_u8(elf_static_executable_data_x86(a.code, a.rodata))));
     return 0;
 }
 `
@@ -493,7 +493,7 @@ function main(): i32 {
     var src: string = "\tmovq $5, %rax\n\tincq %rax\n\tshlq $3, %rax\n\tsubq $6, %rax\n\tmovq %rax, %rdi\n\tmovq $60, %rax\n\tsyscall\n";
     var a: X86Asm = x86_gas_assemble(src);
     if (a.unknown.len() > 0) { return 2; }
-    write(string_from_bytes_unchecked(elf_static_executable_data_x86(a.code, a.rodata)));
+    write(string_from_bytes_unchecked(to_u8(elf_static_executable_data_x86(a.code, a.rodata))));
     return 0;
 }
 `
@@ -504,7 +504,7 @@ function main(): i32 {
     var src: string = "\tmovq $84, %rax\n\tcqto\n\tmovq $2, %rcx\n\tidivq %rcx\n\tmovq %rax, %rdi\n\tmovq $60, %rax\n\tsyscall\n";
     var a: X86Asm = x86_gas_assemble(src);
     if (a.unknown.len() > 0) { return 2; }
-    write(string_from_bytes_unchecked(elf_static_executable_data_x86(a.code, a.rodata)));
+    write(string_from_bytes_unchecked(to_u8(elf_static_executable_data_x86(a.code, a.rodata))));
     return 0;
 }
 `
@@ -519,7 +519,7 @@ function main(): i32 {
     var src: string = "\tmovabs $0x0123456789abcdef, %rsi\n\tmovabs $0xfedcba9876543210, %rdi\n\tmovq $8, %rcx\n\tshldq %cl, %rdi, %rsi\n\tmovabs $0x23456789abcdeffe, %rax\n\tcmpq %rax, %rsi\n\tjne bad\n\tmovabs $0x0000000100000001, %rax\n\tmovabs $0x0000000100000001, %rcx\n\tmulq %rcx\n\tmovabs $0x0000000200000001, %rcx\n\tcmpq %rcx, %rax\n\tjne bad\n\tcmpq $1, %rdx\n\tjne bad\n\tmovq $-1, %rax\n\tmovq $1, %rcx\n\taddq %rcx, %rax\n\tmovq $5, %rax\n\tmovq $7, %rcx\n\tadcq %rcx, %rax\n\tcmpq $13, %rax\n\tjne bad\n\tmovq $0, %rax\n\tmovq $1, %rcx\n\tsubq %rcx, %rax\n\tmovq $20, %rax\n\tmovq $6, %rcx\n\tsbbq %rcx, %rax\n\tcmpq $13, %rax\n\tjne bad\n\tmovq $42, %rdi\n\tjmp out\nbad:\n\tmovq $1, %rdi\nout:\n\tmovq $60, %rax\n\tsyscall\n";
     var a: X86Asm = x86_gas_assemble(src);
     if (a.unknown.len() > 0) { return 2; }
-    write(string_from_bytes_unchecked(elf_static_executable_data_x86(a.code, a.rodata)));
+    write(string_from_bytes_unchecked(to_u8(elf_static_executable_data_x86(a.code, a.rodata))));
     return 0;
 }
 `
@@ -547,7 +547,7 @@ function main(): i32 {
     var src: string = "\tmovq $6, %r12\n\tmovq $7, %r13\n\timulq %r13, %r12\n\tmovq %r12, %rdi\n\tmovq $60, %rax\n\tsyscall\n";
     var a: X86Asm = x86_gas_assemble(src);
     if (a.unknown.len() > 0) { return 2; }
-    write(string_from_bytes_unchecked(elf_static_executable_data_x86(a.code, a.rodata)));
+    write(string_from_bytes_unchecked(to_u8(elf_static_executable_data_x86(a.code, a.rodata))));
     return 0;
 }
 `
@@ -563,7 +563,7 @@ function main(): i32 {
     var src: string = ".text\n.globl _start\n_start:\n\tmovabs $17179869184, %rcx\n\tshrq $30, %rcx\n\tbtq $4, %rcx\n\tjc bitok\n\tmovq $1, %rdi\n\tjmp done\nbitok:\n\tincl counter(%rip)\n\tincl counter(%rip)\n\tmovl counter(%rip), %eax\n\tsubq $16, %rsp\n\tmovq $0, 8(%rsp)\n\tmovl $24, 8(%rsp)\n\tmovq 8(%rsp), %rdi\n\taddq %rax, %rdi\n\taddq %rcx, %rdi\n\tcmpq %rcx, 8(%rsp)\n\tja done\n\tmovq $2, %rdi\ndone:\n\tmovq $60, %rax\n\tsyscall\n.section .bss\n.align 8\ncounter: .quad 0\n";
     var a: X86Asm = x86_gas_assemble(src);
     var entry: i32 = x86_label_off(a, "_start");
-    write(string_from_bytes_unchecked(elf_program_x86(a.code, [], [], a.rodata, a.bss_size, entry)));
+    write(string_from_bytes_unchecked(to_u8(elf_program_x86(a.code, [], [], a.rodata, a.bss_size, entry))));
     return 0;
 }
 `
@@ -574,7 +574,7 @@ function main(): i32 {
     var src: string = "\tsubq $16, %rsp\n\tmovq $42, %r8\n\tmovq %r8, (%rsp)\n\tmovq (%rsp), %r9\n\tmovq %r9, %rdi\n\taddq $16, %rsp\n\tmovq $60, %rax\n\tsyscall\n";
     var a: X86Asm = x86_gas_assemble(src);
     if (a.unknown.len() > 0) { return 2; }
-    write(string_from_bytes_unchecked(elf_static_executable_data_x86(a.code, a.rodata)));
+    write(string_from_bytes_unchecked(to_u8(elf_static_executable_data_x86(a.code, a.rodata))));
     return 0;
 }
 `
@@ -585,7 +585,7 @@ function main(): i32 {
     var src: string = "\tsubq $64, %rsp\n\tmovq $42, %rax\n\tmovq $2, %rcx\n\tmovq %rax, (%rsp,%rcx,8)\n\tmovq (%rsp,%rcx,8), %rdi\n\taddq $64, %rsp\n\tmovq $60, %rax\n\tsyscall\n";
     var a: X86Asm = x86_gas_assemble(src);
     if (a.unknown.len() > 0) { return 2; }
-    write(string_from_bytes_unchecked(elf_static_executable_data_x86(a.code, a.rodata)));
+    write(string_from_bytes_unchecked(to_u8(elf_static_executable_data_x86(a.code, a.rodata))));
     return 0;
 }
 `
@@ -596,7 +596,7 @@ function main(): i32 {
     var src: string = "\tsubq $16, %rsp\n\tmovb $42, (%rsp)\n\tmovzbq (%rsp), %rdi\n\taddq $16, %rsp\n\tmovq $60, %rax\n\tsyscall\n";
     var a: X86Asm = x86_gas_assemble(src);
     if (a.unknown.len() > 0) { return 2; }
-    write(string_from_bytes_unchecked(elf_static_executable_data_x86(a.code, a.rodata)));
+    write(string_from_bytes_unchecked(to_u8(elf_static_executable_data_x86(a.code, a.rodata))));
     return 0;
 }
 `
@@ -607,7 +607,7 @@ function main(): i32 {
     var src: string = "\tsubq $16, %rsp\n\tmovq $42, %rcx\n\tmovb %cl, (%rsp)\n\tmovzbq (%rsp), %r8\n\tmovq %r8, %rdi\n\taddq $16, %rsp\n\tmovq $60, %rax\n\tsyscall\n";
     var a: X86Asm = x86_gas_assemble(src);
     if (a.unknown.len() > 0) { return 2; }
-    write(string_from_bytes_unchecked(elf_static_executable_data_x86(a.code, a.rodata)));
+    write(string_from_bytes_unchecked(to_u8(elf_static_executable_data_x86(a.code, a.rodata))));
     return 0;
 }
 `
@@ -634,7 +634,7 @@ function main(): i32 {
     var src: string = ".text\n_start:\n\tmovq $43, %rdi\n\tleaq vals(%rip), %rax\n\tmovq (%rax), %rcx\n\tcmpq $-1, %rcx\n\tjne done\n\tmovq 8(%rax), %rcx\n\tcmpq $-5, %rcx\n\tjne done\n\tmovq 16(%rax), %rcx\n\tcmpq $-2147483648, %rcx\n\tjne done\n\tmovq $42, %rdi\ndone:\n\tmovq $60, %rax\n\tsyscall\n.section .rodata\nvals:\n\t.quad -1\n\t.quad -5\n\t.quad -2147483648\n";
     var a: X86Asm = x86_gas_assemble(src);
     if (a.unknown.len() > 0) { return 2; }
-    write(string_from_bytes_unchecked(elf_static_executable_data_x86(a.code, a.rodata)));
+    write(string_from_bytes_unchecked(to_u8(elf_static_executable_data_x86(a.code, a.rodata))));
     return 0;
 }
 `

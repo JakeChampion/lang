@@ -14,22 +14,22 @@ import "./ssa_lift";
 import "./util";
 
 function main(): i32 {
-    var id: i32 = 1;
-    var registered: i32 = 0;
-    var declined: i32 = 0;
-    var out: string = "";
-    while (id < 1024) {
-        var k: string = ir.kind_name(id);
-        if (k != "invalid") {
-            registered = registered + 1;
-            var o: ir.Op = ir.Op { decl: 0 - 1, kind_tag: id, i32_imm: 0, i64_imm: 0i64, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
-            if (!ssa_lift.admits(o)) {
-                declined = declined + 1;
-                out = out + k + " pops=" + util.i32_to_string(ir.op_pops(o)) + " pushes=" + util.i32_to_string(ir.op_pushes(o)) + "\n";
-            }
-        }
-        id = id + 1;
+  var id: i32 = 1;
+  var registered: i32 = 0;
+  var declined: i32 = 0;
+  var out: string = "";
+  while (id < 1024) {
+    var k: string = ir.kind_name(id);
+    if (k != "invalid") {
+      registered = registered + 1;
+      var o: ir.Op = ir.Op { decl: 0 - 1, kind_tag: id, i32_imm: 0, i64_imm: 0i64, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+      if (!ssa_lift.admits(o)) {
+        declined = declined + 1;
+        out = out + k + " pops=" + util.i32_to_string(ir.op_pops(o)) + " pushes=" + util.i32_to_string(ir.op_pushes(o)) + "\n";
+      }
     }
-    write(out + "registered=" + util.i32_to_string(registered) + " declined=" + util.i32_to_string(declined) + "\n");
-    return 0;
+    id = id + 1;
+  }
+  write(out + "registered=" + util.i32_to_string(registered) + " declined=" + util.i32_to_string(declined) + "\n");
+  return 0;
 }

@@ -46,7 +46,7 @@ function rebuild(src: Node[]): Node[] {
 	var out: Node[] = [];
 	var i: i32 = 0;
 	while (i < src.len()) {
-		var s: Node = src[i] as i32;
+		var s: Node = src[i];
 		out = out.append(Node { name: s.name, kids: s.kids, n: s.n });
 		i = i + 1;
 	}

@@ -672,6 +672,31 @@ func trimPkg(s string) string {
 // "did not terminate / infinitely recursive" error rather than running
 // off the round cap and failing the trailing re-check with a misleading
 // "compiler bug". Regression for I3 in docs/ADVERSARIAL-REVIEW-2026-06.md.
+// The re-check after instantiation applies the checked target's rules:
+// config_get stays itself on the proxy world instead of becoming env.
+func TestRunRecheckKeepsTheTarget(t *testing.T) {
+	prog, err := parser.Parse(`function read[T](x: T, name: string): Option[string] { return config_get(name); }
+function main(): i32 { match (read(1, "GREETING")) { Some(v) => { return 0; }, None => { return 1; } } }`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	info, err := checker.CheckTarget(prog, "wasm32-wasi-http")
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	if err := monomorph.Run(prog, info); err != nil {
+		t.Fatalf("monomorph: %v", err)
+	}
+	ast.WalkProgram(prog, func(n ast.Node) bool {
+		if call, ok := n.(*ast.Call); ok {
+			if id, ok := call.Callee.(*ast.Ident); ok && id.Name == "env" {
+				t.Errorf("the re-check renamed config_get to env on the proxy world")
+			}
+		}
+		return true
+	})
+}
+
 func TestRunReportsPolymorphicRecursion(t *testing.T) {
 	src := `struct Nest[T] { head: T, tail: Nest[Nest[T]] }
 function f(n: Nest[i32]): i32 { return n.head; }

@@ -48,7 +48,8 @@ func TestSelfHostStructDeepDropIRX86_64(t *testing.T) {
 		if len(asm) == 0 {
 			t.Fatalf("%s: self-host compiler emitted 0 bytes", name)
 		}
-		if wantAsmSubstr != "" && !strings.Contains(string(asm), wantAsmSubstr) {
+		// The drop helper named is the AST lowering's, so it is read from that lowering.
+		if wantAsmSubstr != "" && !strings.Contains(string(runCaptureAST(t, runner, driverBin, []byte(prog))), wantAsmSubstr) {
 			t.Fatalf("%s: emitted asm missing %q — the nested-struct field did not deep-drop", name, wantAsmSubstr)
 		}
 		bin := buildBin(t, gcc, dir, name, string(asm))

@@ -74,7 +74,8 @@ func TestSelfHostStructCopyIRX86_64(t *testing.T) {
 			if len(asm) == 0 {
 				t.Fatal("self-host compiler emitted 0 bytes")
 			}
-			copies := bytes.Count(asm, []byte("call __fn___fern_struct_copy"))
+			// op_struct_copy is the AST lowering's record-update emit.
+			copies := bytes.Count(runCaptureAST(t, runner, driverBin, []byte(tc.src)), []byte("call __fn___fern_struct_copy"))
 			switch {
 			case tc.copyAssert > 0 && copies == 0:
 				t.Errorf("%s: expected op_struct_copy to fire (call __fn___fern_struct_copy), found none — compact update path regressed", tc.name)

@@ -1,5 +1,6 @@
 import "std/test";
 import "std/string";
+
 // examples/tests/string_parse_radix_test.fern — pure-Fern coverage of
 // std/string.parse_int_radix(base): the method form of the arbitrary-base i32
 // parser (2..36, digits 0-9a-z case-insensitive, optional +/-), the general
@@ -11,68 +12,83 @@ import "std/string";
 // native compilation on all four backends.
 
 function val(o: Option[i32], d: i32): i32 {
-    match (o) { Some(v) => { return v; }, None => { return d; } }
+  match (o) {
+    Some(v) => {
+      return v;
+    },
+    None => {
+      return d;
+    }
+  }
 }
 
 function test_hex(): test.TestOutcome {
-    return test.assert_true(val("ff".parse_int_radix(16), 0 - 1) == 255);
+  return test.assert_true(val("ff".parse_int_radix(16), 0 - 1) == 255);
 }
 
 function test_binary(): test.TestOutcome {
-    return test.assert_true(val("101".parse_int_radix(2), 0 - 1) == 5);
+  return test.assert_true(val("101".parse_int_radix(2), 0 - 1) == 5);
 }
 
 function test_octal(): test.TestOutcome {
-    return test.assert_true(val("777".parse_int_radix(8), 0 - 1) == 511);
+  return test.assert_true(val("777".parse_int_radix(8), 0 - 1) == 511);
 }
 
 function test_base36(): test.TestOutcome {
-    return test.assert_true(val("z".parse_int_radix(36), 0 - 1) == 35);
+  return test.assert_true(val("z".parse_int_radix(36), 0 - 1) == 35);
 }
 
 function test_negative(): test.TestOutcome {
-    return test.assert_true(val("-1a".parse_int_radix(16), 0) == 0 - 26);
+  return test.assert_true(val("-1a".parse_int_radix(16), 0) == 0 - 26);
 }
 
 function test_plus_sign(): test.TestOutcome {
-    return test.assert_true(val("+10".parse_int_radix(10), 0 - 1) == 10);
+  return test.assert_true(val("+10".parse_int_radix(10), 0 - 1) == 10);
 }
 
 function test_uppercase(): test.TestOutcome {
-    // Digits are case-insensitive.
-    return test.assert_true(val("FF".parse_int_radix(16), 0 - 1) == 255);
+  // Digits are case-insensitive.
+  return test.assert_true(val("FF".parse_int_radix(16), 0 - 1) == 255);
 }
 
 function test_digit_ge_base(): test.TestOutcome {
-    // '2' is not a valid base-2 digit.
-    match ("2".parse_int_radix(2)) {
-        Some(v) => { return test.fail("expected None for digit >= base"); },
-        None => { return test.pass(); }
+  // '2' is not a valid base-2 digit.
+  match ("2".parse_int_radix(2)) {
+    Some(v) => {
+      return test.fail("expected None for digit >= base");
+    },
+    None => {
+      return test.pass();
     }
+  }
 }
 
 function test_bad_base(): test.TestOutcome {
-    // Bases outside 2..36 → None.
-    if (val("5".parse_int_radix(1), 0 - 99) != 0 - 99) { return test.fail("base 1"); }
-    return test.assert_true(val("5".parse_int_radix(37), 0 - 99) == 0 - 99);
+  // Bases outside 2..36 → None.
+  if (val("5".parse_int_radix(1), 0 - 99) != 0 - 99) {
+    return test.fail("base 1");
+  }
+  return test.assert_true(val("5".parse_int_radix(37), 0 - 99) == 0 - 99);
 }
 
 function test_empty_and_lone_sign(): test.TestOutcome {
-    if (val("".parse_int_radix(10), 0 - 99) != 0 - 99) { return test.fail("empty"); }
-    return test.assert_true(val("-".parse_int_radix(10), 0 - 99) == 0 - 99);
+  if (val("".parse_int_radix(10), 0 - 99) != 0 - 99) {
+    return test.fail("empty");
+  }
+  return test.assert_true(val("-".parse_int_radix(10), 0 - 99) == 0 - 99);
 }
 
 function main(): i32 {
-    var r: test.TestRunner = test.test_new("std/string parse_int_radix");
-    r = r.it("hex",            test_hex);
-    r = r.it("binary",         test_binary);
-    r = r.it("octal",          test_octal);
-    r = r.it("base36",         test_base36);
-    r = r.it("negative",       test_negative);
-    r = r.it("plus sign",      test_plus_sign);
-    r = r.it("uppercase",      test_uppercase);
-    r = r.it("digit >= base",  test_digit_ge_base);
-    r = r.it("bad base",       test_bad_base);
-    r = r.it("empty/lone sign", test_empty_and_lone_sign);
-    return r.finish();
+  var r: test.TestRunner = test.test_new("std/string parse_int_radix");
+  r = r.it("hex", test_hex);
+  r = r.it("binary", test_binary);
+  r = r.it("octal", test_octal);
+  r = r.it("base36", test_base36);
+  r = r.it("negative", test_negative);
+  r = r.it("plus sign", test_plus_sign);
+  r = r.it("uppercase", test_uppercase);
+  r = r.it("digit >= base", test_digit_ge_base);
+  r = r.it("bad base", test_bad_base);
+  r = r.it("empty/lone sign", test_empty_and_lone_sign);
+  return r.finish();
 }

@@ -21,7 +21,7 @@
 // indexing a string yields a byte, and no allocation or one-time init is
 // needed.
 function __int_pair_table(): string {
-    return "00010203040506070809101112131415161718192021222324252627282930313233343536373839404142434445464748495051525354555657585960616263646566676869707172737475767778798081828384858687888990919293949596979899";
+  return "00010203040506070809101112131415161718192021222324252627282930313233343536373839404142434445464748495051525354555657585960616263646566676869707172737475767778798081828384858687888990919293949596979899";
 }
 
 // __int_u32_digits returns how many decimal digits `u` needs, by a comparison
@@ -37,16 +37,34 @@ function __int_pair_table(): string {
 // Ten comparisons worst case, and a small integer (the common case: loop
 // counters, indices, sizes) exits after one or two.
 function __int_u32_digits(u: u32): i32 {
-    if (u < (10 as u32)) { return 1; }
-    if (u < (100 as u32)) { return 2; }
-    if (u < (1000 as u32)) { return 3; }
-    if (u < (10000 as u32)) { return 4; }
-    if (u < (100000 as u32)) { return 5; }
-    if (u < (1000000 as u32)) { return 6; }
-    if (u < (10000000 as u32)) { return 7; }
-    if (u < (100000000 as u32)) { return 8; }
-    if (u < (1000000000 as u32)) { return 9; }
-    return 10;
+  if (u < 10 as u32) {
+    return 1;
+  }
+  if (u < 100 as u32) {
+    return 2;
+  }
+  if (u < 1000 as u32) {
+    return 3;
+  }
+  if (u < 10000 as u32) {
+    return 4;
+  }
+  if (u < 100000 as u32) {
+    return 5;
+  }
+  if (u < 1000000 as u32) {
+    return 6;
+  }
+  if (u < 10000000 as u32) {
+    return 7;
+  }
+  if (u < 100000000 as u32) {
+    return 8;
+  }
+  if (u < 1000000000 as u32) {
+    return 9;
+  }
+  return 10;
 }
 
 // `int_to_string(n)` — signed-i32 → ASCII decimal. The
@@ -74,40 +92,44 @@ function __int_u32_digits(u: u32): i32 {
 // (8-byte-slotted `u8[]`). The element-wise form is layout-agnostic, so it is
 // correct on every backend and lowers on the self-host IR path.
 pub function int_to_string(n: i32): string {
-    var neg: boolean = false;
-    if (n < 0) {
-        neg = true;
-        n = 0 - n;
-    }
-    var u: u32 = n as u32;
-    var ndig: i32 = __int_u32_digits(u);
-    var total: i32 = ndig;
-    if (neg) { total = total + 1; }
-    var buf: u8[] = __alloc_u8(total);
-    var tbl: string = __int_pair_table();
-    var w: i32 = total;
-    // Two digits at a time from the least significant end.
-    while (u >= (100 as u32)) {
-        var r: i32 = (u % (100 as u32)) as i32;
-        u = u / (100 as u32);
-        w = w - 2;
-        buf = buf.with(w, tbl[r * 2] as u8);
-        buf = buf.with(w + 1, tbl[r * 2 + 1] as u8);
-    }
-    // 1 or 2 digits left. Reading both from the table covers the two-digit
-    // remainder without a second division; the one-digit case takes the low
-    // half only, which is why the width was computed up front.
-    var last: i32 = u as i32;
-    if (u >= (10 as u32)) {
-        w = w - 2;
-        buf = buf.with(w, tbl[last * 2] as u8);
-        buf = buf.with(w + 1, tbl[last * 2 + 1] as u8);
-    } else {
-        w = w - 1;
-        buf = buf.with(w, (last + 48) as u8);
-    }
-    if (neg) { buf = buf.with(0, 45 as u8); }
-    return string_from_bytes_unchecked(buf);
+  var neg: boolean = false;
+  if (n < 0) {
+    neg = true;
+    n = 0 - n;
+  }
+  var u: u32 = n as u32;
+  var ndig: i32 = __int_u32_digits(u);
+  var total: i32 = ndig;
+  if (neg) {
+    total = total + 1;
+  }
+  var buf: u8[] = __alloc_u8(total);
+  var tbl: string = __int_pair_table();
+  var w: i32 = total;
+  // Two digits at a time from the least significant end.
+  while (u >= 100 as u32) {
+    var r: i32 = (u % (100 as u32)) as i32;
+    u = u / (100 as u32);
+    w = w - 2;
+    buf = buf.with(w, tbl[r * 2] as u8);
+    buf = buf.with(w + 1, tbl[r * 2 + 1] as u8);
+  }
+  // 1 or 2 digits left. Reading both from the table covers the two-digit
+  // remainder without a second division; the one-digit case takes the low
+  // half only, which is why the width was computed up front.
+  var last: i32 = u as i32;
+  if (u >= 10 as u32) {
+    w = w - 2;
+    buf = buf.with(w, tbl[last * 2] as u8);
+    buf = buf.with(w + 1, tbl[last * 2 + 1] as u8);
+  } else {
+    w = w - 1;
+    buf = buf.with(w, (last + 48) as u8);
+  }
+  if (neg) {
+    buf = buf.with(0, 45 as u8);
+  }
+  return string_from_bytes_unchecked(buf);
 }
 
 // `__int_to_string_u64(mag, neg)` — i64 / u64 cousin. `mag`
@@ -124,73 +146,97 @@ pub function int_to_string(n: i32): string {
 // a u64 ladder would be twenty comparisons, and the count loop here runs at
 // most ten times because it consumes two digits per step.
 pub function __int_to_string_u64(mag: i64, neg: i32): string {
-    var m: u64 = mag as u64;
-    var ndig: i32 = 1;
-    var probe: u64 = m;
-    while (probe >= (100 as u64)) {
-        ndig = ndig + 2;
-        probe = probe / (100 as u64);
-    }
-    if (probe >= (10 as u64)) { ndig = ndig + 1; }
-    var total: i32 = ndig;
-    if (neg != 0) { total = total + 1; }
-    var buf: u8[] = __alloc_u8(total);
-    var tbl: string = __int_pair_table();
-    var w: i32 = total;
-    while (m >= (100 as u64)) {
-        var r: i32 = (m % (100 as u64)) as i32;
-        m = m / (100 as u64);
-        w = w - 2;
-        buf = buf.with(w, tbl[r * 2] as u8);
-        buf = buf.with(w + 1, tbl[r * 2 + 1] as u8);
-    }
-    var last: i32 = m as i32;
-    if (m >= (10 as u64)) {
-        w = w - 2;
-        buf = buf.with(w, tbl[last * 2] as u8);
-        buf = buf.with(w + 1, tbl[last * 2 + 1] as u8);
-    } else {
-        w = w - 1;
-        buf = buf.with(w, (last + 48) as u8);
-    }
-    if (neg != 0) { buf = buf.with(0, 45 as u8); }
-    return string_from_bytes_unchecked(buf);
+  var m: u64 = mag as u64;
+  var ndig: i32 = 1;
+  var probe: u64 = m;
+  while (probe >= 100 as u64) {
+    ndig = ndig + 2;
+    probe = probe / (100 as u64);
+  }
+  if (probe >= 10 as u64) {
+    ndig = ndig + 1;
+  }
+  var total: i32 = ndig;
+  if (neg != 0) {
+    total = total + 1;
+  }
+  var buf: u8[] = __alloc_u8(total);
+  var tbl: string = __int_pair_table();
+  var w: i32 = total;
+  while (m >= 100 as u64) {
+    var r: i32 = (m % (100 as u64)) as i32;
+    m = m / (100 as u64);
+    w = w - 2;
+    buf = buf.with(w, tbl[r * 2] as u8);
+    buf = buf.with(w + 1, tbl[r * 2 + 1] as u8);
+  }
+  var last: i32 = m as i32;
+  if (m >= 10 as u64) {
+    w = w - 2;
+    buf = buf.with(w, tbl[last * 2] as u8);
+    buf = buf.with(w + 1, tbl[last * 2 + 1] as u8);
+  } else {
+    w = w - 1;
+    buf = buf.with(w, (last + 48) as u8);
+  }
+  if (neg != 0) {
+    buf = buf.with(0, 45 as u8);
+  }
+  return string_from_bytes_unchecked(buf);
 }
 
 pub function __radix_digit(c: i32): i32 {
-    if (c >= 48 && c <= 57)  { return (c as i32) - 48; }     // 0-9 → 0-9
-    if (c >= 97 && c <= 122) { return (c as i32) - 87; }     // a-z → 10-35
-    if (c >= 65 && c <= 90)  { return (c as i32) - 55; }     // A-Z → 10-35
-    return 0 - 1;
+  if (c >= 48 && c <= 57) {  // 0-9 → 0-9
+    return c as i32 - 48;
+  }
+  if (c >= 97 && c <= 122) {  // a-z → 10-35
+    return c as i32 - 87;
+  }
+  if (c >= 65 && c <= 90) {  // A-Z → 10-35
+    return c as i32 - 55;
+  }
+  return 0 - 1;
 }
 
 pub function __radix_char(d: i32): i32 {
-    if (d < 10) { return d + 48; }                   // 0-9
-    return d + 87;                                    // a-z (lowercase)
+  if (d < 10) {  // 0-9
+    return d + 48;
+  }
+  return d + 87;  // a-z (lowercase)
 }
 
 pub function parse_int_radix(s: string, base: i32): Option[i32] {
-    if (base < 2 || base > 36) { return None; }
-    var n: i32 = s.len();
-    if (n == 0) { return None; }
-    var neg: boolean = false;
-    var i: i32 = 0;
-    if (s[0] == 45) {           // '-'
-        neg = true;
-        i = 1;
-    } else if (s[0] == 43) {    // '+'
-        i = 1;
+  if (base < 2 || base > 36) {
+    return None;
+  }
+  var n: i32 = s.len();
+  if (n == 0) {
+    return None;
+  }
+  var neg: boolean = false;
+  var i: i32 = 0;
+  if (s[0] == 45) {  // '-'
+    neg = true;
+    i = 1;
+  } else if (s[0] == 43) {  // '+'
+    i = 1;
+  }
+  if (i >= n) {  // sign without digits
+    return None;
+  }
+  var v: i32 = 0;
+  while (i < n) {
+    var d: i32 = __radix_digit(s[i] as i32);
+    if (d < 0 || d >= base) {
+      return None;
     }
-    if (i >= n) { return None; }    // sign without digits
-    var v: i32 = 0;
-    while (i < n) {
-        var d: i32 = __radix_digit((s[i] as i32));
-        if (d < 0 || d >= base) { return None; }
-        v = v * base + d;
-        i = i + 1;
-    }
-    if (neg) { v = 0 - v; }
-    return Some(v);
+    v = v * base + d;
+    i = i + 1;
+  }
+  if (neg) {
+    v = 0 - v;
+  }
+  return Some(v);
 }
 
 // `int_to_string_radix(n, base)` — render `n` in `base` (2..36), digits
@@ -199,35 +245,43 @@ pub function parse_int_radix(s: string, base: i32): Option[i32] {
 // mirror of `parse_int_radix`'s `None` on the same bad base. Callers passing
 // a fixed valid base (`to_binary`/`to_hex`/… always do) never observe it.
 pub function int_to_string_radix(n: i32, base: i32): string {
-    if (base < 2 || base > 36) { return ""; }
-    if (n == 0) { return "0"; }
-    var neg: boolean = (n < 0);
-    // Use i64 magnitude so INT_MIN's negation doesn't overflow.
-    var mag: i64 = n as i64;
-    if (neg) { mag = 0 - mag; }
-    // Worst case is 32 binary digits + sign = 33; allocate slack.
-    var digits: u8[] = __alloc_u8(33);
-    var k: i32 = 0;
-    var b64: i64 = base as i64;
-    while (mag > (0 as i64)) {
-        var d: i32 = (mag % b64) as i32;
-        digits = digits.with(k, __radix_char(d) as u8);
-        k = k + 1;
-        mag = mag / b64;
-    }
-    var out_len: i32 = k;
-    if (neg) { out_len = k + 1; }
-    var buf: u8[] = __alloc_u8(out_len);
-    var bi: i32 = 0;
-    if (neg) {
-        buf = buf.with(0, 45 as u8);        // '-'
-        bi = 1;
-    }
-    var j: i32 = k - 1;
-    while (j >= 0) {
-        buf = buf.with(bi, digits[j]);
-        bi = bi + 1;
-        j = j - 1;
-    }
-    return string_from_bytes_unchecked(buf);
+  if (base < 2 || base > 36) {
+    return "";
+  }
+  if (n == 0) {
+    return "0";
+  }
+  var neg: boolean = n < 0;
+  // Use i64 magnitude so INT_MIN's negation doesn't overflow.
+  var mag: i64 = n as i64;
+  if (neg) {
+    mag = 0 - mag;
+  }
+  // Worst case is 32 binary digits + sign = 33; allocate slack.
+  var digits: u8[] = __alloc_u8(33);
+  var k: i32 = 0;
+  var b64: i64 = base as i64;
+  while (mag > 0 as i64) {
+    var d: i32 = (mag % b64) as i32;
+    digits = digits.with(k, __radix_char(d) as u8);
+    k = k + 1;
+    mag = mag / b64;
+  }
+  var out_len: i32 = k;
+  if (neg) {
+    out_len = k + 1;
+  }
+  var buf: u8[] = __alloc_u8(out_len);
+  var bi: i32 = 0;
+  if (neg) {
+    buf = buf.with(0, 45 as u8);  // '-'
+    bi = 1;
+  }
+  var j: i32 = k - 1;
+  while (j >= 0) {
+    buf = buf.with(bi, digits[j]);
+    bi = bi + 1;
+    j = j - 1;
+  }
+  return string_from_bytes_unchecked(buf);
 }

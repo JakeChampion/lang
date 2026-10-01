@@ -9,5 +9,5 @@
 import "core/_test_empty";
 
 pub function stdlib_test_marker(): i32 {
-    return 42;
+  return 42;
 }

@@ -36,24 +36,24 @@ import "std/array";
 // read is O(total). This is the core-CLI hot path — every
 // `read_input("-")` from cat / wc / head / grep / … lands here.
 pub function read_all_stdin(): string {
-    var r: Reader = stdin();
-    var chunks: string[] = [];
-    while (true) {
-        match (r.read_chunk(4096)) {
-            Ok(chunk) => {
-                if (chunk.len() == 0) {
-                    r.close();
-                    return chunks.join("");
-                }
-                chunks = chunks.append(chunk);
-            },
-            Err(e) => {
-                r.close();
-                return chunks.join("");
-            },
+  var r: Reader = stdin();
+  var chunks: string[] = [];
+  while (true) {
+    match (r.read_chunk(4096)) {
+      Ok(chunk) => {
+        if (chunk.len() == 0) {
+          r.close();
+          return chunks.join("");
         }
+        chunks = chunks.append(chunk);
+      },
+      Err(e) => {
+        r.close();
+        return chunks.join("");
+      }
     }
-    return "";
+  }
+  return "";
 }
 
 // `read_input(path)` — read a CLI-style input operand: the
@@ -69,8 +69,8 @@ pub function read_all_stdin(): string {
 //     Err(_)   => { eprint("tool: " + path + ": cannot open"); },
 //   }
 pub function read_input(path: string): Result[string, IoError] {
-    if (path == "-" || path == "") {
-        return Ok(read_all_stdin());
-    }
-    return read_file(path);
+  if (path == "-" || path == "") {
+    return Ok(read_all_stdin());
+  }
+  return read_file(path);
 }

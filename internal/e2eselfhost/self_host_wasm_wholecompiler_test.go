@@ -3,20 +3,17 @@ package e2eselfhost
 import (
 	"bytes"
 	"errors"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
 	"testing"
 )
 
 // TestSelfHostWasmWholeCompilerShardedLink is the main gate for #5508: the ENTIRE
-// self-host wasm compiler (15 modules, incl. irlower at ~894 funcs) links into
-// one valid wasm module — with the oversized module emitted in FUNCTION WINDOWS
-// across separate processes so no single lowering exhausts the bump arena.
+// self-host wasm compiler links into one valid wasm module from per-unit
+// objects, with each large module cut into FUNCTION WINDOWS, a unit apiece.
 //
 // This is the wasm analogue of the asm whole-compiler per-module link test, and
 // the first end-to-end proof that per-module wasm emit scales past the toy cases
@@ -26,8 +23,8 @@ import (
 // runShardedCompiler): validating proves well-formedness, not that the windows
 // compute the right thing.
 //
-// Runs in its own CI job (wasm-wholecompiler-link-x86_64), not in an LPT shard:
-// at ~13 min it was 71% of the shards' 18-minute wall on its own (#6667).
+// Runs in its own CI job (wasm-wholecompiler-link-x86_64), not in an LPT shard
+// (#6667).
 func TestSelfHostWasmWholeCompilerShardedLink(t *testing.T) {
 	if testing.Short() {
 		t.Skip("whole-compiler sharded link is heavy; skipped in -short")
@@ -46,6 +43,8 @@ func TestSelfHostWasmWholeCompilerShardedLink(t *testing.T) {
 	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "asm_ir.fern", "wasm_ir.fern", "flatten.fern", "modloader.fern", "fern_toml.fern", "builtins.fern", "wasm_objfile.fern", "wasm_modload_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_modload_run.fern", "wasm_modload_run")
 	entryPath := filepath.Join(dir, "wasm_modload_run.fern")
+	// The compiler imports core/map, which resolves beside the entry.
+	copyStdlibTree(t, dir)
 
 	drive := func(t *testing.T, args ...string) (string, string, error) {
 		t.Helper()
@@ -93,91 +92,17 @@ func TestSelfHostWasmWholeCompilerShardedLink(t *testing.T) {
 		t.Fatalf("func-counts returned %d lines, want %d", len(counts), n)
 	}
 
-	// Emit each module in FUNCTION WINDOWS, each its own process (fresh arena).
-	// Windows run on a bounded worker pool so the per-process parse floors
-	// overlap — the whole-compiler emit is CI-runnable this way, not a ~40-min
-	// serial run. A window that still
-	// OOMs (137) is halved by its own worker (rare; the static window already
-	// clears the arena). Each job records its own plan lines; the plan is
-	// assembled in job order so it is deterministic regardless of interleaving.
+	// The plan cuts each module into FUNCTION WINDOWS, so the link assembles
+	// many namespaced units per large module. One process emits every unit: the
+	// typed lowering is whole-program, so a process per window would each lower
+	// the whole compiler again.
 	const window = 150
-	// 2 workers, not 3: each per-module wasm emit's peak RSS is ~2x an asm
-	// window's (heavier whole-program view + wasm emit), so 3
-	// concurrent window emits peaked at ~14.5 GB — over a 16 GB CI runner's
-	// headroom — OOM-killing the job (exit 143, no assertion failure)
-	// reproducibly at the irlower windows. 2 keeps the peak ~10 GB at ~1.5x
-	// wall-clock, still well under the job's 28m test budget.
-	const workers = 2
-	// Both memory-exhaustion causes mean the same thing HERE — the window is too
-	// big, halve it and retry — so both are accepted. They are not the same event:
-	// 125 is the emitted binary tripping __fern_alloc's bounds check on its own
-	// fixed arena, 137 is 128+9, the HOST kernel OOM-killing the process. Before
-	// the arena trap had its own status both arrived as 137 and were
-	// indistinguishable; keep them named so a change that cares about the
-	// difference has something to key on.
-	isOOM := func(err error) bool {
-		var ee *exec.ExitError
-		if !errors.As(err, &ee) {
-			return false
-		}
-		const arenaExhausted, sigkilled = 125, 137
-		return ee.ExitCode() == arenaExhausted || ee.ExitCode() == sigkilled
-	}
-	type job struct {
-		idx, lo, hi int
-		lines       []string
-		err         error
-	}
-	var jobs []*job
-	for i := range n {
-		if counts[i] <= window {
-			jobs = append(jobs, &job{idx: i, lo: 0, hi: counts[i]})
-			continue
-		}
-		for lo := 0; lo < counts[i]; lo += window {
-			jobs = append(jobs, &job{idx: i, lo: lo, hi: min(lo+window, counts[i])})
-		}
-	}
-	// emitWin emits [lo,hi), self-splitting on OOM; appends plan lines to *out.
-	var emitWin func(idx, lo, hi int, out *[]string) error
-	emitWin = func(idx, lo, hi int, out *[]string) error {
-		rng := strconv.Itoa(lo) + ":" + strconv.Itoa(hi)
-		_, se, err := drive(t, "-per-module-emit", strconv.Itoa(idx), "-func-range", rng, "-cache-dir", cacheDir)
-		if err == nil {
-			*out = append(*out, strconv.Itoa(idx)+" "+strconv.Itoa(lo)+" "+strconv.Itoa(hi))
-			return nil
-		}
-		if !isOOM(err) {
-			return fmt.Errorf("emit module %d [%d,%d) failed (not OOM): %v\n%s", idx, lo, hi, err, se)
-		}
-		if hi-lo <= 1 {
-			return fmt.Errorf("emit module %d single-func window [%d,%d) still OOMed", idx, lo, hi)
-		}
-		mid := lo + (hi-lo)/2
-		if e := emitWin(idx, lo, mid, out); e != nil {
-			return e
-		}
-		return emitWin(idx, mid, hi, out)
-	}
-	sem := make(chan struct{}, workers)
-	var wg sync.WaitGroup
-	for _, j := range jobs {
-		wg.Add(1)
-		go func(j *job) {
-			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-			j.err = emitWin(j.idx, j.lo, j.hi, &j.lines)
-		}(j)
-	}
-	wg.Wait()
 	var plan strings.Builder
-	for _, j := range jobs {
-		if j.err != nil {
-			t.Fatalf("%v", j.err)
-		}
-		for _, ln := range j.lines {
-			plan.WriteString(ln + "\n")
+	units := 0
+	for i := range n {
+		for lo := 0; lo < max(counts[i], 1); lo += window {
+			plan.WriteString(strconv.Itoa(i) + " " + strconv.Itoa(lo) + " " + strconv.Itoa(min(lo+window, counts[i])) + "\n")
+			units++
 		}
 	}
 
@@ -186,6 +111,18 @@ func TestSelfHostWasmWholeCompilerShardedLink(t *testing.T) {
 		t.Fatalf("write plan: %v", err)
 	}
 
+	// A host OOM kill (137) on a loaded runner is retried once; the units the
+	// killed run wrote are cache hits the second time. The arena trap (125) is
+	// deterministic, so it is not retried.
+	_, se, err := drive(t, "-per-module-emit-all", "-plan", planPath, "-cache-dir", cacheDir)
+	var ee *exec.ExitError
+	if errors.As(err, &ee) && ee.ExitCode() == 137 {
+		t.Logf("-per-module-emit-all was killed (137); retrying once")
+		_, se, err = drive(t, "-per-module-emit-all", "-plan", planPath, "-cache-dir", cacheDir)
+	}
+	if err != nil {
+		t.Fatalf("-per-module-emit-all failed: %v\n%s", err, se)
+	}
 	wat, se, err := drive(t, "-link", "-plan", planPath, "-cache-dir", cacheDir)
 	if err != nil {
 		t.Fatalf("-link failed: %v\n%s", err, se)
@@ -211,7 +148,7 @@ func TestSelfHostWasmWholeCompilerShardedLink(t *testing.T) {
 	if fi, err := os.Stat(corePath); err == nil {
 		coreBytes = fi.Size()
 	}
-	t.Logf("whole-compiler wasm link OK: %d modules, %d units, %d bytes WAT, %d bytes core module, validated", n, len(jobs), len(wat), coreBytes)
+	t.Logf("whole-compiler wasm link OK: %d modules, %d units, %d bytes WAT, %d bytes core module, validated", n, units, len(wat), coreBytes)
 	runShardedCompiler(t, wasmtime, wasmtools, dir, corePath)
 }
 
@@ -228,7 +165,7 @@ func TestSelfHostWasmWholeCompilerShardedLink(t *testing.T) {
 // two-module program, then run the module IT produced. The program's answer
 // (14 = len("sharded") + 7) comes back only if the lexer, parser, module
 // resolution, IR lowering and wasm emit all still work after being cut into
-// function windows across as many processes — and the string literal in the leaf
+// function windows — and the string literal in the leaf
 // module makes the data-section/base wiring essential rather than incidental.
 func runShardedCompiler(t *testing.T, wasmtime, wasmtools, dir, compiler string) {
 	t.Helper()

@@ -26,10 +26,15 @@ import (
 //     numerics module and is in fact the random-number module
 //     (`random_int` over the platform CSPRNG). Derivation caught what a
 //     hand-written classification would have got wrong.
-//   - `std/test` is hosted on four capabilities, which is the answer to
+//   - `std/test` is hosted on six capabilities, which is the answer to
 //     the question the issue raises: a freestanding target cannot run
 //     the in-language test runner today, and `log` (its output sink) is
-//     only one of the four in the way.
+//     only one of the six in the way.
+//   - `std/http` calls one capability itself, `log`, through the platform
+//     `respond_error` is handed; the other five arrive with std/platform's
+//     methods it never calls, the same module-granular reach as the
+//     `std/mock_platform` entry below, and reach std/tcp and std/test
+//     through their import of it.
 //   - `std/jni` is hosted on `cabi` alone. It touches no OS surface at
 //     all; what it needs is a C calling convention to hand a JNIEnv
 //     method pointer to, which is a property of the target and not of
@@ -55,15 +60,15 @@ var stdModuleReach = map[string]string{
 	"std/csv":           "",
 	"std/dotenv":        "",
 	"std/error":         "",
-	"std/fetch":         "env,fs,log,now,proc,random,reactor,sysinfo,tcp,unix",
+	"std/fetch":         "config,env,fs,log,now,proc,random,reactor,sysinfo,tcp,unix",
 	"std/float":         "",
 	"std/format":        "",
-	"std/fuzz":          "env,fs,log,now,random",
+	"std/fuzz":          "config,env,fs,log,now,random",
 	"std/glob":          "",
 	"std/hash":          "",
 	"std/headers":       "",
 	"std/hex":           "",
-	"std/http":          "fs",
+	"std/http":          "config,env,fs,log,now,random",
 	"std/i32":           "",
 	"std/i64":           "",
 	"std/io":            "fs,stdin",
@@ -72,7 +77,7 @@ var stdModuleReach = map[string]string{
 	"std/json":          "",
 	"std/log":           "log",
 	"std/math":          "random",
-	"std/mock_platform": "env,log,now,random",
+	"std/mock_platform": "config,env,log,now,random",
 	"std/net":           "tcp,unix",
 	"std/ndarray":       "",
 	"std/num":           "",
@@ -81,7 +86,7 @@ var stdModuleReach = map[string]string{
 	"std/ordset":        "",
 	"std/path":          "",
 	"std/peg":           "",
-	"std/platform":      "env,log,now,random",
+	"std/platform":      "config,env,log,now,random",
 	"std/pmap":          "",
 	"std/pset":          "",
 	"std/pvec":          "",
@@ -97,8 +102,8 @@ var stdModuleReach = map[string]string{
 	"std/stream":        "",
 	"std/string":        "",
 	"std/table":         "",
-	"std/tcp":           "env,fs,log,now,proc,reactor,sysinfo,tcp,unix",
-	"std/test":          "env,fs,log,now",
+	"std/tcp":           "config,env,fs,log,now,proc,random,reactor,sysinfo,tcp,unix",
+	"std/test":          "config,env,fs,log,now,random",
 	"std/textwrap":      "",
 	"std/time":          "now",
 	"std/u32":           "",
@@ -107,7 +112,7 @@ var stdModuleReach = map[string]string{
 	"std/url":           "",
 	"std/utf8":          "",
 	"std/uuid":          "now,random",
-	"std/wasi_http":     "env,fs,log,now,random",
+	"std/wasi_http":     "config,env,fs,log,now,random",
 }
 
 // TestStdPartitionIsDerivedNotAsserted computes each `std/` module's host

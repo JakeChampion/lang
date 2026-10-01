@@ -2,6 +2,7 @@ import "std/fuzz";
 import "std/test";
 import "std/string";
 import "std/utf8" as utf8;
+
 // examples/tests/fuzz_example_test.fern — `std/fuzz` walkthrough.
 //
 // Each fuzz target is a `(u8[]) => test.TestOutcome` function:
@@ -25,14 +26,16 @@ import "std/utf8" as utf8;
 // doesn't crash on the supplied corpus before adding property
 // checks.
 function check_always_ok(input: u8[]): test.TestOutcome {
-    return test.pass();
+  return test.pass();
 }
 
 // Property: len(input) is non-negative — always true, but
 // useful as a smoke test of the integer-comparison path.
 function check_len_nonneg(input: u8[]): test.TestOutcome {
-    if (input.len() >= 0) { return test.pass(); }
-    return test.fail("len returned negative for input of " + input.len().to_string() + " bytes");
+  if (input.len() >= 0) {
+    return test.pass();
+  }
+  return test.fail("len returned negative for input of " + input.len().to_string() + " bytes");
 }
 
 // Property: an idempotent transform — `to_upper(to_upper(s))`
@@ -40,15 +43,19 @@ function check_len_nonneg(input: u8[]): test.TestOutcome {
 // property, so the target bridges through `utf8.from_bytes`
 // and passes invalid inputs through.
 function check_to_upper_idempotent(input: u8[]): test.TestOutcome {
-    match (utf8.from_bytes(input)) {
-        Some(s) => {
-            var once: string = s.to_upper();
-            var twice: string = once.to_upper();
-            if (once == twice) { return test.pass(); }
-            return test.fail("to_upper is not idempotent: \"" + once + "\" vs \"" + twice + "\"");
-        },
-        None => { return test.pass(); },
+  match (utf8.from_bytes(input)) {
+    Some(s) => {
+      var once: string = s.to_upper();
+      var twice: string = once.to_upper();
+      if (once == twice) {
+        return test.pass();
+      }
+      return test.fail("to_upper is not idempotent: \"" + once + "\" vs \"" + twice + "\"");
+    },
+    None => {
+      return test.pass();
     }
+  }
 }
 
 // Property: trim() output never starts or ends with a space.
@@ -56,40 +63,50 @@ function check_to_upper_idempotent(input: u8[]): test.TestOutcome {
 // `string_from_bytes_unchecked`. The corpus seeds whitespace
 // at both ends so the mutation path is exercising both sides.
 function check_trim_strips_spaces(input: u8[]): test.TestOutcome {
-    var s: string = string_from_bytes_unchecked(input);
-    var trimmed: str = s.trim();
-    if (trimmed.len() == 0) { return test.pass(); }
-    if (trimmed[0] == 32) {
-        return test.fail("trim left a leading space: \"" + trimmed + "\"");
-    }
-    if (trimmed[trimmed.len() - 1] == 32) {
-        return test.fail("trim left a trailing space: \"" + trimmed + "\"");
-    }
+  var s: string = string_from_bytes_unchecked(input);
+  var trimmed: str = s.trim();
+  if (trimmed.len() == 0) {
     return test.pass();
+  }
+  if (trimmed[0] == 32) {
+    return test.fail("trim left a leading space: \"" + trimmed + "\"");
+  }
+  if (trimmed[trimmed.len() - 1] == 32) {
+    return test.fail("trim left a trailing space: \"" + trimmed + "\"");
+  }
+  return test.pass();
 }
 
 function main(): i32 {
-    var r: test.TestRunner = test.test_new("fuzz examples");
+  var r: test.TestRunner = test.test_new("fuzz examples");
 
-    r = r.fuzz("trivial",
-               ["".bytes(), "a".bytes(), "hello world".bytes()],
-               fuzz.fuzz_default_iterations(),
-               check_always_ok);
+  r = r.fuzz(
+    "trivial",
+    ["".bytes(), "a".bytes(), "hello world".bytes()],
+    fuzz.fuzz_default_iterations(),
+    check_always_ok,
+  );
 
-    r = r.fuzz("len is non-negative",
-               ["".bytes(), "x".bytes(), "abc".bytes()],
-               50,
-               check_len_nonneg);
+  r = r.fuzz(
+    "len is non-negative",
+    ["".bytes(), "x".bytes(), "abc".bytes()],
+    50,
+    check_len_nonneg,
+  );
 
-    r = r.fuzz("to_upper idempotent",
-               ["".bytes(), "abc".bytes(), "Hello World".bytes(), "MIXED case 123".bytes()],
-               100,
-               check_to_upper_idempotent);
+  r = r.fuzz(
+    "to_upper idempotent",
+    ["".bytes(), "abc".bytes(), "Hello World".bytes(), "MIXED case 123".bytes()],
+    100,
+    check_to_upper_idempotent,
+  );
 
-    r = r.fuzz("trim strips edge spaces",
-               ["   leading".bytes(), "trailing   ".bytes(), "  both  ".bytes(), "no_space".bytes()],
-               100,
-               check_trim_strips_spaces);
+  r = r.fuzz(
+    "trim strips edge spaces",
+    ["   leading".bytes(), "trailing   ".bytes(), "  both  ".bytes(), "no_space".bytes()],
+    100,
+    check_trim_strips_spaces,
+  );
 
-    return r.finish();
+  return r.finish();
 }

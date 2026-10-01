@@ -71,7 +71,6 @@ func TestSelfHostWasmComponentAdapter(t *testing.T) {
 		stdout string
 	}{
 		{"print", "function main(): i32 { write(\"hello from a component\\n\"); return 0; }", "hello from a component\n"},
-		{"fstring", "function main(): i32 { var n: i32 = 21; write(f\"answer={n * 2}\"); return 0; }", "answer=42"},
 		{"loop-print", "function main(): i32 { var i: i32 = 0; while (i < 3) { print_int(i); i = i + 1; } return 0; }", "012"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

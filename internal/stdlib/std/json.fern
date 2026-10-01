@@ -41,8 +41,10 @@ import "std/u64";
 import "std/float";
 
 function __json_hex_lower(d: i32): i32 {
-    if (d < 10) { return d + 48; }   // '0' + d
-    return d + 87;                    // 'a' - 10 + d
+  if (d < 10) {  // '0' + d
+    return d + 48;
+  }
+  return d + 87;  // 'a' - 10 + d
 }
 
 // `json.json_escape(s)` — escape a raw string for embedding inside a
@@ -57,130 +59,159 @@ function __json_hex_lower(d: i32): i32 {
 // string leaf, and `std/log`'s JSON-lines mode all route through it
 // (#4388 item 4 — it was previously copy-pasted per consumer).
 pub function json_escape(s: string): string {
-    var n: i32 = s.len();
-    // Two-pass exact-size buffer (#4379): the five named escapes (" \ \n \r \t)
-    // expand to 2 bytes, any other control byte (<32) to a 6-byte \u00XX, and
-    // everything else passes through 1:1. Replaces the O(n²) `out = out + …` that
-    // recopied the growing result each byte.
-    var total: i32 = 0;
-    var i: i32 = 0;
-    while (i < n) {
-        var b: i32 = s[i] as i32;
-        if (b == 34 || b == 92 || b == 10 || b == 13 || b == 9) { total = total + 2; }
-        else if (b < 32) { total = total + 6; }
-        else { total = total + 1; }
-        i = i + 1;
+  var n: i32 = s.len();
+  // Two-pass exact-size buffer (#4379): the five named escapes (" \ \n \r \t)
+  // expand to 2 bytes, any other control byte (<32) to a 6-byte \u00XX, and
+  // everything else passes through 1:1. Replaces the O(n²) `out = out + …` that
+  // recopied the growing result each byte.
+  var total: i32 = 0;
+  var i: i32 = 0;
+  while (i < n) {
+    var b: i32 = s[i] as i32;
+    if (b == 34 || b == 92 || b == 10 || b == 13 || b == 9) {
+      total = total + 2;
+    } else if (b < 32) {
+      total = total + 6;
+    } else {
+      total = total + 1;
     }
-    var buf: u8[] = __alloc_u8(total);
-    var pos: i32 = 0;
-    i = 0;
-    while (i < n) {
-        var b: i32 = s[i] as i32;
-        if (b == 34)      { buf = buf.with(pos, 92 as u8); buf = buf.with(pos + 1, 34 as u8);  pos = pos + 2; }   // \"
-        else if (b == 92) { buf = buf.with(pos, 92 as u8); buf = buf.with(pos + 1, 92 as u8);  pos = pos + 2; }   // \\
-        else if (b == 10) { buf = buf.with(pos, 92 as u8); buf = buf.with(pos + 1, 110 as u8); pos = pos + 2; }   // \n
-        else if (b == 13) { buf = buf.with(pos, 92 as u8); buf = buf.with(pos + 1, 114 as u8); pos = pos + 2; }   // \r
-        else if (b == 9)  { buf = buf.with(pos, 92 as u8); buf = buf.with(pos + 1, 116 as u8); pos = pos + 2; }   // \t
-        else if (b < 32) {
-            // \u00XX with lowercase hex.
-            buf = buf.with(pos, 92 as u8);       // \
-            buf = buf.with(pos + 1, 117 as u8);  // u
-            buf = buf.with(pos + 2, 48 as u8);   // 0
-            buf = buf.with(pos + 3, 48 as u8);   // 0
-            buf = buf.with(pos + 4, __json_hex_lower((b >> 4) & 15) as u8);
-            buf = buf.with(pos + 5, __json_hex_lower(b & 15) as u8);
-            pos = pos + 6;
-        } else {
-            buf = buf.with(pos, s[i] as u8);
-            pos = pos + 1;
-        }
-        i = i + 1;
+    i = i + 1;
+  }
+  var buf: u8[] = __alloc_u8(total);
+  var pos: i32 = 0;
+  i = 0;
+  while (i < n) {
+    var b: i32 = s[i] as i32;
+    if (b == 34) {  // \"
+      buf = buf.with(pos, 92 as u8);
+      buf = buf.with(pos + 1, 34 as u8);
+      pos = pos + 2;
+    } else if (b == 92) {  // \\
+      buf = buf.with(pos, 92 as u8);
+      buf = buf.with(pos + 1, 92 as u8);
+      pos = pos + 2;
+    } else if (b == 10) {  // \n
+      buf = buf.with(pos, 92 as u8);
+      buf = buf.with(pos + 1, 110 as u8);
+      pos = pos + 2;
+    } else if (b == 13) {  // \r
+      buf = buf.with(pos, 92 as u8);
+      buf = buf.with(pos + 1, 114 as u8);
+      pos = pos + 2;
+    } else if (b == 9) {  // \t
+      buf = buf.with(pos, 92 as u8);
+      buf = buf.with(pos + 1, 116 as u8);
+      pos = pos + 2;
+    } else if (b < 32) {
+      // \u00XX with lowercase hex.
+      buf = buf.with(pos, 92 as u8);  // \
+      buf = buf.with(pos + 1, 117 as u8);  // u
+      buf = buf.with(pos + 2, 48 as u8);  // 0
+      buf = buf.with(pos + 3, 48 as u8);  // 0
+      buf = buf.with(pos + 4, __json_hex_lower(b >> 4 & 15) as u8);
+      buf = buf.with(pos + 5, __json_hex_lower(b & 15) as u8);
+      pos = pos + 6;
+    } else {
+      buf = buf.with(pos, s[i] as u8);
+      pos = pos + 1;
     }
-    return string_from_bytes_unchecked(buf);
+    i = i + 1;
+  }
+  return string_from_bytes_unchecked(buf);
 }
 
 pub function json_encode(v: JsonValue): string {
-    // Single shared `buf` and `i` across match arms — the
-    // wasm emitter names locals by lang identifier, so
-    // re-declaring a `var` in nested scopes collides
-    // (same mistake parse_float hit). Only one composite arm
-    // runs per call, so the shared `buf` needs no reset.
-    var buf: u8[] = [];
-    var i: i32 = 0;
-    match (v) {
-        JNull => { return "null"; },
-        JBool(b) => {
-            if (b) { return "true"; }
-            return "false";
-        },
-        JNumber(s) => { return s; },
-        JString(s) => {
-            return "\"" + json_escape(s) + "\"";
-        },
-        JArray(arr) => {
-            // Accumulate this level into a LOCAL u8[] (#4379) rather than
-            // `out = out + json_encode(arr[i])`, which recopied the whole
-            // encoded-so-far prefix on every element — O(level²) at each nesting
-            // level. Every append targets the local `buf`, so it grows in place
-            // (amortized O(1)); the child bytes are inlined (not routed through a
-            // helper, whose borrowed-param append would copy per call). Byte-for-
-            // byte identical output.
-            buf = buf.append(91 as u8);   // '['
-            var n: i32 = arr.len();
-            while (i < n) {
-                if (i > 0) { buf = buf.append(44 as u8); }   // ','
-                var enc: string = json_encode(arr[i]);
-                var el: i32 = enc.len();
-                var k: i32 = 0;
-                while (k < el) {
-                    buf = buf.append(enc[k] as u8);
-                    k = k + 1;
-                }
-                i = i + 1;
-            }
-            buf = buf.append(93 as u8);   // ']'
-            return string_from_bytes_unchecked(buf);
-        },
-        JObject(m) => {
-            // Keys are emitted straight off the map's iteration
-            // cursor, which is INSERTION order for a map built by
-            // inserts alone — so a decode→encode round-trip
-            // preserves key order. A map that has had a key
-            // `delete`d iterates in the swap-with-last order
-            // instead (see core/map's "Iteration order" contract,
-            // #4388); JSON object member order is not semantically
-            // significant, so this only affects byte-exactness.
-            // Same local-u8[] accumulation as JArray (#4379): the old
-            // `out = out + …` recopied the growing object text on every member.
-            buf = buf.append(123 as u8);   // '{'
-            var first: boolean = true;
-            var iter: MapIter[string, JsonValue] = m.iter();
-            while (iter.has_next()) {
-                if (!first) { buf = buf.append(44 as u8); }   // ','
-                first = false;
-                buf = buf.append(34 as u8);   // '"'
-                var ek: string = json_escape(iter.key());
-                var ekl: i32 = ek.len();
-                var kk: i32 = 0;
-                while (kk < ekl) {
-                    buf = buf.append(ek[kk] as u8);
-                    kk = kk + 1;
-                }
-                buf = buf.append(34 as u8);   // '"'
-                buf = buf.append(58 as u8);   // ':'
-                var ev: string = json_encode(iter.value());
-                var evl: i32 = ev.len();
-                var vk: i32 = 0;
-                while (vk < evl) {
-                    buf = buf.append(ev[vk] as u8);
-                    vk = vk + 1;
-                }
-                iter.advance();
-            }
-            buf = buf.append(125 as u8);   // '}'
-            return string_from_bytes_unchecked(buf);
+  // Single shared `buf` and `i` across match arms — the
+  // wasm emitter names locals by lang identifier, so
+  // re-declaring a `var` in nested scopes collides
+  // (same mistake parse_float hit). Only one composite arm
+  // runs per call, so the shared `buf` needs no reset.
+  var buf: u8[] = [];
+  var i: i32 = 0;
+  match (v) {
+    JNull => {
+      return "null";
+    },
+    JBool(b) => {
+      if (b) {
+        return "true";
+      }
+      return "false";
+    },
+    JNumber(s) => {
+      return s;
+    },
+    JString(s) => {
+      return "\"" + json_escape(s) + "\"";
+    },
+    JArray(arr) => {
+      // Accumulate this level into a LOCAL u8[] (#4379) rather than
+      // `out = out + json_encode(arr[i])`, which recopied the whole
+      // encoded-so-far prefix on every element — O(level²) at each nesting
+      // level. Every append targets the local `buf`, so it grows in place
+      // (amortized O(1)); the child bytes are inlined (not routed through a
+      // helper, whose borrowed-param append would copy per call). Byte-for-
+      // byte identical output.
+      buf = buf.append(91 as u8);  // '['
+      var n: i32 = arr.len();
+      while (i < n) {
+        if (i > 0) {  // ','
+          buf = buf.append(44 as u8);
         }
+        var enc: string = json_encode(arr[i]);
+        var el: i32 = enc.len();
+        var k: i32 = 0;
+        while (k < el) {
+          buf = buf.append(enc[k] as u8);
+          k = k + 1;
+        }
+        i = i + 1;
+      }
+      buf = buf.append(93 as u8);  // ']'
+      return string_from_bytes_unchecked(buf);
+    },
+    JObject(m) => {
+      // Keys are emitted straight off the map's iteration
+      // cursor, which is INSERTION order for a map built by
+      // inserts alone — so a decode→encode round-trip
+      // preserves key order. A map that has had a key
+      // `delete`d iterates in the swap-with-last order
+      // instead (see core/map's "Iteration order" contract,
+      // #4388); JSON object member order is not semantically
+      // significant, so this only affects byte-exactness.
+      // Same local-u8[] accumulation as JArray (#4379): the old
+      // `out = out + …` recopied the growing object text on every member.
+      buf = buf.append(123 as u8);  // '{'
+      var first: boolean = true;
+      var iter: MapIter[string, JsonValue] = m.iter();
+      while (iter.has_next()) {
+        if (!first) {  // ','
+          buf = buf.append(44 as u8);
+        }
+        first = false;
+        buf = buf.append(34 as u8);  // '"'
+        var ek: string = json_escape(iter.key());
+        var ekl: i32 = ek.len();
+        var kk: i32 = 0;
+        while (kk < ekl) {
+          buf = buf.append(ek[kk] as u8);
+          kk = kk + 1;
+        }
+        buf = buf.append(34 as u8);  // '"'
+        buf = buf.append(58 as u8);  // ':'
+        var ev: string = json_encode(iter.value());
+        var evl: i32 = ev.len();
+        var vk: i32 = 0;
+        while (vk < evl) {
+          buf = buf.append(ev[vk] as u8);
+          vk = vk + 1;
+        }
+        iter.advance();
+      }
+      buf = buf.append(125 as u8);  // '}'
+      return string_from_bytes_unchecked(buf);
     }
+  }
 }
 
 // === JSON pretty-printing ===
@@ -195,87 +226,103 @@ pub function json_encode(v: JsonValue): string {
 
 // __json_spaces returns a string of `n` spaces.
 function __json_spaces(n: i32): string {
-    var b: u8[] = [];
-    var i: i32 = 0;
-    while (i < n) {
-        b = b.append(32 as u8);
-        i = i + 1;
-    }
-    return string_from_bytes_unchecked(b);
+  var b: u8[] = [];
+  var i: i32 = 0;
+  while (i < n) {
+    b = b.append(32 as u8);
+    i = i + 1;
+  }
+  return string_from_bytes_unchecked(b);
 }
 
 // __json_append_str appends `s`'s bytes onto `buf` (the same local-u8[]
 // accumulation json_encode uses to avoid O(n²) string concat).
 function __json_append_str(buf: u8[], s: string): u8[] {
-    var i: i32 = 0;
-    var out: u8[] = buf;
-    while (i < s.len()) {
-        out = out.append(s[i] as u8);
-        i = i + 1;
-    }
-    return out;
+  var i: i32 = 0;
+  var out: u8[] = buf;
+  while (i < s.len()) {
+    out = out.append(s[i] as u8);
+    i = i + 1;
+  }
+  return out;
 }
 
 function __json_pretty(v: JsonValue, indent: i32, depth: i32): string {
-    match (v) {
-        JNull => { return "null"; },
-        JBool(b) => {
-            if (b) { return "true"; }
-            return "false";
-        },
-        JNumber(s) => { return s; },
-        JString(s) => { return "\"" + json_escape(s) + "\""; },
-        JArray(arr) => {
-            var n: i32 = arr.len();
-            if (n == 0) { return "[]"; }
-            var inner: string = __json_spaces((depth + 1) * indent);
-            var close: string = __json_spaces(depth * indent);
-            var buf: u8[] = [];
-            buf = buf.append(91 as u8);           // '['
-            buf = __json_append_str(buf, "\n");
-            var i: i32 = 0;
-            while (i < n) {
-                if (i > 0) { buf = __json_append_str(buf, ",\n"); }
-                buf = __json_append_str(buf, inner);
-                buf = __json_append_str(buf, __json_pretty(arr[i], indent, depth + 1));
-                i = i + 1;
-            }
-            buf = __json_append_str(buf, "\n");
-            buf = __json_append_str(buf, close);
-            buf = buf.append(93 as u8);           // ']'
-            return string_from_bytes_unchecked(buf);
-        },
-        JObject(m) => {
-            if (m.len() == 0) { return "{}"; }
-            var inner: string = __json_spaces((depth + 1) * indent);
-            var close: string = __json_spaces(depth * indent);
-            var buf: u8[] = [];
-            buf = buf.append(123 as u8);          // '{'
-            buf = __json_append_str(buf, "\n");
-            var first: boolean = true;
-            var iter: MapIter[string, JsonValue] = m.iter();
-            while (iter.has_next()) {
-                if (!first) { buf = __json_append_str(buf, ",\n"); }
-                first = false;
-                buf = __json_append_str(buf, inner);
-                buf = buf.append(34 as u8);       // '"'
-                buf = __json_append_str(buf, json_escape(iter.key()));
-                buf = buf.append(34 as u8);       // '"'
-                buf = __json_append_str(buf, ": ");
-                buf = __json_append_str(buf, __json_pretty(iter.value(), indent, depth + 1));
-                iter.advance();
-            }
-            buf = __json_append_str(buf, "\n");
-            buf = __json_append_str(buf, close);
-            buf = buf.append(125 as u8);          // '}'
-            return string_from_bytes_unchecked(buf);
+  match (v) {
+    JNull => {
+      return "null";
+    },
+    JBool(b) => {
+      if (b) {
+        return "true";
+      }
+      return "false";
+    },
+    JNumber(s) => {
+      return s;
+    },
+    JString(s) => {
+      return "\"" + json_escape(s) + "\"";
+    },
+    JArray(arr) => {
+      var n: i32 = arr.len();
+      if (n == 0) {
+        return "[]";
+      }
+      var inner: string = __json_spaces((depth + 1) * indent);
+      var close: string = __json_spaces(depth * indent);
+      var buf: u8[] = [];
+      buf = buf.append(91 as u8);  // '['
+      buf = __json_append_str(buf, "\n");
+      var i: i32 = 0;
+      while (i < n) {
+        if (i > 0) {
+          buf = __json_append_str(buf, ",\n");
         }
+        buf = __json_append_str(buf, inner);
+        buf = __json_append_str(buf, __json_pretty(arr[i], indent, depth + 1));
+        i = i + 1;
+      }
+      buf = __json_append_str(buf, "\n");
+      buf = __json_append_str(buf, close);
+      buf = buf.append(93 as u8);  // ']'
+      return string_from_bytes_unchecked(buf);
+    },
+    JObject(m) => {
+      if (m.len() == 0) {
+        return "{}";
+      }
+      var inner: string = __json_spaces((depth + 1) * indent);
+      var close: string = __json_spaces(depth * indent);
+      var buf: u8[] = [];
+      buf = buf.append(123 as u8);  // '{'
+      buf = __json_append_str(buf, "\n");
+      var first: boolean = true;
+      var iter: MapIter[string, JsonValue] = m.iter();
+      while (iter.has_next()) {
+        if (!first) {
+          buf = __json_append_str(buf, ",\n");
+        }
+        first = false;
+        buf = __json_append_str(buf, inner);
+        buf = buf.append(34 as u8);  // '"'
+        buf = __json_append_str(buf, json_escape(iter.key()));
+        buf = buf.append(34 as u8);  // '"'
+        buf = __json_append_str(buf, ": ");
+        buf = __json_append_str(buf, __json_pretty(iter.value(), indent, depth + 1));
+        iter.advance();
+      }
+      buf = __json_append_str(buf, "\n");
+      buf = __json_append_str(buf, close);
+      buf = buf.append(125 as u8);  // '}'
+      return string_from_bytes_unchecked(buf);
     }
+  }
 }
 
 // `json_encode_pretty(v, indent)` — indented, human-readable JSON.
 pub function json_encode_pretty(v: JsonValue, indent: i32): string {
-    return __json_pretty(v, indent, 0);
+  return __json_pretty(v, indent, 0);
 }
 
 // === JSON parsing ===
@@ -290,51 +337,61 @@ pub function json_encode_pretty(v: JsonValue, indent: i32): string {
 // combined yet.
 
 struct __JsonParser {
-    s: string,
-    pos: i32,
-    error: i32,
-    // Offset of the FIRST failure, or -1 while the parse has not failed.
-    // The cursor already threaded `pos`, so the position of a syntax
-    // error was known at the point of failure and thrown away by
-    // json_parse returning None — a malformed document reported that it
-    // was malformed and nothing else. Recording it here is what lets
-    // json_parse_result say where.
-    errpos: i32,
-    // Current container-nesting depth, threaded through every
-    // cursor so the recursive descent can bound how deep it
-    // will go. A hostile `[[[[…` / `{"a":{"a":{…` body would
-    // otherwise recurse without limit and overflow the stack
-    // (a DoS on an untrusted request body). The cap is 128 (see
-    // __json_p_value), matching serde_json's default recursion
-    // limit — well clear of any realistic document, well short of
-    // a stack overflow.
-    depth: i32,
+  s: string,
+  pos: i32,
+  error: i32,
+  // Offset of the FIRST failure, or -1 while the parse has not failed.
+  // The cursor already threaded `pos`, so the position of a syntax
+  // error was known at the point of failure and thrown away by
+  // json_parse returning None — a malformed document reported that it
+  // was malformed and nothing else. Recording it here is what lets
+  // json_parse_result say where.
+  errpos: i32,
+  // Current container-nesting depth, threaded through every
+  // cursor so the recursive descent can bound how deep it
+  // will go. A hostile `[[[[…` / `{"a":{"a":{…` body would
+  // otherwise recurse without limit and overflow the stack
+  // (a DoS on an untrusted request body). The cap is 128 (see
+  // __json_p_value), matching serde_json's default recursion
+  // limit — well clear of any realistic document, well short of
+  // a stack overflow.
+  depth: i32,
 }
 
 // __json_p_skip_ws advances past leading whitespace and returns
 // the advanced cursor. Advance-only: no value to surface, so it
 // returns just the new __JsonParser (rebind: `p = __json_p_skip_ws(p);`).
 function __json_p_skip_ws(p: __JsonParser): __JsonParser {
-    var cur: __JsonParser = p;
-    var n: i32 = cur.s.len();
-    while (cur.pos < n) {
-        var b: i32 = cur.s[cur.pos] as i32;
-        if (b != 32 && b != 9 && b != 10 && b != 13) { break; }
-        cur = __JsonParser { ...cur, pos: cur.pos + 1 };
+  var cur: __JsonParser = p;
+  var n: i32 = cur.s.len();
+  while (cur.pos < n) {
+    var b: i32 = cur.s[cur.pos] as i32;
+    if (b != 32 && b != 9 && b != 10 && b != 13) {
+      break;
     }
-    return cur;
+    cur = __JsonParser { ...cur, pos: cur.pos + 1 };
+  }
+  return cur;
 }
 
 function __json_p_byte(p: __JsonParser): i32 {
-    if (p.pos >= p.s.len()) { return 0; }
-    return (p.s[p.pos] as i32);
+  if (p.pos >= p.s.len()) {
+    return 0;
+  }
+  return p.s[p.pos] as i32;
 }
 
 function __json_hex_value(c: i32): i32 {
-    if (c >= 48 && c <= 57)  { return c - 48; }
-    if (c >= 97 && c <= 102) { return c - 87; }
-    if (c >= 65 && c <= 70)  { return c - 55; }
-    return -1;
+  if (c >= 48 && c <= 57) {
+    return c - 48;
+  }
+  if (c >= 97 && c <= 102) {
+    return c - 87;
+  }
+  if (c >= 65 && c <= 70) {
+    return c - 55;
+  }
+  return -1;
 }
 
 // __json_p_number consumes a JSON number and returns the
@@ -342,61 +399,77 @@ function __json_hex_value(c: i32): i32 {
 // __JsonParser)`. On a malformed number it threads back a
 // cursor with `error: 1` and a JNull placeholder.
 function __json_p_number(p0: __JsonParser): (JsonValue, __JsonParser) {
-    // Copy the borrowed parameter into a local before threading it
-    // through struct-updates. Reassigning the *parameter* in a loop
-    // and returning it trips an RC over-release in the current
-    // struct-update lowering (a separate codegen bug); the local
-    // copy — the same shape __json_p_skip_ws uses — sidesteps it.
-    var p: __JsonParser = p0;
-    var start: i32 = p.pos;
-    var n: i32 = p.s.len();
-    var b: i32 = 0;
-    // Optional '-'
-    if (__json_p_byte(p) == 45) { p = __JsonParser { ...p, pos: p.pos + 1 }; }
-    // At least one digit.
-    b = __json_p_byte(p);
-    if (b < 48 || b > 57) { return (JNull, __json_fail(p)); }
-    // Integer digits. RFC 8259's `int` is `zero / digit1-9 *DIGIT`, so a
-    // leading zero may not be followed by another digit: `01` is not a
-    // number, it is two tokens. Accepting it made Fern disagree with every
-    // other JSON implementation on the same bytes.
-    var intStart: i32 = p.pos;
+  // Copy the borrowed parameter into a local before threading it
+  // through struct-updates. Reassigning the *parameter* in a loop
+  // and returning it trips an RC over-release in the current
+  // struct-update lowering (a separate codegen bug); the local
+  // copy — the same shape __json_p_skip_ws uses — sidesteps it.
+  var p: __JsonParser = p0;
+  var start: i32 = p.pos;
+  var n: i32 = p.s.len();
+  var b: i32 = 0;
+  // Optional '-'
+  if (__json_p_byte(p) == 45) {
+    p = __JsonParser { ...p, pos: p.pos + 1 };
+  }
+  // At least one digit.
+  b = __json_p_byte(p);
+  if (b < 48 || b > 57) {
+    return (JNull, __json_fail(p));
+  }
+  // Integer digits. RFC 8259's `int` is `zero / digit1-9 *DIGIT`, so a
+  // leading zero may not be followed by another digit: `01` is not a
+  // number, it is two tokens. Accepting it made Fern disagree with every
+  // other JSON implementation on the same bytes.
+  var intStart: i32 = p.pos;
+  while (p.pos < n) {
+    b = p.s[p.pos] as i32;
+    if (b < 48 || b > 57) {
+      break;
+    }
+    p = __JsonParser { ...p, pos: p.pos + 1 };
+  }
+  if (p.s[intStart] as i32 == 48 && p.pos - intStart > 1) {
+    return (JNull, __json_fail(__JsonParser { ...p, pos: intStart + 1 }));
+  }
+  // Optional '.<digits>' — `frac` is `"." 1*DIGIT`, so at least one.
+  if (__json_p_byte(p) == 46) {
+    p = __JsonParser { ...p, pos: p.pos + 1 };
+    var fracDigits: i32 = 0;
     while (p.pos < n) {
-        b = p.s[p.pos] as i32;
-        if (b < 48 || b > 57) { break; }
-        p = __JsonParser { ...p, pos: p.pos + 1 };
+      b = p.s[p.pos] as i32;
+      if (b < 48 || b > 57) {
+        break;
+      }
+      p = __JsonParser { ...p, pos: p.pos + 1 };
+      fracDigits = fracDigits + 1;
     }
-    if (p.s[intStart] as i32 == 48 && p.pos - intStart > 1) {
-        return (JNull, __json_fail(__JsonParser { ...p, pos: intStart + 1 }));
+    if (fracDigits == 0) {
+      return (JNull, __json_fail(p));
     }
-    // Optional '.<digits>' — `frac` is `"." 1*DIGIT`, so at least one.
-    if (__json_p_byte(p) == 46) {
-        p = __JsonParser { ...p, pos: p.pos + 1 };
-        var fracDigits: i32 = 0;
-        while (p.pos < n) {
-            b = p.s[p.pos] as i32;
-            if (b < 48 || b > 57) { break; }
-            p = __JsonParser { ...p, pos: p.pos + 1 };
-            fracDigits = fracDigits + 1;
-        }
-        if (fracDigits == 0) { return (JNull, __json_fail(p)); }
-    }
-    // Optional [eE][+-]?<digits> — `exp` is likewise 1*DIGIT.
+  }
+  // Optional [eE][+-]?<digits> — `exp` is likewise 1*DIGIT.
+  b = __json_p_byte(p);
+  if (b == 101 || b == 69) {
+    p = __JsonParser { ...p, pos: p.pos + 1 };
     b = __json_p_byte(p);
-    if (b == 101 || b == 69) {
-        p = __JsonParser { ...p, pos: p.pos + 1 };
-        b = __json_p_byte(p);
-        if (b == 43 || b == 45) { p = __JsonParser { ...p, pos: p.pos + 1 }; }
-        var expDigits: i32 = 0;
-        while (p.pos < n) {
-            b = p.s[p.pos] as i32;
-            if (b < 48 || b > 57) { break; }
-            p = __JsonParser { ...p, pos: p.pos + 1 };
-            expDigits = expDigits + 1;
-        }
-        if (expDigits == 0) { return (JNull, __json_fail(p)); }
+    if (b == 43 || b == 45) {
+      p = __JsonParser { ...p, pos: p.pos + 1 };
     }
-    return (JNumber(slice_unchecked(p.s, start, p.pos) + ""), p);
+    var expDigits: i32 = 0;
+    while (p.pos < n) {
+      b = p.s[p.pos] as i32;
+      if (b < 48 || b > 57) {
+        break;
+      }
+      p = __JsonParser { ...p, pos: p.pos + 1 };
+      expDigits = expDigits + 1;
+    }
+    if (expDigits == 0) {
+      return (JNull, __json_fail(p));
+    }
+  }
+  return (JNumber(slice_unchecked(p.s, start, p.pos) + ""), p);
 }
 
 // __json_emit_codepoint encodes a single Unicode scalar value
@@ -408,28 +481,28 @@ function __json_p_number(p0: __JsonParser): (JsonValue, __JsonParser) {
 // caller appends the returned bytes to its output buffer, so no growing string
 // is threaded through (see __json_p_string's O(n) u8[] accumulation, #4379).
 function __json_cp_bytes(cp: i32): u8[] {
-    if (cp < 128) {
-        return [cp as u8];
-    }
-    if (cp < 2048) {
-        return [
-            ((cp >> 6) | 192) as u8,
-            ((cp & 63) | 128) as u8
-        ];
-    }
-    if (cp < 65536) {
-        return [
-            ((cp >> 12) | 224) as u8,
-            (((cp >> 6) & 63) | 128) as u8,
-            ((cp & 63) | 128) as u8
-        ];
-    }
+  if (cp < 128) {
+    return [cp as u8];
+  }
+  if (cp < 2048) {
     return [
-        ((cp >> 18) | 240) as u8,
-        (((cp >> 12) & 63) | 128) as u8,
-        (((cp >> 6) & 63) | 128) as u8,
-        ((cp & 63) | 128) as u8
+      (cp >> 6 | 192) as u8,
+      (cp & 63 | 128) as u8,
     ];
+  }
+  if (cp < 65536) {
+    return [
+      (cp >> 12 | 224) as u8,
+      (cp >> 6 & 63 | 128) as u8,
+      (cp & 63 | 128) as u8,
+    ];
+  }
+  return [
+    (cp >> 18 | 240) as u8,
+    (cp >> 12 & 63 | 128) as u8,
+    (cp >> 6 & 63 | 128) as u8,
+    (cp & 63 | 128) as u8,
+  ];
 }
 
 // __json_p_uhex parses 4 hex digits at p.pos (without
@@ -438,20 +511,24 @@ function __json_cp_bytes(cp: i32): u8[] {
 // past-end-of-input. Does NOT consume the hex digits past
 // what it reads — it advances p.pos by 4 on success.
 function __json_p_uhex(p0: __JsonParser): (i32, __JsonParser) {
-    // See __json_p_number: thread a local copy of the param, not the
-    // param itself, to avoid the struct-update RC over-release.
-    var p: __JsonParser = p0;
-    if (p.pos + 4 > p.s.len()) { return (0, __json_fail(p)); }
-    var u: i32 = 0;
-    var i: i32 = 0;
-    while (i < 4) {
-        var hv: i32 = __json_hex_value((p.s[p.pos] as i32));
-        if (hv < 0) { return (0, __json_fail(p)); }
-        u = (u << 4) | hv;
-        p = __JsonParser { ...p, pos: p.pos + 1 };
-        i = i + 1;
+  // See __json_p_number: thread a local copy of the param, not the
+  // param itself, to avoid the struct-update RC over-release.
+  var p: __JsonParser = p0;
+  if (p.pos + 4 > p.s.len()) {
+    return (0, __json_fail(p));
+  }
+  var u: i32 = 0;
+  var i: i32 = 0;
+  while (i < 4) {
+    var hv: i32 = __json_hex_value(p.s[p.pos] as i32);
+    if (hv < 0) {
+      return (0, __json_fail(p));
     }
-    return (u, p);
+    u = u << 4 | hv;
+    p = __JsonParser { ...p, pos: p.pos + 1 };
+    i = i + 1;
+  }
+  return (u, p);
 }
 
 // __json_p_string consumes a quoted JSON string and returns the
@@ -459,95 +536,121 @@ function __json_p_uhex(p0: __JsonParser): (i32, __JsonParser) {
 // __JsonParser)`. Error paths thread back a cursor with
 // `error: 1` and an empty-string placeholder.
 function __json_p_string(p0: __JsonParser): (string, __JsonParser) {
-    // See __json_p_number: thread a local copy of the param.
-    var p: __JsonParser = p0;
-    if (__json_p_byte(p) != 34) { return ("", __json_fail(p)); }
-    p = __JsonParser { ...p, pos: p.pos + 1 };
-    // Accumulate the decoded value in a LOCAL growable u8[] (#4379): the old
-    // `out = out + p.s[p.pos:p.pos+1]` appended one byte at a time onto an
-    // immutable string -- O(value²), recopying the whole decoded prefix per
-    // character on the hot request-body parse path. Every append targets the
-    // local `out`, so it grows in place (amortized O(1)); codepoint escapes emit
-    // their 1-4 UTF-8 bytes (from the pure __json_cp_bytes) through the hoisted
-    // `cb` / `ci` cursor. Byte-for-byte identical decoding.
-    var out: u8[] = [];
-    var n: i32 = p.s.len();
-    var b: i32 = 0;
-    var cb: u8[] = [];
-    var ci: i32 = 0;
-    while (true) {
-        b = __json_p_byte(p);
-        if (b == 0) { return ("", __json_fail(p)); }
-        if (b == 34) { return (string_from_bytes_unchecked(out), __JsonParser { ...p, pos: p.pos + 1 }); }
-        if (b == 92) {                                  // '\\'
-            p = __JsonParser { ...p, pos: p.pos + 1 };
-            var esc: i32 = __json_p_byte(p);
-            if (esc == 0) { return ("", __json_fail(p)); }
-            if (esc == 117) {                           // 'u' — \uXXXX
-                p = __JsonParser { ...p, pos: p.pos + 1 };
-                var (u, pu) = __json_p_uhex(p);
-                p = pu;
-                if (p.error != 0) { return ("", p); }
-                // High surrogate (D800..DBFF): combine with
-                // the following low surrogate (DC00..DFFF) to
-                // form a single astral code point. Lone or
-                // mismatched surrogates fall back to U+FFFD
-                // (REPLACEMENT CHARACTER) — matches Go's
-                // encoding/json + most strict UTF-8 emitters. The branch
-                // funnels to a primary codepoint `cp1` plus, for the
-                // mismatched-low-surrogate case, a second `cp2` (-1 = none).
-                var cp1: i32 = 65533;
-                var cp2: i32 = -1;
-                if (u >= 55296 && u <= 56319) {
-                    if (p.pos + 6 > n
-                        || p.s[p.pos] != 92
-                        || p.s[p.pos+1] != 117) {
-                        cp1 = 65533;
-                    } else {
-                        p = __JsonParser { ...p, pos: p.pos + 2 };
-                        var (low, pl) = __json_p_uhex(p);
-                        p = pl;
-                        if (p.error != 0) { return ("", p); }
-                        if (low < 56320 || low > 57343) {
-                            cp1 = 65533;
-                            cp2 = low;
-                        } else {
-                            cp1 = 65536
-                                + ((u - 55296) << 10)
-                                + (low - 56320);
-                        }
-                    }
-                } else if (u >= 56320 && u <= 57343) {
-                    cp1 = 65533;
-                } else {
-                    cp1 = u;
-                }
-                cb = __json_cp_bytes(cp1);
-                ci = 0;
-                while (ci < cb.len()) { out = out.append(cb[ci] as u8); ci = ci + 1; }
-                if (cp2 >= 0) {
-                    cb = __json_cp_bytes(cp2);
-                    ci = 0;
-                    while (ci < cb.len()) { out = out.append(cb[ci] as u8); ci = ci + 1; }
-                }
-            } else {
-                var ch: i32 = -1;
-                if (esc == 34 || esc == 92 || esc == 47) { ch = esc; }
-                else if (esc == 110) { ch = 10; }
-                else if (esc == 114) { ch = 13; }
-                else if (esc == 116) { ch = 9; }
-                else if (esc == 98)  { ch = 8; }
-                else if (esc == 102) { ch = 12; }
-                else { return ("", __json_fail(p)); }
-                out = out.append(ch as u8);
-                p = __JsonParser { ...p, pos: p.pos + 1 };
-            }
-        } else {
-            out = out.append(p.s[p.pos] as u8);
-            p = __JsonParser { ...p, pos: p.pos + 1 };
-        }
+  // See __json_p_number: thread a local copy of the param.
+  var p: __JsonParser = p0;
+  if (__json_p_byte(p) != 34) {
+    return ("", __json_fail(p));
+  }
+  p = __JsonParser { ...p, pos: p.pos + 1 };
+  // Accumulate the decoded value in a LOCAL growable u8[] (#4379): the old
+  // `out = out + p.s[p.pos:p.pos+1]` appended one byte at a time onto an
+  // immutable string -- O(value²), recopying the whole decoded prefix per
+  // character on the hot request-body parse path. Every append targets the
+  // local `out`, so it grows in place (amortized O(1)); codepoint escapes emit
+  // their 1-4 UTF-8 bytes (from the pure __json_cp_bytes) through the hoisted
+  // `cb` / `ci` cursor. Byte-for-byte identical decoding.
+  var out: u8[] = [];
+  var n: i32 = p.s.len();
+  var b: i32 = 0;
+  var cb: u8[] = [];
+  var ci: i32 = 0;
+  while (true) {
+    b = __json_p_byte(p);
+    if (b == 0) {
+      return ("", __json_fail(p));
     }
-    return ("", p);   // unreachable
+    if (b == 34) {
+      return (string_from_bytes_unchecked(out), __JsonParser { ...p, pos: p.pos + 1 });
+    }
+    if (b == 92) {  // '\\'
+      p = __JsonParser { ...p, pos: p.pos + 1 };
+      var esc: i32 = __json_p_byte(p);
+      if (esc == 0) {
+        return ("", __json_fail(p));
+      }
+      if (esc == 117) {  // 'u' — \uXXXX
+        p = __JsonParser { ...p, pos: p.pos + 1 };
+        let (u, pu) = __json_p_uhex(p);
+        p = pu;
+        if (p.error != 0) {
+          return ("", p);
+        }
+        // High surrogate (D800..DBFF): combine with
+        // the following low surrogate (DC00..DFFF) to
+        // form a single astral code point. Lone or
+        // mismatched surrogates fall back to U+FFFD
+        // (REPLACEMENT CHARACTER) — matches Go's
+        // encoding/json + most strict UTF-8 emitters. The branch
+        // funnels to a primary codepoint `cp1` plus, for the
+        // mismatched-low-surrogate case, a second `cp2` (-1 = none).
+        var cp1: i32 = 65533;
+        var cp2: i32 = -1;
+        if (u >= 55296 && u <= 56319) {
+          if (p.pos + 6 > n
+            || p.s[p.pos] != 92
+            || p.s[p.pos + 1] != 117) {
+            cp1 = 65533;
+          } else {
+            p = __JsonParser { ...p, pos: p.pos + 2 };
+            let (low, pl) = __json_p_uhex(p);
+            p = pl;
+            if (p.error != 0) {
+              return ("", p);
+            }
+            if (low < 56320 || low > 57343) {
+              cp1 = 65533;
+              cp2 = low;
+            } else {
+              cp1 = 65536
+                + (u - 55296 << 10)
+                + (low - 56320);
+            }
+          }
+        } else if (u >= 56320 && u <= 57343) {
+          cp1 = 65533;
+        } else {
+          cp1 = u;
+        }
+        cb = __json_cp_bytes(cp1);
+        ci = 0;
+        while (ci < cb.len()) {
+          out = out.append(cb[ci] as u8);
+          ci = ci + 1;
+        }
+        if (cp2 >= 0) {
+          cb = __json_cp_bytes(cp2);
+          ci = 0;
+          while (ci < cb.len()) {
+            out = out.append(cb[ci] as u8);
+            ci = ci + 1;
+          }
+        }
+      } else {
+        var ch: i32 = -1;
+        if (esc == 34 || esc == 92 || esc == 47) {
+          ch = esc;
+        } else if (esc == 110) {
+          ch = 10;
+        } else if (esc == 114) {
+          ch = 13;
+        } else if (esc == 116) {
+          ch = 9;
+        } else if (esc == 98) {
+          ch = 8;
+        } else if (esc == 102) {
+          ch = 12;
+        } else {
+          return ("", __json_fail(p));
+        }
+        out = out.append(ch as u8);
+        p = __JsonParser { ...p, pos: p.pos + 1 };
+      }
+    } else {
+      out = out.append(p.s[p.pos] as u8);
+      p = __JsonParser { ...p, pos: p.pos + 1 };
+    }
+  }
+  return ("", p);  // unreachable
 }
 
 // __json_p_array consumes a JSON array and returns the decoded
@@ -555,35 +658,37 @@ function __json_p_string(p0: __JsonParser): (string, __JsonParser) {
 // Recurses into __json_p_value for each element, threading the
 // cursor through. Error paths thread back `error: 1` + JNull.
 function __json_p_array(p0: __JsonParser): (JsonValue, __JsonParser) {
-    // See __json_p_number: thread a local copy of the param.
-    var p: __JsonParser = p0;
-    p = __JsonParser { ...p, pos: p.pos + 1 };          // consume '['
+  // See __json_p_number: thread a local copy of the param.
+  var p: __JsonParser = p0;
+  p = __JsonParser { ...p, pos: p.pos + 1 };  // consume '['
+  p = __json_p_skip_ws(p);
+  if (__json_p_byte(p) == 93) {  // ']'
+    p = __JsonParser { ...p, pos: p.pos + 1 };
+    var empty: JsonValue[] = [];
+    return (JArray(empty), p);
+  }
+  var arr: JsonValue[] = [];
+  while (true) {
+    let (elem, pe) = __json_p_value(p);
+    p = pe;
+    if (p.error != 0) {
+      return (JNull, p);
+    }
+    arr = arr.append(elem);
     p = __json_p_skip_ws(p);
-    if (__json_p_byte(p) == 93) {                       // ']'
-        p = __JsonParser { ...p, pos: p.pos + 1 };
-        var empty: JsonValue[] = [];
-        return (JArray(empty), p);
+    var b: i32 = __json_p_byte(p);
+    if (b == 44) {  // ','
+      p = __JsonParser { ...p, pos: p.pos + 1 };
+      p = __json_p_skip_ws(p);
+      continue;
     }
-    var arr: JsonValue[] = [];
-    while (true) {
-        var (elem, pe) = __json_p_value(p);
-        p = pe;
-        if (p.error != 0) { return (JNull, p); }
-        arr = arr.append(elem);
-        p = __json_p_skip_ws(p);
-        var b: i32 = __json_p_byte(p);
-        if (b == 44) {                                  // ','
-            p = __JsonParser { ...p, pos: p.pos + 1 };
-            p = __json_p_skip_ws(p);
-            continue;
-        }
-        if (b == 93) {                                  // ']'
-            p = __JsonParser { ...p, pos: p.pos + 1 };
-            return (JArray(arr), p);
-        }
-        return (JNull, __json_fail(p));
+    if (b == 93) {  // ']'
+      p = __JsonParser { ...p, pos: p.pos + 1 };
+      return (JArray(arr), p);
     }
-    return (JNull, p);   // unreachable
+    return (JNull, __json_fail(p));
+  }
+  return (JNull, p);  // unreachable
 }
 
 // __json_p_object consumes a JSON object and returns the decoded
@@ -592,42 +697,46 @@ function __json_p_array(p0: __JsonParser): (JsonValue, __JsonParser) {
 // (values), threading the cursor through. Error paths thread
 // back `error: 1` + JNull.
 function __json_p_object(p0: __JsonParser): (JsonValue, __JsonParser) {
-    // See __json_p_number: thread a local copy of the param.
-    var p: __JsonParser = p0;
-    p = __JsonParser { ...p, pos: p.pos + 1 };          // consume '{'
+  // See __json_p_number: thread a local copy of the param.
+  var p: __JsonParser = p0;
+  p = __JsonParser { ...p, pos: p.pos + 1 };  // consume '{'
+  p = __json_p_skip_ws(p);
+  var m: Map[string, JsonValue] = map_new(8);
+  if (__json_p_byte(p) == 125) {  // '}'
+    p = __JsonParser { ...p, pos: p.pos + 1 };
+    return (JObject(m), p);
+  }
+  while (true) {
+    let (key, pk) = __json_p_string(p);
+    p = pk;
+    if (p.error != 0) {
+      return (JNull, p);
+    }
     p = __json_p_skip_ws(p);
-    var m: Map[string, JsonValue] = map_new(8);
-    if (__json_p_byte(p) == 125) {                      // '}'
-        p = __JsonParser { ...p, pos: p.pos + 1 };
-        return (JObject(m), p);
+    if (__json_p_byte(p) != 58) {  // ':'
+      return (JNull, __json_fail(p));
     }
-    while (true) {
-        var (key, pk) = __json_p_string(p);
-        p = pk;
-        if (p.error != 0) { return (JNull, p); }
-        p = __json_p_skip_ws(p);
-        if (__json_p_byte(p) != 58) {                   // ':'
-            return (JNull, __json_fail(p));
-        }
-        p = __JsonParser { ...p, pos: p.pos + 1 };
-        var (val, pv) = __json_p_value(p);
-        p = pv;
-        if (p.error != 0) { return (JNull, p); }
-        m = m.insert(key, val);
-        p = __json_p_skip_ws(p);
-        var b: i32 = __json_p_byte(p);
-        if (b == 44) {                                  // ','
-            p = __JsonParser { ...p, pos: p.pos + 1 };
-            p = __json_p_skip_ws(p);
-            continue;
-        }
-        if (b == 125) {                                 // '}'
-            p = __JsonParser { ...p, pos: p.pos + 1 };
-            return (JObject(m), p);
-        }
-        return (JNull, __json_fail(p));
+    p = __JsonParser { ...p, pos: p.pos + 1 };
+    let (val, pv) = __json_p_value(p);
+    p = pv;
+    if (p.error != 0) {
+      return (JNull, p);
     }
-    return (JNull, p);   // unreachable
+    m = m.insert(key, val);
+    p = __json_p_skip_ws(p);
+    var b: i32 = __json_p_byte(p);
+    if (b == 44) {  // ','
+      p = __JsonParser { ...p, pos: p.pos + 1 };
+      p = __json_p_skip_ws(p);
+      continue;
+    }
+    if (b == 125) {  // '}'
+      p = __JsonParser { ...p, pos: p.pos + 1 };
+      return (JObject(m), p);
+    }
+    return (JNull, __json_fail(p));
+  }
+  return (JNull, p);  // unreachable
 }
 
 // __json_p_value is the recursive-descent dispatch: it skips
@@ -636,63 +745,77 @@ function __json_p_object(p0: __JsonParser): (JsonValue, __JsonParser) {
 // value plus the advanced cursor: `(JsonValue, __JsonParser)`.
 // Error paths thread back `error: 1` + JNull.
 function __json_p_value(p0: __JsonParser): (JsonValue, __JsonParser) {
-    // See __json_p_number: thread a local copy of the param.
-    var p: __JsonParser = p0;
-    p = __json_p_skip_ws(p);
-    var b: i32 = __json_p_byte(p);
-    if (b == 0) { return (JNull, __json_fail(p)); }
-    if (b == 110) {                                     // 'n' — null
-        if (p.pos + 4 > p.s.len()) { return (JNull, __json_fail(p)); }
-        if (p.s[p.pos+1] != 117 || p.s[p.pos+2] != 108 || p.s[p.pos+3] != 108) {
-            return (JNull, __json_fail(p));
-        }
-        return (JNull, __JsonParser { ...p, pos: p.pos + 4 });
-    }
-    if (b == 116) {                                     // 't' — true
-        if (p.pos + 4 > p.s.len()) { return (JNull, __json_fail(p)); }
-        if (p.s[p.pos+1] != 114 || p.s[p.pos+2] != 117 || p.s[p.pos+3] != 101) {
-            return (JNull, __json_fail(p));
-        }
-        return (JBool(true), __JsonParser { ...p, pos: p.pos + 4 });
-    }
-    if (b == 102) {                                     // 'f' — false
-        if (p.pos + 5 > p.s.len()) { return (JNull, __json_fail(p)); }
-        if (p.s[p.pos+1] != 97 || p.s[p.pos+2] != 108 ||
-            p.s[p.pos+3] != 115 || p.s[p.pos+4] != 101) {
-            return (JNull, __json_fail(p));
-        }
-        return (JBool(false), __JsonParser { ...p, pos: p.pos + 5 });
-    }
-    if (b == 34) {                                      // '"' — string
-        var (s, ps) = __json_p_string(p);
-        p = ps;
-        if (p.error != 0) { return (JNull, p); }
-        return (JString(s), p);
-    }
-    if (b == 91) {                                      // '['
-        // Bound the recursion: a value nested past 128 containers
-        // (serde_json's default limit) is rejected before descending
-        // another level, so a hostile deeply-nested body can't
-        // overflow the stack.
-        if (p.depth >= 128) { return (JNull, __json_fail(p)); }
-        var savedA: i32 = p.depth;
-        p = __JsonParser { ...p, depth: p.depth + 1 };
-        var (av, pa) = __json_p_array(p);
-        // Restore the caller's depth on the way out so siblings at
-        // this level see the correct nesting, not an inflated one.
-        return (av, __JsonParser { ...pa, depth: savedA });
-    }
-    if (b == 123) {                                     // '{'
-        if (p.depth >= 128) { return (JNull, __json_fail(p)); }
-        var savedO: i32 = p.depth;
-        p = __JsonParser { ...p, depth: p.depth + 1 };
-        var (ov, po) = __json_p_object(p);
-        return (ov, __JsonParser { ...po, depth: savedO });
-    }
-    if (b == 45 || (b >= 48 && b <= 57)) {              // '-' or digit
-        return __json_p_number(p);
-    }
+  // See __json_p_number: thread a local copy of the param.
+  var p: __JsonParser = p0;
+  p = __json_p_skip_ws(p);
+  var b: i32 = __json_p_byte(p);
+  if (b == 0) {
     return (JNull, __json_fail(p));
+  }
+  if (b == 110) {  // 'n' — null
+    if (p.pos + 4 > p.s.len()) {
+      return (JNull, __json_fail(p));
+    }
+    if (p.s[p.pos + 1] != 117 || p.s[p.pos + 2] != 108 || p.s[p.pos + 3] != 108) {
+      return (JNull, __json_fail(p));
+    }
+    return (JNull, __JsonParser { ...p, pos: p.pos + 4 });
+  }
+  if (b == 116) {  // 't' — true
+    if (p.pos + 4 > p.s.len()) {
+      return (JNull, __json_fail(p));
+    }
+    if (p.s[p.pos + 1] != 114 || p.s[p.pos + 2] != 117 || p.s[p.pos + 3] != 101) {
+      return (JNull, __json_fail(p));
+    }
+    return (JBool(true), __JsonParser { ...p, pos: p.pos + 4 });
+  }
+  if (b == 102) {  // 'f' — false
+    if (p.pos + 5 > p.s.len()) {
+      return (JNull, __json_fail(p));
+    }
+    if (p.s[p.pos + 1] != 97 || p.s[p.pos + 2] != 108
+      || p.s[p.pos + 3] != 115 || p.s[p.pos + 4] != 101) {
+      return (JNull, __json_fail(p));
+    }
+    return (JBool(false), __JsonParser { ...p, pos: p.pos + 5 });
+  }
+  if (b == 34) {  // '"' — string
+    let (s, ps) = __json_p_string(p);
+    p = ps;
+    if (p.error != 0) {
+      return (JNull, p);
+    }
+    return (JString(s), p);
+  }
+  if (b == 91) {  // '['
+    // Bound the recursion: a value nested past 128 containers
+    // (serde_json's default limit) is rejected before descending
+    // another level, so a hostile deeply-nested body can't
+    // overflow the stack.
+    if (p.depth >= 128) {
+      return (JNull, __json_fail(p));
+    }
+    var savedA: i32 = p.depth;
+    p = __JsonParser { ...p, depth: p.depth + 1 };
+    let (av, pa) = __json_p_array(p);
+    // Restore the caller's depth on the way out so siblings at
+    // this level see the correct nesting, not an inflated one.
+    return (av, __JsonParser { ...pa, depth: savedA });
+  }
+  if (b == 123) {  // '{'
+    if (p.depth >= 128) {
+      return (JNull, __json_fail(p));
+    }
+    var savedO: i32 = p.depth;
+    p = __JsonParser { ...p, depth: p.depth + 1 };
+    let (ov, po) = __json_p_object(p);
+    return (ov, __JsonParser { ...po, depth: savedO });
+  }
+  if (b == 45 || b >= 48 && b <= 57) {  // '-' or digit
+    return __json_p_number(p);
+  }
+  return (JNull, __json_fail(p));
 }
 
 // __json_fail marks the cursor failed, remembering the offset of the FIRST
@@ -700,97 +823,109 @@ function __json_p_value(p0: __JsonParser): (JsonValue, __JsonParser) {
 // through every enclosing container, and the innermost position is the one
 // that describes the document.
 function __json_fail(p: __JsonParser): __JsonParser {
-    if (p.error != 0) { return p; }
-    return __JsonParser { ...p, error: 1, errpos: p.pos };
+  if (p.error != 0) {
+    return p;
+  }
+  return __JsonParser { ...p, error: 1, errpos: p.pos };
 }
 
 // __json_line_col converts a byte offset into 1-based (line, column),
 // counting a column in BYTES rather than code points — the same unit the
 // offset is in, so the two always agree.
 function __json_line_col(s: string, off: i32): (i32, i32) {
-    var line: i32 = 1;
-    var col: i32 = 1;
-    var i: i32 = 0;
-    var stop: i32 = off;
-    if (stop > s.len()) { stop = s.len(); }
-    while (i < stop) {
-        if (s[i] as i32 == 10) {
-            line = line + 1;
-            col = 1;
-        } else {
-            col = col + 1;
-        }
-        i = i + 1;
+  var line: i32 = 1;
+  var col: i32 = 1;
+  var i: i32 = 0;
+  var stop: i32 = off;
+  if (stop > s.len()) {
+    stop = s.len();
+  }
+  while (i < stop) {
+    if (s[i] as i32 == 10) {
+      line = line + 1;
+      col = 1;
+    } else {
+      col = col + 1;
     }
-    return (line, col);
+    i = i + 1;
+  }
+  return (line, col);
 }
 
 // A syntax error, located. `offset` is the byte index; `line` and `col` are
 // 1-based and derived from it.
 pub struct JsonError {
-    message: string,
-    offset: i32,
-    line: i32,
-    col: i32,
+  message: string,
+  offset: i32,
+  line: i32,
+  col: i32,
 }
 
 pub function (e: JsonError) to_string(): string {
-    return e.line.to_string() + ":" + e.col.to_string() + ": " + e.message;
+  return e.line.to_string() + ":" + e.col.to_string() + ": " + e.message;
 }
 
 // __json_message describes the failure at `off` from the input alone, so
 // the 20 failure sites stay a single shared helper rather than each
 // carrying its own wording.
 function __json_message(s: string, off: i32): string {
-    if (off >= s.len()) { return "unexpected end of input"; }
-    var b: i32 = s[off] as i32;
-    if (b < 32) {
-        return "unexpected control byte in input";
-    }
-    if (b < 128) {
-        return "unexpected byte '" + string_from_bytes_unchecked([s[off]]) + "'";
-    }
-    // A non-ASCII byte renders as hex — quoting it alone could split a
-    // multibyte code point.
-    return "unexpected byte '\\x" + b.to_hex().pad_start(2, "0") + "'";
+  if (off >= s.len()) {
+    return "unexpected end of input";
+  }
+  var b: i32 = s[off] as i32;
+  if (b < 32) {
+    return "unexpected control byte in input";
+  }
+  if (b < 128) {
+    return "unexpected byte '" + string_from_bytes_unchecked([s[off]]) + "'";
+  }
+  // A non-ASCII byte renders as hex — quoting it alone could split a
+  // multibyte code point.
+  return "unexpected byte '\\x" + b.to_hex().pad_start(2, "0") + "'";
 }
 
 // json_parse_result is json_parse plus the position of the failure.
 // Prefer it wherever the input can be malformed and a human will read the
 // result: a config file, a request body, anything hand-edited.
 pub function json_parse_result(s: string): Result[JsonValue, JsonError] {
-    var p: __JsonParser = __JsonParser { s: s, pos: 0, error: 0, depth: 0, errpos: -1 };
-    var (v, pv) = __json_p_value(p);
-    p = pv;
-    p = __json_p_skip_ws(p);
-    if (p.error != 0) {
-        var off: i32 = p.errpos;
-        if (off < 0) { off = p.pos; }
-        var (ln, cl) = __json_line_col(s, off);
-        return Err(JsonError {
-            message: __json_message(s, off),
-            offset: off,
-            line: ln,
-            col: cl,
-        });
+  var p: __JsonParser = __JsonParser { s: s, pos: 0, error: 0, depth: 0, errpos: -1 };
+  let (v, pv) = __json_p_value(p);
+  p = pv;
+  p = __json_p_skip_ws(p);
+  if (p.error != 0) {
+    var off: i32 = p.errpos;
+    if (off < 0) {
+      off = p.pos;
     }
-    if (p.pos < s.len()) {
-        var (ln2, cl2) = __json_line_col(s, p.pos);
-        return Err(JsonError {
-            message: "trailing content after the top-level value",
-            offset: p.pos,
-            line: ln2,
-            col: cl2,
-        });
-    }
-    return Ok(v);
+    let (ln, cl) = __json_line_col(s, off);
+    return Err(JsonError {
+      message: __json_message(s, off),
+      offset: off,
+      line: ln,
+      col: cl,
+    });
+  }
+  if (p.pos < s.len()) {
+    let (ln2, cl2) = __json_line_col(s, p.pos);
+    return Err(JsonError {
+      message: "trailing content after the top-level value",
+      offset: p.pos,
+      line: ln2,
+      col: cl2,
+    });
+  }
+  return Ok(v);
 }
 
 pub function json_parse(s: string): Option[JsonValue] {
-    match (json_parse_result(s)) {
-        Ok(v) => { return Some(v); },
-        Err(_) => { return None; },
+  match (json_parse_result(s)) {
+    Ok(v) => {
+      return Some(v);
+    },
+    Err(_) => {
+      return None;
     }
+  }
 }
 
 // ============================================================
@@ -828,32 +963,44 @@ pub function json_parse(s: string): Option[JsonValue] {
 // None when `obj` isn't a JObject or `key` isn't present.
 // Foundation for the typed getters below.
 pub function json_get(obj: JsonValue, key: string): Option[JsonValue] {
-    match (obj) {
-        JObject(m) => {
-            match (m.get(key)) {
-                Some(v) => { return Some(v); },
-                None => { return None; }
-            }
+  match (obj) {
+    JObject(m) => {
+      match (m.get(key)) {
+        Some(v) => {
+          return Some(v);
         },
-        _ => { return None; }
+        None => {
+          return None;
+        }
+      }
+    },
+    _ => {
+      return None;
     }
-    return None;
+  }
+  return None;
 }
 
 // `json_get_string(obj, key)` — typed-extract a JString.
 // Returns None when the key is missing or the value isn't
 // a string.
 pub function json_get_string(obj: JsonValue, key: string): Option[string] {
-    match (json_get(obj, key)) {
-        Some(v) => {
-            match (v) {
-                JString(s) => { return Some(s); },
-                _ => { return None; }
-            }
+  match (json_get(obj, key)) {
+    Some(v) => {
+      match (v) {
+        JString(s) => {
+          return Some(s);
         },
-        None => { return None; }
+        _ => {
+          return None;
+        }
+      }
+    },
+    None => {
+      return None;
     }
-    return None;
+  }
+  return None;
 }
 
 // `json_get_i32(obj, key)` — typed-extract a JNumber as i32.
@@ -865,43 +1012,64 @@ pub function json_get_string(obj: JsonValue, key: string): Option[string] {
 // i64 and range-checked, so `2147483648` on an i32 field is
 // rejected instead of coming back as the min value (#4384 item 4).
 pub function json_get_i32(obj: JsonValue, key: string): Option[i32] {
-    match (json_get(obj, key)) {
-        Some(v) => {
-            match (v) {
-                JNumber(s) => { return __json_number_i32(s); },
-                _ => { return None; }
-            }
+  match (json_get(obj, key)) {
+    Some(v) => {
+      match (v) {
+        JNumber(s) => {
+          return __json_number_i32(s);
         },
-        None => { return None; }
+        _ => {
+          return None;
+        }
+      }
+    },
+    None => {
+      return None;
     }
-    return None;
+  }
+  return None;
 }
 
 // __json_number_i32 reads a JNumber's decimal text as an i32: an optional
 // '-' then digits, None for anything else or a value outside the range.
 function __json_number_i32(s: string): Option[i32] {
-    var acc: i64 = 0;
-    var i: i32 = 0;
-    var neg: boolean = false;
-    var nlen: i32 = s.len();
-    if (nlen == 0) { return None; }
-    if (s[0] == 45) { neg = true; i = 1; }
-    if (i >= nlen) { return None; }
-    while (i < nlen) {
-        var b: i32 = s[i] as i32;
-        if (b < 48 || b > 57) { return None; }
-        acc = acc * 10 + ((b - 48) as i64);
-        // 2147483648 == |i32 min|; anything past it can't fit
-        // either sign. Bounding here also keeps `acc` small
-        // enough that it never overflows the i64 itself.
-        if (acc > 2147483648) { return None; }
-        i = i + 1;
+  var acc: i64 = 0;
+  var i: i32 = 0;
+  var neg: boolean = false;
+  var nlen: i32 = s.len();
+  if (nlen == 0) {
+    return None;
+  }
+  if (s[0] == 45) {
+    neg = true;
+    i = 1;
+  }
+  if (i >= nlen) {
+    return None;
+  }
+  while (i < nlen) {
+    var b: i32 = s[i] as i32;
+    if (b < 48 || b > 57) {
+      return None;
     }
-    // Negatives reach down to -2147483648; positives top out
-    // one lower at 2147483647.
-    if (neg) { return Some((0 - acc) as i32); }
-    if (acc > 2147483647) { return None; }
-    return Some(acc as i32);
+    acc = acc * 10 + (b - 48) as i64;
+    // 2147483648 == |i32 min|; anything past it can't fit
+    // either sign. Bounding here also keeps `acc` small
+    // enough that it never overflows the i64 itself.
+    if (acc > 2147483648) {
+      return None;
+    }
+    i = i + 1;
+  }
+  // Negatives reach down to -2147483648; positives top out
+  // one lower at 2147483647.
+  if (neg) {
+    return Some((0 - acc) as i32);
+  }
+  if (acc > 2147483647) {
+    return None;
+  }
+  return Some(acc as i32);
 }
 
 // `json_get_i64(obj, key)` — typed-extract a JNumber as i64. Like
@@ -915,59 +1083,84 @@ function __json_number_i32(s: string): Option[i32] {
 // can't hold, so it too reads as overflow; callers needing exactly the
 // minimum must special-case it.)
 pub function json_get_i64(obj: JsonValue, key: string): Option[i64] {
-    match (json_get(obj, key)) {
-        Some(v) => {
-            match (v) {
-                JNumber(s) => { return __json_number_i64(s); },
-                _ => { return None; }
-            }
+  match (json_get(obj, key)) {
+    Some(v) => {
+      match (v) {
+        JNumber(s) => {
+          return __json_number_i64(s);
         },
-        None => { return None; }
+        _ => {
+          return None;
+        }
+      }
+    },
+    None => {
+      return None;
     }
-    return None;
+  }
+  return None;
 }
 
 // __json_number_i64 reads a JNumber's decimal text as an i64, None for a
 // non-digit body or a value past i64 max (the wrap shows as a negative
 // accumulator; more than 19 digits cannot fit at all).
 function __json_number_i64(s: string): Option[i64] {
-    var n: i64 = 0;
-    var i: i32 = 0;
-    var sign: i64 = 1;
-    var nlen: i32 = s.len();
-    var digits: i32 = 0;
-    if (nlen == 0) { return None; }
-    if (s[0] == 45) { sign = 0 - 1; i = 1; }
-    if (i >= nlen) { return None; }
-    while (i < nlen) {
-        var b: i32 = s[i] as i32;
-        if (b < 48 || b > 57) { return None; }
-        n = n * 10 + ((b - 48) as i64);
-        digits = digits + 1;
-        if (n < 0 || digits > 19) { return None; }
-        i = i + 1;
+  var n: i64 = 0;
+  var i: i32 = 0;
+  var sign: i64 = 1;
+  var nlen: i32 = s.len();
+  var digits: i32 = 0;
+  if (nlen == 0) {
+    return None;
+  }
+  if (s[0] == 45) {
+    sign = 0 - 1;
+    i = 1;
+  }
+  if (i >= nlen) {
+    return None;
+  }
+  while (i < nlen) {
+    var b: i32 = s[i] as i32;
+    if (b < 48 || b > 57) {
+      return None;
     }
-    return Some(n * sign);
+    n = n * 10 + (b - 48) as i64;
+    digits = digits + 1;
+    if (n < 0 || digits > 19) {
+      return None;
+    }
+    i = i + 1;
+  }
+  return Some(n * sign);
 }
 
 // __json_number_u64 reads a JNumber's decimal text as a u64: digits only,
 // None for a sign, a non-digit body or a value past u64 max.
 function __json_number_u64(s: string): Option[u64] {
-    var n: u64 = 0;
-    var i: i32 = 0;
-    var nlen: i32 = s.len();
-    if (nlen == 0) { return None; }
-    while (i < nlen) {
-        var b: i32 = s[i] as i32;
-        if (b < 48 || b > 57) { return None; }
-        var d: u64 = (b - 48) as u64;
-        // 1844674407370955161 is u64 max with its last digit (5) dropped.
-        if (n > 1844674407370955161) { return None; }
-        if (n == 1844674407370955161 && d > 5) { return None; }
-        n = n * 10 + d;
-        i = i + 1;
+  var n: u64 = 0;
+  var i: i32 = 0;
+  var nlen: i32 = s.len();
+  if (nlen == 0) {
+    return None;
+  }
+  while (i < nlen) {
+    var b: i32 = s[i] as i32;
+    if (b < 48 || b > 57) {
+      return None;
     }
-    return Some(n);
+    var d: u64 = (b - 48) as u64;
+    // 1844674407370955161 is u64 max with its last digit (5) dropped.
+    if (n > 1844674407370955161) {
+      return None;
+    }
+    if (n == 1844674407370955161 && d > 5) {
+      return None;
+    }
+    n = n * 10 + d;
+    i = i + 1;
+  }
+  return Some(n);
 }
 
 // `json_get_f64(obj, key)` — typed-extract a JNumber as f64. The
@@ -979,46 +1172,64 @@ function __json_number_u64(s: string): Option[u64] {
 // (#5420 — the raw text of a parser-validated JNumber is a valid
 // parse_float input, so the Some/None split falls out for free).
 pub function json_get_f64(obj: JsonValue, key: string): Option[f64] {
-    match (json_get(obj, key)) {
-        Some(v) => {
-            match (v) {
-                JNumber(s) => { return s.parse_float(); },
-                _ => { return None; }
-            }
+  match (json_get(obj, key)) {
+    Some(v) => {
+      match (v) {
+        JNumber(s) => {
+          return s.parse_float();
         },
-        None => { return None; }
+        _ => {
+          return None;
+        }
+      }
+    },
+    None => {
+      return None;
     }
-    return None;
+  }
+  return None;
 }
 
 // `json_get_bool(obj, key)` — typed-extract a JBool.
 pub function json_get_bool(obj: JsonValue, key: string): Option[boolean] {
-    match (json_get(obj, key)) {
-        Some(v) => {
-            match (v) {
-                JBool(b) => { return Some(b); },
-                _ => { return None; }
-            }
+  match (json_get(obj, key)) {
+    Some(v) => {
+      match (v) {
+        JBool(b) => {
+          return Some(b);
         },
-        None => { return None; }
+        _ => {
+          return None;
+        }
+      }
+    },
+    None => {
+      return None;
     }
-    return None;
+  }
+  return None;
 }
 
 // `json_get_array(obj, key)` — typed-extract a JArray.
 // Returns the array's element list directly so callers can
 // `len()` / index over it without further matching.
 pub function json_get_array(obj: JsonValue, key: string): Option[JsonValue[]] {
-    match (json_get(obj, key)) {
-        Some(v) => {
-            match (v) {
-                JArray(arr) => { return Some(arr); },
-                _ => { return None; }
-            }
+  match (json_get(obj, key)) {
+    Some(v) => {
+      match (v) {
+        JArray(arr) => {
+          return Some(arr);
         },
-        None => { return None; }
+        _ => {
+          return None;
+        }
+      }
+    },
+    None => {
+      return None;
     }
-    return None;
+  }
+  return None;
 }
 
 // `json_get_object(obj, key)` — typed-extract a JObject as
@@ -1033,16 +1244,22 @@ pub function json_get_array(obj: JsonValue, key: string): Option[JsonValue[]] {
 // (The unwrap_or pattern works around chained-Option
 // unwrapping until lang grows a `?.` operator.)
 pub function json_get_object(obj: JsonValue, key: string): Option[JsonValue] {
-    match (json_get(obj, key)) {
-        Some(v) => {
-            match (v) {
-                JObject(_) => { return Some(v); },
-                _ => { return None; }
-            }
+  match (json_get(obj, key)) {
+    Some(v) => {
+      match (v) {
+        JObject(_) => {
+          return Some(v);
         },
-        None => { return None; }
+        _ => {
+          return None;
+        }
+      }
+    },
+    None => {
+      return None;
     }
-    return None;
+  }
+  return None;
 }
 
 // `__json_ptr_unescape(tok)` — decode a single RFC 6901 reference
@@ -1052,30 +1269,44 @@ pub function json_get_object(obj: JsonValue, key: string): Option[JsonValue] {
 // keys, so the `out + …` build is fine and only runs on the rare
 // escape-bearing path (a `~`-free token returns unchanged).
 function __json_ptr_unescape(tok: string): string {
-    var n: i32 = tok.len();
-    var has: boolean = false;
-    var i: i32 = 0;
-    while (i < n) {
-        if (tok[i] == 126) { has = true; i = n; } else { i = i + 1; }   // '~' = 126
+  var n: i32 = tok.len();
+  var has: boolean = false;
+  var i: i32 = 0;
+  while (i < n) {
+    if (tok[i] == 126) {  // '~' = 126
+      has = true;
+      i = n;
+    } else {
+      i = i + 1;
     }
-    if (!has) { return tok; }
-    // Byte-level rebuild: pass-through bytes of a valid string stay
-    // valid, and the ~0/~1 escapes are ASCII.
-    var out: u8[] = [];
-    i = 0;
-    while (i < n) {
-        var c: i32 = tok[i] as i32;
-        if (c == 126 && i + 1 < n) {
-            var d: i32 = tok[i + 1] as i32;
-            if (d == 49)      { out = out.append(47 as u8); i = i + 2; }    // ~1 -> /
-            else if (d == 48) { out = out.append(126 as u8); i = i + 2; }   // ~0 -> ~
-            else              { out = out.append(tok[i]); i = i + 1; }
-        } else {
-            out = out.append(tok[i]);
-            i = i + 1;
-        }
+  }
+  if (!has) {
+    return tok;
+  }
+  // Byte-level rebuild: pass-through bytes of a valid string stay
+  // valid, and the ~0/~1 escapes are ASCII.
+  var out: u8[] = [];
+  i = 0;
+  while (i < n) {
+    var c: i32 = tok[i] as i32;
+    if (c == 126 && i + 1 < n) {
+      var d: i32 = tok[i + 1] as i32;
+      if (d == 49) {  // ~1 -> /
+        out = out.append(47 as u8);
+        i = i + 2;
+      } else if (d == 48) {  // ~0 -> ~
+        out = out.append(126 as u8);
+        i = i + 2;
+      } else {
+        out = out.append(tok[i]);
+        i = i + 1;
+      }
+    } else {
+      out = out.append(tok[i]);
+      i = i + 1;
     }
-    return string_from_bytes_unchecked(out);
+  }
+  return string_from_bytes_unchecked(out);
 }
 
 // `__json_ptr_index(tok)` — parse an RFC 6901 array-index token to a
@@ -1084,19 +1315,27 @@ function __json_ptr_unescape(tok: string): string {
 // token, non-digits, and out-of-i32 magnitudes all yield -1 (a
 // guaranteed miss).
 function __json_ptr_index(tok: string): i32 {
-    var n: i32 = tok.len();
-    if (n == 0) { return 0 - 1; }
-    if (tok[0] == 48 && n > 1) { return 0 - 1; }   // leading zero
-    var acc: i64 = 0;
-    var i: i32 = 0;
-    while (i < n) {
-        var b: i32 = tok[i] as i32;
-        if (b < 48 || b > 57) { return 0 - 1; }
-        acc = acc * 10 + ((b - 48) as i64);
-        if (acc > 2147483647) { return 0 - 1; }    // past any real array length
-        i = i + 1;
+  var n: i32 = tok.len();
+  if (n == 0) {
+    return 0 - 1;
+  }
+  if (tok[0] == 48 && n > 1) {  // leading zero
+    return 0 - 1;
+  }
+  var acc: i64 = 0;
+  var i: i32 = 0;
+  while (i < n) {
+    var b: i32 = tok[i] as i32;
+    if (b < 48 || b > 57) {
+      return 0 - 1;
     }
-    return acc as i32;
+    acc = acc * 10 + (b - 48) as i64;
+    if (acc > 2147483647) {  // past any real array length
+      return 0 - 1;
+    }
+    i = i + 1;
+  }
+  return acc as i32;
 }
 
 // `json_pointer(doc, pointer)` — resolve an RFC 6901 JSON Pointer
@@ -1111,43 +1350,61 @@ function __json_ptr_index(tok: string): i32 {
 //   json_pointer(doc, "/user/tags/0")   // first tag
 //   json_pointer(doc, "/a~1b")          // key literally "a/b"
 pub function json_pointer(doc: JsonValue, pointer: string): Option[JsonValue] {
-    var n: i32 = pointer.len();
-    if (n == 0) { return Some(doc); }
-    if (pointer[0] != 47) { return None; }   // must start with '/' = 47
-    var cur: JsonValue = doc;
-    var i: i32 = 1;                            // past the leading '/'
-    while (i <= n) {
-        // Token runs from i up to the next '/' (or the end).
-        var j: i32 = i;
-        while (j < n && pointer[j] != 47) { j = j + 1; }
-        var tok: string = __json_ptr_unescape(slice_unchecked(pointer, i, j));
-        match (cur) {
-            JObject(m) => {
-                match (m.get(tok)) {
-                    Some(v) => { cur = v; },
-                    None => { return None; }
-                }
-            },
-            JArray(arr) => {
-                var idx: i32 = __json_ptr_index(tok);
-                if (idx < 0 || idx >= arr.len()) { return None; }
-                cur = arr[idx];
-            },
-            _ => { return None; }
-        }
-        i = j + 1;                            // past the terminating '/'
+  var n: i32 = pointer.len();
+  if (n == 0) {
+    return Some(doc);
+  }
+  if (pointer[0] != 47) {  // must start with '/' = 47
+    return None;
+  }
+  var cur: JsonValue = doc;
+  var i: i32 = 1;  // past the leading '/'
+  while (i <= n) {
+    // Token runs from i up to the next '/' (or the end).
+    var j: i32 = i;
+    while (j < n && pointer[j] != 47) {
+      j = j + 1;
     }
-    return Some(cur);
+    var tok: string = __json_ptr_unescape(slice_unchecked(pointer, i, j));
+    match (cur) {
+      JObject(m) => {
+        match (m.get(tok)) {
+          Some(v) => {
+            cur = v;
+          },
+          None => {
+            return None;
+          }
+        }
+      },
+      JArray(arr) => {
+        var idx: i32 = __json_ptr_index(tok);
+        if (idx < 0 || idx >= arr.len()) {
+          return None;
+        }
+        cur = arr[idx];
+      },
+      _ => {
+        return None;
+      }
+    }
+    i = j + 1;  // past the terminating '/'
+  }
+  return Some(cur);
 }
 
 // `json_is_null(v)` — true iff `v` is JNull. Convenience
 // over the bare match for the common nullability check.
 pub function json_is_null(v: JsonValue): boolean {
-    match (v) {
-        JNull => { return true; },
-        _ => { return false; }
+  match (v) {
+    JNull => {
+      return true;
+    },
+    _ => {
+      return false;
     }
-    return false;
+  }
+  return false;
 }
 
 // === Json trait + @derive(Json) ===
@@ -1171,42 +1428,63 @@ pub function json_is_null(v: JsonValue): boolean {
 // generic `(xs: T[]) to_json[T: Json]()` below (#2766); map objects are a
 // remaining follow-up.
 pub trait Json {
-    function to_json(self: Self): string;
+  function to_json(self: Self): string;
 }
 
 impl Json for i32 {
-    function to_json(self: Self): string { return self.to_string(); }
+  function to_json(self: i32): string {
+    return self.to_string();
+  }
 }
+
 impl Json for i64 {
-    function to_json(self: Self): string { return self.to_string(); }
+  function to_json(self: i64): string {
+    return self.to_string();
+  }
 }
+
 impl Json for u32 {
-    function to_json(self: Self): string { return self.to_string(); }
+  function to_json(self: u32): string {
+    return self.to_string();
+  }
 }
+
 impl Json for u64 {
-    function to_json(self: Self): string { return self.to_string(); }
+  function to_json(self: u64): string {
+    return self.to_string();
+  }
 }
+
 impl Json for boolean {
-    function to_json(self: Self): string {
-        if (self) { return "true"; }
-        return "false";
+  function to_json(self: boolean): string {
+    if (self) {
+      return "true";
     }
+    return "false";
+  }
 }
+
 // Floats serialise as their decimal `to_string`. Like the `JNumber`
 // encoder, valid JSON numeric formatting is the caller's responsibility:
 // a non-finite value (NaN / ±Inf) has no JSON representation and would
 // produce invalid output — guard those before serialising if they can
 // occur.
 impl Json for f64 {
-    function to_json(self: Self): string { return self.to_string(); }
+  function to_json(self: f64): string {
+    return self.to_string();
+  }
 }
+
 impl Json for f32 {
-    function to_json(self: Self): string { return self.to_string(); }
+  function to_json(self: f32): string {
+    return self.to_string();
+  }
 }
+
 impl Json for string {
-    function to_json(self: Self): string {
-        return "\"" + json_escape(self) + "\"";
-    }
+  function to_json(self: string): string {
+    return "\"" + json_escape(self) + "\"";
+  }
 }
 
 // Array serialiser: a `T[]` whose element type is `Json` renders as a JSON
@@ -1219,30 +1497,32 @@ impl Json for string {
 // special-cases `arr.to_json()` on a known array element type) so the erased
 // generic body never has to dispatch on `T`.
 pub function (xs: T[]) to_json[T: Json](): string {
-    // Local growable u8[] accumulation (#4379), like json_encode's JArray arm:
-    // the old `out = out + xs[i].to_json()` recopied the whole encoded-so-far
-    // prefix on every element — O(array²). Every append targets the local `out`,
-    // so it grows in place (amortized O(1)); the per-element bytes are inlined.
-    // (On the self-hosted compiler this body is dead — `arr.to_json()` call sites
-    // are intercepted by lower_array_to_json, whose codegen carries the matching
-    // rewrite — but the native monomorphiser compiles it, so it must stay O(n)
-    // and lower cleanly.) Byte-for-byte identical output.
-    var out: u8[] = [];
-    out = out.append(91 as u8);   // '['
-    var i: i32 = 0;
-    while (i < xs.len()) {
-        if (i > 0) { out = out.append(44 as u8); }   // ','
-        var e: string = xs[i].to_json();
-        var el: i32 = e.len();
-        var k: i32 = 0;
-        while (k < el) {
-            out = out.append(e[k] as u8);
-            k = k + 1;
-        }
-        i = i + 1;
+  // Local growable u8[] accumulation (#4379), like json_encode's JArray arm:
+  // the old `out = out + xs[i].to_json()` recopied the whole encoded-so-far
+  // prefix on every element — O(array²). Every append targets the local `out`,
+  // so it grows in place (amortized O(1)); the per-element bytes are inlined.
+  // (On the self-hosted compiler this body is dead — `arr.to_json()` call sites
+  // are intercepted by lower_array_to_json, whose codegen carries the matching
+  // rewrite — but the native monomorphiser compiles it, so it must stay O(n)
+  // and lower cleanly.) Byte-for-byte identical output.
+  var out: u8[] = [];
+  out = out.append(91 as u8);  // '['
+  var i: i32 = 0;
+  while (i < xs.len()) {
+    if (i > 0) {  // ','
+      out = out.append(44 as u8);
     }
-    out = out.append(93 as u8);   // ']'
-    return string_from_bytes_unchecked(out);
+    var e: string = xs[i].to_json();
+    var el: i32 = e.len();
+    var k: i32 = 0;
+    while (k < el) {
+      out = out.append(e[k] as u8);
+      k = k + 1;
+    }
+    i = i + 1;
+  }
+  out = out.append(93 as u8);  // ']'
+  return string_from_bytes_unchecked(out);
 }
 
 // === FromJson trait + @derive(FromJson) ===
@@ -1267,178 +1547,250 @@ pub function (xs: T[]) to_json[T: Json](): string {
 // decoder through `http.body_json[T](req)`, which also checks the media
 // type and answers each failure with its own status.
 pub trait FromJson {
-    function from_json_value(v: JsonValue): Result[Self, string];
+  function from_json_value(v: JsonValue): Result[Self, string];
 }
 
 // `json_kind(v)` — what a value is, for a shape error's "got ...".
 pub function json_kind(v: JsonValue): string {
-    match (v) {
-        JNull => { return "null"; },
-        JBool(b) => { return "a boolean"; },
-        JNumber(s) => { return "a number"; },
-        JString(s) => { return "a string"; },
-        JArray(xs) => { return "an array"; },
-        JObject(m) => { return "an object"; }
+  match (v) {
+    JNull => {
+      return "null";
+    },
+    JBool(b) => {
+      return "a boolean";
+    },
+    JNumber(s) => {
+      return "a number";
+    },
+    JString(s) => {
+      return "a string";
+    },
+    JArray(xs) => {
+      return "an array";
+    },
+    JObject(m) => {
+      return "an object";
     }
-    return "";
+  }
+  return "";
 }
 
 impl FromJson for i32 {
-    function from_json_value(v: JsonValue): Result[Self, string] {
-        match (v) {
-            JNumber(s) => {
-                match (__json_number_i32(s)) {
-                    Some(n) => { return Ok(n); },
-                    None => { return Err("expected an integer in the i32 range, got " + s); }
-                }
-            },
-            _ => { return Err("expected an integer, got " + json_kind(v)); }
+  function from_json_value(v: JsonValue): Result[i32, string] {
+    match (v) {
+      JNumber(s) => {
+        match (__json_number_i32(s)) {
+          Some(n) => {
+            return Ok(n);
+          },
+          None => {
+            return Err("expected an integer in the i32 range, got " + s);
+          }
         }
-        return Err("");
+      },
+      _ => {
+        return Err("expected an integer, got " + json_kind(v));
+      }
     }
+    return Err("");
+  }
 }
 
 impl FromJson for i64 {
-    function from_json_value(v: JsonValue): Result[Self, string] {
-        match (v) {
-            JNumber(s) => {
-                match (__json_number_i64(s)) {
-                    Some(n) => { return Ok(n); },
-                    None => { return Err("expected an integer in the i64 range, got " + s); }
-                }
-            },
-            _ => { return Err("expected an integer, got " + json_kind(v)); }
+  function from_json_value(v: JsonValue): Result[i64, string] {
+    match (v) {
+      JNumber(s) => {
+        match (__json_number_i64(s)) {
+          Some(n) => {
+            return Ok(n);
+          },
+          None => {
+            return Err("expected an integer in the i64 range, got " + s);
+          }
         }
-        return Err("");
+      },
+      _ => {
+        return Err("expected an integer, got " + json_kind(v));
+      }
     }
+    return Err("");
+  }
 }
 
 impl FromJson for u32 {
-    function from_json_value(v: JsonValue): Result[Self, string] {
-        match (v) {
-            JNumber(s) => {
-                match (__json_number_i64(s)) {
-                    Some(n) => {
-                        if (n < 0 || n > 4294967295) { return Err("expected an integer in the u32 range, got " + s); }
-                        return Ok(n as u32);
-                    },
-                    None => { return Err("expected an integer in the u32 range, got " + s); }
-                }
-            },
-            _ => { return Err("expected an integer, got " + json_kind(v)); }
+  function from_json_value(v: JsonValue): Result[u32, string] {
+    match (v) {
+      JNumber(s) => {
+        match (__json_number_i64(s)) {
+          Some(n) => {
+            if (n < 0 || n > 4294967295) {
+              return Err("expected an integer in the u32 range, got " + s);
+            }
+            return Ok(n as u32);
+          },
+          None => {
+            return Err("expected an integer in the u32 range, got " + s);
+          }
         }
-        return Err("");
+      },
+      _ => {
+        return Err("expected an integer, got " + json_kind(v));
+      }
     }
+    return Err("");
+  }
 }
 
 impl FromJson for u64 {
-    function from_json_value(v: JsonValue): Result[Self, string] {
-        match (v) {
-            JNumber(s) => {
-                match (__json_number_u64(s)) {
-                    Some(n) => { return Ok(n); },
-                    None => { return Err("expected an integer in the u64 range, got " + s); }
-                }
-            },
-            _ => { return Err("expected an integer, got " + json_kind(v)); }
+  function from_json_value(v: JsonValue): Result[u64, string] {
+    match (v) {
+      JNumber(s) => {
+        match (__json_number_u64(s)) {
+          Some(n) => {
+            return Ok(n);
+          },
+          None => {
+            return Err("expected an integer in the u64 range, got " + s);
+          }
         }
-        return Err("");
+      },
+      _ => {
+        return Err("expected an integer, got " + json_kind(v));
+      }
     }
+    return Err("");
+  }
 }
 
 impl FromJson for f64 {
-    function from_json_value(v: JsonValue): Result[Self, string] {
-        match (v) {
-            JNumber(s) => {
-                match (s.parse_float()) {
-                    Some(f) => { return Ok(f); },
-                    None => { return Err("expected a number, got " + s); }
-                }
-            },
-            _ => { return Err("expected a number, got " + json_kind(v)); }
+  function from_json_value(v: JsonValue): Result[f64, string] {
+    match (v) {
+      JNumber(s) => {
+        match (s.parse_float()) {
+          Some(f) => {
+            return Ok(f);
+          },
+          None => {
+            return Err("expected a number, got " + s);
+          }
         }
-        return Err("");
+      },
+      _ => {
+        return Err("expected a number, got " + json_kind(v));
+      }
     }
+    return Err("");
+  }
 }
 
 impl FromJson for f32 {
-    function from_json_value(v: JsonValue): Result[Self, string] {
-        match (v) {
-            JNumber(s) => {
-                match (s.parse_float()) {
-                    Some(f) => { return Ok(f as f32); },
-                    None => { return Err("expected a number, got " + s); }
-                }
-            },
-            _ => { return Err("expected a number, got " + json_kind(v)); }
+  function from_json_value(v: JsonValue): Result[f32, string] {
+    match (v) {
+      JNumber(s) => {
+        match (s.parse_float()) {
+          Some(f) => {
+            return Ok(f as f32);
+          },
+          None => {
+            return Err("expected a number, got " + s);
+          }
         }
-        return Err("");
+      },
+      _ => {
+        return Err("expected a number, got " + json_kind(v));
+      }
     }
+    return Err("");
+  }
 }
 
 impl FromJson for boolean {
-    function from_json_value(v: JsonValue): Result[Self, string] {
-        match (v) {
-            JBool(b) => { return Ok(b); },
-            _ => { return Err("expected a boolean, got " + json_kind(v)); }
-        }
-        return Err("");
+  function from_json_value(v: JsonValue): Result[boolean, string] {
+    match (v) {
+      JBool(b) => {
+        return Ok(b);
+      },
+      _ => {
+        return Err("expected a boolean, got " + json_kind(v));
+      }
     }
+    return Err("");
+  }
 }
 
 impl FromJson for string {
-    function from_json_value(v: JsonValue): Result[Self, string] {
-        match (v) {
-            JString(s) => { return Ok(s); },
-            _ => { return Err("expected a string, got " + json_kind(v)); }
-        }
-        return Err("");
+  function from_json_value(v: JsonValue): Result[string, string] {
+    match (v) {
+      JString(s) => {
+        return Ok(s);
+      },
+      _ => {
+        return Err("expected a string, got " + json_kind(v));
+      }
     }
+    return Err("");
+  }
 }
 
 // `decode[T](text)` — parse `text` and decode it as a `T`.
 pub function decode[T: FromJson](text: string): Result[T, string] {
-    match (json_parse_result(text)) {
-        Ok(v) => { return T.from_json_value(v); },
-        Err(e) => { return Err("invalid JSON: " + e.to_string()); }
+  match (json_parse_result(text)) {
+    Ok(v) => {
+      return T.from_json_value(v);
+    },
+    Err(e) => {
+      return Err("invalid JSON: " + e.to_string());
     }
-    return Err("");
+  }
+  return Err("");
 }
 
 // `from_json_array[T](v)` — every element of a JSON array as a `T`; an
 // element's shape error is prefixed with its index.
 pub function from_json_array[T: FromJson](v: JsonValue): Result[T[], string] {
-    match (v) {
-        JArray(xs) => {
-            var out: T[] = [];
-            var i: i32 = 0;
-            while (i < xs.len()) {
-                match (T.from_json_value(xs[i])) {
-                    Ok(x) => { out = out.append(x); },
-                    Err(why) => { return Err("[" + i.to_string() + "]: " + why); }
-                }
-                i = i + 1;
-            }
-            return Ok(out);
-        },
-        _ => { return Err("expected an array, got " + json_kind(v)); }
+  match (v) {
+    JArray(xs) => {
+      var out: T[] = [];
+      var i: i32 = 0;
+      while (i < xs.len()) {
+        match (T.from_json_value(xs[i])) {
+          Ok(x) => {
+            out = out.append(x);
+          },
+          Err(why) => {
+            return Err("[" + i.to_string() + "]: " + why);
+          }
+        }
+        i = i + 1;
+      }
+      return Ok(out);
+    },
+    _ => {
+      return Err("expected an array, got " + json_kind(v));
     }
-    return Err("");
+  }
+  return Err("");
 }
 
 // `from_json_option[T](v)` — `None` for an absent value, else the value
 // decoded as a `T`. The derive pairs it with `from_json_optional_field`.
 pub function from_json_option[T: FromJson](v: Option[JsonValue]): Result[Option[T], string] {
-    match (v) {
-        Some(jv) => {
-            match (T.from_json_value(jv)) {
-                Ok(x) => { return Ok(Some(x)); },
-                Err(why) => { return Err(why); }
-            }
+  match (v) {
+    Some(jv) => {
+      match (T.from_json_value(jv)) {
+        Ok(x) => {
+          return Ok(Some(x));
         },
-        None => { return Ok(None); }
+        Err(why) => {
+          return Err(why);
+        }
+      }
+    },
+    None => {
+      return Ok(None);
     }
-    return Err("");
+  }
+  return Err("");
 }
 
 // The derive's field readers. `from_json_field(v, name)` is the field's
@@ -1447,36 +1799,50 @@ pub function from_json_option[T: FromJson](v: Option[JsonValue]): Result[Option[
 // missing or null instead; `from_json_at(name, why)` prefixes a field's
 // shape error with its name.
 pub function from_json_field(v: JsonValue, name: string): Result[JsonValue, string] {
-    match (v) {
-        JObject(m) => {
-            match (m.get(name)) {
-                Some(fv) => { return Ok(fv); },
-                None => { return Err("missing field \"" + name + "\""); }
-            }
+  match (v) {
+    JObject(m) => {
+      match (m.get(name)) {
+        Some(fv) => {
+          return Ok(fv);
         },
-        _ => { return Err("expected an object, got " + json_kind(v)); }
+        None => {
+          return Err("missing field \"" + name + "\"");
+        }
+      }
+    },
+    _ => {
+      return Err("expected an object, got " + json_kind(v));
     }
-    return Err("");
+  }
+  return Err("");
 }
 
 pub function from_json_optional_field(v: JsonValue, name: string): Result[Option[JsonValue], string] {
-    match (v) {
-        JObject(m) => {
-            match (m.get(name)) {
-                Some(fv) => {
-                    match (fv) {
-                        JNull => { return Ok(None); },
-                        _ => { return Ok(Some(fv)); }
-                    }
-                },
-                None => { return Ok(None); }
+  match (v) {
+    JObject(m) => {
+      match (m.get(name)) {
+        Some(fv) => {
+          match (fv) {
+            JNull => {
+              return Ok(None);
+            },
+            _ => {
+              return Ok(Some(fv));
             }
+          }
         },
-        _ => { return Err("expected an object, got " + json_kind(v)); }
+        None => {
+          return Ok(None);
+        }
+      }
+    },
+    _ => {
+      return Err("expected an object, got " + json_kind(v));
     }
-    return Err("");
+  }
+  return Err("");
 }
 
 pub function from_json_at(name: string, why: string): string {
-    return "field \"" + name + "\": " + why;
+  return "field \"" + name + "\": " + why;
 }

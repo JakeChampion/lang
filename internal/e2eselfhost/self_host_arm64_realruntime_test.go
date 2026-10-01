@@ -81,7 +81,7 @@ func TestSelfHostArm64DarwinAssemblesRealRuntime(t *testing.T) {
 			sb.WriteString("    p = arm64_gas_link(p, tv, dv);\n")
 			sb.WriteString("    var pa2: Arm64Asm = p.asm;\n")
 			sb.WriteString("    var bin: i32[] = macho_executable(pa2.code, eh, p.data, \"fern\", macho_entry_off(pa2), p.bss_size, arm64_gas_rebase_offs(p));\n")
-			sb.WriteString("    write(string_from_bytes_unchecked(bin));\n    return 0;\n}\n")
+			sb.WriteString("    write(string_from_bytes_unchecked(to_u8(bin)));\n    return 0;\n}\n")
 
 			wat := runCapture(t, gcc, runner, wrun, []byte(sb.String()))
 			if len(wat) == 0 {

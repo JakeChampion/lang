@@ -22,27 +22,35 @@
 import "./wasm_ir";
 import "./util";
 
-function show(s: string): string { if (s.len() == 0) { return "<empty>"; } return s; }
+function show(s: string): string {
+  if (s.len() == 0) {
+    return "<empty>";
+  }
+
+  return s;
+}
 
 function main(): i32 {
-    var corpus: string[] = [
-        "(i32, i32)", "(i32, u32, string)", "(Map[K, V], c)",
-        "((a, b), c)", "(Option[i32], Result[i32, u32])", "(x)",
-        "(i32, i32)[]", "i32", "Map[a, b]", "", "(a, (b, c), d)"
-    ];
-    var out: string = "";
-    var i: i32 = 0;
-    while (i < corpus.len()) {
-        var t: string = corpus[i];
-        var label: string = t;
-        if (label.len() == 0) { label = "<empty>"; }
-        var n: i32 = 0;
-        while (n <= 3) {
-            out = out + label + "[" + util.i32_to_string(n) + "]=" + show(wasm_ir.nth_tuple_type_elem(t, n)) + "\n";
-            n = n + 1;
-        }
-        i = i + 1;
+  var corpus: string[] = [
+    "(i32, i32)", "(i32, u32, string)", "(Map[K, V], c)",
+    "((a, b), c)", "(Option[i32], Result[i32, u32])", "(x)",
+    "(i32, i32)[]", "i32", "Map[a, b]", "", "(a, (b, c), d)",
+  ];
+  var out: string = "";
+  var i: i32 = 0;
+  while (i < corpus.len()) {
+    var t: string = corpus[i];
+    var label: string = t;
+    if (label.len() == 0) {
+      label = "<empty>";
     }
-    write(out);
-    return 0;
+    var n: i32 = 0;
+    while (n <= 3) {
+      out = out + label + "[" + util.i32_to_string(n) + "]=" + show(wasm_ir.nth_tuple_type_elem(t, n)) + "\n";
+      n = n + 1;
+    }
+    i = i + 1;
+  }
+  write(out);
+  return 0;
 }

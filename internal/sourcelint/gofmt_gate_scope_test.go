@@ -62,6 +62,10 @@ func TestGofmtGateReadsGitsFileSetNotTheDirectory(t *testing.T) {
 			run("git", "init", "-q")
 			run("git", "config", "user.email", "gate@example.invalid")
 			run("git", "config", "user.name", "gate")
+			// A detached auto-gc or maintenance run still writing objects/pack
+			// makes TempDir's cleanup fail with "directory not empty".
+			run("git", "config", "gc.auto", "0")
+			run("git", "config", "maintenance.auto", "false")
 
 			if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte("/.claude/\n"), 0o644); err != nil {
 				t.Fatal(err)

@@ -24,27 +24,33 @@
 
 import "./wasm_ir";
 
-function show(s: string): string { if (s.len() == 0) { return "<empty>"; } return s; }
+function show(s: string): string {
+  if (s.len() == 0) {
+    return "<empty>";
+  }
+
+  return s;
+}
 
 function main(): i32 {
-    var corpus: string[] = [
-        "Option[i32]", "Option[u32]", "Option[string]", "Option[Foo]",
-        "Option[Map[a, b]]", "Option[(string, string)]", "Option[i32][]",
-        "Option[]", "Option",
-        "Result[i32, u32]", "Result[string, IoError]", "Result[i32]",
-        "Result[Map[a, b], i32]", "Result[i32, u32][]", "Result[i32, u32, x]",
-        "Result",
-        "i32", "string", "Foo", "u8[]", "", "Map[string, i32]"
-    ];
-    var out: string = "";
-    var i: i32 = 0;
-    while (i < corpus.len()) {
-        var t: string = corpus[i];
-        var opt: string = wasm_ir.parse_option_payload(t);
-        var err: string = wasm_ir.parse_result_err_payload(t);
-        out = out + show(t) + " opt=" + show(opt) + " err=" + show(err) + "\n";
-        i = i + 1;
-    }
-    write(out);
-    return 0;
+  var corpus: string[] = [
+    "Option[i32]", "Option[u32]", "Option[string]", "Option[Foo]",
+    "Option[Map[a, b]]", "Option[(string, string)]", "Option[i32][]",
+    "Option[]", "Option",
+    "Result[i32, u32]", "Result[string, IoError]", "Result[i32]",
+    "Result[Map[a, b], i32]", "Result[i32, u32][]", "Result[i32, u32, x]",
+    "Result",
+    "i32", "string", "Foo", "u8[]", "", "Map[string, i32]",
+  ];
+  var out: string = "";
+  var i: i32 = 0;
+  while (i < corpus.len()) {
+    var t: string = corpus[i];
+    var opt: string = wasm_ir.parse_option_payload(t);
+    var err: string = wasm_ir.parse_result_err_payload(t);
+    out = out + show(t) + " opt=" + show(opt) + " err=" + show(err) + "\n";
+    i = i + 1;
+  }
+  write(out);
+  return 0;
 }

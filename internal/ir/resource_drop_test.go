@@ -69,6 +69,31 @@ function main(): i32 {
 	}
 }
 
+// A bare resource name is an owned handle: kept, it is dropped like `own R`;
+// consumed by an explicit drop, it is not.
+func TestAutoDropBareNamedOwnedLocal(t *testing.T) {
+	ip := lowerResourceProg(t, resourcePrelude+`
+function main(): i32 {
+	var p: Pollable = subscribe(0 as u64);
+	if (ready(p)) { write("x"); }
+	return 0;
+}`)
+	if n, _ := countDropExterns(ip); n != 1 {
+		t.Fatalf("kept bare-named local: got %d drop externs, want 1", n)
+	}
+	ip = lowerResourceProg(t, resourcePrelude+`
+@import("wasi:io/poll@0.2.0", "[resource-drop]pollable")
+function drop_pollable(h: own Pollable): void;
+function main(): i32 {
+	var p: Pollable = subscribe(0 as u64);
+	drop_pollable(p);
+	return 0;
+}`)
+	if n, _ := countDropExterns(ip); n != 0 {
+		t.Fatalf("explicitly dropped bare-named local: got %d drop externs, want 0", n)
+	}
+}
+
 // A handle that escapes (returned to the caller) is NOT auto-dropped — its
 // consumer owns it, so dropping here would double-free.
 func TestAutoDropSkipsMovedHandle(t *testing.T) {

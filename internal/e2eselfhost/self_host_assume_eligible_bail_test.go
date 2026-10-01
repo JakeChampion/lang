@@ -32,6 +32,10 @@ func TestSelfHostAssumeEligibleBailRefusesByName(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	shDir := writeSelfHostModloadProject(t)
 	driverBin := buildSelfHostBin(t, gcc, shDir, "asm_modload_run.fern", "ae_bail_driver")
+	// The bail is the AST lowering's: the per-module routes lower the whole
+	// program through the typed lowering, which gates it before any unit. Set
+	// after the build, which stage0 would otherwise run on the AST lowering.
+	t.Setenv("FERN_SEM_IR", "")
 
 	// One entry per fixture: the per-module route resolves imports from the
 	// entry's directory, and these programs have none.

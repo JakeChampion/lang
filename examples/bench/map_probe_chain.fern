@@ -8,7 +8,7 @@ import "core/map";
 // walk dominates — at this load a miss must walk to the first empty bucket —
 // so it is the row that regresses if the SWAR group probe stops paying.
 function main(): i32 {
-  var n: i32 = 190000;               // pow2_ceil growth lands this at 72.5% load
+  var n: i32 = 190000;  // pow2_ceil growth lands this at 72.5% load
   var m: Map[i32, i32] = Map { };
   var i: i32 = 0;
   while (i < n) {
@@ -20,8 +20,8 @@ function main(): i32 {
   while (r < 3) {
     var j: i32 = 0;
     while (j < n) {
-      total = total + m.get_or(j * 2, 0) as i64;         // hit
-      total = total + m.get_or(j * 2 + 1, 0 - 1) as i64; // miss
+      total = total + m.get_or(j * 2, 0) as i64;  // hit
+      total = total + m.get_or(j * 2 + 1, 0 - 1) as i64;  // miss
       j = j + 1;
     }
     r = r + 1;

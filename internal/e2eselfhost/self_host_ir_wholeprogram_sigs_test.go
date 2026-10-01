@@ -19,9 +19,9 @@ import (
 //
 // Library B's bgreet returns a STRING ("hi"); entry A does `var s = bgreet();
 // return s.len();`. Only with B's signature in the whole-program view does the
-// entry tag bgreet's result as a string and lower `.len()` to str_len → 2.
-// Without it the call is mis-tagged i32 and the emitted asm differs (proving
-// the signature actually drives codegen, not just eligibility).
+// entry type bgreet's result as a string and lower `.len()` to str_len → 2.
+// Without it the typed lowering refuses the unit: the checker sees a call to
+// nothing, rather than a lowering guessing the callee's type.
 func TestSelfHostIRWholeProgramSignatures(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -63,11 +63,26 @@ func TestSelfHostIRWholeProgramSignatures(t *testing.T) {
 	}
 	entryWith := run(t, entrySrc, entryArgs...)
 
-	// Without the sibling signature, bgreet's return type is invisible, so the
-	// call is tagged i32 and the codegen differs — the signature drives emit.
-	entryWithout := run(t, entrySrc, "-ir-unit", "entry", "-ir-ns", "a", "-ir-extern", "bgreet")
-	if entryWith == entryWithout {
-		t.Fatalf("whole-program signature did not change codegen — bgreet's string return type was not threaded into tagging")
+	// Without the sibling's source bgreet names nothing the checker knows, so
+	// the unit is refused rather than emitted with a guessed return type.
+	{
+		var cmd *exec.Cmd
+		args := []string{"-ir-unit", "entry", "-ir-ns", "a", "-ir-extern", "bgreet"}
+		if len(runner) == 0 {
+			cmd = exec.Command(driverBin, args...)
+		} else {
+			cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), args...)...)
+		}
+		cmd.Stdin = bytes.NewReader([]byte(entrySrc))
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		out, err := cmd.Output()
+		if err == nil {
+			t.Fatalf("a unit calling a sibling it was not given emitted %d bytes; want the checker's refusal", len(out))
+		}
+		if !strings.Contains(stderr.String(), "bgreet") {
+			t.Fatalf("the refusal does not name the unknown callee bgreet:\n%s", stderr.String())
+		}
 	}
 	if !strings.Contains(entryWith, "__fern_str") && !strings.Contains(entryWith, "8(%r") {
 		// With the signature the result is treated as a string box (len read at

@@ -241,13 +241,13 @@ var capabilityProfiles = map[string]capabilityProfile{
 	//     socket endpoints. wasi:sockets has IP sockets only.
 	//   - `reactor` — a readiness set the host keeps between waits:
 	//     epoll, kqueue, or on wasm a table of wasi:io pollables.
-	"hosted-native": {"log", "now", "env", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "sched", "fsinfo", "fsnode", "fsowner", "tty", "fssync", "syscall", "unix", "reactor"},
+	"hosted-native": {"log", "now", "env", "config", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "sched", "fsinfo", "fsnode", "fsowner", "tty", "fssync", "syscall", "unix", "reactor"},
 
 	// CLI-world wasm wires fs (the preview1 fd helpers) and tcp
 	// (wasi:sockets — wasmbin/wasi_tcp.go) but NOT subprocess:
 	// wasi:cli/exec-process isn't in the runtime helpers (the standing
 	// gap wasmbin's TestBuildReportsUnsupported pins).
-	"wasi-cli": {"log", "now", "env", "args", "random", "stdin", "stdout", "fs", "tcp", "host", "signal", "reactor"},
+	"wasi-cli": {"log", "now", "env", "config", "args", "random", "stdin", "stdout", "fs", "tcp", "host", "signal", "reactor"},
 
 	// The proxy world: an HTTP handler and nothing else. No stdout
 	// stream and no filesystem — which is what makes `stdout` meaningful
@@ -255,11 +255,12 @@ var capabilityProfiles = map[string]capabilityProfile{
 	// process, so neither `args` nor `env`: the world imports neither
 	// argv nor `wasi:cli/environment`, and a component carrying one
 	// fails to instantiate ("a matching implementation was not found in
-	// the linker") rather than reading empty. Deploy-time configuration
-	// reaches a proxy handler as a binding, not envp
-	// (docs/PLATFORM-RESEARCH.md Rec §7). `fetch` is the planned outbound
-	// capability (docs/STDLIB-DESIGN-RESEARCH.md Rec §10).
-	"wasi-proxy": {"log", "now", "random", "fetch"},
+	// the linker") rather than reading empty. `config`, deploy-time
+	// configuration, is wasi:config/store here; every target grants it,
+	// and where there is an environment the checker renames config_get to
+	// env, so only this world's backend reads the store. `fetch` is the
+	// planned outbound capability (docs/STDLIB-DESIGN-RESEARCH.md Rec §10).
+	"wasi-proxy": {"log", "now", "config", "random", "fetch"},
 
 	// No host at all. Everything a program can still reach is
 	// platforms.coreBuiltins; docs/FREESTANDING-CORE.md has the rule
@@ -300,9 +301,10 @@ var environments = map[string]environment{
 		// The proxy world never enters the component; the host calls
 		// the exported `handle`.
 		entry: EntryExports,
-		// No bindings yet: the proxy world has no environment import, so
-		// `wasmtime serve --env KEY=VAL` never reaches the guest. Named
-		// kv-namespace / service / config bindings are Rec §7's job.
+		// The proxy world has no environment import, so `wasmtime serve
+		// --env KEY=VAL` never reaches the guest; configuration arrives
+		// through wasi:config/store as `config_get`. Named kv-namespace /
+		// service bindings are Rec §7's job.
 		bindings: nil,
 	},
 

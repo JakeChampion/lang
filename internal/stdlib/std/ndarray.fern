@@ -88,192 +88,216 @@ pub struct NdArray[T] { data: T[], shape: i32[], strides: i32[], offset: i32 }
 
 // A precondition failed: the same trap an out-of-range index takes.
 function shape_error(): void {
-    exit(134);
+  exit(134);
 }
 
 // A shape is a list of non-negative extents whose product fits an i32,
 // since that product is an index into storage; anything else aborts.
 function check_shape(shape: i32[]): void {
-    var n: i32 = 1;
-    var k: i32 = 0;
-    while (k < shape.len()) {
-        if (shape[k] < 0) { shape_error(); }
-        if (shape[k] != 0 && n > 2147483647 / shape[k]) { shape_error(); }
-        n = n * shape[k];
-        k = k + 1;
+  var n: i32 = 1;
+  var k: i32 = 0;
+  while (k < shape.len()) {
+    if (shape[k] < 0) {
+      shape_error();
     }
+    if (shape[k] != 0 && n > 2147483647 / shape[k]) {
+      shape_error();
+    }
+    n = n * shape[k];
+    k = k + 1;
+  }
 }
 
 // The element count a shape describes; 1 for the rank-0 shape.
 function count_of(shape: i32[]): i32 {
-    check_shape(shape);
-    var n: i32 = 1;
-    var k: i32 = 0;
-    while (k < shape.len()) {
-        n = n * shape[k];
-        k = k + 1;
-    }
-    return n;
+  check_shape(shape);
+  var n: i32 = 1;
+  var k: i32 = 0;
+  while (k < shape.len()) {
+    n = n * shape[k];
+    k = k + 1;
+  }
+  return n;
 }
 
 // Row-major strides: the last axis is contiguous.
 function row_major(shape: i32[]): i32[] {
-    var out: i32[] = [];
-    var k: i32 = 0;
-    while (k < shape.len()) {
-        out = out.append(0);
-        k = k + 1;
-    }
-    var s: i32 = 1;
-    k = shape.len() - 1;
-    while (k >= 0) {
-        out = out.with(k, s);
-        s = s * shape[k];
-        k = k - 1;
-    }
-    return out;
+  var out: i32[] = [];
+  var k: i32 = 0;
+  while (k < shape.len()) {
+    out = out.append(0);
+    k = k + 1;
+  }
+  var s: i32 = 1;
+  k = shape.len() - 1;
+  while (k >= 0) {
+    out = out.with(k, s);
+    s = s * shape[k];
+    k = k - 1;
+  }
+  return out;
 }
 
 // `from_flat(data, shape)` — the array whose row-major reading is `data`.
 // `data` is shared, not copied. The shape must account for every element
 // of `data`; `[]` is a rank-0 scalar over a one-element `data`.
 pub function from_flat[T](data: T[], shape: i32[]): NdArray[T] {
-    if (count_of(shape) != data.len()) { shape_error(); }
-    return NdArray { data: data, shape: shape, strides: row_major(shape), offset: 0 };
+  if (count_of(shape) != data.len()) {
+    shape_error();
+  }
+  return NdArray { data: data, shape: shape, strides: row_major(shape), offset: 0 };
 }
 
 pub function (a: NdArray[T]) shape(): i32[] {
-    return a.shape;
+  return a.shape;
 }
 
 pub function (a: NdArray[T]) strides(): i32[] {
-    return a.strides;
+  return a.strides;
 }
 
 pub function (a: NdArray[T]) rank(): i32 {
-    return a.shape.len();
+  return a.shape.len();
 }
 
 // The element count.
 pub function (a: NdArray[T]) len(): i32 {
-    return count_of(a.shape);
+  return count_of(a.shape);
 }
 
 // `is_row_major()` — the strides are the row-major ones for the shape,
 // so `reshape` needs no copy. An axis of extent 1 has no neighbour along
 // it and its stride does not count.
 pub function (a: NdArray[T]) is_row_major(): boolean {
-    var rm: i32[] = row_major(a.shape);
-    var k: i32 = 0;
-    while (k < a.shape.len()) {
-        if (a.shape[k] != 1 && a.strides[k] != rm[k]) { return false; }
-        k = k + 1;
+  var rm: i32[] = row_major(a.shape);
+  var k: i32 = 0;
+  while (k < a.shape.len()) {
+    if (a.shape[k] != 1 && a.strides[k] != rm[k]) {
+      return false;
     }
-    return true;
+    k = k + 1;
+  }
+  return true;
 }
 
 // `is_packed()` — row-major from element 0 with nothing else in the
 // storage: `data` IS the row-major reading, so `to_flat` needs no copy.
 pub function (a: NdArray[T]) is_packed(): boolean {
-    return a.is_row_major() && a.offset == 0 && a.data.len() == a.len();
+  return a.is_row_major() && a.offset == 0 && a.data.len() == a.len();
 }
 
 // The storage index of `idx`, checking the rank and every bound.
 function addr[T](a: NdArray[T], idx: i32[]): i32 {
-    if (idx.len() != a.shape.len()) { shape_error(); }
-    var at: i32 = a.offset;
-    var k: i32 = 0;
-    while (k < idx.len()) {
-        if (idx[k] < 0 || idx[k] >= a.shape[k]) { shape_error(); }
-        at = at + idx[k] * a.strides[k];
-        k = k + 1;
+  if (idx.len() != a.shape.len()) {
+    shape_error();
+  }
+  var at: i32 = a.offset;
+  var k: i32 = 0;
+  while (k < idx.len()) {
+    if (idx[k] < 0 || idx[k] >= a.shape[k]) {
+      shape_error();
     }
-    return at;
+    at = at + idx[k] * a.strides[k];
+    k = k + 1;
+  }
+  return at;
 }
 
 // `get(idx)` — the element at a full index. A rank-0 array is read with
 // `get([])`.
 pub function (a: NdArray[T]) get(idx: i32[]): T {
-    return a.data[addr(a, idx)];
+  return a.data[addr(a, idx)];
 }
 
 function check_axis[T](a: NdArray[T], axis: i32): void {
-    if (axis < 0 || axis >= a.shape.len()) { shape_error(); }
+  if (axis < 0 || axis >= a.shape.len()) {
+    shape_error();
+  }
 }
 
 // `transpose()` — the axes in reverse order. Metadata only.
 pub function (a: NdArray[T]) transpose(): NdArray[T] {
-    var axes: i32[] = [];
-    var k: i32 = a.shape.len() - 1;
-    while (k >= 0) {
-        axes = axes.append(k);
-        k = k - 1;
-    }
-    return a.permute(axes);
+  var axes: i32[] = [];
+  var k: i32 = a.shape.len() - 1;
+  while (k >= 0) {
+    axes = axes.append(k);
+    k = k - 1;
+  }
+  return a.permute(axes);
 }
 
 // `permute(axes)` — axis `k` of the result is axis `axes[k]` of `a`.
 // `axes` must be a permutation of `0 .. rank - 1`. Metadata only.
 pub function (a: NdArray[T]) permute(axes: i32[]): NdArray[T] {
-    if (axes.len() != a.shape.len()) { shape_error(); }
-    var seen: boolean[] = [];
-    var shape: i32[] = [];
-    var strides: i32[] = [];
-    var k: i32 = 0;
-    while (k < axes.len()) {
-        seen = seen.append(false);
-        k = k + 1;
+  if (axes.len() != a.shape.len()) {
+    shape_error();
+  }
+  var seen: boolean[] = [];
+  var shape: i32[] = [];
+  var strides: i32[] = [];
+  var k: i32 = 0;
+  while (k < axes.len()) {
+    seen = seen.append(false);
+    k = k + 1;
+  }
+  k = 0;
+  while (k < axes.len()) {
+    check_axis(a, axes[k]);
+    if (seen[axes[k]]) {
+      shape_error();
     }
-    k = 0;
-    while (k < axes.len()) {
-        check_axis(a, axes[k]);
-        if (seen[axes[k]]) { shape_error(); }
-        seen = seen.with(axes[k], true);
-        shape = shape.append(a.shape[axes[k]]);
-        strides = strides.append(a.strides[axes[k]]);
-        k = k + 1;
-    }
-    return NdArray { data: a.data, shape: shape, strides: strides, offset: a.offset };
+    seen = seen.with(axes[k], true);
+    shape = shape.append(a.shape[axes[k]]);
+    strides = strides.append(a.strides[axes[k]]);
+    k = k + 1;
+  }
+  return NdArray { data: a.data, shape: shape, strides: strides, offset: a.offset };
 }
 
 // `reverse(axis)` — the elements along `axis` in the opposite order: the
 // stride flips sign and the offset moves to the old last element.
 // Metadata only.
 pub function (a: NdArray[T]) reverse(axis: i32): NdArray[T] {
-    check_axis(a, axis);
-    var n: i32 = a.shape[axis];
-    var s: i32 = a.strides[axis];
-    var offset: i32 = a.offset;
-    if (n > 0) { offset = offset + (n - 1) * s; }
-    return NdArray { data: a.data, shape: a.shape, strides: a.strides.with(axis, 0 - s), offset: offset };
+  check_axis(a, axis);
+  var n: i32 = a.shape[axis];
+  var s: i32 = a.strides[axis];
+  var offset: i32 = a.offset;
+  if (n > 0) {
+    offset = offset + (n - 1) * s;
+  }
+  return NdArray { data: a.data, shape: a.shape, strides: a.strides.with(axis, 0 - s), offset: offset };
 }
 
 // `slice(axis, lo, hi)` — the half-open range `[lo, hi)` along `axis`,
 // with `0 <= lo <= hi <= extent`; the other axes are unchanged. Metadata
 // only.
 pub function (a: NdArray[T]) slice(axis: i32, lo: i32, hi: i32): NdArray[T] {
-    check_axis(a, axis);
-    if (lo < 0 || lo > hi || hi > a.shape[axis]) { shape_error(); }
-    var offset: i32 = a.offset + lo * a.strides[axis];
-    return NdArray { data: a.data, shape: a.shape.with(axis, hi - lo), strides: a.strides, offset: offset };
+  check_axis(a, axis);
+  if (lo < 0 || lo > hi || hi > a.shape[axis]) {
+    shape_error();
+  }
+  var offset: i32 = a.offset + lo * a.strides[axis];
+  return NdArray { data: a.data, shape: a.shape.with(axis, hi - lo), strides: a.strides, offset: offset };
 }
 
 // `select(axis, i)` — the partial index: position `i` along `axis`, as an
 // array of one rank less. Metadata only.
 pub function (a: NdArray[T]) select(axis: i32, i: i32): NdArray[T] {
-    check_axis(a, axis);
-    if (i < 0 || i >= a.shape[axis]) { shape_error(); }
-    var shape: i32[] = [];
-    var strides: i32[] = [];
-    var k: i32 = 0;
-    while (k < a.shape.len()) {
-        if (k != axis) {
-            shape = shape.append(a.shape[k]);
-            strides = strides.append(a.strides[k]);
-        }
-        k = k + 1;
+  check_axis(a, axis);
+  if (i < 0 || i >= a.shape[axis]) {
+    shape_error();
+  }
+  var shape: i32[] = [];
+  var strides: i32[] = [];
+  var k: i32 = 0;
+  while (k < a.shape.len()) {
+    if (k != axis) {
+      shape = shape.append(a.shape[k]);
+      strides = strides.append(a.strides[k]);
     }
-    return NdArray { data: a.data, shape: shape, strides: strides, offset: a.offset + i * a.strides[axis] };
+    k = k + 1;
+  }
+  return NdArray { data: a.data, shape: shape, strides: strides, offset: a.offset + i * a.strides[axis] };
 }
 
 // `reshape(shape)` — the same elements, in row-major reading order, under
@@ -282,25 +306,31 @@ pub function (a: NdArray[T]) select(axis: i32, i: i32): NdArray[T] {
 // structural operation whose cost depends on what came before it — ask
 // `is_row_major()` when that matters.
 pub function (a: NdArray[T]) reshape(shape: i32[]): NdArray[T] {
-    if (count_of(shape) != a.len()) { shape_error(); }
-    if (a.is_row_major()) {
-        return NdArray { data: a.data, shape: shape, strides: row_major(shape), offset: a.offset };
-    }
-    return from_flat(copy_flat(a), shape);
+  if (count_of(shape) != a.len()) {
+    shape_error();
+  }
+  if (a.is_row_major()) {
+    return NdArray { data: a.data, shape: shape, strides: row_major(shape), offset: a.offset };
+  }
+  return from_flat(copy_flat(a), shape);
 }
 
 // `packed()` — `a` itself when it is packed, otherwise a fresh packed
 // copy with the same shape.
 pub function (a: NdArray[T]) packed(): NdArray[T] {
-    if (a.is_packed()) { return a; }
-    return from_flat(copy_flat(a), a.shape);
+  if (a.is_packed()) {
+    return a;
+  }
+  return from_flat(copy_flat(a), a.shape);
 }
 
 // `to_flat()` — the elements in row-major reading order: the storage
 // itself when `a` is packed, otherwise a fresh copy.
 pub function (a: NdArray[T]) to_flat(): T[] {
-    if (a.is_packed()) { return a.data; }
-    return copy_flat(a);
+  if (a.is_packed()) {
+    return a.data;
+  }
+  return copy_flat(a);
 }
 
 // ---- elementwise, and along an axis ----------------------------------------
@@ -308,39 +338,41 @@ pub function (a: NdArray[T]) to_flat(): T[] {
 // The storage index of an in-range `idx`: the walkers below hand it one
 // from the odometer, so nothing is checked again.
 function addr_of[T](a: NdArray[T], idx: i32[]): i32 {
-    var at: i32 = a.offset;
-    var k: i32 = 0;
-    while (k < idx.len()) {
-        at = at + idx[k] * a.strides[k];
-        k = k + 1;
-    }
-    return at;
+  var at: i32 = a.offset;
+  var k: i32 = 0;
+  while (k < idx.len()) {
+    at = at + idx[k] * a.strides[k];
+    k = k + 1;
+  }
+  return at;
 }
 
 function zeros(rank: i32): i32[] {
-    var idx: i32[] = [];
-    var k: i32 = 0;
-    while (k < rank) {
-        idx = idx.append(0);
-        k = k + 1;
-    }
-    return idx;
+  var idx: i32[] = [];
+  var k: i32 = 0;
+  while (k < rank) {
+    idx = idx.append(0);
+    k = k + 1;
+  }
+  return idx;
 }
 
 // `map(f)` — `f` applied to every element, in reading order, as a packed
 // handle of the same shape. One buffer is allocated.
 pub function (a: NdArray[T]) map[T, U](f: (T) => U): NdArray[U] {
-    if (a.is_packed()) { return from_flat(packed_map(a.data, f), a.shape); }
-    var out: U[] = [];
-    var n: i32 = a.len();
-    var idx: i32[] = zeros(a.shape.len());
-    var i: i32 = 0;
-    while (i < n) {
-        out = out.append(f(a.data[addr_of(a, idx)]));
-        idx = bump(idx, a.shape);
-        i = i + 1;
-    }
-    return from_flat(out, a.shape);
+  if (a.is_packed()) {
+    return from_flat(packed_map(a.data, f), a.shape);
+  }
+  var out: U[] = [];
+  var n: i32 = a.len();
+  var idx: i32[] = zeros(a.shape.len());
+  var i: i32 = 0;
+  while (i < n) {
+    out = out.append(f(a.data[addr_of(a, idx)]));
+    idx = bump(idx, a.shape);
+    i = i + 1;
+  }
+  return from_flat(out, a.shape);
 }
 
 // A packed handle's `data` IS the reading order (§2), so the odometer has
@@ -349,24 +381,28 @@ pub function (a: NdArray[T]) map[T, U](f: (T) => U): NdArray[U] {
 // that a packed walk does not owe, and that is the whole cost for every
 // shape the scale kernel of #9735 cannot take.
 function packed_map[T, U](data: T[], f: (T) => U): U[] {
-    var out: U[] = [];
-    var n: i32 = data.len();
-    var i: i32 = 0;
-    while (i < n) {
-        out = out.append(f(data[i]));
-        i = i + 1;
-    }
-    return out;
+  var out: U[] = [];
+  var n: i32 = data.len();
+  var i: i32 = 0;
+  while (i < n) {
+    out = out.append(f(data[i]));
+    i = i + 1;
+  }
+  return out;
 }
 
 function same_shape(x: i32[], y: i32[]): boolean {
-    if (x.len() != y.len()) { return false; }
-    var k: i32 = 0;
-    while (k < x.len()) {
-        if (x[k] != y[k]) { return false; }
-        k = k + 1;
+  if (x.len() != y.len()) {
+    return false;
+  }
+  var k: i32 = 0;
+  while (k < x.len()) {
+    if (x[k] != y[k]) {
+      return false;
     }
-    return true;
+    k = k + 1;
+  }
+  return true;
 }
 
 // `broadcast_shape(x, y)` — the shape two shapes broadcast to, aligned
@@ -375,28 +411,34 @@ function same_shape(x: i32[], y: i32[]): boolean {
 // abort: both are derived, and docs/ARRAY-ALGEBRA.md §4 rules that out
 // as an error rather than a truncation.
 pub function broadcast_shape(x: i32[], y: i32[]): i32[] {
-    check_shape(x);
-    check_shape(y);
-    var rank: i32 = x.len();
-    if (y.len() > rank) { rank = y.len(); }
-    var out: i32[] = zeros(rank);
-    var k: i32 = 0;
-    while (k < rank) {
-        var ex: i32 = 1;
-        var ey: i32 = 1;
-        if (k >= rank - x.len()) { ex = x[k - (rank - x.len())]; }
-        if (k >= rank - y.len()) { ey = y[k - (rank - y.len())]; }
-        if (ex == ey || ey == 1) {
-            out = out.with(k, ex);
-        } else if (ex == 1) {
-            out = out.with(k, ey);
-        } else {
-            shape_error();
-        }
-        k = k + 1;
+  check_shape(x);
+  check_shape(y);
+  var rank: i32 = x.len();
+  if (y.len() > rank) {
+    rank = y.len();
+  }
+  var out: i32[] = zeros(rank);
+  var k: i32 = 0;
+  while (k < rank) {
+    var ex: i32 = 1;
+    var ey: i32 = 1;
+    if (k >= rank - x.len()) {
+      ex = x[k - (rank - x.len())];
     }
-    check_shape(out);
-    return out;
+    if (k >= rank - y.len()) {
+      ey = y[k - (rank - y.len())];
+    }
+    if (ex == ey || ey == 1) {
+      out = out.with(k, ex);
+    } else if (ex == 1) {
+      out = out.with(k, ey);
+    } else {
+      shape_error();
+    }
+    k = k + 1;
+  }
+  check_shape(out);
+  return out;
 }
 
 // `broadcast_to(shape)` — `a` read as a handle of `shape`, which must be
@@ -404,42 +446,50 @@ pub function broadcast_shape(x: i32[], y: i32[]): i32[] {
 // axis of `shape` it aligns with or has extent 1. A stretched axis gets
 // stride 0, so the same element is read along it. Metadata only.
 pub function (a: NdArray[T]) broadcast_to(shape: i32[]): NdArray[T] {
-    check_shape(shape);
-    var pad: i32 = shape.len() - a.shape.len();
-    if (pad < 0) { shape_error(); }
-    var strides: i32[] = zeros(shape.len());
-    var k: i32 = 0;
-    while (k < a.shape.len()) {
-        if (a.shape[k] == shape[pad + k]) {
-            strides = strides.with(pad + k, a.strides[k]);
-        } else if (a.shape[k] != 1) {
-            shape_error();
-        }
-        k = k + 1;
+  check_shape(shape);
+  var pad: i32 = shape.len() - a.shape.len();
+  if (pad < 0) {
+    shape_error();
+  }
+  var strides: i32[] = zeros(shape.len());
+  var k: i32 = 0;
+  while (k < a.shape.len()) {
+    if (a.shape[k] == shape[pad + k]) {
+      strides = strides.with(pad + k, a.strides[k]);
+    } else if (a.shape[k] != 1) {
+      shape_error();
     }
-    return NdArray { data: a.data, shape: shape, strides: strides, offset: a.offset };
+    k = k + 1;
+  }
+  return NdArray { data: a.data, shape: shape, strides: strides, offset: a.offset };
 }
 
 // `zip_with(b, f)` — `f` over corresponding elements of two handles
 // whose shapes broadcast, as a packed handle of the broadcast shape.
 // Two shapes that do not broadcast abort.
 pub function (a: NdArray[T]) zip_with[T, U, V](b: NdArray[U], f: (T, U) => V): NdArray[V] {
-    var shape: i32[] = broadcast_shape(a.shape, b.shape);
-    var x: NdArray[T] = a;
-    var y: NdArray[U] = b;
-    if (!same_shape(a.shape, shape)) { x = a.broadcast_to(shape); }
-    if (!same_shape(b.shape, shape)) { y = b.broadcast_to(shape); }
-    if (x.is_packed() && y.is_packed()) { return from_flat(packed_zip(x.data, y.data, f), shape); }
-    var out: V[] = [];
-    var n: i32 = count_of(shape);
-    var idx: i32[] = zeros(shape.len());
-    var i: i32 = 0;
-    while (i < n) {
-        out = out.append(f(x.data[addr_of(x, idx)], y.data[addr_of(y, idx)]));
-        idx = bump(idx, shape);
-        i = i + 1;
-    }
-    return from_flat(out, shape);
+  var shape: i32[] = broadcast_shape(a.shape, b.shape);
+  var x: NdArray[T] = a;
+  var y: NdArray[U] = b;
+  if (!same_shape(a.shape, shape)) {
+    x = a.broadcast_to(shape);
+  }
+  if (!same_shape(b.shape, shape)) {
+    y = b.broadcast_to(shape);
+  }
+  if (x.is_packed() && y.is_packed()) {
+    return from_flat(packed_zip(x.data, y.data, f), shape);
+  }
+  var out: V[] = [];
+  var n: i32 = count_of(shape);
+  var idx: i32[] = zeros(shape.len());
+  var i: i32 = 0;
+  while (i < n) {
+    out = out.append(f(x.data[addr_of(x, idx)], y.data[addr_of(y, idx)]));
+    idx = bump(idx, shape);
+    i = i + 1;
+  }
+  return from_flat(out, shape);
 }
 
 // Both operands packed means each `data` IS the reading order (§2), so the
@@ -449,14 +499,14 @@ pub function (a: NdArray[T]) zip_with[T, U, V](b: NdArray[U], f: (T, U) => V): N
 // 1 a stride of 0 and so fails `is_packed`, while one that only prepends
 // extent-1 axes keeps it and leaves the order alone.
 function packed_zip[T, U, V](x: T[], y: U[], f: (T, U) => V): V[] {
-    var out: V[] = [];
-    var n: i32 = x.len();
-    var i: i32 = 0;
-    while (i < n) {
-        out = out.append(f(x[i], y[i]));
-        i = i + 1;
-    }
-    return out;
+  var out: V[] = [];
+  var n: i32 = x.len();
+  var i: i32 = 0;
+  while (i < n) {
+    out = out.append(f(x[i], y[i]));
+    i = i + 1;
+  }
+  return out;
 }
 
 // `outer(b, f)` — `f` over every pair of elements, as a packed handle of
@@ -464,51 +514,51 @@ function packed_zip[T, U, V](x: T[], y: U[], f: (T, U) => V): V[] {
 // `f(a.get(i..), b.get(j..))`. Each operand is read through a broadcast
 // view, so one buffer is allocated.
 pub function (a: NdArray[T]) outer[T, U, V](b: NdArray[U], f: (T, U) => V): NdArray[V] {
-    var ra: i32 = a.shape.len();
-    var rb: i32 = b.shape.len();
-    var shape: i32[] = join(a.shape, b.shape);
-    check_shape(shape);
-    var x: NdArray[T] = NdArray { data: a.data, shape: join(a.shape, ones(rb)), strides: join(a.strides, zeros(rb)), offset: a.offset };
-    var y: NdArray[U] = NdArray { data: b.data, shape: join(ones(ra), b.shape), strides: join(zeros(ra), b.strides), offset: b.offset };
-    return x.zip_with(y, f);
+  var ra: i32 = a.shape.len();
+  var rb: i32 = b.shape.len();
+  var shape: i32[] = join(a.shape, b.shape);
+  check_shape(shape);
+  var x: NdArray[T] = NdArray { data: a.data, shape: join(a.shape, ones(rb)), strides: join(a.strides, zeros(rb)), offset: a.offset };
+  var y: NdArray[U] = NdArray { data: b.data, shape: join(ones(ra), b.shape), strides: join(zeros(ra), b.strides), offset: b.offset };
+  return x.zip_with(y, f);
 }
 
 // `x` followed by `y`.
 function join(x: i32[], y: i32[]): i32[] {
-    var out: i32[] = [];
-    var k: i32 = 0;
-    while (k < x.len()) {
-        out = out.append(x[k]);
-        k = k + 1;
-    }
-    k = 0;
-    while (k < y.len()) {
-        out = out.append(y[k]);
-        k = k + 1;
-    }
-    return out;
+  var out: i32[] = [];
+  var k: i32 = 0;
+  while (k < x.len()) {
+    out = out.append(x[k]);
+    k = k + 1;
+  }
+  k = 0;
+  while (k < y.len()) {
+    out = out.append(y[k]);
+    k = k + 1;
+  }
+  return out;
 }
 
 function ones(rank: i32): i32[] {
-    var out: i32[] = [];
-    var k: i32 = 0;
-    while (k < rank) {
-        out = out.append(1);
-        k = k + 1;
-    }
-    return out;
+  var out: i32[] = [];
+  var k: i32 = 0;
+  while (k < rank) {
+    out = out.append(1);
+    k = k + 1;
+  }
+  return out;
 }
 
 // The storage index of the leading `count` positions of `idx` read
 // against `a`'s axes from `from`.
 function base_of[T](a: NdArray[T], idx: i32[], idx_from: i32, axis_from: i32, count: i32): i32 {
-    var at: i32 = a.offset;
-    var k: i32 = 0;
-    while (k < count) {
-        at = at + idx[idx_from + k] * a.strides[axis_from + k];
-        k = k + 1;
-    }
-    return at;
+  var at: i32 = a.offset;
+  var k: i32 = 0;
+  while (k < count) {
+    at = at + idx[idx_from + k] * a.strides[axis_from + k];
+    k = k + 1;
+  }
+  return at;
 }
 
 // `inner(b, init, mul, add)` — the last axis of `a` contracted against
@@ -520,121 +570,127 @@ function base_of[T](a: NdArray[T], idx: i32[], idx_from: i32, axis_from: i32, co
 // must have rank at least 1 and the two contracted extents must be
 // equal; anything else aborts.
 pub function (a: NdArray[T]) inner[T, A](b: NdArray[T], init: A, mul: (T, T) => A, add: (A, A) => A): NdArray[A] {
-    var ra: i32 = a.shape.len();
-    var rb: i32 = b.shape.len();
-    if (ra < 1 || rb < 1 || a.shape[ra - 1] != b.shape[0]) { shape_error(); }
-    var n: i32 = a.shape[ra - 1];
-    var sa: i32 = a.strides[ra - 1];
-    var sb: i32 = b.strides[0];
-    var shape: i32[] = join(drop_axis(a.shape, ra - 1), drop_axis(b.shape, 0));
-    var out: A[] = [];
-    var total: i32 = count_of(shape);
-    var idx: i32[] = zeros(shape.len());
-    var i: i32 = 0;
-    while (i < total) {
-        var pa: i32 = base_of(a, idx, 0, 0, ra - 1);
-        var pb: i32 = base_of(b, idx, ra - 1, 1, rb - 1);
-        var acc: A = init;
-        var k: i32 = 0;
-        while (k < n) {
-            acc = add(acc, mul(a.data[pa + k * sa], b.data[pb + k * sb]));
-            k = k + 1;
-        }
-        out = out.append(acc);
-        idx = bump(idx, shape);
-        i = i + 1;
+  var ra: i32 = a.shape.len();
+  var rb: i32 = b.shape.len();
+  if (ra < 1 || rb < 1 || a.shape[ra - 1] != b.shape[0]) {
+    shape_error();
+  }
+  var n: i32 = a.shape[ra - 1];
+  var sa: i32 = a.strides[ra - 1];
+  var sb: i32 = b.strides[0];
+  var shape: i32[] = join(drop_axis(a.shape, ra - 1), drop_axis(b.shape, 0));
+  var out: A[] = [];
+  var total: i32 = count_of(shape);
+  var idx: i32[] = zeros(shape.len());
+  var i: i32 = 0;
+  while (i < total) {
+    var pa: i32 = base_of(a, idx, 0, 0, ra - 1);
+    var pb: i32 = base_of(b, idx, ra - 1, 1, rb - 1);
+    var acc: A = init;
+    var k: i32 = 0;
+    while (k < n) {
+      acc = add(acc, mul(a.data[pa + k * sa], b.data[pb + k * sb]));
+      k = k + 1;
     }
-    return from_flat(out, shape);
+    out = out.append(acc);
+    idx = bump(idx, shape);
+    i = i + 1;
+  }
+  return from_flat(out, shape);
 }
 
 // `fold_all(init, f)` — every element folded in reading order.
 pub function (a: NdArray[T]) fold_all[T, A](init: A, f: (A, T) => A): A {
-    if (a.is_packed()) { return packed_fold(a.data, init, f); }
-    var acc: A = init;
-    var n: i32 = a.len();
-    var idx: i32[] = zeros(a.shape.len());
-    var i: i32 = 0;
-    while (i < n) {
-        acc = f(acc, a.data[addr_of(a, idx)]);
-        idx = bump(idx, a.shape);
-        i = i + 1;
-    }
-    return acc;
+  if (a.is_packed()) {
+    return packed_fold(a.data, init, f);
+  }
+  var acc: A = init;
+  var n: i32 = a.len();
+  var idx: i32[] = zeros(a.shape.len());
+  var i: i32 = 0;
+  while (i < n) {
+    acc = f(acc, a.data[addr_of(a, idx)]);
+    idx = bump(idx, a.shape);
+    i = i + 1;
+  }
+  return acc;
 }
 
 // The packed walk for `fold_all`, in the same reading order the odometer
 // would have produced — which is what keeps AA-02 (§7's "every fold is in
 // increasing index order") true of both arms.
 function packed_fold[T, A](data: T[], init: A, f: (A, T) => A): A {
-    var acc: A = init;
-    var n: i32 = data.len();
-    var i: i32 = 0;
-    while (i < n) {
-        acc = f(acc, data[i]);
-        i = i + 1;
-    }
-    return acc;
+  var acc: A = init;
+  var n: i32 = data.len();
+  var i: i32 = 0;
+  while (i < n) {
+    acc = f(acc, data[i]);
+    i = i + 1;
+  }
+  return acc;
 }
 
 // The shape with `axis` removed.
 function drop_axis(shape: i32[], axis: i32): i32[] {
-    var out: i32[] = [];
-    var k: i32 = 0;
-    while (k < shape.len()) {
-        if (k != axis) { out = out.append(shape[k]); }
-        k = k + 1;
+  var out: i32[] = [];
+  var k: i32 = 0;
+  while (k < shape.len()) {
+    if (k != axis) {
+      out = out.append(shape[k]);
     }
-    return out;
+    k = k + 1;
+  }
+  return out;
 }
 
 // The lane a full index belongs to: its row-major position in the shape
 // with `axis` removed. Every element of one lane differs only along
 // `axis`, so a fold per lane is a fold along the axis.
 function lane_of(idx: i32[], axis: i32, lane_strides: i32[]): i32 {
-    var lane: i32 = 0;
-    var k: i32 = 0;
-    var j: i32 = 0;
-    while (k < idx.len()) {
-        if (k != axis) {
-            lane = lane + idx[k] * lane_strides[j];
-            j = j + 1;
-        }
-        k = k + 1;
+  var lane: i32 = 0;
+  var k: i32 = 0;
+  var j: i32 = 0;
+  while (k < idx.len()) {
+    if (k != axis) {
+      lane = lane + idx[k] * lane_strides[j];
+      j = j + 1;
     }
-    return lane;
+    k = k + 1;
+  }
+  return lane;
 }
 
 // One accumulator per lane, all `init`.
 function lanes[A](count: i32, init: A): A[] {
-    var accs: A[] = [];
-    var i: i32 = 0;
-    while (i < count) {
-        accs = accs.append(init);
-        i = i + 1;
-    }
-    return accs;
+  var accs: A[] = [];
+  var i: i32 = 0;
+  while (i < count) {
+    accs = accs.append(init);
+    i = i + 1;
+  }
+  return accs;
 }
 
 // The axis's own row-major stride, and the number of lanes ahead of it:
 // the product of the extents after `axis`, and the product of those before.
 function extent_after(shape: i32[], axis: i32): i32 {
-    var s: i32 = 1;
-    var k: i32 = axis + 1;
-    while (k < shape.len()) {
-        s = s * shape[k];
-        k = k + 1;
-    }
-    return s;
+  var s: i32 = 1;
+  var k: i32 = axis + 1;
+  while (k < shape.len()) {
+    s = s * shape[k];
+    k = k + 1;
+  }
+  return s;
 }
 
 function extent_before(shape: i32[], axis: i32): i32 {
-    var s: i32 = 1;
-    var k: i32 = 0;
-    while (k < axis) {
-        s = s * shape[k];
-        k = k + 1;
-    }
-    return s;
+  var s: i32 = 1;
+  var k: i32 = 0;
+  while (k < axis) {
+    s = s * shape[k];
+    k = k + 1;
+  }
+  return s;
 }
 
 // The packed walks for the two axis folds. A packed handle's `data` IS the
@@ -645,50 +701,50 @@ function extent_before(shape: i32[], axis: i32): i32 {
 // nor `lane_of` nor `bump` is needed. `t` still increases for a fixed lane,
 // which is what keeps §7's increasing index order along the axis true here.
 function packed_reduce[T, A](data: T[], outer: i32, extent: i32, inner: i32, init: A, f: (A, T) => A): A[] {
-    var accs: A[] = lanes(outer * inner, init);
-    var i: i32 = 0;
-    var h: i32 = 0;
-    while (h < outer) {
-        var base: i32 = h * inner;
-        var t: i32 = 0;
-        while (t < extent) {
-            var l: i32 = 0;
-            while (l < inner) {
-                var lane: i32 = base + l;
-                accs = accs.with(lane, f(accs[lane], data[i]));
-                i = i + 1;
-                l = l + 1;
-            }
-            t = t + 1;
-        }
-        h = h + 1;
+  var accs: A[] = lanes(outer * inner, init);
+  var i: i32 = 0;
+  var h: i32 = 0;
+  while (h < outer) {
+    var base: i32 = h * inner;
+    var t: i32 = 0;
+    while (t < extent) {
+      var l: i32 = 0;
+      while (l < inner) {
+        var lane: i32 = base + l;
+        accs = accs.with(lane, f(accs[lane], data[i]));
+        i = i + 1;
+        l = l + 1;
+      }
+      t = t + 1;
     }
-    return accs;
+    h = h + 1;
+  }
+  return accs;
 }
 
 function packed_scan[T, A](data: T[], outer: i32, extent: i32, inner: i32, init: A, f: (A, T) => A): A[] {
-    var accs: A[] = lanes(outer * inner, init);
-    var out: A[] = [];
-    var i: i32 = 0;
-    var h: i32 = 0;
-    while (h < outer) {
-        var base: i32 = h * inner;
-        var t: i32 = 0;
-        while (t < extent) {
-            var l: i32 = 0;
-            while (l < inner) {
-                var lane: i32 = base + l;
-                var acc: A = f(accs[lane], data[i]);
-                accs = accs.with(lane, acc);
-                out = out.append(acc);
-                i = i + 1;
-                l = l + 1;
-            }
-            t = t + 1;
-        }
-        h = h + 1;
+  var accs: A[] = lanes(outer * inner, init);
+  var out: A[] = [];
+  var i: i32 = 0;
+  var h: i32 = 0;
+  while (h < outer) {
+    var base: i32 = h * inner;
+    var t: i32 = 0;
+    while (t < extent) {
+      var l: i32 = 0;
+      while (l < inner) {
+        var lane: i32 = base + l;
+        var acc: A = f(accs[lane], data[i]);
+        accs = accs.with(lane, acc);
+        out = out.append(acc);
+        i = i + 1;
+        l = l + 1;
+      }
+      t = t + 1;
     }
-    return out;
+    h = h + 1;
+  }
+  return out;
 }
 
 // `reduce_axis(axis, init, f)` — the fold along `axis`, in increasing
@@ -696,51 +752,61 @@ function packed_scan[T, A](data: T[], outer: i32, extent: i32, inner: i32, init:
 // reduces to a rank-0 one. Every lane is folded in one reading-order
 // walk, which visits each lane's elements in axis order.
 pub function (a: NdArray[T]) reduce_axis[T, A](axis: i32, init: A, f: (A, T) => A): NdArray[A] {
-    check_axis(a, axis);
-    var rshape: i32[] = drop_axis(a.shape, axis);
-    var lane_strides: i32[] = row_major(rshape);
-    if (a.is_packed()) {
-        return from_flat(packed_reduce(a.data, extent_before(a.shape, axis), a.shape[axis],
-            extent_after(a.shape, axis), init, f), rshape);
-    }
-    var accs: A[] = lanes(count_of(rshape), init);
-    var n: i32 = a.len();
-    var idx: i32[] = zeros(a.shape.len());
-    var i: i32 = 0;
-    while (i < n) {
-        var lane: i32 = lane_of(idx, axis, lane_strides);
-        accs = accs.with(lane, f(accs[lane], a.data[addr_of(a, idx)]));
-        idx = bump(idx, a.shape);
-        i = i + 1;
-    }
-    return from_flat(accs, rshape);
+  check_axis(a, axis);
+  var rshape: i32[] = drop_axis(a.shape, axis);
+  var lane_strides: i32[] = row_major(rshape);
+  if (a.is_packed()) {
+    return from_flat(
+      packed_reduce(
+        a.data, extent_before(a.shape, axis), a.shape[axis],
+        extent_after(a.shape, axis), init, f,
+      ),
+      rshape,
+    );
+  }
+  var accs: A[] = lanes(count_of(rshape), init);
+  var n: i32 = a.len();
+  var idx: i32[] = zeros(a.shape.len());
+  var i: i32 = 0;
+  while (i < n) {
+    var lane: i32 = lane_of(idx, axis, lane_strides);
+    accs = accs.with(lane, f(accs[lane], a.data[addr_of(a, idx)]));
+    idx = bump(idx, a.shape);
+    i = i + 1;
+  }
+  return from_flat(accs, rshape);
 }
 
 // `scan_axis(axis, init, f)` — the running fold along `axis`, in
 // increasing index order, as a packed handle of the same shape: element
 // `i` along the axis holds the fold of elements `0 .. i`.
 pub function (a: NdArray[T]) scan_axis[T, A](axis: i32, init: A, f: (A, T) => A): NdArray[A] {
-    check_axis(a, axis);
-    var rshape: i32[] = drop_axis(a.shape, axis);
-    var lane_strides: i32[] = row_major(rshape);
-    if (a.is_packed()) {
-        return from_flat(packed_scan(a.data, extent_before(a.shape, axis), a.shape[axis],
-            extent_after(a.shape, axis), init, f), a.shape);
-    }
-    var accs: A[] = lanes(count_of(rshape), init);
-    var out: A[] = [];
-    var n: i32 = a.len();
-    var idx: i32[] = zeros(a.shape.len());
-    var i: i32 = 0;
-    while (i < n) {
-        var lane: i32 = lane_of(idx, axis, lane_strides);
-        var acc: A = f(accs[lane], a.data[addr_of(a, idx)]);
-        accs = accs.with(lane, acc);
-        out = out.append(acc);
-        idx = bump(idx, a.shape);
-        i = i + 1;
-    }
-    return from_flat(out, a.shape);
+  check_axis(a, axis);
+  var rshape: i32[] = drop_axis(a.shape, axis);
+  var lane_strides: i32[] = row_major(rshape);
+  if (a.is_packed()) {
+    return from_flat(
+      packed_scan(
+        a.data, extent_before(a.shape, axis), a.shape[axis],
+        extent_after(a.shape, axis), init, f,
+      ),
+      a.shape,
+    );
+  }
+  var accs: A[] = lanes(count_of(rshape), init);
+  var out: A[] = [];
+  var n: i32 = a.len();
+  var idx: i32[] = zeros(a.shape.len());
+  var i: i32 = 0;
+  while (i < n) {
+    var lane: i32 = lane_of(idx, axis, lane_strides);
+    var acc: A = f(accs[lane], a.data[addr_of(a, idx)]);
+    accs = accs.with(lane, acc);
+    out = out.append(acc);
+    idx = bump(idx, a.shape);
+    i = i + 1;
+  }
+  return from_flat(out, a.shape);
 }
 
 // `map_rank(k, f)` — `f` applied to every rank-`k` CELL of `a`. The shape
@@ -768,94 +834,100 @@ pub function (a: NdArray[T]) scan_axis[T, A](axis: i32, init: A, f: (A, T) => A)
 // place the result's RANK depends on the input's extents rather than on
 // its shape alone.
 pub function (a: NdArray[T]) map_rank[T, U](k: i32, f: (NdArray[T]) => NdArray[U]): NdArray[U] {
-    if (k < 0 || k > a.shape.len()) { shape_error(); }
-    var fr: i32 = a.shape.len() - k;
-    var frame: i32[] = [];
-    var j: i32 = 0;
-    while (j < fr) {
-        frame = frame.append(a.shape[j]);
-        j = j + 1;
+  if (k < 0 || k > a.shape.len()) {
+    shape_error();
+  }
+  var fr: i32 = a.shape.len() - k;
+  var frame: i32[] = [];
+  var j: i32 = 0;
+  while (j < fr) {
+    frame = frame.append(a.shape[j]);
+    j = j + 1;
+  }
+  var cells: i32 = count_of(frame);
+  var out: U[] = [];
+  var cshape: i32[] = [];
+  var idx: i32[] = zeros(fr);
+  // A packed handle's cells are contiguous runs in reading order, so the
+  // cell at frame index `i` is this handle with its offset moved to
+  // `i * csize` — the same shape and strides every time. Building those
+  // once and varying only the offset replaces a chain of `fr` selects,
+  // each of which allocated a fresh shape and strides pair.
+  //
+  // The strides are SLICED from `a`, not recomputed as the row-major ones
+  // for the cell shape: `is_row_major` skips extent-1 axes, so a packed
+  // handle may carry a non-canonical stride on one (reverse of an extent-1
+  // axis leaves it packed). No element read steps along such an axis, but
+  // `strides()` is public, and the chain this replaces exposed `a`'s value.
+  var packed: boolean = a.is_packed();
+  var cshape_in: i32[] = [];
+  var cstrides: i32[] = [];
+  var q: i32 = fr;
+  while (q < a.shape.len()) {
+    cshape_in = cshape_in.append(a.shape[q]);
+    cstrides = cstrides.append(a.strides[q]);
+    q = q + 1;
+  }
+  var csize: i32 = count_of(cshape_in);
+  var i: i32 = 0;
+  while (i < cells) {
+    // Selecting axis 0 drops it, so `fr` selections leave the rank-k
+    // cell at this frame index.
+    var cell: NdArray[T] = a;
+    if (packed) {
+      cell = NdArray { data: a.data, shape: cshape_in, strides: cstrides, offset: i * csize };
+    } else {
+      var d: i32 = 0;
+      while (d < fr) {
+        cell = cell.select(0, idx[d]);
+        d = d + 1;
+      }
+      idx = bump(idx, frame);
     }
-    var cells: i32 = count_of(frame);
-    var out: U[] = [];
-    var cshape: i32[] = [];
-    var idx: i32[] = zeros(fr);
-    // A packed handle's cells are contiguous runs in reading order, so the
-    // cell at frame index `i` is this handle with its offset moved to
-    // `i * csize` — the same shape and strides every time. Building those
-    // once and varying only the offset replaces a chain of `fr` selects,
-    // each of which allocated a fresh shape and strides pair.
-    //
-    // The strides are SLICED from `a`, not recomputed as the row-major ones
-    // for the cell shape: `is_row_major` skips extent-1 axes, so a packed
-    // handle may carry a non-canonical stride on one (reverse of an extent-1
-    // axis leaves it packed). No element read steps along such an axis, but
-    // `strides()` is public, and the chain this replaces exposed `a`'s value.
-    var packed: boolean = a.is_packed();
-    var cshape_in: i32[] = [];
-    var cstrides: i32[] = [];
-    var q: i32 = fr;
-    while (q < a.shape.len()) {
-        cshape_in = cshape_in.append(a.shape[q]);
-        cstrides = cstrides.append(a.strides[q]);
-        q = q + 1;
+    var r: NdArray[U] = f(cell);
+    if (i == 0) {
+      cshape = r.shape();
+    } else {
+      if (!same_shape(r.shape(), cshape)) {
+        shape_error();
+      }
     }
-    var csize: i32 = count_of(cshape_in);
-    var i: i32 = 0;
-    while (i < cells) {
-        // Selecting axis 0 drops it, so `fr` selections leave the rank-k
-        // cell at this frame index.
-        var cell: NdArray[T] = a;
-        if (packed) {
-            cell = NdArray { data: a.data, shape: cshape_in, strides: cstrides, offset: i * csize };
-        } else {
-            var d: i32 = 0;
-            while (d < fr) {
-                cell = cell.select(0, idx[d]);
-                d = d + 1;
-            }
-            idx = bump(idx, frame);
-        }
-        var r: NdArray[U] = f(cell);
-        if (i == 0) {
-            cshape = r.shape();
-        } else {
-            if (!same_shape(r.shape(), cshape)) { shape_error(); }
-        }
-        var flat: U[] = r.to_flat();
-        var m: i32 = 0;
-        while (m < flat.len()) {
-            out = out.append(flat[m]);
-            m = m + 1;
-        }
-        i = i + 1;
+    var flat: U[] = r.to_flat();
+    var m: i32 = 0;
+    while (m < flat.len()) {
+      out = out.append(flat[m]);
+      m = m + 1;
     }
-    return from_flat(out, join(frame, cshape));
+    i = i + 1;
+  }
+  return from_flat(out, join(frame, cshape));
 }
 
 // The row-major reading of `a`, walked with an odometer over the shape.
 function copy_flat[T](a: NdArray[T]): T[] {
-    var out: T[] = [];
-    var n: i32 = a.len();
-    var idx: i32[] = zeros(a.shape.len());
-    var i: i32 = 0;
-    while (i < n) {
-        out = out.append(a.data[addr_of(a, idx)]);
-        idx = bump(idx, a.shape);
-        i = i + 1;
-    }
-    return out;
+  var out: T[] = [];
+  var n: i32 = a.len();
+  var idx: i32[] = zeros(a.shape.len());
+  var i: i32 = 0;
+  while (i < n) {
+    out = out.append(a.data[addr_of(a, idx)]);
+    idx = bump(idx, a.shape);
+    i = i + 1;
+  }
+  return out;
 }
 
 // The next index in row-major order: the last axis moves fastest. `idx`
 // is consumed so the writes land in place; borrowed, every step would
 // copy it.
 function bump(own idx: i32[], shape: i32[]): i32[] {
-    var k: i32 = shape.len() - 1;
-    while (k >= 0) {
-        if (idx[k] + 1 < shape[k]) { return idx.with(k, idx[k] + 1); }
-        idx = idx.with(k, 0);
-        k = k - 1;
+  var k: i32 = shape.len() - 1;
+  while (k >= 0) {
+    if (idx[k] + 1 < shape[k]) {
+      return idx.with(k, idx[k] + 1);
     }
-    return idx;
+    idx = idx.with(k, 0);
+    k = k - 1;
+  }
+  return idx;
 }

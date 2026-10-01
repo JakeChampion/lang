@@ -18,8 +18,8 @@
 // table[index], where the table is *env. env is a JNIEnv* — a pointer to
 // the function-table pointer — so two loads are needed.
 pub function method_ptr(env: usize, index: i32): usize {
-    var table: usize = __load_ptr(env);              // *env
-    return __load_ptr(table + (index * 8) as usize); // table[index] (8-byte slots)
+  var table: usize = __load_ptr(env);  // *env
+  return __load_ptr(table + (index * 8) as usize);  // table[index] (8-byte slots)
 }
 
 // call0 / call1 / call2 / call3 invoke JNIEnv method `index` with `env` as
@@ -27,51 +27,85 @@ pub function method_ptr(env: usize, index: i32): usize {
 // the method's result (usize; 0/ignored for void methods). The JVM's varargs
 // CallXxxMethod entries aren't covered here — fixed-arity methods only.
 pub function call0(env: usize, index: i32): usize {
-    return __c_call1(method_ptr(env, index), env);
+  return __c_call1(method_ptr(env, index), env);
 }
+
 pub function call1(env: usize, index: i32, a0: usize): usize {
-    return __c_call2(method_ptr(env, index), env, a0);
+  return __c_call2(method_ptr(env, index), env, a0);
 }
+
 pub function call2(env: usize, index: i32, a0: usize, a1: usize): usize {
-    return __c_call3(method_ptr(env, index), env, a0, a1);
+  return __c_call3(method_ptr(env, index), env, a0, a1);
 }
+
 pub function call3(env: usize, index: i32, a0: usize, a1: usize, a2: usize): usize {
-    return __c_call4(method_ptr(env, index), env, a0, a1, a2);
+  return __c_call4(method_ptr(env, index), env, a0, a1, a2);
 }
 
 // FP-returning dispatch: same integer-arg shape as call1/call2, but the
 // JNIEnv method's result is a jfloat / jdouble (returned in the FP register).
 // Only the return crosses the FP boundary; arguments stay integer/pointer.
 pub function call1_f32(env: usize, index: i32, a0: usize): f32 {
-    return __c_call2_f32(method_ptr(env, index), env, a0);
+  return __c_call2_f32(method_ptr(env, index), env, a0);
 }
+
 pub function call1_f64(env: usize, index: i32, a0: usize): f64 {
-    return __c_call2_f64(method_ptr(env, index), env, a0);
+  return __c_call2_f64(method_ptr(env, index), env, a0);
 }
+
 pub function call2_f32(env: usize, index: i32, a0: usize, a1: usize): f32 {
-    return __c_call3_f32(method_ptr(env, index), env, a0, a1);
+  return __c_call3_f32(method_ptr(env, index), env, a0, a1);
 }
+
 pub function call2_f64(env: usize, index: i32, a0: usize, a1: usize): f64 {
-    return __c_call3_f64(method_ptr(env, index), env, a0, a1);
+  return __c_call3_f64(method_ptr(env, index), env, a0, a1);
 }
+
 pub function call3_f32(env: usize, index: i32, a0: usize, a1: usize, a2: usize): f32 {
-    return __c_call4_f32(method_ptr(env, index), env, a0, a1, a2);
+  return __c_call4_f32(method_ptr(env, index), env, a0, a1, a2);
 }
+
 pub function call3_f64(env: usize, index: i32, a0: usize, a1: usize, a2: usize): f64 {
-    return __c_call4_f64(method_ptr(env, index), env, a0, a1, a2);
+  return __c_call4_f64(method_ptr(env, index), env, a0, a1, a2);
 }
 
 // Well-known JNINativeInterface method indices (subset). Index helpers
 // rather than magic numbers at call sites.
-pub function FIND_CLASS(): i32 { return 6; }
-pub function GET_METHOD_ID(): i32 { return 33; }
-pub function GET_FIELD_ID(): i32 { return 94; }
-pub function GET_STATIC_METHOD_ID(): i32 { return 113; }
-pub function GET_STATIC_FIELD_ID(): i32 { return 144; }
-pub function NEW_STRING_UTF(): i32 { return 167; }
-pub function GET_STRING_UTF_LENGTH(): i32 { return 168; }
-pub function GET_STRING_UTF_CHARS(): i32 { return 169; }
-pub function RELEASE_STRING_UTF_CHARS(): i32 { return 170; }
+pub function FIND_CLASS(): i32 {
+  return 6;
+}
+
+pub function GET_METHOD_ID(): i32 {
+  return 33;
+}
+
+pub function GET_FIELD_ID(): i32 {
+  return 94;
+}
+
+pub function GET_STATIC_METHOD_ID(): i32 {
+  return 113;
+}
+
+pub function GET_STATIC_FIELD_ID(): i32 {
+  return 144;
+}
+
+pub function NEW_STRING_UTF(): i32 {
+  return 167;
+}
+
+pub function GET_STRING_UTF_LENGTH(): i32 {
+  return 168;
+}
+
+pub function GET_STRING_UTF_CHARS(): i32 {
+  return 169;
+}
+
+pub function RELEASE_STRING_UTF_CHARS(): i32 {
+  return 170;
+}
 
 // cstr copies a Fern string into a fresh, NUL-terminated C buffer and
 // returns its raw address — the `const char*` shape FindClass /
@@ -93,24 +127,24 @@ pub function RELEASE_STRING_UTF_CHARS(): i32 { return 170; }
 // stay zero, so the result is always NUL-terminated (including the empty
 // string and exact-multiple-of-4 lengths).
 pub function cstr(s: string): usize {
-    var n: i32 = s.len();
-    var buf: usize = __alloc(n + 4);
-    var i: i32 = 0;
-    while (i + 4 <= n) {
-        var w: i32 = (s[i] as i32) | ((s[i + 1] as i32) << 8) | ((s[i + 2] as i32) << 16) | ((s[i + 3] as i32) << 24);
-        __store_i32(buf + (i as usize), w);
-        i = i + 4;
-    }
-    var base: i32 = i; // start of the (< 4-byte) tail
-    var t: i32 = 0;
-    var sh: i32 = 0;
-    while (i < n) {
-        t = t | ((s[i] as i32) << sh);
-        sh = sh + 8;
-        i = i + 1;
-    }
-    __store_i32(buf + (base as usize), t); // tail bytes + NUL terminator
-    return buf;
+  var n: i32 = s.len();
+  var buf: usize = __alloc(n + 4);
+  var i: i32 = 0;
+  while (i + 4 <= n) {
+    var w: i32 = s[i] as i32 | s[i + 1] as i32 << 8 | s[i + 2] as i32 << 16 | s[i + 3] as i32 << 24;
+    __store_i32(buf + i as usize, w);
+    i = i + 4;
+  }
+  var base: i32 = i;  // start of the (< 4-byte) tail
+  var t: i32 = 0;
+  var sh: i32 = 0;
+  while (i < n) {
+    t = t | s[i] as i32 << sh;
+    sh = sh + 8;
+    i = i + 1;
+  }
+  __store_i32(buf + base as usize, t);  // tail bytes + NUL terminator
+  return buf;
 }
 
 // --- Typed JNIEnv method wrappers ---------------------------------------
@@ -126,57 +160,57 @@ pub function cstr(s: string): usize {
 
 // jint (*GetVersion)(JNIEnv*)
 pub function get_version(env: usize): i32 {
-    return call0(env, 4) as i32;
+  return call0(env, 4) as i32;
 }
 
 // jclass (*FindClass)(JNIEnv*, const char* name)
 pub function find_class(env: usize, name: usize): usize {
-    return call1(env, FIND_CLASS(), name);
+  return call1(env, FIND_CLASS(), name);
 }
 
 // jclass (*GetObjectClass)(JNIEnv*, jobject obj)
 pub function get_object_class(env: usize, obj: usize): usize {
-    return call1(env, 31, obj);
+  return call1(env, 31, obj);
 }
 
 // jmethodID (*GetMethodID)(JNIEnv*, jclass clazz, const char* name, const char* sig)
 pub function get_method_id(env: usize, clazz: usize, name: usize, sig: usize): usize {
-    return call3(env, GET_METHOD_ID(), clazz, name, sig);
+  return call3(env, GET_METHOD_ID(), clazz, name, sig);
 }
 
 // jfieldID (*GetFieldID)(JNIEnv*, jclass clazz, const char* name, const char* sig)
 pub function get_field_id(env: usize, clazz: usize, name: usize, sig: usize): usize {
-    return call3(env, GET_FIELD_ID(), clazz, name, sig);
+  return call3(env, GET_FIELD_ID(), clazz, name, sig);
 }
 
 // jmethodID (*GetStaticMethodID)(JNIEnv*, jclass clazz, const char* name, const char* sig)
 pub function get_static_method_id(env: usize, clazz: usize, name: usize, sig: usize): usize {
-    return call3(env, GET_STATIC_METHOD_ID(), clazz, name, sig);
+  return call3(env, GET_STATIC_METHOD_ID(), clazz, name, sig);
 }
 
 // jfieldID (*GetStaticFieldID)(JNIEnv*, jclass clazz, const char* name, const char* sig)
 pub function get_static_field_id(env: usize, clazz: usize, name: usize, sig: usize): usize {
-    return call3(env, GET_STATIC_FIELD_ID(), clazz, name, sig);
+  return call3(env, GET_STATIC_FIELD_ID(), clazz, name, sig);
 }
 
 // jstring (*NewStringUTF)(JNIEnv*, const char* bytes)
 pub function new_string_utf(env: usize, bytes: usize): usize {
-    return call1(env, NEW_STRING_UTF(), bytes);
+  return call1(env, NEW_STRING_UTF(), bytes);
 }
 
 // jsize (*GetStringUTFLength)(JNIEnv*, jstring str)
 pub function get_string_utf_length(env: usize, jstr: usize): i32 {
-    return call1(env, GET_STRING_UTF_LENGTH(), jstr) as i32;
+  return call1(env, GET_STRING_UTF_LENGTH(), jstr) as i32;
 }
 
 // const char* (*GetStringUTFChars)(JNIEnv*, jstring str, jboolean* isCopy)
 pub function get_string_utf_chars(env: usize, jstr: usize, is_copy: usize): usize {
-    return call2(env, GET_STRING_UTF_CHARS(), jstr, is_copy);
+  return call2(env, GET_STRING_UTF_CHARS(), jstr, is_copy);
 }
 
 // void (*ReleaseStringUTFChars)(JNIEnv*, jstring str, const char* chars)
 pub function release_string_utf_chars(env: usize, jstr: usize, chars: usize): usize {
-    return call2(env, RELEASE_STRING_UTF_CHARS(), jstr, chars);
+  return call2(env, RELEASE_STRING_UTF_CHARS(), jstr, chars);
 }
 
 // --- Exception handling -------------------------------------------------
@@ -188,28 +222,28 @@ pub function release_string_utf_chars(env: usize, jstr: usize, chars: usize): us
 
 // jint (*Throw)(JNIEnv*, jthrowable obj) — rethrow an existing throwable.
 pub function throw(env: usize, throwable: usize): i32 {
-    return call1(env, 13, throwable) as i32;
+  return call1(env, 13, throwable) as i32;
 }
 
 // jint (*ThrowNew)(JNIEnv*, jclass clazz, const char* message) — construct
 // and throw `clazz(message)`. Pass `jni.cstr(msg)` for the message.
 pub function throw_new(env: usize, clazz: usize, message: usize): i32 {
-    return call2(env, 14, clazz, message) as i32;
+  return call2(env, 14, clazz, message) as i32;
 }
 
 // jthrowable (*ExceptionOccurred)(JNIEnv*) — the pending exception, or 0.
 pub function exception_occurred(env: usize): usize {
-    return call0(env, 15);
+  return call0(env, 15);
 }
 
 // void (*ExceptionDescribe)(JNIEnv*) — print the pending exception + trace.
 pub function exception_describe(env: usize): usize {
-    return call0(env, 16);
+  return call0(env, 16);
 }
 
 // void (*ExceptionClear)(JNIEnv*) — clear the pending exception.
 pub function exception_clear(env: usize): usize {
-    return call0(env, 17);
+  return call0(env, 17);
 }
 
 // --- Reference management -----------------------------------------------
@@ -220,50 +254,50 @@ pub function exception_clear(env: usize): usize {
 
 // jobject (*NewGlobalRef)(JNIEnv*, jobject obj)
 pub function new_global_ref(env: usize, obj: usize): usize {
-    return call1(env, 21, obj);
+  return call1(env, 21, obj);
 }
 
 // void (*DeleteGlobalRef)(JNIEnv*, jobject gref)
 pub function delete_global_ref(env: usize, gref: usize): usize {
-    return call1(env, 22, gref);
+  return call1(env, 22, gref);
 }
 
 // void (*DeleteLocalRef)(JNIEnv*, jobject lref)
 pub function delete_local_ref(env: usize, lref: usize): usize {
-    return call1(env, 23, lref);
+  return call1(env, 23, lref);
 }
 
 // jobject (*NewLocalRef)(JNIEnv*, jobject ref)
 pub function new_local_ref(env: usize, ref: usize): usize {
-    return call1(env, 25, ref);
+  return call1(env, 25, ref);
 }
 
 // --- Class / object relationships ---------------------------------------
 
 // jclass (*GetSuperclass)(JNIEnv*, jclass clazz)
 pub function get_superclass(env: usize, clazz: usize): usize {
-    return call1(env, 10, clazz);
+  return call1(env, 10, clazz);
 }
 
 // jboolean (*IsAssignableFrom)(JNIEnv*, jclass sub, jclass sup)
 pub function is_assignable_from(env: usize, sub: usize, sup: usize): i32 {
-    return call2(env, 11, sub, sup) as i32;
+  return call2(env, 11, sub, sup) as i32;
 }
 
 // jboolean (*IsSameObject)(JNIEnv*, jobject a, jobject b)
 pub function is_same_object(env: usize, a: usize, b: usize): i32 {
-    return call2(env, 24, a, b) as i32;
+  return call2(env, 24, a, b) as i32;
 }
 
 // jobject (*AllocObject)(JNIEnv*, jclass clazz) — allocate without running
 // a constructor (pair with CallNonvirtual<init> if you need one).
 pub function alloc_object(env: usize, clazz: usize): usize {
-    return call1(env, 27, clazz);
+  return call1(env, 27, clazz);
 }
 
 // jboolean (*IsInstanceOf)(JNIEnv*, jobject obj, jclass clazz)
 pub function is_instance_of(env: usize, obj: usize, clazz: usize): i32 {
-    return call2(env, 32, obj, clazz) as i32;
+  return call2(env, 32, obj, clazz) as i32;
 }
 
 // --- Instance field accessors -------------------------------------------
@@ -284,82 +318,82 @@ pub function is_instance_of(env: usize, obj: usize, clazz: usize): i32 {
 
 // jobject (*GetObjectField)(JNIEnv*, jobject obj, jfieldID fieldID)
 pub function get_object_field(env: usize, obj: usize, field: usize): usize {
-    return call2(env, 95, obj, field);
+  return call2(env, 95, obj, field);
 }
 
 // jboolean (*GetBooleanField)(JNIEnv*, jobject, jfieldID)
 pub function get_boolean_field(env: usize, obj: usize, field: usize): i32 {
-    return call2(env, 96, obj, field) as i32;
+  return call2(env, 96, obj, field) as i32;
 }
 
 // jbyte (*GetByteField)(JNIEnv*, jobject, jfieldID)
 pub function get_byte_field(env: usize, obj: usize, field: usize): i32 {
-    return call2(env, 97, obj, field) as i32;
+  return call2(env, 97, obj, field) as i32;
 }
 
 // jchar (*GetCharField)(JNIEnv*, jobject, jfieldID)
 pub function get_char_field(env: usize, obj: usize, field: usize): i32 {
-    return call2(env, 98, obj, field) as i32;
+  return call2(env, 98, obj, field) as i32;
 }
 
 // jshort (*GetShortField)(JNIEnv*, jobject, jfieldID)
 pub function get_short_field(env: usize, obj: usize, field: usize): i32 {
-    return call2(env, 99, obj, field) as i32;
+  return call2(env, 99, obj, field) as i32;
 }
 
 // jint (*GetIntField)(JNIEnv*, jobject, jfieldID)
 pub function get_int_field(env: usize, obj: usize, field: usize): i32 {
-    return call2(env, 100, obj, field) as i32;
+  return call2(env, 100, obj, field) as i32;
 }
 
 // jlong (*GetLongField)(JNIEnv*, jobject, jfieldID) — full 64-bit result.
 pub function get_long_field(env: usize, obj: usize, field: usize): usize {
-    return call2(env, 101, obj, field);
+  return call2(env, 101, obj, field);
 }
 
 // jfloat (*GetFloatField)(JNIEnv*, jobject, jfieldID) — FP result.
 pub function get_float_field(env: usize, obj: usize, field: usize): f32 {
-    return call2_f32(env, 102, obj, field);
+  return call2_f32(env, 102, obj, field);
 }
 
 // jdouble (*GetDoubleField)(JNIEnv*, jobject, jfieldID) — FP result.
 pub function get_double_field(env: usize, obj: usize, field: usize): f64 {
-    return call2_f64(env, 103, obj, field);
+  return call2_f64(env, 103, obj, field);
 }
 
 // void (*SetObjectField)(JNIEnv*, jobject obj, jfieldID, jobject value)
 pub function set_object_field(env: usize, obj: usize, field: usize, value: usize): usize {
-    return call3(env, 104, obj, field, value);
+  return call3(env, 104, obj, field, value);
 }
 
 // void (*SetBooleanField)(JNIEnv*, jobject, jfieldID, jboolean)
 pub function set_boolean_field(env: usize, obj: usize, field: usize, value: usize): usize {
-    return call3(env, 105, obj, field, value);
+  return call3(env, 105, obj, field, value);
 }
 
 // void (*SetByteField)(JNIEnv*, jobject, jfieldID, jbyte)
 pub function set_byte_field(env: usize, obj: usize, field: usize, value: usize): usize {
-    return call3(env, 106, obj, field, value);
+  return call3(env, 106, obj, field, value);
 }
 
 // void (*SetCharField)(JNIEnv*, jobject, jfieldID, jchar)
 pub function set_char_field(env: usize, obj: usize, field: usize, value: usize): usize {
-    return call3(env, 107, obj, field, value);
+  return call3(env, 107, obj, field, value);
 }
 
 // void (*SetShortField)(JNIEnv*, jobject, jfieldID, jshort)
 pub function set_short_field(env: usize, obj: usize, field: usize, value: usize): usize {
-    return call3(env, 108, obj, field, value);
+  return call3(env, 108, obj, field, value);
 }
 
 // void (*SetIntField)(JNIEnv*, jobject, jfieldID, jint)
 pub function set_int_field(env: usize, obj: usize, field: usize, value: usize): usize {
-    return call3(env, 109, obj, field, value);
+  return call3(env, 109, obj, field, value);
 }
 
 // void (*SetLongField)(JNIEnv*, jobject, jfieldID, jlong)
 pub function set_long_field(env: usize, obj: usize, field: usize, value: usize): usize {
-    return call3(env, 110, obj, field, value);
+  return call3(env, 110, obj, field, value);
 }
 
 // --- Static field accessors ---------------------------------------------
@@ -372,27 +406,27 @@ pub function set_long_field(env: usize, obj: usize, field: usize, value: usize):
 
 // jobject (*GetStaticObjectField)(JNIEnv*, jclass, jfieldID)
 pub function get_static_object_field(env: usize, clazz: usize, field: usize): usize {
-    return call2(env, 145, clazz, field);
+  return call2(env, 145, clazz, field);
 }
 
 // jint (*GetStaticIntField)(JNIEnv*, jclass, jfieldID)
 pub function get_static_int_field(env: usize, clazz: usize, field: usize): i32 {
-    return call2(env, 150, clazz, field) as i32;
+  return call2(env, 150, clazz, field) as i32;
 }
 
 // jlong (*GetStaticLongField)(JNIEnv*, jclass, jfieldID)
 pub function get_static_long_field(env: usize, clazz: usize, field: usize): usize {
-    return call2(env, 151, clazz, field);
+  return call2(env, 151, clazz, field);
 }
 
 // jfloat (*GetStaticFloatField)(JNIEnv*, jclass, jfieldID)
 pub function get_static_float_field(env: usize, clazz: usize, field: usize): f32 {
-    return call2_f32(env, 152, clazz, field);
+  return call2_f32(env, 152, clazz, field);
 }
 
 // jdouble (*GetStaticDoubleField)(JNIEnv*, jclass, jfieldID)
 pub function get_static_double_field(env: usize, clazz: usize, field: usize): f64 {
-    return call2_f64(env, 153, clazz, field);
+  return call2_f64(env, 153, clazz, field);
 }
 
 // --- Arrays -------------------------------------------------------------
@@ -400,7 +434,7 @@ pub function get_static_double_field(env: usize, clazz: usize, field: usize): f6
 // jsize (*GetArrayLength)(JNIEnv*, jarray array) — anchored by
 // ReleaseStringUTFChars=170 (just before GetArrayLength=171).
 pub function get_array_length(env: usize, array: usize): i32 {
-    return call1(env, 171, array) as i32;
+  return call1(env, 171, array) as i32;
 }
 
 // --- Calling Java methods (jvalue-array form) ---------------------------
@@ -422,14 +456,14 @@ pub function get_array_length(env: usize, array: usize): i32 {
 // jvalue_set_* setters below instead. Raw __alloc (not __alloc_u8) so the
 // buffer isn't reference-counted out from under the call.
 pub function jvalues(args: usize[]): usize {
-    var n: i32 = args.len();
-    var buf: usize = __alloc(n * 8);
-    var i: i32 = 0;
-    while (i < n) {
-        __store_i64(buf + (i * 8) as usize, args[i] as i64);
-        i = i + 1;
-    }
-    return buf;
+  var n: i32 = args.len();
+  var buf: usize = __alloc(n * 8);
+  var i: i32 = 0;
+  while (i < n) {
+    __store_i64(buf + (i * 8) as usize, args[i] as i64);
+    i = i + 1;
+  }
+  return buf;
 }
 
 // jvalue_alloc + jvalue_set_* build a mixed-type jvalue array for the ...A
@@ -439,71 +473,71 @@ pub function jvalues(args: usize[]): usize {
 // each argument by its JNI type; every setter returns the buffer so calls
 // chain: `jni.jvalue_set_f64(jni.jvalue_set_int(jvalue_alloc(2), 0, x), 1, d)`.
 pub function jvalue_alloc(n: i32): usize {
-    var buf: usize = __alloc(n * 8);
-    var i: i32 = 0;
-    while (i < n) {
-        __store_i64(buf + (i * 8) as usize, 0 as i64); // zero (clears f32 padding)
-        i = i + 1;
-    }
-    return buf;
+  var buf: usize = __alloc(n * 8);
+  var i: i32 = 0;
+  while (i < n) {
+    __store_i64(buf + (i * 8) as usize, 0 as i64);  // zero (clears f32 padding)
+    i = i + 1;
+  }
+  return buf;
 }
 
 // integer / boolean / char / object slot — a full 8-byte word.
 pub function jvalue_set_int(args: usize, idx: i32, v: usize): usize {
-    __store_i64(args + (idx * 8) as usize, v as i64);
-    return args;
+  __store_i64(args + (idx * 8) as usize, v as i64);
+  return args;
 }
 
 // jlong slot — explicit i64 (same storage as set_int; named for clarity).
 pub function jvalue_set_long(args: usize, idx: i32, v: i64): usize {
-    __store_i64(args + (idx * 8) as usize, v);
-    return args;
+  __store_i64(args + (idx * 8) as usize, v);
+  return args;
 }
 
 // jfloat slot — the 4-byte float bits in the slot's low word (the high 4
 // stay zero from jvalue_alloc, matching the jvalue union's jfloat member).
 pub function jvalue_set_f32(args: usize, idx: i32, x: f32): usize {
-    __store_i32(args + (idx * 8) as usize, f32_bits(x));
-    return args;
+  __store_i32(args + (idx * 8) as usize, f32_bits(x));
+  return args;
 }
 
 // jdouble slot — the full 8-byte double bits.
 pub function jvalue_set_f64(args: usize, idx: i32, d: f64): usize {
-    __store_i64(args + (idx * 8) as usize, f64_bits(d));
-    return args;
+  __store_i64(args + (idx * 8) as usize, f64_bits(d));
+  return args;
 }
 
 // jobject (*CallObjectMethodA)(JNIEnv*, jobject, jmethodID, const jvalue*)
 pub function call_object_method_a(env: usize, obj: usize, method: usize, args: usize): usize {
-    return call3(env, 36, obj, method, args);
+  return call3(env, 36, obj, method, args);
 }
 
 // jboolean (*CallBooleanMethodA)(JNIEnv*, jobject, jmethodID, const jvalue*)
 pub function call_boolean_method_a(env: usize, obj: usize, method: usize, args: usize): i32 {
-    return call3(env, 39, obj, method, args) as i32;
+  return call3(env, 39, obj, method, args) as i32;
 }
 
 // jint (*CallIntMethodA)(JNIEnv*, jobject, jmethodID, const jvalue*)
 pub function call_int_method_a(env: usize, obj: usize, method: usize, args: usize): i32 {
-    return call3(env, 51, obj, method, args) as i32;
+  return call3(env, 51, obj, method, args) as i32;
 }
 
 // jlong (*CallLongMethodA)(JNIEnv*, jobject, jmethodID, const jvalue*)
 pub function call_long_method_a(env: usize, obj: usize, method: usize, args: usize): usize {
-    return call3(env, 54, obj, method, args);
+  return call3(env, 54, obj, method, args);
 }
 
 // jfloat (*CallFloatMethodA)(JNIEnv*, jobject, jmethodID, const jvalue*)
 pub function call_float_method_a(env: usize, obj: usize, method: usize, args: usize): f32 {
-    return call3_f32(env, 57, obj, method, args);
+  return call3_f32(env, 57, obj, method, args);
 }
 
 // jdouble (*CallDoubleMethodA)(JNIEnv*, jobject, jmethodID, const jvalue*)
 pub function call_double_method_a(env: usize, obj: usize, method: usize, args: usize): f64 {
-    return call3_f64(env, 60, obj, method, args);
+  return call3_f64(env, 60, obj, method, args);
 }
 
 // void (*CallVoidMethodA)(JNIEnv*, jobject, jmethodID, const jvalue*)
 pub function call_void_method_a(env: usize, obj: usize, method: usize, args: usize): usize {
-    return call3(env, 63, obj, method, args);
+  return call3(env, 63, obj, method, args);
 }

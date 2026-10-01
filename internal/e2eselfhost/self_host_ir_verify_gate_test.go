@@ -254,7 +254,7 @@ func TestSelfHostIRVerifyGateWholeCompiler(t *testing.T) {
 	if len(runner) != 0 {
 		t.Skip("modload driver runs natively; skipping under an exec runner")
 	}
-	dir := writeSelfHostModloadProject(t)
+	dir := writeSelfHostModloadProjectTyped(t)
 	bin := buildSelfHostBin(t, gcc, dir, "asm_modload_run.fern", "modload_run")
 
 	// asm_ir_run.fern imports the whole x86 pipeline, so its closure is the

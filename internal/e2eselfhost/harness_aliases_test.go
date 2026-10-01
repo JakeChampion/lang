@@ -24,6 +24,7 @@ var cachedDriverBin = e2eharness.CachedDriverBin
 var cachedLink = e2eharness.CachedLink
 var compileFilesModload = e2eharness.CompileFilesModload
 var compileSourceModload = e2eharness.CompileSourceModload
+var copyStdlibTree = e2eharness.CopyStdlibTree
 var writeSourceModloadProject = e2eharness.WriteSourceModloadProject
 var componentCoreSection = e2eharness.ComponentCoreSection
 var contains = e2eharness.Contains
@@ -55,6 +56,7 @@ var withBuildMemoryMB = e2eharness.WithBuildMemoryMB
 var withPrintInt = e2eharness.WithPrintInt
 var writeSelfHostAsmProject = e2eharness.WriteSelfHostAsmProject
 var writeSelfHostModloadProject = e2eharness.WriteSelfHostModloadProject
+var writeSelfHostModloadProjectTyped = e2eharness.WriteSelfHostModloadProjectTyped
 var x86_64Tooling = e2eharness.X86_64Tooling
 var x86_64Runner = e2eharness.X86_64Runner
 

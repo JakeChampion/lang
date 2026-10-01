@@ -89,7 +89,9 @@ func TestSelfHostTupleReclaimIRX86_64(t *testing.T) {
 			// Tuple-only programs: a `call __fn___fern_arr_dec` (the shallow box
 			// release) is the per-iteration tuple reclaim. The bare label
 			// `__fn___fern_arr_dec:` (the helper definition) is not a call.
-			reclaims := bytes.Count(asm, []byte("call __fn___fern_arr_dec"))
+			// The reclaim is the AST lowering's; the typed lowering allocates no box
+			// for these scalar tuples.
+			reclaims := bytes.Count(runCaptureAST(t, runner, driverBin, []byte(tc.src)), []byte("call __fn___fern_arr_dec"))
 			if tc.mustReclaim && reclaims == 0 {
 				t.Errorf("%s: expected a per-iteration tuple reclaim (call __fn___fern_arr_dec), found none — the tuple leaks", tc.name)
 			}

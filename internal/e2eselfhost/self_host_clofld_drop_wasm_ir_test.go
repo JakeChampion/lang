@@ -10,17 +10,10 @@ import (
 )
 
 // TestSelfHostClofldDropWasmIR is the wasm port of
-// TestSelfHostClofldDropIRX86_64: the clofld routing lives in shared
-// irlower.fern, and emit_wasm_struct_drop_body's fn-field arm (the wasm
-// k_clo sibling) / emit_wasm_field_reclaim_body's fn gate (fr_clo) do the
-// env-box release — a `__mkclo$` box is one rc-headered block, so the
-// rc-guarded $__fern_arr_dec IS the shallow closure free (captures leak,
-// the k_struct one-level model). Cases mirror the x86 leg: an admitted
-// straight-line fn-field struct deep-drops at exit (the WAT carries the
-// $__struct_drop_H call); the loop-nested capture churn reclaims each
-// prior iteration's env box through $__field_reclaim_H's fn arm and stays
-// BALANCED at scale; a bare closure IDENT field value and a BASE COPY
-// keep the sound leak (no admission, aliases stay callable).
+// TestSelfHostClofldDropIRX86_64: a struct with a closure field releases the
+// closure's env box when it dies, at exit and in a loop that stays BALANCED at
+// scale (the WAT carries the $__sem_release_H call); a bare closure IDENT
+// field value and a BASE COPY keep their aliases callable.
 func TestSelfHostClofldDropWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping clofld drop wasm IR e2e")
@@ -39,10 +32,10 @@ func TestSelfHostClofldDropWasmIR(t *testing.T) {
 	}{
 		{"clofld-drop-fires",
 			`struct H { f: (i32) => i32, id: i32 } function main(): i32 { var h: H = H { f: (x: i32): i32 => { return x + 3; }, id: 1 }; var r: i32 = h.f(10); return r; }`,
-			13, "call $__struct_drop_H"},
+			13, "call $__sem_release_H"},
 		{"clofld-capture-churn-balanced",
 			`struct H { f: (i32) => i32, id: i32 } function churn(n: i32): i32 { var bad: i32 = 0; var i: i32 = 0; while (i < n) { var k: i32 = i % 5; var h: H = H { f: (x: i32): i32 => { return x + k; }, id: i }; if (h.f(10) != 10 + k) { bad = 1; } i = i + 1; } return bad; } function main(): i32 { var v: i32 = churn(200000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
-			0, "call $__field_reclaim_H"},
+			0, "call $__sem_release_H"},
 		{"clofld-ident-excluded",
 			`struct H { f: (i32) => i32, id: i32 } function main(): i32 { var g = (x: i32): i32 => { return x * 2; }; var h: H = H { f: g, id: 3 }; var r: i32 = h.f(5) + g(2) + h.id; if (r != 17) { return 90; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`,
 			0, ""},
