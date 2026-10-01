@@ -101600,7 +101600,7 @@ function wcap_cell_name(c: string): string {
 
 struct WCaps { names: string[], types: string[] }
 
-struct WCapExpr { expr: ast.Expr, caps: WCaps }
+struct WCapExpr { expr: ast.Expr, caps: WCaps, changed: boolean }
 
 struct WCapStmt { stmt: ast.Stmt, caps: WCaps, changed: boolean }
 
@@ -101667,10 +101667,14 @@ function wcap_expr(e: ast.Expr, fd: parser.FuncDecl, gfns: string[], structs: St
       // captures from their cells at the top of the body.
       var inner: WCaps = acc;
       var nb: ast.Stmt[] = [];
+      var bchanged: boolean = false;
       var bi: i32 = 0;
       while (bi < lm.body.len()) {
         var rs: WCapStmt = wcap_stmt(lm.body[bi], fd, gfns, structs, mfuncs, inner, atargets);
         inner = rs.caps;
+        if (rs.changed) {
+          bchanged = true;
+        }
         nb = nb.append(rs.stmt);
         bi = bi + 1;
       }
@@ -101694,16 +101698,16 @@ function wcap_expr(e: ast.Expr, fd: parser.FuncDecl, gfns: string[], structs: St
           typed_caps = typed_caps.append(cap);
         }
       }
-      return WCapExpr { expr: ast.ExprLambda { ...lm, body: full, captures: typed_caps }, caps: wcaps_join(inner, mine) };
+      return WCapExpr { expr: ast.ExprLambda { ...lm, body: full, captures: typed_caps }, caps: wcaps_join(inner, mine), changed: bchanged || mine.names.len() > 0 };
     },
     ast.ExprBinary(b) => {
       var l: WCapExpr = wcap_expr(b.left, fd, gfns, structs, mfuncs, acc, atargets);
       var r: WCapExpr = wcap_expr(b.right, fd, gfns, structs, mfuncs, l.caps, atargets);
-      return WCapExpr { expr: ast.ExprBinary { op: b.op, left: l.expr, right: r.expr, line: b.line, col: b.col, ty: b.ty }, caps: r.caps };
+      return WCapExpr { expr: ast.ExprBinary { op: b.op, left: l.expr, right: r.expr, line: b.line, col: b.col, ty: b.ty }, caps: r.caps, changed: l.changed || r.changed };
     },
     ast.ExprUnary(u) => {
       var o: WCapExpr = wcap_expr(u.operand, fd, gfns, structs, mfuncs, acc, atargets);
-      return WCapExpr { expr: ast.ExprUnary { op: u.op, operand: o.expr, line: u.line, col: u.col, ty: u.ty }, caps: o.caps };
+      return WCapExpr { expr: ast.ExprUnary { op: u.op, operand: o.expr, line: u.line, col: u.col, ty: u.ty }, caps: o.caps, changed: o.changed };
     },
     ast.ExprCall(c) => {
       // An IMMEDIATELY-INVOKED lambda never reaches the env box, so its
@@ -101718,10 +101722,14 @@ function wcap_expr(e: ast.Expr, fd: parser.FuncDecl, gfns: string[], structs: St
       if let ast.ExprLambda(ilm) = c.callee {
         var iacc: WCaps = acc;
         var ib: ast.Stmt[] = [];
+        var ichanged: boolean = false;
         var ii: i32 = 0;
         while (ii < ilm.body.len()) {
           var irs: WCapStmt = wcap_stmt(ilm.body[ii], fd, gfns, structs, mfuncs, iacc, atargets);
           iacc = irs.caps;
+          if (irs.changed) {
+            ichanged = true;
+          }
           ib = ib.append(irs.stmt);
           ii = ii + 1;
         }
@@ -101729,79 +101737,101 @@ function wcap_expr(e: ast.Expr, fd: parser.FuncDecl, gfns: string[], structs: St
         for iarg in c.args {
           var iar: WCapExpr = wcap_expr(iarg, fd, gfns, structs, mfuncs, iacc, atargets);
           iacc = iar.caps;
+          if (iar.changed) {
+            ichanged = true;
+          }
           iargs = iargs.append(iar.expr);
         }
         var ilam: ast.Expr = ast.ExprLambda { ...ilm, body: ib };
-        return WCapExpr { expr: ast.ExprCall { callee: ilam, args: iargs, line: c.line, col: c.col, type_args: c.type_args, ty: c.ty }, caps: iacc };
+        return WCapExpr { expr: ast.ExprCall { callee: ilam, args: iargs, line: c.line, col: c.col, type_args: c.type_args, ty: c.ty }, caps: iacc, changed: ichanged };
       }
       var cal: WCapExpr = wcap_expr(c.callee, fd, gfns, structs, mfuncs, acc, atargets);
       var a: WCaps = cal.caps;
+      var cchanged: boolean = cal.changed;
       var na: ast.Expr[] = [];
       for arg in c.args {
         var ar: WCapExpr = wcap_expr(arg, fd, gfns, structs, mfuncs, a, atargets);
         a = ar.caps;
+        if (ar.changed) {
+          cchanged = true;
+        }
         na = na.append(ar.expr);
       }
-      return WCapExpr { expr: ast.ExprCall { callee: cal.expr, args: na, line: c.line, col: c.col, type_args: c.type_args, ty: c.ty }, caps: a };
+      return WCapExpr { expr: ast.ExprCall { callee: cal.expr, args: na, line: c.line, col: c.col, type_args: c.type_args, ty: c.ty }, caps: a, changed: cchanged };
     },
     ast.ExprArray(ar) => {
       var a: WCaps = acc;
       var ne: ast.Expr[] = [];
+      var achanged: boolean = false;
       var i: i32 = 0;
       while (i < ar.elements.len()) {
         var er: WCapExpr = wcap_expr(ar.elements[i], fd, gfns, structs, mfuncs, a, atargets);
         a = er.caps;
+        if (er.changed) {
+          achanged = true;
+        }
         ne = ne.append(er.expr);
         i = i + 1;
       }
-      return WCapExpr { expr: ast.ExprArray { ...ar, elements: ne }, caps: a };
+      return WCapExpr { expr: ast.ExprArray { ...ar, elements: ne }, caps: a, changed: achanged };
     },
     ast.ExprTuple(t) => {
       var a: WCaps = acc;
       var ne: ast.Expr[] = [];
+      var tchanged: boolean = false;
       for el in t.elements {
         var er: WCapExpr = wcap_expr(el, fd, gfns, structs, mfuncs, a, atargets);
         a = er.caps;
+        if (er.changed) {
+          tchanged = true;
+        }
         ne = ne.append(er.expr);
       }
-      return WCapExpr { expr: ast.ExprTuple { elements: ne, line: t.line, col: t.col }, caps: a };
+      return WCapExpr { expr: ast.ExprTuple { elements: ne, line: t.line, col: t.col }, caps: a, changed: tchanged };
     },
     ast.ExprIndex(x) => {
       var ax: WCapExpr = wcap_expr(x.array, fd, gfns, structs, mfuncs, acc, atargets);
       var ix: WCapExpr = wcap_expr(x.index, fd, gfns, structs, mfuncs, ax.caps, atargets);
-      return WCapExpr { expr: ast.ExprIndex { array: ax.expr, index: ix.expr, unchecked: x.unchecked, ty: x.ty, line: x.line, col: x.col }, caps: ix.caps };
+      return WCapExpr { expr: ast.ExprIndex { array: ax.expr, index: ix.expr, unchecked: x.unchecked, ty: x.ty, line: x.line, col: x.col }, caps: ix.caps, changed: ax.changed || ix.changed };
     },
     ast.ExprSlice(sl) => {
       var sa: WCapExpr = wcap_expr(sl.array, fd, gfns, structs, mfuncs, acc, atargets);
       var ss: WCapExpr = wcap_expr(sl.start, fd, gfns, structs, mfuncs, sa.caps, atargets);
       var se: WCapExpr = wcap_expr(sl.end, fd, gfns, structs, mfuncs, ss.caps, atargets);
-      return WCapExpr { expr: ast.ExprSlice { ...sl, array: sa.expr, start: ss.expr, end: se.expr }, caps: se.caps };
+      return WCapExpr { expr: ast.ExprSlice { ...sl, array: sa.expr, start: ss.expr, end: se.expr }, caps: se.caps, changed: sa.changed || ss.changed || se.changed };
     },
     ast.ExprStructLit(sl) => {
       var a: WCaps = acc;
       var nv: ast.Expr[] = [];
+      var schanged: boolean = false;
       for fv in sl.field_values {
         var fr: WCapExpr = wcap_expr(fv, fd, gfns, structs, mfuncs, a, atargets);
         a = fr.caps;
+        if (fr.changed) {
+          schanged = true;
+        }
         nv = nv.append(fr.expr);
       }
       var nbase: ast.Expr = sl.base;
       if (sl.has_base) {
         var br: WCapExpr = wcap_expr(sl.base, fd, gfns, structs, mfuncs, a, atargets);
         a = br.caps;
+        if (br.changed) {
+          schanged = true;
+        }
         nbase = br.expr;
       }
-      return WCapExpr { expr: ast.ExprStructLit { type_name: sl.type_name, field_names: sl.field_names, field_values: nv, has_base: sl.has_base, base: nbase, line: sl.line, col: sl.col, written: sl.written }, caps: a };
+      return WCapExpr { expr: ast.ExprStructLit { type_name: sl.type_name, field_names: sl.field_names, field_values: nv, has_base: sl.has_base, base: nbase, line: sl.line, col: sl.col, written: sl.written }, caps: a, changed: schanged };
     },
     ast.ExprFieldAccess(fa) => {
       var o: WCapExpr = wcap_expr(fa.obj, fd, gfns, structs, mfuncs, acc, atargets);
-      return WCapExpr { expr: ast.ExprFieldAccess { obj: o.expr, field: fa.field, line: fa.line, col: fa.col, ty: fa.ty }, caps: o.caps };
+      return WCapExpr { expr: ast.ExprFieldAccess { obj: o.expr, field: fa.field, line: fa.line, col: fa.col, ty: fa.ty }, caps: o.caps, changed: o.changed };
     },
     _ => {
-      return WCapExpr { expr: e, caps: acc };
+      return WCapExpr { expr: e, caps: acc, changed: false };
     }
   }
-  return WCapExpr { expr: e, caps: acc };
+  return WCapExpr { expr: e, caps: acc, changed: false };
 }
 
 // wcap_stmt rewrites the lambdas in one statement's OWN expressions, returning
@@ -101813,46 +101843,49 @@ function wcap_stmt(st: ast.Stmt, fd: parser.FuncDecl, gfns: string[], structs: S
   match (st) {
     ast.StmtVar(v) => {
       var r: WCapExpr = wcap_expr(v.init, fd, gfns, structs, mfuncs, acc, atargets);
-      return WCapStmt { stmt: ast.StmtVar { name: v.name, type_name: v.type_name, init: r.expr, line: v.line, col: v.col, is_view: v.is_view, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types }, caps: r.caps, changed: false };
+      return WCapStmt { stmt: ast.StmtVar { name: v.name, type_name: v.type_name, init: r.expr, line: v.line, col: v.col, is_view: v.is_view, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types }, caps: r.caps, changed: r.changed };
     },
     ast.StmtAssign(a) => {
       var r: WCapExpr = wcap_expr(a.value, fd, gfns, structs, mfuncs, acc, atargets);
-      return WCapStmt { stmt: ast.StmtAssign { target: a.target, value: r.expr, line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col }, caps: r.caps, changed: false };
+      return WCapStmt { stmt: ast.StmtAssign { target: a.target, value: r.expr, line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col }, caps: r.caps, changed: r.changed };
     },
     ast.StmtReturn(r) => {
       var rr: WCapExpr = wcap_expr(r.value, fd, gfns, structs, mfuncs, acc, atargets);
-      return WCapStmt { stmt: ast.StmtReturn { value: rr.expr, line: r.line, col: r.col }, caps: rr.caps, changed: false };
+      return WCapStmt { stmt: ast.StmtReturn { value: rr.expr, line: r.line, col: r.col }, caps: rr.caps, changed: rr.changed };
     },
     ast.StmtExpr(e) => {
       var er: WCapExpr = wcap_expr(e.value, fd, gfns, structs, mfuncs, acc, atargets);
-      return WCapStmt { stmt: ast.StmtExpr { value: er.expr, line: 0 }, caps: er.caps, changed: false };
+      return WCapStmt { stmt: ast.StmtExpr { value: er.expr, line: 0 }, caps: er.caps, changed: er.changed };
     },
     ast.StmtIf(f) => {
       var cr: WCapExpr = wcap_expr(f.cond, fd, gfns, structs, mfuncs, acc, atargets);
       var tb: WCapBody = box_wide_captures_stmts(f.then_body, fd, gfns, structs, mfuncs, atargets);
       var eb: WCapBody = box_wide_captures_stmts(f.else_body, fd, gfns, structs, mfuncs, atargets);
-      return WCapStmt { stmt: ast.StmtIf { cond: cr.expr, then_body: tb.stmts, else_body: eb.stmts, line: 0, else_chained: false, sugar: parser.no_match_sugar(), origin: "" }, caps: cr.caps, changed: tb.changed || eb.changed };
+      return WCapStmt { stmt: ast.StmtIf { cond: cr.expr, then_body: tb.stmts, else_body: eb.stmts, line: 0, else_chained: false, sugar: parser.no_match_sugar(), origin: "" }, caps: cr.caps, changed: cr.changed || tb.changed || eb.changed };
     },
     ast.StmtWhile(w) => {
       var cr: WCapExpr = wcap_expr(w.cond, fd, gfns, structs, mfuncs, acc, atargets);
       var wb: WCapBody = box_wide_captures_stmts(w.body, fd, gfns, structs, mfuncs, atargets);
-      return WCapStmt { stmt: ast.StmtWhile { cond: cr.expr, body: wb.stmts, label: w.label, line: w.line, is_loop: w.is_loop }, caps: cr.caps, changed: wb.changed };
+      return WCapStmt { stmt: ast.StmtWhile { cond: cr.expr, body: wb.stmts, label: w.label, line: w.line, is_loop: w.is_loop }, caps: cr.caps, changed: cr.changed || wb.changed };
     },
     ast.StmtFor(fr) => {
       var itr: WCapExpr = wcap_expr(fr.iter, fd, gfns, structs, mfuncs, acc, atargets);
       var fb: WCapBody = box_wide_captures_stmts(fr.body, fd, gfns, structs, mfuncs, atargets);
-      return WCapStmt { stmt: ast.StmtFor { var_name: fr.var_name, iter: itr.expr, body: fb.stmts, label: fr.label, line: fr.line }, caps: itr.caps, changed: fb.changed };
+      return WCapStmt { stmt: ast.StmtFor { var_name: fr.var_name, iter: itr.expr, body: fb.stmts, label: fr.label, line: fr.line }, caps: itr.caps, changed: itr.changed || fb.changed };
     },
     ast.StmtMatch(m) => {
       var sr: WCapExpr = wcap_expr(m.scrutinee, fd, gfns, structs, mfuncs, acc, atargets);
       var a: WCaps = sr.caps;
-      var mchanged: boolean = false;
+      var mchanged: boolean = sr.changed;
       var na: ast.MatchArm[] = [];
       for arm in m.arms {
         var ng: ast.Expr = arm.guard;
         if (arm.has_guard) {
           var gr: WCapExpr = wcap_expr(arm.guard, fd, gfns, structs, mfuncs, a, atargets);
           a = gr.caps;
+          if (gr.changed) {
+            mchanged = true;
+          }
           ng = gr.expr;
         }
         var ab: WCapBody = box_wide_captures_stmts(arm.body, fd, gfns, structs, mfuncs, atargets);

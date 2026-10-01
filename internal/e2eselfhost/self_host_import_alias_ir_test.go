@@ -44,7 +44,10 @@ func TestSelfHostImportAliasIR(t *testing.T) {
 function main(): i32 {
     var w = io.bytes_writer_new().write_string("ok");
     if (w.len() != 2) { return 1; }
-    if (w.into_string() != "ok") { return 2; }
+    match (w.into_string()) {
+        Some(s) => { if (s != "ok") { return 2; } },
+        None => { return 3; },
+    }
     return 0;
 }`
 	prog := filepath.Join(dir, "alias_prog.fern")

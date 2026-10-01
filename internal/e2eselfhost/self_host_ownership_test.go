@@ -186,18 +186,8 @@ function main(): i32 {
 }
 
 func TestSelfHostOwnershipInference(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	if len(runner) != 0 {
-		t.Skip("the CLI driver takes host filesystem paths as argv")
-	}
-	stdlibRoot, err := filepath.Abs("../../internal/stdlib")
-	if err != nil {
-		t.Fatal(err)
-	}
+	cli := buildSelfHostCLI(t)
 	interpBin := buildLangBinForInterp(t)
-	dir := writeSelfHostAsmProject(t)
-	copySelfHostDriver(t, dir, "fern.fern")
-	fernBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
 	for _, tc := range ownershipCases {
 		t.Run(tc.name, func(t *testing.T) {
 			if want := interpExit(t, interpBin, tc.src); want != 0 {
@@ -205,7 +195,9 @@ func TestSelfHostOwnershipInference(t *testing.T) {
 			}
 			for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
 				t.Run(target, func(t *testing.T) {
-					exit, stderr := selfHostCLIRun(t, fernBin, stdlibRoot, tc.src, target)
+					stderr, exit := cli.exitOf(t, tc.src, target,
+						"FERN_SEM_IR=1", "FERN_SEM_IR_STRICT=1", "FERN_STRICT_IR=1",
+						"FERN_SEM_IR_ONLY=", "FERN_SEM_IR_SKIP=", "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
 					if exit != 0 {
 						t.Fatalf("exit = %d, want 0 (interp oracle)\n%s", exit, stderr)
 					}
@@ -215,7 +207,7 @@ func TestSelfHostOwnershipInference(t *testing.T) {
 		})
 	}
 	t.Run("modes-in-the-emitted-code", func(t *testing.T) {
-		assertInferredModes(t, runner, fernBin, stdlibRoot)
+		assertInferredModes(t, cli.runner, cli.bin, cli.stdlib)
 	})
 }
 
@@ -332,7 +324,9 @@ func assertInferredModes(t *testing.T, runner []string, fernBin, stdlibRoot stri
 		t.Fatalf("write main.fern: %v", err)
 	}
 	asmPath := filepath.Join(proj, "out.s")
-	if out, err := runX86_64Bin(runner, fernBin, "-target", "x86-64-linux", "-emit", "asm", mainPath, stdlibRoot, "-o", asmPath).CombinedOutput(); err != nil {
+	cmd := runX86_64Bin(runner, fernBin, "-target", "x86-64-linux", "-emit", "asm", mainPath, stdlibRoot, "-o", asmPath)
+	cmd.Env = append(os.Environ(), "FERN_SEM_IR=1", "FERN_SEM_IR_STRICT=1", "FERN_STRICT_IR=1", "FERN_SEM_IR_ONLY=", "FERN_SEM_IR_SKIP=")
+	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("compile: %v (%s)", err, out)
 	}
 	asm, err := os.ReadFile(asmPath)
