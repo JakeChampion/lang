@@ -755,7 +755,7 @@ function ident(e: ast.Expr, id: ast.ExprIdent, s: State, expected: typeinfo.Type
   }
   var ty: typeinfo.Type = checked(e, s);
   if (ssasem.is_func(ty)) {
-    return refused(s, "function address is not a closure value");
+    return refused(s, "function address is not a closure value: " + id.name);
   }
   var whole: typeinfo.Type = literal_union(e, s, expected);
   if (names_variant(s, whole, id.name)) {

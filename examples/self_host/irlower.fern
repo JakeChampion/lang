@@ -98817,15 +98817,29 @@ function passthrough_call_boxable(rc: ast.ExprCall, callee: string, fd: parser.F
   var found: boolean = false;
   var i: i32 = 0;
   while (i < rc.args.len()) {
-    if (lift_callee_is_typevar_passthrough(mfuncs, callee, i) && lift_arg_is_passthrough_fn_value(rc.args[i], mfuncs)) {
-      if (!passthrough_arg_boxable(rc.args[i], fd, mfuncs)) {
+    if (lift_callee_is_typevar_passthrough(mfuncs, callee, i)) {
+      // A nested if-expression at a passthrough position is not boxed by
+      // try_fn_field_value's ident-callee case, so its arms would stay raw.
+      if (passthrough_arg_is_iife(rc.args[i])) {
         return false;
       }
-      found = true;
+      if (lift_arg_is_passthrough_fn_value(rc.args[i], mfuncs)) {
+        if (!passthrough_arg_boxable(rc.args[i], fd, mfuncs)) {
+          return false;
+        }
+        found = true;
+      }
     }
     i = i + 1;
   }
   return found;
+}
+
+function passthrough_arg_is_iife(arg: ast.Expr): boolean {
+  if let ast.ExprCall(c) = arg {
+    return is_iife_callee(c);
+  }
+  return false;
 }
 
 function passthrough_arg_boxable(arg: ast.Expr, fd: parser.FuncDecl, mfuncs: MFuncs): boolean {
@@ -98840,9 +98854,6 @@ function passthrough_arg_boxable(arg: ast.Expr, fd: parser.FuncDecl, mfuncs: MFu
       match (c.callee) {
         ast.ExprIdent(cid) => {
           return passthrough_call_boxable(c, cid.name, fd, mfuncs);
-        },
-        ast.ExprLambda(il) => {
-          return c.args.len() == 0 && il.params.len() == 0 && iife_arm_values_boxable(il.body, 0, fd, mfuncs) > 0;
         },
         _ => {
           return false;
