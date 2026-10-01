@@ -16,10 +16,25 @@ function view_head[T](xs: [T]): T {
   return xs[0];
 }
 
-// A concrete-element view receiver is not folded to a template: the typed
-// lowering reaches it by its receiver's key, which must see the view.
+// Concrete receivers keep the same namespaces, regardless of declaration order.
 function (xs: [u8]) back(): u8 {
   return xs[xs.len() - 1];
+}
+
+function (xs: u8[]) back(): u8 {
+  return xs[0];
+}
+
+function (xs: u8[]) edge(): u8 {
+  return xs[0];
+}
+
+function (xs: [u8]) edge(): u8 {
+  return xs[xs.len() - 1];
+}
+
+function (xs: [u8]) rest(): [u8] {
+  return xs[1:];
 }
 
 function main(): i32 {
@@ -51,8 +66,18 @@ function main(): i32 {
   if (bytes.pick() != 122 as u8 || source.as_bytes().pick() != 122 as u8) {
     return 7;
   }
-  if (bytes.back() != 122 as u8 || "hello".as_bytes().back() != 111 as u8) {
+  var owned: u8[] = [97 as u8, 122 as u8];
+  if (bytes.back() != 122 as u8 || owned.back() != 97 as u8) {
     return 12;
+  }
+  if (bytes.edge() != 122 as u8 || owned.edge() != 97 as u8) {
+    return 13;
+  }
+  if (source.as_bytes().back() != 122 as u8 || "hello".as_bytes().back() != 111 as u8 || bytes.rest().back() != 122 as u8) {
+    return 14;
+  }
+  if ((if (source.len() == 2) { bytes } else { source.as_bytes() }).back() != 122 as u8) {
+    return 15;
   }
   var rows: i32[][] = [[9, 11], [13, 15]];
   var row_view: [i32[]] = rows[:];

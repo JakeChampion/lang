@@ -2817,12 +2817,8 @@ function e021_bound_call_diag(pbound: string, at: typeinfo.Type, s: Scope, ln: i
 // signature. A view receiver (`[T]`) has a separate namespace; the caller
 // selects that namespace from the checked receiver type.
 //
-// Resolution accepts a concrete element; LOWERING does not yet. One
-// `(arr: i32[]) name()` declaration anywhere in a bundle costs an unrelated
-// generic its type-parameter substitution — `num.sum`'s `T.zero()` lowers to
-// a `const_func "T"` and the module is refused as not IR-eligible. That gap is
-// why std/array still declares its concrete-element verbs as
-// `__method_Array_<name>` free functions.
+// Lowering folds concrete methods without method type parameters into free
+// functions keyed by the receiver element and namespace before view erasure.
 function array_receiver_matches(rt: string, view: boolean): boolean {
   if (view) {
     return parser.spelling_is_view(rt);
@@ -22154,6 +22150,9 @@ function type_to_irtag(t: typeinfo.Type): string {
       if (elem.len() == 0) {
         return "";
       }
+      if (a.view) {
+        return "[" + elem + "]";
+      }
       return elem + "[]";
     },
     typeinfo.TypeFunc(_) => {
@@ -22273,6 +22272,9 @@ function type_to_arrtag(t: typeinfo.Type): string {
       var et: string = type_to_irtag(a.elem);
       if (et == "") {
         return "";
+      }
+      if (a.view) {
+        return "[" + et + "]";
       }
       return et + "[]";
     },
@@ -23194,8 +23196,9 @@ function vb_annotation_of(t: typeinfo.Type): string {
       if (type_label(a.elem) == "str") {
         return "";
       }
-      // A spelling, not a message: lowering reads a view as the owned array.
-      return type_label(t_array(a.elem));
+      // Keep the checked namespace until method calls have been resolved.
+      // The AST lowering erases views only after the typed module is built.
+      return typeinfo.spelling(t);
     },
     typeinfo.TypeUnion(u) => {
       if (u.args.len() == 0) {
