@@ -13769,6 +13769,38 @@ function (s: Scope) call_param_types(c: ast.ExprCall): typeinfo.Type[] {
   return [];
 }
 
+// for_iter_diags reports a `for` over a value that is not an array, string or
+// map. Native lowers such a loop to `ITER.len()` and `ITER[i]`, so the iterand
+// draws exactly that shape's E043 and E034 here, on the loop's line.
+function for_iter_diags(fr: ast.StmtFor, s: Scope): util.Diag[] {
+  var none: util.Diag[] = [];
+  if (for_iter_is_range(fr.iter)) {
+    return none;
+  }
+  var it: typeinfo.Type = check_expr(fr.iter, s);
+  match (it) {
+    typeinfo.TypeArray(_) => {
+      return none;
+    },
+    typeinfo.TypeString(_) => {
+      return none;
+    },
+    typeinfo.TypeMap(_) => {
+      return none;
+    },
+    _ => {}
+  }
+  if (is_unknown(it)) {
+    return none;
+  }
+  var col: i32 = expr_col(fr.iter);
+  var bound: Scope = s.bind("__for_iter", it);
+  var iter: ast.Expr = ast.ExprIdent { name: "__for_iter", line: fr.line, col: col, ty: "" };
+  var len_call: ast.Expr = ast.ExprCall { callee: ast.ExprFieldAccess { obj: iter, field: "len", line: fr.line, col: col, ty: "" }, args: [], line: fr.line, col: col, type_args: [], ty: "" };
+  var first: ast.Expr = ast.ExprIndex { array: iter, index: ast.ExprNumber { text: "0", suffix: "", raw: "", is_float: false, line: fr.line, col: col }, unchecked: false, ty: "", line: fr.line, col: col };
+  return util.append_diags(call_diags(len_call, bound), call_diags(first, bound));
+}
+
 function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
   var out: util.Diag[] = [];
   var cur: Scope = s;
@@ -13831,6 +13863,7 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
       },
       ast.StmtFor(fr) => {
         out = util.append_diags(out, call_diags(fr.iter, cur));
+        out = util.append_diags(out, for_iter_diags(fr, cur));
         out = util.append_diags(out, stmts_call_diags(fr.body, for_body_scope(fr, cur)));
       },
       ast.StmtMatch(m) => {
@@ -16919,7 +16952,7 @@ function ow_result_borrows(mod: parser.Module, ofuncs: OwnFunc[], builtins: util
     var unmarked: parser.FuncDecl[] = [];
     for fn in pending {
       if ((first || ow_calls_any(fn, marked)) && ow_func_result_borrows(fn, mod, ofuncs, borrows, builtins)) {
-        borrows = util.name_index(borrows.names.append(fn.name));
+        borrows = borrows.added(fn.name);
         now_marked = now_marked.append(fn.name);
       } else {
         unmarked = unmarked.append(fn);

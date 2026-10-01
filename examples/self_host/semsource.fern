@@ -6584,16 +6584,15 @@ function hands_back(fd: parser.FuncDecl, known: util.NameIndex): boolean {
 // count to keep the other reference safe and its bytes belong to a source
 // the caller may release first.
 function handers(mod: parser.Module): util.NameIndex {
-  var out: string[] = [];
-  var found: util.NameIndex = util.name_index(out);
+  var none: string[] = [];
+  var found: util.NameIndex = util.name_index(none);
   var changed: boolean = true;
   while (changed) {
     changed = false;
     for fd in mod.funcs {
       var key: string = decl_key(fd);
       if (!found.has(key) && hands_back(fd, found)) {
-        out = out.append(key);
-        found = util.name_index(out);
+        found = found.added(key);
         changed = true;
       }
     }

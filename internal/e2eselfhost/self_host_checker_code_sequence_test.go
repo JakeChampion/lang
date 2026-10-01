@@ -58,6 +58,8 @@ func TestSelfHostCheckerCodeSequenceX86_64(t *testing.T) {
 		want    string
 		withMsg bool
 	}{
+		// A loop over a struct: the `.len()` miss, then the index, once each.
+		{"for-over-struct", "struct Box { k: i32 }\nfunction main(): i32 { var b: Box = Box { k: 1 }; for it in b { var k: i32 = it.k; } return 0; }\n", "E043(struct Box has no field \"len\"),E034(indexing non-array value of type Box)", true},
 		// Two independent leaks in one function: multiplicity, no ordering
 		// question. A collector that starts reporting a leak twice fails here
 		// while every set-based gate stays green.
