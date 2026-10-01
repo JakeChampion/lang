@@ -28,8 +28,8 @@ name: Test e2e self-host
 # self-host compiler (bootstrap/stage0.lock, fetched once per job by
 # bootstrap/bootstrap.sh), ~90-105 s per driver and 300 s for fern.fern
 # (docs/LOCAL-DEV-LOOP.md), so a shard that misses the cache pays its distinct
-# drivers first and its tests second. `driver-sizes` builds every stock driver
-# and is the job that saves the cache.
+# drivers first and its tests second. `driver-sizes` builds every stock x86
+# driver and saves that cache; the aarch64 shard saves the Linux ARM64 one.
 #
 # TWO WORKERS PER SHARD. Each x86 shard runs its selection as two isolated
 # processes through cmd/ci-test-workers (docs/CI-X86-WORKERS.md), each with
@@ -455,7 +455,11 @@ jobs:
       - uses: ./.github/actions/setup-fern
         with:
           wasmtime: "true"
+      # The aarch64 shard is the one Linux ARM64 job that builds the stock
+      # drivers natively, so it is the job that saves that arch's cache.
       - uses: ./.github/actions/selfhost-driver-cache
+        with:
+          save: ${{ matrix.host == 'aarch64' && 'true' || 'false' }}
       - name: aarch64 cross toolchain (x86 shards — arm64 cross-emit tests)
         if: matrix.host == 'x86_64'
         uses: ./.github/actions/apt-cross-toolchain

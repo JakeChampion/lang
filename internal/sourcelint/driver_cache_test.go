@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -19,17 +20,19 @@ const driverCacheAction = "./.github/actions/selfhost-driver-cache"
 // would hand a job a driver built from other sources, and the tests would pass
 // against the wrong compiler.
 func TestDriverBuildingJobsRestoreTheDriverCache(t *testing.T) {
-	// Lane file -> the one job that saves. Every job in the file that calls
-	// setup-fern (or, on macOS, installs the toolchain) builds drivers or runs
-	// tests that may, so every one of them restores.
-	lanes := map[string]string{
-		"test-e2e-selfhost.yml": "driver-sizes",
-		"test-e2e-other.yml":    "",
-		"test-e2e-arm64.yml":    "",
-		"test-e2e-wasm.yml":     "",
-		"macos.yml":             "test-arm64-darwin",
+	// Lane file -> the jobs that save, one per runner OS and arch the lane
+	// builds drivers on (the cache key is per OS and arch, so an arch nobody
+	// saves for restores nothing). Every job in the file that calls setup-fern
+	// (or, on macOS, installs the toolchain) builds drivers or runs tests that
+	// may, so every one of them restores.
+	lanes := map[string][]string{
+		"test-e2e-selfhost.yml": {"driver-sizes", "test"},
+		"test-e2e-other.yml":    nil,
+		"test-e2e-arm64.yml":    nil,
+		"test-e2e-wasm.yml":     nil,
+		"macos.yml":             {"test-arm64-darwin"},
 	}
-	for file, saver := range lanes {
+	for file, want := range lanes {
 		src := workflowSource(t, file)
 		var savers []string
 		// Per job, textually: the jobs block split on job headers.
@@ -61,11 +64,10 @@ func TestDriverBuildingJobsRestoreTheDriverCache(t *testing.T) {
 				savers = append(savers, id)
 			}
 		}
-		switch {
-		case saver == "" && len(savers) != 0:
-			t.Errorf("%s: %v save the driver cache; this lane only restores (its shards would each upload a near-identical directory per tree)", file, savers)
-		case saver != "" && (len(savers) != 1 || savers[0] != saver):
-			t.Errorf("%s: the driver cache must be saved by exactly %q, got %v", file, saver, savers)
+		sort.Strings(savers)
+		if strings.Join(savers, ",") != strings.Join(want, ",") {
+			t.Errorf("%s: the driver cache must be saved by exactly %v (one job per runner OS and arch), got %v; "+
+				"a lane's other jobs only restore, or its shards each upload a near-identical directory per tree", file, want, savers)
 		}
 	}
 
