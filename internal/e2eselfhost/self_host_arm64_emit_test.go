@@ -7,11 +7,10 @@ import (
 
 // TestSelfHostAsmArm64Bootstrap compiles each case through the self-hosted
 // CLI (`fern.fern`, built for the x86-64 host) with `-target arm64-linux
-// -emit asm` under FERN_SEM_IR_STRICT, assembles the output with
-// aarch64-linux-gnu-gcc and runs it under qemu-aarch64 (or natively on an
-// arm64 host), checking the exit code and, where a case names one, stdout.
-// Strict mode makes a declaration the typed lowering refuses a failure rather
-// than an AST-lowered fallback. A case is either a whole program or bare
+// -emit asm`, assembles the output with aarch64-linux-gnu-gcc and runs it
+// under qemu-aarch64 (or natively on an arm64 host), checking the exit code
+// and, where a case names one, stdout. A declaration the typed lowering
+// refuses fails the compile. A case is either a whole program or bare
 // statements, which the CLI wraps into `main`.
 func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 	gcc, qemu := arm64Tooling(t)

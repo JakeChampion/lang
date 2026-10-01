@@ -169,7 +169,7 @@ func TestSelfHostArm64LeakcheckOffEmitsNothing(t *testing.T) {
 func arm64CensusRun(t *testing.T, x86runner []string, driverBin, gcc, qemu, name, src string) int {
 	t.Helper()
 	asm := runCaptureEnv(t, x86runner, driverBin, []byte(src),
-		[]string{"PATH=/usr/bin:/bin", "FERN_LEAKCHECK=1", "FERN_SEM_IR_STRICT=1"}, "-target", "arm64-linux")
+		[]string{"PATH=/usr/bin:/bin", "FERN_LEAKCHECK=1"}, "-target", "arm64-linux")
 	return arm64Census(t, gcc, qemu, name, string(asm))
 }
 

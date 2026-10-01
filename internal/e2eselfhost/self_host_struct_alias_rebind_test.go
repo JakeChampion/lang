@@ -62,8 +62,8 @@ func TestSelfHostStructAliasRebindX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	cli := buildLangBinForInterp(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "asm_load_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "asm_load_run.fern", "driver")
 
 	for _, tc := range structAliasRebindCases {
 		t.Run(tc.name, func(t *testing.T) {

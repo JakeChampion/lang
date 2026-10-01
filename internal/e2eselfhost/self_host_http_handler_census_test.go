@@ -97,7 +97,7 @@ func requireCompleteHTTPSemanticLowering(t *testing.T, report []byte) {
 	t.Helper()
 	// Correct responses alone could conceal an AST fallback and its ownership.
 	rows := regexp.MustCompile(`FERN_SEM_IR: module: produced ([0-9]+) of ([0-9]+) declarations and ([0-9]+) of ([0-9]+) instances`).FindAllStringSubmatch(string(report), -1)
-	if len(rows) == 0 || strings.Contains(string(report), "refused") || strings.Contains(string(report), "the AST lowering stands") {
+	if len(rows) == 0 || strings.Contains(string(report), "refused") {
 		t.Fatalf("HTTP fixture must use semantic ownership: %s", report)
 	}
 	for _, row := range rows {

@@ -73,13 +73,13 @@ func testSelfHostStrArrayWithReclaim(t *testing.T, target string) {
 	t.Helper()
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "asm_load_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "asm_load_run.fern", "driver")
 
 	liveOf := func(t *testing.T, name string, rounds int, update string) int64 {
 		t.Helper()
 		src := strings.Replace(strArrayWithChurnSrc(rounds, true), "a = a.with(3, a[5]);", update, 1)
-		asm := runCaptureEnv(t, runner, driverBin, []byte(src), []string{"PATH=/usr/bin:/bin", "FERN_LEAKCHECK=1"}, "-target", target)
+		asm := mustLoadCompile(t, runner, driverBin, src, []string{"FERN_LEAKCHECK=1"}, "-target", target)
 		var cmd *exec.Cmd
 		if target == "arm64-linux" {
 			armgcc, qemu := arm64Tooling(t)

@@ -15,7 +15,7 @@ import (
 // keeps the units it asked for. The functions no module declares (the generic
 // instances, a lifted closure) are the entry's and are emitted once, by the
 // unit that ends the entry module. FERN_SEM_IR= still selects the AST
-// lowering, and FERN_SEM_IR_STRICT fails an emit rather than fall back.
+// lowering, and a refusal fails the emit.
 func TestSelfHostWasmModloadTypedLowering(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -161,7 +161,7 @@ function main(): i32 {
 		var planText strings.Builder
 		for idx, n := range strings.Fields(counts) {
 			rng := "0:" + n
-			_, se, code := drive(t, entry, []string{"FERN_SEM_IR_STRICT=1"}, "-per-module-emit", strconv.Itoa(idx), "-func-range", rng, "-cache-dir", cacheDir)
+			_, se, code := drive(t, entry, nil, "-per-module-emit", strconv.Itoa(idx), "-func-range", rng, "-cache-dir", cacheDir)
 			if code != 0 {
 				t.Fatalf("emit %d: exit %d\n%s", idx, code, se)
 			}
@@ -198,7 +198,7 @@ function main(): i32 {
 	// A type that holds itself, merged past its source, has no copy and is a
 	// typed refusal by name (TestSelfHostSemIRStrict); a dyn holding a view
 	// is copied at the merge since #10909.
-	t.Run("strict_refusal_fails_the_emit", func(t *testing.T) {
+	t.Run("refusal_fails_the_emit", func(t *testing.T) {
 		proj := t.TempDir()
 		entry := filepath.Join(proj, "main.fern")
 		write(t, entry, `import "std/i32";
@@ -221,12 +221,9 @@ function g(n: i32): i32 {
 }
 function main(): i32 { return g(3) + g(0); }
 `)
-		_, se, code := drive(t, entry, []string{"FERN_SEM_IR_STRICT=1"}, "-per-module-emit", "0")
+		_, se, code := drive(t, entry, nil, "-per-module-emit", "0")
 		if code != 3 || !strings.Contains(se, "FERN_SEM_IR: g: a value merged past its source has no copy: L holds itself, so its copy would recurse") {
-			t.Fatalf("strict emit: exit %d, want 3 naming the refusal\n%s", code, se)
-		}
-		if _, se, code := drive(t, entry, []string{"FERN_SEM_IR_STRICT="}, "-per-module-emit", "0"); code != 0 {
-			t.Fatalf("the same without strict: exit %d, want the AST lowering's emit\n%s", code, se)
+			t.Fatalf("emit: exit %d, want 3 naming the refusal\n%s", code, se)
 		}
 	})
 }

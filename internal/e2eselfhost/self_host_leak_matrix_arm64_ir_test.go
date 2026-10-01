@@ -53,21 +53,12 @@ func nativeLeakVerdictArm64(t *testing.T, cli, qemu, dir, name, src string) (lea
 
 func selfHostLeakVerdictArm64(t *testing.T, arm64gcc, qemu string, x86runner []string, driverBin, dir, name, src string) (leakVerdict, int) {
 	t.Helper()
-	var cmd *exec.Cmd
-	args := []string{"-target", "arm64-linux"}
-	if len(x86runner) == 0 {
-		cmd = exec.Command(driverBin, args...)
-	} else {
-		cmd = exec.Command(x86runner[0], append(append(append([]string{}, x86runner[1:]...), driverBin), args...)...)
-	}
-	cmd.Stdin = strings.NewReader(src)
-	cmd.Env = []string{"PATH=/usr/bin:/bin", "FERN_LEAKCHECK=1"}
-	asm, err := cmd.Output()
-	if err != nil || len(asm) == 0 {
-		t.Logf("%s: self-host arm64 compile refused: %v", name, err)
+	asm, stderr, err := loadCompile(t, x86runner, driverBin, src, []string{"FERN_LEAKCHECK=1"}, "-target", "arm64-linux")
+	if err != nil {
+		t.Logf("%s: self-host arm64 compile refused: %v\n%s", name, err, stderr)
 		return verdictError, -1
 	}
-	bin := buildBinArm64(t, arm64gcc, dir, "leakmxa64_"+name, string(asm))
+	bin := buildBinArm64(t, arm64gcc, dir, "leakmxa64_"+name, asm)
 	rcmd := runArm64Bin(qemu, bin)
 	var errBuf strings.Builder
 	rcmd.Stderr = &errBuf
@@ -127,8 +118,8 @@ func TestSelfHostLeakMatrixIRArm64(t *testing.T) {
 	x86gcc, x86runner := x86_64Tooling(t)
 	cli := buildLangBinForInterp(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "asm_load_run.fern")
+	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_load_run.fern", "driver")
 
 	cells := leakMatrixCells()
 	seen := map[string]bool{}

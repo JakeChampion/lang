@@ -9,11 +9,9 @@ import (
 	"testing"
 )
 
-// FERN_SEM_IR_STRICT=1 turns the silent fallback to the AST lowering into a
-// failed compile: exit 3, after the refusals FERN_SEM_IR_REPORT would print.
-// A module the typed path produces whole compiles as it would without the flag,
-// and without the flag a refused one still compiles. A runtime helper the typed
-// path refuses fails the compile the same way.
+// A module the typed lowering refuses fails the compile: exit 3, after a
+// `FERN_SEM_IR:` line naming each refusal. Every compile here runs with no
+// FERN_ variable of the caller's (childEnv).
 func TestSelfHostSemIRStrict(t *testing.T) {
 	gcc, _ := x86_64Tooling(t)
 	stdlibRoot, err := filepath.Abs("../../internal/stdlib")
@@ -30,7 +28,7 @@ func TestSelfHostSemIRStrict(t *testing.T) {
 			t.Fatal(err)
 		}
 		cmd := exec.Command(fernBin, "-target", target, path, stdlibRoot, "-o", filepath.Join(t.TempDir(), "prog"))
-		cmd.Env = append(os.Environ(), env...)
+		cmd.Env = childEnv(env...)
 		var stderr strings.Builder
 		cmd.Stderr = &stderr
 		err := cmd.Run()
@@ -48,8 +46,8 @@ func TestSelfHostSemIRStrict(t *testing.T) {
 	}
 
 	produced := "function add(a: i32, b: i32): i32 { return a + b; }\nfunction main(): i32 { return add(2, 3); }\n"
-	if code, out := compile(produced, "FERN_SEM_IR_STRICT=1"); code != 0 {
-		t.Fatalf("a module produced whole: exit %d under strict\n%s", code, out)
+	if code, out := compile(produced); code != 0 {
+		t.Fatalf("a module produced whole: exit %d\n%s", code, out)
 	}
 	// A trait method implemented for `str` in an imported module: the call
 	// names `string.shout`, which the contract is keyed by too (#10883).
@@ -62,17 +60,17 @@ func TestSelfHostSemIRStrict(t *testing.T) {
 	}
 	strTraitBin := filepath.Join(strTrait, "prog")
 	strTraitBuild := exec.Command(fernBin, "-target", "x86-64-linux", filepath.Join(strTrait, "main.fern"), stdlibRoot, "-o", strTraitBin)
-	strTraitBuild.Env = append(os.Environ(), "FERN_SEM_IR_STRICT=1")
+	strTraitBuild.Env = childEnv()
 	if out, err := strTraitBuild.CombinedOutput(); err != nil {
-		t.Fatalf("an imported trait method on str under strict: %v\n%s", err, out)
+		t.Fatalf("an imported trait method on str: %v\n%s", err, out)
 	}
 	var strTraitExit *exec.ExitError
 	if err := exec.Command(strTraitBin).Run(); !errors.As(err, &strTraitExit) || strTraitExit.ExitCode() != 3 {
-		t.Fatalf("an imported trait method on str under strict: %v, want exit 3", err)
+		t.Fatalf("an imported trait method on str: %v, want exit 3", err)
 	}
 	async := "async function compute(): i32 { return 7; }\nfunction main(): i32 { return compute(); }\n"
-	if code, out := compile(async, "FERN_SEM_IR_STRICT=1"); code != 0 {
-		t.Fatalf("an async function: exit %d under strict\n%s", code, out)
+	if code, out := compile(async); code != 0 {
+		t.Fatalf("an async function: exit %d\n%s", code, out)
 	}
 
 	// Each target spells the clock, id and termios helpers' sources on its own
@@ -88,13 +86,13 @@ func TestSelfHostSemIRStrict(t *testing.T) {
 }
 `
 	for _, target := range []string{"x86-64-linux", "arm64-linux", "arm64-darwin"} {
-		if code, out := compileFor(target, helpers, "FERN_SEM_IR_STRICT=1"); code != 0 {
-			t.Errorf("%s: the runtime helpers: exit %d under strict\n%s", target, code, out)
+		if code, out := compileFor(target, helpers); code != 0 {
+			t.Errorf("%s: the runtime helpers: exit %d\n%s", target, code, out)
 		}
 	}
 
 	// A read of a view map value takes a fresh box rather than the column's
-	// own, so it compiles under strict (#10701).
+	// own, so the typed lowering takes it (#10701).
 	viewRead := `import "core/map";
 function main(): i32 {
     var b: string = "abcdefgh";
@@ -109,13 +107,13 @@ function main(): i32 {
 	}
 	viewBin := filepath.Join(t.TempDir(), "prog")
 	viewBuild := exec.Command(fernBin, "-target", "x86-64-linux", viewSrc, stdlibRoot, "-o", viewBin)
-	viewBuild.Env = append(os.Environ(), "FERN_SEM_IR_STRICT=1")
+	viewBuild.Env = childEnv()
 	if out, err := viewBuild.CombinedOutput(); err != nil {
-		t.Fatalf("a view map value read under strict: %v, want the typed lowering's compile\n%s", err, out)
+		t.Fatalf("a view map value read: %v, want the typed lowering's compile\n%s", err, out)
 	}
 	var viewExit *exec.ExitError
 	if err := exec.Command(viewBin).Run(); !errors.As(err, &viewExit) || viewExit.ExitCode() != 4 {
-		t.Fatalf("a view map value read under strict: %v, want exit 4", err)
+		t.Fatalf("a view map value read: %v, want exit 4", err)
 	}
 
 	// A function value whose type no declaration spells (`fs[0]`) keys no
@@ -131,9 +129,9 @@ function main(): i32 {
 		}
 		bin := filepath.Join(t.TempDir(), "prog")
 		build := exec.Command(fernBin, "-target", "x86-64-linux", path, stdlibRoot, "-o", bin)
-		build.Env = append(os.Environ(), "FERN_SEM_IR_STRICT=1")
+		build.Env = childEnv()
 		if out, err := build.CombinedOutput(); err != nil {
-			t.Fatalf("compile under strict: %v\n%s", err, out)
+			t.Fatalf("compile: %v\n%s", err, out)
 		}
 		var exit *exec.ExitError
 		if err := exec.Command(bin).Run(); !errors.As(err, &exit) || exit.ExitCode() != want {
@@ -192,7 +190,7 @@ function main(): i32 { return hold(pick(1)) + hold((): string => "x"); }
 	}
 	pickAsm := filepath.Join(t.TempDir(), "prog.s")
 	emit := exec.Command(fernBin, "-target", "x86-64-linux", "-emit", "asm", pickSrc, stdlibRoot, "-o", pickAsm)
-	emit.Env = append(os.Environ(), "FERN_SEM_IR_STRICT=1")
+	emit.Env = childEnv()
 	if out, err := emit.CombinedOutput(); err != nil {
 		t.Fatalf("a generic callee's function result: %v\n%s", err, out)
 	}
@@ -295,8 +293,9 @@ function main(): i32 {
 }
 `, "FERN_SEM_IR: viewer: closure capture type"},
 	} {
-		if code, out := compile(c.src, "FERN_SEM_IR_STRICT=1"); code != 3 || !strings.Contains(out, c.why) {
-			t.Fatalf("%s: exit %d under strict, want 3 naming %q\n%s", c.name, code, c.why, out)
+		code, out := compile(c.src)
+		if code != 3 || !strings.Contains(out, c.why) || !strings.Contains(out, "FERN_SEM_IR: the typed lowering refused") {
+			t.Fatalf("%s: exit %d, want 3 naming %q\n%s", c.name, code, c.why, out)
 		}
 	}
 
@@ -320,8 +319,8 @@ function main(): i32 {
 }
 `
 	for _, target := range []string{"x86-64-linux", "arm64-linux", "arm64-darwin"} {
-		if code, out := compileFor(target, handleFd, "FERN_SEM_IR_STRICT=1"); code != 0 {
-			t.Errorf("%s: a handle's fd read: exit %d under strict\n%s", target, code, out)
+		if code, out := compileFor(target, handleFd); code != 0 {
+			t.Errorf("%s: a handle's fd read: exit %d\n%s", target, code, out)
 		}
 	}
 
@@ -330,7 +329,6 @@ function main(): i32 {
 	// holding itself. The AST lowering leaks both on x86-64 and emits an
 	// invalid wasm module for the wide one, so the answer is pinned rather than
 	// compared with it.
-	t.Setenv("FERN_SEM_IR_STRICT", "1")
 	for _, c := range []struct{ name, src, want string }{
 		{"wide-and-nested", `import "std/i32";
 import "std/i64";
@@ -377,5 +375,57 @@ function main(): i32 {
 				semLeaks(t, target, leak, 0)
 			}
 		})
+	}
+}
+
+// TestSelfHostSemIRRuntimeHelperRefusal pins the runtime-helper half: a helper
+// source the typed lowering refuses fails the compile with exit 3, naming the
+// helper, with no FERN_ variable set. No shipped helper is refused, so the
+// driver is built from a copy whose `chr` source holds its block in an i32,
+// which does not type-check. Under a bisect knob the helper keeps the AST
+// lowering instead.
+func TestSelfHostSemIRRuntimeHelperRefusal(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	dir := writeSelfHostAsmProject(t)
+	copySelfHostDriver(t, dir, "asm_run.fern")
+	core := filepath.Join(dir, "asmcore.fern")
+	src, err := os.ReadFile(core)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const typed = "function __fern_chr(b: i32): string { var p: usize = __raw_alloc(1);"
+	if strings.Count(string(src), typed) != 1 {
+		t.Fatalf("asmcore.fern no longer spells rt_src_chr as %q", typed)
+	}
+	broken := strings.Replace(string(src), typed, "function __fern_chr(b: i32): string { var p: i32 = __raw_alloc(1);", 1)
+	if err := os.WriteFile(core, []byte(broken), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
+
+	const prog = "function main(): i32 { var s: string = chr(65); return s.len(); }\n"
+	emit := func(env ...string) (string, string, int) {
+		var cmd *exec.Cmd
+		if len(runner) == 0 {
+			cmd = exec.Command(driverBin)
+		} else {
+			cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), driverBin)...)
+		}
+		cmd.Stdin = strings.NewReader(prog)
+		cmd.Env = childEnv(env...)
+		var stdout, stderr strings.Builder
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+		_ = cmd.Run()
+		return stdout.String(), stderr.String(), cmd.ProcessState.ExitCode()
+	}
+
+	_, stderr, code := emit()
+	if code != 3 || !strings.Contains(stderr, "FERN_SEM_IR: runtime __fern_chr: does not type-check") ||
+		!strings.Contains(stderr, "FERN_SEM_IR: the typed lowering refused runtime helper __fern_chr") {
+		t.Fatalf("exit %d, want 3 naming the refused helper\n%s", code, stderr)
+	}
+	if asm, stderr, code := emit("FERN_SEM_IR_SKIP=__fern_chr"); code != 0 || !strings.Contains(asm, "__fn___fern_chr:") {
+		t.Fatalf("under FERN_SEM_IR_SKIP: exit %d, want the AST lowering's helper\n%s", code, stderr)
 	}
 }

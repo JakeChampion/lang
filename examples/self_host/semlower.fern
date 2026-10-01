@@ -6,17 +6,18 @@
 // now the only thing that ran that chain over a whole module was a test driver;
 // this is where a whole-program emit path asks for it.
 //
-// The substitution is whole or nothing: every declaration produced, and
-// `ircore.lower_gated` reads the produced bodies in place of lowering them, or
-// none, and the module keeps the AST lowering it always had. With FERN_SEM_IR
-// empty, what a backend receives is what it received before, op for op.
+// The substitution is whole: every declaration produced, and
+// `ircore.lower_gated` reads the produced bodies in place of lowering them. A
+// refusal fails the compile with exit 3, after a line naming each one. With
+// FERN_SEM_IR empty, a backend receives the AST lowering, op for op.
 //
 // The result is handed to the emit path as a VALUE (`ircore.Sub`) rather than
 // produced inside it, so that only a driver that wants the path links the
 // pipeline behind it. Linking it everywhere cost the eight backend-carrying
 // drivers 6.7-10.2% of their bytes for a flag they never read.
 //
-// Two contracts hold the mixed module together, one per direction:
+// Only the bisect knobs (FERN_SEM_IR_ONLY / FERN_SEM_IR_SKIP) build a mixed
+// module, and two contracts hold it together, one per direction:
 //
 //   - An AST-lowered CALLER of a produced callee reads registries derived from
 //     that callee's SYNTAX, which disagree with the contract a produced body
@@ -88,9 +89,9 @@ pub function sem_ir_on(): boolean {
   }
 }
 
-// sem_report_on reports whether FERN_SEM_IR_REPORT asks for a line per refusal
-// on stderr, and the per-module tally. Nothing about the emitted program
-// changes with it; it only says what was produced and why the rest was not.
+// sem_report_on reports whether FERN_SEM_IR_REPORT asks for the per-module
+// tally, and for a line per declaration when a bisect knob keeps a mixed
+// module. Nothing about the emitted program changes with it.
 pub function sem_report_on(): boolean {
   match (env("FERN_SEM_IR_REPORT")) {
     Some(v) => {
@@ -181,29 +182,23 @@ function selected(only: string, skip: string, name: string): boolean {
   return has_prefix_in(only, name);
 }
 
-// sem_strict_on reports whether FERN_SEM_IR_STRICT makes a module the typed
-// path does not produce whole a hard error, where it would keep the AST
-// lowering. The refusals are reported first, as FERN_SEM_IR_REPORT would.
-pub function sem_strict_on(): boolean {
-  match (env("FERN_SEM_IR_STRICT")) {
-    Some(v) => {
-      return v.len() > 0;
-    },
-    None => {
-      return false;
-    }
-  }
+// bisecting reports whether a bisect knob is set, the one case where a
+// refusal keeps the AST lowering for what it covers rather than failing the
+// compile.
+function bisecting(): boolean {
+  return sem_ir_only() != "" || sem_ir_skip() != "";
 }
 
+// report names a refusal on stderr. Outside the bisect knobs every refusal
+// fails the compile, and the line is the error's detail.
 function report(what: string, why: string): i32 {
-  if (sem_report_on() || sem_strict_on()) {
+  if (sem_report_on() || !bisecting()) {
     eprint("FERN_SEM_IR: " + what + ": " + why);
   }
   return 0;
 }
 
-// tally reports what was produced. Strict prints only the refusals, so a
-// strict compile that succeeds writes nothing to stderr.
+// tally reports what was produced; only FERN_SEM_IR_REPORT prints it.
 function tally(what: string, why: string): i32 {
   if (sem_report_on()) {
     eprint("FERN_SEM_IR: " + what + ": " + why);
@@ -423,7 +418,7 @@ function ast_lowered(built: semsource.Built, r: Rows, i: i32): boolean {
   if (i >= built.decls.len() || !built.decls[i].template) {
     return true;
   }
-  return sem_ir_only() != "" || sem_ir_skip() != "";
+  return bisecting();
 }
 
 // Whether a function type carries a reference: a parameter or the result
@@ -969,22 +964,14 @@ pub function substitution(mod: parser.Module, lowered: parser.FuncDecl[], struct
     sigs = irlower.consume_sigs(sigs, lowered, consumed);
   }
   util.arr_push_cliff_report("sem:substituted", 0);
-  // Production is all or nothing: a module with a refused declaration keeps
-  // the AST lowering whole, since a produced body beside an AST-lowered one
-  // is two memory conventions on one module, sound only where the contracts
-  // `prune` reads cover every crossing. The bisect knobs keep the mixed
-  // module, which is what they exist to halve. An instance has no AST body
-  // to fall back on, so a refused one is refused production too.
+  // A refused declaration or instance fails the compile. The bisect knobs
+  // keep the mixed module, which is what they exist to halve: a produced body
+  // beside an AST-lowered one is two memory conventions on one module, sound
+  // only where the contracts `prune` reads cover every crossing.
   var refused_n: i32 = mod.funcs.len() - n + built.instances.len() - instances.len();
-  if (refused_n > 0 && sem_ir_only() == "" && sem_ir_skip() == "") {
-    report("module", "produced 0 of " + util.i32_to_string(mod.funcs.len()) + " declarations and 0 of "
-      + util.i32_to_string(built.instances.len()) + " instances: "
-      + util.i32_to_string(refused_n) + " refused, the AST lowering stands");
-    if (sem_strict_on()) {
-      eprint("FERN_SEM_IR_STRICT: the typed lowering refused " + util.i32_to_string(refused_n) + " declarations and instances; the FERN_SEM_IR lines above name each");
-      exit(3);
-    }
-    return ircore.no_sub();
+  if (refused_n > 0 && !bisecting()) {
+    eprint("FERN_SEM_IR: the typed lowering refused " + util.i32_to_string(refused_n) + " declarations and instances; the FERN_SEM_IR lines above name each");
+    exit(3);
   }
   tally("module", "produced " + util.i32_to_string(n) + " of "
     + util.i32_to_string(mod.funcs.len()) + " declarations and "
@@ -993,7 +980,7 @@ pub function substitution(mod: parser.Module, lowered: parser.FuncDecl[], struct
   // A module produced whole calls no template's erased body: every caller
   // is produced and calls an instance. Under the bisect knobs an AST-lowered
   // caller may still call it, so there the AST lowering stands.
-  if (n == mod.funcs.len() && sem_ir_only() == "" && sem_ir_skip() == "") {
+  if (n == mod.funcs.len() && !bisecting()) {
     var i2: i32 = 0;
     while (i2 < mod.funcs.len()) {
       if (!bodies[i2].ok && built.decls[i2].template) {
@@ -1013,10 +1000,8 @@ pub function substitution(mod: parser.Module, lowered: parser.FuncDecl[], struct
 
 // runtime_bodies is the typed lowering of a Fern-source runtime helper
 // (asmcore.rt_src_*), one body per function the source defines and in its
-// order, or none when any of them keeps the AST lowering. A source that does
-// not type-check is not asked: the helpers are written on the raw floor, and
-// one still spelling an address as an `i32` is refused by the checker before
-// anything here runs. Under FERN_SEM_IR_STRICT a refusal exits 3.
+// order. A refusal, including a source that does not type-check, exits 3;
+// under the bisect knobs it returns none and the AST lowering stands.
 pub function runtime_bodies(src: string): irlower.LowerResult[] {
   if (!sem_ir_on()) {
     return [];
@@ -1060,8 +1045,8 @@ pub function runtime_bodies(src: string): irlower.LowerResult[] {
 
 function runtime_refused(name: string, why: string): irlower.LowerResult[] {
   report("runtime " + name, why);
-  if (sem_strict_on()) {
-    eprint("FERN_SEM_IR_STRICT: the typed lowering refused runtime helper " + name);
+  if (!bisecting()) {
+    eprint("FERN_SEM_IR: the typed lowering refused runtime helper " + name);
     exit(3);
   }
   return [];

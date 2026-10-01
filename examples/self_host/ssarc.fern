@@ -2948,7 +2948,7 @@ function map_op(own r: irlower.LowerResult, ins: ssa.SInst, f: ssasem.Func): irl
 
 // A map whose key and value are both 32-bit integers or booleans runs on
 // core/map's hash table rather than the runtime's association list (#9608).
-// Production is all or nothing (semlower.substitution), so no AST-lowered
+// Production is whole (semlower.substitution), so no AST-lowered
 // body shares a program with a routed map; the bisect knobs keep a mixed
 // module, so under them every map stays on the runtime, as it does in a
 // program whose import closure has no core/map to run on: a map-typed field

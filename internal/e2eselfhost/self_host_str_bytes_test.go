@@ -33,7 +33,7 @@ function main(): i32 {
 // body it declined would fail the build rather than fall back to the AST one.
 func TestSelfHostStrBytesEveryTarget(t *testing.T) {
 	h := selfHostCLIForHost(t)
-	lowerings := []struct{ name, env string }{{"typed", "FERN_SEM_IR_STRICT=1"}, {"ast", "FERN_SEM_IR="}}
+	lowerings := []struct{ name, env string }{{"typed", "FERN_SEM_IR=1"}, {"ast", "FERN_SEM_IR="}}
 	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
 		for _, l := range lowerings {
 			t.Run(target+"/"+l.name, func(t *testing.T) {

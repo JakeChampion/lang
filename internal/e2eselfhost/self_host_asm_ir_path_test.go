@@ -5,10 +5,9 @@ import (
 )
 
 // TestSelfHostAsmIRPath compiles ~900 small programs through the self-hosted
-// CLI (`fern.fern`) on x86-64 under FERN_SEM_IR_STRICT, links and runs each,
-// and checks the exit code. Strict mode makes a declaration the typed
-// lowering refuses a failure rather than an AST-lowered fallback, so every
-// case is also a guard that the typed path produces it whole.
+// CLI (`fern.fern`) on x86-64, links and runs each, and checks the exit code.
+// A declaration the typed lowering refuses fails the compile, so every case is
+// also a guard that the typed path produces it whole.
 //
 // Each `want` is the native interpreter's answer, except where that
 // interpreter cannot run the program: the raw-memory intrinsics, `chr`, the

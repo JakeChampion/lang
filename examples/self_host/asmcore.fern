@@ -150,7 +150,7 @@ pub struct EmitState {
   capture: usize,
   // The typed lowering of a runtime helper's source: one body per function it
   // defines, then the drop helpers those bodies carry, or none to keep the
-  // AST lowering. The CLI supplies it (semlower.runtime_bodies); a backend
+  // AST lowering (the typed path off, or a bisect knob). The CLI supplies it (semlower.runtime_bodies); a backend
   // never links that pipeline itself.
   rt_lower: (string) => irlower.LowerResult[],
   // The symbols this file already defines as named bodies (the drop helpers
