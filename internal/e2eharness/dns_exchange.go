@@ -27,6 +27,10 @@ const (
 	// that asks for the two one after the other times out on the A query
 	// while one that asks for both at once gets both.
 	FakeNameserverPair
+	// FakeNameserverNat64 answers every AAAA query with 64:ff9b::c000:aa,
+	// the well-known NAT64 prefix embedding 192.0.0.170, which is what a
+	// network behind a translator answers for ipv4only.arpa.
+	FakeNameserverNat64
 )
 
 // FakeNameserver is a nameserver on the loopback interface for one name:
@@ -65,7 +69,9 @@ func dnsQuestionLen(msg []byte) int {
 // record the question's type asks for, the A record 93.184.216.34 or
 // the AAAA record 2001:db8::1, both owners compressed back to the
 // question, which has to be `vm.example.com` for the pointers to land.
-func dnsReply(query []byte, truncated bool) []byte {
+// In the NAT64 mode the reply is one AAAA record on the question's own
+// name, 64:ff9b::c000:aa.
+func dnsReply(query []byte, truncated bool, mode FakeNameserverMode) []byte {
 	qlen := dnsQuestionLen(query)
 	if qlen == 0 || qlen > len(query)-12 {
 		return nil
@@ -79,6 +85,11 @@ func dnsReply(query []byte, truncated bool) []byte {
 	out := []byte{query[0], query[1], flags[0], flags[1], 0, 1, 0, an, 0, 0, 0, 0}
 	out = append(out, query[12:12+qlen]...)
 	if truncated {
+		return out
+	}
+	if mode == FakeNameserverNat64 {
+		out[7] = 1
+		out = append(out, 192, 12, 0, 28, 0, 1, 0, 0, 0, 60, 0, 16, 0x00, 0x64, 0xff, 0x9b, 0, 0, 0, 0, 0, 0, 0, 0, 0xc0, 0x00, 0x00, 0xaa)
 		return out
 	}
 	out = append(out, 192, 12, 0, 5, 0, 1, 0, 0, 0, 60, 0, 6, 3, 'w', 'w', 'w', 192, 15)
@@ -124,7 +135,7 @@ func StartFakeNameserver(t *testing.T, mode FakeNameserverMode) FakeNameserver {
 				continue
 			}
 			query := append([]byte(nil), buf[:n]...)
-			reply := dnsReply(query, mode == FakeNameserverTruncate)
+			reply := dnsReply(query, mode == FakeNameserverTruncate, mode)
 			if reply == nil {
 				continue
 			}
@@ -163,7 +174,7 @@ func StartFakeNameserver(t *testing.T, mode FakeNameserverMode) FakeNameserver {
 				if mode == FakeNameserverSilent {
 					return
 				}
-				reply := dnsReply(msg, false)
+				reply := dnsReply(msg, false, mode)
 				framed := append([]byte{byte(len(reply) >> 8), byte(len(reply))}, reply...)
 				_, _ = c.Write(framed)
 			}(c)
@@ -279,5 +290,103 @@ func CheckDnsPair(t *testing.T, ns FakeNameserver, stdout string, exit int) {
 	}
 	if udp := atomic.LoadInt32(ns.UDPQueries); udp != 2 {
 		t.Errorf("the server saw %d UDP queries; want 2 (the A and the AAAA together)", udp)
+	}
+}
+
+// DnsNat64Source is a program that asks the nameserver at `port` for the
+// NAT64 prefixes ipv4only.arpa reveals and prints each as prefix/bits.
+func DnsNat64Source(port int) string {
+	return fmt.Sprintf(`import "std/dns";
+import "std/net";
+import "std/i32";
+
+function main(): i32 {
+    var ns: net.SocketAddr = net.socket_addr(net.ipv4_loopback(), %d);
+    var conf: dns.ResolvConf = dns.ResolvConf { nameservers: [ns], search: [], ndots: 1, timeout_ms: 1000, attempts: 1, rotate: false };
+    var ps: dns.Nat64Prefix[] = dns.nat64_prefixes(conf);
+    var i: i32 = 0;
+    while (i < ps.len()) {
+        match (net.ipv6(ps[i].bytes)) {
+            Some(ip) => { print(ip.to_string() + "/" + ps[i].bits.to_string()); },
+            None => { print("?"); }
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+`, port)
+}
+
+// CheckDnsNat64 expects the one well-known prefix.
+func CheckDnsNat64(t *testing.T, stdout string, exit int) {
+	t.Helper()
+	if exit != 0 || stdout != "64:ff9b::/96\n" {
+		t.Fatalf("exit %d, stdout %q; want exit 0 and 64:ff9b::/96", exit, stdout)
+	}
+}
+
+// StartEchoListener listens on 127.0.0.1 at a free port and answers "ok"
+// to each connection that sends "hi", until the test ends. Returns the
+// port.
+func StartEchoListener(t *testing.T) int {
+	t.Helper()
+	ln, err := net.ListenTCP("tcp", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				_ = c.SetDeadline(time.Now().Add(5 * time.Second))
+				buf := make([]byte, 2)
+				if _, err := readFull(c, buf); err == nil && string(buf) == "hi" {
+					_, _ = c.Write([]byte("ok"))
+				}
+			}(c)
+		}
+	}()
+	return ln.Addr().(*net.TCPAddr).Port
+}
+
+// DnsDialSource is a program that races `first` and 127.0.0.1 for a
+// connection to `port` with a short attempt delay, sends "hi" on the
+// winner and prints what comes back: "ok" from StartEchoListener. It
+// exits 2 on a failed dial.
+func DnsDialSource(first string, port int) string {
+	return fmt.Sprintf(`import "std/dns";
+import "std/net";
+
+function main(): i32 {
+    var first: net.IpAddr = net.ipv4_unspecified();
+    match (net.ip_parse(%q)) {
+        Some(ip) => { first = ip; },
+        None => { return 3; }
+    }
+    var opts: dns.DialOptions = dns.DialOptions { fallback_ms: 200, timeout_ms: 5000 };
+    match (dns.connect_race([first, net.ipv4_loopback()], %d, opts)) {
+        Ok(sock) => {
+            tcp_send(sock, "hi");
+            var got: u8[] = tcp_recv(sock, 16);
+            print(string_from_bytes_unchecked(got));
+            tcp_close(sock);
+            return 0;
+        },
+        Err(e) => { print(e.message()); return 2; }
+    }
+}
+`, first, port)
+}
+
+// CheckDnsDial expects the echo's "ok" with exit 0.
+func CheckDnsDial(t *testing.T, stdout string, exit int) {
+	t.Helper()
+	if exit != 0 || stdout != "ok\n" {
+		t.Fatalf("exit %d, stdout %q; want exit 0 and ok", exit, stdout)
 	}
 }
