@@ -1114,14 +1114,21 @@ func (l *lifter) handle(i int, op ir.Op) error {
 		l.stack = append(l.stack, result)
 	case ir.OpCallDyn:
 		// [data, args..., vtable] (vtable on top) → result | (). op.Sig() is the
-		// receiver-first method signature (Params[0] = receiver/data), so the
-		// number of call-arg values is len(Sig.Params); the vtable sits above
-		// them. Args = [data, args..., vtable]; Imm = the method slot; Width =
-		// the result width. Pushes a result iff the method is non-void.
-		if op.Sig() == nil {
-			return fmt.Errorf("ssa.LiftFromIR: OpCallDyn at op[%d] missing Sig", i)
+		// receiver-first method signature (Params[0] = receiver/data); a
+		// two-word argument or result (a string under the two-word ABI)
+		// occupies two entries. Args = [data, args..., vtable]; Imm = the
+		// method slot; Width = the result width.
+		sig := op.Sig()
+		if sig == nil || len(sig.Params) == 0 {
+			return fmt.Errorf("ssa.LiftFromIR: OpCallDyn at op[%d] missing its receiver-first Sig", i)
 		}
-		argc := len(op.Sig().Params)
+		argc := 1
+		for _, p := range sig.Params[1:] {
+			argc++
+			if l.twoWordType(p) {
+				argc++
+			}
+		}
 		if len(l.stack) < argc+1 {
 			return fmt.Errorf("ssa.LiftFromIR: OpCallDyn at op[%d] needs %d args + vtable, stack has %d", i, argc, len(l.stack))
 		}
@@ -1129,14 +1136,28 @@ func (l *lifter) handle(i int, op ir.Op) error {
 		callArgs := append([]Value(nil), l.stack[len(l.stack)-1-argc:len(l.stack)-1]...)
 		l.stack = l.stack[:len(l.stack)-argc-1]
 		all := append(callArgs, vtable)
+		void := false
+		switch sig.Result.(type) {
+		case nil, ast.VoidType, ast.NeverType:
+			void = true
+		}
+		if void {
+			l.out.AddOpNoResult(l.cur, OpCallDyn, all...)
+			l.cur.Ops[len(l.cur.Ops)-1].Imm = int64(op.I32)
+			break
+		}
+		if l.twoWordType(sig.Result) {
+			a, b := l.out.AddCallDynPair(l.cur, all...)
+			l.cur.Ops[len(l.cur.Ops)-1].Imm = int64(op.I32)
+			l.stack = append(l.stack, a, b)
+			break
+		}
 		result := l.out.AddOp(l.cur, OpCallDyn, all...)
 		o := l.cur.Ops[len(l.cur.Ops)-1]
 		o.Imm = int64(op.I32) // method slot
-		if op.Sig().Result != nil {
-			o.Width = widthOfAstType(op.Sig().Result)
-			o.Addr = isAddressAstType(op.Sig().Result)
-			l.stack = append(l.stack, result)
-		}
+		o.Width = widthOfAstType(sig.Result)
+		o.Addr = isAddressAstType(sig.Result)
+		l.stack = append(l.stack, result)
 	case ir.OpMakeSomeI32, ir.OpMakeOkI32:
 		// (payload) → (tag=0, payload)
 		if len(l.stack) < 1 {
