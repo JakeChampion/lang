@@ -3884,10 +3884,10 @@ function main(): i32 {
     var src: string = "";
     match (read_file(av[2])) { Ok(text) => { src = text; }, Err(_) => { return 2; } }
     var entry = parser.parse_module(lexer.tokenize(src));
-    // The program's imports resolve against the stdlib root (av[3], with its
-    // trailing slash), merge in and are tree-shaken as the CLI does them: a
-    // routed map calls core/map's functions, which the program has to carry.
-    let (loaded, missing) = modloader.load_imports(modloader.no_overlay(), av[3], entry);
+    // The program's imports resolve against the stdlib staged beside it, merge
+    // in and are tree-shaken as the CLI does them: a routed map calls
+    // core/map's functions, which the program has to carry.
+    let (loaded, missing) = modloader.load_imports(modloader.no_overlay(), av[2], entry);
     if (modloader.report_unresolved(missing, "semsource_rc")) {
         return 2;
     }
@@ -4035,13 +4035,17 @@ func inScratchDir(t *testing.T, run *exec.Cmd, target string) *exec.Cmd {
 
 // semsourceStdlibRoot is the directory the semsource driver resolves a
 // program's imports against, with the trailing slash modloader joins on.
-func semsourceStdlibRoot(t *testing.T) string {
+// semsourceProgram writes program into a directory of its own with the
+// stdlib staged beside it, which is where the driver resolves its imports.
+func semsourceProgram(t *testing.T, program string) string {
 	t.Helper()
-	root, err := filepath.Abs("../../internal/stdlib")
-	if err != nil {
+	progDir := t.TempDir()
+	copyStdlibTree(t, progDir)
+	path := filepath.Join(progDir, "program.fern")
+	if err := os.WriteFile(path, []byte(program), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	return root + "/"
+	return path
 }
 
 func TestSelfHostSemanticSourceRC(t *testing.T) {
@@ -4050,19 +4054,15 @@ func TestSelfHostSemanticSourceRC(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "semsource_rc.fern"), []byte(semsourceRCDriver), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	program := filepath.Join(dir, "program.fern")
-	if err := os.WriteFile(program, []byte(semsourceRCProgram), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	program := semsourceProgram(t, semsourceRCProgram)
 	driver := buildSelfHostBin(t, gcc, dir, "semsource_rc.fern", "semsource-rc")
-	stdlibRoot := semsourceStdlibRoot(t)
 	for _, target := range []string{"arm64-linux", "x86-64-linux", "x86-64-sanitize", "wasm32-wasi"} {
 		t.Run(target, func(t *testing.T) {
 			emitTarget, mode := target, "FERN_LEAKCHECK=1"
 			if target == "x86-64-sanitize" {
 				emitTarget, mode = "x86-64-linux", "FERN_SANITIZE=1"
 			}
-			cmd := runX86_64Bin(runner, driver, emitTarget, program, stdlibRoot)
+			cmd := runX86_64Bin(runner, driver, emitTarget, program)
 			cmd.Env = append(os.Environ(), mode)
 			var diagnostics bytes.Buffer
 			cmd.Stderr = &diagnostics
