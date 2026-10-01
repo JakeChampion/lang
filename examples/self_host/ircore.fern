@@ -1622,7 +1622,7 @@ pub function split_units(g: Gated, parts: parser.Module[], entry: i32): Units {
 // The lowering spells a `str` receiver `string`; a part's declaration still
 // spells it `str`.
 function owner_key(fd: parser.FuncDecl): string {
-  return util.base_type_name(parser.erase_str_spelling(fd.receiver_type)) + "." + fd.name;
+  return parser.receiver_base(fd.receiver_type) + "." + fd.name;
 }
 
 // declared_owners is, for each function of `g`, the part declaring it or its
