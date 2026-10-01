@@ -4253,10 +4253,11 @@ func (b *builder) computeMovedLocals() map[string]bool {
 			}
 		}
 		if len(ownParam) > 0 {
-			// A consuming match (`match (own_param) { … }`) consumes the
-			// scrutinee — its box is shallow-freed at the match — so the exit
-			// sweep must not ALSO deep-drop it. Mark the own-param scrutinee
-			// moved (its last use is the match).
+			// A consuming match (`match (own_param) { … }` with an arm that
+			// takes a pointer payload) consumes the scrutinee — its box is
+			// shallow-freed at the match — so the exit sweep must not ALSO
+			// deep-drop it. Mark the own-param scrutinee moved (its last use is
+			// the match).
 			//
 			// Both claims are made at the identifier itself rather than at the
 			// match or call holding it, because walkDominatingExprs withholds
@@ -4271,7 +4272,9 @@ func (b *builder) computeMovedLocals() map[string]bool {
 			walkDominatingExprs(b.fn.Body, func(n ast.Node) bool {
 				switch x := n.(type) {
 				case *ast.Match:
-					noteScrutinee(x.Tag)
+					if ast.MatchTakesPointerPayload(x.Arms) {
+						noteScrutinee(x.Tag)
+					}
 				case *ast.MatchExpr:
 					noteScrutinee(x.Tag)
 				case *ast.Call:
@@ -4999,7 +5002,7 @@ func (b *builder) computeBorrowedBindings() map[string]bool {
 		if _, consuming := b.rc.consumingOwnedMatches[m]; consuming {
 			return true
 		}
-		if _, ownScrut := b.ownParamEnumScrutinee(m.Tag); ownScrut {
+		if _, ownScrut := b.ownParamEnumScrutinee(m.Tag, m.Arms); ownScrut {
 			return true
 		}
 		// An owned-payload match's admitted bindings own their reference;
@@ -6528,7 +6531,7 @@ func (b *builder) computeConsumingMatchReuse() map[*ast.Call]bool {
 		if !scrutIsIdent {
 			return true
 		}
-		consumeEnum, consumeScrut := b.ownParamEnumScrutinee(m.Tag)
+		consumeEnum, consumeScrut := b.ownParamEnumScrutinee(m.Tag, m.Arms)
 		if !consumeScrut {
 			return true
 		}
@@ -6687,7 +6690,7 @@ func (b *builder) computeConsumingOwnedMatches() (map[*ast.Match]string, map[*as
 			payload[m] = true
 			return true
 		}
-		if _, own := b.ownParamEnumScrutinee(m.Tag); own {
+		if _, own := b.ownParamEnumScrutinee(m.Tag, m.Arms); own {
 			if !(b.isPairFormScrutinee(m.Tag) && !anyArmAtBinding(m.Arms) && !anyArmPayloads(m.Arms)) {
 				ownMove[m] = true
 			}
