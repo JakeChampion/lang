@@ -851,7 +851,7 @@ function instance_records(built: semsource.Built): parser.StructDecl[] {
   var out: parser.StructDecl[] = [];
   var names: string[] = [];
   for p in util.append_all(built.decls, built.instances) {
-    for rec in p.func.records {
+    for rec in p.func.records.list {
       if let typeinfo.TypeStruct(r) = rec.ty {
         var name: string = ssasem.type_key(rec.ty);
         if (r.args.len() > 0 && !semtypes.is_env(rec.ty) && util.index_of_str(names, name) < 0) {
