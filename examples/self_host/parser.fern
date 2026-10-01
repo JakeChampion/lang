@@ -10970,6 +10970,25 @@ pub function spelling_is_view(spelling: string): boolean {
   return r.is_view && r.array_depth == 0;
 }
 
+// spells_array_or_view: an owned array `T[]` or a view `[T]`, the two
+// spellings an array-receiver method and its call fold through alike, since
+// the lowering erases the view to the array.
+pub function spells_array_or_view(spelling: string): boolean {
+  return type_ends_arr(spelling) || spelling_is_view(spelling);
+}
+
+// array_elem_spelling is the element of either spelling, "" for neither.
+pub function array_elem_spelling(spelling: string): string {
+  if (type_ends_arr(spelling)) {
+    return slice_unchecked(spelling, 0, spelling.len() - 2) + "";
+  }
+  var r: TypeRef = parse_type_ref(spelling);
+  if (r.is_view && r.array_depth == 0) {
+    return render_type_ref(r.args[0]);
+  }
+  return "";
+}
+
 // A parameter spelling may carry the CONSUMING marker `own T`: the callee
 // releases what it is handed there. It is carried in the spelling because that is
 // where a declaration's parameter types are recorded, and parse_type_ref keeps
@@ -11215,8 +11234,10 @@ function bind_unify(pattern: string, concrete: string, tparams: string[], binds:
     }
     return binds;
   }
-  if (type_ends_arr(pattern) && type_ends_arr(concrete)) {
-    return bind_unify(slice_unchecked(pattern, 0, pattern.len() - 2), slice_unchecked(concrete, 0, concrete.len() - 2), tparams, binds);
+  // An array binds through its element, from either spelling on either
+  // side: a `T[]` parameter takes a `[i32]` argument as the array it lends.
+  if (spells_array_or_view(pattern) && spells_array_or_view(concrete)) {
+    return bind_unify(array_elem_spelling(pattern), array_elem_spelling(concrete), tparams, binds);
   }
   // Tuple pattern `(K, V)` vs `(i32, i32)` — destructure the parens and unify
   // pairwise, so a tuple (or tuple-array, via the array case above) parameter
@@ -12279,9 +12300,8 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
           var amgi: i32 = bg_find(funcs, "__arrm_" + cfa.field);
           if (amgi >= 0) {
             var recvt: string = mono_infer(cfa.obj, env, funcs);
-            if (type_ends_arr(recvt)) {
-              var el: str = slice_unchecked(recvt, 0, recvt.len() - 2);
-              var amrt: string = subst_ty(funcs.decls[amgi].ret_type, funcs.decls[amgi].type_params, [el + ""]);
+            if (spells_array_or_view(recvt)) {
+              var amrt: string = subst_ty(funcs.decls[amgi].ret_type, funcs.decls[amgi].type_params, [array_elem_spelling(recvt)]);
               // `type_params` carries only the BOUNDED receiver var, so a
               // method with an unbounded param of its own — `map[U]`,
               // whose return is `U[]` — leaves U residual and the
@@ -12507,7 +12527,7 @@ function mono_expr(e: ast.Expr, env: MEnv, funcs: MFns, ins: Insts): RExpr {
           var amg: i32 = bg_find(funcs, amn);
           if (amg >= 0) {
             var rty: string = mono_infer(fac.obj, env, funcs);
-            if (type_ends_arr(rty)) {
+            if (spells_array_or_view(rty)) {
               var raw: ast.Expr[] = [fac.obj];
               var rk: i32 = 0;
               while (rk < c.args.len()) {
@@ -13840,10 +13860,10 @@ function is_generic_array_method(fd: FuncDecl): boolean {
   if (fd.receiver_name.len() == 0) {
     return false;
   }
-  if (!type_ends_arr(fd.receiver_type)) {
+  if (!spells_array_or_view(fd.receiver_type)) {
     return false;
   }
-  var elem: str = slice_unchecked(fd.receiver_type, 0, fd.receiver_type.len() - 2);
+  var elem: string = array_elem_spelling(fd.receiver_type);
   if (!looks_type_var(elem)) {
     return false;
   }
@@ -13885,8 +13905,7 @@ pub function register_array_method_generics(mod: Module): Module {
   while (i < mod.funcs.len()) {
     var fd: FuncDecl = mod.funcs[i];
     if (is_generic_array_method(fd)) {
-      var elem: str = slice_unchecked(fd.receiver_type, 0, fd.receiver_type.len() - 2);
-      var tps: string[] = [elem + ""];
+      var tps: string[] = [array_elem_spelling(fd.receiver_type)];
       // Fold the receiver into a leading param named after the
       // receiver, so the body's references to it resolve normally.
       var nparams: ast.ParamDecl[] = [ast.ParamDecl { name: fd.receiver_name, type_name: fd.receiver_type, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }];

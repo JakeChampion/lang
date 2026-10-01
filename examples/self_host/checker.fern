@@ -2814,8 +2814,8 @@ function e021_bound_call_diag(pbound: string, at: typeinfo.Type, s: Scope, ln: i
 // method in scope applies to every array receiver — no element match to make,
 // whether the element is a type variable or a concrete `i32[]` / `string[]`.
 // A receiver whose element does not fit is caught against the method's own
-// signature. A slice receiver (`[T]`) is a different namespace and must not
-// match, hence the leading-`[` exclusion.
+// signature. A slice receiver (`[T]`) is native's separate "slice"
+// namespace: slice_recv_method, which a view receiver consults first.
 //
 // Resolution accepts a concrete element; LOWERING does not yet. One
 // `(arr: i32[]) name()` declaration anywhere in a bundle costs an unrelated
@@ -2824,11 +2824,22 @@ function e021_bound_call_diag(pbound: string, at: typeinfo.Type, s: Scope, ln: i
 // why std/array still declares its concrete-element verbs as
 // `__method_Array_<name>` free functions.
 function (s: Scope) array_recv_method(field: string): MethodSig {
+  return s.recv_method_shaped(field, false);
+}
+
+// slice_recv_method is array_recv_method for the view-receiver form,
+// `function (xs: [T]) head(): T`.
+function (s: Scope) slice_recv_method(field: string): MethodSig {
+  return s.recv_method_shaped(field, true);
+}
+
+// A method named `field` whose receiver is an owned array (`T[]`), or with
+// `view` a slice (`[T]`).
+function (s: Scope) recv_method_shaped(field: string, view: boolean): MethodSig {
   var i: i32 = s.methods.head[sig_name_bucket(field)];
   while (i >= 0) {
     var method: MethodSig = s.methods.methods[i];
-    var rt: string = method.receiver_type;
-    if (method.name == field && rt.len() > 2 && slice_unchecked(rt, 0, 1) != "[" && slice_unchecked(rt, rt.len() - 2, rt.len()) == "[]") {
+    if (method.name == field && recv_spelling_shaped(method.receiver_type, view)) {
       return method;
     }
     i = s.methods.next[i];
@@ -2878,7 +2889,13 @@ function (s: Scope) has_array_method(field: string): boolean {
 // itself (the receiver type), short-circuited ahead of the sig scan.
 function (s: Scope) array_method_ret_type(recv_ty: typeinfo.Type, field: string): typeinfo.Type {
   match (recv_ty) {
-    typeinfo.TypeArray(_) => {
+    typeinfo.TypeArray(ra) => {
+      if (ra.view) {
+        var srm: MethodSig = s.slice_recv_method(field);
+        if (srm.name.len() > 0) {
+          return s.arr_recv_ret_type(recv_ty, srm);
+        }
+      }
       if (field == "append" || field == "with") {
         return recv_ty;
       }
@@ -2933,11 +2950,15 @@ function (s: Scope) arr_recv_ret_type(recv_ty: typeinfo.Type, arm: MethodSig): t
   if (!type_contains_unknown(arm.ret_type) || arm.ret_type_name.len() == 0) {
     return arm.ret_type;
   }
-  var rt: string = arm.receiver_type;
-  if (rt.len() <= 2) {
+  var rr: parser.TypeRef = parser.parse_type_ref(arm.receiver_type);
+  if (rr.is_view) {
+    rr = rr.args[0];
+  } else if (rr.array_depth > 0) {
+    rr = parser.elem_type_ref(rr);
+  } else {
     return arm.ret_type;
   }
-  var elem_param: string = slice_unchecked(rt, 0, rt.len() - 2) + "";
+  var elem_param: string = parser.render_type_ref(rr);
   match (recv_ty) {
     typeinfo.TypeArray(ra) => {
       var tps: string[] = [elem_param];
@@ -3463,6 +3484,14 @@ function (s: Scope) methods_in_namespace(ns: string): string[] {
   if (ns == "Array") {
     out = ["append", "len", "with"];
   }
+  if (ns == "slice") {
+    out = ["len"];
+    for method in s.methods.methods {
+      if (recv_spelling_shaped(method.receiver_type, true)) {
+        out = push_str_unique_sorted(out, method.name);
+      }
+    }
+  }
   if (ns == "string") {
     out = ["as_bytes", "len"];
   }
@@ -3616,7 +3645,10 @@ function (s: Scope) unknown_method_advice(ns: string, method: string, recv: type
 // it, and native says the same thing at both.
 function method_namespace_of(t: typeinfo.Type): string {
   match (t) {
-    typeinfo.TypeArray(_) => {
+    typeinfo.TypeArray(a) => {
+      if (a.view) {
+        return "slice";
+      }
       return "Array";
     },
     typeinfo.TypeString(_) => {
@@ -3636,16 +3668,17 @@ function method_namespace_of(t: typeinfo.Type): string {
 }
 
 function (s: Scope) has_array_recv_method(field: string): boolean {
-  var i: i32 = s.methods.head[sig_name_bucket(field)];
-  while (i >= 0) {
-    var method: MethodSig = s.methods.methods[i];
-    var rt: string = method.receiver_type;
-    if (method.name == field && rt.len() > 2 && slice_unchecked(rt, 0, 1) != "[" && slice_unchecked(rt, rt.len() - 2, rt.len()) == "[]") {
-      return true;
-    }
-    i = s.methods.next[i];
+  return s.array_recv_method(field).name.len() > 0;
+}
+
+// recv_spelling_shaped: `rt` spells an owned array receiver (`T[]`), or with
+// `view` a slice receiver (`[T]`).
+function recv_spelling_shaped(rt: string, view: boolean): boolean {
+  var r: parser.TypeRef = parser.parse_type_ref(rt);
+  if (view) {
+    return r.is_view && r.array_depth == 0;
   }
-  return false;
+  return r.array_depth > 0;
 }
 
 function (s: Scope) lookup_union(name: string): UnionSig {
@@ -13784,7 +13817,10 @@ function (s: Scope) method_missing(recv: typeinfo.Type, field: string): boolean 
     typeinfo.TypeString(_) => {
       return field != "len" && field != "as_bytes" && s.lookup_method(field, "string").name.len() == 0;
     },
-    typeinfo.TypeArray(_) => {
+    typeinfo.TypeArray(ra) => {
+      if (ra.view && s.slice_recv_method(field).name.len() > 0) {
+        return false;
+      }
       return field != "append" && field != "with" && field != "len" && !s.has_array_method(field);
     },
     typeinfo.TypeMap(_) => {

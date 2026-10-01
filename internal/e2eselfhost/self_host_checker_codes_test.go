@@ -179,6 +179,10 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		want []string // codes the self-host checker should print
 	}{
 		{"clean", "function main(): i32 { return 1 + 2; }\n", nil},
+		// A `[T]` receiver is native's "slice" namespace, which a view
+		// receiver consults; an owned array does not reach it.
+		{"slice-receiver-method", "function (xs: [T]) head(): T { return xs[0]; }\nfunction main(): i32 { var a: i32[] = [3, 4]; var sl: [i32] = a[0:2]; return sl.head(); }\n", nil},
+		{"slice-receiver-method-not-on-array", "function (xs: [T]) head(): T { return xs[0]; }\nfunction main(): i32 { var a: i32[] = [3, 4]; return a.head(); }\n", []string{"E043"}},
 		// A literal local takes ONE integer type: its first width-fixing use
 		// decides it, i32 when none does (#10123). The self-host held it at i32
 		// from its binding and native let each use pick a width, so the same
