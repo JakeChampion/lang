@@ -2366,7 +2366,7 @@ function folded_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s:
 // this boundary does not own.
 function primitive_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s: State, statement: boolean): Value {
   // Keyed as decl_key keys the declaration: `(m: Map[string, i32]) f` is `Map.f`.
-  var owner: string = util.base_type_name(typeinfo.spelling(s.values[recv.id]));
+  var owner: string = parser.receiver_base(typeinfo.spelling(s.values[recv.id]));
   if (owner.len() == 0) {
     return refused(s, "unsupported call target");
   }
@@ -2536,7 +2536,9 @@ function method_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: State, stateme
   if (ssasem.contract_variables(contract).len() > 0) {
     return invoke_method(recv, c.args, contract, s);
   }
-  recv = lend(recv, contract.params[0], contract.modes[0], keeps(s, key));
+  // The receiver is produced before its contract is found, so it widens
+  // here as an argument does in `expr`: a `str` method takes a `string`.
+  recv = lend(widen(recv, contract.params[0]), contract.params[0], contract.modes[0], keeps(s, key));
   s = recv.s;
   if (!semtypes.equal(s.values[recv.id], contract.params[0])) {
     return refused(s, "call receiver type");
@@ -5027,12 +5029,13 @@ function decl_param_mode(fd: parser.FuncDecl, at: i32, t: typeinfo.Type): i32 {
 
 // Two types may declare one method name, so a method's contract is keyed by
 // its receiver type the way irlower keys <Type>.<method>. A bare key would
-// let one callee's contract answer for the other.
-function decl_key(fd: parser.FuncDecl): string {
+// let one callee's contract answer for the other. It is also the symbol a call
+// to the declaration names.
+pub function decl_key(fd: parser.FuncDecl): string {
   if (fd.receiver_type.len() == 0) {
     return fd.name;
   }
-  return util.base_type_name(fd.receiver_type) + "." + fd.name;
+  return parser.receiver_base(fd.receiver_type) + "." + fd.name;
 }
 
 // coarse_fn_tag_without_contract reports a declaration whose result is the
@@ -6076,7 +6079,7 @@ function shadowed_builtins(mod: parser.Module): string[] {
   for fd in mod.funcs {
     if (fd.receiver_type.len() == 0) {
       keys = keys.append(fd.name);
-    } else if (!std_string && util.base_type_name(fd.receiver_type) == "string") {
+    } else if (!std_string && parser.receiver_base(fd.receiver_type) == "string") {
       keys = keys.append(decl_key(fd));
     }
   }
