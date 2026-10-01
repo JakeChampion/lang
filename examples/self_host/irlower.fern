@@ -98750,7 +98750,7 @@ function iife_arm_values_boxable(stmts: ast.Stmt[], seen: i32, fd: parser.FuncDe
             n = n + 1;
           },
           ast.ExprIdent(rid) => {
-            if (!arm_names_module_fn(rid.name, fd, mfuncs)) {
+            if (!arm_names_module_fn(rid.name, fd, mfuncs) && !names_local_fn_value(rid, mfuncs)) {
               return 0 - 1;
             }
             n = n + 1;
@@ -98823,7 +98823,7 @@ function passthrough_call_boxable(rc: ast.ExprCall, callee: string, fd: parser.F
       if (passthrough_arg_is_iife(rc.args[i])) {
         return false;
       }
-      if (lift_arg_is_passthrough_fn_value(rc.args[i], mfuncs)) {
+      if (lift_arg_is_passthrough_fn_value(rc.args[i], mfuncs) || arg_names_local_fn_value(rc.args[i], mfuncs)) {
         if (!passthrough_arg_boxable(rc.args[i], fd, mfuncs)) {
           return false;
         }
@@ -98842,13 +98842,20 @@ function passthrough_arg_is_iife(arg: ast.Expr): boolean {
   return false;
 }
 
+function arg_names_local_fn_value(arg: ast.Expr, mfuncs: MFuncs): boolean {
+  if let ast.ExprIdent(id) = arg {
+    return names_local_fn_value(id, mfuncs);
+  }
+  return false;
+}
+
 function passthrough_arg_boxable(arg: ast.Expr, fd: parser.FuncDecl, mfuncs: MFuncs): boolean {
   match (arg) {
     ast.ExprLambda(_) => {
       return true;
     },
     ast.ExprIdent(id) => {
-      return arm_names_module_fn(id.name, fd, mfuncs);
+      return arm_names_module_fn(id.name, fd, mfuncs) || names_local_fn_value(id, mfuncs);
     },
     ast.ExprCall(c) => {
       match (c.callee) {
@@ -98867,6 +98874,13 @@ function passthrough_arg_boxable(arg: ast.Expr, fd: parser.FuncDecl, mfuncs: MFu
   return false;
 }
 
+// A local (or parameter) holding a fn value is already an env box, so an arm
+// yielding one needs no boxing and is marked as it stands. A module function
+// name is not: that one takes a `$wrap` trampoline.
+function names_local_fn_value(id: ast.ExprIdent, mfuncs: MFuncs): boolean {
+  return id.ty == "fn" && !lift_names_fn_value(mfuncs, id.name);
+}
+
 // The boxed shape of a passthrough call: no fn value is still passed through
 // raw, and at least one argument is an env-box marker, so the call yields a
 // box.
@@ -98878,7 +98892,7 @@ function passthrough_call_marked(rc: ast.ExprCall, callee: string, mfuncs: MFunc
       if (lift_arg_is_passthrough_fn_value(rc.args[i], mfuncs)) {
         return false;
       }
-      if (expr_is_marked(rc.args[i], mfuncs)) {
+      if (expr_is_marked(rc.args[i], mfuncs) || arg_names_local_fn_value(rc.args[i], mfuncs)) {
         boxed = true;
       }
     }
@@ -98925,6 +98939,11 @@ function iife_arms_all_marked(stmts: ast.Stmt[], mfuncs: MFuncs): boolean {
               _ => {
                 return false;
               }
+            }
+          },
+          ast.ExprIdent(rid) => {
+            if (!names_local_fn_value(rid, mfuncs)) {
+              return false;
             }
           },
           _ => {
