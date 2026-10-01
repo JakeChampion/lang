@@ -1158,6 +1158,27 @@ func TestTypedFieldRebindStaysInsideTheLiteral(t *testing.T) {
 	}
 }
 
+// A generic struct literal nested in another's field infers its own type
+// arguments: the outer field's `Box[T]` names a parameter nothing has bound
+// yet, so it fixes nothing (#10895). A clash across the nesting is still E043.
+func TestNestedGenericStructLiteralInfersItsOwnArgs(t *testing.T) {
+	const decls = "struct Box[T] { v: T } struct Outer[T] { b: Box[T] } struct Two[T] { b: Box[T], c: T } "
+	for _, body := range []string{
+		"var o = Outer { b: Box { v: 4 } }; var r: i32 = o.b.v; return r;",
+		"var o = Outer { b: Box { v: 4611686018427387904 } }; var r: i64 = o.b.v; return 0;",
+		"var o: Outer[i64] = Outer { b: Box { v: 4 } }; var r: i64 = o.b.v; return 0;",
+		"var o = Two { b: Box { v: \"x\" }, c: \"y\" }; return o.c.len();",
+	} {
+		if err := checkSource(t, decls+"function main(): i32 { "+body+" }"); err != nil {
+			t.Errorf("%s: rejected, want accepted: %v", body, err)
+		}
+	}
+	err := checkSource(t, decls+"function main(): i32 { var o = Two { b: Box { v: 1 }, c: \"x\" }; return 0; }")
+	if err == nil || !strings.Contains(err.Error(), `field "c": expected i32, got string`) {
+		t.Errorf("clash across the nesting: want the field refused, got %v", err)
+	}
+}
+
 func TestGenericStructLiteralLocalWidensByLiteral(t *testing.T) {
 	src := "struct Same[T] { a: T, b: T } function main(): i32 { " +
 		"var q = Same { a: 1, b: 4611686018427387904 }; var r: i64 = q.b; return 0; }"
