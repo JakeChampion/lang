@@ -251,17 +251,6 @@ pub function new_state(): EmitState {
     funcs: fns,
     local_types: lts,
     n_params: 0,
-    // Default ON (x86-64): a fully-IR-eligible module (i32 + arrays, full
-    // Perceus RC) compiles through asm_ir.emit_module_ir; everything else
-    // (strings/structs/methods/maps/floats/closures) falls back to the AST
-    // emitter. The IR path now uses asm.fern's OWN array layout + RC
-    // helpers (8-byte __fern_arr_box, __fn___fern_rc_inc/__fn___fern_arr_dec)
-    // and implements the full array Perceus lifecycle — alias-inc,
-    // move-on-return, borrowed params, the exit dec-sweep, and reassignment
-    // retain + cow-guarded release — so it is a drop-in for asm.fern's
-    // array RC (the self_host_rc_runtime asm patterns match). The compiler
-    // is not all_eligible (it is full of strings/structs), so it still
-    // compiles via AST and the byte-identical fixpoint holds.
     use_ir: true,
     // Whole-program default: no namespace, so string labels stay `.S<idx>`
     // (byte-identical to the pre-per-module emitter). Per-module unit emit
