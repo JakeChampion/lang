@@ -4652,15 +4652,11 @@ function main(): i32 {
 // count out of. Which format a target selects is pinned separately by
 // internal/coreutils/longdouble_test.go. Passing suite -> exit 0.
 // `examples/tests/coreutils_resolv_test.fern` covers coreutils/lib/resolv —
-// the NSS lookup gethostid makes, written in Fern on read_file and the tcp
-// builtins: /etc/hosts (comments, aliases, IPv6 lines to skip, caseless
-// match, first line wins), nsswitch's `hosts:` line with its bracketed
-// actions and compiled-in default, resolv.conf's defaults and caps, the
-// res_search candidate order, and RFC 1035 A queries and replies (a CNAME
-// ahead of its A record, every status), and the canonical-name lookup
-// `who --lookup` makes: the first name on a matching hosts line, taken
-// from a line of either address family, and the owner of the A record at
-// the end of a CNAME chain. Two live cases run against this machine's
+// the NSS walk gethostid makes over std/dns's two sources: nsswitch's
+// `hosts:` line with its bracketed actions and compiled-in default, and
+// the walk's reaction to each source's status (the files, the resolver
+// configuration and the wire protocol are std/dns's, under
+// TestRunnerDnsExamplePasses). Two live cases run against this machine's
 // own /etc/hosts. Passing suite -> exit 0.
 func TestRunnerCoreutilsResolvExamplePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
@@ -4669,7 +4665,30 @@ func TestRunnerCoreutilsResolvExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: coreutils/lib/resolv", "1..32", "# pass 32", "# fail 0"} {
+	for _, w := range []string{"# Suite: coreutils/lib/resolv", "1..9", "# pass 9", "# fail 0"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `examples/tests/dns_test.fern` covers std/dns (#9855): the RFC 1035
+// codec both ways (names, a query, the EDNS0 OPT record, a reply with
+// compression pointers, what decode refuses, a round trip over every
+// section and record type), the answer section read through a CNAME
+// chain with each rcode, the hosts file of both families, resolv.conf's
+// defaults, caps and floors, res_search's candidate order and its
+// reaction to each failure of a scripted nameserver, and the search walk
+// over a name's plan. Two live cases run against this machine's own
+// /etc/hosts. Passing suite -> exit 0.
+func TestRunnerDnsExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/dns_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/dns", "1..25", "# pass 25", "# fail 0"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
