@@ -25,23 +25,23 @@ import (
 // reference and compares the builder's bytes against it. A failure returns a
 // small distinct code saying which shape disagreed; 42 means every
 // comparison matched.
-const bufPushKernelsIRProg = `function ref(s: string, table: u8[]): string {
-    var out: string = "";
+const bufPushKernelsIRProg = `function ref(s: string, table: u8[]): u8[] {
+    var out: u8[] = [];
     var i: i32 = 0;
     while (i < s.len()) {
         var c: i32 = s[i] as i32;
         if (c < table.len()) { c = table[c] as i32; }
-        out = out + chr(c);
+        out = out.append(c as u8);
         i = i + 1;
     }
     return out;
 }
-function ref_filtered(s: string, drop: u8[]): string {
-    var out: string = "";
+function ref_filtered(s: string, drop: u8[]): u8[] {
+    var out: u8[] = [];
     var i: i32 = 0;
     while (i < s.len()) {
         var c: i32 = s[i] as i32;
-        if (c >= drop.len() || drop[c] as i32 == 0) { out = out + chr(c); }
+        if (c >= drop.len() || drop[c] as i32 == 0) { out = out.append(c as u8); }
         i = i + 1;
     }
     return out;
@@ -55,20 +55,20 @@ function alternate_table(): u8[] {
 function check_filtered(b: usize, held: string, s: string, drop: u8[]): boolean {
     buf_push(b, held);
     buf_push_filtered(b, s, drop);
-    return buf_take(b) == held + ref_filtered(s, drop);
+    return same_bytes(buf_take_bytes(b), held, ref_filtered(s, drop));
 }
-function ref_expanded(s: string, t: u8[]): string {
-    var out: string = "";
+function ref_expanded(s: string, t: u8[]): u8[] {
+    var out: u8[] = [];
     var i: i32 = 0;
     while (i < s.len()) {
         var c: i32 = s[i] as i32;
         if (c * 8 + 8 > t.len()) {
-            out = out + chr(c);
+            out = out.append(c as u8);
         } else {
             var n: i32 = t[c * 8] as i32;
             if (n > 7) { n = 7; }
             var k: i32 = 0;
-            while (k < n) { out = out + chr(t[c * 8 + 1 + k] as i32); k = k + 1; }
+            while (k < n) { out = out.append(t[c * 8 + 1 + k]); k = k + 1; }
         }
         i = i + 1;
     }
@@ -92,7 +92,7 @@ function expand_table(): u8[] {
 function check_expanded(b: usize, held: string, s: string, t: u8[]): boolean {
     buf_push(b, held);
     buf_push_expanded(b, s, t);
-    return buf_take(b) == held + ref_expanded(s, t);
+    return same_bytes(buf_take_bytes(b), held, ref_expanded(s, t));
 }
 function rot_table(): u8[] {
     var t: u8[] = __alloc_u8(256);
@@ -103,7 +103,15 @@ function rot_table(): u8[] {
 function check(b: usize, held: string, s: string, table: u8[]): boolean {
     buf_push(b, held);
     buf_push_mapped(b, s, table);
-    return buf_take(b) == held + ref(s, table);
+    return same_bytes(buf_take_bytes(b), held, ref(s, table));
+}
+function same_bytes(actual: u8[], held: string, tail: u8[]): boolean {
+    if (actual.len() != held.len() + tail.len()) { return false; }
+    var i: i32 = 0;
+    while (i < held.len()) { if (actual[i] != held[i]) { return false; } i = i + 1; }
+    var j: i32 = 0;
+    while (j < tail.len()) { if (actual[i + j] != tail[j]) { return false; } j = j + 1; }
+    return true;
 }
 function main(): i32 {
     var b: usize = buf_new(4);

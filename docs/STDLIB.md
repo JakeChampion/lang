@@ -29,6 +29,9 @@ Receiver methods on i32 / byte values.
   `is_ascii_upper`, `matches_any`,
   `hex_digit`, `digit_value`, `hex_value`, `to_ascii_lower`,
   `to_ascii_upper`, `to_ascii_string`
+  (`to_ascii_string` accepts a `u8`: 0..127 produces one ASCII byte,
+  including NUL; 128..255 produces the empty string. Keep arbitrary bytes
+  in `u8[]`, or validate a complete sequence with `utf8.from_bytes`.)
 - **Sign / classification:** `signum`, `is_positive`, `is_negative`,
   `is_zero`, `is_in_range`, `is_between`, `is_multiple_of`,
   `is_perfect_square`, `is_palindrome`, `is_even`, `is_odd`,

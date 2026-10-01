@@ -9353,22 +9353,23 @@ pub function buf_helpers(): string {
   return o;
 }
 
-// chr_helper emits $__fern_chr: an i32 byte value to a fresh 1-char
-// `[len@0][bytes@4]` string block (len 1, the low byte at +4). The wasm
+// chr_helper emits $__fern_chr: ASCII becomes a one-byte string and other
+// integers become an empty string. The wasm
 // companion to asm_ir's __fn___fern_chr (the wasm AST backend had no chr, so
 // this is authored fresh). Depends on $__fern_alloc (module_allocates is pulled
 // in by the chr gate alongside this).
 pub function chr_helper(): string {
   var o: string = "";
   o = o + "  (func $__fern_chr (param $n i32) (result i32)\n";
-  o = o + "    (local $blk i32)\n";
+  o = o + "    (local $blk i32) (local $len i32)\n";
   // rc-header the 1-char block via $__fern_str_box (like every other heap
   // string), so a fresh non-escaping `chr(..)` local is reclaimable through
   // $__fern_arr_dec (#2649). The header is transparent to consumers: the block
   // still exposes [len@0][bytes@4] at the returned pointer.
-  o = o + "    (local.set $blk (call $__fern_str_box (i32.const 5)))\n";
-  o = o + "    (i32.store (local.get $blk) (i32.const 1))\n";
-  o = o + "    (i32.store8 (i32.add (local.get $blk) (i32.const 4)) (local.get $n))\n";
+  o = o + "    (local.set $len (i32.le_u (local.get $n) (i32.const 127)))\n";
+  o = o + "    (local.set $blk (call $__fern_str_box (i32.add (i32.const 4) (local.get $len))))\n";
+  o = o + "    (i32.store (local.get $blk) (local.get $len))\n";
+  o = o + "    (if (local.get $len) (then (i32.store8 (i32.add (local.get $blk) (i32.const 4)) (local.get $n))))\n";
   o = o + "    (local.get $blk))\n";
   return o;
 }

@@ -25,6 +25,9 @@ invariant from holding across the stdlib.
 | `Stream.read_line` | a byte cursor | U+FFFD, since its `None` means end of input |
 | `BytesWriter.into_string` | the program's own `write_byte` | `None` (#10950); `into_bytes` is raw |
 | `HttpResponse.body_string` | the program's own `BodyBytes` | U+FFFD; `body_bytes` is raw |
+| Regex replacements, splits and captures | byte-oriented matches | `None` when text would be invalid; explicit byte variants preserve raw output |
+| `u8.to_ascii_string` | a byte value | empty text for bytes above 127; ASCII, including NUL, is preserved |
+| `rng_bytes` / `random_bytes` | pseudorandom or system random bytes | owned `u8[]`, with no text conversion |
 
 The rule the table follows: where the API has an error channel the
 bytes are refused through it; where it has none they decode as U+FFFD,
@@ -34,13 +37,13 @@ The property test (`examples/tests/utf8_validity_property_test.fern`)
 covers the string methods. The byte-level methods (`reverse_bytes`,
 `shift_byte`, `replace_byte`, `without_byte`) return `u8[]`.
 
-The audit still finds observable invalid strings: replacing `.` in `é`
-can split its encoding, a `(.)` capture can expose its first byte, and
-`(255 as u8).to_ascii_string()` constructs an invalid one-byte string.
-`rng_bytes`, `Reader.read_chunk` and builder extraction also still have
-text-typed raw paths. `buf_take_bytes` adds the raw builder destination;
-the old text extraction and its binary consumers still need migration.
-These gaps require implementation and target coverage before closing D9.
+The old `Reader.read_chunk` and builder text extraction still expose
+unchecked raw paths. Their byte-returning siblings now provide migration
+destinations, but binary consumers and the old text contracts still need
+updating. These gaps require implementation and target coverage before
+closing D9. Regex keeps byte-oriented matching: replacing `.` in `é` can
+split its encoding, so the checked text result is `None` while the byte
+variant returns the exact output.
 
 Two things sit outside the invariant on purpose, both recorded rather
 than pending:
@@ -1155,7 +1158,7 @@ Tracked as epic #5626; issue numbers below.
 | 5 | **D5** (#5631) — normalization + `eq_canonical` — **DONE** | 1 | Shipped `nfc`/`nfd`/`eq_canonical`/`is_nfc`/`is_nfd`. NFKC/NFKD declined — a second full table for a lossy transform. |
 | 6 | **D8** (#5632) — `[u8]` string view — **DONE** | — | Builtin already existed; #5632 added the migrated consumer, the four-backend differential, and the docs. Borrow rule still open (#4814). |
 | 7 | **D6** (#5633) — grapheme segmentation — **DONE**; word segmentation followed under #5552 | 1, 3 | Opt-in. NOT the largest table after all (~17 KB vs normalization's ~58 KB). Returns `str[]` views (was `string[]` until #5695 was fixed). Word_Break coalesces to 1085 ranges, ~13 KB; a program that does not segment words is byte-identical to one built before it existed. |
-| 8 | **D9** (#5634, #5714): the UTF-8 validity invariant, **IN PROGRESS** | 6 | `s[a:b]` is `Option[str]` and `read_file` validates. Regex, ASCII-byte conversion and remaining text-typed raw paths still need migration; see the audit at the top. |
+| 8 | **D9** (#5634, #5714): the UTF-8 validity invariant, **IN PROGRESS** | 6 | `s[a:b]` is `Option[str]`; file reads and regex text results validate, ASCII-byte conversion refuses non-ASCII, and RNG output is bytes. Remaining text-typed raw paths still need migration; see the audit at the top. |
 | 9 | **D10** (#5635) — document the path assumption — **DONE** | — | Doc-only. Stated in `std/path`, `std/io`, and `read_dir`'s builtin signature. |
 
 #5552 as filed maps onto slices 1, 4, 5, 6, 7. Its step 1 (document the

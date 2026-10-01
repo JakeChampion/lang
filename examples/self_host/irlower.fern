@@ -9950,7 +9950,7 @@ pub function expr_is_str(e: ast.Expr, s: LowerState): boolean {
             return expr_is_str(arr_elem_index_expr(cfa.obj), s);
           }
           // `b.to_ascii_string()` on a byte receiver yields a fresh
-          // 1-char string (it desugars to chr(b)), so the result feeds
+          // string (it desugars to chr(b)), so the result feeds
           // `[0]` / `.len()` / concat as a string.
           if (cfa.field == "to_ascii_string" && c.args.len() == 0 && ascii_byte_receiver(cfa.obj, s)) {
             return true;
@@ -10109,7 +10109,7 @@ pub function expr_is_str(e: ast.Expr, s: LowerState): boolean {
 //     buffer, min 1 byte; no already-cased identity short-circuit)
 //   - `s.repeat(n)`             (always a fresh buffer; n <= 0 → fresh empty box)
 //   - the free-function spellings `str_to_upper` / `str_to_lower` / `str_repeat`
-//   - the alloc BUILTINS `chr(n)` (fresh 1-char box) and `string_from_bytes_unchecked(arr)`
+//   - the alloc BUILTINS `chr(n)` (fresh string) and `string_from_bytes_unchecked(arr)`
 //     (packs into a fresh box) — fixed fresh-allocating semantics, no user override
 //     (unlike `.to_string()`, whose derived/hand-written body may return an aliased
 //     field, so it stays excluded).
@@ -16191,8 +16191,8 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
       }
       return i2s.emit(ir.op_call_direct("__fern_i32_to_string", 1));
     }
-    // Built-in `chr(n)` — an i32 byte value to a fresh 1-char
-    // string box. Routes to the __fern_chr runtime (allocates).
+    // Built-in `chr(n)`: ASCII 0..127 to a fresh string box; other
+    // values produce an empty string. The __fern_chr runtime allocates.
     // The result is a string (expr_is_str tracks it below).
     if (cid.name == "chr" && c.args.len() == 1) {
       var chrs: LowerState = lower_expr(c.args[0], s);
@@ -19756,7 +19756,7 @@ function lower_call_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerSta
     && ascii_byte_receiver(fa.obj, s)) {
     return lower_ascii_byte_method(fa.field, fa.obj, s);
   }
-  // b.to_ascii_string() — a fresh 1-char string from the byte.
+  // b.to_ascii_string(): a fresh ASCII string, or empty for bytes >127.
   // That is exactly `chr(b)`, which already lowers to the
   // __fern_chr runtime helper on every backend, so it desugars
   // rather than hand-emitting the two allocations the AST
