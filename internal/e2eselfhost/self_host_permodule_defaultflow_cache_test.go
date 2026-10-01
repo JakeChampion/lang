@@ -20,7 +20,8 @@ import (
 
 // pmCacheTree writes the leaf → mid → main chain the cache tests share and
 // returns the project dir and entry path. `leaf` is the module edits are made
-// to; mid calls into it, main calls mid.
+// to; mid calls into it, main calls mid. The tests' leaves are `@noinline`, so
+// mid's lowering reads leaf's signature and not its body.
 func pmCacheTree(t *testing.T, leaf string) (string, string) {
 	t.Helper()
 	proj := t.TempDir()
@@ -79,7 +80,7 @@ func TestSelfHostPerModuleEmitAllObjectCacheX86_64(t *testing.T) {
 	shDir := writeSelfHostModloadProject(t)
 	driverBin := buildSelfHostBin(t, gcc, shDir, "asm_modload_run.fern", "driver")
 
-	proj, entry := pmCacheTree(t, "pub function leaf_val(): i32 { return 40; }\n")
+	proj, entry := pmCacheTree(t, "@noinline pub function leaf_val(): i32 { return 40; }\n")
 	cacheDir := filepath.Join(proj, "cache")
 	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
 		t.Fatalf("mkdir cache: %v", err)
@@ -213,7 +214,7 @@ func TestSelfHostPerModuleEmitAllObjectCacheX86_64(t *testing.T) {
 
 	// Phase 3 — body-only edit: leaf's signature is untouched, so nothing that
 	// merely calls into it can have changed. Only leaf re-emits.
-	writeLeaf("pub function leaf_val(): i32 { return 41; }\n")
+	writeLeaf("@noinline pub function leaf_val(): i32 { return 41; }\n")
 	body, hits, misses := emitAll("body", true)
 	pmWantSets(t, "body", hits, misses, []string{"__entry", "mid"}, []string{"leaf"})
 	assertClean("body", body)
@@ -227,12 +228,73 @@ func TestSelfHostPerModuleEmitAllObjectCacheX86_64(t *testing.T) {
 	// TestSelfHostPerModuleTransitiveInvalidationX86_64 for the shape that makes
 	// direct-edge keying unsound). So the closure over leaf re-emits, which here
 	// is everything.
-	writeLeaf("pub function leaf_val(): i64 { return 40i64; }\n")
+	writeLeaf("@noinline pub function leaf_val(): i64 { return 40i64; }\n")
 	sig, hits, misses := emitAll("sig", true)
 	pmWantSets(t, "sig", hits, misses, []string{}, []string{"__entry", "leaf", "mid"})
 	assertClean("sig", sig)
 	if code := linkRun("sig", sig); code != 42 {
 		t.Fatalf("sig-edit build exit %d, want 42", code)
+	}
+}
+
+// TestSelfHostPerModuleCacheFollowsInlinedBodyX86_64: the typed lowering
+// splices a tiny leaf into its callers, so mid's lowering reads leaf's BODY,
+// which no signature covers. A body-only edit to leaf must re-emit mid too: a
+// served mid would still return the old constant.
+func TestSelfHostPerModuleCacheFollowsInlinedBodyX86_64(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	shDir := writeSelfHostModloadProject(t)
+	driverBin := buildSelfHostBin(t, gcc, shDir, "asm_modload_run.fern", "driver")
+
+	proj, entry := pmCacheTree(t, "pub function leaf_val(): i32 { return 40; }\n")
+	if err := os.WriteFile(filepath.Join(proj, "mid.fern"), []byte("import \"./leaf\";\npub function mid_val(): i32 { return leaf.leaf_val() + 2; }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cacheDir := filepath.Join(proj, "cache")
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	build := func(tag string) (int, []string, []string) {
+		t.Helper()
+		outDir := filepath.Join(proj, "out_"+tag)
+		if err := os.MkdirAll(outDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		cmd := runX86_64Bin(runner, driverBin, entry, "-per-module-emit-all", "-out-dir", outDir, "-cache-dir", cacheDir)
+		var errb strings.Builder
+		cmd.Stderr = &errb
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("%s: emit-all: %v\n%s", tag, err, errb.String())
+		}
+		ents, err := os.ReadDir(outDir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var objs []string
+		for _, e := range ents {
+			objs = append(objs, filepath.Join(outDir, e.Name()))
+		}
+		sort.Strings(objs)
+		bin := filepath.Join(proj, tag+"_bin")
+		if lout, err := exec.Command(gcc, append([]string{"-static", "-nostdlib", "-no-pie"}, append(objs, "-o", bin)...)...).CombinedOutput(); err != nil {
+			t.Fatalf("%s: link: %v\n%s", tag, err, lout)
+		}
+		run := runX86_64Bin(runner, bin)
+		_ = run.Run()
+		hits, misses := pmCacheLines(errb.String())
+		return run.ProcessState.ExitCode(), hits, misses
+	}
+
+	if code, _, _ := build("cold"); code != 42 {
+		t.Fatalf("cold build exit %d, want 42", code)
+	}
+	if err := os.WriteFile(filepath.Join(proj, "leaf.fern"), []byte("pub function leaf_val(): i32 { return 41; }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, hits, misses := build("body")
+	pmWantSets(t, "body", hits, misses, []string{"__entry"}, []string{"leaf", "mid"})
+	if code != 43 {
+		t.Fatalf("body-edit build exit %d, want 43", code)
 	}
 }
 
@@ -253,7 +315,7 @@ func TestSelfHostPerModuleSpawnedCacheX86_64(t *testing.T) {
 	shDir := writeSelfHostModloadProject(t)
 	driverBin := buildSelfHostBin(t, gcc, shDir, "asm_modload_run.fern", "driver")
 
-	proj, entry := pmCacheTree(t, "pub function leaf_val(): i32 { return 40; }\n")
+	proj, entry := pmCacheTree(t, "@noinline pub function leaf_val(): i32 { return 40; }\n")
 	cacheDir := filepath.Join(proj, "cache")
 	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
 		t.Fatalf("mkdir cache: %v", err)

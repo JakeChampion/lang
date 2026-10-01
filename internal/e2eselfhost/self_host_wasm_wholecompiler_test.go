@@ -44,7 +44,7 @@ func TestSelfHostWasmWholeCompilerShardedLink(t *testing.T) {
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_modload_run.fern", "wasm_modload_run")
 	entryPath := filepath.Join(dir, "wasm_modload_run.fern")
 	// The compiler imports core/map, which resolves beside the entry.
-	copyStdlibTree(t, "../../internal/stdlib", dir)
+	copyStdlibTree(t, dir)
 
 	drive := func(t *testing.T, args ...string) (string, string, error) {
 		t.Helper()

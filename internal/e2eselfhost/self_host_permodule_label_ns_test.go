@@ -62,7 +62,7 @@ func TestSelfHostPerModuleLabelNS_X86_64(t *testing.T) {
 	// The driver resolves `std/…` relative to the ENTRY's directory, so the
 	// program is written at the root of a copy of internal/stdlib.
 	progDir := t.TempDir()
-	copyStdlibTree(t, "../../internal/stdlib", progDir)
+	copyStdlibTree(t, progDir)
 	entry := filepath.Join(progDir, "main.fern")
 	if err := os.WriteFile(entry, []byte(floatLabelNSProg), 0o644); err != nil {
 		t.Fatalf("write main.fern: %v", err)
@@ -117,34 +117,5 @@ func TestSelfHostPerModuleLabelNS_X86_64(t *testing.T) {
 	}
 	if string(got) != string(want) {
 		t.Errorf("stdout = %q, want %q (interp oracle)", got, want)
-	}
-}
-
-// copyStdlibTree copies the stdlib source tree so a program can sit at its root
-// and resolve `std/…` / `core/…` imports the way the driver expects.
-func copyStdlibTree(t *testing.T, src, dst string) {
-	t.Helper()
-	err := filepath.WalkDir(src, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, rerr := filepath.Rel(src, path)
-		if rerr != nil {
-			return rerr
-		}
-		if d.IsDir() {
-			return os.MkdirAll(filepath.Join(dst, rel), 0o755)
-		}
-		if !strings.HasSuffix(path, ".fern") {
-			return nil
-		}
-		b, rerr := os.ReadFile(path)
-		if rerr != nil {
-			return rerr
-		}
-		return os.WriteFile(filepath.Join(dst, rel), b, 0o644)
-	})
-	if err != nil {
-		t.Fatalf("copy stdlib tree: %v", err)
 	}
 }

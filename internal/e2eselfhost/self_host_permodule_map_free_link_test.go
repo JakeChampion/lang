@@ -20,6 +20,10 @@ func TestSelfHostPerModuleMapFreeLinks(t *testing.T) {
 	x86gcc, x86runner := x86_64Tooling(t)
 	dir := writeSelfHostModloadProject(t)
 	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_modload_run.fern", "mapfreelinkdriver")
+	// The family is the AST lowering's: the typed lowering releases a map
+	// through core/map's own drop (TestSelfHostPerModuleTypedHelpersLink). Set
+	// after the build, which stage0 would otherwise run on the AST lowering.
+	t.Setenv("FERN_SEM_IR", "")
 
 	proj := t.TempDir()
 	mustWrite(t, proj, "leaf.fern", `import "core/map";

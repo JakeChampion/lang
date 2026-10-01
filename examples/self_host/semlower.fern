@@ -1096,3 +1096,15 @@ function checked_typed(annotated: parser.Module, target: string): parser.Module 
   }
   return typed;
 }
+
+// program is the whole program a register backend's emit over `d` gates, which
+// a per-module build cuts into units (ircore.split_units). A module the gate
+// refuses is an error, as it is for the whole-module emit.
+pub function program(d: Driven): ircore.Gated {
+  var g: ircore.Gated = ircore.gate_program(ircore.sub_lifted(d.sub, checker.ensure_annotated(d.full)), [], d.sub);
+  if (!g.ok) {
+    ircore.eprint_ir_ineligible();
+    exit(1);
+  }
+  return g;
+}

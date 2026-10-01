@@ -27,6 +27,7 @@
 // This module must stay backend-free: it imports the front end, the IR and the
 // lowering, never a backend. asm_ir/asm_arm64_ir/wasm_ir import it, so anything
 // added here that needs to emit an instruction belongs in the backend instead.
+import "core/map";
 import "./parser";
 import "./asmcore";
 import "./util";
@@ -36,6 +37,7 @@ import "./irfipverify";
 import "./irverify";
 import "./ast";
 import "./astwalk";
+import "./treeshake";
 
 // is_array_type reports whether a type string denotes an array (ends "[]").
 function is_array_type(t: string): boolean {
@@ -1460,44 +1462,6 @@ pub function sub_cache(sub: Sub, cache: irlower.LowerResult[]): irlower.LowerRes
   return out;
 }
 
-// lowered_key hashes everything an emit reads from these bodies, so two caches
-// with one key emit the same text against the same view.
-pub function lowered_key(cache: irlower.LowerResult[]): string {
-  var key: string = "";
-  for r in cache {
-    var s: string = r.name + "|" + util.i32_to_string(r.n_locals) + "," + util.i32_to_string(r.n_params)
-      + "," + util.i32_to_string(r.result_kind) + "," + flags_text([r.ok, r.erased_wide, r.superseded])
-      + "|" + ints_text(r.arr_slots) + "|" + ints_text(r.i64_slots) + "|" + ints_text(r.f64_slots) + "|" + ints_text(r.str_slots) + "|";
-    for o in r.ops {
-      s = s + util.i32_to_string(o.kind_tag) + " " + util.i32_to_string(o.i32_imm) + " " + util.i64_to_string(o.i64_imm)
-        + " " + util.i64_to_string(f64_bits(o.f64_imm)) + " " + util.i32_to_string(o.width) + " " + flags_text([o.unsigned])
-        + " " + util.i32_to_string(o.decl) + " " + util.i32_to_string(o.str.len()) + ":" + o.str + ";";
-    }
-    key = key + util.hash_key(s);
-  }
-  return util.hash_key(key);
-}
-
-function flags_text(bs: boolean[]): string {
-  var s: string = "";
-  for b in bs {
-    if (b) {
-      s = s + "1";
-    } else {
-      s = s + "0";
-    }
-  }
-  return s;
-}
-
-function ints_text(ns: i32[]): string {
-  var s: string = "";
-  for n in ns {
-    s = s + util.i32_to_string(n) + ",";
-  }
-  return s;
-}
-
 // Lowered is lower_gated's result: `ok` is the module's IR-eligibility verdict,
 // and when it holds `cache[i]` is mod.funcs[i]'s LowerResult, ready to emit
 // from. A separate flag rather than an empty cache, because a function-less
@@ -1568,6 +1532,208 @@ pub function lower_gated(mod: parser.Module, structs: irlower.StructTab, sg: irl
     i = i + 1;
   }
   return Lowered { ok: true, cache: cache };
+}
+
+// Gated is the whole program a register backend emits: the module it gates,
+// the emit cache (the substitution's bodies in place, its extra bodies on the
+// tail) and the registry base. `ok` is lower_gated's verdict.
+pub struct Gated {
+  ok: boolean,
+  im: parser.Module,
+  stab: irlower.StructTab,
+  base: irlower.FnSigs,
+  cache: irlower.LowerResult[],
+}
+
+// gate_program is the gate both register backends' whole-module emits run, and
+// what a per-module build cuts into units (split_units). `lifted` is the
+// lambda-lifted module (sub_lifted).
+pub function gate_program(lifted: parser.Module, known: string[], sub: Sub): Gated {
+  var im: parser.Module = parser.infer_ret_types_module(script_normalized(lifted));
+  var stab: irlower.StructTab = irlower.struct_tab(im.structs);
+  var base: irlower.FnSigs = sub_base(sub, im.funcs, stab);
+  var g: Lowered = lower_gated(im, stab, irlower.fn_sigs_with_dyn(base, im.trait_reqs), known, false, sub);
+  if (!g.ok) {
+    return Gated { ok: false, im: im, stab: stab, base: base, cache: [] };
+  }
+  return Gated { ok: true, im: im, stab: stab, base: base, cache: sub_cache(sub, g.cache) };
+}
+
+// Units is a gated program cut into one unit per module of a per-module build:
+// mods[k] declares the functions unit k emits and caches[k] their bodies, with
+// the entry's cache carrying the declaration-less bodies on its tail.
+pub struct Units { mods: parser.Module[], caches: irlower.LowerResult[][] }
+
+// split_units assigns every function of `g` to one of `parts` (the modules
+// flatten.bundle_per_module returns, the entry at `entry`). A declaration goes
+// to the part declaring it, and a method the front end added to the part
+// declaring its receiver type. Anything else the front end or the lambda lift
+// made goes to the part of the first function whose body names it, and failing
+// that to the entry. A leaf seminline spliced into a caller in another module
+// keeps its body in its own unit, for the callers that still call it.
+pub function split_units(g: Gated, parts: parser.Module[], entry: i32): Units {
+  var owner: i32[] = unit_owners(g, parts, entry);
+  var mods: parser.Module[] = [];
+  var caches: irlower.LowerResult[][] = [];
+  var k: i32 = 0;
+  while (k < parts.len()) {
+    var funcs: parser.FuncDecl[] = [];
+    var cache: irlower.LowerResult[] = [];
+    var i: i32 = 0;
+    while (i < g.im.funcs.len()) {
+      if (owner[i] == k) {
+        funcs = funcs.append(g.im.funcs[i]);
+        cache = cache.append(g.cache[i]);
+      }
+      i = i + 1;
+    }
+    if (k == entry) {
+      while (i < g.cache.len()) {
+        cache = cache.append(g.cache[i]);
+        i = i + 1;
+      }
+    }
+    mods = mods.append(parser.Module { ...g.im, funcs: funcs, imports: parts[k].imports });
+    caches = caches.append(cache);
+    k = k + 1;
+  }
+  return Units { mods: mods, caches: caches };
+}
+
+function unit_owners(g: Gated, parts: parser.Module[], entry: i32): i32[] {
+  // Part indexes are stored plus one, so a missing key's 0 means "none".
+  var declared: Map[string, i32] = map_new(g.im.funcs.len() + 1);
+  var types: Map[string, i32] = map_new(64);
+  var p: i32 = 0;
+  while (p < parts.len()) {
+    for fd in parts[p].funcs {
+      declared = declared.insert(irlower.grow_fn_key(fd), p + 1);
+    }
+    for sd in parts[p].structs {
+      types = types.insert(sd.name, p + 1);
+    }
+    for ed in parts[p].enums {
+      types = types.insert(ed.name, p + 1);
+    }
+    p = p + 1;
+  }
+  var owner: i32[] = [];
+  var unowned: Map[string, i32] = map_new(64);
+  var queue: i32[] = [];
+  var i: i32 = 0;
+  while (i < g.im.funcs.len()) {
+    var fd: parser.FuncDecl = g.im.funcs[i];
+    var at: i32 = declared.get_or(irlower.grow_fn_key(fd), 0);
+    if (at == 0 && fd.receiver_type.len() > 0) {
+      at = types.get_or(util.base_type_name(fd.receiver_type), 0);
+    }
+    owner = owner.append(at - 1);
+    if (at > 0) {
+      queue = queue.append(i);
+    } else {
+      unowned = unowned.insert(irlower.grow_fn_key(fd), i + 1);
+    }
+    i = i + 1;
+  }
+  var q: i32 = 0;
+  while (q < queue.len()) {
+    var from: i32 = queue[q];
+    // What the body spells, and what its lowering calls: a spliced leaf
+    // is named only by the first, an instance or helper only by the second.
+    var refs: string[] = treeshake.free_names(treeshake.body_refs(g.im.funcs[from]));
+    for o in g.cache[from].ops {
+      if (o.str == "") {
+        continue;
+      }
+      if (o.kind_tag == ir.kind_id("const_struct")) {
+        refs = refs.append(ir.const_struct_fn_body(o.str));
+      } else {
+        refs = refs.append(o.str);
+      }
+    }
+    for ref in refs {
+      var at: i32 = unowned.get_or(ref, 0) - 1;
+      if (at >= 0 && owner[at] < 0) {
+        owner = owner.with(at, owner[from]);
+        queue = queue.append(at);
+      }
+    }
+    q = q + 1;
+  }
+  i = 0;
+  while (i < owner.len()) {
+    if (owner[i] < 0) {
+      owner = owner.with(i, entry);
+    }
+    i = i + 1;
+  }
+  return owner;
+}
+
+// lowered_digest fingerprints what a register backend reads of each body, so a
+// per-module cache keyed on it moves whenever a unit's lowering does, including
+// when that lowering depends on another module's body.
+pub function lowered_digest(cache: irlower.LowerResult[]): string {
+  var d: Digest = Digest { a: 208357, b: 5381 };
+  for r in cache {
+    d = roll(roll(roll(roll(d, r.n_locals), r.n_params), r.result_kind), r.ops.len());
+    d = roll_text(roll(roll(d, digest_flags(r.superseded, r.erased_wide)), digest_flags(r.ok, false)), r.name);
+    for o in r.ops {
+      d = roll(roll(roll(roll(roll(d, o.kind_tag), o.i32_imm), o.width), o.decl), digest_flags(o.unsigned, false));
+      d = roll_text(roll_wide(roll_wide(d, o.i64_imm), f64_bits(o.f64_imm)), o.str);
+    }
+    d = roll_slots(roll_slots(roll_slots(roll_slots(d, r.arr_slots), r.i64_slots), r.f64_slots), r.str_slots);
+  }
+  return util.i32_to_string(d.a) + "_" + util.i32_to_string(d.b);
+}
+
+// Digest is two independent 30-bit polynomial rolls, util.hash_key's.
+struct Digest { a: i32, b: i32 }
+
+// Each word rolls its low 30 bits and then its top two.
+function roll(d: Digest, w: i32): Digest {
+  var a: i32 = d.a * 31 + (w & 1073741823) + 1 & 1073741823;
+  var b: i32 = d.b * 131 + (w & 1073741823) + 7 & 1073741823;
+  a = a * 31 + (w >> 30 & 3) + 1 & 1073741823;
+  b = b * 131 + (w >> 30 & 3) + 7 & 1073741823;
+  return Digest { a: a, b: b };
+}
+
+function roll_wide(d: Digest, v: i64): Digest {
+  return roll(roll(roll(d, (v & 1073741823i64) as i32), (v >> 30 & 1073741823i64) as i32), (v >> 60) as i32);
+}
+
+// A string rolls its length and then its bytes, so adjacent strings cannot
+// trade bytes and roll the same.
+function roll_text(d: Digest, s: string): Digest {
+  var out: Digest = roll(d, s.len());
+  var i: i32 = 0;
+  while (i < s.len()) {
+    out = roll(out, s[i] as i32);
+    i = i + 1;
+  }
+  return out;
+}
+
+function roll_slots(d: Digest, xs: i32[]): Digest {
+  var out: Digest = roll(d, xs.len());
+  var i: i32 = 0;
+  while (i < xs.len()) {
+    out = roll(out, xs[i]);
+    i = i + 1;
+  }
+  return out;
+}
+
+function digest_flags(x: boolean, y: boolean): i32 {
+  var v: i32 = 0;
+  if (x) {
+    v = v + 1;
+  }
+  if (y) {
+    v = v + 2;
+  }
+  return v;
 }
 
 // ---- tiny-leaf inlining -------------------------------------------------

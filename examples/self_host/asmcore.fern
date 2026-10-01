@@ -9443,6 +9443,11 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
     "__fn___fern_map_free_kf", "__fn___fern_map_free_kfvf", "__fn___fern_map_free_kfvs", "__fn___fern_map_free_kfvsa",
     "__fn___fern_map_free_ksvf", "__fn___fern_map_free_vf",
     "__fern_arr_push_owned",
+    // The helpers only a typed body calls: the packed-byte twins, a dead
+    // string view's release, the raw floor's free and the map hash seed.
+    "__fern_alloc_bytes", "__fern_arr_push_u8", "__fern_arr_push_owned_u8",
+    "__fn___fern_arr_slice_u8", "__fn___fern_string_from_bytes_u8",
+    "__fn___fern_str_view_free", "__fern_raw_free", "__fern_map_hash_seed",
     // xs.reverse() / xs.concat(ys) / a[start:end] (#3457): a LIBRARY module's
     // call resolves against the entry module's single definition, exactly
     // like the heap helpers above.

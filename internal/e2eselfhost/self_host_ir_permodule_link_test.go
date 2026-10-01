@@ -54,7 +54,8 @@ func TestSelfHostIRPerModuleLink(t *testing.T) {
 	}
 
 	// Library module B: defines bfoo. Emitted as a non-entry unit.
-	libAsm := emit(t, "function bfoo(x: i32): i32 { return x * 7; }", "-ir-unit", "lib")
+	libSrc := "function bfoo(x: i32): i32 { return x * 7; }"
+	libAsm := emit(t, libSrc, "-ir-unit", "lib")
 	if !strings.Contains(libAsm, ".globl __fn_bfoo") {
 		t.Fatalf("lib unit did not export __fn_bfoo as .globl\n--- lib.s ---\n%s", libAsm)
 	}
@@ -62,8 +63,13 @@ func TestSelfHostIRPerModuleLink(t *testing.T) {
 		t.Fatalf("lib (non-entry) unit must not emit _start\n--- lib.s ---\n%s", libAsm)
 	}
 
-	// Entry module A: calls the imported bfoo (extern), defines main.
-	entryAsm := emit(t, "function main(): i32 { return bfoo(6); }", "-ir-unit", "entry", "-ir-extern", "bfoo")
+	// Entry module A: calls the imported bfoo (extern), defines main. The
+	// typed lowering checks the unit against B's source (-ir-sigs).
+	sigPath := filepath.Join(dir, "pm_lib.fern")
+	if err := os.WriteFile(sigPath, []byte(libSrc), 0o644); err != nil {
+		t.Fatalf("write pm_lib.fern: %v", err)
+	}
+	entryAsm := emit(t, "function main(): i32 { return bfoo(6); }", "-ir-unit", "entry", "-ir-extern", "bfoo", "-ir-sigs", sigPath)
 	if !strings.Contains(entryAsm, "call __fn_bfoo") {
 		t.Fatalf("entry unit did not reference __fn_bfoo as an extern call\n--- entry.s ---\n%s", entryAsm)
 	}
