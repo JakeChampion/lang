@@ -1032,9 +1032,7 @@ function x86_mov_load_rip_label(own a: X86Asm, dst: i32, name: string): X86Asm {
   a = X86Asm { ...a, code: a.code.append(x86_modrm(0, dst, 5)) };  // RIP-relative
   a = X86Asm { ...a, code: x86_le32(a.code, 0) };
   var patch_off: i32 = a.code.len() - 4;
-  a = X86Asm { ...a, fix_offs: a.fix_offs.append(patch_off) };
-  a = X86Asm { ...a, fix_widths: a.fix_widths.append(4) };
-  a = X86Asm { ...a, fix_names: a.fix_names.append(name) };
+  a = x86_queue_fixup(a, patch_off, 4, name);
   return a;
 }
 
@@ -1048,9 +1046,7 @@ function x86_movl_load_rip_label(own a: X86Asm, dst: i32, name: string): X86Asm 
   a = X86Asm { ...a, code: a.code.append(x86_modrm(0, dst, 5)) };  // RIP-relative
   a = X86Asm { ...a, code: x86_le32(a.code, 0) };
   var patch_off: i32 = a.code.len() - 4;
-  a = X86Asm { ...a, fix_offs: a.fix_offs.append(patch_off) };
-  a = X86Asm { ...a, fix_widths: a.fix_widths.append(4) };
-  a = X86Asm { ...a, fix_names: a.fix_names.append(name) };
+  a = x86_queue_fixup(a, patch_off, 4, name);
   return a;
 }
 
@@ -1070,9 +1066,7 @@ function x86_store_imm_rip_label(own a: X86Asm, opcode: i32, w: i32, name: strin
   a = X86Asm { ...a, code: a.code.append(x86_modrm(0, 0, 5)) };  // RIP-relative, /0
   a = X86Asm { ...a, code: x86_le32(a.code, 0) };
   var patch_off: i32 = a.code.len() - 4;
-  a = X86Asm { ...a, fix_offs: a.fix_offs.append(patch_off) };
-  a = X86Asm { ...a, fix_widths: a.fix_widths.append(4) };
-  a = X86Asm { ...a, fix_names: a.fix_names.append(name + "") };
+  a = x86_queue_fixup(a, patch_off, 4, name + "");
   a = X86Asm { ...a, fix_tail_offs: a.fix_tail_offs.append(patch_off) };
   a = X86Asm { ...a, fix_tail_bytes: a.fix_tail_bytes.append(imm_bytes) };
   if (imm_bytes == 1) {
@@ -1103,9 +1097,7 @@ function x86_mov_store_rip_label(own a: X86Asm, src: i32, name: string): X86Asm 
   a = X86Asm { ...a, code: a.code.append(x86_modrm(0, src, 5)) };  // RIP-relative
   a = X86Asm { ...a, code: x86_le32(a.code, 0) };
   var patch_off: i32 = a.code.len() - 4;
-  a = X86Asm { ...a, fix_offs: a.fix_offs.append(patch_off) };
-  a = X86Asm { ...a, fix_widths: a.fix_widths.append(4) };
-  a = X86Asm { ...a, fix_names: a.fix_names.append(name) };
+  a = x86_queue_fixup(a, patch_off, 4, name);
   return a;
 }
 
@@ -1119,9 +1111,7 @@ function x86_movl_store_rip_label(own a: X86Asm, src: i32, name: string): X86Asm
   a = X86Asm { ...a, code: a.code.append(x86_modrm(0, src, 5)) };  // RIP-relative
   a = X86Asm { ...a, code: x86_le32(a.code, 0) };
   var patch_off: i32 = a.code.len() - 4;
-  a = X86Asm { ...a, fix_offs: a.fix_offs.append(patch_off) };
-  a = X86Asm { ...a, fix_widths: a.fix_widths.append(4) };
-  return X86Asm { ...a, fix_names: a.fix_names.append(name) };
+  return x86_queue_fixup(a, patch_off, 4, name);
 }
 
 // x86_rex_opt pushes a REX byte only if any extension bit is set (w must
@@ -1344,6 +1334,7 @@ pub struct X86Asm {
   // resolves them separately once the load address is known.
   dfix_offs: i32[],
   dfix_names: string[],
+  dfix_idx: i32[],
   lab_names: string[],
   lab_secs: i32[],
   lab_offs: i32[],
@@ -1361,6 +1352,12 @@ pub struct X86Asm {
   // fix_widths[i] is how many bytes fix_offs[i] patches: 4 for a rel32 /
   // rip-relative displacement, 1 for a relaxed rel8 branch (#7949).
   fix_widths: i32[],
+  // fix_idx[i] / br_idx[k] / dfix_idx[i] are the label table index behind
+  // the name, -1 when the reference arrived by name alone (the raw encoder
+  // API, a rip-relative memory operand). On the x86_gas_assemble path the
+  // table is built once from the text (x86_gas_label_table) and every
+  // round reads a target through its index instead of hashing its name.
+  fix_idx: i32[],
   // Branch relaxation state. br_long[k] pins the k-th relaxable branch
   // (jcc / jmp to a label, in emission order) to its rel32 form; br_n is
   // the ordinal handed to the next one. x86_gas_assemble re-emits with a
@@ -1376,6 +1373,7 @@ pub struct X86Asm {
   br_n: i32,
   br_offs: i32[],
   br_names: string[],
+  br_idx: i32[],
   br_shorts: boolean[],
   // Patch offsets whose instruction continues PAST the disp32 — an
   // immediate store to a rip-relative global (`movq $0, sym(%rip)`) is the
@@ -1443,7 +1441,25 @@ function x86_asm_new(): X86Asm {
 // applied to a fresh X86Asm, so nothing in the assembler ever holds a second
 // reference to the struct it is threading.
 function x86_asm_new_for(relaxing: boolean, longs: boolean[]): X86Asm {
-  return X86Asm { code: [], rodata: [], bss_size: 0, dfix_offs: [], dfix_names: [], lab_names: [], lab_secs: [], lab_offs: [], lab_head: x86_empty_buckets(), lab_tail: x86_empty_buckets(), lab_next: [], fix_offs: [], fix_names: [], fix_widths: [], fix_tail_offs: [], fix_tail_bytes: [], relaxing: relaxing, br_long: x86_bools_copy(longs), br_n: 0, br_offs: [], br_names: [], br_shorts: [], unknown: [], cfi: cfi_new(cfi_profile_x86()) };
+  return X86Asm { code: [], rodata: [], bss_size: 0, dfix_offs: [], dfix_names: [], dfix_idx: [], lab_names: [], lab_secs: [], lab_offs: [], lab_head: x86_empty_buckets(), lab_tail: x86_empty_buckets(), lab_next: [], fix_offs: [], fix_names: [], fix_widths: [], fix_idx: [], fix_tail_offs: [], fix_tail_bytes: [], relaxing: relaxing, br_long: x86_bools_copy(longs), br_n: 0, br_offs: [], br_names: [], br_idx: [], br_shorts: [], unknown: [], cfi: cfi_new(cfi_profile_x86()) };
+}
+
+// x86_asm_new_prepared is the state for a relaxation round over text whose
+// labels x86_gas_label_table has already indexed: the table's names and
+// buckets are shared, and every label starts unplaced (section and offset
+// -1) until the round reaches its definition.
+function x86_asm_new_prepared(labs: GasLabels, longs: boolean[]): X86Asm {
+  var n: i32 = labs.names.len();
+  return X86Asm { code: [], rodata: [], bss_size: 0, dfix_offs: [], dfix_names: [], dfix_idx: [], lab_names: labs.names, lab_secs: x86_filled(n, 0 - 1), lab_offs: x86_filled(n, 0 - 1), lab_head: labs.head, lab_tail: labs.tail, lab_next: labs.next, fix_offs: [], fix_names: [], fix_widths: [], fix_idx: [], fix_tail_offs: [], fix_tail_bytes: [], relaxing: true, br_long: x86_bools_copy(longs), br_n: 0, br_offs: [], br_names: [], br_idx: [], br_shorts: [], unknown: [], cfi: cfi_new(cfi_profile_x86()) };
+}
+
+// x86_filled is n copies of v.
+function x86_filled(n: i32, v: i32): i32[] {
+  var out: i32[] = [];
+  while (out.len() < n) {
+    out = out.append(v);
+  }
+  return out;
 }
 
 // x86_eh_frame renders the recorded CFI as the .eh_frame of an image whose
@@ -1507,10 +1523,28 @@ function x86_add_label(own a: X86Asm, name: string, sec: i32, off: i32): X86Asm 
   return a;
 }
 
+// x86_place_label records the table entry `idx` (x86_gas_label_table) at
+// `off` in section `sec`; the name and its bucket are already in place, so
+// this writes only the two per-round fields.
+function x86_place_label(own a: X86Asm, idx: i32, sec: i32, off: i32): X86Asm {
+  a = X86Asm { ...a, lab_secs: a.lab_secs.with(idx, sec) };
+  return X86Asm { ...a, lab_offs: a.lab_offs.with(idx, off) };
+}
+
 // x86_label records `name` at the current .text offset (section 0).
 function x86_label(own a: X86Asm, name: string): X86Asm {
   var off: i32 = a.code.len();
   return x86_add_label(a, name, 0, off);
+}
+
+// x86_label_at is x86_label for a label the table indexes (idx >= 0); a
+// label outside the table is added by name.
+function x86_label_at(own a: X86Asm, name: string, idx: i32): X86Asm {
+  if (idx < 0) {
+    return x86_label(a, name);
+  }
+  var off: i32 = a.code.len();
+  return x86_place_label(a, idx, 0, off);
 }
 
 // x86_rodata_label records `name` at the current .rodata offset (section
@@ -1518,6 +1552,14 @@ function x86_label(own a: X86Asm, name: string): X86Asm {
 function x86_rodata_label(own a: X86Asm, name: string): X86Asm {
   var off: i32 = a.rodata.len();
   return x86_add_label(a, name, 1, off);
+}
+
+function x86_rodata_label_at(own a: X86Asm, name: string, idx: i32): X86Asm {
+  if (idx < 0) {
+    return x86_rodata_label(a, name);
+  }
+  var off: i32 = a.rodata.len();
+  return x86_place_label(a, idx, 1, off);
 }
 
 // x86_rodata_quad appends `v` as 8 little-endian bytes to .rodata — a `.quad`
@@ -1534,6 +1576,14 @@ function x86_rodata_quad(own a: X86Asm, v: i64): X86Asm {
 function x86_bss_label(own a: X86Asm, name: string): X86Asm {
   var off: i32 = a.bss_size;
   return x86_add_label(a, name, 2, off);
+}
+
+function x86_bss_label_at(own a: X86Asm, name: string, idx: i32): X86Asm {
+  if (idx < 0) {
+    return x86_bss_label(a, name);
+  }
+  var off: i32 = a.bss_size;
+  return x86_place_label(a, idx, 2, off);
 }
 
 // x86_bss_skip advances the .bss size by `n` bytes (a `.skip`/`.quad`/
@@ -1569,6 +1619,24 @@ pub function x86_label_off(a: X86Asm, name: string): i32 {
   return a.lab_offs[i];
 }
 
+// x86_label_off_at is x86_label_off through a table index: -1 for a label
+// this round has not placed yet, or one outside .text.
+function x86_label_off_at(a: X86Asm, idx: i32): i32 {
+  if (idx < 0 || a.lab_secs[idx] != 0) {
+    return 0 - 1;
+  }
+  return a.lab_offs[idx];
+}
+
+// x86_label_target resolves a reference by its index when it has one, else
+// by name.
+function x86_label_target(a: X86Asm, name: string, idx: i32): i32 {
+  if (idx >= 0) {
+    return x86_label_off_at(a, idx);
+  }
+  return x86_label_off(a, name);
+}
+
 // x86_final_off resolves `name` to its offset (from .text start) in the
 // final image, given the two section bases: the padded .text length
 // (where .rodata starts) and where .bss starts (just past .rodata),
@@ -1579,8 +1647,13 @@ pub function x86_label_off(a: X86Asm, name: string): i32 {
 // patch loops below hold .rodata as a uniquely-owned local while they run —
 // the struct's own field is empty there, so deriving it would read 0.
 function x86_final_off(a: X86Asm, name: string, padded_text: i32, bss_base: i32): i32 {
-  var i: i32 = x86_label_idx(a, name);
-  if (i < 0) {
+  return x86_final_off_at(a, x86_label_idx(a, name), padded_text, bss_base);
+}
+
+// x86_final_off_at is x86_final_off through a table index; an unplaced
+// entry (section -1) is as missing as an unknown name.
+function x86_final_off_at(a: X86Asm, i: i32, padded_text: i32, bss_base: i32): i32 {
+  if (i < 0 || a.lab_secs[i] < 0) {
     return 0 - 1;
   }
   if (a.lab_secs[i] == 1) {
@@ -1590,6 +1663,15 @@ function x86_final_off(a: X86Asm, name: string, padded_text: i32, bss_base: i32)
     return bss_base + a.lab_offs[i];
   }
   return a.lab_offs[i];
+}
+
+// x86_final_target resolves a queued reference by its index when it has
+// one, else by name.
+function x86_final_target(a: X86Asm, name: string, idx: i32, padded_text: i32, bss_base: i32): i32 {
+  if (idx >= 0) {
+    return x86_final_off_at(a, idx, padded_text, bss_base);
+  }
+  return x86_final_off(a, name, padded_text, bss_base);
 }
 
 // x86_fixup_or_patch handles the rel32 of a branch placeholder just
@@ -1605,9 +1687,13 @@ function x86_final_off(a: X86Asm, name: string, padded_text: i32, bss_base: i32)
 // code nothing revisits. Every branch is queued now and every displacement
 // is computed once, at resolve, against the final layout (#7949).
 function x86_fixup_or_patch(own a: X86Asm, name: string): X86Asm {
+  return x86_fixup_or_patch_at(a, name, 0 - 1);
+}
+
+function x86_fixup_or_patch_at(own a: X86Asm, name: string, idx: i32): X86Asm {
   var at: i32 = a.code.len() - 4;
   if (!a.relaxing) {
-    var target: i32 = x86_label_off(a, name);
+    var target: i32 = x86_label_target(a, name, idx);
     if (target >= 0) {
       // Take the buffer OUT of the struct before patching: `a.code`
       // read while `a` still holds it is a second reference, which
@@ -1619,15 +1705,22 @@ function x86_fixup_or_patch(own a: X86Asm, name: string): X86Asm {
       return X86Asm { ...a, code: code };
     }
   }
-  return x86_queue_fixup(a, at, 4, name);
+  return x86_queue_fixup_at(a, at, 4, name, idx);
 }
 
 // x86_queue_fixup records one displacement to patch at resolve: `width`
 // bytes starting at `at`, reaching `name`.
 function x86_queue_fixup(own a: X86Asm, at: i32, width: i32, name: string): X86Asm {
+  return x86_queue_fixup_at(a, at, width, name, 0 - 1);
+}
+
+// x86_queue_fixup_at is x86_queue_fixup with the target's table index, -1
+// when the reference has none.
+function x86_queue_fixup_at(own a: X86Asm, at: i32, width: i32, name: string, idx: i32): X86Asm {
   a = X86Asm { ...a, fix_offs: a.fix_offs.append(at) };
   a = X86Asm { ...a, fix_widths: a.fix_widths.append(width) };
-  return X86Asm { ...a, fix_names: a.fix_names.append(name) };
+  a = X86Asm { ...a, fix_names: a.fix_names.append(name) };
+  return X86Asm { ...a, fix_idx: a.fix_idx.append(idx) };
 }
 
 // x86_branch_long reports whether the next relaxable branch must take its
@@ -1646,9 +1739,10 @@ function x86_branch_long(a: X86Asm, k: i32): boolean {
 // x86_branch_record notes the k-th relaxable branch for the relaxation pass:
 // where its displacement sits, what it targets, and whether this pass took
 // the short form.
-function x86_branch_record(own a: X86Asm, at: i32, name: string, short: boolean): X86Asm {
+function x86_branch_record(own a: X86Asm, at: i32, name: string, idx: i32, short: boolean): X86Asm {
   a = X86Asm { ...a, br_offs: a.br_offs.append(at) };
   a = X86Asm { ...a, br_names: a.br_names.append(name) };
+  a = X86Asm { ...a, br_idx: a.br_idx.append(idx) };
   a = X86Asm { ...a, br_shorts: a.br_shorts.append(short) };
   return X86Asm { ...a, br_n: a.br_n + 1 };
 }
@@ -1665,42 +1759,51 @@ function x86_lea_rip_label(own a: X86Asm, dst: i32, name: string): X86Asm {
   a = X86Asm { ...a, code: a.code.append(x86_modrm(0, dst, 5)) };  // RIP-relative
   a = X86Asm { ...a, code: x86_le32(a.code, 0) };  // placeholder disp32
   var patch_off: i32 = a.code.len() - 4;
-  a = X86Asm { ...a, fix_offs: a.fix_offs.append(patch_off) };
-  a = X86Asm { ...a, fix_widths: a.fix_widths.append(4) };
-  a = X86Asm { ...a, fix_names: a.fix_names.append(name) };
+  a = x86_queue_fixup(a, patch_off, 4, name);
   return a;
 }
 
 // x86_jcc_label emits a conditional jump to a (possibly forward) label.
 function x86_jcc_label(own a: X86Asm, cc: i32, name: string): X86Asm {
+  return x86_jcc_label_at(a, cc, name, 0 - 1);
+}
+
+// x86_jcc_label_at is x86_jcc_label with the target's table index (-1 for
+// a name the table does not hold), which the round's patch and resolve
+// read in place of the name.
+function x86_jcc_label_at(own a: X86Asm, cc: i32, name: string, idx: i32): X86Asm {
   var k: i32 = a.br_n;
   if (a.relaxing && !x86_branch_long(a, k)) {  // 0x70+cc ib
     a = X86Asm { ...a, code: a.code.append(112 + (cc & 15)) };
     a = X86Asm { ...a, code: a.code.append(0) };  // placeholder rel8
     var at: i32 = a.code.len() - 1;
-    a = x86_queue_fixup(a, at, 1, name);
-    return x86_branch_record(a, at, name, true);
+    a = x86_queue_fixup_at(a, at, 1, name, idx);
+    return x86_branch_record(a, at, name, idx, true);
   }
   a = X86Asm { ...a, code: x86_jcc_rel32(a.code, cc, 0) };  // placeholder rel32
   var at4: i32 = a.code.len() - 4;
-  a = x86_fixup_or_patch(a, name);
-  return x86_branch_record(a, at4, name, false);
+  a = x86_fixup_or_patch_at(a, name, idx);
+  return x86_branch_record(a, at4, name, idx, false);
 }
 
 // x86_jmp_label emits an unconditional jump to a label.
 function x86_jmp_label(own a: X86Asm, name: string): X86Asm {
+  return x86_jmp_label_at(a, name, 0 - 1);
+}
+
+function x86_jmp_label_at(own a: X86Asm, name: string, idx: i32): X86Asm {
   var k: i32 = a.br_n;
   if (a.relaxing && !x86_branch_long(a, k)) {  // 0xEB ib
     a = X86Asm { ...a, code: a.code.append(235) };
     a = X86Asm { ...a, code: a.code.append(0) };  // placeholder rel8
     var at: i32 = a.code.len() - 1;
-    a = x86_queue_fixup(a, at, 1, name);
-    return x86_branch_record(a, at, name, true);
+    a = x86_queue_fixup_at(a, at, 1, name, idx);
+    return x86_branch_record(a, at, name, idx, true);
   }
   a = X86Asm { ...a, code: x86_jmp_rel32(a.code, 0) };
   var at4: i32 = a.code.len() - 4;
-  a = x86_fixup_or_patch(a, name);
-  return x86_branch_record(a, at4, name, false);
+  a = x86_fixup_or_patch_at(a, name, idx);
+  return x86_branch_record(a, at4, name, idx, false);
 }
 
 // x86_call_reg: `call *<reg>` — FF /2, direct ModR/M. Closure and dyn-trait
@@ -1724,8 +1827,12 @@ function x86_jmp_reg(own buf: i32[], reg: i32): i32[] {
 
 // x86_call_label emits a call to a label.
 function x86_call_label(own a: X86Asm, name: string): X86Asm {
+  return x86_call_label_at(a, name, 0 - 1);
+}
+
+function x86_call_label_at(own a: X86Asm, name: string, idx: i32): X86Asm {
   a = X86Asm { ...a, code: x86_call_rel32(a.code, 0) };
-  return x86_fixup_or_patch(a, name);
+  return x86_fixup_or_patch_at(a, name, idx);
 }
 
 // x86_gas_is_symbol reports whether a directive operand names a label
@@ -1749,10 +1856,15 @@ function x86_gas_is_symbol(tok: string): boolean {
 // queues an absolute relocation against `name`, patched by
 // x86_resolve_data once the load address is known.
 function x86_rodata_quad_sym(own a: X86Asm, name: string): X86Asm {
+  return x86_rodata_quad_sym_at(a, name, 0 - 1);
+}
+
+function x86_rodata_quad_sym_at(own a: X86Asm, name: string, idx: i32): X86Asm {
   var off: i32 = a.rodata.len();
   a = X86Asm { ...a, rodata: x86_le64_i64(a.rodata, 0) };
   a = X86Asm { ...a, dfix_offs: a.dfix_offs.append(off) };
-  return X86Asm { ...a, dfix_names: a.dfix_names.append(name) };
+  a = X86Asm { ...a, dfix_names: a.dfix_names.append(name) };
+  return X86Asm { ...a, dfix_idx: a.dfix_idx.append(idx) };
 }
 
 // x86_unwind_hdr_len / x86_unwind_eh_len are the sizes of the unwind
@@ -1799,7 +1911,7 @@ pub function x86_resolve_data(own a: X86Asm, text_vaddr: i32): X86Asm {
   var i: i32 = 0;
   while (i < a.dfix_offs.len()) {
     var name: string = a.dfix_names[i];
-    var target: i32 = x86_final_off(a, name, padded_text, bss_base);
+    var target: i32 = x86_final_target(a, name, a.dfix_idx[i], padded_text, bss_base);
     if (target < 0) {
       a = X86Asm { ...a, unknown: a.unknown.append(".quad " + name) };
     } else {
@@ -1832,7 +1944,7 @@ function x86_resolve(own a: X86Asm): X86Asm {
   var i: i32 = 0;
   while (i < a.fix_offs.len()) {
     var patch_off: i32 = a.fix_offs[i];
-    var target: i32 = x86_final_off(a, a.fix_names[i], padded_text, bss_base);
+    var target: i32 = x86_final_target(a, a.fix_names[i], a.fix_idx[i], padded_text, bss_base);
     // A missing label is -1; patching that as a displacement branches
     // into the ELF header, so refuse rather than emit it (#6045).
     if (target < 0) {
@@ -3471,14 +3583,12 @@ function x86_gas_membytes(own a: X86Asm, reg: i32, m: GasMem, tail: i32): X86Asm
     a = X86Asm { ...a, code: a.code.append(x86_modrm(0, reg, 5)) };
     a = X86Asm { ...a, code: x86_le32(a.code, 0) };
     var patch_off: i32 = a.code.len() - 4;
-    a = X86Asm { ...a, fix_offs: a.fix_offs.append(patch_off) };
-    a = X86Asm { ...a, fix_widths: a.fix_widths.append(4) };
     if (tail > 0) {
-      a = X86Asm { ...a, fix_names: a.fix_names.append(m.label) };
+      a = x86_queue_fixup(a, patch_off, 4, m.label);
       a = X86Asm { ...a, fix_tail_offs: a.fix_tail_offs.append(patch_off) };
       return X86Asm { ...a, fix_tail_bytes: a.fix_tail_bytes.append(tail) };
     }
-    return X86Asm { ...a, fix_names: a.fix_names.append(m.label) };
+    return x86_queue_fixup(a, patch_off, 4, m.label);
   }
   return X86Asm { ...a, code: x86_byte_mem_operand(a.code, reg, m.base, m.has_index, m.index, m.scale, m.disp) };
 }
@@ -5454,15 +5564,15 @@ function x86_gas_emit_op(own a: X86Asm, l: GasLine): X86Asm {
       return a;
     }
     if (ext == 4) {
-      return x86_jmp_label(a, rest);
+      return x86_jmp_label_at(a, rest, l.ref_idx);
     }
-    return x86_call_label(a, rest);
+    return x86_call_label_at(a, rest, l.ref_idx);
   }
   // jCC <label>: any spelling the shared condition table knows, aliases
   // (jnae/jnb/jna/jnbe/jnge/jnl/jng/jnle) included. `jmp` is handled above,
   // and "mp" is not a condition, so it could not be caught here regardless.
   if (k == GK_JCC) {
-    return x86_jcc_label(a, l.ext, rest);
+    return x86_jcc_label_at(a, l.ext, rest, l.ref_idx);
   }
   // one-operand: push/pop take a register or a memory operand
   if (k == GK_PUSHQ) {
@@ -5880,13 +5990,18 @@ pub function x86_gas_assemble(src: string): X86Asm {
   // what a round computes. Not the fix for #8146 — the arena limit that
   // issue tracks is still open and its cause still unidentified.
   var pl: GasLine[] = x86_gas_prepare(src);
+  // The labels are indexed once as well: a round places them in the same
+  // order, so every reference reads its target through the index rather
+  // than hashing the name again in each round.
+  var labs: GasLabels = x86_gas_label_table(pl);
+  pl = x86_gas_link_labels(pl, labs);
   var longs: boolean[] = [];
   var pass: i32 = 0;
   // Each round pins at least one more branch long, so the branch count
   // bounds the rounds; the cap is a backstop, and falling out of it keeps
   // every branch long, which is always correct if larger.
   while (pass < 24) {
-    var a: X86Asm = x86_gas_assemble_pass_prepared(pl, longs);
+    var a: X86Asm = x86_gas_assemble_pass_prepared(pl, labs, longs);
     var next: boolean[] = x86_relax_grow(a, longs);
     if (!x86_bools_differ(next, longs)) {
       return a;
@@ -5894,7 +6009,7 @@ pub function x86_gas_assemble(src: string): X86Asm {
     longs = next;
     pass = pass + 1;
   }
-  return x86_gas_assemble_pass_prepared(pl, x86_bools_all_true(longs.len()));
+  return x86_gas_assemble_pass_prepared(pl, labs, x86_bools_all_true(longs.len()));
 }
 
 // x86_relax_grow returns the next round's decisions: every branch this pass
@@ -5909,7 +6024,7 @@ function x86_relax_grow(a: X86Asm, longs: boolean[]): boolean[] {
       pinned = longs[k];
     }
     if (!pinned && a.br_shorts[k]) {
-      var target: i32 = x86_label_off(a, a.br_names[k]);
+      var target: i32 = x86_label_target(a, a.br_names[k], a.br_idx[k]);
       // An unresolved target cannot be measured, so it must not stay
       // short: x86_resolve reports it, and a rel8 placeholder would
       // hide the report behind a range error instead.
@@ -6100,6 +6215,98 @@ struct GasLine {
   base: string,  // mnem without its suffix letter; "" when sfx is 0
   src: string,  // the operands split at the top-level comma; "" when
   dst: string,  // the arm takes `rest` whole
+  def_idx: i32,  // the label table entry this line's label is, -1 when none
+  ref_idx: i32,  // the entry a jcc, jmp, call or `.quad sym` names, -1 when none or unknown
+}
+
+// The labels of a program, indexed once (x86_gas_label_table): the names in
+// definition order, which is the order every round places them in, so an
+// entry's index is its lab_names index in each round's X86Asm, and the
+// bucket chains x86_label_idx walks (lab_head / lab_tail / lab_next).
+struct GasLabels {
+  names: string[],
+  head: i32[],
+  tail: i32[],
+  next: i32[],
+}
+
+// x86_gas_label_table indexes every label the prepared lines define, in
+// their order, chaining each into its bucket the way x86_add_label does, so
+// a duplicate still resolves to its first definition.
+function x86_gas_label_table(pl: GasLine[]): GasLabels {
+  var names: string[] = [];
+  var head: i32[] = x86_empty_buckets();
+  var tail: i32[] = x86_empty_buckets();
+  var next: i32[] = [];
+  var li: i32 = 0;
+  while (li < pl.len()) {
+    var name: string = pl[li].label;
+    li = li + 1;
+    if (name.len() == 0) {
+      continue;
+    }
+    var at: i32 = names.len();
+    var b: i32 = x86_name_bucket(name);
+    var prev: i32 = tail[b];
+    names = names.append(name);
+    next = next.append(0 - 1);
+    if (prev < 0) {
+      head = head.with(b, at);
+    } else {
+      next = next.with(prev, at);
+    }
+    tail = tail.with(b, at);
+  }
+  return GasLabels { names: names, head: head, tail: tail, next: next };
+}
+
+// x86_gas_label_lookup is the table index of `name`, its first definition,
+// or -1.
+function x86_gas_label_lookup(labs: GasLabels, name: string): i32 {
+  var i: i32 = labs.head[x86_name_bucket(name)];
+  while (i >= 0) {
+    if (labs.names[i] == name) {
+      return i;
+    }
+    i = labs.next[i];
+  }
+  return 0 - 1;
+}
+
+// x86_gas_link_labels fills each line's def_idx (its label's table entry,
+// in definition order) and ref_idx (the entry a jcc, a jmp or call to a
+// label, or a `.quad sym` names). A reference the table cannot resolve
+// keeps -1 and the round looks it up by name, which reports it unresolved
+// exactly as before.
+function x86_gas_link_labels(own pl: GasLine[], labs: GasLabels): GasLine[] {
+  var ndef: i32 = 0;
+  var li: i32 = 0;
+  while (li < pl.len()) {
+    var l: GasLine = pl[li];
+    var def_idx: i32 = 0 - 1;
+    if (l.label.len() > 0) {
+      def_idx = ndef;
+      ndef = ndef + 1;
+    }
+    var ref_idx: i32 = 0 - 1;
+    if (l.kind == GK_JCC) {
+      ref_idx = x86_gas_label_lookup(labs, l.rest);
+    } else if (l.kind == GK_BRANCH) {
+      if (l.rest.len() == 0 || l.rest[0] != b'*') {
+        ref_idx = x86_gas_label_lookup(labs, l.rest);
+      }
+    } else if (l.kind == GK_NONE && x86_str_starts_with(l.body, ".quad")) {
+      var qop: string = x86_gas_trim(slice_unchecked(l.body, 6, l.body.len()));
+      if (x86_gas_is_symbol(qop)) {
+        ref_idx = x86_gas_label_lookup(labs, qop);
+      }
+    }
+    if (def_idx >= 0 || ref_idx >= 0) {
+      pl = pl.with(li, GasLine { ...l, def_idx: def_idx, ref_idx: ref_idx });
+    }
+    li = li + 1;
+  }
+  return pl;
 }
 
 // x86_gas_classify decides which arm of x86_gas_emit_op an instruction
@@ -6108,7 +6315,7 @@ struct GasLine {
 // and the split operands. Everything here is a function of the text, so a
 // round never repeats it.
 function x86_gas_classify(mnem: string, rest: string): GasLine {
-  var l: GasLine = GasLine { label: "", body: "", mnem: mnem, rest: rest, kind: GK_UNKNOWN2, ext: 0 - 1, sfx: 0, base: "", src: "", dst: "" };
+  var l: GasLine = GasLine { label: "", body: "", mnem: mnem, rest: rest, kind: GK_UNKNOWN2, ext: 0 - 1, sfx: 0, base: "", src: "", dst: "", def_idx: 0 - 1, ref_idx: 0 - 1 };
   if (mnem == "vzeroupper" && rest.len() == 0) {
     return GasLine { ...l, kind: GK_VZEROUPPER };
   }
@@ -6333,7 +6540,7 @@ function x86_gas_prepare(src: string): GasLine[] {
       }
     }
     if (mnem.len() == 0) {
-      out = out.append(GasLine { label: label, body: line, mnem: mnem, rest: rest, kind: GK_NONE, ext: 0 - 1, sfx: 0, base: "", src: "", dst: "" });
+      out = out.append(GasLine { label: label, body: line, mnem: mnem, rest: rest, kind: GK_NONE, ext: 0 - 1, sfx: 0, base: "", src: "", dst: "", def_idx: 0 - 1, ref_idx: 0 - 1 });
     } else {
       out = out.append(GasLine { ...x86_gas_classify(mnem, rest), label: label, body: line });
     }
@@ -6343,8 +6550,8 @@ function x86_gas_prepare(src: string): GasLine[] {
 
 // x86_gas_assemble_pass_prepared assembles one relaxation round from the
 // already-parsed lines.
-function x86_gas_assemble_pass_prepared(pl: GasLine[], longs: boolean[]): X86Asm {
-  var a: X86Asm = x86_asm_new_for(true, longs);
+function x86_gas_assemble_pass_prepared(pl: GasLine[], labs: GasLabels, longs: boolean[]): X86Asm {
+  var a: X86Asm = x86_asm_new_prepared(labs, longs);
   // The CFI recorder is threaded as its own uniquely-held local and folded
   // into `a` once at the end: recording through the field would append its
   // rule arrays through a shared base and copy them per directive (#8172).
@@ -6358,11 +6565,11 @@ function x86_gas_assemble_pass_prepared(pl: GasLine[], longs: boolean[]): X86Asm
     li = li + 1;
     if (lbl.len() > 0) {
       if (section == 1) {
-        a = x86_rodata_label(a, lbl);
+        a = x86_rodata_label_at(a, lbl, pline.def_idx);
       } else if (section == 2) {
-        a = x86_bss_label(a, lbl);
+        a = x86_bss_label_at(a, lbl, pline.def_idx);
       } else {
-        a = x86_label(a, lbl);
+        a = x86_label_at(a, lbl, pline.def_idx);
       }
     }
     if (line.len() == 0) {
@@ -6408,7 +6615,7 @@ function x86_gas_assemble_pass_prepared(pl: GasLine[], longs: boolean[]): X86Asm
           // `.quad <label>` — an absolute pointer to another
           // symbol. Queued as a relocation; read as a number it
           // would be 0.
-          a = x86_rodata_quad_sym(a, qop);
+          a = x86_rodata_quad_sym_at(a, qop, pline.ref_idx);
         } else {
           // Parsed as i64, not i32: a `.quad` holds the full 64-bit
           // value, and reading it narrow lost both ends. A negative
