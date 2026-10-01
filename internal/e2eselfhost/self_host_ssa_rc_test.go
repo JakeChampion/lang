@@ -269,9 +269,8 @@ function main(): i32 {
     var plan = ssaunits.plan(typed, [2]);
     if (!plan.ok) { eprint(plan.why); return 5; }
     if (!ssarc.lower(typed, [2], plan, irlower.struct_tab_empty(), []).ok) { return 6; }
-    // A record instance with type arguments is named by more than its
-    // declaration, and a schema field this vocabulary cannot WALK refuses the
-    // whole schema; a plain record with an array field lowers.
+    // A record instance with type arguments is found in the schema table by
+    // its whole type, arguments included, so it lowers as a plain record does.
     var wideType: typeinfo.Type = typeinfo.TypeStruct { name: "Box", args: [wide] };
     var wideSchema = semrecords.Record { views: false, ty: wideType, fields: [semrecords.Field { name: "xs", ty: f.result }] };
     var recordType: typeinfo.Type = typeinfo.TypeStruct { name: "Box", args: [] };
@@ -281,8 +280,16 @@ function main(): i32 {
     var genericFunc = ssasem.Func { envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], graph: recordGraph, values: [f.result, wideType], params: [f.result], result: wideType, records: semrecords.records_of([wideSchema]), enums: [], calls: [] };
     var genericPlan = ssaunits.plan(genericFunc, [2]);
     if (!genericPlan.ok) { eprint(genericPlan.why); return 7; }
-    if (!refused(ssarc.lower(genericFunc, [2], genericPlan, irlower.struct_tab_empty(), []), "unsupported physical RC value type")) { return 8; }
-    // A wide array is not such a field. The walk visits only the REFERENCE
+    if (!ssarc.lower(genericFunc, [2], genericPlan, irlower.struct_tab_empty(), []).ok) { return 8; }
+    // The planner admits any map cursor, but the walk still needs the
+    // cursor's key and value to be ones it can walk: a key record with no
+    // schema in the table refuses the value.
+    var cursorType: typeinfo.Type = typeinfo.TypeStruct { name: "MapIter", args: [typeinfo.TypeStruct { name: "Missing", args: [] }, typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false }] };
+    var cursorFunc = ssasem.Func { envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], graph: g, values: [cursorType], params: [cursorType], result: cursorType, records: semrecords.no_records(), enums: [], calls: [] };
+    var cursorPlan = ssaunits.plan(cursorFunc, [2]);
+    if (!cursorPlan.ok) { eprint(cursorPlan.why); return 211; }
+    if (!refused(ssarc.lower(cursorFunc, [2], cursorPlan, irlower.struct_tab_empty(), []), "unsupported physical RC value type")) { return 212; }
+    // So does a wide array field. The walk visits only the REFERENCE
     // fields, and an array of scalars has no element to visit, so it needs its
     // own box released and nothing more.
     var wideField = semrecords.Record { views: false, ty: recordType, fields: [semrecords.Field { name: "xs", ty: f.result },
@@ -295,9 +302,9 @@ function main(): i32 {
     var recordPlan = ssaunits.plan(recordFunc, [2]);
     if (!recordPlan.ok) { eprint(recordPlan.why); return 11; }
     if (!ssarc.lower(recordFunc, [2], recordPlan, irlower.struct_tab_empty(), []).ok) { return 12; }
-    // A variant field this vocabulary cannot walk refuses the enum, and it
-    // refuses on ANY variant, not only the one this graph builds; a wide
-    // payload is walkable for the same reason a wide record field is.
+    // A variant payload that is a record instance, or a wide array, is walkable
+    // for the same reason the record field is, on a variant the graph never
+    // builds as well as on the one it does.
     var shapeType: typeinfo.Type = typeinfo.TypeUnion { name: "Shape", args: [] };
     var enumGraph = ssa.SFunc { name: "enum", nparams: 1, nvals: 2, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), ssa.SInst { kind_tag: ssasem.variant_new(), result: 1, args: [0], imm: 0, str: "W" }], term: ret(1) }] };
@@ -306,7 +313,7 @@ function main(): i32 {
     var wideEnumFunc = ssasem.Func { envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], graph: enumGraph, values: [f.result, shapeType], params: [f.result], result: shapeType, records: semrecords.records_of([wideSchema]), enums: [wideEnum], calls: [] };
     var wideEnumPlan = ssaunits.plan(wideEnumFunc, [2]);
     if (!wideEnumPlan.ok) { eprint(wideEnumPlan.why); return 13; }
-    if (!refused(ssarc.lower(wideEnumFunc, [2], wideEnumPlan, irlower.struct_tab_empty(), []), "unsupported physical RC variant field type")) { return 14; }
+    if (!ssarc.lower(wideEnumFunc, [2], wideEnumPlan, irlower.struct_tab_empty(), []).ok) { return 14; }
     var walkableEnum = semrecords.Enum { ...wideEnum, variants: [semrecords.Variant { name: "W", fields: [semrecords.Field { name: "__ev", ty: f.result }] },
         semrecords.Variant { name: "N", fields: [semrecords.Field { name: "__ev", ty: wide }] }] };
     var walkableEnumFunc = ssasem.Func { ...wideEnumFunc, enums: [walkableEnum] };

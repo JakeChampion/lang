@@ -770,7 +770,7 @@ function reused_or_lowered(built: semsource.Built, mod: parser.Module, structs: 
 // `base` is the pre-`append_dyn` registry set the emitters read; the rows
 // caller_sigs rewrites are returned in the Sub, and the emit and the AST
 // lowering of what is left both read them.
-struct Inference { built: semsource.Built, rows: Rows }
+struct Inference { built: semsource.Built, rows: Rows, records: parser.StructDecl[] }
 
 // Whether the typed pipeline lowers EVERY body of this module. A template's
 // erased body is not one — its instances stand for it — and neither is a
@@ -809,7 +809,7 @@ function lowers_whole_module(built: semsource.Built, r: Rows): boolean {
 // (`ssaunits.mode_error`), and a module that stops lowering whole under the
 // inference keeps the modes it declared.
 function inferred_pass(mod: parser.Module, built: semsource.Built, r: Rows, structs: irlower.StructTab): Inference {
-  var same: Inference = Inference { built: built, rows: r };
+  var same: Inference = Inference { built: built, rows: r, records: [] };
   if (!lowers_whole_module(built, r)) {
     return same;
   }
@@ -822,7 +822,7 @@ function inferred_pass(mod: parser.Module, built: semsource.Built, r: Rows, stru
   if (!lowers_whole_module(widened, r2)) {
     return same;
   }
-  return Inference { built: widened, rows: r2 };
+  return Inference { built: widened, rows: r2, records: [] };
 }
 
 // The module built, lowered, pruned and, when it lowers whole, lowered again
@@ -830,11 +830,57 @@ function inferred_pass(mod: parser.Module, built: semsource.Built, r: Rows, stru
 function produced_rows(mod: parser.Module, structs: irlower.StructTab): Inference {
   var built: semsource.Built = semsource.build_module(mod);
   util.arr_push_cliff_report("sem:built", 0);
+  var records: parser.StructDecl[] = instance_records(built);
+  if (records.len() > 0) {
+    structs = irlower.struct_tab(util.append_all(structs.decls, records));
+  }
   var rows: Rows = rows_of(mod, built, structs, no_reuse(), []);
   util.arr_push_cliff_report("sem:lowered", 0);
   var r: Rows = prune(rows, mod, built);
   util.arr_push_cliff_report("sem:pruned", 0);
-  return inferred_pass(mod, built, r, structs);
+  return Inference { ...inferred_pass(mod, built, r, structs), records: records };
+}
+
+// instance_records declares each record a template's instance builds at its
+// own binding (`Slot__0_T` at i32, from `Slot[T]` in a generic over T). A
+// declaration is what a construction stores its fields through and what names
+// its shape, and the AST tables hold only the one spelled at the variable.
+// Named as ssarc.record_name names the record, appended after the module's
+// own so every declaration index before them is unchanged.
+function instance_records(built: semsource.Built): parser.StructDecl[] {
+  var out: parser.StructDecl[] = [];
+  var names: string[] = [];
+  for p in util.append_all(built.decls, built.instances) {
+    for rec in p.func.records.list {
+      if let typeinfo.TypeStruct(r) = rec.ty {
+        var name: string = ssasem.type_key(rec.ty);
+        if (r.args.len() > 0 && !semtypes.is_env(rec.ty) && util.index_of_str(names, name) < 0) {
+          names = names.append(name);
+          var fields: parser.StructFieldDecl[] = [];
+          for fl in rec.fields {
+            fields = fields.append(parser.StructFieldDecl { name: fl.name, type_name: field_spelling(fl.ty), fn_ret: "", fn_param_types: "" });
+          }
+          out = out.append(parser.StructDecl { name: name, fields: fields, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: false, is_package: false });
+        }
+      }
+    }
+  }
+  return out;
+}
+
+// A field's spelling as the AST tables read one: a view erased to `string`,
+// a record by the name its declaration carries.
+function field_spelling(t: typeinfo.Type): string {
+  if (ssasem.is_view(t)) {
+    return "string";
+  }
+  if let typeinfo.TypeStruct(_) = t {
+    return ssasem.type_key(t);
+  }
+  if let typeinfo.TypeArray(a) = t {
+    return field_spelling(a.elem) + "[]";
+  }
+  return typeinfo.spelling(t);
 }
 
 // lowered is mod.funcs as the AST lowering reads them, with each `str` erased.
@@ -945,7 +991,7 @@ pub function substitution(mod: parser.Module, lowered: parser.FuncDecl[], struct
   if (n == 0 && extra.len() == 0) {
     return ircore.no_sub();
   }
-  return ircore.Sub { ...ircore.no_sub(), on: true, bodies: bodies, extra: extra, sigs: sigs };
+  return ircore.Sub { ...ircore.no_sub(), on: true, bodies: bodies, extra: extra, sigs: sigs, records: inf.records };
 }
 
 // runtime_bodies is the typed lowering of a Fern-source runtime helper
