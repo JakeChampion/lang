@@ -16,6 +16,12 @@ function view_head[T](xs: [T]): T {
   return xs[0];
 }
 
+// A concrete-element view receiver is not folded to a template: the typed
+// lowering reaches it by its receiver's key, which must see the view.
+function (xs: [u8]) back(): u8 {
+  return xs[xs.len() - 1];
+}
+
 function main(): i32 {
   var a: i32[] = [3, 5, 7];
   var v: [i32] = a[:];
@@ -44,6 +50,9 @@ function main(): i32 {
   var bytes = source.as_bytes();
   if (bytes.pick() != 122 as u8 || source.as_bytes().pick() != 122 as u8) {
     return 7;
+  }
+  if (bytes.back() != 122 as u8 || "hello".as_bytes().back() != 111 as u8) {
+    return 12;
   }
   var rows: i32[][] = [[9, 11], [13, 15]];
   var row_view: [i32[]] = rows[:];

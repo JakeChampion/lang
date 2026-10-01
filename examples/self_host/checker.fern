@@ -15006,7 +15006,7 @@ function redeclares(funcs: parser.FuncDecl[], di: i32): boolean {
     if (f2.receiver_type.len() == 0 && pe.receiver_type.len() == 0 && pe.name == f2.name) {
       earlier = true;
     }
-    if (f2.receiver_type.len() > 0 && pe.receiver_type.len() > 0 && pe.name == f2.name && parser.receiver_base(pe.receiver_type) == parser.receiver_base(f2.receiver_type)) {
+    if (f2.receiver_type.len() > 0 && pe.receiver_type.len() > 0 && pe.name == f2.name && parser.receiver_namespace(pe.receiver_type) == parser.receiver_namespace(f2.receiver_type)) {
       earlier = true;
     }
     ej = ej + 1;
@@ -15054,7 +15054,7 @@ function collect_decl_diags(mod: parser.Module): util.Diag[] {
     }
   }
   // E006: a free function redeclared (same name, both receiver-less), or
-  // a method redeclared (same name AND receiver type). The redeclaration
+  // a method redeclared (same name AND receiver namespace). The redeclaration
   // SITE — the second + occurrences — is flagged, matching the Go
   // checker.
   var di: i32 = 0;
@@ -15064,7 +15064,7 @@ function collect_decl_diags(mod: parser.Module): util.Diag[] {
       if (f2.receiver_type.len() == 0) {
         out = out.append(dg_at("E006", "function \"" + f2.name + "\" redeclared", f2.line, f2.col));
       } else {
-        out = out.append(dg_at("E006", "method \"" + f2.name + "\" on " + parser.receiver_base(f2.receiver_type) + " redeclared", f2.line, f2.col));
+        out = out.append(dg_at("E006", "method \"" + f2.name + "\" on " + parser.receiver_namespace(f2.receiver_type) + " redeclared", f2.line, f2.col));
       }
     }
     // E021: a method whose receiver type isn't a known struct / enum /

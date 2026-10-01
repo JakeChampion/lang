@@ -22578,7 +22578,21 @@ function erase_str_names(ty: string): string {
 // receiver_base is the name a method is keyed by on its receiver: the base
 // type, with `str` spelled `string` as the lowering spells it.
 pub function receiver_base(receiver: string): string {
-  return erase_view_spelling(util.base_type_name(receiver));
+  return util.base_type_name(erase_view_spelling(receiver));
+}
+
+// receiver_namespace is the name a method declaration is keyed by against
+// the others: every owned-array receiver shares `Array` and every view
+// receiver `slice`, whatever the element, as native keys them.
+pub function receiver_namespace(receiver: string): string {
+  var r: TypeRef = parse_type_ref(receiver);
+  if (r.array_depth > 0) {
+    return "Array";
+  }
+  if (r.is_view) {
+    return "slice";
+  }
+  return receiver_base(receiver);
 }
 
 function erase_view_list(tys: string[]): string[] {
