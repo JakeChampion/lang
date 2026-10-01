@@ -36,6 +36,31 @@ var strictIRCorpus = []struct {
 	{"views-of-two-sources", `function g(x: string, y: string): str[] { var o: str[] = []; o = o.append(slice_unchecked(x, 0, 1)); o = o.append(slice_unchecked(y, 0, 1)); return o; }
 function main(): i32 { var xs: str[] = g("ab", "cd"); return xs.len(); }
 `, 2},
+	// A dyn holding a view merged past its source is copied at the merge (#10909).
+	{"dyn-view-merged-past-its-source", `import "std/i32";
+trait Size { function size(self: Self): i32; }
+struct P { a: str }
+impl Size for P { function size(self: P): i32 { return self.a.len() * 10 + (self.a[0] as i32) - 97; } }
+function mk(n: i32): string {
+    var s: string = "ab";
+    var i: i32 = 0;
+    while (i < n) { s = s + "c"; i = i + 1; }
+    return s;
+}
+function wrap(s: string): dyn Size { var p: P = P { a: slice_unchecked(s, 1, 4) }; return p; }
+function g(n: i32): i32 {
+    var d: dyn Size = P { a: "q" };
+    if (n != 0) {
+        var s: string = mk(n);
+        d = wrap(s);
+    }
+    var junk: string[] = [];
+    var i: i32 = 0;
+    while (i < 50) { junk = junk.append("zz" + i.to_string()); i = i + 1; }
+    return d.size();
+}
+function main(): i32 { return g(3) + g(0); }
+`, 57},
 	// Every read of a view map value takes a fresh box (#10701).
 	{"view-map-value-reads", `import "core/map";
 function main(): i32 {
@@ -707,33 +732,6 @@ var strictIRBailReasons = []struct {
 	fn     string
 	reason string
 }{
-	// A dyn holding a view cannot be rebuilt at a merge (ssasem.copyable), so
-	// one merged past its source is refused rather than read after the source
-	// is released.
-	{"dyn-view-merged-past-its-source", `import "std/i32";
-trait Size { function size(self: Self): i32; }
-struct P { a: str }
-impl Size for P { function size(self: P): i32 { return self.a.len() * 10 + (self.a[0] as i32) - 97; } }
-function mk(n: i32): string {
-    var s: string = "ab";
-    var i: i32 = 0;
-    while (i < n) { s = s + "c"; i = i + 1; }
-    return s;
-}
-function wrap(s: string): dyn Size { var p: P = P { a: slice_unchecked(s, 1, 4) }; return p; }
-function g(n: i32): i32 {
-    var d: dyn Size = P { a: "q" };
-    if (n != 0) {
-        var s: string = mk(n);
-        d = wrap(s);
-    }
-    var junk: string[] = [];
-    var i: i32 = 0;
-    while (i < 50) { junk = junk.append("zz" + i.to_string()); i = i + 1; }
-    return d.size();
-}
-function main(): i32 { print(g(3).to_string() + " " + g(0).to_string()); return 0; }
-`, "g", "dependency unavailable at use"},
 	// An instance bound to a view would hand out a view it was lent.
 	{"template-bound-to-a-view", `pub function first[T](f: () => T): T {
     var xs: T[] = [f()];
