@@ -370,11 +370,11 @@ function main(): i32 {
 				t.Fatal(err)
 			}
 			for _, target := range []string{"x86-64-sanitize", "arm64-linux", "wasm32-wasi"} {
-				got, report, leak := semCompileRun(t, gcc, nil, fernBin, stdlibRoot, src, target, true, "", "")
+				got, report, leak := semCompileRun(t, gcc, nil, fernBin, stdlibRoot, src, target, true, "")
 				if got != c.want {
 					t.Fatalf("%s: answered %q, want %q\n%s", target, got, c.want, report)
 				}
-				semNoLeak(t, true, target, leak)
+				semLeaks(t, target, leak, 0)
 			}
 		})
 	}
