@@ -40,3 +40,32 @@ func TestSelfHostDnsPair(t *testing.T) {
 	out, _ := cmd.Output()
 	e2eharness.CheckDnsPair(t, ns, string(out), cmd.ProcessState.ExitCode())
 }
+
+// TestSelfHostDnsNat64 is the self-host twin of TestDnsNat64X86_64.
+func TestSelfHostDnsNat64(t *testing.T) {
+	gcc, runner, driverBin := buildModloadDriverX86(t)
+	ns := e2eharness.StartFakeNameserver(t, e2eharness.FakeNameserverNat64)
+	asm, progDir := compileSourceModload(t, runner, driverBin, e2eharness.DnsNat64Source(ns.Port))
+	bin := buildBin(t, gcc, progDir, "nat64", asm)
+	cmd := binCmd(runner, bin)
+	out, _ := cmd.Output()
+	e2eharness.CheckDnsNat64(t, string(out), cmd.ProcessState.ExitCode())
+}
+
+// TestSelfHostDnsDial is the self-host twin of TestDnsDialX86_64.
+func TestSelfHostDnsDial(t *testing.T) {
+	gcc, runner, driverBin := buildModloadDriverX86(t)
+	for _, c := range []struct{ name, first string }{
+		{"refused-first", "127.0.0.2"},
+		{"blackhole-first", "192.0.2.1"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			port := e2eharness.StartEchoListener(t)
+			asm, progDir := compileSourceModload(t, runner, driverBin, e2eharness.DnsDialSource(c.first, port))
+			bin := buildBin(t, gcc, progDir, "dial", asm)
+			cmd := binCmd(runner, bin)
+			out, _ := cmd.Output()
+			e2eharness.CheckDnsDial(t, string(out), cmd.ProcessState.ExitCode())
+		})
+	}
+}
