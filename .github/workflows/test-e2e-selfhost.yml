@@ -493,7 +493,7 @@ jobs:
             if printf '%s\n' "${RES_ALL[@]}" | grep -qx "$t"; then SEL_RES+=("$t"); else SEL_SH+=("$t"); fi
           done
           if [ ${#SEL_SH[@]} -eq 0 ] && [ ${#SEL_RES[@]} -eq 0 ]; then
-            echo "no tests for shard $SHARD/$NSHARD"; exit 0
+            echo "no tests for shard $SHARD/$NSHARD — the list, the filter or scripts/shard-tests is wrong" >&2; exit 1
           fi
           echo "shard $SHARD/$NSHARD: ${#SEL_SH[@]} selfhost-pkg + ${#SEL_RES[@]} residual tests"
           # A worker count the selection can fill: the residual slice is a

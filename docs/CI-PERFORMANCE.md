@@ -880,6 +880,32 @@ branch and on main; main's cache is refreshed only by a main run that
 runs the lane. Branch-scoped caches and the 10 GB repository limit are
 why the shards do not save.
 
+## Eleventh change: the arm64 gate is three shards
+
+The main ruleset requires two checks, `Lint / lint` and
+`Full suite / Test e2e arm64 / test-e2e-arm64`, and pull requests here merge
+when those two are green. Lint is 3.5-4.7 minutes. The arm64 job was one
+job running ~690 `TestArm64*` tests in two worker processes: 8.0-9.1 minutes
+of wall on the three green runs of the ninth measurement, after 7-10 minutes
+queued for an arm64 runner. So the merge gate was that one job.
+
+It is now three shards of equal count (`scripts/shard-tests` with no weights
+file), each in two workers, behind a leaf job that keeps the required check's
+exact name and fails unless every shard succeeded, a vanished runner
+included. Three arm64 runner slots instead of one, for a gate of roughly a
+third of the wall plus the leaf's queue wait.
+
+Sharding it found a bug in `scripts/shard-tests`: with an empty weights file
+(the `/dev/null` fallback a lane without weights gets, or a file of comments)
+awk's `NR == FNR` idiom read every test name as a weight row, and every shard
+printed nothing. The self-host lane's shard step then exited 0 on an empty
+selection, which would have been thirteen green shards running no tests.
+The weights are now read in `BEGIN`, the partition is unchanged when the
+weights file has rows (checked on the live self-host list), the empty
+selection exits 1 in every lane, and `TestShardTestsCoversTheListWithAndWithoutWeights`
+runs the script with an empty, a comment-only, a missing and a real weights
+file and checks the buckets partition the input.
+
 ### Next measurements
 
 Read the `selfhost-driver-cache` step's line on the first shards after
