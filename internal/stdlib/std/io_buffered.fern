@@ -2,33 +2,22 @@
 // Tier-C Rec §13 Phase 1 (docs/STDLIB-DESIGN-RESEARCH.md
 // Rec §5).
 //
-// Lang doesn't yet have nominal interface types — the doc's
-// `interface Reader { read(buf): Result[i32, IoError] }`
-// surface is deferred. Phase 1 uses convention-based
-// polymorphism: BytesWriter shares the `.write_string()` /
-// `.write_bytes()` method shape with the fd-backed Writer
-// type, so generic code that calls those names works
-// against either.
+// BytesWriter accumulates bytes in memory. Its write_string and write_bytes
+// methods return an updated BytesWriter. The fd-backed Writer instead has
+// write(string) and write_bytes(u8[]), which return Option[IoError].
 //
-// Intended use — build up an HTTP response body without
-// per-write socket calls:
+// Build a byte buffer without a host write for each piece:
 //
 //   var w: BytesWriter = bytes_writer_new();
-//   w = w.write_string("HTTP/1.1 200 OK\r\n");
-//   w = w.write_string("Content-Length: " + body.len().to_string() + "\r\n");
-//   w = w.write_string("\r\n");
-//   w = w.write_string(body);
-//   tcp_send(fd, w.into_bytes());
+//   w = w.write_string("header\n");
+//   w = w.write_bytes([0 as u8, 255 as u8]);
+//   var bytes: u8[] = w.into_bytes();
 //
 // `BufWriter` wraps an fd-backed Writer with a flush threshold so
 // per-write syscall overhead drops to per-block, and `LineReader`
 // wraps a Reader and yields one line per call without buffering
 // the whole input. Both are below.
 //
-// Deferred: nominal `Reader` / `Writer` interfaces. Once lang grows
-// interface types, Stream, BytesWriter, BufWriter and the fd-backed
-// Reader / Writer all `impl Reader` / `impl Writer` and generic code
-// accepts any of them via the interface.
 import "std/string";
 import "std/utf8" as utf8;
 
@@ -39,8 +28,7 @@ pub function bytes_writer_new(): BytesWriter {
 }
 
 // `(w: BytesWriter).write_string(s)` — append a string's
-// bytes. Same call shape as the fd-backed Writer's write
-// method.
+// bytes. Rebind the returned writer to keep the appended bytes.
 pub function (w: BytesWriter) write_string(s: string): BytesWriter {
   // A VIEW, not a copy: the loop below only reads bs, and the
   // view never outlives s (a live parameter), so `bytes()` here
@@ -277,7 +265,7 @@ pub function (b: BufWriter) flush(): BufWriter {
   }
   // The take rewinds the builder, so a sticky error still discards the
   // bytes the fd has already refused, as it did before.
-  return __buf_writer_put(b, buf_take(b.buf));
+  return __buf_writer_put_bytes(b, buf_take_bytes(b.buf));
 }
 
 // `(b).close()` — flush, then close the Writer: fclose. The error is the
@@ -342,6 +330,25 @@ function __buf_writer_put(b: BufWriter, s: string): BufWriter {
     None => {}
   }
   match (b.w.write(s)) {
+    Some(e) => {
+      return BufWriter { ...b, err: Some(e) };
+    },
+    None => {
+      return b;
+    }
+  }
+}
+
+// Buffered content can end inside a scalar or contain arbitrary mapped bytes.
+// Keep it in the byte domain and retain the same first-error behavior.
+function __buf_writer_put_bytes(b: BufWriter, own bytes: u8[]): BufWriter {
+  match (b.err) {
+    Some(_) => {
+      return b;
+    },
+    None => {}
+  }
+  match (b.w.write_bytes(bytes)) {
     Some(e) => {
       return BufWriter { ...b, err: Some(e) };
     },

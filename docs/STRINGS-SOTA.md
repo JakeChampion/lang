@@ -897,6 +897,11 @@ interpreter still needs its host migration. They never construct an unchecked
 string. Borrowed views must be materialized before calling this owned-array
 signature.
 
+`BufWriter.flush()` extracts an owned byte array and consumes it after writing.
+Byte writes, mappings and ranges can therefore flush arbitrary bytes or partial
+scalar encodings without constructing a string. Direct string writes retain
+their fast path; sticky write errors and close-error precedence are unchanged.
+
 The socket TRANSPORT followed. `tcp_recv_deadline` returns
 `Option[u8[]]`, and `std/fetch` is byte-domain end to end —
 `fetch_raw` / `fetch_get` / `get_url` return `u8[]`, their `_deadline`
