@@ -3,6 +3,9 @@ package e2eharness
 import (
 	"fmt"
 	"net"
+	"sort"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -19,6 +22,11 @@ const (
 	FakeNameserverAnswer FakeNameserverMode = iota
 	FakeNameserverTruncate
 	FakeNameserverSilent
+	// FakeNameserverPair answers an AAAA query at once and holds the
+	// reply to an A query until an AAAA query has arrived, so a client
+	// that asks for the two one after the other times out on the A query
+	// while one that asks for both at once gets both.
+	FakeNameserverPair
 )
 
 // FakeNameserver is a nameserver on the loopback interface for one name:
@@ -27,6 +35,15 @@ type FakeNameserver struct {
 	Port       int
 	UDPQueries *int32
 	TCPQueries *int32
+}
+
+// dnsQuestionType is the type of the question at offset 12.
+func dnsQuestionType(msg []byte) int {
+	qlen := dnsQuestionLen(msg)
+	if qlen == 0 || 12+qlen > len(msg) {
+		return 0
+	}
+	return int(msg[12+qlen-4])<<8 | int(msg[12+qlen-3])
 }
 
 // dnsQuestionLen is the length of the question at offset 12: the labels
@@ -44,9 +61,10 @@ func dnsQuestionLen(msg []byte) int {
 }
 
 // dnsReply is the reply to a query for vm.example.com: the question
-// echoed, then (unless truncated) a CNAME to www.example.com and the A
-// record 93.184.216.34, both owners compressed back to the question,
-// which has to be `vm.example.com` for the pointers to land.
+// echoed, then (unless truncated) a CNAME to www.example.com and the
+// record the question's type asks for, the A record 93.184.216.34 or
+// the AAAA record 2001:db8::1, both owners compressed back to the
+// question, which has to be `vm.example.com` for the pointers to land.
 func dnsReply(query []byte, truncated bool) []byte {
 	qlen := dnsQuestionLen(query)
 	if qlen == 0 || qlen > len(query)-12 {
@@ -64,6 +82,10 @@ func dnsReply(query []byte, truncated bool) []byte {
 		return out
 	}
 	out = append(out, 192, 12, 0, 5, 0, 1, 0, 0, 0, 60, 0, 6, 3, 'w', 'w', 'w', 192, 15)
+	if dnsQuestionType(query) == 28 {
+		out = append(out, 192, 44, 0, 28, 0, 1, 0, 0, 0, 60, 0, 16, 0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1)
+		return out
+	}
 	out = append(out, 192, 44, 0, 1, 0, 1, 0, 0, 0, 60, 0, 4, 93, 184, 216, 34)
 	return out
 }
@@ -87,6 +109,9 @@ func StartFakeNameserver(t *testing.T, mode FakeNameserverMode) FakeNameserver {
 		udp.Close()
 		tcp.Close()
 	})
+	// The pair mode's barrier: closed once an AAAA query has arrived.
+	seenAAAA := make(chan struct{})
+	var closeSeen sync.Once
 	go func() {
 		buf := make([]byte, 4096)
 		for {
@@ -98,9 +123,23 @@ func StartFakeNameserver(t *testing.T, mode FakeNameserverMode) FakeNameserver {
 			if mode == FakeNameserverSilent {
 				continue
 			}
-			if reply := dnsReply(buf[:n], mode == FakeNameserverTruncate); reply != nil {
-				_, _ = udp.WriteToUDP(reply, from)
+			query := append([]byte(nil), buf[:n]...)
+			reply := dnsReply(query, mode == FakeNameserverTruncate)
+			if reply == nil {
+				continue
 			}
+			if mode == FakeNameserverPair {
+				if dnsQuestionType(query) == 28 {
+					closeSeen.Do(func() { close(seenAAAA) })
+				} else {
+					go func() {
+						<-seenAAAA
+						_, _ = udp.WriteToUDP(reply, from)
+					}()
+					continue
+				}
+			}
+			_, _ = udp.WriteToUDP(reply, from)
 		}
 	}()
 	go func() {
@@ -199,5 +238,46 @@ func CheckDnsExchange(t *testing.T, mode FakeNameserverMode, ns FakeNameserver, 
 		if tcp != wantTCP {
 			t.Errorf("the server saw %d TCP queries; want %d", tcp, wantTCP)
 		}
+	}
+}
+
+// DnsPairSource is a program that asks the nameserver at `port` on the
+// loopback interface for every address of vm.example.com through
+// `lookup_addresses`, which puts the A and AAAA queries together: it
+// prints the addresses one per line and exits 0, or prints the failure
+// and exits 2.
+func DnsPairSource(port int) string {
+	return fmt.Sprintf(`import "std/dns";
+import "std/net";
+
+function main(): i32 {
+    var ns: net.SocketAddr = net.socket_addr(net.ipv4_loopback(), %d);
+    var conf: dns.ResolvConf = dns.ResolvConf { nameservers: [ns], search: [], ndots: 1, timeout_ms: 1000, attempts: 1, rotate: false };
+    match (dns.lookup_addresses(conf, "vm.example.com.")) {
+        Ok(xs) => {
+            var i: i32 = 0;
+            while (i < xs.len()) { print(xs[i].to_string()); i = i + 1; }
+            return 0;
+        },
+        Err(e) => { print(e.message()); return 2; }
+    }
+}
+`, port)
+}
+
+// CheckDnsPair compares a DnsPairSource run against a FakeNameserverPair
+// server: both addresses on stdout with exit 0, whichever order the
+// host's routes put them in, and exactly two UDP queries. A client that
+// asked for the records one after the other would have timed out on
+// the A query, which the server holds until the AAAA query arrives.
+func CheckDnsPair(t *testing.T, ns FakeNameserver, stdout string, exit int) {
+	t.Helper()
+	got := strings.Fields(stdout)
+	sort.Strings(got)
+	if exit != 0 || strings.Join(got, " ") != "2001:db8::1 93.184.216.34" {
+		t.Fatalf("exit %d, stdout %q; want exit 0 and both addresses", exit, stdout)
+	}
+	if udp := atomic.LoadInt32(ns.UDPQueries); udp != 2 {
+		t.Errorf("the server saw %d UDP queries; want 2 (the A and the AAAA together)", udp)
 	}
 }

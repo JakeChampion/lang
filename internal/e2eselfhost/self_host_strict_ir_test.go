@@ -31,26 +31,11 @@ var strictIRCorpus = []struct {
 	src  string
 	want int
 }{
-	// An array holding views of two parameters is anchored to both (#10687).
-	{"views-of-two-sources", `function g(x: string, y: string): str[] { var o: str[] = []; o = o.append(slice_unchecked(x, 0, 1)); o = o.append(slice_unchecked(y, 0, 1)); return o; }
-function main(): i32 { var xs: str[] = g("ab", "cd"); return xs.len(); }
-`, 2},
-	// Every read of a view map value takes a fresh box (#10701).
-	{"view-map-value-reads", `import "core/map";
-function main(): i32 {
-    var b: string = "abcdefgh";
-    var m: Map[i32, str] = map_new(4);
-    m = m.insert(1, slice_unchecked(b, 2, 6));
-    var n: i32 = m.get_or(1, "").len() + m.get_or(2, "x").len();
-    match (m.get(1)) { Some(v) => { n = n + v.len(); }, None => { n = n + 100; } }
-    for v in m.values() { n = n + v.len(); }
-    for (k, v) in m { n = n + k + v.len(); }
-    return n;
-}
-`, 18},
-	// A dyn holding a view merged past its source is copied at the merge, so
-	// the size is read from the copy after the source is released.
-	{"dyn-view-merged-past-its-source", `trait Size { function size(self: Self): i32; }
+	// A dyn holding a view merged past its source is rebuilt at the merge
+	// (ssasem.deep_copy, #10909): narrowed to the concrete holding the view,
+	// copied and widened back.
+	{"dyn-view-merged-past-its-source", `import "std/i32";
+trait Size { function size(self: Self): i32; }
 struct P { a: str }
 impl Size for P { function size(self: P): i32 { return self.a.len() * 10 + (self.a[0] as i32) - 97; } }
 function mk(n: i32): string {
@@ -68,11 +53,28 @@ function g(n: i32): i32 {
     }
     var junk: string[] = [];
     var i: i32 = 0;
-    while (i < 50) { junk = junk.append("zz"); i = i + 1; }
+    while (i < 50) { junk = junk.append("zz" + i.to_string()); i = i + 1; }
     return d.size();
 }
-function main(): i32 { return g(3) + g(0); }
-`, 57},
+function main(): i32 { print(g(3).to_string() + " " + g(0).to_string()); return 0; }
+`, 0},
+	// An array holding views of two parameters is anchored to both (#10687).
+	{"views-of-two-sources", `function g(x: string, y: string): str[] { var o: str[] = []; o = o.append(slice_unchecked(x, 0, 1)); o = o.append(slice_unchecked(y, 0, 1)); return o; }
+function main(): i32 { var xs: str[] = g("ab", "cd"); return xs.len(); }
+`, 2},
+	// Every read of a view map value takes a fresh box (#10701).
+	{"view-map-value-reads", `import "core/map";
+function main(): i32 {
+    var b: string = "abcdefgh";
+    var m: Map[i32, str] = map_new(4);
+    m = m.insert(1, slice_unchecked(b, 2, 6));
+    var n: i32 = m.get_or(1, "").len() + m.get_or(2, "x").len();
+    match (m.get(1)) { Some(v) => { n = n + v.len(); }, None => { n = n + 100; } }
+    for v in m.values() { n = n + v.len(); }
+    for (k, v) in m { n = n + k + v.len(); }
+    return n;
+}
+`, 18},
 	// One local view held twice by an array: each element takes a fresh view.
 	{"local-view-held-twice", `function g(s: string): str[] { var w: str = slice_unchecked(s, 0, 2); var o: str[] = [w, w]; return o; }
 function main(): i32 { return g("abcd").len(); }
@@ -732,6 +734,29 @@ function viewer(n: i32): () => i32 {
 }
 function main(): i32 { var f: () => i32 = viewer(3); return f(); }
 `, "viewer", "closure capture type"},
+	// A type that holds itself has no copy a merge could rebuild
+	// (ssasem.copy_refusal), so one merged past its source is refused by
+	// name; a dyn holding a view is copied there since #10909.
+	{"recursive-enum-merged-past-its-source", `import "std/i32";
+enum L { Cons(str, L), Nil }
+function mk(n: i32): string {
+    var s: string = "ab";
+    var i: i32 = 0;
+    while (i < n) { s = s + "c"; i = i + 1; }
+    return s;
+}
+function two(s: string): L { return Cons(slice_unchecked(s, 0, 1), Cons(slice_unchecked(s, 1, 3), Nil)); }
+function count(l: L): i32 { match (l) { Cons(h, t) => { return h.len() + count(t); }, Nil => { return 0; } } return 0; }
+function g(n: i32): i32 {
+    var l: L = Nil;
+    if (n != 0) {
+        var s: string = mk(n);
+        l = two(s);
+    }
+    return count(l);
+}
+function main(): i32 { return g(3) + g(0); }
+`, "g", "holds itself, so its copy would recurse"},
 	// An instance bound to a view would hand out a view it was lent.
 	{"template-bound-to-a-view", `pub function first[T](f: () => T): T {
     var xs: T[] = [f()];
