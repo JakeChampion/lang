@@ -58,7 +58,7 @@ function verify_provided_module(merged: parser.Module, target: string): i32 {
     // The bodies the emit reads: the typed lowering's, over the module
     // emit_module_ir_gated_sub gates, and the instances and drop helpers
     // it defines beside the declarations.
-    var im: parser.Module = parser.infer_ret_types_module(ircore.script_normalized(ircore.sub_lifted(d.sub, d.full)));
+    var im: parser.Module = ircore.with_records(parser.infer_ret_types_module(ircore.script_normalized(ircore.sub_lifted(d.sub, d.full))), d.sub);
     var stab: irlower.StructTab = irlower.struct_tab(im.structs);
     var sg: irlower.FnSigs = irlower.fn_sigs_with_dyn(ircore.sub_base(d.sub, im.funcs, stab), im.trait_reqs);
     var i: i32 = 0;

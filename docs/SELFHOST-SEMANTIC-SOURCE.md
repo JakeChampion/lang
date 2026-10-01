@@ -733,9 +733,26 @@ Unsupported constructs refuse the whole function with a reason.
   bisect knobs an AST-lowered caller may still call the template, so there
   its AST lowering stands.
 
+  A generic signature spelled only through a function type (`f: () => T`)
+  reads the parser's `fn_ret` / `fn_param_types` sidecars, since the type
+  itself is spelled `fn`. The front end's clone of a generic struct at a
+  template's variable (`Slot__0_T`, from `Slot[T]` in `hold[T]`) is one
+  record per binding: inside a template its variables become the record
+  type's arguments (`semsource.record_variables`), the schema reads its
+  fields at them (`record_sig`), and a call binds them like any other nominal
+  argument. The emit has no declaration for such an instance, so
+  `semlower.instance_records` declares each one, named by its type key
+  (`Slot__0_T$i32`), after the module's own struct declarations, and every
+  emit entry appends them to its table (`ircore.with_records`). That
+  declaration is what a wasm construction stores a wide field through. This
+  is what lets the monomorphiser leave a generic erased when a call site
+  keys no clone: a function value whose type no declaration spells (`fs[0]`,
+  a match arm) or an erased generic forwarding its function parameter, whose
+  call is keyed at its own variable (`hold__0_U`) (#10827).
+
 Refused, each with its own reason: calls of the remaining builtins, a void
 call in expression position, an operator or a literal at the pointer width,
-unsigned negation, generic records, the pattern shapes
+unsigned negation, declared generic records, the pattern shapes
 above, receiver methods and external functions.
 
 A `defer` arrives here already lowered: the desugar replaces it with a flag

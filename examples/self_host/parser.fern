@@ -9491,8 +9491,8 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
   // at one of the function's erased vars (`var c: Slot[T]`, `Slot[T] { … }`,
   // a lambda's `(b: Box[T])`) has the front end clone that struct at the var
   // itself, `Slot__0_T`, whose fields keep the var. The AST lowering's erased
-  // slot cannot say how wide a field is, and the typed lowering's instances
-  // cannot share the one record between bindings. Cloning the function per
+  // slot cannot say how wide a field is (the typed lowering declares one
+  // record per binding, semlower.instance_records). Cloning the function per
   // binding clones the struct with it. Same all-bindable guard as (d).
   if (receiver_type.len() == 0 && (body_binds_bare_var(fbody, params, unbounded_tps, bounded_tps)
     || body_feeds_user_parametric(fbody, erased_only(unbounded_tps, bounded_tps)))) {

@@ -6756,6 +6756,43 @@ function main(): i32 {
     return run(Pending(5, step)) * 10 + probe(Has(mk(8))) + probe(bound) + probe(Empty);
 }
 `},
+	// A generic that builds `Slot[T]` called with a function value whose type
+	// no declaration spells: an array element and a match arm key no clone, so
+	// keep stays erased and each instance builds Slot at its own type (#10827).
+	{name: "a-generic-record-over-an-unspelled-function-value", atLeast: 52, noLeak: true, src: `
+import "std/i32";
+struct Slot[T] { v: T }
+pub function keep[T](f: () => T): T {
+    var c: Slot[T] = Slot[T] { v: f() };
+    return c.v;
+}
+function pick(o: Option[() => string]): string {
+    match (o) { Some(f) => { return keep(f); }, None => { return "none"; } }
+}
+function main(): i32 {
+    var fs: (() => i32)[] = [(): i32 => 7];
+    var gs: (() => string)[] = [(): string => "ab" + "c"];
+    print(keep(fs[0]).to_string() + " " + keep(gs[0]) + " " + pick(Some((): string => "arm")));
+    return 0;
+}
+`},
+	// An erased generic forwarding its function parameter to one that builds
+	// `Slot[T]`: the call inside it is keyed at its own variable, `keep__0_U`,
+	// whose instances build Slot at each binding (#10827).
+	{name: "an-erased-generic-forwarding-its-function-parameter", atLeast: 51, noLeak: true, src: `
+import "std/i32";
+struct Slot[T] { v: T }
+pub function keep[T](f: () => T): T {
+    var c: Slot[T] = Slot[T] { v: f() };
+    return c.v;
+}
+pub function wrap[U](g: () => U): U { return keep(g); }
+function main(): i32 {
+    var n: i32 = 4;
+    print(wrap((): i32 => n + 1).to_string() + " " + wrap((): string => "w" + "x"));
+    return 0;
+}
+`},
 }
 
 // semDynShapes is a trait with a record and an enum implementation, each

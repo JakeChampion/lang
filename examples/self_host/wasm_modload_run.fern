@@ -407,8 +407,8 @@ function declaring_module(d: Declared, f: parser.FuncDecl): i32 {
   return d.mods[row];
 }
 
-function typed_view(parts: flatten.PerModule[], full: parser.Module): TypedView {
-  var im: parser.Module = parser.infer_ret_types_module(wasm_ir.route_normalized(full));
+function typed_view(parts: flatten.PerModule[], full: parser.Module, sub: ircore.Sub): TypedView {
+  var im: parser.Module = ircore.with_records(parser.infer_ret_types_module(wasm_ir.route_normalized(full)), sub);
   var declared: Declared = declared_of(parts);
   var entry_idx: i32 = parts.len() - 1;
   var owner: i32[] = [];
@@ -533,7 +533,7 @@ function typed_file(dir: string, entry_path: string, parts: flatten.PerModule[],
 function run_typed(dir: string, entry_path: string, entry: parser.Module, loaded: flatten.LoadedModule[], parts: flatten.PerModule[], pm_mode: string, pm_index: i32, pm_lo: i32, pm_hi: i32, cache_dir: string, plan_file: string): i32 {
   var merged: parser.Module = flatten.bundle(entry, loaded, "wasm32-wasi");
   if (pm_mode == "func-counts") {
-    var cv: TypedView = typed_view(parts, semlower.driven_module(merged, "wasm32-wasi"));
+    var cv: TypedView = typed_view(parts, semlower.driven_module(merged, "wasm32-wasi"), ircore.no_sub());
     var ci: i32 = 0;
     while (ci < parts.len()) {
       print(util.i32_to_string(owned_rows(cv.owner, ci).len()));
@@ -542,7 +542,7 @@ function run_typed(dir: string, entry_path: string, entry: parser.Module, loaded
     return 0;
   }
   var d: semlower.Driven = semlower.driven(merged, "wasm32-wasi");
-  var tv: TypedView = typed_view(parts, d.full);
+  var tv: TypedView = typed_view(parts, d.full, d.sub);
   var whole: irlower.LowerResult[] = typed_cache(tv, d.sub);
   if (pm_mode == "link") {
     // Hit-only, as the AST link is: a unit's key hashes its lowered bodies,

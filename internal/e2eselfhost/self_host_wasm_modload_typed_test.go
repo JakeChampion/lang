@@ -124,6 +124,62 @@ function main(): i32 {
 		}
 	})
 
+	// The record an instance builds at its binding has no declaration in any
+	// module, so the units read it from the declarations the typed lowering
+	// appends; an i64 field is stored at 8 bytes through it (#10827).
+	t.Run("instance_records_link_and_run", func(t *testing.T) {
+		proj := t.TempDir()
+		write(t, filepath.Join(proj, "leaf.fern"), `pub struct Slot[T] { v: T }
+
+pub function keep[T](f: () => T): T {
+    var c: Slot[T] = Slot[T] { v: f() };
+    return c.v;
+}
+`)
+		entry := filepath.Join(proj, "entry.fern")
+		write(t, entry, `import "./leaf";
+
+function main(): i32 {
+    var fs: (() => i64)[] = [(): i64 => 5000000010 as i64];
+    var gs: (() => string)[] = [(): string => "ab" + "c"];
+    return ((leaf.keep(fs[0]) - (5000000000 as i64)) as i32) + leaf.keep(gs[0]).len();
+}
+`)
+		counts, se, code := drive(t, entry, nil, "-per-module-func-counts")
+		if code != 0 {
+			t.Fatalf("-per-module-func-counts: exit %d\n%s", code, se)
+		}
+		cacheDir := filepath.Join(proj, "cache")
+		if err := os.Mkdir(cacheDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		var planText strings.Builder
+		for idx, n := range strings.Fields(counts) {
+			rng := "0:" + n
+			_, se, code := drive(t, entry, []string{"FERN_SEM_IR_STRICT=1"}, "-per-module-emit", strconv.Itoa(idx), "-func-range", rng, "-cache-dir", cacheDir)
+			if code != 0 {
+				t.Fatalf("emit %d: exit %d\n%s", idx, code, se)
+			}
+			planText.WriteString(strconv.Itoa(idx) + " 0 " + n + "\n")
+		}
+		planPath := filepath.Join(proj, "plan.txt")
+		write(t, planPath, planText.String())
+		wat, se, code := drive(t, entry, nil, "-link", "-plan", planPath, "-cache-dir", cacheDir)
+		if code != 0 {
+			t.Fatalf("-link: exit %d\n%s", code, se)
+		}
+		watPath := filepath.Join(proj, "w.wat")
+		wasmPath := filepath.Join(proj, "w.wasm")
+		write(t, watPath, wat)
+		if out, err := exec.Command(wasmtools, "parse", watPath, "-o", wasmPath).CombinedOutput(); err != nil {
+			t.Fatalf("wasm-tools parse: %v\n%s", err, out)
+		}
+		var ee *exec.ExitError
+		if err := exec.Command(wasmtime, "run", wasmPath).Run(); !errors.As(err, &ee) || ee.ExitCode() != 13 {
+			t.Fatalf("linked module: %v, want exit 13", err)
+		}
+	})
+
 	t.Run("sem_ir_off_takes_the_ast_lowering", func(t *testing.T) {
 		proj := t.TempDir()
 		entry := filepath.Join(proj, "main.fern")
