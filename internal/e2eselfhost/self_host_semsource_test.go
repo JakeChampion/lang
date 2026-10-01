@@ -535,10 +535,9 @@ function inferred_plain(n: i32): i32 { return apply_int((x: i32) => x + 1, n); }
 // literal is.
 function float_binding(n: i32): i32 { var f = 2.5; var g = f + 1.5; if (g > 3.0) { return n; } return 0; }
 function inferred_ret(k: i32, n: i32): i32 { return apply_int((x: i32) => { var m: i32 = x * k; return m + 1; }, n); }
-// A function value is lent, never handed over: a parameter that would take
-// its box and release it here has no contract, since only the frame that
-// built the box knows the captures its release must walk.
-function refused_own_fn(own f: (i32) => i32, n: i32): i32 { return f(n); }
+// An own function value is this frame's to release, from a box another
+// frame built (#10958).
+function own_fn(own f: (i32) => i32, n: i32): i32 { return f(n); }
 // A closure TAKES a captured function value, like every other reference it
 // holds, so the box's release walks that field. The capture is a parameter
 // here and a local closure below, and neither is a special case.
@@ -882,6 +881,36 @@ function same_all(xs: Ty[], ys: Ty[]): boolean {
     return true;
 }
 function keep(t: Ty): Holder { return Holder { kept: t }; }
+enum List { Cons(i32, List), Nil }
+function rebuild(xs: List, unchanged: Ty): List {
+    match (xs) {
+        Cons(h, t) => { return Cons(h + 1, rebuild(t, unchanged)); },
+        Nil => { return Nil; },
+    }
+}
+function empty(xs: List): boolean {
+    match (xs) {
+        Cons(_, t) => { return empty(t); },
+        Nil => { return true; },
+    }
+}
+enum Tree { Tip(i32), Fork(Tree, Tree) }
+function rebuild_tree(t: Tree, unchanged: Ty): Tree {
+    match (t) {
+        Tip(n) => { return Tip(n + 1); },
+        Fork(l, r) => { return Fork(rebuild_tree(l, unchanged), rebuild_tree(r, unchanged)); },
+    }
+}
+function depth(t: Tree): i32 {
+    match (t) {
+        Tip(_) => { return 1; },
+        Fork(l, r) => { return 1 + depth(l) + depth(r); },
+    }
+}
+function keep_after(n: i32, t: Ty): Holder {
+    if (n > 0) { return keep_after(n - 1, t); }
+    return Holder { kept: t };
+}
 function main(): i32 {
     var h: Holder = keep(Nm { name: "a" });
     if (same(h.kept, Nm { name: "a" })) { return 0; }
@@ -924,7 +953,7 @@ func TestSelfHostSemanticInferredCycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("infer driver: %v\n%s", err, got)
 	}
-	want := "same 2 2\nsame_all 2 2\nkeep 3\nmain\n"
+	want := "same 2 2\nsame_all 2 2\nkeep 3\nrebuild 3 2\nempty 2\nrebuild_tree 3 2\ndepth 2\nkeep_after 1 3\nmain\n"
 	if string(got) != want {
 		t.Fatalf("inferred modes:\n%s\nwant:\n%s", got, want)
 	}

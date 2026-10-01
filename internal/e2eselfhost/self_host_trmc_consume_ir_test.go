@@ -4,7 +4,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/e2eharness"
 )
 
 // trmcConsumeCases pin #5333: the consume-safety half of TRMC. The rewrite itself
@@ -248,6 +252,47 @@ func TestSelfHostTrmcConsumeIRArm64(t *testing.T) {
 			if code := cmd.ProcessState.ExitCode(); code != tc.want {
 				t.Errorf("%s = %d, want %d (98 = input not recycled; 99 = over-release; 94-97 = value corrupted, 95 on the shared case = the call-site retain is missing)", tc.name, code, tc.want)
 			}
+		})
+	}
+}
+
+// Exercise the primary typed pipeline and its allocation census on the native
+// Darwin target too. Peak reuse must not come at the expense of shared inputs.
+func TestSelfHostArm64DarwinTrmcConsume(t *testing.T) {
+	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
+		t.Skip("requires Apple Silicon")
+	}
+	dir := writeSelfHostAsmProject(t)
+	copySelfHostDriver(t, dir, "fern.fern")
+	cli := buildSelfHostBinArm64Darwin(t, dir, "fern.fern", "fern")
+	for _, tc := range trmcConsumeCases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			src := filepath.Join(dir, "main.fern")
+			if err := os.WriteFile(src, []byte(tc.src), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			bin := filepath.Join(dir, "main")
+			cmd := exec.Command(cli, "-target", "arm64-darwin", src, e2eharness.SelfHostStdlibRoot(t), "-o", bin)
+			for _, kv := range os.Environ() {
+				if !strings.HasPrefix(kv, "FERN_SANITIZE=") && !strings.HasPrefix(kv, "FERN_RC_FREE_DEBUG=") {
+					cmd.Env = append(cmd.Env, kv)
+				}
+			}
+			cmd.Env = append(cmd.Env, "FERN_STRICT_IR=1", "FERN_LEAKCHECK=1")
+			// Quarantine deliberately prevents reuse. Keep the census for
+			// the peak test and quarantine the separate value/sharing cases.
+			if tc.name != "trmc-consume-halves-peak" {
+				cmd.Env = append(cmd.Env, "FERN_SANITIZE=1")
+			}
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("compile: %v\n%s", err, out)
+			}
+			out, err := exec.Command(bin).CombinedOutput()
+			if err != nil {
+				t.Fatalf("run: %v, want exit %d\n%s", err, tc.want, out)
+			}
+			assertBalancedCensus(t, string(out))
 		})
 	}
 }

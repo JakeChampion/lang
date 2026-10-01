@@ -156,6 +156,9 @@ pub struct EmitState {
   // a substitution or a runtime helper's lowering carries), so a second
   // source bringing the same one does not define it twice.
   named: string[],
+  // rc_free_debug_on(), read once here: the SSA emitters test it at every
+  // rc primitive and call, and an environment walk per instruction showed.
+  rc_free_debug: boolean,
 }
 
 pub function (s: EmitState) has_named(name: string): boolean {
@@ -268,7 +271,58 @@ pub function new_state(): EmitState {
     capture: 0 as usize,
     rt_lower: no_rt_lower,
     named: [],
+    rc_free_debug: rc_free_debug_on(),
   };
+}
+
+// sanitize_on reports whether FERN_SANITIZE is set — the self-host port of
+// ast.SanitizeEnabled (#5545). One opt-in surface over the heap detectors,
+// so you can reach for it before knowing which check will fire: each
+// backend's leak census (its leak_check_on folds it in), the rc over-release
+// report, and the use-after-free quarantine below.
+//
+// One gap versus the native backends, a declared subset rather than
+// silently-different behaviour:
+//
+//   - No backtrace under either report. Native routes through __fern_report,
+//     which walks the frame-pointer chain; there is no such helper here, so
+//     the message is the whole diagnostic.
+//
+// It deliberately does NOT imply FERN_RC_TRACE: per-heap-event output is a
+// probe you point at a reduced repro, not a standing mode.
+pub function sanitize_on(): boolean {
+  match (env("FERN_SANITIZE")) {
+    Some(_) => {
+      return true;
+    },
+    None => {
+      return false;
+    }
+  }
+}
+
+// rc_free_debug_on reports whether the use-after-free QUARANTINE is on —
+// FERN_RC_FREE_DEBUG, or implied by FERN_SANITIZE (ast.ApplySanitize parity;
+// the native RcFreeDebug port). Under it NOTHING is recycled: every free site
+// writes ast.RcPoison (0x7EEDFACE) over the rc word where the block has one,
+// through the backend's rc_poison, and declines its freelist push — a
+// recycled block would overwrite its own poison — so __fern_alloc just keeps
+// bumping, and the rc helpers die with a named report the moment a stale
+// reference touches a poisoned block. A quarantined block still counts as a
+// FREE for the census (hev_free runs at the release), so the two detectors
+// compose instead of every correct free reading as a leak.
+pub function rc_free_debug_on(): boolean {
+  if (sanitize_on()) {
+    return true;
+  }
+  match (env("FERN_RC_FREE_DEBUG")) {
+    Some(_) => {
+      return true;
+    },
+    None => {
+      return false;
+    }
+  }
 }
 
 // add_shape_lit records `name` as a shape this unit references (deduped), for the

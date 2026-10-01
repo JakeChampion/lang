@@ -3403,6 +3403,47 @@ type MatchArm struct {
 //
 // Same exhaustiveness, binding, and guard rules as Match. Reuses
 // MatchArm's payload-binding metadata; only Body differs.
+// MatchTakesPointerPayload reports whether any arm binds a payload of pointer
+// type, or the whole value with an `@` binding. Only that takes anything out
+// of the matched value: a match that tests the tag alone leaves it whole, so it
+// does not consume an owned scrutinee (#9539).
+func MatchTakesPointerPayload(arms []*MatchArm) bool {
+	for _, a := range arms {
+		if armTakesPointer(a.Bindings, a.BindingTypes, a.AtBinding, a.TupleElems, a.Payloads) {
+			return true
+		}
+	}
+	return false
+}
+
+// MatchExprTakesPointerPayload is MatchTakesPointerPayload for the
+// expression form.
+func MatchExprTakesPointerPayload(arms []*MatchExprArm) bool {
+	for _, a := range arms {
+		if armTakesPointer(a.Bindings, a.BindingTypes, a.AtBinding, a.TupleElems, a.Payloads) {
+			return true
+		}
+	}
+	return false
+}
+
+func armTakesPointer(bindings []string, types []Type, at string, tuple []TuplePatElem, payloads []*TuplePatElem) bool {
+	if at != "" || len(tuple) > 0 {
+		return true
+	}
+	for _, sub := range payloads {
+		if sub != nil {
+			return true
+		}
+	}
+	for i, n := range bindings {
+		if n != "" && n != "_" && i < len(types) && types[i] != nil && IsPointerType(types[i]) {
+			return true
+		}
+	}
+	return false
+}
+
 type MatchExpr struct {
 	P    Position
 	Tag  Expr

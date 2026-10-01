@@ -5429,14 +5429,7 @@ function parameters(fd: parser.FuncDecl, s: State): State {
     if (!semtypes.concrete(ty, true)) {
       return fail(s, "unresolved parameter type");
     }
-    // A function value is lent across a call, never handed over: its box
-    // is walked by the frame that built it, the only one whose schema
-    // names the captures, so a parameter that would take the unit and
-    // release the box here has no contract.
     var m: i32 = decl_param_mode(fd, at, ty);
-    if (ssasem.is_func(ty) && m == ssaunits.counted_mode()) {
-      return fail(s, "owning function parameter");
-    }
     var p: Value = define(s, 6, [], at, "", ty);
     s = bind(State { ...p.s, modes: p.s.modes.append(m) }, names[at], p.id);
     at = at + 1;
@@ -7661,7 +7654,8 @@ function row_analysis(p: Produced): ssasem.Analysis {
 }
 
 // Each produced row's quiet cycle (`ownership.cycles`): its edges are the
-// direct calls between functions whose results hold no reference.
+// direct calls between functions whose results hold no reference, including
+// the named parameter phis left when tail recursion became a loop.
 function quiet_cycles(rows: ownership.Escapes[], ix: ownership.Index, all: Produced[], names: string[]): ownership.Escapes[] {
   var quiet: boolean[] = [];
   var succ: i32[][] = [];
@@ -7686,7 +7680,7 @@ function quiet_cycles(rows: ownership.Escapes[], ix: ownership.Index, all: Produ
       var out: i32[] = [];
       for b in all[i].func.graph.blocks {
         for ins in b.insts {
-          if (ins.kind_tag == ssasem.call()) {
+          if (ins.kind_tag == ssasem.call() || ins.kind_tag == 8 && ins.str != "") {
             var to: i32 = ownership.find(rows, ix, ins.str);
             if (to >= 0 && quiet[to]) {
               out = out.append(to);

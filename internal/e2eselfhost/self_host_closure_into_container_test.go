@@ -250,6 +250,53 @@ function main(): i32 {
 // Interpreter-confirmed.
 const closureReturnOwnedWant = 55
 
+// An `own` fn parameter is the returning frame's too (#10958).
+const closureReturnOwnParamSrc = `function mk(b: i32): (i32) => i32 { return (x: i32) => x - b; }
+function passown(own f: (i32) => i32): (i32) => i32 { return f; }
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 6) {
+        var e: (i32) => i32 = passown(mk(i));
+        t = t + e(i + 7) + passown(mk(i))(1);
+        i = i + 1;
+    }
+    return t % 101;
+}
+`
+
+// Interpreter-confirmed.
+const closureReturnOwnParamWant = 33
+
+// An `own` fn parameter kept in a container the callee returns, beside a fn
+// parameter a closure captures (#10958).
+const closureOwnParamKeptSrc = `function apply_int(f: (i32) => i32, n: i32): i32 { return f(n); }
+function mk(b: i32): (i32) => i32 { return (x: i32) => x - b; }
+function via_capture(f: (i32) => i32, n: i32): i32 { return apply_int((x: i32): i32 => { return f(x) + 1; }, n); }
+function keep(own f: (i32) => i32): ((i32) => i32)[] {
+    var fs: ((i32) => i32)[] = [];
+    fs = fs.append(f);
+    return fs;
+}
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 6) {
+        var g: (i32) => i32 = mk(i);
+        t = t + via_capture(g, 10) + via_capture(mk(1), i);
+        t = t + via_capture(g, 3);
+        var ks: ((i32) => i32)[] = keep(mk(i));
+        t = t + ks[0](20);
+        t = t + keep(mk(i + 2))[0](2);
+        i = i + 1;
+    }
+    return t % 101;
+}
+`
+
+// Interpreter-confirmed.
+const closureOwnParamKeptWant = 64
+
 var closureIntoContainerCases = []struct {
 	name string
 	src  string
@@ -264,6 +311,8 @@ var closureIntoContainerCases = []struct {
 	{"return_pattern_match", closureReturnPatternMatchSrc, closureReturnPatternMatchWant},
 	{"return_closure_call", closureReturnClosureCallSrc, closureReturnClosureCallWant},
 	{"return_owned", closureReturnOwnedSrc, closureReturnOwnedWant},
+	{"return_own_param", closureReturnOwnParamSrc, closureReturnOwnParamWant},
+	{"own_param_kept", closureOwnParamKeptSrc, closureOwnParamKeptWant},
 }
 
 func TestSelfHostClosureIntoContainerX86_64(t *testing.T) {

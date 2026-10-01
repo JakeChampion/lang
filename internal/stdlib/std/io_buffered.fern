@@ -14,11 +14,11 @@
 // per-write socket calls:
 //
 //   var w: BytesWriter = bytes_writer_new();
-//   w.write_string("HTTP/1.1 200 OK\r\n");
-//   w.write_string("Content-Length: " + body.to_string() + "\r\n");
-//   w.write_string("\r\n");
-//   w.write_string(body);
-//   tcp_send(fd, w.into_string());
+//   w = w.write_string("HTTP/1.1 200 OK\r\n");
+//   w = w.write_string("Content-Length: " + body.len().to_string() + "\r\n");
+//   w = w.write_string("\r\n");
+//   w = w.write_string(body);
+//   tcp_send(fd, w.into_bytes());
 //
 // `BufWriter` wraps an fd-backed Writer with a flush threshold so
 // per-write syscall overhead drops to per-block, and `LineReader`
@@ -30,6 +30,7 @@
 // Reader / Writer all `impl Reader` / `impl Writer` and generic code
 // accepts any of them via the interface.
 import "std/string";
+import "std/utf8" as utf8;
 
 // `bytes_writer_new()` — fresh empty BytesWriter.
 pub function bytes_writer_new(): BytesWriter {
@@ -89,11 +90,11 @@ pub function (w: BytesWriter) into_bytes(): u8[] {
   return w.data;
 }
 
-// `(w: BytesWriter).into_string()` — same as into_bytes
-// followed by `string_from_bytes_unchecked`. Convenience for the
-// common "build a string buffered" pattern.
-pub function (w: BytesWriter) into_string(): string {
-  return string_from_bytes_unchecked(w.data);
+// `(w: BytesWriter).into_string()` validates the complete buffer as UTF-8.
+// Empty and valid buffers yield Some(text); malformed bytes yield None.
+// Conversion leaves the writer unchanged. Use into_bytes for arbitrary bytes.
+pub function (w: BytesWriter) into_string(): Option[string] {
+  return utf8.from_bytes(w.data);
 }
 
 // `(w: BytesWriter).reset(): BytesWriter` — return a writer with

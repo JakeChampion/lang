@@ -2309,7 +2309,16 @@ func inferred_ret {
     ret v3
 }
 
-refused owning function parameter
+modes 3 1 result i32
+v0:((i32) => i32) v1:i32 v2:i32
+func own_fn {
+  b0:
+    v0 = param 0
+    v1 = param 1
+    v2 = call_value v0 v1
+    ret v2
+}
+
 modes 2 1 result i32
 v0:((i32) => i32) v1:i32 v2:((i32) => i32) v3:i32
 func via_capture {

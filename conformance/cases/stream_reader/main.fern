@@ -32,6 +32,9 @@ function main(): i32 {
     print(string_from_bytes_unchecked(chunk));
     print(b3.remaining().to_string());          // 3 left: "123"
     var (rest, b4) = b3.read_all_string();
-    print(rest);                                // "123"
+    match (rest) {
+        Some(text) => { print(text); },         // "123"
+        None => { return 1; },
+    }
     return 0;
 }
