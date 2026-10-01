@@ -407,7 +407,12 @@ them (#10430).
 
 The self-host bundler (`examples/self_host/flatten.fern`) does mangle an
 imported module's variants (`Full` → `g3__Full`) and rewrites bare references to
-them, so only the ENTRY's variants stay bare. Its checker therefore needs one
+them, so only the ENTRY's variants stay bare. It rewrites a bare reference only
+to a variant of a module in the referring module's import closure
+(`flatten.variant_scope`), the same closure native's checker tests, so a module
+that reaches an enum through another module's function may match on its variants
+bare while one the program loads for an unrelated module's sake (std/net's
+`Other` beside IoError's) does not capture the name. Its checker therefore needs one
 rule rather than the closure: an import cannot name the entry, so a function an
 import declares (`FuncDecl.module` non-empty) reads a variant index without the
 entry's enums and union aliases (`UnionTable.lib_head`). Without it a program's
