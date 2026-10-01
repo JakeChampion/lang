@@ -68,8 +68,9 @@ const (
 	// definition, so the walk answers it and this pass does not.
 	UnitMerged
 
-	// UnitUnknown: an address from a call whose result nothing
-	// classifies.
+	// UnitUnknown: a call result or consumed raw integer parameter whose
+	// ownership provenance is not known. A usize may contain a scalar on
+	// one path and an owned pointer on another.
 	//
 	// This is the accurate name for the gap #7786 left open.
 	// `internal/ir/rcsigs.go` models what a callee does to its
@@ -233,6 +234,15 @@ func UnitsOf(f *Func, sigs map[string]Signature) Units {
 		// lift already records that as ParamAddrs=false, so anything
 		// reaching here is the data word.
 		if i < len(self.Params) && self.Params[i] == Consumed {
+			if i < len(f.ParamRawAddrs) && f.ParamRawAddrs[i] {
+				// Consumption is inferred from a possible release. It
+				// cannot establish a unit at entry for an erased word:
+				// map cleanup, for example, does nothing for scalar
+				// columns and frees the same argument for boxed ones.
+				u.origin[p.ID] = UnitUnknown
+				u.unplaced++
+				continue
+			}
 			u.origin[p.ID] = UnitTransferred
 			continue
 		}

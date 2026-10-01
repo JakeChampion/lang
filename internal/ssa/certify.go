@@ -79,7 +79,8 @@ type CertifyReport struct {
 	Skipped  string
 
 	// Unplaced is how many of the function's values `UnitsOf` could not
-	// classify — a call result with no ownership answer. Reported so a
+	// classify: a call result or consumed raw parameter with no ownership
+	// answer. Reported so a
 	// caller can hold the coverage floor rather than read a low leak
 	// count as a clean result.
 	Unplaced int

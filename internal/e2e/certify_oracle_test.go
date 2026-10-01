@@ -112,7 +112,7 @@ func TestX86_64CertifyAgreesWithTheLeakCensus(t *testing.T) {
 	t.Logf("  flagged: %d functions (%.2f%%), %d values", flagged, rate, values)
 	t.Logf("  walk skipped: %d, lift failures: %d (#7803, not the walk's): %s",
 		skipped, liftFailed, topCounts(byLiftErr, 4))
-	t.Logf("  unplaced call results: %d, poisoned roots: %d", unplaced, poisoned)
+	t.Logf("  unplaced values: %d, poisoned roots: %d", unplaced, poisoned)
 	t.Logf("  by origin: %s", topCounts(byOrigin, 5))
 	t.Logf("  by defining op: %s", topCounts(byKind, 6))
 	t.Logf("  worst functions: %s", topCounts(byFunc, 5))

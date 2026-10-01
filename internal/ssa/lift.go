@@ -78,6 +78,7 @@ func newLifter(in *ir.Func) (*lifter, error) {
 	l.out.ParamWidths = make([]int8, 0, len(in.Params))
 	l.out.ParamFloats = make([]bool, 0, len(in.Params))
 	l.out.ParamAddrs = make([]bool, 0, len(in.Params))
+	l.out.ParamRawAddrs = make([]bool, 0, len(in.Params))
 	for i, p := range in.Params {
 		for k := 0; k < l.slotWords[i]; k++ {
 			l.slots[l.slotBase[i]+k] = l.out.AddParam()
@@ -88,11 +89,13 @@ func newLifter(in *ir.Func) (*lifter, error) {
 				l.out.ParamWidths = append(l.out.ParamWidths, l.halfWidth())
 				l.out.ParamFloats = append(l.out.ParamFloats, false)
 				l.out.ParamAddrs = append(l.out.ParamAddrs, false)
+				l.out.ParamRawAddrs = append(l.out.ParamRawAddrs, false)
 				continue
 			}
 			l.out.ParamWidths = append(l.out.ParamWidths, widthOfAstType(p.Type))
 			l.out.ParamFloats = append(l.out.ParamFloats, isFloatAstType(p.Type))
 			l.out.ParamAddrs = append(l.out.ParamAddrs, isAddressAstType(p.Type))
+			l.out.ParamRawAddrs = append(l.out.ParamRawAddrs, isRawAddressAstType(p.Type))
 		}
 	}
 	l.out.ReturnWidth = widthOfAstType(in.ReturnType)
@@ -384,6 +387,16 @@ func isFloatAstType(t ast.Type) bool {
 	switch t.(type) {
 	case ast.FloatType, *ast.FloatType:
 		return true
+	}
+	return false
+}
+
+func isRawAddressAstType(t ast.Type) bool {
+	switch tt := t.(type) {
+	case ast.NumberType:
+		return tt.IsPointerWidth()
+	case *ast.NumberType:
+		return tt.IsPointerWidth()
 	}
 	return false
 }

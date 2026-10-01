@@ -763,6 +763,13 @@ type Func struct {
 	ParamAddrs []bool
 	ReturnAddr bool
 
+	// ParamRawAddrs distinguishes pointer-width integers from managed
+	// references. A usize may hold either a scalar or an erased pointer;
+	// a release on one path does not prove it arrives owning a unit on
+	// every path. This is ownership provenance, not a register-width fact.
+	// Empty means no raw parameters, as for direct SSA builders.
+	ParamRawAddrs []bool
+
 	// ParamIRIndex maps each SSA parameter back to the flat-IR
 	// parameter it came from. The two numberings agree until a
 	// two-word value appears: a string parameter under the two-word
