@@ -16,9 +16,11 @@ import (
 // needs. A LIBRARY module that uses a helper the entry doesn't (here:
 // __fern_str_concat, via `a + b`) would reference an undefined symbol at link.
 //
-// asm_ir.module_runtime_needs reports a module's closed need-set (`-ir-needs`);
-// the driver unions those across modules and passes them to the entry as
-// `-ir-extra-need`, so the entry's runtime covers every module. The test would
+// asm_ir.module_runtime_needs reports a module's closed need-set (`-ir-needs`),
+// read off the emit of its unit of the typed lowering; the driver unions those
+// across modules and passes them to the entry as `-ir-extra-need`, so the
+// entry's runtime covers every module. The typed lowering checks the entry
+// against B's source (`-ir-sigs`), as it does for the entry's emit. The test would
 // FAIL (link error: undefined __fern_str_concat / __fern_alloc) without the
 // aggregation, because the entry here allocates/concats nothing itself.
 //
@@ -49,23 +51,23 @@ func TestSelfHostIRRuntimeNeedsAggregation(t *testing.T) {
 	libSrc := "function bcat(): i32 { var a = \"ab\"; var b = a + a; return b.len(); }"
 	entrySrc := "function main(): i32 { return bcat(); }"
 
+	sigPath := filepath.Join(dir, "rn_lib.fern")
+	if err := os.WriteFile(sigPath, []byte(libSrc), 0o644); err != nil {
+		t.Fatalf("write rn_lib.fern: %v", err)
+	}
+
 	// The library needs str_concat + heap; the entry needs nothing.
 	libNeeds := splitNeeds(run(t, libSrc, "-ir-needs", "-ir-ns", "b"))
 	if !contains(libNeeds, "str_concat") || !contains(libNeeds, "heap") {
 		t.Fatalf("lib needs probe missing str_concat/heap: %v", libNeeds)
 	}
-	entryNeeds := splitNeeds(run(t, entrySrc, "-ir-needs"))
+	entryNeeds := splitNeeds(run(t, entrySrc, "-ir-needs", "-ir-sigs", sigPath))
 	if contains(entryNeeds, "str_concat") {
 		t.Fatalf("entry should not itself need str_concat: %v", entryNeeds)
 	}
 
 	// Build the entry's -ir-extra-need args from the whole-program union (here
 	// just the library's needs) — this is what the driver will do across modules.
-	// The typed lowering checks the unit against B's source (-ir-sigs).
-	sigPath := filepath.Join(dir, "rn_lib.fern")
-	if err := os.WriteFile(sigPath, []byte(libSrc), 0o644); err != nil {
-		t.Fatalf("write rn_lib.fern: %v", err)
-	}
 	entryArgs := []string{"-ir-unit", "entry", "-ir-ns", "a", "-ir-extern", "bcat", "-ir-sigs", sigPath}
 	for _, n := range libNeeds {
 		entryArgs = append(entryArgs, "-ir-extra-need", n)

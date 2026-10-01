@@ -6,8 +6,8 @@ import (
 
 // TestSelfHostIRF64Eligible locks in the IR-coverage widening for f64: programs
 // using f64 locals/arithmetic/comparison, i32<->f64 casts, AND f64 in a
-// FREE-function signature (param/return) are eligible. It probes
-// asm_ir.all_eligible (the unified driver's `elig` mode) and bit-packs the
+// FREE-function signature (param/return) are eligible. It asks
+// the path probe (semlower.verdict, via eligBits) and bit-packs the
 // per-case results. Case (d) — an f64 METHOD signature — is now ALSO eligible
 // (f64 methods lower through the IR; f64_ret_fns_of records methods keyed
 // "<Type>.<method>"). i64 methods stay deferred until i64 struct fields land. So

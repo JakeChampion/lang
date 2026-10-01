@@ -2680,9 +2680,8 @@ function run(): i32 {
   // before every emit path, so the emit_module_ir routing sees c.ty. Deterministic,
   // so the byte-identical self-compile fixpoint is preserved.
   //
-  // Ahead of the elision so the `-O` gate below sees the module the emit path
-  // would have been handed. Annotation is per-call, so a deleted assert takes
-  // only its own stamps with it and the surviving ones are the same either way.
+  // Annotation is per-call, so an assert the elision deletes takes only its
+  // own stamps with it and the surviving ones are the same either way.
   merged = checker.annotate_module(merged);
 
   // -O: drop every assert() check, the one thing native spends the flag on
@@ -2691,21 +2690,10 @@ function run(): i32 {
   //
   // `-O` must narrow the emitted program and never widen the set that
   // compiles, so the elision runs after EVERY gate: the checker and the two
-  // capability gates above, and IR-eligibility, which the emit path decides
-  // BELOW and so is asked for here, on the module as written. Deleting a
-  // statement can only make a module more eligible, and on an ill-typed
-  // assert that is the whole difference: `assert(nosuchname > 1)` takes the
-  // undefined name away with it and the module lowers (#7170).
-  //
-  // The CHECKER is what rejects that program now, on either build: it
-  // reports E001 for the undefined name and E001 gates since #8461. The
-  // ineligibility refusal below is what rejected it while E001 was exempt
-  // from the compile path, naming neither the name nor the mistake.
+  // capability gates above. The checker is what rejects an ill-typed assert
+  // (`assert(nosuchname > 1)` is E001, #7170, #8461) before the elision can
+  // take it away.
   if (optimize) {
-    if (constfold.has_asserts(merged) && !ircore.module_ir_eligible(parser.module_with_builtins(merged))) {
-      ircore.eprint_ir_ineligible();
-      return 1;
-    }
     merged = constfold.elide_asserts(merged);
   }
 
