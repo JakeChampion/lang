@@ -37,11 +37,18 @@
 //   - `order_addresses` is the destination address selection of RFC
 //     6724, over the source address the host would use for each
 //     destination (`source_for`); `sort_addresses` probes and orders.
+//   - `connect_race` is the RFC 8305 dialer: the addresses tried in turn,
+//     each attempt running alone for the attempt delay before the next
+//     starts beside it, the first to connect winning. `dial(name, port)`
+//     resolves and races.
+//   - `nat64_prefixes` reads the prefixes a NAT64 translator answers under
+//     from the AAAA records of ipv4only.arpa (RFC 7050), and `synthesize`
+//     embeds an IPv4 address under one (RFC 6052); `resolve` does that for
+//     a host with no IPv4 route.
 //   - `system_conf()` and `system_hosts()` read the machine's files, and
 //     `resolve(name)` is the lookup a program wants by default: an address
 //     literal as it is, then the hosts file, then DNS, the addresses in
-//     RFC 6724 order. The Happy Eyeballs dialer and NAT64 are the next
-//     slice of #9855.
+//     RFC 6724 order.
 //
 // `.local` names are not special here: there is no mDNS, so they go to
 // the nameservers like any other name, which is what a resolver without
@@ -51,6 +58,7 @@
 // (`udp_*`, `tcp_*`, `poll`), the query id (`random_i32`) and the clock
 // the wait is measured by (`monotonic_ns`).
 import "std/net";
+import "std/async";
 import "std/i32";
 import "std/string";
 import "std/array";
@@ -1753,8 +1761,14 @@ pub function canonical_name(conf: ResolvConf, name: string): Result[string, DnsE
 // both record types pass it over (`NoSuchName`, `NoData`); a failure on
 // either ends the walk as it does for one query.
 pub function lookup_addresses(conf: ResolvConf, name: string): Result[net.IpAddr[], DnsError] {
+  var found: net.IpAddr[] = found_addresses(conf, name)?;
+  return Ok(sort_addresses(found));
+}
+
+// The paired walk's addresses for `name`, in the order the server gave.
+function found_addresses(conf: ResolvConf, name: string): Result[net.IpAddr[], DnsError] {
   var a: Answer = search_with(search_plan(name, conf), (qname: string): Result[Answer, DnsError] => ask_pair(conf, qname))?;
-  return Ok(sort_addresses(addresses_of(a.records)));
+  return Ok(addresses_of(a.records));
 }
 
 // One step of the paired walk: `qname`'s A and AAAA queries put to the
@@ -2124,6 +2138,369 @@ function prefer_true(for_a: boolean, for_b: boolean): i32 {
   return 0;
 }
 
+// ---------------------------------------------------------------------------
+// Dialing (RFC 8305, Happy Eyeballs)
+//
+// A name's addresses are tried in turn rather than one after another to
+// completion: the first attempt runs alone for the attempt delay, then
+// the next address is tried beside it, and so on, the first to connect
+// winning and the rest closed. An attempt that fails hands its turn to
+// the next at once. The addresses are in RFC 6724 order with the
+// families alternating (§4), so a family whose packets go nowhere costs
+// one delay rather than the whole list.
+
+// `DialOptions` — how `connect_race` and `dial` try a name's addresses:
+// `fallback_ms` is how long an attempt runs alone before the next address
+// is tried beside it (the connection attempt delay, Go's 300 ms), and
+// `timeout_ms` bounds the whole dial.
+pub struct DialOptions { fallback_ms: i32, timeout_ms: i32 }
+
+// `dial_options()` — 300 ms between attempts and ten seconds in all.
+pub function dial_options(): DialOptions {
+  return DialOptions { fallback_ms: 300, timeout_ms: 10000 };
+}
+
+// `interleave_families(addrs)` — RFC 8305 §4's order: the first address's
+// family leads and the families alternate from there, each keeping its
+// own order.
+pub function interleave_families(addrs: net.IpAddr[]): net.IpAddr[] {
+  if (addrs.len() == 0) {
+    return addrs;
+  }
+  var lead_v6: boolean = addrs[0].is_v6();
+  var lead: net.IpAddr[] = [];
+  var other: net.IpAddr[] = [];
+  var i: i32 = 0;
+  while (i < addrs.len()) {
+    if (addrs[i].is_v6() == lead_v6) {
+      lead = lead.append(addrs[i]);
+    } else {
+      other = other.append(addrs[i]);
+    }
+    i = i + 1;
+  }
+  var out: net.IpAddr[] = [];
+  i = 0;
+  while (i < lead.len() || i < other.len()) {
+    if (i < lead.len()) {
+      out = out.append(lead[i]);
+    }
+    if (i < other.len()) {
+      out = out.append(other[i]);
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+// One connect under way: its socket, watched for writability, which is
+// how a connect reports that it ended.
+struct Attempt { sock: i32 }
+
+// `connect_race(addrs, port, opts)` — a connection to the first of
+// `addrs` at `port` that answers, as the section above says, in the
+// blocking mode `connect` gives: `TimedOut` once `timeout_ms` passes
+// with none connected, the last failure when every address failed,
+// `HostUnreachable` for no addresses.
+pub function connect_race(addrs: net.IpAddr[], port: i32, opts: DialOptions): Result[i32, net.NetError] {
+  var drv: async.RealDriver = async.real_driver();
+  var deadline: i64 = now_ms() + opts.timeout_ms as i64;
+  var race: Race = Race { open: [], next: 0, due: now_ms(), last: HostUnreachable };
+  while (true) {
+    var now: i64 = now_ms();
+    if (now >= deadline) {
+      close_attempts(drv, race.open);
+      return Err(TimedOut);
+    }
+    if (race.next < addrs.len() && (race.open.len() == 0 || now >= race.due)) {
+      race = started(drv, race, net.socket_addr(addrs[race.next], port), opts);
+      continue;
+    }
+    if (race.open.len() == 0) {
+      return Err(race.last);
+    }
+    var woke: i32[] = drv.wait(race.open.len(), wait_window(race, addrs.len(), now, deadline));
+    match (settled(drv, race)) {
+      Ok(sock) => {
+        var blocking: Result[void, net.NetError] = net.set_nonblocking(sock, false);
+        return Ok(sock);
+      },
+      Err(after) => {
+        race = after;
+      }
+    }
+  }
+  return Err(TimedOut);
+}
+
+// How long the race may wait before it has something to do: the next
+// attempt's start when an address is left, else the deadline, and at
+// least a millisecond.
+function wait_window(race: Race, n: i32, now: i64, deadline: i64): i32 {
+  var wait_ms: i32 = (deadline - now) as i32;
+  if (race.next < n && (race.due - now) as i32 < wait_ms) {
+    wait_ms = (race.due - now) as i32;
+  }
+  if (wait_ms < 1) {
+    return 1;
+  }
+  return wait_ms;
+}
+
+// The race's state: the attempts under way, the next address to try,
+// when it may start, and the last failure.
+struct Race { open: Attempt[], next: i32, due: i64, last: net.NetError }
+
+// The next address's attempt started: watched when it is under way, the
+// turn handed on at once when it failed to start. Where the host
+// connects before answering (the interpreter), the attempt is already
+// settled and the next wait finds it so.
+function started(drv: async.RealDriver, race: Race, addr: net.SocketAddr, opts: DialOptions): Race {
+  var next: i32 = race.next + 1;
+  match (net.connect_start(addr)) {
+    Ok(sock) => {
+      var watched: i32 = drv.watch(sock, 2);
+      return Race { open: race.open.append(Attempt { sock: sock }), next: next, due: now_ms() + opts.fallback_ms as i64, last: race.last };
+    },
+    Err(e) => {
+      return Race { ...race, next: next, due: now_ms(), last: e };
+    }
+  }
+  return Race { ...race, next: next };
+}
+
+// Every open attempt asked how its connect ended: the first that
+// connected is the winner, the others closed; one that failed is closed
+// and its turn handed on at once; the rest stay open.
+function settled(drv: async.RealDriver, race: Race): Result[i32, Race] {
+  var keep: Attempt[] = [];
+  var out: Race = race;
+  var i: i32 = 0;
+  while (i < race.open.len()) {
+    var a: Attempt = race.open[i];
+    match (net.connect_result(a.sock)) {
+      Ok(_) => {
+        var unwatched: i32 = drv.unwatch(a.sock);
+        close_attempts(drv, keep);
+        close_attempts(drv, after(race.open, i));
+        return Ok(a.sock);
+      },
+      Err(e) => {
+        if (e.eq(net.InProgress)) {
+          keep = keep.append(a);
+        } else {
+          close_attempts(drv, [a]);
+          out = Race { ...out, due: now_ms(), last: e };
+        }
+      }
+    }
+    i = i + 1;
+  }
+  return Err(Race { ...out, open: keep });
+}
+
+// The attempts past index `i`.
+function after(attempts: Attempt[], i: i32): Attempt[] {
+  var out: Attempt[] = [];
+  var k: i32 = i + 1;
+  while (k < attempts.len()) {
+    out = out.append(attempts[k]);
+    k = k + 1;
+  }
+  return out;
+}
+
+function close_attempts(drv: async.RealDriver, attempts: Attempt[]): void {
+  var i: i32 = 0;
+  while (i < attempts.len()) {
+    var unwatched: i32 = drv.unwatch(attempts[i].sock);
+    var closed: Result[void, net.NetError] = net.close(attempts[i].sock);
+    i = i + 1;
+  }
+}
+
+// `dial(name, port, opts)` — `name` resolved and its addresses raced:
+// a connection, or the resolver's failure, or the dial's as
+// `Socket(e)`.
+pub function dial(name: string, port: i32, opts: DialOptions): Result[i32, DnsError] {
+  var addrs: net.IpAddr[] = resolve(name)?;
+  match (connect_race(interleave_families(addrs), port, opts)) {
+    Ok(sock) => {
+      return Ok(sock);
+    },
+    Err(e) => {
+      return Err(Socket(e));
+    }
+  }
+  return Err(NoNameserver);
+}
+
+// ---------------------------------------------------------------------------
+// NAT64 (RFC 7050 discovery, RFC 6052 synthesis)
+
+// `Nat64Prefix` — a prefix a NAT64 translator answers under: the first
+// `bits` bits of `bytes` (32, 40, 48, 56, 64 or 96), the rest zero.
+pub struct Nat64Prefix { bytes: u8[], bits: i32 }
+
+// `nat64_prefix_of(aaaa)` — the prefix an AAAA record for ipv4only.arpa
+// reveals: the well-known 192.0.0.170 or 192.0.0.171 embedded where RFC
+// 6052 puts an IPv4 address under one of the six prefix lengths, the
+// longest tried first, as RFC 7050 §3 reads it; `None` for an address
+// that embeds neither.
+pub function nat64_prefix_of(aaaa: net.IpAddr): Option[Nat64Prefix] {
+  if (!aaaa.is_v6()) {
+    return None;
+  }
+  var b: u8[] = aaaa.bytes();
+  var lengths: i32[] = [96, 64, 56, 48, 40, 32];
+  var i: i32 = 0;
+  while (i < lengths.len()) {
+    if (is_well_known(embedded_v4(b, lengths[i]))) {
+      return Some(Nat64Prefix { bytes: b.take(lengths[i] / 8).concat(zero_bytes(16 - lengths[i] / 8)), bits: lengths[i] });
+    }
+    i = i + 1;
+  }
+  return None;
+}
+
+// RFC 7050's well-known IPv4 addresses, 192.0.0.170 and 192.0.0.171.
+function is_well_known(v4: u8[]): boolean {
+  return v4[0] == 192u8 && v4[1] == 0u8 && v4[2] == 0u8 && (v4[3] == 170u8 || v4[3] == 171u8);
+}
+
+// The IPv4 address an IPv6 address embeds under a prefix of `bits`, in
+// RFC 6052 §2.2's layout: the four bytes after the prefix, skipping byte
+// 8, which a /40, /48 or /56 prefix's address straddles.
+function embedded_v4(b: u8[], bits: i32): u8[] {
+  var out: u8[] = [];
+  var at: i32 = bits / 8;
+  while (out.len() < 4) {
+    if (at != 8) {
+      out = out.append(b[at]);
+    }
+    at = at + 1;
+  }
+  return out;
+}
+
+// `synthesize(prefix, v4)` — `v4` under `prefix` as RFC 6052 §2.2 lays
+// it out: the four bytes follow the prefix, skipping byte 8, which stays
+// zero. An IPv6 address is answered as it is.
+pub function synthesize(prefix: Nat64Prefix, v4: net.IpAddr): net.IpAddr {
+  if (!v4.is_v4()) {
+    return v4;
+  }
+  var src: u8[] = v4.bytes();
+  var out: u8[] = prefix.bytes.take(prefix.bits / 8);
+  var k: i32 = 0;
+  while (out.len() < 16) {
+    if (out.len() != 8 && k < 4) {
+      out = out.append(src[k]);
+      k = k + 1;
+    } else {
+      out = out.append(0u8);
+    }
+  }
+  match (net.ipv6(out)) {
+    Some(ip) => {
+      return ip;
+    },
+    None => {
+      return v4;
+    }
+  }
+  return v4;
+}
+
+// `nat64_prefixes(conf)` — the prefixes the nameservers reveal through
+// the AAAA records of ipv4only.arpa, each once, in the order the records
+// came; none when the name has no such record or the query fails, which
+// is every network without a translator.
+pub function nat64_prefixes(conf: ResolvConf): Nat64Prefix[] {
+  var out: Nat64Prefix[] = [];
+  match (lookup_aaaa(conf, "ipv4only.arpa.")) {
+    Ok(xs) => {
+      var i: i32 = 0;
+      while (i < xs.len()) {
+        match (nat64_prefix_of(xs[i])) {
+          Some(p) => {
+            if (!has_prefix(out, p)) {
+              out = out.append(p);
+            }
+          },
+          None => {}
+        }
+        i = i + 1;
+      }
+    },
+    Err(_) => {}
+  }
+  return out;
+}
+
+function has_prefix(ps: Nat64Prefix[], p: Nat64Prefix): boolean {
+  var i: i32 = 0;
+  while (i < ps.len()) {
+    if (ps[i].bits == p.bits && same_bytes(ps[i].bytes, p.bytes)) {
+      return true;
+    }
+    i = i + 1;
+  }
+  return false;
+}
+
+function same_bytes(a: u8[], b: u8[]): boolean {
+  if (a.len() != b.len()) {
+    return false;
+  }
+  var i: i32 = 0;
+  while (i < a.len()) {
+    if (a[i] != b[i]) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+// `addrs` as this host can reach them: on a host with no IPv4 route and a
+// list of IPv4 addresses with no IPv6 beside them (RFC 8305 §7.3), each is
+// replaced by its synthesis under every prefix the nameservers reveal;
+// elsewhere, or with no prefix revealed, `addrs` as it is.
+function with_nat64(conf: ResolvConf, addrs: net.IpAddr[]): net.IpAddr[] {
+  var i: i32 = 0;
+  while (i < addrs.len()) {
+    if (addrs[i].is_v6()) {
+      return addrs;
+    }
+    i = i + 1;
+  }
+  if (addrs.len() == 0) {
+    return addrs;
+  }
+  match (source_for(addrs[0])) {
+    Some(_) => {
+      return addrs;
+    },
+    None => {}
+  }
+  var prefixes: Nat64Prefix[] = nat64_prefixes(conf);
+  if (prefixes.len() == 0) {
+    return addrs;
+  }
+  var out: net.IpAddr[] = [];
+  i = 0;
+  while (i < addrs.len()) {
+    var k: i32 = 0;
+    while (k < prefixes.len()) {
+      out = out.append(synthesize(prefixes[k], addrs[i]));
+      k = k + 1;
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
 // `system_conf()` — the resolver this machine is configured with: its
 // `/etc/resolv.conf` over its hostname, the defaults when the file is
 // missing.
@@ -2156,17 +2533,21 @@ pub function system_hosts(): HostsEntry[] {
 // `resolve(name)` — the addresses of `name` on this machine: an address
 // literal as it is, then the hosts file, then DNS. The first source with
 // an address answers, the addresses in RFC 6724 order; DNS reports its
-// failure when the hosts file has none.
+// failure when the hosts file has none. On a host with no IPv4 route,
+// IPv4 addresses with no IPv6 beside them are synthesized under the
+// NAT64 prefixes the nameservers reveal.
 pub function resolve(name: string): Result[net.IpAddr[], DnsError] {
+  var conf: ResolvConf = system_conf();
   match (net.ip_parse(name)) {
     Some(ip) => {
-      return Ok([ip]);
+      return Ok(with_nat64(conf, [ip]));
     },
     None => {}
   }
   var hosts: net.IpAddr[] = hosts_lookup(system_hosts(), name);
   if (hosts.len() > 0) {
-    return Ok(sort_addresses(hosts));
+    return Ok(sort_addresses(with_nat64(conf, hosts)));
   }
-  return lookup_addresses(system_conf(), name);
+  var found: net.IpAddr[] = found_addresses(conf, name)?;
+  return Ok(sort_addresses(with_nat64(conf, found)));
 }

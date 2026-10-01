@@ -6672,6 +6672,15 @@ function builtin_string_names(): string[] {
 }
 
 function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState): Ty {
+  // A local function value shadows a builtin of the same name: `rename(x)`
+  // calls the parameter, so its result is the lambda's, not the builtin's.
+  if (s.has_local(id.name)) {
+    var lt: Ty = s.local_type_of(id.name);
+    if (is_fn(lt)) {
+      return fn_ret(lt);
+    }
+    return ty_unknown();
+  }
   if (id.name == "Some" && c.args.len() == 1) {
     return ty_option(infer_expr_type(c.args[0], s));
   }
@@ -6913,19 +6922,6 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
   }
   if (id.name == "str_split") {
     return ty_array_string();
-  }
-  // Local-callee path: when `f()` invokes a
-  // local var that was bound to a lambda, its
-  // recorded type is `fn_<ret>` (see the
-  // ExprLambda match arm above). Strip the
-  // prefix so downstream dispatch (`print(f())`,
-  // string concat, etc.) sees the actual return
-  // type rather than `"unknown"`.
-  if (s.has_local(id.name)) {
-    var lt: Ty = s.local_type_of(id.name);
-    if (is_fn(lt)) {
-      return fn_ret(lt);
-    }
   }
   var fi: i32 = 0;
   while (fi < s.funcs.len()) {

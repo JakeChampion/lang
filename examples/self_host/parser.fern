@@ -27,6 +27,7 @@ import "./ast";
 import "./astwalk";
 import "./util";
 import "./lexer";
+import "./typeinfo";
 
 // =================== PARSER ====================
 
@@ -15016,7 +15017,24 @@ function ms_lambda(lm: ast.ExprLambda, dest: string, env: MEnv, gstructs: Struct
   pcur = lrr.mins;
   var lrl: TyIns = mg_ty_list(lm.ret_fn_param_types, gstructs, pcur);
   pcur = lrl.mins;
-  return RExpr { rexpr: ast.ExprLambda { ...lm, params: nparams, ret_type: rt.ty, ret_fn_ret: lrr.ty, ret_fn_param_types: lrl.ty, body: bodyr.rstmts, use_infer: false }, rins: pcur };
+  for cap in lm.captures {
+    pcur = mg_ty(typeinfo.spelling(cap.ty), gstructs, pcur).mins;
+  }
+  function struct_clone(t: typeinfo.Type): string {
+    if let typeinfo.TypeStruct(_) = t {
+      var sp: string = typeinfo.spelling(t);
+      var m: string = mg_ty(sp, gstructs, pcur).ty;
+      if (m != sp) {
+        return m;
+      }
+    }
+    return "";
+  }
+  var caps: ast.TypedBinding[] = [];
+  for cap in lm.captures {
+    caps = caps.append(ast.TypedBinding { name: cap.name, ty: typeinfo.renamed_nominals(cap.ty, struct_clone) });
+  }
+  return RExpr { rexpr: ast.ExprLambda { ...lm, params: nparams, ret_type: rt.ty, ret_fn_ret: lrr.ty, ret_fn_param_types: lrl.ty, body: bodyr.rstmts, use_infer: false, captures: caps }, rins: pcur };
 }
 
 // ms_struct_lit rewrites a struct literal of a generic struct to its mangled
@@ -16579,7 +16597,22 @@ function me_expr(e: ast.Expr, expected: string, env: MEnv, enums: EnumDecl[], st
         lins = me_collect_slot(lp.type_name, lp.fn_ret, lp.fn_param_types, enums, lins);
       }
       var lret: MeSlot = me_rewrite_slot(lm.ret_type, lm.ret_fn_ret, lm.ret_fn_param_types, enums);
-      return RExpr { rexpr: ast.ExprLambda { ...lm, params: me_rewrite_params(lm.params, enums), ret_type: lret.ty, ret_fn_ret: lret.fn_ret, ret_fn_param_types: lret.fn_params, body: lb.rstmts }, rins: lins };
+      function enum_clone(t: typeinfo.Type): string {
+        if let typeinfo.TypeUnion(_) = t {
+          var sp: string = typeinfo.spelling(t);
+          var m: string = me_rewrite_ty(sp, enums);
+          if (m != sp) {
+            return m;
+          }
+        }
+        return "";
+      }
+      var caps: ast.TypedBinding[] = [];
+      for cap in lm.captures {
+        lins = me_collect_anno(typeinfo.spelling(cap.ty), enums, lins);
+        caps = caps.append(ast.TypedBinding { name: cap.name, ty: typeinfo.renamed_nominals(cap.ty, enum_clone) });
+      }
+      return RExpr { rexpr: ast.ExprLambda { ...lm, params: me_rewrite_params(lm.params, enums), ret_type: lret.ty, ret_fn_ret: lret.fn_ret, ret_fn_param_types: lret.fn_params, body: lb.rstmts, captures: caps }, rins: lins };
     },
     _ => {
       return RExpr { rexpr: e, rins: ins };
