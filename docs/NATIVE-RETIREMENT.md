@@ -62,7 +62,7 @@ targets).
 | #10757 (closed by #10835 after this measurement; the checker typed a suffixed float literal f64) | typed lowering: f32 values typed f64 | 5 |
 | #10768 (closed by #10775 after this measurement) | wasm: the core module exports only `_start`, so a main result of 126 or more is unreadable | 5 |
 | #10771 (the negative `__alloc_u8` and `repeat` aborts landed after this measurement; the array-grow test pins native's 32-bit request, and the `__memcpy` test is native-only by decision on #8799: it goes with the backends) | runtime: allocation-size overflow does not abort with 134; `__memcpy` size classes copy the wrong count | 5 |
-| #10737 (closed by #10741 after this measurement; re-measure before planning it) | typed lowering: `usize / usize`, `f64 as usize` | 4 |
+| #10737 (closed by #10741 after this measurement; re-measured: `f64 as usize` was still refused, and the SSA backends had no pointer-width conversion, fixed on #10874) | typed lowering: `usize / usize`, `f64 as usize` | 4 |
 | #10759 (closed by #10835 after this measurement) | typed lowering: for-each pattern bindings are not semantic values | 4 |
 | #10816 (split from #10767; closed by #10844 after this measurement) | checker: an impl record names its trait without the trait's module, so same-named traits collide (E021) and `dyn cmp.Display` matches no impl (E034) | 4 |
 | #10764 (fixed after this measurement: the member-name call in #10852; the generic form desugars into the generic enum the Go checker desugars every union into) | union type aliases: members have no semantic contract; the generic form does not parse | 4 |

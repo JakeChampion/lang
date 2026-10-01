@@ -2583,10 +2583,10 @@ pub function cast_admits(from: typeinfo.Type, to: typeinfo.Type): boolean {
     return true;
   }
   if (is_usize(from)) {
-    return converts_as_integer(to);
+    return converts_as_integer(to) || is_float(to);
   }
   if (is_usize(to)) {
-    return converts_as_integer(from);
+    return converts_as_integer(from) || is_float(from);
   }
   if (converts_as_integer(from) && converts_as_integer(to)) {
     return true;

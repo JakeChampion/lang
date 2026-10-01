@@ -5398,7 +5398,10 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
       parts = parts.append("    i32.trunc_sat_f64_s\n");
     }
   } else if (o.kind_tag == 13) {  // f64_to_i64
-    if (o.unsigned) {
+    if (o.width == ir.width_ptr()) {
+      // An address is an i32 here; `f64 as usize` saturates at u32::MAX.
+      parts = parts.append("    i32.trunc_sat_f64_u\n");
+    } else if (o.unsigned) {
       parts = parts.append("    i64.trunc_sat_f64_u\n");
     } else {
       parts = parts.append("    i64.trunc_sat_f64_s\n");
@@ -16086,6 +16089,7 @@ function emit_wasm_i32_to_f64(o: ir.Op, parts: string[]): string[] {
       parts = parts.append("    f64.convert_i64_s\n");
     }
   } else if (o.unsigned) {
+    // A pointer-width source (`usize as f64`) is the i32 address here.
     parts = parts.append("    f64.convert_i32_u\n");
   } else {
     parts = parts.append("    f64.convert_i32_s\n");
