@@ -7506,11 +7506,12 @@ function instance_limit(): i32 {
 // the instances' own requests. Refusals are per body and propagate to callers.
 struct Inferred { all: Produced[], table: ssasem.Contracts }
 
+// Nothing escapes until a round finds the use that carries it out.
 function seed_bits(n: i32): boolean[] {
   var out: boolean[] = [];
   var i: i32 = 0;
   while (i < n) {
-    out = out.append(true);
+    out = out.append(false);
     i = i + 1;
   }
   return out;
@@ -7618,10 +7619,15 @@ function inferred_produced(p: Produced, name: string, rows: ownership.Escapes[],
   return Produced { ...p, modes: modes, func: ssasem.Func { ...p.func, calls: calls0 } };
 }
 
-// The greatest fixpoint: every reference parameter starts consumed and is
-// demoted once a round finds no use that carries it out. Bounded by the bits
-// it can clear, since a round only ever removes them — the bound below is a
-// belt on that, not the reason it stops.
+// The least fixpoint: every reference parameter starts lent and is counted
+// once a round finds a use that carries it out. A round only ever adds bits:
+// a callee found to consume carries more of its caller's values and lends
+// fewer of them, so the bound below is a belt, not the reason it stops. A lent
+// parameter is always sound, since the planner retains what a body keeps of
+// one; counting is the hand-over that spares the pair. Seeding consumed
+// instead left every parameter in a call cycle counted, since each kept the
+// other carried: `semtypes.equal` and `equal_list` retained and released
+// every type on every comparison.
 // A closure BODY keeps every mode it declared. The units its arguments carry
 // are read off the function TYPE the box hands out, and `ssasem.closure_type`
 // builds that type from these same modes — so inferring one counted rewrites
