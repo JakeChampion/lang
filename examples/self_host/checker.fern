@@ -5579,12 +5579,15 @@ function param_exprs(tr: parser.TypeRef, tp: string, es: ast.Expr[], s: Scope): 
   if (es.len() == 0) {
     return out;
   }
-  if (tr.array_depth > 0) {
+  if (tr.array_depth > 0 || tr.is_view) {
     var elems: ast.Expr[] = [];
     for e in es {
       if let ast.ExprArray(ea) = e {
         elems = util.append_all(elems, ea.elements);
       }
+    }
+    if (tr.is_view) {
+      return param_exprs(tr.args[0], tp, elems, s);
     }
     return param_exprs(parser.elem_type_ref(tr), tp, elems, s);
   }
@@ -6756,17 +6759,12 @@ function check_program(prog: ast.Stmt[]): ProgramTypes {
 // to Types via type_from_name. The table is built in one pass and
 // then passed to check_module's per-function body walk so calls
 // (including recursive / mutually-recursive ones) can resolve.
-// func_ret_type resolves a FuncDecl's declared return type, re-entering the
-// `[T]` view-ness the parse-time erasure recorded on ret_slice (#9944).
+// func_ret_type resolves a FuncDecl's declared return type.
 function func_ret_type(fd: parser.FuncDecl, tn: TypeNames): typeinfo.Type {
   if (fd.ret_fn_ret.len() > 0 && (fd.ret_type == "fn" || fd.ret_type == "fn[]")) {
     return declared_callable_type(fd.ret_type, fd.ret_fn_ret, fd.ret_fn_param_types, fd.type_params, tn);
   }
-  var rt: typeinfo.Type = type_from_name_erasing_tparams(fd.ret_type, fd.type_params, tn);
-  if (fd.ret_slice) {
-    return as_view(rt);
-  }
-  return rt;
+  return type_from_name_erasing_tparams(fd.ret_type, fd.type_params, tn);
 }
 
 // A lambda's own function type, as a binding of its name sees it.
@@ -6811,14 +6809,10 @@ function lambda_ret_type(lm: ast.ExprLambda, s: Scope): typeinfo.Type {
   return s.resolve_type(lm.ret_type);
 }
 
-// var_declared_type resolves a StmtVar's annotation, re-entering the `[T]`
-// view-ness the parse-time erasure recorded on is_view (#9944).
+// var_declared_type resolves a StmtVar's annotation.
 function var_declared_type(v: ast.StmtVar, s: Scope): typeinfo.Type {
   if (v.fn_ret.len() > 0 && (v.type_name == "fn" || v.type_name == "fn[]")) {
     return declared_callable_type(v.type_name, v.fn_ret, v.fn_param_types, s.tparams, s.type_names());
-  }
-  if (v.is_view) {
-    return as_view(s.resolve_type(v.type_name));
   }
   return s.resolve_type(v.type_name);
 }
@@ -7205,6 +7199,9 @@ function type_from_ref_names(r: parser.TypeRef, tn: TypeNames): typeinfo.Type {
     var elem: parser.TypeRef = parser.elem_type_ref(r);
     return t_array(type_from_ref_names(elem, tn));
   }
+  if (r.is_view) {
+    return t_view(type_from_ref_names(r.args[0], tn));
+  }
   // array_depth == 0 below. `name` is this node's canonical spelling — the
   // primitive / struct / union key and the unknown-reason text.
   var name: string = parser.render_type_ref(r);
@@ -7421,6 +7418,9 @@ function type_from_ref_subst(r: parser.TypeRef, tparams: string[], targs: typein
     var elem: parser.TypeRef = parser.elem_type_ref(r);
     return t_array(type_from_ref_subst(elem, tparams, targs, tn));
   }
+  if (r.is_view) {
+    return t_view(type_from_ref_subst(r.args[0], tparams, targs, tn));
+  }
   if (!r.is_tuple && r.args.len() == 0) {
     var tpi: i32 = util.index_of_str(tparams, r.base);
     if (tpi >= 0 && tpi < targs.len()) {
@@ -7540,11 +7540,13 @@ function gc_is_typevar_name(n: string, tparams: string[], tn: TypeNames): boolea
 function gc_bind_param(r: parser.TypeRef, at: typeinfo.Type, tparams: string[], tn: TypeNames, names: string[], types: typeinfo.Type[]): (string[], typeinfo.Type[]) {
   var ns: string[] = names;
   var ts: typeinfo.Type[] = types;
-  if (r.array_depth > 0) {
+  if (r.array_depth > 0 || r.is_view) {
     match (at) {
       typeinfo.TypeArray(a) => {
-        var elem: parser.TypeRef = parser.elem_type_ref(r);
-        return gc_bind_param(elem, a.elem, tparams, tn, ns, ts);
+        if (r.array_depth > 0) {
+          return gc_bind_param(parser.elem_type_ref(r), a.elem, tparams, tn, ns, ts);
+        }
+        return gc_bind_param(r.args[0], a.elem, tparams, tn, ns, ts);
       },
       _ => {
         return (ns, ts);
@@ -7756,14 +7758,11 @@ function split_fn_param_spellings(csv: string): string[] {
 // Parameters use the same retained scalar/array callable contract as locals,
 // fields and results. No recorded result means an opaque tag, not zero arity.
 // param_decl_type is a declared parameter's type: its sidecar type, else its
-// resolved name, re-entering the `[T]` view-ness the parser erased (#9944).
+// resolved name.
 function param_decl_type(p: ast.ParamDecl, tparams: string[], tn: TypeNames): typeinfo.Type {
   var t: typeinfo.Type = fn_param_decl_type(p, tparams, tn);
   if (is_unknown(t)) {
     t = type_from_name_erasing_tparams(p.type_name, tparams, tn);
-  }
-  if (p.is_view) {
-    return as_view(t);
   }
   return t;
 }
@@ -7781,9 +7780,6 @@ function (s: Scope) resolve_param(p: ast.ParamDecl): typeinfo.Type {
   var ty = fn_param_decl_type(p, s.tparams, s.type_names());
   if (!is_unknown(ty)) {
     return ty;
-  }
-  if (p.is_view) {
-    return as_view(s.resolve_type(p.type_name));
   }
   return s.resolve_type(p.type_name);
 }
@@ -8596,7 +8592,7 @@ function slc_walk(stmts: ast.Stmt[], fname: string, s: Scope, params: string[], 
 function slice_escape_diags(fn: parser.FuncDecl, s: Scope, sums: ViewSum[], vix: ViewIndex): SlcWalk {
   var localarr: string[] = [];
   var tainted: string[] = [];
-  return slc_walk(fn.body, fn.name, s, view_positions(fn), localarr, tainted, sums, vix, fn.ret_slice);
+  return slc_walk(fn.body, fn.name, s, view_positions(fn), localarr, tainted, sums, vix, parser.spelling_is_view(fn.ret_type));
 }
 
 // ---------------------------------------------------------------------------
@@ -10488,7 +10484,7 @@ function loop_diags(stmts: ast.Stmt[], in_loop: boolean, labels: string[]): util
 // this feeds; the fixpoints confirm the arity diagnostics are unchanged).
 pub function count_type_args(t: string): i32 {
   var r: parser.TypeRef = parser.parse_type_ref(t);
-  if (r.is_tuple || r.array_depth > 0 || r.args.len() == 0) {
+  if (r.is_tuple || r.is_view || r.array_depth > 0 || r.args.len() == 0) {
     return 0 - 1;
   }
   return r.args.len();
@@ -17886,6 +17882,9 @@ function e064_unknown_name_tref(tr: parser.TypeRef, tn: TypeNames, extra_known: 
     var elem: parser.TypeRef = parser.elem_type_ref(tr);
     return e064_unknown_name_tref(elem, tn, extra_known);
   }
+  if (tr.is_view) {
+    return e064_unknown_name_tref(tr.args[0], tn, extra_known);
+  }
   // Tuple: out of scope for the array/generic-arg widening.
   if (tr.is_tuple) {
     return "";
@@ -20827,9 +20826,7 @@ function check_module_pass(mod: parser.Module, fda_diags: util.Diag[], focus: st
     // caller, so it cannot dangle. Reporting on both flags every
     // `T[]`-returning function that hands a local array back — a move,
     // and legal — which is what bigint / sort / cmp / unicode do.
-    // The flag comes from the parser rather than ret_type because
-    // parse_type_name erases `[T]` to `T[]`.
-    if (mod.funcs[i].ret_slice) {
+    if (parser.spelling_is_view(mod.funcs[i].ret_type)) {
       body_diags = util.append_diags(body_diags, slice_escape_diags(mod.funcs[i], fsc, slc_sums, slc_ix).diags);
     }
     // E067: a value of a @must_consume struct/enum type must be consumed

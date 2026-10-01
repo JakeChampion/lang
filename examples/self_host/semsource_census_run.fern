@@ -289,7 +289,7 @@ function main(): i32 {
       // (#9773, #9778).
       merged = parser.module_with_builtins_typed(merged);
       merged = irlower.lift_lambdas_typed(merged);
-      var tab: irlower.StructTab = irlower.struct_tab(parser.erase_str_structs(merged.structs));
+      var tab: irlower.StructTab = irlower.struct_tab(parser.erase_view_structs(merged.structs));
 
       report(merged, tab);
       return 0;

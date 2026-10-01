@@ -24,7 +24,7 @@ payloadless success box's `None` tag.
 ## Validation scope
 
 The combined branch passed validation after integration with main
-`d09ae84da`:
+`1ae9cadf6`:
 
 - Full unit suite and `make lint-all`, with `GOMAXPROCS=2` and one Go
   package at a time.
@@ -36,7 +36,7 @@ The combined branch passed validation after integration with main
   allocation counts and no sanitizer findings.
 - Bootstrap from the official pinned seed, followed by `make distcheck`.
   Stage 2 and stage 3 were byte-identical at 14,593,777 bytes, SHA-256
-  `5d767925783a4acd136256c27c17d2083672aef9df0a3bff56f39399c6988215`.
+  `6a0ca5f5adff2011f823c7b71491c948106ba5010239a89dc36977945d8b8626`.
 
 The target matrix covers bootstrap and primary native code, strict
 semantic IR ownership checks, WASM Preview 1 and actual Preview 2

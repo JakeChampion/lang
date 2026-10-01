@@ -55,9 +55,9 @@ name: Test e2e self-host
 # the refresh procedure.
 #
 # The aarch64 runner skips the x86 self-host driver builds (and vice-versa),
-# so the x86 lane is the long pole and the aarch64 lane runs ONE shard: its
-# per-shard cost is dominated by job setup, so near-empty shards would only
-# take runner slots from the x86 fan-out.
+# so the x86 lane is the long pole and the aarch64 lane runs TWO shards: one
+# was 8.5 minutes, and a shard's setup is about a minute, so more than two
+# would mostly take runner slots from the x86 fan-out.
 #
 # The `verify` job reads every shard's outcome artifact off-machine, so a
 # shard whose runner vanished (no outcome at all) is a failure with a
@@ -228,19 +228,29 @@ jobs:
   # WHOLE-COMPILER FIXPOINTS. OWN_JOB_TESTS-class proofs that each run the
   # built compiler over the whole compiler source; they share one job because
   # each is a few minutes and they share the fern.fern build.
+  #
+  # Two jobs, two proofs each: the four steps were 2.0 + 2.4 + 2.6 + 3.6
+  # minutes in one job, the fern.fern build they share coming from the
+  # driver cache either way. `fixpoints` holds the two gen0/gen1 proofs,
+  # `stage2` the two that run what stage 1 built.
   selfhost-fixpoints:
-    name: selfhost-fixpoints-x86_64
+    name: selfhost-fixpoints-x86_64-${{ matrix.group }}
     runs-on: ubuntu-latest
     timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [fixpoints, stage2]
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
       - uses: ./.github/actions/selfhost-driver-cache
       - name: aarch64 cross-gcc + qemu (the stage-2 leg is linked and RUN)
+        if: matrix.group == 'stage2'
         uses: ./.github/actions/apt-cross-toolchain
       - uses: ./.github/actions/build-e2e-binaries
       - name: two-generation const_func eligibility check
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && matrix.group == 'fixpoints' }}
         env:
           RUN_CONST_FUNC_GEN2: "1"
         run: |
@@ -254,7 +264,7 @@ jobs:
       # the whole compiler under qemu, and it is left to a human with time
       # rather than paid on every push.
       - name: arm64 stage-2 fixpoint (gen1 == gen2, byte-identical)
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && matrix.group == 'stage2' }}
         run: |
           set -euo pipefail
           chmod +x e2eselfhost.test
@@ -265,7 +275,7 @@ jobs:
       # The CLI rebuilding itself, and the result compiling real input
       # (#7954). The fixpoints compare bytes; this runs what stage 1 built.
       - name: x86-64 stage-2 CLI compiles lexer.fern and a program
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && matrix.group == 'stage2' }}
         run: |
           set -euo pipefail
           chmod +x e2eselfhost.test
@@ -274,7 +284,7 @@ jobs:
           gotestsum --format standard-verbose --raw-command -- \
             go tool test2json -t -p e2eselfhost "$BIN" -test.run '^TestSelfHostCLIStage2X86_64$' -test.v -test.timeout 20m
       - name: whole-compiler emit-all fixpoint at batch=8 (gen0 == gen1)
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && matrix.group == 'fixpoints' }}
         run: |
           set -euo pipefail
           chmod +x e2eselfhost.test
@@ -446,7 +456,8 @@ jobs:
           - { runner: ubuntu-latest, host: x86_64, nshard: 12, shard: 9 }
           - { runner: ubuntu-latest, host: x86_64, nshard: 12, shard: 10 }
           - { runner: ubuntu-latest, host: x86_64, nshard: 12, shard: 11 }
-          - { runner: ubuntu-24.04-arm, host: aarch64, nshard: 1, shard: 0 }
+          - { runner: ubuntu-24.04-arm, host: aarch64, nshard: 2, shard: 0 }
+          - { runner: ubuntu-24.04-arm, host: aarch64, nshard: 2, shard: 1 }
     name: test-e2e-selfhost-${{ matrix.host }}-shard${{ matrix.shard }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
@@ -455,11 +466,11 @@ jobs:
       - uses: ./.github/actions/setup-fern
         with:
           wasmtime: "true"
-      # The aarch64 shard is the one Linux ARM64 job that builds the stock
-      # drivers natively, so it is the job that saves that arch's cache.
+      # The aarch64 shards are the Linux ARM64 jobs that build the stock
+      # drivers natively, so the first of them saves that arch's cache.
       - uses: ./.github/actions/selfhost-driver-cache
         with:
-          save: ${{ matrix.host == 'aarch64' && 'true' || 'false' }}
+          save: ${{ matrix.host == 'aarch64' && matrix.shard == 0 && 'true' || 'false' }}
       - name: aarch64 cross toolchain (x86 shards — arm64 cross-emit tests)
         if: matrix.host == 'x86_64'
         uses: ./.github/actions/apt-cross-toolchain
@@ -493,7 +504,7 @@ jobs:
             if printf '%s\n' "${RES_ALL[@]}" | grep -qx "$t"; then SEL_RES+=("$t"); else SEL_SH+=("$t"); fi
           done
           if [ ${#SEL_SH[@]} -eq 0 ] && [ ${#SEL_RES[@]} -eq 0 ]; then
-            echo "no tests for shard $SHARD/$NSHARD"; exit 0
+            echo "no tests for shard $SHARD/$NSHARD — the list, the filter or scripts/shard-tests is wrong" >&2; exit 1
           fi
           echo "shard $SHARD/$NSHARD: ${#SEL_SH[@]} selfhost-pkg + ${#SEL_RES[@]} residual tests"
           # A worker count the selection can fill: the residual slice is a
@@ -556,7 +567,7 @@ jobs:
           merge-multiple: true
       - name: verify every shard reported success
         id: verify
-        run: scripts/ci-verify-shard-outcomes shard-outcomes x86_64=12 aarch64=1
+        run: scripts/ci-verify-shard-outcomes shard-outcomes x86_64=12 aarch64=2
       - name: why did a shard leave no outcome
         if: failure() && steps.verify.outcome == 'failure'
         env:
