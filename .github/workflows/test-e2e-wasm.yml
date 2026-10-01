@@ -45,6 +45,7 @@ jobs:
       - uses: ./.github/actions/setup-fern
         with:
           wasmtime: "true"
+      - uses: ./.github/actions/selfhost-driver-cache
       # Compiled here rather than in a build job the test jobs wait on: a
       # `needs:` edge defers the test jobs' creation until the build job has
       # been queued, run and uploaded, and under the account-wide concurrent-
