@@ -12737,7 +12737,7 @@ function mono_expr(e: ast.Expr, env: MEnv, funcs: MFns, ins: Insts): RExpr {
       return RExpr { rexpr: ast.ExprStructLit { type_name: s.type_name, field_names: s.field_names, field_values: vals, has_base: s.has_base, base: rb.rexpr, line: s.line, col: s.col, written: s.written }, rins: rb.rins };
     },
     ast.ExprLambda(lm) => {
-      var bodyr: RStmts = mono_stmts(lm.body, env, funcs, ins, "");
+      var bodyr: RStmts = mono_stmts(lm.body, bind_params(env, lm.params), funcs, ins, "");
       return RExpr { rexpr: ast.ExprLambda { ...lm, body: bodyr.rstmts }, rins: bodyr.rins3 };
     },
     _ => {
@@ -13219,7 +13219,13 @@ function mono_stmts(stmts: ast.Stmt[], env: MEnv, funcs: MFns, ins: Insts, ret_t
 // callee's return-position type var from a fn PARAM passed on (`map_values(f)`
 // calling `__om_map_values(t, f)` with `f: (V) => W`).
 function env_from_params(params: ast.ParamDecl[]): MEnv {
-  var e: MEnv = MEnv { mnames: [], mtypes: [] };
+  return bind_params(MEnv { mnames: [], mtypes: [] }, params);
+}
+
+// bind_params is env_from_params on top of an enclosing env: a lambda's
+// parameters shadow what its body can otherwise see.
+function bind_params(env: MEnv, params: ast.ParamDecl[]): MEnv {
+  var e: MEnv = env;
   var i: i32 = 0;
   while (i < params.len()) {
     var pt: string = params[i].type_name;
