@@ -552,6 +552,7 @@ pub function enforce(mod: parser.Module, target: string): Violation[] {
     wanted = wanted.append(forbidden[wi].builtin);
     wi = wi + 1;
   }
+  var want: util.NameIndex = util.name_index(wanted);
 
   var fi: i32 = 0;
   while (fi < mod.funcs.len()) {
@@ -559,7 +560,7 @@ pub function enforce(mod: parser.Module, target: string): Violation[] {
     var calls: astwalk.CallSite[] = [];
     var bi: i32 = 0;
     while (bi < fd.body.len()) {
-      calls = astwalk.collect_calls_stmt(fd.body[bi], wanted, calls);
+      calls = astwalk.collect_calls_stmt(fd.body[bi], want, calls);
       bi = bi + 1;
     }
     var seen: string[] = [];
@@ -612,6 +613,7 @@ pub function reach(mod: parser.Module): string[] {
     wanted = wanted.append(gates[wi].builtin);
     wi = wi + 1;
   }
+  var want: util.NameIndex = util.name_index(wanted);
 
   var found: string[] = [];
   var fi: i32 = 0;
@@ -619,7 +621,7 @@ pub function reach(mod: parser.Module): string[] {
     var calls: astwalk.CallSite[] = [];
     var bi: i32 = 0;
     while (bi < mod.funcs[fi].body.len()) {
-      calls = astwalk.collect_calls_stmt(mod.funcs[fi].body[bi], wanted, calls);
+      calls = astwalk.collect_calls_stmt(mod.funcs[fi].body[bi], want, calls);
       bi = bi + 1;
     }
     var ci: i32 = 0;
