@@ -398,6 +398,7 @@ TestSelfHostMapIterationOrderX86_64 2
 TestSelfHostMapKeyedArm64IR 2
 TestSelfHostMapKeysValuesIR 2
 TestSelfHostMapLiteralComputedKeyIR_X86_64 3
+TestSelfHostMapLiteralComputedKeyWasmIR 2
 TestSelfHostMapMethodTupleElem 2
 TestSelfHostMapReclaimIR 2
 TestSelfHostMapScopedReclaimIRX86_64 2
@@ -528,6 +529,7 @@ TestSelfHostResultTuplePayloadIR 2
 TestSelfHostRetArrEnumIR 2
 TestSelfHostRetStructFieldIR 2
 TestSelfHostReturnClosureIR 2
+TestSelfHostReuseDifferentialX86_64 3
 TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR 2
 TestSelfHostSSABackendAgreesWithNative 13
 TestSelfHostSSABackendRefusesOtherTargets 20

@@ -2,6 +2,7 @@ package e2eselfhost
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -276,6 +277,38 @@ func TestSelfHostMapLiteralComputedKeyIR_X86_64(t *testing.T) {
 			if code := cmd.ProcessState.ExitCode(); code != want {
 				t.Errorf("%s exited %d, want %d (interp oracle) — a map literal with a "+
 					"computed key built itself with the wrong key kind", tc.name, code, want)
+			}
+		})
+	}
+}
+
+// TestSelfHostMapLiteralComputedKeyWasmIR is the wasm leg of the same corpus,
+// through asm_load_run's wasm32-wasi leg with the stdlib root. Not a duplicate
+// of the x86-64 one: the wasm map runtime is a different representation, so a
+// constructor that disagrees with its inserts on key kind can be invisible on
+// x86-64 and fatal here.
+func TestSelfHostMapLiteralComputedKeyWasmIR(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH; skipping self-host map-literal key-kind wasm e2e")
+	}
+	interpBin := buildLangBinForInterp(t)
+	l := newWasmStdlibLoader(t)
+
+	for _, tc := range mapLiteralComputedKeyCases {
+		t.Run(tc.name, func(t *testing.T) {
+			want := interpExit(t, interpBin, tc.src)
+			watFile := filepath.Join(t.TempDir(), "maplitkey_"+tc.name+".wat")
+			if err := os.WriteFile(watFile, l.emit(t, tc.src), 0o644); err != nil {
+				t.Fatalf("write wat: %v", err)
+			}
+			rcmd := exec.Command("wasmtime", "run", watFile)
+			_ = rcmd.Run()
+			if rcmd.ProcessState == nil || !rcmd.ProcessState.Exited() {
+				t.Fatalf("wasmtime did not exit normally for %q", tc.name)
+			}
+			if got := rcmd.ProcessState.ExitCode(); got != want {
+				t.Errorf("%s exited %d, want %d (interp oracle) — a map literal built "+
+					"itself with the wrong key kind", tc.name, got, want)
 			}
 		})
 	}
