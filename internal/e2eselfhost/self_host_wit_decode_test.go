@@ -232,10 +232,11 @@ function main(): i32 {
 `
 
 // TestSelfHostWitEmitWorldImports gates the self-host P2 emit: replaying the
-// decoded world's decls as component sections must reproduce the Go
-// EmitWorldImports bytes exactly (which wasm-tools validates, see the Go
-// tests), run through the self-host under wasmtime. The Go reference is
-// computed and injected so the two implementations are pinned together.
+// decoded world's decls as component sections, with every import kept, must
+// reproduce the Go EmitWorldImports bytes exactly (which wasm-tools
+// validates, see the Go tests), run through the self-host under wasmtime.
+// The Go reference is computed and injected so the two implementations are
+// pinned together.
 func TestSelfHostWitEmitWorldImports(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host wit-emit e2e")
@@ -278,7 +279,8 @@ function wit_emit_bytes(s: string): i32[] {
     return o;
 }
 function main(): i32 {
-    var got: i32[] = wit_emit_world_imports(wit_section_body(wit_emit_bytes(FERN_BIN()), 7));
+    var tb: i32[] = wit_section_body(wit_emit_bytes(FERN_BIN()), 7);
+    var got: i32[] = wit_emit_world_imports(tb, wit_import_plan(tb, wit_world_import_names(tb)));
     var want: i32[] = wit_emit_bytes(EMIT_REF());
     if (got.len() != want.len()) { return 1; }
     var i: i32 = 0;
@@ -340,8 +342,10 @@ function main(): i32 {
 // TestSelfHostWitPrefixLayout gates the self-host prefix index layout: the
 // component type / instance counts and per-interface instance index derived
 // from the decoded fern world must match the Go PrefixLayout /
-// ImportInstanceIndex, run through the self-host under wasmtime. Returns 0 on
-// success, else a check id.
+// ImportInstanceIndex, run through the self-host under wasmtime, and a plan
+// that keeps only what a stdout core uses renumbers the kept imports and
+// drops the rest (wasi:io/error stays, aliased by wasi:io/streams). Returns 0
+// on success, else a check id.
 func TestSelfHostWitPrefixLayout(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host wit-layout e2e")
@@ -368,11 +372,19 @@ function main(): i32 {
     var pl: WitPrefixLayout = wit_prefix_layout(tb);
     if (pl.types != 32) { return 1; }
     if (pl.instances != 19) { return 2; }
-    if (wit_import_instance_index(tb, "wasi:io/error@0.2.0") != 0) { return 3; }
-    if (wit_import_instance_index(tb, "wasi:io/streams@0.2.0") != 2) { return 4; }
-    if (wit_import_instance_index(tb, "wasi:cli/stdout@0.2.0") != 4) { return 5; }
-    if (wit_import_instance_index(tb, "wasi:random/random@0.2.0") != 18) { return 6; }
-    if (wit_import_instance_index(tb, "wasi:not/here@0.2.0") != (0 - 1)) { return 7; }
+    var all: WitImportPlan = wit_import_plan(tb, wit_world_import_names(tb));
+    if (all.n_inst != 19) { return 8; }
+    if (wit_import_instance_index(tb, all, "wasi:io/error@0.2.0") != 0) { return 3; }
+    if (wit_import_instance_index(tb, all, "wasi:io/streams@0.2.0") != 2) { return 4; }
+    if (wit_import_instance_index(tb, all, "wasi:cli/stdout@0.2.0") != 4) { return 5; }
+    if (wit_import_instance_index(tb, all, "wasi:random/random@0.2.0") != 18) { return 6; }
+    if (wit_import_instance_index(tb, all, "wasi:not/here@0.2.0") != (0 - 1)) { return 7; }
+    var stdout: WitImportPlan = wit_import_plan(tb, ["wasi:cli/stdout@0.2.0"]);
+    if (stdout.n_inst >= 19) { return 9; }
+    if (wit_import_instance_index(tb, stdout, "wasi:io/error@0.2.0") != 0) { return 10; }
+    var so: i32 = wit_import_instance_index(tb, stdout, "wasi:cli/stdout@0.2.0");
+    if (so < 1 || so >= stdout.n_inst || so >= 4) { return 11; }
+    if (wit_import_instance_index(tb, stdout, "wasi:random/random@0.2.0") != (0 - 1)) { return 12; }
     return 0;
 }
 `
