@@ -2906,7 +2906,7 @@ pub function writefile_func_p2(): string {
 // either way, so an eprint-only program carries an unused stdout import and
 // still matches the eprint framing.
 pub function component_io_imports(needs: string[], stderr: boolean): string {
-  var o: string = "";
+  var o: string = "  (import \"wasi:io/error@0.2.0\" \"[resource-drop]error\" (func $io_error_drop (param i32)))\n";
   if (stderr) {
     o = o + "  (import \"wasi:cli/stderr@0.2.0\" \"get-stderr\" (func $get_stderr (result i32)))\n";
     o = o + "  (import \"wasi:io/streams@0.2.0\" \"[method]output-stream.blocking-write-and-flush\" (func $bwf (param i32 i32 i32 i32)))\n";
@@ -2984,7 +2984,12 @@ pub function component_io_shims(needs: string[], stderr: boolean): string {
     o = o + "  (global $__stderr_handle (mut i32) (i32.const -1))\n";
   }
   o = o + "  (func $fd_write (param $fd i32) (param $iovs i32) (param $iovn i32) (param $nw i32) (result i32)\n";
-  o = o + "    (local $h i32) (local $len i32) (local $ret i32)\n";
+  o = o + "    (local $h i32) (local $len i32) (local $ret i32) (local $scratch i32) (local $ptr i32) (local $at i32) (local $chunk i32) (local $vec i32) (local $total i32)\n";
+  o = o + "    (i32.store (local.get $nw) (i32.const 0))\n";
+  o = o + "    (if (i32.and (i32.ne (local.get $fd) (i32.const 1)) (i32.ne (local.get $fd) (i32.const 2))) (then (return (i32.const 8))))\n";
+  if (!stderr) {
+    o = o + "    (if (i32.eq (local.get $fd) (i32.const 2)) (then (return (i32.const 8))))\n";
+  }
   if (stderr) {
     o = o + "    (if (i32.eq (local.get $fd) (i32.const 2))\n";
     o = o + "      (then\n";
@@ -3000,10 +3005,28 @@ pub function component_io_shims(needs: string[], stderr: boolean): string {
     o = o + "      (then (global.set $__stdout_handle (call $get_stdout))))\n";
     o = o + "    (local.set $h (global.get $__stdout_handle))\n";
   }
-  o = o + "    (local.set $len (i32.load (i32.add (local.get $iovs) (i32.const 4))))\n";
-  o = o + "    (local.set $ret (i32.and (i32.add (call $__fern_alloc (i32.const 24)) (i32.const 7)) (i32.const -8)))\n";
-  o = o + "    (call $bwf (local.get $h) (i32.load (local.get $iovs)) (local.get $len) (local.get $ret))\n";
-  o = o + "    (i32.store (local.get $nw) (local.get $len))\n";
+  o = o + "    (local.set $scratch (call $__fern_str_box (i32.const 24)))\n";
+  o = o + "    (local.set $ret (i32.and (i32.add (local.get $scratch) (i32.const 7)) (i32.const -8)))\n";
+  o = o + "    (block $vectors_done (loop $vectors\n";
+  o = o + "      (br_if $vectors_done (i32.ge_u (local.get $vec) (local.get $iovn)))\n";
+  o = o + "      (local.set $ptr (i32.load (local.get $iovs)))\n";
+  o = o + "      (local.set $len (i32.load offset=4 (local.get $iovs))) (local.set $at (i32.const 0))\n";
+  // Even an empty iovec asks the host, preserving a closed-stream error.
+  o = o + "      (block $chunks_done (loop $chunks\n";
+  o = o + "        (local.set $chunk (i32.sub (local.get $len) (local.get $at)))\n";
+  o = o + "        (if (i32.gt_u (local.get $chunk) (i32.const 4096)) (then (local.set $chunk (i32.const 4096))))\n";
+  o = o + "        (call $bwf (local.get $h) (i32.add (local.get $ptr) (local.get $at)) (local.get $chunk) (local.get $ret))\n";
+  o = o + "        (if (i32.load8_u (local.get $ret)) (then\n";
+  o = o + "          (if (i32.eqz (i32.load8_u offset=4 (local.get $ret))) (then (call $io_error_drop (i32.load offset=8 (local.get $ret)))))\n";
+  o = o + "          (drop (call $__fern_arr_dec (local.get $scratch)))\n";
+  o = o + "          (i32.store (local.get $nw) (local.get $total)) (return (i32.const 29))))\n";
+  o = o + "        (local.set $at (i32.add (local.get $at) (local.get $chunk)))\n";
+  o = o + "        (local.set $total (i32.add (local.get $total) (local.get $chunk)))\n";
+  o = o + "        (br_if $chunks_done (i32.eq (local.get $at) (local.get $len))) (br $chunks)))\n";
+  o = o + "      (local.set $vec (i32.add (local.get $vec) (i32.const 1)))\n";
+  o = o + "      (local.set $iovs (i32.add (local.get $iovs) (i32.const 8))) (br $vectors)))\n";
+  o = o + "    (drop (call $__fern_arr_dec (local.get $scratch)))\n";
+  o = o + "    (i32.store (local.get $nw) (local.get $total))\n";
   o = o + "    (i32.const 0))\n";
   if (need(needs, "exit")) {
     o = o + "  (func $proc_exit (param $c i32)\n";
