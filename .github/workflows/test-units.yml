@@ -38,9 +38,15 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { runner: ubuntu-latest,    host: x86_64  }
-          - { runner: ubuntu-24.04-arm, host: aarch64 }
-    name: test-units-${{ matrix.host }}
+          # Two jobs per host: `heavy` is internal/ir, ssa and printer, each
+          # 350-390 s of serial tests that cannot t.Parallel; `rest` is the
+          # other ~75 packages. One job was 10 minutes on x86 with the three
+          # heavy packages sharing four cores with everything else.
+          - { runner: ubuntu-latest,    host: x86_64,  group: heavy }
+          - { runner: ubuntu-latest,    host: x86_64,  group: rest }
+          - { runner: ubuntu-24.04-arm, host: aarch64, group: heavy }
+          - { runner: ubuntu-24.04-arm, host: aarch64, group: rest }
+    name: test-units-${{ matrix.host }}-${{ matrix.group }}
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v7
@@ -145,7 +151,7 @@ jobs:
           if command -v llvm-mc >/dev/null 2>&1; then
             llvm-mc --version | head -2
           fi
-      - name: go test (units)
+      - name: go test (units, ${{ matrix.group }} packages)
         # internal/e2eharness's arm64 native-link parity gate runs ONLY here, so
         # a t.Skip would cover nothing: Arm64Tooling turns it into a failure.
         # Both legs satisfy it — the aarch64 runner through its native gcc.
@@ -155,6 +161,7 @@ jobs:
         # reason cross-gcc above installs on the x86 leg only — so it skips
         # those two gates by design and must not be asked to require them.
         env:
+          UNIT_PACKAGE_GROUP: ${{ matrix.group }}
           FERN_REQUIRE_ARM64_TOOLING: "1"
           FERN_REQUIRE_X86_64_TOOLING: ${{ matrix.host == 'x86_64' && '1' || '' }}
         # The package set is DERIVED, not enumerated — see
@@ -207,7 +214,7 @@ jobs:
       # warning, a full budget, or a flaky upload must never redden main for a
       # lane whose job is to report test results.
       - name: Save Go build cache (main only)
-        if: ${{ !cancelled() && github.ref == 'refs/heads/main' }}
+        if: ${{ !cancelled() && github.ref == 'refs/heads/main' && matrix.group == 'rest' }}
         continue-on-error: true
         uses: actions/cache/save@v6
         with:

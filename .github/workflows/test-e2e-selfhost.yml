@@ -88,7 +88,7 @@ env:
   # their own, so their minutes do not lengthen whichever shard the LPT
   # partition happens to drop them into. Excluded from shard selection by the
   # same regex as the two lists above, and each has a matching job below.
-  OWN_JOB_TESTS: "TestSelfHostPerModuleEmitAllFixpointX86_64|TestSelfHostStage2FixpointArm64|TestSelfHostCLIStage2X86_64|TestSelfHostWasmWholeCompilerShardedLink|TestSelfHostModloadPerModuleWholeCompilerArm64|TestSelfHostSemanticWholeCompilerX86_64"
+  OWN_JOB_TESTS: "TestSelfHostPerModuleEmitAllFixpointX86_64|TestSelfHostStage2FixpointArm64|TestSelfHostCLIStage2X86_64|TestSelfHostWasmWholeCompilerShardedLink|TestSelfHostModloadPerModuleWholeCompilerArm64|TestSelfHostSemanticWholeCompilerX86_64|TestSelfHostAssumeEligibleByteIdenticalX86_64"
   # QUARANTINED: tests excluded from shard selection (they still run locally)
   # while their root cause is fixed. EXACT names only, each with its issue in
   # the comment, and re-run the list when that issue closes: a quarantine with
@@ -292,6 +292,29 @@ jobs:
           cd internal/e2eselfhost
           gotestsum --format standard-verbose --raw-command -- \
             go tool test2json -t -p e2eselfhost "$BIN" -test.run '^TestSelfHostPerModuleEmitAllFixpointX86_64$' -test.v -test.timeout 23m
+
+  # The byte-identity proof between the two whole-compiler emit routes: 83
+  # checked per-process emits on a four-worker pool, each paying the
+  # whole-program parse floor, then the emit-all route. 503 s of CPU-bound
+  # work that no weight can balance into a shard without making that shard
+  # the longest, so it runs here on its own.
+  assume-eligible:
+    name: assume-eligible-x86_64
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-fern
+      - uses: ./.github/actions/selfhost-driver-cache
+      - uses: ./.github/actions/build-e2e-binaries
+      - name: checked per-process emit equals emit-all, byte for byte
+        run: |
+          set -euo pipefail
+          chmod +x e2eselfhost.test
+          BIN="$PWD/e2eselfhost.test"
+          cd internal/e2eselfhost
+          gotestsum --format standard-verbose --raw-command -- \
+            go tool test2json -t -p e2eselfhost "$BIN" -test.run '^TestSelfHostAssumeEligibleByteIdenticalX86_64$' -test.v -test.timeout 28m
 
   wasm-wholecompiler-link:
     name: wasm-wholecompiler-link-x86_64

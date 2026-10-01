@@ -20,9 +20,20 @@ on:
   workflow_dispatch:
 
 jobs:
+  # Two shards of equal count (scripts/shard-tests with no weights file): one
+  # job of the ^TestX86_64 set in two workers was 13.3 minutes, the longest
+  # job outside the self-host lane once the driver cache landed. The fixture
+  # corpus is not a seed sweep, so it runs once, on the first shard.
   test:
-    name: test-e2e-x86_64
+    name: test-e2e-x86_64-shard${{ matrix.shard }}
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { nshard: 2, shard: 0 }
+          - { nshard: 2, shard: 1 }
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/drop-selfhost-sources
@@ -31,9 +42,8 @@ jobs:
         run: |
           go test -c -o "$RUNNER_TEMP/e2e-x86_64.test" ./internal/e2e/
           go build -o "$RUNNER_TEMP/ci-test-workers" ./cmd/ci-test-workers
-      - name: go test (x86_64 e2e)
+      - name: go test (x86_64 e2e, shard ${{ matrix.shard }}/${{ matrix.nshard }}, two workers)
         id: tests
-        working-directory: internal/e2e
         # `^TestX86_64` covers internal/e2e/x86_64_test.go +
         # cross_module_variant_test.go's X86_64 subset. The
         # trailing underscore is in the test names themselves
@@ -47,16 +57,30 @@ jobs:
         # timeout, either — the panic names whichever test was in flight when
         # the alarm fired, which reads as that test hanging and sent one PR
         # chasing a TRMC deep-stack test that passes in 0.20s.
-        run: >-
-          "$RUNNER_TEMP/ci-test-workers"
-          -binary "$RUNNER_TEMP/e2e-x86_64.test"
-          -output "$RUNNER_TEMP/x86_64-test-results"
-          -workers 2 -timeout 25m -run '^TestX86_64'
+        run: |
+          set -euo pipefail
+          mapfile -t MINE < <(
+            go test -list '^TestX86_64' ./internal/e2e/ |
+              grep -E '^Test' |
+              sort |
+              scripts/shard-tests "${{ matrix.shard }}" "${{ matrix.nshard }}" /dev/null
+          )
+          if [ ${#MINE[@]} -eq 0 ]; then
+            echo "no tests for shard ${{ matrix.shard }}/${{ matrix.nshard }} — the list or the filter is wrong" >&2
+            exit 1
+          fi
+          echo "shard ${{ matrix.shard }}/${{ matrix.nshard }}: ${#MINE[@]} tests"
+          PAT="^($(IFS='|'; echo "${MINE[*]}"))\$"
+          cd internal/e2e
+          "$RUNNER_TEMP/ci-test-workers" \
+            -binary "$RUNNER_TEMP/e2e-x86_64.test" \
+            -output "$RUNNER_TEMP/x86_64-test-results" \
+            -workers 2 -timeout 25m -run "$PAT"
       - name: retain native test outcomes
         if: ${{ !cancelled() && (steps.tests.outcome == 'success' || steps.tests.outcome == 'failure') }}
         uses: actions/upload-artifact@v7
         with:
-          name: native-x86_64-test-outcomes-${{ github.run_attempt }}
+          name: native-x86_64-test-outcomes-shard${{ matrix.shard }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/x86_64-test-results
           retention-days: 7
           if-no-files-found: error
@@ -79,7 +103,7 @@ jobs:
       # and its wait for a runner than on the work. lint.yml measured that shape
       # at 165 job-minutes of queue for ~5 minutes of work (run 31819147972).
       - name: go test (fixture corpus through the in-process assembler)
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && matrix.shard == 0 }}
         env:
           FERN_NATIVE_ASM: "1"
         run: gotestsum --format pkgname-and-test-fails -- -run '^TestFernFixtures$' ./internal/e2e/
