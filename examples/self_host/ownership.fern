@@ -154,17 +154,17 @@ function stores_after_receiver(kind: i32): boolean {
 
 // Mark `v` and everything it is anchored to. A projection's chain is already
 // transitive in `dependencies`, so one pass over it reaches the root.
-function carry(out: boolean[], a: ssasem.Analysis, v: i32): boolean[] {
+function carry(own out: boolean[], a: ssasem.Analysis, v: i32): boolean[] {
   if (v < 0 || v >= out.len()) {
     return out;
   }
-  var next: boolean[] = out.with(v, true);
+  out = out.with(v, true);
   for dep in a.dependencies[v] {
-    if (dep >= 0 && dep < next.len()) {
-      next = next.with(dep, true);
+    if (dep >= 0 && dep < out.len()) {
+      out = out.with(dep, true);
     }
   }
-  return next;
+  return out;
 }
 
 // The operands a direct call consumes: the slots its callee's contract counts.
@@ -175,35 +175,33 @@ function carry(out: boolean[], a: ssasem.Analysis, v: i32): boolean[] {
 // A dyn call has no row, and needs none: semsource admits one only where
 // every implementation lends every operand, and those keep the modes they
 // declared (`semsource.dyn_arms`).
-function call_carried(out: boolean[], f: ssasem.Func, a: ssasem.Analysis, ins: ssa.SInst, rows: Escapes[], ix: Index): boolean[] {
+function call_carried(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis, ins: ssa.SInst, rows: Escapes[], ix: Index): boolean[] {
   if (ssasem.is_dyn_call(ins.str)) {
     return out;
   }
   if (ins.str == f.graph.name && !ssasem.reference(f.result)) {
     return out;
   }
-  var next: boolean[] = out;
   var i: i32 = 0;
   while (i < ins.args.len()) {
     if (ssasem.reference(f.values[ins.args[i]]) && consumed(rows, ix, ins.str, i)) {
-      next = carry(next, a, ins.args[i]);
+      out = carry(out, a, ins.args[i]);
     }
     i = i + 1;
   }
-  return next;
+  return out;
 }
 
 // A call THROUGH a function value reads its slots off the type the box hands
 // out, and this boundary has no declaration to consult for it, so every
 // reference operand is taken as consumed.
-function indirect_carried(out: boolean[], f: ssasem.Func, a: ssasem.Analysis, ins: ssa.SInst): boolean[] {
-  var next: boolean[] = out;
+function indirect_carried(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis, ins: ssa.SInst): boolean[] {
   for arg in ins.args {
     if (ssasem.reference(f.values[arg])) {
-      next = carry(next, a, arg);
+      out = carry(out, a, arg);
     }
   }
-  return next;
+  return out;
 }
 
 // A phi `ssasem.tail_recursion` left for parameter `imm` of the call `str` is
@@ -212,41 +210,39 @@ function indirect_carried(out: boolean[], f: ssasem.Func, a: ssasem.Analysis, in
 // parameter itself, which whatever carries the phi carries too (`continued`).
 // Read as a plain loop instead, a walk that rebuilds its input would never
 // consume it.
-function slot_carried(out: boolean[], f: ssasem.Func, a: ssasem.Analysis, ins: ssa.SInst, rows: Escapes[], ix: Index): boolean[] {
+function slot_carried(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis, ins: ssa.SInst, rows: Escapes[], ix: Index): boolean[] {
   if (ins.str == f.graph.name && !ssasem.reference(f.result)) {
     return out;
   }
   if (!consumed(rows, ix, ins.str, ins.imm)) {
     return out;
   }
-  var next: boolean[] = out;
   var i: i32 = 1;
   while (i < ins.args.len()) {
     if (ssasem.reference(f.values[ins.args[i]])) {
-      next = carry(next, a, ins.args[i]);
+      out = carry(out, a, ins.args[i]);
     }
     i = i + 1;
   }
-  return next;
+  return out;
 }
 
 function slot_phi(ins: ssa.SInst): boolean {
   return ins.kind_tag == 8 && ins.str != "";
 }
 
-function continued(out: boolean[], f: ssasem.Func, a: ssasem.Analysis): boolean[] {
-  var next: boolean[] = out;
+function continued(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis): boolean[] {
   for b in f.graph.blocks {
     for ins in b.insts {
-      if (slot_phi(ins) && next[ins.result]) {
-        next = carry(next, a, ins.args[0]);
+      if (slot_phi(ins) && out[ins.result]) {
+        out = carry(out, a, ins.args[0]);
       }
     }
   }
-  return next;
+  return out;
 }
 
-function instruction_carried(out: boolean[], f: ssasem.Func, a: ssasem.Analysis, ins: ssa.SInst, rows: Escapes[], ix: Index): boolean[] {
+function instruction_carried(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis, ins: ssa.SInst, rows: Escapes[], ix: Index): boolean[] {
   if (ins.kind_tag == ssasem.call()) {
     return call_carried(out, f, a, ins, rows, ix);
   }
@@ -256,25 +252,24 @@ function instruction_carried(out: boolean[], f: ssasem.Func, a: ssasem.Analysis,
   if (ins.kind_tag == ssasem.call_value()) {
     return indirect_carried(out, f, a, ins);
   }
-  var next: boolean[] = out;
   if (builds_out(ins.kind_tag)) {
     for arg in ins.args {
       if (ssasem.reference(f.values[arg])) {
-        next = carry(next, a, arg);
+        out = carry(out, a, arg);
       }
     }
-    return next;
+    return out;
   }
   if (stores_after_receiver(ins.kind_tag)) {
     var i: i32 = 1;
     while (i < ins.args.len()) {
       if (ssasem.reference(f.values[ins.args[i]])) {
-        next = carry(next, a, ins.args[i]);
+        out = carry(out, a, ins.args[i]);
       }
       i = i + 1;
     }
   }
-  return next;
+  return out;
 }
 
 // The values a callee may keep a borrow of. A slot the callee does NOT count
@@ -293,20 +288,19 @@ function instruction_carried(out: boolean[], f: ssasem.Func, a: ssasem.Analysis,
 // So a parameter with a value of its own in a lent slot is not counted. The
 // container stays borrowed, nobody drops it, and the callee's borrow stays
 // good — which is what happened before this pass existed.
-function lent_values(out: boolean[], f: ssasem.Func, a: ssasem.Analysis, ins: ssa.SInst, rows: Escapes[], ix: Index): boolean[] {
+function lent_values(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis, ins: ssa.SInst, rows: Escapes[], ix: Index): boolean[] {
   var at: i32 = find(rows, ix, ins.str);
   if (at >= 0 && !rows[at].lends) {
     return out;
   }
-  var next: boolean[] = out;
   var i: i32 = 0;
   while (i < ins.args.len()) {
     if (ssasem.reference(f.values[ins.args[i]]) && !consumed(rows, ix, ins.str, i)) {
-      next = carry(next, a, ins.args[i]);
+      out = carry(out, a, ins.args[i]);
     }
     i = i + 1;
   }
-  return next;
+  return out;
 }
 
 function lent_out(f: ssasem.Func, a: ssasem.Analysis, rows: Escapes[], ix: Index): boolean[] {
