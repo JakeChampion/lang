@@ -610,16 +610,8 @@ func TestSelfHostIRVerifyProvidedCompilerClean(t *testing.T) {
 	if len(runner) != 0 {
 		t.Skip("modload driver runs natively; skipping under an exec runner")
 	}
-	dir := writeSelfHostModloadProject(t)
+	dir := writeSelfHostModloadProjectTyped(t)
 	bin := buildSelfHostBin(t, gcc, dir, "asm_modload_run.fern", "provided_compiler")
-	// The compiler imports core/map; the modload driver resolves it beside the
-	// entry, as the corpus sweep's staging does.
-	stdRoot := langSrcAbs(t, filepath.Join("internal", "stdlib"))
-	for _, lib := range []string{"std", "core"} {
-		if err := os.Symlink(filepath.Join(stdRoot, lib), filepath.Join(dir, lib)); err != nil {
-			t.Fatalf("linking stdlib %s: %v", lib, err)
-		}
-	}
 
 	cmd := exec.Command(bin, filepath.Join(dir, "asm_modload_run.fern"), "-verifyprovided")
 	out, _ := cmd.Output()
