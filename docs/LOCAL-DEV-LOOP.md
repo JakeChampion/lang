@@ -223,7 +223,10 @@ the Go backend emitted a driver in ~9 s — each once per source change and
 shared across processes through `FERN_SELFHOST_BUILD_CACHE`. A cold driver
 build is therefore the dominant cost of a single test; `FERN_SELFHOST_INTERP=1`
 runs the driver under the interpreter instead when the test is not about the
-driver's machine code. `STAGE0=<path>` substitutes a local compiler for the pin,
+driver's machine code. CI carries the built drivers between runs
+(`.github/actions/selfhost-driver-cache`), keyed on the same inputs as the
+harness's key, so a CI job pays a build only for a driver no earlier run
+built. `STAGE0=<path>` substitutes a local compiler for the pin,
 as it does for `make bootstrap`, and it is how a compiler change is tested as
 the drivers' builder before the pin carries it. Every driver is held to what
 the pin can compile, like `fern.fern`.

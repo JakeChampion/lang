@@ -339,6 +339,23 @@ function main(): i32 {
     return a.names.len() * 10 + keep.names.len() + keep.tag.len() + a.tag.len() + keep.n;
 }`, 33, 1, 1, 5, 6, false, false},
 
+	// A field carried over into its own slot and read again after the update:
+	// the read keeps its position (another use needs the value), and the
+	// construction still leaves the slot alone while the donor is unique.
+	{"update-keeps-field-read-later", `struct Acc { names: string[], tag: string, n: i32 }
+function add(own a: Acc, s: string): Acc {
+    var t: string = a.tag;
+    a = Acc { names: a.names.append(s), tag: t, n: a.n + t.len() };
+    return a;
+}
+function main(): i32 {
+    var a: Acc = Acc { names: [], tag: "tag", n: 0 };
+    var i: i32 = 0;
+    while (i < 6) { a = add(a, "x"); i = i + 1; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return a.n * 10 + a.names.len() + a.tag.len();
+}`, 189, 1, 0, 3, 9, false, false},
+
 	// A field carried over into its own slot AND copied into another. The two
 	// are distinct reads of slot 0: the carried-over one is kept in place, and
 	// the copy, placed at slot 1, is not a read of its own slot, so it takes
@@ -488,7 +505,7 @@ func TestSelfHostSemanticReuseDifferentialX86_64(t *testing.T) {
 	// field it replaces at the reuse, so the record's children-drop helper is
 	// called by the program's final drop alone; before, the update's reuse
 	// called it too.
-	keptDropCalls := map[string]int{"update-keeps-fields": 1}
+	keptDropCalls := map[string]int{"update-keeps-fields": 1, "update-keeps-field-read-later": 1}
 
 	for _, tc := range semanticReuseCases {
 		t.Run(tc.name, func(t *testing.T) {

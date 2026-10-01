@@ -23,13 +23,18 @@ registry and existing builder emission tests pass.
 
 The official Darwin bootstrap uses the pinned stage0 with `STAGE0` unset.
 Stage1 builds and passes compiler and `tr` smoke tests. Stage2 and stage3
-are byte-identical at 14,328,209 bytes, SHA-256
-`14f56b439fca28651bbd4bd92100f71b223e1bcc231660f7b2ccf52f61673617`.
-The complete unit suite and `make lint-all` pass.
+are byte-identical after integration with main at 14,543,425 bytes, SHA-256
+`508b7f67b99bb7d306b575e9559cbc1cf6f379668abe4b26991cf1db1413a117`.
+Native and WebAssembly target tests pass on that integration, including
+primary pure components and stdout components with both lowering modes.
+The complete integrated unit suite passes. Lint initially encountered the
+host's system-wide open-file limit during source checks; the full
+`make lint-all` retry with reduced host concurrency passes.
 
 ## Extraction measurement
 
-Measured on arm64 macOS on 2026-10-01. Both programs use the same new primary
+Measured on arm64 macOS on 2026-10-01 before the final main integration.
+Both programs use the same new primary
 compiler and strict semantic IR. They repeatedly push an ASCII block into
 a retained builder, extract it and check the first and last byte. The old
 path uses `buf_take(b).bytes()`; the new path uses `buf_take_bytes(b)`.

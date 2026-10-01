@@ -163,7 +163,7 @@ func physicalRCSource(setup, modes string) string {
 	source = strings.Replace(source, `var src: string = "function produce`, `var src: string = "@noinline function produce`, 1)
 	return `import "./ssarc"; import "./ssasem"; import "./ssaunits"; import "./ssa";
 import "./typeinfo"; import "./semrecords"; import "./parser"; import "./lexer"; import "./irlower"; import "./ir"; import "./util";
-import "./ircore"; import "./asmcore"; import "./asm_ir"; import "./asm_arm64_ir"; import "./wasm_ir";
+import "./ircore"; import "./asmcore"; import "./asm_ir"; import "./asm_arm64_ir"; import "./wasm_ir"; import "./irverifyrc";
 ` + source
 }
 
@@ -1248,6 +1248,45 @@ function main(): i32 {
     if (ssasem.type_key(typeinfo.TypeArray { elem: dynA, view: false }) == ssasem.type_key(typeinfo.TypeArray { elem: boolTy, view: false })) { return 232; }
     if (ssasem.type_key(dynPair) != "$dyn$Pair_5bi32_2c_20u32_5d") { eprint(ssasem.type_key(dynPair)); return 233; }
     if (ssasem.type_key(typeinfo.TypeDyn { traits: "error.Error" }) == ssasem.type_key(typeinfo.TypeDyn { traits: "error__Error" })) { return 234; }
+    // An update that keeps a field the construction alone reads neither
+    // reads nor stores it while the donor is unique: after the allocation the
+    // construction copies the field from the donor, retained, under the
+    // token's null arm, then releases the donor, and the field it replaces is
+    // stored last, unconditionally.
+    var keepGraph = ssa.SFunc { name: "keep", nparams: 2, nvals: 4, entry: 7, takes_env: false,
+        blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1),
+            ssa.SInst { kind_tag: ssasem.record_get(), result: 2, args: [0], imm: 0, str: "xs" },
+            inst(ssasem.record_new(), 3, [2, 1], 0)], term: ret(3) }] };
+    var keepFunc = ssasem.Func { ...growFunc, graph: keepGraph, values: [growType, i32ty, f.result, growType] };
+    var keepPlan = ssaunits.plan(keepFunc, [ssaunits.counted_mode(), 1]);
+    if (!keepPlan.ok) { eprint(keepPlan.why); return 235; }
+    var keepLowered = ssarc.lower(keepFunc, [ssaunits.counted_mode(), 1], keepPlan, irlower.struct_tab_empty(), []);
+    if (!keepLowered.ok) { eprint(keepLowered.why); return 236; }
+    var keepUnique: i32 = 0 - 1;
+    var keepReuse: i32 = 0 - 1;
+    var keepGet: i32 = 0 - 1;
+    var keepGets: i32 = 0;
+    var keepRetains: i32 = 0;
+    var keepSet0: i32 = 0 - 1;
+    var keepSet1: i32 = 0 - 1;
+    var keepNe: i32 = 0 - 1;
+    var ko: i32 = 0;
+    while (ko < keepLowered.ops.len()) {
+        var o: ir.Op = keepLowered.ops[ko];
+        if (o.str == "__fern_rc_is_unique" && keepUnique < 0) { keepUnique = ko; }
+        if (o.str == "__fern_alloc_reuse") { keepReuse = ko; }
+        if (o.str == "__fern_rc_inc") { keepRetains = keepRetains + 1; }
+        if (ir.render_op(o) == "struct_get 0") { keepGet = ko; keepGets = keepGets + 1; }
+        if (ir.render_op(o) == "struct_set 0") { keepSet0 = ko; }
+        if (ir.render_op(o) == "struct_set 1") { keepSet1 = ko; }
+        if (o.kind_tag == ir.kind_id("ne") && keepReuse >= 0 && keepNe < 0) { keepNe = ko; }
+        ko = ko + 1;
+    }
+    if (keepUnique < 0 || keepReuse < 0 || keepGets != 1 || keepRetains != 1) { return 237; }
+    if (keepGet < keepReuse || keepLowered.ops[keepGet - 3].kind_tag != ir.kind_id("if") || keepLowered.ops[keepGet + 1].str != "__fern_rc_inc") { return 238; }
+    if (keepSet0 != keepGet + 2 || keepNe < keepSet0 || keepSet1 < keepNe) { return 239; }
+    var keepVerified: irverifyrc.RcResult = irverifyrc.verify_rc_fn("keep", keepLowered.ops);
+    if (keepVerified.checked != 1 || keepVerified.problems.len() != 0) { if (keepVerified.skips.len() > 0) { eprint(keepVerified.skips[0]); } return 240; }
     return 0;
 }
 `

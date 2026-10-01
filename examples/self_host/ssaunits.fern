@@ -739,7 +739,8 @@ function add_use(own live: boolean[], value: i32, deps: i32[][]): boolean[] {
 // column is counted too. A delete takes one for the receiver it hands back
 // inside its tuple and only COMPARES the key, whose unit stays with the
 // caller. A hole fill takes the chain's and the stored value's, and reads the
-// hole's address.
+// hole's address. A string append takes one for its left operand, whose
+// buffer it may grow in place (`string_append`).
 function operation_supplies(f: ssasem.Func, ins: ssa.SInst): Supply[] {
   var out: Supply[] = [];
   var counted: boolean[] = [];
@@ -759,6 +760,8 @@ function operation_supplies(f: ssasem.Func, ins: ssa.SInst): Supply[] {
     counted = [true, false, ssasem.reference(f.values[ins.args[2]])];
   } else if (ins.kind_tag == ssasem.hole_fill()) {
     counted = [true, false, true];
+  } else if (string_append(f, ins)) {
+    counted = [true, false];
   } else if (construction(ins.kind_tag)) {
     for arg in ins.args {
       counted = counted.append(taken(f.values[arg]));
@@ -772,6 +775,13 @@ function operation_supplies(f: ssasem.Func, ins: ssa.SInst): Supply[] {
     i = i + 1;
   }
   return out;
+}
+
+// A `+` on a counted string: the runtime appends onto the left operand's
+// buffer when the frame hands it the only unit and its block has room, so the
+// operand is taken rather than lent. A view has no unit to hand over.
+pub function string_append(f: ssasem.Func, ins: ssa.SInst): boolean {
+  return ins.kind_tag == 9 && ins.str == "+" && ssasem.is_string(f.values[ins.args[0]]);
 }
 
 // The operands a call lends rather than counts. The callee reads them for the

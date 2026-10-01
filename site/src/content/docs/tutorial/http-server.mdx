@@ -60,7 +60,12 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
             .with_header("x-served-by", "fern");
     }
     if (req.method == "POST") {
-        return http.ok(req.body_string());
+        // body_string() is a Result: a body that is not UTF-8 is
+        // refused, and the error knows its own 400 response.
+        match (req.body_string()) {
+            Ok(body) => { return http.ok(body); },
+            Err(e) => { return e.to_response(); }
+        }
     }
     return http.text(404, "not found");
 }`}
@@ -92,8 +97,13 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
     </tr>
     <tr>
       <td><code>req.body_string()</code></td>
-      <td><code>string</code></td>
-      <td>The request body as a string</td>
+      <td><code>Result[string, BodyError]</code></td>
+      <td>The request body as text; <code>Err</code> when it is not UTF-8</td>
+    </tr>
+    <tr>
+      <td><code>req.body</code></td>
+      <td><code>Bytes</code></td>
+      <td>The request body as bytes, <code>req.body.data</code> for the <code>u8[]</code></td>
     </tr>
     <tr>
       <td><code>req.body_len()</code></td>

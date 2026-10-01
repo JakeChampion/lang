@@ -994,8 +994,12 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
             .with_header("x-served-by", "fern");
     }
     if (req.method == "POST") {
-        // Echo the request body back.
-        return http.ok(req.body_string());
+        // Echo the request body back. body_string() is a Result: a
+        // body that is not UTF-8 is refused with the error's own 400.
+        match (req.body_string()) {
+            Ok(body) => { return http.ok(body); },
+            Err(e) => { return e.to_response(); }
+        }
     }
     return http.text(404, "not found");
 }`,

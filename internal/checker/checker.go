@@ -1466,7 +1466,9 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 	// the program / module path (matching argv[0] in C and os.Args[0]
 	// in Go). Building the array is one-shot and cached: the first
 	// `args()` call materialises it from libc / WASI; subsequent calls
-	// hand back the same pointer.
+	// hand back the same pointer. The bytes are assumed to be UTF-8, not
+	// validated — the `read_dir` position (docs/STRINGS-SOTA.md, D9 and
+	// D10): there is no error arm to refuse into.
 	c.info.FuncSigs["args"] = &ast.FuncType{
 		Params: []ast.Type{},
 		Result: ast.ArrayType{Elem: ast.StringType{}},
@@ -1477,7 +1479,8 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 	// different question — printenv(1) prints it in order, and a
 	// duplicate name (which execve permits and the kernel preserves)
 	// is visible here and invisible to a lookup. Cached the way
-	// `args()` is: one materialisation, the same pointer after.
+	// `args()` is: one materialisation, the same pointer after, and
+	// the same UTF-8 assumption.
 	c.info.FuncSigs["environ"] = &ast.FuncType{
 		Params: []ast.Type{},
 		Result: ast.ArrayType{Elem: ast.StringType{}},
@@ -1486,7 +1489,8 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 	// variable. `Some(value)` for a present key, `None` for
 	// missing. (POSIX distinguishes "set to empty" from "not
 	// set"; the runtime helper preserves that — `Some("")` is
-	// returned for an explicitly empty value.)
+	// returned for an explicitly empty value.) The value is assumed
+	// to be UTF-8, as `args()` is.
 	c.info.FuncSigs["env"] = &ast.FuncType{
 		Params: []ast.Type{ast.StringType{}},
 		Result: ast.EnumType{Name: "Option", Args: []ast.Type{ast.StringType{}}},
@@ -2444,7 +2448,10 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 	// to `stdin().read_line()`. Implemented on every backend
 	// (native reads byte-by-byte into a scratch buffer; wasm wraps
 	// preview-1 `fd_read` / preview-2 `wasi:cli/stdin::get-stdin` +
-	// `wasi:io/streams::blocking-read`).
+	// `wasi:io/streams::blocking-read`). The line is assumed to be
+	// UTF-8, not validated: `None` means end-of-file, so there is no
+	// arm to refuse a stray byte into, and `r.read_chunk(n)` is the
+	// byte reader (docs/STRINGS-SOTA.md, D9).
 	c.info.FuncSigs["read_line"] = &ast.FuncType{
 		Params: []ast.Type{},
 		Result: ast.EnumType{Name: "Option", Args: []ast.Type{ast.StringType{}}},

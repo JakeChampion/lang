@@ -91,6 +91,11 @@ jobs:
           sw_vers
           clang --version | head -1
           go version
+      # The stage0-built arm64-darwin drivers, carried between runs. Shard 0
+      # runs the self-host tests that build them, so it is the shard that saves.
+      - uses: ./.github/actions/selfhost-driver-cache
+        with:
+          save: ${{ matrix.shard == 0 && 'true' || 'false' }}
 
       - name: go vet
         if: matrix.shard == 1
