@@ -2567,9 +2567,9 @@ function reinterprets(from: typeinfo.Type, to: typeinfo.Type): boolean {
 // a register backend and the i32 on wasm, so the conversion is written as the
 // pair that is a no-op on whichever of the two the address already matches —
 // the 64-bit extend or wrap for the narrow width, the pointer-width extend or
-// wrap for the address. The floats are not here: the address reaches one
-// through the 64-bit integer the source writes, and a direct conversion would
-// need the same pairing again in the float domain.
+// wrap for the address. A float converts to and from the address in one op
+// each way, `op_f64_to_ptr` and `op_ptr_to_f64`: the u64 forms on a register
+// backend, the u32 forms on wasm.
 // Whether `e as T` names a DESTINATION rather than a conversion. The
 // conversion vocabulary converts to an integer, a char or a float and to
 // nothing else, so any other target is the operand's own type written down —
