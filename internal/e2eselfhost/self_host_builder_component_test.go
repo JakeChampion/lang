@@ -17,6 +17,7 @@ func testBuilderComponents(t *testing.T, compiler string, runner []string, stdli
 	t.Helper()
 	for _, tc := range []struct{ name, src string }{
 		{"take", e2eharness.BuilderBytesProgram},
+		{"range", e2eharness.BufByteRangeProgram},
 	} {
 		for _, mode := range []string{"0", "1"} {
 			for _, output := range []bool{false, true} {

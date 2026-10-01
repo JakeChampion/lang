@@ -14823,7 +14823,7 @@ function buf_builtin_arity(name: string): i32 {
   if (name == "buf_push_mapped" || name == "buf_push_filtered" || name == "buf_push_expanded") {
     return 3;
   }
-  if (name == "buf_push_range") {
+  if (name == "buf_push_range" || name == "buf_push_bytes_range") {
     return 4;
   }
   return 0 - 1;
@@ -14839,6 +14839,9 @@ function buf_builtin_op(name: string): ir.Op {
   }
   if (name == "buf_push_range") {
     return ir.op_buf_push_range();
+  }
+  if (name == "buf_push_bytes_range") {
+    return ir.op_buf_push_bytes_range();
   }
   if (name == "buf_push_mapped") {
     return ir.op_buf_push_mapped();
@@ -18894,9 +18897,9 @@ function lower_call_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerSta
   // struct still routes to struct-method dispatch below (the AST
   // backend intercepts unconditionally; this is strictly safer). No
   // wasm stdin, so wasm_eligible rejects read_chunk/reader_close.
-  if ((fa.field == "read_chunk" || fa.field == "close" || fa.field == "write" || fa.field == "read_line"
+  if ((fa.field == "read_chunk" || fa.field == "read_chunk_bytes" || fa.field == "close" || fa.field == "write" || fa.field == "read_line"
     || fa.field == "stat" || fa.field == "seek" || fa.field == "truncate"
-    || fa.field == "flags" || fa.field == "isatty" || fa.field == "write_some"
+    || fa.field == "flags" || fa.field == "isatty" || fa.field == "write_some" || fa.field == "write_bytes" || fa.field == "write_some_bytes"
     || fa.field == "dup_onto" || fa.field == "splice_to"
     || is_handle_tty_method(fa.field)
     || is_fd_sync_method(fa.field))
@@ -18914,7 +18917,7 @@ function lower_call_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerSta
       }
       return rls.emit(ir.op_read_line());
     }
-    if (fa.field == "read_chunk" && c.args.len() == 1) {
+    if ((fa.field == "read_chunk" || fa.field == "read_chunk_bytes") && c.args.len() == 1) {
       var rcs: LowerState = lower_expr(fa.obj, s);
       if (!rcs.ok) {
         return rcs;
@@ -18922,6 +18925,9 @@ function lower_call_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerSta
       rcs = lower_expr(c.args[0], rcs);
       if (!rcs.ok) {
         return rcs;
+      }
+      if (fa.field == "read_chunk_bytes") {
+        return rcs.emit(ir.op_read_chunk_bytes());
       }
       return rcs.emit(ir.op_read_chunk());
     }
@@ -19089,7 +19095,7 @@ function lower_call_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerSta
     }
     // w.write_some(s) -> Result[i64, IoError]: the same two operands and
     // ONE write(2), handing back the count it returned (#9231).
-    if (fa.field == "write_some" && c.args.len() == 1) {
+    if ((fa.field == "write_some" || fa.field == "write_bytes" || fa.field == "write_some_bytes") && c.args.len() == 1) {
       var wsm: LowerState = lower_expr(fa.obj, s);
       if (!wsm.ok) {
         return wsm;
@@ -19097,6 +19103,12 @@ function lower_call_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerSta
       wsm = lower_expr(c.args[0], wsm);
       if (!wsm.ok) {
         return wsm;
+      }
+      if (fa.field == "write_bytes") {
+        return wsm.emit(ir.op_write_bytes());
+      }
+      if (fa.field == "write_some_bytes") {
+        return wsm.emit(ir.op_write_some_bytes());
       }
       return wsm.emit(ir.op_write_some());
     }
@@ -22745,7 +22757,7 @@ function resource_method_opt_ret_type(field: string, obj: ast.Expr, s: LowerStat
     || expr_is_str(obj, s) || expr_is_arr_src(obj, s)) {
     return "";
   }
-  if (field == "read_line" || field == "read_chunk" || field == "close" || field == "stat" || field == "seek"
+  if (field == "read_line" || field == "read_chunk" || field == "read_chunk_bytes" || field == "close" || field == "stat" || field == "seek"
     || field == "flags" || field == "isatty" || field == "dup_onto"
     || is_handle_tty_method(field)
     || is_fd_sync_method(field)) {
@@ -22753,8 +22765,8 @@ function resource_method_opt_ret_type(field: string, obj: ast.Expr, s: LowerStat
   }
   // Writer-only, so keyed under Writer: a "Reader." key names no method
   // and answers "", which bails the lowering rather than reading wrong.
-  if (field == "write_some") {
-    return s.opt_ret_type("Writer.write_some");
+  if (field == "write_some" || field == "write_bytes" || field == "write_some_bytes") {
+    return s.opt_ret_type("Writer." + field);
   }
   if (field == "splice_to") {
     return s.opt_ret_type("Reader.splice_to");
@@ -22808,11 +22820,14 @@ function owned_payload_builtin_ptype(e: ast.Expr, s: LowerState): string {
           return "";
         },
         ast.ExprFieldAccess(fa) => {
-          if (fa.field != "read_chunk" && fa.field != "read_line") {
+          if (fa.field != "read_chunk" && fa.field != "read_chunk_bytes" && fa.field != "read_line") {
             return "";
           }
           if (resource_method_opt_ret_type(fa.field, fa.obj, s) == "") {
             return "";
+          }
+          if (fa.field == "read_chunk_bytes") {
+            return "u8[]";
           }
           return "string";
         },
@@ -88213,7 +88228,7 @@ function borrow_reg_record(key: string, flags: string): string {
 // name: the escape walks see no receiver type, so the name alone must settle
 // it.
 function copying_builtin_keys(funcs: parser.FuncDecl[]): string[] {
-  var keys: string[] = ["print", "write", "eprint", "strbuf_append", "buf_push", "buf_push_range", "buf_push_mapped", "buf_push_filtered", "buf_push_expanded", "__memchr", "__rmemchr", "__ascii_run", "__scan_set", "__count_runs", "__bsd_sum", "__count_byte", "__sum_bytes", "__mismatch", "__crc32_cksum", "__scale_f64"];
+  var keys: string[] = ["print", "write", "eprint", "strbuf_append", "buf_push", "buf_push_range", "buf_push_bytes_range", "buf_push_mapped", "buf_push_filtered", "buf_push_expanded", "__memchr", "__rmemchr", "__ascii_run", "__scan_set", "__count_runs", "__bsd_sum", "__count_byte", "__sum_bytes", "__mismatch", "__crc32_cksum", "__scale_f64"];
   var has_write: boolean = false;
   var has_write_some: boolean = false;
   for fn in funcs {
@@ -88253,7 +88268,7 @@ function copying_builtin_flags(key: string): string {
   if (key == "buf_push_mapped" || key == "buf_push_filtered" || key == "buf_push_expanded") {
     return "011";
   }
-  if (key == "buf_push" || key == "buf_push_range" || key == "__crc32_cksum") {
+  if (key == "buf_push" || key == "buf_push_range" || key == "buf_push_bytes_range" || key == "__crc32_cksum") {
     return "01";
   }
   return "1";
@@ -96681,6 +96696,9 @@ function builtin_opt_ret_type(name: string): string {
   if (name == "Reader.read_chunk") {
     return "Result[string, IoError]";
   }
+  if (name == "Reader.read_chunk_bytes") {
+    return "Result[u8[], IoError]";
+  }
   if (name == "Reader.stat" || name == "Writer.stat") {
     return "Result[FileStat, IoError]";
   }
@@ -96693,14 +96711,14 @@ function builtin_opt_ret_type(name: string): string {
   if (name == "Reader.isatty" || name == "Writer.isatty") {
     return "boolean";
   }
-  if (name == "Writer.write_some") {
+  if (name == "Writer.write_some" || name == "Writer.write_some_bytes") {
     return "Result[i64, IoError]";
   }
   if (name == "Reader.splice_to") {
     return "Result[i64, IoError]";
   }
   if (name == "Reader.close" || name == "Writer.close" || name == "Writer.write"
-    || name == "Writer.truncate") {
+    || name == "Writer.truncate" || name == "Writer.write_bytes") {
     return "Option[IoError]";
   }
   if (name == "Reader.dup_onto" || name == "Writer.dup_onto") {

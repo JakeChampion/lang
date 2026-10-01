@@ -1852,6 +1852,24 @@ function ssa_str_target(op: string): string {
   if (op == "read_chunk") {
     return "reader_read_chunk";
   }
+  if (op == "write_bytes") {
+    return "writer_write_bytes";
+  }
+  if (op == "write_bytes_u8") {
+    return "writer_write_bytes_u8";
+  }
+  if (op == "write_some_bytes") {
+    return "writer_write_some_bytes";
+  }
+  if (op == "write_some_bytes_u8") {
+    return "writer_write_some_bytes_u8";
+  }
+  if (op == "read_chunk_bytes") {
+    return "reader_read_chunk_bytes";
+  }
+  if (op == "read_chunk_bytes_u8") {
+    return "reader_read_chunk_bytes_u8";
+  }
   return op;
 }
 
@@ -1859,6 +1877,9 @@ function ssa_str_target(op: string): string {
 // the heap, "" for an op that is not one; the three that need no heap are
 // named by ssa_host_bare.
 function ssa_host_need(op: string): string {
+  if (op == "read_chunk_bytes" || op == "read_chunk_bytes_u8" || op == "write_bytes" || op == "write_bytes_u8" || op == "write_some_bytes" || op == "write_some_bytes_u8") {
+    return op;
+  }
   var fs: string[] = [
     "read_file", "read_file_bytes", "read_file_bytes_u8", "write_file", "write_file_exec", "remove_dir_all", "remove_file",
     "create_dir_all", "read_dir", "read_dir_all", "env", "stat", "lstat", "subprocess", "writer_write",
@@ -3437,7 +3458,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irlower.LowerResult, s: 
     s = s.need("writer_truncate");
     s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n");
     s = s.write("    bl __fn___fern_writer_truncate\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag >= 291 && o.kind_tag <= 297 || o.kind_tag == 306 || o.kind_tag == 325 || o.kind_tag == 326 || o.kind_tag == 328 || o.kind_tag == 347) {  // the buf_* builder
+  } else if (o.kind_tag >= 291 && o.kind_tag <= 297 || o.kind_tag == 306 || o.kind_tag == 325 || o.kind_tag == 326 || o.kind_tag == 328 || o.kind_tag == 347 || o.kind_tag == 351) {  // the buf_* builder
     s = emit_arm64_op_buf(o, s);
   } else if (o.kind_tag == 181) {  // sleep_ms
     // [ms] -> nanosleep(ms). Push x0 for the drop.
@@ -3676,6 +3697,10 @@ function ssa_buf_call(ins: ssa.SInst, reg_of: i32[], sym: string, s: asmcore.Emi
     s = s.need("buf_take_bytes");
   } else if (sym == "__fern_buf_take_bytes_u8") {
     s = s.need("buf_take_bytes_u8");
+  } else if (sym == "__fern_buf_push_bytes_range") {
+    s = s.need("buf_push_bytes_range");
+  } else if (sym == "__fern_buf_push_bytes_range_u8") {
+    s = s.need("buf_push_bytes_range_u8");
   } else if (util.str_has_suffix(sym, "_u8")) {
     s = s.need("buf_u8");
   }
@@ -3806,6 +3831,9 @@ function emit_arm64_op_buf(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   if (o.kind_tag == 347) {
     s = s.need("buf_take_bytes" + asmcore.packed_suffix(ir.is_packed(o)));
   }
+  if (o.kind_tag == 351) {
+    s = s.need("buf_push_bytes_range" + asmcore.packed_suffix(ir.is_packed(o)));
+  }
   s = s.mark_heap();
   s = s.need("buf");
   var k: i32 = asmcore.buf_arity(o.kind_tag);
@@ -3814,7 +3842,7 @@ function emit_arm64_op_buf(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    ldr x" + util.i32_to_string(k) + ", [sp], #16\n");
   }
   var sym: string = asmcore.buf_table_helper(o.kind_tag, ir.is_packed(o));
-  if (o.kind_tag != 347 && sym != asmcore.buf_helper(o.kind_tag)) {
+  if (o.kind_tag != 347 && o.kind_tag != 351 && sym != asmcore.buf_helper(o.kind_tag)) {
     s = s.need("buf_u8");
   }
   return s.write("    bl " + sym + "\n    str x0, [sp, #-16]!\n");
@@ -6378,6 +6406,26 @@ function buf_block_free(s: asmcore.EmitState, ptr: string, words: string, lbl: s
   return s;
 }
 
+// Borrow a byte range and reserve once, preserving the input array.
+function emit_buf_push_bytes_range(s: asmcore.EmitState, packed: boolean): asmcore.EmitState {
+  var suffix: string = asmcore.packed_suffix(packed);
+  var sym: string = "__fern_buf_push_bytes_range" + suffix;
+  var label: string = ".Lbufbyterange" + suffix;
+  s = s.write(".globl " + sym + "\n.type " + sym + ", %function\n" + sym + ":\n");
+  s = s.write("    stp x29, x30, [sp, #-48]!\n    mov x29, sp\n    stp x19, x20, [sp, #16]\n    stp x21, x22, [sp, #32]\n");
+  s = s.write("    mov x19, x0\n    mov x20, x1\n    sxtw x21, w2\n    sxtw x22, w3\n    cmp x21, #0\n    csel x21, x21, xzr, ge\n    ldr x9, [x20]\n    cmp x22, x9\n    csel x22, x22, x9, le\n");
+  s = s.write("    sub x22, x22, x21\n    cmp x22, #0\n    b.le " + label + "_done\n    ldr x1, [x19, #8]\n    add x1, x1, x22\n    ldr x9, [x19, #16]\n    cmp x1, x9\n    b.ls " + label + "_fits\n    bl __fern_buf_reserve\n" + label + "_fits:\n");
+  s = s.write("    ldr x3, [x19]\n    ldr x9, [x19, #8]\n    add x3, x3, x9\n    add x9, x9, x22\n    str x9, [x19, #8]\n    add x1, x20, #8\n    mov x2, x22\n");
+  if (packed) {
+    s = s.write("    add x1, x1, x21\n");
+    s = arm64_copy_bytes(s, CopyRegs { dst: "x3", src: "x1", n: "x2", tmp: "x9", src_end: "x10", dst_end: "x11" }, label + "_words", label + "_tail", label + "_bytes", label + "_done");
+  } else {
+    s = s.write("    add x1, x1, x21, lsl #3\n" + label + "_copy:\n    ldrb w9, [x1], #8\n    strb w9, [x3], #1\n    subs x2, x2, #1\n    b.ne " + label + "_copy\n" + label + "_done:\n");
+  }
+  s = s.write("    mov x0, #0\n    ldp x21, x22, [sp, #32]\n    ldp x19, x20, [sp, #16]\n    ldp x29, x30, [sp], #48\n    ret\n.size " + sym + ", .-" + sym + "\n");
+  return s;
+}
+
 // Copy raw builder storage into a fresh array in the requested layout.
 function emit_buf_take_bytes(s: asmcore.EmitState, packed: boolean): asmcore.EmitState {
   var suffix: string = asmcore.packed_suffix(packed);
@@ -7256,6 +7304,12 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   // rather than left to the arena: a builder that doubles its way up from the
   // floor would otherwise strand every prefix it passed through.
   if (s.has_need("buf")) {
+    if (s.has_need("buf_push_bytes_range")) {
+      s = emit_buf_push_bytes_range(s, false);
+    }
+    if (s.has_need("buf_push_bytes_range_u8")) {
+      s = emit_buf_push_bytes_range(s, true);
+    }
     if (s.has_need("buf_take_bytes")) {
       s = emit_buf_take_bytes(s, false);
     }
@@ -9998,6 +10052,24 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     if (s.has_need("reader")) {
       fs_src = fs_src + " " + asmcore.rt_src_reader_read_chunk(tgt) + " " + asmcore.rt_src_reader_close(tgt);
     }
+    if (s.has_need("write_bytes")) {
+      fs_src = fs_src + " " + asmcore.rt_src_writer_bytes(tgt, false, true);
+    }
+    if (s.has_need("write_bytes_u8")) {
+      fs_src = fs_src + " " + asmcore.rt_src_writer_bytes(tgt, true, true);
+    }
+    if (s.has_need("write_some_bytes")) {
+      fs_src = fs_src + " " + asmcore.rt_src_writer_bytes(tgt, false, false);
+    }
+    if (s.has_need("write_some_bytes_u8")) {
+      fs_src = fs_src + " " + asmcore.rt_src_writer_bytes(tgt, true, false);
+    }
+    if (s.has_need("read_chunk_bytes")) {
+      fs_src = fs_src + " " + asmcore.rt_src_reader_read_chunk_bytes(tgt, false);
+    }
+    if (s.has_need("read_chunk_bytes_u8")) {
+      fs_src = fs_src + " " + asmcore.rt_src_reader_read_chunk_bytes(tgt, true);
+    }
     if (s.has_need("fd_stat")) {
       fs_src = fs_src + " " + asmcore.rt_src_fd_stat(tgt);
     }
@@ -11175,7 +11247,7 @@ function needs_fs_runtime(s: asmcore.EmitState): boolean {
     "chdir", "chroot", "setuid", "setgid", "setgroups", "umask", "fd_fsync", "fd_fdatasync", "fd_syncfs", "sync",
     "temp_dir", "stat", "lstat", "statfs", "access", "read_dir", "read_dir_all",
     "remove_dir_all", "open_file", "open_with", "writer_write", "write_some",
-    "reader", "signal_send", "set_process_group", "set_priority",
+    "reader", "read_chunk_bytes", "read_chunk_bytes_u8", "write_bytes", "write_bytes_u8", "write_some_bytes", "write_some_bytes_u8", "signal_send", "set_process_group", "set_priority",
   ]);
 }
 

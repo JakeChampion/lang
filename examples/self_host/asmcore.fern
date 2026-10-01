@@ -367,6 +367,9 @@ pub function buf_helper(kind: i32): string {
   if (kind == 347) {
     return "__fern_buf_take_bytes";
   }
+  if (kind == 351) {
+    return "__fern_buf_push_bytes_range";
+  }
   if (kind == 291) {
     return "__fern_buf_new";
   }
@@ -408,6 +411,9 @@ pub function buf_table_helper(kind: i32, packed: boolean): string {
   if (packed && kind == 347) {
     return "__fern_buf_take_bytes_u8";
   }
+  if (packed && kind == 351) {
+    return "__fern_buf_push_bytes_range_u8";
+  }
   if (packed && (kind == 325 || kind == 326 || kind == 328)) {
     return buf_helper(kind) + "_u8";
   }
@@ -415,7 +421,7 @@ pub function buf_table_helper(kind: i32, packed: boolean): string {
 }
 
 pub function buf_arity(kind: i32): i32 {
-  if (kind == 293) {
+  if (kind == 293 || kind == 351) {
     return 4;
   }
   if (kind == 325 || kind == 326 || kind == 328) {
@@ -3071,6 +3077,16 @@ pub function rt_src_reader_read_chunk(t: string): string {
   return "function __fern_reader_read_chunk(fd: i32, n: i32): Result[string, IoError] { var p: usize = __raw_alloc(n); var r: i32 = __syscall3(" + sysno(t, "read") + ", fd as i64, p as i64, n as i64) as i32; if (r == n) { return Ok(__raw_string(p, n)); } if (r <= 0) { var short: string = __raw_string(p, n); if (r < 0) { return Err(__fern_io_error(0 - r, \"\")); } return Ok(\"\"); } var q: usize = __raw_alloc(r); __memcpy(q, p, r); var full: string = __raw_string(p, n); return Ok(__raw_string(q, r)); }";
 }
 
+// Scratch is owned as an array throughout, including the error path. Packed
+// results retain their physical reserve; legacy results expand byte slots.
+pub function rt_src_reader_read_chunk_bytes(t: string, packed: boolean): string {
+  var finish: string = "var b: usize = __raw_arr_box(got); var j: i32 = 0; while (j < got) { __raw_store_ptr(b, j + 1, __raw_load8(p, j) as usize); j = j + 1; } return Ok(__raw_array(b));";
+  if (packed) {
+    finish = "__store_i64(raw, got as i64); return Ok(scratch);";
+  }
+  return "function __fern_reader_read_chunk_bytes" + packed_suffix(packed) + "(fd: i32, n: i32): Result[i32[], IoError] { if (n < 0) { return Err(__fern_io_error(22, \"\")); } var raw: usize = __raw_arr_box(n / 8 + 1); var scratch: i32[] = __raw_array(raw); var p: usize = __raw_addr(raw, 8); var got: i32 = __syscall3(" + sysno(t, "read") + ", fd as i64, p as i64, n as i64) as i32; if (got < 0) { return Err(__fern_io_error(0 - got, \"\")); } " + finish + " }";
+}
+
 // rt_src_reader_close backs `r.close()` and `w.close()` → close(fd), Some on a
 // failing close. A close carries no PATH to report, so the errno is classified
 // against an empty one, exactly as rt_src_writer_write does for a failed write.
@@ -4050,6 +4066,26 @@ pub function rt_src_writer_write_some(t: string): string {
   return "function __fern_writer_write_some(fd: i32, s: string): Result[i64, IoError] { var n: i32 = s.len(); var data: usize = __raw_data(s); var w: i32 = __syscall3(" + sysno(t, "write") + ", fd as i64, __raw_addr(data, 0) as i64, n as i64) as i32; if (w < 0) { return Err(__fern_io_error(0 - w, \"\")); } return Ok(w as i64); }";
 }
 
+// Packed production arrays lend their bytes directly. The diagnostic word
+// layout packs into an owned scratch array, never into a string.
+pub function rt_src_writer_bytes(t: string, packed: boolean, all: boolean): string {
+  var name: string = "write_some_bytes";
+  var result: string = "Result[i64, IoError]";
+  var failure: string = "Err";
+  var done: string = "return Ok(w as i64);";
+  if (all) {
+    name = "write_bytes";
+    result = "Option[IoError]";
+    failure = "Some";
+    done = "at = at + w; if (at == n) { return None; } if (w == 0) { return Some(__fern_io_error(5, \"\")); }";
+  }
+  var prep: string = "var p: usize = __raw_addr(__raw_arr_ptr(bytes), 8);";
+  if (!packed) {
+    prep = "var raw: usize = __raw_arr_box(n / 8 + 1); var scratch: i32[] = __raw_array(raw); var p: usize = __raw_addr(__raw_arr_ptr(scratch), 8); var j: i32 = 0; while (j < n) { __raw_store8(p, j, bytes[j]); j = j + 1; }";
+  }
+  return "function __fern_writer_" + name + packed_suffix(packed) + "(fd: i32, bytes: i32[]): " + result + " { var n: i32 = bytes.len(); " + prep + " var at: i32 = 0; while (true) { var w: i32 = __syscall3(" + sysno(t, "write") + ", fd as i64, __raw_addr(p, at) as i64, (n - at) as i64) as i32; if (w < 0) { return " + failure + "(__fern_io_error(0 - w, \"\")); } " + done + " } }";
+}
+
 pub function rt_src_fd_flags(t: string): string {
   return "function __fern_fd_flags(fd: i32): Result[i64, IoError] { var r: i32 = __syscall3(" + sysno(t, "fcntl") + ", fd as i64, 3, 0) as i32; if (r < 0) { return Err(__fern_io_error(0 - r, \"\")); } var acc: i32 = r & 3; var bits: i32 = 0; if (acc != 1) { bits = bits | 1; } if (acc != 0) { bits = bits | 2; } if ((r & " + oflag(t, "append") + ") != 0) { bits = bits | 4; } return Ok(bits as i64); }";
 }
@@ -4716,6 +4752,9 @@ pub function match_payload_type(scrut: ast.Expr, s: EmitState): Ty {
           // Writer.write and Writer.truncate are Option[IoError], a
           // payload this Ty union cannot name, so they fall through
           // to unknown.
+          if (ty_struct_name(rcv) == "Reader" && fa.field == "read_chunk_bytes") {
+            return ty_array_i32();
+          }
           if (ty_struct_name(rcv) == "Reader"
             && (fa.field == "read_chunk" || fa.field == "read_line")) {
             return ty_string();
@@ -4726,7 +4765,7 @@ pub function match_payload_type(scrut: ast.Expr, s: EmitState): Ty {
           if ((ty_struct_name(rcv) == "Reader" || ty_struct_name(rcv) == "Writer") && (fa.field == "seek" || fa.field == "flags")) {
             return ty_i32();
           }
-          if (ty_struct_name(rcv) == "Writer" && fa.field == "write_some") {
+          if (ty_struct_name(rcv) == "Writer" && (fa.field == "write_some" || fa.field == "write_some_bytes")) {
             return ty_i32();
           }
           if (ty_struct_name(rcv) == "Reader" && fa.field == "splice_to") {
@@ -6280,6 +6319,9 @@ function infer_call_method_type(fa: ast.ExprFieldAccess, c: ast.ExprCall, s: Emi
   // the resource signature, rejecting the program before codegen (#8462). The
   // real non-struct-receiver gate is applied at lower time (irlower's
   // resource-method dispatch).
+  if (ty_struct_name(rt) == "Reader" && fa.field == "read_chunk_bytes") {
+    return ty_result(ty_array_i32());
+  }
   if (ty_struct_name(rt) == "Reader" && (fa.field == "read_chunk" || fa.field == "read_line")) {
     return ty_option(ty_string());
   }
@@ -6299,13 +6341,13 @@ function infer_call_method_type(fa: ast.ExprFieldAccess, c: ast.ExprCall, s: Emi
   }
   // Writer.write_some is Result[i64, IoError]: a count, in the same 64-bit
   // payload slot seek's offset lands in.
-  if (ty_struct_name(rt) == "Writer" && fa.field == "write_some") {
+  if (ty_struct_name(rt) == "Writer" && (fa.field == "write_some" || fa.field == "write_some_bytes")) {
     return ty_result(ty_i32());
   }
   if (ty_struct_name(rt) == "Reader" && fa.field == "splice_to") {
     return ty_result(ty_i32());
   }
-  if (ty_struct_name(rt) == "Writer" && (fa.field == "write" || fa.field == "truncate")) {
+  if (ty_struct_name(rt) == "Writer" && (fa.field == "write" || fa.field == "write_bytes" || fa.field == "truncate")) {
     return ty_option(ty_unknown());
   }
   // Reader.dup_onto / Writer.dup_onto -> Option[IoError]: the descriptor
@@ -9547,6 +9589,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
     "__fn___fern_eprint_str", "__fn___fern_putchar",
     "__fn___fern_read_line", "__fn___fern_read_file", "__fn___fern_read_file_bytes",
     "__fn___fern_reader_read_chunk", "__fn___fern_reader_close", "__fn___fern_write_file",
+    "__fn___fern_reader_read_chunk_bytes", "__fn___fern_reader_read_chunk_bytes_u8", "__fn___fern_writer_write_bytes", "__fn___fern_writer_write_bytes_u8", "__fn___fern_writer_write_some_bytes", "__fn___fern_writer_write_some_bytes_u8",
     "__fern_remove_dir_all", "__fn___fern_remove_dir_all", "__fn___fern_temp_dir", "__fern_read_dir", "__fn___fern_read_dir",
     "__fern_read_dir_all", "__fn___fern_read_dir_all", "__fn___fern_remove_file",
     "__fn___fern_create_dir_all",
@@ -9570,6 +9613,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
     "__fern_buf_push_byte", "__fern_buf_push_u64", "__fern_buf_len", "__fern_buf_take",
     "__fern_buf_free",
     "__fern_buf_take_bytes", "__fern_buf_take_bytes_u8",
+    "__fern_buf_push_bytes_range", "__fern_buf_push_bytes_range_u8",
     // crash-only supervision (#5686): the entry owns fork / wait4.
     "__fn___fern_proc_fork", "__fn___fern_proc_waitpid",
     "__fn___fern_proc_waitpid_nohang", "__fn___fern_proc_exec",

@@ -1,5 +1,22 @@
 package x86_64
 
+// Arrays have aligned payload pointers, so the existing range-copy kernel
+// takes its contiguous-memory branch without constructing a string value.
+func (g *generator) emitBufPushBytesRangeRuntime() {
+	g.line(".globl __fern_buf_push_bytes_range")
+	g.line(".type __fern_buf_push_bytes_range, @function")
+	g.label("__fern_buf_push_bytes_range")
+	g.emit("xor eax, eax")
+	g.emit("test edx, edx")
+	g.emit("cmovs edx, eax")
+	g.emit("cmp ecx, dword ptr [rsi - 4]")
+	g.emit("cmovg ecx, dword ptr [rsi - 4]")
+	g.emit("movsxd rdx, edx")
+	g.emit("movsxd rcx, ecx")
+	g.emit("jmp __fern_buf_push_range")
+	g.line(".size __fern_buf_push_bytes_range, .-__fern_buf_push_bytes_range")
+}
+
 // Extract into the ordinary owned-array layout. The builder keeps its
 // capacity and the result remains independent of subsequent pushes/free.
 func (g *generator) emitBufTakeBytesRuntime() {

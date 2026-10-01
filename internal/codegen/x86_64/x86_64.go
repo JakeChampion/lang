@@ -887,6 +887,9 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	if g.usesBufTakeBytes {
 		g.emitBufTakeBytesRuntime()
 	}
+	if g.usesBufPushBytesRange {
+		g.emitBufPushBytesRangeRuntime()
+	}
 	if g.usesNowUnixMs {
 		g.emitNowUnixMsRuntime()
 	}
@@ -1196,6 +1199,15 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 		// helper (4 KiB scratch).
 		g.emitReaderWriterRuntime()
 	}
+	if g.usesWriterBytes {
+		g.emitWriterBytesRuntime(true)
+	}
+	if g.usesWriterSomeBytes {
+		g.emitWriterBytesRuntime(false)
+	}
+	if g.usesReaderBytes {
+		g.emitReaderBytesRuntime()
+	}
 	if ast.SandboxEnabled {
 		// Last code emitter: the filter's allowlist is g.syscalls, which
 		// is only complete once every other emitter has run.
@@ -1356,8 +1368,9 @@ type generator struct {
 	// capacity-carrying builder. Unlike the strbuf above there may be
 	// any number of them at once; a builder is the address of its
 	// control block, handed to Fern as a number.
-	usesStrBuilder   bool
-	usesBufTakeBytes bool
+	usesStrBuilder        bool
+	usesBufTakeBytes      bool
+	usesBufPushBytesRange bool
 	// usesNowUnixMs pulls in `__fern_now_unix_ms()` — wall-
 	// clock-ms via the x86_64 `clock_gettime(CLOCK_REALTIME,
 	// &ts)` syscall (#228). Returns
@@ -1791,7 +1804,10 @@ type generator struct {
 	// runtime bundle (stdin/stdout/stderr + open_reader /
 	// open_writer / open_appender / open_exclusive + Reader/Writer method
 	// helpers). Mirrors the arm64 generator's flag.
-	usesReaderWriter bool
+	usesReaderWriter    bool
+	usesReaderBytes     bool
+	usesWriterBytes     bool
+	usesWriterSomeBytes bool
 }
 
 // recordUse flips the right use-flag for a callee name the
@@ -2105,6 +2121,9 @@ func (g *generator) recordUse(target string) {
 		g.usesAllocU8 = true
 		g.usesAlloc = true
 		g.usesMemcpy = true
+	case "buf_push_bytes_range":
+		g.usesBufPushBytesRange = true
+		fallthrough
 	case "buf_new", "buf_push", "buf_push_range", "buf_push_mapped", "buf_push_filtered", "buf_push_expanded", "buf_push_byte", "buf_push_u64", "buf_len", "buf_take", "buf_free":
 		g.usesStrBuilder = true
 		// Every entry point but buf_len can reach the allocator, the
@@ -2225,6 +2244,11 @@ func (g *generator) recordUse(target string) {
 		g.usesTermiosSet = true
 		g.usesAlloc = true
 		g.usesIoError = true
+	case "__method_Writer_write_bytes", "__method_Writer_write_some_bytes":
+		g.usesWriterBytes = g.usesWriterBytes || target == "__method_Writer_write_bytes"
+		g.usesWriterSomeBytes = g.usesWriterSomeBytes || target == "__method_Writer_write_some_bytes"
+		g.usesAlloc = true
+		g.usesIoError = true
 	case "__method_Writer_write_some":
 		g.usesWriteSome = true
 		g.usesAlloc = true
@@ -2288,6 +2312,10 @@ func (g *generator) recordUse(target string) {
 		g.usesReadLine = true
 		g.usesAlloc = true
 		g.usesMemcpy = true
+	case "__method_Reader_read_chunk_bytes":
+		g.usesReaderBytes = true
+		g.usesReaderWriter = true
+		g.usesAllocU8 = true
 	case "__method_Reader_read_line",
 		"__method_Reader_read_chunk",
 		"__method_Reader_close",
@@ -3969,6 +3997,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_buf_push"
 		case "buf_push_range":
 			target = "__fern_buf_push_range"
+		case "buf_push_bytes_range":
+			target = "__fern_buf_push_bytes_range"
 		case "buf_push_mapped":
 			target = "__fern_buf_push_mapped"
 		case "buf_push_filtered":
@@ -4199,6 +4229,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_reader_read_line"
 		case "__method_Reader_read_chunk":
 			target = "__fern_reader_read_chunk"
+		case "__method_Reader_read_chunk_bytes":
+			target = "__fern_reader_read_chunk_bytes"
 		case "__method_Reader_stat", "__method_Writer_stat":
 			target = "__fern_fd_stat"
 		case "__method_Reader_fsync", "__method_Writer_fsync":
@@ -4227,6 +4259,10 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_handle_termios_get"
 		case "__method_Reader_termios_set":
 			target = "__fern_handle_termios_set"
+		case "__method_Writer_write_bytes":
+			target = "__fern_writer_write_bytes"
+		case "__method_Writer_write_some_bytes":
+			target = "__fern_writer_write_some_bytes"
 		case "__method_Writer_write_some":
 			target = "__fern_writer_write_some"
 		case "__method_Writer_truncate":

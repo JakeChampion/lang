@@ -4797,8 +4797,17 @@ function handle_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
   if (ins.str == "Reader.read_chunk") {
     return Lowered { found: true, r: emit(r, ir.op_read_chunk()) };
   }
+  if (ins.str == "Reader.read_chunk_bytes") {
+    return Lowered { found: true, r: emit(r, ir.packed(ir.op_read_chunk_bytes())) };
+  }
   if (ins.str == "Reader.close" || ins.str == "Writer.close") {
     return Lowered { found: true, r: emit(r, ir.op_reader_close()) };
+  }
+  if (ins.str == "Writer.write_bytes") {
+    return Lowered { found: true, r: emit(r, ir.packed(ir.op_write_bytes())) };
+  }
+  if (ins.str == "Writer.write_some_bytes") {
+    return Lowered { found: true, r: emit(r, ir.packed(ir.op_write_some_bytes())) };
   }
   if (ins.str == "Writer.write") {
     return Lowered { found: true, r: emit(r, ir.op_writer_write()) };
@@ -5259,6 +5268,9 @@ function builder_builtin_site(own r: irlower.LowerResult, ins: ssa.SInst): Lower
   }
   if (ins.str == "buf_push_range") {
     return Lowered { found: true, r: emit(r, ir.op_buf_push_range()) };
+  }
+  if (ins.str == "buf_push_bytes_range") {
+    return Lowered { found: true, r: emit(r, ir.packed(ir.op_buf_push_bytes_range())) };
   }
   if (ins.str == "buf_push_mapped") {
     return Lowered { found: true, r: emit(r, ir.packed(ir.op_buf_push_mapped())) };

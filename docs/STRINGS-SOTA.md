@@ -450,6 +450,7 @@ amortised away rather than softened.
 
 ```
 buf_new(cap) / buf_push(b, s) / buf_push_range(b, s, lo, hi) /
+buf_push_bytes_range(b, bytes, lo, hi) /
 buf_push_byte(b, x) / buf_len(b) / buf_take(b) / buf_take_bytes(b) / buf_free(b)
 ```
 
@@ -467,6 +468,10 @@ writers rather than these directly.
 `buf_take_bytes(b): u8[]` extracts arbitrary bytes into an independently
 owned array and resets the builder length while retaining its reserve.
 Later pushes or freeing the builder do not change the extracted array.
+`buf_push_bytes_range(b, bytes, lo, hi)` borrows a `u8[]` and appends its
+half-open byte range, clamping bounds to the array. Empty or inverted ranges
+append nothing. It reserves once and copies packed arrays in bulk; neither
+appending nor extracting requires an intermediate string.
 Use this path for binary output. It never constructs a string; text callers
 can validate the returned bytes with `std/utf8.from_bytes`. The older
 `buf_take` API still needs a separate validity-contract migration for D9.
@@ -863,6 +868,34 @@ plain Fern) plus its wasm p1/p2 lanes, all return
 and nothing emitted is now real on every lane. `tcp_recv(fd, max)`
 returns `u8[]` (#7467). The remaining builder and Reader raw paths are
 listed in the migration audit above.
+
+`Reader.read_chunk_bytes(n): Result[u8[], IoError]` provides owned raw input
+on the bootstrap interpreter and native/wasm backends, and on the self-hosted
+native and wasm command-module backends. It preserves NUL, malformed UTF-8
+and split scalar encodings. A short read returns the bytes actually read;
+EOF returns an empty array. Negative counts report an I/O error. A
+zero-length read does not advance the cursor and preserves host errors,
+including WASI Preview 1's possible `Interrupted` result. Closed handles
+report an error. Retained arrays remain valid after subsequent reads and
+closing the reader.
+
+The Fern interpreter's host reader still needs a bootstrap-compatible raw
+path before this method has full interpreter parity. The existing
+`Reader.read_chunk` remains text-typed and unchecked pending migration of
+its binary consumers. The new method does not establish the string invariant
+by itself.
+
+`Writer.write_bytes(bytes): Option[IoError]` and
+`Writer.write_some_bytes(bytes): Result[i64, IoError]` borrow an owned `u8[]`
+without changing or retaining it. The former completes short writes and
+reports an I/O error on zero progress; the latter returns the count from one
+host write, which may be zero. Empty writes preserve host errors, and closed
+handles report an error. WASI Preview 2 host writes use blocking chunks of
+at most 4096 bytes. These methods have the same bootstrap
+and primary compiled target coverage as the raw reader; the primary
+interpreter still needs its host migration. They never construct an unchecked
+string. Borrowed views must be materialized before calling this owned-array
+signature.
 
 The socket TRANSPORT followed. `tcp_recv_deadline` returns
 `Option[u8[]]`, and `std/fetch` is byte-domain end to end —

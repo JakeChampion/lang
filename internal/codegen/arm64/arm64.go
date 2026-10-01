@@ -967,6 +967,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesBufTakeBytes {
 		g.emitBufTakeBytesRuntime()
 	}
+	if g.usesBufPushBytesRange {
+		g.emitBufPushBytesRangeRuntime()
+	}
 	if g.usesNowUnixMs {
 		g.emitNowUnixMsRuntime()
 	}
@@ -1203,6 +1206,15 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 		// stdin-only read_line used, plus __fern_io_error for
 		// the Some(IoError) / None error path.
 		g.emitReaderWriterRuntime()
+	}
+	if g.usesWriterBytes {
+		g.emitWriterBytesRuntime(true)
+	}
+	if g.usesWriterSomeBytes {
+		g.emitWriterBytesRuntime(false)
+	}
+	if g.usesReaderBytes {
+		g.emitReaderBytesRuntime()
 	}
 	g.emitDataSections()
 	if !g.darwin {
@@ -15782,8 +15794,9 @@ type generator struct {
 	// Unlike the strbuf above there may be any number of them at once; a
 	// builder is the address of its control block, handed to Fern as a
 	// usize. Mirror of the x86_64 backend's emission.
-	usesStrBuilder   bool
-	usesBufTakeBytes bool
+	usesStrBuilder        bool
+	usesBufTakeBytes      bool
+	usesBufPushBytesRange bool
 
 	// usesExit pulls in `__fern_exit(code)` — direct exit syscall.
 	// Doesn't return; the post-call push x0 the caller emits is
@@ -15991,7 +16004,10 @@ type generator struct {
 	// write). stdin / stdout / stderr also live behind this
 	// flag since they now return real Reader / Writer struct
 	// pointers (fd at +0) rather than scalar sentinels.
-	usesReaderWriter bool
+	usesReaderWriter    bool
+	usesReaderBytes     bool
+	usesWriterBytes     bool
+	usesWriterSomeBytes bool
 }
 
 func (g *generator) line(s string) {
@@ -20516,7 +20532,10 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.usesAllocU8 = true
 			g.usesAlloc = true
 			g.usesMemcpy = true
-		case "buf_new", "buf_push", "buf_push_range", "buf_push_mapped", "buf_push_filtered", "buf_push_expanded", "buf_push_byte", "buf_push_u64", "buf_len", "buf_take", "buf_free":
+		case "buf_new", "buf_push", "buf_push_range", "buf_push_bytes_range", "buf_push_mapped", "buf_push_filtered", "buf_push_expanded", "buf_push_byte", "buf_push_u64", "buf_len", "buf_take", "buf_free":
+			if target == "buf_push_bytes_range" {
+				g.usesBufPushBytesRange = true
+			}
 			target = "__fern_" + target
 			g.usesStrBuilder = true
 			// Every entry point but buf_len can reach the allocator, the
@@ -20637,6 +20656,11 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			target = "__fern_reader_read_chunk"
 			g.usesReaderWriter = true
 			g.usesAlloc = true
+		case "__method_Reader_read_chunk_bytes":
+			target = "__fern_reader_read_chunk_bytes"
+			g.usesReaderBytes = true
+			g.usesReaderWriter = true
+			g.usesAllocU8 = true
 		case "__method_Reader_close":
 			target = "__fern_close_fd_box"
 			g.usesReaderWriter = true
@@ -20722,6 +20746,12 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			// ftruncate(2) on the handle's fd → Option[IoError].
 			target = "__fern_writer_truncate"
 			g.usesWriterTruncate = true
+			g.usesAlloc = true
+			g.usesIoError = true
+		case "__method_Writer_write_bytes", "__method_Writer_write_some_bytes":
+			target = "__fern_writer_" + strings.TrimPrefix(target, "__method_Writer_")
+			g.usesWriterBytes = g.usesWriterBytes || target == "__fern_writer_write_bytes"
+			g.usesWriterSomeBytes = g.usesWriterSomeBytes || target == "__fern_writer_write_some_bytes"
 			g.usesAlloc = true
 			g.usesIoError = true
 		case "__method_Writer_write":

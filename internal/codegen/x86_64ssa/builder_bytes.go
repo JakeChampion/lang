@@ -1,5 +1,16 @@
 package x86_64ssa
 
+// The range-copy kernel consumes a data pointer, shared by packed byte arrays.
+func emitBufPushBytesRangeHelper(w func(string, ...any)) {
+	w("%s:", fnLabel("buf_push_bytes_range"))
+	w("\txor eax, eax")
+	w("\ttest edx, edx")
+	w("\tcmovs edx, eax")
+	w("\tcmp ecx, [rsi - 4]")
+	w("\tcmovg ecx, [rsi - 4]")
+	w("\tjmp %s", fnLabel("buf_push_range"))
+}
+
 // Copy builder bytes into an independently owned array and reset its length.
 func emitBufTakeBytesHelper(w func(string, ...any)) {
 	w("%s:", fnLabel("buf_take_bytes"))
