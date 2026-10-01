@@ -45,3 +45,37 @@ func TestDnsExchangeX86_64(t *testing.T) {
 		})
 	}
 }
+
+// TestDnsPairX86_64 is std/dns's paired lookup against a nameserver that
+// answers the A query only once the AAAA query has arrived: the two go
+// out together, so both come back.
+func TestDnsPairX86_64(t *testing.T) {
+	_, runner := x86_64Tooling(t)
+	fern := buildLangBinForInterp(t)
+	stdlib, err := filepath.Abs("../stdlib")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ns := e2eharness.StartFakeNameserver(t, e2eharness.FakeNameserverPair)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "pair.fern")
+	if err := os.WriteFile(src, []byte(e2eharness.DnsPairSource(ns.Port)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(dir, "pair")
+	if out, err := exec.Command(fern, "-target", "x86-64-linux", "-o", bin, src, stdlib).CombinedOutput(); err != nil {
+		t.Fatalf("compile: %v\n%s", err, out)
+	}
+	cmd := runX86_64Bin(runner, bin)
+	out, _ := cmd.Output()
+	e2eharness.CheckDnsPair(t, ns, string(out), cmd.ProcessState.ExitCode())
+}
+
+// TestDnsPairInterp is TestDnsPairX86_64 under the interpreter, whose poll
+// is a stub: the paired wait tries every pending socket in turn there, so
+// the AAAA reply that arrives first is read while the A query waits.
+func TestDnsPairInterp(t *testing.T) {
+	ns := e2eharness.StartFakeNameserver(t, e2eharness.FakeNameserverPair)
+	out, code := runInterpExitCode(t, e2eharness.DnsPairSource(ns.Port))
+	e2eharness.CheckDnsPair(t, ns, out, code)
+}

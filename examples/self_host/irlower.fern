@@ -98669,7 +98669,7 @@ function try_fn_field_value(e: ast.Expr, fd: parser.FuncDecl, funcs: parser.Func
           // capture like any other.
           var fdx: parser.FuncDecl = iife_scope_fd(fd, il.body);
           let (brs, bra) = box_iife_arm_values(il.body, fdx, funcs, counter, gfns, mfuncs, structs);
-          if (bra.counter == counter || !iife_arms_all_marked(brs)) {
+          if (bra.counter == counter || !iife_arms_all_marked(brs, mfuncs)) {
             return InlineCloRes { expr: e, funcs: funcs, counter: counter };
           }
           var nlam: ast.Expr = ast.ExprLambda { ...il, body: brs };
@@ -98767,6 +98767,12 @@ function iife_arm_values_boxable(stmts: ast.Stmt[], seen: i32, fd: parser.FuncDe
                 }
                 n = deep;
               },
+              ast.ExprIdent(cid) => {
+                if (!passthrough_call_boxable(rc, cid.name, fd, mfuncs)) {
+                  return 0 - 1;
+                }
+                n = n + 1;
+              },
               _ => {
                 return 0 - 1;
               }
@@ -98803,26 +98809,116 @@ function iife_arm_values_boxable(stmts: ast.Stmt[], seen: i32, fd: parser.FuncDe
   return n;
 }
 
+// A generic passthrough call (`pick(c, <lambda>, <lambda>)`) yields the fn
+// value it is handed, so an arm returning one is boxable when every fn value
+// it passes through is: try_fn_field_value's ident-callee case boxes exactly
+// those arguments, and boxing the argument boxes the call.
+function passthrough_call_boxable(rc: ast.ExprCall, callee: string, fd: parser.FuncDecl, mfuncs: MFuncs): boolean {
+  var found: boolean = false;
+  var i: i32 = 0;
+  while (i < rc.args.len()) {
+    if (lift_callee_is_typevar_passthrough(mfuncs, callee, i)) {
+      // A nested if-expression at a passthrough position is not boxed by
+      // try_fn_field_value's ident-callee case, so its arms would stay raw.
+      if (passthrough_arg_is_iife(rc.args[i])) {
+        return false;
+      }
+      if (lift_arg_is_passthrough_fn_value(rc.args[i], mfuncs)) {
+        if (!passthrough_arg_boxable(rc.args[i], fd, mfuncs)) {
+          return false;
+        }
+        found = true;
+      }
+    }
+    i = i + 1;
+  }
+  return found;
+}
+
+function passthrough_arg_is_iife(arg: ast.Expr): boolean {
+  if let ast.ExprCall(c) = arg {
+    return is_iife_callee(c);
+  }
+  return false;
+}
+
+function passthrough_arg_boxable(arg: ast.Expr, fd: parser.FuncDecl, mfuncs: MFuncs): boolean {
+  match (arg) {
+    ast.ExprLambda(_) => {
+      return true;
+    },
+    ast.ExprIdent(id) => {
+      return arm_names_module_fn(id.name, fd, mfuncs);
+    },
+    ast.ExprCall(c) => {
+      match (c.callee) {
+        ast.ExprIdent(cid) => {
+          return passthrough_call_boxable(c, cid.name, fd, mfuncs);
+        },
+        _ => {
+          return false;
+        }
+      }
+    },
+    _ => {
+      return false;
+    }
+  }
+  return false;
+}
+
+// The boxed shape of a passthrough call: no fn value is still passed through
+// raw, and at least one argument is an env-box marker, so the call yields a
+// box.
+function passthrough_call_marked(rc: ast.ExprCall, callee: string, mfuncs: MFuncs): boolean {
+  var boxed: boolean = false;
+  var i: i32 = 0;
+  while (i < rc.args.len()) {
+    if (lift_callee_is_typevar_passthrough(mfuncs, callee, i)) {
+      if (lift_arg_is_passthrough_fn_value(rc.args[i], mfuncs)) {
+        return false;
+      }
+      if (expr_is_marked(rc.args[i], mfuncs)) {
+        boxed = true;
+      }
+    }
+    i = i + 1;
+  }
+  return boxed;
+}
+
+function expr_is_marked(e: ast.Expr, mfuncs: MFuncs): boolean {
+  if let ast.ExprCall(c) = e {
+    if let ast.ExprIdent(cid) = c.callee {
+      if (cid.name.len() > 8 && slice_unchecked(cid.name, 0, 8) == "__mkclo$") {
+        return true;
+      }
+      return passthrough_call_marked(c, cid.name, mfuncs);
+    }
+  }
+  return false;
+}
+
 // iife_arms_all_marked is the POST-condition on the rewrite: every arm now
 // returns a `__mkclo$…` env-box marker (or a nested IIFE whose arms all do).
 // try_fn_field_value declines silently — a capture whose slot it cannot build
 // comes back unchanged — and a PARTLY boxed IIFE is worse than an unboxed one:
 // the destination reads as a box from one arm and dispatches every arm that
 // way. Checked rather than assumed, so a decline anywhere abandons the rewrite.
-function iife_arms_all_marked(stmts: ast.Stmt[]): boolean {
+function iife_arms_all_marked(stmts: ast.Stmt[], mfuncs: MFuncs): boolean {
   for stmt in stmts {
     match (stmt) {
       ast.StmtReturn(r) => {
         match (r.value) {
           ast.ExprCall(rc) => {
             match (rc.callee) {
-              ast.ExprIdent(rid) => {
-                if (!(rid.name.len() > 8 && slice_unchecked(rid.name, 0, 8) == "__mkclo$")) {
+              ast.ExprIdent(_) => {
+                if (!expr_is_marked(r.value, mfuncs)) {
                   return false;
                 }
               },
               ast.ExprLambda(ril) => {
-                if (!iife_arms_all_marked(ril.body)) {
+                if (!iife_arms_all_marked(ril.body, mfuncs)) {
                   return false;
                 }
               },
@@ -98837,17 +98933,17 @@ function iife_arms_all_marked(stmts: ast.Stmt[]): boolean {
         }
       },
       ast.StmtIf(iff) => {
-        if (!iife_arms_all_marked(iff.then_body)) {
+        if (!iife_arms_all_marked(iff.then_body, mfuncs)) {
           return false;
         }
-        if (!iife_arms_all_marked(iff.else_body)) {
+        if (!iife_arms_all_marked(iff.else_body, mfuncs)) {
           return false;
         }
       },
       ast.StmtMatch(mm) => {
         var a: i32 = 0;
         while (a < mm.arms.len()) {
-          if (!iife_arms_all_marked(mm.arms[a].body)) {
+          if (!iife_arms_all_marked(mm.arms[a].body, mfuncs)) {
             return false;
           }
           a = a + 1;

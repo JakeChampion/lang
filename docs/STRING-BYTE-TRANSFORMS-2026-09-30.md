@@ -23,9 +23,11 @@ forward/backward search tests and migrated stdlib example tests also pass.
 
 `StringConcatCopySearchProgram` builds runtime concatenations across the
 inline capacity boundaries, checks owned copies and searches, and exercises
-Unicode inputs. Native x86/ARM and both primary lowering modes on x86/ARM/WASI
-have balanced allocation censuses. The same program also passes native and
-primary macOS ARM, bootstrap wasm and both interpreters.
+Unicode inputs. Bootstrap native x86/ARM and primary semantic lowering on
+x86/ARM/WASI have balanced allocation censuses. The same program also passes
+native and primary macOS ARM, bootstrap wasm and both interpreters. Legacy
+AST lowering checks behavior and sanitization, with the ownership limitation
+recorded below.
 
 ## Initial native measurements
 
@@ -144,13 +146,13 @@ The direct short-search path adds no allocation and bounds each candidate
 to four comparisons. The earlier unnecessary general-split linkage remains
 removed.
 
-The three exhausted driver rows are refreshed to measured current-main
+At that revision, the three exhausted driver rows were refreshed to measured main
 values, before this PR's changes: `asm_modload_run` 9,919,592 bytes,
 `asm_pathprobe_run` 5,753,648 bytes, and `irlower_run` 5,579,056 bytes.
 The modload main measurement already equals the failing CI measurement;
 this PR contributed none of that breach. IR lowering had only 845 bytes
 left under its old ceiling. The PR's costs remain visible against the new
-main-only baselines. Other rows and the 5% tolerance are unchanged.
+main-only baselines. Other rows and the 5% tolerance were unchanged.
 
 The final CI-equivalent `TestSelfHostWarmStockDriver` run smoke-executed all
 three drivers and passed the strict size check:
@@ -216,3 +218,44 @@ For the runtime case, the same loop searches `"abc" + args()[1]` for
 `args()[3] + "d"`, with arguments `édef`, the round count, and `é`.
 Both search directions must return byte offset 3. The literal case alone
 would not establish the behavior of strings constructed at runtime.
+
+## Integration with October 1 main
+
+The merge of `dc1c405fe` takes the driver-size baseline file exactly as
+published on main, superseding the earlier three-row refresh above. This
+merge adds no PR-specific size adjustment. The earlier measurements remain
+the record for their source revisions; the merged drivers are checked
+against main's newer baselines.
+
+The wasm module-loader test keeps the linked dyn-view execution and
+bare-view closure refusal cases. It also retains main's recursive-enum
+refusal, which diagnoses a type with no finite ownership copy.
+
+The merged driver smoke tests and strict size comparison pass for the
+three previously exhausted rows:
+
+| Driver | Main baseline | Merged candidate |
+|---|---:|---:|
+| `asm_modload_run.fern` | 9,922,264 | 9,925,360 |
+| `asm_pathprobe_run.fern` | 5,753,440 | 5,756,696 |
+| `irlower_run.fern` | 5,578,848 | 5,582,104 |
+
+This local report covers three of the thirteen drivers; CI checks the full
+set. The full wasm module-loader suite passes, as does the additional
+bare-view closure refusal check.
+
+The lowering-mode audit found that `FERN_SEM_IR=0` enables semantic IR:
+only an empty value disables it. The earlier pair of `0`/`1` census runs
+therefore tested semantic lowering twice. The corrected tests retain the
+strict semantic census and add actual AST behavior and sanitizer coverage.
+They do not claim balanced AST ownership.
+
+With the identical concatenation/copy/search program on ARM64 macOS, main
+`dc1c405fe` records 18,009 allocations, 16,207 frees and 70,960 live bytes;
+the merged candidate records 12,009 allocations, 10,207 frees and the same
+70,960 live bytes. Both retain 1,802 allocations and exit successfully.
+The candidate's x86/ARM Linux AST runs also retain 70,960 bytes; WASI
+retains 48,544 bytes in the same 1,802 allocations. This is existing legacy
+ownership debt under #4451, not a leak fixed by this string change. No AST
+ownership heuristic was added. Semantic censuses remain balanced on all
+four targets.

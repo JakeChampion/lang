@@ -36,18 +36,30 @@ func TestSelfHostStringTransformInvolutionDoesNotLeak(t *testing.T) {
 }
 
 func TestSelfHostStringConcatCopySearchDoesNotLeak(t *testing.T) {
+	testSelfHostStringConcatCopySearch(t, "1")
+}
+
+func TestSelfHostStringConcatCopySearchLegacyAST(t *testing.T) {
+	// Empty selects legacy AST lowering; "0" also enables semantic IR.
+	// Main already leaks in this scenario through legacy ownership (#4451).
+	// Exercise behavior and sanitization here, with strict census above.
+	testSelfHostStringConcatCopySearch(t, "")
+}
+
+func testSelfHostStringConcatCopySearch(t *testing.T, mode string) {
+	t.Helper()
 	cli := buildSelfHostCLI(t)
-	for _, mode := range []string{"0", "1"} {
-		for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
-			t.Run("typed="+mode+"/"+target, func(t *testing.T) {
-				stderr, code := cli.exitOf(t, e2eharness.StringConcatCopySearchProgram, target,
-					"FERN_SEM_IR="+mode, "FERN_SEM_IR_STRICT="+mode, "FERN_SEM_IR_ONLY=", "FERN_SEM_IR_SKIP=",
-					"FERN_STRICT_IR=1", "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
-				if code != 0 {
-					t.Fatalf("exit = %d\n%s", code, stderr)
-				}
+	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
+		t.Run("typed="+mode+"/"+target, func(t *testing.T) {
+			stderr, code := cli.exitOf(t, e2eharness.StringConcatCopySearchProgram, target,
+				"FERN_SEM_IR="+mode, "FERN_SEM_IR_STRICT="+mode, "FERN_SEM_IR_ONLY=", "FERN_SEM_IR_SKIP=",
+				"FERN_STRICT_IR=1", "FERN_SANITIZE=1", "FERN_LEAKCHECK="+mode)
+			if code != 0 {
+				t.Fatalf("exit = %d\n%s", code, stderr)
+			}
+			if mode != "" {
 				assertBalancedCensus(t, stderr)
-			})
-		}
+			}
+		})
 	}
 }

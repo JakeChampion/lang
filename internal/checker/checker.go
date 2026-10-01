@@ -16266,6 +16266,15 @@ func callSiteName(fn *ast.FuncDecl) (display, spelling string) {
 	return display, "." + fn.MethodSimpleName
 }
 
+// boundParams is the set of type parameters sub binds.
+func boundParams(sub map[string]ast.Type) map[string]bool {
+	out := make(map[string]bool, len(sub))
+	for name := range sub {
+		out[name] = true
+	}
+	return out
+}
+
 // containsParamType reports whether t (or any of its component
 // types) is a still-unresolved generic ParamType. Used to flag
 // failed `use`-callback inference: a substitution that leaves a
@@ -18982,6 +18991,17 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			// instead of its own field type `Box[i32]`, mis-typing it.
 			savedExpected := c.expectedType
 			c.expectedType = fieldExpected
+			// A struct literal in a field spelled with one of this literal's
+			// parameters that nothing has bound yet infers its own arguments:
+			// `Box { v: 4 }` in `Outer { b: … }` (#10895) would otherwise take
+			// Outer's unbound `T` as one. Any other value keeps the
+			// destination, which is all a generic call returning `A[]` has to
+			// infer `A` from.
+			if _, lit := f.Value.(*ast.StructLit); lit && sub != nil {
+				if _, unbound := paramTypeNotIn(expected, boundParams(sub)); unbound {
+					c.expectedType = nil
+				}
+			}
 			vt := c.checkExpr(f.Value, s)
 			c.expectedType = savedExpected
 			if vt == nil {

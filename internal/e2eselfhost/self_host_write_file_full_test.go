@@ -43,7 +43,7 @@ func TestSelfHostWriteFileReportsFullDevice(t *testing.T) {
 	}
 	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
 		t.Run(target, func(t *testing.T) {
-			if got, report, _ := semCompileRun(t, gcc, runner, fernBin, stdlibRoot, src, target, true, "", ""); got != "0|err\n" {
+			if got, report, _ := semCompileRun(t, gcc, runner, fernBin, stdlibRoot, src, target, true, ""); got != "0|err\n" {
 				t.Fatalf("answered %q, want %q\nreport: %s", got, "0|err\n", report)
 			}
 		})

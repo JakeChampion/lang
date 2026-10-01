@@ -1767,8 +1767,26 @@ func builtinTcpSocketCtl(i *Interp, args []Value) (Value, error) {
 	if !ok {
 		return nil, fmt.Errorf("tcp_socket_ctl: expected number arg, got %T", args[2])
 	}
-	if op < 1 || op > 8 {
+	if op < 1 || op > 9 {
 		return Number(-22), nil
+	}
+	if op == 9 {
+		if r, ok := i.udpSocketCtl(int64(id), int64(op), int64(arg)); ok {
+			return r, nil
+		}
+		var addr net.Addr
+		if ln, ok := i.tcpListeners[int64(id)]; ok {
+			addr = ln.Addr()
+		} else if conn, ok := i.tcpConns[int64(id)]; ok {
+			addr = conn.LocalAddr()
+		} else {
+			return Number(-1), nil
+		}
+		ta, ok := addr.(*net.TCPAddr)
+		if !ok {
+			return Number(-int64(syscall.EAFNOSUPPORT)), nil
+		}
+		return localGroup(ta.IP, int64(arg)), nil
 	}
 	if op == 8 {
 		fd, ok := i.rawFd(int64(id))
@@ -1841,6 +1859,32 @@ func builtinTcpSocketCtl(i *Interp, args []Value) (Value, error) {
 		return Number(-1), nil
 	}
 	return Number(0), nil
+}
+
+// localGroup is control op 9's answer for a socket bound to ip: group
+// `which` (0..7) of the address in network order, an IPv4 address filling
+// groups 0 and 1, or 4 or 6 for `which` 8; -EINVAL outside that range.
+func localGroup(ip net.IP, which int64) Value {
+	if which < 0 || which > 8 {
+		return Number(-int64(syscall.EINVAL))
+	}
+	if v4 := ip.To4(); v4 != nil {
+		if which == 8 {
+			return Number(4)
+		}
+		if which < 2 {
+			return Number(int64(v4[2*which])<<8 | int64(v4[2*which+1]))
+		}
+		return Number(0)
+	}
+	v6 := ip.To16()
+	if v6 == nil {
+		return Number(-int64(syscall.EAFNOSUPPORT))
+	}
+	if which == 8 {
+		return Number(6)
+	}
+	return Number(int64(v6[2*which])<<8 | int64(v6[2*which+1]))
 }
 
 // builtinWasmPollableDrop is the interpreter's `wasm_pollable_drop(p)` — a

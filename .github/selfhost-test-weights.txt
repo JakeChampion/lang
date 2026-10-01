@@ -563,7 +563,7 @@ TestSelfHostSaturatingWasmIR 2
 TestSelfHostSaturatingX86IR 2
 TestSelfHostScaleMapX86_64 3
 TestSelfHostSelfrefStructIR 2
-TestSelfHostSemanticAllocationParity 2
+TestSelfHostSemanticAllocationCounts 2
 TestSelfHostSemanticFileHandles 2
 TestSelfHostSemanticHandleTty 2
 TestSelfHostSemanticProduction 188

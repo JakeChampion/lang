@@ -249,7 +249,7 @@ function main(): i32 { return g(3) + g(0); }
 
 	// A closure capturing a bare view still has no owned environment copy.
 	// This pins the strict driver's refusal rather than a now-supported case.
-	t.Run("strict_refusal_fails_the_emit", func(t *testing.T) {
+	t.Run("bare_view_closure_refusal_fails_the_emit", func(t *testing.T) {
 		proj := t.TempDir()
 		entry := filepath.Join(proj, "main.fern")
 		write(t, entry, `function viewer(n: i32): () => i32 {
@@ -266,6 +266,41 @@ function main(): i32 { var f: () => i32 = viewer(3); return f(); }
 			t.Fatalf("strict emit: exit %d, want 3 naming the refusal\n%s", code, se)
 		}
 		if _, se, code := drive(t, entry, []string{"FERN_SEM_IR=1", "FERN_SEM_IR_STRICT=", "FERN_SEM_IR_ONLY=", "FERN_SEM_IR_SKIP="}, "-per-module-emit", "0"); code != 0 {
+			t.Fatalf("the same without strict: exit %d, want the AST lowering's emit\n%s", code, se)
+		}
+	})
+
+	// A type that holds itself, merged past its source, has no copy and is a
+	// typed refusal by name (TestSelfHostSemIRStrict); a dyn holding a view
+	// is copied at the merge since #10909.
+	t.Run("strict_refusal_fails_the_emit", func(t *testing.T) {
+		proj := t.TempDir()
+		entry := filepath.Join(proj, "main.fern")
+		write(t, entry, `import "std/i32";
+enum L { Cons(str, L), Nil }
+function mk(n: i32): string {
+    var s: string = "ab";
+    var i: i32 = 0;
+    while (i < n) { s = s + "c"; i = i + 1; }
+    return s;
+}
+function two(s: string): L { return Cons(slice_unchecked(s, 0, 1), Cons(slice_unchecked(s, 1, 3), Nil)); }
+function count(l: L): i32 { match (l) { Cons(h, t) => { return h.len() + count(t); }, Nil => { return 0; } } return 0; }
+function g(n: i32): i32 {
+    var l: L = Nil;
+    if (n != 0) {
+        var s: string = mk(n);
+        l = two(s);
+    }
+    return count(l);
+}
+function main(): i32 { return g(3) + g(0); }
+`)
+		_, se, code := drive(t, entry, []string{"FERN_SEM_IR_STRICT=1"}, "-per-module-emit", "0")
+		if code != 3 || !strings.Contains(se, "FERN_SEM_IR: g: a value merged past its source has no copy: L holds itself, so its copy would recurse") {
+			t.Fatalf("strict emit: exit %d, want 3 naming the refusal\n%s", code, se)
+		}
+		if _, se, code := drive(t, entry, []string{"FERN_SEM_IR_STRICT="}, "-per-module-emit", "0"); code != 0 {
 			t.Fatalf("the same without strict: exit %d, want the AST lowering's emit\n%s", code, se)
 		}
 	})
