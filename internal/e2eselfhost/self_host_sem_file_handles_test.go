@@ -107,7 +107,7 @@ func TestSelfHostSemanticFileHandles(t *testing.T) {
 		if err := os.WriteFile(src, []byte(selfHostSemFileHandleSource(base)), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		got, report, _ := semCompileRun(t, gcc, runner, fernBin, stdlibRoot, src, "x86-64-linux", sem, "", "")
+		got, report, _ := semCompileRun(t, gcc, runner, fernBin, stdlibRoot, src, "x86-64-linux", sem, "")
 		if !sem {
 			if got != "0|" {
 				t.Fatalf("the AST lowering answered %q, want %q", got, "0|")
