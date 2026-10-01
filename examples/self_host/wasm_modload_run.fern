@@ -223,10 +223,10 @@ function write_cached(cf: string, ns: string, obj: wasm_objfile.UnitObj): void {
   if (cf.len() == 0) {
     return;
   }
-  eprint("cache-miss " + ns + "\n");
+  eprint("cache-miss " + ns);
   match (write_file(cf, wasm_objfile.encode(obj))) {
     Err(werr) => {
-      eprint("wasm per-module: cache write failed for " + ns + "\n");
+      eprint("wasm per-module: cache write failed for " + ns);
     },
     Ok(_) => {}
   }
@@ -268,10 +268,10 @@ function read_cached(cf: string, ns: string): wasm_objfile.MaybeUnit {
         // decode reads its sections positionally, so a stale file would
         // yield a wrong-but-plausible unit rather than an error.
         if (!wasm_objfile.is_current(cached)) {
-          eprint("cache-stale " + ns + "\n");
+          eprint("cache-stale " + ns);
           return wasm_objfile.MaybeUnit { found: false, obj: wasm_objfile.empty_unit() };
         }
-        eprint("cache-hit " + ns + "\n");
+        eprint("cache-hit " + ns);
         return wasm_objfile.MaybeUnit { found: true, obj: wasm_objfile.decode(cached) };
       },
       Err(e) => {}
@@ -295,7 +295,7 @@ function read_plan(plan_file: string, nmods: i32): ShardRef[] {
     },
     Err(e) => {}
   }
-  eprint("wasm_modload_run: could not read plan " + plan_file + "\n");
+  eprint("wasm_modload_run: could not read plan " + plan_file);
   exit(1);
   return [];
 }
@@ -329,8 +329,8 @@ function link_missing(l: Linked): boolean {
   if (l.missing.len() == 0) {
     return false;
   }
-  eprint("wasm -link: no cached object for:" + l.missing + "\n");
-  eprint("  emit each with `-per-module-emit N -cache-dir DIR`, or the plan with `-per-module-emit-all`, first.\n");
+  eprint("wasm -link: no cached object for:" + l.missing);
+  eprint("  emit each with `-per-module-emit N -cache-dir DIR`, or the plan with `-per-module-emit-all`, first.");
   return true;
 }
 
@@ -565,7 +565,7 @@ function run_typed(dir: string, entry_path: string, entry: parser.Module, loaded
     return 0;
   }
   if (pm_index < 0 || pm_index >= parts.len()) {
-    eprint("wasm per-module: emit index out of range\n");
+    eprint("wasm per-module: emit index out of range");
     return 1;
   }
   write(wasm_objfile.encode(typed_obj(dir, entry_path, parts, tv, whole, ShardRef { idx: pm_index, lo: pm_lo, hi: pm_hi }, cache_dir)));
@@ -690,7 +690,7 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
   }
 
   if (pm_index < 0 || pm_index >= parts.len()) {
-    eprint("wasm per-module: emit index out of range\n");
+    eprint("wasm per-module: emit index out of range");
     return 1;
   }
 
@@ -748,11 +748,11 @@ function main(): i32 {
     ai = ai + 1;
   }
   if (entry_path == "" || pm_mode == "") {
-    eprint("usage: wasm_modload_run <entry.fern> [-per-module-count | -per-module-manifest | -per-module-func-counts | -per-module-emit N [-func-range LO:HI] | -per-module-emit-all [-plan FILE] | -link [-plan FILE]] [-cache-dir DIR]\n");
+    eprint("usage: wasm_modload_run <entry.fern> [-per-module-count | -per-module-manifest | -per-module-func-counts | -per-module-emit N [-func-range LO:HI] | -per-module-emit-all [-plan FILE] | -link [-plan FILE]] [-cache-dir DIR]");
     return 2;
   }
   if (pm_mode == "emit-all" && cache_dir == "") {
-    eprint("wasm_modload_run: -per-module-emit-all writes the cache, so it needs -cache-dir\n");
+    eprint("wasm_modload_run: -per-module-emit-all writes the cache, so it needs -cache-dir");
     return 2;
   }
   var dir: string = modloader.dirname(entry_path);
@@ -770,7 +770,7 @@ function main(): i32 {
       return run_per_module(dir, entry_path, entry, loaded, pm_mode, pm_index, pm_lo, pm_hi, cache_dir, plan_file);
     },
     Err(e) => {
-      eprint("wasm_modload_run: could not read entry file\n");
+      eprint("wasm_modload_run: could not read entry file");
       return 1;
     }
   }

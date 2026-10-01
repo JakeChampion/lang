@@ -50,7 +50,7 @@ function rebuild(cache: irlower.LowerResult[]): Rebuilt {
 function rebuilt(sub: ircore.Sub): ircore.Sub {
   var rb: Rebuilt = rebuild(sub.bodies);
   var rx: Rebuilt = rebuild(sub.extra);
-  eprint("rebuilt i64=" + util.i32_to_string(rb.i64s + rx.i64s) + " f64=" + util.i32_to_string(rb.f64s + rx.f64s) + "\n");
+  eprint("rebuilt i64=" + util.i32_to_string(rb.i64s + rx.i64s) + " f64=" + util.i32_to_string(rb.f64s + rx.f64s));
   return ircore.Sub { ...sub, bodies: rb.cache, extra: rx.cache };
 }
 
@@ -68,7 +68,7 @@ function bits_round_trip(): boolean {
 
 function main(): i32 {
   if (!bits_round_trip()) {
-    eprint("ir_const_numeric_run: a numeric constant did not keep its bits\n");
+    eprint("ir_const_numeric_run: a numeric constant did not keep its bits");
     return 3;
   }
   var av: string[] = args();
@@ -82,7 +82,7 @@ function main(): i32 {
   }
   var d: semlower.Driven = semlower.driven(mod, target);
   if (!d.sub.on) {
-    eprint("ir_const_numeric_run: the typed lowering did not produce the module\n");
+    eprint("ir_const_numeric_run: the typed lowering did not produce the module");
     return 1;
   }
   var sub: ircore.Sub = rebuilt(d.sub);

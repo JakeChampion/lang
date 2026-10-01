@@ -125,7 +125,7 @@ function main(): i32 {
   var r: i32 = 0;
   while (r < reg.len()) {
     if (!caps.classified(reg[r])) {
-      eprint("caps: unclassified builtin: " + reg[r] + "\n");
+      eprint("caps: unclassified builtin: " + reg[r]);
       return 7;
     }
     r = r + 1;

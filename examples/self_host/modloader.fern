@@ -100,20 +100,10 @@ pub function read_error_reason(e: IoError): string {
     NotFound(_) => {
       return "";
     },
-    PermissionDenied(_) => {
-      return "permission denied";
-    },
-    InvalidUtf8(_) => {
-      return "invalid UTF-8";
-    },
-    Other(_, msg) => {
-      return msg;
-    },
     _ => {
-      return "read failed";
+      return util.io_error_reason(e);
     }
   }
-  return "read failed";
 }
 
 // Resolved is a module's source together with the DIRECTORY it was read

@@ -166,12 +166,12 @@ pub function warn_unresolved_imports(mod: Module, driver: string): boolean {
     paths = paths + "\"" + mod.imports[i].path + "\"";
     i = i + 1;
   }
-  eprint("warning: " + driver + " has no module loader; UNRESOLVED imports: " + paths + "\n");
-  eprint("warning: any verdict below (ir/refused, exit code, eligibility bail) describes a BROKEN program, not the language.\n");
-  eprint("warning: to judge this program use a loading driver: `fern <prog> <stdlib-root>`, or asm_load_run.\n");
+  eprint("warning: " + driver + " has no module loader; UNRESOLVED imports: " + paths);
+  eprint("warning: any verdict below (ir/refused, exit code, eligibility bail) describes a BROKEN program, not the language.");
+  eprint("warning: to judge this program use a loading driver: `fern <prog> <stdlib-root>`, or asm_load_run.");
   match (env("FERN_STRICT_IMPORTS")) {
     Some(_) => {
-      eprint("error: FERN_STRICT_IMPORTS=1 refuses an unresolvable-import run\n");
+      eprint("error: FERN_STRICT_IMPORTS=1 refuses an unresolvable-import run");
       exit(3);
     },
     None => {}

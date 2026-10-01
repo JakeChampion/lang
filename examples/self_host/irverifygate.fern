@@ -112,7 +112,7 @@ pub function verify_or_refuse(fn_name: string, ops: ir.Op[], n_params: i32, n_lo
     return 0;
   }
   eprint("FERN_IR_VERIFY: " + fn_name + " lowered to malformed IR (#6639):"
-    + irverify.format_problems(ps, 20) + "\n");
+    + irverify.format_problems(ps, 20));
   exit(4);
   return 0;
 }
