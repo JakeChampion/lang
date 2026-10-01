@@ -1191,6 +1191,29 @@ function drain_leading(f: Fmt, line: i32, depth: i32): (string, Fmt) {
   return (out, g);
 }
 
+// drain_decl_leading is drain_leading for a top-level declaration, keeping a
+// blank line the source had between two of its comments or after the last
+// one: a section header stays apart from the doc comment below it.
+function drain_decl_leading(f: Fmt, line: i32): (string, Fmt) {
+  var chunks: string[] = [];
+  var g: Fmt = f;
+  var last: i32 = 0;
+  while (g.ci < g.comments.len() && g.comments[g.ci].line < line) {
+    if (last > 0 && g.blank_at(g.comments[g.ci].line - 1)) {
+      chunks = chunks.append("\n");
+    }
+    last = g.comments[g.ci].line;
+    chunks = chunks.append("//" + g.comments[g.ci].text + "\n");
+    g = Fmt { ...g, ci: g.ci + 1 };
+  }
+  // The line after the last comment, not the one above `line`: an attribute
+  // can sit between them.
+  if (last > 0 && g.blank_at(last + 1)) {
+    chunks = chunks.append("\n");
+  }
+  return (util.str_join_chunks(chunks), g);
+}
+
 // emit_trailing emits a comment sharing the source line of the statement just
 // written — `putchar(70);  // F`. No newline: the caller's line break follows.
 function emit_trailing(f: Fmt, line: i32): (string, Fmt) {
@@ -3695,22 +3718,11 @@ function format_module_with_inline(mod: parser.Module, traits: parser.TraitDecl[
   // the only reads of the partial string.
   var chunks: string[] = [];
   var wrote: boolean = false;
-  // Imports cluster at the top with no blank between them.
-  var ii: i32 = 0;
-  while (ii < mod.imports.len()) {
-    if (mod.imports[ii].line > 0) {
-      let (ilead, fi2) = drain_leading(f, mod.imports[ii].line, 0);
-      chunks = chunks.append(ilead);
-      wrote = true;
-      f = fi2;
-    }
-    chunks = chunks.append(print_import(mod.imports[ii]));
-    wrote = true;
-    ii = ii + 1;
-  }
   // The declarations to emit, as (kind, index) pairs ordered by source line.
   // kind 0 = struct, 1 = enum (at its first variant's position), 2 = alias,
-  // 3 = function/const.
+  // 3 = function/const, 4 = trait, 5 = impl, 6 = import or `pub use`.
+  // Imports stay where they were written: hoisting one drained the comments
+  // of every declaration above it into the import block (#10870).
   //
   // An enum is desugared into one variant struct per variant, so it is
   // reconstructed at the position its FIRST variant occupies and its
@@ -3722,6 +3734,13 @@ function format_module_with_inline(mod: parser.Module, traits: parser.TraitDecl[
   var kinds: i32[] = [];
   var idxs: i32[] = [];
   var lines: i32[] = [];
+  var ii: i32 = 0;
+  while (ii < mod.imports.len()) {
+    kinds = kinds.append(6);
+    idxs = idxs.append(ii);
+    lines = lines.append(mod.imports[ii].line);
+    ii = ii + 1;
+  }
   var i: i32 = 0;
   while (i < mod.structs.len()) {
     var owner: string = mod.structs[i].enum_owner;
@@ -3815,19 +3834,20 @@ function format_module_with_inline(mod: parser.Module, traits: parser.TraitDecl[
   var di: i32 = 0;
   while (di < kinds.len()) {
     var dline: i32 = lines[di];
-    if (wrote) {
-      if (f.blank_before(dline) || di > 0 || mod.imports.len() > 0) {
-        chunks = chunks.append("\n");
-        wrote = true;
-      }
+    // Consecutive imports cluster with no blank between them.
+    if (di > 0 && !(kinds[di] == 6 && kinds[di - 1] == 6)) {
+      chunks = chunks.append("\n");
     }
     if (dline > 0) {
-      let (lead, fl) = drain_leading(f, dline, 0);
+      let (lead, fl) = drain_decl_leading(f, dline);
       chunks = chunks.append(lead);
       wrote = true;
       f = fl;
     }
-    if (kinds[di] == 0) {
+    if (kinds[di] == 6) {
+      chunks = chunks.append(print_import(mod.imports[idxs[di]]));
+      wrote = true;
+    } else if (kinds[di] == 0) {
       let (stext, sf2) = print_struct_decl(mod.structs[idxs[di]], flines, f);
       chunks = chunks.append(stext);
       wrote = true;
