@@ -190,25 +190,36 @@ function main(): i32 {
 		}
 	})
 
-	// A generic over an unspelled function value is a typed refusal
+	// A dyn holding a view merged past its source is a typed refusal
 	// (TestSelfHostSemIRStrict).
 	t.Run("strict_refusal_fails_the_emit", func(t *testing.T) {
 		proj := t.TempDir()
 		entry := filepath.Join(proj, "main.fern")
-		write(t, entry, `struct Slot[T] { v: T }
-
-pub function hold[T](f: () => T): i32 {
-    var c: Slot[T] = Slot[T] { v: f() };
-    return 1;
+		write(t, entry, `trait Size { function size(self: Self): i32; }
+struct P { a: str }
+impl Size for P { function size(self: P): i32 { return self.a.len() * 10 + (self.a[0] as i32) - 97; } }
+function mk(n: i32): string {
+    var s: string = "ab";
+    var i: i32 = 0;
+    while (i < n) { s = s + "c"; i = i + 1; }
+    return s;
 }
-
-function main(): i32 {
-    var fs: (() => i32)[] = [(): i32 => 7];
-    return hold(fs[0]) + hold((): string => "x");
+function wrap(s: string): dyn Size { var p: P = P { a: slice_unchecked(s, 1, 4) }; return p; }
+function g(n: i32): i32 {
+    var d: dyn Size = P { a: "q" };
+    if (n != 0) {
+        var s: string = mk(n);
+        d = wrap(s);
+    }
+    var junk: string[] = [];
+    var i: i32 = 0;
+    while (i < 50) { junk = junk.append("zz"); i = i + 1; }
+    return d.size();
 }
+function main(): i32 { return g(3) + g(0); }
 `)
 		_, se, code := drive(t, entry, []string{"FERN_SEM_IR_STRICT=1"}, "-per-module-emit", "0")
-		if code != 3 || !strings.Contains(se, "FERN_SEM_IR: hold$i32: record field type") {
+		if code != 3 || !strings.Contains(se, "FERN_SEM_IR: g: produced graph fails semantic verification: dependency unavailable at use") {
 			t.Fatalf("strict emit: exit %d, want 3 naming the refusal\n%s", code, se)
 		}
 		if _, se, code := drive(t, entry, []string{"FERN_SEM_IR_STRICT="}, "-per-module-emit", "0"); code != 0 {
