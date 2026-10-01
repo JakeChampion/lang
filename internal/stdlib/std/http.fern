@@ -37,6 +37,7 @@ import "std/json";
 import "std/stream";
 import "std/error";
 import "std/platform";
+import "std/utf8" as utf8;
 
 // `http_status_text(code)` — IANA reason phrase for the
 // common HTTP status codes (RFC 9110). Returns "" for
@@ -313,11 +314,13 @@ impl ToResponse for string {
 //
 // `body_json[T](req)` decodes a request's body as a `T` that implements
 // `json.FromJson` (`@derive(json.FromJson)` on a struct), and tells the
-// three failures apart so each answers with its own status: a media type
-// that is not JSON (`UnsupportedMediaType`, 415), a body that is not JSON
-// (`MalformedJson`, 400, with where the text broke), and JSON of the wrong
-// shape (`WrongShape`, 422, naming the field). `BodyError` is `ToResponse`,
-// so a handler declared as `Result[HttpResponse, BodyError]` fails with `?`:
+// four failures apart so each answers with its own status: a media type
+// that is not JSON (`UnsupportedMediaType`, 415), a body that is not
+// text (`NotUtf8`, 400 — the error `body_string` carries too), a body
+// that is not JSON (`MalformedJson`, 400, with where the text broke), and
+// JSON of the wrong shape (`WrongShape`, 422, naming the field).
+// `BodyError` is `ToResponse`, so a handler declared as
+// `Result[HttpResponse, BodyError]` fails with `?`:
 //
 //     function handle(req: HttpRequest, plat: Platform): Result[HttpResponse, http.BodyError] {
 //         var item: Item = http.body_json[Item](req)?;
@@ -332,11 +335,15 @@ pub enum BodyError {
   UnsupportedMediaType(string),
   MalformedJson(json.JsonError),
   WrongShape(string),
+  NotUtf8,
 }
 
 impl ToResponse for BodyError {
   function to_response(self: BodyError): HttpResponse {
     match (self) {
+      NotUtf8 => {
+        return problem(400, "", "body is not valid UTF-8");
+      },
       UnsupportedMediaType(ct) => {
         if (ct.len() == 0) {
           return problem(415, "", "expected a Content-Type of application/json");
@@ -365,7 +372,8 @@ pub function body_json[T: json.FromJson](req: HttpRequest): Result[T, BodyError]
       return Err(UnsupportedMediaType(""));
     }
   }
-  match (json.json_parse_result(req.body_string())) {
+  var text: string = req.body_string()?;
+  match (json.json_parse_result(text)) {
     Ok(v) => {
       match (T.from_json_value(v)) {
         Ok(t) => {
@@ -645,7 +653,7 @@ function __field_value(buf: u8[], from: i32, end: i32): Option[string] {
     }
     i = i + 1;
   }
-  return Some(__bytes_string(buf, from, end));
+  return utf8.from_bytes(__bytes_range(buf, from, end));
 }
 
 // `__parse_header_bytes(buf, from, end)` — the CRLF-separated header
@@ -655,9 +663,11 @@ function __field_value(buf: u8[], from: i32, end: i32): Option[string] {
 // colon — a `Content-Length : 5` dropped instead would strand its body
 // for the next pipelined parse — or starting with the SP or HTAB of
 // obs-fold, §5.2) or a value holding a control byte other than HTAB
-// (RFC 9110 §5.5), 431 for more fields than the cap. Names are
-// case-folded by HeaderMap.append; a value loses the SP and HTAB around
-// it (`__field_value`).
+// or bytes that are not well-formed UTF-8 (RFC 9110 §5.5 leaves
+// obs-text opaque; a `string` is text, so the octets have to spell
+// some), 431 for more fields than the cap. Names are case-folded by
+// HeaderMap.append; a value loses the SP and HTAB around it
+// (`__field_value`).
 function __parse_header_bytes(buf: u8[], from: i32, end: i32, fields: i32): Result[HeaderMap, i32] {
   var h: HeaderMap = headers.header_map_new();
   var count: i32 = 0;
@@ -1618,7 +1628,9 @@ function __pct_byte(s: string, at: i32, end: i32): i32 {
 
 // `__decoded_path(s, from, end)` — s[from, end), which starts with `/`,
 // decoded once and with its dot segments removed, or the status refusing
-// it.
+// it: a byte the grammar does not admit, an escape of `/` or NUL, dot
+// segments climbing above the root, or escapes that decode to ill-formed
+// UTF-8.
 function __decoded_path(s: string, from: i32, end: i32): Result[string, i32] {
   if (end <= from) {
     return Ok("/");
@@ -1640,6 +1652,11 @@ function __decoded_path(s: string, from: i32, end: i32): Result[string, i32] {
       i = i + 1;
     }
     out = out.append(b as u8);
+  }
+  // Only an escape can put a non-ASCII byte here (`__is_pchar` refuses a
+  // raw one), and a sequence of them has to spell UTF-8 (RFC 3987 §3.1).
+  if (!utf8.is_valid_utf8(string_from_bytes_unchecked(out))) {
+    return Err(400);
   }
   return __without_dot_segments(out);
 }
@@ -1951,10 +1968,23 @@ pub function (r: HttpRequest) body_stream(): Stream {
   return r.body;
 }
 
-// `(r: HttpRequest).body_string()` — the whole body as a
-// UTF-8 string, cursor position ignored.
-pub function (r: HttpRequest) body_string(): string {
-  return string_from_bytes_unchecked(r.body.data);
+// `(r: HttpRequest).body_string()` — the whole body as text, cursor
+// position ignored, or `Err(NotUtf8)` when its bytes are not
+// well-formed UTF-8. The body is the sender's bytes, so this is the
+// boundary D9 (docs/STRINGS-SOTA.md) checks at; the error is
+// `ToResponse` (400), so a handler declared `Result[HttpResponse,
+// BodyError]` takes the text with `?`, and `body_bytes` is the body as
+// it came.
+pub function (r: HttpRequest) body_string(): Result[string, BodyError] {
+  match (utf8.from_bytes(r.body.data)) {
+    Some(s) => {
+      return Ok(s);
+    },
+    None => {
+      return Err(NotUtf8);
+    }
+  }
+  return Err(NotUtf8);
 }
 
 // `(r: HttpRequest).body_bytes()` — the whole body as a u8
@@ -1972,8 +2002,11 @@ pub function (r: HttpRequest) body_len(): i32 {
 }
 
 // `(r: HttpResponse).body_string()` — the body as text, whichever
-// `Body` holds it: the text itself, the bytes or the Stream's remainder
-// read as UTF-8 unchecked, or every chunk the producer answers, joined.
+// `Body` holds it: the text itself, the bytes or the Stream's remainder,
+// or every chunk the producer answers, joined. The byte-domain bodies
+// are the program's own bytes and this reader has no error channel, so
+// an ill-formed sequence reads as U+FFFD; `body_bytes` is the body as
+// it is.
 // A `BodyFile` answers "" here: the file is streamed by the serve loop
 // as the response is written, never read by code a handler reaches,
 // since a handler's host effects go through its `Platform` bag (E080).
@@ -1984,18 +2017,18 @@ pub function (r: HttpResponse) body_string(): string {
       return s;
     },
     BodyBytes(bs) => {
-      return string_from_bytes_unchecked(bs);
+      return utf8.from_bytes_lossy(bs);
     },
     BodyStream(st) => {
       var rest: (u8[], Stream) = st.read_all();
-      return string_from_bytes_unchecked(rest.0);
+      return utf8.from_bytes_lossy(rest.0);
     },
     BodyFile(path) => {
       return "";
     },
     BodyChunks(producer) => {
       var joined: u8[] = __chunks_joined(producer);
-      return string_from_bytes_unchecked(joined);
+      return utf8.from_bytes_lossy(joined);
     }
   }
   return "";

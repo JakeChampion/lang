@@ -1761,7 +1761,10 @@ function main(): i32 {
     var wire: string = "POST /upload HTTP/1.1\r\nHost: h\r\nContent-Length: 11\r\n\r\nhello world";
     match (http.http_parse_request(wire)) {
         Some(req) => {
-            if (req.body_string() != "hello world") { return 1; }
+            match (req.body_string()) {
+                Ok(text) => { if (text != "hello world") { return 1; } },
+                Err(e) => { return 5; }
+            }
             if (req.body_len() != 11) { return 2; }
             var bs: u8[] = req.body_bytes();
             if (bs.len() != 11) { return 3; }

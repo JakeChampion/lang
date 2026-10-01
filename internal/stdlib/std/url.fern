@@ -27,6 +27,7 @@
 // Phase 5).
 
 import "core/map";
+import "std/utf8" as utf8;
 
 function __url_unreserved(b: i32): boolean {
   if (b >= 65 && b <= 90) {  // A-Z
@@ -102,10 +103,21 @@ pub function url_encode(s: string): string {
   return string_from_bytes_unchecked(buf);
 }
 
+// `url_decode(s)` — `s` with every `%XX` folded to the byte it names.
+// A `%` not followed by two hex digits passes through as itself. The
+// bytes are text: an escape sequence that does not spell well-formed
+// UTF-8 (`%FF`, a lone `%C3`) decodes to U+FFFD per ill-formed unit, as
+// the WHATWG URL parser decodes it; `url_decode_bytes` is the same fold
+// handing back the bytes.
 pub function url_decode(s: string): string {
+  return utf8.from_bytes_lossy(url_decode_bytes(s));
+}
+
+// `url_decode_bytes(s)` — the bytes `url_decode` reads as text.
+pub function url_decode_bytes(s: string): u8[] {
   var n: i32 = s.len();
   if (n == 0) {
-    return "";
+    return [];
   }
   // Decoded output is at most n bytes; count the exact length (each
   // valid `%XX` folds 3 input bytes to 1) then fill one buffer — O(n)
@@ -136,17 +148,23 @@ pub function url_decode(s: string): string {
     }
     pos = pos + 1;
   }
-  return string_from_bytes_unchecked(buf);
+  return buf;
 }
 
 // form_decode is url_decode for `application/x-www-form-urlencoded`:
-// identical %-escape handling, but a literal `+` decodes to a space.
-// This is the correct decoder for query strings and form bodies,
-// where `+` is the classic encoding of a space.
+// identical %-escape handling (ill-formed UTF-8 to U+FFFD included),
+// but a literal `+` decodes to a space. This is the correct decoder for
+// query strings and form bodies, where `+` is the classic encoding of a
+// space.
 pub function form_decode(s: string): string {
+  return utf8.from_bytes_lossy(form_decode_bytes(s));
+}
+
+// `form_decode_bytes(s)` — the bytes `form_decode` reads as text.
+pub function form_decode_bytes(s: string): u8[] {
   var n: i32 = s.len();
   if (n == 0) {
-    return "";
+    return [];
   }
   // Same two-pass exact-size fill as url_decode (O(n)); a `+` folds to
   // a single space byte, a valid `%XX` folds 3 input bytes to 1.
@@ -179,7 +197,7 @@ pub function form_decode(s: string): string {
     }
     pos = pos + 1;
   }
-  return string_from_bytes_unchecked(buf);
+  return buf;
 }
 
 // form_encode is the inverse of form_decode: url_encode's

@@ -1,6 +1,7 @@
 import "std/test";
 import "std/http";
 import "std/stream";
+import "std/utf8" as utf8;
 
 // examples/tests/http_request_body_stream_test.fern —
 // `HttpRequest.body` is a `Stream` (docs/PLATFORM-RESEARCH.md
@@ -20,6 +21,19 @@ import "std/stream";
 // distinction exists to prevent.
 
 // `wire(body)` — a POST whose Content-Length frames `body`.
+// `body_text(req)` — the body as text, or what `body_string` refused.
+function body_text(req: HttpRequest): string {
+  match (req.body_string()) {
+    Ok(text) => {
+      return text;
+    },
+    Err(e) => {
+      return "<not utf-8>";
+    }
+  }
+  return "<not utf-8>";
+}
+
 function wire(body: string): string {
   return "POST /upload HTTP/1.1\r\nHost: h\r\nContent-Length: " + body.len().to_string() + "\r\n\r\n" + body;
 }
@@ -91,7 +105,7 @@ function test_read_n_leaves_the_remainder(): test.TestOutcome {
 function test_body_string_ignores_a_partial_walk(): test.TestOutcome {
   var req: HttpRequest = parsed("hello world");
   let (head, rest) = req.body_stream().read_n(5);
-  return test.assert_eq(req.body_string(), "hello world");
+  return test.assert_eq(body_text(req), "hello world");
 }
 
 function test_body_len_ignores_a_partial_walk(): test.TestOutcome {
@@ -109,10 +123,50 @@ function test_body_bytes_matches_body_len(): test.TestOutcome {
 function test_bodyless_request_reads_empty(): test.TestOutcome {
   match (http.http_parse_request("GET / HTTP/1.0\r\n\r\n")) {
     Some(req) => {
-      return test.assert_eq(req.body_string() + "/" + req.body_len().to_string(), "/0");
+      return test.assert_eq(body_text(req) + "/" + req.body_len().to_string(), "/0");
     },
     None => {
       return test.fail("well-formed request wrongly rejected");
+    }
+  }
+  return test.fail("unreachable");
+}
+
+// The text readers over a stream of bytes that are not UTF-8: the line
+// reads with U+FFFD in place of the bad byte (`read_line` has no arm to
+// refuse into), and `body_string` refuses.
+function test_ill_formed_bytes_read_as_replacement(): test.TestOutcome {
+  var fffd: string = utf8.utf8_encode(65533 as char);
+  var raw: string = string_from_bytes_unchecked([97 as u8, 255 as u8, 10 as u8, 98 as u8]);
+  var req: HttpRequest = parsed(raw);
+  let (line, rest) = req.body_stream().read_line();
+  match (line) {
+    Some(l) => {
+      if (l != "a" + fffd) {
+        return test.fail("read_line: " + l);
+      }
+    },
+    None => {
+      return test.fail("read_line: None");
+    }
+  }
+  let (tail, done) = rest.read_all_string();
+  match (tail) {
+    Some(t) => {
+      if (t != "b") {
+        return test.fail("read_all_string: " + t);
+      }
+    },
+    None => {
+      return test.fail("read_all_string refused the valid remainder");
+    }
+  }
+  match (req.body_string()) {
+    Ok(text) => {
+      return test.fail("body_string accepted ill-formed bytes");
+    },
+    Err(e) => {
+      return test.assert_eq(e.to_response().status, 400);
     }
   }
   return test.fail("unreachable");
@@ -130,5 +184,6 @@ function main(): i32 {
   r = r.it("body_len ignores a partial walk", test_body_len_ignores_a_partial_walk);
   r = r.it("body_bytes matches body_len", test_body_bytes_matches_body_len);
   r = r.it("a bodyless request reads empty", test_bodyless_request_reads_empty);
+  r = r.it("ill-formed bytes read as U+FFFD", test_ill_formed_bytes_read_as_replacement);
   return r.finish();
 }

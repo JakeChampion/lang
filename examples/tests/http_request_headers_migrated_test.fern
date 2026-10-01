@@ -16,6 +16,19 @@ import "std/http";
 // file with assertions on the parsed shape directly —
 // no subprocess, no print-then-grep.
 
+// `body_text(req)` — the body as text, or what `body_string` refused.
+function body_text(req: HttpRequest): string {
+  match (req.body_string()) {
+    Ok(text) => {
+      return text;
+    },
+    Err(e) => {
+      return "<not utf-8>";
+    }
+  }
+  return "<not utf-8>";
+}
+
 function test_parsed_headers_reachable_on_req(): test.TestOutcome {
   var wire: string = "GET /x HTTP/1.1\r\nHost: example.com\r\nContent-Type: application/json\r\nContent-Length: 0\r\n\r\n";
   match (http.http_parse_request(wire)) {
@@ -107,7 +120,7 @@ function test_x_prefixed_cl_not_content_length(): test.TestOutcome {
   var wire: string = "GET / HTTP/1.1\r\nHost: h\r\nX-Custom-Content-Length: 5\r\n\r\nhello";
   match (http.http_parse_request(wire)) {
     Some(req) => {
-      return test.assert_eq(req.body_string(), "");
+      return test.assert_eq(body_text(req), "");
     },
     None => {
       return test.fail("well-formed request wrongly rejected");

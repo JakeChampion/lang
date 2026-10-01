@@ -18,9 +18,16 @@ import "testing"
 // returned parameter as escaping, so a parameter it clears is one the
 // callee neither stored nor returned, whatever the result's shape.
 //
-// `handsBack` is the other side of that line and must still be refused:
-// its helper returns the payload, so the returned string and the box the
-// join would free are the same storage.
+// `handsBack` sits on the other side of the escape oracle's line and is
+// released all the same: its helper returns the payload, so the oracle
+// counts the parameter as escaping and the callee owns it by default. The
+// call site then retains the binding for the callee's exit release, and
+// the returned string takes its own transfer count, so the box the join
+// frees holds nothing the result still reads (ownedCallArgRetained). It
+// used to be refused on the reasoning that the string and the box were one
+// storage; measured, that refusal leaked the box, the variant and the
+// string on every failure (`rc_request_path_leaks_test.go`,
+// failure-payload-handed-to-a-helper-that-returns-it).
 const matchFailurePayloadSrc = `function etext(e: IoError): string {
     match (e) {
         NotFound(_) => { return "no such file"; },
@@ -70,9 +77,9 @@ func TestMatchFailurePayloadHandedToHelperStillFreesBox(t *testing.T) {
 			t.Errorf("ptrW=%d: reads emits %d scrutinee-box releases, want %d — binding the payload and handing it to a non-escaping helper forfeited the box; ops:\n%s",
 				ptrW, got, want, p)
 		}
-		if got := enumBoxReleaseCount(findFunc(p, "handsBack")); got != 0 {
-			t.Errorf("ptrW=%d: handsBack emits %d scrutinee-box releases, want 0 — its helper RETURNS the payload, so the returned string and the freed box are the same storage",
-				ptrW, got)
+		if got := enumBoxReleaseCount(findFunc(p, "handsBack")); got != want {
+			t.Errorf("ptrW=%d: handsBack emits %d scrutinee-box releases, want %d — its helper owns the payload and the call retains it, so the box is still the arm's to free; ops:\n%s",
+				ptrW, got, want, p)
 		}
 	}
 }

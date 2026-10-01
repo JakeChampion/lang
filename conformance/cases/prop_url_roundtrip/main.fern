@@ -11,13 +11,28 @@ import "std/i32";
 
 // Property-based round-trip audit for std/url percent-encoding.
 //
-// Deterministic LCG => identical inputs on every backend. Full byte
-// range (incl. embedded NUL / high bytes) and lengths 0..47.
+// Deterministic LCG => identical inputs on every backend, lengths 0..47.
 //
-// Property: url_decode(url_encode(s)) == s for every generated s.
+// Two sweeps. The text sweep draws each character from an alphabet
+// spanning all four UTF-8 widths and the ASCII bytes the encoder escapes
+// (NUL, space, the reserved punctuation), so every escape path and every
+// byte of a multi-byte sequence is exercised, and checks both decoders.
+// The byte sweep keeps the full 0..255 range of the original case: a
+// `string` is well-formed UTF-8 (docs/STRINGS-SOTA.md, D9) and `url_decode`
+// reads an escape that does not spell UTF-8 as U+FFFD, so an arbitrary
+// byte sequence round-trips only through `url_decode_bytes`; the unchecked
+// string it is encoded from is the #2817 allocator churn this case guards.
+//
+// Properties: url_decode(url_encode(s)) == s for every generated text s,
+// and url_decode_bytes(url_encode(s)) == s.bytes() for every generated s.
 
 function lcg_next(state: i32): i32 {
     return ((state * 1103515245) + 12345) & 2147483647;
+}
+
+function alphabet(): string[] {
+    return ["a", "Z", "0", " ", "%", "/", "?", "&", "=", "+", "~", "-", "_", ".",
+            string_from_bytes_unchecked([0 as u8]), "é", "ß", "中", "€", "𝄞"];
 }
 
 function gen_bytes(seed: i32, n: i32): u8[] {
@@ -32,16 +47,61 @@ function gen_bytes(seed: i32, n: i32): u8[] {
     return buf;
 }
 
+function gen_text(seed: i32, n: i32, alpha: string[]): string {
+    var out: string = "";
+    var state: i32 = seed;
+    var i: i32 = 0;
+    while (i < n) {
+        state = lcg_next(state);
+        out = out + alpha[(state / 7) % alpha.len()];
+        i = i + 1;
+    }
+    return out;
+}
+
+function same_bytes(a: u8[], b: u8[]): boolean {
+    if (a.len() != b.len()) {
+        return false;
+    }
+    var i: i32 = 0;
+    while (i < a.len()) {
+        if (a[i] != b[i]) {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
 function main(): i32 {
+    var alpha: string[] = alphabet();
     var state: i32 = 305419896;
     var trial: i32 = 0;
     while (trial < 300) {
         state = lcg_next(state);
         var n: i32 = state % 48;
-        var s: string = string_from_bytes_unchecked(gen_bytes(state, n));
+        var s: string = gen_text(state, n, alpha);
+        var enc: string = url.url_encode(s);
 
-        if (url.url_decode(url.url_encode(s)) != s) {
+        if (url.url_decode(enc) != s) {
             print("url roundtrip FAILED at trial " + trial.to_string());
+            return 1;
+        }
+        if (!same_bytes(url.url_decode_bytes(enc), s.bytes())) {
+            print("url byte roundtrip FAILED at trial " + trial.to_string());
+            return 1;
+        }
+        trial = trial + 1;
+    }
+    trial = 0;
+    while (trial < 300) {
+        state = lcg_next(state);
+        var n: i32 = state % 48;
+        var raw: u8[] = gen_bytes(state, n);
+        var s: string = string_from_bytes_unchecked(raw);
+
+        if (!same_bytes(url.url_decode_bytes(url.url_encode(s)), raw)) {
+            print("url byte roundtrip FAILED at byte trial " + trial.to_string());
             return 1;
         }
         trial = trial + 1;

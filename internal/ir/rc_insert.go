@@ -1011,6 +1011,7 @@ func (b *builder) bindingUsesExcused(body ast.Node, name string, bt ast.Type, co
 				}
 				if b.readOnlyCallArg(x, i) || (countedAliasOK && b.indirectCallArg(x)) ||
 					(countedAliasOK && b.borrowedCallArg(x, i)) ||
+					(countedAliasOK && b.ownedCallArgRetained(x, i, bt)) ||
 					(countedAliasOK && b.variantRetainsPayload(x, id, bt)) ||
 					(countedAliasOK && b.sinkRetainsArg(x, i, bt)) {
 					excused[id] = true
@@ -1206,6 +1207,40 @@ func (b *builder) borrowedCallArg(call *ast.Call, i int) bool {
 		return false
 	}
 	return !b.calleeParamOwnedByDefault(id.Name, sig.Params[i], i)
+}
+
+// ownedCallArgRetained reports whether argument `i` of direct call `call`
+// reaches a parameter the callee OWNS by default, at a site that retains the
+// argument rather than moving it. The call lowering incs an aliased argument
+// in that position so the callee's exit release is paid for (the Slice 2
+// retain in the OpCallDirect lowering, mirrored here term for term), which
+// leaves the argument's own count where it was — the caller's to release.
+// What the callee lets out it takes on the retained count or retains again
+// (a returned alias takes its transfer inc), so nothing uncounted survives
+// the call. A pair-form payload bound by a match arm and handed to such a
+// callee was released by nobody: the callee gave back only the count it was
+// handed, and the arm withheld its release because the occurrence was not
+// excused — one payload per match leaked (a parsed request handed to a method
+// whose parameter owns it, `req.body_string()`, was the shape).
+func (b *builder) ownedCallArgRetained(call *ast.Call, i int, bt ast.Type) bool {
+	id, ok := call.Callee.(*ast.Ident)
+	if !ok || b.rc.moveSites[call.Args[i]] {
+		return false
+	}
+	if _, isLocal := b.locals[id.Name]; isLocal {
+		return false
+	}
+	sig := b.info.FuncSigs[id.Name]
+	if sig == nil || i >= len(sig.Params) {
+		return false
+	}
+	if _, known := b.paramEscapes[id.Name]; !known {
+		return false
+	}
+	if own := b.info.OwnFuncs[id.Name]; i < len(own) && own[i] {
+		return false
+	}
+	return b.retainsOnAlias(bt) && b.calleeParamOwnedByDefault(id.Name, sig.Params[i], i)
 }
 
 // indirectCallArg reports whether call goes through a function value. Its

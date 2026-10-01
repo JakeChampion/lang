@@ -72,9 +72,13 @@ function census_burn(n: i32): i32 {
     return x;
 }
 function census_handle(req: HttpRequest, plat: Platform): HttpResponse {
-    if (req.path == "/chunked") { return http.ok(req.body_string()); }
+    if (req.path == "/chunked" || req.path == "/expect") {
+        match (req.body_string()) {
+            Ok(text) => { return http.ok(text); },
+            Err(e) => { return e.to_response(); }
+        }
+    }
     if (req.path == "/nocontent") { return http.no_content(); }
-    if (req.path == "/expect") { return http.ok(req.body_string()); }
     var work: i32 = 0;
     if (req.path.starts_with("/slow")) { work = 12000000; }
     if (req.path.starts_with("/gone")) { work = 60000000; }
