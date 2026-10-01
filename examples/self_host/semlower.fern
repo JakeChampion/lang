@@ -91,9 +91,9 @@ pub function sem_ir_on(): boolean {
   }
 }
 
-// sem_report_on reports whether FERN_SEM_IR_REPORT asks for a line per refusal
-// on stderr, and the per-module tally. Nothing about the emitted program
-// changes with it; it only says what was produced and why the rest was not.
+// sem_report_on reports whether FERN_SEM_IR_REPORT asks for the per-module
+// tally, and for a line per declaration when a bisect knob keeps a mixed
+// module. Nothing about the emitted program changes with it.
 pub function sem_report_on(): boolean {
   match (env("FERN_SEM_IR_REPORT")) {
     Some(v) => {

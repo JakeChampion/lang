@@ -31,6 +31,33 @@ var strictIRCorpus = []struct {
 	src  string
 	want int
 }{
+	// A dyn holding a view merged past its source is rebuilt at the merge
+	// (ssasem.deep_copy, #10909): narrowed to the concrete holding the view,
+	// copied and widened back.
+	{"dyn-view-merged-past-its-source", `import "std/i32";
+trait Size { function size(self: Self): i32; }
+struct P { a: str }
+impl Size for P { function size(self: P): i32 { return self.a.len() * 10 + (self.a[0] as i32) - 97; } }
+function mk(n: i32): string {
+    var s: string = "ab";
+    var i: i32 = 0;
+    while (i < n) { s = s + "c"; i = i + 1; }
+    return s;
+}
+function wrap(s: string): dyn Size { var p: P = P { a: slice_unchecked(s, 1, 4) }; return p; }
+function g(n: i32): i32 {
+    var d: dyn Size = P { a: "q" };
+    if (n != 0) {
+        var s: string = mk(n);
+        d = wrap(s);
+    }
+    var junk: string[] = [];
+    var i: i32 = 0;
+    while (i < 50) { junk = junk.append("zz" + i.to_string()); i = i + 1; }
+    return d.size();
+}
+function main(): i32 { print(g(3).to_string() + " " + g(0).to_string()); return 0; }
+`, 0},
 	// An array holding views of two parameters is anchored to both (#10687).
 	{"views-of-two-sources", `function g(x: string, y: string): str[] { var o: str[] = []; o = o.append(slice_unchecked(x, 0, 1)); o = o.append(slice_unchecked(y, 0, 1)); return o; }
 function main(): i32 { var xs: str[] = g("ab", "cd"); return xs.len(); }
@@ -692,33 +719,44 @@ var strictIRBailReasons = []struct {
 	fn     string
 	reason string
 }{
-	// A dyn holding a view cannot be rebuilt at a merge (ssasem.copyable), so
-	// one merged past its source is refused rather than read after the source
-	// is released.
-	{"dyn-view-merged-past-its-source", `import "std/i32";
-trait Size { function size(self: Self): i32; }
-struct P { a: str }
-impl Size for P { function size(self: P): i32 { return self.a.len() * 10 + (self.a[0] as i32) - 97; } }
+	// A closure capturing a bare view is refused where it is built: returned,
+	// it would outlive the string it views.
+	{"closure-captures-a-view", `function mk(n: i32): string {
+    var s: string = "ab";
+    var i: i32 = 0;
+    while (i < n) { s = s + "c"; i = i + 1; }
+    return s;
+}
+function viewer(n: i32): () => i32 {
+    var s: string = mk(n);
+    var v: str = slice_unchecked(s, 1, 4);
+    return () => v.len() * 10 + (v[0] as i32) - 97;
+}
+function main(): i32 { var f: () => i32 = viewer(3); return f(); }
+`, "viewer", "closure capture type"},
+	// A type that holds itself has no copy a merge could rebuild
+	// (ssasem.copy_refusal), so one merged past its source is refused by
+	// name; a dyn holding a view is copied there since #10909.
+	{"recursive-enum-merged-past-its-source", `import "std/i32";
+enum L { Cons(str, L), Nil }
 function mk(n: i32): string {
     var s: string = "ab";
     var i: i32 = 0;
     while (i < n) { s = s + "c"; i = i + 1; }
     return s;
 }
-function wrap(s: string): dyn Size { var p: P = P { a: slice_unchecked(s, 1, 4) }; return p; }
+function two(s: string): L { return Cons(slice_unchecked(s, 0, 1), Cons(slice_unchecked(s, 1, 3), Nil)); }
+function count(l: L): i32 { match (l) { Cons(h, t) => { return h.len() + count(t); }, Nil => { return 0; } } return 0; }
 function g(n: i32): i32 {
-    var d: dyn Size = P { a: "q" };
+    var l: L = Nil;
     if (n != 0) {
         var s: string = mk(n);
-        d = wrap(s);
+        l = two(s);
     }
-    var junk: string[] = [];
-    var i: i32 = 0;
-    while (i < 50) { junk = junk.append("zz" + i.to_string()); i = i + 1; }
-    return d.size();
+    return count(l);
 }
-function main(): i32 { print(g(3).to_string() + " " + g(0).to_string()); return 0; }
-`, "g", "dependency unavailable at use"},
+function main(): i32 { return g(3) + g(0); }
+`, "g", "holds itself, so its copy would recurse"},
 	// An instance bound to a view would hand out a view it was lent.
 	{"template-bound-to-a-view", `pub function first[T](f: () => T): T {
     var xs: T[] = [f()];

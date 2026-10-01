@@ -96,7 +96,12 @@ func runCaptureEnv(t *testing.T, runner []string, bin string, stdin []byte, env 
 	cmd.Env = env
 	out, err := cmd.Output()
 	if err != nil {
-		t.Fatalf("run %s: %v", bin, err)
+		var stderr []byte
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			stderr = ee.Stderr
+		}
+		t.Fatalf("run %s: %v\n%s", bin, err, stderr)
 	}
 	return out
 }
@@ -143,6 +148,17 @@ func loadCompile(t *testing.T, runner []string, driverBin, src string, env []str
 		err = errors.New("the driver emitted 0 bytes")
 	}
 	return string(out), stderr.String(), err
+}
+
+// mustLoadCompile is loadCompile that fails the test, with the driver's
+// stderr, when the compile does.
+func mustLoadCompile(t *testing.T, runner []string, driverBin, src string, env []string, args ...string) string {
+	t.Helper()
+	out, stderr, err := loadCompile(t, runner, driverBin, src, env, args...)
+	if err != nil {
+		t.Fatalf("asm_load_run: %v\n%s", err, stderr)
+	}
+	return out
 }
 
 // hevRun runs a built binary and returns its stderr plus exit code.

@@ -1,7 +1,6 @@
 package e2eselfhost
 
 import (
-	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -32,10 +31,8 @@ func TestSelfHostNegateWidthWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host wasm negate width e2e")
 	}
-	gcc, _ := x86_64Tooling(t)
+	l := newWasmStdlibLoader(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driverBin := cachedDriverBin(t, gcc, dir, "wasm_ir_run.fern")
 
 	cases := []struct {
 		name string
@@ -93,9 +90,7 @@ function main(): i32 { var b: i32 = 5; print((-b).to_string()); return 0; }`,
 		},
 		{
 			// f64 negation is its own arm (fneg) and is untouched by the width
-			// selection; this pins that. It avoids to_string because the wasm
-			// driver resolves no imports, so `std/f64` is not available to it —
-			// the comparisons say the same thing about the value.
+			// selection; this pins that.
 			name: "f64 control",
 			src: `function main(): i32 {
   var b: f64 = 2.5;
@@ -110,15 +105,7 @@ function main(): i32 { var b: i32 = 5; print((-b).to_string()); return 0; }`,
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			cmd := exec.Command(driverBin, "-ir")
-			cmd.Stdin = bytes.NewReader([]byte(c.src))
-			cmd.Env = []string{"PATH=/usr/bin:/bin"}
-			var emitErr strings.Builder
-			cmd.Stderr = &emitErr
-			wat, err := cmd.Output()
-			if err != nil || len(wat) == 0 {
-				t.Fatalf("self-host wasm emit failed: %v\n%s", err, emitErr.String())
-			}
+			wat := l.emit(t, c.src)
 			watFile := filepath.Join(dir, strings.ReplaceAll(c.name, " ", "_")+".wat")
 			if werr := os.WriteFile(watFile, wat, 0o644); werr != nil {
 				t.Fatalf("write wat: %v", werr)

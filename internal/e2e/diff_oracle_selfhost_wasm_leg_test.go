@@ -191,7 +191,7 @@ func runSelfHostWasmSeed(t *testing.T, fernBin, stdlibRoot, src string, semantic
 	// the x86-64 pair gives: empty is off, and writing it is what stops an
 	// ambient FERN_SEM_IR in the environment turning both legs into the
 	// semantic one.
-	compile.Env = append(os.Environ(), "FERN_SEM_IR=")
+	compile.Env = append(os.Environ(), "FERN_SEM_IR=", "FERN_SEM_IR_ONLY=", "FERN_SEM_IR_SKIP=")
 	if semantic {
 		compile.Env = append(compile.Env, "FERN_SEM_IR=1")
 	}
