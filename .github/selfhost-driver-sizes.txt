@@ -409,8 +409,12 @@
 # self-host commits from 32d575e60 to 7d8ea4e18 (the map str key column and
 # per-iteration last-use drops of #10869 among them). Numbers pasted from
 # driver-sizes' own report on run 36809675672.
-fern.fern/stage2 12346536
-fern.fern 12346536
+# 2026-10-01 — fern.fern and fern.fern/stage2 12346536 -> 12973880 (+5.1%),
+# main's own growth since the last refresh, on the same pin; the other rows
+# stay inside 5%. Measured with TestSelfHostWarmStockDriver on main at
+# 0b539c5a5; stage1 and stage2 still match to the byte.
+fern.fern/stage2 12973880
+fern.fern 12973880
 asm_load_run.fern 10514488
 asm_modload_run.fern 9438224
 asm_ir_run.fern 9619240
