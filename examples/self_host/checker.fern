@@ -23440,7 +23440,11 @@ function pretype_module_in(mod: parser.Module, mt: ModuleTables): parser.Module 
 
 // pend holds the open generic reads a literal local was compared or combined
 // with: each takes the width pend_id's class settles at, once the body is walked.
-struct LitInfer { parent: i32[], width: typeinfo.Type[], keys: string[], cargs: string[], ctags: string[], pend: ast.Expr[], pend_id: i32[], pend_scope: Scope[] }
+// skeys / snames / sargs / sids record each generic struct local (#10453):
+// its declaration's key, the struct, each type argument's spelling, and the
+// class of each argument only untyped literals bound (-1 for one a typed field
+// bound). sargs and sids are flat; sfirst[j] is struct j's first argument.
+struct LitInfer { parent: i32[], width: typeinfo.Type[], keys: string[], cargs: string[], ctags: string[], pend: ast.Expr[], pend_id: i32[], pend_scope: Scope[], skeys: string[], snames: string[], sfirst: i32[], sargs: string[], sids: i32[] }
 
 struct LitRewrite { keys: string[], tags: string[], cargs: string[], ctags: string[] }
 
@@ -23470,6 +23474,89 @@ function lit_id(t: typeinfo.Type): i32 {
   return 0 - 1;
 }
 
+const LIT_STRUCT_MARK: string = "literal struct #";
+
+// A generic struct local whose type arguments untyped literals bound is bound
+// under a marker naming its struct and the class of each argument, -1 for one
+// a typed field bound: `Same|3`.
+function lit_struct_marker(name: string, ids: i32[]): typeinfo.Type {
+  var spelled: string = LIT_STRUCT_MARK + name + "|";
+  var i: i32 = 0;
+  while (i < ids.len()) {
+    if (i > 0) {
+      spelled = spelled + ",";
+    }
+    spelled = spelled + util.i32_to_string(ids[i]);
+    i = i + 1;
+  }
+  return t_unknown(spelled);
+}
+
+// lit_struct_of reads a struct-local marker back: the struct and the class of
+// each argument. ("", []) for any other type.
+function lit_struct_of(t: typeinfo.Type): (string, i32[]) {
+  var none: i32[] = [];
+  if let typeinfo.TypeUnknown(u) = t {
+    var n: i32 = LIT_STRUCT_MARK.len();
+    if (u.reason.len() <= n || slice_unchecked(u.reason, 0, n) != LIT_STRUCT_MARK) {
+      return ("", none);
+    }
+    var bar: i32 = util.index_of_sub(u.reason, "|");
+    var ids: i32[] = [];
+    var k: i32 = 0;
+    var neg: boolean = false;
+    var i: i32 = bar + 1;
+    while (i <= u.reason.len()) {
+      if (i == u.reason.len() || u.reason[i] as i32 == 44) {
+        if (neg) {
+          k = 0 - k;
+        }
+        ids = ids.append(k);
+        k = 0;
+        neg = false;
+      } else if (u.reason[i] as i32 == 45) {
+        neg = true;
+      } else {
+        k = k * 10 + u.reason[i] as i32 - 48;
+      }
+      i = i + 1;
+    }
+    return (slice_unchecked(u.reason, n, bar) + "", ids);
+  }
+  return ("", none);
+}
+
+// lit_struct_read reports whether `e` reads a generic struct local whole.
+function lit_struct_read(e: ast.Expr, s: Scope): boolean {
+  if let ast.ExprIdent(id) = e {
+    let (name, ids) = lit_struct_of(s.lookup(id.name));
+    return name.len() > 0;
+  }
+  return false;
+}
+
+// lit_struct_field_class is the class a read `obj.field` reads when obj is a
+// generic struct local and the field is declared at a literal-bound type
+// parameter, else -1.
+function lit_struct_field_class(fa: ast.ExprFieldAccess, s: Scope): i32 {
+  if let ast.ExprIdent(oid) = fa.obj {
+    let (name, ids) = lit_struct_of(s.lookup(oid.name));
+    if (name.len() == 0) {
+      return 0 - 1;
+    }
+    var sig: StructSig = s.lookup_struct(name);
+    var fi: i32 = field_index(sig, fa.field);
+    if (fi < 0 || fi >= sig.field_type_names.len()) {
+      return 0 - 1;
+    }
+    var ti: i32 = util.index_of_str(sig.type_params, sig.field_type_names[fi]);
+    if (ti >= 0 && ti < ids.len()) {
+      return ids[ti];
+    }
+  }
+  return 0 - 1;
+}
+
 // lit_tree reports whether `e` is an untyped integer tree — unsuffixed
 // literals and literal locals under sign and arithmetic operators, the shape
 // native's settleInt descends — and appends the literal locals it reads.
@@ -23484,6 +23571,13 @@ function lit_tree(e: ast.Expr, s: Scope, ids: i32[]): (boolean, i32[]) {
         return (false, ids);
       }
       return (true, ids.append(k));
+    },
+    ast.ExprFieldAccess(fa) => {
+      var fk: i32 = lit_struct_field_class(fa, s);
+      if (fk < 0) {
+        return (false, ids);
+      }
+      return (true, ids.append(fk));
     },
     ast.ExprUnary(u) => {
       if (u.op == "-" || u.op == "+") {
@@ -23565,6 +23659,22 @@ function lit_demand(e: ast.Expr, want: typeinfo.Type, s: Scope, st: LitInfer): L
     return demand_open(e, want, s, st);
   }
   match (want) {
+    typeinfo.TypeStruct(ws) => {
+      if let ast.ExprIdent(sid) = e {
+        let (name, ids) = lit_struct_of(s.lookup(sid.name));
+        if (name == ws.name && ids.len() == ws.args.len()) {
+          var outs: LitInfer = st;
+          var j: i32 = 0;
+          while (j < ids.len()) {
+            if (ids[j] >= 0) {
+              outs = lit_fix(outs, [ids[j]], ws.args[j]);
+            }
+            j = j + 1;
+          }
+          return outs;
+        }
+      }
+    },
     typeinfo.TypeTuple(wt) => {
       if let ast.ExprTuple(tl) = e {
         if (tl.elements.len() == wt.elements.len()) {
@@ -23917,7 +24027,7 @@ function lit_call(c: ast.ExprCall, s: Scope, st: LitInfer): LitInfer {
   var reads: boolean = false;
   for arg in c.args {
     let (seed, ids) = lit_tree(arg, s, []);
-    reads = reads || seed && ids.len() > 0 || lit_composite(arg) || !seed && open_tree(arg, s);
+    reads = reads || seed && ids.len() > 0 || lit_composite(arg) || !seed && open_tree(arg, s) || lit_struct_read(arg, s);
   }
   var pts: typeinfo.Type[] = [];
   if (reads) {
@@ -24261,6 +24371,18 @@ function lit_stmt(stmt: ast.Stmt, s: Scope, st: LitInfer): (Scope, LitInfer) {
       }
       let (seed, ids) = lit_tree(v.init, s, []);
       if (!seed) {
+        if let ast.ExprStructLit(sl) = v.init {
+          let (ss, sst) = lit_struct_local(v, sl, s, lit_expr(v.init, s, st));
+          if (ss.len() > 0) {
+            var own_ids: i32[] = [];
+            var oi: i32 = sst.sfirst[sst.sfirst.len() - 1];
+            while (oi < sst.sids.len()) {
+              own_ids = own_ids.append(sst.sids[oi]);
+              oi = oi + 1;
+            }
+            return (s.bind(v.name, lit_struct_marker(ss, own_ids)), sst);
+          }
+        }
         return (bind_stmt(stmt, s), lit_expr(v.init, s, st));
       }
       var k: i32 = st.parent.len();
@@ -24320,6 +24442,111 @@ function lit_stmt(stmt: ast.Stmt, s: Scope, st: LitInfer): (Scope, LitInfer) {
   return (s, st);
 }
 
+// lit_struct_local registers `var q = Same { a: 1, b: 2 }` (#10453): each type
+// argument only untyped literals bind is a class of its own, fixed at i64 when
+// one of those literals has no i32 reading. It returns the struct's name, ""
+// when no argument is literal-bound or the literal is not a generic one.
+function lit_struct_local(v: ast.StmtVar, sl: ast.ExprStructLit, s: Scope, st: LitInfer): (string, LitInfer) {
+  var sig: StructSig = s.lookup_struct(sl.type_name);
+  if (sig.type_params.len() == 0 || sl.has_base || util.index_of_sub(sl.type_name, "[") >= 0) {
+    return ("", st);
+  }
+  var args: typeinfo.Type[] = struct_lit_args(sl, sig, s);
+  var out: LitInfer = st;
+  var ids: i32[] = [];
+  var spelled: string[] = [];
+  var any: boolean = false;
+  var ti: i32 = 0;
+  while (ti < sig.type_params.len()) {
+    var lits: boolean = false;
+    var typed: boolean = false;
+    var wide: boolean = false;
+    var i: i32 = 0;
+    while (i < sl.field_names.len()) {
+      var fi: i32 = field_index(sig, sl.field_names[i]);
+      if (fi >= 0 && fi < sig.field_type_names.len() && sig.field_type_names[fi] == sig.type_params[ti]) {
+        if (int_literal_tree(sl.field_values[i])) {
+          lits = true;
+          wide = wide || wide_int_tree(sl.field_values[i]);
+        } else {
+          typed = true;
+        }
+      }
+      i = i + 1;
+    }
+    if (lits && !typed) {
+      var k: i32 = out.parent.len();
+      out = lit_new(out, "");
+      if (wide) {
+        out = lit_fix(out, [k], t_i64());
+      }
+      ids = ids.append(k);
+      any = true;
+    } else {
+      ids = ids.append(0 - 1);
+    }
+    var sp: string = "";
+    if (ti < args.len() && !is_unknown(args[ti])) {
+      sp = typeinfo.spelling(args[ti]);
+    }
+    spelled = spelled.append(sp);
+    ti = ti + 1;
+  }
+  if (!any) {
+    return ("", st);
+  }
+  var sargs: string[] = out.sargs;
+  var sids: i32[] = out.sids;
+  var j: i32 = 0;
+  while (j < ids.len()) {
+    sargs = sargs.append(spelled[j]);
+    sids = sids.append(ids[j]);
+    j = j + 1;
+  }
+  return (sl.type_name, LitInfer { ...out, skeys: out.skeys.append(lit_var_key(v)), snames: out.snames.append(sl.type_name), sfirst: out.sfirst.append(out.sids.len()), sargs: sargs, sids: sids });
+}
+
+// lit_struct_tags spells each generic struct local whose literal-bound
+// arguments settled anywhere but i32: `Same[i64]`.
+function lit_struct_tags(st: LitInfer): (string[], string[]) {
+  var keys: string[] = [];
+  var tags: string[] = [];
+  var j: i32 = 0;
+  while (j < st.skeys.len()) {
+    var end: i32 = st.sids.len();
+    if (j + 1 < st.sfirst.len()) {
+      end = st.sfirst[j + 1];
+    }
+    var parts: string = "";
+    var moved: boolean = false;
+    var known: boolean = true;
+    var i: i32 = st.sfirst[j];
+    while (i < end) {
+      var a: string = st.sargs[i];
+      if (st.sids[i] >= 0) {
+        a = "i32";
+        var w: typeinfo.Type = st.width[lit_find(st, st.sids[i])];
+        if (!is_unknown(w)) {
+          a = typeinfo.spelling(w);
+        }
+        moved = moved || a != "i32";
+      }
+      known = known && a.len() > 0;
+      if (i > st.sfirst[j]) {
+        parts = parts + ", ";
+      }
+      parts = parts + a;
+      i = i + 1;
+    }
+    if (moved && known) {
+      keys = keys.append(st.skeys[j]);
+      tags = tags.append(st.snames[j] + "[" + parts + "]");
+    }
+    j = j + 1;
+  }
+  return (keys, tags);
+}
+
 // lit_rewrites lists the declarations whose class settled at a type other
 // than i32, with the spelling to write. A key two candidates share — two
 // synthesized declarations at one position — is dropped when they disagree.
@@ -24328,6 +24555,10 @@ function lit_rewrites(st: LitInfer): LitRewrite {
   var tags: string[] = [];
   var k: i32 = 0;
   while (k < st.keys.len()) {
+    if (st.keys[k].len() == 0) {
+      k = k + 1;
+      continue;
+    }
     var w: typeinfo.Type = st.width[lit_find(st, k)];
     var tag: string = "i32";
     if (!is_unknown(w)) {
@@ -24351,6 +24582,13 @@ function lit_rewrites(st: LitInfer): LitRewrite {
       ot = ot.append(tags[i]);
     }
     i = i + 1;
+  }
+  let (sk, stg) = lit_struct_tags(st);
+  var si: i32 = 0;
+  while (si < sk.len()) {
+    ok = ok.append(sk[si]);
+    ot = ot.append(stg[si]);
+    si = si + 1;
   }
   let (ck, ct) = agreed_tags(st.cargs, st.ctags);
   return LitRewrite { keys: ok, tags: ot, cargs: ck, ctags: ct };
@@ -24523,7 +24761,13 @@ function generic_fn_names(funcs: parser.FuncDecl[]): string[] {
 function lit_candidate_at(st: ast.Stmt): boolean {
   match (st) {
     ast.StmtVar(v) => {
-      return v.type_name.len() == 0 && !name_has_comma(v.name) && int_literal_tree(v.init);
+      if (v.type_name.len() > 0 || name_has_comma(v.name)) {
+        return false;
+      }
+      if let ast.ExprStructLit(sl) = v.init {
+        return lit_any_int_literal(sl.field_values);
+      }
+      return int_literal_tree(v.init);
     },
     ast.StmtFor(fr) => {
       if (!for_iter_is_range(fr.iter)) {
@@ -24563,7 +24807,7 @@ function lit_resolve_pending(st: LitInfer): LitInfer {
 }
 
 function settle_lit_body(stmts: ast.Stmt[], s: Scope): ast.Stmt[] {
-  var st: LitInfer = lit_resolve_pending(lit_stmts(stmts, s, LitInfer { parent: [], width: [], keys: [], cargs: [], ctags: [], pend: [], pend_id: [], pend_scope: [] }));
+  var st: LitInfer = lit_resolve_pending(lit_stmts(stmts, s, LitInfer { parent: [], width: [], keys: [], cargs: [], ctags: [], pend: [], pend_id: [], pend_scope: [], skeys: [], snames: [], sfirst: [], sargs: [], sids: [] }));
   var rw: LitRewrite = lit_rewrites(st);
   if (rw.keys.len() == 0 && rw.cargs.len() == 0) {
     return stmts;

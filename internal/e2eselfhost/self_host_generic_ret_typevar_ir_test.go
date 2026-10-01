@@ -209,6 +209,17 @@ function main(): i32 {
     if (q.a + q.b == 8589934595 && r == 1) { return 7; }
     return 3;
 }`},
+	// A generic struct local takes the width its first fixing use names
+	// (#10453).
+	{"struct-literal-local-one-width", `struct Same[T] { a: T, b: T }
+@noinline function take1(x: Same[i64]): i64 { return x.a + x.b + 8589934592; }
+function main(): i32 {
+    var q = Same { a: 1, b: 2 };
+    var o = Same { a: 5, b: 6 };
+    var r: i64 = o.a;
+    if (take1(q) == 8589934595 && r * 4294967296 == 21474836480) { return 7; }
+    return 3;
+}`},
 	// The widening reads INTEGERS only: wider_int keeps the first reading when
 	// either side is not one, so a shared variable bound by two strings types
 	// exactly as it did.

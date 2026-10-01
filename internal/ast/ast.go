@@ -82,8 +82,7 @@ type NumberType struct {
 	// (the surrounding context demands a concrete width), the
 	// checker stamps `Width` on the NumberLit AST node and
 	// returns the concrete NumberType from the affected call
-	// sites. Polymorphic propagates through ast.Equal as a
-	// "matches anything int" wildcard.
+	// sites. ast.Equal reads it at its normal width, i32.
 	Polymorphic bool
 }
 type BoolType struct{}

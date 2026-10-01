@@ -981,6 +981,37 @@ func TestTypedValueBindsAheadOfEarlierLiteral(t *testing.T) {
 	}
 }
 
+// A generic struct local whose type argument only untyped literals bind takes
+// ONE width, as an integer literal local does (#10123): the first use that
+// fixes it decides — a field read at a typed destination, or the whole local
+// where a Same[i64] is wanted — and a second, different width is E003
+// (#10453). Native read such a local at any width field by field, and refused
+// it whole as a Same[i32].
+func TestGenericStructLiteralLocalTakesOneWidth(t *testing.T) {
+	const decls = "struct Same[T] { a: T, b: T } function take1(x: Same[i64]): i32 { return 1; } function take(xs: Same[i64][]): i32 { return 1; } "
+	for _, body := range []string{
+		`var q = Same { a: 1, b: 2 }; var r: i64 = q.a; return 0;`,
+		`var q = Same { a: 1, b: 2 }; return take1(q);`,
+		`var q = Same { a: 1, b: 2 }; return take([q]);`,
+		`var q = Same { a: 1, b: 2 }; var r: i64 = q.a; var z: i64 = q.b; return take1(q);`,
+		`var q = Same { a: 1, b: 2 }; var z: i32 = q.a; return 0;`,
+	} {
+		if err := checkSource(t, decls+"function main(): i32 { "+body+" }"); err != nil {
+			t.Errorf("%s: rejected, want accepted: %v", body, err)
+		}
+	}
+	for _, body := range []string{
+		`var q = Same { a: 1, b: 2 }; var r: i64 = q.a; var z: i32 = q.b; return 0;`,
+		`var q = Same { a: 1, b: 2 }; var t = take1(q); var z: i32 = q.a; return 0;`,
+		`var q = Same { a: 1, b: 4611686018427387904 }; var z: i32 = q.a; return 0;`,
+	} {
+		err := checkSource(t, decls+"function main(): i32 { "+body+" }")
+		if err == nil || !strings.Contains(err.Error(), "cannot assign i64 to variable of type i32") {
+			t.Errorf("%s: want the i32 read refused, got: %v", body, err)
+		}
+	}
+}
+
 // TestGenericCallLiteralBoundTSettlesByPosition covers #10176: a type
 // parameter only untyped literals bind stays open until the position reading
 // the call settles it. A destination names its width, through a field read of

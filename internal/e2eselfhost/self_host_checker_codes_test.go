@@ -273,6 +273,14 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// A typed field binds T ahead of an untyped literal written before
 		// it, so this is a Same[i64] (#10453); the literal used to bind T at
 		// i32 and the typed field then clashed.
+		// A generic struct local whose type argument only untyped literals bind
+		// takes one width: the first use that fixes it decides, and a second,
+		// different width is E003 (#10453).
+		{"struct-local-field-read-fixes-width", "struct Same[T] { a: T, b: T }\nfunction take1(x: Same[i64]): i32 { return 1; }\nfunction take(xs: Same[i64][]): i32 { return 1; }\nfunction main(): i32 { var q = Same { a: 1, b: 2 }; var r: i64 = q.a; return 0; }\n", nil},
+		{"struct-local-passed-whole-fixes-width", "struct Same[T] { a: T, b: T }\nfunction take1(x: Same[i64]): i32 { return 1; }\nfunction take(xs: Same[i64][]): i32 { return 1; }\nfunction main(): i32 { var q = Same { a: 1, b: 2 }; return take1(q); }\n", nil},
+		{"struct-local-in-array-argument-fixes-width", "struct Same[T] { a: T, b: T }\nfunction take1(x: Same[i64]): i32 { return 1; }\nfunction take(xs: Same[i64][]): i32 { return 1; }\nfunction main(): i32 { var q = Same { a: 1, b: 2 }; return take([q]); }\n", nil},
+		{"struct-local-second-width", "struct Same[T] { a: T, b: T }\nfunction take1(x: Same[i64]): i32 { return 1; }\nfunction take(xs: Same[i64][]): i32 { return 1; }\nfunction main(): i32 { var q = Same { a: 1, b: 2 }; var r: i64 = q.a; var z: i32 = q.b; return 0; }\n", []string{"E003"}},
+		{"struct-local-passed-then-read-narrow", "struct Same[T] { a: T, b: T }\nfunction take1(x: Same[i64]): i32 { return 1; }\nfunction take(xs: Same[i64][]): i32 { return 1; }\nfunction main(): i32 { var q = Same { a: 1, b: 2 }; var t = take1(q); var z: i32 = q.a; return 0; }\n", []string{"E003"}},
 		{"generic-literal-typed-field-binds-ahead", "struct Same[T] { a: T, b: T }\nfunction take(xs: Same[i64][]): i32 { return xs.len(); }\nfunction main(): i32 { var y: i64 = 5; var q = Same { a: 1, b: y }; var r: i64 = q.a; return take([q]); }\n", nil},
 		// A literal whose fields clash has no instantiation, so its local
 		// reads as untyped and no use reports the clash again (#10453). Native

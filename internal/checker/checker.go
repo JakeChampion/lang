@@ -7801,8 +7801,15 @@ type checker struct {
 	litLocals  []*litLocal
 	litLocalOf map[*ast.Var]*litLocal
 	litIdents  map[*ast.Ident]*litLocal
-	current    *ast.FuncDecl
-	loopDepth  int
+	// litStructOf holds, per unannotated generic struct local, the literal
+	// local each type argument only untyped literals bound is (nil for an
+	// argument something typed bound); litFields maps a read of a field at
+	// such a parameter to it.
+	litStructOf    map[*ast.Var][]*litLocal
+	litFields      map[*ast.FieldAccess]*litLocal
+	litStructReads map[*ast.Ident]*ast.Var
+	current        *ast.FuncDecl
+	loopDepth      int
 	// tryConvN uniquifies the temp-var name in the error-converting `?`
 	// desugar (TryOp.Lowered). See #3234.
 	tryConvN int
@@ -14061,6 +14068,7 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		if _, dup := s.names[n.Name]; dup {
 			c.errfCode(n.P, "E013", "variable %q already declared in this scope", n.Name)
 		}
+		unannotated := n.Type == nil
 		c.setElemHintFor(n.Init, n.Type)
 		c.expectedType = n.Type
 		got := c.checkExpr(n.Init, s)
@@ -14135,6 +14143,9 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		s.bindVar(n.Name, n.Type, n)
 		c.info.VarTypes[n] = n.Type
 		c.info.Locals[c.current] = append(c.info.Locals[c.current], n)
+		if st, ok := n.Type.(ast.StructType); ok && unannotated {
+			c.beginLitStructLocal(n, st, s)
+		}
 	case *ast.Destructure:
 		// `let (a, b, …) = expr;` — Init must produce a
 		// tuple of arity len(Names). Each name is registered
@@ -19115,7 +19126,9 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				return nil
 			}
 		}
-		return c.fieldAccessType(n, s, c.checkExpr(n.Target, s))
+		ft := c.fieldAccessType(n, s, c.checkExpr(n.Target, s))
+		c.noteLitField(n, ft, s)
+		return ft
 	}
 	return nil
 }
@@ -19582,8 +19595,16 @@ func (c *checker) settleNumeric(e ast.Expr, hint ast.Type) {
 		to.Type = hint
 	}
 	if fa, ok := e.(*ast.FieldAccess); ok {
+		if hn, ok := hint.(ast.NumberType); ok && !hn.Polymorphic {
+			if ll := c.litFields[fa]; ll != nil {
+				c.fixLitLocal(ll, hn, fa.P)
+			}
+		}
 		c.settleGenericCallByHint(fa, hint)
 		return
+	}
+	if id, ok := e.(*ast.Ident); ok {
+		c.settleLitStructLocal(id, hint)
 	}
 	switch hn := hint.(type) {
 	case ast.NumberType:
@@ -19942,6 +19963,9 @@ func (c *checker) settleIntSigned(e ast.Expr, hn ast.NumberType, negated bool) {
 		// B's string leaves A's proof untouched (#8722).
 		c.settleGenericCallByHint(x, hn)
 	case *ast.FieldAccess:
+		if ll := c.litFields[x]; ll != nil {
+			c.fixLitLocal(ll, hn, x.P)
+		}
 		c.settleGenericCallByHint(x, hn)
 	}
 }
@@ -20005,8 +20029,8 @@ func (c *checker) elemSettleable(have, want ast.Type) bool {
 		}
 	}
 	// So does a generic struct whose arguments literals bound: `[Same { a:
-	// 1, b: 2^62 }]` widens to `Same[i64][]` and settles its elements there
-	// (#10453).
+	// 1, b: 2^62 }]` widens to `Same[i64][]`, and `[q]` for a `var q = Same {
+	// a: 1, b: 2 }` settles to it, each element settling there (#10453).
 	if h, ok := have.(ast.StructType); ok {
 		if w, ok := want.(ast.StructType); ok && h.Name == w.Name && len(h.Args) == len(w.Args) && len(h.Args) > 0 {
 			for i := range h.Args {
@@ -20179,6 +20203,13 @@ func (c *checker) postSettleType(e ast.Expr, prior ast.Type) ast.Type {
 	case *ast.Ident:
 		// A read of a literal local that the settle just fixed.
 		if ll := c.litIdents[x]; ll != nil && ll.fixed {
+			return ll.width
+		}
+		if t := c.litStructType(x); t != nil {
+			return t
+		}
+	case *ast.FieldAccess:
+		if ll := c.litFields[x]; ll != nil && ll.fixed {
 			return ll.width
 		}
 	case *ast.NumberLit:
