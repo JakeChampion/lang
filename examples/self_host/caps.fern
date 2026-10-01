@@ -117,6 +117,9 @@ pub function builtin_caps(): BuiltinCap[] {
     BuiltinCap { builtin: "temp_dir", capability: "fs" },
     BuiltinCap { builtin: "getcwd", capability: "fs" },
     BuiltinCap { builtin: "env", capability: "env" },
+    // Deploy-time configuration reads what the deployment put in the
+    // environment, or its proxy-world equivalent: the same reach.
+    BuiltinCap { builtin: "config_get", capability: "env" },
     // The whole list is the same capability as one lookup: a caller
     // that can ask for a name can ask for every name it can guess.
     BuiltinCap { builtin: "environ", capability: "env" },

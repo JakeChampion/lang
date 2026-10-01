@@ -21,6 +21,7 @@ import (
 var payloadlessArmBoxSize = map[string]int32{
 	// Option[string]: tag@0, pad@4, data@8, len@12.
 	"__fern_env":                 16,
+	"__fern_config_get":          16,
 	"__fern_read_line":           16,
 	"__fern_reader_read_line_fd": 16,
 	// Option[IoError]: tag@0, IoError ptr@4.

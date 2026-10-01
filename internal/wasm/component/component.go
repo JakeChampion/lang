@@ -1317,6 +1317,35 @@ func WasiSocketsNetworkInstanceTypeBody() []byte {
 	return body
 }
 
+// wasiConfigStore is the wasi:config store interface the proxy world imports
+// (cmd/fern/wit/deps/config/store.wit), at the version wasmtime serves.
+const wasiConfigStore = "wasi:config/store@0.2.0-rc.1"
+
+// WasiConfigStoreInstanceTypeBody returns the type-section body for
+// wasi:config/store: `get: func(key: string) -> result<option<string>,
+// error>`, `error` being `variant { upstream(string), io(string) }`.
+//
+// Decls: 0 the error variant, 1 export "error" (eq 0), 2 option<string>,
+// 3 result<2, 1>, 4 func(key: string) -> 3, 5 export "get" (func 4).
+func WasiConfigStoreInstanceTypeBody() []byte {
+	body := []byte{0x01, 0x42, 0x06}
+	body = append(body, 0x01)
+	body = append(body, InnerTypeVariant([]VariantCase{
+		{Name: "upstream", HasPayload: true, PayloadValtype: CValtypeString},
+		{Name: "io", HasPayload: true, PayloadValtype: CValtypeString},
+	})...)
+	body = append(body, ExportTypeEqDecl("error", 0)...)
+	body = append(body, 0x01)
+	body = append(body, InnerTypeOption(CValtypeString)...)
+	body = append(body, 0x01)
+	body = append(body, InnerTypeResultOkErr(2, 1)...)
+	body = append(body, tcpMethodFuncDecl("get", []string{"key"}, []byte{CValtypeString}, 3)...)
+	body = append(body, 0x04, 0x00, byte(len("get")))
+	body = append(body, "get"...)
+	body = append(body, 0x01, 0x04)
+	return body
+}
+
 // WasiSocketsInstanceNetworkInstanceTypeBody returns the type-section
 // body for `wasi:sockets/instance-network@0.2.0`:
 // `instance-network: func() -> own<network>`. The `network` resource

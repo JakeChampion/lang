@@ -4307,6 +4307,7 @@ function builtin_sigs(): string[] {
     "create_link(string, string): Result[void, IoError]",
     "create_symlink(string, string): Result[void, IoError]",
     "env(string): Option[string]",
+    "config_get(string): Option[string]",
     "environ(): string[]",
     "eprint(string): void",
     "exit(i32): void",

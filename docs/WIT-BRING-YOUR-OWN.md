@@ -1563,7 +1563,13 @@ produces a response:
 > `@export` that binds it to the program's `handle`. The core is composed by
 > `wit_compose.compose_http` against the embedded proxy world
 > (`wit_proxy_world.fern`): the world-driven composer with `[resource-drop]`
-> lowerings and the incoming-handler export tail. Native's `-target
+> lowerings and the incoming-handler export tail. The world bounds the
+> component's imports rather than dictating them: the prefix declares the
+> interfaces the core imports, the ones the export's types need, and what
+> those alias (`wit_decode.wit_import_plan`), so a handler that never reads
+> its configuration does not import `wasi:config/store` and serves without
+> `-S config`, the same import surface the native path derives by classifying
+> the core. Native's `-target
 > wasm32-wasi-http` (`emitIncomingHandlerExport` / `compose_http.go` /
 > `wasi_http.go`) emits the entry as wasm instructions instead;
 > `TestSelfHostWasiHttpTargetMatchesNative` holds the two to the same

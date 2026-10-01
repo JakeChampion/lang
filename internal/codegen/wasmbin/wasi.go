@@ -507,6 +507,18 @@ var importSpecs = map[string]importSpec{
 		params:  []byte{encode.ValtypeI32},
 		results: nil,
 	},
+	"wasi_config_get_p2": {
+		// wasi:config/store@0.2.0-rc.1::get(key: string) ->
+		// result<option<string>, error>. Canonical-ABI lowered to
+		// `(key_ptr, key_len, retptr) -> ()`: retptr holds the result
+		// discriminant @ +0; for ok the option's discriminant @ +4 and
+		// the value (ptr @ +8, len @ +12), allocated in our memory
+		// through cabi_realloc.
+		module:  "wasi:config/store@0.2.0-rc.1",
+		name:    "get",
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: nil,
+	},
 	"wasi_get_stderr_p2": {
 		// Preview-2: wasi:cli/stderr@0.2.0::get-stderr() →
 		// own<output-stream>. Mirror of get-stdout; the result
@@ -2082,6 +2094,9 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 	if helpers.set["__fern_env_at"] {
 		in.add("wasi_environ_sizes_get")
 		in.add("wasi_environ_get")
+	}
+	if helpers.set["__fern_config_get"] {
+		in.add("wasi_config_get_p2")
 	}
 	if helpers.set["__fern_env"] {
 		if opts.Preview2WASI {
@@ -4765,6 +4780,87 @@ func buildEnvironBodyP2(idxs map[string]uint32) []byte {
 	body = memory.InstI32Store(body, 2, 0)
 	body = inst.InstLocalGet(body, 2)
 	locals := inst.PutLocalsOneGroup(nil, 12, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
+}
+
+// buildConfigGetBody is __fern_config_get(name_data, name_len): one
+// wasi:config/store.get for the name, answered as the same Option[string]
+// box __fern_env builds. Some(value) when the host holds the key; None when
+// it does not, and when the store reports an error, which a caller cannot
+// act on differently from a missing key.
+//
+// Locals (after 2 params): 2=$rb, 3=$buf, 4=$blen, 5=$i (normalize
+// scratch), 6=$box, 7=$cdata, 8=$clen.
+func buildConfigGetBody(idxs map[string]uint32) []byte {
+	alloc := idxs["__fern_alloc"]
+	allocRc1 := idxs["__fern_alloc_rc1"]
+	strCopy := idxs["__fern_str_copy"]
+	get := idxs["wasi_config_get_p2"]
+	free := idxs["__free"]
+	var body []byte
+	body = inst.InstI32Const(body, 16)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstLocalSet(body, 2)
+	body = emitStrNormalize(body, idxs, 0, 1, 3, 4, 5)
+	body = inst.InstLocalGet(body, 3)
+	body = inst.InstLocalGet(body, 4)
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstCall(body, get)
+	body = emitStrNormalizeFree(body, idxs, 1, 3, 4)
+	// ok (+0 == 0) and some (+4 == 1): copy the value into an owned string.
+	body = inst.InstLocalGet(body, 2)
+	body = memory.InstI32Load8U(body, 0, 0)
+	body = numeric.InstI32Eqz(body)
+	body = inst.InstLocalGet(body, 2)
+	body = memory.InstI32Load8U(body, 0, 4)
+	body = inst.InstI32Const(body, 1)
+	body = numeric.InstI32Eq(body)
+	body = numeric.InstI32And(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	{
+		body = inst.InstLocalGet(body, 2)
+		body = memory.InstI32Load(body, 2, 8)
+		body = inst.InstLocalGet(body, 2)
+		body = memory.InstI32Load(body, 2, 12)
+		body = inst.InstCall(body, strCopy)
+		body = inst.InstLocalSet(body, 8)
+		body = inst.InstLocalSet(body, 7)
+		// The host's value buffer came through cabi_realloc; give it back.
+		body = inst.InstLocalGet(body, 2)
+		body = memory.InstI32Load(body, 2, 12)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		{
+			body = inst.InstLocalGet(body, 2)
+			body = memory.InstI32Load(body, 2, 8)
+			body = inst.InstLocalGet(body, 2)
+			body = memory.InstI32Load(body, 2, 12)
+			body = inst.InstCall(body, free)
+		}
+		body = inst.InstEnd(body)
+		body = inst.InstLocalGet(body, 2)
+		body = inst.InstI32Const(body, 16)
+		body = inst.InstCall(body, free)
+		body = inst.InstI32Const(body, 16)
+		body = inst.InstCall(body, allocRc1)
+		body = inst.InstLocalSet(body, 6)
+		body = inst.InstLocalGet(body, 6)
+		body = inst.InstI32Const(body, 0)
+		body = memory.InstI32Store(body, 2, 0)
+		body = inst.InstLocalGet(body, 6)
+		body = inst.InstLocalGet(body, 7)
+		body = memory.InstI32Store(body, 2, 8)
+		body = inst.InstLocalGet(body, 6)
+		body = inst.InstLocalGet(body, 8)
+		body = memory.InstI32Store(body, 2, 12)
+		body = inst.InstLocalGet(body, 6)
+		body = inst.InstReturn(body)
+	}
+	body = inst.InstEnd(body)
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstI32Const(body, 16)
+	body = inst.InstCall(body, free)
+	body = emitPayloadlessResultBox(body, allocRc1, 6, 16, 1)
+	locals := inst.PutLocalsOneGroup(nil, 7, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
 }
 

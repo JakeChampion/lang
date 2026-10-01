@@ -10016,7 +10016,7 @@ pub function builtin_function_names(): string[] {
   return [
     // I/O + process + environment
     "print", "write", "eprint", "putchar",
-    "exit", "args", "env", "subprocess",
+    "exit", "args", "env", "config_get", "subprocess",
     // Crash-only supervision (docs/CRASH-ONLY-SERVE.md D2'): fork the
     // process / exec into another program / reap a child. std/tcp's
     // tcp_serve_supervised is the stdlib caller of the first and last;

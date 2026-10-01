@@ -109,6 +109,7 @@ var providedSigs = map[string]providedSig{
 	"__fern_drop_arr_ptr":             {2, rWord},
 	"__fern_drop_arr_str":             {2, rWord},
 	"__fern_env":                      {2, rWord},
+	"__fern_config_get":               {2, rWord},
 	"__fern_env_at":                   {1, rString},
 	"__fern_env_count":                {0, rWord},
 	"__fern_eprint":                   {2, rVoid},

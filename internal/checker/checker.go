@@ -51,6 +51,10 @@ var _ diag.FileSetter = (*Error)(nil)
 // list of locals (so codegen can lay out a frame).
 type Info struct {
 	VarTypes map[*ast.Var]ast.Type
+	// Target is the -target the program was checked for ("" for the hosted
+	// default), so a pass that re-checks a rewritten program checks it for
+	// the same target.
+	Target string
 	// IntrinsicCalls records resolved semantic identities for the pre-RC IR.
 	// Nil when no supported intrinsic was checked; legacy lowering is unchanged.
 	IntrinsicCalls map[*ast.Call]IntrinsicCall
@@ -1055,7 +1059,35 @@ func checkTarget(ctx context.Context, prog *ast.Program, target string) (*Info, 
 	if hasHandleDecl(prog) {
 		adaptResultHandler(prog)
 	}
-	return checkImpl(ctx, prog, targetSupervises(target))
+	if targetHasEnv(target) {
+		configFromEnv(prog)
+	}
+	info, err := checkImpl(ctx, prog, targetSupervises(target))
+	if info != nil {
+		info.Target = target
+	}
+	return info, err
+}
+
+// targetHasEnv reports whether `target` provides a process environment. An
+// unknown or empty target is the hosted default, which does.
+func targetHasEnv(target string) bool {
+	d := platforms.ForTarget(target)
+	return d == nil || slices.Contains(d.Capabilities, "env")
+}
+
+// configFromEnv renames every call to config_get to env: where the target
+// has an environment, that is where deploy-time configuration arrives, so
+// only the proxy world's backend implements config_get itself.
+func configFromEnv(prog *ast.Program) {
+	ast.WalkProgram(prog, func(n ast.Node) bool {
+		if call, ok := n.(*ast.Call); ok {
+			if id, ok := call.Callee.(*ast.Ident); ok && id.Name == "config_get" {
+				id.Name = "env"
+			}
+		}
+		return true
+	})
 }
 
 // targetSupervises reports whether a handler program built for `target`
@@ -1456,6 +1488,13 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 	// set"; the runtime helper preserves that — `Some("")` is
 	// returned for an explicitly empty value.)
 	c.info.FuncSigs["env"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}},
+		Result: ast.EnumType{Name: "Option", Args: []ast.Type{ast.StringType{}}},
+	}
+	// config_get(name) — one deploy-time configuration value. Where the
+	// target has an environment it is the environment (checkTarget renames
+	// the call to env); the proxy world reads wasi:config/store.
+	c.info.FuncSigs["config_get"] = &ast.FuncType{
 		Params: []ast.Type{ast.StringType{}},
 		Result: ast.EnumType{Name: "Option", Args: []ast.Type{ast.StringType{}}},
 	}

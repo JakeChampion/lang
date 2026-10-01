@@ -539,6 +539,17 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_alloc_rc1")
 					needs.add("__fern_str_copy")
 					needs.add("__fern_env_at")
+				case "__fern_config_get":
+					// (name) → Option[string] through
+					// wasi:config/store.get; the value is copied into a
+					// fresh owned string and the retbuf freed.
+					needs.add("__fern_alloc")
+					needs.add("__fern_alloc_rc1")
+					needs.add("__fern_str_copy")
+					needs.add("__fern_str_len")
+					needs.add("__fern_str_byte")
+					needs.add("__free")
+					needs.add("__fern_config_get")
 				case "__fern_env":
 					// (name) → Option[string]. Walks the cached
 					// environ_ptrs comparing each entry's prefix
@@ -1387,7 +1398,7 @@ func closePreview2HelperCalls(needs *runtimeNeeds) {
 // rather than per-call and keeps the static-sentinel header from
 // __fern_alloc_box.
 var helperResultBoxCallers = []string{
-	"__fern_env", "__fern_read_line",
+	"__fern_env", "__fern_config_get", "__fern_read_line",
 	"__fern_read_file", "__fern_read_file_bytes", "__fern_write_file",
 	"__fern_open_reader", "__fern_open_writer", "__fern_open_appender",
 	"__fern_open_exclusive", "__fern_open_reader_with", "__fern_open_writer_with",
@@ -2007,6 +2018,15 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32, encode.ValtypeI32},
 		body:    buildEnvAtBody,
+	},
+	"__fern_config_get": {
+		// (name_data, name_len) → Option[string] heap box, from
+		// wasi:config/store.get. The front ends rename config_get to env
+		// on every target with an environment, so only the proxy world
+		// reaches this.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildConfigGetBody,
 	},
 	"__fern_env": {
 		// (name_data, name_len) → Option[string] heap box.
