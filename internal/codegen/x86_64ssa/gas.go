@@ -2431,6 +2431,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"buf_push_u64":                    emitBufPushU64Helper,
 	"buf_len":                         emitBufLenHelper,
 	"buf_take":                        emitBufTakeHelper,
+	"buf_take_bytes":                  emitBufTakeBytesHelper,
 	"buf_free":                        emitBufFreeHelper,
 	"__alloc_reuse":                   emitAllocReuseHelper,
 	"print":                           emitPrintHelper("print", 1),
@@ -2556,6 +2557,7 @@ var heapUsingHelpers = map[string]bool{
 	"buf_new":                    true,
 	"__fern_buf_reserve":         true,
 	"buf_take":                   true,
+	"buf_take_bytes":             true,
 	"stdin":                      true,
 	"stdout":                     true,
 	"stderr":                     true,
@@ -2644,6 +2646,7 @@ var heapUsingHelpers = map[string]bool{
 // calls another must have that callee emitted too — the module never references
 // it directly). Transitively closed by referencedRuntimeHelpers.
 var runtimeHelperDeps = map[string][]string{
+	"buf_take_bytes":                  {"__alloc_u8", "__alloc", "__memcpy"},
 	"poll":                            {"__alloc", "__free"},
 	"strbuf_append":                   {"__alloc", "__free"},
 	"strbuf_take":                     {"__alloc"},

@@ -2290,6 +2290,11 @@ pub function op_buf_take(): Op {
   return op0(296);
 }
 
+// Extract owned bytes and reset the builder, without interpreting text.
+pub function op_buf_take_bytes(): Op {
+  return op0(347);
+}
+
 pub function op_buf_free(): Op {
   return op0(297);
 }
@@ -4204,6 +4209,9 @@ function kind_id_len13(name: string): i32 {
 }
 
 function kind_id_len14(name: string): i32 {
+  if (name == "buf_take_bytes") {
+    return 347;
+  }
   var c: u8 = name[0];
   if (c == b'a' && name == "arr_push_owned") {
     return 93;
@@ -5360,6 +5368,9 @@ function buf_kind_name(id: i32): string {
 // extension tags beyond kind_count() (struct_copy=198 … buf_free=297)
 // — lives in kind_name_4, whose fallthrough is the "invalid" sentinel.
 pub function kind_name(id: i32): string {
+  if (id == 347) {
+    return "buf_take_bytes";
+  }
   if (id <= 40) {
     return kind_name_0(id);
   }
@@ -5557,6 +5568,9 @@ function pops3(t: i32): boolean {
 // answers in one place rather than scattering seven tags across the pops1_* /
 // pops2_* predicates.
 function pops_buf(t: i32): i32 {
+  if (t == 347) {
+    return 1;
+  }
   // buf_push_u64 arrived after the block had closed over 291-297, so it
   // carries the next free id instead of extending it.
   if (t == 306) {

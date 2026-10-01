@@ -286,6 +286,7 @@ var Ungated = map[string]bool{
 	"buf_push_u64":                true,
 	"buf_len":                     true,
 	"buf_take":                    true,
+	"buf_take_bytes":              true,
 	"buf_free":                    true,
 	"f32_bits":                    true,
 	"f32_from_bits":               true,

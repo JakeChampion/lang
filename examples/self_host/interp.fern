@@ -3702,7 +3702,7 @@ function is_buf_builtin(name: string): boolean {
   if (name == "buf_push_byte" || name == "buf_push_u64" || name == "buf_push_mapped" || name == "buf_push_filtered" || name == "buf_push_expanded") {
     return true;
   }
-  return name == "buf_len" || name == "buf_take" || name == "buf_free";
+  return name == "buf_len" || name == "buf_take" || name == "buf_take_bytes" || name == "buf_free";
 }
 
 function v_buf_handle(h: usize): Value {
@@ -3863,9 +3863,8 @@ function call_buf_append(name: string, h: usize, args: Value[]): Value {
   return v_void();
 }
 
-// The three handle-only builtins: the accumulated length, the take that
-// hands the bytes over and leaves the builder ready at its reserve, and the
-// free that releases it.
+// Handle-only builtins: accumulated length, text/byte extraction that leaves
+// the builder ready at its reserve, and free that releases it.
 function call_buf_read(name: string, h: usize, args: Value[]): Value {
   if (args.len() != 1) {
     return v_err(name + ": expected 1 arg (b)");
@@ -3876,11 +3875,32 @@ function call_buf_read(name: string, h: usize, args: Value[]): Value {
   if (name == "buf_take") {
     return v_string(buf_take(h));
   }
+  if (name == "buf_take_bytes") {
+    return call_buf_take_bytes(h);
+  }
   if (name != "buf_free") {
     return v_err(name + ": not a builder read");
   }
   buf_free(h);
   return v_void();
+}
+
+// Read the host builder directly so the interpreter remains buildable by the
+// pinned bootstrap, which predates the new builtin. No string is constructed.
+function call_buf_take_bytes(h: usize): Value {
+  var n: i32 = buf_len(h);
+  var data: usize = __load_ptr(h);
+  if (target_arch() == "wasm32") {
+    data = data + 4 as usize;
+  }
+  var out: Value[] = [];
+  var i: i32 = 0;
+  while (i < n) {
+    out = out.append(v_int(__load_u8(data + i as usize)));
+    i = i + 1;
+  }
+  __store_ptr(h + __ptr_width() as usize, 0 as usize);
+  return v_arr_of(out, "u8");
 }
 
 function call_buf_builtin(name: string, args: Value[]): Value {

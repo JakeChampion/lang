@@ -425,7 +425,7 @@ amortised away rather than softened.
 
 ```
 buf_new(cap) / buf_push(b, s) / buf_push_range(b, s, lo, hi) /
-buf_push_byte(b, x) / buf_len(b) / buf_take(b) / buf_free(b)
+buf_push_byte(b, x) / buf_len(b) / buf_take(b) / buf_take_bytes(b) / buf_free(b)
 ```
 
 `buf_take` copies the accumulated bytes into a string of exactly their
@@ -438,6 +438,13 @@ flush against a write syscall. A builder is not
 refcounted and has no drop — a handle that is never freed leaks, exactly as
 an fd that is never closed does — so programs want `std/io_buffered`'s
 writers rather than these directly.
+
+`buf_take_bytes(b): u8[]` extracts arbitrary bytes into an independently
+owned array and resets the builder length while retaining its reserve.
+Later pushes or freeing the builder do not change the extracted array.
+Use this path for binary output. It never constructs a string; text callers
+can validate the returned bytes with `std/utf8.from_bytes`. The older
+`buf_take` API still needs a separate validity-contract migration for D9.
 
 ---
 

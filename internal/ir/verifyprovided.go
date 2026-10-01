@@ -434,6 +434,7 @@ var providedSigs = map[string]providedSig{
 	"buf_push_u64":                    {2, rVoid},
 	"buf_len":                         {1, rWord},
 	"buf_take":                        {1, rString},
+	"buf_take_bytes":                  {1, rWord},
 	"buf_free":                        {1, rVoid},
 	"string_from_bytes_unchecked":     {-1, rString},
 	"subprocess":                      {-1, rWord},

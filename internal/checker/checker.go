@@ -1605,6 +1605,12 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 		Params: []ast.Type{bufH},
 		Result: ast.StringType{},
 	}
+	// Extract arbitrary bytes as an independently owned array, resetting
+	// the builder without interpreting its contents as text.
+	c.info.FuncSigs["buf_take_bytes"] = &ast.FuncType{
+		Params: []ast.Type{bufH},
+		Result: ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}},
+	}
 	c.info.FuncSigs["buf_free"] = &ast.FuncType{
 		Params: []ast.Type{bufH},
 		Result: ast.VoidType{},

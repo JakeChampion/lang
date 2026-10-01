@@ -292,13 +292,15 @@ var rcInertBuiltins = map[string]bool{
 	"string_from_bytes_unchecked": true,
 
 	// The capacity-carrying builder (#8773). `buf_push` / `buf_push_range`
-	// memcpy the piece past the buffer tail and retain nothing; the rest
-	// take and return scalars. `buf_free` releases the builder's own
+	// memcpy the piece past the buffer tail and retain nothing. The take
+	// operations return fresh owned values, classified in rcresults.go.
+	// `buf_free` releases the builder's own
 	// blocks, which is the wholesale-invalidation axis `__heap_release_to`
 	// is filed under above and not one this table answers.
 	"buf_new": true, "buf_push": true, "buf_push_range": true, "buf_push_mapped": true, "buf_push_filtered": true, "buf_push_expanded": true,
 	"buf_push_byte": true, "buf_push_u64": true, "buf_len": true, "buf_take": true,
-	"buf_free": true,
+	"buf_free":       true,
+	"buf_take_bytes": true,
 
 	"proc_exec": true, "proc_exec_as": true, "proc_fork": true, "proc_waitpid": true,
 	"proc_waitpid_nohang": true,

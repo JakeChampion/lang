@@ -653,6 +653,7 @@ func New() *Interp {
 	i.Builtins["buf_push_u64"] = &Builtin{Fn: builtinBufPushU64}
 	i.Builtins["buf_len"] = &Builtin{Fn: builtinBufLen}
 	i.Builtins["buf_take"] = &Builtin{Fn: builtinBufTake}
+	i.Builtins["buf_take_bytes"] = &Builtin{Fn: builtinBufTakeBytes}
 	i.Builtins["buf_free"] = &Builtin{Fn: builtinBufFree}
 	// `x.len()` dispatches through three mangled names (one per
 	// receiver type the checker registers a method on); all three
@@ -5526,6 +5527,22 @@ func builtinBufTake(i *Interp, args []Value) (Value, error) {
 	s := String(b)
 	i.bufs[h] = make([]byte, 0, cap(b))
 	return s, nil
+}
+
+func builtinBufTakeBytes(i *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("buf_take_bytes: expected 1 arg (b), got %d", len(args))
+	}
+	h, b, err := bufHandle(i, "buf_take_bytes", args[0])
+	if err != nil {
+		return nil, err
+	}
+	out := newArray(len(b))
+	for j, value := range b {
+		out.E[j] = Number(value)
+	}
+	i.bufs[h] = b[:0]
+	return out, nil
 }
 
 // builtinBufFree releases the builder. The handle is dead afterwards,

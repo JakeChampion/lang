@@ -7245,6 +7245,7 @@ function builder_contracts(): ssasem.Contract[] {
     ssasem.Contract { name: "buf_push_u64", params: [t_usize(), t_u64()], modes: [ssaunits.value_mode(), ssaunits.value_mode()], result: t_void() },
     ssasem.Contract { name: "buf_len", params: [t_usize()], modes: handle, result: t_i32() },
     ssasem.Contract { name: "buf_take", params: [t_usize()], modes: handle, result: t_string() },
+    ssasem.Contract { name: "buf_take_bytes", params: [t_usize()], modes: handle, result: typeinfo.TypeArray { elem: t_u8(), view: false } },
     ssasem.Contract { name: "buf_free", params: [t_usize()], modes: handle, result: t_void() },
   ];
 }

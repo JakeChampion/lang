@@ -4296,6 +4296,7 @@ function builtin_sigs(): string[] {
     "buf_push_range(usize, string, i32, i32): void",
     "buf_push_u64(usize, u64): void",
     "buf_take(usize): string",
+    "buf_take_bytes(usize): u8[]",
     "cell_new(T): Cell",
     "chdir(string): Result[void, IoError]",
     "chmod(string, i32): Result[void, IoError]",
@@ -16968,7 +16969,7 @@ function ow_func_result_borrows(fn: parser.FuncDecl, mod: parser.Module, ofuncs:
 // from native's table and fails when the two drift.
 function ow_fresh_builtins(): string[] {
   var out: string[] = [
-    "__alloc_u8", "args", "buf_take", "cell_new", "environ", "getcwd", "getgroups",
+    "__alloc_u8", "args", "buf_take", "buf_take_bytes", "cell_new", "environ", "getcwd", "getgroups",
     "hostname", "map_new", "random_bytes", "read_line", "set_priority",
     "setgid", "setuid",
     "signal_send", "set_process_group", "set_window_size",

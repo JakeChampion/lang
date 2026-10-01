@@ -5141,6 +5141,9 @@ function builder_builtin_site(own r: irlower.LowerResult, ins: ssa.SInst): Lower
   if (ins.str == "buf_take") {
     return Lowered { found: true, r: emit(r, ir.op_buf_take()) };
   }
+  if (ins.str == "buf_take_bytes") {
+    return Lowered { found: true, r: emit(r, ir.packed(ir.op_buf_take_bytes())) };
+  }
   if (ins.str == "buf_free") {
     return Lowered { found: true, r: emit(r, ir.op_buf_free()) };
   }

@@ -1064,7 +1064,7 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					// unconditionalHelperCalls below.
 					needs.add(op.Str)
 				case "buf_new", "buf_push", "buf_push_range", "buf_push_mapped", "buf_push_filtered", "buf_push_expanded", "buf_push_byte",
-					"buf_push_u64", "buf_len", "buf_take", "buf_free":
+					"buf_push_u64", "buf_len", "buf_take", "buf_take_bytes", "buf_free":
 					// The capacity-carrying builder, same shape: its
 					// callees come from unconditionalHelperCalls.
 					needs.add(op.Str)
@@ -1303,6 +1303,7 @@ var unconditionalHelperCalls = map[string][]string{
 	"strbuf_take":            {"__fern_alloc_rc1"},
 	"buf_new":                {"__fern_alloc_rc1"},
 	"buf_take":               {"__fern_alloc_rc1"},
+	"buf_take_bytes":         {"__fern_alloc"},
 	"__fern_buf_reserve":     {"__fern_alloc_rc1", "__fern_box_free"},
 	"buf_push":               {"__fern_str_len", "__fern_str_byte", "__fern_buf_reserve"},
 	"buf_push_range":         {"__fern_str_byte", "__fern_buf_reserve"},
@@ -2284,6 +2285,11 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32, encode.ValtypeI32},
 		body:    buildBufTakeBody,
+	},
+	"buf_take_bytes": {
+		params:  []byte{encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildBufTakeBytesBody,
 	},
 	"buf_free": {
 		// (h) → (). The buffer, when the builder still owns one, and the

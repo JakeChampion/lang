@@ -14811,6 +14811,9 @@ function lower_target_name(name: string, s: LowerState): LowerState {
 // the name is not one of them; a mismatch therefore falls through to the
 // ordinary call path exactly as a wrong-arity `strbuf_append` does.
 function buf_builtin_arity(name: string): i32 {
+  if (name == "buf_take_bytes") {
+    return 1;
+  }
   if (name == "buf_new" || name == "buf_len" || name == "buf_take" || name == "buf_free") {
     return 1;
   }
@@ -14857,6 +14860,9 @@ function buf_builtin_op(name: string): ir.Op {
   }
   if (name == "buf_take") {
     return ir.op_buf_take();
+  }
+  if (name == "buf_take_bytes") {
+    return ir.op_buf_take_bytes();
   }
   return ir.op_buf_free();
 }

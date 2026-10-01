@@ -364,6 +364,9 @@ pub function emit_shape_lits_from(s: EmitState, from: i32): EmitState {
 // The register-ABI helper a buffer-builder op calls (#8773), and how many
 // operands it takes, in argument-register order; "" and 0 for any other op.
 pub function buf_helper(kind: i32): string {
+  if (kind == 347) {
+    return "__fern_buf_take_bytes";
+  }
   if (kind == 291) {
     return "__fern_buf_new";
   }
@@ -402,6 +405,9 @@ pub function buf_helper(kind: i32): string {
 
 // The helper for a buffer op over a packed u8[] table (packed_suffix).
 pub function buf_table_helper(kind: i32, packed: boolean): string {
+  if (packed && kind == 347) {
+    return "__fern_buf_take_bytes_u8";
+  }
   if (packed && (kind == 325 || kind == 326 || kind == 328)) {
     return buf_helper(kind) + "_u8";
   }
@@ -6963,7 +6969,7 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
   if (id.name == "getgroups") {
     return ty_array_i64();
   }
-  if (id.name == "__alloc_u8") {
+  if (id.name == "__alloc_u8" || id.name == "buf_take_bytes") {
     return ty_array_i32();
   }
   if (id.name == "random_bytes") {
@@ -9563,6 +9569,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
     "__fern_buf_new", "__fern_buf_push", "__fern_buf_push_range", "__fern_buf_push_mapped", "__fern_buf_push_filtered", "__fern_buf_push_expanded",
     "__fern_buf_push_byte", "__fern_buf_push_u64", "__fern_buf_len", "__fern_buf_take",
     "__fern_buf_free",
+    "__fern_buf_take_bytes", "__fern_buf_take_bytes_u8",
     // crash-only supervision (#5686): the entry owns fork / wait4.
     "__fn___fern_proc_fork", "__fn___fern_proc_waitpid",
     "__fn___fern_proc_waitpid_nohang", "__fn___fern_proc_exec",
