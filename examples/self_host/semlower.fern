@@ -66,6 +66,8 @@ struct Rows {
   // rather than computing it again for a row the ownership inference did not
   // move (#9969).
   plans: ssaunits.Plan[],
+  // Why each row is not emitted, "" where nothing refused it (`refusal`).
+  why: string[],
 }
 
 // sem_ir_on reports whether the semantic lowering runs: it does unless
@@ -232,38 +234,43 @@ function superseded(): irlower.LowerResult {
 
 // produced_plan plans one function's units. A refusal at either stage yields a
 // plan that is not ok, and the body it would have lowered keeps the AST one.
-function produced_plan(p: semsource.Produced, what: string): ssaunits.Plan {
+function produced_plan(p: semsource.Produced): ssaunits.Plan {
   // A template's erased body is not a body this boundary has: its instances
   // are separate symbols of their own, and the erased symbol keeps the AST
   // lowering that its own AST callers name.
   if (p.template) {
-    if (!p.ok && !p.bodyless) {
-      report(what, p.why);
-    }
     return ssaunits.refused("generic template");
   }
   if (!p.ok) {
-    if (!p.bodyless) {
-      report(what, p.why);
-    }
     return ssaunits.refused(p.why);
   }
-  var plan: ssaunits.Plan = ssaunits.plan(p.func, p.modes);
-  if (!plan.ok) {
-    report(what, plan.why);
+  return ssaunits.plan(p.func, p.modes);
+}
+
+// refusal is why a row's body is not emitted, or "" where nothing refused it:
+// the body was produced, a template's instances stand for it, it is an
+// `@import` extern, or a bisect knob left it out (`considered` false).
+function refusal(p: semsource.Produced, body: irlower.LowerResult, considered: boolean): string {
+  if (!considered || body.ok || p.bodyless) {
+    return "";
   }
-  return plan;
+  if (p.template) {
+    if (p.ok) {
+      return "";
+    }
+    return p.why;
+  }
+  return body.why;
 }
 
 // produced_body lowers a planned function. Every plan is made before any body
 // is lowered, because a caller's bracket reads its callees' plans (`grows`).
-function produced_body(p: semsource.Produced, plan: ssaunits.Plan, structs: irlower.StructTab, grows: ssaunits.GrowRow[], what: string): irlower.LowerResult {
+function produced_body(p: semsource.Produced, plan: ssaunits.Plan, structs: irlower.StructTab, grows: ssaunits.GrowRow[]): irlower.LowerResult {
   if (!plan.ok) {
     return declined(plan.why);
   }
   var r: irlower.LowerResult = ssarc.lower(p.func, p.modes, plan, structs, grows);
   if (!r.ok) {
-    report(what, r.why);
     return declined(r.why);
   }
   return r;
@@ -592,8 +599,7 @@ function ast_indirect_cone(r: Rows, mod: parser.Module, built: semsource.Built):
     for name in direct_callees(mod, built, row) {
       for callee in rows_of_name(r, name) {
         if (r.keep[callee]) {
-          report(r.n1[callee], "is reached by a direct call from " + r.n1[row] + ", which the AST lowering calls through a box");
-          r = Rows { ...r, keep: r.keep.with(callee, false) };
+          r = dropped(r, callee, "is reached by a direct call from " + r.n1[row] + ", which the AST lowering calls through a box");
         }
         // A template never seeds, but an AST-lowered caller calls its
         // erased body, so the cone continues through it.
@@ -631,8 +637,7 @@ function prune(r: Rows, mod: parser.Module, built: semsource.Built): Rows {
           bad = ast_built_value(r, mod, built, i);
         }
         if (bad.len() > 0) {
-          report(r.n1[i], bad);
-          r = Rows { ...r, keep: r.keep.with(i, false) };
+          r = dropped(r, i, bad);
           changed = true;
         }
       }
@@ -645,6 +650,23 @@ function prune(r: Rows, mod: parser.Module, built: semsource.Built): Rows {
     }
   }
   return r;
+}
+
+// dropped turns row `i` off, recording why.
+function dropped(r: Rows, i: i32, why: string): Rows {
+  return Rows { ...r, keep: r.keep.with(i, false), why: r.why.with(i, why) };
+}
+
+// report_rows names every refused row on stderr (`report`).
+function report_rows(r: Rows, prefix: string): i32 {
+  var i: i32 = 0;
+  while (i < r.why.len()) {
+    if (r.why[i].len() > 0) {
+      report(prefix + r.n1[i], r.why[i]);
+    }
+    i = i + 1;
+  }
+  return 0;
 }
 
 function kept_count(r: Rows): i32 {
@@ -668,7 +690,7 @@ function produced_at(built: semsource.Built, mod: parser.Module, i: i32): semsou
 // No rows to take back: what the FIRST lowering of a module is handed, and
 // what makes `rows_of` compute every plan and every body.
 function no_reuse(): Rows {
-  return Rows { body: [], n1: [], n2: [], keep: [], grows: [], called: [], plans: [] };
+  return Rows { body: [], n1: [], n2: [], keep: [], grows: [], called: [], plans: [], why: [] };
 }
 
 // Whether row `i` can be taken from `prev` unchanged. `changed` is
@@ -701,6 +723,7 @@ function rows_of(mod: parser.Module, built: semsource.Built, structs: irlower.St
   var skip: string = sem_ir_skip();
   var r: Rows = no_reuse();
   var plans: ssaunits.Plan[] = [];
+  var considered: boolean[] = [];
   var keys: string[] = [];
   var funcs: ssasem.Func[] = [];
   var i: i32 = 0;
@@ -710,9 +733,10 @@ function rows_of(mod: parser.Module, built: semsource.Built, structs: irlower.St
     if (row_reusable(prev, changed, i)) {
       plan = prev.plans[i];
     } else if (selected(only, skip, fd.name)) {
-      plan = produced_plan(built.decls[i], fd.name);
+      plan = produced_plan(built.decls[i]);
     }
     plans = plans.append(plan);
+    considered = considered.append(row_reusable(prev, changed, i) || selected(only, skip, fd.name));
     keys = keys.append(semsource.decl_key(fd));
     funcs = funcs.append(built.decls[i].func);
     r = Rows { ...r, n1: r.n1.append(fd.name), n2: r.n2.append(semsource.decl_key(fd)), called: r.called.append(called_values(built.decls[i].func)) };
@@ -728,9 +752,10 @@ function rows_of(mod: parser.Module, built: semsource.Built, structs: irlower.St
     if (row_reusable(prev, changed, at)) {
       plan = prev.plans[at];
     } else if (selected(only, skip, name)) {
-      plan = produced_plan(p, name);
+      plan = produced_plan(p);
     }
     plans = plans.append(plan);
+    considered = considered.append(row_reusable(prev, changed, at) || selected(only, skip, name));
     keys = keys.append(name);
     funcs = funcs.append(p.func);
     r = Rows { ...r, n1: r.n1.append(name), n2: r.n2.append(""), called: r.called.append(called_values(p.func)) };
@@ -740,7 +765,7 @@ function rows_of(mod: parser.Module, built: semsource.Built, structs: irlower.St
   i = 0;
   while (i < plans.len()) {
     var body: irlower.LowerResult = reused_or_lowered(built, mod, structs, r, prev, changed, i);
-    r = Rows { ...r, body: r.body.append(body), keep: r.keep.append(body.ok) };
+    r = Rows { ...r, body: r.body.append(body), keep: r.keep.append(body.ok), why: r.why.append(refusal(produced_at(built, mod, i), body, considered[i])) };
     i = i + 1;
   }
   return r;
@@ -754,7 +779,7 @@ function reused_or_lowered(built: semsource.Built, mod: parser.Module, structs: 
     && ssaunits.grow_rows_agree(prev.grows, r.grows, ssasem.called_names(p.func))) {
     return prev.body[i];
   }
-  return produced_body(p, r.plans[i], structs, r.grows, r.n1[i]);
+  return produced_body(p, r.plans[i], structs, r.grows);
 }
 
 // substitution produces every function this boundary admits and hands the
@@ -886,6 +911,7 @@ pub function substitution(mod: parser.Module, lowered: parser.FuncDecl[], struct
   var inf: Inference = produced_rows(mod, structs);
   var built: semsource.Built = inf.built;
   var r: Rows = inf.rows;
+  report_rows(r, "");
   var sigs: irlower.FnSigs = base;
   var helpers: ssarc.Helpers = ssarc.no_helpers();
   var bodies: irlower.LowerResult[] = [];
@@ -1007,7 +1033,11 @@ pub function runtime_bodies(src: string): irlower.LowerResult[] {
   var i: i32 = 0;
   while (i < im.funcs.len()) {
     if (!inf.rows.keep[i]) {
-      return runtime_refused(im.funcs[i].name, "kept the AST lowering");
+      var why: string = inf.rows.why[i];
+      if (why.len() == 0) {
+        why = "kept the AST lowering";
+      }
+      return runtime_refused(im.funcs[i].name, why);
     }
     out = out.append(inf.rows.body[i]);
     helpers = ssarc.with_drop_helpers(helpers, inf.built.decls[i].func);
@@ -1060,11 +1090,20 @@ pub function target_substitution(typed: parser.Module, target: string): ircore.S
   if (!sem_ir_on()) {
     return ircore.no_sub();
   }
-  if (util.str_has_prefix(target, "wasm")) {
-    return substitution_of(irlower.lift_lambdas_typed(ircore.script_normalized(typed)));
+  if (is_wasm(target)) {
+    return substitution_of(wasm_gated(typed));
   }
   var lifted: parser.Module = ircore.lift_lambdas_typed(typed);
   return ircore.Sub { ...substitution_of(gated_module(lifted)), lifted: lifted, has_lifted: true };
+}
+
+function is_wasm(target: string): boolean {
+  return util.str_has_prefix(target, "wasm");
+}
+
+// The module the wasm emit path gates: it lifts inside its own normalisation.
+function wasm_gated(typed: parser.Module): parser.Module {
+  return irlower.lift_lambdas_typed(ircore.script_normalized(typed));
 }
 
 function substitution_of(im: parser.Module): ircore.Sub {
@@ -1108,17 +1147,119 @@ pub function driven_module(mod: parser.Module, target: string): parser.Module {
 }
 
 function checked_typed(annotated: parser.Module, target: string): parser.Module {
+  var t: Typed = typed_for(annotated, target);
+  if (t.errs.len() > 0) {
+    eprint(util.format_diags(t.errs));
+    exit(1);
+  }
+  return t.mod;
+}
+
+// Typed is the module the typed lowering reads for a target, and the emit
+// entry's diagnostics on it, which run before the lowering so a module they
+// refuse gets its diagnostic rather than a lowering refusal.
+struct Typed { mod: parser.Module, errs: util.Diag[] }
+
+function typed_for(annotated: parser.Module, target: string): Typed {
   var desc: platforms.Descriptor = platforms.for_target(target);
   var folded: parser.Module = constfold.fold_target_name(annotated, desc.environment, desc.isa);
   var typed: parser.Module = parser.module_with_builtins_typed(folded);
-  // The emit entry's checks run before the lowering, so a module they refuse
-  // gets its diagnostic rather than a lowering refusal.
-  var errs: util.Diag[] = asmcore.entry_check_errors(checker.ensure_annotated(parser.erase_str_module(typed)));
-  if (errs.len() > 0) {
-    eprint(util.format_diags(errs));
-    exit(1);
+  return Typed { mod: typed, errs: asmcore.entry_check_errors(checker.ensure_annotated(parser.erase_str_module(typed))) };
+}
+
+// Verdict is the typed lowering's answer for a program, without emitting it
+// and without exiting: `ok` when the program passes the checks and every
+// declaration and instance is produced. `errors` holds the diagnostics of a
+// program that fails the checks, which then has no rows.
+pub struct Verdict { ok: boolean, errors: util.Diag[], rows: VerdictRow[] }
+
+// One declaration or instance. `state` is "produced", "refused" (with `why`),
+// "template" for a generic whose instances stand for it, or "extern" for an
+// `@import` declaration.
+pub struct VerdictRow { name: string, state: string, why: string }
+
+// verdict lowers `mod` as a driver that parsed it hands it to the emit
+// (`driven`). A driver that holds a program to the checker's build gate first
+// asks verdict_annotated after it, as its emit does.
+pub function verdict(mod: parser.Module, target: string): Verdict {
+  return verdict_annotated(checker.annotate_module(mod), target);
+}
+
+// verdict_annotated is verdict for a module the caller already checked and
+// annotated (`driven_annotated`).
+pub function verdict_annotated(annotated: parser.Module, target: string): Verdict {
+  var t: Typed = typed_for(annotated, target);
+  if (t.errs.len() > 0) {
+    return Verdict { ok: false, errors: t.errs, rows: [] };
   }
-  return typed;
+  var im: parser.Module = t.mod;
+  if (is_wasm(target)) {
+    im = wasm_gated(t.mod);
+  } else {
+    im = gated_module(ircore.lift_lambdas_typed(t.mod));
+  }
+  var inf: Inference = produced_rows(im, irlower.struct_tab(parser.erase_str_module(im).structs));
+  var rows: VerdictRow[] = [];
+  var ok: boolean = true;
+  var i: i32 = 0;
+  while (i < inf.rows.keep.len()) {
+    var row: VerdictRow = verdict_row(im, inf, i);
+    if (row.state == "refused") {
+      ok = false;
+    }
+    rows = rows.append(row);
+    i = i + 1;
+  }
+  return Verdict { ok: ok, errors: [], rows: rows };
+}
+
+function verdict_row(im: parser.Module, inf: Inference, i: i32): VerdictRow {
+  var name: string = inf.rows.n1[i];
+  if (i < im.funcs.len()) {
+    name = semsource.decl_key(im.funcs[i]);
+  }
+  if (inf.rows.keep[i]) {
+    return VerdictRow { name: name, state: "produced", why: "" };
+  }
+  if (inf.rows.why[i].len() > 0) {
+    return VerdictRow { name: name, state: "refused", why: inf.rows.why[i] };
+  }
+  var p: semsource.Produced = produced_at(inf.built, im, i);
+  if (p.bodyless) {
+    return VerdictRow { name: name, state: "extern", why: "" };
+  }
+  if (p.template) {
+    return VerdictRow { name: name, state: "template", why: "" };
+  }
+  // A bisect knob left it out, so the AST lowering stands for it.
+  return VerdictRow { name: name, state: "refused", why: "kept the AST lowering" };
+}
+
+// verdict_text is a verdict as the drivers' `-ir-probe` prints it: the
+// diagnostics of a program that fails the checks, then `<name>: ir` for each
+// produced row, `<name>: refused: <why>` for each refused one, the state of
+// the rest, and last the module's line, `module: IR` or `module: refused`.
+pub function verdict_text(v: Verdict): string {
+  var out: string = "";
+  if (v.errors.len() > 0) {
+    out = util.format_diags(v.errors);
+    if (!util.str_has_suffix(out, "\n")) {
+      out = out + "\n";
+    }
+  }
+  for row in v.rows {
+    if (row.state == "produced") {
+      out = out + row.name + ": ir\n";
+    } else if (row.state == "refused") {
+      out = out + row.name + ": refused: " + row.why + "\n";
+    } else {
+      out = out + row.name + ": " + row.state + "\n";
+    }
+  }
+  if (v.ok) {
+    return out + "module: IR\n";
+  }
+  return out + "module: refused\n";
 }
 
 // program is the whole program a register backend's emit over `d` gates, which

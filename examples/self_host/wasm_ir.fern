@@ -1925,14 +1925,12 @@ pub function wasm_eligible(mod: parser.Module): boolean {
   return g.ok && wasm_ir_deferrals_ok(g.cache);
 }
 
-// wasm_ir_deferrals_ok is the non-eligible_core half of wasm_eligible evaluated
-// over a pre-lowered cache: the set of ops that DON'T yet lower on the wasm IR
+// wasm_ir_deferrals_ok is the deferral half of wasm_eligible evaluated over a
+// pre-lowered cache: the set of ops that DON'T yet lower on the wasm IR
 // backend (poll / timer_fd / the tcp_* socket set / wasm_poll — the
 // component-model / socket runtime the bare core-wasm+preview1 backend doesn't
 // wire). Split out of wasm_eligible so the emit dispatch can build the cache
-// ONCE — after the cheap eligible_core AST gate passes — and reuse it for both
-// this deferral gate AND emit, instead of re-lowering the whole module ~10× via
-// the mod-taking module_emits_op. Byte-identical to the old inline chain (#4652).
+// ONCE and reuse it for both this deferral gate AND emit (#4652).
 // module_erased_wide: any lowered function passes a 64-bit / f64 value
 // through a bare-typevar (erased-generic) param (LowerResult.erased_wide).
 // The wasm backend types erased param locals i32, so such a module is refused —

@@ -17,10 +17,10 @@ import (
 // so each widening of the IR subset (primitive receivers, enum receivers, the
 // derive helpers, …) shows up as an intentional ast->ir flip here.
 //
-// The path decision is probed via the asm_pathprobe_run driver, which runs the
-// EXACT production pipeline (parser.module_with_builtins → lift_lambdas →
-// asm_ir.all_eligible — what emit_module checks) and prints "ir"/"refused" without
-// emitting any assembly, so the gate is fast and assembler-free.
+// The path decision is probed via the asm_pathprobe_run driver, which asks the
+// typed lowering the drivers emit from (semlower.verdict) and prints
+// "ir"/"refused" without emitting any assembly, so the gate is fast and
+// assembler-free.
 //
 // Frontier (post to_string-builtin slice):
 //   - Concrete struct-impl methods + monomorphised struct/primitive bounded
@@ -55,39 +55,44 @@ import (
 //     matching `<ConcreteType>.<method>` via a compare-branch chain over the
 //     trait's impl types (mirroring the AST emitter).
 var traitIRPath = map[string]string{
-	"trait-impl-method":                          "ir",
-	"trait-impl-arg":                             "ir",
-	"trait-two-impls":                            "ir",
-	"trait-bounded-generic-monotype":             "ir",
-	"trait-bounded-generic-multitype":            "ir",
-	"trait-bounded-generic-primitive":            "ir",
-	"trait-bounded-generic-mixed":                "ir",
-	"trait-bounded-generic-array-elem":           "ir",
-	"trait-bounded-generic-two-params":           "ir",
-	"trait-parametric-impl-struct-elem":          "ir",
-	"trait-dyn-object-heterogeneous":             "ir",
-	"trait-struct-array-loop-method":             "ir",
-	"trait-derive-struct-eq":                     "ir",
-	"trait-derive-struct-ord":                    "ir",
-	"trait-derive-struct-display-nested":         "ir",
+	"trait-impl-method":                 "ir",
+	"trait-impl-arg":                    "ir",
+	"trait-two-impls":                   "ir",
+	"trait-bounded-generic-monotype":    "ir",
+	"trait-bounded-generic-multitype":   "ir",
+	"trait-bounded-generic-primitive":   "ir",
+	"trait-bounded-generic-mixed":       "ir",
+	"trait-bounded-generic-array-elem":  "ir",
+	"trait-bounded-generic-two-params":  "ir",
+	"trait-parametric-impl-struct-elem": "ir",
+	"trait-dyn-object-heterogeneous":    "ir",
+	"trait-struct-array-loop-method":    "ir",
+	"trait-derive-struct-eq":            "ir",
+	"trait-derive-struct-ord":           "ir",
+	// The probe reads stdin and loads no import, so a case calling into
+	// std/i32 or core/cmp (a derived Display or Json reaches i32.to_string)
+	// calls something nothing defines, and the typed lowering refuses it.
+	// TestSelfHostTraitsX86_64 compiles these through the CLI, which loads
+	// the imports.
+	"trait-derive-struct-display-nested":         "refused",
 	"trait-enum-method":                          "ir",
 	"trait-enum-method-unannot-local":            "ir",
 	"trait-enum-method-unannot-payloadless":      "ir",
-	"trait-derive-enum-display":                  "ir",
+	"trait-derive-enum-display":                  "refused",
 	"trait-derive-enum-eq":                       "ir",
 	"trait-derive-enum-ord":                      "ir",
-	"trait-derive-struct-json":                   "ir",
-	"trait-derive-enum-json":                     "ir",
-	"trait-derive-struct-debug":                  "ir",
+	"trait-derive-struct-json":                   "refused",
+	"trait-derive-enum-json":                     "refused",
+	"trait-derive-struct-debug":                  "refused",
 	"trait-derive-enum-debug":                    "ir",
 	"trait-derive-struct-hash":                   "ir",
 	"trait-derive-enum-hash":                     "ir",
-	"trait-generic-struct-derive-display-i32":    "ir",
-	"trait-generic-struct-derive-display-string": "ir",
-	"trait-generic-struct-derive-display-both":   "ir",
+	"trait-generic-struct-derive-display-i32":    "refused",
+	"trait-generic-struct-derive-display-string": "refused",
+	"trait-generic-struct-derive-display-both":   "refused",
 	"trait-generic-struct-derive-eq":             "ir",
 	"trait-generic-struct-derive-ord":            "ir",
-	"trait-generic-struct-parametric-impl":       "ir",
+	"trait-generic-struct-parametric-impl":       "refused",
 }
 
 // TestSelfHostTraitIRPathX86_64 asserts the IR-vs-AST routing for every trait
