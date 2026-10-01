@@ -13372,6 +13372,12 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 				if id, ok := x.Operand.(*ast.Ident); ok {
 					borrow[id] = true
 				}
+			case *ast.MatchExpr:
+				// A match no arm of which takes a pointer payload out of its
+				// scrutinee reads it: the value stays whole (#9539).
+				if id, ok := x.Tag.(*ast.Ident); ok && !ast.MatchExprTakesPointerPayload(x.Arms) {
+					borrow[id] = true
+				}
 			case *ast.SliceExpr:
 				// `s[lo:hi]` reads s (and the bounds) — a borrow.
 				if id, ok := x.Source.(*ast.Ident); ok {
@@ -13603,7 +13609,19 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			// (not owned). Capture ownership BEFORE recordExprUses consumes the
 			// scrutinee.
 			scrutOwned := c.isOwnedScrutinee(x.Tag, isOwnedExpr)
-			recordExprUses(x.Tag, moved) // a bare-ident scrutinee is consumed here
+			// A bare-ident scrutinee is consumed here, unless no arm takes a
+			// pointer payload out of it: then the value stays whole.
+			if id, ok := x.Tag.(*ast.Ident); ok && !ast.MatchTakesPointerPayload(x.Arms) {
+				prev, had := moved[id.Name]
+				recordExprUses(x.Tag, moved)
+				if had {
+					moved[id.Name] = prev
+				} else {
+					delete(moved, id.Name)
+				}
+			} else {
+				recordExprUses(x.Tag, moved)
+			}
 			for _, arm := range x.Arms {
 				armMoved := cloneMoved(moved)
 				var added []string

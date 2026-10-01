@@ -9804,7 +9804,7 @@ func (b *builder) stmt(s ast.Stmt) error {
 		// release and leave the box to the exit sweep.
 		consumeOwnedName := ""
 		if !pairFormScrutinee {
-			consumeEnum, consumeScrut = b.ownParamEnumScrutinee(n.Tag)
+			consumeEnum, consumeScrut = b.ownParamEnumScrutinee(n.Tag, n.Arms)
 		}
 		if !pairFormScrutinee && !consumeScrut {
 			// computeConsumingOwnedMatches never admits an `own` param, so the
@@ -18867,10 +18867,12 @@ func (b *builder) emitOwnedConsumingArmDrop(ptrSlot int32, et ast.EnumType, vari
 
 // ownParamEnumScrutinee reports the enum type when `tag` is a bare reference to
 // an OWN (consuming) parameter of the current function whose static type is an
-// enum — the scrutinee of a consuming match. Gated on the program using `own`
-// (b.info.OwnFuncs), so non-`own` code never triggers the consuming path.
-func (b *builder) ownParamEnumScrutinee(tag ast.Expr) (ast.EnumType, bool) {
-	if !ast.RcFreeEnabled || len(b.info.OwnFuncs) == 0 {
+// enum, and an arm takes a pointer payload out of it — the scrutinee of a
+// consuming match. A match that only tests the tag leaves the value whole
+// (#9539). Gated on the program using `own` (b.info.OwnFuncs), so non-`own`
+// code never triggers the consuming path.
+func (b *builder) ownParamEnumScrutinee(tag ast.Expr, arms []*ast.MatchArm) (ast.EnumType, bool) {
+	if !ast.RcFreeEnabled || len(b.info.OwnFuncs) == 0 || !ast.MatchTakesPointerPayload(arms) {
 		return ast.EnumType{}, false
 	}
 	id, ok := tag.(*ast.Ident)
