@@ -410,7 +410,7 @@ function call_contract_error(c: ssasem.Contract, f: ssasem.Func): string {
 
 // Check the finite schema tables, not recursive nominal field expansion.
 function schema_fields_error(f: ssasem.Func): string {
-  for record in f.records {
+  for record in f.records.list {
     for field in record.fields {
       if (!supported(field.ty, f)) {
         return "unsupported counted record field";
@@ -1025,7 +1025,7 @@ function constructed_fields(f: ssasem.Func, ins: ssa.SInst): semrecords.Field[] 
   if (ins.kind_tag == ssasem.record_new() && !semtypes.is_env(t)) {
     var at: i32 = semrecords.find(f.records, t);
     if (at >= 0) {
-      return f.records[at].fields;
+      return f.records.list[at].fields;
     }
   }
   if (ins.kind_tag == ssasem.variant_new()) {

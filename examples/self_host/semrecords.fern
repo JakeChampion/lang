@@ -9,6 +9,23 @@ pub struct Field { name: string, ty: typeinfo.Type }
 // through every type its fields reach (semsource.view_types).
 pub struct Record { ty: typeinfo.Type, fields: Field[], views: boolean }
 
+// Records is a function's record table with a bucket index over the struct
+// names, so a lookup by type walks one name's instances, not the table.
+pub struct Records { list: Record[], names: util.NameIndex }
+
+pub function records_of(list: Record[]): Records {
+  var names: string[] = [];
+  for r in list {
+    names = names.append(record_name(r));
+  }
+  return Records { list: list, names: util.name_index(names) };
+}
+
+pub function no_records(): Records {
+  var none: Record[] = [];
+  return records_of(none);
+}
+
 // An enum's identity is its union type; each variant is a named field shape.
 // `layout` says how a variant's box is built and read, which is a property of
 // the declaration rather than of any use: a declared enum boxes its payload
@@ -33,13 +50,19 @@ pub function layout_option(): i32 {
   return 3;
 }
 
-pub function find(records: Record[], ty: typeinfo.Type): i32 {
+pub function find(records: Records, ty: typeinfo.Type): i32 {
   if let typeinfo.TypeStruct(s) = ty {
     return find_struct(records, s.name, ty);
   }
+  return find_in(records.list, ty);
+}
+
+// find_in is find over a list with no index yet: the table while a function's
+// schema is still being collected.
+pub function find_in(list: Record[], ty: typeinfo.Type): i32 {
   var i: i32 = 0;
-  while (i < records.len()) {
-    if (semtypes.equal(records[i].ty, ty)) {
+  while (i < list.len()) {
+    if (semtypes.equal(list[i].ty, ty)) {
       return i;
     }
     i = i + 1;
@@ -61,17 +84,15 @@ pub function find_enum(enums: Enum[], ty: typeinfo.Type): i32 {
   return 0 - 1;
 }
 
-// Only a struct of the same name can equal a struct type, so the name is
-// compared before the full type: the scan and the first match are find's own.
-function find_struct(records: Record[], name: string, ty: typeinfo.Type): i32 {
-  var i: i32 = 0;
-  while (i < records.len()) {
-    if let typeinfo.TypeStruct(r) = records[i].ty {
-      if (r.name == name && semtypes.equal(records[i].ty, ty)) {
-        return i;
-      }
+// Only a struct of the same name can equal a struct type, so the walk is the
+// name's chain, ascending, and the first full match is find's own.
+function find_struct(records: Records, name: string, ty: typeinfo.Type): i32 {
+  var i: i32 = records.names.chain(name);
+  while (i >= 0) {
+    if (records.names.names[i] == name && semtypes.equal(records.list[i].ty, ty)) {
+      return i;
     }
-    i = i + 1;
+    i = records.names.next[i];
   }
   return 0 - 1;
 }
@@ -100,7 +121,7 @@ pub function find_variant(e: Enum, name: string): i32 {
   return 0 - 1;
 }
 
-function resolved_all(types: typeinfo.Type[], records: Record[], enums: Enum[]): boolean {
+function resolved_all(types: typeinfo.Type[], records: Records, enums: Enum[]): boolean {
   for ty in types {
     if (!resolved(ty, records, enums)) {
       return false;
@@ -111,7 +132,7 @@ function resolved_all(types: typeinfo.Type[], records: Record[], enums: Enum[]):
 
 // Follow structural types, not nominal field edges. The table verifies every
 // field separately, so recursive declarations never recurse during validation.
-function resolved(ty: typeinfo.Type, records: Record[], enums: Enum[]): boolean {
+function resolved(ty: typeinfo.Type, records: Records, enums: Enum[]): boolean {
   if (semtypes.is_cell(ty)) {
     return resolved(semtypes.cell_elem(ty), records, enums);
   }
@@ -129,7 +150,7 @@ function resolved(ty: typeinfo.Type, records: Record[], enums: Enum[]): boolean 
   return resolved_structural(ty, records, enums);
 }
 
-function resolved_structural(ty: typeinfo.Type, records: Record[], enums: Enum[]): boolean {
+function resolved_structural(ty: typeinfo.Type, records: Records, enums: Enum[]): boolean {
   if let typeinfo.TypeArray(a) = ty {
     return resolved(a.elem, records, enums);
   }
@@ -145,7 +166,7 @@ function resolved_structural(ty: typeinfo.Type, records: Record[], enums: Enum[]
   return true;
 }
 
-function fields_error(fields: Field[], records: Record[], enums: Enum[]): string {
+function fields_error(fields: Field[], records: Records, enums: Enum[]): string {
   var i: i32 = 0;
   while (i < fields.len()) {
     var field: Field = fields[i];
@@ -202,20 +223,12 @@ function record_name(r: Record): string {
 }
 
 // Only two instances of one struct can collide or disagree, so a record is
-// compared with the earlier records of its name alone: chained per hash bucket,
-// in ascending order, which is the order the pairwise scan reported in.
-function records_error(records: Record[], enums: Enum[]): string {
-  var nb: i32 = records.len() * 2 + 1;
-  var head: i32[] = [];
-  var tail: i32[] = [];
-  while (head.len() < nb) {
-    head = head.append(0 - 1);
-    tail = tail.append(0 - 1);
-  }
-  var next: i32[] = [];
+// compared with the earlier records of its name alone: the table's chain for
+// the name, ascending, which is the order the pairwise scan reported in.
+function records_error(records: Records, enums: Enum[]): string {
   var i: i32 = 0;
-  while (i < records.len()) {
-    var record: Record = records[i];
+  while (i < records.list.len()) {
+    var record: Record = records.list[i];
     if (!semtypes.concrete(record.ty, false)) {
       return "unresolved record identity";
     }
@@ -223,24 +236,16 @@ function records_error(records: Record[], enums: Enum[]): string {
       return "non-nominal record identity";
     }
     var name: string = record_name(record);
-    var b: i32 = util.hash_bucket(name, nb);
-    var j: i32 = head[b];
-    while (j >= 0) {
-      if (record_name(records[j]) == name) {
-        var clash: string = instance_error(record, records[j]);
+    var j: i32 = records.names.chain(name);
+    while (j >= 0 && j < i) {
+      if (records.names.names[j] == name) {
+        var clash: string = instance_error(record, records.list[j]);
         if (clash != "") {
           return clash;
         }
       }
-      j = next[j];
+      j = records.names.next[j];
     }
-    next = next.append(0 - 1);
-    if (tail[b] < 0) {
-      head = head.with(b, i);
-    } else {
-      next = next.with(tail[b], i);
-    }
-    tail = tail.with(b, i);
     var why: string = fields_error(record.fields, records, enums);
     if (why != "") {
       return why;
@@ -250,7 +255,7 @@ function records_error(records: Record[], enums: Enum[]): string {
   return "";
 }
 
-function variants_error(variants: Variant[], records: Record[], enums: Enum[]): string {
+function variants_error(variants: Variant[], records: Records, enums: Enum[]): string {
   var i: i32 = 0;
   while (i < variants.len()) {
     if (variants[i].name == "") {
@@ -275,7 +280,7 @@ function variants_error(variants: Variant[], records: Record[], enums: Enum[]): 
 // A struct-union's member is its own box, so the member's field shape must
 // also be a record this table carries: the walks that read a member read it
 // through that record.
-function layout_error(e: Enum, records: Record[]): string {
+function layout_error(e: Enum, records: Records): string {
   if (e.layout == layout_option()) {
     return option_layout_error(e);
   }
@@ -286,11 +291,11 @@ function layout_error(e: Enum, records: Record[]): string {
     return "";
   }
   for v in e.variants {
-    var at: i32 = find_named(records, v.name);
+    var at: i32 = records.names.find(v.name);
     if (at < 0) {
       return "missing union member record";
     }
-    if (!same_fields(records[at].fields, v.fields)) {
+    if (!same_fields(records.list[at].fields, v.fields)) {
       return "inconsistent union member record";
     }
   }
@@ -320,19 +325,6 @@ function option_layout_error(e: Enum): string {
   return "";
 }
 
-function find_named(records: Record[], name: string): i32 {
-  var i: i32 = 0;
-  while (i < records.len()) {
-    if let typeinfo.TypeStruct(r) = records[i].ty {
-      if (r.name == name) {
-        return i;
-      }
-    }
-    i = i + 1;
-  }
-  return 0 - 1;
-}
-
 function same_fields(a: Field[], b: Field[]): boolean {
   if (a.len() != b.len()) {
     return false;
@@ -347,7 +339,7 @@ function same_fields(a: Field[], b: Field[]): boolean {
   return true;
 }
 
-function enums_error(records: Record[], enums: Enum[]): string {
+function enums_error(records: Records, enums: Enum[]): string {
   var i: i32 = 0;
   while (i < enums.len()) {
     var e: Enum = enums[i];
@@ -377,7 +369,7 @@ function enums_error(records: Record[], enums: Enum[]): string {
   return "";
 }
 
-pub function verify(records: Record[], enums: Enum[]): string {
+pub function verify(records: Records, enums: Enum[]): string {
   var why: string = records_error(records, enums);
   if (why != "") {
     return why;

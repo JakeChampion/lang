@@ -13,7 +13,7 @@ pub struct Func {
   values: typeinfo.Type[],
   params: typeinfo.Type[],
   result: typeinfo.Type,
-  records: semrecords.Record[],
+  records: semrecords.Records,
   enums: semrecords.Enum[],
   calls: Contract[],
   envs: EnvRow[],
@@ -1038,7 +1038,7 @@ function record_construction_error(ins: ssa.SInst, f: Func, result: typeinfo.Typ
   if (at < 0) {
     return "missing record construction schema";
   }
-  var fields: semrecords.Field[] = f.records[at].fields;
+  var fields: semrecords.Field[] = f.records.list[at].fields;
   if (ins.args.len() != fields.len()) {
     return "record construction arity";
   }
@@ -1123,7 +1123,7 @@ function record_projection_error(ins: ssa.SInst, f: Func, result: typeinfo.Type)
   if (at < 0) {
     return "missing record projection schema";
   }
-  var fields: semrecords.Field[] = f.records[at].fields;
+  var fields: semrecords.Field[] = f.records.list[at].fields;
   if (ins.imm < 0 || ins.imm >= fields.len()) {
     return "record projection index";
   }
@@ -2851,7 +2851,7 @@ function type_placement_error(t: typeinfo.Type): string {
 }
 
 function field_placement_error(f: Func): string {
-  for record in f.records {
+  for record in f.records.list {
     var env: boolean = semtypes.is_env(record.ty);
     for field in record.fields {
       if (!holds_func(field.ty)) {
@@ -3731,7 +3731,7 @@ pub function holds_view(f: Func, t: typeinfo.Type): boolean {
   }
   var r: i32 = semrecords.find(f.records, t);
   if (r >= 0) {
-    return f.records[r].views;
+    return f.records.list[r].views;
   }
   var e: i32 = semrecords.find_enum(f.enums, t);
   if (e >= 0) {
@@ -3789,7 +3789,7 @@ pub function copyable(f: Func, t: typeinfo.Type): boolean {
   if (r < 0 || semtypes.is_env(t)) {
     return false;
   }
-  for fl in f.records[r].fields {
+  for fl in f.records.list[r].fields {
     if (!copyable(f, fl.ty)) {
       return false;
     }
@@ -3844,7 +3844,7 @@ function deep_copy(f: Func, s: CopySplice, v: i32): Copied {
 }
 
 function copy_record(f: Func, s: CopySplice, v: i32, t: typeinfo.Type): Copied {
-  var fields: semrecords.Field[] = f.records[semrecords.find(f.records, t)].fields;
+  var fields: semrecords.Field[] = f.records.list[semrecords.find(f.records, t)].fields;
   var parts: i32[] = [];
   var i: i32 = 0;
   while (i < fields.len()) {
