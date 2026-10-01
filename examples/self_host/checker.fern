@@ -2585,7 +2585,7 @@ function derives_trait(s: Scope, tyname: string, tr: string): boolean {
 function conforms_to_dyn_trait(s: Scope, tyname: string, tr: string): boolean {
   var key: string = util.base_type_name(tr);
   for imp in s.impls {
-    if (parser.impl_trait_key(imp) == key && util.base_type_name(imp.impl_type) == tyname) {
+    if (parser.impl_trait_key(imp) == key && parser.receiver_base(imp.impl_type) == parser.receiver_base(tyname)) {
       return true;
     }
   }
@@ -4029,11 +4029,12 @@ function type_assignable(from: typeinfo.Type, to: typeinfo.Type, unions: UnionSi
       return false;
     },
     typeinfo.TypeDyn(_) => {
-      // A direct coercion site accepts any value here; whether the concrete
-      // implements the traits needs the impl table, which `coercible`
-      // asks. An `unknown` source (e.g. a not-yet-typed dyn method call) is
-      // accepted so it can't false-positive.
-      return true;
+      // A direct coercion site accepts any value but a `str`, which assigns
+      // only to a `str`: a box would hold the view past its source. Whether
+      // the concrete implements the traits needs the impl table, which
+      // `coercible` asks. An `unknown` source (e.g. a not-yet-typed dyn
+      // method call) is accepted so it can't false-positive.
+      return !is_str_view(from);
     },
     typeinfo.TypeFunc(_) => {
       // Callable assignment compatibility remains coarse in this partial
@@ -11392,6 +11393,11 @@ function settles_to(e: ast.Expr, want: typeinfo.Type, s: Scope): boolean {
     typeinfo.TypeArray(wa) => {
       match (e) {
         ast.ExprArray(arr) => {
+          // Each element is a coercion site of its own, and one that does
+          // not coerce into a dyn slot is E034 (array_elem_check).
+          if (is_dyn_slot(wa.elem)) {
+            return true;
+          }
           for element in arr.elements {
             if (!settles_or_assignable(element, wa.elem, s)) {
               return false;
@@ -14848,7 +14854,7 @@ function redeclares(funcs: parser.FuncDecl[], di: i32): boolean {
     if (f2.receiver_type.len() == 0 && pe.receiver_type.len() == 0 && pe.name == f2.name) {
       earlier = true;
     }
-    if (f2.receiver_type.len() > 0 && pe.receiver_type.len() > 0 && pe.name == f2.name && util.base_type_name(pe.receiver_type) == util.base_type_name(f2.receiver_type)) {
+    if (f2.receiver_type.len() > 0 && pe.receiver_type.len() > 0 && pe.name == f2.name && parser.receiver_base(pe.receiver_type) == parser.receiver_base(f2.receiver_type)) {
       earlier = true;
     }
     ej = ej + 1;
@@ -14906,7 +14912,7 @@ function collect_decl_diags(mod: parser.Module): util.Diag[] {
       if (f2.receiver_type.len() == 0) {
         out = out.append(dg_at("E006", "function \"" + f2.name + "\" redeclared", f2.line, f2.col));
       } else {
-        out = out.append(dg_at("E006", "method \"" + f2.name + "\" on " + util.base_type_name(f2.receiver_type) + " redeclared", f2.line, f2.col));
+        out = out.append(dg_at("E006", "method \"" + f2.name + "\" on " + parser.receiver_base(f2.receiver_type) + " redeclared", f2.line, f2.col));
       }
     }
     // E021: a method whose receiver type isn't a known struct / enum /
