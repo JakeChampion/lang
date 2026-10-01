@@ -1321,6 +1321,21 @@ function decl_sentinel(p: Par, text: string): ast.Stmt {
   return s_unknown(p, "decl:" + text);
 }
 
+// sync_to_top_level steps to the next token that can open a top-level
+// declaration, as native's syncToTopLevel does, so the rest of a malformed one
+// raises no diagnostics of its own.
+function sync_to_top_level(p: Par): Par {
+  var q: Par = p;
+  while (!q.at_end()) {
+    var kw: string = q.peek_keyword();
+    if (kw == "function" || kw == "struct" || kw == "enum" || kw == "import" || kw == "const" || kw == "trait" || kw == "impl" || kw == "pub") {
+      return q;
+    }
+    q = q.advance();
+  }
+  return q;
+}
+
 // skip_body_item steps past the rest of a malformed trait or impl body item: to
 // a `;` at depth 0 (consumed), past a `{ … }` block, or up to the body's own `}`
 // (left for the caller), so one bad item raises one diagnostic.
@@ -9823,9 +9838,9 @@ function parse_enum_decl(p: Par): (string, StructDecl[], string[], i32[], Par) {
 
 // parse_import consumes `import "path";` starting from the
 // `import` keyword. The path string is captured verbatim; the
-// trailing semicolon is consumed when present. Malformed input
-// (missing string, etc.) yields an Import with empty path so
-// the surrounding loop can recover.
+// trailing semicolon is consumed when present. A missing path is
+// reported, the rest of the declaration is skipped, and the caller
+// records no import for it.
 
 function parse_import(p: Par): (Import, ast.Stmt[], Par) {
   var imp_line: i32 = p.peek_line();
@@ -9840,6 +9855,7 @@ function parse_import(p: Par): (Import, ast.Stmt[], Par) {
     },
     _ => {
       bad = bad.append(decl_sentinel(p, "malformed import: its path could not be read"));
+      return (Import { path: "", is_reexport: false, reexport_names: [], alias: "", line: imp_line, resolved: "" }, bad, sync_to_top_level(p));
     }
   }
   // Optional `as <ident>` alias clause (`import "std/io_buffered" as io`): the
@@ -9868,7 +9884,8 @@ function parse_import(p: Par): (Import, ast.Stmt[], Par) {
 // an Import flagged `is_reexport` carrying the re-exported names, so the
 // loader pulls in the target module and the bundler can redirect a
 // consumer's `facade.name` to the target's mangled symbol. A missing path
-// is reported, and the caller records no import for it.
+// is reported, the rest of the declaration is skipped, and the caller
+// records no import for it.
 function parse_pubuse(p: Par): (Import, ast.Stmt[], Par) {
   var pu_line: i32 = p.peek_line();
   p = p.advance();  // consume `use`
@@ -9882,6 +9899,7 @@ function parse_pubuse(p: Par): (Import, ast.Stmt[], Par) {
     },
     _ => {
       bad = bad.append(decl_sentinel(p, "malformed re-export: its path could not be read"));
+      return (Import { path: "", is_reexport: true, reexport_names: [], alias: "", line: pu_line, resolved: "" }, bad, sync_to_top_level(p));
     }
   }
   if (p.at_path_sep()) {
@@ -26525,6 +26543,11 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
     if (kw == "function") {
       let (fr_func, fr_p) = parse_func_decl(p);
       p = fr_p;
+      // The nameless declaration is still recorded for the declaration gate to
+      // report; the tokens it could not read are skipped.
+      if (fr_func.name.len() == 0) {
+        p = sync_to_top_level(p);
+      }
       if (verbatim && has_inline_hint) {
         inline_hints = inline_hints.append(FunctionInlineHint { line: fr_func.line, col: fr_func.col, never: inline_never });
       }

@@ -84,6 +84,8 @@ func TestSelfHostDeclNamesGate(t *testing.T) {
 		{"keyword-impl-trait", "struct A { x: i32 }\nimpl use for A { }\nfunction main(): i32 { return 0; }", true, "malformed impl: its trait name could not be read"},
 		{"pathless-import", "import;\nfunction main(): i32 { return 0; }", true, "malformed import: its path could not be read"},
 		{"pathless-reexport", "pub use;\nfunction main(): i32 { return 0; }", true, "malformed re-export: its path could not be read"},
+		{"pathless-import-list", "import x.{a};\nfunction main(): i32 { return 0; }", true, "malformed import: its path could not be read"},
+		{"pathless-reexport-list", "pub use x.{a};\nfunction main(): i32 { return 0; }", true, "malformed re-export: its path could not be read"},
 		{"primitive-impl-type", "trait T { function f(self: Self): i32; }\nimpl T for i32 { function f(self: i32): i32 { return self; } }\nfunction main(): i32 { return 0; }", false, ""},
 		// A parser sentinel: wasm_run has no checked prologue to report it.
 		{"sentinel", "function main(): i32 { return @; }", true, "parser-side unknown"},
@@ -123,6 +125,20 @@ func TestSelfHostDeclNamesGate(t *testing.T) {
 				t.Fatalf("driver exited %d with %d bytes for a legal program\n%s", code, len(out), stderr)
 			}
 		})
+	}
+
+	// A malformed declaration raises one diagnostic, as on native: what follows
+	// it up to the next declaration is skipped rather than read as new ones.
+	for _, src := range []string{
+		"import x.{a};\nfunction main(): i32 { return 0; }",
+		"pub use x.{a};\nfunction main(): i32 { return 0; }",
+		"function use(): i32 { return 1; }\nfunction main(): i32 { return 0; }",
+		"function type(): i32 { return 1; }\nfunction main(): i32 { return 0; }",
+	} {
+		_, stderr, _ := runDeclGate(t, runner, driverBin, []byte(src+"\n"))
+		if n := strings.Count(stderr, "error["); n != 1 {
+			t.Errorf("%q raised %d diagnostics, want 1:\n%s", src, n, stderr)
+		}
 	}
 }
 

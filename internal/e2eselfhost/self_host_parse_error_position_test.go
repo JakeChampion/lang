@@ -223,7 +223,8 @@ func TestSelfHostParseUnknownDiagSequence(t *testing.T) {
 			"function main(): i32 {\n  var big: f64 = 1e999;\n  return 0;\n}\n",
 			"error[P002]: in fn 'main': invalid float literal \"1e999\": value out of range (2:18)"},
 		// The nameless-function P001 raised by parse_unknown_errors_module
-		// itself, before any walk, followed by the top-level residue.
+		// itself, before any walk, and nothing after it: the parser skips the
+		// rest of the declaration, as native does.
 		//
 		// `function (…)` here is a malformed DECLARATION, not the anonymous
 		// function expression #2673 retired, so it does not migrate to an
@@ -232,8 +233,7 @@ func TestSelfHostParseUnknownDiagSequence(t *testing.T) {
 		// source with `expected "Ident", got "("`.
 		{"malformed-fn-decl",
 			"function (): i32 {\n  return 1;\n}\nfunction main(): i32 {\n  return 0;\n}\n",
-			"error[P001]: malformed function declaration: its name or signature could not be read (a keyword such as `use`, `type` or `match` cannot be a name) (1:1)\n" +
-				"error[P001]: at top level: parser-side unknown: punct:: (1:12)"},
+			"error[P001]: malformed function declaration: its name or signature could not be read (a keyword such as `use`, `type` or `match` cannot be a name) (1:1)"},
 	}
 
 	for _, tc := range cases {
