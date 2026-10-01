@@ -3887,7 +3887,11 @@ function main(): i32 {
     // The program's imports resolve against the stdlib root (av[3], with its
     // trailing slash), merge in and are tree-shaken as the CLI does them: a
     // routed map calls core/map's functions, which the program has to carry.
-    var merged = flatten.bundle(entry, modloader.load_imports(modloader.no_overlay(), av[3], entry), "");
+    let (loaded, missing) = modloader.load_imports(modloader.no_overlay(), av[3], entry);
+    if (modloader.report_unresolved(missing, "semsource_rc")) {
+        return 2;
+    }
+    var merged = flatten.bundle(entry, loaded, "");
     // Gate on the checker as the CLI does, so the fixture cannot hold a
     // program the language rejects.
     var gated: util.Diag[] = checker.build_gate_diags(merged);
