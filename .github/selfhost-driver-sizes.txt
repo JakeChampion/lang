@@ -416,16 +416,32 @@
 # 2026-10-01 — asm_run 8648888 -> 9081512 (+5.0%), main's growth since the
 # last refresh plus this PR's dyn and map copies; the other rows stay inside
 # 5%. Number pasted from driver-sizes' own report on run 36836392983.
+# 2026-10-01 — refresh three exhausted rows to measured MAIN bf70edeb8,
+# before the string-transform PR's changes, on stage0-20261001-7d8ea4e:
+# asm_modload_run 9919592, asm_pathprobe_run 5753648, irlower_run 5579056.
+# Main alone already exceeds the old modload/pathprobe ceilings; irlower
+# has 845 bytes of headroom before the new string correctness work.
+# Pathprobe's growth from the previously validated main 3dd6a4909 is
+# 27992 linked bytes. Debug symbols account for all 26886 new code bytes:
+# checker +24339 (generic-struct literal widths through locals/captures),
+# parser +2150 (recovery/imports/receiver parsing), generated drops +653,
+# irlower -256; the other 1106 bytes are outside .text. These are merged
+# correctness changes, not a new string-search algorithm's overhead.
+# The PR remains measured against these main-only numbers. Its pathprobe
+# cost is +1792 linked bytes, of which +1358 code: scalar UTF-8 splitting
+# +749, allocation-free directional search +383, bounded short search +226.
+# Reproducer, exact source revisions and attribution:
+# docs/STRING-BYTE-TRANSFORMS-2026-09-30.md.
 fern.fern/stage2 12973880
 fern.fern 12973880
 asm_load_run.fern 10514488
-asm_modload_run.fern 9438224
+asm_modload_run.fern 9919592
 asm_ir_run.fern 9619240
 asm_run.fern 9081512
 wasm_ir_run.fern 8820144
 wasm_run.fern 8817328
 wasm_runio_run.fern 8816656
-asm_pathprobe_run.fern 5454560
+asm_pathprobe_run.fern 5753648
 asm_ir_elig_run.fern 4881280
-irlower_run.fern 5314192
+irlower_run.fern 5579056
 checker_modload_run.fern 2335496

@@ -9,7 +9,8 @@ Two-Way search reads the original strings in either direction. Reverse
 search maps each logical index to the corresponding byte from the end;
 it creates neither invalid reversed strings nor temporary byte views.
 The comparison budget, single-byte fast paths and linear worst-case
-algorithm are unchanged.
+bound are preserved. Forward searches for two to four bytes use direct
+comparisons, bounded to four per candidate, before the Two-Way tier.
 
 ## Validation
 
@@ -85,7 +86,7 @@ The conformance leak census found 42 unpaired allocations in
 `prop_string_involution`. They came from `bytes()` on inline strings of
 lengths 1 through 7: `as_bytes()` promoted their contents into storage with
 no owner. Review then identified ARM64 concatenations with inline storage
-through 15 bytes and the same promotion in forward search. The final copy
+through 15 bytes and the same promotion in forward search. The portable body
 uses the existing `__str_bytes(s, 0)` primitive: addressable strings use a
 bulk copy, while inline strings copy directly into the owned array. It
 does not assume an inline capacity. Search reads strings directly.
@@ -110,11 +111,55 @@ The scalar loop removes 2,632 bytes from the PR image. Debug-symbol builds
 attribute the code growth over main to 931 bytes, down from 3,396 bytes;
 the removed functions include the general string-split wrappers and runtime
 split/UTF-8-step helpers. The remaining code provides scalar stepping and
-the initial byte-view search path. The unchanged baseline is 5,454,560 bytes, with
-a 5% ceiling of 5,727,288 bytes. No baseline was raised.
-The final search/copy correction adds 160 linked bytes to the previous PR
-head and remains within that ceiling. Direction coordinates are supplied
-once by the caller and shared by factorization and periodicity checks.
+the initial byte-view search path. At that checkpoint the baseline was
+5,454,560 bytes, with a 5% ceiling of 5,727,288 bytes. No baseline was raised
+for that correction.
+That search/copy correction added 160 linked bytes to the previous PR
+head and remained within that ceiling before the next main merge. Direction
+coordinates are supplied once by the caller and shared by factorization and
+periodicity checks.
+
+The subsequent merge of main `bf70edeb8` changed that comparison. With the
+same pinned compiler, main alone produces a 5,753,648-byte pathprobe driver;
+the candidate produces 5,755,440 bytes. Debug symbols account for every
+changed code byte:
+
+| Change from previously measured main `3dd6a4909` | Code bytes |
+|---|---:|
+| Checker, principally generic-struct literal inference | +24,339 |
+| Parser recovery and module/receiver parsing | +2,150 |
+| Generated ownership helpers | +653 |
+| IR lowering | -256 |
+| Total inherited code growth | +26,886 |
+
+Main's linked growth is 27,992 bytes, including 1,106 other linked bytes.
+The new inference code preserves integer widths through generic struct
+locals, copies and captures; parser recovery handles malformed imports
+without discarding later declarations. These are merged correctness fixes.
+
+The candidate adds 1,358 code bytes to current main: scalar splitting and
+UTF-8 stepping account for 749, directional Two-Way search for 383, and the
+bounded short-needle path for 226. Another 434 bytes are outside `.text`.
+The direct short-search path adds no allocation and bounds each candidate
+to four comparisons. The earlier unnecessary general-split linkage remains
+removed.
+
+The three exhausted driver rows are refreshed to measured current-main
+values, before this PR's changes: `asm_modload_run` 9,919,592 bytes,
+`asm_pathprobe_run` 5,753,648 bytes, and `irlower_run` 5,579,056 bytes.
+The modload main measurement already equals the failing CI measurement;
+this PR contributed none of that breach. IR lowering had only 845 bytes
+left under its old ceiling. The PR's costs remain visible against the new
+main-only baselines. Other rows and the 5% tolerance are unchanged.
+
+The final CI-equivalent `TestSelfHostWarmStockDriver` run smoke-executed all
+three drivers and passed the strict size check:
+
+| Driver | Main-only baseline | Final candidate |
+|---|---:|---:|
+| `asm_modload_run.fern` | 9,919,592 | 9,919,592 |
+| `asm_pathprobe_run.fern` | 5,753,648 | 5,755,440 |
+| `irlower_run.fern` | 5,579,056 | 5,580,840 |
 
 ## Direct-search measurement
 
@@ -131,11 +176,43 @@ only its size argument changed for the measured run.
 
 | Search | Before median | Direct-index median |
 |---|---:|---:|
-| Forward | 97.087 ms | 93.947 ms |
-| Backward | 124.546 ms | 125.057 ms |
+| Forward | 92.871 ms | 90.295 ms |
+| Backward | 124.167 ms | 124.826 ms |
 
-Samples overlap: forward ranges are 94.384-108.737 ms and 93.273-99.805 ms;
-backward ranges are 124.259-128.811 ms and 124.389-137.471 ms. These results
-do not establish a speedup. They rule out the helper version's large
-regression in this workload, while the new search removes view promotions
-and reversed-array allocations.
+Forward ranges are 91.727-99.309 ms and 89.669-90.761 ms; backward ranges
+overlap at 123.443-127.026 ms and 123.333-130.451 ms. The forward median
+decreases in this run. The measurements rule out the per-byte helper
+version's large regression in this workload, while the new search removes
+view promotions and reversed-array allocations.
+
+## Short-search and owned-copy follow-up
+
+The bootstrap compiler now lowers the canonical `std/string.bytes()`
+declaration to a borrowed-string, fresh-array operation, matching the
+primary compiler's existing `str_bytes` operation. Each backend copies
+directly from inline or addressable storage into the owned byte array.
+User-defined methods retain their source implementation. Raw pointers from
+`__str_bytes` still receive conservative escape handling.
+
+This fixes the one-allocation leak in `alloc_flat_bytes_roundtrip`: the
+portable body's local raw pointer had obscured the borrowing contract from
+the bootstrap's parameter analysis. Regression tests cover that census,
+source/signature checks, raw pointer escape, and fresh SSA results at empty,
+inline-boundary and larger lengths.
+
+The direct-index search was remeasured with the inline probe above, against
+`3b39cc77e`, after adding the bounded short-needle path. Each comparison uses
+one compiler and changes only the stdlib. On native ARM64 macOS, two warm-ups
+precede seven alternating samples, with no concurrent validation workloads.
+Each pipeline first passed with one round; only the round count then changed.
+
+| Compiler and workload | Rounds | Before median | Candidate median |
+|---|---:|---:|---:|
+| Go bootstrap, literal inline probe | 10,000,000 | 877.608 ms | 402.408 ms |
+| Primary Fern compiler, literal inline probe | 10,000,000 | 528.614 ms | 215.402 ms |
+| Go bootstrap, runtime concatenations | 1,000,000 | 100.943 ms | 52.104 ms |
+
+For the runtime case, the same loop searches `"abc" + args()[1]` for
+`args()[3] + "d"`, with arguments `édef`, the round count, and `é`.
+Both search directions must return byte offset 3. The literal case alone
+would not establish the behavior of strings constructed at runtime.
