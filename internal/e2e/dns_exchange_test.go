@@ -70,3 +70,12 @@ func TestDnsPairX86_64(t *testing.T) {
 	out, _ := cmd.Output()
 	e2eharness.CheckDnsPair(t, ns, string(out), cmd.ProcessState.ExitCode())
 }
+
+// TestDnsPairInterp is TestDnsPairX86_64 under the interpreter, whose poll
+// is a stub: the paired wait tries every pending socket in turn there, so
+// the AAAA reply that arrives first is read while the A query waits.
+func TestDnsPairInterp(t *testing.T) {
+	ns := e2eharness.StartFakeNameserver(t, e2eharness.FakeNameserverPair)
+	out, code := runInterpExitCode(t, e2eharness.DnsPairSource(ns.Port))
+	e2eharness.CheckDnsPair(t, ns, out, code)
+}

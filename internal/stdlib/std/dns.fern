@@ -1208,32 +1208,64 @@ function pending_slots(slots: Slot[]): i32[] {
 // The replies to the waiting slots' queries before `deadline`, datagrams
 // that are not one ignored; a slot still waiting at the deadline keeps
 // `NoReply`. The sockets are polled as one set, so the replies are taken
-// in whichever order the server sends them.
+// in whichever order the server sends them; where the host has no poll
+// (the interpreter) the sockets are made non-blocking and tried in turn
+// instead, a millisecond's pause between rounds.
 function await_udp_replies(slots: Slot[], deadline: i64): Slot[] {
   var out: Slot[] = slots;
   var pending: i32[] = pending_slots(out);
   var left: i32 = (deadline - now_ms()) as i32;
   while (pending.len() > 0 && left > 0) {
     var ready: i32 = first_readable(out, pending, left);
-    if (ready < 0) {
+    if (ready == 0 - 1) {
       return out;
     }
-    var k: i32 = pending[ready];
-    match (take_reply(out[k].sock, out[k].q)) {
-      Ok(found) => {
-        match (found) {
-          Some(reply) => {
-            out = out.with(k, Slot { ...out[k], reply: Some(reply) });
-          },
-          None => {}
-        }
-      },
-      Err(e) => {
-        out = out.with(k, Slot { ...out[k], sock: closed_slot(out[k].sock), err: e });
-      }
+    if (ready == 0 - 2) {
+      out = sweep_replies(out, pending);
+    } else {
+      out = taken(out, pending[ready]);
     }
     pending = pending_slots(out);
     left = (deadline - now_ms()) as i32;
+  }
+  return out;
+}
+
+// Slot `k` with the datagram its socket holds taken: its reply when the
+// datagram is one, or its socket closed on a receive error.
+function taken(slots: Slot[], k: i32): Slot[] {
+  match (take_reply(slots[k].sock, slots[k].q)) {
+    Ok(found) => {
+      match (found) {
+        Some(reply) => {
+          return slots.with(k, Slot { ...slots[k], reply: Some(reply) });
+        },
+        None => {
+          return slots;
+        }
+      }
+    },
+    Err(e) => {
+      return slots.with(k, Slot { ...slots[k], sock: closed_slot(slots[k].sock), err: e });
+    }
+  }
+  return slots;
+}
+
+// One round over the pending slots without a poll: each socket is made
+// non-blocking and tried, a round that found nothing pausing a
+// millisecond so the wait does not spin.
+function sweep_replies(slots: Slot[], pending: i32[]): Slot[] {
+  var out: Slot[] = slots;
+  var i: i32 = 0;
+  while (i < pending.len()) {
+    var k: i32 = pending[i];
+    var nb: Result[void, net.NetError] = net.set_nonblocking(out[k].sock, true);
+    out = taken(out, k);
+    i = i + 1;
+  }
+  if (pending_slots(out).len() == pending.len()) {
+    sleep_ms(1i64);
   }
   return out;
 }
@@ -1245,13 +1277,12 @@ function closed_slot(sock: i32): i32 {
 }
 
 // Which of the pending slots is readable within `wait_ms`, as an index
-// into `pending`, or -1 at the deadline: the poll shape std/tcp's
-// recv-with-deadline uses. A native poll(2) honours the timeout and
-// answers the first readable socket; wasm ignores its argument and the
-// timer pollable fires at the deadline; the interpreter's poll is a stub
-// that answers -1 at once, which is told from a native timeout by the
-// time that passed, and reads as the first slot being readable so the
-// receive that follows blocks as it always did there.
+// into `pending`; -1 at the deadline, -2 where the host has no poll: the
+// poll shape std/tcp's recv-with-deadline uses. A native poll(2) honours
+// the timeout and answers the first readable socket; wasm ignores its
+// argument and the timer pollable fires at the deadline; the
+// interpreter's poll is a stub that answers -1 at once, which is told
+// from a native timeout by the time that passed.
 function first_readable(slots: Slot[], pending: i32[], wait_ms: i32): i32 {
   var ms: i32 = wait_ms;
   if (ms < 1) {
@@ -1283,7 +1314,7 @@ function first_readable(slots: Slot[], pending: i32[], wait_ms: i32): i32 {
   if (waited * 2i64 >= ms as i64 * ns_per_ms) {
     return 0 - 1;
   }
-  return 0;
+  return 0 - 2;
 }
 
 // One datagram off `sock`: the reply to `q` when it is one, `None` when
@@ -1932,7 +1963,9 @@ function scope_v6(ip: net.IpAddr, b: u8[]): i32 {
 
 // `common_prefix_len(a, b)` — how many leading bits two IPv6 addresses
 // share, at most 64 since the interface identifier says nothing about
-// the route; 0 when either is IPv4, as rule 9 reads only IPv6.
+// the route; 0 when either is IPv4. The RFC's rule 9 reads both families,
+// but Go does not compare it for IPv4 (go.dev/issue/13283), and this
+// follows Go.
 pub function common_prefix_len(a: net.IpAddr, b: net.IpAddr): i32 {
   if (a.is_v4() || b.is_v4()) {
     return 0;
