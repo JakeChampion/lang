@@ -9,6 +9,7 @@ import "std/array";
 // shape that lowers through the self-host IR. The Go-side suite unit-tests
 // these; this is the migration-shaped (pure-Fern, std/test-driven,
 // self-host-gated) companion.
+
 function test_flat_map(): test.TestOutcome {
   var xs: i32[] = [1, 2, 3];
   var out = xs.flat_map((x: i32): i32[] => [x, x * 10]);

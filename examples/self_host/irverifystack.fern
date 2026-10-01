@@ -48,11 +48,13 @@
 // reported as a problem. Coverage is then a number the corpus gate can hold a
 // floor under, so an unmodelled op shows up as a coverage regression rather
 // than as a spurious failure, and the table can grow monotonically.
+
 import "./ir";
 import "./irverify";
 import "./util";
 
 // ---- results -----------------------------------------------------------
+
 // StackResult is one function's verdict. `bail` is empty when the function
 // was fully modelled; when it is set the problems are DISCARDED, because a
 // pass that stopped modelling halfway has nothing trustworthy to say about
@@ -124,6 +126,7 @@ function fn_result_slots(): i32 {
 }
 
 // ---- the pass ----------------------------------------------------------
+
 // verify_stack_fn walks one lowered function's op stream and reports every
 // operand-stack violation, in op order.
 //

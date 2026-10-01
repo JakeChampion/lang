@@ -18,6 +18,7 @@
 // `bytes` is `u8[]` throughout the codebase (no separate
 // type alias today). Stream constructors / readers all use
 // `u8[]` for the byte-array side.
+
 import "std/string";
 import "core/int";
 
@@ -124,6 +125,7 @@ pub function (s: Stream) read_all_string(): (string, Stream) {
 // interface types AND a decision on how an effectful reader
 // presents a value-shaped surface (if ever).
 // ============================================================
+
 // `(s: Stream).read_byte()` — read a single byte from the
 // cursor. Returns `(Option[i32], advancedStream)`: Some(b)
 // + a Stream advanced past it, or None + the unchanged

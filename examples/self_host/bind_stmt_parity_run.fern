@@ -23,6 +23,7 @@
 // purpose: with no struct / union / signature tables every annotation resolves
 // to unknown on BOTH sides, so a divergence in what an annotation binds would
 // compare equal and the gate would pass vacuously.
+
 import "./ast";
 import "./checker";
 import "./parser";

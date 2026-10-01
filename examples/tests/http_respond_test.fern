@@ -7,6 +7,7 @@ import "std/error";
 // examples/tests/http_respond_test.fern — a handler that fails with `?`
 // (#9854): its helpers answer `Result[HttpResponse, http.HttpError]`, and
 // `http.respond` turns the failure into the RFC 9457 problem reply.
+
 function lookup(path: string): Result[string, http.HttpError] {
   if (path == "/items/1") {
     return Ok("first");

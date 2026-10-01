@@ -15,6 +15,7 @@ import "std/array";
 // miscompiles the generic rotate over pointer-payload (string) elements —
 // returning an empty array — a self-host codegen gap unrelated to the (correct)
 // stdlib body, tracked separately.
+
 function test_left(): test.TestOutcome {
   return test.assert_eq_array([1, 2, 3, 4, 5].rotate_left(2), [3, 4, 5, 1, 2]);
 }

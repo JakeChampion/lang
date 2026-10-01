@@ -5,6 +5,7 @@ import "std/format" as format;
 // std/format.parse_duration_ms: single units (ms/s/m/h/d), multi-part
 // durations with and without separating spaces, the i64 range beyond
 // i32, and the None rejections (empty, bare number, unknown unit).
+
 // Small helpers so the assertions read as i64 comparisons: unwrap a Some
 // to its value (defaulting to -1 on None) and test for None.
 function ms_of(s: string): i64 {

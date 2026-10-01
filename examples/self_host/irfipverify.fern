@@ -49,11 +49,13 @@
 // decision. Its siblings are irverify.fern (structure, slice 1) and
 // irverifystack.fern (operand-stack discipline, slice 2); it reuses their
 // `Problem` so a driver can report all three from one list.
+
 import "./ir";
 import "./irverify";
 import "./util";
 
 // ---- the claim ---------------------------------------------------------
+
 // FipClaim is what a function declared about itself. Built from the FuncDecl
 // by the caller, so this module stays a leaf over `ir` (the same reason
 // irverify takes an `FnSig[]` rather than importing the parser).
@@ -73,6 +75,7 @@ pub function claim_none(name: string): FipClaim {
 }
 
 // ---- the result --------------------------------------------------------
+
 // FipResult carries the verdict plus the two counts behind it. The counts are
 // reported for the reason native's verifystack reports coverage: a clean
 // verdict means little on its own — "0 fresh, 0 paired" is a function that
@@ -90,6 +93,7 @@ pub struct FipResult {
 }
 
 // ---- the op table ------------------------------------------------------
+
 // fresh_alloc_what names the construct an op allocates a FRESH box for, or ""
 // when the op allocates nothing at this point in the program.
 //
@@ -226,6 +230,7 @@ pub function elided_carried_at(ops: ir.Op[], at: i32): i32 {
 }
 
 // ---- the pass ----------------------------------------------------------
+
 // verify_fip_fn checks one lowered function's ops against its claim. Returns
 // at most one problem — native reports a single E068 naming every offending
 // site, and a per-site list would bury the count, which is the actual verdict.

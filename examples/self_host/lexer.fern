@@ -33,6 +33,7 @@
 // end-to-end without resorting to Go-side workarounds. The Go
 // build still owns the production code path; this file is run
 // from a Go test that compiles + executes it.
+
 pub struct TokEof { line: i32, col: i32 }
 
 // `raw` is the source spelling of a quoted literal — `'x'` / `b'x'`,

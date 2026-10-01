@@ -11,6 +11,7 @@ import "std/time";
 // interpreter (where the real fetch's fd-backed futures never resolve).
 //
 // Run:  fern -interp examples/tests/sim_net_test.fern
+
 // __three_upstreams — a net with three endpoints whose latencies are
 // deliberately out of input order (30ms / 10ms / 20ms).
 function __three_upstreams(d: sim.Sim): sim.Net {

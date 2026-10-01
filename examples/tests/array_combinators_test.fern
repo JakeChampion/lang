@@ -12,6 +12,7 @@ import "std/test";
 // both the Some and None arms. The closures passed in include a
 // captured-variable case (`test_filter_capture`) so the
 // closure-conversion path is exercised alongside the plain ones.
+
 function test_map(): test.TestOutcome {
   var xs: i32[] = [1, 2, 3];
   var ys: i32[] = array.map(xs, (n: i32): i32 => n * 10);

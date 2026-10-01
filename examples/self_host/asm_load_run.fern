@@ -14,6 +14,7 @@
 // using read_file + the parser's captured Import list. Non-local
 // imports (core/…, std/…) are skipped — the entry must be
 // self-contained over local modules + builtins.
+
 import "./util";
 import "./lexer";
 import "./parser";
@@ -195,7 +196,7 @@ function checked_or_exit(merged: parser.Module, prune: boolean): parser.Module {
 function main(): i32 {
   var av: string[] = args();
   if (av.len() < 2) {
-    eprint("usage: asm_load_run <entry.fern> [stdlib-root]\n");
+    eprint("usage: asm_load_run <entry.fern> [stdlib-root]");
     return 2;
   }
   var entry_path: string = av[1];
@@ -295,11 +296,11 @@ function main(): i32 {
   // handed x86-64 text and surfaced as "unknown mnemonic `movq'" from the
   // aarch64 assembler, which reads as a codegen bug rather than a typo.
   if (target != "x86-64-linux" && target != "arm64-linux" && target != "arm64-darwin" && target != "wasm32-wasi") {
-    eprint("asm_load_run: unknown -target: " + target + " (want x86-64-linux, arm64-linux, arm64-darwin, wasm32-wasi)\n");
+    eprint("asm_load_run: unknown -target: " + target + " (want x86-64-linux, arm64-linux, arm64-darwin, wasm32-wasi)");
     return 2;
   }
   if (emit_form != "" && (emit_form != "component-core" || target != "wasm32-wasi")) {
-    eprint("asm_load_run: -emit " + emit_form + " is not an output form for " + target + " (want component-core with -target wasm32-wasi)\n");
+    eprint("asm_load_run: -emit " + emit_form + " is not an output form for " + target + " (want component-core with -target wasm32-wasi)");
     return 2;
   }
 
@@ -315,7 +316,7 @@ function main(): i32 {
     }
   }
   if (!eok) {
-    eprint("asm_load_run: cannot read entry file\n");
+    eprint("asm_load_run: cannot read entry file");
     return 1;
   }
   var entry_mod: parser.Module = parser.parse_module(lexer.tokenize(esrc));
@@ -346,9 +347,7 @@ function main(): i32 {
         }
       }
       if (!mok) {
-        eprint("asm_load_run: cannot read module: ");
-        eprint(mpath);
-        eprint("\n");
+        eprint("asm_load_run: cannot read module: " + mpath);
         return 1;
       }
       var m: parser.Module = parser.parse_module(lexer.tokenize(msrc));
@@ -428,7 +427,7 @@ function main(): i32 {
     // pm_mode == "emit": emit exactly module pm_index (the ONLY strbuf-emit
     // in this process, so the buffer is clean).
     if (pm_index < 0 || pm_index >= parts.len()) {
-      eprint("per-module: emit index out of range\n");
+      eprint("per-module: emit index out of range");
       return 1;
     }
     var extra: string[] = [];
@@ -485,9 +484,7 @@ function main(): i32 {
     var pm_stab: irlower.StructTab = irlower.struct_tab(all_structs);
     var pm_wpb: irlower.FnSigs = ircore.wp_fn_sigs(all_funcs, pm_stab);
     if (!ircore.all_eligible_view_base(infmods[pm_index], known, pm_stab, pm_wpb)) {
-      eprint("per-module: module not IR-eligible: ");
-      eprint(parts[pm_index].ns);
-      eprint("\n");
+      eprint("per-module: module not IR-eligible: " + parts[pm_index].ns);
       return 1;
     }
     // The entry folds the whole-program runtime-need union (-extra-need,
@@ -545,7 +542,7 @@ function main(): i32 {
     if (emit_form == "component-core") {
       var shape: i32 = wasm_ir.component_shape(dw.full);
       if (shape < 0) {
-        eprint("asm_load_run: the program uses WASI imports the component wrapper does not frame\n");
+        eprint("asm_load_run: the program uses WASI imports the component wrapper does not frame");
         return 1;
       }
       write(wasm_ir.emit_module_mode_or_error_sub(dw.full, true, shape != 0, dw.sub));

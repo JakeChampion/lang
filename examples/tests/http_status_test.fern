@@ -6,6 +6,7 @@ import "std/http" as http;
 // RFC 9110 status-class predicates (1xx-5xx), the combined
 // http_is_error (4xx/5xx), century boundaries, and the no-class result
 // for out-of-range codes.
+
 function test_status_text(): test.TestOutcome {
   if (http.http_status_text(200) != "OK") {
     return test.fail("200");

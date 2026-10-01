@@ -45,6 +45,7 @@ import "./decltypes";
 
 // =================== TYPE SYSTEM ====================
 // Semantic type definitions live in typeinfo, shared with typed consumers.
+
 // Helper wraps: same pattern as elsewhere in the port — putting
 // the struct literal in return-position lets the implicit
 // struct→union wrap fire. Inline `var t: Type = TypeI32 { ... };`
@@ -3366,6 +3367,7 @@ function (s: Scope) has_sig(name: string): boolean {
 // `join` for string[] side by side) and this checker has no bound solver to do
 // it with; the unfiltered list would advertise an API the receiver does not
 // have, which native's own note calls worse than the bare typo.
+
 // retired_collection_spelling: the value-returning name that replaced a
 // mutable-looking collection method removed by the pure-collection API, or ""
 // for a name that was never one. They resolve to nothing now, so the reader is
@@ -5179,8 +5181,9 @@ function uninferred_call_diags(sig: FuncSig, c: ast.ExprCall, bn: string[], name
 }
 
 // empty_array_positions reads the values whose declared type spells `tp`:
-// whether any does, and whether every one is an empty array literal, which
-// binds nothing (#10499). An empty spelling declares no type.
+// whether any does, and whether every one binds nothing: an empty array
+// literal (#10499), or a `use` callback whose binding has no type (#10833).
+// An empty spelling declares no type.
 function empty_array_positions(spellings: string[], values: ast.Expr[], tp: string): (boolean, boolean) {
   var named: boolean = false;
   var all_empty: boolean = true;
@@ -5188,17 +5191,28 @@ function empty_array_positions(spellings: string[], values: ast.Expr[], tp: stri
   while (k < spellings.len() && k < values.len()) {
     if (spellings[k].len() > 0 && type_ref_names_any(parser.parse_type_ref(spellings[k]), [tp])) {
       named = true;
-      var empty: boolean = false;
-      if let ast.ExprArray(arr) = values[k] {
-        empty = arr.elements.len() == 0;
-      }
-      if (!empty) {
+      if (!binds_nothing(values[k])) {
         all_empty = false;
       }
     }
     k = k + 1;
   }
   return (named, all_empty);
+}
+
+function binds_nothing(e: ast.Expr): boolean {
+  match (e) {
+    ast.ExprArray(arr) => {
+      return arr.elements.len() == 0;
+    },
+    ast.ExprLambda(lm) => {
+      return lm.use_infer && lm.params.len() > 0 && lm.params[0].type_name.len() == 0;
+    },
+    _ => {
+      return false;
+    }
+  }
+  return false;
 }
 
 // bound_names_tp: a bound on one of `sig`'s type parameters spells `tp`, so
@@ -7980,6 +7994,7 @@ function name_in(name: string, list: string[]): boolean {
 // A summary is keyed the way str_ret_fns is — bare for a free function,
 // "<BaseType>.<name>" for a method — because a method name can collide
 // across receiver types whose bodies view different things.
+
 pub struct ViewSum { key: string, flags: boolean[], fresh: boolean }
 
 // ViewIndex is a name index over a ViewSum table — the StructTable idiom.
@@ -15168,6 +15183,7 @@ function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
 // The source order of two occurrences is their position, where native numbers
 // idents in walk order; the two agree wherever the parser leaves source order
 // alone.
+
 struct LuOcc { name: string, line: i32, col: i32 }
 
 struct LuVar { name: string, init: ast.Expr }
@@ -18770,6 +18786,14 @@ function e032_call_check(c: ast.ExprCall, lastfn: string[], cur: Scope): util.Di
       out = out.append(dg_at("E032", "use: callee \"" + callee_name + "\"'s last parameter isn't a function — add an explicit `: TYPE` annotation", c.line, c.col));
     } else if (sig.all_type_params.len() > 0 && is_unknown(use_binding_type(c, cur))) {
       out = out.append(dg_at("E032", "use: could not infer binding type for \"" + callee_name + "\" from its arguments — add an explicit `: TYPE` annotation", c.line, c.col));
+      // The callback's parameter stays unknown, so it does not fit the
+      // callee's parameter either, which native reports as it is declared.
+      var last: i32 = sig.param_types.len() - 1;
+      var expected: string = "fn";
+      if (last < sig.param_type_names.len()) {
+        expected = sig.param_type_names[last];
+      }
+      out = out.append(dg_at("E038", "argument " + util.i32_to_string(c.args.len()) + ": expected " + expected + ", got " + use_callback_label(c.args[c.args.len() - 1], cur), c.line, c.col));
     }
     return out;
   }
@@ -18795,6 +18819,27 @@ function e032_call_check(c: ast.ExprCall, lastfn: string[], cur: Scope): util.Di
   }
   out = out.append(dg_at("E032", "use: callee \"" + callee_name + "\" has no signature; add an explicit `: TYPE` annotation", c.line, c.col));
   return out;
+}
+
+// use_callback_label spells a synthesised `use` callback whose binding has no
+// type: each parameter unknown, and the return its body settled.
+function use_callback_label(e: ast.Expr, s: Scope): string {
+  var params: string = "";
+  if let ast.ExprLambda(lm) = e {
+    var i: i32 = 0;
+    while (i < lm.params.len()) {
+      if (i > 0) {
+        params = params + ", ";
+      }
+      params = params + "<unknown>";
+      i = i + 1;
+    }
+  }
+  var ret: string = "unknown";
+  if let typeinfo.TypeFunc(ft) = check_expr(e, s) {
+    ret = type_label(ft.ret_type);
+  }
+  return "(" + params + ") => " + ret;
 }
 
 // e032_expr collects the E032 diagnostics an expression contributes — a `use`
@@ -22499,6 +22544,7 @@ pub function ensure_annotated_parts(mods: parser.Module[]): parser.Module[] {
 // The pass is conservative in both directions: it rewrites only when every
 // store agrees on one resolved type that has a literal zero, and leaves the
 // parser's declaration alone otherwise.
+
 // vb_local_name returns the value local a value block routes its arm values
 // through — a body shaped `[var v = <zero>; <chain>; return v;]` — or "" for
 // any other body.
@@ -23131,6 +23177,7 @@ function pretype_module_in(mod: parser.Module, mt: ModuleTables): parser.Module 
 // 2)` is `both(1u64, 2u64)`. The pass records that width against each literal
 // argument (cargs / ctags) and writes it as the literal's suffix. A call no
 // position types keeps its default: i32, or i64 for a wide literal argument.
+
 // pend holds the open generic reads a literal local was compared or combined
 // with: each takes the width pend_id's class settles at, once the body is walked.
 struct LitInfer { parent: i32[], width: typeinfo.Type[], keys: string[], cargs: string[], ctags: string[], pend: ast.Expr[], pend_id: i32[], pend_scope: Scope[] }

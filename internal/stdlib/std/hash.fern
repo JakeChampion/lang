@@ -21,7 +21,9 @@
 //           register complemented at both ends, the length not folded in).
 //   sum -r: 16-bit right-rotate-then-add over every byte.
 //   sum -s: the 32-bit byte sum folded to 16 bits twice.
+
 // === CRC-32 as cksum(1) computes it ===
+
 pub struct Cksum {
   crc: u32,
   len: u64,
@@ -235,6 +237,7 @@ pub function crc32_of(s: string): u32 {
 }
 
 // === BSD sum (`sum -r`): 16-bit rotate-and-add, 1 KiB blocks ===
+
 pub struct BsdSum {
   sum: u32,
   len: u64,
@@ -287,6 +290,7 @@ pub function bsd_sum_of(s: string): u32 {
 }
 
 // === System V sum (`sum -s`): folded 32-bit byte sum, 512-byte blocks ===
+
 pub struct SysvSum {
   sum: u32,
   len: u64,

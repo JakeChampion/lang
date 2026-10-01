@@ -30,6 +30,7 @@
 // re-implementing membership.
 //
 // The app writes its report to stderr; stdout carries TAP-13 from std/test.
+
 import "std/test";
 import "std/i32";
 import "std/set";
@@ -122,6 +123,7 @@ function remaining(g: Game): i32 {
 }
 
 // ---------------------------------------------------------------- oracle
+
 // The mask, derived from the word and a set of letters with no game state in
 // between. `masked` walks the game; this walks the word. They must agree.
 function derived_mask(word: string, letters: string[]): string {
@@ -189,6 +191,7 @@ function alphabet(): string[] {
 }
 
 // ----------------------------------------------------------------- tests
+
 // THE test. A repeat guess must leave the game BYTE-IDENTICAL — not merely
 // "not cost a life". A tracker that re-adds the letter, or a mask that
 // recomputes differently the second time, passes a life-count assertion and
@@ -444,6 +447,7 @@ function test_repeated_letters_count_once(): test.TestOutcome {
 }
 
 // ------------------------------------------------------------------- app
+
 function main(): i32 {
   eprint("hangman — a word list and a guess tracker");
   var g: Game = new_game("compiler", 6);

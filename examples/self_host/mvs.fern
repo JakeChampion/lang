@@ -19,6 +19,7 @@
 // Error text is native's, word for word: a resolution that fails must fail
 // the same way under either compiler, or a project builds under one and not
 // the other.
+
 import "./util";
 import "./fern_toml";
 
@@ -98,6 +99,7 @@ pub struct State {
 }
 
 // ---- versions ---------------------------------------------------------
+
 // parse_version parses "MAJOR.MINOR.PATCH", returning ok=false otherwise.
 pub function parse_version(s: string): Version {
   var parts: string[] = split_char(s, b'.');
@@ -161,6 +163,7 @@ function ver_cmp_s(a: string, b: string): i32 {
 }
 
 // ---- index ------------------------------------------------------------
+
 // parse_index parses the index format: a `[package]` section per package,
 // each line `"VERSION" = { path = "…" }` or
 // `"VERSION" = { url = "…", hash = "sha256:…" }`. A malformed index parses
@@ -369,6 +372,7 @@ function vers_list(vs: string[]): string {
 }
 
 // ---- resolution -------------------------------------------------------
+
 // begin starts a resolution from `roots` (the top-level manifest's version
 // deps) under `bans` (its [exclude] table — only the root's excludes reach
 // MVS, preserving determinism). The returned state either carries an `err`,
@@ -605,6 +609,7 @@ function sort_reqs(rs: Req[]): Req[] {
 }
 
 // ---- fern.lock --------------------------------------------------------
+
 // lock_text renders the selected set as a fern.lock. Under MVS the versions
 // are fully determined by the manifests + index, so the lock is not a
 // resolution SNAPSHOT that can drift — it records the chosen (name, version,
@@ -628,6 +633,7 @@ pub function lock_text(sel: Sel[]): string {
 }
 
 // ---- small string helpers ---------------------------------------------
+
 // split_char splits `s` on the byte `c`, keeping empty fields.
 pub function split_char(s: string, c: u8): string[] {
   var out: string[] = [];

@@ -9,6 +9,7 @@ import "std/string";
 // so the self-host merged bundle stays under the asm_ir IR budget. The Go-side
 // TestStringRsplitOnce pins these across all four backends; this is the
 // migration-shaped (pure-Fern, std/test-driven) companion.
+
 function pair_is(o: Option[(string, string)], h: string, t: string): boolean {
   match (o) {
     Some(p) => {

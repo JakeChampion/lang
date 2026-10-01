@@ -36,6 +36,7 @@
 //
 // No prelude: these are in scope only after a program declares
 // `import "std/net";` (docs/PRELUDE-TO-MODULES.md, Phase 5).
+
 import "std/i32";
 import "std/error";
 import "core/cmp";
@@ -79,6 +80,7 @@ pub enum NetError {
 
 // ---------------------------------------------------------------------------
 // Constructors
+
 function __zero_bytes(n: i32): u8[] {
   var out: u8[] = [];
   var i: i32 = 0;
@@ -137,6 +139,7 @@ pub function socket_addr(ip: IpAddr, port: i32): SocketAddr {
 
 // ---------------------------------------------------------------------------
 // IpAddr accessors and predicates
+
 // `bytes()` — the network-order bytes: 4 for a `V4`, 16 for a `V6`.
 pub function (a: IpAddr) bytes(): u8[] {
   match (a) {
@@ -298,6 +301,7 @@ impl cmp.Display for IpAddr {}
 
 // ---------------------------------------------------------------------------
 // Formatting
+
 function __v4_text(b: u8[]): string {
   return (b[0] as i32).to_string() + "." + (b[1] as i32).to_string() + "." + (b[2] as i32).to_string() + "." + (b[3] as i32).to_string();
 }
@@ -404,6 +408,7 @@ impl cmp.Display for SocketAddr {}
 
 // ---------------------------------------------------------------------------
 // Parsing
+
 // The pieces of `s` between occurrences of the byte `sep`, as owned
 // strings; an empty input is one empty piece.
 function __pieces(s: string, sep: i32): string[] {
@@ -735,6 +740,7 @@ pub function socket_addr_parse(s: string): Option[SocketAddr] {
 
 // ---------------------------------------------------------------------------
 // NetError
+
 // The errno each variant stands for, in declaration order (`Other` has
 // none), and its number on each target. `net_errno_test.go` pins every
 // row to `internal/strerror`; edit the four lists together.
@@ -965,6 +971,7 @@ pub function (e: NetError) eq(other: NetError): boolean {
 // on wasm `set_nodelay` and `set_nonblocking` answer `Other(58)`
 // (`ENOTSUP`) rather than claiming a setting the host does not have, and
 // `reuse_port` is ignored: a port is one socket's there.
+
 // ListenOptions — what `listen_with` asks of the listener: the accept
 // queue depth, and whether other listeners may share the port
 // (`SO_REUSEPORT`, the kernel balancing accepted connections across them).
@@ -1090,6 +1097,7 @@ function __socket_count(r: i32): Result[i32, NetError] {
 // Typed faces over `udp_bind`, `udp_connect`, `udp_sendto` and
 // `udp_recvfrom`, on the same `i32` descriptors as the rest, each taking
 // the address of either family as its bytes.
+
 // `udp_socket(addr)` — a datagram socket bound to `addr` (port 0 lets the
 // host pick, and `local_port` reads it back), or the error the bind
 // reported. It receives from any peer until `set_peer` fixes one.
@@ -1158,6 +1166,7 @@ pub function recv(sock: i32, buf: u8[]): Result[i32, NetError] {
 // Connecting
 //
 // Typed faces over `tcp_connect_with` and control op 5 of `tcp_socket_ctl`.
+
 // `connect(addr)` — a connection to `addr`, or the error the dial reported.
 pub function connect(addr: SocketAddr): Result[i32, NetError] {
   return __tcp_socket(tcp_connect_with(addr.ip.bytes(), addr.port, false));
@@ -1201,6 +1210,7 @@ function __tcp_socket(r: i32): Result[i32, NetError] {
 //
 // Native only: neither WASI world has a filesystem namespace for socket
 // endpoints, so a program that names these does not compile for wasm.
+
 // `listen_unix(path, backlog)` — a stream socket listening at the filesystem
 // path with that accept queue, or the error the bind or listen reported:
 // `AddrInUse` while a socket file is there (remove it first when it is a

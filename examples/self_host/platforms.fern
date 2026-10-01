@@ -23,11 +23,13 @@
 // neither is implied. Output FORM is not in the name — `-emit asm` /
 // `-emit core-module` select it — because what a program may reach does not
 // depend on whether the driver stops at the emitter's text or links it.
+
 import "./parser";
 import "./astwalk";
 import "./util";
 
 // ---- descriptors -------------------------------------------------------
+
 // Descriptor is one target's runtime surface: which ISA selects the backend,
 // which environment says what the host provides, and what that environment
 // grants. `known` is false for a target with no entry in the table — native
@@ -204,6 +206,7 @@ pub function targets_providing(capability: string): string[] {
 }
 
 // ---- builtin classification --------------------------------------------
+
 // Gate pairs a capability-gated builtin with the capability a target must
 // grant for it to be callable.
 pub struct Gate { builtin: string, capability: string }
@@ -515,6 +518,7 @@ pub function forbidden_gates(target: string): Gate[] {
 }
 
 // ---- enforcement -------------------------------------------------------
+
 // Violation is one gated call the target cannot satisfy. `fn_name` is the
 // function the call was found in and `fn_module` the module it came from —
 // empty for the entry module, since flatten.bundle mangles an imported

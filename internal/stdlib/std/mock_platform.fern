@@ -28,6 +28,7 @@
 // already handles a failed fetch handles a mocked one. A canned answer is
 // a row of the same cell the log lives in, which `calls()` skips and
 // `reset()` keeps.
+
 import "std/string";
 import "std/platform";
 

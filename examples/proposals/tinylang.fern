@@ -16,6 +16,7 @@
 //
 // The app writes its report to stderr; stdout carries TAP-13 from
 // std/test, so the file is its own test suite.
+
 import "std/test";
 import "std/i32";
 
@@ -160,6 +161,7 @@ function run(e: Expr): Value {
 }
 
 // ---------------------------------------------------------------- tests
+
 function test_arithmetic_and_let(): test.TestOutcome {
   if (as_num(run(Add(Num(2), Add(Num(3), Num(4))))) != 9) {
     return test.fail("2 + (3 + 4) should be 9");
@@ -309,6 +311,7 @@ function test_deep_nesting(): test.TestOutcome {
 }
 
 // ----------------------------------------------------------------- app
+
 function show(label: string, e: Expr): void {
   var v: Value = run(e);
   if (is_err(v)) {

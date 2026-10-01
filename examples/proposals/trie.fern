@@ -36,6 +36,7 @@
 // works around it, and the tests below say nothing about allocation.
 //
 // The app writes its report to stderr; stdout carries TAP-13 from std/test.
+
 import "std/test";
 import "std/i32";
 import "std/i64";
@@ -60,6 +61,7 @@ function new_trie(): Trie {
 }
 
 // ------------------------------------------------------------- edges
+
 // Binary search, valid because labels is maintained sorted by with_edge.
 // Returns the target node index, or -1 when the node has no such edge.
 function edge_of(n: Node, b: i32): i32 {
@@ -105,6 +107,7 @@ function with_edge(n: Node, b: i32, target: i32): Node {
 }
 
 // ------------------------------------------------------------ insert
+
 // Insert is idempotent: a duplicate returns the trie unchanged, counts
 // included. Checking membership up front is what makes that true, and it is
 // also what lets the count bump be a single unconditional pass over the path
@@ -153,6 +156,7 @@ function insert(t: Trie, w: string): Trie {
 }
 
 // ------------------------------------------------------------ lookup
+
 // The node reached by walking `p` from the root, or -1 if the path runs out of
 // edges. Every query below is this walk plus a one-line reading of the node it
 // lands on, which is the whole point of the structure.
@@ -195,6 +199,7 @@ function size(t: Trie): i32 {
 }
 
 // ----------------------------------------------------------- listing
+
 // Depth-first, emitting a terminal node's key before descending into its
 // children. Because the edge list is sorted and a proper prefix is
 // lexicographically smaller than anything extending it, that visit order is
@@ -233,6 +238,7 @@ function keys_with_prefix(t: Trie, p: string): string[] {
 }
 
 // ------------------------------------------------- longest common prefix
+
 // Descend while the path is forced: one outgoing edge and no key ending here.
 // The terminal check is the subtle half — if a key ends at this node then that
 // key is in the set, so the common prefix cannot be any longer than it.
@@ -277,9 +283,11 @@ function longest_prefix_of(t: Trie, q: string): Option[string] {
 }
 
 // -------------------------------------------------------- the oracle
+
 // Everything below re-answers the queries above by scanning the corpus the
 // trie was built from. These are deliberately dumb: no shared helpers with the
 // trie, no cleverness to get wrong.
+
 function bf_contains(words: string[], w: string): boolean {
   var i: i32 = 0;
   while (i < words.len()) {
@@ -414,6 +422,7 @@ function bf_longest_prefix_of(words: string[], q: string): Option[string] {
 }
 
 // ------------------------------------------------------------ corpora
+
 // Chosen so the interesting structural cases are all present: "car" is a
 // proper prefix of "card" and "cart"; "do" of "dog"; "a" is a single byte;
 // "" is absent here and inserted only by the test that is about it.
@@ -470,6 +479,7 @@ function join(xs: string[]): string {
 }
 
 // ------------------------------------------------------------- tests
+
 function test_membership_agrees_with_a_scan(): test.TestOutcome {
   var words: string[] = corpus();
   var t: Trie = build(words);
@@ -823,6 +833,7 @@ function test_any_byte_is_a_valid_label(): test.TestOutcome {
 }
 
 // ------------------------------------------------------------- probe
+
 // Build a trie of n generated keys and read something off it, so nothing is
 // dead code. The keys share prefixes heavily, which is the realistic shape.
 function churn(n: i32): i32 {

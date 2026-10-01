@@ -20,12 +20,14 @@
 // const phase and no error channel, so an asset arm there would have to invent
 // both. This pass runs BEFORE constfold, so `__fern_asset("a") + __fern_asset("b")`
 // still folds to one literal — constfold sees two string literals by then.
+
 import "./ast";
 import "./astwalk";
 import "./parser";
 import "./util";
 
 // ---- the bundle -------------------------------------------------------
+
 // Assets is one `-embed DIR` bundle. `names` is sorted and `contents` is
 // parallel to it — parallel arrays rather than a map because the lookup is a
 // compile-time linear scan over a few dozen entries and the tree already
@@ -280,6 +282,7 @@ pub function format_available(a: Assets): string {
 }
 
 // ---- the substitution pass --------------------------------------------
+
 // ASSET_ONE / ASSET_ALL are the two builtin spellings. Neither is declared
 // anywhere: an occurrence this pass does not substitute reaches the checker as
 // an ordinary undefined callee.

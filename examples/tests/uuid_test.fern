@@ -12,6 +12,7 @@ import "std/string";
 // from string-concat + sliced hex-digit literals (no chr / byte-array
 // round-trip), so it lowers through the self-host IR path. The Go-side
 // suite unit-tests the bytes; this is the migration-shaped companion.
+
 function test_v4_len(): test.TestOutcome {
   return test.assert_eq(uuid.uuid_v4().len(), 36);
 }

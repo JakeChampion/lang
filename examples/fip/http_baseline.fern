@@ -17,6 +17,7 @@ import "std/i64";
 import "std/string";
 
 // ===================== THE CODEC =====================
+
 // route is the handler, spelled the same way in the `fip` variant: `/`
 // answers `ok`, `/echo` on a POST echoes the body, `/users/<id>` answers
 // the id, anything else is a 404; a served response carries the request id
@@ -60,6 +61,7 @@ function serve(wire: u8[], wire_len: i32): string {
 // steady state rather than in a separate test that proves nothing about
 // throughput. The request's length is left in the wire buffer's last four
 // bytes, past anything a request can reach.
+
 fip function max_wire(): i32 {
   return 1024;
 }
@@ -314,6 +316,7 @@ function zeros_u8(n: i32): u8[] {
 }
 
 // ===================== DRIVER =====================
+
 function main(): i32 {
   var batch: i32 = 64;
   var rounds: i32 = 2000;

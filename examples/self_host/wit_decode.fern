@@ -10,6 +10,7 @@
 // round-trip reproduces the input — exercising the uleb reader against the
 // real fern.bin through the self-host. Slices 2/3 add the value-type grammar
 // and the world model. The LEB writers come from watbin.
+
 import "./watbin";
 
 // UlebRead is the result of reading a uleb128: the decoded value and the
@@ -90,6 +91,7 @@ pub function wit_reencode_sections(payload: i32[]): i32[] {
 // list / option / result / tuple / own / borrow) and function types decode
 // into flat models (parallel arrays) and re-encode from them, so a
 // structural mis-parse changes the bytes and is caught by the round-trip.
+
 pub struct SlebR { value: i32, next: i32 }
 
 pub struct NameR { s: string, next: i32 }
@@ -455,6 +457,7 @@ pub function wit_encode_func(out: i32[], f: WitFunc): i32[] {
 // mis-parse desyncs the cursor and changes the output, so round-tripping the
 // whole fern.bin / http.bin type + export sections is a strong oracle —
 // matching the Go decoder's World round-trip, but in the self-host.
+
 pub struct TxR { next: i32, out: i32[] }
 
 // wit_tx_typedef transcodes one type definition at pos.
@@ -654,6 +657,7 @@ pub function wit_section_body(payload: i32[], want_id: i32): i32[] {
 // component (Type(component)); the world component's import decls (kind 0x03)
 // name the interfaces. Non-import decls are skipped with the slice-3
 // transcoder (wit_tx_decl, throwing away its output).
+
 pub function wit_world_import_names(tbody: i32[]): string[] {
   var names: string[] = [];
   var none: i32[] = [];
@@ -788,6 +792,7 @@ function wit_alias_renumbered(buf: i32[], sort_pos: i32, plan: WitImportPlan): i
 // vec(1) -- so with every import kept the output is byte-identical to the Go
 // EmitWorldImports. An alias of an imported instance is renumbered to the
 // pruned prefix.
+
 pub function wit_emit_section(out: i32[], id: i32, body: i32[]): i32[] {
   out = out.append(id);
   out = watbin.leb_u32(out, body.len());
@@ -855,6 +860,7 @@ pub function wit_emit_world_imports(tbody: i32[], plan: WitImportPlan): i32[] {
 // encoding), reusing wit_decode_def. A type export bound `eq` resolves to the
 // type it names; sentinel -1 entries (outer aliases / surfaced resources)
 // resolve as scalar handles, matching the Go ResolveDef==nil case.
+
 // wit_iface_instance_offset returns the byte offset (in the type-section body)
 // of the instance type the world imports under `iface`, or -1.
 pub function wit_iface_instance_offset(tbody: i32[], iface: string): i32 {
@@ -1168,6 +1174,7 @@ pub function wit_classify(tbody: i32[], iface: string, fname: string): i32 {
 // (which the suffix aliases its functions from). Navigates the world component
 // decls like wit_world_import_names, counting type slots (type decls + type
 // aliases) and import decls.
+
 pub struct WitPrefixLayout { types: i32, instances: i32 }
 
 pub function wit_prefix_layout(tbody: i32[]): WitPrefixLayout {
@@ -1247,6 +1254,7 @@ pub function wit_import_instance_index(tbody: i32[], plan: WitImportPlan, iface:
 // type + import sections and return each function import with its param
 // valtypes (the trampoline signature a memory lowering mirrors). Parallel
 // arrays: ifaces[i] / names[i] / params[i].
+
 pub struct WitCoreImports { ifaces: string[], names: string[], params: i32[][] }
 
 pub function wit_core_func_imports(bin: i32[]): WitCoreImports {

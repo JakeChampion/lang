@@ -21,6 +21,7 @@
 // rules. This driver is just the asm-emitting front door (+ an -ir-probe
 // mode). Uses only features the self-hosted emitter supports (args,
 // read_file → Result, match), so it builds with either compiler.
+
 import "./util";
 import "./lexer";
 import "./parser";
@@ -41,6 +42,7 @@ import "./platforms";
 import "./semlower";
 
 // ---- callee resolution (#6639 slice 4) ---------------------------------
+
 // verify_provided_module runs the resolution pass over the whole merged
 // program and writes the verdict. Returns the process exit code.
 //
@@ -227,6 +229,7 @@ function builtin_view(dir: string, base: parser.StructDecl[]): parser.StructDecl
 // (`cannot find entry symbol _start`), and the built compiler jumping to a
 // garbage address (observed: RIP=0x1 with the initial argv/envp stack
 // untouched). Hence the "indented AND not a directive" test below.
+
 // dedupe_weak_into is the incremental core: it appends the deduped form of ONE
 // already-emitted chunk to the (caller-reset) global strbuf and returns the
 // updated `seen` symbol set, so a caller streaming unit-at-a-time carries the
@@ -449,7 +452,7 @@ function emit_per_module_concat(dir: string, entry_path: string, entry_mod: pars
     if (cachefile.len() > 0) {
       match (read_file(cachefile)) {
         Ok(cached) => {
-          eprint("cache-hit " + parts[idx].ns + "\n");
+          eprint("cache-hit " + parts[idx].ns);
           out = out + cached;
           served = true;
         },
@@ -462,15 +465,15 @@ function emit_per_module_concat(dir: string, entry_path: string, entry_mod: pars
         // route. Without this the decline is silent and the failure
         // resurfaces as an undefined `__fn_` at link, with nothing
         // pointing at which unit could not lower.
-        eprint("per-module concat: module not IR-eligible: " + parts[idx].ns + "\n");
+        eprint("per-module concat: module not IR-eligible: " + parts[idx].ns);
         return "";
       }
       var unit: string = emit_unit(v, idx, parts[idx].is_entry, parts[idx].ns, extra, 0, 0 - 1, target);
       if (cachefile.len() > 0) {
-        eprint("cache-miss " + parts[idx].ns + "\n");
+        eprint("cache-miss " + parts[idx].ns);
         match (write_file(cachefile, unit)) {
           Err(cerr) => {
-            eprint("per-module concat: cache write failed for " + parts[idx].ns + "\n");
+            eprint("per-module concat: cache write failed for " + parts[idx].ns);
           },
           Ok(_) => {}
         }
@@ -546,10 +549,10 @@ function emit_unit_to_file(out_dir: string, unit_spec: string, v: View, parts: f
   if (cachefile.len() > 0) {
     match (read_file(cachefile)) {
       Ok(cached) => {
-        eprint("cache-hit " + shard_ns + "\n");
+        eprint("cache-hit " + shard_ns);
         match (write_file(outpath, cached)) {
           Err(cwerr) => {
-            eprint("per-module: unit write failed: " + outpath + "\n");
+            eprint("per-module: unit write failed: " + outpath);
             return false;
           },
           Ok(_) => {}
@@ -562,16 +565,16 @@ function emit_unit_to_file(out_dir: string, unit_spec: string, v: View, parts: f
   var unit: string = emit_unit(v, midx, is_entry, shard_ns, extra, wlo, whi, target);
   match (write_file(outpath, unit)) {
     Err(werr) => {
-      eprint("per-module: unit write failed: " + outpath + "\n");
+      eprint("per-module: unit write failed: " + outpath);
       return false;
     },
     Ok(_) => {}
   }
   if (cachefile.len() > 0) {
-    eprint("cache-miss " + shard_ns + "\n");
+    eprint("cache-miss " + shard_ns);
     match (write_file(cachefile, unit)) {
       Err(cerr) => {
-        eprint("per-module: cache write failed for " + shard_ns + "\n");
+        eprint("per-module: cache write failed for " + shard_ns);
       },
       Ok(_) => {}
     }
@@ -678,7 +681,7 @@ function emit_per_module_spawned(dir: string, entry_path: string, entry: parser.
       tmp = td;
     },
     Err(e_td) => {
-      eprint("per-module spawned: could not create a unit directory\n");
+      eprint("per-module spawned: could not create a unit directory");
       return 1;
     }
   }
@@ -690,7 +693,7 @@ function emit_per_module_spawned(dir: string, entry_path: string, entry: parser.
     }
     var rc: i32 = spawn_batch(self_exe, entry_path, tmp, lo, hi, target, cache_dir);
     if (rc != 0) {
-      eprint("per-module spawned: unit batch " + util.i32_to_string(lo) + ":" + util.i32_to_string(hi) + " failed (exit " + util.i32_to_string(rc) + "), falling back to the merged IR emit\n");
+      eprint("per-module spawned: unit batch " + util.i32_to_string(lo) + ":" + util.i32_to_string(hi) + " failed (exit " + util.i32_to_string(rc) + "), falling back to the merged IR emit");
       var ce1: i32 = 0;
       match (remove_dir_all(tmp)) {
         Err(rr1) => {
@@ -716,7 +719,7 @@ function emit_per_module_spawned(dir: string, entry_path: string, entry: parser.
       Err(e_st) => {}
     }
     if (!present) {
-      eprint("per-module spawned: missing emitted unit " + vpath + "\n");
+      eprint("per-module spawned: missing emitted unit " + vpath);
       var ce2: i32 = 0;
       match (remove_dir_all(tmp)) {
         Err(rr2) => {
@@ -743,7 +746,7 @@ function emit_per_module_spawned(dir: string, entry_path: string, entry: parser.
       Err(e_ru) => {}
     }
     if (!read_ok) {
-      eprint("per-module spawned: unit vanished mid-stream: " + rpath + "\n");
+      eprint("per-module spawned: unit vanished mid-stream: " + rpath);
       var ce3: i32 = 0;
       match (remove_dir_all(tmp)) {
         Err(rr3) => {
@@ -981,9 +984,7 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
       }
       if (!v.typed && !assume_eligible && !cached_here && idx != checked_idx) {
         if (!ircore.all_eligible_view_base(infmods[idx], v.known, v.stab, v.base)) {
-          eprint("per-module: module not IR-eligible: ");
-          eprint(parts[idx].ns);
-          eprint("\n");
+          eprint("per-module: module not IR-eligible: " + parts[idx].ns);
           return 1;
         }
         checked_idx = idx;
@@ -1057,14 +1058,14 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
     return 0;
   }
   if (pm_index < 0 || pm_index >= parts.len()) {
-    eprint("per-module: emit index out of range\n");
+    eprint("per-module: emit index out of range");
     return 1;
   }
   var extra: string[] = [];
   if (parts[pm_index].is_entry) {
     extra = pm_extra;
     if (pm_lo > 0 || pm_hi >= 0 && pm_hi < infmods[pm_index].funcs.len()) {
-      eprint("per-module: the entry is emitted whole, not in a -func-range window\n");
+      eprint("per-module: the entry is emitted whole, not in a -func-range window");
       return 1;
     }
   }
@@ -1088,7 +1089,7 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
     if (cachefile.len() > 0) {
       match (read_file(cachefile)) {
         Ok(cached) => {
-          eprint("cache-hit " + parts[pm_index].ns + "\n");
+          eprint("cache-hit " + parts[pm_index].ns);
           write(cached);
           return 0;
         },
@@ -1104,9 +1105,7 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
     elig = ircore.all_eligible_view_base_range(infmods[pm_index], v.known, v.stab, v.base, pm_lo, pm_hi);
   }
   if (!elig) {
-    eprint("per-module: module not IR-eligible: ");
-    eprint(parts[pm_index].ns);
-    eprint("\n");
+    eprint("per-module: module not IR-eligible: " + parts[pm_index].ns);
     return 1;
   }
   // Function-sharding (#3425): emit only the [pm_lo, pm_hi) window of this
@@ -1128,10 +1127,10 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
   // write_file's borrow/consume semantics for the unit box.
   write(unit);
   if (cachefile.len() > 0) {
-    eprint("cache-miss " + parts[pm_index].ns + "\n");
+    eprint("cache-miss " + parts[pm_index].ns);
     match (write_file(cachefile, unit)) {
       Err(werr) => {
-        eprint("per-module: cache write failed for " + parts[pm_index].ns + "\n");
+        eprint("per-module: cache write failed for " + parts[pm_index].ns);
       },
       Ok(_) => {}
     }
@@ -1303,7 +1302,7 @@ function main(): i32 {
     // handed x86-64 text and surfaced as "unknown mnemonic `movq'" from the
     // aarch64 assembler, which reads as a codegen bug rather than a typo.
     if (target != "x86-64-linux" && target != "arm64-linux") {
-      eprint("asm_modload_run: unknown -target: " + target + " (want x86-64-linux, arm64-linux)\n");
+      eprint("asm_modload_run: unknown -target: " + target + " (want x86-64-linux, arm64-linux)");
       return 2;
     } else if (entry_path == "") {
       entry_path = a[ai];
@@ -1315,7 +1314,7 @@ function main(): i32 {
     return provided_audit();
   }
   if (entry_path == "") {
-    eprint("usage: asm_modload_run <entry.fern> [-verifyprovided | -provided-audit | -ir-probe | -per-module-count | -per-module-needs | -per-module-func-counts | -per-module-shape | -per-module-manifest | -per-module-emit N [-func-range LO:HI] | -per-module-emit-all -out-dir DIR [-func-budget N] [-unit-range LO:HI]] [-cache-dir DIR] [-assume-eligible]\n");
+    eprint("usage: asm_modload_run <entry.fern> [-verifyprovided | -provided-audit | -ir-probe | -per-module-count | -per-module-needs | -per-module-func-counts | -per-module-shape | -per-module-manifest | -per-module-emit N [-func-range LO:HI] | -per-module-emit-all -out-dir DIR [-func-budget N] [-unit-range LO:HI]] [-cache-dir DIR] [-assume-eligible]");
     return 2;
   }
   var dir: string = modloader.dirname(entry_path);
@@ -1401,7 +1400,7 @@ function main(): i32 {
               return 0;
             }
             if (asrc == 2) {
-              eprint("asm_modload_run: spawned per-module emit failed after writing output\n");
+              eprint("asm_modload_run: spawned per-module emit failed after writing output");
               return 1;
             }
           }
@@ -1460,7 +1459,7 @@ function main(): i32 {
             return 0;
           }
           if (src == 2) {
-            eprint("asm_modload_run: spawned per-module emit failed after writing output\n");
+            eprint("asm_modload_run: spawned per-module emit failed after writing output");
             return 1;
           }
         }
@@ -1475,7 +1474,7 @@ function main(): i32 {
       return 0;
     },
     Err(e) => {
-      eprint("asm_modload_run: could not read entry file\n");
+      eprint("asm_modload_run: could not read entry file");
       return 1;
     }
   }

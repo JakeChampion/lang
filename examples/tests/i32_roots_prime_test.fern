@@ -11,6 +11,7 @@ import "std/i32" as i32m;
 // reports prime. The Go-side TestI32RootsPrime pins these across all four
 // backends; this is the migration-shaped companion. Scalar-only, so self-host
 // clean. A regression here hangs rather than failing.
+
 function test_next_power_of_2(): test.TestOutcome {
   if (0.next_power_of_2() != 1) {
     return test.fail("0 -> 1");

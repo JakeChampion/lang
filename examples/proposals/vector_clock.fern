@@ -9,6 +9,7 @@
 //
 // The app writes its report to stderr; stdout carries TAP-13 from
 // std/test, so the file is its own test suite.
+
 import "std/test";
 import "std/i32";
 
@@ -120,6 +121,7 @@ function render(c: Clock): string {
 }
 
 // ---------------------------------------------------------------- tests
+
 // A local event advances only its own node, and is strictly after what
 // came before it on that node.
 function test_a_local_event_advances_one_entry(): test.TestOutcome {
@@ -251,6 +253,7 @@ function test_merge_keeps_the_pointwise_max(): test.TestOutcome {
 }
 
 // ----------------------------------------------------------------- app
+
 function main(): i32 {
   eprint("vector_clock — a partial order over distributed events");
   var a: Clock = tick(clock_new(3), 0);

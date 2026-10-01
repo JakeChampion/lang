@@ -11,6 +11,7 @@ import "std/array" as array;
 // `product` is the bounded generic `[T: Mul + One]` since #2663, so these
 // exercise the f64 instantiation of one verb rather than a `product_f64`
 // sibling — which is why the empty case has to name its element type.
+
 function near(a: f64, b: f64): boolean {
   var d: f64 = a - b;
   if (d < 0.0) {

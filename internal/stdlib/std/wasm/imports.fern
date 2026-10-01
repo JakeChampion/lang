@@ -22,6 +22,7 @@
 // parallel-array layout (modules / names / kinds / desc_bodies),
 // and encode_import_section stitches the section together. This
 // keeps the section composer flat without forcing a union type.
+
 import "std/wasm/leb128";
 import "std/wasm/encode";
 
@@ -57,6 +58,7 @@ pub function mut_var(): u8 {
 // `kinds` array). Helper-shaped so the caller doesn't have to
 // open-code the per-variant leb / limit / mut encoding at the
 // import-section call site.
+
 // Function: just a typeidx.
 pub function import_desc_func(typeidx: u32): u8[] {
   return leb128.uleb_u32([], typeidx);

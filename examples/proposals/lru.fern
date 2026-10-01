@@ -24,6 +24,7 @@
 // rather than a tautology.
 //
 // The app writes its report to stderr; stdout carries TAP-13 from std/test.
+
 import "std/test";
 import "std/i32";
 import "std/string";
@@ -168,6 +169,7 @@ function hit_rate_milli(c: Cache): i32 {
 }
 
 // -------------------------------------------------------------- oracle
+
 // The slow, obvious model: a flat list plus a last-touched stamp per key.
 // Eviction scans for the minimum stamp. No shared code with the cache above.
 struct Model {
@@ -307,6 +309,7 @@ function cache_keys_sorted(c: Cache): string {
 }
 
 // --------------------------------------------------------------- tests
+
 // The essential one. A FIFO cache passes every other test in this file;
 // it fails this. Reading "a" makes it the most recent, so inserting "d" must
 // evict "b" — the oldest READ — not "a", the oldest INSERT.

@@ -18,6 +18,7 @@
 // which the D9 invariant forbids (docs/STRINGS-SOTA.md). Callers that
 // want text decode explicitly: `utf8.from_bytes(fetch.http_body(resp))`
 // returns `None` when the body is not valid UTF-8.
+
 import "std/string";
 import "std/async";
 import "std/time";

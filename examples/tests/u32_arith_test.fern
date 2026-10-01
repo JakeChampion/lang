@@ -21,6 +21,7 @@ import "std/u32";
 // correct. Distinct from (and narrower than) the earlier "u32 through a bounded
 // generic" framing — this is plain, concrete, non-generic u32 code. The suite
 // flips onto the differential gate once u32 arithmetic truncates to 32 bits.
+
 function rotr(x: u32, n: u32): u32 {
   return x >> n | x << 32 - n;
 }

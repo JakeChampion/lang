@@ -19,6 +19,7 @@
 //
 // The app writes its report to stderr; stdout carries TAP-13 from
 // std/test, so the file is its own test suite.
+
 import "std/test";
 import "std/i32";
 import "std/string";
@@ -132,6 +133,7 @@ function join_with(xs: string[], sep: string): string {
 }
 
 // ---------------------------------------------------------------- tests
+
 // Ties break by registration index. Three plugins at the same priority must
 // run in the order they were added, and adding a fourth at a lower priority
 // must not disturb their relative order.
@@ -344,6 +346,7 @@ function test_an_empty_registry_is_the_identity(): test.TestOutcome {
 }
 
 // ------------------------------------------------------------------ app
+
 function main(): i32 {
   eprint("plugin_registry — typed hooks, deterministic order");
   var r: Registry = registry_new();

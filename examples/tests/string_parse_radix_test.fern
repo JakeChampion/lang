@@ -10,6 +10,7 @@ import "std/string";
 // assert_true (no scalar assert_eq[i32]). The return is Option[i32], so the
 // suite is self-host-gated in full. The Go-side TestStringParseIntRadix pins
 // native compilation on all four backends.
+
 function val(o: Option[i32], d: i32): i32 {
   match (o) {
     Some(v) => {

@@ -25,6 +25,7 @@
 // the end. There is no interior mutation — advancing yields a new iterator —
 // which is the functional shape the self-host IR path already lowers (a
 // Cell-backed mutable cursor would be a later optimisation).
+
 // Iterator is the iteration protocol: a type yields `T` values one at a time
 // via `next`. `Some((v, it2))` produces the next value `v` and the iterator
 // state `it2` to continue from; `None` signals exhaustion.
@@ -176,6 +177,7 @@ pub function collect[T, I: Iterator[T]](it: I): T[] {
 // generic body hits the same abstract-key `Map` dispatch gap as the generic
 // `Set[T]` in #2671, where the function's `K`/`V` don't unify with the `Map`
 // method's own type params. It lands once that compiler gap closes.)
+
 // fold is the fundamental left reduction: starting from `init`, it threads an
 // accumulator of type `A` through `f(acc, value)` for every value the iterator
 // yields, returning the final accumulator. `sum` is `fold(it, 0, +)`; `count`

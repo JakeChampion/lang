@@ -20,6 +20,7 @@
 //
 // The app writes its report to stderr; stdout carries TAP-13 from
 // std/test, so the file is its own test suite.
+
 import "std/test";
 import "std/string";
 import "std/i32";
@@ -72,6 +73,7 @@ function is_keep(e: Edit): boolean {
 }
 
 // ------------------------------------------------------------------ LCS
+
 // lcs[i * (m+1) + j] = length of the LCS of a[i..] and b[j..], filled from
 // the bottom right so the backtrack below can walk forward and produce the
 // edit script in file order.
@@ -144,6 +146,7 @@ function keep_count(edits: Edit[]): i32 {
 }
 
 // ---------------------------------------------------------------- hunks
+
 function context(): i32 {
   return 3;
 }
@@ -271,6 +274,7 @@ function render(a: string[], b: string[], a_name: string, b_name: string): strin
 }
 
 // ---------------------------------------------------------------- apply
+
 // Parse a rendered unified diff and apply it to `a`. Deliberately strict:
 // a context line that does not match, or a header whose counts disagree
 // with its body, is an error rather than a best-effort patch — the point is
@@ -406,6 +410,7 @@ function parse_header(h: string): Result[i32[], string] {
 }
 
 // ------------------------------------------------------------- the corpus
+
 struct Pair { name: string, a: string[], b: string[] }
 
 function corpus(): Pair[] {
@@ -460,6 +465,7 @@ function corpus(): Pair[] {
 }
 
 // ---------------------------------------------------------------- tests
+
 // THE test. Render, parse the rendered text back, apply it to the original,
 // and require the target exactly. This is the property a diff exists to
 // have, and it covers the renderer and the parser at once.
@@ -737,6 +743,7 @@ function test_context_is_bounded(): test.TestOutcome {
 }
 
 // ------------------------------------------------------------------ app
+
 function main(): i32 {
   eprint("unidiff — a unified diff, checked by applying it back");
   var a: string[] = [

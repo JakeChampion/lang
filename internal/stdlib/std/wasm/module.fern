@@ -13,6 +13,7 @@
 // the order: type, import, function, table, memory, global,
 // export, start, element, code, data. `build` emits them in that
 // order, skipping any section whose input is empty.
+
 import "std/wasm/encode";
 import "std/wasm/sections";
 import "std/wasm/imports";
@@ -121,6 +122,7 @@ pub function module_new(): Module {
 // folded into the matching builder so callers can't set the data
 // without the gate.
 // ============================================================
+
 // with_types — type section: one functype per (params, results)
 // pair (parallel arrays).
 pub function (m: Module) with_types(params: u8[][], results: u8[][]): Module {

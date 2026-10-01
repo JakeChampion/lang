@@ -27,11 +27,13 @@
 // prefix, written separately and sharing no code with the lazy one.
 //
 // The app writes its report to stderr; stdout carries TAP-13 from std/test.
+
 import "std/test";
 import "std/i32";
 import "std/string";
 
 // ------------------------------------------------------------- the source
+
 // An infinite source, as a state pair plus a step. `a` is the value the source
 // yields; `step` advances the pair. Two very different sequences come out of
 // the same three fields, which is the check that the pipeline is not quietly
@@ -52,6 +54,7 @@ function pull(s: Src): (i32, Src) {
 }
 
 // ------------------------------------------------------------- the stages
+
 enum Stage { Map((i32) => i32), Filter((i32) => boolean) }
 
 // A run's result: the elements taken, the source left over (so a pipeline can
@@ -101,6 +104,7 @@ function run(src: Src, stages: Stage[], n: i32): Run {
 }
 
 // ------------------------------------------------------------- the oracle
+
 // An eager pipeline over a bounded prefix, sharing nothing with `run`: it
 // materialises the whole prefix first, then rewrites the array once per stage,
 // then slices. This is how you would write it if laziness were not the point,
@@ -139,6 +143,7 @@ function eager(src: Src, stages: Stage[], n: i32, prefix: i32): i32[] {
 }
 
 // ------------------------------------------------------------- reporting
+
 function show(xs: i32[]): string {
   var s: string = "[";
   for i in 0..xs.len() {
@@ -163,6 +168,7 @@ function same(a: i32[], b: i32[]): boolean {
 }
 
 // --------------------------------------------------------------- the tests
+
 // THE test. Not "it terminated" — an exact pull count. Taking 5 even naturals
 // requires seeing 0..8, which is nine pulls; a pipeline that read ahead by a
 // block, or that materialised a prefix, would give the same five numbers at a
@@ -342,6 +348,7 @@ function test_a_different_infinite_source_is_the_same_machinery(): test.TestOutc
 }
 
 // ----------------------------------------------------------------- the app
+
 function main(): i32 {
   eprint("lazy_pipeline — map, filter and take over an infinite source");
 

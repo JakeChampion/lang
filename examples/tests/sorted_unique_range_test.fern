@@ -10,6 +10,7 @@ import "std/test";
 //     are vacuously sorted.
 //   * `test.assert_unique(arr)` / `test.assert_unique(arr)`
 //     — every element appears at most once.
+
 function test_in_range_f64_pass(): test.TestOutcome {
   return test.assert_in_range_f64(2.5, 1.0, 3.0);
 }

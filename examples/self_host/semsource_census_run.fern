@@ -280,7 +280,7 @@ function unresolved_imports(entry: parser.Module, loaded: flatten.LoadedModule[]
 function main(): i32 {
   var av: string[] = args();
   if (av.len() < 2) {
-    eprint("usage: semsource_census_run <entry.fern>\n");
+    eprint("usage: semsource_census_run <entry.fern>");
     return 2;
   }
   var entry_path: string = av[1];
@@ -292,7 +292,7 @@ function main(): i32 {
       var missing: string[] = unresolved_imports(entry, loaded);
       if (missing.len() > 0) {
         for m in missing {
-          eprint("unresolved import: " + m + "\n");
+          eprint("unresolved import: " + m);
         }
         return 2;
       }
@@ -320,7 +320,7 @@ function main(): i32 {
       return 0;
     },
     Err(_) => {
-      eprint("cannot read entry\n");
+      eprint("cannot read entry");
       return 2;
     }
   }

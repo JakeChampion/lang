@@ -48,44 +48,6 @@ func Format(prog *ast.Program) string {
 		blanks[ln] = true
 	}
 	f := &formatter{comments: prog.Comments, blanks: blanks}
-	// Imports cluster at the top of the file with no blank line
-	// between consecutive ones — they read like a single block
-	// that introduces the module's dependencies. A blank line
-	// follows the last import before the first decl, same shape
-	// the inter-decl loop produces below.
-	if len(prog.Imports) > 0 {
-		for _, imp := range prog.Imports {
-			f.drainLeading(imp.P.Line, 0)
-			f.b.WriteString(`import "`)
-			f.b.WriteString(imp.Path)
-			f.b.WriteString(`"`)
-			if imp.Alias != "" {
-				f.b.WriteString(" as ")
-				f.b.WriteString(imp.Alias)
-			}
-			f.b.WriteString(`;`)
-			f.emitTrailing(imp.P.Line)
-			f.b.WriteByte('\n')
-		}
-	}
-	// `pub use` re-exports cluster with the imports at the top of the
-	// file — same dependency-introduction role.
-	for _, pu := range prog.PubUses {
-		f.drainLeading(pu.P.Line, 0)
-		f.b.WriteString(`pub use "`)
-		f.b.WriteString(pu.Path)
-		f.b.WriteString(`".{`)
-		for i, name := range pu.Names {
-			if i > 0 {
-				f.b.WriteString(", ")
-			}
-			f.b.WriteString(name)
-		}
-		f.b.WriteString(`};`)
-		f.emitTrailing(pu.P.Line)
-		f.b.WriteByte('\n')
-	}
-	written := len(prog.Imports) > 0 || len(prog.PubUses) > 0
 	// Impl methods are also present in prog.Funcs (the parser flattens
 	// them there for the checker). Collect them so the funcs below are
 	// skipped — they render inside their `impl { … }` block.
@@ -95,7 +57,8 @@ func Format(prog *ast.Program) string {
 			implMethods[m] = true
 		}
 	}
-	// Declarations emit in SOURCE ORDER, not grouped by kind.
+	// Declarations, imports included, emit in SOURCE ORDER, not grouped by
+	// kind.
 	//
 	// The kind-grouped form (every struct, then every enum, then …)
 	// silently RELOCATED COMMENTS, because the comment cursor is monotonic
@@ -113,40 +76,50 @@ func Format(prog *ast.Program) string {
 	// contract — the syntax reference promises only that the formatter
 	// "preserves their original position" for comments — and which made a
 	// `-fmt -d` diff on an unformatted file far larger than the change it
-	// was reporting.
+	// was reporting. Hoisting an import written below a declaration had the
+	// same effect: it drained every doc comment above it into the import
+	// block (#10870).
 	type topDecl struct {
-		p    ast.Position
-		emit func()
+		p        ast.Position
+		emit     func()
+		isImport bool
 	}
 	decls := make([]topDecl, 0,
-		len(prog.Structs)+len(prog.Enums)+len(prog.Unions)+len(prog.Resources)+
+		len(prog.Imports)+len(prog.PubUses)+
+			len(prog.Structs)+len(prog.Enums)+len(prog.Unions)+len(prog.Resources)+
 			len(prog.Traits)+len(prog.Impls)+len(prog.Consts)+len(prog.Funcs))
+	for _, imp := range prog.Imports {
+		decls = append(decls, topDecl{p: imp.P, emit: func() { f.formatImport(imp) }, isImport: true})
+	}
+	for _, pu := range prog.PubUses {
+		decls = append(decls, topDecl{p: pu.P, emit: func() { f.formatPubUse(pu) }, isImport: true})
+	}
 	for _, sd := range prog.Structs {
-		decls = append(decls, topDecl{sd.P, func() { f.formatStructDecl(sd) }})
+		decls = append(decls, topDecl{sd.P, func() { f.formatStructDecl(sd) }, false})
 	}
 	for _, ed := range prog.Enums {
-		decls = append(decls, topDecl{ed.P, func() { f.formatEnumDecl(ed) }})
+		decls = append(decls, topDecl{ed.P, func() { f.formatEnumDecl(ed) }, false})
 	}
 	for _, ud := range prog.Unions {
-		decls = append(decls, topDecl{ud.P, func() { f.formatUnionDecl(ud) }})
+		decls = append(decls, topDecl{ud.P, func() { f.formatUnionDecl(ud) }, false})
 	}
 	for _, rd := range prog.Resources {
-		decls = append(decls, topDecl{rd.P, func() { f.formatResourceDecl(rd) }})
+		decls = append(decls, topDecl{rd.P, func() { f.formatResourceDecl(rd) }, false})
 	}
 	for _, td := range prog.Traits {
-		decls = append(decls, topDecl{td.P, func() { f.formatTraitDecl(td) }})
+		decls = append(decls, topDecl{td.P, func() { f.formatTraitDecl(td) }, false})
 	}
 	for _, id := range prog.Impls {
-		decls = append(decls, topDecl{id.P, func() { f.formatImplDecl(id) }})
+		decls = append(decls, topDecl{id.P, func() { f.formatImplDecl(id) }, false})
 	}
 	for _, cd := range prog.Consts {
-		decls = append(decls, topDecl{cd.P, func() { f.formatConstDecl(cd) }})
+		decls = append(decls, topDecl{cd.P, func() { f.formatConstDecl(cd) }, false})
 	}
 	for _, fn := range prog.Funcs {
 		if implMethods[fn] {
 			continue
 		}
-		decls = append(decls, topDecl{fn.P, func() { f.formatFunc(fn, 0) }})
+		decls = append(decls, topDecl{fn.P, func() { f.formatFunc(fn, 0) }, false})
 	}
 	// Stable, so two declarations the parser gave the same position (a
 	// desugar that synthesises one from another) keep the order the
@@ -157,13 +130,14 @@ func Format(prog *ast.Program) string {
 		}
 		return decls[i].p.Col < decls[j].p.Col
 	})
-	for _, d := range decls {
-		if written {
+	// Consecutive imports cluster with no blank line between them; every
+	// other pair of top-level items is blank-separated.
+	for i, d := range decls {
+		if i > 0 && !(d.isImport && decls[i-1].isImport) {
 			f.b.WriteByte('\n')
 		}
-		f.drainLeading(d.p.Line, 0)
+		f.drainDeclLeading(d.p.Line)
 		d.emit()
-		written = true
 	}
 	// Trailing comments past the last declaration emit at depth 0.
 	f.drainAll(0)
@@ -171,6 +145,34 @@ func Format(prog *ast.Program) string {
 }
 
 const formatIndent = "  "
+
+func (f *formatter) formatImport(imp *ast.Import) {
+	f.b.WriteString(`import "`)
+	f.b.WriteString(imp.Path)
+	f.b.WriteString(`"`)
+	if imp.Alias != "" {
+		f.b.WriteString(" as ")
+		f.b.WriteString(imp.Alias)
+	}
+	f.b.WriteString(`;`)
+	f.emitTrailing(imp.P.Line)
+	f.b.WriteByte('\n')
+}
+
+func (f *formatter) formatPubUse(pu *ast.PubUse) {
+	f.b.WriteString(`pub use "`)
+	f.b.WriteString(pu.Path)
+	f.b.WriteString(`".{`)
+	for i, name := range pu.Names {
+		if i > 0 {
+			f.b.WriteString(", ")
+		}
+		f.b.WriteString(name)
+	}
+	f.b.WriteString(`};`)
+	f.emitTrailing(pu.P.Line)
+	f.b.WriteByte('\n')
+}
 
 // formatter bundles the output buffer and the comment cursor so
 // helpers can drain leading / inline trailing comments without
@@ -211,6 +213,28 @@ func (f *formatter) drainLeading(line, depth int) {
 		f.b.WriteString(f.comments[f.ci].Text)
 		f.b.WriteByte('\n')
 		f.ci++
+	}
+}
+
+// drainDeclLeading is drainLeading for a top-level declaration, keeping a
+// blank line the source had between two of its comments or after the last
+// one: a section header stays apart from the doc comment below it.
+func (f *formatter) drainDeclLeading(line int) {
+	last := 0
+	for f.ci < len(f.comments) && f.comments[f.ci].Pos.Line < line {
+		if last > 0 && f.blanks[f.comments[f.ci].Pos.Line-1] {
+			f.b.WriteByte('\n')
+		}
+		last = f.comments[f.ci].Pos.Line
+		f.b.WriteString("//")
+		f.b.WriteString(f.comments[f.ci].Text)
+		f.b.WriteByte('\n')
+		f.ci++
+	}
+	// The line after the last comment, not the one above `line`: an
+	// attribute can sit between them.
+	if last > 0 && f.blanks[last+1] {
+		f.b.WriteByte('\n')
 	}
 }
 

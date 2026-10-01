@@ -16,6 +16,7 @@
 // type. The world import prefix does not surface one, so each dropped
 // resource is aliased out of its imported instance once, right after the
 // prefix, and shared by every drop of it (mirror of component.ComposeFromWorld).
+
 import "./util";
 import "./watbin";
 import "./wit_decode";

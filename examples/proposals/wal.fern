@@ -27,6 +27,7 @@
 // that look like length headers.
 //
 // The app writes its report to stderr; stdout carries TAP-13 from std/test.
+
 import "std/test";
 import "std/i32";
 import "std/i64";
@@ -39,6 +40,7 @@ function HEADER(): i32 {
 }
 
 // ------------------------------------------------------------- checksum
+
 // A modular rolling hash, accumulated in i64 so the multiply cannot overflow
 // before the reduction. The result stays below 2^31, so it fits the four
 // header bytes with room to spare.
@@ -51,6 +53,7 @@ function crc_of(payload: u8[]): i32 {
 }
 
 // ------------------------------------------------------------- framing
+
 function put_u16(out: u8[], v: i32): u8[] {
   return out.append((v % 256) as u8).append((v / 256 % 256) as u8);
 }
@@ -99,6 +102,7 @@ function append_record(log: u8[], payload: u8[]): u8[] {
 }
 
 // ------------------------------------------------------------- replay
+
 struct Replay { records: u8[][], torn: boolean, consumed: i32 }
 
 // Stop at the first record that does not fully validate, and say so. Skipping
@@ -134,6 +138,7 @@ function replay(log: u8[]): Replay {
 }
 
 // ------------------------------------------------------------- helpers
+
 function bytes_of(s: string): u8[] {
   var out: u8[] = [];
   for i in 0..s.len() {
@@ -203,6 +208,7 @@ function whole_records_within(recs: u8[][], k: i32): i32 {
 }
 
 // ----------------------------------------------------------------- tests
+
 // THE test. Every one of the n+1 truncation points, not three chosen ones.
 // At each cut the replay must return exactly the records that fit whole, with
 // the same bytes they were appended with, and must flag torn exactly when the
@@ -449,6 +455,7 @@ function test_a_real_file_survives_a_real_truncation(): test.TestOutcome {
 }
 
 // ------------------------------------------------------------------- app
+
 function main(): i32 {
   eprint("wal — append, replay, and stop at the first torn record");
   var recs: u8[][] = corpus();

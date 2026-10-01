@@ -20,11 +20,13 @@
 // tcp_connect, however many stdlib frames sit in between. So the analysis is a
 // call-graph walk (analyze), and the report and enforcement are two readings of
 // its one result — the report is all usage, enforcement is usage minus grants.
+
 import "./parser";
 import "./astwalk";
 import "./util";
 
 // ---- vocabulary + classification ---------------------------------------
+
 // capabilities is the v1 vocabulary, sorted. Deliberately coarse (see the
 // brief): path- or host-level filtering is out of scope for v1. The sort is
 // required — analyze emits a row's uses in this order rather than sorting
@@ -240,6 +242,7 @@ pub function classified(name: string): boolean {
 }
 
 // ---- packages ----------------------------------------------------------
+
 // Pkg is one bundle module's package identity, assembled by the caller (the
 // driver) from the entry manifest:
 //
@@ -308,6 +311,7 @@ pub function enforceable(mod: parser.Module, pkgs: Pkg[]): boolean {
 }
 
 // ---- report ------------------------------------------------------------
+
 // Use is one capability a package can reach, with an example call chain from
 // one of the package's own functions down to the tagged builtin. Chain
 // elements are function names as they appear in the bundle (module-mangled);
@@ -603,6 +607,7 @@ pub function format_rows(rows: Row[]): string {
 }
 
 // ---- enforcement -------------------------------------------------------
+
 // Violation is one package reaching a capability outside its grant.
 // `governed` selects the severity: true is a checker-grade error (E070),
 // false a warn-and-allow diagnostic.

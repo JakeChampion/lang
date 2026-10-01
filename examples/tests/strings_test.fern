@@ -7,6 +7,7 @@ import "std/test";
 // once the Fern test runner replaces the Go-side `*_test.go`
 // harness: per-module test file, explicit list of cases in
 // main(), single TAP-13 stream on stdout.
+
 function test_uppercase(): test.TestOutcome {
   return test.assert_eq("hello".to_upper(), "HELLO");
 }

@@ -4,6 +4,7 @@
 // program `import "std/i64";` explicitly to call `n.abs()` /
 // `.gcd(…)` / etc. on an i64 (docs/PRELUDE-TO-MODULES.md,
 // Phase 5).
+
 import "core/int";
 
 // `(n: i64) abs()` — absolute value. i64::MIN wraps to
@@ -182,6 +183,7 @@ pub function (n: i64) is_between(lo: i64, hi: i64): boolean {
 // BMI1 and SSE4.2 both.
 //
 // Zero is defined: leading_zeros / trailing_zeros of 0 return the width.
+
 pub function (n: i64) count_ones(): i32 {
   return __popcount64(n as u64);
 }
@@ -312,6 +314,7 @@ pub function (n: i64) to_string_radix(base: i32): string {
 // the std/i32 versions): an add of two same-sign operands that
 // flips sign overflowed, and a sub whose operands differ in sign
 // from a wrong-signed result overflowed.
+
 pub function (n: i64) saturating_add(other: i64): i64 {
   var r: i64 = n + other;
   if (n > 0 as i64 && other > 0 as i64 && r < 0 as i64) {
@@ -565,6 +568,7 @@ pub function (n: i64) overflowing_rem(other: i64): (i64, boolean) {
 // is the one value where `-n` and `|n|` overflow (the result 2^63 has no i64
 // representation), so `abs()` / unary `-` wrap MIN to itself; these give the
 // overflow-safe forms.
+
 // `(n: i64) checked_neg()` — `Some(-n)`, or `None` for i64::MIN.
 pub function (n: i64) checked_neg(): Option[i64] {
   if (n == 0 as i64 - 9223372036854775807 as i64 - 1 as i64) {

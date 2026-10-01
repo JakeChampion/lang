@@ -23,6 +23,7 @@ import "std/test";
 // counters from the outer suite — same shape the
 // runner_self_test.fern uses to exercise failure
 // reporting without poisoning the parent's exit code.
+
 function intentional_fail(): test.TestOutcome {
   return test.fail("expected fail used to trigger fail-fast");
 }

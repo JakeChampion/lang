@@ -13,6 +13,7 @@
 // their local copies; keeping each conversion small bounds the
 // churn in the Go-side test staging lists (each test that
 // compiles a converted module must also stage util.fern).
+
 // i32_to_string renders a signed 32-bit integer in base 10 — the
 // LSB-first digit loop the printer / disassembler / constfold /
 // vm / wasm / ssa backends each used to carry their own copy of.
@@ -995,7 +996,7 @@ pub function rc_underflow_guard(who: string, code: i32): i32 {
   if (n == 0) {
     return code;
   }
-  eprint(who + ": internal error: rc over-release detected (" + i32_to_string(n) + " dec(s) on an already-released block)\n");
+  eprint(who + ": internal error: rc over-release detected (" + i32_to_string(n) + " dec(s) on an already-released block)");
   return RC_UNDERFLOW_EXIT;
 }
 
@@ -1029,7 +1030,7 @@ pub function arr_push_cliff_report(who: string, code: i32): i32 {
       var copied: i64 = __arr_push_shared_bytes();
       eprint(who + ": arr_push_shared_count=" + i32_to_string(__arr_push_shared_count())
         + " arr_push_shared_bytes=" + i64_to_string(copied)
-        + " heap_bump_bytes=" + i64_to_string(__heap_bump_bytes()) + "\n");
+        + " heap_bump_bytes=" + i64_to_string(__heap_bump_bytes()));
       return code;
     },
     None => {
@@ -1144,7 +1145,10 @@ pub function format_diags_in(diags: Diag[], files: string[]): string {
     if (d.code.len() > 0) {
       tag = "error[" + d.code + "]: ";
     }
-    out = out + tag + d.message + " (" + pos_str(files, d.line, d.col) + ")\n";
+    if (i > 0) {
+      out = out + "\n";
+    }
+    out = out + tag + d.message + " (" + pos_str(files, d.line, d.col) + ")";
     i = i + 1;
   }
   return out;
@@ -1250,6 +1254,7 @@ pub function derive_hint(tn: string, derive: string, trait_name: string): string
 // manifest/vendor/workspace/lock resolver — the two policies are not
 // interchangeable. util is the home because it imports nothing, so a driver
 // picks these up without widening its compile closure.
+
 // last_slash returns the index of the final '/' in p, or -1.
 pub function last_slash(p: string): i32 {
   var i: i32 = 0;
@@ -1506,4 +1511,31 @@ pub function to_u8(b: i32[]): u8[] {
     i = i + 1;
   }
   return o;
+}
+
+// io_error_reason is the reason part of a failed file operation's report.
+pub function io_error_reason(e: IoError): string {
+  match (e) {
+    NotFound(_) => {
+      return "not found";
+    },
+    PermissionDenied(_) => {
+      return "permission denied";
+    },
+    AlreadyExists(_) => {
+      return "already exists";
+    },
+    InvalidUtf8(_) => {
+      return "invalid UTF-8";
+    },
+    Interrupted => {
+      return "interrupted";
+    },
+    Unsupported => {
+      return "unsupported";
+    },
+    Other(_, msg) => {
+      return msg;
+    }
+  }
 }

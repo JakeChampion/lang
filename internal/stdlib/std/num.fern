@@ -26,6 +26,7 @@
 // generic numeric code (`T: num.Num` ⇒ add/sub/mul/div all available). `Neg` is
 // separate and implemented for the signed/float types only (i32/i64/f32/f64);
 // the unsigned u32/u64 get Add/Sub/Mul/Div/Num but no Neg.
+
 import "core/iter";
 
 pub trait Add {
@@ -343,6 +344,7 @@ impl Num for u64 {}
 // lowers on every backend. The explicit-identity API is kept regardless: it
 // works for a user `Add`/`Mul` type that has no `Zero`/`One` impl, and lets a
 // caller choose the seed (e.g. `0.0` vs a trait-fixed value) at the call site.
+
 // sum_with folds `xs` left with `.add`, starting from `zero`: the generic
 // element-wise total. Empty `xs` returns `zero` unchanged.
 pub function sum_with[T: Add](xs: T[], zero: T): T {
@@ -371,6 +373,7 @@ pub function product_with[T: Mul](xs: T[], one: T): T {
 // on every backend. Bound on `Add + Zero` / `Mul + One`: usable for the
 // primitive numerics and any user type that impls BOTH the operator and the
 // identity. (A user `Add` type with no `Zero` impl still has `sum_with`.)
+
 // sum totals `xs` from the additive identity; empty `xs` returns `T.zero()`.
 pub function sum[T: Add + Zero](xs: T[]): T {
   var acc: T = T.zero();
@@ -448,6 +451,7 @@ pub function adjacent_diff[T: Sub](xs: T[]): T[] {
 // above cover the `T: Add + Zero` case. The accumulator's `.add` / `.mul`
 // monomorphises to a direct call, so these lower on the self-host IR path like
 // core/iter's other bounded collectors (#2691 / #3558).
+
 // sum_iter totals every value an iterator yields, starting from `zero`
 // (returned unchanged for an empty iterator).
 pub function sum_iter[T: Add, I: iter.Iterator[T]](it: I, zero: T): T {

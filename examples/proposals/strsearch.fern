@@ -55,11 +55,13 @@
 // bytes. The corpus keeps a non-ASCII needle for that reason.
 //
 // The app writes its report to stderr; stdout carries TAP-13 from std/test.
+
 import "std/test";
 import "std/i32";
 import "std/string";
 
 // ----------------------------------------------------------------- naive
+
 // The definition of "occurs at i", written out. No shift rule at all, so it
 // has nothing in common with the two below except the answer.
 function naive_find(h: string, p: string): i32[] {
@@ -80,6 +82,7 @@ function naive_find(h: string, p: string): i32[] {
 }
 
 // ------------------------------------------------------------------- KMP
+
 // f[i] = the length of the longest PROPER prefix of p[0..i] that is also a
 // suffix of it. Empty pattern has no table.
 function kmp_table(p: string): i32[] {
@@ -144,6 +147,7 @@ function kmp_find(h: string, p: string): i32[] {
 }
 
 // ------------------------------------------------- Boyer-Moore-Horspool
+
 // bc[c] = how far to shift when the text character aligned with the pattern's
 // LAST position is c: the distance from that position back to c's rightmost
 // other occurrence, or the whole pattern length when it does not occur.
@@ -196,6 +200,7 @@ function count(h: string, p: string): i32 {
 }
 
 // ---------------------------------------------------------------- corpus
+
 // Every string over {a, b} up to `maxlen`, including the empty one. Small
 // alphabet on purpose: repetition and near-repetition are where a shift rule
 // overshoots, and a two-letter alphabet is nothing but near-repetition.
@@ -290,6 +295,7 @@ function contains_pos(xs: i32[], v: i32): boolean {
 }
 
 // ----------------------------------------------------------------- tests
+
 // The three-way differential over the exhaustive {a,b} space. If a shift rule
 // is wrong anywhere, it is wrong on one of these 7 665 pairs.
 function test_all_three_agree_exhaustively(): test.TestOutcome {

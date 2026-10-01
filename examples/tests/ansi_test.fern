@@ -7,6 +7,7 @@ import "std/ansi" as ansi;
 // multi-byte UTF-8 text). Assertions round-trip through strip() so they
 // don't need the raw ESC byte spelled out, plus a length check that
 // confirms codes are actually emitted.
+
 function test_strip_roundtrip(): test.TestOutcome {
   if (ansi.strip(ansi.red("hi")) != "hi") {
     return test.fail("red");

@@ -14,6 +14,7 @@ import "std/string";
 // to find_all, which is correct on interp and on ALL FOUR native backends
 // (pinned by the Go-side TestStringFindAll). Mirrors the array_count_sum_by /
 // iter_combinators precedent (interp-only for a self-host-compiler gap).
+
 function test_multiple(): test.TestOutcome {
   var a: i32[] = "abcabcabc".find_all("bc");
   return test.assert_eq_array(a, [1, 4, 7]);

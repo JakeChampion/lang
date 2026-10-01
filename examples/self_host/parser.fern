@@ -22,12 +22,14 @@
 //   - String / f-string handling (lexer recognises them; parser
 //     stub treats them as opaque ExprUnknown)
 //   - Receivers, type-params, `pub`, `import`
+
 import "./ast";
 import "./astwalk";
 import "./util";
 import "./lexer";
 
 // =================== PARSER ====================
+
 // ParamDestr is the desugar of ONE destructuring parameter, in the shape the
 // body prelude needs: `names` is the comma-joined binding list a destructuring
 // StmtVar carries in its name, `marker` is the `@sd:<Struct>:<fields>` tag a
@@ -166,12 +168,12 @@ pub function warn_unresolved_imports(mod: Module, driver: string): boolean {
     paths = paths + "\"" + mod.imports[i].path + "\"";
     i = i + 1;
   }
-  eprint("warning: " + driver + " has no module loader; UNRESOLVED imports: " + paths + "\n");
-  eprint("warning: any verdict below (ir/refused, exit code, eligibility bail) describes a BROKEN program, not the language.\n");
-  eprint("warning: to judge this program use a loading driver: `fern <prog> <stdlib-root>`, or asm_load_run.\n");
+  eprint("warning: " + driver + " has no module loader; UNRESOLVED imports: " + paths);
+  eprint("warning: any verdict below (ir/refused, exit code, eligibility bail) describes a BROKEN program, not the language.");
+  eprint("warning: to judge this program use a loading driver: `fern <prog> <stdlib-root>`, or asm_load_run.");
   match (env("FERN_STRICT_IMPORTS")) {
     Some(_) => {
-      eprint("error: FERN_STRICT_IMPORTS=1 refuses an unresolvable-import run\n");
+      eprint("error: FERN_STRICT_IMPORTS=1 refuses an unresolvable-import run");
       exit(3);
     },
     None => {}
@@ -412,6 +414,7 @@ function concat_enums(a: EnumDecl[], b: EnumDecl[]): EnumDecl[] {
 
 // Helper wraps to satisfy the implicit-union-wrap return-position
 // rule. Same pattern lexer.fern uses for Token construction.
+
 function e_number(text: string, suffix: string, is_float: boolean): ast.Expr {
   return ast.ExprNumber { text: text, suffix: suffix, raw: "", is_float: is_float, line: 0, col: 0 };
 }
@@ -1528,6 +1531,7 @@ pub function resolve_labels_module(mod: Module): Module {
 // Parser state. `toks` is the lexer's output; `pos` is the
 // current cursor into it. We mutate via value-semantics (return
 // fresh Par from each consume()).
+
 // `no_struct` suppresses the `Ident { … }` / `pkg.Type { … }`
 // struct-literal shortcut in parse_primary while parsing an
 // expression whose trailing `{` opens a block instead — the
@@ -2296,6 +2300,7 @@ function parse_arrow_lambda(p: Par): (ast.Expr, Par) {
 // of the value + new-parser pair threaded through recursive-descent
 // (docs/CURSOR-IDIOM.md). Avoids a stateful `var p: Par` shared across
 // helpers.
+
 // map_key_kind_of_expr classifies a map-literal KEY as 1 (integer-keyed),
 // 0 (string-keyed) or -1 (undecidable) by walking down to its leftmost
 // literal leaf. A key is rarely a bare literal — `(1 + 1)`, `(560 | (x <<|
@@ -3881,6 +3886,7 @@ function p_tuple_carrier(kinds: i32[], binds: string[], lits: ast.Expr[], pats: 
 // parse_tuple_arm_pattern consumes `(p0, p1, …)` with the cursor on the
 // opening `(`, returning the element encoding. A parse problem yields
 // elem_kinds.len() == 0 (the callers emit a degenerate stmt).
+
 // parse_tuple_arm_pattern is the depth-guarded face of parse_tuple_arm_pattern_nested: see MAX_NEST_DEPTH.
 function parse_tuple_arm_pattern(p: Par): (i32[], string[], ast.Expr[], ast.Pattern[], Par) {
   if (p.too_deep()) {
@@ -4547,6 +4553,7 @@ function parse_struct_match_arms(p: Par, expr_form: boolean): (ast.StructArm[], 
 // parse_branch_body yields a parsed if/match value-branch body: the
 // Stmt[] (leading statements followed by `s_return(tail)`) plus the
 // return-type tag derived from the TAIL expression (the block's value).
+
 // branch_stmt_start reports whether the next token begins a STATEMENT
 // inside an if/match value-branch body (block-expressions slice 1). These
 // are the keyword-led statements parse_stmt handles directly (each
@@ -5365,6 +5372,7 @@ function parse_pipe(p: Par): (ast.Expr, Par) {
 // token. On malformed input — missing `{` or `}` — the result is
 // a single StmtUnknown so the outer caller can still surface a
 // reasonable error site.
+
 function parse_block(p: Par): (ast.Stmt[], Par) {
   if (p.peek_punct() != "{") {
     var miss: ast.Stmt[] = [s_unknown(p, "missing { in block")];
@@ -5528,6 +5536,7 @@ function parse_block_or_stmt(p: Par): (ast.Stmt[], Par) {
 //   Name(ident)        — PatVariant { type_name: Name, binding: ident }
 // The lexer treats `_` as an identifier (underscore is a valid
 // alpha byte) so wildcards arrive here via peek_ident.
+
 // parse_pattern is the depth-guarded face of parse_pattern_nested: see MAX_NEST_DEPTH.
 function parse_pattern(p: Par): (ast.Pattern, Par) {
   if (p.too_deep()) {
@@ -6209,6 +6218,7 @@ function build_merged_arm(vn: string, arms: ast.MatchArm[], lo: i32, hi: i32, fa
 // Malformed input recovers by yielding an empty-arm StmtMatch
 // — the surrounding parse_module loop continues at the next
 // token.
+
 function parse_match_stmt(p: Par): (ast.Stmt, Par) {
   // E030 (non-exhaustive match) is reported at the `match` keyword.
   var mkline: i32 = p.peek_line();
@@ -7813,6 +7823,7 @@ pub function parse_program(toks: lexer.Token[]): ast.Stmt[] {
 // bit lower_func needs to admit `for y in f(x)` (flat_map's shape) onto the
 // IR path. The type position is a bare ident in this cut —
 // no array / generic / union syntax.
+
 // parse_type_name reads a (possibly generic) type spelling and
 // returns it as a single concatenated string. Recognises:
 //   * `Name`                     — `Map` or `i32`
@@ -7827,6 +7838,7 @@ pub function parse_program(toks: lexer.Token[]): ast.Stmt[] {
 // resolve `g().field` (struct_ret_fns gets a `g|P` entry in lower_func), so the
 // call-result field read lowers on the IR path instead of bailing
 // (#3640 slice A). Empty for non-struct returns (the common fn-value case).
+
 // consume_array_suffix swallows trailing `[]` suffix(es) after a type and
 // appends them to `name`. Needed for the parenthesized type forms — a
 // tuple `(i32, i32)[]` or function `(() => i32)[]` array — whose `[]`
@@ -7966,25 +7978,6 @@ function consume_array_suffix(p: Par, name: string): (string, boolean, string, P
   return (name, false, "", p);
 }
 
-// `dyn Trait` (single) or `dyn A + B + …` (multi-trait object) — a
-// runtime trait-object type. The self-host erases it to a coarse
-// `"dyn <trait>"` / `"dyn A + B"` spelling and dispatches method
-// calls by the value's runtime shape (a struct/enum value carries
-// its own shape pointer); op_dyn_dispatch enumerates every module
-// method of the called name over its struct/prim receivers, so a
-// method from ANY trait in the set lands on the concrete impl. The
-// trait set is carried on the op for the one case the name-keyed
-// search cannot answer alone: two traits providing one method for
-// one type, where the second provider is emitted as
-// `<Type>.<Trait>.<m>` and only the trait picks it out
-// (dyn_arm_matches). Recurse per trait so `dyn Shape[]` /
-// `dyn mod.Shape` / `dyn A + B[]` reuse the generic-arg +
-// trailing-`[]` handling; the `[]` falls on the last trait and so on
-// the whole `"dyn …"` spelling, which is what is_array_type_name +
-// the element-strip (name[0:len-2]) expect. Traits are joined in
-// source order with " + " (matching the native String() separator).
-// A trailing/empty `+` is a parse error.
-// See docs/DYN-TRAITS.md §4.3 + §10.
 function parse_type_dyn(p: Par): (string, boolean, string, Par) {
   p = p.advance();  // consume `dyn`
   let (dinner_name, dinner_ret_arr, dinner_fn_ret, dinner_p) = parse_type_name(p);
@@ -8973,6 +8966,7 @@ function parse_param(p: Par, nth: i32): (ast.ParamDecl, Par) {
 // the offending token; the surrounding parse_module loop turns the
 // result into a degenerate FuncDecl with empty name on failure so
 // the caller can spot it.
+
 // TpList is one generic type-parameter list: the names in source order and,
 // parallel to them, each one's `+`-joined trait bound ("" when unbounded).
 struct TpList { tnames: string[], tbounds: string[] }
@@ -9559,6 +9553,7 @@ function parse_field_type(p: Par, name: string): (StructFieldDecl, Par) {
 // is optional). Errors leave the parser at the offending token;
 // surrounding parse_module recovers via the StructDecl with
 // empty name.
+
 // The i32[] result is the source line of each field, for the formatter
 // (FieldLines). Empty on every early return, since a decl the parser could not
 // read has no fields to place comments against.
@@ -9639,6 +9634,7 @@ function parse_struct_decl(p: Par): (StructDecl, i32[], Par) {
 // produce an alias with no variants — the checker rejects them,
 // but parsing stays lenient so error recovery proceeds. The
 // trailing semicolon is consumed if present.
+
 function parse_type_alias(p: Par): (TypeAlias, Par) {
   // E016 (alias name collides with a struct/enum) is reported at the
   // `type` keyword.
@@ -9691,6 +9687,7 @@ function parse_type_alias(p: Par): (TypeAlias, Par) {
 // first payload of a multi-payload variant is bound; extras are
 // consumed. The enum's own name isn't recorded — variant names are
 // global, as with the existing union machinery.
+
 function parse_enum_decl(p: Par): (string, StructDecl[], string[], i32[], Par) {
   p = p.advance();  // consume `enum`
   var out: StructDecl[] = [];
@@ -9817,6 +9814,7 @@ function parse_enum_decl(p: Par): (string, StructDecl[], string[], i32[], Par) {
 // trailing semicolon is consumed when present. Malformed input
 // (missing string, etc.) yields an Import with empty path so
 // the surrounding loop can recover.
+
 function parse_import(p: Par): (Import, ast.Stmt[], Par) {
   var imp_line: i32 = p.peek_line();
   p = p.advance();  // consume `import`
@@ -10411,6 +10409,7 @@ function add_builtin_struct2(structs: StructDecl[], name: string, f0: string, t0
 // the needed instantiations, then clones each bounded generic per
 // instantiation with the type variable substituted. A worklist handles
 // clones that themselves call bounded generics.
+
 // MEnv is a tiny var-name -> type-name environment for inference.
 struct MEnv { mnames: string[], mtypes: string[] }
 
@@ -13738,6 +13737,7 @@ pub function instantiate_func(fd: FuncDecl, name: string, tparams: string[], cts
 // free-generic worklist clones one concrete `__arrm_m__<elem>` per
 // element type — so generic array methods use the proven free-generic
 // monomorphiser instead of that i32 mis-dispatch.
+
 // looks_type_var reports whether `s` is a type variable: the `0_<name>`
 // spelling rename_type_vars_module gives every one. Exact, since no type an
 // identifier can name starts with a digit.
@@ -13873,6 +13873,7 @@ pub function register_array_method_generics(mod: Module): Module {
 // concrete `__mapm_verb__<K>;<V>` per key/value pair — with `subst_ty`
 // substituting `Map[K,V] → Map[i32,i32]`, so the cloned body's key-kind is
 // correct. Mirrors register_array_method_generics exactly.
+
 // map_receiver_typevars returns the type-variable arguments of a `Map[K, V]`
 // receiver type (e.g. ["K", "V"]), or [] if the receiver isn't a Map whose
 // args are all type variables. The args must ALL be type vars — a partially
@@ -13998,6 +13999,7 @@ pub function register_map_method_generics(mod: Module): Module {
 // `fd.type_params` and cannot be read back off the decl; they are recovered
 // from the signature instead — every type var in the params + return that the
 // receiver does not fix is one of them.
+
 // collect_tvars appends every generic type variable in a type spelling to
 // `acc` (first-appearance order, deduped), recursing through array / tuple /
 // bracketed-generic structure the same way subst_ty substitutes it. A
@@ -14622,6 +14624,7 @@ function has_func_named(a: FuncDecl[], b: FuncDecl[], name: string): boolean {
 // statically (the same `f__<key>` scheme the function monomorphiser
 // uses). A no-op when no struct is generic (the self-host source +
 // stdlib use none), which keeps the byte-identical fixpoint.
+
 // TyIns threads a rewritten type string alongside the running
 // instantiation accumulator.
 struct TyIns { ty: string, mins: Insts }
@@ -15689,6 +15692,7 @@ function ms_module(mod: Module, defer_enums: boolean): Module {
 // enum's methods by name. The compiler source uses no generic enums
 // and the stdlib's carry no methods, so the pass is a no-op there
 // (fixpoint-safe), exactly like the generic-struct pass. See issue #3572.
+
 // genum_index returns the index of the generic EnumDecl named `name`, or -1.
 function genum_index(enums: EnumDecl[], name: string): i32 {
   var i: i32 = 0;
@@ -17433,6 +17437,7 @@ function str_in(xs: string[], s: string): boolean {
 // captured before the deferred actions run. lower_defers_module eliminates
 // every StmtDefer (rewriting to flag-sets + per-exit cleanup) so the
 // backends never emit one. Mirrors the Go IR's ast.Defer + IsActive local.
+
 // dl_itoa renders a non-negative i32 as decimal (flag indices). parser.fern
 // has no i32_to_string, so build digits via 1-char string slices.
 function dl_itoa(n: i32): string {
@@ -18856,6 +18861,7 @@ pub function hoist_local_funcs_module(mod: Module): Module {
 }
 
 // ---- lifting the bindings a deferred action names ---------------------------
+
 // A deferred action is replayed at the exits of the scope that registered it,
 // and a binding declared in a block INSIDE that scope has no slot there: the
 // interpreter read whatever the name last meant and the semantic lowering
@@ -19374,12 +19380,14 @@ pub function lower_defers_module(mod: Module): Module {
 // that does not move a handle is a call argument bound to a `borrow` parameter;
 // everything else moves it and leaves the drop to the consumer, because leaking
 // is safe and a double drop is not.
+
 function resource_drop_fn_name(res: string): string {
   return "__resource_drop_" + res;
 }
 
 // name_in_list is a local membership test (contains_str lives in other modules).
 // name_in_list -> util.has_str (SH-020).
+
 // handle_resource_of returns R for an owned-handle spelling — "own R", or a
 // bare R that names a registered resource — else "".
 function handle_resource_of(type_name: string, resources: ResourceDecl[]): string {
@@ -20143,6 +20151,7 @@ pub function desugar_ranges_module(mod: Module): Module {
 // the pattern is equivalent to the positional pattern that lists the variant's
 // fields in DECLARATION order — which is what this pass rewrites it to, before
 // the checker or any backend sees it. See docs/NAMED-FIELD-VARIANTS.md.
+
 // variant_field_names_of returns the record-form field names declared for the
 // variant struct `name`, or [] when the name is unknown, is a plain struct, or
 // is a positional / payloadless variant. A qualified spelling (`mod.Rect`) is
@@ -20501,6 +20510,7 @@ function fda_lookup_params(name: string, funcs: FuncDecl[]): ast.ParamDecl[] {
 // positional one with defaults filled — so every later pass and backend
 // sees an ordinary `Args` list (the same contract the native pass gives
 // the Go checker).
+
 function fda_is_named_marker(e: ast.Expr): boolean {
   match (e) {
     ast.ExprBinary(b) => {
@@ -20739,6 +20749,7 @@ function fda_stmts(stmts: ast.Stmt[], funcs: FuncDecl[]): ast.Stmt[] {
 }
 
 // ---- default-argument diagnostics (mirrors internal/defaultargs) ----
+
 // default_nonconst_reason reports the first sub-expression that stops a
 // parameter default from being a constant expression, as the reason text E076
 // prints, and whether one was found. A WHITELIST of literal / unary / binary,
@@ -21240,6 +21251,7 @@ pub function fill_default_args_module(mod: Module): Module {
 // (leaves "") on anything it can't pin down — locals, recursion,
 // conflicting or complex returns — preserving the prior behaviour for
 // those rather than guessing.
+
 function irt_param_type(params: ast.ParamDecl[], name: string): string {
   var i: i32 = 0;
   while (i < params.len()) {
@@ -21878,6 +21890,7 @@ pub function infer_ret_types_module(mod: Module): Module {
 //     increment could reach `arr.len()`).
 // Accesses inside a lambda / defer body are never marked: that code runs later,
 // when `i` may have advanced past `len`.
+
 struct LenLoopMatch { ok: boolean, idx: string, arr: string }
 
 struct LenArrRef { ok: boolean, name: string }
@@ -22472,6 +22485,7 @@ pub function module_with_builtins_typed(mod: Module): Module {
 // starts with a digit, so looks_type_var is exact on the result;
 // util.show_type_vars turns the spelling back for a diagnostic, and
 // written_type_vars_module for the printer.
+
 function tvar_spelling(name: string): string {
   if (looks_type_var(name)) {
     return name;
@@ -22946,6 +22960,7 @@ function rename_tv_annot(st: ast.Stmt, vars: string[], cts: string[]): ast.Stmt 
 // default methods after every trait declaration has been seen:
 // trait_name (simple, qualifier stripped), impl_type, the impl's bounded
 // type params, and the method names the impl explicitly provided.
+
 // TraitDefault is one trait method that carries a `{ … }` default body
 // (abstract signatures are dropped). `trait_name` is the simple trait
 // name; `method` is the parsed method (params[0] = self for a receiver
@@ -23028,6 +23043,7 @@ function claim_method_name(fd: FuncDecl, tname: string, keys: string[], traits: 
 // same answer — the compiled backends through irlower.dyn_arm_matches, the AST
 // interpreter through dyn_provider_name — so the rule lives beside the renaming
 // it undoes rather than once per engine.
+
 // dyn_trait_set splits a `dyn Trait` type spelling into its trait names:
 // "dyn B" -> ["B"], "dyn A + B" -> ["A", "B"]. Non-dyn spellings yield none.
 pub function dyn_trait_set(ty: string): string[] {
@@ -23148,6 +23164,7 @@ function str_list_contains(xs: string[], want: string): boolean {
 // self-host-compiled program gets the same field-wise methods. Structs
 // only for now — enums desugar to struct-unions here, so enum @derive
 // is a follow-up. See docs/TRAITS.md.
+
 // derive_simple_name returns a (possibly qualified) trait name's simple
 // name (after the last `.`): `cmp.Display` → "Display".
 pub function derive_simple_name(name: string): string {
@@ -23792,6 +23809,7 @@ function synth_enum_derives(ename: string, declared: StructDecl[], derives: stri
 // concrete, so each field's default is either a scalar zero literal or a
 // nominal field's own `Type.default()` (a plain associated call — item 1's
 // IR path resolves it). Mirrors the Go synthDefault / defaultDeriveExpr.
+
 // dv_is_scalar reports whether a type is a primitive scalar whose default
 // is a zero literal: i32/i64/u8/u32/u64 → 0, f32/f64 → 0.0, boolean → false,
 // string → "". The Go side asks this of the TYPE (every NumberType is a
@@ -24183,6 +24201,7 @@ function parse_export_attr(p: Par): (string, string, boolean, Par) {
 }
 
 // yields the parsed resource name plus the advanced parser.
+
 // parse_resource_decl_name consumes `resource Name;` (the contextual `resource`
 // identifier is at the cursor) and returns the parser plus `Name`. The optional
 // `@import` WIT binding is attached by parse_module. See ResourceDecl and
@@ -25258,6 +25277,7 @@ function skip_decl_modifier(p: Par, name: string, before: string): Par {
 // SCOPE: same-module destinations. Imports are unresolved at parse time, so a
 // float parameter or field declared in ANOTHER module is not settled against —
 // that shape still behaves as it did before this pass existed.
+
 // is_float_type_name reports whether a declared type name denotes a float
 // scalar. `float` is the unsuffixed spelling; f32 is f64-shaped downstream.
 function is_float_type_name(t: string): boolean {
@@ -25349,6 +25369,7 @@ function settle_float_expr(e: ast.Expr): ast.Expr {
 // the whole IIFE by the first branch, so a float first arm beside an i32 second
 // arm reads that arm's integer bits as a double. Left alone, the checker's
 // E003 / E031 names the problem instead.
+
 // settled_branch_value returns a value branch's result — its body's trailing
 // `return E`, which is where parse_branch_body puts a branch's value (native's
 // BlockExpr tail) — with a flag for a body that yields none.
@@ -25634,6 +25655,7 @@ pub function settle_to_name(e: ast.Expr, type_name: string): ast.Expr {
 // Destination lookups over the module's own declarations. A call to a function
 // this module does not declare, or a literal of a struct it does not declare,
 // finds nothing and settles nothing.
+
 // SettleFns is the module's function decls with a name index over them — the
 // MFns idiom for this pass, whose destination lookup below runs once per call
 // expression in the module and scanned every decl each time. The index travels
@@ -26732,6 +26754,7 @@ pub function merge_module_prefixed(into: Module, from: Module, prefix: string): 
 }
 
 // =================== VALIDATION ====================
+
 function main(): i32 {
   var rc: i32 = check_operator_precedence();
   if (rc != 0) {

@@ -9,6 +9,7 @@ import "std/i64";
 // test reads a variable, the clock, a random number and an upstream's
 // status through its bag, and the test decides each answer; configuration
 // and secrets are canned the same way, a secret logged by its name alone.
+
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
   var region: string = "nowhere";
   match (plat.env("REGION")) {

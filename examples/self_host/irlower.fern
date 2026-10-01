@@ -25,6 +25,7 @@
 //     are fresh and sole-owned (so a drop may reclaim them) versus borrowed
 //     or a zero-copy view (where a drop would over-release);
 //   - CONTROL — the structured block/loop/if nesting that br-depths index.
+
 import "./ast";
 import "./ir";
 import "./irverify";
@@ -2348,6 +2349,7 @@ function (s: LowerState) defer_alias_slot(name: string): i32 {
 // `internal/e2eselfhost` cannot reach and the per-module fixpoint can. That is
 // why its retirement refusal is spelled out explicitly rather than inherited
 // from a lookup that happened to miss.
+
 // mark_reclaim_site / reclaim_site_key record and read slot i's binding-SITE key
 // (#7272). Empty for a slot no `var` bound, which is why every tuple predicate
 // below treats "" as "no credit" rather than falling back to the name: the tuple
@@ -5324,6 +5326,7 @@ pub function expr_map_type_tag(e: ast.Expr, s: LowerState): string {
 // receiver whose value type isn't inferred yet (bare map_new → defaults to i32),
 // so a string value there would otherwise emit vis=0 and leak — its box is then
 // never freed by $__fern_map_release (the #4353 wasm-IR value-release gap).
+
 // map_value_widekind (#5253): 8-byte VALUE-column discriminator for the map ops
 // that the wasm IR path handles differently per width — 0 narrow (i32/pointer),
 // 1 i64/u64 (wasm boxes an 8-byte cell into the i32 column), 2 f64 (wasm defers
@@ -5895,6 +5898,7 @@ function qualified_variant_enum(fa: ast.ExprFieldAccess, s: LowerState): string 
 // while building its initial state); the LowerState methods delegate.
 // decl_field_index returns a field's position in DECL order (-1 if absent);
 // decl_is_struct reports whether `name` is a declared struct.
+
 // StructTab is the module's struct decls plus two name indexes over them. Every
 // by-name lookup below used to scan the whole array — ~560,000 queries over
 // ~400 decls per self-compile, 11.9% of the instructions retired lowering
@@ -7901,6 +7905,7 @@ pub function variant_arm_decl_index(pv: ast.PatVariant, scrut_enum: string, s: L
 // variant name two enums share has two decls, so anywhere the owning enum is
 // known the `_at` form is the correct one — the by-name form silently answers
 // for whichever enum was declared first.
+
 // decl_at_field_type returns the type of field `index` (decl order) of the decl
 // at `decl_index`, or "".
 pub function decl_at_field_type(structs: StructTab, decl_index: i32, index: i32): string {
@@ -17947,7 +17952,7 @@ function report_expr_append(s: LowerState, fa: ast.ExprFieldAccess, c: ast.ExprC
   }
   eprint("append-report: " + s.frame.cur_fn + ":"
     + util.i32_to_string(c.line) + ":" + util.i32_to_string(c.col)
-    + "  " + verdict + "  " + expr_append_recv_label(fa.obj) + "  " + why + "\n");
+    + "  " + verdict + "  " + expr_append_recv_label(fa.obj) + "  " + why);
   return s;
 }
 
@@ -20112,6 +20117,7 @@ function lower_call_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerSta
 // takes the read as a move — three sites that have to agree, and none of them
 // is here. A scalar is copied out of the buffer, so nothing survives the release
 // to dangle.
+
 // owned_scalar_field_type reports whether a declared field type names a value
 // that is COPIED out of its container rather than pointing back into it. Every
 // scalar width plus `boolean`; `string` / arrays / structs / enums are pointers
@@ -23228,6 +23234,7 @@ function vb_leaves_fresh_str(init: ast.Expr, lits: boolean): boolean {
 // owned, native's countedConditionalType. An arm retains the local it yields
 // when that local is an array, string, struct or dyn value declared outside
 // the conditional (native's emitCountedYield); any other arm has to be fresh.
+
 // cond_alias_leaf_retains: `e` names a string, struct or dyn value declared
 // outside the conditional whose value temp is `tslot` — a local, a parameter or
 // a const — which its arm retains.
@@ -26543,6 +26550,7 @@ function struct_lit_all_scalar(structs: StructTab, name: string): boolean {
 // value is a literal of that kind. Wider fields (i64 / f64), strings and nested
 // aggregates need more than the one word per field the backends emit for this
 // op, so they stay on struct_make.
+
 // const_agg_scalar_field reports whether a DECLARED field type is one this slice
 // can place statically: an i32-width scalar. `struct_field_width` returns 64 for
 // exactly the wide kinds, which is the same classifier struct_make's field
@@ -32062,7 +32070,7 @@ function lower_stmt_assign(a: ast.StmtAssign, s: LowerState): LowerState {
                 }
                 eprint("append-report: " + s.frame.cur_fn + ":"
                   + util.i32_to_string(a.line) + ":" + util.i32_to_string(a.col)
-                  + "  " + verdict + "  " + lexical.source_name(a.target) + "  " + why + "\n");
+                  + "  " + verdict + "  " + lexical.source_name(a.target) + "  " + why);
               }
               if (push_shared) {
                 aps = aps.emit(ir.op_arr_push());
@@ -35520,6 +35528,7 @@ function append_inplace_recvs(stmts: ast.Stmt[], esc: string[], acc: string[]): 
 // classifies the ones it recognises. A site is admitted only when the two
 // agree, so an expression shape this walk does not know refuses the site
 // instead of admitting it.
+
 // field_append_site_key names one `<root>.<field>.append(v)` call by position
 // AND receiver spelling, the self-host's stand-in for native's AST node
 // identity.
@@ -36107,6 +36116,7 @@ function fai_capture_scan(bound: ast.Expr, target: string, roots: string[], acc:
 // therefore be bound exactly once. It may be declared at any depth: each run of
 // a nested declaration builds a fresh box, and every use of the name sits
 // inside its scope, after it, just as for a top-level one.
+
 // fai_is_struct_lit: is `e` a struct literal — a freshly constructed box?
 function fai_is_struct_lit(e: ast.Expr): boolean {
   match (e) {
@@ -38936,6 +38946,7 @@ function emit_struct_tuple_field_drops(se: LowerState, slot: i32, sty: string): 
 // falls back to the function-exit dec-sweep (the safe-leak invariant). The drop
 // is emitted as dec + ZERO the slot, so the later exit-sweep harmlessly decs a
 // null on that slot (no LowerState threading needed).
+
 // str_borrowing_method reports whether a string method neither hands its
 // receiver's box out nor returns a view of it: `len` plus the predicates and the
 // fresh-copy transforms, each of which either reads the receiver's bytes or
@@ -40655,6 +40666,7 @@ function stmt_unsafe_for_allow_ret(st: ast.Stmt, name: string, borrowable: strin
 // This is the relaxation `body_unsafe_for_allow_ret` lacks (it flags any non-
 // borrowable call arg as an escape), and it admits the `s = lower_X(.., s)`
 // chains the snapshot-param / snapshot-local reclaim otherwise excludes.
+
 // is_consume_rebind_call: `e` is a free call `g(.., name, ..)` where every direct
 // `name` argument sits at a CONSUME-SAFE or BORROWABLE position of g, and no other
 // argument lets `name` escape. (Method calls are already safe via the receiver-
@@ -42544,6 +42556,7 @@ pub function (s: LowerState) with_optret_pending(v: string[]): LowerState {
 // LowerState.xblock_pending (recip|donor); the recursive lower_block consumes it
 // when it constructs the recipient. Donor selection excludes any donor a
 // same-block site already consumed (so the two passes never double-free a box).
+
 // cross_recipient_fields_fresh is the RECIPIENT field-value freshness gate the
 // cross-statement (cross_reuse_sites) and cross-block (xblock_scan_body)
 // families share: every leak-safe array field VALUE must be a fresh array
@@ -43409,6 +43422,7 @@ pub function is_f64_scalar_type_name(t: string): boolean {
 // cannot dangle another live reference (the safety property the earlier shallow-RC
 // slice lacked — it freed escaping boxes and use-after-free'd the self-compile).
 // Later slices widen this toward the native inter-procedural borrow inference.
+
 // push_str_unique appends s to xs unless already present.
 function push_str_unique(xs: string[], s: string): string[] {
   if (util.index_of_str(xs, s) >= 0) {
@@ -43996,6 +44010,7 @@ function alias_names_in_stmts(stmts: ast.Stmt[], acc: string[]): string[] {
 // in-place: the source field is emptied before the mutation, so the local IS
 // the only reference. That exemption is why this keys on a positional scan
 // rather than flagging every field-read binding.
+
 // field_read_base returns the base object name of a `OBJ.field` init, or "" —
 // the source whose buffer such a binding borrows.
 function field_read_base(e: ast.Expr): string {
@@ -44278,6 +44293,7 @@ function assign_is_self_two_arg_method(a: ast.StmtAssign): boolean {
 // and the clone site's are the shallow free, which is what frees a shared
 // element exactly once — by m, after every holder is dead. An element only a
 // superseded box still names (a value the clone overwrote) leaks one level.
+
 // map_alias_holder_sites: the binding sites of every plain alias `var q = m` in
 // `body` when ALL of them qualify as holders — each not reassigned, not
 // escaping, not explicitly iterated, carrying no identity use, and neither it
@@ -44448,6 +44464,7 @@ function var_decl_scan(stmts: ast.Stmt[], name: string, in_loop: boolean): i32 {
 // sweep point. Scope exit is after every read of a local tuple, so the "MAP:"
 // exit set may take it; the PRECISE drop fires at the map's last TOP-LEVEL use —
 // which is the tuple binding itself — so that gate keeps refusing.
+
 // tuple_bare_elem_sole_use: `init` is a tuple literal in which `name` appears
 // ONLY as a direct bare-ident element. A tuple mentioning the name anywhere else
 // answers false, so the borrow reading below cannot hide a second, genuinely
@@ -47945,6 +47962,7 @@ function rcenum_call_init_owner(e: ast.Expr, opt_fresh_ret: SigReg): string {
 // `s = "reset"` read as a fresh rebind, admitting an accumulator TestSelfHostStrAccum
 // pins as un-reclaimable. Both that and the exclusion below are over-release
 // contracts, so this stays local to the STR credit.
+
 // litstr_tostring_receiver: `name` is the receiver of a `.to_string()` call. On a
 // STRING receiver that call is the IDENTITY — its result aliases the receiver's box,
 // and the concat-temp machinery frees that result as an inline-consumed temp. Adding
@@ -48105,6 +48123,7 @@ function litstr_tostring_recv_body(stmts: ast.Stmt[], name: string): boolean {
 //
 // An UNKNOWN receiver type is refused, not assumed scalar: unresolvable must fall to
 // leak-safe, since the wrong answer here is an over-release rather than a leak.
+
 // tostr_scalar_type_name: the receiver types whose `.to_string()` is the decimal-text
 // builtin. Deliberately NOT `string` (the identity case) and not a struct/array.
 function tostr_scalar_type_name(t: string): boolean {
@@ -48877,6 +48896,7 @@ function collect_str_handback_call_names(stmts: ast.Stmt[], str_handback_ret: st
 // (or static-literal) box at every point, so freeing the superseded box on each
 // reassignment (emit_str_reclaim_store, heap-base-guarded so the initial "" literal
 // is a no-op on its .rodata data) and the final at scope exit is sound.
+
 // str_accum_value_is_fresh: the accumulator class's freshness test for a
 // binding or a rebind RHS. str_local_binding_is_fresh answers from the
 // expression alone — a concat, a string method, a known producer — and the
@@ -49068,6 +49088,7 @@ function collect_str_accumulator_names(stmts: ast.Stmt[], reassigned: string[], 
 // loop-rebind) closes the caller-side leak that survives the returned-builder
 // move-on-return (whose freed intermediates live inside f; its final was moved to
 // the caller and leaked here until now).
+
 // body_has_nonfresh_str_return_reg: any return whose value is NOT a fresh string
 // producer (str_local_binding_is_fresh — a concat, a string method, or a named
 // producer). A bare `return ident` (an accumulator move-out) is conservatively
@@ -49697,6 +49718,7 @@ function own_str_param_moved_out(name: string, body: ast.Stmt[], params: ast.Par
 // direct return expression over the receiver ident: a slice of a callee LOCAL
 // is a view of a buffer that local's own sweep frees, and a slice bound to a
 // name first could have been stored somewhere else on the way out.
+
 // The walk is a LEAST FIXPOINT over the bare-name half, for the same reason
 // param_counted_of's is: a function whose returns are all calls cannot be judged
 // until those callees are, and the stdlib stacks them three deep
@@ -50977,6 +50999,7 @@ function collect_fresh_map_in_stmt(st: ast.Stmt, acc: string[]): string[] {
 // arr_push grow-leak is closed for snapshot-kind columns by map_owncols (#5335
 // layer 0: i32/string K/V route grows through __fern_arr_push_owned); only
 // flag-1 alias columns (i64/f64/struct/generic) keep the LOAD-BEARING leak.
+
 // map_decl_type: the K or the V of the `var name: Map[K, V] = …` declaration of
 // the map local `name`, found anywhere in `stmts` (nested if / while / for /
 // match bodies included); "" if unannotated or not found. `want_key` picks the
@@ -51999,6 +52022,7 @@ function map_identity_escape_stmt(st: ast.Stmt, name: string): boolean {
 // literal's .rodata data is heap-guard-skipped, an immortal view is skipped) and
 // then frees the buffer. Anything the analyses cannot prove stays on the shallow
 // buffer-only dec (elements leak — sound, never an over-release).
+
 // strarr_elem_store_ok: strarr_value_is_fresh asked WITHOUT the whole-program
 // registry — the answer available to an admission that holds no FnSigs. A call
 // to a proven `str_fresh_ret_fns` producer is refused here and admitted at the
@@ -52985,6 +53009,7 @@ function collect_dyn_struct_in_stmt(st: ast.Stmt, body: ast.Stmt[], params: ast.
 // cell (free the sole-owned inner string box at cell@8 first, then dec the
 // cell). Any element that doesn't classify uncredits the whole array (sound
 // leak, exactly today's behaviour).
+
 // collect_dyn_arr_names: every `var <n>: dyn <T>[] = [<literal>...]` binding
 // whose EVERY element is a prim/string literal or a leak-safe scalar-only
 // struct literal, as "<binding site>|<kinds>" entries (kinds[i] = 'p'/'s' for
@@ -56405,6 +56430,7 @@ function snapshot_param_slots_of(fn: parser.FuncDecl, reassigned: string[], borr
 // buffer the caller still owned. The same snapshot admits the alias `var sc = s`
 // and the call-derived `var sl = lower_expr(x, s)`, whose box may BE the
 // source's; those two earn no struct credit and reclaim by their rebinds only.
+
 // is_fresh_struct_ret_value reports whether a return value is a freshly
 // CONSTRUCTED struct — a literal or struct-update of a leaf-safe struct. A bare
 // ident / call / anything else is NOT fresh (it may alias a borrowed param).
@@ -57282,6 +57308,7 @@ function body_has_nonfresh_arrlit_return(stmts: ast.Stmt[]): boolean {
 // else escapes it. Element freshness needs no proof at all here — the ret type
 // is is_leaksafe_array_field, so every element is a SCALAR, and the shallow
 // element-blind `__fern_rc_dec` both consumers emit has no pointer to dangle.
+
 // arr_returned_ident_names collects the name of every `return <ident>` in
 // `stmts`. Paired with body_has_nonident_arr_return, which refuses the function
 // outright if any return is some other shape.
@@ -57540,6 +57567,7 @@ function body_returns_local_built_arr(stmts: ast.Stmt[]): boolean {
 // is sole-owned": the extracted reference must be one the container SOLE-OWNS
 // too, else the read hands the destination a reference someone else still
 // releases. The predicates below prove exactly that, per producer.
+
 // strarr_value_is_fresh: `e` produces a string box this frame constructs and
 // nothing else names — a literal (const_str builds a fresh rc=1 box per
 // evaluation), a concat / string-method producer (str_local_binding_is_fresh),
@@ -58302,6 +58330,7 @@ pub function arr_fresh_ret_key(fn: parser.FuncDecl): string {
 // elements come with it, so that shape is admitted only at a scalar element
 // type, where shallow and complete are the same thing. That is also what
 // separates this from "STRARR:", whose deep free needs a fresh buffer.
+
 // arrown_ret_type: `t` is one of the four rc-array types the StmtReturn dup arms
 // classify — scalar-element, array-of-struct, array-of-enum, `string[]`. A
 // `T[][]` field is deliberately absent: no return arm claims it, so it reaches
@@ -59461,6 +59490,7 @@ function body_returns_bare_name(stmts: ast.Stmt[], name: string): boolean {
 // op_struct_make gives the box an rc header. Anything not provably this shape is
 // left to leak (sound). Conservative + deterministic — a mis-classified free is a
 // use-after-free that breaks the byte-identical fixpoint.
+
 // enum_variant_scalar_payload: every payload field of variant struct `vname` is a
 // flat scalar (i32/boolean/i64/f64/u32/u64). A no-payload (0-field) variant
 // trivially qualifies. The shape-ptr is at slot 0; payload fields are __ev, __ev1…
@@ -60797,6 +60827,7 @@ function confirm_map_get_frees(fr: EnumFrees, body: ast.Stmt[], i: i32, s: Lower
 // and is NOT passed to enum_donor_reuse_sites, so an rc-payload box can never be
 // donated (the donor path overwrites fields without dropping old values — sound
 // only for scalar donors) and is freed by exactly one deep-drop here.
+
 // enum_field_rc_droppable: a payload field type whose value is an rc-headered box
 // the match-consume reclaim can release — a leak-safe scalar array
 // (i32[]/i64[]/f64[]/boolean[], freed by one __fern_rc_dec), a deep-drop-ok
@@ -61782,6 +61813,7 @@ function emit_enum_variant_payload_drops(s: LowerState, slot: i32, enum_name: st
 // variant payload is a leak-safe SCALAR ARRAY (single arr_dec fully releases it — NOT a
 // nested struct, whose __struct_drop would double-free a shared payload). The reassign
 // RHS is always a FRESH variant ctor, so the new box never equals the old — no cow guard.
+
 // enum_variant_array_payload_only: every field of variant `vname` is a flat scalar or a
 // leak-safe SCALAR ARRAY. String / nested-struct / enum / map / option / tuple payloads
 // bail — the deep-drop must be a single arr_dec per rc field, never a __struct_drop.
@@ -62261,6 +62293,7 @@ function emit_enum_inplace_reassign(value: ast.Expr, slot: i32, enum_name: strin
 // box itself is freed. DISJOINT from the scalar option set (that admits only
 // scalar payloads; this only array payloads), so an option is freed by at most
 // one path — never double-freed.
+
 // OptRcCand: a candidate rc-payload option — the constructed variant ("Some"/"Ok"/
 // "Err") and the payload TYPE (an array type like "i32[]", or a struct type like
 // "P"). An empty `variant` means "not admitted".
@@ -64498,6 +64531,7 @@ function slot_is_reclaimable_map(s: LowerState, i: i32): boolean {
 }
 
 // --- map alias group releases (#7235; the group model is at map_alias_holder_sites)
+
 struct MapTupHolders { slots: i32[], idxs: i32[] }
 
 // map_groups_present: the registry holds an alias-group row at all — the cheap
@@ -67519,6 +67553,7 @@ function arrarr_free_helper_of(s: LowerState, i: i32): string {
 // a bare argument at a borrowable position. `.with` / `.append` bound
 // elsewhere clone the buffer and share its boxes uncounted, so any other
 // method refuses.
+
 // slot_is_reclaimable_cloarr: slot i holds a "CLOARR:"-credited closure-array
 // local. The credit rather than the is_closurearr flag: an annotated empty
 // literal grown by `.append` earns the flag at the append, which lowers after
@@ -68062,6 +68097,7 @@ function emit_opttup_reclaim_store(se: LowerState, slot: i32, inner: string): Lo
 // __struct_drop_<P>) instead of the tuple deep-drop. some_opt_type records the full
 // Option[P] for a struct payload (no tuple-style element collapse), so no opt_ty override
 // is needed at the binding.
+
 // optstruct_payload_reclaimable: the Some payload struct `sty` is one this class can
 // release. Three disjuncts, in descending amount of work at the drop:
 //   - an rc-array / nested-struct / enum field: __struct_drop_<P> walks it, then the
@@ -68587,6 +68623,7 @@ function emit_optstruct_reclaim_store(se: LowerState, slot: i32, sty: string): L
 // that ARE reassigned, which is the exact complement of the gate every
 // consuming-match analysis applies. A name is therefore claimed by this class or
 // by those, never both, so no box is freed twice.
+
 // optarr_ann_is: `type_name` is `Option[<leak-safe scalar array>]` — Option of a
 // flat i32[]/i64[]/f64[]/boolean[] buffer, whose whole release is one rc-dec.
 function optarr_ann_is(type_name: string): boolean {
@@ -69756,6 +69793,7 @@ function emit_optarr_reclaim_store(se: LowerState, slot: i32): LowerState {
 // the backend-complete __fern_arrarr_free (inner scalar buffers + outer). Scalar-inner only
 // (i32[][]/boolean[][]/…); a string-inner arr-of-arr would need __fern_strarrarr_free
 // (deferred). opt_type carries the full Option[T[][]] for this annotated binding.
+
 // optarrarr_ann_is: `type_name` is `Option[<scalar-arr>[]]` — Option of an arr-of-arr whose
 // inner element is a leak-safe scalar array.
 function optarrarr_ann_is(type_name: string): boolean {
@@ -71180,6 +71218,7 @@ function emit_arrtup_reclaim_store(se: LowerState, slot: i32, ttype: string): Lo
 // no extra marking is needed. Release reuses the ARRTUP counted element-walk but drops
 // each element via the struct-field deep-drop (__struct_drop_<T>, backend-complete)
 // instead of the tuple deep-drop.
+
 // arrstruct_elem_struct_type: for an array type `T[]` whose element T is a struct decl
 // that routes field-reclaim (has an rc-array / nested-struct / enum field), return T,
 // else "". `structs` is the decl table.
@@ -71275,6 +71314,7 @@ function arrstruct_lit_is_fresh(e: ast.Expr, structs: StructTab, sfok: string[],
 // source that outlives the push keeps its own claim and its own field walk.
 // The retain is gated on this very credit (slot_is_reclaimable_arrstruct at the
 // append), which is what keeps the inc and the dec the same set.
+
 // moved_ident_at: `e` is a bare ident the move analysis recorded at this source
 // position. Keyed on line:col, not the name, so a local that is moved at one store
 // and merely read at another admits only the store that moved it.
@@ -72571,6 +72611,7 @@ function arrstruct_elem_payload_escapes(stmts: ast.Stmt[], name: string, sty: st
 // element enum in neither `arrarr_elem` (populated only for `T[][]`, and only for
 // four scalar tags) nor `struct_type`, and adding a slot column for one class is
 // more surface than parsing a credit that is already per-name.
+
 // arrenum_lit_enum: `e` is a non-empty array literal whose EVERY element is a fresh
 // construction of the SAME enum (fresh_rcpayload_enum_init — the ctor forms the
 // scalar-enum reclaim already admits, qualified and unqualified, call and unit),
@@ -73182,6 +73223,7 @@ function arrenum_param_escapes(stmts: ast.Stmt[], name: string, body: ast.Stmt[]
 // `with` is NOT admitted here, unlike arrstruct's: it REPLACES, so the superseded
 // element has to be released at the store, and this class's element release is a
 // variant dispatch that frees the box rather than a dec. That is its own slice.
+
 // arrenum_lit_is_empty: `e` is the `[]` an append-built array starts from.
 function arrenum_lit_is_empty(e: ast.Expr): boolean {
   match (e) {
@@ -74234,6 +74276,7 @@ function slot_is_snapshot_param(s: LowerState, i: i32): boolean {
 // field's OLD value in d's box must be released (dec) before the new value is
 // written, or it leaks. Non-overridden array fields stay in d's box and move to c
 // (deep-dropped at c's reclamation). See emit_self_overwrite_reuse.
+
 // reuse_field_is_scalar: a flat leak-only scalar field (no rc) — i32 / boolean /
 // the 8-byte i64 / f64 and the u32 / u64 widths.
 function reuse_field_is_scalar(t: string): boolean {
@@ -74926,6 +74969,7 @@ function self_overwrite_reuse_sites(body: ast.Stmt[], structs: StructTab, fresh_
 // admission set — computed over the WHOLE function body, because the update sits
 // inside a loop while p is bound outside it, a pairing the index-keyed site
 // lists cannot express.
+
 // sa_is_self_update reports whether `e` is exactly `T { ...name, … }` — a struct
 // literal of type `tyname` spreading `name` itself.
 function sa_is_self_update(e: ast.Expr, name: string, tyname: string): boolean {
@@ -76194,6 +76238,7 @@ function emit_self_overwrite_reuse(c_name: string, c_site: string, init: ast.Exp
 // reused here. Constructions are scanned in increasing index order; for each, the
 // FIRST (nearest-from-the-front) eligible, not-yet-consumed donor at a strictly
 // earlier index is chosen, and each donor is consumed at most once.
+
 // CrossReuseSites: parallel arrays — for each cross-statement reuse site, the
 // construction's body-statement index and the donor local name d whose box it
 // reuses. A flat pair (not string[][]) for the self-host nested-array limitation.
@@ -76203,6 +76248,7 @@ struct CrossReuseSites { idxs: i32[], donors: string[], dtypes: string[] }
 // a full (no-base) struct literal of a struct type, returning the bound name and
 // type via out-params encoded as the literal itself; here we only need a boolean
 // plus the type name, computed by callers re-matching the StmtVar.
+
 // cross_construction_donor finds the donor name for a full-construction at index k
 // given the already-computed self-overwrite reuse sites and the set of donors
 // already consumed by earlier cross pairings. Returns "" if none is eligible.
@@ -76841,6 +76887,7 @@ function emit_cross_struct_reuse(c_name: string, c_site: string, init: ast.Expr,
 // nested tuple / Result / Map / enum), each written at its width via
 // op_tuple_set / _w (i64.store / f64.store / i32.store on wasm; a uniform 8-byte
 // movq / str on the register backends).
+
 struct CrossTupleReuseSites { idxs: i32[], donors: string[] }
 
 // fresh_tuple_lit_arity returns the element count of the tuple a name was bound
@@ -77343,6 +77390,7 @@ function emit_cross_tuple_reuse(c_name: string, c_type: string, c_site: string, 
 // is consumed at most once and, once chosen, is removed from the enum-free set so it
 // is NOT also freed (no double-free). The recipient construction is lowered in place
 // by emit_enum_donor_reuse instead of lower_stmt + a fresh alloc.
+
 // EnumDonorSites: parallel arrays — for each enum-donor reuse, the recipient
 // construction's body-statement index, the recipient struct name, and the donor enum
 // local name x whose box it reuses. Flat triple for the self-host nested-array limit.
@@ -77624,6 +77672,7 @@ function emit_enum_donor_reuse(y_name: string, y_site: string, init: ast.Expr, r
 // flows into c, and is freed once via c. Each donor is consumed at most once; the
 // FIRST (nearest-from-front) eligible donor is chosen for determinism (the
 // byte-identical fixpoint demands a deterministic AST->pairing function).
+
 // EnumCrossSites: parallel arrays — for each enum->enum cross-reuse site, the
 // recipient construction's body-statement index, the donor enum local name, and the
 // enum E. Flat triple for the self-host nested-array limit.
@@ -77915,6 +77964,7 @@ function emit_enum_cross_reuse(c_name: string, c_site: string, value: ast.Expr, 
 //      aliases own it), and a same-slot MOVE retains (rc_inc) the array instead,
 //      since the fresh box takes a second counted reference to x's still-owned
 //      payload.
+
 // inarm_iife_match: if `e` is the value-position IIFE wrapping a match-EXPRESSION
 // (an ExprCall of a 0-param ExprLambda whose single body statement is a StmtMatch),
 // returns that StmtMatch via `out` (true), else false. Mirrors lower_iife's shape
@@ -78683,6 +78733,7 @@ function tco_self_tail(ops: ir.Op[], name: string, nparams: i32): ir.Op[] {
 // scoped to the NARROW shape, exactly as native scopes it: the loop releases a
 // cell only on the advance, so a widened path that can leave the loop early
 // walks away from cells the caller has already retained. See trmc_consume_safe.
+
 // trmc_count_self_calls: how many calls to bare `fname` appear in `e`.
 function trmc_count_self_calls(e: ast.Expr, fname: string): i32 {
   var n: i32 = 0;
@@ -82351,6 +82402,7 @@ pub function opt_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
 // must be a DIRECT Ok/Err/Some constructor or None — each allocates a fresh
 // rc-headered box (op_opt_make / op_opt_none), so the caller's `?` is the sole
 // owner and a shallow __fern_rc_dec at the consume edge frees exactly once.
+
 // opt_return_is_direct_ctor: `e` is a direct Ok(..)/Err(..)/Some(..) call or a
 // bare None — the fresh-box return shapes (anything else may alias: a bare
 // ident/param/field forwards a live box; a call result's ownership is unknown).
@@ -83732,6 +83784,7 @@ function collect_try_str_binding_names(stmts: ast.Stmt[], opt_fresh_ret: SigReg,
 // obj-type-blind — a same-named field on another type over-excludes (sound).
 // Callers must pass the WHOLE-PROGRAM func list (all_funcs on the per-module
 // paths); a partial list would under-count the reads and re-open the UAF.
+
 // strfld_mark: record e's field name as unsafely read (dedup'd), then keep
 // walking its receiver chain.
 function strfld_mark(e: ast.Expr, acc: string[]): string[] {
@@ -89389,6 +89442,7 @@ function param_alias_bind_sites(stmts: ast.Stmt[], src: string, borrowable: stri
 // lambda bodies and defer actions are covered: the set is a SUPERSET of what
 // any one walk reads, and a walk none of whose consulted entries changed
 // reproduces its verdict, which is what makes skipping it exact.
+
 // CallDeps: function `fi` depends on the functions at
 // deps[starts[fi] .. starts[fi + 1]).
 struct CallDeps {
@@ -92031,6 +92085,7 @@ pub function consumed_params_of(fn: parser.FuncDecl, reassigned: string[], struc
 // The reachable gain is smaller than it looks: ownedByDefaultShapeIn
 // (rc_caps.go:304) covers enum / struct / tuple only, so array, Map and string
 // params already agree with this seed.
+
 // rc_fe_taint adds name to the taint set if absent.
 function rc_fe_taint(tainted: string[], name: string): string[] {
   if (util.index_of_str(tainted, name) >= 0) {
@@ -93052,6 +93107,7 @@ function rc_fe_run(fn: parser.FuncDecl, reassigned: string[], structs: StructTab
 // no later top-level statement — exact for single-mention statements (native
 // keys per ident NODE, which only differs when the same name recurs inside
 // one statement).
+
 // rc_ml_count_in_expr / rc_ml_count_in_stmt: occurrence count of ident `name`
 // in an expression / statement (with duplicates — astwalk's collectors dedupe).
 function rc_ml_count_in_expr(e: ast.Expr, name: string): i32 {
@@ -94363,6 +94419,7 @@ function da_scan(stmts: ast.Stmt[], body: ast.Stmt[], assigned: string[], rets: 
 // the other half: it refuses the precise drops and the reuse donorship, so a
 // cancelled inc can never leave `.with` seeing rc == 1 and mutating the
 // caller's buffer.
+
 // dead_alias_borrow_params_of: which parameters an alias may borrow from —
 // the ones THIS FRAME never releases, so the only reference in play is the
 // caller's. Native asks that as `!own && !paramOwnedByDefault &&
@@ -94831,6 +94888,7 @@ pub function pd_filter_names(pd: PreciseDrops, names: string[]): PreciseDrops {
 // (the in-place rc==1 fast path) for a reassign-to-self (`a = a.with(..)`),
 // a fresh non-projection receiver (call result), or a receiver at its last
 // use. Rendered as native nodePos of the CALL node + "=true"/"=false".
+
 // rc_asi_is_with: the ExprCall is a `.with(index, value)` method call; the
 // receiver is the callee FieldAccess's object.
 function rc_asi_is_with(c: ast.ExprCall): boolean {
@@ -95041,6 +95099,7 @@ pub function array_set_incs_of(fn: parser.FuncDecl, structs: StructTab): string[
 // FUNCTION-BODY top-level pairings are rendered (lower_block recomputes
 // per nested block at lowering time; nested pairings are a documented
 // omission until the dump threads block context).
+
 // reuse_sources_of: "line:col<-donor" per cross-struct / cross-tuple pairing;
 // empty when the reuse layer is disabled (native's RcReuseEnabled gate).
 // Native computeReuseSources runs TWO passes over every block — a same-block
@@ -95215,6 +95274,7 @@ function reuse_xblock_pairs(stmts: ast.Stmt[], structs: StructTab, fresh_ret: st
 // loop body (the canonical FBIP `while(..){ var a=T{}; ..; var b=T{} }`) fire
 // at lowering but were invisible to a fn.body-top-level-only scan.
 // Encoded flat (no nested arrays): callers pattern-match `st` themselves.
+
 // reuse_sources_block: the same-block cross-struct / cross-tuple pairings of
 // `stmts` (recipient-lit position <- donor name), then recurse into nested
 // blocks. Mirrors lower_block's per-block cross_reuse_sites /
@@ -97227,6 +97287,7 @@ pub function lower_module(funcs: parser.FuncDecl[], structs: StructTab): ir.Lowe
 // walk doesn't reach) are left as ExprLambda, so the module bails. A module
 // with no lifted lambda is returned UNCHANGED (so the
 // lambda-free fixpoint is byte-identical).
+
 pub struct LiftAcc { funcs: parser.FuncDecl[], counter: i32 }
 
 struct LiftExpr { expr: ast.Expr, acc: LiftAcc }
@@ -97917,6 +97978,7 @@ function lift_stmts(stmts: ast.Stmt[], acc: LiftAcc, gfns: string[]): LiftStmts 
 // result on every backend. Declines (leaving ExprLambda → AST) when a capture's
 // type can't be resolved, a capture (or f) is reassigned, or f escapes as a
 // value — first-class capturing closures (box + env) are a later slice.
+
 // lambda_captures returns the lambda's free variables (its captures): every used
 // identifier that is not a param, a local it binds, a global function, or a
 // literal keyword. Deduped, first-seen order.
@@ -98409,6 +98471,7 @@ function clo_owner_name(fd: parser.FuncDecl): string {
 // lambda_captures order, matching make_clo_func's env-box slot order (cap[i] →
 // box slot 1+i). The counter persists across all aggregate positions in fd so
 // every hoisted closure gets a distinct name.
+
 struct InlineCloRes { expr: ast.Expr, funcs: parser.FuncDecl[], counter: i32 }
 
 // InlineCloAcc is the lift's accumulator on astwalk's rewrite spine: the
@@ -98460,6 +98523,7 @@ function try_inline_closure(lam: ast.ExprLambda, fd: parser.FuncDecl, funcs: par
 // i32 (make_clo_func declines otherwise); a fn-name whose FuncDecl isn't found,
 // or any other field-value shape, declines (ok:false) so the field stays as-is
 // and the module bails (correctness preserved).
+
 // make_wrap_lambda_func builds the env-taking trampoline for a NO-CAPTURE inline
 // lambda field value: `<wrapname>(__env: i32[], origparams…) { <lambda body> }`
 // (the lambda body inlined verbatim; __env is unused). Always succeeds — a
@@ -101177,6 +101241,7 @@ function lift_inline_closures(fd: parser.FuncDecl, gfns: string[], structs: Stru
 //      matching the interpreter (the oracle per #2896). Directly-called
 //      bindings don't need this: the param-lift passes captures at each call
 //      site (#5301), which is already by-reference for reads.
+
 // append_bound_binder appends a binder name, splitting the comma-joined form a
 // tuple destructure and a two-name `for (k, v) in m` use — unsplit, neither name
 // is recognised as a shadow. The astwalk twin of this is append_bound_name.
@@ -102589,6 +102654,7 @@ pub function lift_lambdas_view_typed(raw_mod: parser.Module, view: parser.FuncDe
 // chains and recursive tails on the O(n) in-place fast path. The struct- and
 // field-read append forms already route through the CLONE lowering
 // (lower_arr_append_value), so bare-ident params are the only seeding shape.
+
 // grow_ident_count: occurrences of `name` among the idents of `e`.
 function grow_ident_count(e: ast.Expr, name: string): i32 {
   return astwalk.count_ident_expr(e, name);
@@ -103587,6 +103653,7 @@ pub function grow_field_position_row(rows: string[], callee: string, idx: i32): 
 // A grow bracket is a FLAT PLAN: per protected buffer, `slot`, the hop count,
 // then that many (field index, load width) pairs. One i32[] rather than encoded
 // strings, so nothing between building it and emitting it has to parse.
+
 // grow_bracket_place resolves an argument or receiver to `[slot, (index, width)…]`
 // — the local this frame loads it from and the field hops from that local's
 // value to the argument — or `[]` when it is not a place the caller reads back
@@ -103796,6 +103863,7 @@ pub function emit_grow_field_bracket_dec(se: LowerState, slots: i32[]): LowerSta
 //
 // A shadowing inner declaration of the same name inflates the census, which only ever
 // WITHHOLDS the verdict — the safe direction, same as native.
+
 function grow_ident_census(stmts: ast.Stmt[], acc: string[]): string[] {
   var a: string[] = acc;
   for stmt in stmts {
@@ -107239,6 +107307,7 @@ function tup_ok_from_tuple_credits(out: string[], tup_ok: string[]): string[] {
 // runtime fact (`var b = a` earlier, a capture, a producer's alias), so the
 // move tests __fern_rc_is_unique(a) and empties the slot only when it holds.
 // Mirrors native computeFieldOwnMoves / emitFieldOwnMove.
+
 // field_move_owned_value: is `e`, bound to `name`, a value this frame holds one
 // counted reference to — a struct literal, a strict-fresh producer call, or a
 // call that threads `name` itself through an `own` position (the reference

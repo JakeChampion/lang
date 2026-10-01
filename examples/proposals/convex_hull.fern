@@ -19,6 +19,7 @@
 //
 // The app writes its report to stderr; stdout carries TAP-13 from
 // std/test, so the file is its own test suite.
+
 import "std/test";
 import "std/i32";
 import "std/i64";
@@ -84,6 +85,7 @@ function sorted_unique(ps: Pt[]): Pt[] {
 }
 
 // ------------------------------------------------------- monotone chain
+
 // Andrew's monotone chain. Sort lexicographically, sweep left-to-right for
 // the lower hull and right-to-left for the upper, dropping any vertex that
 // does not turn left. Collinear points are dropped (`<= 0`), so the ring
@@ -137,6 +139,7 @@ function drop_last(ps: Pt[]): Pt[] {
 }
 
 // --------------------------------------------------------- gift wrapping
+
 // Jarvis march. Start at the lexicographically smallest point and repeatedly
 // pick the point that everything else is to the left of. O(n*h) and utterly
 // unlike the chain sweep, which is the point of having it — the two share
@@ -205,6 +208,7 @@ function all_collinear(ps: Pt[]): boolean {
 }
 
 // ------------------------------------------------------------- properties
+
 // Rotate a ring so it starts at its lexicographically smallest point. Both
 // algorithms produce the same CYCLE; this makes the two comparable as
 // sequences without either being adjusted to suit the other.
@@ -296,6 +300,7 @@ function render(ring: Pt[]): string {
 }
 
 // -------------------------------------------------------- point sets
+
 function pts(xs: i32[]): Pt[] {
   var out: Pt[] = [];
   var i: i32 = 0;
@@ -359,6 +364,7 @@ function grid(n: i32): Pt[] {
 }
 
 // ---------------------------------------------------------------- tests
+
 // THE test. Two algorithms that share only the orientation predicate must
 // produce the same ring, as a cycle, on every input.
 function test_the_two_algorithms_agree(): test.TestOutcome {
@@ -551,6 +557,7 @@ function test_a_grid_hulls_to_its_corners(): test.TestOutcome {
 }
 
 // ------------------------------------------------------------------ app
+
 function main(): i32 {
   eprint("convex_hull — two algorithms, one ring");
   var cs: Case[] = corpus();

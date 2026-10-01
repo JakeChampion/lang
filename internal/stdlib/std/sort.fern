@@ -35,6 +35,7 @@
 //
 // No prelude: a program `import "std/sort";` explicitly. The generic sorts live
 // in `core/cmp`, so reach for `cmp.sort` via `import "core/cmp";`.
+
 // `string_cmp_ci` folds each BYTE through `(u8) .to_ascii_lower()`, which
 // lives in std/i32 — declare it so the receiver method registers under
 // no-prelude rather than arriving by luck through core/cmp's own imports.
@@ -126,6 +127,7 @@ pub function sort_strings_asc_ci(arr: string[]): string[] {
 // This dogfoods the `own` consuming-parameter feature in the stdlib: real code
 // whose ownership transfer (the returned array IS the input box) is pinned by
 // the differential e2e gates.
+
 // `sort_i32_inplace_asc(own arr)` — ascending insertion-sort performed directly
 // on the (owned) input buffer; returns that same buffer, now sorted.
 pub fip function sort_i32_inplace_asc(own arr: i32[]): i32[] {

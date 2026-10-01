@@ -16,6 +16,7 @@
 // elements, and the array-of-tuple / array-of-generic / bogus-element cases that
 // peel to an unknown element) and prints type_debug of each. The companion Go
 // test pins the exact mapping.
+
 import "./checker";
 import "./typeinfo";
 import "./util";

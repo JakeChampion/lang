@@ -14,6 +14,7 @@ import "std/http";
 // shell out and parse TAP output. This is the smallest end-
 // to-end harness that confirms the runner's failure-reporting
 // contract holds.
+
 // Helper: assert that a TestOutcome is Pass (i.e. an
 // assertion that should have passed actually did).
 function expect_pass(o: test.TestOutcome): test.TestOutcome {
@@ -49,6 +50,7 @@ function expect_fail_containing(o: test.TestOutcome, needle: string): test.TestO
 // The passing case must return test.pass(); the failing case must
 // return Fail with the assertion's predicate name in the
 // message.
+
 function test_assert_true_pass(): test.TestOutcome {
   return expect_pass(test.assert_true(true));
 }
@@ -228,6 +230,7 @@ function test_eq_i32_array_fail_index(): test.TestOutcome {
 // nothing (#8469). An inverted range is the same shape of caller
 // bug and gets its own message rather than being blamed on
 // whichever side the value fell outside.
+
 function test_in_range_i32_pass(): test.TestOutcome {
   return expect_pass(test.assert_in_range_i32(5, 0, 10));
 }
@@ -392,6 +395,7 @@ function test_fail_returns_fail(): test.TestOutcome {
 // Each uses an isolated quiet child runner so its `not ok` lines and
 // summary do not decide this suite's own exit code — the same shape
 // fail_fast_test.fern uses.
+
 function test_dropped_it_result_still_counts(): test.TestOutcome {
   var sub: test.TestRunner = test.test_new_quiet("dropped-it");
   // Both results are DISCARDED — the mistake the runner has to
@@ -449,6 +453,7 @@ function test_finish_exits_nonzero_for_dropped_result(): test.TestOutcome {
 // the answer has to come from core/cmp's instances, and before the total order
 // landed every one of these PASSED while asserting nothing: `cmp` answered 0
 // for any NaN comparison, and 0 satisfies both `<= 0` and `>= 0`.
+
 function nan_f64(): f64 {
   var z: f64 = 0.0;
   return z / z;

@@ -10,6 +10,7 @@
 // the UUID string is built purely from string concat + a sliced
 // hex-digit literal, so `uuid_v4` lowers through the self-hosted
 // compiler's IR path on every backend (no chr round-trip).
+
 // uuid_hex_digit renders a nibble (0-15) as a one-character
 // lowercase hex string. Slicing a literal (rather than `chr`)
 // keeps the helper in the IR-lowerable string subset.

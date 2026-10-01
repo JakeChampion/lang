@@ -168,6 +168,22 @@ struct Dog { age: i32 }
 
 function main(): i32 { return LIMIT; }
 `},
+	// An import written below declarations (#10870).
+	{"late-import", `import "core/map";
+
+// about first
+function first(): i32 { return 1; }
+
+// about Pair
+struct Pair { a: i32, b: i32 }
+
+// about the late import
+import "std/strings"; // trailing on the import
+pub use "./util".{helper};
+
+// about second
+function second(): i32 { return 2; }
+`},
 }
 
 // TestFormatPreservesCommentAttachment is the property gate.
@@ -233,6 +249,104 @@ function fifth(): i32 { return 5; }
 		if at[i] < at[i-1] {
 			t.Errorf("declarations reordered: %q emitted before %q\n%s", order[i], order[i-1], got)
 		}
+	}
+}
+
+// TestFormatKeepsLateImportInPlace pins #10870: an import written below a
+// declaration prints where it was written, so the comments above the
+// declarations before it stay with them.
+func TestFormatKeepsLateImportInPlace(t *testing.T) {
+	src := `import "core/map";
+// about first
+function first(): i32 { return 1; }
+// about the late imports
+import "std/strings";
+import "./util" as u;
+// about second
+function second(): i32 { return 2; }
+`
+	want := `import "core/map";
+
+// about first
+function first(): i32 {
+  return 1;
+}
+
+// about the late imports
+import "std/strings";
+import "./util" as u;
+
+// about second
+function second(): i32 {
+  return 2;
+}
+`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if got := Format(prog); got != want {
+		t.Errorf("got:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+// TestFormatKeepsSectionCommentApart pins the other half of #10870: a
+// section comment separated by a blank line from the doc comment below it,
+// or from the declaration, stays separate rather than merging into the
+// declaration's doc block.
+func TestFormatKeepsSectionCommentApart(t *testing.T) {
+	src := `// --- section one ---
+
+// about first
+function first(): i32 { return 1; }
+
+// --- section two ---
+//
+// prose about the section
+
+// about Pair
+struct Pair { a: i32 }
+
+// a note about what follows
+
+const LIMIT: i32 = 3;
+
+// a note above an attribute
+
+@inline
+function third(): i32 { return 3; }
+`
+	want := `// --- section one ---
+
+// about first
+function first(): i32 {
+  return 1;
+}
+
+// --- section two ---
+//
+// prose about the section
+
+// about Pair
+struct Pair { a: i32 }
+
+// a note about what follows
+
+const LIMIT: i32 = 3;
+
+// a note above an attribute
+
+@inline
+function third(): i32 {
+  return 3;
+}
+`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if got := Format(prog); got != want {
+		t.Errorf("got:\n%s\nwant:\n%s", got, want)
 	}
 }
 

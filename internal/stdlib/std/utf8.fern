@@ -21,6 +21,7 @@
 // and `s.codepoint_count()` cannot disagree. `utf8_decode_at` is the
 // strict layer instead: it reports ill-formed input as `None` rather
 // than substituting anything.
+
 import "std/string";
 
 // `utf8_decode_at(s, i)` — decode the single codepoint whose UTF-8

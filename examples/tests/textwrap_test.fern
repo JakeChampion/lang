@@ -5,6 +5,7 @@ import "std/textwrap" as textwrap;
 // std/textwrap.word_wrap: greedy wrapping at word boundaries, the
 // exact-fit boundary, long words on their own line, hard-newline /
 // blank-line preservation, space collapsing, and the edge widths.
+
 function test_greedy_wrap(): test.TestOutcome {
   return test.assert_eq(textwrap.word_wrap("the quick brown fox", 10), "the quick\nbrown fox");
 }
