@@ -227,7 +227,7 @@ function main(): i32 { return g(3) + g(0); }
 		if err := os.Mkdir(cacheDir, 0o755); err != nil {
 			t.Fatal(err)
 		}
-		env := []string{"FERN_SEM_IR=1", "FERN_SEM_IR_STRICT=1", "FERN_SEM_IR_ONLY=", "FERN_SEM_IR_SKIP="}
+		env := []string{"FERN_SEM_IR=1", "FERN_SEM_IR_ONLY=", "FERN_SEM_IR_SKIP="}
 		if _, se, code := drive(t, entry, env, "-per-module-emit-all", "-cache-dir", cacheDir); code != 0 {
 			t.Fatalf("strict emit: exit %d\n%s", code, se)
 		}
@@ -261,12 +261,9 @@ function main(): i32 { return g(3) + g(0); }
 }
 function main(): i32 { var f: () => i32 = viewer(3); return f(); }
 `)
-		_, se, code := drive(t, entry, []string{"FERN_SEM_IR=1", "FERN_SEM_IR_STRICT=1", "FERN_SEM_IR_ONLY=", "FERN_SEM_IR_SKIP="}, "-per-module-emit", "0")
+		_, se, code := drive(t, entry, []string{"FERN_SEM_IR=1", "FERN_SEM_IR_ONLY=", "FERN_SEM_IR_SKIP="}, "-per-module-emit", "0")
 		if code != 3 || !strings.Contains(se, "FERN_SEM_IR: viewer: closure capture type") {
-			t.Fatalf("strict emit: exit %d, want 3 naming the refusal\n%s", code, se)
-		}
-		if _, se, code := drive(t, entry, []string{"FERN_SEM_IR=1", "FERN_SEM_IR_STRICT=", "FERN_SEM_IR_ONLY=", "FERN_SEM_IR_SKIP="}, "-per-module-emit", "0"); code != 0 {
-			t.Fatalf("the same without strict: exit %d, want the AST lowering's emit\n%s", code, se)
+			t.Fatalf("emit: exit %d, want 3 naming the refusal\n%s", code, se)
 		}
 	})
 
