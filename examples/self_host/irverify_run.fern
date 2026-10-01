@@ -1020,6 +1020,28 @@ function rc_checks(): i32 {
     return 217;
   }
 
+  // ---- returns separate claims only on the returning path ------------
+  // A function return on the first claim's path separates the sites.
+  // Each site must remain checked, and a conditional return must still
+  // expose the reachable double claim through its other arm.
+  var returns: string[] = ["return", "return_void", "return_pair"];
+  var ri: i32 = 0;
+  while (ri < returns.len()) {
+    var stopped: ir.Op[] = concat_ops(selfhost_reuse(1, 1), [raw_op(returns[ri])]);
+    stopped = concat_ops(stopped, selfhost_reuse(1, 1));
+    var sr: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", stopped);
+    if (sr.checked != 2 || sr.problems.len() != 0) {
+      return 221;
+    }
+    ri = ri + 1;
+  }
+  var conditional: ir.Op[] = concat_ops(selfhost_reuse(1, 1), [ir.op_const_i32(1), ir.op_if(0), raw_op("return_void"), ir.op_end()]);
+  conditional = concat_ops(conditional, selfhost_reuse(1, 1));
+  var cr: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", conditional);
+  if (cr.checked != 2 || cr.problems.len() != 1) {
+    return 222;
+  }
+
   // ---- a kept-field reuse is modelled through its earlier select ------
   // ssarc.keep_token proves the donor unique and stores it, or null, into
   // the token slot; after the allocation keep_release branches on the token
