@@ -74,6 +74,7 @@ func TestWorldInterfaces(t *testing.T) {
 			"[method]udp-socket.finish-bind",
 			"[method]udp-socket.stream",
 			"[method]udp-socket.local-address",
+			"[method]udp-socket.remote-address",
 		},
 		[]string{"incoming-datagram-stream", "outgoing-datagram-stream", "udp-socket"})
 }

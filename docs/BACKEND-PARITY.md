@@ -155,9 +155,9 @@ network-order bytes, four for IPv4 and sixteen for IPv6, and opens the
 socket for the family the length names; any other length answers
 `-EAFNOSUPPORT` before a socket exists (97 on Linux, 47 on Darwin, 5 in
 the WASI numbering). The unspecified address of either family takes
-every interface, and `::` both families where the host allows a
-dual-stack listener: Linux and Darwin do by default, and wasi:sockets 0.2
-keeps an IPv6 socket IPv6-only. A host without IPv6 refuses the family:
+every interface, and `::` both families: `IPV6_V6ONLY` is cleared on an
+IPv6 listener whatever the host's default, except on wasi:sockets 0.2,
+which keeps an IPv6 socket IPv6-only. A host without IPv6 refuses the family:
 `-EAFNOSUPPORT` from `socket(2)` natively and in the interpreter, and on
 wasm the `-ENOTSUP` wasmtime answers for create-socket. `tcp_connect` and
 `udp_send` keep their packed IPv4 forms and box them for the same bodies.
@@ -173,7 +173,10 @@ on Linux and `SO_NWRITE` on Darwin, 7 the peer's address as one 32-bit
 key: an IPv4 address packed as `tcp_connect` takes it, a v4-mapped IPv6
 address its IPv4 one, any other IPv6 address the two words of its first
 eight bytes XORed and never 0, and 0 for a socket with no peer, so a key
-is never mistaken for an error) are the socket controls of #9853;
+is never mistaken for an error, 9 the socket's own address and 10 its
+peer's as 16-bit groups: arg 0..7 the group in network order, an IPv4
+address filling 0 and 1 and the rest 0, 8 the family as 4 or 6, 9 the
+port, -EINVAL past that) are the socket controls of #9853;
 std/net wraps them. On wasm, ops 1, 3 and 6 answer `-ENOTSUP` (58 in the
 WASI numbering) because wasi:sockets 0.2 has neither a Nagle switch nor a
 blocking mode to turn off nor a reading of the send queue (op 7 reads
@@ -285,7 +288,7 @@ time there.
 | `tcp_listen`, `tcp_accept`, `tcp_local_port`, `tcp_close`, `tcp_pollable`, `tcp_recv`, `tcp_send` | Fern body | Fern body | wasi:sockets/tcp bodies (`wasi_tcp.go`, `wasm_ir.fern`); a "fd" is the 16-byte record | E066 | net package |
 | `tcp_connect` (packed IPv4) | Fern body | Fern body | boxes the address for `tcp_connect_with` | E066 | net package |
 | `tcp_listen_with`, `tcp_connect_with` (byte address) | Fern body | Fern body | `__fern_ip_flat` then start-bind or start-connect; a started connect is kind 4 | E066 | net package, `JoinHostPort`; a started connect is finished before answering |
-| `tcp_socket_ctl` | Fern body; op 7 answers 0 on a datagram socket | Fern body; op 7 answers 0 on a datagram socket | ops 2, 4, 5 and 7 through wasi:sockets; 1, 3 and 6 `-ENOTSUP`; every op `-ENOTSUP` on a datagram record, op 7 0 | E066 | net package controls; op 3 makes `tcp_recv` and `tcp_send` one read(2) or write(2) on the descriptor, so a send answers what the kernel took or -EAGAIN; op 5 answers 0 at once; op 6 reads the host's send queue; op 7 keys `RemoteAddr`, 0 on a datagram socket |
+| `tcp_socket_ctl` | Fern body; op 7 answers 0 on a datagram socket | Fern body; op 7 answers 0 on a datagram socket | ops 2, 4, 5, 7, 9 and 10 through wasi:sockets; 1, 3 and 6 `-ENOTSUP`; every op but 9 and 10 `-ENOTSUP` on a datagram record, op 7 0 | E066 | net package controls; op 3 makes `tcp_recv` and `tcp_send` one read(2) or write(2) on the descriptor, so a send answers what the kernel took or -EAGAIN; op 5 answers 0 at once; op 6 reads the host's send queue; op 7 keys `RemoteAddr`, 0 on a datagram socket; ops 9 and 10 read the descriptor's own sockaddr |
 | `tcp_recv_into` | Fern body, `read(2)` | Fern body | non-blocking read on the input stream, `-EAGAIN` when empty | E066 | a read through the descriptor |
 | `tcp_sendfile` | Fern body, `sendfile(2)`, the file advanced by what the socket took | Fern body, the position read and moved around Darwin's offset-and-length form | `-ENOTSUP`: the serve loop reads the file and sends the piece | E066 | a read of the open file then one socket write, the file moved back over what the socket did not take |
 | `udp_send` | Fern body, dotted-quad parse | Fern body | `udp_bind` then `udp_sendto` then close | E066 | net package |

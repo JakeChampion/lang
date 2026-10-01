@@ -258,18 +258,8 @@ func (i *Interp) udpSocketCtl(id, op, arg int64) (Value, bool) {
 		err = syscall.Shutdown(fd, int(arg))
 	case 5:
 		err = connectResult(fd)
-	case 9:
-		sa, err := getsockname(fd)
-		if err != nil {
-			return negErrno(err), true
-		}
-		switch a := sa.(type) {
-		case *syscall.SockaddrInet4:
-			return localGroup(net.IP(a.Addr[:]), arg), true
-		case *syscall.SockaddrInet6:
-			return localGroup(net.IP(a.Addr[:]), arg), true
-		}
-		return Number(-int64(syscall.EAFNOSUPPORT)), true
+	case 9, 10:
+		return nameGroup(fd, op, arg), true
 	}
 	if err != nil {
 		return negErrno(err), true

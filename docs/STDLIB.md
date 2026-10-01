@@ -1235,9 +1235,9 @@ The socket controls are typed faces over the descriptor builtins
 
 - `listen_at(addr, opts)` — a listener bound to a `SocketAddr` of either
   family with `ListenOptions { backlog, reuse_port }`; `::` takes every
-  interface of both families where the host allows a dual-stack listener
-  (Linux and Darwin by default; wasi:sockets keeps an IPv6 socket
-  IPv6-only).
+  interface of both families (`IPV6_V6ONLY` is cleared, whatever the
+  host's default) except on wasi:sockets, which keeps an IPv6 socket
+  IPv6-only.
 - `listen_with(port, opts)` — `listen_at` on every IPv4 interface at `port`, with `ListenOptions { backlog,
   reuse_port }` (`listen_options()` is `tcp_listen`'s 128 and one
   listener per port), or the `NetError` the bind or listen reported.
@@ -1258,6 +1258,10 @@ The socket controls are typed faces over the descriptor builtins
 - `local_addr(sock)` — the address and port a socket is bound to, as
   `Result[SocketAddr, NetError]`: the address the host picked for a
   connected socket, `0.0.0.0` or `::` for a listener on every interface.
+- `peer_addr(sock)` — the address and port of the peer a socket is
+  connected to, an IPv4 peer of a dual-stack listener as the `V4` it is
+  rather than the v4-mapped `V6` the socket reports; `Other(ENOTCONN)`
+  for a socket with no peer.
 - `peer_key(sock)` — the peer's address as one 32-bit key, or `None` for
   a socket with no peer: an IPv4 address packed as `tcp_connect` takes
   it (the first octet in the low byte), a v4-mapped IPv6 address its IPv4
@@ -1392,7 +1396,11 @@ stays silent, and with the A and AAAA queries together.
 
 ### `std/tcp`
 
-- `tcp_serve(port, handler)` — HTTP/1.1 serve loop. Calls
+- `tcp_serve(port, handler)` — HTTP/1.1 serve loop on `::`, every
+  interface of both families, with an IPv4 peer counted by
+  `max_connections_per_ip` as the IPv4 address it is; on `0.0.0.0` where
+  the host has no IPv6 (the family refused, or the address not there to
+  bind) and on wasm, whose `::` listener would be IPv6-only. Calls
   `handler(req: HttpRequest, plat: Platform): HttpResponse` once
   per request, constructing the `Platform` bag it passes. The loop
   is a reactor: one readiness set from the Driver seam watches the
@@ -1472,7 +1480,7 @@ stays silent, and with the A and AAAA queries together.
   worker `tcp_serve_supervised_opts` forks has it set, so a supervisor
   killed outright (SIGKILL, a crash) takes its workers down rather than
   leaving them serving as orphans.
-  A listener it cannot bind is `serve: cannot listen on 0.0.0.0:PORT:`
+  A listener it cannot bind is `serve: cannot listen on port PORT:`
   and the error's text on stderr, and the entry returns 98 (every
   `tcp_serve*` entry, and a supervised worker that binds its own).
   A listener the process was started with (`LISTEN_FDS` at least 1,
