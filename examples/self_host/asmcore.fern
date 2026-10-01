@@ -7611,7 +7611,7 @@ pub function runtime_need_deps(name: string): string[] {
     || name == "str_from_bytes" || name == "alloc_u8" || name == "strbuf" || name == "buf"
     || name == "read_file_bytes_u8" || name == "random_bytes_u8" || name == "tcp_recv_u8"
     || name == "str_bytes_u8" || name == "str_from_bytes_u8" || name == "arr_slice_u8" || name == "alloc_bytes"
-    || name == "arr_push" || name == "arr_slice" || name == "str_own"
+    || name == "arr_push" || name == "arr_slice" || name == "str_own" || name == "str_grow"
     || name == "str_case" || name == "str_repeat"
     || name == "str_replace"
     || name == "arrarr_free" || name == "strarrarr_free" || name == "optarrarr_free"
@@ -9603,7 +9603,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
     // owns the definitions.
     "__fern_map_snapshot_col", "__fern_map_snapshot_col_str",
     "__fn___fern_rc_inc", "__fn___fern_arr_dec", "__fn___fern_rc_is_unique", "__fn___fern_arr_inc_elems", "__fn___fern_arr_own_elems",
-    "__fn___fern_str_own",
+    "__fn___fern_str_own", "__fn___fern_str_grow",
     "__fn___fern_alloc_reuse",
     "__fn___fern_rc_underflow_count", "__fn___fern_i32_to_string", "__fn___fern_u32_to_string",
     "__fn___fern_i64_to_string", "__fn___fern_u64_to_string",

@@ -783,6 +783,13 @@ pub function eval_ops(ops: ir.Op[], n_locals: i32, args: i32[], fns: ir.LoweredF
       stack = stack.with(sp, eb);
       sp = sp + 1;
       pc = pc + 1;
+    } else if (o.kind_tag == 149 && o.str == "__fern_str_grow") {  // call_direct
+      // Pops [a, b] and answers 0: never in place, so the caller's
+      // concatenation runs.
+      sp = sp - 2;
+      stack = stack.with(sp, 0);
+      sp = sp + 1;
+      pc = pc + 1;
     } else if (o.kind_tag == 149 && o.str == "__fern_arr_own_elems") {  // call_direct
       // Pops [dst, src]: the element retain over src, then dst. A slice
       // here copies its bytes, so no element is a view box.
