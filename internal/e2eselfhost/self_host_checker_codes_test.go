@@ -271,6 +271,9 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"struct-literal-wide-array-field", "struct Stack[T] { items: T[] }\nfunction main(): i32 { var q = Stack { items: [1, 4611686018427387904] }; var r: i64 = q.items[1]; return 0; }\n", nil},
 		// A nested generic literal infers its own arguments (#10895).
 		{"nested-generic-struct-literal", "struct Box[T] { v: T }\nstruct Outer[T] { b: Box[T] }\nfunction main(): i32 { var o = Outer { b: Box { v: 4 } }; return o.b.v; }\n", nil},
+		{"nested-generic-struct-literal-wide", "struct Box[T] { v: T }\nstruct Two[T] { b: Box[T], c: T }\nfunction main(): i32 { var o = Two { b: Box { v: 4611686018427387904 }, c: 1 }; var r: i64 = o.c; return 0; }\n", nil},
+		// A generic call in an unbound field infers from the destination.
+		{"generic-call-in-unbound-field", "struct Holder[T] { xs: T[], z: T }\nfunction emptyArr[A](): A[] { return []; }\nfunction f[T](t: T): Holder[T] { var h = Holder { xs: emptyArr(), z: t }; return h; }\nfunction main(): i32 { var h = f(7); return h.z; }\n", nil},
 		{"nested-generic-struct-literal-clash", "struct Box[T] { v: T }\nstruct Two[T] { b: Box[T], c: T }\nfunction main(): i32 { var o = Two { b: Box { v: 1 }, c: \"x\" }; return 0; }\n", []string{"E043"}},
 		{"struct-literal-wide-in-array", "struct Same[T] { a: T, b: T }\nfunction main(): i32 { var xs = [Same { a: 1, b: 4611686018427387904 }]; var r: i64 = xs[0].b; return 0; }\n", nil},
 		// A typed field binds T ahead of an untyped literal written before

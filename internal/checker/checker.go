@@ -18991,12 +18991,16 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			// instead of its own field type `Box[i32]`, mis-typing it.
 			savedExpected := c.expectedType
 			c.expectedType = fieldExpected
-			// A field spelled with one of this literal's parameters that
-			// nothing has bound yet names no destination: `Box { v: 4 }` in
-			// `Outer { b: … }` infers its own argument (#10895) rather than
-			// taking Outer's unbound `T` as one.
-			if _, unbound := paramTypeNotIn(expected, boundParams(sub)); unbound && sub != nil {
-				c.expectedType = nil
+			// A struct literal in a field spelled with one of this literal's
+			// parameters that nothing has bound yet infers its own arguments:
+			// `Box { v: 4 }` in `Outer { b: … }` (#10895) would otherwise take
+			// Outer's unbound `T` as one. Any other value keeps the
+			// destination, which is all a generic call returning `A[]` has to
+			// infer `A` from.
+			if _, lit := f.Value.(*ast.StructLit); lit && sub != nil {
+				if _, unbound := paramTypeNotIn(expected, boundParams(sub)); unbound {
+					c.expectedType = nil
+				}
 			}
 			vt := c.checkExpr(f.Value, s)
 			c.expectedType = savedExpected

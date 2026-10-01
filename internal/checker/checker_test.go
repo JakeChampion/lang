@@ -1162,16 +1162,27 @@ func TestTypedFieldRebindStaysInsideTheLiteral(t *testing.T) {
 // arguments: the outer field's `Box[T]` names a parameter nothing has bound
 // yet, so it fixes nothing (#10895). A clash across the nesting is still E043.
 func TestNestedGenericStructLiteralInfersItsOwnArgs(t *testing.T) {
-	const decls = "struct Box[T] { v: T } struct Outer[T] { b: Box[T] } struct Two[T] { b: Box[T], c: T } "
+	const decls = "struct Box[T] { v: T } struct Outer[T] { b: Box[T] } struct Two[T] { b: Box[T], c: T } " +
+		"struct List[T] { tail: Option[List[T]], head: T } struct C[T] { v: T } struct B[T] { c: C[T] } struct A[T] { b: B[T] } "
 	for _, body := range []string{
 		"var o = Outer { b: Box { v: 4 } }; var r: i32 = o.b.v; return r;",
 		"var o = Outer { b: Box { v: 4611686018427387904 } }; var r: i64 = o.b.v; return 0;",
 		"var o: Outer[i64] = Outer { b: Box { v: 4 } }; var r: i64 = o.b.v; return 0;",
 		"var o = Two { b: Box { v: \"x\" }, c: \"y\" }; return o.c.len();",
+		"var o = Two { b: Box { v: 4611686018427387904 }, c: 1 }; var r: i64 = o.c; return 0;",
+		"var l = List { tail: None, head: 1 }; return l.head;",
+		"var a = A { b: B { c: C { v: 1 } } }; return a.b.c.v;",
 	} {
 		if err := checkSource(t, decls+"function main(): i32 { "+body+" }"); err != nil {
 			t.Errorf("%s: rejected, want accepted: %v", body, err)
 		}
+	}
+	// A generic call in such a field keeps the destination: it is all the
+	// call has to infer its result's parameter from.
+	if err := checkSource(t, "struct Holder[T] { xs: T[], z: T } function emptyArr[A](): A[] { return []; } "+
+		"function f[T](t: T): Holder[T] { var h = Holder { xs: emptyArr(), z: t }; return h; } "+
+		"function main(): i32 { var h = f(7); return h.z; }"); err != nil {
+		t.Errorf("a generic call in an unbound field: rejected, want accepted: %v", err)
 	}
 	err := checkSource(t, decls+"function main(): i32 { var o = Two { b: Box { v: 1 }, c: \"x\" }; return 0; }")
 	if err == nil || !strings.Contains(err.Error(), `field "c": expected i32, got string`) {
