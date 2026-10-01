@@ -2516,7 +2516,8 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 		in.add("wasi_io_pollable_block")
 		in.add("wasi_io_pollable_drop")
 	}
-	if helpers.set["__fern_tcp_local_port"] {
+	// The socket controls read the local address too (op 9).
+	if helpers.set["__fern_tcp_local_port"] || helpers.set["__fern_tcp_socket_ctl"] {
 		in.add("wasi_sockets_tcp_local_address")
 	}
 	if helpers.set["__fern_tcp_pollable"] {
@@ -2589,7 +2590,7 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 		in.add("wasi_io_pollable_block")
 		in.add("wasi_io_pollable_drop")
 	}
-	if helpers.set["__fern_udp_bind"] && helpers.set["__fern_tcp_local_port"] {
+	if helpers.set["__fern_udp_bind"] && (helpers.set["__fern_tcp_local_port"] || helpers.set["__fern_tcp_socket_ctl"]) {
 		in.add("wasi_sockets_udp_local_address")
 	}
 

@@ -29,3 +29,14 @@ func TestSelfHostDnsExchange(t *testing.T) {
 		})
 	}
 }
+
+// TestSelfHostDnsPair is the self-host twin of TestDnsPairX86_64.
+func TestSelfHostDnsPair(t *testing.T) {
+	gcc, runner, driverBin := buildModloadDriverX86(t)
+	ns := e2eharness.StartFakeNameserver(t, e2eharness.FakeNameserverPair)
+	asm, progDir := compileSourceModload(t, runner, driverBin, e2eharness.DnsPairSource(ns.Port))
+	bin := buildBin(t, gcc, progDir, "pair", asm)
+	cmd := binCmd(runner, bin)
+	out, _ := cmd.Output()
+	e2eharness.CheckDnsPair(t, ns, string(out), cmd.ProcessState.ExitCode())
+}

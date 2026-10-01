@@ -1255,6 +1255,9 @@ The socket controls are typed faces over the descriptor builtins
   `SO_NWRITE` on Darwin), as `Result[i32, NetError]`: how far the peer has
   got with what was written, which is what a minimum data rate on a
   response is judged by.
+- `local_addr(sock)` — the address and port a socket is bound to, as
+  `Result[SocketAddr, NetError]`: the address the host picked for a
+  connected socket, `0.0.0.0` or `::` for a listener on every interface.
 - `peer_key(sock)` — the peer's address as one 32-bit key, or `None` for
   a socket with no peer: an IPv4 address packed as `tcp_connect` takes
   it (the first octet in the low byte), a v4-mapped IPv6 address its IPv4
@@ -1336,28 +1339,41 @@ the sockets, `random` for query ids and `now` for the wait.
   as it stands.
 - `exchange(ns, q, timeout_ms)` is one query to one nameserver: UDP with
   EDNS0, a reply to another id or question ignored, a truncated reply
-  asked again over TCP (`exchange_tcp`). `ask(conf, q)` is res_send over
-  the nameservers, `attempts` times round, from a rotating start under
-  `rotate`; SERVFAIL, REFUSED, silence and an unreachable server hand the
-  query to the next.
+  asked again over TCP (`exchange_tcp`); `exchange_many(ns, qs,
+  timeout_ms)` sends several at once, each on its own socket, and awaits
+  the replies as one set. `ask(conf, q)` and `ask_many(conf, qs)` are
+  res_send over the nameservers, `attempts` times round, from a rotating
+  start under `rotate`; SERVFAIL, REFUSED, silence and an unreachable
+  server hand a query to the next, and the queries a server did answer
+  stay answered while the rest go on.
 - `lookup_a`, `lookup_aaaa` and `canonical_name` walk the search plan over
   `ask`; `lookup_records_with` and `search_with` take the asker as a
   function, which is how the walk is tested with a scripted nameserver.
-  `DnsError` is `NoSuchName` (NXDOMAIN), `NoData` (a clean reply without
-  the record), `NoReply` (the timeout), `ServerFailure`, `Refused`,
-  `Malformed`, `NoNameserver` or `Socket(NetError)`, and implements
-  `error.Error`.
+  `lookup_addresses(conf, name)` asks for the A and AAAA records together
+  at each step of the walk (`combine_pair` is how their two results
+  become one) and answers the addresses in RFC 6724 order. `DnsError` is
+  `NoSuchName` (NXDOMAIN), `NoData` (a clean reply without the record),
+  `NoReply` (the timeout), `ServerFailure`, `Refused`, `Malformed`,
+  `NoNameserver` or `Socket(NetError)`, and implements `error.Error`.
+- `order_addresses(dsts, srcs)` is RFC 6724's destination address
+  selection: each destination beside the source the host would use for
+  it (`source_for(dst)`, a datagram socket connected to it and asked for
+  its local address; `None` for no route, which puts the destination
+  last), then matching scope, matching label, higher precedence, smaller
+  scope and the longest common prefix, ties keeping the server's order.
+  `policy_of`, `scope_of` and `common_prefix_len` are the table and the
+  measures the rules read; `sort_addresses(dsts)` probes and orders.
 - `system_conf()` and `system_hosts()` read this machine's files, and
   `resolve(name)` is the lookup a program wants by default: an address
-  literal as it is, then the hosts file, then DNS, A records before AAAA
-  records. The RFC 6724 sort, the parallel A and AAAA query, Happy
-  Eyeballs and NAT64 are the next slice of #9855; `.local` names go to
-  the nameservers like any other (no mDNS).
+  literal as it is, then the hosts file, then DNS, the addresses in RFC
+  6724 order. The Happy Eyeballs dialer and NAT64 are the next slice of
+  #9855; `.local` names go to the nameservers like any other (no mDNS).
 
-`examples/tests/dns_test.fern` covers the codec, the files, the plan and
-the walk; `TestDnsExchangeX86_64` and its self-host twin drive the
-exchange against a nameserver on the loopback interface, over UDP,
-through the TCP retry and against one that stays silent.
+`examples/tests/dns_test.fern` covers the codec, the files, the plan, the
+walk and the ordering rules; `TestDnsExchangeX86_64`, `TestDnsPairX86_64`
+and their self-host twins drive the exchange against a nameserver on the
+loopback interface, over UDP, through the TCP retry, against one that
+stays silent, and with the A and AAAA queries together.
 
 ### `std/tcp`
 
