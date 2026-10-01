@@ -6790,7 +6790,7 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
   }
   // env(name): Option[string] — Some(value) if the
   // variable is set (including empty), None otherwise.
-  if (id.name == "env") {
+  if (id.name == "env" || id.name == "config_get") {
     return ty_option(ty_string());
   }
   // The streaming-I/O constructors, typed as native types them

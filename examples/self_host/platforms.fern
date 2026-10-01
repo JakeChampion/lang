@@ -63,7 +63,7 @@ pub struct Descriptor {
 // native's own note claims for it.
 function capability_profile(profile: string): string[] {
   if (profile == "hosted-native") {
-    return ["log", "now", "env", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "sched", "fsinfo", "fsnode", "fsowner", "tty", "fssync", "syscall", "subprocess", "unix", "reactor"];
+    return ["log", "now", "env", "config", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "sched", "fsinfo", "fsnode", "fsowner", "tty", "fssync", "syscall", "subprocess", "unix", "reactor"];
   }
   if (profile == "wasi-cli") {
     // fs is preview1's fd helpers and tcp is wasi:sockets; there is no
@@ -77,14 +77,14 @@ function capability_profile(profile: string): string[] {
     // granted: a component's node name is the empty string, truthfully,
     // and so is `signal`: nothing can deliver a signal to a component,
     // so ignoring one is a no-op rather than a missing import.
-    return ["log", "now", "env", "args", "random", "stdin", "stdout", "fs", "tcp", "host", "signal", "reactor"];
+    return ["log", "now", "env", "config", "args", "random", "stdin", "stdout", "fs", "tcp", "host", "signal", "reactor"];
   }
   if (profile == "wasi-proxy") {
     // The proxy world: an HTTP handler and nothing else. No stdout
     // stream, no filesystem, and no process — so neither argv nor
     // envp: `wasi:cli/environment` is not in the world, and a
     // component importing it fails to instantiate.
-    return ["log", "now", "random", "fetch"];
+    return ["log", "now", "config", "random", "fetch"];
   }
   // "none" — no host at all. Everything still reachable is core_builtin.
   var empty: string[] = [];
@@ -286,11 +286,15 @@ pub function gated_builtins(): Gate[] {
     // same wakeup expressed as a wasi:io/poll pollable.
     Gate { builtin: "timer_fd", capability: "pollfd" },
     // The ambient invocation environment. argv and envp are adjacent on
-    // the process stack, but they are separate capabilities because the
-    // proxy world has envp and no argv.
+    // the process stack, but they are separate capabilities: wasi-cli
+    // answers both, and a platform could hand a component one without
+    // the other.
     Gate { builtin: "env", capability: "env" },
     Gate { builtin: "environ", capability: "env" },
     Gate { builtin: "args", capability: "args" },
+    // Deploy-time configuration: the environment where there is one,
+    // wasi:config/store on the proxy world.
+    Gate { builtin: "config_get", capability: "config" },
     // Entropy — a syscall on native, a host import on wasm, never
     // something the program can compute.
     Gate { builtin: "random_bytes", capability: "random" },

@@ -16052,7 +16052,10 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
     // string. No wasm env access, so wasm_eligible rejects env
     // modules; x86 / arm64 lower it (the same __fern_env runtime the
     // AST path calls — std/test's assert_env_*, #3457).
-    if (cid.name == "env" && c.args.len() == 1) {
+    // `config_get(name)` is the same op: where the target has an environment
+    // that is the source, and the proxy world's backend answers the env op
+    // from wasi:config/store (a direct env() is refused there first).
+    if ((cid.name == "env" || cid.name == "config_get") && c.args.len() == 1) {
       var envs: LowerState = lower_expr(c.args[0], s);
       if (!envs.ok) {
         return envs;
@@ -22781,7 +22784,7 @@ function owned_payload_builtin_ptype(e: ast.Expr, s: LowerState): string {
           if (cid.name == "read_line" && c.args.len() == 0) {
             return "string";
           }
-          if (cid.name == "env" && c.args.len() == 1) {
+          if ((cid.name == "env" || cid.name == "config_get") && c.args.len() == 1) {
             return "string";
           }
           if (cid.name == "read_file" && c.args.len() == 1) {
@@ -96539,7 +96542,7 @@ function builtin_opt_ret_type(name: string): string {
   if (name == "read_dir_all") {
     return "Result[string[], IoError]";
   }
-  if (name == "env") {
+  if (name == "env" || name == "config_get") {
     return "Option[string]";
   }
   if (name == "stat") {

@@ -4706,7 +4706,7 @@ function handle_method(name: string): string {
 }
 
 function union_builtin_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
-  if (ins.str == "env") {
+  if (ins.str == "env" || ins.str == "config_get") {
     return Lowered { found: true, r: emit(r, ir.op_env()) };
   }
   if (ins.str == "read_file") {

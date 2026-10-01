@@ -144,6 +144,9 @@ var BuiltinCaps = map[string]string{
 
 	"env":     "env",
 	"environ": "env",
+	// Deploy-time configuration reads what the deployment put in the
+	// environment, or its proxy-world equivalent: the same reach.
+	"config_get": "env",
 	// The machine's name is ambient information about where the
 	// process runs, in the same way its environment is: a dependency
 	// that reads it should be seen to.

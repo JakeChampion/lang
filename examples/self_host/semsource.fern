@@ -7101,6 +7101,7 @@ function union_result_contracts(): ssasem.Contract[] {
   var path: i32[] = [ssaunits.borrow_mode()];
   var out: ssasem.Contract[] = [
     ssasem.Contract { name: "env", params: [t_string()], modes: path, result: t_option(t_string()) },
+    ssasem.Contract { name: "config_get", params: [t_string()], modes: path, result: t_option(t_string()) },
     ssasem.Contract { name: "read_line", params: [], modes: [], result: t_option(t_string()) },
     ssasem.Contract { name: "read_file", params: [t_string()], modes: path, result: t_io_result(t_string()) },
     ssasem.Contract { name: "read_file_bytes", params: [t_string()], modes: path, result: t_io_result(typeinfo.TypeArray { elem: t_u8(), view: false }) },

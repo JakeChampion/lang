@@ -229,6 +229,9 @@ pub function bag_method(builtin: string): string {
   if (builtin == "env") {
     return "env";
   }
+  if (builtin == "config_get") {
+    return "config";
+  }
   if (builtin == "random_i32") {
     return "random_i32";
   }
