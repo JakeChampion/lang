@@ -2,9 +2,11 @@ package e2eselfhost
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -109,6 +111,38 @@ func hevCompile(t *testing.T, runner []string, driverBin, src string, env []stri
 		t.Fatal("self-host compiler emitted 0 bytes")
 	}
 	return string(asm)
+}
+
+// loadCompile compiles src with the asm_load_run driver against the stdlib
+// and returns its output, or the error with the driver's stderr. A map needs
+// a loading compile: the typed lowering routes it onto core/map, which a
+// stdin driver has no loader to reach. env is the driver's whole environment
+// beside PATH; args follow the stdlib root (`-target`, …).
+func loadCompile(t *testing.T, runner []string, driverBin, src string, env []string, args ...string) (string, string, error) {
+	t.Helper()
+	stdlibRoot, err := filepath.Abs("../../internal/stdlib")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "main.fern")
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	argv := append([]string{path, stdlibRoot}, args...)
+	var cmd *exec.Cmd
+	if len(runner) == 0 {
+		cmd = exec.Command(driverBin, argv...)
+	} else {
+		cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), argv...)...)
+	}
+	cmd.Env = append([]string{"PATH=/usr/bin:/bin"}, env...)
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err == nil && len(out) == 0 {
+		err = errors.New("the driver emitted 0 bytes")
+	}
+	return string(out), stderr.String(), err
 }
 
 // hevRun runs a built binary and returns its stderr plus exit code.

@@ -68,8 +68,8 @@ func TestSelfHostMapStructColumnWasmIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "asm_load_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "asm_load_run.fern", "driver")
 
 	for _, tc := range []struct{ name, src string }{
 		{"strfield_insert_match", mapStructColumnInsertMatchSrc},
@@ -78,7 +78,10 @@ func TestSelfHostMapStructColumnWasmIR(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			want := interpExit(t, interpBin, tc.src)
-			wat := wasmLcCompile(t, runner, driverBin, tc.src, []string{"FERN_LEAKCHECK=1"})
+			wat, stderr, err := loadCompile(t, runner, driverBin, tc.src, []string{"FERN_LEAKCHECK=1"}, "-target", "wasm32-wasi")
+			if err != nil {
+				t.Fatalf("compile: %v\n%s", err, stderr)
+			}
 			stderr, exit := wasmLcRun(t, dir, "mapsc_"+tc.name, wat)
 			if exit != want {
 				t.Fatalf("%s exited %d, want %d (interp oracle; 99 = over-release)", tc.name, exit, want)

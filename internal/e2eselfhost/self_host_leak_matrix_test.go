@@ -850,20 +850,12 @@ func nativeLeakVerdict(t *testing.T, cli, dir, name, src string) (leakVerdict, i
 // so the matrix records frontend gaps alongside reclaim ones.
 func selfHostLeakVerdict(t *testing.T, gcc string, runner []string, driverBin, dir, name, src string) (leakVerdict, int) {
 	t.Helper()
-	var cmd *exec.Cmd
-	if len(runner) == 0 {
-		cmd = exec.Command(driverBin)
-	} else {
-		cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), driverBin)...)
-	}
-	cmd.Stdin = strings.NewReader(src)
-	cmd.Env = []string{"PATH=/usr/bin:/bin", "FERN_LEAKCHECK=1"}
-	asm, err := cmd.Output()
-	if err != nil || len(asm) == 0 {
-		t.Logf("%s: self-host compile refused: %v", name, err)
+	asm, stderr, err := loadCompile(t, runner, driverBin, src, []string{"FERN_LEAKCHECK=1"})
+	if err != nil {
+		t.Logf("%s: self-host compile refused: %v\n%s", name, err, stderr)
 		return verdictError, -1
 	}
-	bin := buildBin(t, gcc, dir, "leakmx_"+name, string(asm))
+	bin := buildBin(t, gcc, dir, "leakmx_"+name, asm)
 	stderr, exit := hevRun(t, runner, bin)
 	if exit == -1 || exit == 139 || exit == 134 || exit == 137 {
 		return verdictCrash, exit
@@ -877,19 +869,11 @@ func selfHostLeakVerdict(t *testing.T, gcc string, runner []string, driverBin, d
 // fails hard rather than downgrading to an `error` verdict.
 func selfHostSanitizeCell(t *testing.T, gcc string, runner []string, driverBin, dir, name, src string) (int, string) {
 	t.Helper()
-	var cmd *exec.Cmd
-	if len(runner) == 0 {
-		cmd = exec.Command(driverBin)
-	} else {
-		cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), driverBin)...)
+	asm, stderr, err := loadCompile(t, runner, driverBin, src, []string{"FERN_SANITIZE=1"})
+	if err != nil {
+		t.Fatalf("%s: sanitize compile refused what the census leg compiled: %v\n%s", name, err, stderr)
 	}
-	cmd.Stdin = strings.NewReader(src)
-	cmd.Env = []string{"PATH=/usr/bin:/bin", "FERN_SANITIZE=1"}
-	asm, err := cmd.Output()
-	if err != nil || len(asm) == 0 {
-		t.Fatalf("%s: sanitize compile refused what the census leg compiled: %v", name, err)
-	}
-	bin := buildBin(t, gcc, dir, "leakmxsan_"+name, string(asm))
+	bin := buildBin(t, gcc, dir, "leakmxsan_"+name, asm)
 	stderr, exit := hevRun(t, runner, bin)
 	return exit, stderr
 }
@@ -926,8 +910,8 @@ func TestSelfHostLeakMatrixX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	cli := buildLangBinForInterp(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "asm_load_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "asm_load_run.fern", "driver")
 
 	cells := leakMatrixCells()
 	seen := map[string]bool{}
