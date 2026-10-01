@@ -460,49 +460,6 @@ function elided_lambda_captures(lm: ast.ExprLambda): ast.ExprLambda {
   return ast.ExprLambda { ...lm, captures: captures };
 }
 
-// has_asserts reports whether elide_asserts would remove anything — the same
-// statement set drop_assert matches, over the same traversal. The driver asks
-// before paying for the `-O` eligibility pre-gate, so a release build of a
-// program with no assert in it costs one AST walk instead of one lowering.
-pub function has_asserts(mod: parser.Module): boolean {
-  var found: boolean = stmts_have_assert(mod.top_stmts);
-  var i: i32 = 0;
-  while (i < mod.funcs.len()) {
-    if (stmts_have_assert(mod.funcs[i].body)) {
-      found = true;
-    }
-    i = i + 1;
-  }
-  return found;
-}
-
-function stmts_have_assert(stmts: ast.Stmt[]): boolean {
-  var found: boolean = false;
-  var i: i32 = 0;
-  while (i < stmts.len()) {
-    found = astwalk.fold_stmt_nodes(
-      stmts[i], found,
-      (st: ast.Stmt, own acc: boolean) => acc || is_assert_stmt(st),
-      (e: ast.Expr, own acc: boolean) => acc,
-      (e: ast.Expr) => true,
-    );
-    i = i + 1;
-  }
-  return found;
-}
-
-function is_assert_stmt(st: ast.Stmt): boolean {
-  match (st) {
-    ast.StmtIf(f) => {
-      return f.origin == parser.ORIGIN_ASSERT;
-    },
-    _ => {
-      return false;
-    }
-  }
-  return false;
-}
-
 // drop_assert keeps every statement but the assert desugar. The splicing fold
 // carries it into nested blocks, lambda bodies and match arms, so no shape
 // needs a case here.
@@ -1013,28 +970,6 @@ function main(): i32 {
     _ => {
       return 195;
     }
-  }
-
-  // has_asserts must answer for exactly the statements elide_asserts removes,
-  // so it is asked over the same shapes: the plain one, the hand-written `if`
-  // that is not an assert, and each nesting the top-level filter misses.
-  if (!has_asserts(fold_source("function main(): i32 { assert(1 > 2); return 0; }"))) {
-    return 196;
-  }
-  if (has_asserts(fold_source("function main(): i32 { if (1 > 2) { return 3; } return 0; }"))) {
-    return 197;
-  }
-  if (!has_asserts(fold_source("function main(): i32 { while (false) { assert(1 > 2); } return 0; }"))) {
-    return 198;
-  }
-  if (!has_asserts(fold_source("function main(): i32 { var f = (): i32 => { assert(1 > 2); return 1; }; return 0; }"))) {
-    return 199;
-  }
-  if (!has_asserts(fold_source("enum E { A(i32) } function main(): i32 { var e: E = E.A(1); match (e) { E.A(v) => { assert(v > 2); }, _ => { return 9; } } return 0; }"))) {
-    return 202;
-  }
-  if (has_asserts(elide_asserts(fold_source("function main(): i32 { while (false) { assert(1 > 2); } return 0; }")))) {
-    return 203;
   }
 
   // fold_module rebuilds every FuncDecl, so it has to carry every field

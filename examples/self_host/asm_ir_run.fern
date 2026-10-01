@@ -45,10 +45,9 @@ function run(): i32 {
   var probe: boolean = false;
   // `known` is the program-wide known-symbol set (#3451 step 1): symbols
   // defined in SIBLING modules of the loaded import set, supplied here via
-  // repeated `-ir-extern <name>`. Threaded into eligibility so a direct call /
-  // function value to such a name is admitted as an extern (resolved at link)
-  // instead of bailing the module — modelling the per-module path
-  // where every cross-module call targets a sibling's `__fn_*` symbol.
+  // repeated `-ir-extern <name>`. The AST lowering's gated emit (`-ir`) admits
+  // a call to such a name as an extern resolved at link; the typed lowering
+  // reads the siblings' sources (`-ir-sigs`) instead.
   var known: string[] = [];
   // `unit` selects per-module translation-unit emit (#3451 step 1/3):
   // "entry" → emit_module_ir_unit(is_entry=true, globl_defs=true) (the
@@ -174,19 +173,18 @@ function run(): i32 {
     }
     sp = sp + 1;
   }
-  // `-ir-probe`: report the IR-eligibility frontier instead of emitting asm —
-  // a per-function breakdown of what lowers vs what bails.
+  // `-ir-probe`: report the typed lowering's verdict instead of emitting asm —
+  // what it produces and what it refuses, per declaration, over this module
+  // and its `-ir-sigs` siblings.
   if (probe) {
-    print(ircore.eligibility_report_known(lm, known));
+    write(semlower.verdict_text(semlower.verdict(with_siblings(mod, siblings), target)));
     return 0;
   }
   // `-ir-needs`: report the module's closed runtime-need set, one per line.
   if (needs_probe) {
-    var nds: string[] = asm_ir.module_runtime_needs(lm);
-    var ni: i32 = 0;
-    while (ni < nds.len()) {
-      print(nds[ni] + "\n");
-      ni = ni + 1;
+    var nt: TypedUnits = typed_units(mod, siblings, target);
+    for nd in asm_ir.module_runtime_needs(nt.u.mods[0], nt.g.im.funcs, nt.g.stab, nt.u.caches[0], nt.g.base) {
+      print(nd + "\n");
     }
     return 0;
   }
@@ -266,11 +264,35 @@ function run(): i32 {
 }
 
 // typed_unit emits `mod` as one unit of a per-module build over the typed
-// lowering. The typed lowering checks a whole program, so it lowers `mod`
-// together with its `-ir-sigs` siblings and emits `mod`'s share; a call to a
-// sibling it was not given is the checker's undefined-name error. Siblings are
-// never inlined, so which of them were passed cannot change `mod`'s code.
+// lowering (typed_units).
 function typed_unit(mod: parser.Module, siblings: parser.Module[], is_entry: boolean, ns: string, extra: string[], target: string): string {
+  var t: TypedUnits = typed_units(mod, siblings, target);
+  var needs: string[] = [];
+  if (is_entry) {
+    needs = extra;
+  }
+  return asm_ir.emit_module_ir_unit_flat(t.u.mods[0], is_entry, true, ns, needs, t.g.im.funcs, t.g.stab, 0, 0 - 1, t.u.caches[0], t.g.base, t.d.sub.rt_lower);
+}
+
+// The typed lowering checks a whole program, so it lowers `mod` together with
+// its `-ir-sigs` siblings and cuts `mod`'s share out as unit 0; a call to a
+// sibling it was not given is the checker's undefined-name error.
+struct TypedUnits { d: semlower.Driven, g: ircore.Gated, u: ircore.Units }
+
+function typed_units(mod: parser.Module, siblings: parser.Module[], target: string): TypedUnits {
+  var d: semlower.Driven = semlower.driven(with_siblings(mod, siblings), target);
+  var g: ircore.Gated = semlower.program(d);
+  var parts: parser.Module[] = [mod];
+  for sm in siblings {
+    parts = parts.append(sm);
+  }
+  return TypedUnits { d: d, g: g, u: ircore.split_units(g, parts, 0) };
+}
+
+// with_siblings is `mod` with its siblings' declarations after its own.
+// Siblings are never inlined, so which of them were passed cannot change
+// `mod`'s code.
+function with_siblings(mod: parser.Module, siblings: parser.Module[]): parser.Module {
   var whole: parser.Module = mod;
   for sm in siblings {
     var calls: parser.FuncDecl[] = [];
@@ -288,16 +310,5 @@ function typed_unit(mod: parser.Module, siblings: parser.Module[], is_entry: boo
       trait_decls: util.append_all(whole.trait_decls, sm.trait_decls),
     };
   }
-  var d: semlower.Driven = semlower.driven(whole, target);
-  var g: ircore.Gated = semlower.program(d);
-  var parts: parser.Module[] = [mod];
-  for sm in siblings {
-    parts = parts.append(sm);
-  }
-  var u: ircore.Units = ircore.split_units(g, parts, 0);
-  var needs: string[] = [];
-  if (is_entry) {
-    needs = extra;
-  }
-  return asm_ir.emit_module_ir_unit_flat(u.mods[0], is_entry, true, ns, needs, g.im.funcs, g.stab, 0, 0 - 1, u.caches[0], g.base, d.sub.rt_lower);
+  return whole;
 }

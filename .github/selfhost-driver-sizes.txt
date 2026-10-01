@@ -432,7 +432,10 @@ asm_run.fern 9123464
 wasm_ir_run.fern 9120048
 wasm_run.fern 9117408
 wasm_runio_run.fern 9116728
-asm_pathprobe_run.fern 5753440
-asm_ir_elig_run.fern 4884920
+# 2026-10-01: #10929 routes the path probe through semlower.verdict instead
+# of the old ircore eligibility pipeline. CI run 36888561319 measured 3959936
+# bytes; reproduced with the pinned stage0 and TestSelfHostWarmStockDriver.
+# The probe's refusal regression passes. Preserve this reduction as the ceiling.
+asm_pathprobe_run.fern 3959936
 irlower_run.fern 5578848
 checker_modload_run.fern 2386128

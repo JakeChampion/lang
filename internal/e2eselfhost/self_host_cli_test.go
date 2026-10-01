@@ -683,7 +683,7 @@ function main(): i32 {
 	// set that compiles.
 	//
 	// The target-capability gate (E066) is one of the two shapes this is
-	// pinned with; the IR-eligibility gate is the other, below.
+	// pinned with; the checker is the other, below.
 	t.Run("opt-elides-after-the-gates", func(t *testing.T) {
 		srcPath := filepath.Join(dir, "capassert.fern")
 		src := "function main(): i32 {\n    assert(proc_fork() >= 0);\n    return 0;\n}\n"
@@ -701,22 +701,17 @@ function main(): i32 {
 		}
 	})
 
-	// The IR-eligibility half of the same ordering (#7170). An ill-typed assert
+	// The checker half of the same ordering (#7170). An ill-typed assert
 	// condition is what the elision would otherwise delete unexamined: `-O`
-	// took the undefined name away with the assert, the module became
-	// IR-eligible, and a release build emitted a working binary for a program
-	// the default build — and native, on both settings — refuses.
-	//
-	// The two legs have to AGREE; which exit code they agree on is the second
-	// assertion. Both rejections are now the checker's own diagnostic — E001
-	// for the undefined name (since #8461 made every coded diagnostic gate the
-	// build, so its verdict reaches it) and E043
-	// for the unknown field (since #7380) — rather than the ineligibility
-	// refusal that named neither the call nor the mistake.
+	// would take the undefined name away with the assert and emit a working
+	// binary for a program the default build — and native, on both settings —
+	// refuses. The checker rejects it first on both legs: E001 for the
+	// undefined name (#8461 made every coded diagnostic gate the build) and
+	// E043 for the unknown field (#7380).
 	t.Run("opt-does-not-widen-what-compiles", func(t *testing.T) {
-		for _, tc := range []struct{ name, src string }{
-			{"undefined-name", "function main(): i32 {\n    assert(nosuchname > 1);\n    return 0;\n}\n"},
-			{"unknown-field", "struct P { x: i32 }\nfunction main(): i32 {\n    var p: P = P { x: 1 };\n    assert(p.nofield > 0);\n    return 0;\n}\n"},
+		for _, tc := range []struct{ name, src, code string }{
+			{"undefined-name", "function main(): i32 {\n    assert(nosuchname > 1);\n    return 0;\n}\n", "E001"},
+			{"unknown-field", "struct P { x: i32 }\nfunction main(): i32 {\n    var p: P = P { x: 1 };\n    assert(p.nofield > 0);\n    return 0;\n}\n", "E043"},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
 				srcPath := filepath.Join(dir, "illassert_"+tc.name+".fern")
@@ -726,11 +721,15 @@ function main(): i32 {
 				outDef, codeDef := runDriver(t, srcPath)
 				outOpt, codeOpt := runDriver(t, "-O", srcPath)
 				if codeDef != codeOpt {
-					t.Errorf("default exited %d but -O exited %d; the elision is running before the IR-eligibility gate\ndefault:\n%s\n-O:\n%s",
+					t.Errorf("default exited %d but -O exited %d; the elision is running before the checker\ndefault:\n%s\n-O:\n%s",
 						codeDef, codeOpt, outDef, outOpt)
 				}
 				if codeDef == 0 {
 					t.Errorf("an ill-typed assert compiled on the default build (exit 0); native rejects it")
+				}
+				diag, _ := exec.Command(fernBin, "-target", "x86-64-linux", "-emit", "asm", "-O", srcPath).CombinedOutput()
+				if !strings.Contains(string(diag), tc.code) {
+					t.Errorf("-O did not reject the assert with the checker's %s:\n%s", tc.code, diag)
 				}
 			})
 		}
@@ -745,33 +744,6 @@ function main(): i32 {
 			"    assert(n > 100, \"control\");\n"+
 			"    return 5;\n"+
 			"}\n", 1, 5)
-	})
-
-	// The gate normalises with the lambda lift and the script-to-`main` desugar
-	// before asking eligible_core, and wasm applies that pair in the opposite
-	// order to the register backends. A script carrying both a lambda and an
-	// assert is where a divergence between the two orders would show up as an
-	// `-O` build refusing a program the default build compiles.
-	t.Run("opt-gate-normalises-a-script-with-a-lambda", func(t *testing.T) {
-		srcPath := filepath.Join(dir, "optscript.fern")
-		src := "var f = (x: i32): i32 => { return x * 2; };\n" +
-			"var n: i32 = f(3);\n" +
-			"assert(n > 1, \"script\");\n"
-		if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
-			t.Fatalf("write src: %v", err)
-		}
-		for _, target := range []string{"x86-64-linux", "wasm32-wasi"} {
-			for _, opt := range []bool{false, true} {
-				args := []string{"-target", target, "-emit", "asm", srcPath}
-				if opt {
-					args = append([]string{"-O"}, args...)
-				}
-				out, code := runDriver(t, args...)
-				if code != 0 {
-					t.Errorf("%s -O=%v exited %d, want 0:\n%s", target, opt, code, out)
-				}
-			}
-		}
 	})
 
 	t.Run("check-ok", func(t *testing.T) {
