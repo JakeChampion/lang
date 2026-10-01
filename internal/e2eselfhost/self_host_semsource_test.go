@@ -882,6 +882,32 @@ function same_all(xs: Ty[], ys: Ty[]): boolean {
     return true;
 }
 function keep(t: Ty): Holder { return Holder { kept: t }; }
+enum List { Cons(i32, List), Nil }
+function rebuild(xs: List, unchanged: Ty): List {
+    match (xs) {
+        Cons(h, t) => { return Cons(h + 1, rebuild(t, unchanged)); },
+        Nil => { return Nil; },
+    }
+}
+function empty(xs: List): boolean {
+    match (xs) {
+        Cons(_, t) => { return empty(t); },
+        Nil => { return true; },
+    }
+}
+enum Tree { Tip(i32), Fork(Tree, Tree) }
+function rebuild_tree(t: Tree, unchanged: Ty): Tree {
+    match (t) {
+        Tip(n) => { return Tip(n + 1); },
+        Fork(l, r) => { return Fork(rebuild_tree(l, unchanged), rebuild_tree(r, unchanged)); },
+    }
+}
+function depth(t: Tree): i32 {
+    match (t) {
+        Tip(_) => { return 1; },
+        Fork(l, r) => { return 1 + depth(l) + depth(r); },
+    }
+}
 function main(): i32 {
     var h: Holder = keep(Nm { name: "a" });
     if (same(h.kept, Nm { name: "a" })) { return 0; }
@@ -924,7 +950,7 @@ func TestSelfHostSemanticInferredCycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("infer driver: %v\n%s", err, got)
 	}
-	want := "same 2 2\nsame_all 2 2\nkeep 3\nmain\n"
+	want := "same 2 2\nsame_all 2 2\nkeep 3\nrebuild 3 2\nempty 2\nrebuild_tree 3 2\ndepth 2\nmain\n"
 	if string(got) != want {
 		t.Fatalf("inferred modes:\n%s\nwant:\n%s", got, want)
 	}
