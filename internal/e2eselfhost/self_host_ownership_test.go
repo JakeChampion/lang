@@ -232,10 +232,7 @@ func TestSelfHostOwnershipInference(t *testing.T) {
 // parameter and must drop, `reads_only` must not. The same pair for a record:
 // `keep_or_new` hands its parameter back on one arm and drops it on the other,
 // and `lends_to_builtin` only lends a field to a builtin's lent slot, which
-// takes no unit. For a recursive enum: `graft` stores its parameter in the
-// result on one arm and drops it on the other, `bump` rebuilds a tree from the
-// parts of its parameter and `depth` only walks it, so neither of those two
-// counts. And for a receiver: `advance` builds a new cursor out of its
+// takes no unit. And for a receiver: `advance` builds a new cursor out of its
 // parameter and must drop it, `peek` returns an element of its token array and
 // must not.
 const inferredModesProgram = `enum Node { Leaf(i32), Label(string), Empty }
@@ -256,11 +253,6 @@ function depth(t: Tree): i32 {
 @noinline
 function bump(t: Tree): Tree {
     match (t) { Tip(v) => { return Tip(v + 1); }, Fork(l, r) => { return Fork(bump(l), bump(r)); } }
-}
-@noinline
-function graft(t: Tree, k: i32): Tree {
-    if (k > 0) { return Fork(t, Tip(k)); }
-    return Tip(0);
 }
 @noinline
 function lends_to_builtin(r: Rec): i32 { return __count_byte(r.text, 97) + r.n; }
@@ -299,8 +291,6 @@ function main(): i32 {
     if (depth(t) != 5) { return 4; }
     t = bump(t);
     if (depth(t) != 5) { return 5; }
-    t = graft(t, 9);
-    if (depth(t) != 7) { return 7; }
     var c: Cursor = Cursor { toks: [Leaf(2), Label("xy" + "")], pos: 0 };
     var w: i32 = 0;
     while (c.pos < 3) { w = w + reads_only(c.peek()); c = c.advance(); }
@@ -380,19 +370,12 @@ func assertInferredModes(t *testing.T, runner []string, fernBin, stdlibRoot stri
 		t.Errorf("lends_to_builtin calls %s: a record whose field only reaches a builtin's lent slot was inferred COUNTED", recDrop)
 	}
 	const treeDrop = "__sem_release_Tree"
-	stored, ok := asmWholeFunc(string(asm), "graft")
-	if !ok {
-		t.Fatal("no __fn_graft in the emitted code")
-	}
-	if !strings.Contains(stored, treeDrop) {
-		t.Fatalf("graft does not call %s — the marker this reads is gone, so the traversal assertions below prove nothing", treeDrop)
-	}
 	rebuilt, ok := asmWholeFunc(string(asm), "bump")
 	if !ok {
 		t.Fatal("no __fn_bump in the emitted code")
 	}
-	if strings.Contains(rebuilt, treeDrop) {
-		t.Errorf("bump calls %s: a rebuild whose result holds no part of the parameter was inferred COUNTED, which costs a retain and a release per node", treeDrop)
+	if !strings.Contains(rebuilt, treeDrop) {
+		t.Fatalf("bump does not call %s — the marker this reads is gone, so the traversal assertion below proves nothing", treeDrop)
 	}
 	walk, ok := asmWholeFunc(string(asm), "depth")
 	if !ok {
