@@ -274,6 +274,13 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"nested-generic-struct-literal-wide", "struct Box[T] { v: T }\nstruct Two[T] { b: Box[T], c: T }\nfunction main(): i32 { var o = Two { b: Box { v: 4611686018427387904 }, c: 1 }; var r: i64 = o.c; return 0; }\n", nil},
 		// A generic call in an unbound field infers from the destination.
 		{"generic-call-in-unbound-field", "struct Holder[T] { xs: T[], z: T }\nfunction emptyArr[A](): A[] { return []; }\nfunction f[T](t: T): Holder[T] { var h = Holder { xs: emptyArr(), z: t }; return h; }\nfunction main(): i32 { var h = f(7); return h.z; }\n", nil},
+		// Two instantiations of one generic struct in an array literal are
+		// E034 unless an integer literal gives way to the other's (#10912).
+		{"array-two-instantiations", "struct Same[T] { a: T, b: T }\nfunction main(): i32 { var xs = [Same { a: 1, b: 2 }, Same { a: \"x\", b: \"y\" }]; return 0; }\n", []string{"E034"}},
+		{"array-two-instantiations-third", "struct Box[T] { v: T }\nfunction main(): i32 { var xs = [Box { v: 1 }, Box { v: \"a\" }, Box { v: 2 }]; return 0; }\n", []string{"E034"}},
+		{"array-two-instantiations-nested", "struct Box[T] { v: T }\nfunction main(): i32 { var xs = [Box { v: Box { v: 1 } }, Box { v: Box { v: \"x\" } }]; return 0; }\n", []string{"E034"}},
+		{"array-two-instantiations-locals", "struct Box[T] { v: T }\nfunction main(): i32 { var a: Box[i32] = Box { v: 1 }; var b: Box[string] = Box { v: \"s\" }; var xs = [a, b]; return 0; }\n", []string{"E034"}},
+		{"array-instantiation-literal-gives-way-to-float", "struct Box[T] { v: T }\nfunction main(): i32 { var xs = [Box { v: 1.5 }, Box { v: 2 }]; var ys = [Box { v: 2 }, Box { v: 1.5 }]; return 0; }\n", nil},
 		{"nested-generic-struct-literal-clash", "struct Box[T] { v: T }\nstruct Two[T] { b: Box[T], c: T }\nfunction main(): i32 { var o = Two { b: Box { v: 1 }, c: \"x\" }; return 0; }\n", []string{"E043"}},
 		{"struct-literal-wide-in-array", "struct Same[T] { a: T, b: T }\nfunction main(): i32 { var xs = [Same { a: 1, b: 4611686018427387904 }]; var r: i64 = xs[0].b; return 0; }\n", nil},
 		// A typed field binds T ahead of an untyped literal written before
