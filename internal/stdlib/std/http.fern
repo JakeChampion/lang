@@ -35,6 +35,8 @@ import "std/json";
 // to wrap a parsed body, and the cursor readers the whole-body
 // shims below run over it.
 import "std/stream";
+import "std/error";
+import "std/platform";
 
 // `http_status_text(code)` — IANA reason phrase for the
 // common HTTP status codes (RFC 9110). Returns "" for
@@ -221,7 +223,9 @@ pub function plain(body: string): HttpResponse {
 // status text. std/json's `JsonError` answers 400 with where the text
 // broke, and a `string` error answers 500 with the status text alone —
 // the message is dropped, so log it before the `?` when it matters, or
-// fail with an `HttpError` to put it on the wire.
+// fail with an `HttpError` to put it on the wire. A handler whose errors
+// are `dyn error.Error` is answered by `respond_error`, which logs each
+// message through the platform.
 
 pub trait ToResponse {
   function to_response(self: Self): HttpResponse;
@@ -243,6 +247,29 @@ pub function respond[E: ToResponse](result: Result[HttpResponse, E]): HttpRespon
 // state passes through beside the answer.
 pub function respond_with[S, E: ToResponse](pair: (S, Result[HttpResponse, E])): (S, HttpResponse) {
   return (pair.0, respond(pair.1));
+}
+
+// `respond_error(result, plat)` — `respond` for a handler whose errors are
+// `dyn error.Error`: the error's message goes to `plat.log` and the answer
+// is a bare 500 problem, since the message may say more than a client
+// should see. A `handle` declared with that error type is adapted with it.
+pub function respond_error(result: Result[HttpResponse, dyn error.Error], plat: Platform): HttpResponse {
+  match (result) {
+    Ok(r) => {
+      return r;
+    },
+    Err(e) => {
+      plat.log("handler error: " + e.message());
+      return problem(500, "", "");
+    }
+  }
+  return problem(500, "", "");
+}
+
+// `respond_error_with(pair, plat)` — `respond_error` for a state-threading
+// handler.
+pub function respond_error_with[S](pair: (S, Result[HttpResponse, dyn error.Error]), plat: Platform): (S, HttpResponse) {
+  return (pair.0, respond_error(pair.1, plat));
 }
 
 pub function problem(status: i32, title: string, detail: string): HttpResponse {

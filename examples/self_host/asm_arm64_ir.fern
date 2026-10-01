@@ -4114,6 +4114,9 @@ function helper_call_needs(name: string, s: asmcore.EmitState): asmcore.EmitStat
   if (name == "__fern_arr_own_elems") {
     s = s.need("arr_own_elems");
   }
+  if (name == "__fern_str_own") {
+    s = s.need("str_own");
+  }
   // The VIEW-aware string[] element walk (#6544), gated the same way:
   // a binary that never reclaims a builtin string[] must not carry a
   // body whose inner `bl __fn___fern_str_view_free` the negative
@@ -7701,10 +7704,55 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write(".Laie_ret:\n");
     s = s.write("    ret\n");
   }
+  // __fern_str_own(s@[sp]) -> a string its holder owns a unit of, the arm64
+  // sibling of the x86-64 body: a counted string retained, a fresh box over
+  // an arena view's bytes, and any other view as is.
+  if (s.has_need("str_own")) {
+    s = s.write("__fn___fern_str_own:\n");
+    s = s.write("    ldr x0, [sp]\n");
+    s = s.write("    tbnz x0, #0, .Lso_ret\n");
+    s = s.write("    mov x9, #0x10000\n");
+    s = s.write("    cmp x0, x9\n");
+    s = s.write("    blo .Lso_ret\n");
+    s = s.write("    ldur w1, [x0, #-8]\n");  // rc
+    s = s.write(san_poison_check("w1", "w9", ".Lso_live"));
+    s = s.write("    tbnz w1, #31, .Lso_view\n");
+    s = s.write("    stp x0, x30, [sp, #-16]!\n");
+    s = s.write("    str x0, [sp, #-16]!\n");
+    s = s.write("    bl __fn___fern_rc_inc\n");
+    s = s.write("    add sp, sp, #16\n");
+    s = s.write("    ldp x0, x30, [sp], #16\n");
+    s = s.write("    ret\n");
+    s = s.write(".Lso_view:\n");
+    s = s.write("    sub x1, x0, #8\n");  // box base
+    s = s.write("    adrp x11, __fern_heap_base\n");
+    s = s.write("    add x11, x11, :lo12:__fern_heap_base\n");
+    s = s.write("    ldr x11, [x11]\n");
+    s = s.write("    cmp x1, x11\n");
+    s = s.write("    blo .Lso_ret\n");
+    s = s.write("    adrp x12, __fern_heap_end\n");
+    s = s.write("    add x12, x12, :lo12:__fern_heap_end\n");
+    s = s.write("    ldr x12, [x12]\n");
+    s = s.write("    cmp x1, x12\n");
+    s = s.write("    bhs .Lso_ret\n");
+    s = s.write("    stp x0, x30, [sp, #-16]!\n");
+    s = s.write("    mov x0, #24\n");
+    s = s.write("    bl __fern_alloc\n");
+    s = s.write("    ldp x1, x30, [sp], #16\n");  // the shared box
+    s = s.write("    mov x3, #-1\n");
+    s = s.write("    str x3, [x0]\n");
+    s = s.write("    ldr x2, [x1]\n");
+    s = s.write("    str x2, [x0, #8]\n");  // data
+    s = s.write("    ldr x2, [x1, #8]\n");
+    s = s.write("    str x2, [x0, #16]\n");  // len
+    s = s.write("    add x0, x0, #8\n");
+    s = s.write(".Lso_ret:\n");
+    s = s.write("    ret\n");
+  }
   // __fern_arr_own_elems(dst@[sp,#16], src@[sp]) -> dst, the arm64
-  // sibling of the x86-64 body: dst takes its own unit on each of its first
-  // len(src) elements, a retain on a counted one and a fresh box on an
-  // arena string view. x19/x20/x21 hold dst/len/i.
+  // sibling of the x86-64 body: each of dst's first len(src) elements is
+  // replaced by the unit __fern_str_own answers for it. x19/x20/x21 hold
+  // dst/len/i.
   if (s.has_need("arr_own_elems")) {
     s = s.write("__fn___fern_arr_own_elems:\n");
     s = s.write("    ldr x0, [sp, #16]\n");  // dst (also the result)
@@ -7724,43 +7772,11 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    bge .Laoe_done\n");
     s = s.write("    add x9, x21, #1\n");
     s = s.write("    ldr x0, [x19, x9, lsl #3]\n");  // element i
-    s = s.write("    tbnz x0, #0, .Laoe_next\n");
-    s = s.write("    mov x9, #0x10000\n");
-    s = s.write("    cmp x0, x9\n");
-    s = s.write("    blo .Laoe_next\n");
-    s = s.write("    ldur w1, [x0, #-8]\n");  // rc
-    s = s.write(san_poison_check("w1", "w9", ".Laoe_live"));
-    s = s.write("    tbnz w1, #31, .Laoe_view\n");
     s = s.write("    str x0, [sp, #-16]!\n");
-    s = s.write("    bl __fn___fern_rc_inc\n");
+    s = s.write("    bl __fn___fern_str_own\n");
     s = s.write("    add sp, sp, #16\n");
-    s = s.write("    b .Laoe_next\n");
-    s = s.write(".Laoe_view:\n");
-    s = s.write("    sub x1, x0, #8\n");  // box base
-    s = s.write("    adrp x11, __fern_heap_base\n");
-    s = s.write("    add x11, x11, :lo12:__fern_heap_base\n");
-    s = s.write("    ldr x11, [x11]\n");
-    s = s.write("    cmp x1, x11\n");
-    s = s.write("    blo .Laoe_next\n");
-    s = s.write("    adrp x12, __fern_heap_end\n");
-    s = s.write("    add x12, x12, :lo12:__fern_heap_end\n");
-    s = s.write("    ldr x12, [x12]\n");
-    s = s.write("    cmp x1, x12\n");
-    s = s.write("    bhs .Laoe_next\n");
-    s = s.write("    str x0, [sp, #-16]!\n");
-    s = s.write("    mov x0, #24\n");
-    s = s.write("    bl __fern_alloc\n");
-    s = s.write("    ldr x1, [sp], #16\n");  // the shared box
-    s = s.write("    mov x3, #-1\n");
-    s = s.write("    str x3, [x0]\n");
-    s = s.write("    ldr x2, [x1]\n");
-    s = s.write("    str x2, [x0, #8]\n");  // data
-    s = s.write("    ldr x2, [x1, #8]\n");
-    s = s.write("    str x2, [x0, #16]\n");  // len
-    s = s.write("    add x0, x0, #8\n");
     s = s.write("    add x9, x21, #1\n");
     s = s.write("    str x0, [x19, x9, lsl #3]\n");
-    s = s.write(".Laoe_next:\n");
     s = s.write("    add x21, x21, #1\n");
     s = s.write("    b .Laoe_loop\n");
     s = s.write(".Laoe_done:\n");

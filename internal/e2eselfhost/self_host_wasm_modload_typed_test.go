@@ -134,20 +134,25 @@ function main(): i32 {
 		}
 	})
 
-	// A read of a view map value is a typed refusal (TestSelfHostSemIRStrict).
+	// A generic over an unspelled function value is a typed refusal
+	// (TestSelfHostSemIRStrict).
 	t.Run("strict_refusal_fails_the_emit", func(t *testing.T) {
 		proj := t.TempDir()
 		entry := filepath.Join(proj, "main.fern")
-		write(t, entry, `import "core/map";
+		write(t, entry, `struct Slot[T] { v: T }
+
+pub function hold[T](f: () => T): i32 {
+    var c: Slot[T] = Slot[T] { v: f() };
+    return 1;
+}
+
 function main(): i32 {
-    var b: string = "abcdefgh";
-    var m: Map[i32, str] = map_new(4);
-    m = m.insert(1, slice_unchecked(b, 2, 6));
-    match (m.get(1)) { Some(v) => { return v.len(); }, None => { return 0; } }
+    var fs: (() => i32)[] = [(): i32 => 7];
+    return hold(fs[0]) + hold((): string => "x");
 }
 `)
 		_, se, code := drive(t, entry, []string{"FERN_SEM_IR_STRICT=1"}, "-per-module-emit", "0")
-		if code != 3 || !strings.Contains(se, "a read of a view map value would share the column's view box") {
+		if code != 3 || !strings.Contains(se, "FERN_SEM_IR: hold$i32: record field type") {
 			t.Fatalf("strict emit: exit %d, want 3 naming the refusal\n%s", code, se)
 		}
 		if _, se, code := drive(t, entry, []string{"FERN_SEM_IR_STRICT="}, "-per-module-emit", "0"); code != 0 {

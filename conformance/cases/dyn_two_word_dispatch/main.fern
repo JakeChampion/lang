@@ -1,0 +1,26 @@
+// `dyn` dispatch with a string argument, and with a string result. Under the
+// two-word string ABI (wasm32, arm64) each is a (data, len) pair on the
+// operand stack, which the SSA lift has to count as the verifier does; the
+// two are separate calls so a miscount of one cannot cancel the other's.
+trait Named {
+    function score(self: Self, prefix: string): i32;
+    function tag(self: Self, n: i32): string;
+}
+
+struct Cat { lives: i32 }
+impl Named for Cat {
+    function score(self: Self, prefix: string): i32 { return prefix.len() + self.lives; }
+    function tag(self: Self, n: i32): string {
+        if (n > 5) { return "cat!"; }
+        return "cat";
+    }
+}
+
+function run(own d: dyn Named): i32 {
+    var t: string = d.tag(7);
+    return d.score("abcd") + t.len();
+}
+
+function main(): i32 {
+    return run(Cat { lives: 9 }) + 25;
+}
