@@ -387,8 +387,8 @@ function ast_values(mod: parser.Module, built: semsource.Built, r: Rows): AstVal
       if (hoisted(key) && params > 0) {
         var at: i32 = ssasem.find_contract(built.contracts, key);
         var v: AstValue = AstValue { ty: typeinfo.unchecked(), arity: params - 1, typed: false };
-        if (i < mod.funcs.len() && at >= 0 && ssasem.closure_env(built.contracts[at])) {
-          var ty: typeinfo.Type = ssasem.closure_type(built.contracts[at]);
+        if (i < mod.funcs.len() && at >= 0 && ssasem.closure_env(built.contracts.list[at])) {
+          var ty: typeinfo.Type = ssasem.closure_type(built.contracts.list[at]);
           v = AstValue { ty: ty, arity: ssasem.func_params(ty).len(), typed: semtypes.concrete(ty, true) };
         }
         out = out.append(v);

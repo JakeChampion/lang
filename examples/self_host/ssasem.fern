@@ -93,7 +93,25 @@ pub struct EnvRow { fn_ty: typeinfo.Type, env_ty: typeinfo.Type }
 // callee's body is never consulted.
 pub struct Contract { name: string, params: typeinfo.Type[], modes: i32[], result: typeinfo.Type }
 
-pub function find_contract(calls: Contract[], name: string): i32 {
+// Contracts is a contract table with a bucket index over the names, so a call
+// resolves its callee's row by walking one chain, not the table.
+pub struct Contracts { list: Contract[], names: util.NameIndex }
+
+pub function contracts_of(list: Contract[]): Contracts {
+  var names: string[] = [];
+  for c in list {
+    names = names.append(c.name);
+  }
+  return Contracts { list: list, names: util.name_index(names) };
+}
+
+pub function find_contract(table: Contracts, name: string): i32 {
+  return table.names.find(name);
+}
+
+// find_contract_in is find_contract over a list with no index: a body's own
+// calls, or the table while it is still being collected.
+pub function find_contract_in(calls: Contract[], name: string): i32 {
   var i: i32 = 0;
   while (i < calls.len()) {
     if (calls[i].name == name) {
@@ -1371,7 +1389,7 @@ function closure_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
   if (!is_func(result)) {
     return "closure value type";
   }
-  var at: i32 = find_contract(f.calls, ins.str);
+  var at: i32 = find_contract_in(f.calls, ins.str);
   if (at < 0) {
     return "missing closure body contract";
   }
@@ -2343,7 +2361,7 @@ function leaf_key(t: typeinfo.Type): string {
 // A produced graph's contracts are instances: every parameter and the result
 // are exact types, and a call is held to them.
 function call_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
-  var at: i32 = find_contract(f.calls, ins.str);
+  var at: i32 = find_contract_in(f.calls, ins.str);
   if (at < 0) {
     return "missing call contract";
   }
@@ -2960,7 +2978,7 @@ function contracts_error(calls: Contract[]): string {
     if (c.name == "") {
       return "empty call contract name";
     }
-    if (find_contract(calls, c.name) != i) {
+    if (find_contract_in(calls, c.name) != i) {
       return "duplicate call contract";
     }
     if (c.modes.len() != c.params.len()) {

@@ -439,7 +439,7 @@ function schema_fields_error(f: ssasem.Func): string {
 // and never appears in the type the box hands out, so a counted one there would
 // be a promise nothing can state.
 function closure_body_error(f: ssasem.Func, ins: ssa.SInst): string {
-  var c: ssasem.Contract = f.calls[ssasem.find_contract(f.calls, ins.str)];
+  var c: ssasem.Contract = f.calls[ssasem.find_contract_in(f.calls, ins.str)];
   if (c.modes.len() > 0 && c.modes[0] == counted_mode()) {
     return "function value consumes its environment";
   }
@@ -802,7 +802,7 @@ function call_value_supplied(f: ssasem.Func, ins: ssa.SInst): boolean[] {
 }
 
 function call_supplied(f: ssasem.Func, ins: ssa.SInst): boolean[] {
-  var c: ssasem.Contract = f.calls[ssasem.find_contract(f.calls, ins.str)];
+  var c: ssasem.Contract = f.calls[ssasem.find_contract_in(f.calls, ins.str)];
   var out: boolean[] = [];
   var i: i32 = 0;
   while (i < ins.args.len()) {
@@ -816,7 +816,7 @@ function call_supplied(f: ssasem.Func, ins: ssa.SInst): boolean[] {
 // deciding which arguments its bracket covers. `call_supplied` reads the same
 // contract for the ledger; this is the whole row rather than the counted half.
 pub function callee_modes(f: ssasem.Func, ins: ssa.SInst): i32[] {
-  var at: i32 = ssasem.find_contract(f.calls, ins.str);
+  var at: i32 = ssasem.find_contract_in(f.calls, ins.str);
   if (at < 0) {
     return [];
   }
