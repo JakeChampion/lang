@@ -81,6 +81,17 @@ function useit(): i32 { return apply(add10, 5) + apply(twice, 3); }
 function main(): i32 { return useit(); }`,
 			want: 21, // 15 + 6
 		},
+		{
+			// The record an instance builds at its binding is declared by the
+			// typed lowering, not the module; its i64 field is stored through
+			// that declaration (#10827).
+			name: "instance_record_with_a_wide_field",
+			src: `struct Slot[T] { v: T }
+function keep[T](f: () => T): T { var c: Slot[T] = Slot[T] { v: f() }; return c.v; }
+function wide(): i64 { var fs: (() => i64)[] = [(): i64 => 5000000010 as i64]; return keep(fs[0]); }
+function main(): i32 { var gs: (() => string)[] = [(): string => "ab" + "c"]; return ((wide() - (5000000000 as i64)) as i32) + keep(gs[0]).len(); }`,
+			want: 13, // 10 + 3
+		},
 	}
 
 	// build compiles src with `bin` and returns the program's exit code.

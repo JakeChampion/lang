@@ -329,11 +329,12 @@ function generic_decl(fd: parser.FuncDecl): boolean {
   if (fd.type_params.len() > 0 || fd.all_type_params.len() > 0) {
     return true;
   }
-  if (spelled_typevar(fd.ret_type)) {
+  if (spelled_typevar(fd.ret_type) || spelled_typevar(fd.ret_fn_ret) || spelled_typevar(fd.ret_fn_param_types)) {
     return true;
   }
+  // A function type is spelled `fn`, its slots in the sidecars beside it.
   for p in fd.params {
-    if (spelled_typevar(p.type_name)) {
+    if (spelled_typevar(p.type_name) || spelled_typevar(p.fn_ret) || spelled_typevar(p.fn_param_types)) {
       return true;
     }
   }
@@ -412,7 +413,11 @@ function typevar_reason_name(reason: string): string {
 // consuming slot bound to a scalar drops its `own` as `typeinfo.own_flags`
 // says. Every other unknown is left alone and refuses where it stands, and so
 // does a variable the binding does not name, which stays a variable.
-function resolved(t: typeinfo.Type, template: boolean, b: ssasem.Binding): typeinfo.Type {
+//
+// A record the front end cloned at a variable (`Slot__0_T`, from `Slot[T]`
+// inside a generic over T) is one record per binding: its variables become
+// its arguments, so each instance builds the record at its own types.
+function resolved(t: typeinfo.Type, template: boolean, b: ssasem.Binding, scope: checker.Scope): typeinfo.Type {
   if (!template) {
     return t;
   }
@@ -423,42 +428,115 @@ function resolved(t: typeinfo.Type, template: boolean, b: ssasem.Binding): typei
     }
     return t;
   }
-  return resolved_within(t, b);
+  return resolved_within(t, b, scope);
 }
 
-function resolved_within(t: typeinfo.Type, b: ssasem.Binding): typeinfo.Type {
+function resolved_within(t: typeinfo.Type, b: ssasem.Binding, scope: checker.Scope): typeinfo.Type {
   if let typeinfo.TypeArray(a) = t {
-    return typeinfo.TypeArray { elem: resolved(a.elem, true, b), view: a.view };
+    return typeinfo.TypeArray { elem: resolved(a.elem, true, b, scope), view: a.view };
   }
   if let typeinfo.TypeTuple(tup) = t {
-    return typeinfo.TypeTuple { elements: resolved_list(tup.elements, b) };
+    return typeinfo.TypeTuple { elements: resolved_list(tup.elements, b, scope) };
   }
   if let typeinfo.TypeFunc(fn) = t {
-    var params: typeinfo.Type[] = resolved_list(fn.param_types, b);
-    return typeinfo.TypeFunc { ...fn, param_types: params, param_own: typeinfo.own_flags(fn.param_own, params), ret_type: resolved(fn.ret_type, true, b) };
+    var params: typeinfo.Type[] = resolved_list(fn.param_types, b, scope);
+    return typeinfo.TypeFunc { ...fn, param_types: params, param_own: typeinfo.own_flags(fn.param_own, params), ret_type: resolved(fn.ret_type, true, b, scope) };
   }
   if let typeinfo.TypeMap(m) = t {
-    return typeinfo.TypeMap { key: resolved(m.key, true, b), value: resolved(m.value, true, b) };
+    return typeinfo.TypeMap { key: resolved(m.key, true, b, scope), value: resolved(m.value, true, b, scope) };
   }
   if let typeinfo.TypeStruct(r) = t {
-    return typeinfo.TypeStruct { ...r, args: resolved_list(r.args, b) };
+    if (r.args.len() == 0) {
+      var args: typeinfo.Type[] = [];
+      for v in record_variables(r.name, scope, []) {
+        args = args.append(ssasem.substitute(typeinfo.TypeErased { name: v }, b));
+      }
+      return typeinfo.TypeStruct { ...r, args: args };
+    }
+    return typeinfo.TypeStruct { ...r, args: resolved_list(r.args, b, scope) };
   }
   if let typeinfo.TypeUnion(u) = t {
-    return typeinfo.TypeUnion { ...u, args: resolved_list(u.args, b) };
+    return typeinfo.TypeUnion { ...u, args: resolved_list(u.args, b, scope) };
   }
   return t;
 }
 
-function resolved_list(ts: typeinfo.Type[], b: ssasem.Binding): typeinfo.Type[] {
+function resolved_list(ts: typeinfo.Type[], b: ssasem.Binding, scope: checker.Scope): typeinfo.Type[] {
   var out: typeinfo.Type[] = [];
   for t in ts {
-    out = out.append(resolved(t, true, b));
+    out = out.append(resolved(t, true, b, scope));
+  }
+  return out;
+}
+
+// The variables a record's fields spell, in order of first occurrence, through
+// any record cloned at a variable that a field holds. Only a clone, named
+// `Base__key`, can hold one: a declared generic has type parameters instead.
+// `seen` cuts a recursive one.
+function record_variables(name: string, scope: checker.Scope, seen: string[]): string[] {
+  if (!util.contains(name, "__")) {
+    return [];
+  }
+  var sig: checker.StructSig = checker.struct_sig(scope, name);
+  if (sig.name.len() == 0 || sig.type_params.len() > 0 || sig.enum_owner.len() > 0 || util.index_of_str(seen, name) >= 0) {
+    return [];
+  }
+  var out: string[] = [];
+  for ft in sig.field_types {
+    out = spelled_variables(ft, scope, seen.append(name), out);
+  }
+  return out;
+}
+
+function spelled_variables(t: typeinfo.Type, scope: checker.Scope, seen: string[], out: string[]): string[] {
+  var name: string = "";
+  if let typeinfo.TypeUnknown(u) = t {
+    name = typevar_reason_name(u.reason);
+  }
+  if let typeinfo.TypeErased(e) = t {
+    name = e.name;
+  }
+  if (parser.looks_type_var(name)) {
+    if (util.index_of_str(out, name) < 0) {
+      return out.append(name);
+    }
+    return out;
+  }
+  var parts: typeinfo.Type[] = [];
+  if let typeinfo.TypeArray(a) = t {
+    parts = [a.elem];
+  }
+  if let typeinfo.TypeTuple(tup) = t {
+    parts = tup.elements;
+  }
+  if let typeinfo.TypeFunc(fn) = t {
+    parts = fn.param_types.append(fn.ret_type);
+  }
+  if let typeinfo.TypeMap(m) = t {
+    parts = [m.key, m.value];
+  }
+  if let typeinfo.TypeUnion(u) = t {
+    parts = u.args;
+  }
+  if let typeinfo.TypeStruct(r) = t {
+    if (r.args.len() > 0) {
+      parts = r.args;
+    } else {
+      for v in record_variables(r.name, scope, seen) {
+        if (util.index_of_str(out, v) < 0) {
+          out = out.append(v);
+        }
+      }
+    }
+  }
+  for p in parts {
+    out = spelled_variables(p, scope, seen, out);
   }
   return out;
 }
 
 function bound_type(s: State, name: string, scope: checker.Scope): typeinfo.Type {
-  return settled(resolved(checker.scope_type(scope, name), s.template, s.binding));
+  return settled(resolved(checker.scope_type(scope, name), s.template, s.binding, scope));
 }
 
 // A float the checker left polymorphic — a literal's binding with no
@@ -511,7 +589,7 @@ function settled_payload(t: typeinfo.Type): typeinfo.Type {
 // ---- expressions ------------------------------------------------------------
 
 function checked(e: ast.Expr, s: State): typeinfo.Type {
-  return settled(resolved(checker.expr_type(e, s.scope), s.template, s.binding));
+  return settled(resolved(checker.expr_type(e, s.scope), s.template, s.binding, s.scope));
 }
 
 function decimal(text: string): boolean {
@@ -1155,6 +1233,28 @@ function record_schema(name: string, s: State): checker.StructSig {
   return sig;
 }
 
+// The schema of record type `t`: its declaration's, read at the arguments a
+// record cloned at a variable carries.
+function record_sig(t: typeinfo.Type, s: State): checker.StructSig {
+  if let typeinfo.TypeStruct(r) = t {
+    var sig: checker.StructSig = record_schema(r.name, s);
+    if (sig.name.len() == 0 || r.args.len() == 0) {
+      return sig;
+    }
+    var vars: string[] = record_variables(r.name, s.scope, []);
+    if (vars.len() != r.args.len()) {
+      return checker.struct_sig(s.scope, "");
+    }
+    var b: ssasem.Binding = ssasem.Binding { ok: true, why: "", names: vars, types: r.args };
+    var fts: typeinfo.Type[] = [];
+    for ft in sig.field_types {
+      fts = fts.append(resolved(ft, true, b, s.scope));
+    }
+    return checker.StructSig { ...sig, field_types: fts };
+  }
+  return checker.struct_sig(s.scope, "");
+}
+
 function record_field_index(sig: checker.StructSig, name: string): i32 {
   var i: i32 = 0;
   while (i < sig.field_names.len()) {
@@ -1177,11 +1277,7 @@ function record_field(fa: ast.ExprFieldAccess, s: State): Value {
   if (fa.field == "fd" && semtypes.is_stream(s.values[container.id])) {
     return define(s, ssasem.cast(), [container.id], 0, "", t_i32());
   }
-  var name: string = "";
-  if let typeinfo.TypeStruct(r) = s.values[container.id] {
-    name = r.name;
-  }
-  var sig: checker.StructSig = record_schema(name, s);
+  var sig: checker.StructSig = record_sig(s.values[container.id], s);
   if (sig.name.len() == 0) {
     return refused(s, "unsupported projection");
   }
@@ -1266,11 +1362,11 @@ function built_record(w: Written, ty: typeinfo.Type): Value {
 // the construction takes its own unit of every reference field, so the base
 // stays live to the construction and is released after it.
 function record_update(e: ast.Expr, sl: ast.ExprStructLit, s: State): Value {
-  var sig: checker.StructSig = record_schema(sl.type_name, s);
+  var ty: typeinfo.Type = record_type(sl.type_name, s);
+  var sig: checker.StructSig = record_sig(ty, s);
   if (sig.name.len() == 0) {
     return refused(s, "unsupported record literal");
   }
-  var ty: typeinfo.Type = record_type(sig);
   var base: Value = expr(sl.base, s, ty);
   s = base.s;
   if (!s.ok) {
@@ -1316,20 +1412,22 @@ function record(e: ast.Expr, sl: ast.ExprStructLit, s: State): Value {
   if (sl.has_base) {
     return record_update(e, sl, s);
   }
-  var sig: checker.StructSig = record_schema(sl.type_name, s);
+  var ty: typeinfo.Type = record_type(sl.type_name, s);
+  var sig: checker.StructSig = record_sig(ty, s);
   if (sig.name.len() == 0 || sl.field_values.len() != sig.field_types.len()) {
     return refused(s, "unsupported record literal");
   }
-  return built_record(place_fields(written_fields(sl, sig, s), sig, 0 - 1), record_type(sig));
+  return built_record(place_fields(written_fields(sl, sig, s), sig, 0 - 1), ty);
 }
 
 // A literal's type is the struct it names: record_schema admits only a
-// declaration without type parameters, so the name is the whole of it. The
+// declaration without type parameters, so the name is the whole of it, read
+// at the template's binding when the struct was cloned at a variable. The
 // checker's reading of the literal is not consulted, since a field holding a
 // value block over a template call is one it leaves untyped while every
 // field is produced at its declared type here anyway.
-function record_type(sig: checker.StructSig): typeinfo.Type {
-  return typeinfo.TypeStruct { name: sig.name, args: [] };
+function record_type(name: string, s: State): typeinfo.Type {
+  return resolved(typeinfo.TypeStruct { name: record_schema(name, s).name, args: [] }, s.template, s.binding, s.scope);
 }
 
 // A variant literal supplies its payload fields in declaration order; the
@@ -1829,7 +1927,7 @@ function downcast(e: ast.Expr, u: ast.ExprUnary, s: State): Value {
     return refused(s, "downcast of a value that is not dyn");
   }
   var target: string = slice_unchecked(u.op, 4, u.op.len()) + "";
-  var concrete: typeinfo.Type = resolved(s.scope.resolve_type(target), s.template, s.binding);
+  var concrete: typeinfo.Type = resolved(s.scope.resolve_type(target), s.template, s.binding, s.scope);
   if (struct_name(concrete) != target && union_name(concrete) != target) {
     return refused(s, "downcast target: " + target);
   }
@@ -2474,7 +2572,7 @@ function method_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: State, stateme
   // field read and a call through what it holds. The receiver is already
   // produced, so the read takes its value rather than evaluating the object a
   // second time.
-  var fsig: checker.StructSig = record_schema(owner, s);
+  var fsig: checker.StructSig = record_sig(s.values[recv.id], s);
   if (fsig.name.len() > 0) {
     var fat: i32 = record_field_index(fsig, fa.field);
     if (fat >= 0 && ssasem.is_func(fsig.field_types[fat])) {
@@ -2912,7 +3010,7 @@ function block_type(e: ast.Expr, c: ast.ExprCall, s: State, expected: typeinfo.T
   }
   if let ast.ExprLambda(lam) = c.callee {
     if (lam.ret_type.len() > 0) {
-      return resolved(s.scope.resolve_type(lam.ret_type), s.template, s.binding);
+      return resolved(s.scope.resolve_type(lam.ret_type), s.template, s.binding, s.scope);
     }
   }
   return ty;
@@ -3716,7 +3814,7 @@ function destructure_record(encoded: string, tag: string, whole: i32, s: State, 
   }
   var names: string[] = pattern_names(encoded);
   var fields: string[] = pattern_names(slice_unchecked(rest, colon + 1, rest.len()) + "");
-  var sig: checker.StructSig = record_schema(struct_name(s.values[whole]), s);
+  var sig: checker.StructSig = record_sig(s.values[whole], s);
   if (sig.name.len() == 0 || sig.name != slice_unchecked(rest, 0, colon) || fields.len() != names.len()) {
     return fail(s, "unsupported destructuring declaration");
   }
@@ -5108,7 +5206,7 @@ function inferred_result(fd: parser.FuncDecl, scope: checker.Scope, b: ssasem.Bi
       return slot;
     }
   }
-  return resolved(checker.expr_type(returned, at), generic_decl(fd), b);
+  return resolved(checker.expr_type(returned, at), generic_decl(fd), b, at);
 }
 
 // The type of a slot the lambda lift filled with a closure constructor:
@@ -5242,7 +5340,7 @@ function result_type(fd: parser.FuncDecl, scope: checker.Scope, b: ssasem.Bindin
   if (fd.ret_type.len() == 0) {
     return inferred_result(fd, scope, b, contracts);
   }
-  var declared: typeinfo.Type = resolved(scope.ret_type, generic_decl(fd), b);
+  var declared: typeinfo.Type = resolved(scope.ret_type, generic_decl(fd), b, scope);
   if (synthesised(fd)) {
     let (returned, _) = checker.first_returned(fd.body, scope);
     if (!literal_adapts(returned, declared)) {
@@ -5299,7 +5397,7 @@ function env_captures(fd: parser.FuncDecl, scope: checker.Scope, template: boole
       if (reads_env_slot(v.init, out.len() + 1)) {
         read = true;
         at = checker.bind_stmt(st, at);
-        out = out.append(resolved(checker.scope_type(at, v.name), template, b));
+        out = out.append(resolved(checker.scope_type(at, v.name), template, b, at));
       }
     }
     if (!read) {
@@ -5675,7 +5773,7 @@ function type_holds_view(t: typeinfo.Type, views: string[], impls: parser.ImplIn
     return type_holds_view(m.key, views, impls) || type_holds_view(m.value, views, impls);
   }
   if let typeinfo.TypeStruct(r) = t {
-    return util.index_of_str(views, r.name) >= 0;
+    return util.index_of_str(views, r.name) >= 0 || types_hold_view(r.args, views, impls);
   }
   if let typeinfo.TypeUnion(u) = t {
     return util.index_of_str(views, u.name) >= 0 || types_hold_view(u.args, views, impls);
@@ -5836,14 +5934,14 @@ function env_entry(t: typeinfo.Type, views: string[], impls: parser.ImplInfo[], 
 }
 
 function record_entry(t: typeinfo.Type, r: typeinfo.TypeStruct, s: State, out: Schemas): Schemas {
-  var sig: checker.StructSig = record_schema(r.name, s);
-  if (sig.name.len() == 0 || r.args.len() > 0) {
+  var sig: checker.StructSig = record_sig(t, s);
+  if (sig.name.len() == 0) {
     return Schemas { ...out, ok: false, why: "unsupported record type" };
   }
   if (!fields_resolved(sig)) {
     return Schemas { ...out, ok: false, why: "unresolved record field type" };
   }
-  return Schemas { ...out, records: out.records.append(semrecords.Record { ty: t, fields: fields_of(sig), views: util.index_of_str(s.views, r.name) >= 0 }) };
+  return Schemas { ...out, records: out.records.append(semrecords.Record { ty: t, fields: fields_of(sig), views: type_holds_view(t, s.views, s.impls) }) };
 }
 
 // A union is a declared enum, whose variants it owns, or a struct-union, whose
@@ -6038,7 +6136,7 @@ function dyn_concretes(t: typeinfo.Type, s: State): typeinfo.Type[] {
 }
 
 // The base names of every type the module implements each trait of `t`'s set
-// for.
+// for, an impl for `str` named `string` as the receiver it is keyed by.
 function dyn_impl_names(t: typeinfo.Type, impls: parser.ImplInfo[]): string[] {
   var out: string[] = [];
   var traits: string[] = parser.dyn_trait_set(typeinfo.spelling(t));
@@ -6046,7 +6144,7 @@ function dyn_impl_names(t: typeinfo.Type, impls: parser.ImplInfo[]): string[] {
     return out;
   }
   for imp in impls {
-    var n: string = util.base_type_name(imp.impl_type);
+    var n: string = parser.receiver_base(imp.impl_type);
     if (parser.impl_trait_key(imp) != util.base_type_name(traits[0]) || util.index_of_str(out, n) >= 0) {
       continue;
     }
@@ -6127,7 +6225,7 @@ function shadowed_builtins(mod: parser.Module): string[] {
 // any_implementer reports whether some type implements every trait of a dyn set.
 function any_implementer(impls: parser.ImplInfo[], traits: string[]): boolean {
   for imp in impls {
-    if (implements_traits(impls, util.base_type_name(imp.impl_type), traits)) {
+    if (implements_traits(impls, parser.receiver_base(imp.impl_type), traits)) {
       return true;
     }
   }
@@ -6138,7 +6236,7 @@ function implements_traits(impls: parser.ImplInfo[], n: string, traits: string[]
   for tr in traits {
     var found: boolean = false;
     for imp in impls {
-      if (implements_trait(imp, tr) && util.base_type_name(imp.impl_type) == n) {
+      if (implements_trait(imp, tr) && parser.receiver_base(imp.impl_type) == n) {
         found = true;
       }
     }
@@ -6401,7 +6499,7 @@ function contract(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.C
   var generic: boolean = generic_decl(fd);
   var at: i32 = 0;
   while (at < names.len()) {
-    var ty: typeinfo.Type = resolved(checker.scope_type(scope, names[at]), generic, ssasem.unbound());
+    var ty: typeinfo.Type = resolved(checker.scope_type(scope, names[at]), generic, ssasem.unbound(), scope);
     if (at == 0 && is_closure_body(fd)) {
       ty = env_type(fd, scope, generic, ssasem.unbound(), decl_key(fd));
     }

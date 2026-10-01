@@ -8816,8 +8816,8 @@ function callgate_undefined_error(g: CallGate, where: string, name: string, line
   var out: string = where + ": call to undefined function '" + name + "'";
   var ns: string = callgate_module_ns(name, g.names, g.known);
   if (ns.len() > 0) {
-    out = out + " — no module '" + ns + "' was loaded (an import that resolves to no"
-      + " file is skipped, so every call into it dangles)";
+    out = out + " — no module '" + ns + "' was loaded (a std/ or core/ import is"
+      + " skipped when no stdlib was given, so every call into it dangles)";
   }
   return util.Diag { code: "E001", message: out, line: line, col: col };
 }

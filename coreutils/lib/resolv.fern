@@ -4,32 +4,29 @@
 // line of /etc/nsswitch.conf names the sources in order — `files`
 // (/etc/hosts) and `dns` (the nameservers of /etc/resolv.conf, walked
 // with its search list) — and the first AF_INET answer wins. This module
-// is that lookup, written on the runtime that exists: `read_file` for the
-// three files and the tcp builtins for the DNS leg. hostid(1) is the
-// consumer today; `hostname`, `uname` and `who` reach for the same pieces.
+// is that walk; the two sources are std/dns, which reads the files and
+// speaks RFC 1035. hostid(1) is the consumer today; `who --lookup`
+// reaches for the canonical-name walk beside it.
 //
 // An address is carried as the in_addr WORD: the four octets in memory
 // order read as a little-endian integer, `a | b<<8 | c<<16 | d<<24`. That
 // is the form `tcp_connect` takes and the one gethostid shifts.
 //
 // Where this differs from glibc, and why (docs/COREUTILS.md):
-//   - DNS goes over TCP. glibc asks over UDP first and retries over TCP
-//     only on a truncated reply; Fern has no UDP receive, and RFC 1035
-//     obliges every nameserver to answer the same query over TCP, so the
-//     A records are the same. A resolver that refuses TCP altogether is
-//     the one host this diverges on.
 //   - Only `files` and `dns` are implemented. Any other source on the
 //     hosts line (mdns4_minimal, myhostname, resolve, …) reports UNAVAIL,
 //     as glibc does for a source with no module installed.
-//   - RES_OPTIONS, LOCALDOMAIN and HOSTALIASES are not read, and a
-//     nameserver given as an IPv6 address is skipped.
+//   - What std/dns does not read, this does not either: RES_OPTIONS,
+//     LOCALDOMAIN and HOSTALIASES, and a nameserver with an IPv6 zone.
 import "std/string";
 import "std/array";
+import "std/net";
+import "std/dns";
 
 // ---- statuses ---------------------------------------------------------------
 //
 // What a source says about a name, in glibc's vocabulary. Every lookup
-// below returns one of these beside its address.
+// below returns one of these beside its answer.
 pub function success(): i32 {
   return 0;
 }
@@ -42,16 +39,21 @@ pub function unavail(): i32 {
   return 2;
 }
 
-// Two statuses the DNS leg uses internally and never lets escape, because
-// glibc's search loop reacts to each differently: a SERVFAIL rcode moves on
-// to the next candidate, a refused connection abandons the search outright,
-// and a timeout stops the candidates but still tries the bare name.
-pub function servfail(): i32 {
-  return 3;
-}
-
-pub function refused(): i32 {
-  return 4;
+// A DNS failure as NSS reports it: a name the servers do not know, or
+// know no address for, is NOTFOUND; everything else is UNAVAIL.
+function nss_status(e: dns.DnsError): i32 {
+  match (e) {
+    NoSuchName => {
+      return notfound();
+    },
+    NoData => {
+      return notfound();
+    },
+    _ => {
+      return unavail();
+    }
+  }
+  return unavail();
 }
 
 // ---- addresses --------------------------------------------------------------
@@ -60,81 +62,20 @@ pub function ipv4_word(a: i32, b: i32, c: i32, d: i32): i32 {
   return a & 255 | (b & 255) << 8 | (c & 255) << 16 | (d & 255) << 24;
 }
 
-// `parse_ipv4(s)` — the in_addr word of a dotted quad, or None for
-// anything else, an IPv6 address included.
-pub function parse_ipv4(s: string): Option[i32] {
-  var octets: i32[] = [];
-  var cur: i32 = 0;
-  var digits: i32 = 0;
+// The in_addr word of the first IPv4 address among `xs`, which is the
+// first AF_INET answer gethostid takes.
+function first_v4_word(xs: net.IpAddr[]): Option[i32] {
   var i: i32 = 0;
-  while (i < s.len()) {
-    var ch: i32 = s[i] as i32;
-    if (ch == 46) {
-      if (digits == 0) {
-        return None;
-      }
-      octets = octets.append(cur);
-      cur = 0;
-      digits = 0;
-    } else if (ch >= 48 && ch <= 57) {
-      cur = cur * 10 + (ch - 48);
-      digits = digits + 1;
-      if (cur > 255 || digits > 3) {
-        return None;
-      }
-    } else {
-      return None;
-    }
-    i = i + 1;
-  }
-  if (digits == 0) {
-    return None;
-  }
-  octets = octets.append(cur);
-  if (octets.len() != 4) {
-    return None;
-  }
-  return Some(ipv4_word(octets[0], octets[1], octets[2], octets[3]));
-}
-
-// ---- /etc/hosts -------------------------------------------------------------
-// `hosts_lookup(contents, name)` — the first line of an /etc/hosts file
-// whose address is IPv4 and whose canonical name or any alias is `name`,
-// compared without regard to ASCII case, as glibc's files backend does.
-// `#` starts a comment; a line that is not an address followed by names
-// is skipped, which is what happens to the IPv6 lines.
-pub function hosts_lookup(contents: string, name: string): Option[i32] {
-  var lines: string[] = contents.lines();
-  var i: i32 = 0;
-  while (i < lines.len()) {
-    var f: string[] = strip_comment(lines[i]).fields();
-    i = i + 1;
-    if (f.len() < 2) {
-      continue;
-    }
-    match (parse_ipv4(f[0])) {
-      Some(addr) => {
-        var j: i32 = 1;
-        while (j < f.len()) {
-          if (f[j].eq_ignore_ascii_case(name)) {
-            return Some(addr);
-          }
-          j = j + 1;
-        }
+  while (i < xs.len()) {
+    match (xs[i].packed_v4()) {
+      Some(w) => {
+        return Some(w);
       },
       None => {}
     }
+    i = i + 1;
   }
   return None;
-}
-
-// The line up to its `#`, if any.
-function strip_comment(line: string): string {
-  var h: i32 = line.index_of("#");
-  if (h < 0) {
-    return line;
-  }
-  return slice_unchecked(line, 0, h) + "";
 }
 
 // ---- /etc/nsswitch.conf -----------------------------------------------------
@@ -170,6 +111,15 @@ pub function nsswitch_hosts(contents: string): Source[] {
     return parse_sources(slice_unchecked(line, 6, line.len()) + "");
   }
   return default_sources();
+}
+
+// The line up to its `#`, if any.
+function strip_comment(line: string): string {
+  var h: i32 = line.index_of("#");
+  if (h < 0) {
+    return line;
+  }
+  return slice_unchecked(line, 0, h) + "";
 }
 
 // The tokens after `hosts:`: a bare word is a source, and a bracketed
@@ -249,479 +199,22 @@ pub function (s: Source) stops(status: i32): boolean {
   return s.unavail_return;
 }
 
-// ---- /etc/resolv.conf -------------------------------------------------------
-// `ResolvConf` — what the DNS leg reads off resolv.conf: the nameservers
-// (in_addr words, at most three as glibc keeps), the search list, and
-// `ndots`.
-pub struct ResolvConf { nameservers: i32[], search: string[], ndots: i32 }
-
-// `parse_resolv_conf(contents, host)` — glibc's res_init over the file.
-// `host` is the machine's own name, whose domain part is the search list
-// when the file names none; no `nameserver` means 127.0.0.1. `#` and `;`
-// start comments. `domain` and `search` each replace the list, so the
-// last one wins.
-pub function parse_resolv_conf(contents: string, host: string): ResolvConf {
-  var ns: i32[] = [];
-  var search: string[] = [];
-  var have_search: boolean = false;
-  var ndots: i32 = 1;
-  var lines: string[] = contents.lines();
-  var i: i32 = 0;
-  while (i < lines.len()) {
-    var f: string[] = strip_resolv_comment(lines[i]).fields();
-    i = i + 1;
-    if (f.len() < 2) {
-      continue;
-    }
-    if (f[0] == "nameserver") {
-      match (parse_ipv4(f[1])) {
-        Some(a) => {
-          if (ns.len() < 3) {
-            ns = ns.append(a);
-          }
-        },
-        None => {}
-      }
-    } else if (f[0] == "domain" || f[0] == "search") {
-      have_search = true;
-      search = search_domains(f);
-    } else if (f[0] == "options") {
-      ndots = options_ndots(f, ndots);
+// The `hosts:` line of this machine's nsswitch.conf, or the default.
+function system_sources(): Source[] {
+  match (read_file("/etc/nsswitch.conf")) {
+    Ok(c) => {
+      return nsswitch_hosts(c);
+    },
+    Err(_) => {
+      return default_sources();
     }
   }
-  if (!have_search) {
-    search = host_domain(host);
-  }
-  if (ns.len() == 0) {
-    ns = ns.append(ipv4_word(127, 0, 0, 1));
-  }
-  return ResolvConf { nameservers: ns, search: search, ndots: ndots };
+  return default_sources();
 }
 
-function strip_resolv_comment(line: string): string {
-  var s: string = strip_comment(line);
-  var h: i32 = s.index_of(";");
-  if (h < 0) {
-    return s;
-  }
-  return slice_unchecked(s, 0, h) + "";
-}
-
-// The domains of a `search` or `domain` line: `domain` takes one, `search`
-// takes all; a trailing dot is dropped and an entry that is only a dot is
-// the root and contributes nothing.
-function search_domains(f: string[]): string[] {
-  var out: string[] = [];
-  var n: i32 = f.len();
-  if (f[0] == "domain") {
-    n = 2;
-  }
-  var i: i32 = 1;
-  while (i < n) {
-    var d: string = f[i];
-    if (d.ends_with(".")) {
-      d = slice_unchecked(d, 0, d.len() - 1) + "";
-    }
-    if (d.len() > 0) {
-      out = out.append(d);
-    }
-    i = i + 1;
-  }
-  return out;
-}
-
-// `ndots:N` on an `options` line, capped at 15 as glibc caps it.
-function options_ndots(f: string[], current: i32): i32 {
-  var v: i32 = current;
-  var i: i32 = 1;
-  while (i < f.len()) {
-    if (f[i].starts_with("ndots:")) {
-      match ((slice_unchecked(f[i], 6, f[i].len()) + "").parse_int()) {
-        Some(n) => {
-          v = n;
-          if (v > 15) {
-            v = 15;
-          }
-          if (v < 0) {
-            v = 0;
-          }
-        },
-        None => {}
-      }
-    }
-    i = i + 1;
-  }
-  return v;
-}
-
-// The search list glibc derives from the local hostname: everything after
-// its first dot, or nothing.
-function host_domain(host: string): string[] {
-  var out: string[] = [];
-  var dot: i32 = host.index_of(".");
-  if (dot < 0 || dot + 1 >= host.len()) {
-    return out;
-  }
-  return out.append(slice_unchecked(host, dot + 1, host.len()) + "");
-}
-
-// `SearchPlan` — the three pieces __res_context_search works in, which
-// are NOT interchangeable with a flat candidate list. `as_is` is the name
-// as it stands, `suffixes` the search-list names, and `leads` says whether
-// the as-is query runs BEFORE the suffixes (glibc's `tried_as_is`) or is
-// the retry after them. Which of the two it is decides both whether that
-// retry happens at all and whose status is reported, so a search cannot
-// be driven from the order alone.
-pub struct SearchPlan { as_is: string, suffixes: string[], leads: boolean }
-
-// `search_plan(name, rc)` — res_search's plan for `name`. A name ending
-// in a dot is asked for as it stands and nothing else. Otherwise a name
-// with at least `ndots` dots leads with the as-is query and then tries
-// each search domain; one with fewer tries the search domains first and
-// the as-is name after them.
-pub function search_plan(name: string, rc: ResolvConf): SearchPlan {
-  var none: string[] = [];
-  if (name.ends_with(".")) {
-    return SearchPlan { as_is: slice_unchecked(name, 0, name.len() - 1) + "", suffixes: none, leads: true };
-  }
-  var dots: i32 = 0;
-  var i: i32 = 0;
-  while (i < name.len()) {
-    if (name[i] == 46) {
-      dots = dots + 1;
-    }
-    i = i + 1;
-  }
-  var sfx: string[] = [];
-  var j: i32 = 0;
-  while (j < rc.search.len()) {
-    sfx = sfx.append(name + "." + rc.search[j]);
-    j = j + 1;
-  }
-  return SearchPlan { as_is: name, suffixes: sfx, leads: dots >= rc.ndots };
-}
-
-// `search_candidates(name, rc)` — the plan flattened into the order the
-// names are asked in, for reading and for the order test.
-pub function search_candidates(name: string, rc: ResolvConf): string[] {
-  var p: SearchPlan = search_plan(name, rc);
-  var out: string[] = [];
-  if (p.leads) {
-    out = out.append(p.as_is);
-  }
-  var j: i32 = 0;
-  while (j < p.suffixes.len()) {
-    out = out.append(p.suffixes[j]);
-    j = j + 1;
-  }
-  if (!p.leads) {
-    out = out.append(p.as_is);
-  }
-  return out;
-}
-
-// ---- DNS, RFC 1035 ----------------------------------------------------------
-// `dns_query_a(id, name)` — a recursion-desired query for the A records of
-// `name`, without the two-byte length TCP prefixes. A label that is empty
-// or longer than 63 bytes cannot be encoded, so the query is empty.
-pub function dns_query_a(id: i32, name: string): u8[] {
-  var q: u8[] = [];
-  q = put16(q, id);
-  q = put16(q, 256);  // RD
-  q = put16(q, 1);  // QDCOUNT
-  q = put16(q, 0);
-  q = put16(q, 0);
-  q = put16(q, 0);
-  var labels: string[] = name.split(".");
-  var i: i32 = 0;
-  while (i < labels.len()) {
-    var l: string = labels[i];
-    if (l.len() == 0 || l.len() > 63) {
-      var none: u8[] = [];
-      return none;
-    }
-    q = q.append(l.len() as u8);
-    var j: i32 = 0;
-    while (j < l.len()) {
-      q = q.append(l[j]);
-      j = j + 1;
-    }
-    i = i + 1;
-  }
-  q = q.append(0 as u8);
-  q = put16(q, 1);  // QTYPE A
-  q = put16(q, 1);  // QCLASS IN
-  return q;
-}
-
-function put16(b: u8[], v: i32): u8[] {
-  var out: u8[] = b.append((v >> 8 & 255) as u8);
-  return out.append((v & 255) as u8);
-}
-
-function be16(m: u8[], i: i32): i32 {
-  return m[i] as i32 << 8 | m[i + 1] as i32;
-}
-
-// The offset past the name at `pos`: labels up to a zero, or a
-// compression pointer, which is two bytes wherever it points. Past the end
-// of the message the answer is the message length, which every caller
-// then finds too short.
-function skip_name(m: u8[], pos: i32): i32 {
-  var p: i32 = pos;
-  while (p < m.len()) {
-    var l: i32 = m[p] as i32;
-    if (l == 0) {
-      return p + 1;
-    }
-    if ((l & 192) == 192) {
-      return p + 2;
-    }
-    p = p + 1 + l;
-  }
-  return m.len();
-}
-
-// `dns_answer_a(msg, id)` — the first A record in a response, as
-// (status, word). A response that is not a reply to `id`, is malformed,
-// or carries an error other than NXDOMAIN is UNAVAIL — the server is
-// tried no further, the next one is; NXDOMAIN and a clean answer with no
-// A record are both NOTFOUND, which lets the search list go on.
-pub function dns_answer_a(msg: u8[], id: i32): (i32, i32) {
-  var head: i32 = header_status(msg, id);
-  if (head != success()) {
-    return (head, 0);
-  }
-  var pos: i32 = 12;
-  var qd: i32 = be16(msg, 4);
-  while (qd > 0) {
-    pos = skip_name(msg, pos) + 4;
-    qd = qd - 1;
-  }
-  var an: i32 = be16(msg, 6);
-  while (an > 0) {
-    pos = skip_name(msg, pos);
-    if (pos + 10 > msg.len()) {
-      return (unavail(), 0);
-    }
-    var ty: i32 = be16(msg, pos);
-    var cls: i32 = be16(msg, pos + 2);
-    var rdlen: i32 = be16(msg, pos + 8);
-    pos = pos + 10;
-    if (pos + rdlen > msg.len()) {
-      return (unavail(), 0);
-    }
-    if (ty == 1 && cls == 1 && rdlen == 4) {
-      return (success(), ipv4_word(msg[pos] as i32, msg[pos + 1] as i32, msg[pos + 2] as i32, msg[pos + 3] as i32));
-    }
-    pos = pos + rdlen;
-    an = an - 1;
-  }
-  return (notfound(), 0);
-}
-
-// The reply's header as an NSS status. A response that is not a reply
-// to `id`, is malformed, or carries an error other than NXDOMAIN is
-// UNAVAIL — the server is tried no further, the next one is; NXDOMAIN is
-// NOTFOUND, which lets the search list go on.
-function header_status(msg: u8[], id: i32): i32 {
-  if (msg.len() < 12 || be16(msg, 0) != id) {
-    return unavail();
-  }
-  var flags: i32 = be16(msg, 2);
-  if ((flags & 32768) == 0) {
-    return unavail();
-  }
-  var rcode: i32 = flags & 15;
-  if (rcode == 3) {
-    return notfound();
-  }
-  if (rcode == 2) {
-    return servfail();
-  }
-  if (rcode != 0) {
-    return unavail();
-  }
-  return success();
-}
-
-// One query to one nameserver over TCP: the message behind a two-byte
-// big-endian length, the reply read until its own length prefix is
-// satisfied. Anything short of a whole reply is UNAVAIL.
-function dns_exchange(ns: i32, qname: string): (i32, i32) {
-  var id: i32 = random_i32() & 65535;
-  var q: u8[] = dns_query_a(id, qname);
-  if (q.len() == 0) {
-    return (notfound(), 0);
-  }
-  var r: (i32, u8[]) = dns_exchange_raw(ns, q);
-  if (r.0 != success()) {
-    return (r.0, 0);
-  }
-  return dns_answer_a(r.1, id);
-}
-
-// The reply to one query from one nameserver, as (status, message): a
-// refused connection is REFUSED, anything short of a whole reply is
-// UNAVAIL, and the bytes come back under SUCCESS for the caller to read
-// as an address or as a name.
-function dns_exchange_raw(ns: i32, q: u8[]): (i32, u8[]) {
-  var none: u8[] = [];
-  var framed: u8[] = [];
-  framed = put16(framed, q.len());
-  framed = framed.concat(q);
-  var c: i32 = tcp_connect(ns, 53);
-  if (c < 0) {
-    return (refused(), none);
-  }
-  if (tcp_send(c, string_from_bytes_unchecked(framed)) < 0) {
-    tcp_close(c);
-    return (unavail(), none);
-  }
-  var reply: u8[] = read_framed(c);
-  tcp_close(c);
-  if (reply.len() == 0) {
-    return (unavail(), none);
-  }
-  return (success(), reply);
-}
-
-// The reply body, once its length prefix says it is all there; empty when
-// the peer closes first.
-function read_framed(c: i32): u8[] {
-  var buf: u8[] = [];
-  var want: i32 = -1;
-  while (want < 0 || buf.len() < want) {
-    var chunk: u8[] = tcp_recv(c, 4096);
-    if (chunk.len() == 0) {
-      break;
-    }
-    buf = buf.concat(chunk);
-    if (want < 0 && buf.len() >= 2) {
-      want = 2 + be16(buf, 0);
-    }
-  }
-  var none: u8[] = [];
-  if (want < 2 || buf.len() < want) {
-    return none;
-  }
-  return buf.drop(2).take(want - 2);
-}
-
-// `dns_lookup(rc, name)` — glibc's res_search over the nameservers: each
-// name is put to the servers in order until one answers, and an address
-// from any server ends the search.
-pub function dns_lookup(rc: ResolvConf, name: string): (i32, i32) {
-  return dns_search(search_plan(name, rc), 0, (q: string): (i32, i32) => dns_lookup_one(rc, q));
-}
-
-// `dns_search(plan, ask)` — __res_context_search over an `ask` that
-// answers one name. Separated from the nameserver so it can be driven
-// with scripted answers: WHICH name is asked next is as much of the
-// behaviour as what comes back, and only a stub can see that.
-//
-// The as-is query is not one candidate among the others, and treating it
-// as one gets two things wrong. It sits OUTSIDE the loop's stop rules —
-// however it fails, the search list is still tried — and its status is
-// SAVED and reported in preference to anything the suffixes produce, so
-// an as-is NXDOMAIN reports NOTFOUND even when a later suffix hit a
-// SERVFAIL. When it leads, there is no retry afterwards; when it trails,
-// it is the retry, and it runs whether the suffix loop finished or was
-// cut short.
-//
-// Inside the suffix loop, three failures read differently:
-//
-//   - a SERVFAIL rcode records itself and moves to the NEXT suffix, so
-//     one broken zone does not hide a name a later suffix would reach;
-//   - a refused connection returns at once, before any saved status is
-//     consulted, and nothing further is asked;
-//   - NXDOMAIN moves on; anything else — a timeout, a malformed reply —
-//     ends the loop.
-//
-// Only an address escapes as SUCCESS. The failures collapse to the three
-// NSS statuses, a recorded SERVFAIL reporting as UNAVAIL the way glibc
-// reports its TRY_AGAIN.
-pub function dns_search[T](plan: SearchPlan, zero: T, ask: (string) => (i32, T)): (i32, T) {
-  var saved: i32 = 0 - 1;
-  if (plan.leads) {
-    var lead: (i32, T) = ask(plan.as_is);
-    if (lead.0 == success()) {
-      return lead;
-    }
-    saved = lead.0;
-  }
-  var got_servfail: boolean = false;
-  var last: i32 = notfound();
-  var i: i32 = 0;
-  while (i < plan.suffixes.len()) {
-    var r: (i32, T) = ask(plan.suffixes[i]);
-    if (r.0 == success()) {
-      return r;
-    }
-    if (r.0 == refused()) {
-      return (unavail(), zero);
-    }
-    if (r.0 == servfail()) {
-      got_servfail = true;
-    } else {
-      last = r.0;
-      if (r.0 != notfound()) {
-        i = plan.suffixes.len();
-      }
-    }
-    i = i + 1;
-  }
-  if (!plan.leads) {
-    var bare: (i32, T) = ask(plan.as_is);
-    if (bare.0 == success()) {
-      return bare;
-    }
-    last = bare.0;
-  }
-  if (saved >= 0) {
-    return (nss_status(saved), zero);
-  }
-  if (got_servfail) {
-    return (unavail(), zero);
-  }
-  return (nss_status(last), zero);
-}
-
-// The DNS leg's two extra statuses collapsed back to the three NSS ones.
-function nss_status(s: i32): i32 {
-  if (s == success() || s == notfound()) {
-    return s;
-  }
-  return unavail();
-}
-
-// One candidate against every nameserver in order. A server that answers
-// anything at all — an address, NXDOMAIN, SERVFAIL — settles the candidate;
-// only a server that could not be reached or did not reply moves to the
-// next. Every server exhausted is the timeout case, not the refused one,
-// unless every one of them refused the connection.
-function dns_lookup_one(rc: ResolvConf, qname: string): (i32, i32) {
-  var all_refused: boolean = true;
-  var j: i32 = 0;
-  while (j < rc.nameservers.len()) {
-    var r: (i32, i32) = dns_exchange(rc.nameservers[j], qname);
-    if (r.0 != unavail() && r.0 != refused()) {
-      return r;
-    }
-    if (r.0 != refused()) {
-      all_refused = false;
-    }
-    j = j + 1;
-  }
-  if (all_refused && rc.nameservers.len() > 0) {
-    return (refused(), 0);
-  }
-  return (unavail(), 0);
-}
-
-// ---- the lookup -------------------------------------------------------------
-// `lookup(name, sources)` — the NSS walk: each source in turn, stopping on
-// the first address or on a status the source's actions make final.
+// ---- the lookups --------------------------------------------------------------
+// `lookup(name, sources)` — the NSS walk for an IPv4 address: each source
+// in turn until one answers or one's action ends the walk.
 pub function lookup(name: string, sources: Source[]): Option[i32] {
   var i: i32 = 0;
   while (i < sources.len()) {
@@ -738,68 +231,75 @@ pub function lookup(name: string, sources: Source[]): Option[i32] {
   return None;
 }
 
-// One source's answer. A source this module does not implement is
-// UNAVAIL, as a source whose module is not installed is to glibc.
+// The `files` source is the hosts file's first IPv4 address for the
+// name, UNAVAIL when the file cannot be read; the `dns` source the first
+// A record res_search finds.
 function lookup_source(src: string, name: string): (i32, i32) {
   if (src == "files") {
-    match (read_file("/etc/hosts")) {
-      Ok(c) => {
-        match (hosts_lookup(c, name)) {
-          Some(a) => {
-            return (success(), a);
-          },
-          None => {
-            return (notfound(), 0);
-          }
-        }
-      },
-      Err(_) => {
-        return (unavail(), 0);
-      }
-    }
+    return files_lookup(name);
   }
   if (src == "dns") {
-    var contents: string = "";
-    match (read_file("/etc/resolv.conf")) {
-      Ok(c) => {
-        contents = c;
-      },
-      Err(_) => {}
-    }
-    return dns_lookup(parse_resolv_conf(contents, hostname()), name);
+    return dns_lookup(name);
   }
   return (unavail(), 0);
 }
 
-// ---- canonical names --------------------------------------------------------
-// `canon_host(name)` — the name `name` answers to, as
-// `getaddrinfo(name, AI_CANONNAME)` reports it. `who --lookup` prints
-// this in place of what the session recorded.
-//
-// It is the same NSS walk `resolve` makes, carrying a NAME rather than
-// an address: the files backend answers with the first name on the
-// matching line, so an alias resolves to its canonical name, and the DNS
-// backend answers with the owner of the A record, which is the end of
-// the CNAME chain. A name that resolves to nothing has no canonical form
-// and the caller keeps what it had.
-//
-// A numeric address is not looked up at all — getaddrinfo parses it and
-// reports it back — which is why an address in a utmp record survives
-// --lookup unchanged.
+function files_lookup(name: string): (i32, i32) {
+  match (read_file("/etc/hosts")) {
+    Ok(c) => {
+      return found_word(first_v4_word(dns.hosts_lookup(dns.parse_hosts(c), name)));
+    },
+    Err(_) => {
+      return (unavail(), 0);
+    }
+  }
+  return (unavail(), 0);
+}
+
+function dns_lookup(name: string): (i32, i32) {
+  match (dns.lookup_a(dns.system_conf(), name)) {
+    Ok(xs) => {
+      return found_word(first_v4_word(xs));
+    },
+    Err(e) => {
+      return (nss_status(e), 0);
+    }
+  }
+  return (unavail(), 0);
+}
+
+// SUCCESS with the word, or NOTFOUND.
+function found_word(w: Option[i32]): (i32, i32) {
+  match (w) {
+    Some(v) => {
+      return (success(), v);
+    },
+    None => {
+      return (notfound(), 0);
+    }
+  }
+  return (notfound(), 0);
+}
+
+// `resolve(name)` — gethostid's lookup of `name`: the in_addr word of its
+// first IPv4 address through this machine's `hosts:` sources.
+pub function resolve(name: string): Option[i32] {
+  return lookup(name, system_sources());
+}
+
+// `canon_host(name)` — getaddrinfo's AI_CANONNAME for `name` over the
+// same walk, for `who --lookup`: an address literal is its own canonical
+// name; the files backend answers the first name of the first hosts line
+// naming it, of either address family; the dns backend the owner of the
+// A record at the end of the CNAME chain.
 pub function canon_host(name: string): Option[string] {
-  match (parse_ipv4(name)) {
+  match (net.ip_parse(name)) {
     Some(_) => {
       return Some(name);
     },
     None => {}
   }
-  var sources: Source[] = default_sources();
-  match (read_file("/etc/nsswitch.conf")) {
-    Ok(c) => {
-      sources = nsswitch_hosts(c);
-    },
-    Err(_) => {}
-  }
+  var sources: Source[] = system_sources();
   var i: i32 = 0;
   while (i < sources.len()) {
     var s: Source = sources[i];
@@ -819,7 +319,7 @@ function canon_source(src: string, name: string): (i32, string) {
   if (src == "files") {
     match (read_file("/etc/hosts")) {
       Ok(c) => {
-        match (hosts_canon(c, name)) {
+        match (dns.hosts_canonical(dns.parse_hosts(c), name)) {
           Some(n) => {
             return (success(), n);
           },
@@ -834,184 +334,14 @@ function canon_source(src: string, name: string): (i32, string) {
     }
   }
   if (src == "dns") {
-    var contents: string = "";
-    match (read_file("/etc/resolv.conf")) {
-      Ok(c) => {
-        contents = c;
+    match (dns.canonical_name(dns.system_conf(), name)) {
+      Ok(n) => {
+        return (success(), n);
       },
-      Err(_) => {}
+      Err(e) => {
+        return (nss_status(e), "");
+      }
     }
-    var rc: ResolvConf = parse_resolv_conf(contents, hostname());
-    return dns_search(search_plan(name, rc), "", (q: string): (i32, string) => dns_canon_one(rc, q));
   }
   return (unavail(), "");
-}
-
-// `hosts_canon(contents, name)` — the CANONICAL name of the first
-// /etc/hosts line that names `name`, which is the first name on that
-// line however far along the line the match was. Unlike an address
-// lookup this accepts a line of any address family: getaddrinfo is
-// asked without one, so the `::1` line names `ip6-localhost` for the
-// aliases beside it.
-pub function hosts_canon(contents: string, name: string): Option[string] {
-  var lines: string[] = contents.lines();
-  var i: i32 = 0;
-  while (i < lines.len()) {
-    var f: string[] = strip_comment(lines[i]).fields();
-    i = i + 1;
-    if (f.len() < 2 || !is_address(f[0])) {
-      continue;
-    }
-    var j: i32 = 1;
-    while (j < f.len()) {
-      if (f[j].eq_ignore_ascii_case(name)) {
-        return Some(f[1]);
-      }
-      j = j + 1;
-    }
-  }
-  return None;
-}
-
-// Whether a field is the address a hosts line opens with: a dotted quad,
-// or anything holding a colon, which is the IPv6 form and the only other
-// thing that may stand there.
-function is_address(f: string): boolean {
-  match (parse_ipv4(f)) {
-    Some(_) => {
-      return true;
-    },
-    None => {}
-  }
-  return f.index_of(":") >= 0;
-}
-
-// One canonical-name query against every nameserver in order, the same
-// way `dns_lookup_one` asks for an address.
-function dns_canon_one(rc: ResolvConf, qname: string): (i32, string) {
-  var all_refused: boolean = true;
-  var j: i32 = 0;
-  while (j < rc.nameservers.len()) {
-    var r: (i32, string) = dns_canon_exchange(rc.nameservers[j], qname);
-    if (r.0 != unavail() && r.0 != refused()) {
-      return r;
-    }
-    if (r.0 != refused()) {
-      all_refused = false;
-    }
-    j = j + 1;
-  }
-  if (all_refused && rc.nameservers.len() > 0) {
-    return (refused(), "");
-  }
-  return (unavail(), "");
-}
-
-function dns_canon_exchange(ns: i32, qname: string): (i32, string) {
-  var id: i32 = random_i32() & 65535;
-  var q: u8[] = dns_query_a(id, qname);
-  if (q.len() == 0) {
-    return (notfound(), "");
-  }
-  var r: (i32, u8[]) = dns_exchange_raw(ns, q);
-  if (r.0 != success()) {
-    return (r.0, "");
-  }
-  return dns_answer_canon(r.1, id, qname);
-}
-
-// `dns_answer_canon(msg, id, qname)` — the owner name of the first A
-// record the answer reaches from `qname`, following the CNAME chain the
-// way a resolver builds `h_name`. The statuses are `dns_answer_a`'s.
-pub function dns_answer_canon(msg: u8[], id: i32, qname: string): (i32, string) {
-  var head: i32 = header_status(msg, id);
-  if (head != success()) {
-    return (head, "");
-  }
-  var pos: i32 = 12;
-  var qd: i32 = be16(msg, 4);
-  while (qd > 0) {
-    pos = skip_name(msg, pos) + 4;
-    qd = qd - 1;
-  }
-  var cur: string = qname;
-  var an: i32 = be16(msg, 6);
-  while (an > 0) {
-    var owner: (string, i32) = read_name(msg, pos, 0);
-    pos = owner.1;
-    if (pos + 10 > msg.len()) {
-      return (unavail(), "");
-    }
-    var ty: i32 = be16(msg, pos);
-    var cls: i32 = be16(msg, pos + 2);
-    var rdlen: i32 = be16(msg, pos + 8);
-    pos = pos + 10;
-    if (pos + rdlen > msg.len()) {
-      return (unavail(), "");
-    }
-    if (cls == 1 && owner.0.eq_ignore_ascii_case(cur)) {
-      if (ty == 5) {
-        cur = read_name(msg, pos, 0).0;
-      } else if (ty == 1) {
-        return (success(), cur);
-      }
-    }
-    pos = pos + rdlen;
-    an = an - 1;
-  }
-  return (notfound(), "");
-}
-
-// A domain name at `pos`, labels joined by dots and the root written as
-// the empty string. A compression pointer is followed, bounded by a
-// depth so a message pointing at itself ends rather than spins.
-function read_name(msg: u8[], pos: i32, depth: i32): (string, i32) {
-  var out: string = "";
-  var p: i32 = pos;
-  while (p < msg.len()) {
-    var l: i32 = msg[p] as i32;
-    if (l == 0) {
-      return (out, p + 1);
-    }
-    if ((l & 192) == 192) {
-      if (p + 1 >= msg.len() || depth > 8) {
-        return (out, p + 2);
-      }
-      var target: i32 = (l & 63) << 8 | msg[p + 1] as i32;
-      var rest: string = read_name(msg, target, depth + 1).0;
-      if (out.len() > 0 && rest.len() > 0) {
-        out = out + ".";
-      }
-      return (out + rest, p + 2);
-    }
-    if (p + 1 + l > msg.len()) {
-      return (out, msg.len());
-    }
-    if (out.len() > 0) {
-      out = out + ".";
-    }
-    var label: u8[] = [];
-    var k: i32 = 0;
-    while (k < l) {
-      label = label.append(msg[p + 1 + k]);
-      k = k + 1;
-    }
-    out = out + string_from_bytes_unchecked(label);
-    p = p + 1 + l;
-  }
-  return (out, msg.len());
-}
-
-// `resolve(name)` — the IPv4 address of `name` as gethostbyname would
-// find it on this machine, through /etc/nsswitch.conf, /etc/hosts and
-// /etc/resolv.conf.
-pub function resolve(name: string): Option[i32] {
-  var sources: Source[] = default_sources();
-  match (read_file("/etc/nsswitch.conf")) {
-    Ok(c) => {
-      sources = nsswitch_hosts(c);
-    },
-    Err(_) => {}
-  }
-  return lookup(name, sources);
 }

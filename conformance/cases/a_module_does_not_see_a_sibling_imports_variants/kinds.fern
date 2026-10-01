@@ -1,0 +1,12 @@
+// An enum whose variant is named like one of the builtin IoError's.
+pub enum Kind {
+    Plain,
+    Other(i32),
+}
+
+pub function code(k: Kind): i32 {
+    match (k) {
+        Plain => { return 0; },
+        Other(n) => { return n; },
+    }
+}
