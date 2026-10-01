@@ -9819,13 +9819,16 @@ function parse_import(p: Par): (Import, ast.Stmt[], Par) {
   var imp_line: i32 = p.peek_line();
   p = p.advance();  // consume `import`
   var path: string = "";
+  var bad: ast.Stmt[] = [];
   var t: lexer.Token = p.peek();
   match (t) {
     lexer.TokString(s) => {
       path = s.value;
       p = p.advance();
     },
-    _ => {}
+    _ => {
+      bad = bad.append(decl_sentinel(p, "malformed import: its path could not be read"));
+    }
   }
   // Optional `as <ident>` alias clause (`import "std/io_buffered" as io`): the
   // alias becomes the qualifier for `io.foo` references; flatten maps it back to
@@ -9833,7 +9836,6 @@ function parse_import(p: Par): (Import, ast.Stmt[], Par) {
   // common, redundant form. `as` is a keyword (peek_keyword, like the cast `x as
   // T`), so it never collides with an identifier.
   var alias: string = "";
-  var bad: ast.Stmt[] = [];
   if (p.peek_keyword() == "as") {
     p = p.advance();  // consume `as`
     alias = p.peek_ident();
@@ -9853,25 +9855,27 @@ function parse_import(p: Par): (Import, ast.Stmt[], Par) {
 // `use` keyword; a leading `pub` is stripped by the caller). It returns
 // an Import flagged `is_reexport` carrying the re-exported names, so the
 // loader pulls in the target module and the bundler can redirect a
-// consumer's `facade.name` to the target's mangled symbol. Malformed
-// input degrades to an empty re-export the caller can recover from.
+// consumer's `facade.name` to the target's mangled symbol. A missing path
+// is reported, and the caller records no import for it.
 function parse_pubuse(p: Par): (Import, ast.Stmt[], Par) {
   var pu_line: i32 = p.peek_line();
   p = p.advance();  // consume `use`
   var path: string = "";
+  var bad: ast.Stmt[] = [];
   var t: lexer.Token = p.peek();
   match (t) {
     lexer.TokString(s) => {
       path = s.value;
       p = p.advance();
     },
-    _ => {}
+    _ => {
+      bad = bad.append(decl_sentinel(p, "malformed re-export: its path could not be read"));
+    }
   }
   if (p.at_path_sep()) {
     p = p.advance();
   }
   var names: string[] = [];
-  var bad: ast.Stmt[] = [];
   if (p.peek_punct() == "{") {
     p = p.advance();
     while (!p.at_end() && p.peek_punct() != "}") {
@@ -26496,7 +26500,9 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
     if (kw == "import") {
       let (ir_imp, ir_bad, ir_p) = parse_import(p);
       p = ir_p;
-      imports = imports.append(ir_imp);
+      if (ir_imp.path.len() > 0) {
+        imports = imports.append(ir_imp);
+      }
       for b in ir_bad {
         top_stmts = top_stmts.append(b);
       }
@@ -26508,7 +26514,9 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
     if (kw == "use") {
       let (ur_imp, ur_bad, ur_p) = parse_pubuse(p);
       p = ur_p;
-      imports = imports.append(ur_imp);
+      if (ur_imp.path.len() > 0) {
+        imports = imports.append(ur_imp);
+      }
       for b in ur_bad {
         top_stmts = top_stmts.append(b);
       }

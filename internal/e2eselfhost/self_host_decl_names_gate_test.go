@@ -82,6 +82,8 @@ func TestSelfHostDeclNamesGate(t *testing.T) {
 		// and a trait name in `impl Trait for Type`. A built-in type name,
 		// itself a keyword, stays legal in type position.
 		{"keyword-impl-trait", "struct A { x: i32 }\nimpl use for A { }\nfunction main(): i32 { return 0; }", true, "malformed impl: its trait name could not be read"},
+		{"pathless-import", "import;\nfunction main(): i32 { return 0; }", true, "malformed import: its path could not be read"},
+		{"pathless-reexport", "pub use;\nfunction main(): i32 { return 0; }", true, "malformed re-export: its path could not be read"},
 		{"primitive-impl-type", "trait T { function f(self: Self): i32; }\nimpl T for i32 { function f(self: i32): i32 { return self; } }\nfunction main(): i32 { return 0; }", false, ""},
 		// A parser sentinel: wasm_run has no checked prologue to report it.
 		{"sentinel", "function main(): i32 { return @; }", true, "parser-side unknown"},
@@ -234,6 +236,7 @@ func TestSelfHostDeclNamesGateRawPathsX86_64(t *testing.T) {
 			{"numeric-struct-name", "struct 123 { x: i32 }\nfunction main(): i32 { return 0; }\n", "malformed struct declaration: its name could not be read (a keyword such as `type` or `match` cannot be a name) (1:1)"},
 			{"keyword-enum", "enum match { A, B }\nfunction main(): i32 { return 0; }\n", "malformed enum declaration: its name could not be read (a keyword such as `type` or `match` cannot be a name) (1:1)"},
 			{"keyword-const", "const use: i32 = 1;\nfunction main(): i32 { return 0; }\n", "malformed const declaration: its name could not be read (a keyword such as `type` or `match` cannot be a name) (1:1)"},
+			{"pathless-import", "import;\nfunction main(): i32 { return 0; }\n", "malformed import: its path could not be read (1:7)"},
 			{"keyword-alias", "type match = i32;\nfunction main(): i32 { return 0; }\n", "malformed type alias declaration: its name could not be read (a keyword such as `type` or `match` cannot be a name) (1:1)"},
 			{"numeric-alias-name", "type 123 = i32;\nfunction main(): i32 { return 0; }\n", "malformed type alias declaration: its name could not be read (a keyword such as `type` or `match` cannot be a name) (1:1)"},
 			// The one sentinel with a native code names it on every driver,
