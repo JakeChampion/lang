@@ -12166,7 +12166,7 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
     ast.ExprSlice(sl) => {
       var source: string = mono_infer(sl.array, env, funcs);
       if (source == "string" || source == "str") {
-        return "str";
+        return "Option[str]";
       }
       var elem: string = array_method_element(source);
       if (elem.len() > 0) {
