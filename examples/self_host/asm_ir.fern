@@ -709,6 +709,33 @@ function capw_class(s: asmcore.EmitState, words: string): asmcore.EmitState {
   return s.write(l.name + ":\n");
 }
 
+// large_class rounds the >=512 KiB byte count in %rax up to its large-tier
+// capacity, native's 3-significant-bit scheme, and leaves the capacity in %rax
+// and its freelist class in %rdx: four classes per power of two, 0 for
+// 512 KiB through 44 for 1 GiB. Alloc and free both derive the class here, so
+// a block returns to the class it was bumped at. Clobbers %rcx.
+function large_class(s: asmcore.EmitState): asmcore.EmitState {
+  var l: asmcore.LabelOut = asmcore.fresh_label(s);
+  s = l.state.write("    cmpq $524288, %rax\n");
+  s = s.write("    jae " + l.name + "\n");
+  s = s.write("    movl $524288, %eax\n");
+  s = s.write(l.name + ":\n");
+  s = s.write("    bsrq %rax, %rcx\n");
+  s = s.write("    subl $2, %ecx\n");
+  s = s.write("    movl $1, %edx\n");
+  s = s.write("    shlq %cl, %rdx\n");  // granule = 1 << (msb - 2)
+  s = s.write("    leaq -1(%rax,%rdx), %rax\n");
+  s = s.write("    negq %rdx\n");
+  s = s.write("    andq %rdx, %rax\n");  // capacity
+  s = s.write("    bsrq %rax, %rcx\n");
+  s = s.write("    subl $2, %ecx\n");
+  s = s.write("    movq %rax, %rdx\n");
+  s = s.write("    shrq %cl, %rdx\n");  // top three bits, 4..7
+  s = s.write("    shlq $2, %rcx\n");
+  s = s.write("    addq %rcx, %rdx\n");
+  return s.write("    subq $72, %rdx\n");  // 4 * (msb - 2) + top - 72
+}
+
 // buf_block_free emits the inline release of one BARE byte block — the string
 // builder's buffer, or its control block — onto the size-class freelist
 // __fern_alloc pops from, `ptr` naming the block and `words` its class. The
@@ -2519,17 +2546,11 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   // recycles blocks <512 KiB exactly; blocks >=512 KiB previously LEAKED (no class),
   // so a long-running emit that frees big per-function analysis arrays exhausted the
   // arena (exit 137) — the self-host runtime lagging the native two-tier design. This
-  // array is the large tier: LINEAR 512-KiB classes, class = round_up(size, 512 KiB)
-  // >> 19 (1..2048 for 512 KiB..1 GiB), so 2049 slots suffice (2560 for headroom).
-  // Linear costs two things against native's 3-significant-bit tier: a 513-KiB
-  // request occupies 1 MiB, and an accumulator grown in place copies every
-  // 512 KiB rather than every ~12.5%, so growing one stays O(n^2) where
-  // native's is amortised linear (#9077). Geometric binning was once
-  // impossible here — the x86_gas assembler had no `bsr` and no `%cl` shift —
-  // but both are supported now: x86_gas_bitscan_op maps bsrl/bsrq and
-  // x86_gas_shift_family takes a `%cl` count, so native's class function
-  // ports across and the constraint no longer applies.
-  // Each large ALLOC rounds the request up to its class capacity (a 512-KiB multiple)
+  // array is the large tier: native's 3-significant-bit capacities (large_class),
+  // four classes per power of two from 512 KiB to 1 GiB, so 45 slots suffice
+  // (2560 kept). A geometric tier is what lets an accumulator grown in place
+  // copy only every ~12.5% of its size (#9077).
+  // Each large ALLOC rounds the request up to its class capacity
   // and bumps at THAT — so every block in a class has one capacity and any freed block
   // satisfies any same-class request; each large FREE re-derives the class from the
   // logical size via the same round-up and pushes the block (successor pointer in its
@@ -2619,20 +2640,18 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    popq %rcx\n");
   s = s.write("    popq %rbp\n");
   s = s.write("    ret\n");
-  // Large tier (#3425): a >=512 KiB request. Round the byte size UP to a 512-KiB
-  // multiple (the class capacity — bump AT it so every block in a class has one
-  // size, so any freed block satisfies any same-class request), derive class =
-  // cap >> 19, and pop the large freelist; empty falls through to the bump with
-  // %rdi = capacity. >1 GiB is bump-only. Linear rather than geometric; see
-  // the note on __fern_large_freelist above for what that costs and why it is
-  // no longer forced. %rcx/%rdx are already saved.
+  // Large tier (#3425): a >=512 KiB request. Round the byte size UP to its
+  // class capacity (large_class) and bump AT it, so every block in a class has
+  // one size and any freed block satisfies any same-class request; pop the
+  // large freelist, and an empty class falls through to the bump with %rdi =
+  // capacity. >1 GiB is bump-only. %rcx/%rdx are already saved.
   s = s.write(".Lalloc_large:\n");
   s = s.write("    cmpq $0x40000000, %rdi\n");  // > 1 GiB: bump exact, no freelist
   s = s.write("    ja .Lalloc_nofl\n");
-  s = s.write("    leaq 524287(%rdi), %rax\n");  // size + (512 KiB - 1)
-  s = s.write("    andq $-524288, %rax\n");  // cap = round_up(size, 512 KiB)
+  s = s.write("    movq %rdi, %rax\n");
+  s = large_class(s);
   s = s.write("    movq %rax, %rdi\n");  // %rdi = cap = bytes to bump
-  s = s.write("    shrq $19, %rax\n");  // class = cap >> 19  (1..2048)
+  s = s.write("    movq %rdx, %rax\n");  // class
   s = s.write("    leaq __fern_large_freelist(%rip), %rdx\n");
   s = s.write("    movq (%rdx,%rax,8), %rcx\n");  // head
   s = s.write("    testq %rcx, %rcx\n");
@@ -2834,7 +2853,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    movl __fern_rc_underflow(%rip), %eax\n");
   s = s.write("    ret\n");
   // __fern_large_push(base = %r8, bytes = %rsi): return a freed >=512 KiB block
-  // to the large tier (#3425). Bins by the same 3-significant-bit round-up
+  // to the large tier (#3425). Bins by the same large_class round-up
   // __fern_alloc's .Lalloc_large uses (so the block returns to the class whose
   // capacity it was bumped at) and pushes it (successor pointer in its first 8
   // bytes). >1 GiB is dropped (never freelisted, matching alloc). Clobbers
@@ -2862,9 +2881,9 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   // one decline covers every >=512 KiB free. Callers with an rc word have
   // already poisoned it at their own rc store.
   if (!s.rc_free_debug) {
-    s = s.write("    leaq 524287(%rsi), %rax\n");  // bytes + (512 KiB - 1)
-    s = s.write("    andq $-524288, %rax\n");  // cap = round_up(bytes, 512 KiB)
-    s = s.write("    shrq $19, %rax\n");  // class = cap >> 19
+    s = s.write("    movq %rsi, %rax\n");
+    s = large_class(s);
+    s = s.write("    movq %rdx, %rax\n");  // class
     s = s.write("    leaq __fern_large_freelist(%rip), %rdx\n");
     s = s.write("    movq (%rdx,%rax,8), %rcx\n");  // old head
     s = s.write("    movq %rcx, (%r8)\n");  // *base = old head
@@ -3351,6 +3370,81 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    popq %r12\n");
     s = s.write("    popq %rbx\n");
     s = s.write(".Laie_ret:\n");
+    s = s.write("    ret\n");
+  }
+  // __fern_str_grow(a@16(%rsp), b@8(%rsp)) -> 1 once b is appended to a in
+  // place, else 0 with nothing written. In place needs a FUSED box at rc 1,
+  // whose block __fern_str_free will return to the class it came from: the
+  // grown block's words, ceil(len/8) + 3, still fit the capacity __fern_capw
+  // or large_class gave the original, in the same tier. Under a heap-event
+  // build the growth reports as a free of the old size and an alloc of the
+  // new, so the two hooks still pair by size.
+  if (s.has_need("str_grow")) {
+    s = s.write("__fn___fern_str_grow:\n");
+    s = s.write("    movq 16(%rsp), %r8\n");  // a
+    s = s.write("    xorl %eax, %eax\n");
+    s = s.write("    testb $1, %r8b\n");
+    s = s.write("    jnz .Lsg_ret\n");
+    s = s.write("    cmpq $0x10000, %r8\n");
+    s = s.write("    jb .Lsg_ret\n");
+    s = s.write("    movl -8(%r8), %ecx\n");  // rc
+    s = s.write(san_poison_check("%ecx"));
+    s = s.write("    cmpl $1, %ecx\n");
+    s = s.write("    jne .Lsg_ret\n");
+    s = s.write("    cmpl $" + util.i32_to_string(fused_marker()) + ", -4(%r8)\n");
+    s = s.write("    jne .Lsg_ret\n");
+    s = s.write("    movq 8(%rsp), %rdx\n");  // b
+    s = s.write("    movq 8(%rdx), %rsi\n");  // lb
+    s = s.write("    movq 8(%r8), %rcx\n");  // la
+    s = s.write("    leaq (%rcx,%rsi), %rdi\n");  // grown length
+    s = s.write("    cmpq $0x7fffffff, %rdi\n");
+    s = s.write("    ja .Lsg_ret\n");
+    s = s.write("    leaq 31(%rcx), %r9\n");
+    s = s.write("    shrq $3, %r9\n");  // words now
+    s = s.write("    leaq 31(%rdi), %r10\n");
+    s = s.write("    shrq $3, %r10\n");  // words grown
+    s = s.write("    cmpq %r9, %r10\n");
+    s = s.write("    je .Lsg_copy\n");
+    s = s.write("    cmpq $65536, %r9\n");
+    s = s.write("    jae .Lsg_large\n");
+    s = s.write("    pushq %r9\n");
+    s = s.write("    call __fern_capw\n");
+    s = s.write("    popq %r11\n");  // capacity, in words
+    s = s.write("    cmpq %r11, %r10\n");
+    s = s.write("    ja .Lsg_ret\n");
+    s = s.write("    jmp .Lsg_fits\n");
+    s = s.write(".Lsg_large:\n");
+    s = s.write("    cmpq $0x8000000, %r10\n");  // past 1 GiB the block is exact
+    s = s.write("    ja .Lsg_ret\n");
+    s = s.write("    leaq 0(,%r9,8), %rax\n");
+    s = s.write("    pushq %rcx\n");
+    s = s.write("    pushq %rdx\n");
+    s = large_class(s);
+    s = s.write("    popq %rdx\n");
+    s = s.write("    popq %rcx\n");
+    s = s.write("    shrq $3, %rax\n");  // capacity, in words
+    s = s.write("    cmpq %rax, %r10\n");
+    s = s.write("    movl $0, %eax\n");
+    s = s.write("    ja .Lsg_ret\n");
+    s = s.write(".Lsg_fits:\n");
+    if (hev_on()) {
+      s = s.write("    leaq -8(%r8), %r11\n");  // base
+      s = hev_free(s, "%r11", "%r9");
+      s = s.write("    pushq %r10\n");
+      s = s.write("    pushq %r11\n");
+      s = s.write("    pushq 16(%rsp)\n");  // site = our caller
+      s = s.write("    call __fern_hev_a\n");
+      s = s.write("    addq $24, %rsp\n");
+    }
+    s = s.write(".Lsg_copy:\n");
+    s = s.write("    movq %rdi, 8(%r8)\n");  // len = grown length
+    s = s.write("    movq (%r8), %rdi\n");
+    s = s.write("    addq %rcx, %rdi\n");  // dst = data + la
+    s = s.write("    movq %rsi, %rcx\n");
+    s = s.write("    movq (%rdx), %rsi\n");  // src = b's data
+    s = s.write("    rep movsb\n");
+    s = s.write("    movl $1, %eax\n");
+    s = s.write(".Lsg_ret:\n");
     s = s.write("    ret\n");
   }
   // __fern_str_own(s@8(%rsp)) -> a string its holder owns a unit of. A
@@ -9304,6 +9398,9 @@ function helper_call_needs(name: string, s: asmcore.EmitState): asmcore.EmitStat
   }
   if (name == "__fern_str_own") {
     s = s.need("str_own");
+  }
+  if (name == "__fern_str_grow") {
+    s = s.need("str_grow");
   }
   // The VIEW-aware string[] element walk (#6544) is gated the same way
   // and for the same reason: its body's inner

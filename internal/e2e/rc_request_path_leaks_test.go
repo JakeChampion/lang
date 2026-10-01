@@ -64,6 +64,66 @@ function main(): i32 {
     }
     return t;
 }`},
+		// A pair-form payload handed to a callee whose parameter is
+		// owned-by-default is retained for the callee's exit release, so the
+		// payload's own count is still the arm's to drop. The arm withheld it
+		// (the occurrence was not an excused use), the callee's dec only took
+		// the retained count back, and the record leaked once per match.
+		// `bs` owns `r` because a field of it escapes into the result; the
+		// `@noinline` keeps the call a call, since the inlined form folds the
+		// pair into one frame and hides the shape.
+		{"pair-form-payload-handed-to-an-owning-callee", 30, `struct S { data: u8[] }
+struct R { path: string, body: S }
+function mkr(n: i32): Option[R] { return Some(R { path: "abc", body: S { data: __alloc_u8(n) } }); }
+function chk(n: i32): Option[string] { return Some("abc"); }
+@noinline function bs(r: R): Result[string, i32] {
+    match (chk(r.body.data.len())) { Some(s) => { return Ok(s); }, None => { return Err(1); } }
+    return Ok(r.path);
+}
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 10) {
+        match (mkr(i + 3)) { Some(r) => { match (bs(r)) { Ok(s) => { t = t + s.len(); }, Err(e) => { t = t + 100; } } }, None => { return 1; } }
+        i = i + 1;
+    }
+    return t;
+}`},
+		// The heap-box form of the same shape: a failure payload handed to a
+		// helper that returns a string out of it. The helper owns the payload
+		// (the oracle counts the returned field as an escape), so the call
+		// retains it and the returned string takes its own transfer count;
+		// the box, the variant and the string are then the arm's to release.
+		// The `defer` keeps `mk` off the pair-form ABI so the scrutinee is a
+		// box, which is the shape every builtin returning Result has.
+		{"failure-payload-handed-to-a-helper-that-returns-it", 5, `import "std/i32";
+enum E { Missing(i32), Detail(i32, string) }
+function keeps(e: E): string { match (e) { Detail(_, msg) => { return msg; }, _ => { return "other"; } } return ""; }
+function heap(i: i32): string { var s: string = "message-number-"; return s + i.to_string() + "!!"; }
+@noinline function mk(i: i32): Result[i32, E] { defer { var z: i32 = 0; } if (i % 2 == 0) { return Err(Detail(1, heap(i))); } return Ok(i); }
+function handsBack(i: i32): i32 { match (mk(i)) { Err(e) => { var m: string = keeps(e); if (m.len() < 3) { return 9; } return 1; }, Ok(_) => {} } return 0; }
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 10) { t = t + handsBack(i); i = i + 1; }
+    return t;
+}`},
+		// The same shape through std/http, where it was found: a parsed
+		// request read as text by a method whose parameter owns it.
+		{"parsed-request-body-read-as-text", 45, `import "std/http";
+function wire(n: i32): string { return "POST /x HTTP/1.1\r\nHost: h\r\nContent-Length: " + n.to_string() + "\r\n\r\n" + "0123456789".take(n); }
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 10) {
+        match (http.http_parse_request(wire(i))) {
+            Some(req) => { match (req.body_string()) { Ok(s) => { t = t + s.len(); }, Err(e) => { t = t + 100; } } },
+            None => { t = t + 100; }
+        }
+        i = i + 1;
+    }
+    return t;
+}`},
 		// A pair-form callee's pointer payload arrives counted by the return
 		// ABI, so the caller owns it whether the callee built it or retained
 		// an alias of a parameter's element (`Some(h.values[i])`, the shape

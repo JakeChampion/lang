@@ -83,6 +83,7 @@ jobs:
           # unseen: this lane was green while the only tests that
           # could catch it never ran anywhere in CI.
           wasmtime: "true"
+      - uses: ./.github/actions/selfhost-driver-cache
       - name: build native test runners
         run: |
           go test -c -o "$RUNNER_TEMP/e2e-other.test" ./internal/e2e/

@@ -300,7 +300,7 @@ func TestRunnerUrlExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/url", "# pass 26", "# fail 0", "1..26"} {
+	for _, w := range []string{"# Suite: std/url", "# pass 28", "# fail 0", "1..28"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
@@ -593,7 +593,7 @@ func TestRunnerIoBufferedExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/io_buffered BytesWriter", "# pass 19", "# fail 0", "1..19"} {
+	for _, w := range []string{"# Suite: std/io_buffered BytesWriter", "# pass 20", "# fail 0", "1..20"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
@@ -913,7 +913,7 @@ func TestRunnerUtf8ExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/utf8", "# pass 29", "# fail 0", "1..29"} {
+	for _, w := range []string{"# Suite: std/utf8", "# pass 30", "# fail 0", "1..30"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
@@ -3856,7 +3856,7 @@ func TestRunnerHttpRequestBytesExample(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: HTTP request bytes", "# pass 21", "# fail 0", "1..21"} {
+	for _, w := range []string{"# Suite: HTTP request bytes", "# pass 23", "# fail 0", "1..23"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
@@ -3873,7 +3873,7 @@ func TestRunnerHttpBodyJsonExample(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: Typed JSON bodies", "# pass 5", "# fail 0", "1..5"} {
+	for _, w := range []string{"# Suite: Typed JSON bodies", "# pass 6", "# fail 0", "1..6"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
@@ -4049,7 +4049,7 @@ func TestRunnerHttpRequestBodyStreamExample(t *testing.T) {
 		"ok 6 - read_n leaves the remainder",
 		"ok 7 - body_string ignores a partial walk",
 		"ok 10 - a bodyless request reads empty",
-		"# pass 10",
+		"# pass 11",
 		"# fail 0",
 	} {
 		if !strings.Contains(out, w) {

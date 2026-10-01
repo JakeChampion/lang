@@ -21,8 +21,15 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
         return http.text(415, "");
       }
     }
-    plat.log("created " + req.body_string());
-    return http.json(req.body_string()).with_header("Location", "/items/1").with_header("X-Status", "created");
+    match (req.body_string()) {
+      Ok(text) => {
+        plat.log("created " + text);
+        return http.json(text).with_header("Location", "/items/1").with_header("X-Status", "created");
+      },
+      Err(e) => {
+        return e.to_response();
+      }
+    }
   }
   if (req.method == "GET" && req.path == "/whoami") {
     match (req.headers.get("x-caller")) {

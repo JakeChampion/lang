@@ -339,6 +339,22 @@ pub function from_bytes(b: u8[]): Option[string] {
   return None;
 }
 
+// `from_bytes_lossy(b)` — the string those bytes spell, with each
+// ill-formed sequence replaced by U+FFFD, one per MAXIMAL SUBPART (the
+// module note; the rule `codepoints` walks by). Total where `from_bytes`
+// is `Option`: the text view of bytes an API has no error channel to
+// refuse with — a stream's `read_line`, `url_decode`, a byte writer's
+// `into_string`. Well-formed input comes back untouched, and a caller
+// who wants the bytes themselves takes the `u8[]` sibling of whichever
+// API handed it these.
+pub function from_bytes_lossy(b: u8[]): string {
+  var s: string = string_from_bytes_unchecked(b);
+  if (is_valid_utf8(s)) {
+    return s;
+  }
+  return encode_all(s.chars());
+}
+
 // `encode_all(cps)` — concatenate the UTF-8 encodings of a codepoint
 // sequence into a string. Inverse of `codepoints` for valid input
 // (`encode_all(codepoints(s)) == s` when `s` is valid UTF-8).

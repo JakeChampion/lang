@@ -73,6 +73,25 @@ function test_malformed_json_is_400(): test.TestOutcome {
   return test.pass();
 }
 
+// A body whose bytes are not UTF-8 is refused before the JSON is looked
+// at, with the status `body_string` carries.
+function test_a_body_that_is_not_utf8_is_400(): test.TestOutcome {
+  var m: MockPlatform = mock_platform.mock_platform_new();
+  var raw: string = string_from_bytes_unchecked([123 as u8, 255 as u8, 125 as u8]);
+  var resp: HttpResponse = handle(http.request("POST", "/items").with_json(raw), m.as_platform());
+  match (test.assert_status(resp, 400)) {
+    Fail(msg) => {
+      return test.fail(msg);
+    },
+    Pass => {}
+  }
+  var body: string = resp.body_string();
+  if (!body.contains("body is not valid UTF-8")) {
+    return test.fail("problem body: " + body);
+  }
+  return test.pass();
+}
+
 function test_the_wrong_shape_is_422(): test.TestOutcome {
   var m: MockPlatform = mock_platform.mock_platform_new();
   var resp: HttpResponse = handle(http.request("POST", "/items").with_json("{\"name\":\"axe\",\"qty\":\"two\",\"tags\":[]}"), m.as_platform());
@@ -142,5 +161,6 @@ function main(): i32 {
   r = r.it("malformed JSON is 400", test_malformed_json_is_400);
   r = r.it("the wrong shape is 422", test_the_wrong_shape_is_422);
   r = r.it("decode reads text directly", test_decode_reads_text_directly);
+  r = r.it("a body that is not UTF-8 is 400", test_a_body_that_is_not_utf8_is_400);
   return r.finish();
 }
