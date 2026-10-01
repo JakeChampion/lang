@@ -22337,6 +22337,12 @@ pub function erase_str_spelling(ty: string): string {
   return out + slice_unchecked(ty, start, ty.len());
 }
 
+// receiver_base is the name a method is keyed by on its receiver: the base
+// type, with `str` spelled `string` as the lowering spells it.
+pub function receiver_base(receiver: string): string {
+  return erase_str_spelling(util.base_type_name(receiver));
+}
+
 function erase_str_list(tys: string[]): string[] {
   var out: string[] = [];
   for t in tys {

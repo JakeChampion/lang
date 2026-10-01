@@ -375,7 +375,7 @@ function ast_values(mod: parser.Module, built: semsource.Built, r: Rows): AstVal
       var key: string = r.n1[i];
       var params: i32 = 0;
       if (i < mod.funcs.len()) {
-        key = call_key(mod.funcs[i]);
+        key = semsource.decl_key(mod.funcs[i]);
         params = mod.funcs[i].params.len();
       } else {
         var template: i32 = util.index_of_str(r.n2, built.instances[i - mod.funcs.len()].key);
@@ -662,16 +662,6 @@ function kept_count(r: Rows): i32 {
   return n;
 }
 
-// The symbol a call to declaration `i` names: the receiver-qualified spelling
-// for a method, the bare name otherwise. A `str` receiver is named as the
-// AST lowering names it, erased.
-function call_key(fd: parser.FuncDecl): string {
-  if (fd.receiver_type.len() > 0) {
-    return util.base_type_name(parser.erase_str_spelling(fd.receiver_type)) + "." + fd.name;
-  }
-  return fd.name;
-}
-
 // The produced body at row `i`: a declaration first, then an instance.
 function produced_at(built: semsource.Built, mod: parser.Module, i: i32): semsource.Produced {
   if (i < mod.funcs.len()) {
@@ -728,9 +718,9 @@ function rows_of(mod: parser.Module, built: semsource.Built, structs: irlower.St
       plan = produced_plan(built.decls[i], fd.name);
     }
     plans = plans.append(plan);
-    keys = keys.append(call_key(fd));
+    keys = keys.append(semsource.decl_key(fd));
     funcs = funcs.append(built.decls[i].func);
-    r = Rows { ...r, n1: r.n1.append(fd.name), n2: r.n2.append(call_key(fd)), called: r.called.append(called_values(built.decls[i].func)) };
+    r = Rows { ...r, n1: r.n1.append(fd.name), n2: r.n2.append(semsource.decl_key(fd)), called: r.called.append(called_values(built.decls[i].func)) };
     i = i + 1;
   }
   var at: i32 = mod.funcs.len();
@@ -871,9 +861,9 @@ pub function substitution(mod: parser.Module, lowered: parser.FuncDecl[], struct
   var i: i32 = 0;
   while (i < mod.funcs.len()) {
     if (r.keep[i]) {
-      callees = callees.append(ssarc.Callee { name: call_key(mod.funcs[i]), f: built.decls[i].func, modes: built.decls[i].modes, plan: r.plans[i], receiver: semsource.has_receiver(mod.funcs[i]) });
-      seeds = seeds.append(call_key(mod.funcs[i]) + "|"
-        + ssarc.grow_mask(call_key(mod.funcs[i]), built.decls[i].func, r.grows, semsource.has_receiver(mod.funcs[i])));
+      callees = callees.append(ssarc.Callee { name: semsource.decl_key(mod.funcs[i]), f: built.decls[i].func, modes: built.decls[i].modes, plan: r.plans[i], receiver: semsource.has_receiver(mod.funcs[i]) });
+      seeds = seeds.append(semsource.decl_key(mod.funcs[i]) + "|"
+        + ssarc.grow_mask(semsource.decl_key(mod.funcs[i]), built.decls[i].func, r.grows, semsource.has_receiver(mod.funcs[i])));
       if (mod.funcs[i].receiver_type.len() == 0) {
         consumed = util.append_all(consumed, ssarc.consumed_array_rows(mod.funcs[i].name, built.decls[i].func, built.decls[i].modes));
       }

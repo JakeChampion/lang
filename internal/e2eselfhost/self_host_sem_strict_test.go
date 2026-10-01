@@ -51,6 +51,25 @@ func TestSelfHostSemIRStrict(t *testing.T) {
 	if code, out := compile(produced, "FERN_SEM_IR_STRICT=1"); code != 0 {
 		t.Fatalf("a module produced whole: exit %d under strict\n%s", code, out)
 	}
+	// A trait method implemented for `str` in an imported module: the call
+	// names `string.shout`, which the contract is keyed by too (#10883).
+	strTrait := t.TempDir()
+	if err := os.WriteFile(filepath.Join(strTrait, "leaf.fern"), []byte("pub trait Shout { function shout(self: Self): i32; }\nimpl Shout for str { function shout(self: Self): i32 { return self.len() + 1; } }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(strTrait, "main.fern"), []byte("import \"./leaf\";\nfunction main(): i32 { var s: str = \"ab\"; return s.shout(); }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	strTraitBin := filepath.Join(strTrait, "prog")
+	strTraitBuild := exec.Command(fernBin, "-target", "x86-64-linux", filepath.Join(strTrait, "main.fern"), stdlibRoot, "-o", strTraitBin)
+	strTraitBuild.Env = append(os.Environ(), "FERN_SEM_IR_STRICT=1")
+	if out, err := strTraitBuild.CombinedOutput(); err != nil {
+		t.Fatalf("an imported trait method on str under strict: %v\n%s", err, out)
+	}
+	var strTraitExit *exec.ExitError
+	if err := exec.Command(strTraitBin).Run(); !errors.As(err, &strTraitExit) || strTraitExit.ExitCode() != 3 {
+		t.Fatalf("an imported trait method on str under strict: %v, want exit 3", err)
+	}
 	async := "async function compute(): i32 { return 7; }\nfunction main(): i32 { return compute(); }\n"
 	if code, out := compile(async, "FERN_SEM_IR_STRICT=1"); code != 0 {
 		t.Fatalf("an async function: exit %d under strict\n%s", code, out)
