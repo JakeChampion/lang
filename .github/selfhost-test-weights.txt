@@ -528,7 +528,6 @@ TestSelfHostResultTuplePayloadIR 2
 TestSelfHostRetArrEnumIR 2
 TestSelfHostRetStructFieldIR 2
 TestSelfHostReturnClosureIR 2
-TestSelfHostReuseDifferentialX86_64 3
 TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR 2
 TestSelfHostSSABackendAgreesWithNative 13
 TestSelfHostSSABackendRefusesOtherTargets 20

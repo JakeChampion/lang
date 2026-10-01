@@ -10,8 +10,8 @@ import (
 // (refs #9450): a variant construction written at the call site, whose
 // payloads are fresh, and a string[] literal of fresh or literal elements at a
 // borrowable position of a callee that returns no pointer. `first` hands an
-// element back, so its literal must not be freed; the sanitizer is what would
-// see it if it were.
+// element back, so its literal must not be freed before `f` is done with it;
+// the sanitizer is what would see it if it were.
 const lentTempReleaseSrc = `import "std/i32";
 enum E { A(i32), B(i32) }
 enum S { Word(string), Nothing }
@@ -45,9 +45,7 @@ func TestSelfHostLentTempRelease(t *testing.T) {
 		t.Fatalf("exit=%d, want %d (stderr %q)", exit, lentTempReleaseWant, stderr)
 	}
 	allocs, frees, _ := leakSummaryOf(t, "lent_temp_release", stderr)
-	// The one block left is `first`'s element literal box: the callee hands it
-	// back, so no caller-side release may touch it.
-	if allocs-frees != 1 {
-		t.Fatalf("allocs=%d frees=%d, want exactly the handed-back element left (stderr %q)", allocs, frees, stderr)
+	if allocs != frees {
+		t.Fatalf("allocs=%d frees=%d, want every block freed (stderr %q)", allocs, frees, stderr)
 	}
 }

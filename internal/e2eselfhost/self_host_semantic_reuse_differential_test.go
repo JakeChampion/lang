@@ -8,15 +8,9 @@ import (
 	"testing"
 )
 
-// The typed (semantic) lowering's reuse pairing, gated the way the AST path's
-// is: a firing count that must be met, a switch that must take it to zero, and
-// the two builds' answers compared against each other.
-//
-// TestSelfHostReuseDifferentialX86_64 does NOT cover this. Its driver is
-// asm_run.fern, which runs lexer -> parser -> asm_ir -> irlower and never
-// touches semlower, so neither of its arms reaches ssarc. fern.fern is the
-// only driver that routes through the semantic path, which is why this suite
-// builds the whole CLI rather than the demo driver.
+// The typed (semantic) lowering's reuse pairing: a firing count that must be
+// met, a switch (FERN_SELFHOST_NO_REUSE=1) that must take it to zero, and the
+// two builds' answers compared against each other.
 //
 // Each case must produce WHOLE on the typed path, so every intrinsic a case
 // calls must have a semantic contract, as `__rc_underflow_count` does.

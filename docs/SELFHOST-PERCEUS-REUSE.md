@@ -405,9 +405,9 @@ staying green (the self-compile must remain byte-identical).
   `TestSelfHostModloadFixpointX86_64`, which retired with the AST emitters in
   #3457 slice 5 — a merged whole-compiler bundle is past the 512-function IR
   budget, so there was nothing left to compile it.) (d) the whole reuse layer can be switched off
-  (`FERN_SELFHOST_NO_REUSE=1` → `irlower.reuse_layer_disabled()`, §6.5), and
-  `TestSelfHostReuseDifferentialX86_64` asserts reuse-on vs reuse-off are
-  observationally identical on firing shapes from every family.
+  (`FERN_SELFHOST_NO_REUSE=1`, §6.5), and
+  `TestSelfHostSemanticReuseDifferentialX86_64` asserts reuse-on vs reuse-off
+  are observationally identical on the typed lowering's firing shapes.
 - **Analysis divergence from native.** The self-host pairing must be *no more
   aggressive* than native's (conservative is safe — it only forgoes an
   optimisation). Reuse-on-self-host vs reuse-off-self-host must be
@@ -520,13 +520,13 @@ donor-based pairing (self-overwrite / cross-struct / cross-tuple / enum-donor
 / enum-cross / in-arm — the site lists stay empty, so their donor-free
 suppressions never fire either) and drops the ENUMRE in-place reassign
 upgrade back to `emit_enum_reclaim_store`'s free+alloc — mirroring native's
-`ast.RcReuseEnabled=false`. The differential contract ("reuse-on vs reuse-off
-must be observationally identical") is enforced by
-`TestSelfHostReuseDifferentialX86_64`
-(`internal/e2eselfhost/self_host_reuse_differential_test.go`): each firing
-shape from every family compiles both ways, the switch is proven live (asm
-differs; `alloc_reuse` present only on the ON side), and both binaries must
-exit identically (detector cases pin leak-freedom on both sides).
+`ast.RcReuseEnabled=false`. The same variable switches off the typed
+lowering's pairing, and the differential contract ("reuse-on vs reuse-off
+must be observationally identical") is enforced on it by
+`TestSelfHostSemanticReuseDifferentialX86_64`
+(`internal/e2eselfhost/self_host_semantic_reuse_differential_test.go`). The
+AST lowering's own differential went with the `FERN_SEM_IR=` off switch, since
+no compile reaches `irlower.reuse_layer_disabled()` any more.
 
 ---
 
