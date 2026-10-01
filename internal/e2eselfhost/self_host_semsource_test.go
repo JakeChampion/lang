@@ -856,6 +856,80 @@ function main(): i32 {
 }
 `
 
+// The inference over a call cycle. `same` and `same_all` read their
+// parameters and call each other; a fixpoint seeded consumed kept both
+// counted, since each kept the other's parameters carried. `keep` stores its
+// parameter and is counted.
+const semsourceInferFixture = `
+struct Arr { elem: Ty }
+struct Tup { elements: Ty[] }
+struct Nm { name: string }
+type Ty = Arr | Tup | Nm;
+struct Holder { kept: Ty }
+function same(a: Ty, b: Ty): boolean {
+    if let Arr(x) = a { if let Arr(y) = b { return same(x.elem, y.elem); } }
+    if let Tup(x) = a { if let Tup(y) = b { return same_all(x.elements, y.elements); } }
+    if let Nm(x) = a { if let Nm(y) = b { return x.name == y.name; } }
+    return false;
+}
+function same_all(xs: Ty[], ys: Ty[]): boolean {
+    if (xs.len() != ys.len()) { return false; }
+    var i: i32 = 0;
+    while (i < xs.len()) {
+        if (!same(xs[i], ys[i])) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+function keep(t: Ty): Holder { return Holder { kept: t }; }
+function main(): i32 {
+    var h: Holder = keep(Nm { name: "a" });
+    if (same(h.kept, Nm { name: "a" })) { return 0; }
+    return 1;
+}
+`
+
+const semsourceInferDriver = `import "./semsource"; import "./util";
+import "./parser"; import "./lexer"; import "./irlower";
+function main(): i32 {
+    var src: string = "";
+    match (read_file(args()[1])) { Ok(text) => { src = text; }, Err(_) => { return 2; } }
+    var parsed = parser.parse_module(lexer.tokenize(src));
+    var mod = irlower.lift_lambdas_typed(parser.register_struct_method_generics(parser.register_map_method_generics(parser.register_array_method_generics(parser.Module { ...parsed, structs: parser.inject_builtin_enums(parsed.structs) }))));
+    var built = semsource.with_inferred_modes(semsource.build_module(mod));
+    var i: i32 = 0;
+    while (i < built.decls.len()) {
+        var line: string = built.names[i];
+        if (!built.decls[i].ok) { line = line + " refused " + built.decls[i].why; }
+        for m in built.decls[i].modes { line = line + " " + util.i32_to_string(m); }
+        print(line);
+        i = i + 1;
+    }
+    return 0;
+}
+`
+
+func TestSelfHostSemanticInferredCycle(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	dir := copySelfHostTree(t)
+	if err := os.WriteFile(filepath.Join(dir, "semsource_infer.fern"), []byte(semsourceInferDriver), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fixture := filepath.Join(dir, "fixture.fern")
+	if err := os.WriteFile(fixture, []byte(semsourceInferFixture), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	driver := buildSelfHostBin(t, gcc, dir, "semsource_infer.fern", "semsource-infer")
+	got, err := runX86_64Bin(runner, driver, fixture).CombinedOutput()
+	if err != nil {
+		t.Fatalf("infer driver: %v\n%s", err, got)
+	}
+	want := "same 2 2\nsame_all 2 2\nkeep 3\nmain\n"
+	if string(got) != want {
+		t.Fatalf("inferred modes:\n%s\nwant:\n%s", got, want)
+	}
+}
+
 func TestSelfHostSemanticSourcePrint(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := copySelfHostTree(t)

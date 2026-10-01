@@ -107,6 +107,22 @@ graph = ssa.SFunc { name: "lent", nparams: 2, nvals: 4, entry: 7, takes_env: fal
 ] };
 `
 
+// A loop phi over a string: the entry operand a borrowed parameter, the back
+// edge a tuple element read off another borrowed parameter. Both lend the
+// value whole, so the phi owns no unit and neither edge supplies one; the
+// return retains what it hands back. Counting the tuple makes the element a
+// part of a unit the frame releases, so the phi owns one and each edge
+// retains into it.
+const unitLentPhi = `
+params = [pair, st, bt]; types = [pair, st, bt, st, st]; result = st; modes = [2, 2, 1];
+graph = ssa.SFunc { name: "lentphi", nparams: 3, nvals: 5, entry: 7, takes_env: false, blocks: [
+    ssa.SBlock { id: 37, preds: [17], insts: [], term: ret(3) },
+    ssa.SBlock { id: 27, preds: [17], insts: [inst(ssasem.tuple_get(), 4, [0], 0)], term: br(17) },
+    ssa.SBlock { id: 17, preds: [7, 27], insts: [inst(8, 3, [1, 4], 0)], term: ssa.STerm { kind_tag: 3, cond: 2, t: 27, f: 37, target: 0, value: 0 } },
+    ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1), inst(6, 2, [], 2)], term: br(17) }
+] };
+`
+
 type unitCase struct{ name, setup, check, mutate, want string }
 
 func unitCases() []unitCase {
@@ -139,6 +155,16 @@ if (!supply(find(p, 27, ssaunits.edge_point(), 37), 0, 2, 0, ssaunits.move_unit(
 		{"loop-phi", unitLoop, `
 if (!supply(find(p, 7, ssaunits.edge_point(), 17), 0, 0, 0, ssaunits.move_unit())) { return 21; }
 if (!supply(find(p, 27, ssaunits.edge_point(), 17), 0, 2, 0, ssaunits.move_unit())) { return 22; }
+`, "", ""},
+		{"lent-projection-phi", unitLentPhi, `
+if (p.owned[3] || p.owned[4]) { return 57; }
+if (find(p, 7, ssaunits.edge_point(), 17).supplies.len() != 0 || find(p, 27, ssaunits.edge_point(), 17).supplies.len() != 0) { return 58; }
+if (!supply(find(p, 37, ssaunits.return_point(), 0 - 1), 0, 3, 0, ssaunits.retain_unit())) { return 59; }
+`, "", ""},
+		{"counted-projection-phi", unitLentPhi + "modes = [3, 2, 1];", `
+if (!p.owned[3] || p.owned[4]) { return 60; }
+if (!supply(find(p, 7, ssaunits.edge_point(), 17), 0, 1, 0, ssaunits.retain_unit())) { return 61; }
+if (!supply(find(p, 27, ssaunits.edge_point(), 17), 0, 4, 0, ssaunits.retain_unit())) { return 62; }
 `, "", ""},
 		{"unused-parameter", unitDuplicate + `result = typeinfo.TypeVoid { tag: 0 }; graph = ssa.SFunc { ...graph, nvals: 1, blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0)], term: ret(0 - 1) }] }; types = [sa];`, `if (!drops(find(p, 7, ssaunits.entry_point(), 0 - 1), [0])) { return 23; }`, "", ""},
 		{"missing-supply", unitDuplicate, "", `var s = find(p, 7, 1, 0 - 1); p = replace(p, ssaunits.Step { ...s, supplies: [] });`, "unit supply arity"},
