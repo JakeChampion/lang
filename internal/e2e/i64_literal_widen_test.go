@@ -230,10 +230,12 @@ function main(): i32 {
 // genericStructLocalBigLiteralProgram pins #10453: an unannotated local bound
 // to a generic struct literal whose type argument only literals bind is a
 // Same[i64] when one of those literals has no i32 reading, inside an array
-// literal too. Before, native typed it Same[i32] and truncated the wide field
-// with no diagnostic. A correct run exits 15.
+// literal too, and through a field declared `T[]`. Before, native typed it
+// Same[i32] and truncated the wide field with no diagnostic. A correct run
+// exits 31.
 const genericStructLocalBigLiteralProgram = `
 struct Same[T] { a: T, b: T }
+struct Stack[T] { items: T[] }
 function main(): i32 {
   var q = Same { a: 1, b: 4611686018427387904 };
   var r: i64 = q.b;
@@ -243,6 +245,8 @@ function main(): i32 {
   if (q.b - q.a == 4611686018427387903) { c = c + 4; }
   var xs = [Same { a: 1, b: 4611686018427387904 }];
   if (xs[0].b == r) { c = c + 8; }
+  var st = Stack { items: [1, 4611686018427387904] };
+  if (st.items[1] == r) { c = c + 16; }
   return c;
 }
 `
@@ -287,7 +291,7 @@ func TestInterpUnannotatedBigLiteralWidens(t *testing.T) {
 	run(arrayDestinationGenericProgram, 15, "annotated array destination generic call")
 	run(genericPositionsBigLiteralProgram, 63, "literal-bound generic call in every position")
 	run(arrayArgumentStructLiteralProgram, 3, "struct literals in an array argument")
-	run(genericStructLocalBigLiteralProgram, 15, "generic struct local with a wide literal field")
+	run(genericStructLocalBigLiteralProgram, 31, "generic struct local with a wide literal field")
 }
 
 func TestX86_64UnannotatedBigLiteralWidens(t *testing.T) {
@@ -324,8 +328,8 @@ func TestX86_64UnannotatedBigLiteralWidens(t *testing.T) {
 	if _, code := compileAndRunX86_64(t, arrayArgumentStructLiteralProgram); code != 3 {
 		t.Errorf("x86-64 struct literals in an array argument: exit = %d, want 3", code)
 	}
-	if _, code := compileAndRunX86_64(t, genericStructLocalBigLiteralProgram); code != 15 {
-		t.Errorf("x86-64 generic struct local with a wide literal field: exit = %d, want 15", code)
+	if _, code := compileAndRunX86_64(t, genericStructLocalBigLiteralProgram); code != 31 {
+		t.Errorf("x86-64 generic struct local with a wide literal field: exit = %d, want 31", code)
 	}
 }
 
@@ -363,8 +367,8 @@ func TestArm64UnannotatedBigLiteralWidens(t *testing.T) {
 	if _, code := compileAndRunArm64(t, arrayArgumentStructLiteralProgram); code != 3 {
 		t.Errorf("arm64 struct literals in an array argument: exit = %d, want 3", code)
 	}
-	if _, code := compileAndRunArm64(t, genericStructLocalBigLiteralProgram); code != 15 {
-		t.Errorf("arm64 generic struct local with a wide literal field: exit = %d, want 15", code)
+	if _, code := compileAndRunArm64(t, genericStructLocalBigLiteralProgram); code != 31 {
+		t.Errorf("arm64 generic struct local with a wide literal field: exit = %d, want 31", code)
 	}
 }
 
@@ -402,7 +406,7 @@ func TestWASMUnannotatedBigLiteralWidens(t *testing.T) {
 	if code := runWasm(t, arrayArgumentStructLiteralProgram); code != 3 {
 		t.Errorf("wasm struct literals in an array argument: exit = %d, want 3", code)
 	}
-	if code := runWasm(t, genericStructLocalBigLiteralProgram); code != 15 {
-		t.Errorf("wasm generic struct local with a wide literal field: exit = %d, want 15", code)
+	if code := runWasm(t, genericStructLocalBigLiteralProgram); code != 31 {
+		t.Errorf("wasm generic struct local with a wide literal field: exit = %d, want 31", code)
 	}
 }

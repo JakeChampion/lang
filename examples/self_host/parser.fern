@@ -13331,7 +13331,7 @@ function subst_expr(e: ast.Expr, tparams: string[], cts: string[]): ast.Expr {
       if (sl.has_base) {
         nb = subst_expr(sl.base, tparams, cts);
       }
-      return ast.ExprStructLit { type_name: sl.type_name, field_names: sl.field_names, field_values: nv, has_base: sl.has_base, base: nb, line: sl.line, col: sl.col, written: sl.written };
+      return ast.ExprStructLit { type_name: sl.type_name, field_names: sl.field_names, field_values: nv, has_base: sl.has_base, base: nb, line: sl.line, col: sl.col, written: subst_ty(sl.written, tparams, cts) };
     },
     ast.ExprBinary(b) => {
       return ast.ExprBinary { op: b.op, left: subst_expr(b.left, tparams, cts), right: subst_expr(b.right, tparams, cts), line: b.line, col: b.col, ty: b.ty };
@@ -15032,7 +15032,12 @@ function ms_struct_lit(s: ast.ExprStructLit, dest: string, env: MEnv, gstructs: 
       cur = cur.iadd(s.type_name, key);
     }
   }
-  return RExpr { rexpr: ast.ExprStructLit { type_name: tn, field_names: s.field_names, field_values: vals, has_base: s.has_base, base: rb.rexpr, line: s.line, col: s.col, written: s.written }, rins: cur };
+  // An instance takes no type arguments, so the written ones are spent.
+  var written: string = s.written;
+  if (tn != s.type_name) {
+    written = "";
+  }
+  return RExpr { rexpr: ast.ExprStructLit { type_name: tn, field_names: s.field_names, field_values: vals, has_base: s.has_base, base: rb.rexpr, line: s.line, col: s.col, written: written }, rins: cur };
 }
 
 // lit_field_decl_type is the declared type of field `field` of the
@@ -22373,7 +22378,7 @@ function erase_str_expr(e: ast.Expr): ast.Expr {
       return ast.ExprArray { ...a, elem_ty: erase_str_spelling(a.elem_ty) };
     },
     ast.ExprStructLit(sl) => {
-      return ast.ExprStructLit { ...sl, type_name: erase_str_spelling(sl.type_name) };
+      return ast.ExprStructLit { ...sl, type_name: erase_str_spelling(sl.type_name), written: erase_str_spelling(sl.written) };
     },
     ast.ExprZero(z) => {
       return ast.ExprZero { ...z, type_name: erase_str_spelling(z.type_name) };
@@ -22790,7 +22795,7 @@ function rename_tv_expr(e: ast.Expr, vars: string[], cts: string[]): ast.Expr {
       return ast.ExprZero { ...z, type_name: subst_ty(z.type_name, vars, cts) };
     },
     ast.ExprStructLit(sl) => {
-      return ast.ExprStructLit { ...sl, type_name: subst_ty(sl.type_name, vars, cts) };
+      return ast.ExprStructLit { ...sl, type_name: subst_ty(sl.type_name, vars, cts), written: subst_ty(sl.written, vars, cts) };
     },
     ast.ExprLambda(lm) => {
       var lps: ast.ParamDecl[] = [];
@@ -24741,7 +24746,7 @@ function par_scan_expr(e: ast.Expr, own acc: ParScan): ParScan {
   var hit: boolean = false;
   match (e) {
     ast.ExprStructLit(sl) => {
-      hit = spelled_feeds(sl.type_name, acc.vars);
+      hit = spelled_feeds(sl.type_name, acc.vars) || spelled_feeds(sl.written, acc.vars);
     },
     ast.ExprZero(z) => {
       hit = spelled_feeds(z.type_name, acc.vars);

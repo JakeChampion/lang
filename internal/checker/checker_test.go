@@ -1051,6 +1051,23 @@ func TestGenericStructLiteralWideningInArrayAndWritten(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "does not fit in i32") {
 		t.Errorf("written Same[i32] with a wide field: want the literal refused, got %v", err)
 	}
+	// A field that holds the parameter inside a composite widens it too.
+	for _, decl := range []string{
+		"struct Stack[T] { items: T[] } function main(): i32 { var q = Stack { items: [4611686018427387904] }; var r: i64 = q.items[0]; return 0; }",
+		"struct Tagged[T] { p: (T, string) } function main(): i32 { var q = Tagged { p: (4611686018427387904, \"x\") }; var r: i64 = q.p.0; return 0; }",
+	} {
+		prog, err := parser.Parse(decl)
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		if _, err := Check(prog); err != nil {
+			t.Errorf("%s: check: %v", decl, err)
+			continue
+		}
+		if got := prog.Funcs[0].Body.Stmts[0].(*ast.Var).Type.String(); !strings.HasSuffix(got, "[i64]") {
+			t.Errorf("%s: q is %s, want the i64 instantiation", decl, got)
+		}
+	}
 }
 
 func TestGenericStructLiteralLocalWidensByLiteral(t *testing.T) {

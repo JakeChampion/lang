@@ -261,6 +261,14 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"struct-literal-written-instantiation-not-widened", "struct Same[T] { a: T, b: T }\nfunction main(): i32 { var q = Same[i32] { a: 1, b: 4611686018427387904 }; return 0; }\n", []string{"E047"}},
 		{"struct-literal-written-arity", "struct Same[T] { a: T, b: T }\nfunction main(): i32 { var q = Same[i64, i32] { a: 1, b: 2 }; return 0; }\n", []string{"E040"}},
 		{"struct-literal-written-i64-read-narrow", "struct Box[T] { v: T }\nfunction main(): i32 { var q = Box[i64] { v: 4 }; var r: i32 = q.v; return 0; }\n", []string{"E003"}},
+		// A written argument is validated as an annotation is, a type
+		// variable in it is the enclosing function's, and a struct-update
+		// base's instantiation outranks it, all as natively.
+		{"struct-literal-written-unknown-type", "struct Box[T] { v: i32 }\nfunction main(): i32 { var b = Box[Zzz] { v: 1 }; return 0; }\n", []string{"E064"}},
+		{"struct-literal-written-map-key", "import \"core/map\";\nstruct Box[T] { v: T }\nfunction main(): i32 { var b = Box[Map[f64, i32]] { v: map_new(4) }; return 0; }\n", []string{"E045"}},
+		{"struct-literal-written-type-variable", "struct T { z: i32 }\nstruct Box[T] { v: T }\nstruct Many[T] { xs: T[] }\nfunction wrap[T](x: T): Box[T] { return Box[T] { v: x }; }\nfunction many[T](x: T): Many[T] { return Many[T] { xs: [x] }; }\nfunction main(): i32 { var b = wrap(4294967296); var r: i64 = b.v; var m = many(4294967296); var k: i64 = m.xs[0]; return 0; }\n", nil},
+		{"struct-literal-update-base-outranks-written", "struct Pair[T] { a: T, b: T }\nfunction f(p: Pair[string]): Pair[string] { return Pair[i32] { ...p, a: \"x\" }; }\nfunction main(): i32 { return f(Pair { a: \"a\", b: \"b\" }).a.len(); }\n", nil},
+		{"struct-literal-wide-array-field", "struct Stack[T] { items: T[] }\nfunction main(): i32 { var q = Stack { items: [1, 4611686018427387904] }; var r: i64 = q.items[1]; return 0; }\n", nil},
 		{"struct-literal-wide-in-array", "struct Same[T] { a: T, b: T }\nfunction main(): i32 { var xs = [Same { a: 1, b: 4611686018427387904 }]; var r: i64 = xs[0].b; return 0; }\n", nil},
 		{"generic-literal-fields-clash-without-destination", "struct Same[T] { a: T, b: T }\nfunction take(xs: Same[i64][]): i32 { return xs.len(); }\nfunction main(): i32 { var y: i64 = 5; var q = Same { a: 1, b: y }; var r: i64 = q.a; return 0; }\n", []string{"E043"}},
 		// A literal whose fields clash has no instantiation, so its local

@@ -180,6 +180,24 @@ function main(): i32 {
     if (r == 4611686018427387904 && q.a + 1 == 2 && xs[0].b == r && w.a == 4294967296) { return 7; }
     return 3;
 }`},
+	// A written instantiation that spells the enclosing function's type
+	// variable is that variable, never a declared type of the same name, and
+	// a field holding the parameter inside an array widens it too (#10453).
+	{"struct-literal-written-type-variable", `struct T { z: i32 }
+struct Box[T] { v: T }
+struct Many[T] { xs: T[] }
+struct Stack[T] { items: T[] }
+function wrap[T](x: T): Box[T] { return Box[T] { v: x }; }
+function many[T](x: T): Many[T] { return Many[T] { xs: [x] }; }
+function main(): i32 {
+    var b = wrap(4294967296);
+    var r: i64 = b.v;
+    var m = many(4294967296);
+    var k: i64 = m.xs[0];
+    var st = Stack { items: [1, 4611686018427387904] };
+    if (r == 4294967296 && k == r && st.items[1] == 4611686018427387904) { return 7; }
+    return 3;
+}`},
 	// The widening reads INTEGERS only: wider_int keeps the first reading when
 	// either side is not one, so a shared variable bound by two strings types
 	// exactly as it did.

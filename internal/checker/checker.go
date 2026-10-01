@@ -20429,7 +20429,7 @@ func (c *checker) widenCompositeByLiterals(t ast.Type, es ...ast.Expr) ast.Type 
 		args := append([]ast.Type(nil), tt.Args...)
 		changed := false
 		for i, tp := range sd.TypeParams {
-			if w := c.widenCompositeByLiterals(args[i], structParamExprs(sd, tp, es)...); w != nil {
+			if w := c.widenCompositeByLiterals(args[i], c.structParamExprs(sd, tp, es)...); w != nil {
 				args[i], changed = w, true
 			}
 		}
@@ -20440,29 +20440,64 @@ func (c *checker) widenCompositeByLiterals(t ast.Type, es ...ast.Expr) ast.Type 
 	return nil
 }
 
-// structParamExprs is the set of field values, across the struct literals es
-// produce, whose declared field type is the type parameter tp. A literal that
-// wrote its own type arguments is already settled and contributes nothing.
-func structParamExprs(sd *ast.StructDecl, tp string, es []ast.Expr) []ast.Expr {
-	byParam := map[string]bool{}
-	for _, f := range sd.Fields {
-		if pt, ok := f.Type.(ast.ParamType); ok && pt.Name == tp {
-			byParam[f.Name] = true
-		}
-	}
+// structParamExprs is the set of expressions, across the struct literals es
+// produce, that occupy the type parameter tp: a field declared `T`, an element
+// of one declared `T[]` or `(T, string)`, a field of a nested `Box[T]`. A
+// literal that wrote its own type arguments is already settled and
+// contributes nothing.
+func (c *checker) structParamExprs(sd *ast.StructDecl, tp string, es []ast.Expr) []ast.Expr {
 	var out []ast.Expr
-	for _, e := range valueExprs(es) {
-		sl, ok := e.(*ast.StructLit)
-		if !ok || sl.TypeName != sd.Name || sl.TypeArgsWritten {
-			continue
-		}
-		for _, f := range sl.Fields {
-			if byParam[f.Name] {
-				out = append(out, f.Value)
+	for _, f := range sd.Fields {
+		var vals []ast.Expr
+		for _, e := range valueExprs(es) {
+			sl, ok := e.(*ast.StructLit)
+			if !ok || sl.TypeName != sd.Name || sl.TypeArgsWritten {
+				continue
+			}
+			for _, lf := range sl.Fields {
+				if lf.Name == f.Name {
+					vals = append(vals, lf.Value)
+				}
 			}
 		}
+		out = append(out, c.paramExprs(f.Type, tp, vals)...)
 	}
 	return out
+}
+
+// paramExprs is the set of expressions within es, values of declared type t,
+// that occupy the type parameter tp.
+func (c *checker) paramExprs(t ast.Type, tp string, es []ast.Expr) []ast.Expr {
+	if len(es) == 0 {
+		return nil
+	}
+	switch tt := t.(type) {
+	case ast.ParamType:
+		if tt.Name == tp {
+			return es
+		}
+	case ast.ArrayType:
+		return c.paramExprs(tt.Elem, tp, arrayElemExprs(es))
+	case ast.SliceType:
+		return c.paramExprs(tt.Elem, tp, arrayElemExprs(es))
+	case ast.TupleType:
+		var out []ast.Expr
+		for i, et := range tt.Elems {
+			out = append(out, c.paramExprs(et, tp, tupleElemExprs(es, i))...)
+		}
+		return out
+	case ast.StructType:
+		sd, ok := c.info.Structs[tt.Name]
+		if !ok || len(sd.TypeParams) != len(tt.Args) {
+			return nil
+		}
+		var out []ast.Expr
+		for i, inner := range sd.TypeParams {
+			out = append(out, c.paramExprs(tt.Args[i], tp, c.structParamExprs(sd, inner, es))...)
+		}
+		return out
+	}
+	return nil
 }
 
 // valueExprs expands each expression to the value-producing trees behind it —
