@@ -250,26 +250,26 @@ function walked(t: typeinfo.Type): boolean {
 // copy, so the result is an ordinary counted box).
 // A map's helper releases one unit of a counted box: a decrement while the
 // box is shared, and the columns and the block for the last unit.
-function release_name(t: typeinfo.Type): string {
+function release_name(t: typeinfo.Type, f: ssasem.Func): string {
   if (ssasem.is_view(t)) {
     return "__fern_str_view_free";
   }
   if (ssasem.is_string(t)) {
     return "__fern_str_free";
   }
-  if (routed_map(t) && routed_box(ssasem.map_value(t))) {
+  if (routed_map(t, f) && routed_box(ssasem.map_value(t))) {
     return "__map_drop_boxes_impl";
   }
-  if (routed_map(t) && (ssasem.is_text(ssasem.map_key(t)) || ssasem.is_string(ssasem.map_value(t)))) {
+  if (routed_map(t, f) && (ssasem.is_text(ssasem.map_key(t)) || ssasem.is_string(ssasem.map_value(t)))) {
     return "__map_drop_strcols_impl";
   }
-  if (routed_map(t)) {
+  if (routed_map(t, f)) {
     return "__map_drop_impl";
   }
   if (ssasem.is_map(t)) {
     return map_release_name(t);
   }
-  if (routed_iter(t)) {
+  if (routed_iter(t, f)) {
     return "__mapiter_drop_impl";
   }
   if (semtypes.is_map_iter(t)) {
@@ -330,22 +330,22 @@ function map_release_name(t: typeinfo.Type): string {
 // release the function that releases one key, and a map of boxes the one
 // that releases one value — the key's first, the value's on top — so the
 // runtime can walk a column whose shape it does not know.
-function release(own r: irlower.LowerResult, slot: i32, t: typeinfo.Type): irlower.LowerResult {
-  if (routed_map(t) && routed_box(ssasem.map_value(t))) {
+function release(own r: irlower.LowerResult, slot: i32, t: typeinfo.Type, f: ssasem.Func): irlower.LowerResult {
+  if (routed_map(t, f) && routed_box(ssasem.map_value(t))) {
     r = emit(r, ir.op_load_local(slot));
     r = emit(r, ir.op_const_closure(env_release_name(ssasem.map_value(t))));
-    r = emit(r, ir.op_call_direct(release_name(t), 2));
+    r = emit(r, ir.op_call_direct(release_name(t, f), 2));
     return emit(r, ir.op_drop());
   }
   var fns: string[] = map_release_fns(t);
   if (fns.len() == 0) {
-    return helper(r, slot, release_name(t));
+    return helper(r, slot, release_name(t, f));
   }
   r = emit(r, ir.op_load_local(slot));
   for fn in fns {
     r = emit(r, ir.op_const_func(0, fn));
   }
-  r = emit(r, ir.op_call_direct(release_name(t), fns.len() + 1));
+  r = emit(r, ir.op_call_direct(release_name(t, f), fns.len() + 1));
   return emit(r, ir.op_drop());
 }
 
@@ -724,7 +724,7 @@ function gated_field_slot(f: ssasem.Func, held: Held, g: i32): i32 {
 
 function bracket_give(own r: irlower.LowerResult, f: ssasem.Func, held: Held): irlower.LowerResult {
   for v in held.arrays {
-    r = release(r, v, f.values[v]);
+    r = release(r, v, f.values[v], f);
   }
   var k: i32 = 0;
   while (k < held.records.len()) {
@@ -997,7 +997,7 @@ function drop_value_inline(own r: irlower.LowerResult, slot: i32, t: typeinfo.Ty
     r = drop_children(r, slot, t, scratch, f);
     r = emit(r, ir.op_end());
   }
-  return release(r, slot, t);
+  return release(r, slot, t, f);
 }
 
 // A builtin union's box carries no shape pointer, so the walk selects its one
@@ -1120,7 +1120,7 @@ function drop_variant_chain(own r: irlower.LowerResult, t: typeinfo.Type, f: ssa
   r = emit(r, ir.op_const_i32(0));
   r = emit(r, ir.op_bin("eq", 0, false));
   r = emit(r, ir.op_if(0));
-  r = release(r, node, t);
+  r = release(r, node, t, f);
   r = emit(r, ir.op_end());
   r = emit(r, ir.op_const_i32(0));
   r = emit(r, ir.op_store_local(first));
@@ -1133,7 +1133,7 @@ function drop_variant_chain(own r: irlower.LowerResult, t: typeinfo.Type, f: ssa
   r = emit(r, ir.op_call_direct("__fern_rc_is_unique", 1));
   r = emit(r, ir.op_if(0));
   r = emit(r, ir.op_else());
-  r = release(r, next, t);
+  r = release(r, next, t, f);
   r = emit(r, ir.op_br(2));
   r = emit(r, ir.op_end());
   r = emit(r, ir.op_load_local(next));
@@ -1223,7 +1223,7 @@ function drops(own r: irlower.LowerResult, step: ssaunits.Step, f: ssasem.Func):
 function drops_less(own r: irlower.LowerResult, step: ssaunits.Step, f: ssasem.Func, taken: i32, took: i32, shell: i32): irlower.LowerResult {
   for value in step.drops {
     if (value == shell) {
-      r = release(r, value, f.values[value]);
+      r = release(r, value, f.values[value], f);
     } else if (value != taken && value != took) {
       r = drop_value(r, value, f.values[value], scratch_base(f), f);
     }
@@ -1501,7 +1501,7 @@ function reuse_token(own r: irlower.LowerResult, f: ssasem.Func, donor: i32): ir
   r = emit(r, ir.op_load_local(donor));
   r = emit(r, ir.op_store_local(token));
   r = emit(r, ir.op_else());
-  r = release(r, donor, f.values[donor]);
+  r = release(r, donor, f.values[donor], f);
   r = emit(r, ir.op_const_i32(0));
   r = emit(r, ir.op_store_local(token));
   r = emit(r, ir.op_end());
@@ -2010,7 +2010,7 @@ function routed_box_columns(f: ssasem.Func): typeinfo.Type[] {
   var out: typeinfo.Type[] = [];
   var names: string[] = [];
   for t in schema_types(f) {
-    if (!routed_map(t) || !routed_box(ssasem.map_value(t))) {
+    if (!routed_map(t, f) || !routed_box(ssasem.map_value(t))) {
       continue;
     }
     var name: string = env_release_name(ssasem.map_value(t));
@@ -2950,19 +2950,21 @@ function map_op(own r: irlower.LowerResult, ins: ssa.SInst, f: ssasem.Func): irl
 // core/map's hash table rather than the runtime's association list (#9608).
 // Production is whole (semlower.substitution), so no AST-lowered
 // body shares a program with a routed map; the bisect knobs keep a mixed
-// module, so under them every map stays on the runtime.
-function routed_map(t: typeinfo.Type): boolean {
+// module, so under them every map stays on the runtime, as it does in a
+// program whose import closure has no core/map to run on: a map-typed field
+// needs no map op, so nothing in such a program loads it (#10851).
+function routed_map(t: typeinfo.Type, f: ssasem.Func): boolean {
   if (!ssasem.is_map(t)) {
     return false;
   }
-  return routed_key(ssasem.map_key(t)) && routed_value(ssasem.map_value(t)) && map_routing_on();
+  return routed_key(ssasem.map_key(t)) && routed_value(ssasem.map_value(t)) && f.map_module && map_routing_on();
 }
 
-function routed_iter(t: typeinfo.Type): boolean {
+function routed_iter(t: typeinfo.Type, f: ssasem.Func): boolean {
   if (!semtypes.is_map_iter(t)) {
     return false;
   }
-  return routed_key(semtypes.map_iter_key(t)) && routed_value(semtypes.map_iter_value(t)) && map_routing_on();
+  return routed_key(semtypes.map_iter_key(t)) && routed_value(semtypes.map_iter_value(t)) && f.map_module && map_routing_on();
 }
 
 // A string column, of keys or values, holds one unit of each string, as the
@@ -3008,13 +3010,13 @@ function knob_unset(name: string): boolean {
 
 function routed_map_op(f: ssasem.Func, ins: ssa.SInst): boolean {
   if (ins.kind_tag == ssasem.map_new() || ins.kind_tag == ssasem.map_cleared()) {
-    return routed_map(f.values[ins.result]);
+    return routed_map(f.values[ins.result], f);
   }
   if (ssasem.is_map_op(ins.kind_tag)) {
-    return routed_map(f.values[ins.args[0]]);
+    return routed_map(f.values[ins.args[0]], f);
   }
   if (ssasem.is_map_iter_op(ins.kind_tag)) {
-    return routed_iter(f.values[ins.args[0]]) || routed_iter(f.values[ins.result]);
+    return routed_iter(f.values[ins.args[0]], f) || routed_iter(f.values[ins.result], f);
   }
   return false;
 }
@@ -3190,7 +3192,7 @@ function routed_insert(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SIns
     r = emit(r, ir.op_bin("eq", 0, false));
     r = emit(r, ir.op_if(0));
     if (counted_key) {
-      r = release(r, ins.args[1], ssasem.map_key(t));
+      r = release(r, ins.args[1], ssasem.map_key(t), f);
     }
     if (boxed_val) {
       r = helper(r, old_val, value_release(ssasem.map_value(t)));
@@ -3754,7 +3756,7 @@ function sole_owned_base(own r: irlower.LowerResult, f: ssasem.Func, base: i32, 
   r = emit(r, ir.op_load_local(base));
   r = emit(r, ir.op_store_local(scratch));
   r = emit(r, ir.op_else());
-  r = release(r, base, f.values[base]);
+  r = release(r, base, f.values[base], f);
   r = emit(r, ir.op_load_local(base));
   r = emit(r, ir.op_const_i32(0));
   r = emit(r, ir.op_load_local(base));
@@ -3809,7 +3811,7 @@ function append_push(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Pla
   if (ssasem.reference(elem)) {
     r = own_copied(r, elem, res, ins.args[0]);
   }
-  r = release(r, ins.args[0], f.values[ins.args[0]]);
+  r = release(r, ins.args[0], f.values[ins.args[0]], f);
   r = emit(r, ir.op_end());
   return emit(r, ir.op_load_local(res));
 }

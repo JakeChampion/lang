@@ -5042,6 +5042,218 @@ function g(n: i32): i32 {
 }
 function main(): i32 { print(g(3).to_string() + " " + g(2).to_string()); return 0; }
 `},
+	// A dyn holding a view, merged past its source: its box is tested for each
+	// concrete holding a view, and on a hit narrowed, copied and widened back.
+	{name: "a-dyn-holding-a-view-merged-past-its-source-is-copied", atLeast: 4, noLeak: true, src: `
+import "std/i32";
+trait Size { function size(self: Self): i32; }
+struct P { a: str }
+impl Size for P { function size(self: P): i32 { return self.a.len() * 10 + (self.a[0] as i32) - 97; } }
+function mk(n: i32): string {
+    var s: string = "ab";
+    var i: i32 = 0;
+    while (i < n) { s = s + "c"; i = i + 1; }
+    return s;
+}
+function churn(): i32 {
+    var junk: string[] = [];
+    var i: i32 = 0;
+    while (i < 50) { junk = junk.append("zz" + i.to_string()); i = i + 1; }
+    return junk.len();
+}
+function wrap(s: string): dyn Size { var p: P = P { a: slice_unchecked(s, 1, 4) }; return p; }
+function g(n: i32): i32 {
+    var d: dyn Size = P { a: "q" };
+    if (n != 0) {
+        var s: string = mk(n);
+        d = wrap(s);
+    }
+    churn();
+    return d.size();
+}
+function main(): i32 { print(g(3).to_string() + " " + g(0).to_string()); return 0; }
+`},
+	// A dyn over several concretes, assigned in a loop from a body-local source: a
+	// record and two enum variants holding views are copied, and a record and a
+	// boxed string holding none are kept, settled by the tests that refute the
+	// others.
+	{name: "a-dyn-over-several-boxes-merged-in-a-loop-is-copied", atLeast: 4, noLeak: true, src: `
+import "std/i32";
+trait Size { function size(self: Self): i32; }
+struct P { a: str }
+struct Q { n: i32 }
+enum E { One(str), Two(str, str) }
+impl Size for P { function size(self: P): i32 { return self.a.len() * 10 + (self.a[0] as i32) - 97; } }
+impl Size for Q { function size(self: Q): i32 { return self.n; } }
+impl Size for E {
+    function size(self: E): i32 {
+        match (self) { One(a) => { return 100 + a.len(); }, Two(a, b) => { return 200 + a.len() * 10 + b.len(); } }
+        return 0;
+    }
+}
+impl Size for string { function size(self: string): i32 { return 1000 + self.len(); } }
+function mk(n: i32): string {
+    var s: string = "ab";
+    var i: i32 = 0;
+    while (i < n) { s = s + "c"; i = i + 1; }
+    return s;
+}
+function pick(s: string, k: i32): dyn Size {
+    if (k == 0) { var p: P = P { a: slice_unchecked(s, 1, 4) }; return p; }
+    if (k == 1) { var e: E = One(slice_unchecked(s, 0, 3)); return e; }
+    if (k == 2) { var e2: E = Two(slice_unchecked(s, 0, 1), slice_unchecked(s, 1, 4)); return e2; }
+    var q: Q = Q { n: s.len() };
+    return q;
+}
+function g(n: i32): string {
+    var d: dyn Size = P { a: "q" };
+    var out: string = "";
+    var k: i32 = 0;
+    while (k < n) {
+        var s: string = mk(k + 2);
+        if (k == 4) {
+            var t: string = s + "!";
+            d = t;
+        } else {
+            d = pick(s, k);
+        }
+        var junk: string[] = [];
+        var i: i32 = 0;
+        while (i < 20) { junk = junk.append("zz" + i.to_string()); i = i + 1; }
+        out = out + d.size().to_string() + ",";
+        k = k + 1;
+    }
+    var junk2: string[] = [];
+    var j: i32 = 0;
+    while (j < 50) { junk2 = junk2.append("yy" + j.to_string()); j = j + 1; }
+    return out + d.size().to_string();
+}
+function main(): i32 { print(g(5) + " " + g(0) + " " + g(3)); return 0; }
+`},
+	// A dyn widened from a box holding no view, built in a branch, reads no bytes
+	// but its own, so the merge keeps it.
+	{name: "a-dyn-widened-from-a-viewless-branch-local-is-produced", atLeast: 4, noLeak: true, src: `
+import "std/i32";
+trait Size { function size(self: Self): i32; }
+struct P { a: str }
+struct Q { n: i32 }
+impl Size for P { function size(self: P): i32 { return self.a.len() * 10 + (self.a[0] as i32) - 97; } }
+impl Size for Q { function size(self: Q): i32 { return self.n; } }
+function churn(): i32 {
+    var junk: string[] = [];
+    var i: i32 = 0;
+    while (i < 50) { junk = junk.append("zz" + i.to_string()); i = i + 1; }
+    return junk.len();
+}
+function g(n: i32): i32 {
+    var d: dyn Size = P { a: "q" };
+    if (n != 0) {
+        var q: Q = Q { n: n * 7 };
+        d = q;
+    }
+    churn();
+    return d.size();
+}
+function main(): i32 { print(g(3).to_string() + " " + g(0).to_string()); return 0; }
+`},
+	// A view map a call returns, anchored to a branch local: rebuilt from its two
+	// column snapshots, each value copied.
+	{name: "a-view-map-a-call-returns-from-a-branch-local-is-copied", atLeast: 4, noLeak: true, src: `
+import "std/i32";
+import "core/map";
+function mk(n: i32): string {
+    var s: string = "ab";
+    var i: i32 = 0;
+    while (i < n) { s = s + "c"; i = i + 1; }
+    return s;
+}
+function churn(): i32 {
+    var junk: string[] = [];
+    var i: i32 = 0;
+    while (i < 50) { junk = junk.append("zz" + i.to_string()); i = i + 1; }
+    return junk.len();
+}
+function index(s: string): Map[i32, str] {
+    var m: Map[i32, str] = map_new(4);
+    m = m.insert(1, slice_unchecked(s, 0, 2));
+    return m.insert(2, slice_unchecked(s, 1, 4));
+}
+function g(n: i32): string {
+    var m: Map[i32, str] = map_new(4);
+    if (n != 0) {
+        var s: string = mk(n);
+        m = index(s);
+    }
+    churn();
+    return m.get_or(1, "-") + "/" + m.get_or(2, "-") + "/" + m.len().to_string();
+}
+function main(): i32 { print(g(3) + " " + g(0)); return 0; }
+`},
+	// A map of records holding views, returned from a loop-body local and merged
+	// past it: each record value is rebuilt with its view copied.
+	{name: "a-map-of-view-records-a-call-returns-in-a-loop-is-copied", atLeast: 4, noLeak: true, src: `
+import "std/i32";
+import "core/map";
+struct P { a: str, n: i32 }
+function mk(n: i32): string {
+    var s: string = "ab";
+    var i: i32 = 0;
+    while (i < n) { s = s + "c"; i = i + 1; }
+    return s;
+}
+function index(s: string): Map[string, P] {
+    var m: Map[string, P] = map_new(4);
+    m = m.insert("x", P { a: slice_unchecked(s, 0, 2), n: 1 });
+    m = m.insert("y", P { a: slice_unchecked(s, 1, 4), n: 2 });
+    return m;
+}
+function g(n: i32): string {
+    var m: Map[string, P] = map_new(4);
+    var k: i32 = 0;
+    while (k < n) {
+        var s: string = mk(k + 2);
+        m = index(s);
+        k = k + 1;
+    }
+    var junk: string[] = [];
+    var i: i32 = 0;
+    while (i < 50) { junk = junk.append("zz" + i.to_string()); i = i + 1; }
+    var out: string = m.len().to_string();
+    for key in m.keys() {
+        var p: P = m.get_or(key, P { a: "-", n: 0 });
+        out = out + ";" + key + "=" + p.a + "/" + p.n.to_string();
+    }
+    return out;
+}
+function main(): i32 { print(g(3) + " " + g(0)); return 0; }
+`},
+	// A value read out of a view map holds the map's bytes, so it keeps the map,
+	// and the source the map is anchored to, alive.
+	{name: "a-view-map-value-read-keeps-the-map-alive", atLeast: 4, noLeak: true, src: `
+import "std/i32";
+import "core/map";
+function mk(n: i32): string {
+    var s: string = "ab";
+    var i: i32 = 0;
+    while (i < n) { s = s + "c"; i = i + 1; }
+    return s;
+}
+function index(s: string): Map[i32, str] {
+    var m: Map[i32, str] = map_new(4);
+    m = m.insert(1, slice_unchecked(s, 0, 2));
+    return m.insert(2, slice_unchecked(s, 1, 4));
+}
+function g(n: i32): string {
+    var m: Map[i32, str] = index(mk(n));
+    var v: str = m.get_or(2, "-");
+    var out: string = "2" + ";";
+    var junk: string[] = [];
+    var i: i32 = 0;
+    while (i < 50) { junk = junk.append("zz" + i.to_string()); i = i + 1; }
+    return out + v;
+}
+function main(): i32 { print(g(3)); return 0; }
+`},
 	{name: "a-nested-array-a-call-returns-from-a-branch-local-is-produced", atLeast: 4, noLeak: true, src: `
 function mk(n: i32): string {
     var s: string = "ab";
@@ -5854,6 +6066,70 @@ function main(): i32 {
         i = i + 1;
     }
     return t - 66;
+}
+`},
+	// A dyn whose type holds a view (through `P`) returned as a box of a local
+	// counted string: the box reads no bytes but its own, so the result is
+	// anchored to nothing (#10908). It was refused as escaping its source.
+	{name: "a-boxed-string-returned-as-a-view-holding-dyn-is-produced", atLeast: 6, noLeak: true, src: `
+import "std/i32";
+trait Size { function size(self: Self): i32; }
+impl Size for string { function size(self: string): i32 { return 1000 + self.len(); } }
+struct P { a: str }
+impl Size for P { function size(self: P): i32 { return self.a.len() * 10 + (self.a[0] as i32) - 97; } }
+function mk(n: i32): string {
+    var s: string = "ab";
+    var i: i32 = 0;
+    while (i < n) { s = s + "c"; i = i + 1; }
+    return s;
+}
+function pick(s: string): dyn Size { var t: string = s + "!"; return t; }
+function wrap(s: string): dyn Size { var p: P = P { a: slice_unchecked(s, 1, 4) }; return p; }
+function main(): i32 {
+    var d: dyn Size = pick(mk(2));
+    var e: dyn Size = wrap(mk(3));
+    var junk: string[] = [];
+    var i: i32 = 0;
+    while (i < 50) { junk = junk.append("zz" + i.to_string()); i = i + 1; }
+    print(d.size().to_string() + " " + e.size().to_string());
+    return 0;
+}
+`},
+	// An impl on `str` is the impl on `string`, so a counted string boxes into
+	// the dyn through it, owned by the box: returned from a local, and merged
+	// past a branch-local source (#10908). The dyn's concretes named nothing
+	// for the impl, so its release walked no string box.
+	{name: "a-string-boxed-through-an-impl-for-str-is-produced", atLeast: 6, noLeak: true, src: `
+import "std/i32";
+trait Size { function size(self: Self): i32; }
+impl Size for str { function size(self: str): i32 { return 1000 + self.len() * 10 + (self[0] as i32) - 97; } }
+struct P { a: str }
+impl Size for P { function size(self: P): i32 { return self.a.len() * 10 + (self.a[0] as i32) - 97; } }
+function mk(n: i32): string {
+    var s: string = "ab";
+    var i: i32 = 0;
+    while (i < n) { s = s + "c"; i = i + 1; }
+    return s;
+}
+function churn(): i32 {
+    var junk: string[] = [];
+    var i: i32 = 0;
+    while (i < 50) { junk = junk.append("zz" + i.to_string()); i = i + 1; }
+    return junk.len();
+}
+function pick(s: string): dyn Size { var t: string = s + "!"; return t; }
+function g(n: i32): i32 {
+    var d: dyn Size = P { a: "q" };
+    if (n != 0) { var s: string = mk(n); d = s; }
+    churn();
+    return d.size();
+}
+function main(): i32 {
+    var d: dyn Size = pick(mk(2));
+    var lit: dyn Size = "xy";
+    churn();
+    print(d.size().to_string() + " " + lit.size().to_string() + " " + g(3).to_string() + " " + g(0).to_string());
+    return 0;
 }
 `},
 	// A 64-bit integer and a float are boxed at their own width, which wasm's

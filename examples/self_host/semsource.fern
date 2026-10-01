@@ -5090,7 +5090,7 @@ function renumber(blocks: ssa.SBlock[], map: i32[], values: typeinfo.Type[]): ss
     out = out.append(ssa.SBlock { ...b, insts: insts, term: term });
   }
   var graph: ssa.SFunc = ssa.SFunc { name: "", nparams: 0, nvals: kept.len(), blocks: out, entry: 0, takes_env: false };
-  return ssasem.Func { graph: graph, values: kept, params: [], result: t_void(), records: semrecords.no_records(), enums: [], calls: [], envs: [], anchors: [], dyns: [], shadows: [], finalizers: [] };
+  return ssasem.Func { graph: graph, values: kept, params: [], result: t_void(), records: semrecords.no_records(), enums: [], calls: [], envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: false };
 }
 
 // ---- functions --------------------------------------------------------------
@@ -5443,7 +5443,7 @@ function parameters(fd: parser.FuncDecl, s: State): State {
 
 function refuse(why: string): Produced {
   var graph: ssa.SFunc = ssa.SFunc { name: "", nparams: 0, nvals: 0, blocks: [], entry: 0, takes_env: false };
-  return Produced { ok: false, why: why, func: ssasem.Func { graph: graph, values: [], params: [], result: t_void(), records: semrecords.no_records(), enums: [], calls: [], envs: [], anchors: [], dyns: [], shadows: [], finalizers: [] }, modes: [], template: false, key: "", requests: [], bodyless: false };
+  return Produced { ok: false, why: why, func: ssasem.Func { graph: graph, values: [], params: [], result: t_void(), records: semrecords.no_records(), enums: [], calls: [], envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: false }, modes: [], template: false, key: "", requests: [], bodyless: false };
 }
 
 function initial(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Contracts, binding: ssasem.Binding, name: string, handers: util.NameIndex, shadows: string[], views: string[], funcs: parser.FuncDecl[], impls: parser.ImplInfo[]): State {
@@ -6136,7 +6136,7 @@ function dyn_concretes(t: typeinfo.Type, s: State): typeinfo.Type[] {
 }
 
 // The base names of every type the module implements each trait of `t`'s set
-// for.
+// for, an impl for `str` named `string` as the receiver it is keyed by.
 function dyn_impl_names(t: typeinfo.Type, impls: parser.ImplInfo[]): string[] {
   var out: string[] = [];
   var traits: string[] = parser.dyn_trait_set(typeinfo.spelling(t));
@@ -6144,7 +6144,7 @@ function dyn_impl_names(t: typeinfo.Type, impls: parser.ImplInfo[]): string[] {
     return out;
   }
   for imp in impls {
-    var n: string = util.base_type_name(imp.impl_type);
+    var n: string = parser.receiver_base(imp.impl_type);
     if (parser.impl_trait_key(imp) != util.base_type_name(traits[0]) || util.index_of_str(out, n) >= 0) {
       continue;
     }
@@ -6225,7 +6225,7 @@ function shadowed_builtins(mod: parser.Module): string[] {
 // any_implementer reports whether some type implements every trait of a dyn set.
 function any_implementer(impls: parser.ImplInfo[], traits: string[]): boolean {
   for imp in impls {
-    if (implements_traits(impls, util.base_type_name(imp.impl_type), traits)) {
+    if (implements_traits(impls, parser.receiver_base(imp.impl_type), traits)) {
       return true;
     }
   }
@@ -6236,7 +6236,7 @@ function implements_traits(impls: parser.ImplInfo[], n: string, traits: string[]
   for tr in traits {
     var found: boolean = false;
     for imp in impls {
-      if (implements_trait(imp, tr) && util.base_type_name(imp.impl_type) == n) {
+      if (implements_trait(imp, tr) && parser.receiver_base(imp.impl_type) == n) {
         found = true;
       }
     }
@@ -6405,7 +6405,7 @@ function complete(fd: parser.FuncDecl, s: State, name: string): Produced {
     return refuse(table.why);
   }
   var graph: ssa.SFunc = ssa.SFunc { ...f.graph, name: name, nparams: params.len() };
-  f = ssasem.Func { ...f, graph: graph, params: params, result: s.result, records: semrecords.records_of(table.records), enums: table.enums, calls: s.calls, envs: closed.rows, dyns: closed.dyns, shadows: s.shadows, finalizers: finalized_types(s.impls) };
+  f = ssasem.Func { ...f, graph: graph, params: params, result: s.result, records: semrecords.records_of(table.records), enums: table.enums, calls: s.calls, envs: closed.rows, dyns: closed.dyns, shadows: s.shadows, finalizers: finalized_types(s.impls), map_module: s.scope.module_imported("core/map") };
   // Before the verifier in anchor_module, so the rewritten graph is the one
   // it checks, and before anything downstream plans ownership over it (#9692).
   f = ssasem.tail_recursion(f, name);
@@ -7411,13 +7411,17 @@ function anchor_module(all: Produced[], names: string[]): Produced[] {
     }
     if (p.ok && !p.template) {
       p = Produced { ...p, func: ssasem.Func { ...p.func, anchors: anchors } };
-      var copies: ssasem.MergeCopy[] = ssasem.merge_copies(p.func);
-      if (copies.len() > 0) {
-        p = Produced { ...p, func: ssasem.with_merge_copies(p.func, copies) };
-      }
-      var analysis: ssasem.Analysis = ssasem.analyze(p.func);
-      if (!analysis.ok) {
-        p = Produced { ...refuse("produced graph fails semantic verification: " + analysis.why), key: p.key };
+      var plan: ssasem.MergePlan = ssasem.merge_copies(p.func);
+      if (plan.why != "") {
+        p = Produced { ...refuse(plan.why), key: p.key };
+      } else {
+        if (plan.copies.len() > 0) {
+          p = Produced { ...p, func: ssasem.with_merge_copies(p.func, plan.copies) };
+        }
+        var analysis: ssasem.Analysis = ssasem.analyze(p.func);
+        if (!analysis.ok) {
+          p = Produced { ...refuse("produced graph fails semantic verification: " + analysis.why), key: p.key };
+        }
       }
     }
     out = out.append(p);
