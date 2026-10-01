@@ -22,6 +22,7 @@ import "testing"
 
 const randSeededPcgProg = `
 import "std/option";
+import "std/array";
 import "std/rand" as rand;
 import "std/i32";
 import "std/i64";
@@ -172,7 +173,7 @@ function main(): i32 {
     // rng_fill for speed, so this is what keeps the two in agreement.
     var fh: usize = buf_new(64);
     var fst: i64 = rand.rng_fill(rand.rng_seed(4242 as i64), fh, 64);
-    var filled: string = buf_take(fh);
+    var filled: u8[] = buf_take_bytes(fh);
     if (filled.len() != 64) { return 27; }
     var dst: i64 = rand.rng_seed(4242 as i64);
     var word: i32 = 0;
@@ -201,7 +202,7 @@ function main(): i32 {
     // is 64, and a tail shorter than a word takes the low bytes of one more.
     var ah = rand.rng_bytes(rand.rng_seed(4242 as i64), 32);
     var bh = rand.rng_bytes(ah.0, 32);
-    var joined: string = ah.1 + bh.1;
+    var joined: u8[] = ah.1.concat(bh.1);
     if (joined.len() != 64) { return 30; }
     var j2: i32 = 0;
     while (j2 < 64) {
@@ -226,7 +227,13 @@ function main(): i32 {
     var os1 = rand.rng_bytes(rand.rng_seed_from_os(), 32);
     var os2 = rand.rng_bytes(rand.rng_seed_from_os(), 32);
     if (os1.1.len() != 32 || os2.1.len() != 32) { return 37; }
-    if (os1.1 == os2.1) { return 38; }
+    var same_os_bytes: boolean = true;
+    var oi: i32 = 0;
+    while (oi < 32) {
+        if (os1.1[oi] != os2.1[oi]) { same_os_bytes = false; }
+        oi = oi + 1;
+    }
+    if (same_os_bytes) { return 38; }
     // And the bytes are not all the same one.
     var flat: boolean = true;
     var f2: i32 = 1;

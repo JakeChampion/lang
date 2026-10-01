@@ -558,12 +558,15 @@ a key from it.
   bounded forms are unbiased (Lemire).
 - `rng_fill(state, h, n): i64` — push `n` pseudorandom bytes onto the
   capacity-carrying builder `h` and return the advanced state.
-  `rng_bytes(state, n): (i64, string)` is the same as a string. Eight
-  bytes leave per `buf_push_u64`, which is what makes this the fast way
-  to produce bulk randomness: 4 MiB costs 5.6 ms against `random_bytes`'
-  15.3 ms, because the kernel's generator is the slower of the two
-  (#9221). `shuffle_seeded` / `choice_seeded` / `sample_seeded` are the
-  array helpers over the same generator.
+  Eight bytes leave per `buf_push_u64`; the bulk builder measurements
+  are recorded in #9221.
+- `rng_bytes(state, n): (i64, u8[])` returns the same stream as owned
+  bytes. Each eight-byte word consumes two draws, low byte first; a
+  partial final word discards unused high bytes. For `n <= 0`, the array
+  is empty and the state is unchanged. Use a validating text constructor
+  if the bytes must become a string.
+- `shuffle_seeded` / `choice_seeded` / `sample_seeded` are the array
+  helpers over the same generator.
 
 ### `std/semver`
 
