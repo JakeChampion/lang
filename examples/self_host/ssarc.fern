@@ -210,7 +210,7 @@ function record_name(t: typeinfo.Type): string {
 }
 
 function record_fields(t: typeinfo.Type, f: ssasem.Func): semrecords.Field[] {
-  return f.records[semrecords.find(f.records, t)].fields;
+  return f.records.list[semrecords.find(f.records, t)].fields;
 }
 
 function variants_of(t: typeinfo.Type, f: ssasem.Func): semrecords.Variant[] {
@@ -838,7 +838,7 @@ function has_children(t: typeinfo.Type, f: ssasem.Func): boolean {
 // names — lists the same environments as the frame that built the closure.
 function env_records(f: ssasem.Func, fn_ty: typeinfo.Type): semrecords.Record[] {
   var out: semrecords.Record[] = [];
-  for rec in f.records {
+  for rec in f.records.list {
     if (!semtypes.is_env(rec.ty) || !fields_have_children(rec.fields)) {
       continue;
     }
@@ -1909,7 +1909,7 @@ function walkable(t: typeinfo.Type, f: ssasem.Func): boolean {
 }
 
 function schema_types_error(f: ssasem.Func): string {
-  for record in f.records {
+  for record in f.records.list {
     for field in record.fields {
       if (!walkable(field.ty, f)) {
         return "unsupported physical RC record field type";
@@ -2020,7 +2020,7 @@ function routed_box_columns(f: ssasem.Func): typeinfo.Type[] {
 
 function schema_types(f: ssasem.Func): typeinfo.Type[] {
   var all: typeinfo.Type[] = f.values;
-  for rec in f.records {
+  for rec in f.records.list {
     for field in rec.fields {
       all = all.append(field.ty);
     }
@@ -2097,40 +2097,78 @@ function optimized_helper(h: irlower.LowerResult): irlower.LowerResult {
 // rules out. A function's schema set is closed under field reachability, so
 // iterating it also reaches the types the bodies themselves call.
 pub function drop_helpers(f: ssasem.Func): irlower.LowerResult[] {
+  var none: string[] = [];
+  return helpers_not_in(f, util.name_index(none));
+}
+
+// Helpers is the drop helpers collected over a module's bodies, with an index
+// over their symbols: a helper is generated once per module, by the first
+// function whose schema names its type. Every function's table is built from
+// the module's one declaration set, so a later function's body would be the
+// same one.
+pub struct Helpers { rows: irlower.LowerResult[], done: util.NameIndex }
+
+pub function no_helpers(): Helpers {
+  var none: irlower.LowerResult[] = [];
+  return Helpers { rows: none, done: util.name_index(row_names(none)) };
+}
+
+// with_drop_helpers adds the helpers of f whose symbols h does not carry yet.
+pub function with_drop_helpers(h: Helpers, f: ssasem.Func): Helpers {
+  var fresh: irlower.LowerResult[] = helpers_not_in(f, h.done);
+  if (fresh.len() == 0) {
+    return h;
+  }
+  var rows: irlower.LowerResult[] = util.append_all(h.rows, fresh);
+  return Helpers { rows: rows, done: util.name_index(row_names(rows)) };
+}
+
+// helpers_not_in is drop_helpers less the symbols `done` carries.
+function helpers_not_in(f: ssasem.Func, done: util.NameIndex): irlower.LowerResult[] {
   var out: irlower.LowerResult[] = [];
-  for rec in f.records {
+  for rec in f.records.list {
     if (has_children(rec.ty, f)) {
-      out = util.append_all(out, [one_helper(rec.ty, f), release_helper(rec.ty, f)]);
+      out = append_helpers(out, rec.ty, f, done);
     }
   }
   for e in f.enums {
     if (has_children(e.ty, f)) {
-      out = util.append_all(out, [one_helper(e.ty, f), release_helper(e.ty, f)]);
+      out = append_helpers(out, e.ty, f, done);
     }
   }
   for v in boxed_columns(f) {
-    if (!outlined_release(v, f)) {
+    if (!outlined_release(v, f) && !done.has(release_helper_name(v))) {
       out = out.append(release_helper(v, f));
     }
   }
   for v in routed_box_columns(f) {
-    if (ssasem.is_string_array(v)) {
+    if (ssasem.is_string_array(v) && !done.has(release_helper_name(v))) {
       out = out.append(release_helper(v, f));
     }
-    out = out.append(env_release_helper(v));
+    if (!done.has(env_release_name(v))) {
+      out = out.append(env_release_helper(v));
+    }
   }
   return out;
 }
 
-function named_index(rows: irlower.LowerResult[], name: string): i32 {
-  var i: i32 = 0;
-  while (i < rows.len()) {
-    if (rows[i].name == name) {
-      return i;
-    }
-    i = i + 1;
+// append_helpers adds t's drop and release helpers, each unless done has it.
+function append_helpers(own out: irlower.LowerResult[], t: typeinfo.Type, f: ssasem.Func, done: util.NameIndex): irlower.LowerResult[] {
+  if (!done.has(drop_helper_name(t))) {
+    out = out.append(one_helper(t, f));
   }
-  return 0 - 1;
+  if (!done.has(release_helper_name(t))) {
+    out = out.append(release_helper(t, f));
+  }
+  return out;
+}
+
+function row_names(rows: irlower.LowerResult[]): string[] {
+  var out: string[] = [];
+  for r in rows {
+    out = out.append(r.name);
+  }
+  return out;
 }
 
 function replaced(rows: irlower.LowerResult[], at: i32, row: irlower.LowerResult): irlower.LowerResult[] {
@@ -2158,20 +2196,32 @@ function replaced(rows: irlower.LowerResult[], at: i32, row: irlower.LowerResult
 pub function merge_helpers(cache: irlower.LowerResult[], helpers: irlower.LowerResult[]): irlower.LowerResult[] {
   var out: irlower.LowerResult[] = cache;
   var raw: irlower.LowerResult[] = [];
-  for h in helpers {
-    var at: i32 = named_index(raw, h.name);
-    if (at < 0) {
+  // raw_at[k] is the position in raw of the helper that first carried the
+  // symbol of helpers[k], which is helpers[k] itself when it is the first.
+  var names: util.NameIndex = util.name_index(row_names(helpers));
+  var raw_at: i32[] = [];
+  var k: i32 = 0;
+  while (k < helpers.len()) {
+    var h: irlower.LowerResult = helpers[k];
+    var first: i32 = names.find(h.name);
+    if (first == k) {
+      raw_at = raw_at.append(raw.len());
       raw = raw.append(h);
-    } else if (!ir.ops_equal(raw[at].ops, h.ops) || raw[at].n_params != h.n_params
-      || raw[at].n_locals != h.n_locals) {
-      raw = replaced(raw, at, irlower.LowerResult {
-        ...h, ok: false,
-        why: "conflicting drop helper for " + h.name,
-      });
+    } else {
+      var at: i32 = raw_at[first];
+      raw_at = raw_at.append(at);
+      if (!ir.ops_equal(raw[at].ops, h.ops) || raw[at].n_params != h.n_params || raw[at].n_locals != h.n_locals) {
+        raw = replaced(raw, at, irlower.LowerResult {
+          ...h, ok: false,
+          why: "conflicting drop helper for " + h.name,
+        });
+      }
     }
+    k = k + 1;
   }
+  var cached: util.NameIndex = util.name_index(row_names(cache));
   for h in raw {
-    if (named_index(out, h.name) >= 0) {
+    if (cached.has(h.name)) {
       continue;
     }
     if (h.ok) {

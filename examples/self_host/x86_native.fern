@@ -5483,7 +5483,6 @@ function x86_gas_pinsr(own a: X86Asm, mnem: string, rest: string): X86Asm {
   return X86Asm { ...a, code: x86_sse_3a_imm(a.code, w, op, xd, rs, imm) };
 }
 
-// x86_gas_emit assembles one instruction line (mnemonic + operand text).
 // x86_gas_emit assembles one instruction from its text: the entry the
 // encoder fixtures and the `lock` arm use. A round goes through
 // x86_gas_emit_op with the line x86_gas_prepare classified.
@@ -6241,7 +6240,6 @@ struct GasLine {
   kind: i32,  // the GK_* arm
   ext: i32,  // the arm's table value, -1 when it has none
   sfx: i32,  // x86_gas_suffix_size(mnem)
-  base: string,  // mnem without its suffix letter; "" when sfx is 0
   src: string,  // the operands split at the top-level comma; "" when
   dst: string,  // the arm takes `rest` whole
   def_idx: i32,  // the label table entry this line's label is, -1 when none
@@ -6344,7 +6342,7 @@ function x86_gas_link_labels(own pl: GasLine[], labs: GasLabels): GasLine[] {
 // and the split operands. Everything here is a function of the text, so a
 // round never repeats it.
 function x86_gas_classify(mnem: string, rest: string): GasLine {
-  var l: GasLine = GasLine { label: "", body: "", mnem: mnem, rest: rest, kind: GK_UNKNOWN2, ext: 0 - 1, sfx: 0, base: "", src: "", dst: "", def_idx: 0 - 1, ref_idx: 0 - 1 };
+  var l: GasLine = GasLine { label: "", body: "", mnem: mnem, rest: rest, kind: GK_UNKNOWN2, ext: 0 - 1, sfx: 0, src: "", dst: "", def_idx: 0 - 1, ref_idx: 0 - 1 };
   if (mnem == "vzeroupper" && rest.len() == 0) {
     return GasLine { ...l, kind: GK_VZEROUPPER };
   }
@@ -6391,9 +6389,11 @@ function x86_gas_classify(mnem: string, rest: string): GasLine {
   }
   var sfx: i32 = x86_gas_suffix_size(mnem);
   l = GasLine { ...l, sfx: sfx };
+  // The mnemonic without its suffix letter, "" when sfx is 0: the arms
+  // below key on it, and nothing after classification does.
+  var bse: string = "";
   if (sfx > 0) {
-    var bse: string = x86_gas_strip_suffix(mnem);
-    l = GasLine { ...l, base: bse };
+    bse = x86_gas_strip_suffix(mnem);
     if (x86_gas_is_imul(bse)) {
       return GasLine { ...l, kind: GK_IMUL };
     }
@@ -6477,7 +6477,7 @@ function x86_gas_classify(mnem: string, rest: string): GasLine {
     return GasLine { ...l, kind: GK_CVT2S, ext: c2s };
   }
   if (sfx > 0) {
-    var bse2: string = l.base;
+    var bse2: string = bse;
     var ae: i32 = x86_gas_alu_ext(bse2);
     if (ae >= 0) {
       return GasLine { ...l, kind: GK_ALU, ext: ae };
@@ -6569,7 +6569,7 @@ function x86_gas_prepare(src: string): GasLine[] {
       }
     }
     if (mnem.len() == 0) {
-      out = out.append(GasLine { label: label, body: line, mnem: mnem, rest: rest, kind: GK_NONE, ext: 0 - 1, sfx: 0, base: "", src: "", dst: "", def_idx: 0 - 1, ref_idx: 0 - 1 });
+      out = out.append(GasLine { label: label, body: line, mnem: mnem, rest: rest, kind: GK_NONE, ext: 0 - 1, sfx: 0, src: "", dst: "", def_idx: 0 - 1, ref_idx: 0 - 1 });
     } else {
       out = out.append(GasLine { ...x86_gas_classify(mnem, rest), label: label, body: line });
     }
