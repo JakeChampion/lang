@@ -552,7 +552,14 @@ function steal(own r: irlower.LowerResult, f: ssasem.Func, v: i32, unique: i32):
 // the frame still reads count as shared, and `unshared_map` then copies:
 // `var n = m.insert(k, v)` leaves `m` as it was, which is the value the
 // checker's E055 promises for every collection operation.
+//
+// A string append defers every retain of its left operand: a string the
+// frame still reads cannot grow in place, so it is lent to a plain
+// concatenation, which takes nothing (`grow_or_concat`).
 function deferred_retain(f: ssasem.Func, p: ssaunits.Plan, step: ssaunits.Step, ins: ssa.SInst): boolean {
+  if (ssaunits.string_append(f, ins)) {
+    return receiver_retained(step);
+  }
   if (ins.kind_tag != ssasem.append() && ins.kind_tag != ssasem.with()) {
     return false;
   }
@@ -565,6 +572,10 @@ function deferred_retain(f: ssasem.Func, p: ssaunits.Plan, step: ssaunits.Step, 
   if (p.grows[ins.result] < 0 && p.kept[ins.result]) {
     return false;
   }
+  return receiver_retained(step);
+}
+
+function receiver_retained(step: ssaunits.Step): boolean {
   for supply in step.supplies {
     if (supply.slot == 0 && supply.mode == ssaunits.retain_unit()) {
       return true;
@@ -2406,6 +2417,29 @@ function operand_width(f: ssasem.Func, ins: ssa.SInst): i32 {
   return 0;
 }
 
+// A string append handed the left operand's unit: the runtime grows that
+// buffer in place when the block has room, and the result IS the operand;
+// otherwise the concatenation builds a fresh box and the operand's unit is
+// released.
+function grow_or_concat(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
+  var res: i32 = scratch_base(f);
+  r = reserve(r, res + 1);
+  r = emit(r, ir.op_load_local(ins.args[0]));
+  r = emit(r, ir.op_load_local(ins.args[1]));
+  r = emit(r, ir.op_call_direct("__fern_str_grow", 2));
+  r = emit(r, ir.op_if(0));
+  r = emit(r, ir.op_load_local(ins.args[0]));
+  r = emit(r, ir.op_store_local(res));
+  r = emit(r, ir.op_else());
+  r = emit(r, ir.op_load_local(ins.args[0]));
+  r = emit(r, ir.op_load_local(ins.args[1]));
+  r = emit(r, ir.op_str_concat());
+  r = emit(r, ir.op_store_local(res));
+  r = release(r, ins.args[0], f.values[ins.args[0]], f);
+  r = emit(r, ir.op_end());
+  return emit(r, ir.op_load_local(res));
+}
+
 // A string `+` is the runtime's concatenation, a fresh box; equality reads
 // both operands, and an ordering is `str_cmp` — which hands back a signed i32
 // under, at or over zero — against a zero constant. The verifier admits no
@@ -3617,6 +3651,10 @@ function instruction(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Pla
   }
   if (ins.kind_tag == ssasem.append()) {
     r = append_push(r, f, p, ins, defer0, link);
+    return emit(r, ir.op_store_local(ins.result));
+  }
+  if (ssaunits.string_append(f, ins) && !defer0 && !p.literal[ins.args[0]]) {
+    r = grow_or_concat(r, f, ins);
     return emit(r, ir.op_store_local(ins.result));
   }
   if (literal_text_eq(f, p, ins) >= 0) {

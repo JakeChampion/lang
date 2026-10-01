@@ -147,6 +147,9 @@ function is_rc_helper(name: string): boolean {
     // One string's unit of its own: the retain, or a fresh box for an arena
     // view. ssarc's reads out of a view map column emit it.
     || name == "__fern_str_own"
+    // A string append's in-place arm: grows a sole-owned fused box when its
+    // block has room and answers whether it did. Only ssarc emits it.
+    || name == "__fern_str_grow"
     // FBIP reuse-degrade primitive (#4350): hands a dead donor's block back
     // when its cap matches, else freelists it and allocs fresh — so a reuse
     // site guarded by __fern_rc_is_unique degrades instead of corrupting.
@@ -930,7 +933,7 @@ pub function lift_lambdas_parts(mods: parser.Module[]): parser.Module[] {
 pub function all_runtime_need_roots(): string[] {
   return [
     "alloc_u8", "args", "arr_push", "arr_push_owned", "arr_slice",
-    "arr_str_join", "arr_inc_elems", "arr_own_elems", "str_own", "arrarr_free", "chr", "env", "eprint", "heap",
+    "arr_str_join", "arr_inc_elems", "arr_own_elems", "str_own", "str_grow", "arrarr_free", "chr", "env", "eprint", "heap",
     "i32_to_string", "u32_to_string", "maps", "monotonic_ns", "now_ns", "now_unix_ms",
     // The map roots that "maps" does NOT reach. Each is marked directly by
     // the arm64 emitter, and runtime_need_deps declares no root with any of

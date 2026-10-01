@@ -4097,15 +4097,6 @@ behaviour is observable either way.
 
 ## Open gaps
 
-**Accumulating into an array or a string is quadratic under the self-host
-compiler (#9077).** `xs = xs.append(v)` and `s = s + piece` grow in place under
-native and copy per step in the self-host build, so a corpus cannot hand the
-self-host leg a large accumulation: `dircolors`' large-input cases are sized to
-what the self-host finishes (6000 entries — past a read block on the way in and
-past a pipe buffer on the way out) rather than to what native would take. Found
-when the self-host build of dircolors was SIGKILLed on a case native finishes
-in 0.19 s.
-
 **A directory walk is bounded by PATH_MAX (#9074).** Every filesystem builtin
 takes a path, so a recursive walk concatenates one per entry and the kernel
 refuses it past 4096 bytes. GNU's fts is fd-relative (FTS_CWDFD: openat /

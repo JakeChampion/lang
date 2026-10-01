@@ -3372,6 +3372,81 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(".Laie_ret:\n");
     s = s.write("    ret\n");
   }
+  // __fern_str_grow(a@16(%rsp), b@8(%rsp)) -> 1 once b is appended to a in
+  // place, else 0 with nothing written. In place needs a FUSED box at rc 1,
+  // whose block __fern_str_free will return to the class it came from: the
+  // grown block's words, ceil(len/8) + 3, still fit the capacity __fern_capw
+  // or large_class gave the original, in the same tier. Under a heap-event
+  // build the growth reports as a free of the old size and an alloc of the
+  // new, so the two hooks still pair by size.
+  if (s.has_need("str_grow")) {
+    s = s.write("__fn___fern_str_grow:\n");
+    s = s.write("    movq 16(%rsp), %r8\n");  // a
+    s = s.write("    xorl %eax, %eax\n");
+    s = s.write("    testb $1, %r8b\n");
+    s = s.write("    jnz .Lsg_ret\n");
+    s = s.write("    cmpq $0x10000, %r8\n");
+    s = s.write("    jb .Lsg_ret\n");
+    s = s.write("    movl -8(%r8), %ecx\n");  // rc
+    s = s.write(san_poison_check("%ecx"));
+    s = s.write("    cmpl $1, %ecx\n");
+    s = s.write("    jne .Lsg_ret\n");
+    s = s.write("    cmpl $" + util.i32_to_string(fused_marker()) + ", -4(%r8)\n");
+    s = s.write("    jne .Lsg_ret\n");
+    s = s.write("    movq 8(%rsp), %rdx\n");  // b
+    s = s.write("    movq 8(%rdx), %rsi\n");  // lb
+    s = s.write("    movq 8(%r8), %rcx\n");  // la
+    s = s.write("    leaq (%rcx,%rsi), %rdi\n");  // grown length
+    s = s.write("    cmpq $0x7fffffff, %rdi\n");
+    s = s.write("    ja .Lsg_ret\n");
+    s = s.write("    leaq 31(%rcx), %r9\n");
+    s = s.write("    shrq $3, %r9\n");  // words now
+    s = s.write("    leaq 31(%rdi), %r10\n");
+    s = s.write("    shrq $3, %r10\n");  // words grown
+    s = s.write("    cmpq %r9, %r10\n");
+    s = s.write("    je .Lsg_copy\n");
+    s = s.write("    cmpq $65536, %r9\n");
+    s = s.write("    jae .Lsg_large\n");
+    s = s.write("    pushq %r9\n");
+    s = s.write("    call __fern_capw\n");
+    s = s.write("    popq %r11\n");  // capacity, in words
+    s = s.write("    cmpq %r11, %r10\n");
+    s = s.write("    ja .Lsg_ret\n");
+    s = s.write("    jmp .Lsg_fits\n");
+    s = s.write(".Lsg_large:\n");
+    s = s.write("    cmpq $0x8000000, %r10\n");  // past 1 GiB the block is exact
+    s = s.write("    ja .Lsg_ret\n");
+    s = s.write("    leaq 0(,%r9,8), %rax\n");
+    s = s.write("    pushq %rcx\n");
+    s = s.write("    pushq %rdx\n");
+    s = large_class(s);
+    s = s.write("    popq %rdx\n");
+    s = s.write("    popq %rcx\n");
+    s = s.write("    shrq $3, %rax\n");  // capacity, in words
+    s = s.write("    cmpq %rax, %r10\n");
+    s = s.write("    movl $0, %eax\n");
+    s = s.write("    ja .Lsg_ret\n");
+    s = s.write(".Lsg_fits:\n");
+    if (hev_on()) {
+      s = s.write("    leaq -8(%r8), %r11\n");  // base
+      s = hev_free(s, "%r11", "%r9");
+      s = s.write("    pushq %r10\n");
+      s = s.write("    pushq %r11\n");
+      s = s.write("    pushq 16(%rsp)\n");  // site = our caller
+      s = s.write("    call __fern_hev_a\n");
+      s = s.write("    addq $24, %rsp\n");
+    }
+    s = s.write(".Lsg_copy:\n");
+    s = s.write("    movq %rdi, 8(%r8)\n");  // len = grown length
+    s = s.write("    movq (%r8), %rdi\n");
+    s = s.write("    addq %rcx, %rdi\n");  // dst = data + la
+    s = s.write("    movq %rsi, %rcx\n");
+    s = s.write("    movq (%rdx), %rsi\n");  // src = b's data
+    s = s.write("    rep movsb\n");
+    s = s.write("    movl $1, %eax\n");
+    s = s.write(".Lsg_ret:\n");
+    s = s.write("    ret\n");
+  }
   // __fern_str_own(s@8(%rsp)) -> a string its holder owns a unit of. A
   // counted string is retained and answered. An arena view box, whose
   // immortal rc cannot count a second holder, is answered as a fresh box
@@ -9323,6 +9398,9 @@ function helper_call_needs(name: string, s: asmcore.EmitState): asmcore.EmitStat
   }
   if (name == "__fern_str_own") {
     s = s.need("str_own");
+  }
+  if (name == "__fern_str_grow") {
+    s = s.need("str_grow");
   }
   // The VIEW-aware string[] element walk (#6544) is gated the same way
   // and for the same reason: its body's inner
