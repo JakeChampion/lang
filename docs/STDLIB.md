@@ -1605,6 +1605,10 @@ in-memory buffer-backed `Stream`.
   `stream_empty()`.
 - Readers: `(s).read_byte()`, `(s).read_n(n)`, `(s).read_line()`,
   `(s).read_all()`, `(s).read_all_string()`.
+- `read_all_string(): (Option[string], Stream)` validates only the unread
+  bytes. It returns `Some(text)` for valid UTF-8 and `None` for malformed
+  bytes, advancing the returned cursor to EOF either way. EOF yields
+  `Some("")`. The original value and its bytes remain available.
 - Introspection: `(s).len()`, `(s).remaining()`, `(s).is_empty()`.
 
 ### `std/io_buffered`

@@ -20,6 +20,7 @@
 // `u8[]` for the byte-array side.
 
 import "std/string";
+import "std/utf8" as utf8;
 import "core/int";
 
 // `stream_from_bytes(bs)` — wrap a `u8[]` buffer as a
@@ -92,17 +93,13 @@ pub function (s: Stream) read_all(): (u8[], Stream) {
   return (out, Stream { ...s, pos: end });
 }
 
-// `(s: Stream).read_all_string()` — consume the remaining
-// bytes as a UTF-8 string, returning `(string, advancedStream)`.
-// Convenience over `string_from_bytes_unchecked` on `read_all`'s bytes,
-// and so UNCHECKED: non-UTF-8 input round-trips through the string as
-// raw bytes rather than being rejected. A reader is a genuine ingest
-// boundary, so callers who need the bytes to actually be text should
-// take `read_all` and pass the bytes to `std/utf8.from_bytes`, which
-// validates and returns `Option[string]` (#5634, D9).
-pub function (s: Stream) read_all_string(): (string, Stream) {
+// `(s: Stream).read_all_string()` consumes and validates the remaining bytes.
+// Valid UTF-8 yields Some(text), including Some("") at EOF; malformed bytes
+// yield None. The returned cursor advances to EOF in either case. The original
+// Stream remains unchanged, so callers can still recover its bytes with read_all.
+pub function (s: Stream) read_all_string(): (Option[string], Stream) {
   let (bytes, s2) = s.read_all();
-  return (string_from_bytes_unchecked(bytes), s2);
+  return (utf8.from_bytes(bytes), s2);
 }
 
 // ============================================================
