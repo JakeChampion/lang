@@ -22885,7 +22885,14 @@ func (b *builder) curIdentOrder() checker.IdentOrder {
 // body walk each time (#8175).
 func (b *builder) curCallArgDies() map[*ast.Call]map[string]bool {
 	if b.callArgDiesFn != b.fn {
-		b.callArgDies = callArgDeaths(b.fn, b.info, b.paramFieldObs)
+		var owned map[string]bool
+		if len(b.rc.consumingBindings) > 0 {
+			owned = make(map[string]bool, len(b.rc.consumingBindings))
+			for nm := range b.rc.consumingBindings {
+				owned[nm] = true
+			}
+		}
+		b.callArgDies = callArgDeaths(b.fn, b.info, b.paramFieldObs, owned)
 		b.callArgDiesFn = b.fn
 	}
 	return b.callArgDies
