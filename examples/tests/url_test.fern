@@ -1,6 +1,7 @@
 import "std/test";
 import "std/url" as url;
 import "core/map";
+import "std/utf8" as utf8;
 
 // examples/tests/url_test.fern — pure-Fern coverage of std/url's
 // RFC 3986 percent-encoding (url_encode / url_decode) and the
@@ -313,6 +314,28 @@ function test_parse_scheme_anchored(): test.TestOutcome {
   }
 }
 
+// An escape that does not spell UTF-8 decodes to U+FFFD, one per
+// ill-formed unit; the bytes themselves are `url_decode_bytes`'s.
+function test_decode_ill_formed_is_replacement(): test.TestOutcome {
+  var fffd: string = utf8.utf8_encode(65533 as char);
+  if (url.url_decode("a%FFb") != "a" + fffd + "b") {
+    return test.fail("url_decode %FF");
+  }
+  if (url.form_decode("a%C3+b") != "a" + fffd + " b") {
+    return test.fail("form_decode %C3");
+  }
+  return test.assert_eq(url.url_decode("%C3%A9"), "é");
+}
+
+function test_decode_bytes_keeps_the_bytes(): test.TestOutcome {
+  var bs: u8[] = url.url_decode_bytes("a%FFb");
+  if (bs.len() != 3 || bs[1] as i32 != 255) {
+    return test.fail("url_decode_bytes");
+  }
+  var fs: u8[] = url.form_decode_bytes("%00+");
+  return test.assert_true(fs.len() == 2 && fs[0] as i32 == 0 && fs[1] as i32 == 32);
+}
+
 function main(): i32 {
   var r: test.TestRunner = test.test_new("std/url");
   r = r.it("encode space", test_encode_space);
@@ -341,5 +364,7 @@ function main(): i32 {
   r = r.it("parse port validation", test_parse_port);
   r = r.it("parse host shape", test_parse_host_shape);
   r = r.it("parse scheme anchored", test_parse_scheme_anchored);
+  r = r.it("decode ill-formed is U+FFFD", test_decode_ill_formed_is_replacement);
+  r = r.it("decode_bytes keeps the bytes", test_decode_bytes_keeps_the_bytes);
   return r.finish();
 }

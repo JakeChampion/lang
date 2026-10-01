@@ -1,0 +1,66 @@
+name: Self-host driver cache
+description: >
+  Point FERN_SELFHOST_BUILD_CACHE at a directory restored from the Actions
+  cache, so a job pays for a self-host driver build only when nothing earlier
+  built that exact driver.
+
+  The drivers (asm_ir_run.fern, fern.fern, ...) are compiled by the pinned
+  stage0 compiler at 90-300 s each (docs/LOCAL-DEV-LOOP.md), and the e2e
+  harness keys each one by its source closure, the target, the stage0
+  binary's bytes and the stdlib tree (internal/e2eharness,
+  CachedDriverBinFor): a static freestanding binary from the same compiler
+  and sources is the same bytes on every runner, which is what makes the
+  directory safe to carry between runs. The Actions-cache key is the hash of
+  the same inputs, so an exact hit holds every stock driver this tree needs,
+  and the prefix fallback lands the newest earlier directory, in which every
+  driver whose closure did not change still matches its harness key.
+
+  Only drivers (*.driverbin) are cached, not the programs the tests link
+  (*.bin). Entries older than seven days are dropped after the restore, so a
+  saved directory does not accumulate drivers no tree builds any more.
+
+  One job per lane saves (save: "true"): the one that builds every stock
+  driver anyway. Every other job restores only, so the lane's shards do not
+  each upload a near-identical directory per tree.
+inputs:
+  save:
+    description: >
+      Save the directory under the exact key when the job ends. The exact key
+      changes with the stage0 pin, the self-host sources and the stdlib, so a
+      save happens once per tree per saving job.
+    required: false
+    default: "false"
+runs:
+  using: composite
+  steps:
+    - name: Name the driver cache directory
+      id: dir
+      shell: bash
+      run: |
+        dir="$RUNNER_TEMP/selfhost-unicache"
+        mkdir -p "$dir"
+        echo "FERN_SELFHOST_BUILD_CACHE=$dir" >> "$GITHUB_ENV"
+        echo "dir=$dir" >> "$GITHUB_OUTPUT"
+    - name: Restore the stage0-built drivers
+      if: inputs.save != 'true'
+      uses: actions/cache/restore@v6
+      with:
+        path: ${{ steps.dir.outputs.dir }}/*.driverbin
+        key: selfhost-drivers-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('bootstrap/stage0.lock', 'examples/self_host/**', 'internal/stdlib/**') }}
+        restore-keys: |
+          selfhost-drivers-v1-${{ runner.os }}-${{ runner.arch }}-
+    - name: Restore the stage0-built drivers, and save them when the job ends
+      if: inputs.save == 'true'
+      uses: actions/cache@v6
+      with:
+        path: ${{ steps.dir.outputs.dir }}/*.driverbin
+        key: selfhost-drivers-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('bootstrap/stage0.lock', 'examples/self_host/**', 'internal/stdlib/**') }}
+        restore-keys: |
+          selfhost-drivers-v1-${{ runner.os }}-${{ runner.arch }}-
+    - name: Drop drivers no run has needed for a week
+      shell: bash
+      run: |
+        dir="${{ steps.dir.outputs.dir }}"
+        stale=$(find "$dir" -maxdepth 1 -name '*.driverbin' -mtime +7 -print -delete | wc -l)
+        kept=$(find "$dir" -maxdepth 1 -name '*.driverbin' | wc -l)
+        echo "self-host driver cache: $kept driver(s) restored, $stale stale one(s) dropped"

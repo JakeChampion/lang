@@ -1594,7 +1594,10 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
         return http.ok("world");
     }
     if (req.method == "POST") {
-        return http.ok(req.body_string());
+        match (req.body_string()) {
+            Ok(text) => { return http.ok(text); },
+            Err(e) => { return e.to_response(); }
+        }
     }
     return http.text(404, "not found");
 }
@@ -2170,7 +2173,10 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
         return http.ok("world");
     }
     if (req.method == "POST") {
-        return http.ok(req.body_string());
+        match (req.body_string()) {
+            Ok(text) => { return http.ok(text); },
+            Err(e) => { return e.to_response(); }
+        }
     }
     return http.text(404, "not found");
 }

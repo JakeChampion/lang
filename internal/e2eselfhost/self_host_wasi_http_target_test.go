@@ -32,7 +32,10 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
         }
     }
     if (req.method == "POST") {
-        return http.ok(req.method + ":" + req.body_string());
+        match (req.body_string()) {
+            Ok(text) => { return http.ok(req.method + ":" + text); },
+            Err(e) => { return e.to_response(); }
+        }
     }
     return http.text(404, "not found");
 }

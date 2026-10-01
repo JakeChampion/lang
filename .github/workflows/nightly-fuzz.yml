@@ -115,6 +115,7 @@ jobs:
       - uses: ./.github/actions/setup-fern
         with:
           wasmtime: "true"
+      - uses: ./.github/actions/selfhost-driver-cache
       - name: go test (seeds ${{ needs.window.outputs.base }}+, shard ${{ matrix.shard }}/2)
         env:
           DIFF_ORACLE_SEED_BASE: "${{ needs.window.outputs.base }}"
@@ -165,6 +166,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
+      - uses: ./.github/actions/selfhost-driver-cache
       - name: go test (self-host, seeds ${{ needs.window.outputs.base }}+, shard ${{ matrix.shard }}/4)
         env:
           FERN_SELFHOST_DIFF: "1"
@@ -197,6 +199,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
+      - uses: ./.github/actions/selfhost-driver-cache
       - name: go test (self-host semantic, seeds ${{ needs.window.outputs.base }}+, shard ${{ matrix.shard }}/4)
         env:
           FERN_SELFHOST_DIFF: "1"
@@ -229,6 +232,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
+      - uses: ./.github/actions/selfhost-driver-cache
       - name: aarch64 cross toolchain + qemu
         uses: ./.github/actions/apt-cross-toolchain
       - name: go test (self-host arm64, seeds ${{ needs.window.outputs.base }}+, shard ${{ matrix.shard }}/2)
@@ -257,6 +261,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
+      - uses: ./.github/actions/selfhost-driver-cache
       - name: aarch64 cross toolchain + qemu
         uses: ./.github/actions/apt-cross-toolchain
       - name: go test (self-host arm64 semantic, seeds ${{ needs.window.outputs.base }}+, shard ${{ matrix.shard }}/2)
@@ -285,6 +290,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
+      - uses: ./.github/actions/selfhost-driver-cache
       - name: go test (self-host wasm ${{ matrix.lowering }}, seeds ${{ needs.window.outputs.base }}+)
         env:
           FERN_SELFHOST_DIFF: "1"
@@ -323,6 +329,7 @@ jobs:
       - uses: ./.github/actions/setup-fern
         with:
           wasmtime: ${{ matrix.wasmtime }}
+      - uses: ./.github/actions/selfhost-driver-cache
 
       # Go keeps the generated corpus under $GOCACHE/fuzz, so this sits
       # inside the build cache setup-fern already restored — hence the
@@ -395,6 +402,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
+      - uses: ./.github/actions/selfhost-driver-cache
 
       # The corpus is this lane's whole point: a night that discovers an input
       # reaching new self-host coverage must hand it to the next night, or the

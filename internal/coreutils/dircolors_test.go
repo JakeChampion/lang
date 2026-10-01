@@ -183,9 +183,7 @@ func dircolorsCases(t *testing.T) []invocation {
 	pDashRange := pattern("p-dash-range", "[--0]")
 
 	// Past one read block on the way in (90 KB) and past a pipe buffer on
-	// the way out (84 KB), which is what the SIGPIPE case needs. Not
-	// larger: the self-host leg runs this corpus too, and there an
-	// accumulation loop is still quadratic (#9077).
+	// the way out (84 KB), which is what the SIGPIPE case needs.
 	big := dircolorsFile(t, dir, "big", strings.Repeat("DIR 0123456789\n", 6000))
 	// A body that outgrows one stdio buffer, which is what separates the
 	// two write-failure wordings: the shell emitters write the body and

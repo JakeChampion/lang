@@ -71,6 +71,20 @@ function test_into_bytes(): test.TestOutcome {
   return test.assert_true(bs.len() == 3 && bs[0] as i32 == 120);
 }
 
+// A byte that is not UTF-8 is refused by into_string and kept by
+// into_bytes.
+function test_into_string_refuses_ill_formed(): test.TestOutcome {
+  var w = io.bytes_writer_new().write_string("a").write_byte(255).write_string("b");
+  match (w.into_string()) {
+    Some(s) => {
+      return test.fail("into_string accepted: " + s);
+    },
+    None => {}
+  }
+  var bs: u8[] = w.into_bytes();
+  return test.assert_true(bs.len() == 3 && bs[1] as i32 == 255);
+}
+
 function test_reset(): test.TestOutcome {
   var w = io.bytes_writer_new().write_string("discard me");
   w = w.reset();
@@ -308,5 +322,6 @@ function main(): i32 {
   r = r.it("LineReader keeps terminators", test_line_reader_keeps_terminators);
   r = r.it("LineReader spans chunks", test_line_reader_spans_chunks);
   r = r.it("LineReader empty and NUL", test_line_reader_empty_and_nul);
+  r = r.it("into_string refuses ill-formed bytes", test_into_string_refuses_ill_formed);
   return r.finish();
 }

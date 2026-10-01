@@ -472,6 +472,32 @@ function test_lossy_indexing(): test.TestOutcome {
   return test.assert_eq(utf8.substring(s, 2, 3).to_owned(), "b");
 }
 
+// from_bytes_lossy: well-formed bytes come back untouched; an ill-formed
+// sequence is one U+FFFD per maximal subpart, the rule `codepoints`
+// walks by.
+function test_from_bytes_lossy(): test.TestOutcome {
+  var fffd: string = utf8.utf8_encode(65533 as char);
+  var m: string = mixed();
+  if (utf8.from_bytes_lossy(m.bytes()) != m) {
+    return test.fail("well-formed input changed");
+  }
+  if (utf8.from_bytes_lossy([]).len() != 0) {
+    return test.fail("empty");
+  }
+  // E2 82 could still begin a 3-byte sequence: one unit, then the A.
+  if (utf8.from_bytes_lossy([226 as u8, 130 as u8, 65 as u8]) != fffd + "A") {
+    return test.fail("truncated 3-byte");
+  }
+  // F0 cannot take 80 as its second byte: two units.
+  if (utf8.from_bytes_lossy([240 as u8, 128 as u8]) != fffd + fffd) {
+    return test.fail("F0 80");
+  }
+  if (utf8.from_bytes_lossy([65 as u8, 255 as u8, 66 as u8]) != "A" + fffd + "B") {
+    return test.fail("one bad byte");
+  }
+  return test.assert_true(utf8.is_valid_utf8(utf8.from_bytes_lossy([237 as u8, 160 as u8, 128 as u8])));
+}
+
 function main(): i32 {
   var r: test.TestRunner = test.test_new("std/utf8");
   r = r.it("decode ascii", test_decode_ascii);
@@ -503,5 +529,6 @@ function main(): i32 {
   r = r.it("lossy maximal subpart", test_lossy_maximal_subpart);
   r = r.it("lossy valid neighbours", test_lossy_valid_neighbours);
   r = r.it("lossy codepoint indexing", test_lossy_indexing);
+  r = r.it("from_bytes_lossy", test_from_bytes_lossy);
   return r.finish();
 }

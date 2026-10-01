@@ -3,7 +3,8 @@ package e2e
 import "testing"
 
 // utf8FromBytesProgram pins `std/utf8.from_bytes` — the validating
-// bytes-to-string constructor from #5634, decision D9, slice 2.
+// bytes-to-string constructor from #5634, decision D9, slice 2 — and its
+// total sibling `from_bytes_lossy`.
 //
 // The split it belongs to: `string_from_bytes_unchecked` is the builtin
 // the caller vouches for, `utf8.from_bytes` is the one that checks. The
@@ -71,6 +72,16 @@ function main(): i32 {
         }
         p = p + 1;
     }
+
+    // from_bytes_lossy: well-formed input untouched, one U+FFFD per
+    // maximal subpart, and the result is always well-formed.
+    var fffd: string = utf8.utf8_encode(65533 as char);
+    if (utf8.from_bytes_lossy(mixed) != s) { return 17; }
+    if (utf8.from_bytes_lossy([226 as u8, 130 as u8, 65 as u8]) != fffd + "A") { return 18; } // truncated 3-byte, then A
+    if (utf8.from_bytes_lossy([240 as u8, 128 as u8]) != fffd + fffd) { return 19; }           // F0 cannot take 80: two units
+    if (utf8.from_bytes_lossy([255 as u8]) != fffd) { return 20; }
+    if (utf8.from_bytes_lossy([]).len() != 0) { return 21; }
+    if (!utf8.is_valid_utf8(utf8.from_bytes_lossy([65 as u8, 255 as u8, 66 as u8]))) { return 22; }
     return 0;
 }
 `

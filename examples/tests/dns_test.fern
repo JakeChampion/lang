@@ -242,6 +242,14 @@ function test_decode_rejects(): test.TestOutcome {
     },
     None => {}
   }
+  // A label whose bytes are not UTF-8: a name is text, so Malformed.
+  var bad_label: i32[] = [0, 1, 129, 128, 0, 1, 0, 0, 0, 0, 0, 0, 2, 255, 109, 0, 0, 1, 0, 1];
+  match (decoded(bytes(bad_label))) {
+    Some(_) => {
+      return test.fail("a label that is not UTF-8");
+    },
+    None => {}
+  }
   // A query echoed back decodes, but is not a response to anything.
   match (decoded(encoded(dns.query(7, "vm.example.com", dns.type_a())))) {
     Some(m) => {
