@@ -1,0 +1,33 @@
+// main imports store, which imports shapes; main never imports shapes. A
+// module may name bare the variants of every module its imports reach, so
+// `Circle` / `Square` resolve here in a match on store's result, nested in an
+// `Ok(...)`, and in construction.
+import "./store";
+
+function area(k: i32): i32 {
+    match (store.get(k)) {
+        Circle(r) => { return 3 * r * r; },
+        Square(s) => { return s * s; },
+    }
+}
+
+function side(k: i32): i32 {
+    match (store.find(k)) {
+        Ok(Square(s)) => { return s; },
+        Ok(Circle(_)) => { return 0; },
+        Err(e) => { return e; },
+    }
+}
+
+function main(): i32 {
+    if (area(0) != 27) { return 1; }
+    if (area(1) != 16) { return 2; }
+    if (side(1) != 4) { return 3; }
+    if (side(0) != 0) { return 4; }
+    if (side(0 - 5) != 0 - 5) { return 5; }
+    match (Square(2)) {
+        Square(s) => { if (s != 2) { return 6; } },
+        _ => { return 7; },
+    }
+    return 42;
+}
