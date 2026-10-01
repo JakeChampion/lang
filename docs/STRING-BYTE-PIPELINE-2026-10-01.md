@@ -21,10 +21,14 @@ limit, traverses all iovecs, reports partial counts and errors, and releases
 scratch memory and owned error handles. The WASM raw writer also fixes the
 payloadless success box's `None` tag.
 
+`BufWriter.flush()` now extracts bytes and writes them through the raw API.
+The primary interpreter uses host byte methods for stdin, stdout and stderr,
+including short-write counts and close errors. Builder extraction also uses
+the host API, replacing the temporary direct-memory compatibility path.
+
 ## Validation scope
 
-The combined branch passed validation after integration with main
-`1ae9cadf6`:
+The foundation passed validation after integration with main `1ae9cadf6`:
 
 - Full unit suite and `make lint-all`, with `GOMAXPROCS=2` and one Go
   package at a time.
@@ -35,8 +39,18 @@ The combined branch passed validation after integration with main
   written. Primary native and core-WASM executions require balanced
   allocation counts and no sanitizer findings.
 - Bootstrap from the official pinned seed, followed by `make distcheck`.
-  Stage 2 and stage 3 were byte-identical at 14,593,777 bytes, SHA-256
-  `6a0ca5f5adff2011f823c7b71491c948106ba5010239a89dc36977945d8b8626`.
+
+The interpreter bridge uses the published
+[`stage0-20261001-c891ebc` seed](https://github.com/JakeChampion/lang/releases/tag/stage0-20261001-c891ebc).
+Its Darwin bootstrap stages 1, 2 and 3 are identical at 14,610,337 bytes,
+SHA-256 `97745b400146fa25696b9d95ebe496934c94102766ca4d6daa49b81153340a4c`.
+Darwin runs exercise interpreters built through both Go and the primary seed;
+Linux runs exercise primary ARM64 and x86-64 interpreters. All compare exact
+output against the Go interpreter for readers, writers, builder reuse,
+buffered writes and empty/nonempty pipeline round trips. Compiled buffered
+writes and the pipeline also pass on ARM64, x86-64 and core WASM, with balanced
+allocation counts on the semantic path. The bridge also passes the full unit
+suite and `make lint-all` with the published seed pinned.
 
 The target matrix covers bootstrap and primary native code, strict
 semantic IR ownership checks, WASM Preview 1 and actual Preview 2
@@ -46,12 +60,10 @@ closed descriptors and payloadless results stored in a map. A deterministic
 component host checks partial failures, error-handle disposal and scratch
 allocation balance.
 
-Two existing primary-compiler gaps remain explicit. Its interpreter needs
-a raw Reader/Writer host bridge after the bootstrap seed can compile those
-calls. Its Preview 2 components do not yet provide stdin Reader imports;
-the raw reader tests require a clear refusal there. Neither path is
-counted as successful execution coverage. Primary builder extraction does
-run in the interpreter, and component output is covered.
+Primary Preview 2 components do not yet provide stdin Reader imports;
+the raw reader tests require a clear refusal there. That path is not counted
+as successful execution coverage. Primary interpreter file-handle opening
+also remains unsupported; this bridge covers the standard streams.
 
 The focused commits retain their individual measured reports:
 

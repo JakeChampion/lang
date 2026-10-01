@@ -879,11 +879,10 @@ including WASI Preview 1's possible `Interrupted` result. Closed handles
 report an error. Retained arrays remain valid after subsequent reads and
 closing the reader.
 
-The Fern interpreter's host reader still needs a bootstrap-compatible raw
-path before this method has full interpreter parity. The existing
-`Reader.read_chunk` remains text-typed and unchecked pending migration of
-its binary consumers. The new method does not establish the string invariant
-by itself.
+The Fern interpreter also supports raw stdin reads; its file-handle opening
+remains unsupported. The existing `Reader.read_chunk` remains text-typed and
+unchecked pending migration of its binary consumers. The new method does not
+establish the string invariant by itself.
 
 `Writer.write_bytes(bytes): Option[IoError]` and
 `Writer.write_some_bytes(bytes): Result[i64, IoError]` borrow an owned `u8[]`
@@ -892,10 +891,12 @@ reports an I/O error on zero progress; the latter returns the count from one
 host write, which may be zero. Empty writes preserve host errors, and closed
 handles report an error. WASI Preview 2 host writes use blocking chunks of
 at most 4096 bytes. These methods have the same bootstrap
-and primary compiled target coverage as the raw reader; the primary
-interpreter still needs its host migration. They never construct an unchecked
-string. Borrowed views must be materialized before calling this owned-array
-signature.
+and primary compiled target coverage as the raw reader. The primary
+interpreter bridges raw stdin reads and stdout/stderr writes through these
+host methods, preserving arrays, counts and I/O errors. It also supports text
+writes on those stdio handles. File-handle opening in that interpreter remains
+outside this bridge. They never construct an unchecked string. Borrowed views
+must be materialized before calling this owned-array signature.
 
 `BufWriter.flush()` extracts an owned byte array and consumes it after writing.
 Byte writes, mappings and ranges can therefore flush arbitrary bytes or partial
