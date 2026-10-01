@@ -1670,7 +1670,13 @@ function drop_fields_except(own r: irlower.LowerResult, slot: i32, fields: semre
   return r;
 }
 
-function reuse_construct(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
+// `kept` marks the fields the construction reads from its donor's slot of
+// the same index (block_keeps): when the box that comes back IS the donor,
+// those fields are already in place and their stores are skipped; a fresh
+// box, which the shared arm or a size-class mismatch answers, takes every
+// field. The test is on the box the helper returned, not on the token, so
+// the mismatch arm is covered without reading the helper's decision twice.
+function reuse_construct(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, kept: boolean[]): irlower.LowerResult {
   if (ins.kind_tag == ssasem.tuple_new()) {
     return reuse_tuple(r, f, ins);
   }
@@ -1698,18 +1704,40 @@ function reuse_construct(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SI
   r = emit(r, ir.op_load_local(ins.result));
   r = emit(r, ir.op_struct_set_shape(shape));
   r = emit(r, ir.op_drop());
+  var any_kept: boolean = false;
   var i: i32 = 0;
   while (i < ins.args.len() && i < fields.len()) {
-    r = emit(r, ir.op_load_local(ins.result));
-    r = emit(r, ir.op_load_local(ins.args[i]));
-    if (ssasem.is_wide(fields[i].ty)) {
-      r = emit(r, ir.op_struct_set_i64(i));
+    if (i < kept.len() && kept[i]) {
+      any_kept = true;
     } else {
-      r = emit(r, ir.op_struct_set(i, load_width(fields[i].ty)));
+      r = reuse_store(r, ins, fields, i);
     }
     i = i + 1;
   }
-  return r;
+  if (!any_kept) {
+    return r;
+  }
+  r = emit(r, ir.op_load_local(ins.result));
+  r = emit(r, ir.op_load_local(token_slot(f)));
+  r = emit(r, ir.op_bin("ne", ir.width_ptr(), false));
+  r = emit(r, ir.op_if(0));
+  i = 0;
+  while (i < ins.args.len() && i < fields.len()) {
+    if (i < kept.len() && kept[i]) {
+      r = reuse_store(r, ins, fields, i);
+    }
+    i = i + 1;
+  }
+  return emit(r, ir.op_end());
+}
+
+function reuse_store(own r: irlower.LowerResult, ins: ssa.SInst, fields: semrecords.Field[], i: i32): irlower.LowerResult {
+  r = emit(r, ir.op_load_local(ins.result));
+  r = emit(r, ir.op_load_local(ins.args[i]));
+  if (ssasem.is_wide(fields[i].ty)) {
+    return emit(r, ir.op_struct_set_i64(i));
+  }
+  return emit(r, ir.op_struct_set(i, load_width(fields[i].ty)));
 }
 
 // A tuple box has no shape word: element i is slot i, so the box is one word
@@ -5520,7 +5548,8 @@ function block_body(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan
         r = reuse_token(r, f, pairs.selfs[pos]);
       }
       if (pairs.builds[pos] >= 0 || pairs.selfs[pos] >= 0) {
-        r = reuse_construct(r, f, ins);
+        var kb: i32 = util.index_of_i32(keeps.built, pos);
+        r = reuse_construct(r, f, ins, if (kb >= 0) { keeps.slots[kb] } else { [] });
       } else {
         r = instruction(r, f, p, ins, structs, defer0, link_at(f, links, ins), util.index_of_i32(kept, ins.result) >= 0);
       }
