@@ -6314,15 +6314,6 @@ function lc_bump_free_words(s: asmcore.EmitState, words: string, t1: string, t2:
   return lc_bump_free_add(s, words + ", lsl #3", t1, t2);
 }
 
-// buf_block_free emits the inline release of one BARE byte block — the string
-// builder's buffer, or its control block — onto the size-class freelist
-// __fern_alloc pops from, `ptr` naming the block and `words` its class. The
-// same stores __fn___fern_str_free's data-buffer arm makes, with the fused
-// arm's large-tier branch; neither block carries an rc word, so there is no rc
-// to clear first — and none to poison, so declining the push is the whole
-// quarantine treatment for both. `ptr` and `words` must avoid x1..x4, which __fern_large_push
-// clobbers; x3 / x9 / x10 are this helper's own scratch. `lbl` distinguishes
-// one call site's labels from another's.
 // freelist_push emits the push of the block at `ptr` onto the small-tier
 // freelist. `words` holds the block's logical size and comes out as its class,
 // the capacity __fern_capw rounds it to, which is the size __fern_alloc bumped
@@ -6345,6 +6336,15 @@ function freelist_push(s: asmcore.EmitState, ptr: string, words: string, base: s
   return s;
 }
 
+// buf_block_free emits the inline release of one BARE byte block — the string
+// builder's buffer, or its control block — onto the size-class freelist
+// __fern_alloc pops from, `ptr` naming the block and `words` its class. The
+// same stores __fn___fern_str_free's data-buffer arm makes, with the fused
+// arm's large-tier branch; neither block carries an rc word, so there is no rc
+// to clear first — and none to poison, so declining the push is the whole
+// quarantine treatment for both. `ptr` and `words` must avoid x1..x4, which __fern_large_push
+// clobbers; x3 / x9 / x10 are this helper's own scratch. `lbl` distinguishes
+// one call site's labels from another's.
 function buf_block_free(s: asmcore.EmitState, ptr: string, words: string, lbl: string): asmcore.EmitState {
   s = s.write("    mov x9, #0x10000\n");
   s = s.write("    cmp " + words + ", x9\n");
@@ -6688,10 +6688,9 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   s = s.write("    .align 8\n");
   // Large-tier freelist (#3425): the 65536-word __fern_freelist above recycles
   // blocks <512 KiB exactly; blocks >=512 KiB previously LEAKED, exhausting the
-  // arena on a long emit. LINEAR 512-KiB classes: class = round_up(size,512KiB)
-  // >> 19 (1..2048), 2560 slots for headroom. The arm64 twin of asm_ir.fern's
-  // tier (bsr/variable-shift-free — built from 1<<19 to avoid arm64's tight
-  // immediate/wide-literal encoding, like the existing round-to-8 lsr/lsl).
+  // arena on a long emit. Native's 3-significant-bit capacities
+  // (arm64_large_class), 45 classes from 512 KiB to 1 GiB, 2560 slots kept.
+  // The arm64 twin of asm_ir.fern's tier.
   s = s.write("__fern_large_freelist: .skip 20480\n");
   // Shadows for the arena checkpoint (#6728) — the arm64 twin of asm_ir's.
   // .bss, so they cost image size nothing and are zero-filled.
@@ -6769,23 +6768,17 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   s = s.write("    mov x0, x2\n");  // return head
   s = s.write("    ldp x29, x30, [sp], #16\n");
   s = s.write("    ret\n");
-  // Large tier (#3425): x0 = rounded-8 size (>=512 KiB), x3 = idx. Round the
-  // size up to a 512-KiB multiple (the class capacity — bump AT it so every
-  // block in a class has one size), class = cap>>19, pop the large freelist;
-  // empty falls through to the bump with x0 = cap. >1 GiB is bump-only. Only
-  // x0..x3 used (alloc's clobber contract). 512 KiB is built as 1<<19 to avoid
-  // wide immediates.
+  // Large tier (#3425): x0 = rounded-8 size (>=512 KiB). Round the size up to
+  // its class capacity (arm64_large_class) and bump AT it, so every block in a
+  // class has one size; pop the large freelist, and an empty class falls
+  // through to the bump with x0 = cap. >1 GiB is bump-only. Only x0..x3 used
+  // (alloc's clobber contract).
   s = s.write(".Lalloc_large:\n");
   s = s.write("    mov x1, #1\n");
   s = s.write("    lsl x1, x1, #30\n");  // x1 = 1 GiB
   s = s.write("    cmp x0, x1\n");
   s = s.write("    b.hi .Lalloc_nofl\n");  // > 1 GiB: bump exact, no freelist
-  s = s.write("    mov x1, #1\n");
-  s = s.write("    lsl x1, x1, #19\n");  // x1 = 512 KiB
-  s = s.write("    sub x1, x1, #1\n");  // x1 = 512 KiB - 1
-  s = s.write("    add x0, x0, x1\n");  // size + (512 KiB - 1)
-  s = s.write("    lsr x3, x0, #19\n");  // class = round_up(size,512KiB) >> 19  (1..2048)
-  s = s.write("    lsl x0, x3, #19\n");  // cap = class << 19 = bytes to bump
+  s = arm64_large_class(s, "x0", "x3", "x1");  // x0 = cap = bytes to bump
   s = s.write("    adrp x1, __fern_large_freelist\n");
   s = s.write("    add x1, x1, :lo12:__fern_large_freelist\n");
   s = s.write("    ldr x2, [x1, x3, lsl #3]\n");  // head
@@ -7830,14 +7823,39 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   return s;
 }
 
+// arm64_large_class rounds the >=512 KiB byte count in `n` up to its
+// large-tier capacity in place, native's 3-significant-bit scheme, and leaves
+// its freelist class in `cls`: four classes per power of two, 0 for 512 KiB
+// through 44 for 1 GiB, as asm_ir's large_class. Alloc and free both derive the
+// class here, so a block returns to the class it was bumped at. Clobbers `t`.
+function arm64_large_class(s: asmcore.EmitState, n: string, cls: string, t: string): asmcore.EmitState {
+  s = s.write("    mov " + t + ", #1\n");
+  s = s.write("    lsl " + t + ", " + t + ", #19\n");
+  s = s.write("    cmp " + n + ", " + t + "\n");
+  s = s.write("    csel " + n + ", " + t + ", " + n + ", lo\n");  // at least 512 KiB
+  s = s.write("    clz " + t + ", " + n + "\n");
+  s = s.write("    mov " + cls + ", #61\n");
+  s = s.write("    sub " + cls + ", " + cls + ", " + t + "\n");  // msb - 2
+  s = s.write("    mov " + t + ", #1\n");
+  s = s.write("    lsl " + t + ", " + t + ", " + cls + "\n");  // granule
+  s = s.write("    sub " + t + ", " + t + ", #1\n");
+  s = s.write("    add " + n + ", " + n + ", " + t + "\n");
+  s = s.write("    bic " + n + ", " + n + ", " + t + "\n");  // capacity
+  s = s.write("    clz " + t + ", " + n + "\n");
+  s = s.write("    mov " + cls + ", #61\n");
+  s = s.write("    sub " + t + ", " + cls + ", " + t + "\n");  // msb - 2
+  s = s.write("    lsr " + cls + ", " + n + ", " + t + "\n");  // top three bits, 4..7
+  s = s.write("    add " + cls + ", " + cls + ", " + t + ", lsl #2\n");
+  return s.write("    sub " + cls + ", " + cls + ", #72\n");
+}
+
 // emit_rt_large_tier_and_rc emits the large-block tier (__fern_large_push and the >=512 KiB
 // recycling bins) and the reference-counting release helpers, including the
 // need-gated nested-array frees.
 function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
   // __fern_large_push(base=x1, bytes=x2): return a freed >=512 KiB block to
   // the large tier (#3425), arm64 twin of asm_ir's helper. Bins by the same
-  // linear round-up __fern_alloc uses (class = round_up(bytes,512KiB)>>19) and
-  // pushes (successor in the block's first word). >1 GiB is dropped. Clobbers
+  // arm64_large_class __fern_alloc uses and pushes (successor in the block's first word). >1 GiB is dropped. Clobbers
   // x1..x4, PRESERVES x0 (so a caller mid-free — e.g. str_free with box in x0 —
   // survives). A caller that only ret's after can TAIL-BRANCH here (b, not bl),
   // so its ret-addr in x30 flows straight through.
@@ -7856,11 +7874,8 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
   // tail-branch here. Callers with an rc word have already poisoned it at
   // their own rc store, and recycling the block would overwrite that poison.
   if (!s.rc_free_debug) {
-    s = s.write("    mov x3, #1\n");
-    s = s.write("    lsl x3, x3, #19\n");  // 512 KiB
-    s = s.write("    sub x3, x3, #1\n");  // 512 KiB - 1
-    s = s.write("    add x2, x2, x3\n");  // bytes + (512 KiB - 1)
-    s = s.write("    lsr x2, x2, #19\n");  // class = round_up(bytes,512KiB) >> 19
+    s = arm64_large_class(s, "x2", "x4", "x3");
+    s = s.write("    mov x2, x4\n");  // class
     s = s.write("    adrp x3, __fern_large_freelist\n");
     s = s.write("    add x3, x3, :lo12:__fern_large_freelist\n");
     s = s.write("    ldr x4, [x3, x2, lsl #3]\n");  // old head
