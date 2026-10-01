@@ -856,7 +856,7 @@ pub function substitution(mod: parser.Module, lowered: parser.FuncDecl[], struct
   var built: semsource.Built = inf.built;
   var r: Rows = inf.rows;
   var sigs: irlower.FnSigs = base;
-  var helpers: irlower.LowerResult[] = [];
+  var helpers: ssarc.Helpers = ssarc.no_helpers();
   var bodies: irlower.LowerResult[] = [];
   // The may-grow masks an AST caller brackets by are rebuilt with every
   // produced declaration's own in place of the one its syntax would give.
@@ -877,7 +877,7 @@ pub function substitution(mod: parser.Module, lowered: parser.FuncDecl[], struct
       if (mod.funcs[i].receiver_type.len() == 0) {
         consumed = util.append_all(consumed, ssarc.consumed_array_rows(mod.funcs[i].name, built.decls[i].func, built.decls[i].modes));
       }
-      helpers = util.append_all(helpers, ssarc.drop_helpers(built.decls[i].func));
+      helpers = ssarc.with_drop_helpers(helpers, built.decls[i].func);
       bodies = bodies.append(r.body[i]);
       n = n + 1;
     } else if (built.decls[i].template && (built.decls[i].ok || built.decls[i].bodyless)) {
@@ -900,7 +900,7 @@ pub function substitution(mod: parser.Module, lowered: parser.FuncDecl[], struct
   var at: i32 = 0;
   while (at < built.instances.len()) {
     if (r.keep[mod.funcs.len() + at]) {
-      helpers = util.append_all(helpers, ssarc.drop_helpers(built.instances[at].func));
+      helpers = ssarc.with_drop_helpers(helpers, built.instances[at].func);
       instances = instances.append(r.body[mod.funcs.len() + at]);
       if (!util.contains(built.instances[at].key, ".")) {
         consumed = util.append_all(consumed, ssarc.consumed_array_rows(built.instances[at].key, built.instances[at].func, built.instances[at].modes));
@@ -949,9 +949,9 @@ pub function substitution(mod: parser.Module, lowered: parser.FuncDecl[], struct
       i2 = i2 + 1;
     }
   }
-  // The declaration-less bodies are deduped by symbol and conflict-checked
-  // here, where the rule lives, so the emit path's tail is a plain append.
-  var extra: irlower.LowerResult[] = ssarc.merge_helpers(instances, helpers);
+  // The declaration-less bodies are merged by symbol here, where the rule
+  // lives, so the emit path's tail is a plain append.
+  var extra: irlower.LowerResult[] = ssarc.merge_helpers(instances, helpers.rows);
   if (n == 0 && extra.len() == 0) {
     return ircore.no_sub();
   }
@@ -982,20 +982,18 @@ pub function runtime_bodies(src: string): irlower.LowerResult[] {
     return runtime_refused(first_name(im), "instantiates a generic");
   }
   var out: irlower.LowerResult[] = [];
-  var helpers: irlower.LowerResult[] = [];
+  var helpers: ssarc.Helpers = ssarc.no_helpers();
   var i: i32 = 0;
   while (i < im.funcs.len()) {
     if (!inf.rows.keep[i]) {
       return runtime_refused(im.funcs[i].name, "kept the AST lowering");
     }
     out = out.append(inf.rows.body[i]);
-    for h in ssarc.drop_helpers(inf.built.decls[i].func) {
-      helpers = helpers.append(h);
-    }
+    helpers = ssarc.with_drop_helpers(helpers, inf.built.decls[i].func);
     i = i + 1;
   }
   // The drop helpers follow the bodies, deduplicated by symbol.
-  var all: irlower.LowerResult[] = ssarc.merge_helpers(out, helpers);
+  var all: irlower.LowerResult[] = ssarc.merge_helpers(out, helpers.rows);
   for h in all {
     if (!h.ok) {
       return runtime_refused(h.name, h.why);

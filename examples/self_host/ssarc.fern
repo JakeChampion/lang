@@ -2097,27 +2097,68 @@ function optimized_helper(h: irlower.LowerResult): irlower.LowerResult {
 // rules out. A function's schema set is closed under field reachability, so
 // iterating it also reaches the types the bodies themselves call.
 pub function drop_helpers(f: ssasem.Func): irlower.LowerResult[] {
+  var none: string[] = [];
+  return helpers_not_in(f, util.name_index(none));
+}
+
+// Helpers is the drop helpers collected over a module's bodies, with an index
+// over their symbols: a helper is generated once per module, by the first
+// function whose schema names its type. Every function's table is built from
+// the module's one declaration set, so a later function's body would be the
+// same one.
+pub struct Helpers { rows: irlower.LowerResult[], done: util.NameIndex }
+
+pub function no_helpers(): Helpers {
+  var none: irlower.LowerResult[] = [];
+  return Helpers { rows: none, done: util.name_index(row_names(none)) };
+}
+
+// with_drop_helpers adds the helpers of f whose symbols h does not carry yet.
+pub function with_drop_helpers(h: Helpers, f: ssasem.Func): Helpers {
+  var fresh: irlower.LowerResult[] = helpers_not_in(f, h.done);
+  if (fresh.len() == 0) {
+    return h;
+  }
+  var rows: irlower.LowerResult[] = util.append_all(h.rows, fresh);
+  return Helpers { rows: rows, done: util.name_index(row_names(rows)) };
+}
+
+// helpers_not_in is drop_helpers less the symbols `done` carries.
+function helpers_not_in(f: ssasem.Func, done: util.NameIndex): irlower.LowerResult[] {
   var out: irlower.LowerResult[] = [];
   for rec in f.records.list {
     if (has_children(rec.ty, f)) {
-      out = util.append_all(out, [one_helper(rec.ty, f), release_helper(rec.ty, f)]);
+      out = append_helpers(out, rec.ty, f, done);
     }
   }
   for e in f.enums {
     if (has_children(e.ty, f)) {
-      out = util.append_all(out, [one_helper(e.ty, f), release_helper(e.ty, f)]);
+      out = append_helpers(out, e.ty, f, done);
     }
   }
   for v in boxed_columns(f) {
-    if (!outlined_release(v, f)) {
+    if (!outlined_release(v, f) && !done.has(release_helper_name(v))) {
       out = out.append(release_helper(v, f));
     }
   }
   for v in routed_box_columns(f) {
-    if (ssasem.is_string_array(v)) {
+    if (ssasem.is_string_array(v) && !done.has(release_helper_name(v))) {
       out = out.append(release_helper(v, f));
     }
-    out = out.append(env_release_helper(v));
+    if (!done.has(env_release_name(v))) {
+      out = out.append(env_release_helper(v));
+    }
+  }
+  return out;
+}
+
+// append_helpers adds t's drop and release helpers, each unless done has it.
+function append_helpers(own out: irlower.LowerResult[], t: typeinfo.Type, f: ssasem.Func, done: util.NameIndex): irlower.LowerResult[] {
+  if (!done.has(drop_helper_name(t))) {
+    out = out.append(one_helper(t, f));
+  }
+  if (!done.has(release_helper_name(t))) {
+    out = out.append(release_helper(t, f));
   }
   return out;
 }
