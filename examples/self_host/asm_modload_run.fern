@@ -1150,15 +1150,13 @@ function fold_target_calls(entry: parser.Module, loaded: flatten.LoadedModule[],
 
 function main(): i32 {
   var a: string[] = args();
-  // `-ir-probe`: after real import resolution + bundling, report the IR-
-  // eligibility frontier (ircore.eligibility_report) instead of emitting asm.
+  // `-ir-probe`: after real import resolution + bundling, report the typed
+  // lowering's verdict (semlower.verdict_text) instead of emitting asm.
   // Unlike asm_ir_run's stdin probe, this loads imports off disk, so a
-  // function that calls an IMPORTED helper (`s.split_once()`,
-  // `int.__int_to_string_u64()`) is measured with its callee actually
-  // present — the stdin probe reports an artificial bail for those because
-  // the import is never loaded. Point it at an entry sitting at the stdlib
-  // root so `import "std/u64"` and its transitive `import "core/int"` both
-  // resolve: `asm_modload_run internal/stdlib/_probe.fern -ir-probe`.
+  // function that calls an IMPORTED helper (`s.split_once()`) is checked with
+  // its callee present. Point it at an entry sitting at the stdlib root so
+  // `import "std/u64"` and its transitive `import "core/int"` both resolve:
+  // `asm_modload_run internal/stdlib/_probe.fern -ir-probe`.
   //
   // The per-module flags (-per-module-count / -per-module-needs /
   // -per-module-emit N [-extra-need X...]) drive the builtins-aware per-module
@@ -1343,13 +1341,7 @@ function main(): i32 {
         return verify_provided_module(merged, target);
       }
       if (probe) {
-        // Probe the module codegen actually routes on: run the same
-        // module_with_builtins pipeline the emit path below uses
-        // (monomorphise drops un-instantiated bounded-generic templates
-        // like core/cmp's min[T:Ord], whose type-param-receiver call
-        // otherwise bails and mis-reports `module: refused` for a program
-        // that in fact routes IR — #4374), not the raw merged module.
-        write(ircore.eligibility_report(ircore.lift_lambdas(parser.module_with_builtins(merged))));
+        write(semlower.verdict_text(semlower.verdict(merged, target)));
         return 0;
       }
       // Hoisted above the arm64 leg so both targets share ONE

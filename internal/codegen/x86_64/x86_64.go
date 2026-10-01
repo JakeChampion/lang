@@ -995,6 +995,9 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	if g.usesAsBytes {
 		g.emitStringAsBytesRuntime()
 	}
+	if g.usesStringBytes {
+		g.emitStringBytesRuntime()
+	}
 	if g.usesReadLine {
 		g.emitReadLineRuntime()
 	}
@@ -1465,6 +1468,7 @@ type generator struct {
 	usesSignalMask            bool
 	usesSignalDispositionRead bool
 	usesAsBytes               bool
+	usesStringBytes           bool
 	usesReadLine              bool
 	// cold holds the current function's out-of-line arms — a bounds check's
 	// abort, an index's inline-string arm — emitted after its epilogue so the
@@ -2266,6 +2270,10 @@ func (g *generator) recordUse(target string) {
 	case "__method_string_as_bytes":
 		g.usesAsBytes = true
 		g.usesSliceMake = true
+		g.usesAlloc = true
+	case "__fern_string_bytes_copy":
+		g.usesStringBytes = true
+		g.usesAllocU8 = true
 		g.usesAlloc = true
 	case "read_line":
 		g.usesReadLine = true

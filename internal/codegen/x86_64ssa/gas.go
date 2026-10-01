@@ -2359,6 +2359,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"open_reader":                     emitOpenHandleHelper("open_reader", "or", 0, 0),
 	"open_writer":                     emitOpenHandleHelper("open_writer", "ow", 577, 438),
 	"__method_string_as_bytes":        emitStringAsBytesHelper,
+	"__fern_string_bytes_copy":        emitStringBytesCopyHelper,
 	"__fern_memchr":                   emitMemchrHelper,
 	"__fern_mismatch":                 emitMismatchHelper,
 	"__fern_rmemchr":                  emitRmemchrHelper,
@@ -2647,6 +2648,7 @@ var runtimeHelperDeps = map[string][]string{
 	"strbuf_append":                   {"__alloc", "__free"},
 	"strbuf_take":                     {"__alloc"},
 	"__method_string_as_bytes":        {"__slice_make"},
+	"__fern_string_bytes_copy":        {"__alloc_u8"},
 	"__fern_closure_drop":             {"__fern_box_free", "__fern_rc_dec"},
 	"__fern_arr_push_grow_ptr":        {"__fern_arr_push_grow", "__fern_rc_inc"},
 	"__fern_arr_push_grow_str":        {"__fern_arr_push_grow", "__fern_rc_inc"},
@@ -3346,6 +3348,7 @@ func emitBcopyCall(w func(string, ...any), dst, src, n string) {
 // is emitted whenever one of them is. It is not in runtimeHelperEmitters (the IR
 // cannot name it), so this gate is what puts it in the module.
 var bcopyUsingHelpers = map[string]bool{
+	"__fern_string_bytes_copy":    true,
 	"strbuf_append":               true,
 	"strbuf_take":                 true,
 	"string_from_bytes_unchecked": true,

@@ -8,8 +8,8 @@ import (
 // methods returning structs / tuples. The struct/tuple return registries used
 // to record only free functions, so `var p = obj.mk()` for a struct/tuple-
 // returning method bailed (the call site couldn't type p, and a
-// struct method-call result's `p.x` bails). It probes asm_ir.all_eligible (the
-// unified driver's `elig` mode) on method-returning programs and encodes the
+// struct method-call result's `p.x` bails). It asks the path probe (semlower.verdict, via
+// eligBits) on method-returning programs and encodes the
 // per-case results in the exit code (a*10 + b == 11 when both are eligible).
 func TestSelfHostIRMethodReturnEligible(t *testing.T) {
 	progs := []string{
@@ -17,6 +17,6 @@ func TestSelfHostIRMethodReturnEligible(t *testing.T) {
 		"struct B { } function (b: B) pair(): (string, i32) { return (\"hi\", 5); } function main(): i32 { var b = B { }; var (s, n) = b.pair(); return s.len() + n; }",
 	}
 	if got := eligBits(t, progs, []int{10, 1}); got != 11 {
-		t.Errorf("method-returning IR eligibility = %d, want 11 (each digit is one case's all_eligible)", got)
+		t.Errorf("method-returning IR eligibility = %d, want 11 (each digit is one case's verdict)", got)
 	}
 }

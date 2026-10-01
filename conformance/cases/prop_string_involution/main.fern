@@ -1,4 +1,5 @@
 import "std/string";
+import "std/array";
 import "std/i32";
 import "std/utf8" as utf8;
 
@@ -6,7 +7,7 @@ import "std/utf8" as utf8;
 //
 // Deterministic LCG => identical inputs on every backend. Full byte
 // range, lengths 0..47 — so most generated strings are NOT valid UTF-8,
-// which is the interesting part: `string` is never validity-checked.
+// created explicitly with the unchecked constructor to probe malformed input.
 //
 // Properties:
 //   reverse_bytes . reverse_bytes == id       (involution)
@@ -63,7 +64,7 @@ function main(): i32 {
         var n: i32 = state % 48;
         var s: string = string_from_bytes_unchecked(gen_bytes(state, n));
 
-        if (s.reverse_bytes().reverse_bytes() != s) {
+        if (!s.reverse_bytes().reverse().equal(s.bytes())) {
             print("reverse_bytes involution FAILED at trial " + trial.to_string());
             return 1;
         }

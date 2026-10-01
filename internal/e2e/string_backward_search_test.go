@@ -7,8 +7,8 @@ package e2e
 // naive right-to-left probe loop, O(n*m) worst case (#6196). `__str_rfind_from`
 // now has three tiers: the empty-needle gap, a backward memchr-shaped scan for
 // a single byte, and for anything longer a metered naive scan that ESCALATES to
-// the reverse Two-Way — reverse both strings, run the forward algorithm, map
-// the index back — once it has spent a linear comparison budget.
+// reverse Two-Way, which reads the original strings through backward index
+// coordinates and maps the result back, once the comparison budget is spent.
 //
 // Measured on the adversarial shape (40 KB of "a", needle 2000×"a"+"b", five
 // repeats): 2.655s before, 0.014s after.
