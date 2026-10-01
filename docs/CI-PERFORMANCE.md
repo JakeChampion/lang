@@ -897,6 +897,15 @@ third of the wall plus the leaf's queue wait. The `test-e2e-other` aarch64
 leg, one shard of 9.9-12.2 minutes and the longest job outside the self-host
 lane, is two shards by the same arithmetic.
 
+Lint, the other required check, spent 2.0 of its 4.7 minutes in
+`fern -check sources`, and 146 of those seconds locally were
+`tools/selfhost_driver_check.sh` type-checking 47 drivers one after another,
+each reading the compiler's closure again. The loop runs one check per core
+now (`xargs -P`): 44 s on the 4-core container, and the stdlib loop beside it
+16 s to 5 s. The `fern test cache` step (1.2 minutes) stays serial: its two
+probes edit sources and read `go test`'s cache verdicts, so running them at
+once would have each probe invalidating the other's cached result.
+
 Sharding it found a bug in `scripts/shard-tests`: with an empty weights file
 (the `/dev/null` fallback a lane without weights gets, or a file of comments)
 awk's `NR == FNR` idiom read every test name as a weight row, and every shard

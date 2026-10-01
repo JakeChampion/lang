@@ -17,24 +17,29 @@ if [ ! -x bin/fern ]; then
 	exit 1
 fi
 
-tmp=$(mktemp -d)
-trap 'rm -rf "$tmp"' EXIT
-
-status=0
-checked=0
-while IFS= read -r f; do
+# One wrapper program per module, each in its own directory, checked in
+# parallel: the checks are independent and each one is a process.
+check_module() {
+	f=$1
 	mod=${f#internal/stdlib/}
 	mod=${mod%.fern}
-	case "$(basename "$mod")" in
-	_test*) continue ;; # fixtures with nothing to check
-	esac
-	printf 'import "%s";\nfunction main(): i32 { return 0; }\n' "$mod" >"$tmp/main.fern"
-	if ! ./bin/fern -check "$tmp/main.fern"; then
+	dir=$(mktemp -d)
+	trap 'rm -rf "$dir"' EXIT
+	printf 'import "%s";\nfunction main(): i32 { return 0; }\n' "$mod" >"$dir/main.fern"
+	if ! ./bin/fern -check "$dir/main.fern"; then
 		echo "FAIL: \"$mod\" does not type-check as a standalone import" >&2
-		status=1
+		exit 1
 	fi
-	checked=$((checked + 1))
-done < <(find internal/stdlib -name '*.fern' | sort)
+}
+export -f check_module
+
+mapfile -t modules < <(find internal/stdlib -name '*.fern' | sort | grep -v '/_test[^/]*\.fern$')
+checked=${#modules[@]}
+status=0
+if [ "$checked" -gt 0 ]; then
+	printf '%s\n' "${modules[@]}" |
+		xargs -P "$(nproc)" -n 1 bash -c 'check_module "$0"' || status=1
+fi
 
 if [ "$checked" -eq 0 ]; then
 	echo "stdlib check: found no stdlib modules at all — refusing to pass vacuously" >&2
