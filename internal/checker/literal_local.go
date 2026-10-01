@@ -99,7 +99,8 @@ func (c *checker) noteLitField(fa *ast.FieldAccess, t ast.Type, s *scope) {
 
 // settleLitStructLocal fixes a generic struct local's literal-bound type
 // arguments from a destination that names them: `take(q)` for a
-// `take(x: Same[i64])`.
+// `take(x: Same[i64])`. An argument already fixed is left to the
+// destination's own check, as a scalar literal local's whole read is.
 func (c *checker) settleLitStructLocal(id *ast.Ident, hint ast.Type) {
 	decl := c.litStructReads[id]
 	st, ok := hint.(ast.StructType)
@@ -107,7 +108,7 @@ func (c *checker) settleLitStructLocal(id *ast.Ident, hint ast.Type) {
 		return
 	}
 	for i, ll := range c.litStructOf[decl] {
-		if ll == nil || i >= len(st.Args) {
+		if ll == nil || ll.fixed || i >= len(st.Args) {
 			continue
 		}
 		if nt, ok := st.Args[i].(ast.NumberType); ok && !nt.Polymorphic {

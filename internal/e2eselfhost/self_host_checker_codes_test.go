@@ -281,6 +281,9 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"struct-local-in-array-argument-fixes-width", "struct Same[T] { a: T, b: T }\nfunction take1(x: Same[i64]): i32 { return 1; }\nfunction take(xs: Same[i64][]): i32 { return 1; }\nfunction main(): i32 { var q = Same { a: 1, b: 2 }; return take([q]); }\n", nil},
 		{"struct-local-second-width", "struct Same[T] { a: T, b: T }\nfunction take1(x: Same[i64]): i32 { return 1; }\nfunction take(xs: Same[i64][]): i32 { return 1; }\nfunction main(): i32 { var q = Same { a: 1, b: 2 }; var r: i64 = q.a; var z: i32 = q.b; return 0; }\n", []string{"E003"}},
 		{"struct-local-passed-then-read-narrow", "struct Same[T] { a: T, b: T }\nfunction take1(x: Same[i64]): i32 { return 1; }\nfunction take(xs: Same[i64][]): i32 { return 1; }\nfunction main(): i32 { var q = Same { a: 1, b: 2 }; var t = take1(q); var z: i32 = q.a; return 0; }\n", []string{"E003"}},
+		// A literal-bound struct local used at a second width is the
+		// destination's mismatch, E038, as a scalar literal local's is.
+		{"generic-literal-struct-local-second-width", "struct Same[T] { a: T, b: T }\nfunction take(x: Same[i64]): i64 { return x.a; }\nfunction take32(x: Same[i32]): i32 { return x.a; }\nfunction main(): i32 { var s = Same { a: 1, b: 2 }; var a = take(s); return take32(s); }\n", []string{"E038"}},
 		{"generic-literal-typed-field-binds-ahead", "struct Same[T] { a: T, b: T }\nfunction take(xs: Same[i64][]): i32 { return xs.len(); }\nfunction main(): i32 { var y: i64 = 5; var q = Same { a: 1, b: y }; var r: i64 = q.a; return take([q]); }\n", nil},
 		// A literal whose fields clash has no instantiation, so its local
 		// reads as untyped and no use reports the clash again (#10453). Native
