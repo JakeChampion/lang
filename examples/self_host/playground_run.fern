@@ -86,40 +86,6 @@ function embedded_stdlib(): modloader.Overlay {
   return modloader.Overlay { paths: paths, srcs: srcs, sealed: true };
 }
 
-// unresolved_imports names every import of `entry` that the loader did not
-// resolve, transitively.
-//
-// load_imports skips an import it cannot resolve, without a word — deliberate
-// in the CLI, where a compiler intrinsic looks exactly like an unresolvable
-// import. In a playground it is a trap: a user who types `import
-// "std/collections"` gets a program that compiles and then fails at a call
-// nothing defines, with nothing pointing at the import. `fern.fern` reports
-// this (`cannot read module <path>: <reason>`); so does this.
-//
-// It shares one blind spot with the loader, because it keys the same way the
-// loader does: two imports whose BASENAMES collide (`std/convert` and
-// `std/wasm/convert` both exist) load one and drop the other, and the dropped
-// one looks resolved here. That is the loader's dedupe (modloader.base_name),
-// not this check's, and fixing it means changing what a module is named by.
-function unresolved_imports(entry: parser.Module, loaded: flatten.LoadedModule[]): string[] {
-  var have: string[] = [];
-  for m in loaded {
-    have = have.append(m.name + "");
-  }
-  var missing: string[] = [];
-  var wanted: parser.Import[] = entry.imports;
-  for m in loaded {
-    wanted = util.append_all(wanted, m.mod.imports);
-  }
-  for imp in wanted {
-    var name: string = modloader.base_name(imp.path);
-    if (!util.has_str(have, name) && !util.has_str(missing, imp.path)) {
-      missing = missing.append(imp.path + "");
-    }
-  }
-  return missing;
-}
-
 // CHECK_FLAG selects the diagnostics-only mode. A playground wants the errors
 // as the user types, long before anything is worth compiling, and running the
 // whole emit path to get them means paying for a module nobody will run.
@@ -273,15 +239,12 @@ function run(): i32 {
     return 1;
   }
 
-  // The entry came from stdin, so it has no directory. With a sealed overlay
-  // that is inert: nothing below resolve_module ever sees the empty root.
+  // The entry came from stdin, so it is named `stdin` and has no directory.
+  // With a sealed overlay that is inert: nothing below resolve_module ever sees
+  // the empty root.
   var ov: modloader.Overlay = embedded_stdlib();
-  let (loaded, files) = modloader.load_imports_with_files(ov, "", entry);
-  var missing: string[] = unresolved_imports(entry, loaded);
-  if (missing.len() > 0) {
-    for p in missing {
-      eprint("cannot resolve module: " + p);
-    }
+  let (loaded, files, missing) = modloader.load_imports_with_files(ov, "stdin", entry);
+  if (modloader.report_unresolved(missing, "playground")) {
     return 1;
   }
 
