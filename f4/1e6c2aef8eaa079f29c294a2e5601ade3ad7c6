@@ -221,3 +221,38 @@ selfhost/wasm32-wasi/utf8_ingest_validated.emit	21950
 # lane: selfhost-alloc-x86_64
 x86_64/checker.allocs	69307844
 x86_64/checker.frees	59411266
+
+# lane: net-nightly
+net/fern/c64.rps	78199
+net/fern/c64.p50_us	617
+net/fern/c64.p99_us	3147
+net/fern/c64.failed	0
+net/fern/c4096.rps	52584
+net/fern/c4096.p50_us	22808
+net/fern/c4096.p99_us	251328
+net/fern/c4096.failed	0
+net/go/c64.rps	71301
+net/go/c64.p50_us	675
+net/go/c64.p99_us	3107
+net/go/c64.failed	0
+net/go/c4096.rps	60822
+net/go/c4096.p50_us	64129
+net/go/c4096.p99_us	137757
+net/go/c4096.failed	0
+net/hyper/c64.rps	114080
+net/hyper/c64.p50_us	553
+net/hyper/c64.p99_us	1063
+net/hyper/c64.failed	0
+net/hyper/c4096.rps	79021
+net/hyper/c4096.p50_us	51918
+net/hyper/c4096.p99_us	58740
+net/hyper/c4096.failed	0
+net/h2o/c64.rps	90827
+net/h2o/c64.p50_us	684
+net/h2o/c64.p99_us	1082
+net/h2o/c64.failed	0
+net/h2o/c4096.rps	95158
+net/h2o/c4096.p50_us	12400
+net/h2o/c4096.p99_us	22777
+net/h2o/c4096.failed	0
+net/fern/held.bytes_per_connection	615
