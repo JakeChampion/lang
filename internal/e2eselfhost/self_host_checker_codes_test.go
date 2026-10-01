@@ -2548,6 +2548,15 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"union-over-enums", "enum A { P, Q }\nenum B { R, T }\ntype X = A | B;\nfunction main(): i32 { return 0; }\n", []string{"E016"}},
 		{"union-duplicate-member", "struct A { v: i32 }\ntype X = A | A;\nfunction main(): i32 { return 0; }\n", []string{"E016"}},
 		{"union-generic-member-without-arguments", "struct Box[T] { v: T }\nstruct B { w: i32 }\ntype X = Box | B;\nfunction main(): i32 { return 0; }\n", []string{"E016"}},
+		{"union-plain-member-with-arguments", "struct A { v: i32 }\nstruct B { w: i32 }\ntype X = A[i32] | B;\nfunction main(): i32 { return 0; }\n", []string{"E016"}},
+		{"union-generic-member-arity", "struct Two[T, U] { a: T, b: U }\nstruct B { w: i32 }\ntype X = Two[i32] | B;\nfunction main(): i32 { return 0; }\n", []string{"E016"}},
+		{"union-generic-member-with-arguments", "struct Box[T] { v: T }\nstruct B { w: i32 }\ntype X = Box[i32] | B;\nfunction main(): i32 { return 0; }\n", nil},
+		{"union-generic-alias", "struct Leaf[T] { v: T }\nstruct Lit { v: i32 }\ntype Tree[T] = Leaf[T] | Lit;\nfunction main(): i32 { var t: Tree[i32] = Lit { v: 1 }; return 0; }\n", nil},
+		{"union-generic-alias-arity", "struct Leaf[T] { v: T }\nstruct Lit { v: i32 }\ntype Tree[T] = Leaf[T] | Lit;\nfunction main(): i32 { var t: Tree[i32, i32] = Lit { v: 1 }; return 0; }\n", []string{"E019"}},
+		{"enum-generic-arity", "struct Lit { v: i32 }\nenum Tree[T] { Leaf(T), Lit(Lit) }\nfunction f(t: Tree[i32, i32]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E019"}},
+		// A user enum shadowing a built-in's name leaves the annotation meaning
+		// the built-in: `Cell[i32]` is not checked against the enum's arity.
+		{"enum-shadows-builtin-arity", "enum Cell { Text(string), Num(i32) }\nfunction f(c: Cell[i32]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", nil},
 		{"union-bare-cell-member", "struct B { w: i32 }\ntype X = Cell | B;\nfunction main(): i32 { return 0; }\n", []string{"E016"}},
 		{"union-bare-map-member", "struct B { w: i32 }\ntype X = Map | B;\nfunction main(): i32 { return 0; }\n", []string{"E016"}},
 		{"union-bare-mapiter-member", "struct B { w: i32 }\ntype X = MapIter | B;\nfunction main(): i32 { return 0; }\n", []string{"E016"}},

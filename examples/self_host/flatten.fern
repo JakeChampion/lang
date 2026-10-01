@@ -1380,9 +1380,15 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
       variants = variants.append(rewrite_type_name(mod.aliases[k].variants[v], ctx));
       v = v + 1;
     }
+    var vargs: string[] = [];
+    for a in mod.aliases[k].variant_args {
+      vargs = vargs.append(rewrite_type_name_list(a, ctx));
+    }
     aliases = aliases.append(parser.TypeAlias {
       name: mangle_bare(mod.aliases[k].name, ctx),
       variants: variants,
+      variant_args: vargs,
+      type_params: mod.aliases[k].type_params,
       line: mod.aliases[k].line,
       col: mod.aliases[k].col,
       is_pub: true,
