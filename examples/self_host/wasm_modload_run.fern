@@ -350,7 +350,7 @@ function link_text(l: Linked, merged: parser.Module): string {
 struct Typed { g: ircore.Gated, u: ircore.Units, keys: ircore.UnitKeys }
 
 function typed_units(parts: flatten.PerModule[], d: semlower.Driven, cache_dir: string): Typed {
-  var im: parser.Module = parser.infer_ret_types_module(wasm_ir.route_normalized(d.full));
+  var im: parser.Module = ircore.with_records(parser.infer_ret_types_module(wasm_ir.route_normalized(d.full)), d.sub);
   var stab: irlower.StructTab = irlower.struct_tab(im.structs);
   var base: irlower.FnSigs = ircore.sub_base(d.sub, im.funcs, stab);
   var l: ircore.Lowered = wasm_ir.lower_all_gated(im, stab, base, d.sub);

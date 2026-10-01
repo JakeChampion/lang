@@ -661,11 +661,11 @@ function built(n: i32): string {
 function addr_as_text(p: usize): string { return p as string; }
 function addr_as_bytes(p: usize): u8[] { return p as u8[]; }
 function text_as_addr(s: string): usize { return s as usize; }
-// The ADDRESS is what cast_admits keeps out of the float domain — it reaches
-// one through the 64-bit integer the source writes — so this is what a refused
-// cast looks like now that both directions of the address reinterpretation are
-// admitted, and now that the byte converts like every other integer width.
-function refused_address_as_float(h: usize): f64 { return h as f64; }
+// An address converts to and from a float at the pointer width, as it
+// extends and wraps at it: the golden pins one cast each way, the u64 forms
+// on a register backend and the u32 forms on wasm (#10874).
+function address_as_float(h: usize): f64 { return h as f64; }
+function float_as_address(x: f64): usize { return x as usize; }
 function handle_sum(h: usize, k: usize): usize { return h + k; }
 function handle_narrow(h: usize): i32 { return h as i32; }
 function handle_byte(h: usize): u8 { return h as u8; }
@@ -3903,7 +3903,7 @@ function main(): i32 {
     var base = ircore.wp_fn_sigs(mod.funcs, tab);
     var built = semsource.build_module(typed);
     var bodies: irlower.LowerResult[] = [];
-    var helpers: irlower.LowerResult[] = [];
+    var helpers: ssarc.Helpers = ssarc.no_helpers();
     var skipped: irlower.LowerResult = irlower.LowerResult { ok: false, why: "", ops: [], n_locals: 0, n_params: 0, erased_wide: false, superseded: false, arr_slots: [], i64_slots: [], f64_slots: [], str_slots: [], alias_incs: [], name: "", result_kind: irlower.result_from_decl() };
     // Every body is planned before any is lowered, as semlower does: a
     // caller's bracket reads the fields its callees' plans may grow (grows),
@@ -3966,7 +3966,7 @@ function main(): i32 {
         if (mask.len() == 0 || semis != fd.params.len()) { eprint(key + ": grow mask " + mask + " misplaces the AST positions"); return 7; }
         seeds = seeds.append(fd.name + "|" + ssarc.grow_mask(fd.name, p.func, grows, false));
         for row in ssarc.consumed_array_rows(fd.name, p.func, p.modes) { consumed = consumed.append(row); }
-        for h in ssarc.drop_helpers(p.func) { helpers = helpers.append(h); }
+        helpers = ssarc.with_drop_helpers(helpers, p.func);
         bodies = bodies.append(lowered);
         at = at + 1;
     }
@@ -3976,7 +3976,7 @@ function main(): i32 {
         var lowered = ssarc.lower(p.func, p.modes, plans[mod.funcs.len() + ai], tab, grows);
         if (!lowered.ok) { eprint(p.func.graph.name + ": " + lowered.why); return 6; }
         eprint("instance " + p.func.graph.name + "\n");
-        for h in ssarc.drop_helpers(p.func) { helpers = helpers.append(h); }
+        helpers = ssarc.with_drop_helpers(helpers, p.func);
         instances = instances.append(lowered);
         ai = ai + 1;
     }
@@ -3995,7 +3995,7 @@ function main(): i32 {
     // declaration, so they go on the cache tail past mod.funcs, deduped by
     // symbol.
     cache = ssarc.merge_helpers(cache, instances);
-    cache = ssarc.merge_helpers(cache, helpers);
+    cache = ssarc.merge_helpers(cache, helpers.rows);
     if (av[1] == "x86-64-linux") {
         print(asm_ir.emit_module_ir_unit_flat(mod, true, false, "", [], mod.funcs, tab, 0, 0 - 1, cache, base, asmcore.no_rt_lower));
     } else if (av[1] == "arm64-linux") {

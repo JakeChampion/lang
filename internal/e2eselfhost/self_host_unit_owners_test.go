@@ -11,9 +11,7 @@ import (
 // cut the typed lowering into the same units: both call ircore.split_units, so
 // -per-module-func-counts agrees line for line. The leaf declares a method on
 // `str`, which the lowering spells `string`; only main calls it, so matching
-// the declaration on the unerased spelling handed it to the entry. The typed
-// lowering refuses that method (#10883), so strict is off and the gated AST
-// lowering is what gets split.
+// the declaration on the unerased spelling handed it to the entry.
 func TestSelfHostPerModuleUnitOwners(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -58,7 +56,6 @@ function main(): i32 {
 	counts := func(bin string) string {
 		t.Helper()
 		cmd := runX86_64Bin(runner, bin, entry, "-per-module-func-counts")
-		cmd.Env = append(os.Environ(), "FERN_SEM_IR_STRICT=")
 		out, err := cmd.Output()
 		if err != nil {
 			t.Fatalf("%s -per-module-func-counts: %v\n%s", filepath.Base(bin), err, out)
