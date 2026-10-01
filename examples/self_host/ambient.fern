@@ -66,7 +66,7 @@ pub function bag_param(fd: parser.FuncDecl): string {
 
 // gated_calls lists the gated builtins `fd`'s body calls directly, in source
 // order, each once. A same-named METHOD on a user type is a different callee.
-function gated_calls(fd: parser.FuncDecl, wanted: string[]): string[] {
+function gated_calls(fd: parser.FuncDecl, wanted: util.NameIndex): string[] {
   var calls: astwalk.CallSite[] = [];
   var bi: i32 = 0;
   while (bi < fd.body.len()) {
@@ -104,7 +104,7 @@ function chain_of(mod: parser.Module, parent: i32[], at: i32): string[] {
 // handler_violations appends the effects the handler at `hi` reaches: a
 // breadth-first walk from it, one violation per capability, the chain being
 // the first path the walk found.
-function handler_violations(mod: parser.Module, hi: i32, bag: string, wanted: string[], own out: Violation[]): Violation[] {
+function handler_violations(mod: parser.Module, hi: i32, bag: string, wanted: util.NameIndex, own out: Violation[]): Violation[] {
   var parent: i32[] = [];
   var pi: i32 = 0;
   while (pi < mod.funcs.len()) {
@@ -190,12 +190,13 @@ function by_capability(vs: Violation[]): Violation[] {
 // body reaches, whether or not this program serves it.
 pub function enforce(mod: parser.Module): Violation[] {
   var gates: platforms.Gate[] = platforms.gated_builtins();
-  var wanted: string[] = [];
+  var names: string[] = [];
   var gi: i32 = 0;
   while (gi < gates.len()) {
-    wanted = wanted.append(gates[gi].builtin);
+    names = names.append(gates[gi].builtin);
     gi = gi + 1;
   }
+  var wanted: util.NameIndex = util.name_index(names);
   var out: Violation[] = [];
   var hi: i32 = 0;
   while (hi < mod.funcs.len()) {
