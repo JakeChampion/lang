@@ -25,12 +25,13 @@ var payloadlessArmBoxSize = map[string]int32{
 	"__fern_read_line":           16,
 	"__fern_reader_read_line_fd": 16,
 	// Option[IoError]: tag@0, IoError ptr@4.
-	"__fern_writer_write":    8,
-	"__fern_writer_truncate": 8,
-	"__fern_writer_close":    8,
-	"__fern_reader_close_fd": 8,
-	"__fern_fd_fsync":        8,
-	"__fern_fd_fdatasync":    8,
+	"__fern_writer_write":       8,
+	"__fern_writer_write_bytes": 8,
+	"__fern_writer_truncate":    8,
+	"__fern_writer_close":       8,
+	"__fern_reader_close_fd":    8,
+	"__fern_fd_fsync":           8,
+	"__fern_fd_fdatasync":       8,
 }
 
 // payloadlessArmAbsent names the result-box helpers with no uninitialised
@@ -58,28 +59,29 @@ var payloadlessArmAbsent = map[string]bool{
 	"__fern_handle_termios_get":     true,
 	"__fern_handle_termios_set":     true,
 	// splice_to is Err(Unsupported) on every wasm path, the same shape.
-	"__fern_reader_splice":     true,
-	"__fern_reader_seek":       true,
-	"__fern_writer_seek":       true,
-	"__fern_reader_flags":      true,
-	"__fern_writer_flags":      true,
-	"__fern_writer_write_some": true,
-	"__fern_remove_file":       true,
-	"__fern_stat":              true,
-	"__fern_lstat":             true,
-	"__fern_read_dir":          true,
-	"__fern_read_dir_all":      true,
-	"__fern_remove_dir_all":    true,
-	"__fern_temp_dir":          true,
-	"__fern_create_dir_all":    true,
-	"__fern_create_dir":        true,
-	"__fern_remove_dir":        true,
-	"__fern_create_link":       true,
-	"__fern_create_symlink":    true,
-	"__fern_read_link":         true,
-	"__fern_rename":            true,
-	"__fern_set_file_times":    true,
-	"__fern_truncate":          true,
+	"__fern_reader_splice":           true,
+	"__fern_reader_seek":             true,
+	"__fern_writer_seek":             true,
+	"__fern_reader_flags":            true,
+	"__fern_writer_flags":            true,
+	"__fern_writer_write_some":       true,
+	"__fern_writer_write_some_bytes": true,
+	"__fern_remove_file":             true,
+	"__fern_stat":                    true,
+	"__fern_lstat":                   true,
+	"__fern_read_dir":                true,
+	"__fern_read_dir_all":            true,
+	"__fern_remove_dir_all":          true,
+	"__fern_temp_dir":                true,
+	"__fern_create_dir_all":          true,
+	"__fern_create_dir":              true,
+	"__fern_remove_dir":              true,
+	"__fern_create_link":             true,
+	"__fern_create_symlink":          true,
+	"__fern_read_link":               true,
+	"__fern_rename":                  true,
+	"__fern_set_file_times":          true,
+	"__fern_truncate":                true,
 	// Neither preview has a per-filesystem flush, so every path out of
 	// __fern_fd_syncfs is Some(IoError): it has no payloadless arm. Nor does
 	// __fern_fd_dup_onto, and for the same reason — neither preview can do
@@ -139,6 +141,12 @@ func TestPayloadlessArmsZeroTheirBoxPayload(t *testing.T) {
 		for world, build := range bodies {
 			t.Run(world+"/"+name, func(t *testing.T) {
 				code := build(idxs)
+				// None is tag 1. A wrong tag can match a fallback branch while
+				// skipping the enum drop and leaking a result box per write.
+				noneTag := memory.InstI32Store(inst.InstI32Const(nil, 1), 2, 0)
+				if !bytes.Contains(code, noneTag) {
+					t.Errorf("%s (%s): payloadless Option arm never stores the None tag", name, world)
+				}
 				for off := uint32(4); off < uint32(size); off += 4 {
 					if !bytes.Contains(code, zeroStoreAt(off)) {
 						t.Errorf("%s (%s): the payloadless arm never zeroes the box word at "+

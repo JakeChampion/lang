@@ -4066,6 +4066,26 @@ pub function rt_src_writer_write_some(t: string): string {
   return "function __fern_writer_write_some(fd: i32, s: string): Result[i64, IoError] { var n: i32 = s.len(); var data: usize = __raw_data(s); var w: i32 = __syscall3(" + sysno(t, "write") + ", fd as i64, __raw_addr(data, 0) as i64, n as i64) as i32; if (w < 0) { return Err(__fern_io_error(0 - w, \"\")); } return Ok(w as i64); }";
 }
 
+// Packed production arrays lend their bytes directly. The diagnostic word
+// layout packs into an owned scratch array, never into a string.
+pub function rt_src_writer_bytes(t: string, packed: boolean, all: boolean): string {
+  var name: string = "write_some_bytes";
+  var result: string = "Result[i64, IoError]";
+  var failure: string = "Err";
+  var done: string = "return Ok(w as i64);";
+  if (all) {
+    name = "write_bytes";
+    result = "Option[IoError]";
+    failure = "Some";
+    done = "at = at + w; if (at == n) { return None; } if (w == 0) { return Some(__fern_io_error(5, \"\")); }";
+  }
+  var prep: string = "var p: usize = __raw_addr(__raw_arr_ptr(bytes), 8);";
+  if (!packed) {
+    prep = "var raw: usize = __raw_arr_box(n / 8 + 1); var scratch: i32[] = __raw_array(raw); var p: usize = __raw_addr(__raw_arr_ptr(scratch), 8); var j: i32 = 0; while (j < n) { __raw_store8(p, j, bytes[j]); j = j + 1; }";
+  }
+  return "function __fern_writer_" + name + packed_suffix(packed) + "(fd: i32, bytes: i32[]): " + result + " { var n: i32 = bytes.len(); " + prep + " var at: i32 = 0; while (true) { var w: i32 = __syscall3(" + sysno(t, "write") + ", fd as i64, __raw_addr(p, at) as i64, (n - at) as i64) as i32; if (w < 0) { return " + failure + "(__fern_io_error(0 - w, \"\")); } " + done + " } }";
+}
+
 pub function rt_src_fd_flags(t: string): string {
   return "function __fern_fd_flags(fd: i32): Result[i64, IoError] { var r: i32 = __syscall3(" + sysno(t, "fcntl") + ", fd as i64, 3, 0) as i32; if (r < 0) { return Err(__fern_io_error(0 - r, \"\")); } var acc: i32 = r & 3; var bits: i32 = 0; if (acc != 1) { bits = bits | 1; } if (acc != 0) { bits = bits | 2; } if ((r & " + oflag(t, "append") + ") != 0) { bits = bits | 4; } return Ok(bits as i64); }";
 }
@@ -4745,7 +4765,7 @@ pub function match_payload_type(scrut: ast.Expr, s: EmitState): Ty {
           if ((ty_struct_name(rcv) == "Reader" || ty_struct_name(rcv) == "Writer") && (fa.field == "seek" || fa.field == "flags")) {
             return ty_i32();
           }
-          if (ty_struct_name(rcv) == "Writer" && fa.field == "write_some") {
+          if (ty_struct_name(rcv) == "Writer" && (fa.field == "write_some" || fa.field == "write_some_bytes")) {
             return ty_i32();
           }
           if (ty_struct_name(rcv) == "Reader" && fa.field == "splice_to") {
@@ -6321,13 +6341,13 @@ function infer_call_method_type(fa: ast.ExprFieldAccess, c: ast.ExprCall, s: Emi
   }
   // Writer.write_some is Result[i64, IoError]: a count, in the same 64-bit
   // payload slot seek's offset lands in.
-  if (ty_struct_name(rt) == "Writer" && fa.field == "write_some") {
+  if (ty_struct_name(rt) == "Writer" && (fa.field == "write_some" || fa.field == "write_some_bytes")) {
     return ty_result(ty_i32());
   }
   if (ty_struct_name(rt) == "Reader" && fa.field == "splice_to") {
     return ty_result(ty_i32());
   }
-  if (ty_struct_name(rt) == "Writer" && (fa.field == "write" || fa.field == "truncate")) {
+  if (ty_struct_name(rt) == "Writer" && (fa.field == "write" || fa.field == "write_bytes" || fa.field == "truncate")) {
     return ty_option(ty_unknown());
   }
   // Reader.dup_onto / Writer.dup_onto -> Option[IoError]: the descriptor
@@ -9569,7 +9589,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
     "__fn___fern_eprint_str", "__fn___fern_putchar",
     "__fn___fern_read_line", "__fn___fern_read_file", "__fn___fern_read_file_bytes",
     "__fn___fern_reader_read_chunk", "__fn___fern_reader_close", "__fn___fern_write_file",
-    "__fn___fern_reader_read_chunk_bytes", "__fn___fern_reader_read_chunk_bytes_u8",
+    "__fn___fern_reader_read_chunk_bytes", "__fn___fern_reader_read_chunk_bytes_u8", "__fn___fern_writer_write_bytes", "__fn___fern_writer_write_bytes_u8", "__fn___fern_writer_write_some_bytes", "__fn___fern_writer_write_some_bytes_u8",
     "__fern_remove_dir_all", "__fn___fern_remove_dir_all", "__fn___fern_temp_dir", "__fern_read_dir", "__fn___fern_read_dir",
     "__fern_read_dir_all", "__fn___fern_read_dir_all", "__fn___fern_remove_file",
     "__fn___fern_create_dir_all",

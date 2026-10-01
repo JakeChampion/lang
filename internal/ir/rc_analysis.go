@@ -1470,6 +1470,8 @@ func pureReadReceiverBuiltin(name string) bool {
 //     the loop taken out, and its Result holds a COUNT — a scalar, so
 //     there is even less for the string to be named by than in `write`'s
 //     error box;
+//   - the raw byte Writer methods likewise borrow their arrays without
+//     retaining them or returning references into their storage;
 //   - string_from_bytes_unchecked memcpys the u8[] into a fresh string
 //     (inline-packed, the empty sentinel, or an rc1 heap copy — never
 //     the input buffer);
@@ -1491,24 +1493,26 @@ func pureReadReceiverBuiltin(name string) bool {
 // The checker rejects a user function redeclaring a builtin name, so
 // the table can never answer for a defined function.
 var copyingBuiltinArgs = map[string][]int{
-	"strbuf_append":               {0},
-	"buf_push":                    {1},
-	"buf_push_range":              {1},
-	"buf_push_bytes_range":        {1},
-	"buf_push_mapped":             {1, 2},
-	"buf_push_filtered":           {1, 2},
-	"buf_push_expanded":           {1, 2},
-	"print":                       {0},
-	"write":                       {0},
-	"eprint":                      {0},
-	"__method_Writer_write":       {1},
-	"__method_Writer_write_some":  {1},
-	"string_from_bytes_unchecked": {0},
-	"__memchr":                    {0},
-	"__rmemchr":                   {0},
-	"__ascii_run":                 {0},
-	"__count_byte":                {0},
-	"__sum_bytes":                 {0},
+	"strbuf_append":                    {0},
+	"buf_push":                         {1},
+	"buf_push_range":                   {1},
+	"buf_push_bytes_range":             {1},
+	"buf_push_mapped":                  {1, 2},
+	"buf_push_filtered":                {1, 2},
+	"buf_push_expanded":                {1, 2},
+	"print":                            {0},
+	"write":                            {0},
+	"eprint":                           {0},
+	"__method_Writer_write":            {1},
+	"__method_Writer_write_some":       {1},
+	"__method_Writer_write_bytes":      {1},
+	"__method_Writer_write_some_bytes": {1},
+	"string_from_bytes_unchecked":      {0},
+	"__memchr":                         {0},
+	"__rmemchr":                        {0},
+	"__ascii_run":                      {0},
+	"__count_byte":                     {0},
+	"__sum_bytes":                      {0},
 	// __scale_f64 reads its array and writes a fresh one; nothing of the
 	// input is retained.
 	"__scale_f64": {0},

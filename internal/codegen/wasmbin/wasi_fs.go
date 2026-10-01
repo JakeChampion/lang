@@ -2293,11 +2293,11 @@ const noDescriptor = -1
 // returns nothing, so these always return None — selected via
 // preview2HelperBodyOverrides.
 func buildReaderCloseFdBodyP2(idxs map[string]uint32) []byte {
-	return buildStreamCloseBodyP2(idxs, idxs["wasi_io_input_stream_drop"], true)
+	return buildStreamCloseBodyP2(idxs, idxs["wasi_io_input_stream_drop"])
 }
 
 func buildWriterCloseBodyP2(idxs map[string]uint32) []byte {
-	return buildStreamCloseBodyP2(idxs, idxs["wasi_io_output_stream_drop"], false)
+	return buildStreamCloseBodyP2(idxs, idxs["wasi_io_output_stream_drop"])
 }
 
 // buildStreamCloseBodyP2 drops the stream handle stored at the Reader /
@@ -2306,13 +2306,13 @@ func buildWriterCloseBodyP2(idxs map[string]uint32) []byte {
 // form). `drop` is the canon resource.drop import for the relevant
 // stream resource. A stdio handle owns no descriptor and carries
 // noDescriptor there.
-func buildStreamCloseBodyP2(idxs map[string]uint32, drop uint32, reader bool) []byte {
+func buildStreamCloseBodyP2(idxs map[string]uint32, drop uint32) []byte {
 	allocRc1 := idxs["__fern_alloc_rc1"]
 
 	var body []byte
-	if reader {
+	{
 		// Every u32 stream handle is valid. Track closure in the signed file
-		// position instead: a live Reader's position is always non-negative.
+		// position instead: Reader and Writer both store it at offset 8.
 		body = inst.InstLocalGet(body, 0)
 		body = memory.InstI64Load(body, 3, readerPosOff)
 		body = inst.InstI64Const(body, -1)
@@ -2354,7 +2354,7 @@ func buildStreamCloseBodyP2(idxs map[string]uint32, drop uint32, reader bool) []
 		body = inst.InstEnd(body)
 	}
 
-	if reader {
+	{
 		body = inst.InstLocalGet(body, 0)
 		body = inst.InstI64Const(body, -1)
 		body = memory.InstI64Store(body, 3, readerPosOff)

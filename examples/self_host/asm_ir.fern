@@ -2111,7 +2111,7 @@ function needs_fs_runtime(s: asmcore.EmitState): boolean {
     "read_link", "chdir", "chroot", "setuid", "setgid", "setgroups", "fd_fsync", "fd_fdatasync", "fd_syncfs", "sync",
     "umask", "write_file", "write_file_exec", "temp_dir", "read_dir", "read_dir_all",
     "remove_dir_all", "open_file", "open_with", "writer_write", "write_some",
-    "reader", "read_chunk_bytes", "read_chunk_bytes_u8", "signal_send", "set_process_group", "set_priority",
+    "reader", "read_chunk_bytes", "read_chunk_bytes_u8", "write_bytes", "write_bytes_u8", "write_some_bytes", "write_some_bytes_u8", "signal_send", "set_process_group", "set_priority",
   ]);
 }
 
@@ -6944,6 +6944,18 @@ function ssa_str_target(op: string): string {
   if (op == "read_chunk") {
     return "reader_read_chunk";
   }
+  if (op == "write_bytes") {
+    return "writer_write_bytes";
+  }
+  if (op == "write_bytes_u8") {
+    return "writer_write_bytes_u8";
+  }
+  if (op == "write_some_bytes") {
+    return "writer_write_some_bytes";
+  }
+  if (op == "write_some_bytes_u8") {
+    return "writer_write_some_bytes_u8";
+  }
   if (op == "read_chunk_bytes") {
     return "reader_read_chunk_bytes";
   }
@@ -6957,7 +6969,7 @@ function ssa_str_target(op: string): string {
 // the heap, "" for an op that is not one; the three that need no heap are
 // named by ssa_host_bare.
 function ssa_host_need(op: string): string {
-  if (op == "read_chunk_bytes" || op == "read_chunk_bytes_u8") {
+  if (op == "read_chunk_bytes" || op == "read_chunk_bytes_u8" || op == "write_bytes" || op == "write_bytes_u8" || op == "write_some_bytes" || op == "write_some_bytes_u8") {
     return op;
   }
   var fs: string[] = [
@@ -11259,6 +11271,18 @@ function emit_entry_runtime(s: asmcore.EmitState, all_structs: irlower.StructTab
     }
     if (s.has_need("reader")) {
       fs_src = fs_src + " " + asmcore.rt_src_reader_read_chunk("x86_64") + " " + asmcore.rt_src_reader_close("x86_64");
+    }
+    if (s.has_need("write_bytes")) {
+      fs_src = fs_src + " " + asmcore.rt_src_writer_bytes("x86_64", false, true);
+    }
+    if (s.has_need("write_bytes_u8")) {
+      fs_src = fs_src + " " + asmcore.rt_src_writer_bytes("x86_64", true, true);
+    }
+    if (s.has_need("write_some_bytes")) {
+      fs_src = fs_src + " " + asmcore.rt_src_writer_bytes("x86_64", false, false);
+    }
+    if (s.has_need("write_some_bytes_u8")) {
+      fs_src = fs_src + " " + asmcore.rt_src_writer_bytes("x86_64", true, false);
     }
     if (s.has_need("read_chunk_bytes")) {
       fs_src = fs_src + " " + asmcore.rt_src_reader_read_chunk_bytes("x86_64", false);

@@ -205,32 +205,34 @@ var rcResultOwned = map[string]bool{
 	// two instructions into the free builtin's helper; on wasm each is a
 	// body of its own that answers Unsupported. Either way the box is
 	// freshly allocated per call (#9363).
-	"__fern_handle_window_size":     true,
-	"__fern_handle_set_window_size": true,
-	"__fern_handle_termios_get":     true,
-	"__fern_handle_termios_set":     true,
-	"__fern_reader_seek":            true,
-	"__fern_reader_splice":          true,
-	"__fern_writer_seek":            true,
-	"__fern_reader_flags":           true,
-	"__fern_writer_flags":           true,
-	"__fern_writer_write_some":      true,
-	"__fern_remove_file":            true,
-	"__fern_stat":                   true,
-	"__fern_lstat":                  true,
-	"__fern_read_dir":               true,
-	"__fern_read_dir_all":           true,
-	"__fern_remove_dir_all":         true,
-	"__fern_temp_dir":               true,
-	"__fern_create_dir_all":         true,
-	"__fern_create_dir":             true,
-	"__fern_remove_dir":             true,
-	"__fern_create_link":            true,
-	"__fern_create_symlink":         true,
-	"__fern_read_link":              true,
-	"__fern_rename":                 true,
-	"__fern_set_file_times":         true,
-	"__fern_truncate":               true,
+	"__fern_handle_window_size":      true,
+	"__fern_handle_set_window_size":  true,
+	"__fern_handle_termios_get":      true,
+	"__fern_handle_termios_set":      true,
+	"__fern_reader_seek":             true,
+	"__fern_reader_splice":           true,
+	"__fern_writer_seek":             true,
+	"__fern_reader_flags":            true,
+	"__fern_writer_flags":            true,
+	"__fern_writer_write_some":       true,
+	"__fern_writer_write_bytes":      true,
+	"__fern_writer_write_some_bytes": true,
+	"__fern_remove_file":             true,
+	"__fern_stat":                    true,
+	"__fern_lstat":                   true,
+	"__fern_read_dir":                true,
+	"__fern_read_dir_all":            true,
+	"__fern_remove_dir_all":          true,
+	"__fern_temp_dir":                true,
+	"__fern_create_dir_all":          true,
+	"__fern_create_dir":              true,
+	"__fern_remove_dir":              true,
+	"__fern_create_link":             true,
+	"__fern_create_symlink":          true,
+	"__fern_read_link":               true,
+	"__fern_rename":                  true,
+	"__fern_set_file_times":          true,
+	"__fern_truncate":                true,
 	// `access`, `write_file_exec`, `chmod` and `statfs` have no
 	// `__fern_*` entry in rcsigs to alias through — all four are
 	// native-only (E066 refuses them on the wasm worlds), so they are
@@ -332,6 +334,8 @@ var rcOwnedResultBuiltins = map[string]bool{
 	"__method_Reader_flags":            true, // __fern_reader_flags
 	"__method_Writer_flags":            true, // __fern_writer_flags
 	"__method_Writer_write_some":       true, // __fern_writer_write_some
+	"__method_Writer_write_bytes":      true, // __fern_writer_write_bytes
+	"__method_Writer_write_some_bytes": true, // __fern_writer_write_some_bytes
 	"__method_Reader_stat":             true, // __fern_fd_stat
 	"__method_Writer_stat":             true, // __fern_fd_stat
 	"__method_Reader_fsync":            true, // __fern_fd_fsync

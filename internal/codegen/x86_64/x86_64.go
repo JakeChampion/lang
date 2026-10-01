@@ -1199,6 +1199,12 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 		// helper (4 KiB scratch).
 		g.emitReaderWriterRuntime()
 	}
+	if g.usesWriterBytes {
+		g.emitWriterBytesRuntime(true)
+	}
+	if g.usesWriterSomeBytes {
+		g.emitWriterBytesRuntime(false)
+	}
 	if g.usesReaderBytes {
 		g.emitReaderBytesRuntime()
 	}
@@ -1798,8 +1804,10 @@ type generator struct {
 	// runtime bundle (stdin/stdout/stderr + open_reader /
 	// open_writer / open_appender / open_exclusive + Reader/Writer method
 	// helpers). Mirrors the arm64 generator's flag.
-	usesReaderWriter bool
-	usesReaderBytes  bool
+	usesReaderWriter    bool
+	usesReaderBytes     bool
+	usesWriterBytes     bool
+	usesWriterSomeBytes bool
 }
 
 // recordUse flips the right use-flag for a callee name the
@@ -2234,6 +2242,11 @@ func (g *generator) recordUse(target string) {
 	case "__method_Reader_termios_set":
 		g.usesHandleTty = true
 		g.usesTermiosSet = true
+		g.usesAlloc = true
+		g.usesIoError = true
+	case "__method_Writer_write_bytes", "__method_Writer_write_some_bytes":
+		g.usesWriterBytes = g.usesWriterBytes || target == "__method_Writer_write_bytes"
+		g.usesWriterSomeBytes = g.usesWriterSomeBytes || target == "__method_Writer_write_some_bytes"
 		g.usesAlloc = true
 		g.usesIoError = true
 	case "__method_Writer_write_some":
@@ -4246,6 +4259,10 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_handle_termios_get"
 		case "__method_Reader_termios_set":
 			target = "__fern_handle_termios_set"
+		case "__method_Writer_write_bytes":
+			target = "__fern_writer_write_bytes"
+		case "__method_Writer_write_some_bytes":
+			target = "__fern_writer_write_some_bytes"
 		case "__method_Writer_write_some":
 			target = "__fern_writer_write_some"
 		case "__method_Writer_truncate":

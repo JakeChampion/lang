@@ -1207,6 +1207,12 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 		// the Some(IoError) / None error path.
 		g.emitReaderWriterRuntime()
 	}
+	if g.usesWriterBytes {
+		g.emitWriterBytesRuntime(true)
+	}
+	if g.usesWriterSomeBytes {
+		g.emitWriterBytesRuntime(false)
+	}
 	if g.usesReaderBytes {
 		g.emitReaderBytesRuntime()
 	}
@@ -15998,8 +16004,10 @@ type generator struct {
 	// write). stdin / stdout / stderr also live behind this
 	// flag since they now return real Reader / Writer struct
 	// pointers (fd at +0) rather than scalar sentinels.
-	usesReaderWriter bool
-	usesReaderBytes  bool
+	usesReaderWriter    bool
+	usesReaderBytes     bool
+	usesWriterBytes     bool
+	usesWriterSomeBytes bool
 }
 
 func (g *generator) line(s string) {
@@ -20738,6 +20746,12 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			// ftruncate(2) on the handle's fd → Option[IoError].
 			target = "__fern_writer_truncate"
 			g.usesWriterTruncate = true
+			g.usesAlloc = true
+			g.usesIoError = true
+		case "__method_Writer_write_bytes", "__method_Writer_write_some_bytes":
+			target = "__fern_writer_" + strings.TrimPrefix(target, "__method_Writer_")
+			g.usesWriterBytes = g.usesWriterBytes || target == "__fern_writer_write_bytes"
+			g.usesWriterSomeBytes = g.usesWriterSomeBytes || target == "__fern_writer_write_some_bytes"
 			g.usesAlloc = true
 			g.usesIoError = true
 		case "__method_Writer_write":

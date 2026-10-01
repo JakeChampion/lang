@@ -964,7 +964,7 @@ pub function all_runtime_need_roots(): string[] {
     "sync", "fd_fsync", "fd_fdatasync", "fd_syncfs", "fd_dup_onto",
     "termios_get", "termios_set",
     "temp_dir", "open_file", "open_with", "reader", "fd_stat", "reader_seek", "reader_splice", "fd_flags",
-    "read_chunk_bytes", "read_chunk_bytes_u8",
+    "read_chunk_bytes", "read_chunk_bytes_u8", "write_bytes", "write_bytes_u8", "write_some_bytes", "write_some_bytes_u8",
     "writer_write", "write_some", "writer_truncate", "subprocess", "crc32_cksum", "sum_bytes",
     // The packed-byte twins a typed program's u8[] calls (asmcore.packed_suffix).
     "alloc_bytes", "arr_push_u8", "buf_u8", "buf_take_bytes", "buf_take_bytes_u8", "str_bytes_u8", "str_from_bytes_u8", "arr_slice_u8",

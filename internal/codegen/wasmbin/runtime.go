@@ -678,6 +678,11 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 				case "__fern_handle_isatty":
 					// (h) → i32 — 0 / 1, and nothing to box.
 					needs.add("__fern_handle_isatty")
+				case "__fern_writer_write_bytes", "__fern_writer_write_some_bytes":
+					needs.add("__fern_alloc")
+					needs.add("__fern_alloc_rc1")
+					needs.add("__build_io_error")
+					needs.add(callDirectAlias(op.Str))
 				case "__fern_writer_write_some":
 					// (w, s_data, s_len) → i32 — one write and
 					// the count; Result[i64, IoError].
@@ -1416,7 +1421,7 @@ var helperResultBoxCallers = []string{
 	"__fern_open_reader", "__fern_open_writer", "__fern_open_appender",
 	"__fern_open_exclusive", "__fern_open_reader_with", "__fern_open_writer_with",
 	"__fern_reader_close_fd", "__fern_writer_close",
-	"__fern_writer_write", "__fern_writer_write_some", "__fern_reader_read_line_fd",
+	"__fern_writer_write", "__fern_writer_write_some", "__fern_writer_write_bytes", "__fern_writer_write_some_bytes", "__fern_reader_read_line_fd",
 	"__fern_reader_read_chunk", "__fern_fd_stat", "__fern_reader_seek", "__fern_writer_seek",
 	"__fern_reader_read_chunk_bytes",
 	"__fern_reader_flags", "__fern_writer_flags",
@@ -3148,6 +3153,14 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildWriterWriteBody,
+	},
+	"__fern_writer_write_bytes": {
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32}, body: buildWriterBytesBody,
+	},
+	"__fern_writer_write_some_bytes": {
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32}, body: buildWriterSomeBytesBody,
 	},
 	"__fern_writer_write_some": {
 		// (w, s_data, s_len) → i32 — heap-form

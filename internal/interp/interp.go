@@ -696,6 +696,8 @@ func New() *Interp {
 	i.Builtins["__method_Writer_isatty"] = &Builtin{Fn: builtinHandleIsatty}
 	i.Builtins["__method_Writer_write"] = &Builtin{Fn: builtinWriterWrite}
 	i.Builtins["__method_Writer_write_some"] = &Builtin{Fn: builtinWriterWriteSome}
+	i.Builtins["__method_Writer_write_bytes"] = &Builtin{Fn: builtinWriterWriteBytes}
+	i.Builtins["__method_Writer_write_some_bytes"] = &Builtin{Fn: builtinWriterWriteSomeBytes}
 	i.Builtins["__method_Writer_close"] = &Builtin{Fn: builtinWriterClose}
 	i.Builtins["__method_Reader_fsync"] = &Builtin{Fn: builtinFsync}
 	i.Builtins["__method_Writer_fsync"] = &Builtin{Fn: builtinFsync}

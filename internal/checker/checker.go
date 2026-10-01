@@ -3891,6 +3891,9 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 	writeSomeResult := ast.EnumType{Name: "Result", Args: []ast.Type{
 		ast.NumberType{Width: 64, Signed: true}, ioErrType}}
 	registerStructMethod("Writer", "write_some", []ast.Type{ast.StringType{}}, writeSomeResult)
+	bytes := ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}
+	registerStructMethod("Writer", "write_bytes", []ast.Type{bytes}, optionIoErr)
+	registerStructMethod("Writer", "write_some_bytes", []ast.Type{bytes}, writeSomeResult)
 	registerStructMethod("Writer", "close", nil, optionIoErr)
 	// truncate(len) is ftruncate(2) on the handle: the file's length is set
 	// to `len`, growing with a hole that reads as zeros or discarding the

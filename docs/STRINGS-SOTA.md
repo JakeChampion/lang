@@ -861,6 +861,18 @@ path before this method has full interpreter parity. The existing
 its binary consumers. The new method does not establish the string invariant
 by itself.
 
+`Writer.write_bytes(bytes): Option[IoError]` and
+`Writer.write_some_bytes(bytes): Result[i64, IoError]` borrow an owned `u8[]`
+without changing or retaining it. The former completes short writes and
+reports an I/O error on zero progress; the latter returns the count from one
+host write, which may be zero. Empty writes preserve host errors, and closed
+handles report an error. WASI Preview 2 host writes use blocking chunks of
+at most 4096 bytes. These methods have the same bootstrap
+and primary compiled target coverage as the raw reader; the primary
+interpreter still needs its host migration. They never construct an unchecked
+string. Borrowed views must be materialized before calling this owned-array
+signature.
+
 The socket TRANSPORT followed. `tcp_recv_deadline` returns
 `Option[u8[]]`, and `std/fetch` is byte-domain end to end —
 `fetch_raw` / `fetch_get` / `get_url` return `u8[]`, their `_deadline`
