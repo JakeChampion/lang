@@ -2774,7 +2774,24 @@ func text_as_addr {
     ret v1
 }
 
-refused cast contract: usize as f64
+modes 1 result f64
+v0:usize v1:f64
+func address_as_float {
+  b0:
+    v0 = param 0
+    v1 = cast v0
+    ret v1
+}
+
+modes 1 result usize
+v0:f64 v1:usize
+func float_as_address {
+  b0:
+    v0 = param 0
+    v1 = cast v0
+    ret v1
+}
+
 modes 1 1 result usize
 v0:usize v1:usize v2:usize
 func handle_sum {
