@@ -7828,6 +7828,10 @@ type checker struct {
 	// seenDiags drops a diagnostic identical to one already recorded at
 	// the same position — see errfCode.
 	seenDiags map[diagKey]bool
+	// seededParams names the type parameters a struct literal took from its
+	// destination or update base while its fields unify: a typed field may
+	// rebind only what the literal's own fields bound.
+	seededParams map[string]bool
 	// wideLits are the integer literals past i64 max seen so far, each once
 	// — see checkUnsettledWideLiterals.
 	wideLits []wideLit
@@ -9927,7 +9931,7 @@ func (c *checker) unifyType(expected, actual ast.Type, sub map[string]ast.Type) 
 			// An untyped integer literal bound the parameter first; a typed
 			// integer bound later decides it, and the literal settles there
 			// (`Same { a: 1, b: y }` with `y: i64` is a Same[i64], #10453).
-			if en, ok := existing.(ast.NumberType); ok && en.Polymorphic {
+			if en, ok := existing.(ast.NumberType); ok && en.Polymorphic && !c.seededParams[p.Name] {
 				if an, ok := actual.(ast.NumberType); ok {
 					if !an.Polymorphic {
 						sub[p.Name] = actual
@@ -10116,6 +10120,26 @@ func unifyIfArms(a, b ast.Type) ast.Type {
 		}
 		if len(be.Args) == 0 && len(ae.Args) > 0 {
 			return ae
+		}
+	}
+	// Two instantiations of one generic struct unify argument-wise, so
+	// `[Same { a: 1, b: 2 }, Same { a: 3, b: y }]` with `y: i64` is a
+	// Same[i64][] and the literal-bound element settles there (#10453).
+	if as, aok := a.(ast.StructType); aok {
+		if bs, bok := b.(ast.StructType); bok && as.Name == bs.Name && len(as.Args) == len(bs.Args) && len(as.Args) > 0 {
+			args := make([]ast.Type, len(as.Args))
+			for i := range as.Args {
+				if ast.Equal(as.Args[i], bs.Args[i]) {
+					args[i] = as.Args[i]
+					continue
+				}
+				u := unifyIfArms(as.Args[i], bs.Args[i])
+				if u == nil {
+					return nil
+				}
+				args[i] = u
+			}
+			return ast.StructType{Name: as.Name, Args: args}
 		}
 	}
 	// Tuple types: unify element-wise. Lets polymorphic /
@@ -18865,6 +18889,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			n.TypeArgsWritten = false
 		}
 		var sub map[string]ast.Type
+		seeded := map[string]bool{}
 		if len(sd.TypeParams) > 0 {
 			sub = make(map[string]ast.Type, len(sd.TypeParams))
 			// Seed the type-arg substitution from an explicit destination
@@ -18878,6 +18903,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			if et, ok := c.expectedType.(ast.StructType); ok && et.Name == sd.Name && len(et.Args) == len(sd.TypeParams) {
 				for i, tp := range sd.TypeParams {
 					sub[tp] = et.Args[i]
+					seeded[tp] = true
 				}
 			}
 			// Construction-site type args outrank the destination: the
@@ -18907,6 +18933,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 						for i, tp := range sd.TypeParams {
 							if i < len(bst.Args) {
 								sub[tp] = bst.Args[i]
+								seeded[tp] = true
 							}
 						}
 					}
@@ -18996,7 +19023,10 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				}
 			}
 			if sub != nil {
-				if !c.unifyType(expected, vt, sub) && !dynFieldOK {
+				c.seededParams = seeded
+				unified := c.unifyType(expected, vt, sub)
+				c.seededParams = nil
+				if !unified && !dynFieldOK {
 					// Show the substituted field type (`i32`) rather than the
 					// bare parameter (`T`) when the instantiation is known —
 					// e.g. seeded from a `Box[i32]` destination.

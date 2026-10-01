@@ -284,6 +284,13 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// A literal-bound struct local used at a second width is the
 		// destination's mismatch, E038, as a scalar literal local's is.
 		{"generic-literal-struct-local-second-width", "struct Same[T] { a: T, b: T }\nfunction take(x: Same[i64]): i64 { return x.a; }\nfunction take32(x: Same[i32]): i32 { return x.a; }\nfunction main(): i32 { var s = Same { a: 1, b: 2 }; var a = take(s); return take32(s); }\n", []string{"E038"}},
+		// The typed-first binding stays inside the literal, an array's
+		// typed element widens a literal sibling in either order, and a
+		// struct local's copy and capture share its width (#10453).
+		{"generic-literal-update-over-literal-base", "struct Same[T] { a: T, b: T }\nfunction main(): i32 { var q = Same { a: 1, b: 2 }; var y: i64 = 8589934592; var w = Same { ...q, b: y }; return 0; }\n", []string{"E043"}},
+		{"generic-literal-array-typed-sibling", "struct Same[T] { a: T, b: T }\nfunction main(): i32 { var y: i64 = 8589934592; var xs = [Same { a: 1, b: 2 }, Same { a: 3, b: y }]; var r: i64 = xs[0].a; return 0; }\n", nil},
+		{"generic-literal-struct-local-copy", "struct Same[T] { a: T, b: T }\nfunction main(): i32 { var q = Same { a: 1, b: 2 }; var r = q; var z: i64 = r.a; var w: i64 = q.b; return 0; }\n", nil},
+		{"generic-literal-struct-local-capture", "struct Same[T] { a: T, b: T }\nfunction main(): i32 { var q = Same { a: 1, b: 2 }; var f = (): i64 => q.a; return 0; }\n", nil},
 		{"generic-literal-typed-field-binds-ahead", "struct Same[T] { a: T, b: T }\nfunction take(xs: Same[i64][]): i32 { return xs.len(); }\nfunction main(): i32 { var y: i64 = 5; var q = Same { a: 1, b: y }; var r: i64 = q.a; return take([q]); }\n", nil},
 		// A literal whose fields clash has no instantiation, so its local
 		// reads as untyped and no use reports the clash again (#10453). Native

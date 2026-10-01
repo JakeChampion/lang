@@ -5444,7 +5444,7 @@ function impl_trait_args(bound: parser.TypeRef, at: typeinfo.Type, s: Scope): ty
 }
 
 // struct_lit_args are a generic struct literal's type arguments: each is bound
-// by the first written field that fixes it, a typed field ahead of an untyped
+// by the first written field that fixes it, a typed integer ahead of an untyped
 // integer literal, as native binds them; the rest stay unknown. An empty array
 // literal fixes nothing.
 function struct_lit_args(sl: ast.ExprStructLit, ssig: StructSig, s: Scope): typeinfo.Type[] {
@@ -5459,7 +5459,10 @@ function struct_lit_args(sl: ast.ExprStructLit, ssig: StructSig, s: Scope): type
     var i: i32 = 0;
     while (i < sl.field_names.len()) {
       var fi: i32 = field_index(ssig, sl.field_names[i]);
-      var binds: boolean = fi >= 0 && fi < ssig.field_type_names.len() && int_literal_tree(sl.field_values[i]) == (pass == 1);
+      // A typed integer binds ahead of an untyped literal, as native's
+      // rebind does; every other value binds in written order, so a clash is
+      // reported on the field that breaks what the earlier ones bound.
+      var binds: boolean = fi >= 0 && fi < ssig.field_type_names.len() && typed_int_field(sl.field_values[i], s) == (pass == 0);
       // An empty array literal binds nothing; it takes whatever the others fix.
       if let ast.ExprArray(ea) = sl.field_values[i] {
         if (ea.elements.len() == 0) {
@@ -5485,6 +5488,12 @@ function struct_lit_args(sl: ast.ExprStructLit, ssig: StructSig, s: Scope): type
     }
   }
   return args;
+}
+
+// typed_int_field is whether a struct literal's field value is an integer
+// that is not an untyped literal tree.
+function typed_int_field(e: ast.Expr, s: Scope): boolean {
+  return !int_literal_tree(e) && is_integer(check_expr(e, s));
 }
 
 // written_struct_args are the type arguments a literal spells, `Same[i32] {
@@ -5622,7 +5631,8 @@ function widened_field_type(sig: StructSig, j: i32, largs: typeinfo.Type[], s: S
   return t_unknown("no field");
 }
 
-// reads_i64 is whether t, or an array or tuple element of it, is i64.
+// reads_i64 is whether t, or an array or tuple element or struct type
+// argument of it, is i64.
 function reads_i64(t: typeinfo.Type): boolean {
   if (type_to_irtag(t) == "i64") {
     return true;
@@ -5630,6 +5640,13 @@ function reads_i64(t: typeinfo.Type): boolean {
   match (t) {
     typeinfo.TypeArray(at) => {
       return reads_i64(at.elem);
+    },
+    typeinfo.TypeStruct(st) => {
+      for a in st.args {
+        if (reads_i64(a)) {
+          return true;
+        }
+      }
     },
     typeinfo.TypeTuple(tt) => {
       for et in tt.elements {
@@ -6101,6 +6118,7 @@ function check_array_expr(a: ast.ExprArray, s: Scope): typeinfo.Type {
   // call_diags_array's E034 rule.
   var first: typeinfo.Type = check_expr(a.elements[0], s);
   var first_lit: i32 = numeric_literal_kind(a.elements[0]);
+  var first_expr: ast.Expr = a.elements[0];
   var i: i32 = 1;
   while (i < a.elements.len()) {
     var et: typeinfo.Type = check_expr(a.elements[i], s);
@@ -6108,13 +6126,53 @@ function check_array_expr(a: ast.ExprArray, s: Scope): typeinfo.Type {
     // A mismatch is call_diags_array's E034; the literal keeps its
     // first element's type, as native types it. A sibling only ever makes
     // it more concrete: `None` after `Some(1)` keeps `Option[i32]`.
-    if (!vaguer_than(et, first) && !literal_gives_way(lit, first) && (same_element_type(et, first) || literal_gives_way(first_lit, et))) {
+    if (!vaguer_than(et, first) && !literal_gives_way(lit, first) && !struct_lit_gives_way(a.elements[i], et, first, s)
+      && (same_element_type(et, first) || literal_gives_way(first_lit, et))
+      || struct_lit_gives_way(first_expr, first, et, s)) {
       first = et;
       first_lit = lit;
+      first_expr = a.elements[i];
     }
     i = i + 1;
   }
   return t_array(first);
+}
+
+// struct_lit_gives_way is whether `e`, a generic struct literal of type
+// `from`, takes a sibling's instantiation `to` instead: every argument the two
+// differ in is one only untyped integer literals of `e` bound, and `to` reads
+// it as an integer — `Same { a: 1, b: 2 }` beside a Same[i64].
+function struct_lit_gives_way(e: ast.Expr, from: typeinfo.Type, to: typeinfo.Type, s: Scope): boolean {
+  if let ast.ExprStructLit(sl) = e {
+    if let typeinfo.TypeStruct(fs) = from {
+      if let typeinfo.TypeStruct(ts) = to {
+        var sig: StructSig = s.lookup_struct(sl.type_name);
+        if (sl.written.len() > 0 || fs.name != ts.name || fs.args.len() != ts.args.len() || sig.type_params.len() != fs.args.len()) {
+          return false;
+        }
+        var lit: ast.Expr[] = [sl];
+        var differs: boolean = false;
+        var k: i32 = 0;
+        while (k < fs.args.len()) {
+          if (typeinfo.spelling(fs.args[k]) != typeinfo.spelling(ts.args[k])) {
+            var es: ast.Expr[] = struct_param_exprs(sig, sig.type_params[k], lit, s);
+            if (es.len() == 0 || !is_integer(ts.args[k])) {
+              return false;
+            }
+            for pe in es {
+              if (!int_literal_tree(pe)) {
+                return false;
+              }
+            }
+            differs = true;
+          }
+          k = k + 1;
+        }
+        return differs;
+      }
+    }
+  }
+  return false;
 }
 
 function check_index_expr(x: ast.ExprIndex, s: Scope): typeinfo.Type {
@@ -22217,7 +22275,7 @@ function settle_array_literals(a: ast.ExprArray, s: Scope): ast.Expr {
     }
   }
   if (tag.len() == 0) {
-    return a;
+    return settle_array_struct_literals(a, s);
   }
   var els: ast.Expr[] = [];
   for element in a.elements {
@@ -22228,6 +22286,54 @@ function settle_array_literals(a: ast.ExprArray, s: Scope): ast.Expr {
     }
   }
   return parser.settle_to_name(ast.ExprArray { ...a, elements: els }, tag + "[]");
+}
+
+// settle_array_struct_literals settles the struct-literal elements of an
+// array whose element type a typed sibling widened: `[Same { a: 1, b: 2 },
+// Same { a: 3, b: y }]` with `y: i64` is a Same[i64][], so the first
+// element's literals are read at i64 (#10453).
+function settle_array_struct_literals(a: ast.ExprArray, s: Scope): ast.Expr {
+  if let typeinfo.TypeArray(at) = check_expr(a, s) {
+    if (!reads_i64(at.elem)) {
+      return a;
+    }
+    var els: ast.Expr[] = [];
+    for element in a.elements {
+      els = els.append(settle_struct_lit_wide(element, at.elem, s));
+    }
+    return ast.ExprArray { ...a, elements: els };
+  }
+  return a;
+}
+
+// settle_struct_lit_wide settles a generic struct literal's fields at the
+// widths t, an instantiation of its struct, reads at i64.
+function settle_struct_lit_wide(e: ast.Expr, t: typeinfo.Type, s: Scope): ast.Expr {
+  if let ast.ExprStructLit(sl) = e {
+    if let typeinfo.TypeStruct(ts) = t {
+      var sig: StructSig = s.lookup_struct(sl.type_name);
+      if (ts.name != sl.type_name || sig.type_params.len() != ts.args.len() || sig.type_params.len() == 0) {
+        return e;
+      }
+      var nv: ast.Expr[] = [];
+      var i: i32 = 0;
+      while (i < sl.field_values.len()) {
+        var v: ast.Expr = sl.field_values[i];
+        var fi: i32 = 0 - 1;
+        if (i < sl.field_names.len()) {
+          fi = field_index(sig, sl.field_names[i]);
+        }
+        if (fi >= 0 && fi < sig.field_type_names.len()) {
+          var ft: typeinfo.Type = type_from_ref_subst(parser.parse_type_ref(sig.field_type_names[fi]), sig.type_params, ts.args, s.type_names());
+          v = settle_struct_lit_wide(settle_wide_literals(v, ft), ft, s);
+        }
+        nv = nv.append(v);
+        i = i + 1;
+      }
+      return ast.ExprStructLit { ...sl, field_values: nv };
+    }
+  }
+  return e;
 }
 
 // annotate_expr rebuilds `e`, stamping ExprCall.ty, ExprIdent.ty,
@@ -23461,7 +23567,9 @@ function pretype_module_in(mod: parser.Module, mt: ModuleTables): parser.Module 
 // its declaration's key, the struct, each type argument's spelling, and the
 // class of each argument only untyped literals bound (-1 for one a typed field
 // bound). sargs and sids are flat; sfirst[j] is struct j's first argument.
-struct LitInfer { parent: i32[], width: typeinfo.Type[], keys: string[], cargs: string[], ctags: string[], pend: ast.Expr[], pend_id: i32[], pend_scope: Scope[], skeys: string[], snames: string[], sfirst: i32[], sargs: string[], sids: i32[] }
+// wkeys / wtags are the declarations whose whole type a widening already
+// decided: an array of generic struct literals a typed sibling widened.
+struct LitInfer { parent: i32[], width: typeinfo.Type[], keys: string[], cargs: string[], ctags: string[], pend: ast.Expr[], pend_id: i32[], pend_scope: Scope[], skeys: string[], snames: string[], sfirst: i32[], sargs: string[], sids: i32[], wkeys: string[], wtags: string[] }
 
 struct LitRewrite { keys: string[], tags: string[], cargs: string[], ctags: string[] }
 
@@ -24388,6 +24496,13 @@ function lit_stmt(stmt: ast.Stmt, s: Scope, st: LitInfer): (Scope, LitInfer) {
       }
       let (seed, ids) = lit_tree(v.init, s, []);
       if (!seed) {
+        if let ast.ExprArray(ea) = v.init {
+          var wtag: string = widened_array_tag(ea, s);
+          if (wtag.len() > 0) {
+            var wst: LitInfer = lit_expr(v.init, s, st);
+            return (bind_stmt(stmt, s), LitInfer { ...wst, wkeys: wst.wkeys.append(lit_var_key(v)), wtags: wst.wtags.append(wtag) });
+          }
+        }
         if let ast.ExprStructLit(sl) = v.init {
           let (ss, sst) = lit_struct_local(v, sl, s, lit_expr(v.init, s, st));
           if (ss.len() > 0) {
@@ -24603,6 +24718,12 @@ function lit_rewrites(st: LitInfer): LitRewrite {
     ot = ot.append(stg[si]);
     si = si + 1;
   }
+  var wi: i32 = 0;
+  while (wi < st.wkeys.len()) {
+    ok = ok.append(st.wkeys[wi]);
+    ot = ot.append(st.wtags[wi]);
+    wi = wi + 1;
+  }
   let (ck, ct) = agreed_tags(st.cargs, st.ctags);
   return LitRewrite { keys: ok, tags: ot, cargs: ck, ctags: ct };
 }
@@ -24753,6 +24874,27 @@ function lit_scan_expr(e: ast.Expr, own sc: LitScan): LitScan {
 
 // lit_holds_int_literal is whether e is an untyped integer tree or holds one
 // as an element of an array, tuple or struct literal.
+// widened_array_tag spells an array literal's type when a typed sibling
+// widened its generic struct element past a struct-literal element's own
+// instantiation: `[Same { a: 1, b: 2 }, Same { a: 3, b: y }]` is a
+// Same[i64][]. "" for any other array.
+function widened_array_tag(ea: ast.ExprArray, s: Scope): string {
+  var at: typeinfo.Type = check_expr(ea, s);
+  if let typeinfo.TypeArray(ta) = at {
+    if let typeinfo.TypeStruct(ts) = ta.elem {
+      if (!reads_i64(ta.elem)) {
+        return "";
+      }
+      for e in ea.elements {
+        if (struct_lit_gives_way(e, check_expr(e, s), ta.elem, s)) {
+          return typeinfo.spelling(at);
+        }
+      }
+    }
+  }
+  return "";
+}
+
 function lit_holds_int_literal(e: ast.Expr): boolean {
   if (int_literal_tree(e)) {
     return true;
@@ -24807,10 +24949,7 @@ function lit_candidate_at(st: ast.Stmt): boolean {
       if (v.type_name.len() > 0 || name_has_comma(v.name)) {
         return false;
       }
-      if let ast.ExprStructLit(sl) = v.init {
-        return lit_holds_int_literal(v.init);
-      }
-      return int_literal_tree(v.init);
+      return lit_holds_int_literal(v.init);
     },
     ast.StmtFor(fr) => {
       if (!for_iter_is_range(fr.iter)) {
@@ -24850,7 +24989,7 @@ function lit_resolve_pending(st: LitInfer): LitInfer {
 }
 
 function settle_lit_body(stmts: ast.Stmt[], s: Scope): ast.Stmt[] {
-  var st: LitInfer = lit_resolve_pending(lit_stmts(stmts, s, LitInfer { parent: [], width: [], keys: [], cargs: [], ctags: [], pend: [], pend_id: [], pend_scope: [], skeys: [], snames: [], sfirst: [], sargs: [], sids: [] }));
+  var st: LitInfer = lit_resolve_pending(lit_stmts(stmts, s, LitInfer { parent: [], width: [], keys: [], cargs: [], ctags: [], pend: [], pend_id: [], pend_scope: [], skeys: [], snames: [], sfirst: [], sargs: [], sids: [], wkeys: [], wtags: [] }));
   var rw: LitRewrite = lit_rewrites(st);
   if (rw.keys.len() == 0 && rw.cargs.len() == 0) {
     return stmts;

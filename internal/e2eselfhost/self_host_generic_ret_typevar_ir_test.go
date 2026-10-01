@@ -209,6 +209,19 @@ function main(): i32 {
     if (q.a + q.b == 8589934595 && r == 1) { return 7; }
     return 3;
 }`},
+	// A typed element widens an array of generic struct literals in either
+	// order, and a struct local's copy shares its width (#10453).
+	{"struct-literal-array-and-copy-widths", `struct Same[T] { a: T, b: T }
+function main(): i32 {
+    var y: i64 = 8589934592;
+    var xs = [Same { a: 1, b: 2 }, Same { a: 3, b: y }];
+    var ws = [Same { a: 3, b: y }, Same { a: 1, b: 2 }];
+    var o = Same { a: 1, b: 2 };
+    var o2 = o;
+    var z: i64 = o2.a * 4294967296;
+    if (xs[1].b == y && xs[0].a * 4294967296 == 4294967296 && ws[1].b * 4294967296 == 8589934592 && z == 4294967296) { return 7; }
+    return 3;
+}`},
 	// A generic struct local takes the width its first fixing use names
 	// (#10453).
 	{"struct-literal-local-one-width", `struct Same[T] { a: T, b: T }

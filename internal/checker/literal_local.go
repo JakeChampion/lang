@@ -74,7 +74,7 @@ func (c *checker) noteLitField(fa *ast.FieldAccess, t ast.Type, s *scope) {
 	if !ok {
 		return
 	}
-	decl := s.lookupVarDecl(id.Name)
+	decl := c.lookupLitDecl(id.Name, s)
 	lls := c.litStructOf[decl]
 	if lls == nil {
 		return
@@ -149,20 +149,18 @@ func (c *checker) noteLitIdent(id *ast.Ident, t ast.Type, decl *ast.Var) {
 // when the body read it, which may have been before any use fixed it. `s` is
 // the scope the closure was defined in.
 func (c *checker) restampLitCaptures(caps []ast.Param, s *scope) {
-	if c.litLocalOf == nil {
+	if c.litLocalOf == nil && c.litStructOf == nil {
 		return
 	}
 	for i := range caps {
+		if st, ok := caps[i].Type.(ast.StructType); ok {
+			c.restampLitStructCapture(&caps[i], st, c.lookupLitDecl(caps[i].Name, s))
+			continue
+		}
 		if nt, ok := caps[i].Type.(ast.NumberType); !ok || !nt.Polymorphic {
 			continue
 		}
-		decl := s.lookupVarDecl(caps[i].Name)
-		for j := len(c.captureChain) - 1; decl == nil && j >= 0; j-- {
-			if ent := c.captureChain[j]; ent.scope != nil {
-				decl = ent.scope.lookupVarDecl(caps[i].Name)
-			}
-		}
-		ll := c.litLocalOf[decl]
+		ll := c.litLocalOf[c.lookupLitDecl(caps[i].Name, s)]
 		switch {
 		case ll == nil:
 		case ll.fixed:
@@ -171,6 +169,43 @@ func (c *checker) restampLitCaptures(caps []ast.Param, s *scope) {
 			ll.onFix = append(ll.onFix, func(w ast.NumberType) { caps[i].Type = w })
 		}
 	}
+}
+
+// restampLitStructCapture gives a closure's capture of a generic struct local
+// each literal-bound argument the local settles to.
+func (c *checker) restampLitStructCapture(cp *ast.Param, st ast.StructType, decl *ast.Var) {
+	for k, ll := range c.litStructOf[decl] {
+		if ll == nil || k >= len(st.Args) {
+			continue
+		}
+		k := k
+		set := func(w ast.NumberType) {
+			cst, ok := cp.Type.(ast.StructType)
+			if !ok || k >= len(cst.Args) {
+				return
+			}
+			args := append([]ast.Type(nil), cst.Args...)
+			args[k] = w
+			cp.Type = ast.StructType{Name: cst.Name, Args: args}
+		}
+		if ll.fixed {
+			set(ll.width)
+		} else {
+			ll.onFix = append(ll.onFix, set)
+		}
+	}
+}
+
+// lookupLitDecl resolves name from s, or through the scopes a closure body
+// captures from.
+func (c *checker) lookupLitDecl(name string, s *scope) *ast.Var {
+	decl := s.lookupVarDecl(name)
+	for j := len(c.captureChain) - 1; decl == nil && j >= 0; j-- {
+		if ent := c.captureChain[j]; ent.scope != nil {
+			decl = ent.scope.lookupVarDecl(name)
+		}
+	}
+	return decl
 }
 
 // fixLitLocal gives a literal local its one integer type. A second, different
@@ -188,14 +223,14 @@ func (c *checker) fixLitLocal(ll *litLocal, w ast.NumberType, pos ast.Position) 
 	ll.width = w
 	if ll.arg >= 0 {
 		c.fixLitStructArg(ll, w)
-		return
+	} else {
+		ll.decl.Type = w
+		c.info.VarTypes[ll.decl] = w
+		if ll.scope.vars[ll.decl.Name] == ll.decl {
+			ll.scope.names[ll.decl.Name] = w
+		}
+		c.settleInt(ll.decl.Init, w)
 	}
-	ll.decl.Type = w
-	c.info.VarTypes[ll.decl] = w
-	if ll.scope.vars[ll.decl.Name] == ll.decl {
-		ll.scope.names[ll.decl.Name] = w
-	}
-	c.settleInt(ll.decl.Init, w)
 	for _, f := range ll.onFix {
 		f(w)
 	}
@@ -221,15 +256,8 @@ func (c *checker) fixLitStructArg(ll *litLocal, w ast.NumberType) {
 		return
 	}
 	sl.TypeArgs = append([]ast.Type(nil), args...)
-	tp := sd.TypeParams[ll.arg]
-	for _, f := range sd.Fields {
-		if pt, ok := f.Type.(ast.ParamType); ok && pt.Name == tp {
-			for _, fi := range sl.Fields {
-				if fi.Name == f.Name {
-					c.settleInt(fi.Value, w)
-				}
-			}
-		}
+	for _, e := range c.structParamExprs(sd, sd.TypeParams[ll.arg], []ast.Expr{sl}) {
+		c.settleInt(e, w)
 	}
 }
 
@@ -275,6 +303,9 @@ func (c *checker) propagateLitLocals(body *ast.Block) {
 				if ll := c.litLocalOf[x]; ll != nil {
 					c.settleLitGroup(ll, x.Init)
 				}
+				if id, ok := x.Init.(*ast.Ident); ok {
+					c.linkLitStructCopy(x, c.litStructReads[id], id.P)
+				}
 			case *ast.Assign:
 				if id, ok := x.Target.(*ast.Ident); ok {
 					if ll := c.litIdents[id]; ll != nil {
@@ -295,6 +326,23 @@ func (c *checker) propagateLitLocals(body *ast.Block) {
 		})
 		if c.fixedLitLocals() == before {
 			return
+		}
+	}
+}
+
+// linkLitStructCopy gives `var r = q`, both generic struct locals whose
+// arguments literals bound, one width per argument: whichever side a use
+// fixed first decides the other, and two different widths are E003.
+func (c *checker) linkLitStructCopy(r *ast.Var, q *ast.Var, pos ast.Position) {
+	rs, qs := c.litStructOf[r], c.litStructOf[q]
+	for i := 0; i < len(rs) && i < len(qs); i++ {
+		a, b := rs[i], qs[i]
+		switch {
+		case a == nil || b == nil || !a.fixed && !b.fixed:
+		case a.fixed:
+			c.fixLitLocal(b, a.width, pos)
+		default:
+			c.fixLitLocal(a, b.width, pos)
 		}
 	}
 }

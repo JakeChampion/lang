@@ -1129,6 +1129,35 @@ func TestGenericStructLiteralWideningInArrayAndWritten(t *testing.T) {
 	}
 }
 
+// A typed integer rebinds only what the literal's own fields bound: a struct
+// update whose base fixed T at i32 still reports the typed field (#10453).
+// An array whose typed element widens a literal sibling is that widening's
+// type in either order, and a literal-bound struct local's copy and closure
+// capture share its width.
+func TestTypedFieldRebindStaysInsideTheLiteral(t *testing.T) {
+	const decls = "struct Same[T] { a: T, b: T } "
+	err := checkSource(t, decls+"function main(): i32 { var q = Same { a: 1, b: 2 }; var y: i64 = 8589934592; var w = Same { ...q, b: y }; return 0; }")
+	if err == nil || !strings.Contains(err.Error(), `field "b": expected i32, got i64`) {
+		t.Errorf("struct update over an i32 base: want the field refused, got %v", err)
+	}
+	for _, body := range []string{
+		"var y: i64 = 8589934592; var xs = [Same { a: 1, b: 2 }, Same { a: 3, b: y }]; var r: i64 = xs[0].a; return 0;",
+		"var y: i64 = 8589934592; var xs = [Same { a: 3, b: y }, Same { a: 1, b: 2 }]; var r: i64 = xs[1].a; return 0;",
+		"var q = Same { a: 1, b: 2 }; var r = q; var z: i64 = r.a; var w: i64 = q.b; return 0;",
+		"var q = Same { a: 1, b: 2 }; var f = (): i64 => q.a; return 0;",
+	} {
+		if err := checkSource(t, decls+"function main(): i32 { "+body+" }"); err != nil {
+			t.Errorf("%s: rejected, want accepted: %v", body, err)
+		}
+	}
+	if err := checkSource(t, decls+"function main(): i32 { var q = Same { a: 1, b: 2 }; var r = q; var z: i64 = r.a; var w: i32 = q.b; return 0; }"); err == nil || !strings.Contains(err.Error(), "already inferred") {
+		t.Errorf("a copy and its source read at two widths: want E003, got %v", err)
+	}
+	if err := checkSource(t, decls+"function main(): i32 { var xs = [Same { a: 1, b: 2 }, Same { a: \"x\", b: \"y\" }]; return 0; }"); err == nil || !strings.Contains(err.Error(), "array element type") {
+		t.Errorf("an array of two instantiations no literal reconciles: want E034, got %v", err)
+	}
+}
+
 func TestGenericStructLiteralLocalWidensByLiteral(t *testing.T) {
 	src := "struct Same[T] { a: T, b: T } function main(): i32 { " +
 		"var q = Same { a: 1, b: 4611686018427387904 }; var r: i64 = q.b; return 0; }"
