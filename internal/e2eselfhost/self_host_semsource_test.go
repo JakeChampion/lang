@@ -3981,7 +3981,7 @@ const semsourceRCWant = "1\n4\n5\n-3\n-2\n2\n0\n1\n5\n5\n12\n1\n8\n12\n0\n3\n3\n
 const semsourceRCDriver = `import "./semsource"; import "./ssarc"; import "./ssaunits"; import "./ssa"; import "./ssasem";
 import "./parser"; import "./lexer"; import "./irlower"; import "./ir";
 import "./ircore"; import "./checker"; import "./asmcore"; import "./asm_ir"; import "./asm_arm64_ir"; import "./wasm_ir"; import "./util";
-import "./modloader"; import "./flatten"; import "./treeshake";
+import "./modloader"; import "./flatten"; import "./treeshake"; import "./semlower";
 function main(): i32 {
     var av = args();
     var src: string = "";
@@ -4104,11 +4104,11 @@ function main(): i32 {
     cache = ssarc.merge_helpers(cache, instances);
     cache = ssarc.merge_helpers(cache, helpers.rows);
     if (av[1] == "x86-64-linux") {
-        print(asm_ir.emit_module_ir_unit_flat(mod, true, false, "", [], mod.funcs, tab, 0, 0 - 1, cache, base, asmcore.no_rt_lower));
+        print(asm_ir.emit_module_ir_unit_flat(mod, true, false, "", [], mod.funcs, tab, 0, 0 - 1, cache, base, semlower.runtime_bodies));
     } else if (av[1] == "arm64-linux") {
         strbuf_reset();
         var state = asmcore.new_state();
-        state = asmcore.EmitState { ...state, struct_decls: tab, funcs: mod.funcs };
+        state = asmcore.EmitState { ...state, struct_decls: tab, funcs: mod.funcs, rt_lower: semlower.runtime_bodies };
         state = asm_arm64_ir.emit_body(mod, state, false, cache, base);
         // The per-type __field_reclaim_<T> / __struct_drop_<T> bodies this unit
         // needs, in the order the real arm64 module emit uses them. Without it a
