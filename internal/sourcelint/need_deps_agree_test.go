@@ -121,7 +121,7 @@ func TestMarkWrappersAgreeWithRuntimeNeedDeps(t *testing.T) {
 // arm is `if (name == "x" || ...) { ... return v; }`, ending at the first `}`
 // indented as far as its `if` line: every root its condition names gets the
 // literal of the `var v: string[] = [...]` it returns, declared in the arm or
-// earlier in the function. Every root the function tests must land in the
+// elsewhere in the function. Every root the function tests must land in the
 // table, so an arm the parse cannot read fails by name.
 func parseRuntimeNeedDeps(t *testing.T, text string) map[string][]string {
 	t.Helper()
@@ -157,7 +157,7 @@ func parseRuntimeNeedDeps(t *testing.T, text string) map[string][]string {
 		decl := regexp.MustCompile(`\bvar ` + v + `: string\[\] = \[([^\]]*)\]`)
 		l := decl.FindStringSubmatch(rest[:end])
 		if l == nil {
-			l = decl.FindStringSubmatch(body[:m[0]])
+			l = decl.FindStringSubmatch(body)
 		}
 		if l == nil {
 			t.Fatalf("runtime_need_deps arm %q returns %s, which no string[] literal declares", first, v)
