@@ -220,10 +220,11 @@ function declined(why: string): irlower.LowerResult {
   };
 }
 
-// The entry for a template whose instances stand for it: a body of no ops
-// the emit skips (irlower.LowerResult.superseded), in place of the AST
-// lowering of the erased body, whose wasm verdict (erased_wide) would
-// otherwise decline a module nothing in it calls that body from (#9838).
+// The entry for a declaration with no body of its own (an `@import` extern,
+// or a template whose instances stand for it): no ops, and the emit skips it
+// (irlower.LowerResult.superseded). The AST lowering of an erased template
+// body would otherwise decline, on wasm, a module nothing in it calls that
+// body from (#9838).
 function superseded(): irlower.LowerResult {
   return irlower.LowerResult {
     ok: true, why: "", ops: [], n_locals: 0, n_params: 0,
@@ -961,9 +962,9 @@ pub function substitution(mod: parser.Module, lowered: parser.FuncDecl[], struct
       bodies = bodies.append(declined("generic template"));
       n = n + 1;
     } else if (built.decls[i].bodyless) {
-      // An `@import` extern has no body on either path: the bridge
-      // emits it from its declaration. Not a refusal.
-      bodies = bodies.append(declined("external declaration"));
+      // An `@import` extern has no body: the bridge emits it from its
+      // declaration. Not a refusal.
+      bodies = bodies.append(superseded());
       n = n + 1;
     } else {
       bodies = bodies.append(declined("kept the AST lowering"));

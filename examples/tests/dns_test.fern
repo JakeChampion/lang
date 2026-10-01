@@ -929,6 +929,97 @@ function test_combine_pair(): test.TestOutcome {
   return test.pass();
 }
 
+// ---- dialing and NAT64 ------------------------------------------------------
+function test_interleave_families(): test.TestOutcome {
+  var v6_leads: net.IpAddr[] = dns.interleave_families(addrs(["2001:db8::1", "2001:db8::2", "93.184.216.34", "2001:db8::3", "93.184.216.35"]));
+  if (shown(v6_leads) != "2001:db8::1 93.184.216.34 2001:db8::2 93.184.216.35 2001:db8::3") {
+    return test.fail("the first address's family leads and the families alternate, each in its own order");
+  }
+  var v4_leads: net.IpAddr[] = dns.interleave_families(addrs(["93.184.216.34", "2001:db8::1", "93.184.216.35"]));
+  if (shown(v4_leads) != "93.184.216.34 2001:db8::1 93.184.216.35") {
+    return test.fail("an IPv4 address first leads with IPv4");
+  }
+  var none: net.IpAddr[] = dns.interleave_families(addrs([]));
+  return test.assert_eq(none.len(), 0);
+}
+
+function test_dial_options(): test.TestOutcome {
+  var o: dns.DialOptions = dns.dial_options();
+  if (o.fallback_ms != 300 || o.timeout_ms != 10000) {
+    return test.fail("300 ms between attempts, ten seconds in all");
+  }
+  return test.pass();
+}
+
+function prefix_is(aaaa: string, want: string, bits: i32): boolean {
+  match (dns.nat64_prefix_of(addr(aaaa))) {
+    Some(p) => {
+      match (net.ipv6(p.bytes)) {
+        Some(ip) => {
+          return p.bits == bits && ip.eq(addr(want));
+        },
+        None => {
+          return false;
+        }
+      }
+    },
+    None => {
+      return false;
+    }
+  }
+  return false;
+}
+
+function test_nat64_prefix_of(): test.TestOutcome {
+  if (!prefix_is("64:ff9b::c000:aa", "64:ff9b::", 96)) {
+    return test.fail("the well-known prefix, 192.0.0.170 in the last four bytes");
+  }
+  if (!prefix_is("2001:db8:1:2:c0:0:ab00:0", "2001:db8:1:2::", 64) || !prefix_is("2001:db8:1:2:c0:0:aa00:0", "2001:db8:1:2::", 64)) {
+    return test.fail("a /64 prefix, the address after byte 8, either well-known address");
+  }
+  if (!prefix_is("2001:db8:c000:aa::", "2001:db8::", 32)) {
+    return test.fail("a /32 prefix, the address in bytes 4 to 7");
+  }
+  if (!prefix_is("2001:db8:1c0:0:aa::", "2001:db8:100::", 40)) {
+    return test.fail("a /40 prefix, the address straddling byte 8");
+  }
+  match (dns.nat64_prefix_of(addr("2001:db8::1"))) {
+    Some(_) => {
+      return test.fail("an address embedding neither well-known address reveals no prefix");
+    },
+    None => {}
+  }
+  match (dns.nat64_prefix_of(addr("192.0.0.170"))) {
+    Some(_) => {
+      return test.fail("an IPv4 address reveals no prefix");
+    },
+    None => {}
+  }
+  return test.pass();
+}
+
+function test_synthesize(): test.TestOutcome {
+  var wk: dns.Nat64Prefix = dns.Nat64Prefix { bytes: addr("64:ff9b::").bytes(), bits: 96 };
+  if (!dns.synthesize(wk, addr("192.0.2.1")).eq(addr("64:ff9b::c000:201"))) {
+    return test.fail("under the well-known prefix the address fills the last four bytes");
+  }
+  var p64: dns.Nat64Prefix = dns.Nat64Prefix { bytes: addr("2001:db8:1:2::").bytes(), bits: 64 };
+  if (!dns.synthesize(p64, addr("192.0.2.1")).eq(addr("2001:db8:1:2:c0:2:100:0"))) {
+    return test.fail("under a /64 prefix byte 8 stays zero and the address follows it");
+  }
+  if (!dns.synthesize(wk, addr("2001:db8::1")).eq(addr("2001:db8::1"))) {
+    return test.fail("an IPv6 address is left as it is");
+  }
+  match (dns.nat64_prefix_of(dns.synthesize(p64, addr("192.0.0.171")))) {
+    Some(back) => {
+      return test.assert_eq(back.bits, 64);
+    },
+    None => {
+      return test.fail("a synthesis of the well-known address reveals its prefix again");
+    }
+  }
+}
+
 function test_live_hosts_file(): test.TestOutcome {
   if (!has_loopback(dns.hosts_lookup(dns.system_hosts(), "localhost"))) {
     return test.fail("this machine's /etc/hosts maps localhost to a loopback address");
@@ -988,6 +1079,10 @@ function main(): i32 {
   r = r.it("RFC 6724: the ordering rules", test_order_rules);
   r = r.it("RFC 6724: unusable destinations last, ties stable", test_order_unusable_and_stable);
   r = r.it("the A and AAAA results combined", test_combine_pair);
+  r = r.it("RFC 8305: the families interleaved", test_interleave_families);
+  r = r.it("RFC 8305: the dial options", test_dial_options);
+  r = r.it("NAT64: the prefix an ipv4only.arpa record reveals", test_nat64_prefix_of);
+  r = r.it("NAT64: an IPv4 address under a prefix", test_synthesize);
   r = r.it("live: this machine's /etc/hosts", test_live_hosts_file);
   r = r.it("live: resolve localhost and a literal", test_live_resolve);
   return r.finish();

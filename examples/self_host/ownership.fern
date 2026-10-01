@@ -20,12 +20,17 @@
 // whichever answer this reaches, and an escape is far easier to see on the
 // typed IR than on the AST.
 //
-// The least fixpoint starts parameters lent and counts the uses that carry
-// them out. Read-only call cycles stay lent. A constructor-tail loop also
-// counts the parameter it advances through: releasing each visited cell
-// lets the next output allocation recycle it instead of retaining the whole
-// input until the call returns. The typed loop's phis and hole operations
-// identify that case without changing unrelated read-only parameters.
+// It is a GREATEST fixpoint: every reference parameter starts escaping and is
+// demoted once a round finds no escaping use. A least fixpoint would answer
+// "borrowed" for every recursive traversal, since the only use that carries
+// the parameter out is the recursive call whose own slot is counted only if
+// the parameter is — the cycle never starts from below. That is right for a
+// walk that rebuilds (`std/pvec`'s `__pv_with_in` takes its child out of a
+// unique node), and wrong for one whose result holds no reference: nothing a
+// take frees can leave such a frame, so its own recursive call carries nothing
+// (#10352). The same holds of a cycle of such functions: `semtypes.equal` and
+// `equal_list` call each other, and each kept the other's parameters counted
+// until a call inside a quiet cycle stopped carrying (#10941).
 import "./ssa";
 import "./ssasem";
 import "./util";
@@ -33,8 +38,9 @@ import "./util";
 // One row per produced symbol: whether each parameter leaves the frame.
 // `lends` says a slot the row leaves uncounted may still be kept as a borrow in
 // what the callee returns (lent_values); a builtin whose result holds no
-// reference cannot keep one.
-pub struct Escapes { name: string, bits: boolean[], lends: boolean }
+// reference cannot keep one. `cycle` is the row's quiet cycle (`cycles`), -1
+// on none.
+pub struct Escapes { name: string, bits: boolean[], lends: boolean, cycle: i32 }
 
 // Rows by name, chained per hash bucket in ascending row order. A round
 // rewrites a row's bits and never its name, so one index built over the
@@ -164,6 +170,108 @@ function carry(own out: boolean[], a: ssasem.Analysis, v: i32): boolean[] {
   return out;
 }
 
+// Whether `caller` and `callee` lie on one quiet cycle: a call graph's cycle
+// whose functions all return no reference, so nothing a take frees can leave
+// it and a call inside it carries nothing.
+function same_cycle(rows: Escapes[], ix: Index, caller: string, callee: string): boolean {
+  var a: i32 = find(rows, ix, caller);
+  var b: i32 = find(rows, ix, callee);
+  return a >= 0 && b >= 0 && rows[a].cycle >= 0 && rows[a].cycle == rows[b].cycle;
+}
+
+// The strongly connected components of `succ` that hold a cycle, numbered from
+// 0; -1 for a node on none. Tarjan's algorithm, iterative so a deep call chain
+// cannot exhaust the stack.
+pub function cycles(succ: i32[][]): i32[] {
+  var n: i32 = succ.len();
+  var order: i32[] = [];
+  var low: i32[] = [];
+  var on: boolean[] = [];
+  var comp: i32[] = [];
+  // The Tarjan stack and the DFS's own, each a prefix of its array: `slen`
+  // and `wlen` are their depths, and a push past the end appends.
+  var stack: i32[] = [];
+  var work: i32[] = [];
+  var edge: i32[] = [];
+  var i: i32 = 0;
+  while (i < n) {
+    order = order.append(0 - 1);
+    low = low.append(0);
+    on = on.append(false);
+    comp = comp.append(0 - 1);
+    stack = stack.append(0);
+    work = work.append(0);
+    edge = edge.append(0);
+    i = i + 1;
+  }
+  var slen: i32 = 0;
+  var wlen: i32 = 0;
+  var counter: i32 = 0;
+  var ncomp: i32 = 0;
+  var s: i32 = 0;
+  while (s < n) {
+    if (order[s] < 0) {
+      order = order.with(s, counter);
+      low = low.with(s, counter);
+      counter = counter + 1;
+      stack = stack.with(slen, s);
+      slen = slen + 1;
+      on = on.with(s, true);
+      work = work.with(0, s);
+      edge = edge.with(0, 0);
+      wlen = 1;
+      while (wlen > 0) {
+        var top: i32 = wlen - 1;
+        var v: i32 = work[top];
+        var e: i32 = edge[top];
+        if (e < succ[v].len()) {
+          edge = edge.with(top, e + 1);
+          var w: i32 = succ[v][e];
+          if (order[w] < 0) {
+            order = order.with(w, counter);
+            low = low.with(w, counter);
+            counter = counter + 1;
+            stack = stack.with(slen, w);
+            slen = slen + 1;
+            on = on.with(w, true);
+            work = work.with(wlen, w);
+            edge = edge.with(wlen, 0);
+            wlen = wlen + 1;
+          } else if (on[w] && order[w] < low[v]) {
+            low = low.with(v, order[w]);
+          }
+        } else {
+          wlen = top;
+          if (top > 0 && low[v] < low[work[top - 1]]) {
+            low = low.with(work[top - 1], low[v]);
+          }
+          if (low[v] == order[v]) {
+            var first: i32 = slen - 1;
+            while (stack[first] != v) {
+              first = first - 1;
+            }
+            var cyclic: boolean = slen - first > 1 || util.index_of_i32(succ[v], v) >= 0;
+            var k: i32 = first;
+            while (k < slen) {
+              on = on.with(stack[k], false);
+              if (cyclic) {
+                comp = comp.with(stack[k], ncomp);
+              }
+              k = k + 1;
+            }
+            if (cyclic) {
+              ncomp = ncomp + 1;
+            }
+            slen = first;
+          }
+        }
+      }
+    }
+    s = s + 1;
+  }
+  return comp;
+}
+
 // The operands a direct call consumes: the slots its callee's contract counts.
 // The contract's own modes are stale by construction here — they are what this
 // analysis is computing — so the CURRENT round's answer is read instead, which
@@ -176,14 +284,15 @@ function call_carried(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis, in
   if (ssasem.is_dyn_call(ins.str)) {
     return out;
   }
-  if (ins.str == f.graph.name && !ssasem.reference(f.result)) {
+  if (same_cycle(rows, ix, f.graph.name, ins.str)) {
     return out;
   }
-  var rebuilds: boolean = ins.str == f.graph.name && constructed_result(f, ins.result);
   var i: i32 = 0;
   while (i < ins.args.len()) {
-    if (ssasem.reference(f.values[ins.args[i]]) && (consumed(rows, ix, ins.str, i)
-      || rebuilds && projected_parameter(f, a, ins.args[i]))) {
+    // Passing the same parameter to the same slot supplies no independent
+    // reason to consume it. Any other escaping use still carries it.
+    var unchanged: boolean = ins.str == f.graph.name && unchanged_slot(f, ins.args[i], i);
+    if (!unchanged && ssasem.reference(f.values[ins.args[i]]) && consumed(rows, ix, ins.str, i)) {
       out = carry(out, a, ins.args[i]);
     }
     i = i + 1;
@@ -191,24 +300,23 @@ function call_carried(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis, in
   return out;
 }
 
-// A recursive result stored in a newly built value is a rebuilding walk.
-// Count only arguments projected from a parameter, leaving unchanged reader
-// arguments lent. The normal lent-out guard still protects borrowed results.
-function constructed_result(f: ssasem.Func, value: i32): boolean {
+// Tail recursion replaces parameters with named phis even when another
+// recursive call remains in the body. A phi fed only by its parameter and
+// itself still forwards exactly that parameter, without advancing through it.
+function unchanged_slot(f: ssasem.Func, value: i32, slot: i32): boolean {
+  if (value == slot) {
+    return true;
+  }
   for b in f.graph.blocks {
     for ins in b.insts {
-      if (builds_out(ins.kind_tag) && util.index_of_i32(ins.args, value) >= 0) {
+      if (ins.result == value && slot_phi(ins) && ins.str == f.graph.name && ins.imm == slot) {
+        for arg in ins.args {
+          if (arg != value && arg != slot) {
+            return false;
+          }
+        }
         return true;
       }
-    }
-  }
-  return false;
-}
-
-function projected_parameter(f: ssasem.Func, a: ssasem.Analysis, value: i32): boolean {
-  for dep in a.dependencies[value] {
-    if (dep >= 0 && dep < f.params.len() && dep != value) {
-      return true;
     }
   }
   return false;
@@ -232,16 +340,18 @@ function indirect_carried(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis
 // parameter itself, which whatever carries the phi carries too (`continued`).
 // Read as a plain loop instead, a walk that rebuilds its input would never
 // consume it.
-function slot_carried(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis, ins: ssa.SInst, rows: Escapes[], ix: Index, rebuilds: boolean): boolean[] {
-  if (ins.str == f.graph.name && !ssasem.reference(f.result)) {
+function slot_carried(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis, ins: ssa.SInst, rows: Escapes[], ix: Index): boolean[] {
+  if (same_cycle(rows, ix, f.graph.name, ins.str)) {
     return out;
   }
-  if (!consumed(rows, ix, ins.str, ins.imm) && !recycling_slot(f, a, ins, rebuilds)) {
+  if (!consumed(rows, ix, ins.str, ins.imm)) {
     return out;
   }
   var i: i32 = 1;
   while (i < ins.args.len()) {
-    if (ssasem.reference(f.values[ins.args[i]])) {
+    // A backedge that just forwards its own phi is the loop form of an
+    // unchanged recursive argument, not an escaping use of that parameter.
+    if (ins.args[i] != ins.result && ssasem.reference(f.values[ins.args[i]])) {
       out = carry(out, a, ins.args[i]);
     }
     i = i + 1;
@@ -251,37 +361,6 @@ function slot_carried(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis, in
 
 function slot_phi(ins: ssa.SInst): boolean {
   return ins.kind_tag == 8 && ins.str != "";
-}
-
-// The constructor-tail rewrite marks the chain with hole_fill and each
-// parameter phi with the original call slot. A projected next argument is
-// anchored to that phi; an unchanged parameter is the phi itself and must
-// remain lent. This preference is independent of the call-graph fixpoint.
-function recycling_slot(f: ssasem.Func, a: ssasem.Analysis, ins: ssa.SInst, rebuilds: boolean): boolean {
-  if (!rebuilds || ins.str != f.graph.name) {
-    return false;
-  }
-  var i: i32 = 1;
-  while (i < ins.args.len()) {
-    var arg: i32 = ins.args[i];
-    if (arg >= 0 && arg != ins.result && ssasem.reference(f.values[arg])
-      && util.index_of_i32(a.dependencies[arg], ins.result) >= 0) {
-      return true;
-    }
-    i = i + 1;
-  }
-  return false;
-}
-
-function rebuilds_chain(f: ssasem.Func): boolean {
-  for b in f.graph.blocks {
-    for ins in b.insts {
-      if (ins.kind_tag == ssasem.hole_fill()) {
-        return true;
-      }
-    }
-  }
-  return false;
 }
 
 function continued(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis): boolean[] {
@@ -295,12 +374,12 @@ function continued(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis): bool
   return out;
 }
 
-function instruction_carried(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis, ins: ssa.SInst, rows: Escapes[], ix: Index, rebuilds: boolean): boolean[] {
+function instruction_carried(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis, ins: ssa.SInst, rows: Escapes[], ix: Index): boolean[] {
   if (ins.kind_tag == ssasem.call()) {
     return call_carried(out, f, a, ins, rows, ix);
   }
   if (slot_phi(ins)) {
-    return slot_carried(out, f, a, ins, rows, ix, rebuilds);
+    return slot_carried(out, f, a, ins, rows, ix);
   }
   if (ins.kind_tag == ssasem.call_value()) {
     return indirect_carried(out, f, a, ins);
@@ -385,10 +464,9 @@ function carried_values(f: ssasem.Func, a: ssasem.Analysis, rows: Escapes[], ix:
     out = out.append(false);
     i = i + 1;
   }
-  var rebuilds: boolean = rebuilds_chain(f);
   for b in f.graph.blocks {
     for ins in b.insts {
-      out = instruction_carried(out, f, a, ins, rows, ix, rebuilds);
+      out = instruction_carried(out, f, a, ins, rows, ix);
     }
     if (b.term.kind_tag == 1 && b.term.value >= 0) {
       out = out.with(b.term.value, true);

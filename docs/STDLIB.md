@@ -1310,8 +1310,9 @@ loop and `std/fetch` the client.
 
 A stub resolver (#9855): the RFC 1035 wire codec, the two files glibc's
 resolver reads, a query over UDP that retries over TCP when the reply is
-truncated, and the lookups on top. Reaches `fs` for the files, `tcp` for
-the sockets, `random` for query ids and `now` for the wait.
+truncated, the lookups on top, and the dialer that races a name's
+addresses. Reaches `fs` for the files, `tcp` for the sockets, `random`
+for query ids, `now` for the wait and `reactor` for the race.
 
 - `Message`, `Question`, `Record`, `RData` — a message as data, `RData`
   being `A(IpAddr)`, `AAAA(IpAddr)`, `CNAME(name)`, `PTR(name)` or
@@ -1363,11 +1364,25 @@ the sockets, `random` for query ids and `now` for the wait.
   scope and the longest common prefix, ties keeping the server's order.
   `policy_of`, `scope_of` and `common_prefix_len` are the table and the
   measures the rules read; `sort_addresses(dsts)` probes and orders.
+- `connect_race(addrs, port, opts)` is the RFC 8305 dialer: the first
+  address is tried alone for `DialOptions.fallback_ms` (300, Go's
+  attempt delay), then the next beside it, and so on, an attempt that
+  fails handing its turn to the next at once; the first to connect wins
+  and the rest are closed, `TimedOut` once `timeout_ms` passes.
+  `interleave_families(addrs)` is §4's order, the families alternating
+  from the first address's. `dial(name, port, opts)` resolves and races.
+- `nat64_prefixes(conf)` reads the prefixes a NAT64 translator answers
+  under from the AAAA records of `ipv4only.arpa` (RFC 7050;
+  `nat64_prefix_of` reads one record, the well-known 192.0.0.170 or .171
+  embedded under one of the six prefix lengths), and `synthesize(prefix,
+  v4)` embeds an IPv4 address under one as RFC 6052 lays it out.
 - `system_conf()` and `system_hosts()` read this machine's files, and
   `resolve(name)` is the lookup a program wants by default: an address
   literal as it is, then the hosts file, then DNS, the addresses in RFC
-  6724 order. The Happy Eyeballs dialer and NAT64 are the next slice of
-  #9855; `.local` names go to the nameservers like any other (no mDNS).
+  6724 order. On a host with no IPv4 route, IPv4 addresses with no IPv6
+  beside them are synthesized under the prefixes the nameservers reveal
+  (RFC 8305 §7.3). `.local` names go to the nameservers like any other
+  (no mDNS).
 
 `examples/tests/dns_test.fern` covers the codec, the files, the plan, the
 walk and the ordering rules; `TestDnsExchangeX86_64`, `TestDnsPairX86_64`

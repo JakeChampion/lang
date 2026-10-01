@@ -908,6 +908,10 @@ function depth(t: Tree): i32 {
         Fork(l, r) => { return 1 + depth(l) + depth(r); },
     }
 }
+function keep_after(n: i32, t: Ty): Holder {
+    if (n > 0) { return keep_after(n - 1, t); }
+    return Holder { kept: t };
+}
 function main(): i32 {
     var h: Holder = keep(Nm { name: "a" });
     if (same(h.kept, Nm { name: "a" })) { return 0; }
@@ -950,7 +954,7 @@ func TestSelfHostSemanticInferredCycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("infer driver: %v\n%s", err, got)
 	}
-	want := "same 2 2\nsame_all 2 2\nkeep 3\nrebuild 3 2\nempty 2\nrebuild_tree 3 2\ndepth 2\nmain\n"
+	want := "same 2 2\nsame_all 2 2\nkeep 3\nrebuild 3 2\nempty 2\nrebuild_tree 3 2\ndepth 2\nkeep_after 1 3\nmain\n"
 	if string(got) != want {
 		t.Fatalf("inferred modes:\n%s\nwant:\n%s", got, want)
 	}
