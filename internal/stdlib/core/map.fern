@@ -441,13 +441,20 @@ pub function __map_cow_inplace(m: usize): usize {
 // whole claim: the slot is one pointer to an rc'd box and the generated deep
 // drop frees at the box's last reference, so an inc per entry is enough. No
 // per-field walk is needed in the inc direction.
+//
+// A boxed wide-scalar KEY (keyKind 2) needs a cell of its own for the value
+// cell's reason: a delete, clear or drop frees the key cells it walks (#10968).
 function __map_own_copied_cols(buf: usize): void {
   var ownKeys: boolean = __load_i32(buf + 8) == 1;
+  var keyCellBytes: i32 = 0;
+  if (__load_i32(buf + 8) == 2) {
+    keyCellBytes = __map_key_cell_bytes(buf);
+  }
   var valKind: i32 = __map_val_kind(buf);
   var ownVals: boolean = valKind == 5;
   var retainVals: boolean = valKind >= 2 && !ownVals;
   var cellBytes: i32 = __map_val_cell_bytes(buf);
-  if (!ownKeys && !ownVals && !retainVals && cellBytes == 0) {
+  if (!ownKeys && !ownVals && !retainVals && cellBytes == 0 && keyCellBytes == 0) {
     return;
   }
   var cap: i32 = __load_i32(buf);
@@ -471,6 +478,11 @@ function __map_own_copied_cols(buf: usize): void {
       var fresh: usize = __alloc(cellBytes);
       __memcpy(fresh, __load_ptr(slot + ptrW), cellBytes);
       __store_ptr(slot + ptrW, fresh);
+    }
+    if (keyCellBytes != 0) {
+      var freshKey: usize = __alloc(keyCellBytes);
+      __memcpy(freshKey, __load_ptr(slot), keyCellBytes);
+      __store_ptr(slot, freshKey);
     }
     i = i + 1;
   }
