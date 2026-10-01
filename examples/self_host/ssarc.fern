@@ -2122,15 +2122,12 @@ pub function drop_helpers(f: ssasem.Func): irlower.LowerResult[] {
   return out;
 }
 
-function named_index(rows: irlower.LowerResult[], name: string): i32 {
-  var i: i32 = 0;
-  while (i < rows.len()) {
-    if (rows[i].name == name) {
-      return i;
-    }
-    i = i + 1;
+function row_names(rows: irlower.LowerResult[]): string[] {
+  var out: string[] = [];
+  for r in rows {
+    out = out.append(r.name);
   }
-  return 0 - 1;
+  return out;
 }
 
 function replaced(rows: irlower.LowerResult[], at: i32, row: irlower.LowerResult): irlower.LowerResult[] {
@@ -2158,20 +2155,32 @@ function replaced(rows: irlower.LowerResult[], at: i32, row: irlower.LowerResult
 pub function merge_helpers(cache: irlower.LowerResult[], helpers: irlower.LowerResult[]): irlower.LowerResult[] {
   var out: irlower.LowerResult[] = cache;
   var raw: irlower.LowerResult[] = [];
-  for h in helpers {
-    var at: i32 = named_index(raw, h.name);
-    if (at < 0) {
+  // raw_at[k] is the position in raw of the helper that first carried the
+  // symbol of helpers[k], which is helpers[k] itself when it is the first.
+  var names: util.NameIndex = util.name_index(row_names(helpers));
+  var raw_at: i32[] = [];
+  var k: i32 = 0;
+  while (k < helpers.len()) {
+    var h: irlower.LowerResult = helpers[k];
+    var first: i32 = names.find(h.name);
+    if (first == k) {
+      raw_at = raw_at.append(raw.len());
       raw = raw.append(h);
-    } else if (!ir.ops_equal(raw[at].ops, h.ops) || raw[at].n_params != h.n_params
-      || raw[at].n_locals != h.n_locals) {
-      raw = replaced(raw, at, irlower.LowerResult {
-        ...h, ok: false,
-        why: "conflicting drop helper for " + h.name,
-      });
+    } else {
+      var at: i32 = raw_at[first];
+      raw_at = raw_at.append(at);
+      if (!ir.ops_equal(raw[at].ops, h.ops) || raw[at].n_params != h.n_params || raw[at].n_locals != h.n_locals) {
+        raw = replaced(raw, at, irlower.LowerResult {
+          ...h, ok: false,
+          why: "conflicting drop helper for " + h.name,
+        });
+      }
     }
+    k = k + 1;
   }
+  var cached: util.NameIndex = util.name_index(row_names(cache));
   for h in raw {
-    if (named_index(out, h.name) >= 0) {
+    if (cached.has(h.name)) {
       continue;
     }
     if (h.ok) {
