@@ -933,6 +933,27 @@ selection exits 1 in every lane, and `TestShardTestsCoversTheListWithAndWithoutW
 runs the script with an empty, a comment-only, a missing and a real weights
 file and checks the buckets partition the input.
 
+## Twelfth change: the remaining single long jobs, and the gate's other half
+
+With the self-host shards shortened, the next long poles were single jobs:
+`test-e2e-x86_64` at 13.3 minutes (two shards now, like the arm64 gate),
+`test-units-x86_64` at 10.4 (two jobs per host: `internal/ir`, `ssa` and
+`printer`, each 350-390 s of serial tests that cannot t.Parallel, apart from
+the other 75 packages they were sharing four cores with), and the self-host
+lane's shard 0, whose `TestSelfHostAssumeEligibleByteIdenticalX86_64` is
+503 s of CPU-bound work already running four wide (83 checked per-process
+emits, each paying the whole-program parse floor). No weight can place a
+test that size without making its shard the longest, so it runs in a job of
+its own and leaves the shard partition.
+
+Lint, the gate's other half, ran twelve steps one after another. The eight
+cheap, read-only ones (`vet`, `gofmt-check`, `fmt-check`, `deadcode`,
+`actionlint`, `testnames`, `ci-selftest`, `digest-check`) are one
+`make -j -k lint-fast` step now, 85 s on the 4-core container for all of
+them; `check-sources` and `fern-test-cache` keep their steps, the first
+because it is the long one and the second because its probe edits a source
+file while it runs.
+
 ### Next measurements
 
 Read the `selfhost-driver-cache` step's line on the first shards after
