@@ -16,8 +16,9 @@
 //   - The original generic decls are removed so the IR pipeline
 //     never sees a function with TypeParams set.
 //
-// We also re-run `checker.Check` against the rewritten program
-// at the end of the pass: the cloned functions need their
+// We also re-run the checker against the rewritten program, for the
+// target the first check was for (`info.Target`), at the end of the
+// pass: the cloned functions need their
 // FuncSigs entries, and any generic-call body that referenced
 // the type parameters has to be re-typed in the concrete-arg
 // world. The re-check uses the same checker.Info struct (so
@@ -762,7 +763,7 @@ func Run(prog *ast.Program, info *checker.Info) error {
 	//    substituted types.
 	info.GenericFuncs = map[string]*ast.FuncDecl{}
 	info.GenericStructs = map[string]*ast.StructDecl{}
-	newInfo, err := checker.Check(prog)
+	newInfo, err := checker.CheckTarget(prog, info.Target)
 	if err != nil {
 		// A coded diagnostic here is a USER error that only became
 		// visible once the type arguments were substituted — `Cell[T]`

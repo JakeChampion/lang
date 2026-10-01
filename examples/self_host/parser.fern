@@ -99,14 +99,16 @@ pub struct StructFieldDecl { name: string, type_name: string, fn_ret: string, fn
 // struct and for a positional (`Pair(A, B)`) or payloadless variant.
 pub struct StructDecl { name: string, fields: StructFieldDecl[], type_params: string[], derives: string[], line: i32, col: i32, enum_owner: string, must_consume: boolean, variant_field_names: string[], is_pub: boolean, is_package: boolean }
 
-// Top-level union type alias: `type Name = V1 | V2 | V3;`.
+// Top-level union type alias: `type Name = V1 | V2 | V3;`. `variant_args[i]`
+// is the argument list a member is written with (`Leaf[T]` keeps "T"), ""
+// for a bare member; `type_params` are the alias's own.
 // Variants are captured as bare type-name strings — they
 // resolve to other struct decls in the same module (or to
 // primitives in a later milestone). The `pub` modifier is
 // optional and currently consumed and discarded, since
 // the self-host pipeline doesn't yet distinguish exported
 // from private decls.
-pub struct TypeAlias { name: string, variants: string[], line: i32, col: i32, is_pub: boolean, is_package: boolean, module: string }
+pub struct TypeAlias { name: string, variants: string[], variant_args: string[], type_params: string[], line: i32, col: i32, is_pub: boolean, is_package: boolean, module: string }
 
 // Top-level import: `import "./path";`. The path is captured
 // verbatim (including the quotes-stripped value). Resolution
@@ -9558,6 +9560,39 @@ function parse_field_type(p: Par, name: string): (StructFieldDecl, Par) {
   return (StructFieldDecl { name: name, type_name: ty.name, fn_ret: ty.fn_ret, fn_param_types: ty.fn_params }, end);
 }
 
+// parse_decl_tparams reads a declaration's optional type-parameter list
+// (`[T, U]`) after its name, consuming the brackets; the names are the
+// bracket's top-level identifiers.
+function parse_decl_tparams(p: Par): (string[], Par) {
+  var tparams: string[] = [];
+  if (p.peek_punct() != "[") {
+    return (tparams, p);
+  }
+  p = p.advance();  // consume `[`
+  var gd: i32 = 1;
+  while (!p.at_end() && gd > 0) {
+    var gpk: string = p.peek_punct();
+    if (gpk == "[") {
+      gd = gd + 1;
+      p = p.advance();
+      continue;
+    }
+    if (gpk == "]") {
+      gd = gd - 1;
+      p = p.advance();
+      continue;
+    }
+    if (gd == 1) {
+      var tpn: string = p.peek_ident();
+      if (tpn.len() > 0) {
+        tparams = tparams.append(tpn);
+      }
+    }
+    p = p.advance();
+  }
+  return (tparams, p);
+}
+
 // parse_struct_decl consumes `struct Name { field, field, … }`
 // starting from the `struct` keyword. Fields may be separated
 // by `,` or terminated without one (last field's trailing `,`
@@ -9584,31 +9619,8 @@ function parse_struct_decl(p: Par): (StructDecl, i32[], Par) {
   // so the monomorphiser can clone a concrete struct per instantiation
   // (the field layout is uniform, but the per-instantiation field
   // TYPES drive primitive/string method dispatch).
-  var tparams: string[] = [];
-  if (p.peek_punct() == "[") {
-    p = p.advance();  // consume `[`
-    var gd: i32 = 1;
-    while (!p.at_end() && gd > 0) {
-      var gpk: string = p.peek_punct();
-      if (gpk == "[") {
-        gd = gd + 1;
-        p = p.advance();
-        continue;
-      }
-      if (gpk == "]") {
-        gd = gd - 1;
-        p = p.advance();
-        continue;
-      }
-      if (gd == 1) {
-        var tpn: string = p.peek_ident();
-        if (tpn.len() > 0) {
-          tparams = tparams.append(tpn);
-        }
-      }
-      p = p.advance();
-    }
-  }
+  let (tparams, tp_p) = parse_decl_tparams(p);
+  p = tp_p;
   if (p.peek_punct() != "{") {
     var empty: StructFieldDecl[] = [];
     return (StructDecl { name: name, fields: empty, type_params: tparams, derives: [], line: sline, col: scol, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false }, flines, p);
@@ -9640,7 +9652,7 @@ function parse_struct_decl(p: Par): (StructDecl, i32[], Par) {
   return (StructDecl { name: name, fields: fields, type_params: tparams, derives: [], line: sline, col: scol, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false }, flines, p);
 }
 
-// parse_type_alias consumes `type Name = V1 | V2 | … ;` starting
+// parse_type_alias consumes `type Name[T, …] = V1[T] | V2 | … ;` starting
 // from the `type` keyword. Empty variant lists (`type X = ;`)
 // produce an alias with no variants — the checker rejects them,
 // but parsing stays lenient so error recovery proceeds. The
@@ -9654,26 +9666,25 @@ function parse_type_alias(p: Par): (TypeAlias, Par) {
   p = p.advance();  // consume `type`
   var name: string = p.peek_ident();
   if (name.len() == 0) {
-    var empty: string[] = [];
-    return (TypeAlias { name: "", variants: empty, line: taline, col: tacol, is_pub: true, is_package: false, module: "" }, p);
+    return (TypeAlias { name: "", variants: [], variant_args: [], type_params: [], line: taline, col: tacol, is_pub: true, is_package: false, module: "" }, p);
   }
   p = p.advance();
+  let (tparams, tp_p) = parse_decl_tparams(p);
+  p = tp_p;
   if (p.peek_punct() != "=") {
-    var empty2: string[] = [];
-    return (TypeAlias { name: name, variants: empty2, line: taline, col: tacol, is_pub: true, is_package: false, module: "" }, p);
+    return (TypeAlias { name: name, variants: [], variant_args: [], type_params: tparams, line: taline, col: tacol, is_pub: true, is_package: false, module: "" }, p);
   }
   p = p.advance();  // consume `=`
   var variants: string[] = [];
-  while (true) {
-    var v: string = p.peek_ident();
-    if (v.len() == 0) {
-      // Allow keyword-style variants too (e.g. `null` if it
-      // ever lexes as a keyword); for now fall through to
-      // end-of-list handling.
-      break;
-    }
-    p = p.advance();
-    variants = variants.append(v);
+  var vargs: string[] = [];
+  while (p.peek_ident().len() > 0) {
+    // A member is a type spelling: its base names the struct, and its
+    // arguments, if any, are kept as written.
+    let (dt, dt_p) = parse_decl_type(p);
+    p = dt_p;
+    var r: TypeRef = parse_type_ref(dt.name);
+    variants = variants.append(r.base);
+    vargs = vargs.append(type_ref_args_spelling(r));
     if (p.peek_punct() == "|") {
       p = p.advance();
       continue;
@@ -9683,7 +9694,20 @@ function parse_type_alias(p: Par): (TypeAlias, Par) {
   if (p.peek_punct() == ";") {
     p = p.advance();
   }
-  return (TypeAlias { name: name, variants: variants, line: taline, col: tacol, is_pub: true, is_package: false, module: "" }, p);
+  return (TypeAlias { name: name, variants: variants, variant_args: vargs, type_params: tparams, line: taline, col: tacol, is_pub: true, is_package: false, module: "" }, p);
+}
+
+// type_ref_args_spelling is a type reference's argument list as one
+// spelling (`Map[K, V]` gives "K, V"), "" when it has none.
+function type_ref_args_spelling(r: TypeRef): string {
+  var out: string = "";
+  for a in r.args {
+    if (out.len() > 0) {
+      out = out + ", ";
+    }
+    out = out + me_ref_spelling(a);
+  }
+  return out;
 }
 
 // parse_enum_decl consumes a Rust-style `enum Name { V1, V2(T), V3 { f: U }, … }`
@@ -9712,31 +9736,8 @@ function parse_enum_decl(p: Par): (string, StructDecl[], string[], i32[], Par) {
   // monomorphiser can clone a concrete enum per instantiation (the variant
   // payload TYPES are substituted, like a generic struct's fields). Mirrors
   // the `struct Box[T]` parse above.
-  var tparams: string[] = [];
-  if (p.peek_punct() == "[") {
-    p = p.advance();  // consume `[`
-    var gd: i32 = 1;
-    while (!p.at_end() && gd > 0) {
-      var gpk: string = p.peek_punct();
-      if (gpk == "[") {
-        gd = gd + 1;
-        p = p.advance();
-        continue;
-      }
-      if (gpk == "]") {
-        gd = gd - 1;
-        p = p.advance();
-        continue;
-      }
-      if (gd == 1) {
-        var tpn: string = p.peek_ident();
-        if (tpn.len() > 0) {
-          tparams = tparams.append(tpn);
-        }
-      }
-      p = p.advance();
-    }
-  }
+  let (tparams, tp_p) = parse_decl_tparams(p);
+  p = tp_p;
   if (p.peek_punct() != "{") {
     return (name, out, tparams, vlines, p);
   }
@@ -10015,7 +10016,7 @@ pub function builtin_function_names(): string[] {
   return [
     // I/O + process + environment
     "print", "write", "eprint", "putchar",
-    "exit", "args", "env", "subprocess",
+    "exit", "args", "env", "config_get", "subprocess",
     // Crash-only supervision (docs/CRASH-ONLY-SERVE.md D2'): fork the
     // process / exec into another program / reap a child. std/tcp's
     // tcp_serve_supervised is the stdlib caller of the first and last;
@@ -19483,7 +19484,11 @@ pub function union_alias_errors(mod: Module, al: TypeAlias): string[] {
     return out.append("union \"" + al.name + "\" collides with a struct of the same name");
   }
   var seen: string[] = [];
-  for m in al.variants {
+  var mi: i32 = 0;
+  while (mi < al.variants.len()) {
+    var m: string = al.variants[mi];
+    var given: i32 = alias_member_arity(al, mi);
+    mi = mi + 1;
     if (util.has_str(seen, m)) {
       out = out.append("duplicate member \"" + m + "\" in union " + al.name);
       continue;
@@ -19496,7 +19501,9 @@ pub function union_alias_errors(mod: Module, al: TypeAlias): string[] {
     }
     if (!found) {
       out = out.append("union " + al.name + " member \"" + m + "\" does not name a struct in scope");
-    } else if (tps.len() > 0) {
+    } else if (tps.len() == 0 && given > 0) {
+      out = out.append("union " + al.name + " member \"" + m + "\" is not generic but was given " + util.i32_to_string(given) + " type argument(s)");
+    } else if (tps.len() != given) {
       var params: string = "";
       for tp in tps {
         if (params.len() > 0) {
@@ -19504,10 +19511,65 @@ pub function union_alias_errors(mod: Module, al: TypeAlias): string[] {
         }
         params = params + tp;
       }
-      out = out.append("union " + al.name + " member \"" + m + "\" takes " + util.i32_to_string(tps.len()) + " type argument(s), got 0; a generic struct member needs them supplied (e.g. `type " + al.name + "[" + params + "] = " + m + "[" + params + "] | …`)");
+      out = out.append("union " + al.name + " member \"" + m + "\" takes " + util.i32_to_string(tps.len()) + " type argument(s), got " + util.i32_to_string(given) + "; a generic struct member needs them supplied (e.g. `type " + al.name + "[" + params + "] = " + m + "[" + params + "] | …`)");
     }
   }
   return out;
+}
+
+// alias_member_arity is how many type arguments member `i` of `al` is written
+// with.
+function alias_member_arity(al: TypeAlias, i: i32): i32 {
+  if (i >= al.variant_args.len() || al.variant_args[i].len() == 0) {
+    return 0;
+  }
+  return split_top_commas(al.variant_args[i]).len();
+}
+
+// desugar_union_aliases rewrites each alias that spells type parameters or
+// member arguments (`type Tree[T] = Leaf[T] | Lit;`) into the generic enum
+// the Go checker desugars every union into: one variant per member, whose
+// payload is the member type. A plain alias stays a struct-union, and an
+// alias the checker refuses (union_alias_errors, alias_redeclares_enum) stays
+// an alias for it to report.
+pub function desugar_union_aliases(mod: Module): Module {
+  var aliases: TypeAlias[] = [];
+  var enums: EnumDecl[] = mod.enums;
+  var structs: StructDecl[] = mod.structs;
+  var i: i32 = 0;
+  while (i < mod.aliases.len()) {
+    var al: TypeAlias = mod.aliases[i];
+    if (!alias_spells_args(al) || !alias_registers(mod, i)) {
+      aliases = aliases.append(al);
+      i = i + 1;
+      continue;
+    }
+    var vi: i32 = 0;
+    while (vi < al.variants.len()) {
+      var member: string = al.variants[vi];
+      var payload: string = member;
+      if (vi < al.variant_args.len() && al.variant_args[vi].len() > 0) {
+        payload = member + "[" + al.variant_args[vi] + "]";
+      }
+      structs = structs.append(StructDecl { name: member, fields: [StructFieldDecl { name: "__ev", type_name: payload, fn_ret: "", fn_param_types: "" }], type_params: [], derives: [], line: 0, col: 0, enum_owner: al.name, must_consume: false, variant_field_names: [], is_pub: true, is_package: false });
+      vi = vi + 1;
+    }
+    enums = enums.append(EnumDecl { name: al.name, variant_names: al.variants, type_params: al.type_params, line: al.line, col: al.col, must_consume: false, try_marker: false, is_pub: al.is_pub, is_package: al.is_package, module: al.module });
+    i = i + 1;
+  }
+  return Module { ...mod, aliases: aliases, structs: structs, enums: enums };
+}
+
+function alias_spells_args(al: TypeAlias): boolean {
+  if (al.type_params.len() > 0) {
+    return true;
+  }
+  for a in al.variant_args {
+    if (a.len() > 0) {
+      return true;
+    }
+  }
+  return false;
 }
 
 // alias_redeclares_enum reports whether mod.aliases[idx] desugars into an enum
@@ -22464,7 +22526,7 @@ pub function erase_str_module(mod: Module): Module {
   var structs: StructDecl[] = erase_str_structs(mod.structs);
   var aliases: TypeAlias[] = [];
   for al in mod.aliases {
-    aliases = aliases.append(TypeAlias { ...al, variants: erase_str_list(al.variants) });
+    aliases = aliases.append(TypeAlias { ...al, variants: erase_str_list(al.variants), variant_args: erase_str_list(al.variant_args) });
   }
   var impls: ImplInfo[] = [];
   for im in mod.impls {
@@ -26645,6 +26707,7 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
     var nothing: string[] = [];
     parsed = substitute_const_refs(parsed, inferred_const_table(funcs, inferred, ConstTable { names: nothing, values: [] }));
     parsed = Module { ...parsed, funcs: settle_const_types(parsed.funcs, structs), inferred_consts: inferred };
+    parsed = desugar_union_aliases(parsed);
   }
   var settled: Module = settle_module(resolve_variant_fields_module(resolve_labels_module(resolve_assoc_projections(parsed))));
   if (!verbatim) {
@@ -26737,7 +26800,7 @@ pub function merge_module_prefixed(into: Module, from: Module, prefix: string): 
   var ai: i32 = 0;
   while (ai < from.aliases.len()) {
     var ad: TypeAlias = from.aliases[ai];
-    naliases = naliases.append(TypeAlias { name: prefix + "." + ad.name, variants: ad.variants, line: ad.line, col: ad.col, is_pub: true, is_package: false, module: ad.module });
+    naliases = naliases.append(TypeAlias { ...ad, name: prefix + "." + ad.name, is_pub: true, is_package: false });
     ai = ai + 1;
   }
   var nresources: ResourceDecl[] = into.resources;
@@ -27555,6 +27618,60 @@ function check_type_aliases(): i32 {
   }
   if (modTy.funcs[0].name != "main") {
     return 843;
+  }
+  // A parameterised alias, or one with an argumented member, desugars into
+  // a generic enum whose variant payloads are the members, with the type
+  // variable respelled as every compile-path declaration's is; `-fmt`'s
+  // parse keeps the alias with its parameters and arguments as written.
+  var srcGen: string = "struct Leaf[T] { v: T } struct Lit { v: i32 } type Tree[T] = Leaf[T] | Lit; type Slot = Leaf[i32] | Lit; function main(): i32 { return 0; }";
+  var modGen: Module = parse_module(lexer.tokenize(srcGen));
+  if (modGen.aliases.len() != 0 || modGen.enums.len() != 2) {
+    return 844;
+  }
+  if (modGen.enums[0].name != "Tree" || modGen.enums[0].type_params.len() != 1 || modGen.enums[0].type_params[0] != "0_T") {
+    return 845;
+  }
+  if (modGen.enums[0].variant_names.len() != 2 || modGen.enums[0].variant_names[0] != "Leaf" || modGen.enums[0].variant_names[1] != "Lit") {
+    return 846;
+  }
+  var leaf_payload: string = "";
+  var lit_payload: string = "";
+  var slot_payload: string = "";
+  for sd in modGen.structs {
+    if (sd.enum_owner == "Tree" && sd.name == "Leaf") {
+      leaf_payload = sd.fields[0].type_name;
+    }
+    if (sd.enum_owner == "Tree" && sd.name == "Lit") {
+      lit_payload = sd.fields[0].type_name;
+    }
+    if (sd.enum_owner == "Slot" && sd.name == "Leaf") {
+      slot_payload = sd.fields[0].type_name;
+    }
+  }
+  if (leaf_payload != "Leaf[0_T]" || lit_payload != "Lit" || slot_payload != "Leaf[i32]") {
+    return 847;
+  }
+  if (modGen.enums[1].name != "Slot" || modGen.enums[1].type_params.len() != 0) {
+    return 848;
+  }
+  var fmtGen: Module = parse_module_verbatim(lexer.tokenize(srcGen)).pmod;
+  if (fmtGen.aliases.len() != 2 || fmtGen.enums.len() != 0) {
+    return 849;
+  }
+  if (fmtGen.aliases[0].type_params.len() != 1 || fmtGen.aliases[0].type_params[0] != "T") {
+    return 850;
+  }
+  if (fmtGen.aliases[0].variant_args.len() != 2 || fmtGen.aliases[0].variant_args[0] != "T" || fmtGen.aliases[0].variant_args[1] != "") {
+    return 851;
+  }
+  if (fmtGen.aliases[1].variant_args[0] != "i32") {
+    return 852;
+  }
+  // A member at the wrong arity leaves the alias for the checker's E016.
+  var srcBad: string = "struct Leaf[T] { v: T } struct Lit { v: i32 } type Tree = Leaf | Lit; function main(): i32 { return 0; }";
+  var modBad: Module = parse_module(lexer.tokenize(srcBad));
+  if (modBad.aliases.len() != 1 || modBad.enums.len() != 0) {
+    return 853;
   }
 
   // Single-variant alias is allowed (it's just a type-rename).

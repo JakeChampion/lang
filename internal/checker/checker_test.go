@@ -4386,6 +4386,45 @@ function shutdown(reason: string): void { print(reason); }`, "arm64-darwin", "tc
 	}
 }
 
+// config_get is the environment wherever the target has one; only the
+// proxy world keeps the builtin, and Info records the target so a later
+// re-check (monomorph) applies the same rule.
+func TestConfigGetFollowsTheTargetsEnvironment(t *testing.T) {
+	const src = `function main(): i32 { match (config_get("GREETING")) { Some(v) => { return 0; }, None => { return 1; } } }`
+	for _, tc := range []struct{ target, callee string }{
+		{"", "env"},
+		{"x86-64-linux", "env"},
+		{"wasm32-wasi", "env"},
+		{"wasm32-wasi-http", "config_get"},
+	} {
+		t.Run(tc.target, func(t *testing.T) {
+			prog, err := parser.Parse(src)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			info, err := CheckTarget(prog, tc.target)
+			if err != nil {
+				t.Fatalf("check: %v", err)
+			}
+			if info.Target != tc.target {
+				t.Fatalf("info.Target = %q, want %q", info.Target, tc.target)
+			}
+			var got string
+			ast.WalkProgram(prog, func(n ast.Node) bool {
+				if call, ok := n.(*ast.Call); ok {
+					if id, ok := call.Callee.(*ast.Ident); ok && (id.Name == "env" || id.Name == "config_get") {
+						got = id.Name
+					}
+				}
+				return true
+			})
+			if got != tc.callee {
+				t.Fatalf("config_get on %q became %q, want %q", tc.target, got, tc.callee)
+			}
+		})
+	}
+}
+
 // TestSynthesisedHandleMainRunsInitFirst pins the
 // docs/PLATFORM-RESEARCH.md Rec §3 init() ordering: when the
 // program defines both `handle` and `init`, the auto-main

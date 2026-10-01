@@ -1608,8 +1608,8 @@ is refused at check time (E080, `internal/ambient`, mirrored by
 
 Each method needs its target capability (`internal/platforms`), so
 what a handler may call depends on where it is going: the `wasi-http`
-proxy world grants log / now / random / fetch, and `.env` is an E066
-there.
+proxy world grants log / now / random / config / fetch, and `.env` is an
+E066 there.
 
 Substituting the bag is what makes a handler testable: a recording bag
 (`std/mock_platform`) answers each method from a log instead of the host,
@@ -1636,6 +1636,13 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 - `(plat).elapsed_ns()` — monotonic ns, for measuring (`now`).
 - `(plat).env(name)` — one variable from the invocation environment,
   `Option[string]` (`env`).
+- `(plat).config(name)` — one deploy-time configuration value,
+  `Option[string]` (`config`). On a target with an environment it is the
+  variable of that name; on the `wasi-http` proxy world it is
+  `wasi:config/store`, which `wasmtime serve -S config
+  -S config-var=NAME=VALUE` serves.
+- `(plat).secret(name)` — `config` for a value that must not be logged:
+  the same lookup, and a mock records only the name.
 - `(plat).random_i32()` — one draw from the platform CSPRNG
   (`random`).
 - `(plat).fetch(host, port, path)` lives in `std/fetch`, next to the
@@ -1654,11 +1661,12 @@ assert_eq(m.calls()[0].name, "log");
 ```
 
 Mocked capabilities answer what the test canned, else a fixed value — 0
-for `now_ms` / `elapsed_ns` / `random_i32`, `None` for `env`, -1 for
-`fetch`, and `log` swallows the line.
+for `now_ms` / `elapsed_ns` / `random_i32`, `None` for `env` / `config` /
+`secret`, -1 for `fetch`, and `log` swallows the line.
 
 - `mock_platform_new()`; `(m).as_platform()`.
-- `(m).env_set(name, value)`, `(m).now_set(ms)`, `(m).elapsed_set(ns)`,
+- `(m).env_set(name, value)`, `(m).config_set(name, value)`,
+  `(m).secret_set(name, value)`, `(m).now_set(ms)`, `(m).elapsed_set(ns)`,
   `(m).random_set(v)`, `(m).fetch_set(host, port, path, status)` — the
   answer the bag gives from then on (the last one canned wins; a fetch of
   another host, port or path still answers -1). A canned answer is a row

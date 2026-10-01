@@ -4307,6 +4307,7 @@ function builtin_sigs(): string[] {
     "create_link(string, string): Result[void, IoError]",
     "create_symlink(string, string): Result[void, IoError]",
     "env(string): Option[string]",
+    "config_get(string): Option[string]",
     "environ(): string[]",
     "eprint(string): void",
     "exit(i32): void",
@@ -10511,22 +10512,37 @@ function variant_pattern_owner(name: string): string {
 }
 
 // type_arity_diag checks one type annotation: if it supplies an explicit
-// `[...]` argument list whose count doesn't match the named struct's
-// declared type-parameter count, it's E019. Checked at every annotation
-// position: parameter, struct field, return and body `var`. At the last
-// two the Go checker adds an E003 / E002 on the mismatched value as well;
-// this reports the E019 alone.
-function type_arity_diag(t: string, structs: parser.StructDecl[]): util.Diag[] {
+// `[...]` argument list whose count doesn't match the named struct's or
+// enum's declared type-parameter count, it's E019. Checked at every
+// annotation position: parameter, struct field, return and body `var`. At
+// the last two the Go checker adds an E003 / E002 on the mismatched value as
+// well; this reports the E019 alone.
+function type_arity_diag(t: string, structs: parser.StructDecl[], enums: parser.EnumDecl[]): util.Diag[] {
   var out: util.Diag[] = [];
   // An array of an instantiation (`Pair[i32][]`) names the same head.
   while (t.len() > 2 && slice_unchecked(t, t.len() - 2, t.len()) == "[]") {
     t = slice_unchecked(t, 0, t.len() - 2) + "";
   }
   var nargs: i32 = count_type_args(t);
-  if (nargs >= 0) {
-    var tpc: i32 = struct_type_param_count(structs, util.base_type_name(t));
-    if (tpc >= 0 && nargs != tpc) {
-      out = out.append(dg_at("E019", "struct " + util.base_type_name(t) + " has " + util.i32_to_string(tpc) + " type parameter(s), " + util.i32_to_string(nargs) + " supplied", struct_decl_line(structs, util.base_type_name(t)), struct_decl_col(structs, util.base_type_name(t))));
+  if (nargs < 0) {
+    return out;
+  }
+  var base: string = util.base_type_name(t);
+  var tpc: i32 = struct_type_param_count(structs, base);
+  if (tpc >= 0) {
+    if (nargs != tpc) {
+      out = out.append(dg_at("E019", "struct " + base + " has " + util.i32_to_string(tpc) + " type parameter(s), " + util.i32_to_string(nargs) + " supplied", struct_decl_line(structs, base), struct_decl_col(structs, base)));
+    }
+    return out;
+  }
+  // A declaration shadowing a built-in's name is E010, and the annotation
+  // may still mean the built-in, so its arity is not checked against it.
+  if (parser.is_reserved_struct_name(base) || parser.is_reserved_enum_name(base)) {
+    return out;
+  }
+  for ed in enums {
+    if (ed.name == base && ed.type_params.len() != nargs) {
+      return out.append(dg_at("E019", "enum " + base + " has " + util.i32_to_string(ed.type_params.len()) + " type parameter(s), " + util.i32_to_string(nargs) + " supplied", ed.line, ed.col));
     }
   }
   return out;
@@ -16678,7 +16694,7 @@ function ow_borrowed_params(fn: parser.FuncDecl, mod: parser.Module, ofuncs: Own
 // function answers from `borrows`; a builtin from the fresh list below. A
 // method is reached through a receiver this walk does not resolve, so it is
 // assumed to be able to.
-function ow_call_may_borrow(c: ast.ExprCall, mod: parser.Module, borrows: string[], builtins: string[]): boolean {
+function ow_call_may_borrow(c: ast.ExprCall, mod: parser.Module, borrows: util.NameIndex, builtins: util.NameIndex): boolean {
   if let ast.ExprIdent(cid) = c.callee {
     if (ow_struct_known(mod.structs, cid.name)) {
       return false;
@@ -16686,10 +16702,10 @@ function ow_call_may_borrow(c: ast.ExprCall, mod: parser.Module, borrows: string
     if (ow_variant_known(mod.structs, cid.name, "")) {
       return false;
     }
-    if (util.has_str(builtins, cid.name)) {
+    if (builtins.has(cid.name)) {
       return false;
     }
-    return util.has_str(borrows, cid.name);
+    return borrows.has(cid.name);
   }
   return true;
 }
@@ -16697,7 +16713,7 @@ function ow_call_may_borrow(c: ast.ExprCall, mod: parser.Module, borrows: string
 // ow_expr_borrows reports whether `e` can alias one of `borrowed`.
 // Pessimistic by construction: a shape that is not a construction and not a
 // path this walk follows is assumed to be able to.
-function ow_expr_borrows(e: ast.Expr, mod: parser.Module, borrowed: string[], locals: string[], borrows: string[], builtins: string[]): boolean {
+function ow_expr_borrows(e: ast.Expr, mod: parser.Module, borrowed: string[], locals: string[], borrows: util.NameIndex, builtins: util.NameIndex): boolean {
   match (e) {
     ast.ExprNumber(_) => {
       return false;
@@ -16767,7 +16783,7 @@ function ow_expr_borrows(e: ast.Expr, mod: parser.Module, borrowed: string[], lo
 // ow_borrowed_locals names the locals that can hold a borrow of one of
 // `borrowed`. Settled to a fixed point rather than read once, so a value that
 // only becomes a borrow on a loop's second iteration is still seen.
-function ow_borrowed_locals(spine: ast.Stmt[], mod: parser.Module, borrowed: string[], borrows: string[], builtins: string[]): string[] {
+function ow_borrowed_locals(spine: ast.Stmt[], mod: parser.Module, borrowed: string[], borrows: util.NameIndex, builtins: util.NameIndex): string[] {
   var locals: string[] = [];
   var changed: boolean = true;
   while (changed) {
@@ -16797,7 +16813,7 @@ function ow_borrowed_locals(spine: ast.Stmt[], mod: parser.Module, borrowed: str
 
 // ow_func_result_borrows reports whether any of the returns of `fn` is derived
 // from one of its borrowed pointer parameters.
-function ow_func_result_borrows(fn: parser.FuncDecl, mod: parser.Module, ofuncs: OwnFunc[], borrows: string[], builtins: string[]): boolean {
+function ow_func_result_borrows(fn: parser.FuncDecl, mod: parser.Module, ofuncs: OwnFunc[], borrows: util.NameIndex, builtins: util.NameIndex): boolean {
   var borrowed: string[] = ow_borrowed_params(fn, mod, ofuncs);
   if (borrowed.len() == 0) {
     return false;
@@ -16856,8 +16872,8 @@ function ow_fresh_builtins(): string[] {
 // scrutinee alone (#9539): a pointer-returning function takes no pointer
 // parameter, so its result is built fresh, or every pointer parameter is
 // `own`, so the callee already took ownership of each.
-function ow_signature_fresh_owners(mod: parser.Module, ofuncs: OwnFunc[], builtins: string[]): string[] {
-  var out: string[] = builtins;
+function ow_signature_fresh_owners(mod: parser.Module, ofuncs: OwnFunc[], builtins: util.NameIndex): string[] {
+  var out: string[] = builtins.names;
   for fn in mod.funcs {
     if (fn.receiver_name.len() > 0 || fn.type_params.len() > 0) {
       continue;
@@ -16888,8 +16904,9 @@ function ow_signature_fresh_owners(mod: parser.Module, ofuncs: OwnFunc[], builti
 // ow_result_borrows settles the least fixed point described at
 // ow_fresh_owners. After the first round only a function calling one the
 // previous round marked can change its answer, so only those are examined again.
-function ow_result_borrows(mod: parser.Module, ofuncs: OwnFunc[], builtins: string[]): string[] {
-  var borrows: string[] = [];
+function ow_result_borrows(mod: parser.Module, ofuncs: OwnFunc[], builtins: util.NameIndex): util.NameIndex {
+  var none: string[] = [];
+  var borrows: util.NameIndex = util.name_index(none);
   var pending: parser.FuncDecl[] = [];
   for fn in mod.funcs {
     if (fn.receiver_name.len() > 0 || fn.type_params.len() > 0) {
@@ -16900,26 +16917,26 @@ function ow_result_borrows(mod: parser.Module, ofuncs: OwnFunc[], builtins: stri
     }
   }
   var first: boolean = true;
-  var marked: string[] = [];
-  while (first || marked.len() > 0) {
+  var marked: util.NameIndex = util.name_index(none);
+  while (first || marked.names.len() > 0) {
     var now_marked: string[] = [];
     var unmarked: parser.FuncDecl[] = [];
     for fn in pending {
       if ((first || ow_calls_any(fn, marked)) && ow_func_result_borrows(fn, mod, ofuncs, borrows, builtins)) {
-        borrows = borrows.append(fn.name);
+        borrows = util.name_index(borrows.names.append(fn.name));
         now_marked = now_marked.append(fn.name);
       } else {
         unmarked = unmarked.append(fn);
       }
     }
     first = false;
-    marked = now_marked;
+    marked = util.name_index(now_marked);
     pending = unmarked;
   }
   return borrows;
 }
 
-function ow_calls_any(fn: parser.FuncDecl, names: string[]): boolean {
+function ow_calls_any(fn: parser.FuncDecl, names: util.NameIndex): boolean {
   var hits: astwalk.CallSite[] = [];
   for st in fn.body {
     hits = astwalk.collect_calls_stmt(st, names, hits);
@@ -16932,8 +16949,8 @@ function ow_calls_any(fn: parser.FuncDecl, names: string[]): boolean {
 
 // ow_fresh_owners is the complement: every pointer-returning function the
 // fixpoint did not mark, plus the builtins.
-function ow_fresh_owners(mod: parser.Module, ofuncs: OwnFunc[], builtins: string[], borrows: string[]): string[] {
-  var out: string[] = builtins;
+function ow_fresh_owners(mod: parser.Module, ofuncs: OwnFunc[], builtins: util.NameIndex, borrows: util.NameIndex): string[] {
+  var out: string[] = builtins.names;
   for fn in mod.funcs {
     if (fn.receiver_name.len() > 0 || fn.type_params.len() > 0) {
       continue;
@@ -16941,7 +16958,7 @@ function ow_fresh_owners(mod: parser.Module, ofuncs: OwnFunc[], builtins: string
     if (!ow_type_is_pointer(fn.ret_type, mod)) {
       continue;
     }
-    if (util.has_str(borrows, fn.name)) {
+    if (borrows.has(fn.name)) {
       continue;
     }
     out = out.append(fn.name);
@@ -16955,7 +16972,7 @@ function ow_fresh_owners(mod: parser.Module, ofuncs: OwnFunc[], builtins: string
 // a borrow back. ow_call_may_borrow already treats every method callee as able
 // to, so one pass over the settled `borrows` is enough — a method reached only
 // through another method is pessimistic already.
-function ow_fresh_methods(mod: parser.Module, ofuncs: OwnFunc[], builtins: string[], borrows: string[]): string[] {
+function ow_fresh_methods(mod: parser.Module, ofuncs: OwnFunc[], builtins: util.NameIndex, borrows: util.NameIndex): string[] {
   var out: string[] = [];
   var refused: string[] = [];
   for fn in mod.funcs {
@@ -16988,8 +17005,8 @@ function ow_fresh_methods(mod: parser.Module, ofuncs: OwnFunc[], builtins: strin
 // module; only the bodies `focus` admits (in_focus) are walked.
 pub function own_diags(mod: parser.Module, focus: string[]): util.Diag[] {
   var ofuncs: OwnFunc[] = collect_own_funcs(mod.funcs);
-  var builtins: string[] = ow_fresh_builtins();
-  var borrows: string[] = ow_result_borrows(mod, ofuncs, builtins);
+  var builtins: util.NameIndex = util.name_index(ow_fresh_builtins());
+  var borrows: util.NameIndex = ow_result_borrows(mod, ofuncs, builtins);
   var fresh: string[] = ow_fresh_owners(mod, ofuncs, builtins, borrows);
   var fresh_methods: string[] = ow_fresh_methods(mod, ofuncs, builtins, borrows);
   var fresh_scrut: string[] = ow_signature_fresh_owners(mod, ofuncs, builtins);
@@ -20683,12 +20700,12 @@ function check_module_pass(mod: parser.Module, fda_diags: util.Diag[], focus: st
     // in a parameter type.
     var pai2: i32 = 0;
     while (pai2 < mod.funcs[i].params.len()) {
-      body_diags = util.append_diags(body_diags, type_arity_diag(mod.funcs[i].params[pai2].type_name, mod.structs));
+      body_diags = util.append_diags(body_diags, type_arity_diag(mod.funcs[i].params[pai2].type_name, mod.structs, mod.enums));
       pai2 = pai2 + 1;
     }
-    body_diags = util.append_diags(body_diags, type_arity_diag(mod.funcs[i].ret_type, mod.structs));
+    body_diags = util.append_diags(body_diags, type_arity_diag(mod.funcs[i].ret_type, mod.structs, mod.enums));
     for annot in collect_annots(mod.funcs[i].body) {
-      body_diags = util.append_diags(body_diags, type_arity_diag(annot.type_name, mod.structs));
+      body_diags = util.append_diags(body_diags, type_arity_diag(annot.type_name, mod.structs, mod.enums));
     }
     // E036: unqualified reference to a variant shared by 2+ enums.
     if (ambig.len() > 0) {
@@ -20725,7 +20742,7 @@ function check_module_pass(mod: parser.Module, fda_diags: util.Diag[], focus: st
   // E019: generic-struct type-argument arity in struct field types.
   for sd in mod.structs {
     for field in sd.fields {
-      body_diags = util.append_diags(body_diags, type_arity_diag(field.type_name, mod.structs));
+      body_diags = util.append_diags(body_diags, type_arity_diag(field.type_name, mod.structs, mod.enums));
     }
   }
   // E064: a type annotation that names no declared type (the self-host
