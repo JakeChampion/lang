@@ -51,6 +51,10 @@ var _ diag.FileSetter = (*Error)(nil)
 // list of locals (so codegen can lay out a frame).
 type Info struct {
 	VarTypes map[*ast.Var]ast.Type
+	// Target is the -target the program was checked for ("" for the hosted
+	// default), so a pass that re-checks a rewritten program checks it for
+	// the same target.
+	Target string
 	// IntrinsicCalls records resolved semantic identities for the pre-RC IR.
 	// Nil when no supported intrinsic was checked; legacy lowering is unchanged.
 	IntrinsicCalls map[*ast.Call]IntrinsicCall
@@ -1055,7 +1059,35 @@ func checkTarget(ctx context.Context, prog *ast.Program, target string) (*Info, 
 	if hasHandleDecl(prog) {
 		adaptResultHandler(prog)
 	}
-	return checkImpl(ctx, prog, targetSupervises(target))
+	if targetHasEnv(target) {
+		configFromEnv(prog)
+	}
+	info, err := checkImpl(ctx, prog, targetSupervises(target))
+	if info != nil {
+		info.Target = target
+	}
+	return info, err
+}
+
+// targetHasEnv reports whether `target` provides a process environment. An
+// unknown or empty target is the hosted default, which does.
+func targetHasEnv(target string) bool {
+	d := platforms.ForTarget(target)
+	return d == nil || slices.Contains(d.Capabilities, "env")
+}
+
+// configFromEnv renames every call to config_get to env: where the target
+// has an environment, that is where deploy-time configuration arrives, so
+// only the proxy world's backend implements config_get itself.
+func configFromEnv(prog *ast.Program) {
+	ast.WalkProgram(prog, func(n ast.Node) bool {
+		if call, ok := n.(*ast.Call); ok {
+			if id, ok := call.Callee.(*ast.Ident); ok && id.Name == "config_get" {
+				id.Name = "env"
+			}
+		}
+		return true
+	})
 }
 
 // targetSupervises reports whether a handler program built for `target`
@@ -1456,6 +1488,13 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 	// set"; the runtime helper preserves that — `Some("")` is
 	// returned for an explicitly empty value.)
 	c.info.FuncSigs["env"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}},
+		Result: ast.EnumType{Name: "Option", Args: []ast.Type{ast.StringType{}}},
+	}
+	// config_get(name) — one deploy-time configuration value. Where the
+	// target has an environment it is the environment (checkTarget renames
+	// the call to env); the proxy world reads wasi:config/store.
+	c.info.FuncSigs["config_get"] = &ast.FuncType{
 		Params: []ast.Type{ast.StringType{}},
 		Result: ast.EnumType{Name: "Option", Args: []ast.Type{ast.StringType{}}},
 	}
@@ -19987,6 +20026,19 @@ func (c *checker) elemSettleable(have, want ast.Type) bool {
 			return c.elemSettleable(h.Elem, w.Elem)
 		}
 	}
+	// So does a generic struct whose arguments literals bound: `[Same { a:
+	// 1, b: 2^62 }]` widens to `Same[i64][]` and settles its elements there
+	// (#10453).
+	if h, ok := have.(ast.StructType); ok {
+		if w, ok := want.(ast.StructType); ok && h.Name == w.Name && len(h.Args) == len(w.Args) && len(h.Args) > 0 {
+			for i := range h.Args {
+				if !c.elemSettleable(h.Args[i], w.Args[i]) {
+					return false
+				}
+			}
+			return true
+		}
+	}
 	// Which destinations a polymorphic element settles to depends on WHICH
 	// polymorphic it is, so split on `have` before looking at `want`.
 	switch h := have.(type) {
@@ -20406,6 +20458,83 @@ func (c *checker) widenCompositeByLiterals(t ast.Type, es ...ast.Expr) ast.Type 
 		if w := c.widenCompositeByLiterals(tt.Elem, arrayElemExprs(es)...); w != nil {
 			return ast.SliceType{Elem: w}
 		}
+	case ast.StructType:
+		// A generic struct literal whose type argument only literals bind:
+		// `Same { a: 1, b: 4611686018427387904 }` (#10453).
+		sd, ok := c.info.Structs[tt.Name]
+		if !ok || len(sd.TypeParams) != len(tt.Args) {
+			return nil
+		}
+		args := append([]ast.Type(nil), tt.Args...)
+		changed := false
+		for i, tp := range sd.TypeParams {
+			if w := c.widenCompositeByLiterals(args[i], c.structParamExprs(sd, tp, es)...); w != nil {
+				args[i], changed = w, true
+			}
+		}
+		if changed {
+			return ast.StructType{Name: tt.Name, Args: args}
+		}
+	}
+	return nil
+}
+
+// structParamExprs is the set of expressions, across the struct literals es
+// produce, that occupy the type parameter tp: a field declared `T`, an element
+// of one declared `T[]` or `(T, string)`, a field of a nested `Box[T]`. A
+// literal that wrote its own type arguments is already settled and
+// contributes nothing.
+func (c *checker) structParamExprs(sd *ast.StructDecl, tp string, es []ast.Expr) []ast.Expr {
+	var out []ast.Expr
+	for _, f := range sd.Fields {
+		var vals []ast.Expr
+		for _, e := range valueExprs(es) {
+			sl, ok := e.(*ast.StructLit)
+			if !ok || sl.TypeName != sd.Name || sl.TypeArgsWritten {
+				continue
+			}
+			for _, lf := range sl.Fields {
+				if lf.Name == f.Name {
+					vals = append(vals, lf.Value)
+				}
+			}
+		}
+		out = append(out, c.paramExprs(f.Type, tp, vals)...)
+	}
+	return out
+}
+
+// paramExprs is the set of expressions within es, values of declared type t,
+// that occupy the type parameter tp.
+func (c *checker) paramExprs(t ast.Type, tp string, es []ast.Expr) []ast.Expr {
+	if len(es) == 0 {
+		return nil
+	}
+	switch tt := t.(type) {
+	case ast.ParamType:
+		if tt.Name == tp {
+			return es
+		}
+	case ast.ArrayType:
+		return c.paramExprs(tt.Elem, tp, arrayElemExprs(es))
+	case ast.SliceType:
+		return c.paramExprs(tt.Elem, tp, arrayElemExprs(es))
+	case ast.TupleType:
+		var out []ast.Expr
+		for i, et := range tt.Elems {
+			out = append(out, c.paramExprs(et, tp, tupleElemExprs(es, i))...)
+		}
+		return out
+	case ast.StructType:
+		sd, ok := c.info.Structs[tt.Name]
+		if !ok || len(sd.TypeParams) != len(tt.Args) {
+			return nil
+		}
+		var out []ast.Expr
+		for i, inner := range sd.TypeParams {
+			out = append(out, c.paramExprs(tt.Args[i], tp, c.structParamExprs(sd, inner, es))...)
+		}
+		return out
 	}
 	return nil
 }

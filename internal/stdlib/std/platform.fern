@@ -99,8 +99,9 @@ pub function (plat: Platform) record(name: string, args: string): void {
 
 // `.can(key, value)` — on a recording bag, answer `key` with `value` from
 // now on: the capability methods ask `.canned(key)` before their fixed
-// answer. The keys are `env NAME`, `now_ms`, `elapsed_ns`, `random_i32`
-// and `fetch HOST:PORT PATH`; std/mock_platform's setters spell them. A
+// answer. The keys are `env NAME`, `config NAME`, `secret NAME`, `now_ms`,
+// `elapsed_ns`, `random_i32` and `fetch HOST:PORT PATH`; std/mock_platform's
+// setters spell them. A
 // tab, newline or backslash in the value is escaped into the row.
 pub function (plat: Platform) can(key: string, value: string): void {
   if (plat.mode != PLATFORM_MODE_MOCK) {
@@ -249,6 +250,31 @@ pub function (plat: Platform) env(name: string): Option[string] {
     return plat.canned("env " + name);
   }
   return env(name);
+}
+
+// `.config(name)` — one deploy-time configuration value. Needs the `config`
+// capability, which every target grants: the invocation environment where
+// the target has one, and wasi:config/store on the proxy world (`wasmtime
+// serve -S config -S config-var=NAME=VALUE`), so a handler reads its
+// settings the same way wherever it is deployed. `None` for a name the
+// deployment does not set, and for a store that answers with an error.
+pub function (plat: Platform) config(name: string): Option[string] {
+  if (plat.is_mock()) {
+    plat.record("config", name);
+    return plat.canned("config " + name);
+  }
+  return config_get(name);
+}
+
+// `.secret(name)` — one deploy-time secret: read as `.config` reads, from the
+// same source. A recording bag logs the name it was asked for and never the
+// value, so a test's call log cannot leak one.
+pub function (plat: Platform) secret(name: string): Option[string] {
+  if (plat.is_mock()) {
+    plat.record("secret", name);
+    return plat.canned("secret " + name);
+  }
+  return config_get(name);
 }
 
 // `.random_i32()` — one uniformly random i32 from the platform CSPRNG.

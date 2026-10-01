@@ -106,6 +106,6 @@ if (!supply(s, 0, 0, 0, ssaunits.retain_unit()) || !supply(s, 1, 0, 1, ssaunits.
 `, "", ""},
 		{"record-double-move", unitRecordDuplicate, "", `var s = find(p, 7, 1, 0 - 1); var a = s.supplies[0]; p = replace(p, ssaunits.Step { ...s, supplies: [ssaunits.Supply { ...a, mode: 2 }, s.supplies[1]] });`, "move without counted unit"},
 		{"record-borrowed-move", unitRecordDuplicate + "modes = [2];", "", `var s = find(p, 7, 1, 0 - 1); var a = s.supplies[0]; p = replace(p, ssaunits.Step { ...s, supplies: [ssaunits.Supply { ...a, mode: 2 }, s.supplies[1]] });`, "move without counted unit"},
-		{"record-changed-schema", unitRecordDuplicate, "", `var r = f.records[0]; f = ssasem.Func { ...f, records: [semrecords.Record { ...r, fields: [r.fields[0]] }] };`, "record construction arity"},
+		{"record-changed-schema", unitRecordDuplicate, "", `var r = f.records.list[0]; f = ssasem.Func { ...f, records: semrecords.records_of([semrecords.Record { ...r, fields: [r.fields[0]] }]) };`, "record construction arity"},
 	}
 }

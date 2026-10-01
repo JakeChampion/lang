@@ -156,12 +156,13 @@ pub function hash_bucket(s: string, n: i32): i32 {
     return 0;
   }
   var a: i32 = 208357;
+  var len: i32 = s.len();
   var i: i32 = 0;
-  while (i < s.len()) {
+  while (i < len) {
     a = a * 31 + s[i] as i32 + 1 & 1073741823;
     i = i + 1;
   }
-  a = a * 31 + s.len() & 1073741823;
+  a = a * 31 + len & 1073741823;
   return a % n;
 }
 

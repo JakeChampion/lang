@@ -13,7 +13,7 @@ pub struct Func {
   values: typeinfo.Type[],
   params: typeinfo.Type[],
   result: typeinfo.Type,
-  records: semrecords.Record[],
+  records: semrecords.Records,
   enums: semrecords.Enum[],
   calls: Contract[],
   envs: EnvRow[],
@@ -93,7 +93,25 @@ pub struct EnvRow { fn_ty: typeinfo.Type, env_ty: typeinfo.Type }
 // callee's body is never consulted.
 pub struct Contract { name: string, params: typeinfo.Type[], modes: i32[], result: typeinfo.Type }
 
-pub function find_contract(calls: Contract[], name: string): i32 {
+// Contracts is a contract table with a bucket index over the names, so a call
+// resolves its callee's row by walking one chain, not the table.
+pub struct Contracts { list: Contract[], names: util.NameIndex }
+
+pub function contracts_of(list: Contract[]): Contracts {
+  var names: string[] = [];
+  for c in list {
+    names = names.append(c.name);
+  }
+  return Contracts { list: list, names: util.name_index(names) };
+}
+
+pub function find_contract(table: Contracts, name: string): i32 {
+  return table.names.find(name);
+}
+
+// find_contract_in is find_contract over a list with no index: a body's own
+// calls, or the table while it is still being collected.
+pub function find_contract_in(calls: Contract[], name: string): i32 {
   var i: i32 = 0;
   while (i < calls.len()) {
     if (calls[i].name == name) {
@@ -377,7 +395,7 @@ pub function refused_analysis(why: string): Analysis {
 }
 
 function failed(why: string): Analysis {
-  return Analysis { ok: false, why: why, parents: [], dependencies: [], flow: ssalive.Flow { ok: false, why: why, words: 0, live_in: [], live_out: [], at: [] } };
+  return Analysis { ok: false, why: why, parents: [], dependencies: [], flow: ssalive.Flow { ok: false, why: why, words: 0, live_in: [], live_out: [], at: [], none: [] } };
 }
 
 function empty_dependencies(n: i32): i32[][] {
@@ -1038,7 +1056,7 @@ function record_construction_error(ins: ssa.SInst, f: Func, result: typeinfo.Typ
   if (at < 0) {
     return "missing record construction schema";
   }
-  var fields: semrecords.Field[] = f.records[at].fields;
+  var fields: semrecords.Field[] = f.records.list[at].fields;
   if (ins.args.len() != fields.len()) {
     return "record construction arity";
   }
@@ -1123,7 +1141,7 @@ function record_projection_error(ins: ssa.SInst, f: Func, result: typeinfo.Type)
   if (at < 0) {
     return "missing record projection schema";
   }
-  var fields: semrecords.Field[] = f.records[at].fields;
+  var fields: semrecords.Field[] = f.records.list[at].fields;
   if (ins.imm < 0 || ins.imm >= fields.len()) {
     return "record projection index";
   }
@@ -1371,7 +1389,7 @@ function closure_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
   if (!is_func(result)) {
     return "closure value type";
   }
-  var at: i32 = find_contract(f.calls, ins.str);
+  var at: i32 = find_contract_in(f.calls, ins.str);
   if (at < 0) {
     return "missing closure body contract";
   }
@@ -2343,7 +2361,7 @@ function leaf_key(t: typeinfo.Type): string {
 // A produced graph's contracts are instances: every parameter and the result
 // are exact types, and a call is held to them.
 function call_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
-  var at: i32 = find_contract(f.calls, ins.str);
+  var at: i32 = find_contract_in(f.calls, ins.str);
   if (at < 0) {
     return "missing call contract";
   }
@@ -2851,7 +2869,7 @@ function type_placement_error(t: typeinfo.Type): string {
 }
 
 function field_placement_error(f: Func): string {
-  for record in f.records {
+  for record in f.records.list {
     var env: boolean = semtypes.is_env(record.ty);
     for field in record.fields {
       if (!holds_func(field.ty)) {
@@ -2960,7 +2978,7 @@ function contracts_error(calls: Contract[]): string {
     if (c.name == "") {
       return "empty call contract name";
     }
-    if (find_contract(calls, c.name) != i) {
+    if (find_contract_in(calls, c.name) != i) {
       return "duplicate call contract";
     }
     if (c.modes.len() != c.params.len()) {
@@ -3731,7 +3749,7 @@ pub function holds_view(f: Func, t: typeinfo.Type): boolean {
   }
   var r: i32 = semrecords.find(f.records, t);
   if (r >= 0) {
-    return f.records[r].views;
+    return f.records.list[r].views;
   }
   var e: i32 = semrecords.find_enum(f.enums, t);
   if (e >= 0) {
@@ -3789,7 +3807,7 @@ pub function copyable(f: Func, t: typeinfo.Type): boolean {
   if (r < 0 || semtypes.is_env(t)) {
     return false;
   }
-  for fl in f.records[r].fields {
+  for fl in f.records.list[r].fields {
     if (!copyable(f, fl.ty)) {
       return false;
     }
@@ -3844,7 +3862,7 @@ function deep_copy(f: Func, s: CopySplice, v: i32): Copied {
 }
 
 function copy_record(f: Func, s: CopySplice, v: i32, t: typeinfo.Type): Copied {
-  var fields: semrecords.Field[] = f.records[semrecords.find(f.records, t)].fields;
+  var fields: semrecords.Field[] = f.records.list[semrecords.find(f.records, t)].fields;
   var parts: i32[] = [];
   var i: i32 = 0;
   while (i < fields.len()) {

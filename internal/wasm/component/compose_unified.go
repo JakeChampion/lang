@@ -70,6 +70,10 @@ type ComposeRequest struct {
 	// get-arguments / get-environment (memory+realloc, shared interface).
 	WallNow, Args, Env bool
 
+	// Config is wasi:config/store.get (memory+realloc): deploy-time
+	// configuration on the proxy world, which has no environment.
+	Config bool
+
 	// Structured no-opt imports (exit / random / monotonic).
 	Structured []WasiImport
 
@@ -172,6 +176,9 @@ func Compose(coreBytes []byte, req ComposeRequest, coreExportName string) []byte
 	}
 	if req.Args || req.Env {
 		g.ensureCliEnvironment(req.Args, req.Env)
+	}
+	if req.Config {
+		g.importStandalone(wasiConfigStore, WasiConfigStoreInstanceTypeBody())
 	}
 	for _, imp := range req.Structured {
 		g.importStructured(imp)
@@ -394,6 +401,9 @@ func Compose(coreBytes []byte, req ComposeRequest, coreExportName string) []byte
 	}
 	if req.Env {
 		g.add(gImport{iface: "wasi:cli/environment@0.2.0", name: "get-environment", kind: gMemRealloc, params: composeOneI32Params})
+	}
+	if req.Config {
+		g.add(gImport{iface: wasiConfigStore, name: "get", kind: gMemRealloc, params: composeConfigGetParams})
 	}
 	for _, imp := range req.Structured {
 		g.add(gImport{iface: imp.InterfaceName, name: imp.FuncName, kind: gNoOpt})

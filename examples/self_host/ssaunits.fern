@@ -410,7 +410,7 @@ function call_contract_error(c: ssasem.Contract, f: ssasem.Func): string {
 
 // Check the finite schema tables, not recursive nominal field expansion.
 function schema_fields_error(f: ssasem.Func): string {
-  for record in f.records {
+  for record in f.records.list {
     for field in record.fields {
       if (!supported(field.ty, f)) {
         return "unsupported counted record field";
@@ -439,7 +439,7 @@ function schema_fields_error(f: ssasem.Func): string {
 // and never appears in the type the box hands out, so a counted one there would
 // be a promise nothing can state.
 function closure_body_error(f: ssasem.Func, ins: ssa.SInst): string {
-  var c: ssasem.Contract = f.calls[ssasem.find_contract(f.calls, ins.str)];
+  var c: ssasem.Contract = f.calls[ssasem.find_contract_in(f.calls, ins.str)];
   if (c.modes.len() > 0 && c.modes[0] == counted_mode()) {
     return "function value consumes its environment";
   }
@@ -683,8 +683,8 @@ function retagged_string(f: ssasem.Func, defs: ssa.SInst[], v: i32): boolean {
   return d.kind_tag == ssasem.str_as() && d.args.len() == 1 && !ssasem.is_view(f.values[d.args[0]]);
 }
 
-function live_out_row(flow: ssalive.Flow, bi: i32, n: i32): boolean[] {
-  var out: boolean[] = bits(n);
+function live_out_row(flow: ssalive.Flow, bi: i32): boolean[] {
+  var out: boolean[] = flow.none;
   for v in ssalive.live_out_ids(flow, bi) {
     out = out.with(v, true);
   }
@@ -802,7 +802,7 @@ function call_value_supplied(f: ssasem.Func, ins: ssa.SInst): boolean[] {
 }
 
 function call_supplied(f: ssasem.Func, ins: ssa.SInst): boolean[] {
-  var c: ssasem.Contract = f.calls[ssasem.find_contract(f.calls, ins.str)];
+  var c: ssasem.Contract = f.calls[ssasem.find_contract_in(f.calls, ins.str)];
   var out: boolean[] = [];
   var i: i32 = 0;
   while (i < ins.args.len()) {
@@ -816,7 +816,7 @@ function call_supplied(f: ssasem.Func, ins: ssa.SInst): boolean[] {
 // deciding which arguments its bracket covers. `call_supplied` reads the same
 // contract for the ledger; this is the whole row rather than the counted half.
 pub function callee_modes(f: ssasem.Func, ins: ssa.SInst): i32[] {
-  var at: i32 = ssasem.find_contract(f.calls, ins.str);
+  var at: i32 = ssasem.find_contract_in(f.calls, ins.str);
   if (at < 0) {
     return [];
   }
@@ -1025,7 +1025,7 @@ function constructed_fields(f: ssasem.Func, ins: ssa.SInst): semrecords.Field[] 
   if (ins.kind_tag == ssasem.record_new() && !semtypes.is_env(t)) {
     var at: i32 = semrecords.find(f.records, t);
     if (at >= 0) {
-      return f.records[at].fields;
+      return f.records.list[at].fields;
     }
   }
   if (ins.kind_tag == ssasem.variant_new()) {
@@ -1746,7 +1746,7 @@ function block_reads(blk: ssa.SBlock, v: i32): boolean {
 // A value live out of bi reaches root other than through `take` or a read of
 // another of root's slots.
 function reached_past_take(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], bi: i32, take: ssa.SInst, root: i32): boolean {
-  var out: boolean[] = live_out_row(a.flow, bi, f.graph.nvals);
+  var out: boolean[] = live_out_row(a.flow, bi);
   var w: i32 = 0;
   while (w < f.graph.nvals) {
     if (out[w] && w != root && reads(a, w, root)) {
@@ -2066,10 +2066,10 @@ pub function plan(f: ssasem.Func, modes: i32[]): Plan {
   var grow_fields: i32[] = [];
   // Per append or with result: whether its receiver is read after it, by
   // this block or on the way out, directly or through a dependent.
-  var kept: boolean[] = bits(f.graph.nvals);
+  var kept: boolean[] = analysis.flow.none;
   // Per parameter: whether an edge carries it into a phi while it, or a
   // value depending on it, is still live in the target.
-  var entry_kept: boolean[] = bits(f.graph.nvals);
+  var entry_kept: boolean[] = analysis.flow.none;
   var vi0: i32 = 0;
   while (vi0 < f.graph.nvals) {
     grows = grows.append(0 - 1);
@@ -2081,7 +2081,7 @@ pub function plan(f: ssasem.Func, modes: i32[]): Plan {
   while (bi < f.graph.blocks.len()) {
     var b: ssa.SBlock = f.graph.blocks[bi];
     if (reachable[bi]) {
-      var live: boolean[] = live_out_row(analysis.flow, bi, f.graph.nvals);
+      var live: boolean[] = live_out_row(analysis.flow, bi);
       if (b.term.kind_tag == 1) {
         live = add_use(live, b.term.value, analysis.dependencies);
       }
@@ -2123,7 +2123,7 @@ pub function plan(f: ssasem.Func, modes: i32[]): Plan {
         }
         pos = pos - 1;
       }
-      var entry_dead: boolean[] = bits(f.graph.nvals);
+      var entry_dead: boolean[] = analysis.flow.none;
       for ins in b.insts {
         if ((ins.kind_tag == 6 || ins.kind_tag == 8) && owned[ins.result] && !live[ins.result]) {
           entry_dead = entry_dead.with(ins.result, true);
@@ -2131,7 +2131,7 @@ pub function plan(f: ssasem.Func, modes: i32[]): Plan {
       }
       steps = steps.append(choose(step(b.id, entry_point(), 0 - 1), [], entry_dead, owned));
       if (b.term.kind_tag == 1 || b.term.kind_tag == 4) {
-        var dead: boolean[] = bits(f.graph.nvals);
+        var dead: boolean[] = analysis.flow.none;
         if (b.term.kind_tag == 1) {
           dead = add_use(dead, b.term.value, analysis.dependencies);
         }
@@ -2188,7 +2188,7 @@ function read_error(state: boolean[], value: i32, owned: boolean[], deps: i32[][
 }
 
 function invariant(f: ssasem.Func, bi: i32, owned: boolean[], flow: ssalive.Flow): boolean[] {
-  var state: boolean[] = bits(f.graph.nvals);
+  var state: boolean[] = flow.none;
   for v in ssalive.live_in_ids(flow, bi) {
     if (owned[v]) {
       state = state.with(v, true);

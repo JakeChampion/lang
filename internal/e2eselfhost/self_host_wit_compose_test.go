@@ -14,9 +14,9 @@ import (
 // TestSelfHostComposeFromWorld is the end-to-end gate for the self-host
 // world-driven composer: the self-hosted compiler decodes the fern world,
 // parses a stdout core's imports, classifies them against the world, emits the
-// full world import prefix, and wires the suffix — producing a component that
-// validates under wasm-tools and runs under wasmtime, printing the program's
-// output. This is the self-host mirror of the Go ComposeFromWorldAuto, and
+// world import prefix pruned to what the core reaches, and wires the suffix —
+// producing a component that validates under wasm-tools and runs under
+// wasmtime, printing the program's output. This is the self-host mirror of the Go ComposeFromWorldAuto, and
 // completes P2 in both compilers.
 func TestSelfHostComposeFromWorld(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
@@ -73,6 +73,21 @@ func TestSelfHostComposeFromWorld(t *testing.T) {
 	}
 	if vout, err := exec.Command(wasmtools, "validate", mine).CombinedOutput(); err != nil {
 		t.Fatalf("wasm-tools validate: %v\n%s", err, vout)
+	}
+	wit, err := exec.Command(wasmtools, "component", "wit", mine).CombinedOutput()
+	if err != nil {
+		t.Fatalf("component wit: %v\n%s", err, wit)
+	}
+	if !strings.Contains(string(wit), "import wasi:cli/stdout@0.2.0") {
+		t.Errorf("component WIT lacks the stdout import:\n%s", wit)
+	}
+	// An import the world's own aliases target stays (filesystem/types,
+	// the sockets: a later decl reads a type of theirs); one nothing
+	// aliases and the core never reaches is dropped.
+	for _, unused := range []string{"wasi:cli/stderr", "wasi:random/", "wasi:filesystem/preopens"} {
+		if strings.Contains(string(wit), unused) {
+			t.Errorf("component imports %s, which a stdout core never reaches:\n%s", unused, wit)
+		}
 	}
 	stdout, err := exec.Command(wasmtime, "run", mine).Output()
 	if err != nil {

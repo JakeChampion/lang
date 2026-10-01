@@ -58,6 +58,7 @@ var bagMethods = map[string]string{
 	"now_unix_ms":  "now_ms",
 	"monotonic_ns": "elapsed_ns",
 	"env":          "env",
+	"config_get":   "config",
 	"random_i32":   "random_i32",
 }
 

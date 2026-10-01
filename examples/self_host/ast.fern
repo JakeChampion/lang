@@ -167,7 +167,9 @@ pub struct ExprSlice { array: Expr, start: Expr, end: Expr, ty: string, open_end
 // than sniff the sentinel). With a base, a subset of fields is
 // legal — the checker relaxes completeness. See
 // docs/IMMUTABILITY-MIGRATION-PLAN.md.
-pub struct ExprStructLit { type_name: string, field_names: string[], field_values: Expr[], has_base: boolean, base: Expr, line: i32, col: i32 }
+// written is the instantiation the literal spells, `Box[i64]` for
+// `Box[i64] { v: 1 }`, and "" when the literal names the bare struct.
+pub struct ExprStructLit { type_name: string, field_names: string[], field_values: Expr[], has_base: boolean, base: Expr, line: i32, col: i32, written: string }
 
 // Postfix field access `obj.field`. obj can be any Expr that
 // evaluates to a struct value. `ty` is the typed-IR carrier

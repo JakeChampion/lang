@@ -1,7 +1,8 @@
 // examples/self_host/wit_compose.fern — the self-host world-driven component
 // composer (docs/WIT-BRING-YOUR-OWN.md, P2/P3). Given a decoded world's
 // type-section body and a user core module, it derives the imports the core
-// uses, classifies each against the world, emits the full world import prefix,
+// uses, classifies each against the world, emits the world import prefix
+// pruned to those imports (and the ones the world's own aliases depend on),
 // and wires the suffix — producing a component scoped to that world. The
 // world's type-body may come from an embedded world (wit_proxy_world.fern) or
 // a user-supplied WIT (bring-your-own); the path is identical.
@@ -16,6 +17,7 @@
 // resource is aliased out of its imported instance once, right after the
 // prefix, and shared by every drop of it (mirror of component.ComposeFromWorld).
 
+import "./util";
 import "./watbin";
 import "./wit_decode";
 
@@ -27,7 +29,7 @@ pub struct Composed { bytes: i32[], refused: string }
 // WorldWired is the per-import lowering plan for a core against a world, and
 // the prefix it composes on: the world imports plus the resource types
 // surfaced so far (aliased in the order first met).
-struct WorldWired { o: i32[], n_type: i32, kinds: i32[], insts: i32[], rts: i32[], res_names: string[], res_types: i32[], refused: string }
+struct WorldWired { o: i32[], n_type: i32, plan: wit_decode.WitImportPlan, kinds: i32[], insts: i32[], rts: i32[], res_names: string[], res_types: i32[], refused: string }
 
 function drop_prefix(): string {
   return "[resource-drop]";
@@ -78,19 +80,22 @@ function refuse(w: WorldWired, why: string): WorldWired {
   return WorldWired { ...w, refused: why };
 }
 
-// wire_world emits the world import prefix and plans each core import's
-// lowering against the world: 0 no-opt, 1 memory, 2 memory + realloc, 3 a
-// resource drop (with the surfaced resource type in rts).
-function wire_world(tbody: i32[], ci: wit_decode.WitCoreImports): WorldWired {
+// wire_world emits the world import prefix — the interfaces the core imports
+// and `required` (what an export's types need), plus what those alias — and
+// plans each core import's lowering against the world: 0 no-opt, 1 memory,
+// 2 memory + realloc, 3 a resource drop (with the surfaced resource type in
+// rts).
+function wire_world(tbody: i32[], ci: wit_decode.WitCoreImports, required: string[]): WorldWired {
   var pl: wit_decode.WitPrefixLayout = wit_decode.wit_prefix_layout(tbody);
+  var plan: wit_decode.WitImportPlan = wit_decode.wit_import_plan(tbody, util.append_all(required, ci.ifaces));
   var o: i32[] = watbin.component_preamble();
-  o = watbin.wcat(o, wit_decode.wit_emit_world_imports(tbody));
-  var w: WorldWired = WorldWired { o: o, n_type: pl.types, kinds: [], insts: [], rts: [], res_names: [], res_types: [], refused: "" };
+  o = watbin.wcat(o, wit_decode.wit_emit_world_imports(tbody, plan));
+  var w: WorldWired = WorldWired { o: o, n_type: pl.types, plan: plan, kinds: [], insts: [], rts: [], res_names: [], res_types: [], refused: "" };
   var i: i32 = 0;
   while (i < ci.ifaces.len()) {
     var iface: string = ci.ifaces[i];
     var name: string = ci.names[i];
-    var inst: i32 = wit_decode.wit_import_instance_index(tbody, iface);
+    var inst: i32 = wit_decode.wit_import_instance_index(tbody, plan, iface);
     if (inst < 0) {
       return refuse(w, "core imports interface " + iface + " not declared by the world");
     }
@@ -121,13 +126,12 @@ function wire_world(tbody: i32[], ci: wit_decode.WitCoreImports): WorldWired {
 // wasi:cli/run component of the world.
 pub function compose_run(tbody: i32[], core: i32[]): Composed {
   var ci: wit_decode.WitCoreImports = wit_decode.wit_core_func_imports(core);
-  var w: WorldWired = wire_world(tbody, ci);
+  var w: WorldWired = wire_world(tbody, ci, []);
   if (w.refused.len() > 0) {
     return Composed { bytes: [], refused: w.refused };
   }
-  var pl: wit_decode.WitPrefixLayout = wit_decode.wit_prefix_layout(tbody);
   var o: i32[] = watbin.wcat(w.o, watbin.comp_core_module_section(core));
-  o = watbin.wcat(o, watbin.component_suffix(ci.ifaces, ci.names, w.kinds, w.insts, ci.params, w.rts, w.n_type, pl.instances, 0, "_lang_run"));
+  o = watbin.wcat(o, watbin.component_suffix(ci.ifaces, ci.names, w.kinds, w.insts, ci.params, w.rts, w.n_type, w.plan.n_inst, 0, "_lang_run"));
   return Composed { bytes: o, refused: "" };
 }
 
@@ -143,19 +147,18 @@ pub function component_from_world(tbody: i32[], core: i32[]): i32[] {
 // type the export.
 pub function compose_http(tbody: i32[], core: i32[]): Composed {
   var ci: wit_decode.WitCoreImports = wit_decode.wit_core_func_imports(core);
-  var w: WorldWired = wire_world(tbody, ci);
+  var http_iface: string = "wasi:http/types@0.2.0";
+  var w: WorldWired = wire_world(tbody, ci, [http_iface]);
   if (w.refused.len() > 0) {
     return Composed { bytes: [], refused: w.refused };
   }
-  var http_iface: string = "wasi:http/types@0.2.0";
-  var http_inst: i32 = wit_decode.wit_import_instance_index(tbody, http_iface);
+  var http_inst: i32 = wit_decode.wit_import_instance_index(tbody, w.plan, http_iface);
   if (http_inst < 0) {
     return Composed { bytes: [], refused: "world does not import " + http_iface };
   }
   let (w2, req_t) = surface_resource(w, http_inst, "incoming-request");
   let (w3, out_t) = surface_resource(w2, http_inst, "response-outparam");
-  var pl: wit_decode.WitPrefixLayout = wit_decode.wit_prefix_layout(tbody);
   var o: i32[] = watbin.wcat(w3.o, watbin.comp_core_module_section(core));
-  o = watbin.wcat(o, watbin.component_suffix_http(ci.ifaces, ci.names, w3.kinds, w3.insts, ci.params, w3.rts, w3.n_type, pl.instances, 0, req_t, out_t));
+  o = watbin.wcat(o, watbin.component_suffix_http(ci.ifaces, ci.names, w3.kinds, w3.insts, ci.params, w3.rts, w3.n_type, w3.plan.n_inst, 0, req_t, out_t));
   return Composed { bytes: o, refused: "" };
 }

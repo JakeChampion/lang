@@ -19,9 +19,10 @@
 // pass around.
 //
 // What a mocked capability RETURNS is what the test canned for it, or a
-// fixed value: `env_set`, `now_set`, `elapsed_set`, `random_set` and
-// `fetch_set` record an answer the bag gives from then on; otherwise
-// `now_ms` and `elapsed_ns` answer 0, `env` answers None, `random_i32`
+// fixed value: `env_set`, `config_set`, `secret_set`, `now_set`,
+// `elapsed_set`, `random_set` and `fetch_set` record an answer the bag gives
+// from then on; otherwise `now_ms` and `elapsed_ns` answer 0, `env`,
+// `config` and `secret` answer None, `random_i32`
 // answers 0, `log` discards the line, and `fetch` answers -1 — the value a
 // real fetch gives for a host it could not reach, so a handler that
 // already handles a failed fetch handles a mocked one. A canned answer is
@@ -54,6 +55,19 @@ pub function (m: MockPlatform) record(name: string, args: string): void {
 // `Some(value)` from now on.
 pub function (m: MockPlatform) env_set(name: string, value: string): void {
   m.as_platform().can("env " + name, value);
+}
+
+// `(m: MockPlatform).config_set(name, value)` — `plat.config(name)` answers
+// `Some(value)` from now on.
+pub function (m: MockPlatform) config_set(name: string, value: string): void {
+  m.as_platform().can("config " + name, value);
+}
+
+// `(m: MockPlatform).secret_set(name, value)` — `plat.secret(name)` answers
+// `Some(value)` from now on. The value is held with the canned answers,
+// which `calls()` never returns.
+pub function (m: MockPlatform) secret_set(name: string, value: string): void {
+  m.as_platform().can("secret " + name, value);
 }
 
 // `(m: MockPlatform).now_set(ms)` — `plat.now_ms()` answers `ms`.

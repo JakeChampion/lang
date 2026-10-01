@@ -3643,13 +3643,29 @@ function print_type_alias(a: parser.TypeAlias): string {
   if (a.is_package) {
     out = out + "pub(package) ";
   }
-  out = out + "type " + a.name + " = ";
+  out = out + "type " + a.name;
+  if (a.type_params.len() > 0) {
+    out = out + "[";
+    var ti: i32 = 0;
+    while (ti < a.type_params.len()) {
+      if (ti > 0) {
+        out = out + ", ";
+      }
+      out = out + a.type_params[ti];
+      ti = ti + 1;
+    }
+    out = out + "]";
+  }
+  out = out + " = ";
   var i: i32 = 0;
   while (i < a.variants.len()) {
     if (i > 0) {
       out = out + " | ";
     }
     out = out + a.variants[i];
+    if (i < a.variant_args.len() && a.variant_args[i].len() > 0) {
+      out = out + "[" + a.variant_args[i] + "]";
+    }
     i = i + 1;
   }
   return out + ";\n";
@@ -3920,6 +3936,13 @@ function format_module_with_inline(mod: parser.Module, traits: parser.TraitDecl[
 // Round-trip: parse → print → parse again → assert the same
 // shape comes back. Catches printer bugs that would silently
 // drop or mangle nodes.
+// roundtrip_verbatim is roundtrip_module over `-fmt`'s parse, which keeps a
+// union alias the compile path desugars.
+function roundtrip_verbatim(src: string): parser.Module {
+  var mod: parser.Module = parser.parse_module_verbatim(lexer.tokenize(src)).pmod;
+  return parser.parse_module_verbatim(lexer.tokenize(print_module(mod))).pmod;
+}
+
 function roundtrip_module(src: string): parser.Module {
   var toks: lexer.Token[] = lexer.tokenize(src);
   var mod: parser.Module = parser.parse_module(toks);
@@ -4194,6 +4217,15 @@ function check_structs_and_aliases(): i32 {
   }
   if (rt8.aliases[0].variants.len() != 2) {
     return 82;
+  }
+  // A parameterised alias keeps its parameters and each member's arguments.
+  var src8g: string = "struct Leaf[T] { v: T } struct Lit { v: i32 } pub type Tree[T, U] = Leaf[T] | Lit | Leaf[Leaf[U]]; function main(): i32 { return 0; }";
+  var rt8g: parser.Module = roundtrip_verbatim(src8g);
+  if (rt8g.aliases.len() != 1 || rt8g.aliases[0].type_params.len() != 2 || rt8g.aliases[0].type_params[1] != "U") {
+    return 83;
+  }
+  if (rt8g.aliases[0].variant_args.len() != 3 || rt8g.aliases[0].variant_args[0] != "T" || rt8g.aliases[0].variant_args[1] != "" || rt8g.aliases[0].variant_args[2] != "Leaf[U]") {
+    return 84;
   }
 
   return 0;

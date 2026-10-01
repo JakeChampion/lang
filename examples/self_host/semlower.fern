@@ -303,7 +303,7 @@ function live_reg(r: Rows): irlower.SigReg {
 // wasm bridge emits it to — so they are not it.
 // A dyn dispatch reaches every implementation its chain names, so each is a
 // callee the same way.
-function escaping_callee(r: irlower.LowerResult, reg: irlower.SigReg, funcs: parser.FuncDecl[], impls: parser.ImplInfo[]): string {
+function escaping_callee(r: irlower.LowerResult, reg: irlower.SigReg, externs: irlower.SigReg, funcs: parser.FuncDecl[], impls: parser.ImplInfo[]): string {
   for o in r.ops {
     if (o.kind_tag == 147) {  // dyn_dispatch
       for arm in semsource.dyn_arms(funcs, impls, ir.dyn_dispatch_method(o.str), ir.dyn_dispatch_traits(o.str)) {
@@ -314,7 +314,7 @@ function escaping_callee(r: irlower.LowerResult, reg: irlower.SigReg, funcs: par
     }
     if (o.kind_tag == 149 || o.kind_tag == 6) {  // call_direct, const_func
       if (!ircore.is_fern_helper(o.str) && !ircore.is_c_call(o.str)
-        && !is_drop_helper(o.str) && !is_extern(funcs, o.str) && !irlower.sig_reg_has_exact(reg, o.str)) {
+        && !is_drop_helper(o.str) && !irlower.sig_reg_has_exact(externs, o.str) && !irlower.sig_reg_has_exact(reg, o.str)) {
         return o.str;
       }
     }
@@ -322,13 +322,17 @@ function escaping_callee(r: irlower.LowerResult, reg: irlower.SigReg, funcs: par
   return "";
 }
 
-function is_extern(funcs: parser.FuncDecl[], name: string): boolean {
+// extern_reg indexes the names of the `@import` externs among `funcs`, so a
+// callee is tested against them by bucket rather than by a scan of every
+// declaration per call.
+function extern_reg(funcs: parser.FuncDecl[]): irlower.SigReg {
+  var names: string[] = [];
   for fd in funcs {
-    if (fd.name == name && fd.import_iface.len() > 0) {
-      return true;
+    if (fd.import_iface.len() > 0) {
+      names = names.append(fd.name);
     }
   }
-  return false;
+  return irlower.sig_reg_of(names);
 }
 
 // The types of the function values a body calls: the callee value's own type
@@ -371,7 +375,7 @@ function ast_values(mod: parser.Module, built: semsource.Built, r: Rows): AstVal
       var key: string = r.n1[i];
       var params: i32 = 0;
       if (i < mod.funcs.len()) {
-        key = call_key(mod.funcs[i]);
+        key = semsource.decl_key(mod.funcs[i]);
         params = mod.funcs[i].params.len();
       } else {
         var template: i32 = util.index_of_str(r.n2, built.instances[i - mod.funcs.len()].key);
@@ -383,8 +387,8 @@ function ast_values(mod: parser.Module, built: semsource.Built, r: Rows): AstVal
       if (hoisted(key) && params > 0) {
         var at: i32 = ssasem.find_contract(built.contracts, key);
         var v: AstValue = AstValue { ty: typeinfo.unchecked(), arity: params - 1, typed: false };
-        if (i < mod.funcs.len() && at >= 0 && ssasem.closure_env(built.contracts[at])) {
-          var ty: typeinfo.Type = ssasem.closure_type(built.contracts[at]);
+        if (i < mod.funcs.len() && at >= 0 && ssasem.closure_env(built.contracts.list[at])) {
+          var ty: typeinfo.Type = ssasem.closure_type(built.contracts.list[at]);
           v = AstValue { ty: ty, arity: ssasem.func_params(ty).len(), typed: semtypes.concrete(ty, true) };
         }
         out = out.append(v);
@@ -613,6 +617,7 @@ function ast_indirect_cone(r: Rows, mod: parser.Module, built: semsource.Built):
 // A round that turns nothing off is the fixpoint, and `keep` only ever
 // shrinks, so there is one.
 function prune(r: Rows, mod: parser.Module, built: semsource.Built): Rows {
+  var externs: irlower.SigReg = extern_reg(mod.funcs);
   var changed: boolean = true;
   while (changed) {
     changed = false;
@@ -621,7 +626,7 @@ function prune(r: Rows, mod: parser.Module, built: semsource.Built): Rows {
     var i: i32 = 0;
     while (i < r.body.len()) {
       if (r.keep[i]) {
-        var bad: string = escaping_callee(r.body[i], reg, mod.funcs, mod.impls);
+        var bad: string = escaping_callee(r.body[i], reg, externs, mod.funcs, mod.impls);
         if (bad.len() > 0) {
           bad = "calls " + bad + ", which the AST lowering defines";
         } else {
@@ -655,16 +660,6 @@ function kept_count(r: Rows): i32 {
     }
   }
   return n;
-}
-
-// The symbol a call to declaration `i` names: the receiver-qualified spelling
-// for a method, the bare name otherwise. A `str` receiver is named as the
-// AST lowering names it, erased.
-function call_key(fd: parser.FuncDecl): string {
-  if (fd.receiver_type.len() > 0) {
-    return util.base_type_name(parser.erase_str_spelling(fd.receiver_type)) + "." + fd.name;
-  }
-  return fd.name;
 }
 
 // The produced body at row `i`: a declaration first, then an instance.
@@ -723,9 +718,9 @@ function rows_of(mod: parser.Module, built: semsource.Built, structs: irlower.St
       plan = produced_plan(built.decls[i], fd.name);
     }
     plans = plans.append(plan);
-    keys = keys.append(call_key(fd));
+    keys = keys.append(semsource.decl_key(fd));
     funcs = funcs.append(built.decls[i].func);
-    r = Rows { ...r, n1: r.n1.append(fd.name), n2: r.n2.append(call_key(fd)), called: r.called.append(called_values(built.decls[i].func)) };
+    r = Rows { ...r, n1: r.n1.append(fd.name), n2: r.n2.append(semsource.decl_key(fd)), called: r.called.append(called_values(built.decls[i].func)) };
     i = i + 1;
   }
   var at: i32 = mod.funcs.len();
@@ -851,7 +846,7 @@ pub function substitution(mod: parser.Module, lowered: parser.FuncDecl[], struct
   var built: semsource.Built = inf.built;
   var r: Rows = inf.rows;
   var sigs: irlower.FnSigs = base;
-  var helpers: irlower.LowerResult[] = [];
+  var helpers: ssarc.Helpers = ssarc.no_helpers();
   var bodies: irlower.LowerResult[] = [];
   // The may-grow masks an AST caller brackets by are rebuilt with every
   // produced declaration's own in place of the one its syntax would give.
@@ -866,13 +861,13 @@ pub function substitution(mod: parser.Module, lowered: parser.FuncDecl[], struct
   var i: i32 = 0;
   while (i < mod.funcs.len()) {
     if (r.keep[i]) {
-      callees = callees.append(ssarc.Callee { name: call_key(mod.funcs[i]), f: built.decls[i].func, modes: built.decls[i].modes, plan: r.plans[i], receiver: semsource.has_receiver(mod.funcs[i]) });
-      seeds = seeds.append(call_key(mod.funcs[i]) + "|"
-        + ssarc.grow_mask(call_key(mod.funcs[i]), built.decls[i].func, r.grows, semsource.has_receiver(mod.funcs[i])));
+      callees = callees.append(ssarc.Callee { name: semsource.decl_key(mod.funcs[i]), f: built.decls[i].func, modes: built.decls[i].modes, plan: r.plans[i], receiver: semsource.has_receiver(mod.funcs[i]) });
+      seeds = seeds.append(semsource.decl_key(mod.funcs[i]) + "|"
+        + ssarc.grow_mask(semsource.decl_key(mod.funcs[i]), built.decls[i].func, r.grows, semsource.has_receiver(mod.funcs[i])));
       if (mod.funcs[i].receiver_type.len() == 0) {
         consumed = util.append_all(consumed, ssarc.consumed_array_rows(mod.funcs[i].name, built.decls[i].func, built.decls[i].modes));
       }
-      helpers = util.append_all(helpers, ssarc.drop_helpers(built.decls[i].func));
+      helpers = ssarc.with_drop_helpers(helpers, built.decls[i].func);
       bodies = bodies.append(r.body[i]);
       n = n + 1;
     } else if (built.decls[i].template && (built.decls[i].ok || built.decls[i].bodyless)) {
@@ -895,7 +890,7 @@ pub function substitution(mod: parser.Module, lowered: parser.FuncDecl[], struct
   var at: i32 = 0;
   while (at < built.instances.len()) {
     if (r.keep[mod.funcs.len() + at]) {
-      helpers = util.append_all(helpers, ssarc.drop_helpers(built.instances[at].func));
+      helpers = ssarc.with_drop_helpers(helpers, built.instances[at].func);
       instances = instances.append(r.body[mod.funcs.len() + at]);
       if (!util.contains(built.instances[at].key, ".")) {
         consumed = util.append_all(consumed, ssarc.consumed_array_rows(built.instances[at].key, built.instances[at].func, built.instances[at].modes));
@@ -944,9 +939,9 @@ pub function substitution(mod: parser.Module, lowered: parser.FuncDecl[], struct
       i2 = i2 + 1;
     }
   }
-  // The declaration-less bodies are deduped by symbol and conflict-checked
-  // here, where the rule lives, so the emit path's tail is a plain append.
-  var extra: irlower.LowerResult[] = ssarc.merge_helpers(instances, helpers);
+  // The declaration-less bodies are merged by symbol here, where the rule
+  // lives, so the emit path's tail is a plain append.
+  var extra: irlower.LowerResult[] = ssarc.merge_helpers(instances, helpers.rows);
   if (n == 0 && extra.len() == 0) {
     return ircore.no_sub();
   }
@@ -977,20 +972,18 @@ pub function runtime_bodies(src: string): irlower.LowerResult[] {
     return runtime_refused(first_name(im), "instantiates a generic");
   }
   var out: irlower.LowerResult[] = [];
-  var helpers: irlower.LowerResult[] = [];
+  var helpers: ssarc.Helpers = ssarc.no_helpers();
   var i: i32 = 0;
   while (i < im.funcs.len()) {
     if (!inf.rows.keep[i]) {
       return runtime_refused(im.funcs[i].name, "kept the AST lowering");
     }
     out = out.append(inf.rows.body[i]);
-    for h in ssarc.drop_helpers(inf.built.decls[i].func) {
-      helpers = helpers.append(h);
-    }
+    helpers = ssarc.with_drop_helpers(helpers, inf.built.decls[i].func);
     i = i + 1;
   }
   // The drop helpers follow the bodies, deduplicated by symbol.
-  var all: irlower.LowerResult[] = ssarc.merge_helpers(out, helpers);
+  var all: irlower.LowerResult[] = ssarc.merge_helpers(out, helpers.rows);
   for h in all {
     if (!h.ok) {
       return runtime_refused(h.name, h.why);

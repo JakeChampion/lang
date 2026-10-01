@@ -1239,18 +1239,18 @@ pub struct CallSite { name: string, line: i32, col: i32, method: boolean }
 // subtracting its bindings: a lambda's calls are part of what the artifact
 // executes, which is the question here, where free-variable analysis asks what
 // the enclosing scope must capture.
-function call_site_of(e: ast.Expr, want: string[], own acc: CallSite[]): CallSite[] {
+function call_site_of(e: ast.Expr, want: util.NameIndex, own acc: CallSite[]): CallSite[] {
   match (e) {
     ast.ExprCall(c) => {
       match (c.callee) {
         ast.ExprIdent(id) => {
-          if (util.has_str(want, id.name)) {
+          if (want.has(id.name)) {
             return acc.append(CallSite { name: id.name, line: c.line, col: c.col, method: false });
           }
           return acc;
         },
         ast.ExprFieldAccess(fa) => {
-          if (util.has_str(want, fa.field)) {
+          if (want.has(fa.field)) {
             return acc.append(CallSite { name: fa.field, line: c.line, col: c.col, method: true });
           }
           return acc;
@@ -1268,7 +1268,7 @@ function call_site_of(e: ast.Expr, want: string[], own acc: CallSite[]): CallSit
 }
 
 // collect_calls_stmt appends every wanted call reachable from `st` to `acc`.
-pub function collect_calls_stmt(st: ast.Stmt, want: string[], own acc: CallSite[]): CallSite[] {
+pub function collect_calls_stmt(st: ast.Stmt, want: util.NameIndex, own acc: CallSite[]): CallSite[] {
   function visit(e: ast.Expr, own a: CallSite[]): CallSite[] {
     return call_site_of(e, want, a);
   }
