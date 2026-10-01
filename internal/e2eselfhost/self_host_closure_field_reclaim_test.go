@@ -60,12 +60,12 @@ func TestSelfHostClosureFieldReclaimX86_64(t *testing.T) {
 	// `live_bytes = 0`.
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "asm_load_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "asm_load_run.fern", "driver")
 
 	liveOf := func(name string, rounds int, closureField bool) int64 {
 		t.Helper()
-		asm := hevCompile(t, runner, driverBin, closureFieldChurnSrc(rounds, closureField), []string{"FERN_LEAKCHECK=1"})
+		asm := mustLoadCompile(t, runner, driverBin, closureFieldChurnSrc(rounds, closureField), []string{"FERN_LEAKCHECK=1"})
 		progBin := buildBin(t, gcc, dir, name, asm)
 		stderr, _ := hevRun(t, runner, progBin)
 		summary := ""

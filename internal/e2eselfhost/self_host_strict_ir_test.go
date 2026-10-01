@@ -48,6 +48,31 @@ function main(): i32 {
     return n;
 }
 `, 18},
+	// A dyn holding a view merged past its source is copied at the merge, so
+	// the size is read from the copy after the source is released.
+	{"dyn-view-merged-past-its-source", `trait Size { function size(self: Self): i32; }
+struct P { a: str }
+impl Size for P { function size(self: P): i32 { return self.a.len() * 10 + (self.a[0] as i32) - 97; } }
+function mk(n: i32): string {
+    var s: string = "ab";
+    var i: i32 = 0;
+    while (i < n) { s = s + "c"; i = i + 1; }
+    return s;
+}
+function wrap(s: string): dyn Size { var p: P = P { a: slice_unchecked(s, 1, 4) }; return p; }
+function g(n: i32): i32 {
+    var d: dyn Size = P { a: "q" };
+    if (n != 0) {
+        var s: string = mk(n);
+        d = wrap(s);
+    }
+    var junk: string[] = [];
+    var i: i32 = 0;
+    while (i < 50) { junk = junk.append("zz"); i = i + 1; }
+    return d.size();
+}
+function main(): i32 { return g(3) + g(0); }
+`, 57},
 	// One local view held twice by an array: each element takes a fresh view.
 	{"local-view-held-twice", `function g(s: string): str[] { var w: str = slice_unchecked(s, 0, 2); var o: str[] = [w, w]; return o; }
 function main(): i32 { return g("abcd").len(); }
@@ -692,33 +717,21 @@ var strictIRBailReasons = []struct {
 	fn     string
 	reason string
 }{
-	// A dyn holding a view cannot be rebuilt at a merge (ssasem.copyable), so
-	// one merged past its source is refused rather than read after the source
-	// is released.
-	{"dyn-view-merged-past-its-source", `import "std/i32";
-trait Size { function size(self: Self): i32; }
-struct P { a: str }
-impl Size for P { function size(self: P): i32 { return self.a.len() * 10 + (self.a[0] as i32) - 97; } }
-function mk(n: i32): string {
+	// A closure capturing a bare view is refused where it is built: returned,
+	// it would outlive the string it views.
+	{"closure-captures-a-view", `function mk(n: i32): string {
     var s: string = "ab";
     var i: i32 = 0;
     while (i < n) { s = s + "c"; i = i + 1; }
     return s;
 }
-function wrap(s: string): dyn Size { var p: P = P { a: slice_unchecked(s, 1, 4) }; return p; }
-function g(n: i32): i32 {
-    var d: dyn Size = P { a: "q" };
-    if (n != 0) {
-        var s: string = mk(n);
-        d = wrap(s);
-    }
-    var junk: string[] = [];
-    var i: i32 = 0;
-    while (i < 50) { junk = junk.append("zz" + i.to_string()); i = i + 1; }
-    return d.size();
+function viewer(n: i32): () => i32 {
+    var s: string = mk(n);
+    var v: str = slice_unchecked(s, 1, 4);
+    return () => v.len() * 10 + (v[0] as i32) - 97;
 }
-function main(): i32 { print(g(3).to_string() + " " + g(0).to_string()); return 0; }
-`, "g", "dependency unavailable at use"},
+function main(): i32 { var f: () => i32 = viewer(3); return f(); }
+`, "viewer", "closure capture type"},
 	// An instance bound to a view would hand out a view it was lent.
 	{"template-bound-to-a-view", `pub function first[T](f: () => T): T {
     var xs: T[] = [f()];

@@ -195,36 +195,26 @@ function main(): i32 {
 		}
 	})
 
-	// A dyn holding a view merged past its source is a typed refusal
-	// (TestSelfHostSemIRStrict).
+	// A closure capturing a view of a string that dies before the closure is
+	// a typed refusal (TestSelfHostSemIRStrict).
 	t.Run("refusal_fails_the_emit", func(t *testing.T) {
 		proj := t.TempDir()
 		entry := filepath.Join(proj, "main.fern")
-		write(t, entry, `trait Size { function size(self: Self): i32; }
-struct P { a: str }
-impl Size for P { function size(self: P): i32 { return self.a.len() * 10 + (self.a[0] as i32) - 97; } }
-function mk(n: i32): string {
+		write(t, entry, `function mk(n: i32): string {
     var s: string = "ab";
     var i: i32 = 0;
     while (i < n) { s = s + "c"; i = i + 1; }
     return s;
 }
-function wrap(s: string): dyn Size { var p: P = P { a: slice_unchecked(s, 1, 4) }; return p; }
-function g(n: i32): i32 {
-    var d: dyn Size = P { a: "q" };
-    if (n != 0) {
-        var s: string = mk(n);
-        d = wrap(s);
-    }
-    var junk: string[] = [];
-    var i: i32 = 0;
-    while (i < 50) { junk = junk.append("zz"); i = i + 1; }
-    return d.size();
+function viewer(n: i32): () => i32 {
+    var s: string = mk(n);
+    var v: str = slice_unchecked(s, 1, 4);
+    return () => v.len() * 10 + (v[0] as i32) - 97;
 }
-function main(): i32 { return g(3) + g(0); }
+function main(): i32 { var f: () => i32 = viewer(3); return f(); }
 `)
 		_, se, code := drive(t, entry, nil, "-per-module-emit", "0")
-		if code != 3 || !strings.Contains(se, "FERN_SEM_IR: g: produced graph fails semantic verification: dependency unavailable at use") {
+		if code != 3 || !strings.Contains(se, "FERN_SEM_IR: viewer: closure capture type") {
 			t.Fatalf("emit: exit %d, want 3 naming the refusal\n%s", code, se)
 		}
 	})
