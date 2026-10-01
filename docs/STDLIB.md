@@ -1610,6 +1610,11 @@ in-memory buffer-backed `Stream`.
   bytes, advancing the returned cursor to EOF either way. EOF yields
   `Some("")`. The original value and its bytes remain available.
 - Introspection: `(s).len()`, `(s).remaining()`, `(s).is_empty()`.
+- `read_line(): (Result[Option[string], IoError], Stream)` returns `Ok(None)`
+  at EOF, `Ok(Some(text))` for a valid line, or `Err(InvalidUtf8(...))` for
+  malformed bytes. It consumes the whole line on success or error, strips
+  LF and an immediately preceding CR, and preserves a final bare CR. The
+  original stream remains available for recovering bytes after an error.
 
 ### `std/io_buffered`
 

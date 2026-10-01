@@ -29,9 +29,9 @@ var streamIRCases = []struct {
 	// read_all_string consumes the remainder as a string: "hi" -> len 2.
 	{"read-all-string", `var b: Stream = stream.stream_from_bytes([104 as u8, 105 as u8]); var (s, b2) = b.read_all_string(); match (s) { Some(text) => { return text.len(); }, None => { return 1; }, }`, 2},
 	// read_line splits on \n: "ab\ncd" -> first line "ab" (len 2).
-	{"read-line", `var b: Stream = stream.stream_from_bytes([97 as u8, 98 as u8, 10 as u8, 99 as u8, 100 as u8]); var (line, b2) = b.read_line(); match (line) { Some(l) => { return l.len(); }, None => { return 0; }, } return 0;`, 2},
+	{"read-line", `var b: Stream = stream.stream_from_bytes([97 as u8, 98 as u8, 10 as u8, 99 as u8, 100 as u8]); var (line, b2) = b.read_line(); match (line) { Ok(value) => { match (value) { Some(l) => { return l.len(); }, None => { return 0; }, } }, Err(_) => { return 99; }, } return 0;`, 2},
 	// read_line strips a trailing \r before the \n: "x\r\n" -> "x" (len 1).
-	{"read-line-crlf", `var b: Stream = stream.stream_from_bytes([120 as u8, 13 as u8, 10 as u8]); var (line, b2) = b.read_line(); match (line) { Some(l) => { return l.len(); }, None => { return 0; }, } return 0;`, 1},
+	{"read-line-crlf", `var b: Stream = stream.stream_from_bytes([120 as u8, 13 as u8, 10 as u8]); var (line, b2) = b.read_line(); match (line) { Ok(value) => { match (value) { Some(l) => { return l.len(); }, None => { return 0; }, } }, Err(_) => { return 99; }, } return 0;`, 1},
 }
 
 func streamIRSrc(mainBody string) string {

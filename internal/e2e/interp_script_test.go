@@ -2240,13 +2240,13 @@ function main(): i32 {
 function main(): i32 {
     var s: Stream = stream.stream_from_string("unix\nwindows\r\nfinal");
     var (l1, s2) = s.read_line();
-    match (l1) { Some(l) => { print(l); }, None => { print("none"); } }
+    match (l1) { Ok(value) => { match (value) { Some(l) => { print(l); }, None => { print("none"); } } }, Err(_) => { return 1; } }
     var (l2, s3) = s2.read_line();
-    match (l2) { Some(l) => { print(l); }, None => { print("none"); } }
+    match (l2) { Ok(value) => { match (value) { Some(l) => { print(l); }, None => { print("none"); } } }, Err(_) => { return 1; } }
     var (l3, s4) = s3.read_line();
-    match (l3) { Some(l) => { print(l); }, None => { print("none"); } }
+    match (l3) { Ok(value) => { match (value) { Some(l) => { print(l); }, None => { print("none"); } } }, Err(_) => { return 1; } }
     var (l4, _) = s4.read_line();
-    match (l4) { Some(_) => { print("UNEXPECTED"); }, None => { print("eof"); } }
+    match (l4) { Ok(value) => { match (value) { Some(_) => { print("UNEXPECTED"); }, None => { print("eof"); } } }, Err(_) => { return 1; } }
     return 0;
 }`,
 			wantStdout: "unix\nwindows\nfinal\neof\n",

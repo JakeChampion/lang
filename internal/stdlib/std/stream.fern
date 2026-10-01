@@ -18,7 +18,6 @@
 // `bytes` is `u8[]` throughout the codebase (no separate
 // type alias today). Stream constructors / readers all use
 // `u8[]` for the byte-array side.
-
 import "std/string";
 import "std/utf8" as utf8;
 import "core/int";
@@ -122,7 +121,6 @@ pub function (s: Stream) read_all_string(): (Option[string], Stream) {
 // interface types AND a decision on how an effectful reader
 // presents a value-shaped surface (if ever).
 // ============================================================
-
 // `(s: Stream).read_byte()` — read a single byte from the
 // cursor. Returns `(Option[i32], advancedStream)`: Some(b)
 // + a Stream advanced past it, or None + the unchanged
@@ -156,16 +154,14 @@ pub function (s: Stream) read_n(n: i32): (u8[], Stream) {
   return (out, Stream { ...s, pos: pos });
 }
 
-// `(s: Stream).read_line()` — read up to and including the
-// next `\n`, returning `(Option[string], advancedStream)`.
-// The line excludes the trailing newline; a trailing `\r`
-// (Windows line endings) is also stripped. None + unchanged
-// Stream when exhausted at the start of the call (EOF); a
-// final unterminated line returns Some(line) + the advanced
-// Stream, then None on the subsequent call.
-pub function (s: Stream) read_line(): (Option[string], Stream) {
+// Read through the next LF and validate the line as UTF-8. Strip LF and
+// an immediately preceding CR, but preserve a final unterminated CR.
+// Ok(None) means EOF; Ok(Some(text)) includes empty lines. Invalid text
+// returns Err(InvalidUtf8). The returned cursor advances past the entire
+// line even on error; the original Stream retains its bytes and cursor.
+pub function (s: Stream) read_line(): (Result[Option[string], IoError], Stream) {
   if (s.pos >= s.data.len()) {
-    return (None, s);
+    return (Ok(None), s);
   }
   var line_bytes: u8[] = [];
   var pos: i32 = s.pos;
@@ -183,12 +179,23 @@ pub function (s: Stream) read_line(): (Option[string], Stream) {
             stripped = stripped.append(line_bytes[i]);
             i = i + 1;
           }
-          return (Some(string_from_bytes_unchecked(stripped)), Stream { ...s, pos: pos });
+          return (__stream_line_text(stripped), Stream { ...s, pos: pos });
         }
       }
-      return (Some(string_from_bytes_unchecked(line_bytes)), Stream { ...s, pos: pos });
+      return (__stream_line_text(line_bytes), Stream { ...s, pos: pos });
     }
     line_bytes = line_bytes.append(b as u8);
   }
-  return (Some(string_from_bytes_unchecked(line_bytes)), Stream { ...s, pos: pos });
+  return (__stream_line_text(line_bytes), Stream { ...s, pos: pos });
+}
+
+function __stream_line_text(bytes: u8[]): Result[Option[string], IoError] {
+  match (utf8.from_bytes(bytes)) {
+    Some(text) => {
+      return Ok(Some(text));
+    },
+    None => {
+      return Err(InvalidUtf8("Stream.read_line"));
+    }
+  }
 }

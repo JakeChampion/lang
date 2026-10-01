@@ -16,8 +16,11 @@ function main(): i32 {
     while (!done) {
         var (line, next) = cur.read_line();
         match (line) {
-            Some(l) => { print(l); cur = next; },
-            None => { print("EOF"); done = true; },
+            Ok(value) => { match (value) {
+                Some(l) => { print(l); cur = next; },
+                None => { print("EOF"); done = true; },
+            } },
+            Err(_) => { return 1; },
         }
     }
 
