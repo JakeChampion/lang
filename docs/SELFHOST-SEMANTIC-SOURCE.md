@@ -2240,8 +2240,8 @@ The typed path is the only lowering a compile has, and a refusal is a compile
 error, for a program's module and for each runtime helper it appends: the
 refusals are printed as `FERN_SEM_IR_REPORT` would print them, and the compile
 exits 3. There is no off switch and no bisect knob. The AST lowering
-(`irlower`) still lowers an `@import` extern, the claim checks, and the
-drivers that never build a substitution (`irlower_run` and its dumps).
+(`irlower`) still runs for the claim checks and in the drivers that never
+build a substitution (`irlower_run` and its dumps).
 
 What the typed path produced whole, 2026-09-24:
 
@@ -2425,8 +2425,8 @@ AST-lowered caller can call a produced callee, and they go with the lowering.
 
 **Other sites that lower a body from the AST:**
 
-- `ircore.produced_or_lowered`, which lowers what the substitution leaves:
-  an `@import` extern;
+- `ircore.produced_or_lowered`, for a driver that emits with no
+  substitution (`ircore.no_sub()`);
 - `ircore.claim_lowering`, for the FIP and E068 claim checks;
 - `emit_function_via_ir` when the cache is empty.
 
