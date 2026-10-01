@@ -253,11 +253,25 @@ function produced_plan(p: semsource.Produced, what: string): ssaunits.Plan {
     }
     return ssaunits.refused(p.why);
   }
-  var plan: ssaunits.Plan = ssaunits.plan(p.func, p.modes);
+  var plan: ssaunits.Plan = plan_of(p);
   if (!plan.ok) {
     report(what, plan.why);
   }
   return plan;
+}
+
+// A produced function is planned over the analysis it carries when the
+// anchoring verified the graph the planner sees; one whose graph a rewrite
+// moved since carries none and is analysed here.
+function plan_of(p: semsource.Produced): ssaunits.Plan {
+  match (p.analysis) {
+    Some(a) => {
+      return ssaunits.plan_analyzed(p.func, p.modes, a);
+    },
+    None => {
+      return ssaunits.plan(p.func, p.modes);
+    }
+  }
 }
 
 // produced_body lowers a planned function. Every plan is made before any body

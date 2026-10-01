@@ -2043,7 +2043,11 @@ function insert_sorted(own xs: i32[], v: i32): i32[] {
 }
 
 pub function plan(f: ssasem.Func, modes: i32[]): Plan {
-  var semantic: ssasem.Analysis = ssasem.analyze(f);
+  return plan_analyzed(f, modes, ssasem.analyze(f));
+}
+
+// plan over an analysis the caller already holds of this very `f`.
+pub function plan_analyzed(f: ssasem.Func, modes: i32[], semantic: ssasem.Analysis): Plan {
   if (!semantic.ok) {
     return bad(semantic.why);
   }
