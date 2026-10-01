@@ -994,9 +994,11 @@ pub function listen_with(port: i32, opts: ListenOptions): Result[i32, NetError] 
 }
 
 // `listen_at(addr, opts)` — a listening socket bound to `addr`, of either
-// family: `::` takes every interface of both families where the host
-// allows a dual-stack listener (Linux and Darwin by default; wasi:sockets
-// keeps an IPv6 socket IPv6-only).
+// family: `::` takes every interface of both families (`IPV6_V6ONLY` is
+// cleared, whatever the host's default) except on wasi:sockets, which
+// keeps an IPv6 socket IPv6-only. An IPv4 peer of such a listener is a
+// v4-mapped `V6` to `peer_key` and the raw controls, and the `V4` it is to
+// `peer_addr`.
 pub function listen_at(addr: SocketAddr, opts: ListenOptions): Result[i32, NetError] {
   return __socket_count(tcp_listen_with(addr.ip.bytes(), addr.port, opts.backlog, opts.reuse_port));
 }
@@ -1230,10 +1232,32 @@ pub function connect_unix(path: string): Result[i32, NetError] {
 
 // `local_addr(sock)` — the address and port a socket is bound to: the
 // address the host picked for a connected socket, `0.0.0.0` or `::` for
-// a listener bound to every interface. Control op 9 answers the address
-// as 16-bit groups, two for an IPv4 address and eight for an IPv6 one.
+// a listener bound to every interface.
 pub function local_addr(sock: i32): Result[SocketAddr, NetError] {
-  var fam: i32 = tcp_socket_ctl(sock, 9, 8);
+  return __name_of(sock, 9);
+}
+
+// `peer_addr(sock)` — the address and port of the peer a socket is
+// connected to, with an IPv4 peer of a dual-stack listener as the `V4` it
+// is rather than the v4-mapped `V6` the socket reports, so a range check
+// or a per-address count sees the same address whichever listener took
+// the connection. `NetError.Other(ENOTCONN)` for a socket with no peer.
+pub function peer_addr(sock: i32): Result[SocketAddr, NetError] {
+  match (__name_of(sock, 10)) {
+    Ok(a) => {
+      return Ok(socket_addr(a.ip.to_canonical(), a.port));
+    },
+    Err(e) => {
+      return Err(e);
+    }
+  }
+}
+
+// Control op 9 (the socket's own address) and op 10 (its peer's) answer
+// the address as 16-bit groups, two for an IPv4 address and eight for an
+// IPv6 one, the family at arg 8 and the port at arg 9.
+function __name_of(sock: i32, op: i32): Result[SocketAddr, NetError] {
+  var fam: i32 = tcp_socket_ctl(sock, op, 8);
   if (fam < 0) {
     return Err(error_from_errno(fam));
   }
@@ -1244,7 +1268,7 @@ pub function local_addr(sock: i32): Result[SocketAddr, NetError] {
   var b: u8[] = [];
   var i: i32 = 0;
   while (i < groups) {
-    var g: i32 = tcp_socket_ctl(sock, 9, i);
+    var g: i32 = tcp_socket_ctl(sock, op, i);
     if (g < 0) {
       return Err(error_from_errno(g));
     }
@@ -1252,7 +1276,7 @@ pub function local_addr(sock: i32): Result[SocketAddr, NetError] {
     b = b.append((g & 255) as u8);
     i = i + 1;
   }
-  var port: i32 = tcp_local_port(sock);
+  var port: i32 = tcp_socket_ctl(sock, op, 9);
   if (port < 0) {
     return Err(error_from_errno(port));
   }

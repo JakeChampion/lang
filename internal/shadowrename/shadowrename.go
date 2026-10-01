@@ -163,6 +163,11 @@ func (r *renamer) bindFresh(name string) string {
 // `name$N`. Otherwise the binding is kept as-is. Returns the
 // resolved name to store on the AST node.
 func (r *renamer) bindShadow(name string) string {
+	// A wildcard binds nothing, so there is nothing to shadow; renaming it
+	// would make the IR read it as a real binder.
+	if name == "_" {
+		return name
+	}
 	_, shadowed := r.lookup(name)
 	if shadowed || r.declared[name] || r.isFunc(name) {
 		return r.bindRenamed(name)

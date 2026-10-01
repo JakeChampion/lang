@@ -16519,6 +16519,17 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
       // `t` is transferred onward. Scalar payloads are copied, not moved.
       var scrut_owned: boolean = ow_is_owned_scrutinee(m.scrutinee, ctx);
       var rs: OwnWalk = ru_expr(m.scrutinee, moved, ctx);
+      // A match no arm of which takes a pointer payload out leaves the value
+      // whole, so it does not consume a named scrutinee (#9539).
+      if let ast.ExprIdent(sid) = m.scrutinee {
+        var takes: boolean = false;
+        for arm in m.arms {
+          takes = takes || ow_arm_takes_pointer(ctx, arm.pattern);
+        }
+        if (!takes) {
+          rs = OwnWalk { ...rs, moved: ow_unmove(rs.moved, moved, sid.name) };
+        }
+      }
       var mv: MovedEntry[] = rs.moved;
       var d: util.Diag[] = rs.diags;
       var whole: typeinfo.Type = check_expr(m.scrutinee, ctx.scope);
@@ -16618,6 +16629,33 @@ function ow_bind_ctx(ctx: OwnCtx, name: string): OwnCtx {
 // ow_arm_payload_ctx layers a match arm's pointer-typed payload bindings onto
 // the owned set. The payload types come from the variant's synthesised struct
 // decl (`__ev`, `__ev1`, …), which is where the self-host records them.
+// ow_unmove drops the move of `name` a walk recorded on top of `before`.
+function ow_unmove(after: MovedEntry[], before: MovedEntry[], name: string): MovedEntry[] {
+  var out: MovedEntry[] = [];
+  for e in after {
+    var kept: boolean = e.mname != name;
+    for b in before {
+      kept = kept || b.mname == e.mname && b.mline == e.mline;
+    }
+    if (kept) {
+      out = out.append(e);
+    }
+  }
+  return out;
+}
+
+// ow_arm_takes_pointer reports whether an arm's pattern binds a payload of
+// pointer type: only that takes anything out of the scrutinee's box.
+function ow_arm_takes_pointer(ctx: OwnCtx, pat: ast.Pattern): boolean {
+  var bound: OwnCtx = ow_arm_payload_ctx(OwnCtx { ...ctx, owned: [] }, pat);
+  for n in bound.owned {
+    if (n != "_") {
+      return true;
+    }
+  }
+  return false;
+}
+
 function ow_arm_payload_ctx(ctx: OwnCtx, pat: ast.Pattern): OwnCtx {
   if let ast.PatVariant(pv) = pat {
     // `E.Cons` and a bare `Cons` name the same variant decl.

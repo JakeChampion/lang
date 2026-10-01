@@ -157,6 +157,9 @@ pub struct EmitState {
   // a substitution or a runtime helper's lowering carries), so a second
   // source bringing the same one does not define it twice.
   named: string[],
+  // rc_free_debug_on(), read once here: the SSA emitters test it at every
+  // rc primitive and call, and an environment walk per instruction showed.
+  rc_free_debug: boolean,
 }
 
 pub function (s: EmitState) has_named(name: string): boolean {
@@ -266,7 +269,58 @@ pub function new_state(): EmitState {
     capture: 0 as usize,
     rt_lower: no_rt_lower,
     named: [],
+    rc_free_debug: rc_free_debug_on(),
   };
+}
+
+// sanitize_on reports whether FERN_SANITIZE is set — the self-host port of
+// ast.SanitizeEnabled (#5545). One opt-in surface over the heap detectors,
+// so you can reach for it before knowing which check will fire: each
+// backend's leak census (its leak_check_on folds it in), the rc over-release
+// report, and the use-after-free quarantine below.
+//
+// One gap versus the native backends, a declared subset rather than
+// silently-different behaviour:
+//
+//   - No backtrace under either report. Native routes through __fern_report,
+//     which walks the frame-pointer chain; there is no such helper here, so
+//     the message is the whole diagnostic.
+//
+// It deliberately does NOT imply FERN_RC_TRACE: per-heap-event output is a
+// probe you point at a reduced repro, not a standing mode.
+pub function sanitize_on(): boolean {
+  match (env("FERN_SANITIZE")) {
+    Some(_) => {
+      return true;
+    },
+    None => {
+      return false;
+    }
+  }
+}
+
+// rc_free_debug_on reports whether the use-after-free QUARANTINE is on —
+// FERN_RC_FREE_DEBUG, or implied by FERN_SANITIZE (ast.ApplySanitize parity;
+// the native RcFreeDebug port). Under it NOTHING is recycled: every free site
+// writes ast.RcPoison (0x7EEDFACE) over the rc word where the block has one,
+// through the backend's rc_poison, and declines its freelist push — a
+// recycled block would overwrite its own poison — so __fern_alloc just keeps
+// bumping, and the rc helpers die with a named report the moment a stale
+// reference touches a poisoned block. A quarantined block still counts as a
+// FREE for the census (hev_free runs at the release), so the two detectors
+// compose instead of every correct free reading as a leak.
+pub function rc_free_debug_on(): boolean {
+  if (sanitize_on()) {
+    return true;
+  }
+  match (env("FERN_RC_FREE_DEBUG")) {
+    Some(_) => {
+      return true;
+    },
+    None => {
+      return false;
+    }
+  }
 }
 
 // add_shape_lit records `name` as a shape this unit references (deduped), for the
@@ -2548,6 +2602,9 @@ function sockopt(t: string, name: string): string {
     if (name == "eafnosupport") {
       return "47";
     }
+    if (name == "ipv6_v6only") {
+      return "27";
+    }
     return "4";
   }
   if (name == "sol_socket") {
@@ -2573,6 +2630,9 @@ function sockopt(t: string, name: string): string {
   }
   if (name == "eafnosupport") {
     return "97";
+  }
+  if (name == "ipv6_v6only") {
+    return "26";
   }
   return "2048";
 }
@@ -2603,11 +2663,21 @@ function sockaddr_of(t: string, buf: string, packed: boolean): string {
 
 // rt_src_tcp_listen_with backs `tcp_listen_with(addr, port, backlog,
 // reuse_port)` (#9853): rt_src_tcp_listen bound to addr:port, with the
-// accept queue chosen by the caller and SO_REUSEPORT set before the bind
-// when asked. The option value sits in the same scratch block as the
-// sockaddr, after it.
+// accept queue chosen by the caller, IPV6_V6ONLY cleared on an IPv6
+// socket so `::` takes both families whatever the host's default, and
+// SO_REUSEPORT set before the bind when asked. The option values sit in
+// the same scratch block as the sockaddr, after it.
 pub function rt_src_tcp_listen_with(t: string, packed: boolean): string {
-  return "function __fern_tcp_listen_with" + packed_suffix(packed) + "(addr: i32[], port: i32, backlog: i32, reuse_port: boolean): i32 { " + af_of_addr(t) + " var fd: i32 = __syscall3(" + sysno(t, "socket") + ", af as i64, 1, 0) as i32; if (fd < 0) { return fd; } var sa: usize = __raw_scratch(32); var r: i32 = 0; if (reuse_port) { __raw_store8(sa, 28, 1); __raw_store8(sa, 29, 0); __raw_store8(sa, 30, 0); __raw_store8(sa, 31, 0); r = __syscall5(" + sysno(t, "setsockopt") + ", fd as i64, " + sockopt(t, "sol_socket") + ", " + sockopt(t, "so_reuseport") + ", __raw_addr(sa, 28) as i64, 4) as i32; } " + sockaddr_of(t, "sa", packed) + " if (r >= 0) { r = __syscall3(" + sysno(t, "bind") + ", fd as i64, sa as i64, salen as i64) as i32; } if (r >= 0) { r = __syscall3(" + sysno(t, "listen") + ", fd as i64, backlog as i64, 0) as i32; } if (r < 0) { __syscall3(" + sysno(t, "close") + ", fd as i64, 0, 0); return r; } return fd; }";
+  return "function __fern_tcp_listen_with" + packed_suffix(packed) + "(addr: i32[], port: i32, backlog: i32, reuse_port: boolean): i32 { " + af_of_addr(t) + " var fd: i32 = __syscall3(" + sysno(t, "socket") + ", af as i64, 1, 0) as i32; if (fd < 0) { return fd; } var sa: usize = __raw_scratch(32); var r: i32 = 0; if (af == " + sockopt(t, "af_inet6") + ") { __raw_store8(sa, 28, 0); __raw_store8(sa, 29, 0); __raw_store8(sa, 30, 0); __raw_store8(sa, 31, 0); r = __syscall5(" + sysno(t, "setsockopt") + ", fd as i64, 41, " + sockopt(t, "ipv6_v6only") + ", __raw_addr(sa, 28) as i64, 4) as i32; } if (r >= 0 && reuse_port) { __raw_store8(sa, 28, 1); __raw_store8(sa, 29, 0); __raw_store8(sa, 30, 0); __raw_store8(sa, 31, 0); r = __syscall5(" + sysno(t, "setsockopt") + ", fd as i64, " + sockopt(t, "sol_socket") + ", " + sockopt(t, "so_reuseport") + ", __raw_addr(sa, 28) as i64, 4) as i32; } " + sockaddr_of(t, "sa", packed) + " if (r >= 0) { r = __syscall3(" + sysno(t, "bind") + ", fd as i64, sa as i64, salen as i64) as i32; } if (r >= 0) { r = __syscall3(" + sysno(t, "listen") + ", fd as i64, backlog as i64, 0) as i32; } if (r < 0) { __syscall3(" + sysno(t, "close") + ", fd as i64, 0, 0); return r; } return fd; }";
+}
+
+// name_group is the `tcp_socket_ctl` arm for `op`: a socket's own address
+// (op 9, getsockname) or its peer's (op 10, getpeername) as 16-bit groups,
+// arg 0..7 the group in network order (an IPv4 address filling 0 and 1,
+// the rest 0), 8 the family as 4 or 6, 9 the port; -EINVAL outside that
+// range, -EAFNOSUPPORT for another family.
+function name_group(t: string, family: string, op: string, sys: string): string {
+  return "if (op == " + op + ") { if (arg < 0 || arg > 9) { return 0 - 22; } var sa: usize = __raw_scratch(32); var z: i32 = 0; while (z < 32) { __raw_store8(sa, z, 0); z = z + 1; } __raw_store8(sa, 28, 28); var r: i32 = __syscall3(" + sysno(t, sys) + ", fd as i64, sa as i64, __raw_addr(sa, 28) as i64) as i32; if (r < 0) { return r; } if (arg == 9) { return (__raw_load8(sa, 2) << 8) | __raw_load8(sa, 3); } " + family + " if (fam == 2) { if (arg == 8) { return 4; } if (arg > 1) { return 0; } return (__raw_load8(sa, 4 + arg * 2) << 8) | __raw_load8(sa, 5 + arg * 2); } if (fam != " + sockopt(t, "af_inet6") + ") { return 0 - " + sockopt(t, "eafnosupport") + "; } if (arg == 8) { return 6; } return (__raw_load8(sa, 8 + arg * 2) << 8) | __raw_load8(sa, 9 + arg * 2); }";
 }
 
 // rt_src_tcp_socket_ctl backs `tcp_socket_ctl(fd, op, arg)` (#9853): op 1
@@ -2622,11 +2692,9 @@ pub function rt_src_tcp_listen_with(t: string, packed: boolean): string {
 // bytes XORed and never 0; 0 with no peer); op 8 steers the listener's
 // SO_REUSEPORT group by CPU (the filter `ld cpu; ret a` attached with
 // SO_ATTACH_REUSEPORT_CBPF, shared by the group; Linux only, -ENOTSUP on
-// Darwin); op 9 is the local address through getsockname as 16-bit
-// groups (arg 0..7 the group in network order, an IPv4 address filling
-// 0 and 1, arg 8 the family as 4 or 6; -EINVAL outside that range,
-// -EAFNOSUPPORT for another family). 0 or the count, -errno, or -EINVAL
-// for an op that names no control.
+// Darwin); op 9 is the local address through getsockname and op 10 the
+// peer's through getpeername, as 16-bit groups (name_group). 0 or the
+// count, -errno, or -EINVAL for an op that names no control.
 pub function rt_src_tcp_socket_ctl(t: string): string {
   var fc: string = sysno(t, "fcntl");
   var nb: string = sockopt(t, "o_nonblock");
@@ -2634,8 +2702,8 @@ pub function rt_src_tcp_socket_ctl(t: string): string {
   if (t == "arm64-darwin") {
     family = "var fam: i32 = __raw_load8(sa, 1);";
   }
-  var peer: string = "if (op == 7) { var ty: usize = __raw_scratch(8); __raw_store8(ty, 0, 0); __raw_store8(ty, 1, 0); __raw_store8(ty, 2, 0); __raw_store8(ty, 3, 0); __raw_store8(ty, 4, 4); __raw_store8(ty, 5, 0); __raw_store8(ty, 6, 0); __raw_store8(ty, 7, 0); if (__syscall5(" + sysno(t, "getsockopt") + ", fd as i64, " + sockopt(t, "sol_socket") + ", " + sockopt(t, "so_type") + ", ty as i64, __raw_addr(ty, 4) as i64) >= 0 && __raw_load8(ty, 0) == 2) { return 0; } var sa: usize = __raw_scratch(32); var z: i32 = 0; while (z < 32) { __raw_store8(sa, z, 0); z = z + 1; } __raw_store8(sa, 28, 28); if (__syscall3(" + sysno(t, "getpeername") + ", fd as i64, sa as i64, __raw_addr(sa, 28) as i64) < 0) { return 0; } " + family + " if (fam == 2) { return " + peer_word("4") + "; } if (fam != " + sockopt(t, "af_inet6") + ") { return 0; } if (" + peer_word("8") + " == 0 && " + peer_word("12") + " == 0 && " + peer_word("16") + " == 0 && __raw_load8(sa, 18) == 255 && __raw_load8(sa, 19) == 255) { return " + peer_word("20") + "; } var key: i32 = " + peer_word("8") + " ^ " + peer_word("12") + "; if (key == 0) { return 1; } return key; }";
-  var local_group: string = "if (op == 9) { if (arg < 0 || arg > 8) { return 0 - 22; } var sa: usize = __raw_scratch(32); var z: i32 = 0; while (z < 32) { __raw_store8(sa, z, 0); z = z + 1; } __raw_store8(sa, 28, 28); var r: i32 = __syscall3(" + sysno(t, "getsockname") + ", fd as i64, sa as i64, __raw_addr(sa, 28) as i64) as i32; if (r < 0) { return r; } " + family + " if (fam == 2) { if (arg == 8) { return 4; } if (arg > 1) { return 0; } return (__raw_load8(sa, 4 + arg * 2) << 8) | __raw_load8(sa, 5 + arg * 2); } if (fam != " + sockopt(t, "af_inet6") + ") { return 0 - " + sockopt(t, "eafnosupport") + "; } if (arg == 8) { return 6; } return (__raw_load8(sa, 8 + arg * 2) << 8) | __raw_load8(sa, 9 + arg * 2); }";
+  var peer: string = "if (op == 7) { var ty: usize = __raw_scratch(8); __raw_store8(ty, 0, 0); __raw_store8(ty, 1, 0); __raw_store8(ty, 2, 0); __raw_store8(ty, 3, 0); __raw_store8(ty, 4, 4); __raw_store8(ty, 5, 0); __raw_store8(ty, 6, 0); __raw_store8(ty, 7, 0); if (__syscall5(" + sysno(t, "getsockopt") + ", fd as i64, " + sockopt(t, "sol_socket") + ", " + sockopt(t, "so_type") + ", ty as i64, __raw_addr(ty, 4) as i64) >= 0 && __raw_load8(ty, 0) == 2) { return 0; } var sa: usize = __raw_scratch(32); var z: i32 = 0; while (z < 32) { __raw_store8(sa, z, 0); z = z + 1; } __raw_store8(sa, 28, 28); if (__syscall3(" + sysno(t, "getpeername") + ", fd as i64, sa as i64, __raw_addr(sa, 28) as i64) < 0) { return 0; } " + family + " if (fam == 2) { return " + peer_word("4") + "; } if (fam != " + sockopt(t, "af_inet6") + ") { return 0; } if (" + peer_word("8") + " == 0 && " + peer_word("12") + " == 0 && __raw_load8(sa, 16) == 0 && __raw_load8(sa, 17) == 0 && __raw_load8(sa, 18) == 255 && __raw_load8(sa, 19) == 255) { return " + peer_word("20") + "; } var key: i32 = " + peer_word("8") + " ^ " + peer_word("12") + "; if (key == 0) { return 1; } return key; }";
+  var name_groups: string = name_group(t, family, "9", "getsockname") + " " + name_group(t, family, "10", "getpeername");
   var queue: string = "var r: i32 = __syscall3(" + sysno(t, "ioctl") + ", fd as i64, 21521, q as i64) as i32;";
   if (t == "arm64-darwin") {
     queue = "__raw_store8(q, 4, 4); var r: i32 = __syscall5(" + sysno(t, "getsockopt") + ", fd as i64, " + sockopt(t, "sol_socket") + ", 4132, q as i64, __raw_addr(q, 4) as i64) as i32;";
@@ -2647,7 +2715,7 @@ pub function rt_src_tcp_socket_ctl(t: string): string {
     // the sock_fprog { u16 len; struct sock_filter *filter } at f + 16.
     steer = "if (op == 8) { var f: usize = __raw_scratch(32); var z: i32 = 0; while (z < 32) { __raw_store8(f, z, 0); z = z + 1; } __raw_store8(f, 0, 32); __raw_store8(f, 4, 36); __raw_store8(f, 5, 240); __raw_store8(f, 6, 255); __raw_store8(f, 7, 255); __raw_store8(f, 8, 22); __raw_store8(f, 16, 2); __raw_store_ptr(f, 3, f); return __syscall5(" + sysno(t, "setsockopt") + ", fd as i64, " + sockopt(t, "sol_socket") + ", 51, __raw_addr(f, 16) as i64, 16) as i32; }";
   }
-  return "function __fern_tcp_socket_ctl(fd: i32, op: i32, arg: i32): i32 { " + peer + " " + steer + " " + local_group + " if (op == 6) { var q: usize = __raw_scratch(8); var z: i32 = 0; while (z < 8) { __raw_store8(q, z, 0); z = z + 1; } " + queue + " if (r < 0) { return r; } return __raw_load8(q, 0) | (__raw_load8(q, 1) << 8) | (__raw_load8(q, 2) << 16) | (__raw_load8(q, 3) << 24); } if (op == 5) { var sa: usize = __raw_scratch(20); __raw_store8(sa, 16, 16); __raw_store8(sa, 17, 0); __raw_store8(sa, 18, 0); __raw_store8(sa, 19, 0); if (__syscall3(" + sysno(t, "getpeername") + ", fd as i64, sa as i64, __raw_addr(sa, 16) as i64) >= 0) { return 0; } __raw_store8(sa, 16, 4); var g: i32 = __syscall5(" + sysno(t, "getsockopt") + ", fd as i64, " + sockopt(t, "sol_socket") + ", " + sockopt(t, "so_error") + ", sa as i64, __raw_addr(sa, 16) as i64) as i32; if (g < 0) { return g; } var pending: i32 = __raw_load8(sa, 0) | (__raw_load8(sa, 1) << 8) | (__raw_load8(sa, 2) << 16) | (__raw_load8(sa, 3) << 24); if (pending != 0) { return 0 - pending; } return 0 - " + sockopt(t, "einprogress") + "; } if (op == 1 || op == 2) { var v: usize = __raw_scratch(4); __raw_store8(v, 0, arg & 255); __raw_store8(v, 1, 0); __raw_store8(v, 2, 0); __raw_store8(v, 3, 0); if (op == 1) { return __syscall5(" + sysno(t, "setsockopt") + ", fd as i64, 6, 1, v as i64, 4) as i32; } return __syscall5(" + sysno(t, "setsockopt") + ", fd as i64, " + sockopt(t, "sol_socket") + ", " + sockopt(t, "so_keepalive") + ", v as i64, 4) as i32; } if (op == 3) { var flags: i32 = __syscall3(" + fc + ", fd as i64, 3, 0) as i32; if (flags < 0) { return flags; } var want: i32 = flags | " + nb + "; if (arg == 0) { want = flags & (0 - 1 - " + nb + "); } return __syscall3(" + fc + ", fd as i64, 4, want as i64) as i32; } if (op == 4) { return __syscall3(" + sysno(t, "shutdown") + ", fd as i64, arg as i64, 0) as i32; } return 0 - 22; }";
+  return "function __fern_tcp_socket_ctl(fd: i32, op: i32, arg: i32): i32 { " + peer + " " + steer + " " + name_groups + " if (op == 6) { var q: usize = __raw_scratch(8); var z: i32 = 0; while (z < 8) { __raw_store8(q, z, 0); z = z + 1; } " + queue + " if (r < 0) { return r; } return __raw_load8(q, 0) | (__raw_load8(q, 1) << 8) | (__raw_load8(q, 2) << 16) | (__raw_load8(q, 3) << 24); } if (op == 5) { var sa: usize = __raw_scratch(20); __raw_store8(sa, 16, 16); __raw_store8(sa, 17, 0); __raw_store8(sa, 18, 0); __raw_store8(sa, 19, 0); if (__syscall3(" + sysno(t, "getpeername") + ", fd as i64, sa as i64, __raw_addr(sa, 16) as i64) >= 0) { return 0; } __raw_store8(sa, 16, 4); var g: i32 = __syscall5(" + sysno(t, "getsockopt") + ", fd as i64, " + sockopt(t, "sol_socket") + ", " + sockopt(t, "so_error") + ", sa as i64, __raw_addr(sa, 16) as i64) as i32; if (g < 0) { return g; } var pending: i32 = __raw_load8(sa, 0) | (__raw_load8(sa, 1) << 8) | (__raw_load8(sa, 2) << 16) | (__raw_load8(sa, 3) << 24); if (pending != 0) { return 0 - pending; } return 0 - " + sockopt(t, "einprogress") + "; } if (op == 1 || op == 2) { var v: usize = __raw_scratch(4); __raw_store8(v, 0, arg & 255); __raw_store8(v, 1, 0); __raw_store8(v, 2, 0); __raw_store8(v, 3, 0); if (op == 1) { return __syscall5(" + sysno(t, "setsockopt") + ", fd as i64, 6, 1, v as i64, 4) as i32; } return __syscall5(" + sysno(t, "setsockopt") + ", fd as i64, " + sockopt(t, "sol_socket") + ", " + sockopt(t, "so_keepalive") + ", v as i64, 4) as i32; } if (op == 3) { var flags: i32 = __syscall3(" + fc + ", fd as i64, 3, 0) as i32; if (flags < 0) { return flags; } var want: i32 = flags | " + nb + "; if (arg == 0) { want = flags & (0 - 1 - " + nb + "); } return __syscall3(" + fc + ", fd as i64, 4, want as i64) as i32; } if (op == 4) { return __syscall3(" + sysno(t, "shutdown") + ", fd as i64, arg as i64, 0) as i32; } return 0 - 22; }";
 }
 
 // rt_src_tcp_sendfile backs `tcp_sendfile(fd, file, max)`: up to max bytes

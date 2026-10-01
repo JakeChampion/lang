@@ -230,7 +230,7 @@ per-function bugs in the audit log.
 | `std/http` | | | | | | ⬜ | |
 | `std/tcp` | | | | | | ⬜ | |
 | `std/headers` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `HeaderMap` case-insensitive get/get_all/append/set over two parallel string[] fields — native via `headers_map` fixture (all four backends); self-host via the IR path (x86-64 + wasm): `TestSelfHostHeadersIR` — struct with string[] fields, functional struct-spread update, `string[].append`, indexed string-field compares, `Option[string]` `Some`/`None` + payload-binding `match`, chained struct-returning receiver methods, and the `(h) len()` receiver method (the `append-len` case — pins the [#3478](https://github.com/JakeChampion/lang/issues/3478) fix) (inlined as `Headers` + a lookup-slice `lower`, since `HeaderMap` is a reserved builtin name + the importless driver has no `.to_lower()`) |
-| `std/stream` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | in-memory byte `Stream` (`data: u8[]` + `pos` cursor) — the value-threaded CURSOR IDIOM: `len`/`remaining`/`read_byte`/`read_n`/`read_all_string`/`read_line` (CRLF/LF + unterminated tail) — native via the `stream_reader` fixture (interp / x86-64 / arm64 / wasm); self-host via the IR path (x86-64 + wasm): `TestSelfHostStreamIR` — struct with a `u8[]` field + i32 cursor, struct-spread update, tuple-returning methods with pointer + `Option` elements, tuple destructuring in `let`, `u8[].append` with `as u8` casts, `string_from_bytes_unchecked`, `Option` `Some`/`None` + payload-binding `match` (inlined as `Buf`, since `Stream` is a reserved builtin type + the importless driver has no imports) |
+| `std/stream` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | In-memory Stream with immutable byte data and cursor. read_all_string returns validated Option[string] plus the advanced cursor; malformed text is rejected. Actual module coverage on bootstrap interp/x86/ARM/wasm/Darwin and primary compiler x86/ARM/wasm: TestSelfHostStreamIR and StreamUTF8Program. The previous copied Buf fixture is retired. read_line still needs a separate malformed-text error contract. |
 | `std/time` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | is_leap_year/days_in_month/date_make/format_iso — `audit_std_time`; self-host via the IR path: pure-i32 helpers (`TestSelfHostTimeIR`) + the **Date civil-date methods** (Hinnant days_from_civil/civil_from_days, is_valid/add_days/days_since/weekday/day_of_year/format_iso — `TestSelfHostTimeDateIR`, oracle-checked, struct ctor + field access + struct-returning fn + receiver methods) + `date_parse_iso` `Option[Date]` parse (`TestSelfHostTimeParseIR`, `Some`/`None` ctor + payload-binding `match`) + `format_rfc3339` / `instant_parse_rfc3339` (`TestSelfHostTimeRfc3339IR`, **i64 `sec` struct field** — i64 arithmetic/casts + `Some(Instant{ sec: <i64> })`) + `add_span` / `add_duration` / `duration_since` / `days_until` (`TestSelfHostTimeSpanIR`, **8-field Span by-value param** + i64+nsec carry/borrow) + the Zoned / TimeZone surface (`in_zone` / `to_datetime` / `timezone_iana` — `TestSelfHostTimeZonedIR`, **nested structs** `Zoned{instant,zone}` / `DateTime{date,time}` + `Option[TimeZone]`) |
 | `std/task` | | | | | | ⬜ | |
 | `std/mock_platform` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | a recording `Platform`: `as_platform()` hands a handler a bag whose capability methods append to the mock's own `Cell[string]` instead of reaching the host, and `calls()` parses that log back into `MockCall[]` (`record` / `call_count` / `reset` / `has_call` / `find_call` inspect it) — native via the `mock_platform_log` fixture, which drives a real `handle(req, plat)` on interp / x86-64 / arm64 / wasm; self-host via the IR path (x86-64 + wasm): `TestSelfHostMockPlatformIR` — struct with a `Cell[string]` field, accumulating into that cell, byte indexing + `slice_unchecked` over the log, building an array-of-struct from the parse, indexed array-of-struct reads, membership scan, and `find_call`'s `Option[MockCall]` (Option of a struct) + payload-binding `match` (inlined as `MPlat`/`MCall`, since both are reserved builtin type names) |
@@ -3345,6 +3345,16 @@ payload-binding `match` — all already lower, so no compiler change. The types
 are inlined as `MPlat`/`MCall` (`MockPlatform`/`MockCall` are reserved builtin
 type names + the single-program driver resolves no imports). `std/mock_platform`
 row flipped to ✅.
+
+### 2026-09-30: Stream validates whole-buffer text reads
+
+`read_all_string()` returns `(Option[string], Stream)` and rejects malformed
+remaining bytes. The returned cursor reaches EOF after success or failure;
+the original value retains its bytes and cursor. Reading at EOF returns
+`Some("")`. `TestSelfHostStreamIR` now imports the actual module on x86/ARM/wasm.
+`StreamUTF8Program` verifies malformed sequences, snapshots and byte-cursor
+boundaries through both compilers. The copied Buf implementation below is
+historical. `read_line` still needs a distinct malformed-text error contract.
 
 ### 2026-06-20 — std/stream byte Stream on the self-host IR path + native audit
 

@@ -875,7 +875,7 @@ func CheckListenFailure(t *testing.T, cmd *exec.Cmd, port int) {
 	if code := cmd.ProcessState.ExitCode(); code != 98 {
 		t.Errorf("exit code %d, want 98\n--- stderr ---\n%s", code, stderr.String())
 	}
-	want := fmt.Sprintf("serve: cannot listen on 0.0.0.0:%d: Address already in use", port)
+	want := fmt.Sprintf("serve: cannot listen on port %d: Address already in use", port)
 	if !strings.Contains(stderr.String(), want) {
 		t.Errorf("stderr lacks %q:\n%s", want, stderr.String())
 	}

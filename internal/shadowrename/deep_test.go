@@ -311,6 +311,26 @@ func TestRenameMatchArmBindingShadowsOuter(t *testing.T) {
 	}
 }
 
+// A wildcard binds nothing, so a second `_` in a function is not a shadow:
+// renaming it to `_$N` made the IR read it as a real pointer binder and treat
+// a tag-only match as consuming its `own` scrutinee (#9539).
+func TestRenameLeavesWildcardBindingsAlone(t *testing.T) {
+	prog := runRename(t, `enum Box { Str(string), Arr(i32[]) }
+	function f(b: Box): i32 {
+		match (b) { Str(_) => { return 1; }, Arr(_) => { return 2; } }
+	}`)
+	fn := prog.Funcs[len(prog.Funcs)-1]
+	m, ok := fn.Body.Stmts[0].(*ast.Match)
+	if !ok {
+		t.Fatal("match stmt not found")
+	}
+	for _, arm := range m.Arms {
+		if len(arm.Bindings) != 1 || arm.Bindings[0] != "_" {
+			t.Errorf("%s arm bindings %q, want [_]", arm.VariantName, arm.Bindings)
+		}
+	}
+}
+
 // ---- local helpers (distinct names from shadowrename_test.go) ----
 
 func firstBlock(t *testing.T, b *ast.Block) *ast.Block {

@@ -1424,7 +1424,7 @@ func builtinTcpListen(i *Interp, args []Value) (Value, error) {
 	if !ok {
 		return nil, fmt.Errorf("tcp_listen: expected number arg, got %T", args[0])
 	}
-	ln, err := tcpNetListen("tcp", fmt.Sprintf("0.0.0.0:%d", int(port)))
+	ln, err := tcpNetListen("tcp4", fmt.Sprintf("0.0.0.0:%d", int(port)))
 	if err != nil {
 		return negErrno(err), nil
 	}
@@ -1654,7 +1654,15 @@ func builtinTcpListenWith(i *Interp, args []Value) (Value, error) {
 			return serr
 		}
 	}
-	ln, err := lc.Listen(context.Background(), "tcp", net.JoinHostPort(ip.String(), fmt.Sprint(int(port))))
+	// The family the address names, as the native runtimes open: under a
+	// plain "tcp" Go gives an IPv4 wildcard a dual-stack IPv6 socket, whose
+	// accepted sockets then report a v4-mapped local address. "tcp6" would
+	// make an IPv6 listener v6-only, so a 16-byte address keeps "tcp".
+	network := "tcp"
+	if len(ip) == 4 {
+		network = "tcp4"
+	}
+	ln, err := lc.Listen(context.Background(), network, net.JoinHostPort(ip.String(), fmt.Sprint(int(port))))
 	if err != nil {
 		return negErrno(err), nil
 	}
@@ -1767,26 +1775,18 @@ func builtinTcpSocketCtl(i *Interp, args []Value) (Value, error) {
 	if !ok {
 		return nil, fmt.Errorf("tcp_socket_ctl: expected number arg, got %T", args[2])
 	}
-	if op < 1 || op > 9 {
+	if op < 1 || op > 10 {
 		return Number(-22), nil
 	}
-	if op == 9 {
+	if op == 9 || op == 10 {
 		if r, ok := i.udpSocketCtl(int64(id), int64(op), int64(arg)); ok {
 			return r, nil
 		}
-		var addr net.Addr
-		if ln, ok := i.tcpListeners[int64(id)]; ok {
-			addr = ln.Addr()
-		} else if conn, ok := i.tcpConns[int64(id)]; ok {
-			addr = conn.LocalAddr()
-		} else {
+		fd, ok := i.rawFd(int64(id))
+		if !ok {
 			return Number(-1), nil
 		}
-		ta, ok := addr.(*net.TCPAddr)
-		if !ok {
-			return Number(-int64(syscall.EAFNOSUPPORT)), nil
-		}
-		return localGroup(ta.IP, int64(arg)), nil
+		return nameGroup(fd, int64(op), int64(arg)), nil
 	}
 	if op == 8 {
 		fd, ok := i.rawFd(int64(id))
@@ -1861,30 +1861,47 @@ func builtinTcpSocketCtl(i *Interp, args []Value) (Value, error) {
 	return Number(0), nil
 }
 
-// localGroup is control op 9's answer for a socket bound to ip: group
-// `which` (0..7) of the address in network order, an IPv4 address filling
-// groups 0 and 1, or 4 or 6 for `which` 8; -EINVAL outside that range.
-func localGroup(ip net.IP, which int64) Value {
-	if which < 0 || which > 8 {
+// nameGroup is control op 9's (the socket's own address) or op 10's (its
+// peer's) answer for the descriptor fd, read through getsockname or
+// getpeername so the family is the socket's rather than the net
+// package's 16-byte spelling of every address: group `which` (0..7) of
+// the address in network order, an IPv4 address filling groups 0 and 1,
+// 4 or 6 for `which` 8, the port for 9; -EINVAL outside that range.
+func nameGroup(fd int, op, which int64) Value {
+	if which < 0 || which > 9 {
 		return Number(-int64(syscall.EINVAL))
 	}
-	if v4 := ip.To4(); v4 != nil {
-		if which == 8 {
+	var sa syscall.Sockaddr
+	var err error
+	if op == 9 {
+		sa, err = getsockname(fd)
+	} else {
+		sa, err = getpeername(fd)
+	}
+	if err != nil {
+		return negErrno(err)
+	}
+	switch a := sa.(type) {
+	case *syscall.SockaddrInet4:
+		switch {
+		case which == 9:
+			return Number(a.Port)
+		case which == 8:
 			return Number(4)
-		}
-		if which < 2 {
-			return Number(int64(v4[2*which])<<8 | int64(v4[2*which+1]))
+		case which < 2:
+			return Number(int64(a.Addr[2*which])<<8 | int64(a.Addr[2*which+1]))
 		}
 		return Number(0)
+	case *syscall.SockaddrInet6:
+		switch {
+		case which == 9:
+			return Number(a.Port)
+		case which == 8:
+			return Number(6)
+		}
+		return Number(int64(a.Addr[2*which])<<8 | int64(a.Addr[2*which+1]))
 	}
-	v6 := ip.To16()
-	if v6 == nil {
-		return Number(-int64(syscall.EAFNOSUPPORT))
-	}
-	if which == 8 {
-		return Number(6)
-	}
-	return Number(int64(v6[2*which])<<8 | int64(v6[2*which+1]))
+	return Number(-int64(syscall.EAFNOSUPPORT))
 }
 
 // builtinWasmPollableDrop is the interpreter's `wasm_pollable_drop(p)` — a

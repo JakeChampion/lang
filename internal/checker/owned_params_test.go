@@ -54,11 +54,36 @@ function f(own xs: i32[]): i32 {
 }`)
 }
 
+// A match that takes a pointer payload out of an owned scrutinee consumes it;
+// one that only tests the tag, or binds scalars, leaves it whole (#9539).
+const ownBoxPrelude = `enum Box { Str(string), Arr(i32[]), Nil }
+function bsink(b: Box): i32 { return 0; }
+`
+
 func TestOwnedUseAfterMatchConsume(t *testing.T) {
-	wantE050(t, "match-then-use", ownPrelude+`
+	wantE050(t, "match-then-use", ownBoxPrelude+`
+function f(own b: Box): i32 {
+    var r: i32 = match (b) { Str(s) => s.len(), Arr(a) => a.len(), Nil => 0 };   // takes s / a
+    return r + bsink(b);                                                       // E050
+}`)
+	wantE050(t, "match-stmt-then-use", ownBoxPrelude+`
+function f(own b: Box): i32 {
+    match (b) { Str(s) => { return s.len(); }, Arr(_) => { }, Nil => { } }
+    return bsink(b);
+}`)
+}
+
+func TestOwnedUseAfterTagOnlyMatchOK(t *testing.T) {
+	wantOK(t, "scalar-payload-match-then-use", ownPrelude+`
 function f(own l: Lst): i32 {
-    var r: i32 = match (l) { Cons(h) => h, Nil => 0 };   // match consumes l
-    return r + lsink(l);                                 // E050
+    var r: i32 = match (l) { Cons(h) => h, Nil => 0 };
+    return r + lsink(l);
+}`)
+	wantOK(t, "tag-only-match-then-match", ownBoxPrelude+`
+function f(own b: Box): i32 {
+    var t: i32 = 0;
+    match (b) { Str(_) => { t = 1; }, Arr(_) => { t = 2; }, Nil => { t = 3; } }
+    match (b) { Str(s) => { return t + s.len(); }, Arr(a) => { return t + a.len(); }, Nil => { return t; } }
 }`)
 }
 

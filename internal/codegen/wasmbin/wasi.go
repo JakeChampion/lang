@@ -1178,6 +1178,14 @@ var importSpecs = map[string]importSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
 		results: nil,
 	},
+	"wasi_sockets_udp_remote_address": {
+		// (self, retptr) → (), the same area, for the peer `udp_connect`
+		// fixed.
+		module:  "wasi:sockets/udp@0.2.0",
+		name:    "[method]udp-socket.remote-address",
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: nil,
+	},
 	"wasi_sockets_incoming_datagram_stream_drop": {
 		module:  "wasi:sockets/udp@0.2.0",
 		name:    "[resource-drop]incoming-datagram-stream",
@@ -2516,7 +2524,8 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 		in.add("wasi_io_pollable_block")
 		in.add("wasi_io_pollable_drop")
 	}
-	// The socket controls read the local address too (op 9).
+	// The socket controls read the local address too (op 9); op 10 reads
+	// remote-address, which they import already.
 	if helpers.set["__fern_tcp_local_port"] || helpers.set["__fern_tcp_socket_ctl"] {
 		in.add("wasi_sockets_tcp_local_address")
 	}
@@ -2592,6 +2601,9 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 	}
 	if helpers.set["__fern_udp_bind"] && (helpers.set["__fern_tcp_local_port"] || helpers.set["__fern_tcp_socket_ctl"]) {
 		in.add("wasi_sockets_udp_local_address")
+	}
+	if helpers.set["__fern_udp_bind"] && helpers.set["__fern_tcp_socket_ctl"] {
+		in.add("wasi_sockets_udp_remote_address")
 	}
 
 	// wasi:http wrapper. The single __http_entry helper pulls in

@@ -228,6 +228,7 @@ func Compose(coreBytes []byte, req ComposeRequest, coreExportName string) []byte
 			gImport{iface: udp, name: "[method]outgoing-datagram-stream.send", kind: gMem, params: udpSendParams},
 			gImport{iface: udp, name: "[method]outgoing-datagram-stream.subscribe", kind: gNoOpt},
 			gImport{iface: udp, name: "[method]udp-socket.local-address", kind: gMem, params: udpSelfRetParams},
+			gImport{iface: udp, name: "[method]udp-socket.remote-address", kind: gMem, params: udpSelfRetParams},
 			gImport{iface: udp, name: "[method]incoming-datagram-stream.subscribe", kind: gNoOpt},
 			gImport{iface: udp, name: "[resource-drop]udp-socket", kind: gDrop, resourceT: g.surfaced["udp-socket"]},
 			gImport{iface: udp, name: "[resource-drop]incoming-datagram-stream", kind: gDrop, resourceT: g.surfaced["incoming-datagram-stream"]},
