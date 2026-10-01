@@ -1,0 +1,44 @@
+// Owned arrays and views have separate method namespaces even when both
+// methods infer the same element type. Chained view results keep that type.
+function (xs: T[]) pick(): T {
+  return xs[0];
+}
+
+function (xs: [T]) pick(): T {
+  return xs[xs.len() - 1];
+}
+
+function (xs: [T]) tail(): [T] {
+  return xs[1:];
+}
+
+function view_head[T](xs: [T]): T {
+  return xs[0];
+}
+
+function main(): i32 {
+  var a: i32[] = [3, 5, 7];
+  var v: [i32] = a[:];
+  var inferred = a[:];
+  if (a[:].pick() != 7 || inferred.pick() != 7) {
+    return 6;
+  }
+  if (a.pick() != 3 || v.pick() != 7) {
+    return 1;
+  }
+  if (view_head(v) != 3 || view_head(a) != 3) {
+    return 2;
+  }
+  if (v.tail().pick() != 7 || view_head(v.tail()) != 5) {
+    return 3;
+  }
+  var words: string[] = ["first", "last"];
+  var text: [string] = words[:];
+  if (words.pick() != "first" || text.pick() != "last") {
+    return 4;
+  }
+  if (view_head(text.tail()) != "last") {
+    return 5;
+  }
+  return 0;
+}
