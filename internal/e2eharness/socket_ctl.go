@@ -7,7 +7,8 @@ package e2eharness
 // a non-blocking read that answers empty rather than waiting, a write-side
 // shutdown the peer reads as end of stream, the -EINVAL an unknown op
 // draws, the CPU steering of a SO_REUSEPORT group (op 8) where the
-// host has it, and the local address as 16-bit groups (op 9). Exit 42 and "ok" on stdout iff every check holds, else the number
+// host has it, and the local address (op 9) and the peer's (op 10) as
+// 16-bit groups and a port. Exit 42 and "ok" on stdout iff every check holds, else the number
 // of the first failing check; a preview-2 wasm host reports only 0 or 1, so
 // the wasm legs read stdout.
 func SocketCtlProbe() string {
@@ -54,14 +55,24 @@ function main(): i32 {
     if (got.len() != 2 || got[0] != 104u8 || got[1] != 105u8) { return fail(13); }
     var eof: u8[] = tcp_recv(c, 16);
     if (eof.len() != 0) { return fail(14); }
-    if (tcp_socket_ctl(a, 10, 0) >= 0) { return fail(15); }
-    // Op 9 is the local address as 16-bit groups: the accepted side is
-    // 127.0.0.1, so family 4, 127 << 8 then 1, and nothing past group 1.
+    if (tcp_socket_ctl(a, 11, 0) >= 0) { return fail(15); }
+    // Op 9 is the local address as 16-bit groups and the port: the
+    // accepted side is 127.0.0.1, so family 4, 127 << 8 then 1, nothing
+    // past group 1, and the listener's port.
     if (tcp_socket_ctl(a, 9, 8) != 4) { return fail(17); }
     if (tcp_socket_ctl(a, 9, 0) != 32512) { return fail(18); }
     if (tcp_socket_ctl(a, 9, 1) != 1) { return fail(19); }
     if (tcp_socket_ctl(a, 9, 7) != 0) { return fail(20); }
-    if (tcp_socket_ctl(a, 9, 9) >= 0) { return fail(21); }
+    if (tcp_socket_ctl(a, 9, 9) != port) { return fail(21); }
+    if (tcp_socket_ctl(a, 9, 10) >= 0) { return fail(22); }
+    // Op 10 is the peer's, the same way: the dialling side, 127.0.0.1 at
+    // its own port; a listener has no peer.
+    if (tcp_socket_ctl(a, 10, 8) != 4) { return fail(23); }
+    if (tcp_socket_ctl(a, 10, 0) != 32512) { return fail(24); }
+    if (tcp_socket_ctl(a, 10, 1) != 1) { return fail(25); }
+    if (tcp_socket_ctl(a, 10, 7) != 0) { return fail(26); }
+    if (tcp_socket_ctl(a, 10, 9) != tcp_local_port(c)) { return fail(27); }
+    if (tcp_socket_ctl(ln, 10, 8) >= 0) { return fail(28); }
     // Op 8 steers the listener's SO_REUSEPORT group by CPU: attached on
     // Linux (-ENOPROTOOPT where the host lacks the option, as qemu-user
     // does), -ENOTSUP on Darwin and on wasm.
@@ -84,7 +95,7 @@ function main(): i32 {
 
 // NetSocketOptsProbe is SocketCtlProbe through std/net's typed faces:
 // `listen_with` with options, `set_keepalive`, `set_nodelay`,
-// `set_nonblocking`, `local_addr` and `shutdown`, each answering a `Result`
+// `set_nonblocking`, `local_addr`, `peer_addr` and `shutdown`, each answering a `Result`
 // with the errno mapped, and the errno a refused bind and a refused dial
 // report on each target. Same verdict channel: exit 42 and "ok", or the
 // first failing check.
@@ -139,6 +150,10 @@ function main(): i32 {
     match (net.local_addr(a)) {
         Ok(la) => { if (!la.ip.eq(net.ipv4_loopback()) || la.port != port) { return fail(16); } },
         Err(e) => { return fail(17); },
+    }
+    match (net.peer_addr(a)) {
+        Ok(pa) => { if (!pa.ip.eq(net.ipv4_loopback()) || pa.port != tcp_local_port(c)) { return fail(18); } },
+        Err(e) => { return fail(19); },
     }
     if (!ok(net.shutdown(a, net.Write))) { return fail(11); }
     var got: u8[] = tcp_recv(c, 16);

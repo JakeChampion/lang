@@ -595,7 +595,9 @@ different tree, or no successful run at the PR's head.
 ### Review runs
 
 Pullfrog review runs, one standard runner each for 15-35 minutes, are capped
-at two at once by two concurrency groups with `queue: max`.
+at two at once by two concurrency groups with `queue: max`. The ninth
+measurement below found most of them starting after their pull request had
+merged; the gate step in pullfrog.yml and the two reapers now end those.
 
 ### Not done: runners outside the 40-job limit
 
@@ -713,3 +715,126 @@ those switches per-compilation options carried through `checker.Check`,
 that lets the native-backend lanes run in one parallel process, and it is
 also what a `fern` CLI flag for each of them wants. Until then those lanes
 stay on worker processes, where isolation comes from the process boundary.
+
+## Ninth measurement: October 1, 2026 — where the rounds went, and what main re-ran
+
+Every `ci.yml` pull-request run created from 2026-09-28 00:00 UTC to
+2026-10-01 19:00 UTC, every `ci-main.yml` run in the same window, and the job
+and step timings of three green pull-request runs, read the way the earlier
+measurements were. The cancelled-run figures are a sample of 25 of the 470.
+
+| | count | share |
+| --- | ---: | ---: |
+| PR runs created | 600 | |
+| cancelled (a later push, a merge, or a reaper) | 470 | 78% |
+| succeeded | 121 | 20% |
+| failed | 5 | 1% |
+| main runs created | 191 | 2.1 per hour |
+| main runs coalesced away (cancelled pending) | 79 | |
+| main runs succeeded / failed | 84 / 26 | |
+
+A green pull-request round, creation to conclusion, was 64 minutes at the
+median, 114 at p90 and 178 at worst, against 33 / 50 / 73 on 2026-09-21. The
+suite itself grew: 419-495 Ubuntu job-minutes per run against ~330 then, and
+the self-host x86 shards' test step went from 9.4 minutes (run 35724456242,
+2026-09-22) to 18.4 (run 36815704665, 2026-10-01) with the same workflow
+steps around it. The sum of the measured weights in
+`.github/selfhost-test-weights.txt` went from 6,474 s to 10,655 s over the
+same nine days while the package gained 5% more files, so the growth is new
+tests of 100-180 s each, not more tests. On a saturated pool each of those
+shards then waited 20-25 minutes for a runner before its 15-19 minutes of
+work, which is why the round doubled when the shard did not.
+
+Where the pool's minutes went, per hour, over the window:
+
+| Source | Job-minutes per hour | Share of 2,400 available |
+| --- | ---: | ---: |
+| PR runs later cancelled (5.2/h at a mean of 163) | ~850 | 35% |
+| PR runs that finished (1.4/h at ~470) | ~630 | 26% |
+| main runs that finished (1.2/h at ~510) | ~610 | 25% |
+| Pullfrog reviews (3.3/h at a mean of 21.5) | ~72 | 3% |
+
+Two of those rows were the same work done twice.
+
+### Pull requests merge while their run is in flight
+
+Of the twelve most recent successful main runs, eight ran every lane (71
+jobs, 510-533 job-minutes) and four ran only perf. The eight were the common
+case, and the reason was not the tree: for the five checked, the merge
+commit's tree equalled the pull request's head tree in three, which is what
+the ruleset's up-to-date requirement produces. The reason was that the pull
+request's run at that head was still running when the pull request merged,
+so cancel-on-merge.yml cancelled it, and the identical-tree skip, which asked
+for a *successful* run, found none.
+
+| Pull request | Suite checks green at the merge | Still running or cancelled |
+| --- | ---: | ---: |
+| #10934 | 57 | 13 |
+| #10925 | 0 | 66 |
+| #10916 | 26 | 44 |
+| #10868 | 1 | 68 |
+
+The ruleset requires only `Lint / lint` and the arm64 e2e job, and the
+repository owner merges with the rest in flight. So a pull request's run and
+the main run after it were testing the same tree at the same time, one of
+them to be thrown away, and the main run had to go the full 40 minutes before
+a self-host regression showed: 25 of the 26 failed main runs failed in the
+self-host lane, the one that ends last.
+
+The main validation now **adopts** that run instead. On a push to main whose
+tree equals the merged pull request's head tree, ci.yml's lane selector reads
+the newest pull-request run at that head whatever it concluded, lane by lane:
+a lane whose every job succeeded is skipped, one that failed, was cancelled
+or did not run runs on main. A run still in flight with its suite under way
+is waited for, polling every 30 s for up to 30 minutes
+(`CI_CHANGES_WAIT_MINUTES`); a run whose suite is still queued behind the PR
+FIFO is not, since main alone is faster than the queue. cancel-on-merge.yml
+spares exactly that run on the close event, and reap-stale-runs.yml for 45
+minutes after the merge; both still reap the rest of the branch's runs. The
+selector and the reapers each read "suite under way" at their own moment, so
+a suite that starts between the two reads is tested twice as before, once
+more; that costs a suite, never a result.
+Expected effect: one suite per merge, not two, and main's verdict on the
+self-host lane at the moment the pull request's run reaches it rather than
+40 minutes after the merge.
+
+The run that pull request's branch gets after the merge is unchanged in
+cost: the pushes keep coming at the same rate. Of the 470 cancelled runs,
+only 9% were superseded within five minutes of starting and 17% within ten
+(median gap 35 minutes), so a settle delay before the suite fans out was
+measured and not built: it would save under a tenth of that row for five
+minutes added to every round.
+
+### Reviews that started after the merge
+
+Of 60 consecutive successful Pullfrog runs, 43 began after their pull request
+had merged or closed, and at 19:00 UTC on 2026-10-01 the review queue held 21
+unfinished runs, 17 of them for closed pull requests, two of them since
+01:40 UTC. The queue is two slots and reviews arrive at 3.3 an hour at 21.5
+minutes each, so it runs about 60% utilised but in bursts, and once behind it
+serves reviews nobody reads before the ones somebody is waiting on.
+
+Three changes. pullfrog.yml gains a gate step before the agent: a run whose
+pull request is closed, or that a newer run of the same kind for the same
+pull request has already superseded in the queue, ends in seconds. The
+superseding rule is by kind on purpose: a whole-PR review is never dropped
+for an incremental one. cancel-on-merge.yml cancels the closed pull request's
+queued reviews on the close event, and reap-stale-runs.yml sweeps the review
+queue for closed pull requests on its cron, so a review the gate never
+reaches (one of the two slots is held by a 50-minute review) still goes.
+
+What stays with the Pullfrog dashboard, outside this repository: the
+"review new commits" trigger fires on every push, and 166 of the 300 review
+runs in the window were that kind, on pull requests that were pushed to five
+to ten times. The gate collapses the queued ones; the trigger decides how
+many are dispatched.
+
+### Next measurements
+
+Confirm on the first day's main runs how many adopted a pull request's run,
+and how long the selector waited: the `changes` job's log and summary say
+both. The self-host lane's growth is the next cost to attack and it is in
+the tests, not the workflow: each 100-180 s test builds a driver of its own
+through the closure-keyed cache, and sharing drivers across tests with the
+same closure is what would bring the shard back under ten minutes. The
+suite's job-minutes, not the queue policy, now set how long a round takes.

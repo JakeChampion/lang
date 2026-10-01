@@ -469,6 +469,13 @@ function __eafnosupport(): i32 {
   return 97;
 }
 
+function __ipv6_v6only(): i64 {
+  if (target_os() == "darwin") {
+    return 27;
+  }
+  return 26;
+}
+
 // The family an address names by its length: AF_INET for four bytes,
 // AF_INET6 for sixteen, else -EAFNOSUPPORT.
 function __af_of(addr: u8[]): i32 {
@@ -542,7 +549,10 @@ function __connect_to(fd: i64, addr: u8[], port: i32): i64 {
 // socket closed again.
 function __listen_at(fd: i64, sa: usize, salen: i32, backlog: i32, reuse_port: i32): i32 {
   var r: i64 = 0;
-  if (reuse_port != 0) {
+  if (salen == 28) {
+    r = __setsockopt_i32(fd, 41, __ipv6_v6only(), 0);
+  }
+  if (r >= 0 && reuse_port != 0) {
     r = __setsockopt_i32(fd, __sol_socket(), __so_reuseport(), 1);
   }
   if (r >= 0) {
@@ -560,9 +570,10 @@ function __listen_at(fd: i64, sa: usize, salen: i32, backlog: i32, reuse_port: i
 
 // __fern_tcp_listen_with(addr, port, backlog, reuse_port) is a socket
 // listening on addr:port (4 or 16 network-order bytes; the unspecified
-// address of either family takes every interface, and `::` both families
-// where the host allows) with that accept queue, SO_REUSEPORT set before
-// the bind when asked, or -errno. `reuse_port` is the builtin's boolean,
+// address of either family takes every interface, and `::` both families:
+// IPV6_V6ONLY is cleared on an IPv6 listener, whatever the host's default)
+// with that accept queue, SO_REUSEPORT set before the bind when asked, or
+// -errno. `reuse_port` is the builtin's boolean,
 // an i32 here.
 function __fern_tcp_listen_with(addr: u8[], port: i32, backlog: i32, reuse_port: i32): i32 {
   var fd: i64 = __socket_for(addr, 1);
@@ -597,9 +608,9 @@ function __fern_tcp_listen(port: i32): i32 {
 // the socket the peer has not acknowledged yet (unsent and in flight:
 // SIOCOUTQ on Linux, SO_NWRITE on Darwin); op 7 is the peer's address as
 // one 32-bit key (__peer_key); op 8 steers the listener's SO_REUSEPORT
-// group by CPU (__steer_by_cpu); op 9 is the local address as 16-bit
-// groups (__local_group). 0 or the count, -errno, or -EINVAL for an op
-// that names no control.
+// group by CPU (__steer_by_cpu); op 9 is the local address and op 10 the
+// peer's as 16-bit groups and the port (__name_group). 0 or the count,
+// -errno, or -EINVAL for an op that names no control.
 function __fern_tcp_socket_ctl(fd: i32, op: i32, arg: i32): i32 {
   var f: i64 = fd as i64;
   if (op == 5) {
@@ -615,7 +626,10 @@ function __fern_tcp_socket_ctl(fd: i32, op: i32, arg: i32): i32 {
     return __steer_by_cpu(f);
   }
   if (op == 9) {
-    return __local_group(f, arg);
+    return __name_group(f, __sys_getsockname(), arg);
+  }
+  if (op == 10) {
+    return __name_group(f, __sys_getpeername(), arg);
   }
   if (op == 1) {
     return __setsockopt_i32(f, 6, 1, arg) as i32;
@@ -725,7 +739,7 @@ function __peer_key(f: i64): i32 {
   if (r >= 0 && fam == 2) {
     key = __peer_word(sa + 4);
   } else if (r >= 0 && fam == __af_inet6()) {
-    if (__peer_word(sa + 8) == 0 && __peer_word(sa + 12) == 0 && __peer_word(sa + 16) == 0 && __load_u8(sa + 18) == 255 && __load_u8(sa + 19) == 255) {
+    if (__peer_word(sa + 8) == 0 && __peer_word(sa + 12) == 0 && __load_u8(sa + 16) == 0 && __load_u8(sa + 17) == 0 && __load_u8(sa + 18) == 255 && __load_u8(sa + 19) == 255) {
       key = __peer_word(sa + 20);
     } else {
       key = __peer_word(sa + 8) ^ __peer_word(sa + 12);
@@ -738,15 +752,15 @@ function __peer_key(f: i64): i32 {
   return key;
 }
 
-// The socket's local address through getsockname, as 16-bit groups so
-// every answer is non-negative and -errno stays apart: `which` 0..7 is
-// the group in network order (an IPv4 address fills 0 and 1, the rest
-// are 0), 8 is the family as 4 or 6. -EINVAL outside that range,
-// -EAFNOSUPPORT for a socket of another family. The port and address
-// offsets are the same on Darwin, whose sin_len displaces only the
-// family.
-function __local_group(f: i64, which: i32): i32 {
-  if (which < 0 || which > 8) {
+// A socket's own address (getsockname, op 9) or its peer's (getpeername,
+// op 10) as 16-bit groups, so every answer is non-negative and -errno
+// stays apart: `which` 0..7 is the group in network order (an IPv4
+// address fills 0 and 1, the rest are 0), 8 is the family as 4 or 6, 9
+// the port. -EINVAL outside that range, -EAFNOSUPPORT for a socket of
+// another family. The port and address offsets are the same on Darwin,
+// whose sin_len displaces only the family.
+function __name_group(f: i64, sys: i32, which: i32): i32 {
+  if (which < 0 || which > 9) {
     return 0 - 22;
   }
   var sa: usize = __alloc(32);
@@ -756,7 +770,7 @@ function __local_group(f: i64, which: i32): i32 {
     z = z + 1;
   }
   __store_i32(sa + 28, 28);
-  var r: i64 = __syscall3(__sys_getsockname(), f, sa as i64, (sa + 28) as i64);
+  var r: i64 = __syscall3(sys, f, sa as i64, (sa + 28) as i64);
   var fam: i32 = __load_u8(sa) | __load_u8(sa + 1) << 8;
   if (target_os() == "darwin") {
     fam = __load_u8(sa + 1);
@@ -764,6 +778,8 @@ function __local_group(f: i64, which: i32): i32 {
   var out: i32 = 0 - __eafnosupport();
   if (r < 0) {
     out = r as i32;
+  } else if (which == 9) {
+    out = __load_u8(sa + 2) << 8 | __load_u8(sa + 3);
   } else if (fam == 2) {
     out = 4;
     if (which < 2) {

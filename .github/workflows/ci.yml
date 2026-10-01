@@ -35,7 +35,9 @@ jobs:
   # Which lanes this change reaches. One API listing, no checkout; ~10 s.
   changes:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # Ten seconds of work on a pull request. On a main push it may wait up to
+    # CI_CHANGES_WAIT_MINUTES for the merged pull request's in-flight run.
+    timeout-minutes: 40
     outputs:
       lanes: ${{ steps.filter.outputs.lanes }}
     steps:
@@ -235,13 +237,26 @@ jobs:
               for (const [lane, filter] of Object.entries(lanes)) out[lane] = runs(filter);
 
               // A main push whose tree is byte-identical to the head of the
-              // pull request it merged re-tests what that PR's run already
-              // passed. Each lane whose every job succeeded on a successful
-              // PR run at that head is skipped here. A lane the PR run did
-              // not run still runs, so main stays the backstop for the
-              // filters; perf always runs, because its main run records the
-              // history. Any error proves nothing and skips nothing.
+              // pull request it merged re-tests what that PR's run tested, or
+              // is still testing: the ruleset keeps a branch level with main,
+              // so the merge pushes the PR head's own tree, and pull requests
+              // here are merged with their run in flight more often than
+              // after it. The PR's newest run at that head is read lane by
+              // lane. A lane whose every job succeeded is skipped, whatever
+              // the run as a whole concluded; one that failed, was cancelled
+              // or did not run runs here, so main stays the backstop for the
+              // filters. A run still in flight with its suite under way is
+              // waited for, polling until it completes or the wait budget
+              // runs out (cancel-on-merge.yml and reap-stale-runs.yml spare
+              // exactly that run); one whose suite is still queued is not,
+              // since main alone is faster than the queue. perf always runs,
+              // because its main run records the history. Any error proves
+              // nothing and skips nothing.
               const alwaysOnMain = ["perf"];
+              const pollMs = Number(process.env.CI_CHANGES_POLL_MS) || 30000;
+              const waitMinutes = Number(process.env.CI_CHANGES_WAIT_MINUTES ?? 30);
+              const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+              const suiteStarted = (jobs) => jobs.some((j) => j.name.startsWith("Full suite / "));
               // Lane id to the name its jobs carry under "Full suite / ".
               let display = null;
               // A lane's own conditions skip some of its jobs (bootstrap's publish
@@ -267,24 +282,39 @@ jobs:
                   .data.filter((p) => p.merged_at && p.base.ref === "main");
                 if (prs.length === 0) return { reason: "no merged pull request is associated with this commit" };
                 const display = await laneNames();
-                let reason = `the pushed tree differs from the head of #${prs.map((p) => p.number).join(", #")}`;
+                const jobsOf = (run_id) => github.paginate(github.rest.actions.listJobsForWorkflowRun, {
+                  owner, repo, run_id, filter: "latest", per_page: 100,
+                });
+                const reason = `the pushed tree differs from the head of #${prs.map((p) => p.number).join(", #")}`;
                 for (const pr of prs) {
                   const head = (await github.rest.git.getCommit({ owner, repo, commit_sha: pr.head.sha })).data.tree.sha;
                   if (head !== tree) continue;
-                  reason = `#${pr.number}'s head has no successful CI run`;
+                  // Newest first, so a re-run at the same head wins.
                   const { data } = await github.rest.actions.listWorkflowRuns({
-                    owner, repo, workflow_id: "ci.yml", event: "pull_request", head_sha: pr.head.sha, status: "success",
+                    owner, repo, workflow_id: "ci.yml", event: "pull_request", head_sha: pr.head.sha, per_page: 5,
                   });
-                  for (const run of data.workflow_runs) {
-                    const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
-                      owner, repo, run_id: run.id, filter: "latest", per_page: 100,
-                    });
-                    const passed = Object.keys(lanes).filter((l) => {
-                      const mine = display[l] ? jobs.filter((j) => j.name.startsWith(`Full suite / ${display[l]} / `)) : [];
-                      return verdict(mine) === "passed";
-                    });
-                    return { pr: pr.number, run: run.id, lanes: passed };
+                  let run = data.workflow_runs[0];
+                  if (!run) return { reason: `#${pr.number}'s head has no CI run` };
+                  let jobs = await jobsOf(run.id);
+                  let waited = 0;
+                  if (run.status !== "completed") {
+                    if (!suiteStarted(jobs)) return { reason: `#${pr.number}'s run ${run.id} has not started its suite` };
+                    core.info(`#${pr.number}'s run ${run.id} is in flight at this exact tree: waiting up to ${waitMinutes} min for it`);
+                    const started = Date.now();
+                    const deadline = started + waitMinutes * 60000;
+                    while (run.status !== "completed" && Date.now() < deadline) {
+                      await sleep(pollMs);
+                      run = (await github.rest.actions.getWorkflowRun({ owner, repo, run_id: run.id })).data;
+                    }
+                    waited = Math.ceil((Date.now() - started) / 60000);
+                    if (run.status !== "completed") return { reason: `#${pr.number}'s run ${run.id} did not finish within ${waitMinutes} min` };
+                    jobs = await jobsOf(run.id);
                   }
+                  const passed = Object.keys(lanes).filter((l) => {
+                    const mine = display[l] ? jobs.filter((j) => j.name.startsWith(`Full suite / ${display[l]} / `)) : [];
+                    return verdict(mine) === "passed";
+                  });
+                  return { pr: pr.number, run: run.id, lanes: passed, waited };
                 }
                 return { reason };
               };
@@ -361,7 +391,8 @@ jobs:
                 ? (off.length ? `${on.length} lane(s) run, ${off.length} skipped` : `every lane runs: ${why}`)
                 : `${paths.length} changed path(s): ${on.length} lane(s) run, ${off.length} skipped`);
               if (provenOff.length) {
-                core.info(`${provenOff.length} lane(s) skipped: they passed on #${proven.pr}'s run ${proven.run} at this exact tree`);
+                core.info(`${provenOff.length} lane(s) skipped: they passed on #${proven.pr}'s run ${proven.run} at this exact tree` +
+                  (proven.waited ? ` (waited ${proven.waited} min for it)` : ""));
               }
               if (unchanged.length) {
                 core.info(`${unchanged.length} lane(s) skipped: nothing they read changed since main last passed them (${unchanged.join(", ")})`);
@@ -370,7 +401,8 @@ jobs:
                 .addHeading("Lanes", 3)
                 .addRaw(files === null
                   ? (provenOff.length
-                    ? `The tree is identical to #${proven.pr}'s head, and ${provenOff.length} lane(s) passed on its run ${proven.run}.\n`
+                    ? `The tree is identical to #${proven.pr}'s head, and ${provenOff.length} lane(s) passed on its run ${proven.run}` +
+                      (proven.waited ? ` (waited ${proven.waited} min for it)` : "") + `.\n`
                     : `${why}.\n`) + (unchanged.length
                     ? `${unchanged.length} lane(s) unchanged since main last passed them: ${unchanged.join(", ")}.\n`
                     : "")

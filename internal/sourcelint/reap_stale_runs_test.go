@@ -42,6 +42,22 @@ func TestReapStaleRunsCancelsSafely(t *testing.T) {
 		}
 	}
 
+	// A doomed run is spared when the main validation is adopting it: the CI run
+	// at a merged PR's head, the merge having pushed that exact tree, with its
+	// suite under way, for 45 minutes after the merge. The window is a needle
+	// because it has to outlast ci.yml's wait for the run (CI_CHANGES_WAIT_MINUTES,
+	// 30) and no more: past it the run is a dead PR's run again.
+	for _, want := range []struct{ needle, why string }{
+		{"adoptedByMain", "nothing spares the run ci.yml's lane selector is waiting for"},
+		{"age > 45", "the sparing window must outlast ci.yml's 30-minute wait and then close"},
+		{`j.name.startsWith("Full suite / ")`, "a run whose suite is still queued is reaped: main alone is faster"},
+		{`workflow_id: "pullfrog.yml"`, "Pullfrog reviews of closed pull requests are not swept"},
+	} {
+		if !strings.Contains(src, want.needle) {
+			t.Errorf("%s no longer contains %q — %s", reapFile, want.needle, want.why)
+		}
+	}
+
 	// The open pull requests have to be listed BEFORE the runs. In the other
 	// order a pull request opened mid-job has runs that were listed while it did
 	// not yet exist, so they match no open head and get reaped. Same trap

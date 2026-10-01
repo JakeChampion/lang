@@ -37,12 +37,65 @@ jobs:
     permissions:
       id-token: write
       contents: read
+      # The gate step below reads the PR and this workflow's other runs.
+      actions: read
+      pull-requests: read
     steps:
+      # Added to the generated file on purpose: a review nobody will read
+      # ends here, in seconds, instead of holding a runner for 20-50 minutes.
+      # The queue above admits reviews in order, so by the time one starts its
+      # PR is often merged (43 of 60 sampled reviews started after the merge)
+      # or has been pushed to again, with the newer review already queued.
+      # The run name the Pullfrog app dispatches with names the PR ("Review
+      # #10950 [g84rw]", "Review new commits on #10936 [0fn2g]"); a run whose
+      # name has no PR number is left alone. A newer run supersedes only one
+      # of the same kind, so a whole-PR review is never dropped for an
+      # incremental one.
+      - name: Skip a review nobody will read
+        id: gate
+        uses: actions/github-script@v9
+        env:
+          RUN_NAME: ${{ inputs.name }}
+        with:
+          script: |
+            const name = process.env.RUN_NAME || "";
+            const m = /#(\d+)/.exec(name);
+            if (!m) {
+              core.info(`no pull request named in ${JSON.stringify(name)}: reviewing`);
+              return;
+            }
+            const number = Number(m[1]);
+            const { owner, repo } = context.repo;
+            const skip = async (why) => {
+              core.setOutput("skip", "true");
+              core.notice(`review skipped: ${why}`);
+              await core.summary.addHeading("Review skipped", 3).addRaw(`${why}.\n`).write();
+            };
+            const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: number });
+            if (pr.state === "closed") {
+              return skip(`#${number} is ${pr.merged_at ? "merged" : "closed"}, so nobody is waiting on this review`);
+            }
+            const kind = name.replace(/\s*\[[^\]]*\]\s*$/, "").replace(/#\d+/, "#N");
+            const { data: me } = await github.rest.actions.getWorkflowRun({ owner, repo, run_id: context.runId });
+            for (const status of ["requested", "waiting", "pending", "queued", "in_progress"]) {
+              for (const run of await github.paginate(github.rest.actions.listWorkflowRuns, {
+                owner, repo, workflow_id: "pullfrog.yml", status, per_page: 100,
+              })) {
+                const title = run.display_title || "";
+                if (run.id === context.runId || Date.parse(run.created_at) <= Date.parse(me.created_at)) continue;
+                if (title.replace(/\s*\[[^\]]*\]\s*$/, "").replace(/#\d+/, "#N") !== kind) continue;
+                if (!new RegExp(`#${number}(?!\\d)`).test(title)) continue;
+                return skip(`a newer review of #${number} (run ${run.id}, ${status}) covers this one`);
+              }
+            }
+            core.info(`#${number} is open and this is its newest ${JSON.stringify(kind)} run: reviewing`);
       - name: Checkout code
+        if: steps.gate.outputs.skip != 'true'
         uses: actions/checkout@v6
         with:
           fetch-depth: 1
       - name: Run agent
+        if: steps.gate.outputs.skip != 'true'
         uses: pullfrog/pullfrog@v0
         with:
           prompt: ${{ inputs.prompt }}

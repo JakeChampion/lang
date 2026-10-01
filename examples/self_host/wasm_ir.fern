@@ -3417,20 +3417,54 @@ function tcp_listen_wat(name: string, params: string, with_backlog: boolean): st
   return o;
 }
 
+// name_group_arm is the socket-control arm for `op`: a socket's own
+// address (op 9, through local-address) or its peer's (op 10, through
+// remote-address) as 16-bit groups, `tcp_fn` the method for a connection
+// or listener record and `udp_fn` the one for a datagram record when
+// `udp` says the program has them. arg 0..7 is the group in network
+// order (an ipv4 address fills 0 and 1 from its four bytes at +10, the
+// rest are 0; an ipv6 group is the u16 at +16 + 2*arg), 8 the family as
+// 4 or 6, 9 the port at +8; -EINVAL outside that range.
+function name_group_arm(op: i32, tcp_fn: string, udp_fn: string, udp: boolean): string {
+  var o: string = "";
+  o = o + "    (if (i32.eq (local.get $op) (i32.const " + util.i32_to_string(op) + ")) (then\n";
+  o = o + "      (if (i32.gt_u (local.get $arg) (i32.const 9)) (then (return (i32.const -28))))\n";
+  o = o + "      (local.set $ret (call $__fern_alloc (i32.const 36)))\n";
+  if (udp) {
+    o = o + "      (if (i32.lt_u (i32.sub (i32.load offset=12 (local.get $c)) (i32.const 2)) (i32.const 2))\n";
+    o = o + "        (then (call " + udp_fn + " (i32.load (local.get $c)) (local.get $ret)))\n";
+    o = o + "        (else (call " + tcp_fn + " (i32.load (local.get $c)) (local.get $ret))))\n";
+  } else {
+    o = o + "      (call " + tcp_fn + " (i32.load (local.get $c)) (local.get $ret))\n";
+  }
+  o = o + "      (if (i32.load8_u (local.get $ret)) (then\n";
+  o = o + "        (local.set $e (i32.sub (i32.const 0) (call $__fern_wasi_socket_errno (i32.load8_u offset=4 (local.get $ret)))))\n";
+  o = o + "        (call $__fern_raw_free (local.get $ret) (i32.const 36))\n";
+  o = o + "        (return (local.get $e))))\n";
+  o = o + "      (local.set $e (i32.const 0))\n";
+  o = o + "      (if (i32.eq (local.get $arg) (i32.const 9))\n";
+  o = o + "        (then (local.set $e (i32.load16_u offset=8 (local.get $ret))))\n";
+  o = o + "        (else (if (i32.eq (local.get $arg) (i32.const 8))\n";
+  o = o + "          (then (local.set $e (select (i32.const 6) (i32.const 4) (i32.load8_u offset=4 (local.get $ret)))))\n";
+  o = o + "          (else\n";
+  o = o + "            (if (i32.load8_u offset=4 (local.get $ret))\n";
+  o = o + "              (then (local.set $e (i32.load16_u offset=16 (i32.add (local.get $ret) (i32.shl (local.get $arg) (i32.const 1))))))\n";
+  o = o + "              (else (if (i32.lt_u (local.get $arg) (i32.const 2)) (then (local.set $e (i32.or (i32.shl (i32.load8_u offset=10 (i32.add (local.get $ret) (i32.shl (local.get $arg) (i32.const 1)))) (i32.const 8)) (i32.load8_u offset=11 (i32.add (local.get $ret) (i32.shl (local.get $arg) (i32.const 1))))))))))))))\n";
+  o = o + "      (call $__fern_raw_free (local.get $ret) (i32.const 36))\n";
+  o = o + "      (return (local.get $e))))\n";
+  return o;
+}
+
 // $__fern_tcp_socket_ctl(conn, op, arg) -> 0, or -errno. Keep-alive (op 2)
-// shutdown (op 4), the peer's address (op 7, through remote-address) and
-// the local address (op 9, through local-address, the udp method for a
-// datagram record when `udp` says the program has them) are the controls
-// wasi:sockets 0.2 has; no-delay (op 1), non-blocking (op 3), the send
-// queue (op 6) and the reuseport steering (op 8) have none and answer
-// -ENOTSUP (58), so a caller learns the host owns Nagle, the blocking
-// mode and the queue rather than believing it set or read them. Any
-// other op is -EINVAL (28).
-//
-// Op 9 answers the local address as 16-bit groups: arg 0..7 the group in
-// network order (an ipv4 address fills 0 and 1 from its four bytes at
-// +10, the rest are 0; an ipv6 group is the u16 at +16 + 2*arg), 8 the
-// family as 4 or 6; -EINVAL outside that range.
+// shutdown (op 4), the peer's address as a key (op 7, through
+// remote-address), the local address (op 9) and the peer's (op 10) as
+// groups (name_group_arm, the udp methods for a datagram record when
+// `udp` says the program has them) are the controls wasi:sockets 0.2
+// has; no-delay (op 1), non-blocking (op 3), the send queue (op 6) and
+// the reuseport steering (op 8) have none and answer -ENOTSUP (58), so a
+// caller learns the host owns Nagle, the blocking mode and the queue
+// rather than believing it set or read them. Any other op is -EINVAL
+// (28).
 //
 // Op 7 answers the value the native runtimes compute from the sockaddr:
 // an IPv4 address packed with its first octet in the low byte, a
@@ -3446,29 +3480,8 @@ pub function tcp_socket_ctl_func(udp: boolean): string {
   var o: string = "";
   o = o + "  (func $__fern_tcp_socket_ctl (param $c i32) (param $op i32) (param $arg i32) (result i32)\n";
   o = o + "    (local $ret i32) (local $e i32)\n";
-  o = o + "    (if (i32.eq (local.get $op) (i32.const 9)) (then\n";
-  o = o + "      (if (i32.gt_u (local.get $arg) (i32.const 8)) (then (return (i32.const -28))))\n";
-  o = o + "      (local.set $ret (call $__fern_alloc (i32.const 36)))\n";
-  if (udp) {
-    o = o + "      (if (i32.lt_u (i32.sub (i32.load offset=12 (local.get $c)) (i32.const 2)) (i32.const 2))\n";
-    o = o + "        (then (call $__fern_wasi_udp_local_address (i32.load (local.get $c)) (local.get $ret)))\n";
-    o = o + "        (else (call $__fern_wasi_tcp_local_address (i32.load (local.get $c)) (local.get $ret))))\n";
-  } else {
-    o = o + "      (call $__fern_wasi_tcp_local_address (i32.load (local.get $c)) (local.get $ret))\n";
-  }
-  o = o + "      (if (i32.load8_u (local.get $ret)) (then\n";
-  o = o + "        (local.set $e (i32.sub (i32.const 0) (call $__fern_wasi_socket_errno (i32.load8_u offset=4 (local.get $ret)))))\n";
-  o = o + "        (call $__fern_raw_free (local.get $ret) (i32.const 36))\n";
-  o = o + "        (return (local.get $e))))\n";
-  o = o + "      (local.set $e (i32.const 0))\n";
-  o = o + "      (if (i32.eq (local.get $arg) (i32.const 8))\n";
-  o = o + "        (then (local.set $e (select (i32.const 6) (i32.const 4) (i32.load8_u offset=4 (local.get $ret)))))\n";
-  o = o + "        (else\n";
-  o = o + "          (if (i32.load8_u offset=4 (local.get $ret))\n";
-  o = o + "            (then (local.set $e (i32.load16_u offset=16 (i32.add (local.get $ret) (i32.shl (local.get $arg) (i32.const 1))))))\n";
-  o = o + "            (else (if (i32.lt_u (local.get $arg) (i32.const 2)) (then (local.set $e (i32.or (i32.shl (i32.load8_u offset=10 (i32.add (local.get $ret) (i32.shl (local.get $arg) (i32.const 1)))) (i32.const 8)) (i32.load8_u offset=11 (i32.add (local.get $ret) (i32.shl (local.get $arg) (i32.const 1))))))))))))\n";
-  o = o + "      (call $__fern_raw_free (local.get $ret) (i32.const 36))\n";
-  o = o + "      (return (local.get $e))))\n";
+  o = o + name_group_arm(9, "$__fern_wasi_tcp_local_address", "$__fern_wasi_udp_local_address", udp);
+  o = o + name_group_arm(10, "$__fern_wasi_tcp_remote_address", "$__fern_wasi_udp_remote_address", udp);
   o = o + "    (if (i32.or (i32.or (i32.eq (local.get $op) (i32.const 1)) (i32.eq (local.get $op) (i32.const 3))) (i32.or (i32.eq (local.get $op) (i32.const 6)) (i32.eq (local.get $op) (i32.const 8)))) (then (return (i32.const -58))))\n";
   o = o + "    (if (i32.eq (local.get $op) (i32.const 7)) (then\n";
   o = o + "      (if (i32.lt_u (i32.sub (i32.load offset=12 (local.get $c)) (i32.const 2)) (i32.const 2)) (then (return (i32.const 0))))\n";
@@ -3674,6 +3687,10 @@ pub function wasi_udp_recv_imports(): string {
 
 pub function wasi_udp_local_address_import(): string {
   return "  (import \"wasi:sockets/udp@0.2.0\" \"[method]udp-socket.local-address\" (func $__fern_wasi_udp_local_address (param i32 i32)))\n";
+}
+
+pub function wasi_udp_remote_address_import(): string {
+  return "  (import \"wasi:sockets/udp@0.2.0\" \"[method]udp-socket.remote-address\" (func $__fern_wasi_udp_remote_address (param i32 i32)))\n";
 }
 
 // The reactor floor (#9853) over wasi:io/poll: a readiness set kept
@@ -11841,6 +11858,9 @@ function preview1_imports(needs: string[]): string {
   }
   if ((need(needs, "tcp_local_port") || need(needs, "tcp_socket_ctl")) && need(needs, "udp_bind")) {
     parts = parts.append(wasi_udp_local_address_import());
+  }
+  if (need(needs, "tcp_socket_ctl") && need(needs, "udp_bind")) {
+    parts = parts.append(wasi_udp_remote_address_import());
   }
   // udp_send pulls the wasi:sockets/udp set plus the pollable block/drop it
   // uses for the send-permit wait (#4375). The network handle is shared
