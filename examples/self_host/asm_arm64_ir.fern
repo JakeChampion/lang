@@ -11258,7 +11258,7 @@ pub function emit_module_ir_unit_arm64_flat(mod: parser.Module, is_entry: boolea
   var s: asmcore.EmitState = asmcore.new_state();
   // struct_decls is the WHOLE-PROGRAM struct set so a function emitting an
   // imported struct's layout resolves it; str_ns namespaces this unit's pools.
-  s = asmcore.EmitState { ...s, struct_decls: all_structs, funcs: mod.funcs, str_ns: str_ns, rt_lower: rt };
+  s = asmcore.EmitState { ...s, struct_decls: all_structs, funcs: all_funcs, str_ns: str_ns, rt_lower: rt };
   // The Display gate for a unit, as asm_ir.emit_module_ir_unit_flat runs it.
   var derrs: util.Diag[] = asmcore.display_errs_module(mod, s);
   if (derrs.len() > 0) {

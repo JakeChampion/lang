@@ -14,8 +14,10 @@ import (
 // over-budget per-module rescue band: nMod sibling modules x nFn trivial i32
 // functions (701 raw merged funcs — above the 512 gate, below the 1500 cap) with
 // a live closure of nMod, one call per module, so every pruned unit is
-// IR-eligible. Generated and stdlib-free, so it is deterministic and cannot
-// drift onto the AST path because some stdlib helper stopped lowering.
+// IR-eligible. lib0 also makes a dyn call whose only implementer is the
+// entry's, so the library unit's dispatch has to list another unit's method.
+// Generated and stdlib-free, so it is deterministic and cannot drift onto the
+// AST path because some stdlib helper stopped lowering.
 //
 // Returns the entry path and the module count.
 func writeConcatFixture(t *testing.T, dir string) (string, int) {
@@ -29,6 +31,10 @@ func writeConcatFixture(t *testing.T, dir string) (string, int) {
 	want := 0
 	for m := 0; m < nMod; m++ {
 		var lib strings.Builder
+		if m == 0 {
+			lib.WriteString("pub trait Shape { function area(self: Self): i32; }\n")
+			lib.WriteString("pub function shape_area(s: dyn Shape): i32 { return s.area(); }\n")
+		}
 		for f := 0; f < nFn; f++ {
 			fmt.Fprintf(&lib, "pub function m%d_f%d(x: i32): i32 { return x + %d; }\n", m, f, m*nFn+f)
 		}
@@ -42,7 +48,9 @@ func writeConcatFixture(t *testing.T, dir string) (string, int) {
 		fmt.Fprintf(&calls, "lib%d.m%d_f0(1)", m, m)
 		want += 1 + m*nFn // m*nFn+0 added to the argument 1
 	}
-	entry := fmt.Sprintf("%s\nfunction main(): i32 {\n    var t: i32 = %s;\n    if (t == %d) { return 0; }\n    return 1;\n}\n",
+	calls.WriteString(" + lib0.shape_area(Square { side: 3 })")
+	want += 9
+	entry := fmt.Sprintf("%s\nstruct Square { side: i32 }\n\nimpl lib0.Shape for Square {\n    function area(self: Self): i32 { return self.side * self.side; }\n}\n\nfunction main(): i32 {\n    var t: i32 = %s;\n    if (t == %d) { return 0; }\n    return 1;\n}\n",
 		imports.String(), calls.String(), want)
 	entryPath := filepath.Join(proj, "entry.fern")
 	if err := os.WriteFile(entryPath, []byte(entry), 0o644); err != nil {
