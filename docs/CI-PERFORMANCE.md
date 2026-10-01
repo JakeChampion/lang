@@ -893,7 +893,9 @@ It is now three shards of equal count (`scripts/shard-tests` with no weights
 file), each in two workers, behind a leaf job that keeps the required check's
 exact name and fails unless every shard succeeded, a vanished runner
 included. Three arm64 runner slots instead of one, for a gate of roughly a
-third of the wall plus the leaf's queue wait.
+third of the wall plus the leaf's queue wait. The `test-e2e-other` aarch64
+leg, one shard of 9.9-12.2 minutes and the longest job outside the self-host
+lane, is two shards by the same arithmetic.
 
 Sharding it found a bug in `scripts/shard-tests`: with an empty weights file
 (the `/dev/null` fallback a lane without weights gets, or a file of comments)
