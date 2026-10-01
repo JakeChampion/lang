@@ -4033,8 +4033,6 @@ func inScratchDir(t *testing.T, run *exec.Cmd, target string) *exec.Cmd {
 	return run
 }
 
-// semsourceStdlibRoot is the directory the semsource driver resolves a
-// program's imports against, with the trailing slash modloader joins on.
 // semsourceProgram writes program into a directory of its own with the
 // stdlib staged beside it, which is where the driver resolves its imports.
 func semsourceProgram(t *testing.T, program string) string {

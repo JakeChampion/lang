@@ -24,6 +24,8 @@ func TestSelfHostModloadUnresolvedImport(t *testing.T) {
 		// want is the diagnostic, with DIR standing for the project directory;
 		// empty means the run must be clean and quiet.
 		want string
+		// absent, when set, is all the case checks: the run never says it.
+		absent string
 	}{
 		{
 			name: "missing-from-entry",
@@ -49,6 +51,23 @@ func TestSelfHostModloadUnresolvedImport(t *testing.T) {
 				"std/other.fern": "pub function x(): i32 { return 1; }\n",
 			},
 			want: `checker_modload_run: cannot resolve import "std/nosuch" in DIR/main.fern: DIR/std/nosuch.fern: not found`,
+		},
+		{
+			// An empty path is an import of no file, as any other is.
+			name: "empty-path",
+			files: map[string]string{
+				"main.fern": "import \"\";\nfunction main(): i32 { return 0; }\n",
+			},
+			want: `checker_modload_run: cannot resolve import "" in DIR/main.fern: DIR/.fern: not found`,
+		},
+		{
+			// A path the parser could not read is its diagnostic alone; the
+			// loader is never asked to resolve it.
+			name: "pathless-import",
+			files: map[string]string{
+				"main.fern": "import;\nfunction main(): i32 { return 0; }\n",
+			},
+			absent: "cannot resolve import",
 		},
 		{
 			name: "no-stdlib-given-is-quiet",
@@ -82,6 +101,12 @@ func TestSelfHostModloadUnresolvedImport(t *testing.T) {
 			out, _ := cmd.Output()
 			code := cmd.ProcessState.ExitCode()
 			got := strings.TrimRight(stderr.String(), "\n")
+			if tc.absent != "" {
+				if strings.Contains(got+string(out), tc.absent) {
+					t.Fatalf("exit %d, stdout %q, stderr %q; want no %q", code, out, got, tc.absent)
+				}
+				return
+			}
 			if tc.want == "" {
 				if code != 0 || got != "" || len(out) != 0 {
 					t.Fatalf("exit %d, stdout %q, stderr %q; want a clean, quiet check", code, out, got)

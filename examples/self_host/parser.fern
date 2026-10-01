@@ -26607,7 +26607,8 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
     if (kw == "import") {
       let (ir_imp, ir_bad, ir_p) = parse_import(p);
       p = ir_p;
-      if (ir_imp.path.len() > 0) {
+      // An empty path with no diagnostic is `import "";`, which the loader reports.
+      if (ir_imp.path.len() > 0 || ir_bad.len() == 0) {
         imports = imports.append(ir_imp);
       }
       for b in ir_bad {
@@ -26621,7 +26622,7 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
     if (kw == "use") {
       let (ur_imp, ur_bad, ur_p) = parse_pubuse(p);
       p = ur_p;
-      if (ur_imp.path.len() > 0) {
+      if (ur_imp.path.len() > 0 || ur_bad.len() == 0) {
         imports = imports.append(ur_imp);
       }
       for b in ur_bad {
