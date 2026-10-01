@@ -319,6 +319,18 @@ pub function op_f64_to_u64(): Op {
   return Op { decl: 0 - 1, kind_tag: kind_id("f64_to_i64"), i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: true, str: "" };
 }
 
+// The pointer-width conversions (`f64 as usize`, `usize as f64`), marked by
+// width_ptr() as the int_extend / int_wrap pair is: the u64 forms on the
+// register backends, and the u32 forms on wasm, where an address is an i32
+// and the truncation saturates at u32::MAX as native's does.
+pub function op_f64_to_ptr(): Op {
+  return Op { decl: 0 - 1, kind_tag: kind_id("f64_to_i64"), i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width_ptr(), unsigned: true, str: "" };
+}
+
+pub function op_ptr_to_f64(): Op {
+  return Op { decl: 0 - 1, kind_tag: kind_id("i32_to_f64"), i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width_ptr(), unsigned: true, str: "" };
+}
+
 // f64_bits / f64_from_bits — IEEE-754 bit reinterpret between an f64 and its
 // i64 bit pattern. On the register backends the 8-byte rt-stack slot already
 // holds the bits, so both are no-ops; wasm's typed stack needs a real

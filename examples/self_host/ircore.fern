@@ -1411,11 +1411,14 @@ pub struct Sub {
   // emit reads erased rather than lifting again; `has_lifted` says it is set.
   lifted: parser.Module,
   has_lifted: boolean,
+  // The record declarations the produced bodies build beyond the module's own
+  // (semlower.instance_records), for the emit to append to its struct table.
+  records: parser.StructDecl[],
 }
 
 pub function no_sub(): Sub {
   var none: parser.Module = parser.Module { funcs: [], structs: [], aliases: [], imports: [], top_stmts: [], enums: [], resources: [], exports: [], impls: [], trait_reqs: [], trait_decls: [], inferred_consts: [] };
-  return Sub { on: false, bodies: [], extra: [], sigs: irlower.fn_sigs_empty(), rt_lower: asmcore.no_rt_lower, lifted: none, has_lifted: false };
+  return Sub { on: false, bodies: [], extra: [], sigs: irlower.fn_sigs_empty(), rt_lower: asmcore.no_rt_lower, lifted: none, has_lifted: false, records: [] };
 }
 
 // The register emit's lambda-lifted module: the producer's, erased, when it
@@ -1425,6 +1428,16 @@ pub function sub_lifted(sub: Sub, annotated: parser.Module): parser.Module {
     return parser.erase_str_module(sub.lifted);
   }
   return lift_lambdas(annotated);
+}
+
+// `mod` with the substitution's record declarations after its own, once the
+// emit has normalised it, so they sit last as they did where ssarc lowered
+// against them.
+pub function with_records(mod: parser.Module, sub: Sub): parser.Module {
+  if (sub.records.len() == 0) {
+    return mod;
+  }
+  return parser.Module { ...mod, structs: util.append_all(mod.structs, sub.records) };
 }
 
 // The body the substitution produced for declaration `i`, else the AST
@@ -1557,7 +1570,7 @@ pub struct Gated {
 // what a per-module build cuts into units (split_units). `lifted` is the
 // lambda-lifted module (sub_lifted).
 pub function gate_program(lifted: parser.Module, known: string[], sub: Sub): Gated {
-  var im: parser.Module = parser.infer_ret_types_module(script_normalized(lifted));
+  var im: parser.Module = with_records(parser.infer_ret_types_module(script_normalized(lifted)), sub);
   var stab: irlower.StructTab = irlower.struct_tab(im.structs);
   var base: irlower.FnSigs = sub_base(sub, im.funcs, stab);
   var g: Lowered = lower_gated(im, stab, irlower.fn_sigs_with_dyn(base, im.trait_reqs), known, false, sub);
@@ -1622,7 +1635,7 @@ pub function split_units(g: Gated, parts: parser.Module[], entry: i32): Units {
 // The lowering spells a `str` receiver `string`; a part's declaration still
 // spells it `str`.
 function owner_key(fd: parser.FuncDecl): string {
-  return util.base_type_name(parser.erase_str_spelling(fd.receiver_type)) + "." + fd.name;
+  return parser.receiver_base(fd.receiver_type) + "." + fd.name;
 }
 
 // declared_owners is, for each function of `g`, the part declaring it or its

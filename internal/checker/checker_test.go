@@ -6290,6 +6290,21 @@ function main(): i32 { var h: Holder = Holder { shape: NoShape { z: 1 } }; retur
 enum Box { Wrap(dyn Shape) }
 function main(): i32 { var b: Box = Wrap(NoShape { z: 1 }); return 0; }`,
 			"payload 0 type NoShape, expected dyn Shape"},
+		// A `str` assigns only to a `str`, so it boxes into a dyn at no site,
+		// even through an impl on `str`: the box would hold the view past
+		// its source.
+		{"str in dyn struct field",
+			`trait Size { function size(self: Self): i32; }
+impl Size for str { function size(self: str): i32 { return self.len(); } }
+struct Holder { d: dyn Size }
+function main(): i32 { var s: string = "abc"; var v: str = slice_unchecked(s, 0, 2); var h: Holder = Holder { d: v }; return h.d.size(); }`,
+			"expected dyn Size, got str"},
+		{"str in dyn variant payload",
+			`trait Size { function size(self: Self): i32; }
+impl Size for str { function size(self: str): i32 { return self.len(); } }
+enum Box { Wrap(dyn Size) }
+function main(): i32 { var s: string = "abc"; var v: str = slice_unchecked(s, 0, 2); var b: Box = Wrap(v); return 0; }`,
+			"payload 0 type str, expected dyn Size"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

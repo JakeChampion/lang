@@ -240,15 +240,54 @@ function lookup_reexport(mangled: string, ctx: RewriteCtx): string {
 
 // lookup_ivar returns the bundled mangled name for a bare imported
 // enum-variant reference, or "" when `name` isn't an imported variant.
+// lookup_ivar answers the bundled name of the imported enum variant `name`
+// as seen from ctx's module: a variant of a module it imports, or of one a
+// module it imports re-exports. The map holds every loaded module's
+// variants, but a module only sees its own imports' — a name the program
+// loads for another module's sake (std/net's `Other` beside IoError's) must
+// not capture a bare reference here.
 function lookup_ivar(name: string, ctx: RewriteCtx): string {
   var i: i32 = 0;
   while (i < ctx.ivar_names.len()) {
-    if (ctx.ivar_names[i] == name) {
+    if (ctx.ivar_names[i] == name && ivar_visible(ctx.ivar_mangled[i], name, ctx)) {
       return ctx.ivar_mangled[i];
     }
     i = i + 1;
   }
   return "";
+}
+
+// ivar_visible: whether `mangled` (`pfx__name`) is declared by a module ctx's
+// module imports directly, or by the origin of a `pub use` in one of them.
+function ivar_visible(mangled: string, name: string, ctx: RewriteCtx): boolean {
+  var pfx: string = slice_unchecked(mangled, 0, mangled.len() - name.len() - 2) + "";
+  if (util.has_str(ctx.modprefixes, pfx)) {
+    return true;
+  }
+  var r: i32 = 0;
+  while (r < ctx.reexport_targets.len()) {
+    if (has_prefix(ctx.reexport_targets[r], pfx + "__") && has_prefix_in(ctx.reexport_keys[r], ctx.modprefixes)) {
+      return true;
+    }
+    r = r + 1;
+  }
+  return false;
+}
+
+// has_prefix_in: whether `mangled` is `p__…` for some p in `prefixes`.
+function has_prefix_in(mangled: string, prefixes: string[]): boolean {
+  var m: i32 = 0;
+  while (m < prefixes.len()) {
+    if (has_prefix(mangled, prefixes[m] + "__")) {
+      return true;
+    }
+    m = m + 1;
+  }
+  return false;
+}
+
+function has_prefix(s: string, p: string): boolean {
+  return s.len() >= p.len() && slice_unchecked(s, 0, p.len()) + "" == p;
 }
 
 // first_dot / first_bracket: byte index of the first '.' / '[' in s,
@@ -2202,6 +2241,7 @@ function main(): i32 {
   // rewrite_type_name spot-checks via a hand-built ctx.
   var mn: string[] = [];
   mn = mn.append("lexer");
+  mn = mn.append("test");
   var dn: string[] = [];
   dn = dn.append("Token");
   var ivn: string[] = [];

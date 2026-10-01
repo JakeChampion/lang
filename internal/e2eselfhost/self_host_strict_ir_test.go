@@ -707,20 +707,45 @@ var strictIRBailReasons = []struct {
 	fn     string
 	reason string
 }{
-	// A generic bound only through a function value whose type no declaration
-	// spells keys no clone, so its instance stays erased (#10827).
-	{"generic-over-an-unspelled-function-value", `struct Slot[T] { v: T }
-
-pub function hold[T](f: () => T): i32 {
-    var c: Slot[T] = Slot[T] { v: f() };
-    return 1;
+	// A dyn holding a view cannot be rebuilt at a merge (ssasem.copyable), so
+	// one merged past its source is refused rather than read after the source
+	// is released.
+	{"dyn-view-merged-past-its-source", `import "std/i32";
+trait Size { function size(self: Self): i32; }
+struct P { a: str }
+impl Size for P { function size(self: P): i32 { return self.a.len() * 10 + (self.a[0] as i32) - 97; } }
+function mk(n: i32): string {
+    var s: string = "ab";
+    var i: i32 = 0;
+    while (i < n) { s = s + "c"; i = i + 1; }
+    return s;
+}
+function wrap(s: string): dyn Size { var p: P = P { a: slice_unchecked(s, 1, 4) }; return p; }
+function g(n: i32): i32 {
+    var d: dyn Size = P { a: "q" };
+    if (n != 0) {
+        var s: string = mk(n);
+        d = wrap(s);
+    }
+    var junk: string[] = [];
+    var i: i32 = 0;
+    while (i < 50) { junk = junk.append("zz" + i.to_string()); i = i + 1; }
+    return d.size();
+}
+function main(): i32 { print(g(3).to_string() + " " + g(0).to_string()); return 0; }
+`, "g", "dependency unavailable at use"},
+	// An instance bound to a view would hand out a view it was lent.
+	{"template-bound-to-a-view", `pub function first[T](f: () => T): T {
+    var xs: T[] = [f()];
+    return xs[0];
 }
 
 function main(): i32 {
-    var fs: (() => i32)[] = [(): i32 => 7];
-    return hold(fs[0]) + hold((): string => "x");
+    var b: string = "abcdefgh";
+    print(first((): str => slice_unchecked(b, 2, 5)));
+    return 0;
 }
-`, "hold$i32", "record field type"},
+`, "first$str", "a view is lent, never retained"},
 }
 
 // TestSelfHostStrictIRNamesBailReason asserts each fixture's refusal names its

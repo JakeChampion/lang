@@ -13,9 +13,9 @@
 //     sub-path: `import "std/io"` → `<dir>/std/io.fern`, falling back to
 //     the flat basename `<dir>/io.fern`;
 //   * the module's NAMESPACE is the basename (`std/io` → `io`);
-//   * an import that resolves to no readable file is skipped — a compiler
-//     intrinsic / not-vendored stdlib module, exactly as the legacy
-//     `///MODULE` bundle left them out.
+//   * a `std/` or `core/` import is skipped when no stdlib was given (see
+//     stdlib_not_given); any other import that resolves to no readable file
+//     is returned as a diagnostic for the driver to report.
 //
 // Uses only features the self-hosted emitter supports (read_file → Result,
 // match), so it builds with either compiler.
@@ -82,13 +82,13 @@ function enqueue_imports(queue: string[], seen: string[], mod: parser.Module): s
   return out;
 }
 
-// fill_dirs appends `n` copies of `dir`, keeping the directory list the same
-// length as the import queue it parallels.
-function fill_dirs(dirs: string[], dir: string, n: i32): string[] {
-  var out: string[] = dirs;
+// fill_n appends `n` copies of `v`, keeping a list the same length as the
+// import queue it parallels.
+function fill_n(xs: string[], v: string, n: i32): string[] {
+  var out: string[] = xs;
   var i: i32 = 0;
   while (i < n) {
-    out = out.append(dir + "");
+    out = out.append(v + "");
     i = i + 1;
   }
   return out;
@@ -206,7 +206,7 @@ pub function resolve_module(ov: Overlay, dir: string, path: string, name: string
     return Resolved { ...res_none(), src: ov.srcs[oi], dir: dir, ok: true, shown: "stdlib://" + rel_path(path) + ".fern" };
   }
   if (ov.sealed) {
-    return res_none();
+    return Resolved { ...res_none(), err_path: "stdlib://" + rel_path(path) + ".fern" };
   }
   var direct: Resolved = res_read(dir, rel_path(path));
   if (direct.ok || direct.err.len() > 0) {
@@ -221,7 +221,12 @@ pub function resolve_module(ov: Overlay, dir: string, path: string, name: string
   // deps resolved from the per-machine content-addressed store via the
   // `env` runtime builtin. Dormant when no fern.toml is present, so a
   // manifest-less build (every current compiler source) is unchanged.
-  return try_manifest(dir, name);
+  var man: Resolved = try_manifest(dir, name);
+  if (man.ok || man.err.len() > 0) {
+    return man;
+  }
+  // Not found anywhere: `err_path` names the first candidate.
+  return direct;
 }
 
 // try_manifest resolves a DECLARED dependency `name` from `<dir>fern.toml`
@@ -467,39 +472,82 @@ function strip_fern_ext(s: string): string {
   return s;
 }
 
+// unresolved_import is the diagnostic for an import that resolves to no
+// module file: the import as written, the file that wrote it, and the first
+// candidate looked for with why it failed ("" means it is not there).
+pub function unresolved_import(path: string, importer: string, tried: string, reason: string): string {
+  if (reason.len() == 0) {
+    reason = "not found";
+  }
+  return "cannot resolve import \"" + path + "\" in " + importer + ": " + tried + ": " + reason;
+}
+
+// report_unresolved prints each of `missing` (unresolved_import lines) under
+// `driver`'s name and reports whether there were any.
+pub function report_unresolved(missing: string[], driver: string): boolean {
+  for m in missing {
+    eprint(driver + ": " + m);
+  }
+  return missing.len() > 0;
+}
+
+// stdlib_not_given is true for a `std/` or `core/` import made where no stdlib
+// was given: the overlay carries no modules, and the import's tree (`std/` or
+// `core/`) is not a directory under `dir`. Such an import is expected to
+// resolve to nothing — a driver run without a vendored stdlib, on a program
+// that imports `core/map` and uses the builtin Map — so it is skipped, not
+// reported. A call into it still dangles, and the call gate reports that.
+function stdlib_not_given(ov: Overlay, dir: string, path: string): boolean {
+  if (ov.sealed || ov.paths.len() > 0 || !util.is_stdlib_path(path)) {
+    return false;
+  }
+  var tree: string = "core";
+  if (util.str_has_prefix(path, "std/")) {
+    tree = "std";
+  }
+  return !util.is_dir(dir + tree);
+}
+
 // load_imports walks the entry module's import graph breadth-first,
 // reading each resolvable `.fern` file and parsing it into a
 // flatten.LoadedModule keyed by basename (what `mod.X` references resolve
-// to). Unresolvable imports (intrinsics / not-vendored stdlib) are
-// silently skipped.
+// to). It also returns an unresolved_import line for each import that
+// resolved to no file, except those stdlib_not_given expects to be absent;
+// the driver reports them with report_unresolved and fails. Imports are
+// deduped by basename, so of two sharing one (`std/convert` and
+// `std/wasm/convert`) only the first loads and the second is not reported.
+//
+// `entry_path` names the entry in those lines, and its directory is the root
+// the entry's imports resolve against.
 //
 // Each queued import carries the directory it was written IN, and a module
 // is resolved against that rather than against the entry's directory: a
 // dependency's `import "./util"` names a file beside the dependency, and its
-// declared dependencies live in its own manifest. Resolving everything
-// against the entry meant a dependency's own dependencies never loaded at
-// all — silently, since an unresolvable import is skipped (#6756).
+// declared dependencies live in its own manifest (#6756).
 //
 // Each module's lines are numbered from its util.line_base, for every caller:
 // a position read off the result decodes through util.pos_line.
-pub function load_imports(ov: Overlay, dir: string, entry: parser.Module): flatten.LoadedModule[] {
-  let (loaded, files) = load_imports_with_files(ov, dir, entry);
-  return loaded;
+pub function load_imports(ov: Overlay, entry_path: string, entry: parser.Module): (flatten.LoadedModule[], string[]) {
+  let (loaded, files, missing) = load_imports_with_files(ov, entry_path, entry);
+  return (loaded, missing);
 }
 
 // load_imports_with_files is load_imports plus each loaded module's display
 // path, in load order. Each module is tokenized from its own util.line_base,
 // so `files` is the table util.pos_str reads a diagnostic's file from.
-pub function load_imports_with_files(ov: Overlay, dir: string, entry: parser.Module): (flatten.LoadedModule[], string[]) {
+pub function load_imports_with_files(ov: Overlay, entry_path: string, entry: parser.Module): (flatten.LoadedModule[], string[], string[]) {
   var loaded: flatten.LoadedModule[] = [];
   var files: string[] = [];
+  var missing: string[] = [];
   var seen: string[] = [];
   var queue: string[] = enqueue_imports([], seen, entry);
-  var queue_dirs: string[] = fill_dirs([], dir, queue.len());
+  var queue_dirs: string[] = fill_n([], dirname(entry_path), queue.len());
+  var importers: string[] = fill_n([], entry_path, queue.len());
   var qi: i32 = 0;
   while (qi < queue.len()) {
     var path: string = queue[qi];
     var from: string = queue_dirs[qi];
+    var importer: string = importers[qi];
     qi = qi + 1;
     var name: string = base_name(path);
     if (util.has_str(seen, name)) {
@@ -514,10 +562,13 @@ pub function load_imports_with_files(ov: Overlay, dir: string, entry: parser.Mod
       var before: i32 = queue.len();
       queue = enqueue_imports(queue, seen, m);
       // The module's own imports resolve against ITS directory.
-      queue_dirs = fill_dirs(queue_dirs, r.dir, queue.len() - before);
+      queue_dirs = fill_n(queue_dirs, r.dir, queue.len() - before);
+      importers = fill_n(importers, r.shown, queue.len() - before);
+    } else if (r.err.len() > 0 || !stdlib_not_given(ov, from, path)) {
+      missing = missing.append(unresolved_import(path, importer, r.err_path, r.err));
     }
   }
-  return (loaded, files);
+  return (loaded, files, missing);
 }
 
 // merge_builtins reads `<dir>builtins.fern` (the real built-in-type

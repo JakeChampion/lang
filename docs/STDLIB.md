@@ -1303,6 +1303,62 @@ Unix-domain sockets and IPv6 listeners arrive with the primitives that make
 them honest on every address family; until then `std/tcp` is the accept
 loop and `std/fetch` the client.
 
+### `std/dns`
+
+A stub resolver (#9855): the RFC 1035 wire codec, the two files glibc's
+resolver reads, a query over UDP that retries over TCP when the reply is
+truncated, and the lookups on top. Reaches `fs` for the files, `tcp` for
+the sockets, `random` for query ids and `now` for the wait.
+
+- `Message`, `Question`, `Record`, `RData` — a message as data, `RData`
+  being `A(IpAddr)`, `AAAA(IpAddr)`, `CNAME(name)`, `PTR(name)` or
+  `Raw(bytes)` for a type the module does not read. `query(id, name,
+  qtype)` is a recursion-desired question; `with_edns(m)` appends the
+  EDNS0 OPT record advertising `udp_payload()` (4096) bytes; `encode(m)`
+  writes the wire form, names uncompressed; `decode(bytes)` reads one,
+  following compression pointers that only point backwards, and answers
+  `Malformed` for anything that does not fit. `records_for(m, name,
+  rtype)` reads the answer section for a name, following its CNAME chain
+  to the owner that has the records, and `answer_records` turns a reply's
+  rcode into the lookup's result.
+- `parse_hosts(contents)`, `hosts_lookup(entries, name)` (every address
+  of a name, both families, caselessly) and `hosts_canonical(entries,
+  name)` read `/etc/hosts`; `parse_resolv_conf(contents, host)` reads
+  `/etc/resolv.conf` with res_init's defaults and caps (`nameserver` of
+  either family, at most three, one with an IPv6 zone skipped; `domain`
+  and `search`, the last one winning, the hostname's domain when neither
+  is given; `options ndots:n` up to 15, `timeout:n` up to 30 s,
+  `attempts:n` up to 5, `rotate`). `RES_OPTIONS`, `LOCALDOMAIN` and
+  `HOSTALIASES` are not read.
+- `search_plan(name, conf)` and `search_candidates` are res_search's order:
+  a name with at least `ndots` dots is asked as it stands before the
+  search domains, one with fewer after them, a name ending in a dot only
+  as it stands.
+- `exchange(ns, q, timeout_ms)` is one query to one nameserver: UDP with
+  EDNS0, a reply to another id or question ignored, a truncated reply
+  asked again over TCP (`exchange_tcp`). `ask(conf, q)` is res_send over
+  the nameservers, `attempts` times round, from a rotating start under
+  `rotate`; SERVFAIL, REFUSED, silence and an unreachable server hand the
+  query to the next.
+- `lookup_a`, `lookup_aaaa` and `canonical_name` walk the search plan over
+  `ask`; `lookup_records_with` and `search_with` take the asker as a
+  function, which is how the walk is tested with a scripted nameserver.
+  `DnsError` is `NoSuchName` (NXDOMAIN), `NoData` (a clean reply without
+  the record), `NoReply` (the timeout), `ServerFailure`, `Refused`,
+  `Malformed`, `NoNameserver` or `Socket(NetError)`, and implements
+  `error.Error`.
+- `system_conf()` and `system_hosts()` read this machine's files, and
+  `resolve(name)` is the lookup a program wants by default: an address
+  literal as it is, then the hosts file, then DNS, A records before AAAA
+  records. The RFC 6724 sort, the parallel A and AAAA query, Happy
+  Eyeballs and NAT64 are the next slice of #9855; `.local` names go to
+  the nameservers like any other (no mDNS).
+
+`examples/tests/dns_test.fern` covers the codec, the files, the plan and
+the walk; `TestDnsExchangeX86_64` and its self-host twin drive the
+exchange against a nameserver on the loopback interface, over UDP,
+through the TCP retry and against one that stays silent.
+
 ### `std/tcp`
 
 - `tcp_serve(port, handler)` — HTTP/1.1 serve loop. Calls
