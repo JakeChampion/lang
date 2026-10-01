@@ -228,19 +228,29 @@ jobs:
   # WHOLE-COMPILER FIXPOINTS. OWN_JOB_TESTS-class proofs that each run the
   # built compiler over the whole compiler source; they share one job because
   # each is a few minutes and they share the fern.fern build.
+  #
+  # Two jobs, two proofs each: the four steps were 2.0 + 2.4 + 2.6 + 3.6
+  # minutes in one job, the fern.fern build they share coming from the
+  # driver cache either way. `fixpoints` holds the two gen0/gen1 proofs,
+  # `stage2` the two that run what stage 1 built.
   selfhost-fixpoints:
-    name: selfhost-fixpoints-x86_64
+    name: selfhost-fixpoints-x86_64-${{ matrix.group }}
     runs-on: ubuntu-latest
     timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [fixpoints, stage2]
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
       - uses: ./.github/actions/selfhost-driver-cache
       - name: aarch64 cross-gcc + qemu (the stage-2 leg is linked and RUN)
+        if: matrix.group == 'stage2'
         uses: ./.github/actions/apt-cross-toolchain
       - uses: ./.github/actions/build-e2e-binaries
       - name: two-generation const_func eligibility check
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && matrix.group == 'fixpoints' }}
         env:
           RUN_CONST_FUNC_GEN2: "1"
         run: |
@@ -254,7 +264,7 @@ jobs:
       # the whole compiler under qemu, and it is left to a human with time
       # rather than paid on every push.
       - name: arm64 stage-2 fixpoint (gen1 == gen2, byte-identical)
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && matrix.group == 'stage2' }}
         run: |
           set -euo pipefail
           chmod +x e2eselfhost.test
@@ -265,7 +275,7 @@ jobs:
       # The CLI rebuilding itself, and the result compiling real input
       # (#7954). The fixpoints compare bytes; this runs what stage 1 built.
       - name: x86-64 stage-2 CLI compiles lexer.fern and a program
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && matrix.group == 'stage2' }}
         run: |
           set -euo pipefail
           chmod +x e2eselfhost.test
@@ -274,7 +284,7 @@ jobs:
           gotestsum --format standard-verbose --raw-command -- \
             go tool test2json -t -p e2eselfhost "$BIN" -test.run '^TestSelfHostCLIStage2X86_64$' -test.v -test.timeout 20m
       - name: whole-compiler emit-all fixpoint at batch=8 (gen0 == gen1)
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && matrix.group == 'fixpoints' }}
         run: |
           set -euo pipefail
           chmod +x e2eselfhost.test

@@ -897,6 +897,15 @@ third of the wall plus the leaf's queue wait. The `test-e2e-other` aarch64
 leg, one shard of 9.9-12.2 minutes and the longest job outside the self-host
 lane, is two shards by the same arithmetic.
 
+The `diff-selfhost-x86_64` and `-arm64` jobs, 17.3 and 14.5 minutes, were
+the longest jobs outside the shards and ran their 512 seeds in one job per
+target. Each is two seed shards now through the differential lane's own
+`DIFF_ORACLE_SHARD` knob; the wasm leg (0.8 minutes) stays one job.
+
+`selfhost-fixpoints-x86_64` ran four whole-compiler proofs in one job, 2.0,
+2.4, 2.6 and 3.6 minutes of them after a shared fern.fern build: two jobs of
+two proofs each now, the build coming from the driver cache in both.
+
 Lint, the other required check, spent 2.0 of its 4.7 minutes in
 `fern -check sources`, and 146 of those seconds locally were
 `tools/selfhost_driver_check.sh` type-checking 47 drivers one after another,
