@@ -162,8 +162,9 @@ pub function (s: Stream) read_n(n: i32): (u8[], Stream) {
 // (Windows line endings) is also stripped. None + unchanged
 // Stream when exhausted at the start of the call (EOF); a
 // final unterminated line returns Some(line) + the advanced
-// Stream, then None on the subsequent call. Text, as
-// `read_all_string` reads it: an ill-formed sequence is U+FFFD.
+// Stream, then None on the subsequent call. An ill-formed
+// sequence reads as U+FFFD: this reader's None already means
+// end of input, so it has no arm to refuse into.
 pub function (s: Stream) read_line(): (Option[string], Stream) {
   if (s.pos >= s.data.len()) {
     return (None, s);

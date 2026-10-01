@@ -1049,7 +1049,8 @@ serializer.
   `http.bytes(status, bytes)`, `http.stream(status, stream)`,
   `http.file(path)` and `http.chunks(status, next)` build
   the last four. `(resp).body_string()` (an ill-formed sequence in a
-  byte-domain body reads as U+FFFD), `(resp).body_bytes()` and
+  byte-domain body reads as U+FFFD: unlike `(req).body_string()` it has no
+  error arm, a response being the handler's own), `(resp).body_bytes()` and
   `(resp).body_len()` read whichever a response carries, a producer's chunks
   joined; a `BodyFile` reads as empty from a handler, since a handler may not
   reach the file system (E080), and `http_materialize(resp)` reads one whole
@@ -1066,13 +1067,19 @@ serializer.
   body either way. `http_serialize_response_head(resp, keep_alive, framing)`
   is the head alone, the framing line (`Content-Length` or
   `Transfer-Encoding`) the caller's.
+- **Request body:** `HttpRequest.body` is the bytes as they came
+  (`req.body.data`, a `u8[]`); `(req).body_string(): Result[string,
+  BodyError]` is the body as text, `Err(NotUtf8)` when it is not well-formed
+  UTF-8, so a handler declared as `Result[HttpResponse, http.BodyError]`
+  reads `var text: string = req.body_string()?;`.
 - **Typed JSON body:** `body_json[T](req): Result[T, BodyError]` decodes the
   body as a `T: json.FromJson` and tells the failures apart:
   `UnsupportedMediaType(ct)` when the `Content-Type` is not
-  `application/json` or a `+json` type (or is missing), `MalformedJson(e)`
-  with std/json's `JsonError`, `WrongShape(why)` naming the field.
-  `BodyError` is `ToResponse` (415 / 400 / 422, as RFC 9457 problems), so a
-  handler declared as `Result[HttpResponse, http.BodyError]` reads
+  `application/json` or a `+json` type (or is missing), `NotUtf8` when the
+  body is not well-formed UTF-8, `MalformedJson(e)` with std/json's
+  `JsonError`, `WrongShape(why)` naming the field. `BodyError` is
+  `ToResponse` (415 / 400 / 400 / 422, as RFC 9457 problems), so a handler
+  declared as `Result[HttpResponse, http.BodyError]` reads
   `var item: Item = http.body_json[Item](req)?;`.
 - **Header methods:** `(resp).with_header(name, value)` (set) /
   `(resp).with_appended_header(name, value)` (append) /

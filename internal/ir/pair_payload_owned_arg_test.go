@@ -52,7 +52,10 @@ function main(): i32 {
 	if !retained {
 		t.Fatalf("bs does not own r (no retain before the call); the shape under test is gone:\n%s", p)
 	}
-	if n := countCallDirect(fn.Ops, "__fern_box_free"); n == 0 {
-		t.Errorf("main frees no box: the pair-form payload handed to bs's owned parameter is released by nobody; ops:\n%s", p)
+	// The arm's release of r is a __drop_struct_R; the boxes main frees
+	// through other paths (the loop's own temporaries) do not stand in
+	// for it, so the count is pinned on the drop itself.
+	if n := countCallDirect(fn.Ops, "__drop_struct_R"); n != 1 {
+		t.Errorf("main drops R %d times, want 1: the pair-form payload handed to bs's owned parameter is released by nobody; ops:\n%s", n, p)
 	}
 }
