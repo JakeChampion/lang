@@ -2003,7 +2003,16 @@ pub function (s: string) ends_with_ci(suffix: string): boolean {
 pub function (s: string) bytes(): u8[] {
   var n: i32 = s.len();
   var out: u8[] = __alloc_u8(n);
-  if (n > 0) {
+  if (n <= 7) {
+    // Native inline strings need a promoted buffer for an escaping byte
+    // view. This owned copy needs no view, so copy short values directly
+    // instead of creating a promotion with no owner to release it.
+    var i: i32 = 0;
+    while (i < n) {
+      out = out.with(i, s[i]);
+      i = i + 1;
+    }
+  } else {
     // Use `as usize`, not `as i32`: native 64-bit targets
     // (arm64-linux on AWS Graviton / Ampere Altra) place
     // heap mmap regions above 4 GiB, so `pointer as i32`
