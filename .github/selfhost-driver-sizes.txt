@@ -416,6 +416,13 @@
 # 2026-10-01 — asm_run 8648888 -> 9081512 (+5.0%), main's growth since the
 # last refresh plus this PR's dyn and map copies; the other rows stay inside
 # 5%. Number pasted from driver-sizes' own report on run 36836392983.
+# 2026-10-01 — asm_pathprobe_run 5454560 -> 5727752 (+5.0%), main's growth
+# since the last refresh plus this PR's local-address control op in the
+# runtime; the other rows stay inside 5%. Number pasted from driver-sizes'
+# own report on run 36846785115.
+# 2026-10-01 — asm_modload_run 9438224 -> 9917048 (+5.1%) once this branch
+# took main's 48 commits since its base; the other rows stay inside 5%.
+# Number pasted from driver-sizes' own report on run 36854942099.
 fern.fern/stage2 13040616
 fern.fern 13040616
 asm_load_run.fern 10866392
