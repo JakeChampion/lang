@@ -5345,21 +5345,31 @@ function x86_gas_pinsr(own a: X86Asm, mnem: string, rest: string): X86Asm {
 }
 
 // x86_gas_emit assembles one instruction line (mnemonic + operand text).
+// x86_gas_emit assembles one instruction from its text: the entry the
+// encoder fixtures and the `lock` arm use. A round goes through
+// x86_gas_emit_op with the line x86_gas_prepare classified.
 function x86_gas_emit(own a: X86Asm, mnem: string, rest: string): X86Asm {
+  return x86_gas_emit_op(a, x86_gas_classify(mnem, rest));
+}
+
+// x86_gas_emit_op assembles one classified instruction. The arms are the
+// ones x86_gas_classify chose between; each reads its table value from
+// `l.ext` and the operands from the split the classification kept.
+function x86_gas_emit_op(own a: X86Asm, l: GasLine): X86Asm {
+  var mnem: string = l.mnem;
+  var rest: string = l.rest;
+  var k: i32 = l.kind;
   // The AVX2 forms live outside the generated tables (VEX.128.0F 77 for
   // vzeroupper; the rest below the operand split).
-  if (mnem == "vzeroupper" && rest.len() == 0) {
+  if (k == GK_VZEROUPPER) {
     return x86_gas_emit_packed(a, x86_pack3(197, 248, 119));
   }
-  if (mnem == "vpcmpeqb") {
+  if (k == GK_VPCMPEQB) {
     return x86_gas_vpcmpeqb(a, mnem, rest);
   }
   // no-operand mnemonics (incl. the AT&T string ops) — fixed byte lists.
-  if (rest.len() == 0) {
-    var fx: i32 = x86_gas_fixed_op(mnem);
-    if (fx >= 0) {
-      return x86_gas_emit_packed(a, fx);
-    }
+  if (k == GK_FIXED) {
+    return x86_gas_emit_packed(a, l.ext);
   }
   // The repeat prefixes: F3 + a string op for rep/repe/repz, F2 for the
   // not-equal pair. A dropped string-op leaves memory uninitialised,
@@ -5369,8 +5379,8 @@ function x86_gas_emit(own a: X86Asm, mnem: string, rest: string): X86Asm {
   // condition is only meaningful on cmps/scas, where the prefix repeats
   // while ZF is set. repne/repnz repeat while it is clear, which is a
   // different byte and not an alias.
-  var rpfx: i32 = x86_gas_rep_pfx(mnem);
-  if (rpfx >= 0) {
+  if (k == GK_REP) {
+    var rpfx: i32 = l.ext;
     if (!x86_gas_rep_ok(rest)) {
       return x86_gas_bad(a, mnem + " " + rest);
     }
@@ -5388,7 +5398,7 @@ function x86_gas_emit(own a: X86Asm, mnem: string, rest: string): X86Asm {
   }
   // lock prefix: F0, validated against the lockable set — a lock on
   // anything else is #UD at runtime, so it is refused at assembly.
-  if (x86_gas_is_lock(mnem)) {
+  if (k == GK_LOCK) {
     var lsp: i32 = x86_str_indexof(rest, " ");
     var lm: string = rest;
     var lr: string = "";
@@ -5409,23 +5419,17 @@ function x86_gas_emit(own a: X86Asm, mnem: string, rest: string): X86Asm {
   // setCC <reg8>: store a condition flag as 0/1, for any spelling the
   // shared condition table knows — the aliases (setnae/setnb/setna/setnbe/
   // setnge/setnl/setng/setnle) included. The second opcode byte is 0x90+cc.
-  if (x86_str_starts_with(mnem, "set")) {
-    var scc: i32 = x86_gas_cc_code(slice_unchecked(mnem, 3, mnem.len()) + "");
-    if (scc >= 0) {
-      a = X86Asm { ...a, code: x86_setcc_reg8(a.code, 144 + scc, x86_gas_reg8(rest)) };
-      return a;
-    }
+  if (k == GK_SETCC) {
+    a = X86Asm { ...a, code: x86_setcc_reg8(a.code, 144 + l.ext, x86_gas_reg8(rest)) };
+    return a;
   }
   // branch / call: one operand = a label
   // A `*` operand means INDIRECT — through a register or stack slot — not
   // a branch to a label of that name.
-  if (x86_gas_is_branch(mnem)) {
+  if (k == GK_BRANCH) {
+    var ext: i32 = l.ext;  // jmp FF /4, call FF /2
     if (rest.len() > 0 && rest[0] == b'*') {
       var ind: string = x86_gas_trim(slice_unchecked(rest, 1, rest.len()));
-      var ext: i32 = 2;  // call FF /2
-      if (mnem == "jmp") {  // jmp FF /4
-        ext = 4;
-      }
       if (x86_str_contains(ind, "(")) {
         // `*disp(%base[,%index,scale])` and `*sym(%rip)` — FF /2 //4
         // over a memory operand (a callee pointer in a stack slot or
@@ -5442,14 +5446,14 @@ function x86_gas_emit(own a: X86Asm, mnem: string, rest: string): X86Asm {
       if (ireg < 0) {
         return x86_gas_bad(a, mnem + " " + rest);
       }
-      if (mnem == "jmp") {
+      if (ext == 4) {
         a = X86Asm { ...a, code: x86_jmp_reg(a.code, ireg) };
       } else {
         a = X86Asm { ...a, code: x86_call_reg(a.code, ireg) };
       }
       return a;
     }
-    if (mnem == "jmp") {
+    if (ext == 4) {
       return x86_jmp_label(a, rest);
     }
     return x86_call_label(a, rest);
@@ -5457,14 +5461,11 @@ function x86_gas_emit(own a: X86Asm, mnem: string, rest: string): X86Asm {
   // jCC <label>: any spelling the shared condition table knows, aliases
   // (jnae/jnb/jna/jnbe/jnge/jnl/jng/jnle) included. `jmp` is handled above,
   // and "mp" is not a condition, so it could not be caught here regardless.
-  if (x86_str_starts_with(mnem, "j")) {
-    var jcc: i32 = x86_gas_cc_code(slice_unchecked(mnem, 1, mnem.len()) + "");
-    if (jcc >= 0) {
-      return x86_jcc_label(a, jcc, rest);
-    }
+  if (k == GK_JCC) {
+    return x86_jcc_label(a, l.ext, rest);
   }
   // one-operand: push/pop take a register or a memory operand
-  if (x86_gas_is_pushpop(mnem) && mnem == "pushq") {
+  if (k == GK_PUSHQ) {
     if (rest.len() > 0 && rest[0] == b'$') {  // $imm — 6A ib when it fits
       var pv: i32 = x86_gas_atoi(rest);
       if (x86_imm_fits8(pv)) {
@@ -5489,7 +5490,7 @@ function x86_gas_emit(own a: X86Asm, mnem: string, rest: string): X86Asm {
     }
     return a;
   }
-  if (x86_gas_is_pushpop(mnem)) {
+  if (k == GK_POPQ) {
     if (x86_str_contains(rest, "(")) {
       var qm: GasMem = x86_gas_parse_mem(rest);
       if (qm.no_base) {
@@ -5505,56 +5506,48 @@ function x86_gas_emit(own a: X86Asm, mnem: string, rest: string): X86Asm {
     return a;
   }
   // Suffixed families that split their own operands (any arity), plus
-  // the one-operand groups. Each lookup falls through when it misses, so
-  // an unmatched mnemonic still reaches the two-operand dispatch below.
-  var sfx: i32 = x86_gas_suffix_size(mnem);
-  if (sfx > 0) {
-    var bse: string = x86_gas_strip_suffix(mnem);
-    if (x86_gas_is_imul(bse)) {
-      return x86_gas_imul_family(a, mnem, sfx, rest);
-    }
-    var ue: i32 = x86_gas_unary_ext(bse);
-    if (ue >= 0) {
-      return x86_gas_unary_family(a, mnem, 246, ue, sfx, rest);
-    }
-    var ide: i32 = x86_gas_incdec_ext(bse);
-    if (ide >= 0) {
-      return x86_gas_unary_family(a, mnem, 254, ide, sfx, rest);
-    }
-    if (x86_gas_is_bswap(bse)) {
-      return x86_gas_bswap(a, mnem, sfx, rest);
-    }
-    var sho: i32 = x86_gas_shld_op(bse);
-    if (sho >= 0) {
-      return x86_gas_shld_family(a, mnem, sho, sfx, rest);
-    }
+  // the one-operand groups.
+  var sfx: i32 = l.sfx;
+  if (k == GK_IMUL) {
+    return x86_gas_imul_family(a, mnem, sfx, rest);
+  }
+  if (k == GK_UNARY) {
+    return x86_gas_unary_family(a, mnem, 246, l.ext, sfx, rest);
+  }
+  if (k == GK_INCDEC) {
+    return x86_gas_unary_family(a, mnem, 254, l.ext, sfx, rest);
+  }
+  if (k == GK_BSWAP) {
+    return x86_gas_bswap(a, mnem, sfx, rest);
+  }
+  if (k == GK_SHLD) {
+    return x86_gas_shld_family(a, mnem, l.ext, sfx, rest);
   }
   // three-operand SSE ($imm first): rounds/pcmp*stri + the shuffles, and
   // the lane extract/insert group.
-  if (x86_gas_imm3a_op(mnem) >= 0 || x86_gas_shuf_op(mnem) >= 0) {
+  if (k == GK_SSE_IMM3) {
     return x86_gas_sse_imm3(a, mnem, rest);
   }
-  if (x86_gas_is_pextr(mnem)) {
+  if (k == GK_PEXTR) {
     return x86_gas_pextr(a, mnem, rest);
   }
-  if (x86_gas_is_pinsr(mnem)) {
+  if (k == GK_PINSR) {
     return x86_gas_pinsr(a, mnem, rest);
   }
   // two-operand (split on the top-level comma, skipping (%b,%i,s) commas)
-  var ci: i32 = x86_gas_top_comma(rest);
-  if (ci < 0) {
+  if (k == GK_UNKNOWN1) {
     // Unknown / unsupported single-operand mnemonic: RECORD it (SH-005).
     // Dropping the instruction silently produced a corrupt executable
     // with no diagnostic; drivers check `a.unknown` after assembly.
     return X86Asm { ...a, unknown: a.unknown.append(mnem) };
   }
-  var src: string = x86_gas_trim(slice_unchecked(rest, 0, ci));
-  var dst: string = x86_gas_trim(slice_unchecked(rest, ci + 1, rest.len()));
+  var src: string = l.src;
+  var dst: string = l.dst;
   // lea at every width AT&T spells. Intel writes one `lea` and reads the
   // width off the destination register; AT&T names it in the suffix, so
   // each spelling needs an arm or the instruction is dropped.
-  var lsz: i32 = x86_gas_lea_size(mnem);
-  if (lsz >= 0) {
+  if (k == GK_LEA) {
+    var lsz: i32 = l.ext;
     var ld: i32 = x86_gas_reg_w(dst, lsz);
     if (ld < 0) {
       return x86_gas_bad(a, mnem + " " + src + ", " + dst);
@@ -5589,38 +5582,36 @@ function x86_gas_emit(own a: X86Asm, mnem: string, rest: string): X86Asm {
   // The general-register move at the suffix's width. AT&T's movq is also
   // the SSE movq, so that width goes through x86_gas_movq, which reads
   // the operands to tell the two apart.
-  var msz: i32 = x86_gas_mov_size(mnem);
-  if (msz == 64) {
+  if (k == GK_MOVQ) {
     return x86_gas_movq(a, src, dst);
   }
-  if (msz >= 0) {
-    return x86_gas_mov_rm(a, mnem, msz, src, dst);
+  if (k == GK_MOV) {
+    return x86_gas_mov_rm(a, mnem, l.ext, src, dst);
   }
-  if (x86_gas_is_movabs(mnem)) {
+  if (k == GK_MOVABS) {
     a = X86Asm { ...a, code: x86_movabsq(a.code, x86_gas_reg(dst), x86_gas_atoi64(src)) };
     return a;
   }
-  if (x86_gas_is_vex_two(mnem)) {
+  if (k == GK_VEX_TWO) {
     return x86_gas_vex_two(a, mnem, src, dst);
   }
   // Packed 16-byte moves (both directions) and the 0F 10/11 move family.
-  if (x86_gas_movdq_pfx(mnem) >= 0) {
+  if (k == GK_MOVDQ) {
     return x86_gas_movdq(a, mnem, src, dst);
   }
-  var m10: i32 = x86_gas_mov10_pfx(mnem);
-  if (m10 >= 0) {
-    return x86_gas_sse_mov10(a, mnem, m10, src, dst);
+  if (k == GK_MOV10) {
+    return x86_gas_sse_mov10(a, mnem, l.ext, src, dst);
   }
   // Sign-bit gathers: the destination is a GPR, not an xmm.
-  var mmk: i32 = x86_gas_movmsk_op(mnem);
-  if (mmk >= 0) {
+  if (k == GK_MOVMSK) {
+    var mmk: i32 = l.ext;
     return x86_gas_movmsk(a, mnem, mmk / 256, mmk % 256, src, dst);
   }
   // The bit scans and counts. The `l` forms are not routed to the `q` ones
   // the way testl is: the count differs by width (lzcntl counts from bit
   // 31, lzcntq from 63), so the suffix picks REX.W.
-  var bsc: i32 = x86_gas_bitscan_op(mnem);
-  if (bsc >= 0) {
+  if (k == GK_BITSCAN) {
+    var bsc: i32 = l.ext;
     var bsw: i32 = bsc % 256;
     var bsd: i32 = x86_gas_reg32(dst);
     var bss: i32 = x86_gas_reg32(src);
@@ -5635,7 +5626,7 @@ function x86_gas_emit(own a: X86Asm, mnem: string, rest: string): X86Asm {
   }
   // movd moves f32 bits between a GPR and an xmm; which direction depends on
   // which operand is the xmm.
-  if (x86_gas_is_movqd(mnem)) {
+  if (k == GK_MOVQD) {
     if (x86_gas_is_xmm(dst)) {
       a = X86Asm { ...a, code: x86_movd_gpr_to_xmm(a.code, x86_gas_xmm(dst), x86_gas_reg32(src)) };
     } else {
@@ -5648,8 +5639,8 @@ function x86_gas_emit(own a: X86Asm, mnem: string, rest: string): X86Asm {
   // movzx/movsx and reads the widths off the operands. So every spelling
   // needs an entry here, and a missing one is an instruction the assembler
   // drops rather than an error it reports.
-  var mx: i32 = x86_gas_extend_op(mnem);
-  if (mx >= 0) {
+  if (k == GK_MOVEXT) {
+    var mx: i32 = l.ext;
     return x86_gas_movext(a, mx / 256, mx % 256 * 8, src, dst);
   }
   // The float->int converts: cvt(t)sd2si and cvt(t)ss2si, `t` selecting the
@@ -5657,8 +5648,8 @@ function x86_gas_emit(own a: X86Asm, mnem: string, rest: string): X86Asm {
   // a GPR of either width, and the 32-bit spelling (`%eax`) is the one the
   // emitter writes almost always. The AT&T `l`/`q` suffixes name that width
   // explicitly and are accepted alongside the bare spelling.
-  var f2i: i32 = x86_gas_cvt2si(mnem);
-  if (f2i >= 0) {
+  if (k == GK_CVT2SI) {
+    var f2i: i32 = l.ext;
     var cvw: i32 = 1;
     var cvd: i32 = x86_gas_reg32(dst);
     if (cvd >= 0) {  // `%eax` — 32-bit destination, no REX.W
@@ -5680,8 +5671,8 @@ function x86_gas_emit(own a: X86Asm, mnem: string, rest: string): X86Asm {
   // unsuffixed spelling being the 64-bit form the emitter writes and the
   // `l` suffix the 32-bit source. A memory source used to fall into the
   // register parser and encode reg 7 silently.
-  var c2s: i32 = x86_gas_cvt2s_op(mnem);
-  if (c2s >= 0) {
+  if (k == GK_CVT2S) {
+    var c2s: i32 = l.ext;
     var cpfx: i32 = c2s / 256;
     var cw: i32 = c2s % 256;
     var cxd: i32 = x86_gas_xmm(dst);
@@ -5714,55 +5705,46 @@ function x86_gas_emit(own a: X86Asm, mnem: string, rest: string): X86Asm {
   }
   // Two-operand suffix families: the ALU rows, test, shifts/rotates, the
   // bit-test group, the RMW atomics, xchg, and crc32.
-  if (sfx > 0) {
-    var bse2: string = x86_gas_strip_suffix(mnem);
-    var ae: i32 = x86_gas_alu_ext(bse2);
-    if (ae >= 0) {
-      return x86_gas_alu_family(a, mnem, ae, sfx, src, dst);
-    }
-    if (x86_gas_is_test(bse2)) {
-      return x86_gas_test_family(a, sfx, src, dst);
-    }
-    var she: i32 = x86_gas_shift_ext(bse2);
-    if (she >= 0) {
-      return x86_gas_shift_family(a, mnem, she, sfx, src, dst);
-    }
-    var bti: i32 = x86_gas_bt_idx(bse2);
-    if (bti >= 0) {
-      return x86_gas_bt_family(a, mnem, bti, sfx, src, dst);
-    }
-    var rmw: i32 = x86_gas_rmw_op(bse2);
-    if (rmw >= 0) {
-      return x86_gas_rmw_family(a, mnem, rmw, sfx, src, dst);
-    }
-    if (x86_gas_is_xchg(bse2)) {
-      return x86_gas_xchg_family(a, mnem, sfx, src, dst);
-    }
-    if (x86_gas_is_crc32(bse2)) {
-      return x86_gas_crc32_family(a, sfx, src, dst);
-    }
+  if (k == GK_ALU) {
+    return x86_gas_alu_family(a, mnem, l.ext, sfx, src, dst);
+  }
+  if (k == GK_TEST) {
+    return x86_gas_test_family(a, sfx, src, dst);
+  }
+  if (k == GK_SHIFT) {
+    return x86_gas_shift_family(a, mnem, l.ext, sfx, src, dst);
+  }
+  if (k == GK_BT) {
+    return x86_gas_bt_family(a, mnem, l.ext, sfx, src, dst);
+  }
+  if (k == GK_RMW) {
+    return x86_gas_rmw_family(a, mnem, l.ext, sfx, src, dst);
+  }
+  if (k == GK_XCHG) {
+    return x86_gas_xchg_family(a, mnem, sfx, src, dst);
+  }
+  if (k == GK_CRC32) {
+    return x86_gas_crc32_family(a, sfx, src, dst);
   }
   // cmovcc: the full condition table, width from suffix or register.
-  if (x86_str_starts_with(mnem, "cmov")) {
+  if (k == GK_CMOV) {
     return x86_gas_cmov_family(a, mnem, src, dst);
   }
   // SSE vector shift by immediate, then the two-byte-opcode SSE tables
   // and the 66 0F 38 group.
-  var vsp: i32 = x86_gas_vshift_op(mnem);
-  if (vsp >= 0 && src.len() > 0 && src[0] == b'$') {
-    return x86_gas_vshift_imm(a, mnem, vsp, src, dst);
+  if (k == GK_VSHIFT) {
+    return x86_gas_vshift_imm(a, mnem, l.ext, src, dst);
   }
-  var sse: i32 = x86_gas_sse_op(mnem);
-  if (sse >= 0) {
+  if (k == GK_SSE) {
+    var sse: i32 = l.ext;
     return x86_gas_sse_table(a, mnem, sse / 256, sse & 255, src, dst);
   }
-  var s38: i32 = x86_gas_sse38_op(mnem);
-  if (s38 >= 0) {
-    return x86_gas_sse38(a, mnem, s38, src, dst);
+  if (k == GK_SSE38) {
+    return x86_gas_sse38(a, mnem, l.ext, src, dst);
   }
   // movsxd is the AT&T spelling GNU as also accepts for movslq — same
   // sign-extending 32-to-64 load (REX.W 63 /r), so it shares the handler.
-  if (x86_gas_is_movsxd(mnem)) {
+  if (k == GK_MOVSXD) {
     if (x86_str_contains(src, "(")) {
       var sm: GasMem = x86_gas_parse_mem(src);
       if (sm.no_base) {
@@ -5980,14 +5962,331 @@ function x86_bools_all_true(n: i32): boolean[] {
   return out;
 }
 
+// The arms of x86_gas_emit_op, numbered in the order x86_gas_classify tries
+// them. A line's arm is decided by its mnemonic and operand text alone, so
+// it is decided once, in x86_gas_prepare, and every relaxation round reads
+// it. `ext` carries the arm's table value where it has one:
+//   GK_FIXED      the packed fixed byte list
+//   GK_REP        the repeat prefix byte
+//   GK_SETCC      the condition code
+//   GK_BRANCH     4 for jmp, 2 for call (the FF /digit)
+//   GK_JCC        the condition code
+//   GK_UNARY      the F6/F7 /digit
+//   GK_INCDEC     the FE/FF /digit
+//   GK_SHLD       the shld/shrd opcode
+//   GK_LEA        the destination size
+//   GK_MOV        the operand size
+//   GK_MOV10      the 0F 10/11 prefix
+//   GK_MOVMSK     prefix * 256 + opcode
+//   GK_BITSCAN    the packed bit-scan op
+//   GK_MOVEXT     the packed extend op
+//   GK_CVT2SI     the packed convert op
+//   GK_CVT2S      the packed convert op
+//   GK_ALU        the ALU /digit
+//   GK_SHIFT      the shift /digit
+//   GK_BT         the bit-test index
+//   GK_RMW        the RMW op
+//   GK_VSHIFT     the vector shift op
+//   GK_SSE        the packed SSE op
+//   GK_SSE38      the 66 0F 38 opcode
+// GK_NONE is a directive or a bare label, with nothing to emit; GK_UNKNOWN1
+// and GK_UNKNOWN2 are a one- and a two-operand mnemonic no arm takes, which
+// the emit records as unknown.
+const GK_NONE: i32 = 0;
+
+const GK_VZEROUPPER: i32 = 1;
+
+const GK_VPCMPEQB: i32 = 2;
+
+const GK_FIXED: i32 = 3;
+
+const GK_REP: i32 = 4;
+
+const GK_LOCK: i32 = 5;
+
+const GK_SETCC: i32 = 6;
+
+const GK_BRANCH: i32 = 7;
+
+const GK_JCC: i32 = 8;
+
+const GK_PUSHQ: i32 = 9;
+
+const GK_POPQ: i32 = 10;
+
+const GK_IMUL: i32 = 11;
+
+const GK_UNARY: i32 = 12;
+
+const GK_INCDEC: i32 = 13;
+
+const GK_BSWAP: i32 = 14;
+
+const GK_SHLD: i32 = 15;
+
+const GK_SSE_IMM3: i32 = 16;
+
+const GK_PEXTR: i32 = 17;
+
+const GK_PINSR: i32 = 18;
+
+const GK_UNKNOWN1: i32 = 19;
+
+const GK_LEA: i32 = 20;
+
+const GK_MOVQ: i32 = 21;
+
+const GK_MOV: i32 = 22;
+
+const GK_MOVABS: i32 = 23;
+
+const GK_VEX_TWO: i32 = 24;
+
+const GK_MOVDQ: i32 = 25;
+
+const GK_MOV10: i32 = 26;
+
+const GK_MOVMSK: i32 = 27;
+
+const GK_BITSCAN: i32 = 28;
+
+const GK_MOVQD: i32 = 29;
+
+const GK_MOVEXT: i32 = 30;
+
+const GK_CVT2SI: i32 = 31;
+
+const GK_CVT2S: i32 = 32;
+
+const GK_ALU: i32 = 33;
+
+const GK_TEST: i32 = 34;
+
+const GK_SHIFT: i32 = 35;
+
+const GK_BT: i32 = 36;
+
+const GK_RMW: i32 = 37;
+
+const GK_XCHG: i32 = 38;
+
+const GK_CRC32: i32 = 39;
+
+const GK_CMOV: i32 = 40;
+
+const GK_VSHIFT: i32 = 41;
+
+const GK_SSE: i32 = 42;
+
+const GK_SSE38: i32 = 43;
+
+const GK_MOVSXD: i32 = 44;
+
+const GK_UNKNOWN2: i32 = 45;
+
 // One source line with everything the relaxation fixpoint cannot change
 // already worked out. Only the byte offsets a round computes vary between
-// rounds; the text does not, so this is derived once and every round reads it.
+// rounds; the text does not, so this is derived once and every round reads
+// it: the label, the mnemonic and operand split, and the emit arm the
+// mnemonic selects with what that arm reads (x86_gas_classify).
 struct GasLine {
   label: string,  // the `name:` prefix, or "" when the line has none
   body: string,  // what follows it, comment-stripped and trimmed
   mnem: string,  // an instruction's mnemonic; "" on a directive
   rest: string,  // an instruction's operand text
+  kind: i32,  // the GK_* arm
+  ext: i32,  // the arm's table value, -1 when it has none
+  sfx: i32,  // x86_gas_suffix_size(mnem)
+  base: string,  // mnem without its suffix letter; "" when sfx is 0
+  src: string,  // the operands split at the top-level comma; "" when
+  dst: string,  // the arm takes `rest` whole
+}
+
+// x86_gas_classify decides which arm of x86_gas_emit_op an instruction
+// takes, trying the arms in the order the emit once tried them inline, and
+// carries what the arm reads: the table value, the suffix, the stripped base
+// and the split operands. Everything here is a function of the text, so a
+// round never repeats it.
+function x86_gas_classify(mnem: string, rest: string): GasLine {
+  var l: GasLine = GasLine { label: "", body: "", mnem: mnem, rest: rest, kind: GK_UNKNOWN2, ext: 0 - 1, sfx: 0, base: "", src: "", dst: "" };
+  if (mnem == "vzeroupper" && rest.len() == 0) {
+    return GasLine { ...l, kind: GK_VZEROUPPER };
+  }
+  if (mnem == "vpcmpeqb") {
+    return GasLine { ...l, kind: GK_VPCMPEQB };
+  }
+  if (rest.len() == 0) {
+    var fx: i32 = x86_gas_fixed_op(mnem);
+    if (fx >= 0) {
+      return GasLine { ...l, kind: GK_FIXED, ext: fx };
+    }
+  }
+  var rpfx: i32 = x86_gas_rep_pfx(mnem);
+  if (rpfx >= 0) {
+    return GasLine { ...l, kind: GK_REP, ext: rpfx };
+  }
+  if (x86_gas_is_lock(mnem)) {
+    return GasLine { ...l, kind: GK_LOCK };
+  }
+  if (x86_str_starts_with(mnem, "set")) {
+    var scc: i32 = x86_gas_cc_code(slice_unchecked(mnem, 3, mnem.len()) + "");
+    if (scc >= 0) {
+      return GasLine { ...l, kind: GK_SETCC, ext: scc };
+    }
+  }
+  if (x86_gas_is_branch(mnem)) {
+    var bext: i32 = 2;  // call FF /2
+    if (mnem == "jmp") {  // jmp FF /4
+      bext = 4;
+    }
+    return GasLine { ...l, kind: GK_BRANCH, ext: bext };
+  }
+  if (x86_str_starts_with(mnem, "j")) {
+    var jcc: i32 = x86_gas_cc_code(slice_unchecked(mnem, 1, mnem.len()) + "");
+    if (jcc >= 0) {
+      return GasLine { ...l, kind: GK_JCC, ext: jcc };
+    }
+  }
+  if (x86_gas_is_pushpop(mnem) && mnem == "pushq") {
+    return GasLine { ...l, kind: GK_PUSHQ };
+  }
+  if (x86_gas_is_pushpop(mnem)) {
+    return GasLine { ...l, kind: GK_POPQ };
+  }
+  var sfx: i32 = x86_gas_suffix_size(mnem);
+  l = GasLine { ...l, sfx: sfx };
+  if (sfx > 0) {
+    var bse: string = x86_gas_strip_suffix(mnem);
+    l = GasLine { ...l, base: bse };
+    if (x86_gas_is_imul(bse)) {
+      return GasLine { ...l, kind: GK_IMUL };
+    }
+    var ue: i32 = x86_gas_unary_ext(bse);
+    if (ue >= 0) {
+      return GasLine { ...l, kind: GK_UNARY, ext: ue };
+    }
+    var ide: i32 = x86_gas_incdec_ext(bse);
+    if (ide >= 0) {
+      return GasLine { ...l, kind: GK_INCDEC, ext: ide };
+    }
+    if (x86_gas_is_bswap(bse)) {
+      return GasLine { ...l, kind: GK_BSWAP };
+    }
+    var sho: i32 = x86_gas_shld_op(bse);
+    if (sho >= 0) {
+      return GasLine { ...l, kind: GK_SHLD, ext: sho };
+    }
+  }
+  if (x86_gas_imm3a_op(mnem) >= 0 || x86_gas_shuf_op(mnem) >= 0) {
+    return GasLine { ...l, kind: GK_SSE_IMM3 };
+  }
+  if (x86_gas_is_pextr(mnem)) {
+    return GasLine { ...l, kind: GK_PEXTR };
+  }
+  if (x86_gas_is_pinsr(mnem)) {
+    return GasLine { ...l, kind: GK_PINSR };
+  }
+  var ci: i32 = x86_gas_top_comma(rest);
+  if (ci < 0) {
+    return GasLine { ...l, kind: GK_UNKNOWN1 };
+  }
+  var src: string = x86_gas_trim(slice_unchecked(rest, 0, ci));
+  var dst: string = x86_gas_trim(slice_unchecked(rest, ci + 1, rest.len()));
+  l = GasLine { ...l, src: src, dst: dst };
+  var lsz: i32 = x86_gas_lea_size(mnem);
+  if (lsz >= 0) {
+    return GasLine { ...l, kind: GK_LEA, ext: lsz };
+  }
+  var msz: i32 = x86_gas_mov_size(mnem);
+  if (msz == 64) {
+    return GasLine { ...l, kind: GK_MOVQ };
+  }
+  if (msz >= 0) {
+    return GasLine { ...l, kind: GK_MOV, ext: msz };
+  }
+  if (x86_gas_is_movabs(mnem)) {
+    return GasLine { ...l, kind: GK_MOVABS };
+  }
+  if (x86_gas_is_vex_two(mnem)) {
+    return GasLine { ...l, kind: GK_VEX_TWO };
+  }
+  if (x86_gas_movdq_pfx(mnem) >= 0) {
+    return GasLine { ...l, kind: GK_MOVDQ };
+  }
+  var m10: i32 = x86_gas_mov10_pfx(mnem);
+  if (m10 >= 0) {
+    return GasLine { ...l, kind: GK_MOV10, ext: m10 };
+  }
+  var mmk: i32 = x86_gas_movmsk_op(mnem);
+  if (mmk >= 0) {
+    return GasLine { ...l, kind: GK_MOVMSK, ext: mmk };
+  }
+  var bsc: i32 = x86_gas_bitscan_op(mnem);
+  if (bsc >= 0) {
+    return GasLine { ...l, kind: GK_BITSCAN, ext: bsc };
+  }
+  if (x86_gas_is_movqd(mnem)) {
+    return GasLine { ...l, kind: GK_MOVQD };
+  }
+  var mx: i32 = x86_gas_extend_op(mnem);
+  if (mx >= 0) {
+    return GasLine { ...l, kind: GK_MOVEXT, ext: mx };
+  }
+  var f2i: i32 = x86_gas_cvt2si(mnem);
+  if (f2i >= 0) {
+    return GasLine { ...l, kind: GK_CVT2SI, ext: f2i };
+  }
+  var c2s: i32 = x86_gas_cvt2s_op(mnem);
+  if (c2s >= 0) {
+    return GasLine { ...l, kind: GK_CVT2S, ext: c2s };
+  }
+  if (sfx > 0) {
+    var bse2: string = l.base;
+    var ae: i32 = x86_gas_alu_ext(bse2);
+    if (ae >= 0) {
+      return GasLine { ...l, kind: GK_ALU, ext: ae };
+    }
+    if (x86_gas_is_test(bse2)) {
+      return GasLine { ...l, kind: GK_TEST };
+    }
+    var she: i32 = x86_gas_shift_ext(bse2);
+    if (she >= 0) {
+      return GasLine { ...l, kind: GK_SHIFT, ext: she };
+    }
+    var bti: i32 = x86_gas_bt_idx(bse2);
+    if (bti >= 0) {
+      return GasLine { ...l, kind: GK_BT, ext: bti };
+    }
+    var rmw: i32 = x86_gas_rmw_op(bse2);
+    if (rmw >= 0) {
+      return GasLine { ...l, kind: GK_RMW, ext: rmw };
+    }
+    if (x86_gas_is_xchg(bse2)) {
+      return GasLine { ...l, kind: GK_XCHG };
+    }
+    if (x86_gas_is_crc32(bse2)) {
+      return GasLine { ...l, kind: GK_CRC32 };
+    }
+  }
+  if (x86_str_starts_with(mnem, "cmov")) {
+    return GasLine { ...l, kind: GK_CMOV };
+  }
+  var vsp: i32 = x86_gas_vshift_op(mnem);
+  if (vsp >= 0 && src.len() > 0 && src[0] == b'$') {
+    return GasLine { ...l, kind: GK_VSHIFT, ext: vsp };
+  }
+  var sse: i32 = x86_gas_sse_op(mnem);
+  if (sse >= 0) {
+    return GasLine { ...l, kind: GK_SSE, ext: sse };
+  }
+  var s38: i32 = x86_gas_sse38_op(mnem);
+  if (s38 >= 0) {
+    return GasLine { ...l, kind: GK_SSE38, ext: s38 };
+  }
+  if (x86_gas_is_movsxd(mnem)) {
+    return GasLine { ...l, kind: GK_MOVSXD };
+  }
+  return l;
 }
 
 // x86_gas_prepare does every line's round-invariant parsing once: comment
@@ -6033,7 +6332,11 @@ function x86_gas_prepare(src: string): GasLine[] {
         rest = x86_gas_trim(slice_unchecked(line, sp + 1, line.len()));
       }
     }
-    out = out.append(GasLine { label: label, body: line, mnem: mnem, rest: rest });
+    if (mnem.len() == 0) {
+      out = out.append(GasLine { label: label, body: line, mnem: mnem, rest: rest, kind: GK_NONE, ext: 0 - 1, sfx: 0, base: "", src: "", dst: "" });
+    } else {
+      out = out.append(GasLine { ...x86_gas_classify(mnem, rest), label: label, body: line });
+    }
   }
   return out;
 }
@@ -6049,10 +6352,9 @@ function x86_gas_assemble_pass_prepared(pl: GasLine[], longs: boolean[]): X86Asm
   var section: i32 = 0;  // 0 = .text, 1 = .rodata
   var li: i32 = 0;
   while (li < pl.len()) {
-    var lbl: string = pl[li].label;
-    var line: string = pl[li].body;
-    var mnem: string = pl[li].mnem;
-    var rest: string = pl[li].rest;
+    var pline: GasLine = pl[li];
+    var lbl: string = pline.label;
+    var line: string = pline.body;
     li = li + 1;
     if (lbl.len() > 0) {
       if (section == 1) {
@@ -6190,7 +6492,7 @@ function x86_gas_assemble_pass_prepared(pl: GasLine[], longs: boolean[]): X86Asm
       }
       continue;
     }
-    a = x86_gas_emit(a, mnem, rest);
+    a = x86_gas_emit_op(a, pline);
   }
   // Fold the recorder in before resolution: the data base sits past the
   // unwind data, so x86_resolve reads its size through the field.
