@@ -8,6 +8,7 @@ import "std/string";
 // file the serve loop streams as it writes the response
 // (`http_materialize` reads one whole for a test), a missing file
 // answered 404 in its place, and the chunks a producer answers.
+
 function test_text_body(): test.TestOutcome {
   var resp: HttpResponse = http.ok("hello");
   if (resp.body_len() != 5) {

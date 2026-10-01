@@ -16,6 +16,7 @@
 // ever fed the E019 struct-arity check on a struct's OWN generic head (never an
 // array), so the arity diagnostics are unchanged — confirmed by the three x86
 // self-compile fixpoints.
+
 import "./checker";
 import "./util";
 

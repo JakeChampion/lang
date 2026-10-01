@@ -10,6 +10,7 @@ import "std/test";
 // `merge`s the child back when its cases are done. Skipped
 // cases print as `ok N - name # SKIP reason` per TAP-13 and
 // don't affect the exit code.
+
 function test_pass(): test.TestOutcome {
   return test.assert_eq(1, 1);
 }

@@ -20,9 +20,11 @@
 // the program's stdout. Formatting is separated from emission: `render`
 // builds the line (or "" when filtered) and is pure/testable; the
 // `emit` method is `eprint(render(...))`.
+
 // No prelude: a program now `import "std/log";` explicitly to
 // call `log_info(msg)` / etc. (docs/PRELUDE-TO-MODULES.md,
 // Phase 5).
+
 // for `(n: i32).to_string()` in the structured `int` field helper.
 import "std/i32";
 // for `json_escape` — the ONE shared JSON string escaper (the JSON-lines
@@ -45,6 +47,7 @@ pub function log_error(msg: string): void {
 }
 
 // === leveled logger (#2683) =====================================
+
 // Severity levels, low → high. A logger emits a record only when its
 // level is >= the logger's `min_level`, so raising the threshold mutes
 // the chattier levels.

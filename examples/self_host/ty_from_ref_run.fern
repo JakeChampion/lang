@@ -12,6 +12,7 @@
 // for each. The companion Go test pins the exact mapping, so a regression in
 // ty_from_ref (or in parse_type_ref feeding it) that changes any decoded Ty
 // fails the golden here rather than silently miscompiling a typed code path.
+
 import "./asmcore";
 import "./util";
 

@@ -19,6 +19,7 @@
 // Like asm_ir, this is a SEPARATE module imported only by its differential
 // driver (asm_ir_run -target arm64-linux) — asm_arm64.fern and the arm64 bootstrap stay
 // untouched until a later fold/flip slice.
+
 import "./parser";
 import "./asmcore";
 import "./checker";
@@ -962,6 +963,7 @@ function map_fn_address(s: asmcore.EmitState, reg: string, name: string): asmcor
 // callee-saved pool a value live across a call takes, saved in pairs once per
 // function. x4..x7 are scratch; x16/x17 belong to fr_ldr and fr_sub_imm. A
 // spilled value lives at [x29, #-8*(slot+1)] by its allocator slot.
+
 // Pool index 0 is x0, the register the ABI returns a call's result in, so a
 // call result allocated there needs no move at all. The arms that are calls
 // may write it, since the allocator never leaves a caller-saved value live
@@ -2824,7 +2826,7 @@ function emit_ssa_function(r: irlower.LowerResult, label_name: string, s: asmcor
   // cost shows, and this is how a slow one is found.
   var emit_ms: i64 = (monotonic_ns() - t_emit) / 1000000i64;
   if (ircore.ssa_report_on() && lift_ms + emit_ms > 200i64) {
-    eprint("FERN_SSA: time " + label_name + ": lift " + util.i32_to_string(lift_ms as i32) + " ms, emit " + util.i32_to_string(emit_ms as i32) + " ms, " + util.i32_to_string(r.ops.len()) + " ops, " + util.i32_to_string(r.n_locals) + " slots\n");
+    eprint("FERN_SSA: time " + label_name + ": lift " + util.i32_to_string(lift_ms as i32) + " ms, emit " + util.i32_to_string(emit_ms as i32) + " ms, " + util.i32_to_string(r.ops.len()) + " ops, " + util.i32_to_string(r.n_locals) + " slots");
   }
   return s;
 }
@@ -5275,6 +5277,7 @@ function emit_arm64_enum_arr_elems_drop_one(s: asmcore.EmitState, ety: string): 
 // lower through emit_ir_runtime_fern_fn (the IR selector) rather than the AST
 // emit_function. emit_ldc / emit_ccall_shim1_arm64 / emit_ccall_shims_arm64 /
 // emit_rodata_pools_arm64 live alongside it because emit_ir_runtime calls them.
+
 function emit_ldc(s: asmcore.EmitState, reg: string, lbl: string): asmcore.EmitState {
   s = s.write("    adrp x12, " + lbl + "\n");
   s = s.write("    add x12, x12, :lo12:" + lbl + "\n");
@@ -11131,6 +11134,7 @@ pub function emit_ir_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.Emi
 // orchestrators (moved from asm_arm64.fern, #3457 slice-5 prep): with the IR
 // runtime already here (emit_ir_runtime), the whole arm64 IR emit path now
 // lives in asm_arm64_ir.fern, so asm_arm64.fern holds only the AST emitter.
+
 // emit_module_or_error is the arm64 mirror of asm_ir.emit_module_or_error
 // (#3457 slice 5): the same parse-error / type-check / lambda-lift prologue as
 // asm_arm64.emit_module, then the eligibility gate — but a module the gate
@@ -11431,6 +11435,7 @@ pub function emit_module_ir_unit_arm64_flat(mod: parser.Module, is_entry: boolea
 //     sockaddr_in sin_len byte) that std/tcp.fern's HTTP edge-handler
 //     loop is built on, and one-shot IPv4 UDP (udp_send — socket /
 //     sendto 206→133 / close, dotted-quad host parse).
+
 function darwin_starts_with(s: string, p: string): boolean {
   if (s.len() < p.len()) {
     return false;

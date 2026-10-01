@@ -9,6 +9,7 @@ import "std/i64";
 // migration-shaped (pure-Fern, std/test-driven, self-host-gated)
 // companion. Receivers are written `… as i64` so dispatch lands on the
 // i64 methods rather than the i32 ones.
+
 function test_abs(): test.TestOutcome {
   return test.assert_eq((0 as i64 - 5).abs(), 5 as i64);
 }

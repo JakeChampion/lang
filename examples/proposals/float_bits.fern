@@ -28,6 +28,7 @@
 // reach the same facts by different routes, so a disagreement is a real one.
 //
 // The app writes its report to stderr; stdout carries TAP-13 from std/test.
+
 import "std/test";
 import "std/i32";
 import "std/i64";
@@ -76,6 +77,7 @@ function encode(f: Fields): u64 {
 }
 
 // ------------------------------------------------------------ classifying
+
 function CLASS_ZERO(): i32 {
   return 0;
 }
@@ -151,6 +153,7 @@ function unbiased_exp(f: Fields): i32 {
 }
 
 // ------------------------------------------------------------- the corpus
+
 // Every boundary the format has, plus enough ordinary values that a decoder
 // broken only in the middle would still be caught.
 function corpus(): f64[] {
@@ -182,6 +185,7 @@ function names(): string[] {
 }
 
 // ------------------------------------------------------------- reporting
+
 function describe(x: f64): string {
   var f: Fields = decode(x);
   var c: i32 = classify(f);
@@ -218,6 +222,7 @@ function pow2(e: i32): f64 {
 }
 
 // ---------------------------------------------------------------- tests
+
 // THE test. Decode to three fields, rebuild the 64 bits from exactly those
 // three, and require the identical pattern back. Bits, not `==`: `NaN == NaN`
 // is false and `-0.0 == 0.0` is true, so a value comparison would reject every
@@ -428,6 +433,7 @@ function test_nan_payloads_are_distinguishable(): test.TestOutcome {
 }
 
 // ------------------------------------------------------------------- app
+
 function main(): i32 {
   eprint("float_bits — the sign, exponent and mantissa of an f64");
   var xs: f64[] = corpus();

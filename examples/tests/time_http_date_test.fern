@@ -9,6 +9,7 @@ import "std/time" as time;
 // arithmetic (`instant_from_unix` → serial days → Y/M/D + weekday), so
 // this exercises Instant, Option[Instant], and the name tables through
 // the self-host IR path on real stdlib bodies.
+
 // The RFC 9110 canonical example: 784111777 = 1994-11-06T08:49:37Z,
 // a Sunday. (verified: 784111777 / 86400 = 9075 days after 1970-01-01.)
 function test_format_canonical(): test.TestOutcome {

@@ -381,6 +381,7 @@ fbip function reset(own c: Codec): Codec {
 // bytes are held and in nothing else. Every 17th request is malformed, cycling
 // through the six rejections, so the error ladder is exercised in the steady
 // state rather than in a separate test that proves nothing about throughput.
+
 fip function gen_payload_len(n: i64): i32 {
   return (n * (37 as i64) % (241 as i64)) as i32;
 }

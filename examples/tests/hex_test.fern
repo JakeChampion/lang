@@ -12,6 +12,7 @@ import "std/string";
 // std/hex carries bytes as `u8[]` on both sides (#5730). These fixtures
 // are all ASCII, so `text()` reads decoded bytes back to assert against
 // a literal, and `s.bytes()` feeds a literal into the encoder.
+
 // The decoded bytes in this file are ASCII by construction, so reading
 // them back is safe without the `std/utf8.from_bytes` check a real
 // ingest path would use.

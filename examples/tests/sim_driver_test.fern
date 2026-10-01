@@ -12,6 +12,7 @@ import "std/time";
 // (where fd-backed futures never resolve on the real driver).
 //
 // Run:  fern -interp examples/tests/sim_driver_test.fern
+
 // with_deadline: a winner under the virtual deadline is Some, a straggler
 // past it is None, and the clock lands exactly on the deadline.
 function test_deadline_some_and_none(): test.TestOutcome {

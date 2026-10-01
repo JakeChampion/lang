@@ -9,6 +9,7 @@ import "std/test";
 // so they lower cleanly on the AOT + self-host backends (no
 // indirect-call limitation) — hence this file is also exercised
 // through the self-host compiler, not just the interpreter.
+
 function test_reverse(): test.TestOutcome {
   var xs: i32[] = [1, 2, 3, 4, 5];
   var r: i32[] = array.reverse(xs);

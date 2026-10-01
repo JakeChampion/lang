@@ -81,6 +81,7 @@
 // the program with the bounds rule's status (docs/ARRAY-BOUNDS.md, exit
 // 134): a derived shape that is wrong is a bug, and docs/ARRAY-ALGEBRA.md
 // §4 makes it an error rather than a truncation.
+
 // The handle. Construct one through `from_flat`; every field is an
 // implementation detail.
 pub struct NdArray[T] { data: T[], shape: i32[], strides: i32[], offset: i32 }
@@ -333,6 +334,7 @@ pub function (a: NdArray[T]) to_flat(): T[] {
 }
 
 // ---- elementwise, and along an axis ----------------------------------------
+
 // The storage index of an in-range `idx`: the walkers below hand it one
 // from the odometer, so nothing is checked again.
 function addr_of[T](a: NdArray[T], idx: i32[]): i32 {

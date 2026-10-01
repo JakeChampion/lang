@@ -7,6 +7,7 @@
 // the two checkers on the same source — the SET of codes, and, for the
 // diagnostics that name a spelling to write, the message text (#7018).
 // Exits 1 when any diagnostic was emitted, 0 otherwise.
+
 import "./lexer";
 import "./parser";
 import "./rundriver";

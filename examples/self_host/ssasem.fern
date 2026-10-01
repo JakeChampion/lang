@@ -377,7 +377,7 @@ pub function refused_analysis(why: string): Analysis {
 }
 
 function failed(why: string): Analysis {
-  return Analysis { ok: false, why: why, parents: [], dependencies: [], flow: ssalive.Flow { ok: false, why: why, words: 0, live_in: [], live_out: [], at: [] } };
+  return Analysis { ok: false, why: why, parents: [], dependencies: [], flow: ssalive.Flow { ok: false, why: why, words: 0, live_in: [], live_out: [], at: [], none: [] } };
 }
 
 function empty_dependencies(n: i32): i32[][] {
@@ -693,7 +693,7 @@ pub function is_supported_map(t: typeinfo.Type): boolean {
   if (!is_map(t)) {
     return false;
   }
-  if (!is_string(map_key(t)) && !narrow_map_key(map_key(t)) && !wide_map_key(map_key(t)) && !keyed_map_key(map_key(t))) {
+  if (!is_text(map_key(t)) && !narrow_map_key(map_key(t)) && !wide_map_key(map_key(t)) && !keyed_map_key(map_key(t))) {
     return false;
   }
   return narrow_map_value(map_value(t)) || wide_map_value(map_value(t)) || float_map_value(map_value(t)) || counted_map_value(map_value(t));
@@ -1916,8 +1916,10 @@ function map_get_or_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): strin
   return map_operand_error(m, f.values[ins.args[1]], f.values[ins.args[2]]);
 }
 
+// A `str` key column holds an owned copy of each key, so an owned string is
+// the key an insert into one supplies.
 function map_operand_error(m: typeinfo.Type, key: typeinfo.Type, value: typeinfo.Type): string {
-  if (!semtypes.equal(map_key(m), key)) {
+  if (!semtypes.equal(map_key(m), key) && !(is_view(map_key(m)) && is_string(key))) {
     return "map key type";
   }
   if (!semtypes.equal(map_value(m), value)) {
@@ -3523,6 +3525,7 @@ pub function analyze(f: Func): Analysis {
 }
 
 // ---- views merged past their source ----------------------------------------
+
 // A counted copy of view `v` in three fresh values from `first`: an empty
 // string, `v + ""`, and that string retagged as `str`, which anchors nothing.
 pub function view_copy(first: i32, v: i32): ssa.SInst[] {
@@ -3657,6 +3660,7 @@ function with_copied_operands(ins: ssa.SInst, copies: MergeCopy[], made: i32[]):
 }
 
 // ---- copying a value that holds views --------------------------------------
+
 // A graph being extended: the finished blocks, the open block's id,
 // predecessors and instructions, and the next free block id.
 struct CopySplice { values: typeinfo.Type[], done: ssa.SBlock[], id: i32, preds: i32[], insts: ssa.SInst[], next_block: i32 }
@@ -4110,6 +4114,7 @@ function defining_positions(f: Func): i32[] {
 }
 
 // ---- self-tail recursion ----------------------------------------------------
+
 // A self-recursive call in tail position reuses its own activation on the AST
 // lowering, which gets `irlower.tco_self_tail` out of `lower_func`. A produced
 // body never reaches `lower_func`, so until now it grew the stack once per

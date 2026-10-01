@@ -19,6 +19,7 @@
 //
 // Uses only features the self-hosted emitter supports (read_file → Result,
 // match), so it builds with either compiler.
+
 import "./lexer";
 import "./parser";
 import "./flatten";
@@ -100,20 +101,10 @@ pub function read_error_reason(e: IoError): string {
     NotFound(_) => {
       return "";
     },
-    PermissionDenied(_) => {
-      return "permission denied";
-    },
-    InvalidUtf8(_) => {
-      return "invalid UTF-8";
-    },
-    Other(_, msg) => {
-      return msg;
-    },
     _ => {
-      return "read failed";
+      return util.io_error_reason(e);
     }
   }
-  return "read failed";
 }
 
 // Resolved is a module's source together with the DIRECTORY it was read
@@ -591,6 +582,7 @@ pub function merge_builtins(dir: string, merged: parser.Module): parser.Module {
 // signature change low in the graph invalidates everything above it, whether or
 // not those units name anything that moved. Narrowing it means computing the
 // declarations each unit actually references; correctness comes first.
+
 pub function module_sig_string(mod: parser.Module): string {
   var out: string = "";
   var fi: i32 = 0;

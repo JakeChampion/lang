@@ -14,6 +14,7 @@
 //
 // The app writes its report to stderr; stdout carries TAP-13 from
 // std/test, so the file is its own test suite.
+
 import "std/test";
 import "std/strdist";
 import "std/string";
@@ -154,6 +155,7 @@ function hint(typed: string, candidates: string[]): string {
 }
 
 // ---------------------------------------------------------------- tests
+
 function api(): string[] {
   return [
     "rng_seed", "rng_next", "rng_below", "rng_between",
@@ -328,6 +330,7 @@ function test_an_exact_name_ranks_first_at_zero(): test.TestOutcome {
 }
 
 // ----------------------------------------------------------------- app
+
 function main(): i32 {
   eprint("didyoumean — ranking candidates, and knowing when to stay quiet");
   var typed: string[] = ["rng_sed", "shufle", "sampl", "zzzzzzqqqqq", "http_get"];

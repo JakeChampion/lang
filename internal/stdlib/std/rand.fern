@@ -15,6 +15,7 @@
 //
 // The seeded generator is NOT cryptographically secure: two consecutive
 // outputs pin its state. Never use it where unpredictability matters.
+
 import "std/math" as math;
 
 // `shuffle(xs)` — a uniformly random permutation of `xs` (Fisher-Yates
@@ -90,6 +91,7 @@ pub function sample[T](xs: T[], k: i32): T[] {
 // NOT cryptographically secure: two consecutive outputs pin the state.
 // Use `shuffle` / `choice` / `sample` (CSPRNG-backed) when unpredictability
 // matters.
+
 // __pcg_mult / __pcg_inc — the standard PCG32 LCG constants. Written as
 // functions because the language has no const declarations.
 function __pcg_mult(): u64 {
@@ -228,6 +230,7 @@ pub function choice_seeded[T](seed: i64, xs: T[]): Option[T] {
 //
 // The bytes go out eight at a time through `buf_push_u64`, because a byte at
 // a time is what made this slow in the first place (#9221).
+
 // `rng_fill(state, h, n)` — push `n` pseudorandom bytes onto the builder `h`
 // and return the advanced state. `n <= 0` pushes nothing.
 //

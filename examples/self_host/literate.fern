@@ -41,7 +41,9 @@
 // on success; a non-zero code identifies which one failed. The Go
 // build still owns the production path; this file is run from a Go
 // test that compiles + executes it on both backends.
+
 // ─── byte classifiers ──────────────────────────────────────────────
+
 // is_hspace — horizontal whitespace (space or tab). Lines are split
 // on '\n' before any trimming, so newlines never reach here; '\r' is
 // folded in so CRLF documents trim cleanly.
@@ -57,6 +59,7 @@ function is_backtick(b: u8): boolean {
 // The self-hosted modules are deliberately import-free (cf. lexer.fern),
 // so the handful of string utilities the engine needs are inlined here
 // rather than pulled from std/string.
+
 function starts_with(s: string, prefix: string): boolean {
   var pn: i32 = prefix.len();
   if (pn > s.len()) {
@@ -152,6 +155,7 @@ function join_lines(lines: string[]): string {
 }
 
 // ─── fence + chunk-marker recognition ──────────────────────────────
+
 // fence_open_len returns the length of the backtick run that opens a
 // fenced code block (>= 3), or 0 if the line isn't a fence opener.
 // Leading indentation is allowed.
@@ -305,6 +309,7 @@ function ref_name(t: string): string {
 }
 
 // ─── document model ────────────────────────────────────────────────
+
 // Piece is one physical body line of one chunk, tagged with the chunk
 // it belongs to and its 1-based line number in the document. The whole
 // document tangles down to a flat Piece[] in document order; a chunk's
@@ -399,6 +404,7 @@ function stack_has(stack: string[], name: string): boolean {
 }
 
 // ─── expansion ─────────────────────────────────────────────────────
+
 pub struct ExpandOk { lines: string[] }
 
 pub struct ExpandErr { msg: string, line: i32 }
@@ -447,6 +453,7 @@ function expand(pieces: Piece[], name: string, indent: string, active: string[])
 }
 
 // ─── tangle ────────────────────────────────────────────────────────
+
 pub struct TangleOk { code: string }
 
 pub struct TangleErr { msg: string, line: i32 }
@@ -500,6 +507,7 @@ pub function tangle_chunk(src: string, name: string): TangleResult {
 // can declare several, so a multi-module program is written as one
 // document and partitioned into modules. This mirrors the Go engine's
 // `TangleFiles` / `EntryFile` (internal/literate/tanglefiles.go).
+
 // FilePiece is one body line of a `file=PATH` block, tagged with its
 // output path, document line, and whether the block was marked `entry`.
 // Like Piece, the document flattens to a FilePiece[] so same-path
@@ -678,6 +686,7 @@ pub function entry_file(files: FileResult[]): string {
 // ─── self-test ─────────────────────────────────────────────────────
 // main() asserts the engine against the same cases as the Go unit
 // tests. Exit 0 = all passed; a non-zero code identifies the failure.
+
 // tangle_code runs tangle and returns the code on success or "" on
 // error (the success assertions compare against the expected code).
 function tangle_code(src: string): string {

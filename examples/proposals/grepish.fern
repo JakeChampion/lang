@@ -35,6 +35,7 @@ import "std/i32";
 import "std/string";
 
 // ------------------------------------------------------------------ model ---
+
 // mode: 0 = literal (metacharacters are ordinary bytes), 1 = glob
 struct Pattern { body: string, mode: i32, at_start: boolean, at_end: boolean }
 
@@ -45,6 +46,7 @@ struct Block { lines: Line[] }
 struct Report { blocks: Block[], matches: i32[] }
 
 // ---------------------------------------------------------------- matching ---
+
 // `^` and `$` are anchors wherever they appear at the ends, in BOTH modes — a
 // glob is still anchorable, and a literal search for a line ending in `$` is
 // what the literal mode's escape hatch is for (search for it unanchored).
@@ -144,6 +146,7 @@ function matches(p: Pattern, text: string): boolean {
 }
 
 // ---------------------------------------------------------- context window ---
+
 // The whole design in one place: mark every line the windows cover, THEN cut
 // the marked set into runs. Merging and clamping both fall out of that order —
 // there is no code path on which two windows can emit the same line twice,
@@ -197,6 +200,7 @@ function search(lines: string[], p: Pattern, before: i32, after: i32): Report {
 }
 
 // ------------------------------------------------------------- generators ---
+
 function corpus(): string[] {
   return [
     "alpha", "beta", "alphabet", "the alpha line", "gamma", "",
@@ -210,6 +214,7 @@ function metachar_free_patterns(): string[] {
 }
 
 // ------------------------------------------------------------------ tests ---
+
 // The four anchor forms, each against a predicate written by someone else.
 function test_anchors_agree_with_the_obvious_predicates(): test.TestOutcome {
   var lines: string[] = corpus();

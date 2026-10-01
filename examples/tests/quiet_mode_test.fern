@@ -25,6 +25,7 @@ import "std/test";
 // post-run counters we inspect, same pattern as
 // `fail_fast_test.fern` — keeps the outer suite's exit
 // code clean while still pinning the behaviour.
+
 function trivial_pass(): test.TestOutcome {
   return test.pass();
 }

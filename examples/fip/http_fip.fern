@@ -472,6 +472,7 @@ fip function route(own out: u8[], wire: u8[], sp1: i32, path_at: i32, path_end: 
 // steady state rather than in a separate test that proves nothing about
 // throughput. The request's length is left in the wire buffer's last four
 // bytes, past anything a request can reach.
+
 fip function wire_len_at(): i32 {
   return max_wire() - 4;
 }
@@ -689,6 +690,7 @@ function zeros_u8(n: i32): u8[] {
 // The driver is NOT `fip`: it owns the buffers, tallies and prints. The
 // class and the response length come back in the output buffer's header,
 // where a caller would read them anyway.
+
 function main(): i32 {
   var batch: i32 = 64;
   var rounds: i32 = 2000;

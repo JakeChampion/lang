@@ -9,6 +9,7 @@ import "std/i64" as i64m;
 // the near-MAX cases are the crux. Scalar bit-ops, so this runs on all four
 // native backends and both self-host gates. The Go-side TestIntMidpoint pins
 // the native backends; this is the migration-shaped companion.
+
 function test_i32_basic(): test.TestOutcome {
   if (4.midpoint(6) != 5) {
     return test.fail("4,6");

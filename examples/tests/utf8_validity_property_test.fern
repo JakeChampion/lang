@@ -28,6 +28,7 @@ import "std/utf8" as utf8;
 // from an alphabet spanning all four UTF-8 widths, so every iteration
 // runs the operations over a genuinely multibyte string whose shape
 // the fuzzer controls.
+
 // A 1-, 2-, 3- and 4-byte-per-character alphabet, plus the separators
 // the word / line / trim operations key on.
 function alphabet(): string[] {

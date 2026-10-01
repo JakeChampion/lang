@@ -197,7 +197,7 @@ pub function sem_strict_on(): boolean {
 
 function report(what: string, why: string): i32 {
   if (sem_report_on() || sem_strict_on()) {
-    eprint("FERN_SEM_IR: " + what + ": " + why + "\n");
+    eprint("FERN_SEM_IR: " + what + ": " + why);
   }
   return 0;
 }
@@ -206,7 +206,7 @@ function report(what: string, why: string): i32 {
 // strict compile that succeeds writes nothing to stderr.
 function tally(what: string, why: string): i32 {
   if (sem_report_on()) {
-    eprint("FERN_SEM_IR: " + what + ": " + why + "\n");
+    eprint("FERN_SEM_IR: " + what + ": " + why);
   }
   return 0;
 }
@@ -303,7 +303,7 @@ function live_reg(r: Rows): irlower.SigReg {
 // wasm bridge emits it to — so they are not it.
 // A dyn dispatch reaches every implementation its chain names, so each is a
 // callee the same way.
-function escaping_callee(r: irlower.LowerResult, reg: irlower.SigReg, funcs: parser.FuncDecl[], impls: parser.ImplInfo[]): string {
+function escaping_callee(r: irlower.LowerResult, reg: irlower.SigReg, externs: irlower.SigReg, funcs: parser.FuncDecl[], impls: parser.ImplInfo[]): string {
   for o in r.ops {
     if (o.kind_tag == 147) {  // dyn_dispatch
       for arm in semsource.dyn_arms(funcs, impls, ir.dyn_dispatch_method(o.str), ir.dyn_dispatch_traits(o.str)) {
@@ -314,7 +314,7 @@ function escaping_callee(r: irlower.LowerResult, reg: irlower.SigReg, funcs: par
     }
     if (o.kind_tag == 149 || o.kind_tag == 6) {  // call_direct, const_func
       if (!ircore.is_fern_helper(o.str) && !ircore.is_c_call(o.str)
-        && !is_drop_helper(o.str) && !is_extern(funcs, o.str) && !irlower.sig_reg_has_exact(reg, o.str)) {
+        && !is_drop_helper(o.str) && !irlower.sig_reg_has_exact(externs, o.str) && !irlower.sig_reg_has_exact(reg, o.str)) {
         return o.str;
       }
     }
@@ -322,13 +322,17 @@ function escaping_callee(r: irlower.LowerResult, reg: irlower.SigReg, funcs: par
   return "";
 }
 
-function is_extern(funcs: parser.FuncDecl[], name: string): boolean {
+// extern_reg indexes the names of the `@import` externs among `funcs`, so a
+// callee is tested against them by bucket rather than by a scan of every
+// declaration per call.
+function extern_reg(funcs: parser.FuncDecl[]): irlower.SigReg {
+  var names: string[] = [];
   for fd in funcs {
-    if (fd.name == name && fd.import_iface.len() > 0) {
-      return true;
+    if (fd.import_iface.len() > 0) {
+      names = names.append(fd.name);
     }
   }
-  return false;
+  return irlower.sig_reg_of(names);
 }
 
 // The types of the function values a body calls: the callee value's own type
@@ -613,6 +617,7 @@ function ast_indirect_cone(r: Rows, mod: parser.Module, built: semsource.Built):
 // A round that turns nothing off is the fixpoint, and `keep` only ever
 // shrinks, so there is one.
 function prune(r: Rows, mod: parser.Module, built: semsource.Built): Rows {
+  var externs: irlower.SigReg = extern_reg(mod.funcs);
   var changed: boolean = true;
   while (changed) {
     changed = false;
@@ -621,7 +626,7 @@ function prune(r: Rows, mod: parser.Module, built: semsource.Built): Rows {
     var i: i32 = 0;
     while (i < r.body.len()) {
       if (r.keep[i]) {
-        var bad: string = escaping_callee(r.body[i], reg, mod.funcs, mod.impls);
+        var bad: string = escaping_callee(r.body[i], reg, externs, mod.funcs, mod.impls);
         if (bad.len() > 0) {
           bad = "calls " + bad + ", which the AST lowering defines";
         } else {
@@ -969,7 +974,7 @@ pub function substitution(mod: parser.Module, lowered: parser.FuncDecl[], struct
       + util.i32_to_string(built.instances.len()) + " instances: "
       + util.i32_to_string(refused_n) + " refused, the AST lowering stands");
     if (sem_strict_on()) {
-      eprint("FERN_SEM_IR_STRICT: the typed lowering refused " + util.i32_to_string(refused_n) + " declarations and instances; the FERN_SEM_IR lines above name each\n");
+      eprint("FERN_SEM_IR_STRICT: the typed lowering refused " + util.i32_to_string(refused_n) + " declarations and instances; the FERN_SEM_IR lines above name each");
       exit(3);
     }
     return ircore.no_sub();
@@ -1051,7 +1056,7 @@ pub function runtime_bodies(src: string): irlower.LowerResult[] {
 function runtime_refused(name: string, why: string): irlower.LowerResult[] {
   report("runtime " + name, why);
   if (sem_strict_on()) {
-    eprint("FERN_SEM_IR_STRICT: the typed lowering refused runtime helper " + name + "\n");
+    eprint("FERN_SEM_IR_STRICT: the typed lowering refused runtime helper " + name);
     exit(3);
   }
   return [];

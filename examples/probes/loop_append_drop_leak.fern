@@ -22,6 +22,7 @@
 //
 // This is why `lexer.tokenize` leaks its whole Token[] per call (`out =
 // out.append(tok)` in a `while (true)`), which is ~69% of the per-load leak.
+
 function build(n: i32): i32 {
   var xs: i32[] = [];
   var i: i32 = 0;

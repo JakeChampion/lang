@@ -27,6 +27,7 @@
 // Passing a half's own functions there is exactly the bug this driver exists to
 // catch, and it fails loudly rather than subtly — a mis-tagged cross-unit call
 // miscompiles at runtime.
+
 import "./lexer";
 import "./parser";
 import "./rundriver";
@@ -103,7 +104,7 @@ function main(): i32 {
 
   var n: i32 = im.funcs.len();
   if (n < 2) {
-    eprint("wasm_units_probe: need at least 2 functions to split\n");
+    eprint("wasm_units_probe: need at least 2 functions to split");
     return 1;
   }
   var half: i32 = n / 2;

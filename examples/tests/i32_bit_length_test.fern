@@ -9,6 +9,7 @@ import "std/i32";
 // asm_ir IR budget; uses assert_true (no scalar assert_eq[i32]). The Go-side
 // TestI32BitLength pins these across all four backends; this is the
 // migration-shaped companion.
+
 function test_zero(): test.TestOutcome {
   return test.assert_true(0.bit_length() == 0);
 }

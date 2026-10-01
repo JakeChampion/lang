@@ -30,6 +30,7 @@
 // names itself in `bail`, and the backend refuses the function naming it:
 // every op the lowering produces has an arm, so a bail is a compiler bug
 // (ircore.ssa_refuse).
+
 import "./ir";
 import "./ssa";
 import "./util";
@@ -40,6 +41,7 @@ import "./util";
 pub struct LResult { func: ssa.SFunc, ok: boolean, bail: string }
 
 // ---- small array helpers (value-semantics, no slice syntax) -------------
+
 // splice appends `more` onto the block's instruction list. A helper builds
 // what it adds on a fresh list and the caller appends it here, onto a list
 // only this frame holds: an append on the list passed INTO the helper copied
@@ -58,6 +60,7 @@ function splice(insts: ssa.SInst[], more: ssa.SInst[]): ssa.SInst[] {
 // largest functions that copy per store made the lift quadratic. The scope
 // stacks and rows never shrink: `sc_n` is the depth, a scope exit lowers it,
 // and the next entry at that depth overwrites what the exit left.
+
 function drop_last(a: i32[]): i32[] {
   var out: i32[] = [];
   var i: i32 = 0;
@@ -95,6 +98,7 @@ function put_at_s(own xs: string[], d: i32, v: string): string[] {
 }
 
 // ---- IR binary-op kind -> SSA `binary`/`unary` op string ----------------
+
 // LitWord / decimal_word parse an irlower literal's SOURCE TEXT into the i32 the
 // SSA `const_int` holds. irlower carries integer literals as text so the AST
 // backends can splice hex / full-u32 values straight into an immediate; the lift
@@ -231,6 +235,7 @@ function fbin_sym(k: string): string {
 }
 
 // ---- the lift ------------------------------------------------------------
+
 // admits reports whether the production lift has an arm for `op`: one of
 // its own, or the stack machine's through flat_op.
 pub function admits(op: ir.Op): boolean {
@@ -941,6 +946,7 @@ function lift_opt_make_prod(tag: i32, has_payload: boolean, lv: LiftVals): LiftV
 // bin_str / bin_imm are what a lifted binary carries: the optimiser's symbol
 // for the optimiser's consumers, the IR kind name and width for the production
 // emitter.
+
 // lift_int_narrow_prod lifts the integer width ops as the stack machine
 // selects them: a pointer-width extend or wrap moves nothing, so the value
 // flows through; the rest become one unary carrying the op (and the cast's
@@ -2151,6 +2157,7 @@ function lift_call_direct(op: ir.Op, nvals: i32, stack: i32[], cur_insts: ssa.SI
 }
 
 // ---- STerm constructors (ssa.fern's t_* helpers are module-private) ------
+
 function STerm_ret(value: i32): ssa.STerm {
   return ssa.STerm { kind_tag: 1, cond: 0, target: 0, t: 0, f: 0, value: value };
 }

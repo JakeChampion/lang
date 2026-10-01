@@ -11,6 +11,7 @@ import "core/iter" as iter;
 // this is the migration-shaped (pure-Fern, std/test-driven, self-host-gated)
 // companion. (flat_map is intentionally left to a follow-up — the eager
 // std/array flat_map hits a drop-at-exit gap.)
+
 function test_to_array(): test.TestOutcome {
   return test.assert_eq_array(iter.to_array(iter.range(0, 4)), [0, 1, 2, 3]);
 }

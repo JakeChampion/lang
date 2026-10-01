@@ -44,6 +44,7 @@ import "std/i64";
 // Every bound is fixed here and allocated once at startup. Nothing grows: a
 // full queue drops and counts the drop, which is what makes overload a
 // number in the metrics rather than an allocation.
+
 fip function max_entries(): i32 {
   return 256;
 }
@@ -61,6 +62,7 @@ fip function out_cap(): i32 {
 // Header words, then four regions. Each base is derived from the one before
 // it so a capacity change moves everything consistently — the one piece of
 // safety available without a struct.
+
 fip function idx_q_head(): i32 {
   return 0;
 }
@@ -127,6 +129,7 @@ fip function state_words(): i32 {
 }
 
 // ===================== EVENT AND RESPONSE CODES =====================
+
 fip function ev_create(): i64 {
   return 1 as i64;
 }
@@ -160,6 +163,7 @@ fip function rsp_value(): i64 {
 }
 
 // ===================== INITIALIZATION (allocating, once) =====================
+
 // `new_state()` is the control plane: the one allocation the whole program
 // makes for its working set. It is deliberately NOT `fip` — building the
 // arena is exactly the work `fip` exists to keep out of the steady state.
@@ -174,6 +178,7 @@ function new_state(): i64[] {
 }
 
 // ===================== THE DATA PLANE (fip, allocation-free) =====================
+
 // `enqueue` writes one event into the input ring, or counts a drop when the
 // ring is full. Overload is a metric, not a resize: a queue that grows to
 // absorb a burst has moved the failure somewhere it cannot be seen.
@@ -337,6 +342,7 @@ fip function drain_output(own s: i64[]): i64[] {
 // of events then miss a table they never populate), and an even create/delete
 // split at one id per step leaves the table holding a single entry, so the
 // lookup never has anything to find.
+
 // `event_id` mixes the counter before reducing it, so the id a step touches is
 // independent of the kind that step carries.
 //
@@ -429,6 +435,7 @@ fip function round(own s: i64[], seed: i64, batch: i32): i64[] {
 // everything measured after the mark is the steady state. The verdict printed
 // last is the experiment's whole point: allocs=0 over millions of events, from
 // a compiler-checked `fip` call graph rather than from inspection.
+
 function main(): i32 {
   var s: i64[] = new_state();
   s = prefill(s);

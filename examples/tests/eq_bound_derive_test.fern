@@ -11,6 +11,7 @@ import "std/test";
 // reported as a monomorph compiler bug at a stdlib line (#6846). The i32 /
 // string coverage for the same verbs lives in the per-verb suites
 // (array_all_equal_test.fern, array_dedup_test.fern, …).
+
 @derive(cmp.Eq, cmp.Display)
 struct Point { x: i32, y: i32 }
 

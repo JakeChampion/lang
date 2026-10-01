@@ -13,6 +13,7 @@ import "std/array";
 // dedup on all four native backends) because the self-host compiler mishandles
 // the generic cmp.Eq dedup over pointer-payload (string) elements — the same
 // gap that keeps array_rotate / array_accessors' string cases native-only.
+
 function test_runs(): test.TestOutcome {
   // Only ADJACENT dups collapse — the trailing 1 survives.
   return test.assert_eq_array(array.dedup([1, 1, 2, 2, 1]), [1, 2, 1]);

@@ -4,6 +4,7 @@ import "std/strdist" as strdist;
 // examples/tests/strdist_test.fern — pure-Fern coverage of std/strdist:
 // Levenshtein edit distance (classic reference cases + code-point
 // awareness) and the normalised similarity ratio.
+
 function test_levenshtein_basic(): test.TestOutcome {
   if (strdist.levenshtein("", "") != 0) {
     return test.fail("empty/empty");
