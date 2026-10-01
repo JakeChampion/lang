@@ -351,17 +351,17 @@ function main(): i32 {
     var flatSchema = semrecords.Record { views: false, ty: flatType, fields: [semrecords.Field { name: "n", ty: typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false } }] };
     var flatFunc = ssasem.Func { envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], graph: selfGraph, values: [flatType], params: [flatType], result: flatType, records: semrecords.records_of([flatSchema]), enums: [], calls: [] };
     if (ssarc.drop_helpers(flatFunc).len() != 0) { return 24; }
-    // Two views of one type merge to a single tail entry rather than two.
-    var merged = ssarc.merge_helpers([], ssarc.drop_helpers(selfFunc).append(ssarc.drop_helpers(selfFunc)[0]));
-    if (merged.len() != 2) { return 25; }
-    if (!merged[0].ok || !merged[1].ok) { eprint(merged[0].why); return 26; }
-    // Two bodies under one symbol refuse instead. The weak linkage that lets
-    // duplicates co-link would otherwise pick one of them silently.
-    var perturbed = irlower.LowerResult { ...selfHelpers[0], ops: selfHelpers[0].ops.append(ir.op_const_i32(1)) };
-    var clashed = ssarc.merge_helpers([], [selfHelpers[0], perturbed]);
-    if (clashed.len() != 1) { return 27; }
-    if (clashed[0].ok) { return 28; }
-    if (clashed[0].why != "conflicting drop helper for __sem_drop_Node") { eprint(clashed[0].why); return 29; }
+    // Two functions that both name one type produce its helpers once: the
+    // module's collection skips a symbol it already carries, and the merge
+    // keeps the first of a symbol handed to it twice rather than two.
+    var cycle2 = ssasem.Func { ...selfFunc, graph: ssa.SFunc { ...selfGraph, name: "cycle2" } };
+    var collected = ssarc.with_drop_helpers(ssarc.with_drop_helpers(ssarc.no_helpers(), selfFunc), cycle2);
+    if (collected.rows.len() != 2) { return 25; }
+    if (collected.rows[0].name != "__sem_drop_Node" || collected.rows[1].name != "__sem_release_Node") { eprint(collected.rows[0].name); return 26; }
+    if (ssarc.with_drop_helpers(collected, flatFunc).rows.len() != 2) { return 27; }
+    var merged = ssarc.merge_helpers([], collected.rows.append(collected.rows[0]));
+    if (merged.len() != 2) { return 28; }
+    if (!merged[0].ok || !merged[1].ok || ssarc.merge_helpers(merged, collected.rows).len() != 2) { eprint(merged[0].why); return 29; }
     // A frame releasing a nominal box with children makes one call to the
     // type's release helper; the uniqueness test and the child walk live there.
     var sinkGraph = ssa.SFunc { name: "sink", nparams: 1, nvals: 2, entry: 7, takes_env: false,

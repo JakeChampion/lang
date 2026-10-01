@@ -16913,7 +16913,7 @@ function ow_result_borrows(mod: parser.Module, ofuncs: OwnFunc[], builtins: util
     var unmarked: parser.FuncDecl[] = [];
     for fn in pending {
       if ((first || ow_calls_any(fn, marked)) && ow_func_result_borrows(fn, mod, ofuncs, borrows, builtins)) {
-        borrows = util.name_index(borrows.names.append(fn.name));
+        borrows = borrows.added(fn.name);
         now_marked = now_marked.append(fn.name);
       } else {
         unmarked = unmarked.append(fn);
