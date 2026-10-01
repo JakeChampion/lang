@@ -1133,7 +1133,7 @@ pub function no_sub(): Sub {
 // handed one over, else `annotated` lifted here.
 pub function sub_lifted(sub: Sub, annotated: parser.Module): parser.Module {
   if (sub.has_lifted) {
-    return parser.erase_str_module(sub.lifted);
+    return parser.erase_view_module(sub.lifted);
   }
   return lift_lambdas(annotated);
 }

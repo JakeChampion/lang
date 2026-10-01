@@ -59,6 +59,7 @@ function main(): i32 {
     "Vec[(T) => boolean]", "((T) => U)[]", "(T) => U[][]",
     "(T) => () => U[]", "((((T) => U)))", "((() => U)[])",
     "(((T) => U)[][])", "(() => T, () => U)", "() => (() => U[])[]",
+    "[u8]", "[u8][]", "([u8], i32)", "Option[[u8]]", "[[u8]]", "[(i32) => i32]",
   ];
   var out: string = "";
   var bad: i32 = 0;
@@ -92,6 +93,14 @@ function main(): i32 {
   out = out + "struct arr3 base=" + ar.base
     + " args=" + util.i32_to_string(ar.args.len())
     + " depth=" + util.i32_to_string(ar.array_depth) + "\n";
+
+  // A `[T]` view is its own node: the brackets wrap one element, and an array
+  // of views keeps the view inside the suffix (#10926).
+  var vw: parser.TypeRef = parser.parse_type_ref("[u8][]");
+  out = out + "struct viewarr view=" + b2s(vw.is_view)
+    + " depth=" + util.i32_to_string(vw.array_depth)
+    + " elemview=" + b2s(parser.elem_type_ref(vw).is_view)
+    + " elem=" + parser.render_type_ref(parser.elem_type_ref(vw).args[0]) + "\n";
 
   // A function type round-trips even when it is NOT decoded — an unrecognised
   // spelling survives whole as `base` and renders back byte-identical. So the
