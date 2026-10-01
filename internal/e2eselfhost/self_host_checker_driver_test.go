@@ -57,6 +57,9 @@ func TestSelfHostCheckerDriverX86_64(t *testing.T) {
 		// every destructure used to draw.
 		{"destructure-arity-e024", "function main(): i32 { var (a, b, c) = (1, 2); return a; }\n", 1, "error[E024]"},
 		{"destructure-non-tuple-e024", "function main(): i32 { var (a, b) = 5; return a; }\n", 1, "error[E024]"},
+		// A loop over a value no loop iterates is reported AT the loop, not
+		// later as an uninferable statement in its body.
+		{"for-over-struct-e034", "struct Box { k: i32 }\nfunction main(): i32 {\n  var b: Box = Box { k: 1 };\n  var n: i32 = 0;\n  for it in b {\n    n = n + it.k;\n  }\n  return n;\n}\n", 1, "error[E034]: indexing non-array value of type Box (5:"},
 		{"destructure-field-type-e002", "struct P { x: string }\nfunction main(): i32 { var p: P = P { x: \"s\" }; var P { x } = p; return x; }\n", 1, "error[E002]"},
 	}
 	for _, tc := range cases {
