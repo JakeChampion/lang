@@ -31,10 +31,10 @@
 // tables need, but LOWERS only module N, and a cache hit skips the lowering
 // along with the emit.
 //
-// On the typed lowering the key is modloader.typed_unit_cache_key, which adds
-// a hash of the unit's lowered bodies (ircore.lowered_digest) and of the view the
-// emit reads beyond its dependencies (TypedView.view). That lowering is
-// whole-program: it inlines callees and infers ownership across modules. So a
+// On the typed lowering the units and their keys are the asm drivers':
+// ircore.split_units and ircore.unit_cache_key, which adds a hash of the unit's
+// lowered bodies and of the view the emit reads beyond its dependencies
+// (UnitKeys.view). That lowering is whole-program: it inlines callees and infers ownership across modules. So a
 // body-only edit re-emits just that module only when it moves no other
 // module's lowered body; an edit to a body an importer inlined re-emits the
 // importer too. Every emit and link lowers the whole program once, and a hit
@@ -54,7 +54,6 @@ import "./ircore";
 import "./modloader";
 import "./wasm_objfile";
 import "./semlower";
-import "./irverify";
 
 // unit_ns namespaces module `idx`'s base globals. Module 0 keeps the historical
 // unnamespaced names so a single-module program's unit is byte-identical to the
@@ -343,225 +342,107 @@ function link_text(l: Linked, merged: parser.Module): string {
   return wasm_ir.emit_ir_module_units(l.units, merged, l.needs, l.fn_sigs, rc, 0);
 }
 
-// TypedView is the program as the typed lowering sees it, whole. The typed
-// lowering is whole-program (a body reads the ownership inferred for every
-// function it calls), so every typed step lowers the whole program once and
-// keeps the units it asked for, as wasm_units_probe does. Module j's units
-// cover the view's functions module j declares or lifted, in view order; the
-// rest (generic clones, and the instances and drop helpers on the cache tail)
-// are the entry's, whose import closure is the whole program.
-struct TypedView {
-  im: parser.Module,
-  stab: irlower.StructTab,
-  // owner[i] is the module im.funcs[i] belongs to.
-  owner: i32[],
-  // Module j with its own functions from the view, and their signature hashes.
-  mods: parser.Module[],
-  sighashes: string[],
-  // A hash of what every unit's emit reads beyond its dependencies'
-  // signatures: the signatures of the functions no module declares, which
-  // any unit can call, and the whole struct table, which an op's `decl`
-  // indexes and whose enum owners and type parameters the emit reads.
-  view: string,
-}
+// Typed is the program the typed lowering built, whole, cut into units by
+// ircore.split_units (the split the asm drivers use). The typed lowering is
+// whole-program (a body reads the ownership inferred for every function it
+// calls), so every typed step lowers the whole program once and keeps the
+// units it asked for. `keys` are derived only when a cache is configured.
+struct Typed { g: ircore.Gated, u: ircore.Units, keys: ircore.UnitKeys }
 
-function func_key(f: parser.FuncDecl): string {
-  return util.base_type_name(parser.erase_str_spelling(f.receiver_type)) + "." + f.name;
-}
-
-// Declared indexes each module's declarations by func_key: row i of the index
-// is declared by mods[i].
-struct Declared { ix: irverify.NameIndex, mods: i32[] }
-
-function declared_of(parts: flatten.PerModule[]): Declared {
-  var keys: string[] = [];
-  var mods: i32[] = [];
-  var j: i32 = 0;
-  while (j < parts.len()) {
-    for f in parts[j].mod.funcs {
-      keys = keys.append(func_key(f));
-      mods = mods.append(j);
-    }
-    j = j + 1;
-  }
-  return Declared { ix: irverify.name_index(keys), mods: mods };
-}
-
-// declaring_module is the module that declares f, or -1. A lifted function
-// (`<fd>$cloN`, `<fd>$wrapN`) is named before its `$` for the declaration it
-// was lifted from, and belongs to that declaration's module.
-function declaring_module(d: Declared, f: parser.FuncDecl): i32 {
-  var row: i32 = irverify.index_row(d.ix, func_key(f));
-  if (row < 0) {
-    var cut: i32 = 0;
-    while (cut < f.name.len() && f.name[cut] != b'$') {
-      cut = cut + 1;
-    }
-    if (cut == 0 || cut == f.name.len()) {
-      return 0 - 1;
-    }
-    row = irverify.index_row(d.ix, func_key(parser.FuncDecl { ...f, name: slice_unchecked(f.name, 0, cut) + "" }));
-  }
-  if (row < 0) {
-    return 0 - 1;
-  }
-  return d.mods[row];
-}
-
-function typed_view(parts: flatten.PerModule[], full: parser.Module, sub: ircore.Sub): TypedView {
-  var im: parser.Module = ircore.with_records(parser.infer_ret_types_module(wasm_ir.route_normalized(full)), sub);
-  var declared: Declared = declared_of(parts);
-  var entry_idx: i32 = parts.len() - 1;
-  var owner: i32[] = [];
-  var unowned: parser.FuncDecl[] = [];
-  for f in im.funcs {
-    var o: i32 = declaring_module(declared, f);
-    if (o < 0) {
-      o = entry_idx;
-      unowned = unowned.append(f);
-    }
-    owner = owner.append(o);
-  }
-  var mods: parser.Module[] = [];
-  var sighashes: string[] = [];
-  var j: i32 = 0;
-  while (j < parts.len()) {
-    var fs: parser.FuncDecl[] = [];
-    for r in owned_rows(owner, j) {
-      fs = fs.append(im.funcs[r]);
-    }
-    var m: parser.Module = parser.Module { ...parts[j].mod, funcs: fs };
-    mods = mods.append(m);
-    sighashes = sighashes.append(util.hash_key(modloader.module_sig_string(m)));
-    j = j + 1;
-  }
-  return TypedView {
-    im: im, stab: irlower.struct_tab(im.structs), owner: owner, mods: mods, sighashes: sighashes,
-    view: util.hash_key(modloader.module_sig_string(parser.Module { ...im, funcs: unowned, structs: [] }) + struct_table_text(im.structs)),
-  };
-}
-
-// struct_table_text spells every struct decl in table order, with each part
-// the lowering or the emit can read.
-function struct_table_text(structs: parser.StructDecl[]): string {
-  var parts: string[] = [];
-  for sd in structs {
-    parts = parts.append("st " + sd.name + "<" + list_text(sd.type_params) + ">" + sd.enum_owner
-      + "|" + list_text(sd.derives) + "|" + list_text(sd.variant_field_names) + "|");
-    if (sd.must_consume) {
-      parts = parts.append("mc");
-    }
-    parts = parts.append("{");
-    for f in sd.fields {
-      parts = parts.append(f.name + ":" + f.type_name + "/" + f.fn_ret + "/" + f.fn_param_types + ",");
-    }
-    parts = parts.append("}");
-  }
-  return util.str_join_chunks(parts);
-}
-
-function list_text(xs: string[]): string {
-  var parts: string[] = [];
-  for x in xs {
-    parts = parts.append(x + ",");
-  }
-  return util.str_join_chunks(parts);
-}
-
-function owned_rows(owner: i32[], idx: i32): i32[] {
-  var rows: i32[] = [];
-  var i: i32 = 0;
-  while (i < owner.len()) {
-    if (owner[i] == idx) {
-      rows = rows.append(i);
-    }
-    i = i + 1;
-  }
-  return rows;
-}
-
-// typed_cache is the whole program lowered once: each body the substitution
-// produced, the AST lowering's for the rest, then the declaration-less bodies.
-function typed_cache(tv: TypedView, sub: ircore.Sub): irlower.LowerResult[] {
-  var g: ircore.Lowered = wasm_ir.lower_all_gated(tv.im, tv.stab, ircore.sub_base(sub, tv.im.funcs, tv.stab), sub);
-  if (!g.ok) {
+function typed_units(parts: flatten.PerModule[], d: semlower.Driven, cache_dir: string): Typed {
+  var im: parser.Module = ircore.with_records(parser.infer_ret_types_module(wasm_ir.route_normalized(d.full)), d.sub);
+  var stab: irlower.StructTab = irlower.struct_tab(im.structs);
+  var base: irlower.FnSigs = ircore.sub_base(d.sub, im.funcs, stab);
+  var l: ircore.Lowered = wasm_ir.lower_all_gated(im, stab, base, d.sub);
+  if (!l.ok) {
     ircore.eprint_ir_ineligible();
     exit(1);
   }
-  return ircore.sub_cache(sub, g.cache);
+  var g: ircore.Gated = ircore.Gated { ok: true, im: im, stab: stab, base: base, cache: ircore.sub_cache(d.sub, l.cache) };
+  var raw: parser.Module[] = [];
+  var entry_at: i32 = 0;
+  var k: i32 = 0;
+  while (k < parts.len()) {
+    raw = raw.append(parts[k].mod);
+    if (parts[k].is_entry) {
+      entry_at = k;
+    }
+    k = k + 1;
+  }
+  var u: ircore.Units = ircore.split_units(g, raw, entry_at);
+  var keys: ircore.UnitKeys = ircore.no_unit_keys();
+  if (cache_dir.len() > 0) {
+    // The wasm emit reads no whole-program registry, so no facts.
+    keys = ircore.unit_keys(u, im.funcs, stab, base, false);
+  }
+  return Typed { g: g, u: u, keys: keys };
 }
 
 struct TypedUnit { mod: parser.Module, cache: irlower.LowerResult[] }
 
-// typed_unit is module idx's functions [lo, hi) with their bodies. The unit
-// that ends the entry module also carries the cache tail.
-function typed_unit(tv: TypedView, whole: irlower.LowerResult[], idx: i32, lo: i32, hi: i32): TypedUnit {
-  var rows: i32[] = owned_rows(tv.owner, idx);
+// typed_unit is unit idx's functions [lo, hi) with their bodies. The window
+// that ends a unit also carries its cache tail.
+function typed_unit(t: Typed, idx: i32, lo: i32, hi: i32): TypedUnit {
+  var m: parser.Module = t.u.mods[idx];
+  var whole: irlower.LowerResult[] = t.u.caches[idx];
   var end: i32 = hi;
-  if (end < 0 || end > rows.len()) {
-    end = rows.len();
+  if (end < 0 || end > m.funcs.len()) {
+    end = m.funcs.len();
   }
   var fs: parser.FuncDecl[] = [];
   var cache: irlower.LowerResult[] = [];
-  var k: i32 = lo;
-  while (k < end) {
-    fs = fs.append(tv.im.funcs[rows[k]]);
-    cache = cache.append(whole[rows[k]]);
-    k = k + 1;
+  var i: i32 = lo;
+  while (i < end) {
+    fs = fs.append(m.funcs[i]);
+    cache = cache.append(whole[i]);
+    i = i + 1;
   }
-  if (idx == tv.mods.len() - 1 && end == rows.len()) {
-    var x: i32 = tv.im.funcs.len();
-    while (x < whole.len()) {
-      cache = cache.append(whole[x]);
-      x = x + 1;
+  if (end == m.funcs.len()) {
+    while (i < whole.len()) {
+      cache = cache.append(whole[i]);
+      i = i + 1;
     }
   }
-  return TypedUnit { mod: parser.Module { ...tv.im, funcs: fs }, cache: cache };
+  return TypedUnit { mod: parser.Module { ...m, funcs: fs }, cache: cache };
 }
 
-function typed_file(dir: string, entry_path: string, parts: flatten.PerModule[], tv: TypedView, u: TypedUnit, idx: i32, lo: i32, hi: i32, cache_dir: string): string {
+function typed_file(dir: string, entry_path: string, parts: flatten.PerModule[], t: Typed, idx: i32, lo: i32, hi: i32, cache_dir: string): string {
   if (cache_dir.len() == 0) {
     return "";
   }
   var src_hash: string = modloader.module_src_hash(modloader.no_overlay(), dir, entry_path, parts, idx);
-  var key: string = modloader.typed_unit_cache_key(parts, tv.mods, tv.sighashes, idx, src_hash, lo, hi, ircore.lowered_digest(u.cache) + ":" + tv.view);
+  var key: string = ircore.unit_cache_key(parts, t.u, t.keys, idx, src_hash, [], lo, hi);
   if (key.len() == 0) {
     return "";
   }
-  return cache_dir + "/" + parts[idx].ns + unit_ns(idx, lo) + "__t" + util.hash_key(key) + ".wu";
+  return cache_dir + "/" + parts[idx].ns + unit_ns(idx, lo) + "__" + util.hash_key(key) + ".wu";
 }
 
 function run_typed(dir: string, entry_path: string, entry: parser.Module, loaded: flatten.LoadedModule[], parts: flatten.PerModule[], pm_mode: string, pm_index: i32, pm_lo: i32, pm_hi: i32, cache_dir: string, plan_file: string): i32 {
-  var merged: parser.Module = flatten.bundle(entry, loaded, "wasm32-wasi");
+  var d: semlower.Driven = semlower.driven(flatten.bundle(entry, loaded, "wasm32-wasi"), "wasm32-wasi");
+  var t: Typed = typed_units(parts, d, cache_dir);
   if (pm_mode == "func-counts") {
-    var cv: TypedView = typed_view(parts, semlower.driven_module(merged, "wasm32-wasi"), ircore.no_sub());
-    var ci: i32 = 0;
-    while (ci < parts.len()) {
-      print(util.i32_to_string(owned_rows(cv.owner, ci).len()));
-      ci = ci + 1;
+    for m in t.u.mods {
+      print(util.i32_to_string(m.funcs.len()));
     }
     return 0;
   }
-  var d: semlower.Driven = semlower.driven(merged, "wasm32-wasi");
-  var tv: TypedView = typed_view(parts, d.full, d.sub);
-  var whole: irlower.LowerResult[] = typed_cache(tv, d.sub);
   if (pm_mode == "link") {
     // Hit-only, as the AST link is: a unit's key hashes its lowered bodies,
     // so link lowers to find each object, but it builds none.
     var l: Linked = no_units();
     for u in read_plan(plan_file, parts.len()) {
-      var lu: TypedUnit = typed_unit(tv, whole, u.idx, u.lo, u.hi);
-      l = add_found(l, parts, u, read_cached(typed_file(dir, entry_path, parts, tv, lu, u.idx, u.lo, u.hi, cache_dir), parts[u.idx].ns));
+      l = add_found(l, parts, u, read_cached(typed_file(dir, entry_path, parts, t, u.idx, u.lo, u.hi, cache_dir), parts[u.idx].ns));
     }
     if (link_missing(l)) {
       return 1;
     }
-    write(link_text(l, tv.im));
+    write(link_text(l, t.g.im));
     return 0;
   }
   if (pm_mode == "emit-all") {
     for u in read_plan(plan_file, parts.len()) {
-      typed_obj(dir, entry_path, parts, tv, whole, u, cache_dir);
+      typed_obj(dir, entry_path, parts, t, u, cache_dir);
     }
     return 0;
   }
@@ -569,20 +450,20 @@ function run_typed(dir: string, entry_path: string, entry: parser.Module, loaded
     eprint("wasm per-module: emit index out of range");
     return 1;
   }
-  write(wasm_objfile.encode(typed_obj(dir, entry_path, parts, tv, whole, ShardRef { idx: pm_index, lo: pm_lo, hi: pm_hi }, cache_dir)));
+  write(wasm_objfile.encode(typed_obj(dir, entry_path, parts, t, ShardRef { idx: pm_index, lo: pm_lo, hi: pm_hi }, cache_dir)));
   return 0;
 }
 
 // typed_obj is unit u's object, served from the cache when its key matches and
 // emitted, and cached, otherwise.
-function typed_obj(dir: string, entry_path: string, parts: flatten.PerModule[], tv: TypedView, whole: irlower.LowerResult[], u: ShardRef, cache_dir: string): wasm_objfile.UnitObj {
-  var tu: TypedUnit = typed_unit(tv, whole, u.idx, u.lo, u.hi);
-  var cf: string = typed_file(dir, entry_path, parts, tv, tu, u.idx, u.lo, u.hi, cache_dir);
+function typed_obj(dir: string, entry_path: string, parts: flatten.PerModule[], t: Typed, u: ShardRef, cache_dir: string): wasm_objfile.UnitObj {
+  var cf: string = typed_file(dir, entry_path, parts, t, u.idx, u.lo, u.hi, cache_dir);
   var lk: wasm_objfile.MaybeUnit = read_cached(cf, parts[u.idx].ns);
   if (lk.found) {
     return lk.obj;
   }
-  var obj: wasm_objfile.UnitObj = unit_obj(unit_ns(u.idx, u.lo), tu.mod, tu.cache, tv.im.funcs, tv.stab);
+  var tu: TypedUnit = typed_unit(t, u.idx, u.lo, u.hi);
+  var obj: wasm_objfile.UnitObj = unit_obj(unit_ns(u.idx, u.lo), tu.mod, tu.cache, t.g.im.funcs, t.g.stab);
   write_cached(cf, parts[u.idx].ns, obj);
   return obj;
 }

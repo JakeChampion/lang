@@ -18,6 +18,7 @@ var (
 	composeReadViaParams    = []byte{0x7f, 0x7e, 0x7f} // (self, offset, ret_ptr)
 	composeAppendViaParams  = []byte{0x7f, 0x7f}       // (self, ret_ptr) — append, no offset
 	composeOneI32Params     = []byte{0x7f}             // (ret_ptr) — wall-clock/args/env
+	composeConfigGetParams  = []byte{0x7f, 0x7f, 0x7f} // (key_ptr, key_len, ret_ptr) — config/store.get
 
 	// The path mutators all lower identically: the string param flattens
 	// to (ptr, len) and the `result<_, error-code>` return goes through a

@@ -39,6 +39,8 @@ import "./irverify";
 import "./ast";
 import "./astwalk";
 import "./treeshake";
+import "./flatten";
+import "./modloader";
 
 // is_array_type reports whether a type string denotes an array (ends "[]").
 function is_array_type(t: string): boolean {
@@ -1580,8 +1582,10 @@ pub function gate_program(lifted: parser.Module, known: string[], sub: Sub): Gat
 
 // Units is a gated program cut into one unit per module of a per-module build:
 // mods[k] declares the functions unit k emits and caches[k] their bodies, with
-// the entry's cache carrying the declaration-less bodies on its tail.
-pub struct Units { mods: parser.Module[], caches: irlower.LowerResult[][] }
+// the entry's cache carrying the declaration-less bodies on its tail. `loose`
+// lists the functions no part declares (a lifted lambda, a generic clone),
+// which a unit can call whichever unit emits them.
+pub struct Units { mods: parser.Module[], caches: irlower.LowerResult[][], loose: parser.FuncDecl[] }
 
 // split_units assigns every function of `g` to one of `parts` (the modules
 // flatten.bundle_per_module returns, the entry at `entry`). A declaration goes
@@ -1591,7 +1595,8 @@ pub struct Units { mods: parser.Module[], caches: irlower.LowerResult[][] }
 // that to the entry. A leaf seminline spliced into a caller in another module
 // keeps its body in its own unit, for the callers that still call it.
 pub function split_units(g: Gated, parts: parser.Module[], entry: i32): Units {
-  var owner: i32[] = unit_owners(g, parts, entry);
+  var declared: i32[] = declared_owners(g, parts);
+  var owner: i32[] = unit_owners(g, declared, entry);
   var mods: parser.Module[] = [];
   var caches: irlower.LowerResult[][] = [];
   var k: i32 = 0;
@@ -1616,17 +1621,33 @@ pub function split_units(g: Gated, parts: parser.Module[], entry: i32): Units {
     caches = caches.append(cache);
     k = k + 1;
   }
-  return Units { mods: mods, caches: caches };
+  var loose: parser.FuncDecl[] = [];
+  var i: i32 = 0;
+  while (i < declared.len()) {
+    if (declared[i] < 0) {
+      loose = loose.append(g.im.funcs[i]);
+    }
+    i = i + 1;
+  }
+  return Units { mods: mods, caches: caches, loose: loose };
 }
 
-function unit_owners(g: Gated, parts: parser.Module[], entry: i32): i32[] {
+// The lowering spells a `str` receiver `string`; a part's declaration still
+// spells it `str`.
+function owner_key(fd: parser.FuncDecl): string {
+  return util.base_type_name(parser.erase_str_spelling(fd.receiver_type)) + "." + fd.name;
+}
+
+// declared_owners is, for each function of `g`, the part declaring it or its
+// receiver type, or -1.
+function declared_owners(g: Gated, parts: parser.Module[]): i32[] {
   // Part indexes are stored plus one, so a missing key's 0 means "none".
   var declared: Map[string, i32] = map_new(g.im.funcs.len() + 1);
   var types: Map[string, i32] = map_new(64);
   var p: i32 = 0;
   while (p < parts.len()) {
     for fd in parts[p].funcs {
-      declared = declared.insert(irlower.grow_fn_key(fd), p + 1);
+      declared = declared.insert(owner_key(fd), p + 1);
     }
     for sd in parts[p].structs {
       types = types.insert(sd.name, p + 1);
@@ -1637,20 +1658,28 @@ function unit_owners(g: Gated, parts: parser.Module[], entry: i32): i32[] {
     p = p + 1;
   }
   var owner: i32[] = [];
-  var unowned: Map[string, i32] = map_new(64);
-  var queue: i32[] = [];
-  var i: i32 = 0;
-  while (i < g.im.funcs.len()) {
-    var fd: parser.FuncDecl = g.im.funcs[i];
-    var at: i32 = declared.get_or(irlower.grow_fn_key(fd), 0);
+  for fd in g.im.funcs {
+    var at: i32 = declared.get_or(owner_key(fd), 0);
     if (at == 0 && fd.receiver_type.len() > 0) {
       at = types.get_or(util.base_type_name(fd.receiver_type), 0);
     }
     owner = owner.append(at - 1);
-    if (at > 0) {
+  }
+  return owner;
+}
+
+// unit_owners gives each function `declared` leaves at -1 the owner of the
+// first function whose body names it, and failing that the entry.
+function unit_owners(g: Gated, declared: i32[], entry: i32): i32[] {
+  var owner: i32[] = declared;
+  var unowned: Map[string, i32] = map_new(64);
+  var queue: i32[] = [];
+  var i: i32 = 0;
+  while (i < owner.len()) {
+    if (owner[i] >= 0) {
       queue = queue.append(i);
     } else {
-      unowned = unowned.insert(irlower.grow_fn_key(fd), i + 1);
+      unowned = unowned.insert(irlower.grow_fn_key(g.im.funcs[i]), i + 1);
     }
     i = i + 1;
   }
@@ -1689,7 +1718,84 @@ function unit_owners(g: Gated, parts: parser.Module[], entry: i32): i32[] {
   return owner;
 }
 
-// lowered_digest fingerprints what a register backend reads of each body, so a
+// UnitKeys is what keys the units of one split beyond each unit's own source:
+// every unit's signature hash, the whole-program facts when the target's emit
+// reads them, and `view`, a hash of what any unit's emit can read beyond its
+// dependencies' signatures (the loose functions' signatures and the whole
+// struct table, whose enum owners and type parameters the emit reads).
+pub struct UnitKeys { sighashes: string[], facts: modloader.FactHashes, view: string }
+
+// no_unit_keys keys nothing, for a build with no cache.
+pub function no_unit_keys(): UnitKeys {
+  return UnitKeys { sighashes: [], facts: modloader.FactHashes { per_mod: [], global: "" }, view: "" };
+}
+
+// unit_keys derives the keys of `u` once for every unit of it. `facts` folds in
+// the verdicts irlower.wp_fact_rows derives from `base`, for a target whose emit
+// reads that registry (the register backends' does; wasm's does not).
+pub function unit_keys(u: Units, funcs: parser.FuncDecl[], stab: irlower.StructTab, base: irlower.FnSigs, facts: boolean): UnitKeys {
+  var sigmods: parser.Module[] = [];
+  var none: string[] = [];
+  for m in u.mods {
+    sigmods = sigmods.append(parser.Module { ...m, structs: [] });
+    none = none.append("");
+  }
+  var fh: modloader.FactHashes = modloader.FactHashes { per_mod: none, global: "" };
+  if (facts) {
+    fh = modloader.module_fact_hashes(sigmods, irlower.wp_fact_rows(base, funcs, stab));
+  }
+  var loose: string = modloader.module_sig_string(parser.Module { ...sigmods[0], funcs: u.loose });
+  return UnitKeys { sighashes: modloader.fact_sig_hashes(sigmods, fh), facts: fh, view: util.hash_key(loose + struct_table_text(stab.decls)) };
+}
+
+// unit_cache_key keys unit `idx`'s [lo, hi) window of `u`, or "" when `k` keys
+// nothing or its source has no stable hash. A window covering the whole unit is keyed as
+// hi = -1, so a whole-unit emit and its explicit full window share an entry.
+// The unit's whole lowering is digested, since a window's emit can read the
+// bodies beside it (a leaf it inlines, the tail).
+pub function unit_cache_key(parts: flatten.PerModule[], u: Units, k: UnitKeys, idx: i32, src_hash: string, extra: string[], lo: i32, hi: i32): string {
+  if (k.sighashes.len() == 0) {
+    return "";
+  }
+  var khi: i32 = hi;
+  if (lo == 0 && khi >= u.mods[idx].funcs.len()) {
+    khi = 0 - 1;
+  }
+  var key: string = modloader.module_unit_cache_key(parts, u.mods, k.sighashes, idx, src_hash, extra, lo, khi, k.facts);
+  if (key.len() == 0) {
+    return "";
+  }
+  return key + "|ir" + lowered_digest(u.caches[idx]) + ":" + k.view;
+}
+
+// struct_table_text spells every struct decl in table order, with each part
+// the lowering or the emit can read.
+function struct_table_text(structs: parser.StructDecl[]): string {
+  var parts: string[] = [];
+  for sd in structs {
+    parts = parts.append("st " + sd.name + "<" + list_text(sd.type_params) + ">" + sd.enum_owner
+      + "|" + list_text(sd.derives) + "|" + list_text(sd.variant_field_names) + "|");
+    if (sd.must_consume) {
+      parts = parts.append("mc");
+    }
+    parts = parts.append("{");
+    for f in sd.fields {
+      parts = parts.append(f.name + ":" + f.type_name + "/" + f.fn_ret + "/" + f.fn_param_types + ",");
+    }
+    parts = parts.append("}");
+  }
+  return util.str_join_chunks(parts);
+}
+
+function list_text(xs: string[]): string {
+  var parts: string[] = [];
+  for x in xs {
+    parts = parts.append(x + ",");
+  }
+  return util.str_join_chunks(parts);
+}
+
+// lowered_digest fingerprints what an emit reads of each body, so a
 // per-module cache keyed on it moves whenever a unit's lowering does, including
 // when that lowering depends on another module's body.
 pub function lowered_digest(cache: irlower.LowerResult[]): string {

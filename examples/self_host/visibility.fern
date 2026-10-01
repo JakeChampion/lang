@@ -209,7 +209,7 @@ function module_name_of(loaded: flatten.LoadedModule[], qual: string): string {
 
 // module_diags reports every `<qual>.<name>` in `src`'s own functions that names
 // a private top-level declaration of the module `qual` resolves to.
-function module_diags(src_name: string, src: parser.Module, loaded: flatten.LoadedModule[], priv: string[], priv_consts: string[], pkg: string[]): util.Diag[] {
+function module_diags(src_name: string, src: parser.Module, loaded: flatten.LoadedModule[], priv: util.NameIndex, priv_consts: string[], pkg: string[]): util.Diag[] {
   var out: util.Diag[] = [];
   var quals: string[] = import_quals(src);
   if (quals.len() == 0) {
@@ -239,7 +239,7 @@ function module_diags(src_name: string, src: parser.Module, loaded: flatten.Load
         });
       }
     }
-    if (util.has_str(priv, key)) {
+    if (priv.has(key)) {
       var kw: string = "function";
       if (util.has_str(priv_consts, key)) {
         kw = "const";
@@ -261,7 +261,7 @@ function module_diags(src_name: string, src: parser.Module, loaded: flatten.Load
 // which is what makes this formulation immune to the false positives the
 // bundle-level one produced.
 pub function export_diags(entry: parser.Module, loaded: flatten.LoadedModule[]): util.Diag[] {
-  var priv: string[] = private_keys(loaded);
+  var priv: util.NameIndex = util.name_index(private_keys(loaded));
   var priv_consts: string[] = private_const_keys(loaded);
   var pkg: string[] = package_keys(loaded);
   var out: util.Diag[] = module_diags("", entry, loaded, priv, priv_consts, pkg);
@@ -380,7 +380,7 @@ function type_kind_word(mod: parser.Module, name: string): string {
 
 // check_type_name appends a diagnostic when `tn` is a qualified reference to a
 // private type of a loaded module.
-function check_type_name(tn: string, quals: string[], loaded: flatten.LoadedModule[], priv: string[], line: i32, col: i32, acc: util.Diag[]): util.Diag[] {
+function check_type_name(tn: string, quals: string[], loaded: flatten.LoadedModule[], priv: util.NameIndex, line: i32, col: i32, acc: util.Diag[]): util.Diag[] {
   let (q, base) = qual_type_parts(tn);
   if (q.len() == 0 || base.len() == 0) {
     return acc;
@@ -388,7 +388,7 @@ function check_type_name(tn: string, quals: string[], loaded: flatten.LoadedModu
   if (!util.has_str(quals, q)) {
     return acc;
   }
-  if (!util.has_str(priv, q + "." + base)) {
+  if (!priv.has(q + "." + base)) {
     return acc;
   }
   var mi: i32 = module_named(loaded, q);
@@ -412,7 +412,7 @@ function check_type_name(tn: string, quals: string[], loaded: flatten.LoadedModu
 // type_diags scans every type-name position a module writes: each function's
 // params and return type, each local `var`'s declared type, and each struct
 // literal's type name. Struct FIELD types are covered through the decl walk.
-function type_diags(src: parser.Module, loaded: flatten.LoadedModule[], priv: string[]): util.Diag[] {
+function type_diags(src: parser.Module, loaded: flatten.LoadedModule[], priv: util.NameIndex): util.Diag[] {
   var out: util.Diag[] = [];
   var quals: string[] = import_quals(src);
   if (quals.len() == 0) {
@@ -451,7 +451,7 @@ function type_diags(src: parser.Module, loaded: flatten.LoadedModule[], priv: st
 // type names. Deliberately shallow on expressions: a struct literal is the only
 // expression carrying a type NAME, and it is reached through the statement
 // positions that can hold one.
-function stmt_type_diags(st: ast.Stmt, quals: string[], loaded: flatten.LoadedModule[], priv: string[], acc: util.Diag[]): util.Diag[] {
+function stmt_type_diags(st: ast.Stmt, quals: string[], loaded: flatten.LoadedModule[], priv: util.NameIndex, acc: util.Diag[]): util.Diag[] {
   match (st) {
     ast.StmtVar(v) => {
       acc = check_type_name(v.type_name, quals, loaded, priv, v.line, v.col, acc);
@@ -528,7 +528,7 @@ function stmt_type_diags(st: ast.Stmt, quals: string[], loaded: flatten.LoadedMo
 }
 
 // expr_type_diags finds struct-literal type names inside an expression.
-function expr_type_diags(e: ast.Expr, quals: string[], loaded: flatten.LoadedModule[], priv: string[], acc: util.Diag[]): util.Diag[] {
+function expr_type_diags(e: ast.Expr, quals: string[], loaded: flatten.LoadedModule[], priv: util.NameIndex, acc: util.Diag[]): util.Diag[] {
   match (e) {
     ast.ExprStructLit(sl) => {
       acc = check_type_name(sl.type_name, quals, loaded, priv, sl.line, sl.col, acc);

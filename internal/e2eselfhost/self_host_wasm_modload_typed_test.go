@@ -101,6 +101,11 @@ function main(): i32 {
 			}
 			planText.WriteString(strconv.Itoa(u[0]) + " " + strconv.Itoa(u[1]) + " " + strconv.Itoa(u[2]) + "\n")
 		}
+		// Window 0:2 is the whole of leaf, so the whole-module emit is the
+		// same unit and is served from it.
+		if _, se, code := drive(t, entry, nil, "-per-module-emit", "0", "-cache-dir", cacheDir); code != 0 || !strings.Contains(se, "cache-hit leaf") {
+			t.Fatalf("whole-module emit of leaf after its full window: exit %d, want a cache hit\n%s", code, se)
+		}
 		planPath := filepath.Join(proj, "plan.txt")
 		write(t, planPath, planText.String())
 		wat, se, code := drive(t, entry, nil, "-link", "-plan", planPath, "-cache-dir", cacheDir)

@@ -1034,6 +1034,78 @@ func TestGenericCallLiteralBoundTSettlesByPosition(t *testing.T) {
 	}
 }
 
+// An unannotated local bound to a generic struct literal whose type argument
+// only literals bind is a Same[i64] when one of them has no i32 reading, and
+// both field literals settle at i64 (#10453). Typing it Same[i32] truncated the
+// wide field on every native backend with no diagnostic.
+// The widening reaches a literal inside an array literal, whose elements it
+// settles at the widened type (the monomorph re-check refused it as
+// Same__i32[] against Same__i64[]), and never a literal that writes its own
+// instantiation: `Same[i32] { …, b: 2^62 }` is E047 (#10453).
+func TestGenericStructLiteralWideningInArrayAndWritten(t *testing.T) {
+	const decls = "struct Same[T] { a: T, b: T } "
+	if err := checkSource(t, decls+"function main(): i32 { var xs = [Same { a: 1, b: 4611686018427387904 }]; var r: i64 = xs[0].b; return 0; }"); err != nil {
+		t.Errorf("array of a wide literal: rejected, want accepted: %v", err)
+	}
+	err := checkSource(t, decls+"function main(): i32 { var q = Same[i32] { a: 1, b: 4611686018427387904 }; return 0; }")
+	if err == nil || !strings.Contains(err.Error(), "does not fit in i32") {
+		t.Errorf("written Same[i32] with a wide field: want the literal refused, got %v", err)
+	}
+	// A field that holds the parameter inside a composite widens it too.
+	for _, decl := range []string{
+		"struct Stack[T] { items: T[] } function main(): i32 { var q = Stack { items: [4611686018427387904] }; var r: i64 = q.items[0]; return 0; }",
+		"struct Tagged[T] { p: (T, string) } function main(): i32 { var q = Tagged { p: (4611686018427387904, \"x\") }; var r: i64 = q.p.0; return 0; }",
+	} {
+		prog, err := parser.Parse(decl)
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		if _, err := Check(prog); err != nil {
+			t.Errorf("%s: check: %v", decl, err)
+			continue
+		}
+		if got := prog.Funcs[0].Body.Stmts[0].(*ast.Var).Type.String(); !strings.HasSuffix(got, "[i64]") {
+			t.Errorf("%s: q is %s, want the i64 instantiation", decl, got)
+		}
+	}
+}
+
+func TestGenericStructLiteralLocalWidensByLiteral(t *testing.T) {
+	src := "struct Same[T] { a: T, b: T } function main(): i32 { " +
+		"var q = Same { a: 1, b: 4611686018427387904 }; var r: i64 = q.b; return 0; }"
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if _, err := Check(prog); err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	v := prog.Funcs[len(prog.Funcs)-1].Body.Stmts[0].(*ast.Var)
+	if got := v.Type.String(); got != "Same[i64]" {
+		t.Errorf("q: type %s, want Same[i64]", got)
+	}
+	sl := v.Init.(*ast.StructLit)
+	if len(sl.TypeArgs) != 1 || sl.TypeArgs[0].String() != "i64" {
+		t.Errorf("literal type args %v, want [i64]", sl.TypeArgs)
+	}
+	for _, f := range sl.Fields {
+		if lit, ok := f.Value.(*ast.NumberLit); ok && lit.Width != 64 {
+			t.Errorf("field %s: literal settled at width %d, want 64", f.Name, lit.Width)
+		}
+	}
+	// Literals that all read at i32 leave the default alone.
+	narrow, err := parser.Parse("struct Same[T] { a: T, b: T } function main(): i32 { var q = Same { a: 1, b: 2 }; return 0; }")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if _, err := Check(narrow); err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	if got := narrow.Funcs[len(narrow.Funcs)-1].Body.Stmts[0].(*ast.Var).Type.String(); got != "Same[i32]" {
+		t.Errorf("narrow q: type %s, want Same[i32]", got)
+	}
+}
+
 // A comparison's result is a boolean, so nothing outside it ever settles its
 // operands: two polymorphic sides take the default at the comparison itself,
 // and a wide literal on either side makes that default i64 (#8668) instead of
@@ -4250,6 +4322,45 @@ function shutdown(reason: string): void { print(reason); }`, "arm64-darwin", "tc
 			call := main.Body.Stmts[len(main.Body.Stmts)-1].(*ast.Return).Value.(*ast.Call)
 			if id, ok := call.Callee.(*ast.Ident); !ok || id.Name != tc.entry {
 				t.Fatalf("synth main for %s calls %v, want %s", tc.target, call.Callee, tc.entry)
+			}
+		})
+	}
+}
+
+// config_get is the environment wherever the target has one; only the
+// proxy world keeps the builtin, and Info records the target so a later
+// re-check (monomorph) applies the same rule.
+func TestConfigGetFollowsTheTargetsEnvironment(t *testing.T) {
+	const src = `function main(): i32 { match (config_get("GREETING")) { Some(v) => { return 0; }, None => { return 1; } } }`
+	for _, tc := range []struct{ target, callee string }{
+		{"", "env"},
+		{"x86-64-linux", "env"},
+		{"wasm32-wasi", "env"},
+		{"wasm32-wasi-http", "config_get"},
+	} {
+		t.Run(tc.target, func(t *testing.T) {
+			prog, err := parser.Parse(src)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			info, err := CheckTarget(prog, tc.target)
+			if err != nil {
+				t.Fatalf("check: %v", err)
+			}
+			if info.Target != tc.target {
+				t.Fatalf("info.Target = %q, want %q", info.Target, tc.target)
+			}
+			var got string
+			ast.WalkProgram(prog, func(n ast.Node) bool {
+				if call, ok := n.(*ast.Call); ok {
+					if id, ok := call.Callee.(*ast.Ident); ok && (id.Name == "env" || id.Name == "config_get") {
+						got = id.Name
+					}
+				}
+				return true
+			})
+			if got != tc.callee {
+				t.Fatalf("config_get on %q became %q, want %q", tc.target, got, tc.callee)
 			}
 		})
 	}

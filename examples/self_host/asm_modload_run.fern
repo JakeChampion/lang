@@ -323,8 +323,7 @@ function prune_to_reachable(mod: parser.Module, reach: string[]): parser.Module 
 // unit's lowering (empty where the unit emit lowers it), and the whole-program
 // function, struct and registry view every unit lowers against.
 struct View {
-  mods: parser.Module[],
-  caches: irlower.LowerResult[][],
+  u: ircore.Units,
   all_funcs: parser.FuncDecl[],
   stab: irlower.StructTab,
   base: irlower.FnSigs,
@@ -354,8 +353,7 @@ function per_module_view(dir: string, entry: parser.Module, loaded: flatten.Load
       }
       k = k + 1;
     }
-    var u: ircore.Units = ircore.split_units(g, raw, entry_at);
-    return View { mods: u.mods, caches: u.caches, all_funcs: g.im.funcs, stab: g.stab, base: g.base, known: [], rt: d.sub.rt_lower, typed: true };
+    return View { u: ircore.split_units(g, raw, entry_at), all_funcs: g.im.funcs, stab: g.stab, base: g.base, known: [], rt: d.sub.rt_lower, typed: true };
   }
   var pruned: parser.Module[] = [];
   for pt in parts {
@@ -388,7 +386,7 @@ function per_module_view(dir: string, entry: parser.Module, loaded: flatten.Load
   var stab: irlower.StructTab = irlower.struct_tab(builtin_view(dir, all_structs));
   // The whole-program registry base, derived once and shared by every unit's
   // gate and emit (#8199).
-  return View { mods: lifted, caches: caches, all_funcs: all_funcs, stab: stab, base: ircore.wp_fn_sigs(all_funcs, stab), known: known, rt: asmcore.no_rt_lower, typed: false };
+  return View { u: ircore.Units { mods: lifted, caches: caches, loose: [] }, all_funcs: all_funcs, stab: stab, base: ircore.wp_fn_sigs(all_funcs, stab), known: known, rt: asmcore.no_rt_lower, typed: false };
 }
 
 // merged_program is the whole program the merged emit reads.
@@ -427,12 +425,7 @@ function emit_per_module_concat(dir: string, entry_path: string, entry_mod: pars
   var needs: string[] = ircore.all_runtime_need_roots();
   // Signatures are hashed over the PRUNED modules, so a dependency whose
   // reach changed moves every dependent's key.
-  var sighashes: string[] = [];
-  var fh: modloader.FactHashes = modloader.FactHashes { per_mod: [], global: "" };
-  if (cache_dir.len() > 0) {
-    fh = modloader.module_fact_hashes(v.mods, irlower.wp_fact_rows(v.base, v.all_funcs, v.stab));
-    sighashes = modloader.fact_sig_hashes(v.mods, fh);
-  }
+  var keys: ircore.UnitKeys = view_keys(v, cache_dir);
   var out: string = "";
   var idx: i32 = 0;
   while (idx < parts.len()) {
@@ -443,9 +436,9 @@ function emit_per_module_concat(dir: string, entry_path: string, entry_mod: pars
     var cachefile: string = "";
     if (cache_dir.len() > 0) {
       var src_hash: string = modloader.module_src_hash(modloader.no_overlay(), dir, entry_path, parts, idx);
-      var key: string = modloader.module_concat_unit_cache_key(parts, v.mods, sighashes, idx, src_hash, extra, fh);
+      var key: string = ircore.unit_cache_key(parts, v.u, keys, idx, src_hash, extra, 0, 0 - 1);
       if (key.len() > 0) {
-        cachefile = cache_dir + "/" + parts[idx].ns + "_c__" + util.hash_key(key + "|ir" + ircore.lowered_digest(v.caches[idx])) + ".s";
+        cachefile = cache_dir + "/" + parts[idx].ns + "_c__" + util.hash_key(key + "|kept" + kept_names(v.u.mods[idx])) + ".s";
       }
     }
     var served: boolean = false;
@@ -460,7 +453,7 @@ function emit_per_module_concat(dir: string, entry_path: string, entry_mod: pars
       }
     }
     if (!served) {
-      if (!v.typed && !ircore.all_eligible_view_base(v.mods[idx], v.known, v.stab, v.base)) {
+      if (!v.typed && !ircore.all_eligible_view_base(v.u.mods[idx], v.known, v.stab, v.base)) {
         // Name the module that took the whole program off the per-module
         // route. Without this the decline is silent and the failure
         // resurfaces as an undefined `__fn_` at link, with nothing
@@ -485,38 +478,44 @@ function emit_per_module_concat(dir: string, entry_path: string, entry_mod: pars
   return dedupe_weak_defs(out);
 }
 
+// kept_names spells the functions a concat unit kept. Its units are pruned to
+// the whole program's reach, so an edit anywhere can change what a module
+// keeps without touching its source.
+function kept_names(m: parser.Module): string {
+  var kept: string[] = [];
+  for f in m.funcs {
+    kept = kept.append(f.receiver_type + "." + f.name + ",");
+  }
+  return util.hash_key(util.str_join_chunks(kept));
+}
+
+// view_keys keys every unit of `v`, or none when the cache is off.
+function view_keys(v: View, cache_dir: string): ircore.UnitKeys {
+  if (cache_dir.len() == 0) {
+    return ircore.no_unit_keys();
+  }
+  return ircore.unit_keys(v.u, v.all_funcs, v.stab, v.base, true);
+}
+
 // emit_unit emits unit `idx`'s [lo, hi) function window for `target`.
 function emit_unit(v: View, idx: i32, is_entry: boolean, ns: string, extra: string[], lo: i32, hi: i32, target: string): string {
   if (target == "arm64-linux") {
-    return asm_arm64_ir.emit_module_ir_unit_arm64_flat(v.mods[idx], is_entry, true, ns, extra, v.all_funcs, v.stab, lo, hi, v.caches[idx], v.base, v.rt);
+    return asm_arm64_ir.emit_module_ir_unit_arm64_flat(v.u.mods[idx], is_entry, true, ns, extra, v.all_funcs, v.stab, lo, hi, v.u.caches[idx], v.base, v.rt);
   }
-  return asm_ir.emit_module_ir_unit_flat(v.mods[idx], is_entry, true, ns, extra, v.all_funcs, v.stab, lo, hi, v.caches[idx], v.base, v.rt);
+  return asm_ir.emit_module_ir_unit_flat(v.u.mods[idx], is_entry, true, ns, extra, v.all_funcs, v.stab, lo, hi, v.u.caches[idx], v.base, v.rt);
 }
 
 // unit_cache_file returns the object path for ONE emitted unit, or "" when the
 // cache is off or the module has no stable key (src_hash "?" — always rebuild).
 // The single source of the path both the read and the write use.
-//
-// A window covering the whole module is normalised to hi = -1, which is how a
-// single `-per-module-emit N` spells it. The two routes emit byte-identical
-// bytes for that unit (TestSelfHostAssumeEligibleByteIdenticalX86_64 pins it),
-// so without the normalisation they would key the same asm twice and never
-// reuse each other's entries.
-function unit_cache_file(cache_dir: string, parts: flatten.PerModule[], v: View, sighashes: string[], src_hash: string, midx: i32, extra: string[], wlo: i32, whi: i32, fh: modloader.FactHashes): string {
-  if (cache_dir.len() == 0 || sighashes.len() == 0 || src_hash.len() == 0) {
+function unit_cache_file(cache_dir: string, parts: flatten.PerModule[], v: View, keys: ircore.UnitKeys, src_hash: string, midx: i32, extra: string[], wlo: i32, whi: i32): string {
+  if (cache_dir.len() == 0 || src_hash.len() == 0) {
     return "";
   }
-  var khi: i32 = whi;
-  if (wlo == 0 && khi >= v.mods[midx].funcs.len()) {
-    khi = 0 - 1;
-  }
-  var key: string = modloader.module_unit_cache_key(parts, v.mods, sighashes, midx, src_hash, extra, wlo, khi, fh);
+  var key: string = ircore.unit_cache_key(parts, v.u, keys, midx, src_hash, extra, wlo, whi);
   if (key.len() == 0) {
     return "";
   }
-  // A typed unit's lowering can read another module's bodies (an inferred
-  // parameter mode, an instance), which no signature covers.
-  key = key + "|ir" + ircore.lowered_digest(v.caches[midx]);
   var shard_tag: string = "";
   if (wlo > 0) {
     shard_tag = "_s" + util.i32_to_string(wlo);
@@ -671,7 +670,7 @@ function emit_per_module_spawned(dir: string, entry_path: string, entry: parser.
   // list still costs a whole-program lowering (about 52 s and 4.4 GB for the
   // compiler), paid here and again in every batch child.
   var parts: flatten.PerModule[] = flatten.bundle_per_module(entry, loaded, target);
-  var units: string[] = flat_unit_list(dir, parts, per_module_view(dir, entry, loaded, parts, target, []).mods, func_budget);
+  var units: string[] = flat_unit_list(dir, parts, per_module_view(dir, entry, loaded, parts, target, []).u.mods, func_budget);
   if (units.len() == 0) {
     return 1;
   }
@@ -893,7 +892,7 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
   // The units and the whole-program view they lower against, derived each
   // invocation.
   var v: View = per_module_view(dir, entry, loaded, parts, target, []);
-  var infmods: parser.Module[] = v.mods;
+  var infmods: parser.Module[] = v.u.mods;
   // Planning needs the post-lift counts and their module namespaces, not
   // emission side tables or incremental-cache signature hashes.
   if (pm_mode == "func-counts" || pm_mode == "shape") {
@@ -936,11 +935,8 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
     // module, not recomputed per unit: a module sharded into several windows
     // would otherwise re-read and re-hash its source once per shard.
     var srchashes: string[] = [];
-    var sighashes_ea: string[] = [];
-    var fh_ea: modloader.FactHashes = modloader.FactHashes { per_mod: [], global: "" };
+    var keys_ea: ircore.UnitKeys = view_keys(v, cache_dir);
     if (cache_dir.len() > 0) {
-      fh_ea = modloader.module_fact_hashes(infmods, irlower.wp_fact_rows(v.base, v.all_funcs, v.stab));
-      sighashes_ea = modloader.fact_sig_hashes(infmods, fh_ea);
       var chi: i32 = 0;
       while (chi < parts.len()) {
         srchashes = srchashes.append(modloader.module_src_hash(modloader.no_overlay(), dir, entry_path, parts, chi));
@@ -967,7 +963,7 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
       if (srchashes.len() > 0) {
         usrc = srchashes[idx];
       }
-      var ucache: string = unit_cache_file(cache_dir, parts, v, sighashes_ea, usrc, idx, uextra, nth_field_i32(units[uidx], 1), nth_field_i32(units[uidx], 2), fh_ea);
+      var ucache: string = unit_cache_file(cache_dir, parts, v, keys_ea, usrc, idx, uextra, nth_field_i32(units[uidx], 1), nth_field_i32(units[uidx], 2));
       // Whatever is in the cache was emitted from a module that lowered, so
       // a hit makes the eligibility re-lowering pure waste — and that check
       // costs about as much as the emit the hit just saved. Probe before
@@ -1084,8 +1080,7 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
   var cachefile: string = "";
   if (cache_dir.len() > 0) {
     var src_hash: string = modloader.module_src_hash(modloader.no_overlay(), dir, entry_path, parts, pm_index);
-    var pm_fh: modloader.FactHashes = modloader.module_fact_hashes(infmods, irlower.wp_fact_rows(v.base, v.all_funcs, v.stab));
-    cachefile = unit_cache_file(cache_dir, parts, v, modloader.fact_sig_hashes(infmods, pm_fh), src_hash, pm_index, extra, pm_lo, pm_hi, pm_fh);
+    cachefile = unit_cache_file(cache_dir, parts, v, view_keys(v, cache_dir), src_hash, pm_index, extra, pm_lo, pm_hi);
     if (cachefile.len() > 0) {
       match (read_file(cachefile)) {
         Ok(cached) => {

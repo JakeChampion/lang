@@ -649,7 +649,8 @@ func CheckDynErrorHandler(t *testing.T, addr, stderrPath string) {
 	}
 	resp := HTTPRoundTrip(t, addr, "/items/9", 5*time.Second)
 	if !strings.HasPrefix(resp, "HTTP/1.1 500") || !strings.Contains(resp, "application/problem+json") {
-		t.Fatalf("/items/9: want a 500 problem, got\n%s", resp)
+		b, _ := os.ReadFile(stderrPath)
+		t.Fatalf("/items/9: want a 500 problem, got\n%s\nserver stderr:\n%s", resp, b)
 	}
 	if got := ResponseBodyTail(resp); got != `{"type":"about:blank","title":"Internal Server Error","status":500}` {
 		t.Fatalf("/items/9: body %q, want the bare 500 problem", got)

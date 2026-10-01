@@ -1261,6 +1261,36 @@ function main(): i32 {
     if (total > 0) { last = slice_unchecked(fmt, 2, 6); }
     return total + last.len();
 }`},
+	// A method declared on a `str` receiver is keyed as the lowering names it,
+	// `string.shout`, at its declaration and at every call: directly, through
+	// a generic bound, on a `str[]` element, and on a `string` receiver, which
+	// widens to the view. The contract kept the unerased `str.shout`, so every
+	// call was refused and the module fell back to the AST lowering (#10883).
+	{name: "a-trait-method-implemented-for-str", atLeast: 48, noLeak: true, src: `
+import "std/i32";
+trait Shout { function shout(self: Self): string; }
+impl Shout for str { function shout(self: Self): string { return self + "!"; } }
+function loud[T: Shout](x: T): string { return x.shout() + x.shout(); }
+function all(xs: str[]): string {
+    var out: string = "";
+    for x in xs { out = out + x.shout(); }
+    return out;
+}
+function main(): i32 {
+    var owned: string = "ab" + "cd";
+    var s: str = slice_unchecked(owned, 1, 3);
+    var xs: str[] = [slice_unchecked(owned, 0, 1), s];
+    print(s.shout() + " " + loud(s) + " " + "yz".shout() + " " + all(xs) + "\n");
+    return s.shout().len();
+}`},
+	{name: "an-inherent-method-on-str", atLeast: 2, noLeak: true, src: `
+impl str { function twice(self: str): string { return self + self; } }
+function main(): i32 {
+    var owned: string = "ab" + "cd";
+    var s: str = slice_unchecked(owned, 1, 3);
+    print(s.twice() + " " + "xy".twice() + "\n");
+    return s.twice().len();
+}`},
 	// The map cursor: `m.iter()` and its four methods. `map_iter` is the only
 	// allocation of the five and its block carries no rc header, so the frame
 	// counts nothing and frees nothing; `key` and `value` read the map's own

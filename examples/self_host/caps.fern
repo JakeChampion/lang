@@ -117,6 +117,9 @@ pub function builtin_caps(): BuiltinCap[] {
     BuiltinCap { builtin: "temp_dir", capability: "fs" },
     BuiltinCap { builtin: "getcwd", capability: "fs" },
     BuiltinCap { builtin: "env", capability: "env" },
+    // Deploy-time configuration reads what the deployment put in the
+    // environment, or its proxy-world equivalent: the same reach.
+    BuiltinCap { builtin: "config_get", capability: "env" },
     // The whole list is the same capability as one lookup: a caller
     // that can ask for a name can ask for every name it can guess.
     BuiltinCap { builtin: "environ", capability: "env" },
@@ -401,7 +404,7 @@ function chain_of(mod: parser.Module, order: i32[], parent: i32[], at: i32, buil
 // the functions REACHED. That is affordable because it runs on a program with
 // dependency packages (enforceable() is the gate) or on an explicit
 // -capabilities request, never on the ordinary single-package compile.
-function walk(mod: parser.Module, roots: i32[], want: string[]): Use[] {
+function walk(mod: parser.Module, roots: i32[], want: util.NameIndex): Use[] {
   var order: i32[] = [];
   var parent: i32[] = [];
   var ri: i32 = 0;
@@ -532,7 +535,7 @@ function sort_rows(rows: Row[]): Row[] {
 //
 // Rows come back sorted by package name, uses by capability.
 pub function analyze(mod: parser.Module, pkgs: Pkg[]): Row[] {
-  var want: string[] = analysis_want(mod);
+  var want: util.NameIndex = util.name_index(analysis_want(mod));
   var names: string[] = [];
   var fi: i32 = 0;
   while (fi < mod.funcs.len()) {

@@ -65,7 +65,7 @@ targets).
 | #10737 (closed by #10741 after this measurement; re-measure before planning it) | typed lowering: `usize / usize`, `f64 as usize` | 4 |
 | #10759 (closed by #10835 after this measurement) | typed lowering: for-each pattern bindings are not semantic values | 4 |
 | #10816 (split from #10767; closed by #10844 after this measurement) | checker: an impl record names its trait without the trait's module, so same-named traits collide (E021) and `dyn cmp.Display` matches no impl (E034) | 4 |
-| #10764 (the member-name call fixed after this measurement; the generic form is open) | union type aliases: members have no semantic contract; the generic form does not parse | 4 |
+| #10764 (fixed after this measurement: the member-name call in #10852; the generic form desugars into the generic enum the Go checker desugars every union into) | union type aliases: members have no semantic contract; the generic form does not parse | 4 |
 | #10765 (the `async` half closed by #10804; the `message` half by #10844, pinned after this measurement) | typed lowering: `async` functions; a `dyn` std Error's `message` | 4 |
 | #10762 (closed by #10807 after this measurement) | typed lowering: a generic enum's struct payload; the rc-correctness corpus probe | 4 |
 | #10770 (three rows were the measuring harness failing on stderr; the split fixed after this measurement) | wasm: four programs answer wrongly (payloadless Result box, `std/platform`, scratch slots, split on `""`) | 4 |

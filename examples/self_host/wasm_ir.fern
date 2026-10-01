@@ -2508,6 +2508,58 @@ pub function env_func_p2(): string {
   return o;
 }
 
+// config_imports_p2 is the proxy world's source for the env op:
+// wasi:config/store's get, lowered to (key_ptr, key_len, retptr).
+pub function config_imports_p2(): string {
+  return "  (import \"wasi:config/store@0.2.0-rc.1\" \"get\" (func $config_get (param i32 i32 i32)))\n";
+}
+
+// config_env_func_p2 is $__fern_env on the proxy world, where the env op can
+// only have come from config_get (a direct env() is refused there before
+// lowering): one wasi:config/store get for the name, answered as the same
+// Option[string] box env_func_p2 builds. The result's discriminant is at +0
+// (0 ok), the option's at +4 (1 some), the value at +8 / +12. A store error
+// reads as None, which a caller cannot act on differently from a missing key.
+pub function config_env_func_p2(): string {
+  var o: string = "";
+  o = o + "  (func $__fern_env (param $np i32) (result i32)\n";
+  o = o + "    (local $ra i32) (local $vp i32) (local $vl i32) (local $j i32) (local $res i32) (local $tmp i32)\n";
+  o = o + "    (local.set $ra (i32.and (i32.add (call $__fern_alloc (i32.const 24)) (i32.const 7)) (i32.const -8)))\n";
+  o = o + "    (call $config_get (i32.add (local.get $np) (i32.const 4)) (i32.load (local.get $np)) (local.get $ra))\n";
+  o = o + "    (if (i32.and (i32.eqz (i32.load8_u (local.get $ra))) (i32.eq (i32.load8_u (i32.add (local.get $ra) (i32.const 4))) (i32.const 1))) (then\n";
+  o = o + "      (local.set $vp (i32.load (i32.add (local.get $ra) (i32.const 8))))\n";
+  o = o + "      (local.set $vl (i32.load (i32.add (local.get $ra) (i32.const 12))))\n";
+  o = o + "      (local.set $res (call $__fern_str_box (i32.add (i32.const 4) (local.get $vl))))\n";
+  o = o + "      (i32.store (local.get $res) (local.get $vl))\n";
+  o = o + "      (local.set $j (i32.const 0))\n";
+  o = o + "      (block $cd (loop $cc\n";
+  o = o + "        (br_if $cd (i32.ge_u (local.get $j) (local.get $vl)))\n";
+  o = o + "        (i32.store8 (i32.add (i32.add (local.get $res) (i32.const 4)) (local.get $j)) (i32.load8_u (i32.add (local.get $vp) (local.get $j))))\n";
+  o = o + "        (local.set $j (i32.add (local.get $j) (i32.const 1)))\n";
+  o = o + "        (br $cc)))\n";
+  o = o + "      (local.set $tmp (call $__fern_str_box (i32.const 8)))\n";
+  o = o + "      (i32.store (local.get $tmp) (i32.const 0))\n";
+  o = o + "      (i32.store (i32.add (local.get $tmp) (i32.const 4)) (local.get $res))\n";
+  o = o + "      (return (local.get $tmp))))\n";
+  o = o + "    (local.set $tmp (call $__fern_str_box (i32.const 8)))\n";
+  o = o + "    (i32.store (local.get $tmp) (i32.const 1))\n";
+  o = o + "    (i32.store (i32.add (local.get $tmp) (i32.const 4)) (i32.const 0))\n";
+  o = o + "    (local.get $tmp))\n";
+  return o;
+}
+
+// module_is_proxy reports whether `mod` is a proxy-world handler: it exports
+// wasi:http/incoming-handler, which the compiler appends for exactly that
+// target (emitforms.HTTP_ENTRY_STUB).
+function module_is_proxy(mod: parser.Module): boolean {
+  for e in mod.exports {
+    if (e.iface == "wasi:http/incoming-handler@0.2.0") {
+      return true;
+    }
+  }
+  return false;
+}
+
 // args_imports_p2 is the preview2 counterpart: wasi:cli/environment's
 // get-arguments, which writes a list<string> — header (ptr, count) into the
 // return area, each string 8 bytes (ptr@0, len@4). Host-allocated via the
@@ -2874,7 +2926,9 @@ pub function component_io_imports(needs: string[], stderr: boolean): string {
   if (need(needs, "args")) {
     o = o + args_imports_p2();
   }
-  if (need(needs, "env") || need(needs, "environ")) {
+  if (need(needs, "@proxy") && need(needs, "env")) {
+    o = o + config_imports_p2();
+  } else if (need(needs, "env") || need(needs, "environ")) {
     o = o + env_imports_p2();
   }
   // Filesystem last, which is where the AST path puts it and therefore the
@@ -2963,7 +3017,11 @@ pub function component_io_shims(needs: string[], stderr: boolean): string {
     o = o + random_func_p2();
   }
   if (need(needs, "env")) {
-    o = o + env_func_p2();
+    if (need(needs, "@proxy")) {
+      o = o + config_env_func_p2();
+    } else {
+      o = o + env_func_p2();
+    }
   }
   if (need(needs, "environ")) {
     o = o + environ_func_p2();
@@ -3005,9 +3063,13 @@ pub function emit_ir_module_mode(mod: parser.Module, ir_cache: irlower.LowerResu
   var cv: string[] = const_agg_values(ir_cache);
   var ft: string[] = fn_value_table(ir_cache);
   var unit: string = emit_functions_ns("", mod, ir_cache);
+  var needs: string[] = needs_of(ir_cache);
+  if (mode == 2 && module_is_proxy(mod)) {
+    needs = needs.append("@proxy");
+  }
   return emit_ir_module_units(
     [WasmUnit { ns: "", text: unit, strs: sv, caggs: cv, fns: ft }], mod,
-    needs_of(ir_cache), indirect_fn_sigs(ir_cache), emit_ir_rc_bodies(mod, ir_cache, base), mode,
+    needs, indirect_fn_sigs(ir_cache), emit_ir_rc_bodies(mod, ir_cache, base), mode,
   );
 }
 
@@ -15886,7 +15948,7 @@ function host_needs(mod: parser.Module): HostNeeds {
     io: calls.has("print") || calls.has("write") || calls.has("putchar") || calls.has("stdout"),
     rd: calls.has("read_file") || calls.has("read_file_bytes"),
     wr: calls.has("write_file"),
-    env: calls.has("env"),
+    env: calls.has("env") || calls.has("config_get"),
     args: calls.has("args"),
     rnd: calls.has("random_bytes") || calls.has("random_i32") || calls.has("__map_hash_seed"),
     clkw: calls.has("now_unix_ms") || calls.has("now_ns"),

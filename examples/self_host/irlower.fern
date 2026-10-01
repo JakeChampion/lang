@@ -16057,7 +16057,10 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
     // string. No wasm env access, so wasm_eligible rejects env
     // modules; x86 / arm64 lower it (the same __fern_env runtime the
     // AST path calls — std/test's assert_env_*, #3457).
-    if (cid.name == "env" && c.args.len() == 1) {
+    // `config_get(name)` is the same op: where the target has an environment
+    // that is the source, and the proxy world's backend answers the env op
+    // from wasi:config/store (a direct env() is refused there first).
+    if ((cid.name == "env" || cid.name == "config_get") && c.args.len() == 1) {
       var envs: LowerState = lower_expr(c.args[0], s);
       if (!envs.ok) {
         return envs;
@@ -22787,7 +22790,7 @@ function owned_payload_builtin_ptype(e: ast.Expr, s: LowerState): string {
           if (cid.name == "read_line" && c.args.len() == 0) {
             return "string";
           }
-          if (cid.name == "env" && c.args.len() == 1) {
+          if ((cid.name == "env" || cid.name == "config_get") && c.args.len() == 1) {
             return "string";
           }
           if (cid.name == "read_file" && c.args.len() == 1) {
@@ -87471,11 +87474,12 @@ function str_field_counted_lit_sites(stmts: ast.Stmt[], name: string, structs: S
 
 pub function fn_param_sigs_of(funcs: parser.FuncDecl[], structs: StructTab, growset: string[]): string[] {
   var out: string[] = [];
+  var grows: SigReg = sig_reg_of(growset);
   for fd in funcs {
     // #4873 port: the may-grow masks (grow_param_flags_of), whose position 0
     // is the RECEIVER — so parameter i reads position i + 1. Merged below as
     // flag '4'.
-    var gmask: string = grow_reg_value(growset, grow_fn_key(fd));
+    var gmask: string = sig_reg_value_of(grows, grow_fn_key(fd));
     var flags: string = "";
     var any: boolean = false;
     var pj: i32 = 0;
@@ -96599,7 +96603,7 @@ function builtin_opt_ret_type(name: string): string {
   if (name == "read_dir_all") {
     return "Result[string[], IoError]";
   }
-  if (name == "env") {
+  if (name == "env" || name == "config_get") {
     return "Option[string]";
   }
   if (name == "stat") {
@@ -97571,7 +97575,7 @@ function lift_expr_walk(e: ast.Expr, acc: LiftAcc, gfns: string[]): LiftExpr {
         sa = br.acc;
         nbase = br.expr;
       }
-      return LiftExpr { expr: ast.ExprStructLit { type_name: sl.type_name, field_names: sl.field_names, field_values: nvals, has_base: sl.has_base, base: nbase, line: sl.line, col: sl.col }, acc: sa };
+      return LiftExpr { expr: ast.ExprStructLit { type_name: sl.type_name, field_names: sl.field_names, field_values: nvals, has_base: sl.has_base, base: nbase, line: sl.line, col: sl.col, written: sl.written }, acc: sa };
     },
     ast.ExprBinary(b) => {
       // Recurse into the compound expression forms so a no-capture lambda CALL
@@ -100738,7 +100742,7 @@ function ilc_expr_at(e: ast.Expr, acc: InlineCloAcc, fd: parser.FuncDecl, gfns: 
         ct = br.counter;
         nbase = br.expr;
       }
-      return (ast.ExprStructLit { type_name: sl.type_name, field_names: sl.field_names, field_values: nvals, has_base: sl.has_base, base: nbase, line: sl.line, col: sl.col }, InlineCloAcc { funcs: fs, counter: ct }, true);
+      return (ast.ExprStructLit { type_name: sl.type_name, field_names: sl.field_names, field_values: nvals, has_base: sl.has_base, base: nbase, line: sl.line, col: sl.col, written: sl.written }, InlineCloAcc { funcs: fs, counter: ct }, true);
     },
     ast.ExprLambda(_) => {
       return (e, acc, true);
@@ -101672,7 +101676,7 @@ function wcap_expr(e: ast.Expr, fd: parser.FuncDecl, gfns: string[], structs: St
         a = br.caps;
         nbase = br.expr;
       }
-      return WCapExpr { expr: ast.ExprStructLit { type_name: sl.type_name, field_names: sl.field_names, field_values: nv, has_base: sl.has_base, base: nbase, line: sl.line, col: sl.col }, caps: a };
+      return WCapExpr { expr: ast.ExprStructLit { type_name: sl.type_name, field_names: sl.field_names, field_values: nv, has_base: sl.has_base, base: nbase, line: sl.line, col: sl.col, written: sl.written }, caps: a };
     },
     ast.ExprFieldAccess(fa) => {
       var o: WCapExpr = wcap_expr(fa.obj, fd, gfns, structs, mfuncs, acc, atargets);
@@ -103135,8 +103139,9 @@ pub function grow_param_flags_of(funcs: parser.FuncDecl[]): string[] {
 pub function grow_param_flags_seeded(funcs: parser.FuncDecl[], seeds: string[]): string[] {
   // One mask per func, appended in order: the working per-position mask.
   var masks: string[] = [];
+  var seeded_masks: SigReg = sig_reg_of(seeds);
   for fnk in funcs {
-    var seeded: string = grow_reg_value(seeds, grow_fn_key(fnk));
+    var seeded: string = sig_reg_value_of(seeded_masks, grow_fn_key(fnk));
     if (seeded.len() > 0) {
       masks = masks.append(seeded);
       continue;
@@ -103486,9 +103491,10 @@ pub function regrow_sigs(sg: FnSigs, funcs: parser.FuncDecl[], structs: StructTa
 // against it, and the argument's own tracked type can be absent at the call.
 pub function grow_field_positions_of(funcs: parser.FuncDecl[], gflags: string[]): string[] {
   var out: string[] = [];
+  var masks: SigReg = sig_reg_of(gflags);
   for fd in funcs {
     var key: string = grow_fn_key(fd);
-    var mask: string = grow_reg_value(gflags, key);
+    var mask: string = sig_reg_value_of(masks, key);
     if (mask.len() == 0) {
       continue;
     }

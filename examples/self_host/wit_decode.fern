@@ -688,28 +688,19 @@ pub function wit_world_import_names(tbody: i32[]): string[] {
   return names;
 }
 
-// ---- P2 slice: emit the world import prefix ------------------------------
-//
-// Self-host mirror of componenttype's EmitWorldImports: replay the world
-// component's decls as top-level component sections (type decl -> type
-// section id 7, alias -> alias section id 6, import -> import section id 10),
-// skipping exports. Each decl's payload (the bytes after its kind byte) is
-// the section body content, prefixed with vec(1) -- so the output is
-// byte-identical to the Go EmitWorldImports.
+// WitImportPlan is which of a world's imports a component declares, in the
+// world's import order: `keep` per import, `index` its instance index in the
+// pruned prefix (-1 when dropped), `n_inst` the count declared.
+pub struct WitImportPlan { keep: boolean[], index: i32[], n_inst: i32 }
 
-pub function wit_emit_section(out: i32[], id: i32, body: i32[]): i32[] {
-  out = out.append(id);
-  out = watbin.leb_u32(out, body.len());
-  var k: i32 = 0;
-  while (k < body.len()) {
-    out = out.append(body[k]);
-    k = k + 1;
-  }
-  return out;
-}
-
-pub function wit_emit_world_imports(tbody: i32[]): i32[] {
-  var out: i32[] = [];
+// wit_import_plan keeps the imports named by `used` (an interface the core
+// imports, or one an export's types need) and every import an alias of the
+// world targets, since that alias is a type a later decl reads whatever the
+// core calls. A world's imports are an upper bound on a component's, so a
+// host that lacks an interface the program never reaches still runs it: the
+// proxy world's wasi:config/store is served only under `-S config`.
+pub function wit_import_plan(tbody: i32[], used: string[]): WitImportPlan {
+  var keep: boolean[] = [];
   var none: i32[] = [];
   var rc: UlebRead = wit_read_uleb(tbody, 0);
   var p: i32 = rc.next;
@@ -724,6 +715,112 @@ pub function wit_emit_world_imports(tbody: i32[]): i32[] {
   var i: i32 = 0;
   while (i < wcount) {
     var kind: i32 = tbody[p];
+    if (kind == 3) {
+      var nr: NameR = wit_read_name(tbody, p + 2);
+      keep = keep.append(wit_names_has(used, nr.s));
+    } else if (kind == 2) {
+      var target: i32 = wit_alias_target_pos(tbody, p + 1);
+      if (tbody[target] == 0) {
+        var r: UlebRead = wit_read_uleb(tbody, target + 1);
+        if (r.value < keep.len()) {
+          keep = keep.with(r.value, true);
+        }
+      }
+    }
+    var skip: TxR = wit_tx_decl(tbody, p, none);
+    p = skip.next;
+    i = i + 1;
+  }
+  var index: i32[] = [];
+  var n: i32 = 0;
+  var k: i32 = 0;
+  while (k < keep.len()) {
+    if (keep[k]) {
+      index = index.append(n);
+      n = n + 1;
+    } else {
+      index = index.append(0 - 1);
+    }
+    k = k + 1;
+  }
+  return WitImportPlan { keep: keep, index: index, n_inst: n };
+}
+
+function wit_names_has(names: string[], s: string): boolean {
+  var i: i32 = 0;
+  while (i < names.len()) {
+    if (names[i] == s) {
+      return true;
+    }
+    i = i + 1;
+  }
+  return false;
+}
+
+// wit_alias_target_pos is the byte offset of an alias's target kind, given
+// the offset of its sort byte (a core sort carries one more byte).
+function wit_alias_target_pos(buf: i32[], sort_pos: i32): i32 {
+  if (buf[sort_pos] == 0) {
+    return sort_pos + 2;
+  }
+  return sort_pos + 1;
+}
+
+// wit_alias_renumbered re-encodes the alias payload at `sort_pos` with an
+// instance-export target pointing at the pruned prefix's instance index.
+function wit_alias_renumbered(buf: i32[], sort_pos: i32, plan: WitImportPlan): i32[] {
+  var out: i32[] = [];
+  var target: i32 = wit_alias_target_pos(buf, sort_pos);
+  var q: i32 = sort_pos;
+  while (q <= target) {
+    out = out.append(buf[q]);
+    q = q + 1;
+  }
+  var r: UlebRead = wit_read_uleb(buf, target + 1);
+  out = watbin.leb_u32(out, plan.index[r.value]);
+  var nr: NameR = wit_read_name(buf, r.next);
+  return wit_append_name(out, nr.s);
+}
+
+// ---- P2 slice: emit the world import prefix ------------------------------
+//
+// Self-host mirror of componenttype's EmitWorldImports: replay the world
+// component's decls as top-level component sections (type decl -> type
+// section id 7, alias -> alias section id 6, import -> import section id 10),
+// skipping exports and the imports the plan drops. Each decl's payload (the
+// bytes after its kind byte) is the section body content, prefixed with
+// vec(1) -- so with every import kept the output is byte-identical to the Go
+// EmitWorldImports. An alias of an imported instance is renumbered to the
+// pruned prefix.
+
+pub function wit_emit_section(out: i32[], id: i32, body: i32[]): i32[] {
+  out = out.append(id);
+  out = watbin.leb_u32(out, body.len());
+  var k: i32 = 0;
+  while (k < body.len()) {
+    out = out.append(body[k]);
+    k = k + 1;
+  }
+  return out;
+}
+
+pub function wit_emit_world_imports(tbody: i32[], plan: WitImportPlan): i32[] {
+  var out: i32[] = [];
+  var none: i32[] = [];
+  var rc: UlebRead = wit_read_uleb(tbody, 0);
+  var p: i32 = rc.next;
+  p = p + 1;
+  var oc: UlebRead = wit_read_uleb(tbody, p);
+  p = oc.next;
+  p = p + 1;
+  p = p + 1;
+  var wc: UlebRead = wit_read_uleb(tbody, p);
+  var wcount: i32 = wc.value;
+  p = wc.next;
+  var imp: i32 = 0;
+  var i: i32 = 0;
+  while (i < wcount) {
+    var kind: i32 = tbody[p];
     var skip: TxR = wit_tx_decl(tbody, p, none);
     var declEnd: i32 = skip.next;
     var sec: i32 = 0;
@@ -732,9 +829,14 @@ pub function wit_emit_world_imports(tbody: i32[]): i32[] {
     } else if (kind == 2) {
       sec = 6;
     } else if (kind == 3) {
-      sec = 10;
+      if (plan.keep[imp]) {
+        sec = 10;
+      }
+      imp = imp + 1;
     }
-    if (sec != 0) {
+    if (sec == 6 && tbody[wit_alias_target_pos(tbody, p + 1)] == 0) {
+      out = wit_emit_section(out, sec, watbin.wcat([1], wit_alias_renumbered(tbody, p + 1, plan)));
+    } else if (sec != 0) {
       var body: i32[] = [1];
       var j: i32 = p + 1;
       while (j < declEnd) {
@@ -1108,9 +1210,10 @@ pub function wit_prefix_layout(tbody: i32[]): WitPrefixLayout {
   return WitPrefixLayout { types: types, instances: instances };
 }
 
-// wit_import_instance_index returns the instance index `iface` lands at among
-// the world's import decls, or -1.
-pub function wit_import_instance_index(tbody: i32[], iface: string): i32 {
+// wit_import_instance_index returns the instance index `iface` lands at in
+// the prefix the plan emits, or -1 when the world does not import it or the
+// plan drops it.
+pub function wit_import_instance_index(tbody: i32[], plan: WitImportPlan, iface: string): i32 {
   var none: i32[] = [];
   var rc: UlebRead = wit_read_uleb(tbody, 0);
   var p: i32 = rc.next;
@@ -1132,7 +1235,7 @@ pub function wit_import_instance_index(tbody: i32[], iface: string): i32 {
       if (!found) {
         var nr: NameR = wit_read_name(tbody, p + 2);
         if (nr.s == iface) {
-          result = idx;
+          result = plan.index[idx];
           found = true;
         }
         idx = idx + 1;
