@@ -47,11 +47,13 @@
 // is monomorphised under another name and the declared spelling never lowers
 // at all. Resolving against what lowered would report a missing callee on
 // exactly the functions a lowering bug already hid.
+
 import "./ir";
 import "./irverify";
 import "./util";
 
 // ---- the inventory -----------------------------------------------------
+
 // provided_names is the exact-match half of the record: the runtime helpers a
 // backend emits a body for. Enumerable rather than a predicate so the audit
 // can walk it.
@@ -156,6 +158,7 @@ pub function is_provided(name: string): boolean {
 }
 
 // ---- the pass ----------------------------------------------------------
+
 // ProvidedResult is one module's verdict: the problems, and how many
 // call_direct ops were resolved behind them. The count travels with the
 // problems for the reason the stack pass reports coverage — a clean verdict

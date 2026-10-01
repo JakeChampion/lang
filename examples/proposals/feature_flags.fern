@@ -16,10 +16,12 @@
 //
 // The app writes its report to stderr; stdout carries TAP-13 from
 // std/test, so the file is its own test suite.
+
 import "std/test";
 import "std/i32";
 
 // ------------------------------------------------------------- bucketing
+
 // FNV-1a, 32-bit. The multiply is expected to overflow — that is the
 // avalanche — so it relies on i32 `*` wrapping, which every backend agrees
 // on (2147483647 * 2 == -2).
@@ -45,6 +47,7 @@ function bucket_of(flag_key: string, user_id: string): i32 {
 }
 
 // ---------------------------------------------------------------- model
+
 struct Rule { attr: string, want: string, variant: string }
 
 struct Flag {
@@ -126,6 +129,7 @@ function is_on(f: Flag, u: User): boolean {
 }
 
 // ---------------------------------------------------------- populations
+
 function plain(key: string, rollout_bp: i32): Flag {
   return Flag {
     key: key, enabled: true, rollout_bp: rollout_bp,
@@ -156,6 +160,7 @@ function count_on(f: Flag, us: User[]): i32 {
 }
 
 // ---------------------------------------------------------------- tests
+
 // THE property. Raising a rollout must only ever ADD users: everyone in at
 // p% is still in at q% for q > p. A re-randomising evaluator satisfies every
 // distribution check and fails this immediately.
@@ -401,6 +406,7 @@ function test_the_hash_sees_the_whole_key(): test.TestOutcome {
 }
 
 // ------------------------------------------------------------------ app
+
 function main(): i32 {
   eprint("feature_flags — stable bucketing with monotone rollouts");
   var us: User[] = users(1000);

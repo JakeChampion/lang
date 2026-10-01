@@ -13,6 +13,7 @@
 // ./modloader, so this driver differs only in running check_module instead
 // of emitting asm. Uses only features the self-hosted emitter supports
 // (args, read_file → Result, match).
+
 import "./lexer";
 import "./parser";
 import "./flatten";

@@ -16,6 +16,7 @@
 // (from `std/i32` … and `std/string`), and an empty impl simply records
 // that the type satisfies the trait by adopting its existing method.
 // See docs/TRAITS.md.
+
 import "std/i32";
 import "std/i64";
 import "std/u32";
@@ -73,6 +74,7 @@ pub trait Debug {
 // Numeric + string types already have `to_string`; empty impls adopt
 // it. `boolean` and `u8` do not, so they get real bodies — `u8` is the
 // byte type (`s[i]`, #5629) and has no scalar module of its own.
+
 impl Display for i32 {}
 
 impl Display for i64 {}
@@ -106,6 +108,7 @@ impl Display for boolean {
 }
 
 // ---- Eq --------------------------------------------------------
+
 impl Eq for i32 {
   function eq(self: i32, other: i32): boolean {
     return self == other;
@@ -179,6 +182,7 @@ impl Eq for f32 {
 // Relational comparison for the integer types. (string / boolean
 // ordering isn't needed by the assertion helpers, so it's left for a
 // follow-up.)
+
 impl Ord for i32 {
   function cmp(self: i32, other: i32): i32 {
     if (self < other) {
@@ -327,6 +331,7 @@ impl Ord for string {
 // Not the function core/map hashes string keys with: that one seeds the
 // offset basis per process and finishes with an fmix32 avalanche, because
 // its callers read only the low bits after masking.
+
 function __hash_mix_i32(x: i32): i32 {
   var h: i32 = x ^ 61;
   h = h ^ (h as u32 >> 16 as u32) as i32;
@@ -397,6 +402,7 @@ impl Hash for string {
 // (`@derive(Default) struct Box[T]` instantiated at `Box[i32]`)
 // resolve `T.default()` against the bound, the same way nominal
 // fields delegate to their own derived `default()`.
+
 impl Default for i32 {
   function default(): i32 {
     return 0;
@@ -458,6 +464,7 @@ impl Default for f64 {
 // round-trips visibly. These primitive impls let `[T: Debug]` generics
 // (the test runner's `assert_eq`) and nested `@derive(Debug)` fields
 // resolve `(v).to_debug()` for any leaf type.
+
 impl Debug for i32 {
   function to_debug(self: i32): string {
     return self.to_string();
@@ -554,6 +561,7 @@ impl Debug for string {
 // any user `Ord` type (incl. `@derive(Ord)`). A bounded generic whose
 // body calls `a.cmp(b)` monomorphises to a direct call, so these lower
 // on the self-host IR path too (#2691 / #3558).
+
 // min returns the smaller of `a` and `b` (`a` when equal).
 pub function min[T: Ord](a: T, b: T): T {
   if (b.cmp(a) < 0) {
@@ -932,6 +940,7 @@ pub function sort_desc[T: Ord](arr: T[]): T[] {
 // in #5348). They cover any `T: Eq`, including a `@derive(Eq)` struct or
 // enum; std/array's `.contains()` / `.index_of()` receiver methods are the
 // method-form surface over the same bound.
+
 // contains reports whether `xs` holds a value equal to `target`.
 pub function contains[T: Eq](xs: T[], target: T): boolean {
   for x in xs {
@@ -984,6 +993,7 @@ pub function distinct[T: Eq](xs: T[]): T[] {
 // `eq`, `cmp` and `hash` with exactly these signatures, and an empty impl
 // adopts the existing method — the same shape as `impl Display for i32`.
 // `cmp` returns -1 / 0 / 1, so a BigInt[] drops straight into std/sort.
+
 impl Display for bigint.BigInt {}
 
 impl Eq for bigint.BigInt {}

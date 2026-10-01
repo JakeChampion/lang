@@ -12,6 +12,7 @@ import "std/test";
 // can `LANG_BIN=$PWD/fern go test`-style. When the env var
 // isn't set the whole suite skips cleanly rather than
 // cascading false failures.
+
 function test_interp_returns_exit_code(lang_bin: string): test.TestOutcome {
   var src: string = "function main(): i32 { return 7; }";
   var r: ProcessResult = subprocess(lang_bin, ["-interp", "-"], src);

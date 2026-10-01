@@ -11,6 +11,7 @@ import "std/string";
 // The logger is structs + strings only (no Option / tuples / closures),
 // so it compiles on the self-host backends too — this suite runs
 // through the self-host stdtest gate as well as the interpreter.
+
 function test_text_basic(): test.TestOutcome {
   var lg: log.Logger = log.new_logger(log.level_info());
   return test.assert_eq(lg.info_().render("hello"), "[INFO] hello\n");

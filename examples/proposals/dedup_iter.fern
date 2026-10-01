@@ -17,6 +17,7 @@
 //
 // The app writes its report to stderr; stdout carries TAP-13 from
 // std/test, so the file is its own test suite.
+
 import "std/test";
 import "std/i32";
 
@@ -96,6 +97,7 @@ function has_repeat(xs: i32[]): boolean {
 }
 
 // ---------------------------------------------------------------- tests
+
 // The defining property of the cheap variant: it removes adjacent repeats
 // and nothing else, so a value that recurs non-adjacently survives.
 function test_adjacent_collapses_runs_only(): test.TestOutcome {
@@ -214,6 +216,7 @@ function test_neither_invents_nor_loses_values(): test.TestOutcome {
 }
 
 // ----------------------------------------------------------------- app
+
 function main(): i32 {
   eprint("dedup_iter — two dedup strategies, distinguished by state kept");
   var sample: i32[] = [1, 1, 2, 2, 2, 3, 1, 1];

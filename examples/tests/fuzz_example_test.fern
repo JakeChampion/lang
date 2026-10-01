@@ -20,6 +20,7 @@ import "std/utf8" as utf8;
 // `utf8.from_bytes` (validated, Option) when the property is
 // about text, or `string_from_bytes_unchecked` when the
 // property holds for any byte sequence.
+
 // Trivial "always passes" target — exercises the loop machinery
 // without flagging any input. Use this to confirm a fuzz target
 // doesn't crash on the supplied corpus before adding property

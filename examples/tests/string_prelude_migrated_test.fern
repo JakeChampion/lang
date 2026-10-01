@@ -28,6 +28,7 @@ import "std/test";
 // stdout check would catch is print() itself being
 // broken — and the runner's TAP output already depends
 // on print() working.
+
 function test_bytes_len_is_5(): test.TestOutcome {
   var s: string = "Hello";
   var bs: u8[] = s.bytes();

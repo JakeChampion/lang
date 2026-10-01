@@ -35,6 +35,7 @@
 // same sink, `canned`, tab, the capability's key, tab, the value, which
 // the log's reader skips; the sink is the mock's whole state, since the
 // bag's layout is frozen and a cell holds one string.
+
 import "std/string";
 
 // PLATFORM_MODE_HOST / PLATFORM_MODE_MOCK — what the bag's `mode` field

@@ -8,6 +8,7 @@ import "std/peg";
 //
 // Output is TAP-13. Exit code 0 if every case passes. Gated on the
 // Go side by TestRunnerPegExamplePasses (internal/e2e/test_runner_test.go).
+
 // Literal matching: anchored at 0, pos lands after the match.
 function test_lit_match(): test.TestOutcome {
   var r: peg.PegResult = peg.peg_match_pattern(PLit("hello"), "hello world");

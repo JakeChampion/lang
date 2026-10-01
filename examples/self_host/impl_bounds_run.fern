@@ -9,6 +9,7 @@
 // is the merge this driver exists to pin (#7224).
 //
 // Reads a module from stdin so the companion Go test supplies the corpus.
+
 import "./lexer";
 import "./parser";
 import "./rundriver";

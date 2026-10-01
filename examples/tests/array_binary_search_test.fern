@@ -13,6 +13,7 @@ import "std/array";
 // unlike the T[]/Option[T]-returning generics the string case lowers on the
 // self-host IR path too — this suite is self-host-gated in full. The Go-side
 // TestArrayBinarySearch pins native compilation on all four backends.
+
 function idx(o: Option[i32]): i32 {
   match (o) {
     Some(v) => {

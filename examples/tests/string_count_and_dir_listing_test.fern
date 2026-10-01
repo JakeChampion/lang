@@ -9,6 +9,7 @@ import "std/test";
 //     directory listing equals the expected multiset of
 //     file/subdir names (`readdir` order not observable
 //     so the helper sorts both sides before compare).
+
 function test_string_count_pass(): test.TestOutcome {
   return test.assert_string_count(
     "[ERROR] one\n[ERROR] two\n[INFO] three\n",

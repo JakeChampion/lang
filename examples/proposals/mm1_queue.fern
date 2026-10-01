@@ -16,6 +16,7 @@
 //
 // The app writes its report to stderr; stdout carries TAP-13 from
 // std/test, so the file is its own test suite.
+
 import "std/test";
 import "std/i32";
 import "std/i64";
@@ -115,6 +116,7 @@ function simulate(n: i32, mean_gap: i32, mean_svc: i32, seed: i64): Stats {
 }
 
 // ---------------------------------------------------------------- tests
+
 // A server that is never busy makes nobody wait: with arrivals far apart
 // relative to service, the queue is empty on arrival every time.
 function test_a_light_load_never_queues(): test.TestOutcome {
@@ -228,6 +230,7 @@ function test_runs_are_deterministic(): test.TestOutcome {
 }
 
 // ----------------------------------------------------------------- app
+
 function main(): i32 {
   eprint("mm1_queue — a single-server FIFO queue, wait against load");
   var gaps: i32[] = [200, 100, 50, 30, 22, 18];

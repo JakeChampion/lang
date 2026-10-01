@@ -10,6 +10,7 @@ import "std/option";
 // methods on Result[T, E] with closure args. The Go-side suite unit-tests
 // these; this is the migration-shaped (pure-Fern, std/test-driven,
 // self-host-gated) companion.
+
 function test_is_ok_is_err(): test.TestOutcome {
   var ok: Result[i32, string] = Ok(5);
   var er: Result[i32, string] = Err("bad");

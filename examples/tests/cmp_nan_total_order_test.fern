@@ -16,6 +16,7 @@ import "core/cmp" as cmp;
 //
 // The operators are untouched and still IEEE: `nan == nan` is false, `nan <
 // 1.0` is false. Only the trait instances are total.
+
 function nan64(): f64 {
   var z: f64 = 0.0;
   return z / z;
@@ -32,6 +33,7 @@ function inf64(): f64 {
 }
 
 // ---- the placement itself ----
+
 function test_nan_after_every_number(): test.TestOutcome {
   if (nan64().cmp(1.0) != 1) {
     return test.fail("nan should sort after 1.0");
@@ -79,6 +81,7 @@ function test_operators_stay_ieee(): test.TestOutcome {
 }
 
 // ---- what the placement buys the helpers ----
+
 function test_sort_is_deterministic(): test.TestOutcome {
   var s: f64[] = cmp.sort([3.0, nan64(), 1.0, 2.0]);
   if (s[0].is_nan()) {
@@ -113,6 +116,7 @@ function test_contains_finds_a_nan(): test.TestOutcome {
 }
 
 // ---- f32 carries the same instances ----
+
 function test_f32_placement(): test.TestOutcome {
   if (nan32().cmp(1.0) != 1) {
     return test.fail("f32 nan should sort after 1.0");

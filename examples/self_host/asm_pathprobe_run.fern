@@ -5,6 +5,7 @@
 // drivers then refuse the module. This is a pure decision probe: it emits NO
 // assembly, so the Go-side gates can assert the verdict without assembling +
 // running.
+
 import "./lexer";
 import "./parser";
 import "./rundriver";

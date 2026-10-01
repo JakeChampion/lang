@@ -10,6 +10,7 @@ import "std/test";
 // self-host compiler can't lower yet (Option/tuple IR is a pending
 // slice), so this suite is exercised through the native compiler /
 // interpreter — mirroring how the closure combinators are interp-only.
+
 function test_entries_sum(): test.TestOutcome {
   var m: Map[i32, i32] = map_new(8);
   m = m.insert(1, 10);

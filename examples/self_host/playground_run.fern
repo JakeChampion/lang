@@ -27,6 +27,7 @@
 // no path from an import to the host filesystem, and `read_file` on a wasm
 // module with no preopens would fail anyway — sealed makes it fail with a
 // diagnostic naming the import instead of a silently-skipped module.
+
 import "./asm_arm64_ir";
 import "./asm_ir";
 import "./asmcore";

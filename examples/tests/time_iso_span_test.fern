@@ -13,7 +13,9 @@ import "std/time" as time;
 // month-clamping arithmetic (Jan 31 + 1 month → Feb 28/29) through the self-host
 // IR path on real stdlib bodies. The Go-side suite unit-tests these; this is the
 // migration-shaped (pure-Fern, std/test-driven, self-host-gated) companion.
+
 // ---- ISO formatting ----
+
 function test_format_iso(): test.TestOutcome {
   return test.assert_eq(time.date_make(2024, 3, 7).format_iso(), "2024-03-07");
 }
@@ -24,6 +26,7 @@ function test_format_iso_pad_year(): test.TestOutcome {
 }
 
 // ---- ISO parsing ----
+
 function test_parse_iso_ok(): test.TestOutcome {
   match (time.date_parse_iso("2024-03-07")) {
     Some(d) => {
@@ -71,6 +74,7 @@ function test_iso_round_trip(): test.TestOutcome {
 }
 
 // ---- Span arithmetic ----
+
 function test_add_span_days(): test.TestOutcome {
   var d = time.date_make(2024, 1, 1).add_span(time.span_days(10));
   return test.assert_true(d.year == 2024 && d.month == 1 && d.day == 11);

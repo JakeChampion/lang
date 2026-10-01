@@ -52,6 +52,7 @@
 // Every entry point ASCII-fast-paths before touching a table: the
 // tables cover ASCII too, but the common case shouldn't pay a binary
 // search for it.
+
 import "std/utf8" as utf8;
 
 // Case-mapping runs: lo | hi | kind | dUpper+2^23 | dLower+2^23.
@@ -749,6 +750,7 @@ function _is_lower_cp(cp: i32): boolean {
 // `char` to return, so `'ß'` maps to itself; use the string-level
 // `to_upper` when you need `SS`. Rust draws the same line between
 // `char::to_uppercase` and `str::to_uppercase`.
+
 // `c.to_upper()` — the simple uppercase of one scalar, or `c` unchanged.
 pub function (c: char) to_upper(): char {
   return _upper_cp(c as i32) as char;

@@ -14,7 +14,9 @@ import "std/string";
 // empty-needle no-op) and the splitn / split_at shapes return string[] and a
 // tuple. The Go-side suite unit-tests these; this is the migration-shaped
 // (pure-Fern, std/test-driven, self-host-gated) companion.
+
 // ---- substring substitution ----
+
 function test_replace(): test.TestOutcome {
   return test.assert_eq("a.b.c".replace(".", "-"), "a-b-c");
 }
@@ -40,6 +42,7 @@ function test_replace_byte(): test.TestOutcome {
 }
 
 // ---- deletion ----
+
 function test_remove_all(): test.TestOutcome {
   return test.assert_eq("a,b,c".remove_all(","), "abc");
 }
@@ -55,6 +58,7 @@ function test_without_chars(): test.TestOutcome {
 }
 
 // ---- splitting ----
+
 function test_splitn(): test.TestOutcome {
   // n=2 → at most one split; the remainder keeps its separators.
   return test.assert_eq_array("a,b,c,d".splitn(",", 2), ["a", "b,c,d"]);
@@ -77,6 +81,7 @@ function test_split_at_clamp(): test.TestOutcome {
 }
 
 // ---- initialism ----
+
 function test_to_acronym(): test.TestOutcome {
   return test.assert_eq("hello world foo".to_acronym(), "HWF");
 }

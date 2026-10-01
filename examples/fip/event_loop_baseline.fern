@@ -187,6 +187,7 @@ function reset_metrics(s: State): State {
 //
 // Identical to the other two variants', so the three differ in how state is
 // held and in nothing else.
+
 function event_id(n: i64): i64 {
   var x: i64 = n * (2654435761 as i64);
   x = x ^ x >> 15 as i64;

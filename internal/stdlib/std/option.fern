@@ -16,6 +16,7 @@
 // indirect-call seam on the native + wasm backends (#2753) — keep
 // `string`-typed callbacks out of these for now. Non-callback
 // combinators work for every `T` on every backend.
+
 import "core/cmp";
 
 // is_some reports whether the option holds a value.

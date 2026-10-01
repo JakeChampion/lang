@@ -7,7 +7,9 @@ import "std/test";
 //   - f64_bits / f64_from_bits
 //   - stat() builtin + assert_is_file / _is_dir / _file_size
 //   - assert_json_eq for order-independent JSON comparison
+
 // ---------- wider-int relational ----------
+
 function test_i64_lt(): test.TestOutcome {
   return test.assert_lt(5000000000 as i64, 9000000000 as i64);
 }
@@ -49,6 +51,7 @@ function test_i64_lt_failure_message(): test.TestOutcome {
 }
 
 // ---------- f64 bits ----------
+
 function test_f64_bits_round_trip(): test.TestOutcome {
   // 1.0 as f64 = 0x3FF0000000000000 = 4607182418800017408
   var x: f64 = 1.0;
@@ -64,6 +67,7 @@ function test_f64_from_bits_round_trips(): test.TestOutcome {
 }
 
 // ---------- stat + file-state ----------
+
 function test_stat_workflow(r: test.TestRunner): test.TestRunner {
   let (dir, rr) = test.must_temp_dir(r, "batch7-stat");
   if (dir == "") {
@@ -105,6 +109,7 @@ function match_invert_to_pass(result: test.TestOutcome): test.TestOutcome {
 }
 
 // ---------- assert_json_eq ----------
+
 function test_json_simple_equal(): test.TestOutcome {
   return test.assert_json_eq("{\"a\":1}", "{\"a\":1}");
 }

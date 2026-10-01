@@ -16,6 +16,7 @@
 // No prelude: a program `import "std/array";` explicitly to
 // call `arr.sum()` / `arr.join(",")` / etc.
 // (docs/PRELUDE-TO-MODULES.md, Phase 5).
+
 import "std/sort";
 // core/cmp supplies the `Eq` trait that bounds the equality-driven verbs
 // (`contains` / `index_of` / `distinct`) below, plus the primitive `impl Eq`
@@ -41,6 +42,7 @@ import "std/num";
 // identity element. The element-polymorphic reductions (`sum` / `max` /
 // `min` / `product` / `count` / `sorted_asc` / …) live at the bottom of
 // the file as bounded generic methods.
+
 // `(arr: i32[]) avg()` — integer mean (truncated toward zero).
 // None on empty input. The running sum is accumulated in i64,
 // so a long / large-valued array can't overflow BEFORE the
@@ -579,6 +581,7 @@ pub function __method_Array_all_eq_str(arr: string[], target: string): boolean {
 // `[T: Mul + One]` (#2663) — `xs.product()` is the f64 spelling now.
 //
 // Empty-input semantics: `avg_*` returns None (no sensible default).
+
 // avg_i64 — integer mean (floor toward zero for positive
 // sums, toward zero for negative — Go's int64 division
 // semantics). Returns None on empty.
@@ -861,6 +864,7 @@ pub function add_f64(a: f64[], b: f64[]): f64[] {
 // the right v1 trade for the small-n CLI / edge-handler workloads.
 // A lazy `std/iter` can layer on later without reworking these
 // bodies.
+
 // `is_empty(xs)` — `true` iff `xs` has no elements. The readable spelling of
 // `xs.len() == 0`.
 pub function is_empty[T](xs: T[]): boolean {
@@ -1650,6 +1654,7 @@ pub function reduce[T](xs: T[], f: (T, T) => T): Option[T] {
 // `T: cmp.Ord` element type lives in core/cmp. The method forms
 // `xs.sort_by(cmp)` below delegate to std/sort — #5348 removed the duplicate
 // free-function copies that used to live here.)
+
 // `binary_search(xs, target)` — `Some(i)` for an index where `xs[i] == target`,
 // or `None` if absent, assuming `xs` is sorted ASCENDING by the element type's
 // `Ord` ordering (the order `sort` produces). O(log n) — halve the search range
@@ -1698,6 +1703,7 @@ pub function binary_search[T: cmp.Ord](xs: T[], target: T): Option[i32] {
 // `.distinct()` receiver methods (method-form block at the end of this file)
 // are element-generic over the same bound and delegate to core/cmp; the only
 // string[]-specific member of this family is `.distinct_count()`.
+
 // `all_equal(xs)` — true iff every element equals the first (i.e. the array has
 // at most one DISTINCT value). Vacuously true for an empty or single-element
 // array. Short-circuits on the first element that differs. The `T: cmp.Eq`
@@ -1747,6 +1753,7 @@ pub function dedup[T: cmp.Eq](xs: T[]): T[] {
 // (`str_eq` for strings, the scalar compare for `i32`). O(n·m) membership
 // scans; fine for the small-n CLI / edge-handler workloads, reach for a
 // Map/Set at larger N.
+
 // `count(xs, target)` — how many elements equal `target`. The Eq-bounded
 // generic companion to the element-type-specific `.count()` / `.count_str()`
 // receiver methods (which dispatch on the array's element type by name). Empty
@@ -1806,6 +1813,7 @@ pub function difference[T: cmp.Eq](a: T[], b: T[]): T[] {
 // (Structural array equality lives in core/cmp as `eq_arrays[T: Eq]`; the
 // method form `xs.equal(other)` below delegates to it — #5348 removed the
 // duplicate free-function copy that used to live here.)
+
 // `index_of_last(xs, target)` — `Some(i)` for the LAST index whose element
 // equals `target`, else `None`. The reverse-scan companion to `index_of`
 // (first match); the Option keeps "not found" out of band.
@@ -1867,6 +1875,7 @@ pub function ends_with[T: cmp.Eq](xs: T[], suffix: T[]): boolean {
 // parameter / return is a composite (`string`, `Option`, …) hits the
 // indirect-call codegen limitation (#2753) on the native + wasm
 // backends, so keep callbacks scalar / bool / pointer-shaped there.
+
 // `xs.is_empty()` — true iff `xs` has no elements.
 pub function (xs: T[]) is_empty(): boolean {
   return is_empty(xs);
@@ -2016,6 +2025,7 @@ pub function (xs: T[]) min_by(cmp: (T, T) => i32): Option[T] {
 // deferred until the self-host RC copy-on-write matches native.
 // (Bounded-receiver generic methods: carried on the self-host IR path by
 // the same fold that already lowers `map`/`filter`/`fold`.)
+
 // `xs.is_sorted()` — true iff `xs` is in non-decreasing `Ord` order
 // (vacuously true for length < 2).
 pub function (xs: T[]) is_sorted[T: cmp.Ord](): boolean {
@@ -2089,6 +2099,7 @@ pub function (xs: T[]) index_of_last[T: cmp.Eq](target: T): Option[i32] {
 // (No `T[][]` receiver method for `flatten` — array-receiver methods
 // must be element-polymorphic `(xs: T[])`, so a nested-array receiver
 // is rejected by E021. Call the free `flatten(xss)` form instead.)
+
 // `xs.partition(pred)` — method form of `partition`: `(kept, rejected)`
 // split by the predicate.
 pub function (xs: T[]) partition[T](pred: (T) => boolean): (T[], T[]) {
@@ -2131,6 +2142,7 @@ pub function (xs: T[]) windows[T](size: i32): T[][] {
 // so the same call works for every element type that satisfies the bound —
 // i32 / i64 / u32 / u64 / f32 / f64 / string and `@derive(Ord)` /
 // `@derive(Eq)` types alike (#2663).
+
 // `xs.sum()` / `xs.product()` — additive / multiplicative fold over any
 // element type carrying the identity its bound names, so the same call
 // works for i32 / i64 / f64 / … and for a user type with `impl Add`.

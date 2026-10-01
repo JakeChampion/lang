@@ -12,6 +12,7 @@
 //
 // The exit code is 0 only when a second optimize_ops round over the hoisted
 // result changes nothing — the fixpoint check the strength driver makes too.
+
 import "./ir";
 import "./irverify";
 import "./irverifystack";

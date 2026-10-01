@@ -11,6 +11,7 @@ import "std/test";
 //     `(r).log_kv_string(key, value)` (quoted),
 //     `(r).log_kv_i32(key, value)` (unquoted),
 //     `(r).log_kv_i64(key, value)` (unquoted).
+
 function test_eq_string_ci_same_case(): test.TestOutcome {
   return test.assert_eq_string_ci("hello", "hello");
 }

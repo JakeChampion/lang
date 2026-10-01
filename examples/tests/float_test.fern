@@ -14,6 +14,7 @@ import "std/test";
 // epsilon)` is the typical entry point. `_exact` is reserved
 // for canonicalisation tests where bit-equal IS the
 // contract (`f32_bits` round-trips, NaN payload preservation).
+
 function test_f64_addition(): test.TestOutcome {
   return test.assert_eq_f64_near(1.5 + 2.5, 4.0, 0.001);
 }

@@ -8,6 +8,7 @@ import "std/string";
 // two must agree on every request, well-formed or not, and nothing the
 // parse keeps may be a view into the wire, so the buffer is free to be
 // reused.
+
 function wire_post(): string {
   return "POST /echo HTTP/1.1\r\nHost: example.test\r\nX-Request-Id: 42\r\nContent-Length: 5\r\n\r\nhello";
 }

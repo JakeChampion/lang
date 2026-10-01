@@ -8,6 +8,7 @@ import "std/i64" as i64m;
 // is_power_of_2 is the n&(n-1) bit trick, is_perfect_square is sqrt_floor(n)²==n.
 // The Go-side TestI64Roots pins these across all four backends; this is the
 // migration-shaped companion. Scalar-only, so it's self-host clean.
+
 function test_sqrt_floor_exact(): test.TestOutcome {
   return test.assert_true((100 as i64).sqrt_floor() == 10 as i64);
 }

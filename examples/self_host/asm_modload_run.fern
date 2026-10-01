@@ -21,6 +21,7 @@
 // rules. This driver is just the asm-emitting front door (+ an -ir-probe
 // mode). Uses only features the self-hosted emitter supports (args,
 // read_file → Result, match), so it builds with either compiler.
+
 import "./util";
 import "./lexer";
 import "./parser";
@@ -41,6 +42,7 @@ import "./platforms";
 import "./semlower";
 
 // ---- callee resolution (#6639 slice 4) ---------------------------------
+
 // verify_provided_module runs the resolution pass over the whole merged
 // program and writes the verdict. Returns the process exit code.
 //
@@ -227,6 +229,7 @@ function builtin_view(dir: string, base: parser.StructDecl[]): parser.StructDecl
 // (`cannot find entry symbol _start`), and the built compiler jumping to a
 // garbage address (observed: RIP=0x1 with the initial argv/envp stack
 // untouched). Hence the "indented AND not a directive" test below.
+
 // dedupe_weak_into is the incremental core: it appends the deduped form of ONE
 // already-emitted chunk to the (caller-reset) global strbuf and returns the
 // updated `seen` symbol set, so a caller streaming unit-at-a-time carries the

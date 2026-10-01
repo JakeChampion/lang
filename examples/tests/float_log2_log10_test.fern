@@ -9,6 +9,7 @@ import "std/float" as float;
 // these across interp / x86-64 / arm64 (wasmbin skips libm transcendentals,
 // the same known gap log/sin/cos already carry); this is the migration-shaped
 // companion.
+
 function test_log2_pow2(): test.TestOutcome {
   return test.assert_eq_f64_near(8.0.log2(), 3.0, 0.0001);
 }

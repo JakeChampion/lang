@@ -15,6 +15,7 @@ function text(b: u8[]): string {
 // gated through the self-host IR path (TestSelfHostStdTestE2E) so the
 // byte/string lowering is proven end to end on the self-hosted compiler.
 // (std/hex has its own sibling suite, hex_test.fern.)
+
 // Three-byte groups encode to four base64 chars with no padding.
 function test_encode_no_pad(): test.TestOutcome {
   return test.assert_eq(base64.base64_encode("Man".bytes()), "TWFu");

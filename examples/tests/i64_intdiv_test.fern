@@ -8,6 +8,7 @@ import "std/i64" as i64m;
 // log2_floor counts halvings since i64 has no leading_zeros. The Go-side
 // TestI64Intdiv pins these across all four backends; this is the
 // migration-shaped companion. Scalar-only, so self-host clean.
+
 function test_is_multiple_of(): test.TestOutcome {
   if (!(12 as i64).is_multiple_of(4 as i64)) {
     return test.fail("12 % 4");

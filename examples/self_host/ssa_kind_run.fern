@@ -14,6 +14,7 @@
 // The companion Go test (internal/e2eselfhost/self_host_ssa_kind_test.go)
 // asserts the exact stdout and an exit code of 0 (zero failures), pinning
 // the registry end-to-end through the self-host -> native pipeline.
+
 import "./ssa";
 import "./util";
 

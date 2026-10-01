@@ -3,6 +3,7 @@
 // Counterpart to std/u32 for the wider type. No prelude: a
 // program `import "std/u64";` to bring these methods into scope
 // (docs/PRELUDE-TO-MODULES.md, Phase 5).
+
 import "core/int";
 
 pub function (n: u64) min(other: u64): u64 {
@@ -103,6 +104,7 @@ pub function (n: u64) pow(exp: i32): u64 {
 // exactly when the wrapped result is smaller than an operand, and a
 // sub underflows exactly when the subtrahend exceeds the minuend.
 // `saturating_*` clamps to u64::MAX / 0; `checked_*` returns None.
+
 pub function (n: u64) saturating_add(other: u64): u64 {
   var r: u64 = n + other;
   // u64::MAX is the all-ones value; the 2^64-1 decimal literal isn't
@@ -406,6 +408,7 @@ pub function (n: u64) log10_floor(): i32 {
 // BMI1 and SSE4.2 both.
 //
 // Zero is defined: leading_zeros / trailing_zeros of 0 return the width.
+
 // `count_ones()` — the number of set bits in `n`.
 pub function (n: u64) count_ones(): i32 {
   return __popcount64(n);

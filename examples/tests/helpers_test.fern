@@ -8,6 +8,7 @@ import "std/test";
 // `process_assertions_test`) cover the per-type assertion
 // shape; this file covers the layered convenience helpers
 // that fold common patterns into one-liners.
+
 function test_contains_all_pass(): test.TestOutcome {
   return test.assert_contains_all(
     "error: function `foo` undefined at line 5",

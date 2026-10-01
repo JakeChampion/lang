@@ -14,6 +14,7 @@ import "std/test";
 // near-u64-max unsigned max compare, f64 sum + max — now driven
 // through the generic forms monomorphised to each width. `avg_i64`
 // / `avg_f64` (no generic equivalent) stay in std/array.
+
 function test_sum_i64(): test.TestOutcome {
   var arr: i64[] = [1 as i64, 2 as i64, 3 as i64, 4 as i64];
   return test.assert_eq(num.sum(arr), 10 as i64);

@@ -30,6 +30,7 @@ import "std/i32";
 import "std/string";
 
 // ------------------------------------------------------------------ model ---
+
 struct Numbered { lines: string[], width: i32, count: i32 }
 
 // The separator between the number field and the content. Two spaces rather
@@ -76,6 +77,7 @@ function pad_left(s: string, width: i32): string {
 }
 
 // ---------------------------------------------------------------- numbering ---
+
 // Two passes, and the first one is the point: the width cannot be chosen until
 // every non-blank line has been counted, so the count comes first and the
 // formatting second. A single streaming pass is the shape that gets 9 -> 10
@@ -158,6 +160,7 @@ function field_number(line: string, width: i32): i32 {
 }
 
 // ------------------------------------------------------------- generators ---
+
 // A document with `content` non-blank lines and blanks sprinkled through it in
 // a pattern that varies with `shape`, so the numbering is exercised against
 // leading, trailing, adjacent and interior blanks rather than one arrangement.
@@ -209,6 +212,7 @@ function boundary_counts(): i32[] {
 }
 
 // ------------------------------------------------------------------ tests ---
+
 // The main test. At every carry boundary, the field must be as wide as the LAST
 // number — no wider, no narrower.
 function test_the_width_is_the_digit_count_of_the_last_number(): test.TestOutcome {

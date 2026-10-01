@@ -14,6 +14,7 @@ import "std/test";
 // so the array is freed once. The churn loops + the empty-array case (freelist
 // class 3, which a later string box recycles) turn any residual double-free
 // fatal — a clean run proves the balance holds.
+
 function make_names(k: i32): Result[string[], i32] {
   var a: string[] = [];
   var i: i32 = 0;

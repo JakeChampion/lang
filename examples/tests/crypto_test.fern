@@ -9,6 +9,7 @@ import "std/string";
 // The Go-side suite unit-tests the rounds; this is the migration-shaped
 // (pure-Fern, std/test-driven) companion. All arithmetic is u32, so this
 // also exercises the unsigned round math end to end.
+
 function test_sha256_empty(): test.TestOutcome {
   return test.assert_eq(
     crypto.sha256_hex(""),

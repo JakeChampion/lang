@@ -43,6 +43,7 @@
 // as the token with no rc-header arithmetic, and calls `__fern_alloc_reuse`
 // with two arguments where native's `__alloc_reuse` takes three. None of that
 // is what makes a site safe, so none of it is what this checks.
+
 import "./ir";
 import "./irverify";
 import "./util";
@@ -89,6 +90,7 @@ pub function rc_coverage_str(r: RcResult): string {
 }
 
 // ---- op predicates -----------------------------------------------------
+
 // is_reuse_alloc reports whether a call names the reuse allocator. Both
 // spellings are accepted so the pass reads native-emitted streams too.
 function is_reuse_alloc(op: ir.Op): boolean {
@@ -234,6 +236,7 @@ function is_kind(op: ir.Op, name: string): boolean {
 }
 
 // ---- bracket matching --------------------------------------------------
+
 // IfSpan locates the `if` that an `end` closes, and that scope's `else`.
 struct IfSpan { ok: boolean, if_at: i32, else_at: i32 }
 
@@ -362,6 +365,7 @@ function sole_decline(ops: ir.Op[], from: i32, to: i32): DeclineRead {
 }
 
 // ---- site recognition --------------------------------------------------
+
 // Site is one recognised reuse site: the three locals its protocol names, and
 // where each was read from. `why` carries the skip reason when ok is false.
 struct Site {
@@ -572,6 +576,7 @@ function read_site(ops: ir.Op[], call: i32): Site {
 }
 
 // ---- the pass ----------------------------------------------------------
+
 // site_problems is what one recognised site is wrong about, if anything.
 function site_problems(fn_name: string, call: i32, s: Site): irverify.Problem[] {
   var out: irverify.Problem[] = [];

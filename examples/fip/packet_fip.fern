@@ -156,6 +156,7 @@ fip function pow256(k: i32): i64 {
 // chained `.with` in assignment position allocates a fresh box per evaluation
 // (#9702) — so the spelling that reads best is the one that would have put an
 // allocation on every request.
+
 fip function rev_inplace(own b: u8[], at: i32, n: i32): u8[] {
   var i: i32 = 0;
   var j: i32 = n - 1;
@@ -386,6 +387,7 @@ fip function moved(mtype: i32, status: i32, plen: i32, inplace: boolean): i64 {
 // bytes are held and in nothing else. Every 17th request is malformed, cycling
 // through the six rejections, so the error ladder is exercised in the steady
 // state rather than in a separate test that proves nothing about throughput.
+
 fip function gen_payload_len(n: i64): i32 {
   return (n * (37 as i64) % (241 as i64)) as i32;
 }
@@ -490,6 +492,7 @@ function zeros_u8(n: i32): u8[] {
 // and it is what lets the plane return one owned buffer and nothing else. The
 // status and the response length come back in the response header, where a
 // caller would read them anyway.
+
 function main(): i32 {
   var argv: string[] = args();
   var inplace: boolean = true;

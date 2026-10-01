@@ -37,6 +37,7 @@
 // file wants the differential to be about the printer.
 //
 // The app writes its report to stderr; stdout carries TAP-13 from std/test.
+
 import "std/test";
 import "std/i32";
 import "std/string";
@@ -63,6 +64,7 @@ struct Doc { vals: Val[], root: i32 }
 struct ParseR { ok: boolean, doc: Doc, err: string }
 
 // ------------------------------------------------------------- utilities
+
 function is_digit(c: u8): boolean {
   return c >= 48 && c <= 57;
 }
@@ -96,6 +98,7 @@ function empty_val(): Val {
 }
 
 // ---------------------------------------------------------------- parsing
+
 struct Cursor { at: i32, ok: boolean, err: string }
 
 function skip_ws(text: string, at: i32): i32 {
@@ -341,6 +344,7 @@ function parse(text: string): ParseR {
 }
 
 // -------------------------------------------------------------- printing
+
 function repeat(s: string, n: i32): string {
   var out: string = "";
   var i: i32 = 0;
@@ -491,6 +495,7 @@ function pretty(text: string): PrettyR {
 }
 
 // ---------------------------------------------------------------- corpus
+
 function documents(): string[] {
   return [
     "{\"b\":1,\"a\":2}",
@@ -545,6 +550,7 @@ function distinct_pairs(): string[] {
 }
 
 // ----------------------------------------------------------------- tests
+
 // Idempotence: the canonical form of the canonical form is itself.
 function test_pretty_printing_is_idempotent(): test.TestOutcome {
   var ds: string[] = documents();

@@ -24,12 +24,14 @@
 // direction of the error, plus an exact check at the endpoints.
 //
 // The app writes its report to stderr; stdout carries TAP-13 from std/test.
+
 import "std/test";
 import "std/i32";
 import "std/i64";
 import "std/string";
 
 // -------------------------------------------------------- nice numbers
+
 // The smallest number of the form {1,2,5} x 10^k that is >= v.
 //
 // Built by walking the mantissa/exponent ladder rather than by taking a
@@ -63,6 +65,7 @@ function nice_max(v: i32): i32 {
 }
 
 // ------------------------------------------------------------- scaling
+
 // Bar length in cells, rounded half-up. i64 intermediate because
 // v * width overflows i32 for values past ~2 x 10^6 at width 1000 — the kind
 // of input a chart of byte counts hands you routinely.
@@ -78,6 +81,7 @@ function bar_len(v: i32, axis_max: i32, width: i32): i32 {
 }
 
 // ------------------------------------------------------------ rendering
+
 function repeat(c: string, n: i32): string {
   var out: string = "";
   var i: i32 = 0;
@@ -169,6 +173,7 @@ function chart(labels: string[], values: i32[], width: i32): string[] {
 }
 
 // -------------------------------------------------------------- oracle
+
 // The nice-number answer, found by brute force over every candidate rather
 // than by the ladder the implementation walks. Slow and obviously correct,
 // which is what an oracle is for.
@@ -198,6 +203,7 @@ function bf_nice_max(v: i32): i32 {
 }
 
 // --------------------------------------------------------------- tests
+
 // The sweep. Every value from 1 to 2 000, plus each decade boundary and the
 // values either side of it, must get the brute-force answer.
 function test_nice_max_agrees_with_brute_force(): test.TestOutcome {

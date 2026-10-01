@@ -22,6 +22,7 @@ import "std/u64";
 // the largest u64). Until that monomorph preserves unsigned semantics,
 // `test_min_unsigned` / `test_max_unsigned` / `test_to_string_umax`
 // fail on self-host even though they pass under the interpreter oracle.
+
 // 2^64 - 1, the all-ones wraparound value.
 function umax(): u64 {
   return 0 as u64 - 1 as u64;

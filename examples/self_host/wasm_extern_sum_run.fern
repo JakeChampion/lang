@@ -12,6 +12,7 @@
 // and plain scalars/structs — and asserts the new decode equals the old for each.
 // Exits with the mismatch count (0 = byte-identical), so a regression in the
 // TypeRef decode (or in parse_type_ref feeding it) fails the golden here.
+
 import "./wasm_ir";
 import "./util";
 

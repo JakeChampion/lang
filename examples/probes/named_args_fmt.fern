@@ -5,6 +5,7 @@
 //
 // Each name is bound to the parameter it subtracts FROM or subtracts, so a
 // dropped or misplaced name changes the value rather than only the spelling.
+
 function diff(a: i32 = 0, b: i32 = 0): i32 {
   return a - b;
 }

@@ -13,7 +13,9 @@ import "std/string";
 //   pad_start / pad_end / truncate / ellipsis         (fitting / padding)
 // The Go-side suite unit-tests these; this is the migration-shaped (pure-Fern,
 // std/test-driven, self-host-gated) companion.
+
 // ---- classification predicates ----
+
 function test_is_int(): test.TestOutcome {
   var ok: boolean = "42".is_int() && "-42".is_int() && "+5".is_int();
   var no: boolean = !"4.5".is_int() && !"abc".is_int() && !"".is_int() && !"-".is_int();
@@ -52,6 +54,7 @@ function test_is_url_like(): test.TestOutcome {
 }
 
 // ---- case transforms ----
+
 function test_capitalize(): test.TestOutcome {
   return test.assert_eq("hello".capitalize(), "Hello");
 }
@@ -117,6 +120,7 @@ function test_slugify_edges(): test.TestOutcome {
 }
 
 // ---- fitting / padding ----
+
 function test_pad_start(): test.TestOutcome {
   return test.assert_eq("7".pad_start(3, "0"), "007");
 }

@@ -8,6 +8,7 @@ import "std/path" as path;
 // hidden-file edge cases. The Go-side suites unit-test the prelude
 // origins; this is the migration-shaped (pure-Fern, std/test-driven)
 // companion, driven end-to-end through the runner.
+
 function test_join(): test.TestOutcome {
   return test.assert_eq(path.path_join(["a", "b", "c"]), "a/b/c");
 }

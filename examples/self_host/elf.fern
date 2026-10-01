@@ -23,7 +23,9 @@
 //   * 8-byte ELF fields are written via elf_le64 (an i64 value); the
 //     values we emit are all small (addresses < 2^31, sizes), but the
 //     full 8 bytes are always laid down per the ELF-64 layout.
+
 // ---- fixed layout constants (see internal/native/elf/elf.go) ----
+
 // elf_eh_size is the ELF-64 header size (e_ehsize).
 function elf_eh_size(): i32 {
   return 64;
@@ -64,6 +66,7 @@ pub function elf_text_vaddr(): i32 {
 }
 
 // ---- little-endian byte emitters ----
+
 // elf_le16 appends the low 2 bytes of `v`, little-endian.
 function elf_le16(buf: i32[], v: i32): i32[] {
   buf = buf.append(v & 255);
@@ -96,6 +99,7 @@ function elf_le64(buf: i32[], v: i64): i32[] {
 }
 
 // ---- buffer helpers ----
+
 // elf_cat appends every byte of `src` to `buf`.
 pub function elf_cat(buf: i32[], src: i32[]): i32[] {
   var i: i32 = 0;
@@ -133,6 +137,7 @@ function elf_u32_to_i64(v: i32): i64 {
 }
 
 // ---- the image writer ----
+
 // elf_image emits the ELF header + one PT_LOAD (with the given p_flags)
 // covering the whole file, followed by `body`. `machine` selects
 // e_machine (EM_AARCH64 / EM_X86_64). Entry is the first instruction of
@@ -203,6 +208,7 @@ pub function elf_image_entry_bss(body: i32[], flags: i32, machine: i32, entry_of
 }
 
 // ---- public wrappers ----
+
 // elf_static_executable wraps a flat .text blob into a runnable static
 // ELF-64 executable for arm64 Linux (R+X). Execution begins at the first
 // byte of text; the program provides its own startup and exits via a
@@ -247,6 +253,7 @@ function elf_static_executable_data_x86(text: i32[], data: i32[]): i32[] {
 // a second program header so a running program's unwinder can find the
 // .eh_frame the `.cfi_*` directives rendered. .text is therefore one
 // elf_ph_size() further in than elf_text_vaddr()'s single-header image.
+
 // elf_text_off_x86 is the file offset of .text in the x86-64 program image;
 // elf_text_vaddr_x86 its load address.
 pub function elf_text_off_x86(): i32 {
@@ -377,6 +384,7 @@ pub function elf_program_x86(text: i32[], hdr: i32[], eh: i32[], data: i32[], bs
 // segment starts on the first page boundary past .text; an assembler must
 // resolve data-symbol references against that page-aligned address (the
 // Go reference does this in arm64.BytesProgramWX / x86_64.AssembleProgramWX).
+
 // elf_text_vaddr_wx is the .text virtual address for the W^X image: past
 // the ELF header + THREE program headers (code, data, and the
 // PT_GNU_EH_FRAME slot — see elf_wx_text_off). An assembler resolving
@@ -663,6 +671,7 @@ pub function elf_static_executable_bss_x86_wx_at(text: i32[], data: i32[], bss: 
 // them past the last segment cannot disturb what is.
 //
 // Scope matches native's `-g` exactly: a static `.symtab`, not DWARF.
+
 // Elf64_Sym is 24 bytes; Elf64_Shdr is 64.
 pub function elf_sym_size(): i32 {
   return 24;

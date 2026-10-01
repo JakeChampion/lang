@@ -27,6 +27,7 @@
 // This module must stay backend-free: it imports the front end, the IR and the
 // lowering, never a backend. asm_ir/asm_arm64_ir/wasm_ir import it, so anything
 // added here that needs to emit an instruction belongs in the backend instead.
+
 import "core/map";
 import "./parser";
 import "./asmcore";
@@ -929,6 +930,7 @@ function calls_only_known(fd: parser.FuncDecl, mod: parser.Module, known: string
 // each backend); which mnemonic comes out is the backend's (#4378, #8194).
 // These two classify the comparisons that fuse and turn one round when its
 // operands swap.
+
 // is_int_cmp_kind reports whether `id` is an integer comparison — eq, ne and
 // the signed/unsigned orderings. Float compares are excluded: NaN breaks the
 // negation identity (`!(a < b)` is not `a >= b` when either operand is NaN), so
@@ -1028,6 +1030,7 @@ pub function scale_f64_maps_module(mod: parser.Module): parser.Module {
 // reason. This pass discriminates ONE shape at each step and has nothing to
 // say about the rest, which is what `if let` spells without an arm at all, so
 // it adds none.
+
 // ScaleFactor is scale_lambda_factor's answer: the factor expression as the
 // author wrote it, and whether the lambda was the one shape that has one.
 struct ScaleFactor { ok: boolean, k: ast.Expr }

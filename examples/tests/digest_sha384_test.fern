@@ -7,6 +7,7 @@ import "std/string";
 // multi-block message, one million 'a'), fed through the pending-block logic in
 // every way that matters: whole strings, 1000 updates of 1000 bytes, and 7-byte
 // updates that straddle each block boundary, cross-checked against the one-shot form.
+
 // __pseudo builds the 10,003-byte fixed pattern byte i = (i * 7 + 3) & 255:
 // long enough that 7-byte updates straddle every block boundary offset, and
 // not valid UTF-8, so the hasher is fed raw bytes.

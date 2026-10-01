@@ -10,6 +10,7 @@ import "std/test";
 // after. Use `monotonic_ns` (not `now_unix_ms`) for the
 // timestamps so NTP-style clock adjustments don't shift the
 // deadline mid-test.
+
 function test_now_unix_ms_advances(): test.TestOutcome {
   // Wall-clock reads at least don't go BACKWARDS (modulo NTP
   // step backwards; we ignore that case for the test).

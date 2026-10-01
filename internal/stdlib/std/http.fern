@@ -18,6 +18,7 @@
 // says how many bytes a request occupied and whether the connection
 // outlives it, and `http_serialize_response_conn` writes the `Connection`
 // the loop decided. Responses are Content-Length-delimited. No TLS.
+
 import "core/int";
 import "core/map";
 // std/http's bodies dispatch (string) methods all over the
@@ -167,6 +168,7 @@ pub function created(body: string): HttpResponse {
 // Type", …)` at every handler call site. Body types that carry
 // text use an explicit `charset=utf-8` (Fern strings are UTF-8).
 // ============================================================
+
 // Build a 200 response with `Content-Type: ct` set.
 function __http_response_typed(status: i32, body: string, ct: string): HttpResponse {
   var h: HeaderMap = headers.header_map_new();
@@ -224,6 +226,7 @@ pub function plain(body: string): HttpResponse {
 // fail with an `HttpError` to put it on the wire. A handler whose errors
 // are `dyn error.Error` is answered by `respond_error`, which logs each
 // message through the platform.
+
 pub trait ToResponse {
   function to_response(self: Self): HttpResponse;
 }
@@ -324,6 +327,7 @@ impl ToResponse for string {
 // The media type is the `Content-Type` header's type without its
 // parameters, `application/json` or any `+json` suffix, compared without
 // regard to case; a request without the header is refused too.
+
 pub enum BodyError {
   UnsupportedMediaType(string),
   MalformedJson(json.JsonError),
@@ -1908,6 +1912,7 @@ pub function http_serialize_response_head(resp: HttpResponse, keep_alive: boolea
 // cursor, so they answer the same thing however far a
 // separate `body_stream()` walk has advanced.
 // ============================================================
+
 // `request(method, path)` — a request to hand a handler in a test: the
 // method and path as given, no headers and no body, built up with
 // `with_header`, `with_body` and `with_json`. It reads the way a served
@@ -2137,6 +2142,7 @@ pub function chunks(status: i32, next: (i32) => Option[u8[]]): HttpResponse {
 // v) };`. These wrap that into a single rebind — the Rust
 // `http` builder idiom: `r = r.with_header("X-Trace", "1");`.
 // ============================================================
+
 // `(r: HttpResponse).with_header(name, value)` — replace any
 // existing entries for `name` (set semantics) and return the
 // updated response. Rebind: `r = r.with_header(k, v);`.
@@ -2180,6 +2186,7 @@ pub function (r: HttpResponse) with_content_type(ct: string): HttpResponse {
 // appended `Set-Cookie` header (append semantics — one header
 // per cookie, per the RFC).
 // ============================================================
+
 // `(r: HttpRequest).cookie(name)` — the value of cookie `name`
 // from the request's `Cookie` header(s), or None. Parses the
 // RFC 6265 §5.4 cookie-string shape (`a=1; b=2`) across every

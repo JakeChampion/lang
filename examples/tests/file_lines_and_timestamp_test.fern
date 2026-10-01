@@ -7,6 +7,7 @@ import "std/test";
 //   * `test.assert_file_line_count(path, n)` — count lines.
 //   * `test.assert_close_to_now_ms(actual_ms, max_skew_ms)` —
 //     wall-clock timestamp recency check.
+
 function test_file_lines_pass(r: test.TestRunner): test.TestRunner {
   let (dir, rr) = test.must_temp_dir(r, "lines-pass");
   if (dir == "") {
