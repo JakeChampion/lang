@@ -7414,15 +7414,19 @@ function anchor_module(all: Produced[], names: string[]): Produced[] {
     }
     if (p.ok && !p.template) {
       p = Produced { ...p, func: ssasem.Func { ...p.func, anchors: anchors } };
-      var copies: ssasem.MergeCopy[] = ssasem.merge_copies(p.func);
-      if (copies.len() > 0) {
-        p = Produced { ...p, func: ssasem.with_merge_copies(p.func, copies) };
-      }
-      var analysis: ssasem.Analysis = ssasem.analyze(p.func);
-      if (!analysis.ok) {
-        p = Produced { ...refuse("produced graph fails semantic verification: " + analysis.why), key: p.key };
+      var plan: ssasem.MergePlan = ssasem.merge_copies(p.func);
+      if (plan.why != "") {
+        p = Produced { ...refuse(plan.why), key: p.key };
       } else {
-        p = Produced { ...p, analysis: Some(analysis) };
+        if (plan.copies.len() > 0) {
+          p = Produced { ...p, func: ssasem.with_merge_copies(p.func, plan.copies) };
+        }
+        var analysis: ssasem.Analysis = ssasem.analyze(p.func);
+        if (!analysis.ok) {
+          p = Produced { ...refuse("produced graph fails semantic verification: " + analysis.why), key: p.key };
+        } else {
+          p = Produced { ...p, analysis: Some(analysis) };
+        }
       }
     }
     out = out.append(p);

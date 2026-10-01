@@ -904,7 +904,7 @@ func TestGenericCallResultCarryingWideLiteralTWidens(t *testing.T) {
 // destination its argument's literal elements are read at, as an annotated
 // `var` is. `take([Same { a: 1, b: 2 }])` was E038, the literal typed Same[i32]
 // on its own, and a field an i64 settles clashed with the literal-bound `a` as
-// E043 (#10270). Without a destination the first field still binds T.
+// E043 (#10270).
 func TestArrayArgumentIsItsElementsDestination(t *testing.T) {
 	const decls = "struct Same[T] { a: T, b: T } function take(xs: Same[i64][]): i32 { return xs.len(); } "
 	for _, body := range []string{
@@ -917,7 +917,6 @@ func TestArrayArgumentIsItsElementsDestination(t *testing.T) {
 	}
 	for _, c := range []struct{ body, want string }{
 		{`return take([Same { a: 1, b: "x" }]);`, `field "b": expected i64, got string`},
-		{`var y: i64 = 5; var q = Same { a: 1, b: y }; return 0;`, `field "b": expected i32, got i64`},
 	} {
 		err := checkSource(t, decls+"function main(): i32 { "+c.body+" }")
 		if err == nil || !strings.Contains(err.Error(), c.want) {
@@ -934,9 +933,9 @@ func TestArrayArgumentIsItsElementsDestination(t *testing.T) {
 func TestClashingGenericStructLiteralDoesNotCascade(t *testing.T) {
 	const decls = "struct Same[T] { a: T, b: T } function take1(x: Same[i64]): i32 { return 1; } "
 	for _, body := range []string{
-		`var y: i64 = 5; var q = Same { a: 1, b: y }; return take1(q);`,
-		`var y: i64 = 5; var q = Same { a: 1, b: y }; var z: string = q; return 0;`,
-		`var y: i64 = 5; var xs = [Same { a: 1, b: y }]; return take1(xs[0]);`,
+		`var q = Same { a: 1, b: "x" }; return take1(q);`,
+		`var q = Same { a: 1, b: "x" }; var z: string = q; return 0;`,
+		`var xs = [Same { a: 1, b: "x" }]; return take1(xs[0]);`,
 	} {
 		err := checkSource(t, decls+"function main(): i32 { "+body+" }")
 		if err == nil {
@@ -944,11 +943,71 @@ func TestClashingGenericStructLiteralDoesNotCascade(t *testing.T) {
 			continue
 		}
 		msg := err.Error()
-		if !strings.Contains(msg, `field "b": expected i32, got i64`) {
+		if !strings.Contains(msg, `field "b": expected i32, got string`) {
 			t.Errorf("%s: want the field clash, got: %v", body, err)
 		}
 		if n := strings.Count(msg, "\n") + 1; n != 1 {
 			t.Errorf("%s: want only the field clash, got %d diagnostics: %v", body, n, err)
+		}
+	}
+}
+
+// A typed value binds a type parameter ahead of an untyped literal written
+// before it, and the literal settles at that type: `Same { a: 1, b: y }` with
+// `y: i64` is a Same[i64], and `pair(1, y)` a pair at i64 (#10453). The
+// literal used to bind T at i32 first, and the typed value then clashed.
+func TestTypedValueBindsAheadOfEarlierLiteral(t *testing.T) {
+	const decls = "struct Same[T] { a: T, b: T } function take1(x: Same[i64]): i32 { return 1; } function pair[T](a: T, b: T): T { return a; } "
+	for _, body := range []string{
+		`var y: i64 = 5; var q = Same { a: 1, b: y }; return take1(q);`,
+		`var y: i64 = 5; var q = Same { a: y, b: 1 }; return take1(q);`,
+		`var y: i64 = 5; var r: i64 = pair(1, y); return 0;`,
+		`var y: i64 = 5; var r: i64 = pair(y, 1); return 0;`,
+	} {
+		if err := checkSource(t, decls+"function main(): i32 { "+body+" }"); err != nil {
+			t.Errorf("%s: rejected, want accepted: %v", body, err)
+		}
+	}
+	prog, err := parser.Parse(decls + "function main(): i32 { var y: i64 = 5; var q = Same { a: 1, b: y }; return take1(q); }")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if _, err := Check(prog); err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	sl := prog.Funcs[len(prog.Funcs)-1].Body.Stmts[1].(*ast.Var).Init.(*ast.StructLit)
+	if n, ok := sl.Fields[0].Value.(*ast.NumberLit); !ok || n.Width != 64 {
+		t.Errorf("a: 1 settled as %#v, want width 64", sl.Fields[0].Value)
+	}
+}
+
+// A generic struct local whose type argument only untyped literals bind takes
+// ONE width, as an integer literal local does (#10123): the first use that
+// fixes it decides — a field read at a typed destination, or the whole local
+// where a Same[i64] is wanted — and a second, different width is E003
+// (#10453). Native read such a local at any width field by field, and refused
+// it whole as a Same[i32].
+func TestGenericStructLiteralLocalTakesOneWidth(t *testing.T) {
+	const decls = "struct Same[T] { a: T, b: T } function take1(x: Same[i64]): i32 { return 1; } function take(xs: Same[i64][]): i32 { return 1; } "
+	for _, body := range []string{
+		`var q = Same { a: 1, b: 2 }; var r: i64 = q.a; return 0;`,
+		`var q = Same { a: 1, b: 2 }; return take1(q);`,
+		`var q = Same { a: 1, b: 2 }; return take([q]);`,
+		`var q = Same { a: 1, b: 2 }; var r: i64 = q.a; var z: i64 = q.b; return take1(q);`,
+		`var q = Same { a: 1, b: 2 }; var z: i32 = q.a; return 0;`,
+	} {
+		if err := checkSource(t, decls+"function main(): i32 { "+body+" }"); err != nil {
+			t.Errorf("%s: rejected, want accepted: %v", body, err)
+		}
+	}
+	for _, body := range []string{
+		`var q = Same { a: 1, b: 2 }; var r: i64 = q.a; var z: i32 = q.b; return 0;`,
+		`var q = Same { a: 1, b: 2 }; var t = take1(q); var z: i32 = q.a; return 0;`,
+		`var q = Same { a: 1, b: 4611686018427387904 }; var z: i32 = q.a; return 0;`,
+	} {
+		err := checkSource(t, decls+"function main(): i32 { "+body+" }")
+		if err == nil || !strings.Contains(err.Error(), "cannot assign i64 to variable of type i32") {
+			t.Errorf("%s: want the i32 read refused, got: %v", body, err)
 		}
 	}
 }
@@ -1067,6 +1126,35 @@ func TestGenericStructLiteralWideningInArrayAndWritten(t *testing.T) {
 		if got := prog.Funcs[0].Body.Stmts[0].(*ast.Var).Type.String(); !strings.HasSuffix(got, "[i64]") {
 			t.Errorf("%s: q is %s, want the i64 instantiation", decl, got)
 		}
+	}
+}
+
+// A typed integer rebinds only what the literal's own fields bound: a struct
+// update whose base fixed T at i32 still reports the typed field (#10453).
+// An array whose typed element widens a literal sibling is that widening's
+// type in either order, and a literal-bound struct local's copy and closure
+// capture share its width.
+func TestTypedFieldRebindStaysInsideTheLiteral(t *testing.T) {
+	const decls = "struct Same[T] { a: T, b: T } "
+	err := checkSource(t, decls+"function main(): i32 { var q = Same { a: 1, b: 2 }; var y: i64 = 8589934592; var w = Same { ...q, b: y }; return 0; }")
+	if err == nil || !strings.Contains(err.Error(), `field "b": expected i32, got i64`) {
+		t.Errorf("struct update over an i32 base: want the field refused, got %v", err)
+	}
+	for _, body := range []string{
+		"var y: i64 = 8589934592; var xs = [Same { a: 1, b: 2 }, Same { a: 3, b: y }]; var r: i64 = xs[0].a; return 0;",
+		"var y: i64 = 8589934592; var xs = [Same { a: 3, b: y }, Same { a: 1, b: 2 }]; var r: i64 = xs[1].a; return 0;",
+		"var q = Same { a: 1, b: 2 }; var r = q; var z: i64 = r.a; var w: i64 = q.b; return 0;",
+		"var q = Same { a: 1, b: 2 }; var f = (): i64 => q.a; return 0;",
+	} {
+		if err := checkSource(t, decls+"function main(): i32 { "+body+" }"); err != nil {
+			t.Errorf("%s: rejected, want accepted: %v", body, err)
+		}
+	}
+	if err := checkSource(t, decls+"function main(): i32 { var q = Same { a: 1, b: 2 }; var r = q; var z: i64 = r.a; var w: i32 = q.b; return 0; }"); err == nil || !strings.Contains(err.Error(), "already inferred") {
+		t.Errorf("a copy and its source read at two widths: want E003, got %v", err)
+	}
+	if err := checkSource(t, decls+"function main(): i32 { var xs = [Same { a: 1, b: 2 }, Same { a: \"x\", b: \"y\" }]; return 0; }"); err == nil || !strings.Contains(err.Error(), "array element type") {
+		t.Errorf("an array of two instantiations no literal reconciles: want E034, got %v", err)
 	}
 }
 
