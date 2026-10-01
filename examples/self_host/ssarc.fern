@@ -2659,6 +2659,19 @@ function cast(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlow
   if (semtypes.is_handle(from)) {
     return r;
   }
+  // An address converts at the pointer width: the u64 forms on a register
+  // backend, the u32 forms on wasm, where `f64 as usize` saturates at
+  // u32::MAX as native's does.
+  if (ssasem.is_float(to) && ssasem.is_usize(from)) {
+    r = emit(r, ir.op_ptr_to_f64());
+    if (ssasem.is_f32(to)) {
+      return round_f32(r);
+    }
+    return r;
+  }
+  if (ssasem.is_float(from) && ssasem.is_usize(to)) {
+    return emit(r, ir.op_f64_to_ptr());
+  }
   if (ssasem.is_float(to)) {
     return into_float(r, from, to);
   }

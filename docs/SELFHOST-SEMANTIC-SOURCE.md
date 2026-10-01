@@ -147,7 +147,10 @@ Unsupported constructs refuse the whole function with a reason.
   handle through an i64 on every target).
 
 - A cast between the integer types, or between one of the four 32- and 64-bit
-  ones and the f64, as the semantic `cast` kind. `e as T` reaches the producer
+  ones and the f64, or between the f64 and the address at the pointer width
+  (`op_f64_to_ptr`, `op_ptr_to_f64`: the u64 forms on a register backend, the
+  u32 forms on wasm, where `f64 as usize` saturates at `u32::MAX` as native's
+  does), as the semantic `cast` kind. `e as T` reaches the producer
   as a unary whose operator names T, and the destination is the checker's type
   for the whole expression rather than the spelling. Crossing the 64-bit
   boundary is an explicit extend or wrap, and the SOURCE's signedness is what
