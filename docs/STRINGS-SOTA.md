@@ -801,7 +801,9 @@ recognisers, example programs and test fixtures. By category:
 | Category | Examples | Can the bytes be invalid? |
 |---|---|---|
 | Digit assembly | `core/int`, `std/i32`, `std/i64`, `std/float` | No — ASCII it just built |
-| Encoder output | base64/base32/hex **encode**, `url` percent-encode, `json` escape, `ansi`, `table`, `format`, `regex` | No — ASCII by construction |
+| Encoder output | base64/base32/hex **encode**, `url` percent-encode | No: ASCII by construction |
+| Regex output | replacements, splits and captures | Yes: byte matches can split UTF-8 scalars. Text APIs return `Option`; `_bytes` variants preserve raw output. |
+| Text formatting | `json` escape, `ansi`, `table`, `format` | Can contain Unicode; validity depends on preserving complete input scalars, not ASCII output. |
 | Byte-preserving transforms | `std/string` case/pad/trim/repeat/replace | No — reassembles bytes of an already-valid string |
 | Scalar re-encoding | `std/utf8`'s own encoder | No — it just validated the scalar |
 | **Byte containers** | `crypto` digests, base64/base32/hex **decode** | Yes, and *legitimately so* |
