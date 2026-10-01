@@ -1820,9 +1820,8 @@ The first form of this fix released the handed box with the counted release
 and left it at that, which closed the box's double free and not the bytes.
 
 The AST lowering leaks the source instead, which is the other way to keep
-the bytes alive; `TestSelfHostSemanticProduction` compares the sanitizer's leak
-figure between the two columns and refuses a produced body that leaks MORE
-than the AST one, so the copy reads as the produced bodies freeing more.
+the bytes alive; `TestSelfHostSemanticProduction` pins the produced bodies'
+leak figure at zero, so the copy is released whole.
 
 A guarded release — a pointer compare emitted around the drop — was built first
 and does not work: on wasm the two pointers are equal and the retain was real,
@@ -2344,9 +2343,10 @@ What is left, in order:
    `coreutils-bench`). The CLI, the four asm drivers and the wasm drivers
    build a typed-path substitution for what they emit; the rest of the
    drivers never reach the typed path (see below). The semantic differential
-   legs fail a seed that compiles as a mixed module. The production rows'
-   `FERN_SEM_IR_SKIP` leg and
-   `TestSelfHostSemIRStrict`'s off leg keep the AST lowering on purpose.
+   legs fail a seed that compiles as a mixed module.
+   `TestSelfHostSemIRStrict`'s off leg keeps the AST lowering on purpose.
+   The production rows pin their own answers and leak figures, so none of
+   them runs the AST lowering.
 3. The AST lowering is deleted, along with the differential legs that compare
    against it.
 
@@ -2452,7 +2452,6 @@ AST-lowered caller can call a produced callee, and they go with the lowering.
 
 - the three AST differential legs, and their known-divergence files
   (`internal/e2e/testdata/selfhost-diff-{x86_64,arm64,wasm}-known-divergences.txt`);
-- the production test's base, skip and `semRefusedByAST` legs;
 - `TestSelfHostSemIRStrict`'s off leg;
 - the whole-compiler test's AST self-build;
 - about twenty tests with an `ast` or `FERN_SEM_IR_SKIP` leg;
