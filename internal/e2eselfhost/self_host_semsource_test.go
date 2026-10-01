@@ -3907,7 +3907,7 @@ function main(): i32 {
     var base = ircore.wp_fn_sigs(mod.funcs, tab);
     var built = semsource.build_module(typed);
     var bodies: irlower.LowerResult[] = [];
-    var helpers: irlower.LowerResult[] = [];
+    var helpers: ssarc.Helpers = ssarc.no_helpers();
     var skipped: irlower.LowerResult = irlower.LowerResult { ok: false, why: "", ops: [], n_locals: 0, n_params: 0, erased_wide: false, superseded: false, arr_slots: [], i64_slots: [], f64_slots: [], str_slots: [], alias_incs: [], name: "", result_kind: irlower.result_from_decl() };
     // Every body is planned before any is lowered, as semlower does: a
     // caller's bracket reads the fields its callees' plans may grow (grows),
@@ -3970,7 +3970,7 @@ function main(): i32 {
         if (mask.len() == 0 || semis != fd.params.len()) { eprint(key + ": grow mask " + mask + " misplaces the AST positions"); return 7; }
         seeds = seeds.append(fd.name + "|" + ssarc.grow_mask(fd.name, p.func, grows, false));
         for row in ssarc.consumed_array_rows(fd.name, p.func, p.modes) { consumed = consumed.append(row); }
-        for h in ssarc.drop_helpers(p.func) { helpers = helpers.append(h); }
+        helpers = ssarc.with_drop_helpers(helpers, p.func);
         bodies = bodies.append(lowered);
         at = at + 1;
     }
@@ -3980,7 +3980,7 @@ function main(): i32 {
         var lowered = ssarc.lower(p.func, p.modes, plans[mod.funcs.len() + ai], tab, grows);
         if (!lowered.ok) { eprint(p.func.graph.name + ": " + lowered.why); return 6; }
         eprint("instance " + p.func.graph.name + "\n");
-        for h in ssarc.drop_helpers(p.func) { helpers = helpers.append(h); }
+        helpers = ssarc.with_drop_helpers(helpers, p.func);
         instances = instances.append(lowered);
         ai = ai + 1;
     }
@@ -3999,7 +3999,7 @@ function main(): i32 {
     // declaration, so they go on the cache tail past mod.funcs, deduped by
     // symbol.
     cache = ssarc.merge_helpers(cache, instances);
-    cache = ssarc.merge_helpers(cache, helpers);
+    cache = ssarc.merge_helpers(cache, helpers.rows);
     if (av[1] == "x86-64-linux") {
         print(asm_ir.emit_module_ir_unit_flat(mod, true, false, "", [], mod.funcs, tab, 0, 0 - 1, cache, base, asmcore.no_rt_lower));
     } else if (av[1] == "arm64-linux") {
