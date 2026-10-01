@@ -42,7 +42,7 @@ function req_headers_placeholder(): HeaderMap {
 
 function test_body_stream_carries_the_body(): test.TestOutcome {
   let (all, rest) = parsed("hello").body_stream().read_all_string();
-  return test.assert_eq(all, "hello");
+  return test.assert_is_some_eq_string(all, "hello");
 }
 
 function test_body_stream_starts_at_the_beginning(): test.TestOutcome {
@@ -84,7 +84,7 @@ function test_read_n_takes_a_prefix(): test.TestOutcome {
 function test_read_n_leaves_the_remainder(): test.TestOutcome {
   let (head, rest) = parsed("hello world").body_stream().read_n(5);
   let (tail, done) = rest.read_all_string();
-  return test.assert_eq(tail, " world");
+  return test.assert_is_some_eq_string(tail, " world");
 }
 
 // The whole-body readers answer for the buffer, not the cursor.

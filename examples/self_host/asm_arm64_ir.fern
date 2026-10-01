@@ -1632,7 +1632,7 @@ function ssa_rc_prim(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitS
     // answer hold all three across the compare, and x7 is not in the home
     // pool (x0, x9..x15, x19..x28), so the check can borrow it.
     s = s.write("    ldur w5, [" + p + ", #-8]\n");
-    s = s.write(san_poison_check("w5", "w7", done + "us"));
+    s = s.write(san_poison_check("w5", "w7", done + "us", s.rc_free_debug));
     s = s.write("    cmp w5, #1\n    bne " + done + "\n");
     s = s.write("    mov x6, #1\n" + done + ":\n");
     s = s.write("    mov " + d + ", x6\n");
@@ -1640,7 +1640,7 @@ function ssa_rc_prim(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitS
   }
   s = s.write(guard);
   s = s.write("    ldur w5, [" + p + ", #-8]\n");
-  s = s.write(san_poison_check("w5", "w6", done + "sl"));
+  s = s.write(san_poison_check("w5", "w6", done + "sl", s.rc_free_debug));
   s = s.write("    tbnz w5, #31, " + done + "\n");
   s = s.write("    add w5, w5, #1\n    stur w5, [" + p + ", #-8]\n");
   s = s.write(done + ":\n");
@@ -1698,7 +1698,7 @@ function ssa_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitStat
     return ssa_rc_prim(ins, reg_of, lp, s);
   }
   s = ssa_x0_forget(s);
-  if ((ins.str == "__fern_rc_dec" || ins.str == "__fern_str_free") && ins.args.len() == 1 && !rc_free_debug_on()) {
+  if ((ins.str == "__fern_rc_dec" || ins.str == "__fern_str_free") && ins.args.len() == 1 && !s.rc_free_debug) {
     return ssa_rc_dec(ins, reg_of, lp, s);
   }
   if (ircore.is_fern_helper(ins.str) && ssa_reg_helper(ircore.ir_helper_symbol(ins.str), ins.args.len())) {
@@ -2041,9 +2041,9 @@ function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitS
     s = s.write("    tbz w0, #31, 1f\n    b __fern_alloc_size_abort\n1:\n");
     s = s.write("    add x0, x0, #24\n");
   }
-  if (util.str_has_suffix(ins.str, "_u8") && util.str_has_prefix(ins.str, "arr_push") && ins.result >= 0 && !rc_free_debug_on()) {
+  if (util.str_has_suffix(ins.str, "_u8") && util.str_has_prefix(ins.str, "arr_push") && ins.result >= 0 && !s.rc_free_debug) {
     s = s.write(arr_push_inline_u8(sym, lp + "apush" + util.i32_to_string(ins.result)));
-  } else if (util.str_has_prefix(ins.str, "arr_push") && ins.result >= 0 && !rc_free_debug_on()) {
+  } else if (util.str_has_prefix(ins.str, "arr_push") && ins.result >= 0 && !s.rc_free_debug) {
     s = s.write(arr_push_inline(sym, lp + "apush" + util.i32_to_string(ins.result)));
   } else {
     s = s.write("    bl " + sym + "\n");
@@ -2573,7 +2573,7 @@ function ssa_unique_flags(reg_of: i32[], v: i32, join: string, s: asmcore.EmitSt
   s = ssa_read(reg_of, v, "x4", s);
   var p: string = ssa_src(reg_of, v, "x4");
   s = s.write("    tst " + p + ", #1\n    b.ne " + join + "\n    cmp " + p + ", #16, lsl #12\n    b.lo " + join + "\n");
-  s = s.write("    ldur w5, [" + p + ", #-8]\n" + san_poison_check("w5", "w7", join + "us") + "    cmp w5, #1\n" + join + ":\n");
+  s = s.write("    ldur w5, [" + p + ", #-8]\n" + san_poison_check("w5", "w7", join + "us", s.rc_free_debug) + "    cmp w5, #1\n" + join + ":\n");
   return s;
 }
 
@@ -5862,7 +5862,7 @@ function emit_lc_report(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write(".Llc_f:\n    .ascii \" frees=\"\n");
   s = s.write(".Llc_l:\n    .ascii \" live_bytes=\"\n");
   s = s.write(".Llc_nl:\n    .ascii \"\\n\"\n");
-  if (sanitize_on()) {
+  if (asmcore.sanitize_on()) {
     // The texts must match the native backends' byte-for-byte: a
     // `fern-sanitizer:` line must not tell you which compiler built it.
     s = s.write(".Lsan_leak:\n    .ascii \"fern-sanitizer: leak \"\n");
@@ -5906,7 +5906,7 @@ function emit_lc_report(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    add x1, x1, :lo12:.Llc_nl\n");
   s = s.write("    mov x2, #1\n");
   s = s.write("    bl .Llc_write\n");
-  if (sanitize_on()) {
+  if (asmcore.sanitize_on()) {
     // Sanitizer leak VERDICT, after the summary. Only a POSITIVE balance
     // is a leak: zero is clean, and a negative one is an over-free, which
     // the over-release report names at the offending dec — calling that a
@@ -5993,55 +5993,6 @@ function emit_lc_report(s: asmcore.EmitState): asmcore.EmitState {
   return s;
 }
 
-// sanitize_on — FERN_SANITIZE read at emit time (the compiler process), the
-// arm64 port of ast.SanitizeEnabled and the sibling of asm_ir.sanitize_on.
-// One opt-in over the heap detectors, so you can reach for it before knowing
-// which check will fire: the leak census (leak_check_on below folds it in),
-// the rc over-release report, and the use-after-free quarantine.
-//
-// One gap versus the native arm64 backend, a declared subset rather than
-// silently-different behaviour:
-//
-//   - No backtrace under either report. Native routes through __fern_report,
-//     which walks the frame-pointer chain; there is no such helper here, so
-//     the message is the whole diagnostic.
-//
-// It deliberately does NOT imply FERN_RC_TRACE: per-heap-event output is a
-// probe you point at a reduced repro, not a standing mode.
-function sanitize_on(): boolean {
-  match (env("FERN_SANITIZE")) {
-    Some(_) => {
-      return true;
-    },
-    None => {
-      return false;
-    }
-  }
-}
-
-// rc_free_debug_on reports whether the use-after-free QUARANTINE is on —
-// FERN_RC_FREE_DEBUG, or implied by FERN_SANITIZE (ast.ApplySanitize parity).
-// Under it NOTHING is recycled: every free site writes ast.RcPoison over the
-// rc word where the block has one and declines its freelist push — a recycled
-// block would overwrite its own poison — so __fern_alloc just keeps bumping,
-// and the rc helpers die with a named report the moment a stale reference
-// touches a poisoned block. A quarantined block still counts as a FREE for the
-// census, so the two detectors compose instead of every correct free reading
-// as a leak.
-function rc_free_debug_on(): boolean {
-  if (sanitize_on()) {
-    return true;
-  }
-  match (env("FERN_RC_FREE_DEBUG")) {
-    Some(_) => {
-      return true;
-    },
-    None => {
-      return false;
-    }
-  }
-}
-
 // rc_poison is ast.RcPoison (0x7EEDFACE), the marker a quarantined block
 // carries in its rc word. The self-host cannot import the Go constant, so the
 // two are pinned equal by a test rather than by a shared declaration (#9883);
@@ -6063,7 +6014,7 @@ function rc_poison_into(w: string): string {
 // survives to the next toucher), the defensive 0 otherwise. `addr` is the
 // store's addressing text and `w` a w-register the site is free to clobber.
 function quarantine_rc(addr: string, w: string): string {
-  if (rc_free_debug_on()) {
+  if (asmcore.rc_free_debug_on()) {
     return rc_poison_into(w) + "    stur " + w + ", " + addr + "\n";
   }
   return "    stur wzr, " + addr + "\n";
@@ -6075,7 +6026,7 @@ function quarantine_rc(addr: string, w: string): string {
 // frame and no register but x2 and x3 touched. Anything else, and every push
 // under the sanitizer, which checks the count first, goes to `slow`.
 function arr_push_fast(slow: string): string {
-  if (rc_free_debug_on()) {
+  if (asmcore.rc_free_debug_on()) {
     return "";
   }
   var ok: string = slow + "_ok";
@@ -6087,7 +6038,7 @@ function arr_push_fast(slow: string): string {
 
 // arr_push_fast_u8 is arr_push_fast for a packed u8[]: room is len < cap * 8.
 function arr_push_fast_u8(slow: string): string {
-  if (rc_free_debug_on()) {
+  if (asmcore.rc_free_debug_on()) {
     return "";
   }
   var ok: string = slow + "_ok";
@@ -6125,11 +6076,11 @@ function emit_arr_push_u8(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write(".Larr_push_u8_slow:\n");
   s = s.write("    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n    stp x19, x20, [sp, #-16]!\n    stp x21, x22, [sp, #-16]!\n");
   s = s.write("    mov x19, x0\n    mov x20, x1\n    ldr x21, [x19]\n    ldur x22, [x19, #-16]\n");
-  if (!rc_free_debug_on()) {
+  if (!s.rc_free_debug) {
     s = s.write("    b .Larr_push_u8_grow\n");
   }
   s = s.write("    ldur x2, [x19, #-8]\n");
-  s = s.write(san_poison_check("w2", "w10", ".Larr_push_u8_sanlive"));
+  s = s.write(san_poison_check("w2", "w10", ".Larr_push_u8_sanlive", s.rc_free_debug));
   s = s.write("    cmp x2, #1\n    b.eq .Larr_push_u8_rc_ok\n    tbnz x2, #31, .Larr_push_u8_rc_ok\n    b .Larr_push_u8_grow\n");
   s = s.write(".Larr_push_u8_rc_ok:\n");
   s = s.write("    lsl x2, x22, #3\n    cmp x21, x2\n    b.ge .Larr_push_u8_grow\n");
@@ -6154,20 +6105,20 @@ function emit_arr_push_u8(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write(arr_push_fast_u8(".Lapou_slow"));
   s = s.write(".Lapou_slow:\n");
   s = s.write("    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n    stp x19, x20, [sp, #-16]!\n    mov x19, x0\n");
-  if (rc_free_debug_on()) {
+  if (s.rc_free_debug) {
     s = s.write("    bl __fern_arr_push_u8\n");
   } else {
     s = s.write("    bl .Larr_push_u8_slow\n");
   }
   s = s.write("    cmp x0, x19\n    beq .Lapou_ret\n    mov x9, #0x10000\n    cmp x19, x9\n    blo .Lapou_ret\n");
   s = s.write("    ldur w1, [x19, #-8]\n");
-  s = s.write(san_poison_check("w1", "w10", ".Lapou_live"));
+  s = s.write(san_poison_check("w1", "w10", ".Lapou_live", s.rc_free_debug));
   s = s.write("    tbnz w1, #31, .Lapou_ret\n    cmp w1, #1\n    bne .Lapou_ret\n");
   s = s.write("    ldur x1, [x19, #-16]\n    add x1, x1, #3\n    mov x9, #0x10000\n    cmp x1, x9\n    bhs .Lapou_large\n");
   s = s.write(quarantine_rc("[x19, #-8]", "w10"));
   s = s.write("    sub x2, x19, #16\n");
   s = lc_bump_free_words(s, "x1", "x3", "x9");
-  if (!rc_free_debug_on()) {
+  if (!s.rc_free_debug) {
     s = freelist_push(s, "x2", "x1", "x3", "x9");
   }
   s = s.write(".Lapou_ret:\n    ldp x19, x20, [sp], #16\n    ldp x29, x30, [sp], #16\n    ret\n");
@@ -6185,8 +6136,8 @@ function emit_arr_push_u8(s: asmcore.EmitState): asmcore.EmitState {
 // a `bl` rather than a conditional branch to the symbol because
 // __fern_san_abort_uaf is emitted in the ENTRY unit while these rc helpers go
 // into ordinary generated code, so the edge has to survive as an extern.
-function san_poison_check(rc: string, w: string, live: string): string {
-  if (!rc_free_debug_on()) {
+function san_poison_check(rc: string, w: string, live: string, debug: boolean): string {
+  if (!debug) {
     return "";
   }
   return rc_poison_into(w)
@@ -6202,7 +6153,7 @@ function san_poison_check(rc: string, w: string, live: string): string {
 // until the run is over. Empty when the flag is off, which is what keeps an
 // ordinary build's asm byte-identical to one from a compiler without the mode.
 function san_underflow_abort(): string {
-  if (sanitize_on()) {
+  if (asmcore.sanitize_on()) {
     return "    bl __fern_san_abort\n";
   }
   return "";
@@ -6214,7 +6165,7 @@ function san_underflow_abort(): string {
 // compiler produced the binary. Never returns, so it is free to clobber:
 // every caller is a dec that has already established it is over-releasing.
 function emit_san_abort(s: asmcore.EmitState): asmcore.EmitState {
-  if (!sanitize_on()) {
+  if (!asmcore.sanitize_on()) {
     return s;
   }
   s = s.write("    .section .rodata\n");
@@ -6240,7 +6191,7 @@ function emit_san_abort(s: asmcore.EmitState): asmcore.EmitState {
 // because the rc helpers that branch here are emitted into ORDINARY generated
 // code, which under -per-module-emit-all lands in a different unit from this.
 function emit_san_uaf_abort(s: asmcore.EmitState): asmcore.EmitState {
-  if (!rc_free_debug_on()) {
+  if (!s.rc_free_debug) {
     return s;
   }
   s = s.write("    .section .rodata\n");
@@ -6284,7 +6235,7 @@ function high_heap_probe_on(): boolean {
 // cancel exactly. The capacity a block is rounded up to (__fern_capw, the
 // large tier) is deliberately NOT counted: the free side never sees it.
 function leak_check_on(): boolean {
-  if (sanitize_on()) {
+  if (asmcore.sanitize_on()) {
     return true;
   }
   match (env("FERN_LEAKCHECK")) {
@@ -6399,7 +6350,7 @@ function buf_block_free(s: asmcore.EmitState, ptr: string, words: string, lbl: s
   s = s.write("    cmp " + words + ", x9\n");
   s = s.write("    b.hs ." + lbl + "_large\n");
   s = lc_bump_free_words(s, words, "x3", "x10");
-  if (!rc_free_debug_on()) {
+  if (!s.rc_free_debug) {
     s = freelist_push(s, ptr, words, "x3", "x10");
   }
   s = s.write("    b ." + lbl + "_done\n");
@@ -7616,7 +7567,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   s = s.write("    cmp x0, x9\n");
   s = s.write("    blo .Lshrcinc_ret\n");  // low-address guard
   s = s.write("    ldur w1, [x0, #-8]\n");  // rc
-  s = s.write(san_poison_check("w1", "w9", ".Lshrcinc_live"));
+  s = s.write(san_poison_check("w1", "w9", ".Lshrcinc_live", s.rc_free_debug));
   s = s.write("    tbnz w1, #31, .Lshrcinc_ret\n");  // static sentinel
   s = s.write("    add w1, w1, #1\n");
   s = s.write("    stur w1, [x0, #-8]\n");
@@ -7630,7 +7581,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   s = s.write("    cmp x0, x9\n");
   s = s.write("    blo .Lshrcdec_ret\n");
   s = s.write("    ldur w1, [x0, #-8]\n");
-  s = s.write(san_poison_check("w1", "w9", ".Lshrcdec_live"));
+  s = s.write(san_poison_check("w1", "w9", ".Lshrcdec_live", s.rc_free_debug));
   s = s.write("    tbnz w1, #31, .Lshrcdec_ret\n");  // static sentinel
   s = s.write("    cmp w1, #0\n");
   s = s.write("    bgt .Lshrcdec_dec\n");  // rc > 0: normal
@@ -7657,7 +7608,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   s = s.write("    cmp x2, x9\n");
   s = s.write("    blo .Lshuniq_ret\n");
   s = s.write("    ldur w3, [x2, #-8]\n");  // rc
-  s = s.write(san_poison_check("w3", "w9", ".Lshuniq_live"));
+  s = s.write(san_poison_check("w3", "w9", ".Lshuniq_live", s.rc_free_debug));
   s = s.write("    tbnz w3, #31, .Lshuniq_ret\n");  // sentinel => immortal
   s = s.write("    cmp w3, #1\n");
   s = s.write("    bne .Lshuniq_ret\n");
@@ -7680,7 +7631,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    cmp x0, x9\n");
     s = s.write("    blo .Laie_ret\n");
     s = s.write("    ldur w1, [x0, #-8]\n");  // rc
-    s = s.write(san_poison_check("w1", "w9", ".Laie_live"));
+    s = s.write(san_poison_check("w1", "w9", ".Laie_live", s.rc_free_debug));
     s = s.write("    tbnz w1, #31, .Laie_ret\n");  // immortal buffer: its elements are too
     s = s.write("    stp x19, x30, [sp, #-16]!\n");
     s = s.write("    stp x20, x21, [sp, #-16]!\n");
@@ -7715,7 +7666,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    cmp x0, x9\n");
     s = s.write("    blo .Lso_ret\n");
     s = s.write("    ldur w1, [x0, #-8]\n");  // rc
-    s = s.write(san_poison_check("w1", "w9", ".Lso_live"));
+    s = s.write(san_poison_check("w1", "w9", ".Lso_live", s.rc_free_debug));
     s = s.write("    tbnz w1, #31, .Lso_view\n");
     s = s.write("    stp x0, x30, [sp, #-16]!\n");
     s = s.write("    str x0, [sp, #-16]!\n");
@@ -7812,7 +7763,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   s = s.write(quarantine_rc("[x0, #-8]", "w6"));  // release the rc word
   s = s.write("    sub x4, x0, #16\n");  // block base
   s = lc_bump_free_words(s, "x3", "x2", "x9");
-  if (!rc_free_debug_on()) {
+  if (!s.rc_free_debug) {
     s = freelist_push(s, "x4", "x3", "x5", "x6");
   }
   s = s.write(".Lsarelo_fresh:\n");
@@ -7850,7 +7801,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   s = s.write("    cmp x1, x9\n");  // old < 0x10000? (low-addr / SSO)
   s = s.write("    blo .Lsd_ret\n");
   s = s.write("    ldur w3, [x1, #-8]\n");  // old rc
-  s = s.write(san_poison_check("w3", "w9", ".Lsd_live"));
+  s = s.write(san_poison_check("w3", "w9", ".Lsd_live", s.rc_free_debug));
   s = s.write("    tbnz w3, #31, .Lsd_ret\n");  // static sentinel (rc<0)
   s = s.write("    cmp w3, #1\n");
   s = s.write("    bne .Lsd_ret\n");  // shared/other — leave (defensive)
@@ -7862,7 +7813,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   s = s.write(quarantine_rc("[x1, #-8]", "w9"));  // release the rc word
   s = s.write("    sub x5, x1, #16\n");  // base = old - 16
   s = lc_bump_free_words(s, "x4", "x2", "x3");
-  if (!rc_free_debug_on()) {
+  if (!s.rc_free_debug) {
     s = freelist_push(s, "x5", "x4", "x6", "x9");
   }
   s = s.write(".Lsd_ret:\n");
@@ -7904,7 +7855,7 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
   // one decline covers every >=512 KiB free, including the arms that
   // tail-branch here. Callers with an rc word have already poisoned it at
   // their own rc store, and recycling the block would overwrite that poison.
-  if (!rc_free_debug_on()) {
+  if (!s.rc_free_debug) {
     s = s.write("    mov x3, #1\n");
     s = s.write("    lsl x3, x3, #19\n");  // 512 KiB
     s = s.write("    sub x3, x3, #1\n");  // 512 KiB - 1
@@ -7942,7 +7893,7 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    cmp x0, #16, lsl #12\n");
   s = s.write("    blo .Larrdec_ret\n");
   s = s.write("    ldur w1, [x0, #-8]\n");  // rc
-  s = s.write(san_poison_check("w1", "w9", ".Larrdec_live"));
+  s = s.write(san_poison_check("w1", "w9", ".Larrdec_live", s.rc_free_debug));
   s = s.write("    tbnz w1, #31, .Larrdec_ret\n");  // static sentinel
   s = s.write("    cmp w1, #1\n");
   s = s.write("    beq .Larrdec_free\n");
@@ -7967,7 +7918,7 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    bhs .Larrdec_large\n");
   s = s.write("    sub x2, x0, #16\n");  // base = data - 16
   s = lc_bump_free_words(s, "x1", "x3", "x9");
-  if (!rc_free_debug_on()) {
+  if (!s.rc_free_debug) {
     s = freelist_push(s, "x2", "x1", "x3", "x9");
   }
   s = s.write(".Larrdec_ret:\n");
@@ -8001,7 +7952,7 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
   // rc==0 is a double-free, caught by __fern_rc_underflow (matching arr_dec)
   // rather than corrupting the heap. w4 holds rc across the free (x1/x2 = data/len).
   s = s.write("    ldur w4, [x0, #-8]\n");  // rc
-  s = s.write(san_poison_check("w4", "w10", ".Lstrfree_live"));
+  s = s.write(san_poison_check("w4", "w10", ".Lstrfree_live", s.rc_free_debug));
   s = s.write("    tbnz w4, #31, .Lstrfree_ret\n");  // negative = immortal -> skip
   s = s.write("    cmp w4, #1\n");
   s = s.write("    bgt .Lstrfree_dec\n");  // rc>1 -> dec, keep
@@ -8043,7 +7994,7 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
   s = lc_bump_free_words(s, "x2", "x3", "x10");
   // Quarantine (rc_free_debug_on): the DATA buffer carries no rc word, so
   // declining the push is the whole treatment for it.
-  if (!rc_free_debug_on()) {
+  if (!s.rc_free_debug) {
     s = freelist_push(s, "x1", "x2", "x3", "x10");
   }
   s = s.write(".Lstrfree_box:\n");
@@ -8052,7 +8003,7 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write(quarantine_rc("[x0, #-8]", "w10"));  // release the rc word
   s = s.write("    sub x1, x0, #8\n");  // base = box-8
   s = lc_bump_free_add(s, "#24", "x3", "x10");
-  if (!rc_free_debug_on()) {
+  if (!s.rc_free_debug) {
     s = s.write("    adrp x3, __fern_freelist\n");
     s = s.write("    add x3, x3, :lo12:__fern_freelist\n");
     s = s.write("    ldr x10, [x3, #24]\n");  // freelist[3] (24-byte block = 3 words)
@@ -8077,7 +8028,7 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    cmp x2, x9\n");  // large tier (>=65536 words)
   s = s.write("    bhs .Lstrfree_fused_large\n");
   s = lc_bump_free_words(s, "x2", "x3", "x10");
-  if (!rc_free_debug_on()) {
+  if (!s.rc_free_debug) {
     s = freelist_push(s, "x1", "x2", "x3", "x10");
   }
   s = s.write("    b .Lstrfree_ret\n");
@@ -8120,7 +8071,7 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    cmp x0, x9\n");
   s = s.write("    blo .Lstrvfree_ret\n");  // low-addr guard
   s = s.write("    ldur w4, [x0, #-8]\n");  // rc
-  s = s.write(san_poison_check("w4", "w10", ".Lstrvfree_live"));
+  s = s.write(san_poison_check("w4", "w10", ".Lstrvfree_live", s.rc_free_debug));
   s = s.write("    tbnz w4, #31, .Lstrvfree_view\n");  // negative = immortal -> the view case
   s = s.write("    b __fn___fern_str_free\n");  // otherwise: the ordinary rc-aware release
   s = s.write(".Lstrvfree_view:\n");
@@ -8137,7 +8088,7 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    bhs .Lstrvfree_ret\n");
   s = s.write(quarantine_rc("[x0, #-8]", "w10"));  // release the rc word (defensive vs a re-free)
   s = lc_bump_free_add(s, "#24", "x3", "x10");
-  if (!rc_free_debug_on()) {
+  if (!s.rc_free_debug) {
     s = s.write("    adrp x3, __fern_freelist\n");
     s = s.write("    add x3, x3, :lo12:__fern_freelist\n");
     s = s.write("    ldr x10, [x3, #24]\n");  // freelist[3] (24-byte block = 3 words)
@@ -8301,7 +8252,7 @@ function emit_arm64_arr_deep_free_variant(s: asmcore.EmitState, sym: string, lbl
   s = s.write("    cmp x0, x9\n");
   s = s.write("    blo .L" + lbl + "_ret\n");  // low-addr guard
   s = s.write("    ldur w1, [x0, #-8]\n");  // rc
-  s = s.write(san_poison_check("w1", "w10", ".L" + lbl + "_sanlive"));
+  s = s.write(san_poison_check("w1", "w10", ".L" + lbl + "_sanlive", s.rc_free_debug));
   s = s.write("    tbnz w1, #31, .L" + lbl + "_ret\n");  // negative = immortal -> skip
   s = s.write("    cmp w1, #1\n");
   s = s.write("    bgt .L" + lbl + "_dec\n");  // rc>1 -> dec, keep
@@ -8329,7 +8280,7 @@ function emit_arm64_arr_deep_free_variant(s: asmcore.EmitState, sym: string, lbl
   s = s.write("    bhs .L" + lbl + "_large\n");  // large tier -> __fern_large_push
   s = s.write("    sub x2, x19, #16\n");  // base = arr - 16
   s = lc_bump_free_words(s, "x1", "x3", "x9");
-  if (!rc_free_debug_on()) {
+  if (!s.rc_free_debug) {
     s = freelist_push(s, "x2", "x1", "x3", "x9");
   }
   s = s.write(".L" + lbl + "_pop:\n");
@@ -9521,7 +9472,7 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     s = s.write("    ldr x21, [x19]\n");  // len
     s = s.write("    ldur x22, [x19, #-16]\n");  // cap (hidden at -16; rc at -8)
     // Past the fast path, the receiver is shared or full: both grow.
-    if (!rc_free_debug_on()) {
+    if (!s.rc_free_debug) {
       s = s.write("    b .Larr_push_grow\n");
     }
     // #4873 containment gate — the arm64 twin of the x86 gate: an
@@ -9529,7 +9480,7 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     // when capacity fits; rc == 1 / the bit-31 immortal sentinel keep
     // the in-place fast path.
     s = s.write("    ldur x2, [x19, #-8]\n");  // rc word
-    s = s.write(san_poison_check("w2", "w10", ".Larr_push_sanlive"));
+    s = s.write(san_poison_check("w2", "w10", ".Larr_push_sanlive", s.rc_free_debug));
     s = s.write("    cmp x2, #1\n");
     s = s.write("    b.eq .Larr_push_rc_ok\n");
     s = s.write("    tbnz x2, #31, .Larr_push_rc_ok\n");
@@ -9635,7 +9586,7 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     s = s.write("    stp x19, x20, [sp, #-16]!\n");
     s = s.write("    mov x19, x0\n");  // save old arr ptr
     // x0 = new (grew) or old (in place); the fast path already declined.
-    if (rc_free_debug_on()) {
+    if (s.rc_free_debug) {
       s = s.write("    bl __fern_arr_push\n");
     } else {
       s = s.write("    bl .Larr_push_slow\n");
@@ -9646,7 +9597,7 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     s = s.write("    cmp x19, x9\n");  // grew: free the dead old box
     s = s.write("    blo .Lapo_ret\n");  // low-addr / SSO sentinel
     s = s.write("    ldur w1, [x19, #-8]\n");  // old rc
-    s = s.write(san_poison_check("w1", "w10", ".Lapo_live"));
+    s = s.write(san_poison_check("w1", "w10", ".Lapo_live", s.rc_free_debug));
     s = s.write("    tbnz w1, #31, .Lapo_ret\n");  // static sentinel (rc<0)
     s = s.write("    cmp w1, #1\n");
     s = s.write("    bne .Lapo_ret\n");  // not sole owner — leave (defensive)
@@ -9658,7 +9609,7 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     s = s.write(quarantine_rc("[x19, #-8]", "w10"));  // release the rc word
     s = s.write("    sub x2, x19, #16\n");  // old box base
     s = lc_bump_free_words(s, "x1", "x3", "x9");
-    if (!rc_free_debug_on()) {
+    if (!s.rc_free_debug) {
       s = freelist_push(s, "x2", "x1", "x3", "x9");
     }
     s = s.write(".Lapo_ret:\n");

@@ -3,7 +3,9 @@ package e2eharness
 // SocketV6Probe exercises the socket primitives over IPv6 loopback (#9853):
 // a listener bound to ::1, a dial to it and the reply read back, then two
 // datagram sockets on ::1 exchanging datagrams, the sender reported with
-// the family byte 6 and its sixteen address bytes, and a connected reply.
+// the family byte 6 and its sixteen address bytes, and a connected reply;
+// then a `::` listener taking a 127.0.0.1 peer, reported v4-mapped by
+// op 10 (not on wasi:sockets, whose IPv6 socket stays IPv6-only).
 // Exit 42 with "ok" on stdout when every check holds; when the host has no
 // IPv6 the first bind answers -EAFNOSUPPORT (wasmtime reports the missing
 // family as not-supported, -ENOTSUP) and the probe prints "nov6" and
@@ -91,6 +93,27 @@ function main(): i32 {
     if (udp_recvfrom(s, buf, from) != 4 || buf[0] != 112u8 || buf[3] != 103u8) { return fail(18); }
     if (!is_lo6(from) || port_of(from) != pt) { return fail(19); }
     if (tcp_close(s) != 0 || tcp_close(t) != 0) { return fail(20); }
+    // A :: listener takes an IPv4 peer too, which op 10 reports as the
+    // v4-mapped address: family 6, groups 5 to 7 ffff:7f00:1, at the
+    // dialler's port. Not on wasi:sockets, whose IPv6 socket stays
+    // IPv6-only.
+    if (target_os() != "wasi") {
+        var dl: i32 = tcp_listen_with(zeros(16), 0, 4, false);
+        if (dl < 0) { return fail(30); }
+        var dc: i32 = tcp_connect(16777343, tcp_local_port(dl));
+        if (dc < 0) { return fail(31); }
+        var da: i32 = tcp_accept(dl);
+        if (da < 0) { return fail(32); }
+        if (tcp_socket_ctl(da, 10, 8) != 6) { return fail(33); }
+        if (tcp_socket_ctl(da, 10, 4) != 0) { return fail(34); }
+        if (tcp_socket_ctl(da, 10, 5) != 65535) { return fail(35); }
+        if (tcp_socket_ctl(da, 10, 6) != 32512) { return fail(36); }
+        if (tcp_socket_ctl(da, 10, 7) != 1) { return fail(37); }
+        if (tcp_socket_ctl(da, 10, 9) != tcp_local_port(dc)) { return fail(38); }
+        tcp_close(da);
+        tcp_close(dc);
+        tcp_close(dl);
+    }
     print("ok");
     return 42;
 }
@@ -100,7 +123,8 @@ function main(): i32 {
 // NetV6Probe is SocketV6Probe through std/net: `listen_at` on an IPv6
 // `SocketAddr`, `connect` to it, `udp_socket`, `send_to` and `recv_from`
 // with the sender read back as the `::1` address, and `set_peer` with
-// `send`. The same "nov6" answer where the host has no IPv6.
+// `send`, then the `::` listener's IPv4 peer as `peer_addr` and
+// `peer_key` report it. The same "nov6" answer where the host has no IPv6.
 func NetV6Probe() string {
 	return `import "core/int";
 import "std/net";
@@ -210,6 +234,33 @@ function main(): i32 {
     }
     tcp_close(s);
     tcp_close(t);
+    // The same :: listener through std/net: peer_addr hands the IPv4
+    // peer back as the V4 it is, and peer_key keys it as one.
+    if (target_os() != "wasi") {
+        var dl: i32 = 0;
+        match (net.listen_at(net.socket_addr(net.ipv6_unspecified(), 0), net.listen_options())) {
+            Ok(fd) => { dl = fd; },
+            Err(e) => { return fail(30); },
+        }
+        var dc: i32 = 0;
+        match (net.connect(net.socket_addr(net.ipv4_loopback(), tcp_local_port(dl)))) {
+            Ok(fd) => { dc = fd; },
+            Err(e) => { return fail(31); },
+        }
+        var da: i32 = tcp_accept(dl);
+        if (da < 0) { return fail(32); }
+        match (net.peer_addr(da)) {
+            Ok(pa) => { if (!pa.ip.eq(net.ipv4_loopback()) || pa.port != tcp_local_port(dc)) { return fail(33); } },
+            Err(e) => { return fail(34); },
+        }
+        match (net.peer_key(da)) {
+            Some(k) => { if (k != 16777343) { return fail(35); } },
+            None => { return fail(36); },
+        }
+        tcp_close(da);
+        tcp_close(dc);
+        tcp_close(dl);
+    }
     print("ok");
     return 42;
 }

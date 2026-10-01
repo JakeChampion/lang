@@ -1928,7 +1928,12 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// E050: use of an owned parameter after it was consumed (moved).
 		{"own-call-then-use", "function sink(own xs: i32[]): i32 { return xs[0]; }\nfunction f(own xs: i32[]): i32 { var a: i32 = sink(xs); return sink(xs); }\nfunction main(): i32 { return 0; }\n", []string{"E050"}},
 		{"own-double-in-stmt", "function sink(own xs: i32[]): i32 { return xs[0]; }\nfunction f(own xs: i32[]): i32 { return sink(xs) + sink(xs); }\nfunction main(): i32 { return 0; }\n", []string{"E050"}},
-		{"own-match-then-use", "enum Lst { Cons(i32), Nil }\nfunction lsink(l: Lst): i32 { return 0; }\nfunction f(own l: Lst): i32 { var r: i32 = match (l) { Cons(h) => h, Nil => 0 }; return r + lsink(l); }\nfunction main(): i32 { return 0; }\n", []string{"E050"}},
+		// A match consumes an owned scrutinee only when an arm takes a pointer
+		// payload out of it (#9539): a scalar binding or a tag test leaves it
+		// whole.
+		{"own-match-then-use", "enum Box { Str(string), Nil }\nfunction bsink(b: Box): i32 { return 0; }\nfunction f(own b: Box): i32 { var r: i32 = match (b) { Str(s) => s.len(), Nil => 0 }; return r + bsink(b); }\nfunction main(): i32 { return 0; }\n", []string{"E050"}},
+		{"own-scalar-match-then-use", "enum Lst { Cons(i32), Nil }\nfunction lsink(l: Lst): i32 { return 0; }\nfunction f(own l: Lst): i32 { var r: i32 = match (l) { Cons(h) => h, Nil => 0 }; return r + lsink(l); }\nfunction main(): i32 { return 0; }\n", nil},
+		{"own-tag-only-match-then-match", "enum Box { Str(string), Arr(i32[]), Nil }\nfunction f(own b: Box): i32 { var t: i32 = 0; match (b) { Str(_) => { t = 1; }, Arr(_) => { t = 2; }, Nil => { t = 3; } } match (b) { Str(s) => { return t + s.len(); }, Arr(a) => { return t + a.len(); }, Nil => { return t; } } }\nfunction main(): i32 { return f(Nil); }\n", nil},
 		{"own-consume-in-loop", "function sink(own xs: i32[]): i32 { return xs[0]; }\nfunction f(own xs: i32[]): i32 { var i: i32 = 0; while (i < 3) { var a: i32 = sink(xs); i = i + 1; } return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E050"}},
 		// A bare block is not a branch: a consume inside one stands, however
 		// the block ends.

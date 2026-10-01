@@ -126,10 +126,11 @@ sugar for option-1 patterns. Why:
   encoded responses) need bytes, not string. Today's
   string-typed body works because handlers haven't hit
   this yet.
-- The 90% "small request, eager parse" case is one method
-  call away: `req.body.read_all_string()` → `string`.
+- The buffered request API provides `req.body.read_all_string()` as
+  `(Option[string], Stream)`: validated text and an advanced cursor.
+  A future lazy reader also needs to report I/O failures.
 
-**Concrete shape:**
+**Proposed lazy shape:**
 
 ```
 struct HttpRequest {
