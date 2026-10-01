@@ -207,6 +207,63 @@ var semProductionPrograms = []struct {
 	nativeOnly bool
 	src        string
 }{
+	// `s = s + piece` grows the left operand's buffer in place when the frame
+	// hands it the only unit and its block has room (#9077). Each shape here
+	// must still see the value it had: an alias taken mid-loop, a parameter
+	// the callee appends to, a view read across the append, `d + d`, a field
+	// rebuilt from itself, an element read out of an array, and an
+	// accumulator that crosses into the large tier.
+	{name: "string-append-grows-in-place", atLeast: 51, want: "0|700000 573879 605 307 264369 400 401 114 604 8192 692785 501 301 q\n", src: `
+import "std/i32";
+
+struct Box { s: string }
+
+function grown(n: i32, piece: string): string {
+    var s: string = "";
+    for i in 0..n { s = s + piece; }
+    return s;
+}
+
+function suffixed(a: string): string {
+    a = a + "!";
+    return a;
+}
+
+function sum(s: string): i32 {
+    var h: i32 = 0;
+    for i in 0..s.len() { h = (h * 31 + (s[i] as i32)) % 1000003; }
+    return h;
+}
+
+function main(): i32 {
+    var big: string = grown(70000, "abcdefghij");
+    var s: string = "start";
+    var kept: string = "";
+    for i in 0..300 {
+        s = s + "xy";
+        if (i == 150) { kept = s; }
+    }
+    var base: string = grown(400, "q");
+    var other: string = suffixed(base);
+    var acc: string = grown(300, "mn");
+    var vlen: i32 = 0;
+    match (acc[0:4]) {
+        Some(w) => {
+            acc = acc + "tail";
+            vlen = w.len() + (w[3] as i32);
+        },
+        None => {}
+    }
+    var d: string = "ab";
+    for i in 0..12 { d = d + d; }
+    var b = Box { s: "f" };
+    for i in 0..500 { b = Box { s: b.s + "g" }; }
+    var xs: string[] = ["p", "q"];
+    for i in 0..300 { xs = xs.with(0, xs[0] + "z"); }
+    print(f"{big.len()} {sum(big)} {s.len()} {kept.len()} {sum(kept)} {base.len()} {other.len()} {vlen} {acc.len()} {d.len()} {sum(d)} {b.s.len()} {xs[0].len()} {xs[1]}");
+    return 0;
+}
+`},
 	// An element read into a local that stays live across a `.with` on its
 	// array: the insertion sort's shape. The read takes a unit of its own, so
 	// the array moves into the write and is written in place rather than
