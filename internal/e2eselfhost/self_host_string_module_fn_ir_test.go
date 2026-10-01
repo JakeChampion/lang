@@ -26,13 +26,13 @@ var stringModuleFnIRCases = []struct {
 }{
 	// repeat_char(ch, n) -> string; "AAA".len() == 3.
 	{"repeat_char-len", `import "std/string";
-function main(): i32 { return string.repeat_char(65, 3).len(); }`},
+function main(): i32 { return string.repeat_char(65 as char, 3).len(); }`},
 	// Bound to a var first, then .len() — exercises the call in a var-init.
 	{"repeat_char-var", `import "std/string";
-function main(): i32 { var s: string = string.repeat_char(66, 5); return s.len(); }`},
+function main(): i32 { var s: string = string.repeat_char(66 as char, 5); return s.len(); }`},
 	// n <= 0 -> "" (the early-return branch); len 0.
 	{"repeat_char-empty", `import "std/string";
-function main(): i32 { return string.repeat_char(67, 0).len(); }`},
+function main(): i32 { return string.repeat_char(67 as char, 0).len(); }`},
 	// A string METHOD still lowers (regression guard for the parser change).
 	{"trim-method", `import "std/string";
 function main(): i32 { return "  hi  ".trim().len(); }`},
