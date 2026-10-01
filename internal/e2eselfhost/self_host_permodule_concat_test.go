@@ -20,32 +20,14 @@ import (
 // Returns the entry path and the module count.
 func writeConcatFixture(t *testing.T, dir string) (string, int) {
 	t.Helper()
+	const nMod, nFn = 7, 100
 	proj := filepath.Join(dir, "concatproj")
-	imports, calls, want := writeConcatLibs(t, proj)
-	entry := fmt.Sprintf("%s\nfunction main(): i32 {\n    var t: i32 = %s;\n    if (t == %d) { return 0; }\n    return 1;\n}\n",
-		imports, calls, want)
-	entryPath := filepath.Join(proj, "entry.fern")
-	if err := os.WriteFile(entryPath, []byte(entry), 0o644); err != nil {
-		t.Fatalf("write entry: %v", err)
-	}
-	return entryPath, concatModules
-}
-
-// concatModules is the sibling-module count writeConcatLibs generates.
-const concatModules = 7
-
-// writeConcatLibs writes the over-budget band's library half into proj: 7
-// modules of 100 trivial i32 functions, and returns the entry's import lines,
-// an expression calling one function per module, and that expression's
-// value.
-func writeConcatLibs(t *testing.T, proj string) (imports, calls string, want int) {
-	t.Helper()
-	const nFn = 100
 	if err := os.MkdirAll(proj, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	var imp, call strings.Builder
-	for m := 0; m < concatModules; m++ {
+	var imports, calls strings.Builder
+	want := 0
+	for m := 0; m < nMod; m++ {
 		var lib strings.Builder
 		for f := 0; f < nFn; f++ {
 			fmt.Fprintf(&lib, "pub function m%d_f%d(x: i32): i32 { return x + %d; }\n", m, f, m*nFn+f)
@@ -53,14 +35,20 @@ func writeConcatLibs(t *testing.T, proj string) (imports, calls string, want int
 		if err := os.WriteFile(filepath.Join(proj, fmt.Sprintf("lib%d.fern", m)), []byte(lib.String()), 0o644); err != nil {
 			t.Fatalf("write lib%d: %v", m, err)
 		}
-		fmt.Fprintf(&imp, "import \"./lib%d\";\n", m)
+		fmt.Fprintf(&imports, "import \"./lib%d\";\n", m)
 		if m > 0 {
-			call.WriteString(" + ")
+			calls.WriteString(" + ")
 		}
-		fmt.Fprintf(&call, "lib%d.m%d_f0(1)", m, m)
+		fmt.Fprintf(&calls, "lib%d.m%d_f0(1)", m, m)
 		want += 1 + m*nFn // m*nFn+0 added to the argument 1
 	}
-	return imp.String(), call.String(), want
+	entry := fmt.Sprintf("%s\nfunction main(): i32 {\n    var t: i32 = %s;\n    if (t == %d) { return 0; }\n    return 1;\n}\n",
+		imports.String(), calls.String(), want)
+	entryPath := filepath.Join(proj, "entry.fern")
+	if err := os.WriteFile(entryPath, []byte(entry), 0o644); err != nil {
+		t.Fatalf("write entry: %v", err)
+	}
+	return entryPath, nMod
 }
 
 // assertConcatProduced pins WHICH path emitted `asm`: per-unit `.S<ns>_<idx>`

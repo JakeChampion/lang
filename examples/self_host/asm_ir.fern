@@ -10516,9 +10516,8 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
   // re-infer is a no-op there and the cache indices stay aligned.)
   strbuf_reset();
   var s: asmcore.EmitState = asmcore.new_state();
-  // struct_decls and funcs are the WHOLE-PROGRAM sets, so a function emitting
-  // an imported struct's layout (field offsets / sizes) resolves it, and a
-  // dyn dispatch in this unit reaches an implementation another unit declares.
+  // struct_decls and funcs are the WHOLE-PROGRAM sets, so an imported struct's
+  // layout resolves and a `dyn` dispatch has an arm for every impl (#10891).
   s = asmcore.EmitState { ...s, struct_decls: all_structs, funcs: all_funcs, str_ns: str_ns, rt_lower: rt };
   // A unit never passes emit_module_or_error's check, so the Display gate
   // runs here: a `print(xs)` nothing gives a `to_string` would otherwise hand

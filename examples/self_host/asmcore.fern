@@ -86,9 +86,8 @@ pub struct EmitState {
   // semantics. break / continue use the top of each stack.
   loop_exit_labels: string[],
   loop_cont_labels: string[],
-  // funcs: every FuncDecl of the program being emitted — used by method
-  // dispatch in ExprCall(ExprFieldAccess(...), args) and by the dyn
-  // dispatch chain, whose arms may live in another unit.
+  // funcs: the whole program's FuncDecls, in a per-module unit too — used by
+  // method and `dyn` dispatch.
   funcs: parser.FuncDecl[],
   // local_types: parallel to local_names. See asm.fern.
   local_types: Ty[],
