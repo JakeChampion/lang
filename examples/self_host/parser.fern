@@ -575,14 +575,14 @@ function e_slice_all(array: ast.Expr, line: i32, col: i32): ast.Expr {
 }
 
 function e_struct_lit(type_name: string, field_names: string[], field_values: ast.Expr[], line: i32, col: i32): ast.Expr {
-  return ast.ExprStructLit { type_name: type_name, field_names: field_names, field_values: field_values, has_base: false, base: e_unknown("no-base"), line: line, col: col };
+  return ast.ExprStructLit { type_name: type_name, field_names: field_names, field_values: field_values, has_base: false, base: e_unknown("no-base"), line: line, col: col, written: "" };
 }
 
 // e_struct_update builds a struct-update literal carrying a base
 // spread source. The base is the value whose un-overridden fields
 // are copied into the new box; the listed fields override.
 function e_struct_update(type_name: string, field_names: string[], field_values: ast.Expr[], base: ast.Expr, line: i32, col: i32): ast.Expr {
-  return ast.ExprStructLit { type_name: type_name, field_names: field_names, field_values: field_values, has_base: true, base: base, line: line, col: col };
+  return ast.ExprStructLit { type_name: type_name, field_names: field_names, field_values: field_values, has_base: true, base: base, line: line, col: col, written: "" };
 }
 
 function e_field_access(obj: ast.Expr, field: string): ast.Expr {
@@ -2765,6 +2765,12 @@ function parse_postfix(p: Par, base: ast.Expr): (ast.Expr, Par) {
         // always did, so a shape only the compile path understands cannot
         // desync the parse.
         let (wta_text, wta_n, wta_p) = scan_written_type_args(p);
+        // A struct literal keeps its written instantiation on the compile
+        // path too, so `Box[i32] { … }` is checked as a Box[i32].
+        var written_args: string = "";
+        if (wta_n > 0) {
+          written_args = wta_text;
+        }
         if (p.verbatim && wta_n > 0) {
           pending_type_args = wta_text;
           pending_type_arg_list = split_top_commas(wta_text);
@@ -2825,6 +2831,11 @@ function parse_postfix(p: Par, base: ast.Expr): (ast.Expr, Par) {
               let (glit_expr, glit_p) = parse_struct_lit_body(p, glit_name, bid.line, bid.col);
               p = glit_p;
               base = glit_expr;
+              if let ast.ExprStructLit(gsl) = glit_expr {
+                if (written_args.len() > 0) {
+                  base = ast.ExprStructLit { ...gsl, written: bid.name + "[" + written_args + "]" };
+                }
+              }
               pending_type_arg_list = [];
               pending_type_args = "";
             },
@@ -12618,7 +12629,7 @@ function mono_expr(e: ast.Expr, env: MEnv, funcs: MFns, ins: Insts): RExpr {
         i = i + 1;
       }
       var rb: RExpr = mono_expr(s.base, env, funcs, cur);
-      return RExpr { rexpr: ast.ExprStructLit { type_name: s.type_name, field_names: s.field_names, field_values: vals, has_base: s.has_base, base: rb.rexpr, line: s.line, col: s.col }, rins: rb.rins };
+      return RExpr { rexpr: ast.ExprStructLit { type_name: s.type_name, field_names: s.field_names, field_values: vals, has_base: s.has_base, base: rb.rexpr, line: s.line, col: s.col, written: s.written }, rins: rb.rins };
     },
     ast.ExprLambda(lm) => {
       var bodyr: RStmts = mono_stmts(lm.body, env, funcs, ins, "");
@@ -13321,7 +13332,7 @@ function subst_expr(e: ast.Expr, tparams: string[], cts: string[]): ast.Expr {
       if (sl.has_base) {
         nb = subst_expr(sl.base, tparams, cts);
       }
-      return ast.ExprStructLit { type_name: sl.type_name, field_names: sl.field_names, field_values: nv, has_base: sl.has_base, base: nb, line: sl.line, col: sl.col };
+      return ast.ExprStructLit { type_name: sl.type_name, field_names: sl.field_names, field_values: nv, has_base: sl.has_base, base: nb, line: sl.line, col: sl.col, written: sl.written };
     },
     ast.ExprBinary(b) => {
       return ast.ExprBinary { op: b.op, left: subst_expr(b.left, tparams, cts), right: subst_expr(b.right, tparams, cts), line: b.line, col: b.col, ty: b.ty };
@@ -13449,7 +13460,7 @@ function retarget_self_lit_expr(e: ast.Expr, base: string, mang: string): ast.Ex
       if (tn == base) {
         tn = mang;
       }
-      return ast.ExprStructLit { type_name: tn, field_names: sl.field_names, field_values: nv, has_base: sl.has_base, base: nb, line: sl.line, col: sl.col };
+      return ast.ExprStructLit { type_name: tn, field_names: sl.field_names, field_values: nv, has_base: sl.has_base, base: nb, line: sl.line, col: sl.col, written: sl.written };
     },
     ast.ExprCall(c) => {
       var na: ast.Expr[] = [];
@@ -15018,7 +15029,7 @@ function ms_struct_lit(s: ast.ExprStructLit, dest: string, env: MEnv, gstructs: 
       cur = cur.iadd(s.type_name, key);
     }
   }
-  return RExpr { rexpr: ast.ExprStructLit { type_name: tn, field_names: s.field_names, field_values: vals, has_base: s.has_base, base: rb.rexpr, line: s.line, col: s.col }, rins: cur };
+  return RExpr { rexpr: ast.ExprStructLit { type_name: tn, field_names: s.field_names, field_values: vals, has_base: s.has_base, base: rb.rexpr, line: s.line, col: s.col, written: s.written }, rins: cur };
 }
 
 // lit_field_decl_type is the declared type of field `field` of the
@@ -16499,7 +16510,7 @@ function me_expr(e: ast.Expr, expected: string, env: MEnv, enums: EnumDecl[], st
         i = i + 1;
       }
       var rb: RExpr = me_expr(s.base, "", env, enums, structs, funcs, cur);
-      return RExpr { rexpr: ast.ExprStructLit { type_name: s.type_name, field_names: s.field_names, field_values: nvals, has_base: s.has_base, base: rb.rexpr, line: s.line, col: s.col }, rins: rb.rins };
+      return RExpr { rexpr: ast.ExprStructLit { type_name: s.type_name, field_names: s.field_names, field_values: nvals, has_base: s.has_base, base: rb.rexpr, line: s.line, col: s.col, written: s.written }, rins: rb.rins };
     },
     ast.ExprFieldAccess(fa) => {
       // A QUALIFIED unit-variant value `Enum.Variant` (no call) flowing
@@ -17826,7 +17837,7 @@ function dl_expr_with_kids(e: ast.Expr, kids: ast.Expr[]): ast.Expr {
         vals = vals.append(kids[i]);
         i = i + 1;
       }
-      return ast.ExprStructLit { type_name: s.type_name, field_names: s.field_names, field_values: vals, has_base: s.has_base, base: kids[0], line: s.line, col: s.col };
+      return ast.ExprStructLit { type_name: s.type_name, field_names: s.field_names, field_values: vals, has_base: s.has_base, base: kids[0], line: s.line, col: s.col, written: s.written };
     },
     ast.ExprFieldAccess(fa) => {
       return ast.ExprFieldAccess { obj: kids[0], field: fa.field, line: fa.line, col: fa.col, ty: fa.ty };
@@ -20323,7 +20334,7 @@ function rvf_expr(e: ast.Expr, structs: StructDecl[]): ast.Expr {
       if (st.has_base) {
         nbase = rvf_expr(st.base, structs);
       }
-      return ast.ExprStructLit { type_name: st.type_name, field_names: st.field_names, field_values: vals, has_base: st.has_base, base: nbase, line: st.line, col: st.col };
+      return ast.ExprStructLit { type_name: st.type_name, field_names: st.field_names, field_values: vals, has_base: st.has_base, base: nbase, line: st.line, col: st.col, written: st.written };
     },
     ast.ExprFieldAccess(fa) => {
       return ast.ExprFieldAccess { obj: rvf_expr(fa.obj, structs), field: fa.field, line: fa.line, col: fa.col, ty: fa.ty };
@@ -22283,7 +22294,7 @@ function elb_mark_expr(e: ast.Expr, idx: string, arr: string): ast.Expr {
       if (sl.has_base) {
         nbase = elb_mark_expr(sl.base, idx, arr);
       }
-      return ast.ExprStructLit { type_name: sl.type_name, field_names: sl.field_names, field_values: nv, has_base: sl.has_base, base: nbase, line: sl.line, col: sl.col };
+      return ast.ExprStructLit { type_name: sl.type_name, field_names: sl.field_names, field_values: nv, has_base: sl.has_base, base: nbase, line: sl.line, col: sl.col, written: sl.written };
     },
     ast.ExprFieldAccess(fa) => {
       return ast.ExprFieldAccess { obj: elb_mark_expr(fa.obj, idx, arr), field: fa.field, line: fa.line, col: fa.col, ty: fa.ty };
@@ -25842,7 +25853,7 @@ function settle_expr(e: ast.Expr, names: string[], types: string[], fns: SettleF
       if (sl.has_base) {
         base = settle_expr(sl.base, names, types, fns, structs);
       }
-      return ast.ExprStructLit { type_name: sl.type_name, field_names: sl.field_names, field_values: vals, has_base: sl.has_base, base: base, line: sl.line, col: sl.col };
+      return ast.ExprStructLit { type_name: sl.type_name, field_names: sl.field_names, field_values: vals, has_base: sl.has_base, base: base, line: sl.line, col: sl.col, written: sl.written };
     },
     ast.ExprFieldAccess(fa) => {
       return ast.ExprFieldAccess { obj: settle_expr(fa.obj, names, types, fns, structs), field: fa.field, line: fa.line, col: fa.col, ty: fa.ty };

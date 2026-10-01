@@ -19985,6 +19985,19 @@ func (c *checker) elemSettleable(have, want ast.Type) bool {
 			return c.elemSettleable(h.Elem, w.Elem)
 		}
 	}
+	// So does a generic struct whose arguments literals bound: `[Same { a:
+	// 1, b: 2^62 }]` widens to `Same[i64][]` and settles its elements there
+	// (#10453).
+	if h, ok := have.(ast.StructType); ok {
+		if w, ok := want.(ast.StructType); ok && h.Name == w.Name && len(h.Args) == len(w.Args) && len(h.Args) > 0 {
+			for i := range h.Args {
+				if !c.elemSettleable(h.Args[i], w.Args[i]) {
+					return false
+				}
+			}
+			return true
+		}
+	}
 	// Which destinations a polymorphic element settles to depends on WHICH
 	// polymorphic it is, so split on `have` before looking at `want`.
 	switch h := have.(type) {

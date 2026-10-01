@@ -255,6 +255,13 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"array-argument-settles-its-literals", "struct Same[T] { a: T, b: T }\nfunction take(xs: Same[i64][]): i32 { return xs.len(); }\nfunction main(): i32 { return take([Same { a: 1, b: 2 }]); }\n", nil},
 		{"array-argument-field-settles-at-the-parameter", "struct Same[T] { a: T, b: T }\nfunction take(xs: Same[i64][]): i32 { return xs.len(); }\nfunction main(): i32 { var y: i64 = 5; return take([Same { a: 1, b: y }]); }\n", nil},
 		{"array-argument-literal-field-mismatch", "struct Same[T] { a: T, b: T }\nfunction take(xs: Same[i64][]): i32 { return xs.len(); }\nfunction main(): i32 { return take([Same { a: 1, b: \"x\" }]); }\n", []string{"E043"}},
+		// A literal that writes its instantiation is what it writes: the
+		// literal widening does not reach it, and a wrong argument count is
+		// E040 (#10453). The self-host dropped the written arguments.
+		{"struct-literal-written-instantiation-not-widened", "struct Same[T] { a: T, b: T }\nfunction main(): i32 { var q = Same[i32] { a: 1, b: 4611686018427387904 }; return 0; }\n", []string{"E047"}},
+		{"struct-literal-written-arity", "struct Same[T] { a: T, b: T }\nfunction main(): i32 { var q = Same[i64, i32] { a: 1, b: 2 }; return 0; }\n", []string{"E040"}},
+		{"struct-literal-written-i64-read-narrow", "struct Box[T] { v: T }\nfunction main(): i32 { var q = Box[i64] { v: 4 }; var r: i32 = q.v; return 0; }\n", []string{"E003"}},
+		{"struct-literal-wide-in-array", "struct Same[T] { a: T, b: T }\nfunction main(): i32 { var xs = [Same { a: 1, b: 4611686018427387904 }]; var r: i64 = xs[0].b; return 0; }\n", nil},
 		{"generic-literal-fields-clash-without-destination", "struct Same[T] { a: T, b: T }\nfunction take(xs: Same[i64][]): i32 { return xs.len(); }\nfunction main(): i32 { var y: i64 = 5; var q = Same { a: 1, b: y }; var r: i64 = q.a; return 0; }\n", []string{"E043"}},
 		// A literal whose fields clash has no instantiation, so its local
 		// reads as untyped and no use reports the clash again (#10453). Native

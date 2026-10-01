@@ -167,19 +167,22 @@ function main(): i32 {
     var q = both(x, 2);
     return q.1 + q.0 + 4;
 }`},
-	// The widening reads INTEGERS only: wider_int keeps the first reading when
-	// either side is not one, so a shared variable bound by two strings types
-	// exactly as it did.
 	// A generic struct literal whose type argument only literals bind takes
 	// i64 when one of them has no i32 reading (#10453), so neither field of
-	// the local is truncated.
+	// the local is truncated — inside an array literal too. A written
+	// instantiation is what the literal is, and is not widened.
 	{"struct-literal-local-wide-field", `struct Same[T] { a: T, b: T }
 function main(): i32 {
     var q = Same { a: 1, b: 4611686018427387904 };
     var r: i64 = q.b;
-    if (r == 4611686018427387904 && q.a + 1 == 2) { return 7; }
+    var xs = [Same { a: 1, b: 4611686018427387904 }];
+    var w = Same[i64] { a: 4294967296, b: 2 };
+    if (r == 4611686018427387904 && q.a + 1 == 2 && xs[0].b == r && w.a == 4294967296) { return 7; }
     return 3;
 }`},
+	// The widening reads INTEGERS only: wider_int keeps the first reading when
+	// either side is not one, so a shared variable bound by two strings types
+	// exactly as it did.
 	{"shared-typevar-strings", `pub function second[T](a: T, b: T): T { return b; }
 function main(): i32 {
     var s: string = second("ab", "cd");

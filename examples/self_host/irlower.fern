@@ -97510,7 +97510,7 @@ function lift_expr_walk(e: ast.Expr, acc: LiftAcc, gfns: string[]): LiftExpr {
         sa = br.acc;
         nbase = br.expr;
       }
-      return LiftExpr { expr: ast.ExprStructLit { type_name: sl.type_name, field_names: sl.field_names, field_values: nvals, has_base: sl.has_base, base: nbase, line: sl.line, col: sl.col }, acc: sa };
+      return LiftExpr { expr: ast.ExprStructLit { type_name: sl.type_name, field_names: sl.field_names, field_values: nvals, has_base: sl.has_base, base: nbase, line: sl.line, col: sl.col, written: sl.written }, acc: sa };
     },
     ast.ExprBinary(b) => {
       // Recurse into the compound expression forms so a no-capture lambda CALL
@@ -100674,7 +100674,7 @@ function ilc_expr_at(e: ast.Expr, acc: InlineCloAcc, fd: parser.FuncDecl, gfns: 
         ct = br.counter;
         nbase = br.expr;
       }
-      return (ast.ExprStructLit { type_name: sl.type_name, field_names: sl.field_names, field_values: nvals, has_base: sl.has_base, base: nbase, line: sl.line, col: sl.col }, InlineCloAcc { funcs: fs, counter: ct }, true);
+      return (ast.ExprStructLit { type_name: sl.type_name, field_names: sl.field_names, field_values: nvals, has_base: sl.has_base, base: nbase, line: sl.line, col: sl.col, written: sl.written }, InlineCloAcc { funcs: fs, counter: ct }, true);
     },
     ast.ExprLambda(_) => {
       return (e, acc, true);
@@ -101607,7 +101607,7 @@ function wcap_expr(e: ast.Expr, fd: parser.FuncDecl, gfns: string[], structs: St
         a = br.caps;
         nbase = br.expr;
       }
-      return WCapExpr { expr: ast.ExprStructLit { type_name: sl.type_name, field_names: sl.field_names, field_values: nv, has_base: sl.has_base, base: nbase, line: sl.line, col: sl.col }, caps: a };
+      return WCapExpr { expr: ast.ExprStructLit { type_name: sl.type_name, field_names: sl.field_names, field_values: nv, has_base: sl.has_base, base: nbase, line: sl.line, col: sl.col, written: sl.written }, caps: a };
     },
     ast.ExprFieldAccess(fa) => {
       var o: WCapExpr = wcap_expr(fa.obj, fd, gfns, structs, mfuncs, acc, atargets);

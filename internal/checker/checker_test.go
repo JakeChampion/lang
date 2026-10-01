@@ -1037,6 +1037,21 @@ func TestGenericCallLiteralBoundTSettlesByPosition(t *testing.T) {
 // only literals bind is a Same[i64] when one of them has no i32 reading, and
 // both field literals settle at i64 (#10453). Typing it Same[i32] truncated the
 // wide field on every native backend with no diagnostic.
+// The widening reaches a literal inside an array literal, whose elements it
+// settles at the widened type (the monomorph re-check refused it as
+// Same__i32[] against Same__i64[]), and never a literal that writes its own
+// instantiation: `Same[i32] { …, b: 2^62 }` is E047 (#10453).
+func TestGenericStructLiteralWideningInArrayAndWritten(t *testing.T) {
+	const decls = "struct Same[T] { a: T, b: T } "
+	if err := checkSource(t, decls+"function main(): i32 { var xs = [Same { a: 1, b: 4611686018427387904 }]; var r: i64 = xs[0].b; return 0; }"); err != nil {
+		t.Errorf("array of a wide literal: rejected, want accepted: %v", err)
+	}
+	err := checkSource(t, decls+"function main(): i32 { var q = Same[i32] { a: 1, b: 4611686018427387904 }; return 0; }")
+	if err == nil || !strings.Contains(err.Error(), "does not fit in i32") {
+		t.Errorf("written Same[i32] with a wide field: want the literal refused, got %v", err)
+	}
+}
+
 func TestGenericStructLiteralLocalWidensByLiteral(t *testing.T) {
 	src := "struct Same[T] { a: T, b: T } function main(): i32 { " +
 		"var q = Same { a: 1, b: 4611686018427387904 }; var r: i64 = q.b; return 0; }"
