@@ -11,7 +11,7 @@ import (
 // cut the typed lowering into the same units: both call ircore.split_units, so
 // -per-module-func-counts agrees line for line. The leaf declares a method on
 // `str`, which the lowering spells `string`; only main calls it, so matching
-// the declaration on the unerased spelling handed it to the entry.
+// the declaration on the unerased spelling would hand it to the entry.
 func TestSelfHostPerModuleUnitOwners(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
