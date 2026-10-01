@@ -10242,8 +10242,9 @@ function runtime_ast_bodies(fns: parser.FuncDecl[], all_structs: irlower.StructT
 // function (so the IR call site's `call __fn___fern_<name>` resolves to it),
 // replacing a hand-written stack-arg wrapper in emit_ir_runtime.
 //
-// The typed lowering (EmitState.rt_lower) produces the bodies when it takes
-// every function in the source; otherwise the AST lowering does. Emitted
+// The typed lowering (EmitState.rt_lower) produces the bodies; it returns none,
+// and the AST lowering does, only with the typed path off, in a driver that
+// supplies no rt_lower, or under a bisect knob. Emitted
 // entry-only and gated on the helper's need by the caller; emit_runtime_globls
 // already `.globl`s the symbol so the per-module link resolves it.
 function emit_ir_runtime_fern_fn(src: string, all_structs: irlower.StructTab, s: asmcore.EmitState): asmcore.EmitState {

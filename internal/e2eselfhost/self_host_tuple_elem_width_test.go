@@ -292,7 +292,7 @@ func TestSelfHostUntypedTupleElemBailsX86_64(t *testing.T) {
 
 	for _, tc := range untypedTupleElemCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := hevCompile(t, runner, driverBin, tc.src+"\n", []string{"FERN_SEM_IR_STRICT=1"})
+			asm := hevCompile(t, runner, driverBin, tc.src+"\n", nil)
 			_, exit := hevRun(t, runner, buildBin(t, gcc, dir, "untyped_"+tc.name, asm))
 			if exit != tc.want {
 				t.Errorf("%s exited %d, want %d", tc.name, exit, tc.want)

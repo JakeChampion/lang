@@ -81,8 +81,8 @@ func TestSelfHostArrEnumElemReadLeakCheck(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	cli := buildLangBinForInterp(t)
 	dir := t.TempDir()
-	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "asm_load_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "asm_load_run.fern", "driver")
 
 	for _, tc := range selfHostArrEnumElemReadCases {
 		t.Run(tc.name, func(t *testing.T) {

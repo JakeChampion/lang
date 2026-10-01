@@ -113,8 +113,12 @@ func testDifferentialSelfHostArm64(t *testing.T, semantic bool) {
 				t.Errorf(format, args...)
 			}
 
-			r, gap, report := runSelfHostArm64Seed(t, fernBin, stdlibRoot, qemu, src, semantic)
+			r, gap := runSelfHostArm64Seed(t, fernBin, stdlibRoot, qemu, src, semantic)
 			if gap != "" {
+				if semantic && semRefused(gap) {
+					t.Errorf("the typed lowering refused this seed:\n%s", gap)
+					return
+				}
 				// Same contract as the x86-64 leg: a compile bail is a
 				// documented endpoint for an unlisted seed, but a LISTED one
 				// that no longer compiles cannot demonstrate the wrong answer
@@ -126,9 +130,6 @@ func testDifferentialSelfHostArm64(t *testing.T, semantic bool) {
 					"cannot be verified — re-check it and either update the reason or delete it:\n%s",
 					seed, knownFile, reason, gap)
 				return
-			}
-			if semantic {
-				requireSemWhole(t, report)
 			}
 			if r != nil {
 				atomic.AddInt64(&ran, 1)
@@ -155,14 +156,13 @@ func testDifferentialSelfHostArm64(t *testing.T, semantic bool) {
 }
 
 // runSelfHostArm64Seed compiles src for arm64-linux with the self-host CLI and
-// runs the binary it produces. Returns (run, "", report) when it ran and
-// (nil, gap, report) when the compiler bailed; the report is the compiler's
-// stderr, which carries the production tally the semantic leg reads.
+// runs the binary it produces. Returns (run, "") when it ran and (nil, gap)
+// when the compiler bailed.
 //
 // No link step and so no link failure to report: the self-host assembles and
 // links this target itself, which folds what would be the x86-64 leg's link
 // error into the compile failure, naming the unsupported mnemonic.
-func runSelfHostArm64Seed(t *testing.T, fernBin, stdlibRoot, qemu, src string, semantic bool) (*selfHostRun, string, string) {
+func runSelfHostArm64Seed(t *testing.T, fernBin, stdlibRoot, qemu, src string, semantic bool) (*selfHostRun, string) {
 	t.Helper()
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "main.fern")
@@ -175,15 +175,14 @@ func runSelfHostArm64Seed(t *testing.T, fernBin, stdlibRoot, qemu, src string, s
 	// the x86-64 pair gives: empty is off, and writing it is what stops an
 	// ambient FERN_SEM_IR in the environment turning both legs into the
 	// semantic one.
-	compile.Env = append(os.Environ(), "FERN_SEM_IR=", "FERN_SEM_IR_STRICT=", "FERN_SEM_IR_REPORT=1")
+	compile.Env = append(os.Environ(), "FERN_SEM_IR=", "FERN_SEM_IR_ONLY=", "FERN_SEM_IR_SKIP=")
 	if semantic {
 		compile.Env = append(compile.Env, "FERN_SEM_IR=1")
 	}
 	out, err := compile.CombinedOutput()
-	report := string(out)
 	if err != nil {
 		return nil, fmt.Sprintf("%v\n%s%s", err, out,
-			strictIRBailSite(fernBin, "arm64-linux", nil, srcPath, stdlibRoot, out)), report
+			strictIRBailSite(fernBin, "arm64-linux", nil, srcPath, stdlibRoot, out))
 	}
 	// write_file does not set the exec bit (the Makefile chmods
 	// bin/fern-selfhost for the same reason).
@@ -191,5 +190,5 @@ func runSelfHostArm64Seed(t *testing.T, fernBin, stdlibRoot, qemu, src string, s
 		t.Fatalf("chmod: %v", err)
 	}
 	r := runSelfHostBin(runArm64Bin(qemu, binPath), "")
-	return &r, "", report
+	return &r, ""
 }

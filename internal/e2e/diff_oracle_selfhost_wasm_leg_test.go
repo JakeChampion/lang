@@ -112,8 +112,12 @@ func testDifferentialSelfHostWasm(t *testing.T, semantic bool) {
 				t.Errorf(format, args...)
 			}
 
-			out, exit, gap, report := runSelfHostWasmSeed(t, fernBin, stdlibRoot, src, semantic)
+			out, exit, gap := runSelfHostWasmSeed(t, fernBin, stdlibRoot, src, semantic)
 			if gap != "" {
+				if semantic && semRefused(gap) {
+					t.Errorf("the typed lowering refused this seed:\n%s", gap)
+					return
+				}
 				// Same contract as the other legs: a compile bail is a
 				// documented endpoint for an unlisted seed, but a LISTED one
 				// that no longer compiles cannot demonstrate the wrong answer
@@ -126,10 +130,6 @@ func testDifferentialSelfHostWasm(t *testing.T, semantic bool) {
 					seed, knownFile, reason, gap)
 				return
 			}
-			if semantic {
-				requireSemWhole(t, report)
-			}
-
 			// A rejected module and a trap are failures whatever the oracle
 			// byte is, so both are asserted before the clamp is consulted.
 			if rejected, why := wasmRejected(out); rejected {
@@ -176,11 +176,9 @@ func testDifferentialSelfHostWasm(t *testing.T, semantic bool) {
 }
 
 // runSelfHostWasmSeed compiles src for wasm32-wasi with the self-host CLI and
-// runs the module under wasmtime. Returns (combined output, exit, "", report)
-// when it ran and ("", 0, gap, report) when the compiler bailed; the report is
-// the compiler's stderr, which carries the production tally the semantic leg
-// reads.
-func runSelfHostWasmSeed(t *testing.T, fernBin, stdlibRoot, src string, semantic bool) (string, int, string, string) {
+// runs the module under wasmtime. Returns (combined output, exit, "") when it
+// ran and ("", 0, gap) when the compiler bailed.
+func runSelfHostWasmSeed(t *testing.T, fernBin, stdlibRoot, src string, semantic bool) (string, int, string) {
 	t.Helper()
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "main.fern")
@@ -193,16 +191,15 @@ func runSelfHostWasmSeed(t *testing.T, fernBin, stdlibRoot, src string, semantic
 	// the x86-64 pair gives: empty is off, and writing it is what stops an
 	// ambient FERN_SEM_IR in the environment turning both legs into the
 	// semantic one.
-	compile.Env = append(os.Environ(), "FERN_SEM_IR=", "FERN_SEM_IR_STRICT=", "FERN_SEM_IR_REPORT=1")
+	compile.Env = append(os.Environ(), "FERN_SEM_IR=", "FERN_SEM_IR_ONLY=", "FERN_SEM_IR_SKIP=")
 	if semantic {
 		compile.Env = append(compile.Env, "FERN_SEM_IR=1")
 	}
 	out, err := compile.CombinedOutput()
-	report := string(out)
 	if err != nil {
 		return "", 0, fmt.Sprintf("%v\n%s%s", err, out,
-			strictIRBailSite(fernBin, "wasm32-wasi", []string{"-emit", "asm"}, srcPath, stdlibRoot, out)), report
+			strictIRBailSite(fernBin, "wasm32-wasi", []string{"-emit", "asm"}, srcPath, stdlibRoot, out))
 	}
 	run := runSelfHostBin(exec.Command("wasmtime", "run", watPath), "")
-	return run.stdout + run.stderr, run.exit, "", report
+	return run.stdout + run.stderr, run.exit, ""
 }

@@ -228,14 +228,22 @@ const (
 func TestSelfHostHeapBumpFlatIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "asm_load_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "asm_load_run.fern", "driver")
+	compile := func(t *testing.T, src string) string {
+		t.Helper()
+		asm, stderr, err := loadCompile(t, runner, driverBin, src, nil)
+		if err != nil {
+			t.Fatalf("compile: %v\n%s", err, stderr)
+		}
+		return asm
+	}
 
 	for _, tc := range heapBumpFlatCases {
 		t.Run(tc.name, func(t *testing.T) {
 			run := func(n string) int {
 				src := tc.src(n) + "\n"
-				asm := hevCompile(t, runner, driverBin, src, nil)
+				asm := compile(t, src)
 				bin := buildBin(t, gcc, dir, fmt.Sprintf("hbf_%s_%s", strings.ReplaceAll(tc.name, "-", "_"), n), asm)
 				_, exit := hevRun(t, runner, bin)
 				return exit
@@ -250,7 +258,7 @@ func TestSelfHostHeapBumpFlatIRX86_64(t *testing.T) {
 				// running it with the results retained, which the freelist cannot
 				// satisfy — otherwise the flatness below is vacuous after all.
 				src := tc.retained(heapBumpFlatSmallN) + "\n"
-				asm := hevCompile(t, runner, driverBin, src, nil)
+				asm := compile(t, src)
 				bin := buildBin(t, gcc, dir, fmt.Sprintf("hbf_%s_retained", strings.ReplaceAll(tc.name, "-", "_")), asm)
 				if _, exit := hevRun(t, runner, bin); exit != 1 {
 					t.Fatalf("%s: retained control returned %d, want 1 — the shape must still allocate "+

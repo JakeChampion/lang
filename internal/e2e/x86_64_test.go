@@ -162,7 +162,7 @@ func TestX86_64ImportAlias(t *testing.T) {
 import "std/string" as s;
 import "std/i32" as nums;
 function main(): i32 {
-    if (s.repeat_char(120, 3) != "xxx") { return 1; }
+    if (s.repeat_char(120 as char, 3) != "xxx") { return 1; }
     if ((0 - 5).abs() != 5) { return 2; }
     return 0;
 }`
@@ -175,9 +175,9 @@ func TestX86_64StringRepeatChar(t *testing.T) {
 	src := `
 import "std/string";
 function main(): i32 {
-    if (string.repeat_char(120, 4) != "xxxx") { return 1; }
-    if (string.repeat_char(45, 3) != "---") { return 2; }
-    if (string.repeat_char(120, 0) != "") { return 3; }
+    if (string.repeat_char(120 as char, 4) != "xxxx") { return 1; }
+    if (string.repeat_char(45 as char, 3) != "---") { return 2; }
+    if (string.repeat_char(120 as char, 0) != "") { return 3; }
     return 0;
 }`
 	if _, code := compileAndRunX86_64(t, src); code != 0 {

@@ -7,12 +7,23 @@ import (
 	"github.com/jakechampion/lang/internal/ir"
 )
 
-// boxFreeCount counts __fern_box_free calls — the consuming-match SHALLOW free
-// (C1). Under C2 the Cons arm reuses the scrutinee box instead, so this drops.
+// boxFreeCount counts the __fern_box_free calls on the scrutinee box — the
+// consuming-match SHALLOW free (C1). Under C2 the Cons arm reuses the
+// scrutinee box instead, so this drops. The scrutinee is the slot the
+// prologue copies param 0 into; the exit sweep's drop of an arm binding frees
+// through a different slot and is not counted.
 func boxFreeCount(fn *ir.Func) int {
+	scrut := int32(-1)
+	for i := 0; i+1 < len(fn.Ops); i++ {
+		if fn.Ops[i].Kind == ir.OpLoadLocal && fn.Ops[i].I32 == 0 && fn.Ops[i+1].Kind == ir.OpStoreLocal {
+			scrut = fn.Ops[i+1].I32
+			break
+		}
+	}
 	n := 0
-	for _, op := range fn.Ops {
-		if op.Kind == ir.OpCallDirect && op.Str == "__fern_box_free" {
+	for i, op := range fn.Ops {
+		if op.Kind == ir.OpCallDirect && op.Str == "__fern_box_free" && i >= 2 &&
+			fn.Ops[i-2].Kind == ir.OpLoadLocal && fn.Ops[i-2].I32 == scrut {
 			n++
 		}
 	}

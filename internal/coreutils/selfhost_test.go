@@ -122,18 +122,18 @@ func selfHostCompiler(t *testing.T) string {
 	return selfHostPath
 }
 
-// typedPathEnv holds a self-host compile to the typed path, whole: strict makes
-// a refusal fail the compile, and the other three are pinned because an ambient
-// FERN_SEM_IR= or skip list switches the typed path off before strict is read.
-var typedPathEnv = []string{"FERN_SEM_IR=1", "FERN_SEM_IR_ONLY=", "FERN_SEM_IR_SKIP=", "FERN_SEM_IR_STRICT=1"}
+// typedPathEnv holds a self-host compile to the typed path, whole, where a
+// refusal fails the compile: an ambient FERN_SEM_IR= would switch the typed
+// path off, and a bisect list would keep a mixed module.
+var typedPathEnv = []string{"FERN_SEM_IR=1", "FERN_SEM_IR_ONLY=", "FERN_SEM_IR_SKIP="}
 
 // selfHostBin compiles coreutils/<util>.fern with the self-host compiler.
 //
 // FERN_STRICT_IR=1 is the point of the exercise: it names the function that
 // failed to lower instead of leaving a whole-module refusal to be read off a
 // downstream symptom, and it is what turns "the self-host cannot compile this
-// tree" into a message a reader can act on. typedPathEnv does the same for a
-// module the typed path does not produce whole.
+// tree" into a message a reader can act on. typedPathEnv keeps the typed path
+// on, so a module it does not produce whole fails the compile the same way.
 func selfHostBin(t *testing.T, util string) string {
 	t.Helper()
 	selfHostBinsMu.Lock()

@@ -7240,7 +7240,7 @@ func semAllocations(t *testing.T, fernBin, stdlibRoot, src string) int64 {
 	t.Helper()
 	out := filepath.Join(t.TempDir(), "prog")
 	cmd := exec.Command(fernBin, "-target", "x86-64-linux", src, stdlibRoot, "-o", out)
-	cmd.Env = append(os.Environ(), "FERN_LEAKCHECK=1", "FERN_SEM_IR=1", "FERN_SEM_IR_STRICT=1")
+	cmd.Env = append(os.Environ(), "FERN_LEAKCHECK=1", "FERN_SEM_IR=1")
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("compile: %v\n%s", err, output)
 	}

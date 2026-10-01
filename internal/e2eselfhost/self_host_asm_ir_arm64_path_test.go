@@ -6,8 +6,8 @@ import (
 
 // TestSelfHostAsmIRArm64Path is the arm64 sibling of TestSelfHostAsmIRPath: the
 // same kind of program compiled through the self-hosted CLI (`fern.fern`, built
-// for the x86-64 host) with `-target arm64-linux -emit asm` under
-// FERN_SEM_IR_STRICT, assembled with the aarch64 toolchain and run under
+// for the x86-64 host) with `-target arm64-linux -emit asm`, assembled with
+// the aarch64 toolchain and run under
 // qemu-aarch64. Each case pins its exit code: the native interpreter's
 // answer, or 134 for the two slice traps it reports as an error instead.
 func TestSelfHostAsmIRArm64Path(t *testing.T) {

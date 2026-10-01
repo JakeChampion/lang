@@ -347,6 +347,9 @@ func (b *builder) computeRcAnalyses() {
 	// Computed before freeEligible, which consults consumingBindings (a
 	// qualifying binding becomes a counted owner instead of a tainted borrow).
 	b.rc.consumingOwnedMatches, b.rc.ownedPayloadMatches, b.rc.consumingBindings = b.computeConsumingOwnedMatches()
+	// The call-argument deaths admit the counted bindings, so drop any
+	// verdict taken before they were known.
+	b.callArgDiesFn = nil
 	b.rc.borrowedBindings = b.computeBorrowedBindings()
 	// The COW-seam retain sites. Purely syntactic, and freeEligible consults
 	// it: a delete tuple projected without a binding owns its map element only
@@ -1298,6 +1301,13 @@ func inferParamRetainSummary(prog *ast.Program, info *checker.Info, trmcFuncs ma
 	// converges to the grounded fixpoint (a mutual-recursion cycle with no
 	// grounding stays uncredited, the conservative direction).
 	out.fixpoint(prog.Funcs, func(fn *ast.FuncDecl) bool {
+		if stdlibBytesIntrinsic(fn) {
+			if boolSliceEqual(out.vals[fn.Name], []bool{true}) {
+				return false
+			}
+			out.vals[fn.Name] = []bool{true}
+			return true
+		}
 		c, ok := ctxs[fn]
 		if !ok {
 			return false
@@ -6597,6 +6607,10 @@ func (b *builder) computeConsumingMatchReuse() map[*ast.Call]bool {
 func (b *builder) computeConsumingOwnedMatches() (map[*ast.Match]string, map[*ast.Match]bool, map[string]ast.Type) {
 	matches := map[*ast.Match]string{}
 	payload := map[*ast.Match]bool{}
+	// ownMove marks a consuming match over an `own` enum parameter: its
+	// unguarded arms move each pointer payload out of the box before freeing
+	// it, so an admitted binding is the payload's owner.
+	ownMove := map[*ast.Match]bool{}
 	bindings := map[string]ast.Type{}
 	if !ast.RcFreeEnabled || b.fn.Body == nil {
 		return matches, payload, bindings
@@ -6673,6 +6687,12 @@ func (b *builder) computeConsumingOwnedMatches() (map[*ast.Match]string, map[*as
 			payload[m] = true
 			return true
 		}
+		if _, own := b.ownParamEnumScrutinee(m.Tag); own {
+			if !(b.isPairFormScrutinee(m.Tag) && !anyArmAtBinding(m.Arms) && !anyArmPayloads(m.Arms)) {
+				ownMove[m] = true
+			}
+			return true
+		}
 		if inLoop[m] {
 			return true
 		}
@@ -6732,7 +6752,7 @@ func (b *builder) computeConsumingOwnedMatches() (map[*ast.Match]string, map[*as
 		matches[m] = id.Name
 		return true
 	})
-	if len(matches) == 0 && len(payload) == 0 {
+	if len(matches) == 0 && len(payload) == 0 && len(ownMove) == 0 {
 		return matches, payload, bindings
 	}
 	// Binding pass, to a fixpoint: a NAME is admissible only when every
@@ -6805,10 +6825,14 @@ func (b *builder) computeConsumingOwnedMatches() (map[*ast.Match]string, map[*as
 			switch x := n.(type) {
 			case *ast.Match:
 				_, consuming := matches[x]
-				if payload[x] {
+				if payload[x] || ownMove[x] {
+					admissible := ownedPayloadType
+					if ownMove[x] {
+						admissible = sweepable
+					}
 					for _, arm := range x.Arms {
 						if !arm.IsWildcard && arm.Guard == nil && arm.Literal == nil && !armHasSubPatterns(arm) {
-							admit(arm, ownedPayloadType)
+							admit(arm, admissible)
 						} else {
 							disqualify(arm.Bindings)
 						}
@@ -6915,6 +6939,9 @@ func (b *builder) computeConsumingOwnedMatches() (map[*ast.Match]string, map[*as
 				markUsed(m)
 			}
 			for m := range payload {
+				markUsed(m)
+			}
+			for m := range ownMove {
 				markUsed(m)
 			}
 			for nm, bt := range cand {
@@ -8397,8 +8424,8 @@ func (g *growParam) merge(o growParam) bool {
 // callArgDeaths is checker.CallArgDeaths widened by the param-field deaths
 // only the IR's field-observation summaries can see. The widening only adds,
 // so E051, reading the core alone, never admits a move this does not make.
-func callArgDeaths(fn *ast.FuncDecl, info *checker.Info, obs map[string][]fieldObs) map[*ast.Call]map[string]bool {
-	d := checker.CallArgDeaths(fn, info)
+func callArgDeaths(fn *ast.FuncDecl, info *checker.Info, obs map[string][]fieldObs, owned map[string]bool) map[*ast.Call]map[string]bool {
+	d := checker.CallArgDeathsOwning(fn, info, owned)
 	markUnobservedParamFields(d.Dies, fn, info, obs, d.Repeating, d.Escaping, d.Occurrences)
 	return d.Dies
 }
@@ -8903,7 +8930,7 @@ func computeGrowParams(prog *ast.Program, info *checker.Info, obs map[string][]f
 		g := grow.at(fn.Name)
 		deaths, ok := deathsOf[fn]
 		if !ok {
-			deaths = callArgDeaths(fn, info, obs)
+			deaths = callArgDeaths(fn, info, obs, nil)
 			deathsOf[fn] = deaths
 		}
 		changed := false
@@ -9220,6 +9247,10 @@ func (b *builder) computeOwnedArgMoves() map[*ast.Ident]bool {
 		}
 		return true
 	})
+	// A consuming match's counted binding is owned the same way.
+	for nm := range b.rc.consumingBindings {
+		varLocal[nm] = true
+	}
 	b.rc.ownArgRetains = map[*ast.Ident]bool{}
 	ast.Walk(b.fn.Body, func(n ast.Node) bool {
 		call, ok := n.(*ast.Call)
@@ -9688,6 +9719,9 @@ func (b *builder) frameOwnsIdent(name string) bool {
 		return false
 	}
 	if b.isOwnedRcLocal(name) {
+		return true
+	}
+	if _, counted := b.rc.consumingBindings[name]; counted && b.rc.freeEligible[name] {
 		return true
 	}
 	return b.isOwnedRcParam(name) && !b.isConsumedArrayParam(name)

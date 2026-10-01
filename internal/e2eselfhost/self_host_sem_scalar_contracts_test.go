@@ -3,8 +3,7 @@ package e2eselfhost
 import "testing"
 
 // TestSelfHostSemScalarContracts compiles the unsigned-operator and __c_call
-// programs under FERN_SEM_IR_STRICT, so each is the typed lowering's own
-// output, and pins the answers. On the register backends a usize is 64 bits,
+// programs, each the typed lowering's own output, and pins the answers. On the register backends a usize is 64 bits,
 // as it is in the interpreter, so every program the interpreter can run must
 // answer what it does there; wasm's usize is 32 bits.
 func TestSelfHostSemScalarContracts(t *testing.T) {

@@ -254,7 +254,7 @@ function main(): i32 { return branch_returns(mk(), 1) + branch_falls_through(mk(
 		}
 		seen[fn.Name] = true
 		var got []string
-		for _, names := range callArgDeaths(fn, info, obs) {
+		for _, names := range callArgDeaths(fn, info, obs, nil) {
 			for n := range names {
 				got = append(got, n)
 			}

@@ -273,9 +273,6 @@ func TestSelfHostSemanticTrmc(t *testing.T) {
 			if got != selfHostTrmcWant {
 				t.Fatalf("answered %q, want %q\nreport: %s", got, selfHostTrmcWant, report)
 			}
-			if strings.Contains(report, "the AST lowering stands") {
-				t.Fatalf("the module did not produce, so nothing here tested the rewrite:\n%s", report)
-			}
 			if target == "x86-64-sanitize" && leak != 0 {
 				t.Fatalf("the produced loops leaked %d bytes", leak)
 			}

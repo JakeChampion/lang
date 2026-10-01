@@ -6016,6 +6016,9 @@ type variantDrop struct {
 }
 
 func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bool, emitLineMarkers bool, target targetName, cover *coverTable, pairForm map[string]bool, closureCaps map[string][]ast.Param, genEnumDrops map[string]*ast.EnumDecl, genTupleDrops map[string]ast.TupleType, returnsNoParamEscape, returnsFreshPairPayload, returnsFreshBox, returnsConstructedBox map[string]bool, trmcFuncs, trmcConsumeSafe map[string]bool, paramEscapes map[string][]bool, returnsParamProjection map[string]bool, paramCountedRetain, paramNoUncountedAlias map[string][]bool, consumedArrayArgPos, returnedArrayParams map[string][]bool, readOnlyComparators map[string]bool, vtableDispatched map[string]bool, addressTaken map[string]bool, growParams map[string][]growParam, paramFieldObs map[string][]fieldObs) (*Func, error) {
+	if stdlibBytesIntrinsic(fn) {
+		return lowerStdlibBytes(fn), nil
+	}
 	out := &Func{
 		Name:       fn.Name,
 		Params:     fn.Params,
@@ -22885,7 +22888,14 @@ func (b *builder) curIdentOrder() checker.IdentOrder {
 // body walk each time (#8175).
 func (b *builder) curCallArgDies() map[*ast.Call]map[string]bool {
 	if b.callArgDiesFn != b.fn {
-		b.callArgDies = callArgDeaths(b.fn, b.info, b.paramFieldObs)
+		var owned map[string]bool
+		if len(b.rc.consumingBindings) > 0 {
+			owned = make(map[string]bool, len(b.rc.consumingBindings))
+			for nm := range b.rc.consumingBindings {
+				owned[nm] = true
+			}
+		}
+		b.callArgDies = callArgDeaths(b.fn, b.info, b.paramFieldObs, owned)
 		b.callArgDiesFn = b.fn
 	}
 	return b.callArgDies

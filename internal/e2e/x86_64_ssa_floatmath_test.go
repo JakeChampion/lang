@@ -55,9 +55,9 @@ function main(): i32 {
 }`,
 	},
 	{
-		// string.bytes() is std/string's __memcpy caller: an owned copy of the
-		// bytes, summed back and rebuilt into the same text.
-		name: "string_bytes_copies_through_memcpy",
+		// string.bytes() borrows its source and returns an owned copy,
+		// summed back and rebuilt into the same text.
+		name: "string_bytes_owned_copy",
 		src: `import "std/string";
 function main(): i32 {
   var s: string = "hello, memcpy";

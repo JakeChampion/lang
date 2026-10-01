@@ -133,9 +133,8 @@ func TestDifferential_SelfHostX86_64(t *testing.T) {
 // TestDifferential_SelfHostSemanticX86_64 is the same corpus through the
 // self-host CLI with FERN_SEM_IR=1, the fuzz leg for the semantic lowering
 // (docs/SELFHOST-SEMANTIC-SOURCE.md, #9415). The interpreter is the oracle as
-// above, and the report's tally is read per seed: a seed that compiles must
-// produce every declaration, since a refusal would otherwise run it as a
-// mixed module with the AST lowering beside the produced bodies.
+// above, and a seed the typed lowering refuses fails rather than skipping as a
+// coverage gap.
 func TestDifferential_SelfHostSemanticX86_64(t *testing.T) {
 	testDifferentialSelfHostX86_64(t, true)
 }
@@ -188,8 +187,12 @@ func testDifferentialSelfHostX86_64(t *testing.T, semantic bool) {
 				}
 				t.Errorf(format, args...)
 			}
-			r, gap, report := runSelfHostSeed(t, fernBin, stdlibRoot, src, semantic, failf)
+			r, gap := runSelfHostSeed(t, fernBin, stdlibRoot, src, semantic, failf)
 			if gap != "" {
+				if semantic && semRefused(gap) {
+					t.Errorf("the typed lowering refused this seed:\n%s", gap)
+					return
+				}
 				// A compile bail is a documented endpoint, so an unlisted seed
 				// SKIPS. A listed one does not: the row says this seed produces
 				// a wrong ANSWER, and a seed that no longer compiles cannot
@@ -203,9 +206,6 @@ func testDifferentialSelfHostX86_64(t *testing.T, semantic bool) {
 					"cannot be verified — re-check it and either update the reason or delete it:\n%s",
 					seed, knownFile, reason, gap)
 				return
-			}
-			if semantic {
-				requireSemWhole(t, report)
 			}
 			if r != nil {
 				atomic.AddInt64(&ran, 1)
@@ -232,28 +232,11 @@ func testDifferentialSelfHostX86_64(t *testing.T, semantic bool) {
 	})
 }
 
-// semReportWhole reads the production tally out of the compiler's stderr and
-// reports whether every declaration produced.
-func semReportWhole(report string) bool {
-	const marker = "module: produced "
-	at := strings.Index(report, marker)
-	if at < 0 {
-		return false
-	}
-	var n, m int
-	if _, err := fmt.Sscanf(report[at+len(marker):], "%d of %d declarations", &n, &m); err != nil {
-		return false
-	}
-	return n == m
-}
-
-// requireSemWhole fails a seed that compiled as a mixed module: a refused
-// declaration kept the AST lowering beside the produced ones.
-func requireSemWhole(t *testing.T, report string) {
-	t.Helper()
-	if !semReportWhole(report) {
-		t.Errorf("the semantic lowering did not produce this seed whole, so it compiled as a mixed module:\n%s", report)
-	}
+// semRefused reports whether a compile failed because the typed lowering
+// refused part of the program, which the semantic legs fail rather than skip
+// as a coverage gap.
+func semRefused(out string) bool {
+	return strings.Contains(out, "FERN_SEM_IR: the typed lowering refused")
 }
 
 // runSelfHostSeed compiles src with the self-host CLI, links it, and runs it.
@@ -274,7 +257,7 @@ func requireSemWhole(t *testing.T, report string) {
 // selfHostRunTimeout and reported as such, rather than spending the lane's
 // budget. That matters more here than on the fixture legs: these programs are
 // generated, so nobody has ever eyeballed one to know it should terminate.
-func runSelfHostSeed(t *testing.T, fernBin, stdlibRoot, src string, semantic bool, failf failFunc) (*selfHostRun, string, string) {
+func runSelfHostSeed(t *testing.T, fernBin, stdlibRoot, src string, semantic bool, failf failFunc) (*selfHostRun, string) {
 	t.Helper()
 	// Absolute paths throughout: a relative one was unopenable from an
 	// arm64-darwin binary until #6002, and absolute is what every other
@@ -289,27 +272,26 @@ func runSelfHostSeed(t *testing.T, fernBin, stdlibRoot, src string, semantic boo
 	// The control leg spells the flag EMPTY rather than leaving it unset: an
 	// empty value is off (semlower.sem_ir_on), and writing it is what stops an
 	// ambient FERN_SEM_IR=1 in the environment turning both legs into the
-	// semantic one. Strict is spelled off too: under it a refusal would be a
-	// compile gap, which skips, where requireSemWhole fails it.
-	compile.Env = append(os.Environ(), "FERN_SEM_IR=", "FERN_SEM_IR_STRICT=", "FERN_SEM_IR_REPORT=1")
+	// semantic one. The bisect knobs are cleared too, since under either a
+	// refusal keeps a mixed module instead of failing the compile.
+	compile.Env = append(os.Environ(), "FERN_SEM_IR=", "FERN_SEM_IR_ONLY=", "FERN_SEM_IR_SKIP=")
 	if semantic {
 		compile.Env = append(compile.Env, "FERN_SEM_IR=1")
 	}
 	out, err := compile.CombinedOutput()
-	report := string(out)
 	if err != nil {
 		return nil, fmt.Sprintf("%v\n%s%s", err, out,
-			strictIRBailSite(fernBin, "x86-64-linux", []string{"-emit", "asm"}, srcPath, stdlibRoot, out)), report
+			strictIRBailSite(fernBin, "x86-64-linux", []string{"-emit", "asm"}, srcPath, stdlibRoot, out))
 	}
 	binPath := filepath.Join(dir, "prog")
 	// The flags every other self-host x86 link uses (linkSelfHostAsm's small
 	// path).
 	if out, err := exec.Command("gcc", "-static", "-nostdlib", "-no-pie", asmPath, "-o", binPath).CombinedOutput(); err != nil {
 		failf("the assembler/linker REJECTED the self-host asm — the artifact never ran (%v):\n%s\nsrc:\n%s", err, out, src)
-		return nil, "", report
+		return nil, ""
 	}
 	r := runSelfHostBin(exec.Command(binPath), "")
-	return &r, "", report
+	return &r, ""
 }
 
 // checkSelfHostSeedExit is checkSelfHostNativeRun's oracle-side sibling: the

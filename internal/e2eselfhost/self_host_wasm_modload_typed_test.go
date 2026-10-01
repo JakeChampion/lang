@@ -15,7 +15,7 @@ import (
 // keeps the units it asked for. The functions no module declares (the generic
 // instances, a lifted closure) are the entry's and are emitted once, by the
 // unit that ends the entry module. FERN_SEM_IR= still selects the AST
-// lowering, and FERN_SEM_IR_STRICT fails an emit rather than fall back.
+// lowering, and a refusal fails the emit.
 func TestSelfHostWasmModloadTypedLowering(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -161,7 +161,7 @@ function main(): i32 {
 		var planText strings.Builder
 		for idx, n := range strings.Fields(counts) {
 			rng := "0:" + n
-			_, se, code := drive(t, entry, []string{"FERN_SEM_IR_STRICT=1"}, "-per-module-emit", strconv.Itoa(idx), "-func-range", rng, "-cache-dir", cacheDir)
+			_, se, code := drive(t, entry, nil, "-per-module-emit", strconv.Itoa(idx), "-func-range", rng, "-cache-dir", cacheDir)
 			if code != 0 {
 				t.Fatalf("emit %d: exit %d\n%s", idx, code, se)
 			}
@@ -195,10 +195,85 @@ function main(): i32 {
 		}
 	})
 
+	// A dyn holding a view merged past its source now takes a copy. Keep the
+	// former refusal fixture as a linked execution test of that ownership path.
+	t.Run("dyn_view_merged_past_source_runs_under_strict", func(t *testing.T) {
+		proj := t.TempDir()
+		entry := filepath.Join(proj, "main.fern")
+		write(t, entry, `trait Size { function size(self: Self): i32; }
+struct P { a: str }
+impl Size for P { function size(self: P): i32 { return self.a.len() * 10 + (self.a[0] as i32) - 97; } }
+function mk(n: i32): string {
+    var s: string = "ab";
+    var i: i32 = 0;
+    while (i < n) { s = s + "c"; i = i + 1; }
+    return s;
+}
+function wrap(s: string): dyn Size { var p: P = P { a: slice_unchecked(s, 1, 4) }; return p; }
+function g(n: i32): i32 {
+    var d: dyn Size = P { a: "q" };
+    if (n != 0) {
+        var s: string = mk(n);
+        d = wrap(s);
+    }
+    var junk: string[] = [];
+    var i: i32 = 0;
+    while (i < 50) { junk = junk.append("zz"); i = i + 1; }
+    return d.size();
+}
+function main(): i32 { return g(3) + g(0); }
+`)
+		cacheDir := filepath.Join(proj, "cache")
+		if err := os.Mkdir(cacheDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		env := []string{"FERN_SEM_IR=1", "FERN_SEM_IR_STRICT=1", "FERN_SEM_IR_ONLY=", "FERN_SEM_IR_SKIP="}
+		if _, se, code := drive(t, entry, env, "-per-module-emit-all", "-cache-dir", cacheDir); code != 0 {
+			t.Fatalf("strict emit: exit %d\n%s", code, se)
+		}
+		wat, se, code := drive(t, entry, env, "-link", "-cache-dir", cacheDir)
+		if code != 0 {
+			t.Fatalf("strict link: exit %d\n%s", code, se)
+		}
+		watPath := filepath.Join(proj, "dyn.wat")
+		wasmPath := filepath.Join(proj, "dyn.wasm")
+		write(t, watPath, wat)
+		if out, err := exec.Command(wasmtools, "parse", watPath, "-o", wasmPath).CombinedOutput(); err != nil {
+			t.Fatalf("wasm-tools parse: %v\n%s", err, out)
+		}
+		var ee *exec.ExitError
+		if err := exec.Command(wasmtime, "run", wasmPath).Run(); !errors.As(err, &ee) || ee.ExitCode() != 57 {
+			t.Fatalf("linked dyn view: %v, want exit 57", err)
+		}
+	})
+
+	// A closure capturing a bare view still has no owned environment copy.
+	// This pins the strict driver's refusal rather than a now-supported case.
+	t.Run("bare_view_closure_refusal_fails_the_emit", func(t *testing.T) {
+		proj := t.TempDir()
+		entry := filepath.Join(proj, "main.fern")
+		write(t, entry, `function viewer(n: i32): () => i32 {
+    var s: string = "ab";
+    var i: i32 = 0;
+    while (i < n) { s = s + "c"; i = i + 1; }
+    var v: str = slice_unchecked(s, 1, 4);
+    return () => v.len() * 10 + (v[0] as i32) - 97;
+}
+function main(): i32 { var f: () => i32 = viewer(3); return f(); }
+`)
+		_, se, code := drive(t, entry, []string{"FERN_SEM_IR=1", "FERN_SEM_IR_STRICT=1", "FERN_SEM_IR_ONLY=", "FERN_SEM_IR_SKIP="}, "-per-module-emit", "0")
+		if code != 3 || !strings.Contains(se, "FERN_SEM_IR: viewer: closure capture type") {
+			t.Fatalf("strict emit: exit %d, want 3 naming the refusal\n%s", code, se)
+		}
+		if _, se, code := drive(t, entry, []string{"FERN_SEM_IR=1", "FERN_SEM_IR_STRICT=", "FERN_SEM_IR_ONLY=", "FERN_SEM_IR_SKIP="}, "-per-module-emit", "0"); code != 0 {
+			t.Fatalf("the same without strict: exit %d, want the AST lowering's emit\n%s", code, se)
+		}
+	})
+
 	// A type that holds itself, merged past its source, has no copy and is a
 	// typed refusal by name (TestSelfHostSemIRStrict); a dyn holding a view
 	// is copied at the merge since #10909.
-	t.Run("strict_refusal_fails_the_emit", func(t *testing.T) {
+	t.Run("refusal_fails_the_emit", func(t *testing.T) {
 		proj := t.TempDir()
 		entry := filepath.Join(proj, "main.fern")
 		write(t, entry, `import "std/i32";
@@ -221,12 +296,9 @@ function g(n: i32): i32 {
 }
 function main(): i32 { return g(3) + g(0); }
 `)
-		_, se, code := drive(t, entry, []string{"FERN_SEM_IR_STRICT=1"}, "-per-module-emit", "0")
+		_, se, code := drive(t, entry, nil, "-per-module-emit", "0")
 		if code != 3 || !strings.Contains(se, "FERN_SEM_IR: g: a value merged past its source has no copy: L holds itself, so its copy would recurse") {
-			t.Fatalf("strict emit: exit %d, want 3 naming the refusal\n%s", code, se)
-		}
-		if _, se, code := drive(t, entry, []string{"FERN_SEM_IR_STRICT="}, "-per-module-emit", "0"); code != 0 {
-			t.Fatalf("the same without strict: exit %d, want the AST lowering's emit\n%s", code, se)
+			t.Fatalf("emit: exit %d, want 3 naming the refusal\n%s", code, se)
 		}
 	})
 }

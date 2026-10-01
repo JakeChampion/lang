@@ -211,6 +211,14 @@ type ArgDeaths struct {
 // (#9541). The IR widens it with the param-field deaths only it can see, and
 // only ever adds.
 func CallArgDeaths(fn *ast.FuncDecl, info *Info) ArgDeaths {
+	return CallArgDeathsOwning(fn, info, nil)
+}
+
+// CallArgDeathsOwning is CallArgDeaths with `owned` admitted to the
+// last-occurrence shapes beside the params and call-init locals: names the
+// caller knows this frame owns that no declaration here spells, such as the
+// IR's counted consuming-match bindings.
+func CallArgDeathsOwning(fn *ast.FuncDecl, info *Info, owned map[string]bool) ArgDeaths {
 	body := fn.Body
 	out := map[*ast.Call]map[string]bool{}
 	// Occurrence census over the whole body, for the sole-occurrence shape.
@@ -326,7 +334,7 @@ func CallArgDeaths(fn *ast.FuncDecl, info *Info) ArgDeaths {
 		}
 	}
 	admitted := func(name string) bool {
-		return isParam[name] || callInitLocal[name] || unpackInitLocal[name] || aliasInitLocal[name]
+		return isParam[name] || callInitLocal[name] || unpackInitLocal[name] || aliasInitLocal[name] || owned[name]
 	}
 	// markOnce marks `name` dead at the call inside `scope` that takes it,
 	// when scope names it exactly once and that occurrence is a direct
