@@ -269,6 +269,12 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"struct-literal-written-type-variable", "struct T { z: i32 }\nstruct Box[T] { v: T }\nstruct Many[T] { xs: T[] }\nfunction wrap[T](x: T): Box[T] { return Box[T] { v: x }; }\nfunction many[T](x: T): Many[T] { return Many[T] { xs: [x] }; }\nfunction main(): i32 { var b = wrap(4294967296); var r: i64 = b.v; var m = many(4294967296); var k: i64 = m.xs[0]; return 0; }\n", nil},
 		{"struct-literal-update-base-outranks-written", "struct Pair[T] { a: T, b: T }\nfunction f(p: Pair[string]): Pair[string] { return Pair[i32] { ...p, a: \"x\" }; }\nfunction main(): i32 { return f(Pair { a: \"a\", b: \"b\" }).a.len(); }\n", nil},
 		{"struct-literal-wide-array-field", "struct Stack[T] { items: T[] }\nfunction main(): i32 { var q = Stack { items: [1, 4611686018427387904] }; var r: i64 = q.items[1]; return 0; }\n", nil},
+		// A nested generic literal infers its own arguments (#10895).
+		{"nested-generic-struct-literal", "struct Box[T] { v: T }\nstruct Outer[T] { b: Box[T] }\nfunction main(): i32 { var o = Outer { b: Box { v: 4 } }; return o.b.v; }\n", nil},
+		{"nested-generic-struct-literal-wide", "struct Box[T] { v: T }\nstruct Two[T] { b: Box[T], c: T }\nfunction main(): i32 { var o = Two { b: Box { v: 4611686018427387904 }, c: 1 }; var r: i64 = o.c; return 0; }\n", nil},
+		// A generic call in an unbound field infers from the destination.
+		{"generic-call-in-unbound-field", "struct Holder[T] { xs: T[], z: T }\nfunction emptyArr[A](): A[] { return []; }\nfunction f[T](t: T): Holder[T] { var h = Holder { xs: emptyArr(), z: t }; return h; }\nfunction main(): i32 { var h = f(7); return h.z; }\n", nil},
+		{"nested-generic-struct-literal-clash", "struct Box[T] { v: T }\nstruct Two[T] { b: Box[T], c: T }\nfunction main(): i32 { var o = Two { b: Box { v: 1 }, c: \"x\" }; return 0; }\n", []string{"E043"}},
 		{"struct-literal-wide-in-array", "struct Same[T] { a: T, b: T }\nfunction main(): i32 { var xs = [Same { a: 1, b: 4611686018427387904 }]; var r: i64 = xs[0].b; return 0; }\n", nil},
 		// A typed field binds T ahead of an untyped literal written before
 		// it, so this is a Same[i64] (#10453); the literal used to bind T at
