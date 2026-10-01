@@ -160,7 +160,7 @@ function listed_leaf(): string {
 // body that refuses under the widening is shown rather than hidden.
 function measured_build(merged: parser.Module): semsource.Built {
   var built: semsource.Built = semsource.build_module(merged);
-  var widened: semsource.Built = semsource.with_inferred_modes(built);
+  var widened: semsource.Built = semsource.with_inferred_modes(built, []);
   if (!semsource.any_row_changed(semsource.changed_rows(built, widened))) {
     return built;
   }

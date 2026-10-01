@@ -813,7 +813,7 @@ function inferred_pass(mod: parser.Module, built: semsource.Built, r: Rows, stru
   if (!lowers_whole_module(built, r)) {
     return same;
   }
-  var widened: semsource.Built = semsource.with_inferred_modes(built);
+  var widened: semsource.Built = semsource.with_inferred_modes(built, plan_analyses(r));
   var changed: boolean[] = semsource.changed_rows(built, widened);
   if (!semsource.any_row_changed(changed)) {
     return same;
@@ -823,6 +823,16 @@ function inferred_pass(mod: parser.Module, built: semsource.Built, r: Rows, stru
     return same;
   }
   return Inference { built: widened, rows: r2 };
+}
+
+// Each row's plan analysis, in row order: what the inference reads in place
+// of analysing the same graphs again.
+function plan_analyses(r: Rows): ssasem.Analysis[] {
+  var out: ssasem.Analysis[] = [];
+  for p in r.plans {
+    out = out.append(p.analysis);
+  }
+  return out;
 }
 
 // The module built, lowered, pruned and, when it lowers whole, lowered again

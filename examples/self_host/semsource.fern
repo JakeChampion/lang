@@ -7539,7 +7539,18 @@ function builtin_row(c: ssasem.Contract): ownership.Escapes {
   return ownership.Escapes { name: c.name, bits: bits, lends: reference(c.result) };
 }
 
-function infer_rows(all: Produced[], names: string[], pinned: string[]): ownership.Escapes[] {
+// The analysis a row is inferred from. A caller that has planned the rows
+// hands over each plan's analysis in row order, which is of the very graph
+// read here; a row beyond the list, or whose plan was refused and so carries
+// none, is analysed here.
+function planned_analysis(planned: ssasem.Analysis[], i: i32, f: ssasem.Func): ssasem.Analysis {
+  if (i < planned.len() && planned[i].ok) {
+    return planned[i];
+  }
+  return ssasem.analyze(f);
+}
+
+function infer_rows(all: Produced[], names: string[], pinned: string[], planned: ssasem.Analysis[]): ownership.Escapes[] {
   var taken: string[] = pinned;
   var k: i32 = 0;
   while (k < all.len()) {
@@ -7554,7 +7565,7 @@ function infer_rows(all: Produced[], names: string[], pinned: string[]): ownersh
   while (i < all.len() && i < names.len()) {
     if (all[i].ok && !all[i].template && !closure_body_produced(all[i]) && !ownership.names_has(taken, names[i])) {
       rows = rows.append(ownership.Escapes { name: names[i], bits: seed_bits(all[i].func.params.len()), lends: true });
-      analyses = analyses.append(ssasem.analyze(all[i].func));
+      analyses = analyses.append(planned_analysis(planned, i, all[i].func));
     } else {
       analyses = analyses.append(ssasem.refused_analysis("not produced"));
     }
@@ -7598,8 +7609,8 @@ function infer_rows(all: Produced[], names: string[], pinned: string[]): ownersh
   return rows;
 }
 
-function infer_ownership(all: Produced[], names: string[], table: ssasem.Contracts, pinned: string[]): Inferred {
-  var rows: ownership.Escapes[] = infer_rows(all, names, pinned);
+function infer_ownership(all: Produced[], names: string[], table: ssasem.Contracts, pinned: string[], planned: ssasem.Analysis[]): Inferred {
+  var rows: ownership.Escapes[] = infer_rows(all, names, pinned, planned);
   var ix: ownership.Index = ownership.index(rows);
   var out: Produced[] = [];
   var i: i32 = 0;
@@ -7777,9 +7788,12 @@ function dispatched_arms(funcs: parser.FuncDecl[], impls: parser.ImplInfo[], all
 // only where the typed pipeline lowers every body of the module. `semlower`
 // is the layer that knows that — it is what `prune` decides — so it asks for
 // this and checks the answer still lowers whole before keeping it.
-pub function with_inferred_modes(b: Built): Built {
+// `planned` is the analysis each row's plan was made from, in row order
+// (every declaration, then every instance), so the inference reads the
+// graphs it already has analyses of; a caller with no plans passes none.
+pub function with_inferred_modes(b: Built, planned: ssasem.Analysis[]): Built {
   var all: Produced[] = util.append_all(b.decls, b.instances);
-  var inferred: Inferred = infer_ownership(all, b.names, b.contracts, b.dyn_arms);
+  var inferred: Inferred = infer_ownership(all, b.names, b.contracts, b.dyn_arms, planned);
   var decls: Produced[] = [];
   var instances: Produced[] = [];
   var i: i32 = 0;
