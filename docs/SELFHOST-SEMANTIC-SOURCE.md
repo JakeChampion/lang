@@ -2392,9 +2392,17 @@ into five groups:
   how the whole-compiler link test builds the compiler. With `FERN_SEM_IR=`
   the units lower their window through `wasm_ir.lower_all_for_view` as
   before.
-- Gate probes: `asm_pathprobe_run` and `asm_ir_elig_run`. They run
-  `ircore.all_eligible` and emit nothing, so they need no substitution. The
-  verdict `asm_pathprobe_run` and `-decide` print is `ir` or `refused`.
+- Verdict probes: `asm_pathprobe_run`, `asm_load_run -decide`, and
+  `-ir-probe` on `asm_ir_run`, `asm_load_run` and `asm_modload_run`. They ask
+  `semlower.verdict`, which runs the emit entry's checks and the typed
+  lowering the substitution runs, and returns what it produced and what it
+  refused, with each refusal's reason, without exiting. `asm_load_run` holds
+  the program to the checker's build gate first, as its emit does.
+  `asm_pathprobe_run` and `-decide` print `ir` or `refused`; `-ir-probe`
+  prints `semlower.verdict_text`, a line per declaration and instance
+  (`<name>: ir`, `<name>: refused: <why>`, `template` or `extern`) and last
+  `module: IR` or `module: refused`. `asm_ir_run -ir-needs` reads the
+  runtime needs off the emit of the module's unit of the typed lowering.
 - `wasm_units_probe`, which lowers the whole program once through the typed
   substitution and splits that cache between its two units.
 - `ir_const_numeric_run`, which rewrites the constants in the typed path's
@@ -2434,7 +2442,9 @@ AST-lowered caller can call a produced callee, and they go with the lowering.
   an `@import` extern, a declaration a bisect knob leaves out, or everything
   with the typed path off;
 - `ircore.claim_lowering`, for the FIP and E068 claim checks;
-- the eligibility probes in `ircore` (`func_eligible` and the reports);
+- `ircore.all_eligible_view_base` (`func_eligible`), the per-module gate the
+  modload drivers run with the typed path off, and `wasm_ir.wasm_eligible`,
+  the gate of `wasm_ir_run -ir`;
 - `runtime_ast_bodies` in `asm_ir` and `asm_arm64_ir`, for a runtime helper
   under a bisect knob, with the typed path off, or in a driver without
   `rt_lower`;
@@ -2451,10 +2461,9 @@ AST-lowered caller can call a produced callee, and they go with the lowering.
 - the `irlower_run` suites: IR round trip, IR verify, and the rc-plan and
   ownership dumps.
 
-The gate's verdict was spelled `ast`, from when a bail routed to the AST
-emitter. It already meant the drivers refuse the module, and it is now
-spelled `refused`, as is the `-ir-probe` report's `module:` line; step 3
-does not change the gate.
+The probes' verdict was spelled `ast`, from when a bail routed to the AST
+emitter, and then `refused`. It is the typed lowering's now
+(`semlower.verdict`), so step 3 does not change it.
 
 `TestSelfHostSSALoopTailBlockEmittedOnce` pins a loop shape only the AST
 lowering's TCO wrapper builds, and runs a typed leg beside it; its AST leg goes

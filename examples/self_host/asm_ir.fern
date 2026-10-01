@@ -6,10 +6,9 @@
 // between a push of their operands and a pop of the result (emit_stack_op).
 //
 // This is the only x86-64 emitter — the AST one it grew up beside was deleted
-// (#5972). emit_module_ir handles a module only when EVERY function is
-// eligible (ircore.all_eligible); otherwise it REFUSES, and that refusal is a
-// diagnostic naming the bail site under FERN_STRICT_IR=1, not a route to some
-// other emitter.
+// (#5972). A module the gate (ircore.lower_gated) refuses is a diagnostic
+// naming the bail site under FERN_STRICT_IR=1, not a route to some other
+// emitter.
 //
 // What is NOT here: whether a module lowers at all (ircore.fern) and the GAS
 // text arm64 emits identically (asmcore.fern). The other two backends import
@@ -9670,7 +9669,7 @@ function ir_i2f_rax(width: i32, unsigned: boolean, lb: string, d: string): strin
 // emit_module_ir emits a full all-i32-eligible module via the IR path. The
 // program is self-contained (pure i32 uses no runtime helpers): every
 // function via the IR, then a `_start` that calls __fn_main and exits with
-// its result. Caller must ensure all_eligible(mod).
+// its result. The caller has gated the module (ircore.lower_gated).
 // emit_module_funcs derives the per-module side-tables ONCE and emits every
 // function through the IR (asm into the strbuf), marking each function's runtime
 // needs (the maps/heap op-scan + the str_*/print mark_* calls all live inside
@@ -10381,27 +10380,19 @@ function emit_named_bodies(cache: irlower.LowerResult[], from: i32, s: asmcore.E
   return s;
 }
 
-// module_runtime_needs returns the runtime helpers a module requires (the
-// closed need-set: "heap", "maps", "str_concat", …), for whole-program runtime
-// aggregation in per-module emit (#3451 step 3 / #3455). The entry module emits
-// the single shared runtime, but on its OWN it only knows its own needs — a
-// library module that uses a helper the entry doesn't (e.g. str_concat) would
-// reference an undefined symbol at link. The driver unions module_runtime_needs
-// across every loaded module and passes the result as emit_module_ir_unit's
-// extra_needs, so the entry's runtime covers every module. It runs the same
-// per-function emit as the real path (so the need-set is exact) but discards
-// the asm (strbuf_reset) and reads `needed`.
-pub function module_runtime_needs(mod: parser.Module): string[] {
-  var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
-  mod = parser.infer_ret_types_module(mod);
+// module_runtime_needs returns the runtime helpers one unit of a lowered
+// program requires (the closed need-set: "heap", "maps", "str_concat", …), for
+// whole-program runtime aggregation in per-module emit (#3451 step 3 / #3455).
+// The entry module emits the single shared runtime, but on its OWN it only
+// knows its own needs — a library module that uses a helper the entry doesn't
+// (e.g. str_concat) would reference an undefined symbol at link. It runs the
+// unit's emit over `cache` (its lowered bodies, ircore.split_units) so the
+// need-set is exact, but discards the asm (strbuf_reset) and reads `needed`.
+pub function module_runtime_needs(mod: parser.Module, all_funcs: parser.FuncDecl[], all_structs: irlower.StructTab, cache: irlower.LowerResult[], base: irlower.FnSigs): string[] {
   strbuf_reset();
   var s: asmcore.EmitState = asmcore.new_state();
-  s = asmcore.EmitState { ...s, struct_decls: stab, funcs: mod.funcs };
-  // Needs depend only on this module's own ops, so the single-module
-  // signature view suffices (a cross-module call's NEED set is the callee's,
-  // aggregated separately via module_runtime_needs over each module). Extract
-  // the bases into locals here (once) and pass them as individual params.
-  s = emit_module_funcs(mod, mod.funcs, stab, s, false, 0, 0 - 1, [], ircore.wp_fn_sigs(mod.funcs, stab), false);
+  s = asmcore.EmitState { ...s, struct_decls: all_structs, funcs: all_funcs };
+  s = emit_module_funcs(mod, all_funcs, all_structs, s, false, 0, 0 - 1, cache, base, false);
   s = s.close_needs();
   strbuf_reset();
   return s.needed;
