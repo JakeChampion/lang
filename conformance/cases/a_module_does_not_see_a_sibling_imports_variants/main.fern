@@ -1,0 +1,17 @@
+// The program imports two modules: one declares an enum with a variant named
+// like a builtin IoError variant, the other matches and constructs IoError's
+// by its bare name without importing the first. Each module sees only the
+// variants of the modules IT imports, so lib's `Other` stays IoError's.
+import "kinds";
+import "lib";
+
+function main(): i32 {
+    if (kinds.code(kinds.Other(7)) != 7) { return 1; }
+    match (lib.fail()) {
+        Ok(_) => { return 2; },
+        Err(e) => {
+            if (lib.describe(e) != "custom") { return 3; }
+        },
+    }
+    return 42;
+}

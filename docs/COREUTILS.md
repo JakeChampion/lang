@@ -521,12 +521,12 @@ coreutils/
   lib/sys.fern      the five fields of the kernel's utsname record, by
                     name, for the utilities that print the record
                     (uname) or one field of it (arch)
-  lib/resolv.fern   glibc's IPv4 name lookup — /etc/hosts, the
-                    `hosts:` line of nsswitch.conf, resolv.conf and an
-                    RFC 1035 A query — and getaddrinfo's AI_CANONNAME
-                    over the same walk, for the utilities that resolve
-                    the machine's own name (hostid) or one a session
-                    recorded (who --lookup)
+  lib/resolv.fern   glibc's IPv4 name lookup: the NSS walk over the
+                    `hosts:` line of nsswitch.conf, with std/dns as
+                    its `files` and `dns` sources — and getaddrinfo's
+                    AI_CANONNAME over the same walk, for the utilities
+                    that resolve the machine's own name (hostid) or one
+                    a session recorded (who --lookup)
   lib/canon.fern    the symbolic-link resolution walk readlink -f/-e/-m
                     and realpath share: one loop over a name's
                     components under three existence modes, plus the

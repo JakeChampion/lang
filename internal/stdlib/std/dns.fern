@@ -1,0 +1,1587 @@
+// std/dns — a stub resolver (#9855, the P2 slice of the networking plan
+// in #9851): the RFC 1035 wire codec, `/etc/hosts`, `/etc/resolv.conf`,
+// a query over UDP that retries over TCP when the reply is truncated,
+// and the A, AAAA and canonical-name lookups built on them.
+//
+// The pieces, bottom up:
+//
+//   - `Message`, `Question`, `Record`, `RData` — a DNS message as data.
+//     `encode` writes one (names uncompressed, which a query never needs),
+//     `decode` reads one, following compression pointers that only ever
+//     point backwards. `query(id, name, qtype)` is a recursion-desired
+//     question, and `with_edns(m)` appends the OPT record that lets a
+//     server answer 4096 bytes over UDP (EDNS0, RFC 6891).
+//   - `parse_hosts` and `parse_resolv_conf` read the two files glibc's
+//     resolver reads, with its defaults and caps: `ndots` up to 15,
+//     `timeout` up to 30 s, `attempts` up to 5, three nameservers, and
+//     the search list from the machine's own domain when the file names
+//     none. `RES_OPTIONS`, `LOCALDOMAIN` and `HOSTALIASES` are not read,
+//     and a nameserver with an IPv6 zone (`fe80::1%eth0`) is skipped.
+//   - `search_plan` is res_search's order for a name: a name with at
+//     least `ndots` dots is asked as it stands before the search domains,
+//     one with fewer after them, and a name ending in a dot only as it
+//     stands.
+//   - `exchange(ns, q, timeout_ms)` is one query to one nameserver: UDP,
+//     the reply awaited up to the timeout, a reply with another id
+//     ignored, and a truncated reply asked again over TCP. `ask(conf, q)`
+//     is res_send over the nameservers: each is tried in turn, `attempts`
+//     times round, from a rotating start when `rotate` is set, a server
+//     that fails, refuses or stays silent handing the query to the next.
+//   - `lookup_a`, `lookup_aaaa` and `canonical_name` walk the search plan
+//     over `ask` and read the answer section, following a CNAME chain to
+//     the owner of the records; `lookup_records_with` takes the asker as
+//     a function, which is how the walk is tested without a socket.
+//   - `system_conf()` and `system_hosts()` read the machine's files, and
+//     `resolve(name)` is the lookup a program wants by default: an address
+//     literal as it is, then the hosts file, then DNS. Its A records come
+//     before its AAAA records; the RFC 6724 sort and the parallel query
+//     are the next slice of #9855, as are Happy Eyeballs and NAT64.
+//
+// `.local` names are not special here: there is no mDNS, so they go to
+// the nameservers like any other name, which is what a resolver without
+// an mDNS backend does.
+//
+// Reaches the host for the files (`read_file`, `hostname`), the sockets
+// (`udp_*`, `tcp_*`, `poll`), the query id (`random_i32`) and the clock
+// the wait is measured by (`monotonic_ns`).
+import "std/net";
+import "std/i32";
+import "std/string";
+import "std/array";
+import "std/error";
+
+// ---------------------------------------------------------------------------
+// Errors
+
+// DnsError — why a lookup answered nothing.
+//
+// `NoSuchName` is the server's NXDOMAIN, `NoData` a clean reply with no
+// record of the asked type, `NoReply` a nameserver that stayed silent
+// through the timeout, `ServerFailure` and `Refused` its SERVFAIL and
+// REFUSED, `Malformed` a reply, a name or a file that does not parse,
+// `NoNameserver` a configuration naming none, and `Socket` what the
+// transport reported.
+pub enum DnsError {
+  NoSuchName,
+  NoData,
+  NoReply,
+  ServerFailure,
+  Refused,
+  Malformed,
+  NoNameserver,
+  Socket(net.NetError),
+}
+
+pub function (e: DnsError) message(): string {
+  match (e) {
+    NoSuchName => {
+      return "Name or service not known";
+    },
+    NoData => {
+      return "No address associated with hostname";
+    },
+    NoReply => {
+      return "Temporary failure in name resolution";
+    },
+    ServerFailure => {
+      return "Name server failed";
+    },
+    Refused => {
+      return "Name server refused the query";
+    },
+    Malformed => {
+      return "Malformed DNS message";
+    },
+    NoNameserver => {
+      return "No name server configured";
+    },
+    Socket(ne) => {
+      return ne.message();
+    }
+  }
+  return "";
+}
+
+impl error.Error for DnsError {}
+
+pub function (e: DnsError) to_string(): string {
+  return e.message();
+}
+
+// ---------------------------------------------------------------------------
+// The message
+
+// The record types and class this module reads and writes by name; any
+// other type travels as `Raw` bytes.
+pub function type_a(): i32 {
+  return 1;
+}
+
+pub function type_cname(): i32 {
+  return 5;
+}
+
+pub function type_ptr(): i32 {
+  return 12;
+}
+
+pub function type_aaaa(): i32 {
+  return 28;
+}
+
+pub function type_opt(): i32 {
+  return 41;
+}
+
+pub function class_in(): i32 {
+  return 1;
+}
+
+// The response codes a reply's header carries (RFC 1035 §4.1.1).
+pub function rcode_ok(): i32 {
+  return 0;
+}
+
+pub function rcode_format_error(): i32 {
+  return 1;
+}
+
+pub function rcode_server_failure(): i32 {
+  return 2;
+}
+
+pub function rcode_name_error(): i32 {
+  return 3;
+}
+
+pub function rcode_not_implemented(): i32 {
+  return 4;
+}
+
+pub function rcode_refused(): i32 {
+  return 5;
+}
+
+// RData — a record's data: an address, the name a CNAME or PTR points
+// at, or the bytes of a type this module does not read.
+pub enum RData {
+  A(net.IpAddr),
+  AAAA(net.IpAddr),
+  CNAME(string),
+  PTR(string),
+  Raw(u8[]),
+}
+
+// Question — one entry of the question section.
+pub struct Question { name: string, qtype: i32, qclass: i32 }
+
+// Record — one resource record: its owner name, type, class, TTL and data.
+pub struct Record { name: string, rtype: i32, rclass: i32, ttl: i32, data: RData }
+
+// Message — a whole DNS message. `rcode` is the four-bit response code,
+// `opcode` the four-bit operation (0 is a standard query).
+pub struct Message {
+  id: i32,
+  response: boolean,
+  opcode: i32,
+  authoritative: boolean,
+  truncated: boolean,
+  recursion_desired: boolean,
+  recursion_available: boolean,
+  rcode: i32,
+  questions: Question[],
+  answers: Record[],
+  authority: Record[],
+  additional: Record[],
+}
+
+// `query(id, name, qtype)` — a recursion-desired query for the records
+// of `name` of type `qtype`, class IN.
+pub function query(id: i32, name: string, qtype: i32): Message {
+  var qs: Question[] = [Question { name: name, qtype: qtype, qclass: class_in() }];
+  return Message {
+    id: id & 65535, response: false, opcode: 0, authoritative: false, truncated: false,
+    recursion_desired: true, recursion_available: false, rcode: 0,
+    questions: qs, answers: [], authority: [], additional: [],
+  };
+}
+
+// `udp_payload()` — the UDP payload size this module advertises with EDNS0,
+// what Go, hickory and c-ares advertise.
+pub function udp_payload(): i32 {
+  return 4096;
+}
+
+// `with_edns(m)` — `m` with the OPT pseudo-record of EDNS0 appended to its
+// additional section: owner the root, type OPT, the class carrying the UDP
+// payload size, no options.
+pub function with_edns(m: Message): Message {
+  var none: u8[] = [];
+  var opt: Record = Record { name: "", rtype: type_opt(), rclass: udp_payload(), ttl: 0, data: Raw(none) };
+  return Message { ...m, additional: m.additional.append(opt) };
+}
+
+// `rcode_name(rcode)` — a response code by its RFC 1035 name, for log
+// lines.
+pub function rcode_name(rcode: i32): string {
+  if (rcode == 0) {
+    return "NOERROR";
+  }
+  if (rcode == 1) {
+    return "FORMERR";
+  }
+  if (rcode == 2) {
+    return "SERVFAIL";
+  }
+  if (rcode == 3) {
+    return "NXDOMAIN";
+  }
+  if (rcode == 4) {
+    return "NOTIMP";
+  }
+  if (rcode == 5) {
+    return "REFUSED";
+  }
+  return "RCODE" + rcode.to_string();
+}
+
+// ---- encoding ---------------------------------------------------------------
+
+function put16(b: u8[], v: i32): u8[] {
+  var out: u8[] = b.append((v >> 8 & 255) as u8);
+  return out.append((v & 255) as u8);
+}
+
+function put32(b: u8[], v: i32): u8[] {
+  var out: u8[] = put16(b, v >> 16 & 65535);
+  return put16(out, v & 65535);
+}
+
+// A name on the wire: each label behind its length, the root as a lone
+// zero byte. A trailing dot is the root and is dropped. An empty label
+// (`a..b`), one over 63 bytes, or a name over 255 bytes on the wire
+// cannot be encoded.
+pub function encode_name(name: string): Result[u8[], DnsError] {
+  var out: u8[] = [];
+  var n: string = name;
+  if (n.ends_with(".")) {
+    n = slice_unchecked(n, 0, n.len() - 1) + "";
+  }
+  if (n.len() == 0) {
+    return Ok(out.append(0 as u8));
+  }
+  var labels: string[] = n.split(".");
+  var i: i32 = 0;
+  while (i < labels.len()) {
+    var l: string = labels[i];
+    if (l.len() == 0 || l.len() > 63) {
+      return Err(Malformed);
+    }
+    out = out.append(l.len() as u8);
+    var j: i32 = 0;
+    while (j < l.len()) {
+      out = out.append(l[j]);
+      j = j + 1;
+    }
+    i = i + 1;
+  }
+  out = out.append(0 as u8);
+  if (out.len() > 255) {
+    return Err(Malformed);
+  }
+  return Ok(out);
+}
+
+function encode_question(b: u8[], q: Question): Result[u8[], DnsError] {
+  var name: u8[] = encode_name(q.name)?;
+  var out: u8[] = b.concat(name);
+  out = put16(out, q.qtype);
+  return Ok(put16(out, q.qclass));
+}
+
+function encode_rdata(d: RData): Result[u8[], DnsError] {
+  match (d) {
+    A(ip) => {
+      if (!ip.is_v4()) {
+        return Err(Malformed);
+      }
+      return Ok(ip.bytes());
+    },
+    AAAA(ip) => {
+      if (!ip.is_v6()) {
+        return Err(Malformed);
+      }
+      return Ok(ip.bytes());
+    },
+    CNAME(n) => {
+      return encode_name(n);
+    },
+    PTR(n) => {
+      return encode_name(n);
+    },
+    Raw(bytes) => {
+      return Ok(bytes);
+    }
+  }
+  var none: u8[] = [];
+  return Ok(none);
+}
+
+function encode_record(b: u8[], r: Record): Result[u8[], DnsError] {
+  var name: u8[] = encode_name(r.name)?;
+  var data: u8[] = encode_rdata(r.data)?;
+  if (data.len() > 65535) {
+    return Err(Malformed);
+  }
+  var out: u8[] = b.concat(name);
+  out = put16(out, r.rtype);
+  out = put16(out, r.rclass);
+  out = put32(out, r.ttl);
+  out = put16(out, data.len());
+  return Ok(out.concat(data));
+}
+
+function encode_records(b: u8[], rs: Record[]): Result[u8[], DnsError] {
+  var out: u8[] = b;
+  var i: i32 = 0;
+  while (i < rs.len()) {
+    out = encode_record(out, rs[i])?;
+    i = i + 1;
+  }
+  return Ok(out);
+}
+
+// `encode(m)` — the message on the wire, without the two-byte length a
+// TCP exchange puts in front. Names are written uncompressed. A section
+// of more than 65535 entries, or a name that cannot be encoded, is
+// `Malformed`.
+pub function encode(m: Message): Result[u8[], DnsError] {
+  if (!sections_fit(m)) {
+    return Err(Malformed);
+  }
+  var out: u8[] = [];
+  out = put16(out, m.id & 65535);
+  out = put16(out, header_flags(m));
+  out = put16(out, m.questions.len());
+  out = put16(out, m.answers.len());
+  out = put16(out, m.authority.len());
+  out = put16(out, m.additional.len());
+  var i: i32 = 0;
+  while (i < m.questions.len()) {
+    out = encode_question(out, m.questions[i])?;
+    i = i + 1;
+  }
+  out = encode_records(out, m.answers)?;
+  out = encode_records(out, m.authority)?;
+  return encode_records(out, m.additional);
+}
+
+function sections_fit(m: Message): boolean {
+  return m.questions.len() <= 65535 && m.answers.len() <= 65535 && m.authority.len() <= 65535 && m.additional.len() <= 65535;
+}
+
+// The second header word: QR, opcode, AA, TC, RD, RA and the rcode.
+function header_flags(m: Message): i32 {
+  var flags: i32 = (m.opcode & 15) << 11 | m.rcode & 15;
+  if (m.response) {
+    flags = flags | 32768;
+  }
+  if (m.authoritative) {
+    flags = flags | 1024;
+  }
+  if (m.truncated) {
+    flags = flags | 512;
+  }
+  if (m.recursion_desired) {
+    flags = flags | 256;
+  }
+  if (m.recursion_available) {
+    flags = flags | 128;
+  }
+  return flags;
+}
+
+// ---- decoding ---------------------------------------------------------------
+
+function be16(m: u8[], i: i32): i32 {
+  return m[i] as i32 << 8 | m[i + 1] as i32;
+}
+
+function be32(m: u8[], i: i32): i32 {
+  return be16(m, i) << 16 | be16(m, i + 2);
+}
+
+// NameAt — a decoded name and the offset past it in the message.
+pub struct NameAt { name: string, next: i32 }
+
+// `decode_name(msg, pos)` — the name at `pos`: labels up to the root, or
+// up to a compression pointer, which is followed to a lower offset. A
+// pointer forward or to itself, a label past the end, or a name over 255
+// bytes is `Malformed`; `next` is the offset after the labels or after
+// the first pointer, which is where the message continues.
+pub function decode_name(msg: u8[], pos: i32): Result[NameAt, DnsError] {
+  var out: string = "";
+  var total: i32 = 0;
+  var p: i32 = pos;
+  var next: i32 = -1;
+  var hops: i32 = 0;
+  while (p < msg.len()) {
+    var l: i32 = msg[p] as i32;
+    if (l == 0) {
+      return Ok(NameAt { name: out, next: first_of(next, p + 1) });
+    }
+    if ((l & 192) == 192) {
+      next = first_of(next, p + 2);
+      hops = hops + 1;
+      p = pointer_target(msg, p, hops)?;
+      continue;
+    }
+    total = total + 1 + l;
+    if ((l & 192) != 0 || p + 1 + l > msg.len() || total > 254) {
+      return Err(Malformed);
+    }
+    out = join_label(out, msg, p + 1, l);
+    p = p + 1 + l;
+  }
+  return Err(Malformed);
+}
+
+// `next` once it is set, else `at`: the offset after the first pointer or
+// the root is where the message continues.
+function first_of(next: i32, at: i32): i32 {
+  if (next < 0) {
+    return at;
+  }
+  return next;
+}
+
+// The offset a compression pointer at `p` points at, which has to be
+// lower than `p`; `hops` bounds a chain of pointers by the message's
+// size, since each has to go backwards.
+function pointer_target(msg: u8[], p: i32, hops: i32): Result[i32, DnsError] {
+  if (p + 1 >= msg.len()) {
+    return Err(Malformed);
+  }
+  var target: i32 = (msg[p] as i32 & 63) << 8 | msg[p + 1] as i32;
+  if (target >= p || hops > 127) {
+    return Err(Malformed);
+  }
+  return Ok(target);
+}
+
+// `out` with the `len` bytes at `at` appended as its next label.
+function join_label(out: string, msg: u8[], at: i32, len: i32): string {
+  var label: u8[] = [];
+  var k: i32 = 0;
+  while (k < len) {
+    label = label.append(msg[at + k]);
+    k = k + 1;
+  }
+  if (out.len() > 0) {
+    return out + "." + string_from_bytes_unchecked(label);
+  }
+  return string_from_bytes_unchecked(label);
+}
+
+struct QuestionAt { q: Question, next: i32 }
+
+function decode_question(msg: u8[], pos: i32): Result[QuestionAt, DnsError] {
+  var n: NameAt = decode_name(msg, pos)?;
+  if (n.next + 4 > msg.len()) {
+    return Err(Malformed);
+  }
+  var q: Question = Question { name: n.name, qtype: be16(msg, n.next), qclass: be16(msg, n.next + 2) };
+  return Ok(QuestionAt { q: q, next: n.next + 4 });
+}
+
+struct RecordAt { r: Record, next: i32 }
+
+function decode_rdata(msg: u8[], rtype: i32, rclass: i32, at: i32, rdlen: i32): Result[RData, DnsError] {
+  var raw: u8[] = [];
+  var k: i32 = 0;
+  while (k < rdlen) {
+    raw = raw.append(msg[at + k]);
+    k = k + 1;
+  }
+  if (rclass != class_in()) {
+    return Ok(Raw(raw));
+  }
+  if (rtype == type_cname() || rtype == type_ptr()) {
+    return decode_name_rdata(msg, rtype, at, rdlen);
+  }
+  return decode_address_rdata(rtype, raw);
+}
+
+// An A or AAAA record's address, when the data is the right length for
+// it; any other type, or length, keeps its bytes.
+function decode_address_rdata(rtype: i32, raw: u8[]): Result[RData, DnsError] {
+  if (rtype == type_a() && raw.len() == 4) {
+    return Ok(A(net.ipv4(raw[0] as i32, raw[1] as i32, raw[2] as i32, raw[3] as i32)));
+  }
+  if (rtype == type_aaaa() && raw.len() == 16) {
+    match (net.ipv6(raw)) {
+      Some(ip) => {
+        return Ok(AAAA(ip));
+      },
+      None => {
+        return Err(Malformed);
+      }
+    }
+  }
+  return Ok(Raw(raw));
+}
+
+// A CNAME or PTR record's name, which may point back into the message
+// but has to end within the record's data.
+function decode_name_rdata(msg: u8[], rtype: i32, at: i32, rdlen: i32): Result[RData, DnsError] {
+  var n: NameAt = decode_name(msg, at)?;
+  if (n.next > at + rdlen) {
+    return Err(Malformed);
+  }
+  if (rtype == type_cname()) {
+    return Ok(CNAME(n.name));
+  }
+  return Ok(PTR(n.name));
+}
+
+function decode_record(msg: u8[], pos: i32): Result[RecordAt, DnsError] {
+  var n: NameAt = decode_name(msg, pos)?;
+  var p: i32 = n.next;
+  if (p + 10 > msg.len()) {
+    return Err(Malformed);
+  }
+  var rtype: i32 = be16(msg, p);
+  var rclass: i32 = be16(msg, p + 2);
+  var ttl: i32 = be32(msg, p + 4);
+  var rdlen: i32 = be16(msg, p + 8);
+  p = p + 10;
+  if (p + rdlen > msg.len()) {
+    return Err(Malformed);
+  }
+  var data: RData = decode_rdata(msg, rtype, rclass, p, rdlen)?;
+  var r: Record = Record { name: n.name, rtype: rtype, rclass: rclass, ttl: ttl, data: data };
+  return Ok(RecordAt { r: r, next: p + rdlen });
+}
+
+struct RecordsAt { rs: Record[], next: i32 }
+
+function decode_records(msg: u8[], pos: i32, count: i32): Result[RecordsAt, DnsError] {
+  var out: Record[] = [];
+  var p: i32 = pos;
+  var i: i32 = 0;
+  while (i < count) {
+    var r: RecordAt = decode_record(msg, p)?;
+    out = out.append(r.r);
+    p = r.next;
+    i = i + 1;
+  }
+  return Ok(RecordsAt { rs: out, next: p });
+}
+
+// `decode(msg)` — the message the bytes carry. Anything that does not
+// fit — a short header, a section count past the end, a bad pointer —
+// is `Malformed`; bytes after the last section are ignored.
+pub function decode(msg: u8[]): Result[Message, DnsError] {
+  if (msg.len() < 12) {
+    return Err(Malformed);
+  }
+  var flags: i32 = be16(msg, 2);
+  var qd: i32 = be16(msg, 4);
+  var an: i32 = be16(msg, 6);
+  var ns: i32 = be16(msg, 8);
+  var ar: i32 = be16(msg, 10);
+  var p: i32 = 12;
+  var qs: Question[] = [];
+  var i: i32 = 0;
+  while (i < qd) {
+    var q: QuestionAt = decode_question(msg, p)?;
+    qs = qs.append(q.q);
+    p = q.next;
+    i = i + 1;
+  }
+  var answers: RecordsAt = decode_records(msg, p, an)?;
+  var authority: RecordsAt = decode_records(msg, answers.next, ns)?;
+  var additional: RecordsAt = decode_records(msg, authority.next, ar)?;
+  return Ok(Message {
+    id: be16(msg, 0),
+    response: (flags & 32768) != 0,
+    opcode: flags >> 11 & 15,
+    authoritative: (flags & 1024) != 0,
+    truncated: (flags & 512) != 0,
+    recursion_desired: (flags & 256) != 0,
+    recursion_available: (flags & 128) != 0,
+    rcode: flags & 15,
+    questions: qs,
+    answers: answers.rs,
+    authority: authority.rs,
+    additional: additional.rs,
+  });
+}
+
+// `names_equal(a, b)` — two names compared as DNS compares them: without
+// regard to ASCII case, and a trailing dot is the root.
+pub function names_equal(a: string, b: string): boolean {
+  return strip_root(a).eq_ignore_ascii_case(strip_root(b));
+}
+
+function strip_root(n: string): string {
+  if (n.ends_with(".") && n.len() > 1) {
+    return slice_unchecked(n, 0, n.len() - 1) + "";
+  }
+  return n;
+}
+
+// `(m).answers_question(q)` — whether `m` is a reply to the question
+// `q`: the same id is the caller's to check; this is the question itself,
+// name, type and class.
+pub function (m: Message) answers_question(q: Question): boolean {
+  if (m.questions.len() != 1) {
+    return false;
+  }
+  var mq: Question = m.questions[0];
+  return mq.qtype == q.qtype && mq.qclass == q.qclass && names_equal(mq.name, q.name);
+}
+
+// Answer — what the answer section says about a name: the owner the
+// CNAME chain ends at, and that owner's records of the asked type.
+pub struct Answer { canonical: string, records: Record[] }
+
+// `records_for(m, name, rtype)` — the records of type `rtype` the answer
+// section holds for `name`, following CNAMEs from `name` to the owner
+// that has them. A chain longer than the section is cut off where it
+// loops.
+pub function records_for(m: Message, name: string, rtype: i32): Answer {
+  var cur: string = name;
+  var hops: i32 = 0;
+  while (hops <= m.answers.len()) {
+    var at: OwnerScan = scan_owner(m, cur, rtype);
+    if (at.found.len() > 0 || at.alias.len() == 0) {
+      return Answer { canonical: cur, records: at.found };
+    }
+    cur = at.alias;
+    hops = hops + 1;
+  }
+  var none: Record[] = [];
+  return Answer { canonical: cur, records: none };
+}
+
+// What the answer section holds for one owner: its records of the asked
+// type, and the target of its first CNAME.
+struct OwnerScan { found: Record[], alias: string }
+
+function scan_owner(m: Message, owner: string, rtype: i32): OwnerScan {
+  var found: Record[] = [];
+  var alias: string = "";
+  var i: i32 = 0;
+  while (i < m.answers.len()) {
+    var r: Record = m.answers[i];
+    i = i + 1;
+    if (r.rclass != class_in() || !names_equal(r.name, owner)) {
+      continue;
+    }
+    if (r.rtype == rtype) {
+      found = found.append(r);
+    } else if (r.rtype == type_cname() && alias.len() == 0) {
+      alias = cname_target(r.data);
+    }
+  }
+  return OwnerScan { found: found, alias: alias };
+}
+
+function cname_target(d: RData): string {
+  match (d) {
+    CNAME(target) => {
+      return target;
+    },
+    _ => {
+      return "";
+    }
+  }
+  return "";
+}
+
+// `addresses_of(records)` — the addresses the A and AAAA records among
+// `records` carry, in their order.
+pub function addresses_of(records: Record[]): net.IpAddr[] {
+  var out: net.IpAddr[] = [];
+  var i: i32 = 0;
+  while (i < records.len()) {
+    match (records[i].data) {
+      A(ip) => {
+        out = out.append(ip);
+      },
+      AAAA(ip) => {
+        out = out.append(ip);
+      },
+      _ => {}
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// /etc/hosts
+
+// HostsEntry — one line of the hosts file: its address and the names on
+// it, the canonical name first.
+pub struct HostsEntry { ip: net.IpAddr, names: string[] }
+
+// `parse_hosts(contents)` — the entries of a hosts file, in file order.
+// `#` starts a comment; a line whose first field is not an address of
+// either family, or that names nothing, is skipped.
+pub function parse_hosts(contents: string): HostsEntry[] {
+  var out: HostsEntry[] = [];
+  var lines: string[] = contents.lines();
+  var i: i32 = 0;
+  while (i < lines.len()) {
+    var f: string[] = strip_comment(lines[i], "#").fields();
+    i = i + 1;
+    if (f.len() < 2) {
+      continue;
+    }
+    match (net.ip_parse(f[0])) {
+      Some(ip) => {
+        out = out.append(HostsEntry { ip: ip, names: f.drop(1) });
+      },
+      None => {}
+    }
+  }
+  return out;
+}
+
+// `hosts_lookup(entries, name)` — every address of a line whose canonical
+// name or alias is `name`, compared without regard to ASCII case, in file
+// order; empty when no line names it.
+pub function hosts_lookup(entries: HostsEntry[], name: string): net.IpAddr[] {
+  var out: net.IpAddr[] = [];
+  var i: i32 = 0;
+  while (i < entries.len()) {
+    if (entry_names(entries[i], name)) {
+      out = out.append(entries[i].ip);
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+// `hosts_canonical(entries, name)` — the canonical name of the first line
+// naming `name`, as getaddrinfo's AI_CANONNAME reads it from the files
+// backend.
+pub function hosts_canonical(entries: HostsEntry[], name: string): Option[string] {
+  var i: i32 = 0;
+  while (i < entries.len()) {
+    if (entry_names(entries[i], name)) {
+      return Some(entries[i].names[0]);
+    }
+    i = i + 1;
+  }
+  return None;
+}
+
+function entry_names(e: HostsEntry, name: string): boolean {
+  var j: i32 = 0;
+  while (j < e.names.len()) {
+    if (names_equal(e.names[j], name)) {
+      return true;
+    }
+    j = j + 1;
+  }
+  return false;
+}
+
+// The line up to its first `marker`, if any.
+function strip_comment(line: string, marker: string): string {
+  var h: i32 = line.index_of(marker);
+  if (h < 0) {
+    return line;
+  }
+  return slice_unchecked(line, 0, h) + "";
+}
+
+// ---------------------------------------------------------------------------
+// /etc/resolv.conf
+
+// ResolvConf — what the resolver reads off resolv.conf: the nameservers
+// (at most three, as glibc keeps), the search list, `ndots`, the timeout
+// of one try in milliseconds, how many times round the servers, and
+// whether to start each query at the next server (`rotate`).
+pub struct ResolvConf {
+  nameservers: net.SocketAddr[],
+  search: string[],
+  ndots: i32,
+  timeout_ms: i32,
+  attempts: i32,
+  rotate: boolean,
+}
+
+// `dns_port()` — 53.
+pub function dns_port(): i32 {
+  return 53;
+}
+
+// `resolv_defaults(host)` — res_init with no file: 127.0.0.1 as the only
+// nameserver, the search list from `host`'s domain, `ndots` 1, a 5 s
+// timeout, 2 attempts, no rotation.
+pub function resolv_defaults(host: string): ResolvConf {
+  var ns: net.SocketAddr[] = [net.socket_addr(net.ipv4_loopback(), dns_port())];
+  return ResolvConf { nameservers: ns, search: host_domain(host), ndots: 1, timeout_ms: 5000, attempts: 2, rotate: false };
+}
+
+// `parse_resolv_conf(contents, host)` — glibc's res_init over the file.
+// `host` is the machine's own name, whose domain is the search list when
+// the file names none. `#` and `;` start comments. `domain` and `search`
+// each replace the list, so the last one wins. On an `options` line,
+// `ndots:n` is capped at 15, `timeout:n` (seconds) at 30, `attempts:n`
+// at 5, and `rotate` is read; anything else is ignored. A `nameserver`
+// that is not an address, or that carries an IPv6 zone, is skipped, and
+// only the first three count.
+pub function parse_resolv_conf(contents: string, host: string): ResolvConf {
+  var rc: ResolvConf = resolv_defaults(host);
+  var ns: net.SocketAddr[] = [];
+  var have_search: boolean = false;
+  var lines: string[] = contents.lines();
+  var i: i32 = 0;
+  while (i < lines.len()) {
+    var f: string[] = strip_comment(strip_comment(lines[i], "#"), ";").fields();
+    i = i + 1;
+    if (f.len() < 2) {
+      continue;
+    }
+    if (f[0] == "nameserver") {
+      ns = with_nameserver(ns, f[1]);
+    } else if (f[0] == "domain" || f[0] == "search") {
+      have_search = true;
+      rc = ResolvConf { ...rc, search: search_domains(f) };
+    } else if (f[0] == "options") {
+      rc = parse_options(f, rc);
+    }
+  }
+  if (!have_search) {
+    rc = ResolvConf { ...rc, search: host_domain(host) };
+  }
+  if (ns.len() > 0) {
+    rc = ResolvConf { ...rc, nameservers: ns };
+  }
+  return rc;
+}
+
+// `ns` with the nameserver `text` names at port 53: an address of either
+// family, not one with an IPv6 zone, and only while there are fewer than
+// three.
+function with_nameserver(ns: net.SocketAddr[], text: string): net.SocketAddr[] {
+  if (ns.len() >= 3 || text.index_of("%") >= 0) {
+    return ns;
+  }
+  match (net.ip_parse(text)) {
+    Some(ip) => {
+      return ns.append(net.socket_addr(ip, dns_port()));
+    },
+    None => {
+      return ns;
+    }
+  }
+  return ns;
+}
+
+// The domains of a `search` or `domain` line: `domain` takes one, `search`
+// takes all; a trailing dot is dropped and an entry that is only a dot is
+// the root and contributes nothing.
+function search_domains(f: string[]): string[] {
+  var out: string[] = [];
+  var n: i32 = f.len();
+  if (f[0] == "domain") {
+    n = 2;
+  }
+  var i: i32 = 1;
+  while (i < n) {
+    var d: string = f[i];
+    if (d.ends_with(".")) {
+      d = slice_unchecked(d, 0, d.len() - 1) + "";
+    }
+    if (d.len() > 0) {
+      out = out.append(d);
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+function parse_options(f: string[], rc0: ResolvConf): ResolvConf {
+  var rc: ResolvConf = rc0;
+  var i: i32 = 1;
+  while (i < f.len()) {
+    var o: string = f[i];
+    i = i + 1;
+    if (o == "rotate") {
+      rc = ResolvConf { ...rc, rotate: true };
+    } else if (o.starts_with("ndots:")) {
+      rc = ResolvConf { ...rc, ndots: option_value(o, 6, 0, 15, rc.ndots) };
+    } else if (o.starts_with("timeout:")) {
+      rc = ResolvConf { ...rc, timeout_ms: option_value(o, 8, 1, 30, rc.timeout_ms / 1000) * 1000 };
+    } else if (o.starts_with("attempts:")) {
+      rc = ResolvConf { ...rc, attempts: option_value(o, 9, 1, 5, rc.attempts) };
+    }
+  }
+  return rc;
+}
+
+// The number after an option's colon, clamped to `lo..hi`; `current`
+// when it is not a number.
+function option_value(o: string, at: i32, lo: i32, hi: i32, current: i32): i32 {
+  match ((slice_unchecked(o, at, o.len()) + "").parse_int()) {
+    Some(n) => {
+      if (n < lo) {
+        return lo;
+      }
+      if (n > hi) {
+        return hi;
+      }
+      return n;
+    },
+    None => {
+      return current;
+    }
+  }
+  return current;
+}
+
+// The search list glibc derives from the local hostname: everything after
+// its first dot, or nothing.
+function host_domain(host: string): string[] {
+  var out: string[] = [];
+  var dot: i32 = host.index_of(".");
+  if (dot < 0 || dot + 1 >= host.len()) {
+    return out;
+  }
+  return out.append(slice_unchecked(host, dot + 1, host.len()) + "");
+}
+
+// ---------------------------------------------------------------------------
+// The search list
+
+// SearchPlan — the three pieces __res_context_search works in, which are
+// not interchangeable with a flat candidate list. `as_is` is the name as
+// it stands, `suffixes` the search-list names, and `leads` says whether
+// the as-is query runs before the suffixes (glibc's `tried_as_is`) or is
+// the retry after them. Which of the two it is decides both whether that
+// retry happens at all and whose status is reported.
+pub struct SearchPlan { as_is: string, suffixes: string[], leads: boolean }
+
+// `search_plan(name, rc)` — res_search's plan for `name`. A name ending in
+// a dot is asked for as it stands and nothing else. Otherwise a name with
+// at least `ndots` dots leads with the as-is query and then tries each
+// search domain; one with fewer tries the search domains first and the
+// as-is name after them.
+pub function search_plan(name: string, rc: ResolvConf): SearchPlan {
+  var none: string[] = [];
+  if (name.ends_with(".")) {
+    return SearchPlan { as_is: strip_root(name), suffixes: none, leads: true };
+  }
+  var dots: i32 = 0;
+  var i: i32 = 0;
+  while (i < name.len()) {
+    if (name[i] == 46) {
+      dots = dots + 1;
+    }
+    i = i + 1;
+  }
+  var sfx: string[] = [];
+  var j: i32 = 0;
+  while (j < rc.search.len()) {
+    sfx = sfx.append(name + "." + rc.search[j]);
+    j = j + 1;
+  }
+  return SearchPlan { as_is: name, suffixes: sfx, leads: dots >= rc.ndots };
+}
+
+// `search_candidates(name, rc)` — the plan flattened into the order the
+// names are asked in.
+pub function search_candidates(name: string, rc: ResolvConf): string[] {
+  var p: SearchPlan = search_plan(name, rc);
+  var out: string[] = [];
+  if (p.leads) {
+    out = out.append(p.as_is);
+  }
+  var j: i32 = 0;
+  while (j < p.suffixes.len()) {
+    out = out.append(p.suffixes[j]);
+    j = j + 1;
+  }
+  if (!p.leads) {
+    out = out.append(p.as_is);
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// The exchange
+
+// `new_id()` — a query id drawn from the platform's random numbers.
+pub function new_id(): i32 {
+  return random_i32() & 65535;
+}
+
+function zero_bytes(n: i32): u8[] {
+  var out: u8[] = [];
+  var i: i32 = 0;
+  while (i < n) {
+    out = out.append(0 as u8);
+    i = i + 1;
+  }
+  return out;
+}
+
+function now_ms(): i64 {
+  return monotonic_ns() / 1000000i64;
+}
+
+// Whether `fd` is readable within `wait_ms`: the poll shape std/tcp's
+// recv-with-deadline uses. A native poll(2) honours the timeout; wasm
+// ignores its argument and the timer pollable fires at the deadline; the
+// interpreter's poll is a stub that answers -1 at once, which is told
+// from a native timeout by the time that passed, and reads as readable
+// so the receive that follows blocks as it always did there.
+function readable_within(fd: i32, wait_ms: i32): boolean {
+  var ms: i32 = wait_ms;
+  if (ms < 1) {
+    ms = 1;
+  }
+  var ns_per_ms: i64 = 1000000i64;
+  var start: i64 = monotonic_ns();
+  var tok: i32 = tcp_pollable(fd);
+  var timer: i32 = wasm_timer_pollable(ms as i64 * ns_per_ms);
+  var pollset: i32[] = [tok, timer];
+  var ready: i32 = poll(pollset, ms);
+  var dtimer: i32 = wasm_pollable_drop(timer);
+  var dtok: i32 = wasm_pollable_drop(tok);
+  if (ready == 0) {
+    return true;
+  }
+  if (ready == 1) {
+    return false;
+  }
+  var waited: i64 = monotonic_ns() - start;
+  return waited * 2i64 < ms as i64 * ns_per_ms;
+}
+
+function local_for(ns: net.SocketAddr): net.SocketAddr {
+  if (ns.ip.is_v6()) {
+    return net.socket_addr(net.ipv6_unspecified(), 0);
+  }
+  return net.socket_addr(net.ipv4_unspecified(), 0);
+}
+
+// `exchange(ns, q, timeout_ms)` — one query to one nameserver. The
+// message goes over UDP with EDNS0 and the reply is awaited up to the
+// timeout; a datagram that is not a reply to `q` (another id, another
+// question) is ignored and the wait goes on. A truncated reply is asked
+// again over TCP, where the reply is read whole behind its length. A
+// server that stays silent is `NoReply`, one that cannot be reached
+// `Socket`, a reply that does not parse `Malformed`; the reply's own
+// rcode is left to the caller.
+pub function exchange(ns: net.SocketAddr, q: Message, timeout_ms: i32): Result[Message, DnsError] {
+  var bytes: u8[] = encode(with_edns(q))?;
+  var sock: i32 = send_udp(ns, bytes)?;
+  var deadline: i64 = now_ms() + timeout_ms as i64;
+  var got: Result[Message, DnsError] = await_udp_reply(sock, q, deadline);
+  var closed: Result[void, net.NetError] = net.close(sock);
+  var reply: Message = got?;
+  if (reply.truncated) {
+    return exchange_tcp(ns, q, (deadline - now_ms()) as i32);
+  }
+  return Ok(reply);
+}
+
+// A datagram socket of the nameserver's family with `bytes` sent to it.
+function send_udp(ns: net.SocketAddr, bytes: u8[]): Result[i32, DnsError] {
+  var sock: i32 = 0;
+  match (net.udp_socket(local_for(ns))) {
+    Ok(s) => {
+      sock = s;
+    },
+    Err(e) => {
+      return Err(Socket(e));
+    }
+  }
+  match (net.send_to(sock, string_from_bytes_unchecked(bytes), ns)) {
+    Ok(_) => {
+      return Ok(sock);
+    },
+    Err(e) => {
+      var closed: Result[void, net.NetError] = net.close(sock);
+      return Err(Socket(e));
+    }
+  }
+  return Ok(sock);
+}
+
+// The reply to `q` on `sock` before `deadline`, datagrams that are not
+// one ignored; `NoReply` once the deadline passes.
+function await_udp_reply(sock: i32, q: Message, deadline: i64): Result[Message, DnsError] {
+  var left: i32 = (deadline - now_ms()) as i32;
+  while (left > 0) {
+    if (!readable_within(sock, left)) {
+      return Err(NoReply);
+    }
+    match (take_reply(sock, q)) {
+      Ok(found) => {
+        match (found) {
+          Some(reply) => {
+            return Ok(reply);
+          },
+          None => {}
+        }
+      },
+      Err(e) => {
+        return Err(e);
+      }
+    }
+    left = (deadline - now_ms()) as i32;
+  }
+  return Err(NoReply);
+}
+
+// One datagram off `sock`: the reply to `q` when it is one, `None` when
+// it is something else or nothing was queued after all.
+function take_reply(sock: i32, q: Message): Result[Option[Message], DnsError] {
+  var buf: u8[] = zero_bytes(udp_payload());
+  var n: i32 = 0;
+  match (net.recv_from(sock, buf)) {
+    Ok(got) => {
+      n = got.0;
+    },
+    Err(e) => {
+      match (e) {
+        WouldBlock => {
+          return Ok(None);
+        },
+        _ => {
+          return Err(Socket(e));
+        }
+      }
+    }
+  }
+  match (decode(buf.take(n))) {
+    Ok(reply) => {
+      if (reply.id == q.id && reply.response && reply.answers_question(q.questions[0])) {
+        return Ok(Some(reply));
+      }
+      return Ok(None);
+    },
+    Err(_) => {
+      return Ok(None);
+    }
+  }
+  return Ok(None);
+}
+
+// `exchange_tcp(ns, q, timeout_ms)` — the query over TCP: the message
+// behind a two-byte length, the reply read until its own length is
+// satisfied, each read awaited up to the timeout.
+pub function exchange_tcp(ns: net.SocketAddr, q: Message, timeout_ms: i32): Result[Message, DnsError] {
+  var bytes: u8[] = encode(q)?;
+  var framed: u8[] = [];
+  framed = put16(framed, bytes.len());
+  var sock: i32 = send_tcp(ns, framed.concat(bytes))?;
+  var got: Result[u8[], DnsError] = read_framed(sock, now_ms() + timeout_ms as i64);
+  tcp_close(sock);
+  var reply: Message = decode(got?)?;
+  if (reply.id != q.id || !reply.response || !reply.answers_question(q.questions[0])) {
+    return Err(Malformed);
+  }
+  return Ok(reply);
+}
+
+// A connection to the nameserver with `framed` written to it.
+function send_tcp(ns: net.SocketAddr, framed: u8[]): Result[i32, DnsError] {
+  var sock: i32 = 0;
+  match (net.connect(ns)) {
+    Ok(s) => {
+      sock = s;
+    },
+    Err(e) => {
+      return Err(Socket(e));
+    }
+  }
+  var sent: i32 = tcp_send(sock, string_from_bytes_unchecked(framed));
+  if (sent < 0) {
+    tcp_close(sock);
+    return Err(Socket(net.error_from_errno(sent)));
+  }
+  return Ok(sock);
+}
+
+// The message behind the two-byte length on `sock`, each read awaited up
+// to `deadline`: `NoReply` when it passes, `Malformed` when the peer
+// closes short of the length.
+function read_framed(sock: i32, deadline: i64): Result[u8[], DnsError] {
+  var buf: u8[] = [];
+  var want: i32 = -1;
+  while (want < 0 || buf.len() < want) {
+    var left: i32 = (deadline - now_ms()) as i32;
+    if (left <= 0 || !readable_within(sock, left)) {
+      return Err(NoReply);
+    }
+    var chunk: u8[] = tcp_recv(sock, 4096);
+    if (chunk.len() == 0) {
+      return Err(Malformed);
+    }
+    buf = buf.concat(chunk);
+    if (want < 0 && buf.len() >= 2) {
+      want = 2 + be16(buf, 0);
+    }
+  }
+  return Ok(buf.drop(2).take(want - 2));
+}
+
+// `ask(conf, q)` — res_send: `q` put to the nameservers of `conf` in
+// turn, `attempts` times round, starting from a server chosen at random
+// when `rotate` is set. A server's reply ends the walk unless it is
+// SERVFAIL or REFUSED, which hand the query to the next server, as does
+// one that stays silent, cannot be reached, or answers nonsense. When
+// every server has been tried, the walk reports a failure a server
+// gave over the silence of the rest: `ServerFailure`, then `Refused`,
+// then `NoReply`, then what the last try reported.
+pub function ask(conf: ResolvConf, q: Message): Result[Message, DnsError] {
+  var n: i32 = conf.nameservers.len();
+  if (n == 0) {
+    return Err(NoNameserver);
+  }
+  var start: i32 = 0;
+  if (conf.rotate) {
+    start = (random_i32() & 2147483647) % n;
+  }
+  var tally: Tally = Tally { servfail: false, refused: false, silent: false, last: NoReply };
+  var round: i32 = 0;
+  while (round < conf.attempts) {
+    var k: i32 = 0;
+    while (k < n) {
+      var ns: net.SocketAddr = conf.nameservers[(start + k) % n];
+      k = k + 1;
+      match (exchange(ns, q, conf.timeout_ms)) {
+        Ok(reply) => {
+          if (reply.rcode != rcode_server_failure() && reply.rcode != rcode_refused()) {
+            return Ok(reply);
+          }
+          tally = noted_rcode(tally, reply.rcode);
+        },
+        Err(e) => {
+          tally = noted_failure(tally, e);
+        }
+      }
+    }
+    round = round + 1;
+  }
+  return Err(tally_error(tally));
+}
+
+// What the servers said while none answered: the failures seen, and the
+// last error that was neither silence nor a server's own code.
+struct Tally { servfail: boolean, refused: boolean, silent: boolean, last: DnsError }
+
+function noted_rcode(t: Tally, rcode: i32): Tally {
+  if (rcode == rcode_server_failure()) {
+    return Tally { ...t, servfail: true };
+  }
+  return Tally { ...t, refused: true };
+}
+
+function noted_failure(t: Tally, e: DnsError): Tally {
+  match (e) {
+    NoReply => {
+      return Tally { ...t, silent: true };
+    },
+    _ => {
+      return Tally { ...t, last: e };
+    }
+  }
+  return t;
+}
+
+function tally_error(t: Tally): DnsError {
+  if (t.servfail) {
+    return ServerFailure;
+  }
+  if (t.refused) {
+    return Refused;
+  }
+  if (t.silent) {
+    return NoReply;
+  }
+  return t.last;
+}
+
+// ---------------------------------------------------------------------------
+// Lookups
+
+// `answer_records(reply, qname, rtype)` — the records of `rtype` a reply
+// to `qname` carries, following the CNAME chain, as the result of the
+// query: NXDOMAIN is `NoSuchName`, a clean reply with none of them
+// `NoData`, SERVFAIL and REFUSED their errors, any other rcode
+// `Malformed`.
+pub function answer_records(reply: Message, qname: string, rtype: i32): Result[Answer, DnsError] {
+  if (reply.rcode == rcode_name_error()) {
+    return Err(NoSuchName);
+  }
+  if (reply.rcode == rcode_server_failure()) {
+    return Err(ServerFailure);
+  }
+  if (reply.rcode == rcode_refused()) {
+    return Err(Refused);
+  }
+  if (reply.rcode != rcode_ok()) {
+    return Err(Malformed);
+  }
+  var a: Answer = records_for(reply, qname, rtype);
+  if (a.records.len() == 0) {
+    return Err(NoData);
+  }
+  return Ok(a);
+}
+
+// `lookup_records_with(conf, name, rtype, asker)` — `search_with` over
+// the plan for `name`; `rtype` is the asker's to put in its queries.
+pub function lookup_records_with(conf: ResolvConf, name: string, rtype: i32, asker: (string) => Result[Answer, DnsError]): Result[Answer, DnsError] {
+  return search_with(search_plan(name, conf), asker);
+}
+
+// `search_with(plan, asker)` — the search walk of __res_context_search
+// over `asker`, which answers one query: the first name with records
+// wins. A `NoSuchName` or `NoData` moves on to the next candidate;
+// `ServerFailure` does too but is remembered; `Refused` from a suffix
+// ends the walk; silence or a socket error ends the suffixes but the
+// as-is name is still tried when it comes last. When the walk finds
+// nothing, the as-is query's failure is reported when it led, else a
+// remembered `ServerFailure`, else the last failure.
+pub function search_with(plan: SearchPlan, asker: (string) => Result[Answer, DnsError]): Result[Answer, DnsError] {
+  var lead_failed: boolean = false;
+  var lead_err: DnsError = NoSuchName;
+  if (plan.leads) {
+    match (asker(plan.as_is)) {
+      Ok(a) => {
+        return Ok(a);
+      },
+      Err(e) => {
+        lead_failed = true;
+        lead_err = e;
+      }
+    }
+  }
+  var sfx: Suffixes = search_suffixes(plan.suffixes, asker);
+  match (sfx.answer) {
+    Some(a) => {
+      return Ok(a);
+    },
+    None => {}
+  }
+  if (sfx.refused) {
+    return Err(Refused);
+  }
+  var last: DnsError = sfx.last;
+  if (!plan.leads) {
+    match (asker(plan.as_is)) {
+      Ok(a) => {
+        return Ok(a);
+      },
+      Err(e) => {
+        last = e;
+      }
+    }
+  }
+  return Err(search_failure(lead_failed, lead_err, sfx.servfail, last));
+}
+
+// What a walk that found nothing reports: the as-is query's failure when
+// it led, else a server failure a suffix met, else the last failure.
+function search_failure(lead_failed: boolean, lead_err: DnsError, servfail: boolean, last: DnsError): DnsError {
+  if (lead_failed) {
+    return lead_err;
+  }
+  if (servfail) {
+    return ServerFailure;
+  }
+  return last;
+}
+
+// How the search domains went: the answer one gave, or whether one was
+// refused (the walk ends), whether one failed at the server, and the
+// last failure.
+struct Suffixes { answer: Option[Answer], refused: boolean, servfail: boolean, last: DnsError }
+
+function search_suffixes(suffixes: string[], asker: (string) => Result[Answer, DnsError]): Suffixes {
+  var out: Suffixes = Suffixes { answer: None, refused: false, servfail: false, last: NoSuchName };
+  var i: i32 = 0;
+  while (i < suffixes.len()) {
+    match (asker(suffixes[i])) {
+      Ok(a) => {
+        return Suffixes { ...out, answer: Some(a) };
+      },
+      Err(e) => {
+        out = suffix_failed(out, e);
+        if (out.refused || !continues_search(e)) {
+          return out;
+        }
+      }
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+function suffix_failed(out: Suffixes, e: DnsError): Suffixes {
+  match (e) {
+    Refused => {
+      return Suffixes { ...out, refused: true };
+    },
+    ServerFailure => {
+      return Suffixes { ...out, servfail: true };
+    },
+    _ => {
+      return Suffixes { ...out, last: e };
+    }
+  }
+  return out;
+}
+
+// Whether a suffix's failure lets the next suffix be tried: a name the
+// server does not know does, silence and a socket error do not.
+function continues_search(e: DnsError): boolean {
+  match (e) {
+    NoSuchName => {
+      return true;
+    },
+    NoData => {
+      return true;
+    },
+    ServerFailure => {
+      return true;
+    },
+    _ => {
+      return false;
+    }
+  }
+  return false;
+}
+
+// `lookup_records(conf, name, rtype)` — `lookup_records_with` over the
+// nameservers of `conf`.
+pub function lookup_records(conf: ResolvConf, name: string, rtype: i32): Result[Answer, DnsError] {
+  return lookup_records_with(conf, name, rtype, (qname: string): Result[Answer, DnsError] => ask_one(conf, qname, rtype));
+}
+
+// One query of the walk: `qname` put to the nameservers and its reply
+// read for the records of `rtype`.
+function ask_one(conf: ResolvConf, qname: string, rtype: i32): Result[Answer, DnsError] {
+  var reply: Message = ask(conf, query(new_id(), qname, rtype))?;
+  return answer_records(reply, qname, rtype);
+}
+
+// `lookup_a(conf, name)` — the IPv4 addresses of `name`.
+pub function lookup_a(conf: ResolvConf, name: string): Result[net.IpAddr[], DnsError] {
+  var a: Answer = lookup_records(conf, name, type_a())?;
+  return Ok(addresses_of(a.records));
+}
+
+// `lookup_aaaa(conf, name)` — the IPv6 addresses of `name`.
+pub function lookup_aaaa(conf: ResolvConf, name: string): Result[net.IpAddr[], DnsError] {
+  var a: Answer = lookup_records(conf, name, type_aaaa())?;
+  return Ok(addresses_of(a.records));
+}
+
+// `canonical_name(conf, name)` — the owner of `name`'s A records once
+// its CNAME chain is followed, as getaddrinfo's AI_CANONNAME reads it off
+// the DNS backend.
+pub function canonical_name(conf: ResolvConf, name: string): Result[string, DnsError] {
+  var a: Answer = lookup_records(conf, name, type_a())?;
+  return Ok(a.canonical);
+}
+
+// `system_conf()` — the resolver this machine is configured with: its
+// `/etc/resolv.conf` over its hostname, the defaults when the file is
+// missing.
+pub function system_conf(): ResolvConf {
+  var contents: string = "";
+  match (read_file("/etc/resolv.conf")) {
+    Ok(c) => {
+      contents = c;
+    },
+    Err(_) => {}
+  }
+  return parse_resolv_conf(contents, hostname());
+}
+
+// `system_hosts()` — this machine's `/etc/hosts`, empty when missing.
+pub function system_hosts(): HostsEntry[] {
+  match (read_file("/etc/hosts")) {
+    Ok(c) => {
+      return parse_hosts(c);
+    },
+    Err(_) => {
+      var none: HostsEntry[] = [];
+      return none;
+    }
+  }
+  var none2: HostsEntry[] = [];
+  return none2;
+}
+
+// `resolve(name)` — the addresses of `name` on this machine: an address
+// literal as it is, then the hosts file, then DNS, its A records before
+// its AAAA records. The first source with an address answers; DNS
+// reports its failure when the hosts file has none, `NoData` when both
+// record types are empty.
+pub function resolve(name: string): Result[net.IpAddr[], DnsError] {
+  match (net.ip_parse(name)) {
+    Some(ip) => {
+      return Ok([ip]);
+    },
+    None => {}
+  }
+  var hosts: net.IpAddr[] = hosts_lookup(system_hosts(), name);
+  if (hosts.len() > 0) {
+    return Ok(hosts);
+  }
+  return resolve_dns(system_conf(), name);
+}
+
+// Both record types of `name` from the nameservers, A before AAAA; the A
+// query's failure when neither answers, unless it was only `NoData` and
+// the AAAA query failed otherwise.
+function resolve_dns(conf: ResolvConf, name: string): Result[net.IpAddr[], DnsError] {
+  var out: net.IpAddr[] = [];
+  var failure: DnsError = NoData;
+  match (lookup_a(conf, name)) {
+    Ok(v4) => {
+      out = out.concat(v4);
+    },
+    Err(e) => {
+      failure = e;
+    }
+  }
+  match (lookup_aaaa(conf, name)) {
+    Ok(v6) => {
+      out = out.concat(v6);
+    },
+    Err(e) => {
+      failure = worse_of(failure, e);
+    }
+  }
+  if (out.len() == 0) {
+    return Err(failure);
+  }
+  return Ok(out);
+}
+
+// `e` over `current` when `current` is only `NoData`.
+function worse_of(current: DnsError, e: DnsError): DnsError {
+  match (current) {
+    NoData => {
+      return e;
+    },
+    _ => {
+      return current;
+    }
+  }
+  return current;
+}
