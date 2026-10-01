@@ -4,7 +4,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -50,15 +49,11 @@ function walk_a(n: Node, d: i32): i32 { if (d <= 0) { return n.items[0]; } retur
 function walk_b(n: Node, d: i32): i32 { if (d <= 0) { return n.items[0]; } return walk_a(n, d - 1); }
 `
 
-	run := func(t *testing.T, prog, name string, want int, wantAsmSubstr string) {
+	run := func(t *testing.T, prog, name string, want int) {
 		t.Helper()
 		asm := runCapture(t, gcc, runner, driverBin, []byte(prog))
 		if len(asm) == 0 {
 			t.Fatalf("%s: self-host compiler emitted 0 bytes", name)
-		}
-		// The borrow inference is the AST lowering's, so its drop is read from that lowering.
-		if wantAsmSubstr != "" && !strings.Contains(string(runCaptureAST(t, runner, driverBin, []byte(prog))), wantAsmSubstr) {
-			t.Fatalf("%s: emitted asm missing %q — the mutual-recursive borrow was not recognised (regressed to the least-fixpoint?)", name, wantAsmSubstr)
 		}
 		bin := buildBin(t, gcc, dir, name, string(asm))
 		var cmd *exec.Cmd
@@ -88,7 +83,7 @@ function main(): i32 {
     var f: i32 = 0;
     while (f < 200000000) { s = s + once(); f = f + 1; }
     return s - s;
-}`, "borrow_infer_cycle_churn", 0, "__fn___struct_drop_Node")
+}`, "borrow_infer_cycle_churn", 0)
 
 	// VALUE + OVER-RELEASE: the reclaim must be SOUND — `nd` is genuinely dead at
 	// `once`'s exit (only ever read inside the cycle), so freeing it must not
@@ -104,5 +99,5 @@ function main(): i32 {
     var f: i32 = 0;
     while (f < 1000) { s = s + once(); f = f + 1; }
     return (s - 5000) + __rc_underflow_count();
-}`, "borrow_infer_cycle_sound", 0, "")
+}`, "borrow_infer_cycle_sound", 0)
 }

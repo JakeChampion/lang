@@ -51,12 +51,8 @@ function main(): i32 {
 // register path on both ISAs, asserts the listing defines every per-block label
 // once (and dangles none), and assembles + runs it: the invariant is the lift's,
 // so both emitters carry it and the answer has to survive the block that is no
-// longer emitted twice.
-//
-// The wrapper is the AST lowering's (FERN_SEM_IR=), so that leg is the one that
-// reaches the shape. The typed lowering makes the same loop out of the graph
-// (ssasem.tail_recursion), laid out by ssalayout rather than wrapped, and runs
-// as a second leg so the labels and the depth are held on the path that stays.
+// longer emitted twice. The typed lowering makes the loop out of the graph
+// (ssasem.tail_recursion), laid out by ssalayout.
 func TestSelfHostSSALoopTailBlockEmittedOnce(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -75,36 +71,33 @@ func TestSelfHostSSALoopTailBlockEmittedOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for _, leg := range []struct{ name, semIR string }{{"ast", ""}, {"typed", "1"}} {
-		t.Run(leg.name+"/x86-64", func(t *testing.T) {
-			asm := emitSSAAsm(t, fernBin, stdlibRoot, src, "x86-64-linux", leg.semIR)
-			assertNoDuplicateLocalLabels(t, "x86-64 tco asm", asm)
-			assertNoDanglingLocalLabels(t, "x86-64 tco asm", asm)
-			bin := buildBin(t, gcc, t.TempDir(), "tco", string(asm))
-			if out, code := runBin(exec.Command(bin), ""); code != 7 || out != "" {
-				t.Fatalf("x86-64 run = %q exit %d, want %q exit 7", out, code, "")
-			}
-		})
+	t.Run("x86-64", func(t *testing.T) {
+		asm := emitSSAAsm(t, fernBin, stdlibRoot, src, "x86-64-linux")
+		assertNoDuplicateLocalLabels(t, "x86-64 tco asm", asm)
+		assertNoDanglingLocalLabels(t, "x86-64 tco asm", asm)
+		bin := buildBin(t, gcc, t.TempDir(), "tco", string(asm))
+		if out, code := runBin(exec.Command(bin), ""); code != 7 || out != "" {
+			t.Fatalf("x86-64 run = %q exit %d, want %q exit 7", out, code, "")
+		}
+	})
 
-		t.Run(leg.name+"/arm64", func(t *testing.T) {
-			armGCC, qemu := arm64Tooling(t)
-			asm := emitSSAAsm(t, fernBin, stdlibRoot, src, "arm64-linux", leg.semIR)
-			assertNoDuplicateLocalLabels(t, "arm64 tco asm", asm)
-			assertNoDanglingLocalLabels(t, "arm64 tco asm", asm)
-			bin := buildBinArm64(t, armGCC, t.TempDir(), "tco", string(asm))
-			if out, code := runBin(runArm64Bin(qemu, bin), ""); code != 7 || out != "" {
-				t.Fatalf("arm64 run = %q exit %d, want %q exit 7", out, code, "")
-			}
-		})
-	}
+	t.Run("arm64", func(t *testing.T) {
+		armGCC, qemu := arm64Tooling(t)
+		asm := emitSSAAsm(t, fernBin, stdlibRoot, src, "arm64-linux")
+		assertNoDuplicateLocalLabels(t, "arm64 tco asm", asm)
+		assertNoDanglingLocalLabels(t, "arm64 tco asm", asm)
+		bin := buildBinArm64(t, armGCC, t.TempDir(), "tco", string(asm))
+		if out, code := runBin(runArm64Bin(qemu, bin), ""); code != 7 || out != "" {
+			t.Fatalf("arm64 run = %q exit %d, want %q exit 7", out, code, "")
+		}
+	})
 }
 
-// emitSSAAsm emits `src` for `target` through the register path, with the AST
-// lowering when semIR is empty and the typed lowering otherwise.
-func emitSSAAsm(t *testing.T, fernBin, stdlibRoot, src, target, semIR string) []byte {
+// emitSSAAsm emits `src` for `target` through the register path.
+func emitSSAAsm(t *testing.T, fernBin, stdlibRoot, src, target string) []byte {
 	t.Helper()
 	cmd := exec.Command(fernBin, "-backend", "ssa", "-target", target, "-emit", "asm", src, stdlibRoot)
-	cmd.Env = append(os.Environ(), "FERN_SEM_IR="+semIR, "FERN_STRICT_IR=1")
+	cmd.Env = append(os.Environ(), "FERN_STRICT_IR=1")
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
 	asm, err := cmd.Output()

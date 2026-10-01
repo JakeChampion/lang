@@ -32,8 +32,6 @@ import (
 // both builtins, so the whole contract is expressible without std/float — which
 // also keeps this test independent of the f64 `.to_string()` method dispatch
 // that #5885 moved onto std/float.
-//
-// The tagging it pins is irlower's, so the programs compile on the AST lowering.
 func TestSelfHostFloatAliasIsF64(t *testing.T) {
 	const (
 		f64Bits = "4599676419421066581"
@@ -92,7 +90,7 @@ func TestSelfHostFloatAliasIsF64(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCaptureAST(t, runner, driverBin, []byte(tc.prog))
+			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.prog))
 			if len(asm) == 0 {
 				t.Fatal("self-host compiler emitted 0 bytes")
 			}

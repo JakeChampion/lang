@@ -52,14 +52,10 @@ func writeSrc(t *testing.T, name, src string) string {
 func TestSelfHostHandleTupleLiteralX86_64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	src := writeHandleTupleSrc(t)
-	for _, env := range []string{"FERN_SEM_IR=1", "FERN_SEM_IR="} {
-		t.Run(env, func(t *testing.T) {
-			bin := cli.x86Binary(t, src, "FERN_STRICT_IR=1", env)
-			stdout, exit := runStdout(t, cli.runner, bin)
-			if exit != 7 || stdout != "ok\n" {
-				t.Fatalf("exit = %d, stdout %q; want 7 and \"ok\\n\"", exit, stdout)
-			}
-		})
+	bin := cli.x86Binary(t, src, "FERN_STRICT_IR=1")
+	stdout, exit := runStdout(t, cli.runner, bin)
+	if exit != 7 || stdout != "ok\n" {
+		t.Fatalf("exit = %d, stdout %q; want 7 and \"ok\\n\"", exit, stdout)
 	}
 }
 

@@ -126,25 +126,10 @@ func requireSelfHostDiffLeg(t *testing.T) {
 // none — it stops at asm text. That puts the external assembler on the critical
 // path, so asm the assembler REJECTS surfaces here as a link failure rather than
 // hiding, which is the #5862 / #6022 class.
+//
+// A seed the typed lowering (docs/SELFHOST-SEMANTIC-SOURCE.md, #9415) refuses
+// fails rather than skipping as a coverage gap.
 func TestDifferential_SelfHostX86_64(t *testing.T) {
-	testDifferentialSelfHostX86_64(t, false)
-}
-
-// TestDifferential_SelfHostSemanticX86_64 is the same corpus through the
-// self-host CLI with FERN_SEM_IR=1, the fuzz leg for the semantic lowering
-// (docs/SELFHOST-SEMANTIC-SOURCE.md, #9415). The interpreter is the oracle as
-// above, and a seed the typed lowering refuses fails rather than skipping as a
-// coverage gap.
-func TestDifferential_SelfHostSemanticX86_64(t *testing.T) {
-	testDifferentialSelfHostX86_64(t, true)
-}
-
-// selfHostSemDiffKnownFile is the semantic leg's own list: a seed the AST
-// lowering gets right and the semantic one does not belongs here and nowhere
-// else.
-const selfHostSemDiffKnownFile = "selfhost-diff-semantic-x86_64-known-divergences.txt"
-
-func testDifferentialSelfHostX86_64(t *testing.T, semantic bool) {
 	requireSelfHostDiffLeg(t)
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -162,9 +147,6 @@ func testDifferentialSelfHostX86_64(t *testing.T, semantic bool) {
 	fernBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
 
 	knownFile := selfHostDiffKnownFile
-	if semantic {
-		knownFile = selfHostSemDiffKnownFile
-	}
 	known := loadKnownDivergences(t, knownFile)
 
 	var sampled, ran int64
@@ -187,9 +169,9 @@ func testDifferentialSelfHostX86_64(t *testing.T, semantic bool) {
 				}
 				t.Errorf(format, args...)
 			}
-			r, gap := runSelfHostSeed(t, fernBin, stdlibRoot, src, semantic, failf)
+			r, gap := runSelfHostSeed(t, fernBin, stdlibRoot, src, failf)
 			if gap != "" {
-				if semantic && semRefused(gap) {
+				if semRefused(gap) {
 					t.Errorf("the typed lowering refused this seed:\n%s", gap)
 					return
 				}
@@ -233,8 +215,8 @@ func testDifferentialSelfHostX86_64(t *testing.T, semantic bool) {
 }
 
 // semRefused reports whether a compile failed because the typed lowering
-// refused part of the program, which the semantic legs fail rather than skip
-// as a coverage gap.
+// refused part of the program, which the legs fail rather than skip as a
+// coverage gap.
 func semRefused(out string) bool {
 	return strings.Contains(out, "FERN_SEM_IR: the typed lowering refused")
 }
@@ -257,7 +239,7 @@ func semRefused(out string) bool {
 // selfHostRunTimeout and reported as such, rather than spending the lane's
 // budget. That matters more here than on the fixture legs: these programs are
 // generated, so nobody has ever eyeballed one to know it should terminate.
-func runSelfHostSeed(t *testing.T, fernBin, stdlibRoot, src string, semantic bool, failf failFunc) (*selfHostRun, string) {
+func runSelfHostSeed(t *testing.T, fernBin, stdlibRoot, src string, failf failFunc) (*selfHostRun, string) {
 	t.Helper()
 	// Absolute paths throughout: a relative one was unopenable from an
 	// arm64-darwin binary until #6002, and absolute is what every other
@@ -269,15 +251,6 @@ func runSelfHostSeed(t *testing.T, fernBin, stdlibRoot, src string, semantic boo
 	}
 	asmPath := filepath.Join(dir, "prog.s")
 	compile := exec.Command(fernBin, "-target", "x86-64-linux", "-emit", "asm", srcPath, stdlibRoot, "-o", asmPath)
-	// The control leg spells the flag EMPTY rather than leaving it unset: an
-	// empty value is off (semlower.sem_ir_on), and writing it is what stops an
-	// ambient FERN_SEM_IR=1 in the environment turning both legs into the
-	// semantic one. The bisect knobs are cleared too, since under either a
-	// refusal keeps a mixed module instead of failing the compile.
-	compile.Env = append(os.Environ(), "FERN_SEM_IR=", "FERN_SEM_IR_ONLY=", "FERN_SEM_IR_SKIP=")
-	if semantic {
-		compile.Env = append(compile.Env, "FERN_SEM_IR=1")
-	}
 	out, err := compile.CombinedOutput()
 	if err != nil {
 		return nil, fmt.Sprintf("%v\n%s%s", err, out,

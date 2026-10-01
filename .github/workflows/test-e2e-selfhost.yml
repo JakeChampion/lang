@@ -381,15 +381,14 @@ jobs:
           FERN_SELFHOST_FIXTURES: "1"
         run: go test ./internal/e2e/ -run '^${{ matrix.test }}$' -v -timeout ${{ matrix.go-timeout }}
 
-  # THE FERNSMITH CORPUS THROUGH THE SELF-HOST COMPILER, one job per target,
-  # each running the AST-lowering leg and then the semantic-lowering leg of the
-  # same corpus. Per-seed subtests are parallel, so one job already uses every
-  # core; a second job per target would only buy another job's setup.
+  # THE FERNSMITH CORPUS THROUGH THE SELF-HOST COMPILER, one job per target.
+  # Per-seed subtests are parallel, so one job already uses every core; a
+  # second job per target would only buy another job's setup.
   #
   # The wasm legs t.Skip without wasmtime, and they are run WITHOUT it on
   # purpose for now: with it present, five seeds trap in the self-host wasm
   # module where the interpreter runs clean (integer divide by zero on seeds
-  # 139, 195, 402 and 483, an out-of-bounds access on 139's semantic leg), so
+  # 139, 195, 402 and 483, an out-of-bounds access on 139), so
   # the lane cannot go green until the emitter is fixed (#9995). Installing
   # wasmtime here is the last step of that fix, not of this file.
   diff-selfhost:
@@ -409,31 +408,28 @@ jobs:
       - name: aarch64 cross toolchain + qemu (arm64 target)
         if: matrix.qemu == 'true'
         uses: ./.github/actions/apt-cross-toolchain
-      - name: x86_64 — AST lowering, then the semantic lowering
+      - name: x86_64
         if: matrix.target == 'x86_64'
         env:
           FERN_SELFHOST_DIFF: "1"
         run: |
           set -euo pipefail
           go test ./internal/e2e/ -run '^TestDifferential_SelfHostX86_64$' -v -timeout 43m
-          go test ./internal/e2e/ -run '^TestDifferential_SelfHostSemanticX86_64$' -v -timeout 43m
           go test ./internal/e2e/ -run '^TestSelfHostDeepNestingMatchesNativeAndDoesNotCrash$' -v -timeout 10m
-      - name: arm64 — AST lowering, then the semantic lowering
+      - name: arm64
         if: matrix.target == 'arm64'
         env:
           FERN_SELFHOST_DIFF: "1"
         run: |
           set -euo pipefail
           go test ./internal/e2e/ -run '^TestDifferential_SelfHostArm64$' -v -timeout 43m
-          go test ./internal/e2e/ -run '^TestDifferential_SelfHostSemanticArm64$' -v -timeout 43m
-      - name: wasm — AST lowering, then the semantic lowering
+      - name: wasm
         if: matrix.target == 'wasm'
         env:
           FERN_SELFHOST_DIFF: "1"
         run: |
           set -euo pipefail
           go test ./internal/e2e/ -run '^TestDifferential_SelfHostWasm$' -v -timeout 43m
-          go test ./internal/e2e/ -run '^TestDifferential_SelfHostSemanticWasm$' -v -timeout 43m
 
   # THE SHARDS. Each builds both test binaries and the drivers its tests need,
   # then runs its LPT slice of the union list in two isolated worker processes.

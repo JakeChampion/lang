@@ -13,33 +13,32 @@ import (
 // builder left behind. A function that returns a param / field / literal / bare
 // accumulator ident is NOT classified fresh, so its result is left to leak (sound).
 var strFreshRetIRCases = []struct {
-	name        string
-	src         string
-	expected    int
-	mustReclaim bool
+	name     string
+	src      string
+	expected int
 }{
 	// f returns a concat (fresh); r = fmt(42) reclaimed. "n=42" len 4.
 	{"freshret-concat",
 		`import "std/i32";
 function fmt(n: i32): string { return "n=" + n.to_string(); } function main(): i32 { var r: string = fmt(42); return r.len(); }`,
-		4, true},
+		4},
 	// Un-annotated binding of a fresh-string-returning method-forwarder. len 3.
 	{"freshret-unannotated",
 		`import "std/string";
 function up(s: string): string { return s.to_ascii_upper(); } function main(): i32 { var r = up("abc"); return r.len(); }`,
-		3, true},
+		3},
 	// Memory-safety at scale: r = build() reclaimed every iteration (flat heap). A
 	// double-free would corrupt the freelist and crash / return garbage. exit 0.
 	{"freshret-churn-safe",
 		`import "std/i32";
 function build(n: i32): string { return "x=" + n.to_string(); } function main(): i32 { var t: i32 = 0; var k: i32 = 0; while (k < 3000000) { var r: string = build(k); if (r.len() < 3) { t = 1; } k = k + 1; } return t; }`,
-		0, true},
+		0},
 	// NEGATIVE: id() returns its PARAM (an alias of the caller's arg), so it is not
 	// fresh-returning — r must NOT be reclaimed (freeing it could double-free the
 	// caller-owned box). No __fern_str_free; value stays correct. len 2.
 	{"freshret-return-param-not-reclaimed",
 		`function id(s: string): string { return s; } function main(): i32 { var r: string = id("xy"); return r.len(); }`,
-		2, false},
+		2},
 }
 
 // TestSelfHostStrFreshRetIRX86_64 compiles each case through the self-hosted x86-64
@@ -55,14 +54,6 @@ func TestSelfHostStrFreshRetIRX86_64(t *testing.T) {
 			asm := []byte(l.emit(t, tc.src))
 			if len(asm) == 0 {
 				t.Fatal("self-host compiler emitted 0 bytes")
-			}
-			// The fresh-ret reclaim is the AST lowering's decision.
-			reclaims := countUserStrFreeReclaims([]byte(l.emitAST(t, tc.src)))
-			if tc.mustReclaim && reclaims == 0 {
-				t.Errorf("%s: expected a fresh-ret-call reclaim (call __fn___fern_str_free), found none — r leaks", tc.name)
-			}
-			if !tc.mustReclaim && reclaims != 0 {
-				t.Errorf("%s: expected NO reclaim (callee not fresh-returning), found %d — a double-free / UAF risk", tc.name, reclaims)
 			}
 			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
 			var cmd *exec.Cmd

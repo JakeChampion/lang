@@ -276,9 +276,7 @@ func TestSelfHostReuseDifferentialX86_64(t *testing.T) {
 		// childEnv, not os.Environ(): the "reuse on" arm sets nothing, so an
 		// ambient FERN_SELFHOST_NO_REUSE=1 makes it reuse-OFF too and the
 		// on-vs-off comparison below compares a run with itself (#6833).
-		// FERN_SELFHOST_NO_REUSE is the AST lowering's switch, so both arms
-		// compile on it.
-		cmd.Env = childEnv(append([]string{"FERN_SEM_IR="}, extraEnv...)...)
+		cmd.Env = childEnv(extraEnv...)
 		out, err := cmd.Output()
 		if err != nil || len(out) == 0 {
 			t.Fatalf("driver failed (env %v): %v", extraEnv, err)
@@ -371,11 +369,6 @@ func TestSelfHostStrarrReuseExclusionX86_64(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src))
-			// The admission is the AST lowering's; the typed lowering guards every
-			// reuse with a uniqueness check at run time.
-			if strings.Contains(string(runCaptureAST(t, runner, driverBin, []byte(tc.src))), "call __fn___fern_alloc_reuse") {
-				t.Errorf("%s: asm contains an alloc_reuse call — the aliased string[] value was wrongly admitted to reuse", tc.name)
-			}
 			bin := buildBin(t, gcc, dir, tc.name, string(asm))
 			var cmd *exec.Cmd
 			if len(runner) == 0 {

@@ -4,25 +4,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
 // `.to_string()` on an i64 / u64 receiver on the wasm IR path — the wasm half
 // of #5826.
-//
-// irlower lowers the wide receivers to call_direct __fern_{i64,u64}_to_string,
-// which the register backends serve by compiling asmcore.rt_src_* Fern source
-// through the IR pipeline. wasm has no such mechanism (its runtime helpers are
-// hand-written WAT), so wasm_ir_deferrals_ok bailed the WHOLE module to the AST
-// emitter rather than emit a call to an undefined function. It now serves them
-// with $__fern_i64_to_str / $__fern_u64_to_str (i64_to_string_helper /
-// u64_to_string_helper), so the deferral is gone.
-//
-// The formatters are gated one need each (@uses_{i32,i64,u64}_to_string), so a
-// module formatting one width carries only that body — pinned below, because
-// the obvious alternative (widen the existing @uses_i32_to_string gate to cover
-// all three) would quietly bloat every i32 program with two unused formatters.
 
 // wideToStringProg formats the interesting magnitudes of each width in one
 // module: an ordinary i64, INT64_MIN (whose negation overflows back to itself,
@@ -44,13 +30,9 @@ const wideToStringProg = `function main(): i32 {
 const wideImports = "import \"std/i32\";\nimport \"std/i64\";\nimport \"std/u64\";\n"
 
 // TestSelfHostWideToStringWasmIR checks that the wide formatters render the
-// same digits the native interpreter does, and that the AST lowering's
-// hand-written formatters are gated one need each.
+// same digits the native interpreter does.
 func TestSelfHostWideToStringWasmIR(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
 	l := newWasmStdlibLoader(t)
 
 	emit := func(t *testing.T, src string) string {
@@ -95,46 +77,29 @@ func TestSelfHostWideToStringWasmIR(t *testing.T) {
 		}
 	})
 
-	// One formatter per need: an i64-only module must not carry the i32 body,
-	// nor an i32-only module the i64 one.
+	// Each width alone in a module.
 	for _, tc := range []struct {
-		name    string
-		src     string
-		want    string
-		absent  string
-		present string
+		name string
+		src  string
+		want string
 	}{
 		{
-			name:    "i64-only",
-			src:     "function main(): i32 { var n: i64 = 7 as i64; write(n.to_string() + \"\\n\"); return 0; }",
-			want:    "7\n",
-			present: "$__fern_i64_to_str",
-			absent:  "$__fern_i32_to_str",
+			name: "i64-only",
+			src:  "function main(): i32 { var n: i64 = 7 as i64; write(n.to_string() + \"\\n\"); return 0; }",
+			want: "7\n",
 		},
 		{
-			name:    "u64-only",
-			src:     "function main(): i32 { var n: u64 = 9 as u64; write(n.to_string() + \"\\n\"); return 0; }",
-			want:    "9\n",
-			present: "$__fern_u64_to_str",
-			absent:  "$__fern_i64_to_str",
+			name: "u64-only",
+			src:  "function main(): i32 { var n: u64 = 9 as u64; write(n.to_string() + \"\\n\"); return 0; }",
+			want: "9\n",
 		},
 		{
-			name:    "i32-only",
-			src:     "function main(): i32 { var n: i32 = 5; write(n.to_string() + \"\\n\"); return 0; }",
-			want:    "5\n",
-			present: "$__fern_i32_to_str",
-			absent:  "$__fern_i64_to_str",
+			name: "i32-only",
+			src:  "function main(): i32 { var n: i32 = 5; write(n.to_string() + \"\\n\"); return 0; }",
+			want: "5\n",
 		},
 	} {
-		t.Run("gate-"+tc.name, func(t *testing.T) {
-			// The hand-written formatters and their gates are the AST lowering's.
-			wat := string(runCaptureAST(t, runner, driverBin, []byte(tc.src), "-ir"))
-			if !strings.Contains(wat, "(func "+tc.present) {
-				t.Errorf("emitted wat has no %s body", tc.present)
-			}
-			if strings.Contains(wat, "(func "+tc.absent) {
-				t.Errorf("emitted wat carries the unused %s body", tc.absent)
-			}
+		t.Run(tc.name, func(t *testing.T) {
 			if got := runWAT(t, tc.name, emit(t, tc.src)); got != tc.want {
 				t.Errorf("%s = %q, want %q", tc.name, got, tc.want)
 			}

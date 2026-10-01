@@ -1,9 +1,7 @@
 package e2eselfhost
 
 import (
-	"bytes"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -278,57 +276,6 @@ func TestSelfHostMapLiteralComputedKeyIR_X86_64(t *testing.T) {
 			if code := cmd.ProcessState.ExitCode(); code != want {
 				t.Errorf("%s exited %d, want %d (interp oracle) — a map literal with a "+
 					"computed key built itself with the wrong key kind", tc.name, code, want)
-			}
-		})
-	}
-}
-
-// TestSelfHostMapLiteralComputedKeyWasmIR is the wasm leg of the same corpus.
-// Not a duplicate of the x86-64 one: the key kind goes through op_map_new as well as
-// op_map_set, and on wasm that op picks between two DIFFERENT map
-// representations ($__fern_map_new vs $__fern_map_new_str), where the register
-// backends share one constructor and read the kind only at the compare. A
-// constructor that disagrees with its inserts is invisible on x86-64 and fatal
-// here.
-func TestSelfHostMapLiteralComputedKeyWasmIR(t *testing.T) {
-	// These programs pin the AST lowering's built-in map runtime; the typed lowering
-	// takes maps from core/map.
-	t.Setenv("FERN_SEM_IR", "")
-	if _, err := exec.LookPath("wasmtime"); err != nil {
-		t.Skip("wasmtime not on PATH; skipping self-host map-literal key-kind wasm IR e2e")
-	}
-	gcc, runner := x86_64Tooling(t)
-	interpBin := buildLangBinForInterp(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
-
-	for _, tc := range mapLiteralComputedKeyCases {
-		t.Run(tc.name, func(t *testing.T) {
-			want := interpExit(t, interpBin, tc.src)
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(driverBin, "-ir")
-			} else {
-				cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
-			}
-			cmd.Stdin = bytes.NewReader([]byte(tc.src))
-			wat, err := cmd.Output()
-			if err != nil || len(wat) == 0 {
-				t.Fatalf("driver failed for %q: %v", tc.name, err)
-			}
-			watFile := filepath.Join(dir, "maplitkey_"+tc.name+".wat")
-			if err := os.WriteFile(watFile, wat, 0o644); err != nil {
-				t.Fatalf("write wat: %v", err)
-			}
-			rcmd := exec.Command("wasmtime", "run", watFile)
-			_ = rcmd.Run()
-			if rcmd.ProcessState == nil || !rcmd.ProcessState.Exited() {
-				t.Fatalf("wasmtime did not exit normally for %q", tc.name)
-			}
-			if got := rcmd.ProcessState.ExitCode(); got != want {
-				t.Errorf("%s exited %d, want %d (interp oracle) — a map literal built "+
-					"itself with the wrong key kind", tc.name, got, want)
 			}
 		})
 	}

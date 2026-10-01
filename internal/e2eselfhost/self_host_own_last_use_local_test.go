@@ -45,11 +45,9 @@ function main(): i32 {
 }
 `
 
-// TestSelfHostOwnLastUseLocalASTLowering runs the same hand-overs through the
-// AST lowering under the sanitizer. It moves a local it can prove holds a
-// count and retains for any other, so nothing may be released twice; a leak
-// is allowed, as the lowering's exit sweep does not reclaim every local.
-func TestSelfHostOwnLastUseLocalASTLowering(t *testing.T) {
+// TestSelfHostOwnLastUseLocalSanitized runs the same hand-overs, and a local
+// reassigned before its hand-over, under the sanitizer and the leak census.
+func TestSelfHostOwnLastUseLocalSanitized(t *testing.T) {
 	prog, err := os.ReadFile(filepath.Join(langSrcAbs(t, "conformance"), "cases", "own_param_last_use_local", "main.fern"))
 	if err != nil {
 		t.Fatal(err)
@@ -63,13 +61,13 @@ func TestSelfHostOwnLastUseLocalASTLowering(t *testing.T) {
 		{"reassigned", ownLastUseReassignSrc, 15},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			stderr, code := cli.exitOf(t, c.src, "x86-64-linux", "FERN_SANITIZE=1", "FERN_SEM_IR=")
-			if code != c.want || forArrStructSanitizerFault(stderr, false) {
-				t.Fatalf("exit %d, want %d (99 is an rc underflow), and no sanitizer report but a leak\n%s", code, c.want, stderr)
+			stderr, code := cli.exitOf(t, c.src, "x86-64-linux", "FERN_SANITIZE=1")
+			if code != c.want || forArrStructSanitizerFault(stderr, true) {
+				t.Fatalf("exit %d, want %d (99 is an rc underflow), and no sanitizer report\n%s", code, c.want, stderr)
 			}
 			stderr, code = cli.exitOf(t, c.src, "x86-64-linux", "FERN_LEAKCHECK=1")
 			if code != c.want {
-				t.Fatalf("semantic: exit %d, want %d\n%s", code, c.want, stderr)
+				t.Fatalf("leakcheck: exit %d, want %d\n%s", code, c.want, stderr)
 			}
 			assertBalancedCensus(t, stderr)
 		})

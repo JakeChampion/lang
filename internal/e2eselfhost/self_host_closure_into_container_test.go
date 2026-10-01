@@ -127,8 +127,7 @@ function main(): i32 {
 // Interpreter-confirmed.
 const closureReturnFieldArrayWant = 91
 
-// A tuple element. The AST lowering keeps one box: a tuple passed to any call
-// does not release its closure element, with or without this return (#10593).
+// A tuple element (#10593).
 const closureReturnTupleElemSrc = `function mk(b: i32): (i32) => i32 { return (x: i32) => x - b; }
 function tfirst(p: ((i32) => i32, i32)): (i32) => i32 { return p.0; }
 function main(): i32 {
@@ -251,80 +250,36 @@ function main(): i32 {
 // Interpreter-confirmed.
 const closureReturnOwnedWant = 55
 
-// An `own` fn parameter is the returning frame's too. The semantic lowering
-// refuses an owning fn parameter, so this row runs on the AST lowering only.
-const closureReturnOwnParamSrc = `function mk(b: i32): (i32) => i32 { return (x: i32) => x - b; }
-function passown(own f: (i32) => i32): (i32) => i32 { return f; }
-function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
-    while (i < 6) {
-        var e: (i32) => i32 = passown(mk(i));
-        t = t + e(i + 7) + passown(mk(i))(1);
-        i = i + 1;
-    }
-    return t % 101;
-}
-`
-
-// Interpreter-confirmed.
-const closureReturnOwnParamWant = 33
-
-// astLeak is the number of blocks the AST lowering leaves live, pinned
-// exactly; every other leg must balance.
 var closureIntoContainerCases = []struct {
-	name      string
-	src       string
-	want      int
-	astLeak   int64
-	lowerings []vblockClosureLowering
+	name string
+	src  string
+	want int
 }{
-	{"call_into_container", closureCallIntoContainerSrc, closureCallIntoContainerWant, 0, vblockClosureBoth},
-	{"container_shared", closureContainerSharedSrc, closureContainerSharedWant, 0, vblockClosureBoth},
-	{"return_borrowed", closureReturnBorrowedSrc, closureReturnBorrowedWant, 0, vblockClosureBoth},
-	{"return_field_array", closureReturnFieldArraySrc, closureReturnFieldArrayWant, 0, vblockClosureBoth},
-	{"return_tuple_elem", closureReturnTupleElemSrc, closureReturnTupleElemWant, 1, vblockClosureBoth},
-	{"return_value_branch", closureReturnValueBranchSrc, closureReturnValueBranchWant, 0, vblockClosureBoth},
-	{"return_pattern_match", closureReturnPatternMatchSrc, closureReturnPatternMatchWant, 0, vblockClosureBoth},
-	{"return_closure_call", closureReturnClosureCallSrc, closureReturnClosureCallWant, 0, vblockClosureBoth},
-	{"return_owned", closureReturnOwnedSrc, closureReturnOwnedWant, 0, vblockClosureBoth},
-	{"return_own_param", closureReturnOwnParamSrc, closureReturnOwnParamWant, 0, vblockClosureAST},
-}
-
-// assertClosureIntoContainerCensus requires a balanced census, or exactly
-// astLeak live blocks on the AST lowering — never a free beyond that.
-func assertClosureIntoContainerCensus(t *testing.T, stderr, lowering string, astLeak int64) {
-	t.Helper()
-	if lowering != "ast" || astLeak == 0 {
-		assertBalancedCensus(t, stderr)
-		return
-	}
-	var allocs, frees, live int64
-	summary := leakSummaryLine(stderr)
-	if _, err := fmtSscan(summary, &allocs, &frees, &live); err != nil {
-		t.Fatalf("parse %q: %v", summary, err)
-	}
-	if allocs == 0 || allocs-frees != astLeak {
-		t.Errorf("%s — want exactly %d live blocks", summary, astLeak)
-	}
+	{"call_into_container", closureCallIntoContainerSrc, closureCallIntoContainerWant},
+	{"container_shared", closureContainerSharedSrc, closureContainerSharedWant},
+	{"return_borrowed", closureReturnBorrowedSrc, closureReturnBorrowedWant},
+	{"return_field_array", closureReturnFieldArraySrc, closureReturnFieldArrayWant},
+	{"return_tuple_elem", closureReturnTupleElemSrc, closureReturnTupleElemWant},
+	{"return_value_branch", closureReturnValueBranchSrc, closureReturnValueBranchWant},
+	{"return_pattern_match", closureReturnPatternMatchSrc, closureReturnPatternMatchWant},
+	{"return_closure_call", closureReturnClosureCallSrc, closureReturnClosureCallWant},
+	{"return_owned", closureReturnOwnedSrc, closureReturnOwnedWant},
 }
 
 func TestSelfHostClosureIntoContainerX86_64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range closureIntoContainerCases {
-		for _, lw := range tc.lowerings {
-			t.Run(tc.name+"/"+lw.name, func(t *testing.T) {
-				stderr, exit := cli.exitOf(t, tc.src, "x86-64-linux", "FERN_LEAKCHECK=1", lw.env)
-				if exit != tc.want {
-					t.Fatalf("leakcheck: exit = %d, want %d\n%s", exit, tc.want, stderr)
-				}
-				assertClosureIntoContainerCensus(t, stderr, lw.name, tc.astLeak)
-				stderr, exit = cli.exitOf(t, tc.src, "x86-64-linux", "FERN_SANITIZE=1", lw.env)
-				if exit != tc.want || forArrStructSanitizerFault(stderr, lw.name != "ast" || tc.astLeak == 0) {
-					t.Fatalf("sanitize: exit = %d, want %d, and no sanitizer fault\n%s", exit, tc.want, stderr)
-				}
-			})
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			stderr, exit := cli.exitOf(t, tc.src, "x86-64-linux", "FERN_LEAKCHECK=1")
+			if exit != tc.want {
+				t.Fatalf("leakcheck: exit = %d, want %d\n%s", exit, tc.want, stderr)
+			}
+			assertBalancedCensus(t, stderr)
+			stderr, exit = cli.exitOf(t, tc.src, "x86-64-linux", "FERN_SANITIZE=1")
+			if exit != tc.want || forArrStructSanitizerFault(stderr, true) {
+				t.Fatalf("sanitize: exit = %d, want %d, and no sanitizer fault\n%s", exit, tc.want, stderr)
+			}
+		})
 	}
 }
 
@@ -339,14 +294,12 @@ func TestSelfHostClosureIntoContainerWasm(t *testing.T) {
 func checkClosureIntoContainer(t *testing.T, target string) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range closureIntoContainerCases {
-		for _, lw := range tc.lowerings {
-			t.Run(tc.name+"/"+lw.name, func(t *testing.T) {
-				stderr, exit := cli.exitOf(t, tc.src, target, "FERN_LEAKCHECK=1", lw.env)
-				if exit != tc.want {
-					t.Fatalf("exit = %d, want %d\n%s", exit, tc.want, stderr)
-				}
-				assertClosureIntoContainerCensus(t, stderr, lw.name, tc.astLeak)
-			})
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			stderr, exit := cli.exitOf(t, tc.src, target, "FERN_LEAKCHECK=1")
+			if exit != tc.want {
+				t.Fatalf("exit = %d, want %d\n%s", exit, tc.want, stderr)
+			}
+			assertBalancedCensus(t, stderr)
+		})
 	}
 }

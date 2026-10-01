@@ -10,10 +10,10 @@ import (
 )
 
 // TestSelfHostSemanticProduction drives the PRODUCTION consumer of the typed
-// semantic pipeline: `fern -target … ` with FERN_SEM_IR=1, where
-// semlower.lower_gated_sem produces every function semsource admits, lowers it
-// through ssaunits + ssarc, and substitutes the result into the cache the
-// backend emits from (docs/SELFHOST-SEMANTIC-SOURCE.md).
+// semantic pipeline: `fern -target … `, where semlower.substitution produces
+// every function semsource admits, lowers it through ssaunits + ssarc, and
+// substitutes the result into the cache the backend emits from
+// (docs/SELFHOST-SEMANTIC-SOURCE.md).
 //
 // Each program carries its own expectations, checked on every target:
 //
@@ -55,7 +55,7 @@ func TestSelfHostSemanticProduction(t *testing.T) {
 					if target == "wasm32-wasi" && prog.wasm != "" {
 						want = prog.wasm
 					}
-					got, report, leak := semCompileRun(t, gcc, runner, fernBin, stdlibRoot, src, target, true, prog.stdin)
+					got, report, leak := semCompileRun(t, gcc, runner, fernBin, stdlibRoot, src, target, prog.stdin)
 					if got != want {
 						t.Fatalf("answered %q, want %q\nreport: %s", got, want, report)
 					}
@@ -99,12 +99,11 @@ func semProducedCount(t *testing.T, report string) int {
 	return n
 }
 
-// semCompileRun compiles src for target with the semantic path on or off, runs
-// the result, and returns "<exit>|<stdout>", the compiler's stderr, and the
+// semCompileRun compiles src for target, runs the result, and returns "<exit>|<stdout>", the compiler's stderr, and the
 // bytes the sanitizer reports unreleased (0 on the legs that do not sanitize).
 // wasmtime refuses an exit status of 126 or more, which reads as
 // "out-of-range|<stdout>".
-func semCompileRun(t *testing.T, gcc string, runner []string, fernBin, stdlibRoot, src, target string, sem bool, stdin string) (string, string, int) {
+func semCompileRun(t *testing.T, gcc string, runner []string, fernBin, stdlibRoot, src, target string, stdin string) (string, string, int) {
 	t.Helper()
 	dir := t.TempDir()
 	out := filepath.Join(dir, "prog")
@@ -125,15 +124,10 @@ func semCompileRun(t *testing.T, gcc string, runner []string, fernBin, stdlibRoo
 	if sanitize {
 		cmd.Env = append(cmd.Env, "FERN_SANITIZE=1")
 	}
-	if sem {
-		cmd.Env = append(cmd.Env, "FERN_SEM_IR=1")
-	} else {
-		cmd.Env = append(cmd.Env, "FERN_SEM_IR=")
-	}
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		t.Fatalf("compile (sem=%v, %s): %v\n%s", sem, target, err, stderr.String())
+		t.Fatalf("compile (%s): %v\n%s", target, err, stderr.String())
 	}
 	var run *exec.Cmd
 	switch target {
@@ -7240,7 +7234,7 @@ func semAllocations(t *testing.T, fernBin, stdlibRoot, src string) int64 {
 	t.Helper()
 	out := filepath.Join(t.TempDir(), "prog")
 	cmd := exec.Command(fernBin, "-target", "x86-64-linux", src, stdlibRoot, "-o", out)
-	cmd.Env = append(os.Environ(), "FERN_LEAKCHECK=1", "FERN_SEM_IR=1")
+	cmd.Env = append(os.Environ(), "FERN_LEAKCHECK=1")
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("compile: %v\n%s", err, output)
 	}

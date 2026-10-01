@@ -6,12 +6,10 @@ import (
 	"testing"
 )
 
-// A string local bound from an if- or match-expression is released on the AST
-// lowering (#10216). No reclaim credit reached a binding whose initializer is
-// the value-block desugar, so the fresh string it held leaked once per
-// evaluation, including the one bound in a loop body. The credit goes by the
-// block's live leaves: all freshly allocated, or fresh and literal (the
-// literal-local gate), with a diverging branch contributing none.
+// A string local bound from an if- or match-expression is released (#10216),
+// including the one bound in a loop body, whether the block's live leaves are
+// all freshly allocated or fresh and literal, with a diverging branch among
+// them.
 const valueBlockStrReleaseSrc = `import "std/i32";
 function fresh(n: i32): i32 { var s: string = if (n > 0) { "pos" + n.to_string() } else { "neg" + n.to_string() }; return s.len(); }
 function mixed(n: i32): i32 { var s: string = if (n > 0) { "pos" + n.to_string() } else { "x" }; return s.len(); }
@@ -42,7 +40,7 @@ func TestSelfHostValueBlockStrRelease(t *testing.T) {
 	if err := os.WriteFile(src, []byte(valueBlockStrReleaseSrc), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	bin := cli.x86Binary(t, src, "FERN_SEM_IR=", "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
+	bin := cli.x86Binary(t, src, "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
 	stderr, exit := runWithStdin(t, cli.runner, bin, nil)
 	if exit != valueBlockStrReleaseWant {
 		t.Fatalf("exit=%d, want %d (stderr %q)", exit, valueBlockStrReleaseWant, stderr)

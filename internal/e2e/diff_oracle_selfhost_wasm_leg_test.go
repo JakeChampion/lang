@@ -13,12 +13,10 @@ import (
 	"github.com/jakechampion/lang/internal/fernsmith"
 )
 
-// selfHostWasmDiffKnownFile and selfHostSemWasmDiffKnownFile list the seeds
-// whose self-host wasm result disagrees with the interpreter's, one file per
-// lowering, same contract as the x86-64 and arm64 pairs: a listed seed that
-// starts passing fails too.
+// selfHostWasmDiffKnownFile lists the seeds whose self-host wasm result
+// disagrees with the interpreter's, same contract as the x86-64 and arm64
+// legs: a listed seed that starts passing fails too.
 const selfHostWasmDiffKnownFile = "selfhost-diff-wasm-known-divergences.txt"
-const selfHostSemWasmDiffKnownFile = "selfhost-diff-semantic-wasm-known-divergences.txt"
 
 // selfHostWasmDiffMinRunRatio is this leg's own floor on seeds that compiled
 // and produced a COMPARABLE answer, lower than selfHostDiffMinRunRatio because
@@ -57,17 +55,6 @@ const selfHostWasmDiffMinRunRatio = 0.45
 // comparison is dropped, and the seed is counted out of the run ratio so the
 // floor measures what was actually compared.
 func TestDifferential_SelfHostWasm(t *testing.T) {
-	testDifferentialSelfHostWasm(t, false)
-}
-
-// TestDifferential_SelfHostSemanticWasm is the same corpus through the same
-// emitter with the SEMANTIC lowering. Both legs spell FERN_SEM_IR, for the
-// reason the x86-64 pair's compile step gives.
-func TestDifferential_SelfHostSemanticWasm(t *testing.T) {
-	testDifferentialSelfHostWasm(t, true)
-}
-
-func testDifferentialSelfHostWasm(t *testing.T, semantic bool) {
 	requireSelfHostDiffLeg(t)
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -86,9 +73,6 @@ func testDifferentialSelfHostWasm(t *testing.T, semantic bool) {
 	fernBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
 
 	knownFile := selfHostWasmDiffKnownFile
-	if semantic {
-		knownFile = selfHostSemWasmDiffKnownFile
-	}
 	known := loadKnownDivergences(t, knownFile)
 
 	var sampled, compared, clamped int64
@@ -112,9 +96,9 @@ func testDifferentialSelfHostWasm(t *testing.T, semantic bool) {
 				t.Errorf(format, args...)
 			}
 
-			out, exit, gap := runSelfHostWasmSeed(t, fernBin, stdlibRoot, src, semantic)
+			out, exit, gap := runSelfHostWasmSeed(t, fernBin, stdlibRoot, src)
 			if gap != "" {
-				if semantic && semRefused(gap) {
+				if semRefused(gap) {
 					t.Errorf("the typed lowering refused this seed:\n%s", gap)
 					return
 				}
@@ -178,7 +162,7 @@ func testDifferentialSelfHostWasm(t *testing.T, semantic bool) {
 // runSelfHostWasmSeed compiles src for wasm32-wasi with the self-host CLI and
 // runs the module under wasmtime. Returns (combined output, exit, "") when it
 // ran and ("", 0, gap) when the compiler bailed.
-func runSelfHostWasmSeed(t *testing.T, fernBin, stdlibRoot, src string, semantic bool) (string, int, string) {
+func runSelfHostWasmSeed(t *testing.T, fernBin, stdlibRoot, src string) (string, int, string) {
 	t.Helper()
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "main.fern")
@@ -187,14 +171,6 @@ func runSelfHostWasmSeed(t *testing.T, fernBin, stdlibRoot, src string, semantic
 	}
 	watPath := filepath.Join(dir, "prog.wat")
 	compile := exec.Command(fernBin, "-target", "wasm32-wasi", "-emit", "asm", srcPath, stdlibRoot, "-o", watPath)
-	// Spelled EMPTY on the control leg rather than left unset, for the reason
-	// the x86-64 pair gives: empty is off, and writing it is what stops an
-	// ambient FERN_SEM_IR in the environment turning both legs into the
-	// semantic one.
-	compile.Env = append(os.Environ(), "FERN_SEM_IR=", "FERN_SEM_IR_ONLY=", "FERN_SEM_IR_SKIP=")
-	if semantic {
-		compile.Env = append(compile.Env, "FERN_SEM_IR=1")
-	}
 	out, err := compile.CombinedOutput()
 	if err != nil {
 		return "", 0, fmt.Sprintf("%v\n%s%s", err, out,

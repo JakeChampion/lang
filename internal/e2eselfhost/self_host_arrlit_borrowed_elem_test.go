@@ -17,10 +17,6 @@ var arrlitBorrowedElemCases = []struct {
 	name string
 	src  string
 	want int
-	// allocs, frees for a lowering where main keeps a leak of its own (it
-	// never releases an enum local or a struct array it passed on), compared
-	// exactly; every other lowering balances.
-	pinned map[string][2]int64
 }{
 	{"struct_param_in_field_array", `struct Pt { x: i32, tag: i32[] }
 struct Bag { n: i32, pts: Pt[] }
@@ -36,7 +32,7 @@ function main(): i32 {
     while (k < 8) { var junk: Pt = Pt { x: 9, tag: [9, 9] }; acc = acc + junk.tag[0]; k = k + 1; }
     return p0.tag[1] + acc - 72;
 }
-`, 8, nil},
+`, 8},
 	{"struct_param_self_append", `struct Pt { x: i32, tag: i32[] }
 struct Bag { n: i32, pts: Pt[] }
 function mk(p: Pt, k: i32): i32 {
@@ -53,7 +49,7 @@ function main(): i32 {
     while (k < 8) { var junk: Pt = Pt { x: 9, tag: [9, 9] }; acc = acc + junk.tag[0]; k = k + 1; }
     return p0.tag[1] + acc - 72;
 }
-`, 8, nil},
+`, 8},
 	{"enum_param_in_field_array", `enum Flag { On(i32[]), Off }
 struct Flags { n: i32, fs: Flag[] }
 function mk(f: Flag, k: i32): i32 {
@@ -70,7 +66,7 @@ function main(): i32 {
     match (f0) { Flag.On(q) => { g = q[1]; }, Flag.Off => {} }
     return g + acc - 72;
 }
-`, 6, map[string][2]int64{"ast": {21, 19}, "ast_main": {20, 18}, "ast_callees": {21, 19}}},
+`, 6},
 	{"enum_param_self_append", `enum Flag { On(i32[]), Off }
 struct Flags { n: i32, fs: Flag[] }
 function mk(f: Flag, k: i32): i32 {
@@ -89,7 +85,7 @@ function main(): i32 {
     match (f0) { Flag.On(q) => { g = q[1]; }, Flag.Off => {} }
     return g + acc - 72;
 }
-`, 6, map[string][2]int64{"ast": {22, 19}, "ast_main": {21, 19}, "ast_callees": {22, 19}}},
+`, 6},
 	{"indexed_elem_in_field_array", `struct Pt { x: i32, tag: i32[] }
 struct Bag { n: i32, pts: Pt[] }
 function mk(ps: Pt[], k: i32): i32 {
@@ -104,7 +100,7 @@ function main(): i32 {
     while (k < 8) { var junk: Pt = Pt { x: 9, tag: [9, 9] }; acc = acc + junk.tag[0]; k = k + 1; }
     return ps[0].tag[1] + acc - 72;
 }
-`, 8, map[string][2]int64{"ast": {23, 21}, "ast_callees": {23, 21}}},
+`, 8},
 	// A temporary handed to a storing parameter: the counted store leaves it
 	// rc 2, and the caller's post-call release nets it to the record's one.
 	{"temp_args", `struct Pt { x: i32, tag: i32[] }
@@ -129,7 +125,7 @@ function main(): i32 {
     }
     return s;
 }
-`, 18, nil},
+`, 18},
 	// The same at a METHOD's counted position whose result is a struct: the
 	// counted store is the proof, whatever the callee returns.
 	{"temp_enum_to_method", `enum Flag { On(i32[]), Off }
@@ -149,14 +145,7 @@ function main(): i32 {
     while (i < 3) { s = s + round(i); i = i + 1; }
     return s;
 }
-`, 18, nil},
-}
-
-var arrlitBorrowedElemLowerings = []struct{ name, env string }{
-	{"semantic", "FERN_SEM_IR=1"},
-	{"ast", "FERN_SEM_IR="},
-	{"ast_main", "FERN_SEM_IR_SKIP=main"},
-	{"ast_callees", "FERN_SEM_IR_SKIP=mk,mka"},
+`, 18},
 }
 
 func writeArrlitBorrowedElemSrc(t *testing.T, name, src string) string {
@@ -172,24 +161,17 @@ func TestSelfHostArrlitBorrowedElemX86_64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range arrlitBorrowedElemCases {
 		src := writeArrlitBorrowedElemSrc(t, tc.name, tc.src)
-		for _, lw := range arrlitBorrowedElemLowerings {
-			t.Run(tc.name+"/"+lw.name, func(t *testing.T) {
-				pin, pinned := tc.pinned[lw.name]
-				stderr, exit := runWithStdin(t, cli.runner, cli.x86Binary(t, src, "FERN_LEAKCHECK=1", lw.env), nil)
-				if exit != tc.want {
-					t.Fatalf("leakcheck: exit = %d, want %d\n%s", exit, tc.want, stderr)
-				}
-				if pinned {
-					assertLeakPinned(t, stderr, pin, "main's unreleased enum local and passed struct array")
-				} else {
-					assertBalancedCensus(t, stderr)
-				}
-				stderr, exit = runWithStdin(t, cli.runner, cli.x86Binary(t, src, "FERN_SANITIZE=1", lw.env), nil)
-				if exit != tc.want || forArrStructSanitizerFault(stderr, !pinned) {
-					t.Fatalf("sanitize: exit = %d, want %d, and no sanitizer fault\n%s", exit, tc.want, stderr)
-				}
-			})
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			stderr, exit := runWithStdin(t, cli.runner, cli.x86Binary(t, src, "FERN_LEAKCHECK=1"), nil)
+			if exit != tc.want {
+				t.Fatalf("leakcheck: exit = %d, want %d\n%s", exit, tc.want, stderr)
+			}
+			assertBalancedCensus(t, stderr)
+			stderr, exit = runWithStdin(t, cli.runner, cli.x86Binary(t, src, "FERN_SANITIZE=1"), nil)
+			if exit != tc.want || forArrStructSanitizerFault(stderr, true) {
+				t.Fatalf("sanitize: exit = %d, want %d, and no sanitizer fault\n%s", exit, tc.want, stderr)
+			}
+		})
 	}
 }
 

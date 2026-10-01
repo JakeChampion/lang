@@ -1,9 +1,6 @@
 package e2eselfhost
 
 import (
-	"os"
-	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -73,57 +70,5 @@ func TestSelfHostEnumCrossReuseIR(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-// enumCrossReuseFiresDeadDonor: a DEAD same-enum donor reused in place — the recipient
-// box is NOT allocated, so 3 __fern_arr_box (donor box + donor [1,2] + recipient [3,4]).
-const enumCrossReuseFiresDeadDonor = `enum E { A(i32[]), B(i32[]) } function main(): i32 { var a: E = A([1, 2]); var t: i32 = 0; match (a) { A(_) => { t = 5; }, B(_) => { t = 6; } } var c: E = B([3, 4]); var v: i32 = 0; match (c) { A(w) => { v = w[0]; }, B(w) => { v = w[0] + w[1]; } } return t + v; }`
-
-// enumCrossReuseFiresLiveDonor: the donor `a` is read AFTER the recipient, so it is
-// live at c and the reuse must NOT fire — both boxes are allocated (4 __fern_arr_box).
-const enumCrossReuseFiresLiveDonor = `enum E { A(i32[]), B(i32[]) } function main(): i32 { var a: E = A([1, 2]); var c: E = B([3, 4]); var t: i32 = 0; match (a) { A(_) => { t = 5; }, B(_) => { t = 6; } } var v: i32 = 0; match (c) { A(w) => { v = w[0]; }, B(w) => { v = w[0] + w[1]; } } return t + v; }`
-
-// TestSelfHostEnumCrossReuseFiresX86_64 proves the enum->enum cross-reuse actually
-// lowers in place: a dead same-enum donor yields ONE FEWER box alloc (its box is
-// reused by the recipient) than the same program with the donor read after the
-// recipient. Guards against the analysis silently regressing to a no-op that stays
-// correct only because a fresh alloc is also correct.
-func TestSelfHostEnumCrossReuseFiresX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := writeSelfHostAsmProject(t)
-	src, err := os.ReadFile("../../examples/self_host/asm_run.fern")
-	if err != nil {
-		t.Fatalf("read asm_run.fern: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "asm_run.fern"), src, 0o644); err != nil {
-		t.Fatalf("write asm_run.fern: %v", err)
-	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
-
-	// The reuse is the AST lowering's, so the asm is read from that lowering.
-	countAllocs := func(prog string) int {
-		asm := runCaptureAST(t, runner, driverBin, []byte(prog))
-		return countUserArrBoxAllocs(asm)
-	}
-	if got := countAllocs(enumCrossReuseFiresDeadDonor); got != 3 {
-		t.Errorf("dead enum donor: got %d box allocs, want 3 (reuse should fire)", got)
-	}
-	if got := countAllocs(enumCrossReuseFiresLiveDonor); got != 4 {
-		t.Errorf("live enum donor: got %d box allocs, want 4 (reuse must NOT fire)", got)
-	}
-
-	// #4350 slice 5: the firing site is RUNTIME-GUARDED — the emitted asm must
-	// carry the uniqueness probe and the token-degrade allocator (reused =
-	// __fern_rc_is_unique(a); box = __fern_alloc_reuse(reused ? a : 0, nf+1)).
-	// The degrade arm is unreachable from any statically admitted program
-	// (sole-owner donors only), so it is pinned structurally here and at scale
-	// by the self-compile fixpoints.
-	asm := string(runCaptureAST(t, runner, driverBin, []byte(enumCrossReuseFiresDeadDonor)))
-	if rcIsUniqueSites(asm) == 0 {
-		t.Error("enum-cross reuse site emitted no __fern_rc_is_unique guard")
-	}
-	if !strings.Contains(asm, "call __fn___fern_alloc_reuse") {
-		t.Error("enum-cross reuse site emitted no __fern_alloc_reuse token-degrade call")
 	}
 }

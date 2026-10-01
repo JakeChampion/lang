@@ -10,10 +10,7 @@ import (
 
 // Optimisations that compute the right answer whether or not they fire, so no
 // runtime test notices when one stops: each case names a function and the
-// shape its emitted code must (and must not) have on each native target.
-// Every case is checked on BOTH lowerings the CLI has — the typed semantic
-// path it takes by default and the AST path `FERN_SEM_IR=` selects — since
-// an optimisation living in one of them is invisible to the other. The
+// shape its emitted code must (and must not) have on each native target. The
 // program's exit code is checked too, on the host target.
 type optShapeCase struct {
 	name string
@@ -23,8 +20,6 @@ type optShapeCase struct {
 	// want and forbid are regexps over the function's body, keyed by target.
 	want   map[string][]string
 	forbid map[string][]string
-	// typedOnly names an optimisation of a pass only the typed lowering runs.
-	typedOnly bool
 }
 
 var optShapeCases = []optShapeCase{
@@ -79,7 +74,7 @@ function main(): i32 { return sum_to(10i64) as i32; }
 	// the test, is the typed lowering's.
 	// A string literal's static box is immortal: comparing against one
 	// releases nothing afterwards.
-	{name: "literal_compare_no_release", fn: "sym", exit: 5, typedOnly: true, src: `
+	{name: "literal_compare_no_release", fn: "sym", exit: 5, src: `
 @noinline function sym(k: string): i32 {
     if (k == "add") { return 1; }
     if (k == "sub") { return 2; }
@@ -91,7 +86,7 @@ function main(): i32 { return sym("sub") + sym("x"); }
 		forbid: map[string][]string{"x86-64-linux": {`__fern_str_free`}, "arm64-linux": {`__fern_str_free`}}},
 	// A literal a consumer takes while it stays live is handed on without a
 	// retain.
-	{name: "literal_consumed_no_retain", fn: "pair", exit: 2, typedOnly: true, src: `
+	{name: "literal_consumed_no_retain", fn: "pair", exit: 2, src: `
 @noinline function pair(): string[] {
     var s: string = "x";
     var out: string[] = [];
@@ -104,7 +99,7 @@ function main(): i32 { return pair().len(); }
 		forbid: map[string][]string{"x86-64-linux": {`rc_?inc`}, "arm64-linux": {`rc_?inc`}}},
 	// A phi of literals is a literal too: handed on while it stays live, it
 	// is not retained.
-	{name: "literal_phi_consumed_no_retain", fn: "pick2", exit: 2, typedOnly: true, src: `
+	{name: "literal_phi_consumed_no_retain", fn: "pick2", exit: 2, src: `
 @noinline function pick2(c: boolean): string[] {
     var s: string = "ab";
     if (c) { s = "abc"; }
@@ -118,7 +113,7 @@ function main(): i32 { return pick2(true).len(); }
 		forbid: map[string][]string{"x86-64-linux": {`rc_?inc`}, "arm64-linux": {`rc_?inc`}}},
 	// A phi that can also carry a counted string is not a literal: handed on
 	// while live, it is retained.
-	{name: "mixed_phi_consumed_retained", fn: "pick3", exit: 2, typedOnly: true, src: `
+	{name: "mixed_phi_consumed_retained", fn: "pick3", exit: 2, src: `
 @noinline function pick3(c: boolean, t: string): string[] {
     var s: string = "a";
     if (c) { s = t + t; }
@@ -131,7 +126,7 @@ function main(): i32 { return pick3(true, "b").len(); }
 `,
 		want: map[string][]string{"x86-64-linux": {`rc_?inc`}, "arm64-linux": {`rc_?inc`}}},
 	// A phi of literals holds nothing, so its death releases nothing.
-	{name: "literal_phi_no_release", fn: "pick", exit: 3, typedOnly: true, src: `
+	{name: "literal_phi_no_release", fn: "pick", exit: 3, src: `
 @noinline function pick(c: boolean): i32 {
     var s: string = "ab";
     if (c) { s = "abc"; }
@@ -142,7 +137,7 @@ function main(): i32 { return pick(true); }
 		forbid: map[string][]string{"x86-64-linux": {`__fern_str_free`}, "arm64-linux": {`__fern_str_free`}}},
 	// An array release whose count survives it is decremented in place; only
 	// the free calls __fern_arr_dec.
-	{name: "release_inline", fn: "grow", exit: 7, typedOnly: true, src: `
+	{name: "release_inline", fn: "grow", exit: 7, src: `
 @noinline function grow(xs: i32[]): i32 {
     var ys: i32[] = xs.append(4);
     return ys.len() + xs.len();
@@ -162,7 +157,7 @@ function main(): i32 { return grow([1, 2, 3]); }
 function main(): i32 { return fill(3).len(); }
 `,
 		want: map[string][]string{"x86-64-linux": {`apush\d+o:\n\s+movq %rsi, 8\(%rdi,%rdx,8\)`}, "arm64-linux": {`apush\d+o:\n\s+add x2, x2, #1\n\s+str x1, \[x0, x2, lsl #3\]`}}},
-	{name: "unique_test_fused", fn: "bump", exit: 11, typedOnly: true, src: `
+	{name: "unique_test_fused", fn: "bump", exit: 11, src: `
 struct Pt { x: i32, y: i32, tag: string }
 @noinline function bump(p: Pt): Pt { return Pt { ...p, x: p.x + 1 }; }
 function main(): i32 {
@@ -334,14 +329,6 @@ function main(): i32 { return add3(3, 4, 5); }
 		forbid: map[string][]string{"arm64-linux": {`\bsxtw x4, w4\b`}}},
 }
 
-var optShapeLegs = []struct {
-	name string
-	env  []string
-}{
-	{"typed", nil},
-	{"ast", []string{"FERN_SEM_IR="}},
-}
-
 func TestSelfHostOptimisationShapes(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	for _, c := range optShapeCases {
@@ -351,48 +338,41 @@ func TestSelfHostOptimisationShapes(t *testing.T) {
 			if err := os.WriteFile(src, []byte(c.src), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			for _, leg := range optShapeLegs {
-				if c.typedOnly && leg.name != "typed" {
-					continue
-				}
-				for _, target := range []string{"x86-64-linux", "arm64-linux"} {
-					out := filepath.Join(dir, leg.name+"-"+target+".s")
-					cmd := exec.Command(h.cli, "-target", target, "-emit", "asm", "-o", out, src, h.stdlib)
-					cmd.Env = append(os.Environ(), leg.env...)
-					if combined, err := cmd.CombinedOutput(); err != nil {
-						t.Fatalf("%s/%s: emitting: %v\n%s", leg.name, target, err, combined)
-					}
-					asm, err := os.ReadFile(out)
-					if err != nil {
-						t.Fatal(err)
-					}
-					body := selfHostFnBody(t, asm, c.fn)
-					for _, re := range c.want[target] {
-						if !regexp.MustCompile(re).MatchString(body) {
-							t.Errorf("%s/%s: %s lacks %q:\n%s", leg.name, target, c.fn, re, body)
-						}
-					}
-					for _, re := range c.forbid[target] {
-						if regexp.MustCompile(re).MatchString(body) {
-							t.Errorf("%s/%s: %s still has %q:\n%s", leg.name, target, c.fn, re, body)
-						}
-					}
-				}
-				tg := h.targets[0]
-				bin := filepath.Join(dir, leg.name+".bin")
-				cmd := exec.Command(h.cli, "-target", tg.target, "-o", bin, src, h.stdlib)
-				cmd.Env = append(os.Environ(), leg.env...)
+			for _, target := range []string{"x86-64-linux", "arm64-linux"} {
+				out := filepath.Join(dir, target+".s")
+				cmd := exec.Command(h.cli, "-target", target, "-emit", "asm", "-o", out, src, h.stdlib)
 				if combined, err := cmd.CombinedOutput(); err != nil {
-					t.Fatalf("%s: building: %v\n%s", leg.name, err, combined)
+					t.Fatalf("%s: emitting: %v\n%s", target, err, combined)
 				}
-				run := exec.Command(bin)
-				if len(tg.runner) > 0 {
-					run = exec.Command(tg.runner[0], append(tg.runner[1:], bin)...)
+				asm, err := os.ReadFile(out)
+				if err != nil {
+					t.Fatal(err)
 				}
-				_ = run.Run()
-				if got := run.ProcessState.ExitCode(); got != c.exit {
-					t.Errorf("%s: exit %d, want %d", leg.name, got, c.exit)
+				body := selfHostFnBody(t, asm, c.fn)
+				for _, re := range c.want[target] {
+					if !regexp.MustCompile(re).MatchString(body) {
+						t.Errorf("%s: %s lacks %q:\n%s", target, c.fn, re, body)
+					}
 				}
+				for _, re := range c.forbid[target] {
+					if regexp.MustCompile(re).MatchString(body) {
+						t.Errorf("%s: %s still has %q:\n%s", target, c.fn, re, body)
+					}
+				}
+			}
+			tg := h.targets[0]
+			bin := filepath.Join(dir, "prog.bin")
+			cmd := exec.Command(h.cli, "-target", tg.target, "-o", bin, src, h.stdlib)
+			if combined, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("building: %v\n%s", err, combined)
+			}
+			run := exec.Command(bin)
+			if len(tg.runner) > 0 {
+				run = exec.Command(tg.runner[0], append(tg.runner[1:], bin)...)
+			}
+			_ = run.Run()
+			if got := run.ProcessState.ExitCode(); got != c.exit {
+				t.Errorf("exit %d, want %d", got, c.exit)
 			}
 		})
 	}

@@ -4,7 +4,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -41,15 +40,11 @@ func TestSelfHostStructFreshRetFieldIRX86_64(t *testing.T) {
 	}
 	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
 
-	run := func(t *testing.T, prog, name string, want int, wantAsmSubstr string) {
+	run := func(t *testing.T, prog, name string, want int) {
 		t.Helper()
 		asm := runCapture(t, gcc, runner, driverBin, []byte(prog))
 		if len(asm) == 0 {
 			t.Fatalf("%s: self-host compiler emitted 0 bytes", name)
-		}
-		// The drop helper named is the AST lowering's, so it is read from that lowering.
-		if wantAsmSubstr != "" && !strings.Contains(string(runCaptureAST(t, runner, driverBin, []byte(prog))), wantAsmSubstr) {
-			t.Fatalf("%s: emitted asm missing %q — the IR path was not taken", name, wantAsmSubstr)
 		}
 		bin := buildBin(t, gcc, dir, name, string(asm))
 		var cmd *exec.Cmd
@@ -80,7 +75,7 @@ function main(): i32 {
     var s: i32 = 0; var f: i32 = 0;
     while (f < 150000000) { s = mk(); f = f + 1; }
     return s - 10;
-}`, "struct_freshret_field_churn", 0, "call __fn___struct_drop_Outer")
+}`, "struct_freshret_field_churn", 0)
 
 	// VALUE-CORRECTNESS: the inner is read back before the drop; a wrong free of a
 	// live box would corrupt it. a(1) + b(2) + tag(7) = 10.
@@ -90,5 +85,5 @@ function mk_inner(): Inner { return Inner { a: 1, b: 2 }; }
 function main(): i32 {
     var o: Outer = Outer { inner: mk_inner(), tag: 7 };
     return o.inner.a + o.inner.b + o.tag;
-}`, "struct_freshret_field_value", 10, "")
+}`, "struct_freshret_field_value", 10)
 }

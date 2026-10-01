@@ -287,43 +287,36 @@ const closureCallEnumMain = `function main(): i32 {
 }
 `
 
-// Wants are interpreter-confirmed. astCensus pins the AST lowering's census
-// where it is not balanced: the guard leaks the enum each closure captures,
-// which a closure environment never releases (#10587). The census is the
-// same without the retained returns.
+// Wants are interpreter-confirmed (#10587).
 var closureCallEnumCases = []struct {
-	name      string
-	src       string
-	want      int
-	astCensus [2]int64
+	name string
+	src  string
+	want int
 }{
-	{"issue", closureCallEnumIssueSrc, 36, [2]int64{}},
-	{"string", closureCallEnumStringSrc, 85, [2]int64{}},
-	{"array", closureCallEnumArraySrc, 48, [2]int64{}},
-	{"closure", closureCallEnumClosureSrc, 22, [2]int64{}},
-	{"shared", closureCallEnumSharedSrc, 86, [2]int64{30, 20}},
-	{"fresh_local", closureCallEnumFreshLocalSrc, 85, [2]int64{}},
-	{"lam_local", closureCallEnumLamLocalSrc, 60, [2]int64{}},
-	{"named_local", closureCallEnumNamedLocalSrc, 60, [2]int64{}},
+	{"issue", closureCallEnumIssueSrc, 36},
+	{"string", closureCallEnumStringSrc, 85},
+	{"array", closureCallEnumArraySrc, 48},
+	{"closure", closureCallEnumClosureSrc, 22},
+	{"shared", closureCallEnumSharedSrc, 86},
+	{"fresh_local", closureCallEnumFreshLocalSrc, 85},
+	{"lam_local", closureCallEnumLamLocalSrc, 60},
+	{"named_local", closureCallEnumNamedLocalSrc, 60},
 }
 
 func TestSelfHostClosureCallEnumX86_64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range closureCallEnumCases {
-		for _, lw := range vblockClosureBoth {
-			t.Run(tc.name+"/"+lw.name, func(t *testing.T) {
-				stderr, exit := cli.exitOf(t, tc.src, "x86-64-linux", "FERN_LEAKCHECK=1", lw.env)
-				if exit != tc.want {
-					t.Fatalf("leakcheck: exit = %d, want %d\n%s", exit, tc.want, stderr)
-				}
-				checkClosureCallEnumCensus(t, stderr, tc.astCensus, lw.name)
-				stderr, exit = cli.exitOf(t, tc.src, "x86-64-linux", "FERN_SANITIZE=1", lw.env)
-				balanced := lw.name != "ast" || tc.astCensus == [2]int64{}
-				if exit != tc.want || forArrStructSanitizerFault(stderr, balanced) {
-					t.Fatalf("sanitize: exit = %d, want %d, and no sanitizer finding\n%s", exit, tc.want, stderr)
-				}
-			})
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			stderr, exit := cli.exitOf(t, tc.src, "x86-64-linux", "FERN_LEAKCHECK=1")
+			if exit != tc.want {
+				t.Fatalf("leakcheck: exit = %d, want %d\n%s", exit, tc.want, stderr)
+			}
+			assertBalancedCensus(t, stderr)
+			stderr, exit = cli.exitOf(t, tc.src, "x86-64-linux", "FERN_SANITIZE=1")
+			if exit != tc.want || forArrStructSanitizerFault(stderr, true) {
+				t.Fatalf("sanitize: exit = %d, want %d, and no sanitizer finding\n%s", exit, tc.want, stderr)
+			}
+		})
 	}
 }
 
@@ -338,32 +331,12 @@ func TestSelfHostClosureCallEnumWasm(t *testing.T) {
 func checkClosureCallEnum(t *testing.T, target string) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range closureCallEnumCases {
-		for _, lw := range vblockClosureBoth {
-			t.Run(tc.name+"/"+lw.name, func(t *testing.T) {
-				stderr, exit := cli.exitOf(t, tc.src, target, "FERN_LEAKCHECK=1", lw.env)
-				if exit != tc.want {
-					t.Fatalf("exit = %d, want %d\n%s", exit, tc.want, stderr)
-				}
-				checkClosureCallEnumCensus(t, stderr, tc.astCensus, lw.name)
-			})
-		}
-	}
-}
-
-// checkClosureCallEnumCensus: balanced, or on the AST lowering exactly the
-// pinned allocs and frees when the case has a pin.
-func checkClosureCallEnumCensus(t *testing.T, stderr string, pin [2]int64, lowering string) {
-	t.Helper()
-	if lowering != "ast" || pin == [2]int64{} {
-		assertBalancedCensus(t, stderr)
-		return
-	}
-	summary := leakSummaryLine(stderr)
-	var allocs, frees, live int64
-	if _, err := fmtSscan(summary, &allocs, &frees, &live); err != nil {
-		t.Fatalf("parse %q: %v", summary, err)
-	}
-	if got := [2]int64{allocs, frees}; got != pin {
-		t.Errorf("%s, want allocs=%d frees=%d", summary, pin[0], pin[1])
+		t.Run(tc.name, func(t *testing.T) {
+			stderr, exit := cli.exitOf(t, tc.src, target, "FERN_LEAKCHECK=1")
+			if exit != tc.want {
+				t.Fatalf("exit = %d, want %d\n%s", exit, tc.want, stderr)
+			}
+			assertBalancedCensus(t, stderr)
+		})
 	}
 }
