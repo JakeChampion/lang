@@ -269,8 +269,8 @@ function main(): i32 {
     var plan = ssaunits.plan(typed, [2]);
     if (!plan.ok) { eprint(plan.why); return 5; }
     if (!ssarc.lower(typed, [2], plan, irlower.struct_tab_empty(), []).ok) { return 6; }
-    // A record instance with type arguments is named by its type key, so it
-    // lowers as a plain record with an array field does.
+    // A record instance with type arguments is found in the schema table by
+    // its whole type, arguments included, so it lowers as a plain record does.
     var wideType: typeinfo.Type = typeinfo.TypeStruct { name: "Box", args: [wide] };
     var wideSchema = semrecords.Record { views: false, ty: wideType, fields: [semrecords.Field { name: "xs", ty: f.result }] };
     var recordType: typeinfo.Type = typeinfo.TypeStruct { name: "Box", args: [] };
@@ -281,6 +281,14 @@ function main(): i32 {
     var genericPlan = ssaunits.plan(genericFunc, [2]);
     if (!genericPlan.ok) { eprint(genericPlan.why); return 7; }
     if (!ssarc.lower(genericFunc, [2], genericPlan, irlower.struct_tab_empty(), []).ok) { return 8; }
+    // The planner admits any map cursor, but the walk still needs the
+    // cursor's key and value to be ones it can walk: a key record with no
+    // schema in the table refuses the value.
+    var cursorType: typeinfo.Type = typeinfo.TypeStruct { name: "MapIter", args: [typeinfo.TypeStruct { name: "Missing", args: [] }, typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false }] };
+    var cursorFunc = ssasem.Func { envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], graph: g, values: [cursorType], params: [cursorType], result: cursorType, records: semrecords.no_records(), enums: [], calls: [] };
+    var cursorPlan = ssaunits.plan(cursorFunc, [2]);
+    if (!cursorPlan.ok) { eprint(cursorPlan.why); return 211; }
+    if (!refused(ssarc.lower(cursorFunc, [2], cursorPlan, irlower.struct_tab_empty(), []), "unsupported physical RC value type")) { return 212; }
     // So does a wide array field. The walk visits only the REFERENCE
     // fields, and an array of scalars has no element to visit, so it needs its
     // own box released and nothing more.
