@@ -744,12 +744,10 @@ func New() *Interp {
 	i.Builtins["__alloc_u8"] = &Builtin{Fn: builtinAllocU8}
 	i.Builtins["string_from_bytes_unchecked"] = &Builtin{Fn: builtinStringFromBytes}
 	i.Builtins["slice_unchecked"] = &Builtin{Fn: builtinSliceUnchecked}
-	// `s.bytes()` and `s.as_bytes()` round-trip bytes through
-	// raw memory in the stdlib / wat-emitted helper (the
-	// former does `__memcpy(out as i32, s.as_bytes() as i32, n)`,
-	// the latter aliases the string payload via a slice header).
-	// Both are unrepresentable in the interp's value-tree heap,
-	// so override the mangled entry points with direct
+	// Compiled `s.bytes()` makes an owned copy, while `s.as_bytes()`
+	// aliases the string payload via a slice header. Their raw-memory
+	// implementations are unrepresentable in the interp's value-tree
+	// heap, so override the mangled entry points with direct
 	// String→Array conversions that copy each byte. The two
 	// methods diverge on aliasing semantics under codegen
 	// (bytes() copies, as_bytes() shares); the interp returns

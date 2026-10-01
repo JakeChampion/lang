@@ -6016,6 +6016,9 @@ type variantDrop struct {
 }
 
 func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bool, emitLineMarkers bool, target targetName, cover *coverTable, pairForm map[string]bool, closureCaps map[string][]ast.Param, genEnumDrops map[string]*ast.EnumDecl, genTupleDrops map[string]ast.TupleType, returnsNoParamEscape, returnsFreshPairPayload, returnsFreshBox, returnsConstructedBox map[string]bool, trmcFuncs, trmcConsumeSafe map[string]bool, paramEscapes map[string][]bool, returnsParamProjection map[string]bool, paramCountedRetain, paramNoUncountedAlias map[string][]bool, consumedArrayArgPos, returnedArrayParams map[string][]bool, readOnlyComparators map[string]bool, vtableDispatched map[string]bool, addressTaken map[string]bool, growParams map[string][]growParam, paramFieldObs map[string][]fieldObs) (*Func, error) {
+	if stdlibBytesIntrinsic(fn) {
+		return lowerStdlibBytes(fn), nil
+	}
 	out := &Func{
 		Name:       fn.Name,
 		Params:     fn.Params,

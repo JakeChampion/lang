@@ -1001,6 +1001,8 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__slice_idx_4")
 				case "__slice_idx_8":
 					needs.add("__slice_idx_8")
+				case "__fern_string_bytes_copy":
+					needs.add("__fern_string_bytes_copy")
 				case "__method_string_as_bytes":
 					needs.add("__fern_alloc")
 					needs.add("__fern_alloc_rc1")
@@ -1314,6 +1316,7 @@ var unconditionalHelperCalls = map[string][]string{
 	// string's bytes through the bare allocator.
 	"__slice_make":             {"__fern_alloc_rc1"},
 	"__method_string_as_bytes": {"__fern_alloc_rc1", "__fern_alloc", "__fern_str_len", "__fern_str_byte"},
+	"__fern_string_bytes_copy": {"__alloc_u8", "__fern_str_len", "__fern_str_byte"},
 	"__fern_lc_report":         {"__fern_lc_wrnum"},
 	// The print family copies its argument into a fresh buffer and
 	// releases it once the (synchronous) write returns.
@@ -3446,6 +3449,11 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildStringAsBytesBody,
+	},
+	"__fern_string_bytes_copy": {
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildStringBytesCopyBody,
 	},
 	"__fern_stdout": {
 		// () → i32 — Writer struct with fd=1 (stdout).

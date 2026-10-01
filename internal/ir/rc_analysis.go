@@ -1298,6 +1298,13 @@ func inferParamRetainSummary(prog *ast.Program, info *checker.Info, trmcFuncs ma
 	// converges to the grounded fixpoint (a mutual-recursion cycle with no
 	// grounding stays uncredited, the conservative direction).
 	out.fixpoint(prog.Funcs, func(fn *ast.FuncDecl) bool {
+		if stdlibBytesIntrinsic(fn) {
+			if boolSliceEqual(out.vals[fn.Name], []bool{true}) {
+				return false
+			}
+			out.vals[fn.Name] = []bool{true}
+			return true
+		}
 		c, ok := ctxs[fn]
 		if !ok {
 			return false

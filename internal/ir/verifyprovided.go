@@ -43,6 +43,7 @@ var providedSigs = map[string]providedSig{
 	"__alloc":                         {1, rWord},
 	"__alloc_reuse":                   {3, rWord},
 	"__alloc_u8":                      {1, rWord},
+	"__fern_string_bytes_copy":        {2, rWord},
 	"__arr_idx":                       {2, rWord},
 	"__arr_idx_1":                     {2, rWord},
 	"__arr_idx_1_nc":                  {2, rWord},
