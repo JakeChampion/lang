@@ -9521,6 +9521,19 @@ function mx_is_numeric(t: typeinfo.Type): boolean {
 // mx_builtin_enum_of returns the built-in enum a variant name belongs to
 // (Option / Result / JsonValue / IoError / Body), or "" if it isn't a built-in
 // variant. Two struct arms in the same non-empty family unify.
+// builtin_union_sig is the variant list of a built-in Option or Result,
+// neither of which is in the union table, so a match on one is held to E014
+// and E030 like any enum's. Any other name answers an empty sig.
+function builtin_union_sig(name: string): UnionSig {
+  if (name == "Option") {
+    return UnionSig { name: name, variants: ["Some", "None"], is_try: false, is_enum: true, module: "", type_params: ["T"] };
+  }
+  if (name == "Result") {
+    return UnionSig { name: name, variants: ["Ok", "Err"], is_try: false, is_enum: true, module: "", type_params: ["T", "E"] };
+  }
+  return UnionSig { name: "", variants: [], is_try: false, is_enum: false, module: "", type_params: [] };
+}
+
 function mx_builtin_enum_of(name: string): string {
   if (name == "Some" || name == "None") {
     return "Option";
@@ -14078,6 +14091,9 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
         match (mst) {
           typeinfo.TypeUnion(mun) => {
             var usig: UnionSig = cur.lookup_union(mun.name);
+            if (usig.name.len() == 0) {
+              usig = builtin_union_sig(mun.name);
+            }
             // E023: a plain `match` on a value whose type is an
             // enum the checker doesn't know (the unknown-BASE
             // generic annotation shape — see type_from_ref_names).

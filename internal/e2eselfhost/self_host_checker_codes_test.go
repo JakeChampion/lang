@@ -277,6 +277,12 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"nested-generic-struct-literal-wide", "struct Box[T] { v: T }\nstruct Two[T] { b: Box[T], c: T }\nfunction main(): i32 { var o = Two { b: Box { v: 4611686018427387904 }, c: 1 }; var r: i64 = o.c; return 0; }\n", nil},
 		// A generic call in an unbound field infers from the destination.
 		{"generic-call-in-unbound-field", "struct Holder[T] { xs: T[], z: T }\nfunction emptyArr[A](): A[] { return []; }\nfunction f[T](t: T): Holder[T] { var h = Holder { xs: emptyArr(), z: t }; return h; }\nfunction main(): i32 { var h = f(7); return h.z; }\n", nil},
+		// A match on a built-in Option or Result is held to E014 and E030
+		// like any enum's (#10985).
+		{"option-match-result-arms", "function f(): Option[i32] { return Some(3); }\nfunction main(): i32 { match (f()) { Ok(_) => { return 1; }, Err(_) => { return 9; } } return 0; }\n", []string{"E014", "E030"}},
+		{"option-match-misspelled-arm", "function f(): Option[i32] { return Some(3); }\nfunction main(): i32 { match (f()) { Some(v) => { return v; }, Nope => { return 9; } } return 0; }\n", []string{"E014", "E030"}},
+		{"result-match-missing-err", "function f(): Result[i32, string] { return Ok(3); }\nfunction main(): i32 { match (f()) { Ok(v) => { return v; } } return 0; }\n", []string{"E030"}},
+		{"option-result-matches-exhaustive", "function f(): Option[i32] { return Some(3); }\nfunction g(): Result[i32, string] { return Err(\"e\"); }\nfunction main(): i32 { var n: i32 = 0; match (f()) { Some(v) when v > 9 => { n = 1; }, Some(v) => { n = v; }, None => { n = 2; } } match (g()) { Ok(v) => { n = n + v; }, _ => { n = n + 1; } } if let Some(w) = f() { n = n + w; } return n; }\n", nil},
 		// Two instantiations of one generic struct in an array literal are
 		// E034 unless an integer literal gives way to the other's (#10912).
 		{"array-two-instantiations", "struct Same[T] { a: T, b: T }\nfunction main(): i32 { var xs = [Same { a: 1, b: 2 }, Same { a: \"x\", b: \"y\" }]; return 0; }\n", []string{"E034"}},
