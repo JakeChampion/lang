@@ -197,7 +197,7 @@ pub function sem_strict_on(): boolean {
 
 function report(what: string, why: string): i32 {
   if (sem_report_on() || sem_strict_on()) {
-    eprint("FERN_SEM_IR: " + what + ": " + why + "\n");
+    eprint("FERN_SEM_IR: " + what + ": " + why);
   }
   return 0;
 }
@@ -206,7 +206,7 @@ function report(what: string, why: string): i32 {
 // strict compile that succeeds writes nothing to stderr.
 function tally(what: string, why: string): i32 {
   if (sem_report_on()) {
-    eprint("FERN_SEM_IR: " + what + ": " + why + "\n");
+    eprint("FERN_SEM_IR: " + what + ": " + why);
   }
   return 0;
 }
@@ -923,7 +923,7 @@ pub function substitution(mod: parser.Module, lowered: parser.FuncDecl[], struct
       + util.i32_to_string(built.instances.len()) + " instances: "
       + util.i32_to_string(refused_n) + " refused, the AST lowering stands");
     if (sem_strict_on()) {
-      eprint("FERN_SEM_IR_STRICT: the typed lowering refused " + util.i32_to_string(refused_n) + " declarations and instances; the FERN_SEM_IR lines above name each\n");
+      eprint("FERN_SEM_IR_STRICT: the typed lowering refused " + util.i32_to_string(refused_n) + " declarations and instances; the FERN_SEM_IR lines above name each");
       exit(3);
     }
     return ircore.no_sub();
@@ -1005,7 +1005,7 @@ pub function runtime_bodies(src: string): irlower.LowerResult[] {
 function runtime_refused(name: string, why: string): irlower.LowerResult[] {
   report("runtime " + name, why);
   if (sem_strict_on()) {
-    eprint("FERN_SEM_IR_STRICT: the typed lowering refused runtime helper " + name + "\n");
+    eprint("FERN_SEM_IR_STRICT: the typed lowering refused runtime helper " + name);
     exit(3);
   }
   return [];

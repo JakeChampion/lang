@@ -222,7 +222,7 @@ Supported:
 Built-ins:
 
 - `print` / `write` / `eprint` / `putchar` — output (stdout newline-terminated,
-  stdout raw, stderr, single byte).
+  stdout raw, stderr newline-terminated, single byte).
 - `len(x): i32`, `args(): string[]`, `exit(code): void`.
 - `stdin(): Reader` / `stdout(): Writer` / `stderr(): Writer` — standard
   streams with `.read_line()` / `.write(s)` methods.

@@ -122,7 +122,7 @@ function run(): i32 {
   // handed x86-64 text and surfaced as "unknown mnemonic `movq'" from the
   // aarch64 assembler, which reads as a codegen bug rather than a typo.
   if (target != "x86-64-linux" && target != "arm64-linux" && target != "arm64-darwin") {
-    eprint("asm_ir_run: unknown -target: " + target + " (want x86-64-linux, arm64-linux, arm64-darwin)\n");
+    eprint("asm_ir_run: unknown -target: " + target + " (want x86-64-linux, arm64-linux, arm64-darwin)");
     return 2;
   }
   var mod: parser.Module = rundriver.parse_stdin("asm_ir_run");

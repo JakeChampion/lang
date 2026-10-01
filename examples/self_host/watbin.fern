@@ -379,7 +379,7 @@ function index_of_str(xs: string[], n: string): i32 {
 function name_idx(names: string[], n: string): i32 {
   var k: i32 = index_of_str(names, n);
   if (k < 0) {
-    eprint("watbin: reference to undefined " + n + "\n");
+    eprint("watbin: reference to undefined " + n);
     exit(1);
   }
   return k;
