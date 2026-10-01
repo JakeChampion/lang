@@ -1,0 +1,11 @@
+import "./shapes";
+
+pub function get(k: i32): shapes.Shape {
+    if (k == 0) { return shapes.Circle(3); }
+    return shapes.Square(4);
+}
+
+pub function find(k: i32): Result[shapes.Shape, i32] {
+    if (k < 0) { return Err(k); }
+    return Ok(get(k));
+}

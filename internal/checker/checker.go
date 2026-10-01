@@ -7828,6 +7828,10 @@ type checker struct {
 	// seenDiags drops a diagnostic identical to one already recorded at
 	// the same position — see errfCode.
 	seenDiags map[diagKey]bool
+	// seededParams names the type parameters a struct literal took from its
+	// destination or update base while its fields unify: a typed field may
+	// rebind only what the literal's own fields bound.
+	seededParams map[string]bool
 	// wideLits are the integer literals past i64 max seen so far, each once
 	// — see checkUnsettledWideLiterals.
 	wideLits []wideLit
@@ -7840,8 +7844,15 @@ type checker struct {
 	litLocals  []*litLocal
 	litLocalOf map[*ast.Var]*litLocal
 	litIdents  map[*ast.Ident]*litLocal
-	current    *ast.FuncDecl
-	loopDepth  int
+	// litStructOf holds, per unannotated generic struct local, the literal
+	// local each type argument only untyped literals bound is (nil for an
+	// argument something typed bound); litFields maps a read of a field at
+	// such a parameter to it.
+	litStructOf    map[*ast.Var][]*litLocal
+	litFields      map[*ast.FieldAccess]*litLocal
+	litStructReads map[*ast.Ident]*ast.Var
+	current        *ast.FuncDecl
+	loopDepth      int
 	// tryConvN uniquifies the temp-var name in the error-converting `?`
 	// desugar (TryOp.Lowered). See #3234.
 	tryConvN int
@@ -9917,6 +9928,17 @@ func (c *checker) unifyType(expected, actual ast.Type, sub map[string]ast.Type) 
 			// single left-to-right pass, so `apply(map_new(8), bump)` bound
 			// T := bare `Map` from argument 1 and then rejected argument 2's
 			// `Map[string, i32]` (#8004).
+			// An untyped integer literal bound the parameter first; a typed
+			// integer bound later decides it, and the literal settles there
+			// (`Same { a: 1, b: y }` with `y: i64` is a Same[i64], #10453).
+			if en, ok := existing.(ast.NumberType); ok && en.Polymorphic && !c.seededParams[p.Name] {
+				if an, ok := actual.(ast.NumberType); ok {
+					if !an.Polymorphic {
+						sub[p.Name] = actual
+					}
+					return true
+				}
+			}
 			en, ea, eok := namedTypeArity(existing)
 			an, aa, aok := namedTypeArity(actual)
 			if eok && aok && en == an {
@@ -10098,6 +10120,26 @@ func unifyIfArms(a, b ast.Type) ast.Type {
 		}
 		if len(be.Args) == 0 && len(ae.Args) > 0 {
 			return ae
+		}
+	}
+	// Two instantiations of one generic struct unify argument-wise, so
+	// `[Same { a: 1, b: 2 }, Same { a: 3, b: y }]` with `y: i64` is a
+	// Same[i64][] and the literal-bound element settles there (#10453).
+	if as, aok := a.(ast.StructType); aok {
+		if bs, bok := b.(ast.StructType); bok && as.Name == bs.Name && len(as.Args) == len(bs.Args) && len(as.Args) > 0 {
+			args := make([]ast.Type, len(as.Args))
+			for i := range as.Args {
+				if ast.Equal(as.Args[i], bs.Args[i]) {
+					args[i] = as.Args[i]
+					continue
+				}
+				u := unifyIfArms(as.Args[i], bs.Args[i])
+				if u == nil {
+					return nil
+				}
+				args[i] = u
+			}
+			return ast.StructType{Name: as.Name, Args: args}
 		}
 	}
 	// Tuple types: unify element-wise. Lets polymorphic /
@@ -14089,6 +14131,7 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		if _, dup := s.names[n.Name]; dup {
 			c.errfCode(n.P, "E013", "variable %q already declared in this scope", n.Name)
 		}
+		unannotated := n.Type == nil
 		c.setElemHintFor(n.Init, n.Type)
 		c.expectedType = n.Type
 		got := c.checkExpr(n.Init, s)
@@ -14163,6 +14206,9 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		s.bindVar(n.Name, n.Type, n)
 		c.info.VarTypes[n] = n.Type
 		c.info.Locals[c.current] = append(c.info.Locals[c.current], n)
+		if st, ok := n.Type.(ast.StructType); ok && unannotated {
+			c.beginLitStructLocal(n, st, s)
+		}
 	case *ast.Destructure:
 		// `let (a, b, …) = expr;` — Init must produce a
 		// tuple of arity len(Names). Each name is registered
@@ -17281,13 +17327,13 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					// `Wrap(dyn Trait)` variant reported a spurious E036 even though
 					// the builtin Ok/Some/Err payloads and struct fields accept it.
 					// Record the coercion (so the IR boxes it) and accept it when the
-					// concrete impls every trait in the set — mirroring
-					// assignable()'s / maybeWrapForUnion's dyn branch. A
-					// non-implementing concrete still errors E036.
+					// concrete impls every trait in the set, as assignable()'s
+					// dyn branch decides. A non-implementing concrete, or a
+					// `str`, still errors E036.
 					dynPayloadOK := false
 					if dt, ok := substituteType(vr.payloads[i], sub).(ast.DynTraitType); ok {
-						if _, srcDyn := at.(ast.DynTraitType); !srcDyn {
-							if tn, ok2 := methodTypeName(at); ok2 && c.implementsAllDynTraits(dt, tn) {
+						if _, srcDyn := at.(ast.DynTraitType); !srcDyn && c.assignable(dt, at) {
+							if tn, ok2 := methodTypeName(at); ok2 {
 								dynPayloadOK = true
 								if c.info.DynCoercions == nil {
 									c.info.DynCoercions = map[ast.Expr]DynCoercion{}
@@ -17992,6 +18038,15 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 								}
 							}
 						}
+					}
+				}
+			}
+			// A literal argument that bound a parameter before a typed one
+			// settles at what the parameter came to.
+			for i := range n.Args {
+				if i < len(ft.Params) && containsParamType(ft.Params[i]) && !(recvIsArg0 && i == 0) {
+					if want := substituteType(ft.Params[i], sub); !containsParamType(want) {
+						c.settleNumeric(n.Args[i], want)
 					}
 				}
 			}
@@ -18834,6 +18889,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			n.TypeArgsWritten = false
 		}
 		var sub map[string]ast.Type
+		seeded := map[string]bool{}
 		if len(sd.TypeParams) > 0 {
 			sub = make(map[string]ast.Type, len(sd.TypeParams))
 			// Seed the type-arg substitution from an explicit destination
@@ -18847,6 +18903,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			if et, ok := c.expectedType.(ast.StructType); ok && et.Name == sd.Name && len(et.Args) == len(sd.TypeParams) {
 				for i, tp := range sd.TypeParams {
 					sub[tp] = et.Args[i]
+					seeded[tp] = true
 				}
 			}
 			// Construction-site type args outrank the destination: the
@@ -18876,20 +18933,13 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 						for i, tp := range sd.TypeParams {
 							if i < len(bst.Args) {
 								sub[tp] = bst.Args[i]
+								seeded[tp] = true
 							}
 						}
 					}
 				}
 			}
 		}
-		// Empty array literals at a field still spelled with an unbound
-		// parameter: they bind nothing, so they settle once the other
-		// fields have.
-		type deferredEmpty struct {
-			value    ast.Expr
-			expected ast.Type
-		}
-		var deferred []deferredEmpty
 		// A field that contradicts the instantiation the others bound leaves
 		// the literal without one, as an unbound parameter does (E040).
 		clashed := false
@@ -18939,9 +18989,10 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			}
 			// A field type still naming an unbound parameter is no width to
 			// settle at: unifyType below binds the parameter from the value.
+			// An empty array at one binds nothing; it settles once the
+			// other fields have.
 			if containsParamType(fieldExpected) {
 				if at, ok := vt.(ast.ArrayType); ok && at.Elem == nil {
-					deferred = append(deferred, deferredEmpty{f.Value, expected})
 					continue
 				}
 			} else {
@@ -18961,18 +19012,18 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			// argument / array element / return) omitted the struct field, so a
 			// direct `S { d: Concrete{...} }` reported a spurious E043 even
 			// though every other position accepts it (and the self-host checker
-			// already does). Mirror assignable()'s dyn branch here: a concrete
-			// that impls every trait in the set is a valid field value.
+			// already does). assignable()'s dyn branch decides it: a concrete
+			// that impls every trait in the set is a valid field value, and a
+			// `str` is not.
 			dynFieldOK := false
-			if dt, ok := fieldExpected.(ast.DynTraitType); ok {
-				if _, srcDyn := vt.(ast.DynTraitType); !srcDyn {
-					if tn, ok2 := methodTypeName(vt); ok2 && c.implementsAllDynTraits(dt, tn) {
-						dynFieldOK = true
-					}
-				}
+			if _, ok := fieldExpected.(ast.DynTraitType); ok {
+				dynFieldOK = c.assignable(fieldExpected, vt)
 			}
 			if sub != nil {
-				if !c.unifyType(expected, vt, sub) && !dynFieldOK {
+				c.seededParams = seeded
+				unified := c.unifyType(expected, vt, sub)
+				c.seededParams = nil
+				if !unified && !dynFieldOK {
 					// Show the substituted field type (`i32`) rather than the
 					// bare parameter (`T`) when the instantiation is known —
 					// e.g. seeded from a `Box[i32]` destination.
@@ -19037,8 +19088,12 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				}
 			}
 			if complete && !clashed {
-				for _, d := range deferred {
-					c.settleNumeric(d.value, substituteType(d.expected, sub))
+				// Every field at a parameter settles at what inference bound:
+				// an empty array, and a literal that bound before a typed field.
+				for _, f := range n.Fields {
+					if ft, ok := fieldT[f.Name]; ok && containsParamType(ft) {
+						c.settleNumeric(f.Value, substituteType(ft, sub))
+					}
 				}
 				// Stamp on the StructLit so the monomorpher
 				// can rewrite TypeName without re-running
@@ -19137,7 +19192,9 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				return nil
 			}
 		}
-		return c.fieldAccessType(n, s, c.checkExpr(n.Target, s))
+		ft := c.fieldAccessType(n, s, c.checkExpr(n.Target, s))
+		c.noteLitField(n, ft, s)
+		return ft
 	}
 	return nil
 }
@@ -19604,8 +19661,16 @@ func (c *checker) settleNumeric(e ast.Expr, hint ast.Type) {
 		to.Type = hint
 	}
 	if fa, ok := e.(*ast.FieldAccess); ok {
+		if hn, ok := hint.(ast.NumberType); ok && !hn.Polymorphic {
+			if ll := c.litFields[fa]; ll != nil {
+				c.fixLitLocal(ll, hn, fa.P)
+			}
+		}
 		c.settleGenericCallByHint(fa, hint)
 		return
+	}
+	if id, ok := e.(*ast.Ident); ok {
+		c.settleLitStructLocal(id, hint)
 	}
 	switch hn := hint.(type) {
 	case ast.NumberType:
@@ -19964,6 +20029,9 @@ func (c *checker) settleIntSigned(e ast.Expr, hn ast.NumberType, negated bool) {
 		// B's string leaves A's proof untouched (#8722).
 		c.settleGenericCallByHint(x, hn)
 	case *ast.FieldAccess:
+		if ll := c.litFields[x]; ll != nil {
+			c.fixLitLocal(ll, hn, x.P)
+		}
 		c.settleGenericCallByHint(x, hn)
 	}
 }
@@ -20027,8 +20095,8 @@ func (c *checker) elemSettleable(have, want ast.Type) bool {
 		}
 	}
 	// So does a generic struct whose arguments literals bound: `[Same { a:
-	// 1, b: 2^62 }]` widens to `Same[i64][]` and settles its elements there
-	// (#10453).
+	// 1, b: 2^62 }]` widens to `Same[i64][]`, and `[q]` for a `var q = Same {
+	// a: 1, b: 2 }` settles to it, each element settling there (#10453).
 	if h, ok := have.(ast.StructType); ok {
 		if w, ok := want.(ast.StructType); ok && h.Name == w.Name && len(h.Args) == len(w.Args) && len(h.Args) > 0 {
 			for i := range h.Args {
@@ -20201,6 +20269,13 @@ func (c *checker) postSettleType(e ast.Expr, prior ast.Type) ast.Type {
 	case *ast.Ident:
 		// A read of a literal local that the settle just fixed.
 		if ll := c.litIdents[x]; ll != nil && ll.fixed {
+			return ll.width
+		}
+		if t := c.litStructType(x); t != nil {
+			return t
+		}
+	case *ast.FieldAccess:
+		if ll := c.litFields[x]; ll != nil && ll.fixed {
 			return ll.width
 		}
 	case *ast.NumberLit:

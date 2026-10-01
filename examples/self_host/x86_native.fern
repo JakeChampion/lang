@@ -6477,30 +6477,29 @@ function x86_gas_classify(mnem: string, rest: string): GasLine {
     return GasLine { ...l, kind: GK_CVT2S, ext: c2s };
   }
   if (sfx > 0) {
-    var bse2: string = bse;
-    var ae: i32 = x86_gas_alu_ext(bse2);
+    var ae: i32 = x86_gas_alu_ext(bse);
     if (ae >= 0) {
       return GasLine { ...l, kind: GK_ALU, ext: ae };
     }
-    if (x86_gas_is_test(bse2)) {
+    if (x86_gas_is_test(bse)) {
       return GasLine { ...l, kind: GK_TEST };
     }
-    var she: i32 = x86_gas_shift_ext(bse2);
+    var she: i32 = x86_gas_shift_ext(bse);
     if (she >= 0) {
       return GasLine { ...l, kind: GK_SHIFT, ext: she };
     }
-    var bti: i32 = x86_gas_bt_idx(bse2);
+    var bti: i32 = x86_gas_bt_idx(bse);
     if (bti >= 0) {
       return GasLine { ...l, kind: GK_BT, ext: bti };
     }
-    var rmw: i32 = x86_gas_rmw_op(bse2);
+    var rmw: i32 = x86_gas_rmw_op(bse);
     if (rmw >= 0) {
       return GasLine { ...l, kind: GK_RMW, ext: rmw };
     }
-    if (x86_gas_is_xchg(bse2)) {
+    if (x86_gas_is_xchg(bse)) {
       return GasLine { ...l, kind: GK_XCHG };
     }
-    if (x86_gas_is_crc32(bse2)) {
+    if (x86_gas_is_crc32(bse)) {
       return GasLine { ...l, kind: GK_CRC32 };
     }
   }

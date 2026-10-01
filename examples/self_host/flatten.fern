@@ -56,13 +56,15 @@ import "./platforms";
 // TestOutcome). The self-host compiler's own modules sidestep this by
 // always qualifying (`ast.ExprIdent`), so this only widens what
 // downstream code can spell, never changing existing resolution.
+// `variant_scope` holds the prefixes of the modules whose variants this
+// module may name bare (see variant_scope).
 // declnames_mangled is the precomputed mangled_name(prefix, declnames[i])
 // parallel to declnames, so a bare own-decl reference resolves to a SHARED
 // string instance (like ivar_mangled) instead of re-deriving the name on every
 // occurrence. This reduces the allocation the mangle pass performs at its dominant
 // churn site (#4394 lever 1 names mangle_bare as such a site — see
 // docs/SELFHOST-SYMBOL-INTERNING.md); the emitted bytes are unchanged.
-pub struct RewriteCtx { modnames: string[], modprefixes: string[], prefix: string, declnames: string[], declnames_mangled: string[], dn_head: i32[], dn_next: i32[], locals: string[], enumnames: string[], ivar_names: string[], ivar_mangled: string[], reexport_keys: string[], reexport_targets: string[] }
+pub struct RewriteCtx { modnames: string[], modprefixes: string[], prefix: string, declnames: string[], declnames_mangled: string[], dn_head: i32[], dn_next: i32[], locals: string[], enumnames: string[], ivar_names: string[], ivar_mangled: string[], variant_scope: string[], reexport_keys: string[], reexport_targets: string[] }
 
 // declname_buckets sizes the own-decl index. A module's decl count is in the
 // hundreds, so a prime a few times that keeps the chains at one or two.
@@ -238,17 +240,84 @@ function lookup_reexport(mangled: string, ctx: RewriteCtx): string {
   return cur;
 }
 
-// lookup_ivar returns the bundled mangled name for a bare imported
-// enum-variant reference, or "" when `name` isn't an imported variant.
+// lookup_ivar answers the bundled name of the imported enum variant `name`
+// as seen from ctx's module, or "" when no module in its variant_scope
+// declares one. The map holds every loaded module's variants, but a name the
+// program loads for an unrelated module's sake (std/net's `Other` beside
+// IoError's) must not capture a bare reference here.
 function lookup_ivar(name: string, ctx: RewriteCtx): string {
   var i: i32 = 0;
   while (i < ctx.ivar_names.len()) {
-    if (ctx.ivar_names[i] == name) {
+    if (ctx.ivar_names[i] == name && ivar_visible(ctx.ivar_mangled[i], name, ctx)) {
       return ctx.ivar_mangled[i];
     }
     i = i + 1;
   }
   return "";
+}
+
+// ivar_visible: whether `mangled` (`pfx__name`) is declared by a module in
+// ctx's variant_scope.
+function ivar_visible(mangled: string, name: string, ctx: RewriteCtx): boolean {
+  return util.has_str(ctx.variant_scope, slice_unchecked(mangled, 0, mangled.len() - name.len() - 2) + "");
+}
+
+// ImportGraph is every loaded module's imports as indices into the bundle's
+// module list, flattened: module k's are edges[starts[k] .. starts[k + 1]],
+// and an import naming no loaded module is -1.
+struct ImportGraph { starts: i32[], edges: i32[] }
+
+function import_graph(imports: LoadedModule[], ids: string[], pfxs: string[]): ImportGraph {
+  var starts: i32[] = [];
+  var edges: i32[] = [];
+  var k: i32 = 0;
+  while (k < imports.len()) {
+    starts = starts.append(edges.len());
+    for p in import_prefixes(imports[k].mod, ids, pfxs) {
+      edges = edges.append(index_of_str(p, pfxs));
+    }
+    k = k + 1;
+  }
+  starts = starts.append(edges.len());
+  return ImportGraph { starts: starts, edges: edges };
+}
+
+// variant_scope is the prefix of every module `mod` reaches through its
+// imports and theirs, `pub use` included: the modules whose enum variants it
+// may name bare. It is native's import closure (modload.importClosures), which
+// is what the checker's moduleSeesVariant consults.
+function variant_scope(mod: parser.Module, g: ImportGraph, ids: string[], pfxs: string[]): string[] {
+  var direct: string[] = import_prefixes(mod, ids, pfxs);
+  var seen: boolean[] = [];
+  while (seen.len() < pfxs.len()) {
+    seen = seen.append(false);
+  }
+  var queue: i32[] = [];
+  for p in direct {
+    var d: i32 = index_of_str(p, pfxs);
+    if (d >= 0 && !seen[d]) {
+      seen = seen.with(d, true);
+      queue = queue.append(d);
+    }
+  }
+  var qi: i32 = 0;
+  while (qi < queue.len()) {
+    var e: i32 = g.starts[queue[qi]];
+    while (e < g.starts[queue[qi] + 1]) {
+      var t: i32 = g.edges[e];
+      if (t >= 0 && !seen[t]) {
+        seen = seen.with(t, true);
+        queue = queue.append(t);
+      }
+      e = e + 1;
+    }
+    qi = qi + 1;
+  }
+  var out: string[] = direct;
+  for q in queue {
+    out = out.append(pfxs[q]);
+  }
+  return out;
 }
 
 // first_dot / first_bracket: byte index of the first '.' / '[' in s,
@@ -1086,7 +1155,7 @@ pub function rewrite_expr(e: ast.Expr, ctx: RewriteCtx): ast.Expr {
         lctx = RewriteCtx {
           modnames: ctx.modnames, modprefixes: ctx.modprefixes, prefix: ctx.prefix,
           declnames: ctx.declnames, declnames_mangled: ctx.declnames_mangled, dn_head: ctx.dn_head, dn_next: ctx.dn_next, locals: inner,
-          enumnames: ctx.enumnames, ivar_names: ctx.ivar_names, ivar_mangled: ctx.ivar_mangled,
+          enumnames: ctx.enumnames, ivar_names: ctx.ivar_names, ivar_mangled: ctx.ivar_mangled, variant_scope: ctx.variant_scope,
           reexport_keys: ctx.reexport_keys, reexport_targets: ctx.reexport_targets,
         };
       }
@@ -1347,7 +1416,7 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
     var bctx: RewriteCtx = RewriteCtx {
       modnames: ctx.modnames, modprefixes: ctx.modprefixes, prefix: ctx.prefix,
       declnames: ctx.declnames, declnames_mangled: ctx.declnames_mangled, dn_head: ctx.dn_head, dn_next: ctx.dn_next, locals: collect_local_names(fd),
-      enumnames: ctx.enumnames, ivar_names: ctx.ivar_names, ivar_mangled: ctx.ivar_mangled,
+      enumnames: ctx.enumnames, ivar_names: ctx.ivar_names, ivar_mangled: ctx.ivar_mangled, variant_scope: ctx.variant_scope,
       reexport_keys: ctx.reexport_keys, reexport_targets: ctx.reexport_targets,
     };
     funcs = funcs.append(parser.FuncDecl { ...fd, name: new_name, receiver_type: rewrite_type_name(fd.receiver_type, ctx), params: rewrite_params(fd.params, bctx), ret_type: rewrite_type_name(fd.ret_type, ctx), ret_fn_ret: rewrite_type_name(fd.ret_fn_ret, ctx), ret_fn_param_types: rewrite_type_name_list(fd.ret_fn_param_types, ctx), body: rewrite_block(fd.body, bctx), is_pub: true, module: ctx.prefix });
@@ -1396,7 +1465,7 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
     });
     k = k + 1;
   }
-  return parser.Module { ...mod, funcs: funcs, structs: structs, aliases: aliases, top_stmts: rewrite_block(mod.top_stmts, RewriteCtx { modnames: ctx.modnames, modprefixes: ctx.modprefixes, prefix: ctx.prefix, declnames: ctx.declnames, declnames_mangled: ctx.declnames_mangled, dn_head: ctx.dn_head, dn_next: ctx.dn_next, locals: astwalk.collect_bound_stmts(mod.top_stmts, []), enumnames: ctx.enumnames, ivar_names: ctx.ivar_names, ivar_mangled: ctx.ivar_mangled, reexport_keys: ctx.reexport_keys, reexport_targets: ctx.reexport_targets }), enums: mangle_enum_decls(mod.enums, ctx), impls: mangle_impls(mod.impls, ctx) };
+  return parser.Module { ...mod, funcs: funcs, structs: structs, aliases: aliases, top_stmts: rewrite_block(mod.top_stmts, RewriteCtx { modnames: ctx.modnames, modprefixes: ctx.modprefixes, prefix: ctx.prefix, declnames: ctx.declnames, declnames_mangled: ctx.declnames_mangled, dn_head: ctx.dn_head, dn_next: ctx.dn_next, locals: astwalk.collect_bound_stmts(mod.top_stmts, []), enumnames: ctx.enumnames, ivar_names: ctx.ivar_names, ivar_mangled: ctx.ivar_mangled, variant_scope: ctx.variant_scope, reexport_keys: ctx.reexport_keys, reexport_targets: ctx.reexport_targets }), enums: mangle_enum_decls(mod.enums, ctx), impls: mangle_impls(mod.impls, ctx) };
 }
 
 // mangle_impls rewrites an impl block's TARGET type the same way every other
@@ -1482,9 +1551,9 @@ function mangle_enum_decls(enums: parser.EnumDecl[], ctx: RewriteCtx): parser.En
 // flatten_qualified rewrites only QUALIFIED cross-module references
 // (`mod.X` → `mod__X`) in a module — no own-decl mangling. Used on
 // the entry module (whose own decls keep their bare names).
-pub function flatten_qualified(mod: parser.Module, ids: string[], pfxs: string[], ivar_names: string[], ivar_mangled: string[], reexport_keys: string[], reexport_targets: string[]): parser.Module {
+pub function flatten_qualified(mod: parser.Module, ids: string[], pfxs: string[], scope: string[], ivar_names: string[], ivar_mangled: string[], reexport_keys: string[], reexport_targets: string[]): parser.Module {
   var empty: string[] = [];
-  var ctx: RewriteCtx = RewriteCtx { modnames: mod_names(mod), modprefixes: import_prefixes(mod, ids, pfxs), prefix: "", declnames: empty, declnames_mangled: empty, dn_head: [], dn_next: [], locals: empty, enumnames: empty, ivar_names: ivar_names, ivar_mangled: ivar_mangled, reexport_keys: reexport_keys, reexport_targets: reexport_targets };
+  var ctx: RewriteCtx = RewriteCtx { modnames: mod_names(mod), modprefixes: import_prefixes(mod, ids, pfxs), prefix: "", declnames: empty, declnames_mangled: empty, dn_head: [], dn_next: [], locals: empty, enumnames: empty, ivar_names: ivar_names, ivar_mangled: ivar_mangled, variant_scope: scope, reexport_keys: reexport_keys, reexport_targets: reexport_targets };
   return rewrite_module_bodies(mod, ctx);
 }
 
@@ -1564,7 +1633,7 @@ function unique_prefix(base: string, used: string[]): string {
 // mangle_module renames a non-entry module's own decls to
 // `prefix__name` and rewrites every internal reference to match, plus
 // flattens any qualified refs it makes to other modules.
-pub function mangle_module(mod: parser.Module, prefix: string, ids: string[], pfxs: string[], ivar_names: string[], ivar_mangled: string[], reexport_keys: string[], reexport_targets: string[]): parser.Module {
+pub function mangle_module(mod: parser.Module, prefix: string, ids: string[], pfxs: string[], scope: string[], ivar_names: string[], ivar_mangled: string[], reexport_keys: string[], reexport_targets: string[]): parser.Module {
   var decls: string[] = collect_decl_names(mod);
   var ctx: RewriteCtx = RewriteCtx {
     modnames: mod_names(mod),
@@ -1578,6 +1647,7 @@ pub function mangle_module(mod: parser.Module, prefix: string, ids: string[], pf
     enumnames: collect_enum_names(mod),
     ivar_names: ivar_names,
     ivar_mangled: ivar_mangled,
+    variant_scope: scope,
     reexport_keys: reexport_keys,
     reexport_targets: reexport_targets,
   };
@@ -1710,12 +1780,13 @@ pub function bundle(entry0: parser.Module, imports: LoadedModule[], target: stri
   // `pub use` re-export table: redirects a consumer's `facade.name`
   // (which mangles to `facade__name`) to the original `origin__name`.
   var rx: ReexportTable = build_reexports(imports, ids, pfxs);
+  var graph: ImportGraph = import_graph(imports, ids, pfxs);
   var inferred: string[] = mangled_inferred_consts(imports, pfxs, entry);
   var mclaims: string[] = [];
   var i: i32 = 0;
   while (i < imports.len()) {
     var pfx: string = pfxs[i];
-    var md: MethodDedup = disambiguate_methods(mangle_module(imports[i].mod, pfx, ids, pfxs, ivar_names, ivar_mangled, rx.keys, rx.targets), pfx, mclaims);
+    var md: MethodDedup = disambiguate_methods(mangle_module(imports[i].mod, pfx, ids, pfxs, variant_scope(imports[i].mod, graph, ids, pfxs), ivar_names, ivar_mangled, rx.keys, rx.targets), pfx, mclaims);
     mclaims = md.keys;
     var m: parser.Module = md.mod;
     funcs = util.append_all(funcs, m.funcs);
@@ -1749,7 +1820,7 @@ pub function bundle(entry0: parser.Module, imports: LoadedModule[], target: stri
     }
     i = i + 1;
   }
-  var flat: parser.Module = with_result_handler(flatten_qualified(entry, ids, pfxs, ivar_names, ivar_mangled, rx.keys, rx.targets), loaded_prefix(imports, pfxs, "std/error"), loaded_prefix(imports, pfxs, "std/http"));
+  var flat: parser.Module = with_result_handler(flatten_qualified(entry, ids, pfxs, variant_scope(entry, graph, ids, pfxs), ivar_names, ivar_mangled, rx.keys, rx.targets), loaded_prefix(imports, pfxs, "std/error"), loaded_prefix(imports, pfxs, "std/http"));
   var e: parser.Module = disambiguate_methods(flat, "__entry", mclaims).mod;
   funcs = util.append_all(funcs, e.funcs);
   structs = util.append_all(structs, e.structs);
@@ -1941,6 +2012,7 @@ pub function bundle_per_module(entry0: parser.Module, imports: LoadedModule[], t
     iv = iv + 1;
   }
   var rx: ReexportTable = build_reexports(imports, ids, pfxs);
+  var graph: ImportGraph = import_graph(imports, ids, pfxs);
   var inferred: string[] = mangled_inferred_consts(imports, pfxs, entry);
   var mods: parser.Module[] = [];
   var all_funcs: parser.FuncDecl[] = [];
@@ -1951,13 +2023,13 @@ pub function bundle_per_module(entry0: parser.Module, imports: LoadedModule[], t
   var i: i32 = 0;
   while (i < imports.len()) {
     var pfx: string = pfxs[i];
-    var md: MethodDedup = disambiguate_methods(mangle_module(imports[i].mod, pfx, ids, pfxs, ivar_names, ivar_mangled, rx.keys, rx.targets), pfx, mclaims);
+    var md: MethodDedup = disambiguate_methods(mangle_module(imports[i].mod, pfx, ids, pfxs, variant_scope(imports[i].mod, graph, ids, pfxs), ivar_names, ivar_mangled, rx.keys, rx.targets), pfx, mclaims);
     mclaims = md.keys;
     mods = mods.append(md.mod);
     all_funcs = util.append_all(all_funcs, md.mod.funcs);
     i = i + 1;
   }
-  var flat: parser.Module = with_result_handler(flatten_qualified(entry, ids, pfxs, ivar_names, ivar_mangled, rx.keys, rx.targets), loaded_prefix(imports, pfxs, "std/error"), loaded_prefix(imports, pfxs, "std/http"));
+  var flat: parser.Module = with_result_handler(flatten_qualified(entry, ids, pfxs, variant_scope(entry, graph, ids, pfxs), ivar_names, ivar_mangled, rx.keys, rx.targets), loaded_prefix(imports, pfxs, "std/error"), loaded_prefix(imports, pfxs, "std/http"));
   var e: parser.Module = disambiguate_methods(flat, "__entry", mclaims).mod;
   all_funcs = util.append_all(all_funcs, e.funcs);
   // A unit reads a const another unit declares, so the table spans them all.
@@ -1974,12 +2046,12 @@ pub function bundle_per_module(entry0: parser.Module, imports: LoadedModule[], t
 
 function flatten_source(src: string): parser.Module {
   var none: string[] = [];
-  return flatten_qualified(parser.parse_module(lexer.tokenize(src)), none, none, none, none, none, none);
+  return flatten_qualified(parser.parse_module(lexer.tokenize(src)), none, none, none, none, none, none, none);
 }
 
 function mangle_source(src: string, prefix: string): parser.Module {
   var none: string[] = [];
-  return mangle_module(parser.parse_module(lexer.tokenize(src)), prefix, none, none, none, none, none, none);
+  return mangle_module(parser.parse_module(lexer.tokenize(src)), prefix, none, none, none, none, none, none, none);
 }
 
 function main(): i32 {
@@ -2202,6 +2274,7 @@ function main(): i32 {
   // rewrite_type_name spot-checks via a hand-built ctx.
   var mn: string[] = [];
   mn = mn.append("lexer");
+  mn = mn.append("test");
   var dn: string[] = [];
   dn = dn.append("Token");
   var ivn: string[] = [];
@@ -2210,7 +2283,7 @@ function main(): i32 {
   ivm = ivm.append("test__Fail");
   var rxk: string[] = [];
   var rxt: string[] = [];
-  var ctx: RewriteCtx = RewriteCtx { modnames: mn, modprefixes: mn, prefix: "lx", declnames: dn, declnames_mangled: build_mangled_names("lx", dn), dn_head: build_declname_head(dn), dn_next: build_declname_next(dn), locals: [], enumnames: [], ivar_names: ivn, ivar_mangled: ivm, reexport_keys: rxk, reexport_targets: rxt };
+  var ctx: RewriteCtx = RewriteCtx { modnames: mn, modprefixes: mn, prefix: "lx", declnames: dn, declnames_mangled: build_mangled_names("lx", dn), dn_head: build_declname_head(dn), dn_next: build_declname_next(dn), locals: [], enumnames: [], ivar_names: ivn, ivar_mangled: ivm, variant_scope: mn, reexport_keys: rxk, reexport_targets: rxt };
   if (rewrite_type_name("lexer.Token[]", ctx) != "lexer__Token[]") {
     return 90;
   }
@@ -2299,7 +2372,7 @@ function main(): i32 {
   rxk2 = rxk2.append("lexer__Token");
   var rxt2: string[] = [];
   rxt2 = rxt2.append("orig__Token");
-  var rctx: RewriteCtx = RewriteCtx { modnames: mn, modprefixes: mn, prefix: "lx", declnames: dn, declnames_mangled: build_mangled_names("lx", dn), dn_head: build_declname_head(dn), dn_next: build_declname_next(dn), locals: [], enumnames: [], ivar_names: ivn, ivar_mangled: ivm, reexport_keys: rxk2, reexport_targets: rxt2 };
+  var rctx: RewriteCtx = RewriteCtx { modnames: mn, modprefixes: mn, prefix: "lx", declnames: dn, declnames_mangled: build_mangled_names("lx", dn), dn_head: build_declname_head(dn), dn_next: build_declname_next(dn), locals: [], enumnames: [], ivar_names: ivn, ivar_mangled: ivm, variant_scope: mn, reexport_keys: rxk2, reexport_targets: rxt2 };
   if (rewrite_type_name("lexer.Token", rctx) != "orig__Token") {
     return 97;
   }
@@ -2322,7 +2395,7 @@ function main(): i32 {
   edn = edn.append("Wrap");
   var een: string[] = [];
   een = een.append("E");
-  var ectx: RewriteCtx = RewriteCtx { modnames: mn, modprefixes: mn, prefix: "lx", declnames: edn, declnames_mangled: build_mangled_names("lx", edn), dn_head: build_declname_head(edn), dn_next: build_declname_next(edn), locals: [], enumnames: een, ivar_names: ivn, ivar_mangled: ivm, reexport_keys: rxk, reexport_targets: rxt };
+  var ectx: RewriteCtx = RewriteCtx { modnames: mn, modprefixes: mn, prefix: "lx", declnames: edn, declnames_mangled: build_mangled_names("lx", edn), dn_head: build_declname_head(edn), dn_next: build_declname_next(edn), locals: [], enumnames: een, ivar_names: ivn, ivar_mangled: ivm, variant_scope: mn, reexport_keys: rxk, reexport_targets: rxt };
   if (rewrite_type_name("E.Wrap", ectx) != "lx__E.lx__Wrap") {
     return 220;
   }

@@ -319,6 +319,18 @@ pub function op_f64_to_u64(): Op {
   return Op { decl: 0 - 1, kind_tag: kind_id("f64_to_i64"), i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: true, str: "" };
 }
 
+// The pointer-width conversions (`f64 as usize`, `usize as f64`), marked by
+// width_ptr() as the int_extend / int_wrap pair is: the u64 forms on the
+// register backends, and the u32 forms on wasm, where an address is an i32
+// and the truncation saturates at u32::MAX as native's does.
+pub function op_f64_to_ptr(): Op {
+  return Op { decl: 0 - 1, kind_tag: kind_id("f64_to_i64"), i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width_ptr(), unsigned: true, str: "" };
+}
+
+pub function op_ptr_to_f64(): Op {
+  return Op { decl: 0 - 1, kind_tag: kind_id("i32_to_f64"), i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width_ptr(), unsigned: true, str: "" };
+}
+
 // f64_bits / f64_from_bits — IEEE-754 bit reinterpret between an f64 and its
 // i64 bit pattern. On the register backends the 8-byte rt-stack slot already
 // holds the bits, so both are no-ops; wasm's typed stack needs a real
@@ -7778,8 +7790,9 @@ pub function op_allocates(tag: i32): boolean {
   if (tag == 218) {
     return true;
   }
-  // Low-level + literal allocations.
-  if (tag == 76 || tag == 77 || tag == 87 || tag == 92 || tag == 94 || tag == 95) {
+  // Low-level + literal allocations, and every push: the owned pushes grow
+  // the array exactly as the plain ones do.
+  if (tag == 76 || tag == 77 || tag == 87 || tag == 92 || tag == 93 || tag == 94 || tag == 95 || tag == 302 || tag == 303) {
     return true;
   }
   if (tag == 5 || tag == 98 || tag == 102 || tag == 103) {
@@ -7859,10 +7872,10 @@ pub function op_allocates(tag: i32): boolean {
   if (tag == 231) {
     return true;
   }
-  // The single-step directory and link primitives box a Result and
-  // heap-build the NUL-terminated paths they pass to the kernel;
-  // read_link boxes the target string as well.
-  if (tag == 260 || tag == 261 || tag == 262 || tag == 263 || tag == 264) {
+  // The single-step directory and link primitives, rename, set_file_times
+  // and truncate box a Result and heap-build the NUL-terminated paths they
+  // pass to the kernel; read_link boxes the target string as well.
+  if (tag == 260 || tag == 261 || tag == 262 || tag == 263 || tag == 264 || tag == 267 || tag == 269 || tag == 273) {
     return true;
   }
   // read_dir / read_dir_all box a fresh string[] (the arr box + a string

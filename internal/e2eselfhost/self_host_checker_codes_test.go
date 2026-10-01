@@ -270,13 +270,34 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"struct-literal-update-base-outranks-written", "struct Pair[T] { a: T, b: T }\nfunction f(p: Pair[string]): Pair[string] { return Pair[i32] { ...p, a: \"x\" }; }\nfunction main(): i32 { return f(Pair { a: \"a\", b: \"b\" }).a.len(); }\n", nil},
 		{"struct-literal-wide-array-field", "struct Stack[T] { items: T[] }\nfunction main(): i32 { var q = Stack { items: [1, 4611686018427387904] }; var r: i64 = q.items[1]; return 0; }\n", nil},
 		{"struct-literal-wide-in-array", "struct Same[T] { a: T, b: T }\nfunction main(): i32 { var xs = [Same { a: 1, b: 4611686018427387904 }]; var r: i64 = xs[0].b; return 0; }\n", nil},
-		{"generic-literal-fields-clash-without-destination", "struct Same[T] { a: T, b: T }\nfunction take(xs: Same[i64][]): i32 { return xs.len(); }\nfunction main(): i32 { var y: i64 = 5; var q = Same { a: 1, b: y }; var r: i64 = q.a; return 0; }\n", []string{"E043"}},
+		// A typed field binds T ahead of an untyped literal written before
+		// it, so this is a Same[i64] (#10453); the literal used to bind T at
+		// i32 and the typed field then clashed.
+		// A generic struct local whose type argument only untyped literals bind
+		// takes one width: the first use that fixes it decides, and a second,
+		// different width is E003 (#10453).
+		{"struct-local-field-read-fixes-width", "struct Same[T] { a: T, b: T }\nfunction take1(x: Same[i64]): i32 { return 1; }\nfunction take(xs: Same[i64][]): i32 { return 1; }\nfunction main(): i32 { var q = Same { a: 1, b: 2 }; var r: i64 = q.a; return 0; }\n", nil},
+		{"struct-local-passed-whole-fixes-width", "struct Same[T] { a: T, b: T }\nfunction take1(x: Same[i64]): i32 { return 1; }\nfunction take(xs: Same[i64][]): i32 { return 1; }\nfunction main(): i32 { var q = Same { a: 1, b: 2 }; return take1(q); }\n", nil},
+		{"struct-local-in-array-argument-fixes-width", "struct Same[T] { a: T, b: T }\nfunction take1(x: Same[i64]): i32 { return 1; }\nfunction take(xs: Same[i64][]): i32 { return 1; }\nfunction main(): i32 { var q = Same { a: 1, b: 2 }; return take([q]); }\n", nil},
+		{"struct-local-second-width", "struct Same[T] { a: T, b: T }\nfunction take1(x: Same[i64]): i32 { return 1; }\nfunction take(xs: Same[i64][]): i32 { return 1; }\nfunction main(): i32 { var q = Same { a: 1, b: 2 }; var r: i64 = q.a; var z: i32 = q.b; return 0; }\n", []string{"E003"}},
+		{"struct-local-passed-then-read-narrow", "struct Same[T] { a: T, b: T }\nfunction take1(x: Same[i64]): i32 { return 1; }\nfunction take(xs: Same[i64][]): i32 { return 1; }\nfunction main(): i32 { var q = Same { a: 1, b: 2 }; var t = take1(q); var z: i32 = q.a; return 0; }\n", []string{"E003"}},
+		// A literal-bound struct local used at a second width is the
+		// destination's mismatch, E038, as a scalar literal local's is.
+		{"generic-literal-struct-local-second-width", "struct Same[T] { a: T, b: T }\nfunction take(x: Same[i64]): i64 { return x.a; }\nfunction take32(x: Same[i32]): i32 { return x.a; }\nfunction main(): i32 { var s = Same { a: 1, b: 2 }; var a = take(s); return take32(s); }\n", []string{"E038"}},
+		// The typed-first binding stays inside the literal, an array's
+		// typed element widens a literal sibling in either order, and a
+		// struct local's copy and capture share its width (#10453).
+		{"generic-literal-update-over-literal-base", "struct Same[T] { a: T, b: T }\nfunction main(): i32 { var q = Same { a: 1, b: 2 }; var y: i64 = 8589934592; var w = Same { ...q, b: y }; return 0; }\n", []string{"E043"}},
+		{"generic-literal-array-typed-sibling", "struct Same[T] { a: T, b: T }\nfunction main(): i32 { var y: i64 = 8589934592; var xs = [Same { a: 1, b: 2 }, Same { a: 3, b: y }]; var r: i64 = xs[0].a; return 0; }\n", nil},
+		{"generic-literal-struct-local-copy", "struct Same[T] { a: T, b: T }\nfunction main(): i32 { var q = Same { a: 1, b: 2 }; var r = q; var z: i64 = r.a; var w: i64 = q.b; return 0; }\n", nil},
+		{"generic-literal-struct-local-capture", "struct Same[T] { a: T, b: T }\nfunction main(): i32 { var q = Same { a: 1, b: 2 }; var f = (): i64 => q.a; return 0; }\n", nil},
+		{"generic-literal-typed-field-binds-ahead", "struct Same[T] { a: T, b: T }\nfunction take(xs: Same[i64][]): i32 { return xs.len(); }\nfunction main(): i32 { var y: i64 = 5; var q = Same { a: 1, b: y }; var r: i64 = q.a; return take([q]); }\n", nil},
 		// A literal whose fields clash has no instantiation, so its local
 		// reads as untyped and no use reports the clash again (#10453). Native
 		// took the first field's instantiation and added E038 / E003 per use.
-		{"generic-literal-fields-clash-then-passed", "struct Same[T] { a: T, b: T }\nfunction take1(x: Same[i64]): i32 { return 1; }\nfunction main(): i32 { var y: i64 = 5; var q = Same { a: 1, b: y }; return take1(q); }\n", []string{"E043"}},
-		{"generic-literal-fields-clash-then-assigned", "struct Same[T] { a: T, b: T }\nfunction main(): i32 { var y: i64 = 5; var q = Same { a: 1, b: y }; var z: string = q; return 0; }\n", []string{"E043"}},
-		{"generic-literal-fields-clash-in-an-array", "struct Same[T] { a: T, b: T }\nfunction take1(x: Same[i64]): i32 { return 1; }\nfunction main(): i32 { var y: i64 = 5; var xs = [Same { a: 1, b: y }]; return take1(xs[0]); }\n", []string{"E043"}},
+		{"generic-literal-fields-clash-then-passed", "struct Same[T] { a: T, b: T }\nfunction take1(x: Same[i64]): i32 { return 1; }\nfunction main(): i32 { var q = Same { a: 1, b: \"x\" }; return take1(q); }\n", []string{"E043"}},
+		{"generic-literal-fields-clash-then-assigned", "struct Same[T] { a: T, b: T }\nfunction main(): i32 { var q = Same { a: 1, b: \"x\" }; var z: string = q; return 0; }\n", []string{"E043"}},
+		{"generic-literal-fields-clash-in-an-array", "struct Same[T] { a: T, b: T }\nfunction take1(x: Same[i64]): i32 { return 1; }\nfunction main(): i32 { var xs = [Same { a: 1, b: \"x\" }]; return take1(xs[0]); }\n", []string{"E043"}},
 		{"generic-literal-t-out-of-range", "struct Box[T] { v: T }\nfunction box[T](v: T): Box[T] { return Box { v: v }; }\nfunction both[T](a: T, b: T): (T, T) { return (a, b); }\nfunction pick[T](a: T, b: T): Option[T] { return Some(b); }\nfunction id[T](a: T): T { return a; }\nfunction take(v: u64): i32 { return 0; }\nfunction main(): i32 { var x: u8 = id(300); return 0; }\n", []string{"E047"}},
 		// The `.with` receiver root walk (#9699). The self-host matched a bare
 		// identifier only, so a field receiver — the structure-of-arrays shape
@@ -903,6 +924,19 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// E006 must keep firing. (Two inherent declarations are covered by
 		// "method-redeclared" below.)
 		{"same-trait-twice-redeclared", "trait A { function m(self: Self): i32; }\nstruct S { v: i32 }\nimpl A for S { function m(self: Self): i32 { return self.v; } }\nimpl A for S { function m(self: Self): i32 { return 7; } }\nfunction main(): i32 { return 0; }\n", []string{"E006"}},
+		// An impl on `str` is the impl on `string`: a method is keyed by the
+		// erased receiver, so the pair redeclares it, and a `string` coerces
+		// to a dyn through the `str` impl. A `str` itself assigns only to a
+		// `str`, so it boxes into a dyn at no site (#10908).
+		{"str-and-string-impl-redeclared", "trait Size { function size(self: Self): i32; }\nimpl Size for str { function size(self: str): i32 { return self.len(); } }\nimpl Size for string { function size(self: string): i32 { return 1; } }\nfunction main(): i32 { return 0; }\n", []string{"E006"}},
+		{"string-into-dyn-through-str-impl", "trait Size { function size(self: Self): i32; }\nimpl Size for str { function size(self: str): i32 { return self.len(); } }\nfunction main(): i32 { var s: string = \"ab\"; var d: dyn Size = s; var e: dyn Size = \"x\"; return d.size() + e.size(); }\n", nil},
+		{"str-into-dyn-var", "trait Size { function size(self: Self): i32; }\nimpl Size for str { function size(self: str): i32 { return self.len(); } }\nfunction main(): i32 { var s: string = \"abc\"; var v: str = slice_unchecked(s, 0, 2); var d: dyn Size = v; return d.size(); }\n", []string{"E003"}},
+		{"str-into-dyn-assign", "trait Size { function size(self: Self): i32; }\nimpl Size for str { function size(self: str): i32 { return self.len(); } }\nfunction main(): i32 { var s: string = \"abc\"; var v: str = slice_unchecked(s, 0, 2); var d: dyn Size = s; d = v; return d.size(); }\n", []string{"E003"}},
+		{"str-into-dyn-argument", "trait Size { function size(self: Self): i32; }\nimpl Size for string { function size(self: string): i32 { return self.len(); } }\nfunction take(d: dyn Size): i32 { return d.size(); }\nfunction main(): i32 { var s: string = \"abc\"; var v: str = slice_unchecked(s, 0, 2); return take(v); }\n", []string{"E038"}},
+		{"str-into-dyn-return", "trait Size { function size(self: Self): i32; }\nimpl Size for str { function size(self: str): i32 { return self.len(); } }\nfunction box(v: str): dyn Size { return v; }\nfunction main(): i32 { return box(\"ab\").size(); }\n", []string{"E002"}},
+		{"str-into-dyn-array-element", "trait Size { function size(self: Self): i32; }\nimpl Size for str { function size(self: str): i32 { return self.len(); } }\nfunction main(): i32 { var s: string = \"abc\"; var v: str = slice_unchecked(s, 0, 2); var ds: dyn Size[] = [s, v]; return ds.len(); }\n", []string{"E034"}},
+		{"str-into-dyn-field", "trait Size { function size(self: Self): i32; }\nimpl Size for str { function size(self: str): i32 { return self.len(); } }\nstruct H { d: dyn Size }\nfunction main(): i32 { var s: string = \"abc\"; var v: str = slice_unchecked(s, 0, 2); var h: H = H { d: v }; return h.d.size(); }\n", []string{"E043"}},
+		{"str-into-dyn-payload", "trait Size { function size(self: Self): i32; }\nimpl Size for str { function size(self: str): i32 { return self.len(); } }\nenum W { One(dyn Size), Zero }\nfunction main(): i32 { var s: string = \"abc\"; var v: str = slice_unchecked(s, 0, 2); var w: W = One(v); return 0; }\n", []string{"E036"}},
 		{"dyn-object-safe-ok", "trait T { function m(self: Self): i32; }\nfunction f(x: dyn T): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", nil},
 		{"rec-local-ok", "function main(): i32 { function f(n: i32): i32 { if (n <= 0) { return 0; } return f(n - 1); } return f(3); }\n", nil},
 		{"rec-local-capture-ok", "function main(): i32 { var base: i32 = 10; function f(n: i32): i32 { if (n <= 0) { return base; } return 1 + f(n - 1); } return f(3); }\n", nil},
@@ -970,6 +1004,10 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// `for x in <EXPR>` over a non-ident array iterable — clean from both checkers.
 		{"for-literal-clean", "function main(): i32 { var s = 0; for x in [1, 2, 3] { s = s + x; } return s; }\n", nil},
 		{"for-call-clean", "function mk(): i32[] { return [1, 2]; }\nfunction main(): i32 { var s = 0; for x in mk() { s = s + x; } return s; }\n", nil},
+		// `for x in <EXPR>` over a value no loop iterates: native lowers it to
+		// `.len()` + index and reports both at the loop.
+		{"for-over-struct", "enum Ty { S(i32), N(i32) }\nstruct Item { ty: Ty }\nstruct Box { list: Item[], k: i32 }\nfunction main(): i32 {\n  var b: Box = Box { list: [Item { ty: Ty.S(1) }], k: 1 };\n  var names: string[] = [];\n  for it in b {\n    if let Ty.S(v) = it.ty {\n      names = names.append(\"x\");\n    }\n  }\n  return names.len();\n}\n", []string{"E034", "E043"}},
+		{"for-over-i32", "function main(): i32 { var n: i32 = 3; var s: i32 = 0; for x in n { s = s + x; } return s; }\n", []string{"E034", "E043"}},
 		// Unannotated struct-array literal (`var ps = [P{..}, ..]`) — element type
 		// inferred, clean from both checkers.
 		{"inferred-struct-array-clean", "struct P { v: i32 }\nfunction main(): i32 { var ps = [P { v: 3 }, P { v: 4 }]; return ps[0].v + ps[1].v; }\n", nil},

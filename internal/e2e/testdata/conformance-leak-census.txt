@@ -140,6 +140,8 @@
 # Writer.write result boxes that made this 4 are reclaimed since #8405. The
 # accumulator the case measures is clean — it is what the "flat" line asserts.
 a_builtin_method_does_not_see_the_programs_variants  0
+a_module_does_not_see_a_sibling_imports_variants     2
+a_module_names_variants_its_imports_reach            5
 ackermann                                            0
 add_sub_pair                                         0
 aliased_and_used_twice                               0

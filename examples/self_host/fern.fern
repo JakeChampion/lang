@@ -121,7 +121,7 @@ function fmt_output_is_readable(formatted: string): boolean {
 }
 
 // read_failure is the one-line report for a file that could not be read:
-// `fern: cannot read module /abs/x.fern: invalid UTF-8`. An empty reason means
+// `fern: cannot read entry file /abs/x.fern: invalid UTF-8`. An empty reason means
 // the file was not found.
 function read_failure(what: string, path: string, reason: string): string {
   if (reason.len() == 0) {
@@ -389,9 +389,11 @@ function x86_elf_binary(asm: string, emit_syms: boolean): string {
 // directory of the module that imported it. A dependency's `import "./util"`
 // names a file beside the DEPENDENCY, and a dependency's own dependencies are
 // declared in the dependency's manifest — so an import cannot be resolved
-// without knowing where it was written (#6756). `unrooted` is the first
-// `std/…` or `core/…` import met with no stdlib root to load it from.
-struct ImportQueue { paths: string[], dirs: string[], unrooted: string }
+// without knowing where it was written (#6756). `importers` names the file
+// that wrote each path, for the diagnostic when it resolves to nothing.
+// `unrooted` is the first `std/…` or `core/…` import met with no stdlib root
+// to load it from.
+struct ImportQueue { paths: string[], dirs: string[], importers: string[], unrooted: string }
 
 // queued reports whether this import path has already been queued FROM this
 // same directory.
@@ -408,10 +410,11 @@ function queued(paths: string[], dirs: string[], ip: string, from_dir: string): 
 
 // queue_imports appends each of mod's loadable import paths, deduped by path
 // AND directory, each tagged with `from_dir` — mod's own directory, which is
-// what its imports resolve against.
-function queue_imports(q: ImportQueue, mod: parser.Module, from_dir: string, root: string, deps: string[]): ImportQueue {
+// what its imports resolve against — and with `importer`, mod's file.
+function queue_imports(q: ImportQueue, mod: parser.Module, importer: string, from_dir: string, root: string, deps: string[]): ImportQueue {
   var paths: string[] = q.paths;
   var dirs: string[] = q.dirs;
+  var importers: string[] = q.importers;
   var unrooted: string = q.unrooted;
   var i: i32 = 0;
   while (i < mod.imports.len()) {
@@ -427,10 +430,11 @@ function queue_imports(q: ImportQueue, mod: parser.Module, from_dir: string, roo
     if (util.should_load(ip, root, deps) && !queued(paths, dirs, ip, from_dir)) {
       paths = paths.append(ip);
       dirs = dirs.append(from_dir + "");
+      importers = importers.append(importer + "");
     }
     i = i + 1;
   }
-  return ImportQueue { paths: paths, dirs: dirs, unrooted: unrooted };
+  return ImportQueue { paths: paths, dirs: dirs, importers: importers, unrooted: unrooted };
 }
 
 // is_flag is true for an argument that begins with '-'. A bare `-` is not a
@@ -967,7 +971,7 @@ function run_vendor(start: string): i32 {
     return 2;
   }
   var dir: string = start;
-  if (!is_dir(start)) {
+  if (!util.is_dir(start)) {
     var readable: boolean = false;
     match (read_file(start)) {
       Ok(s) => {
@@ -1209,7 +1213,7 @@ function store_dir(hash: string): string {
 }
 
 function dir_or_empty(p: string): string {
-  if (is_dir(p)) {
+  if (util.is_dir(p)) {
     return p;
   }
   return "";
@@ -1279,7 +1283,7 @@ function copy_package(src: string, dst: string): string {
         child_rel = rel + "/" + name;
       }
       var child: string = src + "/" + child_rel;
-      if (is_dir(child)) {
+      if (util.is_dir(child)) {
         if (name == "vendor") {
           continue;
         }
@@ -1412,7 +1416,7 @@ function load_bundle(entry_path: string, entry_mod: parser.Module, root: string,
   var pkgs: caps.Pkg[] = [root_pkg(man)];
   var no_mods: flatten.LoadedModule[] = [];
 
-  var q: ImportQueue = queue_imports(ImportQueue { paths: [], dirs: [], unrooted: "" }, entry_mod, dir_slash, root, deps);
+  var q: ImportQueue = queue_imports(ImportQueue { paths: [], dirs: [], importers: [], unrooted: "" }, entry_mod, entry_path, dir_slash, root, deps);
   var loaded: flatten.LoadedModule[] = [];
   var files: string[] = [];
   var done_paths: string[] = [];
@@ -1420,6 +1424,7 @@ function load_bundle(entry_path: string, entry_mod: parser.Module, root: string,
   while (j < q.paths.len()) {
     var ipath: string = q.paths[j];
     var from: string = q.dirs[j];
+    var importer: string = q.importers[j];
     j = j + 1;
     var from_dir: string = from;
     if (from_dir.len() > 1) {
@@ -1437,15 +1442,16 @@ function load_bundle(entry_path: string, entry_mod: parser.Module, root: string,
       var rm: modloader.Resolved = read_bundle_module(mpath, from, ipath);
       if (!rm.ok) {
         var bad: string = mpath;
-        if (rm.err_path.len() > 0) {
+        if (rm.err.len() > 0) {
           bad = rm.err_path;
         }
-        eprint(read_failure("module", bad, rm.err));
+        eprint("fern: " + modloader.unresolved_import(ipath, importer, bad, rm.err));
         return Bundle { entry: entry_mod, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, ok: false };
       }
       var mdir: string = rm.dir;
       var m: parser.Module = parser.parse_module(lexer.tokenize_from(rm.src, util.line_base(files.len()) + 1));
-      files = files.append(display_path(rm.shown, root));
+      var shown: string = display_path(rm.shown, root);
+      files = files.append(shown);
       // Identity is the FILE, not its basename: two modules can share a
       // basename (`std/sort` and `coreutils/sort`) and the bundler has
       // to tell them apart to give each its own prefix (#9762).
@@ -1455,7 +1461,7 @@ function load_bundle(entry_path: string, entry_mod: parser.Module, root: string,
       // which is the entry's only for a direct import.
       var from_man: fern_toml.Manifest = read_manifest(from);
       pkgs = add_pkg(pkgs, from_man, from, ipath);
-      q = queue_imports(q, m, mdir, root, fern_toml.dep_names(read_manifest(mdir)));
+      q = queue_imports(q, m, shown, mdir, root, fern_toml.dep_names(read_manifest(mdir)));
     }
   }
   if (q.unrooted.len() > 0) {
@@ -1826,7 +1832,7 @@ function tangle_write_files(files: literate.FileResult[], dir: string): i32 {
 // reproduce `ferndoc -out D` exactly, and it means the namespace needs no flag
 // to carry it.
 function run_doc(path: string, out_path: string): i32 {
-  if (is_dir(path)) {
+  if (util.is_dir(path)) {
     return doc_tree(path, out_path);
   }
   var src: string = "";
@@ -1910,7 +1916,7 @@ function doc_tree(dir: string, out_dir: string): i32 {
         child_rel = rel + "/" + name;
       }
       var child: string = dir + "/" + child_rel;
-      if (is_dir(child)) {
+      if (util.is_dir(child)) {
         if (name.len() > 0 && name[0] == b'.') {  // and so `.` / `..`
           continue;
         }
@@ -2030,21 +2036,6 @@ function read_stdin(): string {
     }
   }
   return src;
-}
-
-// is_dir reports whether `path` names a directory. `read_dir` is the probe: a
-// file answers ENOTDIR, so a mistyped entry path stays a file error rather
-// than being read as a package directory.
-function is_dir(path: string): boolean {
-  match (read_dir(path)) {
-    Ok(names) => {
-      return true;
-    },
-    Err(e) => {
-      return false;
-    }
-  }
-  return false;
 }
 
 // check_dir implements `-check <DIR>`: type-check the package governing DIR,
@@ -2431,7 +2422,7 @@ function run(): i32 {
   // `-check <DIR>` checks the package governing DIR, or every member of the
   // workspace it roots. A file argument takes the single-entry path below,
   // and so does a bad one — `is_dir` answers false for both.
-  if (mode_check && is_dir(entry_path)) {
+  if (mode_check && util.is_dir(entry_path)) {
     return check_dir(entry_path, root, target, target_given);
   }
 

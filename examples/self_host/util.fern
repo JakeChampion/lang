@@ -214,6 +214,30 @@ pub function (ix: NameIndex) has(name: string): boolean {
   return ix.find(name) >= 0;
 }
 
+// added is the index with `name` appended: chained at the tail of its bucket,
+// so chains stay ascending, and re-bucketed once the names outnumber the
+// buckets, which keeps a growing set at the load name_index builds.
+pub function (ix: NameIndex) added(name: string): NameIndex {
+  var names: string[] = ix.names.append(name);
+  if (names.len() > ix.head.len()) {
+    return name_index(names);
+  }
+  var k: i32 = names.len() - 1;
+  var b: i32 = hash_bucket(name, ix.head.len());
+  var head: i32[] = ix.head;
+  var next: i32[] = ix.next.append(0 - 1);
+  if (head[b] < 0) {
+    head = head.with(b, k);
+  } else {
+    var t: i32 = head[b];
+    while (next[t] >= 0) {
+      t = next[t];
+    }
+    next = next.with(t, k);
+  }
+  return NameIndex { names: names, head: head, next: next };
+}
+
 // digits_to_i32 parses a leading optional `-` then a run of decimal
 // digits, stopping at the first non-digit. The canonical sign-aware
 // version — several self-host copies were sign-naive (SH-010).
@@ -1377,6 +1401,21 @@ pub function should_load(import_path: string, root: string, deps: string[]): boo
 // holds.
 pub function is_stdlib_path(import_path: string): boolean {
   return str_has_prefix(import_path, "std/") || str_has_prefix(import_path, "core/");
+}
+
+// is_dir reports whether `path` names a directory. `read_dir` is the probe: a
+// file answers ENOTDIR, so a mistyped entry path stays a file error rather
+// than being read as a package directory.
+pub function is_dir(path: string): boolean {
+  match (read_dir(path)) {
+    Ok(names) => {
+      return true;
+    },
+    Err(e) => {
+      return false;
+    }
+  }
+  return false;
 }
 
 // resolve_path maps an import path to a file on disk. Local imports

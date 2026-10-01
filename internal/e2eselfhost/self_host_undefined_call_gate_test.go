@@ -33,8 +33,8 @@ func runDriverAllowFail(t *testing.T, runner []string, bin string, stdin string,
 // call to a function that does not exist must REJECT (exit 1 + an E001
 // diagnostic naming the callee, nothing emitted) instead of emitting
 // `call __fn_<name>` against nothing and exiting 0 — which turned a source
-// typo into a bare `undefined reference` from the linker. An import that
-// resolves to no file is the same defect one level up: modloader skips it, so
+// typo into a bare `undefined reference` from the linker. A std/ import made
+// with no stdlib given is the same defect one level up: modloader skips it, so
 // every qualified call into it dangles; that case gets the module named.
 //
 // The accept cases are the gate's real risk: they pin that the admit list
@@ -84,8 +84,8 @@ func TestSelfHostUndefinedCallGate(t *testing.T) {
 				"function main(): i32 { return apply((n: i32): i32 => { return missing_helper(n); }, 1); }\n",
 			[]string{"E001", "missing_helper"},
 		},
-		// Unresolved import (#5644 comment 2): `std/jni` resolves to no file
-		// from this dir, so the qualified call becomes a dangling
+		// Unresolved import (#5644 comment 2): this dir has no std/ tree, so
+		// `std/jni` is skipped and the qualified call becomes a dangling
 		// `__fn_jni__call0`. The message must blame the MODULE, not the name.
 		{
 			"unresolved-import",

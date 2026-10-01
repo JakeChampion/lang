@@ -375,7 +375,7 @@ function lift_float_prod(k: string, op: ir.Op, nvals: i32, stack: i32[], insts: 
       // The lowering leaves the width 0 on the widening it inserts at an
       // f64 parameter or in mixed arithmetic; the stack machine converts
       // that as a signed 32-bit source.
-      var w: i32 = op.width;
+      var w: i32 = register_width(op.width);
       if (w == 0) {
         w = 32;
       }

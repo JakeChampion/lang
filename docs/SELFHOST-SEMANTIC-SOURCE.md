@@ -147,7 +147,10 @@ Unsupported constructs refuse the whole function with a reason.
   handle through an i64 on every target).
 
 - A cast between the integer types, or between one of the four 32- and 64-bit
-  ones and the f64, as the semantic `cast` kind. `e as T` reaches the producer
+  ones and the f64, or between the f64 and the address at the pointer width
+  (`op_f64_to_ptr`, `op_ptr_to_f64`: the u64 forms on a register backend, the
+  u32 forms on wasm, where `f64 as usize` saturates at `u32::MAX` as native's
+  does), as the semantic `cast` kind. `e as T` reaches the producer
   as a unary whose operator names T, and the destination is the checker's type
   for the whole expression rather than the spelling. Crossing the 64-bit
   boundary is an explicit extend or wrap, and the SOURCE's signedness is what
@@ -443,11 +446,23 @@ Unsupported constructs refuse the whole function with a reason.
   through projections, so the container holds counted strings. A container
   the body did not build, a call's result, is rebuilt whole at that point
   (`ssasem.deep_copy`): an array in a loop over its elements, a tuple element
-  by element, a record field by field, an enum by a test per variant, each
-  view in it copied. A view that is a literal or a retagged string
-  (`ssasem.counted_view`) anchors nothing and is not copied. A cell is shared
-  storage that a copy would split, and `deep_copy` rebuilds no map, so a
-  call's result holding either is still refused (`ssasem.copyable`). Whether a type holds a view at all is
+  by element, a record field by field, an enum by a test per variant, a map
+  in a loop over its two column snapshots, and a dyn by a test per concrete
+  holding a view, each narrowed, copied and widened back, each view in it
+  copied. A dyn box that is none of those concretes holds no view and is kept,
+  retagged by a `dyn_as` naming no shape, which the verifier admits only where
+  tests refuted every such concrete. A view that is a literal or a retagged
+  string (`ssasem.counted_view`) anchors nothing and is not copied. Three
+  kinds have no copy, and a value holding one is refused by name
+  (`ssasem.copy_refusal`): a cell, which is shared storage a copy would split
+  (and holds no view in practice, since E049 keeps a reference-typed capture
+  read-only); a function value, whose environment no test in the typed graph
+  can find (capture of a view is an escape position STR-VIEW-CONTRACT.md §3
+  step 3 assigns to the checker, #8635); and a type that holds itself, whose
+  copy would have to recurse. A value read out of a map holding views (`get`,
+  `get_or`, `values()`) is anchored to the map, and `get_or`'s also to its
+  default (`ssasem.map_read_sources`), since its views read the entries'
+  bytes. Whether a type holds a view at all is
   `ssasem.holds_view`, which reads a declared record's fields and an enum's
   payloads through the body's schema tables. The pass runs in
   `anchor_module` once the anchor table is attached, so a call's roots are
@@ -738,9 +753,26 @@ Unsupported constructs refuse the whole function with a reason.
   bisect knobs an AST-lowered caller may still call the template, so there
   its AST lowering stands.
 
+  A generic signature spelled only through a function type (`f: () => T`)
+  reads the parser's `fn_ret` / `fn_param_types` sidecars, since the type
+  itself is spelled `fn`. The front end's clone of a generic struct at a
+  template's variable (`Slot__0_T`, from `Slot[T]` in `hold[T]`) is one
+  record per binding: inside a template its variables become the record
+  type's arguments (`semsource.record_variables`), the schema reads its
+  fields at them (`record_sig`), and a call binds them like any other nominal
+  argument. The emit has no declaration for such an instance, so
+  `semlower.instance_records` declares each one, named by its type key
+  (`Slot__0_T$i32`), after the module's own struct declarations, and every
+  emit entry appends them to its table (`ircore.with_records`). That
+  declaration is what a wasm construction stores a wide field through. This
+  is what lets the monomorphiser leave a generic erased when a call site
+  keys no clone: a function value whose type no declaration spells (`fs[0]`,
+  a match arm) or an erased generic forwarding its function parameter, whose
+  call is keyed at its own variable (`hold__0_U`) (#10827).
+
 Refused, each with its own reason: calls of the remaining builtins, a void
 call in expression position, an operator or a literal at the pointer width,
-unsigned negation, generic records, the pattern shapes
+unsigned negation, declared generic records, the pattern shapes
 above, receiver methods and external functions.
 
 A `defer` arrives here already lowered: the desugar replaces it with a flag
