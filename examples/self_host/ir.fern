@@ -5719,8 +5719,9 @@ pub function is_foldable_binary_kind(id: i32): boolean {
 // `const` inherits the width the binary was going to produce. Only i32-width
 // signed arithmetic folds — is_foldable_binary_kind excludes the float ops and
 // the unsigned compares, and const_i32_readable admits a source-text operand
-// only when its digits round-trip through i32, so the wide-literal path's text
-// (a hex or full-u32 immediate the fold would discard) is left alone.
+// only when its text is a decimal i32 (util.is_decimal_i32), so the
+// wide-literal path's text (a hex or full-u32 immediate the fold would
+// discard) is left alone.
 //
 // Division and remainder by zero are NOT folded, and deliberately: Fern's
 // division is total (`x / 0 == 0`, docs/INTEGER-SEMANTICS.md) but the fold
@@ -5813,10 +5814,14 @@ pub function fold_const_binaries(ops: Op[]): Op[] {
   var changed: boolean = true;
   while (changed) {
     changed = false;
+    // `out` is written from the first fold on: the ops before it are copied
+    // then, and a pass that folds nothing leaves `cur` as it is.
     var out: Op[] = [];
+    var copying: boolean = false;
     var i: i32 = 0;
     while (i < cur.len()) {
       var folded: boolean = false;
+      var at: i32 = i;
       if (i + 2 < cur.len()) {
         var a: Op = cur[i];
         var b: Op = cur[i + 1];
@@ -5967,13 +5972,36 @@ pub function fold_const_binaries(ops: Op[]): Op[] {
         folded = true;
       }
       if (!folded) {
-        out = out.append(cur[i]);
+        if (copying) {
+          out = out.append(cur[i]);
+        }
         i = i + 1;
+      } else if (!copying) {
+        out = fold_prefixed(cur, at, out);
+        copying = true;
       }
     }
-    cur = out;
+    if (copying) {
+      cur = out;
+    }
   }
   return cur;
+}
+
+// fold_prefixed is ops[0, at) followed by tail.
+function fold_prefixed(ops: Op[], at: i32, tail: Op[]): Op[] {
+  var out: Op[] = [];
+  var j: i32 = 0;
+  while (j < at) {
+    out = out.append(ops[j]);
+    j = j + 1;
+  }
+  j = 0;
+  while (j < tail.len()) {
+    out = out.append(tail[j]);
+    j = j + 1;
+  }
+  return out;
 }
 
 // const_i32_readable reports whether `o` is an i32 constant a peephole may
@@ -5985,11 +6013,11 @@ pub function fold_const_binaries(ops: Op[]): Op[] {
 // lowers to — it carries the literal's text so the wide / hex paths can splice
 // it verbatim — and only qualifies when that text is a plain decimal i32.
 //
-// The round-trip is the test: digits_to_i32 stops at the first non-digit and
-// accumulates without overflow checks, so it answers 0 for "0x10" and wraps
-// silently on anything too wide. Re-rendering and comparing rejects exactly the
-// cases where its answer is not the literal — hex, a suffix, a leading zero, an
-// overflow — without this pass having to know which forms exist.
+// The text has to be what i32_to_string renders (util.is_decimal_i32):
+// digits_to_i32 stops at the first non-digit and accumulates without overflow
+// checks, so it answers 0 for "0x10" and wraps silently on anything too wide,
+// and the rendering test is exactly where its answer is the literal — no hex,
+// no suffix, no leading zero, no overflow.
 pub function const_i32_readable(o: Op): boolean {
   if (o.kind_tag == 1) {
     return o.str.len() == 0;
@@ -5997,16 +6025,13 @@ pub function const_i32_readable(o: Op): boolean {
   if (o.kind_tag != 2) {
     return false;
   }
-  if (o.str.len() == 0) {
-    return false;
-  }
-  return util.i32_to_string(util.digits_to_i32(o.str)) == o.str;
+  return util.is_decimal_i32(o.str);
 }
 
 // const_i64_readable: an i64 constant whose text reads back as decimal (a
 // hex or past-i64 literal does not, and stays as written).
 pub function const_i64_readable(o: Op): boolean {
-  return o.kind_tag == 3 && o.str.len() > 0 && util.i64_to_string(util.digits_to_i64(o.str)) == o.str;
+  return o.kind_tag == 3 && util.is_decimal_i64(o.str);
 }
 
 pub function const_i64_value(o: Op): i64 {
@@ -6922,27 +6947,34 @@ pub function optimize_ops(ops: Op[], n_params: i32, n_locals: i32): OptimizedOps
 pub function hoist_loop_invariants(ops: Op[], n_locals: i32): OptimizedOps {
   var k_loop: i32 = kind_id("loop");
   var cur: OptimizedOps = OptimizedOps { ops: ops, n_locals: n_locals };
+  // The slot bound is read once; a hoist's cache slots are past n_locals,
+  // so the bound follows the count.
+  var maxs: i32 = cp_max_slot(ops);
   // Later loops first: rewriting one shifts every index after it, and
   // walking backwards keeps the indices of the loops still to visit valid.
   var i: i32 = ops.len() - 1;
   while (i >= 0) {
     if (cur.ops[i].kind_tag == k_loop) {
-      cur = licm_hoist_from_loop(cur, i);
+      cur = licm_hoist_from_loop(cur, i, maxs);
+      if (cur.n_locals - 1 > maxs) {
+        maxs = cur.n_locals - 1;
+      }
     }
     i = i - 1;
   }
   return cur;
 }
 
-// licm_hoist_from_loop rewrites the one loop opening at loop_idx.
-function licm_hoist_from_loop(cur: OptimizedOps, loop_idx: i32): OptimizedOps {
+// licm_hoist_from_loop rewrites the one loop opening at loop_idx; maxs is
+// the highest slot any op names.
+function licm_hoist_from_loop(cur: OptimizedOps, loop_idx: i32, maxs: i32): OptimizedOps {
   var ops: Op[] = cur.ops;
   var end: i32 = licm_scope_end(ops, loop_idx);
   if (end < 0) {
     return cur;
   }
   var hdr_end: i32 = licm_header_end(ops, loop_idx);
-  var stored: boolean[] = licm_stored_locals(ops, loop_idx + 1, end);
+  var stored: boolean[] = licm_stored_locals(ops, loop_idx + 1, end, maxs + 1);
   var order: i32[] = licm_candidates(ops, loop_idx, hdr_end, stored);
   if (order.len() == 0) {
     return cur;
@@ -7083,13 +7115,12 @@ function licm_scope_end(ops: Op[], open: i32): i32 {
 }
 
 // licm_stored_locals marks every slot ops[lo, hi) writes, indexed by slot over
-// the whole list's slot range. A slot written anywhere in the loop is not
-// invariant, wherever in the body the write sits.
-function licm_stored_locals(ops: Op[], lo: i32, hi: i32): boolean[] {
+// [0, n), the whole list's slot range. A slot written anywhere in the loop is
+// not invariant, wherever in the body the write sits.
+function licm_stored_locals(ops: Op[], lo: i32, hi: i32, n: i32): boolean[] {
   var k_store: i32 = kind_id("store_local");
   var k_tee: i32 = kind_id("tee_local");
   var stored: boolean[] = [];
-  var n: i32 = cp_max_slot(ops) + 1;
   var s: i32 = 0;
   while (s < n) {
     stored = stored.append(false);
