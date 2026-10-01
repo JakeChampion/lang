@@ -739,7 +739,7 @@ function __peer_key(f: i64): i32 {
   if (r >= 0 && fam == 2) {
     key = __peer_word(sa + 4);
   } else if (r >= 0 && fam == __af_inet6()) {
-    if (__peer_word(sa + 8) == 0 && __peer_word(sa + 12) == 0 && __peer_word(sa + 16) == 0 && __load_u8(sa + 18) == 255 && __load_u8(sa + 19) == 255) {
+    if (__peer_word(sa + 8) == 0 && __peer_word(sa + 12) == 0 && __load_u8(sa + 16) == 0 && __load_u8(sa + 17) == 0 && __load_u8(sa + 18) == 255 && __load_u8(sa + 19) == 255) {
       key = __peer_word(sa + 20);
     } else {
       key = __peer_word(sa + 8) ^ __peer_word(sa + 12);
