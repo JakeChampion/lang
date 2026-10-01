@@ -74,11 +74,14 @@ targets).
 | #10773 (closed: qemu-user drops the two unnamed `c_cc` slots for native's binaries too; the arm64 lane runs on real hardware) | arm64: the termios round trip fails at step 21 | 2 |
 | #10758 (closed by #10828 after this measurement; the cause was the AST folder, not the typed lowering) | typed lowering: unary minus on u32 | 1 |
 | #10772 (fixed after this measurement: the tree shaker dropped core/map behind a builtin enum's variant; the assembler names the symbol) | x86-64: the in-process assembler cannot encode an instruction in a string-payload `match`, and names nothing | 1 |
+| #10927 (found by the 2026-10-01 re-measurement on main 7ae1854f4 with #10915; the call-valued arm fixed after it, two shapes open) | lambda lift: an if-expression as a call argument with an arm whose value is a generic passthrough call carrying lambdas is left unboxed (`function address is not a closure value`, `unsupported expression`); the fuzz seeds also reach a hoisted arm wrapping a capturing lambda in `id`, and arms naming a local fn value | 2 |
+| #10926 (found by the 2026-10-01 re-measurement) | parser and checker: a `[u8]` view inside a struct field, tuple or array element type is erased to `u8[]`, and `[u8][]` does not parse (`TestX86_64RcCorrectnessCorpus/slice_header_in_containers_churn_free` and its arm64 twin) | 2 |
 
 The three fuzz differentials (`TestDifferential_LangsmithMain`,
 `TestDifferential_PrintableStdout`, `TestDropGuidedDifferential`,
 `TestNumericProperty_Differential`) are counted once each above, under the
-gap their seeds hit (#10768, #10757, #10767). Their native legs are not the
+gap their seeds hit (#10768, #10757, #10767; on the 2026-10-01 re-measurement,
+#10927). Their native legs are not the
 gate for anything the self-host legs in `diff_oracle_selfhost_test.go` and
 its arm64 and wasm siblings do not already hold, and go with the backends;
 the seeds the self-host declines by design are that suite's documented
