@@ -9,6 +9,7 @@ import "std/i64";
 // under the asm_ir IR budget; uses assert_true (both ops return i32). The
 // Go-side TestI64BitOps pins these across all four backends; this is the
 // migration-shaped companion.
+
 function test_count_ones_basic(): test.TestOutcome {
   if ((0 as i64).count_ones() != 0) {
     return test.fail("zero");

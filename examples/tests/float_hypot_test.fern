@@ -8,6 +8,7 @@ import "std/float" as float;
 // budget; uses assert_eq_f64_near (tolerance-banded) so it needs no scalar
 // assert_eq[i32]. The Go-side TestFloatHypotFractTan pins these across all four
 // backends; this is the migration-shaped (pure-Fern, std/test-driven) companion.
+
 function test_hypot_345(): test.TestOutcome {
   return test.assert_eq_f64_near(3.0.hypot(4.0), 5.0, 0.0001);
 }

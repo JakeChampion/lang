@@ -15,6 +15,7 @@
 // rendering bytes as text. Read a decode result back with
 // `std/utf8.from_bytes` when the bytes are supposed to be text; encode
 // a string's bytes with `std/string`'s `s.bytes()`.
+
 // __b32_alphabet maps a 5-bit value (0..31) to its character byte:
 // 0..25 → 'A'..'Z', 26..31 → '2'..'7'.
 function __b32_alphabet(v: i32): i32 {

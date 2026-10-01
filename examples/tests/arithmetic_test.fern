@@ -10,6 +10,7 @@ import "std/test";
 //
 // Output is TAP-13. Exit code is 0 if every case passes, 1
 // if any case fails.
+
 function test_addition(): test.TestOutcome {
   return test.assert_eq(2 + 2, 4);
 }

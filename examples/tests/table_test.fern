@@ -5,6 +5,7 @@ import "std/table" as table;
 // column-aligned rendering (last column unpadded, short rows padded
 // with empty cells, code-point-width alignment) and the header variant
 // with its `-` rule.
+
 function test_render_basic(): test.TestOutcome {
   // Column 0 padded to width 3; the last column carries no trailing pad.
   return test.assert_eq(table.render([["a", "bb"], ["ccc", "d"]]), "a    bb\nccc  d");

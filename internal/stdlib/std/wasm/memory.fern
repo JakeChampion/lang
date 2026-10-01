@@ -21,6 +21,7 @@
 // rest of the bulk-memory family (memory.init / data.drop) and
 // the saturating-truncate ops aren't included; the backend's
 // memcpy / memset helpers only reach for copy + fill.
+
 import "std/wasm/leb128";
 
 // put_memarg — append the alignment + offset uleb pair every
@@ -40,6 +41,7 @@ function put_memarg(buf: u8[], align: u32, offset: u32): u8[] {
 // doublewords. The spec lets the producer pass any value <= the
 // natural alignment; engines use it as a hint and ignore it
 // otherwise.
+
 pub function inst_i32_load(buf: u8[], align: u32, offset: u32): u8[] {
   return put_memarg(buf.append(40u8), align, offset);  // 0x28
 }
@@ -97,6 +99,7 @@ pub function inst_i64_load32_u(buf: u8[], align: u32, offset: u32): u8[] {
 }
 
 // ---- Stores (0x36 - 0x3E) ------------------------------------
+
 pub function inst_i32_store(buf: u8[], align: u32, offset: u32): u8[] {
   return put_memarg(buf.append(54u8), align, offset);  // 0x36
 }
@@ -140,6 +143,7 @@ pub function inst_i64_store32(buf: u8[], align: u32, offset: u32): u8[] {
 // memory.size pops nothing and pushes the current size in pages;
 // memory.grow pops the requested delta and pushes the old size on
 // success, -1 on failure.
+
 pub function inst_memory_size(buf: u8[]): u8[] {
   var out: u8[] = buf;
   out = out.append(63u8);  // 0x3F
@@ -163,6 +167,7 @@ pub function inst_memory_grow(buf: u8[]): u8[] {
 // (dst, val, len). The production backend emits these literally
 // as the byte sequences `0xFC 0x0A 0x00 0x00` / `0xFC 0x0B 0x00`
 // for its memcpy / memset runtime helpers.
+
 pub function inst_memory_copy(buf: u8[]): u8[] {
   var out: u8[] = buf;
   out = out.append(252u8);  // 0xFC prefix

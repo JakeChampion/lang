@@ -7,6 +7,7 @@
 // `width` is placed on its own line rather than split. Inter-word runs
 // of spaces collapse to a single space (standard word-wrap behaviour).
 // A non-positive `width` returns `text` unchanged.
+
 import "std/utf8";
 import "std/string";
 import "std/array";

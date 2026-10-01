@@ -21,6 +21,7 @@ import "std/http";
 // `assert_eq` (whole-wire compare) and the new
 // `assert_contains` / `assert_not_contains` for
 // invariants that span multiple cases.
+
 function test_user_headers_before_auto_block(): test.TestOutcome {
   var r: HttpResponse = http.ok("hello");
   r = r.with_header("X-Trace-Id", "abc123");
@@ -101,6 +102,7 @@ function test_duplicate_set_cookie_both_in_order(): test.TestOutcome {
 }
 
 // ---- status-line reason phrases (#4381) ----
+
 // The serializer's reason table used to be a narrow duplicate of
 // http_status_text that only knew 13 codes, so a 429 / 502 shipped
 // the bogus phrase "Status". Now both share one table.

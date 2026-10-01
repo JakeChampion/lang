@@ -6,6 +6,7 @@ import "./util";
 // backend's closure/capture analysis. asmcore / ssa / vm carried
 // byte-identical copies of these; they now live here once. Imports
 // only parser, so any frontend module can depend on it.
+
 // The accumulator is CONSUMING: the fold hands its unit to the visitor at each
 // step and takes back the one the call returns, so exactly one unit is live at
 // every point and the fold releases nothing. The function type spells it —
@@ -1074,6 +1075,17 @@ pub function collect_lambda_idents(lm: ast.ExprLambda, own acc: string[]): strin
     bound = append_bound_name(bound, param.name);
   }
   let (used, final_bound) = scoped_stmts_reads(lm.body, bound, acc, collect_idents_expr);
+  return used;
+}
+
+// collect_free_idents appends every identifier `body` reads that neither
+// `params` nor a declaration inside the body binds.
+pub function collect_free_idents(params: string[], body: ast.Stmt[], own acc: string[]): string[] {
+  var bound: string[] = [];
+  for p in params {
+    bound = append_bound_name(bound, p);
+  }
+  let (used, final_bound) = scoped_stmts_reads(body, bound, acc, collect_idents_expr);
   return used;
 }
 

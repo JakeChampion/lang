@@ -8,6 +8,7 @@ import "std/u64" as u64m;
 // 2^63, and log2_floor spans 0..63. The Go-side TestU64Roots pins these across
 // all four backends; this is the migration-shaped companion. Scalar-only, so
 // self-host clean.
+
 function test_sqrt_floor(): test.TestOutcome {
   if ((100 as u64).sqrt_floor() != 10 as u64) {
     return test.fail("sqrt 100");

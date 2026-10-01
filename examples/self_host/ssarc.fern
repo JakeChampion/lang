@@ -260,7 +260,7 @@ function release_name(t: typeinfo.Type): string {
   if (routed_map(t) && routed_box(ssasem.map_value(t))) {
     return "__map_drop_boxes_impl";
   }
-  if (routed_map(t) && (ssasem.is_string(ssasem.map_key(t)) || ssasem.is_string(ssasem.map_value(t)))) {
+  if (routed_map(t) && (ssasem.is_text(ssasem.map_key(t)) || ssasem.is_string(ssasem.map_value(t)))) {
     return "__map_drop_strcols_impl";
   }
   if (routed_map(t)) {
@@ -288,7 +288,7 @@ function release_name(t: typeinfo.Type): string {
 // and call it on every entry.
 function map_release_name(t: typeinfo.Type): string {
   var v: typeinfo.Type = ssasem.map_value(t);
-  var ks: boolean = ssasem.is_string(ssasem.map_key(t));
+  var ks: boolean = ssasem.is_text(ssasem.map_key(t));
   var kf: boolean = ssasem.keyed_map_key(ssasem.map_key(t));
   if (ssasem.is_string(v)) {
     if (kf) {
@@ -372,7 +372,7 @@ function map_release_fns(t: typeinfo.Type): string[] {
 // wide integer column (i64 / u64), which the register backends treat as 1
 // and wasm keeps as cells it owns and compares by value (#10005).
 function map_key_kind(t: typeinfo.Type): i32 {
-  if (ssasem.is_string(ssasem.map_key(t))) {
+  if (ssasem.is_text(ssasem.map_key(t))) {
     return 0;
   }
   if (ssasem.keyed_map_key(ssasem.map_key(t))) {
@@ -2943,13 +2943,15 @@ function routed_iter(t: typeinfo.Type): boolean {
 // A string column, of keys or values, holds one unit of each string, as the
 // runtime's does.
 function routed_key(t: typeinfo.Type): boolean {
-  return routed_column(t) || ssasem.is_string(t);
+  return routed_column(t) || ssasem.is_text(t);
 }
 
 // A value column may also hold boxes, one unit of each; core/map retains them
 // on every read and copy, and this lowering releases the ones it drops.
+// A view value column stays on the runtime's map (routed_box), where a view
+// key column is a string column of owned copies (routed_key).
 function routed_value(t: typeinfo.Type): boolean {
-  return routed_key(t) || routed_box(t);
+  return routed_column(t) || ssasem.is_string(t) || routed_box(t);
 }
 
 // The boxes a routed value column can hold: any counted value but a string,
@@ -3062,7 +3064,7 @@ function routed_val_tag(t: typeinfo.Type): i32 {
 
 // core/map's keyKind: 1 a string, 0 a scalar held in the slot itself.
 function routed_key_tag(t: typeinfo.Type): i32 {
-  if (ssasem.is_string(t)) {
+  if (ssasem.is_text(t)) {
     return 1;
   }
   return 0;
@@ -3091,7 +3093,7 @@ function routed_column_read(own r: irlower.LowerResult, elem: typeinfo.Type, off
   if (ssasem.is_bool(elem)) {
     return emit(r, ir.op_call_direct("__map_bool_column", 2));
   }
-  if (ssasem.is_string(elem)) {
+  if (ssasem.is_text(elem)) {
     return emit(r, ir.op_call_direct("__map_string_column", 2));
   }
   if (routed_box(elem)) {
@@ -3136,7 +3138,7 @@ function routed_insert(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SIns
   var res: i32 = scratch_base(f);
   var before: i32 = res + 1;
   var old_val: i32 = res + 2;
-  var counted_key: boolean = ssasem.is_string(ssasem.map_key(t));
+  var counted_key: boolean = ssasem.is_text(ssasem.map_key(t));
   var boxed_val: boolean = routed_box(ssasem.map_value(t));
   r = reserve(r, old_val + 1);
   r = emit(r, ir.op_load_local(ins.args[0]));
@@ -3184,7 +3186,7 @@ function routed_delete(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SIns
   var found: i32 = box + 1;
   var old_key: i32 = box + 2;
   var old_val: i32 = box + 3;
-  var counted_key: boolean = ssasem.is_string(ssasem.map_key(t));
+  var counted_key: boolean = ssasem.is_text(ssasem.map_key(t));
   var counted_val: boolean = ssasem.is_string(ssasem.map_value(t)) || routed_box(ssasem.map_value(t));
   r = reserve(r, old_val + 1);
   r = emit(r, ir.op_load_local(ins.args[0]));

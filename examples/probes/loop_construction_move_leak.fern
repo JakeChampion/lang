@@ -24,6 +24,7 @@
 // discriminator between the moved and inc'd lowerings, and they are the
 // quickest way to re-check the property by hand. The regression gate is
 // TestX86_64LeakCheckLoopConstructionMove in internal/e2e/leakcheck_test.go.
+
 function in_loop(): i32 {
   var s: i32 = 0;
   var k: i32 = 0;

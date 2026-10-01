@@ -6,6 +6,7 @@ import "std/rand" as rand;
 // CONTRACTS: shuffle is a permutation (multiset preserved) that leaves
 // its input untouched, choice is always in-bounds (None only when
 // empty), and sample returns k distinct elements of the input.
+
 function sum_arr(a: i32[]): i32 {
   var s: i32 = 0;
   var i: i32 = 0;

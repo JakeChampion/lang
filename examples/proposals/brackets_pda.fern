@@ -7,6 +7,7 @@
 //
 // The app writes its report to stderr; stdout carries TAP-13 from
 // std/test, so the file is its own test suite.
+
 import "std/test";
 import "std/array";
 import "std/i32";
@@ -277,6 +278,7 @@ function is_balanced(src: string): boolean {
 }
 
 // ---------------------------------------------------------------- tests
+
 function balanced_corpus(): string[] {
   return [
     "",
@@ -451,6 +453,7 @@ function test_counting_is_not_enough(): test.TestOutcome {
 }
 
 // ----------------------------------------------------------------- app
+
 function report_line(src: string, label: string): string {
   var r: Report = analyze(src);
   return label + ": " + verdict_text(r.verdict) + " (depth "

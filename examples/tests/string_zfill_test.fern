@@ -9,6 +9,7 @@ import "std/string";
 // self-host merged bundle stays under the asm_ir IR budget; uses assert_true.
 // The Go-side TestStringZfill pins these across all four backends; this is the
 // migration-shaped (pure-Fern, std/test-driven) companion.
+
 function test_unsigned(): test.TestOutcome {
   return test.assert_true("42".zfill(5) == "00042");
 }

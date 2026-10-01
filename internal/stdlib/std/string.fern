@@ -20,6 +20,7 @@
 // and any client that normalizes differently from the server all
 // produce it. For program-internal keys that never leave the
 // process, `==` is the right tool and the cheaper one.
+
 import "core/int";
 import "core/bigint";
 // std/string's bodies dispatch (i32) byte methods on `s[i]`
@@ -91,6 +92,7 @@ pub function (s: string) repeat(n: i32): string {
 // it appears (same as Go's `strings.Contains`). Empty
 // needle / prefix / suffix return true / 0 to match the
 // `strstr` / Go conventions.
+
 pub function (s: string) starts_with(prefix: string): boolean {
   var sLen: i32 = s.len();
   var pLen: i32 = prefix.len();
@@ -1547,6 +1549,7 @@ pub function (s: string) lines_non_empty(): string[] {
 // Suffix `_only` says "every character", not "some character";
 // it no longer disambiguates from the byte-receiver methods,
 // which carry `ascii` in their names since #5629.
+
 pub function (s: string) is_ascii_only(): boolean {
   var n: i32 = s.len();
   var i: i32 = 0;
@@ -3068,6 +3071,7 @@ pub function (s: string) to_array(): string[] {
 // std/utf8's `codepoints` / `codepoint_count` walk with the same rule and
 // agree byte-for-byte; the strict `utf8.utf8_decode_at` is the other
 // layer — it reports ill-formed input as `None` rather than substituting.
+
 // `__utf8_is_cont(b)` — is byte `b` a UTF-8 continuation byte (0x80..0xBF)?
 function __utf8_is_cont(b: i32): boolean {
   return b >= 128 && b < 192;
@@ -3992,6 +3996,7 @@ function __decimal_to_f64(dig: string, k: i32): f64 {
 // duplicated rather than shared because std/float imports std/i32 which
 // imports std/string, so std/string importing std/float would be an import
 // cycle.
+
 // BEGIN GENERATED EISEL-LEMIRE TABLE (cmd/floattablegen) — do not edit by hand.
 // Eisel-Lemire 128-bit power-of-five table: q = -342..308 (651 entries),
 // 22 characters each — 11 for the high 64 bits, then 11 for the low.
@@ -4000,6 +4005,7 @@ function _el_pow5(): string {
 }
 
 // END GENERATED EISEL-LEMIRE TABLE
+
 // _el_dig decodes one table character to its 6-bit value. The alphabet is 64
 // printable ASCII characters in two contiguous spans, '0'..'[' (48..91) and
 // ']'..'p' (93..112); it skips '\' so no character needs escaping.

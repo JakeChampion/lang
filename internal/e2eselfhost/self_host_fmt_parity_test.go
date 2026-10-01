@@ -557,6 +557,52 @@ function two(p: P): i32 {
   return p.x + p.y;
 }
 `},
+	// An import below a declaration prints where it was written; hoisting it
+	// drained every comment above it into the import block (#10870).
+	{"late-import", `import "core/map";
+
+// about one
+function one(): i32 {
+  return 1;
+}
+
+// about the late imports
+import "std/strings";
+pub use "./util".{helper};
+import "./lexer" as lx;
+
+// about two
+function two(): i32 {
+  return 2;
+}
+`},
+	// A blank line between a section comment and the doc comment below it, or
+	// between the last comment and the declaration, survives (#10870).
+	{"section-comment-apart", `// --- section one ---
+
+// about first
+function first(): i32 {
+  return 1;
+}
+
+// --- section two ---
+//
+// prose about the section
+
+// about Pair
+struct Pair { a: i32 }
+
+// a note about what follows
+
+const LIMIT: i32 = 3;
+
+// a note above an attribute
+
+@inline
+function third(): i32 {
+  return 3;
+}
+`},
 	// The modifiers and the shapes a formatter must not drop: `pub` on a
 	// function, type parameters, an aliased import, a cast, a void `return;`.
 	// The unexported struct pins the other half of the visibility rule that

@@ -20,6 +20,7 @@
 // and an exit code of 0 (zero bijection failures), pinning the registry
 // end-to-end through the self-host -> native pipeline (proving the registry
 // compiles + round-trips, not just type-checks).
+
 import "./ir";
 import "./util";
 

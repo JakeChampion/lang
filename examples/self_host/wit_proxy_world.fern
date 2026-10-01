@@ -5,6 +5,7 @@
 // internal/wasm/componenttype/proxy.bin holds them; a Go test pins the two
 // equal, and internal/wasm/componenttype/doc.go says how to regenerate both
 // when the WIT changes.
+
 // proxy_world_payload is the payload as a byte string: a component binary
 // whose type section (id 7) is the world's type body.
 pub function proxy_world_payload(): string {

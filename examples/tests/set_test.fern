@@ -9,6 +9,7 @@ import "std/set" as set;
 // receiver — asserted explicitly in test_add_is_pure, the regression
 // guard for the aliasing/CoW hazard a wrapper struct over a heap array
 // is prone to. Both i32 and string element types are covered.
+
 function test_set_of_dedup(): test.TestOutcome {
   // Duplicates collapse; first occurrence order is kept.
   var s: set.Set[i32] = set.set_of([1, 2, 2, 3, 1]);

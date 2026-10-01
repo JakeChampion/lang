@@ -12,6 +12,7 @@ import "std/test";
 // All four delegate to `std/json`'s `json_parse` and report
 // distinct diagnostics for invalid JSON, wrong top-level
 // type, and missing/extra entries.
+
 function test_has_key_pass(): test.TestOutcome {
   return test.assert_json_has_key("{\"name\":\"alice\",\"age\":30}", "name");
 }

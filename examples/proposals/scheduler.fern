@@ -26,6 +26,7 @@
 // quietly become the other.
 //
 // The app writes its report to stderr; stdout carries TAP-13 from std/test.
+
 import "std/test";
 import "std/i32";
 import "std/string";
@@ -96,6 +97,7 @@ function max_drift(runs: Run[]): i32 {
 }
 
 // ------------------------------------------------------- multiple tasks
+
 // Merge several tasks onto one timeline, earliest due first, ties broken by
 // the order the tasks were registered. The tie-break is not a detail: without
 // a stated one the output depends on iteration order, and two backends would
@@ -151,6 +153,7 @@ function find_task(name: string): Task {
 }
 
 // ----------------------------------------------------------------- tests
+
 // THE test. Under a fixed RATE the k-th run is due at exactly
 // start + k*interval, whatever the duration — that is the entire promise of
 // the policy, and the one a scheduler silently breaks by scheduling from the
@@ -377,6 +380,7 @@ function test_a_zero_interval_is_back_to_back_not_a_hang(): test.TestOutcome {
 }
 
 // ------------------------------------------------------------------- app
+
 function pad(s: string, w: i32): string {
   var out: string = s;
   for i in s.len()..w {

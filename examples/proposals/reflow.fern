@@ -42,6 +42,7 @@
 //     non-ASCII word in it so the rule is exercised rather than avoided.
 //
 // The app writes its report to stderr; stdout carries TAP-13 from std/test.
+
 import "std/test";
 import "std/i32";
 import "std/string";
@@ -126,6 +127,7 @@ function join_lines(lines: string[]): string {
 }
 
 // --------------------------------------------------------------- parsing
+
 function parse(text: string): Block[] {
   var lines: string[] = text.split("\n");
   var blocks: Block[] = [];
@@ -152,6 +154,7 @@ function parse(text: string): Block[] {
 }
 
 // --------------------------------------------------------------- filling
+
 // The columns available to the words themselves. A paragraph indented past
 // the target still has to put a word somewhere, so the floor is one column
 // and the line overflows — the alternative is dropping text.
@@ -205,6 +208,7 @@ function reflow(text: string, width: i32): string {
 }
 
 // ---------------------------------------------------------------- oracle
+
 function join_range(words: string[], from: i32, to: i32): string {
   var out: string = "";
   var i: i32 = from;
@@ -241,6 +245,7 @@ function bf_wrap(indent: string, words: string[], width: i32): string[] {
 }
 
 // ---------------------------------------------------------------- corpus
+
 function docs(): string[] {
   var d: string[] = [];
   d = d.append("the quick brown fox jumps over the lazy dog and keeps going for a while");
@@ -307,6 +312,7 @@ function count_lines(text: string): i32 {
 }
 
 // ----------------------------------------------------------------- tests
+
 // The claim itself: reflowing moves whitespace and touches nothing else.
 function test_the_word_sequence_is_unchanged(): test.TestOutcome {
   var ds: string[] = docs();

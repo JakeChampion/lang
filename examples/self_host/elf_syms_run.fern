@@ -12,6 +12,7 @@
 // re-derive in Go: asking for no symbols returns the image untouched, and
 // the header fields describing the section table are right. Exit 0 means
 // every assertion held; a non-zero code names the failing one.
+
 import "./elf";
 import "./util";
 

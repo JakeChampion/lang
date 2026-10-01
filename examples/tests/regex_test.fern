@@ -8,6 +8,7 @@ import "std/test";
 import "std/regex" as regex;
 
 // --- matcher ---------------------------------------------------------------
+
 function test_match_anywhere(): test.TestOutcome {
   return test.assert_true(regex.regex_match("b", "abc") && !regex.regex_match("z", "abc"));
 }
@@ -40,6 +41,7 @@ function test_case_insensitive_flag(): test.TestOutcome {
 }
 
 // --- bulk operations -------------------------------------------------------
+
 function test_count(): test.TestOutcome {
   return test.assert_eq(regex.regex_count("\\d+", "a1 b22 c333"), 3);
 }
@@ -67,6 +69,7 @@ function test_full_match(): test.TestOutcome {
 }
 
 // --- captures --------------------------------------------------------------
+
 function test_captures_positional(): test.TestOutcome {
   var m: regex.RCaps = regex.regex_captures("(\\d+)-(\\d+)", "id 12-34 x");
   return test.assert_true(m.found && m.group_count() == 2
@@ -93,6 +96,7 @@ function test_captures_quantified_last_iteration(): test.TestOutcome {
 }
 
 // --- named groups ----------------------------------------------------------
+
 function test_named_groups(): test.TestOutcome {
   var m: regex.RCaps = regex.regex_captures("(?<year>\\d{4})-(?<mon>\\d{2})", "date 2026-07");
   return test.assert_true(m.group_named("year") == "2026" && m.group_named("mon") == "07"
@@ -107,6 +111,7 @@ function test_named_group_unknown(): test.TestOutcome {
 }
 
 // --- $-template replacement ------------------------------------------------
+
 function test_replace_groups_numeric(): test.TestOutcome {
   return test.assert_eq(regex.regex_replace_all_groups("(\\w+)@(\\w+)", "a@b c@d", "$2@$1"), "b@a d@c");
 }

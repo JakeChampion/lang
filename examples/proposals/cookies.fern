@@ -34,6 +34,7 @@
 // spellings, and it is what a hand-written "handles whitespace" case cannot be.
 //
 // The app writes its report to stderr; stdout carries TAP-13 from std/test.
+
 import "std/test";
 import "std/i32";
 import "std/string";
@@ -41,6 +42,7 @@ import "std/string";
 struct Cookie { name: string, value: string }
 
 // ------------------------------------------------------------- parse
+
 // A pair is `name=value`. Everything before the FIRST `=` is the name;
 // everything after it — including any further `=` — is the value.
 //
@@ -127,6 +129,7 @@ function serialize(cs: Cookie[]): string {
 }
 
 // ------------------------------------------------------------ helpers
+
 // A stable rendering used for comparing parse results. `\x1f` and `\x1e` are
 // unit/record separators — control bytes that cannot appear in a cookie
 // name and would have to be deliberately put into a value — so a
@@ -149,6 +152,7 @@ function pads(): string[] {
 }
 
 // ------------------------------------------------------------- tests
+
 // The sweep. For a canonical `a=1;b=2` input, whitespace is inserted at each
 // of the five tolerated positions per pair — before the name, between name and
 // `=`, between `=` and value, after the value, and around the `;` — and every

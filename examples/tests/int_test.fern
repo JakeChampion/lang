@@ -8,6 +8,7 @@ import "core/int" as int;
 // (the inverse, lowercase digits). These sit behind the (n).to_string() /
 // to_hex / parse_hex_int method sugar; the Go-side suites unit-test the
 // prelude origin, this is the migration-shaped (pure-Fern) companion.
+
 function test_to_string_zero(): test.TestOutcome {
   return test.assert_eq(int.int_to_string(0), "0");
 }

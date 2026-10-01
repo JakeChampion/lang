@@ -12,6 +12,7 @@
 //
 // `-self` runs the pass's own assertions instead — the both-directions case
 // set, whose exit code names the failing case.
+
 import "std/io";
 import "./lexer";
 import "./parser";
@@ -56,6 +57,7 @@ function report(src: string): string {
 }
 
 // ---- self-checks -------------------------------------------------------
+
 // c builds a comment at `line` so the walker cases read as positions, which is
 // the only thing take_doc looks at. Column is irrelevant to association and is
 // fixed at 1 to say so.

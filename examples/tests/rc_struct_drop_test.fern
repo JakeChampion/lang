@@ -13,6 +13,7 @@ import "std/test";
 // surfaces as a crash or a wrong sum on the differential gate — on x86-64
 // (where the deep-drop body was already real) AND on arm64 (slice 1a made its
 // __struct_drop_<T> a real deep-drop instead of a leak-safe pass-through).
+
 struct Bag { items: i32[] }
 
 struct Inner { v: i32 }

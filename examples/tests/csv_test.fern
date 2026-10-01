@@ -7,6 +7,7 @@ import "std/csv" as csv;
 // then comma-join) and csv_parse_line (split, with quoted fields that
 // may contain commas and "" → " decoding). The Go-side suite unit-tests
 // the prelude origin; this is the migration-shaped (pure-Fern) companion.
+
 function test_escape_plain(): test.TestOutcome {
   return test.assert_eq(csv.csv_escape("hello"), "hello");
 }

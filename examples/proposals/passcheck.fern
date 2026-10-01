@@ -28,12 +28,14 @@
 // is wrong in the direction that matters.
 //
 // The app writes its report to stderr; stdout carries TAP-13 from std/test.
+
 import "std/test";
 import "std/i32";
 import "std/i64";
 import "std/string";
 
 // --------------------------------------------------------------- log2
+
 // log2(n) in thousandths of a bit, for n >= 1. Integer arithmetic only.
 //
 // The fraction comes out of repeated squaring: with x in [1,2), x^2 lands in
@@ -70,6 +72,7 @@ function log2_milli(n: i32): i32 {
 }
 
 // --------------------------------------------------------- classes
+
 function is_lower(b: i32): boolean {
   return b >= 97 && b <= 122;
 }
@@ -120,6 +123,7 @@ function pool_of(pw: string): i32 {
 }
 
 // ------------------------------------------------------------ structure
+
 // Characters that add nothing because they continue a run — "aaa" and "abc"
 // and "123" each cost an attacker one guess, not three. Counted as positions
 // that a run-aware search would not have to enumerate.
@@ -191,6 +195,7 @@ function fixed3(m: i32): string {
 }
 
 // ------------------------------------------------------------- oracle
+
 // log2 x 1000, computed elsewhere and written down — the independent check
 // that the fixed-point routine is right and not merely self-consistent.
 function ref_inputs(): i32[] {
@@ -205,6 +210,7 @@ function ref_log2_milli(): i32[] {
 }
 
 // ----------------------------------------------------------------- tests
+
 // THE test. At an exact power of two the answer must be EXACT — no rounding
 // slop — and across the swept range it must match independently computed
 // references to within one thousandth. A fixed-point log that drifts, or that
@@ -455,6 +461,7 @@ function test_the_verdict_never_goes_backwards(): test.TestOutcome {
 }
 
 // ------------------------------------------------------------------- app
+
 function main(): i32 {
   eprint("passcheck — entropy in integers, because log2 does not build for wasm");
   var pws: string[] = [

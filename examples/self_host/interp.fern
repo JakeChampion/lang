@@ -16,6 +16,7 @@
 // Out of scope (next iteration): function decls + calls, control
 // flow (`if` / `while` / `for`), structs / unions, generics. The
 // parser stub doesn't emit those yet either.
+
 import "./ast";
 import "./lexer";
 import "./parser";
@@ -23,6 +24,7 @@ import "./util";
 import "./astwalk";
 
 // =================== VALUES ====================
+
 pub struct VInt { v: i32 }
 
 // VInt64 holds a 64-bit integer (an i64 literal or the result of 64-bit
@@ -100,6 +102,7 @@ pub struct VErr { msg: string }
 // VErr is the bottom of the value lattice — it propagates
 // silently through every operator that touches it so the first
 // error wins. Mirrors how the checker's TypeUnknown works.
+
 // VCellI / VCellF are the by-reference binding for a MUTABLE SCALAR CAPTURE
 // (SH-057 / #2850). The language deliberately splits capture semantics: scalars
 // are captured by reference and a closure may write them (closures-as-counters
@@ -772,6 +775,7 @@ function interp_char_boundary(s: string, i: i32): boolean {
 }
 
 // =================== SCOPE ====================
+
 // Same shape as the checker's Scope but the parallel slot is
 // Value rather than Type. Linear scan, newest binding wins —
 // matches `let` semantics for the limited stmt set we handle.
@@ -1035,6 +1039,7 @@ function cell_slot_set(slot: Value, v: Value): boolean {
 // can appear in any expression position (a `var` init, a call argument, an
 // array element), and doing it here means every one of those is covered by the
 // same code path without threading a set through Env.
+
 // lam_assign_targets collects assignment targets anywhere in a lambda body,
 // including nested control flow and nested lambdas. The whole-subtree fold
 // WIDENS the old hand-written walk onto a `defer` action's assignment and a
@@ -1061,6 +1066,7 @@ function lam_assign_targets(stmts: ast.Stmt[], own acc: string[]): string[] {
 // celling it is invisible — but a per-iteration `var n = k` captured in a loop
 // MUST stay by value, and celling that would hand every closure the last
 // iteration's n. Native answers 3 for that shape, not 6.
+
 // ib_ident_of / ib_idents_stmts collect every ident mentioned. Used only to
 // approximate what a lambda READS: a superset is safe here because the result
 // is intersected with the names the enclosing body actually reassigns, and
@@ -1490,6 +1496,7 @@ function (e: Env) update(name: string, v: Value): Env {
 }
 
 // =================== EVAL ====================
+
 // eval_expr: a depth-first walk of the parser's Expr tree.
 // Errors propagate via VErr — the moment any sub-expression
 // errors, the surrounding op returns the same VErr. This keeps
@@ -5222,6 +5229,7 @@ pub function eval_module_argv(raw_mod: parser.Module, argv: string[]): Value {
 }
 
 // =================== VALIDATION ====================
+
 function run_source(src: string): Value {
   var toks: lexer.Token[] = lexer.tokenize(src);
   var stmts: ast.Stmt[] = parser.parse_program(toks);

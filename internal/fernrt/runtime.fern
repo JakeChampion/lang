@@ -4,6 +4,7 @@
 // hand-written twin per backend. Bodies bottom out in the provided-callee
 // floor (`__load_u8`, `__load_i64`, ...) and never in an operation that would
 // lower to a call of the helper being defined.
+
 // wasi:sockets error-code discriminants to Preview 1 errnos. Keep in sync
 // with internal/strerror.WasiSocketErrorCodes; its parity test checks all rows.
 function __fern_wasi_socket_errno(code: i32): i32 {
@@ -166,6 +167,7 @@ function __fern_utf8_valid(data: usize, len: usize): i32 {
 // The socket floor (#9853): one body per helper over `__syscall3`, with the
 // syscall numbers and the sockaddr layout keyed by target. Each answers a
 // descriptor or the kernel's -errno, as the builtins it backs always have.
+
 function __sys_socket(): i32 {
   if (target_arch() == "x86-64") {
     return 41;
@@ -1101,6 +1103,7 @@ function __epoll_watch(ep: i64, fd: i32, interest: i32): i32 {
 // signalfd the set holds in its event's data word beside -signal; on
 // Darwin it is ignored, so its default action cannot end the process,
 // and kqueue's EVFILT_SIGNAL records each delivery.
+
 // A zeroed 32-byte act with the handler at 0, which both kernels read
 // that way: SIG_IGN is 1, SIG_DFL 0.
 function __sig_disposition(sig: i32, handler: i32): i32 {

@@ -82,6 +82,7 @@
 // self-host IR path (the array-payload-enum parser bug #3720 that once
 // blocked grouped patterns there is fixed — see
 // internal/e2eselfhost/self_host_regex_ir_test.go).
+
 // RNode is the parsed pattern tree. Leaf atoms (`RChar` / `RAny` /
 // `RClass` / `RStart` / `REnd`, plus `RBound` for a `\b` / `\B`
 // word-boundary assertion) and the composites `RSeq` (concatenation)
@@ -940,6 +941,7 @@ pub function regex_replace(pattern: string, text: string, repl: string): string 
 // that start's matches, the greatest end). Among paths reaching that same
 // longest end, the highest-priority thread's captures win — quantifiers
 // capture greedily and earlier `|` alternatives are preferred.
+
 // RInst is one compiled instruction. `IChar` / `IAny` / `IClass` consume a
 // byte; `IAssert(k)` is a zero-width test (0 = `^`, 1 = `$`, 2 = `\b`,
 // 3 = `\B`); `ISplit(RSplit{a, b})` forks a thread to both targets with `a`

@@ -18,6 +18,7 @@
 // extern tuple param; the three x86 self-compile fixpoints confirm no such
 // tuple-array spelling reaches this on the self-host sources, so the extern-param
 // codegen is unchanged.
+
 import "./wasm_ir";
 import "./util";
 

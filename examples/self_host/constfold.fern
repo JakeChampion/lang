@@ -29,6 +29,7 @@
 // Arithmetic is evaluated in i64 and the types the operands can have decide
 // whether the answer may be emitted — see fits. This pass runs on EVERY
 // build, so a fold that changes the answer is a miscompile.
+
 import "./ast";
 import "./lexer";
 import "./parser";
@@ -36,6 +37,7 @@ import "./util";
 import "./astwalk";
 
 // =================== INT / FOLD HELPERS ====================
+
 // A folded literal is built in the shape the PARSER produces. A number
 // literal's TEXT never carries a sign — irlower.literal_is_i64 classifies by
 // MAGNITUDE alone — so a negative result is unary minus over the
@@ -173,6 +175,7 @@ function as_string_lit(e: ast.Expr): OptString {
 }
 
 // =================== EXPR FOLDING ====================
+
 // fold_expr returns a possibly-rewritten expression. The output
 // has the same ast.Expr shape; what may change is "constants
 // folded one level up." Multiple passes aren't needed — the
@@ -325,6 +328,7 @@ function fold_unary(op: string, operand: ast.Expr): ast.Expr {
 }
 
 // =================== STMT / MODULE FOLDING ====================
+
 function fold_stmt(st: ast.Stmt): ast.Stmt {
   return astwalk.map_stmt(st, fold_node);
 }
@@ -344,6 +348,7 @@ pub function fold_module(mod: parser.Module): parser.Module {
 }
 
 // =================== TARGET NAME ====================
+
 // The two halves of the compile target's name as string literals:
 // `target_os()` is the environment — "linux", "darwin", "android" or "wasi"
 // — and `target_arch()` is the ISA — "arm64", "x86-64" or "wasm32". Neither
@@ -414,6 +419,7 @@ function to_expr(e: ast.Expr, a: TargetAcc): (ast.Expr, TargetAcc, boolean) {
 }
 
 // =================== ASSERT ELISION ====================
+
 // elide_asserts drops every `assert(...)` check from the program — the `-O`
 // release-build behaviour, and the only thing native spends that flag on
 // (internal/constfold.ElideAsserts, #4416). The parser desugars an assert to
@@ -518,6 +524,7 @@ function drop_assert(st: ast.Stmt): ast.Stmt[] {
 }
 
 // =================== VALIDATION ====================
+
 // Convenience: parse a source, fold, return the folded module.
 // is_binary_init reports whether the module's first statement binds an
 // unfolded `op`.

@@ -26,6 +26,7 @@
 //
 // Option / Result are NOT here: Some/None/Ok/Err are special-cased in the
 // emitter, never synthesised as variant structs.
+
 // JsonValue — the std/json document model. `JString(x)` / `match … JObject(m) …`
 // resolve against these variants.
 enum JsonValue {

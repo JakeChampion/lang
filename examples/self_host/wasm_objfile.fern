@@ -26,6 +26,7 @@
 // anything at all — newlines, quotes, NUL. An escaping scheme has to be exactly
 // inverted by the decoder or literals corrupt silently; a byte count cannot be
 // got subtly wrong, it either reads the right span or fails the round-trip test.
+
 import "./util";
 
 pub struct UnitObj {

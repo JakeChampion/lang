@@ -13,6 +13,7 @@ function text(b: u8[]): string {
 // known-answer vectors (the "" / f / fo / foo / foob / fooba / foobar
 // progression that exercises every padding length) plus decode
 // round-trips.
+
 function test_encode_vectors(): test.TestOutcome {
   if (base32.base32_encode("".bytes()) != "") {
     return test.fail("empty");

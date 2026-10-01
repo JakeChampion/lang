@@ -45,6 +45,7 @@
 // zero-letter difference is not a one-letter difference.
 //
 // The app writes its report to stderr; stdout carries TAP-13 from std/test.
+
 import "std/test";
 import "std/i32";
 import "std/string";
@@ -56,6 +57,7 @@ function unreachable(): i32 {
 }
 
 // ------------------------------------------------------------ the graph
+
 // Exactly one letter differs. Equal words differ in zero letters and are NOT
 // adjacent; words of different lengths are never adjacent.
 function differs_by_one(a: string, b: string): boolean {
@@ -97,6 +99,7 @@ function index_of_word(dict: string[], w: string): i32 {
 }
 
 // ------------------------------------------------------------------ BFS
+
 // The shortest chain as dictionary indices, endpoints included. An empty
 // result means no ladder exists.
 function shortest_chain(dict: string[], from: i32, to: i32): i32[] {
@@ -187,6 +190,7 @@ function distance_matrix(dict: string[]): i32[] {
 }
 
 // -------------------------------------------------- the second algorithm
+
 // Is there ANY chain from `from` to `to` in at most `budget` steps? A
 // depth-limited depth-first search — a different strategy from the frontier
 // walk above, and obviously correct, which is what an oracle has to be. Used
@@ -221,6 +225,7 @@ function reachable_within(dict: string[], from: i32, to: i32, budget: i32, path:
 }
 
 // ---------------------------------------------------------------- corpus
+
 // One connected mainland plus a two-word ISLAND, so "no ladder" is a real
 // case. Four letters throughout, and a couple of words differing from several
 // others so the search has branching to get wrong.
@@ -265,6 +270,7 @@ function render(dict: string[], chain: i32[]): string {
 }
 
 // ----------------------------------------------------------------- tests
+
 // Carry the claim out: every chain the solver returns is a real ladder.
 function test_every_chain_is_a_valid_ladder(): test.TestOutcome {
   var dict: string[] = dictionary();

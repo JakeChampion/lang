@@ -58,6 +58,7 @@
 // No prelude: these are in scope only after a program
 // declares `import "std/path";` (docs/PRELUDE-TO-MODULES.md,
 // Phase 5).
+
 pub function path_join(parts: string[]): string {
   var n: i32 = parts.len();
   if (n == 0) {

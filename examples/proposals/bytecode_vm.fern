@@ -21,10 +21,12 @@
 //
 // The app writes its report to stderr; stdout carries TAP-13 from
 // std/test, so the file is its own test suite.
+
 import "std/test";
 import "std/i32";
 
 // ------------------------------------------------------------------- AST
+
 // Variables are slots, resolved when the program is built, so neither the
 // compiler nor the evaluator needs a name table at run time.
 enum Expr {
@@ -113,6 +115,7 @@ function op_name(op: i32): string {
 }
 
 // --------------------------------------------------------------- bytecode
+
 // Every instruction carries one i32 operand; the ones that do not need it
 // (arithmetic, Pop, Halt) ignore it. A uniform shape keeps the code array a
 // plain array and the jump arithmetic correct — an instruction index IS an
@@ -161,6 +164,7 @@ function instr_str(ins: Instr): string {
 }
 
 // --------------------------------------------------------------- compiler
+
 function compile_expr(code: Instr[], e: Expr): Instr[] {
   match (e) {
     Num(v) => {
@@ -224,6 +228,7 @@ function compile(body: Stmt[]): Instr[] {
 }
 
 // --------------------------------------------------------------------- VM
+
 struct Machine {
   vars: i32[],
   max_depth: i32,  // deepest the operand stack ever got
@@ -384,6 +389,7 @@ function run(code: Instr[], nvars: i32): Result[Machine, string] {
 }
 
 // ---------------------------------------------------------- the oracle
+
 // A direct tree walk over the same AST. Deliberately written without
 // reference to the bytecode: no stack, no program counter, no jumps.
 function eval_expr(vars: i32[], e: Expr): Result[i32, string] {
@@ -513,6 +519,7 @@ function evaluate(body: Stmt[], nvars: i32): Result[i32[], string] {
 }
 
 // --------------------------------------------------------- test programs
+
 // Every program in the corpus, each with the slot count it needs. They are
 // built once here so the differential, the jump-target check and the stack
 // discipline check all run over the same set.
@@ -600,6 +607,7 @@ function slots(): i32 {
 }
 
 // ---------------------------------------------------------------- tests
+
 // THE test. Compile-and-run must agree with the tree walk on every program
 // in the corpus, variable for variable. Neither side is the expected value;
 // their agreement is.
@@ -846,6 +854,7 @@ function test_the_vm_refuses_malformed_code(): test.TestOutcome {
 }
 
 // ---------------------------------------------------------------- app
+
 function main(): i32 {
   eprint("bytecode_vm — a stack machine and its tree-walking oracle");
   var progs: Stmt[][] = corpus();
