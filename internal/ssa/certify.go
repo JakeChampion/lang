@@ -123,9 +123,16 @@ func Certify(f *Func, sigs map[string]Signature) CertifyReport {
 	defs := defMap(f)
 
 	entry := map[int32]ownState{}
+	poisoned := map[int32]bool{}
 	for _, p := range f.Params {
-		if units.Origin(p) == UnitTransferred {
+		switch units.Origin(p) {
+		case UnitTransferred:
 			entry[p.ID] = ownHolds
+		case UnitUnknown:
+			// A type-erased parameter: whether it is a unit is decided
+			// at runtime, so nothing about it may be reported.
+			entry[p.ID] = ownMaybe
+			poisoned[p.ID] = true
 		}
 	}
 
@@ -136,8 +143,6 @@ func Certify(f *Func, sigs map[string]Signature) CertifyReport {
 
 	// Which roots leave each block by flowing into a successor's phi.
 	feeds := phiFeeds(f, idx, units)
-
-	poisoned := map[int32]bool{}
 
 	// A forward dataflow to a fixpoint, driven by a worklist. The
 	// lattice is four points and only ever moves toward ownMaybe, so it
