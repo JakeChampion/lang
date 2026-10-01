@@ -2723,8 +2723,7 @@ function run(): i32 {
 
   var typed: parser.Module = parser.module_with_builtins_typed(merged);
   var full: parser.Module = parser.erase_str_module(typed);
-  // The typed semantic lowering, unless FERN_SEM_IR= turns it off, threaded
-  // into whichever emit path runs. Off, this is ircore.no_sub().
+  // The typed semantic lowering, threaded into whichever emit path runs.
   var sub: ircore.Sub = semlower.target_substitution(typed, target);
   var out_asm: string = "";
   var emit_text: boolean = emit == "asm";

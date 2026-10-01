@@ -149,9 +149,8 @@ pub struct EmitState {
   // take its operands in registers.
   capture: usize,
   // The typed lowering of a runtime helper's source: one body per function it
-  // defines, then the drop helpers those bodies carry, or none to keep the
-  // AST lowering (the typed path off, or a bisect knob). The CLI supplies it (semlower.runtime_bodies); a backend
-  // never links that pipeline itself.
+  // defines, then the drop helpers those bodies carry. The CLI supplies it
+  // (semlower.runtime_bodies); a backend never links that pipeline itself.
   rt_lower: (string) => irlower.LowerResult[],
   // The symbols this file already defines as named bodies (the drop helpers
   // a substitution or a runtime helper's lowering carries), so a second
@@ -167,8 +166,11 @@ pub function (s: EmitState) with_named(name: string): EmitState {
   return EmitState { ...s, named: s.named.append(name) };
 }
 
-// no_rt_lower keeps every runtime helper on the AST lowering.
+// no_rt_lower is the runtime-helper lowering of an emit no driver handed the
+// typed one (semlower.runtime_bodies): appending a helper there is a bug.
 pub function no_rt_lower(src: string): irlower.LowerResult[] {
+  eprint("internal error: a runtime helper was appended with no typed lowering to lower it");
+  exit(3);
   return [];
 }
 

@@ -41921,7 +41921,7 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
       // `make selfhost-cli`, then build gen1 the way
       // TestSelfHostPerModuleEmitAllFixpointX86_64 does and
       // run it under gdb —
-      //   ./gen1 asm_modload_run.fern -per-module-emit-all -assume-eligible \
+      //   ./gen1 asm_modload_run.fern -per-module-emit-all \
       //       -out-dir OUT -func-budget 100 -unit-range 0:8
       // The field drops run under __fern_rc_is_unique, the gate the holder
       // side (__struct_drop_<T>'s k_struct arm) already applies: this box may
