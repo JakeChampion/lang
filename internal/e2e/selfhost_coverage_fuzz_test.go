@@ -397,9 +397,12 @@ func TestSelfHostCoverageGuidedFuzz(t *testing.T) {
 // edges a feedback-less run of the same budget does not".
 //
 // Both arms get the same iteration count, the same seeds and the same RNG
-// stream; the only difference is whether a discovery joins the corpus. The
-// assertion is that feedback reaches strictly more counters — a tie would
-// mean the corpus growth is doing nothing, which is the thing worth catching.
+// stream; the only difference is whether a discovery joins the corpus. One
+// stream is one sample, and which arm wins it moves with the compiler under
+// test: stream 7 lost by 204 counters while streams 1-4 won by 13 to 1061
+// (#8921). So several streams run and their totals are compared. Feedback
+// must reach strictly more counters in aggregate; a tie would mean the corpus
+// growth is doing nothing, which is the thing worth catching.
 //
 // Iteration-budgeted rather than time-budgeted on purpose: a wall-clock
 // budget makes the comparison depend on how loaded the runner is, so a slow
@@ -420,20 +423,37 @@ func TestSelfHostCoverageFeedbackBeatsBlindMutation(t *testing.T) {
 	dir := writeSelfHostAsmProject(t)
 	copySelfHostDriver(t, dir, "fern.fern")
 	bin := buildInstrumentedSelfHost(t, gcc, dir)
-	work := t.TempDir()
-	srcPath := filepath.Join(work, "main.fern")
 
 	const iterations = 300
+	const streams = 5
 	seeds := coverFuzzSeeds()
-	guided := runCoverageCampaign(t, bin, stdlibRoot, srcPath, seeds, iterations, true, 7)
-	blind := runCoverageCampaign(t, bin, stdlibRoot, srcPath, seeds, iterations, false, 7)
-
-	t.Logf("guided: %d counters from %d corpus entries; blind: %d counters from %d",
-		guided.covered, len(guided.corpus), blind.covered, len(blind.corpus))
-	if guided.covered <= blind.covered {
-		t.Errorf("feedback reached %d counters, blind mutation reached %d — "+
-			"the corpus is not steering anything",
-			guided.covered, blind.covered)
+	guided := make([]int, streams)
+	blind := make([]int, streams)
+	t.Run("streams", func(t *testing.T) {
+		for i := 0; i < streams; i++ {
+			t.Run(fmt.Sprintf("rng%d", i+1), func(t *testing.T) {
+				t.Parallel()
+				srcPath := filepath.Join(t.TempDir(), "main.fern")
+				g := runCoverageCampaign(t, bin, stdlibRoot, srcPath, seeds, iterations, true, int64(i+1))
+				b := runCoverageCampaign(t, bin, stdlibRoot, srcPath, seeds, iterations, false, int64(i+1))
+				t.Logf("guided: %d counters from %d corpus entries; blind: %d counters from %d",
+					g.covered, len(g.corpus), b.covered, len(b.corpus))
+				guided[i], blind[i] = g.covered, b.covered
+			})
+		}
+	})
+	if t.Failed() {
+		return
+	}
+	var g, b int
+	for i := range guided {
+		g += guided[i]
+		b += blind[i]
+	}
+	if g <= b {
+		t.Errorf("over %d streams feedback reached %d counters, blind mutation reached %d — "+
+			"the corpus is not steering anything (per stream: guided %v, blind %v)",
+			streams, g, b, guided, blind)
 	}
 }
 
