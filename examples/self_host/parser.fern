@@ -12292,6 +12292,14 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
           if ((cfa.field == "to_string" || cfa.field == "to_debug") && c.args.len() == 0) {
             return "string";
           }
+          // The builtin has no function declaration for return-type lookup.
+          // Preserve its borrowed view when inferring a following method.
+          if (cfa.field == "as_bytes" && c.args.len() == 0) {
+            var source: string = mono_infer(cfa.obj, env, funcs);
+            if (source == "string" || source == "str") {
+              return "[u8]";
+            }
+          }
           // Generic array method `recv.m(args)` whose receiver is an
           // array — folded to `__arrm_m[T]` by
           // register_array_method_generics. Infer the receiver's element
@@ -12386,18 +12394,17 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
       return "";
     },
     ast.ExprIndex(ix) => {
-      // `a[i]` where `a: T[]` — the element type is the array type minus its
-      // `[]` suffix. Without this arm mono_infer fell through to "" for an
+      // `a[i]` on an array or view has its container's element type.
+      // Without this arm mono_infer fell through to "" for an
       // array-element read, so a call like `f(a[i], a[j])` could not bind `f`'s
       // type parameter at all: the call stayed generic, the un-monomorphised
       // symbol survived to the IR eligibility gate, and the gate rejected the
       // CALLER as ineligible — a hard compile error since the AST emitters
       // were deleted (#6189).
       //
-      // Guarded on the `[]` suffix rather than blindly trimming two chars: a
-      // STRING index (`s[i]`) yields a char, not a "strin", and an unknown
-      // object type must stay unknown so the call is left generic rather than
-      // bound to a wrong instantiation.
+      // Read exactly one container layer, preserving nested views. String
+      // indices and unknown containers stay unknown here instead of binding
+      // a generic to a truncated type spelling.
       //
       // The element type is also rejected when it is itself a bare type
       // variable — indexing a `T[]` inside a generic yields `T`, which is not
@@ -12407,9 +12414,8 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
       // fails to compile. Same reasoning as the `looks_type_var(crt)` guard on
       // an inferred call return above.
       var at: string = mono_infer(ix.array, env, funcs);
-      var n: i32 = at.len();
-      if (n > 2 && slice_unchecked(at, n - 2, n) == "[]") {
-        var el: string = slice_unchecked(at, 0, n - 2) + "";
+      var el: string = array_method_element(at);
+      if (el.len() > 0) {
         if (looks_type_var(el)) {
           return "";
         }
