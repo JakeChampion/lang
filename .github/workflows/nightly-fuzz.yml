@@ -391,7 +391,7 @@ jobs:
     if: github.repository == 'JakeChampion/lang'
     name: nightly-fuzz-selfhost-coverage
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
@@ -419,7 +419,8 @@ jobs:
             -run '^TestSelfHostCoverageGuidedFuzz$' ./internal/e2e/
 
       # The acceptance property from #5548: feedback must reach counters blind
-      # mutation of the same budget does not. Iteration-budgeted, so it says
+      # mutation of the same budget does not, totalled over five RNG streams
+      # run in parallel. Iteration-budgeted, so it says
       # the same thing on a loaded runner as on an idle one. Runs after the
       # campaign because it rebuilds the instrumented driver; a failure here
       # means the steering has stopped working, which the campaign above
