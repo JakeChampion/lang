@@ -50,5 +50,25 @@ function main(): i32 {
   if (row_view[0].pick() != 9) {
     return 8;
   }
+  var pieces = [source[0:1]];
+  var piece: Option[str] = pieces.pick();
+  match (piece) {
+    Some(value) => {
+      if (value != "a") {
+        return 9;
+      }
+    },
+    None => {
+      return 10;
+    }
+  }
+  var invalid_pieces = ["é"[0:1]];
+  var invalid: Option[str] = invalid_pieces.pick();
+  match (invalid) {
+    Some(_) => {
+      return 11;
+    },
+    None => {}
+  }
   return 0;
 }
