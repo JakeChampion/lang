@@ -17,14 +17,18 @@ import "std/io_buffered" as io;
 // self-host-gated) companion.
 function test_empty(): test.TestOutcome {
   var w = io.bytes_writer_new();
-  if (!w.is_empty() || w.len() != 0) { return test.fail("empty buffer state"); }
+  if (!w.is_empty() || w.len() != 0) {
+    return test.fail("empty buffer state");
+  }
   return test.assert_is_some_eq_string(w.into_string(), "");
 }
 
 function test_write_string(): test.TestOutcome {
   var w = io.bytes_writer_new();
   w = w.write_string("abc");
-  if (w.len() != 3 || w.is_empty()) { return test.fail("written buffer state"); }
+  if (w.len() != 3 || w.is_empty()) {
+    return test.fail("written buffer state");
+  }
   return test.assert_is_some_eq_string(w.into_string(), "abc");
 }
 
@@ -54,7 +58,9 @@ function test_mixed_writes(): test.TestOutcome {
   w = w.write_string("a");
   w = w.write_byte(98);  // 'b'
   w = w.write_bytes("cd".bytes());
-  if (w.len() != 4) { return test.fail("mixed write length"); }
+  if (w.len() != 4) {
+    return test.fail("mixed write length");
+  }
   return test.assert_is_some_eq_string(w.into_string(), "abcd");
 }
 
@@ -68,7 +74,9 @@ function test_into_bytes(): test.TestOutcome {
 function test_reset(): test.TestOutcome {
   var w = io.bytes_writer_new().write_string("discard me");
   w = w.reset();
-  if (!w.is_empty()) { return test.fail("reset buffer state"); }
+  if (!w.is_empty()) {
+    return test.fail("reset buffer state");
+  }
   return test.assert_is_some_eq_string(w.into_string(), "");
 }
 
