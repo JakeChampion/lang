@@ -5856,6 +5856,70 @@ function main(): i32 {
     return t - 66;
 }
 `},
+	// A dyn whose type holds a view (through `P`) returned as a box of a local
+	// counted string: the box reads no bytes but its own, so the result is
+	// anchored to nothing (#10908). It was refused as escaping its source.
+	{name: "a-boxed-string-returned-as-a-view-holding-dyn-is-produced", atLeast: 6, noLeak: true, src: `
+import "std/i32";
+trait Size { function size(self: Self): i32; }
+impl Size for string { function size(self: string): i32 { return 1000 + self.len(); } }
+struct P { a: str }
+impl Size for P { function size(self: P): i32 { return self.a.len() * 10 + (self.a[0] as i32) - 97; } }
+function mk(n: i32): string {
+    var s: string = "ab";
+    var i: i32 = 0;
+    while (i < n) { s = s + "c"; i = i + 1; }
+    return s;
+}
+function pick(s: string): dyn Size { var t: string = s + "!"; return t; }
+function wrap(s: string): dyn Size { var p: P = P { a: slice_unchecked(s, 1, 4) }; return p; }
+function main(): i32 {
+    var d: dyn Size = pick(mk(2));
+    var e: dyn Size = wrap(mk(3));
+    var junk: string[] = [];
+    var i: i32 = 0;
+    while (i < 50) { junk = junk.append("zz" + i.to_string()); i = i + 1; }
+    print(d.size().to_string() + " " + e.size().to_string());
+    return 0;
+}
+`},
+	// An impl on `str` is the impl on `string`, so a counted string boxes into
+	// the dyn through it, owned by the box: returned from a local, and merged
+	// past a branch-local source (#10908). The dyn's concretes named nothing
+	// for the impl, so its release walked no string box.
+	{name: "a-string-boxed-through-an-impl-for-str-is-produced", atLeast: 6, noLeak: true, src: `
+import "std/i32";
+trait Size { function size(self: Self): i32; }
+impl Size for str { function size(self: str): i32 { return 1000 + self.len() * 10 + (self[0] as i32) - 97; } }
+struct P { a: str }
+impl Size for P { function size(self: P): i32 { return self.a.len() * 10 + (self.a[0] as i32) - 97; } }
+function mk(n: i32): string {
+    var s: string = "ab";
+    var i: i32 = 0;
+    while (i < n) { s = s + "c"; i = i + 1; }
+    return s;
+}
+function churn(): i32 {
+    var junk: string[] = [];
+    var i: i32 = 0;
+    while (i < 50) { junk = junk.append("zz" + i.to_string()); i = i + 1; }
+    return junk.len();
+}
+function pick(s: string): dyn Size { var t: string = s + "!"; return t; }
+function g(n: i32): i32 {
+    var d: dyn Size = P { a: "q" };
+    if (n != 0) { var s: string = mk(n); d = s; }
+    churn();
+    return d.size();
+}
+function main(): i32 {
+    var d: dyn Size = pick(mk(2));
+    var lit: dyn Size = "xy";
+    churn();
+    print(d.size().to_string() + " " + lit.size().to_string() + " " + g(3).to_string() + " " + g(0).to_string());
+    return 0;
+}
+`},
 	// A 64-bit integer and a float are boxed at their own width, which wasm's
 	// box stores and unboxes by the primitive's name (#10098): an i64 above
 	// 2^32 keeps its high half, and an f64 its fraction. The AST lowering

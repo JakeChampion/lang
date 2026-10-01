@@ -17281,13 +17281,13 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					// `Wrap(dyn Trait)` variant reported a spurious E036 even though
 					// the builtin Ok/Some/Err payloads and struct fields accept it.
 					// Record the coercion (so the IR boxes it) and accept it when the
-					// concrete impls every trait in the set — mirroring
-					// assignable()'s / maybeWrapForUnion's dyn branch. A
-					// non-implementing concrete still errors E036.
+					// concrete impls every trait in the set, as assignable()'s
+					// dyn branch decides. A non-implementing concrete, or a
+					// `str`, still errors E036.
 					dynPayloadOK := false
 					if dt, ok := substituteType(vr.payloads[i], sub).(ast.DynTraitType); ok {
-						if _, srcDyn := at.(ast.DynTraitType); !srcDyn {
-							if tn, ok2 := methodTypeName(at); ok2 && c.implementsAllDynTraits(dt, tn) {
+						if _, srcDyn := at.(ast.DynTraitType); !srcDyn && c.assignable(dt, at) {
+							if tn, ok2 := methodTypeName(at); ok2 {
 								dynPayloadOK = true
 								if c.info.DynCoercions == nil {
 									c.info.DynCoercions = map[ast.Expr]DynCoercion{}
@@ -18961,15 +18961,12 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			// argument / array element / return) omitted the struct field, so a
 			// direct `S { d: Concrete{...} }` reported a spurious E043 even
 			// though every other position accepts it (and the self-host checker
-			// already does). Mirror assignable()'s dyn branch here: a concrete
-			// that impls every trait in the set is a valid field value.
+			// already does). assignable()'s dyn branch decides it: a concrete
+			// that impls every trait in the set is a valid field value, and a
+			// `str` is not.
 			dynFieldOK := false
-			if dt, ok := fieldExpected.(ast.DynTraitType); ok {
-				if _, srcDyn := vt.(ast.DynTraitType); !srcDyn {
-					if tn, ok2 := methodTypeName(vt); ok2 && c.implementsAllDynTraits(dt, tn) {
-						dynFieldOK = true
-					}
-				}
+			if _, ok := fieldExpected.(ast.DynTraitType); ok {
+				dynFieldOK = c.assignable(fieldExpected, vt)
 			}
 			if sub != nil {
 				if !c.unifyType(expected, vt, sub) && !dynFieldOK {

@@ -903,6 +903,19 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// E006 must keep firing. (Two inherent declarations are covered by
 		// "method-redeclared" below.)
 		{"same-trait-twice-redeclared", "trait A { function m(self: Self): i32; }\nstruct S { v: i32 }\nimpl A for S { function m(self: Self): i32 { return self.v; } }\nimpl A for S { function m(self: Self): i32 { return 7; } }\nfunction main(): i32 { return 0; }\n", []string{"E006"}},
+		// An impl on `str` is the impl on `string`: a method is keyed by the
+		// erased receiver, so the pair redeclares it, and a `string` coerces
+		// to a dyn through the `str` impl. A `str` itself assigns only to a
+		// `str`, so it boxes into a dyn at no site (#10908).
+		{"str-and-string-impl-redeclared", "trait Size { function size(self: Self): i32; }\nimpl Size for str { function size(self: str): i32 { return self.len(); } }\nimpl Size for string { function size(self: string): i32 { return 1; } }\nfunction main(): i32 { return 0; }\n", []string{"E006"}},
+		{"string-into-dyn-through-str-impl", "trait Size { function size(self: Self): i32; }\nimpl Size for str { function size(self: str): i32 { return self.len(); } }\nfunction main(): i32 { var s: string = \"ab\"; var d: dyn Size = s; var e: dyn Size = \"x\"; return d.size() + e.size(); }\n", nil},
+		{"str-into-dyn-var", "trait Size { function size(self: Self): i32; }\nimpl Size for str { function size(self: str): i32 { return self.len(); } }\nfunction main(): i32 { var s: string = \"abc\"; var v: str = slice_unchecked(s, 0, 2); var d: dyn Size = v; return d.size(); }\n", []string{"E003"}},
+		{"str-into-dyn-assign", "trait Size { function size(self: Self): i32; }\nimpl Size for str { function size(self: str): i32 { return self.len(); } }\nfunction main(): i32 { var s: string = \"abc\"; var v: str = slice_unchecked(s, 0, 2); var d: dyn Size = s; d = v; return d.size(); }\n", []string{"E003"}},
+		{"str-into-dyn-argument", "trait Size { function size(self: Self): i32; }\nimpl Size for string { function size(self: string): i32 { return self.len(); } }\nfunction take(d: dyn Size): i32 { return d.size(); }\nfunction main(): i32 { var s: string = \"abc\"; var v: str = slice_unchecked(s, 0, 2); return take(v); }\n", []string{"E038"}},
+		{"str-into-dyn-return", "trait Size { function size(self: Self): i32; }\nimpl Size for str { function size(self: str): i32 { return self.len(); } }\nfunction box(v: str): dyn Size { return v; }\nfunction main(): i32 { return box(\"ab\").size(); }\n", []string{"E002"}},
+		{"str-into-dyn-array-element", "trait Size { function size(self: Self): i32; }\nimpl Size for str { function size(self: str): i32 { return self.len(); } }\nfunction main(): i32 { var s: string = \"abc\"; var v: str = slice_unchecked(s, 0, 2); var ds: dyn Size[] = [s, v]; return ds.len(); }\n", []string{"E034"}},
+		{"str-into-dyn-field", "trait Size { function size(self: Self): i32; }\nimpl Size for str { function size(self: str): i32 { return self.len(); } }\nstruct H { d: dyn Size }\nfunction main(): i32 { var s: string = \"abc\"; var v: str = slice_unchecked(s, 0, 2); var h: H = H { d: v }; return h.d.size(); }\n", []string{"E043"}},
+		{"str-into-dyn-payload", "trait Size { function size(self: Self): i32; }\nimpl Size for str { function size(self: str): i32 { return self.len(); } }\nenum W { One(dyn Size), Zero }\nfunction main(): i32 { var s: string = \"abc\"; var v: str = slice_unchecked(s, 0, 2); var w: W = One(v); return 0; }\n", []string{"E036"}},
 		{"dyn-object-safe-ok", "trait T { function m(self: Self): i32; }\nfunction f(x: dyn T): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", nil},
 		{"rec-local-ok", "function main(): i32 { function f(n: i32): i32 { if (n <= 0) { return 0; } return f(n - 1); } return f(3); }\n", nil},
 		{"rec-local-capture-ok", "function main(): i32 { var base: i32 = 10; function f(n: i32): i32 { if (n <= 0) { return base; } return 1 + f(n - 1); } return f(3); }\n", nil},
