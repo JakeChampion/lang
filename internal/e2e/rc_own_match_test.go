@@ -82,3 +82,42 @@ function main(): i32 {
 		t.Errorf("consuming map should be bounded (cells recycled): N=2000 -> %d, N=20000 -> %d", small, large)
 	}
 }
+
+// A match that only tests the tag of an `own` scrutinee leaves it whole, so a
+// later match can still take its payloads (#9539). The first match used to
+// release the box and the second read what was freed. A correct run exits
+// 608 % 256 = 96; an underflow is 99.
+const ownTagOnlyThenMatchSrc = `enum Box { Str(string), Arr(i32[]), Nil }
+
+@noinline function tag_only(own b: Box): i32 {
+    var t: i32 = 0;
+    match (b) { Str(_) => { t = 1; }, Arr(_) => { t = 2; }, Nil => { t = 3; } }
+    match (b) { Str(s) => { return t * 100 + s.len(); }, Arr(a) => { return t * 100 + a.len(); }, Nil => { return t * 100; } }
+}
+
+function main(): i32 {
+    var v: i32 = tag_only(Str("abcde")) + tag_only(Arr([1, 2, 3])) + tag_only(Nil);
+    if (__rc_underflow_count() != 0) { return 99; }
+    return v % 256;
+}`
+
+func TestX86_64OwnTagOnlyMatchThenMatch(t *testing.T) {
+	if _, code := compileAndRunX86_64FreeOn(t, ownTagOnlyThenMatchSrc); code != 96 {
+		t.Errorf("tag-only match then a payload match: got %d, want 96", code)
+	}
+}
+
+func TestArm64OwnTagOnlyMatchThenMatch(t *testing.T) {
+	if _, code := compileAndRunArm64FreeOn(t, ownTagOnlyThenMatchSrc); code != 96 {
+		t.Errorf("tag-only match then a payload match: got %d, want 96", code)
+	}
+}
+
+func TestWASMOwnTagOnlyMatchThenMatch(t *testing.T) {
+	prev := ast.RcFreeEnabled
+	ast.RcFreeEnabled = true
+	defer func() { ast.RcFreeEnabled = prev }()
+	if got := runWasm(t, ownTagOnlyThenMatchSrc); got != 96 {
+		t.Errorf("tag-only match then a payload match: got %d, want 96", got)
+	}
+}

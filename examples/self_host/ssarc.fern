@@ -1392,14 +1392,10 @@ function claimed_after(c: Claims, slots: i32, pos: i32): boolean {
   return at >= 0 && c.last[at] > pos;
 }
 
-function reuse_pairs(f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], b: ssa.SBlock): ReusePairs {
+function reuse_pairs(f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], b: ssa.SBlock, off: boolean): ReusePairs {
   var tokens: i32[] = [];
   var builds: i32[] = [];
   var selfs: i32[] = [];
-  // The #4350 §6.5 differential switch, which the AST path's reuse layer
-  // answers too: with it set every construction allocates, so a program's
-  // observable behaviour can be compared against its own reusing build.
-  var off: boolean = irlower.reuse_layer_disabled();
   var claims_tab: Claims = block_claims(f, p, b);
   var pending: i32 = 0 - 1;
   var pending_at: i32 = 0 - 1;
@@ -5493,10 +5489,10 @@ function builtin_site(own r: irlower.LowerResult, ins: ssa.SInst): irlower.Lower
   return emit(r, ir.op_call_direct(ins.str, ins.args.len()));
 }
 
-function block_body(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], links: i32[], b: ssa.SBlock, structs: irlower.StructTab, grows: ssaunits.GrowRow[]): irlower.LowerResult {
+function block_body(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], links: i32[], b: ssa.SBlock, structs: irlower.StructTab, grows: ssaunits.GrowRow[], no_reuse: boolean): irlower.LowerResult {
   r = drops(r, at(p, idx, b.id, ssaunits.entry_point(), 0 - 1), f);
   var pos: i32 = 0;
-  var pairs: ReusePairs = reuse_pairs(f, p, idx, b);
+  var pairs: ReusePairs = reuse_pairs(f, p, idx, b, no_reuse);
   var keeps: Keeps = block_keeps(f, p, idx, b, pairs);
   var kept: i32[] = kept_values(keeps);
   for ins in b.insts {
@@ -5545,7 +5541,10 @@ function block_body(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan
 // reaches by branching to it: a `block` ends before that index, a `loop`
 // starts at it. An `if` arm is a label of its own that no branch targets.
 // `steps` is the plan's step index (ssaunits.step_index).
-struct Emit { r: irlower.LowerResult, labels: i32[], why: string, steps: i32[][], links: i32[] }
+// no_reuse is the #4350 §6.5 differential switch, which the AST path's reuse
+// layer answers too: with it set every construction allocates, so a program's
+// observable behaviour can be compared against its own reusing build.
+struct Emit { r: irlower.LowerResult, labels: i32[], why: string, steps: i32[][], links: i32[], no_reuse: boolean }
 
 function label_if(): i32 {
   return 0 - 1;
@@ -5681,7 +5680,7 @@ function region(own e: Emit, f: ssasem.Func, p: ssaunits.Plan, l: ssalayout.Layo
       e = region(e, f, p, l, position, l.loop_end[position], true, structs, grows);
       position = l.loop_end[position] + 1;
     } else {
-      e = Emit { ...e, r: block_body(e.r, f, p, e.steps, e.links, f.graph.blocks[l.order[position]], structs, grows) };
+      e = Emit { ...e, r: block_body(e.r, f, p, e.steps, e.links, f.graph.blocks[l.order[position]], structs, grows, e.no_reuse) };
       e = terminator(e, f, p, l.order, position);
       position = position + 1;
     }
@@ -6275,7 +6274,7 @@ pub function lower(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, structs: irlo
     return empty("physical RC needs reducible graph");
   }
   var steps: i32[][] = ssaunits.step_index(p);
-  var e: Emit = region(Emit { r: frame(f), labels: [], why: "", steps: steps, links: links_of(f, p, steps) }, f, p, layout, 0, layout.order.len() - 1, false, structs, grows);
+  var e: Emit = region(Emit { r: frame(f), labels: [], why: "", steps: steps, links: links_of(f, p, steps), no_reuse: irlower.reuse_layer_disabled() }, f, p, layout, 0, layout.order.len() - 1, false, structs, grows);
   if (e.why != "") {
     return empty(e.why);
   }
