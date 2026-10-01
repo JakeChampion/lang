@@ -9,6 +9,7 @@ import "std/i64";
 // range, i64::MAX/MIN, and out-of-range bases. Kept as its own suite so the
 // self-host merged bundle stays under the asm_ir IR budget; uses assert_true.
 // The Go-side TestI64ToStringRadix pins these across all four backends.
+
 function test_hex(): test.TestOutcome {
   return test.assert_true((255 as i64).to_string_radix(16) == "ff");
 }

@@ -13,7 +13,9 @@ import "std/string";
 // quoting); the *_any predicates take a string[] arg. The Go-side suite unit-
 // tests these; this is the migration-shaped (pure-Fern, std/test-driven,
 // self-host-gated) companion.
+
 // ---- escaping ----
+
 function test_escape_html(): test.TestOutcome {
   // & < > " ' each map to their entity; other bytes pass through.
   return test.assert_eq("a<b>&\"'".escape_html(), "a&lt;b&gt;&amp;&#34;&#39;");
@@ -57,6 +59,7 @@ function test_escape_shell_quote(): test.TestOutcome {
 }
 
 // ---- counting ----
+
 function test_count_byte(): test.TestOutcome {
   // 'a' is byte 97; "banana" has three.
   return test.assert_eq("banana".count_byte(97), 3);
@@ -72,6 +75,7 @@ function test_count_chars_in_empty_set(): test.TestOutcome {
 }
 
 // ---- tokenisation ----
+
 function test_fields(): test.TestOutcome {
   // leading / trailing / repeated whitespace all collapse; empties dropped.
   return test.assert_eq_array("  a b  c ".fields(), ["a", "b", "c"]);
@@ -82,6 +86,7 @@ function test_fields_empty(): test.TestOutcome {
 }
 
 // ---- padding ----
+
 function test_center(): test.TestOutcome {
   // width 6, len 2 → 2 left + 2 right.
   return test.assert_eq("hi".center(6, "*"), "**hi**");
@@ -98,6 +103,7 @@ function test_center_noop(): test.TestOutcome {
 }
 
 // ---- prefix / suffix sets ----
+
 function test_starts_with_any(): test.TestOutcome {
   var xs: string[] = ["xy", "he", "zz"];
   var no: string[] = ["xy", "zz"];

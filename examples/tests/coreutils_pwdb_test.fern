@@ -22,6 +22,7 @@ import "../../coreutils/lib/utmp" as utmp;
 // offsets it writes to were checked against a database util-linux's
 // `utmpdump -r` produced — so a wrong row fails here rather than
 // agreeing with itself.
+
 // A passwd file with every shape the parse has to survive.
 function passwd_fixture(): string {
   var s: string = "";
@@ -293,6 +294,7 @@ function is_none_id(v: Option[i64]): boolean {
 }
 
 // ---- utmp -------------------------------------------------------------------
+
 // Two records built with `utmpdump -r`: a USER_PROCESS for alice on
 // pts/3 and a DEAD_PROCESS for tty1, whose fields are what a reader
 // that got an offset wrong would pick up instead.

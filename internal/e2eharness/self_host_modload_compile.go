@@ -82,8 +82,7 @@ func CompileFilesModload(t *testing.T, runner []string, driverBin string, files 
 
 // fillSelfHostImports copies into progDir every self-host module the written
 // files import but did not supply, following each copied module's own imports
-// in turn. A stdlib import (`core/map`) stages the stdlib tree beside the
-// entry, which is where the driver resolves one.
+// in turn, and the stdlib tree when any of them imports from it.
 func fillSelfHostImports(t *testing.T, progDir string, files map[string]string) {
 	t.Helper()
 	have := map[string]bool{"builtins.fern": true}
@@ -98,7 +97,7 @@ func fillSelfHostImports(t *testing.T, progDir string, files map[string]string) 
 		queue = queue[1:]
 		for _, m := range fernImportRe.FindAllStringSubmatch(src, -1) {
 			if isExternalFernImport(m[1]) {
-				stdlib = true
+				stdlib = stdlib || strings.HasPrefix(m[1], "core/") || strings.HasPrefix(m[1], "std/")
 				continue
 			}
 			name := strings.TrimPrefix(m[1], "./") + ".fern"

@@ -58,12 +58,14 @@
 // which is where native's `__`-prefix filter stops applying — native drops a
 // `__` function and keeps a `__` const, because the filter is on the funcs
 // list it does not share.
+
 import "./ast";
 import "./lexer";
 import "./parser";
 import "./util";
 
 // ---- results -----------------------------------------------------------
+
 // DocDecl is one documented declaration. `kind` is the source keyword
 // ("function", "struct", "enum"), which is what a renderer dispatches on;
 // `doc` is the associated comment run, its lines joined by newline, or empty
@@ -82,6 +84,7 @@ pub struct DocDecl {
 pub struct TakeResult { doc: string, cursor: i32 }
 
 // ---- text --------------------------------------------------------------
+
 // is_space matches Go's unicode.IsSpace for the ASCII range, which is all
 // TrimSpace can see here: comment text is raw source bytes.
 function is_space(b: i32): boolean {
@@ -112,6 +115,7 @@ pub function trim_space(s: string): string {
 }
 
 // ---- the walk ----------------------------------------------------------
+
 // run_end is the index of the last comment in the run starting at `start` — a
 // run being comments on consecutive lines.
 function run_end(cs: lexer.Comment[], start: i32): i32 {
@@ -206,6 +210,7 @@ pub function module_intro(cs: lexer.Comment[], first_decl_line: i32): string {
 }
 
 // ---- declarations ------------------------------------------------------
+
 // public_decls collects the declarations a doc page covers, in source order.
 //
 // Public only, and functions additionally drop the `__`-prefixed internals —
@@ -341,6 +346,7 @@ function min_line(min: i32, line: i32): i32 {
 }
 
 // ---- the pass ----------------------------------------------------------
+
 // associate walks the declarations in source order, handing each the comment
 // run directly above it.
 pub function associate(cs: lexer.Comment[], decls: DocDecl[]): DocDecl[] {
@@ -384,6 +390,7 @@ pub function docs_of(src: string): DocModule {
 // on the declaration (`ParamDecl.type_name`, `FuncDecl.ret_type`), so the
 // renderer prints what was written. Where the two disagree the differential
 // says so, and the answer is to normalise here rather than to loosen the gate.
+
 // type_str renders a declared type. `?` matches native's typeStr for a missing
 // type, which is what an unannotated position renders as rather than an empty
 // string.

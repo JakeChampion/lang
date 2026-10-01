@@ -19,6 +19,7 @@
 //
 // The app writes its report to stderr; stdout carries TAP-13 from
 // std/test, so the file is its own test suite.
+
 import "std/test";
 import "core/map";
 import "std/i32";
@@ -175,6 +176,7 @@ function stored_entries(s: Store): i32 {
 }
 
 // ---------------------------------------------------------------- tests
+
 // THE property. A write to a snapshot must be invisible to every older one,
 // and to every sibling. Nothing about copy-on-write is interesting if this
 // does not hold.
@@ -450,6 +452,7 @@ function test_branches_do_not_interfere(): test.TestOutcome {
 }
 
 // ------------------------------------------------------------------ app
+
 function main(): i32 {
   eprint("cow_snapshots — a persistent map as a chain of overlays");
   var s: Store = store_new();

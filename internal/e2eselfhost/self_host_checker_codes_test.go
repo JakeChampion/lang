@@ -2296,6 +2296,10 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// A `use` callback is the other lambda the programmer wrote that the
 		// parser gives an origin. Native desugars `use` to a local function and
 		// runs the same capture sink over it, so the rule applies there too.
+		// A `use` into a generic callee whose type parameter nothing binds:
+		// E032 for the binding, E038 for the callback, E040 for the parameter
+		// (#10833).
+		{"use-unbound-generic-callback", "function apply[T, I](it: I, cb: (T) => i32): i32 { return 0; }\nfunction main(): i32 {\n    use n <- apply(5);\n    return 1;\n}\n", []string{"E032", "E038", "E040"}},
 		{"e044-capture-void-use-callback", "function v(): void { return; }\nfunction apply(n: i32, cb: (i32) => i32): i32 { return cb(n); }\nfunction main(): i32 {\n    var x = v();\n    use n <- apply(41);\n    x;\n    return n;\n}\n", []string{"E044"}},
 		{"e044-capture-generic-use-callback-ok", "function apply(n: i32, cb: (i32) => i32): i32 { return cb(n); }\nfunction f[T](x: T): i32 {\n    use n <- apply(41);\n    x;\n    return n;\n}\nfunction main(): i32 { return f(1); }\n", nil},
 		// A suspect declared AFTER the `use` lives inside the callback body, so

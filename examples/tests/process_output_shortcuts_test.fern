@@ -11,6 +11,7 @@ import "std/test";
 //   * `test.assert_stdout_line_count(proc, n)` /
 //     `test.assert_stderr_line_count(proc, n)` — line
 //     cardinality without pinning content.
+
 function test_exit_zero_pass(): test.TestOutcome {
   var res: ProcessResult = subprocess("true", [], "");
   return test.assert_exit_zero(res);

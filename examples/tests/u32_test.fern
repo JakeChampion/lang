@@ -9,6 +9,7 @@ import "std/u32";
 // u32::MAX / 0 (saturating) or yields None (checked). Boundary cases
 // use `!=` operators rather than the generic assert_eq, which degrades
 // the all-ones value to signed.
+
 // 2^32 - 1, the all-ones wraparound value.
 function umax(): u32 {
   return 0 as u32 - 1 as u32;

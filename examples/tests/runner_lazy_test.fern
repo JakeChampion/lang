@@ -16,6 +16,7 @@ import "std/i32";
 //
 // Run:
 //   fern -interp examples/tests/runner_lazy_test.fern
+
 function bump_then_pass(seen: Cell[i32]): test.TestOutcome {
   seen.set(seen.get() + 1);
   return Pass;

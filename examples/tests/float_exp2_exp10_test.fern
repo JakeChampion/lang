@@ -9,6 +9,7 @@ import "std/float" as float;
 // Both f64 and f32. The Go-side TestFloatExp2Exp10 pins these across interp /
 // x86-64 / arm64 (wasmbin skips libm transcendentals, the same known gap
 // exp/log/sin already carry); this is the migration-shaped companion.
+
 function test_exp2_pow2(): test.TestOutcome {
   return test.assert_eq_f64_near(3.0.exp2(), 8.0, 0.0001);
 }

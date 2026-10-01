@@ -16,6 +16,7 @@
 //     numerically, alphanumeric lexically (ASCII), numeric < alphanumeric,
 //     and a larger set of identifiers outranks a strict prefix;
 //   - BUILD METADATA IS IGNORED for precedence (1.0.0+a == 1.0.0+b).
+
 import "std/string";
 
 // major.minor.patch plus optional prerelease / build (each "" when

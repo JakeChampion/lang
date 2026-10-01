@@ -30,6 +30,7 @@
 // resolver's traversal, so agreement is evidence and not a restatement.
 //
 // The app writes its report to stderr; stdout carries TAP-13 from std/test.
+
 import "std/test";
 import "std/i32";
 import "std/string";
@@ -172,6 +173,7 @@ function new_state(): State {
 }
 
 // ------------------------------------------------------------- oracle
+
 // Breadth-first walk of everything reachable from `root`. Deliberately NOT a
 // topological sort: several orders are valid, so comparing against one of them
 // would fail on a correct resolver that picked another. The test uses this for
@@ -225,6 +227,7 @@ function position(xs: string[], name: string): i32 {
 }
 
 // --------------------------------------------------------- test graphs
+
 // The diamond: app -> {a, b} -> config. `config` must be built once.
 function diamond(): Container {
   return Container { providers: [
@@ -245,6 +248,7 @@ function chain(): Container {
 }
 
 // --------------------------------------------------------------- tests
+
 // The property that separates a memoizing container from a naive recursive
 // one. Both produce the same VALUES on this graph; only one builds `config`
 // once. `order` records every construction, so a duplicate is visible.

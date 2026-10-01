@@ -22,10 +22,12 @@
 //
 // The app writes its report to stderr; stdout carries TAP-13 from
 // std/test, so the file is its own test suite.
+
 import "std/test";
 import "std/i32";
 
 // ------------------------------------------------------------ byte sieve
+
 // Eratosthenes over a boolean array. `is_prime[i]` for i in 0..=n.
 function sieve_bytes(n: i32): boolean[] {
   var s: boolean[] = [];
@@ -55,6 +57,7 @@ function sieve_bytes(n: i32): boolean[] {
 }
 
 // ------------------------------------------------------------- bit sieve
+
 // The same sieve, 32 numbers to an i32 word. A separate implementation of
 // the same idea: the shift-and-mask arithmetic is where this one can go
 // wrong, and it is exactly where the byte sieve has nothing to get wrong.
@@ -94,6 +97,7 @@ function sieve_bits(n: i32): i32[] {
 }
 
 // --------------------------------------------------------- segmented sieve
+
 // Sieve [lo, hi] using the base primes below sqrt(hi), holding only the
 // window. The classic way to get this wrong is the start offset: the first
 // multiple of p at or above lo, which must not be p itself when p is inside
@@ -173,6 +177,7 @@ function count_segmented(n: i32, window: i32): i32 {
 }
 
 // ------------------------------------------------------- trial division
+
 // Owes nothing to any sieve. Only usable for small n, which is exactly
 // where a sieve's off-by-one at the boundary lives.
 function is_prime_trial(v: i32): boolean {
@@ -200,6 +205,7 @@ function count_trial(n: i32): i32 {
 }
 
 // -------------------------------------------------------------- reports
+
 struct Report { count: i32, max_gap: i32, gap_lo: i32, gap_hi: i32 }
 
 // The largest gap between CONSECUTIVE primes up to n, and where it is. The
@@ -236,6 +242,7 @@ function count_bits(n: i32): i32 {
 }
 
 // ---------------------------------------------------------------- tests
+
 // THE test. Four routes to π(N) — byte sieve, bit sieve, segmented sieve,
 // and trial division — must agree, and must agree with the published
 // values. Three sieves sharing a wrong answer is possible; sharing one that
@@ -417,6 +424,7 @@ function test_the_bound_is_inclusive(): test.TestOutcome {
 }
 
 // ------------------------------------------------------------------ app
+
 function main(): i32 {
   eprint("prime_gaps — three sieves, one answer");
   var ns: i32[] = [100, 1000, 10000];

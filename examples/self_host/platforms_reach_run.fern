@@ -24,6 +24,7 @@
 // runs this over every `std/` module and requires the same answer as native's
 // platforms.Reach over the same module — the partition in
 // internal/platforms/std_partition_test.go, derived twice.
+
 import "./lexer";
 import "./parser";
 import "./flatten";
@@ -33,7 +34,7 @@ import "./platforms";
 function main(): i32 {
   var a: string[] = args();
   if (a.len() < 2) {
-    eprint("usage: platforms_reach_run <entry.fern>\n");
+    eprint("usage: platforms_reach_run <entry.fern>");
     return 2;
   }
   var entry_path: string = a[1];
@@ -52,7 +53,7 @@ function main(): i32 {
       return 0;
     },
     Err(e) => {
-      eprint("platforms_reach_run: could not read entry file\n");
+      eprint("platforms_reach_run: could not read entry file");
       return 1;
     }
   }

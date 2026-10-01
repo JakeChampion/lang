@@ -31,6 +31,7 @@ import "std/i32";
 import "std/string";
 
 // ------------------------------------------------------------------ model ---
+
 function is_tab(c: u8): boolean {
   return c == 9;
 }
@@ -58,6 +59,7 @@ function spaces(n: i32): string {
 }
 
 // ------------------------------------------------------------- conversions ---
+
 // Every tab becomes the spaces needed to reach the next stop, counting columns
 // from the start of the LINE — not from the previous tab, which is the other
 // half of the same arithmetic bug.
@@ -117,6 +119,7 @@ function unexpand(line: string, ts: i32): string {
 }
 
 // ------------------------------------------------------------------ oracle ---
+
 // The display column of each NON-BLANK character, computed by a walk that knows
 // nothing about expand or unexpand.
 //
@@ -186,6 +189,7 @@ function has_tab(s: string): boolean {
 }
 
 // ------------------------------------------------------------- generators ---
+
 // Lines whose whitespace sits at, before and after a stop, with tabs leading,
 // interior and adjacent, plus runs of spaces that a naive unexpand would eat.
 function corpus(): string[] {
@@ -218,6 +222,7 @@ function stops(): i32[] {
 }
 
 // ------------------------------------------------------------------ tests ---
+
 // The arithmetic, on its own, before anything is built on it: a tab at column
 // `col` must reach exactly the next multiple of `ts`.
 function test_a_tab_advances_to_the_next_stop(): test.TestOutcome {

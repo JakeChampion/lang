@@ -10,6 +10,7 @@ import "std/i32";
 // The Go-side suite unit-tests these; this is the migration-shaped
 // (pure-Fern, std/test-driven, self-host-gated) companion. Methods are
 // called bare (receiver-method dispatch), the module only needs importing.
+
 function test_abs_neg(): test.TestOutcome {
   return test.assert_eq((0 - 5).abs(), 5);
 }

@@ -9,6 +9,7 @@ import "std/string";
 // long-running fuzz campaigns where the interesting inputs
 // found over time live in `testdata/<target>_corpus/` rather
 // than inline arrays.
+
 function check_no_x(input: u8[]): test.TestOutcome {
   // Trivially-true property. We use this purely to exercise
   // the corpus-loading / mutation / shrinking plumbing — the

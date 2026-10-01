@@ -21,6 +21,7 @@
 // in TestSelfHostWasmOptionPayload pins the exact decode. The two array rows show
 // the corrected "" (the old garbage would have failed the golden), which the three
 // x86 self-compile fixpoints confirm is unreachable during bootstrap.
+
 import "./wasm_ir";
 
 function show(s: string): string {

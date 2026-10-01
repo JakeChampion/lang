@@ -11,6 +11,7 @@ import "core/map";
 // rules — userinfo at the last '@', bracketed IP-literals, port range,
 // reg-name bytes, and the anchored scheme. The Go-side suite unit-tests
 // the prelude origin; this is the migration-shaped (pure-Fern) companion.
+
 function test_encode_space(): test.TestOutcome {
   return test.assert_eq(url.url_encode("a b"), "a%20b");
 }
@@ -80,6 +81,7 @@ function test_parse_empty(): test.TestOutcome {
 }
 
 // ---- application/x-www-form-urlencoded (#4384 item 5) ----
+
 // form_decode maps '+' to a space and still handles %-escapes.
 function test_form_decode_plus(): test.TestOutcome {
   return test.assert_eq(url.form_decode("a+b%20c"), "a b c");
@@ -205,6 +207,7 @@ function test_query_has_and_all(): test.TestOutcome {
 }
 
 // ---- url_parse authority: RFC 3986 §3.2 (#8469) ----
+
 // `__parse_host_port(s)` — "host|port" for a parse that succeeds,
 // "None" for one that does not. Keeps the authority rows one-liners.
 function __parse_host_port(s: string): string {

@@ -18,6 +18,7 @@ import "std/stream";
 // advanced. A reader that quietly consumed the stream would make
 // the second call in a handler return "" — the failure this
 // distinction exists to prevent.
+
 // `wire(body)` — a POST whose Content-Length frames `body`.
 function wire(body: string): string {
   return "POST /upload HTTP/1.1\r\nHost: h\r\nContent-Length: " + body.len().to_string() + "\r\n\r\n" + body;

@@ -20,6 +20,7 @@
 // Same one-line shape as numeric.fern. ~28 functions.
 // Saturating-truncate (multi-byte 0xFC-prefix) ops aren't included
 // — the production wasm backend uses the trapping variants.
+
 // ---- Integer width conversion ---------------------------------
 pub function inst_i32_wrap_i64(buf: u8[]): u8[] {  // 0xA7
   return buf.append(167u8);

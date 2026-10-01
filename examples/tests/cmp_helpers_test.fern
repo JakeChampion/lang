@@ -6,6 +6,7 @@ import "core/cmp" as cmp;
 // clamp / lt / gte / sort / is_sorted (Ord) and contains / index_of /
 // distinct / eq_arrays (Eq). `derive_test.fern` covers `@derive`; this covers
 // the free functions, driven through the std/test runner (migration-shaped).
+
 function test_min(): test.TestOutcome {
   return test.assert_eq(cmp.min(8, 3), 3);
 }

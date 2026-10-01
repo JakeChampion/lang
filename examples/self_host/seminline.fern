@@ -317,6 +317,7 @@ function index_of(xs: i32[], x: i32): i32 {
 }
 
 // ---- tuples read apart ---------------------------------------------------
+
 struct Def { block: i32, pos: i32 }
 
 function defs_of(g: ssa.SFunc): Def[] {

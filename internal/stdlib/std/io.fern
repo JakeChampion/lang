@@ -15,6 +15,7 @@
 // No prelude: these are in scope only after a program
 // declares `import "std/io";` (docs/PRELUDE-TO-MODULES.md,
 // Phase 5).
+
 import "std/array";
 
 // `read_all_stdin()` — read until EOF and return the result

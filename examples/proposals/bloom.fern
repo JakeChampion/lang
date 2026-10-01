@@ -15,6 +15,7 @@
 //
 // The app writes its report to stderr; stdout carries TAP-13 from
 // std/test, so the file is its own test suite.
+
 import "std/test";
 import "std/string";
 import "std/i32";
@@ -148,6 +149,7 @@ function keys(prefix: string, n: i32): string[] {
 }
 
 // ---------------------------------------------------------------- tests
+
 // The defining property. A false positive is a design cost; a false
 // negative is a bug, at any saturation.
 function test_no_false_negatives(): test.TestOutcome {
@@ -273,6 +275,7 @@ function test_reinsert_sets_no_new_bits(): test.TestOutcome {
 }
 
 // ----------------------------------------------------------------- app
+
 function main(): i32 {
   eprint("bloom — a bloom filter over ()[] configurable bits and hash count");
   var configs: i32[] = [256, 512, 1024, 2048];

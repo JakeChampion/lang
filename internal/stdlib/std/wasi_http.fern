@@ -23,6 +23,7 @@
 // than through `own` resource types because the export has to live in the
 // program's module (it names `handle`) while the externs live here, and a
 // resource type is module-local.
+
 import "std/http";
 import "std/platform";
 

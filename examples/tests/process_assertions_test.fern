@@ -12,6 +12,7 @@ import "std/test";
 // itself. The migration's compiler-binary tests follow the
 // same pattern with `subprocess("/path/to/fern", ["-interp", ...],
 // "")`.
+
 function test_echo_stdout_eq(): test.TestOutcome {
   var r: ProcessResult = subprocess("echo", ["hello"], "");
   return test.assert_stdout_eq(r, "hello\n");

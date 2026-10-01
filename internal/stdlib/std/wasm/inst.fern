@@ -28,6 +28,7 @@
 // body and calls inst_end to close it. That matches the
 // stream-y nature of wasm function bodies and avoids a tree-
 // shaped intermediate.
+
 import "std/wasm/leb128";
 import "std/wasm/encode";
 
@@ -53,6 +54,7 @@ pub function put_blocktype_typeidx(buf: u8[], idx: i32): u8[] {
 }
 
 // ---- Constants -----------------------------------------------
+
 pub function inst_i32_const(buf: u8[], v: i32): u8[] {
   var out: u8[] = buf;
   out = out.append(65u8);  // 0x41
@@ -92,6 +94,7 @@ pub function inst_f64_const(buf: u8[], bits: u64): u8[] {
 }
 
 // ---- Parametric ----------------------------------------------
+
 pub function inst_drop(buf: u8[]): u8[] {
   var out: u8[] = buf;
   out = out.append(26u8);  // 0x1A
@@ -105,6 +108,7 @@ pub function inst_select(buf: u8[]): u8[] {
 }
 
 // ---- Variable: locals + globals ------------------------------
+
 pub function inst_local_get(buf: u8[], idx: u32): u8[] {
   var out: u8[] = buf;
   out = out.append(32u8);  // 0x20
@@ -136,6 +140,7 @@ pub function inst_global_set(buf: u8[], idx: u32): u8[] {
 }
 
 // ---- Control flow --------------------------------------------
+
 pub function inst_unreachable(buf: u8[]): u8[] {
   var out: u8[] = buf;
   out = out.append(0u8);  // 0x00
@@ -229,6 +234,7 @@ pub function inst_call_indirect(buf: u8[], typeidx: u32, tableidx: u32): u8[] {
 // sequence terminated by 0x0B. The two helpers below cover the
 // common shapes; an arbitrary-groups version can come later if
 // callers need it.
+
 // put_locals_empty — locals_vec of length 0: a single uleb(0).
 pub function put_locals_empty(buf: u8[]): u8[] {
   return leb128.uleb_u32(buf, 0u32);

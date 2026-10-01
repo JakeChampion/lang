@@ -27,6 +27,7 @@
 // no path from an import to the host filesystem, and `read_file` on a wasm
 // module with no preopens would fail anyway — sealed makes it fail with a
 // diagnostic naming the import instead of a silently-skipped module.
+
 import "./asm_arm64_ir";
 import "./asm_ir";
 import "./asmcore";
@@ -152,23 +153,18 @@ const EMIT_FLAG: string = "-emit";
 // native actually prints — and a zero line drops the position prefix, which the
 // checker still leaves on some paths.
 function report_diags(diags: util.Diag[], files: string[]): boolean {
-  var out: string = "";
   for d in diags {
     var tag: string = "";
     if (d.code.len() > 0) {
       tag = "error[" + d.code + "]: ";
     }
     if (d.line > 0) {
-      out = out + util.pos_str(files, d.line, d.col) + ": " + tag + d.message + "\n";
+      eprint(util.pos_str(files, d.line, d.col) + ": " + tag + d.message);
     } else {
-      out = out + tag + d.message + "\n";
+      eprint(tag + d.message);
     }
   }
-  if (out.len() == 0) {
-    return false;
-  }
-  eprint(out);
-  return true;
+  return diags.len() > 0;
 }
 
 // check reports type errors and emits nothing. The parser's sentinels are
@@ -219,7 +215,7 @@ function interpret(merged: parser.Module): i32 {
       return 0;
     },
     interp.VErr(e) => {
-      eprint("fern: interp: " + e.msg + "\n");
+      eprint("fern: interp: " + e.msg);
       return 254;
     },
     _ => {
@@ -254,7 +250,7 @@ function run(): i32 {
     ai = ai + 1;
   }
   if (!(target == "wasm32-wasi" || target == "wasm32-wasi-http" || target == "x86-64-linux" || target == "arm64-linux" || target == "arm64-darwin")) {
-    eprint("fern: unknown -target: " + target + " (want one of: arm64-darwin arm64-linux wasm32-wasi wasm32-wasi-http x86-64-linux)\n");
+    eprint("fern: unknown -target: " + target + " (want one of: arm64-darwin arm64-linux wasm32-wasi wasm32-wasi-http x86-64-linux)");
     return 2;
   }
   if (platforms.for_target(target).isa == "wasm32") {
@@ -262,11 +258,11 @@ function run(): i32 {
       form = "wat";
     }
     if (!(form == "wat" || form == "core-module" || form == "component")) {
-      eprint("fern: unknown -emit: " + form + " (want wat, core-module or component)\n");
+      eprint("fern: unknown -emit: " + form + " (want wat, core-module or component)");
       return 2;
     }
   } else if (form.len() > 0 && form != "asm") {
-    eprint("fern: -emit " + form + " is a wasm output form; -target " + target + " emits assembly text\n");
+    eprint("fern: -emit " + form + " is a wasm output form; -target " + target + " emits assembly text");
     return 2;
   }
   var src: string = io.read_all_stdin();
@@ -283,11 +279,9 @@ function run(): i32 {
   let (loaded, files) = modloader.load_imports_with_files(ov, "", entry);
   var missing: string[] = unresolved_imports(entry, loaded);
   if (missing.len() > 0) {
-    var msg: string = "";
     for p in missing {
-      msg = msg + "cannot resolve module: " + p + "\n";
+      eprint("cannot resolve module: " + p);
     }
-    eprint(msg);
     return 1;
   }
 

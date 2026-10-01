@@ -9,6 +9,7 @@ import "std/test";
 //   * Array set-relation assertions:
 //     `assert_array_intersects_i32` / `_string`,
 //     `assert_array_disjoint_i32` / `_string`
+
 // A toy lookup helper used as the "function under test".
 function lookup(k: i32): Option[i32] {
   if (k == 1) {

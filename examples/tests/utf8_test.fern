@@ -11,6 +11,7 @@ import "std/string";
 //   'é'  U+00E9   [195, 169]               2 bytes  (cp 233)
 //   '€'  U+20AC   [226, 130, 172]          3 bytes  (cp 8364)
 //   '😀' U+1F600  [240, 159, 152, 128]     4 bytes  (cp 128512)
+
 function mixed(): string {
   // "A" + é + € + 😀 — 10 bytes, 4 codepoints.
   var b: u8[] = [
@@ -374,6 +375,7 @@ function test_boundary_snap_is_valid(): test.TestOutcome {
 }
 
 // ---- lossy substitution: one U+FFFD per maximal subpart (#8469) ----
+
 // `__lossy_len(b)` — codepoints in `b` if every walker agrees, or -1
 // when they do not. utf8.codepoint_count / utf8.codepoints /
 // string.codepoint_count / string.chars all had to fold ill-formed

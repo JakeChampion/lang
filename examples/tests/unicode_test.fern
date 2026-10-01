@@ -5,6 +5,7 @@ import "std/unicode" as unicode;
 // simple (1:1) case mapping. Exercises multiple scripts (ASCII, Latin-1,
 // Latin Extended, Greek, Cyrillic), the code-point-level helpers, the
 // full-mapping behaviour (ß expands), and case folding.
+
 function test_ascii(): test.TestOutcome {
   return test.assert_true(unicode.to_upper("hello") == "HELLO"
     && unicode.to_lower("HeLLo") == "hello");

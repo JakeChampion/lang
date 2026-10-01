@@ -10,6 +10,7 @@ import "std/string";
 //
 // The remaining vectors were taken from GNU coreutils' `cksum -a sm3`,
 // which is what `coreutils/cksum.fern` is held to.
+
 // __pseudo builds the 10,003-byte fixed pattern byte i = (i * 7 + 3) & 255:
 // long enough that 7-byte updates straddle every block boundary offset, and
 // not valid UTF-8, so the hasher is fed raw bytes.

@@ -12,11 +12,13 @@ import "./typeinfo";
 // Expr / Stmt / Pattern and their cases, the arm and desugar records they
 // carry, and ParamDecl for a lambda's signature. Nothing here may name a
 // type that stayed in parser.fern, or the cycle comes straight back.
+
 // Expression nodes. Recursive via the union — `ExprBinary` holds
 // two Expr children, `ExprCall` holds a list of args, etc. The Go
 // parser produces a denser typed AST (NumberLit / FloatLit /
 // Ident / Binary / Call); this port collapses similar shapes into
 // fewer variants to keep the union member count tractable.
+
 // `raw` is the source spelling of a literal whose written form is not its
 // decoded payload — a quoted `'x'` (a `char`, suffix "char") or `b'x'` (a
 // `u8`, suffix "u8"), and the unit value `()`, which the parser records as
@@ -460,6 +462,7 @@ pub function expr_col(e: Expr): i32 {
 }
 
 // Statement nodes.
+
 // StmtVar binds a name to an init value. `type_name` is the
 // optional `: Type` annotation (bare type name; empty string
 // means no annotation). The checker uses it to override the

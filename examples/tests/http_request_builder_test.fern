@@ -6,6 +6,7 @@ import "std/mock_platform";
 // a socket (#9854): `http.request(method, path)` builds the request, a
 // `MockPlatform`'s bag stands in for the host, and `std/test`'s HTTP
 // assertions read the response back.
+
 // The handler under test: echoes a JSON body back as created, names the
 // caller from a header, and turns anything else away.
 function handle(req: HttpRequest, plat: Platform): HttpResponse {

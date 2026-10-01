@@ -19,6 +19,7 @@ import "std/test";
 // interpreter path. We're pinning that semantic, not the
 // desugar itself — which is why we exercise both
 // variants and their interaction.
+
 struct Add { l: i32, r: i32 }
 
 struct Lit { v: i32 }

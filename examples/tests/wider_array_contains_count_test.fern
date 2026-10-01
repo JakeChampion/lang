@@ -14,6 +14,7 @@ import "std/test";
 //       `test.assert_count_i32(arr, pred, n)` /
 //       `test.assert_count_string(arr, pred, n)` — exactly N
 //       elements satisfy the predicate
+
 function test_eq_i64_array_pass(): test.TestOutcome {
   var actual: i64[] = [1 as i64, 2 as i64, 3 as i64];
   var expected: i64[] = [1 as i64, 2 as i64, 3 as i64];

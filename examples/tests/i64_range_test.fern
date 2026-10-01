@@ -9,6 +9,7 @@ import "std/i64";
 // merged bundle stays under the asm_ir IR budget. The Go-side
 // TestI64AbsDiffRange pins these across all four backends; this is the
 // migration-shaped (pure-Fern, std/test-driven) companion.
+
 function test_abs_diff_wide(): test.TestOutcome {
   var a: i64 = 5000000000 as i64;
   var b: i64 = 3000000000 as i64;

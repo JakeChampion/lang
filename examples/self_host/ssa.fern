@@ -14,6 +14,7 @@
 //   - a block (SBlock) is a list of instructions ending in a terminator;
 //   - a function (SFunc) is a list of blocks with an entry index.
 //
+
 import "./ast";
 import "./parser";
 import "./astwalk";
@@ -22,10 +23,13 @@ import "./util";
 // digits_to_i32 parses a decimal literal's text (non-negative; unary minus
 // is a separate ExprUnary). Mirrors the private helper in the emitters.
 // digits_to_i32 now lives in util.fern (imported as `util`). See SH-020.
+
 // is_all_digits reports whether every byte of s is an ASCII digit (and s is
 // non-empty) — used to tell a tuple index `t.0` from a struct field `t.x`.
 // is_all_digits now lives in util.fern (imported as `util`). See SH-020.
+
 // ---- IR ----------------------------------------------------------------
+
 // SInst is integer-tagged: `kind_tag` holds a kind_id (the registry below;
 // `kind_name` renders one). `args` are value ids, `str` carries a name or
 // operator for the kinds that need text.
@@ -326,6 +330,7 @@ function semantic_kind_name(id: i32): string {
 // NOTE: this vocabulary is the SSA layer's own — it deliberately does NOT
 // reuse ir.kind_id (SSA's "const_int"/"binary"/"phi"/... don't exist in
 // the stack-IR registry and vice versa).
+
 // kind_count is the number of registered SInst kinds (ids 1..kind_count()).
 pub function kind_count(): i32 {
   return 34;
@@ -541,6 +546,7 @@ function rewrite_term(t: STerm, resolved: i32[]): STerm {
 // def, which widens the interval to span the loop — exactly where it's
 // live). A value whose interval strictly contains a `call` takes a
 // callee-saved register or a slot, never a caller-saved register.
+
 // inst_is_call names the instructions that clobber the caller-saved registers:
 // the calls proper, the toy runtime's string / output / file / buffer
 // helpers, and the production lift's box allocation.
@@ -1826,6 +1832,7 @@ pub function use_counts(f: SFunc): i32[] {
 //
 // A self-reference does not count: a loop header phi reads [init, itself]
 // while the body leaves the local alone, and that is trivial too.
+
 // phi_sole_operand is the one value a phi collapses to, or -1. `repl`
 // resolves operands folded in an earlier round.
 function phi_sole_operand(ins: SInst, repl: i32[]): i32 {

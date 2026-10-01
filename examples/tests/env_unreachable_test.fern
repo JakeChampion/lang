@@ -13,6 +13,7 @@ import "std/test";
 // claims can't fire — if a refactor expands the input space
 // and the branch DOES fire, the failure message names the
 // label so the diagnostic is grep-able.
+
 function test_path_is_set(): test.TestOutcome {
   // PATH is set on every POSIX-shaped OS Fern targets. If a
   // CI image somehow has it unset, this test will fail — but

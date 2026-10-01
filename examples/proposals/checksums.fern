@@ -44,11 +44,13 @@
 //     way round still accepts many valid IBANs.
 //
 // The app writes its report to stderr; stdout carries TAP-13 from std/test.
+
 import "std/test";
 import "std/i32";
 import "std/string";
 
 // ------------------------------------------------------------- utilities
+
 function is_digit(c: u8): boolean {
   return c >= 48 && c <= 57;
 }
@@ -72,6 +74,7 @@ function all_digits(s: string): boolean {
 }
 
 // ------------------------------------------------------------------ Luhn
+
 // Doubles every second digit counting FROM THE RIGHT, which is what makes the
 // parity depend on the length rather than on the position index.
 function luhn_valid(s: string): boolean {
@@ -117,6 +120,7 @@ function luhn_check_digit(body: string): i32 {
 }
 
 // -------------------------------------------------------------- ISBN-10
+
 // Weights 10 down to 1, mod 11. The last position may be 'X' for 10 — and
 // only the last.
 function isbn10_valid(s: string): boolean {
@@ -156,6 +160,7 @@ function isbn10_check_char(body: string): string {
 }
 
 // -------------------------------------------------------------- ISBN-13
+
 // Alternating weights 1 and 3, mod 10.
 function isbn13_valid(s: string): boolean {
   if (s.len() != 13 || !all_digits(s)) {
@@ -189,6 +194,7 @@ function isbn13_check_digit(body: string): i32 {
 }
 
 // ----------------------------------------------------------------- IBAN
+
 function is_upper(c: u8): boolean {
   return c >= 65 && c <= 90;
 }
@@ -236,6 +242,7 @@ function iban_valid(s: string): boolean {
 }
 
 // ---------------------------------------------------------------- corpus
+
 function valid_luhn(): string[] {
   return [
     "79927398713", "4539578763621486", "4111111111111111",
@@ -323,6 +330,7 @@ function swap_at(s: string, at: i32): string {
 }
 
 // ----------------------------------------------------------------- tests
+
 // The corpus is genuinely valid — otherwise every sweep below is vacuous.
 function test_the_known_good_numbers_are_accepted(): test.TestOutcome {
   var ks: string[] = kinds();

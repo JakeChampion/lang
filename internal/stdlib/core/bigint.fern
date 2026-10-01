@@ -50,6 +50,7 @@
 //   - every limb is in [0, 2^32).
 //   - zero is never negative (`neg` is false whenever the magnitude is zero),
 //     so `cmp` never has to special-case a negative zero.
+
 pub struct BigInt {
   neg: boolean,
   mag: u64[],
@@ -103,6 +104,7 @@ function __bi_make(neg: boolean, mag: u64[]): BigInt {
 }
 
 // --- magnitude primitives (unsigned, operate on trimmed limb arrays) ---
+
 // __bi_cmp_mag returns -1 / 0 / 1. Both inputs must be trimmed, which is why
 // comparing lengths first is sound.
 function __bi_cmp_mag(a: u64[], b: u64[]): i32 {
@@ -293,6 +295,7 @@ function __bi_divmod_small(a: u64[], d: u64): (u64[], u64) {
 }
 
 // --- construction ---
+
 pub function zero(): BigInt {
   var z: u64[] = [];
   return BigInt { neg: false, mag: z.append(0 as u64) };
@@ -362,6 +365,7 @@ pub function parse(s: string): Option[BigInt] {
 }
 
 // --- queries ---
+
 pub function (a: BigInt) is_zero(): boolean {
   return __bi_is_zero_mag(a.mag);
 }
@@ -429,6 +433,7 @@ pub function (a: BigInt) hash(): i32 {
 }
 
 // --- arithmetic ---
+
 pub function (a: BigInt) negate(): BigInt {
   return __bi_make(!a.neg, a.mag);
 }
@@ -789,6 +794,7 @@ function __bi_shr_limbs(a: u64[], s: i32): u64[] {
 }
 
 // --- rendering ---
+
 // to_string emits base-10 by repeatedly dividing by 10^9 and emitting nine
 // digits per step, ~9x fewer division passes than one digit at a time. The
 // division runs in place on one copy of the limbs, the base-10^9 chunks are

@@ -27,6 +27,7 @@
 // Imports nothing: string handling is hand-rolled over the byte
 // builtins (s[i], s[i:j], .len(), ==, +), matching the rest of the
 // self-host sources.
+
 import "./ast";
 import "./util";
 import "./lexer";
@@ -1578,6 +1579,7 @@ pub function mangle_module(mod: parser.Module, prefix: string, ids: string[], pf
 }
 
 // =================== VALIDATION ====================
+
 // LoadedModule pairs an imported module with its two names, which are NOT
 // the same string and must not be conflated:
 //

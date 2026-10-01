@@ -15,6 +15,7 @@ import "std/array";
 // element string compare trips the self-host compiler, the same pointer-payload
 // class of gap that limits the T[]-returning generics. The Go-side
 // TestArrayMinMaxIndex exercises a string[] on all four native backends.
+
 function idx(o: Option[i32]): i32 {
   match (o) {
     Some(v) => {
