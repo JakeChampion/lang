@@ -6649,7 +6649,7 @@ pub function eliminate_dead_code(ops: Op[]): Op[] {
 
 // zg_mark records `at` as slot `sl`'s first non-zero write, when the slot is in
 // range and has none earlier.
-function zg_mark(first: i32[], sl: i32, at: i32): i32[] {
+function zg_mark(own first: i32[], sl: i32, at: i32): i32[] {
   if (sl < 0 || sl >= first.len()) {
     return first;
   }

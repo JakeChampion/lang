@@ -73,16 +73,15 @@ function successor_table(f: ssa.SFunc, at: i32[]): i32[][] {
 
 // The natural loop of a back edge: the header plus every block that reaches
 // the edge's source without passing through the header.
-function absorb(f: ssa.SFunc, l: Loops, h: i32, u: i32, reachable: boolean[]): Loops {
-  var members: boolean[] = l.members;
+function absorb(f: ssa.SFunc, own l: Loops, h: i32, u: i32, reachable: boolean[]): Loops {
   var work: i32[] = [u];
   while (work.len() > 0) {
     var x: i32 = work[work.len() - 1];
     work = prefix(work, work.len() - 1);
-    if (x == h || members[h * l.n + x]) {
+    if (x == h || l.members[h * l.n + x]) {
       continue;
     }
-    members = members.with(h * l.n + x, true);
+    l = Loops { ...l, members: l.members.with(h * l.n + x, true) };
     for pred in f.blocks[x].preds {
       var pi: i32 = position(l.at, pred);
       if (reachable[pi]) {
@@ -90,7 +89,7 @@ function absorb(f: ssa.SFunc, l: Loops, h: i32, u: i32, reachable: boolean[]): L
       }
     }
   }
-  return Loops { ...l, members: members };
+  return l;
 }
 
 function prefix(xs: i32[], n: i32): i32[] {
