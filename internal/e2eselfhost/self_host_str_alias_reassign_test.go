@@ -110,7 +110,9 @@ func strAliasReassignCases() []strAliasReassignCase {
 			// THE CONTROL THAT MUST NOT MOVE. The string-builder consume-rebind
 			// routes through emit_str_reclaim_store, whose RHS is a FRESH box and
 			// which emits no inc on purpose. The new collector must not claim it:
-			// a retain here would leak, since nothing shares the box.
+			// a retain here would leak, since nothing shares the box. One box per
+			// round: the first append onto the empty literal allocates it and the
+			// other three grow it in place (#10960).
 			name: "string_accumulator_unchanged",
 			src: `function round(i: i32): i32 {
     var s: string = "";
@@ -119,7 +121,7 @@ func strAliasReassignCases() []strAliasReassignCase {
     return s.len();
 }
 ` + strarMain,
-			want: 63, allocs: 80, frees: 80,
+			want: 63, allocs: 20, frees: 20,
 		},
 		{
 			// A reassign whose RHS is a FRESH producer rather than an alias. It is

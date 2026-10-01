@@ -155,11 +155,10 @@ function round(i: i32): i32 {
 			want: 46, allocs: 40, frees: 40,
 		},
 		{
-			// The string-builder accumulator reaches these predicates by a
-			// different route (collect_str_accumulator_names /
-			// emit_str_reclaim_store): four appends per round grow one box in
-			// place (#9077), so a round allocates the box and its class changes,
-			// not a concatenation per append.
+			// The string-builder accumulator, which reaches these predicates by a
+			// different route (collect_str_accumulator_names / emit_str_reclaim_store)
+			// and must not move. One box per round: the first append onto the empty
+			// literal allocates it and the other three grow it in place (#10960).
 			name: "string_accumulator_unchanged",
 			src: `function round(i: i32): i32 {
     var s: string = "";
