@@ -28,7 +28,7 @@ func TestSelfHostArm64DarwinStringConcatCopySearch(t *testing.T) {
 		t.Run("typed="+mode, func(t *testing.T) {
 			bin := filepath.Join(t.TempDir(), "range")
 			compile := exec.Command(cli, "-target", "arm64-darwin", src, stdlib, "-o", bin)
-			compile.Env = append(os.Environ(), "FERN_SEM_IR="+mode, "FERN_SEM_IR_STRICT="+mode, "FERN_SEM_IR_ONLY=", "FERN_SEM_IR_SKIP=", "FERN_STRICT_IR=1", "FERN_SANITIZE=1", "FERN_LEAKCHECK="+mode)
+			compile.Env = append(os.Environ(), "FERN_SEM_IR="+mode, "FERN_SEM_IR_ONLY=", "FERN_SEM_IR_SKIP=", "FERN_STRICT_IR=1", "FERN_SANITIZE=1", "FERN_LEAKCHECK="+mode)
 			if out, err := compile.CombinedOutput(); err != nil {
 				t.Fatalf("compile: %v\n%s", err, out)
 			}

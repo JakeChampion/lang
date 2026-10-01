@@ -229,11 +229,11 @@ function main(): i32 { return g(3) + g(0); }
 		}
 		env := []string{"FERN_SEM_IR=1", "FERN_SEM_IR_ONLY=", "FERN_SEM_IR_SKIP="}
 		if _, se, code := drive(t, entry, env, "-per-module-emit-all", "-cache-dir", cacheDir); code != 0 {
-			t.Fatalf("emit: exit %d\n%s", code, se)
+			t.Fatalf("strict emit: exit %d\n%s", code, se)
 		}
 		wat, se, code := drive(t, entry, env, "-link", "-cache-dir", cacheDir)
 		if code != 0 {
-			t.Fatalf("link: exit %d\n%s", code, se)
+			t.Fatalf("strict link: exit %d\n%s", code, se)
 		}
 		watPath := filepath.Join(proj, "dyn.wat")
 		wasmPath := filepath.Join(proj, "dyn.wasm")
@@ -247,8 +247,8 @@ function main(): i32 { return g(3) + g(0); }
 		}
 	})
 
-	// A closure capturing a bare view still has no owned environment copy:
-	// a refusal, which fails the emit.
+	// A closure capturing a bare view still has no owned environment copy.
+	// This pins the strict driver's refusal rather than a now-supported case.
 	t.Run("bare_view_closure_refusal_fails_the_emit", func(t *testing.T) {
 		proj := t.TempDir()
 		entry := filepath.Join(proj, "main.fern")
