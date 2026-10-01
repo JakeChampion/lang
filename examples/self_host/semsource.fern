@@ -7661,7 +7661,8 @@ function row_analysis(p: Produced): ssasem.Analysis {
 }
 
 // Each produced row's quiet cycle (`ownership.cycles`): its edges are the
-// direct calls between functions whose results hold no reference.
+// direct calls between functions whose results hold no reference, including
+// the named parameter phis left when tail recursion became a loop.
 function quiet_cycles(rows: ownership.Escapes[], ix: ownership.Index, all: Produced[], names: string[]): ownership.Escapes[] {
   var quiet: boolean[] = [];
   var succ: i32[][] = [];
@@ -7686,7 +7687,7 @@ function quiet_cycles(rows: ownership.Escapes[], ix: ownership.Index, all: Produ
       var out: i32[] = [];
       for b in all[i].func.graph.blocks {
         for ins in b.insts {
-          if (ins.kind_tag == ssasem.call()) {
+          if (ins.kind_tag == ssasem.call() || ins.kind_tag == 8 && ins.str != "") {
             var to: i32 = ownership.find(rows, ix, ins.str);
             if (to >= 0 && quiet[to]) {
               out = out.append(to);
