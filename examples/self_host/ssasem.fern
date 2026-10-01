@@ -3760,10 +3760,9 @@ function boxes_hold_view(f: Func, rows: EnvRow[], t: typeinfo.Type): boolean {
 
 // Whether a value of `t` can be rebuilt holding counted strings in place of
 // its views: a `str`, and an array, tuple, record or enum of such. A cell is
-// shared storage, which a copy would split, and a view in a map column is not
-// read out of it (semsource refuses the read), so a copy could not read it
-// either. A dyn or a function value holding a view is a box this cannot
-// rebuild, so a value holding one is refused rather than copied past it.
+// shared storage, which a copy would split, and `deep_copy` rebuilds no map. A
+// dyn or a function value holding a view is a box this cannot rebuild, so a
+// value holding one is refused rather than copied past it.
 pub function copyable(f: Func, t: typeinfo.Type): boolean {
   if (!holds_view(f, t) || is_view(t)) {
     return true;

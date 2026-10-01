@@ -446,9 +446,8 @@ Unsupported constructs refuse the whole function with a reason.
   by element, a record field by field, an enum by a test per variant, each
   view in it copied. A view that is a literal or a retagged string
   (`ssasem.counted_view`) anchors nothing and is not copied. A cell is shared
-  storage that a copy would split, and a view in a map column is never read
-  out of it, so a call's result holding either is still refused
-  (`ssasem.copyable`). Whether a type holds a view at all is
+  storage that a copy would split, and `deep_copy` rebuilds no map, so a
+  call's result holding either is still refused (`ssasem.copyable`). Whether a type holds a view at all is
   `ssasem.holds_view`, which reads a declared record's fields and an enum's
   payloads through the body's schema tables. The pass runs in
   `anchor_module` once the anchor table is attached, so a call's roots are
@@ -655,7 +654,13 @@ Unsupported constructs refuse the whole function with a reason.
   of the frame's own, released as any Option is; the runtime copies the
   column's entry into it without a retain, so over a counted column the
   lowering retains the payload on a hit, and the box owns one unit of it as
-  any Option this frame drops does. `without`
+  any Option this frame drops does. A `str` column holds view boxes, whose
+  immortal rc no retain can count, so every read out of one (`get`,
+  `get_or`, `values`, and so iteration) and every entry an un-share copies
+  takes `__fern_str_own` instead: a retain on a counted string, a fresh box
+  over an arena view's bytes. A `get` hit is rebuilt around that box. Such a
+  map stays on the runtime's map rather than core/map, whose reads and
+  copies retain (#10701). `without`
   takes the receiver's unit and answers the map and a flag, releasing the
   removed entry's key and value through the columns' releases on the way
   (`__fern_map_delete_rel` on the register backends; wasm's delete reads the
@@ -2305,10 +2310,10 @@ What is left, in order:
    (`fixtureCompile`), and the four scripts that measure the self-hosted
    compiler (`perf-bench-selfhost`, `cliff-bench`, `selfhost-alloc-bench`,
    `coreutils-bench`). The CLI, the four asm drivers and the wasm drivers
-   build a typed-path substitution for what they emit, apart from the asm
-   per-module modes; the rest of the drivers never reach the typed path (see
-   below). The semantic differential legs fail a seed that compiles as
-   a mixed module. The production rows' `FERN_SEM_IR_SKIP` leg and
+   build a typed-path substitution for what they emit; the rest of the
+   drivers never reach the typed path (see below). The semantic differential
+   legs fail a seed that compiles as a mixed module. The production rows'
+   `FERN_SEM_IR_SKIP` leg and
    `TestSelfHostSemIRStrict`'s off leg keep the AST lowering on purpose.
 3. The AST lowering is deleted, along with the differential legs that compare
    against it.
@@ -2329,11 +2334,24 @@ into five groups:
   which force the AST lowering's gated emit, run only with the typed path
   off, and the wasm drivers' `-decide` asks `wasm_ir.ir_route_ok` with the
   same substitution. `asm_modload_run -verifyprovided` checks the bodies that
-  emit reads. The per-module modes still take the AST lowering: the asm
-  drivers' `-ir-unit`, `-per-module-emit*` and the concat rescue for a
-  512–1500-function program, because `emit_module_ir_unit_flat` and its arm64
-  twin take no substitution. So the asm per-module whole-compiler fixpoints
-  build the compiler on the AST lowering.
+  emit reads. The asm drivers' per-module modes (`asm_ir_run -ir-unit`,
+  `-per-module-emit*` and the concat rescue for a 512–1500-function program)
+  take the typed lowering too. Every process lowers the program the merged
+  emit reads, whole, through `ircore.gate_program` (the gate the merged emits
+  run), and `ircore.split_units` cuts that lowering into one unit per module:
+  a declaration goes to the module declaring it, a method the front end added
+  to the module declaring its receiver type, anything else the front end or
+  the lambda lift made to the module of the first function naming it, and the
+  instances and drop helpers to the entry, which is never sharded. A leaf
+  `seminline` splices into a caller in another module keeps its body in its
+  own unit. `-ir-unit` lowers its module together with its `-ir-sigs`
+  siblings, so a call to a sibling it was not given is the checker's error,
+  and marks the siblings' declarations `@noinline`, so whether a sibling's
+  leaf is spliced in never depends on which siblings it was given. A unit's
+  object-cache key folds in `ircore.lowered_digest` of its bodies, since a
+  typed body can depend on another module's (an inferred parameter mode, an
+  instance). With `FERN_SEM_IR=` each module is still lowered on its own by
+  the AST lowering.
 - `wasm_modload_run`, whose per-module units take the typed lowering the way
   `wasm_units_probe`'s do: each `-per-module-emit` and `-link` lowers the
   whole program once through `semlower.driven` and keeps the units it asked
@@ -2341,7 +2359,7 @@ into five groups:
   clones, instances and drop helpers are the entry's. The typed lowering
   inlines and infers ownership across modules, so a unit's cache key
   (`modloader.typed_unit_cache_key`) hashes its lowered bodies
-  (`ircore.lowered_key`), and a body edit re-emits every unit its code reached.
+  (`ircore.lowered_digest`), and a body edit re-emits every unit its code reached.
   `-per-module-emit-all` emits a whole link plan from one lowering, which is
   how the whole-compiler link test builds the compiler. With `FERN_SEM_IR=`
   the units lower their window through `wasm_ir.lower_all_for_view` as

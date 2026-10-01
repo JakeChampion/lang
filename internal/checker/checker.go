@@ -16694,6 +16694,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		return ast.FloatType{Polymorphic: true}
 	case *ast.Ident:
 		if t, ok := s.lookup(n.Name); ok {
+			n.Local = true
 			c.noteLitIdent(n, t, s.lookupVarDecl(n.Name))
 			return t
 		}
@@ -16721,6 +16722,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					continue
 				}
 				if t, ok := ent.scope.lookup(n.Name); ok {
+					n.Local = true
 					// Record the capture in this entry's sink AND
 					// in every deeper sink (so each intermediate
 					// closure forwards the slot through).
@@ -21163,8 +21165,10 @@ func resultHandlerShape(handle *ast.FuncDecl) bool {
 //	}
 //
 // or `respond_with` for the stateful pair, std/http's answers to a Result
-// (`E: ToResponse`). The names resolve bare or under std/http's mangling
-// as synthesiseHandleMain's do.
+// (`E: ToResponse`). A handler whose errors are `dyn error.Error` is
+// adapted with `respond_error` / `respond_error_with` instead, which take
+// the handler's platform to log each error's message. The names resolve
+// bare or under std/http's mangling as synthesiseHandleMain's do.
 func adaptResultHandler(prog *ast.Program) {
 	handle := findDecl(prog, "handle")
 	if handle == nil || !resultHandlerShape(handle) {
@@ -21183,9 +21187,15 @@ func adaptResultHandler(prog *ast.Program) {
 	}
 	adapter := "respond"
 	var ret ast.Type = ast.StructType{Name: "HttpResponse"}
+	result := handle.ReturnType
 	if len(handle.Params) == 3 {
 		adapter = "respond_with"
 		ret = ast.TupleType{Elems: []ast.Type{handle.Params[0].Type, ast.StructType{Name: "HttpResponse"}}}
+		result = handle.ReturnType.(ast.TupleType).Elems[1]
+	}
+	dynErr := isDynErrorType(result.(ast.EnumType).Args[1])
+	if dynErr {
+		adapter = strings.Replace(adapter, "respond", "respond_error", 1)
 	}
 	params := make([]ast.Param, len(handle.Params))
 	args := make([]ast.Expr, len(handle.Params))
@@ -21194,7 +21204,11 @@ func adaptResultHandler(prog *ast.Program) {
 		args[i] = &ast.Ident{P: pos, Name: p.Name}
 	}
 	inner := &ast.Call{P: pos, Callee: &ast.Ident{P: pos, Name: resultHandlerName}, Args: args}
-	call := &ast.Call{P: pos, Callee: &ast.Ident{P: pos, Name: resolve(adapter, "http__"+adapter)}, Args: []ast.Expr{inner}}
+	adapterArgs := []ast.Expr{inner}
+	if dynErr {
+		adapterArgs = append(adapterArgs, &ast.Ident{P: pos, Name: handle.Params[len(handle.Params)-1].Name})
+	}
+	call := &ast.Call{P: pos, Callee: &ast.Ident{P: pos, Name: resolve(adapter, "http__"+adapter)}, Args: adapterArgs}
 	prog.Funcs = append(prog.Funcs, &ast.FuncDecl{
 		P:          pos,
 		Name:       "handle",
@@ -21202,6 +21216,19 @@ func adaptResultHandler(prog *ast.Program) {
 		ReturnType: ret,
 		Body:       &ast.Block{Stmts: []ast.Stmt{&ast.Return{P: pos, Value: call}}},
 	})
+}
+
+// isDynErrorType reports whether `t` is `dyn error.Error`, std/error's
+// trait object, under its bare, qualified or mangled name.
+func isDynErrorType(t ast.Type) bool {
+	d, ok := t.(ast.DynTraitType)
+	if !ok || len(d.Traits) != 1 {
+		return false
+	}
+	// std/error's trait by its bundled identity: a program's own `trait
+	// Error` is another trait, and every import spelling of std/error's,
+	// aliased or re-exported, mangles to this one name.
+	return d.Traits[0] == "error__Error"
 }
 
 // platformCtorName is the compiler-owned Platform constructor. The `__fern_`

@@ -4112,6 +4112,9 @@ function helper_call_needs(name: string, s: asmcore.EmitState): asmcore.EmitStat
   if (name == "__fern_arr_own_elems") {
     s = s.need("arr_own_elems");
   }
+  if (name == "__fern_str_own") {
+    s = s.need("str_own");
+  }
   // The VIEW-aware string[] element walk (#6544), gated the same way:
   // a binary that never reclaims a builtin string[] must not carry a
   // body whose inner `bl __fn___fern_str_view_free` the negative
@@ -7698,10 +7701,55 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write(".Laie_ret:\n");
     s = s.write("    ret\n");
   }
+  // __fern_str_own(s@[sp]) -> a string its holder owns a unit of, the arm64
+  // sibling of the x86-64 body: a counted string retained, a fresh box over
+  // an arena view's bytes, and any other view as is.
+  if (s.has_need("str_own")) {
+    s = s.write("__fn___fern_str_own:\n");
+    s = s.write("    ldr x0, [sp]\n");
+    s = s.write("    tbnz x0, #0, .Lso_ret\n");
+    s = s.write("    mov x9, #0x10000\n");
+    s = s.write("    cmp x0, x9\n");
+    s = s.write("    blo .Lso_ret\n");
+    s = s.write("    ldur w1, [x0, #-8]\n");  // rc
+    s = s.write(san_poison_check("w1", "w9", ".Lso_live"));
+    s = s.write("    tbnz w1, #31, .Lso_view\n");
+    s = s.write("    stp x0, x30, [sp, #-16]!\n");
+    s = s.write("    str x0, [sp, #-16]!\n");
+    s = s.write("    bl __fn___fern_rc_inc\n");
+    s = s.write("    add sp, sp, #16\n");
+    s = s.write("    ldp x0, x30, [sp], #16\n");
+    s = s.write("    ret\n");
+    s = s.write(".Lso_view:\n");
+    s = s.write("    sub x1, x0, #8\n");  // box base
+    s = s.write("    adrp x11, __fern_heap_base\n");
+    s = s.write("    add x11, x11, :lo12:__fern_heap_base\n");
+    s = s.write("    ldr x11, [x11]\n");
+    s = s.write("    cmp x1, x11\n");
+    s = s.write("    blo .Lso_ret\n");
+    s = s.write("    adrp x12, __fern_heap_end\n");
+    s = s.write("    add x12, x12, :lo12:__fern_heap_end\n");
+    s = s.write("    ldr x12, [x12]\n");
+    s = s.write("    cmp x1, x12\n");
+    s = s.write("    bhs .Lso_ret\n");
+    s = s.write("    stp x0, x30, [sp, #-16]!\n");
+    s = s.write("    mov x0, #24\n");
+    s = s.write("    bl __fern_alloc\n");
+    s = s.write("    ldp x1, x30, [sp], #16\n");  // the shared box
+    s = s.write("    mov x3, #-1\n");
+    s = s.write("    str x3, [x0]\n");
+    s = s.write("    ldr x2, [x1]\n");
+    s = s.write("    str x2, [x0, #8]\n");  // data
+    s = s.write("    ldr x2, [x1, #8]\n");
+    s = s.write("    str x2, [x0, #16]\n");  // len
+    s = s.write("    add x0, x0, #8\n");
+    s = s.write(".Lso_ret:\n");
+    s = s.write("    ret\n");
+  }
   // __fern_arr_own_elems(dst@[sp,#16], src@[sp]) -> dst, the arm64
-  // sibling of the x86-64 body: dst takes its own unit on each of its first
-  // len(src) elements, a retain on a counted one and a fresh box on an
-  // arena string view. x19/x20/x21 hold dst/len/i.
+  // sibling of the x86-64 body: each of dst's first len(src) elements is
+  // replaced by the unit __fern_str_own answers for it. x19/x20/x21 hold
+  // dst/len/i.
   if (s.has_need("arr_own_elems")) {
     s = s.write("__fn___fern_arr_own_elems:\n");
     s = s.write("    ldr x0, [sp, #16]\n");  // dst (also the result)
@@ -7721,43 +7769,11 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    bge .Laoe_done\n");
     s = s.write("    add x9, x21, #1\n");
     s = s.write("    ldr x0, [x19, x9, lsl #3]\n");  // element i
-    s = s.write("    tbnz x0, #0, .Laoe_next\n");
-    s = s.write("    mov x9, #0x10000\n");
-    s = s.write("    cmp x0, x9\n");
-    s = s.write("    blo .Laoe_next\n");
-    s = s.write("    ldur w1, [x0, #-8]\n");  // rc
-    s = s.write(san_poison_check("w1", "w9", ".Laoe_live"));
-    s = s.write("    tbnz w1, #31, .Laoe_view\n");
     s = s.write("    str x0, [sp, #-16]!\n");
-    s = s.write("    bl __fn___fern_rc_inc\n");
+    s = s.write("    bl __fn___fern_str_own\n");
     s = s.write("    add sp, sp, #16\n");
-    s = s.write("    b .Laoe_next\n");
-    s = s.write(".Laoe_view:\n");
-    s = s.write("    sub x1, x0, #8\n");  // box base
-    s = s.write("    adrp x11, __fern_heap_base\n");
-    s = s.write("    add x11, x11, :lo12:__fern_heap_base\n");
-    s = s.write("    ldr x11, [x11]\n");
-    s = s.write("    cmp x1, x11\n");
-    s = s.write("    blo .Laoe_next\n");
-    s = s.write("    adrp x12, __fern_heap_end\n");
-    s = s.write("    add x12, x12, :lo12:__fern_heap_end\n");
-    s = s.write("    ldr x12, [x12]\n");
-    s = s.write("    cmp x1, x12\n");
-    s = s.write("    bhs .Laoe_next\n");
-    s = s.write("    str x0, [sp, #-16]!\n");
-    s = s.write("    mov x0, #24\n");
-    s = s.write("    bl __fern_alloc\n");
-    s = s.write("    ldr x1, [sp], #16\n");  // the shared box
-    s = s.write("    mov x3, #-1\n");
-    s = s.write("    str x3, [x0]\n");
-    s = s.write("    ldr x2, [x1]\n");
-    s = s.write("    str x2, [x0, #8]\n");  // data
-    s = s.write("    ldr x2, [x1, #8]\n");
-    s = s.write("    str x2, [x0, #16]\n");  // len
-    s = s.write("    add x0, x0, #8\n");
     s = s.write("    add x9, x21, #1\n");
     s = s.write("    str x0, [x19, x9, lsl #3]\n");
-    s = s.write(".Laoe_next:\n");
     s = s.write("    add x21, x21, #1\n");
     s = s.write("    b .Laoe_loop\n");
     s = s.write(".Laoe_done:\n");
@@ -11177,17 +11193,11 @@ pub function emit_module_ir_gated(mod: parser.Module, darwin: boolean): string {
 // lowering substituted into it (ircore.Sub) — the arm64 twin of
 // asm_ir.emit_module_ir_gated_sub.
 pub function emit_module_ir_gated_sub(mod: parser.Module, darwin: boolean, sub: ircore.Sub): string {
-  // script_normalized desugars a SCRIPT-shaped module (top-level statements,
-  // no `main`) into `function main(): i32 { … }`. Return types are inferred
-  // BEFORE the registries are derived so they see the inferred ones.
-  var im: parser.Module = parser.infer_ret_types_module(ircore.script_normalized(mod));
-  var imtab: irlower.StructTab = irlower.struct_tab(im.structs);
-  var base: irlower.FnSigs = ircore.sub_base(sub, im.funcs, imtab);
-  var g: ircore.Lowered = ircore.lower_gated(im, imtab, irlower.fn_sigs_with_dyn(base, im.trait_reqs), [], false, sub);
+  var g: ircore.Gated = ircore.gate_program(mod, [], sub);
   if (!g.ok) {
     return "";
   }
-  return emit_module_ir_flat(im, imtab, darwin, ircore.inline_tiny_leaves(im, ircore.sub_cache(sub, g.cache)), base, sub.rt_lower);
+  return emit_module_ir_flat(g.im, g.stab, darwin, ircore.inline_tiny_leaves(g.im, g.cache), g.base, sub.rt_lower);
 }
 
 function emit_module_ir_flat(mod: parser.Module, stab: irlower.StructTab, darwin: boolean, cache: irlower.LowerResult[], base: irlower.FnSigs, rt: (string) => irlower.LowerResult[]): string {
@@ -11237,14 +11247,14 @@ function emit_module_ir_flat(mod: parser.Module, stab: irlower.StructTab, darwin
 // `b` is the whole-program registry base (ircore.wp_fn_sigs over all_funcs /
 // all_structs), derived once by the driver and shared by every unit it emits
 // (the arm64 twin of asm_ir.emit_module_ir_unit_flat).
-pub function emit_module_ir_unit_arm64_flat(mod: parser.Module, is_entry: boolean, globl_defs: boolean, str_ns: string, extra_needs: string[], all_funcs: parser.FuncDecl[], all_structs: irlower.StructTab, lo: i32, hi: i32, b: irlower.FnSigs): string {
+pub function emit_module_ir_unit_arm64_flat(mod: parser.Module, is_entry: boolean, globl_defs: boolean, str_ns: string, extra_needs: string[], all_funcs: parser.FuncDecl[], all_structs: irlower.StructTab, lo: i32, hi: i32, cache: irlower.LowerResult[], b: irlower.FnSigs, rt: (string) => irlower.LowerResult[]): string {
   var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
   mod = parser.infer_ret_types_module(mod);
   strbuf_reset();
   var s: asmcore.EmitState = asmcore.new_state();
   // struct_decls is the WHOLE-PROGRAM struct set so a function emitting an
   // imported struct's layout resolves it; str_ns namespaces this unit's pools.
-  s = asmcore.EmitState { ...s, struct_decls: all_structs, funcs: mod.funcs, str_ns: str_ns };
+  s = asmcore.EmitState { ...s, struct_decls: all_structs, funcs: mod.funcs, str_ns: str_ns, rt_lower: rt };
   // The Display gate for a unit, as asm_ir.emit_module_ir_unit_flat runs it.
   var derrs: util.Diag[] = asmcore.display_errs_module(mod, s);
   if (derrs.len() > 0) {
@@ -11280,10 +11290,16 @@ pub function emit_module_ir_unit_arm64_flat(mod: parser.Module, is_entry: boolea
   if (hh < 0 || hh > mod.funcs.len()) {
     hh = mod.funcs.len();
   }
-  ircore.check_fip_claims(mod.funcs, lo, hh, [], all_structs, sg, false);
-  s = asmcore.EmitState { ...s, reg_entries: irlower.sig_reg_of(asmcore.unit_labels(mod, lo, hh, [])) };
+  // `cache`, when non-empty, is the unit's lowering, indexed by mod.funcs
+  // position, with declaration-less bodies on its tail (asm_ir.emit_module_funcs).
+  ircore.check_fip_claims(mod.funcs, lo, hh, cache, all_structs, sg, false);
+  s = asmcore.EmitState { ...s, reg_entries: irlower.sig_reg_of(asmcore.unit_labels(mod, lo, hh, cache)), leaves: asmcore.unit_leaves(mod, lo, hh, cache) };
   var fi: i32 = lo;
   while (fi < hh) {
+    if (cache.len() > 0 && cache[fi].superseded) {
+      fi = fi + 1;
+      continue;
+    }
     if (globl_defs) {
       var gname: string = mod.funcs[fi].name;
       if (mod.funcs[fi].receiver_type.len() > 0) {
@@ -11291,9 +11307,14 @@ pub function emit_module_ir_unit_arm64_flat(mod: parser.Module, is_entry: boolea
       }
       s = s.write(".globl __fn_" + asmcore.sanitize_label(gname) + "\n");
     }
-    s = emit_function_via_ir(mod.funcs[fi], s, sg, vsigs);
+    if (cache.len() == 0) {
+      s = emit_function_via_ir(mod.funcs[fi], s, sg, vsigs);
+    } else {
+      s = emit_function_via_ir_pre(cache[fi], mod.funcs[fi], s, vsigs);
+    }
     fi = fi + 1;
   }
+  s = emit_named_bodies(cache, mod.funcs.len(), s, vsigs);
   // #4355: admit the replaced-STRING-field arm per type from the
   // WHOLE-PROGRAM read scan (all_funcs — see asm_ir.emit_module_ir_unit's
   // sibling seeding and irlower.strfld_reclaim_ok_types_of).

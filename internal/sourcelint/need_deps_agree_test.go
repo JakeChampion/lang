@@ -117,10 +117,12 @@ func TestMarkWrappersAgreeWithRuntimeNeedDeps(t *testing.T) {
 	t.Logf("checked %d mark_* wrappers against runtime_need_deps", checked)
 }
 
-// parseRuntimeNeedDeps reads the declared edges out of runtime_need_deps by
-// walking its body: each `if (name == "x")` arm applies to every root named in
-// the same condition, and the returned list is whichever slice literal or named
-// variable that arm returns.
+// parseRuntimeNeedDeps reads the declared edges out of runtime_need_deps. Each
+// arm is `if (name == "x" || ...) { ... return v; }`, ending at the first `}`
+// indented as far as its `if` line: every root its condition names gets the
+// literal of the `var v: string[] = [...]` it returns, declared in the arm or
+// elsewhere in the function. Every root the function tests must land in the
+// table, so an arm the parse cannot read fails by name.
 func parseRuntimeNeedDeps(t *testing.T, text string) map[string][]string {
 	t.Helper()
 	start := strings.Index(text, "pub function runtime_need_deps(name: string): string[] {")
@@ -132,30 +134,49 @@ func parseRuntimeNeedDeps(t *testing.T, text string) map[string][]string {
 		body = body[:end]
 	}
 
+	head := regexp.MustCompile(`(?m)^([ \t]*)if \(([^{}]*)\)\s*\{`)
+	ret := regexp.MustCompile(`\breturn ([a-z0-9_]+);`)
+	quoted := regexp.MustCompile(`"([a-z0-9_]+)"`)
 	out := map[string][]string{}
-	// The heap-only bucket is ONE `if` whose condition ORs many roots across
-	// several lines, so the roots have to be read as bare `name == "x"` tests
-	// rather than as whole single-line arms.
-	if i := strings.Index(body, "return heap;"); i >= 0 {
-		for _, m := range nameEqRe.FindAllStringSubmatch(body[:i], -1) {
-			out[m[1]] = []string{"heap"}
-		}
-	}
-	// Every other arm is `if (name == "x") { ... var d: string[] = [...]; return d; }`.
-	arms := regexp.MustCompile(`if \(name == "([a-z0-9_]+)"\) \{([\s\S]*?)\breturn [a-z0-9_]+;`).FindAllStringSubmatch(body, -1)
-	for _, a := range arms {
-		lit := regexp.MustCompile(`string\[\] = \[([^\]]*)\]`).FindStringSubmatch(a[2])
-		if lit == nil {
+	for _, m := range head.FindAllStringSubmatchIndex(body, -1) {
+		roots := nameEqRe.FindAllStringSubmatch(body[m[4]:m[5]], -1)
+		if len(roots) == 0 {
 			continue
 		}
+		first := roots[0][1]
+		rest := body[m[1]:]
+		end := strings.Index(rest, "\n"+body[m[2]:m[3]]+"}")
+		if end < 0 {
+			t.Fatalf("runtime_need_deps arm %q has no closing brace at its own indent", first)
+		}
+		rets := ret.FindAllStringSubmatch(rest[:end], -1)
+		if len(rets) == 0 {
+			t.Fatalf("runtime_need_deps arm %q returns no named list", first)
+		}
+		v := rets[len(rets)-1][1]
+		decl := regexp.MustCompile(`\bvar ` + v + `: string\[\] = \[([^\]]*)\]`)
+		l := decl.FindStringSubmatch(rest[:end])
+		if l == nil {
+			l = decl.FindStringSubmatch(body)
+		}
+		if l == nil {
+			t.Fatalf("runtime_need_deps arm %q returns %s, which no string[] literal declares", first, v)
+		}
 		var deps []string
-		for _, q := range regexp.MustCompile(`"([a-z0-9_]+)"`).FindAllStringSubmatch(lit[1], -1) {
+		for _, q := range quoted.FindAllStringSubmatch(l[1], -1) {
 			deps = append(deps, q[1])
 		}
-		out[a[1]] = deps
+		for _, r := range roots {
+			out[r[1]] = deps
+		}
+	}
+	for _, m := range nameEqRe.FindAllStringSubmatch(body, -1) {
+		if _, ok := out[m[1]]; !ok {
+			t.Errorf("runtime_need_deps tests %q, but no arm the parse read names it", m[1])
+		}
 	}
 	if len(out) < 10 {
-		t.Fatalf("parsed only %d runtime_need_deps arms — the parse no longer matches the source", len(out))
+		t.Fatalf("parsed only %d runtime_need_deps roots — the parse no longer matches the source", len(out))
 	}
 	return out
 }

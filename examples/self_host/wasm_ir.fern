@@ -1204,7 +1204,8 @@ function slot_in_list(list: i32[], x: i32): boolean {
 // $__fern_arr_dec (the array release that frees at rc==1 via the size-class
 // freelist), so the wasm IR path reclaims exactly as wasm.fern's AST path.
 function wasm_helper_symbol(name: string): string {
-  if (name == "__fern_rc_inc") {
+  // A wasm view is a counted block of its own bytes, so its unit is a retain.
+  if (name == "__fern_rc_inc" || name == "__fern_str_own") {
     return "$__fern_rc_inc";
   }
   if (name == "__fern_rc_dec") {
@@ -1971,11 +1972,12 @@ function all_lowered_ok(cache: irlower.LowerResult[]): boolean {
 // wasm serves those helpers with hand-written WAT and has neither a raw address
 // space nor a syscall instruction to lower them onto.
 //
-// __raw_load8 / __raw_load_ptr / __raw_store_ptr are NOT in the set — wasm
-// selects them (kind_tag 83 / 84 / 85; raw_load8 also backs __load_u8) — and neither are their type-only bridges: __raw_data
+// __raw_load8 / __raw_store8 / __raw_load_ptr / __raw_store_ptr are NOT in the
+// set — wasm selects them (kind_tag 83 / 82 / 84 / 85; raw_load8 and raw_store8
+// also back __load_u8 and __store_u8) — and neither are their type-only bridges: __raw_data
 // lowers to a raw_load_ptr, and __raw_array and __raw_arr_ptr emit nothing at all.
 function is_raw_floor_builtin(name: string): boolean {
-  if (name == "__raw_alloc" || name == "__raw_store8") {
+  if (name == "__raw_alloc") {
     return true;
   }
   if (name == "__raw_string" || name == "__raw_scratch" || name == "__raw_environ" || name == "__raw_splice_pipe") {
@@ -4891,7 +4893,7 @@ function emit_map_op_wat(o: ir.Op, cx: WasmOpCtx): string {
 function is_host_op_kind(tag: i32): boolean {
   return tag == 163 || tag == 164 || tag == 182 || tag == 184
     || tag == 183 || tag == 209 || tag == 168 || tag == 169 || tag == 233 || tag == 170
-    || tag == 203 || tag == 304 || tag == 305 || tag == 202 || tag == 176 || tag == 175 || tag == 236 || tag == 173 || tag == 231
+    || tag == 203 || tag == 304 || tag == 305 || tag == 202 || tag == 308 || tag == 176 || tag == 175 || tag == 236 || tag == 173 || tag == 231
     || tag == 171 || tag == 310 || tag == 172 || tag == 180 || tag == 249 || tag == 166
     || tag == 260 || tag == 261 || tag == 262 || tag == 263 || tag == 264
     || tag == 267 || tag == 269 || tag == 273;
@@ -5660,6 +5662,11 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     parts = parts.append("    drop\n");
   } else if (o.kind_tag == 84) {  // raw_store_ptr
     parts = emit_wasm_raw_store_ptr(arrtmp, eltmp, parts);
+  } else if (o.kind_tag == 82) {  // raw_store8
+    // pop v (top), off, ptr; store v's low byte at ptr+off; push v back.
+    parts = parts.append("    local.set " + util.i32_to_string(eltmp) + "\n    i32.add\n");
+    parts = parts.append("    local.get " + util.i32_to_string(eltmp) + "\n    i32.store8\n");
+    parts = parts.append("    local.get " + util.i32_to_string(eltmp) + "\n");
   } else if (o.kind_tag == 83) {  // raw_load8
     // pop off (top), ptr; push the zero-extended byte at ptr+off.
     parts = parts.append("    i32.add\n    i32.load8_u\n");
@@ -6319,7 +6326,7 @@ function needs_fd_sync(needs: string[]): boolean {
 // needs_io_error reports whether the module carries any fs op — the gate on
 // $__fern_build_io_error and on the strerror texts it selects from.
 pub function needs_io_error(needs: string[]): boolean {
-  return need(needs, "stat") || need(needs, "lstat") || need(needs, "remove_file") || need(needs, "create_dir_all") || need(needs, "create_dir") || need(needs, "remove_dir") || need(needs, "create_link") || need(needs, "create_symlink") || need(needs, "rename") || need(needs, "set_file_times") || need(needs, "truncate") || need(needs, "read_link") || need(needs, "read_dir") || need(needs, "read_dir_all") || need(needs, "remove_dir_all") || need(needs, "temp_dir") || need(needs, "read_file") || need(needs, "read_file_bytes") || need(needs, "write_file") || need_open_file(needs) || need(needs, "writer_write") || need(needs, "write_some") || need(needs, "reader_close") || need(needs, "read_chunk") || need(needs, "fd_stat") || need(needs, "reader_seek") || need(needs, "writer_truncate") || needs_fd_sync(needs);
+  return need(needs, "stat") || need(needs, "lstat") || need(needs, "remove_file") || need(needs, "create_dir_all") || need(needs, "create_dir") || need(needs, "remove_dir") || need(needs, "create_link") || need(needs, "create_symlink") || need(needs, "rename") || need(needs, "set_file_times") || need(needs, "truncate") || need(needs, "read_link") || need(needs, "read_dir") || need(needs, "read_dir_all") || need(needs, "remove_dir_all") || need(needs, "temp_dir") || need(needs, "read_file") || need(needs, "read_file_bytes") || need(needs, "write_file") || need_open_file(needs) || need(needs, "writer_write") || need(needs, "write_some") || need(needs, "reader_close") || need(needs, "read_chunk") || need(needs, "fd_stat") || need(needs, "reader_seek") || need(needs, "writer_truncate") || need(needs, "fd_flags") || needs_fd_sync(needs);
 }
 
 // with_strerror_texts adds the strerror texts and the "Unknown error " prefix
@@ -8642,7 +8649,7 @@ pub function arr_push_helper(): string {
 // the helper's own: every growth step reallocates, and nothing outside this
 // function can ever reach — or release — the buffer it left behind.
 pub function str_split_helper(): string {
-  var o: string = arr_push_helper();
+  var o: string = arr_push_helper() + utf8_step_helper();
   o = o + "  (func $__fern_str_split (param $s i32) (param $sep i32) (result i32)\n";
   o = o + "    (local $sl i32) (local $sepl i32) (local $i i32) (local $start i32) (local $arr i32) (local $piece i32) (local $j i32) (local $match i32)\n";
   o = o + "    (local.set $sl (i32.load (local.get $s)))\n";
@@ -8655,15 +8662,16 @@ pub function str_split_helper(): string {
   o = o + "    (local.set $arr (call $__fern_arr_box (i32.const 0)))\n";
   o = o + "    (i32.store (local.get $arr) (i32.const 0))\n";
   o = o + "    (i32.store (i32.add (local.get $arr) (i32.const 4)) (i32.const 0))\n";
-  // Empty separator char-splits, matching std/string's `split` and the
-  // interp ("abc" -> ["a","b","c"], "" -> []).
+  // Empty separator splits into codepoints, matching std/string's `split`,
+  // the interp and the register backends ("héllo" -> 5 pieces, "" -> []).
   o = o + "    (if (i32.eqz (local.get $sepl)) (then\n";
   o = o + "      (local.set $i (i32.const 0))\n";
   o = o + "      (block $d0 (loop $c0\n";
   o = o + "        (br_if $d0 (i32.ge_s (local.get $i) (local.get $sl)))\n";
-  o = o + "        (local.set $piece (call $__fern_substr (local.get $s) (local.get $i) (i32.add (local.get $i) (i32.const 1))))\n";
+  o = o + "        (local.set $j (call $__fern_utf8_step (local.get $s) (local.get $i) (local.get $sl)))\n";
+  o = o + "        (local.set $piece (call $__fern_substr (local.get $s) (local.get $i) (i32.add (local.get $i) (local.get $j))))\n";
   o = o + "        (local.set $arr (call $__fern_arr_push_owned (local.get $arr) (local.get $piece)))\n";
-  o = o + "        (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
+  o = o + "        (local.set $i (i32.add (local.get $i) (local.get $j)))\n";
   o = o + "        (br $c0)))\n";
   o = o + "      (return (local.get $arr))))\n";
   o = o + "    (local.set $start (i32.const 0))\n";
@@ -8687,6 +8695,42 @@ pub function str_split_helper(): string {
   o = o + "    (local.set $piece (call $__fern_substr (local.get $s) (local.get $start) (local.get $sl)))\n";
   o = o + "    (local.set $arr (call $__fern_arr_push_owned (local.get $arr) (local.get $piece)))\n";
   o = o + "    (local.get $arr))\n";
+  return o;
+}
+
+// utf8_step_helper emits $__fern_utf8_step(s, i, n): the byte width of the
+// codepoint starting at byte i of string s (n bytes long), with the acceptance
+// asmcore.rt_src_str_split's __fern_utf8_step uses on the register backends. A
+// byte that starts no valid sequence is a width of 1.
+function utf8_step_helper(): string {
+  var o: string = "  (func $__fern_utf8_step (param $s i32) (param $i i32) (param $n i32) (result i32)\n";
+  o = o + "    (local $b0 i32) (local $want i32) (local $lo i32) (local $hi i32) (local $c i32) (local $k i32)\n";
+  o = o + "    (local.set $b0 (i32.load8_u (i32.add (i32.add (local.get $s) (i32.const 4)) (local.get $i))))\n";
+  o = o + "    (local.set $want (i32.const 1))\n";
+  o = o + "    (if (i32.and (i32.ge_u (local.get $b0) (i32.const 194)) (i32.lt_u (local.get $b0) (i32.const 224))) (then (local.set $want (i32.const 2))))\n";
+  o = o + "    (if (i32.and (i32.ge_u (local.get $b0) (i32.const 224)) (i32.lt_u (local.get $b0) (i32.const 240))) (then (local.set $want (i32.const 3))))\n";
+  o = o + "    (if (i32.and (i32.ge_u (local.get $b0) (i32.const 240)) (i32.lt_u (local.get $b0) (i32.const 245))) (then (local.set $want (i32.const 4))))\n";
+  o = o + "    (if (i32.le_s (local.get $want) (i32.const 1)) (then (return (i32.const 1))))\n";
+  o = o + "    (if (i32.ge_s (i32.add (local.get $i) (i32.const 1)) (local.get $n)) (then (return (i32.const 1))))\n";
+  o = o + "    (local.set $lo (i32.const 128))\n";
+  o = o + "    (if (i32.eq (local.get $b0) (i32.const 224)) (then (local.set $lo (i32.const 160))))\n";
+  o = o + "    (if (i32.eq (local.get $b0) (i32.const 240)) (then (local.set $lo (i32.const 144))))\n";
+  o = o + "    (local.set $hi (i32.const 191))\n";
+  o = o + "    (if (i32.eq (local.get $b0) (i32.const 237)) (then (local.set $hi (i32.const 159))))\n";
+  o = o + "    (if (i32.eq (local.get $b0) (i32.const 244)) (then (local.set $hi (i32.const 143))))\n";
+  o = o + "    (local.set $c (i32.load8_u (i32.add (i32.add (local.get $s) (i32.const 4)) (i32.add (local.get $i) (i32.const 1)))))\n";
+  o = o + "    (if (i32.lt_u (local.get $c) (local.get $lo)) (then (return (i32.const 1))))\n";
+  o = o + "    (if (i32.gt_u (local.get $c) (local.get $hi)) (then (return (i32.const 1))))\n";
+  o = o + "    (local.set $k (i32.const 2))\n";
+  o = o + "    (block $d (loop $c2\n";
+  o = o + "      (br_if $d (i32.ge_s (local.get $k) (local.get $want)))\n";
+  o = o + "      (if (i32.ge_s (i32.add (local.get $i) (local.get $k)) (local.get $n)) (then (return (local.get $k))))\n";
+  o = o + "      (local.set $c (i32.load8_u (i32.add (i32.add (local.get $s) (i32.const 4)) (i32.add (local.get $i) (local.get $k)))))\n";
+  o = o + "      (if (i32.lt_u (local.get $c) (i32.const 128)) (then (return (local.get $k))))\n";
+  o = o + "      (if (i32.gt_u (local.get $c) (i32.const 191)) (then (return (local.get $k))))\n";
+  o = o + "      (local.set $k (i32.add (local.get $k) (i32.const 1)))\n";
+  o = o + "      (br $c2)))\n";
+  o = o + "    (local.get $want))\n";
   return o;
 }
 

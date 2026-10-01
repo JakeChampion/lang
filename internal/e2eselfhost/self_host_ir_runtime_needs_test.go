@@ -61,7 +61,12 @@ func TestSelfHostIRRuntimeNeedsAggregation(t *testing.T) {
 
 	// Build the entry's -ir-extra-need args from the whole-program union (here
 	// just the library's needs) — this is what the driver will do across modules.
-	entryArgs := []string{"-ir-unit", "entry", "-ir-ns", "a", "-ir-extern", "bcat"}
+	// The typed lowering checks the unit against B's source (-ir-sigs).
+	sigPath := filepath.Join(dir, "rn_lib.fern")
+	if err := os.WriteFile(sigPath, []byte(libSrc), 0o644); err != nil {
+		t.Fatalf("write rn_lib.fern: %v", err)
+	}
+	entryArgs := []string{"-ir-unit", "entry", "-ir-ns", "a", "-ir-extern", "bcat", "-ir-sigs", sigPath}
 	for _, n := range libNeeds {
 		entryArgs = append(entryArgs, "-ir-extra-need", n)
 	}

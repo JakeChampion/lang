@@ -3997,7 +3997,7 @@ function main(): i32 {
     cache = ssarc.merge_helpers(cache, instances);
     cache = ssarc.merge_helpers(cache, helpers);
     if (av[1] == "x86-64-linux") {
-        print(asm_ir.emit_module_ir_unit_flat(mod, true, false, "", [], mod.funcs, tab, 0, 0 - 1, cache, base));
+        print(asm_ir.emit_module_ir_unit_flat(mod, true, false, "", [], mod.funcs, tab, 0, 0 - 1, cache, base, asmcore.no_rt_lower));
     } else if (av[1] == "arm64-linux") {
         strbuf_reset();
         var state = asmcore.new_state();

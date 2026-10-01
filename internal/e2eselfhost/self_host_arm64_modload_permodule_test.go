@@ -33,7 +33,7 @@ import (
 func TestSelfHostModloadPerModuleWholeCompilerArm64(t *testing.T) {
 	armgcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
-	dir := writeSelfHostModloadProject(t)
+	dir := writeSelfHostModloadProjectTyped(t)
 
 	// Build the arm64 driver as an x86 host binary (mirrors the fixpoint harness).
 	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_modload_run.fern", "arm64driver")
@@ -41,11 +41,8 @@ func TestSelfHostModloadPerModuleWholeCompilerArm64(t *testing.T) {
 
 	// 1. Emit every unit of the whole compiler as arm64 asm, batched — the same
 	// route (and the same batch size) `emit_per_module_spawned` drives for arm64
-	// in step 5 below. The per-module eligibility frontier is target-independent
-	// (module_ir_eligible takes no target) and is checked on every push by
-	// TestSelfHostAssumeEligibleByteIdenticalX86_64, so nothing here needs to pay
-	// for the pre-check a second time.
-	units := emitAllWholeCompiler(t, x86runner, driverBin, entry, dir, "wc_arm", "arm64-linux", pmEmitAllBatch, pmGoBuiltEmitMemoryMB)
+	// in step 5 below.
+	units := emitAllWholeCompiler(t, x86runner, driverBin, entry, dir, "wc_arm", "arm64-linux", pmEmitAllBatch(), pmGoBuiltEmitMemoryMB)
 	objs := unitObjPaths(t, dir, "wc_arm", units)
 
 	// 2. Link all arm64 units into one compiler binary.

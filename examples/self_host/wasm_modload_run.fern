@@ -32,7 +32,7 @@
 // along with the emit.
 //
 // On the typed lowering the key is modloader.typed_unit_cache_key, which adds
-// a hash of the unit's lowered bodies (ircore.lowered_key) and of the view the
+// a hash of the unit's lowered bodies (ircore.lowered_digest) and of the view the
 // emit reads beyond its dependencies (TypedView.view). That lowering is
 // whole-program: it inlines callees and infers ownership across modules. So a
 // body-only edit re-emits just that module only when it moves no other
@@ -523,7 +523,7 @@ function typed_file(dir: string, entry_path: string, parts: flatten.PerModule[],
     return "";
   }
   var src_hash: string = modloader.module_src_hash(modloader.no_overlay(), dir, entry_path, parts, idx);
-  var key: string = modloader.typed_unit_cache_key(parts, tv.mods, tv.sighashes, idx, src_hash, lo, hi, ircore.lowered_key(u.cache) + ":" + tv.view);
+  var key: string = modloader.typed_unit_cache_key(parts, tv.mods, tv.sighashes, idx, src_hash, lo, hi, ircore.lowered_digest(u.cache) + ":" + tv.view);
   if (key.len() == 0) {
     return "";
   }

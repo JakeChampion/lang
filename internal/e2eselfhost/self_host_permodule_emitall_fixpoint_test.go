@@ -16,67 +16,42 @@ import (
 	"github.com/jakechampion/lang/internal/e2eharness"
 )
 
-// TestSelfHostPerModuleEmitAllFixpointX86_64 is the proof for the
-// `-assume-eligible` memory fix (#5668): a gen0 → link → gen1 → gen1-emit-all
-// byte-identity fixpoint on the whole compiler, running gen1's emit-all in
-// batches of 8 units per process — the exact configuration that OOM'd (exit 137)
-// BEFORE the fix.
+// TestSelfHostPerModuleEmitAllFixpointX86_64 is a gen0 → link → gen1 →
+// gen1-emit-all byte-identity fixpoint on the whole compiler, emitted in
+// batches of units per process: the route every whole-compiler per-module build
+// takes, the driver's own default included (emit_per_module_spawned).
 //
-// The pre-fix behaviour (recorded then deferred in docs/SELFHOST-AST-RETIREMENT.md):
-// emit-all runs a whole batch in ONE process, and each unit did TWO full
-// whole-module lowering passes (the eligibility pre-check + the emit). On the
-// self-host bump arena (no GC) those stack, so a unit peaked ~7.6 GB and a batch
-// of 8 took the 8 GiB arena to exit-137 on the second batch. `-assume-eligible`
-// drops the redundant pre-check, ~halving each unit's arena advance, so the same
-// batch of 8 now fits. This test is that A/B made permanent: same batch size,
-// with `-assume-eligible`, must run green AND byte-identically (gen0 == gen1).
+// Each process lowers the whole program through the typed lowering, and cuts
+// its units from that. Measured 2026-09-30 with the gen0 driver: the lowering
+// is 52 s at 4.4 GB, and all 116 units of one process emit in another 17 s and
+// 0.2 GB, so the batch (pmEmitAllBatch) keeps the compiler at two processes,
+// which still drives the -unit-range split. It runs UNGATED, in its own CI job
+// (emitall-fixpoint-x86_64).
 //
-// Two whole-compiler emit-all passes. Measured 2026-07-28 at **273 s** — the
-// "~12 min" this comment used to claim predates the param_is_borrowable no-alloc
-// fix, which cut the per-unit emit peak ~3x and the wall with it.
-//
-// batch=8 is essential — it IS the pre-`-assume-eligible` OOM config, and it
-// is the batch `emit_per_module_spawned` uses for the driver's own default build
-// — so it is the only batch size worth a standing gate. It runs UNGATED, in its
-// own CI job (emitall-fixpoint-x86_64).
-//
-// Not env-gated: the gen1 emit peaks ~7909 MB, and the arena is **16 GiB**
-// (x86_64.go's heapBytes and arm64.go's, both 0x400000000), so that reasoning
-// was off by 2x in the direction that retires a test. Re-measured 2026-08-03 on
-// this tree: gen0 42.0 s / 4.96 GB, gen1 108.8 s / 7.27 GB, 297.6 s total —
-// **~45% of the ceiling**, with 8.7 GB of headroom rather than 0.2 GB. The
-// config that was supposedly one commit away from exit-137 has room for the
-// compiler sources to nearly double.
-//
-// WHAT THIS DOES NOT COVER. This is the emit-ALL fixpoint: one process emits a
-// batch of units. It does not run the one-unit-per-process shape, which
-// TestSelfHostAssumeEligibleByteIdenticalX86_64 drives on every push and proves
-// byte-identical to emit-all. gen0 == gen1 byte identity is what is covered
-// HERE.
+// WHAT THIS DOES NOT COVER. The one-unit-per-process shape
+// (`-per-module-emit N`) is TestSelfHostPerModuleRoutesAgree's.
 func TestSelfHostPerModuleEmitAllFixpointX86_64(t *testing.T) {
 	// Both generations use the same batch so the comparison isolates the
 	// COMPILER, not the windowing.
-	const batchUnits = 8
+	batchUnits := pmEmitAllBatch()
 	gcc, runner := x86_64Tooling(t)
-	dir := writeSelfHostModloadProject(t)
+	dir := writeSelfHostModloadProjectTyped(t)
 	entry := filepath.Join(dir, "asm_modload_run.fern")
 
-	gen0Bin := buildSelfHostBin(t, gcc, dir, "asm_modload_run.fern", "eafix8_gen0")
+	gen0Bin := buildSelfHostBin(t, gcc, dir, "asm_modload_run.fern", "eafix_gen0")
 
 	t.Logf("gen0: emit-all of the whole compiler (-assume-eligible, batch=%d)", batchUnits)
-	unitsG0 := emitAllWholeCompiler(t, runner, gen0Bin, entry, dir, "eafix8_g0", "x86-64-linux", batchUnits, pmGoBuiltEmitMemoryMB)
-	gen1Bin := filepath.Join(dir, "eafix8_gen1")
-	objsG0 := unitObjPaths(t, dir, "eafix8_g0", unitsG0)
+	unitsG0 := emitAllWholeCompiler(t, runner, gen0Bin, entry, dir, "eafix_g0", "x86-64-linux", batchUnits, pmGoBuiltEmitMemoryMB)
+	gen1Bin := filepath.Join(dir, "eafix_gen1")
+	objsG0 := unitObjPaths(t, dir, "eafix_g0", unitsG0)
 	linkArgs := append([]string{"-static", "-nostdlib", "-no-pie"}, append(objsG0, "-o", gen1Bin)...)
 	if lout, err := exec.Command(gcc, linkArgs...).CombinedOutput(); err != nil {
 		t.Fatalf("link gen1 from gen0's emit-all units failed: %v\n%s", err, lout)
 	}
 
-	// gen1 (self-host-built) emit-all of the SAME source. With -assume-eligible
-	// each unit's peak is ~halved, so the per-process batch accumulation stays
-	// under the arena ceiling.
+	// gen1 (self-host-built) emit-all of the SAME source.
 	t.Logf("gen1: emit-all of the whole compiler (-assume-eligible, batch=%d)", batchUnits)
-	unitsG1 := emitAllWholeCompiler(t, runner, gen1Bin, entry, dir, "eafix8_g1", "x86-64-linux", batchUnits, pmSelfBuiltEmitMemoryMB)
+	unitsG1 := emitAllWholeCompiler(t, runner, gen1Bin, entry, dir, "eafix_g1", "x86-64-linux", batchUnits, pmSelfBuiltEmitMemoryMB)
 
 	if len(unitsG1) != len(unitsG0) {
 		t.Fatalf("unit count diverged: gen0 emitted %d units, gen1 emitted %d", len(unitsG0), len(unitsG1))

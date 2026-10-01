@@ -6,6 +6,7 @@ import (
 
 	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/checker"
+	"github.com/jakechampion/lang/internal/constfold"
 	"github.com/jakechampion/lang/internal/modload"
 	"github.com/jakechampion/lang/internal/monomorph"
 	"github.com/jakechampion/lang/internal/parser"
@@ -22,6 +23,9 @@ func prepared(t *testing.T, src string, httpDropMain bool) *ast.Program {
 	prog, _, err := modload.LoadSource(src)
 	if err != nil {
 		t.Fatalf("load: %v", err)
+	}
+	if err := constfold.Fold(prog, nil); err != nil {
+		t.Fatalf("constfold: %v", err)
 	}
 	info, err := checker.Check(prog)
 	if err != nil {

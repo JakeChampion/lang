@@ -35,11 +35,14 @@ import (
 // The shape is the minimal trigger: the counters are called from a LIBRARY
 // module, never the entry, so the reference and the definition land in different
 // translation units. Exit 42 proves the read also executed and returned
-// something sane (a positive high-water mark after an array literal, and a zero
+// something sane (a positive high-water mark after an array is built on the
+// heap — a literal is placed statically — and a zero
 // cliff count — and so a zero cliff WEIGHT — for a program that never appends to
 // a shared buffer).
 const perModuleCounterLibSrc = `pub function probe(): i32 {
-    var xs: i32[] = [1, 2, 3];
+    var xs: i32[] = [];
+    var i: i32 = 1;
+    while (i <= 3) { xs = xs.append(i); i = i + 1; }
     var mark: i64 = __heap_bump_bytes();
     if (mark <= (0 as i64)) { return 1; }
     if (xs.len() != 3) { return 2; }

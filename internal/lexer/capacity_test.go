@@ -7,11 +7,12 @@ import (
 )
 
 // The token slice is sized at one token per 6 source bytes, from the density of
-// the repository's own Fern sources. This pins that population: a single dense
-// file runs far tighter than the average (code with no comments or long string
-// literals reaches one token per 2.5 bytes), so the reserve is a starting point
-// rather than a bound, and the guard is that the corpus as a whole still sits
-// on the far side of the divisor.
+// the self-host compiler's sources. This pins that population: a single dense
+// file runs far tighter than the average (the median file is 6.35 bytes per
+// token, and code with no comments or long string literals reaches one token
+// per 2.5 bytes), so the reserve is a starting point rather than a bound, and
+// the guard is that the corpus as a whole still sits on the far side of the
+// divisor.
 func TestTokenSliceIsSizedForTheCorpusDensity(t *testing.T) {
 	files, err := filepath.Glob(filepath.Join("..", "..", "examples", "self_host", "*.fern"))
 	if err != nil || len(files) == 0 {

@@ -142,6 +142,7 @@ function run(): i32 {
   var lm_inf: parser.Module = parser.infer_ret_types_module(lm);
   var all_funcs: parser.FuncDecl[] = lm_inf.funcs;
   var all_structs: parser.StructDecl[] = lm_inf.structs;
+  var siblings: parser.Module[] = [];
   var sp: i32 = 0;
   while (sp < sig_paths.len()) {
     var ssrc: string = "";
@@ -156,7 +157,9 @@ function run(): i32 {
       }
     }
     if (sok) {
-      var smod: parser.Module = parser.infer_ret_types_module(ircore.lift_lambdas(parser.parse_module(lexer.tokenize(ssrc))));
+      var sraw: parser.Module = parser.parse_module(lexer.tokenize(ssrc));
+      siblings = siblings.append(sraw);
+      var smod: parser.Module = parser.infer_ret_types_module(ircore.lift_lambdas(sraw));
       var sf: i32 = 0;
       while (sf < smod.funcs.len()) {
         all_funcs = all_funcs.append(smod.funcs[sf]);
@@ -231,6 +234,10 @@ function run(): i32 {
   // all_structs is settled by here, so the index is built once for the emit
   // rather than per lookup inside it (#8178).
   var all_stab: irlower.StructTab = irlower.struct_tab(all_structs);
+  if ((unit == "entry" || unit == "lib") && semlower.sem_ir_on()) {
+    print(typed_unit(mod, siblings, unit == "entry", ns, extra, target));
+    return 0;
+  }
   if (unit == "entry") {
     print(asm_ir.emit_module_ir_unit(lm_inf, true, true, ns, extra, all_funcs, all_stab, 0, 0 - 1, []));
     return 0;
@@ -255,4 +262,41 @@ function run(): i32 {
   }
   print(emitted);
   return 0;
+}
+
+// typed_unit emits `mod` as one unit of a per-module build over the typed
+// lowering. The typed lowering checks a whole program, so it lowers `mod`
+// together with its `-ir-sigs` siblings and emits `mod`'s share; a call to a
+// sibling it was not given is the checker's undefined-name error. Siblings are
+// never inlined, so which of them were passed cannot change `mod`'s code.
+function typed_unit(mod: parser.Module, siblings: parser.Module[], is_entry: boolean, ns: string, extra: string[], target: string): string {
+  var whole: parser.Module = mod;
+  for sm in siblings {
+    var calls: parser.FuncDecl[] = [];
+    for fd in sm.funcs {
+      calls = calls.append(parser.FuncDecl { ...fd, no_inline: true });
+    }
+    whole = parser.Module {
+      ...whole,
+      funcs: util.append_all(whole.funcs, calls),
+      structs: util.append_all(whole.structs, sm.structs),
+      aliases: util.append_all(whole.aliases, sm.aliases),
+      enums: util.append_all(whole.enums, sm.enums),
+      impls: util.append_all(whole.impls, sm.impls),
+      trait_reqs: util.append_all(whole.trait_reqs, sm.trait_reqs),
+      trait_decls: util.append_all(whole.trait_decls, sm.trait_decls),
+    };
+  }
+  var d: semlower.Driven = semlower.driven(whole, target);
+  var g: ircore.Gated = semlower.program(d);
+  var parts: parser.Module[] = [mod];
+  for sm in siblings {
+    parts = parts.append(sm);
+  }
+  var u: ircore.Units = ircore.split_units(g, parts, 0);
+  var needs: string[] = [];
+  if (is_entry) {
+    needs = extra;
+  }
+  return asm_ir.emit_module_ir_unit_flat(u.mods[0], is_entry, true, ns, needs, g.im.funcs, g.stab, 0, 0 - 1, u.caches[0], g.base, d.sub.rt_lower);
 }

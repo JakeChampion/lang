@@ -3395,12 +3395,48 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(".Laie_ret:\n");
     s = s.write("    ret\n");
   }
+  // __fern_str_own(s@8(%rsp)) -> a string its holder owns a unit of. A
+  // counted string is retained and answered. An arena view box, whose
+  // immortal rc cannot count a second holder, is answered as a fresh box
+  // over the same bytes. A view box outside the arena (a literal) is never
+  // freed, so it is answered as is.
+  if (s.has_need("str_own")) {
+    s = s.write("__fn___fern_str_own:\n");
+    s = s.write("    movq 8(%rsp), %rax\n");
+    s = s.write("    testb $1, %al\n");
+    s = s.write("    jnz .Lso_ret\n");
+    s = s.write("    cmpq $0x10000, %rax\n");
+    s = s.write("    jb .Lso_ret\n");
+    s = s.write("    movl -8(%rax), %ecx\n");  // rc
+    s = s.write(san_poison_check("%ecx"));
+    s = s.write("    testl %ecx, %ecx\n");
+    s = s.write("    js .Lso_view\n");
+    s = s.write("    pushq %rax\n");
+    s = s.write("    call __fn___fern_rc_inc\n");
+    s = s.write("    popq %rax\n");
+    s = s.write("    ret\n");
+    s = s.write(".Lso_view:\n");
+    s = s.write("    leaq -8(%rax), %rdx\n");  // box base
+    s = s.write("    cmpq __fern_heap_base(%rip), %rdx\n");
+    s = s.write("    jb .Lso_ret\n");
+    s = s.write("    cmpq __fern_heap_end(%rip), %rdx\n");
+    s = s.write("    jae .Lso_ret\n");
+    s = s.write("    pushq %rax\n");
+    s = s.write("    movq $24, %rdi\n");
+    s = s.write("    call __fern_alloc\n");
+    s = s.write("    popq %rcx\n");  // the shared box
+    s = s.write("    movq $-1, (%rax)\n");
+    s = s.write("    movq (%rcx), %rdx\n");
+    s = s.write("    movq %rdx, 8(%rax)\n");  // data
+    s = s.write("    movq 8(%rcx), %rdx\n");
+    s = s.write("    movq %rdx, 16(%rax)\n");  // len
+    s = s.write("    addq $8, %rax\n");
+    s = s.write(".Lso_ret:\n");
+    s = s.write("    ret\n");
+  }
   // __fern_arr_own_elems(dst@16(%rsp), src@8(%rsp)) -> dst: dst's first
-  // len(src) elements alias src's, and dst takes its own unit on each. A
-  // counted element is retained; an arena string view box, whose immortal
-  // rc cannot count a second holder, is replaced in dst by a fresh box over
-  // the same bytes. A view box outside the arena (a literal) is never freed,
-  // so it is shared as is. %rbx/%r12/%r13 hold dst/len/i.
+  // len(src) elements alias src's, and each is replaced by the unit
+  // __fern_str_own answers for it. %rbx/%r12/%r13 hold dst/len/i.
   if (s.has_need("arr_own_elems")) {
     s = s.write("__fn___fern_arr_own_elems:\n");
     s = s.write("    movq 16(%rsp), %rax\n");  // dst (also the result)
@@ -3418,37 +3454,10 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(".Laoe_loop:\n");
     s = s.write("    cmpq %r12, %r13\n");
     s = s.write("    jge .Laoe_done\n");
-    s = s.write("    movq 8(%rbx,%r13,8), %rax\n");  // element i
-    s = s.write("    testb $1, %al\n");
-    s = s.write("    jnz .Laoe_next\n");
-    s = s.write("    cmpq $0x10000, %rax\n");
-    s = s.write("    jb .Laoe_next\n");
-    s = s.write("    movl -8(%rax), %ecx\n");  // rc
-    s = s.write(san_poison_check("%ecx"));
-    s = s.write("    testl %ecx, %ecx\n");
-    s = s.write("    js .Laoe_view\n");
-    s = s.write("    pushq %rax\n");
-    s = s.write("    call __fn___fern_rc_inc\n");
+    s = s.write("    pushq 8(%rbx,%r13,8)\n");  // element i
+    s = s.write("    call __fn___fern_str_own\n");
     s = s.write("    addq $8, %rsp\n");
-    s = s.write("    jmp .Laoe_next\n");
-    s = s.write(".Laoe_view:\n");
-    s = s.write("    leaq -8(%rax), %rdx\n");  // box base
-    s = s.write("    cmpq __fern_heap_base(%rip), %rdx\n");
-    s = s.write("    jb .Laoe_next\n");
-    s = s.write("    cmpq __fern_heap_end(%rip), %rdx\n");
-    s = s.write("    jae .Laoe_next\n");
-    s = s.write("    pushq %rax\n");
-    s = s.write("    movq $24, %rdi\n");
-    s = s.write("    call __fern_alloc\n");
-    s = s.write("    popq %rcx\n");  // the shared box
-    s = s.write("    movq $-1, (%rax)\n");
-    s = s.write("    movq (%rcx), %rdx\n");
-    s = s.write("    movq %rdx, 8(%rax)\n");  // data
-    s = s.write("    movq 8(%rcx), %rdx\n");
-    s = s.write("    movq %rdx, 16(%rax)\n");  // len
-    s = s.write("    addq $8, %rax\n");
     s = s.write("    movq %rax, 8(%rbx,%r13,8)\n");
-    s = s.write(".Laoe_next:\n");
     s = s.write("    incq %r13\n");
     s = s.write("    jmp .Laoe_loop\n");
     s = s.write(".Laoe_done:\n");
@@ -9333,6 +9342,9 @@ function helper_call_needs(name: string, s: asmcore.EmitState): asmcore.EmitStat
   if (name == "__fern_arr_own_elems") {
     s = s.need("arr_own_elems");
   }
+  if (name == "__fern_str_own") {
+    s = s.need("str_own");
+  }
   // The VIEW-aware string[] element walk (#6544) is gated the same way
   // and for the same reason: its body's inner
   // `call __fn___fern_str_view_free` must not appear in a binary that
@@ -10458,47 +10470,22 @@ pub function emit_module_ir_gated(mod: parser.Module, known: string[]): string {
 // ir_const_numeric_run's rebuilt copy of it. ircore.no_sub() is this
 // function behaving exactly as it did before the seam existed.
 pub function emit_module_ir_gated_sub(mod: parser.Module, known: string[], sub: ircore.Sub): string {
-  var sm: parser.Module = ircore.script_normalized(mod);
-  // The merged-bundle SIZE budget that stood here is gone with its twin in
-  // eligible_core_known_impl — see the note there for why (#3425's large-tier
-  // freelist is fixed, and since #5972 the budget was a refusal rather than a
-  // fallback). So is the function-less refusal, for the reason given there.
-  //
-  // A main-less module is admitted now: emit_module_ir_unit's `_start` exits 0
-  // instead of calling a __fn_main that does not exist (see its has_main branch).
-  // Was a blanket refusal, which is what kept the bootstrap smoke test's
-  // main-less compiler sources on the AST emitter.
-  // Infer ret types BEFORE lowering the cache so the side-tables see inferred
-  // return types (emit_module_ir_unit re-infers idempotently, keeping the cache
-  // indices aligned with the module it emits).
-  var im: parser.Module = parser.infer_ret_types_module(sm);
-  // Derive the emit-side side-tables ONCE (over im.funcs/im.structs — the whole-
-  // program view, all_funcs == im.funcs here) exactly as emit_module_funcs does,
-  // so the cached lowering is byte-identical to what emit would produce.
-  // The whole-program registry set is the most expensive thing this driver
-  // computes (both interprocedural fixpoints plus fn_sigs_for_borrow); it is
-  // built once — here, or by the substitution's producer — and handed to the
-  // unit emitter, which folds the per-module tails onto it itself (#8199).
-  var imtab: irlower.StructTab = irlower.struct_tab(im.structs);
-  var base: irlower.FnSigs = ircore.sub_base(sub, im.funcs, imtab);
-  var g: ircore.Lowered = ircore.lower_gated(im, imtab, irlower.fn_sigs_with_dyn(base, im.trait_reqs), known, false, sub);
+  // A main-less module is admitted: the unit's `_start` exits 0 instead of
+  // calling a __fn_main that does not exist (see its has_main branch).
+  var g: ircore.Gated = ircore.gate_program(mod, known, sub);
   if (!g.ok) {
     return "";
   }
   // Every function eligible — emit from the cache (no second lowering).
-  return emit_unit_flat_with(im, true, false, "", [], im.funcs, imtab, 0, 0 - 1, ircore.inline_tiny_leaves(im, ircore.sub_cache(sub, g.cache)), base, sub.rt_lower);
+  return emit_module_ir_unit_flat(g.im, true, false, "", [], g.im.funcs, g.stab, 0, 0 - 1, ircore.inline_tiny_leaves(g.im, g.cache), g.base, sub.rt_lower);
 }
 
 pub function emit_module_ir_unit(mod: parser.Module, is_entry: boolean, globl_defs: boolean, str_ns: string, extra_needs: string[], all_funcs: parser.FuncDecl[], all_structs: irlower.StructTab, lo: i32, hi: i32, cache: irlower.LowerResult[]): string {
-  return emit_module_ir_unit_flat(mod, is_entry, globl_defs, str_ns, extra_needs, all_funcs, all_structs, lo, hi, cache, ircore.wp_fn_sigs(all_funcs, all_structs));
-}
-
-pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, globl_defs: boolean, str_ns: string, extra_needs: string[], all_funcs: parser.FuncDecl[], all_structs: irlower.StructTab, lo: i32, hi: i32, cache: irlower.LowerResult[], b: irlower.FnSigs): string {
-  return emit_unit_flat_with(mod, is_entry, globl_defs, str_ns, extra_needs, all_funcs, all_structs, lo, hi, cache, b, asmcore.no_rt_lower);
+  return emit_module_ir_unit_flat(mod, is_entry, globl_defs, str_ns, extra_needs, all_funcs, all_structs, lo, hi, cache, ircore.wp_fn_sigs(all_funcs, all_structs), asmcore.no_rt_lower);
 }
 
 // `rt` lowers the runtime helpers this unit appends (asmcore.EmitState.rt_lower).
-function emit_unit_flat_with(mod: parser.Module, is_entry: boolean, globl_defs: boolean, str_ns: string, extra_needs: string[], all_funcs: parser.FuncDecl[], all_structs: irlower.StructTab, lo: i32, hi: i32, cache: irlower.LowerResult[], b: irlower.FnSigs, rt: (string) => irlower.LowerResult[]): string {
+pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, globl_defs: boolean, str_ns: string, extra_needs: string[], all_funcs: parser.FuncDecl[], all_structs: irlower.StructTab, lo: i32, hi: i32, cache: irlower.LowerResult[], b: irlower.FnSigs, rt: (string) => irlower.LowerResult[]): string {
   // Infer return types for unannotated functions so the IR path's
   // ret-type-keyed call tagging (str_ret_fns_of / opt_ret_fns_of / …)
   // matches what module_with_builtins supplies.

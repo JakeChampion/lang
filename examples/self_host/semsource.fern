@@ -99,6 +99,9 @@ struct State {
   // What a `?` failure edge runs before it returns: the defer desugar's
   // cleanup behind `__dfa_tryall` and `__dfa_tryerr` (parser.lower_defers_body).
   try_cleanup: ast.Stmt[],
+  // Whether that cleanup is being lowered. A `?` inside a defer action
+  // (E079) would replay it again without end.
+  replaying: boolean,
   // The pattern bindings read or written outside the arm that binds them
   // (`escaping_bindings`), and the payload types the arms have shown for
   // them so far, which `build` binds at the top of the body.
@@ -1704,6 +1707,11 @@ function unary(e: ast.Expr, u: ast.ExprUnary, s: State, expected: typeinfo.Type)
 // enforced both the shape and the `@try` opt-in before any of this runs, so
 // this re-derives only what the lowering needs rather than re-policing them.
 function try_expr(u: ast.ExprUnary, s: State): Value {
+  // The checker refuses this shape; a pipeline that lowers without checking
+  // first (asm_modload_run) reaches it.
+  if (s.replaying) {
+    return refused(s, "`?` inside a defer action (E079)");
+  }
   var v: Value = expr(u.operand, s, typeinfo.unchecked());
   s = v.s;
   if (!s.ok) {
@@ -1754,7 +1762,7 @@ function try_expr(u: ast.ExprUnary, s: State): Value {
   // The cleanup replays deferred assignments on the failure edge only, so
   // the success edge resumes with the bindings the test saw.
   var entry: State = s;
-  var gone: State = stmts(s.try_cleanup, open(s, leave, [pred]));
+  var gone: State = stmts(s.try_cleanup, open(State { ...s, replaying: true }, leave, [pred]));
   if (!gone.ok) {
     return Value { s: gone, id: 0 };
   }
@@ -1778,7 +1786,7 @@ function try_expr(u: ast.ExprUnary, s: State): Value {
   }
   var out: Value = define(gone, ssasem.variant_new(), args, 0, rnames[1], s.result);
   s = terminate(out.s, t_ret(out.id));
-  s = State { ...s, names: entry.names, vals: entry.vals, scope: entry.scope };
+  s = State { ...s, names: entry.names, vals: entry.vals, scope: entry.scope, replaying: entry.replaying };
 
   if (unit_good) {
     return define(open(s, good, [pred]), 1, [], 0, "", t_void());
@@ -2201,26 +2209,15 @@ function map_delete(c: ast.ExprCall, recv: Value, s: State, t: typeinfo.Type): V
 // release what the map still holds, so it is refused here rather than
 // described as owned.
 function map_column(s: State, recv: Value, kind: i32, elem: typeinfo.Type): Value {
-  if (ssasem.is_view(elem)) {
-    return refused(s, view_column_read());
-  }
   if (!ssasem.retained_column(elem)) {
     return refused(s, "aliased column element: " + typeinfo.spelling(elem));
   }
   return define(s, kind, [recv.id], 0, "", typeinfo.TypeArray { elem: elem, view: false });
 }
 
-// A read that hands out a unit of a value column retains the box the column
-// holds, and a view's retain is a no-op, so the reader's release would free
-// the map's own view. Such a read needs a fresh view of the entry.
-function view_column_read(): string {
-  return "a read of a view map value would share the column's view box";
-}
-
 // An INSERT's key joins the map's key column, and `keys` would hand out the
-// column's own view box as a value column's read would, so a view key is
-// refused there. A READ's key is hashed and
-// compared, and `operation_supplies` counts no unit for it, so a view is an
+// column's own view box, so a view key is refused there. A READ's key is
+// hashed and compared, and `operation_supplies` counts no unit for it, so a view is an
 // ordinary lend and takes the same retag a borrowed parameter offers.
 function map_key_value(e: ast.Expr, s: State, t: typeinfo.Type, stored: boolean): Value {
   var k: Value = expr(e, s, ssasem.map_key(t));
@@ -2260,9 +2257,6 @@ function map_write(c: ast.ExprCall, recv: Value, s: State, t: typeinfo.Type): Va
 // A lookup borrows the map and the key and answers a scalar the map goes on
 // owning: `has` takes the key alone, `get_or` a default of the value type.
 function map_read(c: ast.ExprCall, recv: Value, s: State, t: typeinfo.Type, kind: i32, result: typeinfo.Type): Value {
-  if (kind != ssasem.map_has() && ssasem.is_view(ssasem.map_value(t))) {
-    return refused(s, view_column_read());
-  }
   var k: Value = map_key_value(c.args[0], s, t, false);
   s = k.s;
   if (!s.ok) {
@@ -2560,6 +2554,17 @@ function dyn_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s: St
   var receiver: typeinfo.Type = s.values[recv.id];
   var traits: string[] = parser.dyn_trait_set(typeinfo.spelling(receiver));
   var arms: string[] = dyn_arms(s.funcs, s.impls, fa.field, traits);
+  if (arms.len() == 0 && !any_implementer(s.impls, traits)) {
+    // No type implements the trait, so no value of the receiver's type
+    // exists and the call cannot execute; native emits the dispatch over
+    // an empty vtable. An implementer with no arm for the name is an
+    // associated function reached through dyn, which the checker refuses.
+    var ty: typeinfo.Type = checked(c, s);
+    if (statement) {
+      ty = t_void();
+    }
+    return unreachable_value(terminate(s, t_unreachable()), ty);
+  }
   if (arms.len() == 0) {
     return refused(s, "dyn method has no implementation: " + fa.field);
   }
@@ -3111,7 +3116,33 @@ function variant_call(e: ast.Expr, name: string, c: ast.ExprCall, s: State, expe
   if (names_variant(s, whole, name)) {
     return variant(name, whole, c.args, s);
   }
+  if (c.args.len() == 1 && names_member(s, whole, name)) {
+    return member_literal(name, whole, c.args[0], s);
+  }
   return refused(s, "call target has no semantic contract: " + name);
+}
+
+// A name is a member literal when the union of structs it is written against
+// (`type Expr = Add | Mul`) has a member of that name.
+function names_member(s: State, whole: typeinfo.Type, name: string): boolean {
+  var owner: string = union_name(whole);
+  if (owner == "" || union_layout(s, owner) != semrecords.layout_member()) {
+    return false;
+  }
+  return checker.variant_shape_sig(s.scope, name, owner).name.len() > 0;
+}
+
+// `Add(a)` builds the member from the struct value it is given, as an
+// implicit wrap of `a` does.
+function member_literal(name: string, whole: typeinfo.Type, written: ast.Expr, s: State): Value {
+  var v: Value = expr(written, s, checked(written, s));
+  if (!v.s.ok) {
+    return v;
+  }
+  if (struct_name(v.s.values[v.id]) != name) {
+    return refused(v.s, "union member literal: " + name + " takes " + name + ", not " + typeinfo.spelling(v.s.values[v.id]));
+  }
+  return define(v.s, ssasem.variant_up(), [v.id], 0, name, whole);
 }
 
 // A destination that names a builtin union but settles nothing in it is no
@@ -5265,7 +5296,7 @@ function initial(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Co
     ok: true, why: "", blocks: [], cur: entry, live: true, next_block: 1, values: [],
     names: [], vals: [], scope: scope, result: result_type(fd, scope, binding, contracts), loops: [], contracts: contracts, calls: [],
     template: generic_decl(fd), binding: binding, requests: [], foreign: [], handers: handers, shadows: shadows, views: views,
-    name: name, modes: [], funcs: funcs, impls: impls, try_cleanup: try_cleanup(fd.body), escaping: escaping_bindings(fd.body), learned: [], learned_types: [],
+    name: name, modes: [], funcs: funcs, impls: impls, try_cleanup: try_cleanup(fd.body), replaying: false, escaping: escaping_bindings(fd.body), learned: [], learned_types: [],
   };
 }
 
@@ -6032,6 +6063,16 @@ function shadowed_builtins(mod: parser.Module): string[] {
     }
   }
   return out;
+}
+
+// any_implementer reports whether some type implements every trait of a dyn set.
+function any_implementer(impls: parser.ImplInfo[], traits: string[]): boolean {
+  for imp in impls {
+    if (implements_traits(impls, util.base_type_name(imp.impl_type), traits)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function implements_traits(impls: parser.ImplInfo[], n: string, traits: string[]): boolean {
