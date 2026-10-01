@@ -27,6 +27,7 @@
 // unchanged rather than re-wrapped by each frame it passes through.
 //
 // The app writes its report to stderr; stdout carries TAP-13 from std/test.
+
 import "std/test";
 import "std/i32";
 import "std/string";
@@ -42,6 +43,7 @@ struct Fault { step: string, why: string, ran: string[] }
 struct Stage { name: string, run: (Ctx) => Result[Ctx, Fault] }
 
 // ------------------------------------------------------------- the stages
+
 function note(c: Ctx, name: string): Ctx {
   return Ctx { value: c.value, ran: c.ran.append(name) };
 }
@@ -88,6 +90,7 @@ function nop(name: string): Stage {
 }
 
 // ----------------------------------------------------------- the pipeline
+
 // The version under test. `?` unwinds to this function's return, handing the
 // caller the fault the stage produced.
 function run_pipeline(stages: Stage[], input: Ctx): Result[Ctx, Fault] {
@@ -130,6 +133,7 @@ function concat_stages(a: Stage[], b: Stage[]): Stage[] {
 }
 
 // ---------------------------------------------------------------- corpus
+
 function fresh(): Ctx {
   var none: string[] = [];
 
@@ -205,6 +209,7 @@ function describe(r: Result[Ctx, Fault]): string {
 }
 
 // ----------------------------------------------------------------- tests
+
 // `?` against the control flow it stands for, over every pipeline.
 function test_the_try_operator_matches_the_explicit_match(): test.TestOutcome {
   var ps: Stage[][] = pipelines();

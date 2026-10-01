@@ -274,7 +274,9 @@ derive_json                                          0
 derive_multi_payload                                 0
 div_modulo                                           0
 divmod_inline                                        0
+dyn_no_implementer                                   0
 dyn_trait_dispatch                                   0
+dyn_two_word_dispatch                                0
 elementary_automaton                                 0
 empty_array                                          0
 enum_array_match                                     0

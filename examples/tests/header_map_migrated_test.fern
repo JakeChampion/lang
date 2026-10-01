@@ -17,6 +17,7 @@ import "std/headers";
 // print-then-grep).
 //
 // Needs `import "std/headers";`.
+
 function test_case_insensitive_get(): test.TestOutcome {
   var h: HeaderMap = headers.header_map_new();
   h = h.set("Content-Type", "application/json");

@@ -33,6 +33,7 @@
 // apostrophes, so `don't` is one word and `end.` loses its full stop.
 //
 // The app writes its report to stderr; stdout carries TAP-13 from std/test.
+
 import "std/test";
 import "std/i32";
 import "std/string";
@@ -40,6 +41,7 @@ import "std/string";
 struct Count { word: string, n: i32 }
 
 // ------------------------------------------------------------- tokenising
+
 function is_lower(c: u8): boolean {
   return c >= 97 && c <= 122;
 }
@@ -85,6 +87,7 @@ function words_of(text: string): string[] {
 }
 
 // ---------------------------------------------------------------- ordering
+
 // Byte-wise `<` on strings: `<` is not defined for string in Fern, and the tie
 // rule needs a total order on words.
 function str_lt(a: string, b: string): boolean {
@@ -112,6 +115,7 @@ function beats(a: Count, b: Count): boolean {
 }
 
 // ---------------------------------------------------------------- counting
+
 function index_of_word(cs: Count[], w: string): i32 {
   var i: i32 = 0;
   while (i < cs.len()) {
@@ -170,6 +174,7 @@ function top(text: string, n: i32): Count[] {
 }
 
 // ---------------------------------------------------------------- oracle
+
 // The count of one word, by rescanning the text. Shares nothing with the
 // table above — no accumulation, no lookup, no ordering.
 function count_of(text: string, w: string): i32 {
@@ -186,6 +191,7 @@ function count_of(text: string, w: string): i32 {
 }
 
 // ---------------------------------------------------------------- corpus
+
 // Mostly ties on purpose: a comparator that ignores the tie rule ranks these
 // by insertion order and looks perfectly plausible doing it.
 function texts(): string[] {
@@ -227,6 +233,7 @@ function show(cs: Count[]): string {
 }
 
 // ----------------------------------------------------------------- tests
+
 // The ranking is the total order, at every position — not just at the top.
 function test_the_ranking_obeys_the_tie_rule_throughout(): test.TestOutcome {
   var ts: string[] = texts();

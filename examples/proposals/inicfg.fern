@@ -38,6 +38,7 @@ import "std/i64";
 import "std/string";
 
 // ---------------------------------------------------------------- values ---
+
 // kind: 0 = int, 1 = bool, 2 = string
 struct Entry {
   section: string,
@@ -77,6 +78,7 @@ function is_digit(c: u8): boolean {
 }
 
 // ---------------------------------------------------------------- parsing ---
+
 // A bare decimal integer, optionally signed. Returns ok=false for anything
 // else, INCLUDING the empty string and a lone "-", so a malformed number is
 // never silently a zero.
@@ -226,6 +228,7 @@ function parse(text: string): ParseR {
 }
 
 // ---------------------------------------------------------- typed lookups ---
+
 function find(cfg: Config, section: string, key: string): i32 {
   var i: i32 = 0;
   while (i < cfg.entries.len()) {
@@ -286,6 +289,7 @@ function get_str(cfg: Config, section: string, key: string): StrR {
 }
 
 // ----------------------------------------------------------------- render ---
+
 function render_value(e: Entry): string {
   if (e.kind == 0) {
     return e.i.to_string();
@@ -370,6 +374,7 @@ function same_entries(a: Config, b: Config): boolean {
 }
 
 // ------------------------------------------------------------- generators ---
+
 function join_lines(lines: string[]): string {
   var out: string = "";
   var i: i32 = 0;
@@ -447,6 +452,7 @@ function splice(lines: string[], at: i32, replacement: string): string[] {
 }
 
 // ------------------------------------------------------------------ tests ---
+
 // Sweep the fault over every position, for every malformation. A parser that
 // reports where it stopped, or a fixed line, or the count of SIGNIFICANT lines,
 // fails somewhere in this sweep.

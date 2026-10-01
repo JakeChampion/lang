@@ -13,6 +13,7 @@
 //
 // The app writes its report to stderr; stdout carries TAP-13 from
 // std/test, so the file is its own test suite.
+
 import "std/test";
 import "std/json";
 import "std/i32";
@@ -222,6 +223,7 @@ function locate(s: string): Loc {
 }
 
 // ---------------------------------------------------------------- tests
+
 function good_docs(): string[] {
   return [
     "null",
@@ -367,6 +369,7 @@ function test_json_parse_still_agrees(): test.TestOutcome {
 }
 
 // ----------------------------------------------------------------- app
+
 function main(): i32 {
   eprint("json_locate — locating the first syntax error in a document");
   var xs: string[] = bad_docs();

@@ -48,7 +48,7 @@ var allRuntimeNeedRoots = []string{
 	"read_file_bytes", "sleep_ms", "str_bytes", "str_case", "str_cmp",
 	"str_concat", "str_eq", "str_from_bytes", "str_lines", "str_print",
 	"str_read_line", "str_repeat", "str_replace",
-	"str_split", "str_trim", "strbuf",
+	"str_own", "str_split", "str_trim", "strbuf",
 }
 
 // assertAsmLinks writes asm to <dir>/<name>.s and links it as a static,

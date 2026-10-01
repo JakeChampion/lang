@@ -8,6 +8,7 @@ import "std/option";
 // asserted by matching the resolved JsonValue's payload. Exercises
 // object descent, array indexing, the ~1/~0 key escapes, the empty
 // reference (whole doc) and empty-key ("/") cases, and the miss paths.
+
 // Extract a JNumber's raw payload string, or "" if the value isn't a
 // JNumber — lets a test assert a resolved leaf without json_get_i32.
 function num_of(v: JsonValue): string {

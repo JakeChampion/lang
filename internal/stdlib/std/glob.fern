@@ -17,6 +17,7 @@
 // Backtracking matcher (like fnmatch); worst-case time is exponential
 // on pathological patterns with many `*`, as with any backtracking
 // globber — fine for realistic path patterns.
+
 // __glob_class tests `ch` against the bracket class starting at `[`
 // (index `start` in `p`), returning (matched, index-just-after-']').
 function __glob_class(p: string, start: i32, ch: i32): (boolean, i32) {

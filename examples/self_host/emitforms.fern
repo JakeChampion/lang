@@ -4,6 +4,7 @@
 // The wasi:cli/run component framing chooses a wrapper from the program's WASI
 // usage; a playground must build the same component the CLI writes, so the
 // choice is made once.
+
 import "./ircore";
 import "./parser";
 import "./wasm_ir";
@@ -42,13 +43,13 @@ pub function http_entry_missing(entry: parser.Module, target: string): string {
     }
     i = i + 1;
   }
-  return "fern: -target wasm32-wasi-http: the program declares no `function handle(req: HttpRequest, plat: Platform): HttpResponse` for the host to call\n";
+  return "fern: -target wasm32-wasi-http: the program declares no `function handle(req: HttpRequest, plat: Platform): HttpResponse` for the host to call";
 }
 
 // http_refused is what a caller prints when wasm_http_component's composer
 // refused the core: an import the proxy world does not grant.
 pub function http_refused(why: string): string {
-  return "fern: -target wasm32-wasi-http: the proxy world cannot take this handler: " + why + "\n";
+  return "fern: -target wasm32-wasi-http: the proxy world cannot take this handler: " + why;
 }
 
 // wasm_http_core is the handler's reactor core in text form: the component

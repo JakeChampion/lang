@@ -6,9 +6,11 @@
 // fern CLI can `import "./arm64_native"` and drive emit -> assemble ->
 // Mach-O without cross-module bare references. The pieces stay logically
 // separable; the section banners below mark the former file boundaries.
+
 // ============================================================
 // PART 1 — AArch64 encoder + named-label assembler
 // ============================================================
+
 // examples/self_host/arm64_encode.fern — a self-hosted AArch64 (arm64)
 // machine-code encoder: one function per instruction form, each appending
 // the 4-byte fixed-width little-endian encoding to an `i32[]` byte buffer.
@@ -32,7 +34,9 @@
 //     the append wrappers thread the byte buffer.
 //   * This module is import-free so the native emitter can `import
 //     "./arm64_encode"` and the unit test can concatenate it with a driver.
+
 // ---- register name helpers (5-bit register numbers) ----
+
 function arm64_x0(): i32 {
   return 0;
 }
@@ -58,6 +62,7 @@ function arm64_xzr(): i32 {
 }
 
 // ---- byte emitter ----
+
 // arm64_le32 appends a 32-bit instruction word (held in an i64),
 // little-endian.
 function arm64_le32(buf: i32[], v: i64): i32[] {
@@ -69,6 +74,7 @@ function arm64_le32(buf: i32[], v: i64): i32[] {
 }
 
 // ---- move-wide family ----
+
 // arm64_movz_word encodes `movz Xd, #imm16, lsl #shift` (move-wide-zero):
 // load imm16 into the given 16-bit slot of Xd, zeroing the rest. shift
 // must be one of 0, 16, 32, 48.
@@ -131,6 +137,7 @@ function arm64_movn(buf: i32[], rd: i32, imm16: i32, shift: i32, w: boolean): i3
 }
 
 // ---- add / sub (immediate) ----
+
 // ---- the add / sub / adds / subs family ----
 //
 // One family, four mnemonics, three operand forms. They differ only in fixed
@@ -142,6 +149,7 @@ function arm64_movn(buf: i32[], rd: i32, imm16: i32, shift: i32, w: boolean): i3
 // the bare register one, and every immediate at or above 4096 was masked to
 // twelve bits and silently lost (`sub sp, sp, #4096` became `sub sp, sp, #0`,
 // so a frame that big was never allocated).
+
 // arm64_addsub_base is the fixed-bit prefix: add is 0, sub sets bit 30, the
 // flag-setting pair sets bit 29, a 64-bit operation sets sf, and the immediate
 // form has a different opcode field from the shifted-register one.
@@ -248,6 +256,7 @@ function arm64_subimm(buf: i32[], rd: i32, rn: i32, imm12: i32, w: boolean): i32
 }
 
 // ---- add / sub / mov (register) ----
+
 // SP is not addressable as Rn in the shifted-register form — there Rn=31 means
 // XZR — so `add x0, sp, x0` assembled as a shifted-register add computes
 // `x0 = 0 + x0` and silently DROPS THE STACK BASE (#6060). GAS uses the
@@ -309,6 +318,7 @@ function arm64_movreg(buf: i32[], rd: i32, rm: i32, w: boolean): i32[] {
 }
 
 // ---- system / control ----
+
 // arm64_svc_word encodes `svc #imm16` -> 0xD4000001 | imm16<<5.
 // The Darwin syscall trap is `svc #0x80`.
 function arm64_svc_word(imm16: i32): i64 {
@@ -345,6 +355,7 @@ function arm64_blr(buf: i32[], rn: i32): i32[] {
 }
 
 // ---- compare (subs to XZR) ----
+
 // arm64_cmpreg_word encodes `cmp Xn, Xm` — AArch64 spells it
 // `subs XZR, Xn, Xm` (shifted-register, zero shift) -> sets NZCV.
 //   0xEB000000 | Rm<<16 | Rn<<5 | 31
@@ -410,6 +421,7 @@ function arm64_le(): i32 {  // <= (signed)
 // A *backward* branch (the bottom of a loop) knows its target offset when
 // it is emitted, so the byte delta is `target_off - buf.len()`; forward
 // branches await the label/fixup pass (a later slice).
+
 // arm64_b_word encodes `b <rel>` -> 0x14000000 | imm26, imm26 = rel/4
 // as a signed 26-bit field.
 function arm64_b_word(rel: i32): i64 {
@@ -468,6 +480,7 @@ function arm64_cbnz(buf: i32[], rt: i32, rel: i32, w: boolean): i32[] {
 // case there is no label table yet — the driver tracks the one offset it
 // needs. arm64 branch displacements are relative to the branch instruction
 // itself, so the byte delta is simply `target_off - branch_off`.
+
 // arm64_rel returns the PC-relative byte delta from a branch at branch_off
 // to target_off.
 function arm64_rel(target_off: i32, branch_off: i32): i32 {
@@ -518,6 +531,7 @@ function arm64_patch_b19(own buf: i32[], at: i32, rel: i32): i32[] {
 }
 
 // ---- bl (branch-with-link, the call instruction) ----
+
 // arm64_bl_word encodes `bl <rel>` -> 0x94000000 | imm26 (rel/4). It sets
 // x30 = address of the following instruction; `ret` returns through x30.
 function arm64_bl_word(rel: i32): i64 {
@@ -539,6 +553,7 @@ function arm64_bl(buf: i32[], rel: i32): i32[] {
 // fixup records the instruction's byte offset and resolve patches with
 // rel = target_off - instr_off. fix_kinds distinguishes the immediate
 // field: 0 = imm26 (b / bl), 1 = imm19 (b.cond / cbz / cbnz).
+
 pub struct Arm64Asm {
   code: i32[],
   lab_names: string[],
@@ -645,6 +660,7 @@ pub function arm64_asm_label_off(a: Arm64Asm, name: string): i32 {
 // The native assembler checks (internal/native/arm64/asm.go, "outside the
 // signed %d-bit range") and inserts veneers for imm26 (veneer.go). This is the
 // refuse-first half of that parity: a diagnostic instead of a wrong branch.
+
 // arm64_branch_field_bits is the immediate width a fixup kind patches: imm26
 // for b/bl, imm19 for b.cond/cbz/cbnz, imm14 for tbz/tbnz.
 function arm64_branch_field_bits(kind: i32): i32 {
@@ -800,6 +816,7 @@ function arm64_asm_resolve(own a: Arm64Asm): Arm64Asm {
 //   str: (3<<30)|0x39000000              = 0xF9000000
 //   ldr: 0xF9000000 | 0x00400000          = 0xF9400000
 //        | (off/8)<<10 | Rn<<5 | Rt
+
 function arm64_sp(): i32 {  // SP in load/store + add/sub-imm context
   return 31;
 }
@@ -890,6 +907,7 @@ function arm64_ldst_fp_imm9(buf: i32[], load: boolean, rt: i32, rn: i32, off: i3
 // image out at (macho_text_vaddr / macho_data_vaddr — the SegmentAddrs
 // parity). Because both segments share the 16 KiB Mach-O page alignment,
 // @PAGEOFF is always 4 KiB-aligned here, but the math is general.
+
 // arm64_page_delta returns the 4 KiB-page delta from the adrp instruction
 // at `adrp_addr` to the target at `target_addr` (the adrp immediate).
 function arm64_page_delta(target_addr: i64, adrp_addr: i64): i32 {
@@ -985,6 +1003,7 @@ function arm64_pair(buf: i32[], base: i64, rt: i32, rt2: i32, rn: i32, off: i32,
 // mirror forms — the bare push/pop idiom. imm9 is a signed byte offset
 // (NOT scaled). Index bits 11:10: pre = 0b11, post = 0b01.
 //   base: (3<<30)|0x38000000 | (load?0x00400000)
+
 function arm64_str_pre_word(rt: i32, rn: i32, off: i32): i64 {
   return 0xf8000000 | (off & 0x1ff) as i64 << 12 | 0xc00 | (rn & 31) as i64 << 5 | (rt & 31) as i64;
 }
@@ -1026,6 +1045,7 @@ function arm64_patch_addimm_off(own buf: i32[], at: i32, off: i32): i32[] {
 }
 
 // ---- bitfield extract + negate + test-bit branch ----
+
 // arm64_ubfx_word encodes `ubfx Rd, Rn, #lsb, #width` (unsigned bitfield
 // extract) — the UBFM alias with immr=lsb, imms=lsb+width-1.
 function arm64_ubfx_word(rd: i32, rn: i32, lsb: i32, width: i32, w: boolean): i64 {
@@ -1175,6 +1195,7 @@ function arm64_asm_tbnz(own a: Arm64Asm, rt: i32, bit: i32, name: string): Arm64
 }
 
 // ---- register-offset load/store, unscaled load/store, conditional-set ----
+
 // arm64_ldst_regext encodes the register / extended-register offset loads
 // and stores `[Xn, Rm, <ext> {#amt}]` for any size (0=b, 1=h, 2=w, 3=x):
 // (size<<30) | 0x38200800 | load<<22 | Rm<<16 | option<<13 | S<<12.
@@ -1324,6 +1345,7 @@ function arm64_cset(buf: i32[], rd: i32, cond: i32, w32: boolean): i32[] {
 }
 
 // ---- shifts (immediate), cmn, csel, and ----
+
 // arm64_lsl_imm / arm64_lsr_imm encode `lsl/lsr Rd, Rn, #sh` — the UBFM
 // aliases. `w` selects the 32-bit form (sf=0, base 0x53000000); else the
 // 64-bit form (base 0xD3400000, N=1 folded in). lsl uses immr=(width-sh),
@@ -1518,6 +1540,7 @@ function arm64_cls(buf: i32[], rd: i32, rn: i32, w: boolean): i32[] {
 // Pinned vs llvm-mc. The few i64 bit-twiddles Fern lacks natively are
 // provided below (logical shift right, ctz, clz) — `>>` is arithmetic, so
 // logical shifts mask off the sign-extended high bits.
+
 struct Arm64Bm {
   n: i32,
   immr: i32,
@@ -1655,6 +1678,7 @@ function arm64_and_imm(buf: i32[], rd: i32, rn: i32, imm: i32, w: boolean): i32[
 // passing the 64-bit immr/imms through. Passing them through was why a run
 // rotated off bit 0 — `and w1, w2, #0xfffe`, which gas encodes — was refused
 // (#8138).
+
 // arm64_bm_rep32 writes a 32-bit pattern out at 64 bits, which is what it
 // means as a 32-bit logical immediate.
 function arm64_bm_rep32(v: i64): i64 {
@@ -1750,6 +1774,7 @@ function arm64_eor_imm(buf: i32[], rd: i32, rn: i32, imm: i32, w: boolean): i32[
 //
 // The integer-runtime ops the self-host asm_arm64 emitter uses beyond the
 // arithmetic above (verified vs llvm-mc).
+
 // subs Xd, Xn, Xm (flag-setting subtract) -> 0xEB000000.
 function arm64_subsreg(buf: i32[], rd: i32, rn: i32, rm: i32): i32[] {
   return arm64_le32(buf, arm64_addsub_reg_word(true, true, false, rd, rn, rm, 0, 0));
@@ -1829,6 +1854,7 @@ function arm64_rbit(buf: i32[], rd: i32, rn: i32, w: boolean): i32[] {
 // Two encodings carry most of the vector surface. Both read `size` as a
 // field, which is what makes them general where the byte-only kernels below
 // are not, and both are shared verbatim with internal/native/arm64.
+
 // arm64_vec3same encodes three-registers-same-arrangement: the integer ALU
 // ops, the bitwise ops (where `size` selects the OPERATION, not a width),
 // and the lane-wise FP ops.
@@ -1971,6 +1997,7 @@ function arm64_v3int_entry(mnem: string): i32 {
 }
 
 // END GENERATED ARM64 V3INT_ENTRY TABLE
+
 // BEGIN GENERATED ARM64 VLOGICAL_ENTRY TABLE (cmd/arm64tblgen) — do not edit by hand.
 // The bitwise three-register ops put the operation in the size field, so they
 // exist only in the byte arrangements. The entry carries that operation
@@ -1999,6 +2026,7 @@ function arm64_vlogical_entry(mnem: string): i32 {
 }
 
 // END GENERATED ARM64 VLOGICAL_ENTRY TABLE
+
 // BEGIN GENERATED ARM64 VCMPZERO_ENTRY TABLE (cmd/arm64tblgen) — do not edit by hand.
 // Compare against zero. cmle/cmlt exist ONLY in this form — their
 // register-operand spellings are the swapped-operand cmge/cmgt.
@@ -2026,6 +2054,7 @@ function arm64_vcmpzero_entry(mnem: string): i32 {
 }
 
 // END GENERATED ARM64 VCMPZERO_ENTRY TABLE
+
 // BEGIN GENERATED ARM64 V2MISC_ENTRY TABLE (cmd/arm64tblgen) — do not edit by hand.
 // Two-register unary integer ops. mvn is an alias of not.
 function arm64_v2misc_entry(mnem: string): i32 {
@@ -2061,6 +2090,7 @@ function arm64_v2misc_entry(mnem: string): i32 {
 }
 
 // END GENERATED ARM64 V2MISC_ENTRY TABLE
+
 // arm64_vecshift encodes the shift-by-immediate class. The element size and
 // the shift amount SHARE the immh:immb field — immh's top set bit IS the
 // element size, which is why the class has no size field of its own — so the
@@ -2144,6 +2174,7 @@ function arm64_vfp3_entry(mnem: string): i32 {
 }
 
 // END GENERATED ARM64 VFP3_ENTRY TABLE
+
 // BEGIN GENERATED ARM64 VFP2_ENTRY TABLE (cmd/arm64tblgen) — do not edit by hand.
 // arm64_vfp2_entry: two-register lane-wise FP, same szHi convention.
 function arm64_vfp2_entry(mnem: string): i32 {
@@ -2176,6 +2207,7 @@ function arm64_vfp2_entry(mnem: string): i32 {
 }
 
 // END GENERATED ARM64 VFP2_ENTRY TABLE
+
 // BEGIN GENERATED ARM64 VFPCMPZERO_ENTRY TABLE (cmd/arm64tblgen) — do not edit by hand.
 // FP compare against zero, whose operand is spelled `#0.0`. szHi is always
 // set for this class, so the entry needs no flag. fcmle/fcmlt exist ONLY
@@ -2205,6 +2237,7 @@ function arm64_vfpcmpzero_entry(mnem: string): i32 {
 }
 
 // END GENERATED ARM64 VFPCMPZERO_ENTRY TABLE
+
 // BEGIN GENERATED ARM64 VSHIFT_ENTRY TABLE (cmd/arm64tblgen) — do not edit by hand.
 // Shift by immediate. The size-mask slot carries the direction: 1 = left.
 function arm64_vshift_entry(mnem: string): i32 {
@@ -2231,6 +2264,7 @@ function arm64_vshift_entry(mnem: string): i32 {
 }
 
 // END GENERATED ARM64 VSHIFT_ENTRY TABLE
+
 // BEGIN GENERATED ARM64 VPERMUTE_OPC TABLE (cmd/arm64tblgen) — do not edit by hand.
 function arm64_vpermute_opc(mnem: string): i32 {
   match (mnem) {
@@ -2259,6 +2293,7 @@ function arm64_vpermute_opc(mnem: string): i32 {
 }
 
 // END GENERATED ARM64 VPERMUTE_OPC TABLE
+
 // arm64_gas_esize is the element width in bits of an arrangement.
 function arm64_gas_esize(code: i32): i32 {
   return 8 * arm64_gas_pow2(arm64_gas_arr_size(code));
@@ -2271,6 +2306,7 @@ function arm64_gas_esize(code: i32): i32 {
 // index together as (index<<1 | 1) << size, so the size is recoverable from
 // the position of the lowest set bit. Get the size wrong and the index is
 // wrong too, on a word that still decodes.
+
 // arm64_gas_lane_size decodes the element letter of a `vN.<Ts>[i]` lane
 // operand to 0=B, 1=H, 2=S, 3=D, or -1 when the token is not a lane.
 function arm64_gas_lane_size(tok: string): i32 {
@@ -2414,6 +2450,7 @@ function arm64_vecldst1(buf: i32[], base: i64, rt: i32, rn: i32, size: i32, q: b
 }
 
 // ---- the narrowing / widening / across-lanes classes (#8000 wave 2c) ----
+
 // arm64_vecext encodes `ext Vd.<T>, Vn.<T>, Vm.<T>, #index` — the byte-wise
 // extract from a register pair, NEON's sliding window and palignr's
 // counterpart. Byte arrangements only; the index counts bytes.
@@ -2488,6 +2525,7 @@ function arm64_across_entry(mnem: string): i32 {
 }
 
 // END GENERATED ARM64 ACROSS_ENTRY TABLE
+
 // BEGIN GENERATED ARM64 PAIRLONG_ENTRY TABLE (cmd/arm64tblgen) — do not edit by hand.
 // Widening pairwise add. The size mask is the SOURCE arrangement's;
 // the destination is one element size up with half the lanes.
@@ -2512,6 +2550,7 @@ function arm64_pairlong_entry(mnem: string): i32 {
 }
 
 // END GENERATED ARM64 PAIRLONG_ENTRY TABLE
+
 // BEGIN GENERATED ARM64 VPOLYLONG_ENTRY TABLE (cmd/arm64tblgen) — do not edit by hand.
 // The polynomial (carry-less) multiply-long. The size-mask slot carries the
 // HIGH flag — the `2` in the mnemonic, which selects the top half of the
@@ -2532,6 +2571,7 @@ function arm64_vpolylong_entry(mnem: string): i32 {
 }
 
 // END GENERATED ARM64 VPOLYLONG_ENTRY TABLE
+
 // arm64_gas_scalar_class decodes a bN/hN/sN/dN scalar SIMD register to its
 // element-size class (0=B, 1=H, 2=S, 3=D), or -1. arm64_gas_scalar_reg gives
 // the number.
@@ -2855,6 +2895,7 @@ function arm64_gas_emit_vecgen(own a: Arm64Asm, mnem: string, ops: string[]): Ar
 //
 // Advanced SIMD is mandatory in the declared ARMv8-A baseline, so these are
 // hard requirements rather than a fast path; there is nothing to detect.
+
 // ---- byte/halfword/sign-extending load/store (unsigned scaled imm) ----
 // ldrb/strb size 0 (no scale); ldrh/strh size 1 (÷2); ldrsw size 2 (÷4).
 function arm64_ldrb(buf: i32[], rt: i32, rn: i32, off: i32): i32[] {
@@ -2971,6 +3012,7 @@ function arm64_msr(buf: i32[], rt: i32, name: string): i32[] {
 // The float runtime the self-host asm_arm64 emitter always emits. d-regs
 // and x-regs share the 5-bit field; the opcode picks the bank. (Verified vs
 // llvm-mc.)
+
 // arm64_fp_single turns a double-precision (ftype=01) scalar FP word into
 // its single-precision (ftype=00) twin by clearing bit 22.
 function arm64_fp_single(word: i64, single: boolean): i64 {
@@ -3107,6 +3149,7 @@ function arm64_cvtf(buf: i32[], rd_fp: i32, rn_gpr: i32, w: boolean, unsigned: b
 // ============================================================
 // PART 2 — GAS-text assembler + data/symbol relocation
 // ============================================================
+
 // examples/self_host/arm64_gas.fern — a self-hosted AArch64 GAS-text
 // assembler: it parses an assembly-text subset into machine-code bytes via
 // the arm64_encode.fern encoders + named-label assembler (Arm64Asm). It is
@@ -3123,7 +3166,9 @@ function arm64_cvtf(buf: i32[], rd_fp: i32, rn_gpr: i32, w: boolean, unsigned: b
 // runtime helpers produce — arm64_gas_known is the authoritative list.
 // Directives: .text/.data/.bss and the data directives; `name:` labels
 // (including GAS numeric locals); `//` line comments.
+
 // ---- text helpers ----
+
 // ---- portable substring helpers ----
 //
 // The Go reference checker has no string index_of/contains/starts_with/
@@ -3131,6 +3176,7 @@ function arm64_cvtf(buf: i32[], rd_fp: i32, rn_gpr: i32, w: boolean, unsigned: b
 // self-host modules avoid them). Since the unified `fern` CLI compiles this
 // module through the Go front-end, provide them over the portable surface
 // (.len(), s[i], s[a:b], concat, array .append).
+
 function arm64_str_indexof(s: string, sub: string): i32 {
   var n: i32 = s.len();
   var m: i32 = sub.len();
@@ -3519,6 +3565,7 @@ function arm64_gas_is_sreg(tok: string): boolean {
 //
 // An arrangement is packed as size*2 + Q, which is the order the encoding
 // itself uses and keeps the two halves one shift apart.
+
 // arm64_gas_arr_code maps an arrangement suffix (no leading dot) to
 // size*2 + Q, or -1. `.1d` parses — ld1/st1 have it — and is refused by the
 // size masks everywhere else.
@@ -4620,6 +4667,7 @@ function arm64_gas_addsub_operand_unsupported(mnem: string, ops: string[]): bool
 // and an emitter. An emitter may be reached after its guard has already
 // recorded a refusal; it returns the assembler unchanged on a shape it
 // cannot index safely.
+
 // BEGIN GENERATED ARM64 SCALAR VOCABULARY (cmd/arm64tblgen) — do not edit by hand.
 function arm64_fam_fixed(): i32 {
   return 0;
@@ -6485,6 +6533,7 @@ function arm64_gas_known(mnem: string): boolean {
 }
 
 // END GENERATED ARM64 SCALAR VOCABULARY
+
 function arm64_gas_is_widening(mnem: string): boolean {
   return mnem == "smull" || mnem == "umull" || mnem == "smaddl" || mnem == "umaddl"
     || mnem == "smsubl" || mnem == "umsubl";
@@ -6496,6 +6545,7 @@ function arm64_fam_is_excl(fam: i32): boolean {
 }
 
 // ---- family guards ----
+
 // arm64_gas_bad_ext_token vets the family operand shapes the way
 // arm64_gas_bad_vec_token vets the NEON ones: a shape the encoders cannot
 // express comes back non-empty, the program loop records it, and the
@@ -7064,6 +7114,7 @@ function arm64_gas_bad_fcmp(ops: string[]): string {
 }
 
 // ---- family emitters ----
+
 function arm64_gas_emit_carry(own a: Arm64Asm, mnem: string, ops: string[]): Arm64Asm {
   var w: boolean = arm64_gas_is_w(ops[0]);
   if (mnem == "ngc" || mnem == "ngcs") {
@@ -7415,6 +7466,7 @@ function arm64_gas_emit_fcmp(own a: Arm64Asm, mnem: string, ops: string[]): Arm6
 }
 
 // ---- instruction dispatch ----
+
 // arm64_gas_is_bcond reports whether `mnem` is a conditional branch, in
 // either GAS spelling: the dotted `b.lt` form or the no-dot `blt` alias.
 // arm64_gas_bcond_suffix returns the condition part of such a mnemonic. It
@@ -8103,6 +8155,7 @@ function arm64_gas_emit_fmov(own a: Arm64Asm, ops: string[]): Arm64Asm {
 // references whose immediates can only be resolved once the final segment
 // addresses are known (macho.fern lays __TEXT and __DATA at separate
 // page-aligned vaddrs). arm64_gas_program parses; arm64_gas_link patches.
+
 pub struct Arm64GasProg {
   asm: Arm64Asm,
   data: i32[],
@@ -9146,6 +9199,7 @@ function arm64_gas_ltorg(p: Arm64GasProg, own aw: Arm64Asm): Arm64Asm {
 }
 
 // ---- the assemble loop ----
+
 // arm64_gas_program parses a GAS-text program (one statement per line)
 // into an Arm64GasProg: .text code (forward branches resolved), a data
 // blob, a data-symbol table, and a queue of @PAGE/@PAGEOFF fixups (left
@@ -9661,6 +9715,7 @@ function arm64_gas_assemble(src: string): Arm64Asm {
 // ============================================================
 // PART 3 — Mach-O writer + ad-hoc SHA-256 signature
 // ============================================================
+
 // examples/self_host/macho.fern — a minimal ad-hoc-signed arm64 Mach-O
 // executable writer for the self-hosted *native* backend. This is
 // the Darwin counterpart of elf.fern (Linux): the container half of the
@@ -9717,6 +9772,7 @@ function arm64_gas_assemble(src: string): Arm64Asm {
 //     code-signing blobs are big-endian. Both emitters live here.
 //
 // References: Apple's loader.h / cs_blobs.h, and FIPS 180-4 (SHA-256).
+
 // ============================================================
 // SHA-256 (FIPS 180-4)
 // ============================================================
@@ -9727,6 +9783,7 @@ function arm64_gas_assemble(src: string): Arm64Asm {
 // [0, 2^32); every arithmetic result is masked back with `& 0xffffffff`,
 // so the signed-i64 `>>` (arithmetic) shift acts as a logical shift on the
 // always-positive words.
+
 // sha256_rotr rotates a 32-bit word right by n (1..31) bits.
 function sha256_rotr(x: i64, n: i32): i64 {
   return (x >> n | x << 32 - n) & 0xffffffff;
@@ -9899,6 +9956,7 @@ function sha256_bytes(data: i32[], start: i32, n: i32): i32[] {
 // ============================================================
 // byte emitters + buffer helpers
 // ============================================================
+
 // macho_le32 appends the low 4 bytes of `v`, little-endian.
 function macho_le32(buf: i32[], v: i32): i32[] {
   buf = buf.append(v & 255);
@@ -10002,6 +10060,7 @@ function macho_pad_to(buf: i32[], n: i32): i32[] {
 // ============================================================
 // fixed-layout constants
 // ============================================================
+
 // macho_page_size is the 16 KiB Mach-O segment alignment on arm64.
 function macho_page_size(): i32 {
   return 16384;
@@ -10143,6 +10202,7 @@ pub function macho_data_vaddr(text_len: i32, eh_len: i32, data_len: i32, bss: i3
 // ============================================================
 // load-command writers
 // ============================================================
+
 // macho_seg writes an LC_SEGMENT_64 command header for nsects sections.
 function macho_seg(buf: i32[], name: string, vmaddr: i64, vmsize: i64, fileoff: i64, filesize: i64, maxprot: i32, initprot: i32, nsects: i32): i32[] {
   buf = macho_le32(buf, 25);  // LC_SEGMENT_64 = 0x19
@@ -10297,6 +10357,7 @@ function macho_main(buf: i32[], entryoff: i32): i32[] {
 // ============================================================
 // code signature
 // ============================================================
+
 // macho_sig_len computes the signature length analytically (it depends
 // only on code_limit and the identifier length, not on the content), so
 // the LC_CODE_SIGNATURE command + __LINKEDIT sizing can be emitted before
@@ -10377,6 +10438,7 @@ function macho_code_signature(content: i32[], code_limit: i32, exec_seg_limit: i
 // ============================================================
 // the image writer
 // ============================================================
+
 // macho_entry_off resolves the entry offset to pass to macho_executable:
 // the `_main` label's offset in the assembled text, or 0 for a hand-built
 // snippet that has no such label and whose entry is its first byte.
@@ -10568,6 +10630,7 @@ pub function macho_executable(text: i32[], eh: i32[], data: i32[], ident: string
 // seen. Neither self-host assembler moves code after parsing — the x86 one
 // re-emits to a fixpoint rather than remapping, the arm64 one flushes its
 // literal pool inline — so no remap step exists here.
+
 // DWARF call-frame opcodes. Only the ones this module emits.
 function cfi_op_nop(): i32 {
   return 0;
@@ -10696,6 +10759,7 @@ pub function cfi_empty(s: CfiState): boolean {
 }
 
 // ---- small helpers -----------------------------------------------------
+
 function cfi_trim(s: string): string {
   var i: i32 = 0;
   var j: i32 = s.len();
@@ -10846,6 +10910,7 @@ function cfi_le64_i64(own b: i32[], v: i64): i32[] {
 }
 
 // ---- recording ---------------------------------------------------------
+
 // The recorder OWNS its state: the rule arrays hold one row per directive
 // for the whole program, and an append through a borrowed spread copies the
 // whole buffer, quadratically, on every relaxation pass (#8172).
@@ -11006,6 +11071,7 @@ function cfi_reg_directive(own s: CfiState, d: string, ops: string[], rest: stri
 }
 
 // ---- rendering ---------------------------------------------------------
+
 // cfi_advance appends the DW_CFA_advance_loc form covering a byte delta, in
 // units of the code alignment factor. A delta that is not a multiple of it
 // is reported through `bad`, so the caller passes it back.

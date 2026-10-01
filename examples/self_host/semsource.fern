@@ -231,6 +231,7 @@ function t_unreachable(): ssa.STerm {
 }
 
 // ---- graph construction ---------------------------------------------------
+
 function emit(s: State, ins: ssa.SInst): State {
   return State { ...s, cur: ssa.SBlock { ...s.cur, insts: s.cur.insts.append(ins) } };
 }
@@ -255,6 +256,7 @@ function terminate(s: State, term: ssa.STerm): State {
 }
 
 // ---- bindings ---------------------------------------------------------------
+
 function lookup(s: State, name: string): i32 {
   var i: i32 = s.names.len() - 1;
   while (i >= 0) {
@@ -316,6 +318,7 @@ function merge_env(s: State, envs: i32[][], count: i32): State {
 }
 
 // ---- erasure ----------------------------------------------------------------
+
 // A declaration that spells type variables is a TEMPLATE. The parser keeps only
 // the BOUNDED names in `type_params` and counts the rest, so either field marks
 // one — and a HOISTED closure body marks neither: the lift copies the
@@ -506,6 +509,7 @@ function settled_payload(t: typeinfo.Type): typeinfo.Type {
 }
 
 // ---- expressions ------------------------------------------------------------
+
 function checked(e: ast.Expr, s: State): typeinfo.Type {
   return settled(resolved(checker.expr_type(e, s.scope), s.template, s.binding));
 }
@@ -2209,39 +2213,41 @@ function map_delete(c: ast.ExprCall, recv: Value, s: State, t: typeinfo.Type): V
 // release what the map still holds, so it is refused here rather than
 // described as owned.
 function map_column(s: State, recv: Value, kind: i32, elem: typeinfo.Type): Value {
-  if (ssasem.is_view(elem)) {
-    return refused(s, view_column_read());
-  }
   if (!ssasem.retained_column(elem)) {
     return refused(s, "aliased column element: " + typeinfo.spelling(elem));
   }
   return define(s, kind, [recv.id], 0, "", typeinfo.TypeArray { elem: elem, view: false });
 }
 
-// A read that hands out a unit of a value column retains the box the column
-// holds, and a view's retain is a no-op, so the reader's release would free
-// the map's own view. Such a read needs a fresh view of the entry.
-function view_column_read(): string {
-  return "a read of a view map value would share the column's view box";
-}
-
 // An INSERT's key joins the map's key column, and `keys` would hand out the
-// column's own view box as a value column's read would, so a view key is
-// refused there. A READ's key is hashed and
-// compared, and `operation_supplies` counts no unit for it, so a view is an
+// column's own view box, so a view key is refused there. A READ's key is
+// hashed and compared, and `operation_supplies` counts no unit for it, so a view is an
 // ordinary lend and takes the same retag a borrowed parameter offers.
 function map_key_value(e: ast.Expr, s: State, t: typeinfo.Type, stored: boolean): Value {
-  var k: Value = expr(e, s, ssasem.map_key(t));
+  var column: typeinfo.Type = ssasem.map_key(t);
+  var k: Value = expr(e, s, column);
   if (!k.s.ok) {
     return k;
   }
   if (!stored) {
-    k = lend(k, ssasem.map_key(t), ssaunits.borrow_mode(), false);
+    k = lend(k, column, ssaunits.borrow_mode(), false);
   }
+  // A `str` key column holds an owned copy of each key: a view's box cannot
+  // be counted, and `keys` would otherwise hand out the column's own box. A
+  // view stored into a `string` column is refused.
   if (ssasem.is_view(k.s.values[k.id])) {
-    return refused(k.s, "view element escapes its source");
+    if (!ssasem.is_view(column)) {
+      return refused(k.s, "view element escapes its source");
+    }
+    if (stored) {
+      k = lend(k, t_string(), ssaunits.borrow_mode(), true);
+    }
+    return k;
   }
-  if (!semtypes.equal(k.s.values[k.id], ssasem.map_key(t))) {
+  if (ssasem.is_view(column) && ssasem.is_string(k.s.values[k.id])) {
+    return k;
+  }
+  if (!semtypes.equal(k.s.values[k.id], column)) {
     return refused(k.s, "map key type");
   }
   return k;
@@ -2268,9 +2274,6 @@ function map_write(c: ast.ExprCall, recv: Value, s: State, t: typeinfo.Type): Va
 // A lookup borrows the map and the key and answers a scalar the map goes on
 // owning: `has` takes the key alone, `get_or` a default of the value type.
 function map_read(c: ast.ExprCall, recv: Value, s: State, t: typeinfo.Type, kind: i32, result: typeinfo.Type): Value {
-  if (kind != ssasem.map_has() && ssasem.is_view(ssasem.map_value(t))) {
-    return refused(s, view_column_read());
-  }
   var k: Value = map_key_value(c.args[0], s, t, false);
   s = k.s;
   if (!s.ok) {
@@ -2568,6 +2571,17 @@ function dyn_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s: St
   var receiver: typeinfo.Type = s.values[recv.id];
   var traits: string[] = parser.dyn_trait_set(typeinfo.spelling(receiver));
   var arms: string[] = dyn_arms(s.funcs, s.impls, fa.field, traits);
+  if (arms.len() == 0 && !any_implementer(s.impls, traits)) {
+    // No type implements the trait, so no value of the receiver's type
+    // exists and the call cannot execute; native emits the dispatch over
+    // an empty vtable. An implementer with no arm for the name is an
+    // associated function reached through dyn, which the checker refuses.
+    var ty: typeinfo.Type = checked(c, s);
+    if (statement) {
+      ty = t_void();
+    }
+    return unreachable_value(terminate(s, t_unreachable()), ty);
+  }
   if (arms.len() == 0) {
     return refused(s, "dyn method has no implementation: " + fa.field);
   }
@@ -2817,6 +2831,7 @@ function bound_call(c: ast.ExprCall, bound: i32, s: State, statement: boolean): 
 }
 
 // ---- value blocks -----------------------------------------------------------
+
 // A value-position `{ … }` block is a zero-argument call of a zero-parameter
 // lambda the parser marks with an origin, and every backend INLINES it rather
 // than calling one: the statements run in the enclosing function and only the
@@ -3573,6 +3588,7 @@ function produce(e: ast.Expr, s: State, expected: typeinfo.Type): Value {
 }
 
 // ---- statements -------------------------------------------------------------
+
 function destructures(v: ast.StmtVar): boolean {
   var i: i32 = 0;
   while (i < v.name.len()) {
@@ -3992,6 +4008,7 @@ function branch(f: ast.StmtIf, s: State): State {
 }
 
 // ---- match ------------------------------------------------------------------
+
 struct Arms { s: State, preds: i32[], envs: i32[][], values: i32[] }
 
 function collect(arms: Arms, done: Arm): Arms {
@@ -4737,6 +4754,7 @@ function stmts(body: ast.Stmt[], s: State): State {
 }
 
 // ---- simplification ---------------------------------------------------------
+
 function resolve(map: i32[], v: i32): i32 {
   while (map[v] != v) {
     v = map[v];
@@ -4943,6 +4961,7 @@ function renumber(blocks: ssa.SBlock[], map: i32[], values: typeinfo.Type[]): ss
 }
 
 // ---- functions --------------------------------------------------------------
+
 // An `@import` extern is a declaration with a contract and no body: its
 // callers are produced against the signature it declares, and the wasm
 // bridge emits the function itself from the declaration.
@@ -5509,6 +5528,7 @@ function try_cleanup(body: ast.Stmt[]): ast.Stmt[] {
 }
 
 // ---- record schemas ---------------------------------------------------------
+
 // The module's declared records and unions whose values hold a `str` view, by
 // name, and its function types that do, as `fn <type_key>`, to a fixpoint over
 // the declaration tables every scope shares and the contract table. Asked once
@@ -6066,6 +6086,16 @@ function shadowed_builtins(mod: parser.Module): string[] {
     }
   }
   return out;
+}
+
+// any_implementer reports whether some type implements every trait of a dyn set.
+function any_implementer(impls: parser.ImplInfo[], traits: string[]): boolean {
+  for imp in impls {
+    if (implements_traits(impls, util.base_type_name(imp.impl_type), traits)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function implements_traits(impls: parser.ImplInfo[], n: string, traits: string[]): boolean {

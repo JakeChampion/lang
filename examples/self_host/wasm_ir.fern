@@ -22,6 +22,7 @@
 //
 // Like asm_ir, this is a SEPARATE module imported only by its differential
 // driver (wasm_ir_run) — wasm.fern stays untouched until a later fold/flip.
+
 import "core/map";
 import "./ast";
 import "./parser";
@@ -67,6 +68,7 @@ pub function large_fl_cells(): i32 {
 // and the $__fern_strcat / $__fern_streq helpers are emitted CALLER-side (in
 // wasm.fern, which owns le32_escape / wat_escape / strcat_helpers) because
 // wasm_ir cannot import wasm without a cycle — same split as the heap runtime.
+
 // lower_all_for lowers EVERY function of `mod` to its IR ops ONCE, returning the
 // per-function LowerResult list in mod.funcs order. It is the cache the wasm IR
 // emit path threads through its two dozen collect / gate passes (str_values,
@@ -169,6 +171,7 @@ pub function str_values(cache: irlower.LowerResult[]): string[] {
 // newline byte at 12, and the WASI out-parameter slot at 16 (path_open writes
 // the opened fd there, fd_readdir / fd_write their counts). 20 is the first
 // word past it, and is where the derived chain starts.
+
 // arr_push_shared_addr is the 4-byte slot holding the rc==1 append cliff
 // counter (#6023): appends that copied a buffer which still had SPARE
 // CAPACITY, so the copy was bought by an extra reference rather than a full
@@ -1204,7 +1207,8 @@ function slot_in_list(list: i32[], x: i32): boolean {
 // $__fern_arr_dec (the array release that frees at rc==1 via the size-class
 // freelist), so the wasm IR path reclaims exactly as wasm.fern's AST path.
 function wasm_helper_symbol(name: string): string {
-  if (name == "__fern_rc_inc") {
+  // A wasm view is a counted block of its own bytes, so its unit is a retain.
+  if (name == "__fern_rc_inc" || name == "__fern_str_own") {
     return "$__fern_rc_inc";
   }
   if (name == "__fern_rc_dec") {
@@ -1609,6 +1613,7 @@ pub function struct_arr_elems_drop_types(cache: irlower.LowerResult[], structs: 
 // the shared cache once (not re-lowering every function per call) is what makes
 // the wasm self-host compile linear (#4652). The op-kind arrives by string;
 // resolve it to the integer tag once so the inner scan is an int compare.
+
 pub function module_emits_op_cached(cache: irlower.LowerResult[], kind: string): boolean {
   var ktag: i32 = ir.kind_id(kind);
   function is_kind(o: ir.Op): boolean {
@@ -2147,47 +2152,47 @@ pub function wasm_unsupported_builtin(mod: parser.Module): string {
 // a pointer at its wasm analog; there is no analog to suggest for subprocess.
 pub function wasm_unsupported_message(name: string): string {
   if (name == "timer_fd") {
-    return "error: timer_fd is not supported on the wasm target (wasm has no pollable file descriptors); use wasm_timer_pollable, which returns a wasi:io/poll pollable\n";
+    return "error: timer_fd is not supported on the wasm target (wasm has no pollable file descriptors); use wasm_timer_pollable, which returns a wasi:io/poll pollable";
   }
   if (ircore.is_c_call(name)) {
-    return "error: " + name + " (C FFI) is not supported on the wasm target (wasm has no C ABI)\n";
+    return "error: " + name + " (C FFI) is not supported on the wasm target (wasm has no C ABI)";
   }
   if (name == "proc_fork" || name == "proc_waitpid"
     || name == "proc_waitpid_nohang" || name == "proc_exec"
     || name == "proc_exec_as") {
-    return "error: " + name + " is not supported on the wasm target (a component has no process model to fork, exec into, or reap)\n";
+    return "error: " + name + " is not supported on the wasm target (a component has no process model to fork, exec into, or reap)";
   }
   if (name == "process_alive") {
-    return "error: process_alive is not supported on the wasm target (a component has no process table, so there are no pids to ask about)\n";
+    return "error: process_alive is not supported on the wasm target (a component has no process table, so there are no pids to ask about)";
   }
   if (name == "signal_send") {
-    return "error: signal_send is not supported on the wasm target (a component has no process table, so there are no pids to deliver a signal to)\n";
+    return "error: signal_send is not supported on the wasm target (a component has no process table, so there are no pids to deliver a signal to)";
   }
   if (name == "set_process_group") {
-    return "error: set_process_group is not supported on the wasm target (a component has no process table, so there are no process groups to join)\n";
+    return "error: set_process_group is not supported on the wasm target (a component has no process table, so there are no process groups to join)";
   }
   if (name == "rlimit_nofile") {
-    return "error: rlimit_nofile is not supported on the wasm target (neither WASI preview enforces resource limits, so there is no ceiling to report)\n";
+    return "error: rlimit_nofile is not supported on the wasm target (neither WASI preview enforces resource limits, so there is no ceiling to report)";
   }
   if (name == "priority" || name == "set_priority") {
-    return "error: " + name + " is not supported on the wasm target (neither WASI preview has a scheduler knob, so there is no nice value to read and nothing a change could move)\n";
+    return "error: " + name + " is not supported on the wasm target (neither WASI preview has a scheduler knob, so there is no nice value to read and nothing a change could move)";
   }
   if (name == "chdir") {
-    return "error: chdir is not supported on the wasm target (WASI resolves every path against a preopened descriptor, so there is no process working directory to change)\n";
+    return "error: chdir is not supported on the wasm target (WASI resolves every path against a preopened descriptor, so there is no process working directory to change)";
   }
   if (name == "chroot") {
-    return "error: chroot is not supported on the wasm target (WASI resolves every path against a preopened descriptor, so there is no process root to move any more than there is a working directory)\n";
+    return "error: chroot is not supported on the wasm target (WASI resolves every path against a preopened descriptor, so there is no process root to move any more than there is a working directory)";
   }
   if (name == "setuid" || name == "setgid" || name == "setgroups") {
-    return "error: " + name + " is not supported on the wasm target (a component has no process identity: neither preview reports a uid, gid or group set, so there is nothing for a change to move)\n";
+    return "error: " + name + " is not supported on the wasm target (a component has no process identity: neither preview reports a uid, gid or group set, so there is nothing for a change to move)";
   }
   if (name == "statfs") {
-    return "error: statfs is not supported on the wasm target (neither preview has a volume to measure: a preopen is a capability handle, not a mount, so it reports neither a size nor a name-length limit)\n";
+    return "error: statfs is not supported on the wasm target (neither preview has a volume to measure: a preopen is a capability handle, not a mount, so it reports neither a size nor a name-length limit)";
   }
   if (is_raw_floor_builtin(name)) {
-    return "error: " + name + " is not supported on the wasm target (a raw-memory / syscall floor intrinsic: wasm has neither a raw address space nor syscalls — these back the register backends' runtime helpers, which wasm serves with hand-written WAT)\n";
+    return "error: " + name + " is not supported on the wasm target (a raw-memory / syscall floor intrinsic: wasm has neither a raw address space nor syscalls — these back the register backends' runtime helpers, which wasm serves with hand-written WAT)";
   }
-  return "error: " + name + " is not supported on the wasm target\n";
+  return "error: " + name + " is not supported on the wasm target";
 }
 
 pub function wasm_ir_deferrals_ok(cache: irlower.LowerResult[]): boolean {
@@ -2277,6 +2282,7 @@ pub function wasm_ir_deferrals_ok(cache: irlower.LowerResult[]): boolean {
 // an `@export` module routed IR and emitted a core whose only exports were
 // `memory` and `_start` — the binding silently dropped. Both halves close
 // together, because both were the one missing emit.
+
 // component_refused_need names the first need of a lowered module outside the
 // component-mode IR subset, or "" when every need is inside it. Unlike the command core — which imports whatever
 // preview1 op it likes — a component core may only import what its framing
@@ -3094,7 +3100,7 @@ pub function emit_module_mode_or_error_sub(mod: parser.Module, component: boolea
     // import for is not an IR bail, so name the op rather than blame the IR.
     if (g.ok && component && wasm_ir_deferrals_ok(cache)) {
       eprint("error: " + component_refused_need(needs_of(cache), io)
-        + " is not supported in a wasm component: the component framing has no import for it (build with -emit core-module for a preview1 module)\n");
+        + " is not supported in a wasm component: the component framing has no import for it (build with -emit core-module for a preview1 module)");
       exit(1);
     }
   }
@@ -3966,6 +3972,7 @@ pub function ipv4_parse_func(): string {
 // outgoing-datagram record is 44 bytes (data ptr@0, len@4, option disc@8,
 // family disc@12, port@16, octets@18) and an incoming-datagram 40 (data
 // ptr@0, len@4, family disc@8, port@12, octets@14).
+
 // -errno from the error-code at byte `err_at` of the result at $ret, into
 // local `into`.
 function udp_errno(into: string, err_at: i32): string {
@@ -6064,7 +6071,7 @@ function produced_result_wat(r: irlower.LowerResult): string {
   if (r.result_kind == irlower.result_f64()) {
     return " (result f64)\n";
   }
-  eprint("error: produced body " + r.name + " carries no result kind\n");
+  eprint("error: produced body " + r.name + " carries no result kind");
   exit(3);
   return "";
 }
@@ -6163,6 +6170,7 @@ function emit_function_ir_named(ns: string, r: irlower.LowerResult, fn_name: str
 // (wasm.emit_module, or the differential driver). Keeping the runtime on the
 // caller side lets wasm.fern import this module for the use_ir dispatch without
 // a cycle: wasm_ir never imports wasm. Caller must ensure wasm_eligible(mod).
+
 // emit_functions emits a unit's function bodies. `ns` namespaces the base
 // globals the bodies reference (see str_base_global); "" is whole-program emit.
 // emit_functions_view emits ONE unit's function bodies against a WHOLE-PROGRAM
@@ -6253,30 +6261,6 @@ function struct_type_id(structs: irlower.StructTab, name: string): i32 {
   return 0;
 }
 
-// build_io_error_func emits $__fern_build_io_error(errno, path) -> IoError enum
-// box — the self-host wasm sibling of native wasmbin's __build_io_error and the
-// register backends' __fern_io_error (asm_ir). Maps a small set of WASI
-// preview-1 errnos to the matching IoError variant, carrying the offending path
-// string on the single-string variants; everything else lands in
-// Other(path, strerror(errno)). The variant ids are baked from the module's struct table
-// (same table the match arms read, so ids agree). errno→variant matches native
-// wasmbin: ENOENT(44) → NotFound(path), EACCES(2) → PermissionDenied(path),
-// EEXIST(20) → AlreadyExists(path), EINTR(27) → Interrupted, ENOTSUP(58) →
-// Unsupported, EILSEQ(25) → InvalidUtf8(path) (synthetic — no wasi call
-// returns it; only read_file's D9 gate passes 25).
-//
-// `slot` is the CONSUMER's variant-box slot width. Both consumers lay a box out
-// the same way — the variant id in slot 0, field i in slot 1+i, so field i sits
-// at slot*(1+i) and an n-field box is slot*(1+n) bytes — but at different
-// widths: the IR consumer (op_enum_new / the IR match dispatch) slots 8, while
-// the legacy AST emitter slots 4 (wasm.struct_field_off(i) = 4 + i*4, boxed as
-// 4 + nfields*4). Emitting the IR layout for both is what made an AST-path
-// `NotFound(p)` read its path out of the upper half of the id slot, and the
-// two-field default arm `Other(path, msg)` — where every unmapped errno lands —
-// wrong in both fields (#5795). Boxes via $__fern_str_box, the same rc-headered
-// allocation both emitters build variants with. A string field is a single
-// [len][bytes] block pointer, and the builder consumes the path it is given: a
-// caller passing a borrowed path retains it first.
 // build_io_error_p2_func emits $__fern_build_io_error_p2(code, path): the
 // PREVIEW2 sibling of $__fern_build_io_error below. It does not duplicate the
 // variant boxing — it translates a `wasi:filesystem/types.error-code`
@@ -6345,6 +6329,30 @@ pub function with_strerror_texts(sv: string[]): string[] {
   return sv;
 }
 
+// build_io_error_func emits $__fern_build_io_error(errno, path) -> IoError enum
+// box — the self-host wasm sibling of native wasmbin's __build_io_error and the
+// register backends' __fern_io_error (asm_ir). Maps a small set of WASI
+// preview-1 errnos to the matching IoError variant, carrying the offending path
+// string on the single-string variants; everything else lands in
+// Other(path, strerror(errno)). The variant ids are baked from the module's struct table
+// (same table the match arms read, so ids agree). errno→variant matches native
+// wasmbin: ENOENT(44) → NotFound(path), EACCES(2) → PermissionDenied(path),
+// EEXIST(20) → AlreadyExists(path), EINTR(27) → Interrupted, ENOTSUP(58) →
+// Unsupported, EILSEQ(25) → InvalidUtf8(path) (synthetic — no wasi call
+// returns it; only read_file's D9 gate passes 25).
+//
+// `slot` is the CONSUMER's variant-box slot width. Both consumers lay a box out
+// the same way — the variant id in slot 0, field i in slot 1+i, so field i sits
+// at slot*(1+i) and an n-field box is slot*(1+n) bytes — but at different
+// widths: the IR consumer (op_enum_new / the IR match dispatch) slots 8, while
+// the legacy AST emitter slots 4 (wasm.struct_field_off(i) = 4 + i*4, boxed as
+// 4 + nfields*4). Emitting the IR layout for both is what made an AST-path
+// `NotFound(p)` read its path out of the upper half of the id slot, and the
+// two-field default arm `Other(path, msg)` — where every unmapped errno lands —
+// wrong in both fields (#5795). Boxes via $__fern_str_box, the same rc-headered
+// allocation both emitters build variants with. A string field is a single
+// [len][bytes] block pointer, and the builder consumes the path it is given: a
+// caller passing a borrowed path retains it first.
 pub function build_io_error_func(slot: i32, sv: string[]): string {
   var o: string = "";
   o = o + "  (func $__fern_build_io_error (param $errno i32) (param $path i32) (result i32)\n";
@@ -7263,6 +7271,7 @@ pub function remove_file_func(): string {
 // create_dir's is dropped (and `umask` is refused outright on this target),
 // and every path resolves under the preopen, so one that escapes it is
 // ENOTCAPABLE where a kernel would resolve it.
+
 // create_dir_func emits $__fern_create_dir(path, mode) -> Result[(), IoError].
 // The mode is accepted and dropped; EEXIST is an ERROR here, unlike
 // create_dir_all's leaf.
@@ -12797,6 +12806,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
 // `mr_types` directly (the shape `is_struct_type` already used), which is what
 // lets them move without dragging `Ctx` across the module boundary.
 // ---------------------------------------------------------------------------
+
 // ty_spelling_is_array reports whether a declared type spelling names an
 // array type — i.e. ends in the two-char "[]" suffix (i32[] / string[] /
 // Foo[] / i32[][]). Generic spellings like Map[K,V] / Box[T] end in "]"
@@ -13353,6 +13363,7 @@ pub function collect_method_types(mod: parser.Module): string[] {
 // wasm.fern keeps calling these through `wasm_ir.` until it is deleted; the
 // dependency direction is what matters (wasm.fern -> wasm_ir, never the reverse).
 // ---------------------------------------------------------------------------
+
 // is_float_type names the floating-point spellings (all lowered to f64 —
 // matching the native backends, which carry no distinct f32).
 pub function is_float_type(t: string): boolean {
@@ -15789,6 +15800,7 @@ pub function returns_value(ret_type: string): boolean {
 // fern.fern are their only callers. Moved verbatim rather than rewritten, so
 // the component classification and the payload spellings cannot shift with the
 // deletion.
+
 pub function parse_result_err_payload(t: string): string {
   var r: parser.TypeRef = parser.parse_type_ref(t);
   if (r.array_depth == 0 && r.base == "Result" && r.args.len() >= 2) {

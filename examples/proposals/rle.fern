@@ -41,6 +41,7 @@
 // thousand malformed inputs nobody had to think up.
 //
 // The app writes its report to stderr; stdout carries TAP-13 from std/test.
+
 import "std/test";
 import "std/i32";
 import "std/string";
@@ -51,6 +52,7 @@ import "std/string";
 struct Decoded { ok: boolean, bytes: u8[], err: string }
 
 // --------------------------------------------------------------- encode
+
 function encode(src: u8[]): u8[] {
   var out: u8[] = [];
   var i: i32 = 0;
@@ -98,6 +100,7 @@ function encode(src: u8[]): u8[] {
 }
 
 // --------------------------------------------------------------- decode
+
 function fail_decode(out: u8[], why: string): Decoded {
   return Decoded { ok: false, bytes: out, err: why };
 }
@@ -140,6 +143,7 @@ function decode(enc: u8[]): Decoded {
 }
 
 // ---------------------------------------------------------------- corpus
+
 function bytes_equal(a: u8[], b: u8[]): boolean {
   if (a.len() != b.len()) {
     return false;
@@ -298,6 +302,7 @@ function corpus(): u8[][] {
 }
 
 // ----------------------------------------------------------------- tests
+
 // The claim: encoding then decoding gives back exactly what went in.
 function test_it_round_trips_the_whole_corpus(): test.TestOutcome {
   var cs: u8[][] = corpus();

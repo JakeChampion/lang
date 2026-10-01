@@ -18,6 +18,7 @@
 // stream whose local index is outside the frame, so the half that reads
 // FERN_IR_VERIFY and exits is testable from somewhere. It cannot be reached
 // through a backend — the compiler does not emit malformed IR on demand.
+
 import "./ir";
 import "./irverify";
 import "./irverifystack";
@@ -46,6 +47,7 @@ function first_msg(ops: ir.Op[], n_params: i32, n_locals: i32): string {
 }
 
 // ---- operand-stack pass helpers (#6639 slice 2) ------------------------
+
 // sp_count is how many stack problems `ops` draws. A bailed function reports
 // nothing, so this is 0 for an unmodelled stream — sp_bail is what
 // distinguishes "clean" from "not looked at".
@@ -248,6 +250,7 @@ function stack_checks(): i32 {
 }
 
 // ---- allocation-budget pass helpers (#6639 slice 3) --------------------
+
 function fip_claim(kw: string, allowance: i32): irfipverify.FipClaim {
   return irfipverify.FipClaim { fn_name: "f", is_fip: kw == "fip", is_fbip: kw == "fbip", allowance: allowance };
 }
@@ -418,6 +421,7 @@ function fip_checks(): i32 {
 
 // gate_checks covers irverifygate.verify_problems — the verdict the backends
 // ---- callee resolution (#6639 slice 4) ---------------------------------
+
 // pv_count is how many unresolved-callee problems `ops` draws against a
 // program declaring `declared`.
 function pv_count(ops: ir.Op[], declared: string[]): i32 {
@@ -700,6 +704,7 @@ function refuse_probe(): i32 {
 }
 
 // ---- ownership half (irverifyrc.fern) ----------------------------------
+
 // raw_op builds an operand-less op by kind name, for the shapes ir.fern gives
 // no dedicated constructor.
 function raw_op(kind: string): ir.Op {

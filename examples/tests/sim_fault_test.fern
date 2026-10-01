@@ -11,6 +11,7 @@ import "std/time";
 // replay (the sweep_seeds workflow), not a flake.
 //
 // Run:  fern -interp examples/tests/sim_fault_test.fern
+
 // fail-mode mirrors the real fetch's connect/send failure: Ready("")
 // immediately, no suspension, the clock does not move, the hit still
 // counts, and a healthy sibling endpoint is untouched.

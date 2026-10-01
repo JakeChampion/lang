@@ -20,6 +20,7 @@
 //
 //   fern -backend ssa -target x86-64-linux -o /tmp/p examples/probes/stack_arguments.fern
 //   /tmp/p; echo $?     # 0, on every backend
+
 function weigh7(a: i32, b: i32, c: i32, d: i32, e: i32, f: i32, g: i32): i32 {
   return a + b * 2 + c * 3 + d * 4 + e * 5 + f * 6 + g * 7;
 }

@@ -19,6 +19,7 @@
 //
 // The app writes its report to stderr; stdout carries TAP-13 from
 // std/test, so the file is its own test suite.
+
 import "std/test";
 import "std/math";
 import "std/i32";
@@ -28,8 +29,8 @@ struct Rgb { r: i32, g: i32, b: i32 }
 
 struct Hsl { h: i32, s: i32, l: i32 }
 
-// h in [0,3600), s/l in [0,1000]
 // ------------------------------------------------------------------ hex
+
 function hex_digit_of(b: i32): i32 {
   if (b >= 48 && b <= 57) {
     return b - 48;
@@ -87,6 +88,7 @@ function to_hex(c: Rgb): string {
 }
 
 // ------------------------------------------------------------------ HSL
+
 // Every conversion below quantises twice — 0..255 into thousandths and back —
 // and integer `/` truncates toward zero, so the two errors point the same way
 // and add. Four truncations on the path is enough to lose 2 units per channel;
@@ -207,6 +209,7 @@ function clamp255(v: i32): i32 {
 }
 
 // ------------------------------------------------------- named colours
+
 struct Named { name: string, c: Rgb }
 
 function palette(): Named[] {
@@ -283,6 +286,7 @@ function sweep(): Rgb[] {
 }
 
 // ---------------------------------------------------------------- tests
+
 // THE test. RGB -> HSL -> RGB over 100 swept colours, requiring every
 // channel back within one unit. A formula that is right on the primaries
 // and wrong in one hue sector fails here and nowhere else.
@@ -502,6 +506,7 @@ function test_lightness_is_monotone(): test.TestOutcome {
 }
 
 // ------------------------------------------------------------------ app
+
 function main(): i32 {
   eprint("colour_convert — hex, HSL and the nearest name");
   var samples: string[] = ["#ff8800", "#3366cc", "#f80", "#808080", "#00ff7f"];

@@ -18,6 +18,7 @@
 //
 // Same shape as leb128: every writer takes a `u8[]`, appends to
 // it, and returns the extended buffer. No I/O, no globals.
+
 import "std/wasm/leb128";
 
 // Valtype byte constants — one per primitive wasm number type.

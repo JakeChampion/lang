@@ -21,6 +21,7 @@
 // extension of the byte's bit-6" — i.e. the encoded high bit
 // already implies the rest. The arithmetic shift on the signed
 // type does the sign extension for free.
+
 // uleb_u32 — append the ULEB128 encoding of `value` to `buf` and
 // return the extended buffer. 1–5 bytes for any u32.
 pub function uleb_u32(buf: u8[], value: u32): u8[] {

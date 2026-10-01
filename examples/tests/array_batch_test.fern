@@ -6,6 +6,7 @@ import "std/array" as array;
 // (consecutive non-overlapping groups) and windows (overlapping sliding
 // groups). chunks/windows return i32[][], so this also exercises the
 // nested-array shape through the self-host IR path on real stdlib bodies.
+
 function test_slice_basic(): test.TestOutcome {
   var s: i32[] = array.slice([10, 20, 30, 40, 50], 1, 4);
   if (s.len() != 3) {

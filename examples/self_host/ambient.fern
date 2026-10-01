@@ -11,10 +11,11 @@
 //
 // The walk is the tree-shaker's: a body reaches every function whose name it
 // spells (a call, a method name, a function value; a method only by a method
-// or operator spelling, never a bare name), and the reach is grown
-// to a fixpoint from the handler. That is the same over-approximation native
+// or operator spelling, never a bare name; a bare name one of its own locals
+// binds, not at all), and the reach is grown to a fixpoint from the handler. That is the same over-approximation native
 // uses for its call graph, minus the row for calls through a value the walk
 // cannot name, which charges nothing on either compiler.
+
 import "./ast";
 import "./astwalk";
 import "./parser";

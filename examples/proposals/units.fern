@@ -16,6 +16,7 @@
 //
 // The app writes its report to stderr; stdout carries TAP-13 from
 // std/test, so the file is its own test suite.
+
 import "std/test";
 import "std/float";
 import "std/i32";
@@ -175,6 +176,7 @@ function render(q: Quantity): string {
 }
 
 // ---------------------------------------------------------------- tests
+
 // Round-tripping through SI must return what went in, for every unit in
 // the table. This catches a factor that is wrong in one direction — the
 // bug a one-way spot check misses.
@@ -460,6 +462,7 @@ function test_unknown_units_are_not_invented(): test.TestOutcome {
 }
 
 // ----------------------------------------------------------------- app
+
 function show_convert(v: f64, from: string, to: string): void {
   var q: Quantity = quantity(v, unit_or_die(from));
   match (convert(q, unit_or_die(to))) {

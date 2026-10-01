@@ -17,6 +17,7 @@ import "std/http";
 // value reached through a constructor, so when the field type
 // swaps and only the method bodies change, a divergence shows up
 // here rather than in whatever handler notices first.
+
 function test_body_string_round_trips(): test.TestOutcome {
   return test.assert_eq(http.ok("hello").body_string(), "hello");
 }

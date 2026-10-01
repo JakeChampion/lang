@@ -10,6 +10,7 @@ import "std/test";
 //   * `test.assert_starts_with_any(s, prefixes)` /
 //     `test.assert_ends_with_any(s, suffixes)` — single string
 //     matches at least one of the supplied options.
+
 function test_all_starts_with_pass(): test.TestOutcome {
   return test.assert_all_starts_with(
     ["[INFO] starting", "[INFO] ready", "[INFO] done"],

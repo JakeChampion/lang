@@ -9,6 +9,7 @@ import "std/test";
 // self-contained trait-test cases). The derived methods must agree with
 // the Go checker's synthesis byte-for-byte (the runner is differential
 // against the interpreter oracle). See docs/TRAITS.md.
+
 @derive(cmp.Eq, cmp.Display, cmp.Ord, cmp.Hash, json.Json)
 struct Point { x: i32, y: i32 }
 
@@ -146,6 +147,7 @@ function test_enum_ord_across_variants(): test.TestOutcome {
 // distribution property, not a guarantee; the native-backend fixture
 // `testdata/cases/hash_struct_enum` exercises that the mix actually
 // spreads.) These law tests stay deterministic on every backend.
+
 function test_hash_law(): test.TestOutcome {
   // Eq ⇒ equal hashes: equal-valued points must hash the same.
   var a: Point = Point { x: 3, y: 7 };

@@ -21,6 +21,7 @@
 // Then drop libfern.so into the APK under lib/arm64-v8a/ and load it from a
 // `Native` class with matching `external fun` declarations. See README.md
 // for the full aapt2 / zipalign / apksigner (or Gradle) packaging recipe.
+
 import "std/jni";
 
 // jint Java_dev_fern_demo_Native_answer(JNIEnv* env, jobject thiz)

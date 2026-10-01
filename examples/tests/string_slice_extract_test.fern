@@ -14,7 +14,9 @@ import "std/string";
 // string)]`, and `-> string[]` shapes, so they exercise Option/tuple match and
 // array assertions through the self-host IR path on real stdlib bodies. The
 // Go-side suite unit-tests these; this is the migration-shaped companion.
+
 // ---- delimiter extraction ----
+
 function test_before(): test.TestOutcome {
   return test.assert_eq("key=value".before("=").to_owned(), "key");
 }
@@ -79,6 +81,7 @@ function test_split_once_missing(): test.TestOutcome {
 }
 
 // ---- affix stripping ----
+
 function test_remove_prefix(): test.TestOutcome {
   var hit: boolean = "unhappy".remove_prefix("un") == "happy";
   var miss: boolean = "happy".remove_prefix("un") == "happy";
@@ -114,6 +117,7 @@ function test_strip_quotes_none(): test.TestOutcome {
 }
 
 // ---- shared run ----
+
 function test_common_prefix(): test.TestOutcome {
   var ok: boolean = "foobar".common_prefix("foobaz") == "fooba";
   var none: boolean = "abc".common_prefix("xyz") == "";
@@ -127,6 +131,7 @@ function test_common_suffix(): test.TestOutcome {
 }
 
 // ---- construction ----
+
 function test_repeat(): test.TestOutcome {
   return test.assert_true("ab".repeat(3) == "ababab" && "x".repeat(0) == "");
 }
@@ -175,6 +180,7 @@ function test_dedent_edges(): test.TestOutcome {
 }
 
 // ---- fixed-width slicing ----
+
 function test_chunks(): test.TestOutcome {
   return test.assert_eq_array("abcdefg".chunks(3), ["abc", "def", "g"]);
 }

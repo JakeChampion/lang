@@ -10,6 +10,7 @@
 //
 // The app writes its report to stderr; stdout carries TAP-13 from
 // std/test, so the file is its own test suite.
+
 import "std/test";
 import "std/i32";
 import "std/i64";
@@ -126,6 +127,7 @@ function live_keys(s: Store): string[] {
 }
 
 // ---------------------------------------------------------------- tests
+
 function seeded(): Store {
   var s: Store = store_new();
   s = put(s, "alpha", "1");
@@ -321,6 +323,7 @@ function test_counters_track_the_slots_under_churn(): test.TestOutcome {
 }
 
 // ----------------------------------------------------------------- app
+
 // One churn round: fill to `n`, delete every other key, compact.
 function churn(n: i32): i32 {
   var s: Store = store_new();

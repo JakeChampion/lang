@@ -13,6 +13,7 @@ import "std/u32" as u32m;
 // version whose `p < n` compare goes negative past 2^31 and spun forever, and
 // sqrt_floor / is_power_of_2 / log2_floor used signed arithmetic near the
 // boundary. Fixed in expr_recv_prim_type — all now match the interpreter.
+
 function test_sqrt_floor(): test.TestOutcome {
   if ((100 as u32).sqrt_floor() != 10 as u32) {
     return test.fail("sqrt 100");

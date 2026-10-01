@@ -4,6 +4,7 @@
 // No prelude: these are in scope only after a program
 // declares `import "std/math";` (docs/PRELUDE-TO-MODULES.md,
 // Phase 5).
+
 // `random_int(lo, hi)` — random i32 in [lo, hi). Returns `lo`
 // when hi <= lo (empty range fallback). Pulls 4 bytes from
 // random_bytes (kernel CSPRNG on natives, wasi_random on
@@ -146,6 +147,7 @@ pub function i64_min(): i64 {
 //
 // Pure f64 arithmetic (no libm / transcendentals), so std/math keeps
 // its zero-dependency, every-backend-exact posture.
+
 // `pi()` — the ratio of a circle's circumference to its diameter, as the
 // closest f64 to π. A function (not a constant) to match how std/math
 // exposes all its values.

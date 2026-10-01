@@ -12,6 +12,7 @@
 // trailing cells. Widths are measured in Unicode CODE POINTS, so
 // accented text lines up; full-width (CJK) and combining marks are a
 // known limitation (they count as one column each).
+
 import "std/utf8";
 import "std/string";
 import "std/array";

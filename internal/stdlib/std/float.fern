@@ -12,6 +12,7 @@
 // No prelude: these are in scope only after a program
 // declares `import "std/float";` (docs/PRELUDE-TO-MODULES.md,
 // Phase 5).
+
 // The formatters dispatch (i64) `.to_string()` (e.g. __float_int_part's
 // digit chunks, __float_to_string_prec) and (i32) `.to_string()` (the
 // shortest formatter's decimal-exponent rendering). Declare std/i64 and
@@ -84,6 +85,7 @@ function __float_int_part(n: f64): string {
 // shortest formatting has. Names mirror the reference so the two can be read
 // side by side. The cache tables below are generated and checked against the
 // upstream table by cmd/floattablegen.
+
 // BEGIN GENERATED DRAGONBOX TABLES (cmd/floattablegen) — do not edit by hand.
 // Dragonbox 128-bit power-of-ten cache for f64: k = -292..326 (619 entries),
 // 22 characters each — 11 for the high 64 bits, then 11 for the low.
@@ -98,6 +100,7 @@ function _db_cache32(): string {
 }
 
 // END GENERATED DRAGONBOX TABLES
+
 // _db_word decodes the 64-bit word that starts at `at`: 11 characters, most
 // significant base-64 digit first. The accumulator cannot overflow because
 // every encoded word is itself a 64-bit value.
@@ -634,6 +637,7 @@ pub function (n: f64) to_string_prec(prec: i32): string {
 // `x.log()` on negative x) should compare results against
 // the textbook formula for the edge cases — std/float
 // doesn't guard.
+
 pub function (x: f64) abs(): f64 {
   return __abs_f64(x);
 }
@@ -1014,6 +1018,7 @@ pub function (rad: f64) to_degrees(): f64 {
 // final answer is bounded by the f32 input + the operation's
 // f64-domain accuracy; the demotion-to-f32 rounds the result
 // to the nearest f32.
+
 pub function (x: f32) abs(): f32 {
   return __abs_f64(x as f64) as f32;
 }

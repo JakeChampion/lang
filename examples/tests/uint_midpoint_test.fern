@@ -14,6 +14,7 @@ import "std/u64" as u64m;
 // so `(a as u32).midpoint(...)` dispatched to the SIGNED std/i32.midpoint (whose
 // `>>` is arithmetic) instead of std/u32.midpoint. Fixed — the self-host
 // compilers now match the interpreter on the near-u32::MAX case.
+
 function test_u32_basic(): test.TestOutcome {
   if ((4 as u32).midpoint(6 as u32) != 5 as u32) {
     return test.fail("4,6");

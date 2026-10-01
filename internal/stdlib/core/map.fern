@@ -77,6 +77,7 @@
 //   cursor, so its output preserves input/insertion key order
 //   for a map that was never deleted from, but a post-delete map
 //   serialises with the swapped key order.
+
 pub function __map_pow2_ceil(n: i32): i32 {
   if (n <= 4) {
     return 4;
@@ -1314,6 +1315,7 @@ pub function __map_clear_impl(m: usize): void {
 //     `__map_*` entry points above are thin dispatchers feeding the
 //     `__map_hash_scalar`/… default adapters in (#4388 item 1 — these
 //     used to be eight near-verbatim body twins of this family).
+
 function __map_lookup_keyed(m: usize, k: usize, hash_fn: (usize) => i32, eq_fn: (usize, usize) => boolean): i32 {
   var buf: usize = __load_ptr(m);
   var cap: i32 = __load_i32(buf);
@@ -1733,6 +1735,7 @@ pub function __mapiter_drop_impl(it: usize): usize {
 // support — so they live alongside the runtime that backs them
 // rather than in a separate module (which would double-bind the
 // `map` import name against `core/map`).
+
 // `m.entries()` — every key/value pair as a fresh `(K, V)[]`, in the
 // map's iteration order. One call instead of zipping `keys()` with a
 // per-key `get()` (or driving the `iter()` cursor by hand). Empty map

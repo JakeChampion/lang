@@ -12,6 +12,7 @@ import "std/string";
 // self-host merged bundle stays under the asm_ir IR budget; uses assert_true.
 // The Go-side TestStringSwapCase pins these across all four backends; this is
 // the migration-shaped (pure-Fern, std/test-driven) companion.
+
 function test_mixed(): test.TestOutcome {
   return test.assert_true("Hello World".swap_case() == "hELLO wORLD");
 }

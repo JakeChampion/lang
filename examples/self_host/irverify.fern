@@ -23,10 +23,12 @@
 // out-of-range branch depth is reported here and only here. Callee
 // RESOLUTION is irverifyprovided.fern (slice 4), which reports the callee this
 // file's arity check deliberately leaves alone.
+
 import "./ir";
 import "./util";
 
 // ---- problems ----------------------------------------------------------
+
 // Problem is one violation, located precisely enough to fix. `op` indexes
 // into the function's op stream, or is -1 for a whole-function problem.
 pub struct Problem {
@@ -59,6 +61,7 @@ pub function format_problems(ps: Problem[], max: i32): string {
 }
 
 // ---- callee signatures -------------------------------------------------
+
 // FnSig is the arity of a function the program declares. Only DECLARED
 // functions are listed: an unresolved callee name is left alone rather than
 // reported here, because one program's function list cannot tell a runtime
@@ -68,6 +71,7 @@ pub function format_problems(ps: Problem[], max: i32): string {
 pub struct FnSig { name: string, n_params: i32 }
 
 // ---- the name index ----------------------------------------------------
+
 // NameIndex is a lookup over the program's declared names. The self-host
 // compiler declares ~3000 functions and emits tens of thousands of calls, so a
 // linear scan per call op makes a pass quadratic on the one program it most
@@ -183,6 +187,7 @@ pub function index_params(ix: NameIndex, name: string): i32 {
 }
 
 // ---- the pass ----------------------------------------------------------
+
 // verify_fn checks one lowered function's op stream and returns every
 // problem found, in op order.
 //

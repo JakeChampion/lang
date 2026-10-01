@@ -10,6 +10,7 @@ import "std/float" as float;
 // the self-host merged bundle stays well under the asm_ir IR budget. The
 // Go-side TestFloatSignumLerp pins these across all four backends; this is the
 // migration-shaped (pure-Fern, std/test-driven) companion.
+
 function test_signum_positive(): test.TestOutcome {
   var x: f64 = 5.0;
   return test.assert_eq_f64_near(x.signum(), 1.0, 0.0);

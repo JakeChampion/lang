@@ -5,6 +5,7 @@ import "std/test";
 // covered by `arithmetic_test.fern`; this file specifically
 // exercises the wider widths so a regression in the interp's
 // `__int_to_string_u64` override would surface here.
+
 function test_i64_addition(): test.TestOutcome {
   var a: i64 = 5000000000;
   var b: i64 = 3000000000;

@@ -63,7 +63,8 @@ type Graph struct {
 // The four over-approximations, each chosen so the result is an upper
 // bound on what a function can reach:
 //
-//   - A bare identifier naming a top-level function is an edge, not
+//   - A bare identifier naming a top-level function, and not bound by a
+//     local of the same name (ast.Ident.Local), is an edge, not
 //     just a call — a function passed as a value is reachable through
 //     whoever invokes it. It is also recorded in Escaping.
 //   - A `dyn Trait` method call edges to every method with that simple
@@ -132,6 +133,17 @@ func Build(prog *ast.Program, isBuiltin func(name string) bool) *Graph {
 				case *ast.Ident:
 					calleeIdent[callee] = true
 					switch {
+					case locals[callee.Name]:
+						// A function declared as a statement inside this
+						// body. closureconv has not hoisted it yet, so it
+						// has no top-level name — but its body is walked
+						// as part of this one, so its reach is already
+						// counted here.
+					case callee.Local:
+						// A parameter, local or capture holding a function
+						// value, whatever top-level function it is spelled
+						// like.
+						g.Indirect[name] = true
 					case g.Funcs[callee.Name] != nil:
 						addEdge(callee.Name)
 					case isBuiltin(callee.Name):
@@ -139,12 +151,6 @@ func Build(prog *ast.Program, isBuiltin func(name string) bool) *Graph {
 							seenBuiltin[callee.Name] = true
 							g.Builtins[name] = append(g.Builtins[name], callee.Name)
 						}
-					case locals[callee.Name]:
-						// A function declared as a statement inside this
-						// body. closureconv has not hoisted it yet, so it
-						// has no top-level name — but its body is walked
-						// as part of this one, so its reach is already
-						// counted here.
 					default:
 						// A local, a parameter, or a struct field
 						// holding a function value.
@@ -169,7 +175,7 @@ func Build(prog *ast.Program, isBuiltin func(name string) bool) *Graph {
 				// A function named outside call position is a value:
 				// an edge (whoever invokes it runs it here) and an
 				// escape (it may reach an indirect call anywhere).
-				if calleeIdent[x] {
+				if calleeIdent[x] || x.Local {
 					return true
 				}
 				if _, isFn := g.Funcs[x.Name]; isFn {
@@ -190,7 +196,7 @@ func Build(prog *ast.Program, isBuiltin func(name string) bool) *Graph {
 			ast.Walk(lam.Body, func(m ast.Node) bool {
 				switch y := m.(type) {
 				case *ast.Call:
-					if id, ok := y.Callee.(*ast.Ident); ok {
+					if id, ok := y.Callee.(*ast.Ident); ok && !id.Local {
 						if g.Funcs[id.Name] != nil {
 							g.Escaping[id.Name] = true
 						} else if isBuiltin(id.Name) {
@@ -198,7 +204,7 @@ func Build(prog *ast.Program, isBuiltin func(name string) bool) *Graph {
 						}
 					}
 				case *ast.Ident:
-					if _, isFn := g.Funcs[y.Name]; isFn {
+					if _, isFn := g.Funcs[y.Name]; isFn && !y.Local {
 						g.Escaping[y.Name] = true
 					}
 				}

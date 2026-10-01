@@ -86,6 +86,7 @@
 //     00 61 73 6d   magic ("\0asm")
 //     0d 00         version 0x000d (component-model preview)
 //     01 00         layer 0x0001  (component, vs 0x0000 for core)
+
 import "std/wasm/leb128";
 import "std/wasm/encode";
 

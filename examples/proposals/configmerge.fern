@@ -42,6 +42,7 @@
 // config file's later line wins over an earlier one.
 //
 // The app writes its report to stderr; stdout carries TAP-13 from std/test.
+
 import "std/test";
 import "std/i32";
 import "std/string";
@@ -54,6 +55,7 @@ struct Layer { name: string, entries: Entry[] }
 struct Resolved { key: string, value: string, from: string }
 
 // ------------------------------------------------------------- ordering
+
 // Byte-wise `<` on strings: `<` is not defined for string in Fern, and the
 // merge needs a total order so its output is comparable rather than
 // insertion-ordered.
@@ -90,6 +92,7 @@ function sort_resolved(rs: Resolved[]): Resolved[] {
 }
 
 // ---------------------------------------------------------------- merge
+
 function index_of_key(rs: Resolved[], k: string): i32 {
   var i: i32 = 0;
   while (i < rs.len()) {
@@ -147,6 +150,7 @@ function merge_all(ls: Layer[]): Resolved[] {
 }
 
 // --------------------------------------------------------------- oracle
+
 // Precedence, by definition: walk the layers from the highest down and take
 // the first that HAS the key. Shares no code with the fold above.
 function resolve(ls: Layer[], k: string): Resolved {
@@ -197,6 +201,7 @@ function all_keys(ls: Layer[]): string[] {
 }
 
 // ------------------------------------------------------- the env mapping
+
 // The result of the env-name mapping: whether the name is one of ours, and
 // the config key it denotes if so.
 struct MappedKey { ok: boolean, key: string }
@@ -272,6 +277,7 @@ function env_layer(vars: string[]): Layer {
 }
 
 // -------------------------------------------------------- typed getters
+
 // Absent is not the same as unparseable: the first uses the default, the
 // second is a reportable error. Collapsing them is how a program ends up
 // listening on the wrong port without saying anything.
@@ -321,6 +327,7 @@ function get_int(rs: Resolved[], key: string, dflt: i32): IntGet {
 }
 
 // ---------------------------------------------------------------- corpus
+
 function entry(k: string, v: string): Entry {
   return Entry { key: k, value: v };
 }
@@ -421,6 +428,7 @@ function env_names(): string[] {
 }
 
 // ----------------------------------------------------------------- tests
+
 // The fold agrees with top-down resolution, key by key, including provenance.
 function test_the_merge_agrees_with_top_down_resolution(): test.TestOutcome {
   var ss: Layer[][] = stacks();

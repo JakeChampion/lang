@@ -9,6 +9,7 @@ import "std/string";
 // the window), and truncate / ellipsis floor-snap the kept prefix
 // (at most n bytes, never more). Multibyte inputs are built from
 // explicit bytes so é's [195, 169] encoding is pinned.
+
 // h(104) é(195,169) l l o — 6 bytes; boundary set {0, 1, 3, 4, 5, 6}.
 function hello_acc(): string {
   var b: u8[] = [104 as u8, 195 as u8, 169 as u8, 108 as u8, 108 as u8, 111 as u8];
@@ -16,6 +17,7 @@ function hello_acc(): string {
 }
 
 // ---- take / drop ----
+
 function test_take_snaps_backward(): test.TestOutcome {
   // 2 sits on é's continuation byte; the prefix keeps only "h".
   return test.assert_eq(hello_acc().take(2).to_owned(), "h");
@@ -49,6 +51,7 @@ function test_take_drop_ascii_identity(): test.TestOutcome {
 }
 
 // ---- split_at ----
+
 function test_split_at_snaps(): test.TestOutcome {
   var p: (string, string) = hello_acc().split_at(2);
   return test.assert_true(p.0 == "h" && p.1.len() == 5
@@ -61,6 +64,7 @@ function test_split_at_ascii(): test.TestOutcome {
 }
 
 // ---- chunks ----
+
 function test_chunks_no_split(): test.TestOutcome {
   // héllo in 2-byte windows: the é does not fit after "h", so the
   // first cut snaps back — h | é | ll | o.
@@ -83,6 +87,7 @@ function test_chunks_ascii_identity(): test.TestOutcome {
 }
 
 // ---- truncate / ellipsis ----
+
 function test_truncate_snaps(): test.TestOutcome {
   // Cap 4 with ".." leaves 2 bytes of prefix — mid-é, so only "h"
   // survives and the result is shorter than the cap, never longer.

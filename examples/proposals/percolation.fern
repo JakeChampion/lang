@@ -18,11 +18,13 @@
 //
 // The app writes its report to stderr; stdout carries TAP-13 from
 // std/test, so the file is its own test suite.
+
 import "std/test";
 import "std/i32";
 import "std/i64";
 
 // ------------------------------------------------------------- union-find
+
 // Parent array with union by index and full path compression on find.
 // Arrays are immutable, so every link is `parent.with(i, v)`; the
 // allocation shape of that is what `main` measures.
@@ -76,6 +78,7 @@ function uf_connected(u: UF, a: i32, b: i32): boolean {
 }
 
 // ------------------------------------------------------------ percolation
+
 // A grid of n*n sites plus two virtual nodes: n*n is the source (joined to
 // every open top-row site) and n*n+1 the sink (joined to the bottom row).
 struct Grid { n: i32, open: boolean[], uf: UF }
@@ -149,6 +152,7 @@ function open_count(g: Grid): i32 {
 }
 
 // --------------------------------------------------------------- the RNG
+
 // xorshift64*, deterministic. Returns the next state; callers thread it.
 function xs_next(s: i64): i64 {
   var x: i64 = s;
@@ -185,6 +189,7 @@ function sites_to_percolate(n: i32, seed: i64): i32 {
 }
 
 // ---------------------------------------------------------------- tests
+
 // A grid with nothing open cannot percolate; one with everything open must.
 function test_empty_and_full_grids(): test.TestOutcome {
   var empty: Grid = grid_new(5);
@@ -322,6 +327,7 @@ function test_threshold_is_near_the_known_value(): test.TestOutcome {
 }
 
 // ----------------------------------------------------------------- app
+
 function main(): i32 {
   eprint("percolation — site percolation on a square lattice, union-find");
 

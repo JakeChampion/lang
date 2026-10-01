@@ -11,6 +11,7 @@ import "std/string";
 // assert_true. The i32 -> string render self-hosts cleanly (like to_hex), so the
 // suite is self-host-gated in full. The Go-side TestI32ToStringRadix pins native
 // compilation on all four backends.
+
 function test_hex(): test.TestOutcome {
   return test.assert_true(255.to_string_radix(16) == "ff");
 }

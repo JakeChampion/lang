@@ -4,6 +4,7 @@
 // it declares `import "std/i32";` (docs/PRELUDE-TO-MODULES.md,
 // Phase 5). Callers reference the free functions qualified
 // (`i32.<name>`) and the receiver methods bare (`n.abs()`).
+
 import "core/int";
 // std/i32's bodies dispatch (string) methods like `s.pad_start(
 // width, "0")` (inside to_string_padded / to_string_with_sep).
@@ -66,6 +67,7 @@ pub function (n: i32) midpoint(other: i32): i32 {
 // `__is_ascii_ws` is the single implementation, which
 // `is_ascii_white_space` widens its byte into, since the `trim()`
 // family calls it directly and pre-dates this surface.
+
 pub function (b: u8) is_ascii_digit(): boolean {
   return b >= 48 && b <= 57;
 }
@@ -468,6 +470,7 @@ pub function (n: i32) is_prime(): boolean {
 // non-ASCII) pass through unchanged for the to_* path and
 // return false for the is_* path. Used by string-level
 // methods below and by hand-rolled tokenisers.
+
 pub function (b: u8) is_ascii_lower(): boolean {
   return b >= 97 && b <= 122;
 }
@@ -532,6 +535,7 @@ pub function (n: i32) clamp(lo: i32, hi: i32): i32 {
 // caller can decide. Overflow detection is sign-bit-based —
 // no i64 widening (the natives' i64 codegen has a comparison
 // bug with values straddling the i32::MAX threshold).
+
 pub function (n: i32) saturating_add(other: i32): i32 {
   var r: i32 = n + other;
   // Overflow: both signs match but result flips sign.
@@ -759,6 +763,7 @@ pub function (n: i32) overflowing_rem(other: i32): (i32, boolean) {
 // representation — so `abs()` / unary `-` wrap MIN to itself. These give the
 // overflow-safe forms, the unary counterparts of the checked_ / overflowing_
 // binary ops.
+
 // `(n: i32) checked_neg()` — `Some(-n)`, or `None` for i32::MIN.
 pub function (n: i32) checked_neg(): Option[i32] {
   if (n == 0 - 2147483647 - 1) {
@@ -824,6 +829,7 @@ pub function (n: i32) checked_shr(rhs: i32): Option[i32] {
 }
 
 // === i32 / i64 parity + power + gcd/lcm ===
+
 pub function (n: i32) is_even(): boolean {
   return n % 2 == 0;
 }
@@ -1067,6 +1073,7 @@ pub function (n: i32) divmod(d: i32): (i32, i32) {
 //
 // `byte_swap` stays a software shift/mask sequence — endian conversion has no
 // single-instruction form the IR exposes.
+
 pub function (n: i32) count_ones(): i32 {
   return __popcount32(n as u32);
 }

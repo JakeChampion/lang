@@ -19,6 +19,7 @@
 // Like asm_ir, this is a SEPARATE module imported only by its differential
 // driver (asm_ir_run -target arm64-linux) — asm_arm64.fern and the arm64 bootstrap stay
 // untouched until a later fold/flip slice.
+
 import "./parser";
 import "./asmcore";
 import "./checker";
@@ -962,6 +963,7 @@ function map_fn_address(s: asmcore.EmitState, reg: string, name: string): asmcor
 // callee-saved pool a value live across a call takes, saved in pairs once per
 // function. x4..x7 are scratch; x16/x17 belong to fr_ldr and fr_sub_imm. A
 // spilled value lives at [x29, #-8*(slot+1)] by its allocator slot.
+
 // Pool index 0 is x0, the register the ABI returns a call's result in, so a
 // call result allocated there needs no move at all. The arms that are calls
 // may write it, since the allocator never leaves a caller-saved value live
@@ -2824,7 +2826,7 @@ function emit_ssa_function(r: irlower.LowerResult, label_name: string, s: asmcor
   // cost shows, and this is how a slow one is found.
   var emit_ms: i64 = (monotonic_ns() - t_emit) / 1000000i64;
   if (ircore.ssa_report_on() && lift_ms + emit_ms > 200i64) {
-    eprint("FERN_SSA: time " + label_name + ": lift " + util.i32_to_string(lift_ms as i32) + " ms, emit " + util.i32_to_string(emit_ms as i32) + " ms, " + util.i32_to_string(r.ops.len()) + " ops, " + util.i32_to_string(r.n_locals) + " slots\n");
+    eprint("FERN_SSA: time " + label_name + ": lift " + util.i32_to_string(lift_ms as i32) + " ms, emit " + util.i32_to_string(emit_ms as i32) + " ms, " + util.i32_to_string(r.ops.len()) + " ops, " + util.i32_to_string(r.n_locals) + " slots");
   }
   return s;
 }
@@ -4112,6 +4114,9 @@ function helper_call_needs(name: string, s: asmcore.EmitState): asmcore.EmitStat
   if (name == "__fern_arr_own_elems") {
     s = s.need("arr_own_elems");
   }
+  if (name == "__fern_str_own") {
+    s = s.need("str_own");
+  }
   // The VIEW-aware string[] element walk (#6544), gated the same way:
   // a binary that never reclaims a builtin string[] must not carry a
   // body whose inner `bl __fn___fern_str_view_free` the negative
@@ -5272,6 +5277,7 @@ function emit_arm64_enum_arr_elems_drop_one(s: asmcore.EmitState, ety: string): 
 // lower through emit_ir_runtime_fern_fn (the IR selector) rather than the AST
 // emit_function. emit_ldc / emit_ccall_shim1_arm64 / emit_ccall_shims_arm64 /
 // emit_rodata_pools_arm64 live alongside it because emit_ir_runtime calls them.
+
 function emit_ldc(s: asmcore.EmitState, reg: string, lbl: string): asmcore.EmitState {
   s = s.write("    adrp x12, " + lbl + "\n");
   s = s.write("    add x12, x12, :lo12:" + lbl + "\n");
@@ -7698,10 +7704,55 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write(".Laie_ret:\n");
     s = s.write("    ret\n");
   }
+  // __fern_str_own(s@[sp]) -> a string its holder owns a unit of, the arm64
+  // sibling of the x86-64 body: a counted string retained, a fresh box over
+  // an arena view's bytes, and any other view as is.
+  if (s.has_need("str_own")) {
+    s = s.write("__fn___fern_str_own:\n");
+    s = s.write("    ldr x0, [sp]\n");
+    s = s.write("    tbnz x0, #0, .Lso_ret\n");
+    s = s.write("    mov x9, #0x10000\n");
+    s = s.write("    cmp x0, x9\n");
+    s = s.write("    blo .Lso_ret\n");
+    s = s.write("    ldur w1, [x0, #-8]\n");  // rc
+    s = s.write(san_poison_check("w1", "w9", ".Lso_live"));
+    s = s.write("    tbnz w1, #31, .Lso_view\n");
+    s = s.write("    stp x0, x30, [sp, #-16]!\n");
+    s = s.write("    str x0, [sp, #-16]!\n");
+    s = s.write("    bl __fn___fern_rc_inc\n");
+    s = s.write("    add sp, sp, #16\n");
+    s = s.write("    ldp x0, x30, [sp], #16\n");
+    s = s.write("    ret\n");
+    s = s.write(".Lso_view:\n");
+    s = s.write("    sub x1, x0, #8\n");  // box base
+    s = s.write("    adrp x11, __fern_heap_base\n");
+    s = s.write("    add x11, x11, :lo12:__fern_heap_base\n");
+    s = s.write("    ldr x11, [x11]\n");
+    s = s.write("    cmp x1, x11\n");
+    s = s.write("    blo .Lso_ret\n");
+    s = s.write("    adrp x12, __fern_heap_end\n");
+    s = s.write("    add x12, x12, :lo12:__fern_heap_end\n");
+    s = s.write("    ldr x12, [x12]\n");
+    s = s.write("    cmp x1, x12\n");
+    s = s.write("    bhs .Lso_ret\n");
+    s = s.write("    stp x0, x30, [sp, #-16]!\n");
+    s = s.write("    mov x0, #24\n");
+    s = s.write("    bl __fern_alloc\n");
+    s = s.write("    ldp x1, x30, [sp], #16\n");  // the shared box
+    s = s.write("    mov x3, #-1\n");
+    s = s.write("    str x3, [x0]\n");
+    s = s.write("    ldr x2, [x1]\n");
+    s = s.write("    str x2, [x0, #8]\n");  // data
+    s = s.write("    ldr x2, [x1, #8]\n");
+    s = s.write("    str x2, [x0, #16]\n");  // len
+    s = s.write("    add x0, x0, #8\n");
+    s = s.write(".Lso_ret:\n");
+    s = s.write("    ret\n");
+  }
   // __fern_arr_own_elems(dst@[sp,#16], src@[sp]) -> dst, the arm64
-  // sibling of the x86-64 body: dst takes its own unit on each of its first
-  // len(src) elements, a retain on a counted one and a fresh box on an
-  // arena string view. x19/x20/x21 hold dst/len/i.
+  // sibling of the x86-64 body: each of dst's first len(src) elements is
+  // replaced by the unit __fern_str_own answers for it. x19/x20/x21 hold
+  // dst/len/i.
   if (s.has_need("arr_own_elems")) {
     s = s.write("__fn___fern_arr_own_elems:\n");
     s = s.write("    ldr x0, [sp, #16]\n");  // dst (also the result)
@@ -7721,43 +7772,11 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    bge .Laoe_done\n");
     s = s.write("    add x9, x21, #1\n");
     s = s.write("    ldr x0, [x19, x9, lsl #3]\n");  // element i
-    s = s.write("    tbnz x0, #0, .Laoe_next\n");
-    s = s.write("    mov x9, #0x10000\n");
-    s = s.write("    cmp x0, x9\n");
-    s = s.write("    blo .Laoe_next\n");
-    s = s.write("    ldur w1, [x0, #-8]\n");  // rc
-    s = s.write(san_poison_check("w1", "w9", ".Laoe_live"));
-    s = s.write("    tbnz w1, #31, .Laoe_view\n");
     s = s.write("    str x0, [sp, #-16]!\n");
-    s = s.write("    bl __fn___fern_rc_inc\n");
+    s = s.write("    bl __fn___fern_str_own\n");
     s = s.write("    add sp, sp, #16\n");
-    s = s.write("    b .Laoe_next\n");
-    s = s.write(".Laoe_view:\n");
-    s = s.write("    sub x1, x0, #8\n");  // box base
-    s = s.write("    adrp x11, __fern_heap_base\n");
-    s = s.write("    add x11, x11, :lo12:__fern_heap_base\n");
-    s = s.write("    ldr x11, [x11]\n");
-    s = s.write("    cmp x1, x11\n");
-    s = s.write("    blo .Laoe_next\n");
-    s = s.write("    adrp x12, __fern_heap_end\n");
-    s = s.write("    add x12, x12, :lo12:__fern_heap_end\n");
-    s = s.write("    ldr x12, [x12]\n");
-    s = s.write("    cmp x1, x12\n");
-    s = s.write("    bhs .Laoe_next\n");
-    s = s.write("    str x0, [sp, #-16]!\n");
-    s = s.write("    mov x0, #24\n");
-    s = s.write("    bl __fern_alloc\n");
-    s = s.write("    ldr x1, [sp], #16\n");  // the shared box
-    s = s.write("    mov x3, #-1\n");
-    s = s.write("    str x3, [x0]\n");
-    s = s.write("    ldr x2, [x1]\n");
-    s = s.write("    str x2, [x0, #8]\n");  // data
-    s = s.write("    ldr x2, [x1, #8]\n");
-    s = s.write("    str x2, [x0, #16]\n");  // len
-    s = s.write("    add x0, x0, #8\n");
     s = s.write("    add x9, x21, #1\n");
     s = s.write("    str x0, [x19, x9, lsl #3]\n");
-    s = s.write(".Laoe_next:\n");
     s = s.write("    add x21, x21, #1\n");
     s = s.write("    b .Laoe_loop\n");
     s = s.write(".Laoe_done:\n");
@@ -11115,6 +11134,7 @@ pub function emit_ir_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.Emi
 // orchestrators (moved from asm_arm64.fern, #3457 slice-5 prep): with the IR
 // runtime already here (emit_ir_runtime), the whole arm64 IR emit path now
 // lives in asm_arm64_ir.fern, so asm_arm64.fern holds only the AST emitter.
+
 // emit_module_or_error is the arm64 mirror of asm_ir.emit_module_or_error
 // (#3457 slice 5): the same parse-error / type-check / lambda-lift prologue as
 // asm_arm64.emit_module, then the eligibility gate — but a module the gate
@@ -11415,6 +11435,7 @@ pub function emit_module_ir_unit_arm64_flat(mod: parser.Module, is_entry: boolea
 //     sockaddr_in sin_len byte) that std/tcp.fern's HTTP edge-handler
 //     loop is built on, and one-shot IPv4 UDP (udp_send — socket /
 //     sendto 206→133 / close, dotted-quad host parse).
+
 function darwin_starts_with(s: string, p: string): boolean {
   if (s.len() < p.len()) {
     return false;

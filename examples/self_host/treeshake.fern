@@ -28,6 +28,7 @@
 // subtract lambda-local bindings — for reachability, keeping an extra
 // same-named function is harmless; dropping a referenced one is not.
 // Over-keeping only costs IR budget; it never changes behaviour.
+
 import "./ast";
 import "./astwalk";
 import "./lexer";
@@ -362,16 +363,122 @@ pub struct RefSet { names: string[], head: i32[], next: i32[] }
 // a call graph function by function (ambient.fern). A method is reached only by
 // a method or operator spelling: a bare name is a local or a free function, as
 // native's call graph reads it, so `var close` does not reach a `close` method.
+// A bare name `fd`'s own parameters, receiver or declarations bind reaches
+// nothing: a local spelled like a free function is not a reference to it. A
+// method spelled on a receiver of known declared type reaches that type's
+// method (`methods` holds the qualified root); its bare spelling stays in
+// `any` for the helpers only a bare name reaches.
 pub struct BodyRefs { any: RefSet, methods: RefSet }
 
 pub function body_refs(fd: parser.FuncDecl): BodyRefs {
+  var lt: LocalTypes = local_types(fd);
+  function method_of(e: ast.Expr, own acc: string[]): string[] {
+    return method_name_of(e, lt, acc);
+  }
   var methods: string[] = [];
+  // The bare spellings too: an array-method helper (`__method_Array_join`)
+  // and an interposed trait method (`B.scale`) are reached by `.join` and
+  // `.scale` alone, which no qualified root names.
+  var bare: string[] = [];
   var i: i32 = 0;
   while (i < fd.body.len()) {
-    methods = astwalk.fold_stmt(fd.body[i], methods, ts_method_name_of);
+    methods = astwalk.fold_stmt(fd.body[i], methods, method_of);
+    bare = astwalk.fold_stmt(fd.body[i], bare, ts_method_name_of);
     i = i + 1;
   }
-  return BodyRefs { any: refset_of(ts_func_names(fd, [])), methods: refset_of(methods) };
+  var bound: string[] = [];
+  if (fd.receiver_name.len() > 0) {
+    bound = bound.append(fd.receiver_name);
+  }
+  var pi: i32 = 0;
+  while (pi < fd.params.len()) {
+    bound = bound.append(fd.params[pi].name);
+    pi = pi + 1;
+  }
+  var any: string[] = [];
+  any = util.append_all(any, methods);
+  any = util.append_all(any, bare);
+  var free: string[] = astwalk.collect_free_idents(bound, fd.body, []);
+  var fi: i32 = 0;
+  while (fi < free.len()) {
+    any = any.append(ts_free_root(free[fi]));
+    fi = fi + 1;
+  }
+  return BodyRefs { any: refset_of(any), methods: refset_of(methods) };
+}
+
+// LocalTypes pairs the names a function binds with a declared type — its
+// receiver, its parameters and every annotated `var` — with that type. A
+// type parameter, and a name bound again under another spelling, map to "".
+struct LocalTypes { names: string[], types: string[] }
+
+function lt_bind(own lt: LocalTypes, name: string, ty: string): LocalTypes {
+  var k: i32 = util.index_of_str(lt.names, name);
+  if (k < 0) {
+    return LocalTypes { names: lt.names.append(name), types: lt.types.append(ty) };
+  }
+  if (lt.types[k] == ty) {
+    return lt;
+  }
+  return LocalTypes { names: lt.names, types: lt.types.with(k, "") };
+}
+
+function lt_stmt(st: ast.Stmt, own lt: LocalTypes): LocalTypes {
+  match (st) {
+    ast.StmtVar(v) => {
+      return lt_bind(lt, v.name, v.type_name);
+    },
+    ast.StmtFor(f) => {
+      return lt_bind(lt, f.var_name, "");
+    },
+    _ => {
+      return lt;
+    }
+  }
+  return lt;
+}
+
+function local_types(fd: parser.FuncDecl): LocalTypes {
+  var lt: LocalTypes = LocalTypes { names: [], types: [] };
+  if (fd.receiver_name.len() > 0) {
+    lt = lt_bind(lt, fd.receiver_name, fd.receiver_type);
+  }
+  var pi: i32 = 0;
+  while (pi < fd.params.len()) {
+    var ty: string = fd.params[pi].type_name;
+    if (util.base_type_name(ty) == "Self") {
+      ty = fd.receiver_type;
+    }
+    if (util.has_str(fd.type_params, util.base_type_name(ty))) {
+      ty = "";
+    }
+    lt = lt_bind(lt, fd.params[pi].name, ty);
+    pi = pi + 1;
+  }
+  var i: i32 = 0;
+  while (i < fd.body.len()) {
+    lt = astwalk.fold_stmt_spine(fd.body[i], lt, lt_stmt);
+    i = i + 1;
+  }
+  return lt;
+}
+
+// method_name_of is ts_method_name_of with a method spelled on a receiver of
+// known declared type qualified by it: `plat.log` reaches `Platform`'s `log`
+// and not every `log`, as native's typed dispatch reads it.
+function method_name_of(e: ast.Expr, lt: LocalTypes, own acc: string[]): string[] {
+  if let ast.ExprFieldAccess(fa) = e {
+    if let ast.ExprIdent(id) = fa.obj {
+      var k: i32 = util.index_of_str(lt.names, id.name);
+      if (k >= 0) {
+        var base: string = util.base_type_name(lt.types[k]);
+        if (ts_named_tag(base)) {
+          return acc.append(ts_qualified_root(base, fa.field));
+        }
+      }
+    }
+  }
+  return ts_method_name_of(e, acc);
 }
 
 // free_names is the receiver-less functions `br` names.
@@ -388,9 +495,27 @@ pub function free_names(br: BodyRefs): string[] {
 
 pub function refs_name(br: BodyRefs, fd: parser.FuncDecl): boolean {
   if (fd.receiver_type.len() > 0) {
-    return ts_kept_name(fd, br.methods);
+    if (ts_kept_name(fd, br.methods)) {
+      return true;
+    }
+    if (refset_has(br.methods, ts_qualified_root(util.base_type_name(fd.receiver_type), fd.name))) {
+      return true;
+    }
+    var im: string = ts_interposed_method_name(fd.name);
+    return im.len() > 0 && refset_has(br.any, im);
   }
-  return ts_kept_name(fd, br.any);
+  // A free function is named by a bare identifier: `plat.log` is a method
+  // or a field whatever free `log` the program also declares, where the
+  // shake's own ts_kept_name keeps both.
+  if (refset_has(br.any, ts_free_root(fd.name))) {
+    return true;
+  }
+  var m: string = ts_array_method_name(fd.name);
+  if (m.len() > 0 && refset_has(br.any, m)) {
+    return true;
+  }
+  var im: string = ts_interposed_method_name(fd.name);
+  return im.len() > 0 && refset_has(br.any, im);
 }
 
 function ts_method_name_of(e: ast.Expr, own acc: string[]): string[] {
@@ -520,7 +645,9 @@ function ts_grow(mod: parser.Module, rs0: RefSet, pending0: i32[]): TsGrown {
 
 // ts_reaches_map reports whether a map can reach the kept program: a map
 // constructor is reachable, a kept function or a lambda in one takes or
-// returns a map, or a struct or variant holds one.
+// returns a map, a struct or variant holds one, or a kept body names a
+// builtin enum a variant of which holds one — the enum's drop walks that
+// variant whichever variant the program built.
 function ts_reaches_map(mod: parser.Module, rs: RefSet): boolean {
   if (refset_has(rs, "map_new") || refset_has(rs, ts_free_root("map_new"))
     || refset_has(rs, "__map_new_i32") || refset_has(rs, ts_free_root("__map_new_i32"))) {
@@ -537,6 +664,23 @@ function ts_reaches_map(mod: parser.Module, rs: RefSet): boolean {
       if (ts_mentions_any([fl.type_name], map_types)) {
         return true;
       }
+    }
+  }
+  var all: parser.StructDecl[] = parser.inject_builtin_enums(mod.structs);
+  var bi: i32 = mod.structs.len();
+  while (bi < all.len()) {
+    var variant: parser.StructDecl = all[bi];
+    bi = bi + 1;
+    var owner: string = variant.enum_owner;
+    if (owner.len() == 0) {
+      owner = variant.name;
+    }
+    if (util.index_of_str(map_types, owner) < 0) {
+      continue;
+    }
+    if (refset_has(rs, variant.name) || refset_has(rs, ts_free_root(variant.name))
+      || refset_has(rs, owner) || refset_has(rs, ts_free_root(owner))) {
+      return true;
     }
   }
   return false;

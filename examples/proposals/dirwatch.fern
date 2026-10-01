@@ -33,6 +33,7 @@
 // same bytes.
 //
 // The app writes its report to stderr; stdout carries TAP-13 from std/test.
+
 import "std/test";
 import "std/i32";
 import "std/i64";
@@ -74,6 +75,7 @@ function checksum(s: string): i32 {
 }
 
 // ------------------------------------------------------------- the differ
+
 function find_entry(es: Entry[], name: string): Option[Entry] {
   for i in 0..es.len() {
     if (es[i].name == name) {
@@ -157,6 +159,7 @@ function total(c: Changes): i32 {
 }
 
 // ---------------------------------------------------------- the real disk
+
 // Snapshot a directory: every regular file's name, size and content hash.
 // Directories are skipped rather than recursed — a watcher that silently
 // descended would report a nested change as a change to the parent.
@@ -219,6 +222,7 @@ function write_at(dir: string, name: string, body: string): boolean {
 }
 
 // ------------------------------------------------------- generated shapes
+
 // A deterministic pseudo-random walk over a fixed name alphabet, so the tests
 // cover hundreds of before/after shapes rather than the three anybody would
 // write by hand — including the degenerate ones: identical, disjoint,
@@ -248,6 +252,7 @@ function gen_snapshot(seed: i32): Entry[] {
 }
 
 // ----------------------------------------------------------------- tests
+
 // THE test. Applying the change set to `before` must reconstruct `after`'s
 // name list exactly, for every generated pair. A differ that drops a file,
 // double-counts one, or reports a rename as a modification fails here and
@@ -516,6 +521,7 @@ function test_polling_an_unchanged_directory_is_silent(): test.TestOutcome {
 }
 
 // ------------------------------------------------------------------- app
+
 function show(label: string, xs: string[]): string {
   var s: string = label + "=[";
   for i in 0..xs.len() {

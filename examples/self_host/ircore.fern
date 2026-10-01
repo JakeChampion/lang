@@ -27,6 +27,7 @@
 // This module must stay backend-free: it imports the front end, the IR and the
 // lowering, never a backend. asm_ir/asm_arm64_ir/wasm_ir import it, so anything
 // added here that needs to emit an instruction belongs in the backend instead.
+
 import "core/map";
 import "./parser";
 import "./asmcore";
@@ -141,6 +142,9 @@ function is_rc_helper(name: string): boolean {
     // takes a fresh box for each arena view it shares (register backends),
     // and the element retain otherwise. Only ssarc's copy sites emit it.
     || name == "__fern_arr_own_elems"
+    // One string's unit of its own: the retain, or a fresh box for an arena
+    // view. ssarc's reads out of a view map column emit it.
+    || name == "__fern_str_own"
     // FBIP reuse-degrade primitive (#4350): hands a dead donor's block back
     // when its cap matches, else freelists it and allocs fresh — so a reuse
     // site guarded by __fern_rc_is_unique degrades instead of corrupting.
@@ -536,7 +540,7 @@ pub function ssa_report_on(): boolean {
 // native ISAs, so this is a compiler bug naming its site, never a program the
 // backend does not cover.
 pub function ssa_refuse(name: string, why: string): i32 {
-  eprint("error: internal: " + name + " did not lift to SSA: " + why + " — the register path is the only native emitter and every op the lowering produces must reach it\n");
+  eprint("error: internal: " + name + " did not lift to SSA: " + why + " — the register path is the only native emitter and every op the lowering produces must reach it");
   exit(3);
   return 0;
 }
@@ -546,7 +550,7 @@ pub function ssa_refuse(name: string, why: string): i32 {
 // bridges any op with a known stack effect, so a new op kind whose pop count
 // ir.op_pops models lands here until its arm is written.
 pub function flat_arm_missing(o: ir.Op): i32 {
-  eprint("error: internal: no stack-machine arm for op " + ir.kind_name(o.kind_tag) + " — the register path bridges it through emit_stack_op, which has no arm for it\n");
+  eprint("error: internal: no stack-machine arm for op " + ir.kind_name(o.kind_tag) + " — the register path bridges it through emit_stack_op, which has no arm for it");
   exit(3);
   return 0;
 }
@@ -554,7 +558,7 @@ pub function flat_arm_missing(o: ir.Op): i32 {
 // strict_ir_refuse reports an IR bail as a hard error and exits. Called only when
 // strict_ir_on(); `what` names the function (or module-level gate) that bailed.
 pub function strict_ir_refuse(what: string): i32 {
-  eprint("FERN_STRICT_IR: " + what + " — the IR path bailed here; strict mode reports the bail site rather than a whole-module refusal (#5646)\n");
+  eprint("FERN_STRICT_IR: " + what + " — the IR path bailed here; strict mode reports the bail site rather than a whole-module refusal (#5646)");
   exit(3);
   return 0;
 }
@@ -562,7 +566,7 @@ pub function strict_ir_refuse(what: string): i32 {
 // ssa_block_id_collision reports an SSA lift that returned two blocks carrying
 // one id, and exits (#9688).
 pub function ssa_block_id_collision(name: string, id: i32): i32 {
-  eprint("error: internal: the SSA lift returned block " + util.i32_to_string(id) + " twice in " + name + " — one `.Lssa_` label would be written twice; this is a compiler bug (#9688)\n");
+  eprint("error: internal: the SSA lift returned block " + util.i32_to_string(id) + " twice in " + name + " — one `.Lssa_` label would be written twice; this is a compiler bug (#9688)");
   exit(3);
   return 0;
 }
@@ -926,6 +930,7 @@ function calls_only_known(fd: parser.FuncDecl, mod: parser.Module, known: string
 // each backend); which mnemonic comes out is the backend's (#4378, #8194).
 // These two classify the comparisons that fuse and turn one round when its
 // operands swap.
+
 // is_int_cmp_kind reports whether `id` is an integer comparison — eq, ne and
 // the signed/unsigned orderings. Float compares are excluded: NaN breaks the
 // negation identity (`!(a < b)` is not `a >= b` when either operand is NaN), so
@@ -1025,6 +1030,7 @@ pub function scale_f64_maps_module(mod: parser.Module): parser.Module {
 // reason. This pass discriminates ONE shape at each step and has nothing to
 // say about the rest, which is what `if let` spells without an arm at all, so
 // it adds none.
+
 // ScaleFactor is scale_lambda_factor's answer: the factor expression as the
 // author wrote it, and whether the lambda was the one shape that has one.
 struct ScaleFactor { ok: boolean, k: ast.Expr }
@@ -1203,7 +1209,7 @@ pub function lift_lambdas_parts(mods: parser.Module[]): parser.Module[] {
 pub function all_runtime_need_roots(): string[] {
   return [
     "alloc_u8", "args", "arr_push", "arr_push_owned", "arr_slice",
-    "arr_str_join", "arr_inc_elems", "arr_own_elems", "arrarr_free", "chr", "env", "eprint", "heap",
+    "arr_str_join", "arr_inc_elems", "arr_own_elems", "str_own", "arrarr_free", "chr", "env", "eprint", "heap",
     "i32_to_string", "u32_to_string", "maps", "monotonic_ns", "now_ns", "now_unix_ms",
     // The map roots that "maps" does NOT reach. Each is marked directly by
     // the arm64 emitter, and runtime_need_deps declares no root with any of
@@ -1301,7 +1307,7 @@ pub function script_normalized(mod: parser.Module): parser.Module {
 // eprint_ir_ineligible writes the refusal every IR route shares — the three
 // backends' `*_or_error` entries and the driver's `-O` pre-gate.
 pub function eprint_ir_ineligible(): void {
-  eprint("error: module is not IR-eligible; the AST emitter is no longer reachable from this driver (set FERN_STRICT_IR=1 to name the bail site)\n");
+  eprint("error: module is not IR-eligible; the AST emitter is no longer reachable from this driver (set FERN_STRICT_IR=1 to name the bail site)");
 }
 
 // module_ir_eligible answers the question each backend's `*_or_error` entry
@@ -1340,7 +1346,7 @@ pub function module_ir_eligible(mod: parser.Module): boolean {
 // they `return unsupported_op_refuse(...)` in the position an instruction
 // string would have taken.
 pub function unsupported_op_refuse(tag: i32, backend: string): string {
-  eprint("error: no instruction selection for IR op " + ir.kind_name(tag) + " (kind " + util.i32_to_string(tag) + ") on the " + backend + " backend — refusing to emit a silently dropped operation (#6917)\n");
+  eprint("error: no instruction selection for IR op " + ir.kind_name(tag) + " (kind " + util.i32_to_string(tag) + ") on the " + backend + " backend — refusing to emit a silently dropped operation (#6917)");
   exit(3);
   return "";
 }
@@ -1358,7 +1364,7 @@ pub function lower_failed_refuse(name: string, r: irlower.LowerResult): i32 {
   if (r.ok) {
     return 0;
   }
-  eprint("error: " + name + " did not lower: " + r.why + " — the IR path bailed in this function and there is no AST emitter to fall back to (#8590)\n");
+  eprint("error: " + name + " did not lower: " + r.why + " — the IR path bailed in this function and there is no AST emitter to fall back to (#8590)");
   exit(3);
   return 0;
 }

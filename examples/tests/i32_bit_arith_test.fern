@@ -8,6 +8,7 @@ import "std/i32";
 // merged bundle stays well under the asm_ir IR budget. The Go-side
 // TestI32AbsDiffCountZeros pins these across all four backends; this is the
 // migration-shaped (pure-Fern, std/test-driven) companion.
+
 function test_abs_diff_pos(): test.TestOutcome {
   return test.assert_eq(5.abs_diff(8), 3);
 }

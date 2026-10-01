@@ -27,6 +27,7 @@
 //      correct; a level that is merely sorted is not enough.
 //
 // The app writes its report to stderr; stdout carries TAP-13 from std/test.
+
 import "std/test";
 import "std/i32";
 import "std/string";
@@ -228,6 +229,7 @@ function render(sl: SkipList): string {
 }
 
 // ---------------------------------------------------------------- oracle
+
 function bf_contains(keys: i32[], k: i32): boolean {
   var i: i32 = 0;
   while (i < keys.len()) {
@@ -282,6 +284,7 @@ function build(keys: i32[]): SkipList {
 }
 
 // ----------------------------------------------------------------- tests
+
 // Level 0 is the whole set, sorted — checked against an independent sort.
 function test_level_zero_is_the_sorted_key_set(): test.TestOutcome {
   var keys: i32[] = corpus();

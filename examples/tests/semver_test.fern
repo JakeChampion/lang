@@ -5,6 +5,7 @@ import "std/semver" as semver;
 // parse + field extraction, canonical to_string, the SemVer §11
 // precedence chain (including the numeric-vs-lexical `beta.2 < beta.11`
 // trap), build-metadata-is-ignored, and the malformed-input rejections.
+
 // compare two version strings by precedence; 99 if either won't parse.
 function cmp(x: string, y: string): i32 {
   match (semver.parse(x)) {

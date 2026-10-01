@@ -21,11 +21,13 @@
 //
 // The app writes its report to stderr; stdout carries TAP-13 from
 // std/test, so the file is its own test suite.
+
 import "std/test";
 import "std/string";
 import "std/i32";
 
 // --------------------------------------------------------------- tokens
+
 // Token kinds. Punctuation and keywords are distinguished by `text`, so
 // the parser matches on a single kind plus a string rather than on
 // twenty variants that all mean "a fixed spelling".
@@ -188,6 +190,7 @@ function lex(src: string): Lexed {
 }
 
 // ------------------------------------------------------------------ AST
+
 enum Expr {
   Num(i32),
   Var(string),
@@ -204,6 +207,7 @@ enum Stmt {
 }
 
 // --------------------------------------------------------------- parser
+
 // The parser threads its position through a struct rather than mutating,
 // so a failed alternative cannot leave the cursor moved.
 struct P { toks: Token[], pos: i32, error: string, line: i32, col: i32 }
@@ -455,6 +459,7 @@ function parse(src: string): Parsed {
 }
 
 // -------------------------------------------------------------- printer
+
 // Fully parenthesised, one statement per line, two-space indent. Explicit
 // parentheses are what make the round trip an oracle: the printed form
 // encodes the tree's shape rather than relying on the reader (or the
@@ -524,6 +529,7 @@ function print_program(p: Parsed): string {
 }
 
 // ------------------------------------------------------------ evaluator
+
 // Enough of an interpreter to check that the tree MEANS what the source
 // said. Precedence bugs that survive the printer round trip (because both
 // directions agree on the wrong shape) show up here as wrong arithmetic.
@@ -673,6 +679,7 @@ function run(src: string): i32[] {
 }
 
 // ---------------------------------------------------------- the corpus
+
 function valid_sources(): string[] {
   return [
     "print 1;",
@@ -696,6 +703,7 @@ function valid_sources(): string[] {
 }
 
 // ---------------------------------------------------------------- tests
+
 // THE test. The printer parenthesises fully, so reparsing its output must
 // land on the same tree — which means printing is a fixpoint after one
 // application. A parser that got precedence or associativity wrong still
@@ -895,6 +903,7 @@ function test_parsing_is_deterministic(): test.TestOutcome {
 }
 
 // ------------------------------------------------------------------ app
+
 function main(): i32 {
   eprint("miniparse — recursive descent, checked by round-tripping its own output");
   var src: string = "# factorial\nvar n = 5;\nvar acc = 1;\nwhile (n > 1) {\n  acc = acc * n;\n  n = n - 1;\n}\nprint acc;";

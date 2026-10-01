@@ -17,6 +17,7 @@
 // want is in the wrong module, and that mis-hosting is what #4397 unwound.
 // Comments below that describe a body as "transcribed verbatim from asm.fern"
 // are recording where it came from, not a file you can go read.
+
 import "./lexer";
 import "./parser";
 import "./asmcore";
@@ -35,32 +36,38 @@ import "./ssa_lift";
 // the IR pipeline via emit_ir_runtime_fern_fn in the entry block — each copies `s`
 // case-flipping ASCII letters via the raw-memory intrinsics. Heap-dependent;
 // gated on the str_case need.
+
 // __fern_str_repeat was hand-written here through #2649; it is now a Fern
 // runtime function (asmcore.rt_src_str_repeat) lowered through the IR pipeline
 // via emit_ir_runtime_fern_fn in emit_module_ir_unit's entry block — n copies of
 // `s` in a fresh buffer + box via the raw-memory intrinsics. Heap-dependent,
 // gated on the str_repeat need. The op_str_repeat handler now calls the
 // stack-arg __fn___fern_str_repeat symbol.
+
 // __fern_str_trim was hand-written here through #2649; it is now a Fern runtime
 // function (asmcore.rt_src_str_trim) lowered through the IR pipeline via
 // emit_ir_runtime_fern_fn in emit_module_ir_unit's entry block — a zero-copy
 // slice (s[start:end]) skipping leading/trailing ASCII whitespace. Heap-dependent
 // (the slice box allocates), gated on the str_trim need.
+
 // __fern_str_replace was hand-written here through #2649; it is now a Fern
 // runtime function (asmcore.rt_src_str_replace) lowered through the IR pipeline
 // via emit_ir_runtime_fern_fn in emit_module_ir_unit's entry block — two-pass
 // count + build via the raw-memory intrinsics. Heap-dependent, gated on the
 // str_replace need. The op_str_replace handler now calls the stack-arg
 // __fn___fern_str_replace symbol.
+
 // __fern_str_lines was hand-written here through #2649; it is now a Fern runtime
 // function (asmcore.rt_src_str_lines) lowered through the IR pipeline via
 // emit_ir_runtime_fern_fn in emit_module_ir_unit's entry block. Heap +
 // arr_push dependent; gated on the str_lines need.
+
 // __fern_random_i32 is a Fern runtime function (#2649): asmcore.rt_src_random_i32,
 // emitted via emit_ir_runtime_fern_fn and gated on the random_i32 need. It stays
 // OUT of the heap-gated runtime block for the same reason the hand-asm did — it
 // allocates nothing (getrandom into the static __fern_scratch), so a program
 // whose only runtime call is random_i32 must still get the helper.
+
 // emit_ir_map_hash_seed appends the __fern_map_hash_seed() helper — core/map's
 // per-process string-hash seed (#6194), drawn once via __fn___fern_random_i32 and
 // cached in the unit-local __fern_map_seed word.
@@ -99,11 +106,13 @@ function emit_ir_map_hash_seed(s: asmcore.EmitState): asmcore.EmitState {
 // (need-gated). They read clock_gettime (syscall 228) into the fixed static
 // __fern_scratch buffer via the __syscall3 / __raw_scratch / __load_i64 floor,
 // then do i64 math — no heap, no per-call leak. arm64/AST keep their hand-asm.
+
 // __fern_poll is a Fern runtime function (#2649): asmcore.rt_src_poll. It builds
 // the pollfd[] with __raw_store_ptr + __raw_store8 and calls poll(2); arm64
 // Linux reaches ppoll through __syscall5 instead.
 // __fern_timer_fd is a Fern runtime function (#2649): asmcore.rt_src_timer_fd —
 // timerfd_create then timerfd_settime over an itimerspec in __fern_scratch.
+
 // emit_ir_wasm_timer_pollable appends __fern_wasm_timer_pollable(ns) -> -1: on
 // native there's no pollable (a deadline uses poll(2)'s timeout arg), so it
 // returns -1 (an fd poll(2) ignores). Portability shim for with_deadline.
@@ -150,6 +159,7 @@ function emit_ir_wasm_poll(s: asmcore.EmitState): asmcore.EmitState {
 
 // __fern_tcp_connect is a Fern runtime function (#2649):
 // asmcore.rt_src_tcp_connect — socket + connect over the shared sockaddr_head.
+
 // emit_ir_tcp_pollable appends __fern_tcp_pollable(%rdi = fd) -> fd: on native a
 // socket's readiness token IS its fd (poll(2) takes fds directly), so identity.
 function emit_ir_tcp_pollable(s: asmcore.EmitState): asmcore.EmitState {
@@ -160,14 +170,18 @@ function emit_ir_tcp_pollable(s: asmcore.EmitState): asmcore.EmitState {
 }
 
 // __fern_tcp_close is a Fern runtime function (#2649): asmcore.rt_src_tcp_close — close(2).
+
 // __fern_tcp_recv is a Fern runtime function (#2649): asmcore.rt_src_tcp_recv
 // — read(2) into a scratch buffer, spread into a fresh u8[] box (#5714).
+
 // __fern_tcp_send is a Fern runtime function (#2649): asmcore.rt_src_tcp_send
 // sendto(2) with MSG_NOSIGNAL from the string's buffer, via __raw_data.
 // __fern_tcp_listen is a Fern runtime function (#2649):
 // asmcore.rt_src_tcp_listen — socket + bind + listen over a sockaddr_in built
 // byte-wise in __fern_scratch.
+
 // __fern_tcp_accept is a Fern runtime function (#2649): asmcore.rt_src_tcp_accept — accept(2) with a NULL addr/addrlen.
+
 // __fern_open_res is a Fern runtime function (#2649): asmcore.rt_src_open_res,
 // emitted in the fs bundle below and gated on the open_file need. It
 // NUL-terminates the path and openat(AT_FDCWD, pathz, flags, mode)s, wrapping
@@ -182,13 +196,17 @@ function emit_ir_tcp_pollable(s: asmcore.EmitState): asmcore.EmitState {
 // and __fern_sleep_ns its nanosecond-resolution twin (#8528):
 // asmcore.rt_src_sleep_ns. Both write the timespec into __fern_scratch, so they
 // join the scratch gate.
+
 // __fern_proc_fork is a Fern runtime function (#2649): asmcore.rt_src_proc_fork
 // — a bare no-argument fork(2).
+
 // __fern_proc_exec is a Fern runtime function (#2649): asmcore.rt_src_proc_exec
 // — execve(2) over a built argv.
+
 // __fern_proc_waitpid is a Fern runtime function (#2649):
 // asmcore.rt_src_proc_waitpid — wait4 into __fern_scratch, then the
 // signal-or-exit-code decode.
+
 // emit_ir_runtime appends the array/RC/heap runtime the IR path needs, using
 // asm.fern's OWN array layout + helper bodies (transcribed verbatim from
 // asm.fern's emit_runtime) so the IR path is a byte-compatible DROP-IN: the
@@ -3395,12 +3413,48 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(".Laie_ret:\n");
     s = s.write("    ret\n");
   }
+  // __fern_str_own(s@8(%rsp)) -> a string its holder owns a unit of. A
+  // counted string is retained and answered. An arena view box, whose
+  // immortal rc cannot count a second holder, is answered as a fresh box
+  // over the same bytes. A view box outside the arena (a literal) is never
+  // freed, so it is answered as is.
+  if (s.has_need("str_own")) {
+    s = s.write("__fn___fern_str_own:\n");
+    s = s.write("    movq 8(%rsp), %rax\n");
+    s = s.write("    testb $1, %al\n");
+    s = s.write("    jnz .Lso_ret\n");
+    s = s.write("    cmpq $0x10000, %rax\n");
+    s = s.write("    jb .Lso_ret\n");
+    s = s.write("    movl -8(%rax), %ecx\n");  // rc
+    s = s.write(san_poison_check("%ecx"));
+    s = s.write("    testl %ecx, %ecx\n");
+    s = s.write("    js .Lso_view\n");
+    s = s.write("    pushq %rax\n");
+    s = s.write("    call __fn___fern_rc_inc\n");
+    s = s.write("    popq %rax\n");
+    s = s.write("    ret\n");
+    s = s.write(".Lso_view:\n");
+    s = s.write("    leaq -8(%rax), %rdx\n");  // box base
+    s = s.write("    cmpq __fern_heap_base(%rip), %rdx\n");
+    s = s.write("    jb .Lso_ret\n");
+    s = s.write("    cmpq __fern_heap_end(%rip), %rdx\n");
+    s = s.write("    jae .Lso_ret\n");
+    s = s.write("    pushq %rax\n");
+    s = s.write("    movq $24, %rdi\n");
+    s = s.write("    call __fern_alloc\n");
+    s = s.write("    popq %rcx\n");  // the shared box
+    s = s.write("    movq $-1, (%rax)\n");
+    s = s.write("    movq (%rcx), %rdx\n");
+    s = s.write("    movq %rdx, 8(%rax)\n");  // data
+    s = s.write("    movq 8(%rcx), %rdx\n");
+    s = s.write("    movq %rdx, 16(%rax)\n");  // len
+    s = s.write("    addq $8, %rax\n");
+    s = s.write(".Lso_ret:\n");
+    s = s.write("    ret\n");
+  }
   // __fern_arr_own_elems(dst@16(%rsp), src@8(%rsp)) -> dst: dst's first
-  // len(src) elements alias src's, and dst takes its own unit on each. A
-  // counted element is retained; an arena string view box, whose immortal
-  // rc cannot count a second holder, is replaced in dst by a fresh box over
-  // the same bytes. A view box outside the arena (a literal) is never freed,
-  // so it is shared as is. %rbx/%r12/%r13 hold dst/len/i.
+  // len(src) elements alias src's, and each is replaced by the unit
+  // __fern_str_own answers for it. %rbx/%r12/%r13 hold dst/len/i.
   if (s.has_need("arr_own_elems")) {
     s = s.write("__fn___fern_arr_own_elems:\n");
     s = s.write("    movq 16(%rsp), %rax\n");  // dst (also the result)
@@ -3418,37 +3472,10 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(".Laoe_loop:\n");
     s = s.write("    cmpq %r12, %r13\n");
     s = s.write("    jge .Laoe_done\n");
-    s = s.write("    movq 8(%rbx,%r13,8), %rax\n");  // element i
-    s = s.write("    testb $1, %al\n");
-    s = s.write("    jnz .Laoe_next\n");
-    s = s.write("    cmpq $0x10000, %rax\n");
-    s = s.write("    jb .Laoe_next\n");
-    s = s.write("    movl -8(%rax), %ecx\n");  // rc
-    s = s.write(san_poison_check("%ecx"));
-    s = s.write("    testl %ecx, %ecx\n");
-    s = s.write("    js .Laoe_view\n");
-    s = s.write("    pushq %rax\n");
-    s = s.write("    call __fn___fern_rc_inc\n");
+    s = s.write("    pushq 8(%rbx,%r13,8)\n");  // element i
+    s = s.write("    call __fn___fern_str_own\n");
     s = s.write("    addq $8, %rsp\n");
-    s = s.write("    jmp .Laoe_next\n");
-    s = s.write(".Laoe_view:\n");
-    s = s.write("    leaq -8(%rax), %rdx\n");  // box base
-    s = s.write("    cmpq __fern_heap_base(%rip), %rdx\n");
-    s = s.write("    jb .Laoe_next\n");
-    s = s.write("    cmpq __fern_heap_end(%rip), %rdx\n");
-    s = s.write("    jae .Laoe_next\n");
-    s = s.write("    pushq %rax\n");
-    s = s.write("    movq $24, %rdi\n");
-    s = s.write("    call __fern_alloc\n");
-    s = s.write("    popq %rcx\n");  // the shared box
-    s = s.write("    movq $-1, (%rax)\n");
-    s = s.write("    movq (%rcx), %rdx\n");
-    s = s.write("    movq %rdx, 8(%rax)\n");  // data
-    s = s.write("    movq 8(%rcx), %rdx\n");
-    s = s.write("    movq %rdx, 16(%rax)\n");  // len
-    s = s.write("    addq $8, %rax\n");
     s = s.write("    movq %rax, 8(%rbx,%r13,8)\n");
-    s = s.write(".Laoe_next:\n");
     s = s.write("    incq %r13\n");
     s = s.write("    jmp .Laoe_loop\n");
     s = s.write(".Laoe_done:\n");
@@ -4974,6 +5001,7 @@ function ir_div_guarded(tag: i32, width: i32, lb: string): string {
 // instructions on: both guards branch on a value that is now a compile-time
 // constant, a power of two needs no divide at all, and any other divisor
 // takes the multiply-high reciprocal.
+
 // pow2_shift_i64 gives sh when `mag`, read as an unsigned 64-bit bit pattern,
 // is 2^sh, and -1 otherwise.
 function pow2_shift_i64(mag: i64): i32 {
@@ -6002,6 +6030,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
 // %rbx and %r12-%r15 are the callee-saved pool a value live across a call
 // takes, saved once per function. %r11, %rcx and %rdx are scratch. A spilled
 // value lives below the save area by its allocator slot (ssa_slot).
+
 // Pool index 0 is %rax, the register the ABI returns a call's result in, so a
 // call result allocated there needs no move.
 function ssa_reg(k: i32): string {
@@ -8177,7 +8206,7 @@ function emit_ssa_function(r: irlower.LowerResult, label_name: string, s: asmcor
   // cost shows, and this is how a slow one is found.
   var emit_ms: i64 = (monotonic_ns() - t_emit) / 1000000i64;
   if (ircore.ssa_report_on() && lift_ms + emit_ms > 200i64) {
-    eprint("FERN_SSA: time " + label_name + ": lift " + util.i32_to_string(lift_ms as i32) + " ms, emit " + util.i32_to_string(emit_ms as i32) + " ms, " + util.i32_to_string(r.ops.len()) + " ops, " + util.i32_to_string(r.n_locals) + " slots\n");
+    eprint("FERN_SSA: time " + label_name + ": lift " + util.i32_to_string(lift_ms as i32) + " ms, emit " + util.i32_to_string(emit_ms as i32) + " ms, " + util.i32_to_string(r.ops.len()) + " ops, " + util.i32_to_string(r.n_locals) + " slots");
   }
   return s;
 }
@@ -9332,6 +9361,9 @@ function helper_call_needs(name: string, s: asmcore.EmitState): asmcore.EmitStat
   }
   if (name == "__fern_arr_own_elems") {
     s = s.need("arr_own_elems");
+  }
+  if (name == "__fern_str_own") {
+    s = s.need("str_own");
   }
   // The VIEW-aware string[] element walk (#6544) is gated the same way
   // and for the same reason: its body's inner

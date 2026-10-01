@@ -14,6 +14,7 @@ import "std/test";
 // `r.log(msg)` prints a TAP comment (`# msg`) without
 // recording a test outcome. Useful for debug breadcrumbs
 // between cases.
+
 function test_lines_match(): test.TestOutcome {
   var actual: string = "line 1\nline 2\nline 3\n";
   return test.assert_lines_eq(actual, ["line 1", "line 2", "line 3"]);

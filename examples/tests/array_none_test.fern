@@ -9,6 +9,7 @@ import "std/array";
 // any/all), so the i32 cases lower on the self-host IR path. The Go-side
 // TestNativeArrayNone pins native compilation on all four backends (incl. a
 // string-closure case); this is the migration-shaped companion.
+
 function is_neg(x: i32): boolean {
   return x < 0;
 }

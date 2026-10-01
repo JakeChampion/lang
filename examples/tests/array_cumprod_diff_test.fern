@@ -8,6 +8,7 @@ import "std/array" as array;
 // and return an f64[] (scalar payload), so this runs on all four native backends
 // and both self-host gates. The Go-side TestArrayCumprodDiff pins the native
 // backends; this is the migration-shaped companion.
+
 function near(a: f64, b: f64): boolean {
   var d: f64 = a - b;
   if (d < 0.0) {

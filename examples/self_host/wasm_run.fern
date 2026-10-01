@@ -10,6 +10,7 @@
 // captures the WAT, and runs it with `wasmtime run prog.wat` — asserting
 // the process exit code matches the program's result. End-to-end proof
 // that the wasm IR emitter emits runnable WebAssembly.
+
 import "./lexer";
 import "./parser";
 import "./rundriver";

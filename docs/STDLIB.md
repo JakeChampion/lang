@@ -1101,6 +1101,10 @@ serializer.
   "Malformed JSON" with where the text broke, and a `string` error
   answers 500 with the status text alone, since an internal message is
   for the log rather than the peer (`examples/tests/http_respond_test.fern`).
+  A `Result[HttpResponse, dyn error.Error]` goes through
+  `respond_error(result, plat)` instead: the error's `message()` is
+  written to `plat.log` and the reply is the bare 500 problem
+  (`respond_error_with(pair, plat)` for the state-threading pair).
 - **Cookies (RFC 6265):** `(req).cookie(name): Option[string]`;
   `SetCookie` built via `cookie_new(name, value)` (hardened
   defaults: `Path=/`, `HttpOnly`, `SameSite=Lax`) or
@@ -1453,7 +1457,9 @@ loop and `std/fetch` the client.
   `(S, Result[HttpResponse, E])` with state), so its body fails with
   `?`, is accepted by both compilers: they rename it
   `__fern_handle_result` and synthesise the plain `handle` calling
-  `http.respond` (or `respond_with`) over it, so every consumer, the
+  `http.respond` (or `respond_with`) over it — `respond_error` (or
+  `respond_error_with`) with the handler's platform when `E` is
+  `dyn error.Error` — so every consumer, the
   synthesised main and the wasi-http entry included, keeps the
   HttpResponse-shaped entry.
 

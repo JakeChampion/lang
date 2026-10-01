@@ -32,6 +32,7 @@
 // different oracle, not a tweak to this one.
 //
 // The app writes its report to stderr; stdout carries TAP-13 from std/test.
+
 import "std/test";
 import "std/i32";
 import "std/string";
@@ -57,6 +58,7 @@ function min3(a: i32, b: i32, c: i32): i32 {
 }
 
 // ------------------------------------------------------------------- DP
+
 // The full (n+1) x (m+1) table, flattened. Kept whole rather than reduced to
 // two rows because the backtrace needs every cell — the space-saving version
 // is the one that cannot print a script, which is the whole point here.
@@ -216,6 +218,7 @@ function render(edits: Edit[]): string {
 }
 
 // ---------------------------------------------------------------- oracle
+
 // The recursive definition, memo-free. Exponential and obviously correct — the
 // point of an oracle is that you can read it and believe it, so it is a
 // transcription of the textbook recurrence and nothing else.
@@ -248,6 +251,7 @@ function pairs(): string[] {
 }
 
 // ----------------------------------------------------------------- tests
+
 // The essential one: the script is a claim about how to reach b from a, so
 // carry it out and compare.
 function test_applying_the_script_reproduces_the_target(): test.TestOutcome {

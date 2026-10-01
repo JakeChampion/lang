@@ -20,6 +20,7 @@
 // table / mem / global) that warrants its own module. Table +
 // element are here because they're what `call_indirect` (closures
 // + indirect dispatch in the production backend) needs.
+
 import "std/wasm/leb128";
 import "std/wasm/encode";
 
