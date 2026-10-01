@@ -133,7 +133,7 @@ func TestSelfHostFloatToU8Saturates(t *testing.T) {
 		t.Run(leg.name, func(t *testing.T) {
 			for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
 				t.Run(target, func(t *testing.T) {
-					got, _, _ := semCompileRun(t, gcc, runner, fernBin, stdlibRoot, src, target, leg.sem, "", "")
+					got, _, _ := semCompileRun(t, gcc, runner, fernBin, stdlibRoot, src, target, leg.sem, "")
 					if got != "0|" {
 						floatToU8Explain(t, leg.name+" "+target, got)
 					}
