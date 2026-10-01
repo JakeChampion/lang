@@ -777,7 +777,9 @@ think they're free additions to make.
   preserved.
 - **`(n: i32).is_palindrome()`**: decimal-palindrome check.
 - **`(s: string).to_array()`**: string[] with one whole Unicode
-  scalar per element. Use `chars()` for char values or `bytes()` for bytes.
+  scalar per element. This is the named scalar-to-string-array conversion;
+  `split("")` delegates to the same implementation. Use `chars()` for char
+  values or `bytes()` for bytes.
 - **`s.remove_all(needle)`**: sugar for `replace(needle, "")`.
 - **`s.before(sep)` / `s.after(sep)`**: substring around the
   FIRST `sep`. before returns s on no-match; after returns

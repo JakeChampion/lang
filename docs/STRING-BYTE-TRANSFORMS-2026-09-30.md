@@ -5,11 +5,11 @@
 reversing `é` produces `[169, 195]`. Call `utf8.from_bytes` when a result
 should become text; it returns `None` for malformed bytes.
 
-The backward substring search previously used reversed strings for its
-Two-Way fallback. It now keeps those reversals as bytes. Two-Way and its
-factorization accept byte views, so the forward path passes borrowed views
-of the source. The comparison budget, single-byte fast paths and
-linear worst-case algorithm are unchanged.
+Two-Way search reads the original strings in either direction. Reverse
+search maps each logical index to the corresponding byte from the end;
+it creates neither invalid reversed strings nor temporary byte views.
+The comparison budget, single-byte fast paths and linear worst-case
+algorithm are unchanged.
 
 ## Validation
 
@@ -20,9 +20,16 @@ through the bootstrap interpreter, Linux x86/ARM, wasm, Darwin and the
 primary Fern compiler on Linux x86/ARM and wasm. The existing exhaustive
 forward/backward search tests and migrated stdlib example tests also pass.
 
-## Native measurements
+`StringConcatCopySearchProgram` builds runtime concatenations across the
+inline capacity boundaries, checks owned copies and searches, and exercises
+Unicode inputs. Native x86/ARM and both primary lowering modes on x86/ARM/WASI
+have balanced allocation censuses. The same program also passes native and
+primary macOS ARM, bootstrap wasm and both interpreters.
 
-Measured on ARM64 macOS 15.8, with `-O -target arm64-darwin`. Baseline is
+## Initial native measurements
+
+The initial byte-view implementation was measured on ARM64 macOS 15.8,
+with `-O -target arm64-darwin`. Baseline is
 `26cfbaf2116b2d3de4960fc92fb149188979102b`; candidate is this change.
 Each sample launches a process. After a warm-up, five samples alternate
 baseline/candidate order. Other local validation ran during measurement.
@@ -77,8 +84,11 @@ Long-search and inline workloads ran in separate sequential batches.
 The conformance leak census found 42 unpaired allocations in
 `prop_string_involution`. They came from `bytes()` on inline strings of
 lengths 1 through 7: `as_bytes()` promoted their contents into storage with
-no owner. Copying short values directly into the owned array removes that
-promotion. The full census passes with its existing zero-leak expectation.
+no owner. Review then identified ARM64 concatenations with inline storage
+through 15 bytes and the same promotion in forward search. The final copy
+uses the existing `__str_bytes(s, 0)` primitive: addressable strings use a
+bulk copy, while inline strings copy directly into the owned array. It
+does not assume an inline capacity. Search reads strings directly.
 
 The driver-size check also exposed unnecessary linkage. `to_array()` called
 `split("")`, which retained the general separator search and runtime split
@@ -94,10 +104,38 @@ These are actual linked sizes for `asm_pathprobe_run.fern`, measured with
 | Main base `3dd6a4909` | 5,725,656 |
 | PR head `722625fac` | 5,729,648 |
 | Short-copy fix and shared scalar loop | 5,727,016 |
+| Representation-aware copy and direct string search | 5,727,176 |
 
 The scalar loop removes 2,632 bytes from the PR image. Debug-symbol builds
 attribute the code growth over main to 931 bytes, down from 3,396 bytes;
 the removed functions include the general string-split wrappers and runtime
 split/UTF-8-step helpers. The remaining code provides scalar stepping and
-the byte-view search path. The unchanged baseline is 5,454,560 bytes, with
+the initial byte-view search path. The unchanged baseline is 5,454,560 bytes, with
 a 5% ceiling of 5,727,288 bytes. No baseline was raised.
+The final search/copy correction adds 160 linked bytes to the previous PR
+head and remains within that ceiling. Direction coordinates are supplied
+once by the caller and shared by factorization and periodicity checks.
+
+## Direct-search measurement
+
+The final search uses an origin and a step of 1 or -1 to index the source.
+A first version called a helper per byte and regressed forward search;
+direct index arithmetic removed that overhead.
+
+Native ARM64 primary-compiler measurements compare PR head `3b39cc77e`
+with this implementation, using the same compiler for both binaries.
+Each process searches 30 times through a 2 MiB repetitive haystack for a
+128-byte needle, checking the result. Two warm-ups precede seven samples
+in alternating order. The pipeline first passed with a 16 KiB haystack;
+only its size argument changed for the measured run.
+
+| Search | Before median | Direct-index median |
+|---|---:|---:|
+| Forward | 97.087 ms | 93.947 ms |
+| Backward | 124.546 ms | 125.057 ms |
+
+Samples overlap: forward ranges are 94.384-108.737 ms and 93.273-99.805 ms;
+backward ranges are 124.259-128.811 ms and 124.389-137.471 ms. These results
+do not establish a speedup. They rule out the helper version's large
+regression in this workload, while the new search removes view promotions
+and reversed-array allocations.

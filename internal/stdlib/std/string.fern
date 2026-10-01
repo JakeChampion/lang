@@ -149,14 +149,14 @@ function __substr_eq(s: string, offset: i32, needle: string, nLen: i32): boolean
 // current candidate, `k` the offset being compared within the current period,
 // and `p` the period established so far. Each byte is examined O(1) amortized
 // times, so the whole thing is O(m) with no allocation.
-function __str_maxsuf(x: [u8], m: i32, invert: boolean): (i32, i32) {
+function __str_maxsuf(x: string, m: i32, invert: boolean, origin: i32, step: i32): (i32, i32) {
   var ms: i32 = 0 - 1;
   var j: i32 = 0;
   var k: i32 = 1;
   var p: i32 = 1;
   while (j + k < m) {
-    var a: i32 = x[j + k] as i32;
-    var b: i32 = x[ms + k] as i32;
+    var a: i32 = x[origin + step * (j + k)] as i32;
+    var b: i32 = x[origin + step * (ms + k)] as i32;
     if (invert) {
       var t: i32 = a;
       a = b;
@@ -194,12 +194,12 @@ function __str_maxsuf(x: [u8], m: i32, invert: boolean): (i32, i32) {
 // The returned `crit + period <= m` (the maximal-suffix loop keeps
 // `j <= m - 1`, and `crit + period` is `j + 1`), so the periodicity probe in
 // __str_two_way reads in bounds.
-function __str_critical_factorization(needle: [u8], m: i32): (i32, i32) {
+function __str_critical_factorization(needle: string, m: i32, origin: i32, step: i32): (i32, i32) {
   if (m < 3) {
     return (m - 1, 1);
   }
-  var fwd: (i32, i32) = __str_maxsuf(needle, m, false);
-  var rev: (i32, i32) = __str_maxsuf(needle, m, true);
+  var fwd: (i32, i32) = __str_maxsuf(needle, m, false, origin, step);
+  var rev: (i32, i32) = __str_maxsuf(needle, m, true, origin, step);
   if (rev.0 < fwd.0) {
     return (fwd.0 + 1, fwd.1);
   }
@@ -208,10 +208,10 @@ function __str_critical_factorization(needle: [u8], m: i32): (i32, i32) {
 
 // A factorization period is valid when the prefix through crit repeats at
 // that offset. The factorization guarantees crit + period <= needle.len().
-function __str_is_periodic(needle: [u8], crit: i32, period: i32): boolean {
+function __str_is_periodic(needle: string, origin: i32, crit: i32, period: i32, step: i32): boolean {
   var i: i32 = 0;
   while (i < crit) {
-    if (needle[period + i] != needle[i]) {
+    if (needle[origin + step * (period + i)] != needle[origin + step * i]) {
       return false;
     }
     i = i + 1;
@@ -232,14 +232,16 @@ function __str_is_periodic(needle: [u8], crit: i32, period: i32): boolean {
 // needle's period. Callers must pass `m >= 2` and `start >= 0` — the
 // zero-length and single-byte needles are handled by __str_find_from's fast
 // paths, which are both cheaper than setting up a factorization.
-function __str_two_way(s: [u8], sLen: i32, needle: [u8], m: i32, start: i32): i32 {
-  var cf: (i32, i32) = __str_critical_factorization(needle, m);
+// The origins and step map logical indices into the original strings:
+// (0, 0, 1) scans forward; (sLen - 1, m - 1, -1) scans backward.
+function __str_two_way(s: string, sLen: i32, needle: string, m: i32, start: i32, sOrigin: i32, nOrigin: i32, step: i32): i32 {
+  var cf: (i32, i32) = __str_critical_factorization(needle, m, nOrigin, step);
   var crit: i32 = cf.0;
   var period: i32 = cf.1;
   var last: i32 = sLen - m;
   var j: i32 = start;
 
-  if (__str_is_periodic(needle, crit, period)) {
+  if (__str_is_periodic(needle, nOrigin, crit, period, step)) {
     // Periodic needle ("abcabcabd"): the left half is a suffix of the
     // stretch one period further in, so after a failed left-half match we
     // may shift by exactly `period` and remember (`memory`) the prefix
@@ -250,12 +252,12 @@ function __str_two_way(s: [u8], sLen: i32, needle: [u8], m: i32, start: i32): i3
       if (memory > i) {
         i = memory;
       }
-      while (i < m && needle[i] as i32 == s[i + j] as i32) {
+      while (i < m && needle[nOrigin + step * i] == s[sOrigin + step * (i + j)]) {
         i = i + 1;
       }
       if (i >= m) {
         i = crit - 1;
-        while (i >= memory && needle[i] as i32 == s[i + j] as i32) {
+        while (i >= memory && needle[nOrigin + step * i] == s[sOrigin + step * (i + j)]) {
           i = i - 1;
         }
         if (i < memory) {
@@ -280,12 +282,12 @@ function __str_two_way(s: [u8], sLen: i32, needle: [u8], m: i32, start: i32): i3
   shift = shift + 1;
   while (j <= last) {
     var i: i32 = crit;
-    while (i < m && needle[i] as i32 == s[i + j] as i32) {
+    while (i < m && needle[nOrigin + step * i] == s[sOrigin + step * (i + j)]) {
       i = i + 1;
     }
     if (i >= m) {
       i = crit - 1;
-      while (i >= 0 && needle[i] as i32 == s[i + j] as i32) {
+      while (i >= 0 && needle[nOrigin + step * i] == s[sOrigin + step * (i + j)]) {
         i = i - 1;
       }
       if (i < 0) {
@@ -339,7 +341,7 @@ function __str_find_from(s: string, sLen: i32, needle: string, nLen: i32, start:
   if (nLen == 1) {
     return __memchr(s, needle[0] as i32, from);
   }
-  return __str_two_way(s.as_bytes(), sLen, needle.as_bytes(), nLen, from);
+  return __str_two_way(s, sLen, needle, nLen, from, 0, 0, 1);
 }
 
 pub function (s: string) contains(needle: string): boolean {
@@ -389,18 +391,13 @@ function __str_rfind_budget(): i32 {
 // been Two-Way and linear since #6179 -- a needle like "aaaa...ab" against
 // "aaaa...a" walked the whole needle at every position (#6196).
 //
-// The reverse Two-Way is obtained by reversing both strings and running the
-// FORWARD algorithm: the leftmost match in the reversed haystack is the
-// rightmost in the original, at index `sLen - r - nLen`. That is the standard
-// construction, and it reuses the tested `__str_two_way` rather than growing a
-// second, subtly different factorization.
+// The reverse Two-Way reads both strings from their last byte to their first:
+// the leftmost match in that order is the rightmost in the original, at
+// index `sLen - r - nLen`. The same factorization and search handle both
+// directions without allocating reversed arrays or borrowed byte views.
 //
-// Its cost is one O(n) copy of the haystack, where the naive scan needs no
-// allocation at all. That is exactly why the budget exists rather than
-// escalating unconditionally: reversing a megabyte to find a two-byte
-// separator that the naive scan would have hit in twenty bytes is a
-// pessimisation, not an optimisation. Under the budget the common case keeps
-// its O(1) space, and the quadratic case gets its linear bound.
+// The budget avoids factorization for a match close to the end. Both paths
+// use O(1) space, and the fallback keeps the worst-case linear bound.
 function __str_rfind_from(s: string, sLen: i32, needle: string, nLen: i32): i32 {
   if (nLen == 0) {
     return sLen;
@@ -453,9 +450,7 @@ function __str_rfind_from(s: string, sLen: i32, needle: string, nLen: i32): i32 
   // Restart from scratch under the linear algorithm; a partial result cannot
   // be carried over, because the scan above ran right-to-left and Two-Way
   // runs left-to-right over the reversal.
-  var rs: u8[] = s.reverse_bytes();
-  var rn: u8[] = needle.reverse_bytes();
-  var r: i32 = __str_two_way(rs, sLen, rn, nLen, 0);
+  var r: i32 = __str_two_way(s, sLen, needle, nLen, 0, sLen - 1, nLen - 1, 0 - 1);
   if (r < 0) {
     return 0 - 1;
   }
@@ -2003,10 +1998,10 @@ pub function (s: string) ends_with_ci(suffix: string): boolean {
 pub function (s: string) bytes(): u8[] {
   var n: i32 = s.len();
   var out: u8[] = __alloc_u8(n);
-  if (n <= 7) {
-    // Native inline strings need a promoted buffer for an escaping byte
-    // view. This owned copy needs no view, so copy short values directly
-    // instead of creating a promotion with no owner to release it.
+  var data: usize = __str_bytes(s, 0 as usize);
+  if (data == 0 as usize) {
+    // Inline strings have no stable address. Copy their bytes directly;
+    // the backend decides which values use inline storage.
     var i: i32 = 0;
     while (i < n) {
       out = out.with(i, s[i]);
@@ -2019,7 +2014,7 @@ pub function (s: string) bytes(): u8[] {
     // silently truncates and __memcpy traps on the bad
     // address. See `int_to_string` in core/int.fern for
     // the same fix in context.
-    __memcpy(out as usize, s.as_bytes() as usize, n);
+    __memcpy(out as usize, data, n);
   }
   return out;
 }
