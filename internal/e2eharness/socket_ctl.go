@@ -6,8 +6,8 @@ package e2eharness
 // load-balances one (Linux), no-delay and keep-alive on the accepted side,
 // a non-blocking read that answers empty rather than waiting, a write-side
 // shutdown the peer reads as end of stream, the -EINVAL an unknown op
-// draws, and the CPU steering of a SO_REUSEPORT group (op 8) where the
-// host has it. Exit 42 and "ok" on stdout iff every check holds, else the number
+// draws, the CPU steering of a SO_REUSEPORT group (op 8) where the
+// host has it, and the local address as 16-bit groups (op 9). Exit 42 and "ok" on stdout iff every check holds, else the number
 // of the first failing check; a preview-2 wasm host reports only 0 or 1, so
 // the wasm legs read stdout.
 func SocketCtlProbe() string {
@@ -54,7 +54,14 @@ function main(): i32 {
     if (got.len() != 2 || got[0] != 104u8 || got[1] != 105u8) { return fail(13); }
     var eof: u8[] = tcp_recv(c, 16);
     if (eof.len() != 0) { return fail(14); }
-    if (tcp_socket_ctl(a, 9, 0) >= 0) { return fail(15); }
+    if (tcp_socket_ctl(a, 10, 0) >= 0) { return fail(15); }
+    // Op 9 is the local address as 16-bit groups: the accepted side is
+    // 127.0.0.1, so family 4, 127 << 8 then 1, and nothing past group 1.
+    if (tcp_socket_ctl(a, 9, 8) != 4) { return fail(17); }
+    if (tcp_socket_ctl(a, 9, 0) != 32512) { return fail(18); }
+    if (tcp_socket_ctl(a, 9, 1) != 1) { return fail(19); }
+    if (tcp_socket_ctl(a, 9, 7) != 0) { return fail(20); }
+    if (tcp_socket_ctl(a, 9, 9) >= 0) { return fail(21); }
     // Op 8 steers the listener's SO_REUSEPORT group by CPU: attached on
     // Linux (-ENOPROTOOPT where the host lacks the option, as qemu-user
     // does), -ENOTSUP on Darwin and on wasm.
@@ -77,7 +84,7 @@ function main(): i32 {
 
 // NetSocketOptsProbe is SocketCtlProbe through std/net's typed faces:
 // `listen_with` with options, `set_keepalive`, `set_nodelay`,
-// `set_nonblocking` and `shutdown`, each answering `Result[(), NetError]`
+// `set_nonblocking`, `local_addr` and `shutdown`, each answering a `Result`
 // with the errno mapped, and the errno a refused bind and a refused dial
 // report on each target. Same verdict channel: exit 42 and "ok", or the
 // first failing check.
@@ -129,6 +136,10 @@ function main(): i32 {
         if (!ok(net.set_nonblocking(c, false))) { return fail(9); }
     }
     if (tcp_send(a, "hi") != 2) { return fail(10); }
+    match (net.local_addr(a)) {
+        Ok(la) => { if (!la.ip.eq(net.ipv4_loopback()) || la.port != port) { return fail(16); } },
+        Err(e) => { return fail(17); },
+    }
     if (!ok(net.shutdown(a, net.Write))) { return fail(11); }
     var got: u8[] = tcp_recv(c, 16);
     if (got.len() != 2 || got[0] != 104u8 || got[1] != 105u8) { return fail(12); }

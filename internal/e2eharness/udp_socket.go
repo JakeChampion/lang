@@ -88,8 +88,9 @@ function main(): i32 {
 }
 
 // NetUdpProbe is UdpSocketProbe through std/net's typed faces:
-// `udp_socket`, `local_port`, `send_to`, `recv_from`, `set_peer`, `send`,
-// `recv` and `close`, each answering a `Result` with the errno mapped, the
+// `udp_socket`, `local_port`, `send_to`, `recv_from`, `set_peer`,
+// `local_addr` (on the connected datagram socket, the shape
+// `dns.source_for` reads), `send`, `recv` and `close`, each answering a `Result` with the errno mapped, the
 // `AddrInUse` a second bind of a held port reports, and the `WouldBlock`
 // of a non-blocking receive. Same verdict
 // channel: exit 42 and "ok", or the first failing check.
@@ -155,6 +156,10 @@ function main(): i32 {
     match (net.set_peer(b, loopback(pa))) {
         Ok(u) => {},
         Err(e) => { return fail(10); },
+    }
+    match (net.local_addr(b)) {
+        Ok(la) => { if (!la.ip.eq(net.ipv4_loopback()) || la.port != pb) { return fail(23); } },
+        Err(e) => { return fail(24); },
     }
     if (sent(net.send(b, "pong!")) != 5) { return fail(11); }
     match (net.recv(a, buf)) {
