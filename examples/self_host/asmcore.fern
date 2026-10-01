@@ -3077,6 +3077,16 @@ pub function rt_src_reader_read_chunk(t: string): string {
   return "function __fern_reader_read_chunk(fd: i32, n: i32): Result[string, IoError] { var p: usize = __raw_alloc(n); var r: i32 = __syscall3(" + sysno(t, "read") + ", fd as i64, p as i64, n as i64) as i32; if (r == n) { return Ok(__raw_string(p, n)); } if (r <= 0) { var short: string = __raw_string(p, n); if (r < 0) { return Err(__fern_io_error(0 - r, \"\")); } return Ok(\"\"); } var q: usize = __raw_alloc(r); __memcpy(q, p, r); var full: string = __raw_string(p, n); return Ok(__raw_string(q, r)); }";
 }
 
+// Scratch is owned as an array throughout, including the error path. Packed
+// results retain their physical reserve; legacy results expand byte slots.
+pub function rt_src_reader_read_chunk_bytes(t: string, packed: boolean): string {
+  var finish: string = "var b: usize = __raw_arr_box(got); var j: i32 = 0; while (j < got) { __raw_store_ptr(b, j + 1, __raw_load8(p, j) as usize); j = j + 1; } return Ok(__raw_array(b));";
+  if (packed) {
+    finish = "__store_i64(raw, got as i64); return Ok(scratch);";
+  }
+  return "function __fern_reader_read_chunk_bytes" + packed_suffix(packed) + "(fd: i32, n: i32): Result[i32[], IoError] { if (n < 0) { return Err(__fern_io_error(22, \"\")); } var raw: usize = __raw_arr_box(n / 8 + 1); var scratch: i32[] = __raw_array(raw); var p: usize = __raw_addr(raw, 8); var got: i32 = __syscall3(" + sysno(t, "read") + ", fd as i64, p as i64, n as i64) as i32; if (got < 0) { return Err(__fern_io_error(0 - got, \"\")); } " + finish + " }";
+}
+
 // rt_src_reader_close backs `r.close()` and `w.close()` → close(fd), Some on a
 // failing close. A close carries no PATH to report, so the errno is classified
 // against an empty one, exactly as rt_src_writer_write does for a failed write.
@@ -4722,6 +4732,9 @@ pub function match_payload_type(scrut: ast.Expr, s: EmitState): Ty {
           // Writer.write and Writer.truncate are Option[IoError], a
           // payload this Ty union cannot name, so they fall through
           // to unknown.
+          if (ty_struct_name(rcv) == "Reader" && fa.field == "read_chunk_bytes") {
+            return ty_array_i32();
+          }
           if (ty_struct_name(rcv) == "Reader"
             && (fa.field == "read_chunk" || fa.field == "read_line")) {
             return ty_string();
@@ -6286,6 +6299,9 @@ function infer_call_method_type(fa: ast.ExprFieldAccess, c: ast.ExprCall, s: Emi
   // the resource signature, rejecting the program before codegen (#8462). The
   // real non-struct-receiver gate is applied at lower time (irlower's
   // resource-method dispatch).
+  if (ty_struct_name(rt) == "Reader" && fa.field == "read_chunk_bytes") {
+    return ty_result(ty_array_i32());
+  }
   if (ty_struct_name(rt) == "Reader" && (fa.field == "read_chunk" || fa.field == "read_line")) {
     return ty_option(ty_string());
   }
@@ -9553,6 +9569,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
     "__fn___fern_eprint_str", "__fn___fern_putchar",
     "__fn___fern_read_line", "__fn___fern_read_file", "__fn___fern_read_file_bytes",
     "__fn___fern_reader_read_chunk", "__fn___fern_reader_close", "__fn___fern_write_file",
+    "__fn___fern_reader_read_chunk_bytes", "__fn___fern_reader_read_chunk_bytes_u8",
     "__fern_remove_dir_all", "__fn___fern_remove_dir_all", "__fn___fern_temp_dir", "__fern_read_dir", "__fn___fern_read_dir",
     "__fern_read_dir_all", "__fn___fern_read_dir_all", "__fn___fern_remove_file",
     "__fn___fern_create_dir_all",

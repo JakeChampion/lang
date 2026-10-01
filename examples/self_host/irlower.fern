@@ -18897,7 +18897,7 @@ function lower_call_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerSta
   // struct still routes to struct-method dispatch below (the AST
   // backend intercepts unconditionally; this is strictly safer). No
   // wasm stdin, so wasm_eligible rejects read_chunk/reader_close.
-  if ((fa.field == "read_chunk" || fa.field == "close" || fa.field == "write" || fa.field == "read_line"
+  if ((fa.field == "read_chunk" || fa.field == "read_chunk_bytes" || fa.field == "close" || fa.field == "write" || fa.field == "read_line"
     || fa.field == "stat" || fa.field == "seek" || fa.field == "truncate"
     || fa.field == "flags" || fa.field == "isatty" || fa.field == "write_some"
     || fa.field == "dup_onto" || fa.field == "splice_to"
@@ -18917,7 +18917,7 @@ function lower_call_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerSta
       }
       return rls.emit(ir.op_read_line());
     }
-    if (fa.field == "read_chunk" && c.args.len() == 1) {
+    if ((fa.field == "read_chunk" || fa.field == "read_chunk_bytes") && c.args.len() == 1) {
       var rcs: LowerState = lower_expr(fa.obj, s);
       if (!rcs.ok) {
         return rcs;
@@ -18925,6 +18925,9 @@ function lower_call_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerSta
       rcs = lower_expr(c.args[0], rcs);
       if (!rcs.ok) {
         return rcs;
+      }
+      if (fa.field == "read_chunk_bytes") {
+        return rcs.emit(ir.op_read_chunk_bytes());
       }
       return rcs.emit(ir.op_read_chunk());
     }
@@ -22748,7 +22751,7 @@ function resource_method_opt_ret_type(field: string, obj: ast.Expr, s: LowerStat
     || expr_is_str(obj, s) || expr_is_arr_src(obj, s)) {
     return "";
   }
-  if (field == "read_line" || field == "read_chunk" || field == "close" || field == "stat" || field == "seek"
+  if (field == "read_line" || field == "read_chunk" || field == "read_chunk_bytes" || field == "close" || field == "stat" || field == "seek"
     || field == "flags" || field == "isatty" || field == "dup_onto"
     || is_handle_tty_method(field)
     || is_fd_sync_method(field)) {
@@ -22811,11 +22814,14 @@ function owned_payload_builtin_ptype(e: ast.Expr, s: LowerState): string {
           return "";
         },
         ast.ExprFieldAccess(fa) => {
-          if (fa.field != "read_chunk" && fa.field != "read_line") {
+          if (fa.field != "read_chunk" && fa.field != "read_chunk_bytes" && fa.field != "read_line") {
             return "";
           }
           if (resource_method_opt_ret_type(fa.field, fa.obj, s) == "") {
             return "";
+          }
+          if (fa.field == "read_chunk_bytes") {
+            return "u8[]";
           }
           return "string";
         },
@@ -96683,6 +96689,9 @@ function builtin_opt_ret_type(name: string): string {
   }
   if (name == "Reader.read_chunk") {
     return "Result[string, IoError]";
+  }
+  if (name == "Reader.read_chunk_bytes") {
+    return "Result[u8[], IoError]";
   }
   if (name == "Reader.stat" || name == "Writer.stat") {
     return "Result[FileStat, IoError]";

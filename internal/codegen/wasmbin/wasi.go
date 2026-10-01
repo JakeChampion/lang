@@ -2377,9 +2377,12 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 			in.add("wasi_fd_read")
 		}
 	}
-	if helpers.set["__fern_reader_read_chunk"] {
+	if helpers.set["__fern_reader_read_chunk"] || helpers.set["__fern_reader_read_chunk_bytes"] {
 		if opts.Preview2WASI {
 			in.add("wasi_io_blocking_read")
+			if helpers.set["__fern_reader_read_chunk_bytes"] {
+				in.add("wasi_io_error_drop")
+			}
 		} else {
 			in.add("wasi_fd_read")
 		}
@@ -3013,37 +3016,38 @@ func buildMapHashSeedBody(idxs map[string]uint32) []byte {
 // body. Each override has the same (params, results) signature as
 // the helper's runtimeHelperSpec — only the bytecode differs.
 var preview2HelperBodyOverrides = map[string]func(map[string]uint32) []byte{
-	"isatty":                     buildIsattyBodyP2,
-	"__fern_random_i32":          buildRandomI32BodyP2,
-	"__fern_monotonic_ns":        buildMonotonicNsBodyP2,
-	"__fern_sleep_ms":            buildSleepMsBodyP2,
-	"__fern_sleep_ns":            buildSleepNsBodyP2,
-	"__fern_random_bytes":        buildRandomBytesBodyP2,
-	"__fern_print":               buildPrintBodyP2,
-	"__fern_write":               buildWriteBodyP2,
-	"__fern_eprint":              buildEprintBodyP2,
-	"__fern_lc_report":           buildLcReportBodyP2,
-	"__fern_putchar":             buildPutcharBodyP2,
-	"__fern_now_ns":              buildNowNsBodyP2,
-	"__fern_now_unix_ms":         buildNowUnixMsBodyP2,
-	"__fern_read_byte":           buildReadByteBodyP2,
-	"__fern_arg_count":           buildArgCountBodyP2,
-	"__fern_arg_at":              buildArgAtBodyP2,
-	"__fern_args":                buildArgsBodyP2,
-	"__fern_env":                 buildEnvBodyP2,
-	"__fern_environ":             buildEnvironBodyP2,
-	"__fern_read_file":           buildReadFileBodyP2,
-	"__fern_read_file_bytes":     buildReadFileBytesBodyP2,
-	"__fern_write_file":          buildWriteFileBodyP2,
-	"__fern_stdin":               buildStdinBodyP2,
-	"__fern_reader_read_line_fd": buildReaderReadLineFdBodyP2,
-	"__fern_reader_read_chunk":   buildReaderReadChunkBodyP2,
-	"__fern_fd_stat":             buildFdStatBodyP2,
-	"__fern_exit":                buildExitBodyP2,
-	"__fern_fd_fsync":            buildFdSyncBodyP2("wasi_descriptor_sync_p2"),
-	"__fern_fd_fdatasync":        buildFdSyncBodyP2("wasi_descriptor_sync_data_p2"),
-	"__fern_fd_syncfs":           buildFdSyncfsBody,
-	"__fern_fd_dup_onto":         buildFdDupOntoBody,
+	"isatty":                         buildIsattyBodyP2,
+	"__fern_random_i32":              buildRandomI32BodyP2,
+	"__fern_monotonic_ns":            buildMonotonicNsBodyP2,
+	"__fern_sleep_ms":                buildSleepMsBodyP2,
+	"__fern_sleep_ns":                buildSleepNsBodyP2,
+	"__fern_random_bytes":            buildRandomBytesBodyP2,
+	"__fern_print":                   buildPrintBodyP2,
+	"__fern_write":                   buildWriteBodyP2,
+	"__fern_eprint":                  buildEprintBodyP2,
+	"__fern_lc_report":               buildLcReportBodyP2,
+	"__fern_putchar":                 buildPutcharBodyP2,
+	"__fern_now_ns":                  buildNowNsBodyP2,
+	"__fern_now_unix_ms":             buildNowUnixMsBodyP2,
+	"__fern_read_byte":               buildReadByteBodyP2,
+	"__fern_arg_count":               buildArgCountBodyP2,
+	"__fern_arg_at":                  buildArgAtBodyP2,
+	"__fern_args":                    buildArgsBodyP2,
+	"__fern_env":                     buildEnvBodyP2,
+	"__fern_environ":                 buildEnvironBodyP2,
+	"__fern_read_file":               buildReadFileBodyP2,
+	"__fern_read_file_bytes":         buildReadFileBytesBodyP2,
+	"__fern_write_file":              buildWriteFileBodyP2,
+	"__fern_stdin":                   buildStdinBodyP2,
+	"__fern_reader_read_line_fd":     buildReaderReadLineFdBodyP2,
+	"__fern_reader_read_chunk":       buildReaderReadChunkBodyP2,
+	"__fern_reader_read_chunk_bytes": buildReaderReadChunkBytesBodyP2,
+	"__fern_fd_stat":                 buildFdStatBodyP2,
+	"__fern_exit":                    buildExitBodyP2,
+	"__fern_fd_fsync":                buildFdSyncBodyP2("wasi_descriptor_sync_p2"),
+	"__fern_fd_fdatasync":            buildFdSyncBodyP2("wasi_descriptor_sync_data_p2"),
+	"__fern_fd_syncfs":               buildFdSyncfsBody,
+	"__fern_fd_dup_onto":             buildFdDupOntoBody,
 	// The four terminal questions' handle forms answer Unsupported on
 	// both previews, so preview 2 shares preview 1's body (#9363).
 	"__fern_handle_window_size":     buildHandleTtyRefusal(1),

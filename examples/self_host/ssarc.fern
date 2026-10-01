@@ -4657,6 +4657,9 @@ function handle_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
   if (ins.str == "Reader.read_chunk") {
     return Lowered { found: true, r: emit(r, ir.op_read_chunk()) };
   }
+  if (ins.str == "Reader.read_chunk_bytes") {
+    return Lowered { found: true, r: emit(r, ir.packed(ir.op_read_chunk_bytes())) };
+  }
   if (ins.str == "Reader.close" || ins.str == "Writer.close") {
     return Lowered { found: true, r: emit(r, ir.op_reader_close()) };
   }

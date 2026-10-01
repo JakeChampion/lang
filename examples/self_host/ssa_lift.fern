@@ -531,7 +531,7 @@ function prod_call_argc(k: string): i32 {
   if (k == "arr_slice" || k == "subprocess") {
     return 3;
   }
-  if (k == "write_file" || k == "write_file_exec" || k == "read_chunk" || k == "writer_write") {
+  if (k == "write_file" || k == "write_file_exec" || k == "read_chunk" || k == "read_chunk_bytes" || k == "writer_write") {
     return 2;
   }
   return 0;

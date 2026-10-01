@@ -1199,6 +1199,9 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 		// helper (4 KiB scratch).
 		g.emitReaderWriterRuntime()
 	}
+	if g.usesReaderBytes {
+		g.emitReaderBytesRuntime()
+	}
 	if ast.SandboxEnabled {
 		// Last code emitter: the filter's allowlist is g.syscalls, which
 		// is only complete once every other emitter has run.
@@ -1796,6 +1799,7 @@ type generator struct {
 	// open_writer / open_appender / open_exclusive + Reader/Writer method
 	// helpers). Mirrors the arm64 generator's flag.
 	usesReaderWriter bool
+	usesReaderBytes  bool
 }
 
 // recordUse flips the right use-flag for a callee name the
@@ -2295,6 +2299,10 @@ func (g *generator) recordUse(target string) {
 		g.usesReadLine = true
 		g.usesAlloc = true
 		g.usesMemcpy = true
+	case "__method_Reader_read_chunk_bytes":
+		g.usesReaderBytes = true
+		g.usesReaderWriter = true
+		g.usesAllocU8 = true
 	case "__method_Reader_read_line",
 		"__method_Reader_read_chunk",
 		"__method_Reader_close",
@@ -4208,6 +4216,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_reader_read_line"
 		case "__method_Reader_read_chunk":
 			target = "__fern_reader_read_chunk"
+		case "__method_Reader_read_chunk_bytes":
+			target = "__fern_reader_read_chunk_bytes"
 		case "__method_Reader_stat", "__method_Writer_stat":
 			target = "__fern_fd_stat"
 		case "__method_Reader_fsync", "__method_Writer_fsync":

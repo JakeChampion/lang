@@ -1852,6 +1852,12 @@ function ssa_str_target(op: string): string {
   if (op == "read_chunk") {
     return "reader_read_chunk";
   }
+  if (op == "read_chunk_bytes") {
+    return "reader_read_chunk_bytes";
+  }
+  if (op == "read_chunk_bytes_u8") {
+    return "reader_read_chunk_bytes_u8";
+  }
   return op;
 }
 
@@ -1859,6 +1865,9 @@ function ssa_str_target(op: string): string {
 // the heap, "" for an op that is not one; the three that need no heap are
 // named by ssa_host_bare.
 function ssa_host_need(op: string): string {
+  if (op == "read_chunk_bytes" || op == "read_chunk_bytes_u8") {
+    return op;
+  }
   var fs: string[] = [
     "read_file", "read_file_bytes", "read_file_bytes_u8", "write_file", "write_file_exec", "remove_dir_all", "remove_file",
     "create_dir_all", "read_dir", "read_dir_all", "env", "stat", "lstat", "subprocess", "writer_write",
@@ -9942,6 +9951,12 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     if (s.has_need("reader")) {
       fs_src = fs_src + " " + asmcore.rt_src_reader_read_chunk(tgt) + " " + asmcore.rt_src_reader_close(tgt);
     }
+    if (s.has_need("read_chunk_bytes")) {
+      fs_src = fs_src + " " + asmcore.rt_src_reader_read_chunk_bytes(tgt, false);
+    }
+    if (s.has_need("read_chunk_bytes_u8")) {
+      fs_src = fs_src + " " + asmcore.rt_src_reader_read_chunk_bytes(tgt, true);
+    }
     if (s.has_need("fd_stat")) {
       fs_src = fs_src + " " + asmcore.rt_src_fd_stat(tgt);
     }
@@ -11119,7 +11134,7 @@ function needs_fs_runtime(s: asmcore.EmitState): boolean {
     "chdir", "chroot", "setuid", "setgid", "setgroups", "umask", "fd_fsync", "fd_fdatasync", "fd_syncfs", "sync",
     "temp_dir", "stat", "lstat", "statfs", "access", "read_dir", "read_dir_all",
     "remove_dir_all", "open_file", "open_with", "writer_write", "write_some",
-    "reader", "signal_send", "set_process_group", "set_priority",
+    "reader", "read_chunk_bytes", "read_chunk_bytes_u8", "signal_send", "set_process_group", "set_priority",
   ]);
 }
 

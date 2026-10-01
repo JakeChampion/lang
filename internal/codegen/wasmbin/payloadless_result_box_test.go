@@ -39,17 +39,18 @@ var payloadlessArmBoxSize = map[string]int32{
 // that does not goes through emitResultOkPtr, which writes a zero into the
 // payload slot from a local rather than as a literal.
 var payloadlessArmAbsent = map[string]bool{
-	"__fern_read_file":         true,
-	"__fern_read_file_bytes":   true,
-	"__fern_write_file":        true,
-	"__fern_open_reader":       true,
-	"__fern_open_reader_with":  true,
-	"__fern_open_writer_with":  true,
-	"__fern_open_writer":       true,
-	"__fern_open_appender":     true,
-	"__fern_open_exclusive":    true,
-	"__fern_reader_read_chunk": true,
-	"__fern_fd_stat":           true,
+	"__fern_read_file":               true,
+	"__fern_read_file_bytes":         true,
+	"__fern_write_file":              true,
+	"__fern_open_reader":             true,
+	"__fern_open_reader_with":        true,
+	"__fern_open_writer_with":        true,
+	"__fern_open_writer":             true,
+	"__fern_open_appender":           true,
+	"__fern_open_exclusive":          true,
+	"__fern_reader_read_chunk":       true,
+	"__fern_reader_read_chunk_bytes": true,
+	"__fern_fd_stat":                 true,
 	// The four terminal questions' handle forms: on wasm every arm is
 	// Err(Unsupported), so there is no payloadless arm at all (#9363).
 	"__fern_handle_window_size":     true,

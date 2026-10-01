@@ -841,8 +841,25 @@ side, and the self-host's register lanes (`asmcore.rt_src_utf8_valid`,
 plain Fern) plus its wasm p1/p2 lanes, all return
 `Err(InvalidUtf8(path))` on malformed content — the case D9 predicted
 and nothing emitted is now real on every lane. `tcp_recv(fd, max)`
-returns `u8[]` (#7467), so no byte-carrying builtin is typed `string`
-any more.
+returns `u8[]` (#7467). This did not complete the invariant: streaming
+readers, builders, environment values, arguments and HTTP text boundaries
+still need auditing and migration.
+
+`Reader.read_chunk_bytes(n): Result[u8[], IoError]` provides owned raw input
+on the bootstrap interpreter and native/wasm backends, and on the self-hosted
+native and wasm command-module backends. It preserves NUL, malformed UTF-8
+and split scalar encodings. A short read returns the bytes actually read;
+EOF returns an empty array. Negative counts report an I/O error. A
+zero-length read does not advance the cursor and preserves host errors,
+including WASI Preview 1's possible `Interrupted` result. Closed handles
+report an error. Retained arrays remain valid after subsequent reads and
+closing the reader.
+
+The Fern interpreter's host reader still needs a bootstrap-compatible raw
+path before this method has full interpreter parity. The existing
+`Reader.read_chunk` remains text-typed and unchecked pending migration of
+its binary consumers. The new method does not establish the string invariant
+by itself.
 
 The socket TRANSPORT followed. `tcp_recv_deadline` returns
 `Option[u8[]]`, and `std/fetch` is byte-domain end to end —
@@ -858,7 +875,7 @@ construction, and what it exists to pin is the combinator timing.
 One bridge is left, in `std/tcp`'s serve loop: the request buffer is
 still text-typed because `http_parse_request` and `HttpRequest.body`
 are. That is the HTTP MESSAGE layer rather than the transport, and it
-is its own slice on #5714 — the last one. Its blast radius is the
+is its own slice on #5714. Its blast radius is the
 wasi-http canonical ABI, where the incoming body is marshalled into a
 two-word `string` field at an offset the wrapper hardcodes. That is
 NATIVE ONLY: `wasm32-wasi-http` has no self-host counterpart (#6636),
@@ -1105,7 +1122,7 @@ Tracked as epic #5626; issue numbers below.
 | 5 | **D5** (#5631) — normalization + `eq_canonical` — **DONE** | 1 | Shipped `nfc`/`nfd`/`eq_canonical`/`is_nfc`/`is_nfd`. NFKC/NFKD declined — a second full table for a lossy transform. |
 | 6 | **D8** (#5632) — `[u8]` string view — **DONE** | — | Builtin already existed; #5632 added the migrated consumer, the four-backend differential, and the docs. Borrow rule still open (#4814). |
 | 7 | **D6** (#5633) — grapheme segmentation — **DONE**; word segmentation followed under #5552 | 1, 3 | Opt-in. NOT the largest table after all (~17 KB vs normalization's ~58 KB). Returns `str[]` views (was `string[]` until #5695 was fixed). Word_Break coalesces to 1085 ranges, ~13 KB; a program that does not segment words is byte-identical to one built before it existed. |
-| 8 | **D9** (#5634) — the UTF-8 validity invariant — **IN PROGRESS** | 6 | Largest blast radius; do last, after `[u8]` makes "raw bytes" ergonomic. The `s[a:b]` half and every byte-carrying builtin have landed; the HTTP message layer (`http_parse_request`, `HttpRequest.body`) is the remainder, on #5714. |
+| 8 | **D9** (#5634): the UTF-8 validity invariant: **IN PROGRESS** | 6 | #5714 remains open. Raw reader/writer migration, builders, environment/arguments and HTTP text boundaries still require work. Completed children do not prove the invariant. |
 | 9 | **D10** (#5635) — document the path assumption — **DONE** | — | Doc-only. Stated in `std/path`, `std/io`, and `read_dir`'s builtin signature. |
 
 #5552 as filed maps onto slices 1, 4, 5, 6, 7. Its step 1 (document the

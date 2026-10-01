@@ -1207,6 +1207,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 		// the Some(IoError) / None error path.
 		g.emitReaderWriterRuntime()
 	}
+	if g.usesReaderBytes {
+		g.emitReaderBytesRuntime()
+	}
 	g.emitDataSections()
 	if !g.darwin {
 		// `.note.GNU-stack` is an ELF-only directive — it
@@ -15996,6 +15999,7 @@ type generator struct {
 	// flag since they now return real Reader / Writer struct
 	// pointers (fd at +0) rather than scalar sentinels.
 	usesReaderWriter bool
+	usesReaderBytes  bool
 }
 
 func (g *generator) line(s string) {
@@ -20644,6 +20648,11 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			target = "__fern_reader_read_chunk"
 			g.usesReaderWriter = true
 			g.usesAlloc = true
+		case "__method_Reader_read_chunk_bytes":
+			target = "__fern_reader_read_chunk_bytes"
+			g.usesReaderBytes = true
+			g.usesReaderWriter = true
+			g.usesAllocU8 = true
 		case "__method_Reader_close":
 			target = "__fern_close_fd_box"
 			g.usesReaderWriter = true

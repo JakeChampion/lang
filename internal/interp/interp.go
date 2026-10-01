@@ -679,6 +679,7 @@ func New() *Interp {
 	i.Builtins["open_writer_with"] = &Builtin{Fn: builtinOpenWriterWith}
 	i.Builtins["__method_Reader_read_line"] = &Builtin{Fn: builtinReaderReadLine}
 	i.Builtins["__method_Reader_read_chunk"] = &Builtin{Fn: builtinReaderReadChunk}
+	i.Builtins["__method_Reader_read_chunk_bytes"] = &Builtin{Fn: builtinReaderReadChunkBytes}
 	i.Builtins["__method_Reader_close"] = &Builtin{Fn: builtinReaderClose}
 	i.Builtins["__method_Reader_stat"] = &Builtin{Fn: builtinFdStat}
 	i.Builtins["__method_Writer_stat"] = &Builtin{Fn: builtinFdStat}
@@ -4728,6 +4729,42 @@ func builtinReaderReadChunk(i *Interp, args []Value) (Value, error) {
 		return resultErr(classifyIoError("", rerr)), nil
 	}
 	return resultOk(String(string(buf[:n]))), nil
+}
+
+// Read raw bytes without creating a language string. A short read owns its
+// payload even when the host reader reports EOF with the final bytes.
+func builtinReaderReadChunkBytes(i *Interp, args []Value) (Value, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("Reader.read_chunk_bytes: expected 2 args")
+	}
+	size, ok := args[1].(Number)
+	if !ok {
+		return nil, fmt.Errorf("Reader.read_chunk_bytes: size must be a number")
+	}
+	if size < 0 {
+		return resultErr(classifyIoError("", syscall.EINVAL)), nil
+	}
+	fd, err := streamFd(args[0])
+	if err != nil {
+		return nil, err
+	}
+	if i.closedStd[fd] || (fd != 0 && i.openFiles[fd] == nil) {
+		return resultErr(classifyIoError("", syscall.EBADF)), nil
+	}
+	r, err := readerStream(i, args[0])
+	if err != nil {
+		return nil, err
+	}
+	buf := make([]byte, int(size))
+	n, rerr := r.Read(buf)
+	if n == 0 && rerr != nil && !errors.Is(rerr, io.EOF) {
+		return resultErr(classifyIoError("", rerr)), nil
+	}
+	out := newArray(n)
+	for j, b := range buf[:n] {
+		out.E[j] = Number(b)
+	}
+	return resultOk(out), nil
 }
 
 func builtinReaderClose(i *Interp, args []Value) (Value, error) {

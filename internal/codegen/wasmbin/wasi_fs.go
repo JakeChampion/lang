@@ -2293,11 +2293,11 @@ const noDescriptor = -1
 // returns nothing, so these always return None — selected via
 // preview2HelperBodyOverrides.
 func buildReaderCloseFdBodyP2(idxs map[string]uint32) []byte {
-	return buildStreamCloseBodyP2(idxs, idxs["wasi_io_input_stream_drop"])
+	return buildStreamCloseBodyP2(idxs, idxs["wasi_io_input_stream_drop"], true)
 }
 
 func buildWriterCloseBodyP2(idxs map[string]uint32) []byte {
-	return buildStreamCloseBodyP2(idxs, idxs["wasi_io_output_stream_drop"])
+	return buildStreamCloseBodyP2(idxs, idxs["wasi_io_output_stream_drop"], false)
 }
 
 // buildStreamCloseBodyP2 drops the stream handle stored at the Reader /
@@ -2306,10 +2306,35 @@ func buildWriterCloseBodyP2(idxs map[string]uint32) []byte {
 // form). `drop` is the canon resource.drop import for the relevant
 // stream resource. A stdio handle owns no descriptor and carries
 // noDescriptor there.
-func buildStreamCloseBodyP2(idxs map[string]uint32, drop uint32) []byte {
+func buildStreamCloseBodyP2(idxs map[string]uint32, drop uint32, reader bool) []byte {
 	allocRc1 := idxs["__fern_alloc_rc1"]
 
 	var body []byte
+	if reader {
+		// Every u32 stream handle is valid. Track closure in the signed file
+		// position instead: a live Reader's position is always non-negative.
+		body = inst.InstLocalGet(body, 0)
+		body = memory.InstI64Load(body, 3, readerPosOff)
+		body = inst.InstI64Const(body, -1)
+		body = numeric.InstI64Eq(body)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		body = inst.InstI32Const(body, 8) // WASI EBADF
+		body = inst.InstI32Const(body, 0)
+		body = inst.InstI32Const(body, 0)
+		body = inst.InstCall(body, idxs["__build_io_error"])
+		body = inst.InstLocalSet(body, 2)
+		body = inst.InstI32Const(body, 8)
+		body = inst.InstCall(body, allocRc1)
+		body = inst.InstLocalTee(body, 1)
+		body = inst.InstI32Const(body, 0) // Some(error)
+		body = memory.InstI32Store(body, 2, 0)
+		body = inst.InstLocalGet(body, 1)
+		body = inst.InstLocalGet(body, 2)
+		body = memory.InstI32Store(body, 2, 4)
+		body = inst.InstLocalGet(body, 1)
+		body = inst.InstReturn(body)
+		body = inst.InstEnd(body)
+	}
 	// resource.drop(mem[$self+0]) — the own<…stream> handle.
 	body = inst.InstLocalGet(body, 0)
 	body = memory.InstI32Load(body, 2, 0)
@@ -2329,6 +2354,11 @@ func buildStreamCloseBodyP2(idxs map[string]uint32, drop uint32) []byte {
 		body = inst.InstEnd(body)
 	}
 
+	if reader {
+		body = inst.InstLocalGet(body, 0)
+		body = inst.InstI64Const(body, -1)
+		body = memory.InstI64Store(body, 3, readerPosOff)
+	}
 	// Return None, at Option[IoError]'s uniform box size.
 	body = emitPayloadlessResultBox(body, allocRc1, 1, 8, 1)
 

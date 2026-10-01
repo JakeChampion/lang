@@ -3713,6 +3713,9 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 	// EOF from EISDIR, and a streaming utility needs to (#8700).
 	registerStructMethod("Reader", "read_chunk", []ast.Type{ast.NumberType{}},
 		ast.EnumType{Name: "Result", Args: []ast.Type{ast.StringType{}, ioErrType}})
+	// Raw reads preserve every byte, including partial UTF-8 sequences.
+	registerStructMethod("Reader", "read_chunk_bytes", []ast.Type{ast.NumberType{}},
+		ast.EnumType{Name: "Result", Args: []ast.Type{u8s, ioErrType}})
 	registerStructMethod("Reader", "close", nil, optionIoErr)
 	// stat asks fstat(2) of the handle itself — the same record `stat(path)`
 	// fills, for a stream the program did not open by name (stdin, stdout,

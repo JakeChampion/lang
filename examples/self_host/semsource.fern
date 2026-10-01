@@ -6766,6 +6766,7 @@ function handle_contracts(): ssasem.Contract[] {
     ssasem.Contract { name: "open_writer_with", params: [t_string(), t_i32()], modes: path_flags, result: t_io_result(writer) },
     ssasem.Contract { name: "Reader.read_line", params: [reader], modes: value, result: t_option(t_string()) },
     ssasem.Contract { name: "Reader.read_chunk", params: [reader, t_i32()], modes: [ssaunits.value_mode(), ssaunits.value_mode()], result: t_io_result(t_string()) },
+    ssasem.Contract { name: "Reader.read_chunk_bytes", params: [reader, t_i32()], modes: [ssaunits.value_mode(), ssaunits.value_mode()], result: t_io_result(typeinfo.TypeArray { elem: t_u8(), view: false }) },
     ssasem.Contract { name: "Reader.close", params: [reader], modes: value, result: io_error },
     ssasem.Contract { name: "Writer.close", params: [writer], modes: value, result: io_error },
     ssasem.Contract { name: "Writer.write", params: [writer, t_string()], modes: [ssaunits.value_mode(), ssaunits.borrow_mode()], result: io_error },
