@@ -87471,11 +87471,12 @@ function str_field_counted_lit_sites(stmts: ast.Stmt[], name: string, structs: S
 
 pub function fn_param_sigs_of(funcs: parser.FuncDecl[], structs: StructTab, growset: string[]): string[] {
   var out: string[] = [];
+  var grows: SigReg = sig_reg_of(growset);
   for fd in funcs {
     // #4873 port: the may-grow masks (grow_param_flags_of), whose position 0
     // is the RECEIVER — so parameter i reads position i + 1. Merged below as
     // flag '4'.
-    var gmask: string = grow_reg_value(growset, grow_fn_key(fd));
+    var gmask: string = sig_reg_value_of(grows, grow_fn_key(fd));
     var flags: string = "";
     var any: boolean = false;
     var pj: i32 = 0;
@@ -103135,8 +103136,9 @@ pub function grow_param_flags_of(funcs: parser.FuncDecl[]): string[] {
 pub function grow_param_flags_seeded(funcs: parser.FuncDecl[], seeds: string[]): string[] {
   // One mask per func, appended in order: the working per-position mask.
   var masks: string[] = [];
+  var seeded_masks: SigReg = sig_reg_of(seeds);
   for fnk in funcs {
-    var seeded: string = grow_reg_value(seeds, grow_fn_key(fnk));
+    var seeded: string = sig_reg_value_of(seeded_masks, grow_fn_key(fnk));
     if (seeded.len() > 0) {
       masks = masks.append(seeded);
       continue;
@@ -103486,9 +103488,10 @@ pub function regrow_sigs(sg: FnSigs, funcs: parser.FuncDecl[], structs: StructTa
 // against it, and the argument's own tracked type can be absent at the call.
 pub function grow_field_positions_of(funcs: parser.FuncDecl[], gflags: string[]): string[] {
   var out: string[] = [];
+  var masks: SigReg = sig_reg_of(gflags);
   for fd in funcs {
     var key: string = grow_fn_key(fd);
-    var mask: string = grow_reg_value(gflags, key);
+    var mask: string = sig_reg_value_of(masks, key);
     if (mask.len() == 0) {
       continue;
     }
