@@ -137,15 +137,15 @@
 #     (`read_file(dir + "builtins.fern")`), so it is a source input rather
 #     than linked code — while pipeline.fern and wasm_units_probe.fern carry
 #     their own `main` and are unbaselined PROGRAMS, not unlinked modules.
-#   * THREE DRIVERS COVER ONE CLOSURE: wasm_ir_run, wasm_run and
-#     wasm_runio_run have identical import closures. They differ in what their
-#     `main` reaches, not in what they link, so the three rows are close to
-#     one measurement.
+#   * FIVE DRIVERS COVER TWO CLOSURES: asm_pathprobe_run and asm_ir_elig_run
+#     have identical import closures, as do wasm_ir_run, wasm_run and
+#     wasm_runio_run. They differ in what their `main` reaches, not in what
+#     they link, so the three wasm rows are close to one measurement.
 #
 # PICK THE DENOMINATOR THAT SEES YOUR CHANGE. A change confined to one module is
 # honestly measured against the SMALLEST driver linking it, not against the
 # tracked artifact: checker.fern -> checker_modload_run (3.7 MB), the front end
-# or ssa -> ssa_run (3.1 MB), irlower.fern -> irlower_run (5.3 MB).
+# or ssa -> ssa_run (3.1 MB), irlower.fern -> asm_ir_elig_run (12.0 MB).
 # Dividing by the wrong one is not a small error. #7519 found the 311-loop
 # checker migration registering EXACTLY 0 bytes against irlower_run, which does
 # not link checker.fern at all, and found one irlower slice reading +6.8% or
@@ -423,15 +423,15 @@
 # 2026-10-01 — asm_modload_run 9438224 -> 9917048 (+5.1%) once this branch
 # took main's 48 commits since its base; the other rows stay inside 5%.
 # Number pasted from driver-sizes' own report on run 36854942099.
-fern.fern/stage2 12973880
-fern.fern 12973880
-asm_load_run.fern 10514488
-asm_modload_run.fern 9917048
-asm_ir_run.fern 9619240
-asm_run.fern 9081512
-wasm_ir_run.fern 8820144
-wasm_run.fern 8817328
-wasm_runio_run.fern 8816656
-asm_pathprobe_run.fern 5727752
-irlower_run.fern 5314192
-checker_modload_run.fern 2335496
+fern.fern/stage2 13040616
+fern.fern 13040616
+asm_load_run.fern 10866392
+asm_modload_run.fern 9922264
+asm_ir_run.fern 9698632
+asm_run.fern 9123464
+wasm_ir_run.fern 9120048
+wasm_run.fern 9117408
+wasm_runio_run.fern 9116728
+asm_pathprobe_run.fern 5753440
+irlower_run.fern 5578848
+checker_modload_run.fern 2386128

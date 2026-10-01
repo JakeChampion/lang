@@ -36,7 +36,14 @@ function max_caller_insts(): i32 {
 // `funcs[i]` is spliced into its callers when `inlinable[i]` and it is a leaf;
 // `rewrite[i]` says which functions may be rewritten at all. `names[i]` is the
 // key a call to `funcs[i]` carries.
-pub function inline_leaves(funcs: ssasem.Func[], names: string[], inlinable: boolean[], rewrite: boolean[]): ssasem.Func[] {
+// What the pass made of each function, and whether it rewrote the graph: a
+// caller holding an analysis of what it handed in keeps it only where the
+// graph came back as it went in.
+pub struct Inlined { funcs: ssasem.Func[], rewritten: boolean[] }
+
+struct Rewrite { f: ssasem.Func, changed: boolean }
+
+pub function inline_leaves(funcs: ssasem.Func[], names: string[], inlinable: boolean[], rewrite: boolean[]): Inlined {
   var leaves: Map[string, i32] = map_new(64);
   var any: boolean = false;
   var i: i32 = 0;
@@ -48,19 +55,26 @@ pub function inline_leaves(funcs: ssasem.Func[], names: string[], inlinable: boo
     i = i + 1;
   }
   var out: ssasem.Func[] = [];
+  var rewritten: boolean[] = [];
   i = 0;
   while (i < funcs.len()) {
     var f: ssasem.Func = funcs[i];
+    var changed: boolean = false;
     if (rewrite[i]) {
       if (any && count_insts(f.graph) <= max_caller_insts()) {
-        f = splice_calls(f, funcs, leaves);
+        var spliced: Rewrite = splice_calls(f, funcs, leaves);
+        f = spliced.f;
+        changed = spliced.changed;
       }
-      f = split_tuples(f);
+      var split: Rewrite = split_tuples(f);
+      f = split.f;
+      changed = changed || split.changed;
     }
     out = out.append(f);
+    rewritten = rewritten.append(changed);
     i = i + 1;
   }
-  return out;
+  return Inlined { funcs: out, rewritten: rewritten };
 }
 
 function scalar(t: typeinfo.Type): boolean {
@@ -144,7 +158,7 @@ function leaf_callee(ins: ssa.SInst, leaves: Map[string, i32]): i32 {
   return leaves.get_or(ins.str, 0 - 1);
 }
 
-function splice_calls(f0: ssasem.Func, funcs: ssasem.Func[], leaves: Map[string, i32]): ssasem.Func {
+function splice_calls(f0: ssasem.Func, funcs: ssasem.Func[], leaves: Map[string, i32]): Rewrite {
   var f: ssasem.Func = f0;
   var done: i32 = 0;
   var bi: i32 = 0;
@@ -164,7 +178,7 @@ function splice_calls(f0: ssasem.Func, funcs: ssasem.Func[], leaves: Map[string,
     // reaches in turn.
     bi = bi + 1;
   }
-  return f;
+  return Rewrite { f: f, changed: done > 0 };
 }
 
 function next_block_id(g: ssa.SFunc): i32 {
@@ -371,13 +385,14 @@ function construction(g: ssa.SFunc, defs: Def[], v: i32): i32 {
 // Every read of a known construction reads its element instead, a read of a
 // phi joining constructions reads a per-element phi, and a construction or
 // joining phi left unread is dropped.
-function split_tuples(f0: ssasem.Func): ssasem.Func {
+function split_tuples(f0: ssasem.Func): Rewrite {
   if (!reads_tuples(f0.graph)) {
-    return f0;
+    return Rewrite { f: f0, changed: false };
   }
   var f: ssasem.Func = f0;
   var round: i32 = 0;
   var changed: boolean = true;
+  var rewritten: boolean = false;
   while (changed && round < 8) {
     changed = false;
     var g: ssa.SFunc = f.graph;
@@ -410,9 +425,10 @@ function split_tuples(f0: ssasem.Func): ssasem.Func {
       changed = true;
     }
     f = swept;
+    rewritten = rewritten || changed;
     round = round + 1;
   }
-  return f;
+  return Rewrite { f: f, changed: rewritten };
 }
 
 function reads_tuples(g: ssa.SFunc): boolean {

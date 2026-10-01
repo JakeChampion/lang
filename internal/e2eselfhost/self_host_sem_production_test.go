@@ -1,7 +1,6 @@
 package e2eselfhost
 
 import (
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,15 +15,15 @@ import (
 // through ssaunits + ssarc, and substitutes the result into the cache the
 // backend emits from (docs/SELFHOST-SEMANTIC-SOURCE.md).
 //
-// The assertions are the two things the substitution has to keep true:
+// Each program carries its own expectations, checked on every target:
 //
-//   - the program answers the same as it does with the path off, on every
-//     target — the AST lowering is the oracle here, and it is the same binary
-//     producing both, so a divergence is the substitution's;
-//   - every declaration produces. The report line is checked rather than
-//     assumed, because a body that silently stops producing keeps the program
-//     correct (the AST body stands) and would make the rest of this test pass
-//     while testing nothing.
+//   - the answer, `want` (`wasm` where wasm32 answers otherwise). Where the
+//     interpreter runs the program, it gives the same answer;
+//   - the bytes the sanitize run leaves held at exit, `leaks`, zero unless
+//     the row says otherwise;
+//   - the production tally. The report line is checked rather than assumed:
+//     every compile here is strict, so a refusal fails it, and the floor
+//     catches a declaration that silently stops being counted.
 //
 // TestSelfHostSemanticSourceRC covers the same pipeline under a bespoke driver
 // with a leak check; this one covers the path the CLI actually takes.
@@ -52,71 +51,22 @@ func TestSelfHostSemanticProduction(t *testing.T) {
 					if prog.nativeOnly && target == "wasm32-wasi" {
 						t.Skip("the program reaches builtins the wasi profile does not grant")
 					}
-					if prog.want != "" {
-						if prog.astAnswers == "" {
-							semRefusedByAST(t, fernBin, stdlibRoot, src, target)
-						} else if base, _, _ := semCompileRun(t, gcc, runner, fernBin, stdlibRoot, src, target, false, "", prog.stdin); base != prog.astAnswers {
-							t.Fatalf("the AST lowering answered %q, the case pins %q", base, prog.astAnswers)
-						}
-						got, report, leak := semCompileRun(t, gcc, runner, fernBin, stdlibRoot, src, target, true, "", prog.stdin)
-						if got != prog.want {
-							t.Fatalf("FERN_SEM_IR answered %q, want %q\nreport: %s", got, prog.want, report)
-						}
-						if n := semProducedCount(t, report); n < prog.atLeast {
-							t.Fatalf("produced %d declarations, want at least %d:\n%s", n, prog.atLeast, report)
-						}
-						semNoLeak(t, prog.noLeak, target, leak)
-						return
+					want := prog.want
+					if target == "wasm32-wasi" && prog.wasm != "" {
+						want = prog.wasm
 					}
-					base, _, baseLeak := semCompileRun(t, gcc, runner, fernBin, stdlibRoot, src, target, false, "", prog.stdin)
-					got, report, leak := semCompileRun(t, gcc, runner, fernBin, stdlibRoot, src, target, true, "", prog.stdin)
-					if got != base {
-						t.Fatalf("FERN_SEM_IR changed the answer:\n with = %q\nwithout = %q\nreport: %s",
-							got, base, report)
-					}
-					if prog.skip == "" && prog.refuses != "" && !strings.Contains(report, prog.refuses) {
-						t.Fatalf("FERN_SEM_IR did not report %q:\n%s", prog.refuses, report)
+					got, report, leak := semCompileRun(t, gcc, runner, fernBin, stdlibRoot, src, target, true, prog.stdin)
+					if got != want {
+						t.Fatalf("answered %q, want %q\nreport: %s", got, want, report)
 					}
 					for _, line := range prog.reports {
 						if target != "wasm32-wasi" && !strings.Contains(report, line) {
 							t.Fatalf("FERN_SEM_IR did not report %q:\n%s", line, report)
 						}
 					}
-					if prog.reportLacks != "" && strings.Contains(report, prog.reportLacks) {
-						t.Fatalf("FERN_SEM_IR reported %q, which this case pins as cleared:\n%s", prog.reportLacks, report)
-					}
-					if prog.skip != "" {
-						mixed, mixedReport, mixedLeak := semCompileRun(t, gcc, runner, fernBin, stdlibRoot, src, target, true, prog.skip, prog.stdin)
-						if mixed != base {
-							t.Fatalf("FERN_SEM_IR with FERN_SEM_IR_SKIP=%s changed the answer:\n with = %q\nwithout = %q\nreport: %s",
-								prog.skip, mixed, base, mixedReport)
-						}
-						if mixedLeak > baseLeak {
-							t.Fatalf("FERN_SEM_IR with FERN_SEM_IR_SKIP=%s leaked %d bytes where the AST lowering leaks %d",
-								prog.skip, mixedLeak, baseLeak)
-						}
-						if prog.refuses != "" && !strings.Contains(mixedReport, prog.refuses) {
-							t.Fatalf("FERN_SEM_IR with FERN_SEM_IR_SKIP=%s did not report %q:\n%s",
-								prog.skip, prog.refuses, mixedReport)
-						}
-					}
-					// The sanitizer leg also reports what the run never
-					// released. The AST lowering is the oracle for that too, so
-					// the produced bodies may free more than it does and never
-					// less.
-					if leak > baseLeak {
-						t.Fatalf("FERN_SEM_IR leaked %d bytes where the AST lowering leaks %d", leak, baseLeak)
-					}
-					semNoLeak(t, prog.noLeak, target, leak)
-					// The tally is checked rather than assumed: a body that
-					// silently stops producing keeps the program correct (the
-					// AST body stands) and would leave the comparison above
-					// between two AST-lowered runs. A floor rather than an
-					// equality, so closing a refusal leaf does not red-light
-					// the suite that measures it.
-					if got := semProducedCount(t, report); got < prog.atLeast {
-						t.Fatalf("produced %d declarations, want at least %d:\n%s",
-							got, prog.atLeast, report)
+					semLeaks(t, target, leak, prog.leaks)
+					if n := semProducedCount(t, report); n < prog.atLeast {
+						t.Fatalf("produced %d declarations, want at least %d:\n%s", n, prog.atLeast, report)
 					}
 				})
 			}
@@ -124,38 +74,12 @@ func TestSelfHostSemanticProduction(t *testing.T) {
 	}
 }
 
-// semNoLeak pins that the produced bodies held nothing at exit. Only the
-// sanitize target reports a leak figure at all, so the other three are the
-// answer and tally checks alone.
-func semNoLeak(t *testing.T, want bool, target string, leak int) {
+// semLeaks pins the bytes the sanitize run left held at exit. Only the sanitize
+// target reports a figure, so the other three check the answer and tally alone.
+func semLeaks(t *testing.T, target string, leak, want int) {
 	t.Helper()
-	if !want || target != "x86-64-sanitize" {
-		return
-	}
-	if leak != 0 {
-		t.Fatalf("the produced bodies left %d bytes held at exit; this case claims the "+
-			"semantic path reclaims the shape whole, which the relative pin cannot say", leak)
-	}
-}
-
-// semRefusedByAST asserts the AST lowering refuses the program outright: with
-// the semantic path off the compile fails and strict mode names the bail site.
-// It is what makes a `want` case a claim about reach rather than agreement.
-func semRefusedByAST(t *testing.T, fernBin, stdlibRoot, src, target string) {
-	t.Helper()
-	if target == "x86-64-sanitize" {
-		target = "x86-64-linux"
-	}
-	out := filepath.Join(t.TempDir(), "prog")
-	cmd := exec.Command(fernBin, "-target", target, "-emit", "asm", src, stdlibRoot, "-o", out)
-	cmd.Env = append(os.Environ(), "FERN_SEM_IR=", "FERN_STRICT_IR=1")
-	var stderr strings.Builder
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err == nil {
-		t.Fatalf("the AST lowering compiled a program the case says it refuses")
-	}
-	if !strings.Contains(stderr.String(), "did not lower") {
-		t.Fatalf("the AST lowering failed for another reason:\n%s", stderr.String())
+	if target == "x86-64-sanitize" && leak != want {
+		t.Fatalf("the produced bodies left %d bytes held at exit, want %d", leak, want)
 	}
 }
 
@@ -178,7 +102,9 @@ func semProducedCount(t *testing.T, report string) int {
 // semCompileRun compiles src for target with the semantic path on or off, runs
 // the result, and returns "<exit>|<stdout>", the compiler's stderr, and the
 // bytes the sanitizer reports unreleased (0 on the legs that do not sanitize).
-func semCompileRun(t *testing.T, gcc string, runner []string, fernBin, stdlibRoot, src, target string, sem bool, skip, stdin string) (string, string, int) {
+// wasmtime refuses an exit status of 126 or more, which reads as
+// "out-of-range|<stdout>".
+func semCompileRun(t *testing.T, gcc string, runner []string, fernBin, stdlibRoot, src, target string, sem bool, stdin string) (string, string, int) {
 	t.Helper()
 	dir := t.TempDir()
 	out := filepath.Join(dir, "prog")
@@ -201,10 +127,6 @@ func semCompileRun(t *testing.T, gcc string, runner []string, fernBin, stdlibRoo
 	}
 	if sem {
 		cmd.Env = append(cmd.Env, "FERN_SEM_IR=1")
-		if skip != "" {
-			// A skipped declaration keeps the AST lowering on purpose.
-			cmd.Env = append(cmd.Env, "FERN_SEM_IR_SKIP="+skip)
-		}
 	} else {
 		cmd.Env = append(cmd.Env, "FERN_SEM_IR=")
 	}
@@ -236,7 +158,11 @@ func semCompileRun(t *testing.T, gcc string, runner []string, fernBin, stdlibRoo
 	run.Stderr = &runErr
 	run.Stdin = strings.NewReader(stdin)
 	stdout, _ := run.Output()
-	return fmt.Sprintf("%d|%s", run.ProcessState.ExitCode(), stdout), stderr.String(), sanitizerLeak(t, runErr.String())
+	exit := strconv.Itoa(run.ProcessState.ExitCode())
+	if target == "wasm32-wasi" && strings.Contains(runErr.String(), "exit with invalid exit status") {
+		exit = "out-of-range"
+	}
+	return exit + "|" + string(stdout), stderr.String(), sanitizerLeak(t, runErr.String())
 }
 
 // sanitizerLeak reads the byte count out of the sanitizer's leak line; a run
@@ -256,69 +182,40 @@ func sanitizerLeak(t *testing.T, out string) int {
 	return n
 }
 
-// One program per kind of counted unit a produced body has to get right, and
-// one — `capture-write` — the boundary deliberately refuses most of, so the
-// AST fallback and the mixed module are covered too. `atLeast` is the measured
-// tally at the time of writing.
+// One program per kind of counted unit a produced body has to get right.
+// `atLeast` is the measured tally at the time of writing.
 var semProductionPrograms = []struct {
 	name    string
 	atLeast int
-	// skip, when set, runs the program a third time with FERN_SEM_IR_SKIP
-	// naming these declarations, so they keep the AST lowering while what
-	// they call is produced: the mixed module in the direction the
-	// registries rewritten by ssarc.caller_sigs and irlower.regrow_sigs
-	// hold together.
-	skip string
-	// refuses, when set, is a line the skip leg's report must carry: a
-	// produced body the mixed module has to turn off, and why. Without a skip
-	// leg it is a line the plain report must carry: the refusal that drops
-	// the whole module to the AST lowering.
-	refuses string
-	// reportLacks, when set, is a line the report must NOT carry: a refusal a
-	// fix CLEARED on a module that still refuses for another reason, so the
-	// production tally cannot observe it. `refuses` names what still stands;
-	// this names what may not come back.
-	reportLacks string
 	// reports, when set, are lines the report must carry on the native
 	// targets: the runtime helpers this program pulls in that the typed
 	// lowering produced. Wasm serves them as hand-written WAT.
 	reports []string
-	// want, when set, is the answer ("<exit>|<stdout>") of a program the AST
-	// lowering REFUSES and the semantic lowering produces whole, confirmed
-	// against the native compiler; the AST leg is asserted to refuse it
-	// rather than run.
+	// want is the answer, "<exit>|<stdout>".
 	want string
-	// astAnswers, with want, is the answer the AST lowering gives INSTEAD:
-	// the program is one the native rc design gets wrong and the typed path
-	// gets right, so `want` is the language's answer, confirmed by hand
-	// against the contract the case names, and the AST answer is pinned so
-	// the row is retired the day that lowering is fixed.
-	astAnswers string
-	// noLeak asks for an ABSOLUTE leak pin on the produced run rather than
-	// only the relative one every entry gets: the sanitize leg must report
-	// nothing still held at exit. The relative pin says the produced bodies
-	// free no LESS than the AST lowering, which is green at any leak below
-	// what the AST lowering already leaks — so a claim that the semantic path
-	// reclaims a shape WHOLE needs this instead.
-	noLeak bool
-	// stdin is fed to every run of this program, so a body that reads it
-	// answers the same thing on each leg.
+	// wasm, when set, is the answer on wasm32-wasi, where it is not `want`: a
+	// usize is 32 bits there, a path the program opens is not preopened, or
+	// the exit status is out of wasmtime's range.
+	wasm string
+	// leaks is the bytes the sanitize run leaves held at exit.
+	leaks int
+	// stdin is fed to every run of this program.
 	stdin string
 	// nativeOnly leaves the wasm leg out: the program reaches builtins the
 	// wasi profile does not grant (the user and process ids, the permission
-	// bits, subprocess), which E066 refuses at compile time on both legs.
+	// bits, subprocess), which E066 refuses at compile time.
 	nativeOnly bool
 	src        string
 }{
 	// An element read into a local that stays live across a `.with` on its
 	// array: the insertion sort's shape. The read takes a unit of its own, so
 	// the array moves into the write and is written in place rather than
-	// copied (#9849); TestSelfHostSemanticAllocationParity pins the count.
-	{name: "element-read-outlives-the-array-write", atLeast: 2, noLeak: true, src: semHeldElementSource},
+	// copied (#9849); TestSelfHostSemanticAllocationCounts pins the count.
+	{name: "element-read-outlives-the-array-write", atLeast: 2, want: "6||a|g|bb|ee|ccc|dddd|ffffff|\n", src: semHeldElementSource},
 	// A bodied `async function` is an ordinary function; on this path the bit
 	// only keeps it alive as a tree-shake root. semsource refused the
 	// modifier (#10794).
-	{name: "async-function", atLeast: 4, noLeak: true, want: "16|4 squares ending 9\n\n", astAnswers: "16|4 squares ending 9\n\n", src: `
+	{name: "async-function", atLeast: 4, want: "16|4 squares ending 9\n\n", src: `
 import "std/i32";
 async function compute(): i32 { return 7; }
 pub async function squares(n: i32): i32[] {
@@ -340,7 +237,7 @@ function main(): i32 {
 	// desugar hit, reached without any `function` keyword. The annotation is now
 	// re-read verbatim by the reader that produced the tag, which is what
 	// parse_decl_type already did for a declaration. Produces 0 of 3 without it.
-	{name: "source-lambda-returning-callable", atLeast: 3, src: `
+	{name: "source-lambda-returning-callable", atLeast: 3, want: "42|", src: `
 function main(): i32 {
     var mk: () => ((i32) => i32) = ((): ((i32) => i32) => { var g: (i32) => i32 = ((y: i32) => y); return g; });
     var f: (i32) => i32 = mk();
@@ -352,7 +249,7 @@ function main(): i32 {
 	// parse_arrow_lambda does (#8743) — one read swallows the lambda's own arrow
 	// and one does not — and the contract is recovered on both paths, so both
 	// are gated. Also produces 0 of 3 without the fix.
-	{name: "source-lambda-returning-callable-bare", atLeast: 3, src: `
+	{name: "source-lambda-returning-callable-bare", atLeast: 3, want: "42|", src: `
 function main(): i32 {
     var mk: () => ((i32) => i32) = ((): (i32) => i32 => { var g: (i32) => i32 = ((y: i32) => y); return g; });
     var f: (i32) => i32 = mk();
@@ -369,7 +266,7 @@ function main(): i32 {
 	// are separate arms of the rebuild, so both are here. Produces 0 of 6
 	// without it: `main` refuses on the tuple element type, `take` and `unwrap`
 	// on a binding whose declared `Slot__i32` meets a semantic value of `Slot`.
-	{name: "generic-struct-inside-a-callable-spelling", atLeast: 6, src: `
+	{name: "generic-struct-inside-a-callable-spelling", atLeast: 6, want: "11|", src: `
 struct Slot[T] { v: T }
 
 function slot_of(n: i32): Slot[i32] { return Slot[i32] { v: n }; }
@@ -399,13 +296,8 @@ function main(): i32 {
 	// (#10025). What the mangling clears is the refusal the module used to
 	// carry: `outer: return type: declared ((i32) => ((i32) => Slot__i32)),
 	// returns ((i32) => ((i32) => Slot))`, the sidecar the `...lm` spread
-	// copied verbatim meeting the signature ms_func had already mangled, which
-	// is pinned so it cannot come back.
-	{
-		name:        "a-lambda-declaring-a-callable-result-over-a-generic-struct",
-		atLeast:     5,
-		reportLacks: "outer: return type:",
-		src: `
+	// copied verbatim meeting the signature ms_func had already mangled.
+	{name: "a-lambda-declaring-a-callable-result-over-a-generic-struct", atLeast: 5, want: "15|", src: `
 struct Slot[T] { v: T }
 
 function slot_of(n: i32): Slot[i32] {
@@ -432,7 +324,7 @@ function main(): i32 {
 	// survived: only the boolean arm of if_expr_rt spelled its own tag wrong.
 	// Produces 0 of 2 without the fix; the comparison case covers the binary arm,
 	// which spelled it the same way.
-	{name: "if-expr-boolean-branches", atLeast: 2, src: `
+	{name: "if-expr-boolean-branches", atLeast: 2, want: "1|", src: `
 function main(): i32 {
     var v: boolean = if (true) { false } else { true };
     var w: boolean = if (v) { 1 < 2 } else { 2 < 1 };
@@ -450,7 +342,7 @@ function main(): i32 {
 	// no result to infer. The unannotated case below covers the other half, which
 	// reaches semsource with the tag and nothing to resolve.
 	// Produces 0 of 4 without the fix.
-	{name: "if-expr-lambda-arms-annotated", atLeast: 4, src: `
+	{name: "if-expr-lambda-arms-annotated", atLeast: 4, want: "42|", src: `
 function main(): i32 {
     var f: (i32) => i32 = if (true) { ((x: i32): i32 => x) } else { ((y: i32): i32 => y + 1) };
     return f(42);
@@ -460,7 +352,7 @@ function main(): i32 {
 	// the contract walk has to enter for the same reason the if-expression's
 	// StmtIf does — the hoist gate (iife_arms_have_unboxed_fn) already reaches both.
 	// Produces 0 of 4 without the match arm.
-	{name: "match-expr-lambda-arms-annotated", atLeast: 4, src: `
+	{name: "match-expr-lambda-arms-annotated", atLeast: 4, want: "42|", src: `
 enum Pick { A, B }
 function main(): i32 {
     var p: Pick = Pick.A;
@@ -475,7 +367,7 @@ function main(): i32 {
 	// nothing to resolve. The body still says what it returns, so the result is
 	// inferred the same way an unannotated declaration's already is. Produces
 	// 0 of 4 without the fix.
-	{name: "if-expr-lambda-arms-unannotated", atLeast: 4, src: `
+	{name: "if-expr-lambda-arms-unannotated", atLeast: 4, want: "42|", src: `
 function main(): i32 {
     var f: (i32) => i32 = if (true) { ((x: i32) => x) } else { ((y: i32) => y + 1) };
     return f(42);
@@ -485,12 +377,12 @@ function main(): i32 {
 	// lambda arm but refused a name arm as unboxable, so the name reached
 	// semsource as a function address. Pinned in a `var`, an assignment, a
 	// fn-typed argument beside a lambda arm, and through a nested if-expression.
-	{name: "if-expr-function-name-arms", atLeast: 6, want: "41|", astAnswers: "41|", noLeak: true, src: `
+	{name: "if-expr-function-name-arms", atLeast: 6, want: "41|", src: `
 function inc(x: i32): i32 { return x + 1; }
 function dbl(x: i32): i32 { return x * 2; }
 function main(): i32 { var c: boolean = true; var f: (i32) => i32 = (if (c) { inc } else { dbl }); return f(40); }
 `},
-	{name: "if-expr-function-name-arms-nested", atLeast: 9, want: "80|", astAnswers: "80|", noLeak: true, src: `
+	{name: "if-expr-function-name-arms-nested", atLeast: 9, want: "80|", src: `
 function inc(x: i32): i32 { return x + 1; }
 function dbl(x: i32): i32 { return x * 2; }
 function neg(x: i32): i32 { return 0 - x; }
@@ -500,7 +392,7 @@ function main(): i32 {
     return f(40);
 }
 `},
-	{name: "if-expr-function-name-arms-assigned-and-passed", atLeast: 10, want: "41|", astAnswers: "41|", noLeak: true, src: `
+	{name: "if-expr-function-name-arms-assigned-and-passed", atLeast: 10, want: "41|", src: `
 function inc(x: i32): i32 { return x + 1; }
 function dbl(x: i32): i32 { return x * 2; }
 function apply(f: (i32) => i32, v: i32): i32 { return f(v); }
@@ -518,7 +410,7 @@ function main(): i32 {
 	// loop whose lambda builds a string from a capture and returns early:
 	// the AST lowering used to inline that `return` as the enclosing
 	// function's.
-	{name: "immediately-called-capturing-lambda", atLeast: 4, want: "13|", astAnswers: "13|", noLeak: true, src: `
+	{name: "immediately-called-capturing-lambda", atLeast: 4, want: "13|", src: `
 function g(n: i32): i32 { return n * 2; }
 function main(): i32 {
     var n: i32 = 5;
@@ -528,10 +420,10 @@ function main(): i32 {
     return t;
 }
 `},
-	{name: "immediately-called-capturing-lambda-returned", atLeast: 2, want: "3|", astAnswers: "3|", noLeak: true, src: `
+	{name: "immediately-called-capturing-lambda-returned", atLeast: 2, want: "3|", src: `
 function main(): i32 { var k: i32 = 3; return ((): i32 => { return k; })(); }
 `},
-	{name: "immediately-called-capturing-lambda-in-a-loop", atLeast: 2, want: "18|", astAnswers: "18|", noLeak: true, src: `
+	{name: "immediately-called-capturing-lambda-in-a-loop", atLeast: 2, want: "18|", src: `
 function main(): i32 {
     var base: string = "ab";
     var total: i32 = 0;
@@ -551,7 +443,7 @@ function main(): i32 {
 	// parameters and then the captures, and the call passes the written
 	// arguments and then the captured names. Transposing either order changes
 	// the answer (87 for the arguments, 123 for the captures).
-	{name: "immediately-called-capturing-lambda-with-parameters", atLeast: 2, want: "64|", astAnswers: "64|", noLeak: true, src: `
+	{name: "immediately-called-capturing-lambda-with-parameters", atLeast: 2, want: "64|", src: `
 function main(): i32 {
     var k: i32 = 4;
     var m: i32 = 7;
@@ -568,7 +460,7 @@ function main(): i32 {
 	// defer. An immediately called lambda builds no env box, so the
 	// wide-capture pass leaves its captures alone whatever its parameters;
 	// snapshotting them into cells here left the AST lowering 64 bytes short.
-	{name: "immediately-called-lambda-with-wide-captures", atLeast: 3, want: "15|", astAnswers: "15|", noLeak: true, src: `
+	{name: "immediately-called-lambda-with-wide-captures", atLeast: 3, want: "15|", src: `
 function main(): i32 {
     var big: i64 = 5000000000i64;
     var ratio: f64 = 1.5;
@@ -587,10 +479,10 @@ function main(): i32 {
 	// A capture-free hand-written lambda called inside an if-expression arm:
 	// the lift kept every zero-parameter call inside a value block inline, not
 	// only a nested value block.
-	{name: "immediately-called-lambda-in-an-if-expr-arm", atLeast: 2, want: "5|", astAnswers: "5|", noLeak: true, src: `
+	{name: "immediately-called-lambda-in-an-if-expr-arm", atLeast: 2, want: "5|", src: `
 function main(): i32 { var c: boolean = true; var x: i32 = (if (c) { ((): i32 => { return 5; })() } else { 2 }); return x; }
 `},
-	{name: "scalar-calls", atLeast: 3, src: `
+	{name: "scalar-calls", atLeast: 3, want: "15|", src: `
 function add(a: i32, b: i32): i32 { return a + b; }
 function total(xs: i32[]): i32 {
     var t: i32 = 0;
@@ -601,7 +493,7 @@ function main(): i32 { return total([1, 2, 3, 4, 5]); }
 `},
 	// An unannotated binding takes its type from the checker, so a builtin
 	// whose result the checker left unknown refused the body that named it.
-	{name: "a-chr-result-types-its-binding", atLeast: 1, src: `
+	{name: "a-chr-result-types-its-binding", atLeast: 1, want: "16|", wasm: "out-of-range|", src: `
 function main(): i32 {
     var a = chr(72);
     var s = a + chr(105);
@@ -611,7 +503,7 @@ function main(): i32 {
 	// A match whose only arm is `_` stays a match on a scalar (only a literal
 	// arm desugars it), and it tests nothing, so it needs no union. The heap
 	// string scrutinee is still released.
-	{name: "a-wildcard-only-match-on-a-scalar", atLeast: 3, noLeak: true, src: `
+	{name: "a-wildcard-only-match-on-a-scalar", atLeast: 3, want: "63|", src: `
 function label(n: i32): string {
     if (n > 3) { return "big" + "-past-the-sso-inline-threshold"; }
     return "small" + "-past-the-sso-inline-threshold";
@@ -627,7 +519,7 @@ function main(): i32 { return pick(5) * 10 + pick(2); }
 	// An array literal takes its element type from its most settled element:
 	// `None` after `Some(1)` keeps `Option[i32]`, as native types it, rather
 	// than leaving the binding with a bare `Option`.
-	{name: "an-option-array-literal-settles-from-any-element", atLeast: 2, src: `
+	{name: "an-option-array-literal-settles-from-any-element", atLeast: 2, want: "104|", src: `
 function total(c: i32): i32 {
     var a = [Some(1), Some(2), None];
     var n: i32 = 0;
@@ -640,7 +532,7 @@ function main(): i32 { return total(5) * 10 + total(1); }
 	// A method declared on a concrete map receiver is keyed `Map.<name>`, as
 	// every receiver's method is keyed by its base type; the call looked for
 	// the receiver's full spelling and found no contract.
-	{name: "a-method-on-a-concrete-map-receiver", atLeast: 3, noLeak: true, src: `
+	{name: "a-method-on-a-concrete-map-receiver", atLeast: 3, want: "210|", wasm: "out-of-range|", src: `
 import "core/map";
 function (m: Map[string, i32]) goi(k: string, fallback: i32): i32 {
     if (m.has(k)) { return m.get_or(k, 0); }
@@ -656,7 +548,7 @@ function main(): i32 {
 	// map owns a unit of each, a read retains the box it answers, and the
 	// column's release walks each box's captures. Overwriting and deleting
 	// an entry release the box it held.
-	{name: "a-map-column-of-closures", atLeast: 2, noLeak: true, src: `
+	{name: "a-map-column-of-closures", atLeast: 2, want: "2|", src: `
 import "core/map";
 function run(k: i32): i32 {
     var tag: string = "t" + "-past-the-sso-inline-threshold";
@@ -675,7 +567,7 @@ function main(): i32 { return run(3) - run(1); }
 	// A consuming match that builds a variant of the enum it matched builds it
 	// in the matched box when that box is unique, releasing only the payload
 	// it does not carry over; a box still shared elsewhere is left alone.
-	{name: "a-match-arm-rebuilds-its-variant-in-place", atLeast: 3, noLeak: true, src: `
+	{name: "a-match-arm-rebuilds-its-variant-in-place", atLeast: 3, want: "60|", src: `
 enum E { V(i32, string), W(i32, string) }
 function flip(own x: E): E {
     return match (x) { V(a, s) => W(a + 1, s + "-w"), W(a, s) => V(a * 2, s) };
@@ -691,7 +583,7 @@ function main(): i32 {
     return weight(y) + weight(z) + weight(keep) % 7;
 }
 `},
-	{name: "owned-array-handback", atLeast: 3, src: `
+	{name: "owned-array-handback", atLeast: 3, want: "4|", src: `
 function grown(own xs: i32[]): i32[] { return xs.append(9); }
 function span(xs: i32[]): i32 { return xs.len(); }
 function main(): i32 {
@@ -699,7 +591,7 @@ function main(): i32 {
     return span(ys);
 }
 `},
-	{name: "strings-and-records", atLeast: 3, src: `
+	{name: "strings-and-records", atLeast: 3, want: "7|hi row\n\n", src: `
 struct Row { name: string, n: i32 }
 function greet(r: Row): string { return "hi " + r.name; }
 function mk(n: i32): Row { return Row { name: "row", n: n }; }
@@ -709,7 +601,7 @@ function main(): i32 {
     return r.n;
 }
 `},
-	{name: "enum-match-in-a-loop", atLeast: 3, src: `
+	{name: "enum-match-in-a-loop", atLeast: 3, want: "23|", src: `
 enum Shape { Dot, Line(i32), Box(i32, i32) }
 function area(s: Shape): i32 {
     match (s) { Dot => { return 0; }, Line(n) => { return n; }, Box(w, h) => { return w * h; } }
@@ -721,7 +613,7 @@ function total(ss: Shape[]): i32 {
 }
 function main(): i32 { return total([Dot, Line(3), Box(4, 5)]); }
 `},
-	{name: "map-and-string-keys", atLeast: 3, src: `
+	{name: "map-and-string-keys", atLeast: 3, want: "1|", src: `
 import "core/map";
 function tally(words: string[]): Map[string, i32] {
     var m: Map[string, i32] = map_new(8);
@@ -735,16 +627,12 @@ function seen(words: string[], k: string): i32 {
 }
 function main(): i32 { return seen(["a", "b"], "b") + seen(["a", "b"], "z"); }
 `},
-	// A column snapshot, at both element kinds the contract admits. Nothing
-	// else pins that these PRODUCE: a contract that stopped would drop the
-	// module to the AST lowering, which answers identically, so the corpus and
-	// the leak census would stay green on two AST-lowered runs. The tally
-	// below is what makes this a claim about the semantic path.
+	// A column snapshot, at both element kinds the contract admits.
 	//
 	// Both arrays are read after the map that owned the column is gone, which
 	// is the property the string column's per-element retain buys: an alias
 	// would be reading freed bytes by then, and the sanitizer leg would say so.
-	{name: "map-column-snapshot", atLeast: 4, src: `
+	{name: "map-column-snapshot", atLeast: 4, want: "30|", src: `
 import "core/map";
 function str_keys(n: i32): i32 {
     var ks: string[] = [];
@@ -792,7 +680,7 @@ function main(): i32 { return str_keys(0) + str_values(0) + i32_keys(0); }
 	// the two under one symbol -- at emit time, after the module had produced
 	// whole, so the compile FAILED rather than falling back (#9804). The rows
 	// now close over the schema table, so the chain is a property of the type.
-	{name: "closure-field-built-and-dropped-apart", atLeast: 4, noLeak: true, src: `
+	{name: "closure-field-built-and-dropped-apart", atLeast: 4, want: "4|", src: `
 struct Holder { f: (i32) => i32 }
 
 function make(n: i32): Holder {
@@ -821,7 +709,7 @@ function main(): i32 {
 	// i32 ("return type: declared i32, returns boolean") and the caller with
 	// it ("holds a semantic value of i32"). A synthesised declaration's body
 	// is the authority for its result now. Produced 0 of 4 before.
-	{name: "value-if-arm-is-a-call", atLeast: 4, src: `
+	{name: "value-if-arm-is-a-call", atLeast: 4, want: "3|", src: `
 struct Xyz { n: i32, valid: boolean }
 function gen(): boolean { return true; }
 function mk(n: i32): Xyz { return Xyz { n: n, valid: true }; }
@@ -844,7 +732,7 @@ function main(): i32 {
 	// now, the derived ones included, and a method with a type parameter of
 	// its own folds into a free generic the way a struct's does, with the
 	// variant argument's payload settling that parameter.
-	{name: "generic-enum-methods-clone-per-instantiation", atLeast: 6, noLeak: true, src: `
+	{name: "generic-enum-methods-clone-per-instantiation", atLeast: 6, want: "62|", src: `
 import "core/cmp";
 
 @derive(cmp.Eq)
@@ -872,7 +760,7 @@ function main(): i32 {
 	// destination `Result[U, string]` named Ok without saying what it held, so
 	// the literal was refused ("unsupported variant literal"). The payload
 	// settles it now, for Ok and Err as it already did for Some.
-	{name: "builtin-union-payload-settles-the-literal", atLeast: 1, noLeak: true, src: `
+	{name: "builtin-union-payload-settles-the-literal", atLeast: 1, want: "4|", src: `
 import "std/result";
 
 function main(): i32 {
@@ -891,7 +779,7 @@ function main(): i32 {
 	// A generic enum with a method, used only at a tuple key. The tuple's
 	// clone name is native's (`Opt__tup_i32_i32`), so the enum and its method
 	// are cloned like any other instantiation.
-	{name: "generic-enum-method-at-a-composite-key", atLeast: 2, noLeak: true, src: `
+	{name: "generic-enum-method-at-a-composite-key", atLeast: 2, want: "9|", src: `
 enum Opt[T] { Sm(T), Nn }
 
 function (o: Opt[T]) get_or(d: T): T {
@@ -908,7 +796,7 @@ function main(): i32 {
 }`},
 	// The same enum used at a simple key AND a tuple key in one module: two
 	// clones, each with its own method.
-	{name: "generic-enum-at-a-simple-and-a-composite-key", atLeast: 3, noLeak: true, src: `
+	{name: "generic-enum-at-a-simple-and-a-composite-key", atLeast: 3, want: "37|", src: `
 enum Opt[T] { Sm(T), Nn }
 
 function (o: Opt[T]) get_or(d: T): T {
@@ -925,7 +813,7 @@ function main(): i32 {
 	// The inferred spelling of a tuple key, bound and matched inline. The
 	// clone's name comes from the key; its payload type must come from the
 	// tuple's own spelling, not the mangled key.
-	{name: "generic-enum-at-an-inferred-tuple-key", atLeast: 2, noLeak: true, src: `
+	{name: "generic-enum-at-an-inferred-tuple-key", atLeast: 2, want: "0|", src: `
 enum Opt[T] { Sm(T), Nn }
 
 function (o: Opt[T]) get_or(d: T): T {
@@ -942,22 +830,22 @@ function main(): i32 {
 `},
 	// The inferred tuple key matched inline only, so the scrutinee's recovery
 	// is the one that records the instance.
-	{name: "generic-enum-tuple-key-matched-inline-only", atLeast: 1, noLeak: true, src: `
+	{name: "generic-enum-tuple-key-matched-inline-only", atLeast: 1, want: "0|", src: `
 enum Opt[T] { Sm(T), Nn }
 function main(): i32 { var q: i32 = 0; match (Sm((5, 6))) { Sm(t) => { q = t.0 + t.1; }, Nn => { q = 0; } } return q - 11; }
 `},
 	// The type parameter bound from a later field, with a tuple first: the key
 	// and its spelling must both come from the field that binds T, not from
 	// the first argument.
-	{name: "generic-enum-bound-from-a-later-field", atLeast: 1, noLeak: true, src: `
+	{name: "generic-enum-bound-from-a-later-field", atLeast: 1, want: "0|", src: `
 enum Opt[T] { Sm((i32, i32), T), Nn }
 function main(): i32 { var o = Sm((1, 2), 3); var q: i32 = 0; match (o) { Sm(_, t) => { q = t; }, Nn => { q = 0; } } return q - 3; }
 `},
-	{name: "generic-enum-bound-from-a-later-field-matched-inline", atLeast: 1, noLeak: true, src: `
+	{name: "generic-enum-bound-from-a-later-field-matched-inline", atLeast: 1, want: "0|", src: `
 enum Opt[T] { Sm((i32, i32), T), Nn }
 function main(): i32 { var q: i32 = 0; match (Sm((1, 2), 3)) { Sm(p, t) => { q = t + p.0; }, Nn => { q = 0; } } return q - 4; }
 `},
-	{name: "generic-enum-bound-from-a-later-field-after-a-function", atLeast: 3, noLeak: true, src: `
+	{name: "generic-enum-bound-from-a-later-field-after-a-function", atLeast: 3, want: "0|", src: `
 enum Opt[T] { Sm((i32) => i32, T), Nn }
 function inc(x: i32): i32 { return x + 1; }
 function main(): i32 { var o = Sm(inc, 3); var q: i32 = 0; match (o) { Sm(f, t) => { q = f(t); }, Nn => { q = 0; } } return q - 4; }
@@ -965,7 +853,7 @@ function main(): i32 { var o = Sm(inc, 3); var q: i32 = 0; match (o) { Sm(f, t) 
 	// A tuple key holding an array and a nested tuple with a string: the clone
 	// is `Opt__tup_i32_arr_tup_i32_string`, and its payload's counted parts are
 	// released through the clone's drop.
-	{name: "generic-enum-at-a-nested-tuple-key", atLeast: 2, noLeak: true, src: `
+	{name: "generic-enum-at-a-nested-tuple-key", atLeast: 2, want: "182|", wasm: "out-of-range|", src: `
 enum Opt[T] { Sm(T), Nn }
 
 function (o: Opt[T]) get_or(d: T): T {
@@ -987,7 +875,7 @@ function main(): i32 {
 }`},
 	// The method-less form of the mix. `Sm((1, 2))` must resolve to the tuple
 	// clone's variant, not to the `Opt[i32]` one.
-	{name: "generic-enum-at-a-simple-and-a-composite-key-without-methods", atLeast: 1, noLeak: true, src: `
+	{name: "generic-enum-at-a-simple-and-a-composite-key-without-methods", atLeast: 1, want: "6|", src: `
 enum Opt[T] { Sm(T), Nn }
 
 function main(): i32 {
@@ -1007,7 +895,7 @@ function main(): i32 {
 	// released. A callee that is a function-typed LOCAL is stamped the same
 	// way, but such a local's type nests a function type and the producer
 	// refuses that slot outright, so no row can reach it yet.
-	{name: "use-binding-takes-the-callee-parameter-type", atLeast: 5, noLeak: true, src: `
+	{name: "use-binding-takes-the-callee-parameter-type", atLeast: 5, want: "13|", src: `
 import "core/cmp";
 
 function with_name(n: i32, k: (string) => i32): i32 { return k("name-" + n.to_string()); }
@@ -1039,7 +927,7 @@ function main(): i32 {
 	// body's capture-free tail lambda the same way now; a capturing one stays
 	// with the escaping-closure hoist (#5281). The boxes each call builds are
 	// released.
-	{name: "lambda-returns-a-lambda-from-a-lambda", atLeast: 5, noLeak: true, src: `
+	{name: "lambda-returns-a-lambda-from-a-lambda", atLeast: 5, want: "63|", src: `
 function main(): i32 {
     var mk = (): ((i32) => i32) => { return (x: i32): i32 => x * 2; };
     var mk2 = (): (i32) => i32 => { return (x: i32): i32 => x + 3; };
@@ -1056,7 +944,7 @@ function main(): i32 {
 	// every ` + "`return <lambda>`" + ` rewritten, a CAPTURING one in a branch
 	// included; that is the corridor #5281 miscompiled in silently, so the
 	// branch return is pinned here on every leg.
-	{name: "capturing-lambda-returned-from-a-branch-of-a-lambda", atLeast: 4, noLeak: true, src: `
+	{name: "capturing-lambda-returned-from-a-branch-of-a-lambda", atLeast: 4, want: "33|", src: `
 function main(): i32 {
     var pick = (flag: boolean, n: i32): (i32) => i32 => {
         if (flag) { return (x: i32): i32 => x + n; }
@@ -1073,7 +961,7 @@ function main(): i32 {
 `},
 	// A block-bodied lambda with no result annotation whose body binds through
 	// ` + "`use`" + `, and one whose block yields a tail value.
-	{name: "block-bodied-lambda-with-a-use-binding", atLeast: 4, noLeak: true, src: `
+	{name: "block-bodied-lambda-with-a-use-binding", atLeast: 4, want: "50|", src: `
 function give(x: i32, cb: (i32) => i32): i32 { return cb(x); }
 
 function main(): i32 {
@@ -1084,7 +972,7 @@ function main(): i32 {
     var tail = (x: i32) => { var y: i32 = x + 1; y * 2 };
     return bound() + tail(3);
 }`},
-	{name: "value-match-first-arm-is-a-match-of-lambdas", atLeast: 8, noLeak: true, src: `
+	{name: "value-match-first-arm-is-a-match-of-lambdas", atLeast: 8, want: "42|", src: `
 enum Status { Active, Inactive, Pending }
 function main(): i32 {
     var v0: Status = Pending;
@@ -1099,7 +987,7 @@ function main(): i32 {
 	// Retaining a view is refused (#9802), so `var v: str = s` makes v a fresh
 	// view of s's bytes, and the loop's phi takes it by move. The AST lowering
 	// leaks the boxes.
-	{name: "view-loop-rebinds-a-live-view", atLeast: 1, noLeak: true, src: `
+	{name: "view-loop-rebinds-a-live-view", atLeast: 1, want: "14|", src: `
 function main(): i32 {
     var t: string = "abcde" + "fghij";
     var s: str = slice_unchecked(t, 0, 5);
@@ -1112,7 +1000,7 @@ function main(): i32 {
 	// The same loop starting from a borrowed parameter: the phi merges the
 	// parameter with a fresh view, so it is owned, and its entry value is a
 	// fresh view of the parameter.
-	{name: "view-loop-rebinds-a-view-parameter", atLeast: 2, noLeak: true, src: `
+	{name: "view-loop-rebinds-a-view-parameter", atLeast: 2, want: "202|", wasm: "out-of-range|", src: `
 function walk(p: str, n: i32): i32 {
     var v: str = p;
     var i: i32 = 0;
@@ -1130,7 +1018,7 @@ function main(): i32 {
 	// The mirror: the source is rebound, in a loop too, while the alias
 	// survives and is read afterwards. The alias's fresh view is anchored to
 	// the same bytes, so the source's rebinding releases nothing it reads.
-	{name: "a-view-alias-outlives-its-rebound-source", atLeast: 2, noLeak: true, src: `
+	{name: "a-view-alias-outlives-its-rebound-source", atLeast: 2, want: "21|", src: `
 function pick(t: string, k: i32): i32 {
     var a: str = slice_unchecked(t, 0, 3);
     var b: str = a;
@@ -1154,7 +1042,7 @@ function main(): i32 {
 	// it under the result's name. The arm yields a fresh view of the same
 	// bytes, as a second name does, so the loop rebinding the source merges
 	// no view the result still holds.
-	{name: "a-view-yielded-by-an-if-arm-outlives-its-rebound-source", atLeast: 2, noLeak: true, src: `
+	{name: "a-view-yielded-by-an-if-arm-outlives-its-rebound-source", atLeast: 2, want: "17|", src: `
 function pick(t: string, k: i32): i32 {
     var a: str = slice_unchecked(t, 0, 3);
     var n: i32 = 0;
@@ -1168,7 +1056,7 @@ function main(): i32 {
     while (i < 25) { var t: string = "abcdefg" + "hij"; total = total + pick(t, i % 4); i = i + 1; }
     return total % 256;
 }`},
-	{name: "a-view-yielded-by-a-match-arm-outlives-its-rebound-source", atLeast: 2, noLeak: true, src: `
+	{name: "a-view-yielded-by-a-match-arm-outlives-its-rebound-source", atLeast: 2, want: "157|", wasm: "out-of-range|", src: `
 function pick(t: string, k: i32): i32 {
     var a: str = slice_unchecked(t, 0, 3);
     var n: i32 = 0;
@@ -1183,7 +1071,7 @@ function main(): i32 {
     return total % 256;
 }`},
 	// A loop variable over a view array rebinds a view declared outside it.
-	{name: "a-for-over-views-rebinds-an-outer-view", atLeast: 2, noLeak: true, src: `
+	{name: "a-for-over-views-rebinds-an-outer-view", atLeast: 2, want: "125|", src: `
 function longest(ws: str[]): i32 {
     var best: str = "";
     for w in ws { if (w.len() > best.len()) { best = w; } }
@@ -1203,7 +1091,7 @@ function main(): i32 {
 	// A chained append on an array FIELD read. The AST lowering took the outer
 	// receiver for an i32 and refused the module ("call to unknown symbol
 	// i32.append"); the compiler's own copy_returned_views is this shape.
-	{name: "a-chained-append-on-an-array-field", atLeast: 1, noLeak: true, src: `
+	{name: "a-chained-append-on-an-array-field", atLeast: 1, want: "0|", src: `
 struct TA { w: i32, s: string }
 struct Blk { id: i32, xs: TA[] }
 function main(): i32 {
@@ -1227,7 +1115,7 @@ function main(): i32 {
 	// carries the same immortal rc a view's box does, so producing it at the
 	// destination's own type makes the edge a move. 0 of 4 before, and the AST
 	// lowering strands every view box it makes (3240 bytes in 135 blocks).
-	{name: "a-string-literal-is-already-a-view", atLeast: 4, noLeak: true, src: `
+	{name: "a-string-literal-is-already-a-view", atLeast: 4, want: "68|", wasm: "out-of-range|", src: `
 function span(fmt: string, take: boolean): i32 {
     var spec: str = "";
     if (take) { spec = slice_unchecked(fmt, 1, 4); }
@@ -1266,7 +1154,7 @@ function main(): i32 {
 	// a generic bound, on a `str[]` element, and on a `string` receiver, which
 	// widens to the view. The contract kept the unerased `str.shout`, so every
 	// call was refused and the module fell back to the AST lowering (#10883).
-	{name: "a-trait-method-implemented-for-str", atLeast: 48, noLeak: true, src: `
+	{name: "a-trait-method-implemented-for-str", atLeast: 48, want: "3|bc! bc!bc! yz! a!bc!\n\n", src: `
 import "std/i32";
 trait Shout { function shout(self: Self): string; }
 impl Shout for str { function shout(self: Self): string { return self + "!"; } }
@@ -1283,7 +1171,7 @@ function main(): i32 {
     print(s.shout() + " " + loud(s) + " " + "yz".shout() + " " + all(xs) + "\n");
     return s.shout().len();
 }`},
-	{name: "an-inherent-method-on-str", atLeast: 2, noLeak: true, src: `
+	{name: "an-inherent-method-on-str", atLeast: 2, want: "4|bcbc xyxy\n\n", src: `
 impl str { function twice(self: str): string { return self + self; } }
 function main(): i32 {
     var owned: string = "ab" + "cd";
@@ -1303,11 +1191,7 @@ function main(): i32 {
 	// through the counted column and a narrow-integer key through the raw one,
 	// and only the second exercises the load `is_supported_map` admits beside
 	// the string case. Nothing in the moving corpus rows is integer-keyed.
-	//
-	// No noLeak: both legs hold one 16-byte block per cursor and the typed leg
-	// holds exactly the same bytes the AST leg does, which is what the
-	// comparison against the AST oracle pins.
-	{name: "a-map-cursor-reads-the-columns-it-points-at", atLeast: 6, src: `
+	{name: "a-map-cursor-reads-the-columns-it-points-at", atLeast: 6, want: "181|", wasm: "out-of-range|", src: `
 import "core/map";
 
 function sum_values(m: Map[string, i32]): i32 {
@@ -1390,7 +1274,7 @@ function main(): i32 {
 	// so only the second exercises matching the impl's `for` type against the
 	// concrete one. `words` pins a string element, so a wrong binding cannot
 	// pass as i32.
-	{name: "a-type-variable-only-a-constraint-mentions", atLeast: 13, noLeak: true, src: `
+	{name: "a-type-variable-only-a-constraint-mentions", atLeast: 13, want: "50|", src: `
 import "core/iter" as iter;
 
 function tail(xs: i32[]): i32 {
@@ -1436,7 +1320,7 @@ function main(): i32 {
 	// not build on EITHER leg: `call to unknown symbol
 	// ndarray__NdArray__i32.map`. Binding the receiver to a name first was
 	// enough to compile it, which is what pinned the cause (#9927).
-	{name: "a-chained-receiver-keeps-its-instantiation", atLeast: 20, noLeak: true, src: `
+	{name: "a-chained-receiver-keeps-its-instantiation", atLeast: 20, want: "8|", src: `
 import "std/ndarray" as ndarray;
 
 function main(): i32 {
@@ -1454,9 +1338,8 @@ function main(): i32 {
 	// Clearing that left the module compiling but refusing all 28 of its
 	// declarations, behind the callable-slot spelling the struct
 	// monomorphiser did not mangle. With both closed it produces whole and
-	// reclaims whole, `live_bytes=0` against the 1232 bytes the AST leg
-	// strands.
-	{name: "a-callbacks-return-pins-the-methods-own-variable", atLeast: 28, noLeak: true, src: `
+	// reclaims whole.
+	{name: "a-callbacks-return-pins-the-methods-own-variable", atLeast: 28, want: "15|", src: `
 import "std/ndarray" as ndarray;
 
 function sum_cell(c: ndarray.NdArray[i32]): ndarray.NdArray[i32] {
@@ -1483,7 +1366,7 @@ function main(): i32 {
 	// lambda reach the slot by different routes, and `U = string` over
 	// `T = i32` means a spelling that lost its argument cannot pass as the
 	// receiver's own.
-	{name: "a-callback-slot-keeps-its-instantiation", atLeast: 5, noLeak: true, src: `
+	{name: "a-callback-slot-keeps-its-instantiation", atLeast: 5, want: "3|big/lam\n", src: `
 struct Slot[T] { v: T }
 
 function (s: Slot[T]) through[T, U](f: (Slot[T]) => Slot[U]): Slot[U] {
@@ -1520,7 +1403,7 @@ function main(): i32 {
 	// refusal left an AST-built function value behind, and
 	// `semlower.ast_value_call` then refused the runner's `it` for calling a
 	// value of matching arity, taking every test in the file with it (#9940).
-	{name: "an-ascription-names-a-destination", atLeast: 3, noLeak: true, src: `
+	{name: "an-ascription-names-a-destination", atLeast: 3, want: "27|", src: `
 function total(xs: i32[]): i32 {
     var s: i32 = 0;
     for x in xs { s = s + x; }
@@ -1553,7 +1436,7 @@ function main(): i32 {
 	//
 	// `examples/tests/array_combinators_test` went 0 of 211 to 211 of 211 on
 	// this, on one call to `join_with_last`.
-	{name: "an-array-helper-is-a-free-function", atLeast: 45, noLeak: true, src: `
+	{name: "an-array-helper-is-a-free-function", atLeast: 45, want: "24|a, b and c\n", src: `
 import "std/array" as array;
 
 function main(): i32 {
@@ -1585,7 +1468,7 @@ function main(): i32 {
 	// std/sim's `__pend[T](tok, next: async.Future[T])` returns
 	// `Pending(tok, (woken: i32) => next)`, which is this program with more
 	// around it.
-	{name: "a-generic-enum-keeps-its-arguments", atLeast: 3, noLeak: true, src: `
+	{name: "a-generic-enum-keeps-its-arguments", atLeast: 3, want: "103|", src: `
 enum Box[T] {
     Now(T),
     Later(i32, (i32) => Box[T])
@@ -1624,7 +1507,7 @@ function main(): i32 {
 	// itself a counted array takes the same retain at a different width.
 	//
 	// `conformance/cases/slice_views` went 0 of 111 to 111 of 111 on this.
-	{name: "a-slice-retains-the-elements-it-copied", atLeast: 3, noLeak: true, src: `
+	{name: "a-slice-retains-the-elements-it-copied", atLeast: 3, want: "19|beta/gamma\n", src: `
 function total(ws: [string]) : i32 {
     var n: i32 = 0;
     for w in ws { n = n + w.len(); }
@@ -1651,7 +1534,7 @@ function main(): i32 {
 	// so reading the checker first kept the guess and the outer body refused
 	// `declared i32, returns boolean`. A synthesised callee's contract is read
 	// before the checker now. Refused 3 of 7 before.
-	{name: "value-if-arm-is-a-value-if-of-a-call", atLeast: 7, src: `
+	{name: "value-if-arm-is-a-value-if-of-a-call", atLeast: 7, want: "13|", src: `
 function gen(): boolean { return true; }
 function pick(n: i32): boolean { return n > 2; }
 function main(): i32 {
@@ -1663,7 +1546,7 @@ function main(): i32 {
 	// checker verified `: u8` over `5`, and the annotation stands. It is the
 	// one shape where a synthesised-looking declaration's tag disagrees with
 	// its body's own type without being a guess, so the body must not win.
-	{name: "annotated-lambda-literal-body", atLeast: 3, src: `
+	{name: "annotated-lambda-literal-body", atLeast: 3, want: "7|", src: `
 function apply(f: (i32) => u8, n: i32): u8 { return f(n); }
 function main(): i32 {
     var r: u8 = apply(((x: i32): u8 => 5), 1);
@@ -1676,7 +1559,7 @@ function main(): i32 {
 	// captures every round (16000 bytes at 200 rounds under the sanitizer).
 	// The release walk already reached a tuple's elements through
 	// `drop_tuple_fields`; produced, the shape is reclaimed whole.
-	{name: "closure-in-a-tuple", atLeast: 2, noLeak: true, src: `
+	{name: "closure-in-a-tuple", atLeast: 2, want: "6|", src: `
 function main(): i32 {
     var t: i32 = 0;
     var i: i32 = 0;
@@ -1695,7 +1578,7 @@ function main(): i32 {
 	// through the string dec. The AST lowering leaks its snapshots (168 bytes
 	// here); produced, the loop is reclaimed whole. Refused as
 	// `unsupported iterable: Map[i32, i32]` before.
-	{name: "map-iteration-both-columns", atLeast: 3, noLeak: true, src: `
+	{name: "map-iteration-both-columns", atLeast: 3, want: "65|", src: `
 import "core/map";
 import "std/string";
 function main(): i32 {
@@ -1717,7 +1600,7 @@ function main(): i32 {
 	// block's arm, where no binding annotation reaches them, so the arm's own
 	// reading is what types them: `!` is a boolean, a cast is its target, a
 	// negation is its operand.
-	{name: "value-if-arm-is-a-unary", atLeast: 1, noLeak: true, src: `
+	{name: "value-if-arm-is-a-unary", atLeast: 1, want: "1|", src: `
 function main(): i32 {
     var big: i64 = 5000000000;
     var flags: boolean[] = (if (big > 0) { [true, (if (big > 1) { (!false) } else { true })] } else { [false] });
@@ -1730,7 +1613,7 @@ function main(): i32 {
 	// inference has nothing either (a bare `None` is an Option of no known
 	// payload), so the block kept its i32 label and the module was refused.
 	// The stamp used to apply to a 64-bit annotation alone.
-	{name: "value-block-takes-its-bindings-type", atLeast: 1, noLeak: true, src: `
+	{name: "value-block-takes-its-bindings-type", atLeast: 1, want: "15|", src: `
 struct Pt { x: i32, y: i32 }
 function main(): i32 {
     var a: Option[i32] = (if (true) { None } else { None });
@@ -1746,7 +1629,7 @@ function main(): i32 {
 	// `Option[i32]` had its annotation overridden by the family name and
 	// its call site could not name a variant. A payload-less builtin generic
 	// is a family, not a type.
-	{name: "option-results-of-lambdas", atLeast: 3, noLeak: true, src: `
+	{name: "option-results-of-lambdas", atLeast: 3, want: "29|", src: `
 function id[T](x: T): T { return x; }
 function main(): i32 {
     function some_of(k: i32): Option[i32] { return id(Some(k)); }
@@ -1761,7 +1644,7 @@ function main(): i32 {
 	// from a local function left its binding unresolved. The slot is now
 	// declared as the enclosing declaration's return signature, the way a
 	// hand-written fn local is.
-	{name: "local-function-returns-a-capturing-lambda", atLeast: 3, noLeak: true, src: `
+	{name: "local-function-returns-a-capturing-lambda", atLeast: 3, want: "5|", src: `
 function main(): i32 {
     var acc: i32 = 3;
     function mk(k: i32): (i32) => i32 { return ((x: i32) => acc + x + k); }
@@ -1781,7 +1664,7 @@ function main(): i32 {
 	// implies types such an argument; an argument naming its own type still
 	// binds the variable itself, left to right. The instance is `id[i32[]]`
 	// and its result is reclaimed whole.
-	{name: "literal-argument-typed-from-the-destination", atLeast: 2, noLeak: true, src: `
+	{name: "literal-argument-typed-from-the-destination", atLeast: 2, want: "78|", src: `
 function id[T](x: T): T { return x; }
 function main(): i32 {
     var t: i32 = 0;
@@ -1803,7 +1686,7 @@ function main(): i32 {
 	// hoisted body's contract: what the closure hands out is its body's
 	// promise minus the environment. The chosen closure is called every
 	// round and its box reclaimed.
-	{name: "value-block-of-capturing-lambdas", atLeast: 3, noLeak: true, src: `
+	{name: "value-block-of-capturing-lambdas", atLeast: 3, want: "54|", src: `
 function main(): i32 {
     var base: i32 = 5;
     var t: i32 = 0;
@@ -1820,7 +1703,7 @@ function main(): i32 {
 	// The tuple and struct-pattern desugars yield an arm's value by storing it
 	// into the match's value local, not by returning it, so the hoist of a
 	// fn-valued value block has to count that store as an arm (#10333).
-	{name: "tuple-and-struct-match-of-capturing-lambdas", atLeast: 9, noLeak: true, src: `
+	{name: "tuple-and-struct-match-of-capturing-lambdas", atLeast: 9, want: "51|", src: `
 struct P { a: i32, b: i32 }
 function pick(p: P, base: i32): (i32) => i32 {
     return match (p) { P { a: 0, b } => ((x: i32) => x - base + b), P { a: 1, b } => ((x: i32) => b), _ => ((x: i32) => x + 1) };
@@ -1842,13 +1725,13 @@ function main(): i32 {
 	// syntactic guess, so a tail naming a local bound from a match still says
 	// the struct array it holds (#10332): lifted when the block captures
 	// nothing, inlined when it does, and a single struct as well as an array.
-	{name: "value-block-tail-local-struct-array", atLeast: 2, noLeak: true, src: `
+	{name: "value-block-tail-local-struct-array", atLeast: 2, want: "56|", src: `
 struct P { x: i32, y: i32 }
 function main(): i32 {
     var ps = { var j = 1; var q = match (j) { 1 => [P{x:5,y:6}], _ => [P{x:0,y:0}] }; q };
     return ps[0].x * 10 + ps[0].y;
 }`},
-	{name: "value-block-tail-local-struct", atLeast: 1, noLeak: true, src: `
+	{name: "value-block-tail-local-struct", atLeast: 1, want: "29|", src: `
 struct R { name: string, n: i32 }
 function main(): i32 {
     var t: i32 = 0;
@@ -1860,7 +1743,7 @@ function main(): i32 {
     }
     return t % 101;
 }`},
-	{name: "value-block-tail-local-owning-struct-array-in-loop", atLeast: 1, noLeak: true, src: `
+	{name: "value-block-tail-local-owning-struct-array-in-loop", atLeast: 1, want: "39|", src: `
 struct R { name: string, n: i32 }
 function main(): i32 {
     var t: i32 = 0;
@@ -1878,7 +1761,7 @@ function main(): i32 {
 	// though every field is produced at its declared type. Here the literal
 	// is a template argument too, so the destination binding types the
 	// parameter and the field's block picks between two template calls.
-	{name: "record-literal-is-the-struct-it-names", atLeast: 2, noLeak: true, src: `
+	{name: "record-literal-is-the-struct-it-names", atLeast: 2, want: "6|", src: `
 struct Xyz { n: i32, valid: boolean, tag: string }
 function pick[T](c: boolean, a: T, b: T): T { return if (c) { a } else { b }; }
 function main(): i32 {
@@ -1895,9 +1778,8 @@ function main(): i32 {
 	// A struct- or enum-KEYED map (#9962): a column of boxes the map owns one
 	// unit of per entry, probed through the key's derived hash and eq. The
 	// AST lowering cannot read a field off a key it iterates straight out of
-	// `keys()`, so the last row is a `want` row, its answer confirmed against
-	// the interpreter.
-	{name: "keyed-map-probes", atLeast: 3, noLeak: true, src: `
+	// `keys()`, which the last row does.
+	{name: "keyed-map-probes", atLeast: 3, want: "96|", src: `
 import "core/map";
 import "core/cmp";
 @derive(cmp.Eq, cmp.Hash)
@@ -1930,7 +1812,7 @@ function main(): i32 { return names() * 10 + tags(); }
 `},
 	// A keyed map's key column read back through keys(): the retaining
 	// snapshot, walked after the map is gone.
-	{name: "keyed-map-keys-outlive-the-map", atLeast: 2, noLeak: true, src: `
+	{name: "keyed-map-keys-outlive-the-map", atLeast: 2, want: "27|", src: `
 import "core/map";
 import "core/cmp";
 @derive(cmp.Eq, cmp.Hash)
@@ -1953,7 +1835,7 @@ function main(): i32 { return ranks() - 3; }
 	// insert finds the box aliased and rebuilds it, retaining every key and
 	// value the copy names, so both maps release cleanly. `_kfvf` takes the
 	// key's release and the value's.
-	{name: "keyed-map-of-boxes-shared", atLeast: 2, want: "28|", noLeak: true, src: `
+	{name: "keyed-map-of-boxes-shared", atLeast: 2, want: "28|", src: `
 import "core/map";
 import "core/cmp";
 @derive(cmp.Eq, cmp.Hash)
@@ -1979,7 +1861,7 @@ function main(): i32 { return boxes() % 100; }
 	// without, and an insert into a shared map, whose copy pairs the two column
 	// snapshots by index. wasm keeps each value in a cell of its own. The AST
 	// lowering refuses the program.
-	{name: "a-map-of-i64-values-takes-the-typed-path", atLeast: 2, noLeak: true, want: "0|", src: `
+	{name: "a-map-of-i64-values-takes-the-typed-path", atLeast: 2, want: "0|", src: `
 import "core/map";
 function total(m: Map[i32, i64]): i64 {
     var t: i64 = 0;
@@ -2009,7 +1891,7 @@ function main(): i32 {
 	// On wasm the i64 value snapshot came back in probe order while the keys
 	// came back in insertion order, so iteration and keys()/values() paired a
 	// key with another key's value (#10280).
-	{name: "an-i64-map-pairs-each-key-with-its-value", atLeast: 1, noLeak: true, src: `
+	{name: "an-i64-map-pairs-each-key-with-its-value", atLeast: 1, want: "0|", src: `
 import "core/map";
 function main(): i32 {
     var m: Map[i32, i64] = map_new(2);
@@ -2032,7 +1914,7 @@ function main(): i32 {
 	// closure's capture. It is the constant 0 in an i32-shaped slot, as the
 	// AST lowering has it, so a unit argument crosses a call the same way on
 	// both.
-	{name: "the-unit-value-in-every-position", atLeast: 5, noLeak: true, src: `
+	{name: "the-unit-value-in-every-position", atLeast: 5, want: "0|", src: `
 function sink(u: ()): i32 { return 7; }
 function fallible(): Result[(), i32] { return Ok(()); }
 function main(): i32 {
@@ -2054,11 +1936,10 @@ function main(): i32 {
 	// column of boxes, each read back after the delete and re-inserted once.
 	// The map helpers are typed: the keyed column's search calls its eq
 	// function, and its release the value column's, through __raw_call*.
-	{name: "map-delete-releases-the-entry", atLeast: 3, noLeak: true,
-		reports: []string{
-			"runtime __fern_map_find: produced", "runtime __fern_map_delete: produced",
-			"runtime __fern_map_delete_rel: produced",
-		}, src: `
+	{name: "map-delete-releases-the-entry", atLeast: 3, want: "35|", reports: []string{
+		"runtime __fern_map_find: produced", "runtime __fern_map_delete: produced",
+		"runtime __fern_map_delete_rel: produced",
+	}, src: `
 import "core/map";
 import "core/cmp";
 @derive(cmp.Eq, cmp.Hash)
@@ -2092,7 +1973,7 @@ function by_key(): i32 {
 }
 function main(): i32 { return by_string() + by_value() + by_key(); }
 `},
-	{name: "map-delete-and-clear", atLeast: 4, noLeak: true, src: `
+	{name: "map-delete-and-clear", atLeast: 4, want: "131|", wasm: "out-of-range|", src: `
 import "core/map";
 function survivors(n: i32): i32 {
     var m: Map[i32, i32] = map_new(8);
@@ -2124,7 +2005,7 @@ function main(): i32 { return survivors(5) + emptied(0) + absent(0); }
 	// not pay for, since a map box carries no count to retain. `relayed` is the
 	// same shape over a tuple literal, and reads BOTH elements, so the take has
 	// to leave the one it did not null alone.
-	{name: "tuple-element-take", atLeast: 3, noLeak: true, src: `
+	{name: "tuple-element-take", atLeast: 3, want: "219|", wasm: "out-of-range|", src: `
 import "core/map";
 function chained(n: i32): i32 {
     var m: Map[i32, i32] = map_new(8);
@@ -2151,7 +2032,7 @@ function main(): i32 { return (chained(6) + relayed(1)) & 255; }
 	// shapes the loop exit decides: HIGH included, a single-element range that
 	// runs ONCE where the half-open form runs not at all, and a reversed one
 	// that still runs zero times.
-	{name: "inclusive-range", atLeast: 3, src: `
+	{name: "inclusive-range", atLeast: 3, want: "48|", src: `
 function closed(n: i32): i32 {
     var s: i32 = 0;
     for i in 0..=n { s = s + i; }
@@ -2181,7 +2062,7 @@ function main(): i32 { return (closed(5) + single(3) + skipping(12)) & 255; }
 	// container instead of a tuple slot. `shared` reads `.0` out of one
 	// `get_or`, consumes it, and then reads the SAME key again: if the take
 	// fired on `get_or` the second read would see the nulled slot.
-	{name: "container-read-is-not-a-take", atLeast: 3, noLeak: true, src: `
+	{name: "container-read-is-not-a-take", atLeast: 3, want: "71|", src: `
 import "core/map";
 function seeded(n: i32): Map[i32, (i32[], i32)] {
     var m: Map[i32, (i32[], i32)] = map_new(4);
@@ -2197,12 +2078,11 @@ function shared(n: i32): i32 {
 }
 function main(): i32 { return shared(7) & 255; }
 `},
-	// Reach rather than agreement: the AST lowering reads the receiver's SLOT
-	// to find a clear's key kind, so it declines a receiver that is not a plain
-	// local. The contract reads the key kind from the result type instead and
+	// The AST lowering reads the receiver's SLOT to find a clear's key kind,
+	// so it declines a receiver that is not a plain local. The contract reads the key kind from the result type instead and
 	// never evaluates the receiver for anything else, so a call result works
 	// the way a local does.
-	{name: "map-clear-call-receiver", atLeast: 2, want: "1|", noLeak: true, src: `
+	{name: "map-clear-call-receiver", atLeast: 2, want: "1|", src: `
 import "core/map";
 function built(n: i32): Map[i32, i32] {
     var m: Map[i32, i32] = map_new(8);
@@ -2216,9 +2096,8 @@ function main(): i32 { return built(3).cleared().insert(7, 3).len(); }
 	// Both halves are here: `handed(v)` keeps what it is lent, so the produced
 	// caller hands it a copy of the bytes, and `laundered` hands the result
 	// ON, so the frame that sliced the view owns nothing of it by the time it
-	// returns. The AST lowering leaks the escaping box, so the leak check
-	// reads the produced bodies freeing more, never less.
-	{name: "lent-view-handback", atLeast: 4, src: `
+	// returns.
+	{name: "lent-view-handback", atLeast: 4, want: "12|", src: `
 function handed(text: string): string { return text; }
 function laundered(src: string): string {
     var v: str = slice_unchecked(src, 0, 3);
@@ -2231,16 +2110,11 @@ function main(): i32 {
     return handed(v).len() + fresh_of(v).len() + laundered(s).len();
 }
 `},
-	// A function value the AST lowering builds reaching a produced body. The
-	// AST push never retains the element it appends (its buffer leaks
-	// instead), so an array the AST-lowered ident_of hands back holds
-	// identifiers it does not own, and a produced each would release them as
-	// its own: the abort that stopped the produced compiler on checker.fern.
-	// The skip leg keeps ident_of on the AST lowering; the trampoline that
-	// names it follows through prune's direct-call rule, and each has to
-	// follow through the value's type.
-	{name: "ast-value-into-produced", atLeast: 3, skip: "ident_of",
-		refuses: "each: calls a function value of 2 arguments, a type the AST lowering builds a value of", src: `
+	// A function value reaching the body that calls it, which releases the
+	// identifiers the array it hands back holds: an array whose push did not
+	// retain its element made this the abort that stopped the produced
+	// compiler on checker.fern.
+	{name: "a-function-value-hands-back-an-owned-array", atLeast: 3, want: "30|", src: `
 struct Id { name: string }
 function ident_of(e: Id, own acc: string[]): string[] { return acc.append(e.name); }
 function each(es: Id[], rounds: i32, reads: (Id, own string[]) => string[]): i32 {
@@ -2264,7 +2138,7 @@ function main(): i32 {
 	// it in the array it hands back, which is what every `*_tok` constructor in
 	// the self-host lexer does. Both reach the caller through the callee's
 	// result, so both callees are handed a copy the result may keep.
-	{name: "lent-view-stored", atLeast: 5, src: `
+	{name: "lent-view-stored", atLeast: 5, want: "18|", src: `
 struct Tok { text: string, line: i32 }
 function tok_of(text: string, line: i32): Tok { return Tok { text: text, line: line }; }
 function add_word(acc: string[], w: string): string[] { return acc.append(w); }
@@ -2301,7 +2175,7 @@ function main(): i32 {
 	// as a frame-resident retag and `add` stored a pointer into a frame that
 	// was gone by the time main read the item (#10680: the self-host-built
 	// asm_ir_run stored a callee name this way and faulted in the IR verifier).
-	{name: "lent-view-kept-through-a-local", atLeast: 6, src: `
+	{name: "lent-view-kept-through-a-local", atLeast: 6, want: "0|", src: `
 struct Item { name: string }
 struct Acc { items: Item[] }
 function mk(name: string): Item { return Item { name: name }; }
@@ -2336,10 +2210,9 @@ function main(): i32 {
 	// through the non-consuming helper and takes its unit afterwards, so the
 	// buffer grows in place instead of being copied per element (#9365); the
 	// second half is `set0`, where the caller KEEPS its binding and the
-	// caller-side bracket is what makes the update owe a copy. Both halves
-	// have to answer the same as the AST lowering: 199 says `a` came through
-	// the borrow untouched.
-	{name: "borrowed-param-append", atLeast: 4, src: `
+	// caller-side bracket is what makes the update owe a copy. 199 says `a`
+	// came through the borrow untouched.
+	{name: "borrowed-param-append", atLeast: 4, want: "199|", wasm: "out-of-range|", src: `
 function push(buf: i32[], v: i32): i32[] { return buf.append(v); }
 function build(n: i32): i32[] {
     var out: i32[] = [];
@@ -2368,7 +2241,7 @@ function main(): i32 {
 	//
 	// Every element is distinct and checked back, so a freed-and-reissued
 	// element box shows as a wrong name rather than a crash.
-	{name: "borrowed-param-append-counted-elems", atLeast: 4, src: `
+	{name: "borrowed-param-append-counted-elems", atLeast: 4, want: "4|", src: `
 struct Box { name: string }
 function add(acc: Box[], n: string): Box[] { return acc.append(Box { name: n }); }
 function tag(i: i32): string {
@@ -2398,7 +2271,7 @@ function main(): i32 {
 	// the second push is handed a box the first grew. Elements are counted and
 	// every one is distinct, so a box freed under the array that now points at
 	// it reads back as the wrong name.
-	{name: "borrowed-param-append-nested", atLeast: 4, src: `
+	{name: "borrowed-param-append-nested", atLeast: 4, want: "199|", wasm: "out-of-range|", src: `
 struct D { name: string, fields: string[] }
 function declared(ds: D[], name: string): boolean {
     var i: i32 = 0;
@@ -2434,9 +2307,8 @@ function main(): i32 {
 	// appended to; `twice` appends through the same parameter at two sites, so
 	// the second one is handed what the first produced; and the last `twice`
 	// call has a caller that still reads `live` afterwards, where the bracket
-	// makes the receiver shared and the push copies. Balanced allocs and frees
-	// on both legs is what the leak-parity check makes of it.
-	{name: "borrowed-param-obligations", atLeast: 5, src: `
+	// makes the receiver shared and the push copies.
+	{name: "borrowed-param-obligations", atLeast: 5, want: "211|", wasm: "out-of-range|", src: `
 struct B { n: string }
 function tagx(i: i32): string { var t: string[] = ["aa", "bb", "cc", "dd"]; return "long-payload-" + t[i % 4]; }
 function maybe(xs: B[], flag: boolean): B[] {
@@ -2461,10 +2333,9 @@ function main(): i32 {
 	// reads the record no further through that field, so the push grows the
 	// buffer in place and moves it out of the field (#9365). `keeps` still
 	// reads its record afterwards, so its bracket on the field makes the
-	// push copy; the same call from an AST-lowered `keeps` — the skip leg —
-	// brackets by the regrown registry. `boxes` appends counted elements,
+	// push copy. `boxes` appends counted elements,
 	// where a buffer released under both holders reads back as a wrong name.
-	{name: "field-append", atLeast: 9, skip: "keeps,dying,boxes,emit2,via", src: `
+	{name: "field-append", atLeast: 9, want: "199|", wasm: "out-of-range|", src: `
 struct R { ops: i32[], n: i32 }
 struct Box { name: string }
 struct Q { items: Box[], tag: string }
@@ -2505,16 +2376,12 @@ function main(): i32 {
     return 199;
 }
 `},
-	// An AST-lowered caller moving its accumulator into a produced callee's
-	// OWN array position (#9407): the produced body consumes the buffer — the
-	// push that supersedes it reclaims it — where an AST-lowered callee would
-	// have left it for the caller's rebind to release. The skip leg keeps
-	// `forward` and `census` on the AST lowering, so `census` moves its local
-	// into `forward`, which passes it on to the produced instance; both read
-	// the consuming position through irlower.own_consumed_positions and
-	// transfer their reference instead of releasing it after. Under the
-	// sanitizer leg the second release was a use-after-free.
-	{name: "own-forwarded-into-produced", atLeast: 3, skip: "forward,census", src: `
+	// A caller moving its accumulator into a callee's OWN array position
+	// (#9407): the callee consumes the buffer — the push that supersedes it
+	// reclaims it. `census` moves its local into `forward`, which passes it on
+	// to the instance; both transfer their reference instead of releasing it
+	// after. Under the sanitizer leg a second release was a use-after-free.
+	{name: "own-forwarded-through-a-caller", atLeast: 3, want: "62|", src: `
 function visit(x: string, own acc: string[]): string[] {
     if (x.len() > 2) { return acc.append(x); }
     return acc;
@@ -2535,14 +2402,9 @@ function main(): i32 {
     return (out.len() * 10 + seed.len()) % 251;
 }
 `},
-	// A write back through a capture is refused (#9320), so this module is
-	// mixed: the produced bodies are emitted beside AST-lowered ones, with
-	// ssarc.caller_sigs holding the two sides' release of a shared result
-	// together. It answers the same either way, which is the whole point.
 	// The capture the closure writes is a Cell[i32] the closure and its creator
-	// share (#9320), so every body produces and the total is the same on both
-	// lowerings.
-	{name: "capture-write", atLeast: 3, src: `
+	// share (#9320), so every body produces.
+	{name: "capture-write", atLeast: 3, want: "7|", src: `
 function apply(f: (i32) => i32, v: i32): i32 { return f(v); }
 function main(): i32 {
     var total: i32 = 0;
@@ -2560,7 +2422,7 @@ function main(): i32 {
 	// a clone that still read as a template refused every caller of it as
 	// "uninstantiated generic", and the fold's callback slot kept an `own T`
 	// nothing substituted.
-	{name: "generic-clones", atLeast: 6, src: `
+	{name: "generic-clones", atLeast: 6, want: "50|", src: `
 function first[T](xs: T[]): T { return xs[0]; }
 function append_all[T](into: T[], more: T[]): T[] {
     var out: T[] = into;
@@ -2586,7 +2448,7 @@ function main(): i32 {
 	// the quadratic term that took the produced compiler's self-build past the
 	// arena. The program reads the runtime's shared-append counter itself, so
 	// a copy is a wrong answer (200 and up) rather than a slow one.
-	{name: "record-handed-through-wrapper", atLeast: 4, src: `
+	{name: "record-handed-through-wrapper", atLeast: 4, want: "4|", src: `
 struct R { ops: i32[], n: i32, name: string }
 function emit(r: R, op: i32): R { return R { ...r, ops: r.ops.append(op) }; }
 function helper(r: R, slot: i32): R {
@@ -2629,7 +2491,7 @@ function main(): i32 { return picked(4) * 10 + widen(2).len(); }
 	// Value blocks: a match-expression's arms carry a string, a record, an
 	// array and a tuple to the join, and an empty array arm takes the type
 	// the binding declares rather than the arms' syntactic guess.
-	{name: "value-blocks", atLeast: 3, src: `
+	{name: "value-blocks", atLeast: 3, want: "1|", src: `
 enum Shade { Dark, Light }
 struct Tagged { n: i32, tag: string }
 function vb_words(k: i32): i32 {
@@ -2653,7 +2515,7 @@ function main(): i32 { return (vb_words(3) + vb_rows(2) + vb_rows(0)) & 255; }
 	// The saturating and checked operators at every width the AST lowering
 	// clamps at, matched on the exit code: each function is one shape the
 	// shared op-list builders emit over the semantic lowering's own slots.
-	{name: "overflow-operators", atLeast: 7, src: `
+	{name: "overflow-operators", atLeast: 7, want: "5|", src: `
 function s32(a: i32, b: i32): i32 { return (a +| b) + (a -| b) + (a *| b) + (a <<| b); }
 function u32s(a: u32, b: u32): u32 { return (a +| b) + (a -| b) + (a *| b) + (a <<| b); }
 function s64(a: i64, b: i64): i64 { return (a +| b) + (a -| b) + (a *| b) + (a <<| b); }
@@ -2692,7 +2554,7 @@ function main(): i32 {
     return r & 255;
 }
 `},
-	{name: "type-param-only-in-a-lambda-parameter", atLeast: 10, src: `
+	{name: "type-param-only-in-a-lambda-parameter", atLeast: 10, want: "52|", src: `
 import "core/iter" as iter;
 
 function kept(xs: i32[]): i32 {
@@ -2707,7 +2569,7 @@ function doubled(xs: i32[]): i32 {
 
 function main(): i32 { return kept([5, 2, 8, 1, 4]) + doubled([1, 2, 3]); }
 `},
-	{name: "str-binding-beside-a-generic-struct", atLeast: 2, src: `
+	{name: "str-binding-beside-a-generic-struct", atLeast: 2, want: "32|", src: `
 struct Box[T] { v: T }
 function head(s: string): i32 {
     var v: str = slice_unchecked(s, 0, 3);
@@ -2726,7 +2588,7 @@ function main(): i32 {
 	// the top of the scope and leaves its initialiser behind as an assignment,
 	// so the replay reads what the block left — the replacement, not a capture
 	// taken at registration.
-	{name: "defer-binding-out-of-its-block", atLeast: 4, noLeak: true, src: `
+	{name: "defer-binding-out-of-its-block", atLeast: 4, want: "16|", src: `
 function conditional(enabled: boolean): i32 {
     var seen: i32 = 1;
     loop {
@@ -2773,7 +2635,7 @@ function main(): i32 {
 	// lowering. A zero now names its type and lowers to the zero word, which at
 	// a reference type is the null the assignment left at the declaration site
 	// overwrites before anything reads it.
-	{name: "defer-binding-at-a-type-with-no-literal-zero", atLeast: 4, noLeak: true, src: `
+	{name: "defer-binding-at-a-type-with-no-literal-zero", atLeast: 4, want: "21|", src: `
 struct P { a: i32 }
 function via_record(on: boolean): i32 {
     var seen: i32 = 0;
@@ -2805,7 +2667,7 @@ function via_variant(on: boolean): i32 {
 }
 function main(): i32 { return via_record(true) + via_tuple(true) + via_variant(true); }
 `},
-	{name: "defer-typed-return-temp", atLeast: 3, noLeak: true, src: `
+	{name: "defer-typed-return-temp", atLeast: 3, want: "72|", src: `
 function snapshot(): i32[] {
     var items: i32[] = [7];
     defer items = [9];
@@ -2829,7 +2691,7 @@ function main(): i32 {
 	// hands back is bound beside the local it came from until the cleanup
 	// runs (two_defers replaces both), and the sanitizer leg holds the boxes
 	// to zero over 200 rounds.
-	{name: "defer-return-temp-at-a-type-with-no-literal-zero", atLeast: 7, noLeak: true, src: `
+	{name: "defer-return-temp-at-a-type-with-no-literal-zero", atLeast: 7, want: "8|", src: `
 struct P { a: i32, s: string }
 enum Shape { Dot, Box(i32) }
 function record(n: i32): P {
@@ -2887,7 +2749,7 @@ function main(): i32 {
 	// Both legs bind the temp a closure local from its annotation, so the
 	// caller dispatches the box env-first; through_local returns a box a
 	// declaration built, capturing and plain return one at the return.
-	{name: "defer-in-a-closure-factory", atLeast: 7, noLeak: true, src: `
+	{name: "defer-in-a-closure-factory", atLeast: 7, want: "90|", src: `
 function capturing(k: i32): (i32) => i32 {
     var seen: i32 = 0;
     defer seen = seen + 1;
@@ -2921,7 +2783,7 @@ function main(): i32 {
 	// up as a leak rather than a constant. Each loop binds ONE returned
 	// closure: two distinct ones in a single loop body is #9657, where the AST
 	// lowering this case compares against answers wrongly.
-	{name: "a-function-value-returned-from-a-declaration", atLeast: 9, noLeak: true, src: `
+	{name: "a-function-value-returned-from-a-declaration", atLeast: 9, want: "8|", src: `
 function scalar_capture(n: i32): (i32) => i32 {
     return (x: i32): i32 => { return x + n; };
 }
@@ -2965,7 +2827,7 @@ function main(): i32 {
 	// in the same field is the shape that must NOT be walked as a box. Churned
 	// in a loop so a missed or doubled release shows as a leak or an
 	// over-release rather than a constant.
-	{name: "a-function-value-in-a-record-field", atLeast: 5, noLeak: true, src: `
+	{name: "a-function-value-in-a-record-field", atLeast: 5, want: "4|", src: `
 struct Holder { f: (i32) => i32 }
 function plain(x: i32): i32 { return x + 1; }
 function make(n: i32): Holder {
@@ -2990,7 +2852,7 @@ function main(): i32 {
 	// per call if it were not. (`s.bytes()` is intercepted by the same shape
 	// rule, but it is a std/string declaration rather than a builtin, so a
 	// case for it would pull that whole module's refusals in with it.)
-	{name: "the-bytes-of-a-string", atLeast: 3, noLeak: true, src: `
+	{name: "the-bytes-of-a-string", atLeast: 3, want: "6|", src: `
 function total(s: string): i32 {
     var bs = s.as_bytes();
     var t: i32 = 0;
@@ -3016,7 +2878,7 @@ function main(): i32 {
 	// scrutinee has to stay live past the payload name that would otherwise
 	// end it — `whole_after_payload` reads `w` after `c`, and
 	// `whole_as_value` carries `w` out of the match as the arm's value.
-	{name: "the-at-binder-in-a-match-arm", atLeast: 4, noLeak: true, src: `
+	{name: "the-at-binder-in-a-match-arm", atLeast: 4, want: "3|", src: `
 enum Shape { Circle(string), Square(string) }
 
 function label(s: Shape): string {
@@ -3061,7 +2923,7 @@ function main(): i32 {
 	// WHICH address the cast answers is #8799's open question — native gives
 	// the data pointer and the self-host the box — so this case compares the
 	// two lowerings of ONE compiler and settles nothing about that.
-	{name: "a-reference-cast-to-an-address", atLeast: 2, noLeak: true, src: `
+	{name: "a-reference-cast-to-an-address", atLeast: 2, want: "0|", src: `
 function copy_bytes(s: string): i32 {
     var n: i32 = s.len();
     var out: u8[] = __alloc_u8(n);
@@ -3088,7 +2950,7 @@ function main(): i32 {
 	// std/array is imported because the CHECKER keeps these three out of the
 	// bare method table; every declaration it brings produces too, so the
 	// tally below is the whole program's.
-	{name: "the-array-reduce-and-join-builtins", atLeast: 70, noLeak: true, src: `
+	{name: "the-array-reduce-and-join-builtins", atLeast: 70, want: "1|", src: `
 import "std/array";
 
 function total(xs: i32[]): i32 { return xs.sum() + xs.product(); }
@@ -3114,7 +2976,7 @@ function main(): i32 {
 	// shape rather than one entry's: 0 of 55 before, 55 of 55 after. The
 	// stdin methods and the two standard Writers are all one family, so the
 	// second half drives those too.
-	{name: "stdin-and-the-stream-handles", atLeast: 44, stdin: "alpha\nbeta\n", src: `
+	{name: "stdin-and-the-stream-handles", atLeast: 44, want: "11|alpha\nbeta\n", stdin: "alpha\nbeta\n", src: `
 import "std/io";
 
 function main(): i32 {
@@ -3136,11 +2998,9 @@ function main(): i32 {
 	// Native leaks three blocks an iteration on this program and the
 	// self-host refused to produce `wrap` at all (#9637).
 	//
-	// noLeak, because the answer never depended on this: the program is
-	// correct while leaking, and the leak is the whole subject. Measured 0 of
-	// 150 blocks live on arm64-darwin under FERN_LEAKCHECK, against 150 of
-	// 250 for the AST lowering.
-	{name: "a-closure-that-captures-a-closure", atLeast: 5, noLeak: true, src: `
+	// The program is correct while leaking, so the leak pin is the whole
+	// subject.
+	{name: "a-closure-that-captures-a-closure", atLeast: 5, want: "1|", src: `
 function make(n: i32): (i32) => i32 {
     var xs: i32[] = [n, n + 1, n + 2];
     return (x: i32): i32 => { return x + xs[0] + xs[2]; };
@@ -3165,17 +3025,14 @@ function main(): i32 {
 	// Self-tail recursion. Tail-call optimisation reached a declaration
 	// through `irlower.lower_func`, which a produced body never enters, so a
 	// produced self-tail call grew the stack once per round and a deep enough
-	// recursion took the program out — SIGSEGV on the default path, where the
-	// AST leg answers (#9692). The depth is what makes this a gate rather than
-	// a decoration: a million rounds is several times any stack here, and
-	// before the rewrite the same program died at two hundred thousand on
-	// every target. It costs about a sixth of a second natively.
-	//
-	// Scalars deliberately: the AST leg's own TCO fires for this shape, so the
-	// two legs are comparable and the table's default assertion — same answer
-	// as the AST lowering — is the gate. The reference-typed shapes are in
-	// TestSelfHostSemanticTailRecursion, where the AST leg is not an oracle.
-	{name: "self-tail-recursion", atLeast: 2, src: `
+	// recursion took the program out — SIGSEGV on the default path (#9692).
+	// The depth is what makes this a gate rather than a decoration: a million
+	// rounds is several times any stack here, and before the rewrite the same
+	// program died at two hundred thousand on every target. It costs about a
+	// sixth of a second natively. The interpreter has no TCO and overflows its
+	// stack on this program. The reference-typed shapes are in
+	// TestSelfHostSemanticTailRecursion.
+	{name: "self-tail-recursion", atLeast: 2, want: "1|", src: `
 function count(n: i32, acc: i32): i32 {
     if (n == 0) { return acc; }
     return count(n - 1, acc + 1);
@@ -3192,8 +3049,8 @@ function main(): i32 { return count(1000000, 0) % 7; }
 	// guarding: the array's drop walks each element through
 	// `ssarc.drop_value`, which dispatches a function type to
 	// `drop_captures`. `caps` and `other` are freed by that walk or not at
-	// all, so noLeak is the assertion that carries this case.
-	{name: "an-array-of-capturing-closures", atLeast: 4, noLeak: true, src: `
+	// all, so the leak pin is the assertion that carries this case.
+	{name: "an-array-of-capturing-closures", atLeast: 4, want: "2|", src: `
 function build(n: i32): ((i32) => i32)[] {
     var caps: i32[] = [n, n + 1, n + 2];
     var other: i32[] = [n * 2, n * 3];
@@ -3220,7 +3077,7 @@ function main(): i32 {
 	// describes every slot as one word; the call through the value now
 	// carries the signature tag irlower's call sites carry, so wasm
 	// dispatches it through the funcref type the body was declared with.
-	{name: "sibling-function-with-a-wide-signature", atLeast: 3, noLeak: true, src: `
+	{name: "sibling-function-with-a-wide-signature", atLeast: 3, want: "28|", src: `
 function main(): i32 {
     function scale(k: i64): f64 { return (k as f64) / 4.0; }
     function twice(n: i32): i32 { return (scale((n as i64) * 6i64) as i32) + (scale(9i64) as i32); }
@@ -3243,7 +3100,7 @@ function main(): i32 {
 	// declaration's carries. The AST lowering refuses the shape: whether the
 	// array a function value hands back holds boxes or bare addresses is the
 	// callee's choice, and it dispatched by the declared tag alone.
-	{name: "nested-function-returning-an-array-of-functions", atLeast: 3, want: "65|", noLeak: true, src: `
+	{name: "nested-function-returning-an-array-of-functions", atLeast: 3, want: "65|", src: `
 function main(): i32 {
     function make(k: i32): ((i32) => i32)[] { return [((a: i32) => a + k), ((b: i32) => b * k)]; }
     function pick(n: i32): ((i32) => i32)[] { return make(n + 1); }
@@ -3261,7 +3118,7 @@ function main(): i32 {
 	// signature table typed the closure the template forwards as nothing,
 	// and the block's declaration had no result. The annotate pass now
 	// stamps the result a lambda's body returns before the lift hoists it.
-	{name: "value-block-arm-is-a-template-call-over-a-capturing-lambda", atLeast: 3, noLeak: true, src: `
+	{name: "value-block-arm-is-a-template-call-over-a-capturing-lambda", atLeast: 3, want: "74|", src: `
 function id[T](x: T): T { return x; }
 function main(): i32 {
     var k: i32 = 3;
@@ -3280,7 +3137,7 @@ function main(): i32 {
 	// through a passthrough only an array literal, so the nested block's
 	// lambdas stayed raw addresses. The passthrough chain now ends at a
 	// value block as it ends at a literal, on the gate and the rewrite alike.
-	{name: "passthrough-forwards-a-nested-value-block-of-lambda-arrays", atLeast: 3, noLeak: true, src: `
+	{name: "passthrough-forwards-a-nested-value-block-of-lambda-arrays", atLeast: 3, want: "148|", wasm: "out-of-range|", src: `
 enum Color { Red, Green, Blue }
 function id[T](x: T): T { return x; }
 function choose(p: Color, k: i32): i32 {
@@ -3308,7 +3165,7 @@ function main(): i32 {
 	// The box now takes the array header, so a retain is the ordinary
 	// rc_inc and the free family releases one unit; the sanitizer leg reports
 	// every box released.
-	{name: "a-map-unit-is-shared", atLeast: 4, noLeak: true, src: `
+	{name: "a-map-unit-is-shared", atLeast: 4, want: "111|", src: `
 import "core/map";
 function id[T](x: T): T { return x; }
 function same(m: Map[i32, i32]): Map[i32, i32] { return m; }
@@ -3332,7 +3189,7 @@ function main(): i32 {
     }
     return acc % 113;
 }`},
-	{name: "a-shared-string-map-releases-its-columns-once", atLeast: 2, noLeak: true, src: `
+	{name: "a-shared-string-map-releases-its-columns-once", atLeast: 2, want: "49|", src: `
 import "core/map";
 function pick(c: boolean, a: Map[string, string], b: Map[string, string]): Map[string, string] { return if (c) { a } else { b }; }
 function main(): i32 {
@@ -3356,7 +3213,7 @@ function main(): i32 {
 	// frame takes a fresh box with the same entries when the count says the
 	// box is shared, and a string key and a counted value each get the unit
 	// the copy's entry owns.
-	{name: "a-shared-map-is-copied-before-it-is-written", atLeast: 1, noLeak: true, src: `
+	{name: "a-shared-map-is-copied-before-it-is-written", atLeast: 1, want: "72|", src: `
 import "core/map";
 function main(): i32 {
     var acc: i32 = 0;
@@ -3381,7 +3238,7 @@ function main(): i32 {
 	// receiver and writes the sole-held box in place, so `m`, `n`, `g` and
 	// `rest` all name one box (#9834); only the delete `snapshot` still reads
 	// through copies (#9835).
-	{name: "a-map-the-frame-still-reads-is-not-written", atLeast: 2, noLeak: true, want: "85|", astAnswers: "94|", src: `
+	{name: "a-map-the-frame-still-reads-is-not-written", atLeast: 2, want: "85|", src: `
 import "core/map";
 function grown(m: Map[i32, i32], k: i32): Map[i32, i32] { return m.insert(k, k * 3); }
 function main(): i32 {
@@ -3395,7 +3252,7 @@ function main(): i32 {
     if (g.get_or(7, -1) != 21 || !had || !had2) { return 99; }
     return m.len() + n.len() * 2 + g.len() * 4 + rest.len() * 8 + snapshot.len() * 16 + rest2.len() * 32;
 }`},
-	{name: "a-shared-string-map-is-copied-before-it-is-written", atLeast: 1, noLeak: true, src: `
+	{name: "a-shared-string-map-is-copied-before-it-is-written", atLeast: 1, want: "31|", src: `
 import "core/map";
 function main(): i32 {
     var acc: i32 = 0;
@@ -3416,9 +3273,8 @@ function main(): i32 {
 	// its own behind a contract (semsource.os_contracts), where the census
 	// over the corpus found 773 call sites refusing for the missing contract,
 	// most of them in the coreutils. A fresh string or array is the caller's
-	// and a scalar owns nothing; the pin is that the produced bodies free no
-	// less than the AST lowering, which leaks several of these results (#9832).
-	{name: "os-floor-queries", atLeast: 2, nativeOnly: true, src: `
+	// and a scalar owns nothing.
+	{name: "os-floor-queries", atLeast: 2, want: "255|", nativeOnly: true, src: `
 function queries(): i32 {
     var n: i32 = 0;
     if (getcwd().len() > 0) { n = n + 1; }
@@ -3438,7 +3294,7 @@ function main(): i32 { return queries(); }
 	// fstat, the open flags, lseek. Each hands back a fresh Result box the
 	// caller owns. /dev/null is not preopened under wasmtime, so on that leg
 	// both lowerings take the Err arm and still agree.
-	{name: "os-floor-handles", atLeast: 2, src: `
+	{name: "os-floor-handles", atLeast: 2, want: "15|", wasm: "out-of-range|", src: `
 function handles(path: string): i32 {
     var n: i32 = 0;
     match (open_reader(path)) {
@@ -3457,7 +3313,7 @@ function main(): i32 { return handles("/dev/null") % 256; }
 	// The directory, link and permission ops over a directory temp_dir hands
 	// back, and statfs on it; every path is lent and every outcome a fresh
 	// Result box. access and chmod are fsmode, which wasi does not grant.
-	{name: "os-floor-files", atLeast: 2, nativeOnly: true, src: `
+	{name: "os-floor-files", atLeast: 2, want: "255|", nativeOnly: true, src: `
 function files(dir: string): i32 {
     var n: i32 = 0;
     var sub: string = dir + "/d";
@@ -3483,7 +3339,7 @@ function main(): i32 {
 `},
 	// subprocess hands back a record the caller owns, its two strings among
 	// the parts a release walks; the arguments are lent.
-	{name: "os-floor-subprocess", atLeast: 1, nativeOnly: true, src: `
+	{name: "os-floor-subprocess", atLeast: 1, want: "3|hi\n\n", nativeOnly: true, src: `
 function main(): i32 {
     var p: ProcessResult = subprocess("/bin/echo", ["hi"], "");
     print(p.stdout);
@@ -3494,7 +3350,7 @@ function main(): i32 {
 	// (`insert[K: cmp.Ord, V]` on `OrdMap[K, V]`) is cloned per receiver
 	// instantiation by parser.monomorphize_structs. The clone is concrete, so
 	// it is an ordinary declaration here, not a template nothing instantiates.
-	{name: "generic-struct-method-redeclares-receiver-vars", atLeast: 2, src: `
+	{name: "generic-struct-method-redeclares-receiver-vars", atLeast: 2, want: "27|", src: `
 struct Pair[T] { a: T, b: T }
 function (p: Pair[T]) put[T](v: T): Pair[T] { return Pair { a: p.b, b: v }; }
 function main(): i32 {
@@ -3507,7 +3363,7 @@ function main(): i32 {
 	// bounded key is that clone, and the tree under it is produced with it.
 	// 65 of 65: core/cmp's numeric `add` impls reach only i32 and u64 (and
 	// bigint); the f32, f64, i64 and u32 ones are unreachable.
-	{name: "ordmap-bounded-method-clones", atLeast: 61, src: `
+	{name: "ordmap-bounded-method-clones", atLeast: 61, want: "52|", src: `
 import "std/ordmap";
 function main(): i32 {
     var m: ordmap.OrdMap[i32, i32] = ordmap.ordmap_new();
@@ -3523,7 +3379,7 @@ function main(): i32 {
 	// The value reaches the call every way a function value can: a parameter,
 	// a local, a record field, a tuple element, a lambda and a bare name (the
 	// lift's trampoline for a void target calls it as a statement).
-	{name: "void-callback", atLeast: 7, src: `
+	{name: "void-callback", atLeast: 7, want: "1|a\nb\nc!\nd\ne\nf\n", src: `
 function each(xs: string[], f: (string) => void): void {
     for x in xs { f(x); }
 }
@@ -3547,9 +3403,8 @@ function main(): i32 {
 	// field takes (ssarc.drop_variant_fields drops a variant's fields as a
 	// record's). Nested in an array or tuple it stays refused, as for a
 	// record. `dropped` is a chain never run, so its closures are released by
-	// the walk alone; the AST lowering leaks every chain built through
-	// `f(w)` (#10577), so the pin here is absolute.
-	{name: "closure-in-a-variant-field", atLeast: 4, noLeak: true, src: `
+	// the walk alone (#10577).
+	{name: "closure-in-a-variant-field", atLeast: 4, want: "33|", src: `
 enum Step {
     Done(i32),
     Next(i32, (i32) => Step),
@@ -3584,9 +3439,8 @@ function main(): i32 {
 	// The rest of the OS floor (semsource.os_floor_contracts): the signal,
 	// priority, group and process-group builtins, chroot, poll over a
 	// timerfd. Each arm counts whichever way the host answers, so the count
-	// is the same in a container and on a developer machine, and the pin is
-	// that both lowerings answer alike and the produced bodies free no less.
-	{name: "os-floor-signals-and-process", atLeast: 2, nativeOnly: true, src: `
+	// is the same in a container and on a developer machine.
+	{name: "os-floor-signals-and-process", atLeast: 2, want: "9|", nativeOnly: true, src: `
 function signals(): i32 {
     var n: i32 = 0;
     if (signal_ignore(2) >= 0) { n = n + 1; }
@@ -3623,7 +3477,7 @@ function main(): i32 { return signals(); }
 	// on native), the three closes, `sync` as a statement, and
 	// the set-id calls asking for root, which a host refuses or grants and
 	// the row counts either way.
-	{name: "os-floor-sockets-and-ids", atLeast: 2, nativeOnly: true, src: `
+	{name: "os-floor-sockets-and-ids", atLeast: 2, want: "9|", nativeOnly: true, src: `
 function sockets(): i32 {
     var n: i32 = 0;
     var listener: i32 = tcp_listen(0);
@@ -3662,8 +3516,10 @@ function main(): i32 { return sockets(); }
 `},
 	// The file-time, node, permission and directory ops over a temp_dir, and
 	// the terminal questions asked of a descriptor and of a handle. mknod
-	// makes a FIFO, the one node an unprivileged caller may create.
-	{name: "os-floor-times-nodes-terminal", atLeast: 3, nativeOnly: true, src: `
+	// makes a FIFO, the one node an unprivileged caller may create. chmod_at
+	// follows the link: the nofollow form is fchmodat2, which qemu-user's
+	// aarch64 table lacks.
+	{name: "os-floor-times-nodes-terminal", atLeast: 3, want: "12|", nativeOnly: true, src: `
 function files(dir: string): i32 {
     var n: i32 = 0;
     var f: string = dir + "/f";
@@ -3671,7 +3527,7 @@ function files(dir: string): i32 {
         Ok(_) => { n = n + 1; },
         Err(_) => {}
     }
-    match (chmod_at(f, 420, false)) {
+    match (chmod_at(f, 420, true)) {
         Ok(_) => { n = n + 1; },
         Err(_) => {}
     }
@@ -3742,12 +3598,11 @@ function main(): i32 {
 	// `xs[lo:hi]` on an array of scalars: the checker types it `[T]`, the
 	// runtime copies the window into a fresh array (arr_slice), and the typed
 	// lowering produces it as an owned value of the source's type, bounds
-	// left to the runtime as the AST lowering leaves them. An open end reads
-	// the source's length. Every element width the copy distinguishes is
-	// here: u8 and i32 (4-byte on wasm), i64 and f64 (8-byte). The slices
-	// handed straight to `sum` are the ones the AST lowering never releases
-	// (#9843), so the pin is absolute.
-	{name: "array-slice-of-scalars", atLeast: 2, noLeak: true, src: `
+	// left to the runtime. An open end reads the source's length. Every
+	// element width the copy distinguishes is here: u8 and i32 (4-byte on
+	// wasm), i64 and f64 (8-byte). The slices handed straight to `sum` are
+	// released too (#9843).
+	{name: "array-slice-of-scalars", atLeast: 2, want: "125|", wasm: "out-of-range|", src: `
 function sum(xs: [u8]): i32 {
     var t: i32 = 0;
     var i: i32 = 0;
@@ -3773,9 +3628,7 @@ function main(): i32 {
 	// record: their runtime helpers used to keep the scratch block each call
 	// filled (the 4 KiB path buffer, the 64 KiB drain buffers), so nothing
 	// could pin these at zero (#9832). The helpers own their scratch now, so
-	// the typed lowering, which releases the results, frees everything. The
-	// AST lowering still never releases the fresh result, which the relative
-	// pin tolerates and this row records.
+	// the typed lowering, which releases the results, frees everything.
 	// A mutable capture is a Cell[T] on both lowerings (#9320): the scalars the
 	// closure writes (every scalar kind, not only i32 and boolean, which was
 	// all the box scan admitted and cost an i64 or f64 its writes), a string
@@ -3785,7 +3638,7 @@ function main(): i32 {
 	// the typed lowering used to read at its creation-time value. Both
 	// lowerings are pinned to the native answer, since before the change they
 	// agreed with each other on the wrong one.
-	{name: "a-capture-the-closure-writes-is-a-cell", atLeast: 7, want: "42|", astAnswers: "42|", noLeak: true, src: `
+	{name: "a-capture-the-closure-writes-is-a-cell", atLeast: 7, want: "42|", src: `
 function tally(): i32 {
     var n: i32 = 0;
     var wide: i64 = 100i64;
@@ -3825,7 +3678,7 @@ function main(): i32 {
     return (tally() + k + rebound()) % 100;
 }
 `},
-	{name: "os-floor-fresh-results-are-freed", atLeast: 3, noLeak: true, nativeOnly: true, src: `
+	{name: "os-floor-fresh-results-are-freed", atLeast: 3, want: "57|", nativeOnly: true, src: `
 function leaves(dir: string, p: string): i32 {
     var n: i32 = 0;
     match (create_dir(p + ".d", 493)) { Ok(_) => { n = n + 1; }, Err(_) => { n = n + 2; } }
@@ -3843,13 +3696,13 @@ function leaves(dir: string, p: string): i32 {
 function each(dir: string): i32 {
     var n: i32 = 0;
     var cwd: string = getcwd();
-    n = n + cwd.len() % 7;
+    if (cwd.len() > 0) { n = n + 1; }
     var host: string = hostname();
-    n = n + host.len() % 7;
+    if (host.len() > 0) { n = n + 1; }
     var sys: string = uname_field(0);
     n = n + sys.len() % 7;
     var env: string[] = environ();
-    n = n + env.len() % 7;
+    if (env.len() > 0) { n = n + 1; }
     match (create_symlink("target", dir + "/lnk")) {
         Ok(_) => {
             match (read_link(dir + "/lnk")) {
@@ -3912,7 +3765,7 @@ function main(): i32 {
 	// borrowed string parameter offers. Only an INSERT's key joins the key
 	// column, where the map may outlive the bytes the view borrows, so only
 	// that one is refused.
-	{name: "a-view-is-a-map-read-key", atLeast: 46, noLeak: true, src: `
+	{name: "a-view-is-a-map-read-key", atLeast: 46, want: "47|", src: `
 import "core/map";
 import "std/string";
 function tally(text: string, m: Map[string, i32]): i32 {
@@ -3948,8 +3801,8 @@ function main(): i32 {
 	// which engage only on the sanitize leg. wasm keeps its own hand-written
 	// WAT body for this builtin, so the register legs' fix says nothing about
 	// it: before the wasm half of the fix this program printed 25 over-releases
-	// on the typed leg against its own AST leg's 0.
-	{name: "a-builtin-string-result-is-never-its-argument", atLeast: 60, noLeak: true, src: `
+	// on wasm.
+	{name: "a-builtin-string-result-is-never-its-argument", atLeast: 60, want: "29|over-releases 0\n", src: `
 import "std/string";
 import "std/io";
 function sq(s: string): string { return s.replace("Q", "Z"); }
@@ -3976,7 +3829,7 @@ function main(): i32 {
 	// what settles it. Every declaration here refused before, through the
 	// binding, so `std/result`'s whole combinator surface stood on the AST
 	// lowering.
-	{name: "an-unannotated-binding-takes-its-call-s-type", atLeast: 53, noLeak: true, src: `
+	{name: "an-unannotated-binding-takes-its-call-s-type", atLeast: 53, want: "21|", src: `
 import "std/option";
 import "std/result";
 function mapped(): i32 {
@@ -4002,7 +3855,7 @@ function main(): i32 {
 	// without saying what `Some` holds, and only the payload can say. The
 	// checker does not settle it either, since it infers the literal from the
 	// same parameter.
-	{name: "a-variant-literal-types-itself-where-the-parameter-cannot", atLeast: 44, noLeak: true, src: `
+	{name: "a-variant-literal-types-itself-where-the-parameter-cannot", atLeast: 44, want: "39|", src: `
 import "std/option";
 function both(): i32 {
     var s: Option[i32] = Some(5);
@@ -4023,7 +3876,7 @@ function main(): i32 {
 	// the contract table for `Empty.to_string` and found nothing. Every other
 	// spelling of the same call already worked: a binding of the variant, an
 	// annotated binding, and a payloaded `Circle(1).to_string()`.
-	{name: "a-variant-is-a-value-not-a-type-head", atLeast: 95, noLeak: true, src: `
+	{name: "a-variant-is-a-value-not-a-type-head", atLeast: 95, want: "77|", src: `
 import "core/cmp";
 @derive(cmp.Eq, cmp.Display, cmp.Ord)
 enum Shape { Circle(i32), Square(i32), Empty }
@@ -4036,7 +3889,7 @@ function main(): i32 {
     while (i < 20) { acc = acc + direct().len() + qualified().len() + bound().len(); i = i + 1; }
     return acc % 101;
 }`},
-	{name: "a-method-reads-its-receiver-by-name", atLeast: 97, noLeak: true, src: `
+	{name: "a-method-reads-its-receiver-by-name", atLeast: 97, want: "49|", src: `
 import "std/json";
 @derive(json.Json)
 struct Bag { items: i32[], names: string[] }
@@ -4057,7 +3910,7 @@ function main(): i32 {
     if (Held { xs: [1.5, 2.5] }.render() != "[1.5,2.5]") { return 2; }
     return acc % 101;
 }`},
-	{name: "a-composite-compares-through-its-own-method", atLeast: 51, noLeak: true, src: `
+	{name: "a-composite-compares-through-its-own-method", atLeast: 51, want: "42|", src: `
 import "core/cmp";
 @derive(cmp.Eq, cmp.Ord)
 struct Point { x: i32, y: string }
@@ -4099,7 +3952,7 @@ function main(): i32 {
     }
     return acc + 22;
 }`},
-	{name: "a-u8-converts-to-and-from-a-float", atLeast: 1, noLeak: true, src: `
+	{name: "a-u8-converts-to-and-from-a-float", atLeast: 1, want: "128|", wasm: "out-of-range|", src: `
 function main(): i32 {
     var acc: i32 = 0;
     var i: i32 = 0;
@@ -4126,7 +3979,7 @@ function main(): i32 {
 	// stamps the parameter from the callee's callback slot (native
 	// inferUseParam), before anything is typed against it. Produces 0 of 3
 	// without the stamp.
-	{name: "use-binding-typed-from-its-callee", atLeast: 3, noLeak: true, src: `
+	{name: "use-binding-typed-from-its-callee", atLeast: 3, want: "42|", src: `
 function with_doubled(n: i32, k: (i32) => i32): i32 { return k(n * 2); }
 
 function main(): i32 {
@@ -4136,7 +3989,7 @@ function main(): i32 {
 `},
 	// The binding is a string, read through a method: the stamp carries the
 	// callee's spelling, not a scalar guess.
-	{name: "use-binding-is-a-string", atLeast: 3, noLeak: true, src: `
+	{name: "use-binding-is-a-string", atLeast: 3, want: "25|", src: `
 function taker(f: (string) => i32): i32 { return f("hi"); }
 
 function main(): i32 {
@@ -4147,7 +4000,7 @@ function main(): i32 {
 	// The `use` sits inside an arrow lambda's block body (the shape
 	// conformance/cases/arrow_lambda_block_body pins), so the stamp runs in
 	// the lambda's own scope and the lifted body is typed twice over.
-	{name: "use-binding-inside-a-lambda", atLeast: 4, noLeak: true, src: `
+	{name: "use-binding-inside-a-lambda", atLeast: 4, want: "42|", src: `
 function give(x: i32, cb: (i32) => i32): i32 { return cb(x); }
 
 function main(): i32 {
@@ -4164,9 +4017,9 @@ function main(): i32 {
 	// ssasem.retained_column admitted alone; the rest were refused as an
 	// alias of the map's own elements, which is the refusal that kept
 	// conformance/cases/map_narrow_int_keys on the AST lowering (#9550). The
-	// AST lowering is the oracle here: native materialises a `u8` column at
-	// the wrong stride (#10000), so its answer is not the one to pin.
-	{name: "narrow-scalar-columns-snapshot", atLeast: 1, noLeak: true, src: `
+	// answer is the interpreter's: native codegen materialises a `u8` column
+	// at the wrong stride (#10000).
+	{name: "narrow-scalar-columns-snapshot", atLeast: 1, want: "38|", src: `
 import "core/map";
 
 function main(): i32 {
@@ -4195,7 +4048,7 @@ function main(): i32 {
 	// kept conformance/cases/trailing_commas on the AST lowering (#9550). A
 	// variable the arguments and destination leave unbound is still refused,
 	// as `unbound type variable`.
-	{name: "explicit-type-arguments-at-a-call", atLeast: 2, noLeak: true, src: `
+	{name: "explicit-type-arguments-at-a-call", atLeast: 2, want: "42|", src: `
 function pick[T](xs: T[], i: i32): T { return xs[i]; }
 
 function main(): i32 {
@@ -4209,7 +4062,7 @@ function main(): i32 {
 	// source label, so a `continue outer` or `break scan` inside it named a
 	// loop the semantic source could not find (`loop exit names no enclosing
 	// loop`; conformance/cases/labeled_loops, #9550).
-	{name: "labelled-range-loop", atLeast: 1, noLeak: true, src: `
+	{name: "labelled-range-loop", atLeast: 1, want: "13|", src: `
 function main(): i32 {
     var sum: i32 = 0;
     outer: for i in 0..4 {
@@ -4236,7 +4089,7 @@ function main(): i32 {
 	// as an integer of no integer type (conformance/cases/char_byte_literals,
 	// #9550). A char is a 32-bit cell carrying a code point; it converts to and
 	// from every integer width, and compares as one.
-	{name: "char-literals", atLeast: 3, noLeak: true, src: `
+	{name: "char-literals", atLeast: 3, want: "42|", src: `
 const NEWLINE: char = '\n';
 
 function upper_ascii(c: char): char {
@@ -4263,7 +4116,7 @@ function main(): i32 {
 	// with `operator contract: V + V` (conformance/cases/op_overload_nested,
 	// #9550). The nested form leaves two intermediate records live across the
 	// outer call, which the leak pin covers.
-	{name: "arithmetic-operators-on-a-struct", atLeast: 5, noLeak: true, src: `
+	{name: "arithmetic-operators-on-a-struct", atLeast: 5, want: "42|", src: `
 struct V { x: i32 }
 function (a: V) add(b: V): V { return V { x: a.x + b.x }; }
 function (a: V) sub(b: V): V { return V { x: a.x - b.x }; }
@@ -4284,7 +4137,7 @@ function main(): i32 {
 	// refused ("callee is neither a name nor a field"). The result is stamped
 	// `fn` with its signature sidecars now (#10025, first half). The returned
 	// lambda captures nothing; a capturing one is the issue's second half.
-	{name: "a-lambda-returning-a-lambda-is-called-through-its-result", atLeast: 3, noLeak: true, src: `
+	{name: "a-lambda-returning-a-lambda-is-called-through-its-result", atLeast: 3, want: "42|", src: `
 function main(): i32 {
     var mk = () => { return (b: i32): i32 => b * 2; };
     var f = mk();
@@ -4298,7 +4151,7 @@ function main(): i32 {
 	// and the anchor passes through `pick`, whose result is `tail`'s. Each
 	// trip allocates the next string where the released one was, so a
 	// dangling view prints it (conformance/cases/alloc_flat_method_identity_return).
-	{name: "a-view-result-is-anchored-to-its-argument", atLeast: 3, noLeak: true, src: `
+	{name: "a-view-result-is-anchored-to-its-argument", atLeast: 3, want: "0|abcdefghijklmnopqrstuvwxyz01234567890\n23456789012345678901234567890ab0\nbcdefghijklmnopqrstuvwxyz01234567891\n23456789012345678901234567890ab1\ncdefghijklmnopqrstuvwxyz01234567892\n23456789012345678901234567890ab2\n", wasm: "out-of-range|abcdefghijklmnopqrstuvwxyz01234567890\n23456789012345678901234567890ab0\nbcdefghijklmnopqrstuvwxyz01234567891\n23456789012345678901234567890ab1\ncdefghijklmnopqrstuvwxyz01234567892\n23456789012345678901234567890ab2\n", src: `
 import "std/i32";
 function (s: string) tail(n: i32): str {
     if (n <= 0) { return s; }
@@ -4329,7 +4182,7 @@ function main(): i32 {
 	// of the payload rather than dying at its own last use, the slice. Each trip
 	// allocates the next string where a released one was, so a dangling view
 	// prints it.
-	{name: "a-slice-view-keeps-its-local-alive", atLeast: 1, noLeak: true, src: `
+	{name: "a-slice-view-keeps-its-local-alive", atLeast: 1, want: "0|abcdefghijklmnopqrstuvwxyz0123\nabcdefghijklmnopqrstuvwxyz0123\nabcdefghijklmnopqrstuvwxyz0123\n", src: `
 import "std/i32";
 function main(): i32 {
     var t: i32 = 0;
@@ -4353,7 +4206,7 @@ function main(): i32 {
 	// holds, so it takes the payload with no count to test and releases the box
 	// alone; the Option the function returns is anchored to the parameter its
 	// view reads (conformance/cases/string_slice_option).
-	{name: "an-option-view-result-takes-its-payload", atLeast: 2, noLeak: true, src: `
+	{name: "an-option-view-result-takes-its-payload", atLeast: 2, want: "0|abc\nabc\nabc\n", src: `
 import "std/i32";
 function first_three(s: string): Option[str] {
     var v: str = s[0:3]?;
@@ -4384,7 +4237,7 @@ function main(): i32 {
 	// reassigned from an owned string, std/string's drop, merges two sources
 	// at its phi. Each operand is a counted string's own box, so the phi's unit
 	// carries the bytes and anchors nothing (examples/cli/fold.fern).
-	{name: "a-view-of-counted-strings-carries-its-own-bytes", atLeast: 2, noLeak: true, src: `
+	{name: "a-view-of-counted-strings-carries-its-own-bytes", atLeast: 2, want: "0|the quick \nbrown fox \njumps over\n the lazy \ndog\n", src: `
 import "std/string";
 function fold_line(line: string, width: i32): i32 {
     var n: i32 = 0;
@@ -4404,7 +4257,7 @@ function main(): i32 {
 	// A view of either of two parameters is anchored to both, so the caller
 	// keeps both arguments alive while it lives. (A view of a local is the
 	// checker's E065.)
-	{name: "a-view-result-of-either-parameter-is-anchored-to-both", atLeast: 2, noLeak: true, src: `
+	{name: "a-view-result-of-either-parameter-is-anchored-to-both", atLeast: 2, want: "0|", src: `
 import "std/i32";
 function either(a: string, b: string, first: boolean): str {
     if (first) { return a; }
@@ -4419,7 +4272,7 @@ function main(): i32 {
 	// is anchored to both of its own parameters, and `either` is also handed
 	// its own result back as one of its arguments. Returning the view
 	// parameter `b` returns a fresh view of it, since the parameter is lent.
-	{name: "a-view-result-of-two-parameters-passes-through-a-caller", atLeast: 3, noLeak: true, src: `
+	{name: "a-view-result-of-two-parameters-passes-through-a-caller", atLeast: 3, want: "232|", wasm: "out-of-range|", src: `
 import "std/i32";
 function either(a: str, b: str, first: boolean): str {
     if (first) { return slice_unchecked(a, 1, a.len()); }
@@ -4445,7 +4298,7 @@ function main(): i32 {
 	// parameter, and a view result reading either parameter (#10687). Each
 	// source dies before the value's last read unless it is anchored, and the
 	// junk strings allocated in between then show up in the printed views.
-	{name: "a-value-holding-views-of-two-sources-is-anchored-to-both", atLeast: 4, noLeak: true, src: `
+	{name: "a-value-holding-views-of-two-sources-is-anchored-to-both", atLeast: 4, want: "119|bcdefghijklmnopqrstuvwxyz01234\nDEFGHIJKLMNOPQRSTUVWXYZ9876543\nabcdefghijklmnopqrstuvwxyz0123\n23456789abcdefghijklmnopqrstuv\nklmnopqrstuvwxyz0123456789abcd\nRSTUVWXYZ0123456789ABCDEFGHIJK\nbcdefghijklmnopqrstuvwxyz01234\nDEFGHIJKLMNOPQRSTUVWXYZ9876543\nabcdefghijklmnopqrstuvwxyz0123\n23456789abcdefghijklmnopqrstuv\nklmnopqrstuvwxyz0123456789abcd\nqrstuvwxyz0123456789abcdefghij\nbcdefghijklmnopqrstuvwxyz01234\nDEFGHIJKLMNOPQRSTUVWXYZ9876543\nabcdefghijklmnopqrstuvwxyz0123\n23456789abcdefghijklmnopqrstuv\nklmnopqrstuvwxyz0123456789abcd\nRSTUVWXYZ0123456789ABCDEFGHIJK\n", src: `
 import "std/i32";
 function keep(v: str, xs: str[]): str[] { return xs.append(v); }
 function pair(a: string, b: string): str[] {
@@ -4486,7 +4339,7 @@ function main(): i32 {
 `},
 	// A view parameter is lent, so storing it in a record, a variant or an
 	// array literal, or returning it, takes a fresh view of its bytes.
-	{name: "a-kept-view-parameter-is-a-fresh-view", atLeast: 5, noLeak: true, src: `
+	{name: "a-kept-view-parameter-is-a-fresh-view", atLeast: 5, want: "18|bcd\nde\nefgh7\n", src: `
 import "std/i32";
 struct P { a: str, n: i32 }
 function rec(v: str): P { return P { a: v, n: 1 }; }
@@ -4512,7 +4365,7 @@ function main(): i32 {
 	// box between them, and each frees its own (#10726). Here the copy is the
 	// append in `grow` on a lent array; before, `xs`'s release freed the box
 	// `ys[0]` still held, and `junk` reused it, so `ys[0]` printed "zz".
-	{name: "a-copied-array-of-views-owns-its-boxes", atLeast: 4, noLeak: true, want: "3|ab\ncd\n", astAnswers: "3|ab\ncd\n", src: `
+	{name: "a-copied-array-of-views-owns-its-boxes", atLeast: 4, want: "3|ab\ncd\n", src: `
 function mk(s: string): str[] {
     var xs: str[] = [];
     xs = xs.append(slice_unchecked(s, 0, 2));
@@ -4532,7 +4385,7 @@ function main(): i32 {
 	// The same for every copy of a shared array of views: an append, a with, a
 	// window and an append onto a shared record's field, each with the
 	// original still live.
-	{name: "every-copy-of-a-shared-array-of-views-owns-its-boxes", atLeast: 2, noLeak: true, want: "13|abcd\nabcdef\nabgh\nab\nababbc\n", astAnswers: "13|abcd\nabcdef\nabgh\nab\nababbc\n", src: `
+	{name: "every-copy-of-a-shared-array-of-views-owns-its-boxes", atLeast: 2, want: "13|abcd\nabcdef\nabgh\nab\nababbc\n", src: `
 struct H { names: str[], n: i32 }
 function mk(s: string): str[] {
     var xs: str[] = [];
@@ -4563,7 +4416,7 @@ function main(): i32 {
 	// map keeps its own boxes, which it frees on its drop; before #10701 each
 	// read shared them, the reader's release freed the map's entry, and
 	// `junk` reused it, so later reads printed "zzz".
-	{name: "every-read-of-a-view-map-value-is-a-fresh-view", atLeast: 2, noLeak: true, src: `
+	{name: "every-read-of-a-view-map-value-is-a-fresh-view", atLeast: 2, want: "13|ab\ncde\nh\nab\ncde\nab\ncde\ncde\nab\n", src: `
 import "core/map";
 function fill(s: string): Map[i32, str] {
     var m: Map[i32, str] = map_new(4);
@@ -4594,7 +4447,7 @@ function main(): i32 {
 	// a literal held as a view reads back as itself. A view column stays off
 	// core/map, whose retains would share the boxes. The AST lowering refuses
 	// the program.
-	{name: "a-copied-view-map-owns-its-boxes", atLeast: 3, noLeak: true, want: "28|gh\nabcdefgh!\nlit\nq\ngone\nbc\nabcdefgh!\nbc\nbc\nd\n", src: `
+	{name: "a-copied-view-map-owns-its-boxes", atLeast: 3, want: "28|gh\nabcdefgh!\nlit\nq\ngone\nbc\nabcdefgh!\nbc\nbc\nd\n", src: `
 import "core/map";
 function fill(s: string): Map[string, str] {
     var m: Map[string, str] = map_new(4);
@@ -4638,7 +4491,7 @@ function main(): i32 {
 	// verified once it carries the anchor table: without it the call result
 	// is its own root, which the phi cannot depend on, and `build` was
 	// refused as "dependency unavailable at use" (#10724).
-	{name: "a-loop-phi-over-an-anchored-call-result-is-produced", atLeast: 3, noLeak: true, src: `
+	{name: "a-loop-phi-over-an-anchored-call-result-is-produced", atLeast: 3, want: "12|abc\n", src: `
 import "std/i32";
 function id(xs: str[]): str[] { return xs; }
 function build(s: string, k: i32): str[] {
@@ -4657,7 +4510,7 @@ function main(): i32 {
 `},
 	// The same through `keep`, whose result is anchored to both its view
 	// parameter and its array, so the loop's array holds views of two sources.
-	{name: "a-loop-keeping-views-of-two-sources-through-a-call-is-produced", atLeast: 3, noLeak: true, src: `
+	{name: "a-loop-keeping-views-of-two-sources-through-a-call-is-produced", atLeast: 3, want: "21|ab,A,bc,B,cd,C,de,D,ef,E,\n", src: `
 import "std/i32";
 function keep(v: str, xs: str[]): str[] { return xs.append(v); }
 function build(a: string, b: string, k: i32): str[] {
@@ -4684,8 +4537,7 @@ function main(): i32 {
 `},
 	// #10738's program: an anonymous slice kept through `keep` in a loop. It
 	// failed verification the same way as #10724 and is produced by that fix.
-	// The AST lowering answers the same and leaks the views.
-	{name: "a-loop-keeping-an-anonymous-slice-through-a-call-is-produced", atLeast: 3, noLeak: true, src: `
+	{name: "a-loop-keeping-an-anonymous-slice-through-a-call-is-produced", atLeast: 3, want: "5|", src: `
 function keep(v: str, xs: str[]): str[] { return xs.append(v); }
 function build(s: string, n: i32): str[] {
     var xs: str[] = [];
@@ -4699,7 +4551,7 @@ function main(): i32 { return build("abcdefgh", 5).len(); }
 	// declared there. The phi at the join read a source only one incoming path
 	// defines, and was refused as "dependency unavailable at use" (#10796);
 	// the operand is now copied on its edge.
-	{name: "a-str-local-assigned-a-view-of-a-branch-local-is-produced", atLeast: 4, noLeak: true, src: `
+	{name: "a-str-local-assigned-a-view-of-a-branch-local-is-produced", atLeast: 4, want: "12|<p:xx><>amp:x!\n", src: `
 function mk(n: i32): string {
     var s: string = "stamp:";
     var i: i32 = 0;
@@ -4729,7 +4581,7 @@ function main(): i32 {
 `},
 	// The same through a loop, whose header phi carries the view of the
 	// previous round's local.
-	{name: "a-str-local-assigned-a-view-of-a-loop-body-local-is-produced", atLeast: 3, noLeak: true, src: `
+	{name: "a-str-local-assigned-a-view-of-a-loop-body-local-is-produced", atLeast: 3, want: "8|[bccc][-]\n", src: `
 function mk(n: i32): string {
     var s: string = "ab";
     var i: i32 = 0;
@@ -4753,7 +4605,7 @@ function main(): i32 {
 `},
 	// A container built in a branch or a loop body around a view of a string
 	// declared there: its views are copied where the construction takes them.
-	{name: "a-str-array-built-from-a-view-of-a-branch-local-is-produced", atLeast: 3, noLeak: true, src: `
+	{name: "a-str-array-built-from-a-view-of-a-branch-local-is-produced", atLeast: 3, want: "3|ab|\n", src: `
 function mk(n: i32): string {
     var s: string = "ab";
     var i: i32 = 0;
@@ -4773,7 +4625,7 @@ function f(n: i32): string {
 function main(): i32 { print(f(3) + f(0)); return f(2).len(); }
 `},
 	// The control: the source declared above the branch dominates the join.
-	{name: "a-str-array-built-from-a-view-of-a-dominating-local-is-produced", atLeast: 3, noLeak: true, src: `
+	{name: "a-str-array-built-from-a-view-of-a-dominating-local-is-produced", atLeast: 3, want: "3|ab|\n", src: `
 function mk(n: i32): string {
     var s: string = "ab";
     var i: i32 = 0;
@@ -4792,7 +4644,7 @@ function f(n: i32): string {
 }
 function main(): i32 { print(f(3) + f(0)); return f(2).len(); }
 `},
-	{name: "a-tuple-option-and-array-of-views-of-a-loop-body-local-is-produced", atLeast: 3, noLeak: true, src: `
+	{name: "a-tuple-option-and-array-of-views-of-a-loop-body-local-is-produced", atLeast: 3, want: "13|abc|a,lit,c,c,c x|-,lit\n", src: `
 function mk(n: i32): string {
     var s: string = "ab";
     var i: i32 = 0;
@@ -4822,7 +4674,7 @@ function main(): i32 { print(f(3) + " " + f(0)); return f(2).len(); }
 	// return temp is never written on a void return, and is not declared.
 	// Both legs share that expansion, so each is pinned to the interpreter's
 	// answer rather than to the other.
-	{name: "a-void-function-with-a-defer-and-a-return-is-produced", atLeast: 2, noLeak: true, want: "0|adbd", astAnswers: "0|adbd", src: `
+	{name: "a-void-function-with-a-defer-and-a-return-is-produced", atLeast: 2, want: "0|adbd", src: `
 function f(n: i32): void {
     defer write("d");
     if (n > 0) { write("a"); return; }
@@ -4833,7 +4685,7 @@ function main(): i32 { f(1); f(0); return 0; }
 `},
 	// A `.with` and a map insert take a view of a branch local: copied where
 	// each takes it.
-	{name: "an-array-with-a-view-of-a-branch-local-is-produced", atLeast: 3, noLeak: true, src: `
+	{name: "an-array-with-a-view-of-a-branch-local-is-produced", atLeast: 3, want: "3|ab| zz|\n", src: `
 function mk(n: i32): string {
     var s: string = "ab";
     var i: i32 = 0;
@@ -4852,7 +4704,7 @@ function f(n: i32): string {
 }
 function main(): i32 { print(f(3) + " " + f(0)); return f(2).len(); }
 `},
-	{name: "a-map-inserted-a-view-of-a-branch-local-is-produced", atLeast: 3, noLeak: true, src: `
+	{name: "a-map-inserted-a-view-of-a-branch-local-is-produced", atLeast: 3, want: "3|k|1 0\n", src: `
 import "core/map";
 import "std/i32";
 function mk(n: i32): string {
@@ -4875,7 +4727,7 @@ function main(): i32 { print(f(3) + " " + f(0)); return f(2).len(); }
 `},
 	// A container a call returns, anchored to a string declared in the branch or
 	// loop body it merges out of, is copied whole at the merge (#10815).
-	{name: "a-str-array-a-call-returns-from-a-branch-local-is-produced", atLeast: 4, noLeak: true, src: `
+	{name: "a-str-array-a-call-returns-from-a-branch-local-is-produced", atLeast: 4, want: "4|a|b|\n", src: `
 function mk(n: i32): string {
     var s: string = "ab";
     var i: i32 = 0;
@@ -4895,7 +4747,7 @@ function f(n: i32): string {
 }
 function main(): i32 { print(f(3) + f(0)); return f(2).len(); }
 `},
-	{name: "a-tuple-a-call-returns-from-a-branch-local-is-produced", atLeast: 4, noLeak: true, src: `
+	{name: "a-tuple-a-call-returns-from-a-branch-local-is-produced", atLeast: 4, want: "4|a/bc -/-\n", src: `
 function mk(n: i32): string {
     var s: string = "ab";
     var i: i32 = 0;
@@ -4913,7 +4765,7 @@ function f(n: i32): string {
 }
 function main(): i32 { print(f(3) + " " + f(0)); return f(2).len(); }
 `},
-	{name: "an-option-a-call-returns-from-a-loop-body-local-is-produced", atLeast: 4, noLeak: true, src: `
+	{name: "an-option-a-call-returns-from-a-loop-body-local-is-produced", atLeast: 4, want: "7|some:ab none none\n", src: `
 function mk(n: i32): string {
     var s: string = "ab";
     var i: i32 = 0;
@@ -4941,7 +4793,7 @@ function main(): i32 { print(f(5) + " " + f(2) + " " + f(0)); return f(4).len();
 	// the last variant by exclusion. Each call reaches a different variant and
 	// reads every field it carries, so a wrong index or a phi operand paired
 	// with the wrong arm changes the answer.
-	{name: "a-three-variant-enum-a-call-returns-from-a-branch-local-is-produced", atLeast: 4, noLeak: true, src: `
+	{name: "a-three-variant-enum-a-call-returns-from-a-branch-local-is-produced", atLeast: 4, want: "5|ab/bc b:a c\n", src: `
 enum Tri { A(str, str), B(str), C }
 function mk(n: i32): string {
     var s: string = "ab";
@@ -4971,7 +4823,7 @@ function main(): i32 { print(f(1) + " " + f(2) + " " + f(3)); return f(1).len();
 	// was handed, so it anchors that temporary until its last read; read as
 	// holding no view, the temporary was released at the call and the views
 	// read what the churn reissued.
-	{name: "a-declared-enum-of-views-keeps-its-source-alive", atLeast: 4, noLeak: true, src: `
+	{name: "a-declared-enum-of-views-keeps-its-source-alive", atLeast: 4, want: "0|ab/bc b:a c\n", src: `
 import "std/i32";
 enum Tri { A(str, str), B(str), C }
 function mk(n: i32): string {
@@ -4998,7 +4850,7 @@ function main(): i32 { print(f(1) + " " + f(2) + " " + f(3)); return 0; }
 `},
 	// A declared record with view fields, merged from a branch: rebuilt field
 	// by field, the scalar read out and the views copied.
-	{name: "a-record-a-call-returns-from-a-branch-local-is-produced", atLeast: 4, noLeak: true, src: `
+	{name: "a-record-a-call-returns-from-a-branch-local-is-produced", atLeast: 4, want: "8|a/bc/2/3 -/-/1/0\n", src: `
 import "std/i32";
 struct Pair { a: str, b: str, n: i32 }
 function mk(n: i32): string {
@@ -5021,7 +4873,7 @@ function main(): i32 { print(f(3) + " " + f(0)); return f(2).len(); }
 	// A dyn holds a view when a box it can be holding does: `wrap`'s result is
 	// a `P` over its argument's bytes behind `dyn Size`, so the caller keeps the
 	// temporary it passed alive while the dyn lives, through allocator churn.
-	{name: "a-dyn-holding-a-view-keeps-its-source-alive", atLeast: 4, noLeak: true, src: `
+	{name: "a-dyn-holding-a-view-keeps-its-source-alive", atLeast: 4, want: "0|31 31\n", src: `
 import "std/i32";
 trait Size { function size(self: Self): i32; }
 struct P { a: str }
@@ -5044,7 +4896,7 @@ function main(): i32 { print(g(3).to_string() + " " + g(2).to_string()); return 
 `},
 	// A dyn holding a view, merged past its source: its box is tested for each
 	// concrete holding a view, and on a hit narrowed, copied and widened back.
-	{name: "a-dyn-holding-a-view-merged-past-its-source-is-copied", atLeast: 4, noLeak: true, src: `
+	{name: "a-dyn-holding-a-view-merged-past-its-source-is-copied", atLeast: 4, want: "0|31 26\n", src: `
 import "std/i32";
 trait Size { function size(self: Self): i32; }
 struct P { a: str }
@@ -5077,7 +4929,7 @@ function main(): i32 { print(g(3).to_string() + " " + g(0).to_string()); return 
 	// record and two enum variants holding views are copied, and a record and a
 	// boxed string holding none are kept, settled by the tests that refute the
 	// others.
-	{name: "a-dyn-over-several-boxes-merged-in-a-loop-is-copied", atLeast: 4, noLeak: true, src: `
+	{name: "a-dyn-over-several-boxes-merged-in-a-loop-is-copied", atLeast: 4, want: "0|31,103,213,7,1009,1009 26 31,103,213,213\n", src: `
 import "std/i32";
 trait Size { function size(self: Self): i32; }
 struct P { a: str }
@@ -5132,7 +4984,7 @@ function main(): i32 { print(g(5) + " " + g(0) + " " + g(3)); return 0; }
 `},
 	// A dyn widened from a box holding no view, built in a branch, reads no bytes
 	// but its own, so the merge keeps it.
-	{name: "a-dyn-widened-from-a-viewless-branch-local-is-produced", atLeast: 4, noLeak: true, src: `
+	{name: "a-dyn-widened-from-a-viewless-branch-local-is-produced", atLeast: 4, want: "0|21 26\n", src: `
 import "std/i32";
 trait Size { function size(self: Self): i32; }
 struct P { a: str }
@@ -5158,7 +5010,7 @@ function main(): i32 { print(g(3).to_string() + " " + g(0).to_string()); return 
 `},
 	// A view map a call returns, anchored to a branch local: rebuilt from its two
 	// column snapshots, each value copied.
-	{name: "a-view-map-a-call-returns-from-a-branch-local-is-copied", atLeast: 4, noLeak: true, src: `
+	{name: "a-view-map-a-call-returns-from-a-branch-local-is-copied", atLeast: 4, want: "0|ab/bcc/2 -/-/0\n", src: `
 import "std/i32";
 import "core/map";
 function mk(n: i32): string {
@@ -5191,7 +5043,7 @@ function main(): i32 { print(g(3) + " " + g(0)); return 0; }
 `},
 	// A map of records holding views, returned from a loop-body local and merged
 	// past it: each record value is rebuilt with its view copied.
-	{name: "a-map-of-view-records-a-call-returns-in-a-loop-is-copied", atLeast: 4, noLeak: true, src: `
+	{name: "a-map-of-view-records-a-call-returns-in-a-loop-is-copied", atLeast: 4, want: "0|2;x=ab/1;y=bcc/2 0\n", src: `
 import "std/i32";
 import "core/map";
 struct P { a: str, n: i32 }
@@ -5229,7 +5081,7 @@ function main(): i32 { print(g(3) + " " + g(0)); return 0; }
 `},
 	// A value read out of a view map holds the map's bytes, so it keeps the map,
 	// and the source the map is anchored to, alive.
-	{name: "a-view-map-value-read-keeps-the-map-alive", atLeast: 4, noLeak: true, src: `
+	{name: "a-view-map-value-read-keeps-the-map-alive", atLeast: 4, want: "0|2;bcc\n", src: `
 import "std/i32";
 import "core/map";
 function mk(n: i32): string {
@@ -5254,7 +5106,7 @@ function g(n: i32): string {
 }
 function main(): i32 { print(g(3)); return 0; }
 `},
-	{name: "a-nested-array-a-call-returns-from-a-branch-local-is-produced", atLeast: 4, noLeak: true, src: `
+	{name: "a-nested-array-a-call-returns-from-a-branch-local-is-produced", atLeast: 4, want: "5|a;bc;|\n", src: `
 function mk(n: i32): string {
     var s: string = "ab";
     var i: i32 = 0;
@@ -5276,7 +5128,7 @@ function main(): i32 { print(f(3) + "|" + f(0)); return f(2).len(); }
 `},
 	// A call anchored to the array it extends and to a loop-body local: each
 	// round copies what the join would otherwise read past the local.
-	{name: "an-array-a-call-extends-with-a-loop-body-local-is-produced", atLeast: 4, noLeak: true, src: `
+	{name: "an-array-a-call-extends-with-a-loop-body-local-is-produced", atLeast: 4, want: "8|abc,abc,abc,|\n", src: `
 function mk(n: i32): string {
     var s: string = "ab";
     var i: i32 = 0;
@@ -5299,7 +5151,7 @@ function f(n: i32): string {
 function main(): i32 { print(f(3) + "|" + f(0)); return f(2).len(); }
 `},
 	// The control: the source above the loop dominates every join.
-	{name: "a-str-array-a-call-returns-from-a-dominating-local-is-produced", atLeast: 4, noLeak: true, src: `
+	{name: "a-str-array-a-call-returns-from-a-dominating-local-is-produced", atLeast: 4, want: "2|", src: `
 function mk(n: i32): string {
     var s: string = "ab";
     var i: i32 = 0;
@@ -5320,7 +5172,7 @@ function pick(n: i32): i32 {
 function main(): i32 { return pick(9); }
 `},
 	// std/time's Zoned.format_rfc3339 is that branch shape (#10796).
-	{name: "std-time-format-rfc3339-is-produced", atLeast: 74, noLeak: true, src: `
+	{name: "std-time-format-rfc3339-is-produced", atLeast: 74, want: "20|1970-01-02T01:01:01Z\n", src: `
 import "std/time";
 function main(): i32 {
     var s: string = time.instant_from_unix(90061 as i64).format_rfc3339();
@@ -5331,7 +5183,7 @@ function main(): i32 {
 	// An array of views of one parameter is anchored to it as a single view
 	// result is, whether it is built by append, in a loop, or by a literal and
 	// .with. The AST lowering leaked the view boxes (#10215).
-	{name: "an-array-of-a-parameters-views-is-anchored-to-it", atLeast: 4, noLeak: true, src: `
+	{name: "an-array-of-a-parameters-views-is-anchored-to-it", atLeast: 4, want: "0|", src: `
 import "std/string";
 import "std/i32";
 function g(x: string): str[] { var o: str[] = []; o = o.append(slice_unchecked(x, 0, 2)); o = o.append(slice_unchecked(x, 2, 5)); return o; }
@@ -5363,7 +5215,7 @@ function main(): i32 {
 	// A checked string slice is an Option[str], and binds and returns as one.
 	// The driver's pre-lowering check typed it as its source string and
 	// refused both with E003 and E002, where native accepts them.
-	{name: "a-checked-slice-is-an-option", atLeast: 2, noLeak: true, src: `
+	{name: "a-checked-slice-is-an-option", atLeast: 2, want: "0|bc\nab\n", src: `
 function f(t: string): Option[str] { return t[0:2]; }
 function main(): i32 {
     var s: string = "abcdef";
@@ -5378,7 +5230,7 @@ function main(): i32 {
 	// A record holding a function value reaches, through the field, the
 	// records the function takes and hands back, so a body that names only
 	// the record still carries their schemas (examples/proposals/pipeline.fern).
-	{name: "a-function-field-names-its-signature-records", atLeast: 3, noLeak: true, src: `
+	{name: "a-function-field-names-its-signature-records", atLeast: 3, want: "0|", src: `
 struct Ctx { value: i32 }
 struct Fault { why: string }
 struct Stage { name: string, run: (Ctx) => Result[Ctx, Fault] }
@@ -5391,7 +5243,7 @@ function main(): i32 {
 	// An unsuffixed literal beside an operand the checker gave no width is
 	// read at that operand's width, on either side: the i64 deadline
 	// arithmetic in std/tcp's request reader was refused as `i64 / i32`.
-	{name: "a-literal-takes-its-operands-width", atLeast: 2, noLeak: true, src: `
+	{name: "a-literal-takes-its-operands-width", atLeast: 2, want: "0|", src: `
 function ms(recv_deadline_ms: i32): i32 {
     var read_start_ns: i64 = monotonic_ns();
     var deadline_ns: i64 = (recv_deadline_ms as i64) * 1000000;
@@ -5408,7 +5260,7 @@ function main(): i32 { if (ms(5000) > 4000) { return 0; } return 1; }
 	// An unannotated map literal takes its columns from its entries (#10208):
 	// the checker types the desugared `__map_new_i32(n).insert(k, v)` chain, and
 	// the chain's head takes that type where no destination names one.
-	{name: "an-unannotated-map-literal-names-its-columns", atLeast: 1, noLeak: true, src: `import "core/map";
+	{name: "an-unannotated-map-literal-names-its-columns", atLeast: 1, want: "39|", src: `import "core/map";
 function main(): i32 {
     var m = Map { true: 5, false: 9 };
     var n = Map { 1: 10, 2: 20 };
@@ -5420,7 +5272,7 @@ function main(): i32 {
 	// A match in value position routes its arms through a local the parser
 	// declares with a bare 0 before the arms name a type. At a reference type
 	// that 0 is the type's zero, the null word the arm's store replaces.
-	{name: "a-match-value-local-starts-at-its-types-zero", atLeast: 1, noLeak: true, src: `struct P { x: i32, name: string }
+	{name: "a-match-value-local-starts-at-its-types-zero", atLeast: 1, want: "20|", src: `struct P { x: i32, name: string }
 struct Q { n: i32 }
 function main(): i32 {
     var t: (i32, i32) = (7, 2);
@@ -5431,7 +5283,7 @@ function main(): i32 {
     match (r) { Ok(q) => { return out + q.n; }, Err(_) => { return 51; } }
 }
 `},
-	{name: "a-variant-literal-settles-its-float-payload", atLeast: 2, noLeak: true, src: `
+	{name: "a-variant-literal-settles-its-float-payload", atLeast: 2, want: "0|", src: `
 function process(): Option[f64] {
     var v: f64 = Some(3.14)?;
     return Some(v * 2.0);
@@ -5449,7 +5301,7 @@ function main(): i32 {
 	// bodies release the three strings and both arrays, which the AST lowering
 	// leaves live. Syscall 4000 is unassigned on both Linux ISAs, so it answers
 	// -ENOSYS (-38) on each.
-	{name: "raw-floor-intrinsics", atLeast: 3, nativeOnly: true, noLeak: true, src: `
+	{name: "raw-floor-intrinsics", atLeast: 3, want: "3|Abc\n", nativeOnly: true, src: `
 function chr_of(b: i32): string { var p: usize = __raw_alloc(1); __raw_store8(p, 0, b); return __raw_string(p, 1); }
 function cat2(a: string, b: string): string {
     var la: i32 = a.len();
@@ -5478,8 +5330,7 @@ function main(): i32 {
 `},
 	// The runtime helpers behind `chr` and string `+`, lowered by the typed
 	// path from their Fern source rather than by the AST lowering.
-	{name: "runtime-helpers-take-the-typed-path", atLeast: 1, noLeak: true,
-		reports: []string{"runtime __fern_chr: produced", "runtime __fern_str_concat: produced"}, src: `
+	{name: "runtime-helpers-take-the-typed-path", atLeast: 1, want: "5|abcde!\n", reports: []string{"runtime __fern_chr: produced", "runtime __fern_str_concat: produced"}, src: `
 function main(): i32 {
     var s: string = "";
     var i: i32 = 0;
@@ -5489,15 +5340,14 @@ function main(): i32 {
 }
 `},
 	// The string and string-array helpers, retyped against the raw floor.
-	{name: "string-helpers-take-the-typed-path", atLeast: 1, noLeak: true,
-		reports: []string{
-			"runtime __fern_str_cmp: produced", "runtime __fern_str_to_upper: produced",
-			"runtime __fern_str_to_lower: produced", "runtime __fern_str_repeat: produced",
-			"runtime __fern_str_trim: produced", "runtime __fern_str_replace: produced",
-			"runtime __fern_string_from_bytes_u8: produced", "runtime __fern_str_split: produced",
-			"runtime __fern_str_bytes_u8: produced", "runtime __fern_arr_str_join: produced",
-			"runtime __fern_str_lines: produced",
-		}, src: `
+	{name: "string-helpers-take-the-typed-path", atLeast: 1, want: "221|HELLO, WORLD|hello, world|ababab|Hell0, W0rld\na-b--c\nAZ\n", wasm: "out-of-range|HELLO, WORLD|hello, world|ababab|Hell0, W0rld\na-b--c\nAZ\n", reports: []string{
+		"runtime __fern_str_cmp: produced", "runtime __fern_str_to_upper: produced",
+		"runtime __fern_str_to_lower: produced", "runtime __fern_str_repeat: produced",
+		"runtime __fern_str_trim: produced", "runtime __fern_str_replace: produced",
+		"runtime __fern_string_from_bytes_u8: produced", "runtime __fern_str_split: produced",
+		"runtime __fern_str_bytes_u8: produced", "runtime __fern_arr_str_join: produced",
+		"runtime __fern_str_lines: produced",
+	}, src: `
 import "std/string";
 
 function main(): i32 {
@@ -5515,13 +5365,11 @@ function main(): i32 {
 }
 `},
 	// The stdio helpers, whose syscall words are i64 and whose scratch
-	// pointer is a usize. The AST leg lowers the same retyped sources, so it
-	// takes `usize as i64` and 64-bit syscall words too.
-	{name: "stdio-helpers-take-the-typed-path", atLeast: 1, noLeak: true,
-		reports: []string{
-			"runtime __fern_print_str: produced", "runtime __fern_putchar: produced",
-			"runtime __fern_eprint_str: produced",
-		}, src: `
+	// pointer is a usize.
+	{name: "stdio-helpers-take-the-typed-path", atLeast: 1, want: "0|got A\n", reports: []string{
+		"runtime __fern_print_str: produced", "runtime __fern_putchar: produced",
+		"runtime __fern_eprint_str: produced",
+	}, src: `
 function main(): i32 {
     write("got ");
     putchar(65);
@@ -5533,13 +5381,12 @@ function main(): i32 {
 	// The process, clock and random leaves: i64 syscall words, usize
 	// scratch and allocation blocks. umask, priority and sync are retyped too,
 	// but the filesystem bundle they are emitted in routes only as a whole.
-	{name: "process-helpers-take-the-typed-path", atLeast: 1, nativeOnly: true, noLeak: true,
-		reports: []string{
-			"runtime __fern_random_bytes_u8: produced", "runtime __fern_random_i32: produced",
-			"runtime __fern_isatty: produced", "runtime __fern_process_alive: produced",
-			"runtime __fern_cpu_count: produced", "runtime __fern_sleep_ms: produced",
-			"runtime __fern_sleep_ns: produced",
-		}, src: `
+	{name: "process-helpers-take-the-typed-path", atLeast: 1, want: "142|", nativeOnly: true, reports: []string{
+		"runtime __fern_random_bytes_u8: produced", "runtime __fern_random_i32: produced",
+		"runtime __fern_isatty: produced", "runtime __fern_process_alive: produced",
+		"runtime __fern_cpu_count: produced", "runtime __fern_sleep_ms: produced",
+		"runtime __fern_sleep_ns: produced",
+	}, src: `
 function main(): i32 {
     sleep_ms(1 as i64);
     sleep_ns(1000 as i64);
@@ -5563,12 +5410,11 @@ function main(): i32 {
 	// The filesystem bundle: io_error builds an IoError, so its typed
 	// lowering defines the enum's drop helper, and the program defines the
 	// same one. The file carries it once.
-	{name: "fs-bundle-takes-the-typed-path", atLeast: 2, nativeOnly: true, noLeak: true,
-		reports: []string{
-			"runtime __fern_path_copy: produced", "runtime __fern_io_error: produced",
-			"runtime __fern_sync: produced", "runtime __fern_umask: produced",
-			"runtime __fern_priority: produced",
-		}, src: `
+	{name: "fs-bundle-takes-the-typed-path", atLeast: 2, want: "5|", nativeOnly: true, reports: []string{
+		"runtime __fern_path_copy: produced", "runtime __fern_io_error: produced",
+		"runtime __fern_sync: produced", "runtime __fern_umask: produced",
+		"runtime __fern_priority: produced",
+	}, src: `
 function mk(p: string): IoError { return NotFound(p + "!"); }
 function main(): i32 {
     var old: i32 = umask(18);
@@ -5586,7 +5432,7 @@ function main(): i32 {
 `},
 	// `Ok(())` builds a Result whose success payload is void: the one
 	// written argument carries nothing.
-	{name: "unit-result-literal", atLeast: 2, noLeak: true, src: `
+	{name: "unit-result-literal", atLeast: 2, want: "9|", src: `
 function check(x: i32): Result[void, IoError] {
     if (x < 0) { return Err(NotFound("negative")); }
     return Ok(());
@@ -5600,13 +5446,12 @@ function main(): i32 {
 `},
 	// The path-taking filesystem leaves, each a Result[void, IoError]: the
 	// whole bundle, io_error included, takes the typed path.
-	{name: "fs-leaves-take-the-typed-path", atLeast: 3, nativeOnly: true, noLeak: true,
-		reports: []string{
-			"runtime __fern_create_dir: produced", "runtime __fern_chmod: produced",
-			"runtime __fern_create_symlink: produced", "runtime __fern_rename: produced",
-			"runtime __fern_remove_file: produced", "runtime __fern_remove_dir: produced",
-			"runtime __fern_set_priority: produced", "runtime __fern_truncate: produced",
-		}, src: `
+	{name: "fs-leaves-take-the-typed-path", atLeast: 3, want: "63|", nativeOnly: true, reports: []string{
+		"runtime __fern_create_dir: produced", "runtime __fern_chmod: produced",
+		"runtime __fern_create_symlink: produced", "runtime __fern_rename: produced",
+		"runtime __fern_remove_file: produced", "runtime __fern_remove_dir: produced",
+		"runtime __fern_set_priority: produced", "runtime __fern_truncate: produced",
+	}, src: `
 function ok(r: Result[void, IoError]): i32 {
     match (r) { Ok(_) => { return 1; }, Err(_) => { return 0; } }
 }
@@ -5633,13 +5478,12 @@ function main(): i32 {
 	// The filesystem bundle's readers and writers. read_dir's typed body
 	// appends to a string[], which calls __fern_arr_inc_elems: a need the
 	// AST lowering never marks, so the runtime is emitted again with it.
-	{name: "fs-bundle-reads-and-writes", atLeast: 1, nativeOnly: true, noLeak: true,
-		reports: []string{
-			"runtime __fern_create_dir_all: produced", "runtime __fern_write_file: produced",
-			"runtime __fern_read_file: produced", "runtime __fern_utf8_valid: produced",
-			"runtime __fern_read_file_bytes_u8: produced", "runtime __fern_stat: produced",
-			"runtime __fern_read_dir: produced", "runtime __fern_remove_dir_all: produced",
-		}, src: `
+	{name: "fs-bundle-reads-and-writes", atLeast: 1, want: "13|", nativeOnly: true, reports: []string{
+		"runtime __fern_create_dir_all: produced", "runtime __fern_write_file: produced",
+		"runtime __fern_read_file: produced", "runtime __fern_utf8_valid: produced",
+		"runtime __fern_read_file_bytes_u8: produced", "runtime __fern_stat: produced",
+		"runtime __fern_read_dir: produced", "runtime __fern_remove_dir_all: produced",
+	}, src: `
 function main(): i32 {
     var d: string = "/tmp/fern_sem_fs_bundle";
     remove_dir_all(d);
@@ -5656,7 +5500,7 @@ function main(): i32 {
 }
 `},
 	// The environment, host and stdin leaves.
-	{name: "sys-helpers-take-the-typed-path", atLeast: 1, nativeOnly: true, noLeak: true, stdin: "ab\ncdef\n",
+	{name: "sys-helpers-take-the-typed-path", atLeast: 1, want: "113|", nativeOnly: true, stdin: "ab\ncdef\n",
 		reports: []string{
 			"runtime __fern_env: produced", "runtime __fern_environ: produced",
 			"runtime __fern_getcwd: produced", "runtime __fern_hostname: produced",
@@ -5678,13 +5522,12 @@ function main(): i32 {
 `},
 	// The process leaves. subprocess bundles its drain and exec helpers, and
 	// its typed body adds a runtime need, so the runtime is emitted twice.
-	{name: "proc-leaves-take-the-typed-path", atLeast: 1, nativeOnly: true, noLeak: true,
-		reports: []string{
-			"runtime __fern_subprocess: produced", "runtime __fern_sp_drain: produced",
-			"runtime __fern_sp_exec_at: produced", "runtime __fern_proc_fork: produced",
-			"runtime __fern_proc_waitpid: produced", "runtime __fern_signal_mask: produced",
-			"runtime __fern_timer_fd: produced",
-		}, src: `
+	{name: "proc-leaves-take-the-typed-path", atLeast: 1, want: "99|", nativeOnly: true, reports: []string{
+		"runtime __fern_subprocess: produced", "runtime __fern_sp_drain: produced",
+		"runtime __fern_sp_exec_at: produced", "runtime __fern_proc_fork: produced",
+		"runtime __fern_proc_waitpid: produced", "runtime __fern_signal_mask: produced",
+		"runtime __fern_timer_fd: produced",
+	}, src: `
 function main(): i32 {
     var n: i32 = 0;
     var r: ProcessResult = subprocess("/bin/echo", ["hi", "there"], "");
@@ -5702,7 +5545,7 @@ function main(): i32 {
 `},
 	// a[start:end] copies slots through __fern_arr_slice, which reaches the
 	// source array's address through __raw_arr_ptr.
-	{name: "arr-slice-takes-the-typed-path", atLeast: 1, noLeak: true, nativeOnly: true,
+	{name: "arr-slice-takes-the-typed-path", atLeast: 1, want: "20|", nativeOnly: true,
 		reports: []string{"runtime __fern_arr_slice: produced"}, src: `
 struct P { x: i32, name: string }
 function main(): i32 {
@@ -5718,8 +5561,8 @@ function main(): i32 {
 }
 `},
 	// An address widened to i64 keeps every bit: the store and the load
-	// round-trip it, on the AST leg as well as the typed one.
-	{name: "usize-widens-to-i64-whole", atLeast: 1, nativeOnly: true, noLeak: true, src: `
+	// round-trip it.
+	{name: "usize-widens-to-i64-whole", atLeast: 1, want: "0|", nativeOnly: true, src: `
 function main(): i32 {
     var p: usize = __raw_scratch(8);
     var w: i64 = p as i64;
@@ -5731,22 +5574,22 @@ function main(): i32 {
 `},
 	// Division, remainder, the shifts and the orderings on an address, with
 	// bit 31 set so wasm's 32-bit address needs the unsigned forms (#10737).
-	{name: "usize-unsigned-operators", atLeast: 1, noLeak: true, src: semUsizeOperatorsSource},
+	{name: "usize-unsigned-operators", atLeast: 1, want: "63|", src: semUsizeOperatorsSource},
 	// The same operators past 32 bits, where the register backends must run
 	// them at 64: a 32-bit divide or a count masked mod 32 truncates. u64
 	// rides along as the width's reference.
-	{name: "usize-operators-at-register-width", atLeast: 3, nativeOnly: true, noLeak: true, src: semUsizeWideOperatorsSource},
+	{name: "usize-operators-at-register-width", atLeast: 3, want: "255|", nativeOnly: true, src: semUsizeWideOperatorsSource},
 	// A literal past 32 bits cast to an address wraps on wasm on both
 	// lowerings (#10743).
-	{name: "usize-wide-literal", atLeast: 1, noLeak: true, src: semUsizeWideLiteralSource},
-	{name: "usize-wide-product", atLeast: 2, noLeak: true, src: semUsizeWideProductSource},
+	{name: "usize-wide-literal", atLeast: 1, want: "70|", wasm: "1|", src: semUsizeWideLiteralSource},
+	{name: "usize-wide-product", atLeast: 2, want: "156|", wasm: "112|", src: semUsizeWideProductSource},
 	// The FFI trampolines, reached behind a test that never holds so no C
 	// pointer is called: the typed path produces each caller and the shims
 	// link (#10736).
-	{name: "c-call-trampolines", atLeast: 7, nativeOnly: true, noLeak: true, src: semCCallSource},
+	{name: "c-call-trampolines", atLeast: 7, want: "0|", nativeOnly: true, src: semCCallSource},
 	// The floor's three static words, taken with no runtime helper to mark
 	// the need that defines them: each address pulls in its own definition.
-	{name: "raw-floor-symbols-link-without-a-helper", atLeast: 1, nativeOnly: true, noLeak: true, src: `
+	{name: "raw-floor-symbols-link-without-a-helper", atLeast: 1, want: "7|", nativeOnly: true, src: `
 function main(): i32 {
     var sc: usize = __raw_scratch(8);
     __raw_store8(sc, 0, 7);
@@ -5761,7 +5604,7 @@ function main(): i32 {
 	// (conformance/cases/dyn_trait_dispatch). Two implementations behind one
 	// dyn type reach different bodies, and the second method proves the
 	// dispatch reads the method rather than landing on the first.
-	{name: "dyn-dispatch", atLeast: 6, noLeak: true, src: `
+	{name: "dyn-dispatch", atLeast: 6, want: "42|", src: `
 trait Shape {
     function area(self: Self): i32;
     function sides(self: Self): i32;
@@ -5790,7 +5633,7 @@ function main(): i32 {
 	// round a loop. The AST lowering leaks the record each trip (199 blocks
 	// over 100 trips); the typed path owns the record, lends the dyn value to
 	// the call, and releases the record when the trip ends.
-	{name: "dyn-over-a-counted-record", atLeast: 3, noLeak: true, src: `
+	{name: "dyn-over-a-counted-record", atLeast: 3, want: "29|", src: `
 import "std/i32";
 
 trait Shape { function area(self: Self): i32; }
@@ -5817,7 +5660,7 @@ function main(): i32 {
 	// in consecutive frame slots, which wasm types by value: a float operand
 	// in an i32 slot is a module the validator rejects. An enum temporary
 	// widened at the argument is released after the call that borrowed it.
-	{name: "dyn-method-operands-and-results", atLeast: 6, noLeak: true, src: `
+	{name: "dyn-method-operands-and-results", atLeast: 6, want: "35|635\n", src: `
 import "std/i32";
 
 trait Label {
@@ -5859,35 +5702,8 @@ function main(): i32 {
     return total % 200;
 }
 `},
-	// The dispatch crosses the mixed module in both directions. With the
-	// implementations left to the AST lowering, the produced caller would
-	// reach bodies whose modes it cannot read, so it is turned off; with the
-	// caller left there instead, the AST dispatch reaches produced bodies,
-	// which keep the modes they declared.
-	{name: "dyn-dispatch-into-ast-implementations", atLeast: 1, skip: "area,sides",
-		refuses: "describe: calls Square.area, which the AST lowering defines", src: `
-trait Shape {
-    function area(self: Self): i32;
-    function sides(self: Self): i32;
-}
-struct Square { side: i32 }
-impl Shape for Square {
-    function area(self: Self): i32 { return self.side * self.side; }
-    function sides(self: Self): i32 { return 4; }
-}
-struct Triangle { base: i32, height: i32 }
-impl Shape for Triangle {
-    function area(self: Self): i32 { return (self.base * self.height) / 2; }
-    function sides(self: Self): i32 { return 3; }
-}
-function describe(s: dyn Shape): i32 { return s.area() * 10 + s.sides(); }
-
-function main(): i32 {
-    var sq: dyn Shape = Square { side: 3 };
-    return describe(sq) - 94;
-}
-`},
-	{name: "ast-dispatch-into-produced-implementations", atLeast: 4, skip: "describe", src: `
+	// A dyn parameter dispatching to each of two implementations.
+	{name: "dyn-dispatch-into-two-implementations", atLeast: 4, want: "42|", src: `
 trait Shape {
     function area(self: Self): i32;
     function sides(self: Self): i32;
@@ -5915,9 +5731,8 @@ function main(): i32 {
 	// a record and an enum that each own a string, so a release that missed
 	// the children would leak. Each shape builds six values round a loop:
 	// rebound at a phi, returned, held in a field, held in an array, and
-	// passed through a function that hands its parameter back. A skip leg
-	// leaves the dyn's producer or its pass-through to the AST lowering.
-	{name: "a-rebound-dyn-value-is-owned", atLeast: 3, noLeak: true, src: semDynShapes + `
+	// passed through a function that hands its parameter back.
+	{name: "a-rebound-dyn-value-is-owned", atLeast: 3, want: "0|", src: semDynShapes + `
 function main(): i32 {
     var t: i32 = 0;
     var i: i32 = 0;
@@ -5930,7 +5745,7 @@ function main(): i32 {
     return t - 24;
 }
 `},
-	{name: "a-returned-dyn-value-is-owned", atLeast: 4, noLeak: true, skip: "make", src: semDynShapes + `
+	{name: "a-returned-dyn-value-is-owned", atLeast: 4, want: "0|", src: semDynShapes + `
 function main(): i32 {
     var t: i32 = 0;
     var i: i32 = 0;
@@ -5942,7 +5757,7 @@ function main(): i32 {
     return t - 50;
 }
 `},
-	{name: "a-dyn-field-is-owned", atLeast: 4, noLeak: true, src: semDynShapes + `
+	{name: "a-dyn-field-is-owned", atLeast: 4, want: "0|", src: semDynShapes + `
 struct Holder { s: dyn Shape }
 
 function main(): i32 {
@@ -5956,7 +5771,7 @@ function main(): i32 {
     return t - 50;
 }
 `},
-	{name: "a-dyn-array-owns-its-elements", atLeast: 4, noLeak: true, src: semDynShapes + `
+	{name: "a-dyn-array-owns-its-elements", atLeast: 4, want: "0|", src: semDynShapes + `
 function main(): i32 {
     var t: i32 = 0;
     var i: i32 = 0;
@@ -5968,7 +5783,7 @@ function main(): i32 {
     return t - 136;
 }
 `},
-	{name: "a-dyn-option-payload-is-owned", atLeast: 4, noLeak: true, src: semDynShapes + `
+	{name: "a-dyn-option-payload-is-owned", atLeast: 4, want: "0|", src: semDynShapes + `
 function main(): i32 {
     var t: i32 = 0;
     var i: i32 = 0;
@@ -5982,7 +5797,7 @@ function main(): i32 {
 `},
 	// A superseded entry is released through the map's value column, which
 	// dispatches the same way.
-	{name: "a-dyn-map-value-is-owned", atLeast: 4, noLeak: true, src: `import "core/map";` + semDynShapes + `
+	{name: "a-dyn-map-value-is-owned", atLeast: 4, want: "0|", src: `import "core/map";` + semDynShapes + `
 function main(): i32 {
     var t: i32 = 0;
     var m: Map[i32, dyn Shape] = map_new(8);
@@ -5993,7 +5808,7 @@ function main(): i32 {
     return t - 35;
 }
 `},
-	{name: "a-captured-dyn-value-is-owned", atLeast: 5, noLeak: true, src: semDynShapes + `
+	{name: "a-captured-dyn-value-is-owned", atLeast: 5, want: "0|", src: semDynShapes + `
 function main(): i32 {
     var t: i32 = 0;
     var i: i32 = 0;
@@ -6006,7 +5821,7 @@ function main(): i32 {
     return t - 100;
 }
 `},
-	{name: "a-dyn-parameter-handed-back-is-retained", atLeast: 4, noLeak: true, skip: "pass", src: semDynShapes + `
+	{name: "a-dyn-parameter-handed-back-is-retained", atLeast: 4, want: "0|", src: semDynShapes + `
 function pass(s: dyn Shape): dyn Shape { return s; }
 
 function main(): i32 {
@@ -6021,11 +5836,11 @@ function main(): i32 {
     return t - 48;
 }
 `},
-	// A dyn array local an AST-lowered frame builds and lends to a produced
-	// callee. The AST frame frees the elements at exit only when the callee's
-	// row promises it keeps no reference, which the produced callee now gives
-	// for a borrowed parameter nothing derived from is retained or handed on.
-	{name: "a-dyn-array-lent-to-a-produced-callee", atLeast: 4, noLeak: true, skip: "main", src: `
+	// A dyn array local a frame builds and lends to a callee. The frame frees
+	// the elements at exit only when the callee's row promises it keeps no
+	// reference, which a callee gives for a borrowed parameter nothing derived
+	// from is retained or handed on.
+	{name: "a-dyn-array-lent-to-a-produced-callee", atLeast: 4, want: "0|", src: `
 trait Show { function show(self: Self): i32; }
 impl Show for i32 { function show(self: Self): i32 { return self * 2; } }
 impl Show for string { function show(self: Self): i32 { return self.len(); } }
@@ -6038,9 +5853,8 @@ function main(): i32 {
 `},
 	// A scalar or string widened to dyn is boxed into a cell whose shape is the
 	// primitive's name; the release dispatches on it and frees a boxed
-	// string. The widenings reach a return, a local and an array element, and
-	// the skip leg leaves the producer to the AST lowering.
-	{name: "a-primitive-dyn-value-is-boxed", atLeast: 5, noLeak: true, skip: "make", src: semPrimitiveShows + `
+	// string. The widenings reach a return, a local and an array element.
+	{name: "a-primitive-dyn-value-is-boxed", atLeast: 5, want: "0|", src: semPrimitiveShows + `
 function main(): i32 {
     var t: i32 = 0;
     var i: i32 = 0;
@@ -6053,7 +5867,7 @@ function main(): i32 {
     return t - 63;
 }
 `},
-	{name: "a-boxed-string-dyn-held-in-an-array", atLeast: 5, noLeak: true, src: semPrimitiveShows + `
+	{name: "a-boxed-string-dyn-held-in-an-array", atLeast: 5, want: "0|", src: semPrimitiveShows + `
 struct Holder { d: dyn Show }
 
 function main(): i32 {
@@ -6071,7 +5885,7 @@ function main(): i32 {
 	// A dyn whose type holds a view (through `P`) returned as a box of a local
 	// counted string: the box reads no bytes but its own, so the result is
 	// anchored to nothing (#10908). It was refused as escaping its source.
-	{name: "a-boxed-string-returned-as-a-view-holding-dyn-is-produced", atLeast: 6, noLeak: true, src: `
+	{name: "a-boxed-string-returned-as-a-view-holding-dyn-is-produced", atLeast: 6, want: "0|1005 31\n", src: `
 import "std/i32";
 trait Size { function size(self: Self): i32; }
 impl Size for string { function size(self: string): i32 { return 1000 + self.len(); } }
@@ -6099,7 +5913,7 @@ function main(): i32 {
 	// the dyn through it, owned by the box: returned from a local, and merged
 	// past a branch-local source (#10908). The dyn's concretes named nothing
 	// for the impl, so its release walked no string box.
-	{name: "a-string-boxed-through-an-impl-for-str-is-produced", atLeast: 6, noLeak: true, src: `
+	{name: "a-string-boxed-through-an-impl-for-str-is-produced", atLeast: 6, want: "0|1050 1043 1050 26\n", src: `
 import "std/i32";
 trait Size { function size(self: Self): i32; }
 impl Size for str { function size(self: str): i32 { return 1000 + self.len() * 10 + (self[0] as i32) - 97; } }
@@ -6136,7 +5950,7 @@ function main(): i32 {
 	// box stores and unboxes by the primitive's name (#10098): an i64 above
 	// 2^32 keeps its high half, and an f64 its fraction. The AST lowering
 	// refuses the module.
-	{name: "a-wide-scalar-dyn-value-is-boxed-at-its-width", atLeast: 5, noLeak: true, want: "0|", src: `
+	{name: "a-wide-scalar-dyn-value-is-boxed-at-its-width", atLeast: 5, want: "0|", src: `
 trait Show { function show(self: Self): i32; }
 impl Show for i64 { function show(self: Self): i32 { return (self / 1000000000) as i32; } }
 impl Show for f64 { function show(self: Self): i32 { return (self * 4.0) as i32; } }
@@ -6160,9 +5974,8 @@ function main(): i32 {
 `},
 	// A literal mixing a scalar and a string, at each position that declares a
 	// `dyn Show[]`: a binding, a field, a return and an argument. The checker
-	// once refused all four with the first-element E034 (#10097); the skip
-	// leg leaves the returning function to the AST lowering.
-	{name: "a-mixed-dyn-array-literal-at-each-destination", atLeast: 5, noLeak: true, skip: "mk", src: `
+	// once refused all four with the first-element E034 (#10097).
+	{name: "a-mixed-dyn-array-literal-at-each-destination", atLeast: 5, want: "0|", src: `
 trait Show { function show(self: Self): i32; }
 impl Show for i32 { function show(self: Self): i32 { return self * 2; } }
 impl Show for string { function show(self: Self): i32 { return self.len(); } }
@@ -6178,7 +5991,7 @@ function main(): i32 {
 `},
 	// An owned dyn value over a generic implementation: its instances are the
 	// struct pass's clones (`W__string`), each released by its own drop.
-	{name: "an-owned-dyn-value-over-a-generic-implementation", atLeast: 3, noLeak: true, src: `
+	{name: "an-owned-dyn-value-over-a-generic-implementation", atLeast: 3, want: "0|", src: `
 import "std/i32";
 
 trait Shape { function area(self: Self): i32; }
@@ -6199,7 +6012,7 @@ function main(): i32 {
 `},
 	// Two instances of one generic implementation, one of them nested, beside a
 	// plain implementation in one array of dyn values.
-	{name: "a-dyn-array-over-a-generic-implementations-instances", atLeast: 3, noLeak: true, src: `
+	{name: "a-dyn-array-over-a-generic-implementations-instances", atLeast: 3, want: "44|", src: `
 import "std/i32";
 
 trait Shape { function area(self: Self): i32; }
@@ -6227,7 +6040,7 @@ function main(): i32 {
 `},
 	// A generic ENUM implementation: its clone (`Opt__i32`) is a concrete too,
 	// or its payload's string leaks with every release.
-	{name: "an-owned-dyn-value-over-a-generic-enum-implementation", atLeast: 3, noLeak: true, src: `
+	{name: "an-owned-dyn-value-over-a-generic-enum-implementation", atLeast: 3, want: "0|", src: `
 import "std/i32";
 trait Shape { function area(self: Self): i32; }
 enum Opt[T] { Sm(T, string), Nn }
@@ -6245,7 +6058,7 @@ function main(): i32 {
     return t - 40;
 }
 `},
-	{name: "a-borrowed-dyn-value-over-a-generic-implementation", atLeast: 2, noLeak: true, src: `
+	{name: "a-borrowed-dyn-value-over-a-generic-implementation", atLeast: 2, want: "0|", src: `
 import "std/i32";
 
 trait Shape { function area(self: Self): i32; }
@@ -6272,7 +6085,7 @@ function main(): i32 {
 	// signature tag. Covered: a local bound to a function taking a callback, a
 	// `use` through such a local, a parameter whose type takes a callback, and
 	// a local bound to a function returning a function value.
-	{name: "a-function-value-whose-type-nests-a-function-type", atLeast: 9, noLeak: true, src: `
+	{name: "a-function-value-whose-type-nests-a-function-type", atLeast: 9, want: "41|", src: `
 function with_name(n: i32, k: (string) => i32): i32 { return k("x") + n; }
 function through_local(i: i32): i32 {
     var f: (i32, (string) => i32) => i32 = with_name;
@@ -6298,7 +6111,7 @@ function main(): i32 {
 }
 `},
 	// A call of a call, where the inner callee is a function VALUE: the AST
-	// lowering, the control leg, dispatched the returned function as a bare
+	// lowering dispatched the returned function as a bare
 	// code pointer unless it could name the inner callee as a closure factory,
 	// so every shape here but the last segfaulted there (#10057). Every function
 	// value is an env box, so the outer call always dispatches env-first.
@@ -6308,7 +6121,7 @@ function main(): i32 {
 	// arguments pin the outer call's funcref signature: with only the arity
 	// known, the AST lowering called an all-i32 funcref and wasm refused the
 	// module.
-	{name: "a-call-of-a-call-through-a-function-value", atLeast: 9, noLeak: true, src: `
+	{name: "a-call-of-a-call-through-a-function-value", atLeast: 9, want: "58|", src: `
 struct M { k: i32 }
 function (m: M) make(): (i32) => i32 { var k = m.k; return (b: i32): i32 => b + k; }
 function adder(n: i32): (i32) => i32 { return (b: i32): i32 => b + n; }
@@ -6346,7 +6159,7 @@ function main(): i32 {
 	// the array (returned, reassigned, passed) reached a caller that dispatched
 	// it env-first and segfaulted. A zero-parameter function names a function
 	// value unless it is a `const`, so it boxes too.
-	{name: "a-function-array-holds-boxes", atLeast: 15, want: "64|", astAnswers: "64|", noLeak: true, src: `
+	{name: "a-function-array-holds-boxes", atLeast: 15, want: "64|", src: `
 struct M { k: i32 }
 enum E { Wrap(() => i32), No }
 function a(b: i32): i32 { return b + 1; }
@@ -6375,7 +6188,7 @@ function main(): i32 {
 	// instead (#5281). That no longer reproduces, so every tail takes the slot
 	// and the hoist is gone (#10025). Two levels, three levels, and a lambda
 	// bound to a local that returns an expression-bodied lambda.
-	{name: "a-lambda-returning-a-capturing-lambda", atLeast: 5, noLeak: true, src: `
+	{name: "a-lambda-returning-a-capturing-lambda", atLeast: 5, want: "42|", src: `
 function main(): i32 {
     var curry = (a: i32) => { return (b: i32): i32 => a + b; };
     var add5 = curry(5);
@@ -6385,19 +6198,18 @@ function main(): i32 {
 }
 `},
 	// A function declared to return a function returns an env box, whatever its
-	// return statements spell (#9763). The AST lowering, the control leg,
-	// registered a box-returning function by the shape of its returns, so a
+	// return statements spell (#9763). The AST lowering registered a box-returning function by the shape of its returns, so a
 	// lambda handed back through a generic call, a local bound from one, or a
 	// match-arm payload was dispatched as a bare code pointer by a caller that
 	// bound the result to a local, and segfaulted.
 	// A field read stored into a container is a second owner of a box its
 	// struct's __struct_drop_<T> releases: a scalar array, an array of structs,
-	// a nested struct, an enum. The AST lowering, the control leg, retained only
+	// a nested struct, an enum. The AST lowering retained only
 	// an enum field read, so `xs.append(a.env)` in a callee left the element
 	// uncounted, the caller's drop of the argument freed it, and the next
 	// allocation reused the block under the container. That was the
 	// out-of-bounds abort of a compiler built through the AST lowering (#9763).
-	{name: "a-stored-field-read-is-retained", atLeast: 11, want: "24|", astAnswers: "24|", noLeak: true, src: `
+	{name: "a-stored-field-read-is-retained", atLeast: 11, want: "24|", src: `
 struct In { x: i32 }
 enum Tag { A(i32), B }
 struct E { env: i32[], live: boolean }
@@ -6444,7 +6256,7 @@ function main(): i32 {
 	// a float literal with no sibling to take a width from is an f64 inside a
 	// container as it is alone. The self-host checker rejected the mixed
 	// literals with E034, and the typed path refused every binding here.
-	{name: "an-array-literal-settles-to-its-concrete-sibling", atLeast: 4, want: "59|", noLeak: true, src: `
+	{name: "an-array-literal-settles-to-its-concrete-sibling", atLeast: 4, want: "59|", src: `
 function half(x: f32): f32 { return x / 2.0; }
 function big(): i64 { return 5000000000; }
 function id[T](x: T): T { return x; }
@@ -6468,7 +6280,7 @@ function main(): i32 {
 	// variants are injected after the tree shake, which kept none of the
 	// routed map functions, so the typed lowering's map iteration called
 	// `__map_iter_impl` and the module was refused (#10796).
-	{name: "a-map-reached-only-through-a-jsonvalue-is-produced", atLeast: 81, noLeak: true, src: `
+	{name: "a-map-reached-only-through-a-jsonvalue-is-produced", atLeast: 81, want: "4|", src: `
 import "core/map";
 function width(v: JsonValue): i32 {
     match (v) {
@@ -6483,7 +6295,7 @@ function width(v: JsonValue): i32 {
 }
 function main(): i32 { return width(JString("abc")) + width(JNull); }
 `},
-	{name: "std-json-encode-is-produced", atLeast: 137, noLeak: true, src: `
+	{name: "std-json-encode-is-produced", atLeast: 137, want: "2|42\n", src: `
 import "std/json";
 function main(): i32 {
     var s: string = json.json_encode(JNumber("42"));
@@ -6496,7 +6308,7 @@ function main(): i32 {
 	// a helper the compiler synthesises for the program's own map key still
 	// sees Tag. Before, the first was refused by the checker and a first cut at
 	// the fix sent the second, and std/json's JNull, to the AST lowering.
-	{name: "an-imported-module-does-not-see-the-programs-enums", atLeast: 89, want: "28|", noLeak: true, src: `
+	{name: "an-imported-module-does-not-see-the-programs-enums", atLeast: 89, want: "28|", src: `
 import "core/map";
 import "core/cmp";
 import "std/json";
@@ -6526,7 +6338,7 @@ function main(): i32 {
     return n * 10 + parsed * 5 + code(Reply.Ok) + code(Reply.Busy);
 }
 `},
-	{name: "a-function-returning-a-function-returns-a-box", atLeast: 15, want: "53|", astAnswers: "53|", noLeak: true, src: `
+	{name: "a-function-returning-a-function-returns-a-box", atLeast: 15, want: "53|", src: `
 enum Box { W((i32) => i32), No }
 function id[T](x: T): T { return x; }
 function inc(x: i32): i32 { return x + 1; }
@@ -6549,7 +6361,7 @@ function main(): i32 {
 	// so the function returns a copy; the anchor chase used to leave the
 	// callee pending forever and refused both with "view result escapes its
 	// source" (#10688).
-	{name: "a-str-result-returns-an-owned-call-result", atLeast: 47, noLeak: true, src: `
+	{name: "a-str-result-returns-an-owned-call-result", atLeast: 47, want: "65|", src: `
 import "std/string";
 function mk(p: string): string { return p + "xy"; }
 function owned(p: string): str { return mk(p); }
@@ -6560,7 +6372,7 @@ function main(): i32 { var v: str = view("ab"); var w: str = owned("abc"); retur
 	// The clone substituted the field's result type but not its parameter
 	// types, so `Fn__i32`'s field read `(T) => i32` and the literal was
 	// refused with "variant field type" (#10689).
-	{name: "a-generic-variant-carries-a-function-of-its-parameter", atLeast: 4, noLeak: true, src: `
+	{name: "a-generic-variant-carries-a-function-of-its-parameter", atLeast: 4, want: "84|", src: `
 enum Box[T] { Fn(T, (T) => T), Two((T, T) => T), Empty }
 function inc(x: i32): i32 { return x + 1; }
 function add(a: i32, b: i32): i32 { return a + b; }
@@ -6572,7 +6384,7 @@ function main(): i32 { return run(Fn(41, inc)) + run(Two(add)) + run(Empty); }
 	// anchored to the source, rather than retaining the binding's box (#10692).
 	// The junk string after the stores reuses the source's bytes if the anchor
 	// is lost.
-	{name: "a-view-stored-in-a-container-is-a-fresh-view", atLeast: 3, noLeak: true, src: `
+	{name: "a-view-stored-in-a-container-is-a-fresh-view", atLeast: 3, want: "99|", src: `
 import "std/i32";
 struct P { a: i32, s: str }
 function mk(i: i32): string { return "abcdefghijklmnopqrstuvwxyz0123456789" + i.to_string(); }
@@ -6594,7 +6406,7 @@ function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 20) { t = t + 
 `},
 	// A map value column takes a fresh view too, anchored to the source, and
 	// overwriting an entry releases the view it held.
-	{name: "a-view-stored-in-a-map-is-a-fresh-view", atLeast: 3, noLeak: true, src: `
+	{name: "a-view-stored-in-a-map-is-a-fresh-view", atLeast: 3, want: "99|", src: `
 import "core/map";
 import "std/i32";
 function mk(i: i32): string { return "abcdefghijklmnopqrstuvwxyz0123456789" + i.to_string(); }
@@ -6615,7 +6427,7 @@ function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 20) { t = t + 
 	// An unannotated Some(None): the checker leaves the inner Option's payload
 	// open, and it settles at a void payload, since only None can build it
 	// (#10693).
-	{name: "an-unannotated-none-payload-settles-at-void", atLeast: 2, noLeak: true, src: `
+	{name: "an-unannotated-none-payload-settles-at-void", atLeast: 2, want: "199|", wasm: "out-of-range|", src: `
 function round(i: i32): i32 {
     var o = Some(None);
     var k: i32 = 0;
@@ -6626,7 +6438,7 @@ function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 20) { t = t + 
 `},
 	// A `?` exit replays the deferred assignment on the failure edge alone; the
 	// success edge keeps the binding's own value (#10694).
-	{name: "a-try-exit-replays-a-deferred-assignment-on-its-edge-alone", atLeast: 3, noLeak: true, src: `
+	{name: "a-try-exit-replays-a-deferred-assignment-on-its-edge-alone", atLeast: 3, want: "70|", src: `
 import "std/i32";
 function get(k: i32): Option[string] { if (k % 3 == 0) { return None; } return Some("v" + k.to_string()); }
 function step(k: i32): Option[i32] {
@@ -6647,7 +6459,7 @@ function main(): i32 {
 `},
 	// The failure edge runs the deferred cleanup too: a cell bumped by the
 	// defer counts every call, so 81 needs all six (three `?` exits).
-	{name: "a-try-exit-runs-the-deferred-cleanup-on-the-failure-edge", atLeast: 3, noLeak: true, src: `
+	{name: "a-try-exit-runs-the-deferred-cleanup-on-the-failure-edge", atLeast: 3, want: "81|", src: `
 function fails(k: i32): Option[i32] { if (k % 2 == 0) { return None; } return Some(k); }
 function bump(c: Cell[i32]): void { c.set(c.get() + 1); }
 function step(k: i32, out: Cell[i32]): Option[i32] {
@@ -6668,7 +6480,7 @@ function main(): i32 {
 	// parameter, a call's result, and a non-generic call of a literal (#10715).
 	// Every function array is on the env-box ABI, so only the literal arm needs
 	// boxing. Answers 44.
-	{name: "an-arm-array-beside-a-parameter-or-call-result", atLeast: 9, noLeak: true, src: `
+	{name: "an-arm-array-beside-a-parameter-or-call-result", atLeast: 9, want: "44|", src: `
 function pick(ys: ((i32) => i32)[], c: boolean): i32 {
     var v1: i32 = 3;
     var xs: ((i32) => i32)[] = (if (c) { [((x: i32) => x + v1)] } else { ys });
@@ -6688,7 +6500,7 @@ function main(): i32 {
 	// Methods std/i32 and std/i64 declare on a scalar receiver: keyed by the
 	// receiver's spelling (`u8.to_ascii_lower`, `i64.to_string`) and called
 	// with the receiver at argument 0, chained and in a condition.
-	{name: "std-i32-methods-on-a-scalar-receiver", atLeast: 2, src: `
+	{name: "std-i32-methods-on-a-scalar-receiver", atLeast: 2, want: "3|mixed -42 9000000000\n", src: `
 import "std/i32";
 import "std/i64";
 function fold(s: string): string {
@@ -6714,7 +6526,7 @@ function main(): i32 {
 	// `__lam_0$wrap0`, and the instance `__lam_0$wrap0$i32` is built by the
 	// instance `__lam_0$i32`: produced like its creator, not left to an AST
 	// body no instance has.
-	{name: "a-lambda-from-a-nested-function-in-a-generic", atLeast: 2, src: `
+	{name: "a-lambda-from-a-nested-function-in-a-generic", atLeast: 2, want: "7|", src: `
 pub function make[T](seed: T): T {
     function idmaker(base: T): (T) => T {
         return (x: T) => x;
@@ -6731,7 +6543,7 @@ function main(): i32 {
 	// cloned with the function per binding (parser clause (e)), so the string
 	// clone's record has a field of its own to release and the i64 clone's a
 	// field wasm stores at its width.
-	{name: "a-generic-struct-inside-a-generic-function", atLeast: 3, noLeak: true, src: `
+	{name: "a-generic-struct-inside-a-generic-function", atLeast: 3, want: "10|", src: `
 struct Slot[T] { v: T }
 
 pub function make[T](seed: T): T {
@@ -6748,7 +6560,7 @@ function main(): i32 {
 `},
 	// The same for a function-typed field, and for a lambda field built inside
 	// another one.
-	{name: "a-generic-struct-with-a-function-field-inside-a-generic-function", atLeast: 7, noLeak: true, src: `
+	{name: "a-generic-struct-with-a-function-field-inside-a-generic-function", atLeast: 7, want: "15|", src: `
 struct Box[T] { f: (T) => T }
 
 pub function apply[T](seed: T): T {
@@ -6775,7 +6587,7 @@ function main(): i32 {
 	// function, a function-typed field of a plain or a generic struct. The
 	// generic is cloned per binding with
 	// its struct, as a parameter-bound one is (#10824).
-	{name: "a-generic-struct-over-a-function-parameters-result", atLeast: 7, noLeak: true, src: `
+	{name: "a-generic-struct-over-a-function-parameters-result", atLeast: 7, want: "7|", src: `
 struct Slot[T] { v: T }
 
 pub function hold[T](f: () => T): i32 {
@@ -6802,7 +6614,7 @@ function main(): i32 {
 	// struct instantiation. It is not a fn-param promotion, so it is cloned,
 	// not restored to erased: erased, its body named the generic enum's
 	// unmangled `Leaf` (std/pvec and std/pmap, #10829).
-	{name: "a-return-bound-constructor-called-from-generic-methods", atLeast: 11, noLeak: true, src: `
+	{name: "a-return-bound-constructor-called-from-generic-methods", atLeast: 11, want: "8|", src: `
 enum Node[T] { Leaf(T[]), Branch(Node[T][]) }
 
 struct Stack[T] { root: Node[T], n: i32 }
@@ -6844,7 +6656,7 @@ function main(): i32 {
 	// A call from a generic-struct method is rewritten only per struct
 	// instantiation, after monomorphize_module; the stranded-call scan reads
 	// the finished module, so a keyable call there is cloned, not erased.
-	{name: "a-fn-param-bound-generic-called-from-a-generic-method", atLeast: 10, noLeak: true, src: `
+	{name: "a-fn-param-bound-generic-called-from-a-generic-method", atLeast: 10, want: "5|", src: `
 struct Slot[T] { v: T }
 
 pub function hold[T](f: () => T): i32 {
@@ -6865,7 +6677,7 @@ function main(): i32 {
 }
 `},
 	// The same through a function-typed parameter's parameter.
-	{name: "a-generic-struct-over-a-function-parameters-parameter", atLeast: 5, noLeak: true, src: `
+	{name: "a-generic-struct-over-a-function-parameters-parameter", atLeast: 5, want: "3|", src: `
 struct Slot[T] { v: T[] }
 
 pub function count[T](f: (T) => i32): i32 {
@@ -6882,7 +6694,7 @@ function main(): i32 {
 	// An instance of a lifted generic lambda that returns a call to another
 	// lifted lambda reads that callee's result under its own binding, not as
 	// the template's `T`.
-	{name: "a-lambda-inside-a-lifted-generic-lambda", atLeast: 9, noLeak: true, src: `
+	{name: "a-lambda-inside-a-lifted-generic-lambda", atLeast: 9, want: "14|", src: `
 pub function make[T](seed: T): T {
     function outer(base: T): (T) => T {
         return (x: T): T => ((y: T): T => y)(x);
@@ -6911,7 +6723,7 @@ function main(): i32 {
 	// A nested function returning `(T) => (T) => T` spells its result's result
 	// as a whole function type, respelled with the template's variables, and
 	// the nested template `__lam_0$wrap0$wrap0` is produced per instance.
-	{name: "a-nested-generic-function-returning-a-curried-function", atLeast: 5, noLeak: true, src: `
+	{name: "a-nested-generic-function-returning-a-curried-function", atLeast: 5, want: "10|", src: `
 pub function make[T](seed: T): T {
     function outer(base: T): (T) => (T) => T {
         return (x: T): (T) => T => (y: T): T => y;
@@ -6928,12 +6740,9 @@ function main(): i32 {
 `},
 	// A lambda returned out of a nested generic function that names no type
 	// variable is an ordinary declaration row, `__lam_0$wrap0` or
-	// `__lam_0$clo0`. Its creator `__lam_0` is a template: not kept, yet no
-	// AST-lowered body either, so the value it builds is produced. Under
-	// the skip knob the template's erased body stands and builds the box,
-	// so there the lambda keeps the AST lowering.
-	{name: "a-nested-generic-function-returning-a-lambda-that-names-no-type-variable", atLeast: 7, noLeak: true,
-		skip: "main", refuses: "__lam_0$wrap0: is a function value __lam_0 builds, which the AST lowering defines", src: `
+	// `__lam_0$clo0`. Its creator `__lam_0` is a template, not kept, so the
+	// value it builds is produced.
+	{name: "a-nested-generic-function-returning-a-lambda-that-names-no-type-variable", atLeast: 7, want: "14|", src: `
 pub function make[T](seed: T): T {
     function outer(base: T): (string) => i32 {
         return (s: string): i32 => s.len() + 1;
@@ -6959,11 +6768,8 @@ function main(): i32 {
     return make(7) + keep(1) + s.len() + t.len();
 }
 `},
-	// An AST-lowered hoisted body that calls a generic calls its erased
-	// body, so the indirect cone runs through the template row it never
-	// seeds from and reaches `helper`.
-	{name: "the-indirect-cone-runs-through-an-erased-generic-body", atLeast: 6, noLeak: true,
-		skip: "__lam_0$wrap0", refuses: "helper: is reached by a direct call from pick", src: `
+	// A hoisted lambda body that calls a generic, which reaches `helper`.
+	{name: "the-indirect-cone-runs-through-an-erased-generic-body", atLeast: 6, want: "12|", src: `
 function helper(own xs: string[]): i32 {
     return xs.len();
 }
@@ -6990,7 +6796,7 @@ function main(): i32 {
 	// A body hoisted out of a hoisted body is named `<creator>$clo0$clo0`;
 	// its creator is the body before the last marker, not the declaration
 	// before the first.
-	{name: "a-lambda-lifted-out-of-a-lifted-lambda", atLeast: 7, src: `
+	{name: "a-lambda-lifted-out-of-a-lifted-lambda", atLeast: 7, want: "23|", src: `
 struct Box { f: (i32) => i32 }
 
 function adder(n: i32): (i32) => (i32) => i32 {
@@ -7022,7 +6828,7 @@ function main(): i32 {
 	// The lambda binds only the variable its type mentions, so its one
 	// instance `__lam_0$wrap0$i32` is built by both instances of `__lam_0`,
 	// whose names carry a second binding it does not spell.
-	{name: "a-lambda-binding-fewer-variables-than-its-creator", atLeast: 2, src: `
+	{name: "a-lambda-binding-fewer-variables-than-its-creator", atLeast: 2, want: "9|", src: `
 pub function make[A, B](a: A, b: B): A {
     function idmaker(base: A, other: B): (A) => A {
         return (x: A) => x;
@@ -7039,7 +6845,7 @@ function main(): i32 {
 	// A value block, if-expression or match-expression no path leaves by its
 	// end: the enclosing expression is unreachable, including from inside a
 	// loop whose join and exit the block's `break` still reaches (#10793).
-	{name: "a-value-block-that-leaves-only-by-return-or-break", atLeast: 6, noLeak: true, src: `
+	{name: "a-value-block-that-leaves-only-by-return-or-break", atLeast: 6, want: "134|ab\nabbb!\nzeromany\n", wasm: "out-of-range|ab\nabbb!\nzeromany\n", src: `
 function f(c: boolean): i32 { var x: i32 = { if (c) { return 1; } return 2; }; return x + 100; }
 function g(n: i32): string {
     var s: string = "a";
@@ -7072,7 +6878,7 @@ function main(): i32 {
 	// the enum pass rewrites those spellings to the instance, so a fn value's
 	// result and a tuple element are the same type as the values put there
 	// (#10795).
-	{name: "a-generic-enum-from-a-function-value-or-a-tuple-element", atLeast: 5, noLeak: true, src: `
+	{name: "a-generic-enum-from-a-function-value-or-a-tuple-element", atLeast: 5, want: "59|", src: `
 enum Opt[T] { Non, Has(T) }
 function run(f: (i32) => Opt[string], k: i32): i32 { match (f(k)) { Has(s) => { return s.len(); }, Non => { return 0; } } }
 function pick(t: (Opt[string], i32)): i32 { var e: Opt[string] = t.0; match (e) { Has(s) => { return s.len() + t.1; }, Non => { return t.1; } } }
@@ -7090,7 +6896,7 @@ function main(): i32 {
 	// A generic enum whose payload is a generic struct at its own parameter:
 	// the struct pass leaves `Box[U]` for the enum pass to substitute, and a
 	// second struct pass clones the `Box__string` it names (#10762).
-	{name: "a-generic-enum-with-a-generic-struct-payload", atLeast: 8, noLeak: true, src: `
+	{name: "a-generic-enum-with-a-generic-struct-payload", atLeast: 8, want: "40|xyz\n", src: `
 struct Box[T] { v: T, n: i32 }
 impl[T] Box[T] {
   function size(self: Self): i32 { return self.n * 2; }
@@ -7115,7 +6921,7 @@ function main(): i32 {
 	// A generic enum instantiated at an array, annotated or inferred from the
 	// payload, including a closure payload returning the enum: std/async's
 	// `Future[u8[]]` shape (#10762).
-	{name: "a-generic-enum-at-an-array-type-argument", atLeast: 7, noLeak: true, src: `
+	{name: "a-generic-enum-at-an-array-type-argument", atLeast: 7, want: "86|xyz-\n", src: `
 enum Fut[T] { Ready(T), Pending(i32, (i32) => Fut[T]) }
 enum Holder[T] { Has(T), Empty }
 function step(fd: i32): Fut[u8[]] { var b: u8[] = [1 as u8, 2 as u8, fd as u8]; return Ready(b); }
@@ -7141,7 +6947,7 @@ function main(): i32 {
 	// A generic that builds `Slot[T]` called with a function value whose type
 	// no declaration spells: an array element and a match arm key no clone, so
 	// keep stays erased and each instance builds Slot at its own type (#10827).
-	{name: "a-generic-record-over-an-unspelled-function-value", atLeast: 52, noLeak: true, src: `
+	{name: "a-generic-record-over-an-unspelled-function-value", atLeast: 52, want: "0|7 abc arm\n", src: `
 import "std/i32";
 struct Slot[T] { v: T }
 pub function keep[T](f: () => T): T {
@@ -7161,7 +6967,7 @@ function main(): i32 {
 	// An erased generic forwarding its function parameter to one that builds
 	// `Slot[T]`: the call inside it is keyed at its own variable, `keep__0_U`,
 	// whose instances build Slot at each binding (#10827).
-	{name: "an-erased-generic-forwarding-its-function-parameter", atLeast: 51, noLeak: true, src: `
+	{name: "an-erased-generic-forwarding-its-function-parameter", atLeast: 51, want: "0|5 wx\n", src: `
 import "std/i32";
 struct Slot[T] { v: T }
 pub function keep[T](f: () => T): T {
@@ -7389,12 +7195,13 @@ function main(): i32 {
 }
 `
 
-// TestSelfHostSemanticAllocationParity pins the produced bodies' allocation
-// count against the AST lowering's on shapes where a unit decision is what
-// decides between writing a buffer in place and copying it. The answer cannot
-// see a copy and the leak pins see only what is never released, so this is
-// the check that a buffer moved rather than being retained and duplicated.
-func TestSelfHostSemanticAllocationParity(t *testing.T) {
+// TestSelfHostSemanticAllocationCounts pins the produced bodies' allocation
+// count on shapes where a unit decision is what decides between writing a
+// buffer in place and copying it. The answer cannot see a copy and the leak
+// pins see only what is never released, so this is the check that a buffer
+// moved rather than being retained and duplicated: each copy is one more
+// allocation than the pin.
+func TestSelfHostSemanticAllocationCounts(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
 		t.Skip("the CLI driver takes host filesystem paths as argv")
@@ -7406,41 +7213,36 @@ func TestSelfHostSemanticAllocationParity(t *testing.T) {
 	dir := writeSelfHostAsmProject(t)
 	copySelfHostDriver(t, dir, "fern.fern")
 	fernBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
-	for _, prog := range []struct{ name, src string }{
-		{"element-read-outlives-the-array-write", semHeldElementSource},
+	for _, prog := range []struct {
+		name   string
+		allocs int64
+		src    string
+	}{
+		{"element-read-outlives-the-array-write", 17, semHeldElementSource},
 		// A view merged past a source that dominates the join stays a view.
-		{"a-view-of-a-dominating-source-is-not-copied", semDominatingViewSource},
+		{"a-view-of-a-dominating-source-is-not-copied", 36, semDominatingViewSource},
 	} {
 		t.Run(prog.name, func(t *testing.T) {
 			src := filepath.Join(t.TempDir(), "main.fern")
 			if err := os.WriteFile(src, []byte(prog.src), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			base := semAllocations(t, fernBin, stdlibRoot, src, false)
-			got := semAllocations(t, fernBin, stdlibRoot, src, true)
-			if got > base {
-				t.Fatalf("the produced bodies allocated %d times where the AST lowering allocates %d", got, base)
+			if got := semAllocations(t, fernBin, stdlibRoot, src); got != prog.allocs {
+				t.Fatalf("the produced bodies allocated %d times, want %d", got, prog.allocs)
 			}
 		})
 	}
 }
 
-// semAllocations compiles the program under FERN_LEAKCHECK on x86-64 with the
-// semantic path on or off and answers the run's allocation count. The typed
-// leg is strict, so a refusal fails the compile instead of measuring the AST
-// lowering twice.
-func semAllocations(t *testing.T, fernBin, stdlibRoot, src string, sem bool) int64 {
+// semAllocations compiles the program under FERN_LEAKCHECK on x86-64 through
+// the semantic path and answers the run's allocation count.
+func semAllocations(t *testing.T, fernBin, stdlibRoot, src string) int64 {
 	t.Helper()
 	out := filepath.Join(t.TempDir(), "prog")
 	cmd := exec.Command(fernBin, "-target", "x86-64-linux", src, stdlibRoot, "-o", out)
-	cmd.Env = append(os.Environ(), "FERN_LEAKCHECK=1")
-	if sem {
-		cmd.Env = append(cmd.Env, "FERN_SEM_IR=1")
-	} else {
-		cmd.Env = append(cmd.Env, "FERN_SEM_IR=")
-	}
+	cmd.Env = append(os.Environ(), "FERN_LEAKCHECK=1", "FERN_SEM_IR=1")
 	if output, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("compile (sem=%v): %v\n%s", sem, err, output)
+		t.Fatalf("compile: %v\n%s", err, output)
 	}
 	if err := os.Chmod(out, 0o755); err != nil {
 		t.Fatal(err)
@@ -7448,7 +7250,7 @@ func semAllocations(t *testing.T, fernBin, stdlibRoot, src string, sem bool) int
 	output, _ := exec.Command(out).CombinedOutput()
 	var allocs, frees, live int64
 	if _, err := fmtSscan(leakSummaryLine(string(output)), &allocs, &frees, &live); err != nil {
-		t.Fatalf("no leakcheck summary (sem=%v): %v\n%s", sem, err, output)
+		t.Fatalf("no leakcheck summary: %v\n%s", err, output)
 	}
 	return allocs
 }

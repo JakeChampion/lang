@@ -244,7 +244,7 @@ function produced_plan(p: semsource.Produced): ssaunits.Plan {
   if (!p.ok) {
     return ssaunits.refused(p.why);
   }
-  return ssaunits.plan(p.func, p.modes);
+  return plan_of(p);
 }
 
 // refusal is why a row's body is not emitted, or "" where nothing refused it:
@@ -261,6 +261,20 @@ function refusal(p: semsource.Produced, body: irlower.LowerResult, considered: b
     return p.why;
   }
   return body.why;
+}
+
+// A produced function is planned over the analysis it carries when the
+// anchoring verified the graph the planner sees; one whose graph a rewrite
+// moved since carries none and is analysed here.
+function plan_of(p: semsource.Produced): ssaunits.Plan {
+  match (p.analysis) {
+    Some(a) => {
+      return ssaunits.plan_analyzed(p.func, p.modes, a);
+    },
+    None => {
+      return ssaunits.plan(p.func, p.modes);
+    }
+  }
 }
 
 // produced_body lowers a planned function. Every plan is made before any body
@@ -699,9 +713,6 @@ function no_reuse(): Rows {
 // own modes nor a contract it calls. An empty `prev` reuses nothing, which is
 // what the first lowering passes.
 function row_reusable(prev: Rows, changed: boolean[], i: i32): boolean {
-  if (!sem_reuse_on()) {
-    return false;
-  }
   if (i >= prev.plans.len() || i >= prev.body.len() || i >= changed.len()) {
     return false;
   }
@@ -721,6 +732,12 @@ function row_reusable(prev: Rows, changed: boolean[], i: i32): boolean {
 function rows_of(mod: parser.Module, built: semsource.Built, structs: irlower.StructTab, prev: Rows, changed: boolean[]): Rows {
   var only: string = sem_ir_only();
   var skip: string = sem_ir_skip();
+  // `FERN_SEM_REUSE=` (set but empty) turns the reuse off; an empty `prev`
+  // is how a lowering reuses nothing.
+  var base: Rows = prev;
+  if (!sem_reuse_on()) {
+    base = no_reuse();
+  }
   var r: Rows = no_reuse();
   var plans: ssaunits.Plan[] = [];
   var considered: boolean[] = [];
@@ -730,13 +747,13 @@ function rows_of(mod: parser.Module, built: semsource.Built, structs: irlower.St
   while (i < mod.funcs.len()) {
     var fd: parser.FuncDecl = mod.funcs[i];
     var plan: ssaunits.Plan = ssaunits.refused("not selected");
-    if (row_reusable(prev, changed, i)) {
-      plan = prev.plans[i];
+    if (row_reusable(base, changed, i)) {
+      plan = base.plans[i];
     } else if (selected(only, skip, fd.name)) {
       plan = produced_plan(built.decls[i]);
     }
     plans = plans.append(plan);
-    considered = considered.append(row_reusable(prev, changed, i) || selected(only, skip, fd.name));
+    considered = considered.append(row_reusable(base, changed, i) || selected(only, skip, fd.name));
     keys = keys.append(semsource.decl_key(fd));
     funcs = funcs.append(built.decls[i].func);
     r = Rows { ...r, n1: r.n1.append(fd.name), n2: r.n2.append(semsource.decl_key(fd)), called: r.called.append(called_values(built.decls[i].func)) };
@@ -749,13 +766,13 @@ function rows_of(mod: parser.Module, built: semsource.Built, structs: irlower.St
     // A refused instance has no graph to name it; its symbol is the one requested.
     var name: string = built.names[at];
     var plan: ssaunits.Plan = ssaunits.refused("not selected");
-    if (row_reusable(prev, changed, at)) {
-      plan = prev.plans[at];
+    if (row_reusable(base, changed, at)) {
+      plan = base.plans[at];
     } else if (selected(only, skip, name)) {
       plan = produced_plan(p);
     }
     plans = plans.append(plan);
-    considered = considered.append(row_reusable(prev, changed, at) || selected(only, skip, name));
+    considered = considered.append(row_reusable(base, changed, at) || selected(only, skip, name));
     keys = keys.append(name);
     funcs = funcs.append(p.func);
     r = Rows { ...r, n1: r.n1.append(name), n2: r.n2.append(""), called: r.called.append(called_values(p.func)) };
@@ -764,7 +781,7 @@ function rows_of(mod: parser.Module, built: semsource.Built, structs: irlower.St
   r = Rows { ...r, grows: ssaunits.grow_table(keys, funcs, plans), plans: plans };
   i = 0;
   while (i < plans.len()) {
-    var body: irlower.LowerResult = reused_or_lowered(built, mod, structs, r, prev, changed, i);
+    var body: irlower.LowerResult = reused_or_lowered(built, mod, structs, r, base, changed, i);
     r = Rows { ...r, body: r.body.append(body), keep: r.keep.append(body.ok), why: r.why.append(refusal(produced_at(built, mod, i), body, considered[i])) };
     i = i + 1;
   }
