@@ -645,7 +645,9 @@ function ts_grow(mod: parser.Module, rs0: RefSet, pending0: i32[]): TsGrown {
 
 // ts_reaches_map reports whether a map can reach the kept program: a map
 // constructor is reachable, a kept function or a lambda in one takes or
-// returns a map, or a struct or variant holds one.
+// returns a map, a struct or variant holds one, or a kept body names a
+// builtin enum a variant of which holds one — the enum's drop walks that
+// variant whichever variant the program built.
 function ts_reaches_map(mod: parser.Module, rs: RefSet): boolean {
   if (refset_has(rs, "map_new") || refset_has(rs, ts_free_root("map_new"))
     || refset_has(rs, "__map_new_i32") || refset_has(rs, ts_free_root("__map_new_i32"))) {
@@ -662,6 +664,23 @@ function ts_reaches_map(mod: parser.Module, rs: RefSet): boolean {
       if (ts_mentions_any([fl.type_name], map_types)) {
         return true;
       }
+    }
+  }
+  var all: parser.StructDecl[] = parser.inject_builtin_enums(mod.structs);
+  var bi: i32 = mod.structs.len();
+  while (bi < all.len()) {
+    var variant: parser.StructDecl = all[bi];
+    bi = bi + 1;
+    var owner: string = variant.enum_owner;
+    if (owner.len() == 0) {
+      owner = variant.name;
+    }
+    if (util.index_of_str(map_types, owner) < 0) {
+      continue;
+    }
+    if (refset_has(rs, variant.name) || refset_has(rs, ts_free_root(variant.name))
+      || refset_has(rs, owner) || refset_has(rs, ts_free_root(owner))) {
+      return true;
     }
   }
   return false;

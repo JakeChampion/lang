@@ -352,9 +352,7 @@ function x86_elf_binary(asm: string, emit_syms: boolean): string {
   // Anything unencodable means bytes were dropped, so every offset past
   // the first is wrong — refuse rather than write it (SH-005, #6045).
   if (a.unknown.len() > 0) {
-    eprint("fern: -target x86-64: in-process assembler could not encode: ");
-    eprint(a.unknown[0]);
-    eprint("\n");
+    eprint("fern: -target x86-64: in-process assembler could not encode: " + a.unknown[0]);
     return "";
   }
   var eoff: i32 = x86_native.x86_label_off(a, "_start");
