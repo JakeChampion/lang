@@ -99,7 +99,7 @@ function main(): i32 {
   // leaves the funcref table naming functions the units never emit — which
   // traps at call_indirect rather than failing to link.
   var d: semlower.Driven = semlower.driven(mod, "wasm32-wasi");
-  var im: parser.Module = parser.infer_ret_types_module(wasm_ir.route_normalized(d.full));
+  var im: parser.Module = ircore.with_records(parser.infer_ret_types_module(wasm_ir.route_normalized(d.full)), d.sub);
 
   var n: i32 = im.funcs.len();
   if (n < 2) {
