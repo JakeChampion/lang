@@ -423,6 +423,10 @@
 # 2026-10-01 — asm_modload_run 9438224 -> 9917048 (+5.1%) once this branch
 # took main's 48 commits since its base; the other rows stay inside 5%.
 # Number pasted from driver-sizes' own report on run 36854942099.
+# 2026-10-01 — asm_pathprobe_run 5753440 -> 3959936 (-31.2%): #10929 reads the
+# path probe's refusal off a typed refusal, so the driver no longer carries
+# the AST lowering's answer; the win becomes the ceiling. Number pasted from
+# driver-sizes' own report on run 36891768601.
 fern.fern/stage2 13040616
 fern.fern 13040616
 asm_load_run.fern 10866392
@@ -432,6 +436,6 @@ asm_run.fern 9123464
 wasm_ir_run.fern 9120048
 wasm_run.fern 9117408
 wasm_runio_run.fern 9116728
-asm_pathprobe_run.fern 5753440
+asm_pathprobe_run.fern 3959936
 irlower_run.fern 5578848
 checker_modload_run.fern 2386128
