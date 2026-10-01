@@ -34,7 +34,6 @@ import "std/io";
 import "std/http";
 import "std/tcp";
 import "std/fetch";
-import "std/utf8";
 import "std/headers";
 import "./ast";
 import "./diag";
@@ -46,38 +45,43 @@ import "./machine";
 import "./wire";
 import "./store";
 
-// real_fetch dials the declared backend and speaks HTTP/1.1 to it. This is
-// the one function that separates the proxy from the mock origin the tests
-// use; everything above it is the same code.
+// real_fetch sends `bereq` to the declared backend through std/fetch. This
+// is the one function that separates the proxy from the mock origin the
+// tests use; everything above it is the same code.
 function real_fetch(b: machine.Backend, t: runtime.Txn): machine.FetchOut {
   var empty: runtime.Headers = runtime.headers_new();
-  var host_be: i32 = fetch.parse_ipv4(b.host);
-  if (host_be == 0) {
-    return machine.FetchOut { status: 0, reason: "", headers: empty, body: "", ttl: 0.0 - 1.0, ok: false, err: "backend '" + b.name + "' host '" + b.host + "' is not an IPv4 address" };
+  var host: string = b.host;
+  if (host.index_of(":") >= 0) {
+    host = "[" + host + "]";
   }
-  var req: string = wire.build_request(t.bereq, b.host + ":" + b.port.to_string());
-  var raw_bytes: u8[] = fetch.fetch_raw(host_be, b.port, req);
-  // `wire.parse_response` is a text parser, so a non-UTF-8 origin response
-  // is a backend error here rather than something to reinterpret. A proxy
-  // that must pass binary bodies through needs a byte-domain wire parser.
-  var raw: string = "";
-  match (utf8.from_bytes(raw_bytes)) {
+  var req: fetch.Request = wire.request_of(t.bereq, "http://" + host + ":" + b.port.to_string());
+  var resp: HttpResponse = http.ok("");
+  match (fetch.send(req)) {
+    Ok(r) => {
+      resp = r;
+    },
+    Err(e) => {
+      return machine.FetchOut { status: 0, reason: "", headers: empty, body: "", ttl: 0.0 - 1.0, ok: false, err: "backend '" + b.name + "': " + e.message() };
+    }
+  }
+  // The proxy's messages hold text, so a non-UTF-8 origin response is a
+  // backend error here rather than something to reinterpret. A proxy
+  // that must pass binary bodies through needs byte-bodied messages.
+  var body: string = "";
+  match (resp.body_text()) {
     Some(text) => {
-      raw = text;
+      body = text;
     },
     None => {
       return machine.FetchOut { status: 0, reason: "", headers: empty, body: "", ttl: 0.0 - 1.0, ok: false, err: "backend '" + b.name + "' returned a response that is not valid UTF-8" };
     }
   }
-  var p: wire.Parsed = wire.parse_response(raw);
-  if (!p.ok) {
-    return machine.FetchOut { status: 0, reason: "", headers: empty, body: "", ttl: 0.0 - 1.0, ok: false, err: p.err };
-  }
+  var h: runtime.Headers = wire.headers_of(resp.headers);
   // An origin's Cache-Control is what decides how long its answer may be
   // kept; without one the built-in default applies.
   var ttl: f64 = 0.0 - 1.0;
-  match (p.headers.get("Cache-Control")) {
-    VString(cc) => {
+  match (resp.headers.get("Cache-Control")) {
+    Some(cc) => {
       match (wire.max_age(cc)) {
         Some(secs) => {
           ttl = secs;
@@ -85,9 +89,9 @@ function real_fetch(b: machine.Backend, t: runtime.Txn): machine.FetchOut {
         None => {}
       }
     },
-    _ => {}
+    None => {}
   }
-  return machine.FetchOut { status: p.status, reason: p.reason, headers: p.headers, body: p.body, ttl: ttl, ok: true, err: "" };
+  return machine.FetchOut { status: resp.status as i64, reason: http.http_status_text(resp.status), headers: h, body: body, ttl: ttl, ok: true, err: "" };
 }
 
 // client_ip_of reads the forwarded address, since the accept loop does not

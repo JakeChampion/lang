@@ -924,27 +924,37 @@ func FetchDeadlineUpstreams(t *testing.T) (silentPort, livePort int) {
 	return silent.Addr().(*net.TCPAddr).Port, live.Addr().(*net.TCPAddr).Port
 }
 
-// FetchDeadlineSource is a `fetch_get_deadline` client (#4385): against
-// the silent upstream it must answer `None` at its 400 ms deadline, and
-// against the live one `Some` with a 200 in time. Exit 0 when both hold.
+// FetchDeadlineSource is a std/fetch client under its timeouts (#4385):
+// against the silent upstream a 400 ms inactivity bound answers
+// `Timeout(Inactivity)` and a 300 ms total bound `Timeout(Total)`, and
+// against the live one the default bounds give a 200 in time. Exit 0 when
+// all three hold.
 func FetchDeadlineSource(silentPort, livePort int) string {
 	return fmt.Sprintf(`import "std/fetch";
-import "std/time";
-function main(): i32 {
-    var slow: Option[u8[]] = fetch.fetch_get_deadline(fetch.ipv4(127,0,0,1), %d, "/", time.duration_millis(400));
-    var slow_ok: boolean = false;
-    match (slow) {
-        Some(s) => { },
-        None => { slow_ok = true; },
+function phase_of(answer: Result[HttpResponse, fetch.FetchError]): string {
+    match (answer) {
+        Ok(resp) => { return "answered"; },
+        Err(e) => {
+            match (e) {
+                Timeout(p) => { return p.message(); },
+                _ => { return e.message(); }
+            }
+        }
     }
-    if (!slow_ok) { return 1; }
-    var fast: Option[u8[]] = fetch.fetch_get_deadline(fetch.ipv4(127,0,0,1), %d, "/", time.duration_millis(5000));
-    match (fast) {
-        Some(resp) => {
-            if (fetch.http_status(resp) == 200) { return 0; }
+    return "";
+}
+function main(): i32 {
+    var silent: string = "http://127.0.0.1:%[1]d/";
+    var idle: fetch.Timeouts = fetch.Timeouts { connect_ms: 5000, inactivity_ms: 400, total_ms: 5000 };
+    if (phase_of(fetch.send(fetch.get(silent).with_timeouts(idle))) != "waiting for the response") { return 1; }
+    var whole: fetch.Timeouts = fetch.Timeouts { connect_ms: 5000, inactivity_ms: 5000, total_ms: 300 };
+    if (phase_of(fetch.send(fetch.get(silent).with_timeouts(whole))) != "in all") { return 5; }
+    match (fetch.send(fetch.get("http://127.0.0.1:%[2]d/"))) {
+        Ok(resp) => {
+            if (resp.status == 200) { return 0; }
             return 2;
         },
-        None => { return 3; },
+        Err(e) => { return 3; }
     }
     return 4;
 }

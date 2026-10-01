@@ -691,6 +691,10 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"impl-complete-ok", "trait Greet { function hello(): i32; }\nstruct Dog {}\nimpl Greet for Dog { function hello(): i32 { return 1; } }\nfunction main(): i32 { return 0; }\n", nil},
 		{"impl-default-omitted-ok", "trait Greet { function hi(): i32 { return 9; } }\nstruct Dog {}\nimpl Greet for Dog {}\nfunction main(): i32 { return 0; }\n", nil},
 		{"impl-missing-one-of-two", "trait Two { function a(): i32; function b(): i32; }\nstruct S {}\nimpl Two for S { function a(): i32 { return 1; } }\nfunction main(): i32 { return 0; }\n", []string{"E021"}},
+		// E021 receiver rule: a method on a built-in enum (`Body`, `Option`)
+		// is as clean as one on a built-in struct, matching the Go checker,
+		// where the self-host once drew E021 for every built-in enum receiver.
+		{"builtin-enum-receiver-ok", "function (b: Body) kind(): i32 { return 1; }\nfunction main(): i32 { return 0; }\n", nil},
 		// E021 signature mismatch (#4347 slice 2): the impl provides the method
 		// but with the wrong arity / param type / return type vs the trait's
 		// declaration (Self resolves to the impl type). A correct impl is clean.

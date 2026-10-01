@@ -14616,7 +14616,7 @@ function receiver_type_ok(rt: string, mod: parser.Module): boolean {
     return true;
   }
   var base: string = util.base_type_name(rt);
-  if (parser.is_reserved_struct_name(base)) {
+  if (parser.is_reserved_struct_name(base) || parser.is_reserved_enum_name(base)) {
     return true;
   }
   for sd in mod.structs {
