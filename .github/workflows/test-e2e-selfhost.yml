@@ -19,13 +19,17 @@ name: Test e2e self-host
 # shards depended on; measured on runs 35708985176 and 35708878302, those jobs
 # sat 8-14 minutes in the queue to do 45 seconds of work, so the shards were not
 # even created until minute 17 of a 35-minute run. So every job builds what it
-# needs on its own runner: the closure-keyed disk cache (hashSelfHostSources)
-# builds each driver at most once per job, and the two worker processes of a
-# shard share it through the atomic publish. The drivers are built by the
-# pinned stage0 self-host compiler (bootstrap/stage0.lock, fetched once per
-# job by bootstrap/bootstrap.sh), ~90-105 s per driver and 300 s for fern.fern
-# (docs/LOCAL-DEV-LOOP.md), so a shard's wall is its distinct drivers first
-# and its tests second.
+# needs on its own runner, into a driver cache carried between runs
+# (.github/actions/selfhost-driver-cache): the closure-keyed disk cache
+# (hashSelfHostSources) builds each driver at most once per job, the two worker
+# processes of a shard share it through the atomic publish, and the Actions
+# cache hands every job the drivers an earlier run built for the same stage0
+# pin, self-host sources and stdlib. The drivers are built by the pinned stage0
+# self-host compiler (bootstrap/stage0.lock, fetched once per job by
+# bootstrap/bootstrap.sh), ~90-105 s per driver and 300 s for fern.fern
+# (docs/LOCAL-DEV-LOOP.md), so a shard that misses the cache pays its distinct
+# drivers first and its tests second. `driver-sizes` builds every stock driver
+# and is the job that saves the cache.
 #
 # TWO WORKERS PER SHARD. Each x86 shard runs its selection as two isolated
 # processes through cmd/ci-test-workers (docs/CI-X86-WORKERS.md), each with
@@ -117,6 +121,7 @@ jobs:
       - uses: ./.github/actions/setup-fern
         with:
           wasmtime: "true" # the CLI tests' `-target wasm32-wasi` sub-legs run wasmtime
+      - uses: ./.github/actions/selfhost-driver-cache
       # TestSelfHostArm64LinuxBuilds EXECUTES its arm64 output under
       # qemu-aarch64; without the emulator it t.Skipped every run, which is why
       # #6047 survived having a `print` test case. cross-gcc stays OFF —
@@ -130,11 +135,9 @@ jobs:
       - uses: ./.github/actions/build-e2e-binaries
       - name: build fern.fern (whole self-hosted compiler)
         env:
-          FERN_SELFHOST_BUILD_CACHE: "${{ runner.temp }}/selfhost-unicache"
           FERN_WARM_DRIVER: "fern.fern"
         run: |
           set -euo pipefail
-          mkdir -p "$FERN_SELFHOST_BUILD_CACHE"
           chmod +x e2eselfhost.test
           BIN="$PWD/e2eselfhost.test"
           cd internal/e2eselfhost
@@ -142,7 +145,6 @@ jobs:
             go tool test2json -t -p e2eselfhost "$BIN" -test.run '^TestSelfHostWarmStockDriver$' -test.v -test.timeout 13m
       - name: run isolated fern.fern driver tests (two workers, local cache)
         env:
-          FERN_SELFHOST_BUILD_CACHE: "${{ runner.temp }}/selfhost-unicache"
           FERN_BUILD_MEM_BUDGET_MB: "6500"
         run: |
           set -euo pipefail
@@ -199,14 +201,15 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
+      - uses: ./.github/actions/selfhost-driver-cache
+        with:
+          save: "true"
       - uses: ./.github/actions/build-e2e-binaries
       - name: build every baselined driver and record its size
         env:
-          FERN_SELFHOST_BUILD_CACHE: "${{ runner.temp }}/selfhost-unicache"
           FERN_DRIVER_SIZE_REPORT: "${{ runner.temp }}/driver-sizes.txt"
         run: |
           set -euo pipefail
-          mkdir -p "$FERN_SELFHOST_BUILD_CACHE"
           FERN_WARM_DRIVER="$(awk '!/^[ \t]*(#|$)/ { print $1 }' .github/selfhost-driver-sizes.txt | paste -sd, -)"
           export FERN_WARM_DRIVER
           echo "drivers: $FERN_WARM_DRIVER"
@@ -232,6 +235,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
+      - uses: ./.github/actions/selfhost-driver-cache
       - name: aarch64 cross-gcc + qemu (the stage-2 leg is linked and RUN)
         uses: ./.github/actions/apt-cross-toolchain
       - uses: ./.github/actions/build-e2e-binaries
@@ -239,10 +243,8 @@ jobs:
         if: ${{ !cancelled() }}
         env:
           RUN_CONST_FUNC_GEN2: "1"
-          FERN_SELFHOST_BUILD_CACHE: "${{ runner.temp }}/selfhost-unicache"
         run: |
           set -euo pipefail
-          mkdir -p "$FERN_SELFHOST_BUILD_CACHE"
           chmod +x e2eselfhost.test
           BIN="$PWD/e2eselfhost.test"
           cd internal/e2eselfhost
@@ -264,11 +266,8 @@ jobs:
       # (#7954). The fixpoints compare bytes; this runs what stage 1 built.
       - name: x86-64 stage-2 CLI compiles lexer.fern and a program
         if: ${{ !cancelled() }}
-        env:
-          FERN_SELFHOST_BUILD_CACHE: "${{ runner.temp }}/selfhost-unicache"
         run: |
           set -euo pipefail
-          mkdir -p "$FERN_SELFHOST_BUILD_CACHE"
           chmod +x e2eselfhost.test
           BIN="$PWD/e2eselfhost.test"
           cd internal/e2eselfhost
@@ -276,11 +275,8 @@ jobs:
             go tool test2json -t -p e2eselfhost "$BIN" -test.run '^TestSelfHostCLIStage2X86_64$' -test.v -test.timeout 20m
       - name: whole-compiler emit-all fixpoint at batch=8 (gen0 == gen1)
         if: ${{ !cancelled() }}
-        env:
-          FERN_SELFHOST_BUILD_CACHE: "${{ runner.temp }}/selfhost-unicache"
         run: |
           set -euo pipefail
-          mkdir -p "$FERN_SELFHOST_BUILD_CACHE"
           chmod +x e2eselfhost.test
           BIN="$PWD/e2eselfhost.test"
           cd internal/e2eselfhost
@@ -296,13 +292,11 @@ jobs:
       - uses: ./.github/actions/setup-fern
         with:
           wasmtime: "true" # the test t.Skips without BOTH wasm-tools and wasmtime
+      - uses: ./.github/actions/selfhost-driver-cache
       - uses: ./.github/actions/build-e2e-binaries
       - name: whole-compiler wasm link (15 modules, function-windowed, then run)
-        env:
-          FERN_SELFHOST_BUILD_CACHE: "${{ runner.temp }}/selfhost-unicache"
         run: |
           set -euo pipefail
-          mkdir -p "$FERN_SELFHOST_BUILD_CACHE"
           chmod +x e2eselfhost.test
           BIN="$PWD/e2eselfhost.test"
           cd internal/e2eselfhost
@@ -316,15 +310,13 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
+      - uses: ./.github/actions/selfhost-driver-cache
       - name: aarch64 cross-gcc + qemu
         uses: ./.github/actions/apt-cross-toolchain
       - uses: ./.github/actions/build-e2e-binaries
       - name: arm64 per-module whole-compiler build + run
-        env:
-          FERN_SELFHOST_BUILD_CACHE: "${{ runner.temp }}/selfhost-unicache"
         run: |
           set -euo pipefail
-          mkdir -p "$FERN_SELFHOST_BUILD_CACHE"
           chmod +x e2eselfhost.test
           BIN="$PWD/e2eselfhost.test"
           cd internal/e2eselfhost
@@ -343,13 +335,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
+      - uses: ./.github/actions/selfhost-driver-cache
       - uses: ./.github/actions/build-e2e-binaries
       - name: semantic self-build and per-module diff
-        env:
-          FERN_SELFHOST_BUILD_CACHE: "${{ runner.temp }}/selfhost-unicache"
         run: |
           set -euo pipefail
-          mkdir -p "$FERN_SELFHOST_BUILD_CACHE"
           chmod +x e2eselfhost.test
           BIN="$PWD/e2eselfhost.test"
           cd internal/e2eselfhost
@@ -373,6 +363,7 @@ jobs:
       - uses: ./.github/actions/setup-fern
         with:
           wasmtime: ${{ matrix.wasmtime }}
+      - uses: ./.github/actions/selfhost-driver-cache
       - name: aarch64 cross toolchain + qemu (arm64 leg)
         if: matrix.qemu == 'true'
         uses: ./.github/actions/apt-cross-toolchain
@@ -406,6 +397,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
+      - uses: ./.github/actions/selfhost-driver-cache
       - name: aarch64 cross toolchain + qemu (arm64 target)
         if: matrix.qemu == 'true'
         uses: ./.github/actions/apt-cross-toolchain
@@ -463,6 +455,7 @@ jobs:
       - uses: ./.github/actions/setup-fern
         with:
           wasmtime: "true"
+      - uses: ./.github/actions/selfhost-driver-cache
       - name: aarch64 cross toolchain (x86 shards — arm64 cross-emit tests)
         if: matrix.host == 'x86_64'
         uses: ./.github/actions/apt-cross-toolchain
@@ -475,11 +468,9 @@ jobs:
           SHARD: "${{ matrix.shard }}"
           NSHARD: "${{ matrix.nshard }}"
           FERN_REQUIRE_ARM64_TOOLING: "${{ matrix.host == 'x86_64' && '1' || '' }}"
-          FERN_SELFHOST_BUILD_CACHE: "${{ runner.temp }}/selfhost-unicache"
           FERN_BUILD_MEM_BUDGET_MB: "6500"
         run: |
           set -euo pipefail
-          mkdir -p "$FERN_SELFHOST_BUILD_CACHE"
           chmod +x e2eselfhost.test e2e.test
           SH_BIN="$PWD/e2eselfhost.test"
           E2E_BIN="$PWD/e2e.test"

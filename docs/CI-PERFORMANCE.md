@@ -829,9 +829,51 @@ runs in the window were that kind, on pull requests that were pushed to five
 to ten times. The gate collapses the queued ones; the trigger decides how
 many are dispatched.
 
+## Tenth change: the stage0-built drivers are carried between runs
+
+Since 2026-09-29 the self-host test drivers are compiled by the pinned
+stage0 compiler instead of the Go backend (docs/LOCAL-DEV-LOOP.md): 139 s
+for `asm_run.fern` on the 4-core container, measured for this change, where
+the Go backend took ~9 s. That is the whole of the shard doubling in the
+ninth measurement. Every job built its drivers from nothing: the 12 x86
+shards each build the stock drivers their slice touches (`asm_ir_run.fern`
+has 671 build sites in the package, `wasm_ir_run.fern` 323, `asm_run.fern`
+263, `fern.fern` 148), the three `diff-selfhost` and three
+`fixtures-selfhost` jobs run `go test` with no disk cache at all, and the
+`test-e2e-other`, `test-e2e-arm64`, `test-e2e-wasm` and macOS jobs run
+`internal/e2e` tests with 46 driver build sites, also with none.
+
+The harness already keys a driver on its source closure, the target, the
+stage0 binary's bytes and the stdlib tree (`CachedDriverBinFor`), so the
+same key is the same bytes on any runner. `.github/actions/selfhost-driver-cache`
+restores the harness's disk cache directory from the Actions cache under a
+key that hashes the same inputs (`bootstrap/stage0.lock`,
+`examples/self_host/**`, `internal/stdlib/**`), with a prefix fallback to
+the newest earlier directory, in which every driver whose own closure did
+not change still matches. Only `*.driverbin` files travel; entries older
+than seven days are dropped after the restore. Every job that builds
+drivers restores; one job per lane saves, the one that builds every stock
+driver anyway (`driver-sizes` on Linux x86, the macOS shard that runs the
+self-host arm64-darwin tests), so the shards do not each upload a
+near-identical directory per tree. Measured locally against a populated
+directory, the same build is 0.64 s.
+
+What it cannot do: the first run on a tree whose self-host sources or
+stdlib changed builds cold on every shard as before, and saves; the next
+run at that tree (a merge-main push, the main validation when it is not
+adopted) hits. A pull request's run restores caches saved on its own
+branch and on main; main's cache is refreshed only by a main run that
+runs the lane. Branch-scoped caches and the 10 GB repository limit are
+why the shards do not save.
+
 ### Next measurements
 
-Confirm on the first day's main runs how many adopted a pull request's run,
+Read the `selfhost-driver-cache` step's line on the first shards after
+this merges: "N driver(s) restored" against the job's test-step time. A
+shard that restores its stock drivers and still runs 15 minutes has its
+time in tests, and the next target is sharing the per-test driver variants
+or the tests themselves. Confirm on the first day's main runs how many
+adopted a pull request's run,
 and how long the selector waited: the `changes` job's log and summary say
 both. The self-host lane's growth is the next cost to attack and it is in
 the tests, not the workflow: each 100-180 s test builds a driver of its own
