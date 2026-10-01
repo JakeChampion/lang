@@ -2752,6 +2752,12 @@ function arr_slice(own r: irlower.LowerResult, f: ssasem.Func, elem: typeinfo.Ty
   if (!ssasem.reference(elem)) {
     return r;
   }
+  return owned_copy(r, f, elem);
+}
+
+// The array on the stack aliases every element pointer it holds, and takes
+// its own unit on each.
+function owned_copy(own r: irlower.LowerResult, f: ssasem.Func, elem: typeinfo.Type): irlower.LowerResult {
   var copy: i32 = scratch_base(f);
   r = reserve(r, copy + 1);
   r = emit(r, ir.op_store_local(copy));
@@ -2874,7 +2880,14 @@ function map_op(own r: irlower.LowerResult, ins: ssa.SInst, f: ssasem.Func): irl
     return emit(r, ir.op_map_has(kkind, eq));
   }
   if (ins.kind_tag == ssasem.map_get()) {
-    return map_get(r, ins, kkind, eq, vkind != 0, map_widekind(t));
+    r = emit(r, ir.op_map_get(kkind, eq, map_widekind(t)));
+    if (ssasem.is_view(ssasem.map_value(t))) {
+      return own_view_hit(r, f, ins);
+    }
+    if (vkind == 0) {
+      return r;
+    }
+    return retain_hit_payload(r, ins);
   }
   if (ins.kind_tag == ssasem.map_keys()) {
     r = emit(r, ir.op_map_keys(column_flag(ssasem.map_key(t)), map_keywide(t)));
@@ -2884,8 +2897,13 @@ function map_op(own r: irlower.LowerResult, ins: ssa.SInst, f: ssasem.Func): irl
     return r;
   }
   if (ins.kind_tag == ssasem.map_values()) {
-    r = emit(r, ir.op_map_values(column_flag(ssasem.map_value(t)), map_widekind(t)));
-    if (ssasem.is_u8(ssasem.map_value(t))) {
+    var vt: typeinfo.Type = ssasem.map_value(t);
+    if (ssasem.is_view(vt)) {
+      r = emit(r, ir.op_map_values(0, map_widekind(t)));
+      return owned_copy(r, f, vt);
+    }
+    r = emit(r, ir.op_map_values(column_flag(vt), map_widekind(t)));
+    if (ssasem.is_u8(vt)) {
       return packed_snapshot(r, f);
     }
     return r;
@@ -2894,6 +2912,9 @@ function map_op(own r: irlower.LowerResult, ins: ssa.SInst, f: ssasem.Func): irl
     return emit(r, ir.op_map_delete(kkind, ir.map_op_packed(eq, vrel, krel), key_column_counted(kkind), vkind));
   }
   r = emit(r, ir.op_map_get_or(kkind, eq, map_widekind(t)));
+  if (ssasem.is_view(ssasem.map_value(t))) {
+    return emit(r, ir.op_call_direct("__fern_str_own", 1));
+  }
   if (vkind == 0) {
     return r;
   }
@@ -2932,9 +2953,11 @@ function routed_value(t: typeinfo.Type): boolean {
 }
 
 // The boxes a routed value column can hold: any counted value but a string,
-// a function or a map, released through the type's own release helper.
+// a function or a map, released through the type's own release helper. A
+// view's box is not counted, so core/map's retains would share it; a view
+// column stays on the runtime's map, whose reads take a fresh box.
 function routed_box(t: typeinfo.Type): boolean {
-  return ssasem.boxed_map_value(t) || ssasem.is_string_array(t);
+  return ssasem.boxed_map_value(t) && !ssasem.is_view(t) || ssasem.is_string_array(t);
 }
 
 function routed_column(t: typeinfo.Type): boolean {
@@ -3275,16 +3298,6 @@ function column_flag(elem: typeinfo.Type): i32 {
 // copies out of the column without a retain, so a hit on a counted column
 // retains the payload here: the box then owns one unit of it, as any Option
 // this frame drops is expected to.
-function map_get(own r: irlower.LowerResult, ins: ssa.SInst, kkind: i32, eq: string, counted: boolean, widekind: i32): irlower.LowerResult {
-  r = emit(r, ir.op_map_get(kkind, eq, widekind));
-  if (!counted) {
-    return r;
-  }
-  return retain_hit_payload(r, ins);
-}
-
-// The Option a counted column's get answers owns a unit of its payload on a
-// hit, which the map copied out of its column without one.
 function retain_hit_payload(own r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerResult {
   r = emit(r, ir.op_store_local(ins.result));
   r = emit(r, ir.op_load_local(ins.result));
@@ -3296,6 +3309,30 @@ function retain_hit_payload(own r: irlower.LowerResult, ins: ssa.SInst): irlower
   r = emit(r, ir.op_opt_payload());
   r = emit(r, ir.op_call_direct("__fern_rc_inc", 1));
   r = emit(r, ir.op_drop());
+  r = emit(r, ir.op_end());
+  return emit(r, ir.op_load_local(ins.result));
+}
+
+// On a view column the payload is the column's own view box, which a retain
+// cannot count, so a hit is rebuilt around the unit `__fern_str_own` answers
+// and the runtime's box is freed alone.
+function own_view_hit(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
+  var hit: i32 = scratch_base(f);
+  r = reserve(r, hit + 1);
+  r = emit(r, ir.op_store_local(ins.result));
+  r = emit(r, ir.op_load_local(ins.result));
+  r = emit(r, ir.op_opt_tag());
+  r = emit(r, ir.op_const_i32(0));
+  r = emit(r, ir.op_bin("eq", 0, false));
+  r = emit(r, ir.op_if(0));
+  r = emit(r, ir.op_load_local(ins.result));
+  r = emit(r, ir.op_opt_payload());
+  r = emit(r, ir.op_call_direct("__fern_str_own", 1));
+  r = emit(r, ir.op_opt_make(0));
+  r = emit(r, ir.op_store_local(hit));
+  r = helper(r, ins.result, "__fern_rc_dec");
+  r = emit(r, ir.op_load_local(hit));
+  r = emit(r, ir.op_store_local(ins.result));
   r = emit(r, ir.op_end());
   return emit(r, ir.op_load_local(ins.result));
 }
@@ -4454,7 +4491,11 @@ function unshared_map(own r: irlower.LowerResult, f: ssasem.Func, slot: i32, box
   if (key_column_counted(kkind)) {
     r = helper(r, key, "__fern_rc_inc");
   }
-  if (vkind != 0) {
+  if (ssasem.is_view(ssasem.map_value(t))) {
+    r = emit(r, ir.op_load_local(value));
+    r = emit(r, ir.op_call_direct("__fern_str_own", 1));
+    r = emit(r, ir.op_store_local(value));
+  } else if (vkind != 0) {
     r = helper(r, value, "__fern_rc_inc");
   }
   r = emit(r, ir.op_load_local(box));

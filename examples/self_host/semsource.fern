@@ -2307,26 +2307,15 @@ function map_delete(c: ast.ExprCall, recv: Value, s: State, t: typeinfo.Type): V
 // release what the map still holds, so it is refused here rather than
 // described as owned.
 function map_column(s: State, recv: Value, kind: i32, elem: typeinfo.Type): Value {
-  if (ssasem.is_view(elem)) {
-    return refused(s, view_column_read());
-  }
   if (!ssasem.retained_column(elem)) {
     return refused(s, "aliased column element: " + typeinfo.spelling(elem));
   }
   return define(s, kind, [recv.id], 0, "", typeinfo.TypeArray { elem: elem, view: false });
 }
 
-// A read that hands out a unit of a value column retains the box the column
-// holds, and a view's retain is a no-op, so the reader's release would free
-// the map's own view. Such a read needs a fresh view of the entry.
-function view_column_read(): string {
-  return "a read of a view map value would share the column's view box";
-}
-
 // An INSERT's key joins the map's key column, and `keys` would hand out the
-// column's own view box as a value column's read would, so a view key is
-// refused there. A READ's key is hashed and
-// compared, and `operation_supplies` counts no unit for it, so a view is an
+// column's own view box, so a view key is refused there. A READ's key is
+// hashed and compared, and `operation_supplies` counts no unit for it, so a view is an
 // ordinary lend and takes the same retag a borrowed parameter offers.
 function map_key_value(e: ast.Expr, s: State, t: typeinfo.Type, stored: boolean): Value {
   var k: Value = expr(e, s, ssasem.map_key(t));
@@ -2366,9 +2355,6 @@ function map_write(c: ast.ExprCall, recv: Value, s: State, t: typeinfo.Type): Va
 // A lookup borrows the map and the key and answers a scalar the map goes on
 // owning: `has` takes the key alone, `get_or` a default of the value type.
 function map_read(c: ast.ExprCall, recv: Value, s: State, t: typeinfo.Type, kind: i32, result: typeinfo.Type): Value {
-  if (kind != ssasem.map_has() && ssasem.is_view(ssasem.map_value(t))) {
-    return refused(s, view_column_read());
-  }
   var k: Value = map_key_value(c.args[0], s, t, false);
   s = k.s;
   if (!s.ok) {

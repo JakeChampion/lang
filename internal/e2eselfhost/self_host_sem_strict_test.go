@@ -74,8 +74,8 @@ func TestSelfHostSemIRStrict(t *testing.T) {
 		}
 	}
 
-	// A read of a view map value would hand out the column's own view box, whose
-	// retain is a no-op, so the reader's release freed the map's entry.
+	// A read of a view map value takes a fresh box rather than the column's
+	// own, so it compiles under strict (#10701).
 	viewRead := `import "core/map";
 function main(): i32 {
     var b: string = "abcdefgh";
@@ -84,12 +84,19 @@ function main(): i32 {
     match (m.get(1)) { Some(v) => { return v.len(); }, None => { return 0; } }
 }
 `
-	code, out := compile(viewRead, "FERN_SEM_IR_STRICT=1")
-	if code != 3 || !strings.Contains(out, "FERN_SEM_IR: main: a read of a view map value would share the column's view box") || !strings.Contains(out, "FERN_SEM_IR_STRICT") {
-		t.Fatalf("a view map value read: exit %d under strict, want 3 naming the refusal\n%s", code, out)
+	viewSrc := filepath.Join(t.TempDir(), "main.fern")
+	if err := os.WriteFile(viewSrc, []byte(viewRead), 0o644); err != nil {
+		t.Fatal(err)
 	}
-	if code, out := compile(viewRead, "FERN_SEM_IR_STRICT="); code != 0 {
-		t.Fatalf("a refused module without strict: exit %d, want the AST lowering's compile\n%s", code, out)
+	viewBin := filepath.Join(t.TempDir(), "prog")
+	viewBuild := exec.Command(fernBin, "-target", "x86-64-linux", viewSrc, stdlibRoot, "-o", viewBin)
+	viewBuild.Env = append(os.Environ(), "FERN_SEM_IR_STRICT=1")
+	if out, err := viewBuild.CombinedOutput(); err != nil {
+		t.Fatalf("a view map value read under strict: %v, want the typed lowering's compile\n%s", err, out)
+	}
+	var viewExit *exec.ExitError
+	if err := exec.Command(viewBin).Run(); !errors.As(err, &viewExit) || viewExit.ExitCode() != 4 {
+		t.Fatalf("a view map value read under strict: %v, want exit 4", err)
 	}
 
 	// A function value whose type no declaration spells (`fs[0]`) keys no

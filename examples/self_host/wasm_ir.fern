@@ -1204,7 +1204,8 @@ function slot_in_list(list: i32[], x: i32): boolean {
 // $__fern_arr_dec (the array release that frees at rc==1 via the size-class
 // freelist), so the wasm IR path reclaims exactly as wasm.fern's AST path.
 function wasm_helper_symbol(name: string): string {
-  if (name == "__fern_rc_inc") {
+  // A wasm view is a counted block of its own bytes, so its unit is a retain.
+  if (name == "__fern_rc_inc" || name == "__fern_str_own") {
     return "$__fern_rc_inc";
   }
   if (name == "__fern_rc_dec") {

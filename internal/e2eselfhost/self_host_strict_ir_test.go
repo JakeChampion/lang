@@ -36,6 +36,19 @@ var strictIRCorpus = []struct {
 	{"views-of-two-sources", `function g(x: string, y: string): str[] { var o: str[] = []; o = o.append(slice_unchecked(x, 0, 1)); o = o.append(slice_unchecked(y, 0, 1)); return o; }
 function main(): i32 { var xs: str[] = g("ab", "cd"); return xs.len(); }
 `, 2},
+	// Every read of a view map value takes a fresh box (#10701).
+	{"view-map-value-reads", `import "core/map";
+function main(): i32 {
+    var b: string = "abcdefgh";
+    var m: Map[i32, str] = map_new(4);
+    m = m.insert(1, slice_unchecked(b, 2, 6));
+    var n: i32 = m.get_or(1, "").len() + m.get_or(2, "x").len();
+    match (m.get(1)) { Some(v) => { n = n + v.len(); }, None => { n = n + 100; } }
+    for v in m.values() { n = n + v.len(); }
+    for (k, v) in m { n = n + k + v.len(); }
+    return n;
+}
+`, 18},
 	// One local view held twice by an array: each element takes a fresh view.
 	{"local-view-held-twice", `function g(s: string): str[] { var w: str = slice_unchecked(s, 0, 2); var o: str[] = [w, w]; return o; }
 function main(): i32 { return g("abcd").len(); }
@@ -694,16 +707,20 @@ var strictIRBailReasons = []struct {
 	fn     string
 	reason string
 }{
-	// Reading a view map value back would hand out the column's own view box
-	// (#10701).
-	{"view-map-value-read", `import "core/map";
-function main(): i32 {
-    var b: string = "abcdefgh";
-    var m: Map[i32, str] = map_new(4);
-    m = m.insert(1, slice_unchecked(b, 2, 6));
-    match (m.get(1)) { Some(v) => { return v.len(); }, None => { return 0; } }
+	// A generic bound only through a function value whose type no declaration
+	// spells keys no clone, so its instance stays erased (#10827).
+	{"generic-over-an-unspelled-function-value", `struct Slot[T] { v: T }
+
+pub function hold[T](f: () => T): i32 {
+    var c: Slot[T] = Slot[T] { v: f() };
+    return 1;
 }
-`, "main", "a read of a view map value would share the column's view box"},
+
+function main(): i32 {
+    var fs: (() => i32)[] = [(): i32 => 7];
+    return hold(fs[0]) + hold((): string => "x");
+}
+`, "hold$i32", "record field type"},
 }
 
 // TestSelfHostStrictIRNamesBailReason asserts each fixture's refusal names its
