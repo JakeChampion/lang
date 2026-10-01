@@ -198,6 +198,44 @@ function main(): i32 {
     if (r == 4294967296 && k == r && st.items[1] == 4611686018427387904) { return 7; }
     return 3;
 }`},
+	// A typed i64 binds T ahead of the untyped literal written before it,
+	// in a struct literal and a generic call (#10453).
+	{"typed-field-binds-ahead-of-literal", `struct Same[T] { a: T, b: T }
+@noinline function pair[T](a: T, b: T): T { return a; }
+function main(): i32 {
+    var y: i64 = 8589934592;
+    var q = Same { a: 3, b: y };
+    var r: i64 = pair(1, y);
+    if (q.a + q.b == 8589934595 && r == 1) { return 7; }
+    return 3;
+}`},
+	// A typed element widens an array of generic struct literals in either
+	// order, and a struct local's copy shares its width (#10453).
+	{"struct-literal-array-and-copy-widths", `struct Same[T] { a: T, b: T }
+function main(): i32 {
+    var y: i64 = 8589934592;
+    var xs = [Same { a: 1, b: 2 }, Same { a: 3, b: y }];
+    var ws = [Same { a: 3, b: y }, Same { a: 1, b: 2 }];
+    var o = Same { a: 1, b: 2 };
+    var o2 = o;
+    var z: i64 = o2.a * 4294967296;
+    if (xs[1].b == y && xs[0].a * 4294967296 == 4294967296 && ws[1].b * 4294967296 == 8589934592 && z == 4294967296) { return 7; }
+    return 3;
+}`},
+	// A generic struct local takes the width its first fixing use names
+	// (#10453).
+	{"struct-literal-local-one-width", `struct Same[T] { a: T, b: T }
+struct Stack[T] { items: T[] }
+@noinline function take1(x: Same[i64]): i64 { return x.a + x.b + 8589934592; }
+@noinline function take_stack(x: Stack[i64]): i64 { return x.items[1] * 4294967296; }
+function main(): i32 {
+    var q = Same { a: 1, b: 2 };
+    var o = Same { a: 5, b: 6 };
+    var r: i64 = o.a;
+    var st = Stack { items: [1, 2] };
+    if (take1(q) == 8589934595 && r * 4294967296 == 21474836480 && take_stack(st) == 8589934592) { return 7; }
+    return 3;
+}`},
 	// The widening reads INTEGERS only: wider_int keeps the first reading when
 	// either side is not one, so a shared variable bound by two strings types
 	// exactly as it did.
