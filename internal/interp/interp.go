@@ -1424,7 +1424,7 @@ func builtinTcpListen(i *Interp, args []Value) (Value, error) {
 	if !ok {
 		return nil, fmt.Errorf("tcp_listen: expected number arg, got %T", args[0])
 	}
-	ln, err := tcpNetListen("tcp", fmt.Sprintf("0.0.0.0:%d", int(port)))
+	ln, err := tcpNetListen("tcp4", fmt.Sprintf("0.0.0.0:%d", int(port)))
 	if err != nil {
 		return negErrno(err), nil
 	}
@@ -1654,7 +1654,15 @@ func builtinTcpListenWith(i *Interp, args []Value) (Value, error) {
 			return serr
 		}
 	}
-	ln, err := lc.Listen(context.Background(), "tcp", net.JoinHostPort(ip.String(), fmt.Sprint(int(port))))
+	// The family the address names, as the native runtimes open: under a
+	// plain "tcp" Go gives an IPv4 wildcard a dual-stack IPv6 socket, whose
+	// accepted sockets then report a v4-mapped local address. "tcp6" would
+	// make an IPv6 listener v6-only, so a 16-byte address keeps "tcp".
+	network := "tcp"
+	if len(ip) == 4 {
+		network = "tcp4"
+	}
+	ln, err := lc.Listen(context.Background(), network, net.JoinHostPort(ip.String(), fmt.Sprint(int(port))))
 	if err != nil {
 		return negErrno(err), nil
 	}
