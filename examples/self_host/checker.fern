@@ -2817,12 +2817,8 @@ function e021_bound_call_diag(pbound: string, at: typeinfo.Type, s: Scope, ln: i
 // signature. A view receiver (`[T]`) has a separate namespace; the caller
 // selects that namespace from the checked receiver type.
 //
-// Resolution accepts a concrete element; LOWERING does not yet. One
-// `(arr: i32[]) name()` declaration anywhere in a bundle costs an unrelated
-// generic its type-parameter substitution — `num.sum`'s `T.zero()` lowers to
-// a `const_func "T"` and the module is refused as not IR-eligible. That gap is
-// why std/array still declares its concrete-element verbs as
-// `__method_Array_<name>` free functions.
+// Lowering folds concrete methods without method type parameters into free
+// functions keyed by the receiver element and namespace before view erasure.
 function array_receiver_matches(rt: string, view: boolean): boolean {
   if (view) {
     return parser.spelling_is_view(rt);
@@ -15011,7 +15007,7 @@ function redeclares(funcs: parser.FuncDecl[], di: i32): boolean {
     if (f2.receiver_type.len() == 0 && pe.receiver_type.len() == 0 && pe.name == f2.name) {
       earlier = true;
     }
-    if (f2.receiver_type.len() > 0 && pe.receiver_type.len() > 0 && pe.name == f2.name && parser.receiver_base(pe.receiver_type) == parser.receiver_base(f2.receiver_type)) {
+    if (f2.receiver_type.len() > 0 && pe.receiver_type.len() > 0 && pe.name == f2.name && parser.receiver_namespace(pe.receiver_type) == parser.receiver_namespace(f2.receiver_type)) {
       earlier = true;
     }
     ej = ej + 1;
@@ -15059,7 +15055,7 @@ function collect_decl_diags(mod: parser.Module): util.Diag[] {
     }
   }
   // E006: a free function redeclared (same name, both receiver-less), or
-  // a method redeclared (same name AND receiver type). The redeclaration
+  // a method redeclared (same name AND receiver namespace). The redeclaration
   // SITE — the second + occurrences — is flagged, matching the Go
   // checker.
   var di: i32 = 0;
@@ -15069,7 +15065,7 @@ function collect_decl_diags(mod: parser.Module): util.Diag[] {
       if (f2.receiver_type.len() == 0) {
         out = out.append(dg_at("E006", "function \"" + f2.name + "\" redeclared", f2.line, f2.col));
       } else {
-        out = out.append(dg_at("E006", "method \"" + f2.name + "\" on " + parser.receiver_base(f2.receiver_type) + " redeclared", f2.line, f2.col));
+        out = out.append(dg_at("E006", "method \"" + f2.name + "\" on " + parser.receiver_namespace(f2.receiver_type) + " redeclared", f2.line, f2.col));
       }
     }
     // E021: a method whose receiver type isn't a known struct / enum /
@@ -22159,6 +22155,9 @@ function type_to_irtag(t: typeinfo.Type): string {
       if (elem.len() == 0) {
         return "";
       }
+      if (a.view) {
+        return "[" + elem + "]";
+      }
       return elem + "[]";
     },
     typeinfo.TypeFunc(_) => {
@@ -22278,6 +22277,9 @@ function type_to_arrtag(t: typeinfo.Type): string {
       var et: string = type_to_irtag(a.elem);
       if (et == "") {
         return "";
+      }
+      if (a.view) {
+        return "[" + et + "]";
       }
       return et + "[]";
     },
@@ -23199,8 +23201,9 @@ function vb_annotation_of(t: typeinfo.Type): string {
       if (type_label(a.elem) == "str") {
         return "";
       }
-      // A spelling, not a message: lowering reads a view as the owned array.
-      return type_label(t_array(a.elem));
+      // Keep the checked namespace until method calls have been resolved.
+      // The AST lowering erases views only after the typed module is built.
+      return typeinfo.spelling(t);
     },
     typeinfo.TypeUnion(u) => {
       if (u.args.len() == 0) {

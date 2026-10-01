@@ -42,8 +42,9 @@ The foundation passed validation after integration with main `1ae9cadf6`:
 
 The interpreter bridge uses the published
 [`stage0-20261001-c891ebc` seed](https://github.com/JakeChampion/lang/releases/tag/stage0-20261001-c891ebc).
-Its Darwin bootstrap stages 1, 2 and 3 are identical at 14,610,337 bytes,
-SHA-256 `97745b400146fa25696b9d95ebe496934c94102766ca4d6daa49b81153340a4c`.
+With the concrete-view compiler repairs integrated, Darwin bootstrap stages
+1, 2 and 3 are identical at 14,610,353 bytes,
+SHA-256 `8e5750084769be1389156a5462405bde0b6601e716bc085c78dc2841a05950df`.
 Darwin runs exercise interpreters built through both Go and the primary seed;
 Linux runs exercise primary ARM64 and x86-64 interpreters. All compare exact
 output against the Go interpreter for readers, writers, builder reuse,
@@ -51,6 +52,10 @@ buffered writes and empty/nonempty pipeline round trips. Compiled buffered
 writes and the pipeline also pass on ARM64, x86-64 and core WASM, with balanced
 allocation counts on the semantic path. The bridge also passes the full unit
 suite and `make lint-all` with the published seed pinned.
+
+The combined pipeline and concrete-view repairs pass the Darwin and Linux
+target matrices, including the component writer cases, plus the full unit
+suite and `make lint-all`.
 
 The target matrix covers bootstrap and primary native code, strict
 semantic IR ownership checks, WASM Preview 1 and actual Preview 2
