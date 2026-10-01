@@ -9878,6 +9878,17 @@ func (c *checker) unifyType(expected, actual ast.Type, sub map[string]ast.Type) 
 			// single left-to-right pass, so `apply(map_new(8), bump)` bound
 			// T := bare `Map` from argument 1 and then rejected argument 2's
 			// `Map[string, i32]` (#8004).
+			// An untyped integer literal bound the parameter first; a typed
+			// integer bound later decides it, and the literal settles there
+			// (`Same { a: 1, b: y }` with `y: i64` is a Same[i64], #10453).
+			if en, ok := existing.(ast.NumberType); ok && en.Polymorphic {
+				if an, ok := actual.(ast.NumberType); ok {
+					if !an.Polymorphic {
+						sub[p.Name] = actual
+					}
+					return true
+				}
+			}
 			en, ea, eok := namedTypeArity(existing)
 			an, aa, aok := namedTypeArity(actual)
 			if eok && aok && en == an {
@@ -17956,6 +17967,15 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					}
 				}
 			}
+			// A literal argument that bound a parameter before a typed one
+			// settles at what the parameter came to.
+			for i := range n.Args {
+				if i < len(ft.Params) && containsParamType(ft.Params[i]) && !(recvIsArg0 && i == 0) {
+					if want := substituteType(ft.Params[i], sub); !containsParamType(want) {
+						c.settleNumeric(n.Args[i], want)
+					}
+				}
+			}
 			for _, d := range deferredArgs {
 				want := substituteType(d.expected, sub)
 				if containsParamType(want) {
@@ -18843,14 +18863,6 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				}
 			}
 		}
-		// Empty array literals at a field still spelled with an unbound
-		// parameter: they bind nothing, so they settle once the other
-		// fields have.
-		type deferredEmpty struct {
-			value    ast.Expr
-			expected ast.Type
-		}
-		var deferred []deferredEmpty
 		// A field that contradicts the instantiation the others bound leaves
 		// the literal without one, as an unbound parameter does (E040).
 		clashed := false
@@ -18900,9 +18912,10 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			}
 			// A field type still naming an unbound parameter is no width to
 			// settle at: unifyType below binds the parameter from the value.
+			// An empty array at one binds nothing; it settles once the
+			// other fields have.
 			if containsParamType(fieldExpected) {
 				if at, ok := vt.(ast.ArrayType); ok && at.Elem == nil {
-					deferred = append(deferred, deferredEmpty{f.Value, expected})
 					continue
 				}
 			} else {
@@ -18998,8 +19011,12 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				}
 			}
 			if complete && !clashed {
-				for _, d := range deferred {
-					c.settleNumeric(d.value, substituteType(d.expected, sub))
+				// Every field at a parameter settles at what inference bound:
+				// an empty array, and a literal that bound before a typed field.
+				for _, f := range n.Fields {
+					if ft, ok := fieldT[f.Name]; ok && containsParamType(ft) {
+						c.settleNumeric(f.Value, substituteType(ft, sub))
+					}
 				}
 				// Stamp on the StructLit so the monomorpher
 				// can rewrite TypeName without re-running

@@ -227,6 +227,26 @@ function main(): i32 {
 }
 `
 
+// typedFieldBindsAheadOfLiteralProgram pins #10453: a typed i64 value binds a
+// type parameter ahead of an untyped literal written before it, in a struct
+// literal and a generic call alike, and the literal is read at i64. Both used
+// to bind T at i32 from the literal and reject the typed value. A correct run
+// exits 7.
+const typedFieldBindsAheadOfLiteralProgram = `
+struct Same[T] { a: T, b: T }
+@noinline function pair[T](a: T, b: T): T { return a; }
+function main(): i32 {
+  var y: i64 = 8589934592;
+  var q = Same { a: 3, b: y };
+  var r: i64 = pair(1, y);
+  var c = 0;
+  if (q.b - y == 0) { c = c + 1; }
+  if (q.a + q.b == 8589934595) { c = c + 2; }
+  if (r == 1) { c = c + 4; }
+  return c;
+}
+`
+
 // genericStructLocalBigLiteralProgram pins #10453: an unannotated local bound
 // to a generic struct literal whose type argument only literals bind is a
 // Same[i64] when one of those literals has no i32 reading, inside an array
@@ -292,6 +312,7 @@ func TestInterpUnannotatedBigLiteralWidens(t *testing.T) {
 	run(genericPositionsBigLiteralProgram, 63, "literal-bound generic call in every position")
 	run(arrayArgumentStructLiteralProgram, 3, "struct literals in an array argument")
 	run(genericStructLocalBigLiteralProgram, 31, "generic struct local with a wide literal field")
+	run(typedFieldBindsAheadOfLiteralProgram, 7, "typed value binds ahead of an earlier literal")
 }
 
 func TestX86_64UnannotatedBigLiteralWidens(t *testing.T) {
@@ -330,6 +351,9 @@ func TestX86_64UnannotatedBigLiteralWidens(t *testing.T) {
 	}
 	if _, code := compileAndRunX86_64(t, genericStructLocalBigLiteralProgram); code != 31 {
 		t.Errorf("x86-64 generic struct local with a wide literal field: exit = %d, want 31", code)
+	}
+	if _, code := compileAndRunX86_64(t, typedFieldBindsAheadOfLiteralProgram); code != 7 {
+		t.Errorf("x86-64 typed value binds ahead of an earlier literal: exit = %d, want 7", code)
 	}
 }
 
@@ -370,6 +394,9 @@ func TestArm64UnannotatedBigLiteralWidens(t *testing.T) {
 	if _, code := compileAndRunArm64(t, genericStructLocalBigLiteralProgram); code != 31 {
 		t.Errorf("arm64 generic struct local with a wide literal field: exit = %d, want 31", code)
 	}
+	if _, code := compileAndRunArm64(t, typedFieldBindsAheadOfLiteralProgram); code != 7 {
+		t.Errorf("arm64 typed value binds ahead of an earlier literal: exit = %d, want 7", code)
+	}
 }
 
 func TestWASMUnannotatedBigLiteralWidens(t *testing.T) {
@@ -408,5 +435,8 @@ func TestWASMUnannotatedBigLiteralWidens(t *testing.T) {
 	}
 	if code := runWasm(t, genericStructLocalBigLiteralProgram); code != 31 {
 		t.Errorf("wasm generic struct local with a wide literal field: exit = %d, want 31", code)
+	}
+	if code := runWasm(t, typedFieldBindsAheadOfLiteralProgram); code != 7 {
+		t.Errorf("wasm typed value binds ahead of an earlier literal: exit = %d, want 7", code)
 	}
 }

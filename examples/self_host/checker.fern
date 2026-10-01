@@ -5443,8 +5443,9 @@ function impl_trait_args(bound: parser.TypeRef, at: typeinfo.Type, s: Scope): ty
 }
 
 // struct_lit_args are a generic struct literal's type arguments: each is bound
-// by the first written field that fixes it, as native binds them, and the rest
-// stay unknown. An empty array literal fixes nothing.
+// by the first written field that fixes it, a typed field ahead of an untyped
+// integer literal, as native binds them; the rest stay unknown. An empty array
+// literal fixes nothing.
 function struct_lit_args(sl: ast.ExprStructLit, ssig: StructSig, s: Scope): typeinfo.Type[] {
   var written: typeinfo.Type[] = written_struct_args(sl, ssig, s);
   if (written.len() > 0) {
@@ -5452,22 +5453,26 @@ function struct_lit_args(sl: ast.ExprStructLit, ssig: StructSig, s: Scope): type
   }
   var bn: string[] = [];
   var bt: typeinfo.Type[] = [];
-  var i: i32 = 0;
-  while (i < sl.field_names.len()) {
-    var fi: i32 = field_index(ssig, sl.field_names[i]);
-    var binds: boolean = fi >= 0 && fi < ssig.field_type_names.len();
-    // An empty array literal binds nothing; it takes whatever the others fix.
-    if let ast.ExprArray(ea) = sl.field_values[i] {
-      if (ea.elements.len() == 0) {
-        binds = false;
+  var pass: i32 = 0;
+  while (pass < 2) {
+    var i: i32 = 0;
+    while (i < sl.field_names.len()) {
+      var fi: i32 = field_index(ssig, sl.field_names[i]);
+      var binds: boolean = fi >= 0 && fi < ssig.field_type_names.len() && int_literal_tree(sl.field_values[i]) == (pass == 1);
+      // An empty array literal binds nothing; it takes whatever the others fix.
+      if let ast.ExprArray(ea) = sl.field_values[i] {
+        if (ea.elements.len() == 0) {
+          binds = false;
+        }
       }
+      if (binds) {
+        let (bn2, bt2) = gc_bind_param(parser.parse_type_ref(ssig.field_type_names[fi]), check_expr(sl.field_values[i], s), ssig.type_params, s.type_names(), bn, bt);
+        bn = bn2;
+        bt = bt2;
+      }
+      i = i + 1;
     }
-    if (binds) {
-      let (bn2, bt2) = gc_bind_param(parser.parse_type_ref(ssig.field_type_names[fi]), check_expr(sl.field_values[i], s), ssig.type_params, s.type_names(), bn, bt);
-      bn = bn2;
-      bt = bt2;
-    }
-    i = i + 1;
+    pass = pass + 1;
   }
   var args: typeinfo.Type[] = [];
   for tp in ssig.type_params {
@@ -5499,16 +5504,21 @@ function written_struct_args(sl: ast.ExprStructLit, ssig: StructSig, s: Scope): 
   return out;
 }
 
-// literal_bound_width widens a type argument that untyped integer literals
-// bound to i64 when one of them has no i32 reading, as native's
+// literal_bound_width widens a type argument that only untyped integer
+// literals bound to i64 when one of them has no i32 reading, as native's
 // widenCompositeByLiterals does: `Same { a: 1, b: 4611686018427387904 }` is a
 // Same[i64] (#10453), and so is `Stack { items: [1, 4611686018427387904] }`.
-// An argument a typed value bound first is left alone.
+// An argument a typed value bound is left alone.
 function literal_bound_width(sl: ast.ExprStructLit, ssig: StructSig, tp: string, bound: typeinfo.Type, s: Scope): typeinfo.Type {
   var lit: ast.Expr[] = [sl];
   var es: ast.Expr[] = struct_param_exprs(ssig, tp, lit, s);
-  if (es.len() == 0 || !int_literal_tree(es[0])) {
+  if (es.len() == 0) {
     return bound;
+  }
+  for e in es {
+    if (!int_literal_tree(e)) {
+      return bound;
+    }
   }
   for e in es {
     if (wide_int_tree(e)) {
