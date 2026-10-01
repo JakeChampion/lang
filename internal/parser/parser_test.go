@@ -214,7 +214,7 @@ func TestParseAssertDesugar(t *testing.T) {
 // position when followed by `.` — `string.repeat_char(...)`. Without
 // this, std/string's free functions are unreachable under no-prelude.
 func TestKeywordModuleQualifier(t *testing.T) {
-	prog, err := Parse(`function f(): string { return string.repeat_char(120, 4); }`)
+	prog, err := Parse(`function f(): string { return string.repeat_char(120 as char, 4); }`)
 	if err != nil {
 		t.Fatalf("string.repeat_char should parse: %v", err)
 	}

@@ -101,6 +101,19 @@ function main(): i32 {
     if (w.truncate(4, "..") != "h..") { return 28; }
     if (w.truncate(5, "..").len() != 5) { return 29; }
     if (w.ellipsis(5) != "h...") { return 30; }
+    // A partial repeated fill must end at a scalar boundary as well.
+    if ("x".pad_start_str(4, "é") != "éx") { return 31; }
+    if ("x".pad_end_str(4, "é") != "xé") { return 32; }
+    if ("x".pad_start_str(3, "€") != "x") { return 33; }
+    if ("x".pad_end_str(4, "€") != "x€") { return 34; }
+    if ("x".pad_start_str(6, "𐀀") != "𐀀x") { return 35; }
+    if ("x".pad_end_str(7, "aé") != "xaéaé") { return 36; }
+    if ("x".pad_end_str(6, "aé") != "xaéa") { return 37; }
+    if ("x".pad_start_str(6, "aé") != "aéax") { return 38; }
+    if ("x".pad_start_str(2, "é") != "x") { return 39; }
+    if ("x".pad_end_str(0 - 1, "é") != "x") { return 40; }
+    if ("x".pad_end_str(5, "") != "x") { return 41; }
+    if ("x".pad_end_str(5, "ab") != "xabab") { return 42; }
     return 0;
 }
 `

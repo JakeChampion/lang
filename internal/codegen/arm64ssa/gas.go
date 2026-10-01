@@ -879,6 +879,7 @@ func emitBcopyCall(w func(string, ...any), dst, src, n string) {
 // bcopyUsingHelpers are the runtime helpers that call __ssa_bcopy, so the shared
 // routine is emitted whenever one of them is.
 var bcopyUsingHelpers = map[string]bool{
+	"__fern_string_bytes_copy":    true,
 	"__memcpy":                    true,
 	"__str_concat":                true,
 	"__fern_str_append":           true,
@@ -1397,6 +1398,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__fern_heap_bump_bytes":        emitHeapBumpBytesHelper,
 	"__fern_heap_alloc_count":       emitHeapAllocCountHelper,
 	"__method_string_as_bytes":      emitStringAsBytesHelper,
+	"__fern_string_bytes_copy":      emitStringBytesCopyHelper,
 	"__slice_idx":                   emitSliceIdxHelper("__slice_idx", 2),
 	"__slice_idx_1":                 emitSliceIdxHelper("__slice_idx_1", 0),
 	"__slice_idx_8":                 emitSliceIdxHelper("__slice_idx_8", 3),
@@ -4265,6 +4267,7 @@ var runtimeHelperDeps = map[string][]string{
 	"termios_set":                     {"__fern_io_error"},
 	"access":                          {"__fern_io_error", "__fern_rc_inc"},
 	"__method_string_as_bytes":        {"__slice_make"},
+	"__fern_string_bytes_copy":        {"__alloc_u8"},
 	"read_file_bytes":                 {"__fern_io_error", "__alloc_u8", "__free", "__fern_rc_inc"},
 	"remove_file":                     {"__fern_io_error", "__fern_rc_inc"},
 	"create_dir_all":                  {"__fern_io_error", "__fern_rc_inc"},

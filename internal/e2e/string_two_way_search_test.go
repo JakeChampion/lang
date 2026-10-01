@@ -7,7 +7,7 @@ package e2e
 //
 // The program is a differential harness rather than a fixed table: it
 // enumerates every haystack over {a,b} up to length 8 and every needle up to
-// length 3, and checks each result against a naive reference computed in the
+// length 5, and checks each result against a naive reference computed in the
 // same program. A binary alphabet is what actually exercises Two-Way's
 // periodic branch (the `memory` carry and the shift-by-period), which fixed
 // example strings tend to miss entirely. Returns 42 iff every case agrees on
@@ -85,7 +85,7 @@ function main(): i32 {
         while (hi < ipow2(hlen)) {
             var hay: string = nth_string(hi, hlen);
             var nlen: i32 = 1;
-            while (nlen <= 3) {
+            while (nlen <= 5) {
                 var ni: i32 = 0;
                 while (ni < ipow2(nlen)) {
                     var nee: string = nth_string(ni, nlen);

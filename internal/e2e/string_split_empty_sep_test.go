@@ -11,8 +11,8 @@ package e2e
 // have since been deleted, so this is the test, and the helper now char-splits.
 //
 // The unit is a codepoint, not a byte (#8469): every piece is a whole
-// character, so no fragment is ever invalid UTF-8. `to_array()` is the
-// per-byte split for callers that want one.
+// character, so no fragment is ever invalid UTF-8. `to_array()` uses the same
+// scalar units; `bytes()` exposes the byte sequence.
 
 import "testing"
 

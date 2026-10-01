@@ -20,7 +20,6 @@
 // and any client that normalizes differently from the server all
 // produce it. For program-internal keys that never leave the
 // process, `==` is the right tool and the cheaper one.
-
 import "core/int";
 import "core/bigint";
 // std/string's bodies dispatch (i32) byte methods on `s[i]`
@@ -92,7 +91,6 @@ pub function (s: string) repeat(n: i32): string {
 // it appears (same as Go's `strings.Contains`). Empty
 // needle / prefix / suffix return true / 0 to match the
 // `strstr` / Go conventions.
-
 pub function (s: string) starts_with(prefix: string): boolean {
   var sLen: i32 = s.len();
   var pLen: i32 = prefix.len();
@@ -151,14 +149,14 @@ function __substr_eq(s: string, offset: i32, needle: string, nLen: i32): boolean
 // current candidate, `k` the offset being compared within the current period,
 // and `p` the period established so far. Each byte is examined O(1) amortized
 // times, so the whole thing is O(m) with no allocation.
-function __str_maxsuf(x: string, m: i32, invert: boolean): (i32, i32) {
+function __str_maxsuf(x: string, m: i32, invert: boolean, origin: i32, step: i32): (i32, i32) {
   var ms: i32 = 0 - 1;
   var j: i32 = 0;
   var k: i32 = 1;
   var p: i32 = 1;
   while (j + k < m) {
-    var a: i32 = x[j + k] as i32;
-    var b: i32 = x[ms + k] as i32;
+    var a: i32 = x[origin + step * (j + k)] as i32;
+    var b: i32 = x[origin + step * (ms + k)] as i32;
     if (invert) {
       var t: i32 = a;
       a = b;
@@ -196,16 +194,29 @@ function __str_maxsuf(x: string, m: i32, invert: boolean): (i32, i32) {
 // The returned `crit + period <= m` (the maximal-suffix loop keeps
 // `j <= m - 1`, and `crit + period` is `j + 1`), so the periodicity probe in
 // __str_two_way reads in bounds.
-function __str_critical_factorization(needle: string, m: i32): (i32, i32) {
+function __str_critical_factorization(needle: string, m: i32, origin: i32, step: i32): (i32, i32) {
   if (m < 3) {
     return (m - 1, 1);
   }
-  var fwd: (i32, i32) = __str_maxsuf(needle, m, false);
-  var rev: (i32, i32) = __str_maxsuf(needle, m, true);
+  var fwd: (i32, i32) = __str_maxsuf(needle, m, false, origin, step);
+  var rev: (i32, i32) = __str_maxsuf(needle, m, true, origin, step);
   if (rev.0 < fwd.0) {
     return (fwd.0 + 1, fwd.1);
   }
   return (rev.0 + 1, rev.1);
+}
+
+// A factorization period is valid when the prefix through crit repeats at
+// that offset. The factorization guarantees crit + period <= needle.len().
+function __str_is_periodic(needle: string, origin: i32, crit: i32, period: i32, step: i32): boolean {
+  var i: i32 = 0;
+  while (i < crit) {
+    if (needle[origin + step * (period + i)] != needle[origin + step * i]) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
 }
 
 // __str_two_way is the Crochemore-Perrin Two-Way substring search: the
@@ -221,14 +232,16 @@ function __str_critical_factorization(needle: string, m: i32): (i32, i32) {
 // needle's period. Callers must pass `m >= 2` and `start >= 0` — the
 // zero-length and single-byte needles are handled by __str_find_from's fast
 // paths, which are both cheaper than setting up a factorization.
-function __str_two_way(s: string, sLen: i32, needle: string, m: i32, start: i32): i32 {
-  var cf: (i32, i32) = __str_critical_factorization(needle, m);
+// The origins and step map logical indices into the original strings:
+// (0, 0, 1) scans forward; (sLen - 1, m - 1, -1) scans backward.
+function __str_two_way(s: string, sLen: i32, needle: string, m: i32, start: i32, sOrigin: i32, nOrigin: i32, step: i32): i32 {
+  var cf: (i32, i32) = __str_critical_factorization(needle, m, nOrigin, step);
   var crit: i32 = cf.0;
   var period: i32 = cf.1;
   var last: i32 = sLen - m;
   var j: i32 = start;
 
-  if (__substr_eq(needle, period, needle, crit)) {
+  if (__str_is_periodic(needle, nOrigin, crit, period, step)) {
     // Periodic needle ("abcabcabd"): the left half is a suffix of the
     // stretch one period further in, so after a failed left-half match we
     // may shift by exactly `period` and remember (`memory`) the prefix
@@ -239,12 +252,12 @@ function __str_two_way(s: string, sLen: i32, needle: string, m: i32, start: i32)
       if (memory > i) {
         i = memory;
       }
-      while (i < m && needle[i] as i32 == s[i + j] as i32) {
+      while (i < m && needle[nOrigin + step * i] == s[sOrigin + step * (i + j)]) {
         i = i + 1;
       }
       if (i >= m) {
         i = crit - 1;
-        while (i >= memory && needle[i] as i32 == s[i + j] as i32) {
+        while (i >= memory && needle[nOrigin + step * i] == s[sOrigin + step * (i + j)]) {
           i = i - 1;
         }
         if (i < memory) {
@@ -269,12 +282,12 @@ function __str_two_way(s: string, sLen: i32, needle: string, m: i32, start: i32)
   shift = shift + 1;
   while (j <= last) {
     var i: i32 = crit;
-    while (i < m && needle[i] as i32 == s[i + j] as i32) {
+    while (i < m && needle[nOrigin + step * i] == s[sOrigin + step * (i + j)]) {
       i = i + 1;
     }
     if (i >= m) {
       i = crit - 1;
-      while (i >= 0 && needle[i] as i32 == s[i + j] as i32) {
+      while (i >= 0 && needle[nOrigin + step * i] == s[sOrigin + step * (i + j)]) {
         i = i - 1;
       }
       if (i < 0) {
@@ -288,6 +301,23 @@ function __str_two_way(s: string, sLen: i32, needle: string, m: i32, start: i32)
   return 0 - 1;
 }
 
+// A scan for needles of at most four bytes, with at most four comparisons
+// per candidate. Kept separate from the general search dispatcher.
+function __str_find_short(s: string, sLen: i32, needle: string, nLen: i32, from: i32): i32 {
+  var i: i32 = from;
+  while (i <= sLen - nLen) {
+    var k: i32 = 0;
+    while (k < nLen && s[i + k] == needle[k]) {
+      k = k + 1;
+    }
+    if (k == nLen) {
+      return i;
+    }
+    i = i + 1;
+  }
+  return 0 - 1;
+}
+
 // __str_find_from is THE forward substring-search core: the leftmost index
 // >= `start` of `needle` in `s`, or -1. Every forward scan in this module
 // routes through it, so they all inherit the same linear-time guarantee
@@ -296,7 +326,8 @@ function __str_two_way(s: string, sLen: i32, needle: string, m: i32, start: i32)
 // Adaptive dispatch, cheapest applicable path first:
 //   m == 0  -> `start` (the empty needle matches at every gap)
 //   m == 1  -> a single-byte scan, the memchr shape
-//   m >= 2  -> Two-Way
+//   2 <= m <= 4 -> bounded direct comparisons
+//   m > 4   -> Two-Way
 //
 // The single-byte case matters more than it looks: `split(",")`,
 // `split("\n")`, and the `replace_byte` family are the overwhelmingly common
@@ -328,7 +359,12 @@ function __str_find_from(s: string, sLen: i32, needle: string, nLen: i32, start:
   if (nLen == 1) {
     return __memchr(s, needle[0] as i32, from);
   }
-  return __str_two_way(s, sLen, needle, nLen, from);
+  // At most four comparisons per candidate keeps this path linear and
+  // avoids factorization overhead for short separators and UTF-8 needles.
+  if (nLen <= 4) {
+    return __str_find_short(s, sLen, needle, nLen, from);
+  }
+  return __str_two_way(s, sLen, needle, nLen, from, 0, 0, 1);
 }
 
 pub function (s: string) contains(needle: string): boolean {
@@ -349,13 +385,8 @@ pub function (s: string) index_of(needle: string): i32 {
 
 // __str_rfind_budget bounds the naive backward scan below before it escalates
 // to the reverse Two-Way. Expressed as a multiple of the haystack length:
-// a scan that has compared more than this many bytes is on a quadratic path,
-// and the O(n) copy the escalation costs is cheaper than finishing it.
-//
-// 4 is chosen so that ordinary inputs never escalate. The naive scan compares
-// roughly one byte per position plus the length of each partial match; real
-// text with a real separator is well under 2n, so the copy is paid only by the
-// adversarial shapes it exists for.
+// the budget caps repeated partial matches before switching to the linear
+// algorithm. Both paths read the original strings and use constant space.
 function __str_rfind_budget(): i32 {
   return 4;
 }
@@ -378,18 +409,13 @@ function __str_rfind_budget(): i32 {
 // been Two-Way and linear since #6179 -- a needle like "aaaa...ab" against
 // "aaaa...a" walked the whole needle at every position (#6196).
 //
-// The reverse Two-Way is obtained by reversing both strings and running the
-// FORWARD algorithm: the leftmost match in the reversed haystack is the
-// rightmost in the original, at index `sLen - r - nLen`. That is the standard
-// construction, and it reuses the tested `__str_two_way` rather than growing a
-// second, subtly different factorization.
+// The reverse Two-Way reads both strings from their last byte to their first:
+// the leftmost match in that order is the rightmost in the original, at
+// index `sLen - r - nLen`. The same factorization and search handle both
+// directions without allocating reversed arrays or borrowed byte views.
 //
-// Its cost is one O(n) copy of the haystack, where the naive scan needs no
-// allocation at all. That is exactly why the budget exists rather than
-// escalating unconditionally: reversing a megabyte to find a two-byte
-// separator that the naive scan would have hit in twenty bytes is a
-// pessimisation, not an optimisation. Under the budget the common case keeps
-// its O(1) space, and the quadratic case gets its linear bound.
+// The budget avoids factorization for a match close to the end. Both paths
+// use O(1) space, and the fallback keeps the worst-case linear bound.
 function __str_rfind_from(s: string, sLen: i32, needle: string, nLen: i32): i32 {
   if (nLen == 0) {
     return sLen;
@@ -442,9 +468,7 @@ function __str_rfind_from(s: string, sLen: i32, needle: string, nLen: i32): i32 
   // Restart from scratch under the linear algorithm; a partial result cannot
   // be carried over, because the scan above ran right-to-left and Two-Way
   // runs left-to-right over the reversal.
-  var rs: string = s.reverse_bytes();
-  var rn: string = needle.reverse_bytes();
-  var r: i32 = __str_two_way(rs, sLen, rn, nLen, 0);
+  var r: i32 = __str_two_way(s, sLen, needle, nLen, 0, sLen - 1, nLen - 1, 0 - 1);
   if (r < 0) {
     return 0 - 1;
   }
@@ -1304,11 +1328,9 @@ function __is_medial_caps(s: string, upper_first: boolean): boolean {
 // byte += delta, wrapping at 256. Negative deltas are
 // supported. Useful for simple obfuscation / toy ciphers;
 // don't rely on it for security.
-pub function (s: string) shift_byte(delta: i32): string {
+// The result is owned bytes; validate with utf8.from_bytes to obtain text.
+pub function (s: string) shift_byte(delta: i32): u8[] {
   var n: i32 = s.len();
-  if (n == 0) {
-    return s;
-  }
   var buf: u8[] = __alloc_u8(n);
   var i: i32 = 0;
   while (i < n) {
@@ -1320,7 +1342,7 @@ pub function (s: string) shift_byte(delta: i32): string {
     buf = buf.with(i, b as u8);
     i = i + 1;
   }
-  return string_from_bytes_unchecked(buf);
+  return buf;
 }
 
 // Character sets compare Unicode scalar values, without normalization.
@@ -1429,16 +1451,10 @@ pub function (s: string) split_at(i: i32): (string, string) {
   return (slice_unchecked(s, 0, k).to_owned(), slice_unchecked(s, k, n).to_owned());
 }
 
-// `s.replace_byte(from, to)` — return a copy of s with every
-// byte equal to `from` replaced by `to`. ASCII-level; for
-// multi-byte sequences use `replace(old, new)`. Both args
-// are i32 byte values (use the literal character code or a
-// helper like `b'-' as i32`).
-pub function (s: string) replace_byte(from: i32, to: i32): string {
+// `s.replace_byte(from, to)` returns owned bytes with each byte equal to
+// from replaced by to (converted to u8). Use replace(old, new) for text.
+pub function (s: string) replace_byte(from: i32, to: i32): u8[] {
   var n: i32 = s.len();
-  if (n == 0) {
-    return s;
-  }
   var buf: u8[] = __alloc_u8(n);
   var i: i32 = 0;
   while (i < n) {
@@ -1450,7 +1466,7 @@ pub function (s: string) replace_byte(from: i32, to: i32): string {
     }
     i = i + 1;
   }
-  return string_from_bytes_unchecked(buf);
+  return buf;
 }
 
 // `s.to_acronym()` — first byte of each whitespace-
@@ -1549,7 +1565,6 @@ pub function (s: string) lines_non_empty(): string[] {
 // Suffix `_only` says "every character", not "some character";
 // it no longer disambiguates from the byte-receiver methods,
 // which carry `ascii` in their names since #5629.
-
 pub function (s: string) is_ascii_only(): boolean {
   var n: i32 = s.len();
   var i: i32 = 0;
@@ -2001,14 +2016,23 @@ pub function (s: string) ends_with_ci(suffix: string): boolean {
 pub function (s: string) bytes(): u8[] {
   var n: i32 = s.len();
   var out: u8[] = __alloc_u8(n);
-  if (n > 0) {
+  var data: usize = __str_bytes(s, 0 as usize);
+  if (data == 0 as usize) {
+    // Inline strings have no stable address. Copy their bytes directly;
+    // the backend decides which values use inline storage.
+    var i: i32 = 0;
+    while (i < n) {
+      out = out.with(i, s[i]);
+      i = i + 1;
+    }
+  } else {
     // Use `as usize`, not `as i32`: native 64-bit targets
     // (arm64-linux on AWS Graviton / Ampere Altra) place
     // heap mmap regions above 4 GiB, so `pointer as i32`
     // silently truncates and __memcpy traps on the bad
     // address. See `int_to_string` in core/int.fern for
     // the same fix in context.
-    __memcpy(out as usize, s.as_bytes() as usize, n);
+    __memcpy(out as usize, data, n);
   }
   return out;
 }
@@ -2131,7 +2155,7 @@ pub function (s: string) swap_case(): string {
 // `["", "a", "b", ""]`). An empty separator splits into
 // CHARACTERS — one string per codepoint, the same units
 // `chars()` yields, so no piece is ever half a multibyte
-// sequence. (`to_array()` is the per-byte split.) Result
+// sequence. (`to_array()` is the same scalar split.) Result
 // is built incrementally via `__array_append_string`.
 //
 // Every piece in this family — split, splitn, chunks, lines, fields,
@@ -2141,18 +2165,8 @@ pub function (s: string) split(sep: string): string[] {
   var n: i32 = s.len();
   var sepLen: i32 = sep.len();
   var out: string[] = [];
-  // `i` is the empty-sep branch's cursor only; the separator scan below
-  // tracks its position in `start` / `hit`. Keep the two branches on
-  // DIFFERENT names — the wasm emitter names locals by their lang
-  // identifier, so re-declaring `i` in a sibling scope would collide.
-  var i: i32 = 0;
   if (sepLen == 0) {
-    while (i < n) {
-      var step: i32 = __utf8_step(s, i, n);
-      out = out.append(slice_unchecked(s, i, i + step) + "");
-      i = i + step;
-    }
-    return out;
+    return __split_scalars(s);
   }
   var start: i32 = 0;
   var hit: i32 = __str_find_from(s, n, sep, sepLen, start);
@@ -2895,14 +2909,11 @@ pub function (s: string) find_ci(needle: string): Option[i32] {
   return Some(idx);
 }
 
-// `s.pad_start_str(width, fill)` / `pad_end_str(width, fill)`
-// — left- and right-pad to a minimum BYTE width using the
-// multi-byte `fill` string as the padding unit. The pad
-// repeats; if the byte-count overshoots, the LAST occurrence
-// is truncated at the boundary. The simpler `pad_start(n, ch)`
-// from earlier always uses a single-byte fill — these are
-// the cousins for prefix dashes / line rules / "....." kinds
-// of decorative padding.
+// `s.pad_start_str(width, fill)` / `pad_end_str(width, fill)` repeat the
+// whole fill string within a byte-width budget. The final partial fill
+// ends at a Unicode scalar boundary, so the result may be shorter than
+// width. Existing content is never truncated. Empty fill is a no-op.
+// `pad_start` / `pad_end` instead repeat only the first character of fill.
 pub function (s: string) pad_start_str(width: i32, fill: string): string {
   var sLen: i32 = s.len();
   if (sLen >= width || fill.len() == 0) {
@@ -2913,7 +2924,7 @@ pub function (s: string) pad_start_str(width: i32, fill: string): string {
     pad = pad + fill;
   }
   if (pad.len() < width - sLen) {
-    pad = pad + slice_unchecked(fill, 0, width - sLen - pad.len());
+    pad = pad + fill.take(width - sLen - pad.len());
   }
   return pad + s;
 }
@@ -2928,7 +2939,7 @@ pub function (s: string) pad_end_str(width: i32, fill: string): string {
     pad = pad + fill;
   }
   if (pad.len() < width - sLen) {
-    pad = pad + slice_unchecked(fill, 0, width - sLen - pad.len());
+    pad = pad + fill.take(width - sLen - pad.len());
   }
   return s + pad;
 }
@@ -3034,25 +3045,29 @@ pub function (s: string) at(i: i32): Option[i32] {
   return Some(s[i] as i32);
 }
 
-// `s.to_array()` — string[] one element per byte (each a
-// single-byte string). The string-element sibling of
-// bytes(); useful when later operations need string
-// semantics rather than raw byte values.
+// `s.to_array()` returns one string per Unicode scalar, like split("").
+// Use bytes() or as_bytes() for bytes, and chars() for char values.
 pub function (s: string) to_array(): string[] {
+  return __split_scalars(s);
+}
+
+// Scalar splitting has no separator search. Keep its implementation shared
+// without making to_array retain the general split machinery.
+function __split_scalars(s: string): string[] {
   var n: i32 = s.len();
   var out: string[] = [];
   var i: i32 = 0;
   while (i < n) {
-    out = out.append(slice_unchecked(s, i, i + 1) + "");
-    i = i + 1;
+    var step: i32 = __utf8_step(s, i, n);
+    out = out.append(slice_unchecked(s, i, i + step) + "");
+    i = i + step;
   }
   return out;
 }
 
 // --- UTF-8 codepoint layer -------------------------------------------------
 //
-// Strings are byte-indexed; `bytes()` and `to_array()` above work at that
-// level, so anything non-ASCII is fragile through them. These decode/encode
+// Strings are byte-indexed; `bytes()` exposes those bytes. These decode/encode
 // the UTF-8 content as Unicode scalar values (`char`), the eager-array form
 // the roadmap asks for (#4416 ROADMAP #6). Ill-formed input never throws: a
 // malformed lead, a truncated or bad continuation, an overlong encoding, a
@@ -3071,7 +3086,6 @@ pub function (s: string) to_array(): string[] {
 // std/utf8's `codepoints` / `codepoint_count` walk with the same rule and
 // agree byte-for-byte; the strict `utf8.utf8_decode_at` is the other
 // layer — it reports ill-formed input as `None` rather than substituting.
-
 // `__utf8_is_cont(b)` — is byte `b` a UTF-8 continuation byte (0x80..0xBF)?
 function __utf8_is_cont(b: i32): boolean {
   return b >= 128 && b < 192;
@@ -3207,7 +3221,7 @@ function __utf8_decode_at(s: string, i: i32, step: i32): i32 {
 // the layer note).
 // This is the codepoint layer, matching what `chars` means in Rust, Swift
 // and Go's `[]rune`: iterating it never splits a multibyte sequence. For
-// the byte layer reach for `bytes()` (u8) or `to_array()` (1-byte strings).
+// the byte layer reach for `bytes()` or `as_bytes()`.
 pub function (s: string) chars(): char[] {
   var n: i32 = s.len();
   var out: char[] = [];
@@ -3320,24 +3334,18 @@ pub function string_from_codepoints(cps: char[]): string {
   return string_from_bytes_unchecked(buf);
 }
 
-// `s.reverse_bytes()` — fresh string with the byte order
-// reversed. NOT a Unicode-aware reverse — multibyte UTF-8
-// sequences will scramble their internal byte order, producing
-// invalid UTF-8. The name carries the warning. For pure-ASCII
-// inputs (HTTP headers, hex / base64 / log lines, parser
-// fragments) the operation is well-defined.
-pub function (s: string) reverse_bytes(): string {
+// `s.reverse_bytes()` returns owned bytes in reverse order. Reversing the
+// bytes of a multibyte scalar is not text; use unicode.reverse_graphemes
+// to reverse text, or utf8.from_bytes to validate the byte result explicitly.
+pub function (s: string) reverse_bytes(): u8[] {
   var n: i32 = s.len();
-  if (n == 0) {
-    return "";
-  }
   var buf: u8[] = __alloc_u8(n);
   var i: i32 = 0;
   while (i < n) {
     buf = buf.with(i, s[n - 1 - i] as u8);
     i = i + 1;
   }
-  return string_from_bytes_unchecked(buf);
+  return buf;
 }
 
 // `s.count(sub)` — number of non-overlapping occurrences of
@@ -3996,7 +4004,6 @@ function __decimal_to_f64(dig: string, k: i32): f64 {
 // duplicated rather than shared because std/float imports std/i32 which
 // imports std/string, so std/string importing std/float would be an import
 // cycle.
-
 // BEGIN GENERATED EISEL-LEMIRE TABLE (cmd/floattablegen) — do not edit by hand.
 // Eisel-Lemire 128-bit power-of-five table: q = -342..308 (651 entries),
 // 22 characters each — 11 for the high 64 bits, then 11 for the low.
@@ -4005,7 +4012,6 @@ function _el_pow5(): string {
 }
 
 // END GENERATED EISEL-LEMIRE TABLE
-
 // _el_dig decodes one table character to its 6-bit value. The alphabet is 64
 // printable ASCII characters in two contiguous spans, '0'..'[' (48..91) and
 // ']'..'p' (93..112); it skips '\' so no character needs escaping.
@@ -4330,21 +4336,13 @@ pub function (s: string) parse_float(): Option[f64] {
   return Some(v);
 }
 
-// `repeat_char(ch, n)` — fresh string of n copies of the byte
-// `ch`. Faster than `(c).chr().repeat(n)` would be (no chr
-// helper exists yet; this is the substitute). `n <= 0`
-// returns empty.
-pub function repeat_char(ch: i32, n: i32): string {
+// `repeat_char(ch, n)` repeats a Unicode scalar n times. Nonpositive n
+// returns empty. Use a byte array when the repeated value is a raw byte.
+pub function repeat_char(ch: char, n: i32): string {
   if (n <= 0) {
     return "";
   }
-  var buf: u8[] = __alloc_u8(n);
-  var i: i32 = 0;
-  while (i < n) {
-    buf = buf.with(i, ch as u8);
-    i = i + 1;
-  }
-  return string_from_bytes_unchecked(buf);
+  return string_from_codepoint(ch).repeat(n);
 }
 
 // `__is_ascii_ws(b)` — true for SP / TAB / LF / CR / VT / FF
@@ -4354,29 +4352,29 @@ pub function __is_ascii_ws(b: i32): boolean {
   return b == 32 || b >= 9 && b <= 13;
 }
 
-// `s.replace_at(i, new)` — return a copy of s with the byte at
-// index i replaced by the first byte of `new`. If new is empty,
-// the byte at i is dropped. Out-of-range i (negative or >=
-// len(s)) is a no-op and returns s unchanged.
+// `s.replace_at(i, new)` replaces the scalar at byte offset i with the first
+// scalar of new, or removes it when new is empty. An out-of-range offset or
+// an offset inside a scalar leaves s unchanged.
 pub function (s: string) replace_at(i: i32, new: string): string {
   var n: i32 = s.len();
   if (i < 0 || i >= n) {
     return s;
   }
-  if (new.len() == 0) {
-    return slice_unchecked(s, 0, i) + slice_unchecked(s, i + 1, n);
-  }
-  return slice_unchecked(s, 0, i) + slice_unchecked(new, 0, 1) + slice_unchecked(s, i + 1, n);
-}
-
-// `s.without_byte(b)` — copy of s with every byte equal to b
-// removed. ASCII-level; for multi-byte sequences use
-// `replace_byte` or `replace(old, new)`.
-pub function (s: string) without_byte(b: i32): string {
-  var n: i32 = s.len();
-  if (n == 0) {
+  if (__floor_boundary(s, i) != i) {
     return s;
   }
+  var end: i32 = i + __utf8_step(s, i, n);
+  if (new.len() == 0) {
+    return slice_unchecked(s, 0, i) + slice_unchecked(s, end, n);
+  }
+  var width: i32 = __utf8_step(new, 0, new.len());
+  return slice_unchecked(s, 0, i) + slice_unchecked(new, 0, width) + slice_unchecked(s, end, n);
+}
+
+// `s.without_byte(b)` returns owned bytes with every byte equal to b removed.
+// Use replace(old, "") or without_chars(set) for text.
+pub function (s: string) without_byte(b: i32): u8[] {
+  var n: i32 = s.len();
   var buf: u8[] = __alloc_u8(n);
   var pos: i32 = 0;
   var i: i32 = 0;
@@ -4393,7 +4391,7 @@ pub function (s: string) without_byte(b: i32): string {
     out = out.with(k, buf[k]);
     k = k + 1;
   }
-  return string_from_bytes_unchecked(out);
+  return out;
 }
 
 // `s.repeat_to(target)` — concatenate copies of s until the

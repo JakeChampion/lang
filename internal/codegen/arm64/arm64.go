@@ -1015,6 +1015,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesAsBytes {
 		g.emitStringAsBytesRuntime()
 	}
+	if g.usesStringBytes {
+		g.emitStringBytesRuntime()
+	}
 	if g.usesIoError {
 		g.emitIoErrorRuntime()
 	}
@@ -15876,7 +15879,8 @@ type generator struct {
 	// usesAsBytes pulls in `__method_string_as_bytes(s)` — the
 	// non-copying `(data, len)` → slice<u8> view. Depends on
 	// __fern_slice_make.
-	usesAsBytes bool
+	usesAsBytes     bool
+	usesStringBytes bool
 	// usesReadFile / usesReadFileBytes / usesWriteFile pull in
 	// the file-I/O runtimes `__fern_read_file(path)` /
 	// `__fern_read_file_bytes(path)` / `__fern_write_file(path,
@@ -21012,6 +21016,11 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			// getentropy (syscall 500).
 			target = "__fern_random_i32"
 			g.usesRandomI32 = true
+		case "__fern_string_bytes_copy":
+			g.usesStringBytes = true
+			g.usesAllocU8 = true
+			g.usesAlloc = true
+			g.usesMemcpy = true
 		case "__method_string_as_bytes":
 			// s.as_bytes(): (data, len) → slice<u8> header aliasing
 			// the bytes; an inline-form receiver is copied out first.
