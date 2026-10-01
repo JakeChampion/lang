@@ -2342,24 +2342,29 @@ into five groups:
   a declaration goes to the module declaring it, a method the front end added
   to the module declaring its receiver type, anything else the front end or
   the lambda lift made to the module of the first function naming it, and the
-  instances and drop helpers to the entry, which is never sharded. A leaf
+  instances and drop helpers to the entry, which the asm drivers never shard.
+  A declaration's receiver is matched with `str` spelled `string`, as the
+  lowering spells it. A leaf
   `seminline` splices into a caller in another module keeps its body in its
   own unit. `-ir-unit` lowers its module together with its `-ir-sigs`
   siblings, so a call to a sibling it was not given is the checker's error,
   and marks the siblings' declarations `@noinline`, so whether a sibling's
   leaf is spliced in never depends on which siblings it was given. A unit's
-  object-cache key folds in `ircore.lowered_digest` of its bodies, since a
-  typed body can depend on another module's (an inferred parameter mode, an
-  instance). With `FERN_SEM_IR=` each module is still lowered on its own by
+  object-cache key is `ircore.unit_cache_key`: it folds in
+  `ircore.lowered_digest` of the unit's bodies, since a typed body can depend
+  on another module's (an inferred parameter mode, an instance), and
+  `UnitKeys.view`, a hash of the loose functions' signatures and the whole
+  struct table, which any unit's emit can read. A window covering the whole
+  unit is keyed as the whole unit. With `FERN_SEM_IR=` each module is still lowered on its own by
   the AST lowering.
 - `wasm_modload_run`, whose per-module units take the typed lowering the way
   `wasm_units_probe`'s do: each `-per-module-emit` and `-link` lowers the
   whole program once through `semlower.driven` and keeps the units it asked
-  for. A module's units cover the functions it declares or lifted; the generic
-  clones, instances and drop helpers are the entry's. The typed lowering
-  inlines and infers ownership across modules, so a unit's cache key
-  (`modloader.typed_unit_cache_key`) hashes its lowered bodies
-  (`ircore.lowered_digest`), and a body edit re-emits every unit its code reached.
+  for. The units and their keys are the asm drivers' (`ircore.split_units`,
+  `ircore.unit_cache_key`); the wasm keys leave out the whole-program facts,
+  which only the register backends' emit reads, and the runtime-need set the
+  asm entry folds in. A unit's lowered bodies are in its key, so a body edit
+  re-emits every unit its code reached.
   `-per-module-emit-all` emits a whole link plan from one lowering, which is
   how the whole-compiler link test builds the compiler. With `FERN_SEM_IR=`
   the units lower their window through `wasm_ir.lower_all_for_view` as

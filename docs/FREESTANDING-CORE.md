@@ -48,6 +48,7 @@ costs a silent failure on the first target that lacks it.
 | `now` | `now_unix_ms`, `now_ns`, `monotonic_ns`, `sleep_ms`, `sleep_ns`, `wasm_timer_pollable` | a clock, and wakeups driven by one |
 | `pollfd` | `timer_fd` | file descriptors a readiness primitive can wait on |
 | `env` | `env` | envp, captured at process start |
+| `config` | `config_get` | deploy-time configuration: the environment where the target has one, wasi:config/store on the proxy world |
 | `args` | `args` | argv, which exists only because something exec'd you |
 | `random` | `random_bytes`, `random_i32` | entropy: a syscall or a host import, never computed |
 | `fs` | `read_file`, `write_file`, `open_reader`, … | a filesystem |
@@ -89,9 +90,12 @@ diagnostics*, which a proxy-world host can satisfy with a logger; `stdout` means
 stdout stream*, which it cannot. `write` names the stream. If a target ever wants
 unterminated diagnostics, the answer is a `log`-side builtin, not moving `write`.
 
-**`args` is not `env`.** argv and envp are adjacent on the process stack and `_start`
-captures them together, so folding them into one capability is tempting. wasi-http is
-the counterexample again: it has environment variables and no argv. Two capabilities.
+**`args` is not `env`, and neither is `config`.** argv and envp are adjacent on the
+process stack and `_start` captures them together, so folding them into one
+capability is tempting. wasi-http is the counterexample again: it has neither, and
+its deploy-time configuration arrives through `wasi:config/store` instead — which is
+why `config_get` is its own capability, answered by the environment wherever the
+target has one. Three capabilities.
 
 **`exit` is core.** It is host-shaped — a hosted process exits through the kernel — and
 the case for gating it is real. It is core anyway because *every* target can define

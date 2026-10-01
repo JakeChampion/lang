@@ -134,6 +134,8 @@ func ClassifyCore(bin []byte) (ComposeRequest, []string) {
 			req.Args = true
 		case m == "wasi:cli/environment@0.2.0" && n == "get-environment":
 			req.Env = true
+		case m == wasiConfigStore && n == "get":
+			req.Config = true
 		case m == "wasi:sockets/tcp@0.2.0" && (n == "[method]tcp-socket.start-connect" || n == "[method]tcp-socket.finish-connect"):
 			// Outbound client: pulls in the connect variant of the tcp
 			// instance type (start-connect / finish-connect appended).
@@ -209,7 +211,7 @@ func RequestEmpty(req ComposeRequest) bool {
 		!req.BlockWrite && !req.BlockRead && !req.DropInput && !req.DropOutput && !req.DropError &&
 		!req.File.Any() &&
 		!req.Tcp && !req.Udp && !req.Http && !req.Timer && !req.Poll && !req.PollableDrop && !req.TcpConnect &&
-		!req.WallNow && !req.Args && !req.Env && len(req.Structured) == 0
+		!req.WallNow && !req.Args && !req.Env && !req.Config && len(req.Structured) == 0
 }
 
 // coreModuleImport is one (module, name) pair from the import section.
