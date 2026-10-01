@@ -78,7 +78,7 @@ struct State {
   foreign: i32[],
   // The module declarations whose body may hand one of their parameters out,
   // by contract name; `handers` computes it and `lend` consults it.
-  handers: string[],
+  handers: util.NameIndex,
   // The builtin names a module declaration takes over (`shadowed_builtins`).
   shadows: string[],
   // What in the module holds a view (`view_types`): declared records and
@@ -2785,7 +2785,7 @@ function lend(v: Value, param: typeinfo.Type, m: i32, kept: boolean): Value {
 // on the signature took it out of production. `handers` is that property,
 // read off the bodies once per module.
 function keeps(s: State, callee: string): boolean {
-  return util.index_of_str(s.handers, callee) >= 0;
+  return s.handers.has(callee);
 }
 
 // A call of a bound name whose value is a function: the callee is the closure
@@ -5312,7 +5312,7 @@ function refuse(why: string): Produced {
   return Produced { ok: false, why: why, func: ssasem.Func { graph: graph, values: [], params: [], result: t_void(), records: [], enums: [], calls: [], envs: [], anchors: [], dyns: [], shadows: [], finalizers: [] }, modes: [], template: false, key: "", requests: [], bodyless: false };
 }
 
-function initial(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Contract[], binding: ssasem.Binding, name: string, handers: string[], shadows: string[], views: string[], funcs: parser.FuncDecl[], impls: parser.ImplInfo[]): State {
+function initial(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Contract[], binding: ssasem.Binding, name: string, handers: util.NameIndex, shadows: string[], views: string[], funcs: parser.FuncDecl[], impls: parser.ImplInfo[]): State {
   var entry: ssa.SBlock = ssa.SBlock { id: 0, insts: [], term: t_none(), preds: [] };
   return State {
     ok: true, why: "", blocks: [], cur: entry, live: true, next_block: 1, values: [],
@@ -6300,7 +6300,7 @@ function unresolved_result_spelling(fd: parser.FuncDecl, s: State): string {
 // the checker's function scope, the module's call contracts and — for a
 // template — the instantiation to produce it under, named `name`. Unsupported
 // constructs are explicit refusals, never a partial graph.
-function build(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Contract[], binding: ssasem.Binding, name: string, handers: string[], shadows: string[], views: string[], funcs: parser.FuncDecl[], impls: parser.ImplInfo[]): Produced {
+function build(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Contract[], binding: ssasem.Binding, name: string, handers: util.NameIndex, shadows: string[], views: string[], funcs: parser.FuncDecl[], impls: parser.ImplInfo[]): Produced {
   if (fd.import_iface.len() > 0) {
     return external_entry();
   }
@@ -6405,7 +6405,7 @@ function return_exprs(st: ast.Stmt, own acc: ast.Expr[]): ast.Expr[] {
 // the set below. Nothing else does: `s + ""` and `s.len()` read the value and
 // build something of their own, which is why `copied()` and `view_len()` keep
 // reclaiming the views they are lent.
-function escapes_in(e: ast.Expr, names: string[], known: string[]): boolean {
+function escapes_in(e: ast.Expr, names: string[], known: util.NameIndex): boolean {
   if let ast.ExprIdent(id) = e {
     return util.index_of_str(names, id.name) >= 0;
   }
@@ -6479,15 +6479,15 @@ function stores_argument(name: string): boolean {
 // A call that hands its arguments on: one whose target is already in the set —
 // by plain name, or, since the receiver's type is not in hand here, by method
 // name alone — or one of the builtins that stores what it is given.
-function known_callee(c: ast.ExprCall, known: string[]): boolean {
+function known_callee(c: ast.ExprCall, known: util.NameIndex): boolean {
   if let ast.ExprIdent(id) = c.callee {
-    return stores_argument(id.name) || util.index_of_str(known, id.name) >= 0;
+    return stores_argument(id.name) || known.has(id.name);
   }
   if let ast.ExprFieldAccess(fa) = c.callee {
     if (stores_argument(fa.field)) {
       return true;
     }
-    for k in known {
+    for k in known.names {
       if (method_is(k, fa.field)) {
         return true;
       }
@@ -6516,7 +6516,7 @@ function bound_exprs(st: ast.Stmt, own acc: Bound[]): Bound[] {
 // inside `st`. So the names that carry a parameter close over the body's
 // bindings first — a local bound from an expression that hands one of them
 // out carries it too — and the returns are read against that set.
-function hands_back(fd: parser.FuncDecl, known: string[]): boolean {
+function hands_back(fd: parser.FuncDecl, known: util.NameIndex): boolean {
   var names: string[] = decl_param_names(fd);
   var binds: Bound[] = [];
   var outs: ast.Expr[] = [];
@@ -6547,20 +6547,22 @@ function hands_back(fd: parser.FuncDecl, known: string[]): boolean {
 // string VIEW to one of these hands it a copy, since a view's box carries no
 // count to keep the other reference safe and its bytes belong to a source
 // the caller may release first.
-function handers(mod: parser.Module): string[] {
+function handers(mod: parser.Module): util.NameIndex {
   var out: string[] = [];
+  var found: util.NameIndex = util.name_index(out);
   var changed: boolean = true;
   while (changed) {
     changed = false;
     for fd in mod.funcs {
       var key: string = decl_key(fd);
-      if (util.index_of_str(out, key) < 0 && hands_back(fd, out)) {
+      if (!found.has(key) && hands_back(fd, found)) {
         out = out.append(key);
+        found = util.name_index(out);
         changed = true;
       }
     }
   }
-  return out;
+  return found;
 }
 
 // To a fixpoint: a synthesised declaration's result may be another's, read
@@ -7200,7 +7202,7 @@ function string_contracts(): ssasem.Contract[] {
 // contract is honoured by the bridge's wrapper, emitted from the same
 // declaration. `names` is the symbol each entry defines: a declaration's key,
 // or an instance's name.
-function close_module(all: Produced[], names: string[]): Produced[] {
+function close_module(all: Produced[], names: util.NameIndex): Produced[] {
   var changed: boolean = true;
   while (changed) {
     changed = false;
@@ -7208,7 +7210,7 @@ function close_module(all: Produced[], names: string[]): Produced[] {
     while (i < all.len()) {
       if (all[i].ok) {
         for c in all[i].func.calls {
-          var at: i32 = util.index_of_str(names, c.name);
+          var at: i32 = names.find(c.name);
           if (at >= 0 && !all[at].ok && !all[at].bodyless && all[i].ok) {
             all = all.with(i, Produced { ...refuse("call target was refused: " + all[at].why), key: all[i].key });
             changed = true;
@@ -7287,7 +7289,7 @@ function anchor_module(all: Produced[], names: string[]): Produced[] {
     out = out.append(p);
     i = i + 1;
   }
-  return close_module(out, names);
+  return close_module(out, util.name_index(names));
 }
 
 // Each `return v` of a view becomes `return (v + "") as str`.
@@ -7579,7 +7581,7 @@ function infer_ownership(all: Produced[], names: string[], table: ssasem.Contrac
 pub function build_module(mod: parser.Module): Built {
   var scopes: checker.Scope[] = checker.module_scopes(mod);
   var table: ssasem.Contract[] = contracts(mod, scopes);
-  var handed_back: string[] = handers(mod);
+  var handed_back: util.NameIndex = handers(mod);
   var shadows: string[] = shadowed_builtins(mod);
   var views: string[] = [];
   if (scopes.len() > 0) {
@@ -7614,7 +7616,7 @@ pub function build_module(mod: parser.Module): Built {
     names = names.append(r.name);
     at = at + 1;
   }
-  var all: Produced[] = inline_leaves(anchor_module(close_module(util.append_all(decls, instances), names), names), names, mod.funcs);
+  var all: Produced[] = inline_leaves(anchor_module(close_module(util.append_all(decls, instances), util.name_index(names)), names), names, mod.funcs);
   decls = [];
   instances = [];
   i = 0;
