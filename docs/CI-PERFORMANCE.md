@@ -858,6 +858,20 @@ self-host arm64-darwin tests), so the shards do not each upload a
 near-identical directory per tree. Measured locally against a populated
 directory, the same build is 0.64 s.
 
+The cache is one directory per runner OS and arch, not per target, and that
+is enough: a driver is the self-host compiler built to run on the job's
+host, whatever target it then emits for, so the arm64 and wasm legs on an
+x86 runner (`diff-selfhost-arm64` builds `asm_modload_run.fern` as an x86
+binary) want the same x86-64-linux stock drivers `driver-sizes` saves.
+Across both e2e packages only 11 build sites ask for another target (9
+arm64-linux, 1 wasm32-wasi, 1 arm64-darwin), each a per-test program rather
+than a stock driver; those build cold on every run, as before. On a Linux
+ARM64 runner the shards skip the x86 drivers and build arm64-linux ones
+natively, and the self-host lane's aarch64 shard saves that directory. An
+x86 directory is ~105 MB uncompressed (the rows of
+`.github/selfhost-driver-sizes.txt`), stored zstd-compressed by
+actions/cache; with three savers, up to three directories per tree.
+
 What it cannot do: the first run on a tree whose self-host sources or
 stdlib changed builds cold on every shard as before, and saves; the next
 run at that tree (a merge-main push, the main validation when it is not
@@ -872,7 +886,9 @@ Read the `selfhost-driver-cache` step's line on the first shards after
 this merges: "N driver(s) restored" against the job's test-step time. A
 shard that restores its stock drivers and still runs 15 minutes has its
 time in tests, and the next target is sharing the per-test driver variants
-or the tests themselves. Confirm on the first day's main runs how many
+or the tests themselves.
+
+Confirm on the first day's main runs how many
 adopted a pull request's run,
 and how long the selector waited: the `changes` job's log and summary say
 both. The self-host lane's growth is the next cost to attack and it is in
