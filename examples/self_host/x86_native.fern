@@ -1733,10 +1733,13 @@ function x86_queue_fixup(own a: X86Asm, at: i32, width: i32, name: string): X86A
 // x86_queue_fixup_at is x86_queue_fixup with the target's table index, -1
 // when the reference has none.
 function x86_queue_fixup_at(own a: X86Asm, at: i32, width: i32, name: string, idx: i32): X86Asm {
-  a = X86Asm { ...a, fix_offs: a.fix_offs.append(at) };
-  a = X86Asm { ...a, fix_widths: a.fix_widths.append(width) };
-  a = X86Asm { ...a, fix_names: a.fix_names.append(name) };
-  return X86Asm { ...a, fix_idx: a.fix_idx.append(idx) };
+  return X86Asm {
+    ...a,
+    fix_offs: a.fix_offs.append(at),
+    fix_widths: a.fix_widths.append(width),
+    fix_names: a.fix_names.append(name),
+    fix_idx: a.fix_idx.append(idx),
+  };
 }
 
 // x86_branch_long reports whether the next relaxable branch must take its
@@ -1756,11 +1759,14 @@ function x86_branch_long(a: X86Asm, k: i32): boolean {
 // where its displacement sits, what it targets, and whether this pass took
 // the short form.
 function x86_branch_record(own a: X86Asm, at: i32, name: string, idx: i32, short: boolean): X86Asm {
-  a = X86Asm { ...a, br_offs: a.br_offs.append(at) };
-  a = X86Asm { ...a, br_names: a.br_names.append(name) };
-  a = X86Asm { ...a, br_idx: a.br_idx.append(idx) };
-  a = X86Asm { ...a, br_shorts: a.br_shorts.append(short) };
-  return X86Asm { ...a, br_n: a.br_n + 1 };
+  return X86Asm {
+    ...a,
+    br_offs: a.br_offs.append(at),
+    br_names: a.br_names.append(name),
+    br_idx: a.br_idx.append(idx),
+    br_shorts: a.br_shorts.append(short),
+    br_n: a.br_n + 1,
+  };
 }
 
 // x86_lea_rip_label emits `lea <dst>, [rip + label]` (REX.W 8D /r, ModR/M
