@@ -2151,6 +2151,20 @@ function x86_gas_trim(s: string): string {
   return slice_unchecked(s, a, b) + "";
 }
 
+// x86_gas_trimmed is x86_gas_trim as a view of its operand, for a reader
+// that is done with the bytes before the operand goes.
+function x86_gas_trimmed(s: str): str {
+  var a: i32 = 0;
+  var b: i32 = s.len();
+  while (a < b && (s[a] == b' ' || s[a] == b'\t')) {
+    a = a + 1;
+  }
+  while (b > a && (s[b - 1] == b' ' || s[b - 1] == b'\t')) {
+    b = b - 1;
+  }
+  return slice_unchecked(s, a, b);
+}
+
 // x86_gas_reg_decode decodes a general-purpose register token (`%rax` or
 // `rax`, at any width) to width * 16 + number, or -1. The high-byte names
 // ah/ch/dh/bh are not accepted.
@@ -2860,23 +2874,29 @@ function x86_gas_parse_mem(op: string): GasMem {
   if (disp_str.len() > 0) {
     d = x86_gas_atoi(disp_str);
   }
-  var parts: string[] = x86_str_split(inner, ",");
-  if (parts.len() >= 3) {
-    var b0: string = x86_gas_trim(parts[0]);
-    var bb: i32 = x86_gas_reg(b0);
-    var ix: i32 = x86_gas_reg(x86_gas_trim(parts[1]));
-    var sc: i32 = x86_gas_atoi(x86_gas_trim(parts[2]));
-    return GasMem { is_rip: false, label: "", base: bb, disp: d, has_index: true, index: ix, scale: sc, no_base: b0.len() == 0 };
+  // The parts between the commas are read as views of the operand: a base,
+  // then an index and a scale, none of which outlives this call.
+  var c1: i32 = x86_str_indexof(inner, ",");
+  if (c1 < 0) {
+    return GasMem { is_rip: false, label: "", base: x86_gas_reg(x86_gas_trimmed(inner)), disp: d, has_index: false, index: 0, scale: 1, no_base: false };
   }
+  var b0: str = x86_gas_trimmed(slice_unchecked(inner, 0, c1));
+  var after: str = slice_unchecked(inner, c1 + 1, inner.len());
+  var c2: i32 = x86_str_indexof(after, ",");
   // Two-element SIB `(%base,%index)` — an implicit scale of 1 (asm.fern emits
   // this for byte-element indexing, e.g. `movzbl (%rax,%rcx), %eax`). Without
   // this the whole `%base,%index` string resolved to a single -1 register.
-  if (parts.len() == 2) {
-    var bb2: i32 = x86_gas_reg(x86_gas_trim(parts[0]));
-    var ix2: i32 = x86_gas_reg(x86_gas_trim(parts[1]));
-    return GasMem { is_rip: false, label: "", base: bb2, disp: d, has_index: true, index: ix2, scale: 1, no_base: x86_gas_trim(parts[0]).len() == 0 };
+  if (c2 < 0) {
+    return GasMem { is_rip: false, label: "", base: x86_gas_reg(b0), disp: d, has_index: true, index: x86_gas_reg(x86_gas_trimmed(after)), scale: 1, no_base: b0.len() == 0 };
   }
-  return GasMem { is_rip: false, label: "", base: x86_gas_reg(x86_gas_trim(inner)), disp: d, has_index: false, index: 0, scale: 1, no_base: false };
+  var ix: i32 = x86_gas_reg(x86_gas_trimmed(slice_unchecked(after, 0, c2)));
+  var scale_str: str = slice_unchecked(after, c2 + 1, after.len());
+  var c3: i32 = x86_str_indexof(scale_str, ",");
+  if (c3 >= 0) {
+    scale_str = slice_unchecked(scale_str, 0, c3);
+  }
+  var sc: i32 = x86_gas_atoi(x86_gas_trimmed(scale_str));
+  return GasMem { is_rip: false, label: "", base: x86_gas_reg(b0), disp: d, has_index: true, index: ix, scale: sc, no_base: b0.len() == 0 };
 }
 
 // x86_gas_movq dispatches the movq operand shapes (AT&T src, dst),
@@ -5976,7 +5996,17 @@ function x86_gas_align(own a: X86Asm, section: i32, line: string): X86Asm {
 // or -1. A `#` inside a string literal is data: truncating there shortens
 // the string and shifts every .rodata symbol after it.
 function x86_gas_comment_start(line: string): i32 {
-  var i: i32 = 0;
+  // Most lines hold no `#` at all, and most that do hold no quote before it;
+  // both answer from two byte scans without the walk below.
+  var hash: i32 = x86_str_indexof(line, "#");
+  if (hash < 0) {
+    return hash;
+  }
+  var quote: i32 = x86_str_indexof(line, "\"");
+  if (quote < 0 || quote > hash) {
+    return hash;
+  }
+  var i: i32 = quote;
   var in_str: boolean = false;
   while (i < line.len()) {
     var c: i32 = line[i] as i32;
