@@ -301,6 +301,23 @@ function __str_two_way(s: string, sLen: i32, needle: string, m: i32, start: i32,
   return 0 - 1;
 }
 
+// A scan for needles of at most four bytes, with at most four comparisons
+// per candidate. Kept separate from the general search dispatcher.
+function __str_find_short(s: string, sLen: i32, needle: string, nLen: i32, from: i32): i32 {
+  var i: i32 = from;
+  while (i <= sLen - nLen) {
+    var k: i32 = 0;
+    while (k < nLen && s[i + k] == needle[k]) {
+      k = k + 1;
+    }
+    if (k == nLen) {
+      return i;
+    }
+    i = i + 1;
+  }
+  return 0 - 1;
+}
+
 // __str_find_from is THE forward substring-search core: the leftmost index
 // >= `start` of `needle` in `s`, or -1. Every forward scan in this module
 // routes through it, so they all inherit the same linear-time guarantee
@@ -309,7 +326,8 @@ function __str_two_way(s: string, sLen: i32, needle: string, m: i32, start: i32,
 // Adaptive dispatch, cheapest applicable path first:
 //   m == 0  -> `start` (the empty needle matches at every gap)
 //   m == 1  -> a single-byte scan, the memchr shape
-//   m >= 2  -> Two-Way
+//   2 <= m <= 4 -> bounded direct comparisons
+//   m > 4   -> Two-Way
 //
 // The single-byte case matters more than it looks: `split(",")`,
 // `split("\n")`, and the `replace_byte` family are the overwhelmingly common
@@ -341,6 +359,11 @@ function __str_find_from(s: string, sLen: i32, needle: string, nLen: i32, start:
   if (nLen == 1) {
     return __memchr(s, needle[0] as i32, from);
   }
+  // At most four comparisons per candidate keeps this path linear and
+  // avoids factorization overhead for short separators and UTF-8 needles.
+  if (nLen <= 4) {
+    return __str_find_short(s, sLen, needle, nLen, from);
+  }
   return __str_two_way(s, sLen, needle, nLen, from, 0, 0, 1);
 }
 
@@ -362,13 +385,8 @@ pub function (s: string) index_of(needle: string): i32 {
 
 // __str_rfind_budget bounds the naive backward scan below before it escalates
 // to the reverse Two-Way. Expressed as a multiple of the haystack length:
-// a scan that has compared more than this many bytes is on a quadratic path,
-// and the O(n) copy the escalation costs is cheaper than finishing it.
-//
-// 4 is chosen so that ordinary inputs never escalate. The naive scan compares
-// roughly one byte per position plus the length of each partial match; real
-// text with a real separator is well under 2n, so the copy is paid only by the
-// adversarial shapes it exists for.
+// the budget caps repeated partial matches before switching to the linear
+// algorithm. Both paths read the original strings and use constant space.
 function __str_rfind_budget(): i32 {
   return 4;
 }

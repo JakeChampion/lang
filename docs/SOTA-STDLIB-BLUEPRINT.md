@@ -412,7 +412,8 @@ works around: `docs/PERSISTENT-COLLECTIONS.md`.
 **Substring search is now Two-Way (Crochemore–Perrin).** `std/string`'s search
 family was a naive `O(n·m)` scan that re-probed one byte at a time. It is now a
 single core, `__str_find_from`, dispatching on needle length: empty → the gap
-position, one byte → a `memchr`-shaped scan, longer → Two-Way, which is
+position, one byte → a `memchr`-shaped scan, two to four bytes → bounded
+direct comparisons, longer → Two-Way, which is
 `O(n + m)` time and `O(1)` space with no skip table to allocate. `contains`,
 `index_of`, `split`, `splitn`, `split_once`, `partition`, `find_all`, `count`,
 `count_matches`, `replace`, `replace_n`, and `replacen` all route through it,
@@ -449,18 +450,14 @@ right-to-left probe loop, `O(n·m)` worst case. They now share
 `__str_rfind_from`, which dispatches like its forward sibling — the gap for an
 empty needle, a backward `memchr`-shaped scan for one byte — and for anything
 longer runs the naive scan under a LINEAR COMPARISON BUDGET, escalating to the
-reverse Two-Way (reverse both strings, run the forward algorithm, map the index
-back) once the budget is spent.
+reverse Two-Way once the budget is spent. Two-Way reads the original strings
+through backward index coordinates and maps the result back.
 
-The budget is the whole design, and it exists because reverse Two-Way is not a
-free upgrade the way the forward one was. Forward Two-Way is `O(1)` space;
-reverse Two-Way needs an `O(n)` copy of the haystack to run the forward
-algorithm over. Reversing a megabyte to find a two-byte separator the naive
-scan would have hit twenty bytes in is a pessimisation. Under the budget the
-common case (a short separator near the end, which is what `rsplit_once` is
-usually asked for) keeps its `O(1)` space and never allocates, while the
-quadratic case gets its linear bound. Measured on the adversarial shape — 40 KB
-of `a`, needle 2000×`a`+`b` — **2.655s → 0.014s**.
+Both tiers use `O(1)` auxiliary space without copying the haystack or needle.
+The budget avoids Two-Way factorization when the naive scan quickly finds a
+short separator near the end, while bounding the repetitive worst case.
+The earlier adversarial measurement, 40 KB of `a` and needle 2000×`a`+`b`,
+was **2.655s before escalation versus 0.014s after**.
 
 The honest framing: on ordinary text where the first byte rarely matches, the
 naive scan was already about `n` comparisons and Two-Way is comparable. The win
