@@ -5637,25 +5637,20 @@ function reads_i64(t: typeinfo.Type): boolean {
   if (type_to_irtag(t) == "i64") {
     return true;
   }
-  match (t) {
-    typeinfo.TypeArray(at) => {
-      return reads_i64(at.elem);
-    },
-    typeinfo.TypeStruct(st) => {
-      for a in st.args {
-        if (reads_i64(a)) {
-          return true;
-        }
-      }
-    },
-    typeinfo.TypeTuple(tt) => {
-      for et in tt.elements {
-        if (reads_i64(et)) {
-          return true;
-        }
-      }
-    },
-    _ => {}
+  if let typeinfo.TypeArray(at) = t {
+    return reads_i64(at.elem);
+  }
+  var parts: typeinfo.Type[] = [];
+  if let typeinfo.TypeStruct(st) = t {
+    parts = st.args;
+  }
+  if let typeinfo.TypeTuple(tt) = t {
+    parts = tt.elements;
+  }
+  for p in parts {
+    if (reads_i64(p)) {
+      return true;
+    }
   }
   return false;
 }
@@ -22222,32 +22217,29 @@ function settle_wide_literals(e: ast.Expr, t: typeinfo.Type): ast.Expr {
   if (type_to_irtag(t) == "i64" && int_literal_tree(e)) {
     return settle_int_tree(e, "i64");
   }
-  match (t) {
-    typeinfo.TypeArray(at) => {
-      if let ast.ExprArray(ea) = e {
-        var ne: ast.Expr[] = [];
-        for el in ea.elements {
-          ne = ne.append(settle_wide_literals(el, at.elem));
-        }
-        return ast.ExprArray { ...ea, elements: ne };
+  if let typeinfo.TypeArray(at) = t {
+    if let ast.ExprArray(ea) = e {
+      var ne: ast.Expr[] = [];
+      for el in ea.elements {
+        ne = ne.append(settle_wide_literals(el, at.elem));
       }
-    },
-    typeinfo.TypeTuple(tt) => {
-      if let ast.ExprTuple(et) = e {
-        var ne: ast.Expr[] = [];
-        var k: i32 = 0;
-        while (k < et.elements.len()) {
-          if (k < tt.elements.len()) {
-            ne = ne.append(settle_wide_literals(et.elements[k], tt.elements[k]));
-          } else {
-            ne = ne.append(et.elements[k]);
-          }
-          k = k + 1;
+      return ast.ExprArray { ...ea, elements: ne };
+    }
+  }
+  if let typeinfo.TypeTuple(tt) = t {
+    if let ast.ExprTuple(et) = e {
+      var ne: ast.Expr[] = [];
+      var k: i32 = 0;
+      while (k < et.elements.len()) {
+        if (k < tt.elements.len()) {
+          ne = ne.append(settle_wide_literals(et.elements[k], tt.elements[k]));
+        } else {
+          ne = ne.append(et.elements[k]);
         }
-        return ast.ExprTuple { ...et, elements: ne };
+        k = k + 1;
       }
-    },
-    _ => {}
+      return ast.ExprTuple { ...et, elements: ne };
+    }
   }
   return e;
 }
@@ -24899,17 +24891,14 @@ function lit_holds_int_literal(e: ast.Expr): boolean {
   if (int_literal_tree(e)) {
     return true;
   }
-  match (e) {
-    ast.ExprArray(ea) => {
-      return lit_holds_any(ea.elements);
-    },
-    ast.ExprTuple(et) => {
-      return lit_holds_any(et.elements);
-    },
-    ast.ExprStructLit(sl) => {
-      return lit_holds_any(sl.field_values);
-    },
-    _ => {}
+  if let ast.ExprArray(ea) = e {
+    return lit_holds_any(ea.elements);
+  }
+  if let ast.ExprTuple(et) = e {
+    return lit_holds_any(et.elements);
+  }
+  if let ast.ExprStructLit(sl) = e {
+    return lit_holds_any(sl.field_values);
   }
   return false;
 }
