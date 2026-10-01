@@ -149,7 +149,7 @@ programs through the self-hosted x86-64 driver + CI-gated arm64); native
 |----------|---|---|---|---|---|--------|-------|
 | `print(s)` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | stdout + newline |
 | `write(s)` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | stdout raw, no newline |
-| `eprint(s)` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | stderr (not on stdout) |
+| `eprint(s)` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | stderr + newline |
 | `putchar(b)` | ✅ | ✅ | ✅ | ✅ | ✅ | 🔧 | self-host: fixed on the **IR path** ([#2839](https://github.com/JakeChampion/lang/issues/2839)) — `__fern_putchar` (`write(1, &byte, 1)`) emitted by the x86-64 / arm64 / wasm IR backends, guarded by `self_host_putchar_{,arm64_,wasm_}ir_test.go`. Legacy AST `asm.fern` still doesn't lower it (IR-path-only, per goal 1) |
 | `.len()` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | free `len(x)` is E001 on both front ends |
 | `args(): string[]` | | | | | ✅ | ⚠️ | self-host ✓; native arg-passing via CLI e2e tests |

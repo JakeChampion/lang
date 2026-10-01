@@ -158,14 +158,12 @@ function fmt_file(path: string, fmt_write: boolean, fmt_diff: boolean, out_path:
   }
   if (fmt_write) {
     if (!fmt_output_is_readable(formatted)) {
-      eprint("fern: " + path + ": refusing to write back — the formatted output does not re-parse; this is a formatter bug, please report it\n");
+      eprint("fern: " + path + ": refusing to write back — the formatted output does not re-parse; this is a formatter bug, please report it");
       return 1;
     }
     match (write_file(path, formatted)) {
       Err(e) => {
-        eprint("fern: cannot write back: ");
-        eprint(path);
-        eprint("\n");
+        eprint("fern: cannot write back " + path + ": " + util.io_error_reason(e));
         return 1;
       },
       Ok(_) => {}
@@ -175,9 +173,7 @@ function fmt_file(path: string, fmt_write: boolean, fmt_diff: boolean, out_path:
   if (out_path.len() > 0) {
     match (write_file(out_path, formatted)) {
       Err(e) => {
-        eprint("fern: cannot write output: ");
-        eprint(out_path);
-        eprint("\n");
+        eprint("fern: cannot write output " + out_path + ": " + util.io_error_reason(e));
         return 1;
       },
       Ok(_) => {}
@@ -202,9 +198,9 @@ function eprint_diags(ds: util.Diag[], files: string[]): void {
       tag = "error[" + d.code + "]: ";
     }
     if (d.line > 0) {
-      eprint(util.pos_str(files, d.line, d.col) + ": " + tag + d.message + "\n");
+      eprint(util.pos_str(files, d.line, d.col) + ": " + tag + d.message);
     } else {
-      eprint(tag + d.message + "\n");
+      eprint(tag + d.message);
     }
   }
 }
@@ -357,7 +353,7 @@ function x86_elf_binary(asm: string, emit_syms: boolean): string {
   }
   var eoff: i32 = x86_native.x86_label_off(a, "_start");
   if (eoff < 0) {
-    eprint("fern: -target x86-64: no _start symbol in the emitted program\n");
+    eprint("fern: -target x86-64: no _start symbol in the emitted program");
     return "";
   }
   // The unwind data the `.cfi_*` directives rendered, at the addresses the
@@ -448,15 +444,15 @@ function is_flag(a: string): boolean {
 }
 
 function usage(): i32 {
-  eprint("usage: fern [-check | -interp | -fmt | -capabilities] [-target <isa>-<environment>] [-backend flat|ssa] [-emit asm|core-module] [-embed DIR] [-o OUT] <entry.fern> [stdlib-root]\n");
-  eprint("       fern -fmt [-w | -d | -o OUT] FILE...          (-w overwrites each file, -d prints unified diffs; -o takes one FILE)\n");
-  eprint("       fern -targets                                (list supported targets + capabilities)\n");
-  eprint("       fern -resolve <ABS-DIR>                      (run MVS over the manifest's index; write fern.lock)\n");
-  eprint("       fern -tangle <doc.fern.md>                   (literate: emit the tangled Fern source)\n");
-  eprint("       fern -doc <module.fern> [-o OUT]             (Markdown reference page; stdout without -o)\n");
-  eprint("       fern -doc <DIR> -o OUTDIR                    (one page per module under DIR)\n");
-  eprint("       fern -add NAME SPEC <ABS-DIR>                (declare a dependency: path:DIR | workspace)\n");
-  eprint("       fern -vendor <ABS-DIR>                       (flatten the dependency graph into vendor/)\n");
+  eprint("usage: fern [-check | -interp | -fmt | -capabilities] [-target <isa>-<environment>] [-backend flat|ssa] [-emit asm|core-module] [-embed DIR] [-o OUT] <entry.fern> [stdlib-root]");
+  eprint("       fern -fmt [-w | -d | -o OUT] FILE...          (-w overwrites each file, -d prints unified diffs; -o takes one FILE)");
+  eprint("       fern -targets                                (list supported targets + capabilities)");
+  eprint("       fern -resolve <ABS-DIR>                      (run MVS over the manifest's index; write fern.lock)");
+  eprint("       fern -tangle <doc.fern.md>                   (literate: emit the tangled Fern source)");
+  eprint("       fern -doc <module.fern> [-o OUT]             (Markdown reference page; stdout without -o)");
+  eprint("       fern -doc <DIR> -o OUTDIR                    (one page per module under DIR)");
+  eprint("       fern -add NAME SPEC <ABS-DIR>                (declare a dependency: path:DIR | workspace)");
+  eprint("       fern -vendor <ABS-DIR>                       (flatten the dependency graph into vendor/)");
   return 2;
 }
 
@@ -589,9 +585,9 @@ function capability_violations(merged: parser.Module, target: string): boolean {
     // names the function and module instead. Native's renderer makes the
     // same split.
     if (v.fn_module.len() == 0 && v.line > 0) {
-      eprint(util.i32_to_string(v.line) + ":" + util.i32_to_string(v.col) + ": " + msg + "\n");
+      eprint(util.i32_to_string(v.line) + ":" + util.i32_to_string(v.col) + ": " + msg);
     } else {
-      eprint(msg + "\n");
+      eprint(msg);
     }
     i = i + 1;
   }
@@ -614,9 +610,9 @@ function ambient_violations(merged: parser.Module): boolean {
     var v: ambient.Violation = vs[i];
     var msg: string = "error[E080]: " + ambient.violation_message(v);
     if (v.fn_module.len() == 0 && v.line > 0) {
-      eprint(util.i32_to_string(v.line) + ":" + util.i32_to_string(v.col) + ": " + msg + "\n");
+      eprint(util.i32_to_string(v.line) + ":" + util.i32_to_string(v.col) + ": " + msg);
     } else {
-      eprint(msg + "\n");
+      eprint(msg);
     }
     i = i + 1;
   }
@@ -786,16 +782,12 @@ function run_resolve(start: string): i32 {
 
   var sel: mvs.Sel[] = mvs.selected(st);
   var lock: string = mdir + "/fern.lock";
-  var wrote: boolean = false;
   match (write_file(lock, mvs.lock_text(sel))) {
-    Ok(u) => {
-      wrote = true;
-    },
-    Err(e) => {}
-  }
-  if (!wrote) {
-    eprint("resolve: cannot write " + lock);
-    return 1;
+    Ok(u) => {},
+    Err(e) => {
+      eprint("resolve: cannot write " + lock + ": " + util.io_error_reason(e));
+      return 1;
+    }
   }
   eprint("resolve: " + util.i32_to_string(sel.len()) + " package(s) pinned in " + lock);
   var i: i32 = 0;
@@ -888,7 +880,7 @@ function run_add(pos: string[]): i32 {
   match (write_file(mpath, updated)) {
     Ok(u) => {},
     Err(e) => {
-      eprint("add: cannot write " + mpath);
+      eprint("add: cannot write " + mpath + ": " + util.io_error_reason(e));
       return 1;
     }
   }
@@ -1301,28 +1293,25 @@ function copy_package(src: string, dst: string): string {
         continue;
       }
       var body: string = "";
-      var read_ok: boolean = false;
       match (read_file(child)) {
         Ok(s) => {
           body = s;
-          read_ok = true;
         },
-        Err(e) => {}
-      }
-      if (!read_ok) {
-        return "cannot read " + child;
+        Err(e) => {
+          return "cannot read " + child + ": " + util.io_error_reason(e);
+        }
       }
       var out: string = dst + "/" + child_rel;
       match (create_dir_all(util.dir_of(out))) {
         Ok(u) => {},
         Err(e) => {
-          return "cannot create " + util.dir_of(out);
+          return "cannot create " + util.dir_of(out) + ": " + util.io_error_reason(e);
         }
       }
       match (write_file(out, body)) {
         Ok(u) => {},
         Err(e) => {
-          return "cannot write " + out;
+          return "cannot write " + out + ": " + util.io_error_reason(e);
         }
       }
     }
@@ -1470,7 +1459,7 @@ function load_bundle(entry_path: string, entry_mod: parser.Module, root: string,
     }
   }
   if (q.unrooted.len() > 0) {
-    eprint("fern: import \"" + q.unrooted + "\" needs the stdlib root: pass its directory after the entry file\n");
+    eprint("fern: import \"" + q.unrooted + "\" needs the stdlib root: pass its directory after the entry file");
     return Bundle { entry: entry_mod, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, ok: false };
   }
   var merged: parser.Module = flatten.bundle(flatten.resolve_imports(entry_mod, dir_slash, root), loaded, target);
@@ -1495,7 +1484,7 @@ function bundle_visibility_diags(b: Bundle): boolean {
   var vi: i32 = 0;
   while (vi < vis_diags.len()) {
     var vd: util.Diag = vis_diags[vi];
-    eprint(util.pos_str(b.files, vd.line, vd.col) + ": " + vd.message + "\n");
+    eprint(util.pos_str(b.files, vd.line, vd.col) + ": " + vd.message);
     vi = vi + 1;
   }
   return vis_diags.len() > 0;
@@ -1516,9 +1505,9 @@ function report_decl_name_errors(mod: parser.Module, files: string[]): boolean {
   while (i < ds.len()) {
     var d: util.Diag = ds[i];
     if (d.line > 0) {
-      eprint(util.pos_str(files, d.line, d.col) + ": error[" + d.code + "]: " + d.message + "\n");
+      eprint(util.pos_str(files, d.line, d.col) + ": error[" + d.code + "]: " + d.message);
     } else {
-      eprint("error[" + d.code + "]: " + d.message + "\n");
+      eprint("error[" + d.code + "]: " + d.message);
     }
     i = i + 1;
   }
@@ -1648,9 +1637,9 @@ function check_bundle(b: Bundle, target: string, target_given: boolean): i32 {
     while (hi < hints.len()) {
       var h: util.Diag = hints[hi];
       if (h.line > 0) {
-        eprint(util.pos_str(b.files, h.line, h.col) + ": error[" + h.code + "]: " + h.message + "\n");
+        eprint(util.pos_str(b.files, h.line, h.col) + ": error[" + h.code + "]: " + h.message);
       } else {
-        eprint("error[" + h.code + "]: " + h.message + "\n");
+        eprint("error[" + h.code + "]: " + h.message);
       }
       hi = hi + 1;
     }
@@ -1789,7 +1778,7 @@ function tangle_emit(code: string, out_path: string): i32 {
     match (create_dir_all(parent)) {
       Ok(u) => {},
       Err(e) => {
-        eprint("fern: cannot create output directory: " + parent);
+        eprint("fern: cannot create output directory " + parent + ": " + util.io_error_reason(e));
         return 1;
       }
     }
@@ -1800,7 +1789,7 @@ function tangle_emit(code: string, out_path: string): i32 {
       return 0;
     },
     Err(e) => {
-      eprint("fern: cannot write output: " + out_path);
+      eprint("fern: cannot write output " + out_path + ": " + util.io_error_reason(e));
       return 1;
     }
   }
@@ -1863,7 +1852,7 @@ function run_doc(path: string, out_path: string): i32 {
       return 0;
     },
     Err(e) => {
-      eprint("fern: -doc: cannot write " + out_path);
+      eprint("fern: -doc: cannot write " + out_path + ": " + util.io_error_reason(e));
       return 1;
     }
   }
@@ -1883,7 +1872,7 @@ function doc_tree(dir: string, out_dir: string): i32 {
   match (create_dir_all(out_dir)) {
     Ok(u) => {},
     Err(e) => {
-      eprint("fern: -doc: cannot create " + out_dir);
+      eprint("fern: -doc: cannot create " + out_dir + ": " + util.io_error_reason(e));
       return 1;
     }
   }
@@ -1955,7 +1944,7 @@ function doc_tree(dir: string, out_dir: string): i32 {
       match (write_file(dest, page)) {
         Ok(u) => {},
         Err(e) => {
-          eprint("fern: -doc: cannot write " + dest);
+          eprint("fern: -doc: cannot write " + dest + ": " + util.io_error_reason(e));
           return 1;
         }
       }
@@ -2218,14 +2207,14 @@ function package_violations(merged: parser.Module, pkgs: caps.Pkg[]): boolean {
   var i: i32 = 0;
   while (i < vs.len()) {
     if (!vs[i].governed) {
-      eprint("warning: " + caps.violation_message(vs[i]) + "\n");
+      eprint("warning: " + caps.violation_message(vs[i]));
     }
     i = i + 1;
   }
   var k: i32 = 0;
   while (k < vs.len()) {
     if (vs[k].governed) {
-      eprint("error[E070]: " + caps.violation_message(vs[k]) + "\n");
+      eprint("error[E070]: " + caps.violation_message(vs[k]));
       bad = true;
     }
     k = k + 1;
@@ -2370,9 +2359,7 @@ function run(): i32 {
       }
       out_path = av[i];
     } else if (is_flag(a)) {
-      eprint("fern: unknown flag: ");
-      eprint(a);
-      eprint("\n");
+      eprint("fern: unknown flag: " + a);
       return 2;
     } else {
       pos = pos.append(a);
@@ -2462,15 +2449,15 @@ function run(): i32 {
     return 2;
   }
   if (emit.len() > 0 && emit != "asm" && emit != "core-module") {
-    eprint("fern: unknown -emit: " + emit + " (want asm, core-module, or omit it for the target's default output form)\n");
+    eprint("fern: unknown -emit: " + emit + " (want asm, core-module, or omit it for the target's default output form)");
     return 2;
   }
   if (emit == "core-module" && platforms.for_target(target).isa != "wasm32") {
-    eprint("fern: -emit core-module is a wasm output form; -target " + target + " has no core module to emit\n");
+    eprint("fern: -emit core-module is a wasm output form; -target " + target + " has no core module to emit");
     return 2;
   }
   if (backend != "" && backend != "ssa" && backend != "flat") {
-    eprint("fern: unknown -backend: " + backend + " (want flat or ssa, or omit it for the target's default emitter)\n");
+    eprint("fern: unknown -backend: " + backend + " (want flat or ssa, or omit it for the target's default emitter)");
     return 2;
   }
   // Each target has one emitter, and `-backend` may only name it: the
@@ -2478,11 +2465,11 @@ function run(): i32 {
   // stack machine on wasm, which has no registers to allocate.
   var ssa_isa: boolean = platforms.for_target(target).isa == "arm64" || platforms.for_target(target).isa == "x86-64";
   if (backend == "ssa" && !ssa_isa) {
-    eprint("fern: -backend ssa is not available for -target " + target + " (available for: arm64-linux, arm64-darwin, arm64-android, x86-64-linux)\n");
+    eprint("fern: -backend ssa is not available for -target " + target + " (available for: arm64-linux, arm64-darwin, arm64-android, x86-64-linux)");
     return 2;
   }
   if (backend == "flat" && ssa_isa) {
-    eprint("fern: -backend flat is not available for -target " + target + ": the stack machine's function emitter was retired, and the register path (-backend ssa, the default) is the only emitter on arm64 and x86-64\n");
+    eprint("fern: -backend flat is not available for -target " + target + ": the stack machine's function emitter was retired, and the register path (-backend ssa, the default) is the only emitter on arm64 and x86-64");
     return 2;
   }
 
@@ -2492,7 +2479,7 @@ function run(): i32 {
   // 1 when any file needs formatting.
   if (mode_fmt) {
     if (out_path.len() > 0 && pos.len() > 1) {
-      eprint("fern: -fmt -o takes a single input file (" + util.i32_to_string(pos.len()) + " given)\n");
+      eprint("fern: -fmt -o takes a single input file (" + util.i32_to_string(pos.len()) + " given)");
       return 2;
     }
     var code: i32 = 0;
@@ -2611,7 +2598,7 @@ function run(): i32 {
         // the difference between "exit 254" and a usable report: #5990 was
         // filed against a silent 254 whose cause (an unimplemented
         // construct) the message already named.
-        eprint("fern: interp: " + ev.msg + "\n");
+        eprint("fern: interp: " + ev.msg);
         return 254;
       },
       _ => {
@@ -2751,7 +2738,7 @@ function run(): i32 {
     // A freestanding target type-checks (against an empty capability set)
     // and has nothing to lower with, so refusing here is the correct answer
     // — the alternative is an artifact built for the wrong machine.
-    eprint("fern: -target " + target + ": check-only — no backend emits for this target yet\n");
+    eprint("fern: -target " + target + ": check-only — no backend emits for this target yet");
     return 2;
   }
 
@@ -2922,9 +2909,7 @@ function run(): i32 {
   if (out_path.len() > 0) {
     match (write_output(out_path, out_asm, target, emit)) {
       Err(e) => {
-        eprint("fern: cannot write output: ");
-        eprint(out_path);
-        eprint("\n");
+        eprint("fern: cannot write output " + out_path + ": " + util.io_error_reason(e));
         return 1;
       },
       Ok(_) => {}

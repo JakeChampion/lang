@@ -17949,7 +17949,7 @@ function report_expr_append(s: LowerState, fa: ast.ExprFieldAccess, c: ast.ExprC
   }
   eprint("append-report: " + s.frame.cur_fn + ":"
     + util.i32_to_string(c.line) + ":" + util.i32_to_string(c.col)
-    + "  " + verdict + "  " + expr_append_recv_label(fa.obj) + "  " + why + "\n");
+    + "  " + verdict + "  " + expr_append_recv_label(fa.obj) + "  " + why);
   return s;
 }
 
@@ -32067,7 +32067,7 @@ function lower_stmt_assign(a: ast.StmtAssign, s: LowerState): LowerState {
                 }
                 eprint("append-report: " + s.frame.cur_fn + ":"
                   + util.i32_to_string(a.line) + ":" + util.i32_to_string(a.col)
-                  + "  " + verdict + "  " + lexical.source_name(a.target) + "  " + why + "\n");
+                  + "  " + verdict + "  " + lexical.source_name(a.target) + "  " + why);
               }
               if (push_shared) {
                 aps = aps.emit(ir.op_arr_push());

@@ -23,7 +23,7 @@ import "./modloader";
 function main(): i32 {
   var a: string[] = args();
   if (a.len() < 2) {
-    eprint("usage: checker_modload_run <entry.fern>\n");
+    eprint("usage: checker_modload_run <entry.fern>");
     return 2;
   }
   var entry_path: string = a[1];
@@ -54,7 +54,7 @@ function main(): i32 {
       return 0;
     },
     Err(e) => {
-      eprint("checker_modload_run: could not read entry file\n");
+      eprint("checker_modload_run: could not read entry file");
       return 1;
     }
   }
