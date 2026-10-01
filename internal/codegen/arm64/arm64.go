@@ -967,6 +967,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesBufTakeBytes {
 		g.emitBufTakeBytesRuntime()
 	}
+	if g.usesBufPushBytesRange {
+		g.emitBufPushBytesRangeRuntime()
+	}
 	if g.usesNowUnixMs {
 		g.emitNowUnixMsRuntime()
 	}
@@ -15782,8 +15785,9 @@ type generator struct {
 	// Unlike the strbuf above there may be any number of them at once; a
 	// builder is the address of its control block, handed to Fern as a
 	// usize. Mirror of the x86_64 backend's emission.
-	usesStrBuilder   bool
-	usesBufTakeBytes bool
+	usesStrBuilder        bool
+	usesBufTakeBytes      bool
+	usesBufPushBytesRange bool
 
 	// usesExit pulls in `__fern_exit(code)` — direct exit syscall.
 	// Doesn't return; the post-call push x0 the caller emits is
@@ -20516,7 +20520,10 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.usesAllocU8 = true
 			g.usesAlloc = true
 			g.usesMemcpy = true
-		case "buf_new", "buf_push", "buf_push_range", "buf_push_mapped", "buf_push_filtered", "buf_push_expanded", "buf_push_byte", "buf_push_u64", "buf_len", "buf_take", "buf_free":
+		case "buf_new", "buf_push", "buf_push_range", "buf_push_bytes_range", "buf_push_mapped", "buf_push_filtered", "buf_push_expanded", "buf_push_byte", "buf_push_u64", "buf_len", "buf_take", "buf_free":
+			if target == "buf_push_bytes_range" {
+				g.usesBufPushBytesRange = true
+			}
 			target = "__fern_" + target
 			g.usesStrBuilder = true
 			// Every entry point but buf_len can reach the allocator, the

@@ -3696,6 +3696,9 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
 // builders, so a handle used after its free is a wild pointer here, not the
 // error internal/interp answers one with.
 function is_buf_builtin(name: string): boolean {
+  if (name == "buf_push_bytes_range") {
+    return true;
+  }
   if (name == "buf_new" || name == "buf_push" || name == "buf_push_range") {
     return true;
   }
@@ -3730,9 +3733,38 @@ function call_buf_new(args: Value[]): Value {
   return v_buf_handle(buf_new(reserve));
 }
 
-// `buf_push_range(b, s, lo, hi)` appends `s[lo:hi]`. The bounds are the
-// same contract slice_unchecked's are: out of range is an error here, the
-// interp's stand-in for the trap the codegen does not emit.
+// Raw byte ranges use clamped bounds, including empty and inverted ranges.
+function call_buf_push_bytes_range(h: usize, args: Value[]): Value {
+  if (args.len() != 4) {
+    return v_err("buf_push_bytes_range: expected 4 args (b, bytes, lo, hi)");
+  }
+  if (!is_int_like(args[2]) || !is_int_like(args[3])) {
+    return v_err("buf_push_bytes_range: bounds must be integers");
+  }
+  match (args[1]) {
+    VArr(a) => {
+      var lo: i32 = int_arg_i32(args[2]);
+      var hi: i32 = int_arg_i32(args[3]);
+      if (lo < 0) {
+        lo = 0;
+      }
+      if (hi > a.elements.len()) {
+        hi = a.elements.len();
+      }
+      // The bootstrap seed predates the bulk host operation.
+      while (lo < hi) {
+        buf_push_byte(h, vint_bits(a.elements[lo]) & 255);
+        lo = lo + 1;
+      }
+      return v_void();
+    },
+    _ => {
+      return v_err("buf_push_bytes_range: expected byte array");
+    }
+  }
+}
+
+// String ranges retain the existing unchecked-bounds contract.
 function call_buf_push_range(h: usize, args: Value[]): Value {
   if (args.len() != 4) {
     return v_err("buf_push_range: expected 4 args (b, s, lo, hi)");
@@ -3913,6 +3945,9 @@ function call_buf_builtin(name: string, args: Value[]): Value {
   var h: usize = buf_handle_of(args[0]);
   if (name == "buf_push_range") {
     return call_buf_push_range(h, args);
+  }
+  if (name == "buf_push_bytes_range") {
+    return call_buf_push_bytes_range(h, args);
   }
   if (name == "buf_push_mapped" || name == "buf_push_filtered" || name == "buf_push_expanded") {
     return call_buf_push_table(name, h, args);

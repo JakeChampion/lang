@@ -646,6 +646,7 @@ func New() *Interp {
 	i.Builtins["buf_new"] = &Builtin{Fn: builtinBufNew}
 	i.Builtins["buf_push"] = &Builtin{Fn: builtinBufPush}
 	i.Builtins["buf_push_range"] = &Builtin{Fn: builtinBufPushRange}
+	i.Builtins["buf_push_bytes_range"] = &Builtin{Fn: builtinBufPushBytesRange}
 	i.Builtins["buf_push_mapped"] = &Builtin{Fn: builtinBufPushMapped}
 	i.Builtins["buf_push_filtered"] = &Builtin{Fn: builtinBufPushFiltered}
 	i.Builtins["buf_push_expanded"] = &Builtin{Fn: builtinBufPushExpanded}
@@ -5313,6 +5314,36 @@ func builtinBufPush(i *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("buf_push: expected string arg, got %T", args[1])
 	}
 	i.bufs[h] = append(b, string(s)...)
+	return Void{}, nil
+}
+
+// builtinBufPushBytesRange borrows an array and appends its clamped range.
+func builtinBufPushBytesRange(i *Interp, args []Value) (Value, error) {
+	if len(args) != 4 {
+		return nil, fmt.Errorf("buf_push_bytes_range: expected 4 args, got %d", len(args))
+	}
+	h, b, err := bufHandle(i, "buf_push_bytes_range", args[0])
+	if err != nil {
+		return nil, err
+	}
+	a, ok := args[1].(Array)
+	if !ok {
+		return nil, fmt.Errorf("buf_push_bytes_range: expected byte array, got %T", args[1])
+	}
+	lo, lok := args[2].(Number)
+	hi, hik := args[3].(Number)
+	if !lok || !hik {
+		return nil, fmt.Errorf("buf_push_bytes_range: bounds must be numbers")
+	}
+	low, high := max(int64(lo), 0), min(int64(hi), int64(len(a.E)))
+	for at := low; at < high; at++ {
+		n, ok := a.E[at].(Number)
+		if !ok {
+			return nil, fmt.Errorf("buf_push_bytes_range: element %d is %T", at, a.E[at])
+		}
+		b = append(b, byte(n))
+	}
+	i.bufs[h] = b
 	return Void{}, nil
 }
 

@@ -5120,6 +5120,9 @@ function builder_builtin_site(own r: irlower.LowerResult, ins: ssa.SInst): Lower
   if (ins.str == "buf_push_range") {
     return Lowered { found: true, r: emit(r, ir.op_buf_push_range()) };
   }
+  if (ins.str == "buf_push_bytes_range") {
+    return Lowered { found: true, r: emit(r, ir.packed(ir.op_buf_push_bytes_range())) };
+  }
   if (ins.str == "buf_push_mapped") {
     return Lowered { found: true, r: emit(r, ir.packed(ir.op_buf_push_mapped())) };
   }

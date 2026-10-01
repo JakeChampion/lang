@@ -427,6 +427,7 @@ var providedSigs = map[string]providedSig{
 	"buf_new":                         {1, rWord},
 	"buf_push":                        {3, rVoid},
 	"buf_push_range":                  {5, rVoid},
+	"buf_push_bytes_range":            {4, rVoid},
 	"buf_push_mapped":                 {4, rVoid},
 	"buf_push_filtered":               {4, rVoid},
 	"buf_push_expanded":               {4, rVoid},

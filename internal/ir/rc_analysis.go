@@ -1494,6 +1494,7 @@ var copyingBuiltinArgs = map[string][]int{
 	"strbuf_append":               {0},
 	"buf_push":                    {1},
 	"buf_push_range":              {1},
+	"buf_push_bytes_range":        {1},
 	"buf_push_mapped":             {1, 2},
 	"buf_push_filtered":           {1, 2},
 	"buf_push_expanded":           {1, 2},

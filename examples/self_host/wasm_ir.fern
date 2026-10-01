@@ -345,7 +345,7 @@ pub function need_ops(): string[] {
     "udp_bind", "udp_connect", "udp_recvfrom", "udp_send", "udp_sendto", "tcp_connect_with", "wasm_block",
     "reactor_new", "reactor_ctl", "reactor_wait", "tcp_recv_into", "tcp_sendfile",
     "wasm_poll", "wasm_pollable_drop", "wasm_timer_pollable", "write_file", "open_file",
-    "writer_write", "write_some", "buf_take_bytes",
+    "writer_write", "write_some", "buf_take_bytes", "buf_push_bytes_range",
   ];
 }
 
@@ -1763,6 +1763,7 @@ pub function module_uses_buf(cache: irlower.LowerResult[]): boolean {
     || module_emits_op_cached(cache, "buf_push_u64")
     || module_emits_op_cached(cache, "buf_len") || module_emits_op_cached(cache, "buf_take")
     || module_emits_op_cached(cache, "buf_take_bytes")
+    || module_emits_op_cached(cache, "buf_push_bytes_range")
     || module_emits_op_cached(cache, "buf_free");
 }
 
@@ -2360,6 +2361,7 @@ pub function component_refused_need(needs: string[], io: boolean): string {
     if (n == "arr_push" || n == "arr_push_owned" || n == "arr_push_i64"
       || n == "arr_push_f64" || n == "arr_push_owned_i64" || n == "arr_push_owned_f64"
       || n == "map_iter" || n == "str_split"
+      || n == "buf_take_bytes" || n == "buf_push_bytes_range"
       || n == "str_bytes" || n == "str_from_bytes" || n == "fexp"
       || n == "flog" || n == "fpow" || n == "fsin" || n == "fcos") {
       i = i + 1;
@@ -5899,7 +5901,7 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     // stack: strblock ptr -> copy its bytes onto the builder. Void helper
     // (consumes the arg); push a dummy i32 for the statement-level drop.
     parts = parts.append("    call $__fern_strbuf_append\n    i32.const 0\n");
-  } else if (o.kind_tag >= 291 && o.kind_tag <= 297 || o.kind_tag == 306 || o.kind_tag == 325 || o.kind_tag == 326 || o.kind_tag == 328 || o.kind_tag == 347) {  // the buf_* builder
+  } else if (o.kind_tag >= 291 && o.kind_tag <= 297 || o.kind_tag == 306 || o.kind_tag == 325 || o.kind_tag == 326 || o.kind_tag == 328 || o.kind_tag == 347 || o.kind_tag == 351) {  // the buf_* builder
     parts = emit_wasm_buf_op(o, parts);
   } else if (o.kind_tag == 119) {  // strbuf_take
     // no args -> snapshot the builder into a fresh string box and reset it
@@ -8994,6 +8996,9 @@ function emit_wasm_buf_op(o: ir.Op, parts: string[]): string[] {
   if (o.kind_tag == 293) {
     return parts.append("    call $__fern_buf_push_range\n    i32.const 0\n");
   }
+  if (o.kind_tag == 351) {
+    return parts.append("    call $__fern_buf_push_bytes_range\n    i32.const 0\n");
+  }
   if (o.kind_tag == 325) {
     return parts.append("    call $__fern_buf_push_mapped\n    i32.const 0\n");
   }
@@ -9079,6 +9084,24 @@ pub function strbuf_helpers(): string {
   o = o + "    (global.set $__fern_strbuf_cap (i32.const 0))\n";
   o = o + "    (local.get $box))\n";
   return o;
+}
+
+// The wasm array layout uses four-byte slots for u8 elements.
+function buf_push_bytes_range_helper(): string {
+  var o: string = "  (func $__fern_buf_push_bytes_range (param $h i32) (param $a i32) (param $lo i32) (param $hi i32)\n";
+  o = o + "    (local $n i32) (local $len i32) (local $dst i32) (local $src i32)\n";
+  o = o + "    (if (i32.lt_s (local.get $lo) (i32.const 0)) (then (local.set $lo (i32.const 0))))\n";
+  o = o + "    (if (i32.gt_s (local.get $hi) (i32.load (local.get $a))) (then (local.set $hi (i32.load (local.get $a)))))\n";
+  o = o + "    (if (i32.le_s (local.get $hi) (local.get $lo)) (then (return)))\n";
+  o = o + "    (local.set $n (i32.sub (local.get $hi) (local.get $lo)))\n";
+  o = o + "    (local.set $len (i32.load offset=4 (local.get $h)))\n";
+  o = o + "    (if (i32.gt_u (i32.add (local.get $len) (local.get $n)) (i32.load offset=8 (local.get $h))) (then (call $__fern_buf_reserve (local.get $h) (i32.add (local.get $len) (local.get $n)))))\n";
+  o = o + "    (local.set $dst (i32.add (i32.add (i32.load (local.get $h)) (i32.const 4)) (local.get $len)))\n";
+  o = o + "    (local.set $src (i32.add (i32.add (local.get $a) (i32.const 8)) (i32.mul (local.get $lo) (i32.const 4))))\n";
+  o = o + "    (i32.store offset=4 (local.get $h) (i32.add (local.get $len) (local.get $n)))\n";
+  o = o + "    (loop $copy (i32.store8 (local.get $dst) (i32.load8_u (local.get $src)))\n";
+  o = o + "      (local.set $dst (i32.add (local.get $dst) (i32.const 1))) (local.set $src (i32.add (local.get $src) (i32.const 4)))\n";
+  return o + "      (local.set $n (i32.sub (local.get $n) (i32.const 1))) (br_if $copy (local.get $n))))\n";
 }
 
 // Byte extraction uses array headers, never a string box.
@@ -12346,6 +12369,9 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   }
   if (need(needs, "@uses_buf")) {
     parts = parts.append(buf_helpers());
+  }
+  if (need(needs, "buf_push_bytes_range")) {
+    parts = parts.append(buf_push_bytes_range_helper());
   }
   if (need(needs, "buf_take_bytes")) {
     parts = parts.append(buf_take_bytes_helper());

@@ -2295,6 +2295,10 @@ pub function op_buf_take_bytes(): Op {
   return op0(347);
 }
 
+pub function op_buf_push_bytes_range(): Op {
+  return op0(351);
+}
+
 pub function op_buf_free(): Op {
   return op0(297);
 }
@@ -3083,6 +3087,9 @@ pub function kind_id(name: string): i32 {
   }
   if (n == 19) {
     return kind_id_len19(name);
+  }
+  if (n == 20 && name == "buf_push_bytes_range") {
+    return 351;
   }
   if (n == 21) {
     return kind_id_len21(name);
@@ -5371,6 +5378,9 @@ pub function kind_name(id: i32): string {
   if (id == 347) {
     return "buf_take_bytes";
   }
+  if (id == 351) {
+    return "buf_push_bytes_range";
+  }
   if (id <= 40) {
     return kind_name_0(id);
   }
@@ -5568,6 +5578,9 @@ function pops3(t: i32): boolean {
 // answers in one place rather than scattering seven tags across the pops1_* /
 // pops2_* predicates.
 function pops_buf(t: i32): i32 {
+  if (t == 351) {
+    return 4;
+  }
   if (t == 347) {
     return 1;
   }

@@ -58,6 +58,20 @@ func TestCopyingBuiltinTableArgIsCounted(t *testing.T) {
 	}
 }
 
+func TestCopyingBuiltinByteRangeArgIsCounted(t *testing.T) {
+	src := `function eat(p: u8[]): i32 {
+    var b: usize = buf_new(1);
+    buf_push_bytes_range(b, p, 0, p.len());
+    buf_free(b);
+    return 0;
+}
+function main(): i32 { return 0; }`
+	got := paramCountedFor(t, src, "eat")
+	if len(got) != 1 || !got[0] {
+		t.Fatalf("paramCountedRetain[eat] = %v, want [true]: byte range append borrows p", got)
+	}
+}
+
 // A socket address is read into a sockaddr by a bind, connect or sendto
 // and never retained, so an address parameter is credited too.
 func TestCopyingSocketAddressArgIsCounted(t *testing.T) {

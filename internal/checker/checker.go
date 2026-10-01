@@ -1562,6 +1562,10 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 		Params: []ast.Type{bufH, ast.StringType{}, ast.NumberType{}, ast.NumberType{}},
 		Result: ast.VoidType{},
 	}
+	c.info.FuncSigs["buf_push_bytes_range"] = &ast.FuncType{
+		Params: []ast.Type{bufH, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}, ast.NumberType{}, ast.NumberType{}},
+		Result: ast.VoidType{},
+	}
 	// buf_push_mapped(h, s, table) appends table[b] for each byte b of s; a
 	// byte at or past the table's length is appended unchanged. tr's
 	// translation and dd's conv tables are one call per read.

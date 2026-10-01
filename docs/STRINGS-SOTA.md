@@ -425,6 +425,7 @@ amortised away rather than softened.
 
 ```
 buf_new(cap) / buf_push(b, s) / buf_push_range(b, s, lo, hi) /
+buf_push_bytes_range(b, bytes, lo, hi) /
 buf_push_byte(b, x) / buf_len(b) / buf_take(b) / buf_take_bytes(b) / buf_free(b)
 ```
 
@@ -442,6 +443,10 @@ writers rather than these directly.
 `buf_take_bytes(b): u8[]` extracts arbitrary bytes into an independently
 owned array and resets the builder length while retaining its reserve.
 Later pushes or freeing the builder do not change the extracted array.
+`buf_push_bytes_range(b, bytes, lo, hi)` borrows a `u8[]` and appends its
+half-open byte range, clamping bounds to the array. Empty or inverted ranges
+append nothing. It reserves once and copies packed arrays in bulk; neither
+appending nor extracting requires an intermediate string.
 Use this path for binary output. It never constructs a string; text callers
 can validate the returned bytes with `std/utf8.from_bytes`. The older
 `buf_take` API still needs a separate validity-contract migration for D9.

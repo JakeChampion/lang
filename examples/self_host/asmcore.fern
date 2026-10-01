@@ -367,6 +367,9 @@ pub function buf_helper(kind: i32): string {
   if (kind == 347) {
     return "__fern_buf_take_bytes";
   }
+  if (kind == 351) {
+    return "__fern_buf_push_bytes_range";
+  }
   if (kind == 291) {
     return "__fern_buf_new";
   }
@@ -408,6 +411,9 @@ pub function buf_table_helper(kind: i32, packed: boolean): string {
   if (packed && kind == 347) {
     return "__fern_buf_take_bytes_u8";
   }
+  if (packed && kind == 351) {
+    return "__fern_buf_push_bytes_range_u8";
+  }
   if (packed && (kind == 325 || kind == 326 || kind == 328)) {
     return buf_helper(kind) + "_u8";
   }
@@ -415,7 +421,7 @@ pub function buf_table_helper(kind: i32, packed: boolean): string {
 }
 
 pub function buf_arity(kind: i32): i32 {
-  if (kind == 293) {
+  if (kind == 293 || kind == 351) {
     return 4;
   }
   if (kind == 325 || kind == 326 || kind == 328) {
@@ -9570,6 +9576,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
     "__fern_buf_push_byte", "__fern_buf_push_u64", "__fern_buf_len", "__fern_buf_take",
     "__fern_buf_free",
     "__fern_buf_take_bytes", "__fern_buf_take_bytes_u8",
+    "__fern_buf_push_bytes_range", "__fern_buf_push_bytes_range_u8",
     // crash-only supervision (#5686): the entry owns fork / wait4.
     "__fn___fern_proc_fork", "__fn___fern_proc_waitpid",
     "__fn___fern_proc_waitpid_nohang", "__fn___fern_proc_exec",

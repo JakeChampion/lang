@@ -1,5 +1,16 @@
 package arm64ssa
 
+// Packed array data can use the existing range-copy kernel after clamping.
+func emitBufPushBytesRangeHelper(w func(string, ...any)) {
+	w("%s:", fnLabel("buf_push_bytes_range"))
+	w("\tcmp w2, #0")
+	w("\tcsel w2, w2, wzr, ge")
+	w("\tldur w9, [x1, #-4]")
+	w("\tcmp w3, w9")
+	w("\tcsel w3, w3, w9, le")
+	w("\tb %s", fnLabel("buf_push_range"))
+}
+
 // Copy builder bytes into an independently owned array and reset its length.
 func emitBufTakeBytesHelper(w func(string, ...any)) {
 	w("%s:", fnLabel("buf_take_bytes"))

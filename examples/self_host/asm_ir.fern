@@ -2134,6 +2134,27 @@ function needs_heap_runtime(s: asmcore.EmitState): boolean {
   ]);
 }
 
+// Borrow a byte range and reserve once. Packed arrays copy in bulk; the legacy
+// array layout contributes the low byte of each eight-byte slot.
+function emit_buf_push_bytes_range(s: asmcore.EmitState, packed: boolean): asmcore.EmitState {
+  var suffix: string = asmcore.packed_suffix(packed);
+  var sym: string = "__fern_buf_push_bytes_range" + suffix;
+  var label: string = ".Lbufbyterange" + suffix;
+  s = s.write(".globl " + sym + "\n.type " + sym + ", @function\n" + sym + ":\n");
+  s = s.write("    pushq %rbp\n    movq %rsp, %rbp\n    pushq %rbx\n    pushq %r12\n    pushq %r13\n    pushq %r14\n");
+  s = s.write("    movq %rdi, %rbx\n    movq %rsi, %r14\n    movslq %edx, %r12\n    movslq %ecx, %r13\n");
+  s = s.write("    xorq %rax, %rax\n    testq %r12, %r12\n    cmovsq %rax, %r12\n    cmpq (%r14), %r13\n    cmovgq (%r14), %r13\n");
+  s = s.write("    subq %r12, %r13\n    jle " + label + "_done\n    movq 8(%rbx), %rsi\n    addq %r13, %rsi\n    cmpq 16(%rbx), %rsi\n    jbe " + label + "_fits\n    call __fern_buf_reserve\n" + label + "_fits:\n");
+  s = s.write("    movq (%rbx), %rdi\n    addq 8(%rbx), %rdi\n");
+  if (packed) {
+    s = s.write("    leaq 8(%r14,%r12), %rsi\n    movq %r13, %rdx\n    call __fern_memcpy\n");
+  } else {
+    s = s.write("    leaq 8(%r14,%r12,8), %rsi\n    movq %r13, %rcx\n" + label + "_copy:\n    movb (%rsi), %al\n    movb %al, (%rdi)\n    addq $8, %rsi\n    incq %rdi\n    decq %rcx\n    jne " + label + "_copy\n");
+  }
+  s = s.write("    addq %r13, 8(%rbx)\n" + label + "_done:\n    xorl %eax, %eax\n    popq %r14\n    popq %r13\n    popq %r12\n    popq %rbx\n    popq %rbp\n    ret\n.size " + sym + ", .-" + sym + "\n");
+  return s;
+}
+
 // Copy raw builder storage into a fresh array in the requested layout.
 function emit_buf_take_bytes(s: asmcore.EmitState, packed: boolean): asmcore.EmitState {
   var suffix: string = asmcore.packed_suffix(packed);
@@ -3847,6 +3868,12 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   // rather than left to the arena: a builder that doubles its way up from the
   // floor would otherwise strand every prefix it passed through.
   if (s.has_need("buf")) {
+    if (s.has_need("buf_push_bytes_range")) {
+      s = emit_buf_push_bytes_range(s, false);
+    }
+    if (s.has_need("buf_push_bytes_range_u8")) {
+      s = emit_buf_push_bytes_range(s, true);
+    }
     if (s.has_need("buf_take_bytes")) {
       s = emit_buf_take_bytes(s, false);
     }
@@ -7279,6 +7306,10 @@ function ssa_buf_call(ins: ssa.SInst, reg_of: i32[], sym: string, s: asmcore.Emi
     s = s.need("buf_take_bytes");
   } else if (sym == "__fern_buf_take_bytes_u8") {
     s = s.need("buf_take_bytes_u8");
+  } else if (sym == "__fern_buf_push_bytes_range") {
+    s = s.need("buf_push_bytes_range");
+  } else if (sym == "__fern_buf_push_bytes_range_u8") {
+    s = s.need("buf_push_bytes_range_u8");
   } else if (util.str_has_suffix(sym, "_u8")) {
     s = s.need("buf_u8");
   }
@@ -8856,7 +8887,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irlower.LowerResult, s: 
     s = s.need("heap");
     s = s.need("reader");
     s = s.need("writer_truncate");
-  } else if (o.kind_tag >= 291 && o.kind_tag <= 297 || o.kind_tag == 306 || o.kind_tag == 325 || o.kind_tag == 326 || o.kind_tag == 328 || o.kind_tag == 347) {  // the buf_* builder
+  } else if (o.kind_tag >= 291 && o.kind_tag <= 297 || o.kind_tag == 306 || o.kind_tag == 325 || o.kind_tag == 326 || o.kind_tag == 328 || o.kind_tag == 347 || o.kind_tag == 351) {  // the buf_* builder
     s = emit_ir_op_buf(o, s);
   } else if (o.kind_tag == 181) {  // sleep_ms
     // [ms] -> nanosleep(ms). Push the syscall return so the
@@ -8890,6 +8921,9 @@ function emit_ir_op_buf(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   if (o.kind_tag == 347) {
     s = s.need("buf_take_bytes" + asmcore.packed_suffix(ir.is_packed(o)));
   }
+  if (o.kind_tag == 351) {
+    s = s.need("buf_push_bytes_range" + asmcore.packed_suffix(ir.is_packed(o)));
+  }
   var k: i32 = asmcore.buf_arity(o.kind_tag);
   while (k > 0) {
     k = k - 1;
@@ -8898,7 +8932,7 @@ function emit_ir_op_buf(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   var sym: string = asmcore.buf_table_helper(o.kind_tag, ir.is_packed(o));
   s = s.write("    call " + sym + "\n    pushq %rax\n");
   s = s.need("heap");
-  if (o.kind_tag != 347 && sym != asmcore.buf_helper(o.kind_tag)) {
+  if (o.kind_tag != 347 && o.kind_tag != 351 && sym != asmcore.buf_helper(o.kind_tag)) {
     s = s.need("buf_u8");
   }
   return s.need("buf");

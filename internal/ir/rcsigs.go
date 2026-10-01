@@ -299,8 +299,9 @@ var rcInertBuiltins = map[string]bool{
 	// is filed under above and not one this table answers.
 	"buf_new": true, "buf_push": true, "buf_push_range": true, "buf_push_mapped": true, "buf_push_filtered": true, "buf_push_expanded": true,
 	"buf_push_byte": true, "buf_push_u64": true, "buf_len": true, "buf_take": true,
-	"buf_free":       true,
-	"buf_take_bytes": true,
+	"buf_free":             true,
+	"buf_take_bytes":       true,
+	"buf_push_bytes_range": true,
 
 	"proc_exec": true, "proc_exec_as": true, "proc_fork": true, "proc_waitpid": true,
 	"proc_waitpid_nohang": true,

@@ -1063,7 +1063,7 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					// The string builder. Its callees come from
 					// unconditionalHelperCalls below.
 					needs.add(op.Str)
-				case "buf_new", "buf_push", "buf_push_range", "buf_push_mapped", "buf_push_filtered", "buf_push_expanded", "buf_push_byte",
+				case "buf_new", "buf_push", "buf_push_range", "buf_push_bytes_range", "buf_push_mapped", "buf_push_filtered", "buf_push_expanded", "buf_push_byte",
 					"buf_push_u64", "buf_len", "buf_take", "buf_take_bytes", "buf_free":
 					// The capacity-carrying builder, same shape: its
 					// callees come from unconditionalHelperCalls.
@@ -1307,6 +1307,7 @@ var unconditionalHelperCalls = map[string][]string{
 	"__fern_buf_reserve":     {"__fern_alloc_rc1", "__fern_box_free"},
 	"buf_push":               {"__fern_str_len", "__fern_str_byte", "__fern_buf_reserve"},
 	"buf_push_range":         {"__fern_str_byte", "__fern_buf_reserve"},
+	"buf_push_bytes_range":   {"__fern_buf_reserve"},
 	"buf_push_mapped":        {"__fern_str_len", "__fern_str_byte", "__fern_buf_reserve"},
 	"buf_push_filtered":      {"__fern_str_len", "__fern_str_byte", "__fern_buf_reserve"},
 	"buf_push_expanded":      {"__fern_str_len", "__fern_str_byte", "__fern_buf_reserve"},
@@ -2240,6 +2241,11 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 			encode.ValtypeI32, encode.ValtypeI32},
 		results: nil,
 		body:    buildBufPushRangeBody,
+	},
+	"buf_push_bytes_range": {
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: nil,
+		body:    buildBufPushBytesRangeBody,
 	},
 	"buf_push_mapped": {
 		// (h, data, len, table) → (). Each byte through a u8[] table.
@@ -5327,6 +5333,66 @@ func bufCopyBytes(body []byte, strByte, dataLocal, rawLenLocal, nLocal, dstLocal
 	body = inst.InstEnd(body) // end block
 	body = inst.InstEnd(body) // end if
 	return body
+}
+
+// Packed byte arrays have a length at data-4. Clamp once, then append with
+// memory.copy; no string metadata or character conversion is involved.
+func buildBufPushBytesRangeBody(idxs map[string]uint32) []byte {
+	const (
+		h      = 0
+		data   = 1
+		lo     = 2
+		hi     = 3
+		length = 4
+		n      = 5
+		need   = 6
+	)
+	var body []byte
+	body = inst.InstLocalGet(body, lo)
+	body = inst.InstI32Const(body, 0)
+	body = numeric.InstI32LtS(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstLocalSet(body, lo)
+	body = inst.InstEnd(body)
+	body = inst.InstLocalGet(body, data)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Sub(body)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstLocalSet(body, length)
+	body = inst.InstLocalGet(body, hi)
+	body = inst.InstLocalGet(body, length)
+	body = numeric.InstI32GtS(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, length)
+	body = inst.InstLocalSet(body, hi)
+	body = inst.InstEnd(body)
+	body = inst.InstLocalGet(body, hi)
+	body = inst.InstLocalGet(body, lo)
+	body = numeric.InstI32LeS(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+	body = inst.InstLocalGet(body, hi)
+	body = inst.InstLocalGet(body, lo)
+	body = numeric.InstI32Sub(body)
+	body = inst.InstLocalSet(body, n)
+	body = inst.InstLocalGet(body, h)
+	body = memory.InstI32Load(body, 2, 4)
+	body = inst.InstLocalGet(body, n)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalSet(body, need)
+	body = bufReserveCall(body, idxs["__fern_buf_reserve"], h, need)
+	body = bufDst(body, h)
+	body = inst.InstLocalGet(body, data)
+	body = inst.InstLocalGet(body, lo)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalGet(body, n)
+	body = memory.InstMemoryCopy(body)
+	body = inst.InstLocalGet(body, h)
+	body = inst.InstLocalGet(body, need)
+	body = memory.InstI32Store(body, 2, 4)
+	return inst.PutFunctionBody(nil, inst.PutLocalsOneGroup(nil, 3, encode.ValtypeI32), body)
 }
 
 // buildBufPushRangeBody assembles wasm bytes for buf_push_range.

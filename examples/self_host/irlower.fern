@@ -14823,7 +14823,7 @@ function buf_builtin_arity(name: string): i32 {
   if (name == "buf_push_mapped" || name == "buf_push_filtered" || name == "buf_push_expanded") {
     return 3;
   }
-  if (name == "buf_push_range") {
+  if (name == "buf_push_range" || name == "buf_push_bytes_range") {
     return 4;
   }
   return 0 - 1;
@@ -14839,6 +14839,9 @@ function buf_builtin_op(name: string): ir.Op {
   }
   if (name == "buf_push_range") {
     return ir.op_buf_push_range();
+  }
+  if (name == "buf_push_bytes_range") {
+    return ir.op_buf_push_bytes_range();
   }
   if (name == "buf_push_mapped") {
     return ir.op_buf_push_mapped();
@@ -88213,7 +88216,7 @@ function borrow_reg_record(key: string, flags: string): string {
 // name: the escape walks see no receiver type, so the name alone must settle
 // it.
 function copying_builtin_keys(funcs: parser.FuncDecl[]): string[] {
-  var keys: string[] = ["print", "write", "eprint", "strbuf_append", "buf_push", "buf_push_range", "buf_push_mapped", "buf_push_filtered", "buf_push_expanded", "__memchr", "__rmemchr", "__ascii_run", "__scan_set", "__count_runs", "__bsd_sum", "__count_byte", "__sum_bytes", "__mismatch", "__crc32_cksum", "__scale_f64"];
+  var keys: string[] = ["print", "write", "eprint", "strbuf_append", "buf_push", "buf_push_range", "buf_push_bytes_range", "buf_push_mapped", "buf_push_filtered", "buf_push_expanded", "__memchr", "__rmemchr", "__ascii_run", "__scan_set", "__count_runs", "__bsd_sum", "__count_byte", "__sum_bytes", "__mismatch", "__crc32_cksum", "__scale_f64"];
   var has_write: boolean = false;
   var has_write_some: boolean = false;
   for fn in funcs {
@@ -88253,7 +88256,7 @@ function copying_builtin_flags(key: string): string {
   if (key == "buf_push_mapped" || key == "buf_push_filtered" || key == "buf_push_expanded") {
     return "011";
   }
-  if (key == "buf_push" || key == "buf_push_range" || key == "__crc32_cksum") {
+  if (key == "buf_push" || key == "buf_push_range" || key == "buf_push_bytes_range" || key == "__crc32_cksum") {
     return "01";
   }
   return "1";

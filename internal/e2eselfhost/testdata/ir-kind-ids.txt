@@ -323,3 +323,4 @@ tcp_recv_into=344
 str_data=345
 tcp_sendfile=346
 buf_take_bytes=347
+buf_push_bytes_range=351
