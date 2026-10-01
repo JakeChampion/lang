@@ -161,7 +161,7 @@ jobs:
         # reason cross-gcc above installs on the x86 leg only — so it skips
         # those two gates by design and must not be asked to require them.
         env:
-          UNIT_PACKAGE_GROUP: ${{ matrix.group }}
+          FERN_CI_UNIT_PACKAGE_GROUP: ${{ matrix.group }}
           FERN_REQUIRE_ARM64_TOOLING: "1"
           FERN_REQUIRE_X86_64_TOOLING: ${{ matrix.host == 'x86_64' && '1' || '' }}
         # The package set is DERIVED, not enumerated — see

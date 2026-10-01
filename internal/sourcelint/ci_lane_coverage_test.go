@@ -202,7 +202,13 @@ func unitLane(t *testing.T, root string) lane {
 		}
 	}
 
-	out, err := exec.Command("bash", filepath.Join(root, "scripts", "unit-test-packages")).Output()
+	// A filtered environment (ciEnv drops FERN_*): the units lane sets
+	// FERN_CI_UNIT_PACKAGE_GROUP for its test step, and this gate runs inside
+	// that step. Inherited, the script would print one group and this gate
+	// would read the other as unselected.
+	cmd := exec.Command("bash", filepath.Join(root, "scripts", "unit-test-packages"))
+	cmd.Env = ciEnv()
+	out, err := cmd.Output()
 	if err != nil {
 		t.Fatalf("run scripts/unit-test-packages: %v", err)
 	}
