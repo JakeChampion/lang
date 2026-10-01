@@ -1042,7 +1042,7 @@ pub function runtime_bodies(src: string): irlower.LowerResult[] {
     return runtime_refused(first_name(mod), "does not type-check: " + diags[0].message);
   }
   var im: parser.Module = gated_module(checker.annotate_module(mod));
-  var inf: Inference = produced_rows(im, irlower.struct_tab(parser.erase_str_structs(im.structs)));
+  var inf: Inference = produced_rows(im, irlower.struct_tab(parser.erase_view_structs(im.structs)));
   if (inf.built.instances.len() > 0) {
     return runtime_refused(first_name(im), "instantiates a generic");
   }
@@ -1126,7 +1126,7 @@ function wasm_gated(typed: parser.Module): parser.Module {
 
 function substitution_of(im: parser.Module): ircore.Sub {
   // The typed lowering reads im; the AST lowering's tables read its erasure.
-  var lowered: parser.Module = parser.erase_str_module(im);
+  var lowered: parser.Module = parser.erase_view_module(im);
   var stab: irlower.StructTab = irlower.struct_tab(lowered.structs);
   util.arr_push_cliff_report("sem:gated", 0);
   var sub: ircore.Sub = substitution(im, lowered.funcs, stab, ircore.wp_fn_sigs(lowered.funcs, stab));
@@ -1152,7 +1152,7 @@ pub function driven_annotated(annotated: parser.Module, target: string): Driven 
     return Driven { full: parser.module_with_builtins(annotated), sub: ircore.no_sub() };
   }
   var typed: parser.Module = checked_typed(annotated, target);
-  return Driven { full: parser.erase_str_module(typed), sub: target_substitution(typed, target) };
+  return Driven { full: parser.erase_view_module(typed), sub: target_substitution(typed, target) };
 }
 
 // driven_module is driven's `full` without the typed lowering, for a driver
@@ -1161,7 +1161,7 @@ pub function driven_module(mod: parser.Module, target: string): parser.Module {
   if (!sem_ir_on()) {
     return parser.module_with_builtins(mod);
   }
-  return parser.erase_str_module(checked_typed(checker.annotate_module(mod), target));
+  return parser.erase_view_module(checked_typed(checker.annotate_module(mod), target));
 }
 
 function checked_typed(annotated: parser.Module, target: string): parser.Module {
@@ -1182,7 +1182,7 @@ function typed_for(annotated: parser.Module, target: string): Typed {
   var desc: platforms.Descriptor = platforms.for_target(target);
   var folded: parser.Module = constfold.fold_target_name(annotated, desc.environment, desc.isa);
   var typed: parser.Module = parser.module_with_builtins_typed(folded);
-  return Typed { mod: typed, errs: asmcore.entry_check_errors(checker.ensure_annotated(parser.erase_str_module(typed))) };
+  return Typed { mod: typed, errs: asmcore.entry_check_errors(checker.ensure_annotated(parser.erase_view_module(typed))) };
 }
 
 // Verdict is the typed lowering's answer for a program, without emitting it
@@ -1216,7 +1216,7 @@ pub function verdict_annotated(annotated: parser.Module, target: string): Verdic
   } else {
     im = gated_module(ircore.lift_lambdas_typed(t.mod));
   }
-  var inf: Inference = produced_rows(im, irlower.struct_tab(parser.erase_str_module(im).structs));
+  var inf: Inference = produced_rows(im, irlower.struct_tab(parser.erase_view_module(im).structs));
   var rows: VerdictRow[] = [];
   var ok: boolean = true;
   var i: i32 = 0;

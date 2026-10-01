@@ -4006,7 +4006,7 @@ function main(): i32 {
     // The pipeline the CLI runs before it lowers. The typed lowering reads
     // typed; the AST lowering reads its erasure.
     var typed = irlower.lift_lambdas_typed(parser.module_with_builtins_typed(treeshake.treeshake(checker.annotate_module(merged))));
-    var mod = parser.erase_str_module(typed);
+    var mod = parser.erase_view_module(typed);
     var tab = irlower.struct_tab(mod.structs);
     var base = ircore.wp_fn_sigs(mod.funcs, tab);
     var built = semsource.build_module(typed);

@@ -682,7 +682,13 @@ function reaches(ops: ir.Op[], from: i32, to: i32, donor: i32): boolean {
   var depth: i32 = 0;
   var i: i32 = from + 1;
   while (i < to) {
-    if (is_kind(ops[i], "block") || is_kind(ops[i], "loop") || is_kind(ops[i], "if")) {
+    if (is_kind(ops[i], "return") || is_kind(ops[i], "return_void") || is_kind(ops[i], "return_pair")) {
+      // Only a return on this path ends reachability. A conditional return
+      // in a newly entered scope still leaves its other path available.
+      if (depth == 0) {
+        return false;
+      }
+    } else if (is_kind(ops[i], "block") || is_kind(ops[i], "loop") || is_kind(ops[i], "if")) {
       depth = depth + 1;
     } else if (is_kind(ops[i], "end")) {
       if (depth > 0) {
