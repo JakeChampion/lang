@@ -211,6 +211,23 @@ func TestSelfHostIRPipelineProbe(t *testing.T) {
 	})
 }
 
+// TestSelfHostPathProbePrintsRefused is the path probe's own refusal: most
+// probe assertions want "ir", so this is the one that reads the other verdict,
+// for a module the typed lowering refuses, beside one it produces.
+func TestSelfHostPathProbePrintsRefused(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	dir := writeSelfHostAsmProject(t)
+	copySelfHostDriver(t, dir, "asm_pathprobe_run.fern")
+	probe := buildSelfHostBin(t, gcc, dir, "asm_pathprobe_run.fern", "pathprobe")
+	if got := strings.TrimSpace(string(runCapture(t, gcc, runner, probe, []byte(viewCaptureSrc)))); got != "refused" {
+		t.Errorf("path probe = %q on a refused module, want \"refused\"", got)
+	}
+	produced := "function add(a: i32, b: i32): i32 { return a + b; }\nfunction main(): i32 { return add(2, 3); }\n"
+	if got := strings.TrimSpace(string(runCapture(t, gcc, runner, probe, []byte(produced)))); got != "ir" {
+		t.Errorf("path probe = %q on a module produced whole, want \"ir\"", got)
+	}
+}
+
 // viewCaptureSrc is a module the typed lowering refuses: viewer's closure
 // captures a view of a local string, which is refused where it is built.
 const viewCaptureSrc = "function mk(n: i32): string {\n var s: string = \"ab\";\n var i: i32 = 0;\n while (i < n) { s = s + \"c\"; i = i + 1; }\n return s;\n}\n" +
