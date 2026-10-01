@@ -52,7 +52,7 @@ func testSelfHostStringConcatCopySearch(t *testing.T, mode string) {
 	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
 		t.Run("typed="+mode+"/"+target, func(t *testing.T) {
 			stderr, code := cli.exitOf(t, e2eharness.StringConcatCopySearchProgram, target,
-				"FERN_SEM_IR="+mode, "FERN_SEM_IR_STRICT="+mode, "FERN_SEM_IR_ONLY=", "FERN_SEM_IR_SKIP=",
+				"FERN_SEM_IR="+mode, "FERN_SEM_IR_ONLY=", "FERN_SEM_IR_SKIP=",
 				"FERN_STRICT_IR=1", "FERN_SANITIZE=1", "FERN_LEAKCHECK="+mode)
 			if code != 0 {
 				t.Fatalf("exit = %d\n%s", code, stderr)

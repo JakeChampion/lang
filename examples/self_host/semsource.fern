@@ -7506,12 +7506,11 @@ function instance_limit(): i32 {
 // the instances' own requests. Refusals are per body and propagate to callers.
 struct Inferred { all: Produced[], table: ssasem.Contracts }
 
-// Nothing escapes until a round finds the use that carries it out.
 function seed_bits(n: i32): boolean[] {
   var out: boolean[] = [];
   var i: i32 = 0;
   while (i < n) {
-    out = out.append(false);
+    out = out.append(true);
     i = i + 1;
   }
   return out;
@@ -7619,15 +7618,10 @@ function inferred_produced(p: Produced, name: string, rows: ownership.Escapes[],
   return Produced { ...p, modes: modes, func: ssasem.Func { ...p.func, calls: calls0 } };
 }
 
-// The least fixpoint: every reference parameter starts lent and is counted
-// once a round finds a use that carries it out. A round only ever adds bits:
-// a callee found to consume carries more of its caller's values and lends
-// fewer of them, so the bound below is a belt, not the reason it stops. A lent
-// parameter is always sound, since the planner retains what a body keeps of
-// one; counting is the hand-over that spares the pair. Seeding consumed
-// instead left every parameter in a call cycle counted, since each kept the
-// other carried: `semtypes.equal` and `equal_list` retained and released
-// every type on every comparison.
+// The greatest fixpoint: every reference parameter starts consumed and is
+// demoted once a round finds no use that carries it out. Bounded by the bits
+// it can clear, since a round only ever removes them — the bound below is a
+// belt on that, not the reason it stops.
 // A closure BODY keeps every mode it declared. The units its arguments carry
 // are read off the function TYPE the box hands out, and `ssasem.closure_type`
 // builds that type from these same modes — so inferring one counted rewrites
@@ -7649,7 +7643,7 @@ function builtin_row(c: ssasem.Contract): ownership.Escapes {
   for m in c.modes {
     bits = bits.append(m == ssaunits.counted_mode());
   }
-  return ownership.Escapes { name: c.name, bits: bits, lends: reference(c.result) };
+  return ownership.Escapes { name: c.name, bits: bits, lends: reference(c.result), cycle: 0 - 1 };
 }
 
 // The analysis a row is inferred from: the one its anchoring verified, which
@@ -7666,6 +7660,55 @@ function row_analysis(p: Produced): ssasem.Analysis {
   }
 }
 
+// Each produced row's quiet cycle (`ownership.cycles`): its edges are the
+// direct calls between functions whose results hold no reference, including
+// the named parameter phis left when tail recursion became a loop.
+function quiet_cycles(rows: ownership.Escapes[], ix: ownership.Index, all: Produced[], names: string[]): ownership.Escapes[] {
+  var quiet: boolean[] = [];
+  var succ: i32[][] = [];
+  var i: i32 = 0;
+  while (i < rows.len()) {
+    quiet = quiet.append(false);
+    succ = succ.append([]);
+    i = i + 1;
+  }
+  i = 0;
+  while (i < all.len() && i < names.len()) {
+    var at: i32 = ownership.find(rows, ix, names[i]);
+    if (at >= 0 && !reference(all[i].func.result)) {
+      quiet = quiet.with(at, true);
+    }
+    i = i + 1;
+  }
+  i = 0;
+  while (i < all.len() && i < names.len()) {
+    var at: i32 = ownership.find(rows, ix, names[i]);
+    if (at >= 0 && quiet[at]) {
+      var out: i32[] = [];
+      for b in all[i].func.graph.blocks {
+        for ins in b.insts {
+          if (ins.kind_tag == ssasem.call() || ins.kind_tag == 8 && ins.str != "") {
+            var to: i32 = ownership.find(rows, ix, ins.str);
+            if (to >= 0 && quiet[to]) {
+              out = out.append(to);
+            }
+          }
+        }
+      }
+      succ = succ.with(at, out);
+    }
+    i = i + 1;
+  }
+  var comp: i32[] = ownership.cycles(succ);
+  var out_rows: ownership.Escapes[] = [];
+  var k: i32 = 0;
+  while (k < rows.len()) {
+    out_rows = out_rows.append(ownership.Escapes { ...rows[k], cycle: comp[k] });
+    k = k + 1;
+  }
+  return out_rows;
+}
+
 function infer_rows(all: Produced[], names: string[], pinned: string[]): ownership.Escapes[] {
   var taken: string[] = pinned;
   var k: i32 = 0;
@@ -7680,7 +7723,7 @@ function infer_rows(all: Produced[], names: string[], pinned: string[]): ownersh
   var i: i32 = 0;
   while (i < all.len() && i < names.len()) {
     if (all[i].ok && !all[i].template && !closure_body_produced(all[i]) && !ownership.names_has(taken, names[i])) {
-      rows = rows.append(ownership.Escapes { name: names[i], bits: seed_bits(all[i].func.params.len()), lends: true });
+      rows = rows.append(ownership.Escapes { name: names[i], bits: seed_bits(all[i].func.params.len()), lends: true, cycle: 0 - 1 });
       analyses = analyses.append(row_analysis(all[i]));
     } else {
       analyses = analyses.append(ssasem.refused_analysis("not produced"));
@@ -7688,6 +7731,7 @@ function infer_rows(all: Produced[], names: string[], pinned: string[]): ownersh
     i = i + 1;
   }
   var produced: ownership.Index = ownership.index(rows);
+  rows = quiet_cycles(rows, produced, all, names);
   var builtins: string[] = [];
   for c in builtin_contracts() {
     if (ownership.find(rows, produced, c.name) < 0 && !ownership.names_has(builtins, c.name)) {
