@@ -683,8 +683,8 @@ function retagged_string(f: ssasem.Func, defs: ssa.SInst[], v: i32): boolean {
   return d.kind_tag == ssasem.str_as() && d.args.len() == 1 && !ssasem.is_view(f.values[d.args[0]]);
 }
 
-function live_out_row(flow: ssalive.Flow, bi: i32, n: i32): boolean[] {
-  var out: boolean[] = bits(n);
+function live_out_row(flow: ssalive.Flow, bi: i32): boolean[] {
+  var out: boolean[] = flow.none;
   for v in ssalive.live_out_ids(flow, bi) {
     out = out.with(v, true);
   }
@@ -1746,7 +1746,7 @@ function block_reads(blk: ssa.SBlock, v: i32): boolean {
 // A value live out of bi reaches root other than through `take` or a read of
 // another of root's slots.
 function reached_past_take(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], bi: i32, take: ssa.SInst, root: i32): boolean {
-  var out: boolean[] = live_out_row(a.flow, bi, f.graph.nvals);
+  var out: boolean[] = live_out_row(a.flow, bi);
   var w: i32 = 0;
   while (w < f.graph.nvals) {
     if (out[w] && w != root && reads(a, w, root)) {
@@ -2066,10 +2066,10 @@ pub function plan(f: ssasem.Func, modes: i32[]): Plan {
   var grow_fields: i32[] = [];
   // Per append or with result: whether its receiver is read after it, by
   // this block or on the way out, directly or through a dependent.
-  var kept: boolean[] = bits(f.graph.nvals);
+  var kept: boolean[] = analysis.flow.none;
   // Per parameter: whether an edge carries it into a phi while it, or a
   // value depending on it, is still live in the target.
-  var entry_kept: boolean[] = bits(f.graph.nvals);
+  var entry_kept: boolean[] = analysis.flow.none;
   var vi0: i32 = 0;
   while (vi0 < f.graph.nvals) {
     grows = grows.append(0 - 1);
@@ -2081,7 +2081,7 @@ pub function plan(f: ssasem.Func, modes: i32[]): Plan {
   while (bi < f.graph.blocks.len()) {
     var b: ssa.SBlock = f.graph.blocks[bi];
     if (reachable[bi]) {
-      var live: boolean[] = live_out_row(analysis.flow, bi, f.graph.nvals);
+      var live: boolean[] = live_out_row(analysis.flow, bi);
       if (b.term.kind_tag == 1) {
         live = add_use(live, b.term.value, analysis.dependencies);
       }
@@ -2123,7 +2123,7 @@ pub function plan(f: ssasem.Func, modes: i32[]): Plan {
         }
         pos = pos - 1;
       }
-      var entry_dead: boolean[] = bits(f.graph.nvals);
+      var entry_dead: boolean[] = analysis.flow.none;
       for ins in b.insts {
         if ((ins.kind_tag == 6 || ins.kind_tag == 8) && owned[ins.result] && !live[ins.result]) {
           entry_dead = entry_dead.with(ins.result, true);
@@ -2131,7 +2131,7 @@ pub function plan(f: ssasem.Func, modes: i32[]): Plan {
       }
       steps = steps.append(choose(step(b.id, entry_point(), 0 - 1), [], entry_dead, owned));
       if (b.term.kind_tag == 1 || b.term.kind_tag == 4) {
-        var dead: boolean[] = bits(f.graph.nvals);
+        var dead: boolean[] = analysis.flow.none;
         if (b.term.kind_tag == 1) {
           dead = add_use(dead, b.term.value, analysis.dependencies);
         }
@@ -2188,7 +2188,7 @@ function read_error(state: boolean[], value: i32, owned: boolean[], deps: i32[][
 }
 
 function invariant(f: ssasem.Func, bi: i32, owned: boolean[], flow: ssalive.Flow): boolean[] {
-  var state: boolean[] = bits(f.graph.nvals);
+  var state: boolean[] = flow.none;
   for v in ssalive.live_in_ids(flow, bi) {
     if (owned[v]) {
       state = state.with(v, true);
