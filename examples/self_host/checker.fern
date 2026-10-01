@@ -16684,7 +16684,7 @@ function ow_borrowed_params(fn: parser.FuncDecl, mod: parser.Module, ofuncs: Own
 // function answers from `borrows`; a builtin from the fresh list below. A
 // method is reached through a receiver this walk does not resolve, so it is
 // assumed to be able to.
-function ow_call_may_borrow(c: ast.ExprCall, mod: parser.Module, borrows: string[], builtins: string[]): boolean {
+function ow_call_may_borrow(c: ast.ExprCall, mod: parser.Module, borrows: util.NameIndex, builtins: util.NameIndex): boolean {
   if let ast.ExprIdent(cid) = c.callee {
     if (ow_struct_known(mod.structs, cid.name)) {
       return false;
@@ -16692,10 +16692,10 @@ function ow_call_may_borrow(c: ast.ExprCall, mod: parser.Module, borrows: string
     if (ow_variant_known(mod.structs, cid.name, "")) {
       return false;
     }
-    if (util.has_str(builtins, cid.name)) {
+    if (builtins.has(cid.name)) {
       return false;
     }
-    return util.has_str(borrows, cid.name);
+    return borrows.has(cid.name);
   }
   return true;
 }
@@ -16703,7 +16703,7 @@ function ow_call_may_borrow(c: ast.ExprCall, mod: parser.Module, borrows: string
 // ow_expr_borrows reports whether `e` can alias one of `borrowed`.
 // Pessimistic by construction: a shape that is not a construction and not a
 // path this walk follows is assumed to be able to.
-function ow_expr_borrows(e: ast.Expr, mod: parser.Module, borrowed: string[], locals: string[], borrows: string[], builtins: string[]): boolean {
+function ow_expr_borrows(e: ast.Expr, mod: parser.Module, borrowed: string[], locals: string[], borrows: util.NameIndex, builtins: util.NameIndex): boolean {
   match (e) {
     ast.ExprNumber(_) => {
       return false;
@@ -16773,7 +16773,7 @@ function ow_expr_borrows(e: ast.Expr, mod: parser.Module, borrowed: string[], lo
 // ow_borrowed_locals names the locals that can hold a borrow of one of
 // `borrowed`. Settled to a fixed point rather than read once, so a value that
 // only becomes a borrow on a loop's second iteration is still seen.
-function ow_borrowed_locals(spine: ast.Stmt[], mod: parser.Module, borrowed: string[], borrows: string[], builtins: string[]): string[] {
+function ow_borrowed_locals(spine: ast.Stmt[], mod: parser.Module, borrowed: string[], borrows: util.NameIndex, builtins: util.NameIndex): string[] {
   var locals: string[] = [];
   var changed: boolean = true;
   while (changed) {
@@ -16803,7 +16803,7 @@ function ow_borrowed_locals(spine: ast.Stmt[], mod: parser.Module, borrowed: str
 
 // ow_func_result_borrows reports whether any of the returns of `fn` is derived
 // from one of its borrowed pointer parameters.
-function ow_func_result_borrows(fn: parser.FuncDecl, mod: parser.Module, ofuncs: OwnFunc[], borrows: string[], builtins: string[]): boolean {
+function ow_func_result_borrows(fn: parser.FuncDecl, mod: parser.Module, ofuncs: OwnFunc[], borrows: util.NameIndex, builtins: util.NameIndex): boolean {
   var borrowed: string[] = ow_borrowed_params(fn, mod, ofuncs);
   if (borrowed.len() == 0) {
     return false;
@@ -16862,8 +16862,8 @@ function ow_fresh_builtins(): string[] {
 // scrutinee alone (#9539): a pointer-returning function takes no pointer
 // parameter, so its result is built fresh, or every pointer parameter is
 // `own`, so the callee already took ownership of each.
-function ow_signature_fresh_owners(mod: parser.Module, ofuncs: OwnFunc[], builtins: string[]): string[] {
-  var out: string[] = builtins;
+function ow_signature_fresh_owners(mod: parser.Module, ofuncs: OwnFunc[], builtins: util.NameIndex): string[] {
+  var out: string[] = builtins.names;
   for fn in mod.funcs {
     if (fn.receiver_name.len() > 0 || fn.type_params.len() > 0) {
       continue;
@@ -16894,8 +16894,9 @@ function ow_signature_fresh_owners(mod: parser.Module, ofuncs: OwnFunc[], builti
 // ow_result_borrows settles the least fixed point described at
 // ow_fresh_owners. After the first round only a function calling one the
 // previous round marked can change its answer, so only those are examined again.
-function ow_result_borrows(mod: parser.Module, ofuncs: OwnFunc[], builtins: string[]): string[] {
-  var borrows: string[] = [];
+function ow_result_borrows(mod: parser.Module, ofuncs: OwnFunc[], builtins: util.NameIndex): util.NameIndex {
+  var none: string[] = [];
+  var borrows: util.NameIndex = util.name_index(none);
   var pending: parser.FuncDecl[] = [];
   for fn in mod.funcs {
     if (fn.receiver_name.len() > 0 || fn.type_params.len() > 0) {
@@ -16906,26 +16907,26 @@ function ow_result_borrows(mod: parser.Module, ofuncs: OwnFunc[], builtins: stri
     }
   }
   var first: boolean = true;
-  var marked: string[] = [];
-  while (first || marked.len() > 0) {
+  var marked: util.NameIndex = util.name_index(none);
+  while (first || marked.names.len() > 0) {
     var now_marked: string[] = [];
     var unmarked: parser.FuncDecl[] = [];
     for fn in pending {
       if ((first || ow_calls_any(fn, marked)) && ow_func_result_borrows(fn, mod, ofuncs, borrows, builtins)) {
-        borrows = borrows.append(fn.name);
+        borrows = util.name_index(borrows.names.append(fn.name));
         now_marked = now_marked.append(fn.name);
       } else {
         unmarked = unmarked.append(fn);
       }
     }
     first = false;
-    marked = now_marked;
+    marked = util.name_index(now_marked);
     pending = unmarked;
   }
   return borrows;
 }
 
-function ow_calls_any(fn: parser.FuncDecl, names: string[]): boolean {
+function ow_calls_any(fn: parser.FuncDecl, names: util.NameIndex): boolean {
   var hits: astwalk.CallSite[] = [];
   for st in fn.body {
     hits = astwalk.collect_calls_stmt(st, names, hits);
@@ -16938,8 +16939,8 @@ function ow_calls_any(fn: parser.FuncDecl, names: string[]): boolean {
 
 // ow_fresh_owners is the complement: every pointer-returning function the
 // fixpoint did not mark, plus the builtins.
-function ow_fresh_owners(mod: parser.Module, ofuncs: OwnFunc[], builtins: string[], borrows: string[]): string[] {
-  var out: string[] = builtins;
+function ow_fresh_owners(mod: parser.Module, ofuncs: OwnFunc[], builtins: util.NameIndex, borrows: util.NameIndex): string[] {
+  var out: string[] = builtins.names;
   for fn in mod.funcs {
     if (fn.receiver_name.len() > 0 || fn.type_params.len() > 0) {
       continue;
@@ -16947,7 +16948,7 @@ function ow_fresh_owners(mod: parser.Module, ofuncs: OwnFunc[], builtins: string
     if (!ow_type_is_pointer(fn.ret_type, mod)) {
       continue;
     }
-    if (util.has_str(borrows, fn.name)) {
+    if (borrows.has(fn.name)) {
       continue;
     }
     out = out.append(fn.name);
@@ -16961,7 +16962,7 @@ function ow_fresh_owners(mod: parser.Module, ofuncs: OwnFunc[], builtins: string
 // a borrow back. ow_call_may_borrow already treats every method callee as able
 // to, so one pass over the settled `borrows` is enough — a method reached only
 // through another method is pessimistic already.
-function ow_fresh_methods(mod: parser.Module, ofuncs: OwnFunc[], builtins: string[], borrows: string[]): string[] {
+function ow_fresh_methods(mod: parser.Module, ofuncs: OwnFunc[], builtins: util.NameIndex, borrows: util.NameIndex): string[] {
   var out: string[] = [];
   var refused: string[] = [];
   for fn in mod.funcs {
@@ -16994,8 +16995,8 @@ function ow_fresh_methods(mod: parser.Module, ofuncs: OwnFunc[], builtins: strin
 // module; only the bodies `focus` admits (in_focus) are walked.
 pub function own_diags(mod: parser.Module, focus: string[]): util.Diag[] {
   var ofuncs: OwnFunc[] = collect_own_funcs(mod.funcs);
-  var builtins: string[] = ow_fresh_builtins();
-  var borrows: string[] = ow_result_borrows(mod, ofuncs, builtins);
+  var builtins: util.NameIndex = util.name_index(ow_fresh_builtins());
+  var borrows: util.NameIndex = ow_result_borrows(mod, ofuncs, builtins);
   var fresh: string[] = ow_fresh_owners(mod, ofuncs, builtins, borrows);
   var fresh_methods: string[] = ow_fresh_methods(mod, ofuncs, builtins, borrows);
   var fresh_scrut: string[] = ow_signature_fresh_owners(mod, ofuncs, builtins);
