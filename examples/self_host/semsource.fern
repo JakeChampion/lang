@@ -4992,7 +4992,7 @@ function renumber(blocks: ssa.SBlock[], map: i32[], values: typeinfo.Type[]): ss
     out = out.append(ssa.SBlock { ...b, insts: insts, term: term });
   }
   var graph: ssa.SFunc = ssa.SFunc { name: "", nparams: 0, nvals: kept.len(), blocks: out, entry: 0, takes_env: false };
-  return ssasem.Func { graph: graph, values: kept, params: [], result: t_void(), records: semrecords.no_records(), enums: [], calls: [], envs: [], anchors: [], dyns: [], shadows: [], finalizers: [] };
+  return ssasem.Func { graph: graph, values: kept, params: [], result: t_void(), records: semrecords.no_records(), enums: [], calls: [], envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: false };
 }
 
 // ---- functions --------------------------------------------------------------
@@ -5345,7 +5345,7 @@ function parameters(fd: parser.FuncDecl, s: State): State {
 
 function refuse(why: string): Produced {
   var graph: ssa.SFunc = ssa.SFunc { name: "", nparams: 0, nvals: 0, blocks: [], entry: 0, takes_env: false };
-  return Produced { ok: false, why: why, func: ssasem.Func { graph: graph, values: [], params: [], result: t_void(), records: semrecords.no_records(), enums: [], calls: [], envs: [], anchors: [], dyns: [], shadows: [], finalizers: [] }, modes: [], template: false, key: "", requests: [], bodyless: false };
+  return Produced { ok: false, why: why, func: ssasem.Func { graph: graph, values: [], params: [], result: t_void(), records: semrecords.no_records(), enums: [], calls: [], envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: false }, modes: [], template: false, key: "", requests: [], bodyless: false };
 }
 
 function initial(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Contracts, binding: ssasem.Binding, name: string, handers: util.NameIndex, shadows: string[], views: string[], funcs: parser.FuncDecl[], impls: parser.ImplInfo[]): State {
@@ -6307,7 +6307,7 @@ function complete(fd: parser.FuncDecl, s: State, name: string): Produced {
     return refuse(table.why);
   }
   var graph: ssa.SFunc = ssa.SFunc { ...f.graph, name: name, nparams: params.len() };
-  f = ssasem.Func { ...f, graph: graph, params: params, result: s.result, records: semrecords.records_of(table.records), enums: table.enums, calls: s.calls, envs: closed.rows, dyns: closed.dyns, shadows: s.shadows, finalizers: finalized_types(s.impls) };
+  f = ssasem.Func { ...f, graph: graph, params: params, result: s.result, records: semrecords.records_of(table.records), enums: table.enums, calls: s.calls, envs: closed.rows, dyns: closed.dyns, shadows: s.shadows, finalizers: finalized_types(s.impls), map_module: s.scope.module_imported("core/map") };
   // Before the verifier in anchor_module, so the rewritten graph is the one
   // it checks, and before anything downstream plans ownership over it (#9692).
   f = ssasem.tail_recursion(f, name);

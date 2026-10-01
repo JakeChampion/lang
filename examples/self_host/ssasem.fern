@@ -28,6 +28,9 @@ pub struct Func {
   // The records and enums an `impl mem.Drop` gives a finalizer, by name. The
   // whole module's, so every function's drop helper for a type agrees.
   finalizers: string[],
+  // core/map is in the program's import closure, so a map may run on it
+  // (ssarc.routed_map); without it every map stays on the runtime.
+  map_module: boolean,
 }
 
 // The parameters whose storage a callee's result reads, so a caller keeps
