@@ -9,6 +9,19 @@ import "std/string";
 // parse keeps may be a view into the wire, so the buffer is free to be
 // reused.
 
+// `body_text(req)` — the body as text, or what `body_string` refused.
+function body_text(req: HttpRequest): string {
+  match (req.body_string()) {
+    Ok(text) => {
+      return text;
+    },
+    Err(e) => {
+      return "<not utf-8>";
+    }
+  }
+  return "<not utf-8>";
+}
+
 function wire_post(): string {
   return "POST /echo HTTP/1.1\r\nHost: example.test\r\nX-Request-Id: 42\r\nContent-Length: 5\r\n\r\nhello";
 }
@@ -25,8 +38,8 @@ function test_bytes_parse_keeps_the_request(): test.TestOutcome {
       if (req.headers.len() != 3) {
         return test.fail("headers: " + req.headers.len().to_string());
       }
-      if (req.body_string() != "hello") {
-        return test.fail("body: " + req.body_string());
+      if (body_text(req) != "hello") {
+        return test.fail("body: " + body_text(req));
       }
       return test.assert_is_some_eq_string(req.headers.get("x-request-id"), "42");
     },
@@ -49,7 +62,7 @@ function test_text_and_bytes_agree(): test.TestOutcome {
           if (a.headers.len() != b.headers.len()) {
             return test.fail("header count differs");
           }
-          return test.assert_eq(a.body_string(), b.body_string());
+          return test.assert_eq(body_text(a), body_text(b));
         },
         None => {
           return test.fail("bytes parse failed");
@@ -382,7 +395,7 @@ function chunked(body: string): string {
 function body_of(wire: string): string {
   match (http.http_parse_request_bytes(wire.bytes())) {
     Some(req) => {
-      return req.body_string();
+      return body_text(req);
     },
     None => {
       return "<refused>";
@@ -394,8 +407,8 @@ function body_of(wire: string): string {
 function test_chunked_body_is_decoded(): test.TestOutcome {
   match (http.http_parse_request_bytes(wire_chunked().bytes())) {
     Some(req) => {
-      if (req.body_string() != "hello world") {
-        return test.fail("body: " + req.body_string());
+      if (body_text(req) != "hello world") {
+        return test.fail("body: " + body_text(req));
       }
       if (req.headers.len() != 2) {
         return test.fail("the trailer reached the headers: " + req.headers.len().to_string());
@@ -829,7 +842,7 @@ function test_parse_holds_no_view_into_the_wire(): test.TestOutcome {
       if (req.path != "/echo") {
         return test.fail("the path aliased the wire buffer");
       }
-      return test.assert_eq(req.body_string(), "hello");
+      return test.assert_eq(body_text(req), "hello");
     },
     None => {
       return test.fail("parse failed");
@@ -1112,6 +1125,55 @@ function test_empty_line_before_the_request(): test.TestOutcome {
   return test.pass();
 }
 
+// `header_of(wire, name)` — the value the parse keeps for `name`.
+function header_of(wire: string, name: string): string {
+  match (http.http_parse_request(wire)) {
+    Some(req) => {
+      match (req.headers.get(name)) {
+        Some(v) => {
+          return v;
+        },
+        None => {
+          return "<absent>";
+        }
+      }
+    },
+    None => {
+      return "<refused>";
+    }
+  }
+  return "<refused>";
+}
+
+// A header value is text: obs-text that spells UTF-8 is kept as that
+// text, and a value whose bytes do not spell it is refused with 400.
+function test_header_value_must_be_utf8(): test.TestOutcome {
+  var accented: string = "GET / HTTP/1.1\r\nHost: h\r\nX-Name: José\r\n\r\n";
+  if (header_of(accented, "x-name") != "José") {
+    return test.fail("UTF-8 value: " + header_of(accented, "x-name"));
+  }
+  var broken: string = "GET / HTTP/1.1\r\nHost: h\r\nX-Name: " + string_from_bytes_unchecked([74 as u8, 255 as u8]) + "\r\n\r\n";
+  if (!refused(broken)) {
+    return test.fail("an ill-formed value was accepted");
+  }
+  return test.assert_eq(status_of(broken), 400);
+}
+
+// An escape in the path decodes to bytes, and those bytes have to spell
+// UTF-8: `%C3%A9` is `é`, `%FF` is refused.
+function test_path_escapes_must_be_utf8(): test.TestOutcome {
+  if (target_of("GET", "/caf%C3%A9?q=%FF") != "/café?q=%FF") {
+    return test.fail("decoded path: " + target_of("GET", "/caf%C3%A9?q=%FF"));
+  }
+  if (target_of("GET", "/%FF") != "refused 400") {
+    return test.fail("%FF: " + target_of("GET", "/%FF"));
+  }
+  if (target_of("GET", "/a%C3/b") != "refused 400") {
+    return test.fail("%C3 alone: " + target_of("GET", "/a%C3/b"));
+  }
+  return test.assert_eq(status_of("GET /%FF HTTP/1.1\r\nHost: h\r\n\r\n"), 400);
+}
+
 function main(): i32 {
   var r: test.TestRunner = test.test_new("HTTP request bytes");
   r = r.it("bytes parse keeps the request", test_bytes_parse_keeps_the_request);
@@ -1135,5 +1197,7 @@ function main(): i32 {
   r = r.it("framed persistence follows the version and connection", test_framed_persistence_follows_the_version_and_connection);
   r = r.it("serialize names the connection", test_serialize_names_the_connection);
   r = r.it("parse holds no view into the wire", test_parse_holds_no_view_into_the_wire);
+  r = r.it("header value must be UTF-8", test_header_value_must_be_utf8);
+  r = r.it("path escapes must be UTF-8", test_path_escapes_must_be_utf8);
   return r.finish();
 }

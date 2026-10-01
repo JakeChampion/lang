@@ -6,32 +6,52 @@ date-time / I/O depth) and `LANGUAGE-DIRECTION.md`. This one surveys the
 question, Unicode operations, and the related types that always ship
 alongside (byte views, scalar/char, paths, symbols, builders).
 
-## Completion audit, September 2026
+## Completion audit, October 2026
 
-Epic #5626 remains open. Its closed child issues do not establish D9's
-valid-string invariant: ordinary string methods still include unchecked
-byte transformations. The implementation notes below record earlier stages
-and need to be checked against the current tree before choosing more work.
+Every decision below has landed; epic #5626 closes on this audit. D9's
+invariant — a `string` is well-formed UTF-8 — now holds for every value
+a program can observe, because every stdlib producer that turns bytes
+into a `string` was audited against it:
 
-The character-set methods now compare complete Unicode scalar values:
-`without_chars`, `contains_only`, `count_chars_in`, `trim_chars`,
-`trim_start_chars` and `trim_end_chars`. They preserve ASCII behavior and
-do not normalize text. Combining marks are separate scalars, and repeated
-characters in a set do not multiply a match. For example,
-`"éê".without_chars("é")` returns `"ê"`; it previously removed the shared
-UTF-8 lead byte from both characters, leaving an invalid string.
+| Producer | Bytes from | What it does with ill-formed bytes |
+|---|---|---|
+| `read_file` | a file | `Err(InvalidUtf8)`; `read_file_bytes` is raw |
+| `utf8.from_bytes` | anywhere | `None` |
+| `http` header values, request path | the peer | refused, 400 |
+| `HttpRequest.body_string` | the peer | `Err(BodyError.NotUtf8)`, 400 as a response; `body_bytes` is raw |
+| `dns.decode_name` | the wire | `Err(Malformed)` |
+| `url_decode` / `form_decode` | an escape | U+FFFD per ill-formed unit; `*_decode_bytes` are raw |
+| `Stream.read_all_string` | a byte cursor | `None` (#10950); `read_all` is raw |
+| `Stream.read_line` | a byte cursor | U+FFFD, since its `None` means end of input |
+| `BytesWriter.into_string` | the program's own `write_byte` | `None` (#10950); `into_bytes` is raw |
+| `HttpResponse.body_string` | the program's own `BodyBytes` | U+FFFD; `body_bytes` is raw |
 
-Malformed input from legacy or explicitly unchecked APIs follows the existing
-maximal-subpart decoder: each ill-formed unit compares as U+FFFD in both the
-source and the set. Forward and reverse trimming use the same units. Retained
-units keep their original bytes, so these operations preserve valid input but
-do not repair or validate malformed input.
+The rule the table follows: where the API has an error channel the
+bytes are refused through it; where it has none they decode as U+FFFD,
+one per maximal subpart (`utf8.from_bytes_lossy`, the rule the string
+methods walk by); and the bytes themselves are always one sibling away.
+Everything else that calls the unchecked constructor is valid by
+construction — digits, ASCII an encoder just built, the bytes of a
+string it was handed — and the property test
+(`examples/tests/utf8_validity_property_test.fern`) stands guard over
+the string methods. The byte-level methods (`reverse_bytes`,
+`shift_byte`, `replace_byte`, `without_byte`) return `u8[]`.
 
-`StringCharacterSetProgram` exercises exact results and UTF-8 preservation
-through the bootstrap interpreter and native/wasm backends, and through the
-primary self-host CLI. Raw-byte methods such as `reverse_bytes` and
-`shift_byte`, other string producers, and external input boundaries still
-need an audit before the epic can close.
+Two things sit outside the invariant on purpose, both recorded rather
+than pending:
+
+- **`args()`, `environ()`, `env(name)` and `read_line()` are assumed
+  UTF-8, not validated** — the D10 position, extended from paths to the
+  other values the OS hands a process. None of them has an error arm to
+  refuse into (`read_line` is `Option[string]` and `None` means
+  end-of-file), and a CLI that trapped on a stray byte in its own
+  arguments would be worse than one that passed it through. Their
+  builtin signatures say so.
+- **The byte sinks take `string`** (#10948): `tcp_send`, `udp_sendto`,
+  `write_file` and wasi's `stream_write` have no `u8[]` form, so the
+  stdlib builds an unchecked string to feed them a byte-domain body or a
+  DNS packet. Those strings never reach a caller. The `u8[]` siblings are
+  the mirror of the source-side split and their own slice.
 
 Written because #5552 ("stdlib case ops are ASCII-only — add a Unicode
 `std/unicode`") asked a question the codebase can't answer from first
@@ -747,7 +767,7 @@ it. An escaping view does not crash today, but that is the allocator not
 reusing the storage yet, not a guarantee. This is the same open question
 as `str`'s escape rule (#4814) and is tracked there, not solved here.
 
-### D9 — Guarantee UTF-8 validity on `string`. (Biggest change; sequence it last.)
+### D9 — Guarantee UTF-8 validity on `string`. **LANDED** (#5634, #5714)
 
 The §2.8 invariant. `string` means *well-formed UTF-8*; arbitrary bytes
 live in `u8[]`/`[u8]` (which D8 makes ergonomic).
@@ -843,23 +863,18 @@ forbids; callers decode with `utf8.from_bytes` where they want text.
 `Future[string]` — its bodies are program values, well-formed by
 construction, and what it exists to pin is the combinator timing.
 
-One bridge is left, in `std/tcp`'s serve loop: the request buffer is
-still text-typed because `http_parse_request` and `HttpRequest.body`
-are. That is the HTTP MESSAGE layer rather than the transport, and it
-is its own slice on #5714 — the last one. Its blast radius is the
-wasi-http canonical ABI, where the incoming body is marshalled into a
-two-word `string` field at an offset the wrapper hardcodes. That is
-NATIVE ONLY: `wasm32-wasi-http` has no self-host counterpart (#6636),
-so `internal/codegen/wasmbin` is the only marshalling site, and the
-self-host needs just its two `HttpRequest` declarations
-(`examples/self_host/builtins.fern`, `parser.fern`) moved to `u8[]` so
-the layouts still agree.
-
-The same slice should make the request line and header block reject
-non-ASCII rather than reinterpret it. `method` / `path` / header names
-and values are attacker-supplied bytes today and are turned into
-`string` unchecked, so they are the same hazard one layer up from the
-body.
+The HTTP MESSAGE layer followed. A serve loop holds its buffer as
+`u8[]` and parses it with `http_parse_request_bytes`; `HttpRequest.body`
+is a `Stream` over the body's bytes, on both compilers and in the
+wasi-http marshalling. The request line and header block are checked
+where they become text: a method and a header name are tokens, so
+ASCII by grammar; a header value may carry obs-text (RFC 9110 §5.5),
+and it is admitted when the octets spell UTF-8 and refused with 400
+when they do not; a path's escapes decode to bytes that have to spell
+UTF-8 the same way (`/caf%C3%A9` is `/café`, `/%FF` is 400). The body is
+read as text through `body_string(): Result[string, BodyError]`, whose
+`NotUtf8` answers 400 through `ToResponse`, and `body_json` reads
+through it; `body_bytes` is the body as it came.
 
 Costs, stated honestly:
 
@@ -1093,7 +1108,7 @@ Tracked as epic #5626; issue numbers below.
 | 5 | **D5** (#5631) — normalization + `eq_canonical` — **DONE** | 1 | Shipped `nfc`/`nfd`/`eq_canonical`/`is_nfc`/`is_nfd`. NFKC/NFKD declined — a second full table for a lossy transform. |
 | 6 | **D8** (#5632) — `[u8]` string view — **DONE** | — | Builtin already existed; #5632 added the migrated consumer, the four-backend differential, and the docs. Borrow rule still open (#4814). |
 | 7 | **D6** (#5633) — grapheme segmentation — **DONE**; word segmentation followed under #5552 | 1, 3 | Opt-in. NOT the largest table after all (~17 KB vs normalization's ~58 KB). Returns `str[]` views (was `string[]` until #5695 was fixed). Word_Break coalesces to 1085 ranges, ~13 KB; a program that does not segment words is byte-identical to one built before it existed. |
-| 8 | **D9** (#5634) — the UTF-8 validity invariant — **IN PROGRESS** | 6 | Largest blast radius; do last, after `[u8]` makes "raw bytes" ergonomic. The `s[a:b]` half and every byte-carrying builtin have landed; the HTTP message layer (`http_parse_request`, `HttpRequest.body`) is the remainder, on #5714. |
+| 8 | **D9** (#5634, #5714) — the UTF-8 validity invariant — **DONE** | 6 | Largest blast radius; done last, after `[u8]` made "raw bytes" ergonomic. `s[a:b]` is `Option[str]`, every byte-carrying builtin returns `u8[]`, `read_file` validates, and every stdlib byte-to-string producer refuses or replaces ill-formed bytes (the completion audit at the top). |
 | 9 | **D10** (#5635) — document the path assumption — **DONE** | — | Doc-only. Stated in `std/path`, `std/io`, and `read_dir`'s builtin signature. |
 
 #5552 as filed maps onto slices 1, 4, 5, 6, 7. Its step 1 (document the

@@ -20,7 +20,11 @@
 #
 # The derive_from_json* rows rose when the derived decoder became a caller
 # of `json.decode` (#10714): a fresh Result's payload handed to a call in a
-# function returning a Result is never released, one parsed tree per call.
+# function returning a Result was never released, one parsed tree per call.
+# They and a_module_does_not_see_a_sibling_imports_variants reach 0 with
+# ownedCallArgRetained: a pair-form payload handed to a callee that owns
+# its parameter is retained for the callee, so the arm releases the
+# payload's own count after all.
 #
 # The foreach_* and map_* rows fell when a MapIter cursor became a counted
 # box its frame frees (#9562): every `for (k, v) in m` stranded one.
@@ -140,7 +144,7 @@
 # Writer.write result boxes that made this 4 are reclaimed since #8405. The
 # accumulator the case measures is clean — it is what the "flat" line asserts.
 a_builtin_method_does_not_see_the_programs_variants  0
-a_module_does_not_see_a_sibling_imports_variants     2
+a_module_does_not_see_a_sibling_imports_variants     0
 a_module_names_variants_its_imports_reach            5
 ackermann                                            0
 add_sub_pair                                         0
@@ -269,9 +273,9 @@ defer_in_loop                                        0
 derive_debug                                         0
 derive_default                                       0
 derive_default_generic_primitive                     0
-derive_from_json                                     23
-derive_from_json_i64                                 9
-derive_from_json_shapes                              174
+derive_from_json                                     0
+derive_from_json_i64                                 0
+derive_from_json_shapes                              0
 derive_json                                          0
 derive_multi_payload                                 0
 div_modulo                                           0

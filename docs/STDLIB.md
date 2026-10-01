@@ -992,7 +992,9 @@ hyphenated lowercase form.
 
 Percent-encoding, URL parsing, query parsing.
 
-- `url_encode(s)`, `url_decode(s)`, `form_encode(s)`, `form_decode(s)`
+- `url_encode(s)`, `url_decode(s)`, `form_encode(s)`, `form_decode(s)`;
+  an escape that does not spell UTF-8 decodes to U+FFFD, and
+  `url_decode_bytes(s)` / `form_decode_bytes(s)` hand back the bytes
 - `url_parse(s) Option[Url]`
 - `query_parse(s) Map[string, string[]]`, `query_encode(pairs)`
 - **Single-key query accessors** (scan the raw query string, no map
@@ -1046,7 +1048,8 @@ serializer.
   producer asked for chunk 0, 1, 2, … until it answers None).
   `http.bytes(status, bytes)`, `http.stream(status, stream)`,
   `http.file(path)` and `http.chunks(status, next)` build
-  the last four. `(resp).body_string()`, `(resp).body_bytes()` and
+  the last four. `(resp).body_string()` (an ill-formed sequence in a
+  byte-domain body reads as U+FFFD), `(resp).body_bytes()` and
   `(resp).body_len()` read whichever a response carries, a producer's chunks
   joined; a `BodyFile` reads as empty from a handler, since a handler may not
   reach the file system (E080), and `http_materialize(resp)` reads one whole
@@ -1604,7 +1607,8 @@ in-memory buffer-backed `Stream`.
 - Constructors: `stream_from_bytes(bs)`, `stream_from_string(s)`,
   `stream_empty()`.
 - Readers: `(s).read_byte()`, `(s).read_n(n)`, `(s).read_line()`,
-  `(s).read_all()`, `(s).read_all_string()`.
+  `(s).read_all()`, `(s).read_all_string()`. `read_line` reads an
+  ill-formed sequence as U+FFFD, since its `None` means end of input.
 - `read_all_string(): (Option[string], Stream)` validates only the unread
   bytes. It returns `Some(text)` for valid UTF-8 and `None` for malformed
   bytes, advancing the returned cursor to EOF either way. EOF yields

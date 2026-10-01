@@ -63,6 +63,7 @@ import "std/i32";
 import "std/string";
 import "std/array";
 import "std/error";
+import "std/utf8" as utf8;
 
 // ---------------------------------------------------------------------------
 // Errors
@@ -454,7 +455,14 @@ pub function decode_name(msg: u8[], pos: i32): Result[NameAt, DnsError] {
     if ((l & 192) != 0 || p + 1 + l > msg.len() || total > 254) {
       return Err(Malformed);
     }
-    out = join_label(out, msg, p + 1, l);
+    match (join_label(out, msg, p + 1, l)) {
+      Some(joined) => {
+        out = joined;
+      },
+      None => {
+        return Err(Malformed);
+      }
+    }
     p = p + 1 + l;
   }
   return Err(Malformed);
@@ -483,18 +491,28 @@ function pointer_target(msg: u8[], p: i32, hops: i32): Result[i32, DnsError] {
   return Ok(target);
 }
 
-// `out` with the `len` bytes at `at` appended as its next label.
-function join_label(out: string, msg: u8[], at: i32, len: i32): string {
+// `out` with the `len` bytes at `at` appended as its next label, or
+// None when those bytes are not well-formed UTF-8: a name is text, and
+// the wire is the boundary where that is checked.
+function join_label(out: string, msg: u8[], at: i32, len: i32): Option[string] {
   var label: u8[] = [];
   var k: i32 = 0;
   while (k < len) {
     label = label.append(msg[at + k]);
     k = k + 1;
   }
-  if (out.len() > 0) {
-    return out + "." + string_from_bytes_unchecked(label);
+  match (utf8.from_bytes(label)) {
+    Some(text) => {
+      if (out.len() > 0) {
+        return Some(out + "." + text);
+      }
+      return Some(text);
+    },
+    None => {
+      return None;
+    }
   }
-  return string_from_bytes_unchecked(label);
+  return None;
 }
 
 struct QuestionAt { q: Question, next: i32 }

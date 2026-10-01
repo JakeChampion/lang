@@ -250,7 +250,7 @@ function send(response_out: i32, resp: HttpResponse): void {
     Ok(body) => {
       match (body_write(body)) {
         Ok(stream) => {
-          write_all(stream, resp.body_string());
+          write_all(stream, body_wire(resp));
           output_stream_drop(stream);
         },
         Err(e) => {}
@@ -263,6 +263,31 @@ function send(response_out: i32, resp: HttpResponse): void {
     Err(e) => {}
   }
   outparam_set(response_out, 0, response, 0, 0 as i64, 0, 0, 0, 0);
+}
+
+// body_wire is the body's bytes as `stream_write` takes them, which is
+// as a string (#10948): a text body is itself, and a byte-domain body
+// rides an unchecked string so a binary body reaches the host intact,
+// where `body_string` would read its ill-formed sequences as U+FFFD.
+function body_wire(resp: HttpResponse): string {
+  match (resp.body) {
+    BodyText(s) => {
+      return s;
+    },
+    BodyBytes(bs) => {
+      return string_from_bytes_unchecked(bs);
+    },
+    BodyStream(st) => {
+      return string_from_bytes_unchecked(resp.body_bytes());
+    },
+    BodyFile(path) => {
+      return "";
+    },
+    BodyChunks(producer) => {
+      return string_from_bytes_unchecked(resp.body_bytes());
+    }
+  }
+  return "";
 }
 
 function write_all(stream: i32, body: string): void {

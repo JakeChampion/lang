@@ -942,7 +942,8 @@ pub function json_parse(s: string): Option[JsonValue] {
 //
 // Typical use:
 //
-//   match (json_parse(req.body_string())) {
+//   var text: string = req.body_string()?;
+//   match (json_parse(text)) {
 //       Some(v) => {
 //           var name = json_get_string(v, "name");
 //           var age  = json_get_i32(v, "age");
