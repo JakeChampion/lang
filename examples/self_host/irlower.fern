@@ -713,7 +713,7 @@ pub struct FnSigs {
   // array buffers the method may grow in place (#8224). The receiver has no
   // fn_param_sigs position, so its may-grow entry lives here; a method call
   // brackets exactly those field buffers of a surviving receiver.
-  grow_recv_fns: string[],
+  grow_recv_fns: SigReg,
   // grow_field_positions: "<callee>|<idx>|<TypeName>|<field>,…" for the
   // PARAMETER positions whose struct argument's named field buffers the callee
   // may grow in place. The declared type is included because the bracket
@@ -736,8 +736,8 @@ pub struct FnSigs {
 // b.closure_fns b.const_fns b.fn_names b.own_positions b.own_scalar_arr_positions
 // b.assoc_fns
 pub function wp_fact_rows(b: FnSigs, all_funcs: parser.FuncDecl[], all_stab: StructTab): string[] {
-  var regs: SigReg[] = [b.str_ret_fns, b.i64_ret_fns, b.struct_ret_fns, b.fn_param_sigs, b.noesc_ret_fns, b.opt_fresh_ret_fns];
-  var cols: string[][] = [b.closurearr_ret_fns, b.borrowable_params, b.borrow_bare, b.fresh_struct_ret_fns, b.consume_safe_params, b.return_fresh_struct_ret_fns, b.recv_borrow_fns, b.str_fresh_ret_fns, b.strfld_ok_types, b.tuple_fresh_ret_fns, b.own_consumed_positions, b.consumed_arr_positions, b.param_counted, b.trmc_consume_fns, b.handback_params, b.cnt_struct_ret_fns, b.cnt_handback_params, b.handback_carry_params, b.str_handback_ret, b.grow_recv_fns, b.grow_field_positions, structfld_reclaim_ok_types_of(all_funcs, all_stab, b.borrowable_params)];
+  var regs: SigReg[] = [b.str_ret_fns, b.i64_ret_fns, b.struct_ret_fns, b.fn_param_sigs, b.noesc_ret_fns, b.opt_fresh_ret_fns, b.grow_recv_fns];
+  var cols: string[][] = [b.closurearr_ret_fns, b.borrowable_params, b.borrow_bare, b.fresh_struct_ret_fns, b.consume_safe_params, b.return_fresh_struct_ret_fns, b.recv_borrow_fns, b.str_fresh_ret_fns, b.strfld_ok_types, b.tuple_fresh_ret_fns, b.own_consumed_positions, b.consumed_arr_positions, b.param_counted, b.trmc_consume_fns, b.handback_params, b.cnt_struct_ret_fns, b.cnt_handback_params, b.handback_carry_params, b.str_handback_ret, b.grow_field_positions, structfld_reclaim_ok_types_of(all_funcs, all_stab, b.borrowable_params)];
   for r in regs {
     cols = cols.append(r.rows);
   }
@@ -90465,7 +90465,7 @@ pub function fn_sigs_empty(): FnSigs {
     recv_borrow_fns: e, str_fresh_ret_fns: e, opt_fresh_ret_fns: r, strfld_ok_types: e,
     tuple_fresh_ret_fns: e, own_positions: e, own_scalar_arr_positions: e, own_consumed_positions: e, consumed_arr_positions: e, param_counted: e, trmc_consume_fns: e, handback_params: e, handback_carry_params: e,
     cnt_struct_ret_fns: e, cnt_handback_params: e,
-    str_handback_ret: e, grow_recv_fns: e, grow_field_positions: e,
+    str_handback_ret: e, grow_recv_fns: r, grow_field_positions: e,
   };
 }
 
@@ -91124,7 +91124,7 @@ pub function fn_sigs_for_borrow(funcs: parser.FuncDecl[], structs: StructTab, ar
     cnt_handback_params: cnt_handback_params_of(funcs, cntret),
     handback_carry_params: handback_carry_params_of(funcs),
     str_handback_ret: str_handback_ret_of(funcs),
-    grow_recv_fns: grow_recv_fns_of(growflags),
+    grow_recv_fns: sig_reg_of(grow_recv_fns_of(growflags)),
     grow_field_positions: grow_field_positions_of(funcs, growflags),
   };
 }
@@ -103480,7 +103480,7 @@ pub function regrow_sigs(sg: FnSigs, funcs: parser.FuncDecl[], structs: StructTa
   var growflags: string[] = grow_param_flags_seeded(funcs, seeds);
   return FnSigs {
     ...sg, fn_param_sigs: sig_reg_of(fn_param_sigs_of(funcs, structs, growflags)),
-    grow_recv_fns: grow_recv_fns_of(growflags),
+    grow_recv_fns: sig_reg_of(grow_recv_fns_of(growflags)),
     grow_field_positions: grow_field_positions_of(funcs, growflags),
   };
 }
@@ -103621,22 +103621,7 @@ pub function (s: LowerState) callee_param_may_grow(name: string, idx: i32): bool
 // callee_recv_may_grow_fields returns the RECEIVER field names a method may grow
 // in place (grow_recv_fns), or "" when it grows none (#8224).
 pub function (s: LowerState) callee_recv_may_grow_fields(key: string): string {
-  return grow_reg_value(s.frame.sigs.grow_recv_fns, key);
-}
-
-// grow_reg_value returns the text after the first '|' of the row whose key is
-// `key`, or "".
-pub function grow_reg_value(rows: string[], key: string): string {
-  for row in rows {
-    var b: i32 = 0;
-    while (b < row.len() && row[b] != b'|') {
-      b = b + 1;
-    }
-    if (b < row.len() && slice_unchecked(row, 0, b) == key) {
-      return slice_unchecked(row, b + 1, row.len()) + "";
-    }
-  }
-  return "";
+  return sig_reg_value_of(s.frame.sigs.grow_recv_fns, key);
 }
 
 // grow_field_position_row returns "<TypeName>|<field>,<field>…" for a parameter

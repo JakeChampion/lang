@@ -171,8 +171,8 @@ function supported_nominal(t: typeinfo.Type, f: ssasem.Func): boolean {
   if (semtypes.is_map_iter(t)) {
     return walkable(semtypes.map_iter_key(t), f) && walkable(semtypes.map_iter_value(t), f);
   }
-  if let typeinfo.TypeStruct(r) = t {
-    return (r.args.len() == 0 || semtypes.is_env(t)) && semrecords.find(f.records, t) >= 0;
+  if let typeinfo.TypeStruct(_) = t {
+    return semrecords.find(f.records, t) >= 0;
   }
   if let typeinfo.TypeUnion(_) = t {
     return semrecords.find_enum(f.enums, t) >= 0;
@@ -202,9 +202,14 @@ function supported(t: typeinfo.Type, f: ssasem.Func): boolean {
   return supported_nominal(t, f);
 }
 
+// A record cloned at a type variable is one declaration per binding, named
+// by its arguments (semlower.instance_records).
 function record_name(t: typeinfo.Type): string {
   if let typeinfo.TypeStruct(r) = t {
-    return r.name;
+    if (semtypes.is_env(t)) {
+      return r.name;
+    }
+    return ssasem.type_key(t);
   }
   return "";
 }
@@ -2115,12 +2120,11 @@ pub function no_helpers(): Helpers {
 
 // with_drop_helpers adds the helpers of f whose symbols h does not carry yet.
 pub function with_drop_helpers(h: Helpers, f: ssasem.Func): Helpers {
-  var fresh: irlower.LowerResult[] = helpers_not_in(f, h.done);
-  if (fresh.len() == 0) {
-    return h;
+  var out: Helpers = h;
+  for fresh in helpers_not_in(f, h.done) {
+    out = Helpers { rows: out.rows.append(fresh), done: out.done.added(fresh.name) };
   }
-  var rows: irlower.LowerResult[] = util.append_all(h.rows, fresh);
-  return Helpers { rows: rows, done: util.name_index(row_names(rows)) };
+  return out;
 }
 
 // helpers_not_in is drop_helpers less the symbols `done` carries.
@@ -2171,64 +2175,27 @@ function row_names(rows: irlower.LowerResult[]): string[] {
   return out;
 }
 
-function replaced(rows: irlower.LowerResult[], at: i32, row: irlower.LowerResult): irlower.LowerResult[] {
-  var out: irlower.LowerResult[] = [];
-  var i: i32 = 0;
-  while (i < rows.len()) {
-    if (i == at) {
-      out = out.append(row);
-    } else {
-      out = out.append(rows[i]);
-    }
-    i = i + 1;
-  }
-  return out;
-}
-
-// Two functions that both mention a type each produce a helper for it, so the
-// tail is merged by symbol. A body lowered from a declaration carries no name,
-// so scanning the whole cache cannot collide with one.
-//
-// The bodies are built from a schema table the whole module shares, so they
-// agree. A disagreement would be a miscompile rather than a preference, and
-// the .weak linkage that lets duplicates co-link would pick one silently — so
-// it becomes a refusal the emit path stops on instead.
+// merge_helpers appends to the cache the bodies whose symbol it lacks, the
+// first of each symbol in order. A body lowered from a declaration carries no
+// name, so a declaration-less body cannot collide with one. The helpers a
+// module collects are one per symbol already (Helpers); the merge keeps the
+// first of a symbol handed to it twice rather than co-linking both under the
+// .weak linkage, which would pick one silently.
 pub function merge_helpers(cache: irlower.LowerResult[], helpers: irlower.LowerResult[]): irlower.LowerResult[] {
   var out: irlower.LowerResult[] = cache;
-  var raw: irlower.LowerResult[] = [];
-  // raw_at[k] is the position in raw of the helper that first carried the
-  // symbol of helpers[k], which is helpers[k] itself when it is the first.
+  var cached: util.NameIndex = util.name_index(row_names(cache));
   var names: util.NameIndex = util.name_index(row_names(helpers));
-  var raw_at: i32[] = [];
   var k: i32 = 0;
   while (k < helpers.len()) {
     var h: irlower.LowerResult = helpers[k];
-    var first: i32 = names.find(h.name);
-    if (first == k) {
-      raw_at = raw_at.append(raw.len());
-      raw = raw.append(h);
-    } else {
-      var at: i32 = raw_at[first];
-      raw_at = raw_at.append(at);
-      if (!ir.ops_equal(raw[at].ops, h.ops) || raw[at].n_params != h.n_params || raw[at].n_locals != h.n_locals) {
-        raw = replaced(raw, at, irlower.LowerResult {
-          ...h, ok: false,
-          why: "conflicting drop helper for " + h.name,
-        });
+    if (names.find(h.name) == k && !cached.has(h.name)) {
+      if (h.ok) {
+        out = out.append(optimized_helper(h));
+      } else {
+        out = out.append(h);
       }
     }
     k = k + 1;
-  }
-  var cached: util.NameIndex = util.name_index(row_names(cache));
-  for h in raw {
-    if (cached.has(h.name)) {
-      continue;
-    }
-    if (h.ok) {
-      out = out.append(optimized_helper(h));
-    } else {
-      out = out.append(h);
-    }
   }
   return out;
 }
@@ -2696,6 +2663,19 @@ function cast(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlow
   // A handle is its descriptor, so reading it as the i32 moves nothing.
   if (semtypes.is_handle(from)) {
     return r;
+  }
+  // An address converts at the pointer width: the u64 forms on a register
+  // backend, the u32 forms on wasm, where `f64 as usize` saturates at
+  // u32::MAX as native's does.
+  if (ssasem.is_float(to) && ssasem.is_usize(from)) {
+    r = emit(r, ir.op_ptr_to_f64());
+    if (ssasem.is_f32(to)) {
+      return round_f32(r);
+    }
+    return r;
+  }
+  if (ssasem.is_float(from) && ssasem.is_usize(to)) {
+    return emit(r, ir.op_f64_to_ptr());
   }
   if (ssasem.is_float(to)) {
     return into_float(r, from, to);

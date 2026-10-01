@@ -970,6 +970,10 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// `for x in <EXPR>` over a non-ident array iterable — clean from both checkers.
 		{"for-literal-clean", "function main(): i32 { var s = 0; for x in [1, 2, 3] { s = s + x; } return s; }\n", nil},
 		{"for-call-clean", "function mk(): i32[] { return [1, 2]; }\nfunction main(): i32 { var s = 0; for x in mk() { s = s + x; } return s; }\n", nil},
+		// `for x in <EXPR>` over a value no loop iterates: native lowers it to
+		// `.len()` + index and reports both at the loop.
+		{"for-over-struct", "enum Ty { S(i32), N(i32) }\nstruct Item { ty: Ty }\nstruct Box { list: Item[], k: i32 }\nfunction main(): i32 {\n  var b: Box = Box { list: [Item { ty: Ty.S(1) }], k: 1 };\n  var names: string[] = [];\n  for it in b {\n    if let Ty.S(v) = it.ty {\n      names = names.append(\"x\");\n    }\n  }\n  return names.len();\n}\n", []string{"E034", "E043"}},
+		{"for-over-i32", "function main(): i32 { var n: i32 = 3; var s: i32 = 0; for x in n { s = s + x; } return s; }\n", []string{"E034", "E043"}},
 		// Unannotated struct-array literal (`var ps = [P{..}, ..]`) — element type
 		// inferred, clean from both checkers.
 		{"inferred-struct-array-clean", "struct P { v: i32 }\nfunction main(): i32 { var ps = [P { v: 3 }, P { v: 4 }]; return ps[0].v + ps[1].v; }\n", nil},

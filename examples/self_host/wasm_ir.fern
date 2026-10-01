@@ -3090,8 +3090,9 @@ pub function ir_route_ok(lm: parser.Module, component: boolean, io: boolean, sub
   if (!asmcore.new_state().use_ir) {
     return false;
   }
-  var stab: irlower.StructTab = irlower.struct_tab(lm.structs);
-  var g: ircore.Lowered = lower_all_gated(lm, stab, ircore.sub_base(sub, lm.funcs, stab), sub);
+  var sm: parser.Module = ircore.with_records(lm, sub);
+  var stab: irlower.StructTab = irlower.struct_tab(sm.structs);
+  var g: ircore.Lowered = lower_all_gated(sm, stab, ircore.sub_base(sub, sm.funcs, stab), sub);
   return g.ok && ir_route_final(ircore.sub_cache(sub, g.cache), component, io);
 }
 
@@ -3128,7 +3129,7 @@ pub function emit_module_mode_or_error(mod: parser.Module, component: boolean, i
 // asm_ir.emit_module_ir_gated_sub for why the substitution is passed as a value
 // rather than produced here.
 pub function emit_module_mode_or_error_sub(mod: parser.Module, component: boolean, io: boolean, sub: ircore.Sub): string {
-  var lm: parser.Module = route_normalized(mod);
+  var lm: parser.Module = ircore.with_records(route_normalized(mod), sub);
   // Builtins with no wasm meaning at all are rejected BEFORE the routing
   // decision, so the diagnostic names the builtin rather than the IR op
   // instruction selection would refuse, or nothing at all when the eligibility
@@ -5398,7 +5399,10 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
       parts = parts.append("    i32.trunc_sat_f64_s\n");
     }
   } else if (o.kind_tag == 13) {  // f64_to_i64
-    if (o.unsigned) {
+    if (o.width == ir.width_ptr()) {
+      // An address is an i32 here; `f64 as usize` saturates at u32::MAX.
+      parts = parts.append("    i32.trunc_sat_f64_u\n");
+    } else if (o.unsigned) {
       parts = parts.append("    i64.trunc_sat_f64_u\n");
     } else {
       parts = parts.append("    i64.trunc_sat_f64_s\n");
@@ -16086,6 +16090,7 @@ function emit_wasm_i32_to_f64(o: ir.Op, parts: string[]): string[] {
       parts = parts.append("    f64.convert_i64_s\n");
     }
   } else if (o.unsigned) {
+    // A pointer-width source (`usize as f64`) is the i32 address here.
     parts = parts.append("    f64.convert_i32_u\n");
   } else {
     parts = parts.append("    f64.convert_i32_s\n");
