@@ -1403,6 +1403,21 @@ pub function is_stdlib_path(import_path: string): boolean {
   return str_has_prefix(import_path, "std/") || str_has_prefix(import_path, "core/");
 }
 
+// is_dir reports whether `path` names a directory. `read_dir` is the probe: a
+// file answers ENOTDIR, so a mistyped entry path stays a file error rather
+// than being read as a package directory.
+pub function is_dir(path: string): boolean {
+  match (read_dir(path)) {
+    Ok(names) => {
+      return true;
+    },
+    Err(e) => {
+      return false;
+    }
+  }
+  return false;
+}
+
 // resolve_path maps an import path to a file on disk. Local imports
 // resolve beside the importer, directory segments kept — `./lib/gnu`
 // from `<dir>` is `<dir>/lib/gnu.fern`, as native joins them; std/core

@@ -272,12 +272,9 @@ func playgroundIgnoresDecoy(t *testing.T, bin string) {
 	assertWatRuns(t, wat, 12)
 }
 
-// An import the overlay does not carry is REPORTED, not skipped.
-//
-// load_imports drops an unresolvable import silently — deliberate in the CLI,
-// where a compiler intrinsic looks exactly like one. In a playground it is a
-// trap: the program compiles and then fails at a call nothing defines, with
-// nothing pointing at the import the user actually got wrong.
+// An import the overlay does not carry is REPORTED, not skipped: otherwise the
+// program compiles and then fails at a call nothing defines, with nothing
+// pointing at the import the user actually got wrong.
 func playgroundReportsMissing(t *testing.T, bin string) {
 	_, stderr, code := runPlayground(t, bin, t.TempDir(),
 		"import \"std/nosuchmodule\";\nfunction main(): i32 { return 0; }\n")

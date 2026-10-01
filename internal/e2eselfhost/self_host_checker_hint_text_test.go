@@ -93,6 +93,28 @@ type hintTextCase struct {
 }
 
 var hintTextCases = []hintTextCase{
+	// A generic struct literal's clash names the field that breaks what the
+	// earlier ones bound, and what to write there (#10453): a typed integer
+	// binds ahead of a literal, nothing else does.
+	{
+		name: "E043 generic struct literal clash names the later field",
+		src: `struct Same[T] { a: T, b: T }
+function main(): i32 { var q = Same { a: 1, b: "x" }; return 0; }`,
+		code:     "E043",
+		spelling: `field "b": expected i32`,
+	},
+	{
+		name: "E043 struct update over a literal-bound base",
+		src: `struct Same[T] { a: T, b: T }
+function main(): i32 {
+    var q = Same { a: 1, b: 2 };
+    var y: i64 = 8589934592;
+    var w = Same { ...q, b: y };
+    return 0;
+}`,
+		code:     "E043",
+		spelling: `field "b": expected i32, got i64`,
+	},
 	// The message names the struct's type parameter, which the self-host
 	// respells internally (#9577); it must read as written.
 	{

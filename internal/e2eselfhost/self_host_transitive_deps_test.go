@@ -105,9 +105,8 @@ func TestSelfHostTransitiveDepsDifferentialX86_64(t *testing.T) {
 				t.Fatalf("self-host -check failed where native passed — a transitive dependency did not load:\n%s", shOut)
 			}
 
-			// Checking clean is not enough: an import that resolves to no file
-			// is skipped, so the decisive check is that the program links and
-			// runs the transitive code.
+			// Checking clean is not enough: the decisive check is that the
+			// program links and runs the transitive code.
 			progBin := filepath.Join(selfPkg, "prog")
 			if out, err := exec.Command(driverBin, "-target", "x86-64-linux", "-o", progBin,
 				filepath.Join(selfPkg, entry)).CombinedOutput(); err != nil {

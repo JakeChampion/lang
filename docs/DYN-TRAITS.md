@@ -979,6 +979,8 @@ is expected and the value's concrete type `impl`s the trait:
 - argument passing to a `dyn Shape` parameter
 - array element `[Circle{…}, Rect{…}]` against `dyn Shape[]`
 - `return circle;` from a `dyn Shape`-returning function
+- a struct field `Holder { shape: circle }` or a variant payload
+  `Wrap(circle)` declared `dyn Shape`
 
 The single gate is the checker's assignability relation (`assignable`):
 `dst = dyn Trait`, `src = C` ⊢ ok iff `Info.Impls[Trait][methodTypeName(C)]`.
@@ -986,6 +988,12 @@ Because `assignable` is consulted at every one of these sites, threading
 the impl check through it covers all coercion points uniformly. A
 `dyn Trait` is **not** assignable back to a concrete type (no downcast in
 v1) and two different `dyn` types do not inter-assign.
+
+A `str` is assignable only to a `str`, so it boxes into a `dyn` at none of
+these sites: the box would hold the view past its source. `methodTypeName`
+names a `str` receiver `string`, so `impl Trait for str` is the impl for
+`string` (a second `impl Trait for string` is E006), and a `string` coerces
+to `dyn Trait` through it. Copy the view first (`.to_owned()`) to box it.
 
 ## 6. Implementation map
 

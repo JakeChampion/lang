@@ -413,12 +413,15 @@
 # main's own growth since the last refresh, on the same pin; the other rows
 # stay inside 5%. Measured with TestSelfHostWarmStockDriver on main at
 # 0b539c5a5; stage1 and stage2 still match to the byte.
+# 2026-10-01 — asm_run 8648888 -> 9081512 (+5.0%), main's growth since the
+# last refresh plus this PR's dyn and map copies; the other rows stay inside
+# 5%. Number pasted from driver-sizes' own report on run 36836392983.
 fern.fern/stage2 12973880
 fern.fern 12973880
 asm_load_run.fern 10514488
 asm_modload_run.fern 9438224
 asm_ir_run.fern 9619240
-asm_run.fern 8648888
+asm_run.fern 9081512
 wasm_ir_run.fern 8820144
 wasm_run.fern 8817328
 wasm_runio_run.fern 8816656

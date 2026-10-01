@@ -119,9 +119,28 @@ function main(): i32 {
 	}
 
 	// A function value whose type no declaration spells (`fs[0]`) keys no
-	// clone, so a generic bound only through a fn-typed parameter stays erased
-	// and its typed instances build the one `Slot__0_T` (#10827).
-	unbound := `struct Slot[T] { v: T }
+	// clone, so a generic bound only through a fn-typed parameter stays
+	// erased, and each typed instance builds `Slot__0_T` at its own binding
+	// (#10827). An erased generic forwarding its function parameter calls the
+	// clone keyed at its own variable, `hold__0_U`, a template the same way.
+	run := func(src string, want int) {
+		t.Helper()
+		path := filepath.Join(t.TempDir(), "main.fern")
+		if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		bin := filepath.Join(t.TempDir(), "prog")
+		build := exec.Command(fernBin, "-target", "x86-64-linux", path, stdlibRoot, "-o", bin)
+		build.Env = append(os.Environ(), "FERN_SEM_IR_STRICT=1")
+		if out, err := build.CombinedOutput(); err != nil {
+			t.Fatalf("compile under strict: %v\n%s", err, out)
+		}
+		var exit *exec.ExitError
+		if err := exec.Command(bin).Run(); !errors.As(err, &exit) || exit.ExitCode() != want {
+			t.Fatalf("run: %v, want exit %d", err, want)
+		}
+	}
+	run(`struct Slot[T] { v: T }
 
 pub function hold[T](f: () => T): i32 {
     var c: Slot[T] = Slot[T] { v: f() };
@@ -132,38 +151,26 @@ function main(): i32 {
     var fs: (() => i32)[] = [(): i32 => 7];
     return hold(fs[0]) + hold((): string => "x");
 }
-`
-	if code, out := compile(unbound, "FERN_SEM_IR_STRICT=1"); code != 3 || !strings.Contains(out, "FERN_SEM_IR: hold$i32: record field type") {
-		t.Fatalf("a generic over a variable an unspelled function value carries: exit %d under strict, want 3 naming the refusal\n%s", code, out)
-	}
-	if code, out := compile(unbound, "FERN_SEM_IR_STRICT="); code != 0 {
-		t.Fatalf("the same without strict: exit %d, want the AST lowering's compile\n%s", code, out)
-	}
+`, 2)
+	run(`struct Slot[T] { v: T }
+
+pub function hold[T](f: () => T): i32 {
+    var c: Slot[T] = Slot[T] { v: f() };
+    return 1;
+}
+
+pub function wrap[U](g: () => U): i32 { return hold(g); }
+
+function main(): i32 { return wrap((): i32 => 7) + wrap((): string => "x"); }
+`, 2)
 
 	// The same call from a top-level statement: the scan reads the module's
 	// statements as well as its functions.
-	script := `struct Slot[T] { v: T }
+	run(`struct Slot[T] { v: T }
 pub function hold[T](f: () => T): i32 { var c: Slot[T] = Slot[T] { v: f() }; return 1; }
 var fs: (() => i32)[] = [(): i32 => 7];
 return hold(fs[0]) + hold((): string => "x");
-`
-	if code, out := compile(script, "FERN_SEM_IR_STRICT=1"); code != 3 || !strings.Contains(out, "FERN_SEM_IR: hold$i32: record field type") {
-		t.Fatalf("a top-level call to a generic over an unspelled function value: exit %d under strict, want 3 naming the refusal\n%s", code, out)
-	}
-	scriptSrc := filepath.Join(t.TempDir(), "main.fern")
-	if err := os.WriteFile(scriptSrc, []byte(script), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	scriptBin := filepath.Join(t.TempDir(), "prog")
-	build := exec.Command(fernBin, "-target", "x86-64-linux", scriptSrc, stdlibRoot, "-o", scriptBin)
-	build.Env = append(os.Environ(), "FERN_SEM_IR_STRICT=")
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("the top-level call without strict: %v, want the AST lowering's compile\n%s", err, out)
-	}
-	var scriptExit *exec.ExitError
-	if err := exec.Command(scriptBin).Run(); !errors.As(err, &scriptExit) || scriptExit.ExitCode() != 2 {
-		t.Fatalf("the top-level call without strict: %v, want exit 2", err)
-	}
+`, 2)
 
 	// A generic callee's result spells the callee's own variable, so it binds
 	// nothing: no clone is keyed on `0_K`, and hold stays erased as above.
@@ -178,42 +185,29 @@ pub function hold[T](f: () => T): i32 {
 
 function main(): i32 { return hold(pick(1)) + hold((): string => "x"); }
 `
-	if code, out := compile(genericPick, "FERN_SEM_IR_STRICT=1"); code != 3 || !strings.Contains(out, "FERN_SEM_IR: hold$i32: record field type") || strings.Contains(out, "hold__0_K") {
-		t.Fatalf("a generic callee's function result: exit %d under strict, want 3 refusing hold$i32 and no clone keyed on its variable\n%s", code, out)
+	run(genericPick, 2)
+	pickSrc := filepath.Join(t.TempDir(), "main.fern")
+	if err := os.WriteFile(pickSrc, []byte(genericPick), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pickAsm := filepath.Join(t.TempDir(), "prog.s")
+	emit := exec.Command(fernBin, "-target", "x86-64-linux", "-emit", "asm", pickSrc, stdlibRoot, "-o", pickAsm)
+	emit.Env = append(os.Environ(), "FERN_SEM_IR_STRICT=1")
+	if out, err := emit.CombinedOutput(); err != nil {
+		t.Fatalf("a generic callee's function result: %v\n%s", err, out)
+	}
+	if asm, err := os.ReadFile(pickAsm); err != nil || strings.Contains(string(asm), "hold__0_K") {
+		t.Fatalf("a generic callee's function result: %v, want no clone keyed on its variable", err)
 	}
 
-	// A value that holds a view behind a dyn or a closure cannot be rebuilt at
-	// a merge (ssasem.copyable), so one merged past its source is refused
-	// rather than read after the source is released. A closure capturing a
-	// bare view is refused where it is built; one reaching a view through a
-	// captured record is built and holds that view. Merged past its source in a
-	// record, it compiled whole until view_types answered function types;
-	// returned past it, it was already refused through Func.envs.
+	// A value holding a view merged past its source is copied there
+	// (ssasem.deep_copy). Two kinds have no copy and are refused by name
+	// (ssasem.copy_refusal): a function value, whose environment no test can
+	// find, and a type that holds itself, whose copy would recurse. A closure
+	// capturing a bare view is refused where it is built; one reaching a view
+	// through a captured record is built and holds that view, and returned
+	// past its source it is refused through Func.envs.
 	for _, c := range []struct{ name, src, why string }{
-		{"dyn-view-merged", `import "std/i32";
-trait Size { function size(self: Self): i32; }
-struct P { a: str }
-impl Size for P { function size(self: P): i32 { return self.a.len() * 10 + (self.a[0] as i32) - 97; } }
-function mk(n: i32): string {
-    var s: string = "ab";
-    var i: i32 = 0;
-    while (i < n) { s = s + "c"; i = i + 1; }
-    return s;
-}
-function wrap(s: string): dyn Size { var p: P = P { a: slice_unchecked(s, 1, 4) }; return p; }
-function g(n: i32): i32 {
-    var d: dyn Size = P { a: "q" };
-    if (n != 0) {
-        var s: string = mk(n);
-        d = wrap(s);
-    }
-    var junk: string[] = [];
-    var i: i32 = 0;
-    while (i < 50) { junk = junk.append("zz" + i.to_string()); i = i + 1; }
-    return d.size();
-}
-function main(): i32 { print(g(3).to_string() + " " + g(0).to_string()); return 0; }
-`, "FERN_SEM_IR: g: produced graph fails semantic verification: dependency unavailable at use"},
 		{"closure-in-a-record-merged", `import "std/i32";
 struct P { a: str }
 struct Holder { f: () => i32, n: i32 }
@@ -236,7 +230,27 @@ function g(n: i32): i32 {
     return h.f() * 10 + h.n;
 }
 function main(): i32 { print(g(3).to_string() + " " + g(0).to_string()); return 0; }
-`, "FERN_SEM_IR: g: produced graph fails semantic verification: dependency unavailable at use"},
+`, "FERN_SEM_IR: g: a value merged past its source has no copy: a function value (() => i32) has no shape to rebuild its environment by"},
+		{"recursive-enum-merged", `import "std/i32";
+enum L { Cons(str, L), Nil }
+function mk(n: i32): string {
+    var s: string = "ab";
+    var i: i32 = 0;
+    while (i < n) { s = s + "c"; i = i + 1; }
+    return s;
+}
+function two(s: string): L { return Cons(slice_unchecked(s, 0, 1), Cons(slice_unchecked(s, 1, 3), Nil)); }
+function count(l: L): i32 { match (l) { Cons(h, t) => { return h.len() + count(t); }, Nil => { return 0; } } return 0; }
+function g(n: i32): i32 {
+    var l: L = Nil;
+    if (n != 0) {
+        var s: string = mk(n);
+        l = two(s);
+    }
+    return count(l);
+}
+function main(): i32 { print(g(3).to_string() + " " + g(0).to_string()); return 0; }
+`, "FERN_SEM_IR: g: a value merged past its source has no copy: L holds itself, so its copy would recurse"},
 		{"closure-over-a-record-returned", `import "std/i32";
 function mk(n: i32): string {
     var s: string = "ab";
@@ -309,5 +323,59 @@ function main(): i32 {
 		if code, out := compileFor(target, handleFd, "FERN_SEM_IR_STRICT=1"); code != 0 {
 			t.Errorf("%s: a handle's fd read: exit %d under strict\n%s", target, code, out)
 		}
+	}
+
+	// The records an instance builds at its binding, on every target: a wide
+	// binding a wasm field stores at 8 bytes, a record holding one, and one
+	// holding itself. The AST lowering leaks both on x86-64 and emits an
+	// invalid wasm module for the wide one, so the answer is pinned rather than
+	// compared with it.
+	t.Setenv("FERN_SEM_IR_STRICT", "1")
+	for _, c := range []struct{ name, src, want string }{
+		{"wide-and-nested", `import "std/i32";
+import "std/i64";
+struct Slot[T] { v: T }
+struct Pair[T] { a: Slot[T], n: i32 }
+pub function keep[T](f: () => T): T {
+    var c: Slot[T] = Slot[T] { v: f() };
+    var p: Pair[T] = Pair[T] { a: c, n: 1 };
+    return p.a.v;
+}
+pub function wrap[U](g: () => U): U { return keep(g); }
+function main(): i32 {
+    var hs: (() => i64)[] = [(): i64 => 5000000000 as i64];
+    var ds: (() => f64)[] = [(): f64 => 2.5];
+    print(keep(hs[0]).to_string() + " " + ((keep(ds[0]) * 2.0) as i32).to_string() + " " + wrap((): i64 => 6000000000 as i64).to_string());
+    return 0;
+}
+`, "0|5000000000 5 6000000000\n"},
+		{"recursive", `import "std/i32";
+struct Node[T] { v: T, kids: Node[T][] }
+pub function first[T](f: () => T): T {
+    var leaf: Node[T] = Node[T] { v: f(), kids: [] };
+    var root: Node[T] = Node[T] { ...leaf, kids: [leaf, leaf] };
+    return root.kids[1].v;
+}
+function main(): i32 {
+    var ss: (() => string)[] = [(): string => "q" + "r"];
+    var ns: (() => i32)[] = [(): i32 => 3];
+    print(first(ss[0]) + first(ns[0]).to_string());
+    return 0;
+}
+`, "0|qr3\n"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			src := filepath.Join(t.TempDir(), "main.fern")
+			if err := os.WriteFile(src, []byte(c.src), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			for _, target := range []string{"x86-64-sanitize", "arm64-linux", "wasm32-wasi"} {
+				got, report, leak := semCompileRun(t, gcc, nil, fernBin, stdlibRoot, src, target, true, "", "")
+				if got != c.want {
+					t.Fatalf("%s: answered %q, want %q\n%s", target, got, c.want, report)
+				}
+				semNoLeak(t, true, target, leak)
+			}
+		})
 	}
 }

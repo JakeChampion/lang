@@ -357,7 +357,9 @@ pub function dyn_box(): i32 {
 
 // `x as? T` reads a dyn value's shape: `dyn_is` answers whether the box is a
 // `T`, and `dyn_as` is that same box typed as `T`, valid only where a
-// `dyn_is` has settled it, as a variant narrowing is.
+// `dyn_is` has settled it, as a variant narrowing is. A `dyn_as` naming no
+// shape keeps the dyn type, and is valid where tests have refuted every
+// concrete holding a view: the box holds none, so it reads no other bytes.
 pub function dyn_is(): i32 {
   return 0 - 46;
 }
@@ -1296,6 +1298,12 @@ function dyn_narrowing_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): st
   }
   if (!is_dyn(f.values[ins.args[0]])) {
     return "dyn narrowing operand";
+  }
+  if (ins.str == "") {
+    if (semtypes.equal(f.values[ins.args[0]], result)) {
+      return "";
+    }
+    return "dyn narrowing type";
   }
   if let typeinfo.TypeStruct(r) = result {
     if (r.args.len() == 0 && r.name == ins.str) {
@@ -3077,6 +3085,13 @@ function view_sources(f: Func, defs: ssa.SInst[], anchors: Anchor[], names: stri
   if (projects(d.kind_tag)) {
     return view_sources(f, defs, anchors, names, d.args[0], out);
   }
+  var read: i32[] = map_read_sources(d);
+  if (read.len() > 0) {
+    for a in read {
+      out = view_sources(f, defs, anchors, names, a, out);
+    }
+    return out;
+  }
   if (d.kind_tag == call()) {
     if (!anchored(anchors, d.str)) {
       // Only a view-holding result is ever anchored; an owned one is
@@ -3204,6 +3219,14 @@ function names_has(names: string[], name: string): boolean {
 function guarded(f: Func, ins: ssa.SInst, bi: i32, dom: ssadeps.Dom, defs: ssa.SInst[]): boolean {
   var value: i32 = ins.args[0];
   var known: Known = settled(f, value, bi, dom, defs);
+  if (settled_viewless(ins)) {
+    for c in dyn_view_concretes(f, f.values[value]) {
+      if (!names_has(known.gone, shape_name(f, c))) {
+        return false;
+      }
+    }
+    return true;
+  }
   if (names_has(known.held, ins.str)) {
     return true;
   }
@@ -3278,11 +3301,21 @@ function bytes_roots(f: Func, defs: ssa.SInst[], v: i32, seen: boolean[]): i32[]
   if (!holds_view(f, f.values[v])) {
     return [v];
   }
-  if (d.kind_tag == 5) {
+  // A dyn widened from a box holding no view, or settled to hold none, reads
+  // no bytes but its own.
+  if (d.kind_tag == 5 || settled_viewless(d) || d.kind_tag == dyn_up() && d.args.len() == 1 && !holds_view(f, f.values[d.args[0]])) {
     return [];
   }
   if (projects(d.kind_tag) && d.args.len() > 0) {
     return bytes_roots(f, defs, d.args[0], next);
+  }
+  var read: i32[] = map_read_sources(d);
+  if (read.len() > 0) {
+    var from: i32[] = [];
+    for a in read {
+      from = union_into(from, bytes_roots(f, defs, a, next));
+    }
+    return from;
   }
   if (d.kind_tag == call()) {
     if (!anchored(f.anchors, d.str)) {
@@ -3310,6 +3343,23 @@ function bytes_roots(f: Func, defs: ssa.SInst[], v: i32, seen: boolean[]): i32[]
     roots = union_into(roots, bytes_roots(f, defs, a, next));
   }
   return roots;
+}
+
+// A read of a map's value column hands back a unit of the value, whose views
+// still read the bytes the entry's do: the map's, and for `get_or` the
+// default's too.
+function map_read_sources(d: ssa.SInst): i32[] {
+  if (d.kind_tag == map_get_or() && d.args.len() == 3) {
+    return [d.args[0], d.args[2]];
+  }
+  if ((d.kind_tag == map_get() || d.kind_tag == map_values()) && d.args.len() > 0) {
+    return [d.args[0]];
+  }
+  return [];
+}
+
+function settled_viewless(d: ssa.SInst): boolean {
+  return d.kind_tag == dyn_as() && d.str == "";
 }
 
 function union_into(own out: i32[], more: i32[]): i32[] {
@@ -3347,11 +3397,12 @@ function counted_view(f: Func, defs: ssa.SInst[], v: i32, seen: boolean[]): bool
   return true;
 }
 
-// A phi, a construction (a fresh map included), or an array or map rebuilt
-// around a new element: a value made of its operands, whose views it holds.
+// A phi, a construction (a fresh map and a dyn box included), or an array or
+// map rebuilt around a new element: a value made of its operands, whose views
+// it holds.
 function gathers_views(kind: i32): boolean {
   return kind == 8 || kind == tuple_new() || kind == record_new() || kind == variant_new() || kind == array_new()
-    || kind == append() || kind == with() || kind == map_new() || kind == map_insert();
+    || kind == append() || kind == with() || kind == map_new() || kind == map_insert() || kind == dyn_box();
 }
 
 // A value that gathers views is anchored to the bytes they read, which its own
@@ -3397,6 +3448,10 @@ function borrow_parents(f: Func): i32[][] {
       var anchors: boolean = projects(ins.kind_tag) && semtypes.needs_anchor(f.values[ins.result]);
       if (anchors || borrows_storage(ins, f)) {
         parents = parents.with(ins.result, [ins.args[0]]);
+      }
+      var read: i32[] = map_read_sources(ins);
+      if (read.len() > 0 && holds_view(f, f.values[ins.result])) {
+        parents = parents.with(ins.result, read);
       }
       if (ins.kind_tag == call() && anchored(f.anchors, ins.str)) {
         var args: i32[] = [];
@@ -3780,54 +3835,133 @@ function boxes_hold_view(f: Func, rows: EnvRow[], t: typeinfo.Type): boolean {
   return false;
 }
 
-// Whether a value of `t` can be rebuilt holding counted strings in place of
-// its views: a `str`, and an array, tuple, record or enum of such. A cell is
-// shared storage, which a copy would split, and `deep_copy` rebuilds no map. A
-// dyn or a function value holding a view is a box this cannot rebuild, so a
-// value holding one is refused rather than copied past it.
-pub function copyable(f: Func, t: typeinfo.Type): boolean {
+// Why a value of `t` cannot be rebuilt holding counted strings in place of
+// its views, or "" when it can: a `str`, and an array, tuple, record, enum,
+// map or dyn of such. A cell is shared storage, which a copy would split. A
+// function value carries no shape a test could read to find its environment.
+// A type that holds itself would need a copy that recurses, which a splice
+// cannot express. `open` is the nominal and dyn types being copied around `t`.
+function copy_refusal(f: Func, t: typeinfo.Type, open: typeinfo.Type[]): string {
   if (!holds_view(f, t) || is_view(t)) {
-    return true;
+    return "";
   }
   if let typeinfo.TypeArray(a) = t {
-    return copyable(f, a.elem);
+    return copy_refusal(f, a.elem, open);
   }
   if let typeinfo.TypeTuple(tup) = t {
-    for e in tup.elements {
-      if (!copyable(f, e)) {
-        return false;
-      }
+    return all_copyable(f, tup.elements, open);
+  }
+  if (semtypes.is_cell(t)) {
+    return "a cell " + typeinfo.spelling(t) + " is shared storage a copy would split";
+  }
+  if (is_func(t)) {
+    return "a function value " + typeinfo.spelling(t) + " has no shape to rebuild its environment by";
+  }
+  if (is_map(t)) {
+    return map_refusal(f, t, open);
+  }
+  for o in open {
+    if (semtypes.equal(o, t)) {
+      return typeinfo.spelling(t) + " holds itself, so its copy would recurse";
     }
-    return true;
+  }
+  var inner: typeinfo.Type[] = open.append(t);
+  if (is_dyn(t)) {
+    return dyn_refusal(f, t, inner);
   }
   if let typeinfo.TypeUnion(_) = t {
-    return enum_copyable(f, t);
+    return enum_refusal(f, t, inner);
   }
   var r: i32 = semrecords.find(f.records, t);
   if (r < 0 || semtypes.is_env(t)) {
-    return false;
+    return typeinfo.spelling(t) + " has no record schema to rebuild it by";
   }
   for fl in f.records.list[r].fields {
-    if (!copyable(f, fl.ty)) {
-      return false;
+    var why: string = copy_refusal(f, fl.ty, inner);
+    if (why != "") {
+      return why;
     }
   }
-  return true;
+  return "";
 }
 
-function enum_copyable(f: Func, t: typeinfo.Type): boolean {
+function all_copyable(f: Func, ts: typeinfo.Type[], open: typeinfo.Type[]): string {
+  for e in ts {
+    var why: string = copy_refusal(f, e, open);
+    if (why != "") {
+      return why;
+    }
+  }
+  return "";
+}
+
+function enum_refusal(f: Func, t: typeinfo.Type, open: typeinfo.Type[]): string {
   var at: i32 = semrecords.find_enum(f.enums, t);
   if (at < 0 || f.enums[at].layout == semrecords.layout_member()) {
-    return false;
+    return typeinfo.spelling(t) + " has no variant tests to rebuild it by";
   }
   for v in f.enums[at].variants {
     for fl in v.fields {
-      if (!copyable(f, fl.ty)) {
-        return false;
+      var why: string = copy_refusal(f, fl.ty, open);
+      if (why != "") {
+        return why;
       }
     }
   }
-  return true;
+  return "";
+}
+
+// A map is rebuilt from its two column snapshots, so both must hand back
+// elements the snapshot owns.
+function map_refusal(f: Func, t: typeinfo.Type, open: typeinfo.Type[]): string {
+  if (!is_supported_map(t) || !retained_column(map_key(t)) || !retained_column(map_value(t))) {
+    return "a map " + typeinfo.spelling(t) + " has a column no snapshot owns";
+  }
+  return all_copyable(f, [map_key(t), map_value(t)], open);
+}
+
+// A dyn is rebuilt by testing its box for each concrete holding a view, so
+// each must carry a shape a test names.
+function dyn_refusal(f: Func, t: typeinfo.Type, open: typeinfo.Type[]): string {
+  for c in dyn_view_concretes(f, t) {
+    if (shape_name(f, c) == "") {
+      return "the box " + typeinfo.spelling(c) + " of " + typeinfo.spelling(t) + " carries no shape a test names";
+    }
+    var why: string = copy_refusal(f, c, open);
+    if (why != "") {
+      return why;
+    }
+  }
+  return "";
+}
+
+// The concretes a value of dyn type `t` can be holding that hold a view.
+function dyn_view_concretes(f: Func, t: typeinfo.Type): typeinfo.Type[] {
+  var out: typeinfo.Type[] = [];
+  for row in f.dyns {
+    if (semtypes.equal(row.fn_ty, t) && !semtypes.equal(row.env_ty, t) && holds_view(f, row.env_ty)) {
+      out = out.append(row.env_ty);
+    }
+  }
+  return out;
+}
+
+// The shape `dyn_is` and `dyn_as` name a dyn box of type `c` by: an
+// argument-free record's name, or an enum's whose box carries its variant's
+// shape. "" for any other.
+function shape_name(f: Func, c: typeinfo.Type): string {
+  if let typeinfo.TypeStruct(r) = c {
+    if (r.args.len() == 0) {
+      return r.name;
+    }
+  }
+  if let typeinfo.TypeUnion(u) = c {
+    var at: i32 = semrecords.find_enum(f.enums, c);
+    if (u.args.len() == 0 && at >= 0 && f.enums[at].layout == semrecords.layout_variant()) {
+      return u.name;
+    }
+  }
+  return "";
 }
 
 // `v` rebuilt in the open block and any it adds, each view it holds replaced
@@ -3854,6 +3988,12 @@ function deep_copy(f: Func, s: CopySplice, v: i32): Copied {
   }
   if let typeinfo.TypeTuple(tup) = t {
     return copy_tuple(f, s, v, t, tup.elements);
+  }
+  if (is_dyn(t)) {
+    return copy_dyn(f, s, v, t);
+  }
+  if (is_map(t)) {
+    return copy_map(f, s, v, t);
   }
   if let typeinfo.TypeStruct(_) = t {
     return copy_record(f, s, v, t);
@@ -3888,42 +4028,71 @@ function copy_tuple(f: Func, s: CopySplice, v: i32, t: typeinfo.Type, elements: 
   return sp_emit(s, tuple_new(), t, parts, 0, "");
 }
 
-// An empty array, then each element copied onto it in a loop:
-//   pre:    n = len v; acc0 = []; br head
-//   head:   i = phi(0, i + 1); acc = phi(acc0, acc'); brif i < n, body, exit
-//   body:   acc' = append(acc, copy(v[i])); br head
+// An empty array, then each element copied onto it in a loop.
 function copy_array(f: Func, s: CopySplice, v: i32, t: typeinfo.Type, elem: typeinfo.Type): Copied {
   var n: Copied = sp_emit(s, length(), i32_type(), [v], 0, "");
-  var zero: Copied = sp_emit(n.s, 1, i32_type(), [], 0, "");
+  var acc0: Copied = sp_emit(n.s, array_new(), t, [], 0, "");
+  var l: CopyLoop = loop_enter(acc0.s, n.value, acc0.value, t);
+  var e: Copied = sp_emit(l.s, array_get(), elem, [v, l.i], 0, "");
+  var c: Copied = deep_copy(f, e.s, e.value);
+  var acc1: Copied = sp_emit(c.s, append(), t, [l.acc, c.value], 0, "");
+  return loop_leave(l, acc1.s, acc1.value);
+}
+
+// An empty map, then each entry of the two column snapshots copied into it.
+// The snapshots own their elements, so a view value is a fresh box over the
+// map's bytes until its copy replaces it.
+function copy_map(f: Func, s: CopySplice, v: i32, t: typeinfo.Type): Copied {
+  var kt: typeinfo.Type = map_key(t);
+  var vt: typeinfo.Type = map_value(t);
+  var keys: Copied = sp_emit(s, map_keys(), typeinfo.TypeArray { elem: kt, view: false }, [v], 0, "");
+  var vals: Copied = sp_emit(keys.s, map_values(), typeinfo.TypeArray { elem: vt, view: false }, [v], 0, "");
+  var n: Copied = sp_emit(vals.s, length(), i32_type(), [keys.value], 0, "");
+  var acc0: Copied = sp_emit(n.s, map_new(), t, [n.value], 0, "");
+  var l: CopyLoop = loop_enter(acc0.s, n.value, acc0.value, t);
+  var k: Copied = sp_emit(l.s, array_get(), kt, [keys.value, l.i], 0, "");
+  var ck: Copied = deep_copy(f, k.s, k.value);
+  var x: Copied = sp_emit(ck.s, array_get(), vt, [vals.value, l.i], 0, "");
+  var cx: Copied = deep_copy(f, x.s, x.value);
+  var acc1: Copied = sp_emit(cx.s, map_insert(), t, [l.acc, ck.value, cx.value], 0, "");
+  return loop_leave(l, acc1.s, acc1.value);
+}
+
+// A counted loop accumulating into `acc`, from `acc0`, for `i` below `n`:
+//   pre:    br head
+//   head:   i = phi(0, i + 1); acc = phi(acc0, acc'); brif i < n, body, exit
+//   body:   ...; br head
+// `loop_enter` leaves the body open; `loop_leave` closes it on `acc'` and
+// leaves the exit open, answering `acc`.
+struct CopyLoop { s: CopySplice, pre: i32, head: i32, exit: i32, head_at: i32, i: i32, acc: i32, cond: i32, zero: i32, one: i32, n: i32, acc0: i32 }
+
+function loop_enter(s: CopySplice, n: i32, acc0: i32, t: typeinfo.Type): CopyLoop {
+  var zero: Copied = sp_emit(s, 1, i32_type(), [], 0, "");
   var one: Copied = sp_emit(zero.s, 1, i32_type(), [], 1, "");
-  var acc0: Copied = sp_emit(one.s, array_new(), t, [], 0, "");
-  s = acc0.s;
+  s = one.s;
   var head: i32 = s.next_block;
-  var body: i32 = head + 1;
-  var exit: i32 = head + 2;
   var pre: i32 = s.id;
   var i: i32 = s.values.len();
-  var acc: i32 = i + 1;
-  var cond: i32 = i + 2;
   s = CopySplice { ...sp_blocks(s, 3), values: s.values.append(i32_type()).append(t).append(boolean_type()) };
   s = sp_close(s, t_br(head));
   var head_at: i32 = s.done.len();
-  s = sp_open(s, body, [head]);
-  var e: Copied = sp_emit(s, array_get(), elem, [v, i], 0, "");
-  var c: Copied = deep_copy(f, e.s, e.value);
-  var acc1: Copied = sp_emit(c.s, append(), t, [acc, c.value], 0, "");
-  var i1: Copied = sp_emit(acc1.s, 9, i32_type(), [i, one.value], 0, "+");
+  s = sp_open(s, head + 1, [head]);
+  return CopyLoop { s: s, pre: pre, head: head, exit: head + 2, head_at: head_at, i: i, acc: i + 1, cond: i + 2, zero: zero.value, one: one.value, n: n, acc0: acc0 };
+}
+
+function loop_leave(l: CopyLoop, s: CopySplice, acc1: i32): Copied {
+  var i1: Copied = sp_emit(s, 9, i32_type(), [l.i, l.one], 0, "+");
   s = i1.s;
   var latch: i32 = s.id;
-  s = sp_close(s, t_br(head));
-  var header: ssa.SBlock = ssa.SBlock { id: head, preds: [pre, latch], term: t_brif(cond, body, exit), insts: [
-    ssa.SInst { kind_tag: 8, result: i, args: [zero.value, i1.value], imm: 0, str: "" },
-    ssa.SInst { kind_tag: 8, result: acc, args: [acc0.value, acc1.value], imm: 0, str: "" },
-    ssa.SInst { kind_tag: 9, result: cond, args: [i, n.value], imm: 0, str: "<" },
+  s = sp_close(s, t_br(l.head));
+  var header: ssa.SBlock = ssa.SBlock { id: l.head, preds: [l.pre, latch], term: t_brif(l.cond, l.head + 1, l.exit), insts: [
+    ssa.SInst { kind_tag: 8, result: l.i, args: [l.zero, i1.value], imm: 0, str: "" },
+    ssa.SInst { kind_tag: 8, result: l.acc, args: [l.acc0, acc1], imm: 0, str: "" },
+    ssa.SInst { kind_tag: 9, result: l.cond, args: [l.i, l.n], imm: 0, str: "<" },
   ] };
-  s = CopySplice { ...s, done: inserted(s.done, head_at, header) };
-  s = sp_open(s, exit, [head]);
-  return Copied { s: s, value: acc };
+  s = CopySplice { ...s, done: inserted(s.done, l.head_at, header) };
+  s = sp_open(s, l.exit, [l.head]);
+  return Copied { s: s, value: l.acc };
 }
 
 function inserted(blocks: ssa.SBlock[], at: i32, b: ssa.SBlock): ssa.SBlock[] {
@@ -3990,11 +4159,47 @@ function rebuilt_variant(f: Func, s: CopySplice, v: i32, t: typeinfo.Type, varia
   return sp_emit(s, variant_new(), t, parts, 0, variant.name);
 }
 
-// The view-holding operands to copy. `with_merge_copies` makes each copy
-// with `sp_emit` / `deep_copy` and records its value in `made`.
-pub function merge_copies(f: Func): MergeCopy[] {
+// Each concrete holding a view tested in turn and, on a hit, narrowed,
+// copied and widened back; a box that is none of them holds no view and is
+// kept, retagged as settled (`dyn_as` naming no shape). The values meet in a
+// phi.
+function copy_dyn(f: Func, s: CopySplice, v: i32, t: typeinfo.Type): Copied {
+  var join: i32 = s.next_block;
+  s = sp_blocks(s, 1);
+  var froms: i32[] = [];
+  var built: i32[] = [];
+  for c in dyn_view_concretes(f, t) {
+    var name: string = shape_name(f, c);
+    var test: Copied = sp_emit(s, dyn_is(), boolean_type(), [v], 0, name);
+    s = test.s;
+    var arm: i32 = s.next_block;
+    var at: i32 = s.id;
+    s = sp_close(sp_blocks(s, 2), t_brif(test.value, arm, arm + 1));
+    var n: Copied = sp_emit(sp_open(s, arm, [at]), dyn_as(), c, [v], 0, name);
+    var cc: Copied = deep_copy(f, n.s, n.value);
+    var up: Copied = sp_emit(cc.s, dyn_up(), t, [cc.value], 0, "");
+    froms = froms.append(up.s.id);
+    built = built.append(up.value);
+    s = sp_open(sp_close(up.s, t_br(join)), arm + 1, [at]);
+  }
+  var kept: Copied = sp_emit(s, dyn_as(), t, [v], 0, "");
+  froms = froms.append(kept.s.id);
+  built = built.append(kept.value);
+  s = sp_open(sp_close(kept.s, t_br(join)), join, froms);
+  var out: i32 = s.values.len();
+  var phi: ssa.SInst = ssa.SInst { kind_tag: 8, result: out, args: built, imm: 0, str: "" };
+  return Copied { s: CopySplice { ...s, values: s.values.append(t), insts: s.insts.append(phi) }, value: out };
+}
+
+// The view-holding operands to copy, and why one cannot be when an operand
+// holds a view no copy can rebuild (`copy_refusal`). `with_merge_copies` makes
+// each copy with `sp_emit` / `deep_copy` and records its value in `made`.
+pub struct MergePlan { copies: MergeCopy[], why: string }
+
+pub function merge_copies(f: Func): MergePlan {
+  var plan: MergePlan = MergePlan { copies: [], why: "" };
   if (!has_view_phi(f)) {
-    return [];
+    return plan;
   }
   var none: boolean[] = [];
   for _ in f.values {
@@ -4002,17 +4207,16 @@ pub function merge_copies(f: Func): MergeCopy[] {
   }
   var defs: ssa.SInst[] = definitions(f);
   var m: MergeScan = MergeScan { at: ssadeps.position_of(f.graph), dom: ssadeps.dominates(f.graph), home: defining_positions(f), none: none };
-  var copies: MergeCopy[] = [];
   var bi: i32 = 0;
   while (bi < f.graph.blocks.len()) {
     for ins in f.graph.blocks[bi].insts {
       if (ins.kind_tag == 8 && holds_view(f, f.values[ins.result])) {
-        copies = operand_copies(f, defs, m, bi, ins.result, none, copies);
+        plan = operand_copies(f, defs, m, bi, ins.result, none, plan);
       }
     }
     bi = bi + 1;
   }
-  return copies;
+  return plan;
 }
 
 function has_view_phi(f: Func): boolean {
@@ -4040,36 +4244,40 @@ struct MergeScan { at: i32[], dom: ssadeps.Dom, home: i32[], none: boolean[] }
 // The copies that stop `x`, operand `slot` of `consumer`, holding bytes that
 // fail to dominate block position `join`: `x` itself when it is a `str`, else
 // the views its construction takes, through phis and projections.
-function held_copies(f: Func, defs: ssa.SInst[], m: MergeScan, join: i32, consumer: i32, slot: i32, x: i32, seen: boolean[], own copies: MergeCopy[]): MergeCopy[] {
+function held_copies(f: Func, defs: ssa.SInst[], m: MergeScan, join: i32, consumer: i32, slot: i32, x: i32, seen: boolean[], own plan: MergePlan): MergePlan {
   if (!holds_outlived(f, defs, m, join, x, seen)) {
-    return copies;
+    return plan;
   }
   if (is_view(f.values[x])) {
-    return with_copy(f, defs, m, consumer, slot, x, copies);
+    return with_copy(f, defs, m, consumer, slot, x, plan);
   }
   var d: ssa.SInst = defs[x];
   var next: boolean[] = seen.with(x, true);
   if (projects(d.kind_tag) && d.args.len() > 0) {
-    return held_copies(f, defs, m, join, x, 0, d.args[0], next, copies);
+    return held_copies(f, defs, m, join, x, 0, d.args[0], next, plan);
   }
   if (!gathers_views(d.kind_tag)) {
-    if (!copyable(f, f.values[x])) {
-      return copies;
+    var why: string = copy_refusal(f, f.values[x], []);
+    if (why != "") {
+      if (plan.why == "") {
+        plan = MergePlan { ...plan, why: "a value merged past its source has no copy: " + why };
+      }
+      return plan;
     }
-    return with_copy(f, defs, m, consumer, slot, x, copies);
+    return with_copy(f, defs, m, consumer, slot, x, plan);
   }
-  return operand_copies(f, defs, m, join, x, next, copies);
+  return operand_copies(f, defs, m, join, x, next, plan);
 }
 
 // held_copies over each operand of `consumer`.
-function operand_copies(f: Func, defs: ssa.SInst[], m: MergeScan, join: i32, consumer: i32, seen: boolean[], own copies: MergeCopy[]): MergeCopy[] {
+function operand_copies(f: Func, defs: ssa.SInst[], m: MergeScan, join: i32, consumer: i32, seen: boolean[], own plan: MergePlan): MergePlan {
   var args: i32[] = defs[consumer].args;
   var j: i32 = 0;
   while (j < args.len()) {
-    copies = held_copies(f, defs, m, join, consumer, j, args[j], seen, copies);
+    plan = held_copies(f, defs, m, join, consumer, j, args[j], seen, plan);
     j = j + 1;
   }
-  return copies;
+  return plan;
 }
 
 // Whether `x` holds a view a copy would stop reading bytes that fail to
@@ -4081,9 +4289,9 @@ function holds_outlived(f: Func, defs: ssa.SInst[], m: MergeScan, join: i32, x: 
   return !counted_view(f, defs, x, m.none) && roots_outlived(f, defs, m, x, join);
 }
 
-function with_copy(f: Func, defs: ssa.SInst[], m: MergeScan, consumer: i32, slot: i32, x: i32, own copies: MergeCopy[]): MergeCopy[] {
-  if (copies_slot(copies, consumer, slot)) {
-    return copies;
+function with_copy(f: Func, defs: ssa.SInst[], m: MergeScan, consumer: i32, slot: i32, x: i32, own plan: MergePlan): MergePlan {
+  if (copies_slot(plan.copies, consumer, slot)) {
+    return plan;
   }
   var home: i32 = m.home[consumer];
   var edge: boolean = defs[consumer].kind_tag == 8;
@@ -4091,11 +4299,11 @@ function with_copy(f: Func, defs: ssa.SInst[], m: MergeScan, consumer: i32, slot
   if (edge) {
     var preds: i32[] = f.graph.blocks[home].preds;
     if (slot >= preds.len()) {
-      return copies;
+      return plan;
     }
     at = m.at[preds[slot]];
   }
-  return copies.append(MergeCopy { at: at, edge: edge, consumer: consumer, slot: slot, value: x });
+  return MergePlan { ...plan, copies: plan.copies.append(MergeCopy { at: at, edge: edge, consumer: consumer, slot: slot, value: x }) };
 }
 
 // Whether some value holding the bytes `v` reads fails to strictly dominate

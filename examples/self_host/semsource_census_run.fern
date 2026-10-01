@@ -254,29 +254,6 @@ function embedded_stdlib(): modloader.Overlay {
   return modloader.Overlay { paths: paths, srcs: srcs, sealed: false };
 }
 
-// Every import, transitively, the loader did not resolve. It drops one without
-// a word, which in a compiler driver is right (an intrinsic looks like an
-// unresolvable import) and in a census is the failure mode that produced a
-// whole phantom refusal class.
-function unresolved_imports(entry: parser.Module, loaded: flatten.LoadedModule[]): string[] {
-  var have: string[] = [];
-  for m in loaded {
-    have = have.append(m.name + "");
-  }
-  var missing: string[] = [];
-  var wanted: parser.Import[] = entry.imports;
-  for m in loaded {
-    wanted = util.append_all(wanted, m.mod.imports);
-  }
-  for imp in wanted {
-    var name: string = modloader.base_name(imp.path);
-    if (!util.has_str(have, name) && !util.has_str(missing, imp.path)) {
-      missing = missing.append(imp.path + "");
-    }
-  }
-  return missing;
-}
-
 function main(): i32 {
   var av: string[] = args();
   if (av.len() < 2) {
@@ -288,12 +265,10 @@ function main(): i32 {
   match (read_file(entry_path)) {
     Ok(src) => {
       var entry: parser.Module = parser.parse_module(lexer.tokenize(src));
-      var loaded: flatten.LoadedModule[] = modloader.load_imports(embedded_stdlib(), dir, entry);
-      var missing: string[] = unresolved_imports(entry, loaded);
-      if (missing.len() > 0) {
-        for m in missing {
-          eprint("unresolved import: " + m);
-        }
+      // An unresolved import is the failure mode that once produced a whole
+      // phantom refusal class, so the census refuses to count past one.
+      let (loaded, missing) = modloader.load_imports(embedded_stdlib(), entry_path, entry);
+      if (modloader.report_unresolved(missing, "semsource_census_run")) {
         return 2;
       }
       var merged: parser.Module = flatten.bundle(entry, loaded, "arm64-linux");
