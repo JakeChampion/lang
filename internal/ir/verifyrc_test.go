@@ -365,3 +365,25 @@ func TestVerifyRcIgnoresTwoSitesOnDifferentDonors(t *testing.T) {
 		t.Errorf("distinct donors must not be reported, got %v", problems)
 	}
 }
+
+func TestVerifyRcReturnSeparatesClaims(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		between  []Op
+		problems int
+	}{
+		{"value return", []Op{{Kind: OpReturn}}, 0},
+		{"void return", []Op{{Kind: OpReturnVoid}}, 0},
+		{"pair return", []Op{{Kind: OpReturnPair}}, 0},
+		{"conditional return", []Op{{Kind: OpConstI32, I32: 1}, {Kind: OpIf, I32: BlockTypeVoid}, {Kind: OpReturnVoid}, {Kind: OpEnd}}, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := concatFuncs("return-path", selfHostReuse(donor, donor).Ops,
+				tc.between, selfHostReuse(donor, donor).Ops)
+			problems, cov := verifyRc(f)
+			if cov.Checked != 2 || len(problems) != tc.problems {
+				t.Fatalf("checked %d sites, problems %v; want 2 sites and %d problems", cov.Checked, problems, tc.problems)
+			}
+		})
+	}
+}

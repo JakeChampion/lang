@@ -179,6 +179,9 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		want []string // codes the self-host checker should print
 	}{
 		{"clean", "function main(): i32 { return 1 + 2; }\n", nil},
+		{"view-receiver-method", "function (xs: [T]) head(): T { return xs[0]; } function main(): i32 { var a = [3]; var v: [i32] = a[:]; return v.head(); }", nil},
+		{"view-method-on-owned-array", "function (xs: [T]) head(): T { return xs[0]; } function main(): i32 { var a = [3]; return a.head(); }", []string{"E043"}},
+		{"owned-method-on-view", "function (xs: T[]) first(): T { return xs[0]; } function main(): i32 { var a = [3]; var v: [i32] = a[:]; return v.first(); }", []string{"E043"}},
 		// A literal local takes ONE integer type: its first width-fixing use
 		// decides it, i32 when none does (#10123). The self-host held it at i32
 		// from its binding and native let each use pick a width, so the same
