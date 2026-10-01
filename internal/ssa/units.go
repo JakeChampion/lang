@@ -232,6 +232,10 @@ func UnitsOf(f *Func, sigs map[string]Signature) Units {
 		// The second word of a two-word value is a length, and the
 		// lift already records that as ParamAddrs=false, so anything
 		// reaching here is the data word.
+		if _, erased := ir.RcParamTypeErased(f.Name, i); erased {
+			u.origin[p.ID] = UnitUnknown
+			continue
+		}
 		if i < len(self.Params) && self.Params[i] == Consumed {
 			u.origin[p.ID] = UnitTransferred
 			continue
