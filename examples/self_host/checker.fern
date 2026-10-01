@@ -24456,23 +24456,19 @@ function lit_struct_local(v: ast.StmtVar, sl: ast.ExprStructLit, s: Scope, st: L
   var ids: i32[] = [];
   var spelled: string[] = [];
   var any: boolean = false;
+  var lit: ast.Expr[] = [sl];
   var ti: i32 = 0;
   while (ti < sig.type_params.len()) {
     var lits: boolean = false;
     var typed: boolean = false;
     var wide: boolean = false;
-    var i: i32 = 0;
-    while (i < sl.field_names.len()) {
-      var fi: i32 = field_index(sig, sl.field_names[i]);
-      if (fi >= 0 && fi < sig.field_type_names.len() && sig.field_type_names[fi] == sig.type_params[ti]) {
-        if (int_literal_tree(sl.field_values[i])) {
-          lits = true;
-          wide = wide || wide_int_tree(sl.field_values[i]);
-        } else {
-          typed = true;
-        }
+    for e in struct_param_exprs(sig, sig.type_params[ti], lit, s) {
+      if (int_literal_tree(e)) {
+        lits = true;
+        wide = wide || wide_int_tree(e);
+      } else {
+        typed = true;
       }
-      i = i + 1;
     }
     if (lits && !typed) {
       var k: i32 = out.parent.len();
@@ -24738,6 +24734,36 @@ function lit_scan_expr(e: ast.Expr, own sc: LitScan): LitScan {
   return sc;
 }
 
+// lit_holds_int_literal is whether e is an untyped integer tree or holds one
+// as an element of an array, tuple or struct literal.
+function lit_holds_int_literal(e: ast.Expr): boolean {
+  if (int_literal_tree(e)) {
+    return true;
+  }
+  match (e) {
+    ast.ExprArray(ea) => {
+      return lit_holds_any(ea.elements);
+    },
+    ast.ExprTuple(et) => {
+      return lit_holds_any(et.elements);
+    },
+    ast.ExprStructLit(sl) => {
+      return lit_holds_any(sl.field_values);
+    },
+    _ => {}
+  }
+  return false;
+}
+
+function lit_holds_any(es: ast.Expr[]): boolean {
+  for e in es {
+    if (lit_holds_int_literal(e)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function lit_any_int_literal(args: ast.Expr[]): boolean {
   for a in args {
     if (int_literal_tree(a)) {
@@ -24765,7 +24791,7 @@ function lit_candidate_at(st: ast.Stmt): boolean {
         return false;
       }
       if let ast.ExprStructLit(sl) = v.init {
-        return lit_any_int_literal(sl.field_values);
+        return lit_holds_int_literal(v.init);
       }
       return int_literal_tree(v.init);
     },

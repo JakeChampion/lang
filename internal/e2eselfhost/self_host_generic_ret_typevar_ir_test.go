@@ -212,12 +212,15 @@ function main(): i32 {
 	// A generic struct local takes the width its first fixing use names
 	// (#10453).
 	{"struct-literal-local-one-width", `struct Same[T] { a: T, b: T }
+struct Stack[T] { items: T[] }
 @noinline function take1(x: Same[i64]): i64 { return x.a + x.b + 8589934592; }
+@noinline function take_stack(x: Stack[i64]): i64 { return x.items[1] * 4294967296; }
 function main(): i32 {
     var q = Same { a: 1, b: 2 };
     var o = Same { a: 5, b: 6 };
     var r: i64 = o.a;
-    if (take1(q) == 8589934595 && r * 4294967296 == 21474836480) { return 7; }
+    var st = Stack { items: [1, 2] };
+    if (take1(q) == 8589934595 && r * 4294967296 == 21474836480 && take_stack(st) == 8589934592) { return 7; }
     return 3;
 }`},
 	// The widening reads INTEGERS only: wider_int keeps the first reading when

@@ -251,11 +251,13 @@ function main(): i32 {
 // type argument only literals bind takes the width its first fixing use
 // names — the whole local passed where a Same[i64] is wanted, inside an array
 // argument too, or a field read at an i64 destination — and is i32 when none
-// does. A correct run exits 15.
+// does, through a field declared `T[]` as well. A correct run exits 31.
 const genericStructLocalOneWidthProgram = `
 struct Same[T] { a: T, b: T }
+struct Stack[T] { items: T[] }
 @noinline function take1(x: Same[i64]): i64 { return x.a + x.b + 8589934592; }
 @noinline function take(xs: Same[i64][]): i64 { return xs[0].a * 4294967296; }
+@noinline function take_stack(x: Stack[i64]): i64 { return x.items[1] * 4294967296; }
 function main(): i32 {
   var q = Same { a: 1, b: 2 };
   var c = 0;
@@ -268,6 +270,8 @@ function main(): i32 {
   if (r == 21474836480 && o.b + 1 == 7) { c = c + 4; }
   var d = Same { a: 7, b: 8 };
   if (d.a + d.b == 15) { c = c + 8; }
+  var st = Stack { items: [1, 2] };
+  if (take_stack(st) == 8589934592) { c = c + 16; }
   return c;
 }
 `
@@ -337,7 +341,7 @@ func TestInterpUnannotatedBigLiteralWidens(t *testing.T) {
 	run(genericPositionsBigLiteralProgram, 63, "literal-bound generic call in every position")
 	run(arrayArgumentStructLiteralProgram, 3, "struct literals in an array argument")
 	run(genericStructLocalBigLiteralProgram, 31, "generic struct local with a wide literal field")
-	run(genericStructLocalOneWidthProgram, 15, "generic struct local takes its first use's width")
+	run(genericStructLocalOneWidthProgram, 31, "generic struct local takes its first use's width")
 	run(typedFieldBindsAheadOfLiteralProgram, 7, "typed value binds ahead of an earlier literal")
 }
 
@@ -378,8 +382,8 @@ func TestX86_64UnannotatedBigLiteralWidens(t *testing.T) {
 	if _, code := compileAndRunX86_64(t, genericStructLocalBigLiteralProgram); code != 31 {
 		t.Errorf("x86-64 generic struct local with a wide literal field: exit = %d, want 31", code)
 	}
-	if _, code := compileAndRunX86_64(t, genericStructLocalOneWidthProgram); code != 15 {
-		t.Errorf("x86-64 generic struct local takes its first use's width: exit = %d, want 15", code)
+	if _, code := compileAndRunX86_64(t, genericStructLocalOneWidthProgram); code != 31 {
+		t.Errorf("x86-64 generic struct local takes its first use's width: exit = %d, want 31", code)
 	}
 	if _, code := compileAndRunX86_64(t, typedFieldBindsAheadOfLiteralProgram); code != 7 {
 		t.Errorf("x86-64 typed value binds ahead of an earlier literal: exit = %d, want 7", code)
@@ -423,8 +427,8 @@ func TestArm64UnannotatedBigLiteralWidens(t *testing.T) {
 	if _, code := compileAndRunArm64(t, genericStructLocalBigLiteralProgram); code != 31 {
 		t.Errorf("arm64 generic struct local with a wide literal field: exit = %d, want 31", code)
 	}
-	if _, code := compileAndRunArm64(t, genericStructLocalOneWidthProgram); code != 15 {
-		t.Errorf("arm64 generic struct local takes its first use's width: exit = %d, want 15", code)
+	if _, code := compileAndRunArm64(t, genericStructLocalOneWidthProgram); code != 31 {
+		t.Errorf("arm64 generic struct local takes its first use's width: exit = %d, want 31", code)
 	}
 	if _, code := compileAndRunArm64(t, typedFieldBindsAheadOfLiteralProgram); code != 7 {
 		t.Errorf("arm64 typed value binds ahead of an earlier literal: exit = %d, want 7", code)
@@ -468,8 +472,8 @@ func TestWASMUnannotatedBigLiteralWidens(t *testing.T) {
 	if code := runWasm(t, genericStructLocalBigLiteralProgram); code != 31 {
 		t.Errorf("wasm generic struct local with a wide literal field: exit = %d, want 31", code)
 	}
-	if code := runWasm(t, genericStructLocalOneWidthProgram); code != 15 {
-		t.Errorf("wasm generic struct local takes its first use's width: exit = %d, want 15", code)
+	if code := runWasm(t, genericStructLocalOneWidthProgram); code != 31 {
+		t.Errorf("wasm generic struct local takes its first use's width: exit = %d, want 31", code)
 	}
 	if code := runWasm(t, typedFieldBindsAheadOfLiteralProgram); code != 7 {
 		t.Errorf("wasm typed value binds ahead of an earlier literal: exit = %d, want 7", code)
