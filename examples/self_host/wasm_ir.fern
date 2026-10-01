@@ -323,20 +323,14 @@ function need_open_file(needs: string[]): boolean {
   return need(needs, "open_file") || need(needs, "open_with");
 }
 
-// needs_of records every predicate emit_ir_module_units gates on. It MUST stay
-// exhaustive: a missing entry silently drops a runtime helper, which surfaces as
-// an undefined-function link failure rather than a wrong answer. The
-// byte-identity invariant is what pins it — whole-program emit routes through
-// this same set, so an omission changes the emitted module and fails the suite.
-pub function needs_of(cache: irlower.LowerResult[]): string[] {
-  var out: string[] = [];
-  // The ops whose need is the op's own name: each is a name the import and
-  // helper gates test for. exit's `call $proc_exit` needs no import gate on
-  // the command core (mode 0 imports proc_exit unconditionally for _start),
-  // but a component core has no proc_exit at all — mode 2 defines it as a
-  // shim over wasi:cli/exit, and mode 1 rejects the module outright — so it
-  // is recorded like the rest for both to see.
-  var ops: string[] = [
+// need_ops is every op whose need is the op's own name: each is a name the
+// import and helper gates test for. exit's `call $proc_exit` needs no import
+// gate on the command core (mode 0 imports proc_exit unconditionally for
+// _start), but a component core has no proc_exit at all — mode 2 defines it
+// as a shim over wasi:cli/exit, and mode 1 rejects the module outright — so
+// it is recorded like the rest for both to see.
+pub function need_ops(): string[] {
+  return [
     "args", "arr_push", "arr_push_f64", "arr_push_i64", "arr_push_owned", "arr_push_owned_i64",
     "arr_push_owned_f64", "env", "environ", "eprint_str", "exit", "fcos", "fexp", "flog",
     "fpow", "fsin", "monotonic_ns", "now_ns", "now_unix_ms", "poll", "print_str", "putchar",
@@ -353,6 +347,16 @@ pub function needs_of(cache: irlower.LowerResult[]): string[] {
     "wasm_poll", "wasm_pollable_drop", "wasm_timer_pollable", "write_file", "open_file",
     "writer_write", "write_some",
   ];
+}
+
+// needs_of records every predicate emit_ir_module_units gates on. It MUST stay
+// exhaustive: a missing entry silently drops a runtime helper, which surfaces as
+// an undefined-function link failure rather than a wrong answer. The
+// byte-identity invariant is what pins it — whole-program emit routes through
+// this same set, so an omission changes the emitted module and fails the suite.
+pub function needs_of(cache: irlower.LowerResult[]): string[] {
+  var out: string[] = [];
+  var ops: string[] = need_ops();
   var oi: i32 = 0;
   while (oi < ops.len()) {
     if (module_emits_op_cached(cache, ops[oi])) {
