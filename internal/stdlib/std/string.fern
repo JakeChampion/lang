@@ -2152,18 +2152,8 @@ pub function (s: string) split(sep: string): string[] {
   var n: i32 = s.len();
   var sepLen: i32 = sep.len();
   var out: string[] = [];
-  // `i` is the empty-sep branch's cursor only; the separator scan below
-  // tracks its position in `start` / `hit`. Keep the two branches on
-  // DIFFERENT names — the wasm emitter names locals by their lang
-  // identifier, so re-declaring `i` in a sibling scope would collide.
-  var i: i32 = 0;
   if (sepLen == 0) {
-    while (i < n) {
-      var step: i32 = __utf8_step(s, i, n);
-      out = out.append(slice_unchecked(s, i, i + step) + "");
-      i = i + step;
-    }
-    return out;
+    return __split_scalars(s);
   }
   var start: i32 = 0;
   var hit: i32 = __str_find_from(s, n, sep, sepLen, start);
@@ -3045,7 +3035,21 @@ pub function (s: string) at(i: i32): Option[i32] {
 // `s.to_array()` returns one string per Unicode scalar, like split("").
 // Use bytes() or as_bytes() for bytes, and chars() for char values.
 pub function (s: string) to_array(): string[] {
-  return s.split("");
+  return __split_scalars(s);
+}
+
+// Scalar splitting has no separator search. Keep its implementation shared
+// without making to_array retain the general split machinery.
+function __split_scalars(s: string): string[] {
+  var n: i32 = s.len();
+  var out: string[] = [];
+  var i: i32 = 0;
+  while (i < n) {
+    var step: i32 = __utf8_step(s, i, n);
+    out = out.append(slice_unchecked(s, i, i + step) + "");
+    i = i + step;
+  }
+  return out;
 }
 
 // --- UTF-8 codepoint layer -------------------------------------------------

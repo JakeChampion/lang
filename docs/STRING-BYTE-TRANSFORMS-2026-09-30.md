@@ -71,3 +71,33 @@ function main(): i32 {
 ```
 
 Long-search and inline workloads ran in separate sequential batches.
+
+## CI follow-up: ownership and driver size
+
+The conformance leak census found 42 unpaired allocations in
+`prop_string_involution`. They came from `bytes()` on inline strings of
+lengths 1 through 7: `as_bytes()` promoted their contents into storage with
+no owner. Copying short values directly into the owned array removes that
+promotion. The full census passes with its existing zero-leak expectation.
+
+The driver-size check also exposed unnecessary linkage. `to_array()` called
+`split("")`, which retained the general separator search and runtime split
+helpers. A shared scalar loop now serves `to_array()` and the empty-separator
+branch of `split()`, preserving scalar boundaries and owned results.
+
+These are actual linked sizes for `asm_pathprobe_run.fern`, measured with
+`TestSelfHostWarmStockDriver`, `FERN_WARM_DRIVER=asm_pathprobe_run.fern` and
+`FERN_DRIVER_SIZE_REPORT`, using the same pinned stage0-20261001-7d8ea4e:
+
+| Sources | Linked bytes |
+|---|---:|
+| Main base `3dd6a4909` | 5,725,656 |
+| PR head `722625fac` | 5,729,648 |
+| Short-copy fix and shared scalar loop | 5,727,016 |
+
+The scalar loop removes 2,632 bytes from the PR image. Debug-symbol builds
+attribute the code growth over main to 931 bytes, down from 3,396 bytes;
+the removed functions include the general string-split wrappers and runtime
+split/UTF-8-step helpers. The remaining code provides scalar stepping and
+the byte-view search path. The unchanged baseline is 5,454,560 bytes, with
+a 5% ceiling of 5,727,288 bytes. No baseline was raised.
