@@ -32,6 +32,11 @@ on:
   workflow_call:
   workflow_dispatch:
 
+env:
+  # gotestsum reads this as --jsonfile: the event stream the
+  # failure-annotation step names the failed tests from.
+  GOTESTSUM_JSONFILE: /tmp/gotestsum.jsonl
+
 jobs:
   # TWO JOBS, split over the coreutils corpus, which is most of the lane: one
   # job ran 15.8 minutes, the longest in the suite. Each shard runs its half
@@ -382,6 +387,9 @@ jobs:
         # parses the Mach-O it cannot run.
         run: |
           gotestsum --format standard-verbose -- -run '^(TestSelfHostArm64Darwin.*|TestSelfHostCheckerFallbackHint)$' ./internal/e2eselfhost/
+      - name: name the failed tests as annotations
+        if: failure()
+        run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"
 
       - name: Compile + run every example for arm64-darwin (native, default)
         if: "!cancelled() && matrix.shard == 1"

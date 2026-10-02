@@ -140,7 +140,7 @@ func TestSelfHostSemanticTailRecursion(t *testing.T) {
 
 	for _, target := range []string{"x86-64-linux", "x86-64-sanitize", "arm64-linux", "wasm32-wasi"} {
 		t.Run(target, func(t *testing.T) {
-			got, report, leak := semCompileRun(t, gcc, runner, fernBin, stdlibRoot, src, target, true, "")
+			got, report, leak := semCompileRun(t, gcc, runner, fernBin, stdlibRoot, src, target, "")
 			if got != selfHostTailRecursionWant {
 				t.Fatalf("answered %q, want %q\nreport: %s", got, selfHostTailRecursionWant, report)
 			}

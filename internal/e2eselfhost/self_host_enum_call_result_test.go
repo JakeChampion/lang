@@ -89,22 +89,22 @@ function main(): i32 {
 const enumCallResultWant = 64
 
 func TestSelfHostEnumCallResultX86_64(t *testing.T) {
-	checkEnumFieldAlias(t, "x86-64-linux", enumCallResultSrc, "mk_", enumCallResultWant, true)
+	checkEnumFieldAlias(t, "x86-64-linux", enumCallResultSrc, enumCallResultWant)
 }
 
 func TestSelfHostEnumCallResultSanitizeX86_64(t *testing.T) {
-	checkEnumFieldAliasSanitized(t, enumCallResultSrc, "mk_", enumCallResultWant)
+	checkEnumFieldAliasSanitized(t, enumCallResultSrc, enumCallResultWant)
 }
 
 func TestSelfHostEnumCallResultArm64(t *testing.T) {
-	checkEnumFieldAlias(t, "arm64-linux", enumCallResultSrc, "mk_", enumCallResultWant, true)
+	checkEnumFieldAlias(t, "arm64-linux", enumCallResultSrc, enumCallResultWant)
 }
 
 func TestSelfHostEnumCallResultWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping wasm enum call result")
 	}
-	checkEnumFieldAlias(t, "wasm32-wasi", enumCallResultSrc, "mk_", enumCallResultWant, true)
+	checkEnumFieldAlias(t, "wasm32-wasi", enumCallResultSrc, enumCallResultWant)
 }
 
 // A callee handing back a borrowed parameter, or a borrowed struct parameter's
@@ -160,22 +160,22 @@ function main(): i32 {
 const enumCallHandbackWant = 66
 
 func TestSelfHostEnumCallHandbackX86_64(t *testing.T) {
-	checkEnumFieldAlias(t, "x86-64-linux", enumCallHandbackSrc, "hb_", enumCallHandbackWant, true)
+	checkEnumFieldAlias(t, "x86-64-linux", enumCallHandbackSrc, enumCallHandbackWant)
 }
 
 func TestSelfHostEnumCallHandbackSanitizeX86_64(t *testing.T) {
-	checkEnumFieldAliasSanitized(t, enumCallHandbackSrc, "hb_", enumCallHandbackWant)
+	checkEnumFieldAliasSanitized(t, enumCallHandbackSrc, enumCallHandbackWant)
 }
 
 func TestSelfHostEnumCallHandbackArm64(t *testing.T) {
-	checkEnumFieldAlias(t, "arm64-linux", enumCallHandbackSrc, "hb_", enumCallHandbackWant, true)
+	checkEnumFieldAlias(t, "arm64-linux", enumCallHandbackSrc, enumCallHandbackWant)
 }
 
 func TestSelfHostEnumCallHandbackWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping wasm enum call handback")
 	}
-	checkEnumFieldAlias(t, "wasm32-wasi", enumCallHandbackSrc, "hb_", enumCallHandbackWant, true)
+	checkEnumFieldAlias(t, "wasm32-wasi", enumCallHandbackSrc, enumCallHandbackWant)
 }
 
 // A local lent to a handback callee and then returned (#10443). The AST
@@ -208,22 +208,22 @@ function main(): i32 {
 const enumHandbackReturnWant = 3
 
 func TestSelfHostEnumHandbackReturnX86_64(t *testing.T) {
-	checkEnumFieldAlias(t, "x86-64-linux", enumHandbackReturnSrc, "hb_", enumHandbackReturnWant, true)
+	checkEnumFieldAlias(t, "x86-64-linux", enumHandbackReturnSrc, enumHandbackReturnWant)
 }
 
 func TestSelfHostEnumHandbackReturnSanitizeX86_64(t *testing.T) {
-	checkEnumFieldAliasSanitized(t, enumHandbackReturnSrc, "hb_", enumHandbackReturnWant)
+	checkEnumFieldAliasSanitized(t, enumHandbackReturnSrc, enumHandbackReturnWant)
 }
 
 func TestSelfHostEnumHandbackReturnArm64(t *testing.T) {
-	checkEnumFieldAlias(t, "arm64-linux", enumHandbackReturnSrc, "hb_", enumHandbackReturnWant, true)
+	checkEnumFieldAlias(t, "arm64-linux", enumHandbackReturnSrc, enumHandbackReturnWant)
 }
 
 func TestSelfHostEnumHandbackReturnWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping wasm enum handback return")
 	}
-	checkEnumFieldAlias(t, "wasm32-wasi", enumHandbackReturnSrc, "hb_", enumHandbackReturnWant, true)
+	checkEnumFieldAlias(t, "wasm32-wasi", enumHandbackReturnSrc, enumHandbackReturnWant)
 }
 
 // An "ENUM:" member's result in each temporary position: an argument, a match
@@ -273,20 +273,20 @@ function main(): i32 {
 const enumCallTempWant = 42
 
 func TestSelfHostEnumCallTempX86_64(t *testing.T) {
-	checkEnumFieldAlias(t, "x86-64-linux", enumCallTempSrc, "mk_", enumCallTempWant, true)
+	checkEnumFieldAlias(t, "x86-64-linux", enumCallTempSrc, enumCallTempWant)
 }
 
 func TestSelfHostEnumCallTempSanitizeX86_64(t *testing.T) {
-	checkEnumFieldAliasSanitized(t, enumCallTempSrc, "mk_", enumCallTempWant)
+	checkEnumFieldAliasSanitized(t, enumCallTempSrc, enumCallTempWant)
 }
 
 func TestSelfHostEnumCallTempArm64(t *testing.T) {
-	checkEnumFieldAlias(t, "arm64-linux", enumCallTempSrc, "mk_", enumCallTempWant, true)
+	checkEnumFieldAlias(t, "arm64-linux", enumCallTempSrc, enumCallTempWant)
 }
 
 func TestSelfHostEnumCallTempWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping wasm enum call temporaries")
 	}
-	checkEnumFieldAlias(t, "wasm32-wasi", enumCallTempSrc, "mk_", enumCallTempWant, true)
+	checkEnumFieldAlias(t, "wasm32-wasi", enumCallTempSrc, enumCallTempWant)
 }

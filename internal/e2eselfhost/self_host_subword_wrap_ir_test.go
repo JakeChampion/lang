@@ -71,29 +71,19 @@ var subwordWrapIRCases = []struct {
 }
 
 // TestSelfHostSubwordWrapIR compiles each case with the self-host CLI for
-// x86-64, arm64 and wasm, under both the typed lowering and the AST lowering
-// (FERN_SEM_IR=), and checks the exit code against the interpreter.
+// x86-64, arm64 and wasm, and checks the exit code against the interpreter.
 func TestSelfHostSubwordWrapIR(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	interpBin := buildLangBinForInterp(t)
-	lowerings := []struct {
-		name string
-		env  []string
-	}{
-		{"typed", nil},
-		{"ast", []string{"FERN_SEM_IR="}},
-	}
 	for _, tc := range subwordWrapIRCases {
 		src := tc.main + "\n"
 		want := interpExit(t, interpBin, src)
 		for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
-			for _, lw := range lowerings {
-				t.Run(target+"/"+lw.name+"/"+tc.name, func(t *testing.T) {
-					if stderr, code := cli.exitOf(t, src, target, lw.env...); code != want {
-						t.Errorf("exited %d, want %d (interp oracle)\n%s", code, want, stderr)
-					}
-				})
-			}
+			t.Run(target+"/"+tc.name, func(t *testing.T) {
+				if stderr, code := cli.exitOf(t, src, target); code != want {
+					t.Errorf("exited %d, want %d (interp oracle)\n%s", code, want, stderr)
+				}
+			})
 		}
 	}
 }

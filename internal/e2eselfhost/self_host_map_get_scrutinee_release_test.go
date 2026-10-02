@@ -7,12 +7,9 @@ import (
 	"testing"
 )
 
-// A match over a builtin `m.get(k)` shallow-frees the Option box its answer
-// came in, and the AST lowering did that only at the join after the arms, so
-// an arm that `return`s left the box behind: one 40-byte block per early exit.
-// It is now released inside the arm once the bindings are read, as the
-// builtin-call scrutinees already were (#9038's neighbour). FERN_SEM_IR=
-// selects the AST lowering; the semantic one already balanced.
+// A match over a builtin `m.get(k)` releases the Option box its answer came
+// in, an arm that `return`s included: no block per early exit (#9038's
+// neighbour).
 const mapGetScrutineeSrc = `import "core/map";
 @noinline
 function find(m: Map[string, i32], k: string): i32 {
@@ -38,7 +35,7 @@ func TestSelfHostMapGetScrutineeReleaseX86_64(t *testing.T) {
 	const want = (20 * (42 + 9)) % 101
 	for _, mode := range []string{"FERN_LEAKCHECK=1", "FERN_SANITIZE=1"} {
 		t.Run(strings.TrimSuffix(mode, "=1"), func(t *testing.T) {
-			stderr, exit := runWithStdin(t, cli.runner, cli.x86Binary(t, src, mode, "FERN_SEM_IR="), nil)
+			stderr, exit := runWithStdin(t, cli.runner, cli.x86Binary(t, src, mode), nil)
 			if exit != want || strings.Contains(stderr, "fern-sanitizer:") {
 				t.Fatalf("exit = %d, want %d, and the sanitizer silent\n%s", exit, want, stderr)
 			}

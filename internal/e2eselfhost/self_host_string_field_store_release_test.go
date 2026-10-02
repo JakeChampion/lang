@@ -42,11 +42,6 @@ function main(): i32 {
 }
 `
 
-var stringFieldStoreLowerings = []struct{ name, env string }{
-	{"semantic", "FERN_SEM_IR=1"},
-	{"ast", "FERN_SEM_IR="},
-}
-
 func writeStringFieldStoreSrc(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "string_field_store.fern")
@@ -63,29 +58,21 @@ const stringFieldStoreWant = 1260 % 251
 func TestSelfHostStringFieldStoreReleaseX86_64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	src := writeStringFieldStoreSrc(t)
-	for _, lw := range stringFieldStoreLowerings {
-		t.Run(lw.name, func(t *testing.T) {
-			bin := cli.x86Binary(t, src, "FERN_LEAKCHECK=1", lw.env)
-			stderr, exit := runWithStdin(t, cli.runner, bin, nil)
-			if exit != stringFieldStoreWant {
-				t.Fatalf("exit = %d, want %d\n%s", exit, stringFieldStoreWant, stderr)
-			}
-			assertBalancedCensus(t, stderr)
-		})
+	bin := cli.x86Binary(t, src, "FERN_LEAKCHECK=1")
+	stderr, exit := runWithStdin(t, cli.runner, bin, nil)
+	if exit != stringFieldStoreWant {
+		t.Fatalf("exit = %d, want %d\n%s", exit, stringFieldStoreWant, stderr)
 	}
+	assertBalancedCensus(t, stderr)
 }
 
 func TestSelfHostStringFieldStoreReleaseSanitizeX86_64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	src := writeStringFieldStoreSrc(t)
-	for _, lw := range stringFieldStoreLowerings {
-		t.Run(lw.name, func(t *testing.T) {
-			bin := cli.x86Binary(t, src, "FERN_SANITIZE=1", lw.env)
-			stderr, exit := runWithStdin(t, cli.runner, bin, nil)
-			if exit != stringFieldStoreWant || strings.Contains(stderr, "fern-sanitizer:") {
-				t.Fatalf("exit = %d, want %d, and the sanitizer silent\n%s", exit, stringFieldStoreWant, stderr)
-			}
-		})
+	bin := cli.x86Binary(t, src, "FERN_SANITIZE=1")
+	stderr, exit := runWithStdin(t, cli.runner, bin, nil)
+	if exit != stringFieldStoreWant || strings.Contains(stderr, "fern-sanitizer:") {
+		t.Fatalf("exit = %d, want %d, and the sanitizer silent\n%s", exit, stringFieldStoreWant, stderr)
 	}
 }
 
@@ -95,14 +82,10 @@ func TestSelfHostStringFieldStoreReleaseWasm(t *testing.T) {
 	}
 	cli := buildSelfHostCLI(t)
 	src := writeStringFieldStoreSrc(t)
-	for _, lw := range stringFieldStoreLowerings {
-		t.Run(lw.name, func(t *testing.T) {
-			wat := cli.emit(t, src, "wasm32-wasi", "FERN_LEAKCHECK=1", lw.env)
-			stderr, exit := runWasmCensus(t, wat)
-			if exit != stringFieldStoreWant {
-				t.Fatalf("exit = %d, want %d\n%s", exit, stringFieldStoreWant, stderr)
-			}
-			assertBalancedCensus(t, stderr)
-		})
+	wat := cli.emit(t, src, "wasm32-wasi", "FERN_LEAKCHECK=1")
+	stderr, exit := runWasmCensus(t, wat)
+	if exit != stringFieldStoreWant {
+		t.Fatalf("exit = %d, want %d\n%s", exit, stringFieldStoreWant, stderr)
 	}
+	assertBalancedCensus(t, stderr)
 }

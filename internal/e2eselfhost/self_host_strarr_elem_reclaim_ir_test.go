@@ -2,7 +2,6 @@ package e2eselfhost
 
 import (
 	"os/exec"
-	"strings"
 	"testing"
 )
 
@@ -20,67 +19,18 @@ import (
 // The reclaim is proven by a BOUNDED HIGH-WATER assertion (__heap_bump_bytes()
 // stays flat across a second 5000-iteration churn — element leaks grow it by
 // ~150 B/iter; the only admitted slack is the churn frame's own literal box, a
-// known pre-existing gap measured at 24 B/call), a double-free by the
-// over-release detector (__rc_underflow_count() → 99), and admission/exclusion by an
-// asm-shape assertion on the __fn___fern_str_arr_free CALL site.
+// known pre-existing gap measured at 24 B/call), and a double-free by the
+// over-release detector (__rc_underflow_count() → 99).
 func TestSelfHostStrArrElemReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	l := newStdlibLoader(t)
 	dir := t.TempDir()
 
-	// userCodeCalls reports whether a `call <helper>` appears inside a USER
-	// function — i.e. under a `__fn_<name>:` label that is not itself a
-	// runtime helper (`__fn___fern_*`). The runtime block emits helper
-	// BODIES unconditionally, and since #4355 slice 9 the
-	// __fn___fern_strarrarr_free body itself contains a
-	// `call __fn___fern_str_arr_free` (its per-element inner walk), so a
-	// naive whole-asm substring match reads every compile as "admitted".
-	// Only a call site in user code is a reclaim-set admission.
-	userCodeCalls := func(asm, helper string) bool {
-		inUser := false
-		for _, ln := range strings.Split(asm, "\n") {
-			if strings.HasPrefix(ln, "__fn_") && strings.HasSuffix(ln, ":") {
-				// The per-type RC helpers are compiler-generated runtime, not the
-				// user's frame. __struct_drop_<T> / __field_reclaim_<T> element-walk
-				// a `string[]` FIELD the strarrfld scan admitted, which is a
-				// different reclaim decision from the SARR local credit these rows
-				// measure — conflating them made a `Box { rows: xs }` case read as
-				// "build element-walked xs" when build does nothing of the kind.
-				inUser = !strings.HasPrefix(ln, "__fn___fern_") &&
-					!strings.HasPrefix(ln, "__fn___struct_drop_") &&
-					!strings.HasPrefix(ln, "__fn___field_reclaim_")
-				continue
-			}
-			if inUser && strings.Contains(ln, "call "+helper) {
-				return true
-			}
-		}
-		return false
-	}
-
-	// wantCall: "yes" asserts the element-walk call IS emitted (the array was
-	// admitted to the SARR set); "no" asserts it is NOT (the hazard walk
-	// excluded it — the shallow dec still runs).
-	run := func(t *testing.T, prog, name string, want int, wantCall string) {
+	run := func(t *testing.T, prog, name string, want int) {
 		t.Helper()
 		asm := []byte(l.emit(t, prog))
 		if len(asm) == 0 {
 			t.Fatalf("%s: self-host compiler emitted 0 bytes", name)
-		}
-		// The SARR admission is the AST lowering's, so it is read from that lowering.
-		astAsm := l.emitAST(t, prog)
-		hasCall := userCodeCalls(astAsm, "__fn___fern_str_arr_free")
-		if wantCall == "yes" && !hasCall {
-			t.Fatalf("%s: emitted asm has no __fn___fern_str_arr_free call — the string[] was not admitted to the SARR reclaim set", name)
-		}
-		if wantCall == "no" && hasCall {
-			t.Fatalf("%s: emitted asm calls __fn___fern_str_arr_free — the element-hazard walk failed to exclude an aliased/escaping element", name)
-		}
-		if wantCall == "forwarded" {
-			const call = "call __fn___fern_str_arr_free"
-			if !strings.Contains(asmFuncBody(t, astAsm, "__fn_churn"), call) {
-				t.Fatal("consumer must release the counted elements received through the forwarder")
-			}
 		}
 		bin := buildBin(t, gcc, dir, name, string(asm))
 		var cmd *exec.Cmd
@@ -107,7 +57,7 @@ func TestSelfHostStrArrElemReclaimIRX86_64(t *testing.T) {
 	run(t, `function build(pre: string): i32 { var xs: string[] = ["lit", pre + "c"]; xs = xs.append(pre + "de"); var tl: i32 = 0; var j: i32 = 0; while (j < xs.len()) { tl = tl + xs[j].len(); j = j + 1; } return tl; }
 function churn(n: i32): i32 { var pre: string = "ab"; var acc: i32 = 0; var i: i32 = 0; while (i < n) { acc = (acc + build(pre)) % 251; i = i + 1; } return acc; }
 function main(): i32 { var w: i32 = churn(5000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(5000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
-		"strarr-elem-reclaim-flat", 0, "yes")
+		"strarr-elem-reclaim-flat", 0)
 
 	// LOOP-BODY REINIT, BOUNDED HIGH-WATER (#4353 item 4): a string[] local
 	// re-DECLARED each iteration of churn's own loop (not freed at a helper's
@@ -120,7 +70,7 @@ function main(): i32 { var w: i32 = churn(5000); var b1: i32 = (__heap_bump_byte
 	// double-free (reinit + exit sweep both freeing the final box) → 99.
 	run(t, `function churn(n: i32): i32 { var pre: string = "ab"; var acc: i32 = 0; var i: i32 = 0; while (i < n) { var xs: string[] = ["lit", pre + "x", pre + "yy"]; acc = (acc + xs[0].len() + xs[2].len()) % 251; i = i + 1; } return acc; }
 function main(): i32 { var w: i32 = churn(5000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(5000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
-		"strarr-elem-reinit-loop", 0, "yes")
+		"strarr-elem-reinit-loop", 0)
 
 	// ELEMENT ALIAS BINDING excludes: `var t = xs[0]` is a lasting element alias
 	// the walk can't see through — xs must stay on the shallow buffer-only dec,
@@ -129,7 +79,7 @@ function main(): i32 { var w: i32 = churn(5000); var b1: i32 = (__heap_bump_byte
 	run(t, `function pick(pre: string): i32 { var xs: string[] = [pre + "x", "qq"]; var t: string = xs[0]; return t.len() + xs[1].len(); }
 function churn(n: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { if (pick(pre) != 5) { bad = 1; } i = i + 1; } return bad; }
 function main(): i32 { var v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
-		"strarr-elem-alias-excluded", 0, "no")
+		"strarr-elem-alias-excluded", 0)
 
 	// RETURNED ELEMENT excludes: `return xs[0]` hands an element box to the
 	// caller — xs must not element-walk (the shallow dec frees only the buffer,
@@ -137,7 +87,7 @@ function main(): i32 { var v: i32 = churn(2000); if (__rc_underflow_count() != 0
 	run(t, `function first(pre: string): string { var xs: string[] = [pre + "z"]; return xs[0]; }
 function churn(n: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { if (first(pre).len() != 3) { bad = 1; } i = i + 1; } return bad; }
 function main(): i32 { var v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
-		"strarr-elem-return-excluded", 0, "no")
+		"strarr-elem-return-excluded", 0)
 
 	// PRODUCER-CALL ELEMENT, BOUNDED HIGH-WATER: the stored elements are calls
 	// to `w`, a whole-program-proven fresh-string producer (str_fresh_ret_fns),
@@ -150,7 +100,7 @@ function main(): i32 { var v: i32 = churn(2000); if (__rc_underflow_count() != 0
 function build(pre: string): i32 { var xs: string[] = [w(pre), "lit"]; xs = xs.append(w(pre)); var tl: i32 = 0; var j: i32 = 0; while (j < xs.len()) { tl = tl + xs[j].len(); j = j + 1; } return tl; }
 function churn(n: i32): i32 { var pre: string = "ab"; var acc: i32 = 0; var i: i32 = 0; while (i < n) { acc = (acc + build(pre)) % 251; i = i + 1; } return acc; }
 function main(): i32 { var w0: i32 = churn(5000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(5000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w0 != x) { return 97; } return 0; }`,
-		"strarr-elem-producer-store-flat", 0, "yes")
+		"strarr-elem-producer-store-flat", 0)
 
 	// LOCAL BOUND FROM A PRODUCER, BOUNDED HIGH-WATER: `var xs = mk(pre)` where
 	// `mk` is a "STRARR:" registry function — its admission already proved
@@ -165,7 +115,7 @@ function mk(pre: string): string[] { var out: string[] = []; var i: i32 = 0; whi
 function build(pre: string): i32 { var xs: string[] = mk(pre); var tl: i32 = 0; var j: i32 = 0; while (j < xs.len()) { tl = tl + xs[j].len(); j = j + 1; } return tl; }
 function churn(n: i32): i32 { var pre: string = "ab"; var acc: i32 = 0; var i: i32 = 0; while (i < n) { acc = (acc + build(pre)) % 251; i = i + 1; } return acc; }
 function main(): i32 { var w0: i32 = churn(5000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(5000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w0 != x) { return 97; } return 0; }`,
-		"strarr-local-from-producer-flat", 0, "yes")
+		"strarr-local-from-producer-flat", 0)
 
 	// BORROWED CALL ARG stays admitted: `take` only reads its parameter, so it
 	// is borrowable and the array does not escape — the credit survives the
@@ -177,7 +127,7 @@ function take(xs: string[]): i32 { return xs.len() + xs[0].len(); }
 function build(pre: string): i32 { var xs: string[] = mk(pre); var k: i32 = take(xs); return k + xs[2].len(); }
 function churn(n: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { if (build(pre) != 89) { bad = 1; } i = i + 1; } return bad; }
 function main(): i32 { var v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
-		"strarr-local-borrowed-arg-flat", 0, "yes")
+		"strarr-local-borrowed-arg-flat", 0)
 
 	// STORED BY THE CALLEE is ADMITTED, and this case used to pin the opposite.
 	// Its premise was that `keep`'s parameter is not borrowable, which is still
@@ -204,7 +154,7 @@ function keep(xs: string[]): Box { return Box { rows: xs }; }
 function build(pre: string): i32 { var xs: string[] = mk(pre); var b: Box = keep(xs); return b.rows.len() + b.rows[0].len() + xs[2].len(); }
 function churn(n: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { if (build(pre) != 89) { bad = 1; } i = i + 1; } return bad; }
 function main(): i32 { var v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
-		"strarr-local-stored-by-callee-counted", 0, "yes")
+		"strarr-local-stored-by-callee-counted", 0)
 
 	// The same store where the holder ESCAPES the frame that owns the array —
 	// the shape the case above was written against, and the one that can
@@ -235,7 +185,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 83;
 }`,
-		"strarr-local-callee-holder-escapes", 8, "yes")
+		"strarr-local-callee-holder-escapes", 8)
 
 	// Forwarding transfers the claim: fwd must not free its returned array,
 	// while churn must deep-free that result. fwd's `return xs` moves the array
@@ -247,7 +197,7 @@ function mk(pre: string): string[] { var out: string[] = []; var i: i32 = 0; whi
 function fwd(pre: string): string[] { var xs: string[] = mk(pre); return xs; }
 function churn(n: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { var r: string[] = fwd(pre); if (r.len() + r[1].len() != 46) { bad = 1; } i = i + 1; } return bad; }
 function main(): i32 { var v: i32 = churn(2000); var before = __heap_bump_bytes(); var v2: i32 = churn(2000); var after = __heap_bump_bytes(); if (after != before) { return 98; } if (__rc_underflow_count() != 0) { return 99; } return v + v2; }`,
-		"strarr-local-forwarded-return-owned", 0, "forwarded")
+		"strarr-local-forwarded-return-owned", 0)
 
 	// SELF-`.with` REBIND, BOUNDED HIGH-WATER (#6407): `a = a.with(i, v)` on an
 	// owned string[] lowers to an in-place arr_set, which used to drop the
@@ -263,7 +213,7 @@ function mks(pre: string): string[] { var out: string[] = []; var i: i32 = 0; wh
 function build(pre: string): i32 { var a: string[] = mks(pre); a = a.with(3, a[5]); return a.len() + a[3].len() + a[5].len(); }
 function churn(n: i32): i32 { var pre: string = "ab"; var acc: i32 = 0; var i: i32 = 0; while (i < n) { acc = (acc + build(pre)) % 251; i = i + 1; } return acc; }
 function main(): i32 { var w0: i32 = churn(5000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(5000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w0 != x) { return 97; } return 0; }`,
-		"strarr-with-rebind-flat", 0, "yes")
+		"strarr-with-rebind-flat", 0)
 
 	// `.with` VALUE IS A LIVE LOCAL: the store retains it, so the array and the
 	// local each hold a counted reference — the local reads valid bytes after
@@ -276,7 +226,7 @@ function churn(n: i32): string { var s: string = ""; var i: i32 = 0; while (i < 
 function build(pre: string): i32 { var xs: string[] = mks(pre); var nm: string = pre + "-a-distinct-live-local-string-value"; xs = xs.with(1, nm); var junk: string = churn(20); if (junk.len() < 0) { return 0; } return nm.len() + xs[1].len() + xs[0].len(); }
 function run2(n: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { if (build(pre) != 97) { bad = 1; } i = i + 1; } return bad; }
 function main(): i32 { var v: i32 = run2(3000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
-		"strarr-with-live-local-value-safe", 0, "yes")
+		"strarr-with-live-local-value-safe", 0)
 
 	// `.with` SELF-STORE `a.with(i, a[i])`: the release is cow-guarded on the
 	// old element differing from the stored value, so the store never frees the
@@ -287,7 +237,7 @@ function churn(n: i32): string { var s: string = ""; var i: i32 = 0; while (i < 
 function build(pre: string): i32 { var xs: string[] = mks(pre); xs = xs.with(3, xs[3]); var junk: string = churn(20); if (junk.len() < 0) { return 0; } return xs[3].len(); }
 function run2(n: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { if (build(pre) != 23) { bad = 1; } i = i + 1; } return bad; }
 function main(): i32 { var v: i32 = run2(3000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
-		"strarr-with-self-store-safe", 0, "yes")
+		"strarr-with-self-store-safe", 0)
 
 	// (A borrowed-element STORE case — `var xs: string[] = [nm]` — cannot be
 	// exercised here: a bare-ident element in a string[] literal/append bails

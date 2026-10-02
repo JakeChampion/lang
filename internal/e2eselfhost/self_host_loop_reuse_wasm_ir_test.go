@@ -5,7 +5,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -82,10 +81,6 @@ func TestSelfHostLoopReuseWasmIR(t *testing.T) {
 			wat, err := cmd.Output()
 			if err != nil || len(wat) == 0 {
 				t.Fatalf("driver failed for %q: %v", tc.src, err)
-			}
-			// The reuse emission checked is the AST lowering's.
-			if !strings.Contains(string(runCaptureAST(t, runner, driverBin, []byte(tc.src), "-ir")), "$__fern_str_box") {
-				t.Errorf("%q did not reach the IR box path (no box in WAT)", tc.name)
 			}
 			watFile := filepath.Join(dir, tc.name+".wat")
 			if err := os.WriteFile(watFile, wat, 0o644); err != nil {

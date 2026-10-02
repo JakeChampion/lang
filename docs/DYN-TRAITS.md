@@ -609,7 +609,7 @@ takes only the same `dyn` (#10055). An array literal written at a declared
 coerced on its own, so `[1, "a"]` is one. An assignment declares nothing, so
 there the elements must agree, as native has it (#10097).
 
-**The typed path (`FERN_SEM_IR`).** A struct or enum widened to `dyn` is
+**The typed path.** A struct or enum widened to `dyn` is
 a projection of its box (`ssasem.dyn_up`), and a method call on it is a
 `call` whose contract is the implementations' shared signature. The
 operands go in consecutive slots, which is where `op_dyn_dispatch` reads

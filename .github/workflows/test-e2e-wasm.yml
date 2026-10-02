@@ -66,3 +66,6 @@ jobs:
           cd internal/e2e
           "$RUNNER_TEMP/ci-test-workers" -binary "$BIN" -output "$RUNNER_TEMP/wasm-test-results" \
             -format standard-verbose -workers 2 -timeout 18m -run '^Test(WASM|Wasm)'
+      - name: name the failed tests as annotations
+        if: failure()
+        run: scripts/ci-annotate-failures "$RUNNER_TEMP"/wasm-test-results/worker-*.jsonl

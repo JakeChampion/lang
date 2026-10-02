@@ -58,18 +58,12 @@ func TestSelfHostRegexUTF8(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, mode := range []string{"", "1"} {
 		for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
-			t.Run("typed="+mode+"/"+target, func(t *testing.T) {
+			t.Run("legacy-env="+mode+"/"+target, func(t *testing.T) {
 				stderr, code := cli.exitOf(t, e2eharness.RegexUTF8Program, target, "FERN_SEM_IR="+mode, "FERN_SEM_IR_STRICT="+mode, "FERN_SEM_IR_ONLY=", "FERN_SEM_IR_SKIP=", "FERN_STRICT_IR=1", "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
 				if code != 0 {
 					t.Fatalf("exit = %d\n%s", code, stderr)
 				}
-				// Record the legacy AST census separately. Production
-				// semantic lowering must reclaim every allocation.
-				if mode != "" {
-					assertBalancedCensus(t, stderr)
-				} else {
-					t.Log(stderr)
-				}
+				assertBalancedCensus(t, stderr)
 			})
 		}
 	}
@@ -88,7 +82,7 @@ func TestSelfHostArm64DarwinRegexUTF8(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, mode := range []string{"", "1"} {
-		t.Run("typed="+mode, func(t *testing.T) {
+		t.Run("legacy-env="+mode, func(t *testing.T) {
 			bin := filepath.Join(t.TempDir(), "range")
 			compile := exec.Command(cli, "-target", "arm64-darwin", src, stdlib, "-o", bin)
 			compile.Env = append(os.Environ(), "FERN_SEM_IR="+mode, "FERN_SEM_IR_STRICT="+mode, "FERN_SEM_IR_ONLY=", "FERN_SEM_IR_SKIP=", "FERN_STRICT_IR=1", "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
@@ -98,11 +92,7 @@ func TestSelfHostArm64DarwinRegexUTF8(t *testing.T) {
 			if out, err := exec.Command(bin).CombinedOutput(); err != nil {
 				t.Fatalf("run: %v\n%s", err, out)
 			} else {
-				if mode != "" {
-					assertBalancedCensus(t, string(out))
-				} else {
-					t.Log(string(out))
-				}
+				assertBalancedCensus(t, string(out))
 			}
 		})
 	}

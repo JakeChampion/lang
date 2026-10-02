@@ -8,20 +8,16 @@ import (
 	"testing"
 )
 
-// An AST-lowered caller releases a struct a semantic-lowered producer returns
-// when every return hands back a box the producer built (#10415). Each row
-// runs on every lowering; the reads after a rebind follow fresh allocations,
-// so a box released early shows as a wrong answer.
+// A caller releases a struct a producer returns when every return hands back
+// a box the producer built (#10415). The reads after a rebind follow fresh
+// allocations, so a box released early shows as a wrong answer.
 var mixedStructReleaseCases = []struct {
 	name string
 	src  string
 	want int
-	// balanced: the census closes on every lowering. A row that is not
-	// balanced still has to run clean under the sanitizer apart from leaks.
+	// balanced: the census closes. A row that is not balanced still has to
+	// run clean under the sanitizer apart from leaks.
 	balanced bool
-	// producedOnly: the census closes only where the callees are produced;
-	// an AST-lowered callee keeps that lowering's own leak floor.
-	producedOnly bool
 }{
 	{"loop_built_field", `struct Ints { n: i32, ys: i32[] }
 function build(k: i32): Ints {
@@ -31,7 +27,7 @@ function build(k: i32): Ints {
     return Ints { n: k, ys: g };
 }
 function main(): i32 { var r: Ints = build(3); return r.ys[1] + r.n; }
-`, 4, true, false},
+`, 4, true},
 	{"rebind_in_loop", `struct Ints { n: i32, ys: i32[] }
 function build(k: i32): Ints {
     var g: i32[] = [];
@@ -52,7 +48,7 @@ function main(): i32 {
     }
     return acc + r.n;
 }
-`, 61, true, false},
+`, 61, true},
 	{"merged_returns", `struct Ints { n: i32, ys: i32[] }
 function build(k: i32): Ints {
     var s: Ints = Ints { n: k, ys: [k, 1] };
@@ -75,9 +71,9 @@ function main(): i32 {
     }
     return acc;
 }
-`, 39, true, false},
+`, 39, true},
 	// Results that are not a box the producer built alone: a parameter handed
-	// back, a choice between two, and a record also stored elsewhere. The AST
+	// back, a choice between two, and a record also stored elsewhere. The
 	// caller must not free a field the other owner still reads.
 	{"shared_results", `struct Ints { n: i32, ys: i32[] }
 function pass(p: Ints): Ints { return p; }
@@ -101,7 +97,7 @@ function main(): i32 {
     }
     return acc + base.ys[3];
 }
-`, 33, false, false},
+`, 33, false},
 	// A method's verdict must not reach the free function of the same name:
 	// here the method builds its result and the free function hands back its
 	// argument.
@@ -121,10 +117,9 @@ function main(): i32 {
     }
     return acc + base.ys[1];
 }
-`, 42, false, false},
-	// An AST caller reads a produced method's rows under `<Base>.<name>`
-	// (#10515): the array result's release, the record results' counted
-	// class, and a discarded call's field walk.
+`, 42, false},
+	// A method's results (#10515): the array result's release, the record
+	// results' counted class, and a discarded call's field walk.
 	{"method_array_result", `struct Ints { n: i32, ys: i32[] }
 function (s: Ints) arr(k: i32): i32[] {
     var g: i32[] = s.ys;
@@ -144,7 +139,7 @@ function main(): i32 {
     }
     return acc + base.ys[1];
 }
-`, 32, true, true},
+`, 32, true},
 	{"method_record_results", `struct Ints { n: i32, ys: i32[] }
 function (s: Ints) spread(k: i32): Ints {
     var t: Ints = Ints { n: k, ys: [k, s.n] };
@@ -172,7 +167,7 @@ function main(): i32 {
     }
     return acc + base.ys[1];
 }
-`, 39, true, false},
+`, 39, true},
 	// A free producer's built record is in the counted class too, which is
 	// what releases a read-through array field.
 	{"free_record_read_through", `struct Ints { n: i32, ys: i32[] }
@@ -194,18 +189,7 @@ function main(): i32 {
     }
     return acc + base.ys[1];
 }
-`, 21, true, false},
-}
-
-var mixedStructReleaseLowerings = []struct {
-	name, env string
-	// produced: the callees are semantic-lowered.
-	produced bool
-}{
-	{"semantic", "FERN_SEM_IR=1", true},
-	{"ast", "FERN_SEM_IR=", false},
-	{"ast_main", "FERN_SEM_IR_SKIP=main", true},
-	{"ast_callees", "FERN_SEM_IR_SKIP=build,pass,pick,stash,mk,arr,spread,looped", false},
+`, 21, true},
 }
 
 func writeMixedStructReleaseSrc(t *testing.T, name, src string) string {
@@ -217,30 +201,24 @@ func writeMixedStructReleaseSrc(t *testing.T, name, src string) string {
 	return path
 }
 
-func mixedStructBalanced(balanced, producedOnly, produced bool) bool {
-	return balanced && (!producedOnly || produced)
-}
-
 func TestSelfHostMixedStructReleaseX86_64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range mixedStructReleaseCases {
 		src := writeMixedStructReleaseSrc(t, tc.name, tc.src)
-		for _, lw := range mixedStructReleaseLowerings {
-			balanced := mixedStructBalanced(tc.balanced, tc.producedOnly, lw.produced)
-			t.Run(tc.name+"/"+lw.name, func(t *testing.T) {
-				stderr, exit := runWithStdin(t, cli.runner, cli.x86Binary(t, src, "FERN_LEAKCHECK=1", lw.env), nil)
-				if exit != tc.want {
-					t.Fatalf("leakcheck: exit = %d, want %d\n%s", exit, tc.want, stderr)
-				}
-				if balanced {
-					assertBalancedCensus(t, stderr)
-				}
-				stderr, exit = runWithStdin(t, cli.runner, cli.x86Binary(t, src, "FERN_SANITIZE=1", lw.env), nil)
-				if exit != tc.want || forArrStructSanitizerFault(stderr, balanced) {
-					t.Fatalf("sanitize: exit = %d, want %d, and no sanitizer report\n%s", exit, tc.want, stderr)
-				}
-			})
-		}
+		balanced := tc.balanced
+		t.Run(tc.name, func(t *testing.T) {
+			stderr, exit := runWithStdin(t, cli.runner, cli.x86Binary(t, src, "FERN_LEAKCHECK=1"), nil)
+			if exit != tc.want {
+				t.Fatalf("leakcheck: exit = %d, want %d\n%s", exit, tc.want, stderr)
+			}
+			if balanced {
+				assertBalancedCensus(t, stderr)
+			}
+			stderr, exit = runWithStdin(t, cli.runner, cli.x86Binary(t, src, "FERN_SANITIZE=1"), nil)
+			if exit != tc.want || forArrStructSanitizerFault(stderr, balanced) {
+				t.Fatalf("sanitize: exit = %d, want %d, and no sanitizer report\n%s", exit, tc.want, stderr)
+			}
+		})
 	}
 }
 
@@ -249,25 +227,23 @@ func TestSelfHostMixedStructReleaseArm64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range mixedStructReleaseCases {
 		src := writeMixedStructReleaseSrc(t, tc.name, tc.src)
-		for _, lw := range mixedStructReleaseLowerings {
-			balanced := mixedStructBalanced(tc.balanced, tc.producedOnly, lw.produced)
-			t.Run(tc.name+"/"+lw.name, func(t *testing.T) {
-				asm, err := os.ReadFile(cli.emit(t, src, "arm64-linux", "FERN_LEAKCHECK=1", lw.env))
-				if err != nil {
-					t.Fatal(err)
-				}
-				cmd := runArm64Bin(qemu, buildBinArm64(t, armgcc, t.TempDir(), tc.name, string(asm)))
-				var eb strings.Builder
-				cmd.Stderr = &eb
-				_ = cmd.Run()
-				if code := cmd.ProcessState.ExitCode(); code != tc.want {
-					t.Fatalf("exit = %d, want %d\n%s", code, tc.want, eb.String())
-				}
-				if balanced {
-					assertBalancedCensus(t, eb.String())
-				}
-			})
-		}
+		balanced := tc.balanced
+		t.Run(tc.name, func(t *testing.T) {
+			asm, err := os.ReadFile(cli.emit(t, src, "arm64-linux", "FERN_LEAKCHECK=1"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			cmd := runArm64Bin(qemu, buildBinArm64(t, armgcc, t.TempDir(), tc.name, string(asm)))
+			var eb strings.Builder
+			cmd.Stderr = &eb
+			_ = cmd.Run()
+			if code := cmd.ProcessState.ExitCode(); code != tc.want {
+				t.Fatalf("exit = %d, want %d\n%s", code, tc.want, eb.String())
+			}
+			if balanced {
+				assertBalancedCensus(t, eb.String())
+			}
+		})
 	}
 }
 
@@ -278,17 +254,15 @@ func TestSelfHostMixedStructReleaseWasm(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range mixedStructReleaseCases {
 		src := writeMixedStructReleaseSrc(t, tc.name, tc.src)
-		for _, lw := range mixedStructReleaseLowerings {
-			balanced := mixedStructBalanced(tc.balanced, tc.producedOnly, lw.produced)
-			t.Run(tc.name+"/"+lw.name, func(t *testing.T) {
-				stderr, exit := runWasmCensus(t, cli.emit(t, src, "wasm32-wasi", "FERN_LEAKCHECK=1", lw.env))
-				if exit != tc.want {
-					t.Fatalf("exit = %d, want %d\n%s", exit, tc.want, stderr)
-				}
-				if balanced {
-					assertBalancedCensus(t, stderr)
-				}
-			})
-		}
+		balanced := tc.balanced
+		t.Run(tc.name, func(t *testing.T) {
+			stderr, exit := runWasmCensus(t, cli.emit(t, src, "wasm32-wasi", "FERN_LEAKCHECK=1"))
+			if exit != tc.want {
+				t.Fatalf("exit = %d, want %d\n%s", exit, tc.want, stderr)
+			}
+			if balanced {
+				assertBalancedCensus(t, stderr)
+			}
+		})
 	}
 }

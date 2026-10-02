@@ -56,7 +56,7 @@ func TestSelfHostASCIIByteText(t *testing.T) {
 			{"method", e2eharness.ASCIIByteTextProgram},
 			{"legacy", e2eharness.LegacyASCIICharProgram},
 		} {
-			for _, mode := range []struct{ name, env string }{{"semantic", "FERN_SEM_IR=1"}, {"ast", "FERN_SEM_IR="}} {
+			for _, mode := range []struct{ name, env string }{{"semantic", "FERN_SEM_IR=1"}, {"default", "FERN_SEM_IR="}} {
 				t.Run(target+"/"+program.name+"/"+mode.name, func(t *testing.T) {
 					stderr, code := cli.exitOf(t, program.source, target, mode.env, "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
 					if code != 0 {

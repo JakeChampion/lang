@@ -28,7 +28,8 @@ the host API, replacing the temporary direct-memory compatibility path.
 
 ## Validation scope
 
-The foundation passed validation after integration with main `1ae9cadf6`:
+The foundation passed the following validation at main `1ae9cadf6` before
+the final integration described below:
 
 - Full unit suite and `make lint-all`, with `GOMAXPROCS=2` and one Go
   package at a time.
@@ -42,9 +43,6 @@ The foundation passed validation after integration with main `1ae9cadf6`:
 
 The interpreter bridge uses the published
 [`stage0-20261001-c891ebc` seed](https://github.com/JakeChampion/lang/releases/tag/stage0-20261001-c891ebc).
-With the compiler repairs for view methods integrated, Darwin bootstrap
-stages 1, 2 and 3 are identical at 14,610,337 bytes,
-SHA-256 `206a9796a3bcd89f812d76c5c1862fe3deac68ea9ce196dce1acc26e51c3e3f4`.
 Darwin runs exercise interpreters built through both Go and the primary seed;
 Linux runs exercise primary ARM64 and x86-64 interpreters. All compare exact
 output against the Go interpreter for readers, writers, builder reuse,
@@ -53,9 +51,29 @@ writes and the pipeline also pass on ARM64, x86-64 and core WASM, with balanced
 allocation counts on the semantic path. The bridge also passes the full unit
 suite and `make lint-all` with the published seed pinned.
 
-The combined pipeline and compiler repairs pass the Darwin and Linux target
-matrices, including the component writer cases, plus the full unit suite and
-`make lint-all`.
+Integration with main `539e4e6e5` includes the view-method repairs and the
+retirement of the old AST ownership route. The tests label default and
+legacy-environment configurations explicitly because both now use production
+typed IR. Direct stage-2 checks pass all six byte fixtures on Darwin and core
+WASM binaries with exact output and balanced allocations. The composed
+pipeline covers empty input and 8256 bytes.
+
+The repaired compiler's Darwin bootstrap stages 1, 2 and 3 are identical at
+14,577,249 bytes, SHA-256
+`49eb1af37647e98ae7debcbd718d1479f3071a0e404fa2f580039e5d2b789026`.
+
+That direct check also found a Reader overflow guard emitted as flat
+`unreachable` inside a folded WAT branch. Wasmtime accepted it, but the
+primary binary assembler exited while encoding it. The guard now uses folded
+syntax. A regression builds and runs the pipeline with `-emit core-module`.
+It passes with the primary Linux compiler and the actual Darwin stage 2.
+The full Linux target matrix and `make lint-all` pass after the repair.
+
+The Darwin Go harness is currently blocked before tests by a host `ENFILE`
+linker failure. Docker's shared mount also returned `ENFILE` during the full
+source walk, so the full Linux unit and lint gate runs against an isolated
+snapshot inside the container. These infrastructure failures are not counted
+as passing validation.
 
 The target matrix covers bootstrap and primary native code, strict
 semantic IR ownership checks, WASM Preview 1 and actual Preview 2

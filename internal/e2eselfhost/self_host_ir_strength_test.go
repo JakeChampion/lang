@@ -246,7 +246,29 @@ func TestSelfHostIRStrengthPeephole(t *testing.T) {
 		"f64_wrap: const_i32 1\n" +
 		"f64_wrap_u32_high_refused: const_i64 3000000000 ; int_wrap\n" +
 		"f64_wrap_u32: const_i32 7\n" +
-		magicParityLines()
+		magicParityLines() +
+		// const_i32_readable / const_i64_readable decide from the text alone;
+		// every row also agrees with the rendering round trip they stand for.
+		"readable 0: i32=true i64=true agree=true\n" +
+		"readable 7: i32=true i64=true agree=true\n" +
+		"readable -7: i32=true i64=true agree=true\n" +
+		"readable 007: i32=false i64=false agree=true\n" +
+		"readable -0: i32=false i64=false agree=true\n" +
+		"readable : i32=false i64=false agree=true\n" +
+		"readable -: i32=false i64=false agree=true\n" +
+		"readable 0x10: i32=false i64=false agree=true\n" +
+		"readable 7u8: i32=false i64=false agree=true\n" +
+		"readable +5: i32=false i64=false agree=true\n" +
+		"readable 2147483647: i32=true i64=true agree=true\n" +
+		"readable 2147483648: i32=false i64=true agree=true\n" +
+		"readable -2147483648: i32=true i64=true agree=true\n" +
+		"readable -2147483649: i32=false i64=true agree=true\n" +
+		"readable 4294967296: i32=false i64=true agree=true\n" +
+		"readable 9223372036854775807: i32=false i64=true agree=true\n" +
+		"readable 9223372036854775808: i32=false i64=false agree=true\n" +
+		"readable -9223372036854775808: i32=false i64=true agree=true\n" +
+		"readable -9223372036854775809: i32=false i64=false agree=true\n" +
+		"readable 99999999999999999999: i32=false i64=false agree=true\n"
 
 	cmd := exec.Command(bin)
 	out, _ := cmd.Output()

@@ -26,9 +26,6 @@ import (
 // correctly; the test also pins that the IR path was taken (`call $__fern_map_iter`
 // in the WAT).
 func TestSelfHostMapIterIRWasm(t *testing.T) {
-	// These programs pin the AST lowering's built-in map runtime; the typed lowering
-	// takes maps from core/map.
-	t.Setenv("FERN_SEM_IR", "")
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host map-iter wasm IR e2e")
 	}

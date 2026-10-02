@@ -33,6 +33,11 @@ on:
   workflow_call:
   workflow_dispatch:
 
+env:
+  # gotestsum reads this as --jsonfile: the event stream the
+  # failure-annotation step names the failed tests from.
+  GOTESTSUM_JSONFILE: /tmp/gotestsum.jsonl
+
 jobs:
   # THREE SHARDS, then a leaf named `test-e2e-arm64`. The leaf carries the
   # name because `Full suite / Test e2e arm64 / test-e2e-arm64` is a required
@@ -85,6 +90,9 @@ jobs:
             -binary "$RUNNER_TEMP/e2e-arm64.test" \
             -output "$RUNNER_TEMP/arm64-test-results" \
             -workers 2 -timeout 10m -run "$PAT"
+      - name: name the failed tests as annotations
+        if: failure()
+        run: scripts/ci-annotate-failures "$RUNNER_TEMP"/arm64-test-results/worker-*.jsonl
       - name: retain native test outcomes
         if: ${{ !cancelled() && (steps.tests.outcome == 'success' || steps.tests.outcome == 'failure') }}
         uses: actions/upload-artifact@v7
@@ -144,3 +152,6 @@ jobs:
           gotestsum --format standard-verbose -- -timeout 10m -count=1
           -run '^TestF64TranscendentalBackendsAgree$'
           ./internal/e2e/
+      - name: name the failed tests as annotations
+        if: failure()
+        run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"

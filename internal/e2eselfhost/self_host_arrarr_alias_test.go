@@ -182,30 +182,23 @@ function main(): i32 {
 `, 11, true},
 }
 
-var arrArrAliasLowerings = []struct{ name, env string }{
-	{"semantic", "FERN_SEM_IR=1"},
-	{"ast", "FERN_SEM_IR="},
-}
-
 func TestSelfHostArrArrAliasX86_64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range arrArrAliasCases {
 		src := writeNestedArrFieldDropSrc(t, tc.name, tc.src)
-		for _, lw := range arrArrAliasLowerings {
-			t.Run(tc.name+"/"+lw.name, func(t *testing.T) {
-				stderr, exit := runWithStdin(t, cli.runner, cli.x86Binary(t, src, "FERN_LEAKCHECK=1", lw.env), nil)
-				if exit != tc.want {
-					t.Fatalf("leakcheck: exit = %d, want %d\n%s", exit, tc.want, stderr)
-				}
-				if !tc.refused {
-					assertBalancedCensus(t, stderr)
-				}
-				stderr, exit = runWithStdin(t, cli.runner, cli.x86Binary(t, src, "FERN_SANITIZE=1", lw.env), nil)
-				if exit != tc.want || forArrStructSanitizerFault(stderr, !tc.refused) {
-					t.Fatalf("sanitize: exit = %d, want %d, and no sanitizer report\n%s", exit, tc.want, stderr)
-				}
-			})
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			stderr, exit := runWithStdin(t, cli.runner, cli.x86Binary(t, src, "FERN_LEAKCHECK=1"), nil)
+			if exit != tc.want {
+				t.Fatalf("leakcheck: exit = %d, want %d\n%s", exit, tc.want, stderr)
+			}
+			if !tc.refused {
+				assertBalancedCensus(t, stderr)
+			}
+			stderr, exit = runWithStdin(t, cli.runner, cli.x86Binary(t, src, "FERN_SANITIZE=1"), nil)
+			if exit != tc.want || forArrStructSanitizerFault(stderr, !tc.refused) {
+				t.Fatalf("sanitize: exit = %d, want %d, and no sanitizer report\n%s", exit, tc.want, stderr)
+			}
+		})
 	}
 }
 
@@ -216,16 +209,14 @@ func TestSelfHostArrArrAliasWasm(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range arrArrAliasCases {
 		src := writeNestedArrFieldDropSrc(t, tc.name, tc.src)
-		for _, lw := range arrArrAliasLowerings {
-			t.Run(tc.name+"/"+lw.name, func(t *testing.T) {
-				stderr, exit := runWasmCensus(t, cli.emit(t, src, "wasm32-wasi", "FERN_LEAKCHECK=1", lw.env))
-				if exit != tc.want {
-					t.Fatalf("exit = %d, want %d\n%s", exit, tc.want, stderr)
-				}
-				if !tc.refused {
-					assertBalancedCensus(t, stderr)
-				}
-			})
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			stderr, exit := runWasmCensus(t, cli.emit(t, src, "wasm32-wasi", "FERN_LEAKCHECK=1"))
+			if exit != tc.want {
+				t.Fatalf("exit = %d, want %d\n%s", exit, tc.want, stderr)
+			}
+			if !tc.refused {
+				assertBalancedCensus(t, stderr)
+			}
+		})
 	}
 }

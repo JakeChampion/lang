@@ -1,5 +1,15 @@
 # Checked regex text and explicit byte output
 
+Integration checkpoint, October 2: the raw-pipeline parent `282343afb`
+passes the refreshed Linux target matrix, existing regex fixtures, VCL
+backend TAP suite, `tr` callers and `make lint-all`. Actual stage-2 Darwin,
+core WASM, Preview 2 and primary interpreter fixtures pass. Native reports
+5172 allocations and 5172 frees; core WASM reports 5224 and 5224. Stage 2
+and stage 3 are identical, SHA-256
+`e1cf022bf95bfa4277734439ff29a790c4858c3f8741d508d9425dcaf3f461b0`.
+The newest main integration and its full unit gate remain pending. Earlier
+measurements below retain their original revision and validation context.
+
 `std/regex` matches bytes. For example, `.` consumes one byte of `é`,
 and replacing that match with `X` leaves `0xa9` behind. The previous
 implementation returned those malformed bytes as a string. Captures and

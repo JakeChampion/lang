@@ -27,27 +27,27 @@ var enumSelfRebindRows = []leakRow{
 	{"rc_self", enumRebindLoop(`        var cur: Rc = mk_rc(r);
         cur = hb_rc_param(cur);
         t = t + rval(cur);
-`), true, [2]int64{}},
+`), true},
 	{"sc_self", enumRebindLoop(`        var cs: Sc = mk_sc(r);
         cs = hb_sc_param(cs);
         t = t + cs.val();
-`), true, [2]int64{}},
+`), true},
 	{"rc_self_twice", enumRebindLoop(`        var cur: Rc = mk_rc(r);
         cur = hb_rc_param(cur);
         cur = hb_rc_param(cur);
         t = t + rval(cur);
-`), true, [2]int64{}},
+`), true},
 	{"rc_self_then_fresh", enumRebindLoop(`        var cur: Rc = mk_rc(r);
         cur = hb_rc_param(cur);
         t = t + rval(cur);
         cur = mk_rc(r + 2);
         t = t + rval(cur);
-`), true, [2]int64{}},
+`), true},
 	{"sc_other", enumRebindLoop(`        var cs: Sc = mk_sc(r);
         var o: Sc = mk_sc(r + 1);
         cs = hb_sc_param(o);
         t = t + cs.val() + o.val();
-`), true, [2]int64{}},
+`), true},
 	// Rebinds inside a branch are admitted when each is an "ENUM:" call.
 	{"sc_cond", enumRebindLoop(`        var cs: Sc = mk_sc(r);
         var o: Sc = mk_sc(r + 1);
@@ -57,7 +57,7 @@ var enumSelfRebindRows = []leakRow{
             cs = mk_sc(r + 3);
         }
         t = t + cs.val() + o.val();
-`), true, [2]int64{}},
+`), true},
 	{"sc_loop_call", enumRebindLoop(`        var cs: Sc = mk_sc(r);
         var j: i32 = 0;
         while (j < 2) {
@@ -65,7 +65,7 @@ var enumSelfRebindRows = []leakRow{
             j = j + 1;
         }
         t = t + cs.val();
-`), true, [2]int64{}},
+`), true},
 	// A rebind to another local inside a branch is not a counted call, so the
 	// local keeps no credit rather than being released alongside the lender.
 	{"sc_cond_alias", enumRebindLoop(`        var cs: Sc = mk_sc(r);
@@ -74,20 +74,20 @@ var enumSelfRebindRows = []leakRow{
             cs = o;
         }
         t = t + cs.val() + o.val();
-`), false, [2]int64{200, 100}},
+`), false},
 	// Handing back another local's chain keeps the rc local out of the fresh
 	// family: the result is not its own chain.
 	{"rc_other", enumRebindLoop(`        var cur: Rc = mk_rc(r);
         var o: Rc = mk_rc(r + 1);
         cur = hb_rc_param(o);
         t = t + rval(cur) + rval(o);
-`), false, [2]int64{400, 0}},
+`), false},
 	// Two handback positions, only one of them the local itself.
 	{"rc_pick_mixed", enumRebindLoop(`        var cur: Rc = mk_rc(r);
         var o: Rc = mk_rc(r + 1);
         cur = hb_rc_pick(cur, o, r % 2 == 0);
         t = t + rval(cur) + rval(o);
-`), false, [2]int64{400, 100}},
+`), false},
 }
 
 func TestSelfHostEnumSelfRebindX86_64(t *testing.T) {

@@ -4,7 +4,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -42,15 +41,11 @@ func TestSelfHostStructDeepDropIRX86_64(t *testing.T) {
 	}
 	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
 
-	run := func(t *testing.T, prog, name string, want int, wantAsmSubstr string) {
+	run := func(t *testing.T, prog, name string, want int) {
 		t.Helper()
 		asm := runCapture(t, gcc, runner, driverBin, []byte(prog))
 		if len(asm) == 0 {
 			t.Fatalf("%s: self-host compiler emitted 0 bytes", name)
-		}
-		// The drop helper named is the AST lowering's, so it is read from that lowering.
-		if wantAsmSubstr != "" && !strings.Contains(string(runCaptureAST(t, runner, driverBin, []byte(prog))), wantAsmSubstr) {
-			t.Fatalf("%s: emitted asm missing %q — the nested-struct field did not deep-drop", name, wantAsmSubstr)
 		}
 		bin := buildBin(t, gcc, dir, name, string(asm))
 		var cmd *exec.Cmd
@@ -80,7 +75,7 @@ function main(): i32 {
     var s: i32 = 0; var f: i32 = 0;
     while (f < 150000000) { s = mk(); f = f + 1; }
     return s - 24;
-}`, "struct_deep_drop_churn", 0, "call __fn___struct_drop_Inner")
+}`, "struct_deep_drop_churn", 0)
 
 	// VALUE-CORRECTNESS: the inner is read back before the drop; a wrong free of a
 	// live buffer would corrupt it. o.inner.items[0..15] sum to 136, + tag 7 = 143.
@@ -91,7 +86,7 @@ function main(): i32 {
     var sum: i32 = 0; var j: i32 = 0;
     while (j < 16) { sum = sum + o.inner.items[j]; j = j + 1; }
     return sum + o.tag;
-}`, "struct_deep_drop_value", 143, "")
+}`, "struct_deep_drop_value", 143)
 
 	// CYCLE SAFETY: a tree (`Node { kids: Node[] }`) must NOT infinitely recurse.
 	// `kids` is an array-of-struct (the k_box element walk, shallow per element);
@@ -107,7 +102,7 @@ function main(): i32 {
     var s: i32 = 0; var f: i32 = 0;
     while (f < 1000000) { s = mk(); f = f + 1; }
     return s - 8;
-}`, "struct_deep_drop_cyclic_safe", 0, "")
+}`, "struct_deep_drop_cyclic_safe", 0)
 
 	// DEPTH-2 DEEP-DROP + CHURN (#5336): `Outer { mid: Mid }`, `Mid { inner: Inner }`,
 	// `Inner { items: i32[] }`. `__struct_drop_Outer` must call `__struct_drop_Mid`
@@ -127,7 +122,7 @@ function main(): i32 {
     var s: i32 = 0; var f: i32 = 0;
     while (f < 150000000) { s = mk(); f = f + 1; }
     return s - 26;
-}`, "struct_deep_drop_depth2_churn", 0, "call __fn___struct_drop_Mid")
+}`, "struct_deep_drop_depth2_churn", 0)
 
 	// DEPTH-3 with a STRING leaf field (also reclaimable via nddo_reach's #4297 A2
 	// string credit): `A { b: B }`, `B { c: C }`, `C { name: string, xs: i32[] }`.
@@ -145,7 +140,7 @@ function main(): i32 {
     var s: i32 = 0; var f: i32 = 0;
     while (f < 100000000) { s = mk(); f = f + 1; }
     return s - 4;
-}`, "struct_deep_drop_depth3_str_churn", 0, "call __fn___struct_drop_C")
+}`, "struct_deep_drop_depth3_str_churn", 0)
 
 	// DEPTH-2 VALUE-CORRECTNESS: read the whole depth-2 chain back before the drop; a
 	// wrong free of a live buffer would corrupt the sum. items[0..15] sum 136 + mid.m
@@ -158,5 +153,5 @@ function main(): i32 {
     var sum: i32 = 0; var j: i32 = 0;
     while (j < 16) { sum = sum + o.mid.inner.items[j]; j = j + 1; }
     return sum + o.mid.m + o.tag;
-}`, "struct_deep_drop_depth2_value", 145, "")
+}`, "struct_deep_drop_depth2_value", 145)
 }

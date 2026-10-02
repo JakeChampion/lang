@@ -52,29 +52,27 @@ func TestSelfHostNestedRowLifetime(t *testing.T) {
 			if err := os.WriteFile(src, []byte(source), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			for _, lowering := range []string{"", "1"} {
-				for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
-					t.Run(target+"/semantic="+lowering, func(t *testing.T) {
-						env := []string{"FERN_SEM_IR=" + lowering, "FERN_STRICT_IR=1"}
-						var cmd *exec.Cmd
-						switch target {
-						case "x86-64-linux":
-							cmd = runX86_64Bin(cli.runner, cli.x86Binary(t, src, env...))
-						case "arm64-linux":
-							gcc, qemu := arm64Tooling(t)
-							asm, err := os.ReadFile(cli.emit(t, src, target, env...))
-							if err != nil {
-								t.Fatal(err)
-							}
-							cmd = runArm64Bin(qemu, buildBinArm64(t, gcc, t.TempDir(), "row", string(asm)))
-						case "wasm32-wasi":
-							cmd = exec.Command("wasmtime", "run", cli.emit(t, src, target, env...))
+			for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
+				t.Run(target, func(t *testing.T) {
+					env := []string{"FERN_STRICT_IR=1"}
+					var cmd *exec.Cmd
+					switch target {
+					case "x86-64-linux":
+						cmd = runX86_64Bin(cli.runner, cli.x86Binary(t, src, env...))
+					case "arm64-linux":
+						gcc, qemu := arm64Tooling(t)
+						asm, err := os.ReadFile(cli.emit(t, src, target, env...))
+						if err != nil {
+							t.Fatal(err)
 						}
-						if out, err := cmd.CombinedOutput(); err != nil {
-							t.Fatalf("borrowed row did not survive source disposal: %v\n%s", err, out)
-						}
-					})
-				}
+						cmd = runArm64Bin(qemu, buildBinArm64(t, gcc, t.TempDir(), "row", string(asm)))
+					case "wasm32-wasi":
+						cmd = exec.Command("wasmtime", "run", cli.emit(t, src, target, env...))
+					}
+					if out, err := cmd.CombinedOutput(); err != nil {
+						t.Fatalf("borrowed row did not survive source disposal: %v\n%s", err, out)
+					}
+				})
 			}
 		})
 	}
@@ -93,16 +91,14 @@ func TestSelfHostArm64DarwinNestedRowLifetime(t *testing.T) {
 			if err := os.WriteFile(src, []byte(source), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			for _, lowering := range []string{"", "1"} {
-				bin := filepath.Join(t.TempDir(), "row")
-				cmd := exec.Command(cli, "-target", "arm64-darwin", src, "-o", bin)
-				cmd.Env = append(os.Environ(), "FERN_SEM_IR="+lowering, "FERN_STRICT_IR=1")
-				if out, err := cmd.CombinedOutput(); err != nil {
-					t.Fatalf("compile semantic=%q: %v\n%s", lowering, err, out)
-				}
-				if out, err := exec.Command(bin).CombinedOutput(); err != nil {
-					t.Fatalf("borrowed row did not survive source disposal: %v\n%s", err, out)
-				}
+			bin := filepath.Join(t.TempDir(), "row")
+			cmd := exec.Command(cli, "-target", "arm64-darwin", src, "-o", bin)
+			cmd.Env = append(os.Environ(), "FERN_STRICT_IR=1")
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("compile: %v\n%s", err, out)
+			}
+			if out, err := exec.Command(bin).CombinedOutput(); err != nil {
+				t.Fatalf("borrowed row did not survive source disposal: %v\n%s", err, out)
 			}
 		})
 	}

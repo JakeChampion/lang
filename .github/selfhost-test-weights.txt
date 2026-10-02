@@ -109,7 +109,6 @@ TestSelfHostAssertIR 2
 TestSelfHostAssocFnIR 2
 TestSelfHostAssocIdentityIRX86_64 2
 TestSelfHostAssocTypesDifferential 7
-TestSelfHostAssumeEligibleByteIdenticalX86_64 332
 TestSelfHostAuditStdArrayX86_64 5
 TestSelfHostBase64IR 3
 TestSelfHostBigintChainReclaimX86_64 119
@@ -218,7 +217,6 @@ TestSelfHostEmbedCarriesTheStdlib 2
 TestSelfHostEmbedMatchesNative 2
 TestSelfHostEnumCapturingPayloadIRX86_64 2
 TestSelfHostEnumContractIRArm64 263
-TestSelfHostEnumContractMissingRetainX86_64 14
 TestSelfHostEnumContractVerify 3
 TestSelfHostEnumCrossReuseIR 2
 TestSelfHostEnumFnPayloadIRX86_64 2

@@ -21,7 +21,7 @@ function main(): i32 {
 }
 `)
 		t.Run(tc.name, func(t *testing.T) {
-			bin := cli.x86Binary(t, src, "FERN_LEAKCHECK=1", "FERN_SEM_IR=1")
+			bin := cli.x86Binary(t, src, "FERN_LEAKCHECK=1")
 			stderr, exit := runWithStdin(t, cli.runner, bin, nil)
 			if exit != 3 {
 				t.Fatalf("exit = %d, want 3\n%s", exit, stderr)

@@ -136,7 +136,7 @@ func TestSelfHostPerModuleConcatObjectCacheX86_64(t *testing.T) {
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	_, errs := drive("-per-module-emit-all", "-out-dir", outDir, "-assume-eligible", "-cache-dir", cacheDir)
+	_, errs := drive("-per-module-emit-all", "-out-dir", outDir, "-cache-dir", cacheDir)
 	if eaHits, _ := pmCacheLines(errs); len(eaHits) != 0 {
 		t.Fatalf("emit-all was served concat units: %v", eaHits)
 	}
@@ -144,7 +144,7 @@ func TestSelfHostPerModuleConcatObjectCacheX86_64(t *testing.T) {
 	if err := os.MkdirAll(eaOnly, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	drive("-per-module-emit-all", "-out-dir", outDir, "-assume-eligible", "-cache-dir", eaOnly)
+	drive("-per-module-emit-all", "-out-dir", outDir, "-cache-dir", eaOnly)
 	_, errs = drive("-cache-dir", eaOnly)
 	if cHits, _ := pmCacheLines(errs); len(cHits) != 0 {
 		t.Fatalf("concat was served emit-all units: %v", cHits)

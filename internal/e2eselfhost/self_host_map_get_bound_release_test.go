@@ -9,9 +9,9 @@ import (
 )
 
 // An Option bound from a builtin `m.get(k)` and consumed by one match gives
-// its box back after that match, in the AST lowering (FERN_SEM_IR=), as the
-// direct `match (m.get(k))` form already did (#10195, and the hoisted half of
-// #10083 on wasm), whatever the map's value type (#10306).
+// its box back after that match, as the direct `match (m.get(k))` form does
+// (#10195, and the hoisted half of #10083 on wasm), whatever the map's value
+// type (#10306).
 var mapGetBoundCases = []struct {
 	name string
 	src  string
@@ -138,7 +138,7 @@ func TestSelfHostMapGetBoundReleaseX86_64(t *testing.T) {
 				t.Fatal(err)
 			}
 			for _, mode := range []string{"FERN_LEAKCHECK=1", "FERN_SANITIZE=1"} {
-				stderr, exit := runWithStdin(t, cli.runner, cli.x86Binary(t, src, mode, "FERN_SEM_IR="), nil)
+				stderr, exit := runWithStdin(t, cli.runner, cli.x86Binary(t, src, mode), nil)
 				if exit != tc.want || strings.Contains(stderr, "fern-sanitizer:") {
 					t.Fatalf("%s: exit = %d, want %d, and the sanitizer silent\n%s", mode, exit, tc.want, stderr)
 				}
@@ -164,7 +164,7 @@ func TestSelfHostMapGetBoundReleaseWasm(t *testing.T) {
 			if err := os.WriteFile(src, []byte(tc.src), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			stderr, exit := runWasmCensus(t, cli.emit(t, src, "wasm32-wasi", "FERN_LEAKCHECK=1", "FERN_SEM_IR="))
+			stderr, exit := runWasmCensus(t, cli.emit(t, src, "wasm32-wasi", "FERN_LEAKCHECK=1"))
 			if exit != tc.want {
 				t.Fatalf("exit = %d, want %d\n%s", exit, tc.want, stderr)
 			}
