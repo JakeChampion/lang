@@ -321,12 +321,10 @@ pub function decl_is_struct(structs: StructTab, name: string): boolean {
   return stab_first(structs, name) >= 0;
 }
 
-// dyn_arm_matches decodes an op_dyn_dispatch `tag` into the trait set and
-// method it carries and asks parser.dyn_arm_matches — the shared reading of
-// claim_method_name's namespace — whether `fd` is the definition this dispatch
-// must call for fd's OWN receiver type.
-pub function dyn_arm_matches(fd: parser.FuncDecl, tag: string, funcs: parser.FuncDecl[]): boolean {
-  return parser.dyn_arm_matches(fd, ir.dyn_dispatch_traits(tag), ir.dyn_dispatch_method(tag), funcs);
+// dyn_arm_matches reports whether `fd` is one of the arms an op_dyn_dispatch
+// `tag` carries.
+pub function dyn_arm_matches(fd: parser.FuncDecl, tag: string): boolean {
+  return util.index_of_str(ir.dyn_dispatch_arms(tag), parser.decl_key(fd)) >= 0;
 }
 
 // decl_is_enum reports whether `name` is a declared enum — i.e. some decl records
@@ -534,27 +532,13 @@ pub function is_enum_like_name(t: string, structs: StructTab): boolean {
 }
 
 // decl_is_prim_recv reports whether a method-receiver type spelling names a
-// PRIMITIVE / `string` type (i32/i64/u32/u64/usize/f64/f32/boolean/string) —
-// the receivers `impl Trait for <prim>` can name, whose `dyn` values are
-// heap-boxed at coercion (docs/DYN-TRAITS.md §4.2.3). Not a struct, not an
-// enum, not an array. Mirrors asmcore.is_prim_recv_name for the wasm backend,
-// which works on (structs) inputs rather than EmitState.
+// PRIMITIVE / `string` type (one of prim_type_ids) — the receivers
+// `impl Trait for <prim>` can name, whose `dyn` values are heap-boxed at
+// coercion (docs/DYN-TRAITS.md §4.2.3). Not a struct, not an enum, not an
+// array. Mirrors asmcore.is_prim_recv_name for the wasm backend, which works on
+// (structs) inputs rather than EmitState.
 pub function decl_is_prim_recv(structs: StructTab, name: string): boolean {
-  if (name.len() == 0) {
-    return false;
-  }
-  if (is_array_type_name(name)) {
-    return false;
-  }
-  if (decl_is_struct(structs, name)) {
-    return false;
-  }
-  if (name == "i32" || name == "i64" || name == "u32" || name == "u64" || name == "usize"
-    || name == "f64" || name == "f32" || name == "float"
-    || name == "boolean" || name == "bool" || name == "string") {
-    return true;
-  }
-  return false;
+  return !decl_is_struct(structs, name) && util.index_of_str(prim_type_ids(), name) >= 0;
 }
 
 // prim_type_ids is the canonical ordered list of primitive receiver type names
@@ -563,7 +547,7 @@ pub function decl_is_prim_recv(structs: StructTab, name: string): boolean {
 // a struct's type id (its index in `structs`). The order is fixed for
 // deterministic codegen (docs/DYN-TRAITS.md §4.2.3 — fixpoint determinism).
 pub function prim_type_ids(): string[] {
-  return ["i32", "boolean", "bool", "i64", "u32", "u64", "usize", "f64", "f32", "float", "string"];
+  return ["i32", "boolean", "bool", "i64", "u32", "u64", "usize", "f64", "f32", "float", "string", "u8", "char"];
 }
 
 // prim_type_id maps a primitive receiver type name to its wasm dyn-box shape id

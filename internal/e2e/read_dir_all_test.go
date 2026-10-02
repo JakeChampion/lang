@@ -137,12 +137,9 @@ func TestWASMPreview1ReadDirAll(t *testing.T) {
 }
 
 func TestWASMReadDirAll(t *testing.T) {
-	stdout, stderr, ec, _ := runWasmInDirOpts(t, readDirAllSource(false), nil, runOpts{stdin: ""})
+	stdout, stderr, ec := runCLIComponent(t, readDirAllSource(false), runOpts{workDir: t.TempDir()})
 	if ec != 0 {
-		t.Fatalf("wasmtime exit %d\nstdout:\n%s\nstderr:\n%s", ec, stdout, stderr)
-	}
-	if got := parseMainResult(t, stdout); got != 0 {
-		t.Errorf("main = %d, want 0 (see readDirAllSource)\nstdout:\n%s\nstderr:\n%s", got, stdout, stderr)
+		t.Errorf("wasmtime exit %d, want 0 — the preview-1 command module's main names the case (see readDirAllSource)\nstdout:\n%s\nstderr:\n%s", ec, stdout, stderr)
 	}
 }
 

@@ -177,7 +177,7 @@ func TestInterpDirLinkPrimitives(t *testing.T) {
 // that describes nothing.
 //
 // main's return reaches us on STDOUT, not as the exit status: the harness
-// builds with PrintMainResult.
+// runs the module with `--invoke main`.
 func TestWASMDirLinkPrimitives(t *testing.T) {
 	p := buildComponent(t, dirLinkSource("", false))
 	dir := t.TempDir()

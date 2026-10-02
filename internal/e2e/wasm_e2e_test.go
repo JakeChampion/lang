@@ -1,11 +1,8 @@
-// E2E tests for the WASM backend, executed against a preview-2
-// Component Model component under wasmtime. The pipeline is parse
-// → check → wasm.EmitWithOptions{PrintMainResult: true} →
-// wasm-tools parse + component embed + component new (with the
-// wasi-preview1-component-adapter for the legacy entry-point
-// trampoline only) → `wasmtime run`. Tests skip when any of
-// wasm-tools / wasmtime / `FERN_WASI_ADAPTER` is missing so
-// `go test ./...` stays green on machines without the toolchain.
+// E2E tests for wasm32-wasi. A program compiles with the self-host CLI to a
+// WASI core module, which `wasmtime run --invoke main` runs, printing main's
+// result after the program's own stdout. Tests of preview-2 host behaviour
+// build a wasi:cli component instead (buildCLIComponent). Tests skip when
+// wasmtime is missing or not the pinned version (skipIfPreview2Missing).
 package e2e
 
 import (
@@ -27,6 +24,7 @@ import (
 	"github.com/jakechampion/lang/internal/checker"
 	"github.com/jakechampion/lang/internal/codegen/wasmbin"
 	"github.com/jakechampion/lang/internal/constfold"
+	"github.com/jakechampion/lang/internal/e2eharness"
 	"github.com/jakechampion/lang/internal/modload"
 	"github.com/jakechampion/lang/internal/monomorph"
 	"github.com/jakechampion/lang/internal/parser"
@@ -116,32 +114,59 @@ type runOpts struct {
 	fdLimit int      // when > 0, run wasmtime under `ulimit -n <fdLimit>`
 }
 
-// buildComponent runs the in-process parse → check → wasm.Emit
-// pipeline for src, then drives wasm-tools to emit a Component
-// Model component. PrintMainResult is on so `_start` appends
-// main()'s i32 result to stdout via int_to_string + print. Skips
-// the test if the preview-2 toolchain is unavailable.
-// withResultPrinter guarantees `core/int` is in the import closure so
-// the BuildOptions.PrintMainResult wrapper can stringify main()'s i32
-// return via int_to_string. The auto-prelude used to supply that name
-// to every program; with the prelude gone (docs/PRELUDE-TO-MODULES.md
-// phase 5) the test harness — which is what turns main()'s result into
-// the stdout line runWasm parses — has to pull it in itself rather than
-// make all ~400 wasm programs declare an import they don't otherwise
-// use. Imports may appear in any order and modload dedups, so an
-// unconditional prepend is safe whether or not the program already
-// imports core/int.
-func withResultPrinter(src string) string {
-	return "import \"core/int\";\n" + src
-}
-
+// buildComponent compiles src with the self-host compiler to a WASI core
+// module, which runComponent runs with `--invoke main` so main's result is
+// printed after the program's own stdout.
 func buildComponent(t *testing.T, src string) string {
 	t.Helper()
-	skipIfPreview2Missing(t)
+	return buildComponentMulti(t, "main.fern", map[string]string{"main.fern": src})
+}
 
-	src = withResultPrinter(src)
+// buildComponentMulti is buildComponent for an entry and its sibling modules.
+func buildComponentMulti(t *testing.T, entry string, files map[string]string) string {
+	t.Helper()
+	skipIfPreview2Missing(t)
+	dir := t.TempDir()
+	for path, contents := range files {
+		full := filepath.Join(dir, path)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(contents), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return e2eharness.CompileSelfHostFile(t, e2eharness.TargetWasm32Wasi, filepath.Join(dir, entry), nil)
+}
+
+// buildCLIComponent compiles src with the self-host compiler to a plain
+// wasi:cli/run component, so the program's own prints are its only stdout.
+func buildCLIComponent(t *testing.T, src string) string {
+	t.Helper()
+	skipIfPreview2Missing(t)
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "main.fern")
+	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	comp := filepath.Join(dir, "prog.component.wasm")
+	if out, err := e2eharness.SelfHostCompileCmd(t, e2eharness.TargetWasm32Wasi, srcPath, comp).CombinedOutput(); err != nil {
+		t.Fatalf("SELFHOST-COMPILE-FAIL -target wasm32-wasi: %v\n%s\nsrc:\n%s", err, out, src)
+	}
+	return comp
+}
+
+// buildNativeComponent builds src into a wasi:cli/run component with the
+// native wasm backend. Only the async programs use it: their poll host has no
+// import in the self-host's wasm component, so they stay native until the wasm
+// async decision on #4451.
+func buildNativeComponent(t *testing.T, src string, opts wasmbin.BuildOptions) string {
+	t.Helper()
+	skipIfPreview2Missing(t)
+	if opts.PrintMainResult {
+		src = withResultPrinter(src)
+	}
+	srcPath := filepath.Join(t.TempDir(), "main.fern")
 	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
 	}
@@ -159,63 +184,47 @@ func buildComponent(t *testing.T, src string) string {
 	if err := monomorph.Run(prog, info); err != nil {
 		t.Fatalf("monomorph: %v", err)
 	}
-	bin, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
-		ForceMemorySection: true,
-		Preview2WASI:       true,
-		SynthCliRun:        true,
-		PrintMainResult:    true,
-	})
+	bin, err := wasmbin.BuildWithOptions(prog, info, opts)
 	if err != nil {
 		t.Fatalf("wasmbin.Build: %v", err)
 	}
 	return finishComponentFromCoreBytes(t, bin)
 }
 
-// buildComponentMulti is buildComponent for a module set loaded
-// through modload (the multi-file analogue).
-func buildComponentMulti(t *testing.T, entry string, files map[string]string) string {
-	t.Helper()
-	skipIfPreview2Missing(t)
+// nativeMainResult builds a component whose stdout ends with main's result.
+var nativeMainResult = wasmbin.BuildOptions{ForceMemorySection: true, Preview2WASI: true, SynthCliRun: true, PrintMainResult: true}
 
-	dir := t.TempDir()
-	for path, contents := range files {
-		if path == entry {
-			// core/int for the PrintMainResult wrapper's int_to_string
-			// (see withResultPrinter) — the entry is what defines main.
-			contents = withResultPrinter(contents)
-		}
-		full := filepath.Join(dir, path)
-		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(full, []byte(contents), 0o644); err != nil {
-			t.Fatal(err)
-		}
+// runNativeStdout runs src through buildNativeComponent and returns its stdout.
+func runNativeStdout(t *testing.T, src string) string {
+	t.Helper()
+	s, e, ec := runComponent(t, buildNativeComponent(t, src, nativeMainResult), runOpts{})
+	if ec != 0 {
+		t.Fatalf("wasmtime exit %d\nstdout:\n%s\nstderr:\n%s", ec, s, e)
 	}
-	prog, _, err := modload.Load(filepath.Join(dir, entry))
+	return s
+}
+
+// runWasmNative is runWasm through the native backend.
+func runWasmNative(t *testing.T, src string) int {
+	t.Helper()
+	return parseMainResult(t, runNativeStdout(t, src))
+}
+
+// isCoreModule reports whether the wasm binary at path is a core module
+// rather than a component: their headers differ in the version field, which is
+// 1 for a core module.
+func isCoreModule(t *testing.T, path string) bool {
+	t.Helper()
+	f, err := os.Open(path)
 	if err != nil {
-		t.Fatalf("modload: %v", err)
+		t.Fatal(err)
 	}
-	if err := constfold.Fold(prog, nil); err != nil {
-		t.Fatalf("constfold: %v", err)
+	defer f.Close()
+	head := make([]byte, 8)
+	if _, err := io.ReadFull(f, head); err != nil {
+		t.Fatalf("read wasm header of %s: %v", path, err)
 	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check: %v", err)
-	}
-	if err := monomorph.Run(prog, info); err != nil {
-		t.Fatalf("monomorph: %v", err)
-	}
-	bin, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
-		ForceMemorySection: true,
-		Preview2WASI:       true,
-		SynthCliRun:        true,
-		PrintMainResult:    true,
-	})
-	if err != nil {
-		t.Fatalf("wasmbin.Build: %v", err)
-	}
-	return finishComponentFromCoreBytes(t, bin)
+	return bytes.Equal(head, []byte{0, 'a', 's', 'm', 1, 0, 0, 0})
 }
 
 // finishComponentFromCoreBytes composes the wasmbin-produced core
@@ -249,6 +258,9 @@ func runComponent(t *testing.T, componentPath string, opts runOpts) (stdout, std
 	}
 	for _, e := range opts.envs {
 		cmdArgs = append(cmdArgs, "--env", e)
+	}
+	if isCoreModule(t, componentPath) {
+		cmdArgs = append(cmdArgs, "--invoke", "main")
 	}
 	cmdArgs = append(cmdArgs, componentPath)
 	cmdArgs = append(cmdArgs, opts.args...)
@@ -563,6 +575,14 @@ func runWasmStdinEnv(t *testing.T, src, stdin string, envs []string) (stdout, st
 	t.Helper()
 	p := buildComponent(t, src)
 	return runComponent(t, p, runOpts{stdin: stdin, envs: envs})
+}
+
+// runCLIComponent runs src as a wasi:cli/run component, for a test of
+// preview-2 host behaviour: its stdout is the program's alone, and its exit
+// status is the one wasi:cli/exit carries.
+func runCLIComponent(t *testing.T, src string, opts runOpts) (stdout, stderr string, exitCode int) {
+	t.Helper()
+	return runComponent(t, buildCLIComponent(t, src), opts)
 }
 
 // `read_line()` reads one line from stdin including the trailing
@@ -909,7 +929,7 @@ func TestWASMReturn42(t *testing.T) {
 }
 
 // i64 round-trips through arithmetic + comparison. main() stays
-// i32 (the test harness reads main's i32 return via int_to_string),
+// i32 (the harness reads main's i32 return from wasmtime's --invoke line),
 // but the body holds an i64 value through addition and comparison.
 // Exercises OpExtendI32S on the casts in, OpAdd/OpEq with Width=64
 // in the body, and the i64 wasm types on the local + parameter
@@ -2774,55 +2794,6 @@ function main(): i32 {
 	}
 }
 
-// __memcpy / __memset bridge functions: wat-shim wrappers
-// around wasm's bulk-memory `memory.copy` / `memory.fill`.
-// They're what enables migrating helpers that build /
-// scan growable byte buffers (the json buffer family + map
-// runtime). This test exercises both via raw alloc + an
-// `as_bytes` slice view, then pokes through the slice's
-// data_ptr to verify the bytes landed.
-//
-// `as_bytes` returns a [u8] slice whose data_ptr aliases
-// the string payload, so casting that pointer back to an
-// i32 lets us drive __memcpy / __memset against arbitrary
-// regions for testing. Production usage will always call
-// __memcpy through dedicated buffer-management code.
-func TestWASMBulkMemoryPrimitives(t *testing.T) {
-	src := `function main(): i32 {
-    // __memset: clear 8 bytes starting at the second slot
-    // of a 16-byte buffer, leave the first 8 alone.
-    let buf: u8[] = [
-        65 as u8, 66 as u8, 67 as u8, 68 as u8,
-        69 as u8, 70 as u8, 71 as u8, 72 as u8,
-        73 as u8, 74 as u8, 75 as u8, 76 as u8,
-        77 as u8, 78 as u8, 79 as u8, 80 as u8
-    ];
-    let bs: [u8] = buf[0:16];
-    // The data pointer is a memory address — type it usize (pointer
-    // width) so it flows into the usize-typed __memset / __memcpy params.
-    // Under F2, user code must reach usize via an explicit cast rather
-    // than the implicit i32<->usize hop. See docs/ADVERSARIAL-REVIEW-2026-06.md.
-    let base: usize = (bs as usize);
-    __memset(base + 8, 0, 8);
-    if (buf[0]  != 65)  { return 1; }
-    if (buf[7]  != 72)  { return 2; }
-    if (buf[8]  != 0)   { return 3; }
-    if (buf[15] != 0)   { return 4; }
-    // __memcpy: copy first 4 bytes onto the now-zeroed
-    // back half so the buffer reads ABCDEFGHABCD0000.
-    __memcpy(base + 8, base, 4);
-    if (buf[8]  != 65)  { return 5; }
-    if (buf[9]  != 66)  { return 6; }
-    if (buf[10] != 67)  { return 7; }
-    if (buf[11] != 68)  { return 8; }
-    if (buf[12] != 0)   { return 9; }
-    return 0;
-}`
-	if got := runWasm(t, src); got != 0 {
-		t.Errorf("__memcpy/__memset: exit = %d, want 0", got)
-	}
-}
-
 // base64 round-trip: encode arbitrary bytes, decode back,
 // verify equality. Covers the full alphabet (A-Z, a-z, 0-9,
 // +, /), no-padding (3-byte aligned), 1-byte-padding (length
@@ -4081,6 +4052,11 @@ func TestWASMFunctionValueOrderIndependent(t *testing.T) {
 func runWasmCapturingStdout(t *testing.T, src string) string {
 	t.Helper()
 	stdout, _ := invokeWasmtime(t, src)
+	return stripMainResult(stdout)
+}
+
+// stripMainResult drops the trailing main-result line and blank lines.
+func stripMainResult(stdout string) string {
 	lines := strings.Split(stdout, "\n")
 	for len(lines) > 0 {
 		last := strings.TrimSpace(lines[len(lines)-1])
@@ -4109,7 +4085,7 @@ func TestWASMPrintHelloWorld(t *testing.T) {
 }
 
 // Float observation through the component pipeline: stdout only
-// carries i32 results (via PrintMainResult + int_to_string), and
+// carries i32 results (wasmtime's --invoke line), and
 // `wasi:cli/exit` clamps the exit code to 0/1, so neither channel
 // can carry an f32. Float tests instead express the assertion in
 // the lang program itself — main returns 1 when the expected
@@ -6982,12 +6958,7 @@ function main(): i32 {
 // prelude-to-modules stack works on wasm32 too. See the arm64
 // version for the rationale and per-case explanations. Programs
 // return 0 on success; runWasm parses the i32 main returned out
-// of the PrintMainResult-emitted stdout line.
-//
-// The PrintMainResult wrapper picks the mangled `int__int_to_string`
-// name (versus bare `int_to_string` under auto-prelude) so this
-// test exercises both the no-prelude load path AND the wat
-// emitter's runtime-name lookup.
+// of wasmtime's --invoke line.
 func TestWASMNoPreludeStdlibImports(t *testing.T) {
 	for _, c := range []struct {
 		name string
@@ -16480,9 +16451,8 @@ function main(): i32 {
 	sb.WriteString("    return 0;\n}\n")
 
 	stdout, _ := invokeWasmtime(t, sb.String())
-	// buildComponent uses PrintMainResult: true, so the harness's
-	// trailing main()-returns-0 produces an extra "0" line at the
-	// end. Drop trailing blank + the result line.
+	// wasmtime's --invoke prints main's 0 as a last line. Drop
+	// trailing blank + the result line.
 	gotLines := strings.Split(strings.TrimRight(stdout, "\n"), "\n")
 	if len(gotLines) < len(exps) {
 		t.Fatalf("got %d lines, want >= %d\nstdout:\n%s", len(gotLines), len(exps), stdout)
@@ -16721,175 +16691,6 @@ function main(): i32 {
 	}
 }
 
-// Refcount builtins (`__rc_get` / `__rc_inc` / `__rc_dec`)
-// exposed for Phase-1 testing. Validates Phase 1a (rc=1 on
-// `__alloc_u8`) and Phase 1b (inc / dec are sentinel-aware and
-// don't corrupt the rc word). main returns 0 iff the observed
-// rc progression is exactly 1 → 2 → 1.
-func TestWASMRcBuiltins(t *testing.T) {
-	src := `function main(): i32 {
-    let arr: u8[] = __alloc_u8(10);
-    let r1: i32 = __rc_get(arr);
-    __rc_inc(arr);
-    let r2: i32 = __rc_get(arr);
-    __rc_dec(arr);
-    let r3: i32 = __rc_get(arr);
-    return r1 + r2 + r3 - 4;
-}`
-	if got := runWasm(t, src); got != 0 {
-		t.Errorf("got exit %d, want 0 (rc progression off)", got)
-	}
-}
-
-// Phase 1d transfer inc, refined by #4402 opt 1 (dead-alias dup/drop
-// cancellation): a pure borrowed-view alias — never reassigned, never
-// returned, never moved — elides its inc AND its exit-sweep dec as a
-// net-zero pair, so the rc stays 1. An alias that is still referenced
-// under the return keeps the ordinary transfer inc (rc 2).
-func TestWASMRcAliasInc(t *testing.T) {
-	dead := `function main(): i32 {
-    let arr: u8[] = __alloc_u8(8);
-    let alias: u8[] = arr;
-    return __rc_get(arr) - 1;
-}`
-	if got := runWasm(t, dead); got != 0 {
-		t.Errorf("dead alias: got exit %d, want 0 (borrowed view elides the inc — rc stays 1)", got)
-	}
-	live := `function main(): i32 {
-    let arr: u8[] = __alloc_u8(8);
-    let alias: u8[] = arr;
-    return __rc_get(arr) - 2 + alias.len() - 8;
-}`
-	if got := runWasm(t, live); got != 0 {
-		t.Errorf("returned alias: got exit %d, want 0 (transfer inc kept — rc 2)", got)
-	}
-}
-
-// Phase 1d-ii (+ Phase 1d-viii): FieldAccess + Index alias
-// reads inc the rc; with Phase 1d-viii, the struct- / array-
-// lit constructor also inc's the captured array. A LIVE alias
-// ends at rc=3 — alloc (1) + lit store (1) + alias read (1);
-// a DEAD one cancels the read's inc against its own exit dec
-// and ends at rc=2. Both are pinned, because dropping either
-// side of that pair alone is an over-release.
-func TestWASMRcAliasIncFieldAndIndex(t *testing.T) {
-	for _, c := range []struct {
-		name string
-		// want names the rc the case's arithmetic subtracts, so a failure
-		// says which expectation moved.
-		want string
-		src  string
-	}{
-		{"field_access", "rc=3 (alloc + struct-lit store + live alias read)", `struct Holder { items: u8[] }
-function main(): i32 {
-    let inner: u8[] = __alloc_u8(8);
-    let h: Holder = Holder { items: inner };
-    let alias: u8[] = h.items;
-    // Precise drops (RC-Perceus) release the now-dead struct h AND the
-    // now-dead alias at their last use; reference both in the return so they
-    // stay live through the check — this measures the fully-aliased rc
-    // (inner + h.items + alias). Both .len()-8 terms are 0, so the result is
-    // unchanged.
-    return __rc_get(inner) - 3 + h.items.len() - 8 + alias.len() - 8;
-}`},
-		{"index_load", "rc=3 (alloc + array-lit store + live alias read)", `function main(): i32 {
-    let inner: u8[] = __alloc_u8(8);
-    let matrix: u8[][] = [inner];
-    let alias: u8[] = matrix[0];
-    // Precise drops (RC-Perceus) release the now-dead matrix AND the now-dead
-    // alias at their last use; reference both in the return so they stay live
-    // through the check — this measures the fully-aliased rc (inner + the
-    // array element + alias), which is what the test asserts. An alias that is
-    // NOT read again cancels its inc against its own exit dec instead, which
-    // is a different rc and the case below. matrix.len()-1 and alias.len()-8
-    // are both 0, so the result is unchanged.
-    return __rc_get(inner) - 3 + matrix.len() - 1 + alias.len() - 8;
-}`},
-		{"index_load_dead_alias", "rc=2 (alloc + array-lit store; the dead alias inc/dec cancel)", `function main(): i32 {
-    let inner: u8[] = __alloc_u8(8);
-    let matrix: u8[][] = [inner];
-    let alias: u8[] = matrix[0];
-    // The alias is never read again, so it is a pure borrowed view: the
-    // transfer inc cancels against its own exit dec as a net-zero pair — the
-    // #4402 opt-1 shape RcAliasInc's dead case pins for a plain ident, which
-    // an element read reaches too now that it is not permanently borrow-
-    // tainted (#6567). rc is therefore 2 (alloc + the array-literal element
-    // store), and the underflow counter must still be 0: eliding ONE side of
-    // that pair is an over-release, not an optimisation.
-    return __rc_get(inner) - 2 + matrix.len() - 1 + __rc_underflow_count();
-}`},
-	} {
-		t.Run(c.name, func(t *testing.T) {
-			if got := runWasm(t, c.src); got != 0 {
-				t.Errorf("got exit %d, want 0 — expected %s", got, c.want)
-			}
-		})
-	}
-}
-
-// Phase 1d-iii: `y = x;` reassignment bumps the rc on x.
-func TestWASMRcAliasIncReassign(t *testing.T) {
-	src := `function main(): i32 {
-    let arr: u8[] = __alloc_u8(8);
-    let other: u8[] = __alloc_u8(8);
-    other = arr;
-    return __rc_get(arr) - 2;
-}`
-	if got := runWasm(t, src); got != 0 {
-		t.Errorf("got exit %d, want 0 (assign-alias should bump rc to 2)", got)
-	}
-}
-
-// Phase 2d-borrow: passing an array to a function is a borrow —
-// no caller-side inc, no callee-side exit dec. The rc is
-// untouched across the call and stays at 1.
-func TestWASMRcAliasIncCallArg(t *testing.T) {
-	src := `function f(arr: u8[]): i32 { return 0; }
-function main(): i32 {
-    let arr: u8[] = __alloc_u8(8);
-    let _: i32 = f(arr);
-    return __rc_get(arr) - 1;
-}`
-	if got := runWasm(t, src); got != 0 {
-		t.Errorf("got exit %d, want 0 (borrowed arg: rc stays 1)", got)
-	}
-}
-
-// Phase 3 step 1: rc-underflow detector. __fern_rc_dec bumps a
-// counter (read back via __rc_underflow_count) whenever it is
-// asked to decrement an rc that is already <= 0 — an over-release
-// that, once Phase 3 turns on reclamation, becomes a
-// use-after-free. WASM-only probe (the counter is a linear-memory
-// slot). This test pins the detector's two contracts:
-//   - a program with no over-release reports 0 (no false
-//     positives from healthy 1->0 decs or sentinel statics), and
-//   - a deliberate double-dec (1->0 healthy, then 0-> under) is
-//     caught and counted exactly once.
-func TestWASMRcUnderflowDetector(t *testing.T) {
-	clean := `
-import "core/map";
-function main(): i32 {
-    let m: Map[string, i32] = map_new(8);
-    m = m.insert("a", 1);
-    m = m.insert("b", 2);
-    let xs: i32[] = [1, 2, 3];
-    return __rc_underflow_count() + m.get_or("a", 0) - 1 + xs[0] - 1;
-}`
-	if got := runWasm(t, clean); got != 0 {
-		t.Errorf("clean program: got %d, want 0 (no over-release expected)", got)
-	}
-
-	overRelease := `function main(): i32 {
-    let a: u8[] = __alloc_u8(8);   // rc = 1
-    __rc_dec(a);                   // 1 -> 0 (healthy)
-    __rc_dec(a);                   // 0 -> -1 (over-release, counted)
-    return __rc_underflow_count();
-}`
-	if got := runWasm(t, overRelease); got != 1 {
-		t.Errorf("double-dec: got underflow count %d, want 1", got)
-	}
-}
-
 // Phase 3 step 2: the idiomatic value-returning map mutation
 // `m = m.insert(...)` / `m = m.cleared()` must NOT over-release. The
 // mutators cow in place without bumping rc, so b.assign uses a
@@ -16933,97 +16734,6 @@ function main(): i32 {
 }`
 	if got := runWasm(t, aliased); got != 0 {
 		t.Errorf("got %d, want 0 (aliased self-assign: 0 underflow, m1=1, m2=999)", got)
-	}
-}
-
-// Phase 3 step 3: drop handlers. An array of pointer-shaped
-// rc-tracked elements (here u8[][]) routes its scope-exit dec
-// through __fern_drop_arr_ptr, which on the last reference dec's
-// each element — balancing the per-element inc the IR emits at
-// array-literal construction (Phase 1d-viii). Without the drop,
-// the nested element's rc leaks.
-func TestWASMRcDropArrayElements(t *testing.T) {
-	// Proof the drop FIRES: `consume` nests `inner` into a local
-	// array and drops it on exit; inner's rc must return to its
-	// pre-call value (1), not stay at the constructed 2.
-	fires := `function consume(inner: u8[]): i32 {
-    let outer: u8[][] = [inner];
-    return 0;
-}
-function main(): i32 {
-    let inner: u8[] = __alloc_u8(4);
-    let before: i32 = __rc_get(inner);
-    let ignore: i32 = consume(inner);
-    let after: i32 = __rc_get(inner);
-    return (before - 1) + (after - 1);  // 0 iff drop balanced the inc
-}`
-	if got := runWasm(t, fires); got != 0 {
-		t.Errorf("got %d, want 0 (drop must dec the nested element back to rc 1)", got)
-	}
-
-	// And no over-release: nesting fresh + aliased elements and
-	// dropping the outer array reports 0 underflows.
-	noUnder := `function build(): i32 {
-    let inner: i32[] = [1, 2, 3];
-    let a: i32[][] = [inner];        // aliased element (inc'd)
-    let b: i32[][] = [[4, 5], [6]];  // fresh elements (not inc'd)
-    return a[0][1] + b[1][0];        // 2 + 6
-}
-function main(): i32 {
-    return (build() - 8) + __rc_underflow_count();
-}`
-	if got := runWasm(t, noUnder); got != 0 {
-		t.Errorf("got %d, want 0 (nested-array drop: correct values, 0 underflow)", got)
-	}
-}
-
-// Phase 3 step 3: struct drop handlers. A user struct with
-// pointer-shaped rc-tracked fields drops those fields on its last
-// reference (gated by __fern_rc_is_unique) before dec'ing the box,
-// balancing the per-field inc from Phase 1e-struct-ii.
-func TestWASMRcDropStructFields(t *testing.T) {
-	fires := `struct Holder { items: u8[] }
-function consume(inner: u8[]): i32 {
-    let h: Holder = Holder { items: inner };
-    return 0;
-}
-function main(): i32 {
-    let inner: u8[] = __alloc_u8(4);
-    let before: i32 = __rc_get(inner);
-    let ignore: i32 = consume(inner);
-    let after: i32 = __rc_get(inner);
-    return (before - 1) + (after - 1) + __rc_underflow_count();
-}`
-	if got := runWasm(t, fires); got != 0 {
-		t.Errorf("got %d, want 0 (struct field drop must dec the array back to rc 1)", got)
-	}
-
-	aliased := `struct Holder { items: i32[] }
-function main(): i32 {
-    let inner: i32[] = [1, 2, 3];
-    let h1: Holder = Holder { items: inner };
-    let h2: Holder = h1;
-    return h2.items[2] + __rc_underflow_count() - 3;
-}`
-	if got := runWasm(t, aliased); got != 0 {
-		t.Errorf("got %d, want 0 (aliased struct: no double field-drop, 0 underflow)", got)
-	}
-
-	nested := `struct Grid { rows: i32[][] }
-struct Inner { v: i32[] }
-struct Outer { inner: Inner }
-function build(): i32 {
-    let a: i32[] = [1, 2, 3];
-    let g: Grid = Grid { rows: [a] };
-    let arr: i32[] = [7, 8];
-    let o: Outer = Outer { inner: Inner { v: arr } };
-    return g.rows[0][1] + o.inner.v[0] + __rc_underflow_count();
-}
-function main(): i32 {
-    return build() - 9;
-}`
-	if got := runWasm(t, nested); got != 0 {
-		t.Errorf("got %d, want 0 (nested struct/array fields: correct values, 0 underflow)", got)
 	}
 }
 
@@ -17074,42 +16784,6 @@ function main(): i32 {
 	}
 }
 
-// Phase 1d-vi: dec on overwrite.
-func TestWASMRcDecOnOverwrite(t *testing.T) {
-	src := `function main(): i32 {
-    let arr1: u8[] = __alloc_u8(8);
-    let arr2: u8[] = __alloc_u8(8);
-    let arr3: u8[] = __alloc_u8(8);
-    arr1 = arr2;
-    arr1 = arr3;
-    return __rc_get(arr2) + __rc_get(arr3) - 3;
-}`
-	if got := runWasm(t, src); got != 0 {
-		t.Errorf("got exit %d, want 0 (arr2 rc=1, arr3 rc=2, sum=3)", got)
-	}
-}
-
-// Phase 2: arr.push mutates in place when rc==1 and cap > len.
-// First push of [10, 20] copies (cap=2=len, no spare); the
-// copy bumps cap to max(2*newLen, 4) = 6, so the second push
-// hits the fast path and returns the same pointer.
-func TestWASMArrayPushInPlaceFastPath(t *testing.T) {
-	src := `function main(): i32 {
-    let xs: i32[] = [10, 20];
-    xs = xs.append(30);
-    let addr_before: usize = xs as usize;
-    xs = xs.append(40);
-    let addr_after: usize = xs as usize;
-    if (addr_before != addr_after) { return 1; }
-    if (xs.len() != 4) { return 2; }
-    if (xs[3] != 40) { return 3; }
-    return 0;
-}`
-	if got := runWasm(t, src); got != 0 {
-		t.Errorf("got exit %d, want 0 (in-place fast path should reuse buffer)", got)
-	}
-}
-
 // Phase 2: aliased rc>1 forces copy semantics even with spare
 // cap — otherwise the other holder's view of the array would
 // silently extend.
@@ -17127,23 +16801,6 @@ func TestWASMArrayPushAliasedCopies(t *testing.T) {
 }`
 	if got := runWasm(t, src); got != 0 {
 		t.Errorf("got exit %d, want 0 (aliased push must copy)", got)
-	}
-}
-
-func TestWASMArrayIndexSetInPlaceFastPath(t *testing.T) {
-	src := `function main(): i32 {
-    let xs: i32[] = [10, 20, 30];
-    let addr_before: usize = xs as usize;
-    xs = xs.with(1, 999);
-    let addr_after: usize = xs as usize;
-    if (addr_before != addr_after) { return 1; }
-    if (xs[1] != 999) { return 2; }
-    if (xs[0] != 10) { return 3; }
-    if (xs[2] != 30) { return 4; }
-    return 0;
-}`
-	if got := runWasm(t, src); got != 0 {
-		t.Errorf("got exit %d, want 0 (arr[i]=v in-place when rc==1)", got)
 	}
 }
 
