@@ -26,7 +26,7 @@ func writeCapsTree(t *testing.T, files map[string]string) string {
 }
 
 // The report attributes stdlib usage to the calling package (app gets
-// `net` via std/fetch → tcp_connect), gives a path dependency its own
+// `net` via std/net → tcp_connect_with), gives a path dependency its own
 // row (helper uses fs directly), and includes the dependency's
 // capabilities in the caller's row too — the walk crosses package
 // boundaries, mirroring the brief's enforcement rule. Golden output:
@@ -34,14 +34,12 @@ func writeCapsTree(t *testing.T, files map[string]string) string {
 func TestCapabilitiesReportPathDep(t *testing.T) {
 	root := writeCapsTree(t, map[string]string{
 		"app/fern.toml": "[package]\nname = \"app\"\n[dependencies]\nhelper = { path = \"../helper\" }\n",
-		"app/main.fern": `import "std/fetch";
-import "std/utf8";
+		"app/main.fern": `import "std/net";
 import "helper";
 function main(): i32 {
-  var body: u8[] = fetch.fetch_get(fetch.ipv4(127, 0, 0, 1), 8080, "/");
-  match (utf8.from_bytes(body)) {
-    Some(text) => { helper.save(text); },
-    None => {},
+  match (net.connect(net.socket_addr(net.ipv4_loopback(), 8080))) {
+    Ok(sock) => { helper.save("connected"); },
+    Err(e) => {},
   }
   return 0;
 }`,
