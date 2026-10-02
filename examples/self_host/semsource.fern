@@ -7751,13 +7751,14 @@ function inferred_mode(old: i32, t: typeinfo.Type, consumed: boolean): i32 {
 }
 
 function inferred_contract(c: ssasem.Contract, rows: ownership.Escapes[], ix: ownership.Index): ssasem.Contract {
-  if (ownership.find(rows, ix, c.name) < 0) {
+  let row: i32 = ownership.find(rows, ix, c.name);
+  if (row < 0) {
     return c;
   }
   let modes: i32[] = c.modes;
   let i: i32 = 0;
   while (i < modes.len() && i < c.params.len()) {
-    modes = modes.with(i, inferred_mode(modes[i], c.params[i], ownership.consumed(rows, ix, c.name, i)));
+    modes = modes.with(i, inferred_mode(modes[i], c.params[i], ownership.consumed_at(rows, row, i)));
     i = i + 1;
   }
   return ssasem.Contract { ...c, modes: modes };
@@ -7779,13 +7780,14 @@ function inferred_produced(p: Produced, name: string, rows: ownership.Escapes[],
   for c in p.func.calls {
     calls0 = calls0.append(inferred_contract(c, rows, ix));
   }
-  if (ownership.find(rows, ix, name) < 0) {
+  let row: i32 = ownership.find(rows, ix, name);
+  if (row < 0) {
     return Produced { ...p, func: ssasem.Func { ...p.func, calls: calls0 } };
   }
   let modes: i32[] = p.modes;
   let i: i32 = 0;
   while (i < modes.len() && i < p.func.params.len()) {
-    modes = modes.with(i, inferred_mode(modes[i], p.func.params[i], ownership.consumed(rows, ix, name, i)));
+    modes = modes.with(i, inferred_mode(modes[i], p.func.params[i], ownership.consumed_at(rows, row, i)));
     i = i + 1;
   }
   return Produced { ...p, modes: modes, func: ssasem.Func { ...p.func, calls: calls0 } };

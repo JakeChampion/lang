@@ -86,14 +86,18 @@ pub function find(rows: Escapes[], ix: Index, name: string): i32 {
 // deciding what to REWRITE must ask `find` first, because "no row" means
 // "this symbol keeps the mode it declared", not "count it".
 pub function consumed(rows: Escapes[], ix: Index, name: string, at: i32): boolean {
-  let i: i32 = find(rows, ix, name);
-  if (i < 0) {
+  return consumed_at(rows, find(rows, ix, name), at);
+}
+
+// consumed_at is consumed for the row `find` answered, -1 for none.
+pub function consumed_at(rows: Escapes[], row: i32, at: i32): boolean {
+  if (row < 0) {
     return true;
   }
-  if (at < 0 || at >= rows[i].bits.len()) {
+  if (at < 0 || at >= rows[row].bits.len()) {
     return true;
   }
-  return rows[i].bits[at];
+  return rows[row].bits[at];
 }
 
 // The bodies any function VALUE names. A counted parameter is spelled in the
@@ -287,12 +291,13 @@ function call_carried(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis, in
   if (same_cycle(rows, ix, f.graph.name, ins.str)) {
     return out;
   }
+  let row: i32 = find(rows, ix, ins.str);
   let i: i32 = 0;
   while (i < ins.args.len()) {
     // Passing the same parameter to the same slot supplies no independent
     // reason to consume it. Any other escaping use still carries it.
     let unchanged: boolean = ins.str == f.graph.name && unchanged_slot(f, ins.args[i], i);
-    if (!unchanged && ssasem.reference(f.values[ins.args[i]]) && consumed(rows, ix, ins.str, i)) {
+    if (!unchanged && ssasem.reference(f.values[ins.args[i]]) && consumed_at(rows, row, i)) {
       out = carry(out, a, ins.args[i]);
     }
     i = i + 1;
@@ -427,7 +432,7 @@ function lent_values(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis, ins
   }
   let i: i32 = 0;
   while (i < ins.args.len()) {
-    if (ssasem.reference(f.values[ins.args[i]]) && !consumed(rows, ix, ins.str, i)) {
+    if (ssasem.reference(f.values[ins.args[i]]) && !consumed_at(rows, at, i)) {
       out = carry(out, a, ins.args[i]);
     }
     i = i + 1;
