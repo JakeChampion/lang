@@ -14148,15 +14148,13 @@ function borrow_reg_put(own reg: string[], key: string, flags: string): string[]
 // record of a name in its bucket, so the old one is dropped rather than
 // shadowed — and an empty `flags` leaves the key with no record, which the
 // lookup reads as nothing borrowable. An empty registry is given its buckets.
-// `reg` stays borrowed, as borrow_reg_with_counted's does; the one store is a
-// `with`, which copies the bucket array once when the registry is shared.
-pub function borrow_reg_set(reg: string[], key: string, flags: string): string[] {
-  let out: string[] = reg;
+// `reg` is moved in and stored to in place, as borrow_reg_put's is.
+pub function borrow_reg_set(own reg: string[], key: string, flags: string): string[] {
   if (reg.len() == 0) {
-    out = borrow_reg_new();
+    reg = borrow_reg_new();
   }
-  let b: i32 = util.hash_bucket(key, out.len());
-  let bucket: string = out[b];
+  let b: i32 = util.hash_bucket(key, reg.len());
+  let bucket: string = reg[b];
   let kept: string = "";
   let p: i32 = 0;
   while (p < bucket.len()) {
@@ -14176,7 +14174,8 @@ pub function borrow_reg_set(reg: string[], key: string, flags: string): string[]
   if (flags.len() > 0) {
     kept = kept + borrow_reg_record(key, flags);
   }
-  return out.with(b, kept);
+  reg = reg.with(b, kept);
+  return reg;
 }
 
 function borrow_reg_record(key: string, flags: string): string {

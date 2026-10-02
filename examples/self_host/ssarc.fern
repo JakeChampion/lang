@@ -6261,9 +6261,9 @@ function tier_flags(tiers: string[], prefix: string): string {
   return flags;
 }
 
-function borrow_rows(reg: string[], name: string, tiers: string[], bare_row: string): string[] {
-  let bare: string[] = fnsigs.borrow_reg_set(reg, name, bare_row);
-  return fnsigs.borrow_reg_set(bare, "CNT:" + name, tier_flags(tiers, "CNT:"));
+function borrow_rows(own reg: string[], name: string, tiers: string[], bare_row: string): string[] {
+  reg = fnsigs.borrow_reg_set(reg, name, bare_row);
+  return fnsigs.borrow_reg_set(reg, "CNT:" + name, tier_flags(tiers, "CNT:"));
 }
 
 // The bare row promises the callee keeps no reference to the argument once

@@ -51,9 +51,8 @@ The whole-compiler emit after the previous entry
 - The registry has 4093 buckets (`mfuncs_buckets` is sized the same way), and
   `borrow_reg_set` stores through one `with` on the borrowed registry, which
   copies the bucket array once when it is shared, rather than rebuilding it
-  by appending. Taking the registry `own` and storing in place was the aim;
-  it is held back by #11020, where the two checkers disagree on E051 for the
-  fixture that calls `borrow_reg_set` from a struct literal argument.
+  by appending. Taking the registry `own` and storing in place is
+  `2026-10-02-t`.
 - `StrarrOwnFrame` carries `store_keys`, a `NameIndex` over the key before
   each store row's `|`, built once per module beside `stores`; the call asks
   it `has(ck)` instead of scanning every row for the prefix. Built per frame
@@ -87,7 +86,7 @@ entry's change, and this change on top.
 `borrow_reg_set` rises because its one `with` now copies 4093 buckets rather
 than 251: the lookups it serves fall by 2.9 G for that 0.6 G. With the
 registry taken `own` the same emit measured 202.85 G and `borrow_reg_set`
-0.02 G; that is what #11020 holds back.
+0.02 G; that is `2026-10-02-t`.
 
 `checker.fern` alone, the quick loop: 31.19 G to 31.00 G before the registry
 change. The costs here are whole-program sized (the function table, the
