@@ -40,12 +40,13 @@ func TestCITestWeightsRefreshUsesIndependentRuns(t *testing.T) {
 
 // The runs predate the tree the table is for: a measured test deleted since,
 // or a declared one, gets no row (the weights file's lookup is exact and the
-// testname gate rejects a name nothing answers to), and the drop is reported.
+// testname gate rejects a name nothing answers to), and the drop is reported
+// for the rows the table would otherwise have held.
 func TestCITestWeightsRefreshDropsTestsTheTreeNoLongerHas(t *testing.T) {
 	env := []string{tree(t, "TestKept", "TestWeightOne")}
 	weights := weightsFile(t, "TestKept 5\nTestRetired 40\n")
-	first := seed(t, map[string]string{"shard.timings": "TestKept\t7\nTestDeleted\t90\nTestWeightOne\t0.5\n"})
-	second := seed(t, map[string]string{"shard.timings": "TestKept\t6\nTestDeleted\t91\n"})
+	first := seed(t, map[string]string{"shard.timings": "TestKept\t7\nTestDeleted\t90\nTestWeightOne\t0.5\nTestGoneFast\t0.5\n"})
+	second := seed(t, map[string]string{"shard.timings": "TestKept\t6\nTestDeleted\t91\nTestGoneFast\t0.4\n"})
 	code, out := runWeights(t, env, "refresh", weights, first, second)
 	want := "ci-test-weights: dropped TestDeleted: not a test function in the tree\n" +
 		"ci-test-weights: dropped TestRetired: not a test function in the tree\n" +

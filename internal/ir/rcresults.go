@@ -118,6 +118,7 @@ var rcResultOwned = map[string]bool{
 	"__fern_alloc_rc1":         true, // rc=1 at base+0, payload size at base+4
 	"__alloc_u8":               true, // cap@-12, rc=1@-8, len@-4, payload zeroed
 	"__fern_string_bytes_copy": true, // borrowed string copied into a fresh u8[]
+	"buf_take_bytes":           true, // fresh owned byte array, independent of the builder
 	"__fern_scale_f64":         true, // cap@-12, rc=1@-8, len@-4, the scaled f64 copy
 
 	// String production. Each is three-way — empty, inline-packed (<=7
@@ -175,60 +176,63 @@ var rcResultOwned = map[string]bool{
 	// What is INSIDE the box is a separate answer: a success payload
 	// the helper built fresh is the caller's (rcOwnedPayloadBuiltins),
 	// while the IoError of a failure arm stays immortal.
-	"__fern_env":                 true,
-	"__fern_config_get":          true,
-	"__fern_read_line":           true,
-	"__fern_reader_read_line":    true, // delegates to __fern_read_line
-	"__fern_read_file":           true,
-	"__fern_read_file_bytes":     true,
-	"__fern_write_file":          true,
-	"__fern_open_reader":         true,
-	"__fern_open_reader_with":    true,
-	"__fern_open_writer_with":    true,
-	"__fern_open_writer":         true,
-	"__fern_open_appender":       true,
-	"__fern_open_exclusive":      true,
-	"__fern_reader_close_fd":     true,
-	"__fern_writer_close":        true,
-	"__fern_writer_write":        true,
-	"__fern_writer_truncate":     true,
-	"__fern_reader_read_line_fd": true,
-	"__fern_reader_read_chunk":   true,
-	"__fern_fd_stat":             true,
-	"__fern_fd_fsync":            true,
-	"__fern_fd_fdatasync":        true,
-	"__fern_fd_syncfs":           true,
-	"__fern_fd_dup_onto":         true,
+	"__fern_env":                     true,
+	"__fern_config_get":              true,
+	"__fern_read_line":               true,
+	"__fern_reader_read_line":        true, // delegates to __fern_read_line
+	"__fern_read_file":               true,
+	"__fern_read_file_bytes":         true,
+	"__fern_write_file":              true,
+	"__fern_open_reader":             true,
+	"__fern_open_reader_with":        true,
+	"__fern_open_writer_with":        true,
+	"__fern_open_writer":             true,
+	"__fern_open_appender":           true,
+	"__fern_open_exclusive":          true,
+	"__fern_reader_close_fd":         true,
+	"__fern_writer_close":            true,
+	"__fern_writer_write":            true,
+	"__fern_writer_truncate":         true,
+	"__fern_reader_read_line_fd":     true,
+	"__fern_reader_read_chunk":       true,
+	"__fern_reader_read_chunk_bytes": true,
+	"__fern_fd_stat":                 true,
+	"__fern_fd_fsync":                true,
+	"__fern_fd_fdatasync":            true,
+	"__fern_fd_syncfs":               true,
+	"__fern_fd_dup_onto":             true,
 	// The four terminal questions' handle forms. On the natives each is
 	// two instructions into the free builtin's helper; on wasm each is a
 	// body of its own that answers Unsupported. Either way the box is
 	// freshly allocated per call (#9363).
-	"__fern_handle_window_size":     true,
-	"__fern_handle_set_window_size": true,
-	"__fern_handle_termios_get":     true,
-	"__fern_handle_termios_set":     true,
-	"__fern_reader_seek":            true,
-	"__fern_reader_splice":          true,
-	"__fern_writer_seek":            true,
-	"__fern_reader_flags":           true,
-	"__fern_writer_flags":           true,
-	"__fern_writer_write_some":      true,
-	"__fern_remove_file":            true,
-	"__fern_stat":                   true,
-	"__fern_lstat":                  true,
-	"__fern_read_dir":               true,
-	"__fern_read_dir_all":           true,
-	"__fern_remove_dir_all":         true,
-	"__fern_temp_dir":               true,
-	"__fern_create_dir_all":         true,
-	"__fern_create_dir":             true,
-	"__fern_remove_dir":             true,
-	"__fern_create_link":            true,
-	"__fern_create_symlink":         true,
-	"__fern_read_link":              true,
-	"__fern_rename":                 true,
-	"__fern_set_file_times":         true,
-	"__fern_truncate":               true,
+	"__fern_handle_window_size":      true,
+	"__fern_handle_set_window_size":  true,
+	"__fern_handle_termios_get":      true,
+	"__fern_handle_termios_set":      true,
+	"__fern_reader_seek":             true,
+	"__fern_reader_splice":           true,
+	"__fern_writer_seek":             true,
+	"__fern_reader_flags":            true,
+	"__fern_writer_flags":            true,
+	"__fern_writer_write_some":       true,
+	"__fern_writer_write_bytes":      true,
+	"__fern_writer_write_some_bytes": true,
+	"__fern_remove_file":             true,
+	"__fern_stat":                    true,
+	"__fern_lstat":                   true,
+	"__fern_read_dir":                true,
+	"__fern_read_dir_all":            true,
+	"__fern_remove_dir_all":          true,
+	"__fern_temp_dir":                true,
+	"__fern_create_dir_all":          true,
+	"__fern_create_dir":              true,
+	"__fern_remove_dir":              true,
+	"__fern_create_link":             true,
+	"__fern_create_symlink":          true,
+	"__fern_read_link":               true,
+	"__fern_rename":                  true,
+	"__fern_set_file_times":          true,
+	"__fern_truncate":                true,
 	// `access`, `write_file_exec`, `chmod` and `statfs` have no
 	// `__fern_*` entry in rcsigs to alias through — all four are
 	// native-only (E066 refuses them on the wasm worlds), so they are
@@ -291,13 +295,14 @@ var rcResultImmortal = map[string]bool{
 // (computeConsumingOwnedMatches → consumingBindings). A failure payload
 // (`IoError`) is an immortal box and is not owned.
 var rcOwnedPayloadBuiltins = map[string]bool{
-	"__method_Reader_read_chunk": true, // __fern_reader_read_chunk
-	"__method_Reader_read_line":  true, // __fern_reader_read_line
-	"read_line":                  true, // __fern_read_line
-	"env":                        true, // __fern_env
-	"read_file":                  true, // __fern_read_file
-	"read_file_bytes":            true, // __fern_read_file_bytes
-	"termios_get":                true, // native fresh i64[] terminal words
+	"__method_Reader_read_chunk":       true, // __fern_reader_read_chunk
+	"__method_Reader_read_chunk_bytes": true,
+	"__method_Reader_read_line":        true, // __fern_reader_read_line
+	"read_line":                        true, // __fern_read_line
+	"env":                              true, // __fern_env
+	"read_file":                        true, // __fern_read_file
+	"read_file_bytes":                  true, // __fern_read_file_bytes
+	"termios_get":                      true, // native fresh i64[] terminal words
 }
 
 // rcOwnedResultBuiltins names the builtins — by the callee spelling the IR
@@ -314,76 +319,79 @@ var rcOwnedPayloadBuiltins = map[string]bool{
 // The `Reader` / `Writer` constructors are absent by design: their handle
 // is per-stream, not per-call, and keeps the static sentinel.
 var rcOwnedResultBuiltins = map[string]bool{
-	"env":                             true, // __fern_env
-	"read_line":                       true, // __fern_read_line
-	"__method_Reader_read_line":       true, // __fern_reader_read_line
-	"__method_Reader_read_chunk":      true, // __fern_reader_read_chunk
-	"__method_Reader_close":           true, // __fern_reader_close_fd
-	"__method_Writer_close":           true, // __fern_writer_close
-	"__method_Writer_write":           true, // __fern_writer_write
-	"__method_Writer_truncate":        true, // __fern_writer_truncate
-	"__method_Reader_seek":            true, // __fern_reader_seek
-	"__method_Reader_splice_to":       true, // __fern_reader_splice
-	"__method_Writer_seek":            true, // __fern_writer_seek
-	"__method_Reader_flags":           true, // __fern_reader_flags
-	"__method_Writer_flags":           true, // __fern_writer_flags
-	"__method_Writer_write_some":      true, // __fern_writer_write_some
-	"__method_Reader_stat":            true, // __fern_fd_stat
-	"__method_Writer_stat":            true, // __fern_fd_stat
-	"__method_Reader_fsync":           true, // __fern_fd_fsync
-	"__method_Writer_fsync":           true, // __fern_fd_fsync
-	"__method_Reader_fdatasync":       true, // __fern_fd_fdatasync
-	"__method_Writer_fdatasync":       true, // __fern_fd_fdatasync
-	"__method_Reader_syncfs":          true, // __fern_fd_syncfs
-	"__method_Writer_syncfs":          true, // __fern_fd_syncfs
-	"__method_Reader_dup_onto":        true, // __fern_fd_dup_onto
-	"__method_Writer_dup_onto":        true, // __fern_fd_dup_onto
-	"__method_Reader_window_size":     true, // __fern_handle_window_size
-	"__method_Reader_set_window_size": true, // __fern_handle_set_window_size
-	"__method_Reader_termios_get":     true, // __fern_handle_termios_get
-	"__method_Reader_termios_set":     true, // __fern_handle_termios_set
-	"read_file":                       true,
-	"read_file_bytes":                 true,
-	"write_file":                      true,
-	"write_file_exec":                 true,
-	"open_reader":                     true,
-	"open_reader_with":                true,
-	"open_writer_with":                true,
-	"open_writer":                     true,
-	"open_appender":                   true,
-	"remove_file":                     true,
-	"remove_dir_all":                  true,
-	"create_dir_all":                  true,
-	"create_dir":                      true,
-	"chdir":                           true,
-	"chroot":                          true,
-	"setuid":                          true,
-	"setgid":                          true,
-	"setgroups":                       true,
-	"remove_dir":                      true,
-	"create_link":                     true,
-	"create_symlink":                  true,
-	"read_link":                       true,
-	"rename":                          true,
-	"chmod":                           true,
-	"chmod_at":                        true,
-	"signal_send":                     true,
-	"set_process_group":               true,
-	"set_file_times":                  true,
-	"truncate":                        true,
-	"mknod":                           true,
-	"chown_at":                        true,
-	"temp_dir":                        true,
-	"read_dir":                        true,
-	"window_size":                     true,
-	"set_window_size":                 true,
-	"termios_get":                     true,
-	"termios_set":                     true,
-	"read_dir_all":                    true,
-	"stat":                            true,
-	"lstat":                           true,
-	"statfs":                          true,
-	"access":                          true,
+	"env":                              true, // __fern_env
+	"read_line":                        true, // __fern_read_line
+	"__method_Reader_read_line":        true, // __fern_reader_read_line
+	"__method_Reader_read_chunk":       true, // __fern_reader_read_chunk
+	"__method_Reader_read_chunk_bytes": true,
+	"__method_Reader_close":            true, // __fern_reader_close_fd
+	"__method_Writer_close":            true, // __fern_writer_close
+	"__method_Writer_write":            true, // __fern_writer_write
+	"__method_Writer_truncate":         true, // __fern_writer_truncate
+	"__method_Reader_seek":             true, // __fern_reader_seek
+	"__method_Reader_splice_to":        true, // __fern_reader_splice
+	"__method_Writer_seek":             true, // __fern_writer_seek
+	"__method_Reader_flags":            true, // __fern_reader_flags
+	"__method_Writer_flags":            true, // __fern_writer_flags
+	"__method_Writer_write_some":       true, // __fern_writer_write_some
+	"__method_Writer_write_bytes":      true, // __fern_writer_write_bytes
+	"__method_Writer_write_some_bytes": true, // __fern_writer_write_some_bytes
+	"__method_Reader_stat":             true, // __fern_fd_stat
+	"__method_Writer_stat":             true, // __fern_fd_stat
+	"__method_Reader_fsync":            true, // __fern_fd_fsync
+	"__method_Writer_fsync":            true, // __fern_fd_fsync
+	"__method_Reader_fdatasync":        true, // __fern_fd_fdatasync
+	"__method_Writer_fdatasync":        true, // __fern_fd_fdatasync
+	"__method_Reader_syncfs":           true, // __fern_fd_syncfs
+	"__method_Writer_syncfs":           true, // __fern_fd_syncfs
+	"__method_Reader_dup_onto":         true, // __fern_fd_dup_onto
+	"__method_Writer_dup_onto":         true, // __fern_fd_dup_onto
+	"__method_Reader_window_size":      true, // __fern_handle_window_size
+	"__method_Reader_set_window_size":  true, // __fern_handle_set_window_size
+	"__method_Reader_termios_get":      true, // __fern_handle_termios_get
+	"__method_Reader_termios_set":      true, // __fern_handle_termios_set
+	"read_file":                        true,
+	"read_file_bytes":                  true,
+	"write_file":                       true,
+	"write_file_exec":                  true,
+	"open_reader":                      true,
+	"open_reader_with":                 true,
+	"open_writer_with":                 true,
+	"open_writer":                      true,
+	"open_appender":                    true,
+	"remove_file":                      true,
+	"remove_dir_all":                   true,
+	"create_dir_all":                   true,
+	"create_dir":                       true,
+	"chdir":                            true,
+	"chroot":                           true,
+	"setuid":                           true,
+	"setgid":                           true,
+	"setgroups":                        true,
+	"remove_dir":                       true,
+	"create_link":                      true,
+	"create_symlink":                   true,
+	"read_link":                        true,
+	"rename":                           true,
+	"chmod":                            true,
+	"chmod_at":                         true,
+	"signal_send":                      true,
+	"set_process_group":                true,
+	"set_file_times":                   true,
+	"truncate":                         true,
+	"mknod":                            true,
+	"chown_at":                         true,
+	"temp_dir":                         true,
+	"read_dir":                         true,
+	"window_size":                      true,
+	"set_window_size":                  true,
+	"termios_get":                      true,
+	"termios_set":                      true,
+	"read_dir_all":                     true,
+	"stat":                             true,
+	"lstat":                            true,
+	"statfs":                           true,
+	"access":                           true,
 	// The builder's take hands over its own string-shaped buffer, the
 	// only reference to it (rcResultOwned, #8773); in argument position
 	// nothing else released it, so every BufWriter flush leaked a block
@@ -522,7 +530,7 @@ var rcResultNonPointer = map[string]bool{
 	"__fern_reader_close": true, "__fern_sleep_ms": true,
 	"__fern_sleep_ns": true,
 	"strbuf_reset":    true, "strbuf_append": true,
-	"buf_push": true, "buf_push_range": true, "buf_push_mapped": true, "buf_push_filtered": true, "buf_push_expanded": true, "buf_push_byte": true,
+	"buf_push": true, "buf_push_range": true, "buf_push_bytes_range": true, "buf_push_mapped": true, "buf_push_filtered": true, "buf_push_expanded": true, "buf_push_byte": true,
 	"buf_push_u64": true,
 	"buf_free":     true, "__fern_buf_reserve": true,
 

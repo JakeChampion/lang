@@ -2310,6 +2310,31 @@ func buildStreamCloseBodyP2(idxs map[string]uint32, drop uint32) []byte {
 	allocRc1 := idxs["__fern_alloc_rc1"]
 
 	var body []byte
+	{
+		// Every u32 stream handle is valid. Track closure in the signed file
+		// position instead: Reader and Writer both store it at offset 8.
+		body = inst.InstLocalGet(body, 0)
+		body = memory.InstI64Load(body, 3, readerPosOff)
+		body = inst.InstI64Const(body, -1)
+		body = numeric.InstI64Eq(body)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		body = inst.InstI32Const(body, 8) // WASI EBADF
+		body = inst.InstI32Const(body, 0)
+		body = inst.InstI32Const(body, 0)
+		body = inst.InstCall(body, idxs["__build_io_error"])
+		body = inst.InstLocalSet(body, 2)
+		body = inst.InstI32Const(body, 8)
+		body = inst.InstCall(body, allocRc1)
+		body = inst.InstLocalTee(body, 1)
+		body = inst.InstI32Const(body, 0) // Some(error)
+		body = memory.InstI32Store(body, 2, 0)
+		body = inst.InstLocalGet(body, 1)
+		body = inst.InstLocalGet(body, 2)
+		body = memory.InstI32Store(body, 2, 4)
+		body = inst.InstLocalGet(body, 1)
+		body = inst.InstReturn(body)
+		body = inst.InstEnd(body)
+	}
 	// resource.drop(mem[$self+0]) — the own<…stream> handle.
 	body = inst.InstLocalGet(body, 0)
 	body = memory.InstI32Load(body, 2, 0)
@@ -2329,6 +2354,11 @@ func buildStreamCloseBodyP2(idxs map[string]uint32, drop uint32) []byte {
 		body = inst.InstEnd(body)
 	}
 
+	{
+		body = inst.InstLocalGet(body, 0)
+		body = inst.InstI64Const(body, -1)
+		body = memory.InstI64Store(body, 3, readerPosOff)
+	}
 	// Return None, at Option[IoError]'s uniform box size.
 	body = emitPayloadlessResultBox(body, allocRc1, 1, 8, 1)
 

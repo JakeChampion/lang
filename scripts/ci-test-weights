@@ -212,11 +212,9 @@ refresh() {
         if (samples[name] >= 2 || weight > old) declared[name] = sprintf("%.0f", weight)
       }
       for (name in declared) {
-        if (!(name in in_tree)) {
-          print "ci-test-weights: dropped " name ": not a test function in the tree" | "LC_ALL=C sort >&2"
-          continue
-        }
-        if (declared[name] + 0 != 1) printf "%s %s\n", name, declared[name]
+        if (declared[name] + 0 == 1) continue
+        if (name in in_tree) printf "%s %s\n", name, declared[name]
+        else print "ci-test-weights: dropped " name ": not a test function in the tree" | "LC_ALL=C sort >&2"
       }
     }
   ' "${files[@]}" | LC_ALL=C sort

@@ -273,7 +273,8 @@ var rcInertBuiltins = map[string]bool{
 	"__method_MapIter_key": true, "__method_MapIter_value": true,
 
 	"__method_Reader_close": true, "__method_Reader_read_chunk": true,
-	"__method_Reader_read_line": true, "__method_Reader_seek": true, "__method_Writer_seek": true,
+	"__method_Reader_read_chunk_bytes": true,
+	"__method_Reader_read_line":        true, "__method_Reader_seek": true, "__method_Writer_seek": true,
 	"__method_Reader_splice_to": true,
 	"__method_Reader_flags":     true, "__method_Writer_flags": true,
 	"__method_Reader_isatty": true, "__method_Writer_isatty": true,
@@ -286,19 +287,24 @@ var rcInertBuiltins = map[string]bool{
 	"__method_Reader_stat":  true,
 	"__method_Writer_close": true, "__method_Writer_stat": true,
 	"__method_Writer_truncate": true, "__method_Writer_write": true,
-	"__method_Writer_write_some": true,
+	"__method_Writer_write_some":       true,
+	"__method_Writer_write_bytes":      true,
+	"__method_Writer_write_some_bytes": true,
 
 	"strbuf_append": true, "strbuf_reset": true, "strbuf_take": true,
 	"string_from_bytes_unchecked": true,
 
 	// The capacity-carrying builder (#8773). `buf_push` / `buf_push_range`
-	// memcpy the piece past the buffer tail and retain nothing; the rest
-	// take and return scalars. `buf_free` releases the builder's own
+	// memcpy the piece past the buffer tail and retain nothing. The take
+	// operations return fresh owned values, classified in rcresults.go.
+	// `buf_free` releases the builder's own
 	// blocks, which is the wholesale-invalidation axis `__heap_release_to`
 	// is filed under above and not one this table answers.
 	"buf_new": true, "buf_push": true, "buf_push_range": true, "buf_push_mapped": true, "buf_push_filtered": true, "buf_push_expanded": true,
 	"buf_push_byte": true, "buf_push_u64": true, "buf_len": true, "buf_take": true,
-	"buf_free": true,
+	"buf_free":             true,
+	"buf_take_bytes":       true,
+	"buf_push_bytes_range": true,
 
 	"proc_exec": true, "proc_exec_as": true, "proc_fork": true, "proc_waitpid": true,
 	"proc_waitpid_nohang": true,
@@ -490,8 +496,10 @@ var rcInert = map[string]bool{
 	// borrows and answers 0/1: no count moves either way.
 	"__fern_handle_isatty": true,
 	// write_some borrows the string it writes and hands back a count.
-	"__fern_writer_write_some": true,
-	"signal_default":           true, "signal_ignore": true,
+	"__fern_writer_write_some":       true,
+	"__fern_writer_write_bytes":      true,
+	"__fern_writer_write_some_bytes": true,
+	"signal_default":                 true, "signal_ignore": true,
 	"signal_mask": true, "signal_disposition": true,
 	"__wasi_errno_of_code": true,
 
@@ -547,7 +555,8 @@ var rcInert = map[string]bool{
 	"__fern_handle_termios_get":     true,
 	"__fern_handle_termios_set":     true,
 	"__fern_reader_read_chunk":      true, "__fern_reader_read_line": true,
-	"__fern_reader_read_line_fd": true, "__fern_remove_dir_all": true,
+	"__fern_reader_read_chunk_bytes": true,
+	"__fern_reader_read_line_fd":     true, "__fern_remove_dir_all": true,
 	"__fern_remove_file": true, "__fern_rmdir_rec": true,
 	"__fern_create_dir": true, "__fern_remove_dir": true,
 	"__fern_create_link": true, "__fern_create_symlink": true,

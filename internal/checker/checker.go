@@ -1566,6 +1566,10 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 		Params: []ast.Type{bufH, ast.StringType{}, ast.NumberType{}, ast.NumberType{}},
 		Result: ast.VoidType{},
 	}
+	c.info.FuncSigs["buf_push_bytes_range"] = &ast.FuncType{
+		Params: []ast.Type{bufH, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}, ast.NumberType{}, ast.NumberType{}},
+		Result: ast.VoidType{},
+	}
 	// buf_push_mapped(h, s, table) appends table[b] for each byte b of s; a
 	// byte at or past the table's length is appended unchanged. tr's
 	// translation and dd's conv tables are one call per read.
@@ -1608,6 +1612,12 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 	c.info.FuncSigs["buf_take"] = &ast.FuncType{
 		Params: []ast.Type{bufH},
 		Result: ast.StringType{},
+	}
+	// Extract arbitrary bytes as an independently owned array, resetting
+	// the builder without interpreting its contents as text.
+	c.info.FuncSigs["buf_take_bytes"] = &ast.FuncType{
+		Params: []ast.Type{bufH},
+		Result: ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}},
 	}
 	c.info.FuncSigs["buf_free"] = &ast.FuncType{
 		Params: []ast.Type{bufH},
@@ -3710,6 +3720,9 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 	// EOF from EISDIR, and a streaming utility needs to (#8700).
 	registerStructMethod("Reader", "read_chunk", []ast.Type{ast.NumberType{}},
 		ast.EnumType{Name: "Result", Args: []ast.Type{ast.StringType{}, ioErrType}})
+	// Raw reads preserve every byte, including partial UTF-8 sequences.
+	registerStructMethod("Reader", "read_chunk_bytes", []ast.Type{ast.NumberType{}},
+		ast.EnumType{Name: "Result", Args: []ast.Type{u8s, ioErrType}})
 	registerStructMethod("Reader", "close", nil, optionIoErr)
 	// stat asks fstat(2) of the handle itself — the same record `stat(path)`
 	// fills, for a stream the program did not open by name (stdin, stdout,
@@ -3885,6 +3898,9 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 	writeSomeResult := ast.EnumType{Name: "Result", Args: []ast.Type{
 		ast.NumberType{Width: 64, Signed: true}, ioErrType}}
 	registerStructMethod("Writer", "write_some", []ast.Type{ast.StringType{}}, writeSomeResult)
+	bytes := ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}
+	registerStructMethod("Writer", "write_bytes", []ast.Type{bytes}, optionIoErr)
+	registerStructMethod("Writer", "write_some_bytes", []ast.Type{bytes}, writeSomeResult)
 	registerStructMethod("Writer", "close", nil, optionIoErr)
 	// truncate(len) is ftruncate(2) on the handle: the file's length is set
 	// to `len`, growing with a hole that reads as zeros or discarding the

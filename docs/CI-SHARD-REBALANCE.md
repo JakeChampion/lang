@@ -12,12 +12,12 @@ group rather than the artifacts (docs/CI-WEIGHT-REFRESH.md): run
 (head fbf3fc5, 2,981 measured tests) and run
 [36955214561](https://github.com/JakeChampion/lang/actions/runs/36955214561)
 (head 098da94, 2,969). `scripts/ci-test-weights refresh` over the two: 278
-weights raised, 99 lowered, 915 tests weighted for the first time (most of
+weights raised, 98 lowered, 915 tests weighted for the first time (most of
 them 60-100 s driver builds that were partitioned as one second), 18 dropped
-to the one-second fallback. Both runs predate a45fbe06, which deleted eleven
-tests they had measured; `refresh` drops a measurement for a test the tree no
-longer defines, since the file's lookup is exact and the testname gate rejects
-such a row.
+to the one-second fallback. Both runs predate a45fbe06 and the merges after
+it, which deleted tests they had measured; `refresh` gives a test the tree no
+longer defines no row, since the file's lookup is exact and the testname gate
+rejects such a row.
 
 Replay of the partition with `scripts/shard-tests` over the current 2,990-test
 list, summing each shard's observed seconds from each run:

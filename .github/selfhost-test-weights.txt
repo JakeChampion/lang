@@ -5,7 +5,7 @@
 # `scripts/ci-test-weights refresh`: each entry is ceil(the slower of the two
 # observations); lowering requires both runs. Entries whose replacement rounds
 # to one second are omitted, since tests absent from this file weigh 1, as
-# are the tests both runs measured that a45fbe06 has since deleted.
+# are the tests the runs measured that the tree has since deleted.
 # All registered tests are still assigned exactly once by scripts/shard-tests.
 #
 # The ISOLATED_DRIVER_TESTS of test-e2e-selfhost.yml run in the cli job, not
@@ -285,7 +285,6 @@ TestSelfHostClosureArrParamX86_64 2
 TestSelfHostClosureArrUniformIRX86_64 2
 TestSelfHostClosureArrayIR 4
 TestSelfHostClosureArrayRcIRX86_64 2
-TestSelfHostClosureCallCensusPopulation 4
 TestSelfHostClosureCallEnumArm64 2
 TestSelfHostClosureCallEnumWasm 2
 TestSelfHostClosureCallEnumX86_64 2
@@ -502,7 +501,6 @@ TestSelfHostFinalCreditSiteKeyIRArm64 2
 TestSelfHostFinalCreditSiteKeyWasmIR 2
 TestSelfHostFinalCreditSiteKeyX86_64 2
 TestSelfHostFipCallsNonAllocatingBuiltins 2
-TestSelfHostFipVerifyCorpusClean 3
 TestSelfHostFixtureSourcesCheck 23
 TestSelfHostFlatOperandsInRegisters 38
 TestSelfHostFlattenX86_64 5
@@ -636,15 +634,12 @@ TestSelfHostIRPerModuleDriver 2
 TestSelfHostIRPerModuleLinkArm64 2
 TestSelfHostIRPipelineProbe 2
 TestSelfHostIRRuntimeHelperClosure 2
-TestSelfHostIRVerifyCorpusClean 3
 TestSelfHostIRVerifyGateSilentArm64 2
 TestSelfHostIRVerifyGateSilentWasm 2
 TestSelfHostIRVerifyGateSilentX86_64 2
 TestSelfHostIRVerifyGateWholeCompiler 136
 TestSelfHostIRVerifyProvidedCompilerClean 28
 TestSelfHostIRVerifyProvidedCorpusClean 98
-TestSelfHostIRVerifyRcCorpusClean 3
-TestSelfHostIRVerifyStackCorpusClean 3
 TestSelfHostIdentifierCountsX86_64 4
 TestSelfHostIfLetArm64 2
 TestSelfHostIfLetIRX86_64 2
