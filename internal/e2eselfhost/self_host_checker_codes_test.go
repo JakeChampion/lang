@@ -2637,6 +2637,12 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"union-generic-member-with-arguments", "struct Box[T] { v: T }\nstruct B { w: i32 }\ntype X = Box[i32] | B;\nfunction main(): i32 { return 0; }\n", nil},
 		{"union-generic-alias", "struct Leaf[T] { v: T }\nstruct Lit { v: i32 }\ntype Tree[T] = Leaf[T] | Lit;\nfunction main(): i32 { var t: Tree[i32] = Lit { v: 1 }; return 0; }\n", nil},
 		{"union-generic-alias-arity", "struct Leaf[T] { v: T }\nstruct Lit { v: i32 }\ntype Tree[T] = Leaf[T] | Lit;\nfunction main(): i32 { var t: Tree[i32, i32] = Lit { v: 1 }; return 0; }\n", []string{"E019"}},
+		// A built-in's annotation is held to the built-in's arity (#10897).
+		{"builtin-struct-arity-map", "import \"core/map\";\nfunction f(x: Map[string]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E019"}},
+		{"builtin-struct-arity-cell", "function f(x: Cell[i32, i32]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E019"}},
+		{"builtin-enum-arity-option", "function f(x: Option[i32, i32]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E019"}},
+		{"builtin-enum-arity-result", "function f(x: Result[i32]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E019"}},
+		{"builtin-arity-ok", "function f(x: Cell[i32], y: Option[i32], z: Result[i32, string], w: IoError): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", nil},
 		{"enum-generic-arity", "struct Lit { v: i32 }\nenum Tree[T] { Leaf(T), Lit(Lit) }\nfunction f(t: Tree[i32, i32]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E019"}},
 		// A user enum taking a built-in struct's name is E010, as a struct would
 		// be, so `Cell[i32]` never has to choose between them (#10855).
