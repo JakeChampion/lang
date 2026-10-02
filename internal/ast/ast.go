@@ -1681,33 +1681,47 @@ const MapHeaderBytes = 24
 // circuits to `true` without reading `TwoWordOverride`.
 var CodegenMu sync.Mutex
 
-// MapKeyDispatchable reports whether the map runtime can hash and compare
-// values of `t` BY VALUE. False for a tuple, an array or a slice: the
-// interpreter deep-compares them (TestInterpMapCompositeKeys gates that) and
-// no compiled backend has a branch for one, so the emitted code compares the
-// pointer and every lookup reads the default (#10020).
-//
-// A struct or enum IS dispatchable: #2671 threads its derived hash / eq in as
-// function values. A tuple is a struct without a name, which is why it has
-// nowhere to hang those, and synthesising them structurally is the fix this
-// predicate stands in for.
-//
-// It lives here because two packages need the same answer and only one
-// direction of import is possible: internal/ir imports internal/checker, so
-// the checker cannot reach into the IR. This is a leaf fact about a type's
-// shape either way, which is what this file already holds.
-//
-// The two that consult it are the checker's annotation carve-out — which
-// must not refuse what the interpreter supports — and the IR's refusal to
-// lower one, which stops the compiled build answering the default in
-// silence. A copy each would drift, and the drift reintroduces the
-// miscompile.
+// MapKeyDispatchable reports whether the native map runtime can hash and
+// compare values of `t` BY VALUE. False for a tuple, an array or a slice: the
+// native backends have no branch for one, so the emitted code would compare
+// the pointer and every lookup would read the default (#10020). The IR
+// refuses such a key by name instead. The self-host compiles a structural
+// key (StructuralMapKey) through generated helpers.
 func MapKeyDispatchable(t Type) bool {
 	switch t.(type) {
 	case TupleType, ArrayType, SliceType:
 		return false
 	}
 	return true
+}
+
+// StructuralMapKey reports whether `t` is a tuple or array key compared and
+// hashed element by element (#10020): every element an integer, a boolean, a
+// char, a string, or another such tuple or array.
+func StructuralMapKey(t Type) bool {
+	switch x := t.(type) {
+	case TupleType:
+		if len(x.Elems) == 0 {
+			return false
+		}
+		for _, e := range x.Elems {
+			if !structuralKeyElement(e) {
+				return false
+			}
+		}
+		return true
+	case ArrayType:
+		return structuralKeyElement(x.Elem)
+	}
+	return false
+}
+
+func structuralKeyElement(t Type) bool {
+	switch t.(type) {
+	case NumberType, BoolType, CharType, StringType:
+		return true
+	}
+	return StructuralMapKey(t)
 }
 
 // IsPointerType reports whether values of `t` are represented
