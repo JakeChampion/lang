@@ -20,9 +20,9 @@ func TestX86_64BorrowInferMatchesOwned(t *testing.T) {
 		prev := ast.BorrowInferEnabled
 		defer func() { ast.BorrowInferEnabled = prev }()
 		ast.BorrowInferEnabled = false
-		outOff, exitOff := runFixtureX86_64FreeOn(t, f.mainPath, f.stdin)
+		outOff, exitOff := runFixtureX86_64Native(t, f.mainPath, f.stdin, true)
 		ast.BorrowInferEnabled = true
-		outOn, exitOn := runFixtureX86_64FreeOn(t, f.mainPath, f.stdin)
+		outOn, exitOn := runFixtureX86_64Native(t, f.mainPath, f.stdin, true)
 		if outOff != outOn || exitOff != exitOn {
 			t.Errorf("borrow inference diverged from owned model:\n owned =(exit %d) %q\n borrow=(exit %d) %q", exitOff, outOff, exitOn, outOn)
 		}
@@ -34,9 +34,9 @@ func TestArm64BorrowInferMatchesOwned(t *testing.T) {
 		prev := ast.BorrowInferEnabled
 		defer func() { ast.BorrowInferEnabled = prev }()
 		ast.BorrowInferEnabled = false
-		outOff, exitOff := runFixtureArm64FreeOn(t, f.mainPath, f.stdin)
+		outOff, exitOff := runFixtureArm64Native(t, f.mainPath, f.stdin, true)
 		ast.BorrowInferEnabled = true
-		outOn, exitOn := runFixtureArm64FreeOn(t, f.mainPath, f.stdin)
+		outOn, exitOn := runFixtureArm64Native(t, f.mainPath, f.stdin, true)
 		if outOff != outOn || exitOff != exitOn {
 			t.Errorf("borrow inference diverged from owned model:\n owned =(exit %d) %q\n borrow=(exit %d) %q", exitOff, outOff, exitOn, outOn)
 		}
