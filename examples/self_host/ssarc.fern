@@ -3238,9 +3238,9 @@ function routed_value(t: typeinfo.Type): boolean {
 }
 
 // The boxes a routed value column can hold: any counted value but a string,
-// a function or a map, released through the type's own release helper. A
-// view's box is not counted, so core/map's retains would share it; a view
-// column stays on the runtime's map, whose reads take a fresh box.
+// released through the type's own release helper. A view's box is not
+// counted, so core/map's retains would share it; a view column stays on the
+// runtime's map, whose reads take a fresh box.
 function routed_box(t: typeinfo.Type): boolean {
   return ssasem.boxed_map_value(t) && !ssasem.is_view(t) || ssasem.is_string_array(t);
 }
