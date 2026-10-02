@@ -75,9 +75,8 @@ function rename_twice(p: St): i32 {
     var a: St = r.emit(1);
     return a.ctrl;
 }
-// A rename whose source is not itself admitted — here a struct literal, whose
-// buffers this frame built and whose freshness nothing in the shape records —
-// stays out.
+// A rename of a literal-built local is admitted on the literal's footing: the
+// frame built every buffer in it (#10864).
 function rename_literal(k: i32): i32 {
     var s: St = St { ops: [], names: [], ctrl: 0, who: "x" };
     var t: St = s;
@@ -217,7 +216,7 @@ function main(): i32 { return chain(mk(), 1).ctrl + param_last(mk()) + read_afte
 		"rename_twice": "r",
 		// The literal initialiser is not an admitted source, so neither is the
 		// rename of it: only `k`, sole-occurrence, dies here.
-		"rename_literal":  "k",
+		"rename_literal":  "k,t",
 		"des_rebind":      "p",
 		"var_rebind":      "p",
 		"des_reads_after": "",

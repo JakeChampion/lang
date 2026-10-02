@@ -8,6 +8,10 @@ import "testing"
 // and `len_guarded` bind and the struct `keep` returns leaked per call, and
 // so did the array of a box the caller still shares. `inc` is the
 // reuse-paired traversal, whose bindings move into the rebuilt list.
+// `len_guarded` runs both ways round: a guard that fails falls through to the
+// next arm, and one that holds left the box and its array unreleased by any
+// path (#10943) — returning, handing the binding back, or falling out of the
+// match.
 const ownParamPayloadSrc = `enum Box { Arr(i32[]), Nil }
 enum List { Cons(i32, List), Nil2 }
 struct P { xs: i32[], n: i32 }
@@ -19,6 +23,13 @@ enum Holder { Has(P), Empty }
 @noinline function len_guarded(own b: Box): i32 {
     match (b) { Arr(a) when a.len() > 5 => { return 100; }, Arr(a) => { return a.len(); }, Nil => { return 0; } }
     return 0;
+}
+@noinline function keep_guarded(own b: Box): i32[] {
+    match (b) { Arr(a) when a.len() > 2 => { return a; }, Arr(a) => { return a; }, Nil => { return []; } }
+}
+@noinline function fall_guarded(own b: Box): i32 {
+    match (b) { Arr(a) when a.len() > 1 => { var n: i32 = a.len(); n = n + 1; }, Arr(a) => { return 0; }, Nil => { return 0; } }
+    return 7;
 }
 @noinline function keep(own h: Holder): P {
     match (h) { Has(p) => { return p; }, Empty => { return P { xs: [], n: 0 }; } }
@@ -46,12 +57,14 @@ function main(): i32 {
         total = total + len(Arr([1, 2, 3]));
         total = total + shared_box();
         total = total + len_guarded(Arr([6, 7, 8, 9]));
+        total = total + len_guarded(Arr([6, 7, 8, 9, 10, 11]));
+        total = total + keep_guarded(Arr([4, 5, 6])).len() + fall_guarded(Arr([1, 2]));
         var p = keep(Has(P { xs: [1], n: 2 }));
         total = total + p.xs.len() + p.n;
         total = total + sum(inc(Cons(1, Cons(2, Nil2))));
         i = i + 1;
     }
-    return total - 190;
+    return total - 1290;
 }
 `
 

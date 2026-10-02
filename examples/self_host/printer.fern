@@ -3657,9 +3657,16 @@ function print_type_alias(a: parser.TypeAlias): string {
     out = out + "]";
   }
   out = out + " = ";
+  // Written across lines, the members keep their lines: those that shared a
+  // source line share an output line, and each later line opens with `|`.
+  var ln: i32[] = a.variant_lines;
+  var n: i32 = ln.len();
+  var kept: boolean = n == a.variants.len() && n > 0 && ln[0] > 0 && ln[n - 1] > ln[0];
   var i: i32 = 0;
   while (i < a.variants.len()) {
-    if (i > 0) {
+    if (i > 0 && kept && ln[i] > ln[i - 1]) {
+      out = out + "\n" + indent_str(1) + "| ";
+    } else if (i > 0) {
       out = out + " | ";
     }
     out = out + a.variants[i];

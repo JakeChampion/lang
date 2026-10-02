@@ -670,6 +670,7 @@ func New() *Interp {
 	i.Builtins["read_file"] = &Builtin{Fn: builtinReadFile}
 	i.Builtins["read_file_bytes"] = &Builtin{Fn: builtinReadFileBytes}
 	i.Builtins["write_file"] = &Builtin{Fn: builtinWriteFile}
+	i.Builtins["write_file_bytes"] = &Builtin{Fn: builtinWriteFileBytes}
 	i.Builtins["write_file_exec"] = &Builtin{Fn: builtinWriteFileExec}
 	i.Builtins["open_reader"] = &Builtin{Fn: builtinOpenReader}
 	i.Builtins["open_writer"] = &Builtin{Fn: builtinOpenWriter}
@@ -2963,6 +2964,28 @@ func builtinWriteFileExec(i *Interp, args []Value) (Value, error) {
 
 func builtinWriteFile(_ *Interp, args []Value) (Value, error) {
 	return writeFileMode("write_file", args, 0o644)
+}
+
+func builtinWriteFileBytes(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("write_file_bytes: expected 2 args, got %d", len(args))
+	}
+	path, ok := args[0].(String)
+	if !ok {
+		return nil, fmt.Errorf("write_file_bytes: expected string path, got %T", args[0])
+	}
+	content, ok := args[1].(Array)
+	if !ok {
+		return nil, fmt.Errorf("write_file_bytes: expected byte array, got %T", args[1])
+	}
+	data := make([]byte, len(content.E))
+	for n, value := range content.E {
+		data[n] = byte(value.(Number))
+	}
+	if err := os.WriteFile(string(path), data, 0o644); err != nil {
+		return resultErr(classifyIoError(string(path), err)), nil
+	}
+	return resultOk(unitValue()), nil
 }
 
 // writeFileMode is the shared body of write_file / write_file_exec; `name`
