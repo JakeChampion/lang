@@ -4,7 +4,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -39,15 +38,11 @@ func TestSelfHostStructMultiLevelDropIRX86_64(t *testing.T) {
 	}
 	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
 
-	run := func(t *testing.T, prog, name string, want int, wantAsmSubstr string) {
+	run := func(t *testing.T, prog, name string, want int) {
 		t.Helper()
 		asm := runCapture(t, gcc, runner, driverBin, []byte(prog))
 		if len(asm) == 0 {
 			t.Fatalf("%s: self-host compiler emitted 0 bytes", name)
-		}
-		// The drop helper named is the AST lowering's, so it is read from that lowering.
-		if wantAsmSubstr != "" && !strings.Contains(string(runCaptureAST(t, runner, driverBin, []byte(prog))), wantAsmSubstr) {
-			t.Fatalf("%s: emitted asm missing %q — the multi-level nested field did not deep-drop", name, wantAsmSubstr)
 		}
 		bin := buildBin(t, gcc, dir, name, string(asm))
 		var cmd *exec.Cmd
@@ -79,7 +74,7 @@ function main(): i32 {
     var s: i32 = 0; var f: i32 = 0;
     while (f < 150000000) { s = mk(); f = f + 1; }
     return s - 26;
-}`, "struct_multilevel_drop_churn", 0, "call __fn___struct_drop_B")
+}`, "struct_multilevel_drop_churn", 0)
 
 	// VALUE-CORRECTNESS: the deep value is read back before the drop; a premature free
 	// of a live buffer down the chain would corrupt the read. a.b.c.items[0..15] sum to
@@ -92,7 +87,7 @@ function main(): i32 {
     var sum: i32 = 0; var j: i32 = 0;
     while (j < 16) { sum = sum + a.b.c.items[j]; j = j + 1; }
     return sum + a.b.bt + a.at;
-}`, "struct_multilevel_drop_value", 145, "call __fn___struct_drop_C")
+}`, "struct_multilevel_drop_value", 145)
 
 	// FOUR-LEVEL: pushes the DAG one deeper (`W -> X -> Y -> Z{ items }`) to prove the
 	// transitive body-emission closure (need() re-checks) chains beyond depth-2 and the
@@ -109,5 +104,5 @@ function main(): i32 {
     var s: i32 = 0; var f: i32 = 0;
     while (f < 2000000) { s = mk(); f = f + 1; }
     return s - 27;
-}`, "struct_multilevel_drop_four", 0, "call __fn___struct_drop_Y")
+}`, "struct_multilevel_drop_four", 0)
 }

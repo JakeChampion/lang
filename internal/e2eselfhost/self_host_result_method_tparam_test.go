@@ -5,24 +5,15 @@ import (
 	"testing"
 )
 
-// A payload read back through a generic Option/Result method, in the AST
-// lowering (FERN_SEM_IR=), is read at its instantiated type: the checker binds
-// the receiver's type arguments and the method's own (`and[U]` from `Ok("vw")`)
-// into the call's tag, so `.len()` and `match` read a string as a string
-// (#10014).
-//
-// The typed lowering balances every row. The AST lowering balances the rows
-// marked astCensus (#10388): a scalar-payload Option/Result local used as a
-// method receiver or a borrowed argument, a mixed Result[i32, string] local,
-// and a fresh Ok/Some/Err/None built at a borrowed argument position. The
-// unmarked rows still leak there: a box a callee hands back (`and`, `or`, a
-// generic pass-through; #10388), and a nested Result.
-// Every answer is interpreter-confirmed.
+// A payload read back through a generic Option/Result method is read at its
+// instantiated type: the receiver's type arguments and the method's own
+// (`and[U]` from `Ok("vw")`) bind, so `.len()` and `match` read a string as a
+// string (#10014). Every row balances (#10388), and every answer is
+// interpreter-confirmed.
 var resultMethodTParamCases = []struct {
-	name      string
-	src       string
-	want      int
-	astCensus bool
+	name string
+	src  string
+	want int
 }{
 	{"and_string", `import "std/result";
 function main(): i32 {
@@ -30,7 +21,7 @@ function main(): i32 {
     var s: Result[string, string] = r.and(Ok("vw"));
     return s.unwrap_or("").len();
 }
-`, 2, false},
+`, 2},
 	{"and_string_loop", `import "std/result";
 function main(): i32 {
     var n: i32 = 0;
@@ -43,7 +34,7 @@ function main(): i32 {
     }
     return n % 101;
 }
-`, 400 % 101, false},
+`, 400 % 101},
 	{"and_i32_loop", `import "std/result";
 function main(): i32 {
     var n: i32 = 0;
@@ -56,7 +47,7 @@ function main(): i32 {
     }
     return n % 101;
 }
-`, 19900 % 101, false},
+`, 19900 % 101},
 	{"and_err", `import "std/result";
 function main(): i32 {
     var n: i32 = 0;
@@ -69,7 +60,7 @@ function main(): i32 {
     }
     return n % 101;
 }
-`, 150 % 101, false},
+`, 150 % 101},
 	{"or_string", `import "std/result";
 function main(): i32 {
     var n: i32 = 0;
@@ -82,13 +73,13 @@ function main(): i32 {
     }
     return n % 101;
 }
-`, 150 % 101, false},
+`, 150 % 101},
 	{"unwrap_or_string", `import "std/result";
 function main(): i32 {
     var s: Result[string, string] = Ok("x" + "yz");
     return s.unwrap_or("").len();
 }
-`, 3, true},
+`, 3},
 	{"map_or_string", `import "std/result";
 function slen(s: string): i32 { return s.len(); }
 function main(): i32 {
@@ -101,7 +92,7 @@ function main(): i32 {
     }
     return n % 101;
 }
-`, 200 % 101, true},
+`, 200 % 101},
 	{"flatten_string", `import "std/result";
 function main(): i32 {
     var n: i32 = 0;
@@ -114,14 +105,14 @@ function main(): i32 {
     }
     return n % 101;
 }
-`, 100 % 101, false},
+`, 100 % 101},
 	{"option_and_string", `import "std/option";
 function main(): i32 {
     var o: Option[i32] = Some(4);
     var s: Option[string] = o.and(Some("abcde"));
     return s.unwrap_or("").len();
 }
-`, 5, false},
+`, 5},
 	{"generic_fn_result_matched", `function either[T, E](r: Result[T, E], other: Result[T, E]): Result[T, E] {
     match (r) { Ok(x) => { return Ok(x); }, Err(e) => { return other; } }
 }
@@ -130,27 +121,27 @@ function main(): i32 {
     var s: Result[string, string] = either(r, Ok("x" + "yz"));
     match (s) { Ok(v) => { return v.len(); }, Err(e) => { return 50; } }
 }
-`, 3, false},
+`, 3},
 	{"scalar_recv_unwrap_or", `import "std/result";
 function main(): i32 {
     var o: Result[i32, i32] = Ok(3);
     return o.unwrap_or(0);
 }
-`, 3, true},
+`, 3},
 	{"scalar_recv_is_ok", `import "std/result";
 function main(): i32 {
     var o: Result[i32, i32] = Err(4);
     if (o.is_ok()) { return 1; }
     return 2;
 }
-`, 2, true},
+`, 2},
 	{"option_scalar_recv", `import "std/option";
 function main(): i32 {
     var o: Option[i32] = Some(3);
     if (o.is_some()) { return o.unwrap_or(0); }
     return 1;
 }
-`, 3, true},
+`, 3},
 	{"scalar_recv_loop", `import "std/result";
 import "std/option";
 function main(): i32 {
@@ -164,7 +155,7 @@ function main(): i32 {
     }
     return n;
 }
-`, 4, true},
+`, 4},
 	{"scalar_rebound_recv", `import "std/option";
 function main(): i32 {
     var n: i32 = 0;
@@ -177,12 +168,12 @@ function main(): i32 {
     }
     return n + o.unwrap_or(0) % 7;
 }
-`, 6, true},
+`, 6},
 	{"mixed_unused", `function main(): i32 {
     var r: Result[i32, string] = Ok(3);
     return 7;
 }
-`, 7, true},
+`, 7},
 	{"mixed_borrowed_arg", `@noinline
 function f(o: Result[i32, string]): i32 {
     match (o) { Ok(v) => { return v; }, Err(e) => { return e.len(); } }
@@ -191,19 +182,19 @@ function main(): i32 {
     var r: Result[i32, string] = Ok(3);
     return f(r);
 }
-`, 3, true},
+`, 3},
 	{"fresh_ok_string_arg", `@noinline
 function f(o: Result[string, string]): i32 {
     match (o) { Ok(v) => { return v.len(); }, Err(e) => { return 50; } }
 }
 function main(): i32 { return f(Ok("x" + "yz")); }
-`, 3, true},
+`, 3},
 	{"fresh_some_scalar_arg", `@noinline
 function f(o: Option[i32]): i32 {
     match (o) { Some(v) => { return v; }, None => { return 50; } }
 }
 function main(): i32 { return f(Some(4)) + f(None); }
-`, 54, true},
+`, 54},
 	{"fresh_arg_loop", `import "std/i32";
 import "std/result";
 @noinline
@@ -224,36 +215,30 @@ function main(): i32 {
     }
     return n;
 }
-`, 100, true},
+`, 100},
 }
 
 func TestSelfHostResultMethodTParam(t *testing.T) {
 	cli := buildSelfHostCLI(t)
-	lowerings := []struct{ name, env string }{{"ast", "FERN_SEM_IR="}, {"semantic", "FERN_SEM_IR=1"}}
 	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
 		for _, tc := range resultMethodTParamCases {
-			for _, lw := range lowerings {
-				t.Run(target+"/"+tc.name+"/"+lw.name, func(t *testing.T) {
-					stderr, exit := cli.exitOf(t, tc.src, target, "FERN_LEAKCHECK=1", lw.env)
-					if exit != tc.want {
-						t.Fatalf("exit = %d, want %d\n%s", exit, tc.want, stderr)
-					}
-					balanced := tc.astCensus || lw.name == "semantic"
-					if balanced {
-						assertBalancedCensus(t, stderr)
-					}
-					if target != "x86-64-linux" {
-						return
-					}
-					stderr, exit = cli.exitOf(t, tc.src, target, "FERN_SANITIZE=1", lw.env)
-					if exit != tc.want || strings.Contains(stderr, "use-after-free") || strings.Contains(stderr, "over-release") {
-						t.Fatalf("sanitize: exit = %d, want %d, with no use-after-free or over-release\n%s", exit, tc.want, stderr)
-					}
-					if balanced && strings.Contains(stderr, "fern-sanitizer:") {
-						t.Fatalf("sanitize: want the sanitizer silent\n%s", stderr)
-					}
-				})
-			}
+			t.Run(target+"/"+tc.name, func(t *testing.T) {
+				stderr, exit := cli.exitOf(t, tc.src, target, "FERN_LEAKCHECK=1")
+				if exit != tc.want {
+					t.Fatalf("exit = %d, want %d\n%s", exit, tc.want, stderr)
+				}
+				assertBalancedCensus(t, stderr)
+				if target != "x86-64-linux" {
+					return
+				}
+				stderr, exit = cli.exitOf(t, tc.src, target, "FERN_SANITIZE=1")
+				if exit != tc.want || strings.Contains(stderr, "use-after-free") || strings.Contains(stderr, "over-release") {
+					t.Fatalf("sanitize: exit = %d, want %d, with no use-after-free or over-release\n%s", exit, tc.want, stderr)
+				}
+				if strings.Contains(stderr, "fern-sanitizer:") {
+					t.Fatalf("sanitize: want the sanitizer silent\n%s", stderr)
+				}
+			})
 		}
 	}
 }

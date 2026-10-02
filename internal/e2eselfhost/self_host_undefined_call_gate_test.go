@@ -159,27 +159,6 @@ function main(): i32 {
 		}
 	})
 
-	// The emitter-only free-function spellings (`i32_to_string` /
-	// `str_to_upper`) are not language surface: native's checker rejects them
-	// and only the AST lowering lowers them, so they are admitted on that path.
-	t.Run("accept-emitter-spellings-on-the-ast-lowering", func(t *testing.T) {
-		t.Setenv("FERN_SEM_IR", "")
-		asm, errOut, code, dir := compile(t, "function main(): i32 {\n    print(i32_to_string(6) + str_to_upper(\"ok\"));\n    return 0;\n}\n")
-		if code != 0 {
-			t.Fatalf("driver exited %d (stderr %q), want 0 (accept)", code, errOut)
-		}
-		bin := buildBin(t, gcc, dir, "emitter_spellings", string(asm))
-		var cmd *exec.Cmd
-		if len(runner) == 0 {
-			cmd = exec.Command(bin)
-		} else {
-			cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), bin)...)
-		}
-		if out, exit := runBin(cmd, ""); exit != 0 || !strings.Contains(out, "6OK") {
-			t.Errorf("program exited %d with stdout %q, want 0 and %q", exit, out, "6OK")
-		}
-	})
-
 	// A local closure called by bare name is the shadow-set arm: `f` names no
 	// module function, so only the enclosing function's binder set keeps the
 	// gate off it. (This shape bails on `const_func`, so it

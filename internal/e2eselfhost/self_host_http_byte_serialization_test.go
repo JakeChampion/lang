@@ -40,7 +40,7 @@ func TestSelfHostHTTPByteSerialization(t *testing.T) {
 					if form == "core" {
 						emit := "command-module"
 						if compiler.name == "primary" {
-							emit = "asm"
+							emit = "core-module"
 						}
 						args = append(args, "-emit", emit)
 					}

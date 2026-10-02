@@ -182,19 +182,17 @@ var closureVariantPayloadCases = []struct {
 func TestSelfHostClosureVariantPayloadX86_64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range closureVariantPayloadCases {
-		for _, lw := range vblockClosureBoth {
-			t.Run(tc.name+"/"+lw.name, func(t *testing.T) {
-				stderr, exit := cli.exitOf(t, tc.src, "x86-64-linux", "FERN_LEAKCHECK=1", lw.env)
-				if exit != tc.want {
-					t.Fatalf("leakcheck: exit = %d, want %d\n%s", exit, tc.want, stderr)
-				}
-				assertBalancedCensus(t, stderr)
-				stderr, exit = cli.exitOf(t, tc.src, "x86-64-linux", "FERN_SANITIZE=1", lw.env)
-				if exit != tc.want || forArrStructSanitizerFault(stderr, true) {
-					t.Fatalf("sanitize: exit = %d, want %d, and no sanitizer finding\n%s", exit, tc.want, stderr)
-				}
-			})
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			stderr, exit := cli.exitOf(t, tc.src, "x86-64-linux", "FERN_LEAKCHECK=1")
+			if exit != tc.want {
+				t.Fatalf("leakcheck: exit = %d, want %d\n%s", exit, tc.want, stderr)
+			}
+			assertBalancedCensus(t, stderr)
+			stderr, exit = cli.exitOf(t, tc.src, "x86-64-linux", "FERN_SANITIZE=1")
+			if exit != tc.want || forArrStructSanitizerFault(stderr, true) {
+				t.Fatalf("sanitize: exit = %d, want %d, and no sanitizer finding\n%s", exit, tc.want, stderr)
+			}
+		})
 	}
 }
 
@@ -209,14 +207,12 @@ func TestSelfHostClosureVariantPayloadWasm(t *testing.T) {
 func checkClosureVariantPayload(t *testing.T, target string) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range closureVariantPayloadCases {
-		for _, lw := range vblockClosureBoth {
-			t.Run(tc.name+"/"+lw.name, func(t *testing.T) {
-				stderr, exit := cli.exitOf(t, tc.src, target, "FERN_LEAKCHECK=1", lw.env)
-				if exit != tc.want {
-					t.Fatalf("exit = %d, want %d\n%s", exit, tc.want, stderr)
-				}
-				assertBalancedCensus(t, stderr)
-			})
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			stderr, exit := cli.exitOf(t, tc.src, target, "FERN_LEAKCHECK=1")
+			if exit != tc.want {
+				t.Fatalf("exit = %d, want %d\n%s", exit, tc.want, stderr)
+			}
+			assertBalancedCensus(t, stderr)
+		})
 	}
 }

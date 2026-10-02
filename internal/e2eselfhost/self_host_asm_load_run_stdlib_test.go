@@ -155,23 +155,6 @@ func (l *stdlibLoader) emit(t *testing.T, src string, args ...string) string {
 	return string(runDriverFile(t, l.runner, l.mmc, mainPath, append([]string{l.root}, args...)...))
 }
 
-// emitAST is emit on the AST lowering, for a check that reads that lowering's
-// own output.
-func (l *stdlibLoader) emitAST(t *testing.T, src string) string {
-	t.Helper()
-	mainPath := filepath.Join(t.TempDir(), "main.fern")
-	if err := os.WriteFile(mainPath, []byte(src), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	cmd := runX86_64Bin(l.runner, l.mmc, mainPath, l.root)
-	cmd.Env = append(os.Environ(), "FERN_SEM_IR=")
-	out, err := cmd.Output()
-	if err != nil {
-		t.Fatalf("compile on the AST lowering: %v", err)
-	}
-	return string(out)
-}
-
 // TestSelfHostAsmLoadRunStdlibX86_64 compiles each case with asm_load_run,
 // links it and checks its exit code and stdout.
 func TestSelfHostAsmLoadRunStdlibX86_64(t *testing.T) {

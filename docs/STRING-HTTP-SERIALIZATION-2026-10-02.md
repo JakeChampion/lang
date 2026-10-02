@@ -1,5 +1,10 @@
 # HTTP byte serialization
 
+The serializer and WASI byte writer are combined on the raw pipeline at
+`282343afb`. Integrated target tests, the three-stage bootstrap, the full
+unit suite and lint pass. Timing measurements below retain
+their original compiler provenance; artifact sizes use the integrated compiler.
+
 `http_serialize_response_bytes`, `http_serialize_response_conn_bytes`, and
 `http_serialize_response_to_bytes` return the complete response as `u8[]`.
 They preserve binary bodies, including malformed UTF-8 and NUL bytes, and
@@ -59,13 +64,16 @@ produced identical wire bytes.
 
 | Serializer | Darwin executable | Core WebAssembly |
 | --- | ---: | ---: |
-| Previous text implementation | 99,873 bytes | 51,454 bytes |
-| Corrected text implementation | 99,873 bytes | 51,216 bytes |
-| Byte implementation | 99,841 bytes | 47,760 bytes |
+| Previous text implementation | 99,873 bytes | 46,708 bytes |
+| Corrected text implementation | 99,873 bytes | 46,505 bytes |
+| Byte implementation | 99,841 bytes | 43,153 bytes |
 
 The byte path removes UTF-8 validation/decoding helpers while adding the
-builder lifecycle and bulk-copy helpers. The complete WebAssembly code and
-section attribution was inspected; there is no size baseline change.
+builder lifecycle and bulk-copy helpers. Its core code section shrinks from
+27,347 to 23,885 bytes and contains 166 functions instead of 179. The total
+core reduction is 3,555 bytes. These are direct `core-module` outputs from
+the integrated compiler, without the name section added by the earlier
+WAT-to-binary measurement. There is no size baseline change.
 
 ## Validation
 
@@ -86,4 +94,10 @@ The actual stage2 compiler also passes the serialization fixture on Darwin,
 core WebAssembly, and Preview2. Native reports 443 allocations and 443 frees;
 core WebAssembly reports 494 and 494, both with zero live bytes. Components
 are checked for behavior because their entry point does not print a census.
-The serializer's full unit and lint gate passes.
+The integrated Linux target matrix passes, including both interpreters and
+the real WASI HTTP host. The pinned seed produces three identical Darwin
+compiler binaries of 14,593,761 bytes, SHA-256
+`47999bf7047d24eb916fed92110b578f22d7809673b60cbc4b2c3cb2e353ed73`.
+The full unit suite and `make lint-all` pass in an isolated Linux snapshot. Host Go linking
+is blocked by Darwin file-table exhaustion; actual stage-2 execution covers
+the integrated Darwin compiler.

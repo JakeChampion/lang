@@ -144,13 +144,6 @@ function main(): i32 {
 `, 33},
 }
 
-var nestedArrFieldDropLowerings = []struct{ name, env string }{
-	{"semantic", "FERN_SEM_IR=1"},
-	{"ast", "FERN_SEM_IR="},
-	{"ast_main", "FERN_SEM_IR_SKIP=main"},
-	{"ast_callees", "FERN_SEM_IR_SKIP=build,mk"},
-}
-
 func writeNestedArrFieldDropSrc(t *testing.T, name, src string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), name+".fern")
@@ -164,19 +157,17 @@ func TestSelfHostNestedArrFieldDropX86_64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range nestedArrFieldDropCases {
 		src := writeNestedArrFieldDropSrc(t, tc.name, tc.src)
-		for _, lw := range nestedArrFieldDropLowerings {
-			t.Run(tc.name+"/"+lw.name, func(t *testing.T) {
-				stderr, exit := runWithStdin(t, cli.runner, cli.x86Binary(t, src, "FERN_LEAKCHECK=1", lw.env), nil)
-				if exit != tc.want {
-					t.Fatalf("leakcheck: exit = %d, want %d\n%s", exit, tc.want, stderr)
-				}
-				assertBalancedCensus(t, stderr)
-				stderr, exit = runWithStdin(t, cli.runner, cli.x86Binary(t, src, "FERN_SANITIZE=1", lw.env), nil)
-				if exit != tc.want || forArrStructSanitizerFault(stderr, true) {
-					t.Fatalf("sanitize: exit = %d, want %d, and no sanitizer report\n%s", exit, tc.want, stderr)
-				}
-			})
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			stderr, exit := runWithStdin(t, cli.runner, cli.x86Binary(t, src, "FERN_LEAKCHECK=1"), nil)
+			if exit != tc.want {
+				t.Fatalf("leakcheck: exit = %d, want %d\n%s", exit, tc.want, stderr)
+			}
+			assertBalancedCensus(t, stderr)
+			stderr, exit = runWithStdin(t, cli.runner, cli.x86Binary(t, src, "FERN_SANITIZE=1"), nil)
+			if exit != tc.want || forArrStructSanitizerFault(stderr, true) {
+				t.Fatalf("sanitize: exit = %d, want %d, and no sanitizer report\n%s", exit, tc.want, stderr)
+			}
+		})
 	}
 }
 
@@ -185,22 +176,20 @@ func TestSelfHostNestedArrFieldDropArm64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range nestedArrFieldDropCases {
 		src := writeNestedArrFieldDropSrc(t, tc.name, tc.src)
-		for _, lw := range nestedArrFieldDropLowerings {
-			t.Run(tc.name+"/"+lw.name, func(t *testing.T) {
-				asm, err := os.ReadFile(cli.emit(t, src, "arm64-linux", "FERN_LEAKCHECK=1", lw.env))
-				if err != nil {
-					t.Fatal(err)
-				}
-				cmd := runArm64Bin(qemu, buildBinArm64(t, armgcc, t.TempDir(), tc.name, string(asm)))
-				var eb strings.Builder
-				cmd.Stderr = &eb
-				_ = cmd.Run()
-				if code := cmd.ProcessState.ExitCode(); code != tc.want {
-					t.Fatalf("exit = %d, want %d\n%s", code, tc.want, eb.String())
-				}
-				assertBalancedCensus(t, eb.String())
-			})
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			asm, err := os.ReadFile(cli.emit(t, src, "arm64-linux", "FERN_LEAKCHECK=1"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			cmd := runArm64Bin(qemu, buildBinArm64(t, armgcc, t.TempDir(), tc.name, string(asm)))
+			var eb strings.Builder
+			cmd.Stderr = &eb
+			_ = cmd.Run()
+			if code := cmd.ProcessState.ExitCode(); code != tc.want {
+				t.Fatalf("exit = %d, want %d\n%s", code, tc.want, eb.String())
+			}
+			assertBalancedCensus(t, eb.String())
+		})
 	}
 }
 
@@ -211,14 +200,12 @@ func TestSelfHostNestedArrFieldDropWasm(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range nestedArrFieldDropCases {
 		src := writeNestedArrFieldDropSrc(t, tc.name, tc.src)
-		for _, lw := range nestedArrFieldDropLowerings {
-			t.Run(tc.name+"/"+lw.name, func(t *testing.T) {
-				stderr, exit := runWasmCensus(t, cli.emit(t, src, "wasm32-wasi", "FERN_LEAKCHECK=1", lw.env))
-				if exit != tc.want {
-					t.Fatalf("exit = %d, want %d\n%s", exit, tc.want, stderr)
-				}
-				assertBalancedCensus(t, stderr)
-			})
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			stderr, exit := runWasmCensus(t, cli.emit(t, src, "wasm32-wasi", "FERN_LEAKCHECK=1"))
+			if exit != tc.want {
+				t.Fatalf("exit = %d, want %d\n%s", exit, tc.want, stderr)
+			}
+			assertBalancedCensus(t, stderr)
+		})
 	}
 }

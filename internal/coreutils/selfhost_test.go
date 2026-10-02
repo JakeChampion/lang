@@ -122,18 +122,12 @@ func selfHostCompiler(t *testing.T) string {
 	return selfHostPath
 }
 
-// typedPathEnv holds a self-host compile to the typed path, whole, where a
-// refusal fails the compile: an ambient FERN_SEM_IR= would switch the typed
-// path off, and a bisect list would keep a mixed module.
-var typedPathEnv = []string{"FERN_SEM_IR=1", "FERN_SEM_IR_ONLY=", "FERN_SEM_IR_SKIP="}
-
 // selfHostBin compiles coreutils/<util>.fern with the self-host compiler.
 //
 // FERN_STRICT_IR=1 is the point of the exercise: it names the function that
 // failed to lower instead of leaving a whole-module refusal to be read off a
 // downstream symptom, and it is what turns "the self-host cannot compile this
-// tree" into a message a reader can act on. typedPathEnv keeps the typed path
-// on, so a module it does not produce whole fails the compile the same way.
+// tree" into a message a reader can act on.
 func selfHostBin(t *testing.T, util string) string {
 	t.Helper()
 	selfHostBinsMu.Lock()
@@ -156,7 +150,7 @@ func selfHostBin(t *testing.T, util string) string {
 		filepath.Join(root, "coreutils", util+".fern"),
 		filepath.Join(root, "internal", "stdlib"), "-o", bin)
 	cmd := exec.Command(argv[0], argv[1:]...)
-	cmd.Env = append(append(os.Environ(), "FERN_STRICT_IR=1"), typedPathEnv...)
+	cmd.Env = append(os.Environ(), "FERN_STRICT_IR=1")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("self-host compile coreutils/%s.fern: %v\n%s", util, err, out)
 	}
@@ -232,7 +226,6 @@ func TestSelfHostMulticallCompilesWhole(t *testing.T) {
 		filepath.Join(srcDir, "fern-coreutils.fern"),
 		filepath.Join(root, "internal", "stdlib"), "-o", filepath.Join(t.TempDir(), "fern-coreutils"))
 	cmd := exec.Command(argv[0], argv[1:]...)
-	cmd.Env = append(os.Environ(), typedPathEnv...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("self-host compile of the multicall binary: %v\n%s", err, out)
 	}

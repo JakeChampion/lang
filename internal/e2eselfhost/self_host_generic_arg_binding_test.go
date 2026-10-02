@@ -41,14 +41,12 @@ function main(): i32 {
 func TestSelfHostGenericArgBinding(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, target := range []string{"x86-64-linux", "wasm32-wasi"} {
-		for _, lw := range []struct{ name, env string }{{"semantic", "FERN_SEM_IR=1"}, {"ast", "FERN_SEM_IR="}} {
-			for _, tc := range genericArgBindingCases {
-				t.Run(target+"/"+lw.name+"/"+tc.name, func(t *testing.T) {
-					if stderr, code := cli.exitOf(t, tc.src, target, lw.env); code != 0 {
-						t.Errorf("exited %d, want 0\n%s", code, stderr)
-					}
-				})
-			}
+		for _, tc := range genericArgBindingCases {
+			t.Run(target+"/"+tc.name, func(t *testing.T) {
+				if stderr, code := cli.exitOf(t, tc.src, target); code != 0 {
+					t.Errorf("exited %d, want 0\n%s", code, stderr)
+				}
+			})
 		}
 	}
 }

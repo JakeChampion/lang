@@ -24,7 +24,7 @@ var borrowedAliasAppendRows = []leakRow{
     if (n % 4 == 0) { out = out.append("w" + ""); }
     return out;
 }
-` + borrowedAliasMain, true, [2]int64{}},
+` + borrowedAliasMain, true},
 	{"return_append_in_loop", `function walk(n: i32, acc: string[]): string[] {
     var out: string[] = acc;
     var i: i32 = 0;
@@ -34,13 +34,13 @@ var borrowedAliasAppendRows = []leakRow{
     }
     return out;
 }
-` + borrowedAliasMain, true, [2]int64{}},
+` + borrowedAliasMain, true},
 	{"return_append_in_branch", `function walk(n: i32, acc: string[]): string[] {
     var out: string[] = acc;
     if (n % 4 == 0) { return out.append("w" + ""); }
     return out;
 }
-` + borrowedAliasMain, true, [2]int64{}},
+` + borrowedAliasMain, true},
 	{"alias_of_alias", `function walk(n: i32, acc: string[]): string[] {
     var a: string[] = acc;
     var out: string[] = a;
@@ -48,7 +48,7 @@ var borrowedAliasAppendRows = []leakRow{
     if (n % 3 == 0) { out = out.append("v" + ""); }
     return out;
 }
-` + borrowedAliasMain, true, [2]int64{}},
+` + borrowedAliasMain, true},
 	{"scalar_elems", `function walk(n: i32, acc: i32[]): i32[] {
     var out: i32[] = acc;
     if (n % 4 == 0) { out = out.append(n); }
@@ -60,7 +60,7 @@ function main(): i32 {
     while (fd < 12) { pending = walk(fd, pending); fd = fd + 1; }
     return pending.len() + pending[2];
 }
-`, true, [2]int64{}},
+`, true},
 	// A sole-owner local returned grown: the superseded buffer is this
 	// frame's alone.
 	{"owned_return_append", `function mk(n: i32): i32[] {
@@ -73,7 +73,7 @@ function main(): i32 {
     while (i < 5) { var x: i32[] = mk(i); t = t + x.len() + x[0]; i = i + 1; }
     return t;
 }
-`, true, [2]int64{}},
+`, true},
 	// Counted elements: the buffers balance, and the elements stay with the
 	// threaded accumulator's shallow release (#10420).
 	{"struct_elems", `struct Inst { name: string, depth: i32 }
@@ -88,7 +88,7 @@ function main(): i32 {
     while (fd < 12) { pending = walk(fd, pending); fd = fd + 1; }
     return pending.len() + pending[1].depth;
 }
-`, false, [2]int64{}},
+`, false},
 }
 
 func TestSelfHostBorrowedAliasAppendX86_64(t *testing.T) {

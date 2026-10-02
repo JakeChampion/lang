@@ -217,7 +217,6 @@ TestSelfHostEmbedCarriesTheStdlib 2
 TestSelfHostEmbedMatchesNative 2
 TestSelfHostEnumCapturingPayloadIRX86_64 2
 TestSelfHostEnumContractIRArm64 263
-TestSelfHostEnumContractMissingRetainX86_64 14
 TestSelfHostEnumContractVerify 3
 TestSelfHostEnumCrossReuseIR 2
 TestSelfHostEnumFnPayloadIRX86_64 2

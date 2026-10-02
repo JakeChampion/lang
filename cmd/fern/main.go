@@ -1285,7 +1285,7 @@ func enforceTargetCapabilities(srcPath string, prog *ast.Program, info *checker.
 		extras = append(extras, strings.Split(export, ",")...)
 	}
 	if target == "wasm32-wasi-http" {
-		extras = append(extras, "handle", "__method_HeaderMap_append", "__method_HttpResponse_body_string")
+		extras = append(extras, "handle", "__method_HeaderMap_append", "__method_HttpResponse_body_bytes")
 	}
 	// WIT-exported functions are entry points the AST walk can't
 	// see — keep them (and what they call) in the scanned set. An

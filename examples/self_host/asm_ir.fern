@@ -38,27 +38,27 @@ import "./ssa_lift";
 
 // __fern_str_repeat was hand-written here through #2649; it is now a Fern
 // runtime function (asmcore.rt_src_str_repeat) lowered through the IR pipeline
-// via emit_ir_runtime_fern_fn in emit_module_ir_unit's entry block — n copies of
+// via emit_ir_runtime_fern_fn in emit_module_ir_unit_flat's entry block — n copies of
 // `s` in a fresh buffer + box via the raw-memory intrinsics. Heap-dependent,
 // gated on the str_repeat need. The op_str_repeat handler now calls the
 // stack-arg __fn___fern_str_repeat symbol.
 
 // __fern_str_trim was hand-written here through #2649; it is now a Fern runtime
 // function (asmcore.rt_src_str_trim) lowered through the IR pipeline via
-// emit_ir_runtime_fern_fn in emit_module_ir_unit's entry block — a zero-copy
+// emit_ir_runtime_fern_fn in emit_module_ir_unit_flat's entry block — a zero-copy
 // slice (s[start:end]) skipping leading/trailing ASCII whitespace. Heap-dependent
 // (the slice box allocates), gated on the str_trim need.
 
 // __fern_str_replace was hand-written here through #2649; it is now a Fern
 // runtime function (asmcore.rt_src_str_replace) lowered through the IR pipeline
-// via emit_ir_runtime_fern_fn in emit_module_ir_unit's entry block — two-pass
+// via emit_ir_runtime_fern_fn in emit_module_ir_unit_flat's entry block — two-pass
 // count + build via the raw-memory intrinsics. Heap-dependent, gated on the
 // str_replace need. The op_str_replace handler now calls the stack-arg
 // __fn___fern_str_replace symbol.
 
 // __fern_str_lines was hand-written here through #2649; it is now a Fern runtime
 // function (asmcore.rt_src_str_lines) lowered through the IR pipeline via
-// emit_ir_runtime_fern_fn in emit_module_ir_unit's entry block. Heap +
+// emit_ir_runtime_fern_fn in emit_module_ir_unit_flat's entry block. Heap +
 // arr_push dependent; gated on the str_lines need.
 
 // __fern_random_i32 is a Fern runtime function (#2649): asmcore.rt_src_random_i32,
@@ -4234,14 +4234,14 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   // via emit_ir_runtime_fern_fn (lowered through the IR pipeline as
   // __fn___fern_str_concat, using the raw-memory intrinsics), not a hand-written
   // register-ABI body here. See the emit_ir_runtime_fern_fn call in
-  // emit_module_ir_unit's entry block.
+  // emit_module_ir_unit_flat's entry block.
   // __fern_str_eq is hand-written (#8192) but not here: it takes the __fn_
   // stack convention rather than this section's register ABI, so its body is
-  // rt_x86_str_eq, emitted entry-only from emit_module_ir_unit's entry block.
+  // rt_x86_str_eq, emitted entry-only from emit_module_ir_unit_flat's entry block.
   // __fern_str_cmp is now a Fern runtime function (#2649): emitted entry-only
   // via emit_ir_runtime_fern_fn (lowered through the IR pipeline as
   // __fn___fern_str_cmp), not a hand-written register-ABI body here. See the
-  // emit_ir_runtime_fern_fn call in emit_module_ir_unit's entry block.
+  // emit_ir_runtime_fern_fn call in emit_module_ir_unit_flat's entry block.
   // __fern_arr_slice is a Fern runtime function now (#2649):
   // asmcore.rt_src_arr_slice, emitted
   // need-gated in the migrated-helpers section over the __raw_arr_box +
@@ -4251,23 +4251,23 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   // came last because its bounds check (#5419) traps: it spells the trap with
   // the __syscall3 sub-floor (exit 134), which is why it alone takes a target.
   // __fern_random_bytes is now a Fern runtime function (#2649): emitted via
-  // emit_ir_runtime_fern_fn in emit_module_ir_unit's entry block (need-gated on
+  // emit_ir_runtime_fern_fn in emit_module_ir_unit_flat's entry block (need-gated on
   // random_bytes) — it fills n scratch bytes from getrandom via the __syscall3
   // sub-floor, then spreads them one-per-slot into a fresh u8[] box
   // (__raw_arr_box). The op_random_bytes handler calls the stack-arg
   // __fn___fern_random_bytes symbol.
   // __fern_str_bytes was hand-written here through #2649; it is now a Fern
   // runtime function (asmcore.rt_src_str_bytes) lowered through the IR pipeline
-  // via emit_ir_runtime_fern_fn in emit_module_ir_unit's entry block — it builds
+  // via emit_ir_runtime_fern_fn in emit_module_ir_unit_flat's entry block — it builds
   // the byte i32[] by appending each byte (arr_push). Heap + arr_push dependent;
   // gated on the str_bytes need.
   // __fern_str_split is now a Fern runtime function (#2649): emitted via
-  // emit_ir_runtime_fern_fn in emit_module_ir_unit's entry block (need-gated on
+  // emit_ir_runtime_fern_fn in emit_module_ir_unit_flat's entry block (need-gated on
   // str_split), like the string builders — scans for `sep` and appends each
   // segment slice (.append() -> arr_push_owned) via the raw-memory intrinsics.
   // The op_str_split handler calls the stack-arg __fn___fern_str_split symbol.
   // __fern_string_from_bytes is now a Fern runtime function (#2649): emitted
-  // via emit_ir_runtime_fern_fn in emit_module_ir_unit's entry block (need-gated
+  // via emit_ir_runtime_fern_fn in emit_module_ir_unit_flat's entry block (need-gated
   // on str_from_bytes), like the string builders — packs each 8-byte slot's low
   // byte into a fresh string box via the raw-memory intrinsics. The op_str_from_
   // bytes handler calls the stack-arg __fn___fern_string_from_bytes symbol.
@@ -4854,7 +4854,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   // entry-only via emit_ir_runtime_fern_fn (lowered through the IR pipeline as
   // __fn___fern_i32_to_string, using the raw-memory intrinsics), not a
   // hand-written body here. See the emit_ir_runtime_fern_fn call in
-  // emit_module_ir_unit's entry block.
+  // emit_module_ir_unit_flat's entry block.
   // __fern_chr is now a Fern runtime function (#2649): see asmcore.rt_src_chr,
   // lowered through the IR pipeline via emit_ir_runtime_fern_fn in the entry
   // block (using the raw-memory intrinsics). No longer hand-rolled here.
@@ -8347,7 +8347,7 @@ function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg: irl
 // emit_function_via_ir_pre is the emit half of emit_function_via_ir, split out at
 // the lower_func boundary so a caller that has ALREADY lowered `fd` can emit from
 // that LowerResult without lowering it a second time (#4394 lever 3 — the fused
-// eligible-and-emit path, emit_module_ir_gated, lowers each function once, checks
+// eligible-and-emit path, emit_module_ir_gated_sub, lowers each function once, checks
 // eligibility on that `r`, then emits from the same one, replacing the driver's
 // former lower-twice: all_eligible_known's gate pass re-lowered every function,
 // then emit_module_ir re-lowered every function again). Everything from the
@@ -10351,38 +10351,16 @@ function emit_ir_enum_arr_elems_drop_one(s: asmcore.EmitState, ety: string): asm
   return s;
 }
 
-// runtime_ast_bodies is the AST lowering of a runtime helper's functions, with
-// side tables computed over the helper alone. They read its own functions as
-// the whole program, so a read-only string or array parameter is borrowed and
-// takes no release that would free the caller's value.
-function runtime_ast_bodies(fns: parser.FuncDecl[], all_structs: irlower.StructTab, s: asmcore.EmitState): irlower.LowerResult[] {
-  var bparams: string[] = irlower.borrowable_params_interproc(fns, all_structs);
-  var sg: irlower.FnSigs = irlower.FnSigs {
-    ...irlower.fn_sigs_for_borrow(fns, all_structs, ircore.array_ret_fns_of(fns), bparams),
-    consume_safe_params: irlower.consume_safe_params_interproc(fns, bparams),
-    // These two resolve against the EmitState's struct view, not all_structs.
-    opt_fresh_ret_fns: irlower.sig_reg_of(irlower.opt_fresh_ret_fns_of(fns, s.struct_decls, irlower.str_fresh_ret_fns_of(fns))),
-    strfld_ok_types: irlower.strfld_reclaim_ok_types_of(fns, s.struct_decls, bparams),
-  };
-  var out: irlower.LowerResult[] = [];
-  for fd in fns {
-    out = out.append(irlower.lower_func(fd, s.struct_decls, sg, false));
-  }
-  return out;
-}
-
 // emit_ir_runtime_fern_fn lowers a runtime helper WRITTEN IN FERN through the
 // IR pipeline (issue #2649) — the IR-path analog of asm.fern's
 // emit_runtime_fern_fn. The helper emits as __fn_<name> exactly like a user
 // function (so the IR call site's `call __fn___fern_<name>` resolves to it),
 // replacing a hand-written stack-arg wrapper in emit_ir_runtime.
 //
-// The typed lowering (EmitState.rt_lower) produces the bodies; it returns none,
-// and the AST lowering does, only with the typed path off, in a driver that
-// supplies no rt_lower, or under a bisect knob. Emitted
+// The typed lowering (EmitState.rt_lower) produces the bodies. Emitted
 // entry-only and gated on the helper's need by the caller; emit_runtime_globls
 // already `.globl`s the symbol so the per-module link resolves it.
-function emit_ir_runtime_fern_fn(src: string, all_structs: irlower.StructTab, s: asmcore.EmitState): asmcore.EmitState {
+function emit_ir_runtime_fern_fn(src: string, s: asmcore.EmitState): asmcore.EmitState {
   var m: parser.Module = parser.infer_ret_types_module(parser.parse_module(lexer.tokenize(src)));
   var fns: parser.FuncDecl[] = m.funcs;
   // String literals the helper body interns (e.g. "\n" in str_lines's
@@ -10396,9 +10374,6 @@ function emit_ir_runtime_fern_fn(src: string, all_structs: irlower.StructTab, s:
   var agg0: i32 = s.const_aggs.len();
   var sh0: i32 = s.shape_lits.len();
   var bodies: irlower.LowerResult[] = s.rt_lower(src);
-  if (bodies.len() < fns.len()) {
-    bodies = runtime_ast_bodies(fns, all_structs, s);
-  }
   var i: i32 = 0;
   while (i < fns.len()) {
     s = emit_function_via_ir_pre(bodies[i], fns[i], s, vsigs);
@@ -10446,7 +10421,7 @@ function emit_ir_runtime_fern_fn(src: string, all_structs: irlower.StructTab, s:
 // must answer, so it does not get to refuse the module (#9655).
 function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], all_structs: irlower.StructTab, s: asmcore.EmitState, globl_defs: boolean, lo: i32, hi: i32, cache: irlower.LowerResult[], base: irlower.FnSigs, check_claims: boolean): asmcore.EmitState {
   var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
-  // #4394 lever 3: when `cache` is non-empty the caller (emit_module_ir_gated)
+  // #4394 lever 3: when `cache` is non-empty the caller (emit_module_ir_gated_sub)
   // has ALREADY lowered every function — into cache[i], indexed by mod.funcs
   // position — during its fused eligibility scan, so emit reuses that lowering
   // (via emit_function_via_ir_pre) instead of lowering it a second time.
@@ -10534,51 +10509,14 @@ pub function module_runtime_needs(mod: parser.Module, all_funcs: parser.FuncDecl
   return s.needed;
 }
 
-pub function emit_module_ir(mod: parser.Module): string {
-  // Infer return types BEFORE snapshotting all_funcs: the side-tables are
-  // derived over all_funcs, so they must see the inferred (unannotated)
-  // return types — otherwise a function with an inferred string/struct/…
-  // return is mis-tagged i32 and a chained method on its result miscompiles.
-  // emit_module_ir_unit re-infers `mod` (idempotent), keeping the emitted
-  // module and the analysis set consistent.
-  var im: parser.Module = parser.infer_ret_types_module(mod);
-  return emit_module_ir_unit(im, true, false, "", [], im.funcs, irlower.struct_tab(im.structs), 0, 0 - 1, []);
-}
-
-// emit_module_ir_gated is the FUSED eligibility-gate + whole-program emit (#4394
-// lever 3): it replaces the driver's two-call `if (all_eligible_known(m, known))
-// { emit_module_ir(m) }` — which lowered every function TWICE (once in the gate's
-// per-function eligibility scan, once in emit) — with a single lowering pass. It
-// lowers each function ONCE into a cache while checking eligibility on that same
-// LowerResult, then, if every function is eligible, emits from the cache (no
-// re-lowering); otherwise it returns "" to signal the caller that the module is
-// ineligible. The eligibility verdict is identical to all_eligible_known's:
-// r.ok plus a call_direct/const_func scan whose only rejections are USER function
-// names (RC-inserted __struct_drop_/__field_reclaim_/__fern_* helper calls all
-// pass is_fern_helper), and those user calls come from the AST — unaffected by
-// the fuller emit-side RC side-tables this path lowers with. So a module that
-// routed IR before still routes IR (byte-identically), one that was declined is
-// still declined — just at half the lowering cost.
-//
-// emit_module_or_error is the non-AST half of asm.emit_module (#3457 slice 3):
-// the same parse-error / type-check / lambda-lift prologue, then the IR gate —
-// but a module the gate declines is a hard ERROR here rather than a silent
-// fall-through to the legacy AST emitter.
-//
-// It exists so the single-module drivers can stop importing `asm.fern` at all,
-// which is what makes the AST emitter deletable (slice 5). The declines are
-// diagnosable rather than mysterious: FERN_STRICT_IR=1 makes the gate exit(3)
-// naming the bail site, so a regression here says WHICH construct left the
-// subset, not merely that one did.
+// emit_module_or_error_sub is the whole-program emit over the typed lowering
+// `sub`: the parse-error / type-check / lambda-lift prologue, then the IR
+// gate, and a module the gate declines is a hard ERROR. FERN_STRICT_IR=1
+// makes the gate exit(3) naming the bail site.
 //
 // The prologue is ordered check-then-emit for the reason #4327 records: the
 // fused gate+emit used to return ahead of the type check, so every IR-eligible
 // module skipped it and an ill-typed one miscompiled silently.
-pub function emit_module_or_error(mod: parser.Module): string {
-  return emit_module_or_error_sub(mod, ircore.no_sub());
-}
-
-// The `_sub` sibling of the above: see emit_module_ir_gated_sub.
 pub function emit_module_or_error_sub(mod: parser.Module, sub: ircore.Sub): string {
   var parse_errs: util.Diag[] = asmcore.parse_unknown_errors_module(mod);
   if (parse_errs.len() > 0) {
@@ -10607,16 +10545,11 @@ pub function emit_module_or_error_sub(mod: parser.Module, sub: ircore.Sub): stri
   return "";
 }
 
-// "" is an unambiguous "ineligible" sentinel: an eligible module always emits at
-// least `.globl _start\n    .text\n…`, never the empty string.
-pub function emit_module_ir_gated(mod: parser.Module, known: string[]): string {
-  return emit_module_ir_gated_sub(mod, known, ircore.no_sub());
-}
-
-// emit_module_ir_gated_sub is the same gate with a caller-supplied semantic
-// lowering substituted into it (ircore.Sub): the typed lowering, or
-// ir_const_numeric_run's rebuilt copy of it. ircore.no_sub() is this
-// function behaving exactly as it did before the seam existed.
+// emit_module_ir_gated_sub is the fused gate + whole-program emit (#4394
+// lever 3) over a semantic lowering (ircore.Sub): the typed lowering, or
+// ir_const_numeric_run's rebuilt copy of it. "" is an unambiguous
+// "ineligible" sentinel: an eligible module always emits at least
+// `.globl _start\n    .text\n…`, never the empty string.
 pub function emit_module_ir_gated_sub(mod: parser.Module, known: string[], sub: ircore.Sub): string {
   // A main-less module is admitted: the unit's `_start` exits 0 instead of
   // calling a __fn_main that does not exist (see its has_main branch).
@@ -10626,10 +10559,6 @@ pub function emit_module_ir_gated_sub(mod: parser.Module, known: string[], sub: 
   }
   // Every function eligible — emit from the cache (no second lowering).
   return emit_module_ir_unit_flat(g.im, true, false, "", [], g.im.funcs, g.stab, 0, 0 - 1, ircore.inline_tiny_leaves(g.im, g.cache), g.base, sub.rt_lower);
-}
-
-pub function emit_module_ir_unit(mod: parser.Module, is_entry: boolean, globl_defs: boolean, str_ns: string, extra_needs: string[], all_funcs: parser.FuncDecl[], all_structs: irlower.StructTab, lo: i32, hi: i32, cache: irlower.LowerResult[]): string {
-  return emit_module_ir_unit_flat(mod, is_entry, globl_defs, str_ns, extra_needs, all_funcs, all_structs, lo, hi, cache, ircore.wp_fn_sigs(all_funcs, all_structs), asmcore.no_rt_lower);
 }
 
 // `rt` lowers the runtime helpers this unit appends (asmcore.EmitState.rt_lower).
@@ -10647,7 +10576,7 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
   // struct_decls and funcs are the WHOLE-PROGRAM sets, so an imported struct's
   // layout resolves and a `dyn` dispatch has an arm for every impl (#10891).
   s = asmcore.EmitState { ...s, struct_decls: all_structs, funcs: all_funcs, str_ns: str_ns, rt_lower: rt };
-  // A unit never passes emit_module_or_error's check, so the Display gate
+  // A unit never passes emit_module_or_error_sub's check, so the Display gate
   // runs here: a `print(xs)` nothing gives a `to_string` would otherwise hand
   // the string-only runtime helper a raw pointer (#9945).
   var derrs: util.Diag[] = asmcore.display_errs_module(mod, s);
@@ -10843,7 +10772,7 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
   // the entry only knows its OWN needs; a non-entry module that itself
   // allocates relies on the entry having pulled the heap runtime in.)
   if (is_entry) {
-    s = emit_entry_runtime_settled(s, all_structs);
+    s = emit_entry_runtime_settled(s);
   }
   return strbuf_take();
 }
@@ -10851,14 +10780,14 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
 // A typed runtime body can call a need-gated runtime block emitted before it,
 // so the runtime is emitted into a capture and emitted again, from the state
 // before it, with the needs it added, until they stop growing.
-function emit_entry_runtime_settled(s0: asmcore.EmitState, all_structs: irlower.StructTab): asmcore.EmitState {
+function emit_entry_runtime_settled(s0: asmcore.EmitState): asmcore.EmitState {
   var s: asmcore.EmitState = s0;
   var settled: boolean = false;
   var out: asmcore.EmitState = s0;
   while (!settled) {
     s = s.close_needs();
     var h: usize = buf_new(65536);
-    var t: asmcore.EmitState = emit_entry_runtime(asmcore.EmitState { ...s, capture: h }, all_structs);
+    var t: asmcore.EmitState = emit_entry_runtime(asmcore.EmitState { ...s, capture: h });
     var text: string = buf_take(h);
     if (t.needed.len() == s.needed.len()) {
       settled = true;
@@ -10872,14 +10801,14 @@ function emit_entry_runtime_settled(s0: asmcore.EmitState, all_structs: irlower.
 }
 
 // The shared `__fern_*` runtime the entry module emits.
-function emit_entry_runtime(s: asmcore.EmitState, all_structs: irlower.StructTab): asmcore.EmitState {
+function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   // __fern_str_cmp (#2649): string-ordering helper, hosted on the IR path
   // as a Fern function. Self-contained (two borrowed strings, byte compare, no
   // alloc / no other helper call), so emit_ir_runtime_fern_fn's singleton
   // side-tables are complete. Same .text + need-gated, entry-only emission.
   if (s.has_need("str_cmp")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_cmp(), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_cmp(), s);
   }
   // The freestanding allocator + RC runtime, only when the program allocates.
   // i32.to_string() allocates its box even in an otherwise heap-free program,
@@ -10945,7 +10874,7 @@ function emit_entry_runtime(s: asmcore.EmitState, all_structs: irlower.StructTab
   // string arm.
   if (s.has_need("maps")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_map_find(), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_map_find(), s);
   }
   // __fern_map_delete (#2649): `m.without(k)`. A Fern helper rather than
   // hand-asm — the last of the map ops to move. Gated on its OWN need, not on
@@ -10956,13 +10885,13 @@ function emit_entry_runtime(s: asmcore.EmitState, all_structs: irlower.StructTab
   // map_delete_rel's source carries it when that is needed too.
   if (s.has_need("map_delete") && !s.has_need("map_delete_rel")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_map_delete(), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_map_delete(), s);
   }
   // The releasing delete (#9970) on its own need: only a map that owns its
   // columns calls it, and its body names the string-array free.
   if (s.has_need("map_delete_rel")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_map_delete_rel(), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_map_delete_rel(), s);
   }
   // ASCII case transforms (to_upper / to_lower) — heap-dependent, so the heap
   // runtime is already present; emitted on their own str_case need.
@@ -10970,62 +10899,62 @@ function emit_entry_runtime(s: asmcore.EmitState, all_structs: irlower.StructTab
   // the IR pipeline: copy each byte case-flipped if alpha. Heap-dependent.
   if (s.has_need("str_case")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_to_upper(), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_to_upper(), s);
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_to_lower(), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_to_lower(), s);
   }
   // String repeat — now a Fern runtime function (#2649), lowered through the
   // IR pipeline: n copies of `s` in a fresh buffer via the raw-memory
   // intrinsics. Heap-dependent (present above).
   if (s.has_need("str_repeat")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_repeat(), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_repeat(), s);
   }
   // String trim — now a Fern runtime function (#2649), lowered through the IR
   // pipeline (zero-copy slice; the slice box allocates, so the heap runtime
   // above is present). .text since the heap runtime left us in .bss.
   if (s.has_need("str_trim")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_trim(), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_trim(), s);
   }
   // String replace — now a Fern runtime function (#2649), lowered through the
   // IR pipeline: two-pass count + build via the raw-memory intrinsics.
   // Heap-dependent (present above).
   if (s.has_need("str_replace")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_replace(), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_replace(), s);
   }
   // string_from_bytes_unchecked — now a Fern runtime function (#2649), lowered through the
   // IR pipeline: pack each array element's low byte into a fresh string box via
   // the raw-memory intrinsics. Heap-dependent (present above).
   if (s.has_need("str_from_bytes")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_string_from_bytes(), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_string_from_bytes(), s);
   }
   // The packed-byte twins (asmcore.packed_suffix), for a typed program's u8[].
   if (s.has_need("str_from_bytes_u8")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_string_from_bytes_u8(), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_string_from_bytes_u8(), s);
   }
   if (s.has_need("str_bytes_u8")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_bytes_u8(), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_bytes_u8(), s);
   }
   if (s.has_need("arr_slice_u8")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_slice_u8("x86_64"), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_slice_u8("x86_64"), s);
   }
   if (s.has_need("random_bytes_u8")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_random_bytes_u8("x86_64"), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_random_bytes_u8("x86_64"), s);
   }
   if (s.has_need("tcp_recv_u8")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_recv_u8("x86_64"), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_recv_u8("x86_64"), s);
   }
   if (s.has_need("tcp_recv_into_u8")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_recv_into_u8("x86_64"), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_recv_into_u8("x86_64"), s);
   }
   // random_bytes — now a Fern runtime function (#2649), lowered through the IR
   // pipeline: fill n scratch bytes from getrandom via the __syscall3 sub-floor,
@@ -11034,7 +10963,7 @@ function emit_entry_runtime(s: asmcore.EmitState, all_structs: irlower.StructTab
   // target); asmcore.sysno picks 318.
   if (s.has_need("random_bytes")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_random_bytes("x86_64"), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_random_bytes("x86_64"), s);
   }
   // a[start:end] — a Fern runtime function (#2649) over the __raw_arr_box +
   // __raw_array pair: allocate the fresh box, copy the 8-byte slots, hand it
@@ -11043,14 +10972,14 @@ function emit_entry_runtime(s: asmcore.EmitState, all_structs: irlower.StructTab
   // per-target (asmcore.sysno picks 60 here).
   if (s.has_need("arr_slice")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_slice("x86_64"), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_slice("x86_64"), s);
   }
   // str_split — now a Fern runtime function (#2649), lowered through the IR
   // pipeline: scan for `sep`, append each segment slice (.append() ->
   // arr_push_owned, present via its str_split need deps). Heap-dependent (above).
   if (s.has_need("str_split")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_split(), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_split(), s);
   }
   // String lines — now a Fern runtime function (#2649), lowered through the IR
   // pipeline: splits on '\n' (str_split) + drops the trailing empty via an array
@@ -11058,7 +10987,7 @@ function emit_entry_runtime(s: asmcore.EmitState, all_structs: irlower.StructTab
   // need-gated blocks). .text since the heap runtime left us in .bss.
   if (s.has_need("str_lines")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_lines(), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_lines(), s);
   }
   // String bytes — now a Fern runtime function (#2649), lowered through the IR
   // pipeline: builds the byte i32[] by appending each byte (arr_push, present via
@@ -11066,21 +10995,21 @@ function emit_entry_runtime(s: asmcore.EmitState, all_structs: irlower.StructTab
   // runtime left us in .bss.
   if (s.has_need("str_bytes")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_bytes(), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_bytes(), s);
   }
   // chr — first Tier-2 helper via the raw-memory intrinsics (#2649): alloc 1
   // byte, store b, box it. Lowered through the IR pipeline; the heap runtime
   // above is present (mark_chr pulls heap).
   if (s.has_need("chr")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_chr(), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_chr(), s);
   }
   // str_concat — backs `+` on strings, now Tier-2 via the intrinsics (#2649):
   // alloc lenA+lenB, copy A then B byte-by-byte, box it. Heap-dependent (present
   // above). .text since the heap runtime left us in .bss.
   if (s.has_need("str_concat")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_concat(), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_concat(), s);
   }
   // arr.join(sep) — a Fern runtime function (#5328) lowered through the IR
   // pipeline: two passes over an exact-size block, summing the lengths and
@@ -11088,35 +11017,35 @@ function emit_entry_runtime(s: asmcore.EmitState, all_structs: irlower.StructTab
   // since the heap runtime left us in .bss.
   if (s.has_need("arr_str_join")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_str_join(), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_str_join(), s);
   }
   // i32_to_string — backs (n).to_string(), Tier-2 via the intrinsics (#2649):
   // digit-buffer build. Heap-dependent (present above).
   if (s.has_need("i32_to_string")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_i32_to_string(), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_i32_to_string(), s);
   }
   // u32_to_string — UNSIGNED sibling for (u32).to_string() (#2649). Heap-dep.
   if (s.has_need("u32_to_string")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_u32_to_string(), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_u32_to_string(), s);
   }
   // i64_to_string / u64_to_string — the WIDE siblings (#5826). Heap-dep. The
   // unsigned one is not optional: __fern_i64_to_string renders a u64 with bit
   // 63 set as negative.
   if (s.has_need("i64_to_string")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_i64_to_string(), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_i64_to_string(), s);
   }
   if (s.has_need("u64_to_string")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_u64_to_string(), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_u64_to_string(), s);
   }
   // random_i32 allocates nothing, so its helper is emitted independently of
   // the heap runtime (a random_i32-only program is heap-free).
   if (s.has_need("random_i32")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_random_i32("x86_64"), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_random_i32("x86_64"), s);
   }
   if (s.has_need("map_hash_seed")) {
     s = emit_ir_map_hash_seed(s);
@@ -11124,23 +11053,23 @@ function emit_entry_runtime(s: asmcore.EmitState, all_structs: irlower.StructTab
   // fork / wait4 allocate nothing either — same heap-independent gating.
   if (s.has_need("proc_fork")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_proc_fork("x86_64"), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_proc_fork("x86_64"), s);
   }
   if (s.has_need("proc_waitpid")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_proc_waitpid("x86_64"), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_proc_waitpid("x86_64"), s);
   }
   if (s.has_need("proc_waitpid_nohang")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_proc_waitpid_nohang("x86_64"), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_proc_waitpid_nohang("x86_64"), s);
   }
   if (s.has_need("proc_exec")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_proc_exec("x86_64"), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_proc_exec("x86_64"), s);
   }
   if (s.has_need("proc_exec_as")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_proc_exec_as("x86_64"), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_proc_exec_as("x86_64"), s);
   }
   // subprocess (#2649) — the composite: pipes + fork + exec + drain + reap in
   // one bundle with its two local helpers. Heap-dependent (it allocates the
@@ -11148,7 +11077,7 @@ function emit_entry_runtime(s: asmcore.EmitState, all_structs: irlower.StructTab
   // label it builds through is pre-interned in the entry block on the same need.
   if (s.has_need("subprocess")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_subprocess("x86_64"), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_subprocess("x86_64"), s);
   }
   // The fixed static __fern_scratch buffer (#2649): the buffer the syscall-leaf
   // helpers hand the kernel to write structs into (timespec for the clocks,
@@ -11186,31 +11115,31 @@ function emit_entry_runtime(s: asmcore.EmitState, all_structs: irlower.StructTab
   // prints must still link.
   if (s.has_need("str_read_line")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_read_line("x86_64"), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_read_line("x86_64"), s);
   }
   if (s.has_need("str_print")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_print_str("x86_64"), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_print_str("x86_64"), s);
   }
   if (s.has_need("putchar")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_putchar("x86_64"), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_putchar("x86_64"), s);
   }
   if (s.has_need("eprint")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_eprint_str("x86_64"), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_eprint_str("x86_64"), s);
   }
   if (s.has_need("monotonic_ns")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_clock("monotonic_ns", "x86_64"), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_clock("monotonic_ns", "x86_64"), s);
   }
   if (s.has_need("now_unix_ms")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_clock("now_unix_ms", "x86_64"), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_clock("now_unix_ms", "x86_64"), s);
   }
   if (s.has_need("now_ns")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_clock("now_ns", "x86_64"), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_clock("now_ns", "x86_64"), s);
   }
   // The fs-syscall leaves (stat / read_file / remove_file / write_file /
   // temp_dir / read_dir / remove_dir_all) are now Fern runtime functions (#2649) that share ONE errno→IoError
@@ -11405,90 +11334,90 @@ function emit_entry_runtime(s: asmcore.EmitState, all_structs: irlower.StructTab
     if (s.has_need("writer_truncate")) {
       fs_src = fs_src + " " + asmcore.rt_src_writer_truncate("x86_64");
     }
-    s = emit_ir_runtime_fern_fn(fs_src, all_structs, s);
+    s = emit_ir_runtime_fern_fn(fs_src, s);
   }
   // env — now a Fern runtime function (#2649): walks the envp array (via
   // __raw_environ) and copies the matched value. Heap-dependent (present
   // above); the __fern_envp global + _start save it (gated on env). x86-64-only.
   if (s.has_need("env")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_env(), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_env(), s);
   }
   if (s.has_need("poll")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_poll("x86_64"), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_poll("x86_64"), s);
   }
   if (s.has_need("timer_fd")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_timer_fd("x86_64"), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_timer_fd("x86_64"), s);
   }
   if (s.has_need("isatty")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_isatty("x86_64"), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_isatty("x86_64"), s);
   }
   if (s.has_need("process_alive")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_process_alive("x86_64"), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_process_alive("x86_64"), s);
   }
   if (s.has_need("rlimit_nofile")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_rlimit_nofile("x86_64"), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_rlimit_nofile("x86_64"), s);
   }
   if (s.has_need("signal_mask")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_signal_mask("x86_64"), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_signal_mask("x86_64"), s);
   }
   if (s.has_need("signal_disposition")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_signal_disposition_read("x86_64"), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_signal_disposition_read("x86_64"), s);
   }
   if (s.has_need("signal_ignore")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_signal_disposition("x86_64", "signal_ignore", "1"), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_signal_disposition("x86_64", "signal_ignore", "1"), s);
   }
   if (s.has_need("signal_default")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_signal_disposition("x86_64", "signal_default", "0"), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_signal_disposition("x86_64", "signal_default", "0"), s);
   }
   if (s.has_need("geteuid")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_getid("x86_64", "geteuid"), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_getid("x86_64", "geteuid"), s);
   }
   if (s.has_need("getegid")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_getid("x86_64", "getegid"), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_getid("x86_64", "getegid"), s);
   }
   if (s.has_need("getuid")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_getid("x86_64", "getuid"), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_getid("x86_64", "getuid"), s);
   }
   if (s.has_need("getgid")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_getid("x86_64", "getgid"), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_getid("x86_64", "getgid"), s);
   }
   if (s.has_need("getgroups")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_getgroups("x86_64"), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_getgroups("x86_64"), s);
   }
   if (s.has_need("environ")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_environ(), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_environ(), s);
   }
   if (s.has_need("hostname")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_hostname("x86_64"), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_hostname("x86_64"), s);
   }
   if (s.has_need("uname_field")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_uname_field("x86_64"), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_uname_field("x86_64"), s);
   }
   if (s.has_need("getcwd")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_getcwd("x86_64"), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_getcwd("x86_64"), s);
   }
   if (s.has_need("cpu_count")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_cpu_count("x86_64"), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_cpu_count("x86_64"), s);
   }
   if (s.has_need("wasm_timer_pollable")) {
     s = emit_ir_wasm_timer_pollable(s);
@@ -11504,126 +11433,126 @@ function emit_entry_runtime(s: asmcore.EmitState, all_structs: irlower.StructTab
   }
   if (s.has_need("udp_send")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_send("x86_64"), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_send("x86_64"), s);
   }
   if (s.has_need("tcp_listen_with")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_listen_with("x86_64", false), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_listen_with("x86_64", false), s);
   }
   if (s.has_need("tcp_listen_with_u8")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_listen_with("x86_64", true), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_listen_with("x86_64", true), s);
   }
   if (s.has_need("tcp_socket_ctl")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_socket_ctl("x86_64"), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_socket_ctl("x86_64"), s);
   }
   if (s.has_need("tcp_sendfile")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_sendfile("x86_64"), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_sendfile("x86_64"), s);
   }
   if (s.has_need("udp_bind")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_bind("x86_64", false), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_bind("x86_64", false), s);
   }
   if (s.has_need("udp_bind_u8")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_bind("x86_64", true), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_bind("x86_64", true), s);
   }
   if (s.has_need("udp_connect")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_connect("x86_64", false), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_connect("x86_64", false), s);
   }
   if (s.has_need("udp_connect_u8")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_connect("x86_64", true), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_connect("x86_64", true), s);
   }
   if (s.has_need("udp_sendto")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_sendto("x86_64", false), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_sendto("x86_64", false), s);
   }
   if (s.has_need("udp_sendto_u8")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_sendto("x86_64", true), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_sendto("x86_64", true), s);
   }
   if (s.has_need("udp_recvfrom")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_recvfrom("x86_64", false), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_recvfrom("x86_64", false), s);
   }
   if (s.has_need("udp_recvfrom_u8")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_recvfrom("x86_64", true), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_recvfrom("x86_64", true), s);
   }
   if (s.has_need("tcp_connect_with")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_connect_with("x86_64", false), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_connect_with("x86_64", false), s);
   }
   if (s.has_need("tcp_connect_with_u8")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_connect_with("x86_64", true), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_connect_with("x86_64", true), s);
   }
   if (s.has_need("unix_listen")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_unix_listen("x86_64"), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_unix_listen("x86_64"), s);
   }
   if (s.has_need("unix_connect")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_unix_connect("x86_64"), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_unix_connect("x86_64"), s);
   }
   if (s.has_need("reactor_new")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_reactor_new("x86_64"), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_reactor_new("x86_64"), s);
   }
   if (s.has_need("reactor_ctl")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_reactor_ctl("x86_64"), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_reactor_ctl("x86_64"), s);
   }
   if (s.has_need("reactor_wait")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_reactor_wait("x86_64"), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_reactor_wait("x86_64"), s);
   }
   if (s.has_need("tcp_recv_into")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_recv_into("x86_64"), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_recv_into("x86_64"), s);
   }
   if (s.has_need("tcp_connect")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_connect("x86_64"), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_connect("x86_64"), s);
   }
   if (s.has_need("tcp_pollable")) {
     s = emit_ir_tcp_pollable(s);
   }
   if (s.has_need("tcp_close")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_close("x86_64"), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_close("x86_64"), s);
   }
   if (s.has_need("tcp_recv")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_recv("x86_64"), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_recv("x86_64"), s);
   }
   if (s.has_need("tcp_send")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_send("x86_64"), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_send("x86_64"), s);
   }
   if (s.has_need("tcp_listen")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_listen("x86_64"), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_listen("x86_64"), s);
   }
   if (s.has_need("tcp_accept")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_accept("x86_64"), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_accept("x86_64"), s);
   }
   if (s.has_need("tcp_local_port")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_local_port("x86_64"), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_local_port("x86_64"), s);
   }
   if (s.has_need("sleep_ms")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_sleep_ms("x86_64"), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_sleep_ms("x86_64"), s);
   }
   if (s.has_need("sleep_ns")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_sleep_ns("x86_64"), all_structs, s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_sleep_ns("x86_64"), s);
   }
   return s;
 }

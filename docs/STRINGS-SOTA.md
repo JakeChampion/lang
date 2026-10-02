@@ -908,6 +908,15 @@ Byte writes, mappings and ranges can therefore flush arbitrary bytes or partial
 scalar encodings without constructing a string. Direct string writes retain
 their fast path; sticky write errors and close-error precedence are unchanged.
 
+Both HTTP component adapters use `body_bytes()` and writes of at most 4096
+bytes. The primary `std/wasi_http` adapter passes `u8[]` to the host's
+`list<u8>` import; the bootstrap emitter forwards the packed array. Neither
+converts binary bodies through a string. Each hands off the response before
+writing its body, letting the host drain the stream under backpressure.
+This closes the HTTP component adapters' part of #10948; the TCP, UDP and
+file sinks still need byte-domain interfaces. See the
+[HTTP byte validation and size report](STRING-WASI-HTTP-BYTES-2026-10-02.md).
+
 The socket TRANSPORT followed. `tcp_recv_deadline` returns
 `Option[u8[]]`, and `std/fetch` is byte-domain end to end —
 `fetch_raw` / `fetch_get` / `get_url` return `u8[]`, their `_deadline`

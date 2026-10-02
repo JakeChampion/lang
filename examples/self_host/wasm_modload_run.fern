@@ -18,20 +18,9 @@
 //
 // Every key starts from a module's own source hash folded with the SIGNATURE
 // hashes of everything it depends on, plus the function window the unit
-// covers. The two lowerings add different things to it.
+// covers.
 //
-// On the AST lowering (FERN_SEM_IR=) the key is modloader.module_unit_cache_key,
-// which adds the whole-program facts lowering reads (irlower.wp_fact_rows,
-// split by module in modloader.module_fact_hashes). A body-only edit re-emits
-// just that module, while a signature change also invalidates its dependents,
-// whose call-site tagging depends on it. A body edit that moves a fact about a
-// function (a borrow verdict) invalidates that module's dependents the same
-// way; one that moves a type-level reclaim verdict invalidates every unit.
-// Producing unit N parses every module to build the whole-program VIEW its side
-// tables need, but LOWERS only module N, and a cache hit skips the lowering
-// along with the emit.
-//
-// On the typed lowering the units and their keys are the asm drivers':
+// The units and their keys are the asm drivers':
 // ircore.split_units and ircore.unit_cache_key, which adds a hash of the unit's
 // lowered bodies and of the view the emit reads beyond its dependencies
 // (UnitKeys.view). That lowering is whole-program: it inlines callees and infers ownership across modules. So a
@@ -70,30 +59,6 @@ function unit_ns(idx: i32, lo: i32): string {
     base = base + "_s" + util.i32_to_string(lo);
   }
   return base;
-}
-
-// sub_module clones `m` carrying only funcs[lo:hi) (hi < 0 = to the end). The
-// type world — structs, enums, impls, trait_reqs — stays whole, since it is
-// shared by every shard and resolved against the whole-program view. This is the
-// entire mechanism behind window sharding: lower_all_for_view / emit_functions_view
-// are already whole-program-view-threaded, so a windowed sub-module lowers and
-// emits its slice correctly with no further change (#5508).
-function sub_module(m: parser.Module, lo: i32, hi: i32): parser.Module {
-  var end: i32 = hi;
-  if (end < 0 || end > m.funcs.len()) {
-    end = m.funcs.len();
-  }
-  var fs: parser.FuncDecl[] = [];
-  var i: i32 = lo;
-  while (i < end) {
-    fs = fs.append(m.funcs[i]);
-    i = i + 1;
-  }
-  return parser.Module {
-    funcs: fs, structs: m.structs, aliases: m.aliases, imports: m.imports,
-    top_stmts: m.top_stmts, enums: m.enums, resources: m.resources,
-    exports: m.exports, impls: m.impls, trait_reqs: m.trait_reqs, trait_decls: m.trait_decls, inferred_consts: m.inferred_consts,
-  };
 }
 
 function whole_program_view(parts: flatten.PerModule[]): parser.Module[] {
@@ -164,28 +129,6 @@ function whole_module_plan(nmods: i32): ShardRef[] {
   return out;
 }
 
-// with_builtin_enums gives a unit, and the link, the variant structs of the
-// builtin enums (IoError, JsonValue), which no module declares and
-// merge_builtins finds only beside the compiler's own sources. Without them a
-// unit's `match` on their variants bails, and the link gives every variant the
-// fallback type id 0, so each construction matches the first arm. The
-// whole-program struct table gets the same injection in run_per_module.
-function with_builtin_enums(m: parser.Module): parser.Module {
-  return parser.Module { ...m, structs: parser.inject_builtin_enums(m.structs) };
-}
-
-// build_unit lowers module `idx` and packages its bodies with the metadata link
-// needs. This is the only place lowering happens, which is what makes a cache
-// hit cheap: it skips this entirely.
-function build_unit(infmods: parser.Module[], all_funcs: parser.FuncDecl[], all_stab: irlower.StructTab, idx: i32, lo: i32, hi: i32): wasm_objfile.UnitObj {
-  var ns: string = unit_ns(idx, lo);
-  // Lower ONLY this window's functions. lower_all_for_view sees the whole
-  // program for its side tables, so a call into a function outside the window
-  // (another shard, another module) still tags correctly.
-  var sub: parser.Module = with_builtin_enums(sub_module(infmods[idx], lo, hi));
-  return unit_obj(ns, sub, wasm_ir.lower_all_for_view(sub, all_funcs, all_stab), all_funcs, all_stab);
-}
-
 // unit_obj emits a unit's lowered bodies and packages them with the metadata
 // link needs. cache[i] lowers unit.funcs[i]; entries past them are bodies with
 // no declaration.
@@ -203,21 +146,6 @@ function unit_obj(ns: string, unit: parser.Module, cache: irlower.LowerResult[],
   };
 }
 
-// load_unit returns module `idx`'s object, served from the cache when its key
-// still matches and built (lowered) only when it does not. hit/miss goes to
-// stderr so a build, or a test, can observe exactly which modules were reused.
-function load_unit(dir: string, entry_path: string, parts: flatten.PerModule[], infmods: parser.Module[], sighashes: string[], fh: modloader.FactHashes, all_funcs: parser.FuncDecl[], all_stab: irlower.StructTab, idx: i32, lo: i32, hi: i32, cache_dir: string): wasm_objfile.UnitObj {
-  var lk: wasm_objfile.MaybeUnit = cache_lookup(dir, entry_path, parts, infmods, sighashes, fh, idx, lo, hi, cache_dir);
-  if (lk.found) {
-    return lk.obj;
-  }
-  var obj: wasm_objfile.UnitObj = build_unit(infmods, all_funcs, all_stab, idx, lo, hi);
-  if (cache_dir.len() > 0 && sighashes.len() > 0) {
-    write_cached(cache_file_for(dir, entry_path, parts, infmods, sighashes, fh, idx, lo, hi, cache_dir), parts[idx].ns, obj);
-  }
-  return obj;
-}
-
 // write_cached stores a unit built on a miss; an empty path is a unit with no key.
 function write_cached(cf: string, ns: string, obj: wasm_objfile.UnitObj): void {
   if (cf.len() == 0) {
@@ -230,32 +158,6 @@ function write_cached(cf: string, ns: string, obj: wasm_objfile.UnitObj): void {
     },
     Ok(_) => {}
   }
-}
-
-// cache_file_for returns the object path for module idx, or "" when the module
-// has no stable key (module_src_hash == "?") or no cache is configured. The
-// single source of the path both the read and the write use.
-function cache_file_for(dir: string, entry_path: string, parts: flatten.PerModule[], infmods: parser.Module[], sighashes: string[], fh: modloader.FactHashes, idx: i32, lo: i32, hi: i32, cache_dir: string): string {
-  if (cache_dir.len() == 0 || sighashes.len() == 0) {
-    return "";
-  }
-  var src_hash: string = modloader.module_src_hash(modloader.no_overlay(), dir, entry_path, parts, idx);
-  // The window is folded in by module_unit_cache_key so two shards of one
-  // module get distinct objects; the filename carries the shard-ns for
-  // readability.
-  var key: string = modloader.module_unit_cache_key(parts, infmods, sighashes, idx, src_hash, [], lo, hi, fh);
-  if (key.len() == 0) {
-    return "";
-  }
-  return cache_dir + "/" + parts[idx].ns + unit_ns(idx, lo) + "__" + util.hash_key(key) + ".wu";
-}
-
-// cache_lookup reads module idx's object from the cache. It NEVER lowers, which
-// is what lets -link be hit-only: a whole-compiler link that lowered every
-// module in one process exhausts the bump arena (#3425). A miss returns
-// found=false; the caller decides whether to build (-emit) or error (-link).
-function cache_lookup(dir: string, entry_path: string, parts: flatten.PerModule[], infmods: parser.Module[], sighashes: string[], fh: modloader.FactHashes, idx: i32, lo: i32, hi: i32, cache_dir: string): wasm_objfile.MaybeUnit {
-  return read_cached(cache_file_for(dir, entry_path, parts, infmods, sighashes, fh, idx, lo, hi, cache_dir), parts[idx].ns);
 }
 
 function read_cached(cf: string, ns: string): wasm_objfile.MaybeUnit {
@@ -474,111 +376,17 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
     print(util.i32_to_string(parts.len()) + "\n");
     return 0;
   }
-  if (semlower.sem_ir_on() && pm_mode != "manifest") {
-    return run_typed(dir, entry_path, entry, loaded, parts, pm_mode, pm_index, pm_lo, pm_hi, cache_dir, plan_file);
-  }
-
-  var infmods: parser.Module[] = whole_program_view(parts);
-  var all_funcs: parser.FuncDecl[] = [];
-  var all_structs: parser.StructDecl[] = [];
-  var pi: i32 = 0;
-  while (pi < infmods.len()) {
-    var fk: i32 = 0;
-    while (fk < infmods[pi].funcs.len()) {
-      all_funcs = all_funcs.append(infmods[pi].funcs[fk]);
-      fk = fk + 1;
-    }
-    var sk: i32 = 0;
-    while (sk < infmods[pi].structs.len()) {
-      all_structs = all_structs.append(infmods[pi].structs[sk]);
-      sk = sk + 1;
-    }
-    pi = pi + 1;
-  }
-  all_structs = parser.inject_builtin_enums(all_structs);
-
-  // Signature hashes are needed by the manifest and by any cached emit, and
-  // only then: computing them is a whole-program string walk the self-host
-  // runtime does not yet reclaim (#3425), so an uncached emit must not pay it.
-  var sighashes: string[] = [];
-  if (pm_mode == "manifest" || (pm_mode == "emit" || pm_mode == "emit-all" || pm_mode == "link") && cache_dir.len() > 0) {
-    var shi: i32 = 0;
-    while (shi < parts.len()) {
-      sighashes = sighashes.append(util.hash_key(modloader.module_sig_string(infmods[shi])));
-      shi = shi + 1;
-    }
-  }
-  // A cached emit or link keys on the facts too; the manifest reports plain
-  // signature hashes.
-  var fh: modloader.FactHashes = modloader.FactHashes { per_mod: [], global: "" };
-  if (pm_mode != "manifest" && sighashes.len() > 0) {
-    var fstab: irlower.StructTab = irlower.struct_tab(all_structs);
-    fh = modloader.module_fact_hashes(infmods, irlower.wp_fact_rows(ircore.wp_fn_sigs(all_funcs, fstab), all_funcs, fstab));
-    sighashes = modloader.fact_sig_hashes(infmods, fh);
-  }
-
   if (pm_mode == "manifest") {
+    var infmods: parser.Module[] = whole_program_view(parts);
     var mi: i32 = 0;
     while (mi < parts.len()) {
       print(parts[mi].ns + "|" + modloader.module_src_hash(modloader.no_overlay(), dir, entry_path, parts, mi)
-        + "|" + sighashes[mi] + "|" + modloader.module_dep_ns(parts, infmods, mi) + "\n");
+        + "|" + util.hash_key(modloader.module_sig_string(infmods[mi])) + "|" + modloader.module_dep_ns(parts, infmods, mi) + "\n");
       mi = mi + 1;
     }
     return 0;
   }
-
-  if (pm_mode == "link") {
-    // Assemble the whole module from per-unit objects. Each unit is served
-    // from the cache when its key still matches, so an incremental rebuild
-    // lowers ONLY the modules that actually changed — the benefit the rest of
-    // #5331 was building toward. Link itself consults no ir_cache at all: the
-    // needs, fn_sigs and RC type lists all come from the objects.
-    // Hit-only: -link reads every unit from the cache and lowers NOTHING.
-    // A missing unit is an error naming it, not a silent in-process build —
-    // that is the design that keeps a whole-compiler link under the arena limit
-    // (#3425). The orchestrator emits each miss with -per-module-emit (its
-    // own process) and links again.
-    var l: Linked = no_units();
-    for u in read_plan(plan_file, parts.len()) {
-      l = add_found(l, parts, u, cache_lookup(dir, entry_path, parts, infmods, sighashes, fh, u.idx, u.lo, u.hi, cache_dir));
-    }
-    if (link_missing(l)) {
-      return 1;
-    }
-    var merged: parser.Module = flatten.bundle(entry, loaded, "wasm32-wasi");
-    merged = parser.infer_ret_types_module(wasm_ir.lift_lambdas(with_builtin_enums(modloader.merge_builtins(dir, merged))));
-    write(link_text(l, merged));
-    return 0;
-  }
-
-  if (pm_mode == "func-counts") {
-    // Per-module function count POST lift_lambdas / infer — the exact set
-    // build_unit windows over — so an orchestrator can size shards without a
-    // hardcoded per-source count. Mirrors asm's -per-module-func-counts.
-    var fci: i32 = 0;
-    while (fci < infmods.len()) {
-      print(util.i32_to_string(infmods[fci].funcs.len()));
-      fci = fci + 1;
-    }
-    return 0;
-  }
-
-  if (pm_mode == "emit-all") {
-    var stab: irlower.StructTab = irlower.struct_tab(all_structs);
-    for u in read_plan(plan_file, parts.len()) {
-      load_unit(dir, entry_path, parts, infmods, sighashes, fh, all_funcs, stab, u.idx, u.lo, u.hi, cache_dir);
-    }
-    return 0;
-  }
-
-  if (pm_index < 0 || pm_index >= parts.len()) {
-    eprint("wasm per-module: emit index out of range");
-    return 1;
-  }
-
-  var obj: wasm_objfile.UnitObj = load_unit(dir, entry_path, parts, infmods, sighashes, fh, all_funcs, irlower.struct_tab(all_structs), pm_index, pm_lo, pm_hi, cache_dir);
-  write(wasm_objfile.encode(obj));
-  return 0;
+  return run_typed(dir, entry_path, entry, loaded, parts, pm_mode, pm_index, pm_lo, pm_hi, cache_dir, plan_file);
 }
 
 function main(): i32 {

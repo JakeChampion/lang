@@ -11,10 +11,7 @@ import (
 // A local that takes over an `own` array parameter at its last use (`var a =
 // acc`, `var a = g(acc)` at an `own` position) is threaded exactly as the
 // parameter is, and a reassigned `own` array parameter releases only the
-// replacements its frame minted (#10357). Under
-// the AST lowering the caller releases the buffer it passed whenever the call
-// hands back a different one; the alias used to release that buffer as well.
-// Answers are the interpreter's.
+// replacements its frame minted (#10357). Answers are the interpreter's.
 
 const ownAliasAtNode = `@noinline
 function at_node(n: i32, own a: string[]): string[] {
@@ -34,15 +31,6 @@ const ownAliasMain = `function main(): i32 {
 var ownAliasCases = []struct {
 	name string
 	src  string
-	// mixed is the FERN_SEM_IR_SKIP list: the listed functions and their
-	// callers keep the AST lowering, and every other callee is produced.
-	mixed string
-	// pinned: the AST-leg census, where the leg still leaks for a reason
-	// outside this rule (#10420). Absent means balanced.
-	pinned map[string][2]int64
-	// census: false where the AST legs leak more than one pin can hold; the
-	// sanitizer then checks for everything but a leak.
-	census bool
 }{
 	{"alias_rebind", `function at_node(n: i32, own a: string[]): string[] {
     return a.append("g" + "");
@@ -52,7 +40,7 @@ function fold(own acc: string[], n: i32): string[] {
     a = at_node(n, a);
     return a;
 }
-` + ownAliasMain, "fold", nil, true},
+` + ownAliasMain},
 	{"alias_rebind_chain", ownAliasAtNode + `function fold(own acc: string[], n: i32): string[] {
     var a: string[] = acc;
     a = at_node(n, a);
@@ -61,14 +49,14 @@ function fold(own acc: string[], n: i32): string[] {
     a = at_node(n + 5, a);
     return a;
 }
-` + ownAliasMain, "fold", nil, true},
+` + ownAliasMain},
 	{"alias_reset", ownAliasAtNode + `function fold(own acc: string[], n: i32): string[] {
     var a: string[] = acc;
     a = [];
     if (n % 2 == 0) { a = at_node(n, a); }
     return a;
 }
-` + ownAliasMain, "fold", nil, true},
+` + ownAliasMain},
 	{"alias_of_alias", ownAliasAtNode + `function fold(own acc: string[], n: i32): string[] {
     var a: string[] = acc;
     var b: string[] = a;
@@ -76,14 +64,14 @@ function fold(own acc: string[], n: i32): string[] {
     b = at_node(n + 2, b);
     return b;
 }
-` + ownAliasMain, "fold", nil, true},
+` + ownAliasMain},
 	{"alias_self_append", `function fold(own acc: string[], n: i32): string[] {
     var a: string[] = acc;
     a = a.append("x" + "");
     if (n % 2 == 0) { a = a.append("y" + ""); }
     return a;
 }
-` + ownAliasMain, "fold", nil, true},
+` + ownAliasMain},
 	{"alias_loop_fn_value", `function fold(xs: i32[], own acc: string[], f: (i32, own string[]) => string[]): string[] {
     var a: string[] = acc;
     for x in xs { a = f(x, a); }
@@ -95,7 +83,7 @@ function fold(own acc: string[], n: i32): string[] {
     while (fd < 12) { pending = fold([fd, fd + 1, fd + 2], pending, at_node); fd = fd + 1; }
     return pending.len() % 256;
 }
-`, "fold", nil, true},
+`},
 	{"param_rebind_chain", ownAliasAtNode + `function fold(own acc: string[], n: i32): string[] {
     acc = at_node(n, acc);
     acc = at_node(n + 2, acc);
@@ -104,12 +92,12 @@ function fold(own acc: string[], n: i32): string[] {
     acc = at_node(n + 6, acc);
     return acc;
 }
-` + ownAliasMain, "fold", nil, true},
+` + ownAliasMain},
 	{"param_rebind_loop", ownAliasAtNode + `function fold(own acc: string[], n: i32): string[] {
     for i in [n, n + 2, n + 3, n + 5, n + 6] { acc = at_node(i, acc); }
     return acc;
 }
-` + ownAliasMain, "fold", nil, true},
+` + ownAliasMain},
 	{"param_then_alias", ownAliasAtNode + `function fold(own acc: string[], n: i32): string[] {
     acc = at_node(n, acc);
     var a: string[] = acc;
@@ -117,7 +105,7 @@ function fold(own acc: string[], n: i32): string[] {
     a = at_node(n + 3, a);
     return a;
 }
-` + ownAliasMain, "fold", nil, true},
+` + ownAliasMain},
 	// A call result that hands the parameter back when it keeps it.
 	{"call_handback", ownAliasAtNode + `function fold(own acc: string[], n: i32): string[] {
     var out: string[] = at_node(n, acc);
@@ -125,7 +113,7 @@ function fold(own acc: string[], n: i32): string[] {
     out = at_node(n + 3, out);
     return out;
 }
-` + ownAliasMain, "fold", nil, true},
+` + ownAliasMain},
 	{"call_handback_then_borrowed", ownAliasAtNode + `function walk(n: i32, acc: string[]): string[] {
     if (n % 4 == 0) { return acc.append("w" + ""); }
     return acc;
@@ -136,10 +124,9 @@ function fold(own acc: string[], n: i32): string[] {
     out = at_node(n + 2, out);
     return out;
 }
-` + ownAliasMain, "fold", nil, true},
+` + ownAliasMain},
 	// A local that took the parameter over, passed in a dying position to a
-	// produced callee that consumes it: the AST frame's position consumes too
-	// (own_consumed_positions_of follows the local).
+	// callee that consumes it.
 	{"alias_into_produced_consumer", `@noinline
 function take(n: i32, own a: string[]): string[] {
     if (n % 5 == 0) { return ["r" + ""]; }
@@ -157,8 +144,8 @@ function main(): i32 {
     while (fd < 12) { pending = fold(pending, fd); fd = fd + 1; }
     return pending.len() % 256;
 }
-`, "fold", nil, true},
-	// The same through a call that hands the parameter back (keep stays AST).
+`},
+	// The same through a call that hands the parameter back.
 	{"call_handback_into_produced_consumer", `@noinline
 function take(n: i32, own a: string[]): string[] {
     if (n % 5 == 0) { return ["r" + ""]; }
@@ -181,7 +168,7 @@ function main(): i32 {
     while (fd < 12) { pending = fold(pending, fd); fd = fd + 1; }
     return pending.len() % 256;
 }
-`, "fold,keep", nil, true},
+`},
 	// A call through a fn-typed parameter hands the parameter back.
 	{"fn_value_param_handback", `@noinline
 function at_node(n: i32, own a: string[]): string[] {
@@ -199,7 +186,7 @@ function main(): i32 {
     while (fd < 12) { pending = fold(pending, fd, at_node); fd = fd + 1; }
     return pending.len() % 256;
 }
-`, "fold", nil, true},
+`},
 	// A call through a fn-typed local: the registry reads its `own` positions as
 	// the lowering stamps them, so both take `a` for `acc`.
 	{"fn_value_local_into_produced_consumer", `@noinline
@@ -225,7 +212,7 @@ function main(): i32 {
     while (fd < 12) { pending = fold(pending, fd); fd = fd + 1; }
     return pending.len() % 256;
 }
-`, "fold,at_node", nil, true},
+`},
 	// A consuming position's parameter dropped by a return (#10361).
 	{"consuming_param_dropped", `@noinline
 function at_node(n: i32, own a: string[]): string[] {
@@ -239,7 +226,7 @@ function main(): i32 {
     while (fd < 12) { pending = fold(pending, fd); fd = fd + 1; }
     return pending.len() % 256;
 }
-`, "fold", nil, true},
+`},
 	// #9409: a borrowed alias moved into an `own` callee whose body aliases
 	// the parameter in turn.
 	{"borrowed_outer", `function grow(x: string, own acc: string[]): string[] { return acc.append(x); }
@@ -258,7 +245,7 @@ function main(): i32 {
     var out: string[] = outer("alpha", seed);
     return (out.len() * 10 + seed.len()) % 251;
 }
-`, "inner", nil, true},
+`},
 	// The shape #10338's checker.inst_stmts walk takes, over a struct array.
 	{"struct_elem_walk", `struct Inst { name: string, depth: i32 }
 function fold(xs: i32[], own acc: Inst[], f: (i32, own Inst[]) => Inst[]): Inst[] {
@@ -286,7 +273,7 @@ function main(): i32 {
     for p in pending { t = t + p.name.len() + p.depth; }
     return t % 256;
 }
-`, "fold", map[string][2]int64{"ast": {89, 73}, "ast_main": {89, 73}, "ast_mixed": {89, 73}}, true},
+`},
 	{"struct_elem_scope", `import "std/i32";
 struct Inst { name: string, cts: string[], depth: i32 }
 struct Sc { names: string[], n: i32 }
@@ -335,18 +322,7 @@ function main(): i32 {
     }
     return t % 256;
 }
-`, "fold", nil, false},
-}
-
-type ownAliasLowering struct{ name, env string }
-
-func ownAliasLowerings(mixed string) []ownAliasLowering {
-	return []ownAliasLowering{
-		{"semantic", "FERN_SEM_IR=1"},
-		{"ast", "FERN_SEM_IR="},
-		{"ast_main", "FERN_SEM_IR_SKIP=main"},
-		{"ast_mixed", "FERN_SEM_IR_SKIP=" + mixed},
-	}
+`},
 }
 
 func ownAliasOracle(t *testing.T, interp, src string) int {
@@ -368,40 +344,23 @@ func writeOwnAliasSrc(t *testing.T, name, src string) string {
 	return path
 }
 
-// checkOwnAliasCensus holds one leg's leakcheck output to the row's contract.
-func checkOwnAliasCensus(t *testing.T, stderr string, census bool, pinned map[string][2]int64, lowering string) {
-	t.Helper()
-	if lowering == "semantic" {
-		assertBalancedCensus(t, stderr)
-		return
-	}
-	if pin, ok := pinned[lowering]; ok {
-		assertLeakPinned(t, stderr, pin, "#10420")
-	} else if census {
-		assertBalancedCensus(t, stderr)
-	}
-}
-
 func TestSelfHostOwnParamAliasX86_64(t *testing.T) {
 	interp := buildLangBinForInterp(t)
 	cli := buildSelfHostCLI(t)
 	for _, tc := range ownAliasCases {
 		src := writeOwnAliasSrc(t, tc.name, tc.src)
 		want := ownAliasOracle(t, interp, src)
-		for _, lw := range ownAliasLowerings(tc.mixed) {
-			t.Run(tc.name+"/"+lw.name, func(t *testing.T) {
-				stderr, exit := runWithStdin(t, cli.runner, cli.x86Binary(t, src, "FERN_LEAKCHECK=1", lw.env), nil)
-				if exit != want {
-					t.Fatalf("leakcheck: exit = %d, want %d\n%s", exit, want, stderr)
-				}
-				checkOwnAliasCensus(t, stderr, tc.census, tc.pinned, lw.name)
-				balanced := lw.name == "semantic" || (tc.census && tc.pinned[lw.name] == [2]int64{})
-				stderr, exit = runWithStdin(t, cli.runner, cli.x86Binary(t, src, "FERN_SANITIZE=1", lw.env), nil)
-				if exit != want || forArrStructSanitizerFault(stderr, balanced) {
-					t.Fatalf("sanitize: exit = %d, want %d, and no sanitizer fault\n%s", exit, want, stderr)
-				}
-			})
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			stderr, exit := runWithStdin(t, cli.runner, cli.x86Binary(t, src, "FERN_LEAKCHECK=1"), nil)
+			if exit != want {
+				t.Fatalf("leakcheck: exit = %d, want %d\n%s", exit, want, stderr)
+			}
+			assertBalancedCensus(t, stderr)
+			stderr, exit = runWithStdin(t, cli.runner, cli.x86Binary(t, src, "FERN_SANITIZE=1"), nil)
+			if exit != want || forArrStructSanitizerFault(stderr, true) {
+				t.Fatalf("sanitize: exit = %d, want %d, and no sanitizer fault\n%s", exit, want, stderr)
+			}
+		})
 	}
 }
 
@@ -412,22 +371,20 @@ func TestSelfHostOwnParamAliasArm64(t *testing.T) {
 	for _, tc := range ownAliasCases {
 		src := writeOwnAliasSrc(t, tc.name, tc.src)
 		want := ownAliasOracle(t, interp, src)
-		for _, lw := range ownAliasLowerings(tc.mixed) {
-			t.Run(tc.name+"/"+lw.name, func(t *testing.T) {
-				asm, err := os.ReadFile(cli.emit(t, src, "arm64-linux", "FERN_LEAKCHECK=1", lw.env))
-				if err != nil {
-					t.Fatal(err)
-				}
-				cmd := runArm64Bin(qemu, buildBinArm64(t, armgcc, t.TempDir(), tc.name, string(asm)))
-				var eb strings.Builder
-				cmd.Stderr = &eb
-				_ = cmd.Run()
-				if code := cmd.ProcessState.ExitCode(); code != want {
-					t.Fatalf("exit = %d, want %d\n%s", code, want, eb.String())
-				}
-				checkOwnAliasCensus(t, eb.String(), tc.census, tc.pinned, lw.name)
-			})
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			asm, err := os.ReadFile(cli.emit(t, src, "arm64-linux", "FERN_LEAKCHECK=1"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			cmd := runArm64Bin(qemu, buildBinArm64(t, armgcc, t.TempDir(), tc.name, string(asm)))
+			var eb strings.Builder
+			cmd.Stderr = &eb
+			_ = cmd.Run()
+			if code := cmd.ProcessState.ExitCode(); code != want {
+				t.Fatalf("exit = %d, want %d\n%s", code, want, eb.String())
+			}
+			assertBalancedCensus(t, eb.String())
+		})
 	}
 }
 
@@ -440,14 +397,12 @@ func TestSelfHostOwnParamAliasWasm(t *testing.T) {
 	for _, tc := range ownAliasCases {
 		src := writeOwnAliasSrc(t, tc.name, tc.src)
 		want := ownAliasOracle(t, interp, src)
-		for _, lw := range ownAliasLowerings(tc.mixed) {
-			t.Run(tc.name+"/"+lw.name, func(t *testing.T) {
-				stderr, exit := runWasmCensus(t, cli.emit(t, src, "wasm32-wasi", "FERN_LEAKCHECK=1", lw.env))
-				if exit != want {
-					t.Fatalf("exit = %d, want %d\n%s", exit, want, stderr)
-				}
-				checkOwnAliasCensus(t, stderr, tc.census, tc.pinned, lw.name)
-			})
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			stderr, exit := runWasmCensus(t, cli.emit(t, src, "wasm32-wasi", "FERN_LEAKCHECK=1"))
+			if exit != want {
+				t.Fatalf("exit = %d, want %d\n%s", exit, want, stderr)
+			}
+			assertBalancedCensus(t, stderr)
+		})
 	}
 }

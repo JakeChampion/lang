@@ -36,7 +36,7 @@ func TestSelfHostSSAPhiCyclesAcrossSpills(t *testing.T) {
 					t.Fatal(err)
 				}
 				cmd := exec.Command(h.cli, "-target", target.target, "-o", bin, path, h.stdlib)
-				cmd.Env = append(os.Environ(), "FERN_STRICT_IR=1", "FERN_SEM_IR=1", "FERN_SEM_IR_REPORT=1")
+				cmd.Env = append(os.Environ(), "FERN_STRICT_IR=1", "FERN_SEM_IR_REPORT=1")
 				report, err := cmd.CombinedOutput()
 				if err != nil {
 					t.Fatalf("compile phi cycle: %v\n%s", err, report)

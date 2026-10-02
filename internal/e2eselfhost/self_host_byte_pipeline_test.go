@@ -65,3 +65,23 @@ func TestSelfHostArm64DarwinBytePipeline(t *testing.T) {
 		assertBalancedCensus(t, e2eharness.CheckBytePipeline(t, exec.Command(bin), input))
 	}
 }
+
+// Exercise the primary assembler as well as Wasmtime's WAT parser. A flat
+// instruction inside a folded Reader branch previously passed WAT execution
+// but made the primary core-module assembler index an empty instruction node.
+func TestSelfHostBytePipelineCoreModule(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	dir := t.TempDir()
+	src, binary := filepath.Join(dir, "pipeline.fern"), filepath.Join(dir, "pipeline.wasm")
+	if err := os.WriteFile(src, []byte(e2eharness.BytePipelineProgram), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := runX86_64Bin(cli.runner, cli.bin, "-target", "wasm32-wasi", "-emit", "core-module", src, cli.stdlib, "-o", binary)
+	cmd.Env = append(os.Environ(), "FERN_STRICT_IR=1", "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("core-module compile: %v\n%s", err, out)
+	}
+	for _, input := range [][]byte{nil, bytes.Repeat(e2eharness.ReaderBytesInput(), 8)} {
+		assertBalancedCensus(t, e2eharness.CheckBytePipeline(t, exec.Command("wasmtime", "run", binary), input))
+	}
+}

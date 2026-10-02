@@ -99,27 +99,20 @@ function main(): i32 {
 }
 
 // TestSelfHostGenericStructLitDest compiles each case with the self-host CLI
-// for every target, under both the default lowering and `FERN_SEM_IR=`, and
-// checks the exit code against the interpreter.
+// for every target and checks the exit code against the interpreter.
 func TestSelfHostGenericStructLitDest(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	interpBin := buildLangBinForInterp(t)
-	lowerings := []struct {
-		name string
-		env  []string
-	}{{"default", nil}, {"ast", []string{"FERN_SEM_IR="}}}
 	for _, tc := range genericStructLitDestCases {
 		if got := interpExit(t, interpBin, tc.src); got != tc.want {
 			t.Fatalf("%s: interpreter exited %d, want %d", tc.name, got, tc.want)
 		}
 		for _, target := range []string{"x86-64-linux", "wasm32-wasi", "arm64-linux"} {
-			for _, lw := range lowerings {
-				t.Run(target+"/"+lw.name+"/"+tc.name, func(t *testing.T) {
-					if stderr, code := cli.exitOf(t, tc.src, target, lw.env...); code != tc.want {
-						t.Errorf("exited %d, want %d (interp oracle)\n%s", code, tc.want, stderr)
-					}
-				})
-			}
+			t.Run(target+"/"+tc.name, func(t *testing.T) {
+				if stderr, code := cli.exitOf(t, tc.src, target); code != tc.want {
+					t.Errorf("exited %d, want %d (interp oracle)\n%s", code, tc.want, stderr)
+				}
+			})
 		}
 	}
 }

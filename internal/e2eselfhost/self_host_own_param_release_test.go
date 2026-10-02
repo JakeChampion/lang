@@ -664,40 +664,38 @@ func TestSelfHostOwnHandbackReturnX86_64(t *testing.T) {
 func runBalancedRows(t *testing.T, prefix string, cases []ownParamReleaseCase) {
 	cli := newStrictCLI(t)
 	dir := t.TempDir()
-	for _, lw := range []struct{ name, env string }{{"semantic", "FERN_SEM_IR=1"}, {"ast", "FERN_SEM_IR="}} {
-		for _, tc := range cases {
-			t.Run(lw.name+"/"+tc.name, func(t *testing.T) {
-				asm := cli.emit(t, "x86-64-linux", tc.src, lw.env, "FERN_LEAKCHECK=1")
-				progBin := buildBin(t, cli.gcc, dir, prefix+"_"+lw.name+"_"+tc.name, asm)
-				stderr, exit := hevRun(t, cli.runner, progBin)
-				if exit != tc.want {
-					t.Fatalf("exited %d, want %d (99 = rc underflow; 77 = a read through a freed buffer)", exit, tc.want)
-				}
-				summary := leakSummaryLine(stderr)
-				if summary == "" {
-					t.Fatalf("no leakcheck summary")
-				}
-				var allocs, frees, live int64
-				if _, err := fmtSscan(summary, &allocs, &frees, &live); err != nil {
-					t.Fatalf("parse %q: %v", summary, err)
-				}
-				if allocs == 0 {
-					t.Fatalf("allocated nothing — the probe is not exercising the path")
-				}
-				if live != 0 || allocs != frees {
-					t.Errorf("%s — must balance at live_bytes 0", summary)
-				}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			asm := cli.emit(t, "x86-64-linux", tc.src, "FERN_LEAKCHECK=1")
+			progBin := buildBin(t, cli.gcc, dir, prefix+"_"+tc.name, asm)
+			stderr, exit := hevRun(t, cli.runner, progBin)
+			if exit != tc.want {
+				t.Fatalf("exited %d, want %d (99 = rc underflow; 77 = a read through a freed buffer)", exit, tc.want)
+			}
+			summary := leakSummaryLine(stderr)
+			if summary == "" {
+				t.Fatalf("no leakcheck summary")
+			}
+			var allocs, frees, live int64
+			if _, err := fmtSscan(summary, &allocs, &frees, &live); err != nil {
+				t.Fatalf("parse %q: %v", summary, err)
+			}
+			if allocs == 0 {
+				t.Fatalf("allocated nothing — the probe is not exercising the path")
+			}
+			if live != 0 || allocs != frees {
+				t.Errorf("%s — must balance at live_bytes 0", summary)
+			}
 
-				sanAsm := cli.emit(t, "x86-64-linux", tc.src, lw.env, "FERN_SANITIZE=1")
-				sanBin := buildBin(t, cli.gcc, dir, prefix+"_san_"+lw.name+"_"+tc.name, sanAsm)
-				sanErr, sanExit := hevRun(t, cli.runner, sanBin)
-				if sanExit != tc.want {
-					t.Fatalf("sanitize leg exited %d, want %d (124 = fatal sanitizer check)", sanExit, tc.want)
-				}
-				if strings.Contains(sanErr, "rc over-release") || strings.Contains(sanErr, "use-after-free") {
-					t.Fatalf("sanitize leg reported:\n%s", sanErr)
-				}
-			})
-		}
+			sanAsm := cli.emit(t, "x86-64-linux", tc.src, "FERN_SANITIZE=1")
+			sanBin := buildBin(t, cli.gcc, dir, prefix+"_san_"+tc.name, sanAsm)
+			sanErr, sanExit := hevRun(t, cli.runner, sanBin)
+			if sanExit != tc.want {
+				t.Fatalf("sanitize leg exited %d, want %d (124 = fatal sanitizer check)", sanExit, tc.want)
+			}
+			if strings.Contains(sanErr, "rc over-release") || strings.Contains(sanErr, "use-after-free") {
+				t.Fatalf("sanitize leg reported:\n%s", sanErr)
+			}
+		})
 	}
 }

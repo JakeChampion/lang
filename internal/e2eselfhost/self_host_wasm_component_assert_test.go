@@ -28,7 +28,7 @@ func TestSelfHostWasmComponentAssert(t *testing.T) {
 		{"exit-error", `print("before"); eprint("failed"); exit(7); print("after");`, "before\n", "failed\n", 1},
 		{"writer-exit", `var w = stderr(); w.write("error\n"); exit(1);`, "", "error\n", 1},
 	} {
-		for _, mode := range []string{"ast", "semantic", "bootstrap"} {
+		for _, mode := range []string{"default", "semantic", "bootstrap"} {
 			t.Run(tc.name+"/"+mode, func(t *testing.T) {
 				src := filepath.Join(t.TempDir(), "assert.fern")
 				if err := os.WriteFile(src, []byte(fmt.Sprintf("function main(): i32 { %s return 0; }\n", tc.body)), 0o644); err != nil {

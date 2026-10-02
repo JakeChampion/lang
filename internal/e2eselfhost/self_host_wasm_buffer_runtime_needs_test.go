@@ -7,7 +7,6 @@ import (
 	"reflect"
 	"regexp"
 	"sort"
-	"strings"
 	"testing"
 )
 
@@ -43,9 +42,10 @@ func TestSelfHostWasmBufferRuntimeNeeds(t *testing.T) {
 		}{kind, `buf_push_` + kind + `(h, "\0", ` + table + `); var got = buf_take(h); buf_free(h); if (got != ` + want + `) { return 1; } return 0;`, []string{"push_" + kind, "reserve", "take"}})
 	}
 	definitions := regexp.MustCompile(`(?m)^  \(func \$__fern_buf_([A-Za-z0-9_]+)\b`)
+	// Legacy environment settings both use production typed-IR ownership.
 	for _, mode := range []string{"", "1"} {
 		for _, tc := range cases {
-			t.Run("typed="+mode+"/"+tc.name, func(t *testing.T) {
+			t.Run("legacy-env="+mode+"/"+tc.name, func(t *testing.T) {
 				dir := t.TempDir()
 				src, wat := filepath.Join(dir, "main.fern"), filepath.Join(dir, "main.wat")
 				if err := os.WriteFile(src, []byte(`function main(): i32 { var h: usize = buf_new(1); `+tc.body+` }`), 0o644); err != nil {
@@ -74,11 +74,7 @@ func TestSelfHostWasmBufferRuntimeNeeds(t *testing.T) {
 				if err != nil {
 					t.Fatalf("run: %v\n%s", err, out)
 				}
-				if mode != "" {
-					assertBalancedCensus(t, string(out))
-				} else {
-					t.Log(strings.TrimSpace(string(out)))
-				}
+				assertBalancedCensus(t, string(out))
 				// Each helper is also guest-local in a Preview 2 component.
 				// Recording its individual need must not require a host import.
 				component := filepath.Join(dir, "main.wasm")

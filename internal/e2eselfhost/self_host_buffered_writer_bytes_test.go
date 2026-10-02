@@ -25,7 +25,7 @@ func TestSelfHostBufferedWriterBytes(t *testing.T) {
 			env  []string
 		}{
 			{"semantic", []string{"FERN_SEM_IR=1", "FERN_SANITIZE=1", "FERN_LEAKCHECK=1"}},
-			{"ast", []string{"FERN_SEM_IR="}},
+			{"default", []string{"FERN_SEM_IR="}},
 		} {
 			t.Run(target+"/"+mode.name, func(t *testing.T) {
 				var cmd *exec.Cmd
@@ -77,7 +77,7 @@ func TestSelfHostArm64DarwinBufferedWriterBytes(t *testing.T) {
 	if err := os.WriteFile(src, []byte(e2eharness.BufferedWriterBytesProgram), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	for _, mode := range []struct{ name, env string }{{"semantic", "FERN_SEM_IR=1"}, {"ast", "FERN_SEM_IR="}} {
+	for _, mode := range []struct{ name, env string }{{"semantic", "FERN_SEM_IR=1"}, {"default", "FERN_SEM_IR="}} {
 		t.Run(mode.name, func(t *testing.T) {
 			bin := filepath.Join(t.TempDir(), "writer")
 			compile := exec.Command(cli, "-target", "arm64-darwin", src, stdlib, "-o", bin)

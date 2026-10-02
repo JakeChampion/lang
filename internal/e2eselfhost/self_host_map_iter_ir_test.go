@@ -19,9 +19,6 @@ import (
 // Cases cover string and i32 keys, i32 values, and a `continue` in the body.
 // Exit codes pin correctness incl. the borrow not being double-freed.
 func TestSelfHostMapIterIRX86_64(t *testing.T) {
-	// These programs pin the AST lowering's built-in map runtime; the typed lowering
-	// takes maps from core/map.
-	t.Setenv("FERN_SEM_IR", "")
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
 	src, err := os.ReadFile("../../examples/self_host/asm_run.fern")

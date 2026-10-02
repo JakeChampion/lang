@@ -4,7 +4,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -39,15 +38,11 @@ func TestSelfHostEnumStructPayloadDropIRX86_64(t *testing.T) {
 	}
 	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
 
-	run := func(t *testing.T, prog, name string, want int, wantAsmSubstr string) {
+	run := func(t *testing.T, prog, name string, want int) {
 		t.Helper()
 		asm := runCapture(t, gcc, runner, driverBin, []byte(prog))
 		if len(asm) == 0 {
 			t.Fatalf("%s: self-host compiler emitted 0 bytes", name)
-		}
-		// The deep-drop helper is the AST lowering's, so it is read from that lowering.
-		if wantAsmSubstr != "" && !strings.Contains(string(runCaptureAST(t, runner, driverBin, []byte(prog))), wantAsmSubstr) {
-			t.Fatalf("%s: emitted asm missing %q — the enum struct payload did not deep-drop", name, wantAsmSubstr)
 		}
 		bin := buildBin(t, gcc, dir, name, string(asm))
 		var cmd *exec.Cmd
@@ -80,7 +75,7 @@ function main(): i32 {
     var s: i32 = 0; var f: i32 = 0;
     while (f < 40000000) { s = mk(); f = f + 1; }
     return s - 5;
-}`, "enum_struct_payload_churn", 0, "__struct_drop_Inner")
+}`, "enum_struct_payload_churn", 0)
 
 	// VALUE: bound-borrow-only payload — the arm reads inner.items before the match's
 	// post-arm reclaim deep-drops it. A wrong free of a live buffer (or a double-free)
@@ -96,5 +91,5 @@ function f(): i32 {
     }
     return r;
 }
-function main(): i32 { return f(); }`, "enum_struct_payload_value", 17, "__struct_drop_Inner")
+function main(): i32 { return f(); }`, "enum_struct_payload_value", 17)
 }

@@ -27,7 +27,7 @@ func TestSelfHostWriterBytes(t *testing.T) {
 			env  []string
 		}{
 			{"semantic", []string{"FERN_SEM_IR=1", "FERN_SEM_IR_STRICT=1", "FERN_STRICT_IR=1", "FERN_SANITIZE=1", "FERN_LEAKCHECK=1"}},
-			{"ast", []string{"FERN_SEM_IR="}},
+			{"default", []string{"FERN_SEM_IR="}},
 		} {
 			t.Run(target+"/"+mode.name, func(t *testing.T) {
 				var cmd *exec.Cmd
@@ -76,9 +76,10 @@ func testWriterBytesComponents(t *testing.T, compiler string, runner []string, s
 		t.Fatal("missing boundary before closed-descriptor cases")
 	}
 	source += " return 0;\n}\n"
+	// Both legacy flag values must use production typed-IR ownership.
 	for _, mode := range []string{"0", "1"} {
 		for _, stream := range []string{"stdout", "stderr"} {
-			t.Run("component/typed="+mode+"/"+stream, func(t *testing.T) {
+			t.Run("component/legacy-env="+mode+"/"+stream, func(t *testing.T) {
 				dir := t.TempDir()
 				src, bin := filepath.Join(dir, "writer.fern"), filepath.Join(dir, "writer.wasm")
 				text := strings.Replace(source, "var w = stdout();", "var w = "+stream+"();", 1)
@@ -128,7 +129,7 @@ func TestSelfHostArm64DarwinWriterBytes(t *testing.T) {
 	if err := os.WriteFile(src, []byte(strings.Replace(e2eharness.WriterBytesProgram, "var closed = stderr();", "var closed = stdout();", 1)), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	for _, mode := range []struct{ name, env string }{{"semantic", "FERN_SEM_IR=1"}, {"ast", "FERN_SEM_IR="}} {
+	for _, mode := range []struct{ name, env string }{{"semantic", "FERN_SEM_IR=1"}, {"default", "FERN_SEM_IR="}} {
 		t.Run(mode.name, func(t *testing.T) {
 			bin := filepath.Join(t.TempDir(), "writer")
 			compile := exec.Command(cli, "-target", "arm64-darwin", src, stdlib, "-o", bin)

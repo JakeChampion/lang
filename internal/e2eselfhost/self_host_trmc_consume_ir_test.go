@@ -279,7 +279,7 @@ func TestSelfHostArm64DarwinTrmcConsume(t *testing.T) {
 					cmd.Env = append(cmd.Env, kv)
 				}
 			}
-			cmd.Env = append(cmd.Env, "FERN_SEM_IR=1", "FERN_SEM_IR_STRICT=1", "FERN_SEM_IR_ONLY=", "FERN_SEM_IR_SKIP=", "FERN_STRICT_IR=1", "FERN_LEAKCHECK=1")
+			cmd.Env = append(cmd.Env, "FERN_STRICT_IR=1", "FERN_LEAKCHECK=1")
 			// Quarantine deliberately prevents reuse. Keep the census for
 			// the peak test and quarantine the separate value/sharing cases.
 			if tc.name != "trmc-consume-halves-peak" {

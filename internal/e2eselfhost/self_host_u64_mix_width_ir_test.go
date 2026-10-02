@@ -70,14 +70,12 @@ func TestSelfHostU64MixWidthIR(t *testing.T) {
 	for _, tc := range u64MixWidthIRCases {
 		src := tc.main + "\n"
 		want := interpExit(t, interpBin, src)
-		for _, lw := range []struct{ name, env string }{{"semantic", "FERN_SEM_IR=1"}, {"ast", "FERN_SEM_IR="}} {
-			for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
-				t.Run(lw.name+"/"+target+"/"+tc.name, func(t *testing.T) {
-					if stderr, code := cli.exitOf(t, src, target, lw.env, "FERN_STRICT_IR=1"); code != want {
-						t.Errorf("exited %d, want %d (interp oracle)\n%s", code, want, stderr)
-					}
-				})
-			}
+		for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
+			t.Run(target+"/"+tc.name, func(t *testing.T) {
+				if stderr, code := cli.exitOf(t, src, target, "FERN_STRICT_IR=1"); code != want {
+					t.Errorf("exited %d, want %d (interp oracle)\n%s", code, want, stderr)
+				}
+			})
 		}
 	}
 }

@@ -5,9 +5,8 @@ import "testing"
 // A value-position if, match or block handed straight to a consumer that does
 // not bind it — a borrowing call's argument, a `.len()` receiver, an index or
 // field read — is released there when it is owned whichever arm ran (#10438):
-// a local its arm retained, or a fresh value. The AST lowering left it
-// in a temp nothing swept. Arrays, strings, structs, and a struct handed to a
-// `dyn` parameter, through each form and each consumer.
+// a local its arm retained, or a fresh value. Arrays, strings, structs, and a
+// struct handed to a `dyn` parameter, through each form and each consumer.
 const condArrReleaseSrc = `function sum(xs: i32[]): i32 { var t: i32 = 0; for x in xs { t = t + x; } return t; }
 function mk(j: i32): i32[] { return [j, j, j]; }
 function main(): i32 {
@@ -309,8 +308,7 @@ function main(): i32 {
 
 // A block tail or an arm that yields a string, struct or nested array is not
 // released by its consumer: that release is one buffer dec, which would free
-// the buffer and strand its elements. The AST lowering leaks these whole, which
-// its pinned census holds; the semantic lowering releases them.
+// the buffer and strand its elements; the value is released whole.
 const condNonScalarElemSrc = `struct P { x: i32, y: i32 }
 function tail(): string { return "xyz"; }
 function slen(xs: string[]): i32 { return xs.len(); }
@@ -428,78 +426,41 @@ function main(): i32 {
 }
 `
 
-// Interpreter-confirmed answers. astCensus, when set, is the exact
-// allocs/frees the AST lowering reports, which then need not balance.
+// Interpreter-confirmed answers.
 var condReleaseCases = []struct {
-	name      string
-	src       string
-	want      int
-	balanced  bool
-	astCensus [2]int64
+	name     string
+	src      string
+	want     int
+	balanced bool
 }{
-	{"array", condArrReleaseSrc, 86, true, [2]int64{}},
-	{"string", condStrReleaseSrc, 19, true, [2]int64{}},
-	{"struct", condStructReleaseSrc, 89, true, [2]int64{}},
-	{"struct_array_locals", condStructArrLocalsSrc, 88, true, [2]int64{}},
-	{"element_handout", condElemHandoutSrc, 75, true, [2]int64{}},
-	{"alias_string", condAliasStrSrc, 34, true, [2]int64{}},
-	{"alias_struct", condAliasStructSrc, 65, true, [2]int64{}},
-	{"alias_dyn", condAliasDynSrc, 12, true, [2]int64{}},
-	{"alias_outlives", condAliasOutlivesSrc, 95, true, [2]int64{}},
-	{"bare_name_block", condBareNameBlockSrc, 81, true, [2]int64{}},
-	{"not_owned", condNotOwnedSrc, 98, false, [2]int64{}},
-	{"nonscalar_elements", condNonScalarElemSrc, 73, true, [2]int64{223, 1}},
-	{"row_handout", condRowHandoutSrc, 59, true, [2]int64{}},
-	{"option_match_return", condOptionMatchReturnSrc, 38, true, [2]int64{}},
-	{"block_tail_match_credit", condBlockTailMatchSrc, 81, true, [2]int64{}},
-	{"handback_fresh", condHandbackFreshSrc, 55, true, [2]int64{}},
+	{"array", condArrReleaseSrc, 86, true},
+	{"string", condStrReleaseSrc, 19, true},
+	{"struct", condStructReleaseSrc, 89, true},
+	{"struct_array_locals", condStructArrLocalsSrc, 88, true},
+	{"element_handout", condElemHandoutSrc, 75, true},
+	{"alias_string", condAliasStrSrc, 34, true},
+	{"alias_struct", condAliasStructSrc, 65, true},
+	{"alias_dyn", condAliasDynSrc, 12, true},
+	{"alias_outlives", condAliasOutlivesSrc, 95, true},
+	{"bare_name_block", condBareNameBlockSrc, 81, true},
+	{"not_owned", condNotOwnedSrc, 98, false},
+	{"nonscalar_elements", condNonScalarElemSrc, 73, true},
+	{"row_handout", condRowHandoutSrc, 59, true},
+	{"option_match_return", condOptionMatchReturnSrc, 38, true},
+	{"block_tail_match_credit", condBlockTailMatchSrc, 81, true},
+	{"handback_fresh", condHandbackFreshSrc, 55, true},
 }
 
 func TestSelfHostConditionalValueReleaseX86_64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range condReleaseCases {
-		for _, lw := range vblockClosureBoth {
-			t.Run(tc.name+"/"+lw.name, func(t *testing.T) {
-				stderr, exit := cli.exitOf(t, tc.src, "x86-64-linux", "FERN_LEAKCHECK=1", lw.env)
-				if exit != tc.want {
-					t.Fatalf("leakcheck: exit = %d, want %d\n%s", exit, tc.want, stderr)
-				}
-				balanced := assertCondCensus(t, stderr, tc.balanced, tc.astCensus, lw.name)
-				stderr, exit = cli.exitOf(t, tc.src, "x86-64-linux", "FERN_SANITIZE=1", lw.env)
-				if exit != tc.want || forArrStructSanitizerFault(stderr, balanced) {
-					t.Fatalf("sanitize: exit = %d, want %d, and no sanitizer fault\n%s", exit, tc.want, stderr)
-				}
-			})
-		}
-	}
-}
-
-// condPlanOffCensus pins the AST census under FERN_SELFHOST_RC_PLAN=0 where it
-// differs from the plan's. Every other case is held to its plan-on AST
-// expectation, so a plan-off census moving on one of those fails with the
-// refused-row message even when the frees fell short rather than grew. The off-plan struct gate (body_unsafe_for_alias)
-// reads `Some(p)` as an escape rather than a counted sink, so p is refused
-// there: a sound leak of p and its buffer, never an over-release (#10618).
-var condPlanOffCensus = map[string][2]int64{
-	"option_match_return": {60, 20},
-}
-
-// TestSelfHostConditionalValueReleasePlanOffX86_64 runs the AST lowering with
-// the rc plan off, so a change to either route that moves a census fails here.
-func TestSelfHostConditionalValueReleasePlanOffX86_64(t *testing.T) {
-	cli := buildSelfHostCLI(t)
-	for _, tc := range condReleaseCases {
 		t.Run(tc.name, func(t *testing.T) {
-			census := tc.astCensus
-			if pin, ok := condPlanOffCensus[tc.name]; ok {
-				census = pin
-			}
-			stderr, exit := cli.exitOf(t, tc.src, "x86-64-linux", "FERN_LEAKCHECK=1", "FERN_SEM_IR=", "FERN_SELFHOST_RC_PLAN=0")
+			stderr, exit := cli.exitOf(t, tc.src, "x86-64-linux", "FERN_LEAKCHECK=1")
 			if exit != tc.want {
 				t.Fatalf("leakcheck: exit = %d, want %d\n%s", exit, tc.want, stderr)
 			}
-			balanced := assertCondCensus(t, stderr, tc.balanced, census, "ast")
-			stderr, exit = cli.exitOf(t, tc.src, "x86-64-linux", "FERN_SANITIZE=1", "FERN_SEM_IR=", "FERN_SELFHOST_RC_PLAN=0")
+			balanced := assertCondCensus(t, stderr, tc.balanced)
+			stderr, exit = cli.exitOf(t, tc.src, "x86-64-linux", "FERN_SANITIZE=1")
 			if exit != tc.want || forArrStructSanitizerFault(stderr, balanced) {
 				t.Fatalf("sanitize: exit = %d, want %d, and no sanitizer fault\n%s", exit, tc.want, stderr)
 			}
@@ -518,27 +479,21 @@ func TestSelfHostConditionalValueReleaseWasm(t *testing.T) {
 func checkConditionalValueRelease(t *testing.T, target string) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range condReleaseCases {
-		for _, lw := range vblockClosureBoth {
-			t.Run(tc.name+"/"+lw.name, func(t *testing.T) {
-				stderr, exit := cli.exitOf(t, tc.src, target, "FERN_LEAKCHECK=1", lw.env)
-				if exit != tc.want {
-					t.Fatalf("exit = %d, want %d\n%s", exit, tc.want, stderr)
-				}
-				assertCondCensus(t, stderr, tc.balanced, tc.astCensus, lw.name)
-			})
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			stderr, exit := cli.exitOf(t, tc.src, target, "FERN_LEAKCHECK=1")
+			if exit != tc.want {
+				t.Fatalf("exit = %d, want %d\n%s", exit, tc.want, stderr)
+			}
+			assertCondCensus(t, stderr, tc.balanced)
+		})
 	}
 }
 
-// assertCondCensus requires a balanced census, the pinned AST census on the
-// AST leg of a case that has one, or for a program that is allowed to leak, no
-// more frees than allocations. It reports whether the leg had to balance.
-func assertCondCensus(t *testing.T, stderr string, balanced bool, astCensus [2]int64, lowering string) bool {
+// assertCondCensus requires a balanced census, or for a program that is
+// allowed to leak, no more frees than allocations. It reports whether the
+// census had to balance.
+func assertCondCensus(t *testing.T, stderr string, balanced bool) bool {
 	t.Helper()
-	if lowering == "ast" && astCensus != [2]int64{} {
-		assertRefusedCensus(t, stderr, astCensus)
-		return false
-	}
 	if balanced {
 		assertBalancedCensus(t, stderr)
 		return true

@@ -69,57 +69,9 @@ pub function large_fl_cells(): i32 {
 // wasm.fern, which owns le32_escape / wat_escape / strcat_helpers) because
 // wasm_ir cannot import wasm without a cycle — same split as the heap runtime.
 
-// lower_all_for lowers EVERY function of `mod` to its IR ops ONCE, returning the
-// per-function LowerResult list in mod.funcs order. It is the cache the wasm IR
-// emit path threads through its two dozen collect / gate passes (str_values,
-// module_uses_*, module_emits_op_cached, field_reclaim_types, fn_value_table, …)
-// so a module is lowered a single time instead of once per pass — removing the
-// O(functions²) × O(passes) re-lowering that OOMed the self-host wasm compile of
-// large / many-function modules (#4652).
-//
-// Each element is byte-identical to irlower.lower_func_for(fn, …): the ~20
-// `*_of(funcs)` side-tables are pure functions of mod.funcs / mod.structs, so
-// hoisting them out of the per-function loop (computed once here, not once per
-// call) yields the same ops, and the argument vector otherwise mirrors
-// lower_func_for's exactly (including the empty consume_safe_params — the query
-// passes deliberately use the per-function borrowability, NOT the interprocedural
-// fixpoint the emit path threads through emit_function_ir).
-// lower_all_for_view lowers ONE unit's functions against a WHOLE-PROGRAM view
-// (#5331 step 4b). Same split as emit_functions_view, one layer down: the side
-// tables must see every function in the program (a call is lowered by its
-// CALLEE's shape, and a unit calls into its siblings), while the loop lowers
-// only this unit's functions.
-pub function lower_all_for_view(mod: parser.Module, all_funcs: parser.FuncDecl[], all_structs: irlower.StructTab): irlower.LowerResult[] {
-  return lower_all_for_base(mod, all_structs, ircore.wp_fn_sigs(all_funcs, all_structs));
-}
-
-// lower_all_for_base is lower_all_for_view with the whole-program registry base
-// (ircore.wp_fn_sigs) supplied, so a caller that also seeds the RC bodies from
-// it derives it once.
-//
-// The emit path (emit_functions_view) lowers each function with the
-// INTERPROCEDURAL borrowability + consume-safe fixpoint. RC drop/reclaim
-// insertion is gated on those, so the metadata this cache feeds
-// (field_reclaim_types / struct_drop_types / …) only matches the emitted text
-// when this lowering uses the SAME analysis. Per-function borrowability plus
-// an empty consume-safe set (as an earlier version used) makes the collectors
-// UNDER-report the drops emit actually generates, so a per-module link
-// references a `$__field_reclaim_<T>` / `$__struct_drop_<T>` body the RC-body
-// emission never produced (#5508).
-pub function lower_all_for_base(mod: parser.Module, all_structs: irlower.StructTab, base: irlower.FnSigs): irlower.LowerResult[] {
-  var sg: irlower.FnSigs = irlower.fn_sigs_with_dyn(base, mod.trait_reqs);
-  var out: irlower.LowerResult[] = [];
-  var fi: i32 = 0;
-  while (fi < mod.funcs.len()) {
-    out = out.append(irlower.lower_func(mod.funcs[fi], all_structs, sg, true));
-    fi = fi + 1;
-  }
-  return out;
-}
-
 // lower_all_gated is the whole-program case, judged: the unit IS the program,
-// every function is lowered once with the same registries lower_all_for_base
-// uses, and the module's IR-eligibility verdict comes from that lowering
+// every function is lowered once with the whole-program registries `base`
+// (plus the dyn rows), and the module's IR-eligibility verdict comes from that lowering
 // (ircore.lower_gated) rather than from a separate gate pass that lowered
 // everything a first time and discarded it.
 pub function lower_all_gated(mod: parser.Module, stab: irlower.StructTab, base: irlower.FnSigs, sub: ircore.Sub): ircore.Lowered {
@@ -1877,60 +1829,8 @@ pub function module_uses_i64_divrem(cache: irlower.LowerResult[]): boolean {
   return any_op(cache, is_i64_divrem);
 }
 
-// wasm_eligible: the whole module is in the IR's i32 + arrays subset (the same
-// backend-independent gate the asm backends use — rejects non-lowerable
-// functions and builtin calls). wasm covers everything that gate admits.
-// wasm_eligible is the WASM eligibility gate — the same fused gate the register
-// backends use (ircore.lower_gated), plus the deferral scan over the lowering it
-// produces. Plain function values (const_func / call_indirect) are admitted on
-// every backend; wasm lowers them through a funcref table (fn_support_section),
-// the register backends through the function's code address.
-pub function wasm_eligible(mod: parser.Module): boolean {
-  // read_line / args / read_file / write_file all lower on the wasm IR path
-  // now: wasm_ir emits `call $__fern_<op>` and wasm_ir_run pulls in the
-  // matching wasi imports + helpers when the module uses them. read_line reads
-  // stdin (fd 0) via fd_read and boxes the line (newline stripped); args()
-  // reads argv (wasmtime supplies it, argv[0] = program name); read_file /
-  // write_file open paths
-  // under preopen fd 3 (run with `--dir`), returning Result[string, IoError] /
-  // Result[(), IoError]. read_chunk / reader_close (the streaming reader API) now
-  // lower on the wasm IR path too: wasm_ir emits `call $__fern_reader_read_chunk`
-  // / `call $__fern_reader_close`, and wasm_ir_run pulls in the preview1 fd_read
-  // / fd_close imports + the reader helpers when the module uses them. A Reader is
-  // just its fd (stdin() = fd 0), so read_chunk reads stdin the same way read_line
-  // does; this backs the std/io read_all_stdin loop on wasm.
-  // The clock builtins (monotonic_ns / now_unix_ms / now_ns) DO lower on the
-  // wasm IR path now: wasm_ir emits `call $__fern_<clock>` for each op and
-  // wasm_ir_run pulls in the preview1 wasi clock_time_get import + the
-  // clock_funcs helpers (the same runtime the AST path used) when the module
-  // calls any clock builtin (#3893 follow-up). sleep_ms and sleep_ns lower
-  // here too: preview1 has no sleep syscall, but a single-clock poll_oneoff
-  // subscription is a bare timed block, so $__fern_sleep_ms / $__fern_sleep_ns
-  // are self-contained (#2843).
-  // `m.without(k)` (map_delete) now lowers via the IR: wasm's
-  // $__fern_map_delete returns a [map, existed] tuple box (the wasm tuple ABI,
-  // element i at offset i*4) matching the register backends, so the IR
-  // tuple-destructure reads it correctly (#2933 — previously it returned just
-  // the box, a different ABI, so a delete module could not lower here).
-  // The global string-builder ops (strbuf_reset / strbuf_append / strbuf_take)
-  // now lower on the wasm IR path too: wasm_ir emits `call $__fern_strbuf_<op>`
-  // and the runtime (wasm.strbuf_helpers — a growable bump-heap buffer) is pulled
-  // in by module_uses_strbuf, which also folds into the heap gate. The wasm AST
-  // backend never had strbuf, so this is the only wasm strbuf path.
-  // The libm transcendentals (sin / cos / exp / log / pow) lower through the IR
-  // on every backend, each into its own fdlibm runtime helpers: asm_ir and
-  // asm_arm64_ir emit theirs into .rodata + text, and wasm uses the WAT
-  // helpers (exp_func / log_func / pow_func / …) that wasm_ir_run pulls in
-  // when a module calls one — see the fexp/flog/fsin/fcos/fpow arms below
-  // (kind_tag 62+), which emit `call $__fern_<op>_f64`. They are NOT in the
-  // deferral list.
-  var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
-  var g: ircore.Lowered = lower_all_gated(mod, stab, ircore.wp_fn_sigs(mod.funcs, stab), ircore.no_sub());
-  return g.ok && wasm_ir_deferrals_ok(g.cache);
-}
-
-// wasm_ir_deferrals_ok is the deferral half of wasm_eligible evaluated over a
-// pre-lowered cache: the set of ops that DON'T yet lower on the wasm IR
+// wasm_ir_deferrals_ok is the deferral half of the wasm routing gate,
+// evaluated over a pre-lowered cache: the set of ops that DON'T yet lower on the wasm IR
 // backend (poll / timer_fd / the tcp_* socket set / wasm_poll — the
 // component-model / socket runtime the bare core-wasm+preview1 backend doesn't
 // wire). Split out of wasm_eligible so the emit dispatch can build the cache
@@ -3078,15 +2978,8 @@ pub function component_io_shims(needs: string[], stderr: boolean): string {
   return o;
 }
 
-// emit_ir_module is whole-program emit: a single unnamespaced unit, from the
-// cache `lower_all_for_base` produced over `base`. Mode 0 (see
-// emit_ir_module_mode) emits the historical bytes unchanged, the byte-identity
-// invariant for #5331 step 4b.
-pub function emit_ir_module(mod: parser.Module, ir_cache: irlower.LowerResult[], base: irlower.FnSigs): string {
-  return emit_ir_module_mode(mod, ir_cache, 0, base);
-}
-
-// emit_ir_module_mode is emit_ir_module for a chosen wasm emit mode (0 preview1
+// emit_ir_module_mode is whole-program emit, a single unnamespaced unit, for a
+// chosen wasm emit mode (0 preview1
 // command, 1 component run, 2 component run + stdout — see
 // emit_ir_module_units). `base` is the whole-program registry the cache was
 // lowered with; the RC bodies are seeded from it rather than from a second
@@ -3137,11 +3030,12 @@ pub function ir_route_final(cache: irlower.LowerResult[], component: boolean, io
   return wasm_ir_deferrals_ok(cache) && (!component || component_refused_need(needs_of(cache), io) == "");
 }
 
-// emit_module_mode_or_error is the wasm emit entry for every driver now that
+// emit_module_mode_or_error_sub is the wasm emit entry for every driver now that
 // `wasm.fern` is gone: it makes the same two-halves routing decision
 // wasm.emit_module_mode made, and where that fell THROUGH to the legacy AST
 // emitter it reports a hard error instead. The wasm sibling of
-// asm_ir.emit_module_or_error (#3457).
+// asm_ir.emit_module_or_error_sub (#3457). `sub` is the semantic lowering,
+// passed as a value rather than produced here (see ircore.Sub).
 //
 // `component` / `io` select the framing exactly as before: mode 0 is the preview1
 // command core, 1 the component run core, 2 the component run + stdout core. `fs`
@@ -3154,14 +3048,6 @@ pub function ir_route_final(cache: irlower.LowerResult[], component: boolean, io
 // erased-wide family the AST emitter returned WRONG ANSWERS rather than bailing
 // (docs/SELFHOST-AST-RETIREMENT.md), and in mode 0 it silently dropped an
 // `@export` entirely, so a refusal is strictly better than what it did.
-pub function emit_module_mode_or_error(mod: parser.Module, component: boolean, io: boolean): string {
-  return emit_module_mode_or_error_sub(mod, component, io, ircore.no_sub());
-}
-
-// The `_sub` sibling of the above: the same routing decision with a
-// caller-supplied semantic lowering substituted into it (ircore.Sub). See
-// asm_ir.emit_module_ir_gated_sub for why the substitution is passed as a value
-// rather than produced here.
 pub function emit_module_mode_or_error_sub(mod: parser.Module, component: boolean, io: boolean, sub: ircore.Sub): string {
   var lm: parser.Module = ircore.with_records(route_normalized(mod), sub);
   // Builtins with no wasm meaning at all are rejected BEFORE the routing
@@ -4559,9 +4445,8 @@ pub function lift_lambdas(mod: parser.Module): parser.Module {
   return irlower.lift_lambdas(mod);
 }
 
-// lift_lambdas_parts is ircore.lift_lambdas_parts for the wasm per-module route:
-// every part of a bundle lifted against the whole-program signature view the
-// others supply, so a capturing lambda handed to a SIBLING module's fn-param is
+// lift_lambdas_parts lifts every part of a per-module bundle against the
+// whole-program signature view the others supply, so a capturing lambda handed to a SIBLING module's fn-param is
 // env-boxed instead of reaching lowering as a bare lambda that names a `<fd>$clo`
 // the lift never hoisted — a missing elem-table entry at link (#7215).
 pub function lift_lambdas_parts(mods: parser.Module[]): parser.Module[] {
@@ -6172,7 +6057,7 @@ function emit_str_op_wat(o: ir.Op): string {
 // emit_function_ir emits one function's WAT bodies from its PRE-LOWERED result
 // `r` (#5510 refactor / the wasm port of asm's #4394 lever 3). Previously it
 // re-lowered `fd` here — a SECOND lowering that had to be kept byte-identical to
-// the metadata lowering (lower_all_for_view) by hand, the divergence that caused
+// the metadata lowering by hand, the divergence that caused
 // the RC-consistency bug (#5509). Consuming the cached `r` makes it one lowering
 // by construction. `fd` supplies the func wrapper (name / receiver / ret); the
 // ~13 ret-fn / borrow side-tables that only fed lower_func are gone.
@@ -10289,7 +10174,7 @@ pub function reader_read_chunk_bytes_func(): string {
   var o: string = "  (func $__fern_reader_read_chunk_bytes (param $fd i32) (param $n i32) (result i32)\n";
   o = o + "    (local $a i32) (local $got i32) (local $box i32) (local $err i32) (local $path i32) (local $i i32)\n";
   o = o + "    (if (i32.lt_s (local.get $n) (i32.const 0)) (then (local.set $err (i32.const 28))) (else\n";
-  o = o + "      (if (i64.gt_u (i64.mul (i64.extend_i32_u (local.get $n)) (i64.const 4)) (i64.const 2147483631)) (then unreachable))\n";
+  o = o + "      (if (i64.gt_u (i64.mul (i64.extend_i32_u (local.get $n)) (i64.const 4)) (i64.const 2147483631)) (then (unreachable)))\n";
   o = o + "      (local.set $a (call $__fern_arr_box (i32.mul (local.get $n) (i32.const 4))))\n";
   o = o + "      (i32.store (local.get $a) (i32.const 0)) (i32.store offset=4 (local.get $a) (local.get $n))\n";
   o = o + "      (i32.store (i32.const 0) (i32.add (local.get $a) (i32.const 8)))\n";

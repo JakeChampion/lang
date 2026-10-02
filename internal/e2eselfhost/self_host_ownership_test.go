@@ -196,8 +196,7 @@ func TestSelfHostOwnershipInference(t *testing.T) {
 			for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
 				t.Run(target, func(t *testing.T) {
 					stderr, exit := cli.exitOf(t, tc.src, target,
-						"FERN_SEM_IR=1", "FERN_SEM_IR_STRICT=1", "FERN_STRICT_IR=1",
-						"FERN_SEM_IR_ONLY=", "FERN_SEM_IR_SKIP=", "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
+						"FERN_STRICT_IR=1", "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
 					if exit != 0 {
 						t.Fatalf("exit = %d, want 0 (interp oracle)\n%s", exit, stderr)
 					}
@@ -325,7 +324,7 @@ func assertInferredModes(t *testing.T, runner []string, fernBin, stdlibRoot stri
 	}
 	asmPath := filepath.Join(proj, "out.s")
 	cmd := runX86_64Bin(runner, fernBin, "-target", "x86-64-linux", "-emit", "asm", mainPath, stdlibRoot, "-o", asmPath)
-	cmd.Env = append(os.Environ(), "FERN_SEM_IR=1", "FERN_SEM_IR_STRICT=1", "FERN_STRICT_IR=1", "FERN_SEM_IR_ONLY=", "FERN_SEM_IR_SKIP=")
+	cmd.Env = append(os.Environ(), "FERN_STRICT_IR=1")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("compile: %v (%s)", err, out)
 	}
