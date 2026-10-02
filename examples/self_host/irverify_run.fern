@@ -1038,7 +1038,7 @@ function rc_checks(): i32 {
   }
   // An op of no known kind (its tag is KIND_INVALID) is not a return: the
   // walk continues past it, the way native's switch matches no arm.
-  var unknown: ir.Op[] = concat_ops(selfhost_reuse(1, 1), [raw_op("return_void")]);
+  var unknown: ir.Op[] = concat_ops(selfhost_reuse(1, 1), [raw_op("not_an_op_kind")]);
   unknown = concat_ops(unknown, selfhost_reuse(1, 1));
   var ur: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", unknown);
   if (ur.checked != 2 || ur.problems.len() != 1) {
