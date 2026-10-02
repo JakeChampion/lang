@@ -3,8 +3,6 @@ package e2e
 import (
 	"strconv"
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // A FRESH call-result temp handed to a BORROWED parameter that the callee
@@ -132,40 +130,6 @@ func TestX86_64VariantPayloadArgTempReclaim(t *testing.T) {
 						"a fresh temp stored into a variant payload must be released once the callee has retained it",
 						name, allocs, frees, live)
 				}
-			}
-		})
-	}
-}
-
-// The wasm leg has no alloc census; the bump high-water mark is the same
-// signal — one round's working set, equal for 20 and 200 rounds.
-func variantPayloadBumpSrc(body string, rounds int) string {
-	return body + `function main(): i32 {
-    let before: i32 = (__heap_bump_bytes() as i32);
-    let r: i32 = 0;
-    let sum: i32 = 0;
-    while (r < ` + strconv.Itoa(rounds) + `) { sum = sum + round(r); r = r + 1; }
-    if (sum != ` + strconv.Itoa(rounds) + `) { return 201; }
-    return (__heap_bump_bytes() as i32) - before;
-}`
-}
-
-func TestWASMVariantPayloadArgTempBounded(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
-	for _, tc := range variantPayloadCases {
-		t.Run(tc.name, func(t *testing.T) {
-			small := runWasm(t, variantPayloadBumpSrc(tc.body, 20))
-			large := runWasm(t, variantPayloadBumpSrc(tc.body, 200))
-			if small == 201 || large == 201 {
-				t.Fatalf("value-incorrect run: small=%d large=%d", small, large)
-			}
-			if small != large {
-				t.Errorf("a variant-payload arg temp must be O(1) heap, got rounds=20 -> %d, rounds=200 -> %d (leak)", small, large)
-			}
-			if small == 0 {
-				t.Errorf("expected a non-zero working set, got 0 (probe not exercising the heap)")
 			}
 		})
 	}

@@ -21,7 +21,7 @@ func TestWASMExitCodeCollapsesToOne(t *testing.T) {
     exit(%d);
     return 0;
 }`, c.code)
-		stdout, stderr, ec := runWasmStdinEnv(t, src, "", nil)
+		stdout, stderr, ec := runCLIComponent(t, src, runOpts{})
 		if ec != c.want {
 			t.Errorf("exit(%d): wasmtime exit %d, want %d\nstderr:\n%s", c.code, ec, c.want, stderr)
 		}
@@ -66,7 +66,7 @@ function main(): i32 {
     match (open_writer_with("f", 1)) { Ok(_) => { print("open_writer_with ok"); }, Err(e) => { say("open_writer_with", e); } }
     return 0;
 }`
-	stdout, stderr, ec := runWasmStdinEnv(t, src, "", nil)
+	stdout, stderr, ec := runCLIComponent(t, src, runOpts{})
 	if ec != 0 {
 		t.Fatalf("wasmtime exit %d\nstdout:\n%s\nstderr:\n%s", ec, stdout, stderr)
 	}

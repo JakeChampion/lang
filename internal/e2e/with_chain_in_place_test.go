@@ -15,6 +15,10 @@ import (
 // element, and the chain copies. `own b`
 // assigned from a chain is the shape whose old-value release freed the buffer
 // the chain had just written.
+//
+// The counted receiver is written once before its count starts: the self-host
+// emits a constant array literal as a static block, which its first write
+// copies.
 const withChainInPlaceSrc = `import "core/map";
 
 function chain(own b: i32[], x: i32, y: i32): i32[] {
@@ -45,7 +49,7 @@ function own_param(own b: i32[]): i32[] {
 }
 
 function main(): i32 {
-	let b: i32[] = [0, 0, 0, 0, 0, 0, 0, 0];
+	let b: i32[] = [0, 0, 0, 0, 0, 0, 0, 0].with(0, 0);
 	let at: i64 = __heap_alloc_count();
 	let n: i32 = 0;
 	while (n < 50) { b = chain(b, n, 100); n = n + 1; }

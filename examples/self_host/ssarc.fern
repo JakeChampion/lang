@@ -5184,7 +5184,7 @@ function consecutive(args: i32[]): boolean {
 }
 
 function dyn_site(own r: irtables.LowerResult, ins: ssa.SInst): irtables.LowerResult {
-  return emit(r, ir.op_dyn_dispatch(ssasem.dyn_call_method(ins.str), ssasem.dyn_call_traits(ins.str), ins.args[0], ins.args.len()));
+  return emit(r, ir.op_dyn_dispatch(ssasem.dyn_call_arms(ins.str), ins.args[0], ins.args.len()));
 }
 
 function call_site(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {

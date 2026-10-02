@@ -204,10 +204,10 @@ func TestArm64OwnedPayloadMatchReclaim(t *testing.T) {
 
 func TestWASMOwnedPayloadMatchReclaim(t *testing.T) {
 	for _, c := range []struct{ name, src string }{{"family", ownedPayloadFamilySrc}, {"escape", ownedPayloadEscapeSrc}} {
-		_, stderr, code, _ := runWasmInDir(t, c.src, nil)
-		if code != 0 {
-			t.Logf("stderr:\n%s", stderr)
+		stdout, stderr, ec, _ := runWasmInDir(t, c.src, nil)
+		if ec != 0 {
+			t.Fatalf("%s: wasmtime exit %d\nstderr:\n%s", c.name, ec, stderr)
 		}
-		ownedPayloadCheck(t, c.name, code)
+		ownedPayloadCheck(t, c.name, parseMainResult(t, stdout))
 	}
 }

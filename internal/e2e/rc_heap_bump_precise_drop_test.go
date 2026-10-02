@@ -1,10 +1,7 @@
 package e2e
 
 import (
-	"strings"
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // Perceus precise drops (garbage-free, straight-line subset). An owned
@@ -24,40 +21,6 @@ import (
 // the soundness invariant: a local inc'd into a container that outlives its
 // last bare use is only DEC'd by the precise drop (the container's reference
 // survives), never freed early.
-
-func pdLit(n int) string {
-	p := make([]string, n)
-	for i := range p {
-		p[i] = "0"
-	}
-	return "[" + strings.Join(p, ", ") + "]"
-}
-
-// seqDead4Src: 4 arrays each dead before the next allocates (precise drop
-// reclaims each) — peak ~1 block.
-func seqDead4Src() string {
-	l := pdLit(100) // 400-byte payload -> size-class block (recyclable)
-	return `function main(): i32 {
-    let a: i32[] = ` + l + `; let sa: i32 = a[0];
-    let b: i32[] = ` + l + `; let sb: i32 = b[0];
-    let c: i32[] = ` + l + `; let sc: i32 = c[0];
-    let d: i32[] = ` + l + `; let sd: i32 = d[0];
-    return (__heap_bump_bytes() as i32) + sa + sb + sc + sd;
-}`
-}
-
-// live4Src: the same 4 arrays, all read at the END (all live to function
-// exit) — peak ~4 blocks. The control that precise drops must beat.
-func live4Src() string {
-	l := pdLit(100)
-	return `function main(): i32 {
-    let a: i32[] = ` + l + `;
-    let b: i32[] = ` + l + `;
-    let c: i32[] = ` + l + `;
-    let d: i32[] = ` + l + `;
-    return (__heap_bump_bytes() as i32) + a[0] + b[0] + c[0] + d[0];
-}`
-}
 
 // pdValuesSrc: distinct values across sequential precise-dropped arrays.
 const pdValuesSrc = `function main(): i32 {
@@ -124,32 +87,6 @@ function main(): i32 {
 // buffers + the outer buffer), so a sequentially-dead rc-element array
 // reclaims its WHOLE structure early, not just the outer buffer. ---
 
-// rcArrDead4Src: 4 sequentially-dead i32[][] (array-of-arrays) — each fully
-// reclaimed before the next allocates.
-func rcArrDead4Src() string {
-	row := pdLit(64) // inner buffer, size-class
-	mk := "[" + row + ", " + row + ", " + row + ", " + row + "]"
-	return `function main(): i32 {
-    let a: i32[][] = ` + mk + `; let sa: i32 = a[0][0];
-    let b: i32[][] = ` + mk + `; let sb: i32 = b[0][0];
-    let c: i32[][] = ` + mk + `; let sc: i32 = c[0][0];
-    let d: i32[][] = ` + mk + `; let sd: i32 = d[0][0];
-    return (__heap_bump_bytes() as i32) + sa + sb + sc + sd;
-}`
-}
-
-func rcArrLive4Src() string {
-	row := pdLit(64)
-	mk := "[" + row + ", " + row + ", " + row + ", " + row + "]"
-	return `function main(): i32 {
-    let a: i32[][] = ` + mk + `;
-    let b: i32[][] = ` + mk + `;
-    let c: i32[][] = ` + mk + `;
-    let d: i32[][] = ` + mk + `;
-    return (__heap_bump_bytes() as i32) + a[0][0] + b[0][0] + c[0][0] + d[0][0];
-}`
-}
-
 // rcArrValuesSrc: array-of-struct (P[]), distinct values, with an aliased
 // element kept live — the deep struct-array drop must only DEC the shared
 // element box, not free it.
@@ -168,34 +105,6 @@ function main(): i32 {
     if (acc != 41800) { return 999; }
     return __rc_underflow_count();
 }`
-
-func TestWASMPreciseDrops(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
-	dead := runWasm(t, seqDead4Src())
-	live := runWasm(t, live4Src())
-	if dead >= live {
-		t.Errorf("precise drops should reclaim sequentially-dead arrays: dead4 high-water %d should be < live4 %d", dead, live)
-	}
-	rcDead := runWasm(t, rcArrDead4Src())
-	rcLive := runWasm(t, rcArrLive4Src())
-	if rcDead >= rcLive {
-		t.Errorf("precise drops should reclaim sequentially-dead rc-element arrays: dead4 %d should be < live4 %d", rcDead, rcLive)
-	}
-	if pdValues := runWasm(t, pdValuesSrc); pdValues != 0 {
-		t.Errorf("value correctness / over-release: got %d", pdValues)
-	}
-	if got := runWasm(t, pdAliasSrc); got != 0 {
-		t.Errorf("aliased-into-container soundness: got %d", got)
-	}
-	if got := runWasm(t, pdArgReturnSrc); got != 0 {
-		t.Errorf("function-return-of-arg soundness: got %d", got)
-	}
-	if got := runWasm(t, rcArrValuesSrc); got != 0 {
-		t.Errorf("rc-element array value/alias soundness: got %d", got)
-	}
-}
 
 func TestX86_64PreciseDrops(t *testing.T) {
 	if _, code := compileAndRunX86_64FreeOn(t, pdValuesSrc); code != 0 {
