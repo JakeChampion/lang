@@ -87,5 +87,15 @@ bytes and 2816 data bytes. These fit in existing file-segment padding; the
 by 16,384 bytes. This accounts for the new builtin routing and runtime
 generators without changing a size baseline.
 
+The comparison was repeated after integrating main `0d7a8d321`, using the
+refreshed TCP stage-2 compiler for both sources. Main occupies 12,114,209
+bytes and the TCP candidate 12,130,865, an increase of 16,656 bytes. Code
+still grows by 6,000 bytes and unwind data by 168; data grows by 2,304 bytes.
+On this newer layout, the added code crosses a segment boundary: the text
+segment grows by 16,384 bytes, while link-edit data grows by 272. The data
+segment's file size stays 950,272 bytes and its virtual size grows by
+16,384. The different file growth is accounted for by this layout change;
+no size baseline was raised.
+
 This supplies one sink required by #10948 and #5714 under epic #5626.
 HTTP and DNS consumers still need byte migration, and UDP needs a byte API.
