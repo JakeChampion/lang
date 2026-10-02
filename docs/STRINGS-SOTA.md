@@ -916,9 +916,9 @@ repeat mode, reservoir sampling, missing final delimiters and long records.
 The WebAssembly seek helper releases its syscall return buffer on success
 and error; repeated seek tests and the file-input cases check for leaks.
 
-Validation and performance measurements for the current integration are
-pending. Earlier prepared-branch results do not establish its current
-target coverage, ownership balance or performance.
+Current target, ownership, bootstrap and performance results are recorded
+in [the byte-line report](STRING-BYTE-LINES-2026-10-02.md). The full-unit gate
+remains pending.
 
 The Fern interpreter also supports raw stdin reads; its file-handle opening
 remains unsupported. The existing `Reader.read_chunk` remains text-typed and
