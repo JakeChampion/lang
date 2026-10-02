@@ -20,13 +20,13 @@ import "std/string";
 
 // Naive leftmost-match reference.
 function ref_find(s: string, needle: string): i32 {
-    var n: i32 = s.len();
-    var m: i32 = needle.len();
+    let n: i32 = s.len();
+    let m: i32 = needle.len();
     if (m == 0) { return 0; }
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i + m <= n) {
-        var k: i32 = 0;
-        var ok: boolean = true;
+        let k: i32 = 0;
+        let ok: boolean = true;
         while (k < m) {
             if ((s[i + k] as i32) != (needle[k] as i32)) { ok = false; k = m; }
             else { k = k + 1; }
@@ -40,14 +40,14 @@ function ref_find(s: string, needle: string): i32 {
 // Naive NON-overlapping match positions -- the reference the find_all /
 // count / split / replace family is defined against.
 function ref_positions(s: string, sub: string): i32[] {
-    var out: i32[] = [];
-    var n: i32 = s.len();
-    var m: i32 = sub.len();
+    let out: i32[] = [];
+    let n: i32 = s.len();
+    let m: i32 = sub.len();
     if (m == 0) { return out; }
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i + m <= n) {
-        var k: i32 = 0;
-        var ok: boolean = true;
+        let k: i32 = 0;
+        let ok: boolean = true;
         while (k < m) {
             if ((s[i + k] as i32) != (sub[k] as i32)) { ok = false; k = m; }
             else { k = k + 1; }
@@ -60,9 +60,9 @@ function ref_positions(s: string, sub: string): i32[] {
 
 // The base-2 string of length ` + "`len`" + ` with index ` + "`code`" + `, over {a,b}.
 function nth_string(code: i32, len: i32): string {
-    var out: string = "";
-    var c: i32 = code;
-    var i: i32 = 0;
+    let out: string = "";
+    let c: i32 = code;
+    let i: i32 = 0;
     while (i < len) {
         if (c % 2 == 0) { out = out + "a"; } else { out = out + "b"; }
         c = c / 2;
@@ -72,32 +72,32 @@ function nth_string(code: i32, len: i32): string {
 }
 
 function ipow2(e: i32): i32 {
-    var r: i32 = 1;
-    var i: i32 = 0;
+    let r: i32 = 1;
+    let i: i32 = 0;
     while (i < e) { r = r * 2; i = i + 1; }
     return r;
 }
 
 function main(): i32 {
-    var hlen: i32 = 0;
+    let hlen: i32 = 0;
     while (hlen <= 8) {
-        var hi: i32 = 0;
+        let hi: i32 = 0;
         while (hi < ipow2(hlen)) {
-            var hay: string = nth_string(hi, hlen);
-            var nlen: i32 = 1;
+            let hay: string = nth_string(hi, hlen);
+            let nlen: i32 = 1;
             while (nlen <= 5) {
-                var ni: i32 = 0;
+                let ni: i32 = 0;
                 while (ni < ipow2(nlen)) {
-                    var nee: string = nth_string(ni, nlen);
-                    var first: i32 = ref_find(hay, nee);
-                    var want: i32[] = ref_positions(hay, nee);
+                    let nee: string = nth_string(ni, nlen);
+                    let first: i32 = ref_find(hay, nee);
+                    let want: i32[] = ref_positions(hay, nee);
 
                     if (hay.index_of(nee) != first) { return 1; }
                     if (hay.contains(nee) != (first >= 0)) { return 2; }
 
-                    var got: i32[] = hay.find_all(nee);
+                    let got: i32[] = hay.find_all(nee);
                     if (got.len() != want.len()) { return 3; }
-                    var q: i32 = 0;
+                    let q: i32 = 0;
                     while (q < want.len()) {
                         if (got[q] != want[q]) { return 4; }
                         q = q + 1;
@@ -107,10 +107,10 @@ function main(): i32 {
 
                     // split: piece count is matches+1, and rejoining on the
                     // separator must reproduce the input byte for byte.
-                    var parts: string[] = hay.split(nee);
+                    let parts: string[] = hay.split(nee);
                     if (parts.len() != want.len() + 1) { return 7; }
-                    var rebuilt: string = parts[0];
-                    var p: i32 = 1;
+                    let rebuilt: string = parts[0];
+                    let p: i32 = 1;
                     while (p < parts.len()) {
                         rebuilt = rebuilt + nee + parts[p];
                         p = p + 1;
@@ -119,18 +119,18 @@ function main(): i32 {
 
                     // replace: exact output length, and replacing back
                     // restores the original.
-                    var rep: string = hay.replace(nee, "XY");
+                    let rep: string = hay.replace(nee, "XY");
                     if (rep.len() != hay.len() + want.len() * (2 - nlen)) { return 9; }
                     if (rep.replace("XY", nee) != hay) { return 10; }
                     if (hay.replace_n(nee, "XY", 100) != rep) { return 11; }
                     if (hay.replacen(nee, "XY", 100) != rep) { return 12; }
                     if (want.len() > 0) {
-                        var one: string = hay.replace_n(nee, "XY", 1);
+                        let one: string = hay.replace_n(nee, "XY", 1);
                         if (one != slice_unchecked(hay, 0, want[0]) + "XY" + slice_unchecked(hay, want[0] + nlen, hay.len())) { return 13; }
                     }
 
                     // splitn(2) is split_once's array form.
-                    var s2: string[] = hay.splitn(nee, 2);
+                    let s2: string[] = hay.splitn(nee, 2);
                     if (first >= 0) {
                         if (s2.len() != 2) { return 14; }
                         if (s2[0] != slice_unchecked(hay, 0, first)) { return 15; }
@@ -150,8 +150,8 @@ function main(): i32 {
 
     // Periodic / pathological shapes: the inputs that made the previous
     // naive scan quadratic, and that drive Two-Way's memory + period shift.
-    var a30: string = "";
-    var i: i32 = 0;
+    let a30: string = "";
+    let i: i32 = 0;
     while (i < 30) { a30 = a30 + "a"; i = i + 1; }
     if (a30.index_of(a30 + "b") != (0 - 1)) { return 20; }
     if ((a30 + "b").index_of(a30 + "b") != 0) { return 21; }

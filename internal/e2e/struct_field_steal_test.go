@@ -26,7 +26,7 @@ import "std/i32";
 struct View { shape: i32[], strides: i32[] }
 
 function make(): View {
-    var st: i32[] = [];
+    let st: i32[] = [];
     st = st.append(4);
     st = st.append(1);
     return View { shape: [3, 4], strides: st };
@@ -41,16 +41,16 @@ function (a: View) zip(b: View): i32 {
 }
 
 function verdict(): i32 {
-    var a: View = make();
+    let a: View = make();
     if (a.zip(a.flip(1)) != 15) { return 1; }
     // The same shape written as a free call, which lowers the receiver as an
     // ordinary argument and crashed identically.
-    var b: View = make();
+    let b: View = make();
     if (zipf(b, b.flip(1)) != 15) { return 2; }
     // A view bound to a local first always worked; it is here so a fix that
     // withdrew too many deaths still has to keep this answering.
-    var c: View = make();
-    var v: View = c.flip(1);
+    let c: View = make();
+    let v: View = c.flip(1);
     if (c.zip(v) != 15) { return 3; }
     return 42;
 }

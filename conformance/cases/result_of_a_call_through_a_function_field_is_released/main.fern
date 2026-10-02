@@ -10,15 +10,15 @@ function twice(s: string, t: Txn): Out { return Out { v: 2 * (s.len() + t.id) };
 function val(o: Out): i32 { return o.v; }
 
 function run_with(st: Stage, t: Txn): i32 {
-    var o: Out = st.run(st.name, t);
+    let o: Out = st.run(st.name, t);
     return o.v + st.run(st.name, t).v + val(st.run(st.name, t));
 }
 
 function main(): i32 {
-    var total: i32 = 0;
-    var i: i32 = 0;
+    let total: i32 = 0;
+    let i: i32 = 0;
     while (i < 3) {
-        var st: Stage = Stage { name: "abc", run: step };
+        let st: Stage = Stage { name: "abc", run: step };
         if (i == 1) { st = Stage { name: "ab", run: twice }; }
         total = total + run_with(st, Txn { id: i });
         i = i + 1;

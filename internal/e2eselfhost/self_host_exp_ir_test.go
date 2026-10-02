@@ -34,8 +34,8 @@ func TestSelfHostExpIRWasm(t *testing.T) {
 
 	// `check` returns true when |exp(x) - expected| <= 1e-6 * |expected|.
 	const src = `function check(x: f64, expected: f64): boolean {
-    var got: f64 = __exp_f64(x);
-    var err: f64 = __abs_f64(got - expected);
+    let got: f64 = __exp_f64(x);
+    let err: f64 = __abs_f64(got - expected);
     return err <= (__abs_f64(expected) * 0.000001);
 }
 function main(): i32 {

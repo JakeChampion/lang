@@ -23,8 +23,8 @@ func TestSelfHostFrontendBundleX86_64(t *testing.T) {
 	entry := "import \"./lexer\";\n" +
 		"import \"./parser\";\n" +
 		"function main(): i32 {\n" +
-		"    var toks: lexer.Token[] = lexer.tokenize(\"function f(): i32 { return 42; }\");\n" +
-		"    var mod: parser.Module = parser.parse_module(toks);\n" +
+		"    let toks: lexer.Token[] = lexer.tokenize(\"function f(): i32 { return 42; }\");\n" +
+		"    let mod: parser.Module = parser.parse_module(toks);\n" +
 		"    return mod.funcs.len();\n" +
 		"}\n"
 

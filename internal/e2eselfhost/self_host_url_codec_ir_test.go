@@ -21,16 +21,16 @@ function url_unreserved(b: i32): boolean {
     return false;
 }
 function url_encode(s: string): string {
-    var n: i32 = s.len();
-    var out: string = "";
-    var i: i32 = 0;
+    let n: i32 = s.len();
+    let out: string = "";
+    let i: i32 = 0;
     while (i < n) {
-        var b: i32 = s[i] as i32;
+        let b: i32 = s[i] as i32;
         if (url_unreserved(b)) { out = out + slice_unchecked(s, i, i+1).to_owned(); }
         else {
-            var hi: i32 = (b >> 4) & 15;
-            var lo: i32 = b & 15;
-            var trip: u8[] = [37 as u8, url_hex_char(hi) as u8, url_hex_char(lo) as u8];
+            let hi: i32 = (b >> 4) & 15;
+            let lo: i32 = b & 15;
+            let trip: u8[] = [37 as u8, url_hex_char(hi) as u8, url_hex_char(lo) as u8];
             out = out + string_from_bytes_unchecked(trip);
         }
         i = i + 1;
@@ -44,18 +44,18 @@ function url_hex_val(c: i32): i32 {
     return -1;
 }
 function url_decode(s: string): string {
-    var n: i32 = s.len();
-    var out: string = "";
-    var i: i32 = 0;
+    let n: i32 = s.len();
+    let out: string = "";
+    let i: i32 = 0;
     while (i < n) {
-        var b: i32 = s[i] as i32;
-        var emit: string = slice_unchecked(s, i, i+1).to_owned();
-        var consumed: i32 = 1;
+        let b: i32 = s[i] as i32;
+        let emit: string = slice_unchecked(s, i, i+1).to_owned();
+        let consumed: i32 = 1;
         if (b == 37 && i + 2 < n) {
-            var h1: i32 = url_hex_val(s[i+1] as i32);
-            var h2: i32 = url_hex_val(s[i+2] as i32);
+            let h1: i32 = url_hex_val(s[i+1] as i32);
+            let h2: i32 = url_hex_val(s[i+2] as i32);
             if (h1 >= 0 && h2 >= 0) {
-                var by: u8[] = [((h1 << 4) | h2) as u8];
+                let by: u8[] = [((h1 << 4) | h2) as u8];
                 emit = string_from_bytes_unchecked(by);
                 consumed = 3;
             }
@@ -79,7 +79,7 @@ var urlCodecIRCases = []struct {
 	// two spaces -> "%20%20" -> 6.
 	{"encode-two-spaces", `return url_encode("  ").len();`, 6},
 	// '/' (47) -> "%2F"; the low nibble's hex digit is UPPERCASE 'F' (70).
-	{"encode-uppercase-hex", `var e: string = url_encode("/"); return e[2] as i32;`, 70},
+	{"encode-uppercase-hex", `let e: string = url_encode("/"); return e[2] as i32;`, 70},
 	// "a%20b%2Fc" decodes back to "a b/c" -> 5.
 	{"decode-roundtrip", `return url_decode("a%20b%2Fc").len();`, 5},
 	// an invalid escape ("%zz") is left literal -> 3.

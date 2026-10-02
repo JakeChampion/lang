@@ -14,13 +14,13 @@ import "std/array";
 
 // Expand C-style backslash escapes in `s` (used under -e).
 function unescape(s: string): string {
-  var n: i32 = s.len();
-  var out: string = "";
-  var i: i32 = 0;
+  let n: i32 = s.len();
+  let out: string = "";
+  let i: i32 = 0;
   while (i < n) {
     if (s[i] == 92 && i + 1 < n) {
       // backslash
-      var c: i32 = s[i + 1] as i32;
+      let c: i32 = s[i + 1] as i32;
       if (c == 110) {
         out = out + "\n";  // \n
       } else if (c == 116) {
@@ -44,18 +44,18 @@ function unescape(s: string): string {
 }
 
 function main(): i32 {
-  var argv: string[] = args();
-  var newline: boolean = true;
-  var escapes: boolean = false;
-  var words: string[] = [];
+  let argv: string[] = args();
+  let newline: boolean = true;
+  let escapes: boolean = false;
+  let words: string[] = [];
 
   // Leading flags are consumed only while they look like -n / -e;
   // the first non-flag operand ends option parsing (matching the
   // common echo behaviour where flags must come first).
-  var i: i32 = 1;
-  var still_flags: boolean = true;
+  let i: i32 = 1;
+  let still_flags: boolean = true;
   while (i < argv.len()) {
-    var a: string = argv[i];
+    let a: string = argv[i];
     if (still_flags && a == "-n") {
       newline = false;
     } else if (still_flags && a == "-e") {
@@ -70,7 +70,7 @@ function main(): i32 {
     i = i + 1;
   }
 
-  var line: string = words.join(" ");
+  let line: string = words.join(" ");
   if (escapes) {
     line = unescape(line);
   }

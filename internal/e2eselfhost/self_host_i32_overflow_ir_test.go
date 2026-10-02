@@ -15,15 +15,15 @@ var i32OverflowIRCases = []struct {
 	main string
 }{
 	// Add overflow wraps to negative.
-	{"add", `function main(): i32 { var x = 2147483647; var y = x + 1; if (y < 0) { return 1; } return 0; }`},
+	{"add", `function main(): i32 { let x = 2147483647; let y = x + 1; if (y < 0) { return 1; } return 0; }`},
 	// 65536 * 65536 == 2^32, which wraps to 0 in i32.
-	{"mul", `function main(): i32 { var x = 65536; var y = x * x; if (y == 0) { return 5; } return 0; }`},
+	{"mul", `function main(): i32 { let x = 65536; let y = x * x; if (y == 0) { return 5; } return 0; }`},
 	// Left shift past bit 31 drops the high bits: 1 << 31 is INT_MIN (< 0).
-	{"shl", `function main(): i32 { var x = 1; var y = x << 31; if (y < 0) { return 3; } return 0; }`},
+	{"shl", `function main(): i32 { let x = 1; let y = x << 31; if (y < 0) { return 3; } return 0; }`},
 	// Subtraction underflow wraps: -2e9 - 2e9 == -4e9, which wraps up to the
 	// positive 294967296 in i32. (In-range literals throughout — a literal at
 	// exactly INT_MIN's magnitude is a separate i32/i64-typing concern.)
-	{"sub", `function main(): i32 { var x = 0 - 2000000000; var y = x - 2000000000; if (y > 0) { return 7; } return 0; }`},
+	{"sub", `function main(): i32 { let x = 0 - 2000000000; let y = x - 2000000000; if (y > 0) { return 7; } return 0; }`},
 }
 
 // TestSelfHostI32OverflowIR compiles each case with the self-host CLI for

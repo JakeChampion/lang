@@ -13,7 +13,7 @@ Every lowering function threads its state the same way:
 
 ```
 function lower_call_named_generic(e, c, cid, s: LowerState): LowerState {
-    var sc: LowerState = s;
+    let sc: LowerState = s;
     …
     sc = lower_expr(c.args[ai], sc);
     sc = sc.emit(op);
@@ -38,7 +38,7 @@ with the box. A snapshot LOCAL (#3457) bound from a fresh-ret producer (`var st
 
 ## The snapshot every derived local needs
 
-The second shape was unsound. `var st: Buf = se.add_local(1)` copies the
+The second shape was unsound. `let st: Buf = se.add_local(1)` copies the
 borrowed parameter's fields into `st`'s box uncounted — the functional update
 retains its string and nested-struct fields but not its arrays — and the first
 rebind `st = st.emit(2)` released `se.ops`, the CALLER's buffer, because the
@@ -46,14 +46,14 @@ release compared the old box against the new one only. The sanitizer's
 quarantine confirmed it (`snapshot_local_shared_field`, exit 124 before).
 
 So a struct local now records the variable its binding DERIVES from
-(`snapshot_source_of_init`): the alias `var q: T = p` names `p`; a call names
+(`snapshot_source_of_init`): the alias `let q: T = p` names `p`; a call names
 its receiver, or the one bare-ident argument declared at the local's type.
 `seed_snapshot_local` copies that box into `$snap$<slot>` right after the
 binding, and the rebind release takes it as the snapshot a snapshot param gets
 at entry. That guard is what admits the two shapes the compiler is made of:
 
-- the alias `var sc: LowerState = s`, and
-- the call-derived local `var sl0: LowerState = lower_expr(b.left, s)` from a
+- the alias `let sc: LowerState = s`, and
+- the call-derived local `let sl0: LowerState = lower_expr(b.left, s)` from a
   producer that is NOT fresh-ret and may hand `s`'s own box back — the
   snapshot covers exactly that case, and a derived box is the local's alone.
 
@@ -69,7 +69,7 @@ A derivation is any mention of the local in the bound value, a bare ARGUMENT
 included: the callee may spread-copy it into its result, and a spread retains
 no array field. The exit sweep's box-only mark had only ever counted a method
 receiver, which the first version of this slice found out the hard way — with
-the rebinds admitted, `var apf = s.emit(op); apf = lower_expr(x, apf); return
+the rebinds admitted, `let apf = s.emit(op); apf = lower_expr(x, apf); return
 emit_arr_store(apf, …)` credited `apf`, the sweep deep-dropped its `locals`
 under the box the return had just copied them into, and the self-built
 compiler crashed compiling `examples/tests` (the arm64 stage-2 fixpoint saw it
@@ -83,7 +83,7 @@ box. The registry was a least fixpoint from below, and the lowering is a
 mutually recursive call graph: `lower_expr` dispatches to functions that call
 `lower_expr` on their own `sc`. From below no member is ever safe, because each
 is safe only once the others already are. Measured, it left every one of the
-71 `var sc: LowerState = s` in the compiler with no reclaim, and no `irlower`
+71 `let sc: LowerState = s` in the compiler with no reclaim, and no `irlower`
 parameter consume-safe at all.
 
 `consume_safe_params_interproc` is a greatest fixpoint now: every parameter
@@ -96,11 +96,11 @@ has no chain to any escape.
 Three shapes had to stop counting as escapes for the cycle to hold, each with
 its argument:
 
-- `var q: T = name` and `var q: R = g(.., name, ..)` (name at a consume-safe
+- `let q: T = name` and `let q: R = g(.., name, ..)` (name at a consume-safe
   position), when `q`'s own uses all pass the same scan — asked of the
   caller's box (`own_rebinds` false), whose only releaser is the caller. Asked
   of a snapshot param or local, whose own rebinds release, the alias stays an
-  escape except as the handback pair `var st: R = g(.., name, ..); name =
+  escape except as the handback pair `let st: R = g(.., name, ..); name =
   st.f;` (the `ArgStash` pattern at every call argument).
 - `return g(.., name, ..)` and `return T { f: name, … }`: the box goes back to
   the caller inside the result, the move-out a bare `return name` already is.
@@ -147,7 +147,7 @@ CI's `std/pvec` suite, self-built for arm64, read a freed leaf after 3,000
 appends. The append's level-grow builds `Leaf(v.tail)` over the receiver's
 tail buffer, and `lower_variant_ctor_args` retained an array payload only
 when it was a bare local (#3720): a FIELD READ went in uncounted. Nothing
-had released that field before — the test's `var v = pvec_new(); v =
+had released that field before — the test's `let v = pvec_new(); v =
 v.append(i)` took the box-only rebind — and this slice's admission routed the
 rebind through `__field_reclaim_PVec`, whose array arm freed the replaced
 `tail` under the leaf. Main's compiler already faults on the reduced shape;
@@ -162,7 +162,7 @@ back wrong (24 against 56) rather than quietly intact.
 
 On `parser.fern` the grow buffers are still 493 MB of the 1.05 GB, and the
 survivors are `emit` copies whose local is consumed into ANOTHER local at its
-last use — `var sr: LowerState = lower_expr(b.right, sl0)` with `sl0` never
+last use — `let sr: LowerState = lower_expr(b.right, sl0)` with `sl0` never
 mentioned again — so nothing releases the consumed generation. That is the
 last-use release, the next slice. Then `__fern_str_concat` results (117 MB,
 mostly the x86 text assembler's `x86_gas_trim` / `strip_suffix` / `reg`

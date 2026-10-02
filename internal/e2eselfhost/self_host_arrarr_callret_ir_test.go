@@ -8,7 +8,7 @@ import (
 )
 
 // TestSelfHostArrArrCallRetReclaimIRX86_64 pins #4355 slice 10: an arr-of-arr
-// local initialised from a CALL (`var g: T[][] = mk(..)`) earns the same
+// local initialised from a CALL (`let g: T[][] = mk(..)`) earns the same
 // ARRARR:/ARRARRS: credits the literal it returns would — opt_fresh_ret_fns_of
 // registers "AAC:<name>|<flag>" for FREE functions whose every return is a
 // fresh arr-of-arr literal (arrarr_lit_is_fresh; flag "s" when every return is
@@ -61,21 +61,21 @@ func TestSelfHostArrArrCallRetReclaimIRX86_64(t *testing.T) {
     return [["a" + "b"], ["c" + "d", "e" + "f"]];
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var g: string[][] = mk(i);
+        let g: string[][] = mk(i);
         acc = acc + g.len() + g[0][0].len();
         i = i + 1;
     }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 2000) {
-        var g2: string[][] = mk(j);
+        let g2: string[][] = mk(j);
         acc = acc + g2.len() + g2[1][1].len();
         j = j + 1;
     }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 4096) { return 98; }
     if (acc < 0) { return 97; }
@@ -88,21 +88,21 @@ function main(): i32 {
     return [[i, i + 1], [i + 2]];
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var g: i32[][] = mks(i);
+        let g: i32[][] = mks(i);
         acc = acc + g.len() + g[0][0];
         i = i + 1;
     }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 2000) {
-        var g2: i32[][] = mks(j);
+        let g2: i32[][] = mks(j);
         acc = acc + g2.len() + g2[1][0];
         j = j + 1;
     }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 4096) { return 98; }
     if (acc < 0) { return 97; }
@@ -117,11 +117,11 @@ function main(): i32 {
     return [[s], ["c" + "d"]];
 }
 function main(): i32 {
-    var bad: i32 = 0;
-    var i: i32 = 0;
+    let bad: i32 = 0;
+    let i: i32 = 0;
     while (i < 500) {
-        var s1: string = "aa" + "bb";
-        var g: string[][] = mk2(s1);
+        let s1: string = "aa" + "bb";
+        let g: string[][] = mk2(s1);
         if (g[0][0].len() != 4) { bad = 1; }
         if (s1.len() != 4) { bad = 1; }
         i = i + 1;
@@ -136,25 +136,25 @@ function main(): i32 {
 	// init earns the strict credit. Flat at detector zero, with the reads
 	// correct: a withdrawn credit leaks (98), an over-wide one over-releases (99).
 	run(t, `function mk3(i: i32): string[][] {
-    var t: string[][] = [["a" + "b"], ["c" + "d"]];
+    let t: string[][] = [["a" + "b"], ["c" + "d"]];
     return t;
 }
 function main(): i32 {
-    var bad: i32 = 0;
-    var i: i32 = 0;
+    let bad: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var g: string[][] = mk3(i);
+        let g: string[][] = mk3(i);
         if (g[0][0].len() != 2) { bad = 1; }
         i = i + 1;
     }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 2000) {
-        var g2: string[][] = mk3(j);
+        let g2: string[][] = mk3(j);
         if (g2[1][0] != "cd") { bad = 1; }
         j = j + 1;
     }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (bad != 0) { return 88; }
     if (b2 - b1 >= 4096) { return 98; }
@@ -165,26 +165,26 @@ function main(): i32 {
 	// returned-local proof (aac_local_kind) admits it, so "AAC:mk4|s" and the
 	// strict credit rest on it alone.
 	run(t, `function mk4(i: i32): string[][] {
-    var t: string[][] = [["a" + "b"]];
+    let t: string[][] = [["a" + "b"]];
     t = t.append(["c" + "d"]);
     return t;
 }
 function main(): i32 {
-    var bad: i32 = 0;
-    var i: i32 = 0;
+    let bad: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var g: string[][] = mk4(i);
+        let g: string[][] = mk4(i);
         if (g[0][0].len() != 2) { bad = 1; }
         i = i + 1;
     }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 2000) {
-        var g2: string[][] = mk4(j);
+        let g2: string[][] = mk4(j);
         if (g2[1][0] != "cd") { bad = 1; }
         j = j + 1;
     }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (bad != 0) { return 88; }
     if (b2 - b1 >= 4096) { return 98; }
@@ -195,24 +195,24 @@ function main(): i32 {
 	// "ARC:mk3r|s", so `g = g.append(mk3r(i))` is a sanctioned self-append and
 	// the append-built g frees its rows and their strings.
 	run(t, `function mk3r(i: i32): string[] {
-    var t: string[] = ["a" + "b", "c" + "d"];
+    let t: string[] = ["a" + "b", "c" + "d"];
     return t;
 }
 function round(i: i32): i32 {
-    var g: string[][] = [];
+    let g: string[][] = [];
     g = g.append(mk3r(i));
     g = g.append(mk3r(i + 1));
     if (g[1][1] != "cd") { return 0 - 1000; }
     return g.len();
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) { acc = acc + round(i); i = i + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 2000) { acc = acc + round(j); j = j + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (acc != 4400) { return 97; }
     if (b2 - b1 >= 4096) { return 98; }
@@ -225,17 +225,17 @@ function main(): i32 {
 	// then a second helper call → 2200 underflow ticks → 99, inner strings
 	// leaked → 98).
 	run(t, `function work(n: i32): i32 {
-    var g: string[][] = [["a" + "b"], ["c" + "d", "e" + "f"]];
+    let g: string[][] = [["a" + "b"], ["c" + "d", "e" + "f"]];
     return g.len() + g[0][0].len() + n;
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) { acc = acc + work(i); i = i + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 2000) { acc = acc + work(j); j = j + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 4096) { return 98; }
     if (acc < 0) { return 97; }

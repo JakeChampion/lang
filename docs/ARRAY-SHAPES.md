@@ -245,8 +245,8 @@ element one under `FERN_ARRAY_REPORT=1`.
 textually identical calls cost different amounts:
 
 ```
-var a = nd.from_flat(xs, s);   var f1 = a.to_flat();        // free
-var t = a.transpose();         var f2 = t.to_flat();        // O(n)
+let a = nd.from_flat(xs, s);   let f1 = a.to_flat();        // free
+let t = a.transpose();         let f2 = t.to_flat();        // O(n)
 ```
 
 Both lower to the same op with the same callee. That is the avoidable

@@ -260,7 +260,7 @@ func tempDirPrefixIsNameSrc(t *testing.T) string {
 	}
 	t.Cleanup(func() { os.RemoveAll(parent) })
 	return fmt.Sprintf(`function main(): i32 {
-    var d: string = "";
+    let d: string = "";
     match (temp_dir("plain")) { Err(e) => { return 1; }, Ok(p) => { d = p; } }
     match (remove_dir_all(d)) { Err(e) => { return 2; }, Ok(_) => { } }
     match (temp_dir("%s/inner")) { Ok(p) => { return 3; }, Err(e) => { } }

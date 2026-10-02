@@ -27,12 +27,12 @@ func TestSelfHostPerModuleTypedHelpersLink(t *testing.T) {
 function (s: string) tail(n: i32): str { return slice_unchecked(s, n, s.len()); }
 
 pub function score(words: string[]): i32 {
-    var bytes: u8[] = [];
+    let bytes: u8[] = [];
     for w in words { bytes = bytes.append((w.len() + 96) as u8); }
-    var head: u8[] = bytes[0:2];
-    var text: string = string_from_bytes_unchecked(bytes);
-    var seen: Map[string, i32] = map_new(4);
-    var t: i32 = 0;
+    let head: u8[] = bytes[0:2];
+    let text: string = string_from_bytes_unchecked(bytes);
+    let seen: Map[string, i32] = map_new(4);
+    let t: i32 = 0;
     for w in words {
         seen = seen.insert(w, 1);
         t = t + w.tail(1).len();

@@ -15,9 +15,9 @@ import (
 // trailing whitespace stay visible, then a terminator so "no arguments" is
 // distinguishable from "produced no output".
 const argsEchoProgram = `function main(): i32 {
-    var av: string[] = args();
+    let av: string[] = args();
     print("argv0=" + av[0]);
-    var i: i32 = 1;
+    let i: i32 = 1;
     while (i < av.len()) {
         print("[" + av[i] + "]");
         i = i + 1;

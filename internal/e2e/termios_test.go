@@ -48,10 +48,10 @@ const termiosSource = `function main(): i32 {
         Ok(t) => {
             if (t.len() != 24) { return 11; }
             if (t[5] != (3 as i64)) { return 12; }
-            var off: i64[] = t.with(3, t[3] & (0 - 1 - 8));
+            let off: i64[] = t.with(3, t[3] & (0 - 1 - 8));
             // Exercise every control byte, including the end of the ioctl
             // buffer that a nested allocator's stack frame can overwrite.
-            var i: i32 = 5;
+            let i: i32 = 5;
             while (i < 24) {
                 off = off.with(i, (i + 40) as i64);
                 i = i + 1;
@@ -61,7 +61,7 @@ const termiosSource = `function main(): i32 {
                 Err(_) => { return 14; },
                 Ok(u) => {
                     if (u[3] != (t[3] - (8 as i64))) { return 15; }
-                    var j: i32 = 5;
+                    let j: i32 = 5;
                     while (j < 24) {
                         if (u[j] != off[j]) { return 21; }
                         j = j + 1;

@@ -18,21 +18,21 @@ import (
 //
 // Through the CLI, since the bracket is the semantic lowering's (ssarc).
 const lentArrayBracketProg = `@noinline function reads(o: u8[]): i32 { return o.len(); }
-@noinline function grows(o: u8[]): i32 { var x: u8[] = o.append(1 as u8); return x.len(); }
+@noinline function grows(o: u8[]): i32 { let x: u8[] = o.append(1 as u8); return x.len(); }
 @noinline function scan(s: string, set: u8[]): i32 {
-    var n: i32 = 0;
-    var i: i32 = 0;
+    let n: i32 = 0;
+    let i: i32 = 0;
     while (i < 3) { n = n + __scan_set(s, i, set) + __count_runs(s, 0, set) + reads(set); i = i + 1; }
     return n + set.len();
 }
 @noinline function widen(set: u8[]): i32 {
-    var n: i32 = 0;
-    var i: i32 = 0;
+    let n: i32 = 0;
+    let i: i32 = 0;
     while (i < 3) { n = n + grows(set); i = i + 1; }
     return n + set.len();
 }
 function main(): i32 {
-    var t: u8[] = __alloc_u8(256);
+    let t: u8[] = __alloc_u8(256);
     t = t.with(97, 1 as u8);
     return (scan("xxa", t) + widen(t)) % 200;
 }

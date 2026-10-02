@@ -70,7 +70,7 @@ owned→borrowed direction is spelt out per surface: an owned
 `string` borrows into a `str` anywhere (`assignable`), and an
 owned `T[]` lends into a `[T]` at a PARAMETER (`argAssignable`
 / `argOK`, #6798) — parameters are borrowed by default, so the
-callee never frees what it was lent, while an owning sink (var
+callee never frees what it was lent, while an owning sink (let
 init, struct field, array element, return) keeps the strict
 rule because it would outlive the lend. `own` params are
 excluded from both: they consume.

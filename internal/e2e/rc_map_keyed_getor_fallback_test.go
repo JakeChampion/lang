@@ -29,14 +29,14 @@ import "core/cmp" as cmp;
 struct Point { x: i32, y: i32 }
 
 function main(): i32 {
-    var m: Map[Point, i32[]] = map_new(8);
+    let m: Map[Point, i32[]] = map_new(8);
     m = m.insert(Point { x: 1, y: 2 }, [7, 8, 9]);
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < ` + n + `) {
         // A MISS every round: the key is a fresh struct temp and the
         // fallback a fresh counted-read array.
-        var got: i32[] = m.get_or(Point { x: i + 100, y: 0 }, [1, 2, 3, 4, 5, 6]);
+        let got: i32[] = m.get_or(Point { x: i + 100, y: 0 }, [1, 2, 3, 4, 5, 6]);
         t = t + got.len();
         i = i + 1;
     }
@@ -57,12 +57,12 @@ struct Point { x: i32, y: i32 }
 enum Tag { A(i32), B }
 
 function main(): i32 {
-    var acc: i32 = 0;
-    var m: Map[Point, i32[]] = map_new(8);
+    let acc: i32 = 0;
+    let m: Map[Point, i32[]] = map_new(8);
     m = m.insert(Point { x: 1, y: 2 }, [7, 8, 9]);
-    var sm: Map[Tag, string[]] = map_new(8);
+    let sm: Map[Tag, string[]] = map_new(8);
     sm = sm.insert(Tag.A(1), ["a-wide-payload-past-any-inline-threshold"]);
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
         // hit: the map's own value, which must outlive the call
         acc = acc + (m.get_or(Point { x: 1, y: 2 }, [0]).len() - 3);

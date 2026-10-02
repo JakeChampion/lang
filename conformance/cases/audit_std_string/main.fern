@@ -18,7 +18,7 @@ function main(): i32 {
     if ("x".pad_start(3, " ") != "  x") { print("FAIL padstart"); return 19; }
 
     // collection-returning: split
-    var parts: string[] = "a,b,c".split(",");
+    let parts: string[] = "a,b,c".split(",");
     if (parts.len() != 3) { print("FAIL split-len"); return 20; }
     if (parts[0] != "a" || parts[2] != "c") { print("FAIL split-elem"); return 21; }
 

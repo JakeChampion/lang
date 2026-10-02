@@ -1,7 +1,7 @@
 # 2026-09-05 — a Map read looked like it might keep your key
 
 On the native single-word string ABI, `m.get(k)` with an ALIASED key — a
-`var k` the caller still owns, rather than a fresh concat at the call site —
+`let k` the caller still owns, rather than a fresh concat at the call site —
 stranded the map's key buffer. One block per MAP, sized by the key, flat in
 the value length and in the number of reads. arm64 and wasm32 were clean.
 
@@ -28,7 +28,7 @@ The accounting, per round:
 
 | | rc after |
 |---|---|
-| `var k = stem + "-key"` | 1 |
+| `let k = stem + "-key"` | 1 |
 | `m.insert(k, v)` — the counted key store incs | 2 |
 | map drop, `__drop_map_str_keys` decs | 1 |
 | `k`'s scope exit — **suppressed** | 1, stranded |

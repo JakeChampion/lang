@@ -3,6 +3,6 @@
 // also checks the catalogue's example really does produce the error
 // it documents.
 function main(): i32 {
-    var xs = [];   // error[E020]: empty array literal needs a type annotation
+    let xs = [];   // error[E020]: empty array literal needs a type annotation
     return 0;
 }

@@ -10,24 +10,24 @@ import "testing"
 // skips itself when its toolchain is absent.
 const randProg = `
 import "std/rand" as rand;
-function sum(a: i32[]): i32 { var s: i32 = 0; var i: i32 = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } return s; }
-function has(a: i32[], v: i32): boolean { var i: i32 = 0; while (i < a.len()) { if (a[i] == v) { return true; } i = i + 1; } return false; }
+function sum(a: i32[]): i32 { let s: i32 = 0; let i: i32 = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } return s; }
+function has(a: i32[], v: i32): boolean { let i: i32 = 0; while (i < a.len()) { if (a[i] == v) { return true; } i = i + 1; } return false; }
 function main(): i32 {
-    var xs: i32[] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
-    var s: i32[] = rand.shuffle(xs);
+    let xs: i32[] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+    let s: i32[] = rand.shuffle(xs);
     if (s.len() != 10 || sum(s) != 55) { return 1; }
     if (xs[0] != 1 || xs[9] != 10) { return 2; }            // input untouched
-    var v: i32 = 1; while (v <= 10) { if (!has(s, v)) { return 3; } v = v + 1; }
-    var c: i32 = 0;
+    let v: i32 = 1; while (v <= 10) { if (!has(s, v)) { return 3; } v = v + 1; }
+    let c: i32 = 0;
     while (c < 40) { match (rand.choice(xs)) { Some(e) => { if (!has(xs, e)) { return 4; } }, None => { return 5; } } c = c + 1; }
-    var empty: i32[] = [];
+    let empty: i32[] = [];
     match (rand.choice(empty)) { Some(e) => { return 6; }, None => {} }
-    var samp: i32[] = rand.sample(xs, 4);
+    let samp: i32[] = rand.sample(xs, 4);
     if (samp.len() != 4) { return 7; }
-    var a: i32 = 0;
+    let a: i32 = 0;
     while (a < samp.len()) {
         if (!has(xs, samp[a])) { return 8; }
-        var b: i32 = a + 1;
+        let b: i32 = a + 1;
         while (b < samp.len()) { if (samp[a] == samp[b]) { return 9; } b = b + 1; }
         a = a + 1;
     }

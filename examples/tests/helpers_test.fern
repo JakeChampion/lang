@@ -127,7 +127,7 @@ function test_file_helpers(r: test.TestRunner): test.TestRunner {
   if (dir == "") {
     return rr;
   }
-  var path: string = dir + "/payload.txt";
+  let path: string = dir + "/payload.txt";
   match (write_file(path, "hello\nworld\n")) {
     Ok(_) => {},
     Err(_) => {
@@ -142,7 +142,7 @@ function test_file_helpers(r: test.TestRunner): test.TestRunner {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("helpers");
+  let r: test.TestRunner = test.test_new("helpers");
 
   r = r.it("contains_all pass", test_contains_all_pass);
   r = r.it("contains_all names missing", test_contains_all_localises_missing);

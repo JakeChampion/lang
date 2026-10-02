@@ -32,7 +32,7 @@ function test_first_differs(): test.TestOutcome {
 }
 
 function test_empty_vacuous(): test.TestOutcome {
-  var e: i32[] = [];
+  let e: i32[] = [];
   return test.assert_true(e.all_equal());
 }
 
@@ -45,7 +45,7 @@ function test_free_fn(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("std/array all_equal");
+  let r: test.TestRunner = test.test_new("std/array all_equal");
   r = r.it("all equal", test_all_equal);
   r = r.it("all distinct", test_distinct);
   r = r.it("last differs", test_last_differs);

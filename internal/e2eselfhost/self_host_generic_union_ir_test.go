@@ -43,13 +43,13 @@ function held(s: Slot): i32 {
 }
 
 function main(): i32 {
-    var a: Tree[i32] = Tree.Leaf(Leaf[i32] { v: 4 });
-    var b: Tree[i32] = Pair[i32] { a: 5, b: 6 };
-    var c: Tree[i32] = Lit { v: 7 };
-    var d: Tree[string] = Leaf[string] { v: "le" + "af" };
-    var e: Tree[string] = Tree.Pair(Pair[string] { a: "pa", b: "ir" });
-    var f: Slot = Hold[i32] { v: 30 };
-    var g: Slot = Blank { w: 12 };
+    let a: Tree[i32] = Tree.Leaf(Leaf[i32] { v: 4 });
+    let b: Tree[i32] = Pair[i32] { a: 5, b: 6 };
+    let c: Tree[i32] = Lit { v: 7 };
+    let d: Tree[string] = Leaf[string] { v: "le" + "af" };
+    let e: Tree[string] = Tree.Pair(Pair[string] { a: "pa", b: "ir" });
+    let f: Slot = Hold[i32] { v: 30 };
+    let g: Slot = Blank { w: 12 };
     print((leafOf(a) + leafOf(b) + leafOf(c)).to_string() + ":" + label(d) + ":" + label(e) + ":" + (held(f) + held(g)).to_string());
     return 0;
 }

@@ -40,11 +40,11 @@ function suffix_seconds(b: i32): i64 {
 // interval: unparsable, trailing bytes that are not a single suffix, a NaN,
 // or a negative value.
 pub function parse(f: ld.Format, s: string): Option[ld.LD] {
-  var r: ld.Parse = f.strtold(s);
+  let r: ld.Parse = f.strtold(s);
   if (r.end == 0) {
     return None;
   }
-  var scale: i64 = 1 as i64;
+  let scale: i64 = 1 as i64;
   if (r.end == s.len() - 1) {
     scale = suffix_seconds(s[r.end] as i32);
     if (scale == 0 as i64) {
@@ -72,7 +72,7 @@ pub function nanos_ceil(f: ld.Format, seconds: ld.LD): Option[i64] {
   if (!seconds.is_finite()) {
     return None;
   }
-  var ns: ld.LD = f.mul(seconds, f.from_i64(1000000000 as i64));
+  let ns: ld.LD = f.mul(seconds, f.from_i64(1000000000 as i64));
   return f.round_to_int(ns, ld.round_up()).as_i64();
 }
 
@@ -88,7 +88,7 @@ pub function sleep_seconds(f: ld.Format, seconds: ld.LD): void {
       }
     },
     None => {
-      var hour_ns: i64 = 3600 as i64 * (1000000000 as i64);
+      let hour_ns: i64 = 3600 as i64 * (1000000000 as i64);
       while (true) {
         sleep_ns(hour_ns);
       }

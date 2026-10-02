@@ -7,8 +7,8 @@ which closed the first and recorded that the cell would not move without this.
 ## The repro is two programs one token apart
 
 ```fern
-var keep: E[] = mkv(7);        // 104/102, 80 live
-var keep: E[] = mkv(seed());   // 104/104, clean
+let keep: E[] = mkv(7);        // 104/102, 80 live
+let keep: E[] = mkv(seed());   // 104/104, clean
 ```
 
 Everything else identical, native clean on both, the underflow guard 0

@@ -11,9 +11,9 @@ import "std/array";
 // every program's transitive closure and collided with any user trait
 // providing `add` for i32 (#6931).
 function main(): i32 {
-    var xs: i32[] = [3, 1, 2];
-    var ls: i64[] = [10i64, 20i64];
-    var ss: string[] = ["b", "a", "b"];
+    let xs: i32[] = [3, 1, 2];
+    let ls: i64[] = [10i64, 20i64];
+    let ss: string[] = ["b", "a", "b"];
 
     if (xs.sum() != 6) { return 1; }
     if (ls.sum() != 30i64) { return 2; }

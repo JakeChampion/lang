@@ -11,7 +11,7 @@ import (
 //
 // The IIFE's return-type tag is guessed in the parser by `if_expr_rt`, which has
 // no function table, so any call falls to its "i32" default. #6481 closed the
-// `var x: i64 = …` route by reading the binding's annotation. These three
+// `let x: i64 = …` route by reading the binding's annotation. These three
 // positions have no binding to read: a struct-literal field, a call argument, an
 // array element. The width is recovered after parsing instead, where the
 // function table exists.
@@ -27,19 +27,19 @@ var valueBlockGenericWidthIRCases = []struct {
 	{"struct-field-position", `function id[T](x: T): T { return x; }
 struct Box { n: i64, tag: i32 }
 function main(): i32 {
-    var s: Box = Box { n: (if (true) { id(5000000000i64) } else { id(7i64) }), tag: 1 };
+    let s: Box = Box { n: (if (true) { id(5000000000i64) } else { id(7i64) }), tag: 1 };
     return (s.n / 1000000000i64) as i32;
 }`, 5},
 	{"call-argument-position", `function id[T](x: T): T { return x; }
 function pick[T](c: boolean, a: T, b: T): T { if (c) { return a; } return b; }
 function widen(v: i64): i64 { return v; }
 function main(): i32 {
-    var v: i64 = widen((if (false) { id(3i64) } else { pick(true, 6000000000i64, 4i64) }));
+    let v: i64 = widen((if (false) { id(3i64) } else { pick(true, 6000000000i64, 4i64) }));
     return (v / 1000000000i64) as i32;
 }`, 6},
 	{"array-element-position", `function id[T](x: T): T { return x; }
 function main(): i32 {
-    var xs: i64[] = [1i64, (if (true) { id(7000000000i64) } else { id(2i64) }), 3i64];
+    let xs: i64[] = [1i64, (if (true) { id(7000000000i64) } else { id(2i64) }), 3i64];
     return (xs[1] / 1000000000i64) as i32;
 }`, 7},
 	// A suffixed literal PAST i32-max but inside u32-max must stay u32 rather
@@ -48,13 +48,13 @@ function main(): i32 {
 	// reads value before suffix.
 	{"u32-suffix-past-i32max-control", `function id[T](x: T): T { return x; }
 function main(): i32 {
-    var w: u32 = (if (true) { id(2147484197u32) } else { id(1u32) });
+    let w: u32 = (if (true) { id(2147484197u32) } else { id(1u32) });
     return ((w / 1000000u32) as i32) & 63i32;
 }`, 35},
 	// Control: an arm that names its width with a bare wide literal always
 	// worked, and must keep working.
 	{"wide-literal-arm-control", `function main(): i32 {
-    var v: i64 = (if (true) { 5000000000i64 } else { 7i64 });
+    let v: i64 = (if (true) { 5000000000i64 } else { 7i64 });
     return (v / 1000000000i64) as i32;
 }`, 5},
 }

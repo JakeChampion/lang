@@ -17,8 +17,8 @@ struct Fahrenheit { deg: i32 }
 impl convert.From[i32] for Celsius { function from(v: i32): Self { return Celsius { deg: v }; } }
 impl convert.Into[Fahrenheit] for Celsius { function into(self: Self): Fahrenheit { return Fahrenheit { deg: self.deg * 9 / 5 + 32 }; } }
 function main(): i32 {
-    var c: Celsius = Celsius.from(20);
-    var f: Fahrenheit = c.into();
+    let c: Celsius = Celsius.from(20);
+    let f: Fahrenheit = c.into();
     return f.deg;
 }
 `

@@ -22,7 +22,7 @@ local `flags`. `flags` is passed to
 
 ```
 function borrow_reg_put(reg: string[], key: string, flags: string): string[] {
-    var b: i32 = util.hash_bucket(key, reg.len());
+    let b: i32 = util.hash_bucket(key, reg.len());
     return reg.with(b, reg[b] + key + "|" + flags + "\n");
 }
 ```
@@ -80,6 +80,6 @@ but the caller's dec-on-overwrite for an array local is the buffer-only
 `__fern_arr_dec`, whose justifying comment is about the push MOVE-grow
 helper, where elements transfer without an inc. So the old buffer dies
 owing one reference per element the copy retained. The plain
-`a = f(...)` overwrite has it too — `var a = mk(); a = mk();` on a
+`a = f(...)` overwrite has it too — `let a = mk(); a = mk();` on a
 `string[]` strands one element per round — which makes the fix the
 overwrite's, not the cow's.

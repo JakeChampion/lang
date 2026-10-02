@@ -350,16 +350,16 @@ measured against the interp oracle (45 in each case):
 
 | call | x86-64 | wasm |
 |---|---|---|
-| `var h: H = H { f: mkval }; h.f()` | 45 | module refused |
-| `var fs: (() => f64)[] = [mkval]; fs[0]()` | 255 | module refused |
-| `var t: (() => f64, i32) = (mkval, 1); t.0()` | 255 | module refused |
-| `var f: (f64) => f64 = scale; f(4.5)` | wrong | module refused |
+| `let h: H = H { f: mkval }; h.f()` | 45 | module refused |
+| `let fs: (() => f64)[] = [mkval]; fs[0]()` | 255 | module refused |
+| `let t: (() => f64, i32) = (mkval, 1); t.0()` | 255 | module refused |
+| `let f: (f64) => f64 = scale; f(4.5)` | wrong | module refused |
 
 Two boundaries in that table are worth reading off it. Binding the result to a
-declared local first (`var v: f64 = fs[0]();`) fixed the REGISTER backends —
+declared local first (`let v: f64 = fs[0]();`) fixed the REGISTER backends —
 the declaration supplies the width — and did nothing for wasm, whose funcref
 type is a separate decision; so the `_local` rows in the pinning suite are a
-control for the register half only. And the zero-argument `var f: () => f64 =
+control for the register half only. And the zero-argument `let f: () => f64 =
 mkval; f()` was already correct on both, even though the checker could not type
 it: irlower's own slot walk carried the width. That gap is real all the same,
 and closing it is what makes the with-argument form above work.
@@ -382,7 +382,7 @@ addition from the real work. Three layers were responsible:
   type's result, and is now the single rule both bail sites ask.
 - **A fn-typed LOCAL's declared return never reached its binding.**
   `var_declared_type` resolved `v.type_name` and ignored the `fn_ret` sidecar
-  beside it, so `var f: () => f64` bound the opaque `fn` tag with an unknown
+  beside it, so `let f: () => f64` bound the opaque `fn` tag with an unknown
   result — the local sibling of the `fn_param_decl_type` arm params already had.
 - **The parenthesised fn spelling dropped its result entirely.**
   `parse_type_paren`'s grouping branch returned `consume_array_suffix(p, "fn")`,
@@ -450,7 +450,7 @@ calls, and it was reverted.
 the coarse spelling are behavioural, and neither of the two found is a match on
 `"fn[]"`:
 
-- **The whole-array alias bind reached its arm by accident.** `var xs = r.hs`
+- **The whole-array alias bind reached its arm by accident.** `let xs = r.hs`
   is claimed by the ENUM-array-field arm, because the coarse element `"fn"`
   reads as enum-like to `is_enum_like_name`. With the spelling kept,
   `(() => i32)` is not an enum name, the arm declines, the slot is never marked,
@@ -475,7 +475,7 @@ The sidecar route was then taken, and it is what landed — see below.
 
 ### The ARRAY element: the sidecar route, taken
 
-`var fs: ((f64) => f64)[] = [scale]; fs[0](4.5)` is the one shape whose declared
+`let fs: ((f64) => f64)[] = [scale]; fs[0](4.5)` is the one shape whose declared
 spelling does not survive to a consumer. A tuple keeps its spelling, a field
 records its two sidecars; an array is coarsened whole to `"fn[]"`, and `fn_ret`
 alone names half a signature.
@@ -493,7 +493,7 @@ irlower rebuilds the ELEMENT spelling from the pair and keeps it on the slot as
 sidecars) and hands it to `fn_sig_of_ref`, and `sig_arg_width_char` reads the
 argument widths back out of the same tag, so the closure-element arm and the
 fn-pointer-element arm each lower arguments and name their funcref from ONE
-string. A whole-array alias (`var xs = fs`, `var xs = r.hs`) inherits the
+string. A whole-array alias (`let xs = fs`, `let xs = r.hs`) inherits the
 spelling at the rebind, because otherwise `xs[0]` reaches the call with nothing
 to name.
 
@@ -571,7 +571,7 @@ and one signature, so `internal/e2eselfhost` and the fixture legs are still the
 gates that matter.
 
 **CLOSED (the section below is the record of why it was blocked).** `fn_ret` now
-carries scalar returns, and `parse_stmt`'s var binding stamps them onto an
+carries scalar returns, and `parse_stmt`'s let binding stamps them onto an
 unannotated lambda init, so the declared type answers before `irt_guess` is ever
 consulted. The audit the note called for found exactly ONE consumer that treated
 a non-empty, non-string, unbracketed `fn_ret` as a struct name
@@ -586,7 +586,7 @@ lambda's return type is *inferred* from its body by `irt_guess`, which #6216 and
 the binding already states the answer:
 
 ```fern
-var f: () => f64 = () => m.get_or("k", 0.0);   // still miscompiles
+let f: () => f64 = () => m.get_or("k", 0.0);   // still miscompiles
 ```
 
 `irt_guess` cannot type a **builtin** method call without absorbing the whole
@@ -597,7 +597,7 @@ The annotation route is blocked one level down, and precisely: `parse_type_name`
 *does* recover a fn type's return spelling, but deliberately keeps only
 **struct**, **nominal-enum** and **string** returns (`fn_ret_ty`, parser.fern) —
 scalars are dropped as "primitives need no field lookup", which was true of every
-consumer that existed when it was written. So `var f: () => f64` yields an empty
+consumer that existed when it was written. So `let f: () => f64` yields an empty
 `fn_ret`, and a stamp-the-lambda fix built on it is inert. Verified by
 instrumenting it: `STAMP fn_ret=[] lam_ret=[]`.
 
@@ -624,9 +624,9 @@ migration are consumers that never learned to read an annotation already in
 place.
 
 **And a consumer is rarely alone.** The tuple DESTRUCTURE has its own copy of
-that `ExprIndex` arm — `var (a, b) = arr[i]`, typed from the same
+that `ExprIndex` arm — `let (a, b) = arr[i]`, typed from the same
 `arrarr_elem` — and it did not get the fallback when `expr_tuple_elem_tag` did.
-So one token apart, `ps[0].1` was right and `var (i, v) = ps[0]` returned
+So one token apart, `ps[0].1` was right and `let (i, v) = ps[0]` returned
 garbage for an f64 element (255 on x86-64, 0 on wasm, compiler exit 0). The two
 arms are written as siblings and are commented as siblings; only one of them was
 fixed. When wiring a carrier into a consumer, grep for the walk it replaces —
@@ -648,7 +648,7 @@ spelling is not.
 
 A third ordering fact, learned wiring `ExprIndex.ty`: **a carrier must reach the
 LOAD site, not just the value predicates.** Wiring `expr_is_f64` alone made
-`var v: f64 = (if (c) { [1.5] } else { [2.5] })[0]` type as f64 downstream while
+`let v: f64 = (if (c) { [1.5] } else { [2.5] })[0]` type as f64 downstream while
 still emitting a 4-byte `arr_get` — the two halves disagreed and the wasm
 validator rejected the module outright ("expected f64, found i32"). The width
 decision and the type decision have to share the leaf, which is why
@@ -689,7 +689,7 @@ structs and the result is whatever the method returns:
 ```fern
 struct V { x: f64, y: f64 }
 function (a: V) mul(b: V): f64 { return a.x * b.x + a.y * b.y; }
-var d: f64 = p * q;               // f64 — and no walk over p / q can say so
+let d: f64 = p * q;               // f64 — and no walk over p / q can say so
 ```
 
 Every scalar-returning overload — `f64`, `i64`, `string`, `boolean`, and the
@@ -744,8 +744,8 @@ the enclosing `as i32`. Both halves read the same tag now.
 ### A carrier is only as good as the checker behind it
 
 #6165 shipped with a known sibling gap: the f64 shape
-`var v: f64 = (if (c) { [1.5, 2.5] } else { … })[1]` lowers, but the **i64**
-shape `var v: i64 = (if (c) { [7000000000, 9000000000] } else { … })[1]` still
+`let v: f64 = (if (c) { [1.5, 2.5] } else { … })[1]` lowers, but the **i64**
+shape `let v: i64 = (if (c) { [7000000000, 9000000000] } else { … })[1]` still
 bails the IR path — while the interpreter, the semantic oracle, evaluates it
 fine. Chasing that down produced the finding worth recording here, because it
 bounds what the whole annotate-and-consume migration can deliver.
@@ -765,7 +765,7 @@ parser.ExprNumber(n) => {
 The native compiler does something categorically different: an unsuffixed
 integer literal parses **polymorphic** (`NumberLit.Width == 0`, see
 `internal/parser/parser.go`'s suffix switch) and a later settling pass fixes its
-width from context, so `var v: i64 = <literal>` settles the literal to 64. Only
+width from context, so `let v: i64 = <literal>` settles the literal to 64. Only
 a typed suffix (`42i64`) pins the width at parse time. The self-host checker has
 no settling pass at all.
 

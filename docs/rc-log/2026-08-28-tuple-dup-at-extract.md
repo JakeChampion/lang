@@ -76,7 +76,7 @@ proof rather than a coincidence.
   `keep`'s box instead of being freed under `keep`'s live reference — one
   leak deeper, strictly safer, and TUPB staying refused is what the row pins.
 - `bind_spelling_stays_refused` (new): 200/0/8000, pinned at frees 0. The
-  bind spelling (`var e = src.1; return e`) is deliberately outside this
+  bind spelling (`let e = src.1; return e`) is deliberately outside this
   port — the scans' `StmtVar` arm is untouched.
 
 ## Deferred, recorded here so the enumeration stays honest

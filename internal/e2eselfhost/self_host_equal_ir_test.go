@@ -17,7 +17,7 @@ impl Eq for i32 { function eq(self: Self, other: Self): boolean { return self ==
 impl Eq for string { function eq(self: Self, other: Self): boolean { return self == other; } }
 pub function equal[T: Eq](a: T[], b: T[]): boolean {
     if (a.len() != b.len()) { return false; }
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < a.len()) {
         if (a[i] != b[i]) { return false; }
         i = i + 1;
@@ -25,7 +25,7 @@ pub function equal[T: Eq](a: T[], b: T[]): boolean {
     return true;
 }
 pub function index_of_last[T: Eq](xs: T[], target: T): Option[i32] {
-    var i: i32 = xs.len() - 1;
+    let i: i32 = xs.len() - 1;
     while (i >= 0) {
         if (xs[i] == target) { return Some(i); }
         i = i - 1;
@@ -47,13 +47,13 @@ var equalIRCases = []struct {
 	want int
 }{
 	// i32 equality: equal, value mismatch, length mismatch -> 1 + 2 + 4 = 7.
-	{"equal-i32", `var a: i32[] = [1, 2, 3]; var b: i32[] = [1, 2, 3]; var c: i32[] = [1, 2, 4]; var r: i32 = 0; if (equal(a, b)) { r = r + 1; } if (!equal(a, c)) { r = r + 2; } if (!equal(a, [1, 2])) { r = r + 4; } return r;`, 7},
+	{"equal-i32", `let a: i32[] = [1, 2, 3]; let b: i32[] = [1, 2, 3]; let c: i32[] = [1, 2, 4]; let r: i32 = 0; if (equal(a, b)) { r = r + 1; } if (!equal(a, c)) { r = r + 2; } if (!equal(a, [1, 2])) { r = r + 4; } return r;`, 7},
 	// string equality via str_eq: equal + mismatch -> 8 + 4 = 12.
-	{"equal-string", `var ss: string[] = ["x", "y", "x"]; var r: i32 = 0; if (equal(ss, ["x", "y", "x"])) { r = r + 8; } if (!equal(ss, ["x", "y", "z"])) { r = r + 4; } return r;`, 12},
+	{"equal-string", `let ss: string[] = ["x", "y", "x"]; let r: i32 = 0; if (equal(ss, ["x", "y", "x"])) { r = r + 8; } if (!equal(ss, ["x", "y", "z"])) { r = r + 4; } return r;`, 12},
 	// index_of_last i32: last 5 at index 4 -> 40, plus miss -> +1 -> 41.
-	{"last-i32", `var a: i32[] = [5, 1, 5, 2, 5]; var r: i32 = uw(index_of_last(a, 5), 0 - 1) * 10; if (uw(index_of_last(a, 9), 0 - 1) == 0 - 1) { r = r + 1; } return r;`, 41},
+	{"last-i32", `let a: i32[] = [5, 1, 5, 2, 5]; let r: i32 = uw(index_of_last(a, 5), 0 - 1) * 10; if (uw(index_of_last(a, 9), 0 - 1) == 0 - 1) { r = r + 1; } return r;`, 41},
 	// index_of_last string: last "a" at index 2 -> 2 (str compare on the reverse scan).
-	{"last-string", `var ss: string[] = ["a", "b", "a", "c"]; return uw(index_of_last(ss, "a"), 0 - 1);`, 2},
+	{"last-string", `let ss: string[] = ["a", "b", "a", "c"]; return uw(index_of_last(ss, "a"), 0 - 1);`, 2},
 }
 
 func equalIRSrc(mainBody string) string {

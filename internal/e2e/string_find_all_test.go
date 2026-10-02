@@ -11,11 +11,11 @@ import "testing"
 const stringFindAllProg = `
 import "std/string";
 function main(): i32 {
-    var a: i32[] = "abcabcabc".find_all("bc");
+    let a: i32[] = "abcabcabc".find_all("bc");
     if (a.len() != 3) { return 1; }
     if (a[0] != 1 || a[1] != 4 || a[2] != 7) { return 2; }
     // non-overlapping: resume past each match
-    var b: i32[] = "aaaa".find_all("aa");
+    let b: i32[] = "aaaa".find_all("aa");
     if (b.len() != 2 || b[0] != 0 || b[1] != 2) { return 3; }
     // no match -> empty
     if ("hello".find_all("z").len() != 0) { return 4; }
@@ -24,10 +24,10 @@ function main(): i32 {
     // length always equals count
     if ("a.b.c.d".find_all(".").len() != "a.b.c.d".count(".")) { return 6; }
     // single leading match
-    var c: i32[] = "hello".find_all("he");
+    let c: i32[] = "hello".find_all("he");
     if (c.len() != 1 || c[0] != 0) { return 7; }
     // match at the very end
-    var d: i32[] = "xyzend".find_all("end");
+    let d: i32[] = "xyzend".find_all("end");
     if (d.len() != 1 || d[0] != 3) { return 8; }
     return 42;
 }

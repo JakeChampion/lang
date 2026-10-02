@@ -109,7 +109,7 @@ func TestSelfHostExternRecordResultCustomProvider(t *testing.T) {
 @import("local:test/src@0.1.0", "make-point")
 function make_point(a: i32, b: i32): Point;
 function main(): i32 {
-    var p: Point = make_point(10, 32);
+    let p: Point = make_point(10, 32);
     if (p.x + p.y == 42) { write("` + want + `"); } else { write("mk-bad"); }
     return 0;
 }`

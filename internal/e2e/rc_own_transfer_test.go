@@ -19,8 +19,8 @@ import (
 // is suppressed). No leak, no double free.
 const ownTransferFreshSrc = `function consume(own xs: i32[]): i32 { return xs[0] + xs[1]; }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 300) {
         acc = acc + consume([i, i + 1]);   // [i,i+1] transferred to consume
         i = i + 1;
@@ -36,8 +36,8 @@ function main(): i32 {
 const ownTransferChainSrc = `function consume(own xs: i32[]): i32 { return xs[0] + xs[1]; }
 function relay(own ys: i32[]): i32 { return consume(ys); }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 300) {
         acc = acc + relay([i, i + 1]);
         i = i + 1;
@@ -88,10 +88,10 @@ func TestWASMOwnTransfer(t *testing.T) {
 	bumpSrc := func(n string) string {
 		return `function consume(own xs: i32[]): i32 { return xs[0]; }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
     while (i < ` + n + `) {
-        var unused: i32 = consume([i, i + 1, i + 2, i + 3]);
+        let unused: i32 = consume([i, i + 1, i + 2, i + 3]);
         i = i + 1;
     }
     return (__heap_bump_bytes() as i32) - before;

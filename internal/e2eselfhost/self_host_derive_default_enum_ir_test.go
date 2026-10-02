@@ -20,20 +20,20 @@ var deriveDefaultEnumIRCases = []struct {
 }{
 	// First variant is a UNIT variant → bare variant value. 3.
 	{"unit-first",
-		`trait Default { function default(): Self; } @derive(Default) enum E { A, B(i32) } function main(): i32 { var e: E = E.default(); match (e) { A => { return 3; }, B(n) => { return n; } } }`, 3},
+		`trait Default { function default(): Self; } @derive(Default) enum E { A, B(i32) } function main(): i32 { let e: E = E.default(); match (e) { A => { return 3; }, B(n) => { return n; } } }`, 3},
 	// First variant has an i32 payload → defaulted to 0. 0 + 4 = 4.
 	{"payload-i32",
-		`trait Default { function default(): Self; } @derive(Default) enum E { Wrap(i32), Other } function main(): i32 { var e: E = E.default(); match (e) { Wrap(n) => { return n + 4; }, Other => { return 1; } } }`, 4},
+		`trait Default { function default(): Self; } @derive(Default) enum E { Wrap(i32), Other } function main(): i32 { let e: E = E.default(); match (e) { Wrap(n) => { return n + 4; }, Other => { return 1; } } }`, 4},
 	// First variant has a string payload → defaulted to "". 0 + 9 = 9.
 	{"payload-string",
-		`trait Default { function default(): Self; } @derive(Default) enum E { Msg(string), None } function main(): i32 { var e: E = E.default(); match (e) { Msg(s) => { return s.len() + 9; }, None => { return 1; } } }`, 9},
+		`trait Default { function default(): Self; } @derive(Default) enum E { Msg(string), None } function main(): i32 { let e: E = E.default(); match (e) { Msg(s) => { return s.len() + 9; }, None => { return 1; } } }`, 9},
 	// First variant has a boolean payload → defaulted to false. 6.
 	{"payload-boolean",
-		`trait Default { function default(): Self; } @derive(Default) enum E { Flag(boolean), Off } function main(): i32 { var e: E = E.default(); match (e) { Flag(b) => { if (b) { return 1; } return 6; }, Off => { return 2; } } }`, 6},
-	// Inferred binding: `var e = E.default()` recovers the enum type from the
+		`trait Default { function default(): Self; } @derive(Default) enum E { Flag(boolean), Off } function main(): i32 { let e: E = E.default(); match (e) { Flag(b) => { if (b) { return 1; } return 6; }, Off => { return 2; } } }`, 6},
+	// Inferred binding: `let e = E.default()` recovers the enum type from the
 	// registered associated-call return type. First variant A → 7.
 	{"inferred-binding",
-		`trait Default { function default(): Self; } @derive(Default) enum E { A, B(i32) } function main(): i32 { var e = E.default(); match (e) { A => { return 7; }, B(n) => { return n; } } }`, 7},
+		`trait Default { function default(): Self; } @derive(Default) enum E { A, B(i32) } function main(): i32 { let e = E.default(); match (e) { A => { return 7; }, B(n) => { return n; } } }`, 7},
 }
 
 // TestSelfHostDeriveDefaultEnumIR compiles each case with the self-host CLI for

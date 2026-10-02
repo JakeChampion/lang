@@ -14,12 +14,12 @@ const wasmFdReleaseProgram = `
 import "std/i32";
 
 function round(i: i32): i32 {
-    var s: string = "line " + i.to_string() + "\n";
-    var wrote: i32 = match (write_file("f.txt", s)) { Ok(_) => 1, Err(_) => 0 };
+    let s: string = "line " + i.to_string() + "\n";
+    let wrote: i32 = match (write_file("f.txt", s)) { Ok(_) => 1, Err(_) => 0 };
     if (wrote == 0) { return 1; }
-    var got: i32 = match (read_file("f.txt")) { Ok(t) => t.len(), Err(_) => 0 - 1 };
+    let got: i32 = match (read_file("f.txt")) { Ok(t) => t.len(), Err(_) => 0 - 1 };
     if (got != s.len()) { return 2; }
-    var gotb: i32 = match (read_file_bytes("f.txt")) { Ok(b) => b.len(), Err(_) => 0 - 1 };
+    let gotb: i32 = match (read_file_bytes("f.txt")) { Ok(b) => b.len(), Err(_) => 0 - 1 };
     if (gotb != s.len()) { return 3; }
     match (open_writer("w.txt")) {
         Ok(w) => {
@@ -42,17 +42,17 @@ function round(i: i32): i32 {
         },
         Err(_) => { return 6; }
     }
-    var n: i32 = match (read_dir(".")) { Ok(es) => es.len(), Err(_) => 0 - 1 };
+    let n: i32 = match (read_dir(".")) { Ok(es) => es.len(), Err(_) => 0 - 1 };
     if (n < 2) { return 7; }
-    var isf: boolean = match (stat("f.txt")) { Ok(st) => st.is_file, Err(_) => false };
+    let isf: boolean = match (stat("f.txt")) { Ok(st) => st.is_file, Err(_) => false };
     if (!isf) { return 8; }
     return 0;
 }
 
 function main(): i32 {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var r: i32 = round(i);
+        let r: i32 = round(i);
         if (r != 0) { write("FAIL " + r.to_string() + " at round " + i.to_string()); return r; }
         i = i + 1;
     }

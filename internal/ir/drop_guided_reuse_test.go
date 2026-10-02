@@ -46,9 +46,9 @@ func reuseCountDG(t *testing.T, src string) int {
 func TestDropGuidedParityDeadLocal(t *testing.T) {
 	src := `struct Point { x: i32, y: i32 }
 function main(): i32 {
-    var a: Point = Point { x: 1, y: 2 };
-    var s: i32 = a.x + a.y;
-    var b: Point = Point { x: s + 1, y: 9 };
+    let a: Point = Point { x: 1, y: 2 };
+    let s: i32 = a.x + a.y;
+    let b: Point = Point { x: s + 1, y: 9 };
     return b.x + b.y;
 }`
 	if got := reuseCountDG(t, src); got != 1 {
@@ -59,12 +59,12 @@ function main(): i32 {
 func TestDropGuidedParityLoopBody(t *testing.T) {
 	src := `struct Point { x: i32, y: i32 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 10) {
-        var a: Point = Point { x: i, y: i + 1 };
-        var s: i32 = a.x + a.y;
-        var b: Point = Point { x: s, y: i };
+        let a: Point = Point { x: i, y: i + 1 };
+        let s: i32 = a.x + a.y;
+        let b: Point = Point { x: s, y: i };
         acc = acc + b.x + b.y;
         i = i + 1;
     }
@@ -78,11 +78,11 @@ function main(): i32 {
 func TestDropGuidedParityCrossBlock(t *testing.T) {
 	src := `struct Point { x: i32, y: i32 }
 function main(): i32 {
-    var a: Point = Point { x: 1, y: 2 };
-    var s: i32 = a.x + a.y;
-    var acc: i32 = 0;
+    let a: Point = Point { x: 1, y: 2 };
+    let s: i32 = a.x + a.y;
+    let acc: i32 = 0;
     if (s > 0) {
-        var b: Point = Point { x: s, y: 9 };
+        let b: Point = Point { x: s, y: 9 };
         acc = b.x + b.y;
     }
     return acc;
@@ -95,8 +95,8 @@ function main(): i32 {
 func TestDropGuidedParitySkipsLiveSource(t *testing.T) {
 	src := `struct Point { x: i32, y: i32 }
 function main(): i32 {
-    var a: Point = Point { x: 1, y: 2 };
-    var b: Point = Point { x: a.x + 1, y: 9 };
+    let a: Point = Point { x: 1, y: 2 };
+    let b: Point = Point { x: a.x + 1, y: 9 };
     return a.y + b.x;
 }`
 	if got := reuseCountDG(t, src); got != 0 {
@@ -107,15 +107,15 @@ function main(): i32 {
 func TestDropGuidedParityComposesLevels(t *testing.T) {
 	src := `struct Point { x: i32, y: i32 }
 function main(): i32 {
-    var a: Point = Point { x: 1, y: 2 };
-    var sa: i32 = a.x + a.y;
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let a: Point = Point { x: 1, y: 2 };
+    let sa: i32 = a.x + a.y;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 10) {
-        var m: Point = Point { x: i, y: i };
-        var sm: i32 = m.x + m.y;
+        let m: Point = Point { x: i, y: i };
+        let sm: i32 = m.x + m.y;
         if (sm >= 0) {
-            var c: Point = Point { x: sa + sm, y: i };
+            let c: Point = Point { x: sa + sm, y: i };
             acc = acc + c.x + c.y;
         }
         i = i + 1;
@@ -132,15 +132,15 @@ function main(): i32 {
 // dgArmShapeSrc: a's LAST USE is inside the if arm, before b's construction
 // in the same arm. The PLDI pairing structurally misses it (a is not
 // declared in the arm's list, and the cross-block deadFrom sees a used
-// inside the enclosing if), while the drop token born after `var s` flows
+// inside the enclosing if), while the drop token born after `let s` flows
 // straight to b.
 const dgArmShapeSrc = `struct Point { x: i32, y: i32 }
 function main(): i32 {
-    var a: Point = Point { x: 1, y: 2 };
-    var acc: i32 = 0;
+    let a: Point = Point { x: 1, y: 2 };
+    let acc: i32 = 0;
     if (acc == 0) {
-        var s: i32 = a.x + a.y;
-        var b: Point = Point { x: s, y: 9 };
+        let s: i32 = a.x + a.y;
+        let b: Point = Point { x: s, y: 9 };
         acc = b.x + b.y;
     }
     return acc;
@@ -170,11 +170,11 @@ func TestDropGuidedArmShapeOffBaseline(t *testing.T) {
 func TestDropGuidedSkipsSiblingArmRef(t *testing.T) {
 	src := `struct Point { x: i32, y: i32 }
 function main(): i32 {
-    var a: Point = Point { x: 1, y: 2 };
-    var acc: i32 = 0;
+    let a: Point = Point { x: 1, y: 2 };
+    let acc: i32 = 0;
     if (acc == 0) {
-        var s: i32 = a.x;
-        var b: Point = Point { x: s, y: 9 };
+        let s: i32 = a.x;
+        let b: Point = Point { x: s, y: 9 };
         acc = b.x + b.y;
     } else {
         acc = a.y;
@@ -191,11 +191,11 @@ function main(): i32 {
 func TestDropGuidedSkipsUseAfterStatement(t *testing.T) {
 	src := `struct Point { x: i32, y: i32 }
 function main(): i32 {
-    var a: Point = Point { x: 1, y: 2 };
-    var acc: i32 = 0;
+    let a: Point = Point { x: 1, y: 2 };
+    let acc: i32 = 0;
     if (acc == 0) {
-        var s: i32 = a.x;
-        var b: Point = Point { x: s, y: 9 };
+        let s: i32 = a.x;
+        let b: Point = Point { x: s, y: 9 };
         acc = b.x + b.y;
     }
     return acc + a.y;
@@ -211,12 +211,12 @@ function main(): i32 {
 func TestDropGuidedSkipsLoopArm(t *testing.T) {
 	src := `struct Point { x: i32, y: i32 }
 function main(): i32 {
-    var a: Point = Point { x: 1, y: 2 };
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let a: Point = Point { x: 1, y: 2 };
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 10) {
-        var s: i32 = a.x + a.y;
-        var b: Point = Point { x: s, y: i };
+        let s: i32 = a.x + a.y;
+        let b: Point = Point { x: s, y: i };
         acc = acc + b.x + b.y;
         i = i + 1;
     }
@@ -233,11 +233,11 @@ function main(): i32 {
 func TestDropGuidedSkipsMatchScrutinee(t *testing.T) {
 	src := `enum Wrapper { Wrap(i32[]) }
 function main(): i32 {
-    var a: Wrapper = Wrap([1, 2]);
-    var out: i32 = 0;
+    let a: Wrapper = Wrap([1, 2]);
+    let out: i32 = 0;
     match (a) {
         Wrap(xs) => {
-            var b: Wrapper = Wrap([xs[0]]);
+            let b: Wrapper = Wrap([xs[0]]);
             out = match (b) { Wrap(ys) => ys[0] };
         }
     }
@@ -254,13 +254,13 @@ func TestDropGuidedFiresMatchArmUnrelatedDonor(t *testing.T) {
 	src := `enum Flag { On, Off }
 struct Point { x: i32, y: i32 }
 function main(): i32 {
-    var a: Point = Point { x: 1, y: 2 };
-    var f: Flag = On;
-    var acc: i32 = 0;
+    let a: Point = Point { x: 1, y: 2 };
+    let f: Flag = On;
+    let acc: i32 = 0;
     match (f) {
         On => {
-            var s: i32 = a.x + a.y;
-            var b: Point = Point { x: s, y: 9 };
+            let s: i32 = a.x + a.y;
+            let b: Point = Point { x: s, y: 9 };
             acc = b.x + b.y;
         },
         Off => {
@@ -280,13 +280,13 @@ function main(): i32 {
 func TestDropGuidedFiresArmDropInLoop(t *testing.T) {
 	src := `struct Point { x: i32, y: i32 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 10) {
-        var a: Point = Point { x: i, y: i + 1 };
+        let a: Point = Point { x: i, y: i + 1 };
         if (i % 2 == 0) {
-            var s: i32 = a.x + a.y;
-            var b: Point = Point { x: s, y: i };
+            let s: i32 = a.x + a.y;
+            let b: Point = Point { x: s, y: i };
             acc = acc + b.x + b.y;
         }
         i = i + 1;

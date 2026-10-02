@@ -74,14 +74,14 @@ func tupXReuseElemCases() []tupXReuseElemCase {
 			// recipient's slot is exit-swept normally.
 			name: "donor_and_recipient_idents",
 			src: `function round(i: i32): i32 {
-    var xs: i32[] = [i, i + 1];
-    var t: (i32, i32[]) = (i, xs);
-    var a: i32 = t.1[0];
-    var ys: i32[] = [i + 2, i + 3];
-    var u: (i32, i32[]) = (i, ys);
+    let xs: i32[] = [i, i + 1];
+    let t: (i32, i32[]) = (i, xs);
+    let a: i32 = t.1[0];
+    let ys: i32[] = [i + 2, i + 3];
+    let u: (i32, i32[]) = (i, ys);
     return a + u.1[1];
 }
-function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
+function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
 			want: 74, allocs: 300,
 		},
 		{
@@ -90,13 +90,13 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
 			// while the reuse tagged the slot from the element expression.
 			name: "recipient_array_literal",
 			src: `function round(i: i32): i32 {
-    var xs: i32[] = [i, i + 1];
-    var t: (i32, i32[]) = (i, xs);
-    var a: i32 = t.1[0];
-    var u: (i32, i32[]) = (i, [i + 2, i + 3]);
+    let xs: i32[] = [i, i + 1];
+    let t: (i32, i32[]) = (i, xs);
+    let a: i32 = t.1[0];
+    let u: (i32, i32[]) = (i, [i + 2, i + 3]);
     return a + u.1[1];
 }
-function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
+function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
 			want: 74, allocs: 300,
 		},
 		{
@@ -106,14 +106,14 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
 			// corrupts, and the underflow check is what separates the two.
 			name: "donor_source_read_after",
 			src: `function round(i: i32): i32 {
-    var xs: i32[] = [i, i + 1];
-    var t: (i32, i32[]) = (i, xs);
-    var a: i32 = t.1[0];
-    var ys: i32[] = [i + 2, i + 3];
-    var u: (i32, i32[]) = (i, ys);
+    let xs: i32[] = [i, i + 1];
+    let t: (i32, i32[]) = (i, xs);
+    let a: i32 = t.1[0];
+    let ys: i32[] = [i + 2, i + 3];
+    let u: (i32, i32[]) = (i, ys);
     return a + u.1[1] + xs[1];
 }
-function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
+function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
 			want: 61, allocs: 300,
 		},
 		{
@@ -121,16 +121,16 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
 			// releasing one position.
 			name: "two_retained_positions",
 			src: `function round(i: i32): i32 {
-    var xs: i32[] = [i, i + 1];
-    var ys: i32[] = [i + 2, i + 3];
-    var t: (i32[], i32[]) = (xs, ys);
-    var a: i32 = t.0[0] + t.1[1];
-    var ps: i32[] = [i + 4, i + 5];
-    var qs: i32[] = [i + 6, i + 7];
-    var u: (i32[], i32[]) = (ps, qs);
+    let xs: i32[] = [i, i + 1];
+    let ys: i32[] = [i + 2, i + 3];
+    let t: (i32[], i32[]) = (xs, ys);
+    let a: i32 = t.0[0] + t.1[1];
+    let ps: i32[] = [i + 4, i + 5];
+    let qs: i32[] = [i + 6, i + 7];
+    let u: (i32[], i32[]) = (ps, qs);
     return a + u.0[1] + u.1[0];
 }
-function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
+function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
 			want: 35, allocs: 500,
 		},
 		{
@@ -140,15 +140,15 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
 			// consult the deep-free class, not only the recorded element kinds.
 			name: "chained_donor",
 			src: `function round(i: i32): i32 {
-    var xs: i32[] = [i, i + 1];
-    var t: (i32, i32[]) = (i, xs);
-    var a: i32 = t.1[0];
-    var u: (i32, i32[]) = (i, [i + 2, i + 3]);
-    var b: i32 = u.1[1];
-    var v: (i32, i32[]) = (i, [i + 4, i + 5]);
+    let xs: i32[] = [i, i + 1];
+    let t: (i32, i32[]) = (i, xs);
+    let a: i32 = t.1[0];
+    let u: (i32, i32[]) = (i, [i + 2, i + 3]);
+    let b: i32 = u.1[1];
+    let v: (i32, i32[]) = (i, [i + 4, i + 5]);
     return a + b + v.1[0];
 }
-function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
+function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
 			want: 29, allocs: 400,
 		},
 		{
@@ -158,13 +158,13 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
 			// many frees the caller's live array.
 			name: "param_ident_donor",
 			src: `function feed(xs: i32[], i: i32): i32 {
-    var t: (i32, i32[]) = (i, xs);
-    var a: i32 = t.1[0];
-    var ys: i32[] = [i + 2, i + 3];
-    var u: (i32, i32[]) = (i, ys);
+    let t: (i32, i32[]) = (i, xs);
+    let a: i32 = t.1[0];
+    let ys: i32[] = [i + 2, i + 3];
+    let u: (i32, i32[]) = (i, ys);
     return a + u.1[1];
 }
-function main(): i32 { var xs: i32[] = [7, 11]; var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + feed(xs, r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
+function main(): i32 { let xs: i32[] = [7, 11]; let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x + feed(xs, r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
 			want: 57, allocs: 200,
 		},
 		{
@@ -175,19 +175,19 @@ function main(): i32 { var xs: i32[] = [7, 11]; var x: i32 = 0; var r: i32 = 0; 
 			// nothing — here it owns a fresh array literal.
 			name: "loop_carried_recipient_literal",
 			src: `function run(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var xs: i32[] = [i, i + 1];
-        var t: (i32, i32[]) = (i, xs);
-        var a: i32 = t.1[0];
-        var u: (i32, i32[]) = (i, [i + 2, i + 3]);
+        let xs: i32[] = [i, i + 1];
+        let t: (i32, i32[]) = (i, xs);
+        let a: i32 = t.1[0];
+        let u: (i32, i32[]) = (i, [i + 2, i + 3]);
         acc = acc + a + u.1[1];
         i = i + 1;
     }
     return acc;
 }
-function main(): i32 { var x: i32 = run(100); if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
+function main(): i32 { let x: i32 = run(100); if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
 			want: 74, allocs: 300,
 		},
 		{
@@ -197,20 +197,20 @@ function main(): i32 { var x: i32 = run(100); if (__rc_underflow_count() != 0) {
 			// the widened prior-box gate could have got wrong.
 			name: "loop_carried_recipient_ident",
 			src: `function run(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var xs: i32[] = [i, i + 1];
-        var t: (i32, i32[]) = (i, xs);
-        var a: i32 = t.1[0];
-        var ys: i32[] = [i + 2, i + 3];
-        var u: (i32, i32[]) = (i, ys);
+        let xs: i32[] = [i, i + 1];
+        let t: (i32, i32[]) = (i, xs);
+        let a: i32 = t.1[0];
+        let ys: i32[] = [i + 2, i + 3];
+        let u: (i32, i32[]) = (i, ys);
         acc = acc + a + u.1[1];
         i = i + 1;
     }
     return acc;
 }
-function main(): i32 { var x: i32 = run(100); if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
+function main(): i32 { let x: i32 = run(100); if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
 			want: 74, allocs: 300,
 		},
 		{
@@ -219,15 +219,15 @@ function main(): i32 { var x: i32 = run(100); if (__rc_underflow_count() != 0) {
 			// direction the corrected slot tags could have got wrong.
 			name: "recipient_source_read_after",
 			src: `function round(i: i32): i32 {
-    var xs: i32[] = [i, i + 1];
-    var t: (i32, i32[]) = (i, xs);
-    var a: i32 = t.1[0];
-    var ys: i32[] = [i + 2, i + 3];
-    var u: (i32, i32[]) = (i, ys);
-    var b: i32 = u.1[1];
+    let xs: i32[] = [i, i + 1];
+    let t: (i32, i32[]) = (i, xs);
+    let a: i32 = t.1[0];
+    let ys: i32[] = [i + 2, i + 3];
+    let u: (i32, i32[]) = (i, ys);
+    let b: i32 = u.1[1];
     return a + b + ys[0];
 }
-function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
+function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
 			want: 78, allocs: 300,
 		},
 	}

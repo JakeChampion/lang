@@ -20,8 +20,8 @@ function geta(): A { return unit(); }
 function getb(): B { return unit(); }
 
 function main(): i32 {
-    var a: A = geta();          // 10
-    var b: B = getb();          // 20
-    var c: A = build(5);        // 5
+    let a: A = geta();          // 10
+    let b: B = getb();          // 20
+    let c: A = build(5);        // 5
     return a.v + b.v + c.v;     // 35
 }

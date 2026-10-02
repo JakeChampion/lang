@@ -26,7 +26,7 @@ import "std/i32";
 // avalanche — so it relies on i32 `*` wrapping, which every backend agrees
 // on (2147483647 * 2 == -2).
 function fnv1a(s: string): i32 {
-  var h: i32 = 0 - 2128831035;  // 2166136261 as i32
+  let h: i32 = 0 - 2128831035;  // 2166136261 as i32
   for i in 0..s.len() {
     h = h ^ s[i] as i32;
     h = h * 16777619;
@@ -38,8 +38,8 @@ function fnv1a(s: string): i32 {
 // fraction of a percent. Normalised for sign because the hash is i32 and
 // `%` follows the dividend.
 function bucket_of(flag_key: string, user_id: string): i32 {
-  var h: i32 = fnv1a(flag_key + ":" + user_id);
-  var b: i32 = h % 10000;
+  let h: i32 = fnv1a(flag_key + ":" + user_id);
+  let b: i32 = h % 10000;
   if (b < 0) {
     b = b + 10000;
   }
@@ -142,7 +142,7 @@ function user(id: string): User {
 }
 
 function users(n: i32): User[] {
-  var out: User[] = [];
+  let out: User[] = [];
   for i in 0..n {
     out = out.append(user("user-" + i.to_string()));
   }
@@ -150,7 +150,7 @@ function users(n: i32): User[] {
 }
 
 function count_on(f: Flag, us: User[]): i32 {
-  var n: i32 = 0;
+  let n: i32 = 0;
   for i in 0..us.len() {
     if (is_on(f, us[i])) {
       n = n + 1;
@@ -165,11 +165,11 @@ function count_on(f: Flag, us: User[]): i32 {
 // p% is still in at q% for q > p. A re-randomising evaluator satisfies every
 // distribution check and fails this immediately.
 function test_raising_a_rollout_only_ever_adds_users(): test.TestOutcome {
-  var us: User[] = users(500);
-  var steps: i32[] = [0, 1, 100, 1000, 2500, 5000, 7500, 9000, 9999, 10000];
+  let us: User[] = users(500);
+  let steps: i32[] = [0, 1, 100, 1000, 2500, 5000, 7500, 9000, 9999, 10000];
   for s in 1..steps.len() {
-    var lo: Flag = plain("checkout-v2", steps[s - 1]);
-    var hi: Flag = plain("checkout-v2", steps[s]);
+    let lo: Flag = plain("checkout-v2", steps[s - 1]);
+    let hi: Flag = plain("checkout-v2", steps[s]);
     for i in 0..us.len() {
       if (is_on(lo, us[i]) && !is_on(hi, us[i])) {
         return test.fail(us[i].id + " was in at "
@@ -191,10 +191,10 @@ function test_raising_a_rollout_only_ever_adds_users(): test.TestOutcome {
 // the same place, however many times it is asked, and whatever else changed
 // about the flag.
 function test_bucketing_is_stable(): test.TestOutcome {
-  var us: User[] = users(200);
+  let us: User[] = users(200);
   for i in 0..us.len() {
-    var a: i32 = bucket_of("search-ranking", us[i].id);
-    var b: i32 = bucket_of("search-ranking", us[i].id);
+    let a: i32 = bucket_of("search-ranking", us[i].id);
+    let b: i32 = bucket_of("search-ranking", us[i].id);
     if (a != b) {
       return test.fail("the same pair bucketed twice differently");
     }
@@ -203,8 +203,8 @@ function test_bucketing_is_stable(): test.TestOutcome {
         + ", outside [0, 10000)");
     }
     // Changing the rollout, the rules or the overrides must not move it.
-    var f1: Flag = plain("search-ranking", 1000);
-    var f2: Flag = Flag {
+    let f1: Flag = plain("search-ranking", 1000);
+    let f2: Flag = Flag {
       key: "search-ranking", enabled: true, rollout_bp: 9000,
       rules: [Rule { attr: "plan", want: "pro", variant: "on" }],
       force_on: ["someone-else"], force_off: ["another"],
@@ -219,7 +219,7 @@ function test_bucketing_is_stable(): test.TestOutcome {
 // The extremes are exact, not approximate. 0bp is nobody and 10000bp is
 // everybody — an off-by-one in the comparison shows here and nowhere else.
 function test_the_extremes_are_exact(): test.TestOutcome {
-  var us: User[] = users(1000);
+  let us: User[] = users(1000);
   if (count_on(plain("f", 0), us) != 0) {
     return test.fail("a 0% rollout let " + count_on(plain("f", 0), us).to_string()
       + " users in");
@@ -235,12 +235,12 @@ function test_the_extremes_are_exact(): test.TestOutcome {
 // generator — but tight enough that a bucketing function with a stuck bit
 // or a bad modulo fails it.
 function test_the_rollout_is_roughly_uniform(): test.TestOutcome {
-  var us: User[] = users(4000);
-  var points: i32[] = [1000, 2500, 5000, 7500, 9000];
+  let us: User[] = users(4000);
+  let points: i32[] = [1000, 2500, 5000, 7500, 9000];
   for p in 0..points.len() {
-    var bp: i32 = points[p];
-    var got: i32 = count_on(plain("uniformity", bp), us) * 10000 / us.len();
-    var slack: i32 = 400;  // 4 percentage points
+    let bp: i32 = points[p];
+    let got: i32 = count_on(plain("uniformity", bp), us) * 10000 / us.len();
+    let slack: i32 = 400;  // 4 percentage points
     if (got < bp - slack || got > bp + slack) {
       return test.fail("a " + bp.to_string() + "bp rollout let in "
         + got.to_string() + "bp of 4000 users");
@@ -253,15 +253,15 @@ function test_the_rollout_is_roughly_uniform(): test.TestOutcome {
 // other. Without the flag key in the hash, every flag has the same cohort
 // and a staged rollout exposes the same unlucky users to everything.
 function test_flags_bucket_independently(): test.TestOutcome {
-  var us: User[] = users(1000);
-  var a: Flag = plain("alpha", 5000);
-  var b: Flag = plain("beta", 5000);
-  var both: i32 = 0;
-  var neither: i32 = 0;
-  var only_a: i32 = 0;
+  let us: User[] = users(1000);
+  let a: Flag = plain("alpha", 5000);
+  let b: Flag = plain("beta", 5000);
+  let both: i32 = 0;
+  let neither: i32 = 0;
+  let only_a: i32 = 0;
   for i in 0..us.len() {
-    var ia: boolean = is_on(a, us[i]);
-    var ib: boolean = is_on(b, us[i]);
+    let ia: boolean = is_on(a, us[i]);
+    let ib: boolean = is_on(b, us[i]);
     if (ia && ib) {
       both = both + 1;
     }
@@ -289,12 +289,12 @@ function test_flags_bucket_independently(): test.TestOutcome {
 
 // The precedence ladder, step by step, each assertion naming its rule.
 function test_precedence(): test.TestOutcome {
-  var u: User = User { id: "user-7", attr_keys: ["plan"], attr_vals: ["pro"] };
-  var pro: Rule = Rule { attr: "plan", want: "pro", variant: "on" };
-  var free_rule: Rule = Rule { attr: "plan", want: "free", variant: "off" };
+  let u: User = User { id: "user-7", attr_keys: ["plan"], attr_vals: ["pro"] };
+  let pro: Rule = Rule { attr: "plan", want: "pro", variant: "on" };
+  let free_rule: Rule = Rule { attr: "plan", want: "free", variant: "off" };
 
   // 1. a disabled flag is off for everyone, overrides included.
-  var disabled: Flag = Flag {
+  let disabled: Flag = Flag {
     key: "f", enabled: false, rollout_bp: 10000,
     rules: [pro], force_on: ["user-7"], force_off: [],
   };
@@ -303,7 +303,7 @@ function test_precedence(): test.TestOutcome {
   }
 
   // 2. force_off beats force_on.
-  var both: Flag = Flag {
+  let both: Flag = Flag {
     key: "f", enabled: true, rollout_bp: 10000, rules: [],
     force_on: ["user-7"], force_off: ["user-7"],
   };
@@ -312,7 +312,7 @@ function test_precedence(): test.TestOutcome {
   }
 
   // 3. force_on beats a rule that would say otherwise.
-  var forced: Flag = Flag {
+  let forced: Flag = Flag {
     key: "f", enabled: true, rollout_bp: 0,
     rules: [Rule { attr: "plan", want: "pro", variant: "off" }],
     force_on: ["user-7"], force_off: [],
@@ -322,7 +322,7 @@ function test_precedence(): test.TestOutcome {
   }
 
   // 4. the FIRST matching rule wins, and a rule beats the rollout.
-  var ordered: Flag = Flag {
+  let ordered: Flag = Flag {
     key: "f", enabled: true, rollout_bp: 10000,
     rules: [pro, Rule { attr: "plan", want: "pro", variant: "off" }],
     force_on: [], force_off: [],
@@ -330,7 +330,7 @@ function test_precedence(): test.TestOutcome {
   if (evaluate(ordered, u) != "on") {
     return test.fail("a later rule won");
   }
-  var reversed: Flag = Flag {
+  let reversed: Flag = Flag {
     key: "f", enabled: true, rollout_bp: 10000,
     rules: [Rule { attr: "plan", want: "pro", variant: "off" }, pro],
     force_on: [], force_off: [],
@@ -340,7 +340,7 @@ function test_precedence(): test.TestOutcome {
   }
 
   // 5. a non-matching rule falls through to the rollout.
-  var falls: Flag = Flag {
+  let falls: Flag = Flag {
     key: "f", enabled: true, rollout_bp: 10000,
     rules: [free_rule], force_on: [], force_off: [],
   };
@@ -348,8 +348,8 @@ function test_precedence(): test.TestOutcome {
     return test.fail("a non-matching rule did not fall through to the rollout");
   }
   // A missing attribute matches nothing rather than matching "".
-  var bare: User = user("user-7");
-  var missing: Flag = Flag {
+  let bare: User = user("user-7");
+  let missing: Flag = Flag {
     key: "f", enabled: true, rollout_bp: 0,
     rules: [Rule { attr: "plan", want: "", variant: "on" }],
     force_on: [], force_off: [],
@@ -362,14 +362,14 @@ function test_precedence(): test.TestOutcome {
 
 // Overrides are exact, not prefixes: "user-1" must not force "user-10".
 function test_overrides_match_whole_ids(): test.TestOutcome {
-  var f: Flag = Flag {
+  let f: Flag = Flag {
     key: "f", enabled: true, rollout_bp: 0, rules: [],
     force_on: ["user-1"], force_off: [],
   };
   if (evaluate(f, user("user-1")) != "on") {
     return test.fail("the exact id was not forced on");
   }
-  var bleeders: string[] = ["user-10", "user-11", "user-100", "user-", "user"];
+  let bleeders: string[] = ["user-10", "user-11", "user-100", "user-", "user"];
   for i in 0..bleeders.len() {
     if (evaluate(f, user(bleeders[i])) != "off") {
       return test.fail(bleeders[i] + " was forced on by an override for user-1");
@@ -382,9 +382,9 @@ function test_overrides_match_whole_ids(): test.TestOutcome {
 // byte, length only — must be able to land in different buckets, and a
 // transposition must not be invisible.
 function test_the_hash_sees_the_whole_key(): test.TestOutcome {
-  var pairs_a: string[] = ["abc", "abc", "abc", "ab", "xy"];
-  var pairs_b: string[] = ["abd", "bbc", "acb", "abc", "yx"];
-  var differ: i32 = 0;
+  let pairs_a: string[] = ["abc", "abc", "abc", "ab", "xy"];
+  let pairs_b: string[] = ["abd", "bbc", "acb", "abc", "yx"];
+  let differ: i32 = 0;
   for i in 0..pairs_a.len() {
     if (fnv1a(pairs_a[i]) != fnv1a(pairs_b[i])) {
       differ = differ + 1;
@@ -409,19 +409,19 @@ function test_the_hash_sees_the_whole_key(): test.TestOutcome {
 
 function main(): i32 {
   eprint("feature_flags — stable bucketing with monotone rollouts");
-  var us: User[] = users(1000);
-  var steps: i32[] = [0, 500, 1000, 2500, 5000, 7500, 10000];
-  var prev: i32 = 0;
+  let us: User[] = users(1000);
+  let steps: i32[] = [0, 500, 1000, 2500, 5000, 7500, 10000];
+  let prev: i32 = 0;
   for s in 0..steps.len() {
-    var f: Flag = plain("checkout-v2", steps[s]);
-    var n: i32 = count_on(f, us);
+    let f: Flag = plain("checkout-v2", steps[s]);
+    let n: i32 = count_on(f, us);
     eprint("  rollout " + steps[s].to_string() + "bp -> " + n.to_string()
       + "/1000 users in (+" + (n - prev).to_string() + ")");
     prev = n;
   }
-  var a: Flag = plain("alpha", 5000);
-  var b: Flag = plain("beta", 5000);
-  var both: i32 = 0;
+  let a: Flag = plain("alpha", 5000);
+  let b: Flag = plain("beta", 5000);
+  let both: i32 = 0;
   for i in 0..us.len() {
     if (is_on(a, us[i]) && is_on(b, us[i])) {
       both = both + 1;
@@ -429,8 +429,8 @@ function main(): i32 {
   }
   eprint("  two independent 50% flags overlap on " + both.to_string()
     + "/1000 (a shared cohort would be ~500)");
-  var pro: User = User { id: "user-7", attr_keys: ["plan"], attr_vals: ["pro"] };
-  var staged: Flag = Flag {
+  let pro: User = User { id: "user-7", attr_keys: ["plan"], attr_vals: ["pro"] };
+  let staged: Flag = Flag {
     key: "checkout-v2", enabled: true, rollout_bp: 0,
     rules: [Rule { attr: "plan", want: "pro", variant: "on" }],
     force_on: [], force_off: ["user-7"],
@@ -438,7 +438,7 @@ function main(): i32 {
   eprint("  user-7 (plan=pro, rule says on, force_off says off) -> "
     + evaluate(staged, pro));
 
-  var r: test.TestRunner = test.test_new("feature_flags");
+  let r: test.TestRunner = test.test_new("feature_flags");
   r = r.it("raising a rollout only ever adds users", test_raising_a_rollout_only_ever_adds_users);
   r = r.it("bucketing is stable", test_bucketing_is_stable);
   r = r.it("the extremes are exact", test_the_extremes_are_exact);

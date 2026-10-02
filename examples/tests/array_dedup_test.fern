@@ -33,7 +33,7 @@ function test_sorted_like_distinct(): test.TestOutcome {
 }
 
 function test_empty(): test.TestOutcome {
-  var e: i32[] = [];
+  let e: i32[] = [];
   return test.assert_true(array.dedup(e).len() == 0);
 }
 
@@ -42,7 +42,7 @@ function test_single(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("std/array dedup");
+  let r: test.TestRunner = test.test_new("std/array dedup");
   r = r.it("runs", test_runs);
   r = r.it("all equal", test_all_equal);
   r = r.it("no dups", test_no_dups);

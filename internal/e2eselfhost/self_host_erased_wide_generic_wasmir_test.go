@@ -36,10 +36,10 @@ func TestSelfHostErasedWideGenericWasm(t *testing.T) {
 		want int
 	}{
 		{"erased-f64-roundtrip",
-			`function ident[T](x: T): T { return x; } function main(): i32 { var d: f64 = ident[f64](2.5); if (d == 2.5) { return 42; } return 38; }`,
+			`function ident[T](x: T): T { return x; } function main(): i32 { let d: f64 = ident[f64](2.5); if (d == 2.5) { return 42; } return 38; }`,
 			42},
 		{"erased-i64-roundtrip",
-			`function ident[T](x: T): T { return x; } function main(): i32 { var big: i64 = ident[i64](4200000000 as i64); if (big == 4200000000 as i64) { return 42; } return 38; }`,
+			`function ident[T](x: T): T { return x; } function main(): i32 { let big: i64 = ident[i64](4200000000 as i64); if (big == 4200000000 as i64) { return 42; } return 38; }`,
 			42},
 	}
 	for _, tc := range cases {

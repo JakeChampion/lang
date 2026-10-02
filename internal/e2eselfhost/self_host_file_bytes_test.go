@@ -83,8 +83,8 @@ func TestSelfHostFileBytesFullDevice(t *testing.T) {
 	cli, stdlib := witSelfHostCLI(t)
 	bootstrap := buildLangBinForInterp(t)
 	program := `function main(): i32 {
-  var bytes: u8[] = [255 as u8, 0 as u8, 128 as u8];
-  var i: i32 = 0;
+  let bytes: u8[] = [255 as u8, 0 as u8, 128 as u8];
+  let i: i32 = 0;
   while (i < 128) {
     match (write_file_bytes("/dev/full", bytes)) {
       Ok(_) => { return 1; },

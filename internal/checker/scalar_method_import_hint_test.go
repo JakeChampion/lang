@@ -27,30 +27,30 @@ func TestScalarMethodImportHint(t *testing.T) {
 	}{
 		{
 			name: "f-string on i32 names std/i32 and explains the desugar",
-			src:  `function main(): i32 { var n: i32 = 7; write(f"x{n}y"); return 0; }`,
+			src:  `function main(): i32 { let n: i32 = 7; write(f"x{n}y"); return 0; }`,
 			want: []string{`no method "to_string" on i32`, `import "std/i32"`, "desugars to"},
 		},
 		{
 			name: "explicit to_string on i32",
-			src:  `function main(): i32 { var n: i32 = 7; write(n.to_string()); return 0; }`,
+			src:  `function main(): i32 { let n: i32 = 7; write(n.to_string()); return 0; }`,
 			want: []string{`no method "to_string" on i32`, `import "std/i32"`},
 		},
 		{
 			name: "f64 names std/float, not std/i32",
-			src:  `function main(): i32 { var f: f64 = 1.5; write(f.to_string()); return 0; }`,
+			src:  `function main(): i32 { let f: f64 = 1.5; write(f.to_string()); return 0; }`,
 			want: []string{`no method "to_string" on f64`, `import "std/float"`},
 			deny: []string{"std/i32"},
 		},
 		{
 			name: "i64 names std/i64",
-			src:  `function main(): i32 { var n: i64 = 7 as i64; write(n.to_string()); return 0; }`,
+			src:  `function main(): i32 { let n: i64 = 7 as i64; write(n.to_string()); return 0; }`,
 			want: []string{`import "std/i64"`},
 		},
 		{
 			// Not an f-string desugar target, so the parenthetical must not
 			// appear — it would be describing a mechanism the user did not use.
 			name: "to_string_radix gets the import but NOT the f-string note",
-			src:  `function main(): i32 { var n: i32 = 7; return n.to_string_radix(16).len(); }`,
+			src:  `function main(): i32 { let n: i32 = 7; return n.to_string_radix(16).len(); }`,
 			want: []string{`no method "to_string_radix" on i32`, `import "std/i32"`},
 			deny: []string{"desugars to"},
 		},
@@ -59,7 +59,7 @@ func TestScalarMethodImportHint(t *testing.T) {
 			// std/i32 for a method it does not define would send the reader off
 			// to add an import that cannot help.
 			name: "unknown method keeps the generic error",
-			src:  `function main(): i32 { var n: i32 = 7; return n.nonexistent_method(); }`,
+			src:  `function main(): i32 { let n: i32 = 7; return n.nonexistent_method(); }`,
 			want: []string{"field access on non-struct value of type i32"},
 			deny: []string{"import"},
 		},

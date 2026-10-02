@@ -6,8 +6,8 @@ and is not. The leak has nothing to do with the capture box:
 ```fern
 import "std/i32";
 function main(): i32 {
-  var s: string = "";
-  var i: i32 = 0;
+  let s: string = "";
+  let i: i32 = 0;
   while (i < 1000) { s = f"{i}-iteration"; i = i + 1; }
   return 0;
 }

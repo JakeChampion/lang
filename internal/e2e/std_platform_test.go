@@ -13,19 +13,19 @@ import "testing"
 const stdPlatformProg = `
 import "std/platform" as platform;
 function main(): i32 {
-    var plat: Platform = platform.platform_new();
+    let plat: Platform = platform.platform_new();
     if (plat.version != 3) { return 1; }
     if (plat.handle != 0) { return 6; }
     plat.log("std/platform capability check");
 
     // Wall clock: some time after 2020-09-13, which is the last moment
     // this assertion could have been written to fail.
-    var floor: i64 = 1600000000000;
+    let floor: i64 = 1600000000000;
     if (plat.now_ms() < floor) { return 2; }
 
     // Monotonic clock: non-decreasing between two readings.
-    var t0: i64 = plat.elapsed_ns();
-    var t1: i64 = plat.elapsed_ns();
+    let t0: i64 = plat.elapsed_ns();
+    let t1: i64 = plat.elapsed_ns();
     if (t1 < t0) { return 3; }
 
     // A variable nothing sets reads as None rather than "".

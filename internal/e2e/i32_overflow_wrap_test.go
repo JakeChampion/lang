@@ -12,12 +12,12 @@ import (
 // `< 0` check is true → exit 1. The compiled backends always wrapped (the value
 // lives in a 32-bit register); the AST interpreter is width-driven and used to
 // keep the full 64-bit sum (2147483648 > 0 → exit 0) because an unannotated
-// `var x = …; var y = x + 1` left the binary's IntWidth unpinned. The checker
+// `let x = …; let y = x + 1` left the binary's IntWidth unpinned. The checker
 // now defaults a leftover-polymorphic integer op to i32, so every path agrees.
 const i32OverflowWrapProgram = `
 function main(): i32 {
-    var x = 2147483647;
-    var y = x + 1;
+    let x = 2147483647;
+    let y = x + 1;
     if (y < 0) { return 1; }
     return 0;
 }

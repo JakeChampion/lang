@@ -32,14 +32,14 @@ shape two different ways would itself be incorrect.
 // before (mutable):
 //   function (s: Stream) read_byte(): Option[i32] {
 //       if (s.pos >= s.data.len()) { return None; }
-//       var b = s.data[s.pos]; s.pos = s.pos + 1; return Some(b);
+//       let b = s.data[s.pos]; s.pos = s.pos + 1; return Some(b);
 //   }
-//   var b = s.read_byte();           // mutates s
+//   let b = s.read_byte();           // mutates s
 
 // after (cursor idiom):
 function stream_read_byte(s: Stream): (Option[i32], Stream) {
     if (s.pos >= s.data.len()) { return (None, s); }
-    var b: i32 = s.data[s.pos] as i32;
+    let b: i32 = s.data[s.pos] as i32;
     return (Some(b), Stream { ...s, pos: s.pos + 1 });
 }
 //   let (b, s) = stream_read_byte(s);   // rebinds s
@@ -107,7 +107,7 @@ avoids changing every helper's result type to `Result`.
 - The self-host parser adopted the idiom wholesale (#4406): all 22 of
   parser.fern's one-off `*Result { par: Par, … }` structs are gone —
   every `parse_*` returns `(value…, Par)` and call sites destructure
-  `var (v, p2) = parse_x(p); p = p2;` (the json.fern shape). Multi-value
+  `let (v, p2) = parse_x(p); p = p2;` (the json.fern shape). Multi-value
   results are N-tuples with the cursor last. The two mutable-accumulator
   loops (the precedence climber, the chained-assign collector) keep a
   plain mutable value local instead of rebuilding a result struct.

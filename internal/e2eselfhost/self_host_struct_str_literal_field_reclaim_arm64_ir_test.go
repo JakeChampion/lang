@@ -39,15 +39,15 @@ func TestSelfHostStructStrLiteralFieldReclaimIRArm64(t *testing.T) {
 
 	// SINGLE BIND, no rebind — the shape the leak was measured on.
 	run(t, `struct B { name: string, n: i32 }
-function round(i: i32): i32 { var b: B = B { name: "abc", n: i }; return b.n; }
+function round(i: i32): i32 { let b: B = B { name: "abc", n: i }; return b.n; }
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) { t = t + round(i); i = i + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 2000) { t = t + round(j); j = j + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 4096) { return 98; }
     if (t <= 0) { return 97; }
@@ -58,8 +58,8 @@ function main(): i32 {
 	run(t, `struct B { name: string, n: i32 }
 function bump(b: B): B { return B { ...b, n: b.n + 1 }; }
 function main(): i32 {
-    var b: B = B { name: "abcd", n: 0 };
-    var i: i32 = 0;
+    let b: B = B { name: "abcd", n: 0 };
+    let i: i32 = 0;
     while (i < 1000) { b = bump(b); i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     if (b.name.len() != 4) { return 97; }
@@ -73,11 +73,11 @@ function main(): i32 {
 	run(t, `struct B { name: string, n: i32 }
 function mk(i: i32): B { return B { name: "leaf", n: i }; }
 function main(): i32 {
-    var acc: string[] = [];
-    var i: i32 = 0;
-    while (i < 200) { var b: B = mk(i); acc = acc.append(b.name); i = i + 1; }
-    var bad: i32 = 0;
-    var k: i32 = 0;
+    let acc: string[] = [];
+    let i: i32 = 0;
+    while (i < 200) { let b: B = mk(i); acc = acc.append(b.name); i = i + 1; }
+    let bad: i32 = 0;
+    let k: i32 = 0;
     while (k < acc.len()) { if (acc[k].len() != 4) { bad = 1; } k = k + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     if (bad != 0) { return 88; }

@@ -78,7 +78,7 @@ function block_bytes(): i32 {
 }
 
 function help_text(): string {
-  var out: string = "";
+  let out: string = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]... LAST\n";
   out = out + "  or:  " + gnu.prog() + " [OPTION]... FIRST LAST\n";
   out = out + "  or:  " + gnu.prog() + " [OPTION]... FIRST INCREMENT LAST\n";
@@ -115,7 +115,7 @@ function all_digits(s: string): boolean {
   if (s.len() == 0) {
     return false;
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < s.len()) {
     if (!is_digit(s[i] as i32)) {
       return false;
@@ -126,7 +126,7 @@ function all_digits(s: string): boolean {
 }
 
 function contains(s: string, byte: i32): boolean {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < s.len()) {
     if (s[i] as i32 == byte) {
       return true;
@@ -148,7 +148,7 @@ function contains(s: string, byte: i32): boolean {
 // anything with a `.` or a lowercase `p` is `auto_prec`. `inf` is neither
 // — it is measured like any other run of bytes, and asks for precision 0.
 function scan_arg(f: ld.Format, s: string): Operand {
-  var r: ld.Parse = f.strtold(s);
+  let r: ld.Parse = f.strtold(s);
   // An out-of-range value is rejected only when it OVERFLOWED: 9.5 made
   // gnulib's xstrtod read an ERANGE below one as gradual underflow and
   // hand the subnormal back, so `seq 4e-4951 1` counts from a subnormal
@@ -159,30 +159,30 @@ function scan_arg(f: ld.Format, s: string): Operand {
   if (r.v.is_nan()) {
     gnu.die_usage("invalid " + gnu.quote("not-a-number") + " argument: " + gnu.quote(s), 1);
   }
-  var wp: (i32, i32) = width_and_precision(s);
+  let wp: (i32, i32) = width_and_precision(s);
   return Operand { v: r.v, width: wp.0, prec: wp.1 };
 }
 
 function width_and_precision(arg: string): (i32, i32) {
-  var s: string = skip_blanks_and_plus(arg);
+  let s: string = skip_blanks_and_plus(arg);
   if (contains(s, 120) || contains(s, 88)) {
     if (contains(s, 46) || contains(s, 112)) {
       return (1, auto_prec());
     }
     return (1, 0);
   }
-  var mant: i32 = mantissa_end(s);
-  var exp: i32 = exponent_value(s, mant);
-  var dot: i32 = index_of_byte(s, 46, mant);
-  var frac: i32 = 0;
+  let mant: i32 = mantissa_end(s);
+  let exp: i32 = exponent_value(s, mant);
+  let dot: i32 = index_of_byte(s, 46, mant);
+  let frac: i32 = 0;
   if (dot >= 0) {
     frac = digit_run(s, dot + 1, mant);
   }
-  var width: i32 = mant;
+  let width: i32 = mant;
   if (s.len() > 0 && (s[0] as i32 == 46 || s.len() > 1 && s[0] as i32 == 45 && s[1] as i32 == 46)) {
     width = width + 1;
   }
-  var prec: i32 = frac;
+  let prec: i32 = frac;
   if (exp < 0) {
     prec = prec - exp;
     width = width - exp;
@@ -190,7 +190,7 @@ function width_and_precision(arg: string): (i32, i32) {
       width = width + 1;
     }
   } else if (exp > 0) {
-    var absorbed: i32 = frac;
+    let absorbed: i32 = frac;
     if (exp < absorbed) {
       absorbed = exp;
     }
@@ -209,9 +209,9 @@ function width_and_precision(arg: string): (i32, i32) {
 // GNU skips the bytes it will not print — leading blanks and `+` — before
 // measuring the width.
 function skip_blanks_and_plus(s: string): string {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < s.len()) {
-    var b: i32 = s[i] as i32;
+    let b: i32 = s[i] as i32;
     if (b == 32 || b >= 9 && b <= 13 || b == 43) {
       i = i + 1;
       continue;
@@ -224,11 +224,11 @@ function skip_blanks_and_plus(s: string): string {
 // Where the mantissa stops: the `e` / `E` that starts a well-formed
 // exponent, else the end.
 function mantissa_end(s: string): i32 {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < s.len()) {
-    var b: i32 = s[i] as i32;
+    let b: i32 = s[i] as i32;
     if (b == 101 || b == 69) {
-      var j: i32 = i + 1;
+      let j: i32 = i + 1;
       if (j < s.len() && (s[j] as i32 == 43 || s[j] as i32 == 45)) {
         j = j + 1;
       }
@@ -246,13 +246,13 @@ function exponent_value(s: string, mant: i32): i32 {
   if (mant >= s.len()) {
     return 0;
   }
-  var i: i32 = mant + 1;
-  var neg: boolean = false;
+  let i: i32 = mant + 1;
+  let neg: boolean = false;
   if (i < s.len() && (s[i] as i32 == 43 || s[i] as i32 == 45)) {
     neg = s[i] as i32 == 45;
     i = i + 1;
   }
-  var v: i32 = 0;
+  let v: i32 = 0;
   while (i < s.len() && is_digit(s[i] as i32)) {
     if (v < 100000000) {
       v = v * 10 + (s[i] as i32 - 48);
@@ -266,7 +266,7 @@ function exponent_value(s: string, mant: i32): i32 {
 }
 
 function index_of_byte(s: string, byte: i32, limit: i32): i32 {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < limit) {
     if (s[i] as i32 == byte) {
       return i;
@@ -277,7 +277,7 @@ function index_of_byte(s: string, byte: i32, limit: i32): i32 {
 }
 
 function digit_run(s: string, from: i32, limit: i32): i32 {
-  var i: i32 = from;
+  let i: i32 = from;
   while (i < limit && is_digit(s[i] as i32)) {
     i = i + 1;
   }
@@ -326,7 +326,7 @@ function fmt_overflows(f: Fmt): boolean {
 // everything to `%Lg` though, LAST included: `seq 1 0.5 0x1p2` counts
 // 1 1.5 2 rather than 1.0 1.5 2.0. Only then does -w get a width.
 function default_format(ldbl: ld.Format, first: Operand, step: Operand, last: Operand, equal_width: boolean): Fmt {
-  var prec: i32 = first.prec;
+  let prec: i32 = first.prec;
   if (step.prec > prec) {
     prec = step.prec;
   }
@@ -338,16 +338,16 @@ function default_format(ldbl: ld.Format, first: Operand, step: Operand, last: Op
   // LAST is finite and whose infinite INCREMENT never reaches it — pads
   // to that LAST's three columns.
   if (equal_width && last.v.is_finite()) {
-    var first_width: i32 = rewidth(first, prec);
-    var last_width: i32 = rewidth(last, prec);
-    var width: i32 = first_width;
+    let first_width: i32 = rewidth(first, prec);
+    let last_width: i32 = rewidth(last, prec);
+    let width: i32 = first_width;
     if (last_width > width) {
       width = last_width;
     }
-    var s: Spec = spec(102);
+    let s: Spec = spec(102);
     return Fmt { pre: "", spec: Spec { ...s, zero: true, width: width as i64, prec: prec as i64 }, post: "", ldbl: ldbl };
   }
-  var f: Spec = spec(102);
+  let f: Spec = spec(102);
   return Fmt { pre: "", spec: Spec { ...f, prec: prec as i64 }, post: "", ldbl: ldbl };
 }
 
@@ -360,7 +360,7 @@ function default_format(ldbl: ld.Format, first: Operand, step: Operand, last: Op
 // whole-number sequence is one column and `10` in a one-decimal one is
 // four.
 function rewidth(op: Operand, prec: i32): i32 {
-  var int_digits: i32 = op.width;
+  let int_digits: i32 = op.width;
   if (op.prec > 0) {
     int_digits = int_digits - (1 + op.prec);
   }
@@ -374,24 +374,24 @@ function rewidth(op: Operand, prec: i32): i32 {
 }
 
 function parse_format(ldbl: ld.Format, f: string): Fmt {
-  var start: i32 = find_directive(f, 0);
+  let start: i32 = find_directive(f, 0);
   if (start < 0) {
     format_die(f, "has no % directive");
   }
-  var i: i32 = start + 1;
-  var sp: Spec = spec(0);
+  let i: i32 = start + 1;
+  let sp: Spec = spec(0);
   while (i < f.len() && is_flag(f[i] as i32)) {
     sp = apply_flag(sp, f[i] as i32);
     i = i + 1;
   }
-  var w: (i64, i32) = read_number(f, i);
+  let w: (i64, i32) = read_number(f, i);
   if (w.1 > i) {
     sp = Spec { ...sp, width: w.0 };
     i = w.1;
   }
   if (i < f.len() && f[i] as i32 == 46) {
     i = i + 1;
-    var p: (i64, i32) = read_number(f, i);
+    let p: (i64, i32) = read_number(f, i);
     sp = Spec { ...sp, prec: p.0 };
     i = p.1;
   }
@@ -401,7 +401,7 @@ function parse_format(ldbl: ld.Format, f: string): Fmt {
   if (i >= f.len()) {
     format_die(f, "ends in %");
   }
-  var conv: i32 = f[i] as i32;
+  let conv: i32 = f[i] as i32;
   if (!is_float_conv(conv)) {
     format_die(f, "has unknown %" + one_byte(conv) + " directive");
   }
@@ -413,7 +413,7 @@ function parse_format(ldbl: ld.Format, f: string): Fmt {
 
 // The next `%` that is not `%%`, from `from`; -1 when there is none.
 function find_directive(f: string, from: i32): i32 {
-  var i: i32 = from;
+  let i: i32 = from;
   while (i < f.len()) {
     if (f[i] as i32 == 37) {
       if (i + 1 < f.len() && f[i + 1] as i32 == 37) {
@@ -432,8 +432,8 @@ function literal(s: string): string {
   if (!contains(s, 37)) {
     return s;
   }
-  var out: u8[] = [];
-  var i: i32 = 0;
+  let out: u8[] = [];
+  let i: i32 = 0;
   while (i < s.len()) {
     out = out.append(s[i]);
     if (s[i] as i32 == 37) {
@@ -483,8 +483,8 @@ function one_byte(b: i32): string {
 // A literal width or precision, saturating past the int glibc parses it
 // into so an oversized one is still recognisably oversized.
 function read_number(s: string, i: i32): (i64, i32) {
-  var j: i32 = i;
-  var v: i64 = 0 as i64;
+  let j: i32 = i;
+  let v: i64 = 0 as i64;
   while (j < s.len() && is_digit(s[j] as i32)) {
     if (v < 1000000000000 as i64) {
       v = v * (10 as i64) + (s[j] as i32 - 48) as i64;
@@ -527,8 +527,8 @@ function reserve(b: Block, k: i32): Block {
   if (b.n + k <= b.buf.len()) {
     return b;
   }
-  var wider: u8[] = __alloc_u8(b.n + k + slack_bytes());
-  var i: i32 = 0;
+  let wider: u8[] = __alloc_u8(b.n + k + slack_bytes());
+  let i: i32 = 0;
   while (i < b.n) {
     wider = wider.with(i, b.buf[i]);
     i = i + 1;
@@ -541,13 +541,13 @@ function block_new(): Block {
 }
 
 function push_byte(b: Block, byte: i32): Block {
-  var out: Block = reserve(b, 1);
+  let out: Block = reserve(b, 1);
   return Block { ...out, buf: out.buf.with(out.n, byte as u8), n: out.n + 1 };
 }
 
 function push_str(b: Block, s: string): Block {
-  var out: Block = reserve(b, s.len());
-  var i: i32 = 0;
+  let out: Block = reserve(b, s.len());
+  let i: i32 = 0;
   while (i < s.len()) {
     out = Block { ...out, buf: out.buf.with(out.n, s[i]), n: out.n + 1 };
     i = i + 1;
@@ -593,14 +593,14 @@ function block_finish(o: io_buffered.BufWriter, b: Block): void {
 // in place, which touches 1.1 digits per unit step on average.
 // `digits_of(v)` — `v` as digits.
 function digits_of(v: u64): u8[] {
-  var n: i32 = 1;
-  var x: u64 = v;
+  let n: i32 = 1;
+  let x: u64 = v;
   while (x >= 10 as u64) {
     n = n + 1;
     x = x / (10 as u64);
   }
-  var d: u8[] = __alloc_u8(n);
-  var i: i32 = n;
+  let d: u8[] = __alloc_u8(n);
+  let i: i32 = n;
   x = v;
   while (i > 0) {
     i = i - 1;
@@ -620,16 +620,16 @@ function abs_i64(v: i64): u64 {
 // `add_digits(d, n)` — `d + n`, carried in place from the low end. A
 // carry out of the top digit widens it.
 function add_digits(own d: u8[], n: u64): u8[] {
-  var carry: u64 = n;
-  var i: i32 = d.len() - 1;
+  let carry: u64 = n;
+  let i: i32 = d.len() - 1;
   while (i >= 0 && carry > 0 as u64) {
-    var lo: u64 = carry;
-    var hi: u64 = 0 as u64;
+    let lo: u64 = carry;
+    let hi: u64 = 0 as u64;
     if (carry >= 10 as u64) {
       lo = carry % (10 as u64);
       hi = carry / (10 as u64);
     }
-    var sum: u64 = (d[i] as i32 - 48) as u64 + lo;
+    let sum: u64 = (d[i] as i32 - 48) as u64 + lo;
     carry = hi;
     if (sum >= 10 as u64) {
       sum = sum - 10 as u64;
@@ -647,16 +647,16 @@ function add_digits(own d: u8[], n: u64): u8[] {
 // `sub_digits(d, n)` — `d - n` for `d >= n`, borrowed in place from the
 // low end. Leading zeros the subtraction leaves are dropped.
 function sub_digits(own d: u8[], n: u64): u8[] {
-  var borrow: u64 = n;
-  var i: i32 = d.len() - 1;
+  let borrow: u64 = n;
+  let i: i32 = d.len() - 1;
   while (i >= 0 && borrow > 0 as u64) {
-    var lo: u64 = borrow;
-    var hi: u64 = 0 as u64;
+    let lo: u64 = borrow;
+    let hi: u64 = 0 as u64;
     if (borrow >= 10 as u64) {
       lo = borrow % (10 as u64);
       hi = borrow / (10 as u64);
     }
-    var digit: u64 = (d[i] as i32 - 48) as u64;
+    let digit: u64 = (d[i] as i32 - 48) as u64;
     borrow = hi;
     if (digit < lo) {
       digit = digit + 10 as u64 - lo;
@@ -667,7 +667,7 @@ function sub_digits(own d: u8[], n: u64): u8[] {
     d = d.with(i, (48 + digit as i32) as u8);
     i = i - 1;
   }
-  var z: i32 = 0;
+  let z: i32 = 0;
   while (z + 1 < d.len() && d[z] as i32 == 48) {
     z = z + 1;
   }
@@ -678,16 +678,16 @@ function sub_digits(own d: u8[], n: u64): u8[] {
 }
 
 function concat_digits(a: u8[], b: u8[]): u8[] {
-  var out: u8[] = __alloc_u8(a.len() + b.len());
-  var i: i32 = 0;
+  let out: u8[] = __alloc_u8(a.len() + b.len());
+  let i: i32 = 0;
   while (i < a.len()) {
-    var v: u8 = a[i];
+    let v: u8 = a[i];
     out = out.with(i, v);
     i = i + 1;
   }
-  var j: i32 = 0;
+  let j: i32 = 0;
   while (j < b.len()) {
-    var v: u8 = b[j];
+    let v: u8 = b[j];
     out = out.with(i + j, v);
     j = j + 1;
   }
@@ -695,10 +695,10 @@ function concat_digits(a: u8[], b: u8[]): u8[] {
 }
 
 function slice_digits(d: u8[], from: i32, to: i32): u8[] {
-  var out: u8[] = __alloc_u8(to - from);
-  var i: i32 = from;
+  let out: u8[] = __alloc_u8(to - from);
+  let i: i32 = from;
   while (i < to) {
-    var v: u8 = d[i];
+    let v: u8 = d[i];
     out = out.with(i - from, v);
     i = i + 1;
   }
@@ -706,8 +706,8 @@ function slice_digits(d: u8[], from: i32, to: i32): u8[] {
 }
 
 function zero_digits(n: i32): u8[] {
-  var out: u8[] = __alloc_u8(n);
-  var i: i32 = 0;
+  let out: u8[] = __alloc_u8(n);
+  let i: i32 = 0;
   while (i < n) {
     out = out.with(i, 48 as u8);
     i = i + 1;
@@ -717,9 +717,9 @@ function zero_digits(n: i32): u8[] {
 
 // `inc_fixed(d)` — `d + 1` at a fixed width: all nines wrap to all zeros.
 function inc_fixed(own d: u8[]): u8[] {
-  var i: i32 = d.len() - 1;
+  let i: i32 = d.len() - 1;
   while (i >= 0) {
-    var v: i32 = d[i] as i32 + 1;
+    let v: i32 = d[i] as i32 + 1;
     if (v <= 57) {
       return d.with(i, v as u8);
     }
@@ -736,7 +736,7 @@ function cmp_digits(a: u8[], b: u8[]): i32 {
     }
     return 1;
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < a.len()) {
     if (a[i] != b[i]) {
       if (a[i] < b[i]) {
@@ -751,12 +751,12 @@ function cmp_digits(a: u8[], b: u8[]): i32 {
 
 // A digit string with its leading zeros dropped; zero is one `0`.
 function trim_zeros(s: string): u8[] {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i + 1 < s.len() && s[i] as i32 == 48) {
     i = i + 1;
   }
-  var out: u8[] = __alloc_u8(s.len() - i);
-  var j: i32 = i;
+  let out: u8[] = __alloc_u8(s.len() - i);
+  let j: i32 = i;
   while (j < s.len()) {
     out = out.with(j - i, s[j]);
     j = j + 1;
@@ -768,8 +768,8 @@ function digits_to_u64(d: u8[]): Option[u64] {
   if (d.len() > 19) {
     return None;
   }
-  var v: u64 = 0 as u64;
-  var i: i32 = 0;
+  let v: u64 = 0 as u64;
+  let i: i32 = 0;
   while (i < d.len()) {
     v = v * (10 as u64) + (d[i] as i32 - 48) as u64;
     i = i + 1;
@@ -786,11 +786,11 @@ function digits_to_u64(d: u8[]): Option[u64] {
 // How many digits the term prints, padding included, for a non-negative
 // magnitude of `mag_len` digits.
 function fixed_digits(mag_len: i32, prec: i32, width: i32): i32 {
-  var digits: i32 = mag_len;
+  let digits: i32 = mag_len;
   if (digits < prec + 1) {
     digits = prec + 1;
   }
-  var room: i32 = width;
+  let room: i32 = width;
   if (prec > 0) {
     room = room - 1;
   }
@@ -814,15 +814,15 @@ function digit_col(i: i32, digits: i32, prec: i32): i32 {
 // before the point, the point, zeros and digits after it. A magnitude
 // of up to seven digits is a string without an allocation.
 function emit_fixed(h: usize, mag: u8[], neg: boolean, prec: i32, width: i32): void {
-  var w: i32 = width;
+  let w: i32 = width;
   if (neg) {
     buf_push_byte(h, 45);
     w = w - 1;
   }
-  var digits: i32 = fixed_digits(mag.len(), prec, w);
-  var zeros: i32 = digits - mag.len();
-  var head: i32 = digits - prec;
-  var s: string = string_from_bytes_unchecked(mag);
+  let digits: i32 = fixed_digits(mag.len(), prec, w);
+  let zeros: i32 = digits - mag.len();
+  let head: i32 = digits - prec;
+  let s: string = string_from_bytes_unchecked(mag);
   if (zeros >= head) {
     push_zeros(h, head);
   } else {
@@ -833,7 +833,7 @@ function emit_fixed(h: usize, mag: u8[], neg: boolean, prec: i32, width: i32): v
     return;
   }
   buf_push_byte(h, 46);
-  var from: i32 = head - zeros;
+  let from: i32 = head - zeros;
   if (from < 0) {
     push_zeros(h, 0 - from);
     from = 0;
@@ -842,9 +842,9 @@ function emit_fixed(h: usize, mag: u8[], neg: boolean, prec: i32, width: i32): v
 }
 
 function push_zeros(h: usize, n: i32): void {
-  var left: i32 = n;
+  let left: i32 = n;
   while (left > 0) {
-    var c: i32 = left;
+    let c: i32 = left;
     if (c > zeros().len()) {
       c = zeros().len();
     }
@@ -885,20 +885,20 @@ function block_step(step: u64): boolean {
 }
 
 function digit_seq(o: io_buffered.BufWriter, first: u8[], step: u64, bound: Option[u8[]], prec: i32, width: i32, sep: string, lead: boolean): io_buffered.BufWriter {
-  var w: io_buffered.BufWriter = o;
-  var h: usize = w.handle();
-  var cur: u8[] = first;
-  var sep_first: boolean = lead;
-  var blocked: boolean = block_step(step);
+  let w: io_buffered.BufWriter = o;
+  let h: usize = w.handle();
+  let cur: u8[] = first;
+  let sep_first: boolean = lead;
+  let blocked: boolean = block_step(step);
   // The residue every term leaves modulo the step, which is the low
   // digits of a block's first term.
-  var r: i32 = 0;
+  let r: i32 = 0;
   if (blocked) {
     r = low_value(first) % (step as i32);
   }
-  var qmax: Option[u8[]] = block_bound(bound, r);
-  var hi: u8[] = zero_digits(1);
-  var bounded: boolean = false;
+  let qmax: Option[u8[]] = block_bound(bound, r);
+  let hi: u8[] = zero_digits(1);
+  let bounded: boolean = false;
   match (bound) {
     Some(b) => {
       hi = b;
@@ -912,7 +912,7 @@ function digit_seq(o: io_buffered.BufWriter, first: u8[], step: u64, bound: Opti
     }
     if (blocked && block_ok(cur, r, qmax, prec, width)) {
       w = gnu.flush(w);
-      var b: (io_buffered.BufWriter, u8[]) = blocks(w, block_index(cur), r, step as i32, qmax, prec, width, sep);
+      let b: (io_buffered.BufWriter, u8[]) = blocks(w, block_index(cur), r, step as i32, qmax, prec, width, sep);
       w = b.0;
       cur = b.1;
       sep_first = false;
@@ -930,11 +930,11 @@ function digit_seq(o: io_buffered.BufWriter, first: u8[], step: u64, bound: Opti
 
 // The value of `cur`'s low digits: `cur` modulo the span.
 function low_value(cur: u8[]): i32 {
-  var i: i32 = cur.len() - block_digits();
+  let i: i32 = cur.len() - block_digits();
   if (i < 0) {
     i = 0;
   }
-  var v: i32 = 0;
+  let v: i32 = 0;
   while (i < cur.len()) {
     v = v * 10 + (cur[i] as i32 - 48);
     i = i + 1;
@@ -948,7 +948,7 @@ function low_value(cur: u8[]): i32 {
 function block_bound(bound: Option[u8[]], r: i32): Option[u8[]] {
   match (bound) {
     Some(hi) => {
-      var last: u8[] = slice_digits(hi, 0, hi.len());
+      let last: u8[] = slice_digits(hi, 0, hi.len());
       last = sub_digits(last, r as u64);
       return Some(block_index(last));
     },
@@ -975,7 +975,7 @@ function block_ok(cur: u8[], r: i32, qmax: Option[u8[]], prec: i32, width: i32):
   if (low_value(cur) != r) {
     return false;
   }
-  var q: u8[] = block_index(cur);
+  let q: u8[] = block_index(cur);
   if (!block_fits(q, 0, qmax)) {
     return false;
   }
@@ -990,11 +990,11 @@ function block_ok(cur: u8[], r: i32, qmax: Option[u8[]], prec: i32, width: i32):
 function block_fits(q: u8[], z: i32, qmax: Option[u8[]]): boolean {
   match (qmax) {
     Some(hi) => {
-      var len: i32 = q.len() - z;
+      let len: i32 = q.len() - z;
       if (len != hi.len()) {
         return len < hi.len();
       }
-      var i: i32 = 0;
+      let i: i32 = 0;
       while (i < len) {
         if (q[z + i] != hi[i]) {
           return q[z + i] < hi[i];
@@ -1018,29 +1018,29 @@ function block_fits(q: u8[], z: i32, qmax: Option[u8[]]): boolean {
 // changes the template's layout — and rebuilds it — once the prefix has
 // no zero left to carry into.
 function blocks(o: io_buffered.BufWriter, q: u8[], r: i32, step: i32, qmax: Option[u8[]], prec: i32, width: i32, sep: string): (io_buffered.BufWriter, u8[]) {
-  var w: io_buffered.BufWriter = o;
-  var k: i32 = block_digits();
-  var m: i32 = block_span() / step;
-  var index: u8[] = q;
+  let w: io_buffered.BufWriter = o;
+  let k: i32 = block_digits();
+  let m: i32 = block_span() / step;
+  let index: u8[] = q;
   while (true) {
-    var mag_len: i32 = index.len() + k;
+    let mag_len: i32 = index.len() + k;
     if (index.len() == 1 && index[0] as i32 == 48) {
       mag_len = k;
     }
-    var digits: i32 = fixed_digits(mag_len, prec, width);
-    var p: i32 = digits - k;
-    var prefix: u8[] = pad_digits(index, p);
-    var rec: i32 = digits + sep.len();
+    let digits: i32 = fixed_digits(mag_len, prec, width);
+    let p: i32 = digits - k;
+    let prefix: u8[] = pad_digits(index, p);
+    let rec: i32 = digits + sep.len();
     if (prec > 0) {
       rec = rec + 1;
     }
-    var t: u8[] = template(prefix, r, step, prec, sep, rec);
+    let t: u8[] = template(prefix, r, step, prec, sep, rec);
     while (true) {
       w = gnu.put(w, string_from_bytes_unchecked(t));
       prefix = inc_fixed(prefix);
       // The digits that carried are now zeros; the one before them took
       // the increment. Both are patched into every record.
-      var i: i32 = p - 1;
+      let i: i32 = p - 1;
       while (i >= 0 && prefix[i] as i32 == 48) {
         t = patch(t, digit_col(i, digits, prec), rec, m, 48 as u8);
         i = i - 1;
@@ -1048,9 +1048,9 @@ function blocks(o: io_buffered.BufWriter, q: u8[], r: i32, step: i32, qmax: Opti
       if (i < 0) {
         break;
       }
-      var v: u8 = prefix[i];
+      let v: u8 = prefix[i];
       t = patch(t, digit_col(i, digits, prec), rec, m, v);
-      var z: i32 = 0;
+      let z: i32 = 0;
       while (z + 1 < p && prefix[z] as i32 == 48) {
         z = z + 1;
       }
@@ -1067,7 +1067,7 @@ function blocks(o: io_buffered.BufWriter, q: u8[], r: i32, step: i32, qmax: Opti
 
 // The first term of block `q`: `q000 + r`.
 function first_term(q: u8[], r: i32): u8[] {
-  var start: u8[] = concat_digits(q, zero_digits(block_digits()));
+  let start: u8[] = concat_digits(q, zero_digits(block_digits()));
   start = add_digits(start, r as u64);
   return start;
 }
@@ -1084,20 +1084,20 @@ function pad_digits(q: u8[], p: i32): u8[] {
 // `prefix` + low digits `r`, `r + step`, … below the span, each
 // followed by `sep` and `rec` bytes long, with the point in place.
 function template(prefix: u8[], r: i32, step: i32, prec: i32, sep: string, rec: i32): u8[] {
-  var k: i32 = block_digits();
-  var p: i32 = prefix.len();
-  var digits: i32 = p + k;
-  var t: u8[] = __alloc_u8(block_span() / step * rec);
-  var pos: i32 = 0;
-  var low: i32 = r;
+  let k: i32 = block_digits();
+  let p: i32 = prefix.len();
+  let digits: i32 = p + k;
+  let t: u8[] = __alloc_u8(block_span() / step * rec);
+  let pos: i32 = 0;
+  let low: i32 = r;
   while (low < block_span()) {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < digits) {
       if (prec > 0 && i == digits - prec) {
         t = t.with(pos, 46 as u8);
         pos = pos + 1;
       }
-      var b: u8 = 48 as u8;
+      let b: u8 = 48 as u8;
       if (i < p) {
         b = prefix[i];
       } else {
@@ -1107,9 +1107,9 @@ function template(prefix: u8[], r: i32, step: i32, prec: i32, sep: string, rec: 
       pos = pos + 1;
       i = i + 1;
     }
-    var j: i32 = 0;
+    let j: i32 = 0;
     while (j < sep.len()) {
-      var s: u8 = sep[j];
+      let s: u8 = sep[j];
       t = t.with(pos, s);
       pos = pos + 1;
       j = j + 1;
@@ -1120,8 +1120,8 @@ function template(prefix: u8[], r: i32, step: i32, prec: i32, sep: string, rec: 
 }
 
 function power_of_ten(n: i32): i32 {
-  var v: i32 = 1;
-  var i: i32 = 0;
+  let v: i32 = 1;
+  let i: i32 = 0;
   while (i < n) {
     v = v * 10;
     i = i + 1;
@@ -1131,8 +1131,8 @@ function power_of_ten(n: i32): i32 {
 
 // `patch(t, col, rec, m, v)` — byte `col` of each of the `m` records.
 function patch(own t: u8[], col: i32, rec: i32, m: i32, v: u8): u8[] {
-  var pos: i32 = col;
-  var i: i32 = 0;
+  let pos: i32 = col;
+  let i: i32 = 0;
   while (i < m) {
     t = t.with(pos, v);
     pos = pos + rec;
@@ -1162,11 +1162,11 @@ function seq_fast(o: io_buffered.BufWriter, first: u8[], step: u64, bound: Optio
 // lib/ld builds the body; the sign, the radix and the padding around it
 // are printf's rules rather than the format's, so they are here.
 function render(ldbl: ld.Format, spec: Spec, v: ld.LD): Option[string] {
-  var conv: i32 = spec.conv;
-  var upper: boolean = conv == 70 || conv == 69 || conv == 71 || conv == 65;
-  var prefix: string = sign_prefix(spec, v.neg);
+  let conv: i32 = spec.conv;
+  let upper: boolean = conv == 70 || conv == 69 || conv == 71 || conv == 65;
+  let prefix: string = sign_prefix(spec, v.neg);
   if (!v.is_finite()) {
-    var word: string = "inf";
+    let word: string = "inf";
     if (v.is_nan()) {
       word = "nan";
     }
@@ -1175,16 +1175,16 @@ function render(ldbl: ld.Format, spec: Spec, v: ld.LD): Option[string] {
     }
     return pad(spec, prefix, word, false);
   }
-  var lc: i32 = lower(conv);
+  let lc: i32 = lower(conv);
   if (lc == 97) {
     return hex_field(ldbl, spec, v, prefix, upper);
   }
-  var prec: i64 = spec.prec;
+  let prec: i64 = spec.prec;
   if (prec < 0 as i64) {
     prec = 6 as i64;
   }
-  var extra: i64 = prefix.len() as i64;
-  var d: ld.Dec = v.dec();
+  let extra: i64 = prefix.len() as i64;
+  let d: ld.Dec = v.dec();
   if (lc == 102) {
     return field(spec, prefix, ld.fixed(d, prec, spec.hash, extra));
   }
@@ -1208,8 +1208,8 @@ function hex_field(ldbl: ld.Format, spec: Spec, v: ld.LD, prefix: string, upper:
   if (spec.prec >= 0 as i64 && spec.prec + 10 as i64 + prefix.len() as i64 >= ld.overflow_len()) {
     return None;
   }
-  var radix: string = "0x";
-  var body: string = ldbl.hex(v, spec.prec, spec.hash);
+  let radix: string = "0x";
+  let body: string = ldbl.hex(v, spec.prec, spec.hash);
   if (upper) {
     radix = "0X";
     body = body.to_upper();
@@ -1222,15 +1222,15 @@ function hex_field(ldbl: ld.Format, spec: Spec, v: ld.LD, prefix: string, upper:
 // flag applies, else space padding on the side `-` selects. None is a
 // field glibc could not produce.
 function pad(spec: Spec, prefix: string, body: string, zero_ok: boolean): Option[string] {
-  var len: i64 = (prefix.len() + body.len()) as i64;
-  var total: i64 = len;
+  let len: i64 = (prefix.len() + body.len()) as i64;
+  let total: i64 = len;
   if (spec.width > total) {
     total = spec.width;
   }
   if (total >= ld.overflow_len()) {
     return None;
   }
-  var fill: i32 = (total - len) as i32;
+  let fill: i32 = (total - len) as i32;
   if (fill <= 0) {
     return Some(prefix + body);
   }
@@ -1269,16 +1269,16 @@ function print_numbers(o: io_buffered.BufWriter, b: Block, f: Fmt, first: ld.LD,
   if (out_of_range(first, step, last)) {
     return (o, b);
   }
-  var w: io_buffered.BufWriter = o;
-  var out: Block = emit_term(w, b, f, first);
-  var i: i64 = 1 as i64;
+  let w: io_buffered.BufWriter = o;
+  let out: Block = emit_term(w, b, f, first);
+  let i: i64 = 1 as i64;
   while (true) {
-    var x: ld.LD = f.ldbl.add(first, f.ldbl.mul(f.ldbl.from_i64(i), step));
+    let x: ld.LD = f.ldbl.add(first, f.ldbl.mul(f.ldbl.from_i64(i), step));
     if (out_of_range(x, step, last)) {
       // The term just printed, which for the very first one is FIRST
       // itself: `first + 0*step` is a plain zero and would lose the sign
       // of a negative one.
-      var prev: ld.LD = first;
+      let prev: ld.LD = first;
       if (i > 1 as i64) {
         prev = f.ldbl.add(first, f.ldbl.mul(f.ldbl.from_i64(i - 1 as i64), step));
       }
@@ -1290,7 +1290,7 @@ function print_numbers(o: io_buffered.BufWriter, b: Block, f: Fmt, first: ld.LD,
     }
     out = push_str(out, sep);
     out = emit_term(w, out, f, x);
-    var d: (io_buffered.BufWriter, Block) = drain(w, out);
+    let d: (io_buffered.BufWriter, Block) = drain(w, out);
     w = d.0;
     out = d.1;
     i = i + 1 as i64;
@@ -1324,7 +1324,7 @@ function prints_as_last(f: Fmt, x: ld.LD, prev: ld.LD, last: ld.LD): boolean {
       if (s.len() == 0 || s == printed(f, prev)) {
         return false;
       }
-      var r: ld.Parse = f.ldbl.strtold(s);
+      let r: ld.Parse = f.ldbl.strtold(s);
       return r.end == s.len() && r.v.eq(last);
     },
     None => {
@@ -1354,7 +1354,7 @@ function out_of_range(x: ld.LD, step: ld.LD, last: ld.LD): boolean {
 }
 
 function emit_term(o: io_buffered.BufWriter, b: Block, f: Fmt, v: ld.LD): Block {
-  var out: Block = push_str(b, f.pre);
+  let out: Block = push_str(b, f.pre);
   match (render(f.ldbl, f.spec, v)) {
     Some(s) => {
       out = push_str(out, s);
@@ -1389,20 +1389,20 @@ function write_overflow(o: io_buffered.BufWriter): void {
 // print, because GNU's are rounded to the format at every step. Signed:
 // `-0` keeps nothing, so the caller carries that sign itself.
 function scaled(arg: string, p: i32, limit: u64): Option[i64] {
-  var s: string = skip_blanks_and_plus(arg);
-  var i: i32 = 0;
-  var neg: boolean = false;
+  let s: string = skip_blanks_and_plus(arg);
+  let i: i32 = 0;
+  let neg: boolean = false;
   if (i < s.len() && s[i] as i32 == 45) {
     neg = true;
     i = i + 1;
   }
-  var mant: i32 = mantissa_end(s);
-  var digits: i64 = 0 as i64;
-  var frac: i32 = 0;
-  var seen: boolean = false;
-  var in_frac: boolean = false;
+  let mant: i32 = mantissa_end(s);
+  let digits: i64 = 0 as i64;
+  let frac: i32 = 0;
+  let seen: boolean = false;
+  let in_frac: boolean = false;
   while (i < mant) {
-    var b: i32 = s[i] as i32;
+    let b: i32 = s[i] as i32;
     if (b == 46) {
       if (in_frac) {
         return None;
@@ -1427,12 +1427,12 @@ function scaled(arg: string, p: i32, limit: u64): Option[i64] {
   if (!seen) {
     return None;
   }
-  var k: i32 = p + exponent_value(s, mant) - frac;
+  let k: i32 = p + exponent_value(s, mant) - frac;
   if (k < 0) {
     return None;
   }
-  var v: i64 = digits;
-  var n: i32 = 0;
+  let v: i64 = digits;
+  let n: i32 = 0;
   while (n < k) {
     if (v > 922337203685477580 as i64) {
       return None;
@@ -1489,7 +1489,7 @@ function zero_term_neg(f: ld.Format, first: ld.LD, step: ld.LD, fi: i64, si: i64
   if (fi % si != 0 as i64) {
     return false;
   }
-  var k: i64 = (0 as i64 - fi) / si;
+  let k: i64 = (0 as i64 - fi) / si;
   if (k < 0 as i64) {
     return false;
   }
@@ -1512,15 +1512,15 @@ function dec_seq(o: io_buffered.BufWriter, first: i64, step: i64, last: i64, pre
   if (step < 0 as i64) {
     return gnu.put(dec_terms(o, first, last, step, prec, width, sep, zero_neg, false), "\n");
   }
-  var below: i64 = 0 as i64 - 1 as i64;
+  let below: i64 = 0 as i64 - 1 as i64;
   if (zero_neg) {
     below = 0 as i64;
   }
-  var w: io_buffered.BufWriter = o;
-  var start: i64 = first;
-  var lead: boolean = false;
+  let w: io_buffered.BufWriter = o;
+  let start: i64 = first;
+  let lead: boolean = false;
   if (first <= below) {
-    var stop: i64 = below;
+    let stop: i64 = below;
     if (last < stop) {
       stop = last;
     }
@@ -1541,13 +1541,13 @@ function dec_seq(o: io_buffered.BufWriter, first: i64, step: i64, last: i64, pre
 // a step across zero, where the magnitude turns around, starts over
 // from the value.
 function dec_terms(o: io_buffered.BufWriter, first: i64, last: i64, step: i64, prec: i32, width: i32, sep: string, zero_neg: boolean, lead: boolean): io_buffered.BufWriter {
-  var w: io_buffered.BufWriter = o;
-  var h: usize = w.handle();
-  var count: i64 = (last - first) / step + 1 as i64;
-  var x: i64 = first;
-  var mag: u8[] = digits_of(abs_i64(x));
-  var sep_first: boolean = lead;
-  var i: i64 = 0 as i64;
+  let w: io_buffered.BufWriter = o;
+  let h: usize = w.handle();
+  let count: i64 = (last - first) / step + 1 as i64;
+  let x: i64 = first;
+  let mag: u8[] = digits_of(abs_i64(x));
+  let sep_first: boolean = lead;
+  let i: i64 = 0 as i64;
   while (i < count) {
     if (sep_first) {
       buf_push(h, sep);
@@ -1559,7 +1559,7 @@ function dec_terms(o: io_buffered.BufWriter, first: i64, last: i64, step: i64, p
     }
     i = i + 1 as i64;
     if (i < count) {
-      var y: i64 = x + step;
+      let y: i64 = x + step;
       mag = step_mag(mag, x, y, step);
       x = y;
     }
@@ -1570,7 +1570,7 @@ function dec_terms(o: io_buffered.BufWriter, first: i64, last: i64, step: i64, p
 // `|y|` from `|x|`, where `y` is `x + step`: added to or taken from the
 // digits in place while the sign holds, recounted once it flips.
 function step_mag(own mag: u8[], x: i64, y: i64, step: i64): u8[] {
-  var up: u64 = abs_i64(step);
+  let up: u64 = abs_i64(step);
   if (x >= 0 as i64 && step > 0 as i64 || x <= 0 as i64 && step < 0 as i64) {
     return add_digits(mag, up);
   }
@@ -1585,18 +1585,18 @@ function step_mag(own mag: u8[], x: i64, y: i64, step: i64): u8[] {
 struct Args { format: string, has_format: boolean, sep: string, equal_width: boolean, operands: string[] }
 
 function parse_args(argv: string[]): Args {
-  var opts: gnu.Opt[] = [gnu.flag("w", "equal-width", 1), gnu.valued("f", "format", 2), gnu.valued("s", "separator", 3)];
-  var g: gnu.Getopt = gnu.getopt_new(argv, opts, "seq", help_text(), 1).in_order();
-  var format: string = "";
-  var has_format: boolean = false;
-  var sep: string = "\n";
-  var equal_width: boolean = false;
+  let opts: gnu.Opt[] = [gnu.flag("w", "equal-width", 1), gnu.valued("f", "format", 2), gnu.valued("s", "separator", 3)];
+  let g: gnu.Getopt = gnu.getopt_new(argv, opts, "seq", help_text(), 1).in_order();
+  let format: string = "";
+  let has_format: boolean = false;
+  let sep: string = "\n";
+  let equal_width: boolean = false;
   while (true) {
     if (g.at_negative_number()) {
       g = g.stop();
       break;
     }
-    var r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    let r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = r.1;
     match (r.0) {
       Some(m) => {
@@ -1644,7 +1644,7 @@ function first_digits(ldbl: ld.Format, v: ld.LD, text: string): Option[u8[]] {
 
 // FIRST as `%.0Lf` would print it, when that is a run of digits.
 function whole_digits(ldbl: ld.Format, v: ld.LD): Option[u8[]] {
-  var s0: Spec = spec(102);
+  let s0: Spec = spec(102);
   match (render(ldbl, Spec { ...s0, prec: 0 as i64 }, v)) {
     Some(s) => {
       if (!all_digits(s)) {
@@ -1673,11 +1673,11 @@ function bound_digits(v: ld.LD): Option[Option[u8[]]] {
   if (v.is_zero()) {
     return Some(Some(trim_zeros("0")));
   }
-  var d: ld.Dec = v.dec();
+  let d: ld.Dec = v.dec();
   if (d.dp <= 0) {
     return Some(Some(trim_zeros("0")));
   }
-  var n: i32 = d.dp;
+  let n: i32 = d.dp;
   if (n > d.digits.len()) {
     return Some(Some(trim_zeros(d.digits + "0".repeat(n - d.digits.len()))));
   }
@@ -1693,8 +1693,8 @@ function use_fast(a: Args, f: Fmt, first: Operand, step: Operand, last: Operand,
     return None;
   }
   if (all_digits(first_str) && all_digits(step_str) && all_digits(last_str)) {
-    var lo: u8[] = trim_zeros(first_str);
-    var hi: u8[] = trim_zeros(last_str);
+    let lo: u8[] = trim_zeros(first_str);
+    let hi: u8[] = trim_zeros(last_str);
     // A range that runs backwards is this engine's too: it compares the
     // DIGITS, prints nothing and exits, where the values rounded to the
     // format would still meet — `seq 100000000000000000001 1
@@ -1754,27 +1754,27 @@ function use_fast_rendered(ldbl: ld.Format, first: ld.LD, step: ld.LD, last: ld.
 }
 
 pub function main(): i32 {
-  var a: Args = parse_args(args());
-  var ops: string[] = a.operands;
+  let a: Args = parse_args(args());
+  let ops: string[] = a.operands;
   if (ops.len() == 0) {
     gnu.die_usage("missing operand", 1);
   }
   if (ops.len() > 3) {
     gnu.die_usage("extra operand " + gnu.quote(ops[3]), 1);
   }
-  var ldbl: ld.Format = ld.format();
-  var f: Fmt = Fmt { pre: "", spec: spec(102), post: "", ldbl: ldbl };
+  let ldbl: ld.Format = ld.format();
+  let f: Fmt = Fmt { pre: "", spec: spec(102), post: "", ldbl: ldbl };
   if (a.has_format) {
     f = parse_format(ldbl, a.format);
     if (a.equal_width) {
       gnu.die_usage("format string may not be specified when printing equal width strings", 1);
     }
   }
-  var first_str: string = "1";
-  var step_str: string = "1";
-  var last_str: string = ops[ops.len() - 1];
-  var first: Operand = Operand { v: ldbl.from_i64(1 as i64), width: 1, prec: 0 };
-  var step: Operand = first;
+  let first_str: string = "1";
+  let step_str: string = "1";
+  let last_str: string = ops[ops.len() - 1];
+  let first: Operand = Operand { v: ldbl.from_i64(1 as i64), width: 1, prec: 0 };
+  let step: Operand = first;
   if (ops.len() >= 2) {
     first_str = ops[0];
     first = scan_arg(ldbl, first_str);
@@ -1786,8 +1786,8 @@ pub function main(): i32 {
       gnu.die_usage("invalid Zero increment value: " + gnu.quote(step_str), 1);
     }
   }
-  var last: Operand = scan_arg(ldbl, last_str);
-  var o: io_buffered.BufWriter = gnu.out_with(block_bytes());
+  let last: Operand = scan_arg(ldbl, last_str);
+  let o: io_buffered.BufWriter = gnu.out_with(block_bytes());
   if (!a.has_format) {
     f = default_format(ldbl, first, step, last, a.equal_width);
   } else if (fmt_overflows(f)) {
@@ -1801,15 +1801,15 @@ pub function main(): i32 {
     None => {}
   }
   if (is_fixed_point(f, a.has_format)) {
-    var p: i32 = f.spec.prec as i32;
-    var exact: u64 = ldbl.max_exact_u64();
+    let p: i32 = f.spec.prec as i32;
+    let exact: u64 = ldbl.max_exact_u64();
     match (scaled(first_str, p, exact)) {
       Some(fi) => {
         match (scaled(step_str, p, exact)) {
           Some(si) => {
             match (scaled(last_str, p, exact)) {
               Some(li) => {
-                var nz: boolean = zero_term_neg(ldbl, first.v, step.v, fi, si);
+                let nz: boolean = zero_term_neg(ldbl, first.v, step.v, fi, si);
                 gnu.finish(dec_seq(o, fi, si, li, p, f.spec.width as i32, a.sep, nz));
                 return 0;
               },
@@ -1822,7 +1822,7 @@ pub function main(): i32 {
       None => {}
     }
   }
-  var r: (io_buffered.BufWriter, Block) = print_numbers(o, block_new(), f, first.v, step.v, last.v, a.sep);
+  let r: (io_buffered.BufWriter, Block) = print_numbers(o, block_new(), f, first.v, step.v, last.v, a.sep);
   block_finish(r.0, r.1);
   return 0;
 }

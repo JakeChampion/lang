@@ -12,46 +12,46 @@
 //
 // Sentinels are 251-253, above the `% 113` the success path returns.
 function scalars(i: i32): i32 {
-    var xs: i32[] = [i];
+    let xs: i32[] = [i];
     xs = xs.append(i + 1).append(i + 2);
     if (xs.len() != 3) { return 253; }
     return xs[2];
 }
 
 function bytes(i: i32): i32 {
-    var bs: u8[] = [];
+    let bs: u8[] = [];
     bs = bs.append((i % 256) as u8).append(((i + 1) % 256) as u8);
     if (bs.len() != 2) { return 253; }
     return bs.len();
 }
 
 function strings(i: i32): i32 {
-    var ss: string[] = ["a"];
+    let ss: string[] = ["a"];
     ss = ss.append("b").append("c");
     if (ss.len() != 3) { return 253; }
     return ss[2].len() + ss.len();
 }
 
 function floats(i: i32): i32 {
-    var fs: f64[] = [1.0];
+    let fs: f64[] = [1.0];
     fs = fs.append(2.0).append(3.0);
     return fs.len();
 }
 
 // `with` chains, and the two mixed orders — every combination refused before.
 function withs(i: i32): i32 {
-    var xs: i32[] = [1, 2, 3];
+    let xs: i32[] = [1, 2, 3];
     xs = xs.with(0, i).with(1, i + 1);
-    var ys: i32[] = xs.append(9).with(0, 5);
-    var zs: i32[] = xs.with(2, 7).append(8);
+    let ys: i32[] = xs.append(9).with(0, 5);
+    let zs: i32[] = xs.with(2, 7).append(8);
     return ys.len() + zs.len() + xs[1];
 }
 
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 50) {
-        var a: i32 = scalars(i) + bytes(i) + strings(i) + floats(i) + withs(i);
+        let a: i32 = scalars(i) + bytes(i) + strings(i) + floats(i) + withs(i);
         if (a >= 253) { return 252; }
         acc = acc + a;
         i = i + 1;

@@ -86,8 +86,8 @@ func TestLowerSimpleArithmetic(t *testing.T) {
 
 func TestLowerLocals(t *testing.T) {
 	p := lowerSource(t, `function f(): i32 {
-		var x: i32 = 5;
-		var y: i32 = x + 1;
+		let x: i32 = 5;
+		let y: i32 = x + 1;
 		return y;
 	}`)
 	mustContainOp(t, p, "f", OpStoreLocal)
@@ -106,7 +106,7 @@ func TestLowerIfElse(t *testing.T) {
 
 func TestLowerWhileBreakContinue(t *testing.T) {
 	p := lowerSource(t, `function f(): i32 {
-		var i: i32 = 0;
+		let i: i32 = 0;
 		while (i < 10) {
 			if (i == 5) { break; }
 			i = i + 1;
@@ -124,8 +124,8 @@ func TestLowerWhileBreakContinue(t *testing.T) {
 
 func TestLowerForLoopWithStep(t *testing.T) {
 	p := lowerSource(t, `function f(): i32 {
-		var sum: i32 = 0;
-		for (var i: i32 = 0; i < 10; i = i + 1) {
+		let sum: i32 = 0;
+		for (let i: i32 = 0; i < 10; i = i + 1) {
 			sum = sum + i;
 		}
 		return sum;
@@ -205,7 +205,7 @@ func TestLowerFloatArithmetic(t *testing.T) {
 }
 
 func TestLowerImplicitReturn(t *testing.T) {
-	p := lowerSource(t, `function f(): void { var x: i32 = 0; }`)
+	p := lowerSource(t, `function f(): void { let x: i32 = 0; }`)
 	last := p.Funcs[0].Ops[len(p.Funcs[0].Ops)-1]
 	if last.Kind != OpReturnVoid {
 		t.Errorf("expected trailing return_void, got %s", last.Kind)
@@ -220,7 +220,7 @@ func TestLowerImplicitReturn(t *testing.T) {
 // the valid shape that still has no explicit trailing return. See
 // docs/ADVERSARIAL-REVIEW-2026-06.md (F4).
 func TestLowerImplicitReturnNumber(t *testing.T) {
-	p := lowerSource(t, `function f(): i32 { while (true) { var x: i32 = 0; } }`)
+	p := lowerSource(t, `function f(): i32 { while (true) { let x: i32 = 0; } }`)
 	ops := p.Funcs[0].Ops
 	if ops[len(ops)-1].Kind != OpReturn {
 		t.Errorf("expected trailing return, got %s", ops[len(ops)-1].Kind)
@@ -270,10 +270,10 @@ func TestLowerClosureValueRcTracked(t *testing.T) {
 	// instead take the move-on-alias path and elide the inc, which is
 	// also correct — this shape pins the inc-on-live-alias case.)
 	src := `function main(): i32 {
-    var n: i32 = 5;
+    let n: i32 = 5;
     function f(): i32 { return n; }
-    var a = f;
-    var b = a;
+    let a = f;
+    let b = a;
     return a() + b();
 }`
 	prog := lowerSourceWith(t, src, 8)
@@ -304,7 +304,7 @@ func TestLowerIfExpr(t *testing.T) {
 
 func TestLowerArrayLitAndIndex(t *testing.T) {
 	prog := lowerSource(t, `function f(): i32 {
-		var a: i32[] = [10, 20, 30];
+		let a: i32[] = [10, 20, 30];
 		return a[1];
 	}`)
 	mustContainOp(t, prog, "f", OpAlloc)
@@ -316,7 +316,7 @@ func TestLowerArrayLitAndIndex(t *testing.T) {
 
 func TestLowerStringIndex(t *testing.T) {
 	prog := lowerSource(t, `function f(): i32 {
-		var s: string = "abc";
+		let s: string = "abc";
 		return s[1] as i32;
 	}`)
 	mustContainOp(t, prog, "f", OpCallDirect) // __str_idx
@@ -326,7 +326,7 @@ func TestLowerStringIndex(t *testing.T) {
 func TestLowerStructLitAndFieldAccess(t *testing.T) {
 	prog := lowerSource(t, `struct P { x: i32, y: i32 }
 		function main(): i32 {
-			var p: P = P { x: 10, y: 32 };
+			let p: P = P { x: 10, y: 32 };
 			return p.x + p.y;
 		}`)
 	mustContainOp(t, prog, "main", OpAlloc)
@@ -343,7 +343,7 @@ func TestLowerStructLitAndFieldAccess(t *testing.T) {
 func TestLowerFieldAccessThroughArrayIndex(t *testing.T) {
 	prog := lowerSource(t, `struct P { x: i32 }
 		function main(): i32 {
-			var ps: P[] = [P { x: 7 }];
+			let ps: P[] = [P { x: 7 }];
 			return ps[0].x;
 		}`)
 	mustContainOp(t, prog, "main", OpLoad)
@@ -496,7 +496,7 @@ function main(): i32 {
 func TestLowerIfLetUsesOpMatchTag(t *testing.T) {
 	prog := lowerSource(t, `enum Color { Red(i32), Green, Blue }
 function main(): i32 {
-    var c: Color = Red(7);
+    let c: Color = Red(7);
     if let Red(v) = c { return v; }
     return 0;
 }`)
@@ -558,7 +558,7 @@ function main(): i32 {
 func TestLowerRepackPairAsHeapBoxWasmLayout(t *testing.T) {
 	src := `function pick(): Option[string] { return Some("yo"); }
 function main(): i32 {
-    var s: string = match (pick()) {
+    let s: string = match (pick()) {
         Some(v) => v,
         None => ""
     };
@@ -578,7 +578,7 @@ function main(): i32 {
 func TestLowerRepackPairAsHeapBoxNativeLayout(t *testing.T) {
 	src := `function pick(): Option[string] { return Some("yo"); }
 function main(): i32 {
-    var s: string = match (pick()) {
+    let s: string = match (pick()) {
         Some(v) => v,
         None => ""
     };
@@ -619,7 +619,7 @@ func reboxAllocSizePresent(ops []Op, size int32) bool {
 func TestLowerMatchUsesOpMatchTag(t *testing.T) {
 	prog := lowerSource(t, `enum Color { Red(i32), Green, Blue }
 function main(): i32 {
-    var c: Color = Green;
+    let c: Color = Green;
     match (c) {
         Red(v) => { return v; },
         Green  => { return 1; },
@@ -1226,7 +1226,7 @@ func TestLowerStringEqualityIdentVsLitShortCircuits(t *testing.T) {
 // def site should emit OpMakeClosure.
 func TestLowerNestedFunctionHoists(t *testing.T) {
 	prog := lowerSource(t, `function outer(): i32 {
-		var n: i32 = 7;
+		let n: i32 = 7;
 		function inner(): i32 { return n + 1; }
 		return inner();
 	}`)
@@ -1260,7 +1260,7 @@ func TestLowerNestedFunctionHoists(t *testing.T) {
 	if last := hoisted.Params[len(hoisted.Params)-1].Name; last != "__env" {
 		t.Errorf("hoisted function's last param = %q, want __env", last)
 	}
-	// The outer's def site is now `var inner = MakeClosure{...}`, so
+	// The outer's def site is now `let inner = MakeClosure{...}`, so
 	// outer's ops contain OpMakeClosure.
 	mustContainOp(t, prog, "outer", OpMakeClosure)
 }
@@ -1269,7 +1269,7 @@ func TestLowerNestedFunctionHoists(t *testing.T) {
 // IR walks `local.get $__env; const offset; add; load`.
 func TestLowerCaptureRefIsEnvRelativeLoad(t *testing.T) {
 	prog := lowerSource(t, `function outer(): i32 {
-		var n: i32 = 5;
+		let n: i32 = 5;
 		function inner(): i32 { return n; }
 		return inner();
 	}`)
@@ -1306,8 +1306,8 @@ func TestLowerCaptureRefIsEnvRelativeLoad(t *testing.T) {
 // structured-control-flow target (WAT, etc.) relies on.
 func TestStructuredControlFlowIsBalanced(t *testing.T) {
 	prog := lowerSource(t, `function f(n: i32): i32 {
-		var sum: i32 = 0;
-		for (var i: i32 = 0; i < n; i = i + 1) {
+		let sum: i32 = 0;
+		for (let i: i32 = 0; i < n; i = i + 1) {
 			if (i == 5) { break; }
 			if (i == 7) { continue; }
 			match (i) {
@@ -1352,7 +1352,7 @@ func TestStructuredControlFlowIsBalanced(t *testing.T) {
 func TestLowerNumScratchTracked(t *testing.T) {
 	// A program with no synthetic helpers: ScratchTypes is empty.
 	pPlain := lowerSource(t, `function f(a: i32, b: i32): i32 {
-		var x: i32 = a + b;
+		let x: i32 = a + b;
 		return x;
 	}`)
 	if got := len(pPlain.Funcs[0].ScratchTypes); got != 0 {
@@ -1362,8 +1362,8 @@ func TestLowerNumScratchTracked(t *testing.T) {
 	// at least one scratch slot per helper kind.
 	pHelpers := lowerSource(t, `struct P { x: i32 }
 		function f(n: i32): i32 {
-			var a: i32[] = [1, 2, 3];
-			var p: P = P { x: 5 };
+			let a: i32[] = [1, 2, 3];
+			let p: P = P { x: 5 };
 			match (n) { 0 => { return 0; }, _ => { return 1; } }
 		}`)
 	if got := len(pHelpers.Funcs[0].ScratchTypes); got < 3 {
@@ -1405,7 +1405,7 @@ func TestLowerCallIndirectCarriesSig(t *testing.T) {
 // that expression).
 func TestLowerStampsSourcePositions(t *testing.T) {
 	src := `function f(a: i32, b: i32): i32 {
-		var x: i32 = a + b;
+		let x: i32 = a + b;
 		return x;
 	}`
 	prog := lowerSource(t, src)
@@ -1437,8 +1437,8 @@ func TestLowerStampsSourcePositions(t *testing.T) {
 // block size.
 func TestLowerMakeClosureCarriesNameAndCount(t *testing.T) {
 	prog := lowerSource(t, `function outer(): i32 {
-		var a: i32 = 1;
-		var b: i32 = 2;
+		let a: i32 = 1;
+		let b: i32 = 2;
 		function inner(): i32 { return a + b; }
 		return inner();
 	}`)
@@ -1592,8 +1592,8 @@ func TestLowerGenericEnumStructFieldDrop(t *testing.T) {
 struct Holder { b: Option[Item], n: i32 }
 struct Outer { h: Holder, tag: i32 }
 function build(): i32 {
-    var o: Outer = Outer { h: Holder { b: Some(Item { xs: [1, 2] }), n: 3 }, tag: 4 };
-    var got: i32 = 0;
+    let o: Outer = Outer { h: Holder { b: Some(Item { xs: [1, 2] }), n: 3 }, tag: 4 };
+    let got: i32 = 0;
     match (o.h.b) { Some(it) => { got = it.xs[1]; }, None => { got = 0; } }
     return got;
 }`, 8)
@@ -1635,8 +1635,8 @@ function build(): i32 {
 func TestLowerGenericEnumScalarFieldFreesBox(t *testing.T) {
 	p := lowerSourceWith(t, `struct Holder { b: Option[i32], n: i32 }
 function build(): i32 {
-    var h: Holder = Holder { b: Some(7), n: 3 };
-    var got: i32 = 0;
+    let h: Holder = Holder { b: Some(7), n: 3 };
+    let got: i32 = 0;
     match (h.b) { Some(v) => { got = v; }, None => { got = 0; } }
     return got;
 }`, 8)
@@ -1652,8 +1652,8 @@ function build(): i32 {
 // owned strings.
 func TestLowerStringConcatLocalReclaim(t *testing.T) {
 	p := lowerSourceWith(t, `function build(): i32 {
-    var pre: string = "v";
-    var s: string = pre + "x";
+    let pre: string = "v";
+    let s: string = pre + "x";
     return s.len();
 }`, 4)
 	if !callsDirect(p, "build", "__fern_str_dec") {
@@ -1662,15 +1662,15 @@ func TestLowerStringConcatLocalReclaim(t *testing.T) {
 }
 
 // TestLowerStringAliasReclaim verifies that aliasing a fresh owned string
-// (var s2 = s1, where s1 is a concat result — a headered heap buffer)
+// (let s2 = s1, where s1 is a concat result — a headered heap buffer)
 // retains the shared buffer via the two-word __fern_str_inc, and that both
 // locals reach __fern_str_dec at exit. The dec's rc==1 / is-unique gate
 // frees the buffer exactly once (the first dec sees rc=2 and only
 // decrements; the second sees rc=1 and frees).
 func TestLowerStringAliasReclaim(t *testing.T) {
 	p := lowerSourceWith(t, `function build(): i32 {
-    var s1: string = "a" + "b";
-    var s2: string = s1;
+    let s1: string = "a" + "b";
+    let s2: string = s1;
     return s1.len() + s2.len();
 }`, 4)
 	if !callsDirect(p, "build", "__fern_str_inc") {
@@ -1691,8 +1691,8 @@ func TestLowerStringAliasReclaim(t *testing.T) {
 // the inc a runtime no-op, so the unconditional emit is safe.
 func TestLowerStringAliasIncIsUniform(t *testing.T) {
 	p := lowerSourceWith(t, `function build(xs: string[]): i32 {
-    var v: string = xs[0];
-    var v2: string = v;
+    let v: string = xs[0];
+    let v2: string = v;
     return v.len() + v2.len();
 }`, 4)
 	if !callsDirect(p, "build", "__fern_str_inc") {
@@ -1709,8 +1709,8 @@ func TestLowerStringAliasIncIsUniform(t *testing.T) {
 // the size-class-matched length+1 payload. See docs/IR-SELFCOMPILE-OOM.
 func TestLowerStringReclaimOnNative(t *testing.T) {
 	p := lowerSourceWith(t, `function build(): i32 {
-    var pre: string = "v";
-    var s: string = pre + "x";
+    let pre: string = "v";
+    let s: string = pre + "x";
     return s.len();
 }`, 8)
 	if !callsDirect(p, "build", "__fern_str_dec") {
@@ -1727,9 +1727,9 @@ func TestLowerStringReclaimOnNative(t *testing.T) {
 // buffer once per call. A callee whose retention really is uncounted (a bare
 // `return s`) keeps the taint: TestStringParamPushedThenReturnedBareStaysUncredited.
 func TestLowerStringPassedToPushRetainingFnIsReclaimedNative(t *testing.T) {
-	p := lowerSourceWith(t, `function keep(s: string): string[] { var xs: string[] = []; return xs.append(s); }
+	p := lowerSourceWith(t, `function keep(s: string): string[] { let xs: string[] = []; return xs.append(s); }
 function build(): i32 {
-    var s: string = "a" + "b";
+    let s: string = "a" + "b";
     return keep(s).len();
 }`, 8)
 	if !callsDirect(p, "build", "__fern_str_dec") {
@@ -1750,7 +1750,7 @@ function build(): i32 {
 func TestLowerStringPassedToUnusedParamIsReclaimedNative(t *testing.T) {
 	p := lowerSourceWith(t, `function ignore(s: string): i32 { return 0; }
 function build(): i32 {
-    var s: string = "a" + "b";
+    let s: string = "a" + "b";
     return ignore(s);
 }`, 8)
 	if !callsDirect(p, "build", "__fern_str_dec") {
@@ -1767,7 +1767,7 @@ function build(): i32 {
 func TestLowerStringStructFieldReclaim(t *testing.T) {
 	p := lowerSourceWith(t, `struct Holder { name: string }
 function build(s: string): i32 {
-    var h: Holder = Holder { name: s };
+    let h: Holder = Holder { name: s };
     return h.name.len();
 }`, 4)
 	// The reclamation is OUTLINED: `build` calls the generated drop fn and
@@ -1794,7 +1794,7 @@ func TestLowerStringNestedStructFieldReclaim(t *testing.T) {
 	p := lowerSourceWith(t, `struct Inner { name: string }
 struct Outer { inner: Inner }
 function build(s: string): i32 {
-    var o: Outer = Outer { inner: Inner { name: s } };
+    let o: Outer = Outer { inner: Inner { name: s } };
     return o.inner.name.len();
 }`, 4)
 	if !callsDirect(p, "__drop_struct_Inner", "__fern_str_dec") {
@@ -1811,7 +1811,7 @@ function build(s: string): i32 {
 func TestLowerStringStructFieldReclaimOnNative(t *testing.T) {
 	p := lowerSourceWith(t, `struct Holder { name: string }
 function build(s: string): i32 {
-    var h: Holder = Holder { name: s };
+    let h: Holder = Holder { name: s };
     return h.name.len();
 }`, 8)
 	if !callsDirect(p, "__drop_struct_Holder", "__fern_str_dec") {
@@ -1833,7 +1833,7 @@ func TestLowerStringStructFieldReclaimOnArm64TwoWord(t *testing.T) {
 	defer func() { ast.TwoWordOverride = prevOverride }()
 	p := lowerSourceWith(t, `struct Holder { name: string }
 function build(s: string): i32 {
-    var h: Holder = Holder { name: s };
+    let h: Holder = Holder { name: s };
     return h.name.len();
 }`, 8)
 	if !callsDirect(p, "build", "__drop_struct_Holder") {
@@ -1859,7 +1859,7 @@ func TestLowerStringNestedStructFieldReclaimOnArm64TwoWord(t *testing.T) {
 	p := lowerSourceWith(t, `struct Inner { name: string }
 struct Outer { inner: Inner }
 function build(s: string): i32 {
-    var o: Outer = Outer { inner: Inner { name: s } };
+    let o: Outer = Outer { inner: Inner { name: s } };
     return o.inner.name.len();
 }`, 8)
 	if !callsDirect(p, "__drop_struct_Inner", "__fern_str_dec") {
@@ -1873,7 +1873,7 @@ function build(s: string): i32 {
 // shaped element initialiser retains via __fern_str_inc. Gated wasm.
 func TestLowerStringTupleElemReclaim(t *testing.T) {
 	p := lowerSourceWith(t, `function build(s: string): i32 {
-    var t: (string, i32) = (s, 1);
+    let t: (string, i32) = (s, 1);
     return t.0.len();
 }`, 4)
 	if !callsDirect(p, "build", "__fern_str_dec") {
@@ -1890,8 +1890,8 @@ func TestLowerStringTupleElemReclaim(t *testing.T) {
 // __fern_str_dec would free the buffer under the live binding → UAF).
 func TestLowerStringTupleDestructureDup(t *testing.T) {
 	p := lowerSourceWith(t, `function build(s: string): i32 {
-    var t: (string, i32) = (s, 1);
-    var (a, b) = t;
+    let t: (string, i32) = (s, 1);
+    let (a, b) = t;
     return a.len();
 }`, 4)
 	if !callsDirect(p, "build", "__fern_str_inc") {
@@ -1909,7 +1909,7 @@ func TestLowerStringTupleDestructureDup(t *testing.T) {
 // decrements, so the buffer's count reaches 0 and nothing is reclaimed.
 func TestLowerStringTupleElemReclaimOnNative(t *testing.T) {
 	p := lowerSourceWith(t, `function build(s: string): i32 {
-    var t: (string, i32) = (s, 1);
+    let t: (string, i32) = (s, 1);
     return t.0.len();
 }`, 8)
 	if !callsDirect(p, "build", "__fern_str_dec") {
@@ -1923,7 +1923,7 @@ func TestLowerStringTupleElemReclaimOnNative(t *testing.T) {
 // decrements, so the box came back and the element's buffer did not.
 func TestLowerCellStringDropFrees(t *testing.T) {
 	const src = `function build(s: string): i32 {
-    var c: Cell[string] = cell_new(s + "x");
+    let c: Cell[string] = cell_new(s + "x");
     return c.get().len();
 }`
 	for _, ptrW := range []int{4, 8} {
@@ -1943,7 +1943,7 @@ func TestLowerCellStringDropFrees(t *testing.T) {
 // concat or a fresh call result is.
 func TestLowerCellStringGetTempReclaimed(t *testing.T) {
 	const src = `function build(s: string): i32 {
-    var c: Cell[string] = cell_new(s + "x");
+    let c: Cell[string] = cell_new(s + "x");
     return c.get().len();
 }`
 	for _, ptrW := range []int{4, 8} {
@@ -1960,7 +1960,7 @@ func TestLowerCellStringGetTempReclaimed(t *testing.T) {
 // the buffer) rather than the buffer-only __fern_arr_dec. Gated wasm.
 func TestLowerStringArrayElemReclaim(t *testing.T) {
 	p := lowerSourceWith(t, `function build(a: string, b: string): i32 {
-    var arr: string[] = [a, b];
+    let arr: string[] = [a, b];
     return arr[0].len() + arr[1].len();
 }`, 4)
 	if !callsDirect(p, "build", "__fern_drop_arr_str") {
@@ -1973,7 +1973,7 @@ func TestLowerStringArrayElemReclaim(t *testing.T) {
 func TestLowerStringArrayInStructFieldReclaim(t *testing.T) {
 	p := lowerSourceWith(t, `struct Tags { items: string[] }
 function build(a: string): i32 {
-    var t: Tags = Tags { items: [a] };
+    let t: Tags = Tags { items: [a] };
     return t.items[0].len();
 }`, 4)
 	if !callsDirect(p, "build", "__drop_struct_Tags") {
@@ -1990,7 +1990,7 @@ function build(a: string): i32 {
 // Elements are retained on store, so the per-element frees are balanced.
 func TestLowerStringArrayElemReclaimOnNative(t *testing.T) {
 	p := lowerSourceWith(t, `function build(a: string, b: string): i32 {
-    var arr: string[] = [a, b];
+    let arr: string[] = [a, b];
     return arr[0].len();
 }`, 8)
 	if !callsDirect(p, "build", "__fern_drop_arr_str") {
@@ -2009,7 +2009,7 @@ func TestLowerStringArrayElemReclaimOnArm64TwoWord(t *testing.T) {
 	ast.TwoWordOverride = true
 	defer func() { ast.TwoWordOverride = prevOverride }()
 	p := lowerSourceWith(t, `function build(a: string, b: string): i32 {
-    var arr: string[] = [a, b];
+    let arr: string[] = [a, b];
     return arr[0].len() + arr[1].len();
 }`, 8)
 	if !callsDirect(p, "build", "__fern_drop_arr_str") {
@@ -2027,7 +2027,7 @@ func TestLowerStringArrayInStructFieldReclaimOnArm64TwoWord(t *testing.T) {
 	defer func() { ast.TwoWordOverride = prevOverride }()
 	p := lowerSourceWith(t, `struct Tags { items: string[] }
 function build(a: string): i32 {
-    var t: Tags = Tags { items: [a] };
+    let t: Tags = Tags { items: [a] };
     return t.items[0].len();
 }`, 8)
 	if !callsDirect(p, "build", "__drop_struct_Tags") {
@@ -2047,8 +2047,8 @@ function build(a: string): i32 {
 func TestLowerStringEnumPayloadReclaim(t *testing.T) {
 	p := lowerSourceWith(t, `enum Msg { Text(string), Code(i32) }
 function build(): i32 {
-    var m: Msg = Text("hello" + "world");
-    var got: i32 = 0;
+    let m: Msg = Text("hello" + "world");
+    let got: i32 = 0;
     match (m) { Text(t) => { got = t.len(); }, Code(c) => { got = c; } }
     return got;
 }`, 4)
@@ -2070,15 +2070,15 @@ func TestLowerStringEnumPayloadReclaimOnNative(t *testing.T) {
 	for _, tc := range []struct{ name, src string }{
 		{"nonuniform", `enum Msg { Text(string), Code(i32) }
 function build(): i32 {
-    var m: Msg = Text("hello" + "world");
-    var got: i32 = 0;
+    let m: Msg = Text("hello" + "world");
+    let got: i32 = 0;
     match (m) { Text(t) => { got = t.len(); }, Code(c) => { got = c; } }
     return got;
 }`},
 		{"uniform", `enum Line { Head(string), Tail(string) }
 function build(): i32 {
-    var m: Line = Head("hello" + "world");
-    var got: i32 = 0;
+    let m: Line = Head("hello" + "world");
+    let got: i32 = 0;
     match (m) { Head(t) => { got = t.len(); }, Tail(t) => { got = t.len(); } }
     return got;
 }`},
@@ -2104,8 +2104,8 @@ func TestLowerStringEnumPayloadReclaimOnArm64TwoWord(t *testing.T) {
 	defer func() { ast.TwoWordOverride = prevOverride }()
 	p := lowerSourceWith(t, `enum Msg { Text(string), Code(i32) }
 function build(): i32 {
-    var m: Msg = Text("hello" + "world");
-    var got: i32 = 0;
+    let m: Msg = Text("hello" + "world");
+    let got: i32 = 0;
     match (m) { Text(t) => { got = t.len(); }, Code(c) => { got = c; } }
     return got;
 }`, 8)
@@ -2126,8 +2126,8 @@ func TestLowerStringNestedEnumPayloadReclaimOnArm64TwoWord(t *testing.T) {
 	p := lowerSourceWith(t, `enum Msg { Text(string), Code(i32) }
 struct Holder { m: Msg }
 function build(): i32 {
-    var h: Holder = Holder { m: Text("hello" + "world") };
-    var got: i32 = 0;
+    let h: Holder = Holder { m: Text("hello" + "world") };
+    let got: i32 = 0;
     match (h.m) { Text(t) => { got = t.len(); }, Code(c) => { got = c; } }
     return got;
 }`, 8)
@@ -2159,8 +2159,8 @@ func closureDropCallsDirect(p *Program, callee string) bool {
 // __fern_str_inc. Gated wasm.
 func TestLowerStringClosureCaptureReclaim(t *testing.T) {
 	p := lowerSourceWith(t, `function build(): i32 {
-    var s: string = "cap" + "tured";
-    var f = (): i32 => { return s.len(); };
+    let s: string = "cap" + "tured";
+    let f = (): i32 => { return s.len(); };
     return f();
 }`, 4)
 	if !closureDropCallsDirect(p, "__fern_str_dec") {
@@ -2178,8 +2178,8 @@ func TestLowerStringClosureCaptureReclaim(t *testing.T) {
 // native closure-capture slice.)
 func TestLowerStringClosureCaptureReclaimOnNative(t *testing.T) {
 	p := lowerSourceWith(t, `function build(): i32 {
-    var s: string = "cap" + "tured";
-    var f = (): i32 => { return s.len(); };
+    let s: string = "cap" + "tured";
+    let f = (): i32 => { return s.len(); };
     return f();
 }`, 8)
 	if !closureDropCallsDirect(p, "__fern_str_dec") {
@@ -2200,8 +2200,8 @@ func TestLowerStringClosureCaptureReclaimOnArm64TwoWord(t *testing.T) {
 	ast.TwoWordOverride = true
 	defer func() { ast.TwoWordOverride = prevOverride }()
 	p := lowerSourceWith(t, `function build(): i32 {
-    var s: string = "cap" + "tured";
-    var f = (): i32 => { return s.len(); };
+    let s: string = "cap" + "tured";
+    let f = (): i32 => { return s.len(); };
     return f();
 }`, 8)
 	if !closureDropCallsDirect(p, "__fern_str_dec") {
@@ -2218,7 +2218,7 @@ func TestLowerStringClosureCaptureReclaimOnArm64TwoWord(t *testing.T) {
 // swept and its box leaks entirely.
 func TestLowerTupleBoxReclaim(t *testing.T) {
 	p := lowerSourceWith(t, `function build(): i32 {
-    var t: (i32, i32) = (1, 2);
+    let t: (i32, i32) = (1, 2);
     return t.0 + t.1;
 }`, 8)
 	if !callsDirect(p, "build", "__fern_box_free") {
@@ -2236,7 +2236,7 @@ func TestLowerTupleBoxReclaim(t *testing.T) {
 // surface as runtime calls in the lowered body.
 func TestLowerTupleDestructureArrayReclaim(t *testing.T) {
 	p := lowerSourceWith(t, `function build(): i32 {
-    var (a, b) = ([1, 2], [3, 4]);
+    let (a, b) = ([1, 2], [3, 4]);
     return a[0] + b[1];
 }`, 8)
 	if !callsDirect(p, "build", "__fern_rc_inc") {
@@ -2257,7 +2257,7 @@ func TestLowerTupleDestructureArrayReclaim(t *testing.T) {
 func TestLowerMapStructValueReclaim(t *testing.T) {
 	p := lowerSourceWith(t, `struct Item { xs: i32[] }
 function build(): i32 {
-    var m: Map[i32, Item] = map_new(8);
+    let m: Map[i32, Item] = map_new(8);
     m = m.insert(1, Item { xs: [1, 2] });
     return 0;
 }`, 8)
@@ -2281,7 +2281,7 @@ func TestLowerMapEnumValueReclaim(t *testing.T) {
 struct VA { v: i32[] }
 type Value = VI | VA;
 function build(): i32 {
-    var m: Map[i32, Value] = map_new(8);
+    let m: Map[i32, Value] = map_new(8);
     m = m.insert(1, VI { v: [1, 2] });
     return 0;
 }`, 8)
@@ -2307,7 +2307,7 @@ function build(): i32 {
 func TestLowerMapInEnumDeadDropCulled(t *testing.T) {
 	p := lowerSourceWith(t, `enum E { Obj(Map[i32, i32]), Num(i32) }
 function main(): i32 {
-    var xs: E[] = [];
+    let xs: E[] = [];
     xs = xs.append(Num(7));
     return 0;
 }`, 8)
@@ -2332,7 +2332,7 @@ function main(): i32 {
 func TestLowerMapArrayOfStructValueReclaim(t *testing.T) {
 	p := lowerSourceWith(t, `struct Item { xs: i32[] }
 function build(): i32 {
-    var m: Map[i32, Item[]] = map_new(8);
+    let m: Map[i32, Item[]] = map_new(8);
     m = m.insert(1, [Item { xs: [1, 2] }]);
     return 0;
 }`, 8)
@@ -2358,7 +2358,7 @@ function build(): i32 {
 func TestLowerMapGenericEnumValueReclaim(t *testing.T) {
 	p := lowerSourceWith(t, `struct Item { xs: i32[] }
 function build(): i32 {
-    var m: Map[i32, Option[Item]] = map_new(8);
+    let m: Map[i32, Option[Item]] = map_new(8);
     m = m.insert(1, Some(Item { xs: [1, 2] }));
     return 0;
 }`, 8)
@@ -2381,7 +2381,7 @@ function build(): i32 {
 func TestLowerMapOverwriteDrop(t *testing.T) {
 	p := lowerSourceWith(t, `struct Item { xs: i32[] }
 function build(): i32 {
-    var m: Map[i32, Item] = map_new(8);
+    let m: Map[i32, Item] = map_new(8);
     m = m.insert(1, Item { xs: [1, 2] });
     m = m.insert(1, Item { xs: [3] });
     return 0;
@@ -2400,7 +2400,7 @@ function build(): i32 {
 // each boxed (data, len) value buffer.
 func TestLowerMapStringValueReclaim(t *testing.T) {
 	p := lowerSourceWith(t, `function build(): i32 {
-    var m: Map[i32, string] = map_new(8);
+    let m: Map[i32, string] = map_new(8);
     m = m.insert(1, "hello" + "world");
     return 0;
 }`, 4)
@@ -2420,9 +2420,9 @@ func TestLowerMapStringValueReclaim(t *testing.T) {
 // co-owns the buffer alongside the map's cell.
 func TestLowerMapStringValueGetRetain(t *testing.T) {
 	p := lowerSourceWith(t, `function build(): i32 {
-    var m: Map[i32, string] = map_new(8);
+    let m: Map[i32, string] = map_new(8);
     m = m.insert(1, "hello" + "world");
-    var got: i32 = 0;
+    let got: i32 = 0;
     match (m.get(1)) { Some(v) => { got = v.len(); }, None => { got = 0; } }
     return got;
 }`, 4)
@@ -2441,7 +2441,7 @@ func TestLowerMapStringValueGetRetain(t *testing.T) {
 // stranded every heap value the map held (#2704).
 func TestLowerMapStringValueReclaimOnNative(t *testing.T) {
 	p := lowerSourceWith(t, `function build(): i32 {
-    var m: Map[i32, string] = map_new(8);
+    let m: Map[i32, string] = map_new(8);
     m = m.insert(1, "hello" + "world");
     return 0;
 }`, 8)
@@ -2473,7 +2473,7 @@ func TestLowerMapStringValueReclaimOnArm64TwoWord(t *testing.T) {
 	ast.TwoWordOverride = true
 	defer func() { ast.TwoWordOverride = prev }()
 	p := lowerSourceWith(t, `function build(): i32 {
-    var m: Map[i32, string] = map_new(8);
+    let m: Map[i32, string] = map_new(8);
     m = m.insert(1, "hello" + "world");
     return 0;
 }`, 8)
@@ -2488,7 +2488,7 @@ func TestLowerMapStringValueReclaimOnArm64TwoWord(t *testing.T) {
 // (data, len) key buffer.
 func TestLowerMapStringKeyReclaim(t *testing.T) {
 	p := lowerSourceWith(t, `function build(): i32 {
-    var m: Map[string, i32] = map_new(8);
+    let m: Map[string, i32] = map_new(8);
     m = m.insert("foo" + "bar", 10);
     return 0;
 }`, 4)
@@ -2514,7 +2514,7 @@ func TestLowerMapStringKeyReclaim(t *testing.T) {
 // value side's note explains why a bare rc dec will not do).
 func TestLowerMapStringKeyReclaimOnNative(t *testing.T) {
 	p := lowerSourceWith(t, `function build(): i32 {
-    var m: Map[string, i32] = map_new(8);
+    let m: Map[string, i32] = map_new(8);
     m = m.insert("foo" + "bar", 10);
     return 0;
 }`, 8)
@@ -2546,7 +2546,7 @@ func TestLowerMapStringKeyReclaimOnArm64TwoWord(t *testing.T) {
 	ast.TwoWordOverride = true
 	defer func() { ast.TwoWordOverride = prev }()
 	p := lowerSourceWith(t, `function build(): i32 {
-    var m: Map[string, i32] = map_new(8);
+    let m: Map[string, i32] = map_new(8);
     m = m.insert("foo" + "bar", 10);
     return 0;
 }`, 8)
@@ -2561,7 +2561,7 @@ func TestLowerMapStringKeyReclaimOnArm64TwoWord(t *testing.T) {
 // freelist-class alloc that leaked before this slice.
 func TestLowerMapStringColDropFreesCell(t *testing.T) {
 	p := lowerSourceWith(t, `function build(): i32 {
-    var m: Map[i32, string] = map_new(8);
+    let m: Map[i32, string] = map_new(8);
     m = m.insert(1, "hello" + "world");
     return 0;
 }`, 4)
@@ -2579,12 +2579,12 @@ func TestLowerMapStringLookupKeyCellFreed(t *testing.T) {
 		{"get", `match (m.get("a" + "b")) { Some(v) => { return v; }, None => { return 0; } }`},
 		{"has", `if (m.has("a" + "b")) { return 1; } return 0;`},
 		{"get_or", `return m.get_or("a" + "b", 0);`},
-		{"delete", `var r = m.without("a" + "b"); return 0;`},
+		{"delete", `let r = m.without("a" + "b"); return 0;`},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			p := lowerSourceWith(t, `function build(): i32 {
-    var m: Map[string, i32] = map_new(8);
+    let m: Map[string, i32] = map_new(8);
     m = m.insert("a" + "b", 1);
     `+c.call+`
 }`, 4)
@@ -2600,7 +2600,7 @@ func TestLowerMapStringLookupKeyCellFreed(t *testing.T) {
 // single-pointer and never boxes lookup keys into freeable cells).
 func TestLowerMapStringLookupKeyNoFreeOnNative(t *testing.T) {
 	p := lowerSourceWith(t, `function build(): i32 {
-    var m: Map[string, i32] = map_new(8);
+    let m: Map[string, i32] = map_new(8);
     m = m.insert("a" + "b", 1);
     return m.get_or("a" + "b", 0);
 }`, 8)
@@ -2614,7 +2614,7 @@ func TestLowerMapStringLookupKeyNoFreeOnNative(t *testing.T) {
 // the map's drop.
 func TestLowerMapStringKeyAndValueReclaim(t *testing.T) {
 	p := lowerSourceWith(t, `function build(): i32 {
-    var m: Map[string, string] = map_new(8);
+    let m: Map[string, string] = map_new(8);
     m = m.insert("foo" + "bar", "baz" + "qux");
     return 0;
 }`, 4)
@@ -2670,7 +2670,7 @@ func callsAnyTupleDrop(p *Program) bool {
 func TestLowerNestedTupleStringInStructReclaim(t *testing.T) {
 	p := lowerSourceWith(t, `struct Box { items: (string, i32) }
 function build(): i32 {
-    var b: Box = Box { items: ("h" + "i", 7) };
+    let b: Box = Box { items: ("h" + "i", 7) };
     return b.items.1;
 }`, 4)
 	if !callsAnyTupleDrop(p) {
@@ -2700,7 +2700,7 @@ function build(): i32 {
 func TestLowerNestedTupleStringInStructReclaimOnNativeSingleWord(t *testing.T) {
 	p := lowerSourceWith(t, `struct Box { items: (string, i32) }
 function build(): i32 {
-    var b: Box = Box { items: ("h" + "i", 7) };
+    let b: Box = Box { items: ("h" + "i", 7) };
     return b.items.1;
 }`, 8)
 	td, ok := anyTupleDropFn(p)
@@ -2732,7 +2732,7 @@ func TestLowerNestedTupleStringReclaimOnArm64TwoWord(t *testing.T) {
 	defer func() { ast.TwoWordOverride = prevOverride }()
 	p := lowerSourceWith(t, `struct Box { items: (string, i32) }
 function build(): i32 {
-    var b: Box = Box { items: ("h" + "i", 7) };
+    let b: Box = Box { items: ("h" + "i", 7) };
     return b.items.1;
 }`, 8)
 	td, ok := anyTupleDropFn(p)
@@ -2765,8 +2765,8 @@ func TestLowerEnumPayloadTupleStringReclaim(t *testing.T) {
 	p := lowerSourceWith(t, `enum Wrap { Pair((string, i32)), Empty }
 struct Holder { w: Wrap }
 function build(): i32 {
-    var h: Holder = Holder { w: Pair(("h" + "i", 7)) };
-    var r: i32 = 0;
+    let h: Holder = Holder { w: Pair(("h" + "i", 7)) };
+    let r: i32 = 0;
     match (h.w) { Pair(q) => { r = q.1; }, Empty => { r = 0; } }
     return r;
 }`, 4)
@@ -2793,8 +2793,8 @@ function build(): i32 {
 // thunk then calls into that helper at the closure's last reference.
 func TestLowerClosureCaptureTupleStringReclaim(t *testing.T) {
 	p := lowerSourceWith(t, `function build(): i32 {
-    var p: (string, i32) = ("h" + "i", 7);
-    var f: () => i32 = (): i32 => { return p.1; };
+    let p: (string, i32) = ("h" + "i", 7);
+    let f: () => i32 = (): i32 => { return p.1; };
     return f();
 }`, 4)
 	td, ok := anyTupleDropFn(p)
@@ -2832,7 +2832,7 @@ func TestLowerClosureCaptureTupleStringReclaim(t *testing.T) {
 // while the array is being reclaimed.
 func TestLowerArrayOfTupleStringReclaim(t *testing.T) {
 	p := lowerSourceWith(t, `function build(): i32 {
-    var a: (string, i32)[] = [("h" + "i", 7)];
+    let a: (string, i32)[] = [("h" + "i", 7)];
     return a[0].1;
 }`, 4)
 	td, ok := anyTupleDropFn(p)
@@ -2912,7 +2912,7 @@ func callOrderIn(p *Program, fnName, callee string, from int) int {
 // missing one leaks every displaced cell.
 func TestLowerMapStringValueTagCarriesCellSize(t *testing.T) {
 	const src = `function build(): i32 {
-    var m: Map[i32, string] = map_new(8);
+    let m: Map[i32, string] = map_new(8);
     m = m.insert(1, "hello" + "world");
     return 0;
 }`
@@ -2978,26 +2978,26 @@ func TestLowerMapStringValueOverwriteHasNoPreDrop(t *testing.T) {
 		src     string
 	}{
 		{"wasm32/rawKey", 4, false, `function build(): i32 {
-    var m: Map[i32, string] = map_new(8);
+    let m: Map[i32, string] = map_new(8);
     m = m.insert(1, "hello" + "world");
     m = m.insert(1, "hello" + "there");
     return 0;
 }`},
 		{"wasm32/boxedKey", 4, false, `function build(): i32 {
-    var k: string = "he" + "llo";
-    var m: Map[string, string] = map_new(8);
+    let k: string = "he" + "llo";
+    let m: Map[string, string] = map_new(8);
     m = m.insert(k, "wor" + "ld");
     m = m.insert(k, "the" + "re");
     return 0;
 }`},
 		{"arm64TwoWord/rawKey", 8, true, `function build(): i32 {
-    var m: Map[i32, string] = map_new(8);
+    let m: Map[i32, string] = map_new(8);
     m = m.insert(1, "hello" + "world");
     m = m.insert(1, "hello" + "there");
     return 0;
 }`},
 		{"x86_64SingleWord/rawKey", 8, false, `function build(): i32 {
-    var m: Map[i32, string] = map_new(8);
+    let m: Map[i32, string] = map_new(8);
     m = m.insert(1, "hello" + "world");
     m = m.insert(1, "hello" + "there");
     return 0;
@@ -3051,7 +3051,7 @@ func lastRcIsUniqueBefore(p *Program, fnName string, at int) int {
 // the runtime release would free the value twice.
 //
 // The kind-4 leg is the one that shipped ungated, and its damage is invisible
-// to every counter: `var snap = m; m = m.insert(k, s)` over 200 rounds returns
+// to every counter: `let snap = m; m = m.insert(k, s)` over 200 rounds returns
 // the WRONG value on all three backends while FERN_LEAKCHECK reports
 // allocs=2400 frees=2400 live_bytes=0 — the box is recycled under the reader,
 // so the heap balances exactly.
@@ -3062,7 +3062,7 @@ func TestLowerMapOverwritePreDropsAreSoleOwnerGated(t *testing.T) {
 	}{
 		{"struct value, i32 key (kind 4)", `struct Box { name: string }
 function build(): i32 {
-    var m: Map[i32, Box] = map_new(8);
+    let m: Map[i32, Box] = map_new(8);
     m = m.insert(1, Box { name: "he" + "llo" });
     m = m.insert(1, Box { name: "th" + "ere" });
     return 0;
@@ -3106,8 +3106,8 @@ func TestLowerConditionShortCircuitBranches(t *testing.T) {
 		{"if and else", `function f(a: i32, b: i32): i32 { if (a > 0 && b > 0) { return 1; } else { return 2; } }`, 2},
 		// A cheap loop condition is rotated: two branches in the guard and
 		// two in the bottom test.
-		{"while and", `function f(a: i32, b: i32): i32 { var i: i32 = 0; while (i < a && i < b) { i = i + 1; } return i; }`, 4},
-		{"for or", `function f(a: i32, b: i32): i32 { var n: i32 = 0; for (var i: i32 = 0; i < a || i < b; i = i + 1) { n = n + 1; } return n; }`, 4},
+		{"while and", `function f(a: i32, b: i32): i32 { let i: i32 = 0; while (i < a && i < b) { i = i + 1; } return i; }`, 4},
+		{"for or", `function f(a: i32, b: i32): i32 { let n: i32 = 0; for (let i: i32 = 0; i < a || i < b; i = i + 1) { n = n + 1; } return n; }`, 4},
 		{"three operands", `function f(a: i32, b: i32, c: i32): i32 { if (a > 0 && b > 0 && c > 0) { return 1; } return 2; }`, 3},
 	}
 	for _, c := range cases {
@@ -3141,8 +3141,8 @@ func TestLowerConditionShortCircuitBranches(t *testing.T) {
 func TestLowerConditionKeepsIfUnderCoverage(t *testing.T) {
 	cases := []struct{ name, src string }{
 		{"if", `function f(a: i32, b: i32): i32 { if (a > 0 && b > 0) { return 1; } return 2; }`},
-		{"while", `function f(a: i32, b: i32): i32 { var i: i32 = 0; while (i < a && i < b) { i = i + 1; } return i; }`},
-		{"for", `function f(a: i32, b: i32): i32 { var n: i32 = 0; for (var i: i32 = 0; i < a || i < b; i = i + 1) { n = n + 1; } return n; }`},
+		{"while", `function f(a: i32, b: i32): i32 { let i: i32 = 0; while (i < a && i < b) { i = i + 1; } return i; }`},
+		{"for", `function f(a: i32, b: i32): i32 { let n: i32 = 0; for (let i: i32 = 0; i < a || i < b; i = i + 1) { n = n + 1; } return n; }`},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -3169,8 +3169,8 @@ func TestLowerConditionKeepsIfUnderCoverage(t *testing.T) {
 // Unchecked, and a string index honours it with the no-check helper.
 func TestLowerStringIndexElidesProvenBounds(t *testing.T) {
 	p := lowerSource(t, `function f(s: string): i32 {
-		var t: i32 = 0;
-		var i: i32 = 0;
+		let t: i32 = 0;
+		let i: i32 = 0;
 		while (i < s.len()) { t = t + (s[i] as i32); i = i + 1; }
 		return t;
 	}`)

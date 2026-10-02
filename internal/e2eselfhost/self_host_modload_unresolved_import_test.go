@@ -73,7 +73,7 @@ func TestSelfHostModloadUnresolvedImport(t *testing.T) {
 			name: "no-stdlib-given-is-quiet",
 			files: map[string]string{
 				"main.fern": "import \"core/map\";\nimport \"std/io\";\n" +
-					"function main(): i32 { var m: Map[string, i32] = map_new(2); m = m.insert(\"a\", 1); return m.len(); }\n",
+					"function main(): i32 { let m: Map[string, i32] = map_new(2); m = m.insert(\"a\", 1); return m.len(); }\n",
 			},
 		},
 	}

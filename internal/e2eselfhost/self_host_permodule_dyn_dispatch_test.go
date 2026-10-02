@@ -49,8 +49,8 @@ impl shape.Area for Rect {
 }
 
 function main(): i32 {
-    var a: dyn shape.Area = square.make(3);
-    var b: dyn shape.Area = Rect { w: 2, h: 5 };
+    let a: dyn shape.Area = square.make(3);
+    let b: dyn shape.Area = Rect { w: 2, h: 5 };
     return measure.total(a, b);
 }
 `)

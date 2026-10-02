@@ -1,7 +1,7 @@
 // Tee fusion: recognise the IR's `OpStoreLocal X; OpLoadLocal X`
 // adjacency and collapse it to a single OpTeeLocal X. The pattern
 // surfaces from a few places — the inliner's arg-bind round-trip,
-// hand-written `var x = ...` followed by an immediate use, the
+// hand-written `let x = ...` followed by an immediate use, the
 // assignment-as-expression lowering — and emitting it as a real
 // tee gives the WASM backend a single `local.tee` (saves a byte and
 // a load over `local.set $X; local.get $X`). The arm64 backend

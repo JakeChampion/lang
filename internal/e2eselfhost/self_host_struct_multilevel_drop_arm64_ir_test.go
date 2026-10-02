@@ -36,8 +36,8 @@ func TestSelfHostStructMultiLevelDropIRArm64(t *testing.T) {
 struct B { c: C, bt: i32 }
 struct A { b: B, at: i32 }
 function main(): i32 {
-    var a: A = A { b: B { c: C { items: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16] }, bt: 2 }, at: 7 };
-    var sum: i32 = 0; var j: i32 = 0;
+    let a: A = A { b: B { c: C { items: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16] }, bt: 2 }, at: 7 };
+    let sum: i32 = 0; let j: i32 = 0;
     while (j < 16) { sum = sum + a.b.c.items[j]; j = j + 1; }
     return sum + a.b.bt + a.at;
 }`, "struct_multilevel_drop_arm64_value", 145)
@@ -48,11 +48,11 @@ function main(): i32 {
 struct B { c: C, bt: i32 }
 struct A { b: B, at: i32 }
 function mk(): i32 {
-    var a: A = A { b: B { c: C { items: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16] }, bt: 2 }, at: 7 };
+    let a: A = A { b: B { c: C { items: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16] }, bt: 2 }, at: 7 };
     return a.b.c.items[0] + a.b.c.items[15] + a.b.bt + a.at;
 }
 function main(): i32 {
-    var s: i32 = 0; var f: i32 = 0;
+    let s: i32 = 0; let f: i32 = 0;
     while (f < 200000) { s = mk(); f = f + 1; }
     return s - 26;
 }`, "struct_multilevel_drop_arm64_churn", 0)

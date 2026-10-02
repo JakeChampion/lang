@@ -42,7 +42,7 @@ In this first cut, **named-field variants are constructed positionally**,
 arguments in declaration order:
 
 ```fern
-var r: Shape = Rect(3.0, 4.0);   // w = 3.0, h = 4.0
+let r: Shape = Rect(3.0, 4.0);   // w = 3.0, h = 4.0
 ```
 
 The struct-literal construction form `Rect { w: 3.0, h: 4.0 }` is a

@@ -21,7 +21,7 @@ import (
 // and never emitted, which is how three smaller reductions of this bug all
 // built cleanly.
 const selfHostMangleBracket = `function help_text(): string {
-    var out: string = "";
+    let out: string = "";
     out = out + "line 00\n"; out = out + "line 01\n"; out = out + "line 02\n";
     out = out + "line 03\n"; out = out + "line 04\n"; out = out + "line 05\n";
     out = out + "line 06\n"; out = out + "line 07\n"; out = out + "line 08\n";
@@ -137,8 +137,8 @@ func TestSelfHostModuleNameMangle(t *testing.T) {
 // The two answers differ so a collapse is caught even if it links: taking
 // either module for both gives 2 or 80, never 41.
 const selfHostDupBasenameLib = `function pad(n: i32): string {
-    var out: string = "";
-    var i: i32 = 0;
+    let out: string = "";
+    let i: i32 = 0;
     while (i < n) { out = out + "xxxxxxxx"; i = i + 1; }
     return out;
 }

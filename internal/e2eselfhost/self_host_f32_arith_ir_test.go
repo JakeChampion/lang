@@ -27,19 +27,19 @@ var f32ArithCases = []struct {
 	expected int
 }{
 	// f32 add rounds: 2^24 + 1 -> 2^24 -> 1
-	{"add-round", `function main(): i32 { var a: f32 = 16777216.0 as f32; var one: f32 = 1.0 as f32; var b: f32 = a + one; if ((b as f64) == 16777216.0) { return 1; } return 0; }`, 1},
+	{"add-round", `function main(): i32 { let a: f32 = 16777216.0 as f32; let one: f32 = 1.0 as f32; let b: f32 = a + one; if ((b as f64) == 16777216.0) { return 1; } return 0; }`, 1},
 	// exact f32 add: 1.5 + 2.5 = 4.0 -> 4
-	{"add-exact", `function main(): i32 { var a: f32 = 1.5 as f32; var b: f32 = 2.5 as f32; var c: f32 = a + b; return c as i32; }`, 4},
+	{"add-exact", `function main(): i32 { let a: f32 = 1.5 as f32; let b: f32 = 2.5 as f32; let c: f32 = a + b; return c as i32; }`, 4},
 	// f32 sub is exact for these: 8.5 - 2.0 = 6.5 -> 6
-	{"sub-exact", `function main(): i32 { var a: f32 = 8.5 as f32; var b: f32 = 2.0 as f32; var c: f32 = a - b; return c as i32; }`, 6},
+	{"sub-exact", `function main(): i32 { let a: f32 = 8.5 as f32; let b: f32 = 2.0 as f32; let c: f32 = a - b; return c as i32; }`, 6},
 	// f32 mul is exact: 2.5 * 3.0 = 7.5 -> 7
-	{"mul-exact", `function main(): i32 { var a: f32 = 2.5 as f32; var b: f32 = 3.0 as f32; var c: f32 = a * b; return c as i32; }`, 7},
+	{"mul-exact", `function main(): i32 { let a: f32 = 2.5 as f32; let b: f32 = 3.0 as f32; let c: f32 = a * b; return c as i32; }`, 7},
 	// REGRESSION: f64 arithmetic must NOT round — 2^24 + 1 stays 2^24+1 -> 1
-	{"f64-noround", `function main(): i32 { var a: f64 = 16777216.0; var one: f64 = 1.0; var b: f64 = a + one; if (b == 16777217.0) { return 1; } return 0; }`, 1},
+	{"f64-noround", `function main(): i32 { let a: f64 = 16777216.0; let one: f64 = 1.0; let b: f64 = a + one; if (b == 16777217.0) { return 1; } return 0; }`, 1},
 	// REGRESSION: an f32 comparison yields a bool and must not be rounded -> 7
-	{"cmp", `function main(): i32 { var a: f32 = 2.5 as f32; var b: f32 = 3.5 as f32; if (a < b) { return 7; } return 0; }`, 7},
+	{"cmp", `function main(): i32 { let a: f32 = 2.5 as f32; let b: f32 = 3.5 as f32; if (a < b) { return 7; } return 0; }`, 7},
 	// REGRESSION: an f32 arithmetic result feeding a comparison -> 8
-	{"arith-then-cmp", `function main(): i32 { var a: f32 = 1.5 as f32; var b: f32 = 2.5 as f32; var c: f32 = a + b; if (c > (3.5 as f32)) { return 8; } return 0; }`, 8},
+	{"arith-then-cmp", `function main(): i32 { let a: f32 = 1.5 as f32; let b: f32 = 2.5 as f32; let c: f32 = a + b; if (c > (3.5 as f32)) { return 8; } return 0; }`, 8},
 }
 
 // TestSelfHostF32ArithWasmIR pins f32 arithmetic rounding on the wasm IR backend.

@@ -12,7 +12,7 @@ import (
 // --- The tuple class credits, keyed on the binding rather than the name (#7272)
 //
 // The class credits are collected from the AST, before any slot exists, so their
-// key had always been the variable NAME — and a name has no scope. Two `var t` in
+// key had always been the variable NAME — and a name has no scope. Two `let t` in
 // sibling blocks are two slots under one key, and when they are not the same class
 // the table hands each slot BOTH credits: the box takes the "TUP:" shallow dec AND
 // the "TUPRCS:" deep free, and is released twice.
@@ -53,13 +53,13 @@ func tupClassKeyCases() []tupClassKeyCase {
 			// The issue's repro: sibling blocks, ident element then array literal.
 			name: "sibling_blocks",
 			src: `function round(i: i32): i32 {
-    var xs: i32[] = [i, i + 1];
-    var acc: i32 = 0;
-    { var t: (i32, i32[]) = (i, xs); acc = t.1[0]; }
-    { var t: (i32, i32[]) = (i, [i + 7, i + 9]); acc = acc + t.1[1]; }
+    let xs: i32[] = [i, i + 1];
+    let acc: i32 = 0;
+    { let t: (i32, i32[]) = (i, xs); acc = t.1[0]; }
+    { let t: (i32, i32[]) = (i, [i + 7, i + 9]); acc = acc + t.1[1]; }
     return acc;
 }
-function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
+function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
 			want: 10,
 		},
 		{
@@ -68,13 +68,13 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
 			// a fix that only reorders the lookup would pass one and fail the other.
 			name: "sibling_blocks_reversed",
 			src: `function round(i: i32): i32 {
-    var xs: i32[] = [i, i + 1];
-    var acc: i32 = 0;
-    { var t: (i32, i32[]) = (i, [i + 7, i + 9]); acc = t.1[1]; }
-    { var t: (i32, i32[]) = (i, xs); acc = acc + t.1[0]; }
+    let xs: i32[] = [i, i + 1];
+    let acc: i32 = 0;
+    { let t: (i32, i32[]) = (i, [i + 7, i + 9]); acc = t.1[1]; }
+    { let t: (i32, i32[]) = (i, xs); acc = acc + t.1[0]; }
     return acc;
 }
-function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
+function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
 			want: 10,
 		},
 		{
@@ -82,13 +82,13 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
 			// and the reason this is worth fixing at the key rather than per shape.
 			name: "if_arms",
 			src: `function round(i: i32): i32 {
-    var xs: i32[] = [i, i + 1];
-    var acc: i32 = 0;
-    if (i % 2 == 0) { var t: (i32, i32[]) = (i, xs); acc = t.1[0]; }
-    else { var t: (i32, i32[]) = (i, [i + 7, i + 9]); acc = t.1[1]; }
+    let xs: i32[] = [i, i + 1];
+    let acc: i32 = 0;
+    if (i % 2 == 0) { let t: (i32, i32[]) = (i, xs); acc = t.1[0]; }
+    else { let t: (i32, i32[]) = (i, [i + 7, i + 9]); acc = t.1[1]; }
     return acc;
 }
-function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
+function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
 			want: 5,
 		},
 		{
@@ -97,15 +97,15 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
 			// covers the credits the exit sweep does not.
 			name: "loop_bodies",
 			src: `function round(i: i32): i32 {
-    var xs: i32[] = [i, i + 1];
-    var acc: i32 = 0;
-    var k: i32 = 0;
-    while (k < 2) { var t: (i32, i32[]) = (i, xs); acc = acc + t.1[0]; k = k + 1; }
-    var m: i32 = 0;
-    while (m < 2) { var t: (i32, i32[]) = (i, [i + 7, i + 9]); acc = acc + t.1[1]; m = m + 1; }
+    let xs: i32[] = [i, i + 1];
+    let acc: i32 = 0;
+    let k: i32 = 0;
+    while (k < 2) { let t: (i32, i32[]) = (i, xs); acc = acc + t.1[0]; k = k + 1; }
+    let m: i32 = 0;
+    while (m < 2) { let t: (i32, i32[]) = (i, [i + 7, i + 9]); acc = acc + t.1[1]; m = m + 1; }
     return acc;
 }
-function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
+function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
 			want: 20,
 		},
 		{
@@ -115,13 +115,13 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
 			// leakcheck assertions below would catch.
 			name: "same_class_both_blocks",
 			src: `function round(i: i32): i32 {
-    var xs: i32[] = [i, i + 1];
-    var acc: i32 = 0;
-    { var t: (i32, i32[]) = (i, xs); acc = t.1[0]; }
-    { var t: (i32, i32[]) = (i, xs); acc = acc + t.1[1]; }
+    let xs: i32[] = [i, i + 1];
+    let acc: i32 = 0;
+    { let t: (i32, i32[]) = (i, xs); acc = t.1[0]; }
+    { let t: (i32, i32[]) = (i, xs); acc = acc + t.1[1]; }
     return acc;
 }
-function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
+function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
 			want: 40,
 		},
 		{
@@ -131,13 +131,13 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
 			// not achieve its result by disabling the classes.
 			name: "distinct_names",
 			src: `function round(i: i32): i32 {
-    var xs: i32[] = [i, i + 1];
-    var acc: i32 = 0;
-    { var t: (i32, i32[]) = (i, xs); acc = t.1[0]; }
-    { var u: (i32, i32[]) = (i, [i + 7, i + 9]); acc = acc + u.1[1]; }
+    let xs: i32[] = [i, i + 1];
+    let acc: i32 = 0;
+    { let t: (i32, i32[]) = (i, xs); acc = t.1[0]; }
+    { let u: (i32, i32[]) = (i, [i + 7, i + 9]); acc = acc + u.1[1]; }
     return acc;
 }
-function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
+function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
 			want: 10,
 		},
 	}

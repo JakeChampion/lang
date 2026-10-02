@@ -5,7 +5,7 @@ local; nothing ever released it.
 
 | shape (200 rounds, x86-64) | native | self-host before | after |
 | --- | --- | --- | --- |
-| `var xs = [i,i+1]; var t: (i32, i32[]) = (i, xs)` | `live=0` | `allocs=400 frees=200` **8000** | `400/400` **0** |
+| `let xs = [i,i+1]; let t: (i32, i32[]) = (i, xs)` | `live=0` | `allocs=400 frees=200` **8000** | `400/400` **0** |
 | `(xs, ys)` — two idents | `live=0` | `600/200` **16000** | `600/600` **0** |
 | ident read after the tuple | `live=0` | **8000** | **0** |
 | the ident is a borrowed PARAM | `live=0` | **40**, flat | **0** |
@@ -44,7 +44,7 @@ one — see below.
 ## The rebind half is not optional
 
 The first attempt released only at scope exit, and moved 8000 → 7960: one buffer
-of two hundred. A loop-body `var t = (i, xs)` re-binds ONE slot every iteration,
+of two hundred. A loop-body `let t = (i, xs)` re-binds ONE slot every iteration,
 so the scope-exit sweep sees only the last tuple; the other 199 retains are given
 back by the store that supersedes each box. That is `emit_tup_elem_reclaim_store`,
 the tuple sibling of `emit_str_reclaim_store` — cow-guarded like it, and with the
@@ -70,7 +70,7 @@ Reverting the change and rebuilding: all five cases fail with the leak signature
 ## The gate the first version was missing
 
 The release as first landed over-released a tuple whose owned-pointer element is
-EXTRACTED — `return t.1`, or `var u = t.1`. The extraction hands the element's
+EXTRACTED — `return t.1`, or `let u = t.1`. The extraction hands the element's
 reference to a NEW owner, so a release at the tuple's scope exit is the second
 claim on one reference:
 
@@ -108,8 +108,8 @@ key hands one block's kinds to the other block's slot and releases a position th
 tuple never retained. Measured as a 4000-byte strand on
 
 ```fern
-{ var t: (i32, i32[]) = (i, xs); … }     // retains position 1
-{ var t: (i32[], i32) = (xs, i); … }     // retains position 0
+{ let t: (i32, i32[]) = (i, xs); … }     // retains position 1
+{ let t: (i32[], i32) = (xs, i); … }     // retains position 0
 ```
 
 and it is a live-buffer release waiting to happen the moment the two positions
@@ -133,9 +133,9 @@ statement, which is most code:
 | body, 60 rounds | before | after |
 | --- | --- | --- |
 | `return t.1[0];` | 0 | 0 |
-| `var acc = t.1[0]; return acc;` | **2880** | 0 |
-| `var acc = t.0;` — a *scalar* element read | **2880** | 0 |
-| `var acc = t.1.len();` | **2880** | 0 |
+| `let acc = t.1[0]; return acc;` | **2880** | 0 |
+| `let acc = t.0;` — a *scalar* element read | **2880** | 0 |
+| `let acc = t.1.len();` | **2880** | 0 |
 | `acc = t.1[0];` — plain assignment | **2880** | 0 |
 
 The stranded bytes track the SOURCE array's size (2 elems → 40 B/round, 3 → 48,
@@ -163,7 +163,7 @@ reason; not measured.
 
 - **"Nested blocks deny the credit."** Wrong. A block is irrelevant — an `if`
   *before* the tuple is clean, and a plain extra statement with no block at all
-  leaks. Every probe behind that reading happened to use a `var acc = …` binding.
+  leaks. Every probe behind that reading happened to use a `let acc = …` binding.
 - **"It is the new `TUPELEMOK:` gate over-denying."** Also wrong, and it looked
   compelling because `frees` showed the box being freed, which does prove `TUP:`
   is granted. Rebuilt with the gate removed: still leaks. The gate is not on this
@@ -177,7 +177,7 @@ and measure. Neither survived contact with that test.
 - **The string limb**, and it is the larger leak: **80 B/round, unbounded**
   (16000 at 200 rounds, 32000 at 400 — exactly 2.0× per doubling), where the
   array limb was 40. The issue's table calls this row clean; that row used
-  `var s = "ab" + "c"`, which constant-folds to an immortal literal
+  `let s = "ab" + "c"`, which constant-folds to an immortal literal
   (`constfold.fern:209`, box rc=-1), so it measures a constant. Re-measure with
   `w("ab")` before believing any string-element number.
 - **The same ident in two tuples** — `(i, xs)` and `(i+1, xs)` in one frame —
@@ -186,7 +186,7 @@ and measure. Neither survived contact with that test.
   missing release.
 - **The assign-form rebind** `t = (k, ys)` goes through `lower_stmt_assign`'s
   `emit_arr_store`, which this change does not mirror; each assign's retain
-  strands. The `var` form is covered.
+  strands. The `let` form is covered.
 
 None of the three is a regression, but note the reasoning that is NOT available
 for saying so. "This change only adds decs, so it cannot regress anything" is what

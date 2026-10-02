@@ -12,41 +12,41 @@ import (
 
 var cleanupActionCases = []struct{ name, source, want string }{
 	{"cleanup-return-snapshot", `function pilot(): string {
-  var items = ["saved"]; defer items = ["replacement"]; return items[0];
+  let items = ["saved"]; defer items = ["replacement"]; return items[0];
 }`, "saved\n"},
 	{"cleanup-late-read", `function pilot(): string {
-  var items: i32[] = [2]; defer check(items[0]); items = [9]; return "late";
+  let items: i32[] = [2]; defer check(items[0]); items = [9]; return "late";
 }
-function check(n: i32): void { if (n != 9i32) { var empty: i32[] = []; var bad = empty[0]; } }`, "late\n"},
+function check(n: i32): void { if (n != 9i32) { let empty: i32[] = []; let bad = empty[0]; } }`, "late\n"},
 	{"cleanup-action-write", `function pilot(): string {
-  var items: i32[] = [2]; defer check(items[0]); defer items = [9]; return "ordered";
+  let items: i32[] = [2]; defer check(items[0]); defer items = [9]; return "ordered";
 }
-function check(n: i32): void { if (n != 9i32) { var empty: i32[] = []; var bad = empty[0]; } }`, "ordered\n"},
+function check(n: i32): void { if (n != 9i32) { let empty: i32[] = []; let bad = empty[0]; } }`, "ordered\n"},
 	{"cleanup-no-captures", `function pilot(): string { defer sink(["discarded"]); return "empty env"; }
 function sink(own items: string[]): void {}`, "empty env\n"},
 	{"cleanup-void-tail", `function pilot(): string { work(); return "void"; }
-function work(): void { var items = ["released"]; defer sink([items]); }
+function work(): void { let items = ["released"]; defer sink([items]); }
 function sink(own items: string[][]): void {}`, "void\n"},
 	{"cleanup-branch-action", `function pilot(): string {
-  var items: i32[] = [2]; var enabled = true;
+  let items: i32[] = [2]; let enabled = true;
   defer check(items[0]); defer { if (enabled) { items = [9] } else { items = [3] } }
   return "branch";
 }
-function check(n: i32): void { if (n != 9i32) { var empty: i32[] = []; var bad = empty[0]; } }`, "branch\n"},
+function check(n: i32): void { if (n != 9i32) { let empty: i32[] = []; let bad = empty[0]; } }`, "branch\n"},
 	{"cleanup-local-loop", `function pilot(): string {
-  var items: i32[] = [0]; defer check(items[0]);
-  defer { var i = 0i32; while (i < 3i32) { items = [i]; i = i + 1i32; } }
+  let items: i32[] = [0]; defer check(items[0]);
+  defer { let i = 0i32; while (i < 3i32) { items = [i]; i = i + 1i32; } }
   return "loop";
 }
-function check(n: i32): void { if (n != 2i32) { var empty: i32[] = []; var bad = empty[0]; } }`, "loop\n"},
+function check(n: i32): void { if (n != 2i32) { let empty: i32[] = []; let bad = empty[0]; } }`, "loop\n"},
 	{"cleanup-return-from-loop", `function pilot(): string {
-  var items: i32[] = [2]; defer check(items[0]);
+  let items: i32[] = [2]; defer check(items[0]);
   loop { items = [9]; return "loop return"; }
 }
-function check(n: i32): void { if (n != 9i32) { var empty: i32[] = []; var bad = empty[0]; } }`, "loop return\n"},
+function check(n: i32): void { if (n != 9i32) { let empty: i32[] = []; let bad = empty[0]; } }`, "loop return\n"},
 	{"cleanup-multiple-returns", `function pilot(): string { return choose(true); }
 function choose(flag: boolean): string {
-  var items = ["branch"]; defer sink([items]);
+  let items = ["branch"]; defer sink([items]);
   if (flag) { return items[0]; } return "other";
 }
 function sink(own items: string[][]): void {}`, "branch\n"},
@@ -54,67 +54,67 @@ function sink(own items: string[][]): void {}`, "branch\n"},
 function choose(flag: boolean): string {
   if (flag) { return "early"; } defer fault(); return "later";
 }
-function fault(): void { var empty: i32[] = []; var bad = empty[0]; }`, "early\n"},
+function fault(): void { let empty: i32[] = []; let bad = empty[0]; }`, "early\n"},
 	{"cleanup-shadow-capture", `function pilot(): string {
-  var items: i32[] = [9]; defer check(items[0]);
-  defer { var items: i32[] = [2]; check(items[0] + 7i32); }
+  let items: i32[] = [9]; defer check(items[0]);
+  defer { let items: i32[] = [2]; check(items[0] + 7i32); }
   return "shadow";
 }
-function check(n: i32): void { if (n != 9i32) { var empty: i32[] = []; var bad = empty[0]; } }`, "shadow\n"},
+function check(n: i32): void { if (n != 9i32) { let empty: i32[] = []; let bad = empty[0]; } }`, "shadow\n"},
 	{"cleanup-simultaneous-values", `function pilot(): string {
-  var first: i32[] = [3]; var second: i32[] = [7]; defer check(first[0], second[0]);
-  defer { var saved = first; first = second; second = saved; }
+  let first: i32[] = [3]; let second: i32[] = [7]; defer check(first[0], second[0]);
+  defer { let saved = first; first = second; second = saved; }
   return "swapped";
 }
-function check(a: i32, b: i32): void { if (a != 7i32 || b != 3i32) { var empty: i32[] = []; var bad = empty[0]; } }`, "swapped\n"},
+function check(a: i32, b: i32): void { if (a != 7i32 || b != 3i32) { let empty: i32[] = []; let bad = empty[0]; } }`, "swapped\n"},
 	{"cleanup-captured-own-borrow", `function pilot(): string { return work(["anchored"]); }
-function work(own items: string[]): string { var result = items[0]; defer inspect(items, items); return result; }
-function inspect(reader: string[], own taken: string[]): void { var value = reader[0]; }`, "anchored\n"},
+function work(own items: string[]): string { let result = items[0]; defer inspect(items, items); return result; }
+function inspect(reader: string[], own taken: string[]): void { let value = reader[0]; }`, "anchored\n"},
 	{"cleanup-outer-loop-phi", `function pilot(): string {
-  var items: i32[] = [0]; defer check(items[0]);
-  var i = 0i32; while (i < 3i32) { items = [i]; i = i + 1i32; }
+  let items: i32[] = [0]; defer check(items[0]);
+  let i = 0i32; while (i < 3i32) { items = [i]; i = i + 1i32; }
   return "last";
 }
-function check(n: i32): void { if (n != 2i32) { var empty: i32[] = []; var bad = empty[0]; } }`, "last\n"},
+function check(n: i32): void { if (n != 2i32) { let empty: i32[] = []; let bad = empty[0]; } }`, "last\n"},
 	{"cleanup-cross-action-scalar", `function pilot(): string {
   work(true); work(false); return "scalar joins";
 }
 function work(enabled: boolean): void {
-  var items: i32[] = [2]; var carrier = 7i32;
+  let items: i32[] = [2]; let carrier = 7i32;
   defer check(items[0], carrier, enabled);
   defer { if (enabled) { items = [9] } else { items = [4] } }
   carrier = 11i32;
 }
 function check(n: i32, carrier: i32, enabled: boolean): void {
   if (carrier != 11i32 || (enabled && n != 9i32) || (!enabled && n != 4i32)) {
-    var empty: i32[] = []; var bad = empty[0];
+    let empty: i32[] = []; let bad = empty[0];
   }
 }`, "scalar joins\n"},
 	{"cleanup-cross-action-reference", `function pilot(): string {
   work([[11]], true); work([[11]], false); return "reference joins";
 }
 function work(own seed: i32[][], enabled: boolean): void {
-  var reader = seed[0]; var items: i32[] = [2];
+  let reader = seed[0]; let items: i32[] = [2];
   defer check(items[0], reader, seed, enabled);
   defer { if (enabled) { items = [9] } else { items = [4] } }
 }
 function check(n: i32, reader: i32[], own taken: i32[][], enabled: boolean): void {
   if (reader[0] != 11i32 || taken[0][0] != 11i32 || (enabled && n != 9i32) || (!enabled && n != 4i32)) {
-    var empty: i32[] = []; var bad = empty[0];
+    let empty: i32[] = []; let bad = empty[0];
   }
 }`, "reference joins\n"},
 	{"cleanup-cross-action-multiple-joins", `function pilot(): string {
   work(true); work(false); return "successive joins";
 }
 function work(enabled: boolean): void {
-  var items: i32[] = [2]; var other: i32[] = [3]; var reader: i32[] = [11];
+  let items: i32[] = [2]; let other: i32[] = [3]; let reader: i32[] = [11];
   defer check(items[0], other[0], reader[0], enabled);
   defer { if (enabled) { items = [9] } else { items = [4] } }
   defer { if (enabled) { other = [6] } else { other = [8] } }
 }
 function check(n: i32, m: i32, reader: i32, enabled: boolean): void {
   if (reader != 11i32 || (enabled && (n != 9i32 || m != 6i32)) || (!enabled && (n != 4i32 || m != 8i32))) {
-    var empty: i32[] = []; var bad = empty[0];
+    let empty: i32[] = []; let bad = empty[0];
   }
 }`, "successive joins\n"},
 }
@@ -188,11 +188,11 @@ func TestBuildCleanupActions(t *testing.T) {
 func cleanupProgram(t *testing.T) *Program {
 	t.Helper()
 	prog, info := checkedProgram(t, `function pilot(flag: boolean): string {
-  var items = ["retained"]; var count = 0i32;
+  let items = ["retained"]; let count = 0i32;
   defer inspect(items, count); defer { items = ["replaced"]; count = 9i32; }
   if (flag) { return "yes"; } return "no";
 }
-function inspect(items: string[], count: i32): void { var value = items[0]; }`)
+function inspect(items: string[], count: i32): void { let value = items[0]; }`)
 	p, err := BuildProgram(prog, info)
 	if err != nil {
 		t.Fatal(err)
@@ -276,7 +276,7 @@ func TestARM64TypedCleanupKeepsObservableEffects(t *testing.T) {
 	armLauncher(t)
 	for _, optimize := range []bool{false, true} {
 		out := lowerCheckedARM64(t, `function pilot(): string { defer fault(); return "cleanup erased"; }
-function fault(): void { var empty: i32[] = []; var value = empty[0]; }`)
+function fault(): void { let empty: i32[] = []; let value = empty[0]; }`)
 		stdout, stderr, code := runARM64Pilot(t, armExecutable(t, out, printHarness(out), optimize))
 		if code != 134 || stdout != "" {
 			t.Fatalf("optimized=%v: exit %d stdout %q stderr %q; expected bounds abort", optimize, code, stdout, stderr)
@@ -288,7 +288,7 @@ func BenchmarkTypedCleanupActions(b *testing.B) {
 	for _, count := range []int{1, 8, 64} {
 		b.Run(fmt.Sprintf("actions-%d", count), func(b *testing.B) {
 			var source strings.Builder
-			source.WriteString(`function pilot(items: string[][]): string[][] { var result = items;`)
+			source.WriteString(`function pilot(items: string[][]): string[][] { let result = items;`)
 			for i := 0; i < count; i++ {
 				source.WriteString(`defer result = result.append(["cleanup"]);`)
 			}

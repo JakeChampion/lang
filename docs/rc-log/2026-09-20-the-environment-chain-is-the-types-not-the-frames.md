@@ -8,11 +8,11 @@ Half right: closing it is small. It did not cost a refusal.
 ```fern
 struct Holder { f: (i32) => i32 }
 function make(n: i32): Holder {
-    var xs: i32[] = [n, n + 1, n + 2];
+    let xs: i32[] = [n, n + 1, n + 2];
     return Holder { f: (x: i32): i32 => { return x + xs[0] + xs[2]; } };
 }
 function apply(h: Holder): i32 { return h.f(1); }
-function main(): i32 { … var h: Holder = make(i); t = t + apply(h) % 3; … }
+function main(): i32 { … let h: Holder = make(i); t = t + apply(h) % 3; … }
 ```
 
 ```

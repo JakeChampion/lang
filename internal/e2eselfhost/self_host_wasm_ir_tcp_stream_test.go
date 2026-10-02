@@ -153,12 +153,12 @@ func TestSelfHostWasmIRTcpStream(t *testing.T) {
 	t.Run("send_recv_roundtrip", func(t *testing.T) {
 		port := serve(t, 5, func(got []byte) string { return "ECHO:" + string(got) })
 		src := fmt.Sprintf(`function main(): i32 {
-    var host: i32 = %s;
-    var c: i32 = tcp_connect(host, %d);
+    let host: i32 = %s;
+    let c: i32 = tcp_connect(host, %d);
     if (c < 0) { write("connect-failed\n"); return 1; }
-    var n: i32 = tcp_send(c, "hello");
+    let n: i32 = tcp_send(c, "hello");
     write("sent="); print_int(n);
-    var r: string = string_from_bytes_unchecked(tcp_recv(c, 64));
+    let r: string = string_from_bytes_unchecked(tcp_recv(c, 64));
     write(" got="); write(r); write("\n");
     tcp_close(c);
     return 0;
@@ -178,10 +178,10 @@ func TestSelfHostWasmIRTcpStream(t *testing.T) {
 	t.Run("send_only_composes_without_recv", func(t *testing.T) {
 		port := serve(t, 4, func(got []byte) string { return "" })
 		src := fmt.Sprintf(`function main(): i32 {
-    var host: i32 = %s;
-    var c: i32 = tcp_connect(host, %d);
+    let host: i32 = %s;
+    let c: i32 = tcp_connect(host, %d);
     if (c < 0) { write("connect-failed\n"); return 1; }
-    var n: i32 = tcp_send(c, "ping");
+    let n: i32 = tcp_send(c, "ping");
     write("sent="); print_int(n); write("\n");
     tcp_close(c);
     return 0;
@@ -199,13 +199,13 @@ func TestSelfHostWasmIRTcpStream(t *testing.T) {
 		const payloadLen = 10000
 		port := serve(t, payloadLen, func(got []byte) string { return fmt.Sprintf("%d", len(got)) })
 		src := fmt.Sprintf(`function main(): i32 {
-    var host: i32 = %s;
-    var c: i32 = tcp_connect(host, %d);
+    let host: i32 = %s;
+    let c: i32 = tcp_connect(host, %d);
     if (c < 0) { write("connect-failed\n"); return 1; }
-    var payload: string = "x".repeat(%d);
-    var n: i32 = tcp_send(c, payload);
+    let payload: string = "x".repeat(%d);
+    let n: i32 = tcp_send(c, payload);
     write("sent="); print_int(n);
-    var r: string = string_from_bytes_unchecked(tcp_recv(c, 64));
+    let r: string = string_from_bytes_unchecked(tcp_recv(c, 64));
     write(" server-received="); write(r); write("\n");
     tcp_close(c);
     return 0;

@@ -34,10 +34,10 @@ function eq_fold(a: string, b: string): boolean {
   if (a.len() != b.len()) {
     return false;
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < a.len()) {
-    var x: i32 = a[i] as i32;
-    var y: i32 = b[i] as i32;
+    let x: i32 = a[i] as i32;
+    let y: i32 = b[i] as i32;
     if (x >= 65 && x <= 90) {
       x = x + 32;
     }
@@ -163,29 +163,29 @@ struct Line { kind: i32, ks: i32, ke: i32, as0: i32, ae: i32 }
 // it per line costs more than the parse does. `end` is already cut at a
 // NUL by the caller.
 function scan_line(raw: string, lo: i32, end: i32): Line {
-  var i: i32 = lo;
+  let i: i32 = lo;
   while (i < end && is_space(raw[i] as i32)) {
     i = i + 1;
   }
   if (i >= end || raw[i] as i32 == 35) {
     return Line { kind: 0, ks: i, ke: i, as0: i, ae: i };
   }
-  var ks: i32 = i;
+  let ks: i32 = i;
   while (i < end && !is_space(raw[i] as i32)) {
     i = i + 1;
   }
-  var ke: i32 = i;
+  let ke: i32 = i;
   while (i < end && is_space(raw[i] as i32)) {
     i = i + 1;
   }
   if (i >= end || raw[i] as i32 == 35) {
     return Line { kind: 2, ks: ks, ke: ke, as0: i, ae: i };
   }
-  var as0: i32 = i;
+  let as0: i32 = i;
   while (i < end && raw[i] as i32 != 35) {
     i = i + 1;
   }
-  var ae: i32 = i;
+  let ae: i32 = i;
   while (ae > as0 && is_space(raw[ae - 1] as i32)) {
     ae = ae - 1;
   }
@@ -255,18 +255,18 @@ function entry_push(h: usize, text: string, item_lo: i32, item_hi: i32, star: bo
 }
 
 function parse(text: string, name: string, term: string, colorterm: string, ls: boolean): Parse {
-  var h: usize = buf_new(text.len() + 16);
-  var ok: boolean = true;
-  var state: i32 = st_global();
-  var pos: i32 = 0;
-  var lineno: i32 = 0;
+  let h: usize = buf_new(text.len() + 16);
+  let ok: boolean = true;
+  let state: i32 = st_global();
+  let pos: i32 = 0;
+  let lineno: i32 = 0;
   // The next NUL at or after the cursor, refreshed only once the cursor
   // has passed it: searching each line separately would rescan the rest
   // of the buffer per line.
-  var nul: i32 = __memchr(text, 0, 0);
+  let nul: i32 = __memchr(text, 0, 0);
   while (pos < text.len()) {
-    var nl: i32 = __memchr(text, 10, pos);
-    var end: i32 = nl;
+    let nl: i32 = __memchr(text, 10, pos);
+    let end: i32 = nl;
     if (nl < 0) {
       end = text.len();
     }
@@ -274,22 +274,22 @@ function parse(text: string, name: string, term: string, colorterm: string, ls: 
     if (nul >= 0 && nul < pos) {
       nul = __memchr(text, 0, pos);
     }
-    var cut: i32 = end;
+    let cut: i32 = end;
     if (nul >= 0 && nul < end) {
       cut = nul;
     }
-    var line: Line = scan_line(text, pos, cut);
-    var kind: i32 = line.kind;
-    var ks: i32 = line.ks;
-    var ke: i32 = line.ke;
-    var as0: i32 = line.as0;
-    var ae: i32 = line.ae;
+    let line: Line = scan_line(text, pos, cut);
+    let kind: i32 = line.kind;
+    let ks: i32 = line.ks;
+    let ke: i32 = line.ke;
+    let as0: i32 = line.as0;
+    let ae: i32 = line.ae;
     if (kind == 2) {
       gnu.error(name + ":" + lineno.to_string() + ": invalid line;  missing second token");
       ok = false;
     } else if (kind == 1) {
-      var lead: i32 = text[ks] as i32;
-      var extension: boolean = lead == 46 || lead == 42;
+      let lead: i32 = text[ks] as i32;
+      let extension: boolean = lead == 46 || lead == 42;
       if (extension) {
         if (state == st_termsure()) {
           state = st_termyes();
@@ -298,9 +298,9 @@ function parse(text: string, name: string, term: string, colorterm: string, ls: 
           entry_push(h, text, ks, ke, lead == 46, "", as0, ae, ls);
         }
       } else {
-        var kw: string = slice_unchecked(text, ks, ke) + "";
+        let kw: string = slice_unchecked(text, ks, ke) + "";
         if (eq_fold(kw, "TERM") || eq_fold(kw, "COLORTERM")) {
-          var value: string = colorterm;
+          let value: string = colorterm;
           if (eq_fold(kw, "TERM")) {
             value = term;
           }
@@ -315,7 +315,7 @@ function parse(text: string, name: string, term: string, colorterm: string, ls: 
             state = st_termyes();
           }
           if (state != st_termno()) {
-            var hit: (i32, string) = lookup(kw);
+            let hit: (i32, string) = lookup(kw);
             if (hit.0 == 1) {
               entry_push(h, text, ks, ke, false, hit.1, as0, ae, ls);
             } else if (hit.0 == 0 && state == st_termyes()) {
@@ -333,7 +333,7 @@ function parse(text: string, name: string, term: string, colorterm: string, ls: 
     }
     pos = nl + 1;
   }
-  var body: string = "";
+  let body: string = "";
   if (ok) {
     body = buf_take(h);
   }
@@ -350,11 +350,11 @@ function parse(text: string, name: string, term: string, colorterm: string, ls: 
 // So `a\:b` comes back unchanged, `a^^:b` gains a backslash and
 // `a^:b` does not.
 function escape_push(h: usize, s: string, lo: i32, hi: i32): void {
-  var need: boolean = true;
-  var i: i32 = lo;
-  var run: i32 = lo;
+  let need: boolean = true;
+  let i: i32 = lo;
+  let run: i32 = lo;
   while (i < hi) {
-    var c: i32 = s[i] as i32;
+    let c: i32 = s[i] as i32;
     if (c == 58 || c == 61 || c == 92 || c == 94 || c == 39) {
       if (i > run) {
         buf_push_range(h, s, run, i);
@@ -391,8 +391,8 @@ struct Input { text: string, ok: boolean }
 // failure and a close failure are reported separately, which is how
 // `dircolors - <&-` says both.
 function read_stream(r: Reader, name: string): Input {
-  var chunks: string[] = [];
-  var ok: boolean = true;
+  let chunks: string[] = [];
+  let ok: boolean = true;
   while (true) {
     match (r.read_chunk(65536)) {
       Ok(chunk) => {
@@ -419,7 +419,7 @@ function read_stream(r: Reader, name: string): Input {
 }
 
 function read_input(path: string): Input {
-  var name: string = gnu.quotef(path);
+  let name: string = gnu.quotef(path);
   if (path == "-") {
     return read_stream(stdin(), name);
   }
@@ -456,7 +456,7 @@ function opt_print_ls(): i32 {
 }
 
 function help_text(): string {
-  var out: string = "";
+  let out: string = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]... [FILE]\n";
   out = out + "Write the shell commands that set LS_COLORS, which GNU ls reads.\n";
   out = out + "\n";
@@ -477,8 +477,8 @@ function help_text(): string {
 // $SHELL names csh when its last path component is exactly `csh` or
 // `tcsh`. A trailing slash is not stripped, so `/bin/csh/` is not one.
 function shell_is_csh(shell: string): boolean {
-  var cut: i32 = shell.last_index_of("/");
-  var base: string = shell;
+  let cut: i32 = shell.last_index_of("/");
+  let base: string = shell;
   if (cut >= 0) {
     base = slice_unchecked(shell, cut + 1, shell.len()) + "";
   }
@@ -503,20 +503,20 @@ function env_or(name: string, fallback: string): string {
 pub function main(): i32 {
   // Declaration order is glibc's ambiguity list: `--=x` names every
   // candidate but `--sh`, which shares `--bourne-shell`'s id.
-  var opts: gnu.Opt[] = [];
+  let opts: gnu.Opt[] = [];
   opts = opts.append(gnu.flag("b", "bourne-shell", opt_bourne()));
   opts = opts.append(gnu.flag("", "sh", opt_bourne()));
   opts = opts.append(gnu.flag("c", "csh", opt_csh()));
   opts = opts.append(gnu.flag("", "c-shell", opt_csh()));
   opts = opts.append(gnu.flag("p", "print-database", opt_print_db()));
   opts = opts.append(gnu.flag("", "print-ls-colors", opt_print_ls()));
-  var g: gnu.Getopt = gnu.getopt_new(args(), opts, "dircolors", help_text(), 1);
+  let g: gnu.Getopt = gnu.getopt_new(args(), opts, "dircolors", help_text(), 1);
   // 0 unknown, 1 Bourne, 2 csh; the last of -b / -c decides.
-  var syntax: i32 = 0;
-  var print_db: boolean = false;
-  var print_ls: boolean = false;
+  let syntax: i32 = 0;
+  let print_db: boolean = false;
+  let print_ls: boolean = false;
   while (true) {
-    var r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    let r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = r.1;
     match (r.0) {
       Some(m) => {
@@ -545,9 +545,9 @@ pub function main(): i32 {
   if (print_db && print_ls) {
     gnu.die_usage("options --print-database and --print-ls-colors are mutually exclusive", 1);
   }
-  var operands: string[] = g.operands();
+  let operands: string[] = g.operands();
   // `-p` takes no operand at all, so the FIRST one is the extra one.
-  var limit: i32 = 1;
+  let limit: i32 = 1;
   if (print_db) {
     limit = 0;
   }
@@ -563,11 +563,11 @@ pub function main(): i32 {
     // puts() per line, which is TWO pieces — the line, then its newline
     // — and where those fall in the stdio buffer is what decides
     // whether a failed write is reported with its errno or bare.
-    var od: gnu.Stdio = gnu.stdio_new();
-    var db: string = colordb.text();
-    var at: i32 = 0;
+    let od: gnu.Stdio = gnu.stdio_new();
+    let db: string = colordb.text();
+    let at: i32 = 0;
     while (at < db.len()) {
-      var nl: i32 = __memchr(db, 10, at);
+      let nl: i32 = __memchr(db, 10, at);
       od = od.fwrite(slice_unchecked(db, at, nl) + "");
       od = od.fwrite("\n");
       at = nl + 1;
@@ -596,10 +596,10 @@ pub function main(): i32 {
     }
   }
 
-  var text: string = colordb.text();
-  var name: string = "";
+  let text: string = colordb.text();
+  let name: string = "";
   if (operands.len() == 1) {
-    var input: Input = read_input(operands[0]);
+    let input: Input = read_input(operands[0]);
     if (!input.ok) {
       return 1;
     }
@@ -609,7 +609,7 @@ pub function main(): i32 {
 
   // An unset or empty TERM is the literal string `none`; an unset
   // COLORTERM is the empty string, which `?*` never matches.
-  var p: Parse = parse(text, name, env_or("TERM", "none"), env_or("COLORTERM", ""), print_ls);
+  let p: Parse = parse(text, name, env_or("TERM", "none"), env_or("COLORTERM", ""), print_ls);
   if (!p.ok) {
     return 1;
   }
@@ -620,13 +620,13 @@ pub function main(): i32 {
   // body leaves the suffix pending at close and is reported with its
   // errno, where `--print-ls-colors` writes one piece and nothing is
   // pending, so the same failure is a bare `write error`.
-  var o: gnu.Stdio = gnu.stdio_new();
+  let o: gnu.Stdio = gnu.stdio_new();
   if (print_ls) {
     o = o.fwrite(p.body);
     o.close_stdout();
     return 0;
   }
-  var body: string = p.body;
+  let body: string = p.body;
   if (syntax == 2) {
     o = o.fwrite("setenv LS_COLORS '");
     o = o.fwrite(body);

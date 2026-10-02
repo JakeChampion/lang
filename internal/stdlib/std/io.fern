@@ -36,8 +36,8 @@ import "std/array";
 // read is O(total). This is the core-CLI hot path — every
 // `read_input("-")` from cat / wc / head / grep / … lands here.
 pub function read_all_stdin(): string {
-  var r: Reader = stdin();
-  var chunks: string[] = [];
+  let r: Reader = stdin();
+  let chunks: string[] = [];
   while (true) {
     match (r.read_chunk(4096)) {
       Ok(chunk) => {

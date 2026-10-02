@@ -337,18 +337,18 @@ function base(): string {
 function show(name: string, answer: Result[HttpResponse, fetch.FetchError]): void {
     match (answer) {
         Ok(resp) => {
-            var text: string = "<not utf-8>";
+            let text: string = "<not utf-8>";
             match (resp.body_text()) {
                 Some(s) => { text = s; },
                 None => {}
             }
-            var fields: string = "";
-            var i: i32 = 0;
+            let fields: string = "";
+            let i: i32 = 0;
             while (i < resp.headers.names.len()) {
                 fields = fields + " " + resp.headers.names[i] + "=" + resp.headers.values[i];
                 i = i + 1;
             }
-            var trailers: string = "";
+            let trailers: string = "";
             i = 0;
             while (i < resp.trailers.names.len()) {
                 trailers = trailers + " " + resp.trailers.names[i] + "=" + resp.trailers.values[i];
@@ -367,7 +367,7 @@ function main(): i32 {
     show("nobody", fetch.send(fetch.get(base() + "/nobody")));
     show("head", fetch.send(fetch.request("HEAD", base() + "/plain")));
     show("echo", fetch.send(fetch.request("POST", base() + "/echo?q=1").with_header("X-Trace", "t1").with_text("payload")));
-    var raw: u8[] = "raw".bytes();
+    let raw: u8[] = "raw".bytes();
     show("put", fetch.send(fetch.request("PUT", base() + "/echo").with_bytes(raw)));
     show("blocked", platform.platform_new().http(fetch.get(base() + "/echo")));
     show("numeric", fetch.send(fetch.get("http://2130706433/")));
@@ -378,8 +378,8 @@ function main(): i32 {
     show("platproxiedblocked", platform.platform_new().http(fetch.get("http://169.254.169.254/via")));
     match (fetch.send(fetch.get(base() + "/binary"))) {
         Ok(resp) => {
-            var bs: u8[] = resp.body_bytes();
-            var text: string = "<not utf-8>";
+            let bs: u8[] = resp.body_bytes();
+            let text: string = "<not utf-8>";
             match (resp.body_text()) {
                 Some(s) => { text = s; },
                 None => {}
@@ -392,7 +392,7 @@ function main(): i32 {
         Ok(resp) => { print("big: " + resp.body_bytes().len().to_string()); },
         Err(e) => { print("big: error " + e.message()); }
     }
-    var small: http.HttpLimits = http.http_limits();
+    let small: http.HttpLimits = http.http_limits();
     show("limit", fetch.send(fetch.get(base() + "/big").with_limits(http.HttpLimits { ...small, body: 1024 })));
     show("garbage", fetch.send(fetch.get(base() + "/garbage")));
     show("bighead", fetch.send(fetch.get(base() + "/bighead")));

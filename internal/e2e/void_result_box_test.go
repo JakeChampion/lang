@@ -17,7 +17,7 @@ import (
 // the census must be exact and must not move with the round count.
 func voidResultLoopSrc(rounds int) string {
 	return fmt.Sprintf(`function main(): i32 {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < %d) {
         match (write_file("/tmp/fern_void_result_probe.txt", "x")) { Ok(_) => { }, Err(_) => { return 1; } }
         match (remove_file("/tmp/fern_void_result_probe.txt")) { Ok(_) => { }, Err(_) => { return 2; } }

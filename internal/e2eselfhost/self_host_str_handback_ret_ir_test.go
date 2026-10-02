@@ -68,22 +68,22 @@ func TestSelfHostStrHandbackRetIRX86_64(t *testing.T) {
 	// `got` stays readable and the churn is flat with no over-release.
 	run(t, method+`function idret(x: string): string { return x.maybe(0); }
 function main(): i32 {
-    var base: string = "payload";
-    var bad: i32 = 0;
-    var i: i32 = 0;
+    let base: string = "payload";
+    let bad: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var got: string = idret(base + "-x");
+        let got: string = idret(base + "-x");
         if (got.len() != 9) { bad = 1; }
         i = i + 1;
     }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 2000) {
-        var g2: string = idret(base + "-x");
+        let g2: string = idret(base + "-x");
         if (g2.len() != 9) { bad = 1; }
         j = j + 1;
     }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (bad != 0) { return 97; }
     if (base.len() != 7) { return 88; }
@@ -96,13 +96,13 @@ function main(): i32 {
 	// guard must still skip the arg free, or the two paths double-free it.
 	run(t, method+`function idret(x: string): string { return x.maybe(0); }
 function main(): i32 {
-    var base: string = "payload";
-    var i: i32 = 0;
+    let base: string = "payload";
+    let i: i32 = 0;
     while (i < 200) { idret(base + "-x"); i = i + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 2000) { idret(base + "-x"); j = j + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (base.len() != 7) { return 88; }
     if (b2 - b1 >= 4096) { return 98; }
@@ -114,22 +114,22 @@ function main(): i32 {
 	// temp, closing the leak the non-borrowable escape-analysis fix opened.
 	run(t, method+`function freshret(x: string): string { return x.maybe(1); }
 function main(): i32 {
-    var base: string = "payload";
-    var bad: i32 = 0;
-    var i: i32 = 0;
+    let base: string = "payload";
+    let bad: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var got: string = freshret(base + "-x");
+        let got: string = freshret(base + "-x");
         if (got.len() != 10) { bad = 1; }
         i = i + 1;
     }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 2000) {
-        var g2: string = freshret(base + "-x");
+        let g2: string = freshret(base + "-x");
         if (g2.len() != 10) { bad = 1; }
         j = j + 1;
     }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (bad != 0) { return 97; }
     if (base.len() != 7) { return 88; }
@@ -142,22 +142,22 @@ function main(): i32 {
 	run(t, method+`function idret(x: string): string { return x.maybe(0); }
 function wrap(y: string): string { return idret(y); }
 function main(): i32 {
-    var base: string = "payload";
-    var bad: i32 = 0;
-    var i: i32 = 0;
+    let base: string = "payload";
+    let bad: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var got: string = wrap(base + "-x");
+        let got: string = wrap(base + "-x");
         if (got.len() != 9) { bad = 1; }
         i = i + 1;
     }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 2000) {
-        var g2: string = wrap(base + "-x");
+        let g2: string = wrap(base + "-x");
         if (g2.len() != 9) { bad = 1; }
         j = j + 1;
     }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (bad != 0) { return 97; }
     if (base.len() != 7) { return 88; }

@@ -17,7 +17,7 @@ import (
 //
 // Only the downcast was enumerated, so `match (None as Option[i32])` resolved to
 // "" and bailed the enclosing function. Its sibling
-// ascription shapes — `var x = None as Option[i32]`, `return None as
+// ascription shapes — `let x = None as Option[i32]`, `return None as
 // Option[i32]` — already lowered, because they bind or return through an
 // annotation that carries the payload type. The value-position match is the one
 // place the cast is the only written type, which is why it was the lone bail
@@ -45,7 +45,7 @@ function main(): i32 { return match (Ok(6) as Result[i32, string]) { Ok(v) => v,
 `, 6},
 	{"asc-try", `
 function f(x: i32): Option[i32] {
-    var v: i32 = (Some(x) as Option[i32])?;
+    let v: i32 = (Some(x) as Option[i32])?;
     return Some(v + 1);
 }
 function main(): i32 { return match (f(7)) { Some(v) => v, None => 1 }; }
@@ -55,7 +55,7 @@ trait P { function get(self: Self): i32; }
 struct B { v: i32 }
 impl P for B { function get(self: Self): i32 { return self.v; } }
 function main(): i32 {
-    var d: dyn P = B { v: 9 };
+    let d: dyn P = B { v: 9 };
     match (d as? B) { Some(b) => { return b.v; }, None => { return 1; } }
 }
 `, 9},

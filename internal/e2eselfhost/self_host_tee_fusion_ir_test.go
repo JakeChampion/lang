@@ -34,7 +34,7 @@ import (
 //
 // # Every case takes an opaque input
 //
-// These programs used to bind literals (`var a: i32 = 7; ...`). Constant
+// These programs used to bind literals (`let a: i32 = 7; ...`). Constant
 // propagation then folded them whole — correct, faster, and no longer a test of
 // codegen, since nothing survived to the backend but a constant. Parameters keep
 // the values opaque so the emitted code is what is actually under test.
@@ -50,26 +50,26 @@ var teeFusionCases = []struct {
 	// A chain of bindings, each read once: every tee is created and then dropped.
 	// 7*3 = 21, +7 = 28.
 	{"tee-chain", `function chain(a: i32): i32 {
-    var b: i32 = a * 3;
-    var c: i32 = b + a;
+    let b: i32 = a * 3;
+    let c: i32 = b + a;
     return c;
 }
 function main(): i32 { return chain(7); }`, 28, false},
 	// The slot must still hold the value AFTER the tee — `a` is read three more
 	// times. c = 5 + 5 = 10, then 10 + 5 - 5 = 10.
 	{"tee-reread-slot", `function reread(a: i32): i32 {
-    var b: i32 = a;
-    var c: i32 = a + b;
+    let b: i32 = a;
+    let c: i32 = a + b;
     return c + a - 5;
 }
 function main(): i32 { return reread(5); }`, 10, false},
 	// Fusion inside a loop body, where the slot is rewritten every iteration and
 	// read across the back edge. sum 0..9 = 45.
 	{"tee-loop", `function loopy(k: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < k) {
-        var step: i32 = i;
+        let step: i32 = i;
         acc = acc + step;
         i = i + 1;
     }
@@ -77,9 +77,9 @@ function main(): i32 { return reread(5); }`, 10, false},
 }
 function main(): i32 { return loopy(10); }`, 45, false},
 	// A fused pair feeding a call argument, and one inside the callee.
-	{"tee-call-arg", `function twice(n: i32): i32 { var d: i32 = n * 2; return d; }
+	{"tee-call-arg", `function twice(n: i32): i32 { let d: i32 = n * 2; return d; }
 function callarg(x: i32): i32 {
-    var y: i32 = twice(x);
+    let y: i32 = twice(x);
     return y + x;
 }
 function main(): i32 { return callarg(6); }`, 18, false},
@@ -87,8 +87,8 @@ function main(): i32 { return callarg(6); }`, 18, false},
 	// SURVIVE copy propagation — so it is the one that pins `local.tee` reaching
 	// the wasm backend, and the peek forms reaching the register backends.
 	{"tee-ptr-values", `function ptrs(s: string, xs: i32[]): i32 {
-    var n: i32 = s.len();
-    var m: i32 = xs[2];
+    let n: i32 = s.len();
+    let m: i32 = xs[2];
     return n + m;
 }
 function main(): i32 { return ptrs("hello", [3, 4, 5]); }`, 10, true},

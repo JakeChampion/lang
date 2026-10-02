@@ -30,33 +30,33 @@ func TestSelfHostJoinIR(t *testing.T) {
 		{
 			// 3 elements + a "-" separator: len("a-bb-ccc") = 8.
 			"multi",
-			`function main(): i32 { var xs: string[] = []; xs = xs.append("a"); xs = xs.append("bb"); xs = xs.append("ccc"); return xs.join("-").len(); }`,
+			`function main(): i32 { let xs: string[] = []; xs = xs.append("a"); xs = xs.append("bb"); xs = xs.append("ccc"); return xs.join("-").len(); }`,
 		},
 		{
 			// Empty array joins to "" (len 0) — the n==0 accumulator path.
 			"empty",
-			`function main(): i32 { var xs: string[] = []; return xs.join(",").len(); }`,
+			`function main(): i32 { let xs: string[] = []; return xs.join(",").len(); }`,
 		},
 		{
 			// A single element has no separator applied: len("solo") = 4.
 			"single",
-			`function main(): i32 { var xs: string[] = []; xs = xs.append("solo"); return xs.join(",").len(); }`,
+			`function main(): i32 { let xs: string[] = []; xs = xs.append("solo"); return xs.join(",").len(); }`,
 		},
 		{
 			// Empty separator concatenates directly: len("abc") = 3.
 			"empty-sep",
-			`function main(): i32 { var xs: string[] = []; xs = xs.append("a"); xs = xs.append("b"); xs = xs.append("c"); return xs.join("").len(); }`,
+			`function main(): i32 { let xs: string[] = []; xs = xs.append("a"); xs = xs.append("b"); xs = xs.append("c"); return xs.join("").len(); }`,
 		},
 		{
 			// A multi-char separator: len("x - y - z") = 9.
 			"multi-char-sep",
-			`function main(): i32 { var xs: string[] = []; xs = xs.append("x"); xs = xs.append("y"); xs = xs.append("z"); return xs.join(" - ").len(); }`,
+			`function main(): i32 { let xs: string[] = []; xs = xs.append("x"); xs = xs.append("y"); xs = xs.append("z"); return xs.join(" - ").len(); }`,
 		},
 		{
 			// The join result feeds `+` concat (exercises expr_is_str tracking of a
 			// `.join` result): len("[a,b]") = 5.
 			"concat-result",
-			`function main(): i32 { var xs: string[] = []; xs = xs.append("a"); xs = xs.append("b"); var s: string = "[" + xs.join(",") + "]"; return s.len(); }`,
+			`function main(): i32 { let xs: string[] = []; xs = xs.append("a"); xs = xs.append("b"); let s: string = "[" + xs.join(",") + "]"; return s.len(); }`,
 		},
 	}
 

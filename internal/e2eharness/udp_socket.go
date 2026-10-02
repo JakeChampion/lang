@@ -19,8 +19,8 @@ function fail(n: i32): i32 {
 }
 
 function zeros(n: i32): u8[] {
-    var b: u8[] = [];
-    var i: i32 = 0;
+    let b: u8[] = [];
+    let i: i32 = 0;
     while (i < n) {
         b = b.append(0u8);
         i = i + 1;
@@ -39,19 +39,19 @@ function eafnosupport(): i32 {
 }
 
 function main(): i32 {
-    var lo: u8[] = [127u8, 0u8, 0u8, 1u8];
-    var peer: u8[] = [];
-    var a: i32 = udp_bind(lo, 0);
+    let lo: u8[] = [127u8, 0u8, 0u8, 1u8];
+    let peer: u8[] = [];
+    let a: i32 = udp_bind(lo, 0);
     if (a < 0) { return fail(1); }
-    var pa: i32 = tcp_local_port(a);
+    let pa: i32 = tcp_local_port(a);
     if (pa <= 0) { return fail(2); }
-    var b: i32 = udp_bind(lo, 0);
+    let b: i32 = udp_bind(lo, 0);
     if (b < 0) { return fail(3); }
-    var pb: i32 = tcp_local_port(b);
+    let pb: i32 = tcp_local_port(b);
     if (pb <= 0 || pb == pa) { return fail(4); }
     if (udp_sendto(a, lo, pb, "ping") != 4) { return fail(5); }
-    var buf: u8[] = zeros(16);
-    var from: u8[] = zeros(19);
+    let buf: u8[] = zeros(16);
+    let from: u8[] = zeros(19);
     if (udp_recvfrom(b, buf, from) != 4) { return fail(6); }
     if (buf[0] != 112u8 || buf[1] != 105u8 || buf[2] != 110u8 || buf[3] != 103u8) { return fail(7); }
     if (from[0] != 4u8 || from[1] != 127u8 || from[2] != 0u8 || from[3] != 0u8 || from[4] != 1u8 || from[5] != 0u8) { return fail(8); }
@@ -65,12 +65,12 @@ function main(): i32 {
     if (port_of(from) != pb) { return fail(13); }
     // A receive buffer shorter than the datagram keeps its first bytes.
     if (udp_sendto(a, lo, pb, "abcdef") != 6) { return fail(14); }
-    var small: u8[] = zeros(4);
+    let small: u8[] = zeros(4);
     if (udp_recvfrom(b, small, from) != 4 || small[3] != 100u8) { return fail(15); }
     // The port a holds is refused to a second socket, and an address of
     // neither family's length is refused before any socket exists.
     if (udp_bind(lo, pa) >= 0) { return fail(16); }
-    var odd: u8[] = [1u8, 2u8, 3u8];
+    let odd: u8[] = [1u8, 2u8, 3u8];
     if (udp_bind(odd, 0) != 0 - eafnosupport()) { return fail(20); }
     if (udp_sendto(a, odd, pb, "x") != 0 - eafnosupport()) { return fail(21); }
     if (target_os() == "wasi") {
@@ -104,8 +104,8 @@ function fail(n: i32): i32 {
 }
 
 function zeros(n: i32): u8[] {
-    var b: u8[] = [];
-    var i: i32 = 0;
+    let b: u8[] = [];
+    let i: i32 = 0;
     while (i < n) {
         b = b.append(0u8);
         i = i + 1;
@@ -139,13 +139,13 @@ function sent(r: Result[i32, net.NetError]): i32 {
 }
 
 function main(): i32 {
-    var a: i32 = open_socket(1);
-    var pa: i32 = port_or(a, 2);
-    var b: i32 = open_socket(3);
-    var pb: i32 = port_or(b, 4);
+    let a: i32 = open_socket(1);
+    let pa: i32 = port_or(a, 2);
+    let b: i32 = open_socket(3);
+    let pb: i32 = port_or(b, 4);
     if (a < 0 || pa <= 0 || b < 0 || pb <= 0) { return 5; }
     if (sent(net.send_to(a, [112u8, 105u8, 110u8, 103u8], loopback(pb))) != 4) { return fail(6); }
-    var buf: u8[] = zeros(16);
+    let buf: u8[] = zeros(16);
     match (net.recv_from(b, buf)) {
         Ok(got) => {
             if (got.0 != 4 || buf[0] != 112u8 || buf[3] != 103u8) { return fail(7); }
@@ -229,9 +229,9 @@ function econnrefused(): i32 {
 
 // The connect's result once it is no longer under way.
 function settle(c: i32): i32 {
-    var tries: i32 = 0;
+    let tries: i32 = 0;
     while (tries < 5000) {
-        var r: i32 = tcp_socket_ctl(c, 5, 0);
+        let r: i32 = tcp_socket_ctl(c, 5, 0);
         if (r != 0 - einprogress()) { return r; }
         sleep_ms(1);
         tries = tries + 1;
@@ -240,15 +240,15 @@ function settle(c: i32): i32 {
 }
 
 function main(): i32 {
-    var lo: u8[] = [127u8, 0u8, 0u8, 1u8];
-    var ln: i32 = tcp_listen_with(lo, 0, 4, false);
+    let lo: u8[] = [127u8, 0u8, 0u8, 1u8];
+    let ln: i32 = tcp_listen_with(lo, 0, 4, false);
     if (ln < 0) { return fail(1); }
-    var port: i32 = tcp_local_port(ln);
+    let port: i32 = tcp_local_port(ln);
     if (port <= 0) { return fail(2); }
-    var c: i32 = tcp_connect_with(lo, port, true);
+    let c: i32 = tcp_connect_with(lo, port, true);
     if (c < 0) { return fail(3); }
     if (settle(c) != 0) { return fail(4); }
-    var a: i32 = tcp_accept(ln);
+    let a: i32 = tcp_accept(ln);
     if (a < 0) { return fail(5); }
     if (tcp_socket_ctl(c, 5, 0) != 0) { return fail(6); }
     // Blocking again for the exchange: loopback delivery is not synchronous
@@ -257,17 +257,17 @@ function main(): i32 {
     // its tcp_recv waits regardless.
     if (target_os() != "wasi" && tcp_socket_ctl(c, 3, 0) != 0) { return fail(7); }
     if (tcp_send(c, "hi") != 2) { return fail(8); }
-    var got: u8[] = tcp_recv(a, 16);
+    let got: u8[] = tcp_recv(a, 16);
     if (got.len() != 2 || got[0] != 104u8 || got[1] != 105u8) { return fail(9); }
     if (tcp_send(a, "yo") != 2) { return fail(10); }
-    var back: u8[] = tcp_recv(c, 16);
+    let back: u8[] = tcp_recv(c, 16);
     if (back.len() != 2 || back[0] != 121u8) { return fail(11); }
     tcp_close(a);
     tcp_close(c);
     tcp_close(ln);
-    var c2: i32 = tcp_connect_with(lo, port, true);
+    let c2: i32 = tcp_connect_with(lo, port, true);
     if (c2 >= 0) {
-        var r: i32 = settle(c2);
+        let r: i32 = settle(c2);
         tcp_close(c2);
         if (r != 0 - econnrefused()) { return fail(12); }
     } else if (c2 != 0 - econnrefused()) {
@@ -299,7 +299,7 @@ function loopback(port: i32): net.SocketAddr {
 
 // The connect's result once it is no longer under way: 0, or its errno.
 function settle(c: i32): i32 {
-    var tries: i32 = 0;
+    let tries: i32 = 0;
     while (tries < 5000) {
         match (net.connect_result(c)) {
             Ok(u) => { return 0; },
@@ -316,33 +316,33 @@ function refused(errno: i32): boolean {
 }
 
 function main(): i32 {
-    var ln: i32 = 0;
+    let ln: i32 = 0;
     match (net.listen_with(0, net.listen_options())) {
         Ok(fd) => { ln = fd; },
         Err(e) => { return fail(1); },
     }
-    var port: i32 = 0;
+    let port: i32 = 0;
     match (net.local_port(ln)) {
         Ok(p) => { port = p; },
         Err(e) => { return fail(2); },
     }
-    var c: i32 = 0;
+    let c: i32 = 0;
     match (net.connect_start(loopback(port))) {
         Ok(fd) => { c = fd; },
         Err(e) => { return fail(3); },
     }
     if (settle(c) != 0) { return fail(4); }
-    var a: i32 = tcp_accept(ln);
+    let a: i32 = tcp_accept(ln);
     if (a < 0) { return fail(5); }
     if (tcp_send(c, "hi") != 2) { return fail(6); }
-    var got: u8[] = tcp_recv(a, 16);
+    let got: u8[] = tcp_recv(a, 16);
     if (got.len() != 2 || got[0] != 104u8) { return fail(7); }
     tcp_close(a);
     tcp_close(c);
     tcp_close(ln);
     match (net.connect_start(loopback(port))) {
         Ok(fd) => {
-            var r: i32 = settle(fd);
+            let r: i32 = settle(fd);
             tcp_close(fd);
             if (!refused(r)) { return fail(8); }
         },

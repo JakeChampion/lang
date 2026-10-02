@@ -19,22 +19,22 @@ var mapOfMapPrograms = []struct {
 	// typed lowering refused whole.
 	{"read-through-match", `import "core/map";
 function build(i: i32): Map[i32, Map[i32, i32]] {
-    var inner: Map[i32, i32] = map_new(2);
+    let inner: Map[i32, i32] = map_new(2);
     inner = inner.insert(i, i + 1);
-    var outer: Map[i32, Map[i32, i32]] = map_new(2);
+    let outer: Map[i32, Map[i32, i32]] = map_new(2);
     outer = outer.insert(i, inner);
     return outer;
 }
 function work(i: i32): i32 {
-    var outer: Map[i32, Map[i32, i32]] = build(i);
+    let outer: Map[i32, Map[i32, i32]] = build(i);
     match (outer.get(i)) {
         Some(inner) => { return inner.get_or(i, -1) - i; },
         None => { return -1000; },
     }
 }
 function main(): i32 {
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < 200) { acc = acc + work(i); i = i + 1; }
     if (acc != 200) { return 99; }
     return __rc_underflow_count();
@@ -44,10 +44,10 @@ function main(): i32 {
 	{"round-trip", `import "core/map";
 
 function adjacency(n: i32): Map[i32, Map[i32, i32]] {
-    var g: Map[i32, Map[i32, i32]] = map_new(4);
-    var i: i32 = 0;
+    let g: Map[i32, Map[i32, i32]] = map_new(4);
+    let i: i32 = 0;
     while (i < n) {
-        var row: Map[i32, i32] = map_new(2);
+        let row: Map[i32, i32] = map_new(2);
         row = row.insert(i + 1, i * 10);
         row = row.insert(i + 2, i * 20);
         g = g.insert(i, row);
@@ -57,14 +57,14 @@ function adjacency(n: i32): Map[i32, Map[i32, i32]] {
 }
 
 function mutate(g: Map[i32, Map[i32, i32]]): Map[i32, Map[i32, i32]] {
-    var row: Map[i32, i32] = g.get_or(1, map_new(1));
+    let row: Map[i32, i32] = g.get_or(1, map_new(1));
     row = row.insert(99, 7);
     g = g.insert(100, row);
     return g;
 }
 
 function weight(g: Map[i32, Map[i32, i32]]): i32 {
-    var total: i32 = 0;
+    let total: i32 = 0;
     for (k, row) in g {
         total = total + k + row.len();
         for (_, w) in row {
@@ -75,7 +75,7 @@ function weight(g: Map[i32, Map[i32, i32]]): i32 {
 }
 
 function rows(g: Map[i32, Map[i32, i32]]): i32 {
-    var total: i32 = 0;
+    let total: i32 = 0;
     for row in g.values() {
         total = total + row.len();
     }
@@ -83,25 +83,25 @@ function rows(g: Map[i32, Map[i32, i32]]): i32 {
 }
 
 function round(n: i32): i32 {
-    var g: Map[i32, Map[i32, i32]] = adjacency(n);
+    let g: Map[i32, Map[i32, i32]] = adjacency(n);
     g = mutate(g);
-    var one: i32 = 0;
+    let one: i32 = 0;
     match (g.get(1)) {
         Some(r) => { one = r.len(); },
         None => { return -1; },
     }
-    var hundred: i32 = 0;
+    let hundred: i32 = 0;
     match (g.get(100)) {
         Some(r) => { hundred = r.get_or(99, -1); },
         None => { return -2; },
     }
-    var fresh: Map[i32, i32] = map_new(1);
+    let fresh: Map[i32, i32] = map_new(1);
     fresh = fresh.insert(5, 5);
     g = g.insert(0, fresh);
-    var (g2, existed) = g.without(2);
+    let (g2, existed) = g.without(2);
     if (!existed) { return -4; }
-    var lit: Map[string, Map[i32, i32]] = Map { "a": fresh };
-    var la: i32 = 0;
+    let lit: Map[string, Map[i32, i32]] = Map { "a": fresh };
+    let la: i32 = 0;
     match (lit.get("a")) {
         Some(r) => { la = r.get_or(5, -1); },
         None => { return -3; },
@@ -110,7 +110,7 @@ function round(n: i32): i32 {
 }
 
 function main(): i32 {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 20) {
         if (round(4) != 3036) { return 98; }
         i = i + 1;
@@ -126,24 +126,24 @@ import "core/cmp";
 struct Coord { x: i32, y: i32 }
 
 function round(n: i32): i32 {
-    var g: Map[Coord, Map[i32, i32]] = map_new(2);
-    var h: Map[i32, Map[Coord, i32]] = map_new(2);
-    var i: i32 = 0;
+    let g: Map[Coord, Map[i32, i32]] = map_new(2);
+    let h: Map[i32, Map[Coord, i32]] = map_new(2);
+    let i: i32 = 0;
     while (i < n) {
-        var row: Map[i32, i32] = map_new(2);
+        let row: Map[i32, i32] = map_new(2);
         row = row.insert(i, i * 3);
         g = g.insert(Coord { x: i, y: i }, row);
-        var col: Map[Coord, i32] = map_new(2);
+        let col: Map[Coord, i32] = map_new(2);
         col = col.insert(Coord { x: i, y: 0 }, i * 5);
         h = h.insert(i, col);
         i = i + 1;
     }
-    var r1: Map[i32, i32] = g.get_or(Coord { x: 1, y: 1 }, map_new(1));
+    let r1: Map[i32, i32] = g.get_or(Coord { x: 1, y: 1 }, map_new(1));
     r1 = r1.insert(50, 50);
     g = g.insert(Coord { x: 9, y: 9 }, r1);
-    var c2: Map[Coord, i32] = map_new(1);
+    let c2: Map[Coord, i32] = map_new(1);
     h = h.insert(0, c2);
-    var total: i32 = 0;
+    let total: i32 = 0;
     for (k, row) in g {
         total = total + k.x + row.len();
         for (_, w) in row {
@@ -160,13 +160,13 @@ function round(n: i32): i32 {
         Some(r) => { total = total + r.len() * 1000; },
         None => { return -1; },
     }
-    var (g2, existed) = g.without(Coord { x: 0, y: 0 });
+    let (g2, existed) = g.without(Coord { x: 0, y: 0 });
     if (!existed) { return -2; }
     return total + g2.len() * 100000;
 }
 
 function main(): i32 {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 10) {
         if (round(3) != 301108) { return 98; }
         i = i + 1;
@@ -182,32 +182,32 @@ import "core/cmp";
 struct Coord { x: i32, y: i32 }
 
 function row(i: i32): Map[i32, i32] {
-    var r: Map[i32, i32] = map_new(2);
+    let r: Map[i32, i32] = map_new(2);
     return r.insert(i, i * 2);
 }
 
 function keyed(n: i32): i32 {
-    var g: Map[Coord, Map[i32, i32]] = map_new(2);
-    var i: i32 = 0;
+    let g: Map[Coord, Map[i32, i32]] = map_new(2);
+    let i: i32 = 0;
     while (i < n) {
         g = g.insert(Coord { x: i, y: 0 }, row(i));
         i = i + 1;
     }
-    var before: Map[Coord, Map[i32, i32]] = g;
+    let before: Map[Coord, Map[i32, i32]] = g;
     g = g.insert(Coord { x: 99, y: 0 }, row(99));
     return g.len() * 100 + before.len();
 }
 
 function routed(n: i32): i32 {
-    var g: Map[i32, Map[i32, i32]] = map_new(2);
-    var i: i32 = 0;
+    let g: Map[i32, Map[i32, i32]] = map_new(2);
+    let i: i32 = 0;
     while (i < n) {
         g = g.insert(i, row(i));
         i = i + 1;
     }
-    var before: Map[i32, Map[i32, i32]] = g;
+    let before: Map[i32, Map[i32, i32]] = g;
     g = g.insert(99, row(99));
-    var inner: i32 = 0;
+    let inner: i32 = 0;
     match (before.get(1)) {
         Some(r) => { inner = r.get_or(1, -1); },
         None => { return -1; },
@@ -216,7 +216,7 @@ function routed(n: i32): i32 {
 }
 
 function main(): i32 {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 10) {
         if (keyed(3) != 403) { return 98; }
         if (routed(3) != 20403) { return 97; }

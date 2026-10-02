@@ -6,7 +6,7 @@ self-host leak matrix, on both ISAs.
 ## The shape
 
 ```fern
-function w(i: i32): string { var t: string = "x"; if (i % 2 == 0) { t = "yy"; } return "v-a-wide-payload-…-" + t; }
+function w(i: i32): string { let t: string = "x"; if (i % 2 == 0) { t = "yy"; } return "v-a-wide-payload-…-" + t; }
 enum E { Full(string[]), Note(string), Nil }
 function mk(i: i32): E {
     if (i % 3 == 0) { return E.Full([w(i)]); }

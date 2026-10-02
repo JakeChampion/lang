@@ -60,42 +60,42 @@ func TestSelfHostDisplayArgGate(t *testing.T) {
 		// asm, and a binary that wrote 0 bytes.
 		{
 			"write-u8-array",
-			"function main(): i32 {\n    var b: u8[] = [72 as u8, 105 as u8];\n    write(b);\n    return 0;\n}\n",
+			"function main(): i32 {\n    let b: u8[] = [72 as u8, 105 as u8];\n    write(b);\n    return 0;\n}\n",
 			[]string{"E038", noDisplay("write", "u8[]")},
 		},
 		// print and eprint share the helper, so they shared the hole.
 		{
 			"print-u8-array",
-			"function main(): i32 {\n    var b: u8[] = [72 as u8, 105 as u8];\n    print(b);\n    return 0;\n}\n",
+			"function main(): i32 {\n    let b: u8[] = [72 as u8, 105 as u8];\n    print(b);\n    return 0;\n}\n",
 			[]string{"E038", noDisplay("print", "u8[]")},
 		},
 		{
 			"eprint-u8-array",
-			"function main(): i32 {\n    var b: u8[] = [72 as u8, 105 as u8];\n    eprint(b);\n    return 0;\n}\n",
+			"function main(): i32 {\n    let b: u8[] = [72 as u8, 105 as u8];\n    eprint(b);\n    return 0;\n}\n",
 			[]string{"E038", noDisplay("eprint", "u8[]")},
 		},
 		// A scalar with no to_string in scope: native raises E038 here too,
 		// naming the import that brings the method in.
 		{
 			"write-i32",
-			"function main(): i32 {\n    var n: i32 = 5;\n    write(n);\n    return 0;\n}\n",
+			"function main(): i32 {\n    let n: i32 = 5;\n    write(n);\n    return 0;\n}\n",
 			[]string{"E038", noDisplay("write", "i32"), "`import \"core/cmp\";`"},
 		},
 		{
 			"print-boolean",
-			"function main(): i32 {\n    var b: boolean = true;\n    print(b);\n    return 0;\n}\n",
+			"function main(): i32 {\n    let b: boolean = true;\n    print(b);\n    return 0;\n}\n",
 			[]string{"E038", noDisplay("print", "boolean")},
 		},
 		{
 			"print-f64",
-			"function main(): i32 {\n    var v: f64 = 1.5;\n    print(v);\n    return 0;\n}\n",
+			"function main(): i32 {\n    let v: f64 = 1.5;\n    print(v);\n    return 0;\n}\n",
 			[]string{"E038", noDisplay("print", "f64")},
 		},
 		// An array stays refused with the import: nothing gives `i32[]` a
 		// to_string.
 		{
 			"print-i32-array-with-cmp-imported",
-			"import \"core/cmp\";\nfunction main(): i32 {\n    var xs: i32[] = [1, 2];\n    print(xs);\n    return 0;\n}\n",
+			"import \"core/cmp\";\nfunction main(): i32 {\n    let xs: i32[] = [1, 2];\n    print(xs);\n    return 0;\n}\n",
 			[]string{"E038", noDisplay("print", "i32[]")},
 		},
 		// Nested in a branch: bare expression statements were hitting
@@ -103,7 +103,7 @@ func TestSelfHostDisplayArgGate(t *testing.T) {
 		// must reach one inside a body.
 		{
 			"nested-in-if",
-			"function main(): i32 {\n    var b: u8[] = [1 as u8];\n    if (b.len() > 0) { write(b); }\n    return 0;\n}\n",
+			"function main(): i32 {\n    let b: u8[] = [1 as u8];\n    if (b.len() > 0) { write(b); }\n    return 0;\n}\n",
 			[]string{"E038", noDisplay("write", "u8[]")},
 		},
 	}
@@ -133,8 +133,8 @@ func TestSelfHostDisplayArgGate(t *testing.T) {
 function (q: Q) to_string(): string { return "Q!"; }
 function label(): string { return "lab"; }
 function main(): i32 {
-    var q: Q = Q { a: 1 };
-    var s: string = "loc";
+    let q: Q = Q { a: 1 };
+    let s: string = "loc";
     write("lit");
     write(s);
     write(s + "-cat");
@@ -152,8 +152,8 @@ function main(): i32 {
 	// result beside the locals. The expected text is what native prints.
 	const primitivesSrc = `import "core/cmp";
 function main(): i32 {
-    var a: i32 = 7; var b: i64 = 7i64; var c: u32 = 7 as u32; var d: u64 = 7 as u64;
-    var e: f64 = 1.5; var f: boolean = true; var g: u8 = 65 as u8;
+    let a: i32 = 7; let b: i64 = 7i64; let c: u32 = 7 as u32; let d: u64 = 7 as u64;
+    let e: f64 = 1.5; let f: boolean = true; let g: u8 = 65 as u8;
     print(a); print(b); print(c); print(d); print(e); print(f); print(g);
     print(7); print(1 + 2);
     write(a); write("|"); eprint(a);
@@ -165,7 +165,7 @@ function main(): i32 {
 	const shadowSrc = `function (n: i32) to_string(): string { return "SHADOW"; }
 function main(): i32 {
     print(5);
-    var m: i32 = 6; print(m.to_string());
+    let m: i32 = 6; print(m.to_string());
     return 0;
 }
 `
@@ -204,7 +204,7 @@ function main(): i32 {
 	// survive that for the gate to judge it rather than mis-flag it.
 	t.Run("accept-stdlib", func(t *testing.T) {
 		asm, _ := compileSourceModload(t, runner, driverBin,
-			"import \"std/i32\";\nfunction main(): i32 { var n: i32 = 7; print(n.to_string()); return 0; }\n")
+			"import \"std/i32\";\nfunction main(): i32 { let n: i32 = 7; print(n.to_string()); return 0; }\n")
 		if !strings.Contains(asm, "__fn_main") {
 			t.Fatalf("stdlib program emitted no main (%d bytes)", len(asm))
 		}

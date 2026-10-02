@@ -29,10 +29,10 @@ function (p: Par) advance(): Par {
 }
 
 function parse_sts(p0: Par): (St[], Par) {
-    var body: St[] = [];
-    var p: Par = p0;
+    let body: St[] = [];
+    let p: Par = p0;
     while (p.pos < 3) {
-        var st: St = SA { v: p.pos };
+        let st: St = SA { v: p.pos };
         body = body.append(st);
         p = p.advance();
     }
@@ -40,14 +40,14 @@ function parse_sts(p0: Par): (St[], Par) {
 }
 
 function parse_block(p0: Par): (St[], Par) {
-    var p: Par = p0;
-    var (r_body, r_p) = parse_sts(p);
+    let p: Par = p0;
+    let (r_body, r_p) = parse_sts(p);
     p = r_p;
     if (p.pos < 100) { p = p.advance(); }
-    var k: i32 = 0;
-    var junk_total: i32 = 0;
+    let k: i32 = 0;
+    let junk_total: i32 = 0;
     while (k < 8) {
-        var junk: i32[] = [7777777, 7777777, 7777777, 7777777];
+        let junk: i32[] = [7777777, 7777777, 7777777, 7777777];
         junk_total = junk_total + junk[0];
         k = k + 1;
     }
@@ -56,11 +56,11 @@ function parse_block(p0: Par): (St[], Par) {
 }
 
 function main(): i32 {
-    var toks: i32[] = [1, 2, 3, 4];
-    var p: Par = Par { toks: toks, pos: 0 };
-    var (b, p2) = parse_block(p);
-    var sum: i32 = 0;
-    var i: i32 = 0;
+    let toks: i32[] = [1, 2, 3, 4];
+    let p: Par = Par { toks: toks, pos: 0 };
+    let (b, p2) = parse_block(p);
+    let sum: i32 = 0;
+    let i: i32 = 0;
     while (i < b.len()) {
         match (b[i]) {
             SA(sa) => { sum = sum + sa.v; },

@@ -7,7 +7,7 @@ semantic-lowered producer when the struct had a reference field (#10415).
 ```
 struct Ints { n: i32, ys: i32[] }
 function build(k: i32): Ints { ...loop-built g...; return Ints { n: k, ys: g }; }
-function main(): i32 { var r: Ints = build(3); return r.ys[1] + r.n; }
+function main(): i32 { let r: Ints = build(3); return r.ys[1] + r.n; }
 ```
 
 left allocs=2 frees=0, where every other lowering balanced.

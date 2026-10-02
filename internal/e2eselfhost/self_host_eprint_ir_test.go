@@ -19,7 +19,7 @@ var eprintIRCases = []struct {
 	name, src, want string
 }{
 	{"eprint-literal", `function main(): i32 { eprint("hi"); return 0; }`, "hi\n"},
-	{"eprint-var", `function main(): i32 { var s: string = "abc"; eprint(s); return 0; }`, "abc\n"},
+	{"eprint-var", `function main(): i32 { let s: string = "abc"; eprint(s); return 0; }`, "abc\n"},
 	{"eprint-concat", `function main(): i32 { eprint("x" + "y"); return 0; }`, "xy\n"},
 }
 

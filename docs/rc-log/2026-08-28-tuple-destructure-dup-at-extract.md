@@ -1,6 +1,6 @@
 # A tuple destructure retains the element it extracts
 
-Closes #7682: `var (a, b) = p` over a tuple with a scalar-array element
+Closes #7682: `let (a, b) = p` over a tuple with a scalar-array element
 **over-released** — rc underflow and a sanitizer-confirmed use-after-free,
 where both oracles are correct. It is the first defect in this log whose
 census is *perfectly balanced in the failing case*, so it is worth reading for
@@ -26,9 +26,9 @@ reports it as clean.
 
 | variant | before |
 |---|---|
-| `var p: (i32, i32[]) = (i, [i, i+1]); var (a, b) = p;` | underflow + UAF |
+| `let p: (i32, i32[]) = (i, [i, i+1]); let (a, b) = p;` | underflow + UAF |
 | bare-ident element (`(i, xs)`) — no `TUPRC:` literal credit | underflow + UAF |
-| **no annotation** (`var p = (i, [..])`) — no `TUPRCS:` sweep credit | a plain LEAK, answer correct |
+| **no annotation** (`let p = (i, [..])`) — no `TUPRCS:` sweep credit | a plain LEAK, answer correct |
 | read `base.0` / `base.1` instead of destructuring | clean |
 
 Removing the source's credit converts the double-dec into a single unmatched
@@ -95,11 +95,11 @@ merely cancelling a dec.
 
 `irlower.fern` has no destructure awareness in its escape analysis:
 `is_destr_marker`, `name_has_comma` and `split_pattern_names` appear nowhere
-in it, though the checker has all three. The parser encodes `var (a, b) = p`
+in it, though the checker has all three. The parser encodes `let (a, b) = p`
 as a `StmtVar` whose name is the comma-joined `"a,b"` with a bare
 `ExprIdent(p)` init, so `rctuple_esc_stmt_alias` reads it as an ordinary
 single binding and applies the #7282 alias forgiveness — *"a plain
-`var v = name` bind retained the box"* — which a destructure precisely does
+`let v = name` bind retained the box"* — which a destructure precisely does
 not do. The tuple therefore kept a credit that `keep = t.1` would have sunk.
 
 Fixing the extraction side makes that moot for the measured kinds, but the

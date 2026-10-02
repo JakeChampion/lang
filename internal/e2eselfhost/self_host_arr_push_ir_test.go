@@ -19,13 +19,13 @@ var arrPushIRCases = []struct {
 	main string
 }{
 	// Append three, read length.
-	{"len", `function main(): i32 { var a: i32[] = []; a = a.append(1); a = a.append(2); a = a.append(3); return a.len(); }`},
+	{"len", `function main(): i32 { let a: i32[] = []; a = a.append(1); a = a.append(2); a = a.append(3); return a.len(); }`},
 	// Append to a non-empty array, index the new element.
-	{"index", `function main(): i32 { var a: i32[] = [10]; a = a.append(20); return a[1]; }`},
+	{"index", `function main(): i32 { let a: i32[] = [10]; a = a.append(20); return a[1]; }`},
 	// Append in a loop (exercises geometric growth / realloc), index midway.
-	{"loop-grow", `function main(): i32 { var a: i32[] = []; var i: i32 = 0; while (i < 10) { a = a.append(i * i); i = i + 1; } return a[7]; }`},
+	{"loop-grow", `function main(): i32 { let a: i32[] = []; let i: i32 = 0; while (i < 10) { a = a.append(i * i); i = i + 1; } return a[7]; }`},
 	// Sum a loop-built array.
-	{"loop-sum", `function main(): i32 { var a: i32[] = []; var i: i32 = 0; while (i < 5) { a = a.append(i + 1); i = i + 1; } var s: i32 = 0; for x in a { s = s + x; } return s; }`},
+	{"loop-sum", `function main(): i32 { let a: i32[] = []; let i: i32 = 0; while (i < 5) { a = a.append(i + 1); i = i + 1; } let s: i32 = 0; for x in a { s = s + x; } return s; }`},
 }
 
 // TestSelfHostArrPushIR compiles each case with the self-host CLI for

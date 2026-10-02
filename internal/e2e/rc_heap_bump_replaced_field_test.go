@@ -32,9 +32,9 @@ import (
 func replacedFieldBumpSrc(n string) string {
 	return `struct Box { items: i32[], n: i32 }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var p: Box = Box{ items: [0], n: 0 };
-    var i: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let p: Box = Box{ items: [0], n: 0 };
+    let i: i32 = 0;
     while (i < ` + n + `) {
         p = Box{ items: [i, i + 1, i + 2, i + 3], n: i };
         i = i + 1;
@@ -51,14 +51,14 @@ function main(): i32 {
 const replacedFieldAliasCallSrc = `struct Box { items: i32[], n: i32 }
 function ident(xs: i32[]): i32[] { return xs; }
 function main(): i32 {
-    var p: Box = Box{ items: [1, 2, 3], n: 0 };
-    var i: i32 = 0;
-    var sum: i32 = 0;
+    let p: Box = Box{ items: [1, 2, 3], n: 0 };
+    let i: i32 = 0;
+    let sum: i32 = 0;
     while (i < 100) {
         p = Box{ items: ident(p.items), n: p.n + 1 };
         // Force interleaved allocation that would corrupt a wrongly-freed
         // old buffer (the freelist would hand it back to junk).
-        var junk: i32[] = [7, 7, 7];
+        let junk: i32[] = [7, 7, 7];
         sum = sum + junk[0] + p.items[0] + p.items[1] + p.items[2];
         i = i + 1;
     }
@@ -73,8 +73,8 @@ function main(): i32 {
 const replacedFieldAliasBranchSrc = `struct Box { items: i32[], n: i32 }
 function pick(xs: i32[], k: i32): i32[] { if (k > 0) { return xs; } return xs; }
 function main(): i32 {
-    var p: Box = Box{ items: [5, 6, 7], n: 0 };
-    var i: i32 = 0;
+    let p: Box = Box{ items: [5, 6, 7], n: 0 };
+    let i: i32 = 0;
     while (i < 100) {
         p = Box{ items: pick(p.items, i), n: p.n + 1 };
         i = i + 1;
@@ -90,11 +90,11 @@ function main(): i32 {
 const replacedFieldAliasLocalSrc = `struct Box { items: i32[], n: i32 }
 function ident(xs: i32[]): i32[] { return xs; }
 function main(): i32 {
-    var p: Box = Box{ items: [9, 8, 7], n: 0 };
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let p: Box = Box{ items: [9, 8, 7], n: 0 };
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < 100) {
-        var keep: i32[] = p.items;
+        let keep: i32[] = p.items;
         p = Box{ items: ident(keep), n: p.n + 1 };
         acc = acc + keep[0];
         i = i + 1;

@@ -4,7 +4,7 @@ Two changes landed earlier today made a self-appended struct element a counted
 share: `arrstruct-live-element` widened the ARRSTRUCT admission and stamped
 `"APRETAIN:"` at the sites that retain, and `field-reclaim-shared-box` rc-gated
 the rebind so a shared box's fields survive it. This slice finishes the ARRAY
-family — the LITERAL spelling `var ps: P[] = [p]` had none of it — and adds the
+family — the LITERAL spelling `let ps: P[] = [p]` had none of it — and adds the
 grid that says which container positions are still open.
 
 ## What was still leaking
@@ -13,7 +13,7 @@ Measured x86, 100 rounds, against native, on the state those two changes left:
 
 | shape | self-host | native |
 |---|---|---|
-| `var ps: P[] = [p]`, p read after | 300 / 100 | 300 / 300 |
+| `let ps: P[] = [p]`, p read after | 300 / 100 | 300 / 300 |
 | `ps.append(p); p = P { … }; ps.append(p)` | 600 / 400 | 600 / 600 |
 
 The literal is the plainer of the two: `arrstruct_lit_is_fresh` demanded a fresh

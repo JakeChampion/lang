@@ -76,22 +76,22 @@ func TestSelfHostU32RetGenericDynWasmIR(t *testing.T) {
 		// `idg(a) >> 25`. is_u32_ret_fn misses (the generic fn isn't u32-typed),
 		// so the ExprCall(ident) arm falls through to str_ret_argref + the u32-ness
 		// of the actual argument. 0x80000001 >> 25 == 64 unsigned.
-		{"generic-shr", `function idg[T](x: T): T { return x; } function main(): i32 { var a: u32 = 2147483649 as u32; return (idg(a) >> 25) as i32; }`, 64},
+		{"generic-shr", `function idg[T](x: T): T { return x; } function main(): i32 { let a: u32 = 2147483649 as u32; return (idg(a) >> 25) as i32; }`, 64},
 		// TWO generic-call operands in a DIVISION: `idg(a) / idg(b)` — the argref
 		// u32-ness is the sole signal (no u32 literal operand). 4000000000 / 7 ==
 		// 571428571; % 100 == 71.
-		{"generic-twocall-div", `function idg[T](x: T): T { return x; } function main(): i32 { var a: u32 = 4000000000 as u32; var b: u32 = 7 as u32; return ((idg(a) / idg(b)) % (100 as u32)) as i32; }`, 71},
+		{"generic-twocall-div", `function idg[T](x: T): T { return x; } function main(): i32 { let a: u32 = 4000000000 as u32; let b: u32 = 7 as u32; return ((idg(a) / idg(b)) % (100 as u32)) as i32; }`, 71},
 		// u32-valued if/match IIFE chained in a shift: the 0-arg IIFE lambda the
 		// desugar emits is classified by its first branch's returned value (`a`, a
 		// u32). `(if (…) { a } else { 0 }) >> 25`.
-		{"iife-shr", `function main(): i32 { var a: u32 = 2147483649 as u32; var r: u32 = (if (a > (0 as u32)) { a } else { 0 as u32 }) >> 25; return r as i32; }`, 64},
+		{"iife-shr", `function main(): i32 { let a: u32 = 2147483649 as u32; let r: u32 = (if (a > (0 as u32)) { a } else { 0 as u32 }) >> 25; return r as i32; }`, 64},
 		// dyn Trait method dispatch returning u32, chained in a shift: `d.v() >> 25`.
 		// The "dyn Val.v" key is populated by append_dyn_i64_ret_fns with ret flag
 		// '3'; the ExprCall(method) arm resolves the receiver to "dyn Val".
-		{"dyn-shr", `trait Val { function v(self: Self): u32; } struct B { n: u32 } impl Val for B { function v(self: Self): u32 { return self.n; } } function main(): i32 { var b: B = B { n: 2147483649 as u32 }; var d: dyn Val = b; return (d.v() >> 25) as i32; }`, 64},
+		{"dyn-shr", `trait Val { function v(self: Self): u32; } struct B { n: u32 } impl Val for B { function v(self: Self): u32 { return self.n; } } function main(): i32 { let b: B = B { n: 2147483649 as u32 }; let d: dyn Val = b; return (d.v() >> 25) as i32; }`, 64},
 		// TWO dyn-method-call operands in a DIVISION: `d.v() / d.d7()` — the dyn
 		// u32-return is the sole signal. Same 71 arithmetic as generic-twocall-div.
-		{"dyn-twocall-div", `trait Val { function v(self: Self): u32; function d7(self: Self): u32; } struct B { n: u32, d: u32 } impl Val for B { function v(self: Self): u32 { return self.n; } function d7(self: Self): u32 { return self.d; } } function main(): i32 { var b: B = B { n: 4000000000 as u32, d: 7 as u32 }; var d: dyn Val = b; return ((d.v() / d.d7()) % (100 as u32)) as i32; }`, 71},
+		{"dyn-twocall-div", `trait Val { function v(self: Self): u32; function d7(self: Self): u32; } struct B { n: u32, d: u32 } impl Val for B { function v(self: Self): u32 { return self.n; } function d7(self: Self): u32 { return self.d; } } function main(): i32 { let b: B = B { n: 4000000000 as u32, d: 7 as u32 }; let d: dyn Val = b; return ((d.v() / d.d7()) % (100 as u32)) as i32; }`, 71},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

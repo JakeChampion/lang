@@ -40,16 +40,16 @@ import (
 // closes. `__rc_underflow_count()` is the return value, so an over-release shows
 // up as a nonzero exit rather than as a byte count.
 const scalarOptNestedIfSrc = `function round(i: i32): i32 {
-    var acc: i32 = 0;
-    var o: Option[i32] = Some(i + 1);
+    let acc: i32 = 0;
+    let o: Option[i32] = Some(i + 1);
     if (i >= 0) {
         match (o) { Some(a) => { acc = acc + a; }, None => { acc = acc + 1; } }
     }
     return acc;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     if (x == 999999) { return 90; }
     return __rc_underflow_count();
@@ -58,9 +58,9 @@ function main(): i32 {
 
 // The `while` body, the other nesting #6127's note names.
 const scalarOptNestedWhileSrc = `function round(i: i32): i32 {
-    var acc: i32 = 0;
-    var o: Option[i32] = Some(i + 1);
-    var k: i32 = 0;
+    let acc: i32 = 0;
+    let o: Option[i32] = Some(i + 1);
+    let k: i32 = 0;
     while (k < 1) {
         match (o) { Some(a) => { acc = acc + a; }, None => { acc = acc + 1; } }
         k = k + 1;
@@ -68,8 +68,8 @@ const scalarOptNestedWhileSrc = `function round(i: i32): i32 {
     return acc;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     if (x == 999999) { return 90; }
     return __rc_underflow_count();
@@ -86,16 +86,16 @@ const scalarOptCallNestedIfSrc = `function mk(i: i32): Option[i32] {
     return Some(i + 1);
 }
 function round(i: i32): i32 {
-    var acc: i32 = 0;
-    var o: Option[i32] = mk(i);
+    let acc: i32 = 0;
+    let o: Option[i32] = mk(i);
     if (i >= 0) {
         match (o) { Some(a) => { acc = acc + a; }, None => { acc = acc + 1; } }
     }
     return acc;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     if (x == 999999) { return 90; }
     return __rc_underflow_count();
@@ -110,14 +110,14 @@ const scalarOptCallFlatSrc = `function mk(i: i32): Option[i32] {
     return Some(i + 1);
 }
 function round(i: i32): i32 {
-    var acc: i32 = 0;
-    var o: Option[i32] = mk(i);
+    let acc: i32 = 0;
+    let o: Option[i32] = mk(i);
     match (o) { Some(a) => { acc = acc + a; }, None => { acc = acc + 1; } }
     return acc;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     if (x == 999999) { return 90; }
     return __rc_underflow_count();
@@ -127,14 +127,14 @@ function main(): i32 {
 // The FLAT control, which the other analysis owns. It must stay balanced and must
 // not gain a second credit from this change.
 const scalarOptFlatSrc = `function round(i: i32): i32 {
-    var acc: i32 = 0;
-    var o: Option[i32] = Some(i + 1);
+    let acc: i32 = 0;
+    let o: Option[i32] = Some(i + 1);
     match (o) { Some(a) => { acc = acc + a; }, None => { acc = acc + 1; } }
     return acc;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     if (x == 999999) { return 90; }
     return __rc_underflow_count();
@@ -155,14 +155,14 @@ const scalarOptBlockNestedSrc = `function mk(i: i32): Option[i32] {
     return Some(i + 1);
 }
 function round(i: i32): i32 {
-    var acc: i32 = 0;
-    var k: i32 = 0;
+    let acc: i32 = 0;
+    let k: i32 = 0;
     while (k < 4) {
-        var o: Option[i32] = mk(k);
+        let o: Option[i32] = mk(k);
         if (k >= 0) {
             match (o) { Some(a) => { acc = acc + a; }, None => { acc = acc + 1; } }
         }
-        var p: Option[i32] = Some(k + 7);
+        let p: Option[i32] = Some(k + 7);
         if (k >= 0) {
             match (p) { Some(b) => { acc = acc + b; }, None => { acc = acc + 1; } }
         }
@@ -171,8 +171,8 @@ function round(i: i32): i32 {
     return acc;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     if (x == 999999) { return 90; }
     return __rc_underflow_count();
@@ -186,18 +186,18 @@ const scalarOptBlockFlatSrc = `function mk(i: i32): Option[i32] {
     return Some(i + 1);
 }
 function round(i: i32): i32 {
-    var acc: i32 = 0;
-    var k: i32 = 0;
+    let acc: i32 = 0;
+    let k: i32 = 0;
     while (k < 4) {
-        var o: Option[i32] = mk(k);
+        let o: Option[i32] = mk(k);
         match (o) { Some(a) => { acc = acc + a; }, None => { acc = acc + 1; } }
         k = k + 1;
     }
     return acc;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     if (x == 999999) { return 90; }
     return __rc_underflow_count();
@@ -209,16 +209,16 @@ function main(): i32 {
 // land.
 const scalarOptUsedAfterSrc = `function olen(o: Option[i32]): i32 { match (o) { Some(a) => { return a; }, None => { return 0; } } }
 function round(i: i32): i32 {
-    var acc: i32 = 0;
-    var o: Option[i32] = Some(i + 1);
+    let acc: i32 = 0;
+    let o: Option[i32] = Some(i + 1);
     if (i >= 0) {
         match (o) { Some(a) => { acc = acc + a; }, None => { acc = acc + 1; } }
     }
     return acc + olen(o);
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     if (x == 999999) { return 90; }
     return __rc_underflow_count();

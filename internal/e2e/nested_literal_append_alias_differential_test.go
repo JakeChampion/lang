@@ -31,8 +31,8 @@ func TestNestedLiteralAppendAliasDifferential(t *testing.T) {
 struct I { tag: i32, data: i32[] }
 struct S { xs: i32[], inner: I, n: i32 }
 function work(k: i32): i32 {
-    var o: S = S { xs: [1, 2], inner: I { tag: 0, data: [9, 8] }, n: 0 };
-    var i: i32 = 0;
+    let o: S = S { xs: [1, 2], inner: I { tag: 0, data: [9, 8] }, n: 0 };
+    let i: i32 = 0;
     while (i < k) {
         o = S { xs: o.xs.append(i), inner: I { tag: i, data: o.xs }, n: i };
         i = i + 1;
@@ -47,8 +47,8 @@ function main(): i32 {
 		{"flat_sibling_alias", `import "std/i32";
 struct S { xs: i32[], ys: i32[], n: i32 }
 function work(k: i32): i32 {
-    var o: S = S { xs: [1, 2], ys: [9, 8], n: 0 };
-    var i: i32 = 0;
+    let o: S = S { xs: [1, 2], ys: [9, 8], n: 0 };
+    let i: i32 = 0;
     while (i < k) {
         o = S { xs: o.xs.append(i), ys: o.xs, n: i };
         i = i + 1;
@@ -65,8 +65,8 @@ struct I { tag: i32, data: i32[] }
 struct S { xs: i32[], inner: I, n: i32 }
 function mk(tag: i32, d: i32[]): I { return I { tag: tag, data: d }; }
 function work(k: i32): i32 {
-    var o: S = S { xs: [1, 2], inner: I { tag: 0, data: [9, 8] }, n: 0 };
-    var i: i32 = 0;
+    let o: S = S { xs: [1, 2], inner: I { tag: 0, data: [9, 8] }, n: 0 };
+    let i: i32 = 0;
     while (i < k) {
         o = S { xs: o.xs.append(i), inner: mk(i, o.xs), n: i };
         i = i + 1;
@@ -84,8 +84,8 @@ struct I { tag: i32, data: i32[] }
 struct S { xs: i32[], inner: I, n: i32 }
 function mkFromS(tag: i32, s: S): I { return I { tag: tag, data: s.xs }; }
 function work(k: i32): i32 {
-    var o: S = S { xs: [1, 2], inner: I { tag: 0, data: [9, 8] }, n: 0 };
-    var i: i32 = 0;
+    let o: S = S { xs: [1, 2], inner: I { tag: 0, data: [9, 8] }, n: 0 };
+    let i: i32 = 0;
     while (i < k) {
         o = S { xs: o.xs.append(i), inner: mkFromS(i, o), n: i };
         i = i + 1;
@@ -101,8 +101,8 @@ function main(): i32 {
 struct A { b: i32[] }
 struct S { a: A, ys: i32[], n: i32 }
 function work(k: i32): i32 {
-    var o: S = S { a: A { b: [1, 2] }, ys: [9, 8], n: 0 };
-    var i: i32 = 0;
+    let o: S = S { a: A { b: [1, 2] }, ys: [9, 8], n: 0 };
+    let i: i32 = 0;
     while (i < k) {
         o = S { a: A { b: o.a.b.append(i) }, ys: o.a.b, n: i };
         i = i + 1;
@@ -118,11 +118,11 @@ function main(): i32 {
 		{"later_statement_reads_place", `import "std/i32";
 struct S { xs: i32[], n: i32 }
 function work(k: i32): i32 {
-    var o: S = S { xs: [1, 2], n: 0 };
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let o: S = S { xs: [1, 2], n: 0 };
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < k) {
-        var q: S = S { xs: o.xs.append(i), n: i };
+        let q: S = S { xs: o.xs.append(i), n: i };
         acc = acc + o.xs.len();
         o = q;
         i = i + 1;
@@ -139,11 +139,11 @@ function main(): i32 {
 		{"struct_alias_outlives_rebind", `import "std/i32";
 struct S { xs: i32[], n: i32 }
 function work(k: i32): i32 {
-    var o: S = S { xs: [1, 2], n: 0 };
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let o: S = S { xs: [1, 2], n: 0 };
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < k) {
-        var old: S = o;
+        let old: S = o;
         o = S { xs: o.xs.append(i), n: i };
         acc = acc + old.xs.len();
         i = i + 1;
@@ -160,8 +160,8 @@ function main(): i32 {
 		{"disjoint_sibling_guard", `import "std/i32";
 struct S { xs: i32[], ys: i32[], n: i32 }
 function work(k: i32): i32 {
-    var o: S = S { xs: [1, 2], ys: [9, 8], n: 0 };
-    var i: i32 = 0;
+    let o: S = S { xs: [1, 2], ys: [9, 8], n: 0 };
+    let i: i32 = 0;
     while (i < k) {
         o = S { xs: o.xs.append(i), ys: o.ys, n: i };
         i = i + 1;
@@ -181,13 +181,13 @@ struct Asm { code: i32[], fix_offs: i32[], names: i32[] }
 function emit(a: Asm, opcode: i32, w: i32): Asm {
     if (w != 0) { a = Asm { ...a, code: a.code.append(9) }; }
     a = Asm { ...a, code: a.code.append(opcode) };
-    var patch_off: i32 = a.code.len() - 1;
+    let patch_off: i32 = a.code.len() - 1;
     a = Asm { ...a, fix_offs: a.fix_offs.append(patch_off) };
     return a;
 }
 function main(): i32 {
-    var a: Asm = Asm { code: [], fix_offs: [], names: [] };
-    var i: i32 = 0;
+    let a: Asm = Asm { code: [], fix_offs: [], names: [] };
+    let i: i32 = 0;
     while (i < 8) { a = emit(a, i, i % 2); i = i + 1; }
     print((a.code.len() * 10 + a.fix_offs.len()).to_string());   // 128
     return 0;

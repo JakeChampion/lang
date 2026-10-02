@@ -31,19 +31,19 @@ var arrayConcatMethodIRCases = []struct {
 }{
 	// i32[] concat, indexed back to a scalar: [1,2,3]+[4,5] -> len 5, c[4]=5.
 	{"i32", `import "std/array";
-function main(): i32 { var a: i32[] = [1, 2, 3]; var b: i32[] = [4, 5]; var c: i32[] = a.concat(b); return c.len() * 10 + c[4]; }`},
+function main(): i32 { let a: i32[] = [1, 2, 3]; let b: i32[] = [4, 5]; let c: i32[] = a.concat(b); return c.len() * 10 + c[4]; }`},
 	// string[] concat: the joined array's length (the element kind exercises
 	// the string-width array path, distinct from i32).
 	{"string", `import "std/array";
-function main(): i32 { var a: string[] = ["ab", "c"]; var b: string[] = ["de", "f"]; var c: string[] = a.concat(b); return c.len(); }`},
+function main(): i32 { let a: string[] = ["ab", "c"]; let b: string[] = ["de", "f"]; let c: string[] = a.concat(b); return c.len(); }`},
 	// concat of a fresh array literal argument (receiver is still a bare local).
 	{"literal-arg", `import "std/array";
-function main(): i32 { var a: i32[] = [7, 8]; var c: i32[] = a.concat([9]); return c.len() * 10 + c[2]; }`},
+function main(): i32 { let a: i32[] = [7, 8]; let c: i32[] = a.concat([9]); return c.len() * 10 + c[2]; }`},
 	// chained: the outer receiver is itself an array-method call, so mono_infer
 	// must recover `a.concat(b)`'s return type for the outer `.concat(a)` to
 	// rewrite onto the IR path too. Single element type → one instantiation.
 	{"chained", `import "std/array";
-function main(): i32 { var a: i32[] = [1]; var b: i32[] = [2, 3]; var c: i32[] = a.concat(b).concat(a); return c.len(); }`},
+function main(): i32 { let a: i32[] = [1]; let b: i32[] = [2, 3]; let c: i32[] = a.concat(b).concat(a); return c.len(); }`},
 }
 
 func TestSelfHostArrayConcatMethodIR(t *testing.T) {

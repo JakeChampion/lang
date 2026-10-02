@@ -24,17 +24,17 @@ func TestFStringDiagnosticPositions(t *testing.T) {
 	}{
 		{
 			name: "single interpolant",
-			src:  `function main(): i32 { var s = f"{zzz}"; return 0; }`,
+			src:  `function main(): i32 { let s = f"{zzz}"; return 0; }`,
 			want: []ast.Position{{Line: 1, Col: 35}},
 		},
 		{
 			name: "two interpolants",
-			src:  `function main(): i32 { var s = f"a{aaa} b{bbb}"; return 0; }`,
+			src:  `function main(): i32 { let s = f"a{aaa} b{bbb}"; return 0; }`,
 			want: []ast.Position{{Line: 1, Col: 36}, {Line: 1, Col: 43}},
 		},
 		{
 			name: "f-string on a later line",
-			src:  "function main(): i32 {\n    var s = f\"x{yy}\";\n    return 0;\n}",
+			src:  "function main(): i32 {\n    let s = f\"x{yy}\";\n    return 0;\n}",
 			want: []ast.Position{{Line: 2, Col: 17}},
 		},
 	}

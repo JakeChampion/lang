@@ -19,7 +19,7 @@ function test_starts_with_i32_pass(): test.TestOutcome {
 }
 
 function test_starts_with_i32_empty_prefix_vacuous(): test.TestOutcome {
-  var empty: i32[] = [];
+  let empty: i32[] = [];
   return test.assert_array_starts_with_i32([1, 2, 3], empty);
 }
 
@@ -68,7 +68,7 @@ function test_ends_with_i32_pass(): test.TestOutcome {
 }
 
 function test_ends_with_i32_empty_suffix_vacuous(): test.TestOutcome {
-  var empty: i32[] = [];
+  let empty: i32[] = [];
   return test.assert_array_ends_with_i32([1, 2, 3], empty);
 }
 
@@ -132,7 +132,7 @@ function test_subseq_i32_pass_at_end(): test.TestOutcome {
 }
 
 function test_subseq_i32_empty_vacuous(): test.TestOutcome {
-  var empty: i32[] = [];
+  let empty: i32[] = [];
   return test.assert_array_contains_subseq_i32([1, 2, 3], empty);
 }
 
@@ -195,7 +195,7 @@ function test_subseq_string_missing(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("array prefix / suffix / subseq");
+  let r: test.TestRunner = test.test_new("array prefix / suffix / subseq");
   r = r.it("starts_with_i32 pass", test_starts_with_i32_pass);
   r = r.it("starts_with_i32 empty vacuous", test_starts_with_i32_empty_prefix_vacuous);
   r = r.it("starts_with_i32 full is prefix", test_starts_with_i32_full_array_is_own_prefix);

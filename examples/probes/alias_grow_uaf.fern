@@ -29,14 +29,14 @@ import "std/i32";
 
 // The `gfns` / `lgfns` pair from lift.lift_lambdas_view, minimised.
 function scan(names: string[], extra: string[]): i32 {
-  var g: string[] = [];
-  var i: i32 = 0;
+  let g: string[] = [];
+  let i: i32 = 0;
   while (i < names.len()) {
     g = g.append(names[i]);
     i = i + 1;
   }
-  var lg: string[] = g;
-  var j: i32 = 0;
+  let lg: string[] = g;
+  let j: i32 = 0;
   while (j < extra.len()) {
     lg = lg.append(extra[j]);
     j = j + 1;
@@ -45,26 +45,26 @@ function scan(names: string[], extra: string[]): i32 {
 }
 
 function main(): i32 {
-  var names: string[] = [];
-  var i: i32 = 0;
+  let names: string[] = [];
+  let i: i32 = 0;
   while (i < 8) {
     names = names.append("a_long_mangled_function_name_" + i.to_string());
     i = i + 1;
   }
-  var extra: string[] = ["e0", "e1"];
-  var seen: i32 = scan(names, extra);
+  let extra: string[] = ["e0", "e1"];
+  let seen: i32 = scan(names, extra);
   if (seen != 18) {
     return 1;
   }
   // Re-alias each name: an rc touch, so an RcFreeDebug build traps here
   // rather than silently reading recycled bytes.
-  var again: string[] = [];
-  var m: i32 = 0;
+  let again: string[] = [];
+  let m: i32 = 0;
   while (m < names.len()) {
     again = again.append(names[m]);
     m = m + 1;
   }
-  var n: i32 = 0;
+  let n: i32 = 0;
   while (n < again.len()) {
     if (again[n].len() != 30) {
       return 1;

@@ -22,7 +22,7 @@ import "std/utf8" as utf8;
 // CALL renders 1/0 on the self-host and true/false on native — a real
 // divergence, tracked separately, and not what this case is here to pin.
 function show(label: string, s: string): void {
-    var verdict: string = "INVALID";
+    let verdict: string = "INVALID";
     if (utf8.is_valid_utf8(s)) { verdict = "valid"; }
     print(label + "=" + s + " len=" + s.len().to_string() + " " + verdict);
 }

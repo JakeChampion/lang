@@ -51,7 +51,7 @@ import "./semlower";
 // $__fn_base and string labels stay distinct at link — mirroring the asm side's
 // shard_ns (#3425 / #5508).
 function unit_ns(idx: i32, lo: i32): string {
-  var base: string = "";
+  let base: string = "";
   if (idx != 0) {
     base = "$m" + util.i32_to_string(idx);
   }
@@ -62,8 +62,8 @@ function unit_ns(idx: i32, lo: i32): string {
 }
 
 function whole_program_view(parts: flatten.PerModule[]): parser.Module[] {
-  var mods: parser.Module[] = [];
-  var i: i32 = 0;
+  let mods: parser.Module[] = [];
+  let i: i32 = 0;
   while (i < parts.len()) {
     mods = mods.append(parts[i].mod);
     i = i + 1;
@@ -84,18 +84,18 @@ struct ShardRef { idx: i32, lo: i32, hi: i32 }
 // explicit .s file list to the linker (#5508). A `-` sign is honoured so hi can
 // be -1 (whole module to the end).
 function parse_plan(text: string): ShardRef[] {
-  var nums: i32[] = [];
-  var i: i32 = 0;
+  let nums: i32[] = [];
+  let i: i32 = 0;
   while (i < text.len()) {
-    var c: i32 = text[i] as i32;
-    var neg: boolean = false;
+    let c: i32 = text[i] as i32;
+    let neg: boolean = false;
     if (c == 45 && i + 1 < text.len() && text[i + 1] as i32 >= 48 && text[i + 1] as i32 <= 57) {
       neg = true;
       i = i + 1;
       c = text[i] as i32;
     }
     if (c >= 48 && c <= 57) {
-      var v: i32 = 0;
+      let v: i32 = 0;
       while (i < text.len() && text[i] as i32 >= 48 && text[i] as i32 <= 57) {
         v = v * 10 + (text[i] as i32 - 48);
         i = i + 1;
@@ -108,8 +108,8 @@ function parse_plan(text: string): ShardRef[] {
       i = i + 1;
     }
   }
-  var out: ShardRef[] = [];
-  var k: i32 = 0;
+  let out: ShardRef[] = [];
+  let k: i32 = 0;
   while (k + 2 < nums.len()) {
     out = out.append(ShardRef { idx: nums[k], lo: nums[k + 1], hi: nums[k + 2] });
     k = k + 3;
@@ -120,8 +120,8 @@ function parse_plan(text: string): ShardRef[] {
 // whole_module_plan is the default when no -plan is given: one whole-module unit
 // per module, preserving the pre-sharding link behaviour exactly.
 function whole_module_plan(nmods: i32): ShardRef[] {
-  var out: ShardRef[] = [];
-  var i: i32 = 0;
+  let out: ShardRef[] = [];
+  let i: i32 = 0;
   while (i < nmods) {
     out = out.append(ShardRef { idx: i, lo: 0, hi: 0 - 1 });
     i = i + 1;
@@ -211,11 +211,11 @@ function no_units(): Linked {
 }
 
 function add_found(l: Linked, parts: flatten.PerModule[], u: ShardRef, lk: wasm_objfile.MaybeUnit): Linked {
-  var ns: string = unit_ns(u.idx, u.lo);
+  let ns: string = unit_ns(u.idx, u.lo);
   if (!lk.found) {
     return Linked { ...l, missing: l.missing + " " + parts[u.idx].ns + ns };
   }
-  var obj: wasm_objfile.UnitObj = lk.obj;
+  let obj: wasm_objfile.UnitObj = lk.obj;
   return Linked {
     units: l.units.append(wasm_ir.WasmUnit { ns: ns, text: obj.text, strs: obj.strs, caggs: obj.caggs, fns: obj.fns }),
     needs: wasm_ir.union_strs(l.needs, obj.needs),
@@ -240,7 +240,7 @@ function link_missing(l: Linked): boolean {
 // every unit shares the struct world, and heap_base is a whole-LINK quantity:
 // it sits past every unit's literals.
 function link_text(l: Linked, merged: parser.Module): string {
-  var rc: string = wasm_ir.emit_ir_rc_bodies_from(merged, l.frt, l.sdt, l.aet, wasm_ir.heap_base_for_units(l.units));
+  let rc: string = wasm_ir.emit_ir_rc_bodies_from(merged, l.frt, l.sdt, l.aet, wasm_ir.heap_base_for_units(l.units));
   return wasm_ir.emit_ir_module_units(l.units, merged, l.needs, l.fn_sigs, rc, 0);
 }
 
@@ -252,17 +252,17 @@ function link_text(l: Linked, merged: parser.Module): string {
 struct Typed { g: ircore.Gated, u: ircore.Units, keys: ircore.UnitKeys }
 
 function typed_units(parts: flatten.PerModule[], d: semlower.Driven, cache_dir: string): Typed {
-  var im: parser.Module = ircore.with_records(parser.infer_ret_types_module(wasm_ir.route_normalized(d.full)), d.sub);
-  var stab: irtables.StructTab = irtables.struct_tab(im.structs);
-  var l: ircore.Lowered = ircore.gate(im, d.sub);
+  let im: parser.Module = ircore.with_records(parser.infer_ret_types_module(wasm_ir.route_normalized(d.full)), d.sub);
+  let stab: irtables.StructTab = irtables.struct_tab(im.structs);
+  let l: ircore.Lowered = ircore.gate(im, d.sub);
   if (!l.ok) {
     ircore.eprint_ir_ineligible();
     exit(1);
   }
-  var g: ircore.Gated = ircore.Gated { ok: true, im: im, stab: stab, base: d.sub.sigs, cache: l.cache };
-  var raw: parser.Module[] = [];
-  var entry_at: i32 = 0;
-  var k: i32 = 0;
+  let g: ircore.Gated = ircore.Gated { ok: true, im: im, stab: stab, base: d.sub.sigs, cache: l.cache };
+  let raw: parser.Module[] = [];
+  let entry_at: i32 = 0;
+  let k: i32 = 0;
   while (k < parts.len()) {
     raw = raw.append(parts[k].mod);
     if (parts[k].is_entry) {
@@ -270,8 +270,8 @@ function typed_units(parts: flatten.PerModule[], d: semlower.Driven, cache_dir: 
     }
     k = k + 1;
   }
-  var u: ircore.Units = ircore.split_units(g, raw, entry_at);
-  var keys: ircore.UnitKeys = ircore.no_unit_keys();
+  let u: ircore.Units = ircore.split_units(g, raw, entry_at);
+  let keys: ircore.UnitKeys = ircore.no_unit_keys();
   if (cache_dir.len() > 0) {
     // The wasm emit reads no whole-program registry, so no facts.
     keys = ircore.unit_keys(u, im.funcs, stab, d.sub.sigs, false);
@@ -284,15 +284,15 @@ struct TypedUnit { mod: parser.Module, cache: irtables.LowerResult[] }
 // typed_unit is unit idx's functions [lo, hi) with their bodies. The window
 // that ends a unit also carries its cache tail.
 function typed_unit(t: Typed, idx: i32, lo: i32, hi: i32): TypedUnit {
-  var m: parser.Module = t.u.mods[idx];
-  var whole: irtables.LowerResult[] = t.u.caches[idx];
-  var end: i32 = hi;
+  let m: parser.Module = t.u.mods[idx];
+  let whole: irtables.LowerResult[] = t.u.caches[idx];
+  let end: i32 = hi;
   if (end < 0 || end > m.funcs.len()) {
     end = m.funcs.len();
   }
-  var fs: parser.FuncDecl[] = [];
-  var cache: irtables.LowerResult[] = [];
-  var i: i32 = lo;
+  let fs: parser.FuncDecl[] = [];
+  let cache: irtables.LowerResult[] = [];
+  let i: i32 = lo;
   while (i < end) {
     fs = fs.append(m.funcs[i]);
     cache = cache.append(whole[i]);
@@ -311,8 +311,8 @@ function typed_file(dir: string, entry_path: string, parts: flatten.PerModule[],
   if (cache_dir.len() == 0) {
     return "";
   }
-  var src_hash: string = modloader.module_src_hash(modloader.no_overlay(), dir, entry_path, parts, idx);
-  var key: string = ircore.unit_cache_key(parts, t.u, t.keys, idx, src_hash, [], lo, hi);
+  let src_hash: string = modloader.module_src_hash(modloader.no_overlay(), dir, entry_path, parts, idx);
+  let key: string = ircore.unit_cache_key(parts, t.u, t.keys, idx, src_hash, [], lo, hi);
   if (key.len() == 0) {
     return "";
   }
@@ -320,8 +320,8 @@ function typed_file(dir: string, entry_path: string, parts: flatten.PerModule[],
 }
 
 function run_typed(dir: string, entry_path: string, entry: parser.Module, loaded: flatten.LoadedModule[], parts: flatten.PerModule[], pm_mode: string, pm_index: i32, pm_lo: i32, pm_hi: i32, cache_dir: string, plan_file: string): i32 {
-  var d: semlower.Driven = semlower.driven(flatten.bundle(entry, loaded, "wasm32-wasi"), "wasm32-wasi");
-  var t: Typed = typed_units(parts, d, cache_dir);
+  let d: semlower.Driven = semlower.driven(flatten.bundle(entry, loaded, "wasm32-wasi"), "wasm32-wasi");
+  let t: Typed = typed_units(parts, d, cache_dir);
   if (pm_mode == "func-counts") {
     for m in t.u.mods {
       print(util.i32_to_string(m.funcs.len()));
@@ -331,7 +331,7 @@ function run_typed(dir: string, entry_path: string, entry: parser.Module, loaded
   if (pm_mode == "link") {
     // Hit-only, as the AST link is: a unit's key hashes its lowered bodies,
     // so link lowers to find each object, but it builds none.
-    var l: Linked = no_units();
+    let l: Linked = no_units();
     for u in read_plan(plan_file, parts.len()) {
       l = add_found(l, parts, u, read_cached(typed_file(dir, entry_path, parts, t, u.idx, u.lo, u.hi, cache_dir), parts[u.idx].ns));
     }
@@ -358,26 +358,26 @@ function run_typed(dir: string, entry_path: string, entry: parser.Module, loaded
 // typed_obj is unit u's object, served from the cache when its key matches and
 // emitted, and cached, otherwise.
 function typed_obj(dir: string, entry_path: string, parts: flatten.PerModule[], t: Typed, u: ShardRef, cache_dir: string): wasm_objfile.UnitObj {
-  var cf: string = typed_file(dir, entry_path, parts, t, u.idx, u.lo, u.hi, cache_dir);
-  var lk: wasm_objfile.MaybeUnit = read_cached(cf, parts[u.idx].ns);
+  let cf: string = typed_file(dir, entry_path, parts, t, u.idx, u.lo, u.hi, cache_dir);
+  let lk: wasm_objfile.MaybeUnit = read_cached(cf, parts[u.idx].ns);
   if (lk.found) {
     return lk.obj;
   }
-  var tu: TypedUnit = typed_unit(t, u.idx, u.lo, u.hi);
-  var obj: wasm_objfile.UnitObj = unit_obj(unit_ns(u.idx, u.lo), tu.mod, tu.cache, t.g.im.funcs, t.g.stab);
+  let tu: TypedUnit = typed_unit(t, u.idx, u.lo, u.hi);
+  let obj: wasm_objfile.UnitObj = unit_obj(unit_ns(u.idx, u.lo), tu.mod, tu.cache, t.g.im.funcs, t.g.stab);
   write_cached(cf, parts[u.idx].ns, obj);
   return obj;
 }
 
 function run_per_module(dir: string, entry_path: string, entry: parser.Module, loaded: flatten.LoadedModule[], pm_mode: string, pm_index: i32, pm_lo: i32, pm_hi: i32, cache_dir: string, plan_file: string): i32 {
-  var parts: flatten.PerModule[] = flatten.bundle_per_module(entry, loaded, "wasm32-wasi");
+  let parts: flatten.PerModule[] = flatten.bundle_per_module(entry, loaded, "wasm32-wasi");
   if (pm_mode == "count") {
     print(util.i32_to_string(parts.len()) + "\n");
     return 0;
   }
   if (pm_mode == "manifest") {
-    var infmods: parser.Module[] = whole_program_view(parts);
-    var mi: i32 = 0;
+    let infmods: parser.Module[] = whole_program_view(parts);
+    let mi: i32 = 0;
     while (mi < parts.len()) {
       print(parts[mi].ns + "|" + modloader.module_src_hash(modloader.no_overlay(), dir, entry_path, parts, mi)
         + "|" + util.hash_key(modloader.module_sig_string(infmods[mi])) + "|" + modloader.module_dep_ns(parts, infmods, mi) + "\n");
@@ -389,15 +389,15 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
 }
 
 function main(): i32 {
-  var a: string[] = args();
-  var entry_path: string = "";
-  var pm_mode: string = "";
-  var pm_index: i32 = 0 - 1;
-  var pm_lo: i32 = 0;
-  var pm_hi: i32 = 0 - 1;
-  var cache_dir: string = "";
-  var plan_file: string = "";
-  var ai: i32 = 1;
+  let a: string[] = args();
+  let entry_path: string = "";
+  let pm_mode: string = "";
+  let pm_index: i32 = 0 - 1;
+  let pm_lo: i32 = 0;
+  let pm_hi: i32 = 0 - 1;
+  let cache_dir: string = "";
+  let plan_file: string = "";
+  let ai: i32 = 1;
   while (ai < a.len()) {
     if (a[ai] == "-per-module-count") {
       pm_mode = "count";
@@ -421,8 +421,8 @@ function main(): i32 {
       ai = ai + 1;
     } else if (a[ai] == "-func-range" && ai + 1 < a.len()) {
       // "LO:HI" — digits_to_i32 stops at ':' for LO; slice past it for HI.
-      var rng: string = a[ai + 1];
-      var ci: i32 = 0;
+      let rng: string = a[ai + 1];
+      let ci: i32 = 0;
       while (ci < rng.len() && rng[ci] != b':') {
         ci = ci + 1;
       }
@@ -444,15 +444,15 @@ function main(): i32 {
     eprint("wasm_modload_run: -per-module-emit-all writes the cache, so it needs -cache-dir");
     return 2;
   }
-  var dir: string = modloader.dirname(entry_path);
+  let dir: string = modloader.dirname(entry_path);
   match (read_file(entry_path)) {
     Ok(src) => {
-      var entry: parser.Module = parser.parse_module(lexer.tokenize(src));
+      let entry: parser.Module = parser.parse_module(lexer.tokenize(src));
       let (loaded, missing) = modloader.load_imports(modloader.no_overlay(), entry_path, entry);
       if (modloader.report_unresolved(missing, "wasm_modload_run")) {
         return 1;
       }
-      var parsed: parser.Module[] = [entry];
+      let parsed: parser.Module[] = [entry];
       for lm in loaded {
         parsed = parsed.append(lm.mod);
       }

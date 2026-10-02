@@ -26,8 +26,8 @@ func TestWasmArrayMethodSyntax(t *testing.T) {
 	copySelfHostDriver(t, dir, "wasm_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 
-	const sumSq = "function __method_Array_sum_squared(arr: i32[]): i32 { var s: i32 = 0; var i: i32 = 0; while (i < arr.len()) { s = s + arr[i] * arr[i]; i = i + 1; } return s; }\n"
-	const reversed = "function __method_Array_reversed(arr: i32[]): i32[] { var out: i32[] = []; var i: i32 = arr.len() - 1; while (i >= 0) { out = out.append(arr[i]); i = i - 1; } return out; }\n"
+	const sumSq = "function __method_Array_sum_squared(arr: i32[]): i32 { let s: i32 = 0; let i: i32 = 0; while (i < arr.len()) { s = s + arr[i] * arr[i]; i = i + 1; } return s; }\n"
+	const reversed = "function __method_Array_reversed(arr: i32[]): i32[] { let out: i32[] = []; let i: i32 = arr.len() - 1; while (i >= 0) { out = out.append(arr[i]); i = i - 1; } return out; }\n"
 
 	cases := []struct {
 		name   string
@@ -35,11 +35,11 @@ func TestWasmArrayMethodSyntax(t *testing.T) {
 		exit   int
 	}{
 		// scalar-returning via method syntax.
-		{"sum_squared", sumSq + "function main(): i32 { var a: i32[] = [5, 3, 8, 1]; return a.sum_squared(); }", 99},
+		{"sum_squared", sumSq + "function main(): i32 { let a: i32[] = [5, 3, 8, 1]; return a.sum_squared(); }", 99},
 		// array-returning via method syntax: result must be a live array
 		// (indexable) and rc-swept, not garbage.
-		{"reversed-index", reversed + "function main(): i32 { var a: i32[] = [5, 3, 8, 1]; var b: i32[] = a.reversed(); return b[0]; }", 1},
-		{"reversed-sum", reversed + "function main(): i32 { var a: i32[] = [5, 3, 8, 1]; var b: i32[] = a.reversed(); var s: i32 = 0; for x in b { s = s + x; } return s; }", 17},
+		{"reversed-index", reversed + "function main(): i32 { let a: i32[] = [5, 3, 8, 1]; let b: i32[] = a.reversed(); return b[0]; }", 1},
+		{"reversed-sum", reversed + "function main(): i32 { let a: i32[] = [5, 3, 8, 1]; let b: i32[] = a.reversed(); let s: i32 = 0; for x in b { s = s + x; } return s; }", 17},
 	}
 
 	for _, tc := range cases {

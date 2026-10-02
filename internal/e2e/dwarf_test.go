@@ -119,11 +119,11 @@ function main(): i32 { return helper(21); }
 // function's PC range carries a row for each of its lines. The default build
 // has no line table.
 func TestDWARFLineTable(t *testing.T) {
-	// helper: decl line 1, `var y` line 2, `return` line 3.
-	// main:   decl line 5, `var a` line 6, `return` line 7.
+	// helper: decl line 1, `let y` line 2, `return` line 3.
+	// main:   decl line 5, `let a` line 6, `return` line 7.
 	// @noinline on line 1 (so the line numbers above still hold) keeps helper a
 	// real function with its own PC range to carry line rows.
-	src := "@noinline function helper(x: i32): i32 {\n    var y: i32 = x * 2;\n    return y + 1;\n}\nfunction main(): i32 {\n    var a: i32 = helper(20);\n    return a;\n}\n"
+	src := "@noinline function helper(x: i32): i32 {\n    let y: i32 = x * 2;\n    return y + 1;\n}\nfunction main(): i32 {\n    let a: i32 = helper(20);\n    return a;\n}\n"
 	bin := buildFernCLI(t)
 	dir := t.TempDir()
 	p := filepath.Join(dir, "prog.fern")
@@ -259,7 +259,7 @@ func TestDWARFLocalVars(t *testing.T) {
 	// must track that, so we assert the exact DW_OP_fbreg offset per target.
 	// @noinline keeps f a real frame: the subject is f's own DW_OP_fbreg
 	// offsets, which do not exist once it is substituted into main.
-	src := "@noinline function f(s: string, n: i32): i32 {\n    var m: i32 = n + 1;\n    return m + s.len();\n}\nfunction main(): i32 {\n    return f(\"hi\", 41);\n}\n"
+	src := "@noinline function f(s: string, n: i32): i32 {\n    let m: i32 = n + 1;\n    return m + s.len();\n}\nfunction main(): i32 {\n    return f(\"hi\", 41);\n}\n"
 	bin := buildFernCLI(t)
 	dir := t.TempDir()
 	p := filepath.Join(dir, "prog.fern")
@@ -374,7 +374,7 @@ func TestDWARFLocalVars(t *testing.T) {
 func TestDWARFStructVars(t *testing.T) {
 	src := "struct Point { x: i32, y: i32 }\n" +
 		"function main(): i32 {\n" +
-		"    var pt: Point = Point { x: 7, y: 35 };\n" +
+		"    let pt: Point = Point { x: 7, y: 35 };\n" +
 		"    return pt.x + pt.y;\n" +
 		"}\n"
 	bin := buildFernCLI(t)
@@ -478,7 +478,7 @@ func TestDWARFMixedStructVars(t *testing.T) {
 		// type, so the parameter DIE has to survive.
 		"@noinline function describe(p: Person): i32 { return p.age + p.score; }\n" +
 		"function main(): i32 {\n" +
-		"    var p: Person = Person { name: \"Ada\", age: 36, score: 99 };\n" +
+		"    let p: Person = Person { name: \"Ada\", age: 36, score: 99 };\n" +
 		"    return describe(p);\n" +
 		"}\n"
 	bin := buildFernCLI(t)
@@ -585,7 +585,7 @@ func TestDWARFNestedStructVars(t *testing.T) {
 		// struct type, so the parameter DIE has to survive.
 		"@noinline function area(r: Rect): i32 { return r.w * r.h; }\n" +
 		"function main(): i32 {\n" +
-		"    var r: Rect = Rect { origin: Point { x: 3, y: 4 }, w: 5, h: 6 };\n" +
+		"    let r: Rect = Rect { origin: Point { x: 3, y: 4 }, w: 5, h: 6 };\n" +
 		"    return area(r) + r.origin.x;\n" +
 		"}\n"
 	bin := buildFernCLI(t)
@@ -714,7 +714,7 @@ func TestDWARFEnumVars(t *testing.T) {
 		"    return -1;\n" +
 		"}\n" +
 		"function main(): i32 {\n" +
-		"    var d: Direction = South;\n" +
+		"    let d: Direction = South;\n" +
 		"    return turn(d);\n" +
 		"}\n"
 	bin := buildFernCLI(t)
@@ -831,8 +831,8 @@ func TestDWARFMultiFile(t *testing.T) {
 	}
 	// @noinline keeps twice a real function in its own file; inlining would
 	// copy its rows into main, which is a valid table but not this test.
-	lib := "@noinline pub function twice(x: i32): i32 {\n    var y: i32 = x * 2;\n    return y;\n}\n"
-	main := "import \"./lib/util\";\nfunction main(): i32 {\n    var a: i32 = util.twice(20);\n    return a + 2;\n}\n"
+	lib := "@noinline pub function twice(x: i32): i32 {\n    let y: i32 = x * 2;\n    return y;\n}\n"
+	main := "import \"./lib/util\";\nfunction main(): i32 {\n    let a: i32 = util.twice(20);\n    return a + 2;\n}\n"
 	if err := os.WriteFile(filepath.Join(dir, "lib", "util.fern"), []byte(lib), 0o644); err != nil {
 		t.Fatal(err)
 	}

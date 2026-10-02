@@ -44,54 +44,54 @@ import "std/time";
 import "std/sim";
 
 function main(): i32 {
-    var d: sim.Sim = sim.new(1);
-    var n: sim.Net = sim.net(d);
+    let d: sim.Sim = sim.new(1);
+    let n: sim.Net = sim.net(d);
     n = n.serve(1, 80, "/k", "primary", time.duration_nanos(30000000 as i64));
     n = n.serve(2, 80, "/k", "cache", time.duration_nanos(10000000 as i64));
     n = n.serve(3, 80, "/k", "mirror", time.duration_nanos(20000000 as i64));
-    var fs: async.Future[string][] = [
+    let fs: async.Future[string][] = [
         n.fetch_future(1, 80, "/k"),
         n.fetch_future(2, 80, "/k"),
         n.fetch_future(3, 80, "/k"),
         n.fetch_future(9, 80, "/k")
     ];
-    var got: string[] = async.gather_on(d, fs, "!");
+    let got: string[] = async.gather_on(d, fs, "!");
     if (got[0] != "primary" || got[1] != "cache" || got[2] != "mirror") { return 1; }
     if (got[3] != "") { return 2; }
     if (d.now_ns() != 30000000) { return 3; }
     if (n.hits(2, 80, "/k") != 1) { return 4; }
     if (n.hits(9, 80, "/k") != 0) { return 5; }
 
-    var rd: sim.Sim = sim.new(1);
-    var rn: sim.Net = sim.net(rd);
+    let rd: sim.Sim = sim.new(1);
+    let rn: sim.Net = sim.net(rd);
     rn = rn.serve(1, 80, "/k", "slow", time.duration_nanos(40000000 as i64));
     rn = rn.serve(2, 80, "/k", "fast", time.duration_nanos(10000000 as i64));
-    var rf: async.Future[string][] = [
+    let rf: async.Future[string][] = [
         rn.fetch_future(1, 80, "/k"),
         rn.fetch_future(2, 80, "/k")
     ];
-    var (w, v) = async.race_on(rd, rf, "!");
+    let (w, v) = async.race_on(rd, rf, "!");
     if (w != 1 || v != "fast") { return 6; }
     if (rd.now_ns() != 10000000) { return 7; }
 
-    var dd: sim.Sim = sim.new(7);
-    var dn: sim.Net = sim.net(dd);
+    let dd: sim.Sim = sim.new(7);
+    let dn: sim.Net = sim.net(dd);
     dn = dn.serve(1, 80, "/k", "late", time.duration_nanos(40000000 as i64));
     dn = dn.serve(2, 80, "/k", "early", time.duration_nanos(10000000 as i64));
-    var df: async.Future[string][] = [
+    let df: async.Future[string][] = [
         dn.fetch_future(1, 80, "/k"),
         dn.fetch_future(2, 80, "/k")
     ];
-    var dl: Option[string][] = async.with_deadline_on(dd, time.duration_millis(25), df);
+    let dl: Option[string][] = async.with_deadline_on(dd, time.duration_millis(25), df);
     match (dl[0]) { Some(x) => { return 8; }, None => { } }
     match (dl[1]) { Some(x) => { if (x != "early") { return 9; } }, None => { return 10; } }
     if (dd.now_ns() != 25000000) { return 11; }
 
-    var cd: sim.Sim = sim.new(1);
-    var cn: sim.Net = sim.net(cd);
+    let cd: sim.Sim = sim.new(1);
+    let cn: sim.Net = sim.net(cd);
     cn = cn.serve_chunked(1, 80, "/big", "abcdefghij", time.duration_nanos(5000000 as i64), time.duration_nanos(5000000 as i64), sim.chunks_of(10, 4));
-    var cf: async.Future[string][] = [cn.fetch_future(1, 80, "/big")];
-    var cb: string[] = async.gather_on(cd, cf, "!");
+    let cf: async.Future[string][] = [cn.fetch_future(1, 80, "/big")];
+    let cb: string[] = async.gather_on(cd, cf, "!");
     if (cb[0] != "abcdefghij") { return 12; }
     if (cd.now_ns() != 15000000) { return 13; }
     return 42;

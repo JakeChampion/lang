@@ -122,7 +122,7 @@ import "./asm_arm64";
 import "./asm_wasm";
 
 function select_backend(target: string): i32 {
-    var b: dyn backend.Backend = asm_x86.make();
+    let b: dyn backend.Backend = asm_x86.make();
     if (target == "arm64") { b = asm_arm64.make(); }
     if (target == "wasm") { b = asm_wasm.make(); }
     return b.emit(7);

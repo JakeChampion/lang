@@ -47,7 +47,7 @@ func TestWasmPreview2HelloWorld(t *testing.T) {
 	// The preview-1 adapter no longer touches stdio for us — the
 	// imports above reach the host directly.
 	if err := os.WriteFile(srcPath, []byte(`function main(): i32 {
-    var b = random_bytes(8);
+    let b = random_bytes(8);
     print("hello preview2");
     eprint("err preview2");
     return 0;
@@ -445,8 +445,8 @@ func TestWasmPreview2ReadWriteFile(t *testing.T) {
 	// also exercise the doubling + memory.copy path. The initial
 	// buffer is 4 KiB, so we write a payload past that.
 	if err := os.WriteFile(srcPath, []byte(`function main(): i32 {
-    var content = "";
-    var i = 0;
+    let content = "";
+    let i = 0;
     while (i < 600) {
         content = content + "hello world\n";
         i = i + 1;
@@ -538,15 +538,15 @@ func TestWasmPreview2TcpEcho(t *testing.T) {
 	src := `import "core/int";
 
 function main(): i32 {
-    var sock = tcp_listen(0);
+    let sock = tcp_listen(0);
     if (sock < 0) { return 1; }
-    var port: i32 = tcp_local_port(sock);
+    let port: i32 = tcp_local_port(sock);
     if (port <= 0) { return 4; }
     print(int.int_to_string(port));
-    var conn = tcp_accept(sock);
+    let conn = tcp_accept(sock);
     if (conn < 0) { return 2; }
-    var msg: string = string_from_bytes_unchecked(tcp_recv(conn, 1024));
-    var sent = tcp_send(conn, msg);
+    let msg: string = string_from_bytes_unchecked(tcp_recv(conn, 1024));
+    let sent = tcp_send(conn, msg);
     if (sent < 0) { return 3; }
     tcp_close(conn);
     tcp_close(sock);
@@ -688,14 +688,14 @@ func TestWasmPreview2TcpServerStdoutAdapterFree(t *testing.T) {
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "echolog.fern")
 	src := strings.Replace(`function main(): i32 {
-    var sock = tcp_listen(__PORT__);
+    let sock = tcp_listen(__PORT__);
     if (sock < 0) { return 1; }
     print("LISTENING");
-    var conn = tcp_accept(sock);
+    let conn = tcp_accept(sock);
     if (conn < 0) { return 2; }
-    var msg: string = string_from_bytes_unchecked(tcp_recv(conn, 1024));
+    let msg: string = string_from_bytes_unchecked(tcp_recv(conn, 1024));
     print("GOTDATA");
-    var sent = tcp_send(conn, msg);
+    let sent = tcp_send(conn, msg);
     if (sent < 0) { return 3; }
     tcp_close(conn);
     tcp_close(sock);
@@ -888,7 +888,7 @@ func TestWasmPreview2UdpSendAdapterFree(t *testing.T) {
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "send.fern")
 	src := "function main(): i32 {\n" +
-		"    var n: i32 = udp_send(\"127.0.0.1\", " + itoa(port) + ", \"ping-from-fern\");\n" +
+		"    let n: i32 = udp_send(\"127.0.0.1\", " + itoa(port) + ", \"ping-from-fern\");\n" +
 		"    if (n > 0) { return 0; }\n" +
 		"    return 1;\n" +
 		"}\n"
@@ -1064,7 +1064,7 @@ func TestWasmPreview2TcpUdpAdapterFree(t *testing.T) {
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "both.fern")
 	src := `function main(): i32 {
-    var s: i32 = tcp_listen(` + itoa(tcpPort) + `);
+    let s: i32 = tcp_listen(` + itoa(tcpPort) + `);
     if (s < 0) { return 1; }
     if (udp_send("127.0.0.1", ` + itoa(udpPort) + `, "tcp-and-udp") <= 0) {
         tcp_close(s);
@@ -1228,10 +1228,10 @@ func TestWasmPreview2TcpFileServerAdapterFree(t *testing.T) {
 	}
 	srcPath := filepath.Join(dir, "srv.fern")
 	src := `function main(): i32 {
-    var s: i32 = tcp_listen(` + itoa(port) + `);
+    let s: i32 = tcp_listen(` + itoa(port) + `);
     if (s < 0) { return 1; }
     print("file server up");
-    var c: i32 = tcp_accept(s);
+    let c: i32 = tcp_accept(s);
     if (c < 0) { return 2; }
     match (read_file("index.html")) {
         Ok(content) => { tcp_send(c, content); },
@@ -1365,7 +1365,7 @@ func TestWasmPreview2TcpFileWriteAdapterFree(t *testing.T) {
 	run("wsrv", `function main(): i32 {
     print("write server");
     match (write_file("access.log", "GET / 200\n")) { Err(e) => { return 3; }, Ok(_) => {} }
-    var s: i32 = tcp_listen(`+p+`);
+    let s: i32 = tcp_listen(`+p+`);
     if (s < 0) { return 1; }
     tcp_close(s);
     return 0;
@@ -1376,7 +1376,7 @@ func TestWasmPreview2TcpFileWriteAdapterFree(t *testing.T) {
         Ok(w) => { w.write("entry\n"); w.close(); },
         Err(e) => { return 3; }
     }
-    var s: i32 = tcp_listen(`+p+`);
+    let s: i32 = tcp_listen(`+p+`);
     if (s < 0) { return 1; }
     tcp_close(s);
     return 0;
@@ -1405,12 +1405,12 @@ func TestWasmPreview2TcpStdinAdapterFree(t *testing.T) {
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "stdin.fern")
 	src := `function main(): i32 {
-    var r = stdin();
+    let r = stdin();
     match (r.read_line()) {
         Some(line) => { print(line); },
         None => { print("no-input"); }
     }
-    var s: i32 = tcp_listen(` + itoa(port) + `);
+    let s: i32 = tcp_listen(` + itoa(port) + `);
     if (s < 0) { return 1; }
     tcp_close(s);
     return 0;
@@ -1488,9 +1488,9 @@ func TestWasmPreview2SocketCliExtrasAdapterFree(t *testing.T) {
 	tcpProbe.Close()
 	tcpComp := build("tcpx", `function main(): i32 {
     print("starting");
-    var t: i64 = now_ns();
+    let t: i64 = now_ns();
     match (env("MODE")) { Some(_) => {}, None => {} }
-    var s: i32 = tcp_listen(`+itoa(tcpPort)+`);
+    let s: i32 = tcp_listen(`+itoa(tcpPort)+`);
     if (s < 0) { return 1; }
     tcp_close(s);
     if (t > 0) { return 0; }
@@ -1508,9 +1508,9 @@ func TestWasmPreview2SocketCliExtrasAdapterFree(t *testing.T) {
 	defer pc.Close()
 	udpPort := pc.LocalAddr().(*net.UDPAddr).Port
 	udpComp := build("udpx", `function main(): i32 {
-    var host: string = "127.0.0.1";
+    let host: string = "127.0.0.1";
     match (env("TARGET")) { Some(v) => { host = v; }, None => {} }
-    var t: i64 = now_ns();
+    let t: i64 = now_ns();
     if (udp_send(host, `+itoa(udpPort)+`, "telemetry") > 0 && t > 0) { return 0; }
     return 1;
 }`)
@@ -1731,7 +1731,7 @@ func TestWasmPreview2HttpHandlerResponseHeaders(t *testing.T) {
 import "std/headers";
 import "std/tcp";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
-    var h: HeaderMap = headers.header_map_new();
+    let h: HeaderMap = headers.header_map_new();
     h = h.set("x-served-by", "fern");
     h = h.set("content-type", "text/plain");
     return HttpResponse { status: 201, body: BodyText("ok"), headers: h, trailers: headers.header_map_new() };
@@ -2047,9 +2047,9 @@ import "std/http";
 import "std/platform";
 import "std/tcp";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
-    var t: i64 = plat.now_ms();
-    var m: i64 = plat.elapsed_ns();
-    var r: i32 = plat.random_i32();
+    let t: i64 = plat.now_ms();
+    let m: i64 = plat.elapsed_ns();
+    let r: i32 = plat.random_i32();
     if (t > 0) { return http.ok("clock-ok"); }
     return http.ok("no-clock");
 }
@@ -2305,7 +2305,7 @@ import "std/tcp";
 import "std/platform" as platform;
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
     plat.log("handled " + req.path);
-    var floor: i64 = 1600000000000;
+    let floor: i64 = 1600000000000;
     if (plat.now_ms() < floor) {
         return http.text(500, "clock");
     }

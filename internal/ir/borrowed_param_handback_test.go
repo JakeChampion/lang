@@ -66,12 +66,12 @@ const borrowedParamHandbackSrc = `function ident(s: string): string {
     return s;
 }
 function conv(data: string): i32 {
-    var out: string = data;
+    let out: string = data;
     out = ident(out);
     return out.len();
 }
 function main(): i32 {
-    var r: Reader = stdin();
+    let r: Reader = stdin();
     match (r.read_chunk(8)) {
         Ok(d) => { return conv(d); },
         Err(_) => { return 1; }

@@ -17,7 +17,7 @@ const genEnumStructPayloadSingle = `
 struct Box[T] { v: T }
 enum E[U] { A(Box[U]), B }
 function main(): i32 {
-  var e: E[i32] = A(Box { v: 6 });
+  let e: E[i32] = A(Box { v: 6 });
   match (e) { A(b) => { return b.v; }, B => { return 0; } }
 }
 `
@@ -28,8 +28,8 @@ function main(): i32 {
 const genEnumStructPayloadMulti = `
 struct Box[T] { v: T }
 enum E[U] { A(Box[U]), B }
-function geti(): i32 { var e: E[i32] = A(Box { v: 6 }); match (e) { A(b) => { return b.v; }, B => { return 0; } } }
-function gets(): i32 { var e: E[string] = A(Box { v: "hi" }); match (e) { A(b) => { return b.v.len(); }, B => { return 0; } } }
+function geti(): i32 { let e: E[i32] = A(Box { v: 6 }); match (e) { A(b) => { return b.v; }, B => { return 0; } } }
+function gets(): i32 { let e: E[string] = A(Box { v: "hi" }); match (e) { A(b) => { return b.v.len(); }, B => { return 0; } } }
 function main(): i32 { return geti() + gets(); }
 `
 
@@ -38,7 +38,7 @@ const genEnumEnumPayload = `
 enum Opt[U] { Sm(U), Nn }
 enum E[U] { A(Opt[U]), B }
 function main(): i32 {
-  var e: E[i32] = A(Sm(7));
+  let e: E[i32] = A(Sm(7));
   match (e) { A(o) => { match (o) { Sm(n) => { return n; }, Nn => { return 1; } } }, B => { return 0; } }
 }
 `

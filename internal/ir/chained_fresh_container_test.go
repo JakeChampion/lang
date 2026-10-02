@@ -27,8 +27,8 @@ function passthru(b: QBox): QBox { return b; }
 function sinkv(v: i32[]): i32 { return v.len(); }
 function chained_arg(k: i32): i32 { return sinkv(mk_qbox(k).qs[0].vals); }
 function chained_index(k: i32): i32 { return mk_qbox(k).qs[0].vals[1]; }
-function frombound(k: i32): i32 { var b: QBox = mk_qbox(k); return b.qs[0].vals[1]; }
-function boundctl(k: i32): i32 { var b: QBox = mk_qbox(k); return b.tag; }
+function frombound(k: i32): i32 { let b: QBox = mk_qbox(k); return b.qs[0].vals[1]; }
+function boundctl(k: i32): i32 { let b: QBox = mk_qbox(k); return b.tag; }
 function fromparam(b: QBox): i32 { return b.qs[0].vals[1]; }
 function aliased(b: QBox): i32 { return passthru(b).qs[0].vals[1]; }
 function main(): i32 { return 0; }`

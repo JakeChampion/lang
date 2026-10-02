@@ -33,23 +33,23 @@ import "testing"
 // in internal/codegen/wasmbin pins that half where it is decidable: on the
 // emitted bytes.
 const argsRcHeaderProgram = `function walk(): i32 {
-    var n: i32 = 0;
+    let n: i32 = 0;
     for a in args() { n = n + a.len(); }
     return n;
 }
 
 function main(): i32 {
-    var first: i32 = walk();
+    let first: i32 = walk();
     // Allocate hard between the walks: a freed cache block gets handed
     // straight back out here.
-    var churn: i32 = 0;
-    var i: i32 = 0;
+    let churn: i32 = 0;
+    let i: i32 = 0;
     while (i < 64) {
-        var buf: i32[] = [i, i + 1, i + 2, i + 3, i + 4, i + 5, i + 6, i + 7];
+        let buf: i32[] = [i, i + 1, i + 2, i + 3, i + 4, i + 5, i + 6, i + 7];
         churn = churn + buf[0];
         i = i + 1;
     }
-    var second: i32 = walk();
+    let second: i32 = walk();
     if (first != second) { return 2; }
     if (args().len() != first_len()) { return 3; }
     return __rc_underflow_count();

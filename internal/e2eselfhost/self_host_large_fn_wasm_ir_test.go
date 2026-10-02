@@ -26,7 +26,7 @@ import (
 // the arithmetic — the assertion doesn't have to mirror the computation.
 func largeSingleFnProgram(n int) string {
 	var b strings.Builder
-	b.WriteString("function main(): i32 {\n    var acc: i32 = 0;\n")
+	b.WriteString("function main(): i32 {\n    let acc: i32 = 0;\n")
 	for i := 0; i < n; i++ {
 		s := strconv.Itoa(i)
 		b.WriteString("    acc = acc + " + s + " * 3 - " + s + " + (acc / 2) + (" + s + " % 7);\n")

@@ -26,10 +26,10 @@ var x86SSASingleCases = []struct {
 		name: "heap_bump_bytes_is_monotone",
 		src: `import "std/i32";
 function main(): i32 {
-  var before: i64 = __heap_bump_bytes();
-  var xs: i32[] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
-  var s: string = "grow" + "ing";
-  var after: i64 = __heap_bump_bytes();
+  let before: i64 = __heap_bump_bytes();
+  let xs: i32[] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+  let s: string = "grow" + "ing";
+  let after: i64 = __heap_bump_bytes();
   if (after >= before && after > 0) { stdout().write("monotone\n"); } else { return 1; }
   stdout().write(xs.len().to_string() + s.len().to_string() + "\n");
   return 0;
@@ -46,8 +46,8 @@ function main(): i32 {
   }
   match (open_reader("lines_probe.txt")) {
     Ok(r) => {
-      var n: i32 = 0;
-      var more: boolean = true;
+      let n: i32 = 0;
+      let more: boolean = true;
       while (more) {
         match (r.read_line()) {
           Some(l) => { n = n + 1; stdout().write(n.to_string() + ":[" + l + "]\n"); },
@@ -68,8 +68,8 @@ function main(): i32 {
 function main(): i32 {
   match (temp_dir("fernssa-rd")) {
     Ok(d) => {
-      var names: string[] = ["alpha.txt", "b", "gamma-long-name.log"];
-      var i: i32 = 0;
+      let names: string[] = ["alpha.txt", "b", "gamma-long-name.log"];
+      let i: i32 = 0;
       while (i < names.len()) {
         match (write_file(d + "/" + names[i], names[i])) {
           Ok(u) => {},
@@ -79,8 +79,8 @@ function main(): i32 {
       }
       match (read_dir(d)) {
         Ok(entries) => {
-          var total: i32 = 0;
-          var j: i32 = 0;
+          let total: i32 = 0;
+          let j: i32 = 0;
           while (j < entries.len()) { total = total + entries[j].len(); j = j + 1; }
           stdout().write("entries=" + entries.len().to_string() + " chars=" + total.to_string() + "\n");
         },

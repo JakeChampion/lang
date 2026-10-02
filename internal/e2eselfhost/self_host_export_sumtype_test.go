@@ -149,9 +149,9 @@ function main(): i32 { return 0; }`
 function half(n: i32): Option[i32];
 
 function main(): i32 {
-	var sm: i32 = 0;
+	let sm: i32 = 0;
 	match (half(10)) { Some(v) => { sm = v; }, None => { sm = -100; } }
-	var nn: i32 = 0;
+	let nn: i32 = 0;
 	match (half(3)) { Some(v) => { nn = 99; }, None => { nn = 7; } }
 	if (sm == 5 && nn == 7) { write("opt-ok"); } else { write("opt-bad"); }
 	return 0;
@@ -175,9 +175,9 @@ function main(): i32 { return 0; }`
 function checked_div(a: i32, b: i32): Result[i32, i32];
 
 function main(): i32 {
-	var ok: i32 = 0;
+	let ok: i32 = 0;
 	match (checked_div(20, 4)) { Ok(v) => { ok = v; }, Err(e) => { ok = -100; } }
-	var er: i32 = 0;
+	let er: i32 = 0;
 	match (checked_div(1, 0)) { Ok(v) => { er = 99; }, Err(e) => { er = e; } }
 	if (ok == 5 && er == -1) { write("res-ok"); } else { write("res-bad"); }
 	return 0;

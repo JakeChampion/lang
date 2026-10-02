@@ -1,15 +1,15 @@
 # A borrowing string method's result is releasable at a BINDING too
 
-`var v: str = base.drop(2)` leaked on both backends measured, while the same
+`let v: str = base.drop(2)` leaked on both backends measured, while the same
 call in receiver position (`base.drop(2).len()`) had been flat since #6544's
 first half. Per round, one shape per binary, `__heap_bump_bytes()` at 100 and 200 rounds:
 
 | shape | x86-64 | wasm |
 | --- | --- | --- |
-| `var v: str = base.drop2(2)` (local decl) | 24 → **0** | 120 → **0** |
-| `var v: string = base.pad2(4)` (owned box) | 184 → **0** | — |
-| `var v: str = base.drop(2)` (std/string) | 24 → **0** | — |
-| `var v: str = base.drop2(0)` (identity path) | 0 → 0 | 0 → 0 |
+| `let v: str = base.drop2(2)` (local decl) | 24 → **0** | 120 → **0** |
+| `let v: string = base.pad2(4)` (owned box) | 184 → **0** | — |
+| `let v: str = base.drop(2)` (std/string) | 24 → **0** | — |
+| `let v: str = base.drop2(0)` (identity path) | 0 → 0 | 0 → 0 |
 
 24 bytes is exactly one view box on the register backends; wasm's slice copies,
 so its 120 is box + data.
@@ -39,7 +39,7 @@ but it cannot resolve a SLOT — and the guard is a slot load. A credit whose gu
 slot failed to resolve would emit an UNGUARDED free, which on the identity path
 frees a box the receiver still owns.
 
-That is not hypothetical: `var v: str = h.name.drop(2)` is a field receiver, so
+That is not hypothetical: `let v: str = h.name.drop(2)` is a field receiver, so
 the slot walk answers −1 while a name-keyed credit fires happily. So the collector
 emits `SFRCAND:<name>` and `bind_var_slot` promotes it to `STR:<name>` only when
 `sfrrecv_chain_root_slot` agrees — the `DYNCAND:` → `DYN:` pattern already in the

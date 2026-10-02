@@ -36,21 +36,21 @@ var optIndexRecoveryCases = []struct {
 	// New: the base is itself an index.
 	{"nested-index", `
 function main(): i32 {
-    var aoa: Option[i32][][] = [[Some(4), None], [Some(9)]];
+    let aoa: Option[i32][][] = [[Some(4), None], [Some(9)]];
     match (aoa[0][0]) { Some(v) => { return v; }, None => { return 1; } }
 }
 `, 4},
 	// New: the base is a tuple element.
 	{"tuple-elem-index", `
 function main(): i32 {
-    var t: (Option[i32][], i32) = ([Some(7), None], 3);
+    let t: (Option[i32][], i32) = ([Some(7), None], 3);
     match (t.0[0]) { Some(v) => { return v; }, None => { return 1; } }
 }
 `, 7},
 	// New, via `?` rather than `match` — the value-position resolver.
 	{"nested-index-try", `
 function first(aoa: Option[i32][][]): Option[i32] {
-    var v: i32 = aoa[0][0]?;
+    let v: i32 = aoa[0][0]?;
     return Some(v + 1);
 }
 function main(): i32 {
@@ -60,7 +60,7 @@ function main(): i32 {
 	// Pre-existing: the base is a local.
 	{"local-index", `
 function main(): i32 {
-    var a: Option[i32][] = [Some(4), None];
+    let a: Option[i32][] = [Some(4), None];
     match (a[0]) { Some(v) => { return v; }, None => { return 1; } }
 }
 `, 4},
@@ -68,14 +68,14 @@ function main(): i32 {
 	{"struct-field-index", `
 struct B { o: Option[i32][] }
 function main(): i32 {
-    var b: B = B { o: [Some(5), None] };
+    let b: B = B { o: [Some(5), None] };
     match (b.o[0]) { Some(v) => { return v; }, None => { return 1; } }
 }
 `, 5},
 	// The None arm still has to be reachable through the recovered type.
 	{"nested-index-none", `
 function main(): i32 {
-    var aoa: Option[i32][][] = [[None, Some(4)]];
+    let aoa: Option[i32][][] = [[None, Some(4)]];
     match (aoa[0][0]) { Some(v) => { return v; }, None => { return 6; } }
 }
 `, 6},

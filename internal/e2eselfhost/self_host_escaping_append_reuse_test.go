@@ -11,7 +11,7 @@ import (
 // #4702 regression: a loop-local array buffer that ESCAPES via `out.append(grp)`
 // must not have its buffer reused for the next iteration's `grp`. The self-host
 // RC pass treated `grp` as dead after the owned append (arr_push_owned stores its
-// pointer with no counted reference), so the `var grp = []` loop-rebind reinit-drop
+// pointer with no counted reference), so the `let grp = []` loop-rebind reinit-drop
 // freed a buffer `out` still held — every appended group then aliased the last
 // (`chunks2([1,2,3,4])` read back as [[3,4],[3,4]], so c[0][0] == 3 instead of 1).
 // The fix retains a bare owned pointer-array element on append (the same Perceus
@@ -19,11 +19,11 @@ import (
 // and grp's dec no longer frees it early. Native + interp were always correct;
 // this pins the self-host backends to the same result.
 const escapingAppendChunksProg = `function chunks2(xs: i32[]): i32[][] {
-    var out: i32[][] = [];
-    var i: i32 = 0;
+    let out: i32[][] = [];
+    let i: i32 = 0;
     while (i < xs.len()) {
-        var grp: i32[] = [];
-        var j: i32 = 0;
+        let grp: i32[] = [];
+        let j: i32 = 0;
         while (j < 2 && i + j < xs.len()) { grp = grp.append(xs[i + j]); j = j + 1; }
         out = out.append(grp);
         i = i + 2;
@@ -31,7 +31,7 @@ const escapingAppendChunksProg = `function chunks2(xs: i32[]): i32[][] {
     return out;
 }
 function main(): i32 {
-    var c: i32[][] = chunks2([1, 2, 3, 4]);
+    let c: i32[][] = chunks2([1, 2, 3, 4]);
     // Correct groups are [[1,2],[3,4]]. The pre-fix reuse bug makes every inner
     // array alias the LAST group's buffer, so c[0] reads back as [3,4]. Return 7
     // only when all four elements are exactly right.

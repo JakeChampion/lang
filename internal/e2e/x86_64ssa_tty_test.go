@@ -23,7 +23,7 @@ import (
 // The comparison is against the flat x86-64 emitter, for the reason
 // x86_64ssa_path_helpers_test.go gives.
 const x86SSATtySrc = `function main(): i32 {
-    var base: string = getcwd();
+    let base: string = getcwd();
 
     // Nothing in a test harness is a terminal, so every terminal query must
     // refuse with ENOTTY rather than answer, and refuse identically through
@@ -38,10 +38,10 @@ const x86SSATtySrc = `function main(): i32 {
     // termios_set validates before it asks the kernel: a wrong-length word
     // array and an out-of-range action are both EINVAL, and reach that answer
     // without a terminal.
-    var short: i64[] = [1i64, 2i64];
+    let short: i64[] = [1i64, 2i64];
     match (termios_set(0, 0, short)) { Ok(_) => { return 20; }, Err(e) => {} }
-    var full: i64[] = [];
-    var i: i32 = 0;
+    let full: i64[] = [];
+    let i: i32 = 0;
     while (i < 24) { full = full.append(0i64); i = i + 1; }
     match (termios_set(0, 9, full)) { Ok(_) => { return 21; }, Err(e) => {} }
     match (termios_set(0, 0, full)) { Ok(_) => { return 22; }, Err(e) => {} }

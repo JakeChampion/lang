@@ -12,11 +12,11 @@ import "core/cmp";
 @derive(cmp.Default) enum Status { Idle, Running(i32), Done(i32, i32) }
 
 function main(): i32 {
-    var w: Wrap = Wrap.default();          // {p:{0}, "", false, 0.0}
-    var pr: Pair[Inner] = Pair.default();  // {a:{0}, b:{0}} via T.default()
-    var s: Status = Status.default();      // Idle (first variant)
+    let w: Wrap = Wrap.default();          // {p:{0}, "", false, 0.0}
+    let pr: Pair[Inner] = Pair.default();  // {a:{0}, b:{0}} via T.default()
+    let s: Status = Status.default();      // Idle (first variant)
 
-    var r: i32 = w.p.n + w.label.len() + pr.a.n + pr.b.n + 5;
+    let r: i32 = w.p.n + w.label.len() + pr.a.n + pr.b.n + 5;
     if (w.flag) { r = r + 100; }           // flag defaults false — skipped
     match (s) {
         Idle => { r = r + 1; },            // first variant — taken

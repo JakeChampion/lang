@@ -36,14 +36,14 @@ function step(own a: Asm, v: i32): Asm {
 }
 function step_ret(own a: Asm, v: i32): Asm { return Asm { ...a, cfi: record(a.cfi, v) }; }
 function shared(v: i32): i32 {
-    var a: Asm = Asm { code: [], cfi: Cfi { rules: [1, 2], n: 2 } };
-    var keep: Asm = a;
+    let a: Asm = Asm { code: [], cfi: Cfi { rules: [1, 2], n: 2 } };
+    let keep: Asm = a;
     a = Asm { ...a, cfi: record(a.cfi, v) };
     return keep.cfi.n * 100 + a.cfi.n + keep.cfi.rules.len() * 1000;
 }
 function local_form(n: i32): i32 {
-    var a: Asm = Asm { code: [], cfi: Cfi { rules: [], n: 0 } };
-    var i: i32 = 0;
+    let a: Asm = Asm { code: [], cfi: Cfi { rules: [], n: 0 } };
+    let i: i32 = 0;
     while (i < n) {
         a = Asm { ...a, cfi: record(a.cfi, i) };
         i = i + 1;
@@ -51,14 +51,14 @@ function local_form(n: i32): i32 {
     return a.cfi.n + a.cfi.rules[n - 1];
 }
 function main(): i32 {
-    var a: Asm = Asm { code: [], cfi: Cfi { rules: [], n: 0 } };
-    var i: i32 = 0;
+    let a: Asm = Asm { code: [], cfi: Cfi { rules: [], n: 0 } };
+    let i: i32 = 0;
     while (i < 200) {
         a = step(a, i);
         a = step_ret(a, i);
         i = i + 1;
     }
-    var bad: i32 = 0;
+    let bad: i32 = 0;
     if (a.cfi.n != 400) { bad = bad + 1; }
     if (a.cfi.rules.len() != 400) { bad = bad + 2; }
     if (a.code.len() != 200) { bad = bad + 4; }

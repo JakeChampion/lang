@@ -69,7 +69,7 @@ func TestWasmP3AsyncStringExportProvider(t *testing.T) {
 // string-returning async import and uses the result —
 //
 //	@import("test:dep/d","fetch") async function fetch(): string;
-//	async function run(): i32 { var s: string = fetch(); return s.len(); }
+//	async function run(): i32 { let s: string = fetch(); return s.len(); }
 //
 // The wasmbin async-import branch lowers `fetch` to the `(retptr) -> status`
 // shape and lifts the return-area (ptr,len) into a Fern string;
@@ -83,7 +83,7 @@ func TestWasmP3AsyncImportStringFromFern(t *testing.T) {
 	skipIfPreview2Missing(t) // ensures wasmtime on PATH
 
 	src := `@import("test:dep/d", "fetch") async function fetch(): string;
-async function run(): i32 { var s: string = fetch(); return s.len(); }
+async function run(): i32 { let s: string = fetch(); return s.len(); }
 function main(): i32 { return 0; }
 `
 	dir := t.TempDir()
@@ -263,7 +263,7 @@ func TestWasmP3AsyncListExportProvider(t *testing.T) {
 //
 //	@import("test:dep/d","fetch") async function fetch(): u8[];
 //	async function run(): i32 {
-//	    var xs: u8[] = fetch();
+//	    let xs: u8[] = fetch();
 //	    if (xs.len() == 5 && xs[0] == 104 && xs[4] == 111) { return 42; }
 //	    return 0;
 //	}
@@ -280,7 +280,7 @@ func TestWasmP3AsyncImportListFromFern(t *testing.T) {
 
 	src := `@import("test:dep/d", "fetch") async function fetch(): u8[];
 async function run(): i32 {
-	var xs: u8[] = fetch();
+	let xs: u8[] = fetch();
 	if (xs.len() == 5 && xs[0] == 104 && xs[4] == 111) { return 42; }
 	return 0;
 }

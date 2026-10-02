@@ -19,17 +19,17 @@ import "core/map";
 enum Status { Active, Inactive, Pending }
 
 // Array-returning: the if-expression captures the i64 param, so the lift
-// prepends `var p: i64 = <capture>` and the tail becomes the `if`.
+// prepends `let p: i64 = <capture>` and the tail becomes the `if`.
 function via_array(p: i64): i32[] {
-    var v: i32 = if (p > 4i64) { 1i32 } else { (p as i32) };
+    let v: i32 = if (p > 4i64) { 1i32 } else { (p as i32) };
     return [v];
 }
 
 // The match-EXPRESSION form of the same thing, and a Map return rather than an
 // array, since both composites reached the bail the same way.
 function via_map(p: i64): Map[i32, i32] {
-    var v: i32 = match (Active) { Active => 1i32, Inactive => 29i32, Pending => ((p >> 32i64) as i32) };
-    var m: Map[i32, i32] = Map {};
+    let v: i32 = match (Active) { Active => 1i32, Inactive => 29i32, Pending => ((p >> 32i64) as i32) };
+    let m: Map[i32, i32] = Map {};
     m = m.insert(0i32, v);
     return m;
 }
@@ -43,7 +43,7 @@ function main(): i32 {
 
     // Control: the single-statement route, which always worked and must keep
     // working — the fix routes both through one function now.
-    var direct: i32 = if (true) { 6i32 } else { 7i32 };
+    let direct: i32 = if (true) { 6i32 } else { 7i32 };
     if (direct != 6i32) { return 6; }
 
     return 11;

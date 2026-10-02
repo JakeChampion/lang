@@ -225,7 +225,7 @@ What makes a large extraction defensible is that the names can be **derived
 from something already meaningful in the code**. Here each collection is built
 by a well-named producer, so the mapping writes itself and stays honest:
 
-    var rctups: string[] = collect_fresh_rc_tuple_names(body, structs, []);
+    let rctups: string[] = collect_fresh_rc_tuple_names(body, structs, []);
     out = reclaimable_rc_tuple(body, borrowable, ..., out);
 
 Thirty-two went that way. The counter-rule matters as much: **where a name

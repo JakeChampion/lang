@@ -14,7 +14,7 @@ function bumpLen(own a: u8[]): u8[] {
     return a.with(a.len() - 1, a[a.len() - 1]);
 }
 function stillLive(own a: u8[]): i32 {
-    var b: u8[] = a.with(0, (a[0] as i32 + 1) as u8);
+    let b: u8[] = a.with(0, (a[0] as i32 + 1) as u8);
     return a[0] as i32 + b[0] as i32;
 }
 function main(): i32 { return 0; }`

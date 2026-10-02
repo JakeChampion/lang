@@ -3,7 +3,7 @@
 The #7464 review's "conditionally-returned rc-tuple leak" turned out to be
 neither about conditionals nor about a corner: measured by probe, **every
 function returning an rc-element tuple leaked at a bound call site** —
-`var t = (i, [i, i+1]); return t;` gave the caller allocs=200 frees=0 per 100
+`let t = (i, [i, i+1]); return t;` gave the caller allocs=200 frees=0 per 100
 rounds, and even direct-literal returns freed only the box (frees=100), where
 native is clean on all of them. Arrays (`ARROWN:`) and structs
 (`struct_ret_local_is_frame_fresh`) had their ret machinery; tuples had none.
@@ -29,7 +29,7 @@ native is clean on all of them. Arrays (`ARROWN:`) and structs
 ## What the adversarial review caught before it shipped
 
 - **Ungated caller kinds were a use-after-free** (both skeptics, measured
-  independently): `var r = mk(i); return r.1;` had the pre-return sweep dec
+  independently): `let r = mk(i); return r.1;` had the pre-return sweep dec
   the array being returned — sanitizer exit 124, census silent (the double
   free balances). The literal-init kinds were always gated on `TUPELEMOK:`
   (the payload-escape credit); the call-bound kinds now take the same gate.

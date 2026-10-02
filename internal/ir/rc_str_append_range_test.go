@@ -19,8 +19,8 @@ import (
 // internal/e2e/rc_str_append_range_test.go.
 
 const strAppendRangeSrc = `function build(n: i32, s: string): string {
-    var out: string = "";
-    var i: i32 = 0;
+    let out: string = "";
+    let i: i32 = 0;
     while (i < n) {
         out = out + slice_unchecked(s, 0, 3);
         i = i + 1;
@@ -69,8 +69,8 @@ func TestLowerStrAppendRangeFusesChainIntermediate(t *testing.T) {
 	defer func() { ast.RcFreeEnabled = prev }()
 
 	src := `function build(n: i32, s: string): string {
-    var out: string = "";
-    var i: i32 = 0;
+    let out: string = "";
+    let i: i32 = 0;
     while (i < n) {
         out = out + "|" + slice_unchecked(s, 1, 4);
         i = i + 1;
@@ -124,7 +124,7 @@ func TestLowerStrAppendRangeSkipsCellRead(t *testing.T) {
 	defer func() { ast.RcFreeEnabled = prev }()
 
 	src := `function build(s: string): i32 {
-    var c: Cell[string] = cell_new("");
+    let c: Cell[string] = cell_new("");
     c.set(c.get() + slice_unchecked(s, 0, 3));
     return c.get().len();
 }
@@ -154,7 +154,7 @@ func TestLowerStrAppendRangeFusesConsumedParam(t *testing.T) {
 	defer func() { ast.RcFreeEnabled = prev }()
 
 	src := `function grow(acc: string, s: string, n: i32): string {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
         acc = acc + slice_unchecked(s, 0, 2);
         i = i + 1;
@@ -211,8 +211,8 @@ func TestLowerStrAppendRangeReclaimsOwnedSource(t *testing.T) {
 
 	src := `function mk(s: string): string { return s + "!"; }
 function build(n: i32, s: string): string {
-    var out: string = "";
-    var i: i32 = 0;
+    let out: string = "";
+    let i: i32 = 0;
     while (i < n) {
         out = out + slice_unchecked(mk(s), 0, 3);
         i = i + 1;

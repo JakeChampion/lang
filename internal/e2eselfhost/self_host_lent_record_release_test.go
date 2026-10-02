@@ -20,10 +20,10 @@ struct Rec { n: i32, xs: string[] }
 function keep_field(r: Rec): string[] { return r.xs; }
 function (r: Rec) names(): string[] { return r.xs; }
 function use_rec(i: i32): i32 {
-    var r: Rec = Rec { n: i, xs: ["first-name-" + i.to_string(), "second-name-" + i.to_string()] };
-    var ys: string[] = keep_field(r);
+    let r: Rec = Rec { n: i, xs: ["first-name-" + i.to_string(), "second-name-" + i.to_string()] };
+    let ys: string[] = keep_field(r);
     keep_field(r);
-    var zs: string[] = r.names();
+    let zs: string[] = r.names();
     return ys.len() + zs.len() + r.n % 3;
 }
 enum Shape { Pair(i32, i32[]), Nope }
@@ -40,8 +40,8 @@ function weigh(t: Tag): i32 {
     match (t) { Small(a) => { return a; }, Big(a, b) => { return a + b; } }
 }
 function main(): i32 {
-    var n: i32 = 0;
-    var i: i32 = 0;
+    let n: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
         n = n + use_rec(i) + measure(shape(i)) + weigh(tag(i));
         i = i + 1;

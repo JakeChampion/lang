@@ -77,7 +77,7 @@ import "core/cmp" as cmp;
 // delegates to. To pass values raw, reach for `format_values` (one
 // element type) or `format1`..`format4` (mixed) below.
 pub function format(fmt: string, args: string[]): string {
-  var n: i32 = fmt.len();
+  let n: i32 = fmt.len();
   // Accumulate into a growable u8[] and materialise once (#4379): the old
   // `out = out + …` appended each literal byte / spec result onto an immutable
   // string, recopying the whole growing result every step — O(output²) on the
@@ -88,9 +88,9 @@ pub function format(fmt: string, args: string[]): string {
   // buffer per call, reintroducing the quadratic). Byte indexing (`fmt[i]`)
   // and single-byte appends preserve the byte-for-byte (UTF-8-agnostic)
   // behaviour of the old 1-byte `fmt[i:i+1]` slices.
-  var out: u8[] = [];
-  var i: i32 = 0;
-  var argi: i32 = 0;
+  let out: u8[] = [];
+  let i: i32 = 0;
+  let argi: i32 = 0;
   while (i < n) {
     // Escaped braces: `{{` -> literal `{`, `}}` -> literal `}` (the
     // Python str.format() / Rust format!() convention this mirrors). Checked
@@ -107,12 +107,12 @@ pub function format(fmt: string, args: string[]): string {
       // run is a placeholder. The content is a placeholder spec only when
       // it is empty (`{}`) or starts with `:` (`{:>8}`); anything else
       // (`{abc}`, JSON `{"k":1}`) renders literally and consumes no arg.
-      var j: i32 = i + 1;
+      let j: i32 = i + 1;
       while (j < n && fmt[j] != 125) {
         j = j + 1;
       }
-      var isPlaceholder: boolean = false;
-      var spec: str = "";
+      let isPlaceholder: boolean = false;
+      let spec: str = "";
       if (j < n) {
         spec = slice_unchecked(fmt, i + 1, j);
         if (spec.len() == 0) {
@@ -123,9 +123,9 @@ pub function format(fmt: string, args: string[]): string {
       }
       if (isPlaceholder) {
         if (argi < args.len()) {
-          var piece: string = __format_apply_spec(args[argi], spec);
-          var pl: i32 = piece.len();
-          var pk: i32 = 0;
+          let piece: string = __format_apply_spec(args[argi], spec);
+          let pl: i32 = piece.len();
+          let pk: i32 = 0;
           while (pk < pl) {
             out = out.append(piece[pk] as u8);
             pk = pk + 1;
@@ -135,8 +135,8 @@ pub function format(fmt: string, args: string[]): string {
           // Missing arg — emit the placeholder verbatim so callers
           // can spot the underflow at runtime.
           out = out.append(123 as u8);  // '{'
-          var sl: i32 = spec.len();
-          var sk: i32 = 0;
+          let sl: i32 = spec.len();
+          let sk: i32 = 0;
           while (sk < sl) {
             out = out.append(spec[sk] as u8);
             sk = sk + 1;
@@ -169,8 +169,8 @@ pub function format(fmt: string, args: string[]): string {
 // An empty literal cannot infer `T` (`format_values("hi", [])` is E040);
 // that call is just `format("hi", [])`.
 pub function format_values[T: cmp.Display](fmt: string, args: T[]): string {
-  var strs: string[] = [];
-  var i: i32 = 0;
+  let strs: string[] = [];
+  let i: i32 = 0;
   while (i < args.len()) {
     strs = strs.append(args[i].to_string());
     i = i + 1;
@@ -212,14 +212,14 @@ function __format_apply_spec(s: string, spec: string): string {
   if (spec.len() == 0) {
     return s;
   }
-  var m: i32 = spec.len();
-  var p: i32 = 1;  // skip the leading ':'
+  let m: i32 = spec.len();
+  let p: i32 = 1;  // skip the leading ':'
   // [fill]align — a fill char (a whole code point, possibly multibyte)
   // only counts when an align char (`<>^`) follows it; a bare align
   // char takes the default space fill.
-  var fill: str = " ";
-  var align: i32 = 1;  // 1=left, 2=right, 3=center; strings default left.
-  var fw: i32 = 1;  // byte width of the candidate fill char
+  let fill: str = " ";
+  let align: i32 = 1;  // 1=left, 2=right, 3=center; strings default left.
+  let fw: i32 = 1;  // byte width of the candidate fill char
   match (utf8.utf8_decode_at(spec, p)) {
     Some(pair) => {
       fw = pair.1;
@@ -237,7 +237,7 @@ function __format_apply_spec(s: string, spec: string): string {
   // sign — `+` forces a leading `+` on non-negative numbers; `-`
   // is the default and a no-op. Consumed here so it precedes the
   // `0` flag and width, per Rust's `[sign]['0'][width]` order.
-  var plus: boolean = false;
+  let plus: boolean = false;
   if (p < m && spec[p] == 43) {  // '+'
     plus = true;
     p = p + 1;
@@ -247,13 +247,13 @@ function __format_apply_spec(s: string, spec: string): string {
   // `0` flag — a leading `0` before the width digits selects
   // sign-aware zero-padding (overriding fill/align). The flag is
   // consumed here; any further digits are the width.
-  var zero: boolean = false;
+  let zero: boolean = false;
   if (p < m && spec[p] == 48) {  // '0'
     zero = true;
     p = p + 1;
   }
   // width — run of decimal digits.
-  var width: i32 = 0;
+  let width: i32 = 0;
   while (p < m && spec[p] >= 48 && spec[p] <= 57) {
     width = width * 10 + (spec[p] as i32 - 48);
     p = p + 1;
@@ -263,10 +263,10 @@ function __format_apply_spec(s: string, spec: string): string {
   // anything else. Same "does it look like a number" split the sign flag
   // below uses: `format` sees only the stringified value, so the shape of
   // the digits is the only signal for which meaning was intended.
-  var val: string = s;
+  let val: string = s;
   if (p < m && spec[p] == 46) {
     p = p + 1;
-    var prec: i32 = 0;
+    let prec: i32 = 0;
     while (p < m && spec[p] >= 48 && spec[p] <= 57) {
       prec = prec * 10 + (spec[p] as i32 - 48);
       p = p + 1;
@@ -285,11 +285,11 @@ function __format_apply_spec(s: string, spec: string): string {
     val = "+" + val;
   }
   // width padding — never truncates.
-  var vlen: i32 = val.len();
+  let vlen: i32 = val.len();
   if (vlen >= width) {
     return val;
   }
-  var pad: i32 = width - vlen;
+  let pad: i32 = width - vlen;
   // zero-pad — sign-aware: zeros go after a leading sign char, and
   // the sign counts toward the width. Overrides fill/align.
   if (zero) {
@@ -302,7 +302,7 @@ function __format_apply_spec(s: string, spec: string): string {
     return __repeat_char(fill, pad) + val;
   }
   if (align == 3) {
-    var left: i32 = pad / 2;
+    let left: i32 = pad / 2;
     return __repeat_char(fill, left) + val + __repeat_char(fill, pad - left);
   }
   return val + __repeat_char(fill, pad);
@@ -313,12 +313,12 @@ function __format_apply_spec(s: string, spec: string): string {
 // ("3.") and an exponent form ("1e30") are not numerals here, so they keep
 // the byte-truncation meaning.
 function __is_decimal_numeral(s: string): boolean {
-  var n: i32 = s.len();
-  var i: i32 = 0;
+  let n: i32 = s.len();
+  let i: i32 = 0;
   if (i < n && (s[i] == 43 || s[i] == 45)) {
     i = i + 1;
   }
-  var whole: i32 = 0;
+  let whole: i32 = 0;
   while (i < n && s[i] >= 48 && s[i] <= 57) {
     i = i + 1;
     whole = whole + 1;
@@ -333,7 +333,7 @@ function __is_decimal_numeral(s: string): boolean {
     return false;
   }
   i = i + 1;
-  var frac: i32 = 0;
+  let frac: i32 = 0;
   while (i < n && s[i] >= 48 && s[i] <= 57) {
     i = i + 1;
     frac = frac + 1;
@@ -346,32 +346,32 @@ function __is_decimal_numeral(s: string): boolean {
 // bytes rather than round-tripping through f64, so a numeral with more
 // significant digits than a double can hold keeps the ones it arrived with.
 function __round_to_places(s: string, places: i32): string {
-  var n: i32 = s.len();
-  var i: i32 = 0;
-  var sign: string = "";
+  let n: i32 = s.len();
+  let i: i32 = 0;
+  let sign: string = "";
   if (s[0] == 43 || s[0] == 45) {
     if (s[0] == 45) {
       sign = "-";
     }
     i = 1;
   }
-  var dot: i32 = i;
+  let dot: i32 = i;
   while (dot < n && s[dot] != 46) {
     dot = dot + 1;
   }
-  var intLen: i32 = dot - i;
+  let intLen: i32 = dot - i;
   // One digit run: the integer digits followed by exactly `places`
   // fractional ones, zero-filled where the value has fewer. Carry then
   // propagates right-to-left across the whole run in one pass.
-  var digits: u8[] = [];
-  var k: i32 = i;
+  let digits: u8[] = [];
+  let k: i32 = i;
   while (k < dot) {
     digits = digits.append(s[k] as u8);
     k = k + 1;
   }
-  var f: i32 = 0;
+  let f: i32 = 0;
   while (f < places) {
-    var src: i32 = dot + 1 + f;
+    let src: i32 = dot + 1 + f;
     if (src < n) {
       digits = digits.append(s[src] as u8);
     } else {  // '0'
@@ -379,12 +379,12 @@ function __round_to_places(s: string, places: i32): string {
     }
     f = f + 1;
   }
-  var next: i32 = dot + 1 + places;
+  let next: i32 = dot + 1 + places;
   if (next < n && s[next] >= 53) {  // first dropped digit >= '5'
-    var c: i32 = digits.len() - 1;
-    var carry: boolean = true;
+    let c: i32 = digits.len() - 1;
+    let carry: boolean = true;
     while (carry && c >= 0) {
-      var d: i32 = digits[c] as i32 + 1;
+      let d: i32 = digits[c] as i32 + 1;
       if (d > 57) {
         digits = digits.with(c, 48 as u8);
         c = c - 1;
@@ -396,8 +396,8 @@ function __round_to_places(s: string, places: i32): string {
     // Carry out of the leading digit widens the integer part: 9.9 at
     // `.0` is "10", not "0".
     if (carry) {
-      var grown: u8[] = [49 as u8];  // '1'
-      var g: i32 = 0;
+      let grown: u8[] = [49 as u8];  // '1'
+      let g: i32 = 0;
       while (g < digits.len()) {
         grown = grown.append(digits[g]);
         g = g + 1;
@@ -406,15 +406,15 @@ function __round_to_places(s: string, places: i32): string {
       intLen = intLen + 1;
     }
   }
-  var head: u8[] = [];
-  var j: i32 = 0;
+  let head: u8[] = [];
+  let j: i32 = 0;
   while (j < intLen) {
     head = head.append(digits[j]);
     j = j + 1;
   }
-  var out: string = sign + string_from_bytes_unchecked(head);
+  let out: string = sign + string_from_bytes_unchecked(head);
   if (places > 0) {
-    var tail: u8[] = [];
+    let tail: u8[] = [];
     while (j < digits.len()) {
       tail = tail.append(digits[j]);
       j = j + 1;
@@ -442,7 +442,7 @@ function __repeat_char(s: string, count: i32): string {
   if (count <= 0) {
     return "";
   }
-  var sl: i32 = s.len();
+  let sl: i32 = s.len();
   if (sl == 0) {
     return "";
   }
@@ -450,11 +450,11 @@ function __repeat_char(s: string, count: i32): string {
   // which recopied the growing prefix on every step (O((sl·count)²) — #4379).
   // Same two-pass idiom as std/string's `repeat`; keeps every padded/aligned
   // format spec off the quadratic path.
-  var buf: u8[] = __alloc_u8(sl * count);
-  var pos: i32 = 0;
-  var k: i32 = 0;
+  let buf: u8[] = __alloc_u8(sl * count);
+  let pos: i32 = 0;
+  let k: i32 = 0;
   while (k < count) {
-    var j: i32 = 0;
+    let j: i32 = 0;
     while (j < sl) {
       buf = buf.with(pos, s[j] as u8);
       pos = pos + 1;
@@ -475,12 +475,12 @@ function __repeat_char(s: string, count: i32): string {
 // CLI / log use case; callers needing larger sizes can
 // drop down to manual i64 div + to_string.
 pub function format_bytes(n: i32): string {
-  var neg: boolean = n < 0;
-  var mag: i32 = n;
+  let neg: boolean = n < 0;
+  let mag: i32 = n;
   if (neg) {
     mag = n.abs();
   }
-  var sign: string = "";
+  let sign: string = "";
   if (neg) {
     sign = "-";
   }
@@ -504,22 +504,22 @@ pub function format_duration_ms(ms: i32): string {
   if (ms == 0) {
     return "0ms";
   }
-  var neg: boolean = ms < 0;
-  var mag: i32 = ms;
+  let neg: boolean = ms < 0;
+  let mag: i32 = ms;
   if (neg) {
     mag = ms.abs();
   }
-  var sign: string = "";
+  let sign: string = "";
   if (neg) {
     sign = "-";
   }
-  var h: i32 = mag / 3600000;
-  var rem: i32 = mag - h * 3600000;
-  var m: i32 = rem / 60000;
+  let h: i32 = mag / 3600000;
+  let rem: i32 = mag - h * 3600000;
+  let m: i32 = rem / 60000;
   rem = rem - m * 60000;
-  var s: i32 = rem / 1000;
-  var msPart: i32 = rem - s * 1000;
-  var out: string = "";
+  let s: i32 = rem / 1000;
+  let msPart: i32 = rem - s * 1000;
+  let out: string = "";
   if (h > 0) {
     out = out + h.to_string() + "h";
   }
@@ -552,17 +552,17 @@ pub function format_duration_ms(ms: i32): string {
 // part with no number. The `i64` result holds durations far beyond the
 // i32 that `format_duration_ms` takes.
 pub function parse_duration_ms(s: string): Option[i64] {
-  var n: i32 = s.len();
-  var i: i32 = 0;
-  var total: i64 = 0;
-  var saw: boolean = false;
+  let n: i32 = s.len();
+  let i: i32 = 0;
+  let total: i64 = 0;
+  let saw: boolean = false;
   while (i < n) {
     if (s[i] == 32) {  // skip spaces
       i = i + 1;
       continue;
     }
-    var start: i32 = i;
-    var num: i64 = 0;
+    let start: i32 = i;
+    let num: i64 = 0;
     while (i < n && s[i] >= 48 && s[i] <= 57) {
       num = num * (10 as i64) + (s[i] - 48) as i64;
       i = i + 1;
@@ -570,7 +570,7 @@ pub function parse_duration_ms(s: string): Option[i64] {
     if (i == start) {  // expected a number
       return None;
     }
-    var unit_ms: i64 = 0;
+    let unit_ms: i64 = 0;
     if (i + 1 < n && s[i] == 109 && s[i + 1] == 115) {  // "ms"
       unit_ms = 1;
       i = i + 2;

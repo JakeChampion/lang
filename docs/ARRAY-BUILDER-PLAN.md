@@ -13,7 +13,7 @@ a naive append-in-loop **O(n²)** on aliased data and allocation-heavy even
 when unique:
 
 ```fern
-var out: i32[] = [];
+let out: i32[] = [];
 for x in xs { out = out.append(x.abs()); }   // each append may copy `out`
 ```
 
@@ -28,7 +28,7 @@ replacement before subscript assignment can become a compile error.
 ## Surface
 
 ```fern
-var out: i32[] = Array.build(function(b: ArrayBuilder[i32]): void {
+let out: i32[] = Array.build(function(b: ArrayBuilder[i32]): void {
     for x in xs {
         b.append(x.abs());     // statement — in-place append to b
     }
@@ -67,7 +67,7 @@ Two architectures were considered:
    →
    ```fern
    (function(): T[] {
-       var b: T[] = [];
+       let b: T[] = [];
        BODY'              // each `b.append(x);` → `b = b.append(x);`
                           // each `b.with(i,x);` → `b = b.with(i, x);`
        return b;
@@ -103,7 +103,7 @@ Two architectures were considered:
 ### Trade-off vs. the first-class type
 
 The desugar gives up a *compile-time* linearity guarantee: a pathological
-body (`var alias = b; ... ` then appending to both) would silently CoW
+body (`let alias = b; ... ` then appending to both) would silently CoW
 rather than be rejected. That is a performance cliff, not a correctness
 bug, and it is exactly what `fip` (E053) is for (§5 of the collection
 plan). If a hard linearity guarantee is later wanted, the first-class type
@@ -116,7 +116,7 @@ takes the pragmatic, low-risk path.
   `Array`-qualified `build`) with a single lambda argument, and performs
   the desugar there (sibling of `parseMapLit` / `parseForEach`).
 - `T` comes from the lambda parameter's declared type `ArrayBuilder[T]`
-  (its single type argument), which also types the `var b: T[] = []`.
+  (its single type argument), which also types the `let b: T[] = []`.
 - A non-lambda argument, a missing/!= 1 parameter, or a parameter whose
   type is not `ArrayBuilder[_]` is a parse error with a clear message.
 

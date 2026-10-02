@@ -29,7 +29,7 @@ function walk_inner(own acc: i32[], n: i32): i32[] {
 }
 
 function walk(own acc: i32[], rounds: i32): i32[] {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < rounds) {
         acc = walk_inner(acc, 4);
         i = i + 1;
@@ -38,14 +38,14 @@ function walk(own acc: i32[], rounds: i32): i32[] {
 }
 
 function main(): i32 {
-    var out: i32[] = walk([], 50);
+    let out: i32[] = walk([], 50);
     if (out.len() != 400) { return 91; }
     // Each round appends n=4..1 as (n, 2n): 4,8, 3,6, 2,4, 1,2
-    var expect: i32[] = [4, 8, 3, 6, 2, 4, 1, 2];
-    var bad: i32 = 0;
-    var r: i32 = 0;
+    let expect: i32[] = [4, 8, 3, 6, 2, 4, 1, 2];
+    let bad: i32 = 0;
+    let r: i32 = 0;
     while (r < 50) {
-        var k: i32 = 0;
+        let k: i32 = 0;
         while (k < 8) {
             if (out[r * 8 + k] != expect[k]) { bad = bad + 1; }
             k = k + 1;

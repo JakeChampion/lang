@@ -46,12 +46,12 @@ func TestSelfHostIRNeedDetectionX86_64(t *testing.T) {
 	}{
 		// Map + heap (array) in one module: both runtimes must be emitted.
 		{"map-and-array", `function f(): i32 {
-	var m: Map[string, i32] = map_new(0);
+	let m: Map[string, i32] = map_new(0);
 	m = m.insert("a", 7);
 	m = m.insert("b", 8);
-	var xs: i32[] = [1, 2, 3];
-	var s: i32 = m.get_or("a", 0) + m.get_or("b", 0);
-	var i: i32 = 0;
+	let xs: i32[] = [1, 2, 3];
+	let s: i32 = m.get_or("a", 0) + m.get_or("b", 0);
+	let i: i32 = 0;
 	while (i < xs.len()) { s = s + xs[i]; i = i + 1; }
 	return s;
 }
@@ -59,9 +59,9 @@ function main(): i32 { return f(); }`, 21, false},
 		// Heap-only (array allocation, no map): the allocator/RC runtime is still
 		// pulled in by the op_allocates marking, with no "maps" need.
 		{"array-only", `function main(): i32 {
-	var xs: i32[] = [10, 20, 30];
-	var s: i32 = 0;
-	var i: i32 = 0;
+	let xs: i32[] = [10, 20, 30];
+	let s: i32 = 0;
+	let i: i32 = 0;
 	while (i < xs.len()) { s = s + xs[i]; i = i + 1; }
 	return s;
 }`, 60, true},

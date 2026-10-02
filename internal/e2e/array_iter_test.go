@@ -23,24 +23,24 @@ var arrayIterCases = []struct {
 }{
 	// sum over an array: iter.of(xs) yields 10,20,12 → 42.
 	{"sum-array", `import "core/iter";
-function main(): i32 { var xs: i32[] = [10, 20, 12]; return iter.sum(iter.of(xs)); }`, 42},
+function main(): i32 { let xs: i32[] = [10, 20, 12]; return iter.sum(iter.of(xs)); }`, 42},
 	// count over an array → 5.
 	{"count-array", `import "core/iter";
-function main(): i32 { var xs: i32[] = [1, 1, 1, 1, 1]; return iter.count(iter.of(xs)); }`, 5},
+function main(): i32 { let xs: i32[] = [1, 1, 1, 1, 1]; return iter.count(iter.of(xs)); }`, 5},
 	// filter (closure) then count: evens of 1..6 → 3.
 	{"filter-count", `import "core/iter";
-function main(): i32 { var xs: i32[] = [1, 2, 3, 4, 5, 6]; var e: i32[] = iter.filter(iter.of(xs), (n: i32): boolean => { return n % 2 == 0; }); return iter.count(iter.of(e)); }`, 3},
+function main(): i32 { let xs: i32[] = [1, 2, 3, 4, 5, 6]; let e: i32[] = iter.filter(iter.of(xs), (n: i32): boolean => { return n % 2 == 0; }); return iter.count(iter.of(e)); }`, 3},
 	// map (closure) then sum: squares of 1..4 → 1+4+9+16 = 30.
 	{"map-sum", `import "core/iter";
-function main(): i32 { var xs: i32[] = [1, 2, 3, 4]; var sq: i32[] = iter.map(iter.of(xs), (n: i32): i32 => { return n * n; }); return iter.sum(iter.of(sq)); }`, 30},
+function main(): i32 { let xs: i32[] = [1, 2, 3, 4]; let sq: i32[] = iter.map(iter.of(xs), (n: i32): i32 => { return n * n; }); return iter.sum(iter.of(sq)); }`, 30},
 	// over a map's keys snapshot: sum of keys 10+20+12 → 42.
 	{"sum-map-keys", `import "core/iter";
 import "core/map";
-function main(): i32 { var m: Map[i32, i32] = Map { 10: 1, 20: 2, 12: 3 }; return iter.sum(iter.of(m.keys())); }`, 42},
+function main(): i32 { let m: Map[i32, i32] = Map { 10: 1, 20: 2, 12: 3 }; return iter.sum(iter.of(m.keys())); }`, 42},
 	// over a map's values snapshot: sum of values 1+2+3 → 6.
 	{"sum-map-values", `import "core/iter";
 import "core/map";
-function main(): i32 { var m: Map[i32, i32] = Map { 1: 10, 2: 20, 3: 12 }; return iter.sum(iter.of(m.values())); }`, 42},
+function main(): i32 { let m: Map[i32, i32] = Map { 1: 10, 2: 20, 3: 12 }; return iter.sum(iter.of(m.values())); }`, 42},
 }
 
 func TestArrayIterCombinators(t *testing.T) {
@@ -80,7 +80,7 @@ impl[T] Iterator[T] for One[T] {
     }
 }
 function count[T, I: Iterator[T]](it: I): i32 {
-    var n = 0; var cur = it; var go = true;
+    let n = 0; let cur = it; let go = true;
     while (go) { match (cur.next()) { Some(t) => { n = n + 1; cur = t.1; }, None => { go = false; }, } }
     return n;
 }

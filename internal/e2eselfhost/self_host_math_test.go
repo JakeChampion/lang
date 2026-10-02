@@ -13,9 +13,9 @@ var mathCases = []struct {
 	main string
 	exit int
 }{
-	{"range-sum", "import \"std/math\";\nfunction main(): i32 { var r = math.range(0, 5); var s: i32 = 0; var i: i32 = 0; while (i < r.len()) { s = s + r[i]; i = i + 1; } return s; }\n", 10},
-	{"range-step-sum", "import \"std/math\";\nfunction main(): i32 { var r = math.range_step(0, 10, 2); var s: i32 = 0; var i: i32 = 0; while (i < r.len()) { s = s + r[i]; i = i + 1; } return s; }\n", 20},
-	{"random-bytes-len", "import \"std/math\";\nfunction main(): i32 { var b: u8[] = random_bytes(7); return b.len(); }\n", 7},
+	{"range-sum", "import \"std/math\";\nfunction main(): i32 { let r = math.range(0, 5); let s: i32 = 0; let i: i32 = 0; while (i < r.len()) { s = s + r[i]; i = i + 1; } return s; }\n", 10},
+	{"range-step-sum", "import \"std/math\";\nfunction main(): i32 { let r = math.range_step(0, 10, 2); let s: i32 = 0; let i: i32 = 0; while (i < r.len()) { s = s + r[i]; i = i + 1; } return s; }\n", 20},
+	{"random-bytes-len", "import \"std/math\";\nfunction main(): i32 { let b: u8[] = random_bytes(7); return b.len(); }\n", 7},
 }
 
 // TestSelfHostMathX86_64 proves the self-hosted compiler compiles the

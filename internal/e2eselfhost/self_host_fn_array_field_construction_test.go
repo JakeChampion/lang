@@ -22,16 +22,16 @@ var fnArrayFieldConstructionCases = []struct {
 	exit int
 }{
 	// Built from a param: no construction site is visible at the struct literal.
-	{"param-built", "struct R { hs: (() => i32)[] }\nfunction seven(): i32 { return 7; }\nfunction mk(a: (() => i32)[]): R { return R { hs: a }; }\nfunction main(): i32 { var r: R = mk([seven]); return r.hs[0](); }", 7},
+	{"param-built", "struct R { hs: (() => i32)[] }\nfunction seven(): i32 { return 7; }\nfunction mk(a: (() => i32)[]): R { return R { hs: a }; }\nfunction main(): i32 { let r: R = mk([seven]); return r.hs[0](); }", 7},
 	// Built by `.append` in a loop: the local is never bound to an array literal.
-	{"loop-built", "struct R { hs: (() => i32)[] }\nfunction seven(): i32 { return 7; }\nfunction main(): i32 { var a: (() => i32)[] = []; var i: i32 = 0; while (i < 1) { a = a.append(seven); i = i + 1; } var r: R = R { hs: a }; return r.hs[0](); }", 7},
-	{"literal-named", "struct R { hs: (() => i32)[] }\nfunction seven(): i32 { return 7; }\nfunction main(): i32 { var r: R = R { hs: [seven] }; return r.hs[0](); }", 7},
-	{"literal-closures", "struct R { hs: (() => i32)[] }\nfunction main(): i32 { var n: i32 = 3; var r: R = R { hs: [() => n] }; return r.hs[0](); }", 3},
-	{"local-built", "struct R { hs: (() => i32)[] }\nfunction seven(): i32 { return 7; }\nfunction main(): i32 { var a: (() => i32)[] = [seven]; var r: R = R { hs: a }; return r.hs[0](); }", 7},
+	{"loop-built", "struct R { hs: (() => i32)[] }\nfunction seven(): i32 { return 7; }\nfunction main(): i32 { let a: (() => i32)[] = []; let i: i32 = 0; while (i < 1) { a = a.append(seven); i = i + 1; } let r: R = R { hs: a }; return r.hs[0](); }", 7},
+	{"literal-named", "struct R { hs: (() => i32)[] }\nfunction seven(): i32 { return 7; }\nfunction main(): i32 { let r: R = R { hs: [seven] }; return r.hs[0](); }", 7},
+	{"literal-closures", "struct R { hs: (() => i32)[] }\nfunction main(): i32 { let n: i32 = 3; let r: R = R { hs: [() => n] }; return r.hs[0](); }", 3},
+	{"local-built", "struct R { hs: (() => i32)[] }\nfunction seven(): i32 { return 7; }\nfunction main(): i32 { let a: (() => i32)[] = [seven]; let r: R = R { hs: a }; return r.hs[0](); }", 7},
 	// The read is through a PARAM receiver.
 	{"param-receiver-read", "struct R { hs: (() => i32)[] }\nfunction seven(): i32 { return 7; }\nfunction call(r: R): i32 { return r.hs[0](); }\nfunction main(): i32 { return call(R { hs: [seven] }); }", 7},
 	// Built from a param, and only `.len()` is read.
-	{"param-built-len-only", "struct R { hs: (() => i32)[] }\nfunction mk(a: (() => i32)[]): R { return R { hs: a }; }\nfunction main(): i32 { var r: R = mk([]); return r.hs.len(); }", 0},
+	{"param-built-len-only", "struct R { hs: (() => i32)[] }\nfunction mk(a: (() => i32)[]): R { return R { hs: a }; }\nfunction main(): i32 { let r: R = mk([]); return r.hs.len(); }", 0},
 }
 
 // TestSelfHostFnArrayFieldConstructionX86_64 — the x86-64 leg, through the production

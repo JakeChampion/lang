@@ -37,12 +37,12 @@ var constAggCases = []struct {
 	// The idiom itself: three nullary constructors, called once each. Zero
 	// allocations, three interned blocks.
 	{"nullary-ctors",
-		`struct TypeI32 { is_char: boolean, width: i32, unsigned: boolean } struct TypeString { tag: i32 } type Type = TypeI32 | TypeString; function t_i32(): Type { return TypeI32 { is_char: false, width: 32, unsigned: false }; } function t_u64(): Type { return TypeI32 { is_char: false, width: 64, unsigned: true }; } function t_str(): Type { return TypeString { tag: 0 }; } function w(t: Type): i32 { match (t) { TypeI32(v) => { return v.width; }, TypeString(_) => { return 7; } } return 0; } function main(): i32 { var a: Type = t_i32(); var b: Type = t_u64(); var c: Type = t_str(); return (w(a) + w(b) + w(c)) % 200; }`,
+		`struct TypeI32 { is_char: boolean, width: i32, unsigned: boolean } struct TypeString { tag: i32 } type Type = TypeI32 | TypeString; function t_i32(): Type { return TypeI32 { is_char: false, width: 32, unsigned: false }; } function t_u64(): Type { return TypeI32 { is_char: false, width: 64, unsigned: true }; } function t_str(): Type { return TypeString { tag: 0 }; } function w(t: Type): i32 { match (t) { TypeI32(v) => { return v.width; }, TypeString(_) => { return 7; } } return 0; } function main(): i32 { let a: Type = t_i32(); let b: Type = t_u64(); let c: Type = t_str(); return (w(a) + w(b) + w(c)) % 200; }`,
 		103, 0, 3},
 	// The allocation contract at scale: 100 calls, still zero allocations. This
 	// is the shape the issue measured (552 calls to one constructor).
 	{"hot-loop-zero-allocs",
-		`struct TypeI32 { is_char: boolean, width: i32, unsigned: boolean } struct TypeString { tag: i32 } type Type = TypeI32 | TypeString; function t_i32(): Type { return TypeI32 { is_char: false, width: 32, unsigned: false }; } function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { var t: Type = t_i32(); match (t) { TypeI32(v) => { acc = (acc + v.width) % 1000; }, TypeString(_) => { acc = acc + 1; } } i = i + 1; } return acc % 100; }`,
+		`struct TypeI32 { is_char: boolean, width: i32, unsigned: boolean } struct TypeString { tag: i32 } type Type = TypeI32 | TypeString; function t_i32(): Type { return TypeI32 { is_char: false, width: 32, unsigned: false }; } function main(): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < 100) { let t: Type = t_i32(); match (t) { TypeI32(v) => { acc = (acc + v.width) % 1000; }, TypeString(_) => { acc = acc + 1; } } i = i + 1; } return acc % 100; }`,
 		0, 0, 1},
 	// INTERNING: the same literal from two constructors is ONE BLOCK, even
 	// though three call sites reference a constant. Without dedup the whole
@@ -55,20 +55,20 @@ var constAggCases = []struct {
 	// the shared block — `r` reads the constant again afterwards and must still
 	// see a=5. p.a*10 + q.a + r.a + (b flags) = 50 + 6 + 5 + 3.
 	{"update-does-not-write-through",
-		`struct P { a: i32, b: boolean } function mk(): P { return P { a: 5, b: true }; } function main(): i32 { var p: P = mk(); var q: P = P { ...p, a: p.a + 1 }; var r: P = mk(); var t: i32 = 0; if (p.b) { t = t + 1; } if (q.b) { t = t + 2; } return (p.a * 10 + q.a + r.a + t) % 200; }`,
+		`struct P { a: i32, b: boolean } function mk(): P { return P { a: 5, b: true }; } function main(): i32 { let p: P = mk(); let q: P = P { ...p, a: p.a + 1 }; let r: P = mk(); let t: i32 = 0; if (p.b) { t = t + 1; } if (q.b) { t = t + 2; } return (p.a * 10 + q.a + r.a + t) % 200; }`,
 		64, 1, 1},
 	// SOUNDNESS at scale: 100k updates threaded off a constant, then the
 	// constant is read again. A single write-through would corrupt `fresh`.
 	// The first update copies the constant; the rest reuse that copy in place.
 	{"churn-does-not-corrupt",
-		`struct P { a: i32, b: i32 } function mk(): P { return P { a: 1, b: 2 }; } function main(): i32 { var p: P = mk(); var i: i32 = 0; while (i < 100000) { p = P { ...p, a: (p.a + p.b) % 977 }; i = i + 1; } var fresh: P = mk(); return (p.a % 100) * 2 + fresh.a * 10 + fresh.b; }`,
+		`struct P { a: i32, b: i32 } function mk(): P { return P { a: 1, b: 2 }; } function main(): i32 { let p: P = mk(); let i: i32 = 0; while (i < 100000) { p = P { ...p, a: (p.a + p.b) % 977 }; i = i + 1; } let fresh: P = mk(); return (p.a % 100) * 2 + fresh.a * 10 + fresh.b; }`,
 		198, 1, 1},
 	// A constant moved into a container: the array owns a pointer to the shared
 	// block, and the exit sweep must not free it (the sentinel is what stops it).
 	// The empty `[]` is a static constant as well; the one allocation is the
 	// first append's.
 	{"constant-into-container",
-		`struct P { a: i32, b: i32 } function mk(): P { return P { a: 5, b: 9 }; } function main(): i32 { var ps: P[] = []; var i: i32 = 0; while (i < 4) { ps = ps.append(mk()); i = i + 1; } var s: i32 = 0; var j: i32 = 0; while (j < ps.len()) { s = s + ps[j].a + ps[j].b; j = j + 1; } return s % 200; }`,
+		`struct P { a: i32, b: i32 } function mk(): P { return P { a: 5, b: 9 }; } function main(): i32 { let ps: P[] = []; let i: i32 = 0; while (i < 4) { ps = ps.append(mk()); i = i + 1; } let s: i32 = 0; let j: i32 = 0; while (j < ps.len()) { s = s + ps[j].a + ps[j].b; j = j + 1; } return s % 200; }`,
 		56, 1, 2},
 	// The constant/REUSE interaction, in the shape the reuse suites test: two
 	// same-block literals where the second would otherwise reuse the first's dead
@@ -86,18 +86,18 @@ var constAggCases = []struct {
 	// 1-valued variable: written as plain literals they would now measure zero
 	// reuse against zero and stop pinning reuse at all.
 	{"reuse-shape-all-constant",
-		`struct P { x: i32, y: i32 } function main(): i32 { var cond: i32 = 1; var r: i32 = 0; if (cond > 0) { var a: P = P { x: 10, y: 20 }; var s: i32 = a.x + a.y; var b: P = P { x: 3, y: 4 }; r = s + b.x + b.y; } return r; }`,
+		`struct P { x: i32, y: i32 } function main(): i32 { let cond: i32 = 1; let r: i32 = 0; if (cond > 0) { let a: P = P { x: 10, y: 20 }; let s: i32 = a.x + a.y; let b: P = P { x: 3, y: 4 }; r = s + b.x + b.y; } return r; }`,
 		37, 0, 2},
 	// A field computed from literals (`0 - 3`) folds to a constant, so the
 	// literal is static too.
 	{"folded-field-admitted",
-		`struct P { a: i32, b: i32 } function mk(): P { return P { a: 0 - 3, b: 0x10 }; } function main(): i32 { var p: P = mk(); return (p.a + p.b + 100) % 200; }`,
+		`struct P { a: i32, b: i32 } function mk(): P { return P { a: 0 - 3, b: 0x10 }; } function main(): i32 { let p: P = mk(); return (p.a + p.b + 100) % 200; }`,
 		113, 0, 1},
 	// NOT admitted: a wide (i64) field. The static block writes one word per
 	// field, so a field whose box slot is 8 bytes of a different kind stays on
 	// struct_make until the encoding widens.
 	{"wide-field-not-admitted",
-		`struct W { n: i64, k: i32 } function mk(): W { return W { n: 5000000000, k: 3 }; } function main(): i32 { var w: W = mk(); if (w.n > 4000000000) { return w.k + 10; } return 0; }`,
+		`struct W { n: i64, k: i32 } function mk(): W { return W { n: 5000000000, k: 3 }; } function main(): i32 { let w: W = mk(); if (w.n > 4000000000) { return w.k + 10; } return 0; }`,
 		13, 1, 0},
 }
 

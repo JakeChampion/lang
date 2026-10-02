@@ -16,8 +16,8 @@ import (
 func TestArrayIndexZeroExtendsIndex(t *testing.T) {
 	asm := compile(t, `
 function main(): i32 {
-    var a: i32[] = [10, 20, 30];
-    var i: i32 = 1;
+    let a: i32[] = [10, 20, 30];
+    let i: i32 = 1;
     return a[i];
 }`, Options{})
 	if !strings.Contains(asm, "mov w0, w0") {

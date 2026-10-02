@@ -45,7 +45,7 @@ function test_bad_base(): test.TestOutcome {
 
 function test_round_trip(): test.TestOutcome {
   // to_string_radix then parse_int_radix at the same base recovers n.
-  var s: string = 1234567.to_string_radix(36);
+  let s: string = 1234567.to_string_radix(36);
   match (s.parse_int_radix(36)) {
     Some(v) => {
       return test.assert_true(v == 1234567);
@@ -57,7 +57,7 @@ function test_round_trip(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("std/i32 to_string_radix");
+  let r: test.TestRunner = test.test_new("std/i32 to_string_radix");
   r = r.it("hex", test_hex);
   r = r.it("binary", test_binary);
   r = r.it("octal", test_octal);

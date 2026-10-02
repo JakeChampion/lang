@@ -21,8 +21,8 @@ import "./parser";
 import "./asmcore";
 import "./util";
 function main(): i32 {
-    var src: string = %s;
-    var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
+    let src: string = %s;
+    let mod: parser.Module = parser.parse_module(lexer.tokenize(src));
     print(util.format_diags(asmcore.parse_unknown_errors_module(mod)));
     return 0;
 }
@@ -47,13 +47,13 @@ var parseErrPosCases = []struct {
 	// the recovery that advances PAST the offending token so parse_program
 	// cannot spin, so it is the one case where reading the cursor at the
 	// plant site names the token AFTER the mistake.
-	{"missing-init-expression", "function main(): i32 {\n  var x: i32 = ;\n  return 0;\n}\n"},
+	{"missing-init-expression", "function main(): i32 {\n  let x: i32 = ;\n  return 0;\n}\n"},
 	// A statement sentinel: parse_stmt gives up on the `if` header and plants
 	// a StmtUnknown, which carried no position at all before #2849/SH-041.
 	{"if-without-paren", "function main(): i32 {\n  if x > 1) { return 1; }\n  return 0;\n}\n"},
 	// A sentinel planted from a nested position — the diagnostic has to
 	// survive the walk down through the enclosing statement.
-	{"nested-bad-punct", "function main(): i32 {\n  while (true) {\n    var y: i32 = @;\n  }\n  return 0;\n}\n"},
+	{"nested-bad-punct", "function main(): i32 {\n  while (true) {\n    let y: i32 = @;\n  }\n  return 0;\n}\n"},
 }
 
 // TestSelfHostParseErrorPositions pins SH-041 (tracking #2849): a
@@ -145,7 +145,7 @@ func stageParseProbeTree(t *testing.T) string {
 //
 // The essential rows are the punct:; pair. A bare `return;` parses to the
 // sentinel ExprUnknown("punct:;") in the return's value slot and is exempt
-// there — and ONLY there: `var x: i32 = ;` plants the SAME sentinel in an
+// there — and ONLY there: `let x: i32 = ;` plants the SAME sentinel in an
 // init slot and must stay diagnosed, and `return 1 + ;` plants it nested
 // INSIDE the return's value where it must also stay diagnosed. A collector
 // that exempts the sentinel by kind alone, position-independent, passes every
@@ -165,7 +165,7 @@ func TestSelfHostParseUnknownDiagSequence(t *testing.T) {
 			"function f(): void {\n  return;\n}\nfunction main(): i32 {\n  f();\n  return 0;\n}\n",
 			""},
 		{"var-init-sentinel",
-			"function main(): i32 {\n  var x: i32 = ;\n  return 0;\n}\n",
+			"function main(): i32 {\n  let x: i32 = ;\n  return 0;\n}\n",
 			"error[P001]: in fn 'main': parser-side unknown: punct:; (2:16)"},
 		{"sentinel-nested-in-return",
 			"function main(): i32 {\n  return 1 + ;\n}\n",
@@ -174,7 +174,7 @@ func TestSelfHostParseUnknownDiagSequence(t *testing.T) {
 		// parse_unknown_errors_module's own loop order — with a multi-error
 		// function reporting in source order. Count and order both pinned.
 		{"multi-error-two-fns-and-toplevel",
-			"var g: i32 = ;\nfunction a(): i32 {\n  var x: i32 = ;\n  var y: i32 = @;\n  return 0;\n}\nfunction b(): i32 {\n  if x > 1) { return 1; }\n  return 1 + ;\n}\nfunction main(): i32 {\n  return a() + b() + g;\n}\n",
+			"let g: i32 = ;\nfunction a(): i32 {\n  let x: i32 = ;\n  let y: i32 = @;\n  return 0;\n}\nfunction b(): i32 {\n  if x > 1) { return 1; }\n  return 1 + ;\n}\nfunction main(): i32 {\n  return a() + b() + g;\n}\n",
 			"error[P001]: in fn 'a': parser-side unknown: punct:; (3:16)\n" +
 				"error[P001]: in fn 'a': parser-side unknown: punct:@ (4:16)\n" +
 				"error[P001]: in fn 'b': parser-side unknown: stmt: missing ( in if (8:6)\n" +
@@ -191,7 +191,7 @@ func TestSelfHostParseUnknownDiagSequence(t *testing.T) {
 		// until the braced arrow-lambda body became a function body (#8593) was
 		// inside the following `return`.
 		{"lambda-body-sentinel",
-			"function main(): i32 {\n  var f = (): i32 => { var z: i32 = ;; return 0; };\n  return f();\n}\n",
+			"function main(): i32 {\n  let f = (): i32 => { let z: i32 = ;; return 0; };\n  return f();\n}\n",
 			"error[P001]: in fn 'main': parser-side unknown: punct:; (2:37)"},
 		// A sentinel in a parameter DEFAULT. Defaults hang off the
 		// declaration, not off any statement, so neither the body walk nor the
@@ -220,7 +220,7 @@ func TestSelfHostParseUnknownDiagSequence(t *testing.T) {
 			""},
 		// The one shape that maps to P002 rather than P001 (#6842).
 		{"float-range-p002",
-			"function main(): i32 {\n  var big: f64 = 1e999;\n  return 0;\n}\n",
+			"function main(): i32 {\n  let big: f64 = 1e999;\n  return 0;\n}\n",
 			"error[P002]: in fn 'main': invalid float literal \"1e999\": value out of range (2:18)"},
 		// The nameless-function P001 raised by parse_unknown_errors_module
 		// itself, before any walk, and nothing after it: the parser skips the

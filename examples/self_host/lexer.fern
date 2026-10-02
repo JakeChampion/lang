@@ -125,7 +125,7 @@ function is_suffix_start(b: i32): boolean {  // 'i' 'u' 'f'
 // Inlined as a string-comparison chain instead of a Map[string, bool]
 // so the lexer stays a single file with no init-order dependency.
 function is_keyword(name: string): boolean {
-  return name == "function" || name == "var" || name == "let"
+  return name == "function" || name == "let"
     || name == "use" || name == "if" || name == "else"
     || name == "while" || name == "for" || name == "loop" || name == "break"
     || name == "continue" || name == "return"
@@ -166,17 +166,17 @@ function match_multipunct(src: string, i: i32, n: i32): string {
   if (i >= n) {
     return "";
   }
-  var b0: i32 = src[i] as i32;
-  var b1: i32 = 0 - 1;
+  let b0: i32 = src[i] as i32;
+  let b1: i32 = 0 - 1;
   if (i + 1 < n) {
     b1 = src[i + 1] as i32;
   }
-  var b2: i32 = 0 - 1;
+  let b2: i32 = 0 - 1;
   if (i + 2 < n) {
     b2 = src[i + 2] as i32;
   }
   if (i + 3 <= n) {
-    var hit3: boolean = false;
+    let hit3: boolean = false;
     if (b0 == 60 && b1 == 60 && (b2 == 61 || b2 == 124 || b2 == 63)) {  // <<= <<| <<?
       hit3 = true;
     } else if (b0 == 62 && b1 == 62 && (b2 == 61 || b2 == 63)) {  // >>= >>?
@@ -189,7 +189,7 @@ function match_multipunct(src: string, i: i32, n: i32): string {
     }
   }
   if (i + 2 <= n) {
-    var hit2: boolean = false;
+    let hit2: boolean = false;
     if (b1 == 61) {  // == != <= >= += -= *= /= %= &= |= ^=
       hit2 = b0 == 61 || b0 == 33 || b0 == 60 || b0 == 62
         || b0 == 43 || b0 == 45 || b0 == 42 || b0 == 47
@@ -236,7 +236,7 @@ pub struct Comment { line: i32, col: i32, text: string, trailing: boolean }
 // Comment outlives the scan.
 // code_before: does anything but whitespace precede src[i] on its line?
 function code_before(src: string, i: i32): boolean {
-  var j: i32 = i - 1;
+  let j: i32 = i - 1;
   while (j >= 0 && src[j] != b'\n') {
     if (src[j] != b' ' && src[j] != b'\t' && src[j] != b'\r' && src[j] != 11u8 && src[j] != 12u8) {
       return true;
@@ -276,9 +276,9 @@ function (l: Lex) advance(): Lex {
   if (l.i >= l.n) {
     return l;
   }
-  var b: i32 = l.src[l.i] as i32;
-  var new_line: i32 = l.line;
-  var new_col: i32 = l.col;
+  let b: i32 = l.src[l.i] as i32;
+  let new_line: i32 = l.line;
+  let new_col: i32 = l.col;
   if (b == 10) {
     new_line = new_line + 1;
     new_col = 1;
@@ -298,9 +298,9 @@ function (l: Lex) advance_to(end: i32): Lex {
   if (end <= l.i) {
     return l;
   }
-  var i: i32 = l.i;
-  var new_line: i32 = l.line;
-  var new_col: i32 = l.col;
+  let i: i32 = l.i;
+  let new_line: i32 = l.line;
+  let new_col: i32 = l.col;
   while (i < end) {
     if (l.src[i] == b'\n') {
       new_line = new_line + 1;
@@ -320,9 +320,9 @@ function (l: Lex) advance_to(end: i32): Lex {
 // path has no consumer for them.
 function skip_trivia(l: Lex, acc: Comment[], keep: boolean): TrivResult {
   while (!l.at_end()) {
-    var b: i32 = l.peek_byte();
+    let b: i32 = l.peek_byte();
     if (is_space(b)) {
-      var we: i32 = l.i;
+      let we: i32 = l.i;
       while (we < l.n && is_space(l.src[we] as i32)) {
         we = we + 1;
       }
@@ -333,10 +333,10 @@ function skip_trivia(l: Lex, acc: Comment[], keep: boolean): TrivResult {
       // `//` line comment — consume to newline (newline
       // itself is left for the next iteration's whitespace
       // path so line tracking stays simple).
-      var c_line: i32 = l.line;
-      var c_col: i32 = l.col;
-      var body: i32 = l.i + 2;
-      var ce: i32 = body;
+      let c_line: i32 = l.line;
+      let c_col: i32 = l.col;
+      let body: i32 = l.i + 2;
+      let ce: i32 = body;
       while (ce < l.n && l.src[ce] != b'\n') {
         ce = ce + 1;
       }
@@ -361,7 +361,7 @@ struct NumResult { lex: Lex, tok: Token }
 // fires reliably in return position, so each tok-* helper
 // upgrades a concrete struct into a Token. Callers just write
 // `eof_tok(line, col)` instead of declaring an intermediate
-// `var t: Token = TokEof { … };`. Mirrors the Rust `From` impls
+// `let t: Token = TokEof { … };`. Mirrors the Rust `From` impls
 // you'd write on top of a sum type.
 pub function eof_tok(line: i32, col: i32): Token {
   return TokEof { line: line, col: col };
@@ -420,10 +420,10 @@ function offset_col(base_col: i32, line: i32, col: i32): i32 {
 // rebase_parts renumbers an f-string's interpolant positions, which
 // are relative to the fragment the parts were lexed from.
 function rebase_parts(parts: FStringPart[], base_line: i32, base_col: i32): FStringPart[] {
-  var out: FStringPart[] = [];
-  var i: i32 = 0;
+  let out: FStringPart[] = [];
+  let i: i32 = 0;
   while (i < parts.len()) {
-    var p: FStringPart = parts[i];
+    let p: FStringPart = parts[i];
     if (p.is_expr) {
       out = out.append(FStringPart {
         lit: p.lit, expr: p.expr, is_expr: true,
@@ -443,10 +443,10 @@ function rebase_parts(parts: FStringPart[], base_line: i32, base_col: i32): FStr
 // so tokenize numbers them from 1:1 and every diagnostic against the
 // resulting AST would otherwise land at the start of the file.
 pub function rebase_tokens(toks: Token[], base_line: i32, base_col: i32): Token[] {
-  var out: Token[] = [];
-  var i: i32 = 0;
+  let out: Token[] = [];
+  let i: i32 = 0;
   while (i < toks.len()) {
-    var t: Token = toks[i];
+    let t: Token = toks[i];
     match (t) {
       TokEof(x) => {
         out = out.append(eof_tok(offset_line(base_line, x.line), offset_col(base_col, x.line, x.col)));
@@ -484,7 +484,7 @@ pub function rebase_tokens(toks: Token[], base_line: i32, base_col: i32): Token[
 // lexer keeps to built-ins and imports nothing (the
 // parser imports this module that way).
 function is_blank_range(s: string): boolean {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < s.len()) {
     if (!is_space(s[i] as i32)) {
       return false;
@@ -510,7 +510,7 @@ pub function is_error_tok(t: Token): boolean {
 }
 
 pub function has_error(toks: Token[]): boolean {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < toks.len()) {
     if (is_error_tok(toks[i])) {
       return true;
@@ -527,8 +527,8 @@ pub function has_error(toks: Token[]): boolean {
 // upgrades below are suppressed. Mirrors the Go lexer's
 // `l.afterDot` guard.
 function scan_number(l: Lex, after_dot: boolean, start_line: i32, start_col: i32): NumResult {
-  var begin: i32 = l.i;
-  var is_hex: boolean = false;
+  let begin: i32 = l.i;
+  let is_hex: boolean = false;
   // `0x` / `0X` hex integer literal: consume hex digits, skip the
   // float (fractional / exponent) upgrades. A bare `0x` with no
   // following hex digit is an error, not a silent `0` + `x` ident.
@@ -536,8 +536,8 @@ function scan_number(l: Lex, after_dot: boolean, start_line: i32, start_col: i32
     && (l.src[l.i + 1] == b'x' || l.src[l.i + 1] == b'X')) {
     is_hex = true;
     l = l.advance_to(l.i + 2);  // '0' then 'x' / 'X'
-    var hex_start: i32 = l.i;
-    var he: i32 = l.i;
+    let hex_start: i32 = l.i;
+    let he: i32 = l.i;
     while (he < l.n && is_hex_digit(l.src[he] as i32)) {
       he = he + 1;
     }
@@ -549,19 +549,19 @@ function scan_number(l: Lex, after_dot: boolean, start_line: i32, start_col: i32
     // `0o` octal / `0b` binary integer literal: no float upgrades either.
     return scan_radix_number(l, radix_prefix(l.src, l.i, l.n), start_line, start_col);
   } else {
-    var de: i32 = l.i;
+    let de: i32 = l.i;
     while (de < l.n && is_digit(l.src[de] as i32)) {
       de = de + 1;
     }
     l = l.advance_to(de);
   }
-  var is_float: boolean = false;
+  let is_float: boolean = false;
   // Fractional part: `.<digit>+`. Suppressed for hex and right
   // after a `.` (chained tuple index).
   if (!is_hex && !after_dot && l.i + 1 < l.n && l.src[l.i] == b'.' && is_digit(l.src[l.i + 1] as i32)) {
     is_float = true;
     l = l.advance_to(l.i + 1);  // consume `.`
-    var fe: i32 = l.i;
+    let fe: i32 = l.i;
     while (fe < l.n && is_digit(l.src[fe] as i32)) {
       fe = fe + 1;
     }
@@ -573,7 +573,7 @@ function scan_number(l: Lex, after_dot: boolean, start_line: i32, start_col: i32
   // sign — a bare `1e` / `1efoo` leaves the `e` for the next token.
   if (!is_hex && !after_dot && !l.at_end()
     && (l.peek_byte() == 101 || l.peek_byte() == 69)) {  // 'e' / 'E'
-    var j: i32 = l.i + 1;
+    let j: i32 = l.i + 1;
     if (j < l.n && (l.src[j] == b'+' || l.src[j] == b'-')) {
       j = j + 1;
     }
@@ -583,24 +583,24 @@ function scan_number(l: Lex, after_dot: boolean, start_line: i32, start_col: i32
       if (!l.at_end() && (l.peek_byte() == 43 || l.peek_byte() == 45)) {
         l = l.advance_to(l.i + 1);  // sign
       }
-      var ee: i32 = l.i;
+      let ee: i32 = l.i;
       while (ee < l.n && is_digit(l.src[ee] as i32)) {
         ee = ee + 1;
       }
       l = l.advance_to(ee);
     }
   }
-  var text: str = slice_unchecked(l.src, begin, l.i);
+  let text: str = slice_unchecked(l.src, begin, l.i);
   // Optional typed suffix: i32/i64/u8/u32/u64/f32/f64.
   // The suffix character set is a closed list, so misspellings
   // like `42i33` / a truncated `42i` fail here rather than
   // partially consuming. An integer suffix on a float literal
   // (`1.5i32`) is likewise an error.
-  var suffix: string = "";
+  let suffix: string = "";
   if (!l.at_end() && is_suffix_start(l.peek_byte())) {
-    var s_begin: i32 = l.i;
+    let s_begin: i32 = l.i;
     l = l.advance_to(l.i + 1);
-    var se: i32 = l.i;
+    let se: i32 = l.i;
     while (se < l.n && is_digit(l.src[se] as i32)) {
       se = se + 1;
     }
@@ -619,7 +619,7 @@ function scan_number(l: Lex, after_dot: boolean, start_line: i32, start_col: i32
   if (!is_float && suffix.len() > 0 && suffix[0] == b'f') {
     is_float = true;
   }
-  var tok: Token = number_tok(text, suffix, is_float, start_line, start_col);
+  let tok: Token = number_tok(text, suffix, is_float, start_line, start_col);
   return NumResult { lex: l, tok: tok };
 }
 
@@ -629,7 +629,7 @@ function radix_prefix(src: string, i: i32, n: i32): i32 {
   if (src[i] != b'0' || i + 1 >= n) {
     return 0;
   }
-  var c: u8 = src[i + 1];
+  let c: u8 = src[i + 1];
   if (c == b'o' || c == b'O') {
     return 8;
   }
@@ -644,12 +644,12 @@ function radix_prefix(src: string, i: i32, n: i32): i32 {
 // `raw` the spelling as written, suffix included, for the printer. A value
 // past 64 bits keeps growing the hex digits, so the range checks still see it.
 function scan_radix_number(l0: Lex, base: i32, start_line: i32, start_col: i32): NumResult {
-  var l: Lex = l0;
-  var begin: i32 = l.i;
-  var prefix: string = slice_unchecked(l.src, l.i, l.i + 2) + "";
+  let l: Lex = l0;
+  let begin: i32 = l.i;
+  let prefix: string = slice_unchecked(l.src, l.i, l.i + 2) + "";
   l = l.advance_to(l.i + 2);
-  var digits: i32[] = [];
-  var e: i32 = l.i;
+  let digits: i32[] = [];
+  let e: i32 = l.i;
   while (e < l.n && is_digit(l.src[e] as i32) && l.src[e] as i32 - 48 < base) {
     digits = digits.append(l.src[e] as i32 - 48);
     e = e + 1;
@@ -661,11 +661,11 @@ function scan_radix_number(l0: Lex, base: i32, start_line: i32, start_col: i32):
   if (!l.at_end() && is_digit(l.peek_byte())) {
     return NumResult { lex: l, tok: error_tok("invalid digit in a " + prefix + " literal", start_line, start_col) };
   }
-  var suffix: string = "";
+  let suffix: string = "";
   if (!l.at_end() && is_suffix_start(l.peek_byte())) {
-    var s_begin: i32 = l.i;
+    let s_begin: i32 = l.i;
     l = l.advance_to(l.i + 1);
-    var se: i32 = l.i;
+    let se: i32 = l.i;
     while (se < l.n && is_digit(l.src[se] as i32)) {
       se = se + 1;
     }
@@ -675,22 +675,22 @@ function scan_radix_number(l0: Lex, base: i32, start_line: i32, start_col: i32):
       return NumResult { lex: l, tok: error_tok("unknown numeric suffix", start_line, start_col) };
     }
   }
-  var raw: string = slice_unchecked(l.src, begin, l.i) + "";
+  let raw: string = slice_unchecked(l.src, begin, l.i) + "";
   return NumResult { lex: l, tok: TokNumber { text: radix_digits_hex(digits, base), suffix: suffix, raw: raw, is_float: false, line: start_line, col: start_col } };
 }
 
 // radix_digits_hex renders base-`base` digits (most significant first) as a
 // `0x` literal, by repeated division of the digit string by 16.
 function radix_digits_hex(digits: i32[], base: i32): string {
-  var cur: i32[] = digits;
-  var hex: string = "";
-  var hexch: string = "0123456789abcdef";
+  let cur: i32[] = digits;
+  let hex: string = "";
+  let hexch: string = "0123456789abcdef";
   while (cur.len() > 0) {
-    var next: i32[] = [];
-    var rem: i32 = 0;
+    let next: i32[] = [];
+    let rem: i32 = 0;
     for d in cur {
-      var acc: i32 = rem * base + d;
-      var q: i32 = acc / 16;
+      let acc: i32 = rem * base + d;
+      let q: i32 = acc / 16;
       rem = acc % 16;
       if (next.len() > 0 || q != 0) {
         next = next.append(q);
@@ -704,7 +704,7 @@ function radix_digits_hex(digits: i32[], base: i32): string {
 
 // ident_end returns the offset just past the identifier run starting at l.i.
 function ident_end(l: Lex): i32 {
-  var e: i32 = l.i;
+  let e: i32 = l.i;
   while (e < l.n && is_alnum(l.src[e] as i32)) {
     e = e + 1;
   }
@@ -753,7 +753,7 @@ function apply_escape(l: Lex, esc: i32): EscResult {
     if (l.i + 1 >= l.n || !is_hex_digit(l.src[l.i] as i32) || !is_hex_digit(l.src[l.i + 1] as i32)) {
       return EscResult { lex: l, frag: "", hexerr: true, unknown: false };
     }
-    var b: i32 = hex_val(l.src[l.i] as i32) * 16 + hex_val(l.src[l.i + 1] as i32);
+    let b: i32 = hex_val(l.src[l.i] as i32) * 16 + hex_val(l.src[l.i + 1] as i32);
     l = l.advance();
     l = l.advance();
     return EscResult { lex: l, frag: string_from_bytes_unchecked([b as u8]), hexerr: false, unknown: false };
@@ -769,13 +769,13 @@ function dec_str(v: i32): string {
   if (v == 0) {
     return "0";
   }
-  var rev: u8[] = [];
+  let rev: u8[] = [];
   while (v > 0) {
     rev = rev.append((48 + v % 10) as u8);
     v = v / 10;
   }
-  var out: string = "";
-  var i: i32 = rev.len() - 1;
+  let out: string = "";
+  let i: i32 = rev.len() - 1;
   while (i >= 0) {
     out = out + string_from_bytes_unchecked([rev[i]]);
     i = i - 1;
@@ -789,12 +789,12 @@ function dec_str(v: i32): string {
 struct Utf8 { val: i32, len: i32 }
 
 function decode_utf8(src: string, i: i32, n: i32): Utf8 {
-  var b0: i32 = src[i] as i32;
+  let b0: i32 = src[i] as i32;
   if (b0 < 128) {
     return Utf8 { val: b0, len: 1 };
   }
-  var need: i32 = 0;
-  var val: i32 = 0;
+  let need: i32 = 0;
+  let val: i32 = 0;
   if (b0 >= 240 && b0 < 248) {
     need = 3;
     val = b0 & 7;
@@ -810,9 +810,9 @@ function decode_utf8(src: string, i: i32, n: i32): Utf8 {
   if (i + need >= n) {
     return Utf8 { val: 0, len: 0 };
   }
-  var k: i32 = 1;
+  let k: i32 = 1;
   while (k <= need) {
-    var c: i32 = src[i + k] as i32;
+    let c: i32 = src[i + k] as i32;
     if (c < 128 || c >= 192) {
       return Utf8 { val: 0, len: 0 };
     }
@@ -838,7 +838,7 @@ function quoted_escape(l: Lex, is_byte: boolean): EscVal {
   if (l.at_end()) {
     return EscVal { lex: l, val: 0, err: "unterminated quoted literal" };
   }
-  var esc: i32 = l.peek_byte();
+  let esc: i32 = l.peek_byte();
   l = l.advance();
   if (esc == 110) {
     return EscVal { lex: l, val: 10, err: "" };
@@ -865,7 +865,7 @@ function quoted_escape(l: Lex, is_byte: boolean): EscVal {
     if (l.i + 1 >= l.n || !is_hex_digit(l.src[l.i] as i32) || !is_hex_digit(l.src[l.i + 1] as i32)) {
       return EscVal { lex: l, val: 0, err: "\\x escape needs two hex digits" };
     }
-    var v: i32 = hex_val(l.src[l.i] as i32) * 16 + hex_val(l.src[l.i + 1] as i32);
+    let v: i32 = hex_val(l.src[l.i] as i32) * 16 + hex_val(l.src[l.i + 1] as i32);
     l = l.advance();
     l = l.advance();
     if (!is_byte && v > 127) {
@@ -881,8 +881,8 @@ function quoted_escape(l: Lex, is_byte: boolean): EscVal {
       return EscVal { lex: l, val: 0, err: "\\u escape needs braces: \\u{1F600}" };
     }
     l = l.advance();  // {
-    var digits: i32 = 0;
-    var uv: i32 = 0;
+    let digits: i32 = 0;
+    let uv: i32 = 0;
     while (!l.at_end() && is_hex_digit(l.peek_byte())) {
       if (digits == 6) {
         return EscVal { lex: l, val: 0, err: "\\u{...} takes at most 6 hex digits" };
@@ -912,7 +912,7 @@ function quoted_escape(l: Lex, is_byte: boolean): EscVal {
 // closing_quote_ahead separates a too-long literal (`'ab'`) from an
 // unterminated one (`'ab`) so each error names its own problem.
 function closing_quote_ahead(l: Lex): boolean {
-  var j: i32 = l.i;
+  let j: i32 = l.i;
   while (j < l.n && l.src[j] != b'\n') {
     if (l.src[j] == b'\'') {
       return true;
@@ -929,9 +929,9 @@ function closing_quote_ahead(l: Lex): boolean {
 // non-ASCII `b'é'`, and an unterminated one. Mirrors scanQuoted in
 // internal/lexer/lexer.go.
 function scan_quoted(l: Lex, is_byte: boolean, start_line: i32, start_col: i32): NumResult {
-  var begin: i32 = l.i;
-  var kind_name: string = "character";
-  var suffix: string = "char";
+  let begin: i32 = l.i;
+  let kind_name: string = "character";
+  let suffix: string = "char";
   if (is_byte) {
     kind_name = "byte";
     suffix = "u8";
@@ -941,7 +941,7 @@ function scan_quoted(l: Lex, is_byte: boolean, start_line: i32, start_col: i32):
   if (l.at_end()) {
     return NumResult { lex: l, tok: error_tok("unterminated " + kind_name + " literal", start_line, start_col) };
   }
-  var c: i32 = l.peek_byte();
+  let c: i32 = l.peek_byte();
   if (c == 39) {
     l = l.advance();
     return NumResult { lex: l, tok: error_tok("empty " + kind_name + " literal", start_line, start_col) };
@@ -949,9 +949,9 @@ function scan_quoted(l: Lex, is_byte: boolean, start_line: i32, start_col: i32):
   if (c == 10) {
     return NumResult { lex: l, tok: error_tok("newline inside " + kind_name + " literal", start_line, start_col) };
   }
-  var val: i32 = 0;
+  let val: i32 = 0;
   if (c == 92) {
-    var ev: EscVal = quoted_escape(l, is_byte);
+    let ev: EscVal = quoted_escape(l, is_byte);
     l = ev.lex;
     if (ev.err.len() > 0) {
       return NumResult { lex: l, tok: error_tok(ev.err, start_line, start_col) };
@@ -964,7 +964,7 @@ function scan_quoted(l: Lex, is_byte: boolean, start_line: i32, start_col: i32):
     val = c;
     l = l.advance();
   } else {
-    var u: Utf8 = decode_utf8(l.src, l.i, l.n);
+    let u: Utf8 = decode_utf8(l.src, l.i, l.n);
     if (u.len == 0) {
       return NumResult { lex: l, tok: error_tok("invalid UTF-8 byte in character literal", start_line, start_col) };
     }
@@ -989,9 +989,9 @@ function scan_quoted(l: Lex, is_byte: boolean, start_line: i32, start_col: i32):
 // lexer's error shapes.
 function scan_string(l: Lex, start_line: i32, start_col: i32): NumResult {
   l = l.advance();  // opening "
-  var out: string = "";
+  let out: string = "";
   while (!l.at_end() && l.peek_byte() != 34) {
-    var c: i32 = l.peek_byte();
+    let c: i32 = l.peek_byte();
     if (c == 10) {
       return NumResult { lex: l, tok: error_tok("newline inside string literal", start_line, start_col) };
     }
@@ -1000,9 +1000,9 @@ function scan_string(l: Lex, start_line: i32, start_col: i32): NumResult {
       if (l.at_end()) {
         return NumResult { lex: l, tok: error_tok("unterminated string literal", start_line, start_col) };
       }
-      var esc: i32 = l.peek_byte();
+      let esc: i32 = l.peek_byte();
       l = l.advance();
-      var er: EscResult = apply_escape(l, esc);
+      let er: EscResult = apply_escape(l, esc);
       l = er.lex;
       if (er.hexerr) {
         return NumResult { lex: l, tok: error_tok("\\x escape needs two hex digits", start_line, start_col) };
@@ -1015,7 +1015,7 @@ function scan_string(l: Lex, start_line: i32, start_col: i32): NumResult {
     }
     // Copy the run of plain bytes up to the next `"` / `\` / newline
     // whole — a per-byte slice would split multibyte characters.
-    var re: i32 = l.i;
+    let re: i32 = l.i;
     while (re < l.n && l.src[re] != b'"' && l.src[re] != 92 && l.src[re] != b'\n') {
       re = re + 1;
     }
@@ -1047,11 +1047,11 @@ function scan_string(l: Lex, start_line: i32, start_col: i32): NumResult {
 // failure shapes surface a TokError.
 function scan_fstring(l: Lex, start_line: i32, start_col: i32): NumResult {
   l = l.advance();  // opening "
-  var lit: string = "";
-  var have_lit: boolean = false;
-  var parts: FStringPart[] = [];
+  let lit: string = "";
+  let have_lit: boolean = false;
+  let parts: FStringPart[] = [];
   while (!l.at_end()) {
-    var c: i32 = l.peek_byte();
+    let c: i32 = l.peek_byte();
     if (c == 34) {  // closing "
       l = l.advance();
       if (have_lit) {
@@ -1067,9 +1067,9 @@ function scan_fstring(l: Lex, start_line: i32, start_col: i32): NumResult {
       if (l.at_end()) {
         return NumResult { lex: l, tok: error_tok("unterminated f-string literal", start_line, start_col) };
       }
-      var esc: i32 = l.peek_byte();
+      let esc: i32 = l.peek_byte();
       l = l.advance();
-      var fer: EscResult = apply_escape(l, esc);
+      let fer: EscResult = apply_escape(l, esc);
       l = fer.lex;
       if (fer.hexerr) {
         return NumResult { lex: l, tok: error_tok("\\x escape needs two hex digits", start_line, start_col) };
@@ -1099,12 +1099,12 @@ function scan_fstring(l: Lex, start_line: i32, start_col: i32): NumResult {
       // bump the depth; a string literal inside the interpolant
       // is skipped wholesale so its quotes / braces don't move
       // the boundary.
-      var expr_start: i32 = l.i;
-      var expr_line: i32 = l.line;
-      var expr_col: i32 = l.col;
-      var depth: i32 = 1;
+      let expr_start: i32 = l.i;
+      let expr_line: i32 = l.line;
+      let expr_col: i32 = l.col;
+      let depth: i32 = 1;
       while (!l.at_end() && depth > 0) {
-        var d: i32 = l.peek_byte();
+        let d: i32 = l.peek_byte();
         if (d == 123) {
           depth = depth + 1;
         } else if (d == 125) {
@@ -1134,7 +1134,7 @@ function scan_fstring(l: Lex, start_line: i32, start_col: i32): NumResult {
       if (depth != 0) {
         return NumResult { lex: l, tok: error_tok("unterminated `{` in f-string", start_line, start_col) };
       }
-      var expr_text: str = slice_unchecked(l.src, expr_start, l.i);
+      let expr_text: str = slice_unchecked(l.src, expr_start, l.i);
       l = l.advance();  // closing }
       if (is_blank_range(expr_text)) {
         return NumResult { lex: l, tok: error_tok("empty `{}` in f-string", start_line, start_col) };
@@ -1154,7 +1154,7 @@ function scan_fstring(l: Lex, start_line: i32, start_col: i32): NumResult {
     }
     // Copy the run of plain bytes up to the next `"` / `\` / newline /
     // brace whole — a per-byte slice would split multibyte characters.
-    var le: i32 = l.i;
+    let le: i32 = l.i;
     while (le < l.n && l.src[le] != b'"' && l.src[le] != 92 && l.src[le] != b'\n'
       && l.src[le] != b'{' && l.src[le] != b'}') {
       le = le + 1;
@@ -1187,30 +1187,30 @@ pub function tokenize_full(src: string): LexResult {
 }
 
 function tokenize_impl(src: string, keep: boolean, first_line: i32): LexResult {
-  var l: Lex = Lex { src: src, i: 0, n: src.len(), line: first_line, col: 1 };
-  var out: Token[] = [];
-  var comments: Comment[] = [];
+  let l: Lex = Lex { src: src, i: 0, n: src.len(), line: first_line, col: 1 };
+  let out: Token[] = [];
+  let comments: Comment[] = [];
   // Tracks whether the previously-emitted token was a `.` punct,
   // so the number scanner can suppress the chained-tuple float
   // upgrade (`t.1.0`). Mirrors the Go lexer's `l.afterDot`.
-  var after_dot: boolean = false;
+  let after_dot: boolean = false;
   while (true) {
-    var tr: TrivResult = skip_trivia(l, comments, keep);
+    let tr: TrivResult = skip_trivia(l, comments, keep);
     l = tr.lex;
     comments = tr.comments;
     if (l.at_end()) {
       out = out.append(TokEof { line: l.line, col: l.col });
       return LexResult { tokens: out, comments: comments };
     }
-    var start_line: i32 = l.line;
-    var start_col: i32 = l.col;
-    var b: i32 = l.peek_byte();
+    let start_line: i32 = l.line;
+    let start_col: i32 = l.col;
+    let b: i32 = l.peek_byte();
     // f-string `f"..."` — checked before the identifier path so
     // the leading `f` isn't consumed as an ident. Mirrors the
     // Go lexer's first-branch f-string detection.
     if (b == 102 && l.i + 1 < l.n && l.src[l.i + 1] == b'"') {
       l = l.advance();  // consume `f`
-      var rf = scan_fstring(l, start_line, start_col);
+      let rf = scan_fstring(l, start_line, start_col);
       l = rf.lex;
       out = out.append(rf.tok);
       if (is_error_tok(rf.tok)) {
@@ -1224,7 +1224,7 @@ function tokenize_impl(src: string, keep: boolean, first_line: i32): LexResult {
     // identifier, and no valid program has one immediately followed
     // by a `'`.
     if (b == 98 && l.i + 1 < l.n && l.src[l.i + 1] == b'\'') {
-      var rb = scan_quoted(l, true, start_line, start_col);
+      let rb = scan_quoted(l, true, start_line, start_col);
       l = rb.lex;
       out = out.append(rb.tok);
       if (is_error_tok(rb.tok)) {
@@ -1234,7 +1234,7 @@ function tokenize_impl(src: string, keep: boolean, first_line: i32): LexResult {
       continue;
     }
     if (b == 39) {  // '
-      var rc = scan_quoted(l, false, start_line, start_col);
+      let rc = scan_quoted(l, false, start_line, start_col);
       l = rc.lex;
       out = out.append(rc.tok);
       if (is_error_tok(rc.tok)) {
@@ -1244,7 +1244,7 @@ function tokenize_impl(src: string, keep: boolean, first_line: i32): LexResult {
       continue;
     }
     if (is_digit(b)) {
-      var rn = scan_number(l, after_dot, start_line, start_col);
+      let rn = scan_number(l, after_dot, start_line, start_col);
       l = rn.lex;
       out = out.append(rn.tok);
       if (is_error_tok(rn.tok)) {
@@ -1254,15 +1254,15 @@ function tokenize_impl(src: string, keep: boolean, first_line: i32): LexResult {
       continue;
     }
     if (is_alpha(b)) {
-      var e: i32 = ident_end(l);
-      var tok: Token = ident_or_keyword(slice_unchecked(l.src, l.i, e), start_line, start_col);
+      let e: i32 = ident_end(l);
+      let tok: Token = ident_or_keyword(slice_unchecked(l.src, l.i, e), start_line, start_col);
       l = l.advance_to(e);
       out = out.append(tok);
       after_dot = false;
       continue;
     }
     if (b == 34) {  // "
-      var rs = scan_string(l, start_line, start_col);
+      let rs = scan_string(l, start_line, start_col);
       l = rs.lex;
       out = out.append(rs.tok);
       if (is_error_tok(rs.tok)) {
@@ -1271,9 +1271,9 @@ function tokenize_impl(src: string, keep: boolean, first_line: i32): LexResult {
       after_dot = false;
       continue;
     }
-    var mp: string = match_multipunct(l.src, l.i, l.n);
+    let mp: string = match_multipunct(l.src, l.i, l.n);
     if (mp.len() > 0) {
-      var i: i32 = 0;
+      let i: i32 = 0;
       while (i < mp.len()) {
         l = l.advance();
         i = i + 1;
@@ -1291,7 +1291,7 @@ function tokenize_impl(src: string, keep: boolean, first_line: i32): LexResult {
       continue;
     }
     if (is_single_punct(b)) {
-      var text: str = slice_unchecked(l.src, l.i, l.i + 1);
+      let text: str = slice_unchecked(l.src, l.i, l.i + 1);
       l = l.advance();
       out = out.append(TokPunct { text: text + "", line: start_line, col: start_col });
       after_dot = text == ".";
@@ -1310,11 +1310,11 @@ function tokenize_impl(src: string, keep: boolean, first_line: i32): LexResult {
 // if every assertion holds. Non-zero return codes pinpoint which
 // arm fired so the Go test can surface the right diagnostic.
 function test_mixed(): i32 {
-  var src: string = "var x: i32 = 42i64; // a comment\nreturn x + 1.5f64;\n";
-  var toks: Token[] = tokenize(src);
+  let src: string = "let x: i32 = 42i64; // a comment\nreturn x + 1.5f64;\n";
+  let toks: Token[] = tokenize(src);
 
   // Expected sequence:
-  //   Keyword "var"
+  //   Keyword "let"
   //   Ident "x"
   //   Punct ":"
   //   Keyword "i32"
@@ -1333,7 +1333,7 @@ function test_mixed(): i32 {
 
   match (toks[0]) {
     TokKeyword(t) => {
-      if (t.name != "var") {
+      if (t.name != "let") {
         return 100;
       }
     },
@@ -1481,7 +1481,7 @@ function test_mixed(): i32 {
 // trailing typed suffix (`0x10u8`). All come back as non-float
 // Number tokens whose text includes the prefix.
 function test_hex(): i32 {
-  var toks: Token[] = tokenize("0x2A 0xff 0X0 0xDEADBEEF 0x10u8");
+  let toks: Token[] = tokenize("0x2A 0xff 0X0 0xDEADBEEF 0x10u8");
   if (toks.len() != 6) {
     return 1400;
   }
@@ -1556,7 +1556,7 @@ function test_hex(): i32 {
 // fractional bases. Every input is a single Float whose text is
 // ParseFloat-ready.
 function test_scientific(): i32 {
-  var toks: Token[] = tokenize("1e3 1.5e10 1.5E3 2.0e-2 6.022e+23");
+  let toks: Token[] = tokenize("1e3 1.5e10 1.5E3 2.0e-2 6.022e+23");
   if (toks.len() != 6) {
     return 1500;
   }
@@ -1621,7 +1621,7 @@ function test_scientific(): i32 {
 // separate identifier. `1e foo` → Number "1", Ident "e", Ident
 // "foo", EOF.
 function test_bare_e(): i32 {
-  var toks: Token[] = tokenize("1e foo");
+  let toks: Token[] = tokenize("1e foo");
   if (toks.len() != 4) {
     return 1550;
   }
@@ -1662,7 +1662,7 @@ function test_bare_e(): i32 {
 // two dots, NOT `t . 1.0` with `1.0` eaten as a float. The afterDot
 // guard suppresses the `.<digit>` float upgrade after a `.`.
 function test_chained_tuple(): i32 {
-  var toks: Token[] = tokenize("t.1.0");
+  let toks: Token[] = tokenize("t.1.0");
   if (toks.len() != 6) {
     return 1600;
   }
@@ -1727,11 +1727,11 @@ function test_chained_tuple(): i32 {
 
 // test_float_after_nondot — pin that the afterDot suppression
 // doesn't over-fire: a `.<digit>` after a non-dot context still
-// upgrades to a float. `var f = 1.5;` yields exactly one Float.
+// upgrades to a float. `let f = 1.5;` yields exactly one Float.
 function test_float_after_nondot(): i32 {
-  var toks: Token[] = tokenize("var f = 1.5;");
-  var floats: i32 = 0;
-  var i: i32 = 0;
+  let toks: Token[] = tokenize("let f = 1.5;");
+  let floats: i32 = 0;
+  let i: i32 = 0;
   while (i < toks.len()) {
     match (toks[i]) {
       TokNumber(t) => {
@@ -1824,7 +1824,7 @@ function test_unknown_char(): i32 {
 // lexes to, with the decoded scalar in `text`, the type in `suffix`
 // and the spelling in `raw`.
 function check_quoted(src: string, want_text: string, want_suffix: string): boolean {
-  var t: Token[] = tokenize(src);
+  let t: Token[] = tokenize(src);
   if (t.len() != 2) {
     return false;
   }
@@ -1933,7 +1933,7 @@ function test_quoted_literals(): i32 {
   }
 
   // A `b` not followed by `'` is an ordinary identifier.
-  var idt: Token[] = tokenize("b bytes");
+  let idt: Token[] = tokenize("b bytes");
   match (idt[0]) {
     TokIdent(x) => {
       if (x.name != "b") {
@@ -1978,7 +1978,7 @@ function check_part(p: FStringPart, want_expr: boolean, want_text: string, want_
 // Mirrors the Go lexer's TestFStringParts / TestFStringErrors.
 function test_fstring(): i32 {
   // f"" → no parts.
-  var t0: Token[] = tokenize("f\"\"");
+  let t0: Token[] = tokenize("f\"\"");
   if (t0.len() != 2) {
     return 2000;
   }
@@ -1993,7 +1993,7 @@ function test_fstring(): i32 {
     }
   }
   // f"plain" → [Lit "plain"].
-  var t1: Token[] = tokenize("f\"plain\"");
+  let t1: Token[] = tokenize("f\"plain\"");
   match (t1[0]) {
     TokFString(f) => {
       if (f.parts.len() != 1) {
@@ -2008,7 +2008,7 @@ function test_fstring(): i32 {
     }
   }
   // f"a{x}b" → [Lit "a", Expr "x", Lit "b"].
-  var t2: Token[] = tokenize("f\"a{x}b\"");
+  let t2: Token[] = tokenize("f\"a{x}b\"");
   match (t2[0]) {
     TokFString(f) => {
       if (f.parts.len() != 3) {
@@ -2029,7 +2029,7 @@ function test_fstring(): i32 {
     }
   }
   // f"{{lit}}" → [Lit "{lit}"] (brace escapes).
-  var t3: Token[] = tokenize("f\"{{lit}}\"");
+  let t3: Token[] = tokenize("f\"{{lit}}\"");
   match (t3[0]) {
     TokFString(f) => {
       if (f.parts.len() != 1) {
@@ -2045,7 +2045,7 @@ function test_fstring(): i32 {
   }
   // f"k={"x"}" → [Lit "k=", Expr "\"x\""] (inner string skipped
   // during the brace-matching scan).
-  var t4: Token[] = tokenize("f\"k={\"x\"}\"");
+  let t4: Token[] = tokenize("f\"k={\"x\"}\"");
   match (t4[0]) {
     TokFString(f) => {
       if (f.parts.len() != 2) {
@@ -2063,7 +2063,7 @@ function test_fstring(): i32 {
     }
   }
   // f"sum {a + b}" → [Lit "sum ", Expr "a + b"].
-  var t5: Token[] = tokenize("f\"sum {a + b}\"");
+  let t5: Token[] = tokenize("f\"sum {a + b}\"");
   match (t5[0]) {
     TokFString(f) => {
       if (f.parts.len() != 2) {
@@ -2081,7 +2081,7 @@ function test_fstring(): i32 {
     }
   }
   // f"hi\nthere" → [Lit "hi\nthere"] (escape in literal segment).
-  var t6: Token[] = tokenize("f\"hi\\nthere\"");
+  let t6: Token[] = tokenize("f\"hi\\nthere\"");
   match (t6[0]) {
     TokFString(f) => {
       if (f.parts.len() != 1) {
@@ -2116,7 +2116,7 @@ function test_fstring(): i32 {
 // discriminating case: rebasing onto the f-string's own start places
 // the first plausibly and every later one short (#6989).
 function test_fstring_positions(): i32 {
-  var t: Token[] = tokenize("var s = f\"a{aaa} b{bbb}\";");
+  let t: Token[] = tokenize("let s = f\"a{aaa} b{bbb}\";");
   match (t[3]) {
     TokFString(f) => {
       if (f.parts.len() != 4) {
@@ -2134,7 +2134,7 @@ function test_fstring_positions(): i32 {
     }
   }
   // An f-string on a later line keeps its own line number.
-  match (tokenize("var a = 1;\nvar s = f\"x{yy}\";")[8]) {
+  match (tokenize("let a = 1;\nlet s = f\"x{yy}\";")[8]) {
     TokFString(f) => {
       if (!check_part(f.parts[1], true, "yy", 2, 13)) {
         return 2090;
@@ -2146,7 +2146,7 @@ function test_fstring_positions(): i32 {
   }
   // rebase_tokens shifts the column only on the fragment's first
   // line; a later line takes the fragment's own column.
-  var sub: Token[] = rebase_tokens(tokenize("a\nb"), 4, 10);
+  let sub: Token[] = rebase_tokens(tokenize("a\nb"), 4, 10);
   match (sub[0]) {
     TokIdent(x) => {
       if (x.line != 4 || x.col != 10) {
@@ -2186,8 +2186,8 @@ function check_comment(c: Comment, line: i32, col: i32, text: string): boolean {
 }
 
 function test_comments(): i32 {
-  var src: string = "// leading\nvar u: string = \"http://x//y\"; // trailing\nvar n: i32 = 1;\n//: last\n";
-  var r: LexResult = tokenize_full(src);
+  let src: string = "// leading\nlet u: string = \"http://x//y\"; // trailing\nlet n: i32 = 1;\n//: last\n";
+  let r: LexResult = tokenize_full(src);
   if (r.comments.len() != 3) {
     return 2100;
   }
@@ -2205,12 +2205,12 @@ function test_comments(): i32 {
     return 2104;
   }
   // A source with no comments yields an empty list, not a stray entry.
-  if (tokenize_full("var x: i32 = 1;\n").comments.len() != 0) {
+  if (tokenize_full("let x: i32 = 1;\n").comments.len() != 0) {
     return 2105;
   }
   // An unterminated string bails out of the loop early; the comments
   // seen before the failure still come back with the tokens.
-  if (tokenize_full("// kept\nvar s: string = \"oops\n").comments.len() != 1) {
+  if (tokenize_full("// kept\nlet s: string = \"oops\n").comments.len() != 1) {
     return 2106;
   }
   return 0;
@@ -2221,9 +2221,9 @@ function test_comments(): i32 {
 // lookahead byte is a multibyte lead. The probes must match by byte, and
 // the accumulated values must carry the multibyte content byte-exact.
 function test_multibyte(): i32 {
-  var src: string = "var s: string = \"héllo wörld\"; s <<= 1; // cömment é\nvar f = f\"pré {s} pöst\";\n";
-  var r: LexResult = tokenize_full(src);
-  var toks: Token[] = r.tokens;
+  let src: string = "let s: string = \"héllo wörld\"; s <<= 1; // cömment é\nlet f = f\"pré {s} pöst\";\n";
+  let r: LexResult = tokenize_full(src);
+  let toks: Token[] = r.tokens;
   if (toks.len() != 17) {
     return 2200;
   }
@@ -2274,7 +2274,7 @@ function test_multibyte(): i32 {
   }
   // A 2-byte operator probe whose lookahead byte is a multibyte lead
   // falls back to the single `<`; the é itself is not a token.
-  var t2: Token[] = tokenize("a<é");
+  let t2: Token[] = tokenize("a<é");
   if (t2.len() != 3) {
     return 2212;
   }
@@ -2302,7 +2302,7 @@ function test_multibyte(): i32 {
 }
 
 function main(): i32 {
-  var c: i32 = 0;
+  let c: i32 = 0;
   c = test_mixed();
   if (c != 0) {
     return c;

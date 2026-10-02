@@ -15,7 +15,7 @@ import (
 func TestTypedSSACLICompilesThroughSemanticOwnership(t *testing.T) {
 	bin := buildFernForStdoutTest(t)
 	checkTypedSSAExecutable(t, bin, `
-function main(): i32 { var items = [[17i32, 29i32]]; return get(items[0].append(41i32)); }
+function main(): i32 { let items = [[17i32, 29i32]]; return get(items[0].append(41i32)); }
 function get(items: i32[]): i32 { return items[2]; }
 `)
 }
@@ -24,7 +24,7 @@ func TestTypedSSASourceLoops(t *testing.T) {
 	bin := buildFernForStdoutTest(t)
 	checkTypedSSAExecutable(t, bin, `
 function main(): i32 {
-  var items = [[17i32, 29i32]]; var i = 0i32;
+  let items = [[17i32, 29i32]]; let i = 0i32;
   while (i < 2i32) { items = items.append([41i32]); i = i + 1i32; }
   return get(items[2]);
 }
@@ -37,12 +37,12 @@ func TestTypedSSAExpressionFlow(t *testing.T) {
 	for _, tc := range []struct{ name, source string }{
 		{"short-circuit-join", `function main(): i32 { return choose(false); }
 function choose(flag: boolean): i32 {
-  var items = if (flag && fault()) { [7i32] } else { [41i32] }; return items[0];
+  let items = if (flag && fault()) { [7i32] } else { [41i32] }; return items[0];
 }
-function fault(): boolean { var missing: boolean[] = []; return missing[0]; }`},
+function fault(): boolean { let missing: boolean[] = []; return missing[0]; }`},
 		{"element-return", `function main(): i32 { return choose(true); }
 function choose(flag: boolean): i32 {
-  var items = [[17i32], if (flag) { return 41i32; } else { [2i32] }]; return items[1][0];
+  let items = [[17i32], if (flag) { return 41i32; } else { [2i32] }]; return items[1][0];
 }`},
 	} {
 		t.Run(tc.name, func(t *testing.T) { checkTypedSSAExecutable(t, bin, tc.source) })
@@ -54,8 +54,8 @@ func TestTypedSSAMatchFlow(t *testing.T) {
 	checkTypedSSAExecutable(t, bin, `
 function main(): i32 { return choose(1i32); }
 function choose(tag: i32): i32 {
-  var items = [17i32];
-  var selected = match (tag) {
+  let items = [17i32];
+  let selected = match (tag) {
     n @ 1i32 when { items = [41i32]; false } => [n],
     1i32 => items,
     _ => [29i32]
@@ -69,13 +69,13 @@ func TestTypedSSATupleMatchFlow(t *testing.T) {
 	bin := buildFernForStdoutTest(t)
 	checkTypedSSAExecutable(t, bin, `
 function main(): i32 {
-  var pair = (([41i32], true), 1i32);
-  var child = match (pair) {
+  let pair = (([41i32], true), 1i32);
+  let child = match (pair) {
     ((_, false), _) => [17i32],
     ((items, _), _) when { pair = (([29i32], false), 0i32); false } => items,
     ((items, _), _) => items
   };
-  var i = 0i32; while (i < 64i32) { var churn = (([7i32], true), 2i32); i = i + 1i32; }
+  let i = 0i32; while (i < 64i32) { let churn = (([7i32], true), 2i32); i = i + 1i32; }
   return child[0];
 }
 `)
@@ -85,11 +85,11 @@ func TestTypedSSAVoidCallEffects(t *testing.T) {
 	bin := buildFernForStdoutTest(t)
 	checkTypedSSAExecutable(t, bin, `
 function main(): i32 {
-  var items = [[41i32]]; inspect(items[0]);
-  var i = 0i32; while (i < 64i32) { release([[7i32]]); i = i + 1i32; }
+  let items = [[41i32]]; inspect(items[0]);
+  let i = 0i32; while (i < 64i32) { release([[7i32]]); i = i + 1i32; }
   return items[0][0];
 }
-function inspect(items: i32[]): void { var value = items[0]; }
+function inspect(items: i32[]): void { let value = items[0]; }
 function release(own items: i32[][]): void { return consume(items); }
 function consume(own items: i32[][]): void {}
 `)
@@ -99,17 +99,17 @@ func TestTypedSSAStructuredEffects(t *testing.T) {
 	bin := buildFernForStdoutTest(t)
 	checkTypedSSAExecutable(t, bin, `
 function main(): i32 {
-  var items = [17i32];
+  let items = [17i32];
   (match ((true, [41i32])) {
     (true, child) => { items = child; inspect(child) },
     _ => noop()
   });
-  var i = 0i32;
+  let i = 0i32;
   while (i < 64i32) { (if (i == 0i32) { [[7i32]] } else { [[9i32]] }); i = i + 1i32; }
   action(false); return items[0];
 }
-function action(flag: boolean): void { return if (flag) { noop() } else { var items = [1i32]; inspect(items) }; }
-function inspect(items: i32[]): void { var value = items[0]; }
+function action(flag: boolean): void { return if (flag) { noop() } else { let items = [1i32]; inspect(items) }; }
+function inspect(items: i32[]): void { let value = items[0]; }
 function noop(): void {}
 `)
 }
@@ -118,19 +118,19 @@ func TestTypedSSACleanupActions(t *testing.T) {
 	bin := buildFernForStdoutTest(t)
 	checkTypedSSAExecutable(t, bin, `
 function main(): i32 {
-  var snapshot = produce();
-  var i = 0i32;
+  let snapshot = produce();
+  let i = 0i32;
   while (i < 64i32) { churn(); i = i + 1i32; }
   return snapshot[0];
 }
 function produce(): i32[] {
-  var items = [41i32];
+  let items = [41i32];
   defer inspect(items[0]);
-  defer { var i = 0i32; while (i < 3i32) { items = [7i32]; i = i + 1i32; } }
+  defer { let i = 0i32; while (i < 3i32) { items = [7i32]; i = i + 1i32; } }
   return items;
 }
-function inspect(n: i32): void { if (n != 7i32) { var empty: i32[] = []; var bad = empty[0]; } }
-function churn(): void { var items = [[9i32]]; defer sink([items]); }
+function inspect(n: i32): void { if (n != 7i32) { let empty: i32[] = []; let bad = empty[0]; } }
+function churn(): void { let items = [[9i32]]; defer sink([items]); }
 function sink(own items: i32[][][]): void {}
 `)
 }
@@ -138,17 +138,17 @@ function sink(own items: i32[][][]): void {}
 func TestTypedSSAIterationCleanup(t *testing.T) {
 	bin := buildFernForStdoutTest(t)
 	checkTypedSSAExecutable(t, bin, `function main(): i32 {
-  var snapshot = produce();
-  var i = 0i32; while (i < 64i32) { churn(); i = i + 1i32; }
+  let snapshot = produce();
+  let i = 0i32; while (i < 64i32) { churn(); i = i + 1i32; }
   return snapshot[0];
 }
 function produce(): i32[] {
-  var items = [41i32];
+  let items = [41i32];
   outer: loop { defer inspect(items[0]);
     loop { defer items = [7i32]; return items; }
   }
 }
-function inspect(n: i32): void { if (n != 7i32) { var bad: i32[] = []; var v = bad[0]; } }
+function inspect(n: i32): void { if (n != 7i32) { let bad: i32[] = []; let v = bad[0]; } }
 function churn(): void { loop { defer sink([[9i32]]); break; } }
 function sink(own items: i32[][]): void {}`)
 }
@@ -156,20 +156,20 @@ function sink(own items: i32[][]): void {}`)
 func TestTypedSSAConditionalCleanup(t *testing.T) {
 	bin := buildFernForStdoutTest(t)
 	checkTypedSSAExecutable(t, bin, `function main(): i32 {
-  var saved = produce(true); var other = produce(false);
-  var i = 0i32; while (i < 64i32) { churn(i < 32i32); i = i + 1i32; }
+  let saved = produce(true); let other = produce(false);
+  let i = 0i32; while (i < 64i32) { churn(i < 32i32); i = i + 1i32; }
   return saved[0] + other[0] - 41i32;
 }
 function produce(flag: boolean): i32[] {
-  var items = [41i32]; defer check(items[0], flag);
+  let items = [41i32]; defer check(items[0], flag);
   if (flag) { defer items = [7i32]; } return items;
 }
 function check(n: i32, flag: boolean): void {
-  if ((flag && n != 7i32) || (!flag && n != 41i32)) { var bad: i32[] = []; var v = bad[0]; }
+  if ((flag && n != 7i32) || (!flag && n != 41i32)) { let bad: i32[] = []; let v = bad[0]; }
 }
 function churn(flag: boolean): void {
-  var i = 0i32; while (i < 4i32) {
-    if (flag && i < 2i32) { var items = [[9i32]]; defer sink([items]); }
+  let i = 0i32; while (i < 4i32) {
+    if (flag && i < 2i32) { let items = [[9i32]]; defer sink([items]); }
     i = i + 1i32;
   }
 }
@@ -180,27 +180,27 @@ func TestTypedSSARecordValues(t *testing.T) {
 	bin := buildFernForStdoutTest(t)
 	checkTypedSSAExecutable(t, bin, `struct Box[T] { value: T }
 function main(): i32 {
-  var original = Box[i32[]] { value: [41i32] };
-  var saved = project(original);
+  let original = Box[i32[]] { value: [41i32] };
+  let saved = project(original);
   original = Box[i32[]] { ...original, value: [9i32] };
-  var i = 0i32; while (i < 64i32) { churn(); i = i + 1i32; }
+  let i = 0i32; while (i < 64i32) { churn(); i = i + 1i32; }
   return saved[0];
 }
 function project(box: Box[i32[]]): i32[] { return box.value; }
-function churn(): void { var box = Box[i32[][]] { value: [[7i32]] }; }`)
+function churn(): void { let box = Box[i32[][]] { value: [[7i32]] }; }`)
 }
 
 func TestTypedSSARecursiveRecordValues(t *testing.T) {
 	bin := buildFernForStdoutTest(t)
 	checkTypedSSAExecutable(t, bin, `struct Node[T] { data: T, children: Node[T][] }
 function main(): i32 {
-  var root = Node[i32[]] { data: [0i32], children: [Node[i32[]] { data: [41i32], children: [] }] };
-  var saved = root.children[0].data;
+  let root = Node[i32[]] { data: [0i32], children: [Node[i32[]] { data: [41i32], children: [] }] };
+  let saved = root.children[0].data;
   root = Node[i32[]] { data: [9i32], children: [] };
-  var i = 0i32; while (i < 32i32) { churn(); i = i + 1i32; }
+  let i = 0i32; while (i < 32i32) { churn(); i = i + 1i32; }
   return saved[0];
 }
-function churn(): void { var node = Node[i32[][]] { data: [[7i32]], children: [] }; }`)
+function churn(): void { let node = Node[i32[][]] { data: [[7i32]], children: [] }; }`)
 }
 
 func TestTypedSSAEnumValues(t *testing.T) {
@@ -208,16 +208,16 @@ func TestTypedSSAEnumValues(t *testing.T) {
 	checkTypedSSAExecutable(t, bin, `struct Box[T] { value: T }
 enum Chain[T] { End, Next(T, Chain[T]) }
 function main(): i32 {
-  var tail: Chain[Box[i32[]]] = End;
-  var chain: Chain[Box[i32[]]] = Next(Box[i32[]] { value: [41i32] }, tail);
-  var saved = read(chain); chain = End;
-  var i = 0i32; while (i < 32i32) { churn(); i = i + 1i32; }
+  let tail: Chain[Box[i32[]]] = End;
+  let chain: Chain[Box[i32[]]] = Next(Box[i32[]] { value: [41i32] }, tail);
+  let saved = read(chain); chain = End;
+  let i = 0i32; while (i < 32i32) { churn(); i = i + 1i32; }
   return saved[0];
 }
 function read(chain: Chain[Box[i32[]]]): i32[] {
   return match (chain) { End => [0i32], Next(box, rest) => box.value };
 }
-function churn(): void { var value: Option[i32[][]] = Some([[7i32]]); }`)
+function churn(): void { let value: Option[i32[][]] = Some([[7i32]]); }`)
 }
 
 func checkTypedSSAExecutable(t *testing.T, bin, source string) {
@@ -273,9 +273,9 @@ func checkTypedSSAExecutable(t *testing.T, bin, source string) {
 func TestTypedSSACLIRejectsUnsupportedConstructs(t *testing.T) {
 	bin := buildFernForStdoutTest(t)
 	for _, tc := range []struct{ name, source, want string }{
-		{"division", `function main(): i32 { var x = 4i32; return x / 2i32; }`, "unsupported scalar binary contract"},
-		{"wide-arithmetic", `function main(): i32 { var x = 1i64; var y = x + 1i64; return 0; }`, "scalar binary requires"},
-		{"unresolved-literal-metadata", `function main(): i32 { var items = [[17, 29]]; return items[0][1]; }`, "unresolved or unsupported semantic type"},
+		{"division", `function main(): i32 { let x = 4i32; return x / 2i32; }`, "unsupported scalar binary contract"},
+		{"wide-arithmetic", `function main(): i32 { let x = 1i64; let y = x + 1i64; return 0; }`, "scalar binary requires"},
+		{"unresolved-literal-metadata", `function main(): i32 { let items = [[17, 29]]; return items[0][1]; }`, "unresolved or unsupported semantic type"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			entry := writeFern(t, tc.source)

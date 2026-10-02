@@ -30,8 +30,8 @@ import "core/map";
 // wrapper + http_parse_request will populate one for you on the
 // inbound path once the integration PR lands).
 pub function header_map_new(): HeaderMap {
-  var names: string[] = [];
-  var values: string[] = [];
+  let names: string[] = [];
+  let values: string[] = [];
   return HeaderMap { names: names, values: values };
 }
 
@@ -39,8 +39,8 @@ pub function header_map_new(): HeaderMap {
 // None when no entry matches; use `.get_all` when duplicates
 // matter (`Set-Cookie`, `Accept`, `Via`).
 pub function (h: HeaderMap) get(name: string): Option[string] {
-  var key: string = name.to_lower();
-  var i: i32 = 0;
+  let key: string = name.to_lower();
+  let i: i32 = 0;
   while (i < h.names.len()) {
     if (h.names[i] == key) {
       return Some(h.values[i]);
@@ -55,9 +55,9 @@ pub function (h: HeaderMap) get(name: string): Option[string] {
 // shouldn't need to special-case "missing" separately from
 // "present but empty list").
 pub function (h: HeaderMap) get_all(name: string): string[] {
-  var key: string = name.to_lower();
-  var out: string[] = [];
-  var i: i32 = 0;
+  let key: string = name.to_lower();
+  let out: string[] = [];
+  let i: i32 = 0;
   while (i < h.names.len()) {
     if (h.names[i] == key) {
       out = out.append(h.values[i]);
@@ -85,11 +85,11 @@ pub function (h: HeaderMap) append(name: string, value: string): HeaderMap {
 // further duplicates are dropped; if `name` was absent, the new
 // entry appends.
 pub function (h: HeaderMap) set(name: string, value: string): HeaderMap {
-  var key: string = name.to_lower();
-  var new_names: string[] = [];
-  var new_values: string[] = [];
-  var inserted: boolean = false;
-  var i: i32 = 0;
+  let key: string = name.to_lower();
+  let new_names: string[] = [];
+  let new_values: string[] = [];
+  let inserted: boolean = false;
+  let i: i32 = 0;
   while (i < h.names.len()) {
     if (h.names[i] == key) {
       if (!inserted) {

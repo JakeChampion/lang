@@ -60,31 +60,31 @@ func TestSelfHostEnumStrPayloadReclaimIRX86_64(t *testing.T) {
 	// warmup a second churn re-serves everything from the freelist — the bump
 	// stays flat (< 256 B). A double free ticks the detector → 99.
 	run(t, `enum Tok { Word(string), Num(i32) }
-function go(pre: string): i32 { var x = Word(pre + "abc"); var r = 0; match (x) { Word(s) => { r = s.len(); }, Num(n) => { r = n; }, } return r; }
-function churn(n: i32): i32 { var pre: string = "ab"; var acc: i32 = 0; var i: i32 = 0; while (i < n) { acc = (acc + go(pre)) % 251; i = i + 1; } return acc; }
-function main(): i32 { var w: i32 = churn(5000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(5000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
+function go(pre: string): i32 { let x = Word(pre + "abc"); let r = 0; match (x) { Word(s) => { r = s.len(); }, Num(n) => { r = n; }, } return r; }
+function churn(n: i32): i32 { let pre: string = "ab"; let acc: i32 = 0; let i: i32 = 0; while (i < n) { acc = (acc + go(pre)) % 251; i = i + 1; } return acc; }
+function main(): i32 { let w: i32 = churn(5000); let b1: i32 = (__heap_bump_bytes() as i32); let x: i32 = churn(5000); let b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
 		"enum-str-payload-flat", 0)
 
 	// OPTION string payload (`Option[string] = Some(<fresh concat>)`), consumed
 	// by match: emit_opt_str_payload_drop frees the payload (op_opt_payload →
 	// __fern_str_free) then the box. Flat across the second churn.
-	run(t, `function go(pre: string): i32 { var o: Option[string] = Some(pre + "xyz"); var r = 0; match (o) { Some(s) => { r = s.len(); }, None => { r = 1; }, } return r; }
-function churn(n: i32): i32 { var pre: string = "ab"; var acc: i32 = 0; var i: i32 = 0; while (i < n) { acc = (acc + go(pre)) % 251; i = i + 1; } return acc; }
-function main(): i32 { var w: i32 = churn(5000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(5000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
+	run(t, `function go(pre: string): i32 { let o: Option[string] = Some(pre + "xyz"); let r = 0; match (o) { Some(s) => { r = s.len(); }, None => { r = 1; }, } return r; }
+function churn(n: i32): i32 { let pre: string = "ab"; let acc: i32 = 0; let i: i32 = 0; while (i < n) { acc = (acc + go(pre)) % 251; i = i + 1; } return acc; }
+function main(): i32 { let w: i32 = churn(5000); let b1: i32 = (__heap_bump_bytes() as i32); let x: i32 = churn(5000); let b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
 		"option-str-payload-flat", 0)
 
 	// RESULT Err string payload (variant-aware opt_payload_type reads E for Err).
-	run(t, `function go(pre: string): i32 { var r2: Result[i32, string] = Err(pre + "e"); var r = 0; match (r2) { Ok(v) => { r = v; }, Err(e) => { r = e.len(); }, } return r; }
-function churn(n: i32): i32 { var pre: string = "ab"; var acc: i32 = 0; var i: i32 = 0; while (i < n) { acc = (acc + go(pre)) % 251; i = i + 1; } return acc; }
-function main(): i32 { var w: i32 = churn(5000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(5000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
+	run(t, `function go(pre: string): i32 { let r2: Result[i32, string] = Err(pre + "e"); let r = 0; match (r2) { Ok(v) => { r = v; }, Err(e) => { r = e.len(); }, } return r; }
+function churn(n: i32): i32 { let pre: string = "ab"; let acc: i32 = 0; let i: i32 = 0; while (i < n) { acc = (acc + go(pre)) % 251; i = i + 1; } return acc; }
+function main(): i32 { let w: i32 = churn(5000); let b1: i32 = (__heap_bump_bytes() as i32); let x: i32 = churn(5000); let b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
 		"result-err-str-payload-flat", 0)
 
 	// NON-FRESH payload excluded: `Some(nm)` aliases the live local nm — the
 	// classifier rejects it (leak), so nm reads valid bytes after the match and
 	// nothing double-frees. lens 3 + 3 = 6 over 2000 calls, detector 0.
-	run(t, `function go(pre: string): i32 { var nm: string = pre + "q"; var o: Option[string] = Some(nm); var r = 0; match (o) { Some(s) => { r = s.len(); }, None => { r = 1; }, } return r + nm.len(); }
-function churn(n: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { if (go(pre) != 6) { bad = 1; } i = i + 1; } return bad; }
-function main(): i32 { var v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
+	run(t, `function go(pre: string): i32 { let nm: string = pre + "q"; let o: Option[string] = Some(nm); let r = 0; match (o) { Some(s) => { r = s.len(); }, None => { r = 1; }, } return r + nm.len(); }
+function churn(n: i32): i32 { let pre: string = "ab"; let bad: i32 = 0; let i: i32 = 0; while (i < n) { if (go(pre) != 6) { bad = 1; } i = i + 1; } return bad; }
+function main(): i32 { let v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
 		"option-aliased-str-payload-excluded", 0)
 
 	// ESCAPING arm binding via RETURN — ADMITTED under the Koka consuming-match
@@ -94,9 +94,9 @@ function main(): i32 { var v: i32 = churn(2000); if (__rc_underflow_count() != 0
 	// moved to the returned value). The returned string must stay valid and
 	// nothing may double-free. len 5 over 2000 calls, detector 0.
 	run(t, `enum Tok { Word(string), Num(i32) }
-function go(pre: string): string { var x = Word(pre + "abc"); match (x) { Word(s) => { return s; }, Num(n) => { return "n"; }, } return ""; }
-function churn(n: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { if (go(pre).len() != 5) { bad = 1; } i = i + 1; } return bad; }
-function main(): i32 { var v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
+function go(pre: string): string { let x = Word(pre + "abc"); match (x) { Word(s) => { return s; }, Num(n) => { return "n"; }, } return ""; }
+function churn(n: i32): i32 { let pre: string = "ab"; let bad: i32 = 0; let i: i32 = 0; while (i < n) { if (go(pre).len() != 5) { bad = 1; } i = i + 1; } return bad; }
+function main(): i32 { let v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
 		"enum-escaping-binding-return-moved", 0)
 
 	// ESCAPING arm binding via OUTER-VAR STORE — the shape the pre-#4400 gate
@@ -107,13 +107,13 @@ function main(): i32 { var v: i32 = churn(2000); if (__rc_underflow_count() != 0
 	// 99 (the str_free/dec underflow detector) or a corrupted length.
 	run(t, `enum Tok { Word(string), Num(i32) }
 function go(pre: string): i32 {
-    var out: string = "";
-    var x = Word(pre + "abc");
+    let out: string = "";
+    let x = Word(pre + "abc");
     match (x) { Word(s) => { out = s; }, Num(n) => { out = "n"; }, }
     return out.len();
 }
-function churn(n: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { if (go(pre) != 5) { bad = 1; } i = i + 1; } return bad; }
-function main(): i32 { var v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
+function churn(n: i32): i32 { let pre: string = "ab"; let bad: i32 = 0; let i: i32 = 0; while (i < n) { if (go(pre) != 5) { bad = 1; } i = i + 1; } return bad; }
+function main(): i32 { let v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
 		"enum-escaping-binding-store-moved", 0)
 
 	// GUARD + MOVE mix REJECTED (the #4560 review point): the escaping Word
@@ -124,21 +124,21 @@ function main(): i32 { var v: i32 = churn(2000); if (__rc_underflow_count() != 0
 	// guard outcomes and the detector stays 0 (no skip fired, no over-release).
 	run(t, `enum Tok { Word(string), Num(i32) }
 function go(pre: string, k: i32): i32 {
-    var out: string = "";
-    var x = Word(pre + "abc");
+    let out: string = "";
+    let x = Word(pre + "abc");
     match (x) { Word(s) when k > 0 => { out = slice_unchecked(s, 0, 2) + ""; }, Word(s) => { out = s; }, Num(n) => { out = "n"; }, }
     return out.len();
 }
-function churn(n: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { if (go(pre, 1) != 2) { bad = 1; } if (go(pre, 0) != 5) { bad = 1; } i = i + 1; } return bad; }
-function main(): i32 { var v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
+function churn(n: i32): i32 { let pre: string = "ab"; let bad: i32 = 0; let i: i32 = 0; while (i < n) { if (go(pre, 1) != 2) { bad = 1; } if (go(pre, 0) != 5) { bad = 1; } i = i + 1; } return bad; }
+function main(): i32 { let v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
 		"enum-guarded-move-mix-rejected", 0)
 
 	// NESTED-if consuming match (the "opt-strpayload" precise-drop kind): the
 	// shape is not admitted by the current precise-drop gates (same as the
 	// pre-existing array-payload behavior — the box leaks soundly), so assert
 	// correctness + detector only, no flatness.
-	run(t, `function go(pre: string, k: i32): i32 { var o: Option[string] = Some(pre + "x"); var t = 0; if (k < 2) { match (o) { Some(s) => { t = s.len(); }, None => { t = 0; }, } } return t; }
-function churn(n: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { if (go(pre, 1) != 3) { bad = 1; } i = i + 1; } return bad; }
-function main(): i32 { var v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
+	run(t, `function go(pre: string, k: i32): i32 { let o: Option[string] = Some(pre + "x"); let t = 0; if (k < 2) { match (o) { Some(s) => { t = s.len(); }, None => { t = 0; }, } } return t; }
+function churn(n: i32): i32 { let pre: string = "ab"; let bad: i32 = 0; let i: i32 = 0; while (i < n) { if (go(pre, 1) != 3) { bad = 1; } i = i + 1; } return bad; }
+function main(): i32 { let v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
 		"option-str-nested-if-sound", 0)
 }

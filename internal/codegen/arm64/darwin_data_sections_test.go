@@ -44,7 +44,7 @@ func sectionOfLabel(asm, label string) string {
 // constFuncSrc materialises a named function as a VALUE, forcing an
 // OpConstFunc static closure-pair cell (`__closure_cell_dbl`).
 const constFuncSrc = `function dbl(x: i32): i32 { return x * 2; }
-function main(): i32 { var f: (i32) => i32 = dbl; return f(21); }`
+function main(): i32 { let f: (i32) => i32 = dbl; return f(21); }`
 
 // dynTraitSrc dispatches through a `dyn` trait, forcing a static vtable
 // cell (`__vtable_Error_NotFound`).
@@ -52,7 +52,7 @@ const dynTraitSrc = `trait Error { function message(self: Self): string; }
 struct NotFound { what: string }
 impl Error for NotFound { function message(self: Self): string { return self.what; } }
 function main(): i32 {
-    var e: dyn Error = NotFound { what: "ab" } as dyn Error;
+    let e: dyn Error = NotFound { what: "ab" } as dyn Error;
     return e.message().len();
 }`
 

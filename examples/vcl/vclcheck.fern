@@ -24,7 +24,7 @@ function render(path: string, p: check.Problem): string {
 }
 
 function report_parse(path: string, diags: diag.Diag[]): void {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < diags.len()) {
     eprint(diags[i].render(path));
     i = i + 1;
@@ -32,7 +32,7 @@ function report_parse(path: string, diags: diag.Diag[]): void {
 }
 
 function report_problems(path: string, ps: check.Problem[]): void {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < ps.len()) {
     eprint(render(path, ps[i]));
     i = i + 1;
@@ -40,7 +40,7 @@ function report_problems(path: string, ps: check.Problem[]): void {
 }
 
 function report_unreachable(names: string[]): void {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < names.len()) {
     eprint("note: subroutine '" + names[i] + "' is never called");
     i = i + 1;
@@ -48,24 +48,24 @@ function report_unreachable(names: string[]): void {
 }
 
 function main(): i32 {
-  var argv: string[] = args();
+  let argv: string[] = args();
   if (argv.len() < 2) {
     eprint("usage: vclcheck FILE.vcl");
     return 2;
   }
-  var path: string = argv[1];
+  let path: string = argv[1];
   match (io.read_input(path)) {
     Err(e) => {
       eprint("vclcheck: " + path + ": cannot read");
       return 2;
     },
     Ok(src) => {
-      var p: parser.ParseResult = parser.parse(src);
+      let p: parser.ParseResult = parser.parse(src);
       if (p.diags.len() > 0) {
         report_parse(path, p.diags);
         return 2;
       }
-      var problems: check.Problem[] = check.check(p.decls);
+      let problems: check.Problem[] = check.check(p.decls);
       report_unreachable(check.unreachable_subs(p.decls));
       if (problems.len() == 0) {
         print("ok: " + path);

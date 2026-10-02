@@ -31,23 +31,23 @@ function via_return(c: boolean): i64 {
 function main(): i32 {
     // Magnitude, no suffix. This needs no suffix support at all, which is what
     // says the gap predates the suffix work rather than being caused by it.
-    var a: i64 = (if (false) { 5000000000 } else { 6000000000 });
+    let a: i64 = (if (false) { 5000000000 } else { 6000000000 });
     if (a != 6000000000) { return 1; }
 
     // Explicit suffix, small magnitude — unreachable before #6228 widened
     // infer_expr_width, and the shape that made fernsmith seed 502 bail.
-    var b: i64 = (if (false) { 887i64 } else { 260i64 });
+    let b: i64 = (if (false) { 887i64 } else { 260i64 });
     if (b != 260i64) { return 2; }
 
-    var u: u64 = (if (false) { 887u64 } else { 260u64 });
+    let u: u64 = (if (false) { 887u64 } else { 260u64 });
     if (u != 260u64) { return 3; }
 
     // Mixed widths: the wide branch has to win the unification.
-    var m: i64 = (if (false) { 5000000000 } else { 6 });
+    let m: i64 = (if (false) { 5000000000 } else { 6 });
     if (m != 6) { return 4; }
 
     // Nested, so the inner IIFE's type has to be right for the outer to be.
-    var n: i64 = (if (false) { 1i64 } else { (if (true) { 260i64 } else { 3i64 }) });
+    let n: i64 = (if (false) { 1i64 } else { (if (true) { 260i64 } else { 3i64 }) });
     if (n != 260i64) { return 5; }
 
     // Width in the ELSE branch only. The row above has its wide branch first,
@@ -55,23 +55,23 @@ function main(): i32 {
     // else branch's tag and discarded it, which left these two bailing the IR
     // path. `wider_rt` combines the two instead, since the branches yield one
     // value and a 64-bit one cannot be narrowed to fit the other's tag.
-    var e1: i64 = (if (false) { 6 } else { 5000000000 });
+    let e1: i64 = (if (false) { 6 } else { 5000000000 });
     if (e1 != 5000000000) { return 10; }
 
-    var e2: i64 = (if (true) { 5 } else { 887i64 });
+    let e2: i64 = (if (true) { 5 } else { 887i64 });
     if (e2 != 5) { return 11; }
 
     if (via_return(false) != 6000000000) { return 6; }
 
     // CONTROLS — branch kinds that were already classified, so a regression in
     // the classifier shows up here rather than only in the i64 rows.
-    var i: i32 = (if (false) { 5 } else { 6 });
+    let i: i32 = (if (false) { 5 } else { 6 });
     if (i != 6) { return 7; }
 
-    var f: f64 = (if (false) { 1.5 } else { 2.5 });
+    let f: f64 = (if (false) { 1.5 } else { 2.5 });
     if (f < 2.0) { return 8; }
 
-    var s: string = (if (false) { "a" } else { "b" });
+    let s: string = (if (false) { "a" } else { "b" });
     if (s != "b") { return 9; }
 
     // NOT covered: an i64 branch reached through an IDENT. That shape bails the

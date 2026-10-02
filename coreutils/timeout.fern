@@ -85,7 +85,7 @@ function status_canceled(): i32 {
 }
 
 function help_text(): string {
-  var out: string = "";
+  let out: string = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION] DURATION COMMAND [ARG]...\n";
   out = out + "  or:  " + gnu.prog() + " [OPTION]\n";
   out = out + "Start COMMAND, and kill it if still running after DURATION.\n";
@@ -153,7 +153,7 @@ function interval(f: ld.Format, s: string): ld.LD {
 // negative errno when the fork failed. GNU's alarm(2) with a process
 // standing in for the signal; see the header.
 function fork_timer(f: ld.Format, seconds: ld.LD): i32 {
-  var pid: i32 = proc_fork();
+  let pid: i32 = proc_fork();
   if (pid != 0) {
     return pid;
   }
@@ -170,7 +170,7 @@ function cancel_timer(pid: i32): void {
     Ok(_) => {},
     Err(_) => {}
   }
-  var reaped: i32 = proc_waitpid(pid);
+  let reaped: i32 = proc_waitpid(pid);
 }
 
 // `fired(pid)` — whether `pid` is the child a blocking `proc_waitpid(-1)`
@@ -198,7 +198,7 @@ function deliver(sig: i32, cmd: string, cpid: i32, foreground: boolean, verbose:
   if (verbose) {
     // Signal 0 has no name to print — `-v -s 0` and `-v -s EXIT` both
     // say `signal 0`, where GNU <= 9.9 wrote `EXIT`.
-    var shown: string = signals.name(sig);
+    let shown: string = signals.name(sig);
     if (sig == 0) {
       shown = "0";
     }
@@ -212,7 +212,7 @@ function deliver(sig: i32, cmd: string, cpid: i32, foreground: boolean, verbose:
     return;
   }
   send(0, sig);
-  var cont: i32 = signals.number("CONT");
+  let cont: i32 = signals.number("CONT");
   if (sig != sig_kill() && sig != cont) {
     send(cpid, cont);
     send(0, cont);
@@ -232,7 +232,7 @@ function send(pid: i32, sig: i32): void {
 // failure GNU reports if it could not. ENOENT is 127 and anything else 126,
 // the same split env, nice and nohup use.
 function run_child(cmd: string, argv: string[]): void {
-  var errno: i32 = gnu.exec_command(cmd, argv, environ());
+  let errno: i32 = gnu.exec_command(cmd, argv, environ());
   gnu.error("failed to run command " + gnu.quote(cmd) + ": " + gnu.exec_errno_text(errno));
   if (errno == 2) {
     exit(127);
@@ -251,17 +251,17 @@ struct Cfg { sig: i32, kill_after: ld.LD, preserve: boolean, foreground: boolean
 // `+` optstring prefix env and nice use — the scan stops at the first
 // operand, so `timeout 1 -v CMD` tries to exec `-v`.
 function parse_options(f: ld.Format): (Cfg, string[]) {
-  var opts: gnu.Opt[] = [];
+  let opts: gnu.Opt[] = [];
   opts = opts.append(gnu.flag("", "preserve-status", opt_preserve()));
   opts = opts.append(gnu.flag("", "foreground", opt_foreground()));
   opts = opts.append(gnu.valued("k", "kill-after", opt_kill_after()));
   opts = opts.append(gnu.valued("s", "signal", opt_signal()));
   opts = opts.append(gnu.flag("v", "verbose", opt_verbose()));
 
-  var cfg: Cfg = Cfg { sig: signals.number("TERM"), kill_after: f.from_i64(0 as i64), preserve: false, foreground: false, verbose: false };
-  var g: gnu.Getopt = gnu.getopt_new(args(), opts, "timeout", help_text(), status_canceled()).in_order();
+  let cfg: Cfg = Cfg { sig: signals.number("TERM"), kill_after: f.from_i64(0 as i64), preserve: false, foreground: false, verbose: false };
+  let g: gnu.Getopt = gnu.getopt_new(args(), opts, "timeout", help_text(), status_canceled()).in_order();
   while (true) {
-    var res: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    let res: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = res.1;
     match (res.0) {
       Some(m) => {
@@ -291,7 +291,7 @@ function apply_option(f: ld.Format, cfg: Cfg, m: gnu.OptMatch): Cfg {
   if (m.id == opt_kill_after()) {
     return Cfg { ...cfg, kill_after: interval(f, m.value) };
   }
-  var sig: i32 = signals.operand2sig(m.value);
+  let sig: i32 = signals.operand2sig(m.value);
   if (sig < 0) {
     gnu.error(gnu.quote(m.value) + ": invalid signal");
     gnu.try_help(status_canceled());
@@ -300,20 +300,20 @@ function apply_option(f: ld.Format, cfg: Cfg, m: gnu.OptMatch): Cfg {
 }
 
 pub function main(): i32 {
-  var f: ld.Format = ld.format();
-  var parsed: (Cfg, string[]) = parse_options(f);
-  var cfg: Cfg = parsed.0;
-  var rest: string[] = parsed.1;
+  let f: ld.Format = ld.format();
+  let parsed: (Cfg, string[]) = parse_options(f);
+  let cfg: Cfg = parsed.0;
+  let rest: string[] = parsed.1;
   // A DURATION with no COMMAND is a usage error, and gnulib's usage() prints
   // only the `Try …` line for a nonzero status — no `missing operand` above
   // it.
   if (rest.len() < 2) {
     gnu.try_help(status_canceled());
   }
-  var wait_for: ld.LD = interval(f, rest[0]);
-  var cmd: string = rest[1];
-  var argv: string[] = [];
-  var a: i32 = 1;
+  let wait_for: ld.LD = interval(f, rest[0]);
+  let cmd: string = rest[1];
+  let argv: string[] = [];
+  let a: i32 = 1;
   while (a < rest.len()) {
     argv = argv.append(rest[a]);
     a = a + 1;
@@ -328,7 +328,7 @@ pub function main(): i32 {
     }
   }
 
-  var cpid: i32 = proc_fork();
+  let cpid: i32 = proc_fork();
   if (cpid < 0) {
     gnu.error("fork system call failed: " + gnu.exec_errno_text(0 - cpid));
     return status_canceled();
@@ -382,12 +382,12 @@ function supervise(f: ld.Format, cfg: Cfg, wait_for: ld.LD, cmd: string, cpid: i
     gnu.error("warning: setitimer: " + gnu.exec_errno_text(22));
     return proc_waitpid(cpid);
   }
-  var tpid: i32 = fork_timer(f, wait_for);
+  let tpid: i32 = fork_timer(f, wait_for);
   if (tpid < 0) {
     gnu.error("fork system call failed: " + gnu.exec_errno_text(0 - tpid));
     return status_canceled();
   }
-  var status: i32 = proc_waitpid(0 - 1);
+  let status: i32 = proc_waitpid(0 - 1);
   if (!fired(tpid)) {
     // The command finished inside its DURATION: its status passes through
     // and the timer is cancelled unfired.
@@ -396,9 +396,9 @@ function supervise(f: ld.Format, cfg: Cfg, wait_for: ld.LD, cmd: string, cpid: i
   }
 
   deliver(cfg.sig, cmd, cpid, cfg.foreground, cfg.verbose);
-  var killed: boolean = cfg.sig == sig_kill();
+  let killed: boolean = cfg.sig == sig_kill();
   if (!cfg.kill_after.is_zero()) {
-    var esc: Escalation = await_kill_after(f, cfg.kill_after, cmd, cpid, cfg.foreground, cfg.verbose);
+    let esc: Escalation = await_kill_after(f, cfg.kill_after, cmd, cpid, cfg.foreground, cfg.verbose);
     status = esc.status;
     killed = killed || esc.sent_kill;
   } else {
@@ -439,13 +439,13 @@ struct Escalation { status: i32, sent_kill: boolean }
 // command, so this does not return — the shell sees timeout killed by signal
 // 9, which is the 137 the help text names.
 function await_kill_after(f: ld.Format, kill_after: ld.LD, cmd: string, cpid: i32, foreground: boolean, verbose: boolean): Escalation {
-  var kpid: i32 = fork_timer(f, kill_after);
+  let kpid: i32 = fork_timer(f, kill_after);
   if (kpid < 0) {
     // Nothing left to escalate with, so wait the command out as an
     // unadorned timeout would.
     return Escalation { status: proc_waitpid(cpid), sent_kill: false };
   }
-  var status: i32 = proc_waitpid(0 - 1);
+  let status: i32 = proc_waitpid(0 - 1);
   if (!fired(kpid)) {
     cancel_timer(kpid);
     return Escalation { status: status, sent_kill: false };

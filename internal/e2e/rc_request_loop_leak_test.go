@@ -44,16 +44,16 @@ import "std/string";
 struct Request { method: string, path: string, body: string }
 struct Response { status: i32, body: string }
 function handle(req: Request): Response {
-    var segs: string[] = req.path.split("/");
-    var line: string = req.method + " " + req.path + " (" + req.body + ")";
-    var n: i32 = segs.len();
+    let segs: string[] = req.path.split("/");
+    let line: string = req.method + " " + req.path + " (" + req.body + ")";
+    let n: i32 = segs.len();
     return Response { status: 200 + (n - n), body: line };
 }
 function serve(iters: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < iters) {
-        var r: Response = handle(Request { method: "GET", path: "/api/v1/users/42", body: "ping" });
+        let r: Response = handle(Request { method: "GET", path: "/api/v1/users/42", body: "ping" });
         if (r.status != 200) { return 0 - 1; }
         acc = acc + r.body.len();
         i = i + 1;
@@ -62,13 +62,13 @@ function serve(iters: i32): i32 {
 }
 function main(): i32 {
     // Warm the freelist to steady state, then measure two equal batches.
-    var warm: i32 = serve(5000);
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var a: i32 = serve(50000);
-    var g1: i32 = (__heap_bump_bytes() as i32) - b1;
-    var b2: i32 = (__heap_bump_bytes() as i32);
-    var c: i32 = serve(50000);
-    var g2: i32 = (__heap_bump_bytes() as i32) - b2;
+    let warm: i32 = serve(5000);
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let a: i32 = serve(50000);
+    let g1: i32 = (__heap_bump_bytes() as i32) - b1;
+    let b2: i32 = (__heap_bump_bytes() as i32);
+    let c: i32 = serve(50000);
+    let g2: i32 = (__heap_bump_bytes() as i32) - b2;
     if (a != c) { return 5; }                               // value correctness
     if (__rc_underflow_count() != 0) { return 4; }          // no over-release
     if (g1 / 50000 > 700) { return 2; }                     // absolute ceiling (gross leak / reclaim broken)

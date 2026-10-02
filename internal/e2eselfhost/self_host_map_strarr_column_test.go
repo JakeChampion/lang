@@ -22,22 +22,22 @@ import (
 // interpreter's exit code.
 
 const mapStrArrColumnInsertGetOrSrc = `import "core/map";
-function w(i: i32): string { var t: string = "x"; if (i % 2 == 0) { t = "yy"; } return "v-a-wide-payload-past-any-inline-threshold-" + t; }
+function w(i: i32): string { let t: string = "x"; if (i % 2 == 0) { t = "yy"; } return "v-a-wide-payload-past-any-inline-threshold-" + t; }
 function round(i: i32): i32 {
-    var m: Map[i32, string[]] = Map {};
+    let m: Map[i32, string[]] = Map {};
     m = m.insert(i, [w(i), w(i + 1)]);
     return m.get_or(i, []).len() + i % 3;
 }
-function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }
+function main(): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }
 `
 
 const mapStrArrColumnLiteralLenSrc = `import "core/map";
-function w(i: i32): string { var t: string = "x"; if (i % 2 == 0) { t = "yy"; } return "v-a-wide-payload-past-any-inline-threshold-" + t; }
+function w(i: i32): string { let t: string = "x"; if (i % 2 == 0) { t = "yy"; } return "v-a-wide-payload-past-any-inline-threshold-" + t; }
 function round(i: i32): i32 {
-    var m: Map[i32, string[]] = Map { 1: [w(i), w(i + 1)], 2: [w(i + 2)] };
+    let m: Map[i32, string[]] = Map { 1: [w(i), w(i + 1)], 2: [w(i + 2)] };
     return m.len() + i % 3;
 }
-function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }
+function main(): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }
 `
 
 func TestSelfHostMapStrArrColumnWasmIR(t *testing.T) {

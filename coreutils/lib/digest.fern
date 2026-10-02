@@ -186,7 +186,7 @@ pub function algo_sha2(): Algo {
 // line names one. `SHA2` itself is absent: it leaves the algorithm
 // where it is, so the ordinary tag match reads the line.
 function sha2_members(): Algo[] {
-  var all: Algo[] = [];
+  let all: Algo[] = [];
   all = all.append(algo_sha224());
   all = all.append(algo_sha256());
   all = all.append(algo_sha384());
@@ -203,7 +203,7 @@ pub function algo_sm3(): Algo {
 // order `cksum -a` lists them. crc, sysv and bsd are absent: none of the
 // three is a digest a checksum line can carry.
 pub function checkable(): Algo[] {
-  var all: Algo[] = [];
+  let all: Algo[] = [];
   all = all.append(algo_md5());
   all = all.append(algo_sha1());
   all = all.append(algo_sha224());
@@ -399,7 +399,7 @@ function opt_warn(): i32 {
 }
 
 function help_text(a: Algo): string {
-  var out: string = "";
+  let out: string = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]... [FILE]...\n";
   out = out + "Print or check " + a.tag + " (" + a.bits.to_string() + "-bit) checksums.\n";
   out = out + "\n";
@@ -477,10 +477,10 @@ function hex_value(b: i32): i32 {
 // The digest as it is compared: lower case, because a checksum file may
 // hold either case and the computed side is always lower.
 function lower_hex(s: string): string {
-  var bs: u8[] = [];
-  var i: i32 = 0;
+  let bs: u8[] = [];
+  let i: i32 = 0;
   while (i < s.len()) {
-    var b: i32 = s[i] as i32;
+    let b: i32 = s[i] as i32;
     if (b >= 65 && b <= 70) {
       b = b + 32;
     }
@@ -492,9 +492,9 @@ function lower_hex(s: string): string {
 
 // ---- file name escaping ---------------------------------------------------
 pub function needs_escape(name: string): boolean {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < name.len()) {
-    var b: i32 = name[i] as i32;
+    let b: i32 = name[i] as i32;
     if (b == 92 || b == 10 || b == 13) {
       return true;
     }
@@ -504,10 +504,10 @@ pub function needs_escape(name: string): boolean {
 }
 
 pub function escape_name(name: string): string {
-  var bs: u8[] = [];
-  var i: i32 = 0;
+  let bs: u8[] = [];
+  let i: i32 = 0;
   while (i < name.len()) {
-    var b: i32 = name[i] as i32;
+    let b: i32 = name[i] as i32;
     if (b == 92) {
       bs = bs.append(92 as u8);
       bs = bs.append(92 as u8);
@@ -529,16 +529,16 @@ pub function escape_name(name: string): string {
 // `\\`, `\n` and `\r` exist; anything else, a trailing lone backslash
 // included, makes the line improperly formatted.
 function unescape(name: string): (boolean, string) {
-  var bs: u8[] = [];
-  var i: i32 = 0;
+  let bs: u8[] = [];
+  let i: i32 = 0;
   while (i < name.len()) {
-    var b: i32 = name[i] as i32;
+    let b: i32 = name[i] as i32;
     if (b != 92) {
       bs = bs.append(b as u8);
       i = i + 1;
       continue;
     }
-    var n: i32 = at(name, i + 1);
+    let n: i32 = at(name, i + 1);
     if (n == 92) {
       bs = bs.append(92 as u8);
     } else if (n == 110) {
@@ -558,7 +558,7 @@ function unescape(name: string): (boolean, string) {
 pub struct Sum { hex: string, bin: u8[], err: Option[IoError], failed: boolean }
 
 function digest_reader(r: Reader, kind: i32, bits: i32, owned: boolean): Sum {
-  var c: Ctx = ctx_new(kind, bits);
+  let c: Ctx = ctx_new(kind, bits);
   while (true) {
     match (r.read_chunk(read_size())) {
       Ok(chunk) => {
@@ -578,7 +578,7 @@ function digest_reader(r: Reader, kind: i32, bits: i32, owned: boolean): Sum {
   if (owned) {
     r.close();
   }
-  var bin: u8[] = ctx_bytes(c);
+  let bin: u8[] = ctx_bytes(c);
   return Sum { hex: hex.hex_encode(bin), bin: bin, err: None, failed: false };
 }
 
@@ -642,8 +642,8 @@ pub function tag_prefix(a: Algo, bits: i32): string {
 // The `\` that marks an escaped line goes before the whole line — ahead
 // of the digest, and ahead of the `MD5 (` of a tagged one.
 pub function sum_line(a: Algo, s: Settings, digest: string, name: string): string {
-  var shown: string = name;
-  var out: string = "";
+  let shown: string = name;
+  let out: string = "";
   if (!s.zero && needs_escape(name)) {
     shown = escape_name(name);
     out = "\\";
@@ -651,7 +651,7 @@ pub function sum_line(a: Algo, s: Settings, digest: string, name: string): strin
   if (s.tag) {
     out = out + tag_prefix(a, s.bits) + " (" + shown + ") = " + digest;
   } else {
-    var mark: string = " ";
+    let mark: string = " ";
     if (s.binary == 1) {
       mark = "*";
     }
@@ -718,7 +718,7 @@ function read_digest(s: Settings, field: string, n: i32): Digest {
   if (field.len() != n * 2) {
     return bad_digest();
   }
-  var k: i32 = 0;
+  let k: i32 = 0;
   while (k < field.len()) {
     if (!isxdigit(field[k] as i32)) {
       return bad_digest();
@@ -734,23 +734,23 @@ function read_digest(s: Settings, field: string, n: i32): Digest {
 // it, or an index of `i` when there were no digits at all. b2sum's
 // `BLAKE2b-NNN` is parsed with it, so `-020` is sixteen bits.
 function strtou_base0(s: string, i: i32): (i32, i32) {
-  var p: i32 = i;
+  let p: i32 = i;
   while (isspace(at(s, p))) {
     p = p + 1;
   }
   if (at(s, p) == 43) {
     p = p + 1;
   }
-  var pick: (i32, i32) = base_of(s, p);
-  var base: i32 = pick.0;
+  let pick: (i32, i32) = base_of(s, p);
+  let base: i32 = pick.0;
   p = pick.1;
   // A `0x` with no hex digit after it is the number zero and a
   // pointer left on the `x`, which is what makes `-0x` not a length.
   if (base == 0) {
     return (0, p);
   }
-  var v: i32 = 0;
-  var digits: i32 = 0;
+  let v: i32 = 0;
+  let digits: i32 = 0;
   while (in_base(at(s, p), base)) {
     v = v * base + hex_value(at(s, p));
     // Nothing this parses is used above 512; saturating keeps a long
@@ -778,7 +778,7 @@ function base_of(s: string, p: i32): (i32, i32) {
   if (at(s, p) != 48) {
     return (10, p);
   }
-  var n: i32 = at(s, p + 1);
+  let n: i32 = at(s, p + 1);
   if (n != 120 && n != 88) {
     return (8, p + 1);
   }
@@ -808,11 +808,11 @@ function in_base(b: i32, base: i32): boolean {
 // the first eight bytes of an MD5 there and is improperly formatted to
 // md5sum, and `MD5\t(` opens a line for cksum and not for md5sum.
 function tag_open(a: Algo, s: Settings, cs: string, i: i32): (i32, i32) {
-  var bits: i32 = a.bits;
+  let bits: i32 = a.bits;
   if (!tag_name_at(a, cs, i)) {
     return (0 - 1, bits);
   }
-  var j: i32 = i + a.tag.len();
+  let j: i32 = i + a.tag.len();
   if (a.variable || s.cksum) {
     if (at(cs, j) == 45) {
       // A DIGIT has to follow the dash. GNU <= 9.4 read the length with
@@ -821,7 +821,7 @@ function tag_open(a: Algo, s: Settings, cs: string, i: i32): (i32, i32) {
       if (!isdigit(at(cs, j + 1))) {
         return (0 - 1, bits);
       }
-      var n: (i32, i32) = strtou_base0(cs, j + 1);
+      let n: (i32, i32) = strtou_base0(cs, j + 1);
       if (n.1 == j + 1) {
         return (0 - 1, bits);
       }
@@ -856,14 +856,14 @@ function tag_open(a: Algo, s: Settings, cs: string, i: i32): (i32, i32) {
 // while `MD5\\t(f) = …` — a backslash, not a tab — names no algorithm at
 // all and stays on whatever the last line left.
 function tag_name_at(a: Algo, cs: string, i: i32): boolean {
-  var k: i32 = 0;
+  let k: i32 = 0;
   while (k < a.tag.len()) {
     if (at(cs, i + k) != a.tag[k] as i32) {
       return false;
     }
     k = k + 1;
   }
-  var end: i32 = at(cs, i + a.tag.len());
+  let end: i32 = at(cs, i + a.tag.len());
   return iswhite(end) || end == 45 || end == 40;
 }
 
@@ -874,14 +874,14 @@ function bsd_split(a: Algo, s: Settings, cs: string, start: i32, bits: i32, esca
   if (bits == 0 || bits % 8 != 0 || bits > a.bits) {
     return bad_line(a);
   }
-  var i: i32 = cs.len() - 1;
+  let i: i32 = cs.len() - 1;
   while (i > start && at(cs, i) != 41) {
     i = i - 1;
   }
   if (i < start || at(cs, i) != 41) {
     return bad_line(a);
   }
-  var name: string = slice_unchecked(cs, start, i) + "";
+  let name: string = slice_unchecked(cs, start, i) + "";
   i = i + 1;
   while (iswhite(at(cs, i))) {
     i = i + 1;
@@ -893,7 +893,7 @@ function bsd_split(a: Algo, s: Settings, cs: string, start: i32, bits: i32, esca
   while (iswhite(at(cs, i))) {
     i = i + 1;
   }
-  var d: Digest = read_digest(s, slice_unchecked(cs, i, cs.len()) + "", bits / 8);
+  let d: Digest = read_digest(s, slice_unchecked(cs, i, cs.len()) + "", bits / 8);
   if (!d.ok) {
     return bad_line(a);
   }
@@ -907,8 +907,8 @@ function bsd_split(a: Algo, s: Settings, cs: string, start: i32, bits: i32, esca
 // mode character is consumed against them, while everything else stops
 // at the NUL as a C string does.
 function raw_split(a: Algo, s: Settings, cs: string, i: i32, full_len: i32, escaped: boolean): Line {
-  var n: i32 = 0;
-  var bits: i32 = a.bits;
+  let n: i32 = 0;
+  let bits: i32 = a.bits;
   if (a.variable) {
     // The length is read off the DIGEST, and 9.5 taught it base64: the
     // hex run first, then the base64-only characters after it and the
@@ -916,15 +916,15 @@ function raw_split(a: Algo, s: Settings, cs: string, i: i32, full_len: i32, esca
     // length; one that is not is matched against the encoded length of
     // every digest size the algorithm has, the padding count standing
     // in for the size modulo three.
-    var hexn: i32 = 0;
+    let hexn: i32 = 0;
     while (isxdigit(at(cs, i + hexn))) {
       hexn = hexn + 1;
     }
-    var b64n: i32 = hexn;
+    let b64n: i32 = hexn;
     while (isubase64(at(cs, i + b64n))) {
       b64n = b64n + 1;
     }
-    var eqs: i32 = 0;
+    let eqs: i32 = 0;
     while (at(cs, i + b64n + eqs) == 61) {
       eqs = eqs + 1;
     }
@@ -936,8 +936,8 @@ function raw_split(a: Algo, s: Settings, cs: string, i: i32, full_len: i32, esca
       // hex reading has to be one of the four to stand.
       if (!sha2_size(n * 4)) {
         n = 0;
-        var ms: Algo[] = sha2_members();
-        var mi: i32 = 0;
+        let ms: Algo[] = sha2_members();
+        let mi: i32 = 0;
         while (mi < ms.len()) {
           if (base64_len(ms[mi].bits / 8) == b64n + eqs) {
             n = ms[mi].bits / 4;
@@ -949,7 +949,7 @@ function raw_split(a: Algo, s: Settings, cs: string, i: i32, full_len: i32, esca
         }
       }
     } else if (hexn < b64n) {
-      var j: i32 = 8;
+      let j: i32 = 8;
       while (j <= a.bits) {
         if (base64_len(j / 8) == b64n + eqs && j % 3 == eqs) {
           n = j / 4;
@@ -981,16 +981,16 @@ function raw_split(a: Algo, s: Settings, cs: string, i: i32, full_len: i32, esca
   if (!iswhite(at(cs, i + n))) {
     return bad_line(a);
   }
-  var d: Digest = read_digest(s, slice_unchecked(cs, i, i + n) + "", bits / 8);
+  let d: Digest = read_digest(s, slice_unchecked(cs, i, i + n) + "", bits / 8);
   if (!d.ok) {
     return bad_line(a);
   }
-  var p: i32 = i + n + 1;
-  var c: i32 = at(cs, p);
+  let p: i32 = i + n + 1;
+  let c: i32 = at(cs, p);
   if (p + 1 < full_len && (c == 32 || c == 42)) {
     p = p + 1;
   }
-  var name: string = "";
+  let name: string = "";
   if (p < cs.len()) {
     name = slice_unchecked(cs, p, cs.len()) + "";
   }
@@ -998,9 +998,9 @@ function raw_split(a: Algo, s: Settings, cs: string, i: i32, full_len: i32, esca
 }
 
 function finish_line(a: Algo, d: Digest, bits: i32, raw_name: string, escaped: boolean): Line {
-  var name: string = raw_name;
+  let name: string = raw_name;
   if (escaped) {
-    var u: (boolean, string) = unescape(raw_name);
+    let u: (boolean, string) = unescape(raw_name);
     if (!u.0) {
       return bad_line(a);
     }
@@ -1016,21 +1016,21 @@ function finish_line(a: Algo, d: Digest, bits: i32, raw_name: string, escaped: b
 // Under `detect` the tag is the only way in: an untagged line has no
 // algorithm to read it with and is improperly formatted whatever it holds.
 function parse_line(a: Algo, s: Settings, cs: string, full_len: i32): Line {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (iswhite(at(cs, i))) {
     i = i + 1;
   }
-  var escaped: boolean = false;
+  let escaped: boolean = false;
   if (at(cs, i) == 92) {
     i = i + 1;
     escaped = true;
   }
   if (s.detect) {
-    var all: Algo[] = checkable();
-    var k: i32 = 0;
+    let all: Algo[] = checkable();
+    let k: i32 = 0;
     while (k < all.len()) {
       if (tag_name_at(all[k], cs, i)) {
-        var d: (i32, i32) = tag_open(all[k], s, cs, i);
+        let d: (i32, i32) = tag_open(all[k], s, cs, i);
         if (d.0 < 0) {
           return bad_line(all[k]);
         }
@@ -1041,11 +1041,11 @@ function parse_line(a: Algo, s: Settings, cs: string, full_len: i32): Line {
     return bad_line(a);
   }
   if (a.fam == fam_sha2()) {
-    var m: Algo[] = sha2_members();
-    var j: i32 = 0;
+    let m: Algo[] = sha2_members();
+    let j: i32 = 0;
     while (j < m.len()) {
       if (tag_name_at(m[j], cs, i)) {
-        var md: (i32, i32) = tag_open(m[j], s, cs, i);
+        let md: (i32, i32) = tag_open(m[j], s, cs, i);
         if (md.0 < 0) {
           return bad_line(m[j]);
         }
@@ -1054,7 +1054,7 @@ function parse_line(a: Algo, s: Settings, cs: string, full_len: i32): Line {
       j = j + 1;
     }
   }
-  var t: (i32, i32) = tag_open(a, s, cs, i);
+  let t: (i32, i32) = tag_open(a, s, cs, i);
   if (t.0 >= 0) {
     return bsd_split(a, s, cs, t.0, t.1, escaped);
   }
@@ -1074,18 +1074,18 @@ function plural(n: i64, one: string, many: string): string {
 
 // One verified line: the file digested and the verdict reported.
 function check_one(s: Settings, ln: Line, c: Check): Check {
-  var st: Check = c;
-  var sum: Sum = digest_path(ln.name, ln.algo.kind, ln.bits);
+  let st: Check = c;
+  let sum: Sum = digest_path(ln.name, ln.algo.kind, ln.bits);
   // The REPORT quotes the name the way every other diagnostic does
   // (gnulib's quotearg_n_style_colon, which the line's own colon calls
   // for); the `\`-escaped form is for the checksum FILE, not for this.
   // GNU <= 9.4 printed the escaped form here instead.
-  var shown: string = gnu.quotef(ln.name);
+  let shown: string = gnu.quotef(ln.name);
   if (sum.failed) {
     if (s.ignore_missing && sum_is_missing(sum)) {
       return st;
     }
-    var w: io_buffered.BufWriter = gnu.error_out(st.out, gnu.quotef(ln.name) + ": " + sum_error_text(sum));
+    let w: io_buffered.BufWriter = gnu.error_out(st.out, gnu.quotef(ln.name) + ": " + sum_error_text(sum));
     st = Check { ...st, out: w, openfail: st.openfail + 1 as i64 };
     if (!s.status) {
       st = Check { ...st, out: gnu.put(st.out, shown + ": FAILED open or read\n") };
@@ -1096,7 +1096,7 @@ function check_one(s: Settings, ln: Line, c: Check): Check {
   // `MD5-64` line names the first eight bytes of an MD5 and verifies
   // against them. For a variable digest the two are already the same
   // length, because the digest was computed at the length the line named.
-  var want: string = sum.hex;
+  let want: string = sum.hex;
   if (ln.bits / 4 < want.len()) {
     want = slice_unchecked(want, 0, ln.bits / 4) + "";
   }
@@ -1117,7 +1117,7 @@ function check_one(s: Settings, ln: Line, c: Check): Check {
 // `strip_line(line)` — one line as the grammar sees it: its terminating
 // newline dropped, then a carriage return before it.
 function strip_line(line: string): string {
-  var end: i32 = line.len();
+  let end: i32 = line.len();
   if (end > 0 && line[end - 1] as i32 == 10) {
     end = end - 1;
   }
@@ -1130,7 +1130,7 @@ function strip_line(line: string): string {
 // `cstring(s)` — `s` up to its first NUL, which is where every C string
 // operation on a checksum line stops.
 function cstring(s: string): string {
-  var i: i32 = __memchr(s, 0, 0);
+  let i: i32 = __memchr(s, 0, 0);
   if (i < 0) {
     return s;
   }
@@ -1139,25 +1139,25 @@ function cstring(s: string): string {
 
 // `check_lines(a, s, r, file, o)` — every line of one checksum file.
 function check_lines(a: Algo, s: Settings, r: Reader, file: string, o: io_buffered.BufWriter): Check {
-  var st: Check = Check { properly: 0 as i64, improper: 0 as i64, openfail: 0 as i64, mismatch: 0 as i64, matched: false, out: o };
-  var lr: io_buffered.LineReader = io_buffered.line_reader_new(r, 10, read_size());
-  var no: i64 = 0 as i64;
+  let st: Check = Check { properly: 0 as i64, improper: 0 as i64, openfail: 0 as i64, mismatch: 0 as i64, matched: false, out: o };
+  let lr: io_buffered.LineReader = io_buffered.line_reader_new(r, 10, read_size());
+  let no: i64 = 0 as i64;
   // The algorithm in force. Under `detect` a recognised tag replaces it
   // for every line after, the bad ones included: a line whose tag was
   // read and whose digest was not still names its algorithm in the
   // warning, and so does the next unreadable line.
-  var cur: Algo = a;
+  let cur: Algo = a;
   while (true) {
-    var nx: (Option[string], io_buffered.LineReader) = lr.next_line();
+    let nx: (Option[string], io_buffered.LineReader) = lr.next_line();
     lr = nx.1;
     match (nx.0) {
       Some(raw) => {
         no = no + 1 as i64;
-        var full: string = strip_line(raw);
+        let full: string = strip_line(raw);
         if (full.len() == 0 || full[0] as i32 == 35) {
           continue;
         }
-        var ln: Line = parse_line(cur, s, cstring(full), full.len());
+        let ln: Line = parse_line(cur, s, cstring(full), full.len());
         cur = ln.algo;
         if (!ln.ok) {
           st = Check { ...st, improper: st.improper + 1 as i64 };
@@ -1191,7 +1191,7 @@ function check_lines(a: Algo, s: Settings, r: Reader, file: string, o: io_buffer
 // it verified. A read error on the file itself is reported instead of
 // the tallies and is `properly: -1` from `check_lines`.
 function report(s: Settings, st: Check, file: string): (boolean, io_buffered.BufWriter) {
-  var w: io_buffered.BufWriter = st.out;
+  let w: io_buffered.BufWriter = st.out;
   if (st.properly < 0 as i64) {
     w = gnu.error_out(w, gnu.quotef(file) + ": read error");
     return (false, w);
@@ -1214,7 +1214,7 @@ function report(s: Settings, st: Check, file: string): (boolean, io_buffered.Buf
       w = gnu.error_out(w, gnu.quotef(file) + ": no file was verified");
     }
   }
-  var ok: boolean = st.mismatch == 0 as i64 && st.openfail == 0 as i64;
+  let ok: boolean = st.mismatch == 0 as i64 && st.openfail == 0 as i64;
   if (s.strict && st.improper > 0 as i64) {
     ok = false;
   }
@@ -1227,12 +1227,12 @@ function report(s: Settings, st: Check, file: string): (boolean, io_buffered.Buf
 // `check_file(a, s, file, o)` — one `-c` operand.
 pub function check_file(a: Algo, s: Settings, file: string, o: io_buffered.BufWriter): (boolean, io_buffered.BufWriter) {
   if (file == "-") {
-    var st: Check = check_lines(a, s, stdin(), "standard input", o);
+    let st: Check = check_lines(a, s, stdin(), "standard input", o);
     return report(s, st, "standard input");
   }
   match (open_reader(file)) {
     Ok(r) => {
-      var st: Check = check_lines(a, s, r, file, o);
+      let st: Check = check_lines(a, s, r, file, o);
       r.close();
       return report(s, st, file);
     },
@@ -1246,7 +1246,7 @@ pub function check_file(a: Algo, s: Settings, file: string, o: io_buffered.BufWr
 // `parse_bits(a, v)` — `-l BITS` in full: the value, then the maximum.
 // Zero selects the default. No `Try …` line follows any of them.
 pub function parse_bits(a: Algo, v: string): i32 {
-  var bits: i32 = parse_bits_value(v);
+  let bits: i32 = parse_bits_value(v);
   check_bits_max(a, bits, v);
   if (bits == 0) {
     return a.bits;
@@ -1260,7 +1260,7 @@ pub function parse_bits(a: Algo, v: string): i32 {
 // what `-a` named. Zero comes back as zero: `cksum -l 0` is `-l` unset,
 // and only b2sum reads it as its default length.
 pub function parse_bits_value(v: string): i32 {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < v.len() && isspace(v[i] as i32)) {
     i = i + 1;
   }
@@ -1271,8 +1271,8 @@ pub function parse_bits_value(v: string): i32 {
   // under 2^64: out of range rather than malformed, and reported with the
   // range wording.
   if (i < v.len() && v[i] as i32 == 45) {
-    var j: i32 = i + 1;
-    var nd: i32 = 0;
+    let j: i32 = i + 1;
+    let nd: i32 = 0;
     while (j < v.len() && isdigit(v[j] as i32)) {
       nd = nd + 1;
       j = j + 1;
@@ -1282,13 +1282,13 @@ pub function parse_bits_value(v: string): i32 {
       exit(1);
     }
   }
-  var digits: i32 = 0;
-  var over: boolean = false;
+  let digits: i32 = 0;
+  let over: boolean = false;
   // uintmax_t's real ceiling, because passing it is what chooses the
   // `Value too large` wording over the plain one.
-  var acc: u64 = 0 as u64;
+  let acc: u64 = 0 as u64;
   while (i < v.len() && isdigit(v[i] as i32)) {
-    var d: u64 = (v[i] as i32 - 48) as u64;
+    let d: u64 = (v[i] as i32 - 48) as u64;
     if (over || acc > 1844674407370955161 as u64 || acc == 1844674407370955161 as u64 && d > 5 as u64) {
       over = true;
     } else {
@@ -1334,7 +1334,7 @@ pub function check_bits_max(a: Algo, bits: i32, v: string): void {
 // twelve in the order below. It is not the order the help text lists
 // them in, and `-l` leads it for b2sum.
 function options(a: Algo): gnu.Opt[] {
-  var opts: gnu.Opt[] = [];
+  let opts: gnu.Opt[] = [];
   if (a.variable) {
     opts = opts.append(gnu.valued("l", "length", opt_length()));
   }
@@ -1437,12 +1437,12 @@ function validate(s: Settings): void {
 
 // Every operand digested and printed.
 function compute(a: Algo, s: Settings, names: string[], o: io_buffered.BufWriter): (boolean, io_buffered.BufWriter) {
-  var out: io_buffered.BufWriter = o;
-  var ok: boolean = true;
-  var i: i32 = 0;
+  let out: io_buffered.BufWriter = o;
+  let ok: boolean = true;
+  let i: i32 = 0;
   while (i < names.len()) {
-    var name: string = names[i];
-    var sum: Sum = digest_path(name, a.kind, s.bits);
+    let name: string = names[i];
+    let sum: Sum = digest_path(name, a.kind, s.bits);
     if (sum.failed) {
       out = gnu.error_out(out, gnu.quotef(name) + ": " + sum_error_text(sum));
       ok = false;
@@ -1456,11 +1456,11 @@ function compute(a: Algo, s: Settings, names: string[], o: io_buffered.BufWriter
 
 // Every operand verified.
 function verify(a: Algo, s: Settings, names: string[], o: io_buffered.BufWriter): (boolean, io_buffered.BufWriter) {
-  var out: io_buffered.BufWriter = o;
-  var ok: boolean = true;
-  var i: i32 = 0;
+  let out: io_buffered.BufWriter = o;
+  let ok: boolean = true;
+  let i: i32 = 0;
   while (i < names.len()) {
-    var r: (boolean, io_buffered.BufWriter) = check_file(a, s, names[i], out);
+    let r: (boolean, io_buffered.BufWriter) = check_file(a, s, names[i], out);
     out = r.1;
     if (!r.0) {
       ok = false;
@@ -1472,11 +1472,11 @@ function verify(a: Algo, s: Settings, names: string[], o: io_buffered.BufWriter)
 
 // `run(a)` — the whole program for one algorithm.
 pub function run(a: Algo): i32 {
-  var argv: string[] = args();
-  var s: Settings = settings_new(a.bits);
-  var g: gnu.Getopt = gnu.getopt_new(argv, options(a), a.name, help_text(a), 1);
+  let argv: string[] = args();
+  let s: Settings = settings_new(a.bits);
+  let g: gnu.Getopt = gnu.getopt_new(argv, options(a), a.name, help_text(a), 1);
   while (true) {
-    var r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    let r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = r.1;
     match (r.0) {
       Some(m) => {
@@ -1494,18 +1494,18 @@ pub function run(a: Algo): i32 {
   }
   validate(s);
 
-  var names: string[] = g.operands();
+  let names: string[] = g.operands();
   if (names.len() == 0) {
     names = ["-"];
   }
-  var out: io_buffered.BufWriter = gnu.out_new();
-  var ok: boolean = true;
+  let out: io_buffered.BufWriter = gnu.out_new();
+  let ok: boolean = true;
   if (s.check) {
-    var rv: (boolean, io_buffered.BufWriter) = verify(a, s, names, out);
+    let rv: (boolean, io_buffered.BufWriter) = verify(a, s, names, out);
     ok = rv.0;
     out = rv.1;
   } else {
-    var rc: (boolean, io_buffered.BufWriter) = compute(a, s, names, out);
+    let rc: (boolean, io_buffered.BufWriter) = compute(a, s, names, out);
     ok = rc.0;
     out = rc.1;
   }

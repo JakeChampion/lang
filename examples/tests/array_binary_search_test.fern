@@ -61,7 +61,7 @@ function test_free_fn(): test.TestOutcome {
 }
 
 function test_empty(): test.TestOutcome {
-  var e: i32[] = [];
+  let e: i32[] = [];
   match (e.binary_search(1)) {
     Some(v) => {
       return test.fail("expected None for empty");
@@ -81,7 +81,7 @@ function test_single(): test.TestOutcome {
 
 function test_strings(): test.TestOutcome {
   // Lexicographically sorted; cmp.Ord uses the string ordering.
-  var ss: string[] = ["apple", "banana", "cherry", "date"];
+  let ss: string[] = ["apple", "banana", "cherry", "date"];
   if (idx(ss.binary_search("cherry")) != 2) {
     return test.fail("cherry at 2");
   }
@@ -89,7 +89,7 @@ function test_strings(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("std/array binary_search");
+  let r: test.TestRunner = test.test_new("std/array binary_search");
   r = r.it("found middle", test_found_middle);
   r = r.it("found first", test_found_first);
   r = r.it("found last", test_found_last);

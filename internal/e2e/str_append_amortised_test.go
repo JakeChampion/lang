@@ -15,9 +15,9 @@ import "testing"
 // read linear under the old runtime too. The bound is n/8, sixty-odd times
 // the fixed figure and eight times under the old one.
 const strAppendAmortisedSrc = `function churn(n: i32): i32 {
-    var piece: string = "abcdefghijklmnopqrstuvwxyz0123456789abcdefgh";
-    var out: string = "";
-    var i: i32 = 0;
+    let piece: string = "abcdefghijklmnopqrstuvwxyz0123456789abcdefgh";
+    let out: string = "";
+    let i: i32 = 0;
     while (i < n) { out = out + piece; i = i + 1; }
     return out.len();
 }

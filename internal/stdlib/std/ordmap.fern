@@ -5,10 +5,10 @@
 // `core/cmp.Ord` type. Every operation is value-returning:
 //
 //   import "std/ordmap";
-//   var m: ordmap.OrdMap[string, i32] = ordmap.ordmap_new();
+//   let m: ordmap.OrdMap[string, i32] = ordmap.ordmap_new();
 //   m = m.insert("b", 2);
 //   m = m.insert("a", 1);
-//   var snapshot: ordmap.OrdMap[string, i32] = m;   // O(1), shares every node
+//   let snapshot: ordmap.OrdMap[string, i32] = m;   // O(1), shares every node
 //   m = m.insert("c", 3);                           // snapshot is unchanged
 //   m.get("a");          // Some(1)
 //   m.keys();            // ["a", "b", "c"]  (always in key order)
@@ -32,7 +32,7 @@
 // So `m = m.insert(k, v)` in a loop costs what a mutable balanced tree
 // costs, and taking a snapshot first costs one pointer copy. Neither
 // path needs a transient/builder API, and there is no `own` on the
-// receiver: an `own` receiver would forbid `var m2 = m.insert(k, v)`
+// receiver: an `own` receiver would forbid `let m2 = m.insert(k, v)`
 // (E051), which is the whole point of a persistent map.
 //
 // # Ordering and equality
@@ -75,10 +75,10 @@ pub enum OrdNode[K, V] { Tip, Bin(OrdNode[K, V], K, V, OrdNode[K, V], i32) }
 pub struct OrdMap[K, V] { root: OrdNode[K, V] }
 
 // `ordmap_new()` — the empty map. The key and value types are fixed by
-// the annotation at the binding (`var m: OrdMap[string, i32] =
+// the annotation at the binding (`let m: OrdMap[string, i32] =
 // ordmap_new();`).
 pub function ordmap_new[K, V](): OrdMap[K, V] {
-  var e: OrdNode[K, V] = Tip;
+  let e: OrdNode[K, V] = Tip;
   return OrdMap { root: e };
 }
 
@@ -87,12 +87,12 @@ pub function ordmap_new[K, V](): OrdMap[K, V] {
 // arrays must have the same length; extra entries in the longer one are
 // ignored.
 pub function from_arrays[K: cmp.Ord, V](keys: K[], values: V[]): OrdMap[K, V] {
-  var m: OrdMap[K, V] = ordmap_new();
-  var n: i32 = keys.len();
+  let m: OrdMap[K, V] = ordmap_new();
+  let n: i32 = keys.len();
   if (values.len() < n) {
     n = values.len();
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < n) {
     m = m.insert(keys[i], values[i]);
     i = i + 1;
@@ -118,7 +118,7 @@ function __om_bin[K, V](l: OrdNode[K, V], k: K, v: V, r: OrdNode[K, V]): OrdNode
 }
 
 function __om_single[K, V](k: K, v: V): OrdNode[K, V] {
-  var e: OrdNode[K, V] = Tip;
+  let e: OrdNode[K, V] = Tip;
   return Bin(e, k, v, e, 1);
 }
 
@@ -131,17 +131,17 @@ function __om_rotate_l[K, V](l: OrdNode[K, V], k: K, v: V, r: OrdNode[K, V]): Or
     },
     Bin(rl, rk, rv, rr, rs) => {
       if (__om_size(rl) < 2 * __om_size(rr)) {
-        var nl: OrdNode[K, V] = __om_bin(l, k, v, rl);
+        let nl: OrdNode[K, V] = __om_bin(l, k, v, rl);
         return __om_bin(nl, rk, rv, rr);
       }
       match (rl) {
         Tip => {
-          var nl: OrdNode[K, V] = __om_bin(l, k, v, rl);
+          let nl: OrdNode[K, V] = __om_bin(l, k, v, rl);
           return __om_bin(nl, rk, rv, rr);
         },
         Bin(rll, rlk, rlv, rlr, rls) => {
-          var nl: OrdNode[K, V] = __om_bin(l, k, v, rll);
-          var nr: OrdNode[K, V] = __om_bin(rlr, rk, rv, rr);
+          let nl: OrdNode[K, V] = __om_bin(l, k, v, rll);
+          let nr: OrdNode[K, V] = __om_bin(rlr, rk, rv, rr);
           return __om_bin(nl, rlk, rlv, nr);
         }
       }
@@ -157,17 +157,17 @@ function __om_rotate_r[K, V](l: OrdNode[K, V], k: K, v: V, r: OrdNode[K, V]): Or
     },
     Bin(ll, lk, lv, lr, ls) => {
       if (__om_size(lr) < 2 * __om_size(ll)) {
-        var nr: OrdNode[K, V] = __om_bin(lr, k, v, r);
+        let nr: OrdNode[K, V] = __om_bin(lr, k, v, r);
         return __om_bin(ll, lk, lv, nr);
       }
       match (lr) {
         Tip => {
-          var nr: OrdNode[K, V] = __om_bin(lr, k, v, r);
+          let nr: OrdNode[K, V] = __om_bin(lr, k, v, r);
           return __om_bin(ll, lk, lv, nr);
         },
         Bin(lrl, lrk, lrv, lrr, lrs) => {
-          var nl: OrdNode[K, V] = __om_bin(ll, lk, lv, lrl);
-          var nr: OrdNode[K, V] = __om_bin(lrr, k, v, r);
+          let nl: OrdNode[K, V] = __om_bin(ll, lk, lv, lrl);
+          let nr: OrdNode[K, V] = __om_bin(lrr, k, v, r);
           return __om_bin(nl, lrk, lrv, nr);
         }
       }
@@ -179,8 +179,8 @@ function __om_rotate_r[K, V](l: OrdNode[K, V], k: K, v: V, r: OrdNode[K, V]): Or
 // size by at most one element (insert / delete) — the precondition for
 // a single (possibly double) rotation to suffice.
 function __om_balance[K, V](l: OrdNode[K, V], k: K, v: V, r: OrdNode[K, V]): OrdNode[K, V] {
-  var sl: i32 = __om_size(l);
-  var sr: i32 = __om_size(r);
+  let sl: i32 = __om_size(l);
+  let sr: i32 = __om_size(r);
   if (sl + sr <= 1) {
     return Bin(l, k, v, r, sl + sr + 1);
   }
@@ -199,13 +199,13 @@ pub function __om_insert[K: cmp.Ord, V](t: OrdNode[K, V], k: K, v: V): OrdNode[K
       return __om_single(k, v);
     },
     Bin(l, nk, nv, r, s) => {
-      var c: i32 = k.cmp(nk);
+      let c: i32 = k.cmp(nk);
       if (c < 0) {
-        var nl: OrdNode[K, V] = __om_insert(l, k, v);
+        let nl: OrdNode[K, V] = __om_insert(l, k, v);
         return __om_balance(nl, nk, nv, r);
       }
       if (c > 0) {
-        var nr: OrdNode[K, V] = __om_insert(r, k, v);
+        let nr: OrdNode[K, V] = __om_insert(r, k, v);
         return __om_balance(l, nk, nv, nr);
       }
       return Bin(l, k, v, r, s);
@@ -216,15 +216,15 @@ pub function __om_insert[K: cmp.Ord, V](t: OrdNode[K, V], k: K, v: V): OrdNode[K
 // __om_find returns the node holding `k`, or Tip. Iterative, so a
 // lookup never recurses.
 pub function __om_find[K: cmp.Ord, V](t: OrdNode[K, V], k: K): OrdNode[K, V] {
-  var cur: OrdNode[K, V] = t;
-  var searching: boolean = true;
+  let cur: OrdNode[K, V] = t;
+  let searching: boolean = true;
   while (searching) {
     match (cur) {
       Tip => {
         searching = false;
       },
       Bin(l, nk, nv, r, s) => {
-        var c: i32 = k.cmp(nk);
+        let c: i32 = k.cmp(nk);
         if (c == 0) {
           return cur;
         }
@@ -242,8 +242,8 @@ pub function __om_find[K: cmp.Ord, V](t: OrdNode[K, V], k: K): OrdNode[K, V] {
 // __om_min_node / __om_max_node return the leftmost / rightmost node
 // (Tip for an empty tree).
 pub function __om_min_node[K, V](t: OrdNode[K, V]): OrdNode[K, V] {
-  var cur: OrdNode[K, V] = t;
-  var walking: boolean = true;
+  let cur: OrdNode[K, V] = t;
+  let walking: boolean = true;
   while (walking) {
     match (cur) {
       Tip => {
@@ -265,8 +265,8 @@ pub function __om_min_node[K, V](t: OrdNode[K, V]): OrdNode[K, V] {
 }
 
 pub function __om_max_node[K, V](t: OrdNode[K, V]): OrdNode[K, V] {
-  var cur: OrdNode[K, V] = t;
-  var walking: boolean = true;
+  let cur: OrdNode[K, V] = t;
+  let walking: boolean = true;
   while (walking) {
     match (cur) {
       Tip => {
@@ -298,7 +298,7 @@ function __om_delete_min[K, V](t: OrdNode[K, V]): OrdNode[K, V] {
           return r;
         },
         Bin(ll, lk, lv, lr, ls) => {
-          var nl: OrdNode[K, V] = __om_delete_min(l);
+          let nl: OrdNode[K, V] = __om_delete_min(l);
           return __om_balance(nl, k, v, r);
         }
       }
@@ -317,7 +317,7 @@ function __om_delete_max[K, V](t: OrdNode[K, V]): OrdNode[K, V] {
           return l;
         },
         Bin(rl, rk, rv, rr, rs) => {
-          var nr: OrdNode[K, V] = __om_delete_max(r);
+          let nr: OrdNode[K, V] = __om_delete_max(r);
           return __om_balance(l, k, v, nr);
         }
       }
@@ -346,7 +346,7 @@ function __om_glue[K, V](l: OrdNode[K, V], r: OrdNode[K, V]): OrdNode[K, V] {
                 return r;
               },
               Bin(ml, mk, mv, mr, ms) => {
-                var nl: OrdNode[K, V] = __om_delete_max(l);
+                let nl: OrdNode[K, V] = __om_delete_max(l);
                 return __om_balance(nl, mk, mv, r);
               }
             }
@@ -356,7 +356,7 @@ function __om_glue[K, V](l: OrdNode[K, V], r: OrdNode[K, V]): OrdNode[K, V] {
               return l;
             },
             Bin(ml, mk, mv, mr, ms) => {
-              var nr: OrdNode[K, V] = __om_delete_min(r);
+              let nr: OrdNode[K, V] = __om_delete_min(r);
               return __om_balance(l, mk, mv, nr);
             }
           }
@@ -372,13 +372,13 @@ pub function __om_delete[K: cmp.Ord, V](t: OrdNode[K, V], k: K): OrdNode[K, V] {
       return t;
     },
     Bin(l, nk, nv, r, s) => {
-      var c: i32 = k.cmp(nk);
+      let c: i32 = k.cmp(nk);
       if (c < 0) {
-        var nl: OrdNode[K, V] = __om_delete(l, k);
+        let nl: OrdNode[K, V] = __om_delete(l, k);
         return __om_balance(nl, nk, nv, r);
       }
       if (c > 0) {
-        var nr: OrdNode[K, V] = __om_delete(r, k);
+        let nr: OrdNode[K, V] = __om_delete(r, k);
         return __om_balance(l, nk, nv, nr);
       }
       return __om_glue(l, r);
@@ -393,7 +393,7 @@ function __om_insert_min[K, V](k: K, v: V, t: OrdNode[K, V]): OrdNode[K, V] {
       return __om_single(k, v);
     },
     Bin(l, nk, nv, r, s) => {
-      var nl: OrdNode[K, V] = __om_insert_min(k, v, l);
+      let nl: OrdNode[K, V] = __om_insert_min(k, v, l);
       return __om_balance(nl, nk, nv, r);
     }
   }
@@ -405,7 +405,7 @@ function __om_insert_max[K, V](k: K, v: V, t: OrdNode[K, V]): OrdNode[K, V] {
       return __om_single(k, v);
     },
     Bin(l, nk, nv, r, s) => {
-      var nr: OrdNode[K, V] = __om_insert_max(k, v, r);
+      let nr: OrdNode[K, V] = __om_insert_max(k, v, r);
       return __om_balance(l, nk, nv, nr);
     }
   }
@@ -426,11 +426,11 @@ function __om_join[K, V](l: OrdNode[K, V], k: K, v: V, r: OrdNode[K, V]): OrdNod
         },
         Bin(rl, rk, rv, rr, rs) => {
           if (3 * ls < rs) {
-            var nl: OrdNode[K, V] = __om_join(l, k, v, rl);
+            let nl: OrdNode[K, V] = __om_join(l, k, v, rl);
             return __om_balance(nl, rk, rv, rr);
           }
           if (3 * rs < ls) {
-            var nr: OrdNode[K, V] = __om_join(lr, k, v, r);
+            let nr: OrdNode[K, V] = __om_join(lr, k, v, r);
             return __om_balance(ll, lk, lv, nr);
           }
           return Bin(l, k, v, r, ls + rs + 1);
@@ -454,11 +454,11 @@ function __om_merge[K, V](l: OrdNode[K, V], r: OrdNode[K, V]): OrdNode[K, V] {
         },
         Bin(rl, rk, rv, rr, rs) => {
           if (3 * ls < rs) {
-            var nl: OrdNode[K, V] = __om_merge(l, rl);
+            let nl: OrdNode[K, V] = __om_merge(l, rl);
             return __om_balance(nl, rk, rv, rr);
           }
           if (3 * rs < ls) {
-            var nr: OrdNode[K, V] = __om_merge(lr, r);
+            let nr: OrdNode[K, V] = __om_merge(lr, r);
             return __om_balance(ll, lk, lv, nr);
           }
           return __om_glue(l, r);
@@ -478,15 +478,15 @@ function __om_split[K: cmp.Ord, V](t: OrdNode[K, V], k: K): OrdSplit[K, V] {
       return OrdSplit { lt: t, hit: t, gt: t };
     },
     Bin(l, nk, nv, r, s) => {
-      var c: i32 = k.cmp(nk);
+      let c: i32 = k.cmp(nk);
       if (c < 0) {
-        var sp: OrdSplit[K, V] = __om_split(l, k);
-        var gt: OrdNode[K, V] = __om_join(sp.gt, nk, nv, r);
+        let sp: OrdSplit[K, V] = __om_split(l, k);
+        let gt: OrdNode[K, V] = __om_join(sp.gt, nk, nv, r);
         return OrdSplit { lt: sp.lt, hit: sp.hit, gt: gt };
       }
       if (c > 0) {
-        var sp: OrdSplit[K, V] = __om_split(r, k);
-        var lt: OrdNode[K, V] = __om_join(l, nk, nv, sp.lt);
+        let sp: OrdSplit[K, V] = __om_split(r, k);
+        let lt: OrdNode[K, V] = __om_join(l, nk, nv, sp.lt);
         return OrdSplit { lt: lt, hit: sp.hit, gt: sp.gt };
       }
       return OrdSplit { lt: l, hit: t, gt: r };
@@ -506,9 +506,9 @@ pub function __om_union[K: cmp.Ord, V](a: OrdNode[K, V], b: OrdNode[K, V]): OrdN
           return a;
         },
         Bin(bl, bk, bv, br, bsz) => {
-          var sp: OrdSplit[K, V] = __om_split(b, ak);
-          var l: OrdNode[K, V] = __om_union(al, sp.lt);
-          var r: OrdNode[K, V] = __om_union(ar, sp.gt);
+          let sp: OrdSplit[K, V] = __om_split(b, ak);
+          let l: OrdNode[K, V] = __om_union(al, sp.lt);
+          let r: OrdNode[K, V] = __om_union(ar, sp.gt);
           return __om_join(l, ak, av, r);
         }
       }
@@ -528,9 +528,9 @@ pub function __om_intersection[K: cmp.Ord, V](a: OrdNode[K, V], b: OrdNode[K, V]
           return b;
         },
         Bin(bl, bk, bv, br, bsz) => {
-          var sp: OrdSplit[K, V] = __om_split(b, ak);
-          var l: OrdNode[K, V] = __om_intersection(al, sp.lt);
-          var r: OrdNode[K, V] = __om_intersection(ar, sp.gt);
+          let sp: OrdSplit[K, V] = __om_split(b, ak);
+          let l: OrdNode[K, V] = __om_intersection(al, sp.lt);
+          let r: OrdNode[K, V] = __om_intersection(ar, sp.gt);
           match (sp.hit) {
             Tip => {
               return __om_merge(l, r);
@@ -557,9 +557,9 @@ pub function __om_difference[K: cmp.Ord, V](a: OrdNode[K, V], b: OrdNode[K, V]):
           return a;
         },
         Bin(bl, bk, bv, br, bsz) => {
-          var sp: OrdSplit[K, V] = __om_split(a, bk);
-          var l: OrdNode[K, V] = __om_difference(sp.lt, bl);
-          var r: OrdNode[K, V] = __om_difference(sp.gt, br);
+          let sp: OrdSplit[K, V] = __om_split(a, bk);
+          let l: OrdNode[K, V] = __om_difference(sp.lt, bl);
+          let r: OrdNode[K, V] = __om_difference(sp.gt, br);
           return __om_merge(l, r);
         }
       }
@@ -571,7 +571,7 @@ pub function __om_difference[K: cmp.Ord, V](a: OrdNode[K, V], b: OrdNode[K, V]):
 // cannot name another module's variants, so the set builds its empty
 // root and reads a node's key through these.
 pub function __om_empty[K, V](): OrdNode[K, V] {
-  var e: OrdNode[K, V] = Tip;
+  let e: OrdNode[K, V] = Tip;
   return e;
 }
 
@@ -637,7 +637,7 @@ pub function __om_fold[K, V, A](t: OrdNode[K, V], init: A, f: (A, K, V) => A): A
       return init;
     },
     Bin(l, k, v, r, s) => {
-      var a: A = __om_fold(l, init, f);
+      let a: A = __om_fold(l, init, f);
       a = f(a, k, v);
       return __om_fold(r, a, f);
     }
@@ -662,12 +662,12 @@ pub function __om_for_each[K, V](t: OrdNode[K, V], f: (K, V) => void): void {
 function __om_map_values[K, V, W](t: OrdNode[K, V], f: (V) => W): OrdNode[K, W] {
   match (t) {
     Tip => {
-      var e: OrdNode[K, W] = Tip;
+      let e: OrdNode[K, W] = Tip;
       return e;
     },
     Bin(l, k, v, r, s) => {
-      var nl: OrdNode[K, W] = __om_map_values(l, f);
-      var nr: OrdNode[K, W] = __om_map_values(r, f);
+      let nl: OrdNode[K, W] = __om_map_values(l, f);
+      let nr: OrdNode[K, W] = __om_map_values(r, f);
       return Bin(nl, k, f(v), nr, s);
     }
   }
@@ -681,8 +681,8 @@ pub function __om_filter[K, V](t: OrdNode[K, V], pred: (K, V) => boolean): OrdNo
       return t;
     },
     Bin(l, k, v, r, s) => {
-      var fl: OrdNode[K, V] = __om_filter(l, pred);
-      var fr: OrdNode[K, V] = __om_filter(r, pred);
+      let fl: OrdNode[K, V] = __om_filter(l, pred);
+      let fr: OrdNode[K, V] = __om_filter(r, pred);
       if (pred(k, v)) {
         return __om_join(fl, k, v, fr);
       }
@@ -694,20 +694,20 @@ pub function __om_filter[K, V](t: OrdNode[K, V], pred: (K, V) => boolean): OrdNo
 // __om_at returns the node of rank `i` (0-based, in key order), Tip
 // when out of range.
 pub function __om_at[K, V](t: OrdNode[K, V], i: i32): OrdNode[K, V] {
-  var cur: OrdNode[K, V] = t;
-  var want: i32 = i;
+  let cur: OrdNode[K, V] = t;
+  let want: i32 = i;
   if (want < 0) {
-    var e: OrdNode[K, V] = Tip;
+    let e: OrdNode[K, V] = Tip;
     return e;
   }
-  var walking: boolean = true;
+  let walking: boolean = true;
   while (walking) {
     match (cur) {
       Tip => {
         walking = false;
       },
       Bin(l, k, v, r, s) => {
-        var sl: i32 = __om_size(l);
+        let sl: i32 = __om_size(l);
         if (want < sl) {
           cur = l;
         } else if (want == sl) {
@@ -724,16 +724,16 @@ pub function __om_at[K, V](t: OrdNode[K, V], i: i32): OrdNode[K, V] {
 
 // __om_index_of returns the rank of `k`, or -1 when absent.
 pub function __om_index_of[K: cmp.Ord, V](t: OrdNode[K, V], k: K): i32 {
-  var cur: OrdNode[K, V] = t;
-  var below: i32 = 0;
-  var walking: boolean = true;
+  let cur: OrdNode[K, V] = t;
+  let below: i32 = 0;
+  let walking: boolean = true;
   while (walking) {
     match (cur) {
       Tip => {
         walking = false;
       },
       Bin(l, nk, nv, r, s) => {
-        var c: i32 = k.cmp(nk);
+        let c: i32 = k.cmp(nk);
         if (c == 0) {
           return below + __om_size(l);
         }
@@ -780,8 +780,8 @@ pub function __om_valid[K: cmp.Ord, V](t: OrdNode[K, V]): boolean {
       return true;
     },
     Bin(l, k, v, r, s) => {
-      var sl: i32 = __om_size(l);
-      var sr: i32 = __om_size(r);
+      let sl: i32 = __om_size(l);
+      let sr: i32 = __om_size(r);
       if (s != sl + sr + 1) {
         return false;
       }
@@ -933,13 +933,13 @@ pub function (m: OrdMap[K, V]) index_of[K: cmp.Ord, V](k: K): i32 {
 
 // `keys()` / `values()` — the entries in ascending key order.
 pub function (m: OrdMap[K, V]) keys(): K[] {
-  var acc: K[] = [];
+  let acc: K[] = [];
   acc = __om_keys_into(m.root, acc);
   return acc;
 }
 
 pub function (m: OrdMap[K, V]) values(): V[] {
-  var acc: V[] = [];
+  let acc: V[] = [];
   acc = __om_values_into(m.root, acc);
   return acc;
 }
@@ -985,12 +985,12 @@ pub function (m: OrdMap[K, V]) difference[K: cmp.Ord, V](other: OrdMap[K, V]): O
 // `split(k)` — the entries below `k` and the entries above it, as two
 // maps (an entry AT `k` is in neither). O(log n).
 pub function (m: OrdMap[K, V]) split_lt[K: cmp.Ord, V](k: K): OrdMap[K, V] {
-  var sp: OrdSplit[K, V] = __om_split(m.root, k);
+  let sp: OrdSplit[K, V] = __om_split(m.root, k);
   return OrdMap { root: sp.lt };
 }
 
 pub function (m: OrdMap[K, V]) split_gt[K: cmp.Ord, V](k: K): OrdMap[K, V] {
-  var sp: OrdSplit[K, V] = __om_split(m.root, k);
+  let sp: OrdSplit[K, V] = __om_split(m.root, k);
   return OrdMap { root: sp.gt };
 }
 

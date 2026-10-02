@@ -20,7 +20,7 @@ import "./util";
 // tree writes a fixture directory and returns its path, or "" if the host
 // would not let us.
 function tree(): string {
-  var dir: string = "";
+  let dir: string = "";
   match (temp_dir("fern-embed-run")) {
     Ok(d) => {
       dir = d;
@@ -72,7 +72,7 @@ function tree(): string {
 // valid UTF-8 in any position. Built through the unchecked constructor because
 // that is the only way to spell bytes a `string` literal cannot hold.
 function blob_string(): string {
-  var bs: u8[] = [];
+  let bs: u8[] = [];
   bs = bs.append(65);
   bs = bs.append(0);
   bs = bs.append(66);
@@ -100,10 +100,10 @@ function var_init_of(mod: parser.Module): ast.Expr {
 }
 
 // folded_init parses `src`, resolves assets against `a`, and returns the first
-// `var` initialiser in `main` plus every error the pass reported.
+// `let` initialiser in `main` plus every error the pass reported.
 function folded_init(src: string, a: embed.Assets): (ast.Expr, string[]) {
-  var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
-  var folded: embed.Folded = embed.fold_assets(mod, a);
+  let mod: parser.Module = parser.parse_module(lexer.tokenize(src));
+  let folded: embed.Folded = embed.fold_assets(mod, a);
   return (var_init_of(folded.module), folded.errs);
 }
 
@@ -122,15 +122,15 @@ function str_of(e: ast.Expr): string {
 
 function main(): i32 {
   // ---- 1. the bundle -------------------------------------------------
-  var dir: string = tree();
+  let dir: string = tree();
   if (dir.len() == 0) {
     return 10;
   }
-  var lr: embed.LoadResult = embed.load(dir);
+  let lr: embed.LoadResult = embed.load(dir);
   if (lr.err.len() != 0) {
     return 11;
   }
-  var a: embed.Assets = lr.assets;
+  let a: embed.Assets = lr.assets;
   if (!a.present) {
     return 12;
   }
@@ -168,7 +168,7 @@ function main(): i32 {
   // Byte-exact, and asserted per byte rather than by comparing to a literal:
   // the point is that nothing truncated at the NUL and nothing rewrote the
   // 0xff, which a length check alone would not catch.
-  var blob: string = a.contents[1];
+  let blob: string = a.contents[1];
   if (blob.len() != 5) {
     return 22;
   }
@@ -193,14 +193,14 @@ function main(): i32 {
   }
 
   // An EMPTY directory is legitimate, and is not the same as no -embed.
-  var empty_dir: string = dir + "/empty";
+  let empty_dir: string = dir + "/empty";
   match (create_dir_all(empty_dir)) {
     Ok(u) => {},
     Err(e) => {
       return 28;
     }
   }
-  var er: embed.LoadResult = embed.load(empty_dir);
+  let er: embed.LoadResult = embed.load(empty_dir);
   if (er.err.len() != 0) {
     return 29;
   }
@@ -231,7 +231,7 @@ function main(): i32 {
   }
 
   // ---- 3. __fern_asset -----------------------------------------------
-  var one: string = "function main(): i32 { var s: string = __fern_asset(\"a.txt\"); return s.len(); }\n";
+  let one: string = "function main(): i32 { let s: string = __fern_asset(\"a.txt\"); return s.len(); }\n";
   let (e1, err1) = folded_init(one, a);
   if (err1.len() != 0) {
     return 40;
@@ -241,8 +241,8 @@ function main(): i32 {
   }
 
   // Nested one level in: the pass has to reach every expression position,
-  // not just a `var` initialiser it happens to be handed.
-  var nested: string = "function main(): i32 { var s: string = __fern_asset(\"a.txt\") + __fern_asset(\"sub/b.txt\"); return s.len(); }\n";
+  // not just a `let` initialiser it happens to be handed.
+  let nested: string = "function main(): i32 { let s: string = __fern_asset(\"a.txt\") + __fern_asset(\"sub/b.txt\"); return s.len(); }\n";
   let (e2, err2) = folded_init(nested, a);
   if (err2.len() != 0) {
     return 42;
@@ -270,7 +270,7 @@ function main(): i32 {
     return 51;
   }
 
-  var missing: string = "function main(): i32 { var s: string = __fern_asset(\"a.tx\"); return 0; }\n";
+  let missing: string = "function main(): i32 { let s: string = __fern_asset(\"a.tx\"); return 0; }\n";
   let (e4, err4) = folded_init(missing, a);
   if (err4.len() != 1) {
     return 52;
@@ -279,7 +279,7 @@ function main(): i32 {
     return 53;
   }
 
-  var far: string = "function main(): i32 { var s: string = __fern_asset(\"totally-unrelated-xyzzy\"); return 0; }\n";
+  let far: string = "function main(): i32 { let s: string = __fern_asset(\"totally-unrelated-xyzzy\"); return 0; }\n";
   let (e5, err5) = folded_init(far, a);
   if (err5.len() != 1) {
     return 54;
@@ -291,7 +291,7 @@ function main(): i32 {
     return 56;
   }
 
-  var arity: string = "function main(): i32 { var s: string = __fern_asset(\"a.txt\", \"b\"); return 0; }\n";
+  let arity: string = "function main(): i32 { let s: string = __fern_asset(\"a.txt\", \"b\"); return 0; }\n";
   let (e6, err6) = folded_init(arity, a);
   if (err6.len() != 1) {
     return 57;
@@ -303,7 +303,7 @@ function main(): i32 {
   // The name is checked SYNTACTICALLY, before anything could have rewritten
   // it — an asset resolved from a computed name would have to exist at
   // runtime, which is the one thing embedding rules out.
-  var computed: string = "function main(): i32 { var n: string = \"a.txt\"; var s: string = __fern_asset(n); return 0; }\n";
+  let computed: string = "function main(): i32 { let n: string = \"a.txt\"; let s: string = __fern_asset(n); return 0; }\n";
   let (e7, err7) = folded_init(computed, a);
   if (err7.len() != 1) {
     return 59;
@@ -316,7 +316,7 @@ function main(): i32 {
   // being a literal — the pass claims a call before the spine descends into
   // it, so the inner one is never resolved into a name the outer could then
   // accept. Post-order would compile this into a lookup of "hello asset".
-  var inner: string = "function main(): i32 { var s: string = __fern_asset(__fern_asset(\"a.txt\")); return 0; }\n";
+  let inner: string = "function main(): i32 { let s: string = __fern_asset(__fern_asset(\"a.txt\")); return 0; }\n";
   let (e13, err13) = folded_init(inner, a);
   if (err13.len() != 1) {
     return 62;
@@ -326,14 +326,14 @@ function main(): i32 {
   }
 
   // Two bad names report twice: one failure must not hide the next.
-  var two_bad: string = "function main(): i32 { var s: string = __fern_asset(\"nope1\") + __fern_asset(\"nope2\"); return 0; }\n";
+  let two_bad: string = "function main(): i32 { let s: string = __fern_asset(\"nope1\") + __fern_asset(\"nope2\"); return 0; }\n";
   let (e8, err8) = folded_init(two_bad, a);
   if (err8.len() != 2) {
     return 61;
   }
 
   // ---- 5. __fern_assets ----------------------------------------------
-  var all: string = "function main(): i32 { var xs = __fern_assets(); return xs.len(); }\n";
+  let all: string = "function main(): i32 { let xs = __fern_assets(); return xs.len(); }\n";
   let (e9, err9) = folded_init(all, a);
   if (err9.len() != 0) {
     return 70;
@@ -396,7 +396,7 @@ function main(): i32 {
     return 83;
   }
 
-  var all_arity: string = "function main(): i32 { var xs = __fern_assets(\"a.txt\"); return 0; }\n";
+  let all_arity: string = "function main(): i32 { let xs = __fern_assets(\"a.txt\"); return 0; }\n";
   let (e12, err12) = folded_init(all_arity, a);
   if (err12.len() != 1) {
     return 84;

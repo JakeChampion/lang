@@ -18,7 +18,7 @@ function test_u32_abs_diff(): test.TestOutcome {
 
 function test_u32_abs_diff_max(): test.TestOutcome {
   // u32::MAX via wrap; abs_diff to 0 is MAX itself, no overflow.
-  var big: u32 = 0 as u32 - 1 as u32;
+  let big: u32 = 0 as u32 - 1 as u32;
   return test.assert_true(big.abs_diff(0 as u32) == big);
 }
 
@@ -31,7 +31,7 @@ function test_u32_in_range(): test.TestOutcome {
 
 function test_u32_range_max(): test.TestOutcome {
   // Unsigned compare: MAX is inside [0, MAX] inclusive but not [0, MAX) half-open.
-  var big: u32 = 0 as u32 - 1 as u32;
+  let big: u32 = 0 as u32 - 1 as u32;
   if (!big.is_between(0 as u32, big)) {
     return test.fail("MAX in inclusive");
   }
@@ -51,7 +51,7 @@ function test_u64_in_range(): test.TestOutcome {
 }
 
 function test_u64_range_max(): test.TestOutcome {
-  var big: u64 = 0 as u64 - 1 as u64;
+  let big: u64 = 0 as u64 - 1 as u64;
   if (!big.is_between(0 as u64, big)) {
     return test.fail("MAX in inclusive");
   }
@@ -59,7 +59,7 @@ function test_u64_range_max(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("std/uint range");
+  let r: test.TestRunner = test.test_new("std/uint range");
   r = r.it("u32 abs_diff", test_u32_abs_diff);
   r = r.it("u32 abs_diff max", test_u32_abs_diff_max);
   r = r.it("u32 in_range", test_u32_in_range);

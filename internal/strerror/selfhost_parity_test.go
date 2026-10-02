@@ -119,7 +119,7 @@ func TestSelfHostUnknownPrefixMatches(t *testing.T) {
 	// than from a constant. Textual, because this test reads the Fern
 	// source as data and cannot run it; the end-to-end proof is the
 	// arm64-darwin binary itself, which the macOS lane builds.
-	if !regexp.MustCompile(`var pfx: string = strerror_unknown_prefix\(t\);`).MatchString(src) {
+	if !regexp.MustCompile(`let pfx: string = strerror_unknown_prefix\(t\);`).MatchString(src) {
 		t.Error("strerror_unknown_src does not take its prefix from strerror_unknown_prefix(t) — the per-target prefix is not reaching the emitted runtime")
 	}
 	if !regexp.MustCompile(`strerror_unknown_src\(t\)`).MatchString(src) {

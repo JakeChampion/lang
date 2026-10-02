@@ -11,12 +11,12 @@ const base64urlProg = `
 import "std/base64" as b64;
 import "std/string";
 function main(): i32 {
-    var enc: string = b64.base64url_encode("Hello, World!".bytes());
+    let enc: string = b64.base64url_encode("Hello, World!".bytes());
     if (enc.contains("+") || enc.contains("/") || enc.contains("=")) { return 1; }
     if (string_from_bytes_unchecked(b64.base64url_decode(enc)) != "Hello, World!") { return 2; }
     // 0xFFFFFF is not valid UTF-8 — since #5730 it stays u8[] on both
     // sides and never has to pose as a string.
-    var s2: u8[] = [255 as u8, 255 as u8, 255 as u8];
+    let s2: u8[] = [255 as u8, 255 as u8, 255 as u8];
     if (b64.base64url_encode(s2) != "____") { return 3; }
     if (b64.base64url_encode(b64.base64url_decode("____")) != "____") { return 4; }
     if (b64.base64url_encode("Hi".bytes()) != "SGk") { return 5; }

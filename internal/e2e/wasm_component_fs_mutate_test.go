@@ -47,7 +47,7 @@ func TestCmdLangComponentTempDirRemoveFile(t *testing.T) {
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "fsmut.fern")
 	src := []byte(`function main(): i32 {
-    var d: string = "";
+    let d: string = "";
     match (temp_dir("probe")) { Err(e) => { return 1; }, Ok(p) => { d = p; } }
     match (write_file(d + "/a.txt", "hello")) { Err(e) => { return 1; }, Ok(_) => {} }
     match (read_file(d + "/a.txt")) {
@@ -280,7 +280,7 @@ func TestCmdLangComponentReadDirRemoveDirAll(t *testing.T) {
 	// create_dir_all builds the level under the temp directory — that is
 	// what makes this a tree rather than siblings.
 	src := []byte(`function main(): i32 {
-    var d: string = "";
+    let d: string = "";
     match (temp_dir("rd")) { Err(e) => { return 1; }, Ok(p) => { d = p; } }
     match (write_file(d + "/a.txt", "aaa")) { Err(e) => { return 1; }, Ok(_) => {} }
     match (write_file(d + "/b.txt", "bb")) { Err(e) => { return 1; }, Ok(_) => {} }
@@ -288,8 +288,8 @@ func TestCmdLangComponentReadDirRemoveDirAll(t *testing.T) {
         Err(e) => { return 1; },
         Ok(names) => {
             if (names.len() != 2) { return 1; }
-            var seen: i32 = 0;
-            var i: i32 = 0;
+            let seen: i32 = 0;
+            let i: i32 = 0;
             while (i < names.len()) {
                 if (names[i] == "a.txt") { seen = seen + 1; }
                 if (names[i] == "b.txt") { seen = seen + 1; }
@@ -298,7 +298,7 @@ func TestCmdLangComponentReadDirRemoveDirAll(t *testing.T) {
             if (seen != 2) { return 1; }
         }
     }
-    var mid: string = d + "/mid";
+    let mid: string = d + "/mid";
     match (create_dir_all(mid)) { Err(e) => { return 1; }, Ok(_) => {} }
     match (write_file(mid + "/deep.txt", "d")) { Err(e) => { return 1; }, Ok(_) => {} }
     match (read_dir(mid)) {
@@ -357,7 +357,7 @@ func TestCmdLangComponentStdTestSuiteRuns(t *testing.T) {
 	src := []byte(`import "std/test";
 function fabs(x: f64): f64 { if (x > 0.0) { return x; } return 0.0 - x; }
 function main(): i32 {
-    var r: test.TestRunner = test.test_new("wasm component suite");
+    let r: test.TestRunner = test.test_new("wasm component suite");
     r = r.it("abs positive", () => test.assert_eq_f64_near(fabs(3.5), 3.5, 0.001));
     r = r.it("abs negative", () => test.assert_eq_f64_near(fabs(0.0 - 2.25), 2.25, 0.001));
     return r.finish();

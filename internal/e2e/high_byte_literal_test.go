@@ -13,9 +13,9 @@ import (
 // mangles shows up as both a wrong value and a wrong length.
 const highByteProg = `import "std/i32";
 function main(): i32 {
-    var s: string = "\x00\x41\x7f\x80\xc8\xef\xfe\xff";
-    var out: string = s.len().to_string() + ":";
-    var i: i32 = 0;
+    let s: string = "\x00\x41\x7f\x80\xc8\xef\xfe\xff";
+    let out: string = s.len().to_string() + ":";
+    let i: i32 = 0;
     while (i < s.len()) { out = out + (s[i] as i32).to_string() + " "; i = i + 1; }
     write(out + "\n");
     return 0;

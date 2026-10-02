@@ -14,9 +14,9 @@ const arrayIndexOfProg = `import "std/array";
 struct H { xs: i32[] }
 
 function main(): i32 {
-    var xs: i32[] = [7, 8, 9];
-    var ss: string[] = ["a", "b", "c"];
-    var h: H = H { xs: [7, 8, 9] };
+    let xs: i32[] = [7, 8, 9];
+    let ss: string[] = ["a", "b", "c"];
+    let h: H = H { xs: [7, 8, 9] };
 
     // local i32[] receiver, hit and miss
     match (xs.index_of(9))  { Some(i) => { if (i != 2) { return 1; } }, None => { return 2; } }
@@ -28,12 +28,12 @@ function main(): i32 {
     match (ss.index_of("c")) { Some(i) => { if (i != 2) { return 7; } }, None => { return 8; } }
     match (ss.index_of("z")) { Some(_) => { return 9; },                 None => {} }
     // first match wins on a duplicate, and an empty array is None
-    var dup: i32[] = [5, 3, 5];
+    let dup: i32[] = [5, 3, 5];
     match (dup.index_of(5)) { Some(i) => { if (i != 0) { return 10; } }, None => { return 11; } }
-    var empty: i32[] = [];
+    let empty: i32[] = [];
     match (empty.index_of(0)) { Some(_) => { return 12; }, None => {} }
     // bound to a local first — the non-inline scrutinee path
-    var o: Option[i32] = xs.index_of(8);
+    let o: Option[i32] = xs.index_of(8);
     match (o) { Some(i) => { if (i != 1) { return 13; } }, None => { return 14; } }
     // .contains on the same receivers
     if (!xs.contains(8))   { return 15; }

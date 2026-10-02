@@ -6,7 +6,7 @@ import (
 	"github.com/jakechampion/lang/internal/ir"
 )
 
-// Binding a tuple's STRUCT element to a local — `var q: P = p.1` — incs at the
+// Binding a tuple's STRUCT element to a local — `let q: P = p.1` — incs at the
 // binding site. rhsTainted admits that same read out of a STRUCT-typed local as
 // a counted alias, on the grounds that the binding incs and the container deep-
 // drops its own contents at scope exit; both halves hold for a tuple too, but
@@ -23,12 +23,12 @@ import (
 const tupleThreadSrc = `struct P { a: i32, b: i32, c: i32 }
 function pull(s: P): (i32, P) { return (s.a, P { a: s.a + 1, b: s.b, c: s.c }); }
 function churn(n: i32): i32 {
-    var t: i32 = 0;
-    var s: P = P { a: 0, b: 0, c: 0 };
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let s: P = P { a: 0, b: 0, c: 0 };
+    let i: i32 = 0;
     while (i < n) {
-        var p: (i32, P) = pull(s);
-        var q: P = p.1;
+        let p: (i32, P) = pull(s);
+        let q: P = p.1;
         t = t + q.a;
         s = q;
         i = i + 1;
@@ -88,7 +88,7 @@ func TestTupleElementBindingIsReclaimed(t *testing.T) {
 // rests on the destination's drop being matched by a reference the container
 // genuinely holds, and for the delete tuple that reference did not exist: the
 // tuple stored the receiver's handle uncounted, so crediting the projection
-// alone made `var m = t.0` on a `(Map, boolean)` deep-free a map the tuple
+// alone made `let m = t.0` on a `(Map, boolean)` deep-free a map the tuple
 // still referenced, and segfaulted `map_delete_tuple_churn_free` on both
 // natives. The COW-seam retain supplies the count; the two are a pair (#8276).
 //
@@ -97,7 +97,7 @@ func TestTupleElementBindingIsReclaimed(t *testing.T) {
 //
 //   - the loop reclaims the map (drops are emitted at all), which crediting
 //     the projection is what buys;
-//   - the seam retains it (mapCowBindSites reaches a whole-tuple `var`), which
+//   - the seam retains it (mapCowBindSites reaches a whole-tuple `let`), which
 //     is what makes those drops safe.
 //
 // Drop either and the shape is a use-after-free again, so a future change that
@@ -110,12 +110,12 @@ import "core/int";
 import "core/map";
 
 function churn(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var m: Map[i32, i32] = map_new(8);
+        let m: Map[i32, i32] = map_new(8);
         m = m.insert(1, 4);
-        var t: (Map[i32, i32], boolean) = m.without(1);
+        let t: (Map[i32, i32], boolean) = m.without(1);
         m = t.0;
         if (t.1) { acc = acc + 1; }
         i = i + 1;

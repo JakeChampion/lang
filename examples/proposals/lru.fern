@@ -32,14 +32,14 @@ import "std/string";
 // Byte-wise lexicographic compare. `>` is not defined on strings, and the
 // sorted key set below needs an order that does not depend on the cache's.
 function str_gt(a: string, b: string): boolean {
-  var n: i32 = a.len();
+  let n: i32 = a.len();
   if (b.len() < n) {
     n = b.len();
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < n) {
-    var x: i32 = a[i] as i32;
-    var y: i32 = b[i] as i32;
+    let x: i32 = a[i] as i32;
+    let y: i32 = b[i] as i32;
     if (x != y) {
       return x > y;
     }
@@ -60,7 +60,7 @@ function cache_new(cap: i32): Cache {
 }
 
 function index_of_key(c: Cache, k: string): i32 {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < c.entries.len()) {
     if (c.entries[i].key == k) {
       return i;
@@ -72,8 +72,8 @@ function index_of_key(c: Cache, k: string): i32 {
 
 // Rebuild with the entry at `at` moved to the front, order otherwise intact.
 function promote(es: Entry[], at: i32): Entry[] {
-  var out: Entry[] = [es[at]];
-  var i: i32 = 0;
+  let out: Entry[] = [es[at]];
+  let i: i32 = 0;
   while (i < es.len()) {
     if (i != at) {
       out = out.append(es[i]);
@@ -86,14 +86,14 @@ function promote(es: Entry[], at: i32): Entry[] {
 // A hit promotes. That single line is the whole difference from a FIFO, and
 // the reason test_a_read_promotes exists.
 function get(c: Cache, k: string): (Cache, Option[i32]) {
-  var at: i32 = index_of_key(c, k);
+  let at: i32 = index_of_key(c, k);
   if (at < 0) {
     return (Cache {
       entries: c.entries, cap: c.cap, hits: c.hits,
       misses: c.misses + 1,
     }, None);
   }
-  var v: i32 = c.entries[at].val;
+  let v: i32 = c.entries[at].val;
   return (Cache {
     entries: promote(c.entries, at), cap: c.cap,
     hits: c.hits + 1, misses: c.misses,
@@ -111,10 +111,10 @@ function put(c: Cache, k: string, v: i32): Cache {
   if (c.cap <= 0) {
     return c;
   }
-  var at: i32 = index_of_key(c, k);
-  var kept: Entry[] = [];
+  let at: i32 = index_of_key(c, k);
+  let kept: Entry[] = [];
   if (at >= 0) {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < c.entries.len()) {
       if (i != at) {
         kept = kept.append(c.entries[i]);
@@ -123,16 +123,16 @@ function put(c: Cache, k: string, v: i32): Cache {
     }
   } else {
     // Trim from the tail until there is room for one more.
-    var n: i32 = c.entries.len();
-    var drop_from: i32 = c.cap - 1;
-    var j: i32 = 0;
+    let n: i32 = c.entries.len();
+    let drop_from: i32 = c.cap - 1;
+    let j: i32 = 0;
     while (j < n && j < drop_from) {
       kept = kept.append(c.entries[j]);
       j = j + 1;
     }
   }
-  var next: Entry[] = [Entry { key: k, val: v }];
-  var m: i32 = 0;
+  let next: Entry[] = [Entry { key: k, val: v }];
+  let m: i32 = 0;
   while (m < kept.len()) {
     next = next.append(kept[m]);
     m = m + 1;
@@ -146,8 +146,8 @@ function contains(c: Cache, k: string): boolean {
 
 // The recency order, front first — the state the oracle is compared against.
 function order(c: Cache): string {
-  var out: string = "";
-  var i: i32 = 0;
+  let out: string = "";
+  let i: i32 = 0;
   while (i < c.entries.len()) {
     if (i > 0) {
       out = out + ",";
@@ -161,7 +161,7 @@ function order(c: Cache): string {
 // Hit rate in tenths of a percent, so the report carries a real number without
 // needing floats (which would drag in the wasm libm gap, #6404).
 function hit_rate_milli(c: Cache): i32 {
-  var total: i32 = c.hits + c.misses;
+  let total: i32 = c.hits + c.misses;
   if (total == 0) {
     return 0;
   }
@@ -187,7 +187,7 @@ function model_new(cap: i32): Model {
 }
 
 function model_find(m: Model, k: string): i32 {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < m.keys.len()) {
     if (m.keys[i] == k) {
       return i;
@@ -198,7 +198,7 @@ function model_find(m: Model, k: string): i32 {
 }
 
 function model_get(m: Model, k: string): (Model, Option[i32]) {
-  var at: i32 = model_find(m, k);
+  let at: i32 = model_find(m, k);
   if (at < 0) {
     return (Model {
       keys: m.keys, vals: m.vals, used: m.used, cap: m.cap,
@@ -215,31 +215,31 @@ function model_put(m: Model, k: string, v: i32): Model {
   if (m.cap <= 0) {
     return m;
   }
-  var at: i32 = model_find(m, k);
+  let at: i32 = model_find(m, k);
   if (at >= 0) {
     return Model {
       keys: m.keys, vals: m.vals.with(at, v), used: m.used.with(at, m.clock + 1),
       cap: m.cap, clock: m.clock + 1, hits: m.hits, misses: m.misses,
     };
   }
-  var keys: string[] = m.keys;
-  var vals: i32[] = m.vals;
-  var used: i32[] = m.used;
+  let keys: string[] = m.keys;
+  let vals: i32[] = m.vals;
+  let used: i32[] = m.used;
   if (keys.len() >= m.cap) {
     // Evict the minimum stamp — the least recently used, by definition
     // rather than by position.
-    var lo: i32 = 0;
-    var i: i32 = 1;
+    let lo: i32 = 0;
+    let i: i32 = 1;
     while (i < used.len()) {
       if (used[i] < used[lo]) {
         lo = i;
       }
       i = i + 1;
     }
-    var nk: string[] = [];
-    var nv: i32[] = [];
-    var nu: i32[] = [];
-    var j: i32 = 0;
+    let nk: string[] = [];
+    let nv: i32[] = [];
+    let nu: i32[] = [];
+    let j: i32 = 0;
     while (j < keys.len()) {
       if (j != lo) {
         nk = nk.append(keys[j]);
@@ -262,13 +262,13 @@ function model_put(m: Model, k: string, v: i32): Model {
 // without the two agreeing on order (they deliberately do not — the model
 // keeps insertion order and stamps recency separately).
 function model_keys_sorted(m: Model): string {
-  var ks: string[] = [];
-  var i: i32 = 0;
+  let ks: string[] = [];
+  let i: i32 = 0;
   while (i < m.keys.len()) {
-    var w: string = m.keys[i];
-    var next: string[] = [];
-    var placed: boolean = false;
-    var j: i32 = 0;
+    let w: string = m.keys[i];
+    let next: string[] = [];
+    let placed: boolean = false;
+    let j: i32 = 0;
     while (j < ks.len()) {
       if (!placed && str_gt(ks[j], w)) {
         next = next.append(w);
@@ -283,8 +283,8 @@ function model_keys_sorted(m: Model): string {
     ks = next;
     i = i + 1;
   }
-  var out: string = "";
-  var k: i32 = 0;
+  let out: string = "";
+  let k: i32 = 0;
   while (k < ks.len()) {
     if (k > 0) {
       out = out + ",";
@@ -296,8 +296,8 @@ function model_keys_sorted(m: Model): string {
 }
 
 function cache_keys_sorted(c: Cache): string {
-  var m: Model = model_new(c.cap);
-  var i: i32 = 0;
+  let m: Model = model_new(c.cap);
+  let i: i32 = 0;
   while (i < c.entries.len()) {
     m = Model {
       keys: m.keys.append(c.entries[i].key), vals: m.vals, used: m.used,
@@ -314,7 +314,7 @@ function cache_keys_sorted(c: Cache): string {
 // it fails this. Reading "a" makes it the most recent, so inserting "d" must
 // evict "b" — the oldest READ — not "a", the oldest INSERT.
 function test_a_read_promotes(): test.TestOutcome {
-  var c: Cache = cache_new(3);
+  let c: Cache = cache_new(3);
   c = put(c, "a", 1);
   c = put(c, "b", 2);
   c = put(c, "c", 3);
@@ -348,26 +348,26 @@ function test_a_read_promotes(): test.TestOutcome {
 // relative to the capacity so evictions actually happen — a sweep over unique
 // keys would never exercise the interesting path.
 function test_matches_the_timestamp_model(): test.TestOutcome {
-  var caps: i32[] = [1, 2, 3, 5, 8];
-  var ci: i32 = 0;
+  let caps: i32[] = [1, 2, 3, 5, 8];
+  let ci: i32 = 0;
   while (ci < caps.len()) {
-    var c: Cache = cache_new(caps[ci]);
-    var m: Model = model_new(caps[ci]);
-    var seed: i32 = 12345 + caps[ci];
-    var step: i32 = 0;
+    let c: Cache = cache_new(caps[ci]);
+    let m: Model = model_new(caps[ci]);
+    let seed: i32 = 12345 + caps[ci];
+    let step: i32 = 0;
     while (step < 400) {
       seed = (seed * 1103515245 + 12345) % 2147483647;
       if (seed < 0) {
         seed = 0 - seed;
       }
-      var k: string = "k" + (seed % 12).to_string();
+      let k: string = "k" + (seed % 12).to_string();
       if (seed % 3 == 0) {
         let (c2, gv) = get(c, k);
         let (m2, mv) = model_get(m, k);
         c = c2;
         m = m2;
-        var gs: string = match (gv) { Some(v) => v.to_string(), None => "-" };
-        var ms: string = match (mv) { Some(v) => v.to_string(), None => "-" };
+        let gs: string = match (gv) { Some(v) => v.to_string(), None => "-" };
+        let ms: string = match (mv) { Some(v) => v.to_string(), None => "-" };
         if (gs != ms) {
           return test.fail("cap=" + caps[ci].to_string() + " step=" + step.to_string()
             + " get(" + k + ") gave " + gs + ", model says " + ms);
@@ -400,11 +400,11 @@ function test_matches_the_timestamp_model(): test.TestOutcome {
 // Every get is exactly one hit or one miss, and a put is neither. Without
 // that, a hit rate is not a rate of anything.
 function test_counters_account_for_every_read(): test.TestOutcome {
-  var c: Cache = cache_new(2);
-  var reads: i32 = 0;
+  let c: Cache = cache_new(2);
+  let reads: i32 = 0;
   c = put(c, "a", 1);
   c = put(c, "b", 2);
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < 20) {
     let (c2, _) = get(c, "k" + (i % 4).to_string());
     c = c2;
@@ -434,7 +434,7 @@ function test_counters_account_for_every_read(): test.TestOutcome {
 
 // Re-putting a key updates it and promotes it, without changing the size.
 function test_put_of_an_existing_key_updates_and_promotes(): test.TestOutcome {
-  var c: Cache = cache_new(3);
+  let c: Cache = cache_new(3);
   c = put(c, "a", 1);
   c = put(c, "b", 2);
   c = put(c, "c", 3);
@@ -446,7 +446,7 @@ function test_put_of_an_existing_key_updates_and_promotes(): test.TestOutcome {
     return test.fail("order after re-put is \"" + order(c) + "\", want \"a=99,c=3,b=2\"");
   }
   // The update must be visible, and must not have counted as a read.
-  var before: i32 = c.hits + c.misses;
+  let before: i32 = c.hits + c.misses;
   let (c2, got) = get(c, "a");
   match (got) {
     Some(v) => {
@@ -469,14 +469,14 @@ function test_put_of_an_existing_key_updates_and_promotes(): test.TestOutcome {
 
 function test_capacity_edges(): test.TestOutcome {
   // cap 1: every new key evicts the previous one.
-  var one: Cache = cache_new(1);
+  let one: Cache = cache_new(1);
   one = put(one, "a", 1);
   one = put(one, "b", 2);
   if (one.entries.len() != 1 || !contains(one, "b") || contains(one, "a")) {
     return test.fail("cap 1 holds \"" + order(one) + "\"");
   }
   // cap 0 stores nothing — and is NOT treated as unbounded.
-  var zero: Cache = cache_new(0);
+  let zero: Cache = cache_new(0);
   zero = put(zero, "a", 1);
   zero = put(zero, "b", 2);
   if (zero.entries.len() != 0) {
@@ -493,7 +493,7 @@ function test_capacity_edges(): test.TestOutcome {
     return test.fail("cap 0 did not count the read as a miss");
   }
   // A negative capacity behaves as 0 rather than wrapping into something huge.
-  var neg: Cache = put(cache_new(-3), "a", 1);
+  let neg: Cache = put(cache_new(-3), "a", 1);
   if (neg.entries.len() != 0) {
     return test.fail("negative cap stored entries");
   }
@@ -503,11 +503,11 @@ function test_capacity_edges(): test.TestOutcome {
 // Same sequence, same state — there is no hidden mutable state to diverge,
 // and this is what says so.
 function test_the_same_sequence_gives_the_same_state(): test.TestOutcome {
-  var a: Cache = cache_new(4);
-  var b: Cache = cache_new(4);
-  var i: i32 = 0;
+  let a: Cache = cache_new(4);
+  let b: Cache = cache_new(4);
+  let i: i32 = 0;
   while (i < 60) {
-    var k: string = "k" + (i * 7 % 9).to_string();
+    let k: string = "k" + (i * 7 % 9).to_string();
     if (i % 4 == 0) {
       let (a2, _) = get(a, k);
       let (b2, _) = get(b, k);
@@ -531,11 +531,11 @@ function test_the_same_sequence_gives_the_same_state(): test.TestOutcome {
 function main(): i32 {
   eprint("lru — recency-ordered cache with a capacity bound and a hit/miss report");
 
-  var c: Cache = cache_new(3);
-  var script: string[] = ["p:a:1", "p:b:2", "p:c:3", "g:a", "p:d:4", "g:b", "g:c", "g:a", "p:e:5"];
-  var i: i32 = 0;
+  let c: Cache = cache_new(3);
+  let script: string[] = ["p:a:1", "p:b:2", "p:c:3", "g:a", "p:d:4", "g:b", "g:c", "g:a", "p:e:5"];
+  let i: i32 = 0;
   while (i < script.len()) {
-    var f: string[] = script[i].split(":");
+    let f: string[] = script[i].split(":");
     if (f[0] == "p") {
       c = put(c, f[1], f[2].parse_int_or(0));
       eprint("put " + f[1] + "=" + f[2] + "  -> [" + order(c) + "]");
@@ -551,7 +551,7 @@ function main(): i32 {
   eprint("hits=" + c.hits.to_string() + " misses=" + c.misses.to_string()
     + " rate=" + hit_rate_milli(c).to_string() + "/1000");
 
-  var r: test.TestRunner = test.test_new("lru");
+  let r: test.TestRunner = test.test_new("lru");
   r = r.it("a read promotes", test_a_read_promotes);
   r = r.it("matches the timestamp model", test_matches_the_timestamp_model);
   r = r.it("counters account for every read", test_counters_account_for_every_read);

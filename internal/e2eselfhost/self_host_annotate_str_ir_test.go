@@ -23,13 +23,13 @@ var annotateStrCases = []struct {
 }{
 	// string-returning call bound to a local, then .len().
 	{"call_len", `function greet(n: string): string { return "hi " + n; }
-function main(): i32 { var g: string = greet("bob"); return g.len(); }`}, // 6
+function main(): i32 { let g: string = greet("bob"); return g.len(); }`}, // 6
 	// concat of two string-returning call results (each must type as a string).
 	{"call_concat", `function pfx(n: string): string { return "x" + n; }
-function main(): i32 { var g: string = pfx("ab") + pfx("cde"); return g.len(); }`}, // 3 + 4 = 7
+function main(): i32 { let g: string = pfx("ab") + pfx("cde"); return g.len(); }`}, // 3 + 4 = 7
 	// string call result used directly in a concat then measured.
 	{"call_direct_concat", `function tag(n: string): string { return "[" + n + "]"; }
-function main(): i32 { var g: string = tag("hi") + "!"; return g.len(); }`}, // "[hi]!" = 5
+function main(): i32 { let g: string = tag("hi") + "!"; return g.len(); }`}, // "[hi]!" = 5
 }
 
 // TestSelfHostAnnotateStrIR_X86_64 pins the checker-stamped string result type

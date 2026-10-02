@@ -34,13 +34,13 @@ function span(): (i32, Segment) {
 
 func TestTupleElementFieldAccessLowers(t *testing.T) {
 	for _, tc := range []struct{ name, body string }{
-		{"one level", `var t: (i32, Point) = origin(); return t.1.x;`},
-		{"two levels", `var s: (i32, Segment) = span(); return s.1.to.x;`},
+		{"one level", `let t: (i32, Point) = origin(); return t.1.x;`},
+		{"two levels", `let s: (i32, Segment) = span(); return s.1.to.x;`},
 		{"off the call result", `return origin().1.y;`},
 		{"two levels off the call result", `return span().1.from.y;`},
-		{"through an array element", `var ps: (i32, Point)[] = [origin()]; return ps[0].1.x;`},
-		{"an array element of a tuple element", `var t: (i32, Point[]) = (1, [Point { x: 7, y: 9 }]); return t.1[0].x;`},
-		{"a nested array element of a tuple element", `var t: (i32, Point[][]) = (1, [[Point { x: 7, y: 9 }]]); return t.1[0][0].y;`},
+		{"through an array element", `let ps: (i32, Point)[] = [origin()]; return ps[0].1.x;`},
+		{"an array element of a tuple element", `let t: (i32, Point[]) = (1, [Point { x: 7, y: 9 }]); return t.1[0].x;`},
+		{"a nested array element of a tuple element", `let t: (i32, Point[][]) = (1, [[Point { x: 7, y: 9 }]]); return t.1[0][0].y;`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			lowerOK(t, tupleFieldDecls+"\nfunction main(): i32 { "+tc.body+" }\n")
@@ -57,7 +57,7 @@ func TestTupleElementNonStructTargetStillLowers(t *testing.T) {
 function mk(): (i32, i32[]) { return (1, [4, 5, 6]); }
 
 function main(): i32 {
-    var t: (i32, i32[]) = mk();
+    let t: (i32, i32[]) = mk();
     return t.1.len() + t.1[2];
 }
 `)

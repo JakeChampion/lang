@@ -10,34 +10,34 @@ import "core/map";
 // it would be a different key on wasm) and a float key is refused by the
 // checker (E045); `map_narrow_int_keys` is the case for the 4-byte keys.
 function main(): i32 {
-    var m: Map[i64, i32] = map_new(4);
-    var big: i64 = 4294967296 + 7;
+    let m: Map[i64, i32] = map_new(4);
+    let big: i64 = 4294967296 + 7;
     m = m.insert(big, 10);
     m = m.insert(7 as i64, 20);
     m = m.insert(0 - big, 30);
-    var r: i32 = 0;
+    let r: i32 = 0;
     if (m.len() != 3) { return 1; }
     if (m.get_or(big, 0) != 10) { return 2; }
     if (m.get_or(7 as i64, 0) != 20) { return 3; }
     if (m.get_or(0 - big, 0) != 30) { return 4; }
     if (m.has(4294967296 as i64)) { return 5; }
-    var ks: i64[] = m.keys();
+    let ks: i64[] = m.keys();
     if (ks.len() != 3) { return 6; }
     if (ks[0] != big) { return 7; }
-    var s: i64 = 0;
+    let s: i64 = 0;
     for k in ks { s = s + k; }
     if (s != 7 as i64) { return 8; }
-    var t: i32 = 0;
+    let t: i32 = 0;
     for (k, v) in m { if (k == big) { t = t + v; } }
     if (t != 10) { return 9; }
-    var w: Map[i64, i64] = map_new(2);
+    let w: Map[i64, i64] = map_new(2);
     w = w.insert(big, big * 2);
     if (w.get_or(big, 0 as i64) != big * 2) { return 11; }
-    var u: Map[u64, i32] = map_new(2);
+    let u: Map[u64, i32] = map_new(2);
     u = u.insert(18446744073709551615 as u64, 3);
     if (u.get_or(18446744073709551615 as u64, 0) != 3) { return 12; }
     match (m.get(big)) { Some(v) => { if (v != 10) { return 13; } }, None => { return 14; } }
-    var m2: Map[i64, i32] = m.without(big).0;
+    let m2: Map[i64, i32] = m.without(big).0;
     if (m2.has(big)) { return 15; }
     if (m2.len() != 2) { return 16; }
     return 42;

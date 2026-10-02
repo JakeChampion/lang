@@ -1,6 +1,6 @@
 # 2026-09-03 — `(i32, string)[]` through an erased generic (#7910 (c))
 
-`var ps: (i32, string)[] = [(i, w(i)), (i + 1, w(i + 1))]` handed to
+`let ps: (i32, string)[] = [(i, w(i)), (i + 1, w(i + 1))]` handed to
 `count[T](xs: T[]): i32 { return xs.len(); }`, 100 rounds, allocs/frees live:
 
 | backend | native | self-host before | self-host after |

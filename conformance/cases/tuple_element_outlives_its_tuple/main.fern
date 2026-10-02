@@ -7,8 +7,8 @@ import "std/string";
 // read. Both are then used in ways that consume them, which a borrow of the
 // tuple could not pay for — a map box carries no count to retain (#9555).
 function chained(n: i32): i32 {
-    var m: Map[i32, i32] = map_new(8);
-    var i: i32 = 0;
+    let m: Map[i32, i32] = map_new(8);
+    let i: i32 = 0;
     while (i < n) { m = m.insert(i, i * 10); i = i + 1; }
     m = m.without(1).0;
     m = m.without(2).0;
@@ -16,9 +16,9 @@ function chained(n: i32): i32 {
 }
 
 function relayed(n: i32): i32 {
-    var t: (i32[], string) = ([n, n + 1], "ab");
-    var b: i32[] = t.0;
-    var s: string = t.1;
+    let t: (i32[], string) = ([n, n + 1], "ab");
+    let b: i32[] = t.0;
+    let s: string = t.1;
     b = b.append(n + 2);
     return b.len() * 10 + s.len() + b[2];
 }

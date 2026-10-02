@@ -14,7 +14,7 @@ import "testing"
 // against the native x86-64 backend.
 const structLenMethodIRPrelude = `struct Box { items: string[] }
 function helper(s: string): string {
-    var alpha: string = "abcdefghijklmnopqrstuvwxyz";
+    let alpha: string = "abcdefghijklmnopqrstuvwxyz";
     return slice_unchecked(alpha, 0, 1) + s;
 }
 function (b: Box) add(x: string): Box { return Box { ...b, items: b.items.append(helper(x)) }; }
@@ -28,13 +28,13 @@ var structLenMethodIRCases = []struct {
 	want int
 }{
 	// user method named `len` must shadow the builtin (#3478): two adds -> 2.
-	{"len-method", `var b: Box = Box { items: [] }; b = b.add("a"); b = b.add("b"); return b.len();`, 2},
+	{"len-method", `let b: Box = Box { items: [] }; b = b.add("a"); b = b.add("b"); return b.len();`, 2},
 	// control: a differently-named method with the same body is unaffected.
-	{"count-method", `var b: Box = Box { items: [] }; b = b.add("a"); b = b.add("b"); return b.count();`, 2},
+	{"count-method", `let b: Box = Box { items: [] }; b = b.add("a"); b = b.add("b"); return b.count();`, 2},
 	// the builtin array `.len()` on a real array still works (no regression).
-	{"builtin-arr-len", `var a: i32[] = [10, 20, 30]; return a.len();`, 3},
+	{"builtin-arr-len", `let a: i32[] = [10, 20, 30]; return a.len();`, 3},
 	// the builtin string `.len()` still works (no regression).
-	{"builtin-str-len", `var s: string = "hello"; return s.len();`, 5},
+	{"builtin-str-len", `let s: string = "hello"; return s.len();`, 5},
 }
 
 func structLenMethodIRSrc(mainBody string) string {

@@ -14,17 +14,17 @@ import (
 // f: 0.0 + (rounds to 0 contribution here) — kept integer-clean: 30 + 12 = 42.
 const numTraitsMoreSrc = `import "std/num" as num;
 function (a: T[]) total[T: num.Num](init: T): T {
-    var s = init;
-    var i = 0;
+    let s = init;
+    let i = 0;
     while (i < a.len()) { s = s.add(a[i]); i = i + 1; }
     return s;
 }
 function main(): i32 {
-    var u: u32[] = [10, 20];
-    var w: u64[] = [8, 4];
-    var f: f32[] = [1.5, 1.5];
-    var fs: f32 = f.total(0.0);
-    var fcontrib: i32 = 0;
+    let u: u32[] = [10, 20];
+    let w: u64[] = [8, 4];
+    let f: f32[] = [1.5, 1.5];
+    let fs: f32 = f.total(0.0);
+    let fcontrib: i32 = 0;
     if (fs > 2.5) { fcontrib = 0; }
     return (u.total(0) as i32) + (w.total(0) as i32) + fcontrib;
 }

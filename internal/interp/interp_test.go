@@ -76,8 +76,8 @@ func TestRecursionFactorial(t *testing.T) {
 func TestForLoopWithBreakContinue(t *testing.T) {
 	v, _ := evalProgram(t, `
 		function main(): i32 {
-			var sum: i32 = 0;
-			for (var i: i32 = 0; i < 10; i = i + 1) {
+			let sum: i32 = 0;
+			for (let i: i32 = 0; i < 10; i = i + 1) {
 				if (i == 3) { continue; }
 				if (i == 7) { break; }
 				sum = sum + i;
@@ -93,7 +93,7 @@ func TestForLoopWithBreakContinue(t *testing.T) {
 func TestArrayIndexAndAssign(t *testing.T) {
 	v, _ := evalProgram(t, `
 		function main(): i32 {
-			var a: i32[] = [10, 20, 30];
+			let a: i32[] = [10, 20, 30];
 			a = a.with(1, 99);
 			return a[0] + a[1] + a[2];
 		}`)
@@ -172,7 +172,7 @@ func TestIndirectCallViaLocal(t *testing.T) {
 	v, _ := evalProgram(t, `
 		function dbl(x: i32): i32 { return x * 2; }
 		function main(): i32 {
-			var f = dbl;
+			let f = dbl;
 			return f(7);
 		}`)
 	if n, ok := v.(Number); !ok || n != 14 {
@@ -181,7 +181,7 @@ func TestIndirectCallViaLocal(t *testing.T) {
 }
 
 func TestREPLEvaluatesExpressions(t *testing.T) {
-	in := strings.NewReader("1 + 2 * 3\n\"hi\"\nvar x = 5;\nx + 10\n")
+	in := strings.NewReader("1 + 2 * 3\n\"hi\"\nlet x = 5;\nx + 10\n")
 	var out bytes.Buffer
 	if err := REPL(in, &out); err != nil {
 		t.Fatal(err)
@@ -213,7 +213,7 @@ func TestInterpLenOfString(t *testing.T) {
 
 func TestInterpLenOfArray(t *testing.T) {
 	if got := evalProgramValue(t, `function main(): i32 {
-		var a: i32[] = [1, 2, 3, 4];
+		let a: i32[] = [1, 2, 3, 4];
 		return a.len();
 	}`); got != Number(4) {
 		t.Errorf("got %v, want 4", got)
@@ -222,7 +222,7 @@ func TestInterpLenOfArray(t *testing.T) {
 
 func TestInterpStringIndex(t *testing.T) {
 	if got := evalProgramValue(t, `function main(): i32 {
-		var s: string = "ABC";
+		let s: string = "ABC";
 		return s[1] as i32;
 	}`); got != Number(int64('B')) {
 		t.Errorf("got %v, want %d", got, 'B')
@@ -231,8 +231,8 @@ func TestInterpStringIndex(t *testing.T) {
 
 func TestInterpStringEquality(t *testing.T) {
 	src := `function main(): boolean {
-		var a: string = "hello";
-		var b: string = "hello";
+		let a: string = "hello";
+		let b: string = "hello";
 		return a == b;
 	}`
 	if got := evalProgramValue(t, src); got != Bool(true) {
@@ -272,7 +272,7 @@ func TestInterpFStringFallback(t *testing.T) {
 // `x + n` when called.
 func TestInterpClosure(t *testing.T) {
 	src := `function main(): i32 {
-		var n: i32 = 100;
+		let n: i32 = 100;
 		function bump(x: i32): i32 { return x + n; }
 		return bump(5);
 	}`
@@ -287,8 +287,8 @@ func TestInterpClosure(t *testing.T) {
 // invoked.
 func TestInterpLambda(t *testing.T) {
 	src := `function main(): i32 {
-		var k: i32 = 7;
-		var mul: (i32) => i32 = (x: i32): i32 => { return x * k; };
+		let k: i32 = 7;
+		let mul: (i32) => i32 = (x: i32): i32 => { return x * k; };
 		return mul(6);
 	}`
 	got, _ := evalProgram(t, src)
@@ -308,16 +308,16 @@ func TestInterpMapBasic(t *testing.T) {
 		src  string
 		want int64
 	}{
-		{"len of empty", `function main(): i32 { var m: Map[i32, i32] = map_new(4); return m.len(); }`, 0},
+		{"len of empty", `function main(): i32 { let m: Map[i32, i32] = map_new(4); return m.len(); }`, 0},
 		{"len after set", `function main(): i32 {
-			var m: Map[i32, i32] = map_new(4);
+			let m: Map[i32, i32] = map_new(4);
 			m = m.insert(1, 10);
 			m = m.insert(2, 20);
 			m = m.insert(3, 30);
 			return m.len();
 		}`, 3},
 		{"set then get", `function main(): i32 {
-			var m: Map[i32, i32] = map_new(4);
+			let m: Map[i32, i32] = map_new(4);
 			m = m.insert(7, 42);
 			match (m.get(7)) {
 				Some(v) => { return v; },
@@ -326,7 +326,7 @@ func TestInterpMapBasic(t *testing.T) {
 			return 999;
 		}`, 42},
 		{"get missing key", `function main(): i32 {
-			var m: Map[i32, i32] = map_new(4);
+			let m: Map[i32, i32] = map_new(4);
 			match (m.get(7)) {
 				Some(v) => { return v; },
 				None => { return -1; }
@@ -334,27 +334,27 @@ func TestInterpMapBasic(t *testing.T) {
 			return 999;
 		}`, -1},
 		{"has and delete", `function main(): i32 {
-			var m: Map[i32, i32] = map_new(4);
+			let m: Map[i32, i32] = map_new(4);
 			m = m.insert(1, 100);
 			if (m.has(1) && !m.has(2)) {
-				var (rest, had) = m.without(1);
+				let (rest, had) = m.without(1);
 				if (had && !rest.has(1) && m.has(1)) { return 0; }
 				return -1;
 			}
 			return -2;
 		}`, 0},
 		{"get_or", `function main(): i32 {
-			var m: Map[i32, i32] = map_new(4);
+			let m: Map[i32, i32] = map_new(4);
 			m = m.insert(7, 70);
 			return m.get_or(7, 1) + m.get_or(99, 2);
 		}`, 72},
 		{"literal", `function main(): i32 {
-			var m: Map[i32, i32] = Map { 1: 10, 2: 20, 3: 30 };
+			let m: Map[i32, i32] = Map { 1: 10, 2: 20, 3: 30 };
 			return m.len();
 		}`, 3},
 		{"for-each iter", `function main(): i32 {
-			var m: Map[i32, i32] = Map { 1: 10, 2: 20, 3: 30 };
-			var sum: i32 = 0;
+			let m: Map[i32, i32] = Map { 1: 10, 2: 20, 3: 30 };
+			let sum: i32 = 0;
 			for (k, v) in m {
 				sum = sum + k + v;
 			}
@@ -379,7 +379,7 @@ func TestInterpStructBasic(t *testing.T) {
 	// Fields are immutable; update via struct-update + rebind.
 	src := `struct Point { x: i32, y: i32 }
 		function main(): i32 {
-			var p: Point = Point { x: 3, y: 4 };
+			let p: Point = Point { x: 3, y: 4 };
 			p = Point { ...p, x: p.x + 1 };
 			return p.x + p.y;
 		}`
@@ -394,8 +394,8 @@ func TestInterpStructBasic(t *testing.T) {
 func TestInterpStructUpdate(t *testing.T) {
 	src := `struct Point { x: i32, y: i32 }
 		function main(): i32 {
-			var a: Point = Point { x: 3, y: 4 };
-			var b: Point = Point { ...a, y: 10 };
+			let a: Point = Point { x: 3, y: 4 };
+			let b: Point = Point { ...a, y: 10 };
 			return b.x + b.y;
 		}`
 	v, _ := evalProgram(t, src)
@@ -410,8 +410,8 @@ func TestInterpStructUpdate(t *testing.T) {
 func TestInterpStructUpdateIsFunctional(t *testing.T) {
 	src := `struct Point { x: i32, y: i32 }
 		function main(): i32 {
-			var a: Point = Point { x: 3, y: 4 };
-			var b: Point = Point { ...a, x: 100 };
+			let a: Point = Point { x: 3, y: 4 };
+			let b: Point = Point { ...a, x: 100 };
 			return a.x + a.y;
 		}`
 	v, _ := evalProgram(t, src)
@@ -426,7 +426,7 @@ func TestInterpStructUpdateIsFunctional(t *testing.T) {
 func TestInterpEnumMatchPayload(t *testing.T) {
 	src := `enum Pair { Two(i32, i32) }
 		function main(): i32 {
-			var p: Pair = Two(7, 5);
+			let p: Pair = Two(7, 5);
 			match (p) {
 				Two(a, b) => { return a + b; }
 			}
@@ -448,7 +448,7 @@ func TestInterpGenericOption(t *testing.T) {
 	// declare it locally). With evalProgram running the
 	// checker, just use the built-in.
 	src := `function main(): i32 {
-		var o: Option[i32] = Some(42);
+		let o: Option[i32] = Some(42);
 		match (o) {
 			Some(v) => { return v; },
 			None => { return -1; }
@@ -469,7 +469,7 @@ func TestInterpQualifiedVariants(t *testing.T) {
 	v, _ := evalProgram(t, `enum Color { Red, Green, Blue }
 		enum Status { Red, Yellow }
 		function main(): i32 {
-			var c: Color = Color.Red;
+			let c: Color = Color.Red;
 			match (c) {
 				Color.Red => { return 1; },
 				Color.Green => { return 2; },
@@ -487,7 +487,7 @@ func TestInterpQualifiedVariants(t *testing.T) {
 	v, _ = evalProgram(t, `enum A { Foo(i32), Bar }
 		enum B { Bar, Foo(i32) }
 		function main(): i32 {
-			var a: A = A.Foo(42);
+			let a: A = A.Foo(42);
 			match (a) {
 				A.Foo(x) => { return x; },
 				A.Bar => { return -1; }
@@ -508,7 +508,7 @@ func TestInterpTypeAscription(t *testing.T) {
 	// None gets a concrete type via ascription. Match still
 	// fires the None arm.
 	v, _ := evalProgram(t, `function main(): i32 {
-		var x: Option[i32] = None as Option[i32];
+		let x: Option[i32] = None as Option[i32];
 		match (x) {
 			Some(n) => { return n; },
 			None => { return 42; }
@@ -521,7 +521,7 @@ func TestInterpTypeAscription(t *testing.T) {
 	// Partial Result inference — ascription fixes E without
 	// changing the runtime value.
 	v, _ = evalProgram(t, `function main(): i32 {
-		var r: Result[i32, string] = Ok(7) as Result[i32, string];
+		let r: Result[i32, string] = Ok(7) as Result[i32, string];
 		match (r) {
 			Ok(n) => { return n; },
 			Err(_) => { return -1; }
@@ -537,7 +537,7 @@ func TestInterpTypeAscription(t *testing.T) {
 func TestInterpMatchWildcard(t *testing.T) {
 	src := `enum Light { Red, Green, Yellow }
 		function main(): i32 {
-			var l: Light = Yellow;
+			let l: Light = Yellow;
 			match (l) {
 				Red => { return 1; },
 				_ => { return 99; }
@@ -564,38 +564,38 @@ func TestInterpMatchLiteralNonEnum(t *testing.T) {
 		want Number
 	}{
 		{"i32-stmt-first", `function main(): i32 {
-			var n: i32 = 1;
+			let n: i32 = 1;
 			match (n) { 1 => { return 10; }, 2 => { return 20; }, _ => { return 0; } }
 			return 0;
 		}`, 10},
 		{"i32-stmt-default", `function main(): i32 {
-			var n: i32 = 9;
+			let n: i32 = 9;
 			match (n) { 1 => { return 10; }, 2 => { return 20; }, _ => { return 7; } }
 			return 0;
 		}`, 7},
 		{"string-stmt", `function main(): i32 {
-			var s: string = "b";
+			let s: string = "b";
 			match (s) { "a" => { return 1; }, "b" => { return 7; }, _ => { return 0; } }
 			return 0;
 		}`, 7},
 		{"bool-stmt", `function main(): i32 {
-			var b: boolean = true;
+			let b: boolean = true;
 			match (b) { true => { return 42; }, false => { return 1; }, _ => { return 0; } }
 			return 0;
 		}`, 42},
 		{"expr-form", `function main(): i32 {
-			var n: i32 = 3;
-			var r: i32 = match (n) { 1 => 10, 3 => 30, _ => 0 };
+			let n: i32 = 3;
+			let r: i32 = match (n) { 1 => 10, 3 => 30, _ => 0 };
 			return r;
 		}`, 30},
 		{"guard", `function main(): i32 {
-			var n: i32 = 5;
-			var r: i32 = match (n) { 1 => 1, 5 when n > 3 => 99, _ => 0 };
+			let n: i32 = 5;
+			let r: i32 = match (n) { 1 => 1, 5 when n > 3 => 99, _ => 0 };
 			return r;
 		}`, 99},
 		{"guard-falls-through", `function main(): i32 {
-			var n: i32 = 5;
-			var r: i32 = match (n) { 1 => 1, 5 when n > 100 => 99, _ => 8 };
+			let n: i32 = 5;
+			let r: i32 = match (n) { 1 => 1, 5 when n > 100 => 99, _ => 8 };
 			return r;
 		}`, 8},
 	}
@@ -625,9 +625,9 @@ func TestInterpTcpSocketEcho(t *testing.T) {
 	// orchestration; that's covered by the AOT backends'
 	// integration tests on real ports.
 	src := `function main(): i32 {
-		var fd: i32 = tcp_listen(0);
+		let fd: i32 = tcp_listen(0);
 		if (fd < 0) { return 1; }
-		var c: i32 = tcp_close(fd);
+		let c: i32 = tcp_close(fd);
 		if (c != 0) { return 2; }
 		return 0;
 	}`
@@ -671,8 +671,8 @@ func TestInterpParamDestructure(t *testing.T) {
 		return k * (hi - lo);
 	}
 	function main(): i32 {
-		var f = ((x, y): (i32, i32)): i32 => { return x * y; };
-		var g = ((lo, hi): (i32, i32)) => hi - lo;
+		let f = ((x, y): (i32, i32)): i32 => { return x * y; };
+		let g = ((lo, hi): (i32, i32)) => hi - lo;
 		return add((30, 5)) + scale(2, (3, 5)) + f((1, 2)) + g((5, 6));
 	}`
 	v, _ := evalProgram(t, src)
@@ -705,8 +705,8 @@ func TestInterpTupleMatch(t *testing.T) {
 	}
 	function main(): i32 {
 		// 1 + 7 + 30 + 5 + 7 = 50
-		var t = classify((0, 0)) + classify((0, 7)) + classify((3, 0)) + classify((9, 4)) + classify((2, 5));
-		var s = match ((1, 2)) { (1, b) => b * 3, (a, _) => a };
+		let t = classify((0, 0)) + classify((0, 7)) + classify((3, 0)) + classify((9, 4)) + classify((2, 5));
+		let s = match ((1, 2)) { (1, b) => b * 3, (a, _) => a };
 		// t=50, s=6, tag(("a",2))=2, tag(("z",1))=100 → 50+6+2+100 = 158
 		return t + s + tag(("a", 2)) + tag(("z", 1));
 	}`
@@ -785,7 +785,7 @@ func TestStringSliceYieldsSome(t *testing.T) {
 		{`s[10:10]`, ""}, // empty AT the length, the permissive edge
 		{`s[0:10]`, "abcdefghij"},
 	} {
-		e := evalSliceOption(t, `var s: string = "abcdefghij";`, tc.expr)
+		e := evalSliceOption(t, `let s: string = "abcdefghij";`, tc.expr)
 		if e.VariantName != "Some" || e.Index != 0 {
 			t.Fatalf("%s: got %s, want Some", tc.expr, e.VariantName)
 		}
@@ -803,13 +803,13 @@ func TestStringSliceYieldsSome(t *testing.T) {
 // offset 2 sits inside the é. Either endpoint landing there is None.
 func TestStringSliceSplitCodePointYieldsNone(t *testing.T) {
 	for _, expr := range []string{`m[1:2]`, `m[2:4]`, `m[2:2]`, `m[0:2]`} {
-		e := evalSliceOption(t, `var m: string = "héllo";`, expr)
+		e := evalSliceOption(t, `let m: string = "héllo";`, expr)
 		if e.VariantName != "None" || e.Index != 1 {
 			t.Errorf("%s: got %s(%v), want None", expr, e.VariantName, e.Payloads)
 		}
 	}
 	// The same string sliced ON the boundaries still yields the é.
-	e := evalSliceOption(t, `var m: string = "héllo";`, `m[1:3]`)
+	e := evalSliceOption(t, `let m: string = "héllo";`, `m[1:3]`)
 	if e.VariantName != "Some" {
 		t.Fatalf(`m[1:3]: got %s, want Some`, e.VariantName)
 	}
@@ -828,7 +828,7 @@ func TestStringSliceOutOfRangeYieldsNone(t *testing.T) {
 		`s[4:2]`,     // low > high
 		`s[11:11]`,   // both past the end
 	} {
-		e := evalSliceOption(t, `var s: string = "abcdefghij";`, expr)
+		e := evalSliceOption(t, `let s: string = "abcdefghij";`, expr)
 		if e.VariantName != "None" || e.Index != 1 {
 			t.Errorf("%s: got %s(%v), want None", expr, e.VariantName, e.Payloads)
 		}
@@ -839,7 +839,7 @@ func TestStringSliceOutOfRangeYieldsNone(t *testing.T) {
 // error, so moving the bounds check inside the type switch did not take
 // the array rule with it.
 func TestArraySliceOutOfRangeStillErrors(t *testing.T) {
-	src := `function main(): i32 { var xs: i32[] = [1, 2, 3]; var s: [i32] = xs[1:9]; return s.len(); }`
+	src := `function main(): i32 { let xs: i32[] = [1, 2, 3]; let s: [i32] = xs[1:9]; return s.len(); }`
 	prog, err := parser.Parse(src)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
@@ -879,10 +879,10 @@ func TestSliceUncheckedStillTraps(t *testing.T) {
 // i64's rather than mod 32 like i32's (#10742).
 func TestInterpUsizeShiftsAtSixtyFourBits(t *testing.T) {
 	v := evalProgramValue(t, `function main(): i32 {
-    var one: usize = 1 as usize;
-    var top: usize = one << 63;
-    var a: usize = 70000000000 as usize;
-    var got: i32 = 0;
+    let one: usize = 1 as usize;
+    let top: usize = one << 63;
+    let a: usize = 70000000000 as usize;
+    let got: i32 = 0;
     if (top > a && a < top) { got = got + 1; }
     if ((top >> 62) as i32 == 2) { got = got + 2; }
     if ((a >> 32) as i32 == 16) { got = got + 4; }

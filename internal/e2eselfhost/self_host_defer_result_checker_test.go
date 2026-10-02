@@ -15,7 +15,7 @@ import (
 //
 // The parse-level defer pass (parser.fern lower_defers_func) rewrites every
 // `return E` into `__defret = E; …; return __defret`, pre-declaring the shared
-// temp as `var __defret = 0` (i32). When the function returns Result/Option
+// temp as `let __defret = 0` (i32). When the function returns Result/Option
 // that made the strict checker false-positive: E003 on `__defret = Ok(x)`
 // (assigning a wrapper to an i32 slot) and E002 on `return __defret`
 // (returning i32 where Result was declared). The fix binds every compiler-
@@ -92,7 +92,7 @@ function main(): i32 { match (f(7)) { Some(v) => { return v; }, None => { return
 		// declares no `__defret`. The defer's effect on both returns reaches
 		// the exit code through the cell.
 		{"void-defer", `function f(n: i32, c: Cell[i32]): void { defer c.set(c.get() + 10); if (n > 0) { c.set(c.get() + 1); return; } c.set(c.get() + 2); return; }
-function main(): i32 { var c: Cell[i32] = cell_new(0); f(1, c); f(0, c); return c.get(); }`},
+function main(): i32 { let c: Cell[i32] = cell_new(0); f(1, c); f(0, c); return c.get(); }`},
 		{"defer-and-errdefer-err-path", `function f(x: i32): Result[i32, i32] { defer print("D"); errdefer print("E"); if (x < 0) { return Err(4); } return Ok(x); }
 function main(): i32 { match (f(0 - 9)) { Ok(v) => { return v; }, Err(e) => { return e; } } }`},
 	}

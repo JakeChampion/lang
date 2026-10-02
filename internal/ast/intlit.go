@@ -12,7 +12,7 @@ import (
 // `2147483648` is not, and both share a NumberLit. A literal constfold has
 // substituted carries its sign in Value instead (`const NEG = -5` arrives as a
 // literal holding -5) and is judged the same way. The checker and constfold
-// both report through this so a `var` and a `const` refuse the same literals
+// both report through this so a `let` and a `const` refuse the same literals
 // with the same words.
 func IntLitOutOfRange(lit *NumberLit, negated bool, t NumberType) string {
 	// Past i64 max Value holds the wrapped bit pattern, and uint64 reads the

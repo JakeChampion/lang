@@ -27,7 +27,7 @@ var annotateF64Cases = []struct {
 }{
 	// f64-returning free function; result cast via `as i32`.
 	{"free_ret", `function scale(x: f64): f64 { return x * 2.5; }
-function main(): i32 { var a: f64 = scale(4.0); return a as i32; }`}, // 10
+function main(): i32 { let a: f64 = scale(4.0); return a as i32; }`}, // 10
 	// two f64 calls feeding float arithmetic (each must type f64 so `+` is fadd).
 	{"call_plus_call", `function f(x: f64): f64 { return x + 1.5; }
 function main(): i32 { return (f(2.0) + f(0.5)) as i32; }`}, // 5

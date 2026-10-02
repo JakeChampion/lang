@@ -13,7 +13,7 @@ const gateNestedFieldSrc = `struct Rows { names: string }
 struct Index { keys: string[] }
 
 function (ix: Index) find(name: string): i32 {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < ix.keys.len()) {
     if (ix.keys[i] == name) {
       return i;
@@ -35,8 +35,8 @@ struct Memo { names: Index }
 struct Table { memo: Memo }
 
 function main(): i32 {
-  var t: Table = Table { memo: Memo { names: Index { keys: ["a", "b", "c"] } } };
-  var at: i32 = t.memo.names.find("c");
+  let t: Table = Table { memo: Memo { names: Index { keys: ["a", "b", "c"] } } };
+  let at: i32 = t.memo.names.find("c");
   return at;
 }
 `

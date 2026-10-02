@@ -189,7 +189,7 @@ pub struct ExprUnknown { kind: string, line: i32, col: i32 }
 // printer: parse_map_lit desugars every other parse to the
 // `map_new[_i32](8).insert(k0, v0)…` chain the compile path is written against,
 // and `-fmt` (Par.verbatim) takes this instead. Printing the chain back is not a
-// style choice — the chain states no K/V, so a `var m: Map[string, i32] = Map {}`
+// style choice — the chain states no K/V, so a `let m: Map[string, i32] = Map {}`
 // came back as `map_new(8)` and stopped compiling (E043).
 pub struct ExprMapLit { keys: Expr[], vals: Expr[], line: i32, col: i32 }
 
@@ -228,7 +228,7 @@ pub type Expr = ExprNumber | ExprIdent | ExprString | ExprBool | ExprBinary | Ex
 // parser synthesised, so is_written_lambda_origin admits it.
 pub const ORIGIN_NESTED_FN: string = "nested_fn";
 
-// var_binds_itself reports whether a `var`'s initialiser sees the name it
+// var_binds_itself reports whether a `let`'s initialiser sees the name it
 // declares. Only a nested `function` declaration does, as native's IsLocal
 // FuncDecl does; an arrow lambda reads any enclosing binding of the name.
 pub function var_binds_itself(v: StmtVar): boolean {
@@ -468,18 +468,18 @@ pub function expr_col(e: Expr): i32 {
 // StmtVar binds a name to an init value. `type_name` is the
 // optional `: Type` annotation (bare type name; empty string
 // means no annotation). The checker uses it to override the
-// inferred init type — so a `var sh: Shape = Circle { … }`
+// inferred init type — so a `let sh: Shape = Circle { … }`
 // binds `sh` as TypeUnion("Shape") rather than the inferred
 // TypeStruct("Circle"). Interp / VM ignore it (annotations
 // are checker-only metadata).
-// fn_ret is the RETURN spelling of a fn-typed annotation (`var f: (i32) => i32`
+// fn_ret is the RETURN spelling of a fn-typed annotation (`let f: (i32) => i32`
 // -> "i32"). parse_type_name coarsens the annotation itself to the flat "fn"
 // tag, and StmtVar carries no signature sidecars, so without this the declared
 // return is simply lost — which is what leaves cap_param_for with nothing exact
 // to rebuild a fn-typed capture's signature from (#6256). "" on every other
 // binding.
 // fn_param_types: for a binding annotated with a fn type or an ARRAY of one
-// (`var f: (i64) => boolean`, `var fs: ((f64) => f64)[]`), the comma-separated
+// (`let f: (i64) => boolean`, `let fs: ((f64) => f64)[]`), the comma-separated
 // SPELLINGS of that fn's own parameter types — the StmtVar-level sibling of
 // ParamDecl.fn_param_types, recorded for the same reason. parse_type_name
 // coarsens both annotations to the flat "fn" / "fn[]" tags, and `fn_ret` alone
@@ -506,7 +506,7 @@ pub struct StmtExpr { value: Expr, line: i32 }
 // build_struct_match / build_literal_match desugar it to. All three replace
 // the match outright — the first two with a done-flag chain, the third with an
 // if/else-if chain — and leave no StmtMatch behind, so without this the printer
-// had only the chain to render: `-fmt -w` wrote `var __sm4_5_d = false; …`
+// had only the chain to render: `-fmt -w` wrote `let __sm4_5_d = false; …`
 // (#7065) or the bare `if (n == 0) … else …` (#7072) over the user's match.
 // Read by the printer and by the checker's block_leaves, which needs the arms as
 // written to tell whether the construct can fall through (#8461); every
@@ -691,10 +691,10 @@ pub struct LitArm { is_wild: boolean, lit: Expr, guard: Expr, has_guard: boolean
 // constructs the rest of the pipeline already handles:
 //
 //   if (true) {                                  // scopes the temps
-//     var (__tmL_C_e0, __tmL_C_e1) = <scrutinee>; // the destructure StmtVar
-//     var __tmL_C_d = false;                      // "an arm ran" flag
+//     let (__tmL_C_e0, __tmL_C_e1) = <scrutinee>; // the destructure StmtVar
+//     let __tmL_C_d = false;                      // "an arm ran" flag
 //     if (!__tmL_C_d && __tmL_C_e0 == LIT && …) { // literal elements
-//       var x = __tmL_C_e1;                       // binder elements
+//       let x = __tmL_C_e1;                       // binder elements
 //       if (<guard>) { __tmL_C_d = true; <body> } // guard sees the binds
 //     }
 //     …one if per arm; `_` and all-binder arms have no eq conditions…

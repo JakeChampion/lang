@@ -26,13 +26,13 @@ struct Holder { w: W }
 enum E { Wrap(W), Empty }
 function make(n: i32): W { return W { n: n }; }
 function main(): i32 {
-    var xs: W[] = [W { n: 1 }, W { n: 2 }];
+    let xs: W[] = [W { n: 1 }, W { n: 2 }];
     print("len " + xs.len().to_string());
-    var h: Holder = Holder { w: W { n: 3 } };
+    let h: Holder = Holder { w: W { n: 3 } };
     print("field " + h.w.n.to_string());
-    var e: E = E.Wrap(W { n: 4 });
+    let e: E = E.Wrap(W { n: 4 });
     match (e) { Wrap(v) => { print("payload " + v.n.to_string()); }, Empty => {} }
-    var r: W = make(5);
+    let r: W = make(5);
     print("returned " + r.n.to_string());
     return 0;
 }
@@ -45,8 +45,8 @@ impl mem.Drop for W {
     function drop(self: Self): void { print("drop " + self.n.to_string()); }
 }
 function main(): i32 {
-    var a: W = W { n: 1 };
-    var b: W = a;
+    let a: W = W { n: 1 };
+    let b: W = a;
     print("both " + a.n.to_string() + b.n.to_string());
     return 0;
 }
@@ -59,7 +59,7 @@ impl mem.Drop for Sig {
     function drop(self: Self): void { print("drop Sig"); }
 }
 function main(): i32 {
-    var s: Sig = Sig.Open(7);
+    let s: Sig = Sig.Open(7);
     match (s) { Open(v) => { print("v " + v.to_string()); }, Closed => {} }
     print("end");
     return 0;
@@ -77,11 +77,11 @@ impl mem.Drop for B {
     function drop(self: Self): void { print("drop B"); }
 }
 function main(): i32 {
-    var w: W = W { v: [0, 0] };
-    var i: i32 = 0;
+    let w: W = W { v: [0, 0] };
+    let i: i32 = 0;
     while (i < 2) { w = W { v: [i] }; print("wi"); i = i + 1; }
-    var b: B = B.Keep([0, 0]);
-    var j: i32 = 0;
+    let b: B = B.Keep([0, 0]);
+    let j: i32 = 0;
     while (j < 2) { b = B.Keep([j]); print("bj"); j = j + 1; }
     print("end");
     return 0;
@@ -96,11 +96,11 @@ impl mem.Drop for W {
 }
 function passthru(w: W): W { return w; }
 function main(): i32 {
-    var p: W = passthru(W { n: 2 });
+    let p: W = passthru(W { n: 2 });
     print("p " + p.n.to_string());
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 2) {
-        var t: W = W { n: 10 + i };
+        let t: W = W { n: 10 + i };
         print("iter " + t.n.to_string());
         i = i + 1;
     }

@@ -12,17 +12,17 @@ import (
 
 func TestConditionalCleanupAdmission(t *testing.T) {
 	for _, tc := range []struct{ name, body string }{
-		{"branch-local", `if (flag) { var xs: i32[] = [1]; defer xs = [2]; }`},
-		{"late-replacement", `var xs: i32[] = [1]; if (flag) { defer xs = [2]; } xs = [3];`},
-		{"exclusive", `if (flag) { var xs: i32[] = [1]; defer xs = [2]; } else { var ys: i32[] = [3]; defer ys = [4]; }`},
-		{"independent", `if (flag) { var xs: i32[] = [1]; defer xs = [2]; } if (other) { var ys: i32[] = [3]; defer ys = [4]; }`},
-		{"mixed-order", `var xs: i32[] = [1]; defer xs = [2]; if (flag) { defer xs = [3]; } defer xs = [4];`},
-		{"iteration-reset", `var i = 0i32; while (i < 3i32) { if (flag) { var xs: i32[] = [1]; defer xs = [2]; } i = i + 1i32; }`},
-		{"nested-iteration", `var xs: i32[] = [1]; if (flag) { defer xs = [2]; } var i = 0i32; while (i < 3i32) { if (other) { var ys: i32[] = [3]; defer ys = [4]; } i = i + 1i32; }`},
-		{"continue", `var i = 0i32; while (i < 3i32) { i = i + 1i32; if (flag) { var xs: i32[] = [1]; defer xs = [2]; } if (other) { continue; } }`},
-		{"labelled-break", `outer: loop { if (flag) { var xs: i32[] = [1]; defer xs = [2]; } loop { if (other) { var ys: i32[] = [3]; defer ys = [4]; } break outer; } }`},
-		{"return", `if (flag) { var xs: i32[] = [1]; defer xs = [2]; } if (other) { return; }`},
-		{"nonreturning", `if (flag) { var xs: i32[] = [1]; defer xs = [2]; } if (other) { loop {} }`},
+		{"branch-local", `if (flag) { let xs: i32[] = [1]; defer xs = [2]; }`},
+		{"late-replacement", `let xs: i32[] = [1]; if (flag) { defer xs = [2]; } xs = [3];`},
+		{"exclusive", `if (flag) { let xs: i32[] = [1]; defer xs = [2]; } else { let ys: i32[] = [3]; defer ys = [4]; }`},
+		{"independent", `if (flag) { let xs: i32[] = [1]; defer xs = [2]; } if (other) { let ys: i32[] = [3]; defer ys = [4]; }`},
+		{"mixed-order", `let xs: i32[] = [1]; defer xs = [2]; if (flag) { defer xs = [3]; } defer xs = [4];`},
+		{"iteration-reset", `let i = 0i32; while (i < 3i32) { if (flag) { let xs: i32[] = [1]; defer xs = [2]; } i = i + 1i32; }`},
+		{"nested-iteration", `let xs: i32[] = [1]; if (flag) { defer xs = [2]; } let i = 0i32; while (i < 3i32) { if (other) { let ys: i32[] = [3]; defer ys = [4]; } i = i + 1i32; }`},
+		{"continue", `let i = 0i32; while (i < 3i32) { i = i + 1i32; if (flag) { let xs: i32[] = [1]; defer xs = [2]; } if (other) { continue; } }`},
+		{"labelled-break", `outer: loop { if (flag) { let xs: i32[] = [1]; defer xs = [2]; } loop { if (other) { let ys: i32[] = [3]; defer ys = [4]; } break outer; } }`},
+		{"return", `if (flag) { let xs: i32[] = [1]; defer xs = [2]; } if (other) { return; }`},
+		{"nonreturning", `if (flag) { let xs: i32[] = [1]; defer xs = [2]; } if (other) { loop {} }`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := unverifiedCleanupSource(t, `function pilot(flag: boolean, other: boolean): void {`+tc.body+`}`)
@@ -47,7 +47,7 @@ func TestConditionalCleanupAdmission(t *testing.T) {
 func conditionalCleanupFixture(t *testing.T) *Func {
 	t.Helper()
 	return unverifiedCleanupSource(t, `function pilot(flag: boolean): void {
-  if (flag) { var xs: i32[] = [1]; defer xs = [2]; defer xs = [3]; }
+  if (flag) { let xs: i32[] = [1]; defer xs = [2]; defer xs = [3]; }
 }`)
 }
 
@@ -106,8 +106,8 @@ func TestConditionalCleanupRejectsInvalidCorrelations(t *testing.T) {
 
 func TestConditionalCleanupRejectsExpiredNestedCapture(t *testing.T) {
 	f := unverifiedCleanupSource(t, `function pilot(flag: boolean): void {
-  var xs: i32[] = [1]; if (flag) { defer xs = [2]; }
-  loop { var ys: i32[] = [3]; defer ys = [4]; break; }
+  let xs: i32[] = [1]; if (flag) { defer xs = [2]; }
+  loop { let ys: i32[] = [3]; defer ys = [4]; break; }
 }`)
 	if err := Verify(f); err != nil {
 		t.Fatal(err)
@@ -141,7 +141,7 @@ func BenchmarkConditionalCleanupAdmission(b *testing.B) {
 			var source strings.Builder
 			source.WriteString(`function pilot(flag: boolean): void {`)
 			for i := 0; i < count; i++ {
-				source.WriteString(`if (flag) { var xs: i32[] = [1]; defer xs = [2]; }`)
+				source.WriteString(`if (flag) { let xs: i32[] = [1]; defer xs = [2]; }`)
 			}
 			source.WriteString(`}`)
 			prog, info := checkedProgram(b, source.String())

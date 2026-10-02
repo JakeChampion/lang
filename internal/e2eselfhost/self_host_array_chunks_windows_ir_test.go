@@ -22,10 +22,10 @@ var arrayChunksWindowsIRCases = []struct {
 }{
 	// chunks: non-overlapping groups, last one shorter.
 	{"chunks", `import "std/array";
-function main(): i32 { var xs: i32[] = [1, 2, 3, 4, 5]; var cs: i32[][] = xs.chunks(2); return cs.len() * 10 + cs[0][1] + cs[2][0]; }`},
+function main(): i32 { let xs: i32[] = [1, 2, 3, 4, 5]; let cs: i32[][] = xs.chunks(2); return cs.len() * 10 + cs[0][1] + cs[2][0]; }`},
 	// windows: overlapping sliding sub-slices.
 	{"windows", `import "std/array";
-function main(): i32 { var xs: i32[] = [1, 2, 3, 4, 5]; var ws: i32[][] = xs.windows(2); return ws.len() * 10 + ws[3][0] + ws[0][1]; }`},
+function main(): i32 { let xs: i32[] = [1, 2, 3, 4, 5]; let ws: i32[][] = xs.windows(2); return ws.len() * 10 + ws[3][0] + ws[0][1]; }`},
 }
 
 func TestSelfHostArrayChunksWindowsIR(t *testing.T) {

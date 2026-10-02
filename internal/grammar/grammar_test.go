@@ -40,18 +40,18 @@ func TestGrammarDerivesConstruct(t *testing.T) {
 		// The parser accepts a return-type annotation on an arrow lambda; the
 		// grammar had no place for one, and no corpus source uses the form,
 		// so the differential could not have found it either.
-		{"arrow lambda with a return type", `function main(): i32 { var f = (x: i32): i32 => x + 1; return 0; }`},
-		{"nullary arrow lambda with a return type", `function main(): i32 { var f = (): i32 => 1; return 0; }`},
+		{"arrow lambda with a return type", `function main(): i32 { let f = (x: i32): i32 => x + 1; return 0; }`},
+		{"nullary arrow lambda with a return type", `function main(): i32 { let f = (): i32 => 1; return 0; }`},
 		// The two readings of a return annotation that ends where the
 		// lambda's own arrow begins. The first is a tuple return, the
 		// second a function-typed one; a grammar that commits to either
 		// reading derives one and fails the other.
-		{"arrow lambda returning a tuple", `function main(): i32 { var f = (x: i32): (i32, i32) => g(x); return 0; }`},
-		{"arrow lambda returning a function type", `function main(): i32 { var f = (x: i32): (i32) => i32 => g(x); return 0; }`},
+		{"arrow lambda returning a tuple", `function main(): i32 { let f = (x: i32): (i32, i32) => g(x); return 0; }`},
+		{"arrow lambda returning a function type", `function main(): i32 { let f = (x: i32): (i32) => i32 => g(x); return 0; }`},
 		// A lambda parameter declares `own` the way a named parameter does;
 		// the compiler's own fold visitors are written with one.
-		{"arrow lambda with an owning parameter", `function main(): i32 { var f = (st: i32, own a: string[]): string[] => a; return 0; }`},
-		{"arrow lambda with an owning first parameter", `function main(): i32 { var f = (own a: string[]): string[] => a; return 0; }`},
+		{"arrow lambda with an owning parameter", `function main(): i32 { let f = (st: i32, own a: string[]): string[] => a; return 0; }`},
+		{"arrow lambda with an owning first parameter", `function main(): i32 { let f = (own a: string[]): string[] => a; return 0; }`},
 		{"slice", `function main(): i32 { return xs[0:n]; }`},
 
 		// Header expressions must leave the following brace for the body,
@@ -68,67 +68,67 @@ func TestGrammarDerivesConstruct(t *testing.T) {
 		{"match empty body", `function f(): i32 { match (value) {} return 0; }`},
 		{"match qualified empty body", `function f(): i32 { match (record.value) {} return 0; }`},
 		{"match struct literal source", `function f(): i32 { match (Box {}) { _ => { return 1; } } return 0; }`},
-		{"struct literal outside header", `function f(): i32 { var value = Box {}; return 0; }`},
+		{"struct literal outside header", `function f(): i32 { let value = Box {}; return 0; }`},
 		{"explicit type args", `function main(): i32 { return pick[i32](xs, 0); }`},
 		{"type args, trailing comma", `function main(): i32 { return pick[i32,](xs, 0,); }`},
 
 		// The draft had no struct-update spread.
-		{"struct update spread", `function main(): i32 { var b: P = P { ...a, x: 40 }; return 0; }`},
+		{"struct update spread", `function main(): i32 { let b: P = P { ...a, x: 40 }; return 0; }`},
 
 		// Bounds and attribute args take qualified names.
 		{"qualified bound", `function eq[T: cmp.Eq + cmp.Display](a: T): i32 { return 0; }`},
 		{"qualified attr arg", `@derive(cmp.Debug) struct Point { x: i32 }`},
 
 		// A block in expression position may end in a bare expression.
-		{"value block", `function main(): i32 { var x = if (c) { 1 } else { 2 }; return x; }`},
-		{"value block, statements then value", `function main(): i32 { var x = if (c) { f(); 1 } else { 2 }; return x; }`},
+		{"value block", `function main(): i32 { let x = if (c) { 1 } else { 2 }; return x; }`},
+		{"value block, statements then value", `function main(): i32 { let x = if (c) { f(); 1 } else { 2 }; return x; }`},
 
 		// `default` is a keyword, and the one keyword usable as a name.
-		{"default as member", `function main(): i32 { var w: W = W.default(); return 0; }`},
+		{"default as member", `function main(): i32 { let w: W = W.default(); return 0; }`},
 		{"default as declared name", `trait Default { function default(): Self; }`},
 
 		// `(i32, i32)[]` — array of tuples.
 		{"array of tuples", `function f(): (i32, i32)[] { return xs; }`},
-		{"array of tuples, local", `function main(): i32 { var p: (K, V)[] = q; return 0; }`},
+		{"array of tuples, local", `function main(): i32 { let p: (K, V)[] = q; return 0; }`},
 
 		// One BindPattern serves every irrefutable binding site (#5356), so
 		// the struct and `@` heads a destructuring parameter took are
-		// derivable at a `for` header and a `let` / `var` destructure too. No
+		// derivable at a `for` header and a `let` destructure too. No
 		// corpus source uses them yet, so the differential cannot reach them.
 		{"for struct pattern", `function main(): i32 { for P { x, y } in ps { f(x, y); } return 0; }`},
 		{"for struct pattern, rename and rest", `function main(): i32 { for P { x: a, .. } in ps { f(a); } return 0; }`},
 		{"for @ struct pattern", `function main(): i32 { for w @ P { x, y } in ps { f(w, x, y); } return 0; }`},
 		{"for @ tuple pattern", `function main(): i32 { for w @ (a, b) in ts { f(w, a, b); } return 0; }`},
-		{"var @ struct destructure", `function main(): i32 { var w @ P { x, y } = p; return w.x + x + y; }`},
+		{"let @ struct destructure", `function main(): i32 { let w @ P { x, y } = p; return w.x + x + y; }`},
 		{"let @ tuple destructure", `function main(): i32 { let w @ (a, b) = t; return w.0 + a + b; }`},
 
 		// `own` is a modifier AND an ordinary name.
 		{"own as modifier", `function f(own xs: string[]): i32 { return 0; }`},
 		{"own as parameter name", `function f(rl: i32, own: string[]): i32 { return 0; }`},
-		{"own lambda parameter", `function main(): i32 { var g: (own i32[]) => i32 = (own xs: i32[]) => xs.len(); return 0; }`},
+		{"own lambda parameter", `function main(): i32 { let g: (own i32[]) => i32 = (own xs: i32[]) => xs.len(); return 0; }`},
 
 		// A stdlib module whose name is a primitive-type keyword.
 		{"primitive-named module call", `function main(): i32 { if (string.from_codepoint(1) == "a") { return 1; } return 0; }`},
 
 		// A destructuring arrow-lambda parameter.
-		{"destructuring lambda param", `function main(): i32 { var g = ((lo, hi): (i32, i32)) => hi - lo; return 0; }`},
-		{"destructuring function param", `function main(): i32 { var f = ((x, y): (i32, i32)): i32 => { return x * y; }; return 0; }`},
+		{"destructuring lambda param", `function main(): i32 { let g = ((lo, hi): (i32, i32)) => hi - lo; return 0; }`},
+		{"destructuring function param", `function main(): i32 { let f = ((x, y): (i32, i32)): i32 => { return x * y; }; return 0; }`},
 
 		// A block is an expression in its own right, not only as an if/match
 		// branch (docs/BLOCK-EXPRESSIONS.md). Nothing in the repo used a
 		// standalone one until conformance/cases/diag_e061 existed.
-		{"standalone block expression", `function main(): i32 { var x: i32 = { var a: i32 = 1; a + 1 }; return x; }`},
+		{"standalone block expression", `function main(): i32 { let x: i32 = { let a: i32 = 1; a + 1 }; return x; }`},
 
 		// Match expressions with guards, on one line.
-		{"match expr", `function main(): i32 { var a = match (p) { (1, b) => b * 10, (x, _) => x }; return a; }`},
-		{"match expr with guard", `function main(): i32 { var b = match (q) { (0, y) => y, (x, y) when x == y => x + y, (x, y) => x - y }; return b; }`},
+		{"match expr", `function main(): i32 { let a = match (p) { (1, b) => b * 10, (x, _) => x }; return a; }`},
+		{"match expr with guard", `function main(): i32 { let b = match (q) { (0, y) => y, (x, y) when x == y => x + y, (x, y) => x - y }; return b; }`},
 
 		// Character and byte literals, in expression and in match-arm
 		// position. No corpus source writes one yet, so only these cases
 		// reach the CHAR / BYTE terminals.
-		{"char literal", `function main(): i32 { var c: char = 'x'; return 0; }`},
-		{"byte literal", `function main(): i32 { var b: u8 = b'['; return 0; }`},
-		{"char literal escape", `function main(): i32 { var c: char = '\u{1F600}'; return 0; }`},
+		{"char literal", `function main(): i32 { let c: char = 'x'; return 0; }`},
+		{"byte literal", `function main(): i32 { let b: u8 = b'['; return 0; }`},
+		{"char literal escape", `function main(): i32 { let c: char = '\u{1F600}'; return 0; }`},
 		{"byte literal pattern", `function main(): i32 { match (s[0]) { b'[' => { return 1; }, _ => { return 0; } } return 0; }`},
 		{"char literal pattern", `function main(): i32 { match (c) { 'a' => { return 1; }, _ => { return 0; } } return 0; }`},
 	}
@@ -171,8 +171,8 @@ func TestGrammarRejects(t *testing.T) {
 		// it is P001, and the grammar said it was optional — a promise the
 		// parser has never kept, and one the parser->grammar differential is
 		// structurally unable to notice.
-		{"arrow lambda, untyped param", `function main(): i32 { var f = (x) => x + 1; return 0; }`},
-		{"arrow lambda, untyped params", `function main(): i32 { var f = (x, y) => x; return 0; }`},
+		{"arrow lambda, untyped param", `function main(): i32 { let f = (x) => x + 1; return 0; }`},
+		{"arrow lambda, untyped params", `function main(): i32 { let f = (x, y) => x; return 0; }`},
 	}
 
 	for _, tc := range cases {

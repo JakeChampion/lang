@@ -11,10 +11,10 @@ then supplies a retain that is a no-op against a release that frees.
 The other half is not latent. It is four lines of source:
 
 ```fern
-var t: string = "abcde" + "fghij";
-var s: str = slice_unchecked(t, 0, 5);
-var v: str = s;
-var i: i32 = 0;
+let t: string = "abcde" + "fghij";
+let s: str = slice_unchecked(t, 0, 5);
+let v: str = s;
+let i: i32 = 0;
 while (i < 3) { v = slice_unchecked(t, 5, 10); i = i + 1; }
 return v.len() + s.len() + u.len();
 ```

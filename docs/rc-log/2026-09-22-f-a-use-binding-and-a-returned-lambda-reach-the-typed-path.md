@@ -67,7 +67,7 @@ as `mk2()(i)`, 5 of 5) and `block-bodied-lambda-with-a-use-binding` (5 of 5).
 
 ## What it does not reach
 
-A capturing lambda returned from a lambda (`var curry = (a: i32) => { return
+A capturing lambda returned from a lambda (`let curry = (a: i32) => { return
 (b: i32): i32 => a + b; }`) keeps the AST lowering: the hoist route stays for
 the reason above, and its caller's `curry(1)(2)` is refused anyway, since the
 checker types a lambda's function-valued result as nothing ("sidecars a

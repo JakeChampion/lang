@@ -55,8 +55,8 @@ var oobBranchRangeCases = []struct {
 	name string
 	src  string
 }{
-	{"arr-get", "function main(): i32 { var xs: i32[] = [1, 2, 3]; var i: i32 = 2; return xs[i]; }"},
-	{"arr-set", "function main(): i32 { var xs: i32[] = [1, 2, 3]; var i: i32 = 1; xs = xs.with(i, 9); return xs[1]; }"},
+	{"arr-get", "function main(): i32 { let xs: i32[] = [1, 2, 3]; let i: i32 = 2; return xs[i]; }"},
+	{"arr-set", "function main(): i32 { let xs: i32[] = [1, 2, 3]; let i: i32 = 1; xs = xs.with(i, 9); return xs[1]; }"},
 }
 
 // TestSelfHostOOBBranchRangeArm64 pins that no emitted arm64 bounds check

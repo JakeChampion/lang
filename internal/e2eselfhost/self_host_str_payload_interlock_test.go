@@ -3,7 +3,7 @@ package e2eselfhost
 import "testing"
 
 // strPayloadInterlockCases pin a fresh STRING local handed to a union element of
-// an rc-tuple — `var sv = …; var t = (i, Some(sv))`.
+// an rc-tuple — `let sv = …; let t = (i, Some(sv))`.
 //
 // #7168 released a bare-ident ARRAY payload there and refused a string. The
 // refusal was right but the reason recorded for it was not: the release is not
@@ -32,12 +32,12 @@ var strPayloadInterlockCases = []struct {
 	// `sv` after the tuple, so it doubles as the aliasing control.
 	{"str-payload-reclaimed", `import "std/i32";
 function churn(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var sv: string = "v" + i.to_string();
-        var t: (i32, Option[string]) = (i, Some(sv));
-        var r: i32 = t.0;
+        let sv: string = "v" + i.to_string();
+        let t: (i32, Option[string]) = (i, Some(sv));
+        let r: i32 = t.0;
         match (t.1) { Some(v) => { r = r + v.len(); }, None => {} }
         acc = (acc + r + sv.len()) % 91;
         i = i + 1;
@@ -45,10 +45,10 @@ function churn(n: i32): i32 {
     return acc;
 }
 function main(): i32 {
-    var w: i32 = churn(1000);
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var x: i32 = churn(1000);
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let w: i32 = churn(1000);
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let x: i32 = churn(1000);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return (b2 - b1) / 1000;
@@ -59,12 +59,12 @@ function main(): i32 {
 	// the tuple. It must stay refused AND must not over-release. 73 on native.
 	{"str-escapes-must-refuse", `import "std/i32";
 function churn(n: i32): i32 {
-    var keep: string = "";
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let keep: string = "";
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var sv: string = "v" + i.to_string();
-        var t: (i32, Option[string]) = (i, Some(sv));
+        let sv: string = "v" + i.to_string();
+        let t: (i32, Option[string]) = (i, Some(sv));
         keep = sv;
         acc = (acc + t.0 + keep.len()) % 91;
         i = i + 1;
@@ -72,8 +72,8 @@ function churn(n: i32): i32 {
     return (acc + keep.len()) % 91;
 }
 function main(): i32 {
-    var w: i32 = churn(1000);
-    var x: i32 = churn(1000);
+    let w: i32 = churn(1000);
+    let x: i32 = churn(1000);
     if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return w % 91;
@@ -83,12 +83,12 @@ function main(): i32 {
 	// actually released.
 	{"str-payload-carried-out", `import "std/i32";
 function churn(n: i32): i32 {
-    var keep: string = "zz";
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let keep: string = "zz";
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var sv: string = "v" + i.to_string();
-        var t: (i32, Option[string]) = (i, Some(sv));
+        let sv: string = "v" + i.to_string();
+        let t: (i32, Option[string]) = (i, Some(sv));
         match (t.1) { Some(v) => { keep = v; }, None => {} }
         acc = (acc + t.0) % 91;
         i = i + 1;
@@ -96,20 +96,20 @@ function churn(n: i32): i32 {
     return (acc + keep.len()) % 91;
 }
 function main(): i32 {
-    var w: i32 = churn(1000);
-    var x: i32 = churn(1000);
+    let w: i32 = churn(1000);
+    let x: i32 = churn(1000);
     if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return w % 91;
 }`, 5},
 	// The ARRAY twin must be untouched by the interlock.
 	{"arr-payload-unchanged", `function churn(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var xs: i32[] = [i, i + 2];
-        var t: (i32, Option[i32[]]) = (i, Some(xs));
-        var r: i32 = t.0;
+        let xs: i32[] = [i, i + 2];
+        let t: (i32, Option[i32[]]) = (i, Some(xs));
+        let r: i32 = t.0;
         match (t.1) { Some(v) => { r = r + v[0]; }, None => {} }
         acc = (acc + r + xs[1]) % 91;
         i = i + 1;
@@ -117,10 +117,10 @@ function main(): i32 {
     return acc;
 }
 function main(): i32 {
-    var w: i32 = churn(1000);
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var x: i32 = churn(1000);
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let w: i32 = churn(1000);
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let x: i32 = churn(1000);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return (b2 - b1) / 1000;

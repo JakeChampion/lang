@@ -49,8 +49,8 @@ func TestRoundtripIfElse(t *testing.T) {
 
 func TestRoundtripWhileAndAssign(t *testing.T) {
 	roundTrip(t, `function f(): i32 {
-		var i: i32 = 0;
-		var sum: i32 = 0;
+		let i: i32 = 0;
+		let sum: i32 = 0;
 		while (i < 10) { sum = sum + i; i = i + 1; }
 		return sum;
 	}`)
@@ -58,7 +58,7 @@ func TestRoundtripWhileAndAssign(t *testing.T) {
 
 func TestRoundtripLoop(t *testing.T) {
 	roundTrip(t, `function f(): i32 {
-		var i: i32 = 0;
+		let i: i32 = 0;
 		loop { i = i + 1; if (i >= 3) { break; } }
 		return i;
 	}`)
@@ -66,7 +66,7 @@ func TestRoundtripLoop(t *testing.T) {
 
 func TestRoundtripArraysAndIndexing(t *testing.T) {
 	roundTrip(t, `function f(): i32 {
-		var a: i32[] = [1, 2, 3];
+		let a: i32[] = [1, 2, 3];
 		a[0] = 99;
 		return a[0] + a[1];
 	}`)
@@ -86,15 +86,15 @@ func TestRoundtripUnary(t *testing.T) {
 
 func TestRoundtripStrings(t *testing.T) {
 	roundTrip(t, `function f(): void {
-		var s: string = "hello, world";
+		let s: string = "hello, world";
 		print(s);
 	}`)
 }
 
 func TestRoundtripForBreakContinue(t *testing.T) {
 	roundTrip(t, `function f(): i32 {
-		var sum: i32 = 0;
-		for (var i: i32 = 0; i < 10; i = i + 1) {
+		let sum: i32 = 0;
+		for (let i: i32 = 0; i < 10; i = i + 1) {
 			if (i == 3) { continue; }
 			if (i == 7) { break; }
 			sum = sum + i;
@@ -287,13 +287,13 @@ func TestRoundtripIfExpr(t *testing.T) {
 func TestRoundtripCompoundAssign(t *testing.T) {
 	// The printer always emits the desugared `x = x + 1` form, which
 	// re-parses to the same AST.
-	roundTrip(t, `function f(): i32 { var x: i32 = 0; x += 1; return x; }`)
+	roundTrip(t, `function f(): i32 { let x: i32 = 0; x += 1; return x; }`)
 }
 
 func TestRoundtripStruct(t *testing.T) {
 	roundTrip(t, `struct Point { x: i32, y: i32 }
 		function main(): i32 {
-			var p: Point = Point { x: 1, y: 2 };
+			let p: Point = Point { x: 1, y: 2 };
 			p.x = 10;
 			return p.x + p.y;
 		}`)
@@ -309,15 +309,15 @@ func TestRoundtripStructLitTypeArgs(t *testing.T) {
 	const decls = "struct Box[T] { val: T }\nstruct Stack[T] { items: T[] }\nstruct Pair[A, B] { a: A, b: B }\n"
 	for _, body := range []string{
 		// Written — must survive.
-		`function main(): i32 { var b = Box[i32] { val: 1 }; return b.val; }`,
-		`function main(): i32 { var s = Stack[i32] { items: [] }; return s.items.len(); }`,
-		`function main(): i32 { var p = Pair[i32, string] { a: 1, b: "x" }; return p.a; }`,
-		`function main(): i32 { var b = Box[i32[]] { val: [1] }; return b.val.len(); }`,
+		`function main(): i32 { let b = Box[i32] { val: 1 }; return b.val; }`,
+		`function main(): i32 { let s = Stack[i32] { items: [] }; return s.items.len(); }`,
+		`function main(): i32 { let p = Pair[i32, string] { a: 1, b: "x" }; return p.a; }`,
+		`function main(): i32 { let b = Box[i32[]] { val: [1] }; return b.val.len(); }`,
 		// Written, on a struct-update literal.
-		`function main(): i32 { var a = Box[i32] { val: 1 }; var b = Box[i32] { ...a, val: 2 }; return b.val; }`,
+		`function main(): i32 { let a = Box[i32] { val: 1 }; let b = Box[i32] { ...a, val: 2 }; return b.val; }`,
 		// Not written — must stay not written.
-		`function main(): i32 { var b = Box { val: 1 }; return b.val; }`,
-		`function main(): i32 { var a = Box { val: 1 }; var b = Box { ...a, val: 2 }; return b.val; }`,
+		`function main(): i32 { let b = Box { val: 1 }; return b.val; }`,
+		`function main(): i32 { let a = Box { val: 1 }; let b = Box { ...a, val: 2 }; return b.val; }`,
 	} {
 		roundTrip(t, decls+body)
 	}
@@ -329,9 +329,9 @@ func TestRoundtripStructLitTypeArgs(t *testing.T) {
 func TestRoundtripStructUpdate(t *testing.T) {
 	roundTrip(t, `struct Point { x: i32, y: i32 }
 		function main(): i32 {
-			var a: Point = Point { x: 1, y: 2 };
-			var b: Point = Point { ...a, y: 9 };
-			var c: Point = Point { ...a };
+			let a: Point = Point { x: 1, y: 2 };
+			let b: Point = Point { ...a, y: 9 };
+			let c: Point = Point { ...a };
 			return b.y + c.x;
 		}`)
 }

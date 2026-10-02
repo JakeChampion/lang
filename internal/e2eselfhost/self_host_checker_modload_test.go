@@ -147,7 +147,7 @@ func TestSelfHostCheckerModloadX86_64(t *testing.T) {
 		t.Fatalf("write a.fern: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(progDir, "main.fern"),
-		[]byte("import \"./a\";\nfunction main(): i32 { var x: i32 = a.helper(); if (x) { return 1; } return 0; }\n"), 0o644); err != nil {
+		[]byte("import \"./a\";\nfunction main(): i32 { let x: i32 = a.helper(); if (x) { return 1; } return 0; }\n"), 0o644); err != nil {
 		t.Fatalf("write main.fern: %v", err)
 	}
 
@@ -209,7 +209,7 @@ func TestSelfHostCheckerModloadEmptyImplMangledX86_64(t *testing.T) {
 			"impl Show for Tag { }\n" +
 			"impl Show for num.Num { }\n",
 		"main.fern": "import \"./num\";\nimport \"./cross\";\n" +
-			"function main(): i32 { var n: num.Num = num.Num { v: 1 }; return n.v; }\n",
+			"function main(): i32 { let n: num.Num = num.Num { v: 1 }; return n.v; }\n",
 	}
 	for name, src := range files {
 		if err := os.WriteFile(filepath.Join(progDir, name), []byte(src), 0o644); err != nil {

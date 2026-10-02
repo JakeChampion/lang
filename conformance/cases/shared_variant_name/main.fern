@@ -26,7 +26,7 @@ function b_of(v: B): i32 {
 }
 
 function main(): i32 {
-    var total: i32 = 0;
+    let total: i32 = 0;
     total = total + a_of(A.Zed);      // 1
     total = total + a_of(A.Xx(2));    // 3
     total = total + b_of(B.Zed);      // 7
@@ -34,7 +34,7 @@ function main(): i32 {
 
     // A qualified construction resolved correctly while the arms did not,
     // so NO arm matched and control fell out of the match entirely.
-    var v: B = B.Zed;
+    let v: B = B.Zed;
     total = total + b_of(v);          // 21
     return total;
 }

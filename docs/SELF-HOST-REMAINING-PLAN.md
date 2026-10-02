@@ -59,7 +59,7 @@ section in `ROADMAP-AND-SELF-HOSTING.md` for detail:
   core language is now complete on the wasm backend — plus `.to_string()`
   + f-strings (integer→string runtime) and arrays of structs (`for p in
   pts` / `pts[i].field`, struct spread-update, struct-union match + method,
-  2-D arrays, `var (a, b) = …` tuple destructuring, `const` declarations,
+  2-D arrays, `let (a, b) = …` tuple destructuring, `const` declarations,
   string char-access `s[i]`, bitwise operators `& | ^ << >>`, and generics
   with explicit type args (`f[i32](x)`, `Box[i32] { … }`, `(b: Box[T]) m()`),
   compound assignment incl. `arr[i] += y`, and C-style `enum` values +
@@ -68,7 +68,7 @@ section in `ROADMAP-AND-SELF-HOSTING.md` for detail:
   count; reduce over an `fn` param; struct-method loop; nested structs;
   `?`-chains; `Result` match; string-builder). Hardening passes also fixed
   a parser hang on a reserved keyword misused as an identifier
-  (`parse_module` / `parse_block` now guarantee forward progress), `var (a,
+  (`parse_module` / `parse_block` now guarantee forward progress), `let (a,
   b)` destructure lowering, `const` references (bare ident → call, typed by
   the const's return type), string char-access `s[i]` (byte load), bitwise
   operators, generic type-argument erasure + generic-receiver method
@@ -314,7 +314,7 @@ won't link when only `main.fern` is bundled; `err_*` checker
 negative-tests that don't apply to the emit-only path), they are, in
 planned order:
 
-- ✅ **Array-literal inference + `min`/`max` semantics.** `var a =
+- ✅ **Array-literal inference + `min`/`max` semantics.** `let a =
   [1,2,3]` now infers `array_i32` (was generic `array`, so `.sum()`
   mis-dispatched); `arr.min()`/`max()` now return `Option[i32]`
   (Some/None) instead of a raw i32 — matching the reference
@@ -334,7 +334,7 @@ planned order:
   (match-on-non-enum) via the desugar — a follow-up, matching the
   if-let / match-guard precedent.
 - ✅ **Recursive local functions** — `function f(...) { … f(…) … }` inside
-  another function. A non-recursive local already desugars to `var f =
+  another function. A non-recursive local already desugars to `let f =
   function(…){…}` (a closure); a self-recursive one can't see its own name
   through the closure value. `hoist_local_funcs_module` (a post-parse pass
   in `module_with_builtins`) lifts a self-recursive local to a top-level
@@ -422,7 +422,7 @@ planned order:
   the argument is a bare ident naming a function, it lowers to a
   function-value box rather than a call (`callee_param_is_fn` /
   `arg_fn_value_name`).
-- ✅ **Tuple destructuring** (`var (a, b) = …`) — parser encodes the
+- ✅ **Tuple destructuring** (`let (a, b) = …`) — parser encodes the
   names as "a,b"; the emitter binds a = tuple.0, b = tuple.1
   (`self_host_tuple_destructure_test.go`). Also fixed `count_locals` to
   account for the two bindings (and the four that `for (k,v)` binds).
@@ -510,7 +510,7 @@ planned order:
     path emits a second 1-byte write). The self-host's own AsmRun /
     arm64-emit string-output cases were rewritten to use `write` for
     no-newline/token output and bare `print` for whole lines.
-  - ✅ **Tuple-destructure element typing.** `var (a, b) = init` bound
+  - ✅ **Tuple-destructure element typing.** `let (a, b) = init` bound
     both names to `i32`, so a struct-typed element's receiver method
     mis-mangled as `__fn_i32__<m>` (e.g. `__fn_i32__it` on the
     `TestRunner` from `must_temp_dir`) and failed to link. The parser
@@ -523,7 +523,7 @@ planned order:
   - ✅ **Match-scrutinee payload typing for `Option[T]` / `Result[T,…]`
     locals + call results.** `match (o) { Some(msg) … }` bound `msg` as
     `"unknown"` whenever the scrutinee was either an `ExprIdent` (a
-    local like `var o: Option[string] = …`) *or* a call to a user /
+    local like `let o: Option[string] = …`) *or* a call to a user /
     module function whose return type wraps a payload. That mis-routed
     string-typed payloads through struct shape dispatch — e.g.
     `msg.contains(...)` claimed `"expected 5"` wasn't in
@@ -691,7 +691,7 @@ planned order:
     differential gate, but the `method-fn-arg-boxed-not-called` AsmRun
     case pins the codegen on both backends.
   - ✅ **Prefix-bracket type `[T]` no longer OOMs the parser.**
-    `var ab: [u8] = …` left the `[` unconsumed (`parse_type_name`'s
+    `let ab: [u8] = …` left the `[` unconsumed (`parse_type_name`'s
     fall-through with no base ident / keyword / paren), so the
     surrounding decl loop spun until the kernel killed the
     compiler. Now `[T]` desugars to `T[]` in the parser — reusing
@@ -1266,7 +1266,7 @@ smallest → largest:
     workarounds are now redundant (removed in slice 3s).
   - ✅ **slice 3s — remove the redundant local-copy workarounds**: with the
     FBIP-reuse miscompile fixed (3r), the 15 `arm64_native` functions that
-    bound `var a = a0;` / `var p = p0;` to dodge the param-spread bug now take
+    bound `let a = a0;` / `let p = p0;` to dodge the param-spread bug now take
     their `Arm64Asm` / `Arm64GasProg` parameter directly again (and spread-
     update it in place). No behaviour change — guarded unchanged by
     `TestSelfHostArm64NativeViaGoBackend` (Go x86 backend),

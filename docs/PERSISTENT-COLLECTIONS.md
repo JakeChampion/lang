@@ -270,13 +270,13 @@ the alternative allocating or leaking.
   hands the child array to the binding at the box's own count; `Empty =>`
   arms return `Empty`, never the parameter (a parameter read inside an arm
   makes the match non-consuming and every binding a borrow that copies).
-  The recursive call then takes the child as `var child = kids[sub]; var
+  The recursive call then takes the child as `let child = kids[sub]; let
   rest = kids.with(sub, Empty); child = f(child, ..)` — the `.with` writes
   in place at rc 1 and leaves the child at its own count, the self-reassign
   moves it into the call — and `Branch(rest.with(sub, child))` writes it
   back in place. Reading `kids[sub]` straight into the call instead keeps
   the child shared with the array, and every level below copies. The wrapper
-  does the same for its root: `var root = v.root; v = PVec { ...v, root:
+  does the same for its root: `let root = v.root; v = PVec { ...v, root:
   Empty }; root = __pv_with_in(root, ..)` — the struct-update self-overwrite
   reuses the handle's box and releases the old root reference, so the trie
   reaches the descent unique. `docs/REUSE-CONTRACT.md` R5 / R6 name the

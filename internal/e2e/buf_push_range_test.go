@@ -32,7 +32,7 @@ func runBufPushRangeCorpus(t *testing.T, run func(t *testing.T, src string) stri
 		want.WriteString("\n")
 	}
 	out := run(t, `function main(): i32 {
-    var b: usize = buf_new(1);
+    let b: usize = buf_new(1);
 `+body.String()+`    buf_free(b);
     return 0;
 }

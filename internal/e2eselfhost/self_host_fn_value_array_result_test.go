@@ -14,22 +14,22 @@ import (
 // function iterating a `(i32) => f64[]` result directly.
 const fnValueArrayResultSrc = `import "core/iter" as iter;
 function sum_through(f: (i32) => f64[], n: i32): f64 {
-    var t: f64 = 0.0;
-    var i: i32 = 0;
+    let t: f64 = 0.0;
+    let i: i32 = 0;
     while (i < n) { for y in f(i) { t = t + y; } i = i + 1; }
     return t;
 }
 function main(): i32 {
-    var xs: f64[] = [1.5, 2.5];
-    var fo = iter.flat_map(iter.of(xs), (x: f64): f64[] => { return [x, x * 2.0]; });
-    var ls: i64[] = [4000000000i64, 5i64];
-    var lo = iter.flat_map(iter.of(ls), (x: i64): i64[] => { return [x, x + 1i64]; });
-    var ss: string[] = ["ab", "cde"];
-    var so = iter.flat_map(iter.of(ss), (x: string): string[] => { return [x, x + "!"]; });
-    var is: i32[] = [3, 4];
-    var io = iter.flat_map(iter.of(is), (x: i32): i32[] => { return [x, x * 10]; });
-    var t: f64 = sum_through((k: i32): f64[] => { return [k as f64 * 0.5, 1.25]; }, 4);
-    var r: i32 = (fo[0] as i32) + (fo[1] as i32) + (fo[3] as i32);
+    let xs: f64[] = [1.5, 2.5];
+    let fo = iter.flat_map(iter.of(xs), (x: f64): f64[] => { return [x, x * 2.0]; });
+    let ls: i64[] = [4000000000i64, 5i64];
+    let lo = iter.flat_map(iter.of(ls), (x: i64): i64[] => { return [x, x + 1i64]; });
+    let ss: string[] = ["ab", "cde"];
+    let so = iter.flat_map(iter.of(ss), (x: string): string[] => { return [x, x + "!"]; });
+    let is: i32[] = [3, 4];
+    let io = iter.flat_map(iter.of(is), (x: i32): i32[] => { return [x, x * 10]; });
+    let t: f64 = sum_through((k: i32): f64[] => { return [k as f64 * 0.5, 1.25]; }, 4);
+    let r: i32 = (fo[0] as i32) + (fo[1] as i32) + (fo[3] as i32);
     if (lo[1] != 4000000001i64 || lo[3] != 6i64) { return 90; }
     r = r + so[1].len() + so[3].len() + io[1] + io[3] + (t * 4.0) as i32;
     return r % 251;

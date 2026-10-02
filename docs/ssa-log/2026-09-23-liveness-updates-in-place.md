@@ -2,7 +2,7 @@
 
 Two self-host analyses copied an array on every update.
 
-- `ssalive.compute` started each block from `var out = live_out`, so the
+- `ssalive.compute` started each block from `let out = live_out`, so the
   first `out.with(...)` copied the whole live-out table (blocks × words)
   once per block per pass. It now builds the block's row in a one-row
   scratch array and writes changed words back into `live_out`, which it

@@ -32,7 +32,7 @@ function print_int(n: i32): i32 {
     return 0;
 }
 function main(): i32 {
-    var t: i32 = 0;
+    let t: i32 = 0;
     for w in ["fn", "fx", "var", "vaz", "while", "whilf", "", "a\nb", "a b", "longer"] { t = t * 10 + kw(w); }
     print_int(t); print("");
     print_int(differs("abc") * 100 + differs("abd") * 10 + differs("ab")); print("");

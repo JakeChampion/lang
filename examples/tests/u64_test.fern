@@ -135,7 +135,7 @@ function test_checked(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("std/u64");
+  let r: test.TestRunner = test.test_new("std/u64");
   r = r.it("min", test_min);
   r = r.it("max", test_max);
   r = r.it("min unsigned", test_min_unsigned);

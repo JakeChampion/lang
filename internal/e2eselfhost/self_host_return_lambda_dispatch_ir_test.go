@@ -9,8 +9,8 @@ import (
 // (#5266): a function that returns an inline `return <lambda>` in non-tail /
 // multi-return / match-payload-sibling position used to mis-dispatch the closure
 // at the caller. The lift pass (lift_stmt) now hoists every `return <lambda>`
-// (capturing or not) to `var $lamret$N = <lambda>; return $lamret$N;`, so the
-// StmtVar clo_init rule boxes the closure and the caller's `var g = f()` binds g a
+// (capturing or not) to `let $lamret$N = <lambda>; return $lamret$N;`, so the
+// StmtVar clo_init rule boxes the closure and the caller's `let g = f()` binds g a
 // closure local and dispatches `g()` env-first — uniformly, on the IR path.
 //
 // Before the fix:
@@ -30,21 +30,21 @@ var returnLambdaDispatchIRCases = []struct {
 	exit int
 }{
 	// Baseline single capturing tail return (already worked; guards no regression).
-	{"single-capturing", "function pick(n: i32): () => i32 { return () => n; } function main(): i32 { var g = pick(6); return g(); }", 6},
+	{"single-capturing", "function pick(n: i32): () => i32 { return () => n; } function main(): i32 { let g = pick(6); return g(); }", 6},
 	// C — single NON-capturing lambda return (was SIGSEGV).
-	{"single-noncapturing", "function pick(): () => i32 { return () => 7; } function main(): i32 { var g = pick(); return g(); }", 7},
+	{"single-noncapturing", "function pick(): () => i32 { return () => 7; } function main(): i32 { let g = pick(); return g(); }", 7},
 	// C — non-capturing with an argument.
-	{"noncapturing-arg", "function pick(): (i32) => i32 { return (x: i32) => x + 1; } function main(): i32 { var g = pick(); return g(10); }", 11},
+	{"noncapturing-arg", "function pick(): (i32) => i32 { return (x: i32) => x + 1; } function main(): i32 { let g = pick(); return g(10); }", 11},
 	// B — two DIFFERENT capturing returns, taken branch (mis-dispatch gives 7).
-	{"two-capturing-then", "function pick(flag: i32, n: i32): () => i32 { if (flag > 0) { return () => n; } return () => n + 1; } function main(): i32 { var g = pick(1, 6); return g(); }", 6},
+	{"two-capturing-then", "function pick(flag: i32, n: i32): () => i32 { if (flag > 0) { return () => n; } return () => n + 1; } function main(): i32 { let g = pick(1, 6); return g(); }", 6},
 	// B — two DIFFERENT capturing returns, fall-through branch.
-	{"two-capturing-else", "function pick(flag: i32, n: i32): () => i32 { if (flag > 0) { return () => n; } return () => n + 1; } function main(): i32 { var g = pick(0, 6); return g(); }", 7},
+	{"two-capturing-else", "function pick(flag: i32, n: i32): () => i32 { if (flag > 0) { return () => n; } return () => n + 1; } function main(): i32 { let g = pick(0, 6); return g(); }", 7},
 	// Sequential two returns in one block (no if), non-capturing.
-	{"seq-two-noncapturing", "function pick(): () => i32 { if (true) { return () => 3; } return () => 9; } function main(): i32 { var g = pick(); return g(); }", 3},
+	{"seq-two-noncapturing", "function pick(): () => i32 { if (true) { return () => 3; } return () => 9; } function main(): i32 { let g = pick(); return g(); }", 3},
 	// D — match-bound payload return + inline lambda sibling (was a bail -> SIGSEGV on the AST emitter).
-	{"match-payload-lambda-sibling", "enum Box { W(() => i32) } function pick(b: Box, flag: i32): () => i32 { match (b) { W(f) => { if (flag > 0) { return f; } return () => 0; } } } function main(): i32 { var n: i32 = 6; var g = pick(Box.W(() => n), 1); return g(); }", 6},
+	{"match-payload-lambda-sibling", "enum Box { W(() => i32) } function pick(b: Box, flag: i32): () => i32 { match (b) { W(f) => { if (flag > 0) { return f; } return () => 0; } } } function main(): i32 { let n: i32 = 6; let g = pick(Box.W(() => n), 1); return g(); }", 6},
 	// D — same, fall-through returns the inline lambda.
-	{"match-payload-lambda-fallthrough", "enum Box { W(() => i32) } function pick(b: Box, flag: i32): () => i32 { match (b) { W(f) => { if (flag > 0) { return f; } return () => 42; } } } function main(): i32 { var n: i32 = 6; var g = pick(Box.W(() => n), 0); return g(); }", 42},
+	{"match-payload-lambda-fallthrough", "enum Box { W(() => i32) } function pick(b: Box, flag: i32): () => i32 { match (b) { W(f) => { if (flag > 0) { return f; } return () => 42; } } } function main(): i32 { let n: i32 = 6; let g = pick(Box.W(() => n), 0); return g(); }", 42},
 }
 
 // TestSelfHostReturnLambdaDispatchIRX86_64 — the x86-64 lift-pass fix, through the

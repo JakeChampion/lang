@@ -6,8 +6,8 @@
 pub trait Render { function render(self: Self): string; }
 
 pub function (xs: T[]) render_all[T: Render](): string {
-    var out: string = "";
-    var i: i32 = 0;
+    let out: string = "";
+    let i: i32 = 0;
     while (i < xs.len()) {
         out = out + xs[i].render();
         i = i + 1;

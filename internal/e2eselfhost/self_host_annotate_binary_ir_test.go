@@ -20,7 +20,7 @@ import (
 //
 //	struct V { x: f64, y: f64 }
 //	function (a: V) mul(b: V): f64 { return a.x * b.x + a.y * b.y; }
-//	var d: f64 = p * q;                       // f64, and no walk over p / q says so
+//	let d: f64 = p * q;                       // f64, and no walk over p / q says so
 //
 // Every case below BAILED the IR path before this change ("did not lower:
 // binary `*`" under FERN_STRICT_IR), on both backends, while native compiled
@@ -49,9 +49,9 @@ var annotateBinaryCases = []struct {
 	{"overload_mul_f64", `struct V { x: f64, y: f64 }
 function (a: V) mul(b: V): f64 { return a.x * b.x + a.y * b.y; }
 function main(): i32 {
-  var p: V = V { x: 3.0, y: 4.0 };
-  var q: V = V { x: 2.0, y: 5.0 };
-  var d: f64 = p * q;
+  let p: V = V { x: 3.0, y: 4.0 };
+  let q: V = V { x: 2.0, y: 5.0 };
+  let d: f64 = p * q;
   return (d * 2.0) as i32;
 }`}, // 52
 	// The same overload consumed inline, so the enclosing `*` asks
@@ -59,38 +59,38 @@ function main(): i32 {
 	{"overload_mul_f64_direct", `struct V { x: f64, y: f64 }
 function (a: V) mul(b: V): f64 { return a.x * b.x + a.y * b.y; }
 function main(): i32 {
-  var p: V = V { x: 3.0, y: 4.0 };
-  var q: V = V { x: 2.0, y: 5.0 };
+  let p: V = V { x: 3.0, y: 4.0 };
+  let q: V = V { x: 2.0, y: 5.0 };
   return ((p * q) * 2.0) as i32;
 }`}, // 52
 	// i64 return: needs infer_expr_width AND lower_i64's binary arm.
 	{"overload_add_i64", `struct C { n: i32 }
 function (a: C) add(b: C): i64 { return (a.n as i64) * 1000000000i64 + (b.n as i64); }
 function main(): i32 {
-  var p: C = C { n: 5 };
-  var q: C = C { n: 7 };
+  let p: C = C { n: 5 };
+  let q: C = C { n: 7 };
   return ((p + q) % 100i64) as i32;
 }`}, // 7
 	// The unary sibling at i64 width: lower_i64's ExprUnary arm.
 	{"overload_neg_i64", `struct C { n: i32 }
 function (a: C) neg(): i64 { return (a.n as i64) * 1000000000i64; }
 function main(): i32 {
-  var p: C = C { n: 5 };
+  let p: C = C { n: 5 };
   return (((-p) / 1000000000i64) + 37i64) as i32;
 }`}, // 42
 	{"overload_add_string", `struct N { n: i32 }
 function (a: N) add(b: N): string { return "ab"; }
 function main(): i32 {
-  var p: N = N { n: 1 };
-  var q: N = N { n: 2 };
-  var s: string = p + q;
+  let p: N = N { n: 1 };
+  let q: N = N { n: 2 };
+  let s: string = p + q;
   return s.len() as i32;
 }`}, // 2
 	{"overload_neg_f64", `struct V { x: f64 }
 function (a: V) neg(): f64 { return 0.0 - a.x; }
 function main(): i32 {
-  var p: V = V { x: 21.0 };
-  var d: f64 = -p;
+  let p: V = V { x: 21.0 };
+  let d: f64 = -p;
   return (d * 0.0 - d) as i32;
 }`}, // 21
 	// A boolean-returning overload: without the tag expr_is_bool answered
@@ -98,8 +98,8 @@ function main(): i32 {
 	{"overload_rem_boolean", `struct V { x: i32 }
 function (a: V) rem(b: V): boolean { return a.x > b.x; }
 function main(): i32 {
-  var p: V = V { x: 20 };
-  var q: V = V { x: 22 };
+  let p: V = V { x: 20 };
+  let q: V = V { x: 22 };
   if (p % q) { return 7; }
   return 42;
 }`}, // 42
@@ -110,8 +110,8 @@ function main(): i32 {
 	{"overload_add_struct", `struct V { x: i32 }
 function (a: V) add(b: V): V { return V { x: a.x + b.x }; }
 function main(): i32 {
-  var p: V = V { x: 20 };
-  var q: V = V { x: 22 };
+  let p: V = V { x: 20 };
+  let q: V = V { x: 22 };
   return (p + q).x;
 }`}, // 42
 	// Control: the explicit method call the overload desugars to. It never
@@ -120,23 +120,23 @@ function main(): i32 {
 	{"method_call_control", `struct V { x: f64, y: f64 }
 function (a: V) mul(b: V): f64 { return a.x * b.x + a.y * b.y; }
 function main(): i32 {
-  var p: V = V { x: 3.0, y: 4.0 };
-  var q: V = V { x: 2.0, y: 5.0 };
-  var d: f64 = p.mul(q);
+  let p: V = V { x: 3.0, y: 4.0 };
+  let q: V = V { x: 2.0, y: 5.0 };
+  let d: f64 = p.mul(q);
   return (d * 2.0) as i32;
 }`}, // 52
 	// Control: ordinary f64 arithmetic, where the operand walk already
 	// answers and the tag must be inert.
 	{"plain_f64_arithmetic", `function main(): i32 {
-  var a: f64 = 3.5;
-  var b: f64 = 2.0;
+  let a: f64 = 3.5;
+  let b: f64 = 2.0;
   return ((a * b) + 1.0) as i32;
 }`}, // 8
 	// Control: ordinary i64 arithmetic through the width walk. An unsuffixed
 	// literal types i32 in the self-host checker, so a tag-FIRST width leaf
 	// would narrow this; the wiring is additive precisely so it cannot.
 	{"plain_i64_arithmetic", `function main(): i32 {
-  var a: i64 = 5000000000i64;
+  let a: i64 = 5000000000i64;
   return ((a + 7i64) % 100i64) as i32;
 }`}, // 7
 }
@@ -237,15 +237,15 @@ var annotateBinaryRejectCases = []struct {
 }{
 	{"binary_without_method", `struct W { x: i32 }
 function main(): i32 {
-  var a: W = W { x: 1 };
-  var b: W = W { x: 2 };
-  var c: W = a + b;
+  let a: W = W { x: 1 };
+  let b: W = W { x: 2 };
+  let c: W = a + b;
   return c.x;
 }`},
 	{"unary_without_method", `struct W { x: i32 }
 function main(): i32 {
-  var a: W = W { x: 1 };
-  var c: W = -a;
+  let a: W = W { x: 1 };
+  let c: W = -a;
   return c.x;
 }`},
 }

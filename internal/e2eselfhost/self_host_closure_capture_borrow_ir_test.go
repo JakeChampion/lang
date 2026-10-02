@@ -9,7 +9,7 @@ import (
 
 // TestSelfHostClosureCaptureBorrowIRX86_64 pins the #4354 borrow fix for
 // hoisted-closure capture extracts. make_clo_func synthesizes each capture
-// read as `var <cap> = __env[1+i]` at the top of a `$clo`/`$wrap` body; the
+// read as `let <cap> = __env[1+i]` at the top of a `$clo`/`$wrap` body; the
 // lambda's exit dec-sweep treated those as OWNED array locals and
 // shallow-dec'd them on EVERY call — but the env box owns the references,
 // so an rc==1 capture was freed out from under the box's owner on the
@@ -54,12 +54,12 @@ func TestSelfHostClosureCaptureBorrowIRX86_64(t *testing.T) {
 	// the value still correct.
 	run(t, `function call2(f: () => i32): i32 { return f() + f(); }
 function go(k: i32): i32 {
-    var xs: i32[] = [k, k + 1];
-    var c = () => xs[0] + xs[1];
+    let xs: i32[] = [k, k + 1];
+    let c = () => xs[0] + xs[1];
     return call2(c) / 2;
 }
 function main(): i32 {
-    var q: i32 = go(3);
+    let q: i32 = go(3);
     if (q != 7) { return 90 + q; }
     return __rc_underflow_count();
 }`, "escaping-capture-borrow-detector-zero", 0)
@@ -67,16 +67,16 @@ function main(): i32 {
 	// ALIAS shape (the #4557 fix routes it onto the hoisted path): both
 	// names call the same env; the extract borrow must survive both calls.
 	run(t, `function go(k: i32): i32 {
-    var xs: i32[] = [k, k + 1];
-    var c = () => xs[0] + xs[1];
-    var d = c;
-    var a: i32 = c();
-    var b: i32 = d();
+    let xs: i32[] = [k, k + 1];
+    let c = () => xs[0] + xs[1];
+    let d = c;
+    let a: i32 = c();
+    let b: i32 = d();
     if (a != b) { return 98; }
     return a;
 }
 function main(): i32 {
-    var q: i32 = go(3);
+    let q: i32 = go(3);
     if (q != 7) { return 90 + q; }
     return __rc_underflow_count();
 }`, "alias-capture-borrow-detector-zero", 0)
@@ -85,22 +85,22 @@ function main(): i32 {
 	// zero AND flat (the borrow exclusion must not reintroduce the env or
 	// capture leak the #4552 slice closed for approved closures).
 	run(t, `function go(k: i32): i32 {
-    var xs: i32[] = [k, k + 1];
-    var c = () => xs[0] + xs[1];
-    var d = c;
-    var a: i32 = c();
-    var b: i32 = d();
+    let xs: i32[] = [k, k + 1];
+    let c = () => xs[0] + xs[1];
+    let d = c;
+    let a: i32 = c();
+    let b: i32 = d();
     if (a != b) { return 98; }
     return a;
 }
 function main(): i32 {
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < 3000) { acc = (acc + go(i)) % 251; i = i + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
+    let b1: i32 = (__heap_bump_bytes() as i32);
     i = 0;
     while (i < 3000) { acc = (acc + go(i)) % 251; i = i + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 4096) { return 97; }
     return 0;
@@ -117,12 +117,12 @@ func TestSelfHostClosureCaptureBorrowIRArm64(t *testing.T) {
 
 	prog := `function call2(f: () => i32): i32 { return f() + f(); }
 function go(k: i32): i32 {
-    var xs: i32[] = [k, k + 1];
-    var c = () => xs[0] + xs[1];
+    let xs: i32[] = [k, k + 1];
+    let c = () => xs[0] + xs[1];
     return call2(c) / 2;
 }
 function main(): i32 {
-    var q: i32 = go(3);
+    let q: i32 = go(3);
     if (q != 7) { return 90 + q; }
     return __rc_underflow_count();
 }`

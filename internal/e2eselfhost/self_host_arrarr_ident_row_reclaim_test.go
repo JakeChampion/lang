@@ -16,7 +16,7 @@ import (
 // __fern_strarrarr_free by kind — so the leak was never helper SELECTION, which
 // is what the issue attributed it to. It was the freshness proof: both
 // arrarr_lit_is_fresh and its strict string sibling required every row to be an
-// array LITERAL, so `var outer: string[][] = [inner, [...]]` fell to a flat
+// array LITERAL, so `let outer: string[][] = [inner, [...]]` fell to a flat
 // __fern_arr_dec per level and every element string was stranded (120 B/round
 // for one local row, 192 with a literal row beside it).
 //
@@ -42,18 +42,18 @@ var arrarrIdentRowCases = []struct {
     return "many";
 }
 function nested(k: i32): i32 {
-    var inner: string[] = ["alpha-payload-" + tag(k), "beta-payload-" + tag(k)];
-    var outer: string[][] = [inner, ["gamma-payload-" + tag(k)]];
+    let inner: string[] = ["alpha-payload-" + tag(k), "beta-payload-" + tag(k)];
+    let outer: string[][] = [inner, ["gamma-payload-" + tag(k)]];
     return outer[0][0].len() + outer[1][0].len();
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) { acc = (acc + nested(i % 3)) % 251; i = i + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 2000) { acc = (acc + nested(j % 3)) % 251; j = j + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 4096) { return 98; }
     if (acc < 0) { return 97; }
@@ -66,18 +66,18 @@ function main(): i32 {
     return "many";
 }
 function nested(k: i32): i32 {
-    var inner: string[] = ["alpha-payload-" + tag(k), "beta-payload-" + tag(k)];
-    var outer: string[][] = [inner];
+    let inner: string[] = ["alpha-payload-" + tag(k), "beta-payload-" + tag(k)];
+    let outer: string[][] = [inner];
     return outer[0][0].len() + outer[0][1].len();
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) { acc = (acc + nested(i % 2)) % 251; i = i + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 2000) { acc = (acc + nested(j % 2)) % 251; j = j + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 4096) { return 98; }
     if (acc < 0) { return 97; }
@@ -93,21 +93,21 @@ function main(): i32 {
     return "many";
 }
 function mk(k: i32): string[][] {
-    var inner: string[] = ["alpha-payload-" + tag(k), "beta-payload-" + tag(k)];
+    let inner: string[] = ["alpha-payload-" + tag(k), "beta-payload-" + tag(k)];
     return [inner, ["gamma-payload-" + tag(k)]];
 }
 function consume(k: i32): i32 {
-    var g: string[][] = mk(k);
+    let g: string[][] = mk(k);
     return g[0][0].len() + g[1][0].len();
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) { acc = (acc + consume(i % 2)) % 251; i = i + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 2000) { acc = (acc + consume(j % 2)) % 251; j = j + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 4096) { return 98; }
     if (acc < 0) { return 97; }
@@ -121,18 +121,18 @@ function main(): i32 {
     return "many";
 }
 function nested(k: i32): i32 {
-    var inner: string[] = ["alpha-payload-" + tag(k)];
-    var outer: string[][] = [inner];
-    var a: i32 = outer[0][0].len();
-    var b: i32 = inner[0].len();
+    let inner: string[] = ["alpha-payload-" + tag(k)];
+    let outer: string[][] = [inner];
+    let a: i32 = outer[0][0].len();
+    let b: i32 = inner[0].len();
     if (a != b) { return 0 - 1; }
     return a + b;
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 400) {
-        var v: i32 = nested(i % 2);
+        let v: i32 = nested(i % 2);
         if (v < 0) { return 97; }
         acc = (acc + v) % 251;
         i = i + 1;
@@ -150,19 +150,19 @@ function main(): i32 {
     return "many";
 }
 function nested(k: i32): i32 {
-    var s: string = "shared-payload-" + tag(k);
-    var inner: string[] = [s];
-    var outer: string[][] = [inner];
-    var a: i32 = outer[0][0].len();
-    var b: i32 = s.len();
+    let s: string = "shared-payload-" + tag(k);
+    let inner: string[] = [s];
+    let outer: string[][] = [inner];
+    let a: i32 = outer[0][0].len();
+    let b: i32 = s.len();
     if (a != b) { return 0 - 1; }
     return a + b;
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 400) {
-        var v: i32 = nested(i % 2);
+        let v: i32 = nested(i % 2);
         if (v < 0) { return 97; }
         acc = (acc + v) % 251;
         i = i + 1;
@@ -179,19 +179,19 @@ function main(): i32 {
     return "many";
 }
 function nested(k: i32): i32 {
-    var inner: string[] = ["twice-payload-" + tag(k)];
-    var o1: string[][] = [inner];
-    var o2: string[][] = [inner];
-    var a: i32 = o1[0][0].len();
-    var b: i32 = o2[0][0].len();
+    let inner: string[] = ["twice-payload-" + tag(k)];
+    let o1: string[][] = [inner];
+    let o2: string[][] = [inner];
+    let a: i32 = o1[0][0].len();
+    let b: i32 = o2[0][0].len();
     if (a != b) { return 0 - 1; }
     return a + b;
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 400) {
-        var v: i32 = nested(i % 2);
+        let v: i32 = nested(i % 2);
         if (v < 0) { return 97; }
         acc = (acc + v) % 251;
         i = i + 1;
@@ -211,16 +211,16 @@ function main(): i32 {
     return "many";
 }
 function nested(k: i32): i32 {
-    var inner: string[] = ["first-payload-" + tag(k)];
+    let inner: string[] = ["first-payload-" + tag(k)];
     inner = inner.append("second-payload-" + tag(k));
-    var outer: string[][] = [inner];
+    let outer: string[][] = [inner];
     return outer[0][0].len() + outer[0][1].len();
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 400) {
-        var v: i32 = nested(i % 2);
+        let v: i32 = nested(i % 2);
         if (v <= 0) { return 97; }
         acc = (acc + v) % 251;
         i = i + 1;

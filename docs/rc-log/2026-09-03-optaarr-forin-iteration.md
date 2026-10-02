@@ -6,8 +6,8 @@ shallow buffer dec: every option box and every payload buffer leaked.
 
 ```fern
 function round(i: i32): i32 {
-    var keep: Option[i32[]][] = [Some([i, i + 1]), Some([i + 2, i + 3])];
-    var t: i32 = 0;
+    let keep: Option[i32[]][] = [Some([i, i + 1]), Some([i + 2, i + 3])];
+    let t: i32 = 0;
     for e in keep { match (e) { Some(p) => { t = t + p[0]; }, None => {} } }
     return t + keep.len();
 }
@@ -55,7 +55,7 @@ self-host emits zero `rc_inc` for it, exactly as `arrarr_row_escapes_iter`
 records for an arr-of-arr row — and the bind is transient, the loop ending
 before the exit sweep. So the index bind and the iteration are separate
 questions, and `arrarr_row_escapes_ex` now takes them separately: `dup_at_index`
-still governs `var o = xs[i]` (refused here, no dup), and a new `box_iter_ok`
+still governs `let o = xs[i]` (refused here, no dup), and a new `box_iter_ok`
 governs the `for`.
 
 What the iteration needs is a confinement proof for a box the ordinary escape
@@ -88,8 +88,8 @@ With both conjuncts stubbed to `false &&` and nothing else changed:
 
 ```fern
 function pick(i: i32): Option[i32[]] {
-    var keep: Option[i32[]][] = [Some([i, i + 1]), Some([i + 2, i + 3])];
-    var last: Option[i32[]] = None;
+    let keep: Option[i32[]][] = [Some([i, i + 1]), Some([i + 2, i + 3])];
+    let last: Option[i32[]] = None;
     for e in keep { last = e; }
     return last;
 }
@@ -115,7 +115,7 @@ Without the stub the same probe exits 0 and takes the leak-safe fallback.
 
 `TestSelfHostOptaarrForInIter{X86_64,Arm64,Wasm}` asserts `live_bytes > 0` on
 every refused row, not just its exit code: guarded arm, payload binding stored
-out, payload handed to a call, loop var stored out, bare `var o = xs[i]`, and
+out, payload handed to a call, loop let stored out, bare `let o = xs[i]`, and
 the two out-of-class annotations (`Option[string[]][]`, whose payload is not a
 leak-safe scalar array, and `Option[Option[i32[]]][]`, which is not an option of
 an array at all). A balance appearing there means the credit reached a shape
@@ -128,11 +128,11 @@ the payload-type reading that predicate carries, threaded into the arm vet.
 
 ## Trap for the next reader
 
-`var o: Option[i32[]] = keep[0];` does not compile under the self-host: its
+`let o: Option[i32[]] = keep[0];` does not compile under the self-host: its
 checker types the element as bare `Option` with the payload dropped, and rejects
 the annotated bind (`E003: cannot assign Option to variable of type i32`) where
 native reports `Option[i32[]]` and accepts the annotated form. An unannotated
-`var o = keep[0];` is the only spelling of an OPTAARR element bind the self-host
+`let o = keep[0];` is the only spelling of an OPTAARR element bind the self-host
 accepts, which is what the `elem-bind-refused` row uses. That is a self-host
 checker gap in generic-payload inference, not an rc one, and it is untouched
 here.

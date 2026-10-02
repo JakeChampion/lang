@@ -36,7 +36,7 @@ func foldErrors(t *testing.T, src string) []*Error {
 }
 
 // A const initialiser out of range was reported as an uncoded message at the
-// const's 1:1, in different words from the `var` spelling's E047; a negated
+// const's 1:1, in different words from the `let` spelling's E047; a negated
 // one, or one inside arithmetic, was not reported at all, because the fold
 // truncated it to the declared width first; and u64's upper half was refused
 // outright, the literal's wrapped Value read as negative. Every literal in a

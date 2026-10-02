@@ -73,7 +73,7 @@ func TestSelfHostOverBudgetRoutesIRArm64(t *testing.T) {
 		{"http-handler", httpHandlerSrc},
 		{"http-parse", `import "std/http";
 function main(): i32 {
-    var raw: string = "GET /abc HTTP/1.1\r\nHost: x\r\n\r\n";
+    let raw: string = "GET /abc HTTP/1.1\r\nHost: x\r\n\r\n";
     match (http.http_parse_request(raw)) {
         Some(req) => { return req.path.len(); },
         None => { return 7; }
@@ -110,7 +110,7 @@ func TestSelfHostOverBudgetProgramsRunX86_64(t *testing.T) {
 	t.Run("http-parse", func(t *testing.T) {
 		src := `import "std/http";
 function main(): i32 {
-    var raw: string = "GET /abc HTTP/1.1\r\nHost: x\r\n\r\n";
+    let raw: string = "GET /abc HTTP/1.1\r\nHost: x\r\n\r\n";
     match (http.http_parse_request(raw)) {
         Some(req) => {
             print("method=" + req.method + " path=" + req.path);
@@ -148,13 +148,13 @@ function main(): i32 {
 		// boundary — the serve-loop shape is covered by TestSelfHostHttpHandlerServes.
 		src := fmt.Sprintf(`import "std/http";
 function main(): i32 {
-    var fd: i32 = tcp_listen(%d);
+    let fd: i32 = tcp_listen(%d);
     if (fd < 0) { return 91; }
-    var c: i32 = tcp_accept(fd);
+    let c: i32 = tcp_accept(fd);
     if (c < 0) { return 92; }
-    var req: u8[] = tcp_recv(c, 4096);
+    let req: u8[] = tcp_recv(c, 4096);
     if (req.len() == 0) { return 93; }
-    var n: i32 = tcp_send(c, "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nrawok");
+    let n: i32 = tcp_send(c, "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nrawok");
     tcp_close(c);
     tcp_close(fd);
     if (n < 0) { return 94; }
@@ -220,7 +220,7 @@ func TestSelfHostHttpHandlerServesX86_64(t *testing.T) {
 // self-host's own lowering of the struct spread.
 func TestSelfHostHttpHandlerServesWithOptionsX86_64(t *testing.T) {
 	checkSelfHostHttpHandlerServes(t, func(port int) string {
-		return fmt.Sprintf("var opts: tcp.ServeOptions = tcp.ServeOptions { ...tcp.serve_options(), backlog: 4, reuse_port: true };\n    return tcp.tcp_serve_opts(%d, opts, handle);", port)
+		return fmt.Sprintf("let opts: tcp.ServeOptions = tcp.ServeOptions { ...tcp.serve_options(), backlog: 4, reuse_port: true };\n    return tcp.tcp_serve_opts(%d, opts, handle);", port)
 	})
 }
 

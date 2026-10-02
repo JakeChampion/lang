@@ -34,12 +34,12 @@ func TestDeferTryOpRefused(t *testing.T) {
 		clean bool
 	}{
 		{"defer", `function f(): Option[i32] {
-	var n: i32 = 0;
+	let n: i32 = 0;
 	defer n = g(n)?;
 	return Some(n);
 }`, "`?` is not allowed inside a `defer` action", false},
 		{"errdefer", `function f(): Option[i32] {
-	var n: i32 = 0;
+	let n: i32 = 0;
 	errdefer n = g(n)?;
 	return Some(n);
 }`, "`?` is not allowed inside an `errdefer` action", false},
@@ -65,9 +65,9 @@ func TestDeferTryOpRefused(t *testing.T) {
 		// The positive half: a `?` in a lambda literal in the action, passed
 		// where an Option-returning function is wanted, is accepted outright.
 		// The lambda's own return type is what `?` propagates to (#9515).
-		{"try_in_lambda_literal_in_defer_is_accepted", `function run(h: (i32) => Option[i32]): void { var r: Option[i32] = h(1); }
+		{"try_in_lambda_literal_in_defer_is_accepted", `function run(h: (i32) => Option[i32]): void { let r: Option[i32] = h(1); }
 function f(): i32 {
-	defer run((x: i32) => { var y: i32 = g(x)?; return Some(y + 1); });
+	defer run((x: i32) => { let y: i32 = g(x)?; return Some(y + 1); });
 	return 0;
 }`, "", true},
 		// A `defer` nested INSIDE a lambda body is the same circular shape one
@@ -76,8 +76,8 @@ function f(): i32 {
 		// The self-host mirror missed this: its walk entered no expression, so
 		// the lambda body stayed out of reach.
 		{"defer_inside_a_lambda_body", `function f(out: Cell[i32]): i32 {
-	var h: (i32) => i32 = (x: i32) => {
-		var n: i32 = x;
+	let h: (i32) => i32 = (x: i32) => {
+		let n: i32 = x;
 		defer n = g(n)?;
 		return n;
 	};
@@ -87,7 +87,7 @@ function f(): i32 {
 		// The operator is unaffected everywhere else in a function that also
 		// holds a defer — the rule is about the action, not the function.
 		{"try_outside_the_defer", `function f(out: Cell[i32]): Option[i32] {
-	var n: i32 = g(0)?;
+	let n: i32 = g(0)?;
 	defer out.set(n);
 	return Some(n);
 }`, "", false},
@@ -123,7 +123,7 @@ func TestDeferTryOpIsNotAnInferredReturn(t *testing.T) {
 	return None;
 }
 function main(): i32 {
-	var h: (i32) => i32 = (x: i32) => { var n: i32 = x; defer n = g(n)?; return n; };
+	let h: (i32) => i32 = (x: i32) => { let n: i32 = x; defer n = g(n)?; return n; };
 	return h(1);
 }`)
 	if !strings.Contains(got, "is not allowed inside a `defer` action") {

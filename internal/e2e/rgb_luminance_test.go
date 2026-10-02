@@ -17,9 +17,9 @@ function main(): i32 {
     if (math.rgb_luminance(math.pack_rgb(0, 255, 0)) != 149) { return 3; }
     if (math.rgb_luminance(math.pack_rgb(0, 0, 255)) != 29) { return 4; }
     if (math.rgb_luminance(math.pack_rgb(255, 0, 0)) != 76) { return 5; }
-    var green: i32 = math.rgb_luminance(math.pack_rgb(0, 255, 0));
-    var red: i32 = math.rgb_luminance(math.pack_rgb(255, 0, 0));
-    var blue: i32 = math.rgb_luminance(math.pack_rgb(0, 0, 255));
+    let green: i32 = math.rgb_luminance(math.pack_rgb(0, 255, 0));
+    let red: i32 = math.rgb_luminance(math.pack_rgb(255, 0, 0));
+    let blue: i32 = math.rgb_luminance(math.pack_rgb(0, 0, 255));
     if (!(green > red && red > blue)) { return 6; }
     if (!math.rgb_is_dark(math.pack_rgb(0, 0, 0))) { return 7; }
     if (!math.rgb_is_dark(math.pack_rgb(0, 0, 255))) { return 8; }

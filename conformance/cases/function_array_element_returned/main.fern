@@ -8,18 +8,18 @@ function z(): i32 { return 7; }
 function y(): i32 { return 8; }
 
 function pickf(i: i32): (i32) => i32 {
-    var fs = [a, bb];
+    let fs = [a, bb];
     return fs[i];
 }
 
 function pickz(i: i32): () => i32 {
-    var fs = [z, y];
+    let fs = [z, y];
     return fs[i];
 }
 
 function main(): i32 {
-    var f = pickf(0);
-    var p = pickf;
-    var g = pickz(1);
+    let f = pickf(0);
+    let p = pickf;
+    let g = pickz(1);
     return f(10) + pickf(1)(10) + p(1)(20) + g() + pickz(0)();
 }

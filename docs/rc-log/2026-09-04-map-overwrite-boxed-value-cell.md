@@ -71,9 +71,9 @@ An uncounted-alias free: no rc detector fires, and the fault lands wherever the
 freelist next hands the block out.
 
 ```fern
-var m: Map[string, string] = map_new(8);
+let m: Map[string, string] = map_new(8);
 m = m.insert(k, v1);
-var snap: Map[string, string] = m;   // rc 2, same buffer, same value cell
+let snap: Map[string, string] = m;   // rc 2, same buffer, same value cell
 m = m.insert(k, v2);                 // the pre-drop releases v1 under snap
 ```
 
@@ -95,7 +95,7 @@ The third is not a string pre-drop at all, and it is the one that had gone
 unnoticed longest: the kind-4 boxed struct / enum pre-drop, which deep-drops
 the superseded value inline before the set. `#8354` leaves the struct value
 column shared on a copy for the same reason it leaves the string one, so
-`var snap = m; m = m.insert(k, s)` over `Map[i32, Box]` freed what `snap`
+`let snap = m; m = m.insert(k, s)` over `Map[i32, Box]` freed what `snap`
 named. What made it invisible is that nothing about it looks like a bug:
 
 | 200 rounds, `Map[i32, Box]` | answer | `FERN_LEAKCHECK` |

@@ -10,7 +10,7 @@ import (
 
 // --- A string handed to a struct-literal FIELD loses its own release ---------
 //
-// `var src: string = w("k"); var p: P = P { f: src, n: i };` with `src` read
+// `let src: string = w("k"); let p: P = P { f: src, n: i };` with `src` read
 // afterwards freed 100 of 300 boxes over 100 rounds where native freed all 300.
 // The `str` column of the construction-retain matrix; the `local` cell of it.
 //
@@ -59,8 +59,8 @@ function w(a: string): string { return a + "-past-the-sso-inline-threshold"; }
 `
 
 const sfssMain = `function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { t = t + round(r); r = r + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
@@ -72,9 +72,9 @@ func structFieldStrSourceCases() []structFieldStrSourceCase {
 			// THE REPRO. Base: 300 allocs / 100 frees, native 200/200.
 			name: "struct_lit_string_field",
 			src: sfssPrelude + `function round(i: i32): i32 {
-    var src: string = w("k");
-    var p: P = P { f: src, n: i };
-    var t: i32 = (p.f.len() + p.n) % 101;
+    let src: string = w("k");
+    let p: P = P { f: src, n: i };
+    let t: i32 = (p.f.len() + p.n) % 101;
     return (t + src.len() + i) % 101;
 }
 ` + sfssMain,
@@ -85,9 +85,9 @@ func structFieldStrSourceCases() []structFieldStrSourceCase {
 			// Base 300/100.
 			name: "field_source_outlives_the_holder",
 			src: sfssPrelude + `function round(i: i32): i32 {
-    var src: string = w("k");
-    var t: i32 = 0;
-    { var p: P = P { f: src, n: i }; t = (p.f.len() + p.n) % 101; }
+    let src: string = w("k");
+    let t: i32 = 0;
+    { let p: P = P { f: src, n: i }; t = (p.f.len() + p.n) % 101; }
     return (t + src.len() + i) % 101;
 }
 ` + sfssMain,
@@ -101,9 +101,9 @@ func structFieldStrSourceCases() []structFieldStrSourceCase {
 			// when the source needs its own release. Base 250/50.
 			name: "field_source_in_a_conditional",
 			src: sfssPrelude + `function round(i: i32): i32 {
-    var src: string = w("k");
-    var t: i32 = 0;
-    if (i % 2 == 0) { var p: P = P { f: src, n: i }; t = (p.f.len() + p.n) % 101; }
+    let src: string = w("k");
+    let t: i32 = 0;
+    if (i % 2 == 0) { let p: P = P { f: src, n: i }; t = (p.f.len() + p.n) % 101; }
     return (t + i) % 101;
 }
 ` + sfssMain,
@@ -117,12 +117,12 @@ func structFieldStrSourceCases() []structFieldStrSourceCase {
 			// reused before the read and the answer stops matching native's.
 			name: "read_back_after_churn",
 			src: sfssPrelude + `function round(i: i32): i32 {
-    var src: string = w("k");
-    var t: i32 = 0;
-    { var p: P = P { f: src, n: i }; t = (p.f.len() + p.n) % 101; }
-    var a: string = w("churn-one");
-    var b: string = w("churn-two");
-    var c: string = w("churn-three");
+    let src: string = w("k");
+    let t: i32 = 0;
+    { let p: P = P { f: src, n: i }; t = (p.f.len() + p.n) % 101; }
+    let a: string = w("churn-one");
+    let b: string = w("churn-two");
+    let c: string = w("churn-three");
     return (t + src.len() + a.len() + b.len() + c.len() + i) % 101;
 }
 ` + sfssMain,
@@ -137,8 +137,8 @@ func structFieldStrSourceCases() []structFieldStrSourceCase {
 			// releasing a box the holder took over.
 			name: "moved_field_source_unchanged",
 			src: sfssPrelude + `function round(i: i32): i32 {
-    var src: string = w("k");
-    var p: P = P { f: src, n: i };
+    let src: string = w("k");
+    let p: P = P { f: src, n: i };
     return (p.f.len() + p.n) % 101;
 }
 ` + sfssMain,
@@ -150,13 +150,13 @@ func structFieldStrSourceCases() []structFieldStrSourceCase {
 			// guards it.
 			name: "escaping_holder_still_refused",
 			src: sfssPrelude + `function mk(i: i32): P {
-    var src: string = w("k");
-    var p: P = P { f: src, n: i };
+    let src: string = w("k");
+    let p: P = P { f: src, n: i };
     if (src.len() > 3) { return p; }
     return p;
 }
 function round(i: i32): i32 {
-    var p: P = mk(i);
+    let p: P = mk(i);
     return (p.f.len() + p.n) % 101;
 }
 ` + sfssMain,
@@ -168,8 +168,8 @@ function round(i: i32): i32 {
 			src: `struct P { f: string, g: string, n: i32 }
 function w(a: string): string { return a + "-past-the-sso-inline-threshold"; }
 function round(i: i32): i32 {
-    var src: string = w("k");
-    var p: P = P { f: src, g: src, n: i };
+    let src: string = w("k");
+    let p: P = P { f: src, g: src, n: i };
     return (p.f.len() + p.g.len() + p.n + src.len()) % 101;
 }
 ` + sfssMain,

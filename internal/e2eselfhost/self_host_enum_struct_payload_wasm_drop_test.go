@@ -29,7 +29,7 @@ func TestSelfHostEnumStructPayloadDropWasm(t *testing.T) {
 	prog := `struct Inner { items: i32[] }
 enum Box { Full(Inner), Empty }
 function mk(): i32 {
-    var b: Box = Full(Inner { items: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16] });
+    let b: Box = Full(Inner { items: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16] });
     match (b) {
         Full(_) => {},
         Empty => {},
@@ -37,7 +37,7 @@ function mk(): i32 {
     return 5;
 }
 function main(): i32 {
-    var s: i32 = 0; var k: i32 = 0;
+    let s: i32 = 0; let k: i32 = 0;
     while (k < 400000) { s = mk(); k = k + 1; }
     return s - 5;
 }`

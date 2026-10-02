@@ -74,7 +74,7 @@ func TestFlattenLeavesIfWithElseAlone(t *testing.T) {
 func TestFlattenSkipsContinuationWithControlFlow(t *testing.T) {
 	p := lowerSource(t, `function f(n: i32): i32 {
 		if (n == 0) { return 1; }
-		var sum: i32 = 0;
+		let sum: i32 = 0;
 		while (n > 0) { sum = sum + n; n = n - 1; }
 		return sum;
 	}`)

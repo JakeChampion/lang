@@ -43,7 +43,7 @@ type Config struct {
 	MaxLoopDepth int
 	// MaxLoopIters caps the random iteration count picked for
 	// each emitted while-loop's counter bound. The generator
-	// emits `var c = 0; while (c < N) { ...; c = c + 1; }` with
+	// emits `let c = 0; while (c < N) { ...; c = c + 1; }` with
 	// N drawn from [1, MaxLoopIters]. Differential testing
 	// needs N small so backends without optimisations don't
 	// blow up runtime.
@@ -860,7 +860,7 @@ func (g *Generator) MainProgram() string {
 		// match-expr productions in expr(), so they're safe.
 		vt := g.pickMainVarType()
 		vname := fmt.Sprintf("v%d", i)
-		fmt.Fprintf(&b, "var %s: %s = ", vname, g.typeName(vt))
+		fmt.Fprintf(&b, "let %s: %s = ", vname, g.typeName(vt))
 		g.expr(&b, sc, vt, 0)
 		b.WriteString("; ")
 		sc.declare(vt, vname)
@@ -920,7 +920,7 @@ func (g *Generator) MainPrintableProgram() string {
 	// Runtime float 0.0 / 1.0 for the special-value (NaN / Inf)
 	// comparison observation. Runtime vars (not literals) so
 	// constfold neither rejects nor pre-evaluates `__fz / __fz`.
-	b.WriteString("var __fz: f32 = 0.0f32; var __fo: f32 = 1.0f32; ")
+	b.WriteString("let __fz: f32 = 0.0f32; let __fo: f32 = 1.0f32; ")
 
 	n := g.ch.intN(maxInt(g.cfg.MaxStmts, 0) + 1)
 	for i := 0; i < n; i++ {
@@ -938,7 +938,7 @@ func (g *Generator) MainPrintableProgram() string {
 		}
 		vt := g.pickMainVarType()
 		vname := fmt.Sprintf("v%d", i)
-		fmt.Fprintf(&b, "var %s: %s = ", vname, g.typeName(vt))
+		fmt.Fprintf(&b, "let %s: %s = ", vname, g.typeName(vt))
 		g.expr(&b, sc, vt, 0)
 		b.WriteString("; ")
 		sc.declare(vt, vname)
@@ -1064,7 +1064,7 @@ func (g *Generator) emitFloatAggregateObservation(b *strings.Builder, sc *scope)
 	case 2:
 		g.emitFloatArrayObservation(b, sc, name, tArrF64, d)
 	case 3:
-		fmt.Fprintf(b, "var %s: (f32, f64) = (", name)
+		fmt.Fprintf(b, "let %s: (f32, f64) = (", name)
 		g.expr(b, sc, tF32, d)
 		b.WriteString(", ")
 		g.expr(b, sc, tF64, d)
@@ -1077,12 +1077,12 @@ func (g *Generator) emitFloatAggregateObservation(b *strings.Builder, sc *scope)
 		// FShape literal production, so the observation can never be
 		// the FNone no-op.
 		if g.flip(0.5) {
-			fmt.Fprintf(b, "var %s: FShape = (FTwo(", name)
+			fmt.Fprintf(b, "let %s: FShape = (FTwo(", name)
 			g.expr(b, sc, tF32, d)
 			b.WriteString(", ")
 			g.expr(b, sc, tF32, d)
 		} else {
-			fmt.Fprintf(b, "var %s: FShape = (FWide(", name)
+			fmt.Fprintf(b, "let %s: FShape = (FWide(", name)
 			g.expr(b, sc, tF64, d)
 			b.WriteString(", ")
 			g.expr(b, sc, tF64, d)
@@ -1106,7 +1106,7 @@ func (g *Generator) emitFloatAggregateObservation(b *strings.Builder, sc *scope)
 				name, narrowA, narrowB, narrowRead, wideA, wideB, wideRead)
 		}
 	default:
-		fmt.Fprintf(b, "var %s: Vec2 = (Vec2 { x: ", name)
+		fmt.Fprintf(b, "let %s: Vec2 = (Vec2 { x: ", name)
 		g.expr(b, sc, tF32, d)
 		b.WriteString(", y: ")
 		g.expr(b, sc, tF32, d)
@@ -1121,7 +1121,7 @@ func (g *Generator) emitFloatAggregateObservation(b *strings.Builder, sc *scope)
 // floatAggArrayLen elements and prints each one.
 func (g *Generator) emitFloatArrayObservation(b *strings.Builder, sc *scope, name string, arrT gtype, depth int) {
 	elem, _ := arrayElemOf(arrT)
-	fmt.Fprintf(b, "var %s: %s = [", name, g.typeName(arrT))
+	fmt.Fprintf(b, "let %s: %s = [", name, g.typeName(arrT))
 	for i := 0; i < floatAggArrayLen; i++ {
 		if i > 0 {
 			b.WriteString(", ")
@@ -1196,7 +1196,7 @@ func (g *Generator) emitFloatComparand(b *strings.Builder, sc *scope) {
 	g.emitSpecialFloatValue(b)
 }
 
-// mainVarTypes are the float-free gtypes legal for `var v<N>`
+// mainVarTypes are the float-free gtypes legal for `let v<N>`
 // declarations inside `main` in every profile — floatVarTypes
 // below adds to them where floats are admitted. Strings are exercised
 // through `len(s)` in the i32 path (see tryCompositeProduction),
@@ -1456,8 +1456,8 @@ func (g *Generator) funcDecl(b *strings.Builder, idx int) {
 	g.helpers = append(g.helpers, helperSig{name: name, params: params, retType: ret})
 }
 
-// body emits a sequence of `var` declarations / while-loops
-// followed by a typed `return`. Each `var` adds a fresh name to
+// body emits a sequence of `let` declarations / while-loops
+// followed by a typed `return`. Each `let` adds a fresh name to
 // the scope so later statements can reference it; while-loops use
 // the bounded-counter pattern (see emitWhileLoop) and don't add
 // anything to the outer scope.
@@ -1484,7 +1484,7 @@ func (g *Generator) body(b *strings.Builder, sc *scope, retT gtype) {
 		}
 		vt := g.pickType()
 		vname := fmt.Sprintf("v%d", i)
-		fmt.Fprintf(b, "var %s: %s = ", vname, g.typeName(vt))
+		fmt.Fprintf(b, "let %s: %s = ", vname, g.typeName(vt))
 		g.expr(b, sc, vt, 0)
 		b.WriteString("; ")
 		sc.declare(vt, vname)
@@ -1535,7 +1535,7 @@ func (g *Generator) emitWhileLoop(b *strings.Builder, sc *scope) {
 	counter := fmt.Sprintf("__loop_i%d", idx)
 	iters := 1 + g.ch.intN(maxInt(g.cfg.MaxLoopIters, 1))
 
-	fmt.Fprintf(b, "var %s: i32 = 0i32; ", counter)
+	fmt.Fprintf(b, "let %s: i32 = 0i32; ", counter)
 	fmt.Fprintf(b, "while (%s < %di32) { ", counter, iters)
 
 	// Body: a few var-decls. Use an inner scope so loop-body
@@ -1552,7 +1552,7 @@ func (g *Generator) emitWhileLoop(b *strings.Builder, sc *scope) {
 		}
 		vt := g.pickType()
 		vname := fmt.Sprintf("w%d_%d", idx, i)
-		fmt.Fprintf(b, "var %s: %s = ", vname, g.typeName(vt))
+		fmt.Fprintf(b, "let %s: %s = ", vname, g.typeName(vt))
 		g.expr(b, inner, vt, 0)
 		b.WriteString("; ")
 		inner.declare(vt, vname)
@@ -1690,7 +1690,7 @@ func (g *Generator) maybeEmitForEach(b *strings.Builder, sc *scope) bool {
 		}
 		vt := g.pickType()
 		vname := fmt.Sprintf("fe%d_%d", idx, i)
-		fmt.Fprintf(b, "var %s: %s = ", vname, g.typeName(vt))
+		fmt.Fprintf(b, "let %s: %s = ", vname, g.typeName(vt))
 		g.expr(b, inner, vt, 0)
 		b.WriteString("; ")
 		inner.declare(vt, vname)
@@ -1763,17 +1763,17 @@ func (g *Generator) maybeEmitArrayAliasCow(b *strings.Builder, sc *scope) bool {
 	result := fmt.Sprintf("cw%d_w", idx)
 	readBack := fmt.Sprintf("cw%d_a", idx)
 
-	fmt.Fprintf(b, "var %s: %s = ", src, arrName)
+	fmt.Fprintf(b, "let %s: %s = ", src, arrName)
 	n := g.arrayLiteral(b, sc, elem, 0)
 	b.WriteString("; ")
-	fmt.Fprintf(b, "var %s: %s = %s; ", alias, arrName, src)
+	fmt.Fprintf(b, "let %s: %s = %s; ", alias, arrName, src)
 	// The literal's length is known here, so the write can land
 	// anywhere in it rather than always at 0.
 	at := g.ch.intN(n)
-	fmt.Fprintf(b, "var %s: %s = %s.with(%di32, ", result, arrName, src, at)
+	fmt.Fprintf(b, "let %s: %s = %s.with(%di32, ", result, arrName, src, at)
 	g.expr(b, sc, elem, 1)
 	b.WriteString("); ")
-	fmt.Fprintf(b, "var %s: %s = %s[%di32]; ", readBack, g.typeName(elem), alias, at)
+	fmt.Fprintf(b, "let %s: %s = %s[%di32]; ", readBack, g.typeName(elem), alias, at)
 
 	sc.declare(arrT, result)
 	sc.declare(elem, readBack)
@@ -1808,17 +1808,17 @@ func (g *Generator) maybeEmitLoopReadBeforeWith(b *strings.Builder, sc *scope) b
 	// src stays out of sc, like maybeEmitArrayAliasCow's receiver: a later
 	// reference would move its last use past the `.with` and the shape would
 	// quietly become an ordinary copy.
-	fmt.Fprintf(b, "var %s: i32[] = ", src)
+	fmt.Fprintf(b, "let %s: i32[] = ", src)
 	n := g.arrayLiteral(b, sc, tI32, 0)
 	b.WriteString("; ")
 	at := g.ch.intN(n)
 	// Two iterations minimum — one pass cannot observe its own store.
 	iters := 2 + g.ch.intN(2)
-	fmt.Fprintf(b, "var %s: i32 = 0i32; var %s: i32 = 0i32; ", acc, counter)
+	fmt.Fprintf(b, "let %s: i32 = 0i32; let %s: i32 = 0i32; ", acc, counter)
 	fmt.Fprintf(b, "while (%s < %di32) { ", counter, iters)
 	g.loopDepth++
 	fmt.Fprintf(b, "%s = %s + %s[%di32]; ", acc, acc, src, at)
-	fmt.Fprintf(b, "var %s: i32[] = %s.with(%di32, ", result, src, at)
+	fmt.Fprintf(b, "let %s: i32[] = %s.with(%di32, ", result, src, at)
 	g.expr(b, sc, tI32, 1)
 	b.WriteString("); ")
 	fmt.Fprintf(b, "%s = %s + 1i32; ", counter, counter)
@@ -3188,7 +3188,7 @@ func (g *Generator) pickType() gtype {
 	return pool[g.ch.intN(len(pool))]
 }
 
-// pickMainVarType draws the type of a `var v<N>` declared directly
+// pickMainVarType draws the type of a `let v<N>` declared directly
 // in `main`, plus any dynamic nominal types declared in
 // declareDynamicNominals so main's vars can hold values of
 // user-declared struct / enum types.

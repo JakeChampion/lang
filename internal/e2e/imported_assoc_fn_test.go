@@ -26,13 +26,13 @@ import (
 // 40 + 2 = 42.
 const importedAssocFnZeroSrc = `import "std/num" as num;
 function (a: T[]) total[T: num.Num + num.Zero](): T {
-    var s: T = T.zero();
-    var i: i32 = 0;
+    let s: T = T.zero();
+    let i: i32 = 0;
     while (i < a.len()) { s = s.add(a[i]); i = i + 1; }
     return s;
 }
 function main(): i32 {
-    var xs: i32[] = [40, 2];
+    let xs: i32[] = [40, 2];
     return xs.total();
 }
 `

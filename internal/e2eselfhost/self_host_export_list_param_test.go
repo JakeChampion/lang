@@ -43,7 +43,7 @@ func TestSelfHostExportListParamRunsViaConsumer(t *testing.T) {
 
 	exporterSrc := `@export("local:test/nums@0.1.0", "sum")
 function sum(xs: i32[]): i32 {
-	var s: i32 = 0;
+	let s: i32 = 0;
 	for x in xs { s = s + x; }
 	return s;
 }
@@ -133,7 +133,7 @@ function main(): i32 { return 0; }`
 function sum(xs: i32[]): i32;
 
 function main(): i32 {
-	var xs: i32[] = [10, 20, 30, 40];
+	let xs: i32[] = [10, 20, 30, 40];
 	if (sum(xs) == 100) { write("` + want + `"); } else { write("sum-bad"); }
 	return 0;
 }`

@@ -8,7 +8,7 @@ import (
 )
 
 // tupleStructReclaimCases pin the #4365 tuple-with-STRUCT-element reclaim: a
-// `var t: (i32, P) = (i, P { xs: [..], y: i })` loop-local — a fresh scalar-tuple
+// `let t: (i32, P) = (i, P { xs: [..], y: i })` loop-local — a fresh scalar-tuple
 // whose element is a fresh reclaim-struct box (P sole-owns a rc-array field) —
 // leaked the struct's field buffers + the struct box + the tuple box every
 // iteration on the self-host IR path (native bounds it). The TUPRC class now admits
@@ -34,13 +34,13 @@ var tupleStructReclaimCases = []struct {
 	// Core churn: rebuilt per iteration, scalar + struct-scalar-field reads only.
 	{"tuplestruct-churn", `struct P { xs: i32[], y: i32 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
-    while (i < 200) { var t: (i32, P) = (i, P { xs: [i, i + 1, i + 2], y: i }); acc = (acc + t.0 + t.1.y) % 251; i = i + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
-    while (j < 5000) { var t2: (i32, P) = (j, P { xs: [j, j + 1], y: j }); acc = (acc + t2.1.y) % 251; j = j + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 200) { let t: (i32, P) = (i, P { xs: [i, i + 1, i + 2], y: i }); acc = (acc + t.0 + t.1.y) % 251; i = i + 1; }
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
+    while (j < 5000) { let t2: (i32, P) = (j, P { xs: [j, j + 1], y: j }); acc = (acc + t2.1.y) % 251; j = j + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -50,17 +50,17 @@ function main(): i32 {
 	// array field (t.1.xs[j]) and t.1.xs.len() are all admitted — still reclaims.
 	{"tuplestruct-borrow-full", `struct P { xs: i32[], y: i32 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 5000) {
-        var t: (i32, P) = (i, P { xs: [i, i + 1], y: i });
+        let t: (i32, P) = (i, P { xs: [i, i + 1], y: i });
         acc = (acc + t.0 + t.1.y + t.1.xs[0] + t.1.xs.len()) % 251;
         i = i + 1;
     }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
-    while (j < 5000) { var t2: (i32, P) = (j, P { xs: [j, j + 1], y: j }); acc = (acc + t2.1.xs[1]) % 251; j = j + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
+    while (j < 5000) { let t2: (i32, P) = (j, P { xs: [j, j + 1], y: j }); acc = (acc + t2.1.xs[1]) % 251; j = j + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -70,14 +70,14 @@ function main(): i32 {
 	// tuple — the local is NOT credited (leak-safe), and MUST NOT be over-released.
 	{"tuplestruct-escape-store-safe", `struct P { xs: i32[], y: i32 }
 function main(): i32 {
-    var keep: P = P { xs: [0, 0], y: 0 };
-    var i: i32 = 0;
+    let keep: P = P { xs: [0, 0], y: 0 };
+    let i: i32 = 0;
     while (i < 50) {
-        var t: (i32, P) = (i, P { xs: [i, i + 1], y: i });
+        let t: (i32, P) = (i, P { xs: [i, i + 1], y: i });
         keep = t.1;
         i = i + 1;
     }
-    var acc: i32 = keep.xs[0] + keep.y;
+    let acc: i32 = keep.xs[0] + keep.y;
     if (acc < 0) { return 97; }
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
@@ -87,10 +87,10 @@ function main(): i32 {
 	{"tuplestruct-escape-call-safe", `struct P { xs: i32[], y: i32 }
 function take(p: P): i32 { return p.y; }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 50) {
-        var t: (i32, P) = (i, P { xs: [i, i + 1], y: i });
+        let t: (i32, P) = (i, P { xs: [i, i + 1], y: i });
         acc = (acc + take(t.1)) % 251;
         i = i + 1;
     }
@@ -102,14 +102,14 @@ function main(): i32 {
 	// the WHOLE array element (`keep = t.1` on `(i32, i32[])`) used to over-release (99);
 	// it is now disqualified (leak-safe) like the struct case above.
 	{"arrtuple-whole-extract-safe", `function main(): i32 {
-    var keep: i32[] = [0, 0];
-    var i: i32 = 0;
+    let keep: i32[] = [0, 0];
+    let i: i32 = 0;
     while (i < 50) {
-        var t: (i32, i32[]) = (i, [i, i + 1]);
+        let t: (i32, i32[]) = (i, [i, i + 1]);
         keep = t.1;
         i = i + 1;
     }
-    var acc: i32 = keep[0] + keep[1];
+    let acc: i32 = keep[0] + keep[1];
     if (acc < 0) { return 97; }
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
@@ -117,14 +117,14 @@ function main(): i32 {
 	// REGRESSION guard: the borrow-only array-element tuple STILL reclaims (the gate
 	// only rejects whole extraction, not `t.1[j]` reads). Heap-bounded, no underflow.
 	{"arrtuple-borrow-reclaims", `function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
-    while (i < 200) { var t: (i32, i32[]) = (i, [i, i + 1, i + 2]); acc = acc + t.0 + t.1[0] + t.1[1] + t.1[2]; i = i + 1; }
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 200) { let t: (i32, i32[]) = (i, [i, i + 1, i + 2]); acc = acc + t.0 + t.1[0] + t.1[1] + t.1[2]; i = i + 1; }
     if (acc != 80200) { return 99; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
-    while (j < 5000) { var t2: (i32, i32[]) = (j, [j, j + 1]); acc = (acc + t2.1[0]) % 251; j = j + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
+    while (j < 5000) { let t2: (i32, i32[]) = (j, [j, j + 1]); acc = (acc + t2.1[0]) % 251; j = j + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     return 0;

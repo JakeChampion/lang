@@ -46,19 +46,19 @@ func TestSelfHostMethodWideReturn(t *testing.T) {
 			"f64-receiver",
 			`function (n: f64) m(): i64 { return f64_bits(n / 3.0); }
 			 function big(n: f64): i64 { return f64_bits(n / 3.0); }
-			 function main(): i32 { var a: f64 = 1.0; if (a.m() == big(a)) { return 7; } return 9; }`,
+			 function main(): i32 { let a: f64 = 1.0; if (a.m() == big(a)) { return 7; } return 9; }`,
 		},
 		{
 			"i32-receiver",
 			`function (n: i32) m(): i64 { return f64_bits(1.0 / 3.0); }
 			 function big(): i64 { return f64_bits(1.0 / 3.0); }
-			 function main(): i32 { var a: i32 = 1; if (a.m() == big()) { return 7; } return 9; }`,
+			 function main(): i32 { let a: i32 = 1; if (a.m() == big()) { return 7; } return 9; }`,
 		},
 		{
 			"string-receiver",
 			`function (s: string) m(): i64 { return f64_bits(1.0 / 3.0); }
 			 function big(): i64 { return f64_bits(1.0 / 3.0); }
-			 function main(): i32 { var s: string = "x"; if (s.m() == big()) { return 7; } return 9; }`,
+			 function main(): i32 { let s: string = "x"; if (s.m() == big()) { return 7; } return 9; }`,
 		},
 		{
 			// The receiver kind that already worked — it resolves through
@@ -68,7 +68,7 @@ func TestSelfHostMethodWideReturn(t *testing.T) {
 			`struct P { x: i32 }
 			 function (p: P) m(): i64 { return f64_bits(1.0 / 3.0); }
 			 function big(): i64 { return f64_bits(1.0 / 3.0); }
-			 function main(): i32 { var p: P = P { x: 1 }; if (p.m() == big()) { return 7; } return 9; }`,
+			 function main(): i32 { let p: P = P { x: 1 }; if (p.m() == big()) { return 7; } return 9; }`,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

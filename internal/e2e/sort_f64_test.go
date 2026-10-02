@@ -11,26 +11,26 @@ import "testing"
 // itself when its toolchain is absent.
 const sortF64Prog = `
 import "core/cmp" as cmp;
-function approx(a: f64, b: f64): boolean { var d: f64 = a - b; if (d < 0.0) { d = 0.0 - d; } return d < 0.0001; }
+function approx(a: f64, b: f64): boolean { let d: f64 = a - b; if (d < 0.0) { d = 0.0 - d; } return d < 0.0001; }
 function main(): i32 {
-    var xs: f64[] = [3.5, 1.2, 4.8, 1.1, 5.9, 2.6];
-    var asc: f64[] = cmp.sort(xs);
+    let xs: f64[] = [3.5, 1.2, 4.8, 1.1, 5.9, 2.6];
+    let asc: f64[] = cmp.sort(xs);
     if (!approx(asc[0], 1.1)) { return 1; }
     if (!approx(asc[1], 1.2)) { return 2; }
     if (!approx(asc[5], 5.9)) { return 3; }
-    var desc: f64[] = cmp.sort_desc(xs);
+    let desc: f64[] = cmp.sort_desc(xs);
     if (!approx(desc[0], 5.9)) { return 4; }
     if (!approx(desc[5], 1.1)) { return 5; }
     // input not mutated
     if (!approx(xs[0], 3.5)) { return 6; }
     // single / empty edge cases
-    var one: f64[] = [42.0];
+    let one: f64[] = [42.0];
     if (!approx(cmp.sort(one)[0], 42.0)) { return 7; }
-    var empty: f64[] = [];
+    let empty: f64[] = [];
     if (cmp.sort(empty).len() != 0) { return 8; }
     // negatives sort below zero
-    var neg: f64[] = [0.0 - 1.0, 2.0, 0.0 - 3.0, 0.0];
-    var nasc: f64[] = cmp.sort(neg);
+    let neg: f64[] = [0.0 - 1.0, 2.0, 0.0 - 3.0, 0.0];
+    let nasc: f64[] = cmp.sort(neg);
     if (!approx(nasc[0], 0.0 - 3.0)) { return 9; }
     if (!approx(nasc[1], 0.0 - 1.0)) { return 10; }
     if (!approx(nasc[3], 2.0)) { return 11; }

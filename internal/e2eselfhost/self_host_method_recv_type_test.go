@@ -16,7 +16,7 @@ import (
 //
 //	struct Sink { n: i32 }
 //	function (k: Sink) write(s: string): i32 { … }
-//	var x: i32 = k.write("abc");
+//	let x: i32 = k.write("abc");
 //	  → error[E003]: … declared i32 but initializer has type Option[unknown]
 //
 // The gate now resolves on (receiver type, method name). These cases pin that:
@@ -33,10 +33,10 @@ function (k: Sink) write(s: string): i32 { return s.len() + k.n; }
 function (k: Sink) read_line(): string { return "line"; }
 function (k: Sink) read_chunk(n: i32): string { return "chunk"; }
 function main(): i32 {
-    var k: Sink = Sink { n: 1 };
-    var x: i32 = k.write("abc");
-    var y: string = k.read_line();
-    var z: string = k.read_chunk(4);
+    let k: Sink = Sink { n: 1 };
+    let x: i32 = k.write("abc");
+    let y: string = k.read_line();
+    let z: string = k.read_chunk(4);
     return x * 10 + y.len() + z.len();
 }`},
 	// A stdlib method winning the name: std/array's `(xs: T[]) first(): Option[T]`
@@ -45,8 +45,8 @@ function main(): i32 {
 struct Bag { items: i32[] }
 function (b: Bag) first(): i32[] { return b.items; }
 function main(): i32 {
-    var bg: Bag = Bag { items: [3, 5] };
-    var f: i32[] = bg.first();
+    let bg: Bag = Bag { items: [3, 5] };
+    let f: i32[] = bg.first();
     return f[0] + f[1];
 }`},
 	// Two user structs declaring the same method name: the FIRST declaration won
@@ -56,9 +56,9 @@ function (o: Label) first(): Option[string] { return Some("sss"); }
 struct Bag { items: i32[] }
 function (b: Bag) first(): i32[] { return b.items; }
 function main(): i32 {
-    var bg: Bag = Bag { items: [3, 5] };
-    var f: i32[] = bg.first();
-    var n: i32 = 0;
+    let bg: Bag = Bag { items: [3, 5] };
+    let f: i32[] = bg.first();
+    let n: i32 = 0;
     match (Label { z: 0 }.first()) { Some(s) => { n = s.len(); }, None => { n = 0; } }
     return n * 10 + f[0] + f[1];
 }`},
@@ -68,7 +68,7 @@ function main(): i32 {
 	{"match_on_user_read_line", `struct Sink { n: i32 }
 function (k: Sink) read_line(): Option[i32] { return Some(k.n + 6); }
 function main(): i32 {
-    var k: Sink = Sink { n: 1 };
+    let k: Sink = Sink { n: 1 };
     match (k.read_line()) { Some(v) => { return v; }, None => { return 0; } }
 }`},
 	// The type-NAME sibling of the same defect: ty_from_ref classified any bare
@@ -80,17 +80,17 @@ function main(): i32 {
 function (m: Maple) get(k: i32): i32 { return m.n + k; }
 struct Holder { m: Maple }
 function main(): i32 {
-    var h: Holder = Holder { m: Maple { n: 5 } };
-    var x: i32 = h.m.get(1);
+    let h: Holder = Holder { m: Maple { n: 5 } };
+    let x: i32 = h.m.get(1);
     return x;
 }`},
 	// Control: a real Map still dispatches as one.
 	{"real_map_still_a_map", `import "core/map";
 function main(): i32 {
-    var m: Map[string, i32] = map_new(4);
+    let m: Map[string, i32] = map_new(4);
     m = m.insert("a", 7);
-    var v: i32 = m.get_or("a", 0);
-    var h: i32 = 0;
+    let v: i32 = m.get_or("a", 0);
+    let h: i32 = 0;
     if (m.has("a")) { h = 1; }
     return v * 10 + m.len() + h + m.keys().len();
 }`},
@@ -107,16 +107,16 @@ function (d: Doc) index_of(k: i32): i32 { return k; }
 function (d: Doc) is_empty(): boolean { return d.n == 0; }
 function (d: Doc) last(): i32 { return d.n; }
 function main(): i32 {
-    var d: Doc = Doc { n: 5 };
-    var a: i32 = d.len();
-    var b: i32 = 0;
+    let d: Doc = Doc { n: 5 };
+    let a: i32 = d.len();
+    let b: i32 = 0;
     match (d.get(1)) { Some(v) => { b = v; }, None => { b = 0; } }
-    var c: i32[] = d.keys();
-    var e: i32 = d.split("xx");
-    var f: i32 = d.trim();
-    var g: i32 = d.index_of(2);
-    var h: i32 = d.last();
-    var r: i32 = a + b + c[0] + e + f + g + h;
+    let c: i32[] = d.keys();
+    let e: i32 = d.split("xx");
+    let f: i32 = d.trim();
+    let g: i32 = d.index_of(2);
+    let h: i32 = d.last();
+    let r: i32 = a + b + c[0] + e + f + g + h;
     if (!d.contains(5)) { return 0 - 1; }
     if (d.is_empty()) { return 0 - 2; }
     return r;

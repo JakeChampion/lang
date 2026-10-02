@@ -29,8 +29,8 @@ function build(n: i32): List {
     return Cons(n, build(n - 1));
 }
 function main(): i32 {
-    var total: i32 = 0;
-    var i: i32 = 0;
+    let total: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
         total = total + sum(build(5).inc());   // [5..1] +1 each, sum = 20
         i = i + 1;

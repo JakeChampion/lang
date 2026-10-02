@@ -39,7 +39,7 @@ function handout(a: string, s: string): string {
     return a;
 }
 function main(): i32 {
-    var base: string = "0123456789abcdef";
+    let base: string = "0123456789abcdef";
     return bump(base, "X") + pick(base, "Y", true).len() + handout(base, "Z").len();
 }`
 

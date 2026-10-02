@@ -42,15 +42,15 @@ function main(): i32 {
   //
   // 140 + 84, 285 + 165, 650 + 364 — sums of k*k and of (n+1-k)*k over the
   // width, worked out from the weights rather than read off a run.
-  var seven: i32 = weigh7(1, 2, 3, 4, 5, 6, 7) + weigh7(7, 6, 5, 4, 3, 2, 1);
+  let seven: i32 = weigh7(1, 2, 3, 4, 5, 6, 7) + weigh7(7, 6, 5, 4, 3, 2, 1);
   if (seven != 224) {
     return 1;
   }
-  var nine: i32 = weigh9(1, 2, 3, 4, 5, 6, 7, 8, 9) + weigh9(9, 8, 7, 6, 5, 4, 3, 2, 1);
+  let nine: i32 = weigh9(1, 2, 3, 4, 5, 6, 7, 8, 9) + weigh9(9, 8, 7, 6, 5, 4, 3, 2, 1);
   if (nine != 450) {
     return 2;
   }
-  var twelve: i32 = weigh12(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12)
+  let twelve: i32 = weigh12(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12)
     + weigh12(12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1);
   if (twelve != 1014) {
     return 3;

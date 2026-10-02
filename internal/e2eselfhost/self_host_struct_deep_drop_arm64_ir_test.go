@@ -41,8 +41,8 @@ func TestSelfHostStructDeepDropIRArm64(t *testing.T) {
 	run(t, `struct Inner { items: i32[] }
 struct Outer { inner: Inner, tag: i32 }
 function main(): i32 {
-    var o: Outer = Outer { inner: Inner { items: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16] }, tag: 7 };
-    var sum: i32 = 0; var j: i32 = 0;
+    let o: Outer = Outer { inner: Inner { items: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16] }, tag: 7 };
+    let sum: i32 = 0; let j: i32 = 0;
     while (j < 16) { sum = sum + o.inner.items[j]; j = j + 1; }
     return sum + o.tag;
 }`, "struct_deep_drop_arm64_value", 143)
@@ -53,12 +53,12 @@ function main(): i32 {
 	// churn building a 2-node tree each iteration stays correct + terminating.
 	run(t, `struct Node { kids: Node[], v: i32 }
 function mk(): i32 {
-    var leaf: Node = Node { kids: [], v: 5 };
-    var root: Node = Node { kids: [leaf], v: 3 };
+    let leaf: Node = Node { kids: [], v: 5 };
+    let root: Node = Node { kids: [leaf], v: 3 };
     return root.v + root.kids[0].v;
 }
 function main(): i32 {
-    var s: i32 = 0; var f: i32 = 0;
+    let s: i32 = 0; let f: i32 = 0;
     while (f < 200000) { s = mk(); f = f + 1; }
     return s - 8;
 }`, "struct_deep_drop_arm64_cyclic_safe", 0)

@@ -35,7 +35,7 @@ var sharedVariantNameCases = []struct {
 	// The reported shape: a payload-less variant name shared by two enums.
 	{"shared-unit-variant", `enum A1 { None, Xx(i32) }
 enum B1 { None, Yy(i32) }
-function main(): i32 { var a: A1 = A1.None; var b: B1 = B1.None; var r: i32 = 0;
+function main(): i32 { let a: A1 = A1.None; let b: B1 = B1.None; let r: i32 = 0;
     match (a) { A1.None => { r = r + 1; }, _ => {} }
     match (b) { B1.None => { r = r + 4; }, _ => {} }
     return r; }`},
@@ -43,7 +43,7 @@ function main(): i32 { var a: A1 = A1.None; var b: B1 = B1.None; var r: i32 = 0;
 	// counterpart collides identically.
 	{"shared-unit-variant-non-builtin", `enum A3 { Zed, Xx(i32) }
 enum B3 { Zed, Yy(i32) }
-function main(): i32 { var a: A3 = A3.Zed; var b: B3 = B3.Zed; var r: i32 = 0;
+function main(): i32 { let a: A3 = A3.Zed; let b: B3 = B3.Zed; let r: i32 = 0;
     match (a) { A3.Zed => { r = r + 1; }, _ => {} }
     match (b) { B3.Zed => { r = r + 4; }, _ => {} }
     return r; }`},
@@ -51,7 +51,7 @@ function main(): i32 { var a: A3 = A3.Zed; var b: B3 = B3.Zed; var r: i32 = 0;
 	// `function value B2 not defined` rather than a field-access tag.
 	{"shared-payload-variant", `enum A2 { Wrap(i32), P }
 enum B2 { Wrap(i32), Q }
-function main(): i32 { var a: A2 = A2.Wrap(1); var b: B2 = B2.Wrap(4); var r: i32 = 0;
+function main(): i32 { let a: A2 = A2.Wrap(1); let b: B2 = B2.Wrap(4); let r: i32 = 0;
     match (a) { A2.Wrap(n) => { r = r + n; }, _ => {} }
     match (b) { B2.Wrap(n) => { r = r + n; }, _ => {} }
     return r; }`},
@@ -59,19 +59,19 @@ function main(): i32 { var a: A2 = A2.Wrap(1); var b: B2 = B2.Wrap(4); var r: i3
 	// the failing half, so exercising it alone is the sharper case.
 	{"second-enum-only", `enum A9 { None, Xx(i32) }
 enum B9 { None, Yy(i32) }
-function main(): i32 { var b: B9 = B9.None; match (b) { B9.None => { return 4; }, _ => { return 1; } } }`},
+function main(): i32 { let b: B9 = B9.None; match (b) { B9.None => { return 4; }, _ => { return 1; } } }`},
 	// Shared name at different ordinals, so nothing can depend on the
 	// two variants happening to sit at the same index.
 	{"shared-name-different-ordinals", `enum A5 { None, Xx(i32) }
 enum B5 { Yy(i32), None }
-function main(): i32 { var a: A5 = A5.None; var b: B5 = B5.None; var r: i32 = 0;
+function main(): i32 { let a: A5 = A5.None; let b: B5 = B5.None; let r: i32 = 0;
     match (a) { A5.None => { r = r + 1; }, _ => {} }
     match (b) { B5.None => { r = r + 4; }, _ => {} }
     return r; }`},
 	// A single enum, unchanged by the fix — the by-name and by-owner
 	// lookups agree whenever the name is unique.
 	{"single-enum-control", `enum S1 { None, Xx(i32) }
-function main(): i32 { var a: S1 = S1.None; match (a) { S1.None => { return 1; }, _ => { return 9; } } }`},
+function main(): i32 { let a: S1 = S1.None; match (a) { S1.None => { return 1; }, _ => { return 9; } } }`},
 }
 
 func TestSelfHostSharedVariantNameIRX86_64(t *testing.T) {

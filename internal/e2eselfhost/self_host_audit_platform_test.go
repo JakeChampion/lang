@@ -22,11 +22,11 @@ var auditPlatformCases = []struct {
 	exit int
 }{
 	{"env-unset-none", `function main(): i32 { match (env("FERN_AUDIT_UNSET_ZZZ")) { Some(v) => { return 1; }, None => { return 9; } } }`, 9},
-	{"now-unix-ms-epoch", `function main(): i32 { var t: i64 = now_unix_ms(); if (t > 1600000000000) { return 7; } return 1; }`, 7},
-	{"monotonic-ns-nondecreasing", `function main(): i32 { var a: i64 = monotonic_ns(); var b: i64 = monotonic_ns(); if (b >= a) { return 7; } return 1; }`, 7},
+	{"now-unix-ms-epoch", `function main(): i32 { let t: i64 = now_unix_ms(); if (t > 1600000000000) { return 7; } return 1; }`, 7},
+	{"monotonic-ns-nondecreasing", `function main(): i32 { let a: i64 = monotonic_ns(); let b: i64 = monotonic_ns(); if (b >= a) { return 7; } return 1; }`, 7},
 	{"sleep-ms", `function main(): i32 { sleep_ms(1); return 5; }`, 5},
-	{"random-bytes-len", `function main(): i32 { var b: u8[] = random_bytes(16); return b.len(); }`, 16},
-	{"random-i32-usable", `function main(): i32 { var x: i32 = random_i32(); if (x == x) { return 7; } return 1; }`, 7},
+	{"random-bytes-len", `function main(): i32 { let b: u8[] = random_bytes(16); return b.len(); }`, 16},
+	{"random-i32-usable", `function main(): i32 { let x: i32 = random_i32(); if (x == x) { return 7; } return 1; }`, 7},
 }
 
 // TestSelfHostAuditPlatformX86_64 runs each platform builtin through the

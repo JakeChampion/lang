@@ -31,7 +31,7 @@ func TestArm64StrBufTake(t *testing.T) {
 	src := "function main(): i32 {\n" +
 		"    strbuf_reset();\n" +
 		"    strbuf_append(\"abc\");\n" +
-		"    var result: string = strbuf_take();\n" +
+		"    let result: string = strbuf_take();\n" +
 		"    print(\"before\");\n" +
 		"    print(result);\n" +
 		"    print(\"after\");\n" +
@@ -54,12 +54,12 @@ func TestArm64StrBufTake(t *testing.T) {
 func TestArm64StrBufLargeAppend(t *testing.T) {
 	src := "function main(): i32 {\n" +
 		"    strbuf_reset();\n" +
-		"    var i: i32 = 0;\n" +
+		"    let i: i32 = 0;\n" +
 		"    while (i < 1000) {\n" +
 		"        strbuf_append(\"abcde\");\n" +
 		"        i = i + 1;\n" +
 		"    }\n" +
-		"    var result: string = strbuf_take();\n" +
+		"    let result: string = strbuf_take();\n" +
 		"    print(result);\n" +
 		"    return 0;\n" +
 		"}\n"

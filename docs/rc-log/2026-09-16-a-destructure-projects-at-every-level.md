@@ -2,7 +2,7 @@
 
 `unsupported destructuring declaration` sat at 25 corpus sites after the
 type-headed paths landed: every nested position (`let (a, (b, c)) = t`),
-every struct pattern (`var P { x: N, y: b } = p`, and the prelude a
+every struct pattern (`let P { x: N, y: b } = p`, and the prelude a
 destructuring PARAMETER lowers to), and every `@` binder.
 
 ## What it was

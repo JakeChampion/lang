@@ -7,9 +7,9 @@ import "std/float";
 // comment's own reasoning rules out, and which measurement
 // confirms: the output is exactly "25\n".
 function main(): i32 {
-    var a: f64 = 3.0;
-    var b: f64 = 4.0;
-    var c: f64 = a * a + b * b;
+    let a: f64 = 3.0;
+    let b: f64 = 4.0;
+    let c: f64 = a * a + b * b;
     print(c.to_string());
     return 0;
 }

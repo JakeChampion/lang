@@ -96,7 +96,7 @@ func TestSelfHostExternSingleFieldRecordResultCustomProvider(t *testing.T) {
 @import("local:test/src@0.1.0", "make-wrapped")
 function make_wrapped(a: i32): Wrapped;
 function main(): i32 {
-    var w: Wrapped = make_wrapped(42);
+    let w: Wrapped = make_wrapped(42);
     if (w.v == 42) { write("` + want + `"); } else { write("w-bad"); }
     return 0;
 }`

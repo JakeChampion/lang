@@ -30,51 +30,51 @@ var rcStressProgs = []struct {
 	// enum rebuilt every loop iteration (FBIP-style map, exercises enum reuse)
 	{"enum-loop-rebuild", 22, `enum E { A(i32), B(i32) }
 function step(e: E): E { return match (e) { A(n) => B(n + 1), B(n) => A(n * 2) }; }
-function f(): i32 { var e = A(1); var i = 0; while (i < 6) { e = step(e); i = i + 1; } return match (e) { A(n) => n, B(n) => n }; }
+function f(): i32 { let e = A(1); let i = 0; while (i < 6) { e = step(e); i = i + 1; } return match (e) { A(n) => n, B(n) => n }; }
 function main(): i32 { return f(); }`},
 	// nested closure capturing an owned array, called in a loop
-	{"closure-capture-loop", 60, `function f(): i32 { var xs = [10, 20, 30]; var pick = (i: i32) => xs[i]; var s = 0; var i = 0; while (i < 3) { s = s + pick(i); i = i + 1; } return s; }
+	{"closure-capture-loop", 60, `function f(): i32 { let xs = [10, 20, 30]; let pick = (i: i32) => xs[i]; let s = 0; let i = 0; while (i < 3) { s = s + pick(i); i = i + 1; } return s; }
 function main(): i32 { return f(); }`},
 	// deep nested match over owned enum payloads
 	{"nested-match-owned", 12, `enum T { Leaf(i32), Node(i32, i32) }
 function sum(t: T): i32 { return match (t) { Leaf(n) => n, Node(a, b) => a + b }; }
-function f(): i32 { var a = Node(3, 4); var b = Leaf(5); var c = Node(sum(a), sum(b)); return sum(c); }
+function f(): i32 { let a = Node(3, 4); let b = Leaf(5); let c = Node(sum(a), sum(b)); return sum(c); }
 function main(): i32 { return f(); }`},
 	// struct field reuse in a loop (donor/recipient every iteration)
 	{"struct-reuse-loop", 40, `struct P { x: i32, y: i32 }
-function f(): i32 { var s = 0; var i = 0; while (i < 4) { var a = P { x: i, y: i + 1 }; var t = a.x + a.y; var b = P { x: i * 2, y: 3 }; s = s + t + b.x + b.y; i = i + 1; } return s; }
+function f(): i32 { let s = 0; let i = 0; while (i < 4) { let a = P { x: i, y: i + 1 }; let t = a.x + a.y; let b = P { x: i * 2, y: 3 }; s = s + t + b.x + b.y; i = i + 1; } return s; }
 function main(): i32 { return f(); }`},
 	// tuple rebuilt (fibonacci-style swap) accumulation
-	{"tuple-swap-loop", 55, `function f(): i32 { var t: (i32, i32) = (1, 1); var i = 0; while (i < 8) { t = (t.1, t.0 + t.1); i = i + 1; } return t.1; }
+	{"tuple-swap-loop", 55, `function f(): i32 { let t: (i32, i32) = (1, 1); let i = 0; while (i < 8) { t = (t.1, t.0 + t.1); i = i + 1; } return t.1; }
 function main(): i32 { return f(); }`},
 	// owned string grows via concat accumulation
-	{"string-accum", 10, `function f(): i32 { var s = ""; var i = 0; while (i < 5) { s = s + "ab"; i = i + 1; } return s.len(); }
+	{"string-accum", 10, `function f(): i32 { let s = ""; let i = 0; while (i < 5) { s = s + "ab"; i = i + 1; } return s.len(); }
 function main(): i32 { return f(); }`},
 	// array of arrays with .with mutation on a live receiver
-	{"arr-of-arr-with", 14, `function f(): i32 { var m = [[1, 2], [3, 4]]; var r = m[0][0] + m[1][1]; var n = m.with(0, [9, 9]); return r + n[0][0]; }
+	{"arr-of-arr-with", 14, `function f(): i32 { let m = [[1, 2], [3, 4]]; let r = m[0][0] + m[1][1]; let n = m.with(0, [9, 9]); return r + n[0][0]; }
 function main(): i32 { return f(); }`},
 	// non-tail recursion with an owned array accumulator
-	{"rec-owned-acc", 15, `function build(n: i32): i32[] { if (n <= 0) { return [0]; } var rest = build(n - 1); return rest.with(0, rest[0] + n); }
-function f(): i32 { var a = build(5); return a[0]; }
+	{"rec-owned-acc", 15, `function build(n: i32): i32[] { if (n <= 0) { return [0]; } let rest = build(n - 1); return rest.with(0, rest[0] + n); }
+function f(): i32 { let a = build(5); return a[0]; }
 function main(): i32 { return f(); }`},
 	// the ? operator threading an owned Option through a helper
 	{"option-q-chain", 70, `function first(xs: i32[]): Option[i32] { if (xs.len() > 0) { return Some(xs[0]); } return None; }
-function f(xs: i32[]): Option[i32] { var v = first(xs)?; return Some(v * 10); }
-function main(): i32 { var xs = [7, 8]; return match (f(xs)) { Some(n) => n, None => 0 }; }`},
+function f(xs: i32[]): Option[i32] { let v = first(xs)?; return Some(v * 10); }
+function main(): i32 { let xs = [7, 8]; return match (f(xs)) { Some(n) => n, None => 0 }; }`},
 	// own-param donor: a fresh construction consumed by an owned parameter
 	{"ownparam-donor", 7, `struct H { id: i32, items: i32[] }
 function bump(own d: H): H { return H { id: d.id + 1, items: d.items }; }
-function f(): i32 { var g = bump(H { id: 1, items: [5, 6] }); return g.id + g.items[0]; }
+function f(): i32 { let g = bump(H { id: 1, items: [5, 6] }); return g.id + g.items[0]; }
 function main(): i32 { return f(); }`},
 	// for-in over an array with owned body locals
-	{"forin-owned-body", 18, `function f(): i32 { var xs = [1, 2, 3]; var s = 0; for x in xs { var tmp = [x, x * 2]; s = s + tmp[0] + tmp[1]; } return s; }
+	{"forin-owned-body", 18, `function f(): i32 { let xs = [1, 2, 3]; let s = 0; for x in xs { let tmp = [x, x * 2]; s = s + tmp[0] + tmp[1]; } return s; }
 function main(): i32 { return f(); }`},
 	// match yielding a fresh owned enum, itself consumed by a second match
 	{"match-return-enum-2x", 4, `enum E { A(i32[]), B(i32) }
-function f(): i32 { var e = A([1, 2, 3]); var g = match (e) { A(xs) => B(xs[0] + xs[2]), B(n) => B(n) }; return match (g) { A(xs) => xs[0], B(n) => n }; }
+function f(): i32 { let e = A([1, 2, 3]); let g = match (e) { A(xs) => B(xs[0] + xs[2]), B(n) => B(n) }; return match (g) { A(xs) => xs[0], B(n) => n }; }
 function main(): i32 { return f(); }`},
 	// conditional owned reassignment on divergent branches then a merged use
-	{"cond-owned-merge", 23, `function f(c: i32): i32 { var a = [1, 2]; var b = [3, 4]; if (c > 0) { a = a.with(0, 9); } else { b = b.with(1, 9); } return a[0] + b[1]; }
+	{"cond-owned-merge", 23, `function f(c: i32): i32 { let a = [1, 2]; let b = [3, 4]; if (c > 0) { a = a.with(0, 9); } else { b = b.with(1, 9); } return a[0] + b[1]; }
 function main(): i32 { return f(1) + f(0); }`},
 }
 

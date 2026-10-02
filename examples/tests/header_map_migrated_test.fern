@@ -19,7 +19,7 @@ import "std/headers";
 // Needs `import "std/headers";`.
 
 function test_case_insensitive_get(): test.TestOutcome {
-  var h: HeaderMap = headers.header_map_new();
+  let h: HeaderMap = headers.header_map_new();
   h = h.set("Content-Type", "application/json");
   return test.assert_is_some_eq_string(
     h.get("CONTENT-TYPE"),
@@ -28,7 +28,7 @@ function test_case_insensitive_get(): test.TestOutcome {
 }
 
 function test_get_all_preserves_insertion_order(): test.TestOutcome {
-  var h: HeaderMap = headers.header_map_new();
+  let h: HeaderMap = headers.header_map_new();
   h = h.append("Set-Cookie", "a=1");
   h = h.append("Set-Cookie", "b=2");
   h = h.append("Set-Cookie", "c=3");
@@ -43,7 +43,7 @@ function test_get_all_preserves_insertion_order(): test.TestOutcome {
 }
 
 function test_set_replaces_then_size_2(): test.TestOutcome {
-  var h: HeaderMap = headers.header_map_new();
+  let h: HeaderMap = headers.header_map_new();
   h = h.append("X", "first");
   h = h.append("Y", "y1");
   h = h.append("X", "second");
@@ -54,7 +54,7 @@ function test_set_replaces_then_size_2(): test.TestOutcome {
 }
 
 function test_set_replaces_get_returns_new(): test.TestOutcome {
-  var h: HeaderMap = headers.header_map_new();
+  let h: HeaderMap = headers.header_map_new();
   h = h.append("X", "first");
   h = h.append("Y", "y1");
   h = h.append("X", "second");
@@ -63,19 +63,19 @@ function test_set_replaces_get_returns_new(): test.TestOutcome {
 }
 
 function test_set_on_absent_appends(): test.TestOutcome {
-  var h: HeaderMap = headers.header_map_new();
+  let h: HeaderMap = headers.header_map_new();
   h = h.set("X-First", "1");
   return test.assert_eq(h.len(), 1);
 }
 
 function test_get_all_on_missing_is_empty(): test.TestOutcome {
-  var h: HeaderMap = headers.header_map_new();
+  let h: HeaderMap = headers.header_map_new();
   h = h.append("X", "1");
   return test.assert_eq(h.get_all("Y").len(), 0);
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("HeaderMap (migrated)");
+  let r: test.TestRunner = test.test_new("HeaderMap (migrated)");
   r = r.it(
     "case-insensitive get",
     test_case_insensitive_get,

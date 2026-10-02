@@ -8,13 +8,13 @@
 enum E { A(i32[]), B }
 
 function make(i: i32): E {
-    var items: i32[] = [i, i + 1, i + 2];
-    var e: E = E.A(items);
+    let items: i32[] = [i, i + 1, i + 2];
+    let e: E = E.A(items);
     return e;                       // items' exit sweep frees the buffer this points at
 }
 
 function clobber(i: i32): i32 {
-    var junk: i32[] = [7777, 7777, 7777];
+    let junk: i32[] = [7777, 7777, 7777];
     return junk[0];                 // reuses the freed buffer
 }
 ```

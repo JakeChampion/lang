@@ -93,7 +93,7 @@ func TestSelfHostWasmHostedX86CompilerMatchesNative(t *testing.T) {
 		// The same failure reached a different size (1.7 GB against 3.8 GB)
 		// on a program with one local, so the volume was input-dependent
 		// garbage, not a fixed leak — worth a second point.
-		{"one-local", "function main(): i32 { var a: i32 = 1; return a; }\n"},
+		{"one-local", "function main(): i32 { let a: i32 = 1; return a; }\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			natOut, natErr, natCode := run(t, exec.Command(nativeDrv), tc.src)

@@ -1,6 +1,6 @@
 # The mixed rc tuple, released — one bare ident, one fresh literal
 
-#7281. `var t: (i32[], i32[]) = (xs, [i + 2, i + 3])` released **nothing**: not
+#7281. `let t: (i32[], i32[]) = (xs, [i + 2, i + 3])` released **nothing**: not
 either buffer, not the box.
 
 | rounds | 100 | 200 | 400 |
@@ -68,7 +68,7 @@ being true when the construction retain went in:
 
 | site | shape | before | after |
 | --- | --- | --- | --- |
-| scope-exit sweep | `var t: (i32[], i32[]) = (xs, [..])` | `300/0` 12000 | `300/300` 0 |
+| scope-exit sweep | `let t: (i32[], i32[]) = (xs, [..])` | `300/0` 12000 | `300/300` 0 |
 | rebind store | `t = (xs, [..])` in a loop | `900/600` 12000 | `900/900` 0 |
 | discarded literal | `(xs, [..]);` as a statement | `300/200` 4000 | `300/300` 0 |
 
@@ -82,7 +82,7 @@ so in ONE place rather than in a second copy of the rule.
 
 ## What is still refused, and measured as still leaking
 
-`var keep: i32[] = t.0` extracts an owned pointer element, so
+`let keep: i32[] = t.0` extracts an owned pointer element, so
 `rctuple_payload_escapes` denies the credit and the shape keeps its 12000 with
 the underflow counter at 0. Pinned by `elem_escapes_still_leaks`, asserted on
 the exit code alone: the point of the row is that it must not start

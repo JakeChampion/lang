@@ -91,7 +91,7 @@ function mode_quiet_on_pipe(mode: i32): boolean {
 }
 
 function help_text(): string {
-  var out: string = "";
+  let out: string = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]... [FILE]...\n";
   out = out + "Copy standard input to each FILE, and also to standard output.\n";
   out = out + "\n";
@@ -146,13 +146,13 @@ function read_size(): i32 {
 // unless the mode passes over a broken pipe. A mode that exits does so
 // exactly when it had something to report.
 function fail(c: Copy, i: i32, e: IoError): Copy {
-  var out: Out = c.outs[i];
-  var quiet: boolean = gnu.is_broken_pipe(e) && mode_quiet_on_pipe(c.mode);
-  var s: Copy = Copy { ...c, outs: c.outs.with(i, Out { ...out, live: false }), live: c.live - 1 };
+  let out: Out = c.outs[i];
+  let quiet: boolean = gnu.is_broken_pipe(e) && mode_quiet_on_pipe(c.mode);
+  let s: Copy = Copy { ...c, outs: c.outs.with(i, Out { ...out, live: false }), live: c.live - 1 };
   if (quiet) {
     return s;
   }
-  var shown: string = out.name;
+  let shown: string = out.name;
   if (!out.is_file) {
     shown = gnu.quote(out.name);
   }
@@ -167,8 +167,8 @@ function fail(c: Copy, i: i32, e: IoError): Copy {
 // `put(c, chunk)` — one read block to every output still alive, stdout
 // first, as GNU's descriptor array has it.
 function put(c: Copy, chunk: string): Copy {
-  var s: Copy = c;
-  var i: i32 = 0;
+  let s: Copy = c;
+  let i: i32 = 0;
   while (i < s.outs.len()) {
     if (s.outs[i].live) {
       match (s.outs[i].w.write(chunk)) {
@@ -186,7 +186,7 @@ function put(c: Copy, chunk: string): Copy {
 // The FILEs are closed at the end; stdout is not, because tee never
 // buffered it and gnulib's close_stdout has nothing left to flush.
 function close_files(c: Copy): void {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < c.outs.len()) {
     if (c.outs[i].is_file) {
       c.outs[i].w.close();
@@ -208,12 +208,12 @@ function open_out(name: string, append: boolean): Result[Writer, IoError] {
 // mode that exits stops there, so the operands after it are never
 // created.
 function open_outs(files: string[], append: boolean, mode: i32): Copy {
-  var outs: Out[] = [];
+  let outs: Out[] = [];
   outs = outs.append(Out { w: stdout(), name: "standard output", live: true, is_file: false });
-  var c: Copy = Copy { outs: outs, mode: mode, live: 1, ok: true };
-  var i: i32 = 0;
+  let c: Copy = Copy { outs: outs, mode: mode, live: 1, ok: true };
+  let i: i32 = 0;
   while (i < files.len()) {
-    var name: string = files[i];
+    let name: string = files[i];
     match (open_out(name, append)) {
       Ok(w) => {
         c = Copy { ...c, outs: c.outs.append(Out { w: w, name: name, live: true, is_file: true }), live: c.live + 1 };
@@ -233,8 +233,8 @@ function open_outs(files: string[], append: boolean, mode: i32): Copy {
 }
 
 pub function main(): i32 {
-  var argv: string[] = args();
-  var opts: gnu.Opt[] = [];
+  let argv: string[] = args();
+  let opts: gnu.Opt[] = [];
   // GNU's long_options order, which is the order an ambiguity would
   // list them in. `-p` is the short spelling of `--output-error` and
   // carries no value of its own, so bare `--output-error` and `-p`
@@ -243,12 +243,12 @@ pub function main(): i32 {
   opts = opts.append(gnu.flag("i", "ignore-interrupts", opt_ignore_interrupts()));
   opts = opts.append(gnu.optional_long("p", "output-error", opt_output_error()));
 
-  var append: boolean = false;
-  var ignore_interrupts: boolean = false;
-  var mode: i32 = mode_sigpipe();
-  var g: gnu.Getopt = gnu.getopt_new(argv, opts, "tee", help_text(), 1);
+  let append: boolean = false;
+  let ignore_interrupts: boolean = false;
+  let mode: i32 = mode_sigpipe();
+  let g: gnu.Getopt = gnu.getopt_new(argv, opts, "tee", help_text(), 1);
   while (true) {
-    var r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    let r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = r.1;
     match (r.0) {
       Some(m) => {
@@ -279,8 +279,8 @@ pub function main(): i32 {
     signal.ignore(signal.SIGPIPE);
   }
 
-  var c: Copy = open_outs(g.operands(), append, mode);
-  var r: Reader = stdin();
+  let c: Copy = open_outs(g.operands(), append, mode);
+  let r: Reader = stdin();
   while (c.live > 0) {
     match (r.read_chunk(read_size())) {
       Ok(chunk) => {

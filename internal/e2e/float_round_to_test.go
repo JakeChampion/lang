@@ -11,7 +11,7 @@ import "testing"
 // absent.
 const floatRoundToProg = `
 import "std/float" as float;
-function approx(a: f64, b: f64): boolean { var d: f64 = a - b; if (d < 0.0) { d = 0.0 - d; } return d < 0.0001; }
+function approx(a: f64, b: f64): boolean { let d: f64 = a - b; if (d < 0.0) { d = 0.0 - d; } return d < 0.0001; }
 function main(): i32 {
     if (!approx((3.14159).round_to(2), 3.14)) { return 1; }
     if (!approx((3.14159).round_to(0), 3.0)) { return 2; }

@@ -32,11 +32,11 @@ impl Shape for Square {
     function scaled(self: Self, by: Factor): i32 { return self.side * by.k; }
 }
 function main(): i32 {
-    var f: Factor = Factor { k: 5 };
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let f: Factor = Factor { k: 5 };
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var d: dyn Shape = Square { side: 3 };
+        let d: dyn Shape = Square { side: 3 };
         acc = acc + d.area() + d.scaled(f) + f.k;
         i = i + 1;
     }
@@ -82,7 +82,7 @@ func TestDynVtableParamOwnership(t *testing.T) {
 func dynVtableParamBumpSrc(n, wider string) string {
 	churn := func(bound string) string {
 		return `    while (i < ` + bound + `) {
-        var d: dyn Shape = Boxed { tag: "a heap string owned by a vtable-dispatched receiver" };
+        let d: dyn Shape = Boxed { tag: "a heap string owned by a vtable-dispatched receiver" };
         sum = sum + d.area();
         i = i + 1;
     }
@@ -93,13 +93,13 @@ trait Shape { function area(self: Self): i32; }
 struct Boxed { tag: string }
 impl Shape for Boxed { function area(self: Self): i32 { return self.tag.len(); } }
 function main(): i32 {
-    var sum: i32 = 0;
-    var i: i32 = 0;
-    var base: i32 = (__heap_bump_bytes() as i32);
-` + churn(n) + `    var first: i32 = (__heap_bump_bytes() as i32) - base;
-    var mid: i32 = (__heap_bump_bytes() as i32);
+    let sum: i32 = 0;
+    let i: i32 = 0;
+    let base: i32 = (__heap_bump_bytes() as i32);
+` + churn(n) + `    let first: i32 = (__heap_bump_bytes() as i32) - base;
+    let mid: i32 = (__heap_bump_bytes() as i32);
     i = 0;
-` + churn(wider) + `    var second: i32 = (__heap_bump_bytes() as i32) - mid;
+` + churn(wider) + `    let second: i32 = (__heap_bump_bytes() as i32) - mid;
     if (second > first) { return 1; }
     return sum - sum;
 }`

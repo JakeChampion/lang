@@ -84,8 +84,8 @@ func writeSomePartialSource(fifo string) string {
 function main(): i32 {
     // A megabyte, which is far past Linux's 64 KiB default pipe buffer and
     // past any grown one a caller is likely to have set.
-    var big: string = "x";
-    var i: i32 = 0;
+    let big: string = "x";
+    let i: i32 = 0;
     while (i < 20) {
         big = big + big;
         i = i + 1;

@@ -17,21 +17,21 @@ var sliceViewIRCases = []struct {
 	main string
 }{
 	// a[1:3] of [10,20,30,40] -> [20,30], len 2.
-	{"slice-len", `function main(): i32 { var a: i32[] = [10,20,30,40]; var s: [i32] = a[1:3]; return s.len(); }`},
+	{"slice-len", `function main(): i32 { let a: i32[] = [10,20,30,40]; let s: [i32] = a[1:3]; return s.len(); }`},
 	// s[0] of that window is 20.
-	{"slice-index", `function main(): i32 { var a: i32[] = [10,20,30,40]; var s: [i32] = a[1:3]; return s[0]; }`},
+	{"slice-index", `function main(): i32 { let a: i32[] = [10,20,30,40]; let s: [i32] = a[1:3]; return s[0]; }`},
 	// Sum a window via `for x in s`: a[1:4] of [1..5] = [2,3,4] -> 9.
-	{"slice-iter-sum", `function main(): i32 { var a: i32[] = [1,2,3,4,5]; var s: [i32] = a[1:4]; var t: i32 = 0; for x in s { t = t + x; } return t; }`},
+	{"slice-iter-sum", `function main(): i32 { let a: i32[] = [1,2,3,4,5]; let s: [i32] = a[1:4]; let t: i32 = 0; for x in s { t = t + x; } return t; }`},
 	// A slice of a slice: a[1:5]=[2,3,4,5], then s[0:2]=[2,3] -> len 2.
-	{"slice-of-slice", `function main(): i32 { var a: i32[] = [1,2,3,4,5]; var s: [i32] = a[1:5]; var s2: [i32] = s[0:2]; return s2.len(); }`},
+	{"slice-of-slice", `function main(): i32 { let a: i32[] = [1,2,3,4,5]; let s: [i32] = a[1:5]; let s2: [i32] = s[0:2]; return s2.len(); }`},
 	// A slice passed as a `[i32]` parameter and consumed by the callee.
-	{"slice-as-param", `function sum(s: [i32]): i32 { var t: i32 = 0; for x in s { t = t + x; } return t; } function main(): i32 { var a: i32[] = [4,5,6,7]; return sum(a[1:3]); }`},
+	{"slice-as-param", `function sum(s: [i32]): i32 { let t: i32 = 0; for x in s { t = t + x; } return t; } function main(): i32 { let a: i32[] = [4,5,6,7]; return sum(a[1:3]); }`},
 	// Index with a computed offset off the slice length: last element.
-	{"slice-last", `function main(): i32 { var a: i32[] = [9,8,7]; var s: [i32] = a[0:3]; return s[s.len()-1]; }`},
+	{"slice-last", `function main(): i32 { let a: i32[] = [9,8,7]; let s: [i32] = a[0:3]; return s[s.len()-1]; }`},
 	// An empty window a[2:2] has length 0.
-	{"empty-slice", `function main(): i32 { var a: i32[] = [1,2,3]; var s: [i32] = a[2:2]; return s.len(); }`},
+	{"empty-slice", `function main(): i32 { let a: i32[] = [1,2,3]; let s: [i32] = a[2:2]; return s.len(); }`},
 	// A `[string]` element slice: strs[0:2] = ["ab","cde"], s[1].len() = 3.
-	{"string-elem-slice", `function main(): i32 { var a: string[] = ["ab","cde","f"]; var s: [string] = a[0:2]; return s[1].len(); }`},
+	{"string-elem-slice", `function main(): i32 { let a: string[] = ["ab","cde","f"]; let s: [string] = a[0:2]; return s[1].len(); }`},
 }
 
 // TestSelfHostSliceViewsIR compiles each case with the self-host CLI for

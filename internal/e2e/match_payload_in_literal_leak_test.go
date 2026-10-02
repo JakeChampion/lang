@@ -16,7 +16,7 @@ function pair(n: i32): Option[string] {
     return Some("p" + n.to_string());
 }
 function boxed(n: i32): Result[string, i32] {
-    var r: Result[string, i32] = Err(400);
+    let r: Result[string, i32] = Err(400);
     if (n >= 0) { r = Ok("b" + n.to_string()); }
     return r;
 }
@@ -42,8 +42,8 @@ function cells(n: i32): string[] {
     return [];
 }
 function main(): i32 {
-    var total: i32 = 0;
-    var i: i32 = 0;
+    let total: i32 = 0;
+    let i: i32 = 0;
     while (i < 40) {
         total = total + line(i).1.len() + row(i).s.len() + cells(i).len();
         i = i + 1;

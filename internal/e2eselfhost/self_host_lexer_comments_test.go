@@ -13,7 +13,7 @@ import (
 // either side drifting turns one of them red.
 //
 // Keep this fixture byte-identical to the one in test_comments.
-const commentFixture = "// leading\nvar u: string = \"http://x//y\"; // trailing\nvar n: i32 = 1;\n//: last\n"
+const commentFixture = "// leading\nlet u: string = \"http://x//y\"; // trailing\nlet n: i32 = 1;\n//: last\n"
 
 func TestLexerCommentsMatchSelfHost(t *testing.T) {
 	_, comments, err := lexer.Tokenize(commentFixture)

@@ -54,7 +54,7 @@ var p3StreamI32EOFProducerCore = []byte{
 // per-read `count` math is stride-scaled. Real Fern:
 //
 //	@import("test:dep/d","prod") async function body(): stream[i32];
-//	async function run(): i32 { var b: i32[] = body(); return b[0] + b[1] + b[2]; }
+//	async function run(): i32 { let b: i32[] = body(); return b[0] + b[1] + b[2]; }
 //
 // composed against the i32 EOF producer (writes [10,20,12] as i32, write-awaits,
 // drops) → 42. Confirms the stride-aware collect path on stream<s32>.
@@ -63,7 +63,7 @@ func TestWasmP3StreamI32ResultFromFern(t *testing.T) {
 
 	src := `@import("test:dep/d", "prod") async function body(): stream[i32];
 async function run(): i32 {
-	var b: i32[] = body();
+	let b: i32[] = body();
 	return b[0] + b[1] + b[2];
 }
 function main(): i32 { return 0; }
@@ -121,10 +121,10 @@ function main(): i32 { return 0; }
 // (i32) — the general-T coverage the u8 lazy e2e can't give. Real Fern:
 //
 //	@import("test:dep/d","prod") async function body(): stream[i32];
-//	async function run(): i32 { var sum: i32 = 0; for x in body() { sum = sum + x; } return sum; }
+//	async function run(): i32 { let sum: i32 = 0; for x in body() { sum = sum + x; } return sum; }
 //
-// The checker desugars it to the cursor loop (`var c = body$open(); while(true){
-// if (__stream_next(c) == 0) break; var x = __stream_elem_i32(c); … } __stream_drop(c)`)
+// The checker desugars it to the cursor loop (`let c = body$open(); while(true){
+// if (__stream_next(c) == 0) break; let x = __stream_elem_i32(c); … } __stream_drop(c)`)
 // — separating the EOF flag from the value read so a real `-1` element would
 // never be mistaken for EOF (the u8-only `-1` sentinel limitation L2 had). Each
 // i32 is pulled off the wire one at a time. Composed against the i32 EOF producer
@@ -134,7 +134,7 @@ func TestWasmP3StreamI32ForIn(t *testing.T) {
 
 	src := `@import("test:dep/d", "prod") async function body(): stream[i32];
 async function run(): i32 {
-	var sum: i32 = 0;
+	let sum: i32 = 0;
 	for x in body() {
 		sum = sum + x;
 	}

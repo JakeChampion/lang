@@ -26,18 +26,18 @@ var binaryBitwiseIRCases = []struct {
 	name string
 	main string
 }{
-	{"and", `function main(): i32 { var a = 12; var b = 10; return a & b; }`},
-	{"or", `function main(): i32 { var a = 12; var b = 1; return a | b; }`},
-	{"xor", `function main(): i32 { var a = 12; var b = 10; return a ^ b; }`},
-	{"shl", `function main(): i32 { var a = 3; var b = 4; return a << b; }`},
-	{"shr-pos", `function main(): i32 { var a = 100; var b = 2; return a >> b; }`},
+	{"and", `function main(): i32 { let a = 12; let b = 10; return a & b; }`},
+	{"or", `function main(): i32 { let a = 12; let b = 1; return a | b; }`},
+	{"xor", `function main(): i32 { let a = 12; let b = 10; return a ^ b; }`},
+	{"shl", `function main(): i32 { let a = 3; let b = 4; return a << b; }`},
+	{"shr-pos", `function main(): i32 { let a = 100; let b = 2; return a >> b; }`},
 	// signed i32 right shift is ARITHMETIC: -8 >> 1 == -4, so +100 == 96.
-	{"shr-neg-arith", `function main(): i32 { var a = 0 - 8; var b = 1; return (a >> b) + 100; }`},
+	{"shr-neg-arith", `function main(): i32 { let a = 0 - 8; let b = 1; return (a >> b) + 100; }`},
 	// u32 right shift is LOGICAL (shr_u): 4000000000 >> 1 == 2000000000.
-	{"u32-shr-logical", `function main(): i32 { var a: u32 = 4000000000u32; var b = a >> 1u32; if (b == 2000000000u32) { return 7; } return 1; }`},
-	{"u32-and-mask", `function main(): i32 { var a: u32 = 4294967295u32; var b = a & 255u32; if (b == 255u32) { return 7; } return 1; }`},
+	{"u32-shr-logical", `function main(): i32 { let a: u32 = 4000000000u32; let b = a >> 1u32; if (b == 2000000000u32) { return 7; } return 1; }`},
+	{"u32-and-mask", `function main(): i32 { let a: u32 = 4294967295u32; let b = a & 255u32; if (b == 255u32) { return 7; } return 1; }`},
 	// operator precedence + nesting: ((5<<2)|1)&30 == (20|1)&30 == 21&30 == 20.
-	{"combined-precedence", `function main(): i32 { var x = 5; var y = ((x << 2) | 1) & 30; return y; }`},
+	{"combined-precedence", `function main(): i32 { let x = 5; let y = ((x << 2) | 1) & 30; return y; }`},
 }
 
 // TestSelfHostBinaryBitwiseIRX86_64 routes each case through the self-hosted

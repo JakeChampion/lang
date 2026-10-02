@@ -57,29 +57,29 @@ func allocMatrixCells() []allocCell {
 	const rounds = 100
 	return []allocCell{
 		{name: "scalar_only", rounds: rounds, src: `struct N { n: i32 }
-function round(i: i32): i32 { var v: N = N { n: i }; return v.n; }
+function round(i: i32): i32 { let v: N = N { n: i }; return v.n; }
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { t = t + round(r); r = r + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
 }
 `},
-		{name: "bare_arr", rounds: rounds, src: `function round(i: i32): i32 { var xs: i32[] = [i, i + 1]; return xs.len() + xs[0]; }
+		{name: "bare_arr", rounds: rounds, src: `function round(i: i32): i32 { let xs: i32[] = [i, i + 1]; return xs.len() + xs[0]; }
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { t = t + round(r); r = r + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
 }
 `},
 		{name: "arr_field", rounds: rounds, src: `struct A { xs: i32[] }
-function round(i: i32): i32 { var v: A = A { xs: [i, i + 1] }; return v.xs.len(); }
+function round(i: i32): i32 { let v: A = A { xs: [i, i + 1] }; return v.xs.len(); }
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { t = t + round(r); r = r + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
@@ -91,10 +91,10 @@ function main(): i32 {
 		// that native's zero is the inline encoding and not the folder.
 		{name: "bare_str_sso", rounds: rounds, src: `function w(a: string): string { return a + "!"; }
 function pick(i: i32): string { if (i % 2 == 0) { return "p"; } return "q"; }
-function round(i: i32): i32 { var s: string = w(pick(i)); return s.len() + i; }
+function round(i: i32): i32 { let s: string = w(pick(i)); return s.len() + i; }
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { t = t + round(r); r = r + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
@@ -103,10 +103,10 @@ function main(): i32 {
 		{name: "str_field_sso", rounds: rounds, src: `struct S { s: string }
 function w(a: string): string { return a + "!"; }
 function pick(i: i32): string { if (i % 2 == 0) { return "p"; } return "q"; }
-function round(i: i32): i32 { var v: S = S { s: w(pick(i)) }; return v.s.len() + i; }
+function round(i: i32): i32 { let v: S = S { s: w(pick(i)) }; return v.s.len() + i; }
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { t = t + round(r); r = r + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
@@ -117,10 +117,10 @@ function main(): i32 {
 		// the cell that read 100 against 200 before #7351 was fixed.
 		{name: "bare_str_heap", rounds: rounds, src: `function w(a: string): string { return a + "!"; }
 function pick(i: i32): string { if (i % 2 == 0) { return "abcdefghijklmnopqrstu"; } return "vwxyzabcdefghijklmnop"; }
-function round(i: i32): i32 { var s: string = w(pick(i)); return s.len() + i; }
+function round(i: i32): i32 { let s: string = w(pick(i)); return s.len() + i; }
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { t = t + round(r); r = r + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
@@ -129,10 +129,10 @@ function main(): i32 {
 		{name: "str_field_heap", rounds: rounds, src: `struct S { s: string }
 function w(a: string): string { return a + "!"; }
 function pick(i: i32): string { if (i % 2 == 0) { return "abcdefghijklmnopqrstu"; } return "vwxyzabcdefghijklmnop"; }
-function round(i: i32): i32 { var v: S = S { s: w(pick(i)) }; return v.s.len() + i; }
+function round(i: i32): i32 { let v: S = S { s: w(pick(i)) }; return v.s.len() + i; }
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { t = t + round(r); r = r + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
@@ -147,10 +147,10 @@ function main(): i32 {
 		// not a loop-invariant.
 		{name: "capture_free_fn_value", rounds: rounds, src: `struct H { f: (i32) => i32 }
 function dbl(x: i32): i32 { return x * 2; }
-function round(i: i32): i32 { var h: H = H { f: dbl }; return h.f(i); }
+function round(i: i32): i32 { let h: H = H { f: dbl }; return h.f(i); }
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { t = t + round(r); r = r + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
@@ -163,14 +163,14 @@ function main(): i32 {
 		// changes; the self-host allocates a fresh box at every `+` (#10532).
 		{name: "str_self_append_chain", rounds: rounds, src: `function piece(i: i32): string { if (i % 2 == 0) { return "abcdefghij"; } return "klmnopqrst"; }
 function round(i: i32): i32 {
-    var s: string = piece(i);
+    let s: string = piece(i);
     s = s + piece(i + 1) + ": " + piece(i + 2) + "\r\n";
     s = s + piece(i + 3) + ": " + piece(i + 4) + "\r\n";
     return s.len() + i;
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { t = t + round(r); r = r + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
@@ -181,10 +181,10 @@ function main(): i32 {
 		{name: "arr_and_str_heap", rounds: rounds, src: `struct P { xs: i32[], s: string }
 function w(a: string): string { return a + "!"; }
 function pick(i: i32): string { if (i % 2 == 0) { return "abcdefghijklmnopqrstu"; } return "vwxyzabcdefghijklmnop"; }
-function round(i: i32): i32 { var v: P = P { xs: [i, i + 1], s: w(pick(i)) }; return v.xs.len() + v.s.len(); }
+function round(i: i32): i32 { let v: P = P { xs: [i, i + 1], s: w(pick(i)) }; return v.xs.len() + v.s.len(); }
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { t = t + round(r); r = r + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;

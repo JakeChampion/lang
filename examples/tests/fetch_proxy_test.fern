@@ -32,7 +32,7 @@ function via(p: fetch.ProxyEnv, u: string): string {
 
 // `routes(p, urls)` — `proxy` or `direct` per URL, space-separated.
 function routes(p: fetch.ProxyEnv, urls: string[]): string {
-  var out: string = "";
+  let out: string = "";
   for u in urls {
     if (out.len() > 0) {
       out = out + " ";
@@ -99,23 +99,23 @@ function test_a_bad_block_or_port_matches_nothing(): test.TestOutcome {
 }
 
 function test_only_the_lowercase_variable_is_read(): test.TestOutcome {
-  var p: fetch.ProxyEnv = fetch.proxy_env_from(Some(PROXY), None, None, None);
+  let p: fetch.ProxyEnv = fetch.proxy_env_from(Some(PROXY), None, None, None);
   return test.assert_eq(p.http_proxy + "|" + p.no_proxy, PROXY + "|");
 }
 
 function test_no_proxy_under_request_method(): test.TestOutcome {
-  var p: fetch.ProxyEnv = fetch.proxy_env_from(Some(PROXY), Some("a.example"), None, Some("GET"));
+  let p: fetch.ProxyEnv = fetch.proxy_env_from(Some(PROXY), Some("a.example"), None, Some("GET"));
   return test.assert_eq(p.http_proxy + "|" + p.no_proxy, "|a.example");
 }
 
 function test_no_proxy_lowercase_wins_over_uppercase(): test.TestOutcome {
-  var lower: fetch.ProxyEnv = fetch.proxy_env_from(Some(PROXY), Some("a.example"), Some("b.example"), None);
-  var upper: fetch.ProxyEnv = fetch.proxy_env_from(Some(PROXY), None, Some("b.example"), None);
+  let lower: fetch.ProxyEnv = fetch.proxy_env_from(Some(PROXY), Some("a.example"), Some("b.example"), None);
+  let upper: fetch.ProxyEnv = fetch.proxy_env_from(Some(PROXY), None, Some("b.example"), None);
   return test.assert_eq(lower.no_proxy + "|" + upper.no_proxy, "a.example|b.example");
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("std/fetch proxies");
+  let r: test.TestRunner = test.test_new("std/fetch proxies");
   r = r.it("no proxy configured", test_no_proxy_configured);
   r = r.it("a proxy is the spec as given", test_a_proxy_is_the_spec_as_given);
   r = r.it("localhost and loopback are never proxied", test_localhost_and_loopback_are_never_proxied);

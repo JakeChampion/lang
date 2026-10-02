@@ -19,7 +19,7 @@ func TestIsattyIsTypedAsAPredicate(t *testing.T) {
 		want string // "" = must type-check
 	}{
 		{"used as a condition", `function main(): i32 { if (isatty(1)) { return 1; } return 0; }`, ""},
-		{"assigned to a boolean", `function main(): i32 { var b: boolean = isatty(0); if (b) { return 1; } return 0; }`, ""},
+		{"assigned to a boolean", `function main(): i32 { let b: boolean = isatty(0); if (b) { return 1; } return 0; }`, ""},
 		{"not a number", `function main(): i32 { return isatty(1) + 1; }`, "boolean"},
 		{"takes an fd", `function main(): i32 { if (isatty()) { return 1; } return 0; }`, "argument"},
 	}

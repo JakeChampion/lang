@@ -23,31 +23,31 @@ var structCopyIRCases = []struct {
 	// Threaded builder, scalar override on an array-field struct: base copy is
 	// one struct_copy, `b` overridden. sum 0..9 = 45, +len(a)=2 +len(c)=1 = 48.
 	{"scalar-override-threaded",
-		`struct S { a: i32[], b: i32, c: i32[] } function bump(s: S, v: i32): S { return S { ...s, b: s.b + v }; } function main(): i32 { var s: S = S { a: [1, 2], b: 0, c: [9] }; var i: i32 = 0; while (i < 10) { s = bump(s, i); i = i + 1; } return s.b + s.a.len() + s.c.len(); }`,
+		`struct S { a: i32[], b: i32, c: i32[] } function bump(s: S, v: i32): S { return S { ...s, b: s.b + v }; } function main(): i32 { let s: S = S { a: [1, 2], b: 0, c: [9] }; let i: i32 = 0; while (i < 10) { s = bump(s, i); i = i + 1; } return s.b + s.a.len() + s.c.len(); }`,
 		48},
 	// Array-field override (the immutable-update idiom `xs: xs.append(v)`): the
 	// unchanged fields go through struct_copy, `a` gets the fresh appended array. After
 	// 6 appends a.len()=2+6=8, b unchanged 5. 8 + 5 = 13.
 	{"array-override",
-		`struct S { a: i32[], b: i32 } function push(s: S, v: i32): S { return S { ...s, a: s.a.append(v) }; } function main(): i32 { var s: S = S { a: [1, 2], b: 5 }; var i: i32 = 0; while (i < 6) { s = push(s, i); i = i + 1; } return s.a.len() + s.b; }`,
+		`struct S { a: i32[], b: i32 } function push(s: S, v: i32): S { return S { ...s, a: s.a.append(v) }; } function main(): i32 { let s: S = S { a: [1, 2], b: 5 }; let i: i32 = 0; while (i < 6) { s = push(s, i); i = i + 1; } return s.a.len() + s.b; }`,
 		13},
 	// Multiple overrides in one update: two fields set, two copied via struct_copy.
 	// a.len 3, b=7, c.len 1, d=100 -> 3+7+1+100 = 111.
 	{"multi-override",
-		`struct S { a: i32[], b: i32, c: i32[], d: i32 } function mk(s: S): S { return S { ...s, b: 7, d: 100 }; } function main(): i32 { var s: S = S { a: [1, 2, 3], b: 0, c: [9], d: 0 }; s = mk(s); return s.a.len() + s.b + s.c.len() + s.d; }`,
+		`struct S { a: i32[], b: i32, c: i32[], d: i32 } function mk(s: S): S { return S { ...s, b: 7, d: 100 }; } function main(): i32 { let s: S = S { a: [1, 2, 3], b: 0, c: [9], d: 0 }; s = mk(s); return s.a.len() + s.b + s.c.len() + s.d; }`,
 		111},
 	// string[] field is admitted by struct_copy_eligible (it is NOT retained on
 	// the inline base copy), so the compact path still fires. names kept across
 	// the update, count bumped. len(names)=2, count=3 -> 5.
 	{"string-array-field",
-		`struct S { names: string[], count: i32 } function inc(s: S): S { return S { ...s, count: s.count + 1 }; } function main(): i32 { var s: S = S { names: ["x", "y"], count: 0 }; var i: i32 = 0; while (i < 3) { s = inc(s); i = i + 1; } return s.names.len() + s.count; }`,
+		`struct S { names: string[], count: i32 } function inc(s: S): S { return S { ...s, count: s.count + 1 }; } function main(): i32 { let s: S = S { names: ["x", "y"], count: 0 }; let i: i32 = 0; while (i < 3) { s = inc(s); i = i + 1; } return s.names.len() + s.count; }`,
 		5},
 	// NEGATIVE: a bare `string` field makes the struct ineligible (the inline base
 	// copy retains the shared string), so struct_copy must NOT fire — the update
 	// stays on the per-field path. Value must still be correct. tag "hi" len 2,
 	// n=4 -> 6.
 	{"bare-string-ineligible-no-copy",
-		`struct S { tag: string, n: i32 } function bump(s: S): S { return S { ...s, n: s.n + 1 }; } function main(): i32 { var s: S = S { tag: "hi", n: 0 }; var i: i32 = 0; while (i < 4) { s = bump(s); i = i + 1; } return s.tag.len() + s.n; }`,
+		`struct S { tag: string, n: i32 } function bump(s: S): S { return S { ...s, n: s.n + 1 }; } function main(): i32 { let s: S = S { tag: "hi", n: 0 }; let i: i32 = 0; while (i < 4) { s = bump(s); i = i + 1; } return s.tag.len() + s.n; }`,
 		6},
 }
 

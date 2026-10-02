@@ -32,8 +32,8 @@ const appendIndexedElemProlog = "struct Op { a: i32, b: i32 }\n" +
 	"struct St { ops: Op[] }\n" +
 	"enum E { A(i32), B }\n" +
 	"function mkop(i: i32): Op { return Op { a: i, b: i + 1 }; }\n" +
-	"function three(): Op[] { var pre: Op[] = []; var i: i32 = 0; while (i < 3) { pre = pre.append(mkop(i)); i = i + 1; } return pre; }\n" +
-	"function from_param(pre: Op[]): Op[] { var out: Op[] = []; var p: i32 = 0; while (p < 3) { out = out.append(pre[p]); p = p + 1; } return out; }\n"
+	"function three(): Op[] { let pre: Op[] = []; let i: i32 = 0; while (i < 3) { pre = pre.append(mkop(i)); i = i + 1; } return pre; }\n" +
+	"function from_param(pre: Op[]): Op[] { let out: Op[] = []; let p: i32 = 0; while (p < 3) { out = out.append(pre[p]); p = p + 1; } return out; }\n"
 
 // appendIndexedElemSrc builds the source array inside a one-trip loop body, so
 // it is released at the iteration's end while the destination declared outside
@@ -42,10 +42,10 @@ const appendIndexedElemProlog = "struct Op { a: i32, b: i32 }\n" +
 // sequence rather than a sum several wrong sequences share.
 func appendIndexedElemSrc(decl, body, count, readback string) string {
 	return appendIndexedElemProlog +
-		"function main(): i32 { var t: i32 = 0; " + decl + " var r: i32 = 0; " +
+		"function main(): i32 { let t: i32 = 0; " + decl + " let r: i32 = 0; " +
 		"while (r < 1) { " + body + " r = r + 1; } " +
-		"var junk: string = \"\"; var j: i32 = 0; while (j < 64) { junk = junk + \"    \"; j = j + 1; } " +
-		"var k: i32 = 0; while (k < " + count + ") { " + readback + " k = k + 1; } " +
+		"let junk: string = \"\"; let j: i32 = 0; while (j < 64) { junk = junk + \"    \"; j = j + 1; } " +
+		"let k: i32 = 0; while (k < " + count + ") { " + readback + " k = k + 1; } " +
 		"if (__rc_underflow_count() != 0) { return 99; } return t + junk.len() / 64 - 4; }"
 }
 
@@ -57,7 +57,7 @@ func appendIndexedElemCases() []struct {
 	name, src string
 	balanced  bool
 } {
-	const opsOut = "var out: Op[] = [];"
+	const opsOut = "let out: Op[] = [];"
 	const opDigit = "t = t * 10 + out[k].a;"
 	return []struct {
 		name, src string
@@ -65,7 +65,7 @@ func appendIndexedElemCases() []struct {
 	}{
 		// The statement form, the shape the pass's prologue splice takes.
 		{"stmt_local", appendIndexedElemSrc(opsOut,
-			"var pre: Op[] = three(); var p: i32 = 0; while (p < 3) { out = out.append(pre[p]); p = p + 1; }",
+			"let pre: Op[] = three(); let p: i32 = 0; while (p < 3) { out = out.append(pre[p]); p = p + 1; }",
 			"out.len()", opDigit), true},
 		// The same shape with the SOURCE built in this frame rather than
 		// returned by a callee — what the LICM pass actually does. `pre` is an
@@ -74,32 +74,32 @@ func appendIndexedElemCases() []struct {
 		// a COUNTED store), and the two rc-guarded decs take each box to zero
 		// exactly once.
 		{"stmt_local_sameframe", appendIndexedElemSrc(opsOut,
-			"var pre: Op[] = []; var i: i32 = 0; while (i < 3) { pre = pre.append(mkop(i)); i = i + 1; } "+
-				"var p: i32 = 0; while (p < 3) { out = out.append(pre[p]); p = p + 1; }",
+			"let pre: Op[] = []; let i: i32 = 0; while (i < 3) { pre = pre.append(mkop(i)); i = i + 1; } "+
+				"let p: i32 = 0; while (p < 3) { out = out.append(pre[p]); p = p + 1; }",
 			"out.len()", opDigit), true},
 		// Expression position: a var-init per push.
 		{"expr_local", appendIndexedElemSrc(opsOut,
-			"var pre: Op[] = three(); var o1: Op[] = out.append(pre[0]); var o2: Op[] = o1.append(pre[1]); out = o2.append(pre[2]);",
+			"let pre: Op[] = three(); let o1: Op[] = out.append(pre[0]); let o2: Op[] = o1.append(pre[1]); out = o2.append(pre[2]);",
 			"out.len()", opDigit), false},
 		// The clone form: a struct-field receiver.
-		{"clone_local", appendIndexedElemSrc("var st: St = St { ops: [] };",
-			"var pre: Op[] = three(); var p: i32 = 0; while (p < 3) { st = St { ops: st.ops.append(pre[p]) }; p = p + 1; }",
+		{"clone_local", appendIndexedElemSrc("let st: St = St { ops: [] };",
+			"let pre: Op[] = three(); let p: i32 = 0; while (p < 3) { st = St { ops: st.ops.append(pre[p]) }; p = p + 1; }",
 			"st.ops.len()", "t = t * 10 + st.ops[k].a;"), true},
 		// The source is a borrowed parameter: the caller's release drops it.
 		{"stmt_param", appendIndexedElemSrc(opsOut,
-			"var pre: Op[] = three(); out = from_param(pre);",
+			"let pre: Op[] = three(); out = from_param(pre);",
 			"out.len()", opDigit), false},
 		// The second affected kind: an array element of an array of arrays.
-		{"nested_arr", appendIndexedElemSrc("var out: i32[][] = [];",
-			"var pre: i32[][] = []; var i: i32 = 0; while (i < 3) { pre = pre.append([i, 7]); i = i + 1; } var p: i32 = 0; while (p < 3) { out = out.append(pre[p]); p = p + 1; }",
+		{"nested_arr", appendIndexedElemSrc("let out: i32[][] = [];",
+			"let pre: i32[][] = []; let i: i32 = 0; while (i < 3) { pre = pre.append([i, 7]); i = i + 1; } let p: i32 = 0; while (p < 3) { out = out.append(pre[p]); p = p + 1; }",
 			"out.len()", "t = t * 10 + out[k][0];"), true},
 		// Controls: an enum and a string element were already balanced by
 		// their own rules, so the leak counters catch a retain added on top.
-		{"enum_local", appendIndexedElemSrc("var out: E[] = [];",
-			"var pre: E[] = []; var i: i32 = 0; while (i < 3) { pre = pre.append(A(i)); i = i + 1; } var p: i32 = 0; while (p < 3) { out = out.append(pre[p]); p = p + 1; }",
+		{"enum_local", appendIndexedElemSrc("let out: E[] = [];",
+			"let pre: E[] = []; let i: i32 = 0; while (i < 3) { pre = pre.append(A(i)); i = i + 1; } let p: i32 = 0; while (p < 3) { out = out.append(pre[p]); p = p + 1; }",
 			"out.len()", "match (out[k]) { A(v) => { t = t * 10 + v; }, B => { t = t * 10 + 9; } }"), false},
-		{"str_local", appendIndexedElemSrc("var out: string[] = [];",
-			"var pre: string[] = []; var i: i32 = 0; while (i < 3) { pre = pre.append(\"v\" + \"w\"); i = i + 1; } var p: i32 = 0; while (p < 3) { out = out.append(pre[p]); p = p + 1; }",
+		{"str_local", appendIndexedElemSrc("let out: string[] = [];",
+			"let pre: string[] = []; let i: i32 = 0; while (i < 3) { pre = pre.append(\"v\" + \"w\"); i = i + 1; } let p: i32 = 0; while (p < 3) { out = out.append(pre[p]); p = p + 1; }",
 			"out.len()", "t = t * 10 + out[k].len() - 2 + k;"), false},
 	}
 }

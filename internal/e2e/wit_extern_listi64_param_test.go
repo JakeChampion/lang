@@ -120,7 +120,7 @@ func TestExternListI64ParamCustomProvider(t *testing.T) {
 function sum_i64(data: i64[]): i64;
 
 function main(): i32 {
-	var b: i64[] = [10, 20, 30];
+	let b: i64[] = [10, 20, 30];
 	if (sum_i64(b) == 60) { write("` + want + `"); } else { write("sum-bad"); }
 	return 0;
 }`

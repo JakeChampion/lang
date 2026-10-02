@@ -17,8 +17,8 @@ import (
 // kernel against it over every length to 40 from several starting sums, and
 // over 300 high bytes. 42 means every comparison matched.
 const bsdSumIRProg = `function ref(s: string, sum: i32): i32 {
-    var v: i32 = sum & 65535;
-    var i: i32 = 0;
+    let v: i32 = sum & 65535;
+    let i: i32 = 0;
     while (i < s.len()) {
         v = ((v >> 1) | (v << 15)) & 65535;
         v = (v + (s[i] as i32)) & 65535;
@@ -27,8 +27,8 @@ const bsdSumIRProg = `function ref(s: string, sum: i32): i32 {
     return v;
 }
 function main(): i32 {
-    var n: i32 = 0;
-    var s: string = "";
+    let n: i32 = 0;
+    let s: string = "";
     while (n <= 40) {
         if (__bsd_sum(s, 0) != ref(s, 0)) { return 1; }
         if (__bsd_sum(s, 1) != ref(s, 1)) { return 2; }
@@ -37,8 +37,8 @@ function main(): i32 {
         s = s + chr((n * 37 + 11) % 128);
         n = n + 1;
     }
-    var high: string = "";
-    var k: i32 = 0;
+    let high: string = "";
+    let k: i32 = 0;
     while (k < 300) { high = high + "\xff\x80"; k = k + 1; }
     if (__bsd_sum(high, 4660) != ref(high, 4660)) { return 5; }
     if (__bsd_sum("abc", 74565) != ref("abc", 74565)) { return 6; }

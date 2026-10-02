@@ -32,7 +32,7 @@ func TestUniformEnumDropLoadsNeedsOneTypePerOffset(t *testing.T) {
 			src: `struct A { s: i32[], n: i32 }
 struct B { x: i32[], y: i32[] }
 enum E { VA(A), VB(B) }
-function main(): i32 { var e: E = VA(A { s: [1], n: 2 }); match (e) { VA(a) => { return a.n; }, VB(b) => { return b.y[0]; } } }`,
+function main(): i32 { let e: E = VA(A { s: [1], n: 2 }); match (e) { VA(a) => { return a.n; }, VB(b) => { return b.y[0]; } } }`,
 			want: false,
 		},
 		{
@@ -41,7 +41,7 @@ function main(): i32 { var e: E = VA(A { s: [1], n: 2 }); match (e) { VA(a) => {
 			name: "same_payload_type",
 			src: `struct A { s: i32[], n: i32 }
 enum E { VA(A), VB(A) }
-function main(): i32 { var e: E = VA(A { s: [1], n: 2 }); match (e) { VA(a) => { return a.n; }, VB(b) => { return b.n; } } }`,
+function main(): i32 { let e: E = VA(A { s: [1], n: 2 }); match (e) { VA(a) => { return a.n; }, VB(b) => { return b.n; } } }`,
 			want: true,
 		},
 		{
@@ -50,7 +50,7 @@ function main(): i32 { var e: E = VA(A { s: [1], n: 2 }); match (e) { VA(a) => {
 			name: "arrays_of_different_elements",
 			src: `struct A { n: i32 }
 enum E { VA(A[]), VB(i32[][]) }
-function main(): i32 { var e: E = VB([[1]]); match (e) { VA(a) => { return a[0].n; }, VB(b) => { return b[0][0]; } } }`,
+function main(): i32 { let e: E = VB([[1]]); match (e) { VA(a) => { return a[0].n; }, VB(b) => { return b[0][0]; } } }`,
 			want: false,
 		},
 	} {

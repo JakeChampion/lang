@@ -32,8 +32,8 @@ func selfHostSpliceToSource(dir string, spliced bool) string {
 		want = 1
 	}
 	return fmt.Sprintf(`function copy(r: Reader, w: Writer): i32 {
-    var spliced: i32 = 0;
-    var more: boolean = true;
+    let spliced: i32 = 0;
+    let more: boolean = true;
     while (more) {
         match (r.splice_to(w, 65536)) {
             Ok(n) => {
@@ -60,8 +60,8 @@ func selfHostSpliceToSource(dir string, spliced bool) string {
 }
 
 function main(): i32 {
-    var data: string = "splice me through a pipe\n";
-    var k: i32 = 0;
+    let data: string = "splice me through a pipe\n";
+    let k: i32 = 0;
     while (k < 13) {
         data = data + data;
         k = k + 1;
@@ -73,7 +73,7 @@ function main(): i32 {
             match (open_writer(%[2]q)) {
                 Err(_) => { return 12; },
                 Ok(w) => {
-                    var how: i32 = copy(r, w);
+                    let how: i32 = copy(r, w);
                     w.close();
                     if (how < 0) { return 13; }
                     if (how != %[3]d) { return 14; }

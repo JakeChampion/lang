@@ -45,9 +45,9 @@ func TestRuntimeHelpersAvoidTheFnNamespace(t *testing.T) {
 	// strings, arrays, rc traffic, and a closure.
 	asm := compile(t, `function apply(f: (i32) => i32, v: i32): i32 { return f(v); }
 function main(): i32 {
-    var xs: string[] = ["a", "b"];
+    let xs: string[] = ["a", "b"];
     xs = xs.append("c" + "d");
-    var n: i32 = 1;
+    let n: i32 = 1;
     return apply((x: i32): i32 => { return x + n; }, xs.len()) - 3;
 }`)
 	for _, line := range strings.Split(asm, "\n") {

@@ -11,7 +11,7 @@ import (
 // a loop body leaked one box per iteration on the asm backends.
 //
 // str_local_binding_is_fresh admitted a concat (`a + b`) and the string producer methods
-// but not a bare literal, so `var pre: string = "ab"` earned no "STR:" credit and was
+// but not a bare literal, so `let pre: string = "ab"` earned no "STR:" credit and was
 // never freed. is_fresh_str_temp — twenty lines below it — already documents why the
 // literal IS fresh: const_str allocates a fresh box per evaluation, the DATA is .rodata
 // but the box is not, and __fern_str_free's heap-base guard skips the data and reclaims
@@ -21,7 +21,7 @@ import (
 // Measured with FERN_LEAKCHECK=1 (allocs/frees/live_bytes), 200 iterations, self-host
 // x86-64 — `__heap_bump_bytes()` deltas cannot see this, see #5474's retraction:
 //
-//	while (…) { var pre = "ab"; acc += pre.len(); }   200/0/4800    -> 200/199/24
+//	while (…) { let pre = "ab"; acc += pre.len(); }   200/0/4800    -> 200/199/24
 //	the same with an i32[] built from pre.len()       400/200/4800  -> 400/399/24
 //	pre HOISTED above the loop (control)              201/200/24    -> 201/201/0
 //
@@ -33,7 +33,7 @@ import (
 // Two shapes stay UNCREDITED on purpose, both because the alternative is an
 // over-release rather than a leak:
 //
-//   - A literal local that is also a CONCAT OPERAND (`var pre = "ab"; var q = pre + "x";`
+//   - A literal local that is also a CONCAT OPERAND (`let pre = "ab"; let q = pre + "x";`
 //     — 800/598/4832, still leaking). The shared escape gate expr_unsafe_for treats any
 //     ident operand of a binary op as an escape, so `pre` earns no credit. That gate
 //     backs every reclaim class, not just strings, so widening it is a cross-class change
@@ -56,13 +56,13 @@ var litStrLocalReclaimCases = []struct {
 }{
 	// The reproducer: a literal string local re-declared per iteration, used borrow-only.
 	{"litstr-loop-local", `function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
-    while (i < 200) { var pre: string = "ab"; acc = (acc + pre.len()) % 251; i = i + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
-    while (j < 5000) { var p2: string = "cd"; acc = (acc + p2.len()) % 251; j = j + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 200) { let pre: string = "ab"; acc = (acc + pre.len()) % 251; i = i + 1; }
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
+    while (j < 5000) { let p2: string = "cd"; acc = (acc + p2.len()) % 251; j = j + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -70,19 +70,19 @@ var litStrLocalReclaimCases = []struct {
 }`, 0},
 	// #6606: a local bound to a USER function's string result. str_local_binding_is_fresh
 	// admits a call only via str_free_producer_ident — a hardcoded list of BUILTINS — so
-	// `var t = suffix(i)` earned no credit and freed nothing at all: allocs=200 frees=0
+	// `let t = suffix(i)` earned no credit and freed nothing at all: allocs=200 frees=0
 	// live=4800 over 200 rounds, against 200/199/24 after. The whole-program proof it
 	// needed (str_fresh_ret_fns_of) already existed and was never consulted at the
 	// binding.
 	{"strfresh-ret-call-loop-local", `function suffix(n: i32): string { if (n % 2 == 0) { return "even"; } return "odd"; }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
-    while (i < 200) { var t: string = suffix(i); acc = (acc + t.len()) % 251; i = i + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
-    while (j < 5000) { var t2: string = suffix(j); acc = (acc + t2.len()) % 251; j = j + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 200) { let t: string = suffix(i); acc = (acc + t.len()) % 251; i = i + 1; }
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
+    while (j < 5000) { let t2: string = suffix(j); acc = (acc + t2.len()) % 251; j = j + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -97,10 +97,10 @@ function main(): i32 {
 	// into a wrong ANSWER rather than only a byte count.
 	{"strfresh-identity-ret-refused", `function ident(s: string): string { return s; }
 function main(): i32 {
-    var keep: string = "abcd";
-    var acc: i32 = 0;
-    var i: i32 = 0;
-    while (i < 200) { var t: string = ident(keep); acc = (acc + t.len()) % 251; i = i + 1; }
+    let keep: string = "abcd";
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 200) { let t: string = ident(keep); acc = (acc + t.len()) % 251; i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     if (keep.len() != 4) { return 96; }
     if (acc != (200 * 4) % 251) { return 95; }
@@ -108,13 +108,13 @@ function main(): i32 {
 }`, 0},
 	// The shape #5474's gate tripped on: the same local feeding a scalar array build.
 	{"litstr-loop-local-with-array", `function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
-    while (i < 200) { var pre: string = "ab"; var xs: i32[] = [pre.len(), 2]; acc = (acc + xs.len()) % 251; i = i + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
-    while (j < 5000) { var p2: string = "cd"; var ys: i32[] = [p2.len(), 2]; acc = (acc + ys.len()) % 251; j = j + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 200) { let pre: string = "ab"; let xs: i32[] = [pre.len(), 2]; acc = (acc + xs.len()) % 251; i = i + 1; }
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
+    while (j < 5000) { let p2: string = "cd"; let ys: i32[] = [p2.len(), 2]; acc = (acc + ys.len()) % 251; j = j + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -124,10 +124,10 @@ function main(): i32 {
 	// iteration and compared, so a premature free or a shared/interned box shows up as a
 	// wrong answer rather than only as a byte count. 200 rounds x 2 = 400, %251 = 149.
 	{"litstr-value-exact", `function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var pre: string = "ab";
+        let pre: string = "ab";
         if (pre != "ab") { return 97; }
         acc = (acc + pre.len()) % 251;
         i = i + 1;
@@ -137,11 +137,11 @@ function main(): i32 {
     return 0;
 }`, 0},
 	// ESCAPE negative: the literal local is returned, so it must NOT be freed.
-	{"litstr-escape-return-safe", `function mk(): string { var pre: string = "abcd"; return pre; }
+	{"litstr-escape-return-safe", `function mk(): string { let pre: string = "abcd"; return pre; }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
-    while (i < 200) { var s: string = mk(); acc = (acc + s.len()) % 251; i = i + 1; }
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 200) { let s: string = mk(); acc = (acc + s.len()) % 251; i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     if (acc != 47) { return 97; }
     return 0;

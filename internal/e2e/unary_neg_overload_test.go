@@ -15,8 +15,8 @@ import (
 const unaryNegSrc = `struct V { x: i32 }
 function (self: V) neg(): V { return V { x: 0 - self.x }; }
 function main(): i32 {
-    var a: V = V { x: 5 };
-    var b: V = -a;
+    let a: V = V { x: 5 };
+    let b: V = -a;
     return b.x + 100;
 }
 `

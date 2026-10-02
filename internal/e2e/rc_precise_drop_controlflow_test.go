@@ -18,17 +18,17 @@ struct Pair { a: P, b: P }
 function add(p: P): i32 { return p.x + p.y; }
 function pairsum(q: Pair): i32 { return add(q.a) + add(q.b); }
 function f(n: i32): i32 {
-    var q: Pair = Pair { a: P { x: n, y: 1 }, b: P { x: 2, y: 3 } };
-    var c: i32 = 0;
+    let q: Pair = Pair { a: P { x: n, y: 1 }, b: P { x: 2, y: 3 } };
+    let c: i32 = 0;
     if (n > 0) { c = pairsum(q); }   // q's last use is inside the if
-    var t: (i32, i32) = (n, n + 1);
-    var d: i32 = 0;
+    let t: (i32, i32) = (n, n + 1);
+    let d: i32 = 0;
     if (n > 0) { d = t.0 + t.1; }    // tuple last use inside an if
     return c + d;
 }
 function main(): i32 {
-    var total: i32 = 0;
-    var i: i32 = 0;
+    let total: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) { total = total + f(5); i = i + 1; }
     if (total != 100 * (5 + 1 + 2 + 3 + 5 + 6)) { return 999; }
     return __rc_underflow_count();

@@ -35,12 +35,12 @@ func TestSelfHostTangleDifferentialX86_64(t *testing.T) {
 		// The root chunk plus one reference, indented — the indent of the
 		// `<<ref>>` line prefixes every line the chunk expands to, which is
 		// the rule most easily got wrong.
-		{"root-and-indented-ref", "# Doc\n\n```fern\n<<*>>=\nfunction main(): i32 {\n    <<compute>>\n}\n```\n\n```fern\n<<compute>>=\nvar n: i32 = 20;\nreturn n + 2;\n```\n", true},
+		{"root-and-indented-ref", "# Doc\n\n```fern\n<<*>>=\nfunction main(): i32 {\n    <<compute>>\n}\n```\n\n```fern\n<<compute>>=\nlet n: i32 = 20;\nreturn n + 2;\n```\n", true},
 		// A chunk referenced from another chunk, so expansion recurses.
 		{"nested-refs", "```fern\n<<*>>=\n<<outer>>\n```\n\n```fern\n<<outer>>=\nfunction main(): i32 {\n    <<inner>>\n}\n```\n\n```fern\n<<inner>>=\nreturn 4;\n```\n", true},
 		// Same chunk name defined twice: the pieces concatenate in document
 		// order rather than the later one winning.
-		{"chunk-continued", "```fern\n<<*>>=\nfunction main(): i32 {\n    <<body>>\n}\n```\n\n```fern\n<<body>>=\nvar a: i32 = 1;\n```\n\n```fern\n<<body>>=\nreturn a + 1;\n```\n", true},
+		{"chunk-continued", "```fern\n<<*>>=\nfunction main(): i32 {\n    <<body>>\n}\n```\n\n```fern\n<<body>>=\nlet a: i32 = 1;\n```\n\n```fern\n<<body>>=\nreturn a + 1;\n```\n", true},
 		// Prose and non-fern fences around the chunks must contribute nothing.
 		{"prose-and-other-fences", "Some prose.\n\n```text\nnot fern, ignore me\n```\n\n```fern\n<<*>>=\nfunction main(): i32 { return 1; }\n```\n\nMore prose.\n", true},
 		// A `file=PATH` document tangles to one module per path, under the
@@ -91,7 +91,7 @@ func TestSelfHostTangleDifferentialX86_64(t *testing.T) {
 	t.Run("chunk", func(t *testing.T) {
 		tmp := t.TempDir()
 		doc := filepath.Join(tmp, "doc.fern.md")
-		if err := os.WriteFile(doc, []byte("```fern\n<<*>>=\nfunction main(): i32 {\n    <<compute>>\n}\n```\n\n```fern\n<<compute>>=\nvar n: i32 = 20;\nreturn n + 2;\n```\n"), 0o644); err != nil {
+		if err := os.WriteFile(doc, []byte("```fern\n<<*>>=\nfunction main(): i32 {\n    <<compute>>\n}\n```\n\n```fern\n<<compute>>=\nlet n: i32 = 20;\nreturn n + 2;\n```\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
 		nativeOut, err := exec.Command(nativeBin, "-tangle", "-chunk", "compute", doc).Output()
@@ -105,7 +105,7 @@ func TestSelfHostTangleDifferentialX86_64(t *testing.T) {
 		if string(nativeOut) != string(shOut) {
 			t.Errorf("-chunk output differs:\n--- native ---\n%q\n--- self-host ---\n%q", nativeOut, shOut)
 		}
-		if !strings.Contains(string(nativeOut), "var n: i32 = 20;") {
+		if !strings.Contains(string(nativeOut), "let n: i32 = 20;") {
 			t.Errorf("native -chunk did not expand the chunk: %q", nativeOut)
 		}
 		// A chunk nothing defines is refused by both, rather than expanding

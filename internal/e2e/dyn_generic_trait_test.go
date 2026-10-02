@@ -31,8 +31,8 @@ function sum(d: dyn Container[i32]): i32 {
     return d.get();
 }
 function main(): i32 {
-    var x: dyn Container[i32] = BoxI { v: 40 };
-    var y: dyn Container[i32] = Pair { a: 1, b: 1 };
+    let x: dyn Container[i32] = BoxI { v: 40 };
+    let y: dyn Container[i32] = Pair { a: 1, b: 1 };
     return sum(x) + sum(y);
 }
 `
@@ -78,7 +78,7 @@ const dynGenericDowncastSrc = `trait Container[T] { function get(self: Self): T;
 struct BoxI { v: i32 }
 impl Container[i32] for BoxI { function get(self: Self): i32 { return self.v; } }
 function main(): i32 {
-    var d: dyn Container[i32] = BoxI { v: 41 };
+    let d: dyn Container[i32] = BoxI { v: 41 };
     match (d as? BoxI) {
         Some(b) => { return b.v + 1; },
         None => { return 0; }
@@ -130,7 +130,7 @@ struct W { v: i32 }
 impl Get[i32] for W { function get(self: Self): i32 { return self.v; } }
 impl Name for W { function name(self: Self): i32 { return 1; } }
 function main(): i32 {
-    var d: dyn Get[i32] + Name = W { v: 41 };
+    let d: dyn Get[i32] + Name = W { v: 41 };
     return d.get() + d.name();
 }
 `

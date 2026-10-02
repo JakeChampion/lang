@@ -36,7 +36,7 @@ function plain(): i32 { return 0; }`)
 
 func TestAsyncUsableAsIdentifier(t *testing.T) {
 	// `async` is contextual: as a local / parameter name it must still parse.
-	if _, err := Parse(`function f(): i32 { var async: i32 = 3; return async + 1; }`); err != nil {
+	if _, err := Parse(`function f(): i32 { let async: i32 = 3; return async + 1; }`); err != nil {
 		t.Errorf("`async` as a local name should parse: %v", err)
 	}
 }

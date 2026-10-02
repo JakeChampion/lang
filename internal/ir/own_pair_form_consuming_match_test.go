@@ -25,7 +25,7 @@ function put(own b: Box, i: i32, x: i32): Box {
 }
 
 function main(): i32 {
-    var b: Box = Full([1, 2, 3]);
+    let b: Box = Full([1, 2, 3]);
     b = put(b, 0, 9);
     match (b) { Full(xs) => { return xs[0]; }, Empty => { return 1; } }
 }

@@ -1,7 +1,7 @@
 package e2e
 
 // A `for` header takes a destructuring pattern (#6096), the same one
-// `var (a, b) = e;` takes. Which loop it lowers to is chosen by the iterand's
+// `let (a, b) = e;` takes. Which loop it lowers to is chosen by the iterand's
 // type — an array binds the pattern against each element, a Map against each
 // entry — so both halves have to run, and the Map half is the control that must
 // not regress.
@@ -21,16 +21,16 @@ function pairs(): (i32, string)[] {
 }
 
 function arrayForms(): i32 {
-    var sum: i32 = 0;
-    var xs: (i32, i32)[] = [(1, 2), (3, 4)];
+    let sum: i32 = 0;
+    let xs: (i32, i32)[] = [(1, 2), (3, 4)];
     for (a, b) in xs { sum = sum + a * b; }          // 2 + 12 = 14
     if (sum != 14) { return 0 - 1; }
 
-    var wide: (i32, i32, i32)[] = [(1, 2, 3), (4, 5, 6)];
+    let wide: (i32, i32, i32)[] = [(1, 2, 3), (4, 5, 6)];
     for (p, _, r) in wide { sum = sum + p + r; }     // 4 + 10 = 14
     if (sum != 28) { return 0 - 2; }
 
-    var deep: ((i32, i32), string)[] = [((2, 3), "xy")];
+    let deep: ((i32, i32), string)[] = [((2, 3), "xy")];
     for ((a, b), s) in deep { sum = sum + a * b + s.len(); }  // 6 + 2 = 8
     if (sum != 36) { return 0 - 3; }
 
@@ -44,22 +44,22 @@ function arrayForms(): i32 {
 }
 
 function mapForms(): i32 {
-    var m: Map[i32, i32] = map_new(8);
+    let m: Map[i32, i32] = map_new(8);
     m = m.insert(1, 10);
     m = m.insert(2, 20);
-    var sum: i32 = 0;
+    let sum: i32 = 0;
     for (k, v) in m { sum = sum + k + v; }           // 33
     if (sum != 33) { return 0 - 5; }
 
     // Insertion order, and a break that leaves the cursor walk early.
-    var first: i32 = 0;
+    let first: i32 = 0;
     for (k, v) in m {
         first = k;
         break;
     }
     if (first != 1) { return 0 - 6; }
 
-    var t: Map[i32, (i32, i32)] = map_new(4);
+    let t: Map[i32, (i32, i32)] = map_new(4);
     t = t.insert(7, (10, 100));
     for (k, (lo, hi)) in t { sum = sum + k + lo + hi; }  // 117
     if (sum != 150) { return 0 - 7; }
@@ -67,9 +67,9 @@ function mapForms(): i32 {
 }
 
 function main(): i32 {
-    var a: i32 = arrayForms();
+    let a: i32 = arrayForms();
     if (a != 46) { return 0 - a; }
-    var m: i32 = mapForms();
+    let m: i32 = mapForms();
     if (m != 150) { return 0 - m; }
     return 42;
 }
@@ -86,35 +86,35 @@ function apply(f: () => i32): i32 {
 }
 
 function main(): i32 {
-    var xs: (i32, i32)[] = [(1, 2), (3, 4)];
+    let xs: (i32, i32)[] = [(1, 2), (3, 4)];
 
-    var viaLambda = apply((): i32 => {
-        var s = 0;
+    let viaLambda = apply((): i32 => {
+        let s = 0;
         for (a, b) in xs { s = s + a * b; }
         return s;
     });
     if (viaLambda != 14) { return 1; }
 
-    var viaBlock: i32 = {
-        var s = 0;
+    let viaBlock: i32 = {
+        let s = 0;
         for (a, b) in xs { s = s + a + b; }
         s
     };
     if (viaBlock != 10) { return 2; }
 
-    var s2 = 0;
+    let s2 = 0;
     if (xs.len() == 2) for (a, b) in xs { s2 = s2 + a; }
     if (s2 != 4) { return 3; }
 
-    var opt: i32 = 1;
-    var s3 = 0;
+    let opt: i32 = 1;
+    let s3 = 0;
     match (opt) {
         1 => { for (a, b) in xs { s3 = s3 + b; } },
         _ => {},
     }
     if (s3 != 6) { return 4; }
 
-    var s4 = 0;
+    let s4 = 0;
     for (a, b) in xs {
         for (c, d) in xs { s4 = s4 + a * c + b * d; }
     }
@@ -160,8 +160,8 @@ function twice[T](x: T): (T, T) {
 }
 
 function pairsOf(n: i32, f: (i32) => i32): (i32, i32)[] {
-    var out: (i32, i32)[] = [];
-    var i = 0;
+    let out: (i32, i32)[] = [];
+    let i = 0;
     while (i < n) {
         out = out.append((i, f(i)));
         i = i + 1;
@@ -170,8 +170,8 @@ function pairsOf(n: i32, f: (i32) => i32): (i32, i32)[] {
 }
 
 function makeMap(n: i32): Map[i32, i32] {
-    var m: Map[i32, i32] = map_new(8);
-    var i = 0;
+    let m: Map[i32, i32] = map_new(8);
+    let i = 0;
     while (i < n) {
         m = m.insert(i, i * 3);
         i = i + 1;
@@ -180,10 +180,10 @@ function makeMap(n: i32): Map[i32, i32] {
 }
 
 function main(): i32 {
-    var bump = 5;
-    var total = 0;
+    let bump = 5;
+    let total = 0;
 
-    var (l, r) = twice(7);
+    let (l, r) = twice(7);
     total = total + l + r;
 
     for (a, b) in pairsOf(3, (x: i32) => x + bump) {

@@ -47,7 +47,7 @@ func TestSelfHostWasmArityGate(t *testing.T) {
 		{"too-few", "function f(a: i32, b: i32): i32 { return a + b; } function main(): i32 { return f(1); }"},
 		{"too-many", "function g(a: i32): i32 { return a; } function main(): i32 { return g(1, 2); }"},
 		// Nested inside an expression and a while body.
-		{"nested", "function h(a: i32, b: i32): i32 { return a * b; } function main(): i32 { var s = 0; while (s < 3) { s = s + h(1); } return s; }"},
+		{"nested", "function h(a: i32, b: i32): i32 { return a * b; } function main(): i32 { let s = 0; while (s < 3) { s = s + h(1); } return s; }"},
 	}
 	accepts := []struct {
 		name string

@@ -48,8 +48,8 @@ pub function problem_str(p: Problem): string {
 // format_problems renders problems for a failure message, capped so a
 // systemic break reports a readable sample rather than thousands of lines.
 pub function format_problems(ps: Problem[], max: i32): string {
-  var out: string = "";
-  var i: i32 = 0;
+  let out: string = "";
+  let i: i32 = 0;
   while (i < ps.len()) {
     if (i == max) {
       return out + "\n    ... and " + util.i32_to_string(ps.len() - max) + " more";
@@ -105,22 +105,22 @@ function name_index_buckets(): i32 {
 // every chain in ascending row order without a per-bucket tail — and that is
 // what makes index_row's forward walk answer with the FIRST declaration.
 function chain_names(names: string[], params: i32[]): NameIndex {
-  var nb: i32 = name_index_buckets();
-  var head: i32[] = [];
-  var b: i32 = 0;
+  let nb: i32 = name_index_buckets();
+  let head: i32[] = [];
+  let b: i32 = 0;
   while (b < nb) {
     head = head.append(0 - 1);
     b = b + 1;
   }
-  var next: i32[] = [];
-  var j: i32 = 0;
+  let next: i32[] = [];
+  let j: i32 = 0;
   while (j < names.len()) {
     next = next.append(0 - 1);
     j = j + 1;
   }
-  var k: i32 = names.len() - 1;
+  let k: i32 = names.len() - 1;
   while (k >= 0) {
-    var bk: i32 = util.hash_bucket(names[k], nb);
+    let bk: i32 = util.hash_bucket(names[k], nb);
     next = next.with(k, head[bk]);
     head = head.with(bk, k);
     k = k - 1;
@@ -132,7 +132,7 @@ function chain_names(names: string[], params: i32[]): NameIndex {
 // rather than the constant, so a probe cannot pick a different bucket count
 // than the build did.
 pub function index_row(ix: NameIndex, name: string): i32 {
-  var i: i32 = ix.head[util.hash_bucket(name, ix.head.len())];
+  let i: i32 = ix.head[util.hash_bucket(name, ix.head.len())];
   while (i >= 0) {
     if (ix.names[i] == name) {
       return i;
@@ -146,8 +146,8 @@ pub function index_row(ix: NameIndex, name: string): i32 {
 // index_has answers and index_params declines. A name already present keeps its
 // first entry, so a duplicated name resolves to its first declaration.
 pub function name_index(names: string[]): NameIndex {
-  var params: i32[] = [];
-  var i: i32 = 0;
+  let params: i32[] = [];
+  let i: i32 = 0;
   while (i < names.len()) {
     params = params.append(0 - 1);
     i = i + 1;
@@ -159,9 +159,9 @@ pub function name_index(names: string[]): NameIndex {
 // declaration wins, as in name_index: two entries can disagree about arity, and
 // the call check reads whichever the index kept.
 pub function sig_index(sigs: FnSig[]): NameIndex {
-  var names: string[] = [];
-  var params: i32[] = [];
-  var i: i32 = 0;
+  let names: string[] = [];
+  let params: i32[] = [];
+  let i: i32 = 0;
   while (i < sigs.len()) {
     names = names.append(sigs[i].name);
     params = params.append(sigs[i].n_params);
@@ -179,7 +179,7 @@ pub function index_has(ix: NameIndex, name: string): boolean {
 // index does not carry it — either the name is absent or it was indexed for
 // membership only.
 pub function index_params(ix: NameIndex, name: string): i32 {
-  var r: i32 = index_row(ix, name);
+  let r: i32 = index_row(ix, name);
   if (r < 0) {
     return 0 - 1;
   }
@@ -200,34 +200,34 @@ pub function index_params(ix: NameIndex, name: string): i32 {
 //
 // `sigs` may be empty, which skips the call-arity check.
 pub function verify_fn(fn_name: string, ops: ir.Op[], n_params: i32, n_locals: i32, sigs: NameIndex): Problem[] {
-  var out: Problem[] = [];
+  let out: Problem[] = [];
 
-  var k_load: i32 = ir.kind_id("load_local");
-  var k_store: i32 = ir.kind_id("store_local");
-  var k_tee: i32 = ir.kind_id("tee_local");
-  var k_block: i32 = ir.kind_id("block");
-  var k_loop: i32 = ir.kind_id("loop");
-  var k_if: i32 = ir.kind_id("if");
-  var k_else: i32 = ir.kind_id("else");
-  var k_end: i32 = ir.kind_id("end");
-  var k_br: i32 = ir.kind_id("br");
-  var k_brif: i32 = ir.kind_id("brif");
-  var k_calld: i32 = ir.kind_id("call_direct");
-  var k_calli: i32 = ir.kind_id("call_indirect");
-  var k_callc: i32 = ir.kind_id("call_closure_direct");
+  let k_load: i32 = ir.kind_id("load_local");
+  let k_store: i32 = ir.kind_id("store_local");
+  let k_tee: i32 = ir.kind_id("tee_local");
+  let k_block: i32 = ir.kind_id("block");
+  let k_loop: i32 = ir.kind_id("loop");
+  let k_if: i32 = ir.kind_id("if");
+  let k_else: i32 = ir.kind_id("else");
+  let k_end: i32 = ir.kind_id("end");
+  let k_br: i32 = ir.kind_id("br");
+  let k_brif: i32 = ir.kind_id("brif");
+  let k_calld: i32 = ir.kind_id("call_direct");
+  let k_calli: i32 = ir.kind_id("call_indirect");
+  let k_callc: i32 = ir.kind_id("call_closure_direct");
 
   // The open-scope stack, as parallel arrays with an explicit depth so a
   // pop is O(1) — an array-slice pop would make the walk quadratic on the
   // compiler's own long functions.
-  var st_kind: i32[] = [];
-  var st_at: i32[] = [];
-  var st_else: i32[] = [];
-  var depth: i32 = 0;
+  let st_kind: i32[] = [];
+  let st_at: i32[] = [];
+  let st_else: i32[] = [];
+  let depth: i32 = 0;
 
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < ops.len()) {
-    var op: ir.Op = ops[i];
-    var kt: i32 = op.kind_tag;
+    let op: ir.Op = ops[i];
+    let kt: i32 = op.kind_tag;
 
     if (kt == k_load || kt == k_store || kt == k_tee) {
       if (op.i32_imm < 0 || op.i32_imm >= n_locals) {
@@ -299,7 +299,7 @@ pub function verify_fn(fn_name: string, ops: ir.Op[], n_params: i32, n_locals: i
       } else if (op.str.len() == 0) {
         out = out.append(Problem { fn_name: fn_name, op: i, kind: "call_direct", msg: "call with no callee name" });
       } else {
-        var np: i32 = index_params(sigs, op.str);
+        let np: i32 = index_params(sigs, op.str);
         // A closure target also receives its environment pointer, so
         // the callee may declare one more parameter than the call
         // site pushes.
@@ -322,7 +322,7 @@ pub function verify_fn(fn_name: string, ops: ir.Op[], n_params: i32, n_locals: i
     i = i + 1;
   }
 
-  var d: i32 = 0;
+  let d: i32 = 0;
   while (d < depth) {
     out = out.append(Problem {
       fn_name: fn_name, op: st_at[d], kind: ir.kind_name(st_kind[d]),

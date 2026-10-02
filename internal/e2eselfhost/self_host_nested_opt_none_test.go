@@ -4,7 +4,7 @@ import "testing"
 
 // --- A `Some(None)` payload keeps the binding's declared type (#7217) -------
 //
-//	var o: Option[Option[i32]] = Some(None);
+//	let o: Option[Option[i32]] = Some(None);
 //
 // The `Some(inner)` arm binds the inner Option, so a nested `match (inner)`
 // must see an Option scrutinee, not the `Option[i32]` a bare `None` argument
@@ -21,7 +21,7 @@ type nestedOptNoneCase struct {
 	wantFrees int // when non-zero, assert an exact free count
 }
 
-const nestedOptNoneMain = "\nfunction main(): i32 { var t: i32 = 0; var i: i32 = 0; " +
+const nestedOptNoneMain = "\nfunction main(): i32 { let t: i32 = 0; let i: i32 = 0; " +
 	"while (i < 200) { t = t + round(i); i = i + 1; } " +
 	"if (__rc_underflow_count() != 0) { return 99; } return t % 83; }"
 
@@ -31,7 +31,7 @@ func nestedOptNoneCases() []nestedOptNoneCase {
 			// THE REPRO: a nested match on the `Some(None)` payload.
 			name: "nested_none",
 			src: `function round(i: i32): i32 {
-    var o: Option[Option[i32]] = Some(None);
+    let o: Option[Option[i32]] = Some(None);
     match (o) {
         Some(inner) => { match (inner) { Some(v) => { return v; }, None => { return 3; } } },
         None => { return 2; }
@@ -44,7 +44,7 @@ func nestedOptNoneCases() []nestedOptNoneCase {
 			// The nested-Some neighbour.
 			name: "nested_some",
 			src: `function round(i: i32): i32 {
-    var o: Option[Option[i32]] = Some(Some(i));
+    let o: Option[Option[i32]] = Some(Some(i));
     match (o) {
         Some(inner) => { match (inner) { Some(v) => { return v; }, None => { return 3; } } },
         None => { return 2; }
@@ -57,7 +57,7 @@ func nestedOptNoneCases() []nestedOptNoneCase {
 			// A nested RESULT payload.
 			name: "nested_result",
 			src: `function round(i: i32): i32 {
-    var o: Option[Result[i32, i32]] = Some(Ok(i));
+    let o: Option[Result[i32, i32]] = Some(Ok(i));
     match (o) {
         Some(inner) => { match (inner) { Ok(v) => { return v; }, Err(e) => { return 3; } } },
         None => { return 2; }
@@ -70,8 +70,8 @@ func nestedOptNoneCases() []nestedOptNoneCase {
 			// The same `None` routed through an annotated local.
 			name: "via_local",
 			src: `function round(i: i32): i32 {
-    var inner0: Option[i32] = None;
-    var o: Option[Option[i32]] = Some(inner0);
+    let inner0: Option[i32] = None;
+    let o: Option[Option[i32]] = Some(inner0);
     match (o) {
         Some(inner) => { match (inner) { Some(v) => { return v; }, None => { return 3; } } },
         None => { return 2; }
@@ -86,7 +86,7 @@ func nestedOptNoneCases() []nestedOptNoneCase {
 			// unread.
 			name: "unannotated_none",
 			src: `function round(i: i32): i32 {
-    var o = Some(None);
+    let o = Some(None);
     match (o) { Some(inner) => { return 7; }, None => { return 2; } }
     return 0;
 }` + nestedOptNoneMain,
@@ -96,7 +96,7 @@ func nestedOptNoneCases() []nestedOptNoneCase {
 			// The annotated single-level match.
 			name: "single_level",
 			src: `function round(i: i32): i32 {
-    var o: Option[Option[i32]] = Some(None);
+    let o: Option[Option[i32]] = Some(None);
     match (o) { Some(inner) => { return 7; }, None => { return 2; } }
     return 0;
 }` + nestedOptNoneMain,
@@ -108,9 +108,9 @@ func nestedOptNoneCases() []nestedOptNoneCase {
 			// pinned exactly, so a dropped reclaim or an over-release shows.
 			name: "array_payload_escapes",
 			src: `function round(i: i32): i32 {
-    var held: i32[] = [];
-    var acc: i32 = 0;
-    var o: Option[i32[]] = Some([i, i + 1]);
+    let held: i32[] = [];
+    let acc: i32 = 0;
+    let o: Option[i32[]] = Some([i, i + 1]);
     if (i >= 0) {
         match (o) { Some(a) => { held = a; acc = a[0]; }, None => {} }
     }
@@ -122,7 +122,7 @@ func nestedOptNoneCases() []nestedOptNoneCase {
 			// A STRING payload.
 			name: "nested_string",
 			src: `function round(i: i32): i32 {
-    var o: Option[Option[string]] = Some(None);
+    let o: Option[Option[string]] = Some(None);
     match (o) {
         Some(inner) => { match (inner) { Some(v) => { return v.len(); }, None => { return 3; } } },
         None => { return 2; }
@@ -135,7 +135,7 @@ func nestedOptNoneCases() []nestedOptNoneCase {
 			// A REASSIGNED Option local.
 			name: "reassigned",
 			src: `function round(i: i32): i32 {
-    var o: Option[Option[i32]] = Some(None);
+    let o: Option[Option[i32]] = Some(None);
     if (i % 2 == 0) { o = Some(Some(i)); }
     match (o) {
         Some(inner) => { match (inner) { Some(v) => { return v; }, None => { return 3; } } },

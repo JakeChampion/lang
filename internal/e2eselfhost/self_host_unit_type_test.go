@@ -25,10 +25,10 @@ import (
 const unitRuntimeProgram = `function sink(u: ()): i32 { return 7; }
 function fallible(): Result[(), i32] { return Ok(()); }
 function main(): i32 {
-    var u: () = ();
-    var v = ();
-    var t: ((), i32) = ((), 5);
-    var n: i32 = 0;
+    let u: () = ();
+    let v = ();
+    let t: ((), i32) = ((), 5);
+    let n: i32 = 0;
     match (fallible()) { Ok(_) => { n = n + 1; }, Err(_) => { n = n + 10; } }
     return n + sink(u) + sink(v) + sink(t.0) + t.1;
 }

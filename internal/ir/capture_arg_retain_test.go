@@ -14,12 +14,12 @@ func TestCaptureRefArgToOwnedParamRetained(t *testing.T) {
 struct Txn { headers: string[] }
 struct Out { ctx: Ctx, txn: Txn, n: i32 }
 function run_sub(ctx: Ctx, t: Txn, name: string): Out {
-    var hs: string[] = t.headers.append(name);
+    let hs: string[] = t.headers.append(name);
     return Out { ctx: ctx, txn: Txn { headers: hs }, n: hs.len() };
 }
 function driver(decls: string[]): (string, Txn) => Out {
-    var ctx: Ctx = Ctx { decls: decls };
-    var runner: (string, Txn) => Out = (name: string, t: Txn): Out => { return run_sub(ctx, t, name); };
+    let ctx: Ctx = Ctx { decls: decls };
+    let runner: (string, Txn) => Out = (name: string, t: Txn): Out => { return run_sub(ctx, t, name); };
     return runner;
 }`, 8)
 	var lambda string

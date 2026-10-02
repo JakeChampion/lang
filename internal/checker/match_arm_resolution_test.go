@@ -31,7 +31,7 @@ function a(x: A): i32 {
 }
 
 function b(y: B): i32 {
-  var v: i32 = match (y) {
+  let v: i32 = match (y) {
     Blue => 10,
     Red => 20,
   };

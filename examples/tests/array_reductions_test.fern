@@ -16,17 +16,17 @@ import "std/test";
 // / `avg_f64` (no generic equivalent) stay in std/array.
 
 function test_sum_i64(): test.TestOutcome {
-  var arr: i64[] = [1 as i64, 2 as i64, 3 as i64, 4 as i64];
+  let arr: i64[] = [1 as i64, 2 as i64, 3 as i64, 4 as i64];
   return test.assert_eq(num.sum(arr), 10 as i64);
 }
 
 function test_sum_i64_empty(): test.TestOutcome {
-  var arr: i64[] = [];
+  let arr: i64[] = [];
   return test.assert_eq(num.sum(arr), 0 as i64);
 }
 
 function test_max_i64(): test.TestOutcome {
-  var arr: i64[] = [3 as i64, 1 as i64, 4 as i64, 1 as i64, 5 as i64];
+  let arr: i64[] = [3 as i64, 1 as i64, 4 as i64, 1 as i64, 5 as i64];
   match (cmp.max_of(arr)) {
     Some(m) => {
       return test.assert_eq(m, 5 as i64);
@@ -39,7 +39,7 @@ function test_max_i64(): test.TestOutcome {
 }
 
 function test_min_i64(): test.TestOutcome {
-  var arr: i64[] = [3 as i64, 1 as i64, 4 as i64];
+  let arr: i64[] = [3 as i64, 1 as i64, 4 as i64];
   match (cmp.min_of(arr)) {
     Some(m) => {
       return test.assert_eq(m, 1 as i64);
@@ -52,7 +52,7 @@ function test_min_i64(): test.TestOutcome {
 }
 
 function test_max_i64_empty(): test.TestOutcome {
-  var arr: i64[] = [];
+  let arr: i64[] = [];
   match (cmp.max_of(arr)) {
     Some(_) => {
       return test.fail("expected None on empty");
@@ -65,7 +65,7 @@ function test_max_i64_empty(): test.TestOutcome {
 }
 
 function test_avg_i64(): test.TestOutcome {
-  var arr: i64[] = [2 as i64, 4 as i64, 6 as i64];
+  let arr: i64[] = [2 as i64, 4 as i64, 6 as i64];
   match (array.avg_i64(arr)) {
     Some(m) => {
       return test.assert_eq(m, 4 as i64);
@@ -78,7 +78,7 @@ function test_avg_i64(): test.TestOutcome {
 }
 
 function test_sum_u32(): test.TestOutcome {
-  var arr: u32[] = [10u32, 20u32, 30u32];
+  let arr: u32[] = [10u32, 20u32, 30u32];
   return test.assert_eq(num.sum(arr), 60u32);
 }
 
@@ -87,7 +87,7 @@ function test_max_u64_unsigned(): test.TestOutcome {
   // with unsigned semantics. If sign-extension contaminated
   // the compare, 18446744073709551615u64 would look smaller
   // than 1u64 (because as signed it's -1).
-  var arr: u64[] = [18446744073709551615u64, 1u64, 1000u64];
+  let arr: u64[] = [18446744073709551615u64, 1u64, 1000u64];
   match (cmp.max_of(arr)) {
     Some(m) => {
       return test.assert_eq(m, 18446744073709551615u64);
@@ -100,12 +100,12 @@ function test_max_u64_unsigned(): test.TestOutcome {
 }
 
 function test_sum_f64(): test.TestOutcome {
-  var arr: f64[] = [1.5, 2.5, 3.0];
+  let arr: f64[] = [1.5, 2.5, 3.0];
   return test.assert_eq_f64_near(num.sum(arr), 7.0, 0.0);
 }
 
 function test_max_f64(): test.TestOutcome {
-  var arr: f64[] = [1.5, 3.14, 2.5];
+  let arr: f64[] = [1.5, 3.14, 2.5];
   match (cmp.max_of(arr)) {
     Some(m) => {
       return test.assert_eq_f64_near(m, 3.14, 0.0);
@@ -119,7 +119,7 @@ function test_max_f64(): test.TestOutcome {
 
 function test_avg_f64(): test.TestOutcome {
   // Mean of [1.0, 2.0, 3.0, 4.0] = 2.5
-  var arr: f64[] = [1.0, 2.0, 3.0, 4.0];
+  let arr: f64[] = [1.0, 2.0, 3.0, 4.0];
   match (array.avg_f64(arr)) {
     Some(m) => {
       return test.assert_eq_f64_near(m, 2.5, 0.0001);
@@ -132,7 +132,7 @@ function test_avg_f64(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("array reductions");
+  let r: test.TestRunner = test.test_new("array reductions");
   r = r.it("sum_i64", test_sum_i64);
   r = r.it("sum_i64 empty returns 0", test_sum_i64_empty);
   r = r.it("max_i64", test_max_i64);

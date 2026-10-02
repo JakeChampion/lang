@@ -33,78 +33,78 @@ func TestDeferInBlockExpr(t *testing.T) {
 		// the cell reads 1 at the call site: 5*10 + 1. Firing at main's exit
 		// instead would leave 50.
 		{"arrow_lambda_block_body", `function main(): i32 {
-    var a: Cell[i32] = cell_new(0);
-    var f = (n: i32): i32 => { defer a.set(a.get() + 1); return n; };
-    var inside: i32 = f(5);
+    let a: Cell[i32] = cell_new(0);
+    let f = (n: i32): i32 => { defer a.set(a.get() + 1); return n; };
+    let inside: i32 = f(5);
     return inside * 10 + a.get();
 }`, 51},
 		// The `(…) => { … }` spelling of the same lambda, whose body is
 		// a plain Block rather than a block expression.
 		{"function_form_lambda", `function main(): i32 {
-    var a: Cell[i32] = cell_new(0);
-    var f = (n: i32): i32 => { defer a.set(a.get() + 1); return n; };
-    var inside: i32 = f(5);
+    let a: Cell[i32] = cell_new(0);
+    let f = (n: i32): i32 => { defer a.set(a.get() + 1); return n; };
+    let inside: i32 = f(5);
     return inside * 10 + a.get();
 }`, 51},
 		// A defer under an `if` inside the lambda: still the lambda's exit,
 		// not the end of the `if` body. 1 + 0 read inside, then 7.
 		{"if_body_inside_lambda", `function main(): i32 {
-    var a: Cell[i32] = cell_new(0);
-    var f = (n: i32): i32 => {
+    let a: Cell[i32] = cell_new(0);
+    let f = (n: i32): i32 => {
         if (n > 0) { defer a.set(a.get() + 7); }
         return n + a.get();
     };
-    var inside: i32 = f(1);
+    let inside: i32 = f(1);
     return inside * 10 + a.get();
 }`, 17},
 		// A match ARM body in value position is a block expression too, so the
 		// arm's defer is a defer inside a block inside a block.
 		{"match_arm_inside_lambda", `function main(): i32 {
-    var a: Cell[i32] = cell_new(0);
-    var f = (n: i32): i32 => {
-        var r: i32 = match (n) {
+    let a: Cell[i32] = cell_new(0);
+    let f = (n: i32): i32 => {
+        let r: i32 = match (n) {
             1 => { defer a.set(a.get() + 4); 10 },
             _ => 20,
         };
         return r + a.get();
     };
-    var inside: i32 = f(1);
+    let inside: i32 = f(1);
     return inside * 10 + a.get();
 }`, 104},
 		// A defer in a LOOP inside a lambda composes the two rules: per
 		// iteration (#6851), and inside the lambda. Three runs, all finished
 		// before the lambda returns.
 		{"while_loop_inside_lambda", `function main(): i32 {
-    var a: Cell[i32] = cell_new(0);
-    var f = (n: i32): i32 => {
-        var i: i32 = 0;
+    let a: Cell[i32] = cell_new(0);
+    let f = (n: i32): i32 => {
+        let i: i32 = 0;
         while (i < 3) {
             defer a.set(a.get() + 1);
             i = i + 1;
         }
         return a.get();
     };
-    var inside: i32 = f(0);
+    let inside: i32 = f(0);
     return inside * 10 + a.get();
 }`, 33},
 		// Each of those runs reads ITS iteration's local: 0 + 3 + 6. One run
 		// at the lambda's exit would add 6 alone.
 		{"loop_inside_lambda_reads_own_local", `function main(): i32 {
-    var a: Cell[i32] = cell_new(0);
-    var f = (n: i32): i32 => {
+    let a: Cell[i32] = cell_new(0);
+    let f = (n: i32): i32 => {
         for i in 0..3 {
-            var k: i32 = i * 3;
+            let k: i32 = i * 3;
             defer a.set(a.get() + k);
         }
         return a.get();
     };
-    var inside: i32 = f(0);
+    let inside: i32 = f(0);
     return inside * 10 + a.get();
 }`, 99},
 		// An errdefer in a lambda returning Result: fires on the Err exit.
 		{"errdefer_in_lambda_err", `function main(): i32 {
-    var a: Cell[i32] = cell_new(0);
-    var f = (x: i32): Result[i32, i32] => {
+    let a: Cell[i32] = cell_new(0);
+    let f = (x: i32): Result[i32, i32] => {
         errdefer a.set(9);
         if (x < 0) { return Err(1); }
         return Ok(x);
@@ -114,8 +114,8 @@ func TestDeferInBlockExpr(t *testing.T) {
 }`, 9},
 		// … and not on the Ok exit.
 		{"errdefer_in_lambda_ok", `function main(): i32 {
-    var a: Cell[i32] = cell_new(0);
-    var f = (x: i32): Result[i32, i32] => {
+    let a: Cell[i32] = cell_new(0);
+    let f = (x: i32): Result[i32, i32] => {
         errdefer a.set(9);
         if (x < 0) { return Err(1); }
         return Ok(x);
@@ -126,36 +126,36 @@ func TestDeferInBlockExpr(t *testing.T) {
 		// Each lambda owns its defers: the inner one runs at the inner's exit
 		// (a = 1), the outer's at the outer's (a = 12).
 		{"nested_lambdas_own_their_defers", `function main(): i32 {
-    var a: Cell[i32] = cell_new(0);
-    var outer = (n: i32): i32 => {
-        var inner = (m: i32): i32 => { defer a.set(a.get() * 10 + 1); return m; };
-        var v: i32 = inner(n);
+    let a: Cell[i32] = cell_new(0);
+    let outer = (n: i32): i32 => {
+        let inner = (m: i32): i32 => { defer a.set(a.get() * 10 + 1); return m; };
+        let v: i32 = inner(n);
         defer a.set(a.get() * 10 + 2);
         return v;
     };
-    var r: i32 = outer(7);
+    let r: i32 = outer(7);
     return r * 10 + a.get();
 }`, 82},
 		// No lambda at all: a defer in a plain value-position block is scoped
 		// to the enclosing FUNCTION. It has not run when g reads the cell (30)
 		// and has when main does (+1).
 		{"value_block_defer_is_function_scoped", `function g(a: Cell[i32]): i32 {
-    var x: i32 = { defer a.set(a.get() + 1); 3 };
+    let x: i32 = { defer a.set(a.get() + 1); 3 };
     return x * 10 + a.get();
 }
 function main(): i32 {
-    var a: Cell[i32] = cell_new(0);
-    var inside: i32 = g(a);
+    let a: Cell[i32] = cell_new(0);
+    let inside: i32 = g(a);
     return inside + a.get();
 }`, 31},
 		// A loop nested inside a value block keeps the per-iteration rule: the
 		// three runs are done by the time the block yields its value.
 		{"loop_inside_value_block", `function g(a: Cell[i32]): i32 {
-    var x: i32 = { var i: i32 = 0; while (i < 3) { defer a.set(a.get() + 1); i = i + 1; } 4 };
+    let x: i32 = { let i: i32 = 0; while (i < 3) { defer a.set(a.get() + 1); i = i + 1; } 4 };
     return x * 10 + a.get();
 }
 function main(): i32 {
-    var a: Cell[i32] = cell_new(0);
+    let a: Cell[i32] = cell_new(0);
     return g(a);
 }`, 43},
 	}

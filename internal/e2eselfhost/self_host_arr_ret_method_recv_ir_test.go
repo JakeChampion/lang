@@ -38,20 +38,20 @@ var arrRetMethodRecvCases = []struct {
 	exit int
 }{
 	// The #7627 repro: the shape that emitted `Inner.len`.
-	{"struct-arr-method-len", structArrPrelude + `function main(): i32 { var h: Holder = mkh(); return h.get().len(); }`, 2},
-	{"struct-arr-method-index-field", structArrPrelude + `function main(): i32 { var h: Holder = mkh(); return h.get()[0].k; }`, 3},
-	{"struct-arr-method-index-nested-len", structArrPrelude + `function main(): i32 { var h: Holder = mkh(); return h.get()[1].ys.len(); }`, 1},
-	{"struct-arr-method-foreach", structArrPrelude + `function main(): i32 { var h: Holder = mkh(); var t: i32 = 0; for x in h.get() { t = t + x.k; } return t; }`, 7},
+	{"struct-arr-method-len", structArrPrelude + `function main(): i32 { let h: Holder = mkh(); return h.get().len(); }`, 2},
+	{"struct-arr-method-index-field", structArrPrelude + `function main(): i32 { let h: Holder = mkh(); return h.get()[0].k; }`, 3},
+	{"struct-arr-method-index-nested-len", structArrPrelude + `function main(): i32 { let h: Holder = mkh(); return h.get()[1].ys.len(); }`, 1},
+	{"struct-arr-method-foreach", structArrPrelude + `function main(): i32 { let h: Holder = mkh(); let t: i32 = 0; for x in h.get() { t = t + x.k; } return t; }`, 7},
 	// Binding to an annotated local first was the documented workaround, and
 	// it went down a different path — it must keep working.
-	{"struct-arr-method-bound-first", structArrPrelude + `function main(): i32 { var h: Holder = mkh(); var tmp: Inner[] = h.get(); return tmp.len(); }`, 2},
+	{"struct-arr-method-bound-first", structArrPrelude + `function main(): i32 { let h: Holder = mkh(); let tmp: Inner[] = h.get(); return tmp.len(); }`, 2},
 
 	// Sibling element kinds: clean before the fix, and still clean after.
-	{"enum-arr-method-len", `enum Col { R, G } struct EH { es: Col[] } function (h: EH) get(): Col[] { return h.es; } function main(): i32 { var h: EH = EH { es: [Col.R, Col.G] }; return h.get().len(); }`, 2},
-	{"strarr-method-len", strArrPrelude + `function main(): i32 { var h: SH = SH { ss: ["a", "b", "c"] }; return h.get().len(); }`, 3},
-	{"strarr-method-elem-len", strArrPrelude + `function main(): i32 { var h: SH = SH { ss: ["abcd", "b"] }; return h.get()[0].len(); }`, 4},
-	{"i32arr-method-len", i32ArrPrelude + `function main(): i32 { var h: IH = IH { xs: [7, 8] }; return h.get().len(); }`, 2},
-	{"i32arr-method-index", i32ArrPrelude + `function main(): i32 { var h: IH = IH { xs: [7, 8] }; return h.get()[1]; }`, 8},
+	{"enum-arr-method-len", `enum Col { R, G } struct EH { es: Col[] } function (h: EH) get(): Col[] { return h.es; } function main(): i32 { let h: EH = EH { es: [Col.R, Col.G] }; return h.get().len(); }`, 2},
+	{"strarr-method-len", strArrPrelude + `function main(): i32 { let h: SH = SH { ss: ["a", "b", "c"] }; return h.get().len(); }`, 3},
+	{"strarr-method-elem-len", strArrPrelude + `function main(): i32 { let h: SH = SH { ss: ["abcd", "b"] }; return h.get()[0].len(); }`, 4},
+	{"i32arr-method-len", i32ArrPrelude + `function main(): i32 { let h: IH = IH { xs: [7, 8] }; return h.get().len(); }`, 2},
+	{"i32arr-method-index", i32ArrPrelude + `function main(): i32 { let h: IH = IH { xs: [7, 8] }; return h.get()[1]; }`, 8},
 
 	// The free-FUNCTION limb is the one that always worked (arr_ret_fns keyed
 	// by bare name); it is the control the method limb was modelled on.
@@ -64,10 +64,10 @@ var arrRetMethodRecvCases = []struct {
 	// shows up as an underflow, not as a bad exit code. (The unbound result
 	// still strands its retain — that is #7259, a leak on this same shape and
 	// on the free-fn limb alike, and it is not what these pin.)
-	{"struct-arr-loop-no-underflow", structArrPrelude + `function main(): i32 { var i: i32 = 0; while (i < 30) { var h: Holder = mkh(); if (h.get().len() != 2) { return 90; } i = i + 1; } return __rc_underflow_count(); }`, 0},
-	{"struct-arr-index-loop-no-underflow", structArrPrelude + `function main(): i32 { var i: i32 = 0; while (i < 30) { var h: Holder = mkh(); if (h.get()[1].k != 4) { return 90; } i = i + 1; } return __rc_underflow_count(); }`, 0},
-	{"struct-arr-foreach-loop-no-underflow", structArrPrelude + `function main(): i32 { var i: i32 = 0; while (i < 30) { var h: Holder = mkh(); var t: i32 = 0; for x in h.get() { t = t + x.k; } if (t != 7) { return 90; } i = i + 1; } return __rc_underflow_count(); }`, 0},
-	{"strarr-loop-no-underflow", strArrPrelude + `function main(): i32 { var i: i32 = 0; while (i < 30) { var h: SH = SH { ss: ["a", "b"] }; if (h.get().len() != 2) { return 90; } i = i + 1; } return __rc_underflow_count(); }`, 0},
+	{"struct-arr-loop-no-underflow", structArrPrelude + `function main(): i32 { let i: i32 = 0; while (i < 30) { let h: Holder = mkh(); if (h.get().len() != 2) { return 90; } i = i + 1; } return __rc_underflow_count(); }`, 0},
+	{"struct-arr-index-loop-no-underflow", structArrPrelude + `function main(): i32 { let i: i32 = 0; while (i < 30) { let h: Holder = mkh(); if (h.get()[1].k != 4) { return 90; } i = i + 1; } return __rc_underflow_count(); }`, 0},
+	{"struct-arr-foreach-loop-no-underflow", structArrPrelude + `function main(): i32 { let i: i32 = 0; while (i < 30) { let h: Holder = mkh(); let t: i32 = 0; for x in h.get() { t = t + x.k; } if (t != 7) { return 90; } i = i + 1; } return __rc_underflow_count(); }`, 0},
+	{"strarr-loop-no-underflow", strArrPrelude + `function main(): i32 { let i: i32 = 0; while (i < 30) { let h: SH = SH { ss: ["a", "b"] }; if (h.get().len() != 2) { return 90; } i = i + 1; } return __rc_underflow_count(); }`, 0},
 }
 
 const (

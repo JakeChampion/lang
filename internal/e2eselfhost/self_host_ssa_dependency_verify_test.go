@@ -102,9 +102,9 @@ func dependencyVerifyCases() []dependencyVerifyCase {
 		{"wrong-phi-edge", "phi-edges", "deps = deps.with(2, [3]);", "dependency unavailable at use"},
 		{"branch-root-at-join", "phi-edges", "deps = deps.with(5, [1]);", "dependency unavailable at use"},
 		{"forward-local-root", "nested-projection", "deps = deps.with(0, [1]); deps = deps.with(1, []); deps = deps.with(2, [1]);", "dependency unavailable at use"},
-		{"duplicate-definition", "nested-projection", "var b = f.blocks[0]; b = ssa.SBlock { ...b, insts: b.insts.append(b.insts[0]) }; f = ssa.SFunc { ...f, blocks: f.blocks.with(0, b) };", "duplicate value definition"},
-		{"undefined-operand", "nested-projection", "var b = f.blocks[0]; b = ssa.SBlock { ...b, insts: [b.insts[1], b.insts[2]] }; f = ssa.SFunc { ...f, blocks: f.blocks.with(0, b) };", "undefined value"},
-		{"phi-after-use", "phi-edges", "var b = f.blocks[3]; var ins = ssa.SInst { kind_tag: 1, result: 0 - 1, args: [], imm: 0, str: \"\" }; b = ssa.SBlock { ...b, insts: [ins, b.insts[0]] }; f = ssa.SFunc { ...f, blocks: f.blocks.with(3, b) };", "invalid phi definition"},
+		{"duplicate-definition", "nested-projection", "let b = f.blocks[0]; b = ssa.SBlock { ...b, insts: b.insts.append(b.insts[0]) }; f = ssa.SFunc { ...f, blocks: f.blocks.with(0, b) };", "duplicate value definition"},
+		{"undefined-operand", "nested-projection", "let b = f.blocks[0]; b = ssa.SBlock { ...b, insts: [b.insts[1], b.insts[2]] }; f = ssa.SFunc { ...f, blocks: f.blocks.with(0, b) };", "undefined value"},
+		{"phi-after-use", "phi-edges", "let b = f.blocks[3]; let ins = ssa.SInst { kind_tag: 1, result: 0 - 1, args: [], imm: 0, str: \"\" }; b = ssa.SBlock { ...b, insts: [ins, b.insts[0]] }; f = ssa.SFunc { ...f, blocks: f.blocks.with(3, b) };", "invalid phi definition"},
 	}
 }
 
@@ -112,14 +112,14 @@ func dependencyVerifySource(t *testing.T, tc dependencyVerifyCase) string {
 	t.Helper()
 	source, _ := lifetimeFernFixture(t, selfHostLifetimeFixtures()[tc.graph])
 	source = strings.Replace(source, "import \"./ssalive\";", "import \"./ssalive\";\nimport \"./ssadeps\";", 1)
-	start := strings.Index(source, "var before =")
+	start := strings.Index(source, "let before =")
 	if start < 0 {
 		t.Fatal("fixture has no execution boundary")
 	}
 	return source[:start] + tc.change + `
-var before = ssa.print_func(f);
-var checked = ssadeps.analyze(f, deps);
-var err = checked.why;
+let before = ssa.print_func(f);
+let checked = ssadeps.analyze(f, deps);
+let err = checked.why;
 if (checked.ok != (err == "")) { return 3; }
 if (!checked.ok && (checked.live_in.len() != 0 || checked.live_out.len() != 0)) { return 4; }
 if (ssa.print_func(f) != before) { return 2; }

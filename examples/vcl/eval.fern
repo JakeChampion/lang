@@ -82,7 +82,7 @@ function xerr(t: runtime.Txn, msg: string): ExecOut {
 
 // ------------------------------------------------------------- lookups
 pub function find_sub(ctx: Ctx, name: string): Option[ast.Block] {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < ctx.decls.len()) {
     match (ctx.decls[i]) {
       DSub(s) => {
@@ -98,7 +98,7 @@ pub function find_sub(ctx: Ctx, name: string): Option[ast.Block] {
 }
 
 pub function find_acl(ctx: Ctx, name: string): Option[ast.AclDecl] {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < ctx.decls.len()) {
     match (ctx.decls[i]) {
       DAcl(a) => {
@@ -125,7 +125,7 @@ pub function has_acl(ctx: Ctx, name: string): boolean {
 }
 
 pub function has_backend(ctx: Ctx, name: string): boolean {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < ctx.decls.len()) {
     match (ctx.decls[i]) {
       DBackend(b) => {
@@ -149,12 +149,12 @@ pub function parse_ipv4(s: string): Option[i64] {
   if (s == "localhost") {
     return Some(2130706433);
   }
-  var parts: string[] = s.split(".");
+  let parts: string[] = s.split(".");
   if (parts.len() != 4) {
     return None;
   }
-  var acc: i64 = 0;
-  var i: i32 = 0;
+  let acc: i64 = 0;
+  let i: i32 = 0;
   while (i < 4) {
     match (parts[i].parse_int()) {
       None => {
@@ -183,7 +183,7 @@ pub function mask_of(bits: i32): i64 {
   if (bits >= 32) {
     return 4294967295;
   }
-  var low: i64 = 1;
+  let low: i64 = 1;
   low = low << 32 - bits;
   return 4294967295 - (low - 1);
 }
@@ -200,7 +200,7 @@ function entry_matches(e: ast.AclEntry, ip: i64): EntryHit {
       return EntryHit { covers: false, bits: 0, ok: false, err: "ACL entry '" + e.host + "' is not an IPv4 address or 'localhost'" };
     },
     Some(base) => {
-      var bits: i32 = 32;
+      let bits: i32 = 32;
       if (e.mask != "") {
         match (e.mask.parse_int()) {
           Some(b) => {
@@ -214,7 +214,7 @@ function entry_matches(e: ast.AclEntry, ip: i64): EntryHit {
       if (bits < 0 || bits > 32) {
         return EntryHit { covers: false, bits: 0, ok: false, err: "ACL mask /" + e.mask + " is out of range" };
       }
-      var m: i64 = mask_of(bits);
+      let m: i64 = mask_of(bits);
       return EntryHit { covers: (base & m) == (ip & m), bits: bits, ok: true, err: "" };
     }
   }
@@ -251,12 +251,12 @@ pub function acl_match(ctx: Ctx, name: string, addr: string): Result[boolean, st
 }
 
 function acl_walk(a: ast.AclDecl, ip: i64): Result[boolean, string] {
-  var best_bits: i32 = 0 - 1;
-  var best_negated: boolean = false;
-  var i: i32 = 0;
+  let best_bits: i32 = 0 - 1;
+  let best_negated: boolean = false;
+  let i: i32 = 0;
   while (i < a.entries.len()) {
-    var e: ast.AclEntry = a.entries[i];
-    var h: EntryHit = entry_matches(e, ip);
+    let e: ast.AclEntry = a.entries[i];
+    let h: EntryHit = entry_matches(e, ip);
     if (!h.ok) {
       return Err(h.err);
     }
@@ -276,10 +276,10 @@ function acl_walk(a: ast.AclDecl, ip: i64): Result[boolean, string] {
 // vcl_template rewrites VCL's `\1` capture references into the `$1` form
 // `std/regex` expands, and escapes a literal `$` so it survives.
 function vcl_template(repl: string): string {
-  var out: string = "";
-  var i: i32 = 0;
+  let out: string = "";
+  let i: i32 = 0;
   while (i < repl.len()) {
-    var b: u8 = repl[i];
+    let b: u8 = repl[i];
     if (b == 36) {
       out = out + "$$";
     } else if (b == 92 && i + 1 < repl.len() && repl[i + 1] >= 48 && repl[i + 1] <= 57) {
@@ -309,8 +309,8 @@ pub function builtin_names(): string[] {
 }
 
 pub function is_builtin(name: string): boolean {
-  var names: string[] = builtin_names();
-  var i: i32 = 0;
+  let names: string[] = builtin_names();
+  let i: i32 = 0;
   while (i < names.len()) {
     if (names[i] == name) {
       return true;
@@ -436,11 +436,11 @@ function eval_name(ctx: Ctx, t: runtime.Txn, sub: string, name: string): EvalOut
 // transaction so a nested effect is ordered, then dispatches to a
 // builtin.
 function eval_call(ctx: Ctx, t: runtime.Txn, sub: string, c: ast.CallExpr): EvalOut {
-  var cur: runtime.Txn = t;
-  var out: value.Value[] = [];
-  var i: i32 = 0;
+  let cur: runtime.Txn = t;
+  let out: value.Value[] = [];
+  let i: i32 = 0;
   while (i < c.args.len()) {
-    var r: EvalOut = eval_expr(ctx, cur, sub, c.args[i]);
+    let r: EvalOut = eval_expr(ctx, cur, sub, c.args[i]);
     if (!r.ok) {
       return r;
     }
@@ -470,9 +470,9 @@ function is_acl_operand(ctx: Ctx, e: ast.Expr): string {
 // eval_match runs `~` / `!~`: an ACL membership test when the right side
 // names an ACL, a regex match otherwise.
 function eval_match(ctx: Ctx, t: runtime.Txn, sub: string, b: ast.BinExpr): EvalOut {
-  var negate: boolean = b.op == "!~";
-  var acl: string = is_acl_operand(ctx, b.rhs);
-  var left: EvalOut = eval_expr(ctx, t, sub, b.lhs);
+  let negate: boolean = b.op == "!~";
+  let acl: string = is_acl_operand(ctx, b.rhs);
+  let left: EvalOut = eval_expr(ctx, t, sub, b.lhs);
   if (!left.ok) {
     return left;
   }
@@ -486,29 +486,29 @@ function eval_match(ctx: Ctx, t: runtime.Txn, sub: string, b: ast.BinExpr): Eval
       }
     }
   }
-  var right: EvalOut = eval_expr(ctx, left.txn, sub, b.rhs);
+  let right: EvalOut = eval_expr(ctx, left.txn, sub, b.rhs);
   if (!right.ok) {
     return right;
   }
-  var hit: boolean = regex.regex_match(value.to_str(right.val), value.to_str(left.val));
+  let hit: boolean = regex.regex_match(value.to_str(right.val), value.to_str(left.val));
   return eok(right.txn, VBool(hit != negate));
 }
 
 // eval_logical short-circuits `&&` and `||`, which matters because the
 // right side can have effects.
 function eval_logical(ctx: Ctx, t: runtime.Txn, sub: string, b: ast.BinExpr): EvalOut {
-  var left: EvalOut = eval_expr(ctx, t, sub, b.lhs);
+  let left: EvalOut = eval_expr(ctx, t, sub, b.lhs);
   if (!left.ok) {
     return left;
   }
-  var lv: boolean = value.to_bool(left.val);
+  let lv: boolean = value.to_bool(left.val);
   if (b.op == "&&" && !lv) {
     return eok(left.txn, VBool(false));
   }
   if (b.op == "||" && lv) {
     return eok(left.txn, VBool(true));
   }
-  var right: EvalOut = eval_expr(ctx, left.txn, sub, b.rhs);
+  let right: EvalOut = eval_expr(ctx, left.txn, sub, b.rhs);
   if (!right.ok) {
     return right;
   }
@@ -573,18 +573,18 @@ pub function op_class(op: string): string {
 // syntactically, the other must be able to skip it — so they run before
 // anything is evaluated.
 function eval_binary(ctx: Ctx, t: runtime.Txn, sub: string, b: ast.BinExpr): EvalOut {
-  var cls: string = op_class(b.op);
+  let cls: string = op_class(b.op);
   if (cls == "match") {
     return eval_match(ctx, t, sub, b);
   }
   if (cls == "logical") {
     return eval_logical(ctx, t, sub, b);
   }
-  var left: EvalOut = eval_expr(ctx, t, sub, b.lhs);
+  let left: EvalOut = eval_expr(ctx, t, sub, b.lhs);
   if (!left.ok) {
     return left;
   }
-  var right: EvalOut = eval_expr(ctx, left.txn, sub, b.rhs);
+  let right: EvalOut = eval_expr(ctx, left.txn, sub, b.rhs);
   if (!right.ok) {
     return right;
   }
@@ -669,7 +669,7 @@ pub function eval_expr(ctx: Ctx, t: runtime.Txn, sub: string, e: ast.Expr): Eval
 }
 
 function eval_unary(ctx: Ctx, t: runtime.Txn, sub: string, u: ast.UnExpr): EvalOut {
-  var r: EvalOut = eval_expr(ctx, t, sub, u.operand);
+  let r: EvalOut = eval_expr(ctx, t, sub, u.operand);
   if (!r.ok) {
     return r;
   }
@@ -702,12 +702,12 @@ function compound_op(op: string): string {
 // exec_set runs `set <var> <op> <expr>;`, including the compound forms,
 // which read the current value first.
 function exec_set(ctx: Ctx, t: runtime.Txn, sub: string, s: ast.SetStmt): ExecOut {
-  var r: EvalOut = eval_expr(ctx, t, sub, s.value);
+  let r: EvalOut = eval_expr(ctx, t, sub, s.value);
   if (!r.ok) {
     return xerr(r.txn, r.err);
   }
-  var v: value.Value = r.val;
-  var cur: runtime.Txn = r.txn;
+  let v: value.Value = r.val;
+  let cur: runtime.Txn = r.txn;
   if (s.op != "=") {
     match (vars.read(cur, sub, s.target)) {
       Err(m) => {
@@ -745,11 +745,11 @@ function exec_return(ctx: Ctx, t: runtime.Txn, sub: string, s: ast.ReturnStmt): 
   if (!s.has_args || s.args.len() == 0) {
     return xok(t, FReturn(action(s.action)));
   }
-  var first: EvalOut = eval_expr(ctx, t, sub, s.args[0]);
+  let first: EvalOut = eval_expr(ctx, t, sub, s.args[0]);
   if (!first.ok) {
     return xerr(first.txn, first.err);
   }
-  var status: i64 = 0;
+  let status: i64 = 0;
   match (first.val) {
     VInt(n) => {
       status = n;
@@ -758,10 +758,10 @@ function exec_return(ctx: Ctx, t: runtime.Txn, sub: string, s: ast.ReturnStmt): 
       status = 0;
     }
   }
-  var cur: runtime.Txn = first.txn;
-  var reason: string = "";
+  let cur: runtime.Txn = first.txn;
+  let reason: string = "";
   if (s.args.len() > 1) {
-    var second: EvalOut = eval_expr(ctx, cur, sub, s.args[1]);
+    let second: EvalOut = eval_expr(ctx, cur, sub, s.args[1]);
     if (!second.ok) {
       return xerr(second.txn, second.err);
     }
@@ -774,10 +774,10 @@ function exec_return(ctx: Ctx, t: runtime.Txn, sub: string, s: ast.ReturnStmt): 
 // exec_if walks the arms in order and runs the first whose condition
 // holds, or the trailing `else` when none does.
 function exec_if(ctx: Ctx, t: runtime.Txn, sub: string, s: ast.IfStmt, depth: i32): ExecOut {
-  var cur: runtime.Txn = t;
-  var i: i32 = 0;
+  let cur: runtime.Txn = t;
+  let i: i32 = 0;
   while (i < s.arms.len()) {
-    var c: EvalOut = eval_expr(ctx, cur, sub, s.arms[i].cond);
+    let c: EvalOut = eval_expr(ctx, cur, sub, s.arms[i].cond);
     if (!c.ok) {
       return xerr(c.txn, c.err);
     }
@@ -806,7 +806,7 @@ function exec_call(ctx: Ctx, t: runtime.Txn, sub: string, s: ast.CallStmt, depth
       return xerr(t, "call to undefined subroutine '" + s.name + "'");
     },
     Some(body) => {
-      var out: ExecOut = exec_block(ctx, t, sub, body, depth + 1);
+      let out: ExecOut = exec_block(ctx, t, sub, body, depth + 1);
       if (!out.ok) {
         return out;
       }
@@ -856,7 +856,7 @@ pub function exec_stmt(ctx: Ctx, t: runtime.Txn, sub: string, s: ast.Stmt, depth
       return exec_call(ctx, t, sub, x, depth);
     },
     SExpr(x) => {
-      var r: EvalOut = eval_expr(ctx, t, sub, x.value);
+      let r: EvalOut = eval_expr(ctx, t, sub, x.value);
       if (!r.ok) {
         return xerr(r.txn, r.err);
       }
@@ -879,10 +879,10 @@ pub function exec_stmt(ctx: Ctx, t: runtime.Txn, sub: string, s: ast.Stmt, depth
 
 // exec_block runs statements until one returns or the block ends.
 pub function exec_block(ctx: Ctx, t: runtime.Txn, sub: string, b: ast.Block, depth: i32): ExecOut {
-  var cur: runtime.Txn = t;
-  var i: i32 = 0;
+  let cur: runtime.Txn = t;
+  let i: i32 = 0;
   while (i < b.stmts.len()) {
-    var r: ExecOut = exec_stmt(ctx, cur, sub, b.stmts[i], depth);
+    let r: ExecOut = exec_stmt(ctx, cur, sub, b.stmts[i], depth);
     if (!r.ok) {
       return r;
     }

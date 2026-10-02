@@ -33,7 +33,7 @@ pub function contains[T: Eq](xs: T[], target: T): boolean {
     return false;
 }
 pub function index_of[T: Eq](xs: T[], target: T): Option[i32] {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < xs.len()) {
         if (xs[i] == target) { return Some(i); }
         i = i + 1;
@@ -41,7 +41,7 @@ pub function index_of[T: Eq](xs: T[], target: T): Option[i32] {
     return None;
 }
 pub function distinct[T: Eq](xs: T[]): T[] {
-    var out: T[] = [];
+    let out: T[] = [];
     for x in xs {
         if (!contains(out, x)) { out = out.append(x); }
     }
@@ -62,18 +62,18 @@ var eqVerbsIRCases = []struct {
 	want int
 }{
 	// contains over i32[]: present (20) and absent (99).
-	{"contains-i32", `var a: i32[] = [10, 20, 30, 20]; var r: i32 = 0; if (contains(a, 20)) { r = r + 1; } if (!contains(a, 99)) { r = r + 2; } return r;`, 3},
+	{"contains-i32", `let a: i32[] = [10, 20, 30, 20]; let r: i32 = 0; if (contains(a, 20)) { r = r + 1; } if (!contains(a, 99)) { r = r + 2; } return r;`, 3},
 	// contains over string[]: primitive string `==`.
-	{"contains-string", `var ss: string[] = ["x", "y", "z"]; var r: i32 = 0; if (contains(ss, "z")) { r = r + 4; } if (!contains(ss, "q")) { r = r + 8; } return r;`, 12},
+	{"contains-string", `let ss: string[] = ["x", "y", "z"]; let r: i32 = 0; if (contains(ss, "z")) { r = r + 4; } if (!contains(ss, "q")) { r = r + 8; } return r;`, 12},
 	// index_of hit: 15 is at index 2.
-	{"index-of-hit", `var a: i32[] = [5, 10, 15, 20]; return idx_or(index_of(a, 15), 0 - 1);`, 2},
+	{"index-of-hit", `let a: i32[] = [5, 10, 15, 20]; return idx_or(index_of(a, 15), 0 - 1);`, 2},
 	// index_of miss: returns the None default.
-	{"index-of-miss", `var a: i32[] = [5, 10, 15, 20]; return idx_or(index_of(a, 99), 7);`, 7},
+	{"index-of-miss", `let a: i32[] = [5, 10, 15, 20]; return idx_or(index_of(a, 99), 7);`, 7},
 	// distinct i32[]: [3,1,3,2,1,3] -> [3,1,2]; len*30 + d0*5 + d1*3 + d2 (kept
 	// < 126: wasmtime rejects a process exit code >= 126).
-	{"distinct-i32", `var a: i32[] = [3, 1, 3, 2, 1, 3]; var d: i32[] = distinct(a); return d.len() * 30 + d[0] * 5 + d[1] * 3 + d[2];`, 110},
+	{"distinct-i32", `let a: i32[] = [3, 1, 3, 2, 1, 3]; let d: i32[] = distinct(a); return d.len() * 30 + d[0] * 5 + d[1] * 3 + d[2];`, 110},
 	// distinct string[]: [a,b,a,c,b] -> [a,b,c]; len = 3.
-	{"distinct-string", `var ss: string[] = ["a", "b", "a", "c", "b"]; return distinct(ss).len();`, 3},
+	{"distinct-string", `let ss: string[] = ["a", "b", "a", "c", "b"]; return distinct(ss).len();`, 3},
 }
 
 func eqVerbsIRSrc(mainBody string) string {

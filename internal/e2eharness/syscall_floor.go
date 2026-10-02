@@ -32,26 +32,26 @@ func SyscallFloorProbe(t *testing.T, dir, target string) string {
 		open, atcwd, mmap, munmap, close = 463, -2, 197, 73, 6
 	}
 	return fmt.Sprintf(`function main(): i32 {
-    var path: string = "%s";
-    var cpath: usize = __alloc(path.len() + 1);
-    var i: i32 = 0;
+    let path: string = "%s";
+    let cpath: usize = __alloc(path.len() + 1);
+    let i: i32 = 0;
     while (i < path.len()) {
         __store_u8(cpath + (i as usize), path[i] as i32);
         i = i + 1;
     }
     __store_u8(cpath + (path.len() as usize), 0);
-    var fd: i64 = __syscall4(%d, %d, cpath as i64, 0, 0);
+    let fd: i64 = __syscall4(%d, %d, cpath as i64, 0, 0);
     if (fd < 0) { return 1; }
-    var p: i64 = __syscall6(%d, 0, 65536, 1, 2, fd, 65536);
+    let p: i64 = __syscall6(%d, 0, 65536, 1, 2, fd, 65536);
     if (p <= 0) { return 2; }
-    var first: i32 = __load_u8(p as usize);
-    var last: i32 = __load_u8((p as usize) + 65535);
-    var unmapped: i64 = __syscall3(%d, p, 65536, 0);
-    var closed: i64 = __syscall3(%d, fd, 0, 0);
+    let first: i32 = __load_u8(p as usize);
+    let last: i32 = __load_u8((p as usize) + 65535);
+    let unmapped: i64 = __syscall3(%d, p, 65536, 0);
+    let closed: i64 = __syscall3(%d, fd, 0, 0);
     if (first != 91 || last != 37) { return 3; }
     if (unmapped != 0 || closed != 0) { return 4; }
     if (__syscall6(%d, 0, 65536, 1, 2, 0 - 1, 65536) != 0 - 9) { return 5; }
-    var block: usize = __alloc(16);
+    let block: usize = __alloc(16);
     __store_u8(block, 200);
     __store_u8(block + 15, 263);
     if (__load_u8(block) != 200 || __load_u8(block + 15) != 7) { return 6; }

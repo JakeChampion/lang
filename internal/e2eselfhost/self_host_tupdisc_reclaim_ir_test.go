@@ -27,13 +27,13 @@ var tupDiscReclaimCases = []struct {
     return ([i, i + 1], i);
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var w: i32 = 0;
+    let acc: i32 = 0;
+    let w: i32 = 0;
     while (w < 200) { (w, [w, w + 1]); mk(w); w = w + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
     while (i < 5000) { (i, [i, i + 1]); mk(i); i = i + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -46,7 +46,7 @@ function main(): i32 {
 	// array position + box are freed, the string stays leak-mode; an i64
 	// element declines the entire entry (offset-uniform tuple_get).
 	{"tupdisc-negatives-safe", `function mkmix(i: i32, flip: i32): (i32[], i32) {
-    var ys: i32[] = [i, i, i];
+    let ys: i32[] = [i, i, i];
     if (flip > 0) { return ([i, i + 1], i); }
     return (ys, i);
 }
@@ -57,14 +57,14 @@ function mki64(i: i32): (i64, i32[]) {
     return (7, [i, i + 1]);
 }
 function main(): i32 {
-    var xs: i32[] = [7, 8];
-    var k: i32 = 3;
+    let xs: i32[] = [7, 8];
+    let k: i32 = 3;
     (k, xs);
-    var alias_ok: i32 = xs[0] + xs[1];
+    let alias_ok: i32 = xs[0] + xs[1];
     if (alias_ok != 15) { return 97; }
-    var w: i32 = 0;
+    let w: i32 = 0;
     while (w < 50) { mkmix(w, w % 2); mkstr(w); mki64(w); w = w + 1; }
-    var again: i32 = xs[0] + xs[1];
+    let again: i32 = xs[0] + xs[1];
     if (again != 15) { return 96; }
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
@@ -76,9 +76,9 @@ function main(): i32 {
     return ([i, i + 1], i);
 }
 function main(): i32 {
-    var t = mk(3);
+    let t = mk(3);
     mk(9);
-    var v: i32 = t.0[0] + t.0[1] + t.1;
+    let v: i32 = t.0[0] + t.0[1] + t.1;
     if (v != 10) { return 97; }
     if (__rc_underflow_count() != 0) { return 99; }
     return v;

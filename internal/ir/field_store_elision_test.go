@@ -12,7 +12,7 @@ import "testing"
 func TestFieldStoreElisionFiresForCarriedField(t *testing.T) {
 	p := lowerSource(t, `struct Point { x: i32, y: i32 }
 function main(): i32 {
-    var p: Point = Point { x: 1, y: 2 };
+    let p: Point = Point { x: 1, y: 2 };
     p = Point { x: p.x + 1, y: p.y };
     return p.x;
 }`)
@@ -24,7 +24,7 @@ function main(): i32 {
 func TestFieldStoreElisionSkipsAllChangedSwap(t *testing.T) {
 	p := lowerSource(t, `struct Point { x: i32, y: i32 }
 function main(): i32 {
-    var p: Point = Point { x: 1, y: 2 };
+    let p: Point = Point { x: 1, y: 2 };
     p = Point { x: p.y, y: p.x };
     return p.x;
 }`)

@@ -9,15 +9,15 @@ import (
 var conditionalCleanupCases = []struct{ name, source, want string }{
 	{"conditional-cleanup-exact-traces", conditionalCleanupTraceSource(), "traces\n"},
 	{"conditional-cleanup-body-flow-and-pressure", `function pilot(): string {
-  var i = 0i32;
+  let i = 0i32;
   while (i < 32i32) { work(i < 16i32); i = i + 1i32; }
   return "pressure";
 }
 function work(flag: boolean): void {
-  var items = [[17i32]]; var saved = items[0];
+  let items = [[17i32]]; let saved = items[0];
   defer check(items[0][0], saved[0], flag);
   if (flag) { defer {
-    var j = 0i32;
+    let j = 0i32;
     while (j < 8i32) { items = [[23i32]]; j = j + 1i32; }
     if (flag) { items = [[31i32]] } else { items = [[43i32]] }
   } }
@@ -25,69 +25,69 @@ function work(flag: boolean): void {
 }
 function check(now: i32, saved: i32, flag: boolean): void {
   if (saved != 17i32 || (flag && now != 31i32) || (!flag && now != 29i32)) {
-    var bad: i32[] = []; var v = bad[0];
+    let bad: i32[] = []; let v = bad[0];
   }
 }`, "pressure\n"},
 	{"conditional-cleanup-taken-and-skipped", `function pilot(): string { work(true); work(false); return "both"; }
 function work(flag: boolean): void {
-  var seen = 0i32; defer check(seen, flag);
+  let seen = 0i32; defer check(seen, flag);
   if (flag) { defer seen = 9i32; }
 }
 
 function check(seen: i32, flag: boolean): void {
-  if ((flag && seen != 9i32) || (!flag && seen != 0i32)) { var bad: i32[] = []; var v = bad[0]; }
+  if ((flag && seen != 9i32) || (!flag && seen != 0i32)) { let bad: i32[] = []; let v = bad[0]; }
 }`, "both\n"},
 	{"conditional-cleanup-late-array", `function pilot(): string { work(true); work(false); return "late"; }
 function work(flag: boolean): void {
-  var items: i32[] = [1]; defer check(items[0], flag);
+  let items: i32[] = [1]; defer check(items[0], flag);
   if (flag) { defer items = [items[0] + 6i32]; } items = [3];
 }
 function check(n: i32, flag: boolean): void {
-  if ((flag && n != 9i32) || (!flag && n != 3i32)) { var bad: i32[] = []; var v = bad[0]; }
+  if ((flag && n != 9i32) || (!flag && n != 3i32)) { let bad: i32[] = []; let v = bad[0]; }
 }`, "late\n"},
 	{"conditional-cleanup-branch-local", `function pilot(): string { work(true); work(false); return "local"; }
-function work(flag: boolean): void { if (flag) { var items = ["local"]; defer sink([items]); } }
+function work(flag: boolean): void { if (flag) { let items = ["local"]; defer sink([items]); } }
 function sink(own items: string[][]): void {}`, "local\n"},
 	{"conditional-cleanup-empty-capture-skip", `function pilot(): string { work(false); return "skipped"; }
 function work(flag: boolean): void { if (flag) { defer fault(); } }
-function fault(): void { var bad: i32[] = []; var v = bad[0]; }`, "skipped\n"},
+function fault(): void { let bad: i32[] = []; let v = bad[0]; }`, "skipped\n"},
 	{"conditional-cleanup-saved-return", `function pilot(): string { return work(true); }
 function work(flag: boolean): string {
-  var items = ["saved"]; if (flag) { defer items = ["replaced"]; } return items[0];
+  let items = ["saved"]; if (flag) { defer items = ["replaced"]; } return items[0];
 }`, "saved\n"},
 	{"conditional-cleanup-iteration-reset", `function pilot(): string {
-  var seen = 0i32; var i = 0i32;
+  let seen = 0i32; let i = 0i32;
   while (i < 4i32) { if (i == 0i32 || i == 2i32) { defer seen = seen * 10i32 + i; } i = i + 1i32; }
   check(seen, 13i32); return "epochs";
 }
-function check(a: i32, b: i32): void { if (a != b) { var bad: i32[] = []; var v = bad[0]; } }`, "epochs\n"},
+function check(a: i32, b: i32): void { if (a != b) { let bad: i32[] = []; let v = bad[0]; } }`, "epochs\n"},
 	{"conditional-cleanup-labelled-continue", `function pilot(): string {
-  var seen = 0i32; var i = 0i32;
+  let seen = 0i32; let i = 0i32;
   outer: while (i < 2i32) {
     i = i + 1i32; if (i == 1i32) { defer seen = seen * 10i32 + 1i32; }
     loop { if (i == 2i32) { defer seen = seen * 10i32 + 2i32; } continue outer; }
   }
   check(seen, 12i32); return "continue";
 }
-function check(a: i32, b: i32): void { if (a != b) { var bad: i32[] = []; var v = bad[0]; } }`, "continue\n"},
+function check(a: i32, b: i32): void { if (a != b) { let bad: i32[] = []; let v = bad[0]; } }`, "continue\n"},
 	{"conditional-cleanup-labelled-break", `function pilot(): string { work(true); work(false); return "break"; }
 function work(flag: boolean): void {
-  var seen = 0i32; defer check(seen, flag);
+  let seen = 0i32; defer check(seen, flag);
   outer: loop { if (flag) { defer seen = seen * 10i32 + 1i32; }
     loop { defer seen = seen * 10i32 + 2i32; break outer; }
   }
 }
 function check(n: i32, flag: boolean): void {
-  if ((flag && n != 21i32) || (!flag && n != 2i32)) { var bad: i32[] = []; var v = bad[0]; }
+  if ((flag && n != 21i32) || (!flag && n != 2i32)) { let bad: i32[] = []; let v = bad[0]; }
 }`, "break\n"},
 	{"conditional-cleanup-exclusive-order", `function pilot(): string { work(true); work(false); return "order"; }
 function work(flag: boolean): void {
-  var seen = 0i32; defer check(seen, flag);
+  let seen = 0i32; defer check(seen, flag);
   if (flag) { defer seen = seen * 10i32 + 1i32; } else { defer seen = seen * 10i32 + 2i32; }
   defer seen = seen * 10i32 + 3i32;
 }
 function check(n: i32, flag: boolean): void {
-  if ((flag && n != 31i32) || (!flag && n != 32i32)) { var bad: i32[] = []; var v = bad[0]; }
+  if ((flag && n != 31i32) || (!flag && n != 32i32)) { let bad: i32[] = []; let v = bad[0]; }
 }`, "order\n"},
 }
 
@@ -114,14 +114,14 @@ func conditionalCleanupTraceSource() string {
 	}
 	source.WriteString(`return "traces"; }
 function work(a: boolean, b: boolean, c: boolean, d: boolean, expected: i32): void {
-  var trace = 0i32; defer check(trace, expected);
+  let trace = 0i32; defer check(trace, expected);
   if (a) { defer trace = trace * 10i32 + 1i32; }
   if (b) { defer trace = trace * 10i32 + 2i32; }
   if (c) { defer trace = trace * 10i32 + 3i32; }
   if (d) { defer trace = trace * 10i32 + 4i32; }
 }
 function check(actual: i32, expected: i32): void {
-  if (actual != expected) { var bad: i32[] = []; var v = bad[0]; }
+  if (actual != expected) { let bad: i32[] = []; let v = bad[0]; }
 }`)
 	return source.String()
 }
@@ -146,7 +146,7 @@ func TestARM64TypedGuardedCleanupKeepsObservableEffects(t *testing.T) {
 	for _, optimize := range []bool{false, true} {
 		out := lowerCheckedARM64(t, `function pilot(): string { work(true); return "missing action"; }
 function work(flag: boolean): void { if (flag) { defer fault(); } }
-function fault(): void { var bad: i32[] = []; var v = bad[0]; }`)
+function fault(): void { let bad: i32[] = []; let v = bad[0]; }`)
 		stdout, stderr, code := runARM64Pilot(t, armExecutable(t, out, printHarness(out), optimize))
 		if code != 134 || stdout != "" {
 			t.Fatalf("optimized=%v: exit %d stdout %q stderr %q; expected bounds abort", optimize, code, stdout, stderr)
@@ -160,7 +160,7 @@ func BenchmarkGuardedCleanupBuild(b *testing.B) {
 			var source strings.Builder
 			source.WriteString(`function pilot(flag: boolean): void {`)
 			for range count {
-				source.WriteString(`if (flag) { var items: i32[] = [1]; defer items = [2]; }`)
+				source.WriteString(`if (flag) { let items: i32[] = [1]; defer items = [2]; }`)
 			}
 			source.WriteString(`}`)
 			prog, info := checkedProgram(b, source.String())

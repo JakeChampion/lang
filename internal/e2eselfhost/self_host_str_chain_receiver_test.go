@@ -35,7 +35,7 @@ import "std/string";
 ` + strProbeHelpers + `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
 function (s: string) tail(n: i32): str {
     if (n <= 0) { return s; }
-    var sLen: i32 = s.len();
+    let sLen: i32 = s.len();
     if (n >= sLen) { return ""; }
     return slice_unchecked(s, n, sLen);
 }
@@ -48,14 +48,14 @@ function (s: string) ident2(): string { return s; }
 // chain intermediate was stranded; 4096 sits 2.3x under the measured 9600 leak and
 // far above the 0 a released chain produces.
 func chainRecvHeap(round string) string {
-	return chainRecvPrelude + `function round(pre: string): i32 { var base: string = w(pre); ` + round + ` }
-function churn(pre: string, n: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < n) { acc = (acc + round(pre)) % 251; i = i + 1; } return acc; }
+	return chainRecvPrelude + `function round(pre: string): i32 { let base: string = w(pre); ` + round + ` }
+function churn(pre: string, n: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < n) { acc = (acc + round(pre)) % 251; i = i + 1; } return acc; }
 function main(): i32 {
-    var pre: string = "abcdefgh";
-    var a: i32 = churn(pre, 400);
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var b: i32 = churn(pre, 400);
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let pre: string = "abcdefgh";
+    let a: i32 = churn(pre, 400);
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let b: i32 = churn(pre, 400);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (a != b) { return 97; }
     if (b2 - b1 >= 4096) { return 98; }
@@ -87,18 +87,18 @@ var strChainReceiverCases = []struct {
 	// unconditionally frees what `base` still holds, and the reads below exit 97.
 	// Verified: 97 on a build with the compare removed, 0 with it.
 	{"str-chain-receiver-identity-path-guarded", chainRecvPrelude + `function round(pre: string): i32 {
-    var base: string = w(pre);
-    var c: string = base.tail(0).to_owned2();
-    var p1: string = w("ZZZZZZZZ");
-    var p2: string = w("YYYYYYYY");
-    var p3: string = w("XXXXXXXX");
+    let base: string = w(pre);
+    let c: string = base.tail(0).to_owned2();
+    let p1: string = w("ZZZZZZZZ");
+    let p2: string = w("YYYYYYYY");
+    let p3: string = w("XXXXXXXX");
     if (p1.len() + p2.len() + p3.len() < 0) { return 0; }
     if (has_sub(base, "XXXX")) { return 0 - 1; }
     if (!has_prefix(base, "abcdefgh-a-wide")) { return 0 - 2; }
     if (!has_prefix(c, "abcdefgh-a-wide")) { return 0 - 3; }
     return base.len() + c.len();
 }
-function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { var r: i32 = round(pre); if (r != 212) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
+function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; while (i < 2000) { let r: i32 = round(pre); if (r != 212) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
 	// The `n >= sLen` path returns a LITERAL "", whose box is in .rodata and whose
 	// pointer differs from the root — so the compare admits it and the release runs
 	// on a static. That is safe because __fern_str_view_free's view case guards on
@@ -106,30 +106,30 @@ function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 
 	// which is exactly what this case pins. Not a witness for the compare: it passes
 	// with the compare removed too, because the guard doing the work is the other one.
 	{"str-chain-receiver-empty-literal-path", chainRecvPrelude + `function round(pre: string): i32 {
-    var base: string = w(pre);
-    var c: string = base.tail(9999).to_owned2();
-    var p1: string = w("ZZZZZZZZ");
-    var p2: string = w("YYYYYYYY");
+    let base: string = w(pre);
+    let c: string = base.tail(9999).to_owned2();
+    let p1: string = w("ZZZZZZZZ");
+    let p2: string = w("YYYYYYYY");
     if (p1.len() + p2.len() < 0) { return 0; }
     if (!has_prefix(base, "abcdefgh-a-wide")) { return 0 - 2; }
     if (c.len() != 0) { return 0 - 3; }
     return base.len();
 }
-function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 4000) { var r: i32 = round(pre); if (r != 106) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
+function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; while (i < 4000) { let r: i32 = round(pre); if (r != 106) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
 	// REFUSED: the outer callee hands its receiver straight back, so it is not
 	// recv_borrow proven and the chain release is never emitted. The result aliases
 	// the view over base, which must survive being read after the call.
 	{"str-chain-receiver-unproven-callee-refused", chainRecvPrelude + `function round(pre: string): i32 {
-    var base: string = w(pre);
-    var c: string = base.tail(4).ident2();
-    var p1: string = w("ZZZZZZZZ");
-    var p2: string = w("YYYYYYYY");
+    let base: string = w(pre);
+    let c: string = base.tail(4).ident2();
+    let p1: string = w("ZZZZZZZZ");
+    let p2: string = w("YYYYYYYY");
     if (p1.len() + p2.len() < 0) { return 0; }
     if (!has_prefix(base, "abcdefgh-a-wide")) { return 0 - 2; }
     if (!has_prefix(c, "efgh-a-wide")) { return 0 - 3; }
     return base.len() + c.len();
 }
-function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 4000) { var r: i32 = round(pre); if (r != 208) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
+function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; while (i < 4000) { let r: i32 = round(pre); if (r != 208) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
 }
 
 // TestSelfHostStrChainReceiverIRX86_64 drives the cases through the self-hosted

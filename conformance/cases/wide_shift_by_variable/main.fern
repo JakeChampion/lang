@@ -37,8 +37,8 @@ function shifted_right(s: i64, n: i32): i64 { return s >> n; }
 function shifted_right_u(s: u64, n: i32): u64 { return s >> (n as u64); }
 
 function main(): i32 {
-    var one: i64 = 1;
-    var acc: string = "";
+    let one: i64 = 1;
+    let acc: string = "";
     for i in 0..8 {
         acc = acc + (one << i).to_string() + " ";
     }
@@ -52,13 +52,13 @@ function main(): i32 {
 
     // Unsigned, and the same value shifted by a variable and by the literal
     // it holds — the two spellings lower differently and must agree.
-    var u: u64 = 1;
-    var k: i32 = 40;
+    let u: u64 = 1;
+    let k: i32 = 40;
     print((u << (k as u64)).to_string());
     print((u << 40).to_string());
 
     // A count computed rather than named.
-    var base: i32 = 30;
+    let base: i32 = 30;
     print((one << (base + 2)).to_string());
     print(((one << 62) >> (base + 1)).to_string());
 

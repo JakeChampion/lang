@@ -38,12 +38,12 @@ import (
 // Exit code 0 = every consumer bounded; 1..4 names the one that grew.
 const callTempConsumerBumpSrc = `function mk(s: string): string { return slice_unchecked(s, 0, 20) + "!"; }
 function burn(a: string, n: i32, mode: i32): i32 {
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < n) {
         if (mode == 0) { acc = acc + ("<" + mk(a)).len(); }
         if (mode == 1) { if (mk(a) == "zzz") { acc = acc + 1; } }
-        if (mode == 2) { var c: u8 = mk(a)[0]; acc = acc + (c as i32); }
+        if (mode == 2) { let c: u8 = mk(a)[0]; acc = acc + (c as i32); }
         if (mode == 3) { acc = acc + (slice_unchecked(mk(a), 0, 3) + "").len(); }
         i = i + 1;
     }
@@ -51,13 +51,13 @@ function burn(a: string, n: i32, mode: i32): i32 {
 }
 function grew(a: string, mode: i32): i32 {
     burn(a, 2000, mode);
-    var b1: i32 = (__heap_bump_bytes() as i32);
+    let b1: i32 = (__heap_bump_bytes() as i32);
     burn(a, 20000, mode);
     return (__heap_bump_bytes() as i32) - b1;
 }
 function main(): i32 {
-    var a: string = "longer_string_one_here";
-    var m: i32 = 0;
+    let a: string = "longer_string_one_here";
+    let m: i32 = 0;
     while (m < 4) {
         if (grew(a, m) != 0) { return m + 1; }
         m = m + 1;
@@ -77,17 +77,17 @@ function pick(a: string, b: string): string {
     return b;
 }
 function main(): i32 {
-    var seed: string = "abcdefghij";
-    var a: string = slice_unchecked(seed, 0, 8) + "";
-    var b: string = "xy";
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let seed: string = "abcdefghij";
+    let a: string = slice_unchecked(seed, 0, 8) + "";
+    let b: string = "xy";
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < 200) {
-        var s: string = "<" + mk(a) + ">";      // "<ab!>",      len 5
-        var t: string = "[" + pick(a, b) + "]"; // "[abcdefgh]", len 10
+        let s: string = "<" + mk(a) + ">";      // "<ab!>",      len 5
+        let t: string = "[" + pick(a, b) + "]"; // "[abcdefgh]", len 10
         acc = acc + s.len() + t.len();
         if (pick(a, b) == "abcdefgh") { acc = acc + 1; }
-        var c: u8 = pick(a, b)[0];              // 'a'
+        let c: u8 = pick(a, b)[0];              // 'a'
         acc = acc + (c as i32);
         acc = acc + (slice_unchecked(pick(a, b), 0, 3) + "").len();
         i = i + 1;

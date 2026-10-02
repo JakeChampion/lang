@@ -31,7 +31,7 @@ import (
 // domainname the record holds at 5.
 func unameFieldProbeSource() string {
 	return `function main(): i32 {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 5) {
         print(uname_field(i));
         i = i + 1;

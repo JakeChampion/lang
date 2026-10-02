@@ -17,8 +17,8 @@ import "std/http";
 import "std/tcp";
 
 function main(): i32 {
-  var argv: string[] = args();
-  var port: i32 = 9000;
+  let argv: string[] = args();
+  let port: i32 = 9000;
   if (argv.len() > 1) {
     match (argv[1].parse_int()) {
       Some(n) => {
@@ -32,10 +32,10 @@ function main(): i32 {
   }
   // Created before the accept loop, so it survives the per-request arena
   // and counts across requests.
-  var served: Cell[i32] = cell_new(0);
-  var handler: (HttpRequest, Platform) => HttpResponse = (req: HttpRequest, plat: Platform): HttpResponse => {
+  let served: Cell[i32] = cell_new(0);
+  let handler: (HttpRequest, Platform) => HttpResponse = (req: HttpRequest, plat: Platform): HttpResponse => {
     served.set(served.get() + 1);
-    var body: string = "origin-hit=" + served.get().to_string() + " path=" + req.path + "\n";
+    let body: string = "origin-hit=" + served.get().to_string() + " path=" + req.path + "\n";
     return http.ok(body).with_header("Cache-Control", "max-age=60");
   };
   eprint("origin: serving on port " + port.to_string());

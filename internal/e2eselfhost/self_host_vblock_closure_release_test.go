@@ -11,21 +11,21 @@ import (
 // string[] reads the right word.
 const vblockTailMoveSrc = `import "std/i32";
 struct P { x: i32, y: i32 }
-function mk(j: i32): i32[] { return { var q = [j, j * 2]; q = q.append(3); q }; }
+function mk(j: i32): i32[] { return { let q = [j, j * 2]; q = q.append(3); q }; }
 function main(): i32 {
-    var t: i32 = 0;
-    var j: i32 = 0;
-    var outer: i32[] = [0];
+    let t: i32 = 0;
+    let j: i32 = 0;
+    let outer: i32[] = [0];
     while (j < 10) {
-        var a = { var q = [j, j + 1]; q };
-        var b: i32[] = { var q: i32[] = [j, 4]; q };
-        var c: P[] = { var q = [P { x: 5, y: j }]; q };
-        var d = { var q = [P { x: j, y: 2 }, P { x: 1, y: j }]; t = t + q[0].x; q };
-        var e = { var q = ["a" + j.to_string(), "b"]; q };
-        var f = { var q = [j]; q = q.append(2); q };
-        var h = { var q = [j, 9]; if (j == 8) { break; } q };
-        outer = { var q = [j, 5]; q };
-        var m = mk(j);
+        let a = { let q = [j, j + 1]; q };
+        let b: i32[] = { let q: i32[] = [j, 4]; q };
+        let c: P[] = { let q = [P { x: 5, y: j }]; q };
+        let d = { let q = [P { x: j, y: 2 }, P { x: 1, y: j }]; t = t + q[0].x; q };
+        let e = { let q = ["a" + j.to_string(), "b"]; q };
+        let f = { let q = [j]; q = q.append(2); q };
+        let h = { let q = [j, 9]; if (j == 8) { break; } q };
+        outer = { let q = [j, 5]; q };
+        let m = mk(j);
         t = t + a[1] + a.len() + b[1] + c[0].y + d[1].y + e[0].len() + f[1] + h[1] + outer[1] + m[2];
         j = j + 1;
     }
@@ -38,11 +38,11 @@ const vblockTailMoveWant = 41
 
 // The move through a nested value block (#10436).
 const vblockNestedTailMoveSrc = `function main(): i32 {
-    var t: i32 = 0;
-    var j: i32 = 0;
+    let t: i32 = 0;
+    let j: i32 = 0;
     while (j < 10) {
-        var d = { var z = { var q = [j, 7]; q }; z };
-        var e = { var z: i32[] = { var q = [j, 3]; q = q.append(j); q }; z };
+        let d = { let z = { let q = [j, 7]; q }; z };
+        let e = { let z: i32[] = { let q = [j, 3]; q = q.append(j); q }; z };
         t = t + d[1] + d[0] + e[2];
         j = j + 1;
     }
@@ -62,25 +62,25 @@ const closureRebindReleaseSrc = `struct H { f: (i32) => i32, n: i32 }
 function mk(b: i32): (i32) => i32 { return (x: i32) => x - b; }
 function mks(s: string): (i32) => i32 { return (x: i32) => x + s.len(); }
 function pick(i: i32): (i32) => i32 {
-    var g: (i32) => i32 = mks("ab" + "");
+    let g: (i32) => i32 = mks("ab" + "");
     if (i > 2) { g = mks("abcd"); }
     return g;
 }
 function main(): i32 {
-    var base: i32 = 5;
-    var t: i32 = 0;
-    var fns: ((i32) => i32)[] = [];
-    var keep: (i32) => i32 = mk(100);
-    var i: i32 = 0;
+    let base: i32 = 5;
+    let t: i32 = 0;
+    let fns: ((i32) => i32)[] = [];
+    let keep: (i32) => i32 = mk(100);
+    let i: i32 = 0;
     while (i < 6) {
-        var k: i32 = i;
-        var g: (i32) => i32 = mk(i);
-        var v: (i32) => i32 = (match (i % 3) { 0 => ((x: i32) => x - base), 1 => ((x: i32) => k), _ => ((x: i32) => x + 1) });
-        var w: (i32) => i32 = (match ((i % 3, 0)) { (0, _) => ((x: i32) => x - base), (1, _) => ((x: i32) => k), _ => ((x: i32) => x + 1) });
-        var h: H = H { f: g, n: i };
-        var c: (i32) => i32 = (y: i32) => g(y) + 1;
-        var p = pick(i);
-        var (l, r) = (i % 2, i * 3);
+        let k: i32 = i;
+        let g: (i32) => i32 = mk(i);
+        let v: (i32) => i32 = (match (i % 3) { 0 => ((x: i32) => x - base), 1 => ((x: i32) => k), _ => ((x: i32) => x + 1) });
+        let w: (i32) => i32 = (match ((i % 3, 0)) { (0, _) => ((x: i32) => x - base), (1, _) => ((x: i32) => k), _ => ((x: i32) => x + 1) });
+        let h: H = H { f: g, n: i };
+        let c: (i32) => i32 = (y: i32) => g(y) + 1;
+        let p = pick(i);
+        let (l, r) = (i % 2, i * 3);
         if (i == 3) { keep = g; }
         fns = fns.append(v);
         t = t + g(3) % 7 + v(3) % 7 + w(3) % 7 + h.f(10) + h.n + c(10) + p(1) + l + r;
@@ -98,10 +98,10 @@ const closureRebindReleaseWant = 76
 // the desugar cannot lift, and replays at the function's exit, so the block
 // keeps the local rather than moving it out (#10496).
 const vblockDeferUnliftedSrc = `function main(): i32 {
-    var r = 0;
-    var c = 1;
-    var d = { var q = [1, 2, 3]; if (c > 0) { defer { r = q[0] + q.len() } } q };
-    var e = { var s = ["ab", "c"]; if (c > 5) { defer { r = r + s.len() } } s };
+    let r = 0;
+    let c = 1;
+    let d = { let q = [1, 2, 3]; if (c > 0) { defer { r = q[0] + q.len() } } q };
+    let e = { let s = ["ab", "c"]; if (c > 5) { defer { r = r + s.len() } } s };
     return d[0] + r * 10 + e[0].len() * 50;
 }
 `
@@ -115,14 +115,14 @@ const vblockDeferUnliftedWant = 101
 // `c` is inlined because it captures `j`.
 const vblockArrArrSrc = `function mk(j: i32): i32[][] { return [[j, 1], [2]]; }
 function main(): i32 {
-    var t = 0;
-    var j = 0;
+    let t = 0;
+    let j = 0;
     while (j < 5) {
-        var a = { var q = [[3, 2], [3, 4]]; q };
-        var b = { var q = [["ab", "c"], ["def"]]; q };
-        var c = { var q = [[j * 2, 5], [6]]; q };
-        var m = mk(j);
-        var f = { var q = [[1.5, 2.5]]; q };
+        let a = { let q = [[3, 2], [3, 4]]; q };
+        let b = { let q = [["ab", "c"], ["def"]]; q };
+        let c = { let q = [[j * 2, 5], [6]]; q };
+        let m = mk(j);
+        let f = { let q = [[1.5, 2.5]]; q };
         t = t + a[0][0] + a[1].len() + b[1][0].len() + c[0][0] + c[1].len() + m[0][0] + m[1].len() + (f[0][1] * 2.0) as i32;
         j = j + 1;
     }

@@ -76,7 +76,7 @@ machine this landed from.
    aliased box is only dec'd. The join reclaim is suppressed for such a match:
    both firing would free the box twice.
 5. **`ownedCallResultType` admits the family** (`rcOwnedResultBuiltins`), which
-   is what gives a `var o = r.read_line()` local, an argument temp
+   is what gives a `let o = r.read_line()` local, an argument temp
    `sink(env(k))` and a discarded `env(k);` the same release a user function's
    result gets — and, through the enum's deep drop, the payload with it.
 

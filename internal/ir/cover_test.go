@@ -53,7 +53,7 @@ func coverPointIndices(t *testing.T, p *Program, fn string) []int32 {
 // the self-host's byte-identical fixpoint from noticing this feature.
 func TestCoverPointsAbsentWithoutTheOption(t *testing.T) {
 	src := `function main(): i32 {
-    var x: i32 = 1;
+    let x: i32 = 1;
     return x;
 }`
 	p := lowerSourceWith(t, src, 8)
@@ -112,8 +112,8 @@ function main(): i32 { return pick(1); }`
 // percentage.
 func TestCoverSitesAreOnePerLine(t *testing.T) {
 	src := `function main(): i32 {
-    var a: i32 = 1;
-    var b: i32 = 2;
+    let a: i32 = 1;
+    let b: i32 = 2;
     return a + b;
 }`
 	p := lowerCover(t, src)
@@ -159,7 +159,7 @@ function main(): i32 { return pick(1); }`
 // the author crammed onto a line rather than how often it ran.
 func TestCoverPointsDedupeWithinABasicBlock(t *testing.T) {
 	src := `function main(): i32 {
-    var a: i32 = 1; var b: i32 = 2; var c: i32 = 3;
+    let a: i32 = 1; let b: i32 = 2; let c: i32 = 3;
     return a + b + c;
 }`
 	p := lowerCover(t, src)
@@ -267,7 +267,7 @@ function main(): i32 { return guard(0, 1); }`
 // coverage reports as covered while the body never ran.
 func TestCoverBranchInstrumentsWhile(t *testing.T) {
 	src := `function main(): i32 {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i > 99) {
         i = i + 1;
     }
@@ -293,7 +293,7 @@ func TestCoverBranchSkipsCompilerConditionals(t *testing.T) {
 	// An array index emits a bounds check; a heap value emits drop glue.
 	// Neither is a branch the author wrote, so neither may appear.
 	src := `function main(): i32 {
-    var xs: i32[] = [1, 2, 3];
+    let xs: i32[] = [1, 2, 3];
     return xs[1];
 }`
 	p := lowerCover(t, src)

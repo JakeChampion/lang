@@ -39,7 +39,7 @@ func pipeCallOfReturn(t *testing.T, src string) *ast.Call {
 
 func TestParsePipeHoleSubstitutes(t *testing.T) {
 	// `x |> f(10, _)` → f(10, x), PipeHole = 2 (1-based).
-	call := pipeCallOfReturn(t, `function main(): i32 { var x: i32 = 3; return x |> f(10, _); }`)
+	call := pipeCallOfReturn(t, `function main(): i32 { let x: i32 = 3; return x |> f(10, _); }`)
 	if !call.IsPipe {
 		t.Fatal("IsPipe = false, want true")
 	}
@@ -59,7 +59,7 @@ func TestParsePipeHoleSubstitutes(t *testing.T) {
 
 func TestParsePipeNoHolePrepends(t *testing.T) {
 	// Without a `_`, the LHS still prepends and PipeHole stays 0.
-	call := pipeCallOfReturn(t, `function main(): i32 { var x: i32 = 3; return x |> f(10); }`)
+	call := pipeCallOfReturn(t, `function main(): i32 { let x: i32 = 3; return x |> f(10); }`)
 	if call.PipeHole != 0 {
 		t.Fatalf("PipeHole = %d, want 0 (prepended form)", call.PipeHole)
 	}
@@ -85,7 +85,7 @@ func TestParsePipeNestedHolesCompose(t *testing.T) {
 	// `20 |> f(_, x |> f(5, _))`: the inner pipe consumes its own hole
 	// before the outer scan runs, so the outer hole is slot 1 and the
 	// inner call keeps its substituted arg.
-	call := pipeCallOfReturn(t, `function main(): i32 { var x: i32 = 3; return 20 |> f(_, x |> f(5, _)); }`)
+	call := pipeCallOfReturn(t, `function main(): i32 { let x: i32 = 3; return 20 |> f(_, x |> f(5, _)); }`)
 	if call.PipeHole != 1 {
 		t.Fatalf("outer PipeHole = %d, want 1", call.PipeHole)
 	}

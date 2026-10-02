@@ -23,9 +23,9 @@ func TestBareVariantResolvesWithinTheReferringModule(t *testing.T) {
 	t.Run("independent modules do not ambiguate each other", func(t *testing.T) {
 		err, _ := checkFiles(t, map[string]string{
 			"a.fern": "enum Kind { Text, Binary }\n" +
-				"pub function ka(): i32 { var k: Kind = Text; return 0; }\n",
+				"pub function ka(): i32 { let k: Kind = Text; return 0; }\n",
 			"b.fern": "enum Kind { Text, Blob }\n" +
-				"pub function kb(): i32 { var k: Kind = Text; return 0; }\n",
+				"pub function kb(): i32 { let k: Kind = Text; return 0; }\n",
 			"main.fern": "import \"./a\";\nimport \"./b\";\n" +
 				"function main(): i32 { return a.ka() + b.kb(); }\n",
 		}, "main.fern")
@@ -68,7 +68,7 @@ func TestBareVariantResolvesWithinTheReferringModule(t *testing.T) {
 		err, _ := checkFiles(t, map[string]string{
 			"other.fern": "pub enum Kind { Text, Blob }\n",
 			"lib.fern": "import \"./other\";\nenum Kind { Text, Binary }\n" +
-				"pub function pick(): i32 { var k: Kind = Text; return 0; }\n",
+				"pub function pick(): i32 { let k: Kind = Text; return 0; }\n",
 			"main.fern": "import \"./lib\";\nfunction main(): i32 { return lib.pick(); }\n",
 		}, "main.fern")
 		if err == nil {
@@ -101,7 +101,7 @@ func TestBareVariantResolvesWithinTheReferringModule(t *testing.T) {
 		err, _ := checkFiles(t, map[string]string{
 			"lib.fern": "pub enum Kind { Text, Binary }\n",
 			"main.fern": "import \"./lib\";\n" +
-				"function main(): i32 { var k: lib.Kind = Text; return 0; }\n",
+				"function main(): i32 { let k: lib.Kind = Text; return 0; }\n",
 		}, "main.fern")
 		if err != nil {
 			t.Errorf("lib is in main's closure, so bare Text resolves:\n%v", err)
@@ -115,7 +115,7 @@ func TestBareVariantResolvesWithinTheReferringModule(t *testing.T) {
 			"shapes.fern": "pub enum Kind { Text, Binary }\n",
 			"facade.fern": "pub use \"./shapes\".{Kind};\n",
 			"main.fern": "import \"./facade\";\n" +
-				"function main(): i32 { var k: facade.Kind = Text; return 0; }\n",
+				"function main(): i32 { let k: facade.Kind = Text; return 0; }\n",
 		}, "main.fern")
 		if err != nil {
 			t.Errorf("facade re-exports Kind, so bare Text resolves in main:\n%v", err)
@@ -127,7 +127,7 @@ func TestBareVariantResolvesWithinTheReferringModule(t *testing.T) {
 	t.Run("an unreachable module's variant is not nameable", func(t *testing.T) {
 		err, _ := checkFiles(t, map[string]string{
 			"other.fern": "pub enum Kind { Text, Binary }\n",
-			"lib.fern":   "pub function bad(): i32 { var x = Text; return 0; }\n",
+			"lib.fern":   "pub function bad(): i32 { let x = Text; return 0; }\n",
 			"main.fern": "import \"./lib\";\nimport \"./other\";\n" +
 				"function main(): i32 { return lib.bad(); }\n",
 		}, "main.fern")

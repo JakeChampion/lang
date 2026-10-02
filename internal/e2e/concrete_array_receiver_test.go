@@ -15,20 +15,20 @@ import "testing"
 // `i32[]` and `string[]` methods proves the two do not collide.
 const concreteArrayReceiverSrc = `function (xs: i32[]) avg2(): i32 {
     if (xs.len() == 0) { return 0; }
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < xs.len()) { t = t + xs[i]; i = i + 1; }
     return t / xs.len();
 }
 function (xs: string[]) total_len(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < xs.len()) { t = t + xs[i].len(); i = i + 1; }
     return t;
 }
 function main(): i32 {
-    var a: i32[] = [2, 4, 6];
-    var s: string[] = ["ab", "cde"];
+    let a: i32[] = [2, 4, 6];
+    let s: string[] = ["ab", "cde"];
     return a.avg2() + s.total_len();
 }
 `

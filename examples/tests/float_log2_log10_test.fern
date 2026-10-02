@@ -46,7 +46,7 @@ function test_f32(): test.TestOutcome {
 }
 
 function float_near(a: f64, b: f64): boolean {
-  var d: f64 = a - b;
+  let d: f64 = a - b;
   if (d < 0.0) {
     d = 0.0 - d;
   }
@@ -54,7 +54,7 @@ function float_near(a: f64, b: f64): boolean {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("std/float log2/log10");
+  let r: test.TestRunner = test.test_new("std/float log2/log10");
   r = r.it("log2 power of two", test_log2_pow2);
   r = r.it("log2 large", test_log2_large);
   r = r.it("log2 below one", test_log2_below_one);

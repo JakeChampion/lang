@@ -39,12 +39,12 @@ function main(): i32 { return f(A(1), A(2), A(3)); }`},
 function main(): i32 { return f(0, "hi"); }`},
 	// Nested match in EXPRESSION-value (tail) position.
 	{"nested-expr-value", `enum E { A(i32), B }
-function f(x: E, k: i32): i32 { var r: i32 = match (x) { A(n) => match (k) { 0 => n, _ => n + k }, B => 0 }; return r; }
+function f(x: E, k: i32): i32 { let r: i32 = match (x) { A(n) => match (k) { 0 => n, _ => n + k }, B => 0 }; return r; }
 function main(): i32 { return f(A(7), 3); }`},
 	// Nested match inside a while-loop body, composing with surrounding control flow.
 	{"nested-in-while", `enum E { A(i32), B }
 function classify(x: E): i32 { match (x) { A(n) => { match (n) { 0 => { return 1; }, _ => { return 2; }, } }, B => { return 0; }, } }
-function main(): i32 { var s: i32 = 0; var i: i32 = 0; while (i < 5) { s = s + classify(A(i)); i = i + 1; } return s; }`},
+function main(): i32 { let s: i32 = 0; let i: i32 = 0; while (i < 5) { s = s + classify(A(i)); i = i + 1; } return s; }`},
 	// Regression guard: a flat single-level match.
 	{"single-match-regress", `function f(k: i32): i32 { match (k) { 0 => { return 5; }, _ => { return 9; }, } }
 function main(): i32 { return f(0); }`},

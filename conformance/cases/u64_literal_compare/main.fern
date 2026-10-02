@@ -29,13 +29,13 @@ function main(): i32 {
     if (!(191u64 < 617u64)) { return 7; }
 
     // Through LOCALS: the route that was already correct.
-    var a: u64 = 191u64;
-    var b: u64 = 9223372036854776520u64;
+    let a: u64 = 191u64;
+    let b: u64 = 9223372036854776520u64;
     if (!(a < b)) { return 8; }
 
     // Signed i64 stays signed — the fix must not make every wide compare
     // unsigned.
-    var neg: i64 = 0i64 - 5i64;
+    let neg: i64 = 0i64 - 5i64;
     if (!(neg < 3i64)) { return 9; }
 
     return 11;

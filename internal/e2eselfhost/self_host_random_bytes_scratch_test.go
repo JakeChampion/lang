@@ -10,8 +10,8 @@ import (
 // helper frees it through the string box it wraps the scratch in, so a bound
 // result balances on both lowerings, fifty calls in a loop.
 const randomBytesScratchSrc = `function main(): i32 {
-    var t: i32 = 0; var i: i32 = 0;
-    while (i < 50) { var b: u8[] = random_bytes(16); t = t + b.len(); i = i + 1; }
+    let t: i32 = 0; let i: i32 = 0;
+    while (i < 50) { let b: u8[] = random_bytes(16); t = t + b.len(); i = i + 1; }
     return t % 200;
 }
 `

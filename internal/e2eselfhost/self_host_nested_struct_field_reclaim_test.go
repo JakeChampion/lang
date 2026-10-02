@@ -35,15 +35,15 @@ const nestedStructFieldSrc = `struct Inner { v: i32 }
 struct Outer { f: Inner, n: i32 }
 
 function round(): i32 {
-    var o: Outer = Outer { f: Inner { v: 0 }, n: 0 };
-    var i: i32 = 0;
+    let o: Outer = Outer { f: Inner { v: 0 }, n: 0 };
+    let i: i32 = 0;
     while (i < 4) { o = Outer { f: Inner { v: i }, n: i }; i = i + 1; }
     return o.n;
 }
 
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { t = t + round(); r = r + 1; }
     return t % 7;
 }`
@@ -125,15 +125,15 @@ func TestSelfHostNestedStructFieldHazardsX86_64(t *testing.T) {
 struct PS { node: Node, pos: i32 }
 function parse_one(pos: i32): PS { return PS { node: Node { kind: pos, items: [pos, pos + 1] }, pos: pos + 1 }; }
 function round(n: i32): i32 {
-    var items: Node[] = [];
-    var pos: i32 = 0;
-    while (pos < n) { var p: PS = parse_one(pos); items = items.append(p.node); pos = p.pos; }
-    var t: i32 = 0;
-    var k: i32 = 0;
+    let items: Node[] = [];
+    let pos: i32 = 0;
+    while (pos < n) { let p: PS = parse_one(pos); items = items.append(p.node); pos = p.pos; }
+    let t: i32 = 0;
+    let k: i32 = 0;
     while (k < items.len()) { t = t + items[k].kind + items[k].items[1]; k = k + 1; }
     return t;
 }
-function main(): i32 { var t: i32 = 0; var r: i32 = 0; while (r < 100) { t = t + round(3); r = r + 1; } return t % 97; }`,
+function main(): i32 { let t: i32 = 0; let r: i32 = 0; while (r < 100) { t = t + round(3); r = r + 1; } return t % 97; }`,
 			want: 27,
 		},
 		{
@@ -145,16 +145,16 @@ function main(): i32 { var t: i32 = 0; var r: i32 = 0; while (r < 100) { t = t +
 struct Outer { f: Inner, n: i32 }
 struct Holder { g: Inner, m: i32 }
 function round(i: i32): i32 {
-    var keep: Holder[] = [];
-    var o: Outer = Outer { f: Inner { v: i }, n: i };
-    var j: i32 = 0;
+    let keep: Holder[] = [];
+    let o: Outer = Outer { f: Inner { v: i }, n: i };
+    let j: i32 = 0;
     while (j < 3) { o = Outer { f: Inner { v: i + j }, n: j }; keep = keep.append(Holder { g: o.f, m: j }); j = j + 1; }
-    var t: i32 = 0;
-    var k: i32 = 0;
+    let t: i32 = 0;
+    let k: i32 = 0;
     while (k < keep.len()) { t = t + keep[k].g.v + keep[k].m; k = k + 1; }
     return t;
 }
-function main(): i32 { var t: i32 = 0; var r: i32 = 0; while (r < 100) { t = t + round(r); r = r + 1; } return t % 97; }`,
+function main(): i32 { let t: i32 = 0; let r: i32 = 0; while (r < 100) { t = t + round(r); r = r + 1; } return t % 97; }`,
 			want: 27,
 		},
 		{
@@ -165,16 +165,16 @@ function main(): i32 { var t: i32 = 0; var r: i32 = 0; while (r < 100) { t = t +
 			src: `struct Inner { v: i32 }
 struct Outer { f: Inner, n: i32 }
 function round(i: i32): i32 {
-    var keep: Outer[] = [];
-    var o: Outer = Outer { f: Inner { v: i }, n: i };
-    var j: i32 = 0;
+    let keep: Outer[] = [];
+    let o: Outer = Outer { f: Inner { v: i }, n: i };
+    let j: i32 = 0;
     while (j < 3) { keep = keep.append(Outer { ...o, n: j }); o = Outer { f: Inner { v: i + j }, n: j }; j = j + 1; }
-    var t: i32 = 0;
-    var k: i32 = 0;
+    let t: i32 = 0;
+    let k: i32 = 0;
     while (k < keep.len()) { t = t + keep[k].f.v + keep[k].n; k = k + 1; }
     return t;
 }
-function main(): i32 { var t: i32 = 0; var r: i32 = 0; while (r < 100) { t = t + round(r); r = r + 1; } return t % 97; }`,
+function main(): i32 { let t: i32 = 0; let r: i32 = 0; while (r < 100) { t = t + round(r); r = r + 1; } return t % 97; }`,
 			want: 21,
 		},
 		{
@@ -185,12 +185,12 @@ function main(): i32 { var t: i32 = 0; var r: i32 = 0; while (r < 100) { t = t +
 			src: `struct Inner { v: i32 }
 struct Outer { f: Inner, n: i32 }
 function round(i: i32): i32 {
-    var o: Outer = Outer { f: Inner { v: i }, n: i };
-    var j: i32 = 0;
+    let o: Outer = Outer { f: Inner { v: i }, n: i };
+    let j: i32 = 0;
     while (j < 4) { o = Outer { f: Inner { v: i + j }, n: j }; j = j + 1; }
     return o.f.v + o.n;
 }
-function main(): i32 { var t: i32 = 0; var r: i32 = 0; while (r < 100) { t = t + round(r); r = r + 1; } return t % 97; }`,
+function main(): i32 { let t: i32 = 0; let r: i32 = 0; while (r < 100) { t = t + round(r); r = r + 1; } return t % 97; }`,
 			want: 21,
 		},
 		{
@@ -202,10 +202,10 @@ function main(): i32 { var t: i32 = 0; var r: i32 = 0; while (r < 100) { t = t +
 struct Outer { f: Inner, n: i32 }
 function sink(x: Inner): i32 { return x.v; }
 function round(i: i32): i32 {
-    var o: Outer = Outer { f: Inner { v: i }, n: i };
+    let o: Outer = Outer { f: Inner { v: i }, n: i };
     return sink(o.f) + o.n;
 }
-function main(): i32 { var t: i32 = 0; var r: i32 = 0; while (r < 100) { t = t + round(r); r = r + 1; } return t % 97; }`,
+function main(): i32 { let t: i32 = 0; let r: i32 = 0; while (r < 100) { t = t + round(r); r = r + 1; } return t % 97; }`,
 			want: 6,
 		},
 	} {

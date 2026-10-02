@@ -42,28 +42,28 @@ function days_in_month(y: i32, m: i32): i32 {
     return 0;
 }
 function days_from_civil(y_in: i32, m: i32, d: i32): i32 {
-    var y: i32 = y_in;
+    let y: i32 = y_in;
     if (m <= 2) { y = y - 1; }
-    var era: i32 = 0;
+    let era: i32 = 0;
     if (y >= 0) { era = y / 400; } else { era = (y - 399) / 400; }
-    var yoe: i32 = y - era * 400;
-    var mp: i32 = 0;
+    let yoe: i32 = y - era * 400;
+    let mp: i32 = 0;
     if (m > 2) { mp = m - 3; } else { mp = m + 9; }
-    var doy: i32 = (153 * mp + 2) / 5 + d - 1;
-    var doe: i32 = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let doy: i32 = (153 * mp + 2) / 5 + d - 1;
+    let doe: i32 = yoe * 365 + yoe / 4 - yoe / 100 + doy;
     return era * 146097 + doe - 719468;
 }
 function civil_from_days(z_in: i32): Civil {
-    var z: i32 = z_in + 719468;
-    var era: i32 = 0;
+    let z: i32 = z_in + 719468;
+    let era: i32 = 0;
     if (z >= 0) { era = z / 146097; } else { era = (z - 146096) / 146097; }
-    var doe: i32 = z - era * 146097;
-    var yoe: i32 = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-    var y: i32 = yoe + era * 400;
-    var doy: i32 = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    var mp: i32 = (5 * doy + 2) / 153;
-    var d: i32 = doy - (153 * mp + 2) / 5 + 1;
-    var m: i32 = 0;
+    let doe: i32 = z - era * 146097;
+    let yoe: i32 = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y: i32 = yoe + era * 400;
+    let doy: i32 = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp: i32 = (5 * doy + 2) / 153;
+    let d: i32 = doy - (153 * mp + 2) / 5 + 1;
+    let m: i32 = 0;
     if (mp < 10) { m = mp + 3; } else { m = mp - 9; }
     if (m <= 2) { y = y + 1; }
     return Civil { year: y, month: m, day: d };
@@ -75,25 +75,25 @@ function (d: Civil) is_valid(): boolean {
     return d.day <= days_in_month(d.year, d.month);
 }
 function (d: Civil) add_days(n: i32): Civil {
-    var z: i32 = days_from_civil(d.year, d.month, d.day);
+    let z: i32 = days_from_civil(d.year, d.month, d.day);
     return civil_from_days(z + n);
 }
 function (d: Civil) days_since(other: Civil): i32 {
-    var a: i32 = days_from_civil(d.year, d.month, d.day);
-    var b: i32 = days_from_civil(other.year, other.month, other.day);
+    let a: i32 = days_from_civil(d.year, d.month, d.day);
+    let b: i32 = days_from_civil(other.year, other.month, other.day);
     return a - b;
 }
 function (d: Civil) weekday(): i32 {
-    var z: i32 = days_from_civil(d.year, d.month, d.day);
+    let z: i32 = days_from_civil(d.year, d.month, d.day);
     return ((z + 4) % 7 + 7) % 7;
 }
 function (d: Civil) day_of_year(): i32 {
-    var m: i32 = d.month;
-    var mp: i32 = 0;
+    let m: i32 = d.month;
+    let mp: i32 = 0;
     if (m > 2) { mp = m - 3; } else { mp = m + 9; }
-    var doy: i32 = (153 * mp + 2) / 5 + d.day;
+    let doy: i32 = (153 * mp + 2) / 5 + d.day;
     if (m <= 2) { return doy - 306; }
-    var add_for_leap: i32 = 0;
+    let add_for_leap: i32 = 0;
     if (is_leap_year(d.year)) { add_for_leap = 1; }
     return doy + 59 + add_for_leap;
 }
@@ -117,24 +117,24 @@ var timeDateIRCases = []struct {
 	main string
 }{
 	// weekday of a known date (0..6, Sunday=0).
-	{"weekday", `var d: Civil = Civil { year: 2026, month: 6, day: 13 }; return d.weekday();`},
+	{"weekday", `let d: Civil = Civil { year: 2026, month: 6, day: 13 }; return d.weekday();`},
 	// add_days within a month: 2026-06-13 + 20 = 2026-07-03 -> day 3.
-	{"add-days-day", `var d: Civil = Civil { year: 2026, month: 6, day: 13 }; return d.add_days(20).day;`},
+	{"add-days-day", `let d: Civil = Civil { year: 2026, month: 6, day: 13 }; return d.add_days(20).day;`},
 	// add_days crossing a year boundary: 2025-12-25 + 10 = 2026-01-04 -> month 1.
-	{"add-days-cross-year-month", `var d: Civil = Civil { year: 2025, month: 12, day: 25 }; return d.add_days(10).month;`},
-	{"add-days-cross-year-day", `var d: Civil = Civil { year: 2025, month: 12, day: 25 }; return d.add_days(10).day;`},
+	{"add-days-cross-year-month", `let d: Civil = Civil { year: 2025, month: 12, day: 25 }; return d.add_days(10).month;`},
+	{"add-days-cross-year-day", `let d: Civil = Civil { year: 2025, month: 12, day: 25 }; return d.add_days(10).day;`},
 	// days_since: two Date structs subtracted -> 10.
-	{"days-since", `var a: Civil = Civil { year: 2026, month: 6, day: 13 }; var b: Civil = Civil { year: 2026, month: 6, day: 3 }; return a.days_since(b);`},
+	{"days-since", `let a: Civil = Civil { year: 2026, month: 6, day: 13 }; let b: Civil = Civil { year: 2026, month: 6, day: 3 }; return a.days_since(b);`},
 	// day_of_year: 2024-03-01 in a leap year -> 61.
-	{"day-of-year-leap", `var d: Civil = Civil { year: 2024, month: 3, day: 1 }; return d.day_of_year();`},
+	{"day-of-year-leap", `let d: Civil = Civil { year: 2024, month: 3, day: 1 }; return d.day_of_year();`},
 	// is_valid true (leap Feb 29) -> 1.
-	{"is-valid-leap", `var d: Civil = Civil { year: 2024, month: 2, day: 29 }; if (d.is_valid()) { return 1; } return 0;`},
+	{"is-valid-leap", `let d: Civil = Civil { year: 2024, month: 2, day: 29 }; if (d.is_valid()) { return 1; } return 0;`},
 	// is_valid false (non-leap Feb 29) -> sentinel 7.
-	{"is-valid-nonleap", `var d: Civil = Civil { year: 2023, month: 2, day: 29 }; if (!d.is_valid()) { return 7; } return 0;`},
+	{"is-valid-nonleap", `let d: Civil = Civil { year: 2023, month: 2, day: 29 }; if (!d.is_valid()) { return 7; } return 0;`},
 	// format_iso length: "2026-06-13" -> 10.
-	{"format-iso-len", `var d: Civil = Civil { year: 2026, month: 6, day: 13 }; return d.format_iso().len();`},
+	{"format-iso-len", `let d: Civil = Civil { year: 2026, month: 6, day: 13 }; return d.format_iso().len();`},
 	// format_iso first byte: '2' (50).
-	{"format-iso-firstbyte", `var d: Civil = Civil { year: 2026, month: 6, day: 13 }; return d.format_iso()[0] as i32;`},
+	{"format-iso-firstbyte", `let d: Civil = Civil { year: 2026, month: 6, day: 13 }; return d.format_iso()[0] as i32;`},
 }
 
 func timeDateIRSrc(mainBody string) string {

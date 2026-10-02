@@ -18,17 +18,17 @@ import "core/cmp" as cmp;
 // 1.0` is false. Only the trait instances are total.
 
 function nan64(): f64 {
-  var z: f64 = 0.0;
+  let z: f64 = 0.0;
   return z / z;
 }
 
 function nan32(): f32 {
-  var z: f32 = 0.0;
+  let z: f32 = 0.0;
   return z / z;
 }
 
 function inf64(): f64 {
-  var z: f64 = 0.0;
+  let z: f64 = 0.0;
   return 1.0 / z;
 }
 
@@ -70,7 +70,7 @@ function test_eq_agrees_with_cmp(): test.TestOutcome {
 // The operators keep IEEE semantics — the total order lives in the instances,
 // not in `==` / `<`.
 function test_operators_stay_ieee(): test.TestOutcome {
-  var n: f64 = nan64();
+  let n: f64 = nan64();
   if (n == n) {
     return test.fail("the == operator must stay IEEE (false for NaN)");
   }
@@ -83,7 +83,7 @@ function test_operators_stay_ieee(): test.TestOutcome {
 // ---- what the placement buys the helpers ----
 
 function test_sort_is_deterministic(): test.TestOutcome {
-  var s: f64[] = cmp.sort([3.0, nan64(), 1.0, 2.0]);
+  let s: f64[] = cmp.sort([3.0, nan64(), 1.0, 2.0]);
   if (s[0].is_nan()) {
     return test.fail("nan must not sort first");
   }
@@ -128,7 +128,7 @@ function test_f32_placement(): test.TestOutcome {
 }
 
 function test_f32_sort(): test.TestOutcome {
-  var s: f32[] = cmp.sort([2.0, nan32(), 1.0]);
+  let s: f32[] = cmp.sort([2.0, nan32(), 1.0]);
   if (s[0] != 1.0 || s[1] != 2.0) {
     return test.fail("f32 numbers ahead of the NaN");
   }
@@ -136,7 +136,7 @@ function test_f32_sort(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("core/cmp NaN total order");
+  let r: test.TestRunner = test.test_new("core/cmp NaN total order");
   r = r.it("NaN sorts after every number", test_nan_after_every_number);
   r = r.it("every NaN is one value", test_nans_are_one_value);
   r = r.it("Eq agrees with cmp", test_eq_agrees_with_cmp);

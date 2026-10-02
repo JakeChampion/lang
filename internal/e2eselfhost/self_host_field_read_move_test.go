@@ -10,7 +10,7 @@ import (
 )
 
 // fieldReadMoveCases pin #10482: a local bound from a field read of an `own`
-// parameter (`var fr = st.fr`) holds no count of its own, so storing it into a
+// parameter (`let fr = st.fr`) holds no count of its own, so storing it into a
 // struct or tuple literal at its last use is not a move. The construction has
 // to retain it, because the parameter's exit drop releases the field. #10414's
 // pass had this shape in strarr_own_node, and the gen1 compiler segfaulted
@@ -27,50 +27,50 @@ var fieldReadMoveCases = []struct {
 	{"struct-field-from-own-param", `struct Frame { key: string, n: i32 }
 struct Acc { fr: Frame, m: i32 }
 function step(n: i32, own st: Acc): Acc {
-    var fr: Frame = st.fr;
+    let fr: Frame = st.fr;
     return Acc { fr: fr, m: st.m + n };
 }
 function main(): i32 {
-    var acc: Acc = Acc { fr: Frame { key: "k" + "", n: 1 }, m: 0 };
-    var i: i32 = 0;
+    let acc: Acc = Acc { fr: Frame { key: "k" + "", n: 1 }, m: 0 };
+    let i: i32 = 0;
     while (i < 5) { acc = step(i, acc); i = i + 1; }
     return acc.m + acc.fr.key.len() + acc.fr.n;
 }`, true},
 	{"string-field-from-own-param", `struct Acc { key: string, m: i32 }
 function step(n: i32, own st: Acc): Acc {
-    var k: string = st.key;
-    var i: i32 = 0;
+    let k: string = st.key;
+    let i: i32 = 0;
     while (i < n) { i = i + k.len(); }
     return Acc { key: k, m: st.m + i };
 }
 function main(): i32 {
-    var acc: Acc = Acc { key: "k" + "z", m: 0 };
-    var i: i32 = 0;
+    let acc: Acc = Acc { key: "k" + "z", m: 0 };
+    let i: i32 = 0;
     while (i < 5) { acc = step(i, acc); i = i + 1; }
     return acc.m + acc.key.len();
 }`, true},
 	{"tuple-field-from-own-param", `struct Acc { t: (i32[], i32), m: i32 }
 function step(n: i32, own st: Acc): Acc {
-    var t: (i32[], i32) = st.t;
-    var i: i32 = 0;
+    let t: (i32[], i32) = st.t;
+    let i: i32 = 0;
     while (i < n) { i = i + t.1; }
     return Acc { t: t, m: st.m + i };
 }
 function main(): i32 {
-    var acc: Acc = Acc { t: ([1, 2], 1), m: 0 };
-    var i: i32 = 0;
+    let acc: Acc = Acc { t: ([1, 2], 1), m: 0 };
+    let i: i32 = 0;
     while (i < 5) { acc = step(i, acc); i = i + 1; }
     return acc.m + acc.t.0.len();
 }`, true},
 	{"tuple-element-from-own-param", `struct Frame { key: string, n: i32 }
 struct Acc { fr: Frame, m: i32 }
 function step(n: i32, own st: Acc): (Frame, i32) {
-    var fr: Frame = st.fr;
+    let fr: Frame = st.fr;
     return (fr, st.m + n);
 }
 function main(): i32 {
-    var acc: Acc = Acc { fr: Frame { key: "k" + "", n: 1 }, m: 0 };
-    var i: i32 = 0;
+    let acc: Acc = Acc { fr: Frame { key: "k" + "", n: 1 }, m: 0 };
+    let i: i32 = 0;
     while (i < 5) {
         let (f, m) = step(i, acc);
         acc = Acc { fr: f, m: m };
@@ -86,14 +86,14 @@ struct Acc { fr: Frame, m: i32 }
 @noinline
 function fresh(n: i32): Frame { return Frame { key: "f" + "", n: n }; }
 function step(n: i32, own st: Acc): Acc {
-    var fr: Frame = st.fr;
-    var m: i32 = fr.n;
+    let fr: Frame = st.fr;
+    let m: i32 = fr.n;
     fr = fresh(m + n);
     return Acc { fr: fr, m: st.m + n };
 }
 function main(): i32 {
-    var acc: Acc = Acc { fr: Frame { key: "k" + "", n: 1 }, m: 0 };
-    var i: i32 = 0;
+    let acc: Acc = Acc { fr: Frame { key: "k" + "", n: 1 }, m: 0 };
+    let i: i32 = 0;
     while (i < 5) { acc = step(i, acc); i = i + 1; }
     return acc.m + acc.fr.key.len() + acc.fr.n;
 }`, true},
@@ -104,13 +104,13 @@ struct Acc { fr: Frame, m: i32 }
 @noinline
 function fresh(n: i32): Frame { return Frame { key: "f" + "", n: n }; }
 function step(n: i32, own st: Acc): Acc {
-    var fr: Frame = st.fr;
+    let fr: Frame = st.fr;
     if (n % 2 == 0) { fr = fresh(n); }
     return Acc { fr: fr, m: st.m + n };
 }
 function main(): i32 {
-    var acc: Acc = Acc { fr: Frame { key: "k" + "", n: 1 }, m: 0 };
-    var i: i32 = 0;
+    let acc: Acc = Acc { fr: Frame { key: "k" + "", n: 1 }, m: 0 };
+    let i: i32 = 0;
     while (i < 5) { acc = step(i, acc); i = i + 1; }
     return acc.m + acc.fr.key.len() + acc.fr.n;
 }`, false},

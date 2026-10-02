@@ -7,34 +7,34 @@ function mask(): u32 {
 }
 
 function main(): i32 {
-  var wide = 0xFFFFFFFF;
-  var typed: i64 = wide;
+  let wide = 0xFFFFFFFF;
+  let typed: i64 = wide;
   if (typed / 65536 != 65535) {
     return 1;
   }
-  var upper = 0X80000000;
+  let upper = 0X80000000;
   if (upper <= 0) {
     return 2;
   }
-  var small = 0x000000000000007f;
-  var narrow: i32 = small;
+  let small = 0x000000000000007f;
+  let narrow: i32 = small;
   if (narrow != 127) {
     return 3;
   }
-  var decimal = 127;
-  var decimal_narrow: i32 = decimal;
+  let decimal = 127;
+  let decimal_narrow: i32 = decimal;
   if (decimal_narrow != 127) {
     return 4;
   }
-  var generic = identity(0xFFFFFFFF);
+  let generic = identity(0xFFFFFFFF);
   if (generic / 65536 != 65535) {
     return 5;
   }
-  var values = [0xFFFFFFFF];
+  let values = [0xFFFFFFFF];
   if (values[0] / 65536 != 65535) {
     return 6;
   }
-  var word: u32 = 1;
+  let word: u32 = 1;
   if (word + 0xffffffff != 0u32) {
     return 7;
   }

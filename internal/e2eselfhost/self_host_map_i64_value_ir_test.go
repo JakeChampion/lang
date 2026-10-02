@@ -46,21 +46,21 @@ func TestSelfHostMapI64ValueIRX86_64(t *testing.T) {
 	}{
 		// (1) wide i64 LITERAL value round-trips full-width. 5000000007 % 1000 == 7
 		// (was 199: 5000000007 truncated to 705032711, %1000 == 711 → exit 199).
-		{"i64-literal", "import \"core/map\";\nfunction main(): i32 { var m: Map[i32, i64] = Map { 1: 5000000007 }; var g: i64 = m.get_or(1, 0); return (g % 1000) as i32; }\n"},
+		{"i64-literal", "import \"core/map\";\nfunction main(): i32 { let m: Map[i32, i64] = Map { 1: 5000000007 }; let g: i64 = m.get_or(1, 0); return (g % 1000) as i32; }\n"},
 		// (2) u64 CAST value + chained unsigned shift stays on IR (no bail)
 		// and shifts UNSIGNED. 18e18 >> 58 == 62 (was 254: AST path used sarq).
-		{"u64-cast-shift", "import \"core/map\";\nfunction main(): i32 { var m: Map[i32, u64] = Map { 1: 18000000000000000000 as u64 }; return (m.get_or(1, 0 as u64) >> 58) as i32; }\n"},
+		{"u64-cast-shift", "import \"core/map\";\nfunction main(): i32 { let m: Map[i32, u64] = Map { 1: 18000000000000000000 as u64 }; return (m.get_or(1, 0 as u64) >> 58) as i32; }\n"},
 		// (3) i64 value from a VARIABLE, inserted via .insert on a bound map.
 		// 9000000000 % 1000 == 0.
-		{"i64-var-insert", "import \"core/map\";\nfunction main(): i32 { var m: Map[i32, i64] = map_new(8); var v: i64 = 9000000000; m = m.insert(1, v); return (m.get_or(1, 0) % 1000) as i32; }\n"},
+		{"i64-var-insert", "import \"core/map\";\nfunction main(): i32 { let m: Map[i32, i64] = map_new(8); let v: i64 = 9000000000; m = m.insert(1, v); return (m.get_or(1, 0) % 1000) as i32; }\n"},
 		// (4) u64 value inserted via .insert (cast), chained shift. Same 62.
-		{"u64-insert-shift", "import \"core/map\";\nfunction main(): i32 { var m: Map[i32, u64] = map_new(8); m = m.insert(1, 18000000000000000000 as u64); return (m.get_or(1, 0 as u64) >> 58) as i32; }\n"},
+		{"u64-insert-shift", "import \"core/map\";\nfunction main(): i32 { let m: Map[i32, u64] = map_new(8); m = m.insert(1, 18000000000000000000 as u64); return (m.get_or(1, 0 as u64) >> 58) as i32; }\n"},
 		// (5) unannotated get_or binding width-tracks i64 (infer_expr_width), so a
 		// later `% 1000` is 64-bit. 12000000005 % 1000 == 5.
-		{"i64-unannotated-getor", "import \"core/map\";\nfunction main(): i32 { var m: Map[i32, i64] = Map { 2: 12000000005 }; var g = m.get_or(2, 0); return (g % 1000) as i32; }\n"},
+		{"i64-unannotated-getor", "import \"core/map\";\nfunction main(): i32 { let m: Map[i32, i64] = Map { 2: 12000000005 }; let g = m.get_or(2, 0); return (g % 1000) as i32; }\n"},
 		// (6) MISS path returns the (wide) default full-width. get_or on absent key
 		// yields the default 7000000009; % 1000 == 9.
-		{"i64-default-miss", "import \"core/map\";\nfunction main(): i32 { var m: Map[i32, i64] = map_new(8); var g: i64 = m.get_or(99, 7000000009); return (g % 1000) as i32; }\n"},
+		{"i64-default-miss", "import \"core/map\";\nfunction main(): i32 { let m: Map[i32, i64] = map_new(8); let g: i64 = m.get_or(99, 7000000009); return (g % 1000) as i32; }\n"},
 	}
 
 	for _, tc := range cases {

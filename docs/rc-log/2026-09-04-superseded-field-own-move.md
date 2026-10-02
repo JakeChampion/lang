@@ -28,7 +28,7 @@ reaches the call site as an argument the lowering has accounted for.
 
 ## The lowering
 
-Uniqueness is a RUNTIME fact, not an analysis: `var b = a` earlier, a capture,
+Uniqueness is a RUNTIME fact, not an analysis: `let b = a` earlier, a capture,
 a producer's alias — every one of them would read the emptied slot. So the call
 site parks the field value, tests `__fern_rc_is_unique(a)`, and on the unique
 branch stores a null over the slot, else retains the value for the callee
@@ -50,7 +50,7 @@ has no defer. Everything else takes the retain.
 ## Measured
 
 Probe: `step` (rebind), `step_ret` (return), `local_form` (local base, in a
-loop), `shared` (a `var keep = a` alias that must keep reading its field), 200
+loop), `shared` (a `let keep = a` alias that must keep reading its field), 200
 rounds, value check folded with `__rc_underflow_count()`.
 
 | compiler / lane | verdict |

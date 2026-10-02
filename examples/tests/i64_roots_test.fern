@@ -60,7 +60,7 @@ function test_perfect_square_false(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("std/i64 roots");
+  let r: test.TestRunner = test.test_new("std/i64 roots");
   r = r.it("sqrt_floor exact", test_sqrt_floor_exact);
   r = r.it("sqrt_floor inexact", test_sqrt_floor_inexact);
   r = r.it("sqrt_floor large", test_sqrt_floor_large);

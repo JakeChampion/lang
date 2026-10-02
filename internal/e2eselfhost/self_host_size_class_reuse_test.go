@@ -9,14 +9,14 @@ import "testing"
 // from the free lists, so the bump pointer does not move. An allocation and a
 // free that classed a block differently would leave the second pass bumping.
 const sizeClassReuseProgram = `@noinline function fill(n: i32): i32 {
-    var xs: i32[] = [];
-    var i: i32 = 0;
+    let xs: i32[] = [];
+    let i: i32 = 0;
     while (i < n) { xs = xs.append(i); i = i + 1; }
     return xs.len();
 }
 @noinline function sweep(): i32 {
-    var t: i32 = 0;
-    var n: i32 = 200;
+    let t: i32 = 0;
+    let n: i32 = 200;
     while (n < 1000) { t = t + fill(n); n = n + 37; }
     return t;
 }
@@ -26,8 +26,8 @@ function print_int(n: i32): i32 {
     return 0;
 }
 function main(): i32 {
-    var t: i32 = sweep();
-    var before: i64 = __heap_bump_bytes();
+    let t: i32 = sweep();
+    let before: i64 = __heap_bump_bytes();
     t = t + sweep();
     print_int(t); print("");
     print_int((__heap_bump_bytes() - before) as i32); print("");

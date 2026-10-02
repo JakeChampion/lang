@@ -10,7 +10,7 @@
 //
 //   - the #4873 grow-containment bracket fired on an argument that does not
 //     survive the call, because callArgDeaths recognised only the strict
-//     `x = f(.., x, ..)` and `return f(.., x, ..)` shapes. `var t = f(b, v)`
+//     `x = f(.., x, ..)` and `return f(.., x, ..)` shapes. `let t = f(b, v)`
 //     is neither, so `b` was inc'd across the call purely to force the callee
 //     onto its copy path — probe H below;
 //   - the exit half of the consumed-array-param ownership-flag protocol was
@@ -54,7 +54,7 @@ var materialiseCases = []materialiseCase{
 
 	// Fixed: the call result is materialised into a slot and handed back.
 	// H is the grow-bracket half, I and L the exit-sweep half.
-	{"H_call_result_into_local", `function g(b: i32[], v: i32): i32[] { var t: i32[] = f(b, v); return t; }`, 1, 0},
+	{"H_call_result_into_local", `function g(b: i32[], v: i32): i32[] { let t: i32[] = f(b, v); return t; }`, 1, 0},
 	{"I_call_result_into_param", `function g(b: i32[], v: i32): i32[] { b = f(b, v); return b; }`, 1, 0},
 	{"L_two_calls_via_param", `function g(b: i32[], v: i32): i32[] { b = f(b, v); return f(b, v + 1); }`, 2, 0},
 
@@ -71,8 +71,8 @@ var materialiseCases = []materialiseCase{
 	// tolerated any non-zero value would let that pass unnoticed, and would
 	// equally hide a regression that made the residual worse.
 	{"J_nested_call_arg", `function g(b: i32[], v: i32): i32[] { return f(f(b, v), v + 1); }`, 2, 49},
-	{"K_two_calls_via_local", `function g(b: i32[], v: i32): i32[] { var t: i32[] = f(b, v); return f(t, v + 1); }`, 2, 49},
-	{"M_call_then_inline_append", `function g(b: i32[], v: i32): i32[] { var t: i32[] = f(b, v); return t.append(v + 1); }`, 2, 49},
+	{"K_two_calls_via_local", `function g(b: i32[], v: i32): i32[] { let t: i32[] = f(b, v); return f(t, v + 1); }`, 2, 49},
+	{"M_call_then_inline_append", `function g(b: i32[], v: i32): i32[] { let t: i32[] = f(b, v); return t.append(v + 1); }`, 2, 49},
 }
 
 // src builds the driver. The length + element checks run before the counter is
@@ -86,8 +86,8 @@ func (c materialiseCase) src() string {
 	return fmt.Sprintf(`function f(b: i32[], v: i32): i32[] { return b.append(v); }
 %s
 function main(): i32 {
-    var acc: i32[] = [];
-    var i: i32 = 0;
+    let acc: i32[] = [];
+    let i: i32 = 0;
     while (i < 50) { acc = g(acc, i); i = i + 1; }
     if (acc.len() != %d) { return 254; }
     if (acc[0] != 0 || acc[%d] != %d) { return 253; }

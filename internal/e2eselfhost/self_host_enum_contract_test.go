@@ -13,21 +13,21 @@ import (
 func enumContractRuntimeCases() []arrayClaimCase {
 	var cases []arrayClaimCase
 	for _, body := range []struct{ name, body string }{
-		{"direct", "var src: E = E.Full([i, i + 1]); match (src) { Full(xs) => { return xs; }, Empty => { return [0]; } }"},
-		{"alias", "var src: E = E.Full([i, i + 1]); var x: E = src; var y: E = x; match (y) { Full(xs) => { return xs; }, Empty => { return [0]; } }"},
-		{"payload-alias", "var src: E = E.Full([i, i + 1]); match (src) { Full(xs) => { var ys = xs; return ys; }, Empty => { return [0]; } }"},
-		{"conditional", "var src: E = E.Full([i, i + 1]); match (src) { Full(xs) => { if (i % 2 == 0) { return xs; } }, Empty => {} } return [i, i + 1];"},
-		{"shadowed-parameter", "if (i >= 0) { var i: E = E.Full([i, i + 1]); match (i) { Full(xs) => { return xs; }, Empty => { return [0]; } } } return [0, 1];"},
+		{"direct", "let src: E = E.Full([i, i + 1]); match (src) { Full(xs) => { return xs; }, Empty => { return [0]; } }"},
+		{"alias", "let src: E = E.Full([i, i + 1]); let x: E = src; let y: E = x; match (y) { Full(xs) => { return xs; }, Empty => { return [0]; } }"},
+		{"payload-alias", "let src: E = E.Full([i, i + 1]); match (src) { Full(xs) => { let ys = xs; return ys; }, Empty => { return [0]; } }"},
+		{"conditional", "let src: E = E.Full([i, i + 1]); match (src) { Full(xs) => { if (i % 2 == 0) { return xs; } }, Empty => {} } return [i, i + 1];"},
+		{"shadowed-parameter", "if (i >= 0) { let i: E = E.Full([i, i + 1]); match (i) { Full(xs) => { return xs; }, Empty => { return [0]; } } } return [0, 1];"},
 	} {
 		cases = append(cases, arrayClaimCase{body.name, `enum E { Full(i32[]), Empty }
 @noinline function produce(i: i32): i32[] { ` + body.body + ` }
 @noinline function exercise(i: i32): i32 {
-    var xs = produce(i); var churn = [91, 92];
+    let xs = produce(i); let churn = [91, 92];
     if (xs.len() != 2 || xs[0] != i || xs[1] != i + 1 || churn[0] != 91) { return 2; }
     return 0;
 }
 function main(): i32 {
-    var i = 0; while (i < 32) { var r = exercise(i); if (r != 0) { return r; } i = i + 1; }
+    let i = 0; while (i < 32) { let r = exercise(i); if (r != 0) { return r; } i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; } return 0;
 }`, true})
 	}
@@ -36,14 +36,14 @@ function main(): i32 {
     match (e) { Full(xs) => { return xs; }, Empty => { return [0]; } }
 }
 @noinline function exercise(i: i32): i32 {
-    var e = E.Full([i, i + 1]); var alias: E = e;
-    var first = take(e); var second = take(alias); var churn = [91, 92];
+    let e = E.Full([i, i + 1]); let alias: E = e;
+    let first = take(e); let second = take(alias); let churn = [91, 92];
     if (first[0] != i || second[1] != i + 1 || churn[0] != 91) { return 2; }
     match (e) { Full(xs) => { if (xs[0] != i || xs[1] != i + 1) { return 3; } }, Empty => { return 4; } }
     return 0;
 }
 function main(): i32 {
-    var i = 0; while (i < 32) { var r = exercise(i); if (r != 0) { return r; } i = i + 1; }
+    let i = 0; while (i < 32) { let r = exercise(i); if (r != 0) { return r; } i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; } return 0;
 }`, true})
 	cases = append(cases, arrayClaimCase{"empty-variant", `enum E { Full(i32[]), Empty }
@@ -51,11 +51,11 @@ function main(): i32 {
     match (e) { Full(xs) => { return xs; }, Empty => { return [z]; } }
 }
 @noinline function exercise(i: i32): i32 {
-    var e = E.Empty; var xs = take(e, i); var churn = [i + 91];
+    let e = E.Empty; let xs = take(e, i); let churn = [i + 91];
     if (xs.len() != 1 || xs[0] != i || churn[0] != i + 91) { return 2; } return 0;
 }
 function main(): i32 {
-    var i = 0; while (i < 32) { var r = exercise(i); if (r != 0) { return r; } i = i + 1; }
+    let i = 0; while (i < 32) { let r = exercise(i); if (r != 0) { return r; } i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; } return 0;
 }`, true})
 	return cases
@@ -71,36 +71,36 @@ func TestSelfHostEnumContractVerify(t *testing.T) {
 		ok   bool
 	}{
 		{`match (e) { Full(xs) => { return xs; }, Empty => { return [0]; } }`, true},
-		{`var alias: E = e; match (alias) { Full(xs) => { return xs; }, Empty => { return [0]; } }`, true},
-		{`match (e) { Full(xs) => { var ys = xs; return ys; }, Empty => { return [0]; } }`, true},
+		{`let alias: E = e; match (alias) { Full(xs) => { return xs; }, Empty => { return [0]; } }`, true},
+		{`match (e) { Full(xs) => { let ys = xs; return ys; }, Empty => { return [0]; } }`, true},
 		{`e = E.Full([1]); return [0];`, false},
-		{`var f = (): i32 => { match (e) { Full(xs) => { return xs[0]; }, Empty => { return 0; } } }; return [0];`, false},
+		{`let f = (): i32 => { match (e) { Full(xs) => { return xs[0]; }, Empty => { return 0; } } }; return [0];`, false},
 		{`return unknown(e);`, false},
 		{`while (true) { return [0]; }`, false},
-		{`var xs = [1]; var local = E.Full(xs); return xs;`, false},
+		{`let xs = [1]; let local = E.Full(xs); return xs;`, false},
 	} {
 		src := `enum E { Full(i32[]), Empty } function take(e: E): i32[] { ` + tc.body + ` }`
 		fmt.Fprintf(&checks, "if (accept(%q) != %t) { return %d; }\n", src, tc.ok, i+1)
 	}
 	source := `import "./enumcontract"; import "./parser"; import "./lexer"; import "./typeinfo";
 function region(): enumcontract.Region {
-    var mod = parser.parse_module(lexer.tokenize("enum E { Full(i32[]), Empty } function take(e: E): i32[] { match (e) { Full(xs) => { return xs; }, Empty => { return [0]; } } }"));
+    let mod = parser.parse_module(lexer.tokenize("enum E { Full(i32[]), Empty } function take(e: E): i32[] { match (e) { Full(xs) => { return xs; }, Empty => { return [0]; } } }"));
     return enumcontract.import_function(mod.funcs[0], mod.structs);
 }
 
 function accept(src: string): boolean {
-    var mod = parser.parse_module(lexer.tokenize(src));
+    let mod = parser.parse_module(lexer.tokenize(src));
     return enumcontract.analyze(mod.funcs[0], mod.structs).ok;
 }
 function main(): i32 {
 ` + checks.String() + `
-    var r = region(); var p = enumcontract.verify(r);
+    let r = region(); let p = enumcontract.verify(r);
     if (!p.ok || p.borrowed.len() != 1 || !p.borrowed[0] || p.roots.len() != 0) { return 20; }
-    var effects: enumcontract.Effect[] = [];
+    let effects: enumcontract.Effect[] = [];
     for e in r.effects { if (e.kind != 2 && e.kind != 3) { effects = effects.append(e); } }
     if (enumcontract.verify(enumcontract.Region { ...r, effects: effects }).ok) { return 21; }
-    var values = r.values;
-    var i = 0;
+    let values = r.values;
+    let i = 0;
     while (i < values.len()) {
         if (values[i].kind == 5) { values = values.with(i, enumcontract.Value { ...values[i], field: 99 }); }
         i = i + 1;
@@ -108,11 +108,11 @@ function main(): i32 {
     if (enumcontract.verify(enumcontract.Region { ...r, values: values }).ok) { return 22; }
     if (enumcontract.verify(enumcontract.Region { ...r, params: [99] }).ok) { return 23; }
     if (enumcontract.verify(enumcontract.Region { ...r, params: [0, 0] }).ok) { return 28; }
-    var mod = parser.parse_module(lexer.tokenize("enum E { Full(i32[]), Empty } function take(e: E): i32[] { match (e) { Full(xs) => { return xs; }, Empty => { return [0]; } } } function caller(i: i32): i32 { var e = E.Full([i]); var xs = take(e); return xs[0]; }"));
-    var leaves = enumcontract.leaves(mod.funcs, mod.structs);
-    var caller = enumcontract.analyze_calls(mod.funcs[1], mod.structs, leaves);
+    let mod = parser.parse_module(lexer.tokenize("enum E { Full(i32[]), Empty } function take(e: E): i32[] { match (e) { Full(xs) => { return xs; }, Empty => { return [0]; } } } function caller(i: i32): i32 { let e = E.Full([i]); let xs = take(e); return xs[0]; }"));
+    let leaves = enumcontract.leaves(mod.funcs, mod.structs);
+    let caller = enumcontract.analyze_calls(mod.funcs[1], mod.structs, leaves);
     if (!caller.ok || caller.roots.len() != 1) { return 24; }
-    var invalid = enumcontract.Region { ...leaves[0], params: [99] };
+    let invalid = enumcontract.Region { ...leaves[0], params: [99] };
     if (enumcontract.analyze_calls(mod.funcs[1], mod.structs, [invalid]).ok) { return 25; }
     invalid = enumcontract.Region { ...leaves[0], result: typeinfo.TypeBool { tag: 0 } };
     if (enumcontract.analyze_calls(mod.funcs[1], mod.structs, [invalid]).ok) { return 26; }

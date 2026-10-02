@@ -24,15 +24,15 @@ function observe(s: Scope): i32 {
     return s.names.len() + s.tables.keys.len() + s.tables.values.len();
 }
 function direct(s: Scope): i32 {
-    var r: Scope = grow_names(s);
+    let r: Scope = grow_names(s);
     return observe(r) + observe(s);
 }
 function nested(s: Scope): i32 {
-    var r: Scope = grow_tables(s);
+    let r: Scope = grow_tables(s);
     return observe(r) + observe(s);
 }
 function forwarded(s: Scope): i32 {
-    var r: Scope = grow_tables_forward(s);
+    let r: Scope = grow_tables_forward(s);
     return observe(r) + observe(s);
 }
 function main(): i32 { return 0; }`

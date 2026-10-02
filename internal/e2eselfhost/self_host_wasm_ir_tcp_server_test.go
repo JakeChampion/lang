@@ -170,14 +170,14 @@ func TestSelfHostWasmIRTcpServer(t *testing.T) {
 	t.Run("listen_accept_echo", func(t *testing.T) {
 		port := freePort(t)
 		src := fmt.Sprintf(`function main(): i32 {
-    var l: i32 = tcp_listen(%d);
+    let l: i32 = tcp_listen(%d);
     if (l < 0) { write("listen-failed\n"); return 1; }
     write("listening\n");
-    var c: i32 = tcp_accept(l);
+    let c: i32 = tcp_accept(l);
     if (c < 0) { write("accept-failed\n"); return 1; }
-    var r: string = string_from_bytes_unchecked(tcp_recv(c, 64));
+    let r: string = string_from_bytes_unchecked(tcp_recv(c, 64));
     write("recv="); write(r);
-    var n: i32 = tcp_send(c, "pong");
+    let n: i32 = tcp_send(c, "pong");
     write(" sent="); print_int(n); write("\n");
     tcp_close(c);
     tcp_close(l);
@@ -202,9 +202,9 @@ func TestSelfHostWasmIRTcpServer(t *testing.T) {
 	// the port the host picked, or it does not.
 	t.Run("local_port_of_ephemeral_listener", func(t *testing.T) {
 		src := `function main(): i32 {
-    var l: i32 = tcp_listen(0);
+    let l: i32 = tcp_listen(0);
     if (l < 0) { write("listen-failed\n"); return 1; }
-    var port: i32 = tcp_local_port(l);
+    let port: i32 = tcp_local_port(l);
     tcp_close(l);
     if (port <= 0) { write("no-port\n"); return 1; }
     if (port > 65535) { write("bad-port\n"); return 1; }
@@ -228,16 +228,16 @@ func TestSelfHostWasmIRTcpServer(t *testing.T) {
 	t.Run("pollable_feeds_wasm_poll", func(t *testing.T) {
 		port := freePort(t)
 		src := fmt.Sprintf(`function main(): i32 {
-    var l: i32 = tcp_listen(%d);
+    let l: i32 = tcp_listen(%d);
     if (l < 0) { write("listen-failed\n"); return 1; }
     write("listening\n");
-    var c: i32 = tcp_accept(l);
+    let c: i32 = tcp_accept(l);
     if (c < 0) { write("accept-failed\n"); return 1; }
-    var p: i32 = tcp_pollable(c);
-    var ps: i32[] = [p];
-    var i: i32 = wasm_poll(ps);
+    let p: i32 = tcp_pollable(c);
+    let ps: i32[] = [p];
+    let i: i32 = wasm_poll(ps);
     write("polled="); print_int(i);
-    var r: string = string_from_bytes_unchecked(tcp_recv(c, 64));
+    let r: string = string_from_bytes_unchecked(tcp_recv(c, 64));
     write(" recv="); write(r); write("\n");
     wasm_pollable_drop(p);
     tcp_close(c);

@@ -11,85 +11,85 @@ import "std/option";
 // self-host-gated) companion.
 
 function test_is_some_is_none(): test.TestOutcome {
-  var s: Option[i32] = Some(5);
-  var n: Option[i32] = None;
+  let s: Option[i32] = Some(5);
+  let n: Option[i32] = None;
   return test.assert_true(s.is_some() && !s.is_none() && n.is_none() && !n.is_some());
 }
 
 function test_unwrap_or(): test.TestOutcome {
-  var s: Option[i32] = Some(5);
-  var n: Option[i32] = None;
+  let s: Option[i32] = Some(5);
+  let n: Option[i32] = None;
   return test.assert_true(s.unwrap_or(0) == 5 && n.unwrap_or(42) == 42);
 }
 
 function test_unwrap_or_else(): test.TestOutcome {
-  var n: Option[i32] = None;
+  let n: Option[i32] = None;
   return test.assert_eq(n.unwrap_or_else((): i32 => 7), 7);
 }
 
 function test_map(): test.TestOutcome {
-  var s: Option[i32] = Some(5);
-  var m = s.map((x: i32): i32 => x * 2);
+  let s: Option[i32] = Some(5);
+  let m = s.map((x: i32): i32 => x * 2);
   return test.assert_eq(m.unwrap_or(0), 10);
 }
 
 function test_map_none(): test.TestOutcome {
-  var n: Option[i32] = None;
-  var m = n.map((x: i32): i32 => x * 2);
+  let n: Option[i32] = None;
+  let m = n.map((x: i32): i32 => x * 2);
   return test.assert_eq(m.unwrap_or(0 - 1), 0 - 1);
 }
 
 function test_and_then(): test.TestOutcome {
-  var s: Option[i32] = Some(5);
-  var r = s.and_then((x: i32): Option[i32] => Some(x + 1));
+  let s: Option[i32] = Some(5);
+  let r = s.and_then((x: i32): Option[i32] => Some(x + 1));
   return test.assert_eq(r.unwrap_or(0), 6);
 }
 
 function test_or_else(): test.TestOutcome {
-  var n: Option[i32] = None;
-  var r = n.or_else((): Option[i32] => Some(9));
+  let n: Option[i32] = None;
+  let r = n.or_else((): Option[i32] => Some(9));
   return test.assert_eq(r.unwrap_or(0), 9);
 }
 
 function test_filter_keep(): test.TestOutcome {
-  var s: Option[i32] = Some(5);
-  var r = s.filter((x: i32): boolean => x > 3);
+  let s: Option[i32] = Some(5);
+  let r = s.filter((x: i32): boolean => x > 3);
   return test.assert_eq(r.unwrap_or(0), 5);
 }
 
 function test_filter_drop(): test.TestOutcome {
-  var s: Option[i32] = Some(2);
-  var r = s.filter((x: i32): boolean => x > 3);
+  let s: Option[i32] = Some(2);
+  let r = s.filter((x: i32): boolean => x > 3);
   return test.assert_true(r.is_none());
 }
 
 function test_map_or(): test.TestOutcome {
-  var s: Option[i32] = Some(5);
-  var n: Option[i32] = None;
-  var a = s.map_or(0, (x: i32): i32 => x * 10);
-  var b = n.map_or(0, (x: i32): i32 => x * 10);
+  let s: Option[i32] = Some(5);
+  let n: Option[i32] = None;
+  let a = s.map_or(0, (x: i32): i32 => x * 10);
+  let b = n.map_or(0, (x: i32): i32 => x * 10);
   return test.assert_true(a == 50 && b == 0);
 }
 
 function test_is_some_and(): test.TestOutcome {
-  var s: Option[i32] = Some(5);
+  let s: Option[i32] = Some(5);
   return test.assert_true(s.is_some_and((x: i32): boolean => x > 3));
 }
 
 function test_or(): test.TestOutcome {
-  var s: Option[i32] = Some(5);
-  var n: Option[i32] = None;
+  let s: Option[i32] = Some(5);
+  let n: Option[i32] = None;
   return test.assert_true(s.or(Some(9)).unwrap_or(0) == 5 && n.or(Some(9)).unwrap_or(0) == 9);
 }
 
 function test_and(): test.TestOutcome {
-  var s: Option[i32] = Some(5);
-  var n: Option[i32] = None;
+  let s: Option[i32] = Some(5);
+  let n: Option[i32] = None;
   return test.assert_true(s.and(Some(9)).unwrap_or(0) == 9 && n.and(Some(9)).is_none());
 }
 
 function test_ok_or(): test.TestOutcome {
-  var s: Option[i32] = Some(5);
+  let s: Option[i32] = Some(5);
   match (s.ok_or("missing")) {
     Ok(v) => {
       return test.assert_eq(v, 5);
@@ -102,7 +102,7 @@ function test_ok_or(): test.TestOutcome {
 
 function test_ok_or_else(): test.TestOutcome {
   // None takes the lazy error arm; Some ignores it and yields Ok.
-  var n: Option[i32] = None;
+  let n: Option[i32] = None;
   match (n.ok_or_else((): i32 => 99)) {
     Ok(v) => {
       return test.fail("expected Err for None");
@@ -115,17 +115,17 @@ function test_ok_or_else(): test.TestOutcome {
 
 function test_map_or_else(): test.TestOutcome {
   // Some routes through `f`; None computes the lazy default.
-  var s: Option[i32] = Some(5);
-  var n: Option[i32] = None;
-  var a: i32 = s.map_or_else((): i32 => 0, (x: i32): i32 => x + 1);
-  var b: i32 = n.map_or_else((): i32 => 0, (x: i32): i32 => x + 1);
+  let s: Option[i32] = Some(5);
+  let n: Option[i32] = None;
+  let a: i32 = s.map_or_else((): i32 => 0, (x: i32): i32 => x + 1);
+  let b: i32 = n.map_or_else((): i32 => 0, (x: i32): i32 => x + 1);
   return test.assert_true(a == 6 && b == 0);
 }
 
 function test_zip(): test.TestOutcome {
-  var a: Option[i32] = Some(1);
-  var b: Option[i32] = Some(2);
-  var n: Option[i32] = None;
+  let a: Option[i32] = Some(1);
+  let b: Option[i32] = Some(2);
+  let n: Option[i32] = None;
   // Both present -> Some((1, 2)); either None -> None.
   match (a.zip(b)) {
     Some(p) => {
@@ -142,8 +142,8 @@ function test_zip(): test.TestOutcome {
 
 function test_unzip(): test.TestOutcome {
   // unzip is the inverse of zip: Some((7,"hi")) -> (Some(7), Some("hi")).
-  var some: Option[(i32, string)] = Some((7, "hi"));
-  var sa: (Option[i32], Option[string]) = some.unzip();
+  let some: Option[(i32, string)] = Some((7, "hi"));
+  let sa: (Option[i32], Option[string]) = some.unzip();
   if (sa.0.unwrap_or(0) != 7) {
     return test.fail("first");
   }
@@ -151,15 +151,15 @@ function test_unzip(): test.TestOutcome {
     return test.fail("second");
   }
   // None -> (None, None).
-  var none: Option[(i32, string)] = None;
-  var na: (Option[i32], Option[string]) = none.unzip();
+  let none: Option[(i32, string)] = None;
+  let na: (Option[i32], Option[string]) = none.unzip();
   return test.assert_true(na.0.is_none() && na.1.is_none());
 }
 
 function test_xor(): test.TestOutcome {
-  var s: Option[i32] = Some(5);
-  var t: Option[i32] = Some(9);
-  var n: Option[i32] = None;
+  let s: Option[i32] = Some(5);
+  let t: Option[i32] = Some(9);
+  let n: Option[i32] = None;
   // Exactly one present -> that one; both or neither -> None.
   return test.assert_true(
     s.xor(n).unwrap_or(0) == 5
@@ -170,9 +170,9 @@ function test_xor(): test.TestOutcome {
 }
 
 function test_flatten(): test.TestOutcome {
-  var s: Option[Option[i32]] = Some(Some(7));
-  var inner_none: Option[Option[i32]] = Some(None);
-  var outer_none: Option[Option[i32]] = None;
+  let s: Option[Option[i32]] = Some(Some(7));
+  let inner_none: Option[Option[i32]] = Some(None);
+  let outer_none: Option[Option[i32]] = None;
   // Some(Some(x)) -> Some(x); Some(None) and None both -> None.
   return test.assert_true(
     s.flatten().unwrap_or(0) == 7
@@ -182,7 +182,7 @@ function test_flatten(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("std/option combinators");
+  let r: test.TestRunner = test.test_new("std/option combinators");
   r = r.it("is_some / is_none", test_is_some_is_none);
   r = r.it("unwrap_or", test_unwrap_or);
   r = r.it("unwrap_or_else", test_unwrap_or_else);

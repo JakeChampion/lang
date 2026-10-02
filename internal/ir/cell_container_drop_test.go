@@ -24,7 +24,7 @@ func TestTupleAndEnumCellChildDropThroughArrayMachinery(t *testing.T) {
 		{
 			name: "tuple scalar cell",
 			src: `function main(): i32 {
-    var t: (i32, Cell[i32]) = (1, cell_new(0));
+    let t: (i32, Cell[i32]) = (1, cell_new(0));
     return t.0 - 1;
 }`,
 			want: "__fern_arr_dec",
@@ -32,7 +32,7 @@ func TestTupleAndEnumCellChildDropThroughArrayMachinery(t *testing.T) {
 		{
 			name: "tuple string cell",
 			src: `function main(): i32 {
-    var t: (i32, Cell[string]) = (1, cell_new(""));
+    let t: (i32, Cell[string]) = (1, cell_new(""));
     return t.0 - 1;
 }`,
 			want: "__fern_drop_arr_str",
@@ -41,7 +41,7 @@ func TestTupleAndEnumCellChildDropThroughArrayMachinery(t *testing.T) {
 			name: "enum scalar cell payload",
 			src: `enum H { Has(Cell[i32]), No }
 function main(): i32 {
-    var h: H = Has(cell_new(0));
+    let h: H = Has(cell_new(0));
     return 0;
 }`,
 			want: "__fern_arr_dec",

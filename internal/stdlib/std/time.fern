@@ -78,10 +78,10 @@ pub function instant_from_unix(sec: i64): Instant {
 // module's future surface) for benchmark / elapsed-time
 // measurement.
 pub function instant_now(): Instant {
-  var ms: i64 = now_unix_ms();
-  var sec: i64 = ms / (1000 as i64);
-  var rem_ms: i64 = ms - sec * (1000 as i64);
-  var ns: i32 = rem_ms as i32 * 1000000;  // NANOS_PER_MILLI (see duration_millis)
+  let ms: i64 = now_unix_ms();
+  let sec: i64 = ms / (1000 as i64);
+  let rem_ms: i64 = ms - sec * (1000 as i64);
+  let ns: i32 = rem_ms as i32 * 1000000;  // NANOS_PER_MILLI (see duration_millis)
   return Instant { sec: sec, nsec: ns };
 }
 
@@ -127,17 +127,17 @@ pub function duration_seconds(s: i64): Duration {
 // the module's own bodies. Use the literal until the const
 // resolution gets fixed.
 pub function duration_millis(ms: i64): Duration {
-  var s: i64 = ms / (1000 as i64);
-  var rem_ms: i64 = ms - s * (1000 as i64);
-  var ns: i32 = rem_ms as i32 * 1000000;
+  let s: i64 = ms / (1000 as i64);
+  let rem_ms: i64 = ms - s * (1000 as i64);
+  let ns: i32 = rem_ms as i32 * 1000000;
   return Duration { sec: s, nsec: ns };
 }
 
 // `duration_nanos(ns)` — convert nanoseconds to a Duration, the inverse
 // of `as_nanos`.
 pub function duration_nanos(ns: i64): Duration {
-  var s: i64 = ns / (1000000000 as i64);
-  var rem: i64 = ns - s * (1000000000 as i64);
+  let s: i64 = ns / (1000000000 as i64);
+  let rem: i64 = ns - s * (1000000000 as i64);
   return Duration { sec: s, nsec: rem as i32 };
 }
 
@@ -167,20 +167,20 @@ pub function (d: Duration) to_string(): string {
   // Signed total milliseconds. `nsec` is 0..1e9 and non-negative even
   // for a negative duration (sec carries the borrow), so the two
   // combine directly.
-  var total_ms: i64 = d.sec * (1000 as i64) + (d.nsec / 1000000) as i64;
+  let total_ms: i64 = d.sec * (1000 as i64) + (d.nsec / 1000000) as i64;
   if (total_ms == 0 as i64) {
     return "0s";
   }
-  var neg: boolean = total_ms < 0 as i64;
-  var ms: i64 = total_ms;
+  let neg: boolean = total_ms < 0 as i64;
+  let ms: i64 = total_ms;
   if (neg) {
     ms = 0 as i64 - ms;
   }
-  var h: i64 = ms / (3600000 as i64);
-  var m: i64 = ms % (3600000 as i64) / (60000 as i64);
-  var s: i64 = ms % (60000 as i64) / (1000 as i64);
-  var msec: i64 = ms % (1000 as i64);
-  var out: string = "";
+  let h: i64 = ms / (3600000 as i64);
+  let m: i64 = ms % (3600000 as i64) / (60000 as i64);
+  let s: i64 = ms % (60000 as i64) / (1000 as i64);
+  let msec: i64 = ms % (1000 as i64);
+  let out: string = "";
   if (neg) {
     out = "-";
   }
@@ -237,45 +237,45 @@ pub function span_hours(n: i32): Span {
 // negative-year arithmetic into the same closed form as
 // positive — no branchy "is this year before epoch" guards.
 function __days_from_civil(y_in: i32, m: i32, d: i32): i32 {
-  var y: i32 = y_in;
+  let y: i32 = y_in;
   if (m <= 2) {
     y = y - 1;
   }
-  var era: i32 = 0;
+  let era: i32 = 0;
   if (y >= 0) {
     era = y / 400;
   } else {
     era = (y - 399) / 400;
   }
-  var yoe: i32 = y - era * 400;
-  var mp: i32 = 0;
+  let yoe: i32 = y - era * 400;
+  let mp: i32 = 0;
   if (m > 2) {
     mp = m - 3;
   } else {
     mp = m + 9;
   }
-  var doy: i32 = (153 * mp + 2) / 5 + d - 1;
-  var doe: i32 = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+  let doy: i32 = (153 * mp + 2) / 5 + d - 1;
+  let doe: i32 = yoe * 365 + yoe / 4 - yoe / 100 + doy;
   return era * 146097 + doe - 719468;
 }
 
 // `__civil_from_days(z)` — inverse of `__days_from_civil`.
 // Returns a Date. Same era trick for the negative branch.
 function __civil_from_days(z_in: i32): Date {
-  var z: i32 = z_in + 719468;
-  var era: i32 = 0;
+  let z: i32 = z_in + 719468;
+  let era: i32 = 0;
   if (z >= 0) {
     era = z / 146097;
   } else {
     era = (z - 146096) / 146097;
   }
-  var doe: i32 = z - era * 146097;
-  var yoe: i32 = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-  var y: i32 = yoe + era * 400;
-  var doy: i32 = doe - (365 * yoe + yoe / 4 - yoe / 100);
-  var mp: i32 = (5 * doy + 2) / 153;
-  var d: i32 = doy - (153 * mp + 2) / 5 + 1;
-  var m: i32 = 0;
+  let doe: i32 = z - era * 146097;
+  let yoe: i32 = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+  let y: i32 = yoe + era * 400;
+  let doy: i32 = doe - (365 * yoe + yoe / 4 - yoe / 100);
+  let mp: i32 = (5 * doy + 2) / 153;
+  let d: i32 = doy - (153 * mp + 2) / 5 + 1;
+  let m: i32 = 0;
   if (mp < 10) {
     m = mp + 3;
   } else {
@@ -368,7 +368,7 @@ pub function (d: Date) is_valid(): boolean {
 // backward. Round-trips through the serial day number so
 // month / year / leap-year boundaries handle themselves.
 pub function (d: Date) add_days(n: i32): Date {
-  var z: i32 = __days_from_civil(d.year, d.month, d.day);
+  let z: i32 = __days_from_civil(d.year, d.month, d.day);
   return __civil_from_days(z + n);
 }
 
@@ -377,8 +377,8 @@ pub function (d: Date) add_days(n: i32): Date {
 // before. Subtracts serial day numbers — exact, no floating
 // point.
 pub function (d: Date) days_since(other: Date): i32 {
-  var a: i32 = __days_from_civil(d.year, d.month, d.day);
-  var b: i32 = __days_from_civil(other.year, other.month, other.day);
+  let a: i32 = __days_from_civil(d.year, d.month, d.day);
+  let b: i32 = __days_from_civil(other.year, other.month, other.day);
   return a - b;
 }
 
@@ -389,7 +389,7 @@ pub function (d: Date) days_since(other: Date): i32 {
 // makes the result non-negative even when `__days_from_civil`
 // returns a negative i32 (pre-1970 dates).
 pub function (d: Date) weekday(): i32 {
-  var z: i32 = __days_from_civil(d.year, d.month, d.day);
+  let z: i32 = __days_from_civil(d.year, d.month, d.day);
   return ((z + 4) % 7 + 7) % 7;
 }
 
@@ -406,18 +406,18 @@ pub function (d: Date) weekday(): i32 {
 //   m > 2:  Jan-based = frame_doy + 59 + (is_leap_year(y) ? 1 : 0)
 // Mar 1 is day 60 in non-leap, 61 in leap; Dec 31 is 365 / 366.
 pub function (d: Date) day_of_year(): i32 {
-  var m: i32 = d.month;
-  var mp: i32 = 0;
+  let m: i32 = d.month;
+  let mp: i32 = 0;
   if (m > 2) {
     mp = m - 3;
   } else {
     mp = m + 9;
   }
-  var doy: i32 = (153 * mp + 2) / 5 + d.day;
+  let doy: i32 = (153 * mp + 2) / 5 + d.day;
   if (m <= 2) {
     return doy - 306;
   }
-  var add_for_leap: i32 = 0;
+  let add_for_leap: i32 = 0;
   if (is_leap_year(d.year)) {
     add_for_leap = 1;
   }
@@ -467,10 +467,10 @@ function __parse_digits(s: string, start: i32, end: i32): i32 {
   if (start >= end) {
     return -1;
   }
-  var acc: i32 = 0;
-  var i: i32 = start;
+  let acc: i32 = 0;
+  let i: i32 = start;
   while (i < end) {
-    var b: i32 = s[i] as i32;
+    let b: i32 = s[i] as i32;
     if (b < 48 || b > 57) {
       return -1;
     }
@@ -500,9 +500,9 @@ pub function date_parse_iso(s: string): Option[Date] {
   if (s[4] != 45 || s[7] != 45) {  // '-' = 45
     return None;
   }
-  var y: i32 = __parse_digits(s, 0, 4);
-  var m: i32 = __parse_digits(s, 5, 7);
-  var d: i32 = __parse_digits(s, 8, 10);
+  let y: i32 = __parse_digits(s, 0, 4);
+  let m: i32 = __parse_digits(s, 5, 7);
+  let d: i32 = __parse_digits(s, 8, 10);
   if (y < 0 || m < 0 || d < 0) {
     return None;
   }
@@ -523,32 +523,32 @@ pub function date_parse_iso(s: string): Option[Date] {
 // uses floor division on negatives by adjusting when the
 // remainder would otherwise come back negative.
 pub function (i: Instant) format_rfc3339(): string {
-  var sec: i64 = i.sec;
-  var spd: i64 = 86400 as i64;
-  var days: i64 = sec / spd;
-  var sec_in_day: i64 = sec - days * spd;
+  let sec: i64 = i.sec;
+  let spd: i64 = 86400 as i64;
+  let days: i64 = sec / spd;
+  let sec_in_day: i64 = sec - days * spd;
   if (sec_in_day < 0 as i64) {
     sec_in_day = sec_in_day + spd;
     days = days - 1 as i64;
   }
-  var d: Date = __civil_from_days(days as i32);
-  var sid: i32 = sec_in_day as i32;
-  var h: i32 = sid / 3600;
-  var rem: i32 = sid - h * 3600;
-  var mn: i32 = rem / 60;
-  var s: i32 = rem - mn * 60;
-  var head: string = d.format_iso() + "T" + __pad2(h) + ":" + __pad2(mn) + ":" + __pad2(s);
+  let d: Date = __civil_from_days(days as i32);
+  let sid: i32 = sec_in_day as i32;
+  let h: i32 = sid / 3600;
+  let rem: i32 = sid - h * 3600;
+  let mn: i32 = rem / 60;
+  let s: i32 = rem - mn * 60;
+  let head: string = d.format_iso() + "T" + __pad2(h) + ":" + __pad2(mn) + ":" + __pad2(s);
   if (i.nsec == 0) {
     return head + "Z";
   }
   // 9-digit fractional. Build manually to preserve leading
   // zeros — int_to_string(123) is "123", which would
   // misrepresent ".000000123" as ".123".
-  var ns: i32 = i.nsec;
-  var div: i32 = 100000000;
-  var frac: string = "";
+  let ns: i32 = i.nsec;
+  let div: i32 = 100000000;
+  let frac: string = "";
   while (div >= 1) {
-    var digit: i32 = ns / div - ns / (div * 10) * 10;
+    let digit: i32 = ns / div - ns / (div * 10) * 10;
     // Bytes 48..57 = '0'..'9'. We append each digit as a
     // 1-char string via index → __char_to_string trick:
     // emitting the literal digit chars via an if/else-if chain
@@ -616,7 +616,7 @@ function __rfc3339_fields_valid(y: i32, mo: i32, d: i32, h: i32, mn: i32, sc: i3
 // comparing strings). Zone offsets `+HH:MM` / `-HH:MM` belong to
 // `instant_zoned_parse_rfc3339`.
 pub function instant_parse_rfc3339(s: string): Option[Instant] {
-  var n: i32 = s.len();
+  let n: i32 = s.len();
   // 20 = "YYYY-MM-DDTHH:MM:SSZ" minimum. Beyond that there's
   // an optional ".fraction" before the trailing Z.
   if (n < 20) {
@@ -631,12 +631,12 @@ pub function instant_parse_rfc3339(s: string): Option[Instant] {
   if (s[13] != 58 || s[16] != 58) {  // colons
     return None;
   }
-  var y: i32 = __parse_digits(s, 0, 4);
-  var mo: i32 = __parse_digits(s, 5, 7);
-  var d: i32 = __parse_digits(s, 8, 10);
-  var h: i32 = __parse_digits(s, 11, 13);
-  var mn: i32 = __parse_digits(s, 14, 16);
-  var sc: i32 = __parse_digits(s, 17, 19);
+  let y: i32 = __parse_digits(s, 0, 4);
+  let mo: i32 = __parse_digits(s, 5, 7);
+  let d: i32 = __parse_digits(s, 8, 10);
+  let h: i32 = __parse_digits(s, 11, 13);
+  let mn: i32 = __parse_digits(s, 14, 16);
+  let sc: i32 = __parse_digits(s, 17, 19);
   if (y < 0 || mo < 0 || d < 0 || h < 0 || mn < 0 || sc < 0) {
     return None;
   }
@@ -644,11 +644,11 @@ pub function instant_parse_rfc3339(s: string): Option[Instant] {
     return None;
   }
   // Fraction (optional) + trailing Z.
-  var nsec: i32 = 0;
+  let nsec: i32 = 0;
   if (s[19] == 46) {  // '.' = 46
     // Find Z; everything between '.' and 'Z' is digits.
-    var z_idx: i32 = -1;
-    var i: i32 = 20;
+    let z_idx: i32 = -1;
+    let i: i32 = 20;
     while (i < n) {
       if (s[i] == 90) {  // 'Z' = 90
         z_idx = i;
@@ -666,12 +666,12 @@ pub function instant_parse_rfc3339(s: string): Option[Instant] {
     if (z_idx - 20 > 9) {  // too many digits (>nsec)
       return None;
     }
-    var frac: i32 = __parse_digits(s, 20, z_idx);
+    let frac: i32 = __parse_digits(s, 20, z_idx);
     if (frac < 0) {
       return None;
     }
     // Pad to 9 digits: each missing digit multiplies by 10.
-    var pad: i32 = 9 - (z_idx - 20);
+    let pad: i32 = 9 - (z_idx - 20);
     while (pad > 0) {
       frac = frac * 10;
       pad = pad - 1;
@@ -682,9 +682,9 @@ pub function instant_parse_rfc3339(s: string): Option[Instant] {
     return None;
   }
   // Compose Instant: seconds = days_from_civil(y,m,d)*86400 + h*3600 + mn*60 + sc.
-  var days: i32 = __days_from_civil(y, mo, d);
-  var spd: i64 = 86400 as i64;
-  var sec: i64 = days as i64 * spd
+  let days: i32 = __days_from_civil(y, mo, d);
+  let spd: i64 = 86400 as i64;
+  let sec: i64 = days as i64 * spd
     + (h * 3600 + mn * 60 + sc) as i64;
   return Some(Instant { sec: sec, nsec: nsec });
 }
@@ -814,7 +814,7 @@ pub function month_name(m: i32): string {
 // `(d).weekday_name()` — full English weekday name for the date
 // ("Monday"). Built on `weekday()` (0=Sun … 6=Sat).
 pub function (d: Date) weekday_name(): string {
-  var n: i32 = d.weekday();
+  let n: i32 = d.weekday();
   if (n == 0) {
     return "Sunday";
   }
@@ -842,20 +842,20 @@ pub function (d: Date) weekday_name(): string {
 // value. Sub-second precision is dropped (HTTP-date is
 // second-resolution). Decomposition mirrors `format_rfc3339`.
 pub function (i: Instant) format_http_date(): string {
-  var sec: i64 = i.sec;
-  var spd: i64 = 86400 as i64;
-  var days: i64 = sec / spd;
-  var sec_in_day: i64 = sec - days * spd;
+  let sec: i64 = i.sec;
+  let spd: i64 = 86400 as i64;
+  let days: i64 = sec / spd;
+  let sec_in_day: i64 = sec - days * spd;
   if (sec_in_day < 0 as i64) {
     sec_in_day = sec_in_day + spd;
     days = days - 1 as i64;
   }
-  var d: Date = __civil_from_days(days as i32);
-  var sid: i32 = sec_in_day as i32;
-  var h: i32 = sid / 3600;
-  var rem: i32 = sid - h * 3600;
-  var mn: i32 = rem / 60;
-  var s: i32 = rem - mn * 60;
+  let d: Date = __civil_from_days(days as i32);
+  let sid: i32 = sec_in_day as i32;
+  let h: i32 = sid / 3600;
+  let rem: i32 = sid - h * 3600;
+  let mn: i32 = rem / 60;
+  let s: i32 = rem - mn * 60;
   return __weekday_short(d.weekday()) + ", " + __pad2(d.day) + " "
     + __month_short(d.month) + " " + __pad4(d.year) + " "
     + __pad2(h) + ":" + __pad2(mn) + ":" + __pad2(s) + " GMT";
@@ -870,7 +870,7 @@ function __month_from_short(s: string, start: i32): i32 {
   }
   // slice_snap: a multibyte sequence in the month field yields a
   // snapped (shorter) slice that matches no month name → -1.
-  var m: str = s.slice_snap(start, start + 3);
+  let m: str = s.slice_snap(start, start + 3);
   if (m == "Jan") {
     return 1;
   }
@@ -942,18 +942,18 @@ pub function http_date_parse(s: string): Option[Instant] {
   if (s[26] != 71 || s[27] != 77 || s[28] != 84) {  // 'G''M''T'
     return None;
   }
-  var day: i32 = __parse_digits(s, 5, 7);
-  var mo: i32 = __month_from_short(s, 8);
-  var year: i32 = __parse_digits(s, 12, 16);
-  var h: i32 = __parse_digits(s, 17, 19);
-  var mn: i32 = __parse_digits(s, 20, 22);
-  var sc: i32 = __parse_digits(s, 23, 25);
+  let day: i32 = __parse_digits(s, 5, 7);
+  let mo: i32 = __month_from_short(s, 8);
+  let year: i32 = __parse_digits(s, 12, 16);
+  let h: i32 = __parse_digits(s, 17, 19);
+  let mn: i32 = __parse_digits(s, 20, 22);
+  let sc: i32 = __parse_digits(s, 23, 25);
   if (day < 0 || mo < 0 || year < 0 || h < 0 || mn < 0 || sc < 0) {
     return None;
   }
-  var days: i32 = __days_from_civil(year, mo, day);
-  var spd: i64 = 86400 as i64;
-  var sec: i64 = days as i64 * spd
+  let days: i32 = __days_from_civil(year, mo, day);
+  let spd: i64 = 86400 as i64;
+  let sec: i64 = days as i64 * spd
     + (h * 3600 + mn * 60 + sc) as i64;
   return Some(Instant { sec: sec, nsec: 0 });
 }
@@ -975,15 +975,15 @@ pub function http_date_parse(s: string): Option[Instant] {
 // range offsets get the same canonical-name treatment; we
 // don't reject them here.
 pub function timezone_fixed_offset(offset_seconds: i32): TimeZone {
-  var abs_sec: i32 = offset_seconds;
-  var sign: string = "+";
+  let abs_sec: i32 = offset_seconds;
+  let sign: string = "+";
   if (offset_seconds < 0) {
     abs_sec = -offset_seconds;
     sign = "-";
   }
-  var h: i32 = abs_sec / 3600;
-  var m: i32 = (abs_sec - h * 3600) / 60;
-  var name: string = "UTC" + sign + __pad2(h) + ":" + __pad2(m);
+  let h: i32 = abs_sec / 3600;
+  let m: i32 = (abs_sec - h * 3600) / 60;
+  let name: string = "UTC" + sign + __pad2(h) + ":" + __pad2(m);
   return TimeZone { name: name, offset_seconds: offset_seconds };
 }
 
@@ -999,22 +999,22 @@ pub function (i: Instant) in_zone(z: TimeZone): Zoned {
 // `DateTime` at the zone. Drops the zone — callers needing
 // the round-trip should hold onto the Zoned.
 pub function (z: Zoned) to_datetime(): DateTime {
-  var spd: i64 = 86400 as i64;
+  let spd: i64 = 86400 as i64;
   // Wall-clock seconds = UTC + offset (offset is positive
   // east of UTC, so east-of-UTC zones get later wall-clock).
-  var local_sec: i64 = z.instant.sec + z.zone.offset_seconds as i64;
-  var days: i64 = local_sec / spd;
-  var sec_in_day: i64 = local_sec - days * spd;
+  let local_sec: i64 = z.instant.sec + z.zone.offset_seconds as i64;
+  let days: i64 = local_sec / spd;
+  let sec_in_day: i64 = local_sec - days * spd;
   if (sec_in_day < 0 as i64) {
     sec_in_day = sec_in_day + spd;
     days = days - 1 as i64;
   }
-  var d: Date = __civil_from_days(days as i32);
-  var sid: i32 = sec_in_day as i32;
-  var h: i32 = sid / 3600;
-  var rem: i32 = sid - h * 3600;
-  var mn: i32 = rem / 60;
-  var s: i32 = rem - mn * 60;
+  let d: Date = __civil_from_days(days as i32);
+  let sid: i32 = sec_in_day as i32;
+  let h: i32 = sid / 3600;
+  let rem: i32 = sid - h * 3600;
+  let mn: i32 = rem / 60;
+  let s: i32 = rem - mn * 60;
   return DateTime {
     date: d,
     time: Time { hour: h, minute: mn, second: s, nsec: z.instant.nsec },
@@ -1027,32 +1027,32 @@ pub function (z: Zoned) to_datetime(): DateTime {
 // form. Other zones emit the signed offset; mirrors the
 // shape `instant_zoned_parse_rfc3339` round-trips against.
 pub function (z: Zoned) format_rfc3339(): string {
-  var dt: DateTime = z.to_datetime();
-  var head: string = dt.date.format_iso() + "T"
+  let dt: DateTime = z.to_datetime();
+  let head: string = dt.date.format_iso() + "T"
     + __pad2(dt.time.hour) + ":" + __pad2(dt.time.minute) + ":" + __pad2(dt.time.second);
-  var tail: str = "";
+  let tail: str = "";
   if (dt.time.nsec != 0) {
     // Reuse the Instant fractional emitter logic via a
     // surrogate Instant. Cheap — no syscalls.
-    var tmp: Instant = Instant { sec: 0 as i64, nsec: dt.time.nsec };
-    var s: string = tmp.format_rfc3339();
+    let tmp: Instant = Instant { sec: 0 as i64, nsec: dt.time.nsec };
+    let s: string = tmp.format_rfc3339();
     // tmp's format is "1970-01-01T00:00:00.<frac>Z" —
     // splice the fractional segment (between '.' and 'Z').
-    var dot: i32 = s.index_of(".");
-    var z_idx: i32 = s.index_of("Z");
+    let dot: i32 = s.index_of(".");
+    let z_idx: i32 = s.index_of("Z");
     tail = slice_unchecked(s, dot, z_idx);
   }
   if (z.zone.offset_seconds == 0) {
     return head + tail + "Z";
   }
-  var off: i32 = z.zone.offset_seconds;
-  var sign: string = "+";
+  let off: i32 = z.zone.offset_seconds;
+  let sign: string = "+";
   if (off < 0) {
     off = -off;
     sign = "-";
   }
-  var oh: i32 = off / 3600;
-  var om: i32 = (off - oh * 3600) / 60;
+  let oh: i32 = off / 3600;
+  let om: i32 = (off - oh * 3600) / 60;
   return head + tail + sign + __pad2(oh) + ":" + __pad2(om);
 }
 
@@ -1068,7 +1068,7 @@ pub function (z: Zoned) format_rfc3339(): string {
 // `instant_parse_rfc3339`, extended to the offset (`±HH:MM` with
 // HH <= 23 and MM <= 59).
 pub function instant_zoned_parse_rfc3339(s: string): Option[Zoned] {
-  var n: i32 = s.len();
+  let n: i32 = s.len();
   if (n < 20) {
     return None;
   }
@@ -1081,12 +1081,12 @@ pub function instant_zoned_parse_rfc3339(s: string): Option[Zoned] {
   if (s[13] != 58 || s[16] != 58) {
     return None;
   }
-  var y: i32 = __parse_digits(s, 0, 4);
-  var mo: i32 = __parse_digits(s, 5, 7);
-  var d: i32 = __parse_digits(s, 8, 10);
-  var h: i32 = __parse_digits(s, 11, 13);
-  var mn: i32 = __parse_digits(s, 14, 16);
-  var sc: i32 = __parse_digits(s, 17, 19);
+  let y: i32 = __parse_digits(s, 0, 4);
+  let mo: i32 = __parse_digits(s, 5, 7);
+  let d: i32 = __parse_digits(s, 8, 10);
+  let h: i32 = __parse_digits(s, 11, 13);
+  let mn: i32 = __parse_digits(s, 14, 16);
+  let sc: i32 = __parse_digits(s, 17, 19);
   if (y < 0 || mo < 0 || d < 0 || h < 0 || mn < 0 || sc < 0) {
     return None;
   }
@@ -1094,14 +1094,14 @@ pub function instant_zoned_parse_rfc3339(s: string): Option[Zoned] {
     return None;
   }
   // After seconds: optional `.fraction`, then `Z` or `±HH:MM`.
-  var pos: i32 = 19;
-  var nsec: i32 = 0;
+  let pos: i32 = 19;
+  let nsec: i32 = 0;
   if (s[pos] == 46) {  // '.'
-    var frac_start: i32 = pos + 1;
-    var frac_end: i32 = -1;
-    var i: i32 = frac_start;
+    let frac_start: i32 = pos + 1;
+    let frac_end: i32 = -1;
+    let i: i32 = frac_start;
     while (i < n) {
-      var b: i32 = s[i] as i32;
+      let b: i32 = s[i] as i32;
       if (b == 90 || b == 43 || b == 45) {  // Z, +, -
         frac_end = i;
         i = n;
@@ -1118,11 +1118,11 @@ pub function instant_zoned_parse_rfc3339(s: string): Option[Zoned] {
     if (frac_end - frac_start > 9) {
       return None;
     }
-    var frac: i32 = __parse_digits(s, frac_start, frac_end);
+    let frac: i32 = __parse_digits(s, frac_start, frac_end);
     if (frac < 0) {
       return None;
     }
-    var pad: i32 = 9 - (frac_end - frac_start);
+    let pad: i32 = 9 - (frac_end - frac_start);
     while (pad > 0) {
       frac = frac * 10;
       pad = pad - 1;
@@ -1132,8 +1132,8 @@ pub function instant_zoned_parse_rfc3339(s: string): Option[Zoned] {
   }
   // Now pos points at Z / + / -. Need at least 1 more byte
   // for Z, or 6 more for ±HH:MM.
-  var offset_seconds: i32 = 0;
-  var zone_name: string = "";
+  let offset_seconds: i32 = 0;
+  let zone_name: string = "";
   if (s[pos] == 90) {  // Z
     if (pos + 1 != n) {
       return None;
@@ -1146,8 +1146,8 @@ pub function instant_zoned_parse_rfc3339(s: string): Option[Zoned] {
     if (s[pos + 3] != 58) {  // colon
       return None;
     }
-    var oh: i32 = __parse_digits(s, pos + 1, pos + 3);
-    var om: i32 = __parse_digits(s, pos + 4, pos + 6);
+    let oh: i32 = __parse_digits(s, pos + 1, pos + 3);
+    let om: i32 = __parse_digits(s, pos + 4, pos + 6);
     if (oh < 0 || om < 0) {
       return None;
     }
@@ -1158,7 +1158,7 @@ pub function instant_zoned_parse_rfc3339(s: string): Option[Zoned] {
     if (s[pos] == 45) {
       offset_seconds = -offset_seconds;
     }
-    var sign_str: string = "+";
+    let sign_str: string = "+";
     if (s[pos] == 45) {
       sign_str = "-";
     }
@@ -1168,11 +1168,11 @@ pub function instant_zoned_parse_rfc3339(s: string): Option[Zoned] {
   }
   // Compose: local sec from y/m/d/h/mn/sc, then subtract
   // offset to get UTC sec.
-  var days: i32 = __days_from_civil(y, mo, d);
-  var spd: i64 = 86400 as i64;
-  var local_sec: i64 = days as i64 * spd
+  let days: i32 = __days_from_civil(y, mo, d);
+  let spd: i64 = 86400 as i64;
+  let local_sec: i64 = days as i64 * spd
     + (h * 3600 + mn * 60 + sc) as i64;
-  var utc_sec: i64 = local_sec - offset_seconds as i64;
+  let utc_sec: i64 = local_sec - offset_seconds as i64;
   return Some(Zoned {
     instant: Instant { sec: utc_sec, nsec: nsec },
     zone: TimeZone { name: zone_name, offset_seconds: offset_seconds },
@@ -1247,9 +1247,9 @@ pub function span_years(n: i32): Span {
 pub function (d: Date) add_span(s: Span): Date {
   // Step 1: total months (years*12 + months) added to
   // (year*12 + month-1) in serial-month form.
-  var serial_month: i32 = d.year * 12 + (d.month - 1) + s.years * 12 + s.months;
-  var new_year: i32 = 0;
-  var new_month_zero: i32 = 0;
+  let serial_month: i32 = d.year * 12 + (d.month - 1) + s.years * 12 + s.months;
+  let new_year: i32 = 0;
+  let new_month_zero: i32 = 0;
   // Floor division on negatives: same era trick as
   // __days_from_civil — adjust before the divide.
   if (serial_month >= 0) {
@@ -1260,16 +1260,16 @@ pub function (d: Date) add_span(s: Span): Date {
     new_year = (serial_month - 11) / 12;
     new_month_zero = serial_month - new_year * 12;
   }
-  var new_month: i32 = new_month_zero + 1;
+  let new_month: i32 = new_month_zero + 1;
   // Step 2: clamp day to the new month's length.
-  var max_day: i32 = days_in_month(new_year, new_month);
-  var clamped_day: i32 = d.day;
+  let max_day: i32 = days_in_month(new_year, new_month);
+  let clamped_day: i32 = d.day;
   if (clamped_day > max_day) {
     clamped_day = max_day;
   }
-  var anchor: Date = Date { year: new_year, month: new_month, day: clamped_day };
+  let anchor: Date = Date { year: new_year, month: new_month, day: clamped_day };
   // Step 3: add weeks + days as straight serial-day offset.
-  var total_days: i32 = s.weeks * 7 + s.days;
+  let total_days: i32 = s.weeks * 7 + s.days;
   if (total_days == 0) {
     return anchor;
   }
@@ -1280,9 +1280,9 @@ pub function (d: Date) add_span(s: Span): Date {
 // (sec, nsec) pairs with nsec-overflow carry into sec. Negative
 // durations (`Duration { sec: -10, nsec: 0 }`) walk backward.
 pub function (i: Instant) add_duration(d: Duration): Instant {
-  var sec: i64 = i.sec + d.sec;
-  var nsec: i32 = i.nsec + d.nsec;
-  var nps: i32 = 1000000000;
+  let sec: i64 = i.sec + d.sec;
+  let nsec: i32 = i.nsec + d.nsec;
+  let nps: i32 = 1000000000;
   if (nsec >= nps) {
     nsec = nsec - nps;
     sec = sec + 1 as i64;
@@ -1299,9 +1299,9 @@ pub function (i: Instant) add_duration(d: Duration): Instant {
 // kept non-negative by borrow / carry, even for negative
 // total durations.
 pub function (i: Instant) duration_since(other: Instant): Duration {
-  var sec: i64 = i.sec - other.sec;
-  var nsec: i32 = i.nsec - other.nsec;
-  var nps: i32 = 1000000000;
+  let sec: i64 = i.sec - other.sec;
+  let nsec: i32 = i.nsec - other.nsec;
+  let nps: i32 = 1000000000;
   if (nsec < 0) {
     nsec = nsec + nps;
     sec = sec - 1 as i64;
@@ -1319,7 +1319,7 @@ pub function (i: Instant) duration_since(other: Instant): Duration {
 // follow-up (it's ambiguous — "1 month minus 3 days" could
 // represent the same 28-day delta two ways).
 pub function (d: Date) days_until(other: Date): Span {
-  var delta: i32 = other.days_since(d);
+  let delta: i32 = other.days_since(d);
   return span_days(delta);
 }
 
@@ -1538,7 +1538,7 @@ pub function timezone_observes_dst(name: string): boolean {
 // __rel_unit(n, unit) — "<n> <unit>", pluralising the unit noun
 // unless n is exactly 1 (e.g. "1 hour", "3 hours", "0 seconds").
 function __rel_unit(n: i64, unit: string): string {
-  var s: string = n.to_string() + " " + unit;
+  let s: string = n.to_string() + " " + unit;
   if (n != 1 as i64) {
     s = s + "s";
   }
@@ -1555,23 +1555,23 @@ function __rel_phrase(secs: i64): string {
   if (secs < 60 as i64) {
     return __rel_unit(secs, "second");
   }
-  var mins: i64 = secs / (60 as i64);
+  let mins: i64 = secs / (60 as i64);
   if (mins < 60 as i64) {
     return __rel_unit(mins, "minute");
   }
-  var hours: i64 = mins / (60 as i64);
+  let hours: i64 = mins / (60 as i64);
   if (hours < 24 as i64) {
     return __rel_unit(hours, "hour");
   }
-  var days: i64 = hours / (24 as i64);
+  let days: i64 = hours / (24 as i64);
   if (days < 30 as i64) {
     return __rel_unit(days, "day");
   }
-  var months: i64 = days / (30 as i64);
+  let months: i64 = days / (30 as i64);
   if (months < 12 as i64) {
     return __rel_unit(months, "month");
   }
-  var years: i64 = days / (365 as i64);
+  let years: i64 = days / (365 as i64);
   return __rel_unit(years, "year");
 }
 
@@ -1583,15 +1583,15 @@ function __rel_phrase(secs: i64): string {
 // approximations (month ≈ 30 days, year = 365 days) — for exact
 // intervals use `duration_since` / Span arithmetic instead.
 pub function (i: Instant) relative_to(now: Instant): string {
-  var raw: i64 = i.sec - now.sec;
-  var mag: i64 = raw;
+  let raw: i64 = i.sec - now.sec;
+  let mag: i64 = raw;
   if (mag < 0 as i64) {
     mag = 0 as i64 - mag;
   }
   if (mag < 5 as i64) {
     return "just now";
   }
-  var phrase: string = __rel_phrase(mag);
+  let phrase: string = __rel_phrase(mag);
   if (raw < 0 as i64) {
     return phrase + " ago";
   }

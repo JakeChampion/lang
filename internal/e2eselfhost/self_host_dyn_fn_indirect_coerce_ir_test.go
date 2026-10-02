@@ -53,7 +53,7 @@ function main(): i32 { return apply((x: i32) => x + 100); }`},
 	{"struct-dyn-at-indirect-call", `trait Speak { function say(self: Self): i32; }
 struct Cat { v: i32 }
 impl Speak for Cat { function say(self: Self): i32 { return self.v + 100; } }
-function apply(f: (dyn Speak) => i32): i32 { var c: Cat = Cat { v: 7 }; return f(c); }
+function apply(f: (dyn Speak) => i32): i32 { let c: Cat = Cat { v: 7 }; return f(c); }
 function main(): i32 { return apply((s: dyn Speak) => s.say()); }`},
 }
 

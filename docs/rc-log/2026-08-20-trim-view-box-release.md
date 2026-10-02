@@ -1,6 +1,6 @@
 # A `trim` result's BOX is this frame's; only its bytes are not
 
-`var t: string = base.trim()` leaked its box on every backend. 400 rounds of the
+`let t: string = base.trim()` leaked its box on every backend. 400 rounds of the
 churn harness, a pair of compilers from the same commit:
 
 | shape | x86-64 | arm64 | wasm |

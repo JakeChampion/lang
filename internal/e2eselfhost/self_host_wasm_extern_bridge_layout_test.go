@@ -66,7 +66,7 @@ func TestSelfHostWasmExternBridgeIRLayout(t *testing.T) {
 			src: `struct Mix { a: i32, b: u32, c: i32 }
 @import("local:test/src@0.1.0", "make-mix")
 function make_mix(): Mix;
-function main(): i32 { var p: Mix = make_mix(); return p.a + (p.b as i32) + p.c; }`,
+function main(): i32 { let p: Mix = make_mix(); return p.a + (p.b as i32) + p.c; }`,
 			want: []string{
 				"(local.set $s (call $__fern_str_box (i32.const 32)))",
 				"(i32.const 8)) (i32.load (i32.add (local.get $rb) (i32.const 0))))",
@@ -106,7 +106,7 @@ function main(): i32 { return sum3((1, 2, 3)); }`,
 			name: "tuple-result-retptr",
 			src: `@import("local:test/src@0.1.0", "make-pair")
 function make_pair(a: i32, b: i32): (i32, i32);
-function main(): i32 { var p: (i32, i32) = make_pair(1, 2); return p.0 + p.1; }`,
+function main(): i32 { let p: (i32, i32) = make_pair(1, 2); return p.0 + p.1; }`,
 			want: []string{
 				`(import "local:test/src@0.1.0" "make-pair" (func $make_pair__import (param i32) (param i32) (param i32)))`,
 				"(call $make_pair__import (local.get $ep0) (local.get $ep1) (local.get $rb))",

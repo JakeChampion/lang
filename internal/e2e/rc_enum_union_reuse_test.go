@@ -20,13 +20,13 @@ func enumUnionReplaceSrc(rounds int) string {
 struct B { x: i32[], y: i32[] }
 enum E { VA(A), VB(B) }
 function step(k: i32): i32 {
-    var e: E = VB(B { x: [k, k + 1], y: [k + 2, k + 3] });
+    let e: E = VB(B { x: [k, k + 1], y: [k + 2, k + 3] });
     e = VA(A { s: [k + 4, k + 5], n: k });
     match (e) { VA(a) => { return a.s[0] + a.n; }, VB(b) => { return b.x[0]; } }
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < ` + strconv.Itoa(rounds) + `) { acc = acc + step(i); i = i + 1; }
     if (acc != ` + strconv.Itoa(rounds*(rounds-1)+4*rounds) + `) { return 1; }
     if (__rc_underflow_count() != 0) { return 2; }

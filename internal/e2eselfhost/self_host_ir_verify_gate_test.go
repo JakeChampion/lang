@@ -34,14 +34,14 @@ var gateProgs = []struct {
 	src  string
 }{
 	{"scalars", `function chain(a: i32): i32 {
-    var b: i32 = a * 3;
-    var c: i32 = b + a;
+    let b: i32 = a * 3;
+    let c: i32 = b + a;
     return c;
 }
 function main(): i32 { return chain(7); }`},
 	{"loops-and-branches", `function loopy(k: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < k) {
         if (i % 2 == 0) { acc = acc + i; } else { acc = acc - 1; }
         i = i + 1;
@@ -50,10 +50,10 @@ function main(): i32 { return chain(7); }`},
 }
 function main(): i32 { return loopy(10); }`},
 	{"strings-and-arrays", `function work(s: string, xs: i32[]): i32 {
-    var sl: str = slice_unchecked(s, 1, 4);
-    var joined: string = s + sl;
-    var w: i32[] = xs.with(1, 9);
-    var sum: i32 = 0;
+    let sl: str = slice_unchecked(s, 1, 4);
+    let joined: string = s + sl;
+    let w: i32[] = xs.with(1, 9);
+    let sum: i32 = 0;
     for x in w { sum = sum + x; }
     return joined.len() + sum + s[0] as i32;
 }
@@ -64,8 +64,8 @@ function main(): i32 { return work("hello", [4, 5, 6]); }`},
 }
 function apply(f: (i32) => i32, v: i32): i32 { return f(v); }
 function main(): i32 {
-    var add5: (i32) => i32 = makeAdder(5);
-    var inc: (i32) => i32 = (x: i32): i32 => { return x + 1; };
+    let add5: (i32) => i32 = makeAdder(5);
+    let inc: (i32) => i32 = (x: i32): i32 => { return x + 1; };
     return apply(add5, 30) + inc(2);
 }`},
 	{"enum-match", `enum Shape { Dot, Line(i32), Box(i32, i32) }
@@ -85,16 +85,16 @@ function main(): i32 { return area(Shape.Box(3, 4)) + area(Shape.Line(2)); }`},
 pub function (a: Acc) bump(by: i32): i32 { return a.n + by; }
 pub function (a: Acc) zero(): i32 { return a.n; }
 function main(): i32 {
-    var a: Acc = Acc { n: 5 };
-    var s: string = "abc";
+    let a: Acc = Acc { n: 5 };
+    let s: string = "abc";
     return a.bump(2) + a.zero() + s.len();
 }`},
 	{"structs", `struct P { x: i32, y: i32 }
 function shift(p: P, d: i32): P { return P { ...p, x: p.x + d }; }
 function main(): i32 {
-    var p: P = P { x: 3, y: 4 };
-    var q: P = shift(p, 5);
-    var ps: P[] = [p, q];
+    let p: P = P { x: 3, y: 4 };
+    let q: P = shift(p, 5);
+    let ps: P[] = [p, q];
     return ps[0].x + ps[1].x + q.y;
 }`},
 	// An `own` base superseded in an arm that returns, then again after it:
@@ -110,7 +110,7 @@ function put(own l: Line, n: i32): Line {
     return Line { ...l, cursor: n };
 }
 function main(): i32 {
-    var l: Line = Line { mode: 2, cursor: 0, buf: [] };
+    let l: Line = Line { mode: 2, cursor: 0, buf: [] };
     l = put(l, 3);
     l = put(Line { ...l, mode: 1 }, 7);
     return l.cursor + l.buf.len();

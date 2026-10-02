@@ -50,7 +50,7 @@ function sp(s: string): ast.ParamDecl { return decltypes.fn_param_from_spelling(
 function main(): i32 {
 `)
 	for i, tc := range cases {
-		fmt.Fprintf(&src, "var p%d = %s;\nprint(p%d.type_name + \"|\" + p%d.fn_param_types + \"|\" + p%d.fn_ret + \"|\" + p%d.fn_param_dyn);\n", i, tc.expr, i, i, i, i)
+		fmt.Fprintf(&src, "let p%d = %s;\nprint(p%d.type_name + \"|\" + p%d.fn_param_types + \"|\" + p%d.fn_ret + \"|\" + p%d.fn_param_dyn);\n", i, tc.expr, i, i, i, i)
 		fmt.Fprintf(&src, "if (p%d.name != %s || p%d.own || p%d.has_default || p%d.ret_arr) { return %d; }\n", i, strconv.Quote("capture"), i, i, i, i+1)
 	}
 	src.WriteString("return 0;\n}\n")

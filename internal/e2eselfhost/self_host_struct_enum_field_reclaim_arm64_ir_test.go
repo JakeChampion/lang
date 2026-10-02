@@ -33,8 +33,8 @@ func TestSelfHostStructEnumFieldReclaimIRArm64(t *testing.T) {
 	run(t, `enum Shape { Circle, Square, Rect(i32) }
 struct Tagged { e: Shape, n: i32 }
 function main(): i32 {
-    var t: Tagged = Tagged { e: Rect(7), n: 5 };
-    var r: i32 = 0;
+    let t: Tagged = Tagged { e: Rect(7), n: 5 };
+    let r: i32 = 0;
     match (t.e) { Rect(v) => { r = v; }, _ => { r = 0; } }
     return r + t.n;
 }`, "struct_enum_field_arm64_shape", 12)
@@ -46,10 +46,10 @@ function main(): i32 {
 	run(t, `enum Shape { Circle, Square, Rect(i32) }
 struct Tagged { e: Shape, n: i32 }
 function churn(n: i32): i32 {
-    var bad: i32 = 0; var i: i32 = 0;
+    let bad: i32 = 0; let i: i32 = 0;
     while (i < n) {
-        var s: Shape = Rect(9);
-        var t: Tagged = Tagged { e: s, n: 1 };
+        let s: Shape = Rect(9);
+        let t: Tagged = Tagged { e: s, n: 1 };
         match (t.e) { Rect(v) => { if (v != 9) { bad = 1; } }, _ => { bad = 1; } }
         i = i + 1;
     }

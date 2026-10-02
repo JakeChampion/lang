@@ -21,18 +21,18 @@ var auditTypesCases = []struct {
 	src  string
 	exit int
 }{
-	{"struct-literal-field", `struct P { x: i32, y: i32 } function main(): i32 { var p: P = P { x: 7, y: 3 }; return p.x + p.y; }`, 10},
-	{"struct-method", `struct P { x: i32 } function (p: P) dbl(): i32 { return p.x * 2; } function main(): i32 { var p: P = P { x: 21 }; return p.dbl(); }`, 42},
-	{"struct-functional-update", `struct P { x: i32, y: i32 } function main(): i32 { var p: P = P { x: 7, y: 3 }; var q: P = P { ...p, x: 40 }; return q.x + q.y + p.x; }`, 50},
+	{"struct-literal-field", `struct P { x: i32, y: i32 } function main(): i32 { let p: P = P { x: 7, y: 3 }; return p.x + p.y; }`, 10},
+	{"struct-method", `struct P { x: i32 } function (p: P) dbl(): i32 { return p.x * 2; } function main(): i32 { let p: P = P { x: 21 }; return p.dbl(); }`, 42},
+	{"struct-functional-update", `struct P { x: i32, y: i32 } function main(): i32 { let p: P = P { x: 7, y: 3 }; let q: P = P { ...p, x: 40 }; return q.x + q.y + p.x; }`, 50},
 	{"enum-payload-match", `enum Sh { Circle(i32), Square(i32), Unit } function area(s: Sh): i32 { match (s) { Circle(r) => { return r * r * 3; }, Square(a) => { return a * a; }, Unit => { return 1; } } } function main(): i32 { return area(Square(6)); }`, 36},
 	{"enum-unit-variant", `enum Sh { Circle(i32), Unit } function area(s: Sh): i32 { match (s) { Circle(r) => { return r; }, Unit => { return 99; } } } function main(): i32 { return area(Unit); }`, 99},
-	{"match-expression", `enum Sh { Circle(i32), Square(i32) } function main(): i32 { var s: Sh = Square(5); var m: i32 = match (s) { Circle(r) => r + 1, Square(a) => a + 2 }; return m; }`, 7},
-	{"tuple-index", `function main(): i32 { var t: (i32, i32) = (7, 3); return t.0 + t.1; }`, 10},
-	{"tuple-destructure", `function swap(): (i32, i32) { return (3, 7); } function main(): i32 { var (a, b) = swap(); return a * 10 + b; }`, 37},
-	{"option-some", `function main(): i32 { var o: Option[i32] = Some(42); match (o) { Some(v) => { return v; }, None => { return 0; } } }`, 42},
-	{"option-none", `function main(): i32 { var o: Option[i32] = None; match (o) { Some(v) => { return v; }, None => { return 17; } } }`, 17},
-	{"result-ok", `function main(): i32 { var r: Result[i32, i32] = Ok(42); match (r) { Ok(v) => { return v; }, Err(e) => { return 0 - e; } } }`, 42},
-	{"result-err", `function main(): i32 { var r: Result[i32, i32] = Err(9); match (r) { Ok(v) => { return v; }, Err(e) => { return e; } } }`, 9},
+	{"match-expression", `enum Sh { Circle(i32), Square(i32) } function main(): i32 { let s: Sh = Square(5); let m: i32 = match (s) { Circle(r) => r + 1, Square(a) => a + 2 }; return m; }`, 7},
+	{"tuple-index", `function main(): i32 { let t: (i32, i32) = (7, 3); return t.0 + t.1; }`, 10},
+	{"tuple-destructure", `function swap(): (i32, i32) { return (3, 7); } function main(): i32 { let (a, b) = swap(); return a * 10 + b; }`, 37},
+	{"option-some", `function main(): i32 { let o: Option[i32] = Some(42); match (o) { Some(v) => { return v; }, None => { return 0; } } }`, 42},
+	{"option-none", `function main(): i32 { let o: Option[i32] = None; match (o) { Some(v) => { return v; }, None => { return 17; } } }`, 17},
+	{"result-ok", `function main(): i32 { let r: Result[i32, i32] = Ok(42); match (r) { Ok(v) => { return v; }, Err(e) => { return 0 - e; } } }`, 42},
+	{"result-err", `function main(): i32 { let r: Result[i32, i32] = Err(9); match (r) { Ok(v) => { return v; }, Err(e) => { return e; } } }`, 9},
 }
 
 // TestSelfHostAuditTypesX86_64 runs each composite-type case through the

@@ -1,13 +1,13 @@
 # The borrowed-parameter alias leg, ported to the self-host
 
-#9291, the self-host half of #9244. `var y = p` where p is a borrowed
+#9291, the self-host half of #9244. `let y = p` where p is a borrowed
 parameter took the alias transfer inc on the self-host and balanced it with
 y's exit dec — a wasted pair per call rather than native's leak, because the
 self-host's array sweep does dec an alias slot where native's skips it.
 
 ```fern
 function g(xs: i32[]): i32 {
-  var v: i32[] = xs;
+  let v: i32[] = xs;
   return v[0] + xs[0];
 }
 ```

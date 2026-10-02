@@ -16,14 +16,14 @@ import (
 var undispatchableKeyPrograms = []struct{ name, key, src string }{
 	{"tuple", "(i32, i32)", `import "core/map";
 function main(): i32 {
-    var m: Map[(i32, i32), i32] = map_new(8);
+    let m: Map[(i32, i32), i32] = map_new(8);
     m = m.insert((1, 2), 5);
     return m.get_or((1, 2), 0) + 9;
 }
 `},
 	{"array", "i32[]", `import "core/map";
 function main(): i32 {
-    var m: Map[i32[], i32] = map_new(8);
+    let m: Map[i32[], i32] = map_new(8);
     m = m.insert([1, 2], 5);
     return m.get_or([1, 2], 0) + 9;
 }

@@ -25,8 +25,8 @@ struct Ranked { name: string, distance: i32 }
 // Full Levenshtein, written independently of std/strdist so the two can
 // be compared. Row-at-a-time, so the table is O(min) rather than O(n*m).
 function edit_distance(a: string, b: string): i32 {
-  var n: i32 = a.len();
-  var m: i32 = b.len();
+  let n: i32 = a.len();
+  let m: i32 = b.len();
   if (n == 0) {
     return m;
   }
@@ -34,26 +34,26 @@ function edit_distance(a: string, b: string): i32 {
     return n;
   }
 
-  var prev: i32[] = [];
-  var j: i32 = 0;
+  let prev: i32[] = [];
+  let j: i32 = 0;
   while (j <= m) {
     prev = prev.append(j);
     j = j + 1;
   }
 
-  var i: i32 = 1;
+  let i: i32 = 1;
   while (i <= n) {
-    var cur: i32[] = [i];
-    var k: i32 = 1;
+    let cur: i32[] = [i];
+    let k: i32 = 1;
     while (k <= m) {
-      var cost: i32 = 1;
+      let cost: i32 = 1;
       if (a[i - 1] as i32 == b[k - 1] as i32) {
         cost = 0;
       }
-      var del: i32 = prev[k] + 1;
-      var ins: i32 = cur[k - 1] + 1;
-      var sub: i32 = prev[k - 1] + cost;
-      var best: i32 = del;
+      let del: i32 = prev[k] + 1;
+      let ins: i32 = cur[k - 1] + 1;
+      let sub: i32 = prev[k - 1] + cost;
+      let best: i32 = del;
       if (ins < best) {
         best = ins;
       }
@@ -79,24 +79,24 @@ function max_distance(typed: string): i32 {
 // Every candidate within the threshold, nearest first. Ties break
 // alphabetically so the output is deterministic across backends.
 function rank(typed: string, candidates: string[]): Ranked[] {
-  var out: Ranked[] = [];
-  var limit: i32 = max_distance(typed);
-  var i: i32 = 0;
+  let out: Ranked[] = [];
+  let limit: i32 = max_distance(typed);
+  let i: i32 = 0;
   while (i < candidates.len()) {
-    var d: i32 = edit_distance(typed, candidates[i]);
+    let d: i32 = edit_distance(typed, candidates[i]);
     if (d <= limit) {
       out = out.append(Ranked { name: candidates[i], distance: d });
     }
     i = i + 1;
   }
   // Insertion sort by (distance, name).
-  var a: i32 = 1;
+  let a: i32 = 1;
   while (a < out.len()) {
-    var b: i32 = a;
+    let b: i32 = a;
     while (b > 0) {
-      var lo: Ranked = out[b - 1];
-      var hi: Ranked = out[b];
-      var swap: boolean = false;
+      let lo: Ranked = out[b - 1];
+      let hi: Ranked = out[b];
+      let swap: boolean = false;
       if (hi.distance < lo.distance) {
         swap = true;
       }
@@ -118,14 +118,14 @@ function rank(typed: string, candidates: string[]): Ranked[] {
 // Strings are not ordered by `<` (no operator overloading), so ties break
 // on a byte-wise comparison written out.
 function name_lt(a: string, b: string): boolean {
-  var n: i32 = a.len();
+  let n: i32 = a.len();
   if (b.len() < n) {
     n = b.len();
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < n) {
-    var x: i32 = a[i] as i32;
-    var y: i32 = b[i] as i32;
+    let x: i32 = a[i] as i32;
+    let y: i32 = b[i] as i32;
     if (x != y) {
       return x < y;
     }
@@ -136,7 +136,7 @@ function name_lt(a: string, b: string): boolean {
 
 // The whole point: a single best suggestion, or none.
 function suggest(typed: string, candidates: string[]): Option[string] {
-  var r: Ranked[] = rank(typed, candidates);
+  let r: Ranked[] = rank(typed, candidates);
   if (r.len() == 0) {
     return None;
   }
@@ -167,14 +167,14 @@ function api(): string[] {
 // degenerate ones. This is the check that makes every score below mean
 // something.
 function test_distance_agrees_with_stdlib(): test.TestOutcome {
-  var words: string[] = [
+  let words: string[] = [
     "", "a", "ab", "abc", "kitten", "sitting",
     "rng_seed", "rng_sed", "flaw", "lawn",
   ];
   for i in 0..words.len() {
     for j in 0..words.len() {
-      var mine: i32 = edit_distance(words[i], words[j]);
-      var theirs: i32 = strdist.levenshtein(words[i], words[j]);
+      let mine: i32 = edit_distance(words[i], words[j]);
+      let theirs: i32 = strdist.levenshtein(words[i], words[j]);
       if (mine != theirs) {
         return test.fail("distance(\"" + words[i] + "\", \"" + words[j]
           + "\"): mine=" + mine.to_string()
@@ -206,7 +206,7 @@ function test_known_distances(): test.TestOutcome {
 // Distance is a metric: symmetric, zero only on equality, and it obeys
 // the triangle inequality.
 function test_distance_is_a_metric(): test.TestOutcome {
-  var w: string[] = ["", "a", "abc", "kitten", "sitting", "rng_below"];
+  let w: string[] = ["", "a", "abc", "kitten", "sitting", "rng_below"];
   for i in 0..w.len() {
     if (edit_distance(w[i], w[i]) != 0) {
       return test.fail("d(x,x) != 0 for \"" + w[i] + "\"");
@@ -219,8 +219,8 @@ function test_distance_is_a_metric(): test.TestOutcome {
         return test.fail("d == 0 for different strings");
       }
       for k in 0..w.len() {
-        var direct: i32 = edit_distance(w[i], w[k]);
-        var via: i32 = edit_distance(w[i], w[j]) + edit_distance(w[j], w[k]);
+        let direct: i32 = edit_distance(w[i], w[k]);
+        let via: i32 = edit_distance(w[i], w[j]) + edit_distance(w[j], w[k]);
         if (direct > via) {
           return test.fail("triangle inequality violated");
         }
@@ -232,8 +232,8 @@ function test_distance_is_a_metric(): test.TestOutcome {
 
 // A near-miss gets the right suggestion.
 function test_a_typo_finds_its_neighbour(): test.TestOutcome {
-  var cases: string[] = ["rng_sed", "rng_nex", "rng_belw", "shufle"];
-  var wants: string[] = ["rng_seed", "rng_next", "rng_below", "shuffle"];
+  let cases: string[] = ["rng_sed", "rng_nex", "rng_belw", "shufle"];
+  let wants: string[] = ["rng_seed", "rng_next", "rng_below", "shuffle"];
   for i in 0..cases.len() {
     match (suggest(cases[i], api())) {
       None => {
@@ -254,7 +254,7 @@ function test_a_typo_finds_its_neighbour(): test.TestOutcome {
 // suggestion. A wrong hint sends the reader to change the one thing that
 // was right.
 function test_an_unrelated_name_gets_no_suggestion(): test.TestOutcome {
-  var junk: string[] = ["zzzzzzqqqqq", "http_get", "parse_json", "xyzzy"];
+  let junk: string[] = ["zzzzzzqqqqq", "http_get", "parse_json", "xyzzy"];
   for i in 0..junk.len() {
     match (suggest(junk[i], api())) {
       Some(s) => {
@@ -269,7 +269,7 @@ function test_an_unrelated_name_gets_no_suggestion(): test.TestOutcome {
 // A short name is held to a stricter standard: one edit on a three-letter
 // name is usually a different word, not a typo.
 function test_short_names_are_stricter(): test.TestOutcome {
-  var candidates: string[] = ["cat", "dog", "cow"];
+  let candidates: string[] = ["cat", "dog", "cow"];
   // "bat" is one edit from "cat" and the threshold for a 3-char name is
   // 3/3 + 1 = 2, so it IS offered — that is the documented tradeoff.
   match (suggest("bat", candidates)) {
@@ -295,9 +295,9 @@ function test_short_names_are_stricter(): test.TestOutcome {
 // Ranking is deterministic and nearest-first, with alphabetical ties —
 // otherwise the same typo suggests different things on different runs.
 function test_ranking_is_ordered_and_deterministic(): test.TestOutcome {
-  var cands: string[] = ["rng_next", "rng_seed", "rng_below"];
-  var r1: Ranked[] = rank("rng_", cands);
-  var r2: Ranked[] = rank("rng_", cands);
+  let cands: string[] = ["rng_next", "rng_seed", "rng_below"];
+  let r1: Ranked[] = rank("rng_", cands);
+  let r2: Ranked[] = rank("rng_", cands);
   if (r1.len() != r2.len()) {
     return test.fail("ranking length varied");
   }
@@ -319,7 +319,7 @@ function test_ranking_is_ordered_and_deterministic(): test.TestOutcome {
 // An exact match suggests itself at distance 0, which is what makes the
 // hint safe to use on a name that turned out to exist after all.
 function test_an_exact_name_ranks_first_at_zero(): test.TestOutcome {
-  var r: Ranked[] = rank("shuffle", api());
+  let r: Ranked[] = rank("shuffle", api());
   if (r.len() == 0) {
     return test.fail("exact name produced no ranking");
   }
@@ -333,12 +333,12 @@ function test_an_exact_name_ranks_first_at_zero(): test.TestOutcome {
 
 function main(): i32 {
   eprint("didyoumean — ranking candidates, and knowing when to stay quiet");
-  var typed: string[] = ["rng_sed", "shufle", "sampl", "zzzzzzqqqqq", "http_get"];
+  let typed: string[] = ["rng_sed", "shufle", "sampl", "zzzzzzqqqqq", "http_get"];
   for i in 0..typed.len() {
     eprint("  " + hint(typed[i], api()));
   }
 
-  var r: test.TestRunner = test.test_new("didyoumean");
+  let r: test.TestRunner = test.test_new("didyoumean");
   r = r.it("distance agrees with stdlib", test_distance_agrees_with_stdlib);
   r = r.it("known distances", test_known_distances);
   r = r.it("distance is a metric", test_distance_is_a_metric);

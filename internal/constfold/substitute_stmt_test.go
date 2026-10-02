@@ -34,13 +34,13 @@ func TestSubstituteReachesEveryStatementForm(t *testing.T) {
 		},
 		{
 			name: "defer-action",
-			body: "defer { var d: i32 = LIMIT; }\n    return LIMIT;",
+			body: "defer { let d: i32 = LIMIT; }\n    return LIMIT;",
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			src := "const LIMIT: i32 = 7;\n" +
-				"function main(): i32 {\n    var n: i32 = 0;\n    " + tc.body + "\n}\n"
+				"function main(): i32 {\n    let n: i32 = 0;\n    " + tc.body + "\n}\n"
 			prog := fold(t, src)
 			if n := countIdents(prog, "LIMIT"); n != 0 {
 				t.Errorf("%d unsubstituted `LIMIT` reference(s) left; the const survives to the checker as an undefined identifier", n)

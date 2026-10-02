@@ -52,27 +52,27 @@ func TestX86_64GeneralReuseDropGuided(t *testing.T) {
 // array is deep-freed on the reuse branch.
 const dgArmShapeRuntimeSrc = `struct Holder { id: i32, items: i32[] }
 function run(go_: boolean): i32 {
-    var a: Holder = Holder { id: 1, items: [7, 8] };
-    var acc: i32 = 0;
+    let a: Holder = Holder { id: 1, items: [7, 8] };
+    let acc: i32 = 0;
     if (go_) {
-        var s: i32 = a.id + a.items[0] + a.items[1];
-        var b: Holder = Holder { id: s, items: [3, 4] };
+        let s: i32 = a.id + a.items[0] + a.items[1];
+        let b: Holder = Holder { id: s, items: [3, 4] };
         acc = b.id + b.items[0] + b.items[1];
     }
     return acc;
 }
 function main(): i32 {
-    var t: i32 = run(true);    // s=16; b={16,[3,4]} -> 23
-    var f: i32 = run(false);   // a exit-swept
+    let t: i32 = run(true);    // s=16; b={16,[3,4]} -> 23
+    let f: i32 = run(false);   // a exit-swept
     if (t != 23) { return 1; }
     if (f != 0) { return 2; }
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var m: Holder = Holder { id: i, items: [i, i + 1] };
+        let m: Holder = Holder { id: i, items: [i, i + 1] };
         if (i % 2 == 0) {
-            var s: i32 = m.id + m.items[0] + m.items[1];
-            var b: Holder = Holder { id: s, items: [i + 2, i + 3] };
+            let s: i32 = m.id + m.items[0] + m.items[1];
+            let b: Holder = Holder { id: s, items: [i + 2, i + 3] };
             acc = acc + b.id + b.items[0] + b.items[1];
         }
         i = i + 1;
@@ -143,18 +143,18 @@ var dgTrafficPrograms = []struct {
 	// both strategies must measure identical growth.
 	{"array_buildup", `import "std/i32";
 function main(): i32 {
-    var warm: i32 = 0;
-    var w: i32 = 0;
+    let warm: i32 = 0;
+    let w: i32 = 0;
     while (w < 100) {
-        var row: i32[] = [w, w + 1, w + 2];
+        let row: i32[] = [w, w + 1, w + 2];
         warm = warm + row[0];
         w = w + 1;
     }
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var acc: i32 = warm;
-    var i: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let acc: i32 = warm;
+    let i: i32 = 0;
     while (i < 2000) {
-        var row: i32[] = [i, i + 1, i + 2];
+        let row: i32[] = [i, i + 1, i + 2];
         acc = acc + row[0];
         i = i + 1;
     }
@@ -167,13 +167,13 @@ function main(): i32 {
 	{"struct_churn", `import "std/i32";
 struct Point { x: i32, y: i32 }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 2000) {
-        var a: Point = Point { x: i, y: i + 1 };
-        var s: i32 = a.x + a.y;
-        var b: Point = Point { x: s, y: i };
+        let a: Point = Point { x: i, y: i + 1 };
+        let s: i32 = a.x + a.y;
+        let b: Point = Point { x: s, y: i };
         acc = acc + b.x + b.y;
         i = i + 1;
     }
@@ -185,12 +185,12 @@ function main(): i32 {
 	{"r3_dead_chain", `import "std/i32";
 struct Box { a: i32, b: i32, c: i32, d: i32 }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var p: Box = Box { a: 1, b: 2, c: 3, d: 4 };
-    var s: i32 = p.a + p.d;
-    var q: Box = Box { a: s, b: 0, c: 0, d: 0 };
-    var u: i32 = q.a;
-    var r: Box = Box { a: u, b: 0, c: 0, d: 0 };
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let p: Box = Box { a: 1, b: 2, c: 3, d: 4 };
+    let s: i32 = p.a + p.d;
+    let q: Box = Box { a: s, b: 0, c: 0, d: 0 };
+    let u: i32 = q.a;
+    let r: Box = Box { a: u, b: 0, c: 0, d: 0 };
     print(((__heap_bump_bytes() as i32) - before).to_string());
     if (r.a != 5) { return 1; }
     return 0;
@@ -201,14 +201,14 @@ function main(): i32 {
 	{"arm_shape_loop", `import "std/i32";
 struct Wide { a: i32, b: i32, c: i32, d: i32, e: i32, f: i32, g: i32, h: i32 }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 2000) {
-        var a: Wide = Wide { a: i, b: 1, c: 2, d: 3, e: 4, f: 5, g: 6, h: 7 };
+        let a: Wide = Wide { a: i, b: 1, c: 2, d: 3, e: 4, f: 5, g: 6, h: 7 };
         if (i >= 0) {
-            var s: i32 = a.a + a.h;
-            var b: Wide = Wide { a: s, b: 0, c: 0, d: 0, e: 0, f: 0, g: 0, h: i };
+            let s: i32 = a.a + a.h;
+            let b: Wide = Wide { a: s, b: 0, c: 0, d: 0, e: 0, f: 0, g: 0, h: i };
             acc = acc + b.a + b.h;
         }
         i = i + 1;

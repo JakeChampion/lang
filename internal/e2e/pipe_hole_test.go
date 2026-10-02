@@ -17,13 +17,13 @@ func TestPipePlaceholder(t *testing.T) {
 		// sub(10, 3) = 7: hole in the second slot.
 		{"hole_second_arg", `function sub(a: i32, b: i32): i32 { return a - b; }
 function main(): i32 {
-    var x: i32 = 3;
+    let x: i32 = 3;
     return x |> sub(10, _);
 }`, 7},
 		// sub(3, 1) = 2: hole in the first slot.
 		{"hole_first_arg", `function sub(a: i32, b: i32): i32 { return a - b; }
 function main(): i32 {
-    var x: i32 = 3;
+    let x: i32 = 3;
     return x |> sub(_, 1);
 }`, 2},
 		// Position-distinguishing three-arg case: pick returns
@@ -38,7 +38,7 @@ function main(): i32 {
 		// sub(20, sub(5, 3)) = sub(20, 2) = 18.
 		{"nested_holes_compose", `function sub(a: i32, b: i32): i32 { return a - b; }
 function main(): i32 {
-    var x: i32 = 3;
+    let x: i32 = 3;
     return 20 |> sub(_, x |> sub(5, _));
 }`, 18},
 		// Chained pipes, each with its own hole. sub(9, 4)=5 then sub(8, 5)=3.

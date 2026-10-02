@@ -73,12 +73,12 @@ func assertAsmLinks(t *testing.T, gcc, dir, name, asm string) {
 // omission for i32-only maps motivated #2649), i32-keyed maps, and dynamic
 // arrays (push/grow → __fern_alloc). Map ops require `import "core/map"`.
 var nativeMatrix = map[string]string{
-	"str_concat": `function main(): i32 { var a: string = "ab"; var b: string = a + a; return b.len(); }`,
+	"str_concat": `function main(): i32 { let a: string = "ab"; let b: string = a + a; return b.len(); }`,
 	"map_str": `import "core/map";
-function main(): i32 { var m: Map[string, i32] = map_new(4); m = m.insert("a", 1); m = m.insert("b", 2); return m.get_or("a", 0) + m.get_or("b", 0); }`,
+function main(): i32 { let m: Map[string, i32] = map_new(4); m = m.insert("a", 1); m = m.insert("b", 2); return m.get_or("a", 0) + m.get_or("b", 0); }`,
 	"map_i32": `import "core/map";
-function main(): i32 { var m: Map[i32, i32] = map_new(4); m = m.insert(1, 10); m = m.insert(2, 20); return m.get_or(1, 0) + m.get_or(2, 0); }`,
-	"array_grow": `function main(): i32 { var xs: i32[] = []; var i: i32 = 0; while (i < 8) { xs = xs.append(i); i = i + 1; } return xs.len(); }`,
+function main(): i32 { let m: Map[i32, i32] = map_new(4); m = m.insert(1, 10); m = m.insert(2, 20); return m.get_or(1, 0) + m.get_or(2, 0); }`,
+	"array_grow": `function main(): i32 { let xs: i32[] = []; let i: i32 = 0; while (i < 8) { xs = xs.append(i); i = i + 1; } return xs.len(); }`,
 }
 
 func TestNativeRuntimeHelperClosureX86_64(t *testing.T) {

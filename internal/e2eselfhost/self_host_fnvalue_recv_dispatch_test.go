@@ -45,8 +45,8 @@ impl Key for i32 { function k_id(self: Self): i32 { return self; } }
 impl Key for string { function k_id(self: Self): i32 { return self.len(); } }
 
 function keyed_sum[T, K: Key](xs: T[], key: (T) => K): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < xs.len()) { acc = acc + key(xs[i]).k_id(); i = i + 1; }
     return acc;
 }
@@ -85,19 +85,19 @@ var fnValueRecvDispatchCases = []struct {
 }{
 	// The issue's table, row by row. rows = [{7,"abcd"}, {9,"ef"}].
 	{"fwd_i32", 16, fnValueRecvKeyTrait + `function main(): i32 {
-    var rows: Row[] = [Row { n: 7, name: "abcd" }, Row { n: 9, name: "ef" }];
+    let rows: Row[] = [Row { n: 7, name: "abcd" }, Row { n: 9, name: "ef" }];
     return fwd_i32(rows, (r: Row): i32 => r.n);
 }`},
 	{"fwd_str", 6, fnValueRecvKeyTrait + `function main(): i32 {
-    var rows: Row[] = [Row { n: 7, name: "abcd" }, Row { n: 9, name: "ef" }];
+    let rows: Row[] = [Row { n: 7, name: "abcd" }, Row { n: 9, name: "ef" }];
     return fwd_str(rows, (r: Row): string => r.name);
 }`},
 	{"two_hop", 16, fnValueRecvKeyTrait + `function main(): i32 {
-    var rows: Row[] = [Row { n: 7, name: "abcd" }, Row { n: 9, name: "ef" }];
+    let rows: Row[] = [Row { n: 7, name: "abcd" }, Row { n: 9, name: "ef" }];
     return hop(rows, (r: Row): i32 => r.n);
 }`},
 	{"direct_lambda", 22, fnValueRecvKeyTrait + `function main(): i32 {
-    var rows: Row[] = [Row { n: 7, name: "abcd" }, Row { n: 9, name: "ef" }];
+    let rows: Row[] = [Row { n: 7, name: "abcd" }, Row { n: 9, name: "ef" }];
     return keyed_sum(rows, (r: Row): i32 => r.n)
          + keyed_sum(rows, (r: Row): string => r.name);
 }`},
@@ -106,7 +106,7 @@ var fnValueRecvDispatchCases = []struct {
 	// to moved with what else the unit monomorphised — so a per-term table
 	// measured one at a time would not have caught every shape.
 	{"both_forwards", 22, fnValueRecvKeyTrait + `function main(): i32 {
-    var rows: Row[] = [Row { n: 7, name: "abcd" }, Row { n: 9, name: "ef" }];
+    let rows: Row[] = [Row { n: 7, name: "abcd" }, Row { n: 9, name: "ef" }];
     return fwd_i32(rows, (r: Row): i32 => r.n)
          + fwd_str(rows, (r: Row): string => r.name);
 }`},

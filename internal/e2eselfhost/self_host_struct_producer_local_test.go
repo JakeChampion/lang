@@ -10,8 +10,8 @@ import (
 
 // --- A struct producer that returns a LOCAL (#7343) --------------------------
 //
-// `function mk(): P { var p: P = P { xs: [..] }; return p; }` handed its caller
-// a box no reclaim credit covered, so every `var v: P = mk()` leaked the struct,
+// `function mk(): P { let p: P = P { xs: [..] }; return p; }` handed its caller
+// a box no reclaim credit covered, so every `let v: P = mk()` leaked the struct,
 // its buffer and its string: 128 B/round, unbounded, against 0 on native and
 // interp. The byte-identical producer that returns the literal DIRECTLY was
 // already admitted, so one extra statement in the callee was the whole
@@ -61,9 +61,9 @@ func structProducerCases() []structProducerCase {
 			name: "producer_returns_local",
 			src: `struct P { xs: i32[], s: string }
 function w(a: string): string { return a + "!"; }
-function mk(): P { var p: P = P { xs: [1,2,3], s: w("p") }; return p; }
-function round(i: i32): i32 { var v: P = mk(); return v.xs.len(); }
-function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 200) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
+function mk(): P { let p: P = P { xs: [1,2,3], s: w("p") }; return p; }
+function round(i: i32): i32 { let v: P = mk(); return v.xs.len(); }
+function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 200) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
 			want: 19, allocs: 400, frees: 400,
 		},
 		{
@@ -73,8 +73,8 @@ function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 200) { t = t +
 			src: `struct P { xs: i32[], s: string }
 function w(a: string): string { return a + "!"; }
 function mk(): P { return P { xs: [1,2,3], s: w("p") }; }
-function round(i: i32): i32 { var v: P = mk(); return v.xs.len(); }
-function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 200) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
+function round(i: i32): i32 { let v: P = mk(); return v.xs.len(); }
+function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 200) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
 			want: 19, allocs: 400, frees: 400,
 		},
 		{
@@ -83,17 +83,17 @@ function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 200) { t = t +
 			src: `struct P { xs: i32[], s: string }
 function w(a: string): string { return a + "!"; }
 
-function round(i: i32): i32 { var v: P = P { xs: [1,2,3], s: w("p") }; return v.xs.len(); }
-function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 200) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
+function round(i: i32): i32 { let v: P = P { xs: [1,2,3], s: w("p") }; return v.xs.len(); }
+function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 200) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
 			want: 19, allocs: 400, frees: 400,
 		},
 		{
 			// The smallest shape: one rc-array field, no string.
 			name: "minimal_array_field",
 			src: `struct P { xs: i32[] }
-function mk(): P { var p: P = P { xs: [1, 2, 3] }; return p; }
-function round(i: i32): i32 { var v: P = mk(); return v.xs.len(); }
-function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
+function mk(): P { let p: P = P { xs: [1, 2, 3] }; return p; }
+function round(i: i32): i32 { let v: P = mk(); return v.xs.len(); }
+function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
 			want: 51, allocs: 100, frees: 100,
 		},
 		{
@@ -106,16 +106,16 @@ function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t +
 			name: "sibling_alias",
 			src: `struct P { xs: i32[], s: string }
 function w(a: string): string { return a + "!"; }
-function mk(): P { var p: P = P { xs: [1,2,3], s: w("p") }; return p; }
+function mk(): P { let p: P = P { xs: [1,2,3], s: w("p") }; return p; }
 function round(base: P, i: i32): i32 {
-    var t: i32 = 0;
-    if (i % 2 == 0) { var v: P = mk();  t = t + v.xs.len(); }
-    if (i % 2 == 1) { var v: P = base;  t = t + v.xs.len(); }
+    let t: i32 = 0;
+    if (i % 2 == 0) { let v: P = mk();  t = t + v.xs.len(); }
+    if (i % 2 == 1) { let v: P = base;  t = t + v.xs.len(); }
     return t;
 }
 function main(): i32 {
-    var b: P = P { xs: [7, 8], s: w("b") };
-    var t: i32 = 0; var i: i32 = 0;
+    let b: P = P { xs: [7, 8], s: w("b") };
+    let t: i32 = 0; let i: i32 = 0;
     while (i < 100) { t = t + round(b, i); i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 83;
@@ -131,16 +131,16 @@ function main(): i32 {
 			name: "sibling_alias_renamed",
 			src: `struct P { xs: i32[], s: string }
 function w(a: string): string { return a + "!"; }
-function mk(): P { var p: P = P { xs: [1,2,3], s: w("p") }; return p; }
+function mk(): P { let p: P = P { xs: [1,2,3], s: w("p") }; return p; }
 function round(base: P, i: i32): i32 {
-    var t: i32 = 0;
-    if (i % 2 == 0) { var v: P = mk();  t = t + v.xs.len(); }
-    if (i % 2 == 1) { var u: P = base;  t = t + u.xs.len(); }
+    let t: i32 = 0;
+    if (i % 2 == 0) { let v: P = mk();  t = t + v.xs.len(); }
+    if (i % 2 == 1) { let u: P = base;  t = t + u.xs.len(); }
     return t;
 }
 function main(): i32 {
-    var b: P = P { xs: [7, 8], s: w("b") };
-    var t: i32 = 0; var i: i32 = 0;
+    let b: P = P { xs: [7, 8], s: w("b") };
+    let t: i32 = 0; let i: i32 = 0;
     while (i < 100) { t = t + round(b, i); i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 83;
@@ -149,7 +149,7 @@ function main(): i32 {
 		},
 		{
 			// ADMITTED, and deliberately so after being measured rather than
-			// assumed. `var stolen: i32[] = p.xs;` before `return p` takes a second
+			// assumed. `let stolen: i32[] = p.xs;` before `return p` takes a second
 			// reference to the buffer the caller's deep drop frees — but `stolen` is
 			// a local of the producer's own frame and dies at its exit, so the drop
 			// is balanced: 200/200 at live_bytes 0, underflow 0, both oracles
@@ -162,9 +162,9 @@ function main(): i32 {
 			// over-releases, this row is the first suspect.
 			name: "field_read_admitted",
 			src: `struct P { xs: i32[] }
-function mk(i: i32): P { var p: P = P { xs: [i, i + 1] }; var stolen: i32[] = p.xs; return p; }
-function round(i: i32): i32 { var v: P = mk(i); return v.xs.len(); }
-function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
+function mk(i: i32): P { let p: P = P { xs: [i, i + 1] }; let stolen: i32[] = p.xs; return p; }
+function round(i: i32): i32 { let v: P = mk(i); return v.xs.len(); }
+function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
 			want: 34, allocs: 200, frees: 200,
 		},
 		{
@@ -176,8 +176,8 @@ function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t +
 			name: "refused_param_returned",
 			src: `struct P { xs: i32[] }
 function mk(p: P): P { return p; }
-function round(i: i32): i32 { var src: P = P { xs: [i, i + 1] }; var v: P = mk(src); return v.xs.len(); }
-function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
+function round(i: i32): i32 { let src: P = P { xs: [i, i + 1] }; let v: P = mk(src); return v.xs.len(); }
+function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
 			want: 34, allocs: 200, frees: 200,
 		},
 		{
@@ -186,9 +186,9 @@ function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t +
 			name: "refused_aliased",
 			src: `struct P { xs: i32[] }
 function keepit(q: P): i32 { return q.xs.len(); }
-function mk(i: i32): P { var p: P = P { xs: [i, i + 1] }; var alias: P = p; return p; }
-function round(i: i32): i32 { var v: P = mk(i); return v.xs.len(); }
-function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
+function mk(i: i32): P { let p: P = P { xs: [i, i + 1] }; let alias: P = p; return p; }
+function round(i: i32): i32 { let v: P = mk(i); return v.xs.len(); }
+function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
 			want: 34, allocs: 200, frees: 200,
 		},
 		{
@@ -202,9 +202,9 @@ function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t +
 			// refused rows below are the soundness boundary.
 			name: "admitted_reassigned_all_fresh",
 			src: `struct P { xs: i32[] }
-function mk(i: i32): P { var p: P = P { xs: [i, i + 1] }; p = P { xs: [i + 2, i + 3] }; return p; }
-function round(i: i32): i32 { var v: P = mk(i); return v.xs.len(); }
-function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
+function mk(i: i32): P { let p: P = P { xs: [i, i + 1] }; p = P { xs: [i + 2, i + 3] }; return p; }
+function round(i: i32): i32 { let v: P = mk(i); return v.xs.len(); }
+function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
 			want: 34, allocs: 400, frees: 400,
 		},
 		{
@@ -215,12 +215,12 @@ function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t +
 			name: "two_declarations",
 			src: `struct P { xs: i32[] }
 function mk(i: i32): P {
-    if (i % 2 == 0) { var p: P = P { xs: [i, i + 1] }; return p; }
-    var p: P = P { xs: [i + 2, i + 3] };
+    if (i % 2 == 0) { let p: P = P { xs: [i, i + 1] }; return p; }
+    let p: P = P { xs: [i + 2, i + 3] };
     return p;
 }
-function round(i: i32): i32 { var v: P = mk(i); return v.xs.len(); }
-function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
+function round(i: i32): i32 { let v: P = mk(i); return v.xs.len(); }
+function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
 			want: 34, allocs: 200, frees: 200,
 		},
 		{
@@ -229,9 +229,9 @@ function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t +
 			name: "refused_receiver_field_move",
 			src: `struct P { xs: i32[] }
 function (p: P) grow(): P { return P { xs: p.xs }; }
-function mk(i: i32): P { var p: P = P { xs: [i, i + 1] }; var q: P = p.grow(); return p; }
-function round(i: i32): i32 { var v: P = mk(i); return v.xs.len(); }
-function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
+function mk(i: i32): P { let p: P = P { xs: [i, i + 1] }; let q: P = p.grow(); return p; }
+function round(i: i32): i32 { let v: P = mk(i); return v.xs.len(); }
+function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
 			want: 34, allocs: 300, frees: 300,
 		}}
 }

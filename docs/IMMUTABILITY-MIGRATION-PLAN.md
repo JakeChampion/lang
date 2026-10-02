@@ -105,7 +105,7 @@ an already-shared value and are out of scope for this migration).
   type-checks `n.Target` and `n.Value`, requires assignability, and
   the comment at `:4930-4939` records that `FieldAccess`, `Ident`, and
   `Index` are the three addressable target shapes. There is **no
-  mutability gate** — no `mut` keyword, no `let`/`var` field
+  mutability gate** — no `mut` keyword, no `let` field
   distinction, no recursion-aware rejection.
 - **IR lowers it to a raw in-place store.** `internal/ir/ir.go:9921`
   (`case *ast.FieldAccess:` inside `b.assign`): resolve the owning
@@ -170,7 +170,7 @@ Method: `grep -nE '^\s*<ident>\.<field>\s*(\+=|-=|\*=|/=|=)\s'` across
 `examples/` and `internal/stdlib/`, filtering out `==`/`<=`/`>=`/`!=`
 and comment lines. Statement-leading field assignment is the reliable
 signal (an embedded `something.field =` inside a larger expression is a
-comparison or a `var x: T = ...` declaration).
+comparison or a `let x: T = ...` declaration).
 
 **Total: 59 field-assignment sites across 7 files.**
 
@@ -193,13 +193,13 @@ hold against the source as it stands, and the migration scope is much
 smaller than the doc implies:**
 
 - The real statement-leading field-assignment count is **59**, not ~497.
-  The ~497 figure appears to count `var x: T = …` declarations and
+  The ~497 figure appears to count `let x: T = …` declarations and
   `a.b == c` comparisons, which the `.<field> =` substring also matches.
 - The self-host `.fern` passes contain **zero** statement-leading field
   assignments. `examples/self_host/parser.fern`, `constfold.fern`,
   `flatten.fern` build their ASTs **bottom-up and immutably** (verified:
   every `<ident>.<field>` line in those files is a
-  `var t: lexer.Token = p.peek()`-shaped declaration). The `__set_field`
+  `let t: lexer.Token = p.peek()`-shaped declaration). The `__set_field`
   references that exist (`parser.fern:1181-1195`, `asm.fern:4897-4901`,
   `asm_arm64.fern`) are the self-host compiler *parsing and emitting*
   field assignment **for programs it compiles** (`obj.field = rhs` →
@@ -539,7 +539,7 @@ Once §5 lands, flip the checker to reject the two mutation targets:
 | `io_buffered.fern` receiver builder (4) | `internal/stdlib/std/io_buffered.fern:49,59,66,99` |
 | `headers.fern` receiver builder (4) | `internal/stdlib/std/headers.fern:75-76,107-108` |
 | `mock_platform.fern` receiver builder (2) | `internal/stdlib/std/mock_platform.fern:46,61` |
-| Self-host `.fern` passes do NOT mutate fields | zero statement-leading hits in `examples/self_host/*.fern`; all `<ident>.<field>` lines are `var t: T = …` |
+| Self-host `.fern` passes do NOT mutate fields | zero statement-leading hits in `examples/self_host/*.fern`; all `<ident>.<field>` lines are `let t: T = …` |
 | `__set_field` is the self-host *desugar/emit*, not usage | `examples/self_host/parser.fern:1181-1195`, `asm.fern:4897-4901` |
 | No struct-update / spread syntax exists yet | no `spread`/`...`/`StructUpdate` in `internal/parser/*.go`, `internal/ast/*.go` |
 | StructLit AST node | `internal/ast/ast.go:884-896` |

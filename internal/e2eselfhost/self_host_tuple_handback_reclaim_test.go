@@ -10,7 +10,7 @@ import (
 // #8678: coreutils/seq threads an output block through its stepping loop and
 // hands it through a tuple-returning helper —
 //
-//	var d: (BufWriter, Block) = drain(w, out); w = d.0; out = d.1;
+//	let d: (BufWriter, Block) = drain(w, out); w = d.0; out = d.1;
 //
 // — and every generation of that block leaked under the self-host, 64 KiB per
 // term, until the OOM killer took the process. Each shape below pins one of
@@ -21,7 +21,7 @@ import (
 //     box going back inside the result. The same reading left `flush`'s
 //     `return (o, b)` marking its PARAMETER non-consume-safe, which refused
 //     every caller passing a threaded local to it.
-//   - the handback pair `var d = g(.., out, ..); out = d.f;` was recognised
+//   - the handback pair `let d = g(.., out, ..); out = d.f;` was recognised
 //     only when the unpack was the very next statement; seq reads `w = d.0`
 //     in between, a differently-typed element that cannot be the box.
 //   - `return (o, b)` retained the bare parameter for the tuple, so the
@@ -32,7 +32,7 @@ import (
 //   - a call in statement position taking the local, `overflow(w, out)`,
 //     read as an escape however consume-safe the callee — and its own
 //     `finish(flush(w, b).0)` needed a scalar position to count as safe.
-//   - `var d = drain(w, out)` earned no box credit for `d`, because
+//   - `let d = drain(w, out)` earned no box credit for `d`, because
 //     `drain`'s slow path returns `flush(w, b)` — a call, not a literal.
 //   - with the tuple return admitted, a FRESH local handed back bare by a
 //     callee inside that tuple (numfmt's `options`) was freed by the exit
@@ -53,9 +53,9 @@ function reserve(b: Block, k: i32): Block {
   if (b.n + k <= b.buf.len()) {
     return b;
   }
-  var wider: u8[] = __alloc_u8(b.n + k + 4096);
-  var i: i32 = 0;
-  var out: Block = Block { buf: wider, n: b.n };
+  let wider: u8[] = __alloc_u8(b.n + k + 4096);
+  let i: i32 = 0;
+  let out: Block = Block { buf: wider, n: b.n };
   while (i < b.n) {
     out = Block { ...out, buf: out.buf.with(i, b.buf[i]) };
     i = i + 1;
@@ -64,8 +64,8 @@ function reserve(b: Block, k: i32): Block {
 }
 
 function push_str(b: Block, s: string): Block {
-  var out: Block = reserve(b, s.len());
-  var i: i32 = 0;
+  let out: Block = reserve(b, s.len());
+  let i: i32 = 0;
   while (i < s.len()) {
     out = Block { ...out, buf: out.buf.with(out.n, s[i]), n: out.n + 1 };
     i = i + 1;
@@ -88,8 +88,8 @@ function drain(w: i32, b: Block): (i32, Block) {
 }
 
 function main(): i32 {
-  var b: Block = block_new();
-  var r: (i32, Block) = run(0, b, ROUNDS);
+  let b: Block = block_new();
+  let r: (i32, Block) = run(0, b, ROUNDS);
   return r.1.n % 100 + (r.1.buf[3] as i32) % 7 + (r.0 / 28000) + b.n;
 }
 `
@@ -104,9 +104,9 @@ var tupleHandbackCases = []struct {
   return Block { ...b, n: 0 };
 }
 function run(w0: i32, b: Block, rounds: i32): (i32, Block) {
-  var w: i32 = w0;
-  var out: Block = b;
-  var i: i32 = 0;
+  let w: i32 = w0;
+  let out: Block = b;
+  let i: i32 = 0;
   while (i < rounds) {
     out = push_str(out, "1234567890123\n");
     if (out.n >= 4096) {
@@ -119,13 +119,13 @@ function run(w0: i32, b: Block, rounds: i32): (i32, Block) {
 }`},
 	// The handback pair with the other element read in between: dec_seq.
 	{"handback_other_elem_read", `function run(w0: i32, b: Block, rounds: i32): (i32, Block) {
-  var w: i32 = w0;
-  var out: Block = b;
-  var i: i32 = 0;
+  let w: i32 = w0;
+  let out: Block = b;
+  let i: i32 = 0;
   while (i < rounds) {
     out = push_str(out, "1234567890123\n");
     if (out.n >= 4096) {
-      var d: (i32, Block) = flush(w, out);
+      let d: (i32, Block) = flush(w, out);
       w = d.0;
       out = d.1;
     }
@@ -136,12 +136,12 @@ function run(w0: i32, b: Block, rounds: i32): (i32, Block) {
 	// The identity handback every iteration: drain returns its parameter
 	// inside the tuple on the common path. print_numbers.
 	{"identity_handback_each_round", `function run(w0: i32, b: Block, rounds: i32): (i32, Block) {
-  var w: i32 = w0;
-  var out: Block = b;
-  var i: i32 = 0;
+  let w: i32 = w0;
+  let out: Block = b;
+  let i: i32 = 0;
   while (i < rounds) {
     out = push_str(out, "1234567890123\n");
-    var d: (i32, Block) = drain(w, out);
+    let d: (i32, Block) = drain(w, out);
     w = d.0;
     out = d.1;
     i = i + 1;
@@ -166,7 +166,7 @@ function overflow(w: i32, b: Block): void {
   finish(flush(w, b).0);
 }
 function emit_term(w: i32, b: Block, f: Fmt, v: i32): Block {
-  var out: Block = push_str(b, f.pre);
+  let out: Block = push_str(b, f.pre);
   match (render(v)) {
     Some(k) => {
       if (k == 0) {
@@ -185,10 +185,10 @@ function terminate(b: Block): Block {
   return push_str(b, "\n");
 }
 function run(w0: i32, b: Block, rounds: i32): (i32, Block) {
-  var f: Fmt = Fmt { pre: "", post: "" };
-  var w: i32 = w0;
-  var out: Block = emit_term(w, b, f, 0);
-  var i: i32 = 1;
+  let f: Fmt = Fmt { pre: "", post: "" };
+  let w: i32 = w0;
+  let out: Block = emit_term(w, b, f, 0);
+  let i: i32 = 1;
   while (true) {
     if (i > rounds) {
       out = push_str(out, "\n");
@@ -197,7 +197,7 @@ function run(w0: i32, b: Block, rounds: i32): (i32, Block) {
     }
     out = push_str(out, "\n");
     out = emit_term(w, out, f, i);
-    var d: (i32, Block) = drain(w, out);
+    let d: (i32, Block) = drain(w, out);
     w = d.0;
     out = d.1;
     i = i + 1;
@@ -216,12 +216,12 @@ function run(w0: i32, b: Block, rounds: i32): (i32, Block) {
   return b;
 }
 function build(w0: i32, rounds: i32): (i32, Block) {
-  var w: i32 = w0;
-  var o: Block = block_new();
-  var i: i32 = 0;
+  let w: i32 = w0;
+  let o: Block = block_new();
+  let i: i32 = 0;
   while (i < rounds) {
     o = push_str(o, "1234567890123\n");
-    var d: (i32, Block) = drain(w, o);
+    let d: (i32, Block) = drain(w, o);
     w = d.0;
     o = d.1;
     i = i + 1;
@@ -229,10 +229,10 @@ function build(w0: i32, rounds: i32): (i32, Block) {
   return (w + o.n, check(o, w));
 }
 function run(w0: i32, b: Block, rounds: i32): (i32, Block) {
-  var inner: (i32, Block) = build(w0, rounds);
-  var o: Block = inner.1;
-  var junk: Block = Block { buf: __alloc_u8(8), n: 77 };
-  var out: Block = push_str(b, "x");
+  let inner: (i32, Block) = build(w0, rounds);
+  let o: Block = inner.1;
+  let junk: Block = Block { buf: __alloc_u8(8), n: 77 };
+  let out: Block = push_str(b, "x");
   return (inner.0 + junk.n - 77, Block { ...out, n: o.n % 100 + out.n });
 }`},
 	// swept_local_handed_back's hazard for a credited TUPLE local (#8734): it
@@ -246,24 +246,24 @@ function run(w0: i32, b: Block, rounds: i32): (i32, Block) {
   return t;
 }
 function build(w: i32, rounds: i32): (i32, i32[]) {
-  var xs: i32[] = [];
-  var i: i32 = 0;
+  let xs: i32[] = [];
+  let i: i32 = 0;
   while (i < rounds) {
     xs = xs.append(i % 7);
     i = i + 1;
   }
-  var t: (i32, i32[]) = (w, xs);
+  let t: (i32, i32[]) = (w, xs);
   return checkt(t, w);
 }
 function run(w0: i32, b: Block, rounds: i32): (i32, Block) {
-  var r: (i32, i32[]) = build(w0, rounds);
-  var junk: i32[] = [];
-  var i: i32 = 0;
+  let r: (i32, i32[]) = build(w0, rounds);
+  let junk: i32[] = [];
+  let i: i32 = 0;
   while (i < r.1.len()) {
     junk = junk.append(5);
     i = i + 1;
   }
-  var out: Block = push_str(b, "x");
+  let out: Block = push_str(b, "x");
   return (r.0 + junk.len() - r.1.len(), Block { ...out, n: out.n + r.1[3] + r.1.len() % 100 });
 }`},
 	// A call-derived local rather than an alias, with the loop's exit a
@@ -272,16 +272,16 @@ function run(w0: i32, b: Block, rounds: i32): (i32, Block) {
   return push_str(b, "\n");
 }
 function run(w0: i32, b: Block, rounds: i32): (i32, Block) {
-  var w: i32 = w0;
-  var out: Block = push_str(b, "x");
-  var i: i32 = 1;
+  let w: i32 = w0;
+  let out: Block = push_str(b, "x");
+  let i: i32 = 1;
   while (true) {
     if (i > rounds) {
       out = push_str(out, "end");
       return (w, terminate(out));
     }
     out = push_str(out, "1234567890123\n");
-    var d: (i32, Block) = drain(w, out);
+    let d: (i32, Block) = drain(w, out);
     w = d.0;
     out = d.1;
     i = i + 1;
@@ -303,23 +303,23 @@ var tupleHandbackCheckedCases = []struct {
 	// outer block is never drained and grows every round; what the case pins
 	// is that no generation of either is stranded.
 	{"destructure_same_statement", `function run(w0: i32, b: Block, rounds: i32): (i32, Block) {
-  var w: i32 = w0;
-  var out: Block = b;
-  var i: i32 = 0;
+  let w: i32 = w0;
+  let out: Block = b;
+  let i: i32 = 0;
   while (i < rounds) {
     out = push_str(out, "1234567890123\n");
-    var (w, out) = drain(w, out);
+    let (w, out) = drain(w, out);
     i = i + 1;
   }
   return (w, out);
 }`},
 	{"destructure_fresh_binders", `function run(w0: i32, b: Block, rounds: i32): (i32, Block) {
-  var w: i32 = w0;
-  var out: Block = b;
-  var i: i32 = 0;
+  let w: i32 = w0;
+  let out: Block = b;
+  let i: i32 = 0;
   while (i < rounds) {
     out = push_str(out, "1234567890123\n");
-    var (w2, o2) = drain(w, out);
+    let (w2, o2) = drain(w, out);
     w = w2;
     out = o2;
     i = i + 1;
@@ -334,8 +334,8 @@ var tupleHandbackCheckedCases = []struct {
   return acc;
 }
 function build(w: i32, rounds: i32): string {
-  var acc: string = "";
-  var i: i32 = 0;
+  let acc: string = "";
+  let i: i32 = 0;
   while (i < rounds) {
     acc = acc + "ab";
     i = i + 1;
@@ -343,14 +343,14 @@ function build(w: i32, rounds: i32): string {
   return checks(acc, w);
 }
 function run(w0: i32, b: Block, rounds: i32): (i32, Block) {
-  var s: string = build(w0, rounds);
-  var junk: string = "";
-  var i: i32 = 0;
+  let s: string = build(w0, rounds);
+  let junk: string = "";
+  let i: i32 = 0;
   while (i < s.len()) {
     junk = junk + "z";
     i = i + 1;
   }
-  var out: Block = push_str(b, "x");
+  let out: Block = push_str(b, "x");
   return (w0 + junk.len() - s.len(), Block { ...out, n: out.n + (s[3] as i32) % 7 + s.len() % 100 });
 }`},
 }

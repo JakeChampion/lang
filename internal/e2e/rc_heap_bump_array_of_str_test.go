@@ -19,11 +19,11 @@ import (
 
 func arrOfStrBumpSrc(n string) string {
 	return `function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < ` + n + `) {
-        var g: string[][] = [["aa", "bb"], ["cc"]];
+        let g: string[][] = [["aa", "bb"], ["cc"]];
         acc = acc + g[0][1].len();
         i = i + 1;
     }
@@ -33,10 +33,10 @@ func arrOfStrBumpSrc(n string) string {
 
 // Inner strings + buffers must reclaim AND not over-release.
 const arrOfStrUnderflowSrc = `function main(): i32 {
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < 200) {
-        var g: string[][] = [["alpha", "beta"], ["gamma"]];
+        let g: string[][] = [["alpha", "beta"], ["gamma"]];
         acc = acc + g[0][0].len() + g[1][0].len();
         i = i + 1;
     }

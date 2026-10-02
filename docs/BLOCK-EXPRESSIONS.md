@@ -16,10 +16,10 @@ This is the Rust/Zig-style "everything is an expression" block, adapted
 to Fern's grammar. It enables multi-statement value-position branches:
 
 ```
-var x: i32 = if (e > 0) { var k = e + 1; k } else { 0 };
+let x: i32 = if (e > 0) { let k = e + 1; k } else { 0 };
 
-var label: string = match (tag) {
-    0 => { var s = lookup(tag); s },
+let label: string = match (tag) {
+    0 => { let s = lookup(tag); s },
     _ => "other"
 };
 ```
@@ -86,8 +86,8 @@ Backend support:
   out of the block:
 
   ```
-  var a: i32 = if (true) { var k = 10; k } else { 0 };
-  var b: i32 = if (true) { var k = 20; k } else { 0 };  // separate `k`
+  let a: i32 = if (true) { let k = 10; k } else { 0 };
+  let b: i32 = if (true) { let k = 20; k } else { 0 };  // separate `k`
   ```
 
 - **Type.** The block's type is the type of `Tail`, checked in the child
@@ -102,7 +102,7 @@ Backend support:
 
   ```
   // ERROR (E061): the block produces no value.
-  var x: i32 = if (b) { var k = 1; } else { 0 };
+  let x: i32 = if (b) { let k = 1; } else { 0 };
   ```
 
   The one context that *wants* a value-less block is a block-shaped
@@ -146,7 +146,7 @@ A `return` / `break` / `continue` inside a value-position block is
 supported on every native backend (interp / wasm / arm64 / x86-64):
 
 ```
-var x: i32 = { if (early) { return 0; } var k = compute(); k };
+let x: i32 = { if (early) { return 0; } let k = compute(); k };
 ```
 
 The interpreter propagates a non-normal `r.flow` out of the
@@ -165,9 +165,9 @@ it is not `void` — it is **`never`** (`ast.NeverType`), the bottom
 type, which is assignable to / unifies with any type:
 
 ```
-var x: i32 = { if (n < 0) { return 1; } return 2; };      // general block
-var y: i32 = if (n < 0) { return 1; } else { return 2; }; // both arms diverge
-var z: i32 = match (n) { 0 => { return 100; }, _ => n };  // divergent arm
+let x: i32 = { if (n < 0) { return 1; } return 2; };      // general block
+let y: i32 = if (n < 0) { return 1; } else { return 2; }; // both arms diverge
+let z: i32 = match (n) { 0 => { return 100; }, _ => n };  // divergent arm
 ```
 
 `checker.checkBlockExpr` returns `NeverType` (instead of E061) when the

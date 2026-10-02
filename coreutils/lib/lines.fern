@@ -17,10 +17,10 @@ import "std/string";
 // `hold`, or its whole length when it holds fewer than that — the last
 // line is then unterminated, and there is nothing after it to point at.
 pub function line_cut(hold: string, n: u64, term: i32): i32 {
-  var cut: i32 = 0;
-  var left: u64 = n;
+  let cut: i32 = 0;
+  let left: u64 = n;
   while (left > 0 as u64) {
-    var j: i32 = __memchr(hold, term, cut);
+    let j: i32 = __memchr(hold, term, cut);
     if (j < 0) {
       return hold.len();
     }
@@ -42,8 +42,8 @@ pub function line_cut(hold: string, n: u64, term: i32): i32 {
 // the general path, which counts terminators across the hold as well
 // and was always right for that case.
 pub function tail_start(s: string, n: u64, term: i32): i32 {
-  var pos: i32 = s.len();
-  var left: u64 = n + 1 as u64;
+  let pos: i32 = s.len();
+  let left: u64 = n + 1 as u64;
   while (left > 0 as u64) {
     pos = __rmemchr(s, term, pos - 1);
     if (pos < 0) {

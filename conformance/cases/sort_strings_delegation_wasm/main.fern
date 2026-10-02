@@ -32,27 +32,27 @@ function main(): i32 {
         return 1;
     }
 
-    var arr: string[] = ["cherry", "Apple", "banana", "apple", "", "date"];
+    let arr: string[] = ["cherry", "Apple", "banana", "apple", "", "date"];
 
-    var asc: string[] = cmp.sort(arr);
+    let asc: string[] = cmp.sort(arr);
     if (asc[0] != "" || asc[1] != "Apple") {
         print("asc FAILED");
         return 1;
     }
 
-    var desc: string[] = cmp.sort_desc(arr);
+    let desc: string[] = cmp.sort_desc(arr);
     if (desc[0] != "date") {
         print("desc FAILED");
         return 1;
     }
 
-    var ci: string[] = sort.sort_strings_asc_ci(arr);
+    let ci: string[] = sort.sort_strings_asc_ci(arr);
     // ci-stable: "Apple" and "apple" compare equal, keep input order.
     if (ci[0] != "") {
         print("ci FAILED");
         return 1;
     }
-    var seen_apple_upper: boolean = false;
+    let seen_apple_upper: boolean = false;
     for x in ci {
         if (x == "Apple") { seen_apple_upper = true; }
         if (x == "apple") {

@@ -19,7 +19,7 @@ function main(): i32 {
     if ((8 as u32).abs_diff(5 as u32) != (3 as u32)) { return 2; }
     if ((7 as u32).abs_diff(7 as u32) != (0 as u32)) { return 3; }
     // u32::MAX via wrap; abs_diff to 0 is MAX itself (unsigned, no overflow)
-    var big: u32 = (0 as u32) - (1 as u32);
+    let big: u32 = (0 as u32) - (1 as u32);
     if (big.abs_diff(0 as u32) != big) { return 4; }
     // ---- u32 range (unsigned compare across the sign-bit boundary) ----
     if (!big.is_between(0 as u32, big)) { return 5; }        // MAX inside inclusive
@@ -30,7 +30,7 @@ function main(): i32 {
     if ((5000000000 as u64).abs_diff(3000000000 as u64) != (2000000000 as u64)) { return 9; }
     if ((3000000000 as u64).abs_diff(5000000000 as u64) != (2000000000 as u64)) { return 10; }
     // ---- u64 range (unsigned compare) ----
-    var big64: u64 = (0 as u64) - (1 as u64);
+    let big64: u64 = (0 as u64) - (1 as u64);
     if (!big64.is_between(0 as u64, big64)) { return 11; }
     if (big64.is_in_range(0 as u64, big64)) { return 12; }
     if (!(5 as u64).is_in_range(1 as u64, 10 as u64)) { return 13; }
