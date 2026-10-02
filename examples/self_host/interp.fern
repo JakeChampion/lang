@@ -5193,7 +5193,6 @@ pub function eval_module_argv(raw_mod: parser.Module, argv: string[]): Value {
   // Lower `for i in LOW..HIGH` range-loops (iter = the synthetic `__range`
   // call) to counting while-loops up front — the interpreter's StmtFor only
   // iterates arrays, so an undesugared `__range` iter would mis-evaluate.
-  // (The IR path keeps the `__range` shape for irlower.lower_range_for.)
   // Lower `defer` to its scope-exit position HERE (#4348 item 1) rather
   // than relying on each caller: the stdin drivers (interp_run) fed the
   // raw module straight in, so StmtDefer's recurse-arm executed deferred

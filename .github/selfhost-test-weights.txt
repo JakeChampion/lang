@@ -150,7 +150,6 @@ TestSelfHostClockArm64 13
 TestSelfHostClockIRX86_64 2
 TestSelfHostClosureAliasIRX86_64 2
 TestSelfHostClosureArrayIR 2
-TestSelfHostClosureCallCensusPopulation 5
 TestSelfHostClosurePtrCaptureIRX86_64 2
 TestSelfHostCmpBranchFusion 2
 TestSelfHostCmpCoreIRX86_64 4
@@ -249,7 +248,6 @@ TestSelfHostFieldAppendInPlaceWasmIR 2
 TestSelfHostFieldAppendInPlaceX86_64 2
 TestSelfHostFieldReclaimIRX86_64 20
 TestSelfHostFinalCreditSiteKeyIRArm64 2
-TestSelfHostFipVerifyCorpusClean 3
 TestSelfHostFixtureSourcesCheck 11
 TestSelfHostFlattenX86_64 3
 TestSelfHostFloatBitsIRWasm 2
@@ -320,12 +318,9 @@ TestSelfHostIRPerModuleCrossStruct 2
 TestSelfHostIRPerModuleDriver 2
 TestSelfHostIRPipelineProbe 3
 TestSelfHostIRRuntimeHelperClosure 2
-TestSelfHostIRVerifyCorpusClean 3
 TestSelfHostIRVerifyGateWholeCompiler 108
 TestSelfHostIRVerifyProvidedCompilerClean 19
 TestSelfHostIRVerifyProvidedCorpusClean 57
-TestSelfHostIRVerifyRcCorpusClean 3
-TestSelfHostIRVerifyStackCorpusClean 3
 TestSelfHostIdentifierCountsX86_64 2
 TestSelfHostIifeI64AnnotIR 2
 TestSelfHostImplBounds 3
