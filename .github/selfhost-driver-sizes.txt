@@ -429,7 +429,14 @@
 # 36888675074.
 # 2026-10-02 — irlower_run.fern removed: it drove only the AST lowering, which
 # nothing calls any more.
-fern.fern/stage2 10738872
+# 2026-10-02 — fern.fern/stage2 10738872 -> 11558808 (+7.6%). #11116 guards
+# each nominal release inline (eight instructions where one call stood),
+# trading text for 2.5% of the stage-2 compile's instructions: stage2 at its
+# merge, c33db5628, is 11343312 against 10780152 one merge before. The rest
+# is main's drift since. The stage0-built row, fern.fern, does not carry the
+# guard until the pin moves, so the two rows part here. Number pasted from
+# driver-sizes' own report on run 37064361690.
+fern.fern/stage2 11558808
 fern.fern 10737128
 asm_load_run.fern 8721320
 asm_modload_run.fern 7618432
