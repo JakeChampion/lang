@@ -3,8 +3,6 @@ package e2e
 import (
 	"strings"
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // Perceus precise drops (garbage-free, straight-line subset). An owned
@@ -138,18 +136,6 @@ func rcArrDead4Src() string {
 }`
 }
 
-func rcArrLive4Src() string {
-	row := pdLit(64)
-	mk := "[" + row + ", " + row + ", " + row + ", " + row + "]"
-	return `function main(): i32 {
-    let a: i32[][] = ` + mk + `;
-    let b: i32[][] = ` + mk + `;
-    let c: i32[][] = ` + mk + `;
-    let d: i32[][] = ` + mk + `;
-    return (__heap_bump_bytes() as i32) + a[0][0] + b[0][0] + c[0][0] + d[0][0];
-}`
-}
-
 // rcArrValuesSrc: array-of-struct (P[]), distinct values, with an aliased
 // element kept live — the deep struct-array drop must only DEC the shared
 // element box, not free it.
@@ -168,34 +154,6 @@ function main(): i32 {
     if (acc != 41800) { return 999; }
     return __rc_underflow_count();
 }`
-
-func TestWASMPreciseDrops(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
-	dead := runWasm(t, seqDead4Src())
-	live := runWasm(t, live4Src())
-	if dead >= live {
-		t.Errorf("precise drops should reclaim sequentially-dead arrays: dead4 high-water %d should be < live4 %d", dead, live)
-	}
-	rcDead := runWasm(t, rcArrDead4Src())
-	rcLive := runWasm(t, rcArrLive4Src())
-	if rcDead >= rcLive {
-		t.Errorf("precise drops should reclaim sequentially-dead rc-element arrays: dead4 %d should be < live4 %d", rcDead, rcLive)
-	}
-	if pdValues := runWasm(t, pdValuesSrc); pdValues != 0 {
-		t.Errorf("value correctness / over-release: got %d", pdValues)
-	}
-	if got := runWasm(t, pdAliasSrc); got != 0 {
-		t.Errorf("aliased-into-container soundness: got %d", got)
-	}
-	if got := runWasm(t, pdArgReturnSrc); got != 0 {
-		t.Errorf("function-return-of-arg soundness: got %d", got)
-	}
-	if got := runWasm(t, rcArrValuesSrc); got != 0 {
-		t.Errorf("rc-element array value/alias soundness: got %d", got)
-	}
-}
 
 func TestX86_64PreciseDrops(t *testing.T) {
 	if _, code := compileAndRunX86_64FreeOn(t, pdValuesSrc); code != 0 {

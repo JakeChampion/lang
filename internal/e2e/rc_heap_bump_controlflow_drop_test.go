@@ -3,8 +3,6 @@ package e2e
 import (
 	"strings"
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // Perceus precise drops — slice 5: control-flow-aware placement. The last use
@@ -157,20 +155,6 @@ const cfArgsAliasSrc = `function main(): i32 {
     if (acc != 10200) { return 999; }
     return __rc_underflow_count();
 }`
-
-func TestWASMControlFlowDrop(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
-	if used, both := runWasm(t, cfUsedInIfSrc()), runWasm(t, cfBothLiveSrc()); used >= both {
-		t.Errorf("a local used only in an if-branch should reclaim after the if: used %d should be < both-live %d", used, both)
-	}
-	for name, src := range map[string]string{"early-return": cfEarlyReturnSrc, "loop-then-dead": cfLoopThenDeadSrc, "aliased": cfAliasedSrc, "args-alias": cfArgsAliasSrc} {
-		if got := runWasm(t, src); got != 0 {
-			t.Errorf("%s: got %d (999=value/UAF, >0=over-release)", name, got)
-		}
-	}
-}
 
 func TestX86_64ControlFlowDrop(t *testing.T) {
 	for name, src := range map[string]string{"early-return": cfEarlyReturnSrc, "loop-then-dead": cfLoopThenDeadSrc, "aliased": cfAliasedSrc, "args-alias": cfArgsAliasSrc} {

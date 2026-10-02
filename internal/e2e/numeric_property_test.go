@@ -22,9 +22,7 @@ import (
 	"bytes"
 	"fmt"
 	"math/rand"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -418,7 +416,7 @@ func runBackendsAgainst(t *testing.T, src, want string, skip map[string]string, 
 		if known(t, "wasm32-wasi") {
 			return
 		}
-		comp := buildNumComponent(t, src)
+		comp := buildCLIComponent(t, src)
 		ran("wasm32-wasi")
 		out, stderr, ec := runComponent(t, comp, runOpts{})
 		if ec != 0 {
@@ -428,23 +426,6 @@ func runBackendsAgainst(t *testing.T, src, want string, skip map[string]string, 
 			t.Errorf("wasm = %q, interp = %q\nsrc:\n%s", got, want, src)
 		}
 	})
-}
-
-// buildNumComponent compiles src with the self-host compiler to a plain
-// wasi:cli/run component, so the program's own prints are its only stdout.
-func buildNumComponent(t *testing.T, src string) string {
-	t.Helper()
-	skipIfPreview2Missing(t)
-	dir := t.TempDir()
-	srcPath := filepath.Join(dir, "main.fern")
-	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
-		t.Fatalf("write src: %v", err)
-	}
-	comp := filepath.Join(dir, "prog.component.wasm")
-	if out, err := e2eharness.SelfHostCompileCmd(t, e2eharness.TargetWasm32Wasi, srcPath, comp).CombinedOutput(); err != nil {
-		t.Fatalf("SELFHOST-COMPILE-FAIL -target wasm32-wasi: %v\n%s\nsrc:\n%s", err, out, src)
-	}
-	return comp
 }
 
 // TestNumericProperty_Differential is the deterministic, seeded

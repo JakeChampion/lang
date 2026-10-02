@@ -121,7 +121,7 @@ func TestSimNetNativeX86_64(t *testing.T) {
 }
 
 func TestWASMSimNet(t *testing.T) {
-	if code := runWasm(t, simNetNativeProgram); code != 42 {
+	if code := runWasmNative(t, simNetNativeProgram); code != 42 {
 		t.Errorf("wasm SimNet exit = %d, want 42 (failing check index)", code)
 	}
 }

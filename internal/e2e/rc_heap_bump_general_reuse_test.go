@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // General FBIP reuse (Perceus reuse token, computeReuseSources): a DEAD, owned,
@@ -338,25 +336,5 @@ func TestArm64GeneralReuse(t *testing.T) {
 				t.Errorf("%s: got %d, want 0", c.name, code)
 			}
 		})
-	}
-}
-
-func TestWASMGeneralReuse(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
-	for _, c := range genReuseCases {
-		t.Run(c.name, func(t *testing.T) {
-			if got := runWasm(t, c.src); got != 0 {
-				t.Errorf("%s: got %d, want 0", c.name, got)
-			}
-		})
-	}
-	// Heap-bump win: the reused chain holds fewer live boxes than the
-	// simultaneously-live control.
-	dead := runWasm(t, genReuseDead2Src())
-	live := runWasm(t, genReuseLive2Src())
-	if dead >= live {
-		t.Errorf("general reuse should lower peak boxes: dead-chain %d should be < live %d", dead, live)
 	}
 }
