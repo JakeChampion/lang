@@ -6247,6 +6247,10 @@ struct RelaxStep { st: RelaxPass, changed: boolean }
 // `judge` it also pins long every short branch whose target is out of rel8
 // reach as the pass sees it.
 function x86_relax_pass(a: X86Asm, l: RelaxLayout, t: RelaxTargets, own st: RelaxPass, judge: boolean): RelaxStep {
+  var new_start: i32[] = st.new_start;
+  var new_size: i32[] = st.new_size;
+  var prefix: i32[] = st.prefix;
+  var short: boolean[] = st.short;
   var cum: i32 = 0;
   var changed: boolean = false;
   var i: i32 = 0;
@@ -6259,36 +6263,37 @@ function x86_relax_pass(a: X86Asm, l: RelaxLayout, t: RelaxTargets, own st: Rela
       size = x86_pad_width(at, a.pads[p * 5 + 2], a.pads[p * 5 + 3]);
     } else {
       size = 2;
-      if (st.short[e] && judge) {
-        var disp: i32 = x86_relax_seen(l, t, st, e, i, cum) - (at + 2);
+      if (short[e] && judge) {
+        var disp: i32 = x86_relax_seen(l, t, st.before, new_start, new_size, prefix, e, i, cum) - (at + 2);
         if (disp < 0 - 128 || disp > 127) {
-          st = RelaxPass { ...st, short: st.short.with(e, false) };
+          short = short.with(e, false);
           changed = true;
         }
       }
-      if (!st.short[e]) {
+      if (!short[e]) {
         size = 2 + l.grow[e];
       }
     }
-    st = RelaxPass { ...st, new_start: x86_put(st.new_start, i, at), new_size: x86_put(st.new_size, i, size) };
+    new_start = x86_put(new_start, i, at);
+    new_size = x86_put(new_size, i, size);
     cum = cum + size - l.size[i];
-    st = RelaxPass { ...st, prefix: x86_put(st.prefix, i, cum) };
+    prefix = x86_put(prefix, i, cum);
     i = i + 1;
   }
-  return RelaxStep { st: st, changed: changed };
+  return RelaxStep { st: RelaxPass { new_start: new_start, new_size: new_size, prefix: prefix, before: st.before, short: short }, changed: changed };
 }
 
 // x86_relax_seen is where branch k's target stands as event i sees it
 // mid-pass, with `cum` the growth so far: a position this pass has already
 // laid out, or the last pass's position moved by the growth that reaches it.
-function x86_relax_seen(l: RelaxLayout, t: RelaxTargets, st: RelaxPass, k: i32, i: i32, cum: i32): i32 {
+function x86_relax_seen(l: RelaxLayout, t: RelaxTargets, before: i32[], new_start: i32[], new_size: i32[], prefix: i32[], k: i32, i: i32, cum: i32): i32 {
   var stretch: i32 = cum;
   if (i > 0) {
-    stretch = stretch - st.before[i - 1];
+    stretch = stretch - before[i - 1];
   }
   var b: i32 = t.pad[k];
   if (b >= 0) {
-    var edge: i32 = st.new_start[b] + st.new_size[b];
+    var edge: i32 = new_start[b] + new_size[b];
     if (b >= i) {
       edge = edge + x86_relax_carried(l, stretch, b + 1, i);
     }
@@ -6300,9 +6305,9 @@ function x86_relax_seen(l: RelaxLayout, t: RelaxTargets, st: RelaxPass, k: i32, 
     return off;
   }
   if (j - 1 < i) {
-    return off + st.prefix[j - 1];
+    return off + prefix[j - 1];
   }
-  return off + st.before[j - 1] + x86_relax_carried(l, stretch, j, i);
+  return off + before[j - 1] + x86_relax_carried(l, stretch, j, i);
 }
 
 // Growth carries to a position past the pass's current event only when no pad
