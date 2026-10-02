@@ -10,12 +10,19 @@ import (
 	"testing"
 )
 
-// writeConcatFixture generates a program that lands inside asm_modload_run's
-// over-budget per-module rescue band: nMod sibling modules x nFn trivial i32
-// functions (701 raw merged funcs — above the 512 gate, below the 1500 cap) with
-// a live closure of nMod, one call per module, so every pruned unit is
-// IR-eligible. Generated and stdlib-free, so it is deterministic and cannot
-// drift onto the AST path because some stdlib helper stopped lowering.
+// writeConcatFixture generates a program that lands inside the over-budget
+// per-module rescue band of both drivers: nMod sibling modules x nFn i32
+// functions (701 merged funcs — above the 512 gate, below the 1500 cap), every
+// one of them live, since each module's functions chain to the next and the
+// entry calls each chain's head. asm_modload_run gates on the raw count and
+// asm_load_run on the live one, so the chains are what put the latter past
+// the budget. Every pruned unit is IR-eligible. Generated and stdlib-free, so
+// it is deterministic and cannot drift onto another path because some stdlib
+// helper stopped lowering.
+//
+// The tail of each chain builds a variant of a builtin enum, so every unit
+// interns the same shape symbol: the concat has one definition of it to keep
+// and nMod-1 to drop, which the link step checks.
 //
 // Returns the entry path and the module count.
 func writeConcatFixture(t *testing.T, dir string) (string, int) {
@@ -29,9 +36,10 @@ func writeConcatFixture(t *testing.T, dir string) (string, int) {
 	want := 0
 	for m := 0; m < nMod; m++ {
 		var lib strings.Builder
-		for f := 0; f < nFn; f++ {
-			fmt.Fprintf(&lib, "pub function m%d_f%d(x: i32): i32 { return x + %d; }\n", m, f, m*nFn+f)
+		for f := 0; f < nFn-1; f++ {
+			fmt.Fprintf(&lib, "pub function m%d_f%d(x: i32): i32 { return m%d_f%d(x) + 1; }\n", m, f, m, f+1)
 		}
+		fmt.Fprintf(&lib, "pub function m%d_f%d(x: i32): i32 { var e: IoError = NotFound(\"p\"); match (e) { NotFound(_) => { return x; }, _ => { return 0 - 1; } } }\n", m, nFn-1)
 		if err := os.WriteFile(filepath.Join(proj, fmt.Sprintf("lib%d.fern", m)), []byte(lib.String()), 0o644); err != nil {
 			t.Fatalf("write lib%d: %v", m, err)
 		}
@@ -40,7 +48,7 @@ func writeConcatFixture(t *testing.T, dir string) (string, int) {
 			calls.WriteString(" + ")
 		}
 		fmt.Fprintf(&calls, "lib%d.m%d_f0(1)", m, m)
-		want += 1 + m*nFn // m*nFn+0 added to the argument 1
+		want += nFn // the argument 1, plus one per link of the chain
 	}
 	entry := fmt.Sprintf("%s\nfunction main(): i32 {\n    var t: i32 = %s;\n    if (t == %d) { return 0; }\n    return 1;\n}\n",
 		imports.String(), calls.String(), want)
@@ -129,6 +137,41 @@ func TestSelfHostPerModuleConcatX86_64(t *testing.T) {
 	assertConcatProduced(t, asm)
 
 	bin := buildBin(t, gcc, dir, "concat_prog", string(asm))
+	rc := exec.Command(bin)
+	_ = rc.Run()
+	if code := rc.ProcessState.ExitCode(); code != 0 {
+		t.Fatalf("per-module concat program exited %d, want 0 (cross-unit calls miscompiled)", code)
+	}
+}
+
+// TestSelfHostAsmLoadRunConcatX86_64 is the same emit → assemble → link → run
+// for asm_load_run's own over-budget per-module concat, the path a program
+// with more than 512 live functions takes through that driver (and so
+// through TestSelfHostStdTestE2E). The link is the assertion that matters:
+// every unit defines the `.weak` shape symbol the fixture's shared variant
+// interns, and one stream holding two definitions is an assembler error
+// unless the concat dedupes them.
+func TestSelfHostAsmLoadRunConcatX86_64(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	if len(runner) != 0 {
+		t.Skip("file-loading driver test runs only natively (argv paths)")
+	}
+	dir := writeSelfHostAsmProject(t)
+	copySelfHostDriver(t, dir, "asm_load_run.fern")
+	mmc := buildSelfHostBin(t, gcc, dir, "asm_load_run.fern", "mmc")
+	entryPath, _ := writeConcatFixture(t, dir)
+	stdlibRoot, err := filepath.Abs("../../internal/stdlib")
+	if err != nil {
+		t.Fatalf("abs stdlib root: %v", err)
+	}
+
+	asm, err := exec.Command(mmc, entryPath, stdlibRoot).Output()
+	if err != nil || len(asm) == 0 {
+		t.Fatalf("over-budget concat emit failed: %v (len=%d)", err, len(asm))
+	}
+	assertConcatProduced(t, asm)
+
+	bin := buildBin(t, gcc, dir, "load_concat_prog", string(asm))
 	rc := exec.Command(bin)
 	_ = rc.Run()
 	if code := rc.ProcessState.ExitCode(); code != 0 {

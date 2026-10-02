@@ -996,6 +996,13 @@ Percent-encoding, URL parsing, query parsing.
   an escape that does not spell UTF-8 decodes to U+FFFD, and
   `url_decode_bytes(s)` / `form_decode_bytes(s)` hand back the bytes
 - `url_parse(s) Option[Url]`
+- `url_resolve(base, reference) Option[string]` — RFC 3986 §5.2
+  reference resolution: an absolute reference stands, a scheme-relative
+  one takes the base's scheme, a path is replaced or merged onto the
+  base's directory with dot segments removed, an empty reference keeps
+  the base's path and (without a `?`) query; `None` when the base has no
+  scheme. `url_remove_dot_segments(path)` is the §5.2.4 step on its own
+  (a `..` above the root is dropped, where the request parser refuses it).
 - `query_parse(s) Map[string, string[]]`, `query_encode(pairs)`
 - **Single-key query accessors** (scan the raw query string, no map
   build): `query_get(query, key) Option[string]` (first value),
@@ -1110,6 +1117,9 @@ serializer.
   `Transfer-Encoding`, `TE`, `Trailer`, `Upgrade`).
 - **Request writing:** what a client may put on the wire, the parser's
   refusals turned outward: `http_method_ok(method)` (a token),
+  `http_method_idempotent(method)` (GET, HEAD, PUT, DELETE, OPTIONS and
+  TRACE, the methods a client may send again after a reset before any
+  response byte, RFC 9110 §9.2.2),
   `http_target_ok(target)` (an origin-form request-target: `/`, `pchar`
   and `/`, then a query of `pchar`, `/` and `?`, every `%` followed by
   two hex digits; `%2F` passes, since what a decoded segment may hold is
@@ -1628,7 +1638,22 @@ answer is `Result[HttpResponse, FetchError]`.
   writes `Host`,
   `Content-Length` and `Connection: close` itself and strips hop-by-hop
   fields from what it sends. No TLS yet (`https` fails with `Tls`), no
-  redirects followed, no pool.
+  pool.
+- **Redirects:** a 301, 302, 303, 307 or 308 with a `Location` is
+  followed, `(req).with_redirects(hops)` bounding the hops (10 by
+  default; 0 answers the 3xx as data), every hop under the one total
+  bound. The `Location` is resolved against the request's URL by
+  `url.url_resolve`. A 307 and 308 keep the method and body; a 303, and
+  a 301 or 302 answering a POST, become a GET without the body. When a
+  hop leaves the origin (scheme, host, effective port) `Authorization`,
+  `Proxy-Authorization` and `Cookie` are dropped; `Host` is written per
+  hop.
+- **Retry:** a request the peer resets before any response byte (a
+  reset or abort on the socket, a broken pipe, a close with nothing
+  read) is sent once more when its method is idempotent
+  (`http.http_method_idempotent`: GET, HEAD, PUT, DELETE, OPTIONS,
+  TRACE), on a fresh connection, under the same total bound. A POST is
+  never resent.
 - **Sending:** `send(req)` from a program with a `main`;
   `(plat: Platform).http(req)` from a handler, the capability-scoped
   route (a recording bag answers what `MockPlatform.http_set` canned).
@@ -1649,9 +1674,11 @@ answer is `Result[HttpResponse, FetchError]`.
   `Total`, `Protocol(what)` (a response the parser refuses, interim
   1xx responses past one `limits.header_bytes` between them, or a 101
   the client did not ask for),
-  `Io(NetError)`, `BodyLimit` (a body past `limits.body`), and
-  `Redirect(what)` / `Cancelled`, which no path produces yet.
-  `(e).message()`.
+  `Io(NetError)` (a send or read the kernel refused, and a peer that
+  closed before any response byte, as `ConnectionReset`), `BodyLimit` (a
+  body past `limits.body`), `Redirect(what)` (more hops than
+  `redirects`, a 3xx without a `Location`, or a `Location` that is not a
+  URL), and `Cancelled`, which no path produces yet. `(e).message()`.
 - **Timeouts:** `Timeouts { connect_ms, inactivity_ms, total_ms }`,
   `timeouts()` gives 10 s / 30 s / 60 s. The connect bound covers the
   whole address race; inactivity is the longest wait for the next byte

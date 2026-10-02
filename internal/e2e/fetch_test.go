@@ -42,7 +42,7 @@ func TestFetchClient(t *testing.T) {
 			var stdout bytes.Buffer
 			cmd.Stdout = &stdout
 			_ = cmd.Run()
-			e2eharness.CheckFetchClient(t, up.Port, stdout.String(), cmd.ProcessState.ExitCode())
+			e2eharness.CheckFetchClient(t, up, stdout.String(), cmd.ProcessState.ExitCode())
 		})
 	}
 }
@@ -51,7 +51,7 @@ func TestFetchClientInterp(t *testing.T) {
 	up := e2eharness.StartFetchUpstream(t)
 	closed := e2eharness.ClosedLoopbackPort(t)
 	out, code := runInterpExitCode(t, e2eharness.FetchClientSource(up.Port, closed))
-	e2eharness.CheckFetchClient(t, up.Port, out, code)
+	e2eharness.CheckFetchClient(t, up, out, code)
 }
 
 type nativeBackend struct {

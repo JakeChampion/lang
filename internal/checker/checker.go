@@ -4280,9 +4280,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 		Result: ast.VoidType{},
 	}
 	// `__alloc_u8(n)` returns a fresh `u8[]` of length n,
-	// zero-initialised. Pairs with `__memcpy` / `__memset` /
-	// the `[u8] → i32` data-pointer cast so stdlib code can
-	// build a single-pass byte buffer.
+	// zero-initialised.
 	c.info.FuncSigs["__alloc_u8"] = &ast.FuncType{
 		Params: []ast.Type{ast.NumberType{}},
 		Result: ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}},
@@ -6426,12 +6424,13 @@ func (c *checker) typeImplsEqAndHash(typeName string) bool {
 
 // mapKeyTypeError returns an E045 message describing why `k` cannot be
 // a Map key, or "" if it is a usable key. Usable keys are integers,
-// strings (owned or borrowed), booleans, and struct/enum types that
-// implement both Eq and Hash (#2671). A struct/enum that lacks the
-// derives gets a message pointing at the fix; other composite types
-// (tuple / array / slice / float) keep the historical "not yet
-// supported" wording. A type parameter or polymorphic literal passes —
-// it is resolved later (per monomorph instantiation) and re-checked then.
+// strings (owned or borrowed), booleans, struct/enum types that
+// implement both Eq and Hash (#2671), and tuples and arrays of usable
+// scalar keys (ast.StructuralMapKey, #10020). A struct/enum that lacks the
+// derives gets a message pointing at the fix; a slice or float keeps the
+// historical "not yet supported" wording. A type parameter or polymorphic
+// literal passes — it is resolved later (per monomorph instantiation) and
+// re-checked then.
 //
 // `str` and `boolean` are here because both work: a Map keyed by either
 // inserts and reads back correctly under the interpreter AND compiled.
@@ -6452,6 +6451,11 @@ func (c *checker) mapKeyTypeError(k ast.Type) string {
 			return ""
 		}
 		return fmt.Sprintf("map key type %s is not supported — an enum used as a key must derive Eq and Hash: %s", typeLabel(k), deriveHint(kt.Name, "cmp.Eq, cmp.Hash", ""))
+	case ast.TupleType, ast.ArrayType:
+		if ast.StructuralMapKey(k) {
+			return ""
+		}
+		return fmt.Sprintf("map key type %s is not supported — a tuple or array used as a key may hold only integers, booleans, chars, strings, and such tuples and arrays", typeLabel(k))
 	}
 	return fmt.Sprintf("map key type %s is not yet supported — use i32, string, or a struct/enum with `@derive(cmp.Eq, cmp.Hash)`, which requires %s", typeLabel(k), cmpImport)
 }
@@ -8677,7 +8681,7 @@ func (c *checker) validateMapKeyTypes(prog *ast.Program) {
 func (c *checker) checkMapKeyTypes(t ast.Type, mod string, pos ast.Position) {
 	switch x := t.(type) {
 	case ast.StructType:
-		if x.Name == "Map" && len(x.Args) == 2 && !mapKeyCarvedOut(x.Args[0]) {
+		if x.Name == "Map" && len(x.Args) == 2 {
 			if msg := c.mapKeyTypeError(x.Args[0]); msg != "" {
 				c.report(mod, pos, "E045", msg)
 			}
@@ -8703,24 +8707,6 @@ func (c *checker) checkMapKeyTypes(t ast.Type, mod string, pos ast.Position) {
 		}
 		c.checkMapKeyTypes(x.Result, mod, pos)
 	}
-}
-
-// mapKeyCarvedOut names the key types this rule deliberately does not
-// refuse: the ones the INTERPRETER compares by value while no compiled
-// backend dispatches them (#10020). All three answers differ and none is
-// obviously the bug —
-//
-//	Map { (1, 2): 5 }            E045
-//	Map[(i32, i32), i32]         accepted; 5 interpreted, refused compiling
-//	Map[i32[], i32]              accepted; 5 interpreted, refused compiling
-//
-// — and TestInterpMapCompositeKeys gates the interpreter's answer
-// deliberately, so refusing the annotation here would take away a spelling
-// the language supports. The list is ast.MapKeyDispatchable's, shared with
-// the IR refusal that stops the compiled build answering the default — but
-// not with mapKeyTypeError, which refuses these through its own switch.
-func mapKeyCarvedOut(k ast.Type) bool {
-	return !ast.MapKeyDispatchable(k)
 }
 
 // checkTypeKnown walks a resolved type tree and reports E064 for each

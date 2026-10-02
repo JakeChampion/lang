@@ -73,6 +73,8 @@ pub struct EmitState {
   // funcs_ix indexes `funcs` by name, one entry per declaration in order;
   // with_funcs keeps the two together.
   funcs_ix: util.NameIndex,
+  // kinds: the lift's op-kind table, built once with the state.
+  kinds: ssa_lift.KindTable,
   local_names: string[],
   in_function: boolean,
   string_lits: string[],
@@ -213,6 +215,7 @@ pub function unit_labels(mod: parser.Module, lo: i32, hi: i32, cache: irlower.Lo
 // declared `@noinline` stays a call.
 pub function unit_leaves(mod: parser.Module, lo: i32, hi: i32, cache: irlower.LowerResult[]): ssa.Leaf[] {
   var out: ssa.Leaf[] = [];
+  var kt: ssa_lift.KindTable = ssa_lift.kind_table();
   var fi: i32 = 0;
   while (fi < cache.len()) {
     var inside: boolean = fi >= mod.funcs.len() || fi >= lo && fi < hi;
@@ -227,7 +230,7 @@ pub function unit_leaves(mod: parser.Module, lo: i32, hi: i32, cache: irlower.Lo
           name = util.base_type_name(mod.funcs[fi].receiver_type) + "." + name;
         }
       }
-      var lifted: ssa_lift.LResult = ssa_lift.lift_from_ir_prod(name, cache[fi].n_params, cache[fi].n_locals, cache[fi].ops);
+      var lifted: ssa_lift.LResult = ssa_lift.lift_from_ir_prod(kt, name, cache[fi].n_params, cache[fi].n_locals, cache[fi].ops);
       if (lifted.ok) {
         var f: ssa.SFunc = ssa.thread_forwarding(ssa.prune_dead(ssa.fuse_rotates(ssa.prune_trivial_phis(lifted.func))));
         for leaf in ssa.leaf_of(name, f) {
@@ -254,6 +257,7 @@ pub function new_state(): EmitState {
     builtin_i32: util.name_index(builtin_i32_names()),
     builtin_string: util.name_index(builtin_string_names()),
     funcs_ix: util.name_index(ns),
+    kinds: ssa_lift.kind_table(),
     local_names: ns,
     in_function: false,
     string_lits: sl,
@@ -377,6 +381,124 @@ pub function emit_shape_lits_from(s: EmitState, from: i32): EmitState {
     i = i + 1;
   }
   return s;
+}
+
+// The `.weak`-dedup pair (dedupe_weak_into + dedupe_weak_defs) drops repeated
+// `.weak` DEFINITIONS from a concatenated unit stream, keeping the first of
+// each.
+//
+// A per-module unit emits four kinds of symbol that are one-per-PROGRAM but that
+// any unit needing them emits for itself, each marked `.weak` so the linker
+// merges the copies:
+//
+//   __fern_shp_<T>                     interned struct/enum shape (asmcore.shape_sym)
+//   __fn___struct_drop_<T>             per-type deep struct drop (asm_ir.fern)
+//   __fn___struct_arr_elems_drop_<T>   its element-walking sibling
+//   __fn___field_reclaim_<T>
+//
+// The weak merge only happens when each unit is its own object file — the
+// batched per-module build. Concatenating units into a single assembly stream
+// instead hands `as` two definitions of one symbol in one file, which is an
+// error (`symbol __fern_shp_HttpRequest is already defined`), not a merge.
+// Keeping the first definition and dropping the rest gives every unit's
+// REFERENCES one definition to bind to, which is exactly the address the weak
+// merge would have produced.
+//
+// This used to special-case `__fern_shp_` alone and drop exactly ONE following
+// line, because a shape definition is the two-line pair `.weak SYM` / `SYM:
+// .ascii …`. The three drop/reclaim helpers are multi-line function BODIES, so
+// they collided anyway: that is one of the two things behind the per-module
+// rescue's `nfuncs < 1500` cap below — a program whose modules share struct
+// types (three `ast__` types across the stage-2 compiler's units) hit
+// `symbol __fn___struct_drop_ast__ParamDecl is already defined`, which reads
+// like a memory limit and is not one. (The cap's OTHER reason IS memory, but for
+// a different program: see the bound's own comment.)
+//
+// So skip the whole definition, whatever its length. After a duplicate
+// `.weak SYM` comes the `SYM:` line, then the body: INSTRUCTIONS (indented, and
+// never starting with `.`) and `.L…:` local labels. Anything else ends the skip.
+//
+// "Indented" alone is NOT a safe body test, and getting that wrong is what makes
+// this function delicate: the emitter indents its DIRECTIVES too, and a unit's
+// prologue is `    .globl _start` / `    .text` (asm_ir.emit_module_ir_unit_flat).
+// A duplicate `.weak` at the tail of one unit's shape block sits immediately
+// before the next unit's prologue, so a skip that eats indented lines
+// indiscriminately swallows that `.globl` + `.text` — which silently drops the
+// entry unit's code into the previous unit's `.rodata`, leaving `_start` a LOCAL
+// rodata symbol (`nm`: `r _start`), the linker unable to find an entry
+// (`cannot find entry symbol _start`), and the built compiler jumping to a
+// garbage address (observed: RIP=0x1 with the initial argv/envp stack
+// untouched). Hence the "indented AND not a directive" test below.
+
+// dedupe_weak_into is the incremental core: it appends the deduped form of ONE
+// already-emitted chunk to the (caller-reset) global strbuf and returns the
+// updated `seen` symbol set, so a caller streaming unit-at-a-time carries the
+// set across chunks without ever holding the whole program's asm in memory.
+//
+// Splitting on a chunk boundary is sound because a chunk is a COMPLETE emit: a
+// `.weak SYM` definition never straddles two units, so the drop state machine
+// always returns to 0 before a chunk ends and has nothing to carry.
+pub function dedupe_weak_into(asm_text: string, seen_in: string[]): string[] {
+  var seen: string[] = seen_in;
+  var i: i32 = 0;
+  var n: i32 = asm_text.len();
+  // 0 = emitting, 1 = drop the `SYM:` line of a duplicate, 2 = drop its body.
+  var state: i32 = 0;
+  while (i < n) {
+    var j: i32 = i;
+    while (j < n && asm_text[j] != b'\n') {
+      j = j + 1;
+    }
+    var line: string = slice_unchecked(asm_text, i, j) + "";
+    var drop: boolean = false;
+    if (state == 1) {
+      drop = true;
+      state = 2;
+    } else if (state == 2) {
+      // First non-blank column, so a directive is recognised whether or
+      // not the emitter indented it.
+      var k: i32 = 0;
+      while (k < line.len() && (slice_unchecked(line, k, k + 1) == " " || slice_unchecked(line, k, k + 1) == "\t")) {
+        k = k + 1;
+      }
+      var body: string = slice_unchecked(line, k, line.len()) + "";
+      if (body.len() == 0) {  // blank
+        drop = true;
+      } else if (body.len() > 2 && slice_unchecked(body, 0, 2) == ".L") {  // local label
+        drop = true;
+      } else if (k > 0 && slice_unchecked(body, 0, 1) != ".") {  // instruction
+        drop = true;
+      } else {  // directive / label
+        state = 0;
+      }
+    }
+    if (state == 0 && !drop && line.len() > 6 && slice_unchecked(line, 0, 6) == ".weak ") {
+      var sym: string = slice_unchecked(line, 6, line.len()) + "";
+      if (util.has_str(seen, sym)) {
+        drop = true;
+        state = 1;
+      } else {
+        seen = seen.append(sym);
+      }
+    }
+    if (!drop) {
+      strbuf_append(line);
+      strbuf_append("\n");
+    }
+    i = j + 1;
+  }
+  return seen;
+}
+
+// dedupe_weak_defs dedupes a whole in-memory concat in one pass — the
+// single-process concat path's entry point. Accumulates through the global
+// strbuf (O(1) amortised per append): every unit has already been emitted into
+// `asm_text`, so no emitter is using it, and `out = out + line` would be O(N²)
+// over a ~400 KB stream.
+pub function dedupe_weak_defs(asm_text: string): string {
+  strbuf_reset();
+  var ignored: string[] = dedupe_weak_into(asm_text, []);
+  return strbuf_take();
 }
 
 // shape_sym is the deterministic global symbol for a shape name (the linker-merged
@@ -7662,17 +7784,12 @@ pub struct ConstAggPack { state: EmitState, text: string }
 // of scalars packs as `0|` and its elements, and its length is written into
 // word 0 where the block is emitted. Shared by both register backends and by each one's flat and register arms, so no copy
 // of it can drift from another.
-pub function const_agg_pack(s: EmitState, packed: string): ConstAggPack {
+pub function const_agg_pack(own s: EmitState, packed: string): ConstAggPack {
   var body: string = ir.const_struct_fn_body(packed);
   if (body.len() > 0) {
     return ConstAggPack { state: s, text: "1|__fn_" + sanitize_label(body) };
   }
-  var shp: ShapeRefOut = ShapeRefOut { state: s, label: "0" };
-  if (ir.const_struct_is_bytes(packed)) {
-    shp = ShapeRefOut { state: s, label: "8" };
-  } else if (!ir.const_struct_is_array(packed)) {
-    shp = shape_ref(s, ir.const_struct_type(packed));
-  }
+  var shp: ShapeRefOut = const_agg_shape(s, packed);
   var text: string = shp.label + "|";
   var vals: string[] = ir.const_struct_values(packed);
   var i: i32 = 0;
@@ -7684,6 +7801,18 @@ pub function const_agg_pack(s: EmitState, packed: string): ConstAggPack {
     i = i + 1;
   }
   return ConstAggPack { state: shp.state, text: text };
+}
+
+// const_agg_shape: the shape label of a packed constant aggregate, and the
+// state it interned the shape in.
+function const_agg_shape(own s: EmitState, packed: string): ShapeRefOut {
+  if (ir.const_struct_is_bytes(packed)) {
+    return ShapeRefOut { state: s, label: "8" };
+  }
+  if (!ir.const_struct_is_array(packed)) {
+    return shape_ref(s, ir.const_struct_type(packed));
+  }
+  return ShapeRefOut { state: s, label: "0" };
 }
 
 pub struct StringLitOut { state: EmitState, idx: i32 }
@@ -7702,7 +7831,7 @@ function slit_empty_buckets(): i32[] {
   return out;
 }
 
-pub function add_string_lit(s: EmitState, v: string): StringLitOut {
+pub function add_string_lit(own s: EmitState, v: string): StringLitOut {
   // Dedup: required for shape-pointer dispatch in
   // ExprFieldAccess + StmtMatch. See asm.fern for rationale.
   var b: i32 = util.hash_bucket(v, s.slit_head.len());
@@ -9004,7 +9133,7 @@ function callgate_ns_present(pfx: string, names: string[]): boolean {
   var i: i32 = 0;
   while (i < names.len()) {
     var nm: string = names[i];
-    if (nm.len() > pfx.len() && util.has_prefix(nm, pfx)) {
+    if (nm.len() > pfx.len() && util.str_has_prefix(nm, pfx)) {
       return true;
     }
     i = i + 1;
@@ -9619,7 +9748,7 @@ pub struct DynArg { reg: string, off: i32 }
 // across the module boundary. Without this every cross-module enum `match` (e.g.
 // the parser matching lexer's token variants) silently fails — the self-build
 // miscompile #3451's per-module bootstrap hit.
-pub function shape_ref(s: EmitState, name: string): ShapeRefOut {
+pub function shape_ref(own s: EmitState, name: string): ShapeRefOut {
   if (s.str_ns.len() == 0) {
     var lo: StringLitOut = add_string_lit(s, name);
     return ShapeRefOut { state: lo.state, label: str_lit_label(lo.state, lo.idx) };

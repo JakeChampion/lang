@@ -72,8 +72,8 @@ struct ParamDestr { names: string, marker: string, synth: string, line: i32, col
 // callee and irlower with no signature to dispatch on. The two sidecars are the
 // FuncDecl-level members of the family ParamDecl, StructFieldDecl and StmtVar
 // already carry, recorded through the same non-consuming lookahead and read
-// through the same fn_sig_of rules, so a call through a returned fn value and a
-// call through a parameter cannot disagree about the signature (#5986).
+// through the same rules, so a call through a returned fn value and a call
+// through a parameter cannot disagree about the signature (#5986).
 pub struct FuncDecl { no_inline: boolean, name: string, receiver_name: string, receiver_type: string, type_params: string[], params: ast.ParamDecl[], ret_type: string, body: ast.Stmt[], line: i32, col: i32, import_iface: string, import_wit: string, all_type_params: string[], bound_traits: string[], fip: boolean, fbip: boolean, fip_allowance: i32, async: boolean, is_const: boolean, is_pub: boolean, is_package: boolean, ret_fn_ret: string, ret_fn_param_types: string, module: string }
 
 // Top-level struct decl: `struct Name { field1: T1, field2: T2 }`.
@@ -9414,7 +9414,7 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
     // (c'') a single-typevar fn with a bare-scalar param whose RETURN is fully
     // CONCRETE — `eqf[T](a: T, b: T): boolean`. The value never leaves through
     // the type variable, so neither the widening path nor clause (c) covers it:
-    // erased_widenable requires the return to BE the var (a pass-through) or a
+    // the widening path requires the return to BE the var (a pass-through) or a
     // bare tuple of it, and feeds_wide_container requires the return to CONTAIN
     // it.
     //
@@ -10831,10 +10831,27 @@ pub function top_arrow_at(s: string): i32 {
   return 0 - 1;
 }
 
+// plain_type_spelling: no bracket, paren or arrow, so every branch of
+// parse_type_ref below falls through to the plain named type.
+function plain_type_spelling(s: string): boolean {
+  var i: i32 = 0;
+  while (i < s.len()) {
+    var c: u8 = s[i];
+    if (c == b'[' || c == b'(' || c == b'=') {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
 // parse_type_ref decodes a canonical type spelling into a TypeRef tree. It is the
 // single place the "[]" / "(…)" / "Name[…]" / ", " grammar is scanned; every
 // other decoder should call this rather than re-implement the depth tracking.
 pub function parse_type_ref(sin: string): TypeRef {
+  if (plain_type_spelling(sin)) {
+    return TypeRef { base: sin, args: [], array_depth: 0, is_tuple: false, is_fn: false, is_view: false };
+  }
   var s: string = sin;
   var depth: i32 = 0;
   // Function "(P, Q) => R": base "", args are the parameters with the RESULT
@@ -11266,7 +11283,7 @@ function bind_unify(pattern: string, concrete: string, tparams: string[], binds:
   if (pb > 0 && slice_unchecked(pattern, pattern.len() - 1, pattern.len()) == "]" && cb < 0) {
     var pbase: str = slice_unchecked(pattern, 0, pb);
     var mpfx: string = pbase + "__";
-    if (concrete.len() > mpfx.len() && util.has_prefix(concrete, mpfx)) {
+    if (concrete.len() > mpfx.len() && util.str_has_prefix(concrete, mpfx)) {
       var pp: string[] = split_top_commas(slice_unchecked(pattern, pb + 1, pattern.len() - 1));
       var ckey: str = slice_unchecked(concrete, mpfx.len(), concrete.len());
       var cp: string[] = [ckey + ""];
@@ -13090,7 +13107,7 @@ function inst_struct(ot: string, structs: StructDecl[]): InstStruct {
         si = i;
       } else if (structs[i].type_params.len() > 0 && first_bracket(ot) < 0) {
         var pfx: string = structs[i].name + "__";
-        if (ot.len() > pfx.len() && util.has_prefix(ot, pfx)) {
+        if (ot.len() > pfx.len() && util.str_has_prefix(ot, pfx)) {
           var rest: string = slice_unchecked(ot, pfx.len(), ot.len()) + "";
           cts = [rest];
           if (structs[i].type_params.len() != 1) {
@@ -15278,7 +15295,7 @@ function lit_field_decl_type(structs: StructDecl[], name: string, field: string)
 // is_clone_of: `mangled` names a monomorphised clone of generic struct `base`.
 function is_clone_of(mangled: string, base: string): boolean {
   var pfx: string = base + "__";
-  return mangled.len() > pfx.len() && util.has_prefix(mangled, pfx);
+  return mangled.len() > pfx.len() && util.str_has_prefix(mangled, pfx);
 }
 
 // ms_expr_to is ms_expr for an expression bound to the mangled type `dest`: a
@@ -15389,7 +15406,7 @@ function retype_assoc_ctor(init: ast.Expr, concrete: string, gstructs: StructDec
             ast.ExprIdent(oid) => {
               if (gstruct_index(gstructs, oid.name) >= 0) {
                 var pfx: string = oid.name + "__";
-                if (concrete.len() > pfx.len() && util.has_prefix(concrete, pfx)) {
+                if (concrete.len() > pfx.len() && util.str_has_prefix(concrete, pfx)) {
                   return ast.ExprCall { callee: ast.ExprFieldAccess { obj: ast.ExprIdent { name: concrete, line: oid.line, col: oid.col, ty: "" }, field: fa.field, line: fa.line, col: fa.col, ty: fa.ty }, args: c.args, line: c.line, col: c.col, type_args: c.type_args, ty: c.ty };
                 }
               }
