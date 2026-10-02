@@ -73,6 +73,8 @@ pub struct EmitState {
   // funcs_ix indexes `funcs` by name, one entry per declaration in order;
   // with_funcs keeps the two together.
   funcs_ix: util.NameIndex,
+  // kinds: the lift's op-kind table, built once with the state.
+  kinds: ssa_lift.KindTable,
   local_names: string[],
   in_function: boolean,
   string_lits: string[],
@@ -213,6 +215,7 @@ pub function unit_labels(mod: parser.Module, lo: i32, hi: i32, cache: irlower.Lo
 // declared `@noinline` stays a call.
 pub function unit_leaves(mod: parser.Module, lo: i32, hi: i32, cache: irlower.LowerResult[]): ssa.Leaf[] {
   var out: ssa.Leaf[] = [];
+  var kt: ssa_lift.KindTable = ssa_lift.kind_table();
   var fi: i32 = 0;
   while (fi < cache.len()) {
     var inside: boolean = fi >= mod.funcs.len() || fi >= lo && fi < hi;
@@ -227,7 +230,7 @@ pub function unit_leaves(mod: parser.Module, lo: i32, hi: i32, cache: irlower.Lo
           name = util.base_type_name(mod.funcs[fi].receiver_type) + "." + name;
         }
       }
-      var lifted: ssa_lift.LResult = ssa_lift.lift_from_ir_prod(name, cache[fi].n_params, cache[fi].n_locals, cache[fi].ops);
+      var lifted: ssa_lift.LResult = ssa_lift.lift_from_ir_prod(kt, name, cache[fi].n_params, cache[fi].n_locals, cache[fi].ops);
       if (lifted.ok) {
         var f: ssa.SFunc = ssa.thread_forwarding(ssa.prune_dead(ssa.fuse_rotates(ssa.prune_trivial_phis(lifted.func))));
         for leaf in ssa.leaf_of(name, f) {
@@ -254,6 +257,7 @@ pub function new_state(): EmitState {
     builtin_i32: util.name_index(builtin_i32_names()),
     builtin_string: util.name_index(builtin_string_names()),
     funcs_ix: util.name_index(ns),
+    kinds: ssa_lift.kind_table(),
     local_names: ns,
     in_function: false,
     string_lits: sl,
