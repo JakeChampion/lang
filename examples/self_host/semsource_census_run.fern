@@ -35,7 +35,8 @@ import "./flatten";
 import "./modloader";
 import "./constfold";
 import "./platforms";
-import "./irlower";
+import "./irtables";
+import "./lift";
 import "./semsource";
 import "./ssaunits";
 import "./ssarc";
@@ -101,12 +102,12 @@ function leaf(why: string): string {
 // The stage one body reaches, and the reason it stopped there.
 struct Stage { planned: boolean, lowered: boolean, plan_why: string, rc_why: string }
 
-function stage_of(p: semsource.Produced, tab: irlower.StructTab): Stage {
+function stage_of(p: semsource.Produced, tab: irtables.StructTab): Stage {
   var plan: ssaunits.Plan = ssaunits.plan(p.func, p.modes);
   if (!plan.ok) {
     return Stage { planned: false, lowered: false, plan_why: plan.why, rc_why: "" };
   }
-  var lr: irlower.LowerResult = ssarc.lower(p.func, p.modes, plan, tab, []);
+  var lr: irtables.LowerResult = ssarc.lower(p.func, p.modes, plan, tab, ssaunits.no_grows());
   if (!lr.ok) {
     return Stage { planned: true, lowered: false, plan_why: "", rc_why: lr.why };
   }
@@ -167,7 +168,7 @@ function measured_build(merged: parser.Module): semsource.Built {
   return widened;
 }
 
-function report(merged: parser.Module, tab: irlower.StructTab): void {
+function report(merged: parser.Module, tab: irtables.StructTab): void {
   var listed: string = listed_leaf();
   var built: semsource.Built = measured_build(merged);
   var total: i32 = built.decls.len();
@@ -288,8 +289,8 @@ function main(): i32 {
       // `hoist_local_funcs_module` is one of the passes that was missing
       // (#9773, #9778).
       merged = parser.module_with_builtins_typed(merged);
-      merged = irlower.lift_lambdas_typed(merged);
-      var tab: irlower.StructTab = irlower.struct_tab(parser.erase_view_structs(merged.structs));
+      merged = lift.lift_lambdas_typed(merged);
+      var tab: irtables.StructTab = irtables.struct_tab(parser.erase_view_structs(merged.structs));
 
       report(merged, tab);
       return 0;

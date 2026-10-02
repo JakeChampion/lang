@@ -877,6 +877,25 @@ RFC 4648 base32 (standard `A–Z 2–7` alphabet, `=` padding).
   the strict variant to use for a security-sensitive secret / token,
   matching `base64_decode_strict` / `hex_decode_strict`.
 
+### `std/deflate`
+
+DEFLATE decoding (RFC 1951) with the zlib (RFC 1950) and gzip (RFC 1952)
+framings, pure Fern. Every decoder takes `max_out`, the most bytes it
+will produce, and answers `OutputLimit` past it: a compressed body is a
+caller-controlled expansion, so the bound is part of the call.
+
+- `inflate(input, max_out): Result[Inflated, InflateError]` and
+  `inflate_from(input, from, max_out)` decode a raw stream;
+  `Inflated { out, consumed }` says how many input bytes it took, so a
+  framing can read what follows.
+- `gunzip(input, max_out): Result[u8[], InflateError]` decodes every
+  member in the input and checks each CRC-32 and length;
+  `zlib_decode(input, max_out)` checks the Adler-32 (`adler32(bs)` is
+  public). A preset dictionary is not supported.
+- `InflateError`: `Truncated`, `Malformed(what)`, `OutputLimit`,
+  `BadChecksum`, `BadHeader(what)`; `(e).message()`.
+- No encoder yet.
+
 ### `std/hex`
 
 Hex round-trip.
@@ -1271,9 +1290,18 @@ order, built with `ipv4(a, b, c, d)`, `ipv6(bytes)` or `ip_parse(text)` and
 rendered by `to_string()` in the RFC 5952 canonical form; `SocketAddr` is an
 address and a port, parsed by `socket_addr_parse` from `a.b.c.d:port` and
 the bracketed `[v6]:port` form. The predicates (`is_loopback`,
-`is_private`, `is_link_local`, `is_multicast`, `is_unspecified`) unwrap an
-IPv4-mapped IPv6 address first; `packed_v4()` bridges an `IpAddr` to the
-packed IPv4 argument `tcp_connect` takes.
+`is_private`, `is_link_local`, `is_multicast`, `is_unspecified`) read the
+address as given; `to_canonical()` unwraps an IPv4-mapped IPv6 address for
+them. `is_global()` is the one an outbound block list wants: false for
+every block that is not reachable from anywhere (unspecified, loopback,
+private, link-local, shared 100.64/10, the documentation and benchmarking
+nets, multicast, reserved, broadcast, unique-local, 2001:db8::/32), and an
+IPv6 address carrying an IPv4 one (IPv4-mapped, NAT64's well-known
+64:ff9b::/96, 6to4) answers for the address it carries; one in NAT64's
+local-use 64:ff9b:1::/48 is global only under every prefix length the
+operator may pick. `(a).embedded_v4(bits)` is the address a NAT64 address
+carries under a prefix of `bits` in RFC 6052's layout. `packed_v4()`
+bridges an `IpAddr` to the packed IPv4 argument `tcp_connect` takes.
 
 `NetError` is a closed enum (`AddrInUse`, `ConnectionRefused`,
 `WouldBlock`, … and `Other(errno)`); `error_from_errno(n)` maps the errno a
@@ -1329,13 +1357,15 @@ On wasm, `set_nodelay`, `set_nonblocking` and `send_queue` answer
 reading of the queue, and `reuse_port` is ignored there.
 
 The datagram sockets are typed faces over `udp_bind`, `udp_connect`,
-`udp_sendto` and `udp_recvfrom`, on the same descriptors:
+`udp_sendto_bytes` and `udp_recvfrom`, on the same descriptors:
 
 - `udp_socket(addr)` — a socket bound to a `SocketAddr` of either family
   (port 0 lets the host pick), receiving from any peer until
   `set_peer(sock, peer)` fixes one.
-- `send_to(sock, data, to)` and `send(sock, data)` — one datagram to `to`,
-  or to the fixed peer: the bytes accepted.
+- `send_to(sock, data, to)` and `send(sock, data)`: send one `u8[]` datagram
+  to `to` or the fixed peer and return the byte count. Empty arrays send empty
+  datagrams. The payload remains available to the caller. Convert text with
+  `string.bytes(text)` from `std/string` before sending it.
 - `recv_from(sock, buf)` and `recv(sock, buf)` — one datagram into the
   caller's `u8[]`, up to its length: the byte count, with the sender as a
   `SocketAddr` from `recv_from`. A non-blocking socket with nothing queued
@@ -1438,8 +1468,12 @@ for query ids, `now` for the wait and `reactor` for the race.
   literal as it is, then the hosts file, then DNS, the addresses in RFC
   6724 order. On a host with no IPv4 route, IPv4 addresses with no IPv6
   beside them are synthesized under the prefixes the nameservers reveal
-  (RFC 8305 §7.3). `.local` names go to the nameservers like any other
-  (no mDNS).
+  (RFC 8305 §7.3). `resolve_plain(name)` is the same lookup before that
+  synthesis and the ordering, for a policy that judges the addresses as
+  the sources name them, and `synthesized(addrs)` applies both to its
+  answer; `nat64_carried(addr)` is the IPv4 address `addr` carries under
+  a prefix the nameservers reveal. `.local` names go to the nameservers
+  like any other (no mDNS).
 
 `examples/tests/dns_test.fern` covers the codec, the files, the plan, the
 walk and the ordering rules; `TestDnsExchangeX86_64`, `TestDnsPairX86_64`
@@ -1634,7 +1668,10 @@ answer is `Result[HttpResponse, FetchError]`.
   or chunks; a `BodyFile` is refused, since the client never reads a
   file), `(req).with_timeouts(t)`, `(req).with_limits(l)`. `std/url`
   parses the URL; the host is resolved by `std/dns` (a literal, the hosts
-  file, then DNS) and its addresses raced as `dns.connect_race` does.
+  file, then DNS) and its addresses raced as `dns.connect_race` does. An
+  IPv4 address in the URL is four decimal octets or refused
+  (`2130706433`, `0177.0.0.1`, `127.1` read as loopback to some resolvers
+  and as a name to others).
   Before it connects the client checks the method, the path and query
   and every header against `std/http`'s `http_method_ok` /
   `http_target_ok` / `http_field_name_ok` / `http_field_value_ok`, so a
@@ -1661,6 +1698,29 @@ answer is `Result[HttpResponse, FetchError]`.
 - **Sending:** `send(req)` from a program with a `main`;
   `(plat: Platform).http(req)` from a handler, the capability-scoped
   route (a recording bag answers what `MockPlatform.http_set` canned).
+  The handler's route reaches global addresses only: once the host has
+  resolved, an address `net.is_global` refuses (loopback, a private or
+  link-local block, the cloud metadata address, an IPv4 address carried
+  inside an IPv6 one) fails the request with `Blocked` before anything is
+  dialled, so a rebinding record is caught too. The check reads the
+  addresses as the network names them, before NAT64 synthesis, and an
+  address under a NAT64 prefix the nameservers reveal is judged by the
+  address it carries (`dns.nat64_carried`). `send` has no such rule.
+- **Proxies:** both routes go through the forward proxy the environment
+  names, read through `config_get` as `ProxyEnv` (`proxy_env()`,
+  `proxy_env_from(...)` for the pure form): the lowercase `http_proxy`
+  only, as curl reads it (a CGI host maps a client's `Proxy:` header onto
+  the uppercase name), and none under `REQUEST_METHOD`; `no_proxy` (or
+  `NO_PROXY`) lists the hosts reached directly as `*`, a domain (with a
+  leading dot, its subdomains only), an address, a CIDR block of either
+  family, any of them with a `:port`, zones ignored. `localhost` and
+  loopback are never proxied. `(p).proxy_for(url)` is the pure decision.
+  A proxied request carries the absolute-form target, the origin's
+  `Host`, and `Proxy-Authorization: Basic` from the proxy URL's
+  credentials. On the handler's route the origin is still resolved and
+  checked before the request goes to the proxy (the proxy's own address
+  is the deployment's choice and goes unchecked), so a deployment where
+  only the proxy can resolve names reaches it through `send`.
 - **Responses:** the same `HttpResponse` the server side builds, with
   `BodyBytes`, headers case-folded and the hop-by-hop fields stripped, a
   chunked body decoded and its trailers in `trailers`, interim 1xx
@@ -1673,7 +1733,9 @@ answer is `Result[HttpResponse, FetchError]`.
   `http` / `https`, or a path or query that cannot stand on a request
   line), `InvalidRequest(what)` (a method that is not a token, a header
   that cannot be written as one line, or a file body; `what` names the
-  rule, never the value), `Dns(DnsError)`, `Connect(NetError)`, `Tls`,
+  rule, never the value), `Dns(DnsError)`, `Connect(NetError)`,
+  `Blocked(what)` (a host the handler's route may not reach, naming the
+  address), `Tls`,
   `Timeout(Phase)` with `Phase` one of `Connecting` / `Inactivity` /
   `Total`, `Protocol(what)` (a response the parser refuses, interim
   1xx responses past one `limits.header_bytes` between them, or a 101

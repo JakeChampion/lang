@@ -27,7 +27,7 @@
 // Exit 0 = every name intact. Exit 1 = a name was reclaimed under its owner.
 import "std/i32";
 
-// The `gfns` / `lgfns` pair from irlower.lift_lambdas_view, minimised.
+// The `gfns` / `lgfns` pair from lift.lift_lambdas_view, minimised.
 function scan(names: string[], extra: string[]): i32 {
   var g: string[] = [];
   var i: i32 = 0;

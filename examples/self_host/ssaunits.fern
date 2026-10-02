@@ -81,19 +81,32 @@ struct Ledger { ok: boolean, why: string, bits: boolean[] }
 // (#4873, #8785).
 pub struct GrowRow { callee: string, param: i32, field: i32 }
 
-pub function grow_fields_of(rows: GrowRow[], callee: string, param: i32): i32[] {
+// GrowTable is the module's rows with a name index over their callees kept
+// beside them, one entry per row in order, so a body's bracket asks about a
+// callee along its chain rather than across the table.
+pub struct GrowTable { rows: GrowRow[], by_callee: util.NameIndex }
+
+pub function no_grows(): GrowTable {
+  var no_names: string[] = [];
+  return GrowTable { rows: [], by_callee: util.name_index(no_names) };
+}
+
+pub function grow_fields_of(t: GrowTable, callee: string, param: i32): i32[] {
   var out: i32[] = [];
-  for row in rows {
+  var i: i32 = t.by_callee.chain(callee);
+  while (i >= 0) {
+    var row: GrowRow = t.rows[i];
     if (row.callee == callee && row.param == param && row.field >= 0) {
       out = out.append(row.field);
     }
+    i = t.by_callee.next[i];
   }
   return out;
 }
 
 // Whether the callee may grow the array at `param` in place.
-pub function grows_buffer(rows: GrowRow[], callee: string, param: i32): boolean {
-  return has_row(rows, callee, param, 0 - 1);
+pub function grows_buffer(t: GrowTable, callee: string, param: i32): boolean {
+  return has_row_at(t.rows, t.by_callee, callee, param, 0 - 1);
 }
 
 function has_row(rows: GrowRow[], callee: string, param: i32, field: i32): boolean {
@@ -112,14 +125,14 @@ function has_row(rows: GrowRow[], callee: string, param: i32, field: i32): boole
 // tables that agree on the callees one body names produce that body
 // identically, however much they differ elsewhere. That is what lets a second
 // lowering keep a body the inference did not move.
-pub function grow_rows_agree(a: GrowRow[], b: GrowRow[], callees: string[]): boolean {
-  for row in a {
-    if (names_has(callees, row.callee) && !has_row(b, row.callee, row.param, row.field)) {
+pub function grow_rows_agree(a: GrowTable, b: GrowTable, callees: string[]): boolean {
+  for row in a.rows {
+    if (names_has(callees, row.callee) && !has_row_at(b.rows, b.by_callee, row.callee, row.param, row.field)) {
       return false;
     }
   }
-  for row in b {
-    if (names_has(callees, row.callee) && !has_row(a, row.callee, row.param, row.field)) {
+  for row in b.rows {
+    if (names_has(callees, row.callee) && !has_row_at(a.rows, a.by_callee, row.callee, row.param, row.field)) {
       return false;
     }
   }
@@ -142,6 +155,19 @@ function with_row(rows: GrowRow[], callee: string, param: i32, field: i32): Grow
   return rows.append(GrowRow { callee: callee, param: param, field: field });
 }
 
+// has_row_at is has_row over a table with a name index kept beside it, one
+// entry per row in order: the callee's chain, ascending.
+function has_row_at(rows: GrowRow[], ix: util.NameIndex, callee: string, param: i32, field: i32): boolean {
+  var i: i32 = ix.chain(callee);
+  while (i >= 0) {
+    if (rows[i].callee == callee && rows[i].param == param && rows[i].field == field) {
+      return true;
+    }
+    i = ix.next[i];
+  }
+  return false;
+}
+
 // The rows this function's plan contributes, given the rows `table` already
 // holds for its callees: one per borrowed parameter position an admitted
 // in-place grow or write reaches, directly through an append or a with of its
@@ -152,7 +178,7 @@ function with_row(rows: GrowRow[], callee: string, param: i32, field: i32): Grow
 // carriers lead back to it. A with on a buffer the plan did not admit copies,
 // so it contributes no row. An owned parameter needs no caller bracket — its caller moved the
 // unit in, or retained and so made the record's own count answer "shared".
-pub function grow_rows(callee: string, f: ssasem.Func, p: Plan, table: GrowRow[]): GrowRow[] {
+pub function grow_rows(callee: string, f: ssasem.Func, p: Plan, table: GrowRow[], tix: util.NameIndex): GrowRow[] {
   var out: GrowRow[] = [];
   var defs: ssa.SInst[] = definitions(f);
   var at: i32[] = ssa.block_positions(f.graph);
@@ -183,20 +209,24 @@ pub function grow_rows(callee: string, f: ssasem.Func, p: Plan, table: GrowRow[]
       out = with_row(out, callee, defs[root].imm, field);
     }
   }
+  var partial: GrowTable = GrowTable { rows: table, by_callee: tix };
   for s in p.steps {
-    out = dying_lent_rows(callee, f, p, defs, at, s, table, out);
+    if (s.point < 0) {
+      continue;
+    }
+    var ins: ssa.SInst = f.graph.blocks[at[s.block]].insts[s.point];
+    out = dying_lent_rows(callee, f, p, defs, s, ins, table, tix, out);
     var i: i32 = 0;
     while (i < s.hand_roots.len()) {
       var root: i32 = s.hand_roots[i];
       if (root >= 0 && defs[root].kind_tag == 6 && !p.owned[root]) {
-        var ins: ssa.SInst = f.graph.blocks[at[s.block]].insts[s.point];
         if (is_record(f.values[root]) && s.hand_fields[i] < 0) {
           // A whole record handed on: every field the callee may
           // grow, this parameter may grow.
-          for field in grow_fields_of(table, ins.str, i) {
+          for field in grow_fields_of(partial, ins.str, i) {
             out = with_row(out, callee, defs[root].imm, field);
           }
-        } else if (has_row(table, ins.str, i, 0 - 1)) {
+        } else if (has_row_at(table, tix, ins.str, i, 0 - 1)) {
           out = with_row(out, callee, defs[root].imm, s.hand_fields[i]);
         }
       }
@@ -209,18 +239,14 @@ pub function grow_rows(callee: string, f: ssasem.Func, p: Plan, table: GrowRow[]
 // The rows of a direct call's array operands that die at it, at the positions
 // the callee may grow: the box they carry from a parameter is lent on with
 // nothing in this frame reading it again.
-function dying_lent_rows(callee: string, f: ssasem.Func, p: Plan, defs: ssa.SInst[], at: i32[], s: Step, table: GrowRow[], own out: GrowRow[]): GrowRow[] {
-  if (s.point < 0) {
-    return out;
-  }
-  var ins: ssa.SInst = f.graph.blocks[at[s.block]].insts[s.point];
+function dying_lent_rows(callee: string, f: ssasem.Func, p: Plan, defs: ssa.SInst[], s: Step, ins: ssa.SInst, table: GrowRow[], tix: util.NameIndex, own out: GrowRow[]): GrowRow[] {
   if (ins.kind_tag != ssasem.call()) {
     return out;
   }
   var i: i32 = 0;
   while (i < ins.args.len()) {
     var v: i32 = ins.args[i];
-    if (v >= f.graph.nparams && is_array(f.values[v]) && occurrences(s.drops, v) > 0 && has_row(table, ins.str, i, 0 - 1)) {
+    if (v >= f.graph.nparams && is_array(f.values[v]) && occurrences(s.drops, v) > 0 && has_row_at(table, tix, ins.str, i, 0 - 1)) {
       for param in carried_params(f, defs, v) {
         if (!p.owned[param]) {
           out = with_row(out, callee, defs[param].imm, 0 - 1);
@@ -268,17 +294,21 @@ function carried_params(f: ssasem.Func, defs: ssa.SInst[], v: i32): i32[] {
 
 // Every produced body's rows, closed over the buffers handed on: a row only
 // ever gains, so the rounds converge.
-pub function grow_table(keys: string[], funcs: ssasem.Func[], plans: Plan[]): GrowRow[] {
+pub function grow_table(keys: string[], funcs: ssasem.Func[], plans: Plan[]): GrowTable {
   var table: GrowRow[] = [];
+  var no_names: string[] = [];
+  // tix indexes `table` by callee, one entry per row in order.
+  var tix: util.NameIndex = util.name_index(no_names);
   var changed: boolean = true;
   while (changed) {
     changed = false;
     var i: i32 = 0;
     while (i < plans.len()) {
       if (plans[i].ok) {
-        for row in grow_rows(keys[i], funcs[i], plans[i], table) {
-          if (!has_row(table, row.callee, row.param, row.field)) {
+        for row in grow_rows(keys[i], funcs[i], plans[i], table, tix) {
+          if (!has_row_at(table, tix, row.callee, row.param, row.field)) {
             table = table.append(row);
+            tix = tix.added(row.callee);
             changed = true;
           }
         }
@@ -286,7 +316,7 @@ pub function grow_table(keys: string[], funcs: ssasem.Func[], plans: Plan[]): Gr
       i = i + 1;
     }
   }
-  return table;
+  return GrowTable { rows: table, by_callee: tix };
 }
 
 function bad(why: string): Plan {

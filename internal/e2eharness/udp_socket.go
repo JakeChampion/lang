@@ -144,7 +144,7 @@ function main(): i32 {
     var b: i32 = open_socket(3);
     var pb: i32 = port_or(b, 4);
     if (a < 0 || pa <= 0 || b < 0 || pb <= 0) { return 5; }
-    if (sent(net.send_to(a, "ping", loopback(pb))) != 4) { return fail(6); }
+    if (sent(net.send_to(a, [112u8, 105u8, 110u8, 103u8], loopback(pb))) != 4) { return fail(6); }
     var buf: u8[] = zeros(16);
     match (net.recv_from(b, buf)) {
         Ok(got) => {
@@ -161,7 +161,7 @@ function main(): i32 {
         Ok(la) => { if (!la.ip.eq(net.ipv4_loopback()) || la.port != pb) { return fail(23); } },
         Err(e) => { return fail(24); },
     }
-    if (sent(net.send(b, "pong!")) != 5) { return fail(11); }
+    if (sent(net.send(b, [112u8, 111u8, 110u8, 103u8, 33u8])) != 5) { return fail(11); }
     match (net.recv(a, buf)) {
         Ok(n) => { if (n != 5 || buf[4] != 33u8) { return fail(12); } },
         Err(e) => { return fail(13); },

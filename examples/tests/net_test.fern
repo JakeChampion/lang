@@ -1,0 +1,118 @@
+import "std/test";
+import "std/net";
+
+// examples/tests/net_test.fern — std/net's `is_global`, the predicate
+// behind std/fetch's block list: every block it refuses, by one address
+// in each and one just past its edge, and the IPv6 forms that carry an
+// IPv4 address (IPv4-mapped, NAT64, 6to4), which answer for the address
+// they carry.
+//
+// Run:  fern -interp examples/tests/net_test.fern
+
+// `kind(text)` — `global` or `special` for an address, `unparsed` for
+// anything else.
+function kind(text: string): string {
+  match (net.ip_parse(text)) {
+    Some(a) => {
+      if (a.is_global()) {
+        return "global";
+      }
+      return "special";
+    },
+    None => {
+      return "unparsed";
+    }
+  }
+  return "unparsed";
+}
+
+// `kinds(texts)` — each address's kind, space-separated.
+function kinds(texts: string[]): string {
+  var out: string = "";
+  for t in texts {
+    if (out.len() > 0) {
+      out = out + " ";
+    }
+    out = out + kind(t);
+  }
+  return out;
+}
+
+function test_public_addresses(): test.TestOutcome {
+  return test.assert_eq(kinds(["93.184.216.34", "8.8.8.8", "1.1.1.1", "2606:4700::1111", "2001:4860:4860::8888"]), "global global global global global");
+}
+
+function test_v4_loopback_private_and_link_local(): test.TestOutcome {
+  return test.assert_eq(kinds(["127.0.0.1", "127.255.255.255", "10.1.2.3", "172.16.0.1", "172.31.255.255", "192.168.1.1", "169.254.169.254", "169.254.0.1"]), "special special special special special special special special");
+}
+
+function test_v4_other_special_blocks(): test.TestOutcome {
+  return test.assert_eq(kinds(["0.0.0.0", "0.1.2.3", "100.64.0.1", "100.127.255.255", "192.0.0.1", "192.0.2.1", "198.18.0.1", "198.19.255.255", "198.51.100.7", "203.0.113.9", "224.0.0.1", "240.0.0.1", "255.255.255.255"]), "special special special special special special special special special special special special special");
+}
+
+function test_v4_just_past_each_edge(): test.TestOutcome {
+  return test.assert_eq(kinds(["126.255.255.255", "128.0.0.1", "11.0.0.1", "172.15.255.255", "172.32.0.1", "192.167.255.255", "192.169.0.1", "169.253.0.1", "169.255.0.1", "100.63.255.255", "100.128.0.1", "192.0.1.1", "192.0.3.1", "198.17.255.255", "198.20.0.1", "198.51.101.1", "203.0.112.1", "223.255.255.255"]), "global global global global global global global global global global global global global global global global global global");
+}
+
+function test_v6_special_blocks(): test.TestOutcome {
+  return test.assert_eq(kinds(["::", "::1", "fc00::1", "fd00:ec2::254", "fdff::1", "fe80::1", "febf::1", "ff02::1", "2001:db8::1"]), "special special special special special special special special special");
+}
+
+function test_v6_just_past_each_edge(): test.TestOutcome {
+  return test.assert_eq(kinds(["::2", "fbff::1", "fe00::1", "fe7f::1", "fec0::1", "2001:db7::1", "2001:db9::1"]), "global global global global global global global");
+}
+
+function test_v6_carrying_a_v4_address(): test.TestOutcome {
+  return test.assert_eq(kinds(["::ffff:10.0.0.1", "::ffff:127.0.0.1", "::ffff:169.254.169.254", "64:ff9b::7f00:1", "64:ff9b::a00:1", "2002:7f00:1::", "2002:a00:1::"]), "special special special special special special special");
+}
+
+function test_v6_carrying_a_public_v4_address(): test.TestOutcome {
+  return test.assert_eq(kinds(["::ffff:8.8.8.8", "64:ff9b::808:808", "2002:808:808::"]), "global global global");
+}
+
+// 64:ff9b:1::/48, where the operator picks the prefix length: the same
+// 169.254.169.254 laid out under /48, /64 and /96 is special, and
+// 8.8.8.8 under /48 is global.
+function test_local_use_nat64(): test.TestOutcome {
+  return test.assert_eq(kinds(["64:ff9b:1:a9fe:a9:fe00::", "64:ff9b:1:0:a9:fea9:fe00:0", "64:ff9b:1::a9fe:a9fe", "64:ff9b:1:808:8:800::"]), "special special special global");
+}
+
+// `carried(text, bits)` — the address `text` carries under a prefix of
+// `bits`, or "none".
+function carried(text: string, bits: i32): string {
+  match (net.ip_parse(text)) {
+    Some(a) => {
+      match (a.embedded_v4(bits)) {
+        Some(v4) => {
+          return v4.to_string();
+        },
+        None => {
+          return "none";
+        }
+      }
+    },
+    None => {
+      return "unparsed";
+    }
+  }
+  return "unparsed";
+}
+
+function test_embedded_v4(): test.TestOutcome {
+  return test.assert_eq(carried("64:ff9b::c000:201", 96) + " " + carried("2001:db8:1:2:c0:2:100:0", 64) + " " + carried("64:ff9b:1:a9fe:a9:fe00::", 48) + " " + carried("64:ff9b::c000:201", 50) + " " + carried("192.0.2.1", 96), "192.0.2.1 192.0.2.1 169.254.169.254 none none");
+}
+
+function main(): i32 {
+  var r: test.TestRunner = test.test_new("std/net");
+  r = r.it("public addresses are global", test_public_addresses);
+  r = r.it("v4 loopback, private and link-local", test_v4_loopback_private_and_link_local);
+  r = r.it("v4 other special blocks", test_v4_other_special_blocks);
+  r = r.it("v4 just past each edge", test_v4_just_past_each_edge);
+  r = r.it("v6 special blocks", test_v6_special_blocks);
+  r = r.it("v6 just past each edge", test_v6_just_past_each_edge);
+  r = r.it("v6 carrying a v4 address", test_v6_carrying_a_v4_address);
+  r = r.it("v6 carrying a public v4 address", test_v6_carrying_a_public_v4_address);
+  r = r.it("local-use NAT64 under any prefix length", test_local_use_nat64);
+  r = r.it("embedded_v4 under each layout", test_embedded_v4);
+  return r.finish();
+}

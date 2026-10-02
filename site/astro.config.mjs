@@ -54,7 +54,7 @@ const ogImage = `${siteUrl.replace(/\/$/, "")}${base.replace(/\/$/, "")}/og.png`
 const STDLIB_GROUPS = [
   ["Text", ["ansi", "format", "glob", "peg", "regex", "strdist", "string",
     "table", "textwrap", "unicode", "utf8"]],
-  ["Data & encoding", ["base32", "base64", "crypto", "csv", "hash", "hex",
+  ["Data & encoding", ["base32", "base64", "crypto", "csv", "deflate", "hash", "hex",
     "json", "semver", "url", "uuid"]],
   ["Collections & errors", ["array", "error", "iter", "map", "ndarray", "option",
     "result", "set", "sort", "ordmap", "ordset", "pmap", "pset", "pvec"]],

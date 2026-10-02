@@ -81,11 +81,12 @@ The three fuzz differentials (`TestDifferential_LangsmithMain`,
 `TestDifferential_PrintableStdout`, `TestDropGuidedDifferential`,
 `TestNumericProperty_Differential`) are counted once each above, under the
 gap their seeds hit (#10768, #10757, #10767; on the 2026-10-01 re-measurement,
-#10927). Their native legs are not the
+#10927). Their native legs were not the
 gate for anything the self-host legs in `diff_oracle_selfhost_test.go` and
-its arm64 and wasm siblings do not already hold, and go with the backends;
-the seeds the self-host declines by design are that suite's documented
-floor, not a gap here.
+its arm64 and wasm siblings do not already hold: `TestDifferential_LangsmithMain`
+went in step 4, and the other three run every compiled leg through the
+self-host. The seeds the self-host declines by design are that suite's
+documented floor, not a gap here.
 
 ## The 29 native-instrumentation tests
 
@@ -110,8 +111,9 @@ group is one PR, after the re-point.
 
 | files | what the Go call does | disposition |
 |---|---|---|
-| `fixture_test.go` (`TestFernFixtures`, four native legs plus the `FERN_NATIVE_ASM` leg in `test-e2e-x86_64.yml`) | runs the 335-fixture corpus through each backend | delete: `fixture_selfhost_test.go` runs the same corpus through the self-host on all three targets |
-| `diff_oracle_test.go` (`x86_64.Emit` leg) | the fuzz differential's native leg | delete: the self-host legs are the gate |
+| `fixture_test.go` (`TestFernFixtures`'s three compiled legs, the `FERN_NATIVE_ASM` leg in `test-e2e-x86_64.yml`, and `runFixtureX86_64` / `runFixtureArm64`, which 42 other test files call) | runs the 335-fixture corpus through each backend | DONE: the compiled legs and `FERN_NATIVE_ASM` went, since `fixture_selfhost_test.go` runs the same corpus through the self-host on all three targets; the interpreter leg stays as the oracle. The two runners compile with the self-host (`e2eharness.CompileSelfHostFile`). `runFixtureWasm` and `runFixture{X86_64,Arm64}Native` stay native for the rc flag differentials, which compare two native builds and belong to the instrumentation row |
+| `diff_oracle_test.go` (`x86_64.Emit` leg) | the fuzz differential's native leg | DONE: `TestDifferential_LangsmithMain` went with its `x86_64.Emit` and `arm64.Emit` legs and the leg-requirement check (`FERN_REQUIRE_DIFF_BACKENDS`); `TestDifferential_SelfHost{X86_64,Arm64,Wasm}` in the `diff-selfhost` job are the exit-byte gate. `FuzzGenerate_ExecutionAgrees` loses its wasmbin component leg, and the numeric and printable-stdout sweeps build their wasm leg with the self-host |
+| `wasm_e2e_test.go`'s `buildComponent` / `buildComponentMulti`, behind `runWasm`, `invokeWasmtime` and their multi-file forms (287 files) | `wasmbin.BuildWithOptions` with `PrintMainResult`, so stdout ends with main's result | the self-host core run with `--invoke main`, which prints the same line, as `CompileAndRunWasmbinMain` already does; a measurement of the callers first |
 | `rctrace`, `leakcheck`, `sanitizer`, `heap_alloc_count`, `iter_adapter_leak`, `conformance_leak_census`, `seccomp`, `rc_freelist`, `rc_heap_benchmark` | `x86_64.Emit` with the native instrumentation options (the heap tracer, leak census, sanitizer, seccomp filter) | per test: the self-host has `FERN_LEAKCHECK` and `-sanitize`; the conformance leak census and the seccomp corpus need a self-host run of the same corpus or a decision that the property is native-only, made in that PR |
 | `wit_*` (60 files) and `wasm_p3_*` (15) | `wasmbin.BuildWithOptions` (`Preview2WASI`, `SynthCliRun`, `PrintMainResult`) and `component.Compose*` | a second measurement: the same programs through `fern -target wasm32-wasi` (a component) and `wasm32-wasi-http`, which is the playground's path since #6636. Preview-3 async and streams are a question that measurement answers |
 | `arm64_ssa_differential`, `x86_64_ssa_differential`, `x86_64ssa_*`, `arm64_ssa_*`, `crc32_cksum_ssa`, `ssa_coreutils_coverage`, `f64_ulp` (the SSA legs) | the Go SSA backends | delete with `internal/codegen/{x86_64ssa,arm64ssa}` |
@@ -146,7 +148,7 @@ group is one PR, after the re-point.
 5. **The deletions.** `internal/codegen/{x86_64,arm64,wasmbin,x86_64ssa,arm64ssa}`,
    `internal/native/{x86_64,arm64}` (the assembler the tests link with;
    `internal/native/elf` and the Mach-O writer stay if `cmd/fern` keeps a
-   Go link path), `cmd/dump_arm64`, the `FERN_NATIVE_ASM` leg, and
+   Go link path), `cmd/dump_arm64`, and
    `internal/sourcelint`'s codegen-boundary population. `docs/TEST-GATES.md`
    loses its native rows and `docs/BACKEND-PARITY.md` its per-backend table.
 6. **What `cmd/fern` becomes** is decided on #4451: as thin as possible. Go
@@ -156,8 +158,8 @@ group is one PR, after the re-point.
 
 CI lanes keep their names: `test-e2e-x86_64`, `test-e2e-arm64` and
 `test-e2e-wasm` select by target prefix, which stays the right split when the
-target is compiled by the self-host. The "native test runners" wording, the
-`FERN_NATIVE_ASM` fixture leg go in step 5. Since step 3 every `internal/e2e`
+target is compiled by the self-host. The "native test runners" wording goes
+in step 5. Since step 3 every `internal/e2e`
 lane builds `fern.fern` once from the driver cache, and a self-host change
 runs them; `test-fernsmith` and `examples` never read the self-host and keep
 skipping a change to it.

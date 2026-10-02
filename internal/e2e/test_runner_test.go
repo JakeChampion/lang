@@ -307,6 +307,56 @@ func TestRunnerUrlExamplePasses(t *testing.T) {
 	}
 }
 
+// `examples/tests/deflate_test.fern` covers std/deflate against streams
+// Python's zlib produced: the three block types, a 60 KB corpus with
+// matches reaching the whole window back, every optional gzip header
+// field, two members, a zlib stream, and the refusals.
+func TestRunnerDeflateExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/deflate_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/deflate", "# pass 14", "# fail 0", "1..14"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `examples/tests/net_test.fern` covers std/net's `is_global`, the
+// predicate behind std/fetch's block list.
+func TestRunnerNetExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/net_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/net", "# pass 10", "# fail 0", "1..10"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `examples/tests/fetch_proxy_test.fern` covers std/fetch's proxy
+// selection: which variables are read and every `no_proxy` form.
+func TestRunnerFetchProxyExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/fetch_proxy_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/fetch proxies", "# pass 16", "# fail 0", "1..16"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `examples/tests/csv_test.fern` covers std/csv's RFC 4180 single-line
 // surface — csv_escape (quote-wrap on comma / quote / newline, interior
 // quotes doubled), csv_join (escape then comma-join) and csv_parse_line
