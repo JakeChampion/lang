@@ -1405,10 +1405,25 @@ function send_tcp(ns: net.SocketAddr, framed: u8[]): Result[i32, DnsError] {
       return Err(Socket(e));
     }
   }
-  var sent: i32 = tcp_send(sock, string_from_bytes_unchecked(framed));
-  if (sent < 0) {
-    tcp_close(sock);
-    return Err(Socket(net.error_from_errno(sent)));
+  var remaining: u8[] = framed;
+  while (remaining.len() > 0) {
+    var sent: i32 = tcp_send_bytes(sock, remaining);
+    if (sent < 0) {
+      var failure: net.NetError = net.error_from_errno(sent);
+      if (!failure.eq(net.Interrupted)) {
+        tcp_close(sock);
+        return Err(Socket(failure));
+      }
+    } else {
+      if (sent == 0) {
+        tcp_close(sock);
+        return Err(NoReply);
+      }
+      if (sent == remaining.len()) {
+        return Ok(sock);
+      }
+      remaining = array.drop(remaining, sent);
+    }
   }
   return Ok(sock);
 }

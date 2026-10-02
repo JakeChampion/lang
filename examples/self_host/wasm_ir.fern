@@ -3647,13 +3647,20 @@ pub function tcp_local_port_func(udp: boolean): string {
   return o;
 }
 
-// $__fern_tcp_pollable(conn) -> a wasi:io/poll pollable for the connection's
-// tcp-socket (mem[conn+0]). This is the handle std/async feeds to wasm_poll for
-// overlapped fan-out, so it composes directly with the multiplexer from #4316.
-pub function tcp_pollable_func(): string {
+// An established socket waits for input on its stream. Listeners and pending
+// connects wait for TCP socket state; a UDP handle is never passed to TCP.
+pub function tcp_pollable_func(has_udp: boolean): string {
   var o: string = "";
   o = o + "  (func $__fern_tcp_pollable (param $c i32) (result i32)\n";
-  o = o + "    (call $__fern_wasi_tcp_subscribe (i32.load (local.get $c))))\n";
+  o = o + "    (if (i32.eq (i32.load offset=12 (local.get $c)) (i32.const 1)) (then\n";
+  o = o + "      (return (call $__fern_wasi_input_stream_subscribe (i32.load offset=4 (local.get $c))))))\n";
+  if (has_udp) {
+    o = o + "    (if (i32.eq (i32.load offset=12 (local.get $c)) (i32.const 3)) (then\n";
+    o = o + "      (return (call $__fern_wasi_udp_in_subscribe (i32.load offset=4 (local.get $c))))))\n";
+  }
+  o = o + "    (if (i32.or (i32.eq (i32.load offset=12 (local.get $c)) (i32.const 0)) (i32.eq (i32.load offset=12 (local.get $c)) (i32.const 4))) (then\n";
+  o = o + "      (return (call $__fern_wasi_tcp_subscribe (i32.load (local.get $c))))))\n";
+  o = o + "    (i32.const -1))\n";
   return o;
 }
 
@@ -3722,9 +3729,12 @@ pub function wasi_udp_remote_address_import(): string {
 // and writes (record, readiness) pairs, one word per slot, into the
 // caller's i32[]. A socket is unwatched before it is closed: the
 // pollables a watch holds are children of its streams.
+pub function wasi_input_stream_subscribe_import(): string {
+  return "  (import \"wasi:io/streams@0.2.0\" \"[method]input-stream.subscribe\" (func $__fern_wasi_input_stream_subscribe (param i32) (result i32)))\n";
+}
+
 pub function wasi_stream_subscribe_imports(): string {
-  var o: string = "";
-  o = o + "  (import \"wasi:io/streams@0.2.0\" \"[method]input-stream.subscribe\" (func $__fern_wasi_input_stream_subscribe (param i32) (result i32)))\n";
+  var o: string = wasi_input_stream_subscribe_import();
   o = o + "  (import \"wasi:io/streams@0.2.0\" \"[method]output-stream.subscribe\" (func $__fern_wasi_output_stream_subscribe (param i32) (result i32)))\n";
   return o;
 }
@@ -12157,6 +12167,8 @@ function preview1_imports(needs: string[]): string {
   // read, which nothing else brings in.
   if (need(needs, "reactor_ctl")) {
     parts = parts.append(wasi_stream_subscribe_imports());
+  } else if (need(needs, "tcp_pollable")) {
+    parts = parts.append(wasi_input_stream_subscribe_import());
   }
   if (need(needs, "tcp_recv_into")) {
     parts = parts.append(wasi_stream_read_import());
@@ -12202,7 +12214,7 @@ function preview1_imports(needs: string[]): string {
   if (need_udp_send(needs) || need(needs, "reactor_ctl")) {
     parts = parts.append(wasi_udp_out_subscribe_import());
   }
-  if (need(needs, "udp_recvfrom") || need(needs, "reactor_ctl")) {
+  if (need(needs, "udp_recvfrom") || need(needs, "reactor_ctl") || need(needs, "tcp_pollable") && need_udp_socket(needs)) {
     parts = parts.append(wasi_udp_in_subscribe_import());
   }
   var udp_waits: boolean = need_udp_send(needs) || need(needs, "udp_recvfrom");
@@ -12824,7 +12836,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     parts = parts.append(tcp_local_port_func(need(needs, "udp_bind")));
   }
   if (need(needs, "tcp_pollable")) {
-    parts = parts.append(tcp_pollable_func());
+    parts = parts.append(tcp_pollable_func(need_udp_socket(needs)));
   }
   if (need_udp_socket(needs)) {
     parts = parts.append(udp_close_func());
