@@ -223,7 +223,7 @@ func TestArm64SSABackendDifferential(t *testing.T) {
 				return
 			}
 			_, stdoutUnstable := unstable[rel]
-			if d := ssaDiffCompare(base, ssa, stdoutUnstable); d != "" {
+			if d := ssaDiffCompare(rel, base, ssa, stdoutUnstable); d != "" {
 				atomic.AddInt64(&diverged, 1)
 				if isKnown {
 					t.Logf("known divergence (%s): %s", reason, d)
@@ -285,7 +285,7 @@ func TestArm64SSABackendDifferential(t *testing.T) {
 //
 // stdoutUnstable drops the stdout comparison for programs whose output is not a
 // function of the compiler; every other observable still applies.
-func ssaDiffCompare(base, ssa ssaDiffRun, stdoutUnstable bool) string {
+func ssaDiffCompare(path string, base, ssa ssaDiffRun, stdoutUnstable bool) string {
 	switch {
 	case base.timedOut != ssa.timedOut:
 		// Handled by the caller as its own outcome: a wall expiring says
@@ -303,7 +303,7 @@ func ssaDiffCompare(base, ssa ssaDiffRun, stdoutUnstable bool) string {
 	case base.exit != ssa.exit:
 		return fmt.Sprintf("exit code: flat = %d, ssa = %d\n%s",
 			base.exit, ssa.exit, ssaDiffDetail(base, ssa))
-	case !stdoutUnstable && base.stdout != ssa.stdout:
+	case !stdoutUnstable && ssaDiffStableStdout(path, base.stdout) != ssaDiffStableStdout(path, ssa.stdout):
 		return fmt.Sprintf("stdout differs (both exited %d)\n%s\n%s",
 			base.exit, firstStdoutDiff(base.stdout, ssa.stdout), ssaDiffDetail(base, ssa))
 	}
