@@ -8,9 +8,9 @@ import (
 	"testing"
 )
 
-// A map whose key is a string, a 32-bit integer or a boolean, and whose value
-// is one of those or a box, runs on core/map's hash table under the typed
-// lowering (ssarc.routed_map, #9608). These cases pin what the routing has to
+// A map whose key is a string, a 32-bit integer, a boolean or a keyed type,
+// and whose value is one of those or a box, runs on core/map's hash table
+// under the typed lowering (ssarc.routed_map, #9608). These cases pin what the routing has to
 // keep: the whole Map surface, copy-on-write under an alias, negative keys
 // (which cross into core/map's usize slot and must be equal slots however they
 // were computed), u32 values past 2^31, boolean columns, and the units a string
@@ -164,6 +164,71 @@ function main(): i32 {
     for (k, v) in m2 { it = it + k.len() + v; }
     var e: Map[string, i32] = m2.cleared();
     print(s.to_string() + " " + kl.to_string() + " " + it.to_string() + " " + e.len().to_string());
+    return 0;
+}
+`
+
+// routedMapKeyedKeysSrc: a keyed key column (a derived Eq + Hash struct or
+// enum, a tuple, an array) holds one unit of each key and hashes and compares
+// through closures over the key type's own functions. An overwrite releases
+// the incoming key, a delete the removed one, an alias's copy retains every
+// key, and the last drop releases them all.
+const routedMapKeyedKeysSrc = `import "core/map";
+import "core/cmp";
+import "std/i32";
+import "std/i64";
+@derive(cmp.Eq, cmp.Hash)
+struct Pt { x: i32, tag: string }
+@derive(cmp.Eq, cmp.Hash)
+enum Shape { Dot, Sq(i32), Named(string) }
+struct Rec { name: string, n: i32 }
+struct Holder { idx: Map[Pt, string] }
+function pt(i: i32): Pt { return Pt { x: i, tag: "t" + (i % 5).to_string() }; }
+function main(): i32 {
+    var a: Map[Pt, i32] = map_new(4);
+    var i: i32 = 0;
+    while (i < 60) { a = a.insert(pt(i), i * 2); i = i + 1; }
+    a = a.insert(pt(7), 700);
+    var alias: Map[Pt, i32] = a;
+    a = a.insert(pt(8), 800);
+    var (a2, had) = a.without(pt(9));
+    var s: i32 = a2.get_or(pt(7), 0) + a2.get_or(pt(8), 0) + alias.get_or(pt(8), 0) + a2.get_or(pt(9), -1) + a2.len() + alias.len();
+    if (a2.has(pt(10)) && !a2.has(pt(9)) && had) { s = s + 1; }
+    var b: Map[Shape, string] = Map { Dot: "dot", Sq(2): "sq2" };
+    b = b.insert(Named("n" + "1"), "named");
+    b = b.insert(Sq(2), "two");
+    var bs: string = b.get_or(Sq(2), "-") + b.get_or(Named("n1"), "-") + b.get_or(Sq(3), "-");
+    match (b.get(Dot)) { Some(v) => { bs = bs + v; }, None => { bs = bs + "?"; } }
+    var c: Map[(string, i32), Rec] = map_new(4);
+    i = 0;
+    while (i < 20) { c = c.insert(("r" + i.to_string(), i % 3), Rec { name: "n" + i.to_string(), n: i }); i = i + 1; }
+    c = c.insert(("r4", 1), Rec { name: "four" + "!", n: 4 });
+    var (c2, gone) = c.without(("r5", 2));
+    var cs: string = c2.get_or(("r4", 1), Rec { name: "", n: 0 }).name + " " + c2.len().to_string();
+    var d: Map[i32[], i32] = Map { [1, 2]: 3 };
+    d = d.insert([4], 5);
+    var kl: i32 = 0;
+    for k in a2.keys() { kl = kl + k.x; }
+    var it: i32 = 0;
+    for (k, v) in c2 { it = it + k.1 + v.n; }
+    var h: Holder = Holder { idx: Map { pt(1): "one" } };
+    h = Holder { idx: h.idx.insert(pt(2), "two") };
+    var w: Map[Pt, i64] = map_new(4);
+    i = 0;
+    while (i < 30) { w = w.insert(pt(i), (i as i64) * 5000000000i64); i = i + 1; }
+    w = w.insert(pt(3), 1i64);
+    var walias: Map[Pt, i64] = w;
+    w = w.insert(pt(4), 2i64);
+    var (w2, wgone) = w.without(pt(5));
+    var wsum: i64 = w2.get_or(pt(3), 0i64) + w2.get_or(pt(4), 0i64) + walias.get_or(pt(4), 0i64) + w2.get_or(pt(5), 7i64);
+    match (w2.get(pt(6))) { Some(v) => { wsum = wsum + v; }, None => {} }
+    var fl: Map[(i32, i32), f64] = Map { (1, 2): 1.5 };
+    fl = fl.insert((3, 4), 2.25);
+    fl = fl.insert((1, 2), 0.5);
+    var fs: f64 = fl.get_or((1, 2), 0.0) + fl.get_or((3, 4), 0.0) + fl.get_or((9, 9), 10.0);
+    match (fl.get((3, 4))) { Some(v) => { fs = fs + v; }, None => {} }
+    var e: Map[Pt, i32] = a2.cleared();
+    print(s.to_string() + " " + bs + " " + cs + " " + d.get_or([1, 2], 0).to_string() + " " + kl.to_string() + " " + it.to_string() + " " + h.idx.get_or(pt(2), "") + " " + e.len().to_string() + " " + wsum.to_string() + " " + ((fs * 100.0) as i32).to_string());
     return 0;
 }
 `
@@ -435,6 +500,7 @@ func TestSelfHostRoutedScalarMaps(t *testing.T) {
 		{"generic_dyn_values", routedMapGenericDynValuesSrc, "62"},
 		{"string_array_values", routedMapStringArrayValuesSrc, "80 a39 xy override 8 true"},
 		{"string_keys", routedMapStringKeysSrc, "202311 691 61358 0"},
+		{"keyed_keys", routedMapKeyedKeysSrc, "1635 twonamed-dot four! 19 3 1761 202 two 0 50000000010 1500"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -460,7 +526,7 @@ func TestSelfHostRoutedScalarMaps(t *testing.T) {
 	// passing on the runtime map.
 	for _, c := range cases {
 		asm := routedMapAsm(t, selfHostBin, stdlibRoot, c.src)
-		if !strings.Contains(asm, "call __fn___map_set_impl") || strings.Contains(asm, "call __fern_map_set") {
+		if !strings.Contains(asm, "call __fn___map_set_") || strings.Contains(asm, "call __fern_map_set") {
 			t.Fatalf("the %s program's maps are not routed onto core/map", c.name)
 		}
 	}
