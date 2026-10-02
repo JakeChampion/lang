@@ -85,8 +85,8 @@ func TestSelfHostPerModuleConcatObjectCacheX86_64(t *testing.T) {
 	hits, misses = concat("warm")
 	pmWantSets(t, "warm", hits, misses, all, []string{})
 
-	// Body-only edit that keeps the value and every fact: lib3's source
-	// changes, so lib3 alone re-emits.
+	// Body-only edit of a function the reach set drops: lib3's source changes,
+	// so lib3 alone re-emits.
 	edit("lib3.fern", "return x + 305;", "return x + 1305;")
 	hits, misses = concat("body")
 	pmWantSets(t, "body", hits, misses, without("lib3"), []string{"lib3"})

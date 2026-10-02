@@ -1936,6 +1936,21 @@ function assign_targets_into(out: string[], stmts: ast.Stmt[]): string[] {
   return out;
 }
 
+// lambda_write_targets is body_assign_targets reaching into nested lambda
+// bodies as well: a nested lambda's write to a name free in `stmts` writes that
+// same binding (lexical resolution makes every binding's name distinct).
+pub function lambda_write_targets(stmts: ast.Stmt[]): string[] {
+  var out: string[] = [];
+  for stmt in stmts {
+    out = astwalk.fold_stmt_nodes(stmt, out, assign_target_into, keep_targets, astwalk.descend_all);
+  }
+  return out;
+}
+
+function keep_targets(e: ast.Expr, own acc: string[]): string[] {
+  return acc;
+}
+
 function assign_target_into(st: ast.Stmt, own acc: string[]): string[] {
   match (st) {
     ast.StmtAssign(a) => {

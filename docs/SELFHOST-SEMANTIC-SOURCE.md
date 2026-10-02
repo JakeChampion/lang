@@ -633,9 +633,9 @@ Unsupported constructs refuse the whole function with a reason.
   argument: `__sem_release_<T>`, a body the physical lowering emits beside the
   drop helpers, which does for one value what the frame does for a unit of
   its type. A value column of function values is a column of
-  environment boxes, released through the `_vf` members like any other box.
-  A value column of maps (whose box a read could not retain) and a key column
-  of generic records stay refused ("unsupported map shape").
+  environment boxes, and a value column of maps a column of map boxes, each
+  released through the `_vf` members like any other box. A key column of
+  generic records stays refused ("unsupported map shape").
 
   A map's unit is counted like any box's. The box carries the array header
   on the register backends (`__fern_map_new` takes it from `__fern_arr_box`)

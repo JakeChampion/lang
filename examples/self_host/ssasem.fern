@@ -838,8 +838,8 @@ pub function keyed_map_key_name(k: typeinfo.Type): string {
 // A column whose snapshot is a fresh array owning one unit of every element:
 // a string column and a column of boxes are copied with a per-element retain,
 // and a column of narrow scalars — `i32`, `u8`, `u32`, `bool`, each an
-// i32-shaped cell — holds no references. Every other element — a wide scalar,
-// a function value, a map — would come back aliasing the map's own.
+// i32-shaped cell — holds no references. Any other element would come back
+// aliasing the map's own.
 pub function retained_column(elem: typeinfo.Type): boolean {
   return is_string(elem) || narrow_column(elem) || wide_map_value(elem) || float_map_value(elem) || keyed_map_key(elem) || counted_map_value(elem);
 }
@@ -870,11 +870,9 @@ pub function is_string_array(v: typeinfo.Type): boolean {
 
 // A value column whose entries are boxes of a shape the runtime does not
 // know: a record, a union, an array of anything but strings, a tuple, a dyn
-// value, a function value's environment box. A map's box carries no count on
-// the register backends, so a read of a column of them has nothing to retain,
-// and it stays refused.
+// value, a function value's environment box, a map.
 pub function boxed_map_value(v: typeinfo.Type): boolean {
-  return reference(v) && !is_string(v) && !is_string_array(v) && !is_map(v);
+  return reference(v) && !is_string(v) && !is_string_array(v);
 }
 
 pub function func_params(t: typeinfo.Type): typeinfo.Type[] {

@@ -322,10 +322,10 @@ pub function op_ptr_width(): Op {
 // `arr_set` pops [base, idx, val]; `arr_len` / `arr_rc` pop [base] → len / rc.
 // `arr_make`'s `width` is the element slot width: 32 for i32 / wasm32-pointer
 // elements (4-byte wasm stride) or 64 for f64 elements (8-byte wasm stride,
-// f64.load/store), or 8 for a packed u8 (ir.packed), the one width the register
-// backends read: they give every other element an 8-byte slot. wasm treats 8
-// as its 4-byte slot; `arr_get` / `arr_set` carry the same
-// element width so they select the matching load/store on wasm.
+// f64.load/store), or 8 for a packed u8 (ir.packed, a byte an element on every
+// backend), the one width the register backends read: they give every other
+// element an 8-byte slot. `arr_get` / `arr_set` carry the same
+// element width so they select the matching load/store.
 pub function op_arr_make(n: i32, width: i32): Op {
   return Op { decl: 0 - 1, kind_tag: 87, i32_imm: n, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
 }
@@ -425,16 +425,16 @@ pub function op_arr_push_owned_f64(): Op {
 
 // `alloc_u8` pops [n] → a fresh n-element array (8-byte slots, len = n) via
 // __fern_alloc_u8 (the `__alloc_u8(n)` byte-buffer builtin), every slot zero;
-// packed (ir.packed), n zero bytes via __fern_alloc_bytes.
+// packed (ir.packed), n zero bytes via __fern_alloc_bytes, or on wasm inline.
 pub function op_alloc_u8(): Op {
   return op0(77);
 }
 
 // packed marks a byte-array op as reading or producing a u8[] laid out a byte
-// an element, the layout the register backends give an array whose element
-// ops the typed lowering emits (width 8). Only that lowering marks an op; the
-// AST lowering's u8[] keeps its 8-byte slots, and wasm reads the mark as its
-// narrow 4-byte slot.
+// an element, the layout every backend gives an array whose element ops the
+// typed lowering emits (width 8). Only that lowering marks an op, and it marks
+// every op over a u8[], so the wasm backend, which has no slot twin for the
+// byte builtins, lays each of their arrays out packed.
 pub function packed(o: Op): Op {
   return Op { ...o, width: 8 };
 }
@@ -603,9 +603,9 @@ pub function op_str_slice_frame(base: i32): Op {
 // payloads via __fern_arr_slice. Bounds-checked at construction (#5419):
 // traps unless 0 <= start <= end <= len.
 // `arr_slice`'s `width` is the element width (32 for i32 / wasm32-pointer
-// elements, 64 for f64, 8 for a packed u8): the wasm backend selects the
-// 4-byte or 8-byte copy helper, the register backends the byte copy for 8 and
-// the 8-byte slot copy otherwise.
+// elements, 64 for f64, 8 for a packed u8): every backend takes the byte copy
+// for 8; otherwise the wasm backend selects the 4-byte or 8-byte copy helper
+// and the register backends the 8-byte slot copy.
 pub function op_arr_slice(width: i32): Op {
   return Op { decl: 0 - 1, kind_tag: 96, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
 }
@@ -2593,8 +2593,8 @@ pub function op_const_array(values: string): Op {
   return op_const_struct("&arr", 0, values);
 }
 
-// A constant u8 literal the typed lowering packs (ir.packed): the register
-// backends lay it out a byte an element, and wasm as the array it also is.
+// A constant u8 literal the typed lowering packs (ir.packed): every backend
+// lays it out a byte an element.
 pub function op_const_bytes(values: string): Op {
   return op_const_struct("&bytes", 0, values);
 }

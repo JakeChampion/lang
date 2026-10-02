@@ -1,25 +1,27 @@
 package e2eselfhost
 
 import (
+	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 )
 
-// A u8[] the typed lowering builds is packed a byte an element on the
-// register backends (#9634), where it had an 8-byte slot per byte: every
-// element op, push, slice and allocation carries the byte stride, and each
-// runtime helper that makes or reads a u8[] has a packed twin. Each program
-// below runs on all three targets and must match the native compiler's output
-// with the heap balanced.
+// A u8[] the typed lowering builds is packed a byte an element on every
+// backend (#9634, #10987), where it had an 8-byte slot per byte on the
+// register backends and a 4-byte one on wasm: every element op, push, slice
+// and allocation carries the byte stride, and each runtime helper that makes
+// or reads a u8[] works on the packed bytes. Each program below runs on all
+// three targets and must match the native compiler's output with the heap
+// balanced.
 
 // packedBytesElementsSrc: literals, pushes past a grow, `.with`, slices,
 // string bytes both ways, __alloc_u8, random_bytes, a digest over a string
 // that crosses many blocks, and the heap cost of a 4 MiB byte array. Packed
-// it is 5 MiB after the large tier's rounding; wasm keeps a 4-byte slot per
-// byte and lands on 20 MiB; the 8-byte slots the register backends had would
-// round to 40 MiB, so the 24 MB threshold separates packed from unpacked only
-// where #9634 packs.
+// it is 5 MiB after the large tier's rounding; a 4-byte slot per byte would
+// round to 20 MiB and an 8-byte one to 40 MiB, so the 12 MB threshold
+// separates packed from unpacked on every target.
 const packedBytesElementsSrc = `import "std/i32";
 import "std/crypto";
 
@@ -56,7 +58,7 @@ function main(): i32 {
     var before: i64 = __heap_bump_bytes();
     var mb: u8[] = __alloc_u8(4194304);
     var cost: i64 = __heap_bump_bytes() - before;
-    print("heap " + (mb.len() > 0 && cost < (24000000 as i64)).to_string());
+    print("heap " + (mb.len() > 0 && cost < (12000000 as i64)).to_string());
     return 0;
 }
 `
@@ -114,7 +116,8 @@ const packedBytesContainersWant = "keys 3 9090\nvals 405\nrev 2946\nrec 9 4005\n
 
 // packedBytesRuntimeSrc: the buffer pushes that read a u8[] table (mapped,
 // filtered, expanded, and a table shorter than the bytes it maps), the two
-// set scans, and read_file_bytes.
+// set scans, read_file_bytes, and a write_file_bytes round trip long enough
+// that the read grows its buffer.
 const packedBytesRuntimeSrc = `import "std/i32";
 import "std/io_buffered";
 
@@ -159,6 +162,19 @@ function main(): i32 {
                 },
                 Err(e) => { print("file err"); }
             }
+            var big: u8[] = [];
+            var j: i32 = 0;
+            while (j < 10000) { big = big.append((j % 251) as u8); j = j + 1; }
+            var big_path: string = dir + "/big.bin";
+            match (write_file_bytes(big_path, big)) { Ok(_) => {}, Err(e) => { print("big write err"); } }
+            match (read_file_bytes(big_path)) {
+                Ok(bs) => {
+                    var t: i32 = 0;
+                    for x in bs { t = (t * 31 + (x as i32)) % 1000003; }
+                    print("big " + bs.len().to_string() + " " + t.to_string());
+                },
+                Err(e) => { print("big read err"); }
+            }
             remove_dir_all(dir);
         },
         Err(e) => { print("temp err"); }
@@ -167,7 +183,7 @@ function main(): i32 {
 }
 `
 
-const packedBytesRuntimeWant = "HELLO, WORLD\nfbarb\na<->b<->c\nabc\nscan 3 7 19\nruns 3\nfile 6 69807"
+const packedBytesRuntimeWant = "HELLO, WORLD\nfbarb\na<->b<->c\nabc\nscan 3 7 19\nruns 3\nfile 6 69807\nbig 10000 270744"
 
 // packedBytesConstSrc: a constant u8[] literal whose length is not a
 // multiple of 8, appended to on every evaluation. The constant has no spare
@@ -193,6 +209,30 @@ function main(): i32 {
 `
 
 const packedBytesConstWant = "const 12 3 7 1"
+
+// packedBytesComponentSrc: the runtime case's write_file_bytes round trip,
+// built as a wasm component, whose preview-2 read_file_bytes gathers the
+// stream's 4096-byte chunks into the array and grows it twice on the way.
+const packedBytesComponentSrc = `import "std/i32";
+
+function main(): i32 {
+    var big: u8[] = [];
+    var j: i32 = 0;
+    while (j < 10000) { big = big.append((j % 251) as u8); j = j + 1; }
+    match (write_file_bytes("big.bin", big)) { Ok(_) => {}, Err(e) => { print("big write err"); } }
+    match (read_file_bytes("big.bin")) {
+        Ok(bs) => {
+            var t: i32 = 0;
+            for x in bs { t = (t * 31 + (x as i32)) % 1000003; }
+            print("big " + bs.len().to_string() + " " + t.to_string());
+        },
+        Err(e) => { print("big read err"); }
+    }
+    return 0;
+}
+`
+
+const packedBytesComponentWant = "big 10000 270744"
 
 func TestSelfHostPackedBytes(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
@@ -232,4 +272,32 @@ func TestSelfHostPackedBytes(t *testing.T) {
 			}
 		})
 	}
+	t.Run("component", func(t *testing.T) {
+		if _, err := exec.LookPath("wasmtime"); err != nil {
+			t.Fatal("wasmtime not on PATH")
+		}
+		dir := t.TempDir()
+		in := filepath.Join(dir, "main.fern")
+		if err := os.WriteFile(in, []byte(packedBytesComponentSrc), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		out := filepath.Join(dir, "prog.wasm")
+		compile := exec.Command(selfHostBin, "-target", "wasm32-wasi", in, stdlibRoot, "-o", out)
+		compile.Env = append(os.Environ(), "FERN_STRICT_IR=1", "FERN_SANITIZE=1")
+		if msg, err := compile.CombinedOutput(); err != nil {
+			t.Fatalf("compile: %v\n%s", err, msg)
+		}
+		var stdout, stderr strings.Builder
+		run := exec.Command("wasmtime", "run", "--dir", dir+"::.", out)
+		run.Stdout, run.Stderr = &stdout, &stderr
+		if err := run.Run(); err != nil {
+			t.Fatalf("run: %v\n%s", err, stderr.String())
+		}
+		if got := strings.TrimSpace(stdout.String()); got != packedBytesComponentWant {
+			t.Fatalf("stdout = %q, want %q\n%s", got, packedBytesComponentWant, stderr.String())
+		}
+		if strings.Contains(stderr.String(), "fern-sanitizer:") {
+			t.Fatalf("heap finding:\n%s", stderr.String())
+		}
+	})
 }

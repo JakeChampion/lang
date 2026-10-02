@@ -6897,7 +6897,7 @@ function check_program(prog: ast.Stmt[]): ProgramTypes {
 // (including recursive / mutually-recursive ones) can resolve.
 // func_ret_type resolves a FuncDecl's declared return type.
 function func_ret_type(fd: parser.FuncDecl, tn: TypeNames): typeinfo.Type {
-  if (fd.ret_fn_ret.len() > 0 && (fd.ret_type == "fn" || fd.ret_type == "fn[]")) {
+  if (fd.ret_fn_ret.len() > 0 && parser.is_fn_contract_tag(fd.ret_type)) {
     return declared_callable_type(fd.ret_type, fd.ret_fn_ret, fd.ret_fn_param_types, fd.type_params, tn);
   }
   return type_from_name_erasing_tparams(fd.ret_type, fd.type_params, tn);
@@ -6953,7 +6953,7 @@ function lambda_ret_type(lm: ast.ExprLambda, s: Scope): typeinfo.Type {
   if (lm.ret_type.len() == 0) {
     return t_unknown(INFERRED_RESULT);
   }
-  if (lm.ret_fn_ret.len() > 0 && (lm.ret_type == "fn" || lm.ret_type == "fn[]")) {
+  if (lm.ret_fn_ret.len() > 0 && parser.is_fn_contract_tag(lm.ret_type)) {
     return declared_callable_type(lm.ret_type, lm.ret_fn_ret, lm.ret_fn_param_types, s.tparams, s.type_names());
   }
   return s.resolve_type(lm.ret_type);
@@ -6961,7 +6961,7 @@ function lambda_ret_type(lm: ast.ExprLambda, s: Scope): typeinfo.Type {
 
 // var_declared_type resolves a StmtVar's annotation.
 function var_declared_type(v: ast.StmtVar, s: Scope): typeinfo.Type {
-  if (v.fn_ret.len() > 0 && (v.type_name == "fn" || v.type_name == "fn[]")) {
+  if (v.fn_ret.len() > 0 && parser.is_fn_contract_tag(v.type_name)) {
     return declared_callable_type(v.type_name, v.fn_ret, v.fn_param_types, s.tparams, s.type_names());
   }
   return s.resolve_type(v.type_name);
@@ -7278,7 +7278,7 @@ function collect_struct_sigs(structs: parser.StructDecl[], union_names: string[]
     var ftnames: string[] = [];
     for elem in sd.fields {
       fnames = fnames.append(elem.name);
-      if (elem.fn_ret.len() > 0 && (elem.type_name == "fn" || elem.type_name == "fn[]")) {
+      if (elem.fn_ret.len() > 0 && parser.is_fn_contract_tag(elem.type_name)) {
         ftypes = ftypes.append(declared_callable_type(elem.type_name, elem.fn_ret, elem.fn_param_types, sd.type_params, tn));
       } else {
         ftypes = ftypes.append(type_from_spelling(elem.type_name, tn));
@@ -7929,7 +7929,7 @@ function param_decl_type(p: ast.ParamDecl, tparams: string[], tn: TypeNames): ty
 }
 
 function fn_param_decl_type(p: ast.ParamDecl, tparams: string[], tn: TypeNames): typeinfo.Type {
-  if (p.type_name != "fn" && p.type_name != "fn[]" || p.fn_ret.len() == 0) {
+  if (!parser.is_fn_contract_tag(p.type_name) || p.fn_ret.len() == 0) {
     return t_unknown("opaque fn param");
   }
   return declared_callable_type(p.type_name, p.fn_ret, p.fn_param_types, tparams, tn);
@@ -7945,7 +7945,7 @@ function (s: Scope) resolve_param(p: ast.ParamDecl): typeinfo.Type {
   return s.resolve_type(p.type_name);
 }
 
-// The parser retains callable signatures beside coarse fn/fn[] tags. All
+// The parser retains callable signatures beside coarse fn/fn[]/[fn] tags. All
 // declaration sites consume that same contract. A recorded result distinguishes
 // a genuine empty parameter list from an opaque tag with no signature at all.
 function declared_callable_type(name: string, ret: string, params: string, tparams: string[], tn: TypeNames): typeinfo.Type {
@@ -7960,6 +7960,9 @@ function declared_callable_type(name: string, ret: string, params: string, tpara
   var ft: typeinfo.Type = t_func_own(pts, powns, type_from_name_erasing_tparams(ret, tparams, tn));
   if (name == "fn[]") {
     return t_array(ft);
+  }
+  if (name == "[fn]") {
+    return t_view(ft);
   }
   return ft;
 }
@@ -9327,33 +9330,53 @@ function must_consume_diags(fn: parser.FuncDecl, s: Scope, structs: parser.Struc
 // and every `?`, whose failure edge is a return of the lambda too (#9515).
 struct LambdaExits { types: typeinfo.Type[], bare: boolean }
 
-// lambda_exit_diags is native's return inference for an unannotated lambda:
-// its exits must agree on one type (E002), and a bare `return;` beside a value
-// return is E012. An exit whose type is not fully known, or an integer literal
-// that adapts to its context, constrains nothing here.
-function lambda_exit_diags(lm: ast.ExprLambda, lsc: Scope): util.Diag[] {
-  var out: util.Diag[] = [];
-  var exits: LambdaExits = lambda_exits(lm.body, lsc.with_ret_type(lambda_ret_type(lm, lsc)), LambdaExits { types: [], bare: false });
-  var have: boolean = false;
-  var unified: typeinfo.Type = t_unknown("no exit yet");
-  for t in exits.types {
+// Native's inferReturnType over those exits: the first known one, adopting a
+// sibling's arguments where it is a union written without them (`Ok(v)`), and
+// each exit that agrees with neither recorded as a conflict. An exit whose type
+// is not fully known, or an integer literal that adapts to its context,
+// constrains nothing here.
+struct ExitFold { ty: typeinfo.Type, have: boolean, clash_with: typeinfo.Type[], clash: typeinfo.Type[] }
+
+function fold_exits(types: typeinfo.Type[]): ExitFold {
+  var out: ExitFold = ExitFold { ty: t_unknown("no value exit"), have: false, clash_with: [], clash: [] };
+  for t in types {
     if (!exit_type_known(t)) {
       continue;
     }
-    if (!have) {
-      unified = t;
-      have = true;
+    if (!out.have) {
+      out = ExitFold { ...out, ty: t, have: true };
+    } else if (!exits_unify(out.ty, t)) {
+      out = ExitFold { ...out, clash_with: out.clash_with.append(out.ty), clash: out.clash.append(t) };
     } else {
-      if (!exits_unify(unified, t)) {
-        out = out.append(dg_at("E002", "cannot infer return type for \"\": conflicting return types " + type_label(unified) + " and " + type_label(t) + "; add an explicit return type", lm.line, lm.col));
-      } else {
-        if (!type_eq(unified, t)) {
-          unified = t;
+      if let typeinfo.TypeUnion(u) = out.ty {
+        if (u.args.len() == 0) {
+          out = ExitFold { ...out, ty: t };
         }
       }
     }
   }
-  if (have && exits.bare) {
+  return out;
+}
+
+// exit_result is the result a body that spells none settles to, by the same
+// inference lambda_exit_diags checks.
+pub function exit_result(body: ast.Stmt[], scope: Scope): typeinfo.Type {
+  return fold_exits(lambda_exits(body, scope, LambdaExits { types: [], bare: false }).types).ty;
+}
+
+// lambda_exit_diags is native's return inference for an unannotated lambda:
+// its exits must agree on one type (E002), and a bare `return;` beside a value
+// return is E012.
+function lambda_exit_diags(lm: ast.ExprLambda, lsc: Scope): util.Diag[] {
+  var out: util.Diag[] = [];
+  var exits: LambdaExits = lambda_exits(lm.body, lsc.with_ret_type(lambda_ret_type(lm, lsc)), LambdaExits { types: [], bare: false });
+  var fold: ExitFold = fold_exits(exits.types);
+  var i: i32 = 0;
+  while (i < fold.clash.len()) {
+    out = out.append(dg_at("E002", "cannot infer return type for \"\": conflicting return types " + type_label(fold.clash_with[i]) + " and " + type_label(fold.clash[i]) + "; add an explicit return type", lm.line, lm.col));
+    i = i + 1;
+  }
+  if (fold.have && exits.bare) {
     out = out.append(dg_at("E012", "function \"\" returns a value on some paths but not others; add an explicit return type", lm.line, lm.col));
   }
   return out;
@@ -9458,15 +9481,34 @@ function exit_type_known(t: typeinfo.Type): boolean {
 // Native's unifyReturnType: equal types, or one enum written with its
 // arguments and once without (a bare `None`).
 function exits_unify(a: typeinfo.Type, b: typeinfo.Type): boolean {
-  if (type_eq(a, b)) {
-    return true;
-  }
   if let typeinfo.TypeUnion(ua) = a {
     if let typeinfo.TypeUnion(ub) = b {
-      return ua.name == ub.name && (ua.args.len() == 0 || ub.args.len() == 0);
+      return ua.name == ub.name && (ua.args.len() == 0 || ub.args.len() == 0 || same_union_args(ua.args, ub.args));
     }
   }
-  return false;
+  return type_eq(a, b);
+}
+
+// type_eq compares unions by name alone, but an exit's union arguments are
+// part of the type it returns.
+function same_union_args(a: typeinfo.Type[], b: typeinfo.Type[]): boolean {
+  if (a.len() != b.len()) {
+    return false;
+  }
+  var i: i32 = 0;
+  while (i < a.len()) {
+    var same: boolean = type_eq(a[i], b[i]);
+    if let typeinfo.TypeUnion(ia) = a[i] {
+      if let typeinfo.TypeUnion(ib) = b[i] {
+        same = ia.name == ib.name && same_union_args(ia.args, ib.args);
+      }
+    }
+    if (!same) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
 }
 
 // lret_expr walks an expression looking for lambdas and, for each one
@@ -21536,6 +21578,17 @@ pub function expr_type(e: ast.Expr, s: Scope): typeinfo.Type {
 
 pub function scope_type(s: Scope, name: string): typeinfo.Type {
   return s.lookup(name);
+}
+
+// func_type_params is free function `name`'s type parameters in declared
+// order, the positions a written instantiation `name[A, B](…)` binds.
+pub function func_type_params(s: Scope, name: string): string[] {
+  return s.lookup_sig(name).all_type_params;
+}
+
+// spelled_type is the type a written spelling names in this scope.
+pub function spelled_type(s: Scope, spelling: string): typeinfo.Type {
+  return s.resolve_type(spelling);
 }
 
 // struct_sig is the declared signature of struct `name` in this scope's
