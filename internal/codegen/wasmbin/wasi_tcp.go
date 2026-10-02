@@ -465,15 +465,29 @@ func buildTcpConnectWithBody(idxs map[string]uint32) []byte {
 //
 // Signature: (conn: i32) → i32
 //
-// Returns a wasi:io/poll pollable for the connection's tcp-socket
-// (mem[conn+0]) via tcp-socket.subscribe — the handle std/async
-// multiplexes through wasm_poll for overlapped outbound fan-out.
+// Subscribe to readable data for an established TCP or UDP record. A
+// listener or pending connect uses the TCP socket's state-change pollable.
 func buildTcpPollableBody(idxs map[string]uint32) []byte {
-	subscribe := idxs["wasi_sockets_tcp_subscribe"]
 	var body []byte
-	body = inst.InstLocalGet(body, 0)     // $conn
-	body = memory.InstI32Load(body, 2, 0) // tcp-socket @ conn+0
-	body = inst.InstCall(body, subscribe) // → pollable handle
+	subscribe := func(kind int32, offset uint32, target uint32) {
+		body = inst.InstLocalGet(body, 0)
+		body = memory.InstI32Load(body, 2, 12)
+		body = inst.InstI32Const(body, kind)
+		body = numeric.InstI32Eq(body)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		body = inst.InstLocalGet(body, 0)
+		body = memory.InstI32Load(body, 2, offset)
+		body = inst.InstCall(body, target)
+		body = inst.InstReturn(body)
+		body = inst.InstEnd(body)
+	}
+	subscribe(1, 4, idxs["wasi_io_input_stream_subscribe"])
+	if udp, ok := idxs["wasi_sockets_udp_incoming_subscribe"]; ok {
+		subscribe(udpRecordStreams, 4, udp)
+	}
+	subscribe(0, 0, idxs["wasi_sockets_tcp_subscribe"])
+	subscribe(tcpRecordConnecting, 0, idxs["wasi_sockets_tcp_subscribe"])
+	body = inst.InstI32Const(body, -1)
 	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
 }
 

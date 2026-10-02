@@ -1682,9 +1682,6 @@ function ssa_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitStat
     return ssa_helper_call(ins, reg_of, s);
   }
   if (ssa_reg_call(ins, s)) {
-    if (util.str_has_prefix(ins.str, "__sem_release_") && ins.args.len() == 1 && !s.rc_free_debug) {
-      return ssa_release_nominal(ins, reg_of, lp, s);
-    }
     return ssa_store(reg_of, ins.result, "x0", ssa_x0_forget(ssa_reg_call_emit(ins, reg_of, s)));
   }
   let argc: i32 = ins.args.len();
@@ -1730,30 +1727,22 @@ function ssa_reg_call_emit(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState):
   return s.write("    bl __fn_" + asmcore.sanitize_label(ins.str) + ".r\n");
 }
 
-// ssa_release_nominal renders a record's or union's release
-// (`__sem_release_<T>`, ssarc.release_helper_name) the way ssa_rc_dec renders
-// an array's: a count above one is decremented in w5 and stored back, and
-// nothing is called, and neither is a null or a static box's negative count;
-// a count of one (the free) or zero (the underflow the helper reports) takes
-// the helper, which frees the children and the box. The helper answers 0,
-// and so do the inline arms where the result has a home.
-function ssa_release_nominal(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitState): asmcore.EmitState {
-  s = ssa_read(reg_of, ins.args[0], "x4", s);
-  let p: string = ssa_src(reg_of, ins.args[0], "x4");
-  let id: string = util.i32_to_string(ins.result);
-  let dec: string = lp + "rcreld" + id;
-  let kept: string = lp + "rcrelk" + id;
-  let done: string = lp + "rcrele" + id;
-  s = s.write("    cmp " + p + ", #16, lsl #12\n    blo " + kept + "\n");
-  s = s.write("    ldur w5, [" + p + ", #-8]\n    cmp w5, #1\n    bgt " + dec + "\n");
-  s = s.write("    tbnz w5, #31, " + kept + "\n");
-  s = ssa_reg_call_emit(ins, reg_of, s);
-  s = s.write("    b " + done + "\n" + dec + ":\n    sub w5, w5, #1\n    stur w5, [" + p + ", #-8]\n" + kept + ":\n");
-  if (reg_of[ins.result] != 0 - 1) {
-    s = s.write("    mov x0, #0\n");
+// Shared and static releases finish before allocating a frame. Keeping the
+// guard at the helper entry avoids repeating it at every call site; unique
+// and zero counts continue through the existing destructor/underflow path.
+function ssa_release_entry(r: irtables.LowerResult, lp: string, s: asmcore.EmitState): asmcore.EmitState {
+  if (s.rc_free_debug || !ircore.counted_release_body(r)) {
+    return s;
   }
-  s = s.write(done + ":\n");
-  return ssa_store(reg_of, ins.result, "x0", ssa_x0_forget(s));
+  let dec: string = lp + "release_dec";
+  let kept: string = lp + "release_kept";
+  let slow: string = lp + "release_slow";
+  s = s.write("    cmp x0, #16, lsl #12\n    blo " + kept + "\n");
+  s = s.write("    ldur w5, [x0, #-8]\n    cmp w5, #1\n    bgt " + dec + "\n");
+  s = s.write("    tbz w5, #31, " + slow + "\n");
+  s = s.write(kept + ":\n    mov x0, #0\n    ret\n");
+  s = s.write(dec + ":\n    sub w5, w5, #1\n    stur w5, [x0, #-8]\n    mov x0, #0\n    ret\n");
+  return s.write(slow + ":\n");
 }
 
 // ssa_mem_inst selects the production lift's memory kinds (ssa.fern 40..44)
@@ -2799,6 +2788,7 @@ function emit_ssa_function_arm64(lifted: ssa.SFunc, label_name: string, r: irtab
   let lp: string = ".Lssa_" + asmcore.sanitize_label(label_name) + "_";
   s = s.write("__fn_" + asmcore.sanitize_label(label_name) + ":\n    .cfi_startproc\n");
   s = s.write(ssa_entry_shim(f, asmcore.sanitize_label(label_name)));
+  s = ssa_release_entry(r, lp, s);
   s = s.write("    stp x29, x30, [sp, #-16]!\n    .cfi_def_cfa_offset 16\n    .cfi_offset x29, -16\n    .cfi_offset x30, -8\n    mov x29, sp\n    .cfi_def_cfa_register x29\n");
   let saved: i32[] = ssa_saved_regs(reg_of);
   let save: i32 = ssa_save_bytes(saved);
