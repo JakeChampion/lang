@@ -37,6 +37,52 @@ function (xs: [u8]) rest(): [u8] {
   return xs[1:];
 }
 
+function (xs: [u8]) choose[T](value: T): u8 {
+  return xs[xs.len() - 1];
+}
+
+function (xs: u8[]) choose[T](value: T): u8 {
+  return xs[0];
+}
+
+trait ByteOffset {
+  function offset(self: Self): i32;
+}
+
+impl ByteOffset for u8 {
+  function offset(self: u8): i32 {
+    return self as i32;
+  }
+}
+
+function (xs: u8[]) marked[T: ByteOffset](value: T): u8 {
+  return xs[xs.len() - 1 - value.offset()];
+}
+
+function (xs: [u8]) marked[T: ByteOffset](value: T): u8 {
+  return xs[value.offset()];
+}
+
+function identity[T: ByteOffset](values: T[]): T[] {
+  return values;
+}
+
+function (xs: u8[]) select[T: ByteOffset](values: T[]): u8 {
+  return xs[values[0].offset()];
+}
+
+function (xs: [u8]) select[T: ByteOffset](values: T[]): u8 {
+  return xs[xs.len() - 1 - values[0].offset()];
+}
+
+function (xs: string[]) echo[T](value: T): T {
+  return value;
+}
+
+function (xs: [string]) echo[T](value: T): T {
+  return value;
+}
+
 function main(): i32 {
   var a: i32[] = [3, 5, 7];
   var v: [i32] = a[:];
@@ -84,6 +130,18 @@ function main(): i32 {
   var pick_first = (v: i32[]): i32 => v.pick();
   if (pick_last(a[:]) != 7 || pick_first(a) != 3) {
     return 16;
+  }
+  if (owned.choose(1) != 97 as u8 || bytes.choose(1) != 122 as u8) {
+    return 17;
+  }
+  if (owned.marked(0 as u8) != 122 as u8 || bytes.marked(0 as u8) != 97 as u8) {
+    return 18;
+  }
+  if (text.echo("one").len() != 3 || words.echo("four").len() != 4) {
+    return 19;
+  }
+  if (owned.select(identity([0 as u8])) != 97 as u8 || bytes.select(identity([0 as u8])) != 122 as u8) {
+    return 20;
   }
   var rows: i32[][] = [[9, 11], [13, 15]];
   var row_view: [i32[]] = rows[:];
