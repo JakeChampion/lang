@@ -492,11 +492,6 @@ lane's floor is now the per-seed type-check cost itself.
 - Per-job setup (checkout, toolchain, `go test -c`) is 29 of the 328
   job-minutes of a suite, a mean of 28 s per job. Merging small jobs would
   not repay the longer critical path it creates.
-- `test-e2e-selfhost-x86_64-shard0` is 11 minutes because
-  `TestSelfHostAssumeEligibleByteIdenticalX86_64` is 503 s of it: 346 s in
-  the checked per-process route (83 driver processes, each paying a ~10 s
-  parse floor) and 123 s in emit-all. The per-process route is the thing
-  under test, so that cost is the guarantee's.
 - `test-units-x86_64` is bounded by three serial packages, `internal/ir`
   (392 s), `internal/ssa` (351 s) and `internal/printer` (349 s), which
   run concurrently with each other. None can take `t.Parallel`: `ir`'s
