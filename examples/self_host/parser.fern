@@ -11839,7 +11839,10 @@ function call_ret_type(funcs: MFns, name: string, args: ast.Expr[], env: MEnv): 
   if (fi < 0) {
     return "";
   }
-  var fd: FuncDecl = funcs.decls[fi];
+  return decl_call_ret_type(funcs, funcs.decls[fi], args, env);
+}
+
+function decl_call_ret_type(funcs: MFns, fd: FuncDecl, args: ast.Expr[], env: MEnv): string {
   // A generic whose type params were ALL erased — every one unbounded —
   // still carries them in its RETURN type: `pick2[T](keep: (T) => boolean):
   // T[]` reaches here with type_params empty and ret_type "T[]". Handing
@@ -12056,14 +12059,18 @@ pub function settle_int_tree(e: ast.Expr, tag: string): ast.Expr {
 // recv_method_ret_of is the declared return type of a receiver method call
 // `recv.m(args)` whose receiver type the walk knows. A generic receiver's
 // method returns its type variable, which names nothing concrete.
-function recv_method_ret_of(cfa: ast.ExprFieldAccess, env: MEnv, funcs: MFns): string {
+function recv_method_ret_of(cfa: ast.ExprFieldAccess, args: ast.Expr[], env: MEnv, funcs: MFns): string {
   var rvt: string = mono_infer(cfa.obj, env, funcs);
   if (rvt.len() == 0) {
     return "";
   }
   var concrete: i32 = concrete_array_method_at(funcs, rvt, cfa.field);
   if (concrete >= 0) {
-    return funcs.decls[concrete].ret_type;
+    var call_args: ast.Expr[] = [cfa.obj];
+    for arg in args {
+      call_args = call_args.append(arg);
+    }
+    return decl_call_ret_type(funcs, funcs.decls[concrete], call_args, env);
   }
   var mrt: string = assoc_ret_of(funcs.decls, rvt, cfa.field);
   if (mrt.len() == 0) {
@@ -12369,7 +12376,7 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
               }
             }
           }
-          var mrt: string = recv_method_ret_of(cfa, env, funcs);
+          var mrt: string = recv_method_ret_of(cfa, c.args, env, funcs);
           if (mrt.len() > 0) {
             return mrt;
           }
@@ -12549,7 +12556,25 @@ function mono_expr(e: ast.Expr, env: MEnv, funcs: MFns, ins: Insts): RExpr {
               for arg in nargs {
                 args = args.append(arg);
               }
-              return RExpr { rexpr: ast.ExprCall { ...c, callee: ast.ExprIdent { name: funcs.decls[concrete].name, line: fac.line, col: fac.col, ty: "" }, args: args }, rins: receiver.rins };
+              var name: string = funcs.decls[concrete].name;
+              var instances: Insts = receiver.rins;
+              if (funcs.decls[concrete].type_params.len() > 0) {
+                // Infer from the original arguments: a nested generic call
+                // already rewritten in nargs names a clone outside decls.
+                var raw: ast.Expr[] = [fac.obj];
+                for arg in c.args {
+                  raw = raw.append(arg);
+                }
+                var key: string = explicit_inst_key(funcs.decls[concrete], c.type_args);
+                if (key.len() == 0) {
+                  key = infer_inst(funcs.decls[concrete], raw, env, funcs);
+                }
+                if (key.len() > 0) {
+                  instances = instances.iadd(name, key);
+                  name = name + "__" + sanitize_key(key);
+                }
+              }
+              return RExpr { rexpr: ast.ExprCall { ...c, callee: ast.ExprIdent { name: name, line: fac.line, col: fac.col, ty: "" }, args: args }, rins: instances };
             }
           }
           // Value-receiver generic array method `recv.m(args)` —
@@ -13918,7 +13943,7 @@ pub function array_method_element(spelling: string): string {
 function is_concrete_array_method(fd: FuncDecl): boolean {
   var elem: string = array_method_element(fd.receiver_type);
   return fd.receiver_name.len() > 0 && elem.len() > 0
-    && type_str_vars(elem, []).len() == 0 && fd.all_type_params.len() == 0;
+    && type_str_vars(elem, []).len() == 0;
 }
 
 pub function concrete_array_method_name(receiver: string, method: string): string {
