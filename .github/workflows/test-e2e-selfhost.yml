@@ -599,3 +599,13 @@ jobs:
         env:
           FERN_CI_WEIGHT_GATE_STRICT: "0"
         run: scripts/ci-test-weights check shard-outcomes .github/selfhost-test-weights.txt
+      # The run's evidence in the log: the artifacts last a day and are not
+      # reachable from every network, the log is. Saved as a run's
+      # run.timings, this is a `refresh` input (docs/CI-WEIGHT-REFRESH.md).
+      - name: measured durations, this run's refresh input
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: |
+          echo "::group::measured durations (name, seconds: the slowest observation of each test; save as RUN_DIR/run.timings for scripts/ci-test-weights refresh)"
+          scripts/ci-test-weights merge shard-outcomes
+          echo "::endgroup::"

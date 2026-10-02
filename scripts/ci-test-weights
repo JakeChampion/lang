@@ -4,6 +4,7 @@
 # Usage:
 #   ci-test-weights extract JSONFILE...        # test2json JSON -> `name<TAB>seconds`
 #   ci-test-weights check TIMINGS_DIR WEIGHTS  # compare, report, annotate
+#   ci-test-weights merge TIMINGS_DIR          # one run's slowest observations, a refresh input
 #   ci-test-weights refresh WEIGHTS RUN_DIR RUN_DIR... # measured replacement
 #
 # WHY THIS EXISTS (#6823, second occurrence of #5914). The self-host shards are
@@ -61,8 +62,43 @@ OWN_JOB_FRACTION="${FERN_WEIGHT_OWN_JOB_FRACTION:-0.5}"
 SHARD_LOAD_FRACTION="${FERN_WEIGHT_SHARD_LOAD_FRACTION:-0.85}"
 
 usage() {
-  echo "usage: ci-test-weights extract JSONFILE... | ci-test-weights check TIMINGS_DIR WEIGHTS | ci-test-weights refresh WEIGHTS RUN_DIR RUN_DIR..." >&2
+  echo "usage: ci-test-weights extract JSONFILE... | ci-test-weights check TIMINGS_DIR WEIGHTS | ci-test-weights merge TIMINGS_DIR | ci-test-weights refresh WEIGHTS RUN_DIR RUN_DIR..." >&2
   exit 2
+}
+
+# merge prints one run's evidence as a single refresh input: the slowest
+# observation of each top-level test across the directory's *.timings files,
+# `name<TAB>seconds`, sorted. The verify job prints it into its log, so a run's
+# durations outlive the one-day artifact retention and reach a reader who can
+# see the log but not the artifact store; saved as RUN_DIR/run.timings, the
+# output is exactly what `refresh` reads for that run.
+merge() {
+  [ "$#" -eq 1 ] || usage
+  local dir="$1" file found=0
+  local -a files=()
+  for file in "$dir"/*.timings; do
+    [ -f "$file" ] || continue
+    files+=("$file")
+    found=1
+  done
+  if [ "$found" = 0 ]; then
+    echo "ci-test-weights: no timing files in $dir" >&2
+    return 1
+  fi
+  awk '
+    NF {
+      if (NF != 2 || $1 !~ /^Test[A-Za-z0-9_]+$/ || $2 !~ /^[0-9]+([.][0-9]+)?$/) {
+        print "ci-test-weights: invalid timing row in " FILENAME ": " $0 > "/dev/stderr"
+        failed = 1
+        exit 1
+      }
+      if (!($1 in slowest) || $2 + 0 > slowest[$1] + 0) slowest[$1] = $2
+    }
+    END {
+      if (failed) exit 1
+      for (name in slowest) printf "%s\t%s\n", name, slowest[name]
+    }
+  ' "${files[@]}" | LC_ALL=C sort
 }
 
 # Explicit maintenance, separate from the single-run advisory check. Each
@@ -315,6 +351,7 @@ shift || usage
 case "$cmd" in
   extract) extract "$@" ;;
   check) check "$@" ;;
+  merge) merge "$@" ;;
   refresh) refresh "$@" ;;
   *) usage ;;
 esac
