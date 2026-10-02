@@ -71,3 +71,41 @@ func lookupSig(wi WorldInterface, name string) WorldFunc {
 	}
 	return WorldFunc{}
 }
+
+// A type a `use` brings in from another interface classifies as what it is:
+// `outgoing-handler.handle` of the proxy world answers `result<own, error-code>`
+// with `error-code` declared in wasi:http/types, whose cases carry strings, so
+// the lowering needs realloc exactly as `future-incoming-response.get`, which
+// reads the same variant from inside the types interface, does. Before the
+// owner resolution the `use`d slot read as an opaque scalar and the lowering
+// dropped the realloc option the canonical ABI requires.
+func TestClassifyUsedTypeFromAnotherInterface(t *testing.T) {
+	w, err := DecodeWorld("proxy")
+	if err != nil {
+		t.Fatalf("DecodeWorld: %v", err)
+	}
+	want := map[[2]string]LowerKind{
+		{"wasi:http/outgoing-handler@0.2.0", "handle"}:                           KindMemRealloc,
+		{"wasi:http/types@0.2.0", "[method]future-incoming-response.get"}:        KindMemRealloc,
+		{"wasi:http/types@0.2.0", "[method]outgoing-request.set-method"}:         KindMem,
+		{"wasi:http/types@0.2.0", "[method]outgoing-request.set-authority"}:      KindMem,
+		{"wasi:http/types@0.2.0", "[method]request-options.set-connect-timeout"}: KindNoOpt,
+		{"wasi:http/types@0.2.0", "[method]incoming-response.status"}:            KindNoOpt,
+	}
+	seen := 0
+	for _, wi := range w.Interfaces() {
+		for _, f := range wi.FuncSigs {
+			k, ok := want[[2]string{wi.Name, f.Name}]
+			if !ok {
+				continue
+			}
+			seen++
+			if got := wi.Classify(f); got != k {
+				t.Errorf("%s %s classifies as %s, want %s", wi.Name, f.Name, got, k)
+			}
+		}
+	}
+	if seen != len(want) {
+		t.Fatalf("saw %d of %d functions in the proxy world", seen, len(want))
+	}
+}

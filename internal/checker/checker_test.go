@@ -3108,6 +3108,10 @@ func TestMissingReturnRejected(t *testing.T) {
 		`function sw(n: i32): i32 {
 			match (n) { 0 => { return 0; }, 1 => { return 1; }, _ => { let z = 2; } }
 		}`,
+		// an if on a literal false never takes its only arm
+		`function never(): i32 {
+			if (false) { return 1; }
+		}`,
 	} {
 		err := checkSource(t, src)
 		if err == nil {
@@ -3129,6 +3133,14 @@ func TestMissingReturnAcceptsDivergentForms(t *testing.T) {
 		// if/else both return
 		`function f(b: boolean): i32 {
 			if (b) { return 1; } else { return 2; }
+		}`,
+		// an if on a literal takes one arm: the one the fold leaves of a
+		// branch on the target
+		`function hosted(): i32 {
+			if (true) { return 1; }
+		}`,
+		`function dialled(): i32 {
+			if (false) { let z = 1; } else { return 2; }
 		}`,
 		// trailing return after a one-armed if
 		`function g(b: boolean): i32 {

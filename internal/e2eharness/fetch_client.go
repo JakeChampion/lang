@@ -265,6 +265,12 @@ func readRequest(c net.Conn) (head, body string, ok bool) {
 		if err != nil {
 			return "", "", false
 		}
+		// A TLS record (a handshake's first byte) is a client speaking
+		// `https` to this plain origin: close at once, so a host doing
+		// the handshake reports it instead of waiting for a server hello.
+		if buf[0] == 0x16 {
+			return "", "", false
+		}
 	}
 	sep := bytes.Index(buf, []byte("\r\n\r\n"))
 	head = string(buf[:sep])
@@ -465,6 +471,216 @@ function main(): i32 {
 `, port, closedPort)
 }
 
+// FetchHostedSource is FetchClientSource's twin for a `wasm32-wasi-http`
+// handler, where std/fetch sends through the host's outgoing-handler: the
+// handler answers `/run` with one line per case, the same lines the
+// program prints, for the cases the hosted route shares. It has no proxy
+// cases (the host dials, so the environment's proxy is the host's own),
+// no block-list cases (the host owns the network and its outbound policy
+// is the rule there, so a loopback upstream is reached), and no
+// `Connection: close` or interim-response cases (the host owns the
+// connection and steps over 1xx itself). The host's own refusals are
+// pinned where this client turns them into its errors: a response that
+// is not HTTP, one cut off before it ended, a connection refused, a TLS
+// handshake with an origin that speaks none, and a connection closed
+// before any response byte, which the host reports as its protocol error
+// (so the hosted route has no reset to retry on: `reset` and `resetpost`
+// answer alike).
+func FetchHostedSource(port, closedPort int) string {
+	return fmt.Sprintf(`import "std/fetch";
+import "std/http";
+import "std/platform";
+
+function base(): string {
+    return "http://127.0.0.1:%d";
+}
+
+function line(name: string, answer: Result[HttpResponse, fetch.FetchError]): string {
+    match (answer) {
+        Ok(resp) => {
+            let text: string = "<not utf-8>";
+            match (resp.body_text()) {
+                Some(s) => { text = s; },
+                None => {}
+            }
+            let fields: string = "";
+            let i: i32 = 0;
+            while (i < resp.headers.names.len()) {
+                fields = fields + " " + resp.headers.names[i] + "=" + resp.headers.values[i];
+                i = i + 1;
+            }
+            let trailers: string = "";
+            i = 0;
+            while (i < resp.trailers.names.len()) {
+                trailers = trailers + " " + resp.trailers.names[i] + "=" + resp.trailers.values[i];
+                i = i + 1;
+            }
+            return name + ": " + resp.status.to_string() + " [" + text + "] headers:" + fields + " trailers:" + trailers + "\n";
+        },
+        Err(e) => { return name + ": error " + e.message() + "\n"; }
+    }
+    return "";
+}
+
+function size(name: string, answer: Result[HttpResponse, fetch.FetchError]): string {
+    match (answer) {
+        Ok(resp) => { return name + ": " + resp.body_bytes().len().to_string() + "\n"; },
+        Err(e) => { return name + ": error " + e.message() + "\n"; }
+    }
+    return "";
+}
+
+function handle(req: HttpRequest, plat: Platform): HttpResponse {
+    let small: http.HttpLimits = http.http_limits();
+    let raw: u8[] = "raw".bytes();
+    let out: string = "";
+    out = out + line("plain", plat.http(fetch.get(base() + "/plain")));
+    out = out + line("chunked", plat.http(fetch.get(base() + "/chunked")));
+    out = out + line("nobody", plat.http(fetch.get(base() + "/nobody")));
+    out = out + line("head", plat.http(fetch.request("HEAD", base() + "/plain")));
+    out = out + line("echo", plat.http(fetch.request("POST", base() + "/echo?q=1").with_header("X-Trace", "t1").with_text("payload")));
+    out = out + line("put", plat.http(fetch.request("PUT", base() + "/echo").with_bytes(raw)));
+    out = out + line("numeric", plat.http(fetch.get("http://2130706433/")));
+    out = out + line("octal", plat.http(fetch.get("http://0177.0.0.1/")));
+    out = out + line("short", plat.http(fetch.get("http://127.1/")));
+    match (plat.http(fetch.get(base() + "/binary"))) {
+        Ok(resp) => {
+            let bs: u8[] = resp.body_bytes();
+            let text: string = "<not utf-8>";
+            match (resp.body_text()) {
+                Some(s) => { text = s; },
+                None => {}
+            }
+            out = out + "binary: " + bs.len().to_string() + " " + (bs[0] as i32).to_string() + " " + (bs[3] as i32).to_string() + " " + text + "\n";
+        },
+        Err(e) => { out = out + "binary: error " + e.message() + "\n"; }
+    }
+    out = out + size("big", plat.http(fetch.get(base() + "/big")));
+    out = out + line("limit", plat.http(fetch.get(base() + "/big").with_limits(http.HttpLimits { ...small, body: 1024 })));
+    out = out + line("garbage", plat.http(fetch.get(base() + "/garbage")));
+    out = out + line("truncated", plat.http(fetch.get(base() + "/truncated")));
+    out = out + line("gzip", plat.http(fetch.get(base() + "/gzip")));
+    out = out + line("gzipbodychunked", plat.http(fetch.get(base() + "/gzip-body-chunked")));
+    out = out + line("gzipx", plat.http(fetch.get(base() + "/x-gzip")));
+    out = out + size("gzipfloor", plat.http(fetch.get(base() + "/gzip-floor")));
+    out = out + size("gzipwide", plat.http(fetch.get(base() + "/gzip-wide")));
+    out = out + line("gziphead", plat.http(fetch.request("HEAD", base() + "/gzip")));
+    out = out + line("gzipbad", plat.http(fetch.get(base() + "/gzip-bad")));
+    out = out + line("gzipbomb", plat.http(fetch.get(base() + "/gzip-bomb")));
+    out = out + line("gzipcap", plat.http(fetch.get(base() + "/gzip-bomb").with_limits(http.HttpLimits { ...small, body: 4096 })));
+    out = out + line("gzipdouble", plat.http(fetch.get(base() + "/gzip-double")));
+    out = out + line("gzipdeep", plat.http(fetch.get(base() + "/gzip-double").with_decoding(fetch.Decoding { depth: 2, ratio: 100 })));
+    out = out + line("gzipidentity", plat.http(fetch.get(base() + "/gzip").with_header("Accept-Encoding", "identity")));
+    out = out + line("gzipoff", plat.http(fetch.get(base() + "/gzip").with_decoding(fetch.Decoding { depth: 0, ratio: 100 })));
+    out = out + line("br", plat.http(fetch.get(base() + "/br")));
+    out = out + line("noencoding", plat.http(fetch.request("POST", base() + "/echo").with_header("Accept-Encoding", "identity").with_text("x")));
+    out = out + line("refused", plat.http(fetch.get("http://127.0.0.1:%d/")));
+    out = out + line("badurl", plat.http(fetch.get("not a url")));
+    out = out + line("noscheme", plat.http(fetch.get("ftp://127.0.0.1/")));
+    out = out + line("tls", plat.http(fetch.get("https://127.0.0.1:%d/plain")));
+    out = out + line("crlfurl", plat.http(fetch.get(base() + "/a\r\nX-Injected: 1\r\n\r\n")));
+    out = out + line("crlfvalue", plat.http(fetch.get(base() + "/plain").with_header("X-A", "1\r\nX-Injected: 1")));
+    out = out + line("badname", plat.http(fetch.get(base() + "/plain").with_header("X A", "1")));
+    out = out + line("badmethod", plat.http(fetch.request("GE T", base() + "/plain")));
+    out = out + line("filebody", plat.http(fetch.request("POST", base() + "/echo").with_body(BodyFile("/etc/hostname"))));
+    out = out + line("redir", plat.http(fetch.get(base() + "/redir")));
+    out = out + line("noredir", plat.http(fetch.get(base() + "/redir").with_redirects(0)));
+    out = out + line("chain10", plat.http(fetch.get(base() + "/chain/10")));
+    out = out + line("chain11", plat.http(fetch.get(base() + "/chain/11")));
+    out = out + line("nolocation", plat.http(fetch.get(base() + "/nolocation")));
+    out = out + line("badlocation", plat.http(fetch.get(base() + "/badlocation")));
+    out = out + line("relative", plat.http(fetch.get(base() + "/rel/dir/relative")));
+    out = out + line("post303", plat.http(fetch.request("POST", base() + "/303").with_text("payload")));
+    out = out + line("post307", plat.http(fetch.request("POST", base() + "/307").with_text("payload")));
+    out = out + line("xorigin", plat.http(fetch.get(base() + "/xorigin").with_header("Authorization", "Bearer t").with_header("Cookie", "a=1").with_header("X-Trace", "kept")));
+    out = out + line("sameorigin", plat.http(fetch.get(base() + "/sameorigin").with_header("Authorization", "Bearer t").with_header("Cookie", "a=1")));
+    out = out + line("reset", plat.http(fetch.get(base() + "/reset")));
+    out = out + line("resetpost", plat.http(fetch.request("POST", base() + "/reset-post").with_text("once")));
+    return http.ok(out);
+}
+`, port, closedPort, port)
+}
+
+// FetchHostedWant is what FetchHostedSource answers `/run` with.
+const FetchHostedWant = `plain: 200 [hello] headers: content-length=5 x-up=1 trailers:
+chunked: 200 [abcde] headers: trailers:
+nobody: 204 [] headers: content-length=99 trailers:
+head: 200 [] headers: content-length=5 x-up=1 trailers:
+echo: 201 [ECHO] headers: content-length=ECHOLEN trailers:
+put: 201 [PUT] headers: content-length=PUTLEN trailers:
+numeric: error invalid URL: an IPv4 address that is not four decimal octets
+octal: error invalid URL: an IPv4 address that is not four decimal octets
+short: error invalid URL: an IPv4 address that is not four decimal octets
+binary: 4 255 97 <not utf-8>
+big: 312000
+limit: error response body past its limit
+garbage: error protocol: the host read a malformed response
+truncated: error protocol: the response ended before it was complete
+gzip: 200 [hello gzip] headers: x-up=1 trailers:
+gzipbodychunked: 200 [hello gzip] headers: trailers:
+gzipx: 200 [hello gzip] headers: trailers:
+gzipfloor: 60000
+gzipwide: 100000
+gziphead: 200 [] headers: content-encoding=gzip content-length=GZLEN x-up=1 trailers:
+gzipbad: error decode: a gzip body that does not decode: unsupported compressed data: not gzip
+gzipbomb: error decode: a body of 200000 bytes from ONEBOMB encoded, past the 65536 allowed
+gzipcap: error response body past its limit
+gzipdouble: error decode: content codings past the depth of 1
+gzipdeep: 200 [twice] headers: trailers:
+gzipidentity: 200 [<not utf-8>] headers: content-encoding=gzip content-length=GZLEN x-up=1 trailers:
+gzipoff: 200 [<not utf-8>] headers: content-encoding=gzip content-length=GZLEN x-up=1 trailers:
+br: 200 [raw] headers: content-encoding=br content-length=3 trailers:
+noencoding: 201 [NOENC] headers: content-length=NOENCLEN trailers:
+refused: error connect: Connection refused
+badurl: error invalid URL: no scheme in not a url
+noscheme: error invalid URL: scheme ftp is not http
+tls: error TLS: a protocol error
+crlfurl: error invalid URL: a path or query that cannot be written on a request line
+crlfvalue: error invalid request: a header value has a byte that cannot be written
+badname: error invalid request: a header name is not a token
+badmethod: error invalid request: the method is not a token
+filebody: error invalid request: a file body cannot be sent
+redir: 200 [hello] headers: content-length=5 x-up=1 trailers:
+noredir: 302 [] headers: location=/plain content-length=0 trailers:
+chain10: 200 [end] headers: content-length=3 trailers:
+chain11: error redirect: more than 10 redirects
+nolocation: error redirect: a 302 without a Location
+badlocation: error redirect: a Location that is not a URL
+relative: 200 [/rel/plain?q=2] headers: content-length=14 trailers:
+post303: 201 [POST303] headers: content-length=POST303LEN trailers:
+post307: 201 [POST307] headers: content-length=POST307LEN trailers:
+xorigin: 201 [XORIGIN] headers: content-length=XORIGINLEN trailers:
+sameorigin: 201 [SAMEORIGIN] headers: content-length=SAMEORIGINLEN trailers:
+reset: error protocol: the host read a malformed response
+resetpost: error protocol: the host read a malformed response
+`
+
+// CheckFetchHosted compares the hosted handler's answer against
+// FetchHostedWant with the upstream's ports and the echo lines filled in.
+func CheckFetchHosted(t *testing.T, up *FetchUpstream, body string) {
+	t.Helper()
+	host := "127.0.0.1:" + strconv.Itoa(up.Port)
+	host2 := "127.0.0.1:" + strconv.Itoa(up.Port2)
+	want := FetchHostedWant
+	want = strings.ReplaceAll(want, "GZLEN", strconv.Itoa(len(gzipped([]byte("hello gzip")))))
+	want = strings.ReplaceAll(want, "ONEBOMB", strconv.Itoa(len(gzipped(make([]byte, 200000)))))
+	for name, line := range map[string]string{
+		"ECHO":       echoLine("POST", "/echo?q=1", host, "payload", "t1", "", "", "gzip"),
+		"PUT":        echoLine("PUT", "/echo", host, "raw", "", "", "", "gzip"),
+		"POST303":    echoLine("GET", "/echo", host, "", "", "", "", "gzip"),
+		"POST307":    echoLine("POST", "/echo", host, "payload", "", "", "", "gzip"),
+		"XORIGIN":    echoLine("GET", "/echo", host2, "", "kept", "", "", "gzip"),
+		"SAMEORIGIN": echoLine("GET", "/echo", host, "", "", "Bearer t", "a=1", "gzip"),
+		"NOENC":      echoLine("POST", "/echo", host, "x", "", "", "", "identity"),
+	} {
+		want = strings.ReplaceAll(want, "["+name+"]", "["+line+"]")
+		want = strings.ReplaceAll(want, name+"LEN", strconv.Itoa(len(line)))
+	}
+	if body != want {
+		t.Fatalf("--- got ---\n%s--- want ---\n%s", body, want)
+	}
+}
+
 // FetchClientWant is what FetchClientSource prints.
 const FetchClientWant = `plain: 200 [hello] headers: content-length=5 x-up=1 trailers:
 chunked: 200 [abcde] headers: trailers: x-t=tv
@@ -511,7 +727,7 @@ noencoding: 201 [NOENC] headers: content-length=NOENCLEN trailers:
 refused: error connect: Connection refused
 badurl: error invalid URL: no scheme in not a url
 noscheme: error invalid URL: scheme ftp is not http
-tls: error TLS is not supported
+tls: error TLS: https is not supported on this target
 crlfurl: error invalid URL: a path or query that cannot be written on a request line
 crlfvalue: error invalid request: a header value has a byte that cannot be written
 badname: error invalid request: a header name is not a token

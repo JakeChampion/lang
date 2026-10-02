@@ -347,6 +347,103 @@ pub function fold_module(mod: parser.Module): parser.Module {
   return parser.Module { ...mod, funcs: funcs, top_stmts: fold_block(mod.top_stmts) };
 }
 
+// =================== LITERAL BRANCHES ====================
+
+// prune_literal_branches drops the arm an `if` on a literal condition
+// never takes, the shape a branch on `target_os()` / `target_arch()` has
+// once the calls are the target's name: the live arm stays under
+// `if (true)`, which keeps its block's scope and is what ir drops at emit.
+// Run ahead of the capability gates and the shake, so both see the
+// module as built for this target: an arm that reaches what one target
+// lacks compiles for the other.
+pub function prune_literal_branches(mod: parser.Module): parser.Module {
+  let funcs: parser.FuncDecl[] = [];
+  for fd in mod.funcs {
+    funcs = funcs.append(parser.FuncDecl { ...fd, body: prune_block(fd.body) });
+  }
+  return parser.Module { ...mod, funcs: funcs, top_stmts: prune_block(mod.top_stmts) };
+}
+
+function prune_block(body: ast.Stmt[]): ast.Stmt[] {
+  let (out, a) = astwalk.map_stmts_acc(body, 0, prune_stmt, keep_expr);
+  return out;
+}
+
+// keep_expr claims the closure an if-expression desugars to (ORIGIN_IF_EXPR):
+// its if-chain is the value, which the typed lowering reads with both arms,
+// so no arm of the chain is dropped; the statements inside the arms are
+// pruned as any block. Every other expression is walked.
+function keep_expr(e: ast.Expr, a: i32): (ast.Expr, i32, boolean) {
+  match (e) {
+    ast.ExprLambda(lm) => {
+      if (lm.origin == parser.ORIGIN_IF_EXPR) {
+        return (ast.ExprLambda { ...lm, body: prune_arm(lm.body) }, a, true);
+      }
+      return (e, a, false);
+    },
+    _ => {
+      return (e, a, false);
+    }
+  }
+  return (e, a, false);
+}
+
+// prune_arm prunes one arm of an if-expression: its leading statements as a
+// block, its last — the arm's value, an `else if` chain included — with the
+// chain's conditions folded and every arm kept.
+function prune_arm(body: ast.Stmt[]): ast.Stmt[] {
+  if (body.len() == 0) {
+    return body;
+  }
+  let leading: ast.Stmt[] = [];
+  let i: i32 = 0;
+  while (i < body.len() - 1) {
+    leading = leading.append(body[i]);
+    i = i + 1;
+  }
+  let out: ast.Stmt[] = prune_block(leading);
+  let last: ast.Stmt = body[body.len() - 1];
+  match (last) {
+    ast.StmtIf(f) => {
+      return out.append(ast.StmtIf { ...f, cond: fold_expr(f.cond), then_body: prune_arm(f.then_body), else_body: prune_arm(f.else_body) });
+    },
+    _ => {
+      for st in prune_block([last]) {
+        out = out.append(st);
+      }
+      return out;
+    }
+  }
+  return out;
+}
+
+// prune_stmt claims every `if`: its condition folded, the arm not taken
+// dropped, and the arms it keeps pruned in turn.
+function prune_stmt(s: ast.Stmt, a: i32): (ast.Stmt, i32, boolean) {
+  match (s) {
+    ast.StmtIf(f) => {
+      return (pruned_if(f), a, true);
+    },
+    _ => {
+      return (s, a, false);
+    }
+  }
+  return (s, a, false);
+}
+
+function pruned_if(f: ast.StmtIf): ast.Stmt {
+  let cond: ast.Expr = fold_expr(f.cond);
+  let lit: OptBool = as_bool_lit(cond);
+  let none: ast.Stmt[] = [];
+  if (!lit.ok) {
+    return ast.StmtIf { ...f, cond: cond, then_body: prune_block(f.then_body), else_body: prune_block(f.else_body) };
+  }
+  if (lit.v) {
+    return ast.StmtIf { ...f, cond: cond, then_body: prune_block(f.then_body), else_body: none, else_chained: false };
+  }
+  return ast.StmtIf { ...f, cond: lit_bool(true), then_body: prune_block(f.else_body), else_body: none, else_chained: false };
+}
+
 // =================== TARGET NAME ====================
 
 // The two halves of the compile target's name as string literals:

@@ -8359,7 +8359,16 @@ func stmtExits(s ast.Stmt) bool {
 	case *ast.Block:
 		return funcBodyExits(x)
 	case *ast.If:
-		// A one-armed if can fall through; both arms must exit.
+		// An if on a literal takes one arm: `if (true)` exits when its then
+		// arm does (what a pruned branch on the target leaves), `if (false)`
+		// when its else arm does. Otherwise both arms must exit; a one-armed
+		// if can fall through.
+		if lit, ok := x.Cond.(*ast.BoolLit); ok {
+			if lit.Value {
+				return stmtExits(x.Then)
+			}
+			return x.Else != nil && stmtExits(x.Else)
+		}
 		return x.Else != nil && stmtExits(x.Then) && stmtExits(x.Else)
 	case *ast.Match:
 		// Exhaustiveness is checked separately; here every arm must exit

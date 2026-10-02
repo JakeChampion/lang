@@ -50,22 +50,12 @@ pub function layout_option(): i32 {
   return 3;
 }
 
+// A record's type is a struct and an enum's is a union (semsource's schema
+// walk reads each off that declaration), so any other type is in neither
+// table.
 pub function find(records: Records, ty: typeinfo.Type): i32 {
   if let typeinfo.TypeStruct(s) = ty {
     return find_struct(records, s.name, ty);
-  }
-  return find_in(records.list, ty);
-}
-
-// find_in is find over a list with no index yet: the table while a function's
-// schema is still being collected.
-pub function find_in(list: Record[], ty: typeinfo.Type): i32 {
-  let i: i32 = 0;
-  while (i < list.len()) {
-    if (semtypes.equal(list[i].ty, ty)) {
-      return i;
-    }
-    i = i + 1;
   }
   return 0 - 1;
 }
@@ -94,13 +84,6 @@ pub function name_of(t: typeinfo.Type): string {
 pub function find_enum(enums: Enum[], ty: typeinfo.Type): i32 {
   if let typeinfo.TypeUnion(u) = ty {
     return find_union(enums, u.name, ty);
-  }
-  let i: i32 = 0;
-  while (i < enums.len()) {
-    if (semtypes.equal(enums[i].ty, ty)) {
-      return i;
-    }
-    i = i + 1;
   }
   return 0 - 1;
 }
