@@ -147,13 +147,13 @@ func emitFlagsOk(body []byte, allocRc1, bitsLocal, boxLocal uint32) []byte {
 // NOT report is a parent's flags on an inherited stdio handle, which no
 // preview-2 interface exposes.
 func buildReaderFlagsBodyP2(idxs map[string]uint32) []byte {
-	var body []byte
+	body := emitClosedErrP2(nil, idxs, 0, 1, 3, 2)
 	body = inst.InstI32Const(body, fernFlagRead)
 	return finishFlagsP2(body, idxs["__fern_alloc_rc1"])
 }
 
 func buildWriterFlagsBodyP2(idxs map[string]uint32) []byte {
-	var body []byte
+	body := emitClosedErrP2(nil, idxs, 0, 1, 3, 2)
 	body = inst.InstI32Const(body, fernFlagWrite)
 	// | (append ? 4 : 0), from the box.
 	body = inst.InstLocalGet(body, 0)
@@ -169,10 +169,11 @@ func buildWriterFlagsBodyP2(idxs map[string]uint32) []byte {
 
 // finishFlagsP2 takes a stack holding the flag word and builds Ok of it.
 //
-// Locals after the param: 1: $bits  2: $box
+// Locals after the param: 1: $bits (the errno on a closed handle)
+// 2: $box  3: $err_ptr
 func finishFlagsP2(body []byte, allocRc1 uint32) []byte {
 	body = inst.InstLocalSet(body, 1)
 	body = emitFlagsOk(body, allocRc1, 1, 2)
-	locals := inst.PutLocalsOneGroup(nil, 2, encode.ValtypeI32)
+	locals := inst.PutLocalsOneGroup(nil, 3, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
 }

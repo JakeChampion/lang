@@ -131,6 +131,7 @@ func buildWriterSeekBodyP2(idxs map[string]uint32) []byte {
 	// The whence is checked before the handle is: `lseek(pipe, 0, 5)` is
 	// EINVAL where `lseek(pipe, 0, 0)` is ESPIPE.
 	body = emitWhenceGuardP2(body, idxs, 2, 3, 5, 6)
+	body = emitClosedErrP2(body, idxs, 0, 3, 5, 6)
 	// A handle with no descriptor has no offset to move: ESPIPE, the
 	// same refusal lseek gives on a pipe.
 	body = inst.InstLocalGet(body, 0)
