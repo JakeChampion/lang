@@ -1577,7 +1577,10 @@ function as_cast_allowed(src: typeinfo.Type, tgt: typeinfo.Type): boolean {
 // `+`-joined trait bound(s) when parameter i's declared type is exactly a
 // bounded type parameter (`x: T` where `T: Tr`), else "". Drives the E021
 // generic-bound conformance check at call sites (#4842) — see call_diags.
-pub struct FuncSig { name: string, param_types: typeinfo.Type[], param_own: boolean[], ret_type: typeinfo.Type, all_type_params: string[], type_params: string[], param_bound: string[], type_bounds: string[], ret_type_name: string, param_type_names: string[], param_names: string[], is_const: boolean, receiver: string }
+// `typevars` is every parameter spelling that is a type VARIABLE of the
+// callee, each once in parameter order, as gc_is_typevar_name recognises
+// them: what the call binding and the literal settling read.
+pub struct FuncSig { name: string, param_types: typeinfo.Type[], param_own: boolean[], ret_type: typeinfo.Type, all_type_params: string[], type_params: string[], param_bound: string[], type_bounds: string[], ret_type_name: string, param_type_names: string[], param_names: string[], is_const: boolean, receiver: string, typevars: string[] }
 
 // StructSig: nominal handle for a declared struct. Parallel
 // arrays describe the field list in declaration order: each
@@ -1799,28 +1802,99 @@ pub struct StructTable {
   index: util.NameIndex,
   // The module's declared `resource` names, which a handle type names.
   resources: util.NameIndex,
+  // The module's spellings resolved once, carried here so a scope's
+  // TypeNames reads them (Scope.type_names).
+  spellings: SpellMemo,
+}
+
+// SpellMemo is the type spellings a module writes, each resolved once against
+// its declarations: `types[i]` is what `names.names[i]` resolves to. A
+// spelling resolves to the same type wherever the module writes it, since
+// type_from_spelling reads only the declared names, so the resolution of the
+// few hundred spellings a module repeats hundreds of thousands of times is
+// read off this rather than parsed again.
+pub struct SpellMemo { names: util.NameIndex, types: typeinfo.Type[] }
+
+function no_spellings(): SpellMemo {
+  var none: string[] = [];
+  return SpellMemo { names: util.name_index(none), types: [] };
 }
 
 // TypeNames is the declared struct and union names a type spelling resolves
 // against. A scope reads it off its tables (Scope.type_names); a caller holding
-// bare name lists indexes them once with type_names.
+// bare name lists indexes them once with type_names. `spellings` is the
+// module's memo, empty for a caller holding bare lists.
 pub struct TypeNames {
   structs: util.NameIndex,
   unions: util.NameIndex,
   resources: util.NameIndex,
+  spellings: SpellMemo,
 }
 
 function type_names(struct_names: string[], union_names: string[], resource_names: string[]): TypeNames {
-  return TypeNames { structs: util.name_index(struct_names), unions: util.name_index(union_names), resources: util.name_index(resource_names) };
+  return TypeNames { structs: util.name_index(struct_names), unions: util.name_index(union_names), resources: util.name_index(resource_names), spellings: no_spellings() };
+}
+
+// with_spellings is `tn` with the module's spellings resolved against it.
+function with_spellings(tn: TypeNames, mod: parser.Module): TypeNames {
+  var names: util.NameIndex = tn.spellings.names;
+  var types: typeinfo.Type[] = [];
+  for sp in module_spellings(mod) {
+    if (sp.len() == 0 || names.has(sp)) {
+      continue;
+    }
+    names = names.added(sp);
+    types = types.append(type_from_spelling(sp, tn));
+  }
+  return TypeNames { ...tn, spellings: SpellMemo { names: names, types: types } };
+}
+
+// module_spellings is the type spellings the module's declarations and the
+// statements of its bodies write: parameters, returns, fields and `var`
+// annotations. The walk stays on the statement spine, which is where nearly
+// every spelling a body reads is written; a spelling it does not reach (a
+// lambda's parameters, a `zero`) is parsed where it is read, as every
+// spelling was.
+function module_spellings(mod: parser.Module): string[] {
+  var out: string[] = [];
+  for fd in mod.funcs {
+    for p in fd.params {
+      out = out.append(p.type_name);
+    }
+    out = out.append(fd.ret_type);
+    for st in fd.body {
+      out = astwalk.fold_stmt_spine(st, out, spelling_of_stmt);
+    }
+  }
+  for sd in mod.structs {
+    for f in sd.fields {
+      out = out.append(f.type_name);
+    }
+  }
+  for st in mod.top_stmts {
+    out = astwalk.fold_stmt_spine(st, out, spelling_of_stmt);
+  }
+  return out;
+}
+
+function spelling_of_stmt(st: ast.Stmt, own acc: string[]): string[] {
+  match (st) {
+    ast.StmtVar(v) => {
+      return acc.append(v.type_name);
+    },
+    _ => {
+      return acc;
+    }
+  }
 }
 
 // struct_table indexes `structs` by name.
-function struct_table(structs: StructSig[], resources: string[]): StructTable {
+function struct_table(structs: StructSig[], resources: string[], spellings: SpellMemo): StructTable {
   var names: string[] = [];
   for sd in structs {
     names = names.append(sd.name);
   }
-  return StructTable { structs: structs, index: util.name_index(names), resources: util.name_index(resources) };
+  return StructTable { structs: structs, index: util.name_index(names), resources: util.name_index(resources), spellings: spellings };
 }
 
 function resource_names(mod: parser.Module): string[] {
@@ -1990,7 +2064,7 @@ function new_scope(): Scope {
   var ss: StructSig[] = [];
   var us: UnionSig[] = [];
   var ms: MethodSig[] = [];
-  return Scope { names: ns, types: ts, sigs: sig_table(fs), structs: struct_table(ss, []), unions: union_table(us), methods: method_table(ms), imports: [], loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: [], trait_reqs: [], tparams: [], tbounds: [], tpvars: [], tpvar_tps: [] };
+  return Scope { names: ns, types: ts, sigs: sig_table(fs), structs: struct_table(ss, [], no_spellings()), unions: union_table(us), methods: method_table(ms), imports: [], loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: [], trait_reqs: [], tparams: [], tbounds: [], tpvars: [], tpvar_tps: [] };
 }
 
 // new_scope_full is a module's scope. The impl table rides on every one:
@@ -2021,7 +2095,7 @@ function (s: Scope) with_tparams(tparams: string[], tbounds: string[]): Scope {
 // a cast — so a type parameter cannot be captured by a same-named declared type
 // at one of them.
 function (s: Scope) type_names(): TypeNames {
-  return TypeNames { structs: s.structs.index, unions: s.unions.index, resources: s.structs.resources };
+  return TypeNames { structs: s.structs.index, unions: s.unions.index, resources: s.structs.resources, spellings: s.structs.spellings };
 }
 
 function (s: Scope) resolve_type(name: string): typeinfo.Type {
@@ -2463,7 +2537,7 @@ function (s: Scope) lookup_sig(name: string): FuncSig {
   var empty: typeinfo.Type[] = [];
   var nob: string[] = [];
   var non: string[] = [];
-  return FuncSig { receiver: "", name: "", param_types: empty, param_own: [], ret_type: t_unknown("undefined function"), all_type_params: [], type_params: [], param_bound: nob, type_bounds: [], ret_type_name: "", param_type_names: non, param_names: [], is_const: false };
+  return FuncSig { receiver: "", name: "", param_types: empty, param_own: [], ret_type: t_unknown("undefined function"), all_type_params: [], type_params: [], param_bound: nob, type_bounds: [], ret_type_name: "", param_type_names: non, param_names: [], is_const: false, typevars: [] };
 }
 
 // tp_bound_for returns the `+`-joined trait bound(s) on the type parameter
@@ -4231,16 +4305,7 @@ function settle_shared_literal_typevars(c: ast.ExprCall, nargs: ast.Expr[], s: S
   }
   var sig: FuncSig = s.lookup_sig(name);
   var out: ast.Expr[] = nargs;
-  // Type variables are recognised as the call binding does (gc_is_typevar_name):
-  // a module-loaded callee keeps its parameters' spellings but not always its
-  // type_params list.
-  var tvs: string[] = [];
-  for ptn in sig.param_type_names {
-    if (util.index_of_str(tvs, ptn) < 0 && gc_is_typevar_name(ptn, sig.type_params, s.type_names())) {
-      tvs = tvs.append(ptn);
-    }
-  }
-  for tp in tvs {
+  for tp in sig.typevars {
     let (wty, wok) = shared_literal_typevar_width(sig, c, tp, s);
     if (wok) {
       var tag: string = type_to_irtag(wty);
@@ -6877,7 +6942,13 @@ function collect_func_sigs(funcs: parser.FuncDecl[], tn: TypeNames): FuncSig[] {
       pbnd = pbnd.append(tp_bound_for(param.type_name, fd.type_params, fd.bound_traits));
       ptn = ptn.append(parser.fn_tag_spelling(param.type_name, param.fn_ret, param.fn_param_types));
     }
-    out = out.append(FuncSig { receiver: fd.receiver_type, name: fd.name, param_types: pts, param_own: typeinfo.own_flags(powns, pts), ret_type: func_ret_type(fd, tn), all_type_params: fd.all_type_params, type_params: fd.type_params, param_bound: pbnd, type_bounds: fd.bound_traits, ret_type_name: parser.fn_tag_spelling(fd.ret_type, fd.ret_fn_ret, fd.ret_fn_param_types), param_type_names: ptn, param_names: param_decl_names(fd.params), is_const: fd.is_const });
+    var tvs: string[] = [];
+    for spelling in ptn {
+      if (util.index_of_str(tvs, spelling) < 0 && gc_is_typevar_name(spelling, fd.type_params, tn)) {
+        tvs = tvs.append(spelling);
+      }
+    }
+    out = out.append(FuncSig { receiver: fd.receiver_type, name: fd.name, param_types: pts, param_own: typeinfo.own_flags(powns, pts), ret_type: func_ret_type(fd, tn), all_type_params: fd.all_type_params, type_params: fd.type_params, param_bound: pbnd, type_bounds: fd.bound_traits, ret_type_name: parser.fn_tag_spelling(fd.ret_type, fd.ret_fn_ret, fd.ret_fn_param_types), param_type_names: ptn, param_names: param_decl_names(fd.params), is_const: fd.is_const, typevars: tvs });
     i = i + 1;
   }
   return out;
@@ -7215,8 +7286,17 @@ function union_sig_names(unions: UnionSig[]): string[] {
   return out;
 }
 
-// Parse once, then resolve every constituent through the same structured ladder.
+// Parse once, then resolve every constituent through the same structured
+// ladder; a spelling the module's memo holds is read off it instead.
 function type_from_spelling(name: string, tn: TypeNames): typeinfo.Type {
+  // Read through a local: the stage0 pin's pre-codegen gate types a read
+  // through a struct-typed field by the field's name across every struct
+  // (#11066, fixed in asmcore here, not yet in the pin).
+  var memo: SpellMemo = tn.spellings;
+  var at: i32 = memo.names.find(name);
+  if (at >= 0) {
+    return memo.types[at];
+  }
   return type_from_ref_names(parser.parse_type_ref(name), tn);
 }
 
@@ -20882,10 +20962,10 @@ function check_module_pass(mod: parser.Module, fda_diags: util.Diag[], focus: st
     well_typed = false;
   }
   var union_names: string[] = union_sig_names(unions);
-  var tn: TypeNames = type_names(struct_names, union_names, rnames);
+  var tn: TypeNames = with_spellings(type_names(struct_names, union_names, rnames), mod);
   var sigs: FuncSig[] = collect_func_sigs(mod.funcs, tn);
   var st: SigTable = sig_table(sigs);
-  var stt: StructTable = struct_table(structs, rnames);
+  var stt: StructTable = struct_table(structs, rnames, tn.spellings);
   var ut: UnionTable = union_table(unions);
   var methods: MethodTable = method_table(collect_method_sigs(mod.funcs, tn));
   var body_diags: util.Diag[] = [];
@@ -21319,11 +21399,11 @@ function module_env(mod: parser.Module): ModuleEnv {
     unions = unions.append(enum_union_sig(ed));
   }
   var union_names: string[] = union_sig_names(unions);
-  var tn: TypeNames = type_names(struct_names, union_names, rnames);
+  var tn: TypeNames = with_spellings(type_names(struct_names, union_names, rnames), mod);
   var sigs: FuncSig[] = collect_func_sigs(mod.funcs, tn);
   return ModuleEnv {
     sigs: sig_table(sigs),
-    structs: struct_table(structs, rnames),
+    structs: struct_table(structs, rnames, tn.spellings),
     unions: union_table(unions),
     methods: method_table(collect_method_sigs(mod.funcs, tn)),
     imports: import_paths_of(mod),
@@ -22475,10 +22555,10 @@ function build_module_tables(mod: parser.Module): ModuleTables {
     unions = unions.append(enum_union_sig(ed));
   }
   var union_names: string[] = union_sig_names(unions);
-  var tn: TypeNames = type_names(struct_names, union_names, rnames);
+  var tn: TypeNames = with_spellings(type_names(struct_names, union_names, rnames), mod);
   var sigs: FuncSig[] = collect_func_sigs(mod.funcs, tn);
   var methods: MethodTable = method_table(collect_method_sigs(mod.funcs, tn));
-  return ModuleTables { structs: struct_table(structs, rnames), unions: union_table(unions), sigs: sig_table(sigs), methods: methods, imports: import_paths_of(mod), impls: assoc_func_impls(mod.impls, mod.funcs), trait_reqs: mod.trait_reqs };
+  return ModuleTables { structs: struct_table(structs, rnames, tn.spellings), unions: union_table(unions), sigs: sig_table(sigs), methods: methods, imports: import_paths_of(mod), impls: assoc_func_impls(mod.impls, mod.funcs), trait_reqs: mod.trait_reqs };
 }
 
 // settle_generic_lit_fields settles at i64 each bare integer literal whose
@@ -24444,7 +24524,7 @@ function gcall_of(e: ast.Expr, want: typeinfo.Type, s: Scope): (ast.Expr, typein
     if (parser.is_value_block(c)) {
       return (e, want, false);
     }
-    return (e, want, gcall_sig(c, s).ret_type_name.len() > 0 && gcall_tvars(gcall_sig(c, s), s).len() > 0);
+    return (e, want, gcall_sig(c, s).ret_type_name.len() > 0 && gcall_sig(c, s).typevars.len() > 0);
   }
   return (e, want, false);
 }
@@ -24489,19 +24569,7 @@ function gcall_sig(c: ast.ExprCall, s: Scope): FuncSig {
       return s.lookup_sig(cid.name);
     }
   }
-  return FuncSig { receiver: "", name: "", param_types: [], param_own: [], ret_type: t_unknown("no callee"), all_type_params: [], type_params: [], param_bound: [], type_bounds: [], ret_type_name: "", param_type_names: [], param_names: [], is_const: false };
-}
-
-// gcall_tvars: the type variables a signature declares some parameter AS —
-// recognised as the call binding does (gc_is_typevar_name).
-function gcall_tvars(sig: FuncSig, s: Scope): string[] {
-  var tvs: string[] = [];
-  for ptn in sig.param_type_names {
-    if (util.index_of_str(tvs, ptn) < 0 && gc_is_typevar_name(ptn, sig.type_params, s.type_names())) {
-      tvs = tvs.append(ptn);
-    }
-  }
-  return tvs;
+  return FuncSig { receiver: "", name: "", param_types: [], param_own: [], ret_type: t_unknown("no callee"), all_type_params: [], type_params: [], param_bound: [], type_bounds: [], ret_type_name: "", param_type_names: [], param_names: [], is_const: false, typevars: [] };
 }
 
 // lit_bound_typevar: every argument declared as `tp` is an untyped integer
@@ -24543,7 +24611,7 @@ function gcall_open_tvars(e: ast.Expr, s: Scope): (ast.Expr, string[]) {
   if let ast.ExprCall(c) = ce {
     var sig: FuncSig = gcall_sig(c, s);
     var ret: parser.TypeRef = parser.parse_type_ref(sig.ret_type_name);
-    for tp in gcall_tvars(sig, s) {
+    for tp in sig.typevars {
       if (type_ref_names_any(ret, [tp]) && lit_bound_typevar(sig, c, tp, s)) {
         tvs = tvs.append(tp);
       }
@@ -24562,7 +24630,7 @@ function gcall_demand(e: ast.Expr, want: typeinfo.Type, s: Scope, st: LitInfer):
   }
   if let ast.ExprCall(c) = ce {
     var sig: FuncSig = gcall_sig(c, s);
-    let (bn, bt) = gc_bind_param(parser.parse_type_ref(sig.ret_type_name), lifted, gcall_tvars(sig, s), s.type_names(), [], []);
+    let (bn, bt) = gc_bind_param(parser.parse_type_ref(sig.ret_type_name), lifted, sig.typevars, s.type_names(), [], []);
     var out: LitInfer = st;
     var i: i32 = 0;
     while (i < bn.len()) {
