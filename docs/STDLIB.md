@@ -1644,8 +1644,9 @@ answer is `Result[HttpResponse, FetchError]`.
   that cannot be written as one line, or a file body; `what` names the
   rule, never the value), `Dns(DnsError)`, `Connect(NetError)`, `Tls`,
   `Timeout(Phase)` with `Phase` one of `Connecting` / `Inactivity` /
-  `Total`, `Protocol(what)` (a response the parser refuses, or interim
-  1xx responses past one `limits.header_bytes` between them),
+  `Total`, `Protocol(what)` (a response the parser refuses, interim
+  1xx responses past one `limits.header_bytes` between them, or a 101
+  the client did not ask for),
   `Io(NetError)`, `BodyLimit` (a body past `limits.body`), and
   `Redirect(what)` / `Cancelled`, which no path produces yet.
   `(e).message()`.
