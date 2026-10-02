@@ -26,7 +26,10 @@
 // `Connection: close`. A `wasm32-wasi-http` build dials nothing: the
 // request goes to the host's wasi:http/outgoing-handler (std/wasi_http),
 // which resolves the name, connects and speaks TLS, and everything above
-// the transport is the same.
+// the transport is the same. Where the client dials, it reaches the
+// network only through `Transport`: `send` and `plat.http` use the
+// machine's (`sockets()`), and `send_on(tr, req, policy)` any other, which
+// is how std/sim_fetch runs this client in virtual time.
 // The client asks for `gzip` unless the caller wrote an `Accept-Encoding`
 // of their own, and undoes the coding it asked for, so a caller sees the
 // bytes the origin meant: the body cap bounds what the decoder may
@@ -331,7 +334,7 @@ struct __Target { host: string, port: i32, target: string, host_field: string, p
 // cannot be: through the proxy the environment names for it, as the
 // absolute-form target a proxy forwards (RFC 9112 §3.2.2), else straight
 // to the origin.
-function __target_of(raw: string, policy: __Policy): Result[__Target, FetchError] {
+function __target_of(raw: string, policy: Policy): Result[__Target, FetchError] {
   let u: Url = __http_url(raw)?;
   let port: i32 = __effective_port(u);
   let tls: boolean = u.scheme == "https";
@@ -512,12 +515,86 @@ function __asks_gzip(req: Request): boolean {
   return req.decoding.depth > 0 && !__holds(req.headers.names, "accept-encoding");
 }
 
+// `Transport` — the I/O the dialled route does, behind one seam: the
+// clock its bounds are measured on, name lookup, connecting, and reading
+// and writing a connection by the number `connect` handed out. `Sockets`
+// is the machine's; std/sim_fetch scripts one in virtual time. Every
+// policy the client applies (the block list, the bounds, retrying a
+// reset, following a redirect, decoding) stays above the seam, so a
+// scripted transport exercises exactly what a real one would.
+//
+// `read` answers within `wait_ms`: a chunk, an empty chunk at the end of
+// the stream, or `None` when the wait passed with nothing. `write` answers
+// the bytes taken, or a negated errno.
+pub trait Transport {
+  function now_ns(self: Self): i64;
+  function lookup(self: Self, host: string, judged: boolean): Result[Lookup, dns.DnsError];
+  function connect(self: Self, addrs: net.IpAddr[], port: i32, timeout_ms: i32): Result[i32, net.NetError];
+  function write(self: Self, conn: i32, data: string): i32;
+  function read(self: Self, conn: i32, max: i32, wait_ms: i64): Option[u8[]];
+  function close(self: Self, conn: i32): i32;
+}
+
+// `Lookup` — a name's addresses: `dial` the ones to connect to, and, when
+// the lookup was asked to be `judged`, `named` the ones the network
+// returned with `judged[i]` the address `named[i]` carries (itself, or
+// the IPv4 one under a NAT64 prefix), which the block list judges.
+pub struct Lookup { dial: net.IpAddr[], named: net.IpAddr[], judged: net.IpAddr[] }
+
+// `Sockets` — the machine's transport: the system resolver, raced
+// connects (`dns.connect_race`), and TCP sockets read under a deadline.
+pub struct Sockets {  }
+
+// `sockets()` — the machine's transport.
+pub function sockets(): Sockets {
+  return Sockets {  };
+}
+
+impl Transport for Sockets {
+  function now_ns(self: Sockets): i64 {
+    return monotonic_ns();
+  }
+  function lookup(self: Sockets, host: string, judged: boolean): Result[Lookup, dns.DnsError] {
+    let none: net.IpAddr[] = [];
+    if (!judged) {
+      let found: net.IpAddr[] = dns.resolve(host)?;
+      return Ok(Lookup { dial: found, named: none, judged: none });
+    }
+    let plain: net.IpAddr[] = dns.resolve_plain(host)?;
+    let carried: net.IpAddr[] = [];
+    for a in plain {
+      match (dns.nat64_carried(a)) {
+        Some(v4) => {
+          carried = carried.append(v4);
+        },
+        None => {
+          carried = carried.append(a);
+        }
+      }
+    }
+    return Ok(Lookup { dial: dns.synthesized(plain), named: plain, judged: carried });
+  }
+  function connect(self: Sockets, addrs: net.IpAddr[], port: i32, timeout_ms: i32): Result[i32, net.NetError] {
+    return dns.connect_race(addrs, port, dns.DialOptions { ...dns.dial_options(), timeout_ms: timeout_ms });
+  }
+  function write(self: Sockets, conn: i32, data: string): i32 {
+    return tcp_send(conn, data);
+  }
+  function read(self: Sockets, conn: i32, max: i32, wait_ms: i64): Option[u8[]] {
+    return tcp.tcp_recv_deadline(conn, max, time.duration_millis(wait_ms));
+  }
+  function close(self: Sockets, conn: i32): i32 {
+    tcp_close(conn);
+    return 0;
+  }
+}
+
 // `send(req)` — the request sent and its response read, as the module
 // comment says: a 3xx with a `Location` is followed up to
 // `req.redirects` hops, all under the one total bound. Blocking: every
 // connection is closed before it answers.
 pub function send(req: Request): Result[HttpResponse, FetchError] {
-  return __send_as(req, __Policy { public_only: false, proxies: __proxies() });
+  return send_on(sockets(), req, Policy { public_only: false, proxies: __proxies() });
 }
 
 // `__proxies()` — the environment's proxy configuration where this
@@ -532,18 +609,23 @@ function __proxies(): ProxyEnv {
   }
 }
 
-// `__Policy` — what a route may reach: `public_only` refuses a host that
+// `Policy` — what a route may reach: `public_only` refuses a host that
 // resolves to an address `net.is_global` does not admit; `proxies` is the
-// environment's proxy configuration, read once per `send`.
-struct __Policy { public_only: boolean, proxies: ProxyEnv }
+// proxy configuration, which `send` and `plat.http` read from the
+// environment once per request.
+pub struct Policy { public_only: boolean, proxies: ProxyEnv }
 
-// `__send_as(req, policy)` — `send` under a route's policy.
-function __send_as(req: Request, policy: __Policy): Result[HttpResponse, FetchError] {
-  let started: i64 = monotonic_ns();
+// `send_on(tr, req, policy)` — `send` over the transport `tr` under
+// `policy`: every connection, read and clock reading of the dialled route
+// is `tr`'s, so a scripted transport (std/sim_fetch) runs the whole client
+// in virtual time. A wasi-http build hands the request to the host and
+// never asks `tr`.
+pub function send_on[T: Transport](tr: T, req: Request, policy: Policy): Result[HttpResponse, FetchError] {
+  let started: i64 = tr.now_ns();
   let cur: Request = req;
   let hops: i32 = 0;
   while (true) {
-    let resp: HttpResponse = __send_once(cur, started, policy)?;
+    let resp: HttpResponse = __send_once(tr, cur, started, policy)?;
     if (!__redirects(resp.status) || req.redirects == 0) {
       return Ok(resp);
     }
@@ -663,13 +745,13 @@ function __effective_port(u: Url): i32 {
   return 80;
 }
 
-// `__send_once(req, started, policy)` — one hop: the request validated,
+// `__send_once(tr, req, started, policy)` — one hop: the request validated,
 // then sent by the transport the target has. A wasi-http build has no
 // sockets and hands the request to the host's client; every other
 // target dials the origin itself. The branch is on the target's name, a
 // literal by the time anything is emitted, so each build carries one
 // transport.
-function __send_once(req: Request, started: i64, policy: __Policy): Result[HttpResponse, FetchError] {
+function __send_once[T: Transport](tr: T, req: Request, started: i64, policy: Policy): Result[HttpResponse, FetchError] {
   let t: __Target = __target_of(req.url, policy)?;
   match (__request_ok(req)) {
     Ok(_) => {},
@@ -680,11 +762,11 @@ function __send_once(req: Request, started: i64, policy: __Policy): Result[HttpR
   if (target_os() == "wasi-http") {
     return __send_hosted(req, t);
   } else {
-    return __send_dialled(req, t, started, policy);
+    return __send_dialled(tr, req, t, started, policy);
   }
 }
 
-// `__send_dialled(req, t, started, policy)` — the request on a
+// `__send_dialled(tr, req, t, started, policy)` — the request on a
 // connection this client opens: its origin resolved and checked when the
 // route reaches global addresses only and a proxy carries the request
 // (the proxy's address is the deployment's choice and goes unchecked),
@@ -692,14 +774,14 @@ function __send_once(req: Request, started: i64, policy: __Policy): Result[HttpR
 // reset the connection before any response byte and the method is
 // idempotent (RFC 9110 §9.2.2): a reset before an answer says nothing
 // happened.
-function __send_dialled(req: Request, t: __Target, started: i64, policy: __Policy): Result[HttpResponse, FetchError] {
-  __origin_checked(t, policy)?;
+function __send_dialled[T: Transport](tr: T, req: Request, t: __Target, started: i64, policy: Policy): Result[HttpResponse, FetchError] {
+  __origin_checked(tr, t, policy)?;
   let guard: boolean = policy.public_only && t.direct;
-  let first: Result[HttpResponse, FetchError] = __attempt(req, t, started, guard);
+  let first: Result[HttpResponse, FetchError] = __attempt(tr, req, t, started, guard);
   match (first) {
     Err(e) => {
       if (__reset(e) && http.http_method_idempotent(req.method)) {
-        return __attempt(req, t, started, guard);
+        return __attempt(tr, req, t, started, guard);
       }
       return Err(e);
     },
@@ -710,13 +792,13 @@ function __send_dialled(req: Request, t: __Target, started: i64, policy: __Polic
   return first;
 }
 
-// `__origin_checked(t, policy)` — on the route that reaches global
+// `__origin_checked(tr, t, policy)` — on the route that reaches global
 // addresses only, the origin a proxy will reach for `t` resolved and
 // checked, as `__connect` checks a host it dials itself; nothing when
 // the origin is dialled directly or the route has no such rule.
-function __origin_checked(t: __Target, policy: __Policy): Result[void, FetchError] {
+function __origin_checked[T: Transport](tr: T, t: __Target, policy: Policy): Result[void, FetchError] {
   if (policy.public_only && !t.direct) {
-    let checked: net.IpAddr[] = __resolve(t.origin, true)?;
+    let checked: net.IpAddr[] = __resolve(tr, t.origin, true)?;
   }
   return Ok(());
 }
@@ -736,34 +818,33 @@ function __reset(e: FetchError): boolean {
   return false;
 }
 
-// `__attempt(req, t, started, guard)` — one connection: opened (only to
-// a global address when `guard`), the request written, the response
+// `__attempt(tr, req, t, started, guard)` — one connection: opened (only
+// to a global address when `guard`), the request written, the response
 // read, and closed.
-function __attempt(req: Request, t: __Target, started: i64, guard: boolean): Result[HttpResponse, FetchError] {
-  let sock: i32 = __connect(t, req.timeouts, guard)?;
+function __attempt[T: Transport](tr: T, req: Request, t: __Target, started: i64, guard: boolean): Result[HttpResponse, FetchError] {
+  let conn: i32 = __connect(tr, t, req.timeouts, guard)?;
   let body: u8[] = req.body.bytes();
-  let sent: Result[void, FetchError] = __send_all(sock, __head(req, t, body.len()) + string_from_bytes_unchecked(body));
+  let sent: Result[void, FetchError] = __send_all(tr, conn, __head(req, t, body.len()) + string_from_bytes_unchecked(body));
   match (sent) {
     Ok(_) => {},
     Err(e) => {
-      tcp_close(sock);
+      tr.close(conn);
       return Err(e);
     }
   }
-  let answer: Result[HttpResponse, FetchError] = __read_response(sock, req, started);
-  tcp_close(sock);
+  let answer: Result[HttpResponse, FetchError] = __read_response(tr, conn, req, started);
+  tr.close(conn);
   return answer;
 }
 
-// `__connect(t, timeouts, guard)` — a connection to the host, resolved
-// and raced under the connect bound; with `guard`, refused before the
-// race when any address resolved is not a global one.
-function __connect(t: __Target, timeouts: Timeouts, guard: boolean): Result[i32, FetchError] {
-  let addrs: net.IpAddr[] = __resolve(t.host, guard)?;
-  let opts: dns.DialOptions = dns.DialOptions { ...dns.dial_options(), timeout_ms: __connect_bound(timeouts) };
-  match (dns.connect_race(addrs, t.port, opts)) {
-    Ok(sock) => {
-      return Ok(sock);
+// `__connect(tr, t, timeouts, guard)` — a connection to the host,
+// resolved and raced under the connect bound; with `guard`, refused
+// before the race when any address resolved is not a global one.
+function __connect[T: Transport](tr: T, t: __Target, timeouts: Timeouts, guard: boolean): Result[i32, FetchError] {
+  let addrs: net.IpAddr[] = __resolve(tr, t.host, guard)?;
+  match (tr.connect(addrs, t.port, __connect_bound(timeouts))) {
+    Ok(conn) => {
+      return Ok(conn);
     },
     Err(e) => {
       if (e.eq(net.TimedOut)) {
@@ -783,24 +864,16 @@ function __connect_bound(timeouts: Timeouts): i32 {
   return timeouts.connect_ms;
 }
 
-// `__resolve(host, guard)` — the addresses of `host` as this machine
-// reaches them; with `guard`, refused as `Blocked` when any of them, as
-// the network names it before NAT64 synthesis, is not a global address.
-function __resolve(host: string, guard: boolean): Result[net.IpAddr[], FetchError] {
-  if (!guard) {
-    match (dns.resolve(host)) {
-      Ok(found) => {
-        return Ok(found);
-      },
-      Err(e) => {
-        return Err(Dns(e));
+// `__resolve(tr, host, guard)` — the addresses of `host` as `tr` reaches
+// them; with `guard`, refused as `Blocked` when any of them, as the
+// network names it before NAT64 synthesis, is not a global address.
+function __resolve[T: Transport](tr: T, host: string, guard: boolean): Result[net.IpAddr[], FetchError] {
+  match (tr.lookup(host, guard)) {
+    Ok(found) => {
+      if (guard) {
+        __global_only(found)?;
       }
-    }
-  }
-  match (dns.resolve_plain(host)) {
-    Ok(plain) => {
-      __global_only(plain)?;
-      return Ok(dns.synthesized(plain));
+      return Ok(found.dial);
     },
     Err(e) => {
       return Err(Dns(e));
@@ -809,21 +882,16 @@ function __resolve(host: string, guard: boolean): Result[net.IpAddr[], FetchErro
   return Err(Dns(dns.NoData));
 }
 
-// `__global_only(addrs)` — the refusal naming the first of `addrs` that
-// is not a global address, when there is one; an address under a NAT64
-// prefix the nameservers reveal is judged by the address it carries.
-function __global_only(addrs: net.IpAddr[]): Result[void, FetchError] {
-  for a in addrs {
-    let seen: net.IpAddr = a;
-    match (dns.nat64_carried(a)) {
-      Some(v4) => {
-        seen = v4;
-      },
-      None => {}
+// `__global_only(found)` — the refusal naming the first address the
+// network named that is not a global one, judged by the address it
+// carries when it sits under a NAT64 prefix.
+function __global_only(found: Lookup): Result[void, FetchError] {
+  let i: i32 = 0;
+  while (i < found.named.len()) {
+    if (!found.judged[i].is_global()) {
+      return Err(Blocked(found.named[i].to_string() + " is not a global address"));
     }
-    if (!seen.is_global()) {
-      return Err(Blocked(a.to_string() + " is not a global address"));
-    }
+    i = i + 1;
   }
   return Ok(());
 }
@@ -1005,13 +1073,13 @@ function __host_late_code(code: i32): FetchError {
   return Host("error code " + int.int_to_string(code));
 }
 
-// `__send_all(sock, payload)` — every byte of `payload` written, or the
-// failure as the kernel reported it. The payload is handed to `tcp_send`
-// as the bytes it holds; a body is not text, and never read as one.
-function __send_all(sock: i32, payload: string): Result[void, FetchError] {
+// `__send_all(tr, conn, payload)` — every byte of `payload` written, or
+// the failure as the transport reported it. The payload is handed over as
+// the bytes it holds; a body is not text, and never read as one.
+function __send_all[T: Transport](tr: T, conn: i32, payload: string): Result[void, FetchError] {
   let at: i32 = 0;
   while (at < payload.len()) {
-    let n: i32 = tcp_send(sock, slice_unchecked(payload, at, payload.len()).to_owned());
+    let n: i32 = tr.write(conn, slice_unchecked(payload, at, payload.len()).to_owned());
     if (n < 0) {
       return Err(Io(net.error_from_errno(0 - n)));
     }
@@ -1023,13 +1091,13 @@ function __send_all(sock: i32, payload: string): Result[void, FetchError] {
   return Ok(());
 }
 
-// `__read_response(sock, req, started)` — the response read under the
+// `__read_response(tr, conn, req, started)` — the response read under the
 // inactivity and total bounds, interim 1xx responses stepped over (within
 // one header budget for all of them, so a peer cannot stream `100
 // Continue` for as long as the timeout allows), and handed back with its
 // hop-by-hop fields stripped. The buffer is uniquely owned and grows in
 // place, so the read stays linear in the response.
-function __read_response(sock: i32, req: Request, started: i64): Result[HttpResponse, FetchError] {
+function __read_response[T: Transport](tr: T, conn: i32, req: Request, started: i64): Result[HttpResponse, FetchError] {
   let buf: u8[] = [];
   let from: i32 = 0;
   let eof: boolean = false;
@@ -1052,7 +1120,7 @@ function __read_response(sock: i32, req: Request, started: i64): Result[HttpResp
         return Err(__rejected(code));
       }
     }
-    let chunk: u8[] = __recv_bounded(sock, req.timeouts, started)?;
+    let chunk: u8[] = __recv_bounded(tr, conn, req.timeouts, started)?;
     if (chunk.len() == 0) {
       eof = true;
     } else {
@@ -1207,12 +1275,12 @@ function __interim(status: i32): boolean {
   return status >= 100 && status < 200;
 }
 
-// `__recv_bounded(sock, timeouts, started)` — the next chunk of the
+// `__recv_bounded(tr, conn, timeouts, started)` — the next chunk of the
 // response within the tighter of the inactivity bound and what is left
 // of the total, or the bound that passed.
-function __recv_bounded(sock: i32, timeouts: Timeouts, started: i64): Result[u8[], FetchError] {
+function __recv_bounded[T: Transport](tr: T, conn: i32, timeouts: Timeouts, started: i64): Result[u8[], FetchError] {
   let ns_per_ms: i64 = 1000000;
-  let left_ms: i64 = timeouts.total_ms as i64 - (monotonic_ns() - started) / ns_per_ms;
+  let left_ms: i64 = timeouts.total_ms as i64 - (tr.now_ns() - started) / ns_per_ms;
   if (left_ms <= 0) {
     return Err(Timeout(Total));
   }
@@ -1222,7 +1290,7 @@ function __recv_bounded(sock: i32, timeouts: Timeouts, started: i64): Result[u8[
     wait_ms = left_ms;
     bound = Total;
   }
-  match (tcp.tcp_recv_deadline(sock, 65536, time.duration_millis(wait_ms))) {
+  match (tr.read(conn, 65536, wait_ms)) {
     Some(chunk) => {
       return Ok(chunk);
     },
@@ -1263,7 +1331,7 @@ function __rejected(code: i32): FetchError {
 // what a real request gives for a host that is not listening.
 pub function (plat: Platform) http(req: Request): Result[HttpResponse, FetchError] {
   if (!plat.is_mock()) {
-    return __send_as(req, __Policy { public_only: true, proxies: __proxies() });
+    return send_on(sockets(), req, Policy { public_only: true, proxies: __proxies() });
   }
   let summary: string = req.method + " " + req.url;
   plat.record("http", summary);
