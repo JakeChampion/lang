@@ -41,7 +41,7 @@ struct Rows {
   n1: string[],
   n2: string[],
   keep: boolean[],
-  grows: ssaunits.GrowRow[],
+  grows: ssaunits.GrowTable,
   // Each row's unit plan, kept so a second lowering can take the plan back
   // rather than computing it again for a row the ownership inference did not
   // move (#9969).
@@ -168,7 +168,7 @@ function plan_of(p: semsource.Produced): ssaunits.Plan {
 
 // produced_body lowers a planned function. Every plan is made before any body
 // is lowered, because a caller's bracket reads its callees' plans (`grows`).
-function produced_body(p: semsource.Produced, plan: ssaunits.Plan, structs: irtables.StructTab, grows: ssaunits.GrowRow[]): irtables.LowerResult {
+function produced_body(p: semsource.Produced, plan: ssaunits.Plan, structs: irtables.StructTab, grows: ssaunits.GrowTable): irtables.LowerResult {
   if (!plan.ok) {
     return declined(plan.why);
   }
@@ -202,7 +202,7 @@ function produced_at(built: semsource.Built, mod: parser.Module, i: i32): semsou
 // No rows to take back: what the FIRST lowering of a module is handed, and
 // what makes `rows_of` compute every plan and every body.
 function no_reuse(): Rows {
-  return Rows { body: [], n1: [], n2: [], keep: [], grows: [], plans: [], why: [] };
+  return Rows { body: [], n1: [], n2: [], keep: [], grows: ssaunits.no_grows(), plans: [], why: [] };
 }
 
 // Whether row `i` can be taken from `prev` unchanged. `changed` is
