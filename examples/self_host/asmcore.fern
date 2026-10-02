@@ -4985,6 +4985,11 @@ pub function find_array_method_func(field: string, s: EmitState): string {
   return "";
 }
 
+// field_type_tag_in is the type of `field` of the declared struct
+// `struct_name`, unknown when either is undeclared. A field of a declared
+// struct type keeps its name (struct_local_tag), as a local of that type
+// does, so a read through it resolves within that struct rather than by
+// the first-match field scan.
 pub function field_type_tag_in(struct_name: string, field: string, s: EmitState): Ty {
   var di: i32 = 0;
   while (di < s.struct_decls.decls.len()) {
@@ -4993,7 +4998,7 @@ pub function field_type_tag_in(struct_name: string, field: string, s: EmitState)
       var fi: i32 = 0;
       while (fi < sd.fields.len()) {
         if (sd.fields[fi].name == field) {
-          return ty_from_name(sd.fields[fi].type_name);
+          return struct_local_tag(sd.fields[fi].type_name, s);
         }
         fi = fi + 1;
       }
