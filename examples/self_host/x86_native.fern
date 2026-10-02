@@ -1431,8 +1431,7 @@ function x86_label_buckets(): i32 {
 function x86_name_bucket(name: string): i32 {
   let h: i32 = 0;
   let i: i32 = 0;
-  let n: i32 = name.len();
-  while (i < n) {
+  while (i < name.len()) {
     h = h * 131 + name[i] as i32 & 8388607;
     i = i + 1;
   }
@@ -6695,8 +6694,7 @@ struct LineMemo { keys: string[], head: i32[], next: i32[], lines: GasLine[] }
 function x86_line_bucket(s: str): i32 {
   let h: i32 = 0;
   let i: i32 = 0;
-  let n: i32 = s.len();
-  while (i < n) {
+  while (i < s.len()) {
     h = h * 131 + s[i] as i32 & 8388607;
     i = i + 1;
   }
