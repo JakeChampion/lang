@@ -2815,6 +2815,7 @@ var CallDirectAliases = mergeCodegenAliases(map[string]string{
 	"read_file":        "__fern_read_file",
 	"read_file_bytes":  "__fern_read_file_bytes",
 	"write_file":       "__fern_write_file",
+	"write_file_bytes": "__fern_write_file_bytes",
 	"open_reader":      "__fern_open_reader",
 	"open_writer":      "__fern_open_writer",
 	"open_appender":    "__fern_open_appender",

@@ -231,6 +231,7 @@ var providedSigs = map[string]providedSig{
 	"__fern_wasm_timer_pollable":       {1, rWord},
 	"__fern_write":                     {2, rVoid},
 	"__fern_write_file":                {4, rWord},
+	"__fern_write_file_bytes":          {3, rWord},
 	"__fern_writer_close":              {1, rWord},
 	"__fern_writer_write":              {3, rWord},
 	"__fern_writer_truncate":           {2, rWord},
@@ -474,6 +475,7 @@ var providedSigs = map[string]providedSig{
 	"wasm_timer_pollable":              {-1, rWord},
 	"write":                            {-1, rVoid},
 	"write_file":                       {-1, rWord},
+	"write_file_bytes":                 {-1, rWord},
 	"write_file_exec":                  {-1, rWord},
 }
 

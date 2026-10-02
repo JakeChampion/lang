@@ -1034,6 +1034,9 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	if g.usesWriteFile {
 		g.emitWriteFileRuntime()
 	}
+	if g.usesWriteFileBytes {
+		g.emitWriteFileRuntimeMode("__fern_write_file_bytes", "0644", "b", "")
+	}
 	if g.usesWriteFileExec {
 		g.emitWriteFileRuntimeMode("__fern_write_file_exec", "0755", "x", "0755")
 	}
@@ -1714,7 +1717,8 @@ type generator struct {
 	// usesWriteFileExec is write_file_exec — write_file with the
 	// executable bit. Its own flag so a program that never asks for
 	// one does not carry the second helper body (#6133).
-	usesWriteFileExec bool
+	usesWriteFileExec  bool
+	usesWriteFileBytes bool
 	// usesRemoveDirAll pulls in the recursive `rm -rf` runtime
 	// (`__fern_remove_dir_all(path) → Option[IoError]`) — the
 	// x86-64 sibling of arm64-ssa's emitRemoveDirAllHelper. It's
@@ -2386,6 +2390,10 @@ func (g *generator) recordUse(target string) {
 		g.usesFree = true
 	case "write_file":
 		g.usesWriteFile = true
+		g.usesAlloc = true
+		g.usesIoError = true
+	case "write_file_bytes":
+		g.usesWriteFileBytes = true
 		g.usesAlloc = true
 		g.usesIoError = true
 	case "write_file_exec":
@@ -4139,6 +4147,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_read_file_bytes"
 		case "write_file":
 			target = "__fern_write_file"
+		case "write_file_bytes":
+			target = "__fern_write_file_bytes"
 		case "write_file_exec":
 			target = "__fern_write_file_exec"
 		case "remove_dir_all":
@@ -16473,16 +16483,36 @@ func (g *generator) emitWriteFileRuntimeMode(sym, mode, sfx, fixupMode string) {
 	g.label(sym)
 	g.emit("push rbp")
 	g.emit("mov rbp, rsp")
-	g.emit("push rbx")                           // path byte ptr (materialised)
-	g.emit("push r12")                           // content byte ptr (materialised)
-	g.emit("push r13")                           // fd
-	g.emit("push r14")                           // content_len
-	g.emit("push r15")                           // bytes_written
-	g.emit("sub rsp, 24")                        // 16 bytes scratch (path + content emitStrDataPtr) + 8 for original path value.
-	g.emit("mov [rbp - 64], rdi")                // save original path string value for __fern_io_error
-	g.emitStrLen("r14d", "rsi")                  // content_len (from caller's rsi before materialise)
+	g.emit("push rbx")            // path byte ptr (materialised)
+	g.emit("push r12")            // content byte ptr (materialised)
+	g.emit("push r13")            // fd
+	g.emit("push r14")            // content_len
+	g.emit("push r15")            // bytes_written
+	g.emit("sub rsp, 24")         // 16 bytes scratch (path + content emitStrDataPtr) + 8 for original path value.
+	g.emit("mov [rbp - 64], rdi") // save original path string value for __fern_io_error
+	if sym == "__fern_write_file_bytes" {
+		g.emit("mov r14d, dword ptr [rsi - 4]")
+		g.emit("mov r12, rsi")
+	} else {
+		g.emitStrLen("r14d", "rsi")
+		g.emitStrDataPtr("r12", "rsi", "[rbp - 56]")
+	}
 	g.emitStrDataPtr("rbx", "rdi", "[rbp - 48]") // path byte ptr
-	g.emitStrDataPtr("r12", "rsi", "[rbp - 56]") // content byte ptr
+	if sym == "__fern_write_file_bytes" {
+		g.emitStrLen("ecx", "rdi")
+		g.emit("xor edx, edx")
+		g.label(".Lwf_path" + sfx)
+		g.emit("cmp edx, ecx")
+		g.emit("jae .Lwf_path_ok" + sfx)
+		g.emit("cmp byte ptr [rbx + rdx], 0")
+		g.emit("je .Lwf_path_bad" + sfx)
+		g.emit("inc edx")
+		g.emit("jmp .Lwf_path" + sfx)
+		g.label(".Lwf_path_bad" + sfx)
+		g.emit("mov rax, -22")
+		g.emit("jmp .Lwf_err_open" + sfx)
+		g.label(".Lwf_path_ok" + sfx)
+	}
 
 	// openat(AT_FDCWD, path, O_WRONLY|O_CREAT|O_TRUNC, 0644)
 	g.emit("mov edi, -100")
@@ -16503,6 +16533,14 @@ func (g *generator) emitWriteFileRuntimeMode(sym, mode, sfx, fixupMode string) {
 	g.emit("mov rdx, r14")
 	g.emit("sub rdx, r15")
 	g.emitSyscall(1)
+	if sym == "__fern_write_file_bytes" {
+		g.emit("cmp rax, -4")
+		g.emit("je .Lwf_loop" + sfx)
+		g.emit("test rax, rax")
+		g.emit("jnz .Lwf_progress" + sfx)
+		g.emit("mov rax, -5")
+		g.label(".Lwf_progress" + sfx)
+	}
 	g.emit("test rax, rax")
 	g.emit("js .Lwf_err_close" + sfx)
 	g.emit("add r15, rax")
@@ -16524,6 +16562,10 @@ func (g *generator) emitWriteFileRuntimeMode(sym, mode, sfx, fixupMode string) {
 	}
 	g.emit("mov edi, r13d")
 	g.emitSyscall(3)
+	if sym == "__fern_write_file_bytes" {
+		g.emit("test rax, rax")
+		g.emit("js .Lwf_err_open" + sfx)
+	}
 	// Result.Ok(()): 16-byte box, tag=0, unit payload @+8. The unit
 	// value occupies a payload slot like any other value — the reader
 	// loads it by the declared layout — so the success arm cannot be
