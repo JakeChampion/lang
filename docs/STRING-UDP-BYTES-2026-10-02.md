@@ -6,7 +6,8 @@ stage-3 binaries of 12,131,025 bytes, SHA-256
 `8a969e1658775f91d7be1f17a5a621d5b8cedc1697c4e5cd6188204d2ab328c0`.
 Fresh stage-2 Darwin and WASI IPv4/IPv6 loopback probes pass, retaining the
 allocation counts and fixture sizes below. Refreshed Linux targets and
-`make lint-all` pass; the current full unit gate remains pending.
+`make lint-all` pass. The current full unit suite and all lint gates also
+pass from the immutable final source snapshot.
 
 `udp_send_bytes(host, port, data: u8[])` and
 `udp_sendto_bytes(fd, addr, port, data: u8[])` send one complete datagram.
@@ -32,7 +33,8 @@ interpreter networking remains unsupported.
 ## Validation checkpoint
 
 The implementation is based on TCP byte-sink commit `d5fc77ab1`. The Linux
-target matrix and `make lint-all` pass. The full unit suite is pending.
+target matrix and `make lint-all` pass. The refreshed integration also
+passes the full unit suite.
 
 Real loopback tests verify exact 8193-byte payloads, retained and temporary
 arrays, connected sends and empty datagrams over IPv4 and IPv6. They pass
