@@ -16227,6 +16227,7 @@ function called_names(mod: parser.Module): Map[string, boolean] {
 // can't satisfy. Shape codes:
 //   0 no-I/O · 1 stdout · 2 fs-read · 3 fs-write · 4 fs-rw · 5 random
 //   6 env · 7 args · 8 clock(wall) · 9 clock(mono) · 13 stderr · 14 exit
+//   17 stderr + exit (including assertion failures)
 // HostNeeds is what a program asks of its WASI host, one flag per category
 // the component framings distinguish.
 struct HostNeeds { io: boolean, rd: boolean, wr: boolean, env: boolean, args: boolean, rnd: boolean, clkw: boolean, clkm: boolean, ep: boolean, ex: boolean }
@@ -16307,6 +16308,9 @@ pub function component_shape(mod: parser.Module): i32 {
     return 0;
   }
   if (cats == 2) {
+    if (ep && ex) {
+      return 17;
+    }
     // Only specific fs-paired two-category combos have a single wrap.
     if ((rd || wr) && env) {
       if (rd && wr) {  // fs read+write + env
