@@ -27,7 +27,7 @@ func TestUnitValueChecks(t *testing.T) {
 			`function f(): Option[()] { return Some(()); }
 			 function main(): i32 { return 0; }`},
 		{"bound to a variable",
-			`function main(): i32 { var u = (); return 0; }`},
+			`function main(): i32 { let u = (); return 0; }`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			prog, err := parser.Parse(tc.src)

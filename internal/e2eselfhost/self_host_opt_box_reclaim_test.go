@@ -28,7 +28,7 @@ import (
 func optBoxNonScalarScrutSrc(rounds int) string {
 	return fmt.Sprintf(`function g(x: i32): Option[IoError] { return None; }
 function main(): i32 {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < %d) {
         match (g(i)) { Some(_) => { return 9; }, None => {} }
         i = i + 1;
@@ -43,9 +43,9 @@ function main(): i32 {
 func optBoxNonScalarBoundSrc(rounds int) string {
 	return fmt.Sprintf(`function g(x: i32): Option[IoError] { return None; }
 function main(): i32 {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < %d) {
-        var e: Option[IoError] = g(i);
+        let e: Option[IoError] = g(i);
         match (e) { Some(_) => { return 9; }, None => {} }
         i = i + 1;
     }
@@ -59,9 +59,9 @@ function main(): i32 {
 func optBoxDeadScalarSrc(rounds int) string {
 	return fmt.Sprintf(`function f(x: i32): Option[i32] { if (x > 0) { return Some(x); } return None; }
 function main(): i32 {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < %d) {
-        var a: Option[i32] = f(i);
+        let a: Option[i32] = f(i);
         i = i + 1;
     }
     return 0;
@@ -73,9 +73,9 @@ function main(): i32 {
 func optBoxDeadNonScalarSrc(rounds int) string {
 	return fmt.Sprintf(`function g(x: i32): Option[IoError] { return None; }
 function main(): i32 {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < %d) {
-        var a: Option[IoError] = g(i);
+        let a: Option[IoError] = g(i);
         i = i + 1;
     }
     return 0;
@@ -90,9 +90,9 @@ function main(): i32 {
 func optBoxReturningArmSrc(rounds int) string {
 	return fmt.Sprintf(`function g(x: i32): Option[IoError] { return None; }
 function main(): i32 {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 1000000) {
-        var e: Option[IoError] = g(i);
+        let e: Option[IoError] = g(i);
         match (e) {
             Some(_) => { return 9; },
             None => { i = i + 1; if (i >= %d) { return 0; } }
@@ -111,12 +111,12 @@ function main(): i32 {
 func optBoxNestedMatchSrc(rounds int) string {
 	return fmt.Sprintf(`function g(x: i32): Option[IoError] { return None; }
 function step(i: i32): i32 {
-    var e: Option[IoError] = g(i);
+    let e: Option[IoError] = g(i);
     if (i >= 0) { match (e) { Some(_) => { return 9; }, None => {} } }
     return 0;
 }
 function main(): i32 {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < %d) {
         if (step(i) != 0) { return 9; }
         i = i + 1;
@@ -179,7 +179,7 @@ func TestSelfHostOptBoxReclaimX86_64(t *testing.T) {
 // unreleased shows as 200 unfreed blocks, both as 400.
 func ioOpenCloseSrc(rounds int) string {
 	return fmt.Sprintf(`function main(): i32 {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < %d) {
         match (open_reader("/dev/null")) {
             Ok(r) => { match (r.close()) { Some(e) => { return 9; }, None => {} } },
@@ -192,16 +192,16 @@ func ioOpenCloseSrc(rounds int) string {
 }
 
 // ioOpenCloseBoundSrc is the same round with the open's Result reached through a
-// `var` first. A binding, unlike an anonymous match scrutinee, can carry reclaim
+// `let` first. A binding, unlike an anonymous match scrutinee, can carry reclaim
 // credits of its own, so it is admitted by a different predicate
 // (opt_box_init_type) and needs its own leg: `Result[Reader, IoError]` carries
 // no payload either side that anything deep-drops, so the box-only release is
 // all of it.
 func ioOpenCloseBoundSrc(rounds int) string {
 	return fmt.Sprintf(`function main(): i32 {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < %d) {
-        var r: Result[Reader, IoError] = open_reader("/dev/null");
+        let r: Result[Reader, IoError] = open_reader("/dev/null");
         match (r) {
             Ok(rd) => { match (rd.close()) { Some(e) => { return 9; }, None => {} } },
             Err(e) => { return 8; }
@@ -217,10 +217,10 @@ func ioOpenCloseBoundSrc(rounds int) string {
 // the string payload the arm binds.
 func ioReadChunkSrc(rounds int) string {
 	return fmt.Sprintf(`function main(): i32 {
-    var acc: i32 = 0;
+    let acc: i32 = 0;
     match (open_reader("/dev/zero")) {
         Ok(r) => {
-            var i: i32 = 0;
+            let i: i32 = 0;
             while (i < %d) {
                 match (r.read_chunk(64)) {
                     Ok(chunk) => { acc = acc + chunk.len(); },

@@ -85,7 +85,7 @@ function test_nested_object(): test.TestOutcome {
 }
 
 function test_array_index(): test.TestOutcome {
-  var d: JsonValue = doc_main();
+  let d: JsonValue = doc_main();
   if (ptr_str(d, "/user/tags/0") != "a") {
     return test.fail("index 0");
   }
@@ -109,7 +109,7 @@ function test_descend_into_scalar(): test.TestOutcome {
 }
 
 function test_bad_array_index(): test.TestOutcome {
-  var d: JsonValue = doc_main();
+  let d: JsonValue = doc_main();
   if (ptr_str(d, "/user/tags/x") != "<none>") {
     return test.fail("non-numeric index");
   }
@@ -123,7 +123,7 @@ function test_must_start_with_slash(): test.TestOutcome {
 
 function test_escaped_keys(): test.TestOutcome {
   // Key "a/b" is written "/a~1b"; key "m~n" is "/m~0n".
-  var d: JsonValue = json.json_parse("{\"a/b\":1,\"m~n\":2}").unwrap_or(JNull);
+  let d: JsonValue = json.json_parse("{\"a/b\":1,\"m~n\":2}").unwrap_or(JNull);
   if (ptr_num(d, "/a~1b") != "1") {
     return test.fail("~1 (slash) escape");
   }
@@ -132,19 +132,19 @@ function test_escaped_keys(): test.TestOutcome {
 
 function test_empty_key(): test.TestOutcome {
   // "/" refers to the value at the empty-string key.
-  var d: JsonValue = json.json_parse("{\"\":7}").unwrap_or(JNull);
+  let d: JsonValue = json.json_parse("{\"\":7}").unwrap_or(JNull);
   return test.assert_eq(ptr_num(d, "/"), "7");
 }
 
 function test_multibyte_key_with_escape(): test.TestOutcome {
   // Multibyte bytes around a ~1 escape pass through the byte-level
   // unescape intact: token "é~1ü" decodes to the key "é/ü".
-  var d: JsonValue = json.json_parse("{\"é/ü\":3}").unwrap_or(JNull);
+  let d: JsonValue = json.json_parse("{\"é/ü\":3}").unwrap_or(JNull);
   return test.assert_eq(ptr_num(d, "/é~1ü"), "3");
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("std/json pointer");
+  let r: test.TestRunner = test.test_new("std/json pointer");
   r = r.it("whole doc (empty pointer)", test_whole_doc);
   r = r.it("nested object", test_nested_object);
   r = r.it("array index", test_array_index);

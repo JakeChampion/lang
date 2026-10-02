@@ -22,15 +22,15 @@ const bigintChainSrc = `import "core/bigint";
 struct LD { m: bigint.BigInt, e: i32 }
 
 function add(a: LD, b: LD): LD {
-  var e: i32 = a.e;
+  let e: i32 = a.e;
   if (b.e < e) {
     e = b.e;
   }
-  var av: bigint.BigInt = a.m.shl(a.e - e);
-  var bv: bigint.BigInt = b.m.shl(b.e - e);
-  var s: bigint.BigInt = av.add(bv);
-  var kept: bigint.BigInt = s.shr(1);
-  var dropped: bigint.BigInt = s.sub(kept.shl(1));
+  let av: bigint.BigInt = a.m.shl(a.e - e);
+  let bv: bigint.BigInt = b.m.shl(b.e - e);
+  let s: bigint.BigInt = av.add(bv);
+  let kept: bigint.BigInt = s.shr(1);
+  let dropped: bigint.BigInt = s.sub(kept.shl(1));
   if (!dropped.is_zero()) {
     kept = kept.add(bigint.from_i64(1 as i64));
   }
@@ -38,9 +38,9 @@ function add(a: LD, b: LD): LD {
 }
 
 function main(): i32 {
-  var x: LD = LD { m: bigint.from_i64(12345678901234567 as i64), e: 0 };
-  var step: LD = LD { m: bigint.from_i64(1000 as i64), e: 3 };
-  var i: i32 = 0;
+  let x: LD = LD { m: bigint.from_i64(12345678901234567 as i64), e: 0 };
+  let step: LD = LD { m: bigint.from_i64(1000 as i64), e: 3 };
+  let i: i32 = 0;
   while (i < 2000) {
     x = add(x, step);
     i = i + 1;

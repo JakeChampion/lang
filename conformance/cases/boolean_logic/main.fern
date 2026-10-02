@@ -1,7 +1,7 @@
 // Short-circuit && / ||, unary !, and parenthesised grouping.
 function main(): i32 {
-    var t: boolean = true;
-    var f: boolean = false;
+    let t: boolean = true;
+    let f: boolean = false;
     if (t && !f && (t || f)) {
         return 42;
     }

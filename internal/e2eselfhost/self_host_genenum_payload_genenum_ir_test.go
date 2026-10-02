@@ -29,37 +29,37 @@ var genEnumPayloadGenEnumIRCases = []genEnumPayloadGenEnumIRCase{
 	{"i32_payload", `enum Opt[T] { Sm(T), Nn }
 enum E[U] { A(Opt[U]), B }
 function main(): i32 {
-    var e: E[i32] = A(Sm(5));
+    let e: E[i32] = A(Sm(5));
     match (e) { A(o) => { match (o) { Sm(n) => { return n; }, Nn => { return 0; } } }, B => { return 0; } }
 }`, 5},
 	// string payload, method dispatch on the innermost binding.
 	{"string_payload", `enum Opt[T] { Sm(T), Nn }
 enum E[U] { A(Opt[U]), B }
 function main(): i32 {
-    var e: E[string] = A(Sm("hi"));
+    let e: E[string] = A(Sm("hi"));
     match (e) { A(o) => { match (o) { Sm(n) => { return n.len(); }, Nn => { return 0; } } }, B => { return 0; } }
 }`, 2},
 	// the OUTER unit variant `B` (pinned from the annotation).
 	{"outer_unit", `enum Opt[T] { Sm(T), Nn }
 enum E[U] { A(Opt[U]), B }
 function main(): i32 {
-    var e: E[i32] = B;
+    let e: E[i32] = B;
     match (e) { A(o) => { return 1; }, B => { return 8; } }
 }`, 8},
 	// arithmetic on the extracted inner payload.
 	{"inner_arith", `enum Opt[T] { Sm(T), Nn }
 enum E[U] { A(Opt[U]), B }
 function main(): i32 {
-    var e: E[i32] = A(Sm(4));
+    let e: E[i32] = A(Sm(4));
     match (e) { A(o) => { match (o) { Sm(n) => { return n + 1; }, Nn => { return 0; } } }, B => { return 0; } }
 }`, 5},
 	// two distinct instantiations of E (`E[i32]` + `E[string]`) coexisting.
 	{"two_instantiations", `enum Opt[T] { Sm(T), Nn }
 enum E[U] { A(Opt[U]), B }
 function main(): i32 {
-    var x: E[i32] = A(Sm(3));
-    var y: E[string] = A(Sm("zz"));
-    var r: i32 = 0;
+    let x: E[i32] = A(Sm(3));
+    let y: E[string] = A(Sm("zz"));
+    let r: i32 = 0;
     match (x) { A(o) => { match (o) { Sm(n) => { r = n; }, Nn => { } } }, B => { } }
     match (y) { A(o) => { match (o) { Sm(s) => { r = r + s.len(); }, Nn => { } } }, B => { } }
     return r;

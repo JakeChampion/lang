@@ -6139,7 +6139,7 @@ func (g *generator) emitStrSliceRuntime2W() {
 	// Allocate new_len bytes for the heap output via the rc-headered
 	// allocator (rc=1 at data-8, payload size at data-4) so the
 	// substring is a real rc-tracked string — str_inc on an alias
-	// (e.g. `var w = words[i]` where the element is a slice) and
+	// (e.g. `let w = words[i]` where the element is a slice) and
 	// str_dec on drop both read that header. A raw __fern_alloc
 	// buffer has none, so retaining a slice read before the
 	// allocation and SIGSEGV'd. Mirrors __fern_strcat / read_file.

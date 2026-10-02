@@ -64,7 +64,7 @@ struct R { n: i32 }
 impl lib.Greet for R {
     function tag(self: Self): i32 { return self.n; }
 }
-function main(): i32 { var r: R = R { n: 1 }; return r.greet(); }`,
+function main(): i32 { let r: R = R { n: 1 }; return r.greet(); }`,
 	})
 	prog := loadProg(t, filepath.Join(dir, "main.fern"))
 	td := findTrait(prog, "Greet")
@@ -110,7 +110,7 @@ pub trait Greet {
 }
 impl Greet for S { function tag(self: Self): i32 { return self.v; } }`,
 		"main.fern": `import "./lib";
-function main(): i32 { var s: lib.S = lib.S { v: 1 }; return s.greet(); }`,
+function main(): i32 { let s: lib.S = lib.S { v: 1 }; return s.greet(); }`,
 	})
 	prog := loadProg(t, filepath.Join(dir, "main.fern"))
 	td := findTrait(prog, "Greet")
@@ -139,7 +139,7 @@ trait Greet {
 }
 struct R { n: i32 }
 impl Greet for R { function tag(self: Self): i32 { return self.n; } }
-function main(): i32 { var r: R = R { n: 1 }; return r.greet(); }`,
+function main(): i32 { let r: R = R { n: 1 }; return r.greet(); }`,
 	})
 	prog := loadProg(t, filepath.Join(dir, "main.fern"))
 	td := findTrait(prog, "Greet")
@@ -170,7 +170,7 @@ pub trait Greet {
 		"main.fern": `import "./lib";
 struct R { n: i32 }
 impl lib.Greet for R { function tag(self: Self): i32 { return self.n; } }
-function main(): i32 { var r: R = R { n: 1 }; return r.greet(); }`,
+function main(): i32 { let r: R = R { n: 1 }; return r.greet(); }`,
 	})
 	prog := loadProg(t, filepath.Join(dir, "main.fern"))
 	td := findTrait(prog, "Greet")

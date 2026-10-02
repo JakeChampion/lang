@@ -58,61 +58,61 @@ func TestSelfHostWasmBinary(t *testing.T) {
 	}{
 		{"return-literal", "function main(): i32 { return 42; }", 42},
 		{"arithmetic", "function main(): i32 { return 1 + 2 * 3; }", 7},
-		{"locals", "function main(): i32 { var x: i32 = 5; return x + 37; }", 42},
-		{"subtraction", "function main(): i32 { var a: i32 = 100; var b: i32 = 58; return a - b; }", 42},
+		{"locals", "function main(): i32 { let x: i32 = 5; return x + 37; }", 42},
+		{"subtraction", "function main(): i32 { let a: i32 = 100; let b: i32 = 58; return a - b; }", 42},
 		{"bitwise", "function main(): i32 { return (10 & 6) + (10 | 1); }", 13},
 		// Control flow.
-		{"while-sum", "function main(): i32 { var s: i32 = 0; var i: i32 = 0; while (i < 5) { s = s + i; i = i + 1; } return s; }", 10},
-		{"if-then", "function main(): i32 { var x: i32 = 5; if (x > 3) { return 1; } return 0; }", 1},
-		{"return-in-if-in-loop", "function main(): i32 { var i: i32 = 0; while (i < 10) { if (i == 3) { return i; } i = i + 1; } return 99; }", 3},
-		{"break-continue", "function main(): i32 { var i: i32 = 0; var s: i32 = 0; while (i < 10) { i = i + 1; if (i == 3) { continue; } if (i > 6) { break; } s = s + i; } return s; }", 18},
-		{"short-circuit-and", "function main(): i32 { var a: i32 = 5; if (a > 1 && a < 10) { return 7; } return 0; }", 7},
-		{"nested-loops", "function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 3) { var j: i32 = 0; while (j < 3) { t = t + 1; j = j + 1; } i = i + 1; } return t; }", 9},
+		{"while-sum", "function main(): i32 { let s: i32 = 0; let i: i32 = 0; while (i < 5) { s = s + i; i = i + 1; } return s; }", 10},
+		{"if-then", "function main(): i32 { let x: i32 = 5; if (x > 3) { return 1; } return 0; }", 1},
+		{"return-in-if-in-loop", "function main(): i32 { let i: i32 = 0; while (i < 10) { if (i == 3) { return i; } i = i + 1; } return 99; }", 3},
+		{"break-continue", "function main(): i32 { let i: i32 = 0; let s: i32 = 0; while (i < 10) { i = i + 1; if (i == 3) { continue; } if (i > 6) { break; } s = s + i; } return s; }", 18},
+		{"short-circuit-and", "function main(): i32 { let a: i32 = 5; if (a > 1 && a < 10) { return 7; } return 0; }", 7},
+		{"nested-loops", "function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 3) { let j: i32 = 0; while (j < 3) { t = t + 1; j = j + 1; } i = i + 1; } return t; }", 9},
 		// Division / shifts / structs.
-		{"div-rem", "function main(): i32 { var n: i32 = 17; return n / 5 + n % 5; }", 5},
+		{"div-rem", "function main(): i32 { let n: i32 = 17; return n / 5 + n % 5; }", 5},
 		{"shift-right", "function main(): i32 { return 100 >> 2; }", 25},
 		{"shift-left", "function main(): i32 { return 5 << 3; }", 40},
-		{"struct-fields", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 30, y: 12 }; return p.x + p.y; }", 42},
-		{"struct-mutate", "struct C { n: i32 } function main(): i32 { var c = C { n: 5 }; c = C { ...c, n: c.n + 37 }; return c.n; }", 42},
-		{"struct-nested", "struct Inner { v: i32 } struct Outer { inner: Inner, k: i32 } function main(): i32 { var o = Outer { inner: Inner { v: 8 }, k: 34 }; return o.inner.v + o.k; }", 42},
+		{"struct-fields", "struct P { x: i32, y: i32 } function main(): i32 { let p = P { x: 30, y: 12 }; return p.x + p.y; }", 42},
+		{"struct-mutate", "struct C { n: i32 } function main(): i32 { let c = C { n: 5 }; c = C { ...c, n: c.n + 37 }; return c.n; }", 42},
+		{"struct-nested", "struct Inner { v: i32 } struct Outer { inner: Inner, k: i32 } function main(): i32 { let o = Outer { inner: Inner { v: 8 }, k: 34 }; return o.inner.v + o.k; }", 42},
 		// i64.
-		{"i64-div", "function main(): i32 { var a: i64 = 5000000000; var b: i64 = 7; return ((a / 1000000000) + b) as i32; }", 12},
-		{"i64-sub", "function main(): i32 { var a: i64 = 100; var b: i64 = 58; var c: i64 = a - b; return c as i32; }", 42},
-		{"i64-mul-cmp", "function main(): i32 { var a: i64 = 1000000; var b: i64 = 1000000; var p: i64 = a * b; if (p > 999999999999) { return 1; } return 0; }", 1},
+		{"i64-div", "function main(): i32 { let a: i64 = 5000000000; let b: i64 = 7; return ((a / 1000000000) + b) as i32; }", 12},
+		{"i64-sub", "function main(): i32 { let a: i64 = 100; let b: i64 = 58; let c: i64 = a - b; return c as i32; }", 42},
+		{"i64-mul-cmp", "function main(): i32 { let a: i64 = 1000000; let b: i64 = 1000000; let p: i64 = a * b; if (p > 999999999999) { return 1; } return 0; }", 1},
 		// Strings (including stdout via write()).
-		{"str-len", "function main(): i32 { var s: string = \"hello\"; return s.len(); }", 5},
-		{"str-index", "function main(): i32 { var s: string = \"abcdef\"; return s[3] as i32; }", 100},
-		{"str-concat-len", "function main(): i32 { var a: string = \"foo\"; var b: string = a + \"barbaz\"; return b.len(); }", 9},
+		{"str-len", "function main(): i32 { let s: string = \"hello\"; return s.len(); }", 5},
+		{"str-index", "function main(): i32 { let s: string = \"abcdef\"; return s[3] as i32; }", 100},
+		{"str-concat-len", "function main(): i32 { let a: string = \"foo\"; let b: string = a + \"barbaz\"; return b.len(); }", 9},
 		{"str-compare", "function main(): i32 { if (\"apple\" < \"banana\") { return 7; } return 0; }", 7},
 		{"str-write", "function main(): i32 { write(\"hello world\"); return 0; }", 0},
-		{"str-builder", "function main(): i32 { var s: string = \"\"; var i: i32 = 0; while (i < 3) { s = s + \"ab\"; i = i + 1; } write(s); return s.len(); }", 6},
+		{"str-builder", "function main(): i32 { let s: string = \"\"; let i: i32 = 0; while (i < 3) { s = s + \"ab\"; i = i + 1; } write(s); return s.len(); }", 6},
 		// Closures — named `(type $clos*)` decls + the table & elem sections
 		// + call_indirect through the function table.
-		{"closure-capture", "function adder(n: i32): (i32) => i32 { return (x: i32): i32 => { return x + n; }; } function main(): i32 { var a = adder(10); return a(5); }", 15},
-		{"closure-capture-array", "function main(): i32 { var xs = [10, 20, 30]; var get = (i: i32): i32 => { return xs[i]; }; return get(0) + get(2); }", 40},
+		{"closure-capture", "function adder(n: i32): (i32) => i32 { return (x: i32): i32 => { return x + n; }; } function main(): i32 { let a = adder(10); return a(5); }", 15},
+		{"closure-capture-array", "function main(): i32 { let xs = [10, 20, 30]; let get = (i: i32): i32 => { return xs[i]; }; return get(0) + get(2); }", 40},
 		{"lambda-as-arg", "function apply(f: (i32) => i32, v: i32): i32 { return f(v); } function main(): i32 { return apply((x: i32): i32 => { return x * 7; }, 6); }", 42},
 		// f64: f64.const (8-byte IEEE-754 immediate via f64_bits), the f64
 		// arithmetic / comparison ops, the math intrinsics, and the
 		// int<->float conversions.
-		{"f64-mul", "function main(): i32 { var x: f64 = 3.5; return (x * 2.0) as i32; }", 7},
-		{"f64-sub", "function main(): i32 { var a: f64 = 10.5; var b: f64 = 3.5; return (a - b) as i32; }", 7},
-		{"f64-compare", "function main(): i32 { var a: f64 = 2.5; if (a > 2.0 && a < 3.0) { return 42; } return 0; }", 42},
-		{"f64-sqrt", "function main(): i32 { var a: f64 = 9.0; return (__sqrt_f64(a)) as i32; }", 3},
-		{"f64-int-convert", "function main(): i32 { var n: i32 = 7; var x: f64 = n as f64; return (x + 0.5) as i32; }", 7},
+		{"f64-mul", "function main(): i32 { let x: f64 = 3.5; return (x * 2.0) as i32; }", 7},
+		{"f64-sub", "function main(): i32 { let a: f64 = 10.5; let b: f64 = 3.5; return (a - b) as i32; }", 7},
+		{"f64-compare", "function main(): i32 { let a: f64 = 2.5; if (a > 2.0 && a < 3.0) { return 42; } return 0; }", 42},
+		{"f64-sqrt", "function main(): i32 { let a: f64 = 9.0; return (__sqrt_f64(a)) as i32; }", 3},
+		{"f64-int-convert", "function main(): i32 { let n: i32 = 7; let x: f64 = n as f64; return (x + 0.5) as i32; }", 7},
 		// memory.grow: a program allocating past the initial 16 pages (1 MB)
 		// now grows linear memory instead of trapping (and the encoder emits
 		// memory.size / memory.grow).
-		{"memory-grow", "function main(): i32 { var xs: i32[] = []; var i: i32 = 0; while (i < 300000) { xs = xs.append(i); i = i + 1; } return xs[299999] - xs[299998]; }", 1},
+		{"memory-grow", "function main(): i32 { let xs: i32[] = []; let i: i32 = 0; while (i < 300000) { xs = xs.append(i); i = i + 1; } return xs[299999] - xs[299998]; }", 1},
 		// At-scale validation: substantial multi-feature programs round-trip
 		// through the binary encoder — deep recursion, a struct-array
 		// "linked list" walked by index, and a string split + iteration.
 		{"scale-recursion-fib", "function fib(n: i32): i32 { if (n < 2) { return n; } return fib(n - 1) + fib(n - 2); } function main(): i32 { return fib(12) - 100; }", 44},
-		{"scale-struct-array-list", "struct Node { v: i32, next_idx: i32 } function main(): i32 { var ns: Node[] = []; ns = ns.append(Node { v: 10, next_idx: 1 }); ns = ns.append(Node { v: 20, next_idx: 2 }); ns = ns.append(Node { v: 12, next_idx: 0 - 1 }); var sum: i32 = 0; var i: i32 = 0; while (i >= 0) { sum = sum + ns[i].v; i = ns[i].next_idx; } return sum; }", 42},
-		{"scale-string-split", "function main(): i32 { var s: string = \"the quick brown fox\"; var words = s.split(\" \"); var total: i32 = 0; for w in words { total = total + w.len(); } return total + words.len(); }", 20},
+		{"scale-struct-array-list", "struct Node { v: i32, next_idx: i32 } function main(): i32 { let ns: Node[] = []; ns = ns.append(Node { v: 10, next_idx: 1 }); ns = ns.append(Node { v: 20, next_idx: 2 }); ns = ns.append(Node { v: 12, next_idx: 0 - 1 }); let sum: i32 = 0; let i: i32 = 0; while (i >= 0) { sum = sum + ns[i].v; i = ns[i].next_idx; } return sum; }", 42},
+		{"scale-string-split", "function main(): i32 { let s: string = \"the quick brown fox\"; let words = s.split(\" \"); let total: i32 = 0; for w in words { total = total + w.len(); } return total + words.len(); }", 20},
 		// string_from_bytes_unchecked: pack a u8[] (i32[] of byte values) into a string
 		// block. len() * 10 + first byte offset from 'A': 4*10 + (65-65) = 40.
-		{"string-from-bytes", "function main(): i32 { var s: string = string_from_bytes_unchecked([65, 66, 67, 68]); return s.len() * 10 + ((s[0] as i32) - 65); }", 40},
-		{"string-from-bytes-write", "function main(): i32 { var s: string = string_from_bytes_unchecked([104, 105]); write(s); return s.len(); }", 2},
+		{"string-from-bytes", "function main(): i32 { let s: string = string_from_bytes_unchecked([65, 66, 67, 68]); return s.len() * 10 + ((s[0] as i32) - 65); }", 40},
+		{"string-from-bytes-write", "function main(): i32 { let s: string = string_from_bytes_unchecked([104, 105]); write(s); return s.len(); }", 2},
 		// The v128 kernels (ATLAS-PLATFORM-PLAN §3). This is the only path
 		// that puts watbin's SIMD encodings under load: the WAT leg is parsed
 		// by wasmtime, the binary leg by watbin, and the two must agree — which
@@ -120,17 +120,17 @@ func TestSelfHostWasmBinary(t *testing.T) {
 		// the 0xFD sub-opcode space is dense enough that a wrong byte is
 		// usually another VALID instruction. Each haystack's answer is past the
 		// first 16-byte block so the vector loop actually runs.
-		{"memchr-v128", "function main(): i32 { var s: string = \"aaaaaaaaaaaaaaaaaaaa*aaa\"; return __memchr(s, 42, 0) + 22; }", 42},
-		{"memchr-v128-miss", "function main(): i32 { var s: string = \"aaaaaaaaaaaaaaaaaaaaaaaa\"; return __memchr(s, 42, 0) + 43; }", 42},
-		{"ascii-run-v128", "function main(): i32 { var s: string = \"aaaaaaaaaaaaaaaaaaaaaaaa\"; return __ascii_run(s, 0) + 18; }", 42},
+		{"memchr-v128", "function main(): i32 { let s: string = \"aaaaaaaaaaaaaaaaaaaa*aaa\"; return __memchr(s, 42, 0) + 22; }", 42},
+		{"memchr-v128-miss", "function main(): i32 { let s: string = \"aaaaaaaaaaaaaaaaaaaaaaaa\"; return __memchr(s, 42, 0) + 43; }", 42},
+		{"ascii-run-v128", "function main(): i32 { let s: string = \"aaaaaaaaaaaaaaaaaaaaaaaa\"; return __ascii_run(s, 0) + 18; }", 42},
 		// __scale_f64 is the one case reaching a sub-opcode past the one-byte
 		// uleb boundary (f64x2.mul is 242), and the one reaching v128.store.
 		// Five elements, so the vector body runs twice and the tail once.
-		{"scale-f64-v128", "function main(): i32 { var xs: f64[] = [1.0, 2.0, 3.0, 4.0, 5.0]; var ys: f64[] = __scale_f64(xs, 2.0); return (ys[0] + ys[4]) as i32 + 30; }", 42},
+		{"scale-f64-v128", "function main(): i32 { let xs: f64[] = [1.0, 2.0, 3.0, 4.0, 5.0]; let ys: f64[] = __scale_f64(xs, 2.0); return (ys[0] + ys[4]) as i32 + 30; }", 42},
 		// random_i32(): a single i32 of randomness. Used in self-cancelling
 		// arithmetic so the result is deterministic (42) while still
 		// exercising the builtin's call + helper emission end-to-end.
-		{"random-i32", "function main(): i32 { var r: i32 = random_i32(); return (r - r) + 42; }", 42},
+		{"random-i32", "function main(): i32 { let r: i32 = random_i32(); return (r - r) + 42; }", 42},
 		// putchar(c): write c's low byte to stdout. Exits 0; the binary and
 		// WAT paths must agree on the emitted bytes ("Hi\n").
 		{"putchar", "function main(): i32 { putchar(72); putchar(105); putchar(10); return 0; }", 0},
@@ -147,7 +147,7 @@ func TestSelfHostWasmBinary(t *testing.T) {
 		// WAT path ran fine as text failed to validate once assembled: the
 		// declared type grew a phantom result and the arms' values had nowhere
 		// to go (#6906). (3+1) + (4+1) + (14+1) = 24.
-		{"dyn-dispatch-blocktype", "trait Sh { function area(self: Self): i32; } impl Sh for i32 { function area(self: Self): i32 { return self + 1; } } function total(xs: dyn Sh[]): i32 { var t: i32 = 0; for x in xs { t = t + x.area(); } return t; } function main(): i32 { return total([3, 4, 14]); }", 24},
+		{"dyn-dispatch-blocktype", "trait Sh { function area(self: Self): i32; } impl Sh for i32 { function area(self: Self): i32 { return self + 1; } } function total(xs: dyn Sh[]): i32 { let t: i32 = 0; for x in xs { t = t + x.area(); } return t; } function main(): i32 { return total([3, 4, 14]); }", 24},
 	}
 
 	for _, tc := range cases {
@@ -368,8 +368,8 @@ const asmReadFileDriver = `
 function main(): i32 {
     match (read_file("target.wat")) {
         Ok(wat) => {
-            var bytes: i32[] = wat_to_binary(wat);
-            var i: i32 = 0;
+            let bytes: i32[] = wat_to_binary(wat);
+            let i: i32 = 0;
             while (i < bytes.len()) { print_int(bytes[i]); write("\n"); i = i + 1; }
             return 0;
         },

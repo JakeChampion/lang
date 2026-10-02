@@ -104,11 +104,11 @@ later construction is handed a box the self-update has already built into and
 is returning live.
 
 ```fern
-var a: A3 = A3 { p: "aa", q: seed };      // 3-slot donor, held pending
-var s: i32 = a.q + a.p.len();             // a dies here
-var b: B4 = B4 { x: "bb", y: seed, z: seed + 1 };
+let a: A3 = A3 { p: "aa", q: seed };      // 3-slot donor, held pending
+let s: i32 = a.q + a.p.len();             // a dies here
+let b: B4 = B4 { x: "bb", y: seed, z: seed + 1 };
 b = B4 { ...b, y: s };                    // 4-slot self pairing — clobbers the slot
-var c: A3 = A3 { p: "cc", q: b.y + b.z }; // reads b's box, not a's
+let c: A3 = A3 { p: "cc", q: b.y + b.z }; // reads b's box, not a's
 ```
 
 It reads as a LEAK — `allocs=3 frees=3 live_bytes=24` where the same program

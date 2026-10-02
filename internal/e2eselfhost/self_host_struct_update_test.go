@@ -22,17 +22,17 @@ var structUpdateCases = []struct {
 	exit int
 }{
 	// Single override; the other two fields copy from base. 1+20+3=24.
-	{"single-override", "struct P { x: i32, y: i32, z: i32 } function main(): i32 { var p: P = P { x: 1, y: 2, z: 3 }; var q: P = P { ...p, y: 20 }; return q.x + q.y + q.z; }", 24},
+	{"single-override", "struct P { x: i32, y: i32, z: i32 } function main(): i32 { let p: P = P { x: 1, y: 2, z: 3 }; let q: P = P { ...p, y: 20 }; return q.x + q.y + q.z; }", 24},
 	// Pure copy (no overrides) — every field comes from base. 100+20+3=123.
-	{"pure-copy", "struct P { x: i32, y: i32, z: i32 } function main(): i32 { var p: P = P { x: 1, y: 2, z: 3 }; var q: P = P { ...p }; return q.x*100 + q.y*10 + q.z; }", 123},
+	{"pure-copy", "struct P { x: i32, y: i32, z: i32 } function main(): i32 { let p: P = P { x: 1, y: 2, z: 3 }; let q: P = P { ...p }; return q.x*100 + q.y*10 + q.z; }", 123},
 	// Overrides listed out of declaration order (z then x); the box must
 	// still be laid out in decl order. 9*100+2*10+7=927 -> 927&255=159.
-	{"out-of-order-overrides", "struct P { x: i32, y: i32, z: i32 } function main(): i32 { var p: P = P { x: 1, y: 2, z: 3 }; var q: P = P { ...p, z: 7, x: 9 }; return q.x*100 + q.y*10 + q.z; }", 159},
+	{"out-of-order-overrides", "struct P { x: i32, y: i32, z: i32 } function main(): i32 { let p: P = P { x: 1, y: 2, z: 3 }; let q: P = P { ...p, z: 7, x: 9 }; return q.x*100 + q.y*10 + q.z; }", 159},
 	// Struct-update inside a function return; the base local is borrowed
 	// (its own field stays unchanged). 6*1000+5*100+106=6606 -> &255=206.
-	{"update-in-return", "struct P { a: i32, b: i32 } function bump(p: P): P { return P { ...p, b: p.b + 100 }; } function main(): i32 { var p: P = P { a: 5, b: 6 }; var q: P = bump(p); return p.b*1000 + q.a*100 + q.b; }", 206},
+	{"update-in-return", "struct P { a: i32, b: i32 } function bump(p: P): P { return P { ...p, b: p.b + 100 }; } function main(): i32 { let p: P = P { a: 5, b: 6 }; let q: P = bump(p); return p.b*1000 + q.a*100 + q.b; }", 206},
 	// String field copied verbatim from base, i32 field overridden.
-	{"string-field-copy", "struct S { name: string, n: i32 } function main(): i32 { var s: S = S { name: \"hi\", n: 3 }; var t: S = S { ...s, n: 9 }; if (t.name == \"hi\") { return t.n; } return 0; }", 9},
+	{"string-field-copy", "struct S { name: string, n: i32 } function main(): i32 { let s: S = S { name: \"hi\", n: 3 }; let t: S = S { ...s, n: 9 }; if (t.name == \"hi\") { return t.n; } return 0; }", 9},
 }
 
 // TestSelfHostStructUpdateX86_64 compiles struct-update programs with

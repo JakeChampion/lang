@@ -19,15 +19,15 @@ import "./fern_toml";
 import "./util";
 
 function render_manifest(label: string, src: string): string {
-  var m: fern_toml.Manifest = fern_toml.parse(src);
-  var out: string = label + " name=" + m.name + "\n";
+  let m: fern_toml.Manifest = fern_toml.parse(src);
+  let out: string = label + " name=" + m.name + "\n";
   out = out + label + " deps=" + util.i32_to_string(m.deps.len()) + "\n";
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < m.deps.len()) {
     out = out + label + " dep " + m.deps[i].name + " kind=" + m.deps[i].kind + " version=" + m.deps[i].version + " path=" + m.deps[i].path + "\n";
     i = i + 1;
   }
-  var j: i32 = 0;
+  let j: i32 = 0;
   while (j < m.members.len()) {
     out = out + label + " member " + m.members[j] + "\n";
     j = j + 1;
@@ -36,13 +36,13 @@ function render_manifest(label: string, src: string): string {
 }
 
 function render_lock(label: string, src: string): string {
-  var lr: fern_toml.LockResult = fern_toml.parse_lock(src);
+  let lr: fern_toml.LockResult = fern_toml.parse_lock(src);
   if (lr.err.len() > 0) {
     return label + " error " + lr.err + "\n";
   }
-  var es: fern_toml.LockEntry[] = lr.entries;
-  var out: string = label + " entries=" + util.i32_to_string(es.len()) + "\n";
-  var i: i32 = 0;
+  let es: fern_toml.LockEntry[] = lr.entries;
+  let out: string = label + " entries=" + util.i32_to_string(es.len()) + "\n";
+  let i: i32 = 0;
   while (i < es.len()) {
     out = out + label + " entry " + es[i].name + " version=" + es[i].version + " path=" + es[i].path + " hash=" + es[i].hash + "\n";
     i = i + 1;
@@ -53,8 +53,8 @@ function render_lock(label: string, src: string): string {
 // crlf rewrites every '\n' in `s` as "\r\n", producing the same document as
 // written by a CRLF editor.
 function crlf(s: string): string {
-  var out: string = "";
-  var i: i32 = 0;
+  let out: string = "";
+  let i: i32 = 0;
   while (i < s.len()) {
     if (s[i] == b'\n') {
       out = out + "\r\n";
@@ -67,7 +67,7 @@ function crlf(s: string): string {
 }
 
 function main(): i32 {
-  var manifest: string = "[package]\n"
+  let manifest: string = "[package]\n"
     + "name = \"acme\"\n"
     + "\n"
     + "# a comment line\n"
@@ -77,7 +77,7 @@ function main(): i32 {
     + "\n"
     + "[workspace]\n"
     + "members = [\"a\", \"b/c\"]\n";
-  var lock: string = "[[package]]\n"
+  let lock: string = "[[package]]\n"
     + "name = \"dbl\"\n"
     + "version = \"1.0.0\"\n"
     + "path = \"../dbl\"\n"
@@ -87,7 +87,7 @@ function main(): i32 {
     + "version = \"1.2.3\"\n"
     + "hash = \"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\n";
 
-  var out: string = "";
+  let out: string = "";
   out = out + render_manifest("LF  ", manifest);
   out = out + render_manifest("CRLF", crlf(manifest));
   out = out + render_lock("LF  ", lock);

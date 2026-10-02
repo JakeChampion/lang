@@ -36,8 +36,8 @@ const nestedFieldAliasExplicitSrc = `struct I { tag: i32, data: i32[] }
 struct S { xs: i32[], inner: I, n: i32 }
 
 function work(k: i32): i32 {
-    var o: S = S { xs: [1, 2], inner: I { tag: 0, data: [9] }, n: 0 };
-    var i: i32 = 0;
+    let o: S = S { xs: [1, 2], inner: I { tag: 0, data: [9] }, n: 0 };
+    let i: i32 = 0;
     while (i < k) {
         o = S { xs: o.xs.append(i), inner: o.inner, n: i };
         i = i + 1;
@@ -46,8 +46,8 @@ function work(k: i32): i32 {
 }
 
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 10) { t = t + work(8); r = r + 1; }
     return t & 63;
 }`
@@ -56,8 +56,8 @@ const nestedFieldAliasCarriedSrc = `struct I { tag: i32, data: i32[] }
 struct S { xs: i32[], inner: I, n: i32 }
 
 function work(k: i32): i32 {
-    var o: S = S { xs: [1, 2], inner: I { tag: 0, data: [9] }, n: 0 };
-    var i: i32 = 0;
+    let o: S = S { xs: [1, 2], inner: I { tag: 0, data: [9] }, n: 0 };
+    let i: i32 = 0;
     while (i < k) {
         o = S { ...o, xs: o.xs.append(i), n: i };
         i = i + 1;
@@ -66,8 +66,8 @@ function work(k: i32): i32 {
 }
 
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 10) { t = t + work(8); r = r + 1; }
     return t & 63;
 }`
@@ -94,8 +94,8 @@ func nestedFieldAliasArrayFieldSrc(k int, carried bool) string {
 	return fmt.Sprintf(`struct S { xs: i32[], ys: i32[], n: i32 }
 
 function work(k: i32): i32 {
-    var o: S = S { xs: [1, 2], ys: [5, 6, 7], n: 0 };
-    var i: i32 = 0;
+    let o: S = S { xs: [1, 2], ys: [5, 6, 7], n: 0 };
+    let i: i32 = 0;
     while (i < k) {
         %s
         i = i + 1;
@@ -104,8 +104,8 @@ function work(k: i32): i32 {
 }
 
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 10) { t = t + work(%d); r = r + 1; }
     return t & 63;
 }`, update, k)
@@ -127,8 +127,8 @@ func nestedFieldAliasStructArraySrc(k int) string {
 struct S { xs: i32[], es: E[], n: i32 }
 
 function work(k: i32): i32 {
-    var o: S = S { xs: [1, 2], es: [E { a: 3, b: 4 }, E { a: 5, b: 6 }], n: 0 };
-    var i: i32 = 0;
+    let o: S = S { xs: [1, 2], es: [E { a: 3, b: 4 }, E { a: 5, b: 6 }], n: 0 };
+    let i: i32 = 0;
     while (i < k) {
         o = S { xs: o.xs.append(i), es: o.es, n: i };
         i = i + 1;
@@ -137,8 +137,8 @@ function work(k: i32): i32 {
 }
 
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 10) { t = t + work(%d); r = r + 1; }
     return t & 63;
 }`, k)
@@ -150,14 +150,14 @@ function main(): i32 {
 const nestedFieldAliasArrayForkSrc = `struct S { xs: i32[], ys: i32[], n: i32 }
 
 function work(k: i32): i32 {
-    var o: S = S { xs: [1, 2], ys: [5, 6, 7], n: k };
-    var p: S = S { xs: [4], ys: o.ys, n: o.n + 1 };
+    let o: S = S { xs: [1, 2], ys: [5, 6, 7], n: k };
+    let p: S = S { xs: [4], ys: o.ys, n: o.n + 1 };
     return p.ys[0] + p.ys[2] + o.ys[0] + o.ys[2] + p.n;
 }
 
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 10) { t = t + work(2); r = r + 1; }
     return t / 10;
 }`
@@ -172,7 +172,7 @@ function main(): i32 {
 // freed — 400 B here, flat in k, and present on the `...o` carry too (#6681).
 // Either fix alone leaves that 400; both together reach 0.
 //
-// `vv` is a `var` borrow of the carried enum, so the payload is read back after
+// `vv` is a `let` borrow of the carried enum, so the payload is read back after
 // the loop: an over-release is a wrong exit code before it is a byte count.
 func enumFieldAliasSrc(k int, carried bool) string {
 	update := "o = S { xs: o.xs.append(i), v: o.v, n: i };"
@@ -183,21 +183,21 @@ func enumFieldAliasSrc(k int, carried bool) string {
 struct S { xs: i32[], v: V, n: i32 }
 
 function work(k: i32): i32 {
-    var o: S = S { xs: [1, 2], v: V.A(7), n: 0 };
-    var i: i32 = 0;
+    let o: S = S { xs: [1, 2], v: V.A(7), n: 0 };
+    let i: i32 = 0;
     while (i < k) {
         %s
         i = i + 1;
     }
-    var vv: V = o.v;
-    var r: i32 = 0;
+    let vv: V = o.v;
+    let r: i32 = 0;
     match (vv) { V.A(x) => { r = x; }, V.B => { r = 0; } }
     return o.xs.len() + r;
 }
 
 function main(): i32 {
-    var t: i32 = 0;
-    var rr: i32 = 0;
+    let t: i32 = 0;
+    let rr: i32 = 0;
     while (rr < 10) { t = t + work(%d); rr = rr + 1; }
     return t & 63;
 }`, update, k)
@@ -214,20 +214,20 @@ const enumFieldAliasForkSrc = `enum V { A(i32), B }
 struct S { xs: i32[], v: V, n: i32 }
 
 function work(k: i32): i32 {
-    var o: S = S { xs: [1, 2], v: V.A(7), n: k };
-    var p: S = S { xs: [4], v: o.v, n: o.n + 1 };
-    var vo: V = o.v;
-    var vp: V = p.v;
-    var ro: i32 = 0;
+    let o: S = S { xs: [1, 2], v: V.A(7), n: k };
+    let p: S = S { xs: [4], v: o.v, n: o.n + 1 };
+    let vo: V = o.v;
+    let vp: V = p.v;
+    let ro: i32 = 0;
     match (vo) { V.A(x) => { ro = x; }, V.B => { ro = 0; } }
-    var rp: i32 = 0;
+    let rp: i32 = 0;
     match (vp) { V.A(x) => { rp = x; }, V.B => { rp = 0; } }
     return ro + rp + p.n;
 }
 
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 10) { t = t + work(2); r = r + 1; }
     return t / 10;
 }`
@@ -247,9 +247,9 @@ func freshVariantCtorFieldSrc(qualified bool) string {
 struct S { xs: i32[], v: V, n: i32 }
 
 function work(k: i32): i32 {
-    var o: S = S { xs: [1, 2], v: %s, n: k };
-    var vv: V = o.v;
-    var r: i32 = 0;
+    let o: S = S { xs: [1, 2], v: %s, n: k };
+    let vv: V = o.v;
+    let r: i32 = 0;
     match (vv) { V.A(x) => { r = x; }, V.B => { r = 0; } }
     return o.xs.len() + o.n + r;
 }
@@ -264,14 +264,14 @@ const nestedFieldAliasForkSrc = `struct I { tag: i32, data: i32[] }
 struct S { xs: i32[], inner: I, n: i32 }
 
 function work(k: i32): i32 {
-    var o: S = S { xs: [1, 2], inner: I { tag: 3, data: [9] }, n: k };
-    var p: S = S { xs: [4], inner: o.inner, n: o.n + 1 };
+    let o: S = S { xs: [1, 2], inner: I { tag: 3, data: [9] }, n: k };
+    let p: S = S { xs: [4], inner: o.inner, n: o.n + 1 };
     return p.inner.tag + p.inner.data[0] + o.inner.tag + o.inner.data[0] + p.n;
 }
 
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 10) { t = t + work(2); r = r + 1; }
     return t / 10;
 }`

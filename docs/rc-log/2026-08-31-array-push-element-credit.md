@@ -31,7 +31,7 @@ transitively string/array/slice/Map-free:
 | --- | --- | --- |
 | `{a: i32, b: i32}` | 208/208 clean | 409/409 clean |
 | `{a: i32, s: string, b: i32}` | **308 / 108** | **609 / 209** |
-| the same, temp bound to a `var` first | 308/308 clean | 609/609 clean |
+| the same, temp bound to a `let` first | 308/308 clean | 609/609 clean |
 
 A scalar-only element is owned-by-default, so the **callee** frees it —
 `__fern_box_free` is in `__fn___method_St_emit`. Add one `string` field,

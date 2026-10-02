@@ -14,7 +14,7 @@ leaked. 400 rounds of the churn harness, two compilers from the same commit:
 
 `collect_fresh_strarr_names` credits a `string[]` local only when it can see
 each element as a fresh expression — an array literal of fresh strings. A
-CALL's result is not one, so `var parts = base.split(sep)` fell through to
+CALL's result is not one, so `let parts = base.split(sep)` fell through to
 `__fern_rc_dec` and the elements were never walked.
 
 The elements of a split/lines result are nonetheless exclusively owned: the
@@ -46,7 +46,7 @@ The shape it stops:
 ```fern
 struct Holder { xs: string[] }
 function (h: Holder) split(sep: string): string[] {
-    var out: string[] = [];
+    let out: string[] = [];
     out = out.append(h.xs[0]);
     out = out.append(h.xs[1]);
     return out;
@@ -103,7 +103,7 @@ worsened here.
    corruption over 200 rounds with churn, so the unbalanced dec is landing on a
    box whose rc floor is guarded — detected, not yet located.
 2. **A split result escaping its frame dangles on the register backends** (#7230).
-   `function parts_of(pre: string): string[] { var base = w(pre); return
+   `function parts_of(pre: string): string[] { let base = w(pre); return
    base.split("-"); }` — the elements are views over `base`, which the frame
    frees on the way out. Native reads back correctly; self-host x86-64 reads
    corrupted element data. This one is a WRONG ANSWER, not a leak, and it is the

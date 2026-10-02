@@ -728,7 +728,7 @@ function fact(n: i32): i32 {
     return n * fact(n - 1);
 }
 function main(): i32 {
-    var f: i32 = fact(5);
+    let f: i32 = fact(5);
     print("5! = " + f.to_string());
     return f;
 }`,
@@ -736,14 +736,14 @@ function main(): i32 {
 import "std/string";
 import "std/i32";
 function main(): i32 {
-    var s: string = "  Hello, Fern!  ";
+    let s: string = "  Hello, Fern!  ";
     print("len:        " + s.len().to_string());
     print("trim:       \\"" + s.trim() + "\\"");
     print("byte[2]:    " + (s[2] as i32).to_string());
-    var starts: string = "no";
+    let starts: string = "no";
     if (s.trim().starts_with("Hello")) { starts = "yes"; }
     print("starts:     " + starts);
-    var contains: string = "no";
+    let contains: string = "no";
     if (s.contains("Fern")) { contains = "yes"; }
     print("contains:   " + contains);
     print("replace:    " + "hello world".replace("world", "Fern"));
@@ -754,8 +754,8 @@ import "core/cmp";
 import "std/i32";
 import "std/array";
 function join_i32s(arr: i32[]): string {
-    var i: i32 = 0;
-    var out: string = "";
+    let i: i32 = 0;
+    let out: string = "";
     while (i < arr.len()) {
         if (i > 0) { out = out + ", "; }
         out = out + arr[i].to_string();
@@ -765,11 +765,11 @@ function join_i32s(arr: i32[]): string {
 }
 
 function main(): i32 {
-    var xs: i32[] = [3, 1, 4, 1, 5, 9, 2, 6, 5, 3, 5];
+    let xs: i32[] = [3, 1, 4, 1, 5, 9, 2, 6, 5, 3, 5];
     print("input:  [" + join_i32s(xs) + "]");
-    var asc: i32[] = cmp.sort(xs);
+    let asc: i32[] = cmp.sort(xs);
     print("sorted: [" + join_i32s(asc) + "]");
-    var desc: i32[] = cmp.sort_desc(xs);
+    let desc: i32[] = cmp.sort_desc(xs);
     print("desc:   [" + join_i32s(desc) + "]");
     return asc.len();
 }`,
@@ -789,9 +789,9 @@ function eval(e: Expr): i32 {
 }
 
 function main(): i32 {
-    var sum: Expr = Add { l: 2, r: 3 };
-    var prod: Expr = Mul { l: eval(sum), r: 4 };
-    var v: i32 = eval(prod);   // (2+3) * 4 = 20
+    let sum: Expr = Add { l: 2, r: 3 };
+    let prod: Expr = Mul { l: eval(sum), r: 4 };
+    let v: i32 = eval(prod);   // (2+3) * 4 = 20
     print("(2+3) * 4 = " + v.to_string());
     return v;
 }`,
@@ -800,14 +800,14 @@ import "std/i32";
 struct ParseError { message: string, pos: i32 }
 
 function parse_int(s: string): Result[i32, ParseError] {
-    var n: i32 = s.len();
+    let n: i32 = s.len();
     if (n == 0) {
         return Err(ParseError { message: "empty input", pos: 0 });
     }
-    var v: i32 = 0;
-    var i: i32 = 0;
+    let v: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var b: i32 = s[i] as i32;
+        let b: i32 = s[i] as i32;
         if (!(b as u8).is_ascii_digit()) {
             return Err(ParseError { message: "not a digit", pos: i });
         }
@@ -837,14 +837,14 @@ struct BinOp { op: i32, left: Expr, right: Expr }
 type Expr = Num | BinOp;
 
 function tokenize(src: string): Token[] {
-    var toks: Token[] = [];
-    var n: i32 = src.len();
-    var i: i32 = 0;
+    let toks: Token[] = [];
+    let n: i32 = src.len();
+    let i: i32 = 0;
     while (i < n) {
-        var b: i32 = src[i] as i32;
+        let b: i32 = src[i] as i32;
         if ((b as u8).is_ascii_white_space()) { i = i + 1; }
         else if ((b as u8).is_ascii_digit()) {
-            var v: i32 = 0;
+            let v: i32 = 0;
             while (i < n && src[i].is_ascii_digit()) {
                 v = v * 10 + ((src[i] as i32) - 48);
                 i = i + 1;
@@ -877,8 +877,8 @@ function eval(e: Expr): i32 {
     match (e) {
         Num(n) => { return n.value; },
         BinOp(b) => {
-            var l: i32 = eval(b.left);
-            var r: i32 = eval(b.right);
+            let l: i32 = eval(b.left);
+            let r: i32 = eval(b.right);
             if (b.op == 43) { return l + r; }
             if (b.op == 45) { return l - r; }
             if (b.op == 42) { return l * r; }
@@ -888,51 +888,51 @@ function eval(e: Expr): i32 {
 }
 
 function parse_factor(toks: Token[], cur: i32[]): Expr {
-    var pos: i32 = cur[0];
+    let pos: i32 = cur[0];
     if (peek_kind(toks, pos) == 0) {
         cur = cur.with(0, pos + 1);
         return Num { value: peek_int(toks, pos) };
     }
     cur = cur.with(0, pos + 1);
-    var inner: Expr = parse_expr(toks, cur);
+    let inner: Expr = parse_expr(toks, cur);
     cur = cur.with(0, cur[0] + 1);
     return inner;
 }
 
 function parse_term(toks: Token[], cur: i32[]): Expr {
-    var lhs: Expr = parse_factor(toks, cur);
+    let lhs: Expr = parse_factor(toks, cur);
     while (true) {
-        var pos: i32 = cur[0];
+        let pos: i32 = cur[0];
         if (peek_kind(toks, pos) != 1) { return lhs; }
-        var op: i32 = peek_punct(toks, pos);
+        let op: i32 = peek_punct(toks, pos);
         if (op != 42 && op != 47) { return lhs; }
         cur = cur.with(0, pos + 1);
-        var rhs: Expr = parse_factor(toks, cur);
+        let rhs: Expr = parse_factor(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
     return lhs;
 }
 
 function parse_expr(toks: Token[], cur: i32[]): Expr {
-    var lhs: Expr = parse_term(toks, cur);
+    let lhs: Expr = parse_term(toks, cur);
     while (true) {
-        var pos: i32 = cur[0];
+        let pos: i32 = cur[0];
         if (peek_kind(toks, pos) != 1) { return lhs; }
-        var op: i32 = peek_punct(toks, pos);
+        let op: i32 = peek_punct(toks, pos);
         if (op != 43 && op != 45) { return lhs; }
         cur = cur.with(0, pos + 1);
-        var rhs: Expr = parse_term(toks, cur);
+        let rhs: Expr = parse_term(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
     return lhs;
 }
 
 function main(): i32 {
-    var src: string = "(1 + 2) * 3 - 4";
-    var toks: Token[] = tokenize(src);
-    var cur: i32[] = [0];
-    var ast: Expr = parse_expr(toks, cur);
-    var v: i32 = eval(ast);
+    let src: string = "(1 + 2) * 3 - 4";
+    let toks: Token[] = tokenize(src);
+    let cur: i32[] = [0];
+    let ast: Expr = parse_expr(toks, cur);
+    let v: i32 = eval(ast);
     print(src + " = " + v.to_string());
     return v;
 }`,
@@ -958,13 +958,13 @@ function describe(p: Person): string {
 }
 
 function main(): i32 {
-    var people: Person[] = [
+    let people: Person[] = [
         Person { name: "alice", age: 30, city: "London" },
         Person { name: "bob",   age: 45, city: "Sydney" },
         Person { name: "ciri",  age: 28, city: "Tokyo"  }
     ];
 
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < people.len()) {
         print(describe(people[i]));
         i = i + 1;

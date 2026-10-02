@@ -5,12 +5,12 @@ import "core/int";
 struct Pair { a: i32, b: string }
 
 function apply[S](init: S, f: (S) => i32): i32 {
-    var run: () => i32 = (): i32 => f(init);
+    let run: () => i32 = (): i32 => f(init);
     return run();
 }
 
 function twice[S](init: S, f: (S) => i32): i32 {
-    var g: (i32) => i32 = (k: i32): i32 => f(init) * k;
+    let g: (i32) => i32 = (k: i32): i32 => f(init) * k;
     return g(2);
 }
 

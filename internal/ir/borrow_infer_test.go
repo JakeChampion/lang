@@ -33,7 +33,7 @@ func rcOpCount(ip *ir.Program, fn, needle string) int {
 const borrowInferSrc = `enum L{C(i32,L),N}
 function sum(l:L):i32{match(l){C(h,t)=>{return h+sum(t);},N=>{return 0;}}}
 function build(n:i32):L{if(n==0){return N;}return C(n,build(n-1));}
-function f():i32{var x:L=build(3);return sum(x)+sum(x);}
+function f():i32{let x:L=build(3);return sum(x)+sum(x);}
 function main():i32{return 0;}`
 
 // Caller side: under the owned model the first `sum(x)` incs x (x is read
@@ -91,8 +91,8 @@ func TestBorrowInferKeepsEscapingParamOwned(t *testing.T) {
 function id(p:L):L{return p;}
 function len(l:L):i32{match(l){C(h,t)=>{return 1+len(t);},N=>{return 0;}}}
 function build(n:i32):L{if(n==0){return N;}return C(n,build(n-1));}
-function g():i32{var x:L=build(3);return len(id(x))+len(x);}
-function dying():i32{var x:L=build(3);return len(id(x));}
+function g():i32{let x:L=build(3);return len(id(x))+len(x);}
+function dying():i32{let x:L=build(3);return len(id(x));}
 function main():i32{return 0;}`
 
 	ast.BorrowInferEnabled = false

@@ -37,7 +37,7 @@ pub function http_entry_missing(entry: parser.Module, target: string): string {
   if (target != "wasm32-wasi-http") {
     return "";
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < entry.funcs.len()) {
     if (entry.funcs[i].name == "handle" && entry.funcs[i].receiver_type.len() == 0) {
       return "";
@@ -69,18 +69,18 @@ pub function wasm_http_core(full: parser.Module, sub: ircore.Sub): string {
 // emitter's own refusal, already reported; a non-empty `refused` names the
 // import the world does not declare.
 pub function wasm_http_component(full: parser.Module, sub: ircore.Sub): wit_compose.Composed {
-  var wat: string = wasm_http_core(full, sub);
+  let wat: string = wasm_http_core(full, sub);
   if (wat.len() == 0) {
     return wit_compose.Composed { bytes: [], refused: "" };
   }
-  var core: i32[] = watbin.wat_to_binary(wat);
-  var tbody: i32[] = wit_decode.wit_section_body(watbin.blob_to_bytes(wit_proxy_world.proxy_world_payload()), 7);
+  let core: i32[] = watbin.wat_to_binary(wat);
+  let tbody: i32[] = wit_decode.wit_section_body(watbin.blob_to_bytes(wit_proxy_world.proxy_world_payload()), 7);
   return wit_compose.compose_http(tbody, core);
 }
 
 // declares_extern reports whether `full` declares an `@import` extern.
 function declares_extern(full: parser.Module): boolean {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < full.funcs.len()) {
     if (full.funcs[i].import_iface.len() > 0) {
       return true;
@@ -97,16 +97,16 @@ function declares_extern(full: parser.Module): boolean {
 // core makes. No bytes with an empty `refused` is the emitter's own refusal,
 // already reported; a non-empty `refused` is the message to print.
 pub function wasm_component(full: parser.Module, sub: ircore.Sub): wit_compose.Composed {
-  var shape: i32 = wasm_ir.component_shape(full);
+  let shape: i32 = wasm_ir.component_shape(full);
   if (shape >= 0 && !declares_extern(full)) {
     return wit_compose.Composed { bytes: framed_component(full, shape, sub), refused: "" };
   }
-  var wat: string = wasm_ir.emit_module_mode_or_error_sub(full, true, true, sub);
+  let wat: string = wasm_ir.emit_module_mode_or_error_sub(full, true, true, sub);
   if (wat.len() == 0) {
     return wit_compose.Composed { bytes: [], refused: "" };
   }
-  var tbody: i32[] = wit_decode.wit_section_body(watbin.blob_to_bytes(wit_fern_world.fern_world_payload()), 7);
-  var c: wit_compose.Composed = wit_compose.compose_run(tbody, watbin.wat_to_binary(wat));
+  let tbody: i32[] = wit_decode.wit_section_body(watbin.blob_to_bytes(wit_fern_world.fern_world_payload()), 7);
+  let c: wit_compose.Composed = wit_compose.compose_run(tbody, watbin.wat_to_binary(wat));
   if (c.bytes.len() == 0) {
     return wit_compose.Composed { bytes: [], refused: "fern: -target wasm32-wasi: the fern world cannot take this program: " + c.refused };
   }
@@ -122,7 +122,7 @@ function framed_component(full: parser.Module, shape: i32, sub: ircore.Sub): i32
   if (shape == 0) {
     return watbin.component_full(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error_sub(full, true, false, sub)));
   }
-  var core: i32[] = watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error_sub(full, true, true, sub));
+  let core: i32[] = watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error_sub(full, true, true, sub));
   if (shape == 1) {
     return watbin.component_full_io(core, true);
   }

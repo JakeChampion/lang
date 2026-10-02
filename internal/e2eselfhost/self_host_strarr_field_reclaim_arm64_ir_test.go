@@ -34,8 +34,8 @@ func TestSelfHostStrArrFieldReclaimIRArm64(t *testing.T) {
 	// ADMITTED string[] field: element-fresh literal stores, .len()-only reads.
 	// 300k build/drop cycles under qemu — balanced, values right.
 	run(t, `struct Diag { code: i32, notes: string[] }
-function churn(n: i32): i32 { var bad: i32 = 0; var i: i32 = 0; while (i < n) { var d: Diag = Diag { code: i, notes: ["alpha", "beta" + "x"] }; if (d.notes.len() != 2) { bad = 1; } i = i + 1; } return bad; }
-function main(): i32 { var v: i32 = churn(300000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
+function churn(n: i32): i32 { let bad: i32 = 0; let i: i32 = 0; while (i < n) { let d: Diag = Diag { code: i, notes: ["alpha", "beta" + "x"] }; if (d.notes.len() != 2) { bad = 1; } i = i + 1; } return bad; }
+function main(): i32 { let v: i32 = churn(300000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
 		"strarr-field-reclaim-arm64", 0)
 
 	// STRING-BEFORE-ARRAY field order (the x10-staleness regression): R's
@@ -44,8 +44,8 @@ function main(): i32 { var v: i32 = churn(300000); if (__rc_underflow_count() !=
 	// freed through a stale x10 — a garbage dec that corrupts or ticks the
 	// underflow detector at scale. 300k cycles balanced → exit 0.
 	run(t, `struct R { name: string, items: i32[] }
-function churn(n: i32): i32 { var pre: string = "aa"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { var r: R = R { name: pre + "x", items: [1, 2, 3] }; if (r.name.len() != 3) { bad = 1; } if (r.items.len() != 3) { bad = 1; } i = i + 1; } return bad; }
-function main(): i32 { var v: i32 = churn(300000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
+function churn(n: i32): i32 { let pre: string = "aa"; let bad: i32 = 0; let i: i32 = 0; while (i < n) { let r: R = R { name: pre + "x", items: [1, 2, 3] }; if (r.name.len() != 3) { bad = 1; } if (r.items.len() != 3) { bad = 1; } i = i + 1; } return bad; }
+function main(): i32 { let v: i32 = churn(300000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
 		"str-before-array-field-order-arm64", 0)
 
 	// PRODUCER-CALL ELEMENTS: the field is built from calls to a proven
@@ -55,9 +55,9 @@ function main(): i32 { var v: i32 = churn(300000); if (__rc_underflow_count() !=
 	// flatness leg. 2 + 43 = 45 each build.
 	run(t, `struct Diag { code: i32, notes: string[] }
 function w(pre: string): string { return pre + "-a-wide-element-past-the-inline-threshold"; }
-function build(pre: string): i32 { var d: Diag = Diag { code: 1, notes: [w(pre), w(pre)] }; return d.notes.len() + d.notes.len() + 41; }
-function churn(n: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { if (build(pre) != 45) { bad = 1; } i = i + 1; } return bad; }
-function main(): i32 { var v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
+function build(pre: string): i32 { let d: Diag = Diag { code: 1, notes: [w(pre), w(pre)] }; return d.notes.len() + d.notes.len() + 41; }
+function churn(n: i32): i32 { let pre: string = "ab"; let bad: i32 = 0; let i: i32 = 0; while (i < n) { if (build(pre) != 45) { bad = 1; } i = i + 1; } return bad; }
+function main(): i32 { let v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
 		"strarr-field-producer-elements-arm64", 0)
 
 	// A SIBLING TYPE'S IDENTICALLY-NAMED FIELD, stored from a borrowed
@@ -67,11 +67,11 @@ function main(): i32 { var v: i32 = churn(2000); if (__rc_underflow_count() != 0
 	run(t, `struct Esc { notes: string[] }
 struct Ok { notes: string[] }
 function w(pre: string): string { return pre + "-a-wide-element-past-the-inline-threshold"; }
-function fill(n: i32): string { var s: string = ""; var i: i32 = 0; while (i < n) { s = s + "0123456789012345678901234567890123456789"; i = i + 1; } return s; }
+function fill(n: i32): string { let s: string = ""; let i: i32 = 0; while (i < n) { s = s + "0123456789012345678901234567890123456789"; i = i + 1; } return s; }
 function mkesc(notes: string[]): Esc { return Esc { notes: notes }; }
-function build(pre: string): i32 { var live: string[] = [w(pre), w(pre)]; var e: Esc = mkesc(live); var o: Ok = Ok { notes: [w(pre)] }; var junk: string = fill(20); if (junk.len() < 0) { return 0; } return e.notes.len() + live[0].len() + live[1].len() + o.notes.len(); }
-function churn(n: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { if (build(pre) != 89) { bad = 1; } i = i + 1; } return bad; }
-function main(): i32 { var v: i32 = churn(1000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
+function build(pre: string): i32 { let live: string[] = [w(pre), w(pre)]; let e: Esc = mkesc(live); let o: Ok = Ok { notes: [w(pre)] }; let junk: string = fill(20); if (junk.len() < 0) { return 0; } return e.notes.len() + live[0].len() + live[1].len() + o.notes.len(); }
+function churn(n: i32): i32 { let pre: string = "ab"; let bad: i32 = 0; let i: i32 = 0; while (i < n) { if (build(pre) != 89) { bad = 1; } i = i + 1; } return bad; }
+function main(): i32 { let v: i32 = churn(1000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
 		"strarr-field-sibling-name-arm64", 0)
 
 	// WHOLE-ARRAY PRODUCER CALL as the field value: the store gate took only an
@@ -81,9 +81,9 @@ function main(): i32 { var v: i32 = churn(1000); if (__rc_underflow_count() != 0
 	// 3 + 43 = 46 each build.
 	run(t, `struct Node { name: string, deps: string[], mtime: i32 }
 function w(pre: string): string { return pre + "-a-wide-element-past-the-inline-threshold"; }
-function deps_of(pre: string): string[] { var out: string[] = []; var i: i32 = 0; while (i < 3) { out = out.append(w(pre)); i = i + 1; } return out; }
-function build(pre: string): i32 { var f: Node = Node { name: w(pre), deps: deps_of(pre), mtime: 1 }; return f.deps.len() + f.name.len(); }
-function churn(n: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { if (build(pre) != 46) { bad = 1; } i = i + 1; } return bad; }
-function main(): i32 { var v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
+function deps_of(pre: string): string[] { let out: string[] = []; let i: i32 = 0; while (i < 3) { out = out.append(w(pre)); i = i + 1; } return out; }
+function build(pre: string): i32 { let f: Node = Node { name: w(pre), deps: deps_of(pre), mtime: 1 }; return f.deps.len() + f.name.len(); }
+function churn(n: i32): i32 { let pre: string = "ab"; let bad: i32 = 0; let i: i32 = 0; while (i < n) { if (build(pre) != 46) { bad = 1; } i = i + 1; } return bad; }
+function main(): i32 { let v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
 		"strarr-field-producer-call-store-arm64", 0)
 }

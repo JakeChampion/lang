@@ -11,13 +11,13 @@ import (
 // 100/100 for a scalar-only struct; 200/0 with an rc-array field. Like the
 // argument position (#7576) it leaks per EVALUATION, and like it, the shape is
 // invisible to the construction-retain matrix, whose 35 cells all bind the
-// literal to `var p` first.
+// literal to `let p` first.
 //
 // With this the three positions agree: discarded statement, call argument, and
 // intermediate field read all reclaim; binding to a var still does.
 //
 // THE MECHANISM WAS HERE, for a different receiver. `lower_expr`'s
-// ExprFieldAccess arm already reclaims the box behind a SCALAR field read off a
+// ExprFieldAccess arm already reclaimed the box behind a SCALAR field read off a
 // strict-fresh producer CALL (`mk().k`, #6491): stash the box, read the field,
 // deep-drop the rc fields while the box still owns them, then dec it. A struct
 // LITERAL receiver is the same temporary and takes the same release; it simply
@@ -53,7 +53,7 @@ struct A { xs: i32[], k: i32 }
 func structLitFieldReadMain(loopBody string) string {
 	return `
 function main(): i32 {
-    var t: i32 = 0; var r: i32 = 0;
+    let t: i32 = 0; let r: i32 = 0;
     while (r < 100) { ` + loopBody + ` }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
@@ -94,21 +94,21 @@ func structLitFieldReadCases() []arrenumShareCase {
 			name: "rc_field_read_uaf",
 			src: `struct A { xs: i32[], k: i32 }
 function churn(i: i32): i32 {
-    var a: i32[] = [i, i + 1, i + 2, i + 3];
-    var b: i32[] = [i + 4, i + 5, i + 6, i + 7];
+    let a: i32[] = [i, i + 1, i + 2, i + 3];
+    let b: i32[] = [i + 4, i + 5, i + 6, i + 7];
     return a[0] + b[3];
 }
 function round(i: i32): i32 {
-    var held: i32[] = (A { xs: [i, i + 1], k: i }).xs;
-    var junk: i32 = churn(i * 7 + 3);
+    let held: i32[] = (A { xs: [i, i + 1], k: i }).xs;
+    let junk: i32 = churn(i * 7 + 3);
     if (held.len() != 2) { return 0 - 1; }
-    var v: i32 = held[0] + held[1];
+    let v: i32 = held[0] + held[1];
     if (v != i + i + 1) { return 0 - 1; }
     return v % 101;
 }
 function main(): i32 {
-    var t: i32 = 0; var i: i32 = 0; var bad: i32 = 0;
-    while (i < 200) { var r: i32 = round(i); if (r < 0) { bad = bad + 1; } t = t + r; i = i + 1; }
+    let t: i32 = 0; let i: i32 = 0; let bad: i32 = 0;
+    while (i < 200) { let r: i32 = round(i); if (r < 0) { bad = bad + 1; } t = t + r; i = i + 1; }
     if (bad > 0) { return 100; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 83;
@@ -122,19 +122,19 @@ function main(): i32 {
 			name: "scalar_read_uaf",
 			src: `struct A { xs: i32[], k: i32 }
 function churn(i: i32): i32 {
-    var a: i32[] = [i, i + 1, i + 2, i + 3];
-    var b: i32[] = [i + 4, i + 5, i + 6, i + 7];
+    let a: i32[] = [i, i + 1, i + 2, i + 3];
+    let b: i32[] = [i + 4, i + 5, i + 6, i + 7];
     return a[0] + b[3];
 }
 function round(i: i32): i32 {
-    var k: i32 = (A { xs: [i, i + 1], k: i * 3 + 1 }).k;
-    var junk: i32 = churn(i * 7 + 3);
+    let k: i32 = (A { xs: [i, i + 1], k: i * 3 + 1 }).k;
+    let junk: i32 = churn(i * 7 + 3);
     if (k != i * 3 + 1) { return 0 - 1; }
     return k % 101;
 }
 function main(): i32 {
-    var t: i32 = 0; var i: i32 = 0; var bad: i32 = 0;
-    while (i < 200) { var r: i32 = round(i); if (r < 0) { bad = bad + 1; } t = t + r; i = i + 1; }
+    let t: i32 = 0; let i: i32 = 0; let bad: i32 = 0;
+    while (i < 200) { let r: i32 = round(i); if (r < 0) { bad = bad + 1; } t = t + r; i = i + 1; }
     if (bad > 0) { return 100; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 83;

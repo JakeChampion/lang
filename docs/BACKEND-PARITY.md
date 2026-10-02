@@ -477,7 +477,7 @@ streaming).
 
 These shipped on both natives and were then **removed** with the
 `state` feature (and the arena reset that motivated the second
-cursor). For the record, what existed was: `state { var NAME: T
+cursor). For the record, what existed was: `state { let NAME: T
 = INIT; }` blocks lowering to labelled `.data`/`.bss` slots via
 `OpLoadGlobal`/`OpStoreGlobal`; a synthesised `__state_init`
 start function; and a two-cursor bump allocator (an
@@ -757,7 +757,7 @@ above 4 GiB.
 **Root cause**: the prelude declares pointer-holding locals as `i32`:
 
 ```
-var buf: i32 = __load_ptr(m);   // truncates a 64-bit heap pointer
+let buf: i32 = __load_ptr(m);   // truncates a 64-bit heap pointer
 ```
 
 On wasm32 this is correct (pointers are 32-bit). On native (Linux +
@@ -791,7 +791,7 @@ unsigned). Concretely:
   collapses to identity.
 - Helper signatures change from `__alloc(n: i32) → usize` and
   `__load_ptr(addr: usize) → usize` etc. Prelude pointer locals
-  become `var X: usize = __alloc(...)`.
+  become `let X: usize = __alloc(...)`.
 
 Why this beats the spike's "everything is i64" approach:
 
@@ -819,7 +819,7 @@ Tried option (2) end-to-end. Got far enough to confirm scope:
   / comparisons / function args (the auto-widening half landed
   cleanly in PR #292).
 - **Prelude rewrite** is ~140 sites across the Map / string / slice
-  runtimes (pointer-typed `var X: i32 = __alloc(...)` → `i64`,
+  runtimes (pointer-typed `let X: i32 = __alloc(...)` → `i64`,
   function signatures, return types). Mechanical but laborious.
 - **Native backends** work without code changes — they already
   treat 8-byte slots and 64-bit registers as the default.
@@ -900,7 +900,7 @@ Translating to our shape:
   `__load_f64`.
 
 **Shares scope with the arm64-darwin truncation item above.** With
-type-hash dispatch, the Map runtime stops carrying `var entryK: i64
+type-hash dispatch, the Map runtime stops carrying `let entryK: i64
 = __load_ptr(...)` locals at the Fern level (the value flows as
 `anyptr` + per-call width-tagged load). That side-steps the wasm32
 "cast i64 → string" blocker we hit in the spike — the Map runtime
@@ -1047,7 +1047,7 @@ pipeline. Rewrites `OpMakeClosure(target, n=0)` →
 `OpConstFunc(target)`; both ops produce a pair-pointer of the
 same shape (fn_ptr at +0, env_ptr=0 at +ptrW) but OpConstFunc
 materialises it via a static cell. ElideClosurePair already
-covers the direct-call case (`var f = MakeClosure; ... f(args)`)
+covers the direct-call case (`let f = MakeClosure; ... f(args)`)
 by rewriting to OpMakeEnv; this pass closes the orthogonal
 escape case where the value flows past direct-call dispatch
 (arg to a function-typed param, returned, stored in a field).

@@ -32,8 +32,8 @@ function main(): i32 {
     // Bytes that use the url-safe -/_ alphabet round-trip via encode.
     // FF FE FD is not valid UTF-8, so it stays u8[] (#5730) and the
     // comparison goes through the encoded text.
-    var raw: u8[] = b64.base64_decode("//79");
-    var rawenc: string = b64.base64url_encode(raw);
+    let raw: u8[] = b64.base64_decode("//79");
+    let rawenc: string = b64.base64url_encode(raw);
     if (reenc(b64.base64url_decode_strict(rawenc)) != rawenc) { return 5; }
     if (opt(b64.base64url_decode_strict(""), "X") != "") { return 6; }
     if (!isnone(b64.base64url_decode_strict("SGVsbG8+"))) { return 7; }

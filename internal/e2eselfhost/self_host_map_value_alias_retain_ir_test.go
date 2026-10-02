@@ -7,7 +7,7 @@ import "testing"
 //
 // The register __fern_map_set stores the value pointer with no rc-inc of its
 // own, while the exit dec-sweep releases EVERY array slot unconditionally. So
-// `var a = [...]; m.insert(k, a);` left the map's value column naming a buffer
+// `let a = [...]; m.insert(k, a);` left the map's value column naming a buffer
 // the sweep freed, and the next allocation of that size class handed the block
 // out again underneath the map — a read of the value then sees the recycled
 // block's contents, and nothing reports an over-release because the map's alias
@@ -36,14 +36,14 @@ var mapValueAliasRetainIRCases = []struct {
 	// map, so the helper's exit sweep is what freed the stored buffer.
 	{"helper-insert", `import "core/map";
 function put(m: Map[string, i32[]], k: string, a: i32, b: i32): Map[string, i32[]] {
-    var arr: i32[] = [a, b];
+    let arr: i32[] = [a, b];
     return m.insert(k, arr);
 }
 
 function main(): i32 {
-    var m: Map[string, i32[]] = Map {};
+    let m: Map[string, i32[]] = Map {};
     m = put(m, "k", 3, 4);
-    var junk: i32[] = [7, 9];
+    let junk: i32[] = [7, 9];
     match (m.get("k")) {
         Some(v) => {
             if (v.len() != 2) { return 2; }
@@ -60,14 +60,14 @@ function main(): i32 {
 	// array is freed at the iteration's sweep and the next round recycles it.
 	{"loop-scoped-value", `import "core/map";
 function main(): i32 {
-    var m: Map[i32, i32[]] = Map {};
-    var i: i32 = 0;
+    let m: Map[i32, i32[]] = Map {};
+    let i: i32 = 0;
     while (i < 6) {
-        var arr: i32[] = [i, i + 100];
+        let arr: i32[] = [i, i + 100];
         m = m.insert(i, arr);
         i = i + 1;
     }
-    var j: i32 = 0;
+    let j: i32 = 0;
     while (j < 6) {
         match (m.get(j)) {
             Some(v) => {
@@ -85,14 +85,14 @@ function main(): i32 {
 	// The reported column type: Map[string, string[]].
 	{"string-array-value", `import "core/map";
 function put(m: Map[string, string[]], k: string, v: string): Map[string, string[]] {
-    var a: string[] = [v];
+    let a: string[] = [v];
     return m.insert(k, a);
 }
 
 function main(): i32 {
-    var m: Map[string, string[]] = Map {};
+    let m: Map[string, string[]] = Map {};
     m = put(m, "k", "hello");
-    var junk: string[] = ["zz"];
+    let junk: string[] = ["zz"];
     match (m.get("k")) {
         Some(v) => {
             if (v.len() != 1) { return 2; }
@@ -109,9 +109,9 @@ function main(): i32 {
 	// fix, which is its job.
 	{"fresh-value-control", `import "core/map";
 function main(): i32 {
-    var m: Map[i32, i32[]] = Map {};
+    let m: Map[i32, i32[]] = Map {};
     m = m.insert(1, [3, 4]);
-    var junk: i32[] = [7, 9];
+    let junk: i32[] = [7, 9];
     match (m.get(1)) {
         Some(v) => {
             if (v[0] != 3) { return 2; }

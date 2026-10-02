@@ -5,14 +5,14 @@
 
 ```fern
 struct Inst { name: string, depth: i32 }
-function mk(n: i32): Inst[] { var out: Inst[] = []; out = out.append(Inst { name: "g" + "", depth: n }); return out; }
-function main(): i32 { var pending: Inst[] = []; pending = mk(1); return pending.len(); }
+function mk(n: i32): Inst[] { let out: Inst[] = []; out = out.append(Inst { name: "g" + "", depth: n }); return out; }
+function main(): i32 { let pending: Inst[] = []; pending = mk(1); return pending.len(); }
 ```
 
 On the AST lowering this leaked the one `Inst` box (allocs 3, frees 2). The
 STRUCTARR and ARRSTRUCT credits, which free a struct array's element boxes,
 refused every reassignment except a self-append. So `pending` took the shallow
-buffer dec at exit. The same program with `var pending: Inst[] = mk(1)` was
+buffer dec at exit. The same program with `let pending: Inst[] = mk(1)` was
 balanced, because a producer init already earns the credit.
 
 ## The rule

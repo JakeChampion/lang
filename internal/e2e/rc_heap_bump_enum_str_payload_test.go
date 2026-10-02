@@ -13,7 +13,7 @@ import (
 // was stranded — 64 B a round on x86-64 while arm64 and wasm (two-word ABIs,
 // __fern_str_dec) were already flat.
 //
-// The binding has to be in a CALLEE. A loop-scoped `var m` re-declared in the
+// The binding has to be in a CALLEE. A loop-scoped `let m` re-declared in the
 // body reclaims through emitVarReinitDropOld, which routes to the generated
 // __drop_enum_<E> — and that fn has always called __fern_str_dec, so the loop
 // spelling was flat throughout. Only the function-exit sweep was short.
@@ -29,22 +29,22 @@ const enumStrPayloadChurnSrc = `import "std/i32";
 enum Msg { Text(string), Code(i32) }
 function wide(k: i32): string { return "a-value-well-past-the-inline-threshold-" + k.to_string(); }
 function probe(k: i32): i32 {
-    var m: Msg = Text(wide(k));
-    var got: i32 = 0;
+    let m: Msg = Text(wide(k));
+    let got: i32 = 0;
     match (m) { Text(t) => { got = t.len(); }, Code(c) => { got = c; } }
     return got;
 }
 function churn(n: i32): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < n) { t = t + probe(i); i = i + 1; }
     return t;
 }
 function main(): i32 {
-    var warm: i32 = churn(200);
-    var before: i64 = __heap_bump_bytes();
-    var again: i32 = churn(200);
-    var per: i64 = (__heap_bump_bytes() - before) / 200;
+    let warm: i32 = churn(200);
+    let before: i64 = __heap_bump_bytes();
+    let again: i32 = churn(200);
+    let per: i64 = (__heap_bump_bytes() - before) / 200;
     if (warm != again) { return 98; }
     if (warm <= 0) { return 97; }
     if (__rc_underflow_count() != 0) { return 96; }
@@ -55,22 +55,22 @@ const uniformEnumStrPayloadChurnSrc = `import "std/i32";
 enum Line { Head(string), Tail(string) }
 function wide(k: i32): string { return "a-value-well-past-the-inline-threshold-" + k.to_string(); }
 function probe(k: i32): i32 {
-    var m: Line = Head(wide(k));
-    var got: i32 = 0;
+    let m: Line = Head(wide(k));
+    let got: i32 = 0;
     match (m) { Head(t) => { got = t.len(); }, Tail(t) => { got = t.len() + 1; } }
     return got;
 }
 function churn(n: i32): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < n) { t = t + probe(i); i = i + 1; }
     return t;
 }
 function main(): i32 {
-    var warm: i32 = churn(200);
-    var before: i64 = __heap_bump_bytes();
-    var again: i32 = churn(200);
-    var per: i64 = (__heap_bump_bytes() - before) / 200;
+    let warm: i32 = churn(200);
+    let before: i64 = __heap_bump_bytes();
+    let again: i32 = churn(200);
+    let per: i64 = (__heap_bump_bytes() - before) / 200;
     if (warm != again) { return 98; }
     if (warm <= 0) { return 97; }
     if (__rc_underflow_count() != 0) { return 96; }
@@ -88,15 +88,15 @@ enum Msg { Text(string), Code(i32) }
 function wide(k: i32): string { return "a-value-well-past-the-inline-threshold-" + k.to_string(); }
 function eat(s: string): i32 { return s.len() + 1; }
 function probe(k: i32): i32 {
-    var s: string = wide(k);
-    var m: Msg = Text(s);
-    var out: string = "";
+    let s: string = wide(k);
+    let m: Msg = Text(s);
+    let out: string = "";
     match (m) { Text(t) => { out = t; }, Code(c) => { out = c.to_string(); } }
     return eat(out) + s.len();
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) { acc = acc + probe(i); i = i + 1; }
     if (acc <= 0) { return 97; }
     if (__rc_underflow_count() != 0) { return 96; }

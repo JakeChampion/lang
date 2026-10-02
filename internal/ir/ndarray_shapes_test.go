@@ -18,12 +18,12 @@ const productSrc = `import "std/ndarray";
 function mul(x: i64, y: i64): i64 { return x * y; }
 function add(x: i64, y: i64): i64 { return x + y; }
 function run(a: ndarray.NdArray[i64], b: ndarray.NdArray[i64]): i64 {
-  var mm: ndarray.NdArray[i64] = a.inner(b, 0 as i64, mul, add);
-  var o: ndarray.NdArray[i64] = a.outer(b, (x: i64, y: i64): i64 => x - y);
+  let mm: ndarray.NdArray[i64] = a.inner(b, 0 as i64, mul, add);
+  let o: ndarray.NdArray[i64] = a.outer(b, (x: i64, y: i64): i64 => x - y);
   return mm.get([0, 0]) + o.get([0, 0, 0, 0]);
 }
 function main(): i32 {
-  var a: ndarray.NdArray[i64] = ndarray.from_flat([1 as i64, 2 as i64, 3 as i64, 4 as i64], [2, 2]);
+  let a: ndarray.NdArray[i64] = ndarray.from_flat([1 as i64, 2 as i64, 3 as i64, 4 as i64], [2, 2]);
   return run(a, a) as i32;
 }`
 
@@ -133,17 +133,17 @@ function sum_cell(c: ndarray.NdArray[i64]): ndarray.NdArray[i64] {
   return ndarray.from_flat([c.fold_all(0 as i64, add)], []);
 }
 function algebra(a: ndarray.NdArray[i64], b: ndarray.NdArray[i64], k: i32): i64 {
-  var m: ndarray.NdArray[i64] = a.map(dbl);
-  var z: ndarray.NdArray[i64] = a.zip_with(b, add);
-  var t: i64 = a.fold_all(0 as i64, add);
-  var r: ndarray.NdArray[i64] = a.reduce_axis(1, 0 as i64, add);
-  var sc: ndarray.NdArray[i64] = a.scan_axis(0, 0 as i64, add);
-  var mr: ndarray.NdArray[i64] = a.map_rank(1, sum_cell);
-  var q: ndarray.NdArray[i64] = a.reduce_axis(k, 0 as i64, add);
+  let m: ndarray.NdArray[i64] = a.map(dbl);
+  let z: ndarray.NdArray[i64] = a.zip_with(b, add);
+  let t: i64 = a.fold_all(0 as i64, add);
+  let r: ndarray.NdArray[i64] = a.reduce_axis(1, 0 as i64, add);
+  let sc: ndarray.NdArray[i64] = a.scan_axis(0, 0 as i64, add);
+  let mr: ndarray.NdArray[i64] = a.map_rank(1, sum_cell);
+  let q: ndarray.NdArray[i64] = a.reduce_axis(k, 0 as i64, add);
   return m.get([0, 0]) + z.get([0, 0]) + t + r.get([0]) + sc.get([0, 0]) + mr.get([0]) + q.get([0]);
 }
 function main(): i32 {
-  var a: ndarray.NdArray[i64] = ndarray.from_flat([1 as i64, 2 as i64, 3 as i64, 4 as i64], [2, 2]);
+  let a: ndarray.NdArray[i64] = ndarray.from_flat([1 as i64, 2 as i64, 3 as i64, 4 as i64], [2, 2]);
   return algebra(a, a, 1) as i32;
 }`
 
@@ -261,7 +261,7 @@ function run(bx: Box): i64 {
   return bx.a.reduce_axis(1, 0 as i64, add).get([0]);
 }
 function main(): i32 {
-  var a: ndarray.NdArray[i64] = ndarray.from_flat([1 as i64, 2 as i64, 3 as i64, 4 as i64], [2, 2]);
+  let a: ndarray.NdArray[i64] = ndarray.from_flat([1 as i64, 2 as i64, 3 as i64, 4 as i64], [2, 2]);
   return run(Box { a: a }) as i32;
 }`)
 	var got []ir.NdarrayShape
@@ -289,7 +289,7 @@ function run(a: ndarray.NdArray[i64]): i64 {
   return a.reduce_axis(-1, 0 as i64, add).get([0]);
 }
 function main(): i32 {
-  var a: ndarray.NdArray[i64] = ndarray.from_flat([1 as i64, 2 as i64], [2]);
+  let a: ndarray.NdArray[i64] = ndarray.from_flat([1 as i64, 2 as i64], [2]);
   return run(a) as i32;
 }`)
 	var got []ir.NdarrayShape
@@ -315,13 +315,13 @@ function main(): i32 {
 const i32AxisSrc = `import "std/ndarray";
 function add(x: i32, y: i32): i32 { return x + y; }
 function run(a: ndarray.NdArray[i32], k: i32): i32 {
-  var computed: ndarray.NdArray[i32] = a.reduce_axis(k, 0, add);
-  var written: ndarray.NdArray[i32] = a.reduce_axis(1, 0, add);
-  var scanned: ndarray.NdArray[i32] = a.scan_axis(k, 0, add);
+  let computed: ndarray.NdArray[i32] = a.reduce_axis(k, 0, add);
+  let written: ndarray.NdArray[i32] = a.reduce_axis(1, 0, add);
+  let scanned: ndarray.NdArray[i32] = a.scan_axis(k, 0, add);
   return computed.get([0]) + written.get([0]) + scanned.get([0, 0]);
 }
 function main(): i32 {
-  var a: ndarray.NdArray[i32] = ndarray.from_flat([1, 2, 3, 4], [2, 2]);
+  let a: ndarray.NdArray[i32] = ndarray.from_flat([1, 2, 3, 4], [2, 2]);
   return run(a, 0);
 }`
 
@@ -357,12 +357,12 @@ func TestNdarrayComputedAxisIsNotReadFromTheInit(t *testing.T) {
 const chainedSrc = `import "std/ndarray";
 function add(x: i64, y: i64): i64 { return x + y; }
 function run(a: ndarray.NdArray[i64]): i64 {
-  var t: i64 = a.transpose().reduce_axis(0, 0 as i64, add).get([0]);
-  var c: i64 = a.reduce_axis(1, 0 as i64, add).scan_axis(0, 0 as i64, add).get([0]);
+  let t: i64 = a.transpose().reduce_axis(0, 0 as i64, add).get([0]);
+  let c: i64 = a.reduce_axis(1, 0 as i64, add).scan_axis(0, 0 as i64, add).get([0]);
   return t + c;
 }
 function main(): i32 {
-  var a: ndarray.NdArray[i64] = ndarray.from_flat([1 as i64, 2 as i64, 3 as i64, 4 as i64], [2, 2]);
+  let a: ndarray.NdArray[i64] = ndarray.from_flat([1 as i64, 2 as i64, 3 as i64, 4 as i64], [2, 2]);
   return run(a) as i32;
 }`
 

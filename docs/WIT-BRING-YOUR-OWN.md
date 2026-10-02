@@ -1325,7 +1325,7 @@ world-driven composer (P2) wires it.
        `@import` externs (the P5 import side), which then composes the real
        `wasi:http` handler.
      - **Slice 6c — `[resource-drop]` in a reactor export (composer, Go). ✅
-       Done.** A handler that holds an owned handle (`var t: own Thing =
+       Done.** A handler that holds an owned handle (`let t: own Thing =
        new_thing();`) auto-drops it at scope exit, so the reactor core imports
        `[resource-drop]thing`. `ComposeExportsFromWorld` no longer rejects that —
        it classifies it as a `gDrop` and surfaces the resource + threads its type
@@ -1496,7 +1496,7 @@ produces a response:
   9-param `response-outparam.set` flattening is hidden behind a pure-Fern helper
   `set_response_ok(out, resp)` (no compiler change — the Ok-wrap is just a
   one-line wrapper over the raw extern), alongside a `new_response()` helper. A
-  handler then reads as: `var resp = new_response(); set_status(resp, 404);
+  handler then reads as: `let resp = new_response(); set_status(resp, 404);
   set_response_ok(out, resp);`. `[method]outgoing-response.set-status-code`
   (`status-code` = `u16` param + `result<_,_>` return, both flattening to i32) is
   a plain scalar method extern — declared `set_status(resp: borrow

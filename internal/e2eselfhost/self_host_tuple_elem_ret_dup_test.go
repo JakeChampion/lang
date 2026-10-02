@@ -29,13 +29,13 @@ func tupleElemRetDupCases() []tupleAliasParamCase {
 			name: "direct_elem_return_balances",
 			src: `function get(src: (i32, i32[])): i32[] { return src.1; }
 function make(i: i32): i32 {
-    var keep: (i32, i32[]) = (i, [i, i + 1]);
-    var r: i32[] = get(keep);
+    let keep: (i32, i32[]) = (i, [i, i + 1]);
+    let r: i32[] = get(keep);
     return r.len() + keep.0;
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) { acc = acc + make(i); i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return acc % 83;
@@ -48,14 +48,14 @@ function main(): i32 {
 			// in one round trip.
 			name: "self_extract_balances",
 			src: `function grab(i: i32): i32 {
-    var t: (i32, i32[]) = (i, [i, i + 1, i + 2]);
-    var r: i32[] = pick(t);
+    let t: (i32, i32[]) = (i, [i, i + 1, i + 2]);
+    let r: i32[] = pick(t);
     return r.len() + t.0;
 }
 function pick(t: (i32, i32[])): i32[] { return t.1; }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) { acc = acc + grab(i); i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return acc % 83;
@@ -72,13 +72,13 @@ function main(): i32 {
     return [i];
 }
 function make(i: i32): i32 {
-    var keep: (i32, i32[]) = (i, [i, i + 1]);
-    var r: i32[] = get(keep, i);
+    let keep: (i32, i32[]) = (i, [i, i + 1]);
+    let r: i32[] = get(keep, i);
     return r.len() + keep.0;
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) { acc = acc + make(i); i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return acc % 83;
@@ -95,12 +95,12 @@ function main(): i32 {
 			src: `function sink(xs: i32[]): i32 { return xs.len(); }
 function get(src: (i32, i32[])): i32 { return sink(src.1); }
 function make(i: i32): i32 {
-    var keep: (i32, i32[]) = (i, [i, i + 1]);
+    let keep: (i32, i32[]) = (i, [i, i + 1]);
     return get(keep) + keep.0;
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) { acc = acc + make(i); i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return acc % 83;
@@ -108,21 +108,21 @@ function main(): i32 {
 			want: 4,
 		},
 		{
-			// Adversarial: the BIND spelling (`var e = src.1; return e`).
+			// Adversarial: the BIND spelling (`let e = src.1; return e`).
 			// The exit and free-safety are what this row pins.
 			name: "bind_spelling_stays_refused",
 			src: `function get(src: (i32, i32[])): i32[] {
-    var e: i32[] = src.1;
+    let e: i32[] = src.1;
     return e;
 }
 function make(i: i32): i32 {
-    var keep: (i32, i32[]) = (i, [i, i + 1]);
-    var r: i32[] = get(keep);
+    let keep: (i32, i32[]) = (i, [i, i + 1]);
+    let r: i32[] = get(keep);
     return r.len() + keep.0;
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) { acc = acc + make(i); i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return acc % 83;

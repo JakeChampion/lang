@@ -67,7 +67,7 @@ func ElideClosurePair(prog *Program, pairEnvOffset int32) {
 	// A callee whose result type is a FuncType hands back a closure PAIR, so
 	// a local it initialises holds one even though no OpMakeClosure wrote the
 	// slot. That is the third way a slot comes to hold a pair, and the drop
-	// rewrite below needs it: `var add5 = makeAdder(5);` leaked its env on
+	// rewrite below needs it: `let add5 = makeAdder(5);` leaked its env on
 	// every call because the slot's provenance was invisible here (#8622).
 	returnsClosure := map[string]bool{}
 	for _, fn := range prog.Funcs {
@@ -391,7 +391,7 @@ func elideClosurePairFunc(fn *Func, pairEnvOffset int32, returnsClosure map[stri
 			}
 		}
 	}
-	// An alias of a pair is a pair. `var g = f;` writes the slot through
+	// An alias of a pair is a pair. `let g = f;` writes the slot through
 	// OpLoadLocal (or OpRcInc over one), which carries no OpMakeClosure of
 	// its own, so without this the drop on the alias is left alone — a
 	// missed release rather than a wrong one, but it is most of the shapes

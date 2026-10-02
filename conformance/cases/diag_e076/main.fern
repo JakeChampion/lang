@@ -21,6 +21,6 @@ function f(a: i32, b: i32 = a * 2): i32 {
 }
 
 function main(): i32 {
-    var a: i32 = 100;
+    let a: i32 = 100;
     return f(1);
 }

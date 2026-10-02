@@ -25,7 +25,7 @@ var backtraceHexRe = regexp.MustCompile(`0x[0-9a-f]{16}`)
 // main and leave a correct one-frame backtrace with nothing to walk.
 const deepAbortSrc = `@noinline function inner(xs: i32[]): i32 { return xs[7]; }
 @noinline function mid(xs: i32[]): i32 { return inner(xs); }
-function main(): i32 { var xs: i32[] = [1, 2, 3]; return mid(xs); }
+function main(): i32 { let xs: i32[] = [1, 2, 3]; return mid(xs); }
 `
 
 // buildAndAbort compiles deepAbortSrc with `-g` for target (plus extraArgs,

@@ -19,7 +19,7 @@ function test_all_starts_with_pass(): test.TestOutcome {
 }
 
 function test_all_starts_with_empty_array_vacuous(): test.TestOutcome {
-  var empty: string[] = [];
+  let empty: string[] = [];
   return test.assert_all_starts_with(empty, "anything");
 }
 
@@ -130,7 +130,7 @@ function test_starts_with_any_no_match_reports(): test.TestOutcome {
 }
 
 function test_starts_with_any_empty_options_fails(): test.TestOutcome {
-  var empty: string[] = [];
+  let empty: string[] = [];
   match (test.assert_starts_with_any("anything", empty)) {
     Pass => {
       return test.fail("empty options should fail");
@@ -163,7 +163,7 @@ function test_ends_with_any_no_match(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("all-substring + multi-option substring");
+  let r: test.TestRunner = test.test_new("all-substring + multi-option substring");
   r = r.it("all_starts_with pass", test_all_starts_with_pass);
   r = r.it("all_starts_with empty vacuous", test_all_starts_with_empty_array_vacuous);
   r = r.it("all_starts_with first violation", test_all_starts_with_first_violation_reports);

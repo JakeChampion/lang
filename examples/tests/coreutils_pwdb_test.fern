@@ -25,7 +25,7 @@ import "../../coreutils/lib/utmp" as utmp;
 
 // A passwd file with every shape the parse has to survive.
 function passwd_fixture(): string {
-  var s: string = "";
+  let s: string = "";
   s = s + "root:x:0:0:root:/root:/bin/bash\n";
   // A comment and a blank line are not entries.
   s = s + "# a comment\n";
@@ -88,11 +88,11 @@ function test_full_name(): test.TestOutcome {
 }
 
 function test_home_and_shell(): test.TestOutcome {
-  var dan: pwdb.User = user_of(pwdb.user_by_name_in(passwd_fixture(), "dan"));
+  let dan: pwdb.User = user_of(pwdb.user_by_name_in(passwd_fixture(), "dan"));
   if (dan.dir != "/home/dan" || dan.shell != "/bin/sh") {
     return test.fail("the directory and the shell");
   }
-  var short: pwdb.User = user_of(pwdb.user_by_name_in(passwd_fixture(), "short"));
+  let short: pwdb.User = user_of(pwdb.user_by_name_in(passwd_fixture(), "short"));
   if (short.name != "short") {
     return test.fail("a line that stops after the gid is an entry");
   }
@@ -103,7 +103,7 @@ function test_home_and_shell(): test.TestOutcome {
 }
 
 function group_fixture(): string {
-  var s: string = "";
+  let s: string = "";
   s = s + "root:x:0:\n";
   s = s + "adm:x:4:alice,bob\n";
   s = s + "# a comment\n";
@@ -185,8 +185,8 @@ function is_none_user(u: Option[pwdb.User]): boolean {
 }
 
 function joined(gids: i64[]): string {
-  var s: string = "";
-  var i: i32 = 0;
+  let s: string = "";
+  let i: i32 = 0;
   while (i < gids.len()) {
     if (i > 0) {
       s = s + " ";
@@ -222,8 +222,8 @@ function test_primary_gid_leads(): test.TestOutcome {
 }
 
 function named(names: Option[string][]): string {
-  var s: string = "";
-  var i: i32 = 0;
+  let s: string = "";
+  let i: i32 = 0;
   while (i < names.len()) {
     if (i > 0) {
       s = s + " ";
@@ -245,12 +245,12 @@ function named(names: Option[string][]): string {
 // claims answers None rather than a name, and the FIRST line with a
 // gid names it — `dup` shares 4 with `adm` and never wins.
 function test_group_names(): test.TestOutcome {
-  var gids: i64[] = [0 as i64, 4 as i64, 99999 as i64, 1000 as i64, 99 as i64];
+  let gids: i64[] = [0 as i64, 4 as i64, 99999 as i64, 1000 as i64, 99 as i64];
   return test.assert_eq(named(pwdb.group_names_in(group_fixture(), gids)), "root adm ? alice empty");
 }
 
 function test_empty_gid_list(): test.TestOutcome {
-  var none: i64[] = [];
+  let none: i64[] = [];
   return test.assert_eq(pwdb.group_names_in(group_fixture(), none).len(), 0);
 }
 
@@ -316,7 +316,7 @@ function utmp_fixture_path(): string {
 // Each branch spells its own offsets out rather than asking the reader for
 // them, so the two layouts stay independently stated here.
 function put_record(bs: u8[], typ: i32, pid: i64, line: string, id: string, user: string, host: string, sec: i64): u8[] {
-  var out: u8[] = bs;
+  let out: u8[] = bs;
   out = put_u16(out, typ);
   out = put_pad(out, 2);
   out = put_i32(out, pid);
@@ -341,7 +341,7 @@ function put_record(bs: u8[], typ: i32, pid: i64, line: string, id: string, user
 }
 
 function utmp_fixture_bytes(): u8[] {
-  var bs: u8[] = [];
+  let bs: u8[] = [];
   // Record 1: a USER_PROCESS. Record 2: a DEAD_PROCESS with no user,
   // which no lookup answers.
   bs = put_record(bs, 7, 1234 as i64, "pts/3", "ts/1", "alice", "10.0.0.1", 1788775872 as i64);
@@ -350,14 +350,14 @@ function utmp_fixture_bytes(): u8[] {
 }
 
 function put_u16(bs: u8[], v: i32): u8[] {
-  var out: u8[] = bs.append((v % 256) as u8);
+  let out: u8[] = bs.append((v % 256) as u8);
   return out.append((v / 256 % 256) as u8);
 }
 
 function put_i32(bs: u8[], v: i64): u8[] {
-  var out: u8[] = bs;
-  var x: i64 = v;
-  var i: i32 = 0;
+  let out: u8[] = bs;
+  let x: i64 = v;
+  let i: i32 = 0;
   while (i < 4) {
     out = out.append((x % (256 as i64)) as u8);
     x = x / (256 as i64);
@@ -367,9 +367,9 @@ function put_i32(bs: u8[], v: i64): u8[] {
 }
 
 function put_i64(bs: u8[], v: i64): u8[] {
-  var out: u8[] = bs;
-  var x: i64 = v;
-  var i: i32 = 0;
+  let out: u8[] = bs;
+  let x: i64 = v;
+  let i: i32 = 0;
   while (i < 8) {
     out = out.append((x % (256 as i64)) as u8);
     x = x / (256 as i64);
@@ -379,8 +379,8 @@ function put_i64(bs: u8[], v: i64): u8[] {
 }
 
 function put_pad(bs: u8[], n: i32): u8[] {
-  var out: u8[] = bs;
-  var i: i32 = 0;
+  let out: u8[] = bs;
+  let i: i32 = 0;
   while (i < n) {
     out = out.append(0 as u8);
     i = i + 1;
@@ -389,8 +389,8 @@ function put_pad(bs: u8[], n: i32): u8[] {
 }
 
 function put_field(bs: u8[], s: string, width: i32): u8[] {
-  var out: u8[] = bs;
-  var i: i32 = 0;
+  let out: u8[] = bs;
+  let i: i32 = 0;
   while (i < s.len() && i < width) {
     out = out.append(s[i]);
     i = i + 1;
@@ -417,7 +417,7 @@ function test_utmp_record_fields(): test.TestOutcome {
   if (!write_utmp_fixture()) {
     return test.fail("the fixture could not be written");
   }
-  var es: utmp.Entry[] = utmp.read_all(utmp_fixture_path());
+  let es: utmp.Entry[] = utmp.read_all(utmp_fixture_path());
   if (es.len() != 2) {
     return test.fail("two whole records");
   }
@@ -452,9 +452,9 @@ function test_utmp_record_fields(): test.TestOutcome {
 // records rather than an error — which is how a container with no
 // login database reads.
 function test_utmp_partial_and_missing(): test.TestOutcome {
-  var bs: u8[] = utmp_fixture_bytes();
-  var short: u8[] = [];
-  var i: i32 = 0;
+  let bs: u8[] = utmp_fixture_bytes();
+  let short: u8[] = [];
+  let i: i32 = 0;
   while (i < utmp.record_bytes() + 17) {
     short = short.append(bs[i]);
     i = i + 1;
@@ -503,7 +503,7 @@ function test_utmp_user_on_line(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("coreutils/lib/pwdb + lib/utmp");
+  let r: test.TestRunner = test.test_new("coreutils/lib/pwdb + lib/utmp");
   r = r.defer_cleanup(utmp_fixture_path());
   r = r.it("lookup by name takes the first entry", test_lookup_by_name);
   r = r.it("lookup by uid takes the first entry", test_lookup_by_uid);

@@ -27,7 +27,7 @@ their sources (`borrowedAlias` / `borrowSources`).
 
 ## An owned parameter tainted by an alias kept the caller's count forever
 
-`var cur = root; cur = kids[i]` — the walk every tree lookup is written as —
+`let cur = root; cur = kids[i]` — the walk every tree lookup is written as —
 taints `cur` (a reassign from a borrowed payload) and the backward alias
 propagation carries that taint onto `root`. Under the borrow model that only
 withheld a precise drop; under the owned model it withheld the exit release,
@@ -37,7 +37,7 @@ consumed param spends its count unless it escaped. `own` params keep the
 old gate. This is the class the "sound leak" wording in the owned-model
 comments described; with array-carrying types owned it stopped being rare.
 
-## The escape analysis followed `var` initialisers only
+## The escape analysis followed `let` initialisers only
 
 `root = ins(root, .., k, v)` carries `k` into `root`, which is returned, but
 `paramEscapesInFn` tainted only `*ast.Var` initialisers, so `k` read as
@@ -68,7 +68,7 @@ with it — the re-init drop meets the null too.
 The #4873 containment bracket exempted an owned-by-default position on the
 grounds that the caller retains the argument — but the retain is on the BOX
 and the field buffer inside stays at its own count, exactly the hole the
-2026-08 audit measured (`var c = a.push(3); a.size()`). And a field-chain
+2026-08 audit measured (`let c = a.push(3); a.size()`). And a field-chain
 argument (`push(h.b)`) was never bracketed at all. `bracketArgPath` resolves
 a field chain to the root slot plus the field offsets; the owned-by-default
 exemption is gone.
@@ -133,7 +133,7 @@ function. A retain on one arm and a release on another was balanced. Under
 the borrow model that shape was rare on a parameter; under the owned model
 it is the ordinary one: `return a` on an owned parameter is a transfer inc
 beside the exit sweep's drop, and the arm that rebuilds instead just drops
-(`__rx_count`), or `var cur = it` retains the parameter and the exit sweep
+(`__rx_count`), or `let cur = it` retains the parameter and the exit sweep
 drops both (`iter.filter`). The solver called each Borrowed, so every
 caller that had MOVED its argument into the owned position — the slot
 nulled, the exit drop landing on a constant 0 — read as still holding it,
@@ -167,7 +167,7 @@ unchanged. `examples/bench/pvec_with` 1,118,676 → 642,593 allocations,
 bare payloadless variant in argument or struct-field position
 (`kids.with(sub, Empty)`) is a function-value reference to the self-host
 lowering, which refuses the module; the library spells it through a typed
-local (`var e: VNode[T] = Empty;`) as the rest of the stdlib always has,
+local (`let e: VNode[T] = Empty;`) as the rest of the stdlib always has,
 and that local's sentinel inc/dec is the difference between these numbers
 and the bare spelling (−52% / −59%). The
 library shapes that reach the path are in `docs/PERSISTENT-COLLECTIONS.md`
@@ -181,7 +181,7 @@ library shapes that reach the path are in `docs/PERSISTENT-COLLECTIONS.md`
   `closure_local_passed_to_callee_released` records
   (`docs/rc-log/2026-09-02-persistent-collections-residual-leaks.md`).
 - A consuming-match binding passed at its last use to an owned position
-  (`var nl = __om_insert(l, ..)`) is retained, not moved — `callArgDeaths`
+  (`let nl = __om_insert(l, ..)`) is retained, not moved — `callArgDeaths`
   admits only params and call-initialised locals for the sole-use shape, so
   the ordered map's descent is unique at the root only.
 - A field read passed straight into a call (`f(v.root)`) is retained; the

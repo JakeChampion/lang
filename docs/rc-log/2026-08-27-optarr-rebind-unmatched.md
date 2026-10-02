@@ -6,7 +6,7 @@
 ## The cell
 
 ```fern
-var x: Option[i32[]] = Some([i, i + 1]);
+let x: Option[i32[]] = Some([i, i + 1]);
 x = Some([i + 2, i + 3, i + 4]);
 ```
 

@@ -27,12 +27,12 @@ var deriveEqCases = []struct {
 	{"struct-i32", `import "core/cmp";
 @derive(cmp.Eq)
 struct P { x: i32, y: i32 }
-function main(): i32 { var a = P { x: 1, y: 2 }; var b = P { x: 1, y: 2 }; var c = P { x: 1, y: 9 }; if (a.eq(b) && !a.eq(c)) { return 42; } return 0; }`, 42},
+function main(): i32 { let a = P { x: 1, y: 2 }; let b = P { x: 1, y: 2 }; let c = P { x: 1, y: 9 }; if (a.eq(b) && !a.eq(c)) { return 42; } return 0; }`, 42},
 	// struct with a string field (string is a scalar → `==`) + an i32 field.
 	{"struct-string", `import "core/cmp";
 @derive(cmp.Eq)
 struct S { name: string, n: i32 }
-function main(): i32 { var a = S { name: "hi", n: 1 }; var b = S { name: "hi", n: 1 }; var c = S { name: "ho", n: 1 }; if (a.eq(b) && !a.eq(c)) { return 42; } return 0; }`, 42},
+function main(): i32 { let a = S { name: "hi", n: 1 }; let b = S { name: "hi", n: 1 }; let c = S { name: "ho", n: 1 }; if (a.eq(b) && !a.eq(c)) { return 42; } return 0; }`, 42},
 	// nested struct: the outer derive delegates to the inner struct's own
 	// derived `.eq()` for the nominal field (exercising dv_eq_expr's else arm).
 	{"struct-nested", `import "core/cmp";
@@ -40,7 +40,7 @@ function main(): i32 { var a = S { name: "hi", n: 1 }; var b = S { name: "hi", n
 struct Inner { v: i32 }
 @derive(cmp.Eq)
 struct Outer { inner: Inner, tag: i32 }
-function main(): i32 { var a = Outer { inner: Inner { v: 5 }, tag: 1 }; var b = Outer { inner: Inner { v: 5 }, tag: 1 }; var c = Outer { inner: Inner { v: 6 }, tag: 1 }; if (a.eq(b) && !a.eq(c)) { return 42; } return 0; }`, 42},
+function main(): i32 { let a = Outer { inner: Inner { v: 5 }, tag: 1 }; let b = Outer { inner: Inner { v: 5 }, tag: 1 }; let c = Outer { inner: Inner { v: 6 }, tag: 1 }; if (a.eq(b) && !a.eq(c)) { return 42; } return 0; }`, 42},
 	// enum: payload variants compare their (scalar) payload; payload-less
 	// variants compare by tag; cross-variant is unequal.
 	{"enum-mixed", `import "core/cmp";
@@ -55,7 +55,7 @@ function main(): i32 { if (A(5).eq(A(5)) && !A(5).eq(A(6)) && C.eq(C) && !A(5).e
 	{"struct-operator", `import "core/cmp";
 @derive(cmp.Eq)
 struct P { x: i32, y: i32 }
-function main(): i32 { var a = P { x: 1, y: 2 }; var b = P { x: 1, y: 2 }; var c = P { x: 1, y: 9 }; if (a == b && a != c && !(a == c) && a == a) { return 42; } return 0; }`, 42},
+function main(): i32 { let a = P { x: 1, y: 2 }; let b = P { x: 1, y: 2 }; let c = P { x: 1, y: 9 }; if (a == b && a != c && !(a == c) && a == a) { return 42; } return 0; }`, 42},
 	// Enum operands: a fresh variant construction and a bare unit variant both
 	// dispatch under the OWNING enum, so `Line(7) == Line(7)` is payload-wise.
 	{"enum-operator", `import "core/cmp";
@@ -67,7 +67,7 @@ function main(): i32 { if (A(5) == A(5) && A(5) != A(6) && C == C && A(5) != C &
 	{"enum-local-operator", `import "core/cmp";
 @derive(cmp.Eq)
 enum E { A(i32), C }
-function main(): i32 { var p = A(5); var q = A(5); var r = A(6); if (p == q && p != r) { return 42; } return 0; }`, 42},
+function main(): i32 { let p = A(5); let q = A(5); let r = A(6); if (p == q && p != r) { return 42; } return 0; }`, 42},
 }
 
 // TestNativeDeriveEq runs the derived-Eq programs through the native

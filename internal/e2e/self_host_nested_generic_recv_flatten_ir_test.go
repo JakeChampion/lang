@@ -24,14 +24,14 @@ import (
 const stdFlattenSrc = `import "std/option";
 import "std/result";
 function main(): i32 {
-    var x: Option[Option[i32]] = Some(Some(7));
-    var a: i32 = match (x.flatten()) { Some(v) => v, None => 0 };
-    var y: Option[Option[i32]] = None;
-    var b: i32 = match (y.flatten()) { Some(v) => v, None => 100 };
-    var r: Result[Result[i32, i32], i32] = Ok(Ok(30));
-    var c: i32 = match (r.flatten()) { Ok(v) => v, Err(e) => e };
-    var r2: Result[Result[i32, i32], i32] = Err(5);
-    var d: i32 = match (r2.flatten()) { Ok(v) => v, Err(e) => e };
+    let x: Option[Option[i32]] = Some(Some(7));
+    let a: i32 = match (x.flatten()) { Some(v) => v, None => 0 };
+    let y: Option[Option[i32]] = None;
+    let b: i32 = match (y.flatten()) { Some(v) => v, None => 100 };
+    let r: Result[Result[i32, i32], i32] = Ok(Ok(30));
+    let c: i32 = match (r.flatten()) { Ok(v) => v, Err(e) => e };
+    let r2: Result[Result[i32, i32], i32] = Err(5);
+    let d: i32 = match (r2.flatten()) { Ok(v) => v, Err(e) => e };
     return a + b + c + d;
 }
 `
@@ -81,13 +81,13 @@ var nestedRecvFlattenCases = []struct {
 	want int
 }{
 	// Some(Some(7)).flatten() -> Some(7) -> 7.
-	{"opt-some", `function main(): i32 { var x: Option[Option[i32]] = Some(Some(7)); match (x.flatten()) { Some(v) => { return v; }, None => { return 0; } } }`, 7},
+	{"opt-some", `function main(): i32 { let x: Option[Option[i32]] = Some(Some(7)); match (x.flatten()) { Some(v) => { return v; }, None => { return 0; } } }`, 7},
 	// None.flatten() -> None -> 100.
-	{"opt-none", `function main(): i32 { var x: Option[Option[i32]] = None; match (x.flatten()) { Some(v) => { return v; }, None => { return 100; } } }`, 100},
+	{"opt-none", `function main(): i32 { let x: Option[Option[i32]] = None; match (x.flatten()) { Some(v) => { return v; }, None => { return 100; } } }`, 100},
 	// Ok(Ok(30)).flatten() -> Ok(30) -> 30.
-	{"res-ok", `function main(): i32 { var r: Result[Result[i32, i32], i32] = Ok(Ok(30)); match (r.flatten()) { Ok(v) => { return v; }, Err(e) => { return e; } } }`, 30},
+	{"res-ok", `function main(): i32 { let r: Result[Result[i32, i32], i32] = Ok(Ok(30)); match (r.flatten()) { Ok(v) => { return v; }, Err(e) => { return e; } } }`, 30},
 	// Err(5).flatten() -> Err(5) -> 5.
-	{"res-err", `function main(): i32 { var r: Result[Result[i32, i32], i32] = Err(5); match (r.flatten()) { Ok(v) => { return v; }, Err(e) => { return e; } } }`, 5},
+	{"res-err", `function main(): i32 { let r: Result[Result[i32, i32], i32] = Err(5); match (r.flatten()) { Ok(v) => { return v; }, Err(e) => { return e; } } }`, 5},
 }
 
 func nestedRecvFlattenProg(mainBody string) string {

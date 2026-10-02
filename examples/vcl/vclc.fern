@@ -26,7 +26,7 @@ import "./check";
 import "./compile";
 
 function report_diags(path: string, diags: diag.Diag[]): void {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < diags.len()) {
     eprint(diags[i].render(path));
     i = i + 1;
@@ -34,7 +34,7 @@ function report_diags(path: string, diags: diag.Diag[]): void {
 }
 
 function report_problems(path: string, ps: check.Problem[]): void {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < ps.len()) {
     eprint(path + ":" + ps[i].line.to_string() + ":" + ps[i].col.to_string() + ": [" + ps[i].entry + "] " + ps[i].msg);
     i = i + 1;
@@ -44,8 +44,8 @@ function report_problems(path: string, ps: check.Problem[]): void {
 struct Opts { path: string, prefix: string, ok: boolean }
 
 function parse_opts(argv: string[]): Opts {
-  var o: Opts = Opts { path: "", prefix: "./", ok: false };
-  var i: i32 = 1;
+  let o: Opts = Opts { path: "", prefix: "./", ok: false };
+  let i: i32 = 1;
   while (i < argv.len()) {
     if (argv[i] == "-p" && i + 1 < argv.len()) {
       o = Opts { ...o, prefix: argv[i + 1] };
@@ -59,7 +59,7 @@ function parse_opts(argv: string[]): Opts {
 }
 
 function main(): i32 {
-  var o: Opts = parse_opts(args());
+  let o: Opts = parse_opts(args());
   if (!o.ok) {
     eprint("usage: vclc [-p IMPORT_PREFIX] FILE.vcl");
     return 2;
@@ -70,12 +70,12 @@ function main(): i32 {
       return 2;
     },
     Ok(src) => {
-      var p: parser.ParseResult = parser.parse(src);
+      let p: parser.ParseResult = parser.parse(src);
       if (p.diags.len() > 0) {
         report_diags(o.path, p.diags);
         return 2;
       }
-      var problems: check.Problem[] = check.check(p.decls);
+      let problems: check.Problem[] = check.check(p.decls);
       if (problems.len() > 0) {
         report_problems(o.path, problems);
         return 1;

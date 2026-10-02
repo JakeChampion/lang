@@ -18,9 +18,9 @@ func BenchmarkEnumConstructionFrontend(b *testing.B) {
 				src.WriteString("function main(): i32 {\n")
 				for i := range count {
 					if enums {
-						fmt.Fprintf(&src, "var a%d: Option[i64] = Some(%d); var b%d: Result[string, boolean] = Err(true);\n", i, i, i)
+						fmt.Fprintf(&src, "let a%d: Option[i64] = Some(%d); let b%d: Result[string, boolean] = Err(true);\n", i, i, i)
 					} else {
-						fmt.Fprintf(&src, "var a%d: i64 = %d; var b%d: boolean = true;\n", i, i, i)
+						fmt.Fprintf(&src, "let a%d: i64 = %d; let b%d: boolean = true;\n", i, i, i)
 					}
 				}
 				src.WriteString("return 0; }")

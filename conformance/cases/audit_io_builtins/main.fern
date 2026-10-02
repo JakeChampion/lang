@@ -14,7 +14,7 @@ function main(): i32 {
     putchar(33);         // '!'  -> "Hi!"
     putchar(10);         // '\n' -> "Hi!\n"
     if ("abc".len() != 3) { print("FAIL len-str"); return 11; }
-    var arr: i32[] = [1, 2, 3, 4];
+    let arr: i32[] = [1, 2, 3, 4];
     if (arr.len() != 4) { print("FAIL len-arr"); return 12; }
     print("done");       // stdout: "done\n"
     return 0;

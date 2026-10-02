@@ -7,13 +7,13 @@ import (
 // --- The array-of-enums class reaches its siblings' reclaim shapes ------------
 //
 // `ARRENUM` (#5474) was the last array-of-X element kind to get an element walk
-// at all, and it arrived with only ONE admitted shape: `var xs: E[] = [E.A(..)]`,
+// at all, and it arrived with only ONE admitted shape: `let xs: E[] = [E.A(..)]`,
 // a non-empty literal of fresh ctors, never reassigned. Both other ways to build
 // one leaked their whole structure, on the shapes ordinary code has to use:
 //
-//	var xs: E[] = mk(i)                       producer, 3 allocs / 1 free
-//	var xs: E[] = []; xs = xs.append(E.A(..)) append-built, 4 allocs / 2 frees
-//	var xs: E[] = mk(i)  // mk append-built   both, 4 allocs / 2 frees
+//	let xs: E[] = mk(i)                       producer, 3 allocs / 1 free
+//	let xs: E[] = []; xs = xs.append(E.A(..)) append-built, 4 allocs / 2 frees
+//	let xs: E[] = mk(i)  // mk append-built   both, 4 allocs / 2 frees
 //
 // 80 bytes a round each, unbounded, against 0 on native and interp. The struct
 // side had both of these — `ARRSTRUCTF:` and `ARRSTRUCTA:` (#6535) — so this is
@@ -48,7 +48,7 @@ type arrenumProdCase struct {
 	balance bool // assert allocs == frees at live_bytes 0
 }
 
-const arrenumProdMain = "\nfunction main(): i32 { var t: i32 = 0; var i: i32 = 0; " +
+const arrenumProdMain = "\nfunction main(): i32 { let t: i32 = 0; let i: i32 = 0; " +
 	"while (i < 200) { t = t + round(i); i = i + 1; } " +
 	"if (__rc_underflow_count() != 0) { return 99; } return t % 83; }"
 
@@ -61,8 +61,8 @@ func arrenumProdCases() []arrenumProdCase {
 			// producer. 1000 allocs / 400 frees before, 22400 bytes over 200
 			// rounds, against native's 800/800.
 			name: "producer_returns_local",
-			src: arrenumProdDecl + `function mk(i: i32): E[] { var xs: E[] = []; xs = xs.append(E.A([i, i + 1])); xs = xs.append(E.B); return xs; }
-function round(i: i32): i32 { var v: E[] = mk(i); return v.len(); }` + arrenumProdMain,
+			src: arrenumProdDecl + `function mk(i: i32): E[] { let xs: E[] = []; xs = xs.append(E.A([i, i + 1])); xs = xs.append(E.B); return xs; }
+function round(i: i32): i32 { let v: E[] = mk(i); return v.len(); }` + arrenumProdMain,
 			want: 68, balance: true,
 		},
 		{
@@ -71,20 +71,20 @@ function round(i: i32): i32 { var v: E[] = mk(i); return v.len(); }` + arrenumPr
 			// consumer's slot took the bare buffer dec and no element was walked.
 			name: "producer_returns_literal",
 			src: arrenumProdDecl + `function mk(i: i32): E[] { return [E.A([i, i + 1]), E.B]; }
-function round(i: i32): i32 { var v: E[] = mk(i); return v.len(); }` + arrenumProdMain,
+function round(i: i32): i32 { let v: E[] = mk(i); return v.len(); }` + arrenumProdMain,
 			want: 68, balance: true,
 		},
 		{
 			// The append-built local alone, no producer. 1000/400 before.
 			name: "append_built_local",
-			src: arrenumProdDecl + `function round(i: i32): i32 { var v: E[] = []; v = v.append(E.A([i, i + 1])); v = v.append(E.B); return v.len(); }` +
+			src: arrenumProdDecl + `function round(i: i32): i32 { let v: E[] = []; v = v.append(E.A([i, i + 1])); v = v.append(E.B); return v.len(); }` +
 				arrenumProdMain,
 			want: 68, balance: true,
 		},
 		{
 			// The one shape that was already credited. Must stay so.
 			name: "literal_init",
-			src: arrenumProdDecl + `function round(i: i32): i32 { var v: E[] = [E.A([i, i + 1]), E.B]; return v.len(); }` +
+			src: arrenumProdDecl + `function round(i: i32): i32 { let v: E[] = [E.A([i, i + 1]), E.B]; return v.len(); }` +
 				arrenumProdMain,
 			want: 68, balance: true,
 		},
@@ -94,16 +94,16 @@ function round(i: i32): i32 { var v: E[] = mk(i); return v.len(); }` + arrenumPr
 			// would free `e`'s box under its own owner — not a leak, a corruption.
 			// Stays a safe leak.
 			name: "append_bare_ident_elem",
-			src: arrenumProdDecl + `function round(i: i32): i32 { var e: E = E.A([i, i + 1]); var v: E[] = []; v = v.append(e); return v.len(); }` +
+			src: arrenumProdDecl + `function round(i: i32): i32 { let e: E = E.A([i, i + 1]); let v: E[] = []; v = v.append(e); return v.len(); }` +
 				arrenumProdMain,
 			want: 34,
 		},
 		{
 			// The class's tight escape gate must keep refusing an element
-			// extraction — `var e: E = v[0]` binds an element box the walk would
+			// extraction — `let e: E = v[0]` binds an element box the walk would
 			// free — even now that the credit reaches the append-built shape.
 			name: "append_then_extract",
-			src: arrenumProdDecl + `function round(i: i32): i32 { var v: E[] = []; v = v.append(E.A([i, i + 1])); var e: E = v[0]; return v.len() + match (e) { E.A(p) => p.len(), E.B => 0 }; }` +
+			src: arrenumProdDecl + `function round(i: i32): i32 { let v: E[] = []; v = v.append(E.A([i, i + 1])); let e: E = v[0]; return v.len() + match (e) { E.A(p) => p.len(), E.B => 0 }; }` +
 				arrenumProdMain,
 			want: 19,
 		},
@@ -112,7 +112,7 @@ function round(i: i32): i32 { var v: E[] = mk(i); return v.len(); }` + arrenumPr
 			// another producer's structure by the end.
 			name: "append_foreign_rebind",
 			src: arrenumProdDecl + `function other(i: i32): E[] { return [E.A([i]), E.B]; }
-function round(i: i32): i32 { var v: E[] = []; v = v.append(E.A([i, i + 1])); if (i % 3 == 0) { v = other(i); } return v.len(); }` + arrenumProdMain,
+function round(i: i32): i32 { let v: E[] = []; v = v.append(E.A([i, i + 1])); if (i % 3 == 0) { v = other(i); } return v.len(); }` + arrenumProdMain,
 			want: 18,
 		},
 		{
@@ -120,8 +120,8 @@ function round(i: i32): i32 { var v: E[] = []; v = v.append(E.A([i, i + 1])); if
 			// return, so the callee cannot promise the caller owns it outright.
 			name: "producer_local_escapes",
 			src: arrenumProdDecl + `function sink(vs: E[]): i32 { return vs.len(); }
-function mk(i: i32): E[] { var xs: E[] = []; xs = xs.append(E.A([i, i + 1])); var n: i32 = sink(xs); return xs; }
-function round(i: i32): i32 { var v: E[] = mk(i); return v.len(); }` + arrenumProdMain,
+function mk(i: i32): E[] { let xs: E[] = []; xs = xs.append(E.A([i, i + 1])); let n: i32 = sink(xs); return xs; }
+function round(i: i32): i32 { let v: E[] = mk(i); return v.len(); }` + arrenumProdMain,
 			want: 34,
 		},
 		{
@@ -133,14 +133,14 @@ function round(i: i32): i32 { var v: E[] = mk(i); return v.len(); }` + arrenumPr
 			// now: the producer-fed binding is credited and the alias still is
 			// not, which is the right answer rather than a partial one.
 			name: "sibling_alias",
-			src: arrenumProdDecl + `function mk(i: i32): E[] { var xs: E[] = []; xs = xs.append(E.A([i, i + 1])); return xs; }
+			src: arrenumProdDecl + `function mk(i: i32): E[] { let xs: E[] = []; xs = xs.append(E.A([i, i + 1])); return xs; }
 function round(base: E[], i: i32): i32 {
-    var t: i32 = 0;
-    if (i % 2 == 0) { var v: E[] = mk(i);  t = t + v.len(); }
-    if (i % 2 == 1) { var v: E[] = base;   t = t + v.len(); }
+    let t: i32 = 0;
+    if (i % 2 == 0) { let v: E[] = mk(i);  t = t + v.len(); }
+    if (i % 2 == 1) { let v: E[] = base;   t = t + v.len(); }
     return t;
 }
-function main(): i32 { var b: E[] = [E.A([7, 8])]; var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(b, i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
+function main(): i32 { let b: E[] = [E.A([7, 8])]; let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(b, i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
 			want: 17,
 		},
 	}

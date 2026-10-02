@@ -29,8 +29,8 @@ func TestVoidCallThroughFunctionValueLeavesNothingToDrop(t *testing.T) {
 			src: `
 function run(f: (i32) => void, v: i32): void { f(v); }
 function main(): i32 {
-    var seen: i32 = 0;
-    var g = (x: i32) => { seen = seen + x; };
+    let seen: i32 = 0;
+    let g = (x: i32) => { seen = seen + x; };
     run(g, 4);
     return seen - 4;
 }`,
@@ -49,8 +49,8 @@ function main(): i32 {
 			name: "void closure held in a local", wantDrop: false,
 			src: `
 function main(): i32 {
-    var seen: i32 = 0;
-    var g = (x: i32) => { seen = seen + x; };
+    let seen: i32 = 0;
+    let g = (x: i32) => { seen = seen + x; };
     g(4);
     return seen - 4;
 }`,
@@ -62,7 +62,7 @@ function main(): i32 {
 			name: "void closure literal called inline", wantDrop: false,
 			src: `
 function main(): i32 {
-    var seen: i32 = 0;
+    let seen: i32 = 0;
     ((x: i32) => { seen = seen + x; })(4);
     return seen - 4;
 }`,

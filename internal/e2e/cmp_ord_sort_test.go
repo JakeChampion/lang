@@ -28,30 +28,30 @@ var ordSortCases = []struct {
 	// sort i32 ascending: [3,1,2] -> [1,2,3]; encode s[0]*100+s[1]*10+s[2] = 123.
 	{"i32-ascending", `pub trait Ord { function cmp(self: Self, other: Self): i32; }
 impl Ord for i32 { function cmp(self: Self, other: Self): i32 { if (self < other) { return 0 - 1; } if (self > other) { return 1; } return 0; } }
-function sort[T: Ord](xs: T[]): T[] { var out: T[] = []; for x in xs { out = out.append(x); var i: i32 = out.len() - 1; while (i > 0 && out[i - 1].cmp(out[i]) > 0) { var tmp: T = out[i - 1]; out = out.with(i - 1, out[i]); out = out.with(i, tmp); i = i - 1; } } return out; }
-function main(): i32 { var s = sort([3, 1, 2]); return s[0] * 100 + s[1] * 10 + s[2]; }`, 123},
+function sort[T: Ord](xs: T[]): T[] { let out: T[] = []; for x in xs { out = out.append(x); let i: i32 = out.len() - 1; while (i > 0 && out[i - 1].cmp(out[i]) > 0) { let tmp: T = out[i - 1]; out = out.with(i - 1, out[i]); out = out.with(i, tmp); i = i - 1; } } return out; }
+function main(): i32 { let s = sort([3, 1, 2]); return s[0] * 100 + s[1] * 10 + s[2]; }`, 123},
 	// sort i32 reverse-ordered five: [5,4,3,2,1] -> [1,2,3,4,5];
 	// s[0]*100 + s[2]*5 + s[4] = 1*100 + 3*5 + 5 = 120. (Kept < 126 so the wasm
 	// leg's raw WASI exit code is a valid status — wasmtime rejects codes >= 126.)
 	{"i32-five", `pub trait Ord { function cmp(self: Self, other: Self): i32; }
 impl Ord for i32 { function cmp(self: Self, other: Self): i32 { if (self < other) { return 0 - 1; } if (self > other) { return 1; } return 0; } }
-function sort[T: Ord](xs: T[]): T[] { var out: T[] = []; for x in xs { out = out.append(x); var i: i32 = out.len() - 1; while (i > 0 && out[i - 1].cmp(out[i]) > 0) { var tmp: T = out[i - 1]; out = out.with(i - 1, out[i]); out = out.with(i, tmp); i = i - 1; } } return out; }
-function main(): i32 { var s = sort([5, 4, 3, 2, 1]); return s[0] * 100 + s[2] * 5 + s[4]; }`, 120},
+function sort[T: Ord](xs: T[]): T[] { let out: T[] = []; for x in xs { out = out.append(x); let i: i32 = out.len() - 1; while (i > 0 && out[i - 1].cmp(out[i]) > 0) { let tmp: T = out[i - 1]; out = out.with(i - 1, out[i]); out = out.with(i, tmp); i = i - 1; } } return out; }
+function main(): i32 { let s = sort([5, 4, 3, 2, 1]); return s[0] * 100 + s[2] * 5 + s[4]; }`, 120},
 	// sort over a user Ord struct (compared by .v): [P2,P1,P3] -> [P1,P2,P3];
 	// s[0].v*100 + s[1].v*10 + s[2].v = 123.
 	{"struct", `pub trait Ord { function cmp(self: Self, other: Self): i32; }
 struct P { v: i32 }
 impl Ord for P { function cmp(self: Self, other: Self): i32 { if (self.v < other.v) { return 0 - 1; } if (self.v > other.v) { return 1; } return 0; } }
-function sort[T: Ord](xs: T[]): T[] { var out: T[] = []; for x in xs { out = out.append(x); var i: i32 = out.len() - 1; while (i > 0 && out[i - 1].cmp(out[i]) > 0) { var tmp: T = out[i - 1]; out = out.with(i - 1, out[i]); out = out.with(i, tmp); i = i - 1; } } return out; }
-function main(): i32 { var xs: P[] = [P { v: 2 }, P { v: 1 }, P { v: 3 }]; var s = sort(xs); return s[0].v * 100 + s[1].v * 10 + s[2].v; }`, 123},
+function sort[T: Ord](xs: T[]): T[] { let out: T[] = []; for x in xs { out = out.append(x); let i: i32 = out.len() - 1; while (i > 0 && out[i - 1].cmp(out[i]) > 0) { let tmp: T = out[i - 1]; out = out.with(i - 1, out[i]); out = out.with(i, tmp); i = i - 1; } } return out; }
+function main(): i32 { let xs: P[] = [P { v: 2 }, P { v: 1 }, P { v: 3 }]; let s = sort(xs); return s[0].v * 100 + s[1].v * 10 + s[2].v; }`, 123},
 	// stability: keys [1,1,0] with tags [2,1,0]. A STABLE sort by key keeps the
 	// two key=1 elements in input order (tag 2 before tag 1) -> tags [0,2,1];
 	// s[0].tag*100 + s[1].tag*10 + s[2].tag = 21 (a non-stable sort would give 12).
 	{"stable", `pub trait Ord { function cmp(self: Self, other: Self): i32; }
 struct P { key: i32, tag: i32 }
 impl Ord for P { function cmp(self: Self, other: Self): i32 { if (self.key < other.key) { return 0 - 1; } if (self.key > other.key) { return 1; } return 0; } }
-function sort[T: Ord](xs: T[]): T[] { var out: T[] = []; for x in xs { out = out.append(x); var i: i32 = out.len() - 1; while (i > 0 && out[i - 1].cmp(out[i]) > 0) { var tmp: T = out[i - 1]; out = out.with(i - 1, out[i]); out = out.with(i, tmp); i = i - 1; } } return out; }
-function main(): i32 { var xs: P[] = [P { key: 1, tag: 2 }, P { key: 1, tag: 1 }, P { key: 0, tag: 0 }]; var s = sort(xs); return s[0].tag * 100 + s[1].tag * 10 + s[2].tag; }`, 21},
+function sort[T: Ord](xs: T[]): T[] { let out: T[] = []; for x in xs { out = out.append(x); let i: i32 = out.len() - 1; while (i > 0 && out[i - 1].cmp(out[i]) > 0) { let tmp: T = out[i - 1]; out = out.with(i - 1, out[i]); out = out.with(i, tmp); i = i - 1; } } return out; }
+function main(): i32 { let xs: P[] = [P { key: 1, tag: 2 }, P { key: 1, tag: 1 }, P { key: 0, tag: 0 }]; let s = sort(xs); return s[0].tag * 100 + s[1].tag * 10 + s[2].tag; }`, 21},
 }
 
 // TestNativeOrdSort runs the inline Ord-sort programs on the native interp /
@@ -107,12 +107,12 @@ impl cmp.Ord for P {
     }
 }
 function main(): i32 {
-    var r = 0;
-    var s = cmp.sort([3, 1, 2]);
+    let r = 0;
+    let s = cmp.sort([3, 1, 2]);
     if (s[0] == 1 && s[1] == 2 && s[2] == 3) { r = r + 1; }
-    var ss = cmp.sort(["banana", "apple", "cherry"]);
+    let ss = cmp.sort(["banana", "apple", "cherry"]);
     if (ss[0] == "apple" && ss[1] == "banana" && ss[2] == "cherry") { r = r + 2; }
-    var ps = cmp.sort([P { v: 2 }, P { v: 1 }, P { v: 3 }]);
+    let ps = cmp.sort([P { v: 2 }, P { v: 1 }, P { v: 3 }]);
     if (ps[0].v == 1 && ps[1].v == 2 && ps[2].v == 3) { r = r + 4; }
     return r;
 }

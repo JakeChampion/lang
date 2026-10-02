@@ -123,7 +123,7 @@ func TestExternListI32ResultCustomProvider(t *testing.T) {
 function iota(n: u32): i32[];
 
 function main(): i32 {
-	var xs: i32[] = iota(4u32);
+	let xs: i32[] = iota(4u32);
 	if (xs.len() == 4 && xs[3] == 3) { write("` + want + `"); } else { write("iota-bad"); }
 	return 0;
 }`

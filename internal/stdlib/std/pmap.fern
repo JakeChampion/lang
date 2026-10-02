@@ -6,9 +6,9 @@
 // returning:
 //
 //   import "std/pmap";
-//   var m: pmap.PMap[string, i32] = pmap.pmap_new();
+//   let m: pmap.PMap[string, i32] = pmap.pmap_new();
 //   m = m.insert("a", 1);
-//   var snapshot: pmap.PMap[string, i32] = m;   // O(1), shares every node
+//   let snapshot: pmap.PMap[string, i32] = m;   // O(1), shares every node
 //   m = m.insert("b", 2);                       // snapshot is unchanged
 //   m.get("b");         // Some(2)
 //   snapshot.len();     // 1
@@ -30,7 +30,7 @@
 //     in place, so the same source line allocates nothing.
 //
 // There is no transient/builder API and no `own` on the receiver: an
-// `own` receiver would forbid `var m2 = m.insert(k, v)` (E051), which
+// `own` receiver would forbid `let m2 = m.insert(k, v)` (E051), which
 // is the whole point of a persistent map.
 //
 // # Hashing, equality, order
@@ -75,10 +75,10 @@ pub enum HNode[K, V] { Empty, Leaf(i32, K, V), Coll(i32, HNode[K, V][]), Branch(
 pub struct PMap[K, V] { root: HNode[K, V] }
 
 // `pmap_new()` — the empty map. The key and value types are fixed by
-// the annotation at the binding (`var m: PMap[string, i32] =
+// the annotation at the binding (`let m: PMap[string, i32] =
 // pmap_new();`).
 pub function pmap_new[K, V](): PMap[K, V] {
-  var e: HNode[K, V] = Empty;
+  let e: HNode[K, V] = Empty;
   return PMap { root: e };
 }
 
@@ -87,12 +87,12 @@ pub function pmap_new[K, V](): PMap[K, V] {
 // arrays must have the same length; extra entries in the longer one are
 // ignored.
 pub function from_arrays[K: cmp.Hash + cmp.Eq, V](keys: K[], values: V[]): PMap[K, V] {
-  var m: PMap[K, V] = pmap_new();
-  var n: i32 = keys.len();
+  let m: PMap[K, V] = pmap_new();
+  let n: i32 = keys.len();
   if (values.len() < n) {
     n = values.len();
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < n) {
     m = m.insert(keys[i], values[i]);
     i = i + 1;
@@ -106,7 +106,7 @@ pub function from_arrays[K: cmp.Hash + cmp.Eq, V](keys: K[], values: V[]): PMap[
 // so every 5-bit slice of the result is usable as a trie index. All
 // arithmetic is wrapping i32; only the logical shifts go through u32.
 pub function __hm_mix(x: i32): i32 {
-  var h: i32 = x;
+  let h: i32 = x;
   h = h ^ (h as u32 >> 16 as u32) as i32;
   h = h * (0 - 2048144789);  // 0x85ebca6b
   h = h ^ (h as u32 >> 13 as u32) as i32;
@@ -146,8 +146,8 @@ pub function __hm_size[K, V](n: HNode[K, V]): i32 {
 
 // __hm_insert_at inserts `x` at index `i` of `xs`, shifting the rest up.
 function __hm_insert_at[K, V](xs: HNode[K, V][], i: i32, x: HNode[K, V]): HNode[K, V][] {
-  var out: HNode[K, V][] = [];
-  var j: i32 = 0;
+  let out: HNode[K, V][] = [];
+  let j: i32 = 0;
   while (j < i) {
     out = out.append(xs[j]);
     j = j + 1;
@@ -162,8 +162,8 @@ function __hm_insert_at[K, V](xs: HNode[K, V][], i: i32, x: HNode[K, V]): HNode[
 
 // __hm_remove_at drops index `i` of `xs`.
 function __hm_remove_at[K, V](xs: HNode[K, V][], i: i32): HNode[K, V][] {
-  var out: HNode[K, V][] = [];
-  var j: i32 = 0;
+  let out: HNode[K, V][] = [];
+  let j: i32 = 0;
   while (j < xs.len()) {
     if (j != i) {
       out = out.append(xs[j]);
@@ -183,10 +183,10 @@ function __hm_pair[K, V](a: HNode[K, V], ah: i32, b: HNode[K, V], bh: i32, shift
   if (shift >= 32) {
     return Coll(ah, [a, b]);
   }
-  var fa: i32 = __hm_frag(ah, shift);
-  var fb: i32 = __hm_frag(bh, shift);
+  let fa: i32 = __hm_frag(ah, shift);
+  let fb: i32 = __hm_frag(bh, shift);
   if (fa == fb) {
-    var inner: HNode[K, V] = __hm_pair(a, ah, b, bh, shift + 5);
+    let inner: HNode[K, V] = __hm_pair(a, ah, b, bh, shift + 5);
     return Branch(1 << fa, 2, [inner]);
   }
   if (fa < fb) {
@@ -198,7 +198,7 @@ function __hm_pair[K, V](a: HNode[K, V], ah: i32, b: HNode[K, V], bh: i32, shift
 // __hm_coll_index is the index of the leaf holding `k` in a collision
 // node's array, or -1.
 function __hm_coll_index[K: cmp.Hash + cmp.Eq, V](leaves: HNode[K, V][], k: K): i32 {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < leaves.len()) {
     match (leaves[i]) {
       Leaf(eh, ek, ev) => {
@@ -231,34 +231,34 @@ pub function __hm_insert[K: cmp.Hash + cmp.Eq, V](n: HNode[K, V], h: i32, shift:
       if (lh == h && lk.eq(k)) {
         return Leaf(h, k, v);
       }
-      var fresh: HNode[K, V] = Leaf(h, k, v);
+      let fresh: HNode[K, V] = Leaf(h, k, v);
       return __hm_pair(Leaf(lh, lk, lv), lh, fresh, h, shift);
     },
     Coll(ch, leaves) => {
       if (ch != h) {
-        var fresh: HNode[K, V] = Leaf(h, k, v);
+        let fresh: HNode[K, V] = Leaf(h, k, v);
         return __hm_pair(Coll(ch, leaves), ch, fresh, h, shift);
       }
-      var i: i32 = __hm_coll_index(leaves, k);
+      let i: i32 = __hm_coll_index(leaves, k);
       if (i >= 0) {
         return Coll(ch, leaves.with(i, Leaf(h, k, v)));
       }
       return Coll(ch, leaves.append(Leaf(h, k, v)));
     },
     Branch(bm, s, kids) => {
-      var bit: i32 = 1 << __hm_frag(h, shift);
-      var idx: i32 = __hm_slot(bm, bit);
+      let bit: i32 = 1 << __hm_frag(h, shift);
+      let idx: i32 = __hm_slot(bm, bit);
       if ((bm & bit) == 0) {
-        var fresh: HNode[K, V] = Leaf(h, k, v);
-        var grown: HNode[K, V][] = __hm_insert_at(kids, idx, fresh);
+        let fresh: HNode[K, V] = Leaf(h, k, v);
+        let grown: HNode[K, V][] = __hm_insert_at(kids, idx, fresh);
         return Branch(bm | bit, s + 1, grown);
       }
-      var e: HNode[K, V] = Empty;
-      var child: HNode[K, V] = kids[idx];
-      var rest: HNode[K, V][] = kids.with(idx, e);
-      var old: i32 = __hm_size(child);
+      let e: HNode[K, V] = Empty;
+      let child: HNode[K, V] = kids[idx];
+      let rest: HNode[K, V][] = kids.with(idx, e);
+      let old: i32 = __hm_size(child);
       child = __hm_insert(child, h, shift + 5, k, v);
-      var added: i32 = __hm_size(child) - old;
+      let added: i32 = __hm_size(child) - old;
       return Branch(bm, s + added, rest.with(idx, child));
     }
   }
@@ -267,9 +267,9 @@ pub function __hm_insert[K: cmp.Hash + cmp.Eq, V](n: HNode[K, V], h: i32, shift:
 // __hm_find returns the leaf holding `k`, or Empty. Iterative through
 // the branches; only a collision node is scanned.
 pub function __hm_find[K: cmp.Hash + cmp.Eq, V](n: HNode[K, V], h: i32, k: K): HNode[K, V] {
-  var cur: HNode[K, V] = n;
-  var shift: i32 = 0;
-  var descending: boolean = true;
+  let cur: HNode[K, V] = n;
+  let shift: i32 = 0;
+  let descending: boolean = true;
   while (descending) {
     match (cur) {
       Empty => {
@@ -282,14 +282,14 @@ pub function __hm_find[K: cmp.Hash + cmp.Eq, V](n: HNode[K, V], h: i32, k: K): H
         descending = false;
       },
       Coll(ch, leaves) => {
-        var i: i32 = __hm_coll_index(leaves, k);
+        let i: i32 = __hm_coll_index(leaves, k);
         if (i >= 0) {
           return leaves[i];
         }
         descending = false;
       },
       Branch(bm, s, kids) => {
-        var bit: i32 = 1 << __hm_frag(h, shift);
+        let bit: i32 = 1 << __hm_frag(h, shift);
         if ((bm & bit) == 0) {
           descending = false;
         } else {
@@ -299,7 +299,7 @@ pub function __hm_find[K: cmp.Hash + cmp.Eq, V](n: HNode[K, V], h: i32, k: K): H
       }
     }
   }
-  var e: HNode[K, V] = Empty;
+  let e: HNode[K, V] = Empty;
   return e;
 }
 
@@ -327,14 +327,14 @@ function __hm_is_branch[K, V](n: HNode[K, V]): boolean {
 // a single leaf or collision child collapses to that child, so a trie's
 // shape depends only on its keys.
 function __hm_remove_branch[K: cmp.Hash + cmp.Eq, V](n: HNode[K, V], bm: i32, s: i32, kids: HNode[K, V][], h: i32, shift: i32, k: K): HNode[K, V] {
-  var bit: i32 = 1 << __hm_frag(h, shift);
+  let bit: i32 = 1 << __hm_frag(h, shift);
   if ((bm & bit) == 0) {
     return n;
   }
-  var idx: i32 = __hm_slot(bm, bit);
-  var old: i32 = __hm_size(kids[idx]);
-  var child: HNode[K, V] = __hm_remove(kids[idx], h, shift + 5, k);
-  var now: i32 = __hm_size(child);
+  let idx: i32 = __hm_slot(bm, bit);
+  let old: i32 = __hm_size(kids[idx]);
+  let child: HNode[K, V] = __hm_remove(kids[idx], h, shift + 5, k);
+  let now: i32 = __hm_size(child);
   if (now == old) {
     return n;
   }
@@ -347,7 +347,7 @@ function __hm_remove_branch[K: cmp.Hash + cmp.Eq, V](n: HNode[K, V], bm: i32, s:
   if (kids.len() == 1) {
     return child;
   }
-  var rest: HNode[K, V][] = __hm_remove_at(kids, idx);
+  let rest: HNode[K, V][] = __hm_remove_at(kids, idx);
   if (rest.len() == 1 && !__hm_is_branch(rest[0])) {
     return rest[0];
   }
@@ -363,7 +363,7 @@ pub function __hm_remove[K: cmp.Hash + cmp.Eq, V](n: HNode[K, V], h: i32, shift:
     },
     Leaf(lh, lk, lv) => {
       if (lh == h && lk.eq(k)) {
-        var e: HNode[K, V] = Empty;
+        let e: HNode[K, V] = Empty;
         return e;
       }
       return n;
@@ -372,7 +372,7 @@ pub function __hm_remove[K: cmp.Hash + cmp.Eq, V](n: HNode[K, V], h: i32, shift:
       if (ch != h) {
         return n;
       }
-      var i: i32 = __hm_coll_index(leaves, k);
+      let i: i32 = __hm_coll_index(leaves, k);
       if (i < 0) {
         return n;
       }
@@ -391,7 +391,7 @@ pub function __hm_remove[K: cmp.Hash + cmp.Eq, V](n: HNode[K, V], h: i32, shift:
 // another module's variants, so the set builds its empty root and tests
 // a lookup result through these.
 pub function __hm_empty[K, V](): HNode[K, V] {
-  var e: HNode[K, V] = Empty;
+  let e: HNode[K, V] = Empty;
   return e;
 }
 
@@ -488,8 +488,8 @@ pub function __hm_fold[K, V, A](n: HNode[K, V], init: A, f: (A, K, V) => A): A {
       return f(init, k, v);
     },
     Coll(h, leaves) => {
-      var a: A = init;
-      var i: i32 = 0;
+      let a: A = init;
+      let i: i32 = 0;
       while (i < leaves.len()) {
         a = __hm_fold(leaves[i], a, f);
         i = i + 1;
@@ -497,8 +497,8 @@ pub function __hm_fold[K, V, A](n: HNode[K, V], init: A, f: (A, K, V) => A): A {
       return a;
     },
     Branch(bm, s, kids) => {
-      var a: A = init;
-      var i: i32 = 0;
+      let a: A = init;
+      let i: i32 = 0;
       while (i < kids.len()) {
         a = __hm_fold(kids[i], a, f);
         i = i + 1;
@@ -517,14 +517,14 @@ pub function __hm_for_each[K, V](n: HNode[K, V], f: (K, V) => void): void {
       f(k, v);
     },
     Coll(h, leaves) => {
-      var i: i32 = 0;
+      let i: i32 = 0;
       while (i < leaves.len()) {
         __hm_for_each(leaves[i], f);
         i = i + 1;
       }
     },
     Branch(bm, s, kids) => {
-      var i: i32 = 0;
+      let i: i32 = 0;
       while (i < kids.len()) {
         __hm_for_each(kids[i], f);
         i = i + 1;
@@ -538,15 +538,15 @@ pub function __hm_for_each[K, V](n: HNode[K, V], f: (K, V) => void): void {
 function __hm_map_values[K, V, W](n: HNode[K, V], f: (V) => W): HNode[K, W] {
   match (n) {
     Empty => {
-      var e: HNode[K, W] = Empty;
+      let e: HNode[K, W] = Empty;
       return e;
     },
     Leaf(h, k, v) => {
       return Leaf(h, k, f(v));
     },
     Coll(h, leaves) => {
-      var out: HNode[K, W][] = [];
-      var i: i32 = 0;
+      let out: HNode[K, W][] = [];
+      let i: i32 = 0;
       while (i < leaves.len()) {
         out = out.append(__hm_map_values(leaves[i], f));
         i = i + 1;
@@ -554,8 +554,8 @@ function __hm_map_values[K, V, W](n: HNode[K, V], f: (V) => W): HNode[K, W] {
       return Coll(h, out);
     },
     Branch(bm, s, kids) => {
-      var out: HNode[K, W][] = [];
-      var i: i32 = 0;
+      let out: HNode[K, W][] = [];
+      let i: i32 = 0;
       while (i < kids.len()) {
         out = out.append(__hm_map_values(kids[i], f));
         i = i + 1;
@@ -571,7 +571,7 @@ function __hm_prefix_ok(lh: i32, h: i32, shift: i32): boolean {
   if (shift == 0) {
     return true;
   }
-  var keep: u32 = (32 - shift) as u32;
+  let keep: u32 = (32 - shift) as u32;
   return (lh as u32 << keep) as i32 == (h as u32 << keep) as i32;
 }
 
@@ -581,7 +581,7 @@ function __hm_valid_coll[K, V](ch: i32, leaves: HNode[K, V][]): boolean {
   if (leaves.len() < 2) {
     return false;
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < leaves.len()) {
     match (leaves[i]) {
       Leaf(lh, lk, lv) => {
@@ -635,13 +635,13 @@ function __hm_valid_branch[K, V](bm: i32, s: i32, kids: HNode[K, V][], h: i32, s
   if (kids.len() == 1 && !__hm_is_branch(kids[0])) {
     return false;
   }
-  var total: i32 = 0;
-  var i: i32 = 0;
-  var frag: i32 = 0;
+  let total: i32 = 0;
+  let i: i32 = 0;
+  let frag: i32 = 0;
   while (frag < 32) {
     if ((bm & 1 << frag) != 0) {
-      var child: HNode[K, V] = kids[i];
-      var ch: i32 = __hm_child_hash(child);
+      let child: HNode[K, V] = kids[i];
+      let ch: i32 = __hm_child_hash(child);
       if (ch != 0 - 1 && __hm_frag(ch, shift) != frag) {
         return false;
       }
@@ -690,8 +690,8 @@ pub function (m: PMap[K, V]) is_empty(): boolean {
 // value. Never touches the receiver's nodes, so a snapshot taken
 // before the call is unchanged after it.
 pub function (m: PMap[K, V]) insert[K: cmp.Hash + cmp.Eq, V](k: K, v: V): PMap[K, V] {
-  var e: HNode[K, V] = Empty;
-  var root: HNode[K, V] = m.root;
+  let e: HNode[K, V] = Empty;
+  let root: HNode[K, V] = m.root;
   m = PMap { ...m, root: e };
   root = __hm_insert(root, __hm_mix(k.hash()), 0, k, v);
   return PMap { ...m, root: root };
@@ -760,7 +760,7 @@ pub function (m: PMap[K, V]) contains[K: cmp.Hash + cmp.Eq, V](k: K): boolean {
 // `update(k, f)` — the map with the value at `k` replaced by `f(old)`;
 // the receiver unchanged when `k` is absent.
 pub function (m: PMap[K, V]) update[K: cmp.Hash + cmp.Eq, V](k: K, f: (V) => V): PMap[K, V] {
-  var h: i32 = __hm_mix(k.hash());
+  let h: i32 = __hm_mix(k.hash());
   match (__hm_find(m.root, h, k)) {
     Leaf(lh, lk, lv) => {
       return PMap { root: __hm_insert(m.root, h, 0, k, f(lv)) };
@@ -779,13 +779,13 @@ pub function (m: PMap[K, V]) update[K: cmp.Hash + cmp.Eq, V](k: K, f: (V) => V):
 
 // `keys()` / `values()` — the entries, in hash order.
 pub function (m: PMap[K, V]) keys(): K[] {
-  var acc: K[] = [];
+  let acc: K[] = [];
   acc = __hm_keys_into(m.root, acc);
   return acc;
 }
 
 pub function (m: PMap[K, V]) values(): V[] {
-  var acc: V[] = [];
+  let acc: V[] = [];
   acc = __hm_values_into(m.root, acc);
   return acc;
 }
@@ -808,10 +808,10 @@ pub function (m: PMap[K, V]) map_values[K, V, W](f: (V) => W): PMap[K, W] {
 
 // `filter(pred)` — the map of the entries `pred(k, v)` accepts.
 pub function (m: PMap[K, V]) filter[K: cmp.Hash + cmp.Eq, V](pred: (K, V) => boolean): PMap[K, V] {
-  var out: PMap[K, V] = pmap_new();
-  var ks: K[] = m.keys();
-  var vs: V[] = m.values();
-  var i: i32 = 0;
+  let out: PMap[K, V] = pmap_new();
+  let ks: K[] = m.keys();
+  let vs: V[] = m.values();
+  let i: i32 = 0;
   while (i < ks.len()) {
     if (pred(ks[i], vs[i])) {
       out = out.insert(ks[i], vs[i]);
@@ -825,10 +825,10 @@ pub function (m: PMap[K, V]) filter[K: cmp.Hash + cmp.Eq, V](pred: (K, V) => boo
 // value. The smaller map is folded into the larger, O(m log32 n).
 pub function (m: PMap[K, V]) union[K: cmp.Hash + cmp.Eq, V](other: PMap[K, V]): PMap[K, V] {
   if (m.len() >= other.len()) {
-    var out: PMap[K, V] = m;
-    var ks: K[] = other.keys();
-    var vs: V[] = other.values();
-    var i: i32 = 0;
+    let out: PMap[K, V] = m;
+    let ks: K[] = other.keys();
+    let vs: V[] = other.values();
+    let i: i32 = 0;
     while (i < ks.len()) {
       if (!out.contains(ks[i])) {
         out = out.insert(ks[i], vs[i]);
@@ -837,10 +837,10 @@ pub function (m: PMap[K, V]) union[K: cmp.Hash + cmp.Eq, V](other: PMap[K, V]): 
     }
     return out;
   }
-  var out: PMap[K, V] = other;
-  var ks: K[] = m.keys();
-  var vs: V[] = m.values();
-  var i: i32 = 0;
+  let out: PMap[K, V] = other;
+  let ks: K[] = m.keys();
+  let vs: V[] = m.values();
+  let i: i32 = 0;
   while (i < ks.len()) {
     out = out.insert(ks[i], vs[i]);
     i = i + 1;
@@ -851,10 +851,10 @@ pub function (m: PMap[K, V]) union[K: cmp.Hash + cmp.Eq, V](other: PMap[K, V]): 
 // `intersection(other)` — the entries whose key is in both, with THIS
 // map's values.
 pub function (m: PMap[K, V]) intersection[K: cmp.Hash + cmp.Eq, V](other: PMap[K, V]): PMap[K, V] {
-  var out: PMap[K, V] = pmap_new();
-  var ks: K[] = m.keys();
-  var vs: V[] = m.values();
-  var i: i32 = 0;
+  let out: PMap[K, V] = pmap_new();
+  let ks: K[] = m.keys();
+  let vs: V[] = m.values();
+  let i: i32 = 0;
   while (i < ks.len()) {
     if (other.contains(ks[i])) {
       out = out.insert(ks[i], vs[i]);
@@ -866,9 +866,9 @@ pub function (m: PMap[K, V]) intersection[K: cmp.Hash + cmp.Eq, V](other: PMap[K
 
 // `difference(other)` — this map's entries whose key is NOT in `other`.
 pub function (m: PMap[K, V]) difference[K: cmp.Hash + cmp.Eq, V](other: PMap[K, V]): PMap[K, V] {
-  var out: PMap[K, V] = m;
-  var ks: K[] = other.keys();
-  var i: i32 = 0;
+  let out: PMap[K, V] = m;
+  let ks: K[] = other.keys();
+  let i: i32 = 0;
   while (i < ks.len()) {
     out = out.remove(ks[i]);
     i = i + 1;

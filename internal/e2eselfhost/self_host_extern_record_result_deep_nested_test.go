@@ -121,7 +121,7 @@ struct Outer { l: Mid, r: Mid }
 @import("local:test/src@0.1.0", "make-outer")
 function make_outer(a: i32, b: i32, c: i32, d: i32, e: i32, f: i32, g: i32, h: i32): Outer;
 function main(): i32 {
-    var o: Outer = make_outer(1, 2, 3, 4, 5, 6, 7, 8);
+    let o: Outer = make_outer(1, 2, 3, 4, 5, 6, 7, 8);
     // l.p.x=1, l.p.y=2, l.n=3, r.p.x=4, r.p.y=5, r.n=6
     // 1 + 2*10 + 3*100 + 4*1000 + 5*10000 + 6*100000 = 654321
     if (o.l.p.x + o.l.p.y * 10 + o.l.n * 100 + o.r.p.x * 1000 + o.r.p.y * 10000 + o.r.n * 100000 == 654321) { write("` + want + `"); } else { write("deep-bad"); }

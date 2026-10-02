@@ -17,7 +17,7 @@ do with a string parameter:
 
 ```fern
 function tag(src: string, i: i32): i32 {
-    var x: string = src;
+    let x: string = src;
     return x.len() + i;
 }
 ```

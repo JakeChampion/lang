@@ -58,7 +58,7 @@ var floatTypes = []numType{{"f32", 32, false, true}, {"f64", 64, false, true}}
 // values. Signed negatives and the type minimums are spelled
 // `0 - N (- 1)` because the lexer rejects a bare out-of-range
 // negative literal (e.g. `-2147483648` for i32). The result
-// strings are valid right-hand sides for `var x: T = …`.
+// strings are valid right-hand sides for `let x: T = …`.
 func litsFor(t numType) []string {
 	if t.isFloat {
 		return []string{
@@ -148,7 +148,7 @@ func genIntBinary(r *rand.Rand) string {
 	// the operands — including 0 and -1 divisors and the INT_MIN
 	// dividend — are drawn from the full edge pool like every other
 	// op. The pool already contains 0, 1, -1, and the type min/max.
-	body := fmt.Sprintf("    var a: %s = %s;\n    var b: %s = %s;\n    %s\n",
+	body := fmt.Sprintf("    let a: %s = %s;\n    let b: %s = %s;\n    %s\n",
 		t.name, pick(r, lits), t.name, pick(r, lits), printInt(t, "a "+op+" b"))
 	return wrapMain(body)
 }
@@ -163,7 +163,7 @@ func genIntSaturating(r *rand.Rand) string {
 	t := pick(r, intTypes)
 	lits := litsFor(t)
 	op := pick(r, []string{"+|", "-|", "*|"})
-	body := fmt.Sprintf("    var a: %s = %s;\n    var b: %s = %s;\n    %s\n",
+	body := fmt.Sprintf("    let a: %s = %s;\n    let b: %s = %s;\n    %s\n",
 		t.name, pick(r, lits), t.name, pick(r, lits), printInt(t, "a "+op+" b"))
 	return wrapMain(body)
 }
@@ -177,7 +177,7 @@ func genIntShift(r *rand.Rand) string {
 	// operands to share a type, so the count is typed as the
 	// operand (every value below fits in the smallest type, u8).
 	count := pick(r, []string{"0", "1", "7", "15", "31", "33", "63", "64", "65"})
-	body := fmt.Sprintf("    var a: %s = %s;\n    var c: %s = %s;\n    %s\n",
+	body := fmt.Sprintf("    let a: %s = %s;\n    let c: %s = %s;\n    %s\n",
 		t.name, a, t.name, count, printInt(t, "a "+op+" c"))
 	return wrapMain(body)
 }
@@ -186,7 +186,7 @@ func genIntCompare(r *rand.Rand) string {
 	t := pick(r, intTypes)
 	lits := litsFor(t)
 	op := pick(r, []string{"<", "<=", ">", ">=", "==", "!="})
-	body := fmt.Sprintf("    var a: %s = %s;\n    var b: %s = %s;\n    print(pb(a %s b));\n",
+	body := fmt.Sprintf("    let a: %s = %s;\n    let b: %s = %s;\n    print(pb(a %s b));\n",
 		t.name, pick(r, lits), t.name, pick(r, lits), op)
 	return wrapMain(body)
 }
@@ -194,7 +194,7 @@ func genIntCompare(r *rand.Rand) string {
 func genIntCast(r *rand.Rand) string {
 	src := pick(r, intTypes)
 	dst := pick(r, intTypes)
-	body := fmt.Sprintf("    var a: %s = %s;\n    %s\n",
+	body := fmt.Sprintf("    let a: %s = %s;\n    %s\n",
 		src.name, pick(r, litsFor(src)), printInt(dst, "a as "+dst.name))
 	return wrapMain(body)
 }
@@ -203,7 +203,7 @@ func genFloatBinary(r *rand.Rand) string {
 	t := pick(r, floatTypes)
 	lits := litsFor(t)
 	op := pick(r, []string{"+", "-", "*", "/"})
-	body := fmt.Sprintf("    var a: %s = %s;\n    var b: %s = %s;\n    print((a %s b).to_string());\n",
+	body := fmt.Sprintf("    let a: %s = %s;\n    let b: %s = %s;\n    print((a %s b).to_string());\n",
 		t.name, pick(r, lits), t.name, pick(r, lits), op)
 	return wrapMain(body)
 }
@@ -241,7 +241,7 @@ var floatMathLits = []string{
 // wrapper on the path too.
 func genFloatMath(r *rand.Rand) string {
 	m := pick(r, floatMathExact)
-	body := fmt.Sprintf("    var a: f64 = %s;\n    print((a.%s()).to_string());\n",
+	body := fmt.Sprintf("    let a: f64 = %s;\n    print((a.%s()).to_string());\n",
 		pick(r, floatMathLits), m)
 	return wrapMain(body)
 }
@@ -249,7 +249,7 @@ func genFloatMath(r *rand.Rand) string {
 func genFloatToInt(r *rand.Rand) string {
 	src := pick(r, floatTypes)
 	dst := pick(r, intTypes)
-	body := fmt.Sprintf("    var a: %s = %s;\n    %s\n",
+	body := fmt.Sprintf("    let a: %s = %s;\n    %s\n",
 		src.name, pick(r, litsFor(src)), printInt(dst, "a as "+dst.name))
 	return wrapMain(body)
 }
@@ -257,7 +257,7 @@ func genFloatToInt(r *rand.Rand) string {
 func genIntToFloat(r *rand.Rand) string {
 	src := pick(r, intTypes)
 	dst := pick(r, floatTypes)
-	body := fmt.Sprintf("    var a: %s = %s;\n    print((a as %s).to_string());\n",
+	body := fmt.Sprintf("    let a: %s = %s;\n    print((a as %s).to_string());\n",
 		src.name, pick(r, litsFor(src)), dst.name)
 	return wrapMain(body)
 }
@@ -529,7 +529,7 @@ func TestNumericProperty_FloatMathExact(t *testing.T) {
 	for _, m := range floatMathExact {
 		for i, lit := range floatMathLits {
 			t.Run(fmt.Sprintf("%s/lit%d", m, i), func(t *testing.T) {
-				body := fmt.Sprintf("    var a: f64 = %s;\n    print((a.%s()).to_string());\n", lit, m)
+				body := fmt.Sprintf("    let a: f64 = %s;\n    print((a.%s()).to_string());\n", lit, m)
 				// Hand-written, so an interp gap FAILS rather than skips
 				// (rule 10): a case that stops reaching the oracle is a lost
 				// assertion, not a tolerable one.
@@ -553,91 +553,91 @@ func TestNumericProperty_Regressions(t *testing.T) {
 	}{
 		// Sub-i32 arithmetic wraps to the type width (interp used
 		// not to narrow).
-		{"u8_add_wrap", `    var a: u8 = 255;
+		{"u8_add_wrap", `    let a: u8 = 255;
     print(((a + a) as i64).to_string());`},
 		// u32 widening to i64 zero-extends (interp stored u32
 		// sign-extended, so a high-bit value widened negative).
-		{"u32_mul_widen", `    var a: u32 = 4000000000;
-    var b: u32 = 1;
+		{"u32_mul_widen", `    let a: u32 = 4000000000;
+    let b: u32 = 1;
     print(((a * b) as i64).to_string());`},
 		// float→unsigned-sub-i32 must narrow to the dest width.
-		{"f64_to_u8_wrap", `    var a: f64 = 3000000000.0;
+		{"f64_to_u8_wrap", `    let a: f64 = 3000000000.0;
     print(((a as u8) as i64).to_string());`},
 		// float→int saturates (out of range / NaN).
-		{"f64_to_i32_satpos", `    var a: f64 = 1e30;
+		{"f64_to_i32_satpos", `    let a: f64 = 1e30;
     print((a as i32).to_string());`},
-		{"f64_to_i64_nan", `    var a: f64 = 0.0 / 0.0;
+		{"f64_to_i64_nan", `    let a: f64 = 0.0 / 0.0;
     print((a as i64).to_string());`},
 		// unsigned→float converts from the unsigned magnitude
 		// (interp treated u64 max as signed -1; arm lacked ucvtf).
-		{"u64max_to_f64", `    var a: u64 = 18446744073709551615;
+		{"u64max_to_f64", `    let a: u64 = 18446744073709551615;
     print((a as f64).to_string());`},
-		{"u64max_to_f32", `    var a: u64 = 18446744073709551615;
+		{"u64max_to_f32", `    let a: u64 = 18446744073709551615;
     print((a as f32).to_string());`},
-		{"u32_to_f32", `    var a: u32 = 4000000000;
+		{"u32_to_f32", `    let a: u32 = 4000000000;
     print((a as f32).to_string());`},
 		// Integer division never traps (well-defined contract):
 		// x/0 = 0, x%0 = x, INT_MIN/-1 = INT_MIN, INT_MIN%-1 = 0.
-		{"i32_div_zero", `    var z: i32 = 0;
-    var n: i32 = 10;
+		{"i32_div_zero", `    let z: i32 = 0;
+    let n: i32 = 10;
     print((n / z).to_string());`},
-		{"i32_mod_zero", `    var z: i32 = 0;
-    var n: i32 = 10;
+		{"i32_mod_zero", `    let z: i32 = 0;
+    let n: i32 = 10;
     print((n % z).to_string());`},
-		{"i32_min_div_neg1", `    var a: i32 = 0 - 2147483647 - 1;
-    var b: i32 = 0 - 1;
+		{"i32_min_div_neg1", `    let a: i32 = 0 - 2147483647 - 1;
+    let b: i32 = 0 - 1;
     print((a / b).to_string());`},
-		{"i32_min_mod_neg1", `    var a: i32 = 0 - 2147483647 - 1;
-    var b: i32 = 0 - 1;
+		{"i32_min_mod_neg1", `    let a: i32 = 0 - 2147483647 - 1;
+    let b: i32 = 0 - 1;
     print((a % b).to_string());`},
-		{"i64_div_zero", `    var z: i64 = 0;
-    var n: i64 = 100;
+		{"i64_div_zero", `    let z: i64 = 0;
+    let n: i64 = 100;
     print((n / z).to_string());`},
-		{"i64_min_div_neg1", `    var a: i64 = 0 - 9223372036854775807 - 1;
-    var b: i64 = 0 - 1;
+		{"i64_min_div_neg1", `    let a: i64 = 0 - 9223372036854775807 - 1;
+    let b: i64 = 0 - 1;
     print((a / b).to_string());`},
-		{"u32_div_zero", `    var z: u32 = 0;
-    var n: u32 = 4000000000;
+		{"u32_div_zero", `    let z: u32 = 0;
+    let n: u32 = 4000000000;
     print((n / z).to_string());`},
-		{"u8_mod_zero", `    var z: u8 = 0;
-    var n: u8 = 200;
+		{"u8_mod_zero", `    let z: u8 = 0;
+    let n: u8 = 200;
     print(((n % z) as i64).to_string());`},
 		// Saturating arithmetic (#5542) clamps at the operand width.
 		// The edges are the two clamp directions per signedness, plus
 		// the signed-mul `MIN / -1` pair the division round-trip would
 		// otherwise read as non-overflowing.
-		{"i32_sat_add_hi", `    var a: i32 = 2147483647;
-    var b: i32 = 1;
+		{"i32_sat_add_hi", `    let a: i32 = 2147483647;
+    let b: i32 = 1;
     print((a +| b).to_string());`},
-		{"i32_sat_sub_lo", `    var a: i32 = 0 - 2147483647 - 1;
-    var b: i32 = 1;
+		{"i32_sat_sub_lo", `    let a: i32 = 0 - 2147483647 - 1;
+    let b: i32 = 1;
     print((a -| b).to_string());`},
-		{"i32_sat_mul_min_neg1", `    var a: i32 = 0 - 2147483647 - 1;
-    var b: i32 = 0 - 1;
+		{"i32_sat_mul_min_neg1", `    let a: i32 = 0 - 2147483647 - 1;
+    let b: i32 = 0 - 1;
     print((a *| b).to_string());`},
-		{"i32_sat_mul_neg1_min", `    var a: i32 = 0 - 1;
-    var b: i32 = 0 - 2147483647 - 1;
+		{"i32_sat_mul_neg1_min", `    let a: i32 = 0 - 1;
+    let b: i32 = 0 - 2147483647 - 1;
     print((a *| b).to_string());`},
-		{"i64_sat_mul_min_neg1", `    var a: i64 = 0 - 9223372036854775807 - 1;
-    var b: i64 = 0 - 1;
+		{"i64_sat_mul_min_neg1", `    let a: i64 = 0 - 9223372036854775807 - 1;
+    let b: i64 = 0 - 1;
     print((a *| b).to_string());`},
-		{"i64_sat_add_hi", `    var a: i64 = 9223372036854775807;
-    var b: i64 = 1;
+		{"i64_sat_add_hi", `    let a: i64 = 9223372036854775807;
+    let b: i64 = 1;
     print((a +| b).to_string());`},
-		{"u64_sat_add_hi", `    var a: u64 = 18446744073709551615;
-    var b: u64 = 1;
+		{"u64_sat_add_hi", `    let a: u64 = 18446744073709551615;
+    let b: u64 = 1;
     print((a +| b).to_string());`},
-		{"u64_sat_sub_lo", `    var a: u64 = 0;
-    var b: u64 = 1;
+		{"u64_sat_sub_lo", `    let a: u64 = 0;
+    let b: u64 = 1;
     print((a -| b).to_string());`},
-		{"u32_sat_mul_hi", `    var a: u32 = 4294967295;
-    var b: u32 = 2;
+		{"u32_sat_mul_hi", `    let a: u32 = 4294967295;
+    let b: u32 = 2;
     print(((a *| b) as i64).to_string());`},
-		{"u8_sat_add_hi", `    var a: u8 = 255;
-    var b: u8 = 1;
+		{"u8_sat_add_hi", `    let a: u8 = 255;
+    let b: u8 = 1;
     print(((a +| b) as i64).to_string());`},
-		{"u8_sat_sub_lo", `    var a: u8 = 0;
-    var b: u8 = 1;
+		{"u8_sat_sub_lo", `    let a: u8 = 0;
+    let b: u8 = 1;
     print(((a -| b) as i64).to_string());`},
 	}
 	for _, c := range cases {

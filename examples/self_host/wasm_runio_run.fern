@@ -28,10 +28,10 @@ function main(): i32 {
   // IR-or-error reroute turns into hard errors.
   // `-reactor`: the core imports its WASI host only when the program reaches
   // it, the form an export-only component (and a wasi:http handler) takes.
-  var decide: boolean = false;
-  var reactor: boolean = false;
-  var av: string[] = args();
-  var ai: i32 = 1;
+  let decide: boolean = false;
+  let reactor: boolean = false;
+  let av: string[] = args();
+  let ai: i32 = 1;
   while (ai < av.len()) {
     if (av[ai] == "-decide") {
       decide = true;
@@ -41,16 +41,16 @@ function main(): i32 {
     }
     ai = ai + 1;
   }
-  var mod: parser.Module = rundriver.parse_stdin("wasm_runio_run");
+  let mod: parser.Module = rundriver.parse_stdin("wasm_runio_run");
   if (asmcore.refuse_parse_unknowns([mod]) || asmcore.refuse_decl_names([mod])) {
     return 1;
   }
-  var d: semlower.Driven = semlower.driven(mod, "wasm32-wasi");
+  let d: semlower.Driven = semlower.driven(mod, "wasm32-wasi");
   if (decide) {
     // The emit's own decision (component=true, io=true), reused from
     // wasm_ir rather than restated so the probe cannot drift from the
     // emitter it describes.
-    var plm: parser.Module = wasm_ir.route_normalized(d.full);
+    let plm: parser.Module = wasm_ir.route_normalized(d.full);
     if (wasm_ir.ir_route_ok(plm, true, true, d.sub)) {
       print("ir\n");
     } else {

@@ -35,7 +35,7 @@ function (a: V) neg(): V { return V { x: 0 - a.x }; }
 function main(): i32 {
     // Checked arithmetic inside a nested function, every operator.
     function chk(): i32 {
-        var n: i32 = 0;
+        let n: i32 = 0;
         match (100 +? 5)  { Some(v) => { if (v != 105) { return 1; } }, None => { return 2; } }
         match (100 -? 5)  { Some(v) => { if (v != 95) { return 3; } }, None => { return 4; } }
         match (100 *? 5)  { Some(v) => { if (v != 500) { return 5; } }, None => { return 6; } }
@@ -49,40 +49,40 @@ function main(): i32 {
         match (1 <<? 32)        { Some(v) => { return 17; }, None => {} }
         return n;
     }
-    var c: i32 = chk();
+    let c: i32 = chk();
     if (c != 0) { return c; }
 
     // Composite operator overloads inside a nested function.
     function comp(): i32 {
-        var p: V = V { x: 3 };
-        var q: V = V { x: 4 };
+        let p: V = V { x: 3 };
+        let q: V = V { x: 4 };
         if ((p + q).x != 7) { return 20; }
         if ((-p).x != 0 - 3) { return 21; }
         return 0;
     }
-    var d: i32 = comp();
+    let d: i32 = comp();
     if (d != 0) { return d; }
 
     // The same desugars inside an anonymous function expression.
-    var f: () => i32 = (): i32 => {
+    let f: () => i32 = (): i32 => {
         match (100 /? 5) { Some(v) => { if (v != 20) { return 30; } }, None => { return 31; } }
-        var p: V = V { x: 5 };
-        var q: V = V { x: 6 };
+        let p: V = V { x: 5 };
+        let q: V = V { x: 6 };
         if ((p + q).x != 11) { return 32; }
         return 0;
     };
-    var e: i32 = f();
+    let e: i32 = f();
     if (e != 0) { return e; }
 
     // The same desugars inside a loop { … } body. A loop is a statement kind
     // of its own rather than sugar over while (true), so a rewriter that lists
     // the loop forms by hand can omit it — and then the identical expression
     // compiles inside a while and is rejected inside a loop.
-    var lp: i32 = 0;
+    let lp: i32 = 0;
     loop {
         match (100 /? 5) { Some(v) => { if (v != 20) { lp = 40; } }, None => { lp = 41; } }
-        var p: V = V { x: 7 };
-        var q: V = V { x: 8 };
+        let p: V = V { x: 7 };
+        let q: V = V { x: 8 };
         if ((p + q).x != 15) { lp = 42; }
         break;
     }

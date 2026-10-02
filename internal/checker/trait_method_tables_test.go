@@ -89,7 +89,7 @@ func TestTraitMethodTablesImplMethod(t *testing.T) {
 	info := checkInfo(t, `struct P { x: i32 }
 trait Area { function area(self: Self): i32; }
 impl Area for P { function area(self: Self): i32 { return self.x; } }
-function main(): i32 { var p = P { x: 1 }; return p.area(); }`)
+function main(): i32 { let p = P { x: 1 }; return p.area(); }`)
 
 	wantTraitMethod(t, info, "Area", "P", "area", "__method_P_area")
 	wantOwners(t, info, "P", "area", []string{"Area"})
@@ -113,7 +113,7 @@ func TestTraitMethodTablesDerivedMethod(t *testing.T) {
 impl Eq for i32 { function eq(self: Self, other: Self): boolean { return self == other; } }
 @derive(Eq)
 struct P { x: i32 }
-function main(): i32 { var a = P { x: 1 }; var b = P { x: 2 }; if (a.eq(b)) { return 1; } return 0; }`)
+function main(): i32 { let a = P { x: 1 }; let b = P { x: 2 }; if (a.eq(b)) { return 1; } return 0; }`)
 
 	wantTraitMethod(t, info, "Eq", "P", "eq", "__method_P_eq")
 	wantOwners(t, info, "P", "eq", []string{"Eq"})
@@ -128,7 +128,7 @@ trait Greet {
   function greet(self: Self): i32 { return self.name() + 1; }
 }
 impl Greet for P { function name(self: Self): i32 { return self.x; } }
-function main(): i32 { var p = P { x: 1 }; return p.greet(); }`)
+function main(): i32 { let p = P { x: 1 }; return p.greet(); }`)
 
 	wantTraitMethod(t, info, "Greet", "P", "name", "__method_P_name")
 	wantTraitMethod(t, info, "Greet", "P", "greet", "__method_P_greet")
@@ -141,7 +141,7 @@ function main(): i32 { var p = P { x: 1 }; return p.greet(); }`)
 func TestTraitMethodTablesInherentMethodHasNoOwner(t *testing.T) {
 	info := checkInfo(t, `struct P { x: i32 }
 function (p: P) area(): i32 { return p.x; }
-function main(): i32 { var p = P { x: 1 }; return p.area(); }`)
+function main(): i32 { let p = P { x: 1 }; return p.area(); }`)
 
 	if got := info.Methods["P.area"]; got != "__method_P_area" {
 		t.Fatalf(`Methods["P.area"] = %q, want "__method_P_area"`, got)
@@ -164,7 +164,7 @@ impl P {
   function origin(): P { return P { x: 0 }; }
   function get(self: Self): i32 { return self.x; }
 }
-function main(): i32 { var p = P.origin(); return p.get(); }`)
+function main(): i32 { let p = P.origin(); return p.get(); }`)
 
 	for _, key := range []string{"P.origin", "P.get"} {
 		if _, ok := info.Methods[key]; !ok {
@@ -185,7 +185,7 @@ trait A { function go(self: Self): i32; }
 trait B { function go(self: Self): i32; }
 impl A for P { function go(self: Self): i32 { return 1; } }
 impl B for P { function go(self: Self): i32 { return 2; } }
-function main(): i32 { var p = P { x: 1 }; return p.x; }`)
+function main(): i32 { let p = P { x: 1 }; return p.x; }`)
 
 	wantOwners(t, info, "P", "go", []string{"A", "B"})
 	if got := info.TraitMethods["A.P.go"]; got != "__method_P_go" {
@@ -204,11 +204,11 @@ func TestSameTraitTwiceStillRedeclares(t *testing.T) {
 trait A { function go(self: Self): i32; }
 impl A for P { function go(self: Self): i32 { return 1; } }
 impl A for P { function go(self: Self): i32 { return 2; } }
-function main(): i32 { var p = P { x: 1 }; return p.go(); }`,
+function main(): i32 { let p = P { x: 1 }; return p.go(); }`,
 		"two inherent": `struct P { x: i32 }
 function (p: P) go(): i32 { return 1; }
 function (p: P) go(): i32 { return 2; }
-function main(): i32 { var p = P { x: 1 }; return p.go(); }`,
+function main(): i32 { let p = P { x: 1 }; return p.go(); }`,
 		"same assoc fn twice": `struct P { x: i32 }
 impl P { function make(): P { return P { x: 1 }; } }
 impl P { function make(): P { return P { x: 2 }; } }
@@ -234,12 +234,12 @@ func TestInherentAndTraitMethodCollide(t *testing.T) {
 trait A { function go(self: Self): i32; }
 impl A for P { function go(self: Self): i32 { return 1; } }
 function (p: P) go(): i32 { return 2; }
-function main(): i32 { var p = P { x: 1 }; return p.go(); }`,
+function main(): i32 { let p = P { x: 1 }; return p.go(); }`,
 		"inherent declared first": `struct P { x: i32 }
 function (p: P) go(): i32 { return 2; }
 trait A { function go(self: Self): i32; }
 impl A for P { function go(self: Self): i32 { return 1; } }
-function main(): i32 { var p = P { x: 1 }; return p.go(); }`,
+function main(): i32 { let p = P { x: 1 }; return p.go(); }`,
 	} {
 		err := checkSource(t, src)
 		if err == nil {
@@ -260,7 +260,7 @@ trait A { function go(self: Self): i32; }
 trait B { function go(self: Self): i32; }
 impl A for P { function go(self: Self): i32 { return 1; } }
 impl B for P { function go(self: Self): i32 { return 2; } }
-function main(): i32 { var p = P { x: 1 }; return p.go(); }`)
+function main(): i32 { let p = P { x: 1 }; return p.go(); }`)
 	if err == nil {
 		t.Fatal("expected E074 for a call with two equally-ranked candidates")
 	}
@@ -327,7 +327,7 @@ func TestResolveMethodPrefersNamedTrait(t *testing.T) {
 	info := checkInfo(t, `struct P { x: i32 }
 trait Area { function area(self: Self): i32; }
 impl Area for P { function area(self: Self): i32 { return self.x; } }
-function main(): i32 { var p = P { x: 1 }; return p.area(); }`)
+function main(): i32 { let p = P { x: 1 }; return p.area(); }`)
 
 	for _, prefer := range [][]string{nil, {"Area"}, {""}, {"Unrelated"}} {
 		mangled, owner, ok := info.ResolveMethod("P", "area", prefer)
@@ -345,7 +345,7 @@ function main(): i32 { var p = P { x: 1 }; return p.area(); }`)
 func TestResolveMethodInherentHasNoOwner(t *testing.T) {
 	info := checkInfo(t, `struct P { x: i32 }
 function (p: P) area(): i32 { return p.x; }
-function main(): i32 { var p = P { x: 1 }; return p.area(); }`)
+function main(): i32 { let p = P { x: 1 }; return p.area(); }`)
 
 	mangled, owner, ok := info.ResolveMethod("P", "area", []string{"Area"})
 	if !ok || mangled != "__method_P_area" || owner != "" {

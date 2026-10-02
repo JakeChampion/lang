@@ -29,18 +29,18 @@ func TestFormatDestructuringParamRoundTrips(t *testing.T) {
 		{
 			// The issue's own repro.
 			name: "arrow_tuple_param",
-			src:  "function main(): i32 {\n    var b = ((p, q): (i32, i32)) => p - q;\n    if (b((5, 2)) != 3) { return 1; }\n    return 0;\n}",
+			src:  "function main(): i32 {\n    let b = ((p, q): (i32, i32)) => p - q;\n    if (b((5, 2)) != 3) { return 1; }\n    return 0;\n}",
 			want: "((p, q): (i32, i32)) => p - q",
 		},
 		{
 			name: "arrow_struct_param",
-			src:  "struct Point { x: i32, y: i32 }\nfunction apply(f: (Point) => i32, p: Point): i32 { return f(p); }\nfunction main(): i32 {\n    var g: (Point) => i32 = (Point { x: a, y }: Point) => a + y;\n    return apply(g, Point { x: 3, y: 4 });\n}",
+			src:  "struct Point { x: i32, y: i32 }\nfunction apply(f: (Point) => i32, p: Point): i32 { return f(p); }\nfunction main(): i32 {\n    let g: (Point) => i32 = (Point { x: a, y }: Point) => a + y;\n    return apply(g, Point { x: 3, y: 4 });\n}",
 			want: "(Point { x: a, y }: Point) => a + y",
 		},
 		{
 			// Field shorthand must not become `x: x`.
 			name: "arrow_struct_param_shorthand",
-			src:  "struct Point { x: i32, y: i32 }\nfunction apply(f: (Point) => i32, p: Point): i32 { return f(p); }\nfunction main(): i32 {\n    var g: (Point) => i32 = (Point { x, y }: Point) => x + y;\n    return apply(g, Point { x: 3, y: 4 });\n}",
+			src:  "struct Point { x: i32, y: i32 }\nfunction apply(f: (Point) => i32, p: Point): i32 { return f(p); }\nfunction main(): i32 {\n    let g: (Point) => i32 = (Point { x, y }: Point) => x + y;\n    return apply(g, Point { x: 3, y: 4 });\n}",
 			want: "(Point { x, y }: Point) => x + y",
 		},
 		{

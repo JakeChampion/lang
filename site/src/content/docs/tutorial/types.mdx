@@ -22,7 +22,7 @@ function origin(): Point {
 }
 
 function main(): i32 {
-    var p: Point = origin();
+    let p: Point = origin();
     print(p.x.to_string() + "," + p.y.to_string());
     return 0;
 }`}
@@ -43,7 +43,7 @@ function (p: Point) magnitude_sq(): i32 {
 }
 
 function main(): i32 {
-    var p: Point = Point { x: 3, y: 4 };
+    let p: Point = Point { x: 3, y: 4 };
     print(p.magnitude_sq().to_string()); // 25
     return 0;
 }`}

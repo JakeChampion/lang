@@ -13,7 +13,7 @@ import (
 // column. Counted in bytes, the client is told to replace fewer characters
 // than the document has, and the tail survives the edit.
 func TestFormattingRangeEndIsUTF16(t *testing.T) {
-	src := "function main(): i32 {\n  var s: string = \"é→🐛\";\n  return 0;\n}\n// é→🐛"
+	src := "function main(): i32 {\n  let s: string = \"é→🐛\";\n  return 0;\n}\n// é→🐛"
 	last := "// é→🐛"
 	if got, want := utf16Len(last), len([]byte(last)); got == want {
 		t.Fatalf("fixture does not exercise the conversion: %d units == %d bytes", got, want)
@@ -33,8 +33,8 @@ func TestFormattingRangeEndIsUTF16(t *testing.T) {
 func TestSemanticTokenStartIsUTF16(t *testing.T) {
 	// The conversion is on a name REFERENCE, which is what this pass emits;
 	// a declaration name is not tokenised.
-	declLine := `  var s: string = "é→🐛"; return n;`
-	src := "function main(): i32 {\n  var n: i32 = 7;\n" + declLine + "\n}\n"
+	declLine := `  let s: string = "é→🐛"; return n;`
+	src := "function main(): i32 {\n  let n: i32 = 7;\n" + declLine + "\n}\n"
 	s := NewServer()
 	s.updateDoc("file:///t", src)
 	resp := runSemanticTokens(s.docs["file:///t"], "file:///t")
@@ -67,7 +67,7 @@ func TestSemanticTokenStartIsUTF16(t *testing.T) {
 // shared converter, so it needs its own row: a byte-counting scan lands short
 // on a line with a multi-byte character before the cursor.
 func TestSignatureHelpPositionIsUTF16(t *testing.T) {
-	line := `  var n: i32 = add("é→🐛", `
+	line := `  let n: i32 = add("é→🐛", `
 	src := "function add(s: string, n: i32): i32 { return n; }\n" +
 		"function main(): i32 {\n" + line + "1);\n  return n;\n}\n"
 	u16 := utf16Len(line)

@@ -16,7 +16,7 @@ function test_render_single_column(): test.TestOutcome {
 }
 
 function test_render_empty(): test.TestOutcome {
-  var empty: string[][] = [];
+  let empty: string[][] = [];
   return test.assert_eq(table.render(empty), "");
 }
 
@@ -31,12 +31,12 @@ function test_codepoint_alignment(): test.TestOutcome {
 }
 
 function test_render_with_header(): test.TestOutcome {
-  var h: string = table.render_with_header(["name", "age"], [["ada", "36"], ["bo", "9"]]);
+  let h: string = table.render_with_header(["name", "age"], [["ada", "36"], ["bo", "9"]]);
   return test.assert_eq(h, "name  age\n----  ---\nada   36\nbo    9");
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("std/table");
+  let r: test.TestRunner = test.test_new("std/table");
   r = r.it("render basic", test_render_basic);
   r = r.it("single column", test_render_single_column);
   r = r.it("empty", test_render_empty);

@@ -19,19 +19,19 @@ const withFreshContainerSrc = `struct S { xs: i32[], tag: i32 }
 function mk(): S { return S { xs: [1, 2], tag: 0 }; }
 function mkxs(): i32[][] { return [[1, 2], [3, 4]]; }
 function freshField(i: i32): i32 {
-    var b: i32[] = mk().xs.with(0, i);
+    let b: i32[] = mk().xs.with(0, i);
     return b[0] + b[1];
 }
 function freshElem(i: i32): i32 {
-    var b: i32[] = mkxs()[0].with(0, i);
+    let b: i32[] = mkxs()[0].with(0, i);
     return b[0] + b[1];
 }
 function borrowedField(s: S, i: i32): i32 {
-    var b: i32[] = s.xs.with(0, i);
+    let b: i32[] = s.xs.with(0, i);
     return b[0] + s.xs[0];
 }
 function borrowedElem(a: i32[][], i: i32): i32 {
-    var b: i32[] = a[0].with(0, i);
+    let b: i32[] = a[0].with(0, i);
     return b[0] + a[0][0];
 }
 function main(): i32 { return 0; }`

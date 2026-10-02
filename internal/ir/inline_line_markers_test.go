@@ -39,12 +39,12 @@ func TestLineMarkersDoNotChangeInlining(t *testing.T) {
 	// carve-out), so literals here would re-hide the difference.
 	var b strings.Builder
 	b.WriteString("function leaf(a: i32, b: i32): i32 { return a + b; }\n")
-	b.WriteString("function mid(n: i32): i32 {\n    var t = 0;\n")
+	b.WriteString("function mid(n: i32): i32 {\n    let t = 0;\n")
 	for i := 0; i < 7; i++ {
 		fmt.Fprintf(&b, "    t = t + leaf(n, %d) * %d;\n", i, i+2)
 	}
 	b.WriteString("    return t;\n}\n")
-	b.WriteString("function main(): i32 {\n    var n = 3;\n    return mid(n) + mid(n + 1);\n}\n")
+	b.WriteString("function main(): i32 {\n    let n = 3;\n    return mid(n) + mid(n + 1);\n}\n")
 	src := b.String()
 
 	plain, debug := lowerBothWays(t, src)

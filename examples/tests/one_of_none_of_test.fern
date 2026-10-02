@@ -46,7 +46,7 @@ function test_one_of_i32_missing_reports_set(): test.TestOutcome {
 }
 
 function test_one_of_i32_empty_set_always_fails(): test.TestOutcome {
-  var empty: i32[] = [];
+  let empty: i32[] = [];
   match (test.assert_one_of_i32(0, empty)) {
     Pass => {
       return test.fail("empty allowed set should always fail");
@@ -106,7 +106,7 @@ function test_none_of_i32_match_reports(): test.TestOutcome {
 
 function test_none_of_i32_empty_forbidden_always_passes(): test.TestOutcome {
   // Vacuous: nothing forbidden, anything is OK.
-  var empty: i32[] = [];
+  let empty: i32[] = [];
   return test.assert_none_of_i32(42, empty);
 }
 
@@ -135,7 +135,7 @@ function test_none_of_string_match_reports(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("one_of / none_of");
+  let r: test.TestRunner = test.test_new("one_of / none_of");
   r = r.it("one_of_i32 middle element", test_one_of_i32_pass);
   r = r.it("one_of_i32 single-element set", test_one_of_i32_single_element);
   r = r.it("one_of_i32 first element", test_one_of_i32_first_element);

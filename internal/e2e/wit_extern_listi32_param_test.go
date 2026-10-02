@@ -120,7 +120,7 @@ func TestExternListI32ParamCustomProvider(t *testing.T) {
 function sum_i32(data: i32[]): u32;
 
 function main(): i32 {
-	var b: i32[] = [10, 20, 30];
+	let b: i32[] = [10, 20, 30];
 	if (sum_i32(b) == 60u32) { write("` + want + `"); } else { write("sum-bad"); }
 	return 0;
 }`

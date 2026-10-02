@@ -39,7 +39,7 @@ function test_fail_fast_short_circuits_post_fail(): test.TestOutcome {
   // combined TAP stream (TAP version 13 + suite
   // header + three cases), but its counters live in
   // an isolated value we then inspect.
-  var sub: test.TestRunner = test.test_new_fail_fast("ff-inner");
+  let sub: test.TestRunner = test.test_new_fail_fast("ff-inner");
   sub = sub.it("c1 pass before fail", trivial_pass);
   sub = sub.it("c2 fail triggers fast", intentional_fail);
   sub = sub.it(
@@ -64,7 +64,7 @@ function test_fail_fast_off_runs_every_case(): test.TestOutcome {
   // Sanity check: without fail-fast, the same shape
   // produces 2 pass + 1 test.fail(c3 actually runs).
   // Pins the contract that fail-fast is OPT-IN.
-  var sub: test.TestRunner = test.test_new("ff-control");
+  let sub: test.TestRunner = test.test_new("ff-control");
   sub = sub.it("c1 pass", trivial_pass);
   sub = sub.it("c2 fail", intentional_fail);
   sub = sub.it("c3 still runs", trivial_pass);
@@ -78,7 +78,7 @@ function test_fail_fast_off_runs_every_case(): test.TestOutcome {
 }
 
 function test_parse_fail_fast_present(): test.TestOutcome {
-  var argv: string[] = ["lang", "-interp", "test.fern", "--", "--fail-fast"];
+  let argv: string[] = ["lang", "-interp", "test.fern", "--", "--fail-fast"];
   if (test.parse_fail_fast_from_args(argv)) {
     return test.pass();
   }
@@ -86,7 +86,7 @@ function test_parse_fail_fast_present(): test.TestOutcome {
 }
 
 function test_parse_fail_fast_absent(): test.TestOutcome {
-  var argv: string[] = ["lang", "-interp", "test.fern"];
+  let argv: string[] = ["lang", "-interp", "test.fern"];
   if (!test.parse_fail_fast_from_args(argv)) {
     return test.pass();
   }
@@ -94,8 +94,8 @@ function test_parse_fail_fast_absent(): test.TestOutcome {
 }
 
 function test_with_fail_fast_preserves_filter(): test.TestOutcome {
-  var r0: test.TestRunner = test.test_new_filtered("with-ff", "x");
-  var r1: test.TestRunner = r0.with_fail_fast();
+  let r0: test.TestRunner = test.test_new_filtered("with-ff", "x");
+  let r1: test.TestRunner = r0.with_fail_fast();
   if (r1.filter == "x" && r1.fail_fast) {
     return test.pass();
   }
@@ -103,7 +103,7 @@ function test_with_fail_fast_preserves_filter(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("fail-fast");
+  let r: test.TestRunner = test.test_new("fail-fast");
   r = r.it(
     "fail-fast short-circuits post-fail",
     test_fail_fast_short_circuits_post_fail,

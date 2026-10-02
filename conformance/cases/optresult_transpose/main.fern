@@ -3,10 +3,10 @@ import "std/result";
 // Option.transpose / Result.transpose: exact inverses swapping
 // Option[Result] <-> Result[Option]. Runs interp / x86-64 / arm64 / wasm.
 function main(): i32 {
-    var a: Option[Result[i32, i32]] = Some(Ok(5));
-    var b: Option[Result[i32, i32]] = Some(Err(9));
-    var c: Option[Result[i32, i32]] = None;
-    var r: i32 = 0;
+    let a: Option[Result[i32, i32]] = Some(Ok(5));
+    let b: Option[Result[i32, i32]] = Some(Err(9));
+    let c: Option[Result[i32, i32]] = None;
+    let r: i32 = 0;
     match (a.transpose()) {            // Ok(Some(5))
         Ok(inner) => { match (inner) { Some(x) => { r = r + x; }, None => { r = r + 50; } } },
         Err(e) => { r = r + 60; }
@@ -20,7 +20,7 @@ function main(): i32 {
         Err(e) => { r = r + 90; }
     }
     // Result.transpose is the inverse: transpose().transpose() round-trips.
-    var d: Result[Option[i32], i32] = Ok(Some(3));
+    let d: Result[Option[i32], i32] = Ok(Some(3));
     match (d.transpose().transpose()) {   // back to Ok(Some(3))
         Ok(inner) => { match (inner) { Some(x) => { r = r + x; }, None => {} } },
         Err(e) => {}

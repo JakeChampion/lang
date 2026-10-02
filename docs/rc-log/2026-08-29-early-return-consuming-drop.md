@@ -10,7 +10,7 @@ name and no exit-sweep class covers it.
 No alias, no nesting, no arm:
 
 ```fern
-var src: Option[i32[]] = Some([i, i + 1]);
+let src: Option[i32[]] = Some([i, i + 1]);
 if (i >= 0) { return 5; }
 match (src) { Some(b) => { return b.len(); }, None => { return 2; } }
 ```
@@ -40,7 +40,7 @@ consuming-match drop.
 
 The install block already runs once per statement and is restored after it. It
 asked `idxs[k] == i`; it now asks `vidxs[k] < i && i <= idxs[k]` — the
-candidate's live range, from after its `var` through its match. `vidxs` is the
+candidate's live range, from after its `let` through its match. `vidxs` is the
 declaring statement's index, which every one of the three builders already had
 in hand as its loop variable.
 

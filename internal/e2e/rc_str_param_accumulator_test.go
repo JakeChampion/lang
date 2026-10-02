@@ -28,7 +28,7 @@ import (
 // bytes with the loop inside the callee.
 func strParamAccumulatorSrc(n int) string {
 	return fmt.Sprintf(`function grow(a: string, n: i32): string {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < n) { a = a + "12345678"; i = i + 1; }
     return a;
 }
@@ -46,9 +46,9 @@ const strParamReassignNoAppendSrc = `function f(a: string, s: string): i32 {
     return a.len();
 }
 function main(): i32 {
-    var base: string = "abcdefgh" + "ijklmnop";
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let base: string = "abcdefgh" + "ijklmnop";
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 512) { t = t + f(base, "12345678"); i = i + 1; }
     if (t != 512 * 16) { return 2; }
     return 0;

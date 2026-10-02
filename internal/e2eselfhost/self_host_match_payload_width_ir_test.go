@@ -26,7 +26,7 @@ var matchPayloadWidthIRCases = []struct {
 }{
 	{"payload-binding-in-array-element", `function id[T](x: T): T { return x; }
 function gen(): i64 {
-    var fe: i64[] = [(match ((1099511628358i64) +? (200i64)) { Some(n) => n, None => id(1099511628488i64) })];
+    let fe: i64[] = [(match ((1099511628358i64) +? (200i64)) { Some(n) => n, None => id(1099511628488i64) })];
     return fe[0];
 }
 function main(): i32 { return ((gen() / 1000000000i64) as i32) & 63i32; }`, 11},
@@ -34,7 +34,7 @@ function main(): i32 { return ((gen() / 1000000000i64) as i32) & 63i32; }`, 11},
 	// than the binding. This lowered before.
 	{"none-arm-control", `function id[T](x: T): T { return x; }
 function gen(): i64 {
-    var fe: i64[] = [(match ((1099511628358i64) /? (0i64)) { Some(n) => n, None => id(1099511628488i64) })];
+    let fe: i64[] = [(match ((1099511628358i64) /? (0i64)) { Some(n) => n, None => id(1099511628488i64) })];
     return fe[0];
 }
 function main(): i32 { return ((gen() / 1000000000i64) as i32) & 63i32; }`, 11},

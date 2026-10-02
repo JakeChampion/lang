@@ -26,18 +26,18 @@ import (
 // distinct code rather than an index, so the exit status says WHICH shape
 // disagreed. 42 means every comparison matched.
 const scanSetIRProg = `function ref(s: string, from: i32, set: u8[]): i32 {
-    var i: i32 = from;
+    let i: i32 = from;
     if (i < 0) { i = 0; }
     while (i < s.len()) {
-        var b: i32 = s[i] as i32;
+        let b: i32 = s[i] as i32;
         if (b < set.len() && set[b] as i32 != 0) { return i; }
         i = i + 1;
     }
     return s.len();
 }
 function space_set(): u8[] {
-    var set: u8[] = __alloc_u8(256);
-    var z: i32 = 0;
+    let set: u8[] = __alloc_u8(256);
+    let z: i32 = 0;
     while (z < 256) { set = set.with(z, 0 as u8); z = z + 1; }
     set = set.with(32, 1 as u8);
     set = set.with(9, 1 as u8);
@@ -45,21 +45,21 @@ function space_set(): u8[] {
     return set;
 }
 function main(): i32 {
-    var space: u8[] = space_set();
-    var short: u8[] = [0 as u8, 1 as u8, 0 as u8, 1 as u8];
-    var n: i32 = 0;
+    let space: u8[] = space_set();
+    let short: u8[] = [0 as u8, 1 as u8, 0 as u8, 1 as u8];
+    let n: i32 = 0;
     while (n <= 40) {
-        var base: string = "";
-        var k: i32 = 0;
+        let base: string = "";
+        let k: i32 = 0;
         while (k < n) { base = base + "a"; k = k + 1; }
-        var from: i32 = 0 - 1;
+        let from: i32 = 0 - 1;
         while (from <= n + 1) {
             if (__scan_set(base, from, space) != ref(base, from, space)) { return 1; }
             from = from + 1;
         }
-        var at: i32 = 0;
+        let at: i32 = 0;
         while (at < n) {
-            var s: string = slice_unchecked(base, 0, at) + " " + slice_unchecked(base, at + 1, n);
+            let s: string = slice_unchecked(base, 0, at) + " " + slice_unchecked(base, at + 1, n);
             if (__scan_set(s, 0, space) != ref(s, 0, space)) { return 2; }
             if (__scan_set(s, at, space) != ref(s, at, space)) { return 3; }
             if (__scan_set(s, at + 1, space) != ref(s, at + 1, space)) { return 4; }
@@ -77,9 +77,9 @@ function main(): i32 {
     if (__scan_set("\x00\x02\x01", 0, short) != 2) { return 12; }
     if (__scan_set("\x03\x03\x03", 0, short) != 0) { return 13; }
     if (__scan_set("\x00b\x00", 0, short) != 3) { return 14; }
-    var none: u8[] = [];
+    let none: u8[] = [];
     if (__scan_set("abc", 0, none) != 3) { return 15; }
-    var high: u8[] = space_set();
+    let high: u8[] = space_set();
     high = high.with(255, 1 as u8);
     if (__scan_set("\x7f\xfe\xff", 0, high) != 2) { return 16; }
     if (__scan_set("\x7f\xfe\xff", 3, high) != 3) { return 17; }

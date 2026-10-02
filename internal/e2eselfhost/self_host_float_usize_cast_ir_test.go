@@ -9,14 +9,14 @@ import "testing"
 // the interpreter's width.
 const floatUsizeCastSrc = `import "std/i64";
 function main(): i32 {
-    var g: f64 = 2.5;
-    var v: usize = g as usize;
-    var neg: f64 = -3.0;
-    var n: usize = neg as usize;
-    var wide: f64 = 4000000000.0;
-    var w: usize = wide as usize;
-    var back: f64 = (3000000000 as usize) as f64;
-    var half: f32 = (7 as usize) as f32;
+    let g: f64 = 2.5;
+    let v: usize = g as usize;
+    let neg: f64 = -3.0;
+    let n: usize = neg as usize;
+    let wide: f64 = 4000000000.0;
+    let w: usize = wide as usize;
+    let back: f64 = (3000000000 as usize) as f64;
+    let half: f32 = (7 as usize) as f32;
     print((v as i64).to_string() + " " + (n as i64).to_string() + " " + (w as i64).to_string() + " " + (back as i64).to_string() + " " + (half as i64).to_string());
     return 0;
 }
@@ -26,10 +26,10 @@ function main(): i32 {
 // saturated answer printed beside it.
 const floatUsizeOverflowSrc = `import "std/i64";
 function main(): i32 {
-    var f: f64 = 5000000000.0;
-    var u: usize = f as usize;
-    var big: f64 = 1e30;
-    var m: usize = big as usize;
+    let f: f64 = 5000000000.0;
+    let u: usize = f as usize;
+    let big: f64 = 1e30;
+    let m: usize = big as usize;
     print((u as i64).to_string() + " " + (m as i64).to_string());
     if (u == 5000000000 as usize) { return 7; }
     return 1;

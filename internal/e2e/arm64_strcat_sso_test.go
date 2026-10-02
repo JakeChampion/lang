@@ -19,14 +19,14 @@ import "testing"
 // single-word SSO; arm64 measured allocs=200 while its concat was heap-only.
 const strcatSsoIssueReproSrc = `function mkstr(a: string): string { return a + "!"; }
 function round(i: i32): i32 {
-    var t: i32 = 0;
-    var x: string = mkstr("x");
+    let t: i32 = 0;
+    let x: string = mkstr("x");
     x = mkstr("yz");
     t = (t + x.len()) % 101;
     return t;
 }
 function main(): i32 {
-    var acc: i32 = 0; var i: i32 = 0;
+    let acc: i32 = 0; let i: i32 = 0;
     while (i < 100) { acc = acc + round(i); i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return acc % 83;
@@ -50,12 +50,12 @@ func TestArm64StrcatShortResultIsInline(t *testing.T) {
 // against are heap-form, so equality crosses the two encodings.
 const strcatInlineFormSrc = `function pick(i: i32): string { if (i % 2 == 0) { return "abcde"; } return "vwxyz"; }
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
-        var a: string = pick(i) + "fgh";
-        var b: string = a + "ijklmn";
-        var c: string = b + "o";
+        let a: string = pick(i) + "fgh";
+        let b: string = a + "ijklmn";
+        let c: string = b + "o";
         if (a.len() != 8) { return 1; }
         if (b.len() != 14) { return 2; }
         if (c.len() != 15) { return 3; }
@@ -104,12 +104,12 @@ func TestArm64StrcatInlineFormRoundTrips(t *testing.T) {
 // round. It must heap-allocate, and the round's exit sweep must free it.
 const strcatCapCrossingSrc = `function pick(i: i32): string { if (i % 2 == 0) { return "abcdefgh"; } return "ABCDEFGH"; }
 function round(i: i32): i32 {
-    var s: string = pick(i) + "ijklmnop";
+    let s: string = pick(i) + "ijklmnop";
     if (s.len() != 16) { return 1000; }
     return s[15] as i32;
 }
 function main(): i32 {
-    var acc: i32 = 0; var i: i32 = 0;
+    let acc: i32 = 0; let i: i32 = 0;
     while (i < 100) { acc = acc + round(i); i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return acc % 83;
@@ -133,10 +133,10 @@ func TestArm64StrcatPastCapAllocatesAndFrees(t *testing.T) {
 // as_bytes copies the bytes out first. 12 + 'a' + 'l' = 217.
 func TestArm64StrcatInlineAsBytes(t *testing.T) {
 	_, _, code := runLeakCheckArm64(t, `function main(): i32 {
-    var e: string = "";
+    let e: string = "";
     if (e.as_bytes().len() != 0) { return 1; }
-    var s: string = "abc" + "defghijkl";
-    var b = s.as_bytes();
+    let s: string = "abc" + "defghijkl";
+    let b = s.as_bytes();
     return b.len() + (b[0] as i32) + (b[11] as i32);
 }`)
 	if code != 217 {
@@ -148,7 +148,7 @@ func TestArm64StrcatInlineAsBytes(t *testing.T) {
 // an inline base both must see the packed len word.
 func TestArm64StrcatInlineSlice(t *testing.T) {
 	_, _, code := runLeakCheckArm64(t, `function main(): i32 {
-    var s: string = "abcde" + "fghijklmn";
+    let s: string = "abcde" + "fghijklmn";
     match (s[8:12]) {
         Some(v) => { if (v != "ijkl") { return 1; } if (v.len() != 4) { return 2; } },
         None => { return 3; },
@@ -167,7 +167,7 @@ func TestArm64StrcatInlineStrbufAppend(t *testing.T) {
 function main(): i32 {
     strbuf_reset();
     strbuf_append(pick(0) + "cd");
-    var s: string = strbuf_take();
+    let s: string = strbuf_take();
     if (s != "abcd") { return 1; }
     return s.len() + (s[3] as i32);
 }`)

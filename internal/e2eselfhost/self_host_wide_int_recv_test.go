@@ -23,9 +23,9 @@ const wideRecvMain = `function (n: i64) twice(): i64 { return n + n; }
 function (n: u32) plus1(): u32 { return n + 1; }
 function (n: u64) dbl(): u64 { return n * (2 as u64); }
 function main(): i32 {
-    var a: i64 = 18;
-    var b: u32 = 3;
-    var c: u64 = 1;
+    let a: i64 = 18;
+    let b: u32 = 3;
+    let c: u64 = 1;
     return ((a.twice()) as i32) + ((b.plus1()) as i32) + ((c.dbl()) as i32);
 }
 `

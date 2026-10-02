@@ -61,13 +61,13 @@ func TestSelfHostForwardedProducerReclaimIRX86_64(t *testing.T) {
 function mkp(a: i32, b: i32): P { return P { a: a, b: b }; }
 function outer(a: i32, b: i32): P { return mkp(a, b); }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
-    while (i < 200) { var c: P = outer(i, i + 1); acc = (acc + c.a + c.b) % 251; i = i + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
-    while (j < 2000) { var d: P = outer(j, j + 1); acc = (acc + d.a + d.b) % 251; j = j + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 200) { let c: P = outer(i, i + 1); acc = (acc + c.a + c.b) % 251; i = i + 1; }
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
+    while (j < 2000) { let d: P = outer(j, j + 1); acc = (acc + d.a + d.b) % 251; j = j + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -83,13 +83,13 @@ function mkp(a: i32, b: i32): P { return P { a: a, b: b }; }
 function mid(a: i32, b: i32): P { return mkp(a, b); }
 function outer(a: i32, b: i32): P { return mid(a, b); }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
-    while (i < 200) { var c: P = outer(i, i + 1); acc = (acc + c.a + c.b) % 251; i = i + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
-    while (j < 2000) { var d: P = outer(j, j + 1); acc = (acc + d.a + d.b) % 251; j = j + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 200) { let c: P = outer(i, i + 1); acc = (acc + c.a + c.b) % 251; i = i + 1; }
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
+    while (j < 2000) { let d: P = outer(j, j + 1); acc = (acc + d.a + d.b) % 251; j = j + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -106,10 +106,10 @@ function mkp(a: i32, b: i32): P { return P { a: a, b: b }; }
 function pick(p: P): P { return p; }
 function outer(a: i32, b: i32): P { return pick(mkp(a, b)); }
 function main(): i32 {
-    var bad: i32 = 0;
-    var i: i32 = 0;
+    let bad: i32 = 0;
+    let i: i32 = 0;
     while (i < 2000) {
-        var c: P = outer(i, i + 1);
+        let c: P = outer(i, i + 1);
         if (c.a != i) { bad = 1; }
         if (c.b != i + 1) { bad = 1; }
         i = i + 1;
@@ -127,10 +127,10 @@ function main(): i32 {
 function ping(a: i32, b: i32): P { if (a > 100000) { return pong(a, b); } return P { a: a, b: b }; }
 function pong(a: i32, b: i32): P { return ping(b, a); }
 function main(): i32 {
-    var bad: i32 = 0;
-    var i: i32 = 0;
+    let bad: i32 = 0;
+    let i: i32 = 0;
     while (i < 2000) {
-        var c: P = pong(i, i + 1);
+        let c: P = pong(i, i + 1);
         if (c.a != i + 1) { bad = 1; }
         if (c.b != i) { bad = 1; }
         i = i + 1;
@@ -148,11 +148,11 @@ function main(): i32 {
 function mkq(k: i32): Q { return Q { tag: "payload-tag", k: k }; }
 function outer(k: i32): Q { return mkq(k); }
 function main(): i32 {
-    var keep: Q[] = [];
-    var bad: i32 = 0;
-    var i: i32 = 0;
+    let keep: Q[] = [];
+    let bad: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) { keep = keep.append(outer(i)); i = i + 1; }
-    var j: i32 = 0;
+    let j: i32 = 0;
     while (j < 200) {
         if (keep[j].tag != "payload-tag") { bad = 1; }
         if (keep[j].k != j) { bad = 1; }
@@ -187,10 +187,10 @@ function mkp(a: i32, b: i32): P { return P { a: a, b: b }; }
 function mid(a: i32, b: i32): P { return mkp(a, b); }
 function outer(a: i32, b: i32): P { return mid(a, b); }
 function main(): i32 {
-    var bad: i32 = 0;
-    var i: i32 = 0;
+    let bad: i32 = 0;
+    let i: i32 = 0;
     while (i < 500) {
-        var c: P = outer(i, i + 1);
+        let c: P = outer(i, i + 1);
         if (c.a != i) { bad = 1; }
         if (c.b != i + 1) { bad = 1; }
         i = i + 1;
@@ -204,10 +204,10 @@ function mkp(a: i32, b: i32): P { return P { a: a, b: b }; }
 function pick(p: P): P { return p; }
 function outer(a: i32, b: i32): P { return pick(mkp(a, b)); }
 function main(): i32 {
-    var bad: i32 = 0;
-    var i: i32 = 0;
+    let bad: i32 = 0;
+    let i: i32 = 0;
     while (i < 500) {
-        var c: P = outer(i, i + 1);
+        let c: P = outer(i, i + 1);
         if (c.a != i) { bad = 1; }
         if (c.b != i + 1) { bad = 1; }
         i = i + 1;
@@ -220,11 +220,11 @@ function main(): i32 {
 function mkq(k: i32): Q { return Q { tag: "payload-tag", k: k }; }
 function outer(k: i32): Q { return mkq(k); }
 function main(): i32 {
-    var keep: Q[] = [];
-    var bad: i32 = 0;
-    var i: i32 = 0;
+    let keep: Q[] = [];
+    let bad: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) { keep = keep.append(outer(i)); i = i + 1; }
-    var j: i32 = 0;
+    let j: i32 = 0;
     while (j < 200) {
         if (keep[j].tag != "payload-tag") { bad = 1; }
         if (keep[j].k != j) { bad = 1; }

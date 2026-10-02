@@ -5,7 +5,7 @@
 
 ```fern
 function probe(xs: i32[]): i32 {
-    var w: i32[] = xs.with(0, 99);
+    let w: i32[] = xs.with(0, 99);
     return w[0];
 }
 ```
@@ -61,7 +61,7 @@ question can simply be asked directly.
 Two leaks the probes turn up next door, both independent and both still open:
 
 - an enum construction built inline in ARGUMENT position strands its box —
-  `probe(Some(mk(8)))` leaks 48 bytes a call where `var o = Some(mk(8));
+  `probe(Some(mk(8)))` leaks 48 bytes a call where `let o = Some(mk(8));
   probe(o)` is clean, with or without any `.with` in the callee. #9313. The
   corpus case here spells its Option through a local for that reason: the leak
   gate fails a new case that leaks, and baselining someone else's bug is what

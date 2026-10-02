@@ -166,7 +166,7 @@ function test_with_extension(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("std/path");
+  let r: test.TestRunner = test.test_new("std/path");
   r = r.it("join", test_join);
   r = r.it("join collapses seps", test_join_collapses);
   r = r.it("join preserves root", test_join_root);

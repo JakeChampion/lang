@@ -23,12 +23,12 @@ function test_body_string_round_trips(): test.TestOutcome {
 }
 
 function test_body_len_matches_string(): test.TestOutcome {
-  var r: HttpResponse = http.ok("hello");
+  let r: HttpResponse = http.ok("hello");
   return test.assert_eq(r.body_len(), r.body_string().len());
 }
 
 function test_body_bytes_matches_string_bytes(): test.TestOutcome {
-  var r: HttpResponse = http.text(201, "hi");
+  let r: HttpResponse = http.text(201, "hi");
   return test.assert_eq(r.body_bytes().len(), 2);
 }
 
@@ -40,7 +40,7 @@ function test_empty_body_is_zero_len(): test.TestOutcome {
 // field stops being one, which is what this constructor exists
 // for; today it agrees with the string form.
 function test_bytes_constructor_agrees_with_text(): test.TestOutcome {
-  var b: HttpResponse = http.bytes(201, "hi".bytes());
+  let b: HttpResponse = http.bytes(201, "hi".bytes());
   return test.assert_eq(b.body_string(), http.text(201, "hi").body_string());
 }
 
@@ -52,17 +52,17 @@ function test_bytes_constructor_keeps_status(): test.TestOutcome {
 // the wire is the end-to-end check that they carry the same
 // bytes and the same length the auto Content-Length announces.
 function test_serialized_wire_length_matches_body(): test.TestOutcome {
-  var wire: string = http.http_serialize_response(http.ok("hello"));
+  let wire: string = http.http_serialize_response(http.ok("hello"));
   return test.assert_contains(wire, "Content-Length: 5");
 }
 
 function test_serialized_wire_ends_with_body(): test.TestOutcome {
-  var wire: string = http.http_serialize_response(http.ok("hello"));
+  let wire: string = http.http_serialize_response(http.ok("hello"));
   return test.assert_contains(wire, "\r\n\r\nhello");
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("HTTP response body shim");
+  let r: test.TestRunner = test.test_new("HTTP response body shim");
   r = r.it("body_string round-trips", test_body_string_round_trips);
   r = r.it("body_len matches the string length", test_body_len_matches_string);
   r = r.it("body_bytes matches the string bytes", test_body_bytes_matches_string_bytes);

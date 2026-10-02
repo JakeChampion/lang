@@ -4,9 +4,9 @@
 
 ```
 function scan_body(own s: State, line: string, ...): State {
-    var ws: Words = s.words;
+    let ws: Words = s.words;
     s = State { ...s, words: s.spare };
-    var pos: i64[] = ws.pos;
+    let pos: i64[] = ws.pos;
     ...
     while (...) { ... pos = pos.with(nw, wp); ... }
 }

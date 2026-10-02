@@ -24,10 +24,10 @@ import (
 // reduction returns a bare i32, so it stays on the IR path where the i64
 // arithmetic is exercised directly.
 const i64MeanReduceProgram = `function imean(arr: i32[]): i32 {
-    var n: i32 = arr.len();
+    let n: i32 = arr.len();
     if (n == 0) { return 0; }
-    var s: i64 = 0;
-    var i: i32 = 0;
+    let s: i64 = 0;
+    let i: i32 = 0;
     while (i < n) { s = s + (arr[i] as i64); i = i + 1; }
     return (s / (n as i64)) as i32;
 }

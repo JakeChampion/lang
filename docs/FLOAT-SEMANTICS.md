@@ -104,11 +104,11 @@ Don't write:
 
 ```
 // Reading a NaN's exact bit-pattern — non-portable
-var n: i32 = f32_bits(0.0f32 / 0.0f32);
+let n: i32 = f32_bits(0.0f32 / 0.0f32);
 return n;   // each backend may give a different qNaN payload
 
 // Discriminating -0.0 from +0.0 after arithmetic — non-portable
-var z: f32 = -1.0f32 * 0.0f32;
+let z: f32 = -1.0f32 * 0.0f32;
 return f32_bits(z);   // sign bit not guaranteed across backends
 ```
 
@@ -284,7 +284,7 @@ contextually in type position (like `str`; it is not a lexer keyword,
 so `float.pi()`-style module calls keep working), matching the
 self-host checker's long-standing resolution. The old discrepancy
 (native E064 on `float`, self-host silently f64) is resolved. f32
-remains fully supported via explicit annotation (`var x: f32`), suffix
+remains fully supported via explicit annotation (`let x: f32`), suffix
 (`1.5f32`), or cast (`x as f32`); it is opt-in precision-narrowing,
 never a default. Pinned by `TestFloatDefaultWidthF64`
 (`internal/e2e/float_semantics_test.go`), `TestFloatAliasAndDefaultWidth`

@@ -15,8 +15,8 @@
 // this changes no width, only method keying.
 //
 // Positions, so a narrowing on either side is visible:
-//   unann   — `var u = [<f32 expr>]`, no annotation to read the kind from.
-//   ann     — `var a: f32[] = …`, the annotated spelling.
+//   unann   — `let u = [<f32 expr>]`, no annotation to read the kind from.
+//   ann     — `let a: f32[] = …`, the annotated spelling.
 //   forbind — `for v in a`, which took its own element-kind path and had to be
 //             fixed separately from the index read.
 //   param   — an `f32[]` PARAMETER, whose slot is built by a different column.
@@ -27,36 +27,36 @@
 import "std/float";
 
 function sum_f32(a: f32[]): i32 {
-    var n: i32 = 0;
+    let n: i32 = 0;
     for v in a { n = n + (v as i32); }
     return n;
 }
 
 // The bail shape: an index read on an unannotated f32 array literal.
 function unann_index(i: i32): i32 {
-    var u = [3.14159 as f32 * 2.5 as f32 * 2.5 as f32];
+    let u = [3.14159 as f32 * 2.5 as f32 * 2.5 as f32];
     if (u[0].to_string().len() != 9) { return 253; }
     return 1;
 }
 
 // The annotated spelling of the same read.
 function ann_index(i: i32): i32 {
-    var a: f32[] = [3.14159 as f32 * 2.5 as f32 * 2.5 as f32];
+    let a: f32[] = [3.14159 as f32 * 2.5 as f32 * 2.5 as f32];
     if (a[0].to_string().len() != 9) { return 253; }
     return 1;
 }
 
 // The `for` binder — its own element-kind path, fixed separately.
 function for_binder(i: i32): i32 {
-    var a: f32[] = [3.14159 as f32 * 2.5 as f32 * 2.5 as f32];
-    var n: i32 = 0;
+    let a: f32[] = [3.14159 as f32 * 2.5 as f32 * 2.5 as f32];
+    let n: i32 = 0;
     for v in a { if (v.to_string().len() != 9) { return 253; } n = n + 1; }
     return n;
 }
 
 // An f32[] PARAMETER, whose slot is built by lower_func's own column.
 function param_arr(i: i32): i32 {
-    var a: f32[] = [2.5 as f32, 4.5 as f32];
+    let a: f32[] = [2.5 as f32, 4.5 as f32];
     return sum_f32(a);
 }
 
@@ -65,16 +65,16 @@ function param_arr(i: i32): i32 {
 // one more than the f32 rendering — so a fix that marked every float array
 // f32 fails here rather than passing quietly.
 function f64_control(i: i32): i32 {
-    var d: f64[] = [3.14159 * 2.5 * 2.5];
+    let d: f64[] = [3.14159 * 2.5 * 2.5];
     if (d[0].to_string().len() != 10) { return 252; }
-    var n: i32 = 0;
+    let n: i32 = 0;
     for w in d { if (w.to_string().len() != 10) { return 252; } n = n + 1; }
     return n;
 }
 
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 50) {
         acc = acc + unann_index(i) + ann_index(i) + for_binder(i)
             + param_arr(i) + f64_control(i);

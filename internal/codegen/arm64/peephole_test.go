@@ -117,8 +117,8 @@ func TestPeepholeOptOutEmitsUncollapsed(t *testing.T) {
 // discards it. That is P3's shape.
 const deadPushProg = `
 function main(): i32 {
-  var t: i32 = 0;
-  var i: i32 = 0;
+  let t: i32 = 0;
+  let i: i32 = 0;
   while (i < 4) { t = t + i; i = i + 1; }
   return t;
 }`

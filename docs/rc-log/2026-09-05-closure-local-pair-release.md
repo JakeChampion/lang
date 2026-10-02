@@ -38,8 +38,8 @@ Reduced, the shape is two blocks with no library in it:
 ```fern
 function run(f: (i32) => void, v: i32): void { f(v); }
 function main(): i32 {
-    var sink: i32 = 0;
-    var log = (x: i32) => { sink = sink + x * 2; };
+    let sink: i32 = 0;
+    let log = (x: i32) => { sink = sink + x * 2; };
     run(log, 4);
     return sink - 8;
 }

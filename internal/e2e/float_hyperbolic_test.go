@@ -11,7 +11,7 @@ import "testing"
 // leg skips itself when its toolchain is absent.
 const floatHyperbolicProg = `
 import "std/float" as float;
-function approx(a: f64, b: f64): boolean { var d: f64 = a - b; if (d < 0.0) { d = 0.0 - d; } return d < 0.001; }
+function approx(a: f64, b: f64): boolean { let d: f64 = a - b; if (d < 0.0) { d = 0.0 - d; } return d < 0.001; }
 function main(): i32 {
     if (!approx((0.0).sinh(), 0.0)) { return 1; }
     if (!approx((0.0).cosh(), 1.0)) { return 2; }

@@ -38,7 +38,7 @@ const procWaitpidNohangSource = `function main(): i32 {
     // reports. Not -1, which would claim a child is still running.
     if (proc_waitpid_nohang(0 - 1) != 0 - 10) { return 1; }
 
-    var kid: i32 = proc_fork();
+    let kid: i32 = proc_fork();
     if (kid < 0) { return 2; }
     if (kid == 0) {
         sleep_ms(400 as i64);
@@ -58,7 +58,7 @@ const procWaitpidNohangSource = `function main(): i32 {
     // is asynchronous, so this polls for reapability rather than assuming
     // the child is already gone — which is also the only shape in which a
     // dropped WNOHANG would hang instead of failing.
-    var k2: i32 = proc_fork();
+    let k2: i32 = proc_fork();
     if (k2 < 0) { return 6; }
     if (k2 == 0) {
         sleep_ms(60000 as i64);
@@ -68,8 +68,8 @@ const procWaitpidNohangSource = `function main(): i32 {
         Ok(_) => {},
         Err(_) => { return 7; }
     }
-    var tries: i32 = 0;
-    var got: i32 = 0 - 1;
+    let tries: i32 = 0;
+    let got: i32 = 0 - 1;
     while (tries < 5000) {
         got = proc_waitpid_nohang(k2);
         if (got != 0 - 1) { break; }

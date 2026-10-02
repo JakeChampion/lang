@@ -22,12 +22,12 @@ import (
 // the kernel against it. A failure returns a small distinct code saying which
 // shape disagreed; 42 means every comparison matched.
 const countRunsIRProg = `function ref(s: string, inside: i32, set: u8[]): i32 {
-    var prev: boolean = inside != 0;
-    var runs: i32 = 0;
-    var i: i32 = 0;
+    let prev: boolean = inside != 0;
+    let runs: i32 = 0;
+    let i: i32 = 0;
     while (i < s.len()) {
-        var b: i32 = s[i] as i32;
-        var member: boolean = b < set.len() && set[b] as i32 != 0;
+        let b: i32 = s[i] as i32;
+        let member: boolean = b < set.len() && set[b] as i32 != 0;
         if (member && !prev) { runs = runs + 1; }
         prev = member;
         i = i + 1;
@@ -35,20 +35,20 @@ const countRunsIRProg = `function ref(s: string, inside: i32, set: u8[]): i32 {
     return runs;
 }
 function space_set(): u8[] {
-    var set: u8[] = __alloc_u8(256);
+    let set: u8[] = __alloc_u8(256);
     set = set.with(32, 1 as u8);
     set = set.with(9, 1 as u8);
     set = set.with(10, 1 as u8);
     return set;
 }
 function main(): i32 {
-    var space: u8[] = space_set();
-    var short: u8[] = [0 as u8, 1 as u8, 0 as u8, 1 as u8];
-    var none: u8[] = [];
-    var n: i32 = 0;
-    var s: string = "";
+    let space: u8[] = space_set();
+    let short: u8[] = [0 as u8, 1 as u8, 0 as u8, 1 as u8];
+    let none: u8[] = [];
+    let n: i32 = 0;
+    let s: string = "";
     while (n <= 40) {
-        var inside: i32 = 0;
+        let inside: i32 = 0;
         while (inside <= 1) {
             if (__count_runs(s, inside, space) != ref(s, inside, space)) { return 1; }
             if (__count_runs(s, inside, short) != ref(s, inside, short)) { return 2; }

@@ -116,7 +116,7 @@ function main(): i32 { print("one"); print("two"); return 0; }`, "one\ntwo\n"},
 		{`
 import "std/string";
 function main(): i32 {
-  var a: string = "foo";
+  let a: string = "foo";
   print(a + "bar");
   print("foobar".replace("o", "0"));
   return 0;
@@ -141,7 +141,7 @@ func TestX86_64NativeClosures(t *testing.T) {
   function add(x: i32): i32 { return x + n; }
   return add;
 }
-function main(): i32 { var add5 = makeAdder(5); return add5(37); }`, 42},
+function main(): i32 { let add5 = makeAdder(5); return add5(37); }`, 42},
 		{`function apply(f: (i32) => i32, x: i32): i32 { return f(x); }
 function dbl(x: i32): i32 { return x * 2; }
 function main(): i32 { return apply(dbl, 21); }`, 42},
@@ -159,7 +159,7 @@ func TestX86_64NativeMap(t *testing.T) {
 	src := `
 import "core/map";
 function main(): i32 {
-  var m: Map[i32, i32] = map_new(8);
+  let m: Map[i32, i32] = map_new(8);
   m = m.insert(7, 40);
   m = m.insert(11, 99);
   m = m.insert(7, 42);
@@ -190,8 +190,8 @@ struct IntSet { m: Map[i32, i32] }
 function (s: IntSet) insert(x: i32): IntSet { return IntSet { m: s.m.insert(x, 1) }; }
 function (s: IntSet) len(): i32 { return s.m.len(); }
 function main(): i32 {
-    var m0: Map[i32, i32] = map_new(4);
-    var s: IntSet = IntSet { m: m0 };
+    let m0: Map[i32, i32] = map_new(4);
+    let s: IntSet = IntSet { m: m0 };
     s = s.insert(10);
     s = s.insert(20);
     s = s.insert(10);   // duplicate — set size stays 2
@@ -203,7 +203,7 @@ function main(): i32 {
 }
 
 // Issue #4871: the #2763 clone (above) fires only when the Map field value is
-// DIRECTLY a COW-mutator call. One `var` removed — `var m = s.m.insert(...);
+// DIRECTLY a COW-mutator call. One `let` removed — `let m = s.m.insert(...);
 // return ISet { m: m }` — the field value is a plain ident, the clone was
 // missed, and the new struct aliased the borrowed receiver's in-place buffer:
 // dropping the old struct on `s = iset_add(s, ...)` freed it, so the SECOND
@@ -216,12 +216,12 @@ func TestX86_64NativeMapFieldStructRebindIndirect(t *testing.T) {
 import "core/map";
 struct ISet { m: Map[i32, i32] }
 function iset_add(s: ISet, x: i32): ISet {
-    var m: Map[i32, i32] = s.m.insert(x, 1);
+    let m: Map[i32, i32] = s.m.insert(x, 1);
     return ISet { m: m };
 }
 function main(): i32 {
-    var m0: Map[i32, i32] = map_new(4);
-    var s: ISet = ISet { m: m0 };
+    let m0: Map[i32, i32] = map_new(4);
+    let s: ISet = ISet { m: m0 };
     s = iset_add(s, 10);   // one wrap-insert (was: emptied the map, returned 1→0)
     s = iset_add(s, 20);   // second wrap-insert (was: hung on the freed header)
     s = iset_add(s, 10);   // duplicate — set size stays 2
@@ -242,22 +242,22 @@ func TestX86_64NativeFloat(t *testing.T) {
 	}{
 		{`
 function main(): i32 {
-  var a: f64 = 3.0; var b: f64 = 4.0;
+  let a: f64 = 3.0; let b: f64 = 4.0;
   return ((a * a + b * b) as i32);
 }`, 25},
 		{`
 function main(): i32 {
-  var a: f64 = 10.0; var b: f64 = 4.0;
+  let a: f64 = 10.0; let b: f64 = 4.0;
   return ((a - b) as i32);
 }`, 6},
 		{`
 function main(): i32 {
-  var a: f64 = 84.0; var b: f64 = 2.0;
+  let a: f64 = 84.0; let b: f64 = 2.0;
   return ((a / b) as i32);
 }`, 42},
 		{`
 function main(): i32 {
-  var a: f64 = 1.5; var b: f64 = 2.5;
+  let a: f64 = 1.5; let b: f64 = 2.5;
   if (a < b) { return 7; }
   return 0;
 }`, 7},
@@ -283,10 +283,10 @@ func TestX86_64NativeTranscendentals(t *testing.T) {
 		{"function main(): i32 { return __exp_f64(0.0) as i32; }", 1},
 		{"function main(): i32 { return __exp_f64(2.0) as i32; }", 7},
 		{"function main(): i32 { return __log_f64(10.0) as i32; }", 2},
-		{"function main(): i32 { var r: f64 = __exp_f64(1.0); if (r > 2.71 && r < 2.72) { return 7; } return 0; }", 7},
-		{"function main(): i32 { var r: f64 = __log_f64(2.0); if (r > 0.69 && r < 0.70) { return 7; } return 0; }", 7},
-		{"function main(): i32 { var r: f64 = __sin_f64(0.0); if (r > -0.01 && r < 0.01) { return 7; } return 0; }", 7},
-		{"function main(): i32 { var r: f64 = __cos_f64(0.0); if (r > 0.99 && r < 1.01) { return 7; } return 0; }", 7},
+		{"function main(): i32 { let r: f64 = __exp_f64(1.0); if (r > 2.71 && r < 2.72) { return 7; } return 0; }", 7},
+		{"function main(): i32 { let r: f64 = __log_f64(2.0); if (r > 0.69 && r < 0.70) { return 7; } return 0; }", 7},
+		{"function main(): i32 { let r: f64 = __sin_f64(0.0); if (r > -0.01 && r < 0.01) { return 7; } return 0; }", 7},
+		{"function main(): i32 { let r: f64 = __cos_f64(0.0); if (r > 0.99 && r < 1.01) { return 7; } return 0; }", 7},
 	}
 	for _, c := range cases {
 		if _, code := compileAndRunX86Native(t, c.src); code != c.want {
@@ -336,9 +336,9 @@ func TestX86_64NativeArithmetic(t *testing.T) {
 		{"function main(): i32 { return 84 / 2; }", 42},
 		{"function main(): i32 { return 85 % 43; }", 42},
 		{"function main(): i32 { return 40 + 2; }", 42},
-		{"function main(): i32 { var x: i32 = 10; if (x > 5) { return 42; } return 0; }", 42},
-		{"function main(): i32 { var x: i32 = 3; if (x < 5) { return 42; } return 0; }", 42},
-		{"function main(): i32 { var n: i32 = 0; var i: i32 = 0; while (i < 42) { n = n + 1; i = i + 1; } return n; }", 42},
+		{"function main(): i32 { let x: i32 = 10; if (x > 5) { return 42; } return 0; }", 42},
+		{"function main(): i32 { let x: i32 = 3; if (x < 5) { return 42; } return 0; }", 42},
+		{"function main(): i32 { let n: i32 = 0; let i: i32 = 0; while (i < 42) { n = n + 1; i = i + 1; } return n; }", 42},
 	}
 	for _, c := range cases {
 		if _, code := compileAndRunX86Native(t, c.src); code != c.want {

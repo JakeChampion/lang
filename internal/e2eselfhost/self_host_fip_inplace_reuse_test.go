@@ -19,8 +19,8 @@ fip function dbl(x: i64): i64 { return x * (2 as i64); }
 fip function twice(own xs: i64[]): i64[] { return xs.map((x: i64): i64 => dbl(x)); }
 
 function build(n: i32): i64[] {
-	var xs: i64[] = [];
-	var i: i32 = 0;
+	let xs: i64[] = [];
+	let i: i32 = 0;
 	while (i < n) { xs = xs.append((i as i64) + (1 as i64)); i = i + 1; }
 	return xs;
 }
@@ -31,16 +31,16 @@ function churn(own xs: i64[], rounds: i32): i64[] {
 }
 
 function main(): i32 {
-	var xs: i64[] = build(64);
-	var before: i64 = __heap_bump_bytes();
+	let xs: i64[] = build(64);
+	let before: i64 = __heap_bump_bytes();
 	xs = churn(xs, 200);
-	var grew: i64 = __heap_bump_bytes() - before;
+	let grew: i64 = __heap_bump_bytes() - before;
 	if (xs.len() != 64) { return 90; }
 	if (xs[0] == 1 as i64) { return 91; }
 	if (grew != 0 as i64) { return 92; }
 
-	var a: i64[] = build(4);
-	var b: i64[] = a;
+	let a: i64[] = build(4);
+	let b: i64[] = a;
 	a = twice(a);
 	if (b[0] != 1 as i64 || b[3] != 4 as i64) { return 93; }
 	if (a[0] != 2 as i64 || a[3] != 8 as i64) { return 94; }
@@ -56,13 +56,13 @@ const selfHostOwnedMapReceiverLiveSrc = `import "std/array";
 
 function inc(x: i64): i64 { return x + (1 as i64); }
 function after(own xs: i64[]): i64 {
-	var ys: i64[] = xs.map((x: i64): i64 => inc(x));
+	let ys: i64[] = xs.map((x: i64): i64 => inc(x));
 	return ys[0] * (100 as i64) + xs[0];
 }
 
 function main(): i32 {
-	var xs: i64[] = [5 as i64, 6 as i64];
-	var r: i64 = after(xs);
+	let xs: i64[] = [5 as i64, 6 as i64];
+	let r: i64 = after(xs);
 	if (r != 605 as i64) { return 1; }
 	return 0;
 }
@@ -94,18 +94,18 @@ function build(n: i32): List {
     return Cons(n, build(n - 1));
 }
 function run(own xs: List): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var r: List = loop_map(xs, 100);
-    var grew: i32 = (__heap_bump_bytes() as i32) - before;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let r: List = loop_map(xs, 100);
+    let grew: i32 = (__heap_bump_bytes() as i32) - before;
     if (sum(r) != 6275) { return 998; }
     if (grew != 0) { return 999; }
     return 0;
 }
 function main(): i32 {
-    var code: i32 = run(build(50));
+    let code: i32 = run(build(50));
     if (code != 0) { return code; }
-    var a: List = build(5);
-    var b: List = a;
+    let a: List = build(5);
+    let b: List = a;
     a = map_inc(a);
     if (sum(b) != 15 || sum(a) != 20) { return 997; }
     return 0;

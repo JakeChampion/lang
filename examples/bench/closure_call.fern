@@ -3,8 +3,8 @@
 // are supposed to collapse the easy cases; nothing in the corpus watched
 // whether they still do.
 function apply_n(f: (i32) => i32, n: i32): i64 {
-  var total: i64 = 0i64;
-  var i: i32 = 0;
+  let total: i64 = 0i64;
+  let i: i32 = 0;
   while (i < n) {
     total = total + f(i) as i64;
     i = i + 1;
@@ -13,13 +13,13 @@ function apply_n(f: (i32) => i32, n: i32): i64 {
 }
 
 function main(): i32 {
-  var total: i64 = 0i64;
-  var r: i32 = 0;
+  let total: i64 = 0i64;
+  let r: i32 = 0;
   while (r < 6000) {
     // Zero-capture: should defunctionalise to a direct call.
     total = total + apply_n((x: i32) => x * 3 - 1, 400);
     // Capturing: allocates an environment, retains the capture.
-    var bias: i32 = r;
+    let bias: i32 = r;
     total = total + apply_n((x: i32) => x + bias, 400);
     r = r + 1;
   }

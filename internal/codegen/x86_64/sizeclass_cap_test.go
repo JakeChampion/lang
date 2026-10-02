@@ -121,8 +121,8 @@ func TestStrAppendTakesOneCapacityComputation(t *testing.T) {
 	defer func() { ast.RcFreeEnabled = prev }()
 
 	src := `function main(): i32 {
-    var s: string = "";
-    var i: i32 = 0;
+    let s: string = "";
+    let i: i32 = 0;
     while (i < 4) { s = s + "ab"; i = i + 1; }
     return s.len();
 }`
@@ -141,9 +141,9 @@ func srcUsing(helper, plain string) string {
 		return plain
 	}
 	return `function main(): i32 {
-    var src: string = "abcdefgh";
-    var s: string = "";
-    var i: i32 = 0;
+    let src: string = "abcdefgh";
+    let s: string = "";
+    let i: i32 = 0;
     while (i < 4) { s = s + slice_unchecked(src, 0, 3); i = i + 1; }
     return s.len();
 }`

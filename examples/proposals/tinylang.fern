@@ -99,11 +99,11 @@ function eval(e: Expr, env: Env): Value {
       return lookup(env, name);
     },
     Add(l, r) => {
-      var lv: Value = eval(l, env);
+      let lv: Value = eval(l, env);
       if (is_err(lv)) {
         return lv;
       }
-      var rv: Value = eval(r, env);
+      let rv: Value = eval(r, env);
       if (is_err(rv)) {
         return rv;
       }
@@ -124,7 +124,7 @@ function eval(e: Expr, env: Env): Value {
       }
     },
     Let(name, bound, body) => {
-      var bv: Value = eval(bound, env);
+      let bv: Value = eval(bound, env);
       if (is_err(bv)) {
         return bv;
       }
@@ -136,11 +136,11 @@ function eval(e: Expr, env: Env): Value {
       return VClos(param, body, env);
     },
     App(f, arg) => {
-      var fv: Value = eval(f, env);
+      let fv: Value = eval(f, env);
       if (is_err(fv)) {
         return fv;
       }
-      var av: Value = eval(arg, env);
+      let av: Value = eval(arg, env);
       if (is_err(av)) {
         return av;
       }
@@ -167,7 +167,7 @@ function test_arithmetic_and_let(): test.TestOutcome {
     return test.fail("2 + (3 + 4) should be 9");
   }
   // let x = 5 in x + x
-  var e: Expr = Let("x", Num(5), Add(Var("x"), Var("x")));
+  let e: Expr = Let("x", Num(5), Add(Var("x"), Var("x")));
   if (as_num(run(e)) != 10) {
     return test.fail("let x = 5 in x + x should be 10");
   }
@@ -177,13 +177,13 @@ function test_arithmetic_and_let(): test.TestOutcome {
 // Innermost binding wins.
 function test_shadowing_is_innermost_wins(): test.TestOutcome {
   // let x = 1 in (let x = 2 in x)
-  var e: Expr = Let("x", Num(1), Let("x", Num(2), Var("x")));
+  let e: Expr = Let("x", Num(1), Let("x", Num(2), Var("x")));
   if (as_num(run(e)) != 2) {
     return test.fail("inner binding should shadow, got "
       + as_num(run(e)).to_string());
   }
   // let x = 1 in (let y = 2 in x)  — the outer one is still reachable
-  var f: Expr = Let("x", Num(1), Let("y", Num(2), Var("x")));
+  let f: Expr = Let("x", Num(1), Let("y", Num(2), Var("x")));
   if (as_num(run(f)) != 1) {
     return test.fail("outer binding lost");
   }
@@ -198,7 +198,7 @@ function test_shadowing_is_innermost_wins(): test.TestOutcome {
 //   let x = 20 in
 //   f 0
 function test_closures_capture_their_defining_scope(): test.TestOutcome {
-  var e: Expr = Let(
+  let e: Expr = Let(
     "x", Num(1),
     Let(
       "f", Lam("ignored", Var("x")),
@@ -208,7 +208,7 @@ function test_closures_capture_their_defining_scope(): test.TestOutcome {
       ),
     ),
   );
-  var got: i32 = as_num(run(e));
+  let got: i32 = as_num(run(e));
   if (got == 20) {
     return test.fail("closure saw the CALLER's x — that is dynamic scoping");
   }
@@ -224,7 +224,7 @@ function test_closures_capture_their_defining_scope(): test.TestOutcome {
 //   let mk = (\a . (\b . a + b)) in
 //   ((mk 3) 4)
 function test_a_returned_closure_outlives_its_scope(): test.TestOutcome {
-  var e: Expr = Let(
+  let e: Expr = Let(
     "mk", Lam("a", Lam("b", Add(Var("a"), Var("b")))),
     App(App(Var("mk"), Num(3)), Num(4)),
   );
@@ -240,8 +240,8 @@ function test_a_returned_closure_outlives_its_scope(): test.TestOutcome {
 //   let mk = (\a . (\b . a + b)) in
 //   (mk 10) 1 + (mk 100) 1
 function test_closures_do_not_share_bindings(): test.TestOutcome {
-  var mk: Expr = Lam("a", Lam("b", Add(Var("a"), Var("b"))));
-  var e: Expr = Let(
+  let mk: Expr = Lam("a", Lam("b", Add(Var("a"), Var("b"))));
+  let e: Expr = Let(
     "mk", mk,
     Add(
       App(App(Var("mk"), Num(10)), Num(1)),
@@ -258,25 +258,25 @@ function test_closures_do_not_share_bindings(): test.TestOutcome {
 // Errors name the problem and propagate out of nested evaluation rather
 // than being silently absorbed.
 function test_errors_propagate_with_a_reason(): test.TestOutcome {
-  var unbound: Value = run(Add(Num(1), Var("nope")));
+  let unbound: Value = run(Add(Num(1), Var("nope")));
   if (!is_err(unbound)) {
     return test.fail("unbound variable was not an error");
   }
   if (err_text(unbound) != "unbound variable \"nope\"") {
     return test.fail("unhelpful error: " + err_text(unbound));
   }
-  var applied: Value = run(App(Num(1), Num(2)));
+  let applied: Value = run(App(Num(1), Num(2)));
   if (!is_err(applied)) {
     return test.fail("applying a number was not an error");
   }
 
-  var added: Value = run(Add(Num(1), Lam("x", Var("x"))));
+  let added: Value = run(Add(Num(1), Lam("x", Var("x"))));
   if (!is_err(added)) {
     return test.fail("adding a function was not an error");
   }
 
   // An error deep inside a let body still reaches the top.
-  var deep: Value = run(Let("a", Num(1), Let("b", Num(2), Var("c"))));
+  let deep: Value = run(Let("a", Num(1), Let("b", Num(2), Var("c"))));
   if (!is_err(deep)) {
     return test.fail("deep unbound variable was absorbed");
   }
@@ -286,8 +286,8 @@ function test_errors_propagate_with_a_reason(): test.TestOutcome {
 // Evaluation is deep: a right-nested chain must not blow up or lose
 // precision, and the environment must stay correct all the way down.
 function test_deep_nesting(): test.TestOutcome {
-  var e: Expr = Num(0);
-  var i: i32 = 0;
+  let e: Expr = Num(0);
+  let i: i32 = 0;
   while (i < 200) {
     e = Add(Num(1), e);
     i = i + 1;
@@ -297,13 +297,13 @@ function test_deep_nesting(): test.TestOutcome {
       + as_num(run(e)).to_string());
   }
   // 100 nested lets, innermost variable read from the outermost binding.
-  var body: Expr = Var("v0");
-  var k: i32 = 100;
+  let body: Expr = Var("v0");
+  let k: i32 = 100;
   while (k > 0) {
     body = Let("v" + k.to_string(), Num(k), body);
     k = k - 1;
   }
-  var full: Expr = Let("v0", Num(42), body);
+  let full: Expr = Let("v0", Num(42), body);
   if (as_num(run(full)) != 42) {
     return test.fail("deep let chain lost the outermost binding");
   }
@@ -313,7 +313,7 @@ function test_deep_nesting(): test.TestOutcome {
 // ----------------------------------------------------------------- app
 
 function show(label: string, e: Expr): void {
-  var v: Value = run(e);
+  let v: Value = run(e);
   if (is_err(v)) {
     eprint("  " + label + " => error: " + err_text(v));
   } else {
@@ -344,7 +344,7 @@ function main(): i32 {
   );
   show("1 + nope", Add(Num(1), Var("nope")));
 
-  var r: test.TestRunner = test.test_new("tinylang");
+  let r: test.TestRunner = test.test_new("tinylang");
   r = r.it("arithmetic and let", test_arithmetic_and_let);
   r = r.it("shadowing is innermost-wins", test_shadowing_is_innermost_wins);
   r = r.it("closures capture their defining scope", test_closures_capture_their_defining_scope);

@@ -26,13 +26,13 @@ var nestedTupleReclaimCases = []struct {
 }{
 	// Core churn: nested-tuple loop-local rebuilt per iteration, len/scalar read.
 	{"nested-tuple-churn", `function main(): i32 {
-    var acc: i32 = 0;
-    var w: i32 = 0;
-    while (w < 200) { var t: ((i32, i32[]), i32) = ((w, [w, w + 1]), w); acc = (acc + t.1) % 251; w = w + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    while (i < 5000) { var t2: ((i32, i32[]), i32) = ((i, [i, i + 1]), i); acc = (acc + t2.1) % 251; i = i + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let acc: i32 = 0;
+    let w: i32 = 0;
+    while (w < 200) { let t: ((i32, i32[]), i32) = ((w, [w, w + 1]), w); acc = (acc + t.1) % 251; w = w + 1; }
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    while (i < 5000) { let t2: ((i32, i32[]), i32) = ((i, [i, i + 1]), i); acc = (acc + t2.1) % 251; i = i + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -41,21 +41,21 @@ var nestedTupleReclaimCases = []struct {
 	// Nested-read: the inner array is BORROW-read through `t.0.1[i]` before the
 	// rebind free — reads precede the drop, values exact, still bounded.
 	{"nested-tuple-read", `function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 5000) {
-        var t: ((i32, i32[]), i32) = ((i, [i, i + 1]), i);
+        let t: ((i32, i32[]), i32) = ((i, [i, i + 1]), i);
         acc = (acc + t.0.1[0] + t.0.1[1]) % 251;
         i = i + 1;
     }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 5000) {
-        var t2: ((i32, i32[]), i32) = ((j, [j, j + 1]), j);
+        let t2: ((i32, i32[]), i32) = ((j, [j, j + 1]), j);
         acc = (acc + t2.0.1[0]) % 251;
         j = j + 1;
     }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -64,12 +64,12 @@ var nestedTupleReclaimCases = []struct {
 	// ESCAPE negative: the nested tuple is returned — ownership moves out, the
 	// local is non-reclaimable, nothing freed (values exact, no dangle).
 	{"nested-tuple-escape-safe", `function mk(i: i32): ((i32, i32[]), i32) {
-    var t: ((i32, i32[]), i32) = ((i, [i, i + 1]), i);
+    let t: ((i32, i32[]), i32) = ((i, [i, i + 1]), i);
     return t;
 }
 function main(): i32 {
-    var t = mk(5);
-    var v: i32 = t.0.1[0] + t.0.1[1] + t.1;
+    let t = mk(5);
+    let v: i32 = t.0.1[0] + t.0.1[1] + t.1;
     if (v != 16) { return 97; }
     if (__rc_underflow_count() != 0) { return 99; }
     return v;
@@ -78,24 +78,24 @@ function main(): i32 {
 	// (`((w, xs), w)`) aliasing a live local — skipped by the deep-drop (only the
 	// fresh inner box is freed, xs stays valid), no double-free at detector zero.
 	{"nested-tuple-ident-elem-safe", `function main(): i32 {
-    var xs: i32[] = [7, 8];
-    var acc: i32 = 0;
-    var w: i32 = 0;
-    while (w < 100) { var t: ((i32, i32[]), i32) = ((w, xs), w); acc = (acc + t.0.1[0]) % 251; w = w + 1; }
-    var ok: i32 = xs[0] + xs[1];
+    let xs: i32[] = [7, 8];
+    let acc: i32 = 0;
+    let w: i32 = 0;
+    while (w < 100) { let t: ((i32, i32[]), i32) = ((w, xs), w); acc = (acc + t.0.1[0]) % 251; w = w + 1; }
+    let ok: i32 = xs[0] + xs[1];
     if (ok != 15) { return 97; }
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
 	// Deeper nesting (three tuple levels) — the recursion frees every level.
 	{"nested-tuple-deep", `function main(): i32 {
-    var acc: i32 = 0;
-    var w: i32 = 0;
-    while (w < 200) { var t: (((i32, i32[]), i32), i32) = (((w, [w, w + 1]), w), w); acc = (acc + t.1) % 251; w = w + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    while (i < 5000) { var t2: (((i32, i32[]), i32), i32) = (((i, [i, i + 1]), i), i); acc = (acc + t2.1) % 251; i = i + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let acc: i32 = 0;
+    let w: i32 = 0;
+    while (w < 200) { let t: (((i32, i32[]), i32), i32) = (((w, [w, w + 1]), w), w); acc = (acc + t.1) % 251; w = w + 1; }
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    while (i < 5000) { let t2: (((i32, i32[]), i32), i32) = (((i, [i, i + 1]), i), i); acc = (acc + t2.1) % 251; i = i + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -104,13 +104,13 @@ function main(): i32 {
 	// Mixed: a fresh array in the OUTER tuple alongside a nested-tuple element —
 	// both the outer array and the nested inner array are freed.
 	{"nested-tuple-mixed", `function main(): i32 {
-    var acc: i32 = 0;
-    var w: i32 = 0;
-    while (w < 200) { var t: ((i32, i32[]), i32[]) = ((w, [w, w + 1]), [w, w]); acc = (acc + t.1[0]) % 251; w = w + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    while (i < 5000) { var t2: ((i32, i32[]), i32[]) = ((i, [i, i + 1]), [i, i]); acc = (acc + t2.1[0]) % 251; i = i + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let acc: i32 = 0;
+    let w: i32 = 0;
+    while (w < 200) { let t: ((i32, i32[]), i32[]) = ((w, [w, w + 1]), [w, w]); acc = (acc + t.1[0]) % 251; w = w + 1; }
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    while (i < 5000) { let t2: ((i32, i32[]), i32[]) = ((i, [i, i + 1]), [i, i]); acc = (acc + t2.1[0]) % 251; i = i + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -120,13 +120,13 @@ function main(): i32 {
 	// statement arm takes the same recursive deep-drop. (Regression guard for the
 	// expr_scalar_leaf fix — a shallow scalar-tuple discard leaks the inner box.)
 	{"nested-tuple-discarded", `function main(): i32 {
-    var acc: i32 = 0;
-    var w: i32 = 0;
+    let acc: i32 = 0;
+    let w: i32 = 0;
     while (w < 200) { ((w, [w, w + 1]), w); w = w + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
     while (i < 5000) { ((i, [i, i + 1]), i); i = i + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }

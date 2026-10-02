@@ -160,12 +160,12 @@ func TestSelfHostTargetCapabilityDifferentialX86_64(t *testing.T) {
 	}{
 		// The wasi CLI world has no process model, so fork/waitpid/exec are
 		// refused there and granted on the hosted natives.
-		{"proc-fork-wasm", "wasm32-wasi", "function main(): i32 {\n    var pid: i32 = proc_fork();\n    return pid;\n}\n"},
-		{"proc-fork-native-ok", "x86-64-linux", "function main(): i32 {\n    var pid: i32 = proc_fork();\n    return pid;\n}\n"},
+		{"proc-fork-wasm", "wasm32-wasi", "function main(): i32 {\n    let pid: i32 = proc_fork();\n    return pid;\n}\n"},
+		{"proc-fork-native-ok", "x86-64-linux", "function main(): i32 {\n    let pid: i32 = proc_fork();\n    return pid;\n}\n"},
 		// The bump-arena checkpoint rewinds a heap pointer only the natives
 		// keep. Reading the cursor (`__heap_bump_bytes`) is ungated, which is
 		// what keeps this from being "anything heap-shaped is native-only".
-		{"heap-mark-wasm", "wasm32-wasi", "function main(): i32 {\n    var m: i64 = __heap_mark();\n    __heap_release_to(m);\n    return 0;\n}\n"},
+		{"heap-mark-wasm", "wasm32-wasi", "function main(): i32 {\n    let m: i64 = __heap_mark();\n    __heap_release_to(m);\n    return 0;\n}\n"},
 		{"heap-bump-bytes-wasm-ok", "wasm32-wasi", "function main(): i32 {\n    return __heap_bump_bytes();\n}\n"},
 		// The wasm worlds have no process model, so spawning is refused there
 		// by both. On the NATIVE targets the two tables disagree on purpose —
@@ -173,7 +173,7 @@ func TestSelfHostTargetCapabilityDifferentialX86_64(t *testing.T) {
 		// it, while the self-host's emitters do — so that pairing is asserted
 		// in internal/platforms (profileExceptions) rather than here, where a
 		// row would read as an unexplained divergence.
-		{"subprocess-wasm", "wasm32-wasi", "function main(): i32 {\n    var argv: string[] = [];\n    var r: i32 = run_it(argv);\n    return r;\n}\nfunction run_it(argv: string[]): i32 {\n    subprocess(\"ls\", argv, \"\");\n    return 0;\n}\n"},
+		{"subprocess-wasm", "wasm32-wasi", "function main(): i32 {\n    let argv: string[] = [];\n    let r: i32 = run_it(argv);\n    return r;\n}\nfunction run_it(argv: string[]): i32 {\n    subprocess(\"ls\", argv, \"\");\n    return 0;\n}\n"},
 		// The capabilities a wasm program legitimately has: a filesystem, a
 		// clock, entropy, stdout. If the gate fired on these it would refuse
 		// most real programs.

@@ -18,18 +18,18 @@ import "std/i32";
 import "std/i64";
 
 function nested(k: i32): i32 {
-    var inner: string[] = ["alpha-payload-" + k.to_string(), "beta-payload-" + k.to_string()];
-    var outer: string[][] = [inner, ["gamma-payload-" + k.to_string()]];
+    let inner: string[] = ["alpha-payload-" + k.to_string(), "beta-payload-" + k.to_string()];
+    let outer: string[][] = [inner, ["gamma-payload-" + k.to_string()]];
     return outer[0][0].len() + outer[1][0].len();
 }
 
 function single_level(k: i32): i32 {
-    var xs: string[] = ["delta-payload-" + k.to_string(), "epsilon-payload-" + k.to_string()];
+    let xs: string[] = ["delta-payload-" + k.to_string(), "epsilon-payload-" + k.to_string()];
     return xs[0].len() + xs[1].len();
 }
 
 function rounds(n: i32): i32 {
-    var acc: i32 = 0;
+    let acc: i32 = 0;
     for i in 0..n {
         acc = acc + nested(i % 8) + single_level(i % 8);
     }
@@ -37,11 +37,11 @@ function rounds(n: i32): i32 {
 }
 
 function main(): i32 {
-    var b0: i64 = __heap_bump_bytes();
-    var x: i32 = rounds(50);
-    var b1: i64 = __heap_bump_bytes();
-    var y: i32 = rounds(100);
-    var b2: i64 = __heap_bump_bytes();
+    let b0: i64 = __heap_bump_bytes();
+    let x: i32 = rounds(50);
+    let b1: i64 = __heap_bump_bytes();
+    let y: i32 = rounds(100);
+    let b2: i64 = __heap_bump_bytes();
 
     print(x.to_string());
     print(y.to_string());

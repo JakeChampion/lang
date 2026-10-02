@@ -63,8 +63,8 @@ The exemption is still correct, and the reason is #7553 rather than parity.
 Measured with a new rc-plan case, `fe-string-param-alias`:
 
 ```
-function f(s: string): i32 { var L: string = s; return L.len(); }
-function main(): i32 { var k: string = "abcdefghij"; return f(k); }
+function f(s: string): i32 { let L: string = s; return L.len(); }
+function main(): i32 { let k: string = "abcdefghij"; return f(k); }
 ```
 
 | table | native | self-host |

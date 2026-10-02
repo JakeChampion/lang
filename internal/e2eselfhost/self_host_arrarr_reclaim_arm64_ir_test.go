@@ -32,21 +32,21 @@ func TestSelfHostArrArrReclaimIRArm64(t *testing.T) {
 
 	// string[][] churn — flat at detector zero.
 	run(t, `function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var g: string[][] = [["a" + "b"], ["c" + "d", "e" + "f"]];
+        let g: string[][] = [["a" + "b"], ["c" + "d", "e" + "f"]];
         acc = acc + g.len() + g[0][0].len();
         i = i + 1;
     }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 1000) {
-        var g2: string[][] = [["a" + "b"], ["c" + "d", "e" + "f"]];
+        let g2: string[][] = [["a" + "b"], ["c" + "d", "e" + "f"]];
         acc = acc + g2.len() + g2[1][1].len();
         j = j + 1;
     }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 4096) { return 98; }
     if (acc < 0) { return 97; }
@@ -55,21 +55,21 @@ func TestSelfHostArrArrReclaimIRArm64(t *testing.T) {
 
 	// i32[][] churn with expression inner elements — flat.
 	run(t, `function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var g: i32[][] = [[i, i + 1], [i + 2]];
+        let g: i32[][] = [[i, i + 1], [i + 2]];
         acc = acc + g.len() + g[0][0];
         i = i + 1;
     }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 1000) {
-        var g2: i32[][] = [[j, j + 1], [j + 2]];
+        let g2: i32[][] = [[j, j + 1], [j + 2]];
         acc = acc + g2.len() + g2[1][0];
         j = j + 1;
     }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 4096) { return 98; }
     if (acc < 0) { return 97; }
@@ -78,11 +78,11 @@ func TestSelfHostArrArrReclaimIRArm64(t *testing.T) {
 
 	// Row-alias exclusion pin.
 	run(t, `function main(): i32 {
-    var bad: i32 = 0;
-    var i: i32 = 0;
+    let bad: i32 = 0;
+    let i: i32 = 0;
     while (i < 500) {
-        var g: string[][] = [["a" + "b"], ["c" + "d", "e" + "f"]];
-        var row: string[] = g[1];
+        let g: string[][] = [["a" + "b"], ["c" + "d", "e" + "f"]];
+        let row: string[] = g[1];
         if (row.len() != 2) { bad = 1; }
         if (row[0].len() != 2) { bad = 1; }
         i = i + 1;

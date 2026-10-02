@@ -16,6 +16,6 @@ impl lib.Render for Item {
 }
 
 function main(): i32 {
-    var items: Item[] = [Item { id: 1 }, Item { id: 2 }, Item { id: 3 }];
+    let items: Item[] = [Item { id: 1 }, Item { id: 2 }, Item { id: 3 }];
     return items.render_all().len();   // "a" + "bb" + "ccc" = 6
 }

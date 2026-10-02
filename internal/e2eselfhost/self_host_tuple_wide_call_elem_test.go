@@ -44,12 +44,12 @@ func TestSelfHostTupleWideCallElem(t *testing.T) {
 		{
 			"i64-call-elem",
 			`function fr(n: i32): i64 { return (n as i64) * 3000000000; }
-			 function main(): i32 { var a: i32 = 2; var t: (i64, i32) = (fr(a), 1); if (t.0 == fr(a) && t.1 == 1) { return 7; } return 9; }`,
+			 function main(): i32 { let a: i32 = 2; let t: (i64, i32) = (fr(a), 1); if (t.0 == fr(a) && t.1 == 1) { return 7; } return 9; }`,
 		},
 		{
 			"f64-call-elem",
 			`function fr(n: i32): f64 { return (n as f64) / 3.0; }
-			 function main(): i32 { var a: i32 = 2; var t: (f64, i32) = (fr(a), 1); if (f64_bits(t.0) == f64_bits(fr(a)) && t.1 == 1) { return 7; } return 9; }`,
+			 function main(): i32 { let a: i32 = 2; let t: (f64, i32) = (fr(a), 1); if (f64_bits(t.0) == f64_bits(fr(a)) && t.1 == 1) { return 7; } return 9; }`,
 		},
 		{
 			// Both elements wide, and of different widths, so the per-element
@@ -57,7 +57,7 @@ func TestSelfHostTupleWideCallElem(t *testing.T) {
 			"mixed-i64-f64-call-elems",
 			`function a1(n: i32): i64 { return (n as i64) * 3000000000; }
 			 function a2(n: i32): f64 { return (n as f64) / 3.0; }
-			 function main(): i32 { var t: (i64, f64) = (a1(2), a2(2)); if (t.0 == a1(2) && f64_bits(t.1) == f64_bits(a2(2))) { return 7; } return 9; }`,
+			 function main(): i32 { let t: (i64, f64) = (a1(2), a2(2)); if (t.0 == a1(2) && f64_bits(t.1) == f64_bits(a2(2))) { return 7; } return 9; }`,
 		},
 		{
 			// The callee spelled as a METHOD rather than a free function. The
@@ -67,44 +67,44 @@ func TestSelfHostTupleWideCallElem(t *testing.T) {
 			"method-i32-call-elem",
 			`struct P { x: i32, y: i32 }
 			 function (p: P) sum(): i32 { return p.x + p.y; }
-			 function main(): i32 { var p: P = P { x: 3, y: 4 }; var t: (i32, i64) = (p.sum(), 165i64); if (t.0 == 7 && t.1 == 165) { return 7; } return 9; }`,
+			 function main(): i32 { let p: P = P { x: 3, y: 4 }; let t: (i32, i64) = (p.sum(), 165i64); if (t.0 == 7 && t.1 == 165) { return 7; } return 9; }`,
 		},
 		{
 			"method-i64-call-elem",
 			`struct P { x: i32 }
 			 function (p: P) wide(): i64 { return (p.x as i64) * 3000000000; }
-			 function main(): i32 { var p: P = P { x: 2 }; var t: (i64, i32) = (p.wide(), 1); if (t.0 == p.wide() && t.1 == 1) { return 7; } return 9; }`,
+			 function main(): i32 { let p: P = P { x: 2 }; let t: (i64, i32) = (p.wide(), 1); if (t.0 == p.wide() && t.1 == 1) { return 7; } return 9; }`,
 		},
 		{
 			"method-f64-call-elem",
 			`struct P { x: i32 }
 			 function (p: P) frac(): f64 { return (p.x as f64) / 3.0; }
-			 function main(): i32 { var p: P = P { x: 2 }; var t: (f64, i32) = (p.frac(), 1); if (f64_bits(t.0) == f64_bits(p.frac()) && t.1 == 1) { return 7; } return 9; }`,
+			 function main(): i32 { let p: P = P { x: 2 }; let t: (f64, i32) = (p.frac(), 1); if (f64_bits(t.0) == f64_bits(p.frac()) && t.1 == 1) { return 7; } return 9; }`,
 		},
 		{
 			// A builtin receiver, which the struct/enum method registry cannot
 			// answer for — the length is an i32 whatever it measures.
 			"len-call-elem",
-			`function main(): i32 { var s: string = "xyz"; var t: (i32, i64) = (s.len(), 165i64); if (t.0 == 3 && t.1 == 165) { return 7; } return 9; }`,
+			`function main(): i32 { let s: string = "xyz"; let t: (i32, i64) = (s.len(), 165i64); if (t.0 == 3 && t.1 == 165) { return 7; } return 9; }`,
 		},
 		// Controls — already on the IR path before this change.
 		{
 			"i64-local-elem-control",
-			`function main(): i32 { var w: i64 = 6000000000; var t: (i64, i32) = (w, 1); if (t.0 == w && t.1 == 1) { return 7; } return 9; }`,
+			`function main(): i32 { let w: i64 = 6000000000; let t: (i64, i32) = (w, 1); if (t.0 == w && t.1 == 1) { return 7; } return 9; }`,
 		},
 		{
 			"i64-arith-elem-control",
-			`function main(): i32 { var w: i64 = 3000000000; var t: (i64, i32) = (w * 2, 1); if (t.0 == w * 2 && t.1 == 1) { return 7; } return 9; }`,
+			`function main(): i32 { let w: i64 = 3000000000; let t: (i64, i32) = (w * 2, 1); if (t.0 == w * 2 && t.1 == 1) { return 7; } return 9; }`,
 		},
 		{
 			"i32-call-elem-control",
 			`function fr(n: i32): i32 { return n * 3; }
-			 function main(): i32 { var a: i32 = 2; var t: (i32, i32) = (fr(a), 1); if (t.0 == fr(a) && t.1 == 1) { return 7; } return 9; }`,
+			 function main(): i32 { let a: i32 = 2; let t: (i32, i32) = (fr(a), 1); if (t.0 == fr(a) && t.1 == 1) { return 7; } return 9; }`,
 		},
 		{
 			"string-call-elem-control",
 			`function fr(n: i32): string { return "xy"; }
-			 function main(): i32 { var t: (string, i32) = (fr(1), 1); if (t.0.len() == 2 && t.1 == 1) { return 7; } return 9; }`,
+			 function main(): i32 { let t: (string, i32) = (fr(1), 1); if (t.0.len() == 2 && t.1 == 1) { return 7; } return 9; }`,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

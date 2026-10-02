@@ -18,11 +18,11 @@ import (
 const ownSelfReassignClosureSrc = `struct B { items: i32[], tag: i32[] }
 function grow(own b: B, x: i32): B { return B { items: b.items.append(x), tag: b.tag }; }
 function main(): i32 {
-    var k: i32 = 0;
+    let k: i32 = 0;
     while (k < 100) {
-        var build = (n: i32): i32 => {
-            var a: B = B { items: [], tag: [42] };
-            var i: i32 = 0;
+        let build = (n: i32): i32 => {
+            let a: B = B { items: [], tag: [42] };
+            let i: i32 = 0;
             while (i < n) { a = grow(a, i); i = i + 1; }
             if (a.tag[0] != 42) { return 90; }   // carried field survives the threading
             return a.items.len();

@@ -37,12 +37,12 @@ function make(i: i32): Result[i32[], string] {
     return Ok([i, i + 1, i + 2]);
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var r: i32 = 0;
+    let acc: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) {
-        var k: i32 = 0;
+        let k: i32 = 0;
         while (k < 4) {
-            var v: Result[i32[], string] = make(k);
+            let v: Result[i32[], string] = make(k);
             match (v) { Ok(a) => { acc = acc + a.len(); }, Err(e) => { acc = acc + e.len(); } }
             k = k + 1;
         }
@@ -58,12 +58,12 @@ function make(i: i32): Result[i32[], string] {
     return Ok([i, i + 1, i + 2]);
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var r: i32 = 0;
+    let acc: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) {
-        var k: i32 = 0;
+        let k: i32 = 0;
         while (k < 4) {
-            var v: Result[i32[], string] = make(k);
+            let v: Result[i32[], string] = make(k);
             if (k >= 0) {
                 match (v) { Ok(a) => { acc = acc + a.len(); }, Err(e) => { acc = acc + e.len(); } }
             }
@@ -81,12 +81,12 @@ function make(i: i32): Option[string] {
     return Some("abcd");
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var r: i32 = 0;
+    let acc: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) {
-        var k: i32 = 0;
+        let k: i32 = 0;
         while (k < 4) {
-            var v: Option[string] = make(k);
+            let v: Option[string] = make(k);
             match (v) { Some(a) => { acc = acc + a.len(); }, None => { acc = acc + 1; } }
             k = k + 1;
         }
@@ -102,12 +102,12 @@ function make(i: i32): Option[string] {
     return Some("abcd");
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var r: i32 = 0;
+    let acc: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) {
-        var k: i32 = 0;
+        let k: i32 = 0;
         while (k < 4) {
-            var v: Option[string] = make(k);
+            let v: Option[string] = make(k);
             if (k >= 0) {
                 match (v) { Some(a) => { acc = acc + a.len(); }, None => { acc = acc + 1; } }
             }
@@ -127,11 +127,11 @@ function mk(i: i32): Option[string] {
     return Some("abcd");
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var r: i32 = 0;
+    let acc: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) {
-        var v: Option[string] = mk(r);
-        var c: i32 = 0;
+        let v: Option[string] = mk(r);
+        let c: i32 = 0;
         while (c < 2) {
             match (v) { Some(s) => { acc = acc + s.len(); }, None => { acc = acc + 1; } }
             c = c + 1;
@@ -152,16 +152,16 @@ function mk(i: i32): Option[string] {
     return Some("ab" + "cd");
 }
 function main(): i32 {
-    var held: string = "qqqq";
-    var acc: i32 = 0;
-    var r: i32 = 0;
+    let held: string = "qqqq";
+    let acc: i32 = 0;
+    let r: i32 = 0;
     while (r < 50) {
-        var v: Option[string] = mk(r);
+        let v: Option[string] = mk(r);
         if (r >= 0) {
             match (v) { Some(s) => { held = s; }, None => { acc = acc + 1; } }
         }
-        var c: i32 = 0;
-        while (c < 4) { var t: string = "xy" + "zw"; acc = acc + t.len(); c = c + 1; }
+        let c: i32 = 0;
+        while (c < 4) { let t: string = "xy" + "zw"; acc = acc + t.len(); c = c + 1; }
         acc = acc + held.len();
         r = r + 1;
     }
@@ -177,10 +177,10 @@ function mk(i: i32): Option[string] {
     return Some("abcd");
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var r: i32 = 0;
+    let acc: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) {
-        var v: Option[string] = mk(r);
+        let v: Option[string] = mk(r);
         if (r % 2 == 0) {
             match (v) { Some(s) => { acc = acc + s.len(); }, None => { acc = acc + 1; } }
         } else {
@@ -199,10 +199,10 @@ function mk(i: i32): Option[string] {
     return Some("abcd");
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var r: i32 = 0;
+    let acc: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) {
-        var v: Option[string] = mk(r);
+        let v: Option[string] = mk(r);
         if (r >= 0) {
             match (v) { Some(s) => { acc = acc + s.len(); }, None => { acc = acc + 1; } }
         }
@@ -220,10 +220,10 @@ function mk(i: i32): Option[string] {
     return Some("abcd");
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var r: i32 = 0;
+    let acc: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) {
-        var v: Option[string] = mk(r);
+        let v: Option[string] = mk(r);
         if (olen(v) > 0) {
             match (v) { Some(s) => { acc = acc + s.len(); }, None => { acc = acc + 1; } }
         }

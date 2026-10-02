@@ -26,13 +26,13 @@ var eqVerbCases = []struct {
 struct P { v: i32 }
 impl Eq for P { function eq(self: Self, other: Self): boolean { return self.v == other.v; } }
 function contains[T: Eq](xs: T[], target: T): boolean { for x in xs { if (x.eq(target)) { return true; } } return false; }
-function main(): i32 { var xs: P[] = [P { v: 1 }, P { v: 2 }, P { v: 3 }]; var r = 0; if (contains(xs, P { v: 2 })) { r = r + 5; } if (!contains(xs, P { v: 9 })) { r = r + 2; } return r; }`, 7},
+function main(): i32 { let xs: P[] = [P { v: 1 }, P { v: 2 }, P { v: 3 }]; let r = 0; if (contains(xs, P { v: 2 })) { r = r + 5; } if (!contains(xs, P { v: 9 })) { r = r + 2; } return r; }`, 7},
 	// index_of: first match position; miss → -1. found at 2 → 2*10 + (-1+1) = 20.
 	{"index-of", `pub trait Eq { function eq(self: Self, other: Self): boolean; }
 struct P { v: i32 }
 impl Eq for P { function eq(self: Self, other: Self): boolean { return self.v == other.v; } }
-function index_of[T: Eq](xs: T[], target: T): i32 { var i = 0; for x in xs { if (x.eq(target)) { return i; } i = i + 1; } return 0 - 1; }
-function main(): i32 { var xs: P[] = [P { v: 10 }, P { v: 20 }, P { v: 30 }]; return index_of(xs, P { v: 30 }) * 10 + (index_of(xs, P { v: 99 }) + 1); }`, 20},
+function index_of[T: Eq](xs: T[], target: T): i32 { let i = 0; for x in xs { if (x.eq(target)) { return i; } i = i + 1; } return 0 - 1; }
+function main(): i32 { let xs: P[] = [P { v: 10 }, P { v: 20 }, P { v: 30 }]; return index_of(xs, P { v: 30 }) * 10 + (index_of(xs, P { v: 99 }) + 1); }`, 20},
 	// distinct dedups [1,2,1,3,2] → [1,2,3] (first occurrence kept, in order).
 	// Verified directly via field access on the result: d.len()*100 + d[0].v*10 +
 	// d[2].v. (An earlier revision avoided d[i].v on a generic `struct[]` return,
@@ -45,8 +45,8 @@ function main(): i32 { var xs: P[] = [P { v: 10 }, P { v: 20 }, P { v: 30 }]; re
 struct P { v: i32 }
 impl Eq for P { function eq(self: Self, other: Self): boolean { return self.v == other.v; } }
 function contains[T: Eq](xs: T[], target: T): boolean { for x in xs { if (x.eq(target)) { return true; } } return false; }
-function distinct[T: Eq](xs: T[]): T[] { var out: T[] = []; for x in xs { if (!contains(out, x)) { out = out.append(x); } } return out; }
-function main(): i32 { var xs: P[] = [P { v: 1 }, P { v: 2 }, P { v: 1 }, P { v: 3 }, P { v: 2 }]; var d = distinct(xs); return d.len() * 10 + d[0].v + d[2].v; }`, 34},
+function distinct[T: Eq](xs: T[]): T[] { let out: T[] = []; for x in xs { if (!contains(out, x)) { out = out.append(x); } } return out; }
+function main(): i32 { let xs: P[] = [P { v: 1 }, P { v: 2 }, P { v: 1 }, P { v: 3 }, P { v: 2 }]; let d = distinct(xs); return d.len() * 10 + d[0].v + d[2].v; }`, 34},
 }
 
 // TestNativeEqVerbs runs the inline Eq-verb programs on the native interp /
@@ -95,15 +95,15 @@ func TestNativeEqVerbsModule(t *testing.T) {
 struct P { v: i32 }
 impl cmp.Eq for P { function eq(self: Self, other: Self): boolean { return self.v == other.v; } }
 function main(): i32 {
-    var xs = [10, 20, 30, 20];
-    var a = 0; if (cmp.contains(xs, 30)) { a = 1; }       // 1
-    var b = 0; match (cmp.index_of(xs, 20)) { Some(v) => { b = v; }, None => { b = 0 - 1; } } // 1 (first)
-    var d = cmp.distinct(xs);                              // [10,20,30] len 3
-    var ss = ["a", "b", "a"];
-    var sc = 0; if (cmp.contains(ss, "b")) { sc = 1; }     // 1
-    var si = 0; match (cmp.index_of(ss, "a")) { Some(v) => { si = v; }, None => { si = 0 - 1; } } // 0
-    var sd = cmp.distinct(ss).len();                       // 2
-    var pc = 0; if (cmp.contains([P { v: 5 }, P { v: 6 }], P { v: 6 })) { pc = 1; }  // 1
+    let xs = [10, 20, 30, 20];
+    let a = 0; if (cmp.contains(xs, 30)) { a = 1; }       // 1
+    let b = 0; match (cmp.index_of(xs, 20)) { Some(v) => { b = v; }, None => { b = 0 - 1; } } // 1 (first)
+    let d = cmp.distinct(xs);                              // [10,20,30] len 3
+    let ss = ["a", "b", "a"];
+    let sc = 0; if (cmp.contains(ss, "b")) { sc = 1; }     // 1
+    let si = 0; match (cmp.index_of(ss, "a")) { Some(v) => { si = v; }, None => { si = 0 - 1; } } // 0
+    let sd = cmp.distinct(ss).len();                       // 2
+    let pc = 0; if (cmp.contains([P { v: 5 }, P { v: 6 }], P { v: 6 })) { pc = 1; }  // 1
     return a + b + d.len() + sc + si + sd + pc;            // 1+1+3+1+0+2+1 = 9
 }
 `

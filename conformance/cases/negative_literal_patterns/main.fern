@@ -75,7 +75,7 @@ function main(): i32 {
     print(sign_of(0.0));
     print(sign_of(3.25));
 
-    var n: i32 = 4;
+    let n: i32 = 4;
     print(sum((-1, 9)).to_string());
     print(sum((-n, -9)).to_string());
     return 0;

@@ -34,8 +34,8 @@ function rand_bytes(n: u64): u8[];
 function rand_u64(): u64;
 
 function main(): i32 {
-	var a: u8[] = rand_bytes(16 as u64);
-	var r: u64 = rand_u64();
+	let a: u8[] = rand_bytes(16 as u64);
+	let r: u64 = rand_u64();
 	if (a.len() == 16 && (r & 0) == 0) { write("` + want + `"); } else { write("cli-extern-bad"); }
 	return 0;
 }`
@@ -67,11 +67,11 @@ func TestManyWasiCategoriesViaCLI(t *testing.T) {
 	dir := t.TempDir()
 	const want = "many-ok"
 	src := `function main(): i32 {
-	var a: string[] = args();
-	var g: string = "MISS";
+	let a: string[] = args();
+	let g: string = "MISS";
 	match (env("GREETING")) { Some(v) => { g = v; }, None => {} }
-	var b: u8[] = random_bytes(8);
-	var t: i64 = now_ns();
+	let b: u8[] = random_bytes(8);
+	let t: i64 = now_ns();
 	if (a.len() == 2 && g == "` + want + `" && b.len() == 8 && t > 0) { write(g); } else { write("bad"); }
 	return 0;
 }`

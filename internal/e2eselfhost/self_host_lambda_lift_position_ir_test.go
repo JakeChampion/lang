@@ -29,10 +29,10 @@ var lambdaLiftPositionIRCases = []struct {
 	// Two-argument IIFE.
 	{"iife-2arg", `function main(): i32 { return ((a: i32, b: i32): i32 => { return a + b; })(5, 6); }`},
 	// No-capture lambda as a tuple element, called via `t.0(t.1)`.
-	{"tuple-fn", `function main(): i32 { var t: ((i32) => i32, i32) = ((x: i32): i32 => { return x + 1; }, 10); return t.0(t.1); }`},
+	{"tuple-fn", `function main(): i32 { let t: ((i32) => i32, i32) = ((x: i32): i32 => { return x + 1; }, 10); return t.0(t.1); }`},
 	// Assigning a no-capture lambda to a fn-typed local, then calling it.
 	{"reassign", `function inc(b: i32): i32 { return b + 1; }
-function main(): i32 { var f: (i32) => i32 = inc; f = (x: i32): i32 => { return x * 2; }; return f(5); }`},
+function main(): i32 { let f: (i32) => i32 = inc; f = (x: i32): i32 => { return x * 2; }; return f(5); }`},
 	// Regression: a no-capture lambda call ARGUMENT still lowers (already lifted).
 	{"arg-regress", `function apply(f: (i32) => i32, x: i32): i32 { return f(x); }
 function main(): i32 { return apply((y: i32): i32 => { return y + 1; }, 4); }`},

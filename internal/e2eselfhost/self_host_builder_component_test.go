@@ -25,7 +25,7 @@ func testBuilderComponents(t *testing.T, compiler string, runner []string, stdli
 			if output {
 				name = tc.name + "/stdout"
 				source = strings.Replace(source, "function main(): i32", "function byte_check(): i32", 1)
-				source += "\nfunction main(): i32 { var code = byte_check(); if (code == 0) { print(\"ok\"); } return code; }\n"
+				source += "\nfunction main(): i32 { let code = byte_check(); if (code == 0) { print(\"ok\"); } return code; }\n"
 				want = "ok\n"
 			}
 			t.Run(name, func(t *testing.T) {

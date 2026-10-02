@@ -138,11 +138,11 @@ pub function is_c_call_shim(name: string): boolean {
   if (slice_unchecked(name, 0, 8) != "__c_call") {
     return false;
   }
-  var d: str = slice_unchecked(name, 8, 9);
+  let d: str = slice_unchecked(name, 8, 9);
   if (d != "0" && d != "1" && d != "2" && d != "3" && d != "4") {
     return false;
   }
-  var rest: str = slice_unchecked(name, 9, name.len());
+  let rest: str = slice_unchecked(name, 9, name.len());
   return rest == "" || rest == "_f32" || rest == "_f64";
 }
 
@@ -174,10 +174,10 @@ pub struct ProvidedResult { problems: irverify.Problem[], calls: i32 }
 // An empty callee name is irverify.fern's problem, not this one — it reports
 // that already, and repeating it here would double every occurrence.
 pub function verify_provided_fn(fn_name: string, ops: ir.Op[], declared: irverify.NameIndex): ProvidedResult {
-  var out: irverify.Problem[] = [];
-  var calls: i32 = 0;
-  var k_calld: i32 = ir.kind_id("call_direct");
-  var i: i32 = 0;
+  let out: irverify.Problem[] = [];
+  let calls: i32 = 0;
+  let k_calld: i32 = ir.kind_id("call_direct");
+  let i: i32 = 0;
   while (i < ops.len()) {
     if (ops[i].kind_tag == k_calld && ops[i].str.len() > 0) {
       calls = calls + 1;

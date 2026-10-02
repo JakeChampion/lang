@@ -25,8 +25,8 @@ import (
 
 func stmtTempArrBumpSrc(n string) string {
 	return `function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
     while (i < ` + n + `) { [i, i + 1, i + 2]; i = i + 1; }
     return (__heap_bump_bytes() as i32) - before;
 }`
@@ -37,11 +37,11 @@ func stmtTempArrBumpSrc(n string) string {
 // 3*(199*200/2) + 3*200 = 60300. __rc_underflow_count() (the self-host detector) then
 // reports 0 only if nothing was over-released.
 const stmtTempReclaimDetectorSrc = `function main(): i32 {
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < 200) {
         [i, i + 1, i + 2];
-        var xs: i32[] = [i, i + 1, i + 2];
+        let xs: i32[] = [i, i + 1, i + 2];
         acc = acc + xs[0] + xs[1] + xs[2];
         i = i + 1;
     }
@@ -55,8 +55,8 @@ const stmtTempReclaimDetectorSrc = `function main(): i32 {
 
 func stmtTempTupleBumpSrc(n string) string {
 	return `function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
     while (i < ` + n + `) { (i, i + 1); i = i + 1; }
     return (__heap_bump_bytes() as i32) - before;
 }`
@@ -65,8 +65,8 @@ func stmtTempTupleBumpSrc(n string) string {
 func stmtTempStructBumpSrc(n string) string {
 	return `struct P { x: i32, y: i32 }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
     while (i < ` + n + `) { P { x: i, y: i + 1 }; i = i + 1; }
     return (__heap_bump_bytes() as i32) - before;
 }`
@@ -74,10 +74,10 @@ function main(): i32 {
 
 func stmtTempStrConcatBumpSrc(n string) string {
 	return `function main(): i32 {
-    var a: string = "hello";
-    var b: string = "world";
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
+    let a: string = "hello";
+    let b: string = "world";
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
     while (i < ` + n + `) { a + b; i = i + 1; }
     return (__heap_bump_bytes() as i32) - before;
 }`
@@ -94,8 +94,8 @@ func stmtTempStrConcatBumpSrc(n string) string {
 func stmtTempRcFieldStructBumpSrc(n string) string {
 	return `struct H { id: i32, xs: i32[] }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
     while (i < ` + n + `) { H { id: i, xs: [i, i + 1, i + 2] }; i = i + 1; }
     return (__heap_bump_bytes() as i32) - before;
 }`
@@ -109,8 +109,8 @@ func stmtTempFreshCallBumpSrc(n string) string {
 	return `struct P { x: i32, y: i32 }
 function mk(a: i32): P { return P { x: a, y: a + 1 }; }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
     while (i < ` + n + `) { mk(i); i = i + 1; }
     return (__heap_bump_bytes() as i32) - before;
 }`
@@ -125,8 +125,8 @@ function main(): i32 {
 func stmtTempFreshCallArrBumpSrc(n string) string {
 	return `function mk(a: i32): i32[] { return [a, a + 1, a + 2]; }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
     while (i < ` + n + `) { mk(i); i = i + 1; }
     return (__heap_bump_bytes() as i32) - before;
 }`
@@ -142,11 +142,11 @@ function main(): i32 {
 // recycles it — the same small constant at every N.
 func stmtTempLenReceiverBumpSrc(n string) string {
 	return `function main(): i32 {
-    var s1: string = "ab";
-    var s2: string = "cd";
-    var acc: i32 = 0;
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
+    let s1: string = "ab";
+    let s2: string = "cd";
+    let acc: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
     while (i < ` + n + `) { acc = (acc + (s1 + s2).len()) % 251; i = i + 1; }
     if (acc < 0) { return 0 - 1; }
     return (__heap_bump_bytes() as i32) - before;
@@ -162,8 +162,8 @@ func stmtTempFreshCallRcFieldBumpSrc(n string) string {
 	return `struct H { id: i32, xs: i32[] }
 function mk(a: i32): H { return H { id: a, xs: [a, a + 1, a + 2] }; }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
     while (i < ` + n + `) { mk(i); i = i + 1; }
     return (__heap_bump_bytes() as i32) - before;
 }`
@@ -180,9 +180,9 @@ function main(): i32 {
 // leak, not a fresh sole-owned one).
 func stmtTempFreshStrArrBumpSrc(n string) string {
 	return `function main(): i32 {
-    var p: string = "x";
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
+    let p: string = "x";
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
     while (i < ` + n + `) { [p + "a", p + "b"]; i = i + 1; }
     return (__heap_bump_bytes() as i32) - before;
 }`
@@ -193,10 +193,10 @@ func stmtTempFreshStrArrBumpSrc(n string) string {
 // shared box would corrupt the sum (999) or trip __rc_underflow_count (> 0). Sums:
 // tuple/struct t=(i,i+2): 2i+2 over 0..199 = 40200; string s=a+b: 200 * 10.
 const stmtTempTupleDetectorSrc = `function main(): i32 {
-    var i: i32 = 0; var acc: i32 = 0;
+    let i: i32 = 0; let acc: i32 = 0;
     while (i < 200) {
         (i, i + 1);
-        var t: (i32, i32) = (i, i + 2);
+        let t: (i32, i32) = (i, i + 2);
         acc = acc + t.0 + t.1;
         i = i + 1;
     }
@@ -206,10 +206,10 @@ const stmtTempTupleDetectorSrc = `function main(): i32 {
 
 const stmtTempStructDetectorSrc = `struct P { x: i32, y: i32 }
 function main(): i32 {
-    var i: i32 = 0; var acc: i32 = 0;
+    let i: i32 = 0; let acc: i32 = 0;
     while (i < 200) {
         P { x: i, y: i + 1 };
-        var p: P = P { x: i, y: i + 2 };
+        let p: P = P { x: i, y: i + 2 };
         acc = acc + p.x + p.y;
         i = i + 1;
     }
@@ -218,11 +218,11 @@ function main(): i32 {
 }`
 
 const stmtTempStrConcatDetectorSrc = `function main(): i32 {
-    var a: string = "hello"; var b: string = "world";
-    var i: i32 = 0; var acc: i32 = 0;
+    let a: string = "hello"; let b: string = "world";
+    let i: i32 = 0; let acc: i32 = 0;
     while (i < 200) {
         a + b;
-        var s: string = a + b;
+        let s: string = a + b;
         acc = acc + s.len();
         i = i + 1;
     }
@@ -237,10 +237,10 @@ const stmtTempStrConcatDetectorSrc = `function main(): i32 {
 // (the box-return-register clobber) trips __rc_underflow_count (> 0), not the sum.
 const stmtTempRcFieldStructDetectorSrc = `struct H { id: i32, xs: i32[] }
 function main(): i32 {
-    var i: i32 = 0; var acc: i32 = 0;
+    let i: i32 = 0; let acc: i32 = 0;
     while (i < 200) {
         H { id: i, xs: [i, i + 1, i + 2] };
-        var h: H = H { id: i, xs: [i, i + 1, i + 2] };
+        let h: H = H { id: i, xs: [i, i + 1, i + 2] };
         acc = acc + h.id + h.xs[0] + h.xs[1] + h.xs[2];
         i = i + 1;
     }
@@ -254,10 +254,10 @@ function main(): i32 {
 const stmtTempFreshCallDetectorSrc = `struct P { x: i32, y: i32 }
 function mk(a: i32): P { return P { x: a, y: a + 1 }; }
 function main(): i32 {
-    var i: i32 = 0; var acc: i32 = 0;
+    let i: i32 = 0; let acc: i32 = 0;
     while (i < 200) {
         mk(i);
-        var p: P = mk(i + 1);
+        let p: P = mk(i + 1);
         acc = acc + p.x + p.y;
         i = i + 1;
     }
@@ -274,9 +274,9 @@ function main(): i32 {
 // s1/s2 stay readable after (their own boxes untouched), the length value is
 // exact, and the detector stays zero.
 const stmtTempLenReceiverDetectorSrc = `function main(): i32 {
-    var s1: string = "ab" + "c";
-    var s2: string = "de";
-    var i: i32 = 0; var acc: i32 = 0;
+    let s1: string = "ab" + "c";
+    let s2: string = "de";
+    let i: i32 = 0; let acc: i32 = 0;
     while (i < 200) {
         acc = acc + (s1 + s2).len();
         i = i + 1;
@@ -292,10 +292,10 @@ const stmtTempLenReceiverDetectorSrc = `function main(): i32 {
 // corrupt the sum (999) or trip __rc_underflow_count (> 0).
 const stmtTempFreshCallArrDetectorSrc = `function mk(a: i32): i32[] { return [a, a + 1, a + 2]; }
 function main(): i32 {
-    var i: i32 = 0; var acc: i32 = 0;
+    let i: i32 = 0; let acc: i32 = 0;
     while (i < 200) {
         mk(i);
-        var v = mk(i + 1);
+        let v = mk(i + 1);
         acc = acc + v[0] + v[1] + v[2];
         i = i + 1;
     }
@@ -306,10 +306,10 @@ function main(): i32 {
 const stmtTempFreshCallRcFieldDetectorSrc = `struct H { id: i32, xs: i32[] }
 function mk(a: i32): H { return H { id: a, xs: [a, a + 1, a + 2] }; }
 function main(): i32 {
-    var i: i32 = 0; var acc: i32 = 0;
+    let i: i32 = 0; let acc: i32 = 0;
     while (i < 200) {
         mk(i);
-        var p: H = mk(i + 1);
+        let p: H = mk(i + 1);
         acc = acc + p.id + p.xs[0] + p.xs[1] + p.xs[2];
         i = i + 1;
     }
@@ -323,11 +323,11 @@ function main(): i32 {
 // wrong reclaim that decdouble-freed a live element box would trip __rc_underflow_count
 // (> 0); an over-eager release of the live xs would corrupt the sum (999).
 const stmtTempFreshStrArrDetectorSrc = `function main(): i32 {
-    var p: string = "x";
-    var i: i32 = 0; var acc: i32 = 0;
+    let p: string = "x";
+    let i: i32 = 0; let acc: i32 = 0;
     while (i < 200) {
         [p + "a", p + "b"];
-        var xs: string[] = [p + "c", p + "d"];
+        let xs: string[] = [p + "c", p + "d"];
         acc = acc + xs[0].len() + xs[1].len();
         i = i + 1;
     }
@@ -344,8 +344,8 @@ const stmtTempFreshStrArrDetectorSrc = `function main(): i32 {
 // 200 = 1000, and __rc_underflow_count stays 0 (no over-release). A regression that
 // admitted borrowed elements would trip __rc_underflow_count (> 0).
 const stmtTempBorrowedStrArrDetectorSrc = `function main(): i32 {
-    var s: string = "hello";
-    var i: i32 = 0; var acc: i32 = 0;
+    let s: string = "hello";
+    let i: i32 = 0; let acc: i32 = 0;
     while (i < 200) {
         [s, s];
         acc = acc + s.len();

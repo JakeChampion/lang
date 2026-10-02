@@ -34,7 +34,7 @@
 // whose body is `stmts…; match (p) { … }` for a BORROWED enum parameter `p`:
 //
 //   - the statements before the `match`, and those before an arm's tail, must
-//     be rc-NEUTRAL — a scalar `var`, an assignment to a scalar non-parameter
+//     be rc-NEUTRAL — a scalar `let`, an assignment to a scalar non-parameter
 //     local, and `if` nests of those. The
 //     loop exits through its own `return`, which bypasses the rc exit sweep,
 //     so a statement that would register a drop obligation declines the

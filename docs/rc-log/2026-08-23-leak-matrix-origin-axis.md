@@ -1,7 +1,7 @@
 # The leak matrix grows the origin axis, and the site-keying holds
 
 Leak-matrix v2 — the axis #7253's probe-audit demanded: every v1 cell bound
-`x` from a fresh construction (a local-var origin), and the day's defects all
+`x` from a fresh construction (a local-let origin), and the day's defects all
 sat on the origin axis. The generator now also binds the readable kinds from
 an aliased LOCAL (source read again after the alias) and from a PARAMETER
 main builds once, keeps live across every call, and reads after the loop —

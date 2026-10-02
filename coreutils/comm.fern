@@ -57,7 +57,7 @@ function opt_zero(): i32 {
 }
 
 function help_text(): string {
-  var out: string = "";
+  let out: string = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]... FILE1 FILE2\n";
   out = out + "Compare sorted files FILE1 and FILE2 line by line.\n";
   out = out + "\n";
@@ -99,14 +99,14 @@ function order_disabled(): i32 {
 // lengths. Both lines carry the delimiter, so a whole-string equality
 // answers the equal case without walking anything.
 function cmp_lines(a: string, alo: i32, ahi: i32, b: string, blo: i32, bhi: i32): i32 {
-  var la: i32 = ahi - alo;
-  var lb: i32 = bhi - blo;
-  var n: i32 = la;
+  let la: i32 = ahi - alo;
+  let lb: i32 = bhi - blo;
+  let n: i32 = la;
   if (lb < n) {
     n = lb;
   }
   n = n - 1;
-  var i: i32 = __mismatch(a, alo, b, blo, n);
+  let i: i32 = __mismatch(a, alo, b, blo, n);
   if (i < n) {
     if (a[alo + i] as i32 < b[blo + i] as i32) {
       return 0 - 1;
@@ -162,12 +162,12 @@ function status_error(): i32 {
 // Returns (line, chunk, pos, eof, status, error): status is a line, end
 // of input, or a read failure whose strerror text is `error`.
 function next_line_slow(r: Reader, chunk0: string, pos0: i32, eof0: boolean, term: i32): (string, string, i32, boolean, i32, string) {
-  var chunk: string = chunk0;
-  var pos: i32 = pos0;
-  var eof: boolean = eof0;
-  var carry: string = "";
+  let chunk: string = chunk0;
+  let pos: i32 = pos0;
+  let eof: boolean = eof0;
+  let carry: string = "";
   while (true) {
-    var j: i32 = __memchr(chunk, term, pos);
+    let j: i32 = __memchr(chunk, term, pos);
     if (j >= 0) {
       carry = carry + slice_unchecked(chunk, pos, j + 1);
       return (carry, chunk, j + 1, eof, status_line(), "");
@@ -206,8 +206,8 @@ function next_line_slow(r: Reader, chunk0: string, pos0: i32, eof0: boolean, ter
 struct Cfg { only1: boolean, only2: boolean, both: boolean, sep: string, check: i32, total: boolean, term: i32 }
 
 pub function main(): i32 {
-  var argv: string[] = args();
-  var opts: gnu.Opt[] = [];
+  let argv: string[] = args();
+  let opts: gnu.Opt[] = [];
   opts = opts.append(gnu.flag("1", "", opt_only1()));
   opts = opts.append(gnu.flag("2", "", opt_only2()));
   opts = opts.append(gnu.flag("3", "", opt_both()));
@@ -217,15 +217,15 @@ pub function main(): i32 {
   opts = opts.append(gnu.flag("", "total", opt_total()));
   opts = opts.append(gnu.flag("z", "zero-terminated", opt_zero()));
 
-  var cfg: Cfg = Cfg { only1: true, only2: true, both: true, sep: "\t", check: order_default(), total: false, term: 10 };
-  var delim_specified: boolean = false;
-  var delim_given: string = "";
+  let cfg: Cfg = Cfg { only1: true, only2: true, both: true, sep: "\t", check: order_default(), total: false, term: 10 };
+  let delim_specified: boolean = false;
+  let delim_given: string = "";
 
-  var g: gnu.Getopt = gnu.getopt_new(argv, opts, "comm", help_text(), 1);
+  let g: gnu.Getopt = gnu.getopt_new(argv, opts, "comm", help_text(), 1);
   while (true) {
-    var r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    let r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = r.1;
-    var done: boolean = false;
+    let done: boolean = false;
     match (r.0) {
       Some(m) => {
         if (m.id == opt_only1()) {
@@ -251,7 +251,7 @@ pub function main(): i32 {
           }
           delim_given = m.value;
           delim_specified = true;
-          var sep: string = m.value;
+          let sep: string = m.value;
           if (sep.len() == 0) {
             sep = string_from_bytes_unchecked([0 as u8]);
           }
@@ -267,7 +267,7 @@ pub function main(): i32 {
     }
   }
 
-  var operands: string[] = g.operands();
+  let operands: string[] = g.operands();
   if (operands.len() < 1) {
     gnu.error("missing operand");
     gnu.try_help(1);
@@ -280,10 +280,10 @@ pub function main(): i32 {
     gnu.error("extra operand " + gnu.quote(operands[2]));
     gnu.try_help(1);
   }
-  var name1: string = operands[0];
-  var name2: string = operands[1];
+  let name1: string = operands[0];
+  let name2: string = operands[1];
 
-  var r1: Reader = stdin();
+  let r1: Reader = stdin();
   if (name1 != "-") {
     match (open_reader(name1)) {
       Ok(f) => {
@@ -295,7 +295,7 @@ pub function main(): i32 {
       }
     }
   }
-  var r2: Reader = stdin();
+  let r2: Reader = stdin();
   if (name2 != "-") {
     match (open_reader(name2)) {
       Ok(f) => {
@@ -315,62 +315,62 @@ pub function main(): i32 {
 // is flushed once it holds a block, so no byte is copied into an
 // accumulator on the way.
 function merge(r1: Reader, r2: Reader, name1: string, name2: string, cfg: Cfg): i32 {
-  var out: io_buffered.BufWriter = gnu.out_with(write_block());
-  var h: usize = out.handle();
-  var block: i32 = write_block();
-  var term: i32 = cfg.term;
+  let out: io_buffered.BufWriter = gnu.out_with(write_block());
+  let h: usize = out.handle();
+  let block: i32 = write_block();
+  let term: i32 = cfg.term;
   // Both operands `-` is ONE stream in GNU, read alternately by the two
   // sides; the scan state is copied across after each read so it stays
   // one cursor here too.
-  var shared: boolean = name1 == "-" && name2 == "-";
+  let shared: boolean = name1 == "-" && name2 == "-";
 
-  var chunk1: string = "";
-  var pos1: i32 = 0;
-  var eof1: boolean = false;
-  var chunk2: string = "";
-  var pos2: i32 = 0;
-  var eof2: boolean = false;
+  let chunk1: string = "";
+  let pos1: i32 = 0;
+  let eof1: boolean = false;
+  let chunk2: string = "";
+  let pos2: i32 = 0;
+  let eof2: boolean = false;
 
   // A line is the range `[lo, hi)` of `cur`: the block it was found in,
   // or a string of its own when it straddled two blocks.
-  var cur1: string = "";
-  var lo1: i32 = 0;
-  var hi1: i32 = 0;
-  var cur2: string = "";
-  var lo2: i32 = 0;
-  var hi2: i32 = 0;
-  var have1: boolean = false;
-  var have2: boolean = false;
+  let cur1: string = "";
+  let lo1: i32 = 0;
+  let hi1: i32 = 0;
+  let cur2: string = "";
+  let lo2: i32 = 0;
+  let hi2: i32 = 0;
+  let have1: boolean = false;
+  let have2: boolean = false;
   // The two lines before the current one, for the order check GNU makes
   // at end of input: an unpairable line seen late turns the check on
   // after the last pair was already read, so that pair is re-examined.
-  var back1a: string = "";
-  var alo1: i32 = 0;
-  var ahi1: i32 = 0;
-  var back1b: string = "";
-  var blo1: i32 = 0;
-  var bhi1: i32 = 0;
-  var back2a: string = "";
-  var alo2: i32 = 0;
-  var ahi2: i32 = 0;
-  var back2b: string = "";
-  var blo2: i32 = 0;
-  var bhi2: i32 = 0;
-  var read1: i32 = 0;
-  var read2: i32 = 0;
+  let back1a: string = "";
+  let alo1: i32 = 0;
+  let ahi1: i32 = 0;
+  let back1b: string = "";
+  let blo1: i32 = 0;
+  let bhi1: i32 = 0;
+  let back2a: string = "";
+  let alo2: i32 = 0;
+  let ahi2: i32 = 0;
+  let back2b: string = "";
+  let blo2: i32 = 0;
+  let bhi2: i32 = 0;
+  let read1: i32 = 0;
+  let read2: i32 = 0;
 
   // GNU's writeline: a column prints only if it was not suppressed, and
   // carries one delimiter for each column to its LEFT that is printed,
   // so `comm -1` starts its second column at the left margin. Built
   // once, because joining them per line allocates per line.
-  var show1: boolean = cfg.only1;
-  var show2: boolean = cfg.only2;
-  var show3: boolean = cfg.both;
-  var pre2: string = "";
+  let show1: boolean = cfg.only1;
+  let show2: boolean = cfg.only2;
+  let show3: boolean = cfg.both;
+  let pre2: string = "";
   if (cfg.only1) {
     pre2 = cfg.sep;
   }
-  var pre3: string = "";
+  let pre3: string = "";
   if (cfg.only1) {
     pre3 = pre3 + cfg.sep;
   }
@@ -383,33 +383,33 @@ function merge(r1: Reader, r2: Reader, name1: string, name2: string, cfg: Cfg): 
   // each file warns at most once. Three locals rather than a struct
   // because the unpairable flag is set once per unpaired line, and a
   // struct update allocates.
-  var seen_unpairable: boolean = false;
-  var issued1: boolean = false;
-  var issued2: boolean = false;
-  var t0: u64 = 0 as u64;
-  var t1: u64 = 0 as u64;
-  var t2: u64 = 0 as u64;
+  let seen_unpairable: boolean = false;
+  let issued1: boolean = false;
+  let issued2: boolean = false;
+  let t0: u64 = 0 as u64;
+  let t1: u64 = 0 as u64;
+  let t2: u64 = 0 as u64;
 
   // Each side is stepped at the TOP of the iteration that needs it,
   // which is where GNU's check_order sees the same seen_unpairable it
   // would have seen stepping at the bottom of the previous one.
-  var need1: boolean = true;
-  var need2: boolean = true;
+  let need1: boolean = true;
+  let need2: boolean = true;
   while (true) {
     if (need1) {
       need1 = false;
-      var line: string = "";
-      var llo: i32 = 0;
-      var lhi: i32 = 0;
-      var st: i32 = status_line();
-      var j: i32 = __memchr(chunk1, term, pos1);
+      let line: string = "";
+      let llo: i32 = 0;
+      let lhi: i32 = 0;
+      let st: i32 = status_line();
+      let j: i32 = __memchr(chunk1, term, pos1);
       if (j >= 0) {
         line = chunk1;
         llo = pos1;
         lhi = j + 1;
         pos1 = j + 1;
       } else {
-        var u: (string, string, i32, boolean, i32, string) = next_line_slow(r1, chunk1, pos1, eof1, term);
+        let u: (string, string, i32, boolean, i32, string) = next_line_slow(r1, chunk1, pos1, eof1, term);
         line = u.0;
         lhi = line.len();
         chunk1 = u.1;
@@ -439,7 +439,7 @@ function merge(r1: Reader, r2: Reader, name1: string, name2: string, cfg: Cfg): 
         have1 = false;
       }
       if (read1 >= 2 && should_check(cfg, seen_unpairable, issued1)) {
-        var order: i32 = cmp_lines(back1b, blo1, bhi1, cur1, lo1, hi1);
+        let order: i32 = cmp_lines(back1b, blo1, bhi1, cur1, lo1, hi1);
         if (!have1) {
           order = cmp_lines(back1a, alo1, ahi1, back1b, blo1, bhi1);
         }
@@ -456,18 +456,18 @@ function merge(r1: Reader, r2: Reader, name1: string, name2: string, cfg: Cfg): 
     }
     if (need2) {
       need2 = false;
-      var line: string = "";
-      var llo: i32 = 0;
-      var lhi: i32 = 0;
-      var st: i32 = status_line();
-      var j: i32 = __memchr(chunk2, term, pos2);
+      let line: string = "";
+      let llo: i32 = 0;
+      let lhi: i32 = 0;
+      let st: i32 = status_line();
+      let j: i32 = __memchr(chunk2, term, pos2);
       if (j >= 0) {
         line = chunk2;
         llo = pos2;
         lhi = j + 1;
         pos2 = j + 1;
       } else {
-        var u: (string, string, i32, boolean, i32, string) = next_line_slow(r2, chunk2, pos2, eof2, term);
+        let u: (string, string, i32, boolean, i32, string) = next_line_slow(r2, chunk2, pos2, eof2, term);
         line = u.0;
         lhi = line.len();
         chunk2 = u.1;
@@ -497,7 +497,7 @@ function merge(r1: Reader, r2: Reader, name1: string, name2: string, cfg: Cfg): 
         have2 = false;
       }
       if (read2 >= 2 && should_check(cfg, seen_unpairable, issued2)) {
-        var order: i32 = cmp_lines(back2b, blo2, bhi2, cur2, lo2, hi2);
+        let order: i32 = cmp_lines(back2b, blo2, bhi2, cur2, lo2, hi2);
         if (!have2) {
           order = cmp_lines(back2a, alo2, ahi2, back2b, blo2, bhi2);
         }
@@ -516,7 +516,7 @@ function merge(r1: Reader, r2: Reader, name1: string, name2: string, cfg: Cfg): 
       break;
     }
 
-    var order: i32 = 0;
+    let order: i32 = 0;
     if (!have1) {
       order = 1;
     } else if (!have2) {
@@ -524,7 +524,7 @@ function merge(r1: Reader, r2: Reader, name1: string, name2: string, cfg: Cfg): 
     } else {
       order = cmp_lines(cur1, lo1, hi1, cur2, lo2, hi2);
     }
-    var class: i32 = 3;
+    let class: i32 = 3;
     if (order < 0) {
       class = 1;
     } else if (order > 0) {
@@ -540,7 +540,7 @@ function merge(r1: Reader, r2: Reader, name1: string, name2: string, cfg: Cfg): 
         t1 = t1 + 1 as u64;
       }
     }
-    var wrote: boolean = false;
+    let wrote: boolean = false;
     if (class == 1) {
       if (show1) {
         buf_push_range(h, cur1, lo1, hi1);
@@ -636,7 +636,7 @@ function should_check(cfg: Cfg, seen_unpairable: boolean, issued: boolean): bool
 // The out-of-order diagnostic: fatal under `--check-order`, a warning
 // by default that the exit status picks up at the end.
 function disorder(o: io_buffered.BufWriter, cfg: Cfg, which: i32): io_buffered.BufWriter {
-  var msg: string = "file " + which.to_string() + " is not in sorted order";
+  let msg: string = "file " + which.to_string() + " is not in sorted order";
   if (cfg.check == order_enabled()) {
     gnu.die(o, msg, 1);
   }

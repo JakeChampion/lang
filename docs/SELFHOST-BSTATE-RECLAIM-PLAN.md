@@ -196,8 +196,8 @@ struct St { name: string, a: i32, xs: i32[], ys: string[] }
 function mk(name: string, a: i32, xs: i32[], ys: string[]): St { return St { name: name, a: a, xs: xs, ys: ys }; }
 function (s: St) bump(): St { return mk(s.name, s.a + 1, s.xs, s.ys); }   // shares carried fields
 function main(): i32 {
-    var s: St = St { name: "hello", a: 0, xs: [1, 2, 3], ys: ["p", "q"] };
-    var i: i32 = 0;
+    let s: St = St { name: "hello", a: 0, xs: [1, 2, 3], ys: ["p", "q"] };
+    let i: i32 = 0;
     while (i < 200000000) { s = s.bump(); i = i + 1; }   // 200M field-sharing replacements
     return s.a;
 }
@@ -218,14 +218,14 @@ overwrite path was never the problem.
 
 ### The real leak: a missing drop for dead intermediate locals
 
-The OOM is a different, narrower bug. A `var` local that holds a heap value,
+The OOM is a different, narrower bug. A `let` local that holds a heap value,
 then **dies after being consumed by a borrowing call** (its value flowing
 into a *different* result), is **never freed**:
 
 ```fern
 function f(s: St): St {
-    var t: St = s.bump();    // box1
-    var u: St = t.bump();    // box2 ; t (box1) is now dead — last use was a borrow
+    let t: St = s.bump();    // box1
+    let u: St = t.bump();    // box2 ; t (box1) is now dead — last use was a borrow
     return u;                // box2 moves out ; box1 should be freed here, but is NOT
 }
 // loop: s = f(s)  — 20,000,000 iterations
@@ -233,13 +233,13 @@ function f(s: St): St {
 
 This leaks ~one box per call: **915 MB over 20M iterations** (vs. the flat
 200M-iteration overwrite loop above). The difference is the *form of death*:
-an **overwrite** (`s = …`) fires the reclaim, but an intermediate `var` that
+an **overwrite** (`s = …`) fires the reclaim, but an intermediate `let` that
 simply **goes out of scope after a borrow** does not get its drop inserted.
 The reclaim here is conservative — when last-use can't be proved unique past
 a call, it leaks rather than risk a double-free (sound, but unbounded).
 
 This is the shape that dominates the self-compile. `build_expr` / `build_stmt`
-create many intermediate locals (`var t = walk(...)`, `var r: BResult = …`,
+create many intermediate locals (`let t = walk(...)`, `let r: BResult = …`,
 nested `s = build_expr(child, s)` whose recursion holds transient state) — and
 in `wasm.fern`'s large functions there are thousands of them per build. The
 leak is proportional to **total intermediate locals across the build**, which
@@ -262,7 +262,7 @@ freeing drop, rather than being excluded as a possibly-aliased value.
 **Next step:** pin the exact exclusion in the IR that drops `box1` on the
 floor (likely a "passed to a call → treat as possibly-escaped → don't free"
 conservatism), add a leak-regression e2e test (peak-RSS-bounded or
-alloc/free-balance counted) for the `var t = f(x); g(t)` shape, fix the drop,
+alloc/free-balance counted) for the `let t = f(x); g(t)` shape, fix the drop,
 and re-measure `wasm.fern` SSA-emit (baseline **935 MB → expect tens of MB**,
 matching `asm.fern`). Gate on `TestSelfHostStdTestE2E` + the fixpoint matrix
 from the first commit (the #2538/#2568 lesson: leaks pass the fixpoint; only
@@ -273,7 +273,7 @@ no new analysis, and the leak is a drop-insertion fix, not a reuse feature.
 **2026-07-03 — the NATIVE half landed (#4357).** The exclusion was pinned
 exactly where predicted: `rhsTainted`'s `*ast.Call` case
 (`internal/ir/rc_analysis.go`) propagated receiver/arg taint into the call
-RESULT, so `var t = f(x)` over any param-derived `x` was permanently
+RESULT, so `let t = f(x)` over any param-derived `x` was permanently
 free-INeligible. The fix consults `findReturnsNoParamEscape` — the existing
 interprocedural, transitively slot-sensitive "every return is built from
 scalars and fresh constructions" oracle (exactly the return-field-freshness
@@ -281,7 +281,7 @@ fixpoint the RC-PERCEUS-SELF-HOST-PORT Increment-A history specifies, already
 trusted by the nested-call temp reclaim) — and untaints the result of a
 qualifying free-function call. Regression:
 `internal/e2e/rc_heap_bump_intermediate_local_test.go` (bounded high-water on
-the `var t = f(x); var u = g(t)` shape + the `id(s)`-returns-param soundness
+the `let t = f(x); let u = g(t)` shape + the `id(s)`-returns-param soundness
 negative, x86-64 / arm64 / wasm). Residuals: METHOD callees keep the taint
 (the oracle map is keyed by free-fn name), and the SELF-HOST mirror still
 needs its `fresh_array_ret_fns` fixpoint — the self-host already reclaims the
@@ -303,9 +303,9 @@ native residuals above; only one is still live:
   reclaim the fresh result. Consulting the oracle for methods would be a
   correct parity tidy-up but is not observable — struck from the live-gap
   list pending a concrete repro.
-- **Map-returning intermediates — real leak, precise root cause.** `var m =
+- **Map-returning intermediates — real leak, precise root cause.** `let m =
   mk(i)` and a discarded `mk(i)` both leak on native x86-64 (exit 98 on the
-  `__heap_bump_bytes` fixpoint), while an inline `var m = map_new(8); m =
+  `__heap_bump_bytes` fixpoint), while an inline `let m = map_new(8); m =
   m.insert(..)` loop-local bounds. Root cause: `mk` cow-threads its map
   (`m = m.insert(1, k); return m`), and `computeFreshLocals` (`ir.go`) admits
   only single-assignment locals used *only in return position* — the

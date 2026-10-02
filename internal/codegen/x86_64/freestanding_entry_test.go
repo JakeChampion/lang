@@ -38,7 +38,7 @@ func compileWithOptions(t *testing.T, src string, opts Options) string {
 // __fern_exit is), which between them pull in every runtime piece that
 // capability gating cannot remove.
 const allocatingSrc = `function main(): i32 {
-	var xs: i32[] = [1, 2, 3];
+	let xs: i32[] = [1, 2, 3];
 	if (xs.len() == 0) { exit(1); }
 	return 0;
 }`

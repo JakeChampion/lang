@@ -31,33 +31,33 @@ func TestSelfHostArrayBoundsIR(t *testing.T) {
 		want int
 	}{
 		{"read-past-end",
-			`function main(): i32 { var a: i32[] = [1, 2, 3]; return a[5]; }`, 134},
+			`function main(): i32 { let a: i32[] = [1, 2, 3]; return a[5]; }`, 134},
 		{"read-negative",
-			`function main(): i32 { var a: i32[] = [1, 2, 3]; var i: i32 = 0 - 1; return a[i]; }`, 134},
+			`function main(): i32 { let a: i32[] = [1, 2, 3]; let i: i32 = 0 - 1; return a[i]; }`, 134},
 		{"read-at-len",
-			`function main(): i32 { var a: i32[] = [1, 2, 3]; return a[3]; }`, 134},
+			`function main(): i32 { let a: i32[] = [1, 2, 3]; return a[3]; }`, 134},
 		{"write-past-end",
-			`function main(): i32 { var a: i32[] = [1, 2, 3]; a = a.with(5, 9); return a[0]; }`, 134},
+			`function main(): i32 { let a: i32[] = [1, 2, 3]; a = a.with(5, 9); return a[0]; }`, 134},
 		// In-range: every element read + a write, no abort. 10+20+30 -> exit 60.
 		{"in-range-ok",
-			`function main(): i32 { var a: i32[] = [10, 20, 30]; a = a.with(1, 20); var s: i32 = 0; var i: i32 = 0; while (i < 3) { s = s + a[i]; i = i + 1; } return s; }`, 60},
+			`function main(): i32 { let a: i32[] = [10, 20, 30]; a = a.with(1, 20); let s: i32 = 0; let i: i32 = 0; while (i < 3) { s = s + a[i]; i = i + 1; } return s; }`, 60},
 		// STRING index, the same contract one op over (#8454). op_str_index
 		// emitted a bare `movzbl (%rax,%rcx)` with no compare, so the
 		// self-host read past the end while the native tier aborted. The
 		// index goes through a call so nothing folds it to a constant.
 		{"str-read-past-end",
 			`function idx(): i32 { return 5; }
-function main(): i32 { var s: string = "abc"; return s[idx()] as i32; }`, 134},
+function main(): i32 { let s: string = "abc"; return s[idx()] as i32; }`, 134},
 		{"str-read-at-len",
 			`function idx(): i32 { return 3; }
-function main(): i32 { var s: string = "abc"; return s[idx()] as i32; }`, 134},
+function main(): i32 { let s: string = "abc"; return s[idx()] as i32; }`, 134},
 		{"str-read-negative",
 			`function idx(): i32 { return 0 - 1; }
-function main(): i32 { var s: string = "abc"; return s[idx()] as i32; }`, 134},
+function main(): i32 { let s: string = "abc"; return s[idx()] as i32; }`, 134},
 		// In-range: 'a' + 'c' -> 97 + 99 -> exit 196.
 		{"str-in-range-ok",
 			`function idx(i: i32): i32 { return i; }
-function main(): i32 { var s: string = "abc"; return (s[idx(0)] as i32) + (s[idx(2)] as i32); }`, 196},
+function main(): i32 { let s: string = "abc"; return (s[idx(0)] as i32) + (s[idx(2)] as i32); }`, 196},
 	}
 
 	for _, tc := range cases {
@@ -112,23 +112,23 @@ func TestSelfHostArrayBoundsIRArm64(t *testing.T) {
 		want int
 	}{
 		{"read-past-end",
-			`function main(): i32 { var a: i32[] = [1, 2, 3]; return a[5]; }`, 134},
+			`function main(): i32 { let a: i32[] = [1, 2, 3]; return a[5]; }`, 134},
 		{"read-negative",
-			`function main(): i32 { var a: i32[] = [1, 2, 3]; var i: i32 = 0 - 1; return a[i]; }`, 134},
+			`function main(): i32 { let a: i32[] = [1, 2, 3]; let i: i32 = 0 - 1; return a[i]; }`, 134},
 		{"write-past-end",
-			`function main(): i32 { var a: i32[] = [1, 2, 3]; a = a.with(5, 9); return a[0]; }`, 134},
+			`function main(): i32 { let a: i32[] = [1, 2, 3]; a = a.with(5, 9); return a[0]; }`, 134},
 		{"in-range-ok",
-			`function main(): i32 { var a: i32[] = [10, 20, 30]; a = a.with(1, 20); var s: i32 = 0; var i: i32 = 0; while (i < 3) { s = s + a[i]; i = i + 1; } return s; }`, 60},
+			`function main(): i32 { let a: i32[] = [10, 20, 30]; a = a.with(1, 20); let s: i32 = 0; let i: i32 = 0; while (i < 3) { s = s + a[i]; i = i + 1; } return s; }`, 60},
 		// STRING index, the arm64 half of #8454.
 		{"str-read-past-end",
 			`function idx(): i32 { return 5; }
-function main(): i32 { var s: string = "abc"; return s[idx()] as i32; }`, 134},
+function main(): i32 { let s: string = "abc"; return s[idx()] as i32; }`, 134},
 		{"str-read-negative",
 			`function idx(): i32 { return 0 - 1; }
-function main(): i32 { var s: string = "abc"; return s[idx()] as i32; }`, 134},
+function main(): i32 { let s: string = "abc"; return s[idx()] as i32; }`, 134},
 		{"str-in-range-ok",
 			`function idx(i: i32): i32 { return i; }
-function main(): i32 { var s: string = "abc"; return (s[idx(0)] as i32) + (s[idx(2)] as i32); }`, 196},
+function main(): i32 { let s: string = "abc"; return (s[idx(0)] as i32) + (s[idx(2)] as i32); }`, 196},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

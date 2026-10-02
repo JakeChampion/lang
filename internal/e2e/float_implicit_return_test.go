@@ -49,21 +49,21 @@ function mk64(xs: f64[]): Option[f64] {
 }
 
 function near64(a: f64, b: f64): boolean {
-    var d: f64 = a - b;
+    let d: f64 = a - b;
     if (d < 0.0) { d = 0.0 - d; }
     return d < 0.0001;
 }
 
 function near32(a: f32, b: f32): boolean {
-    var d: f64 = (a as f64) - (b as f64);
+    let d: f64 = (a as f64) - (b as f64);
     if (d < 0.0) { d = 0.0 - d; }
     return d < 0.001;
 }
 
 function main(): i32 {
-    var xs: f64[] = [3.5];
+    let xs: f64[] = [3.5];
     if (!near64(unwrap64(mk64(xs)), 3.5)) { return 1; }
-    var empty: f64[] = [];
+    let empty: f64[] = [];
     if (!near64(unwrap64(mk64(empty)), 0.0 - 999.0)) { return 2; }
 
     if (!near64(pick64(true, 1.5, 2.5), 1.5)) { return 3; }

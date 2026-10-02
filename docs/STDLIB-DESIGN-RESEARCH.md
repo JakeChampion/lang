@@ -177,7 +177,7 @@ case-insensitive lookup, ordered iteration.
 HTTP becomes:
 
 ```
-var resp = plat.fetch(HttpRequest {
+let resp = plat.fetch(HttpRequest {
     method: "POST",
     path:   "https://auth/login",
     headers: headers!{ "content-type": "application/json" },
@@ -266,7 +266,7 @@ mode after the DOM mode.** Streaming and SIMD can wait.
 
 - Most edge handlers receive JSON request bodies of *known
   shape*. `json_parse[CreateUser](req.body)` is what the
-  code wants to write, not `var v = json_parse(req.body);
+  code wants to write, not `let v = json_parse(req.body);
   match v { Object(m) => ... }`.
 - Errors are better. "Expected `name: string`, found number
   at offset 42" beats "type assertion failed."
@@ -281,7 +281,7 @@ mode after the DOM mode.** Streaming and SIMD can wait.
 
 ```
 // DOM mode (today).
-var v = json_parse(req.body);
+let v = json_parse(req.body);
 match v {
     Object(m) => …,
     _ => return http.bad_request(),
@@ -289,7 +289,7 @@ match v {
 
 // Schema mode (new):
 struct CreateUser { name: string, age: i32 }
-var u = json_parse[CreateUser](req.body)?;  // Result return
+let u = json_parse[CreateUser](req.body)?;  // Result return
 // u.name and u.age are typed and validated.
 ```
 
@@ -506,34 +506,34 @@ struct Duration { sec: i64, nsec: i32 }            // absolute interval
 Construction:
 
 ```
-var now = Instant.now();
-var today = Date.today_utc();
-var d = Date { year: 2026, month: 5, day: 19 };
-var dt = DateTime { date: d, time: Time { hour: 14, minute: 0, second: 0, nsec: 0 } };
-var zoned = dt.in_zone(TimeZone.iana("America/New_York"))?;
+let now = Instant.now();
+let today = Date.today_utc();
+let d = Date { year: 2026, month: 5, day: 19 };
+let dt = DateTime { date: d, time: Time { hour: 14, minute: 0, second: 0, nsec: 0 } };
+let zoned = dt.in_zone(TimeZone.iana("America/New_York"))?;
 ```
 
 Arithmetic:
 
 ```
-var tomorrow = today.add_days(1);             // calendar add
-var later = now.add(Duration::seconds(3600)); // absolute add
-var diff = end.duration_since(start);         // → Duration
-var span = end.span_since(start);             // → Span
+let tomorrow = today.add_days(1);             // calendar add
+let later = now.add(Duration::seconds(3600)); // absolute add
+let diff = end.duration_since(start);         // → Duration
+let span = end.span_since(start);             // → Span
 ```
 
 Parse / format:
 
 ```
-var ts = Instant.parse_rfc3339("2026-05-19T14:30:00Z")?;
-var s = ts.format_rfc3339();
+let ts = Instant.parse_rfc3339("2026-05-19T14:30:00Z")?;
+let s = ts.format_rfc3339();
 ```
 
 Timezone data:
 
 ```
-var tz = TimeZone.iana("America/New_York")?;    // load from system
-var local = Instant.now().in_zone(TimeZone.local()?);
+let tz = TimeZone.iana("America/New_York")?;    // load from system
+let local = Instant.now().in_zone(TimeZone.local()?);
 ```
 
 #### What translates from each source
@@ -646,7 +646,7 @@ generalisation is letting handler code do the same with
 any writer:
 
 ```
-var buf = MemoryWriter.new();
+let buf = MemoryWriter.new();
 json_encode_to(buf, payload);
 return HttpResponse { status: 200, body: BodyBytes(buf.bytes()) };
 ```
@@ -777,7 +777,7 @@ walker for each struct type seen as the type arg:
 
 ```
 struct CreateUser { name: string, age: i32 }
-var u = json_parse[CreateUser](req.body_bytes()?)?;
+let u = json_parse[CreateUser](req.body_bytes()?)?;
 ```
 
 The generated decoder walks the input bytes once,

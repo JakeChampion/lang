@@ -13,9 +13,9 @@ import (
 // `function f(s: S): R { s = s.step(x); ...; return ... }`, where a struct PARAM
 // (or method receiver) is threaded through a consume-rebind. Such a param is not
 // reclaimable the normal way (params are caller-owned, and the final value may
-// share the caller's fields), so lower_func snapshots the param's ENTRY box into
-// a hidden `$snap$<name>` local and each reassign frees the old box only when it
-// differs from BOTH the new value (cow) AND the snapshot — via the helper
+// share the caller's fields), so lower_func snapshotted the param's ENTRY box into
+// a hidden `$snap$<name>` local and each reassign freed the old box only when it
+// differed from BOTH the new value (cow) AND the snapshot — via the helper
 // __fern_snapshot_dec(new, old, snap) -> new. A function thus reclaims its OWN
 // intermediate builder boxes but never the caller's original.
 //
@@ -63,15 +63,15 @@ func TestSelfHostSnapshotParamReclaimIRX86_64(t *testing.T) {
 	run(t, `struct C { a: i32, n: i32 }
 function (c: C) step(v: i32): C { return C { a: c.a + v, n: c.n + 1 }; }
 function heavy(c: C): i32 {
-    var k: i32 = 0;
+    let k: i32 = 0;
     while (k < 200) { c = c.step(k); k = k + 1; }
     return c.n;
 }
 function main(): i32 {
-    var f: i32 = 0;
+    let f: i32 = 0;
     while (f < 3000000) {
-        var seed: C = C { a: 0, n: 0 };
-        var r: i32 = heavy(seed);
+        let seed: C = C { a: 0, n: 0 };
+        let r: i32 = heavy(seed);
         f = f + 1 + (r - r);
     }
     return 0;
@@ -84,8 +84,8 @@ function main(): i32 {
 function (c: C) step(v: i32): C { return C { a: c.a + v, n: c.n + 1 }; }
 function thread(c: C): i32 { c = c.step(10); c = c.step(20); return c.a; }
 function main(): i32 {
-    var seed: C = C { a: 5, n: 0 };
-    var t: i32 = thread(seed);
+    let seed: C = C { a: 5, n: 0 };
+    let t: i32 = thread(seed);
     return seed.a + t;
 }`, "snap_param_caller_intact", 40)
 
@@ -96,9 +96,9 @@ function main(): i32 {
 function (e: E) emit(v: i32): E { return E { buf: e.buf.append(v), n: e.n + 1 }; }
 function build(e: E): E { e = e.emit(1); e = e.emit(2); e = e.emit(3); return e; }
 function main(): i32 {
-    var e: E = E { buf: [], n: 0 };
+    let e: E = E { buf: [], n: 0 };
     e = build(e);
-    var sum: i32 = 0; var j: i32 = 0;
+    let sum: i32 = 0; let j: i32 = 0;
     while (j < e.buf.len()) { sum = sum + e.buf[j]; j = j + 1; }
     return sum + e.n;
 }`, "snap_param_heapfield", 9)
@@ -143,8 +143,8 @@ func TestSelfHostSnapshotParamReclaimArm64(t *testing.T) {
 function (c: C) step(v: i32): C { return C { a: c.a + v, n: c.n + 1 }; }
 function thread(c: C): i32 { c = c.step(10); c = c.step(20); return c.a; }
 function main(): i32 {
-    var seed: C = C { a: 5, n: 0 };
-    var t: i32 = thread(seed);
+    let seed: C = C { a: 5, n: 0 };
+    let t: i32 = thread(seed);
     return seed.a + t;
 }`, "snap_param_caller_intact_arm64", 40, true)
 
@@ -159,12 +159,12 @@ function main(): i32 {
 	run(t, `struct C { a: i32, n: i32 }
 function (c: C) step(v: i32): C { return C { a: c.a + v, n: c.n + 1 }; }
 function build(c: C): i32 {
-    var k: i32 = 0;
+    let k: i32 = 0;
     while (k < 50) { c = c.step(k); k = k + 1; }
     return c.a;
 }
 function main(): i32 {
-    var seed: C = C { a: 0, n: 0 };
+    let seed: C = C { a: 0, n: 0 };
     return build(seed) - 1218;
 }`, "snap_param_scalar_churn_arm64", 7, true)
 }
@@ -215,8 +215,8 @@ func TestSelfHostSnapshotParamReclaimWasm(t *testing.T) {
 function (c: C) step(v: i32): C { return C { a: c.a + v, n: c.n + 1 }; }
 function thread(c: C): i32 { c = c.step(10); c = c.step(20); return c.a; }
 function main(): i32 {
-    var seed: C = C { a: 5, n: 0 };
-    var t: i32 = thread(seed);
+    let seed: C = C { a: 5, n: 0 };
+    let t: i32 = thread(seed);
     return seed.a + t;
 }`, "snap_param_caller_intact_wasm", "thread", 40)
 
@@ -227,12 +227,12 @@ function main(): i32 {
 	run(t, `struct C { a: i32, n: i32 }
 function (c: C) step(v: i32): C { return C { a: c.a + v, n: c.n + 1 }; }
 function build(c: C): i32 {
-    var k: i32 = 0;
+    let k: i32 = 0;
     while (k < 50) { c = c.step(k); k = k + 1; }
     return c.a;
 }
 function main(): i32 {
-    var seed: C = C { a: 0, n: 0 };
+    let seed: C = C { a: 0, n: 0 };
     return build(seed) - 1218;
 }`, "snap_param_scalar_churn_wasm", "build", 7)
 }

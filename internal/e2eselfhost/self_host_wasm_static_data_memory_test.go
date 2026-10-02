@@ -41,9 +41,9 @@ const (
 // move rather than merely that the module loaded.
 func bigLiteralProgram() string {
 	var b strings.Builder
-	b.WriteString("function main(): i32 {\n  var n: i32 = 0;\n")
+	b.WriteString("function main(): i32 {\n  let n: i32 = 0;\n")
 	for i := 0; i < bigLiteralCount; i++ {
-		fmt.Fprintf(&b, "  var s%d: string = \"%04d%s\";\n", i, i, strings.Repeat("x", bigLiteralBytes-4))
+		fmt.Fprintf(&b, "  let s%d: string = \"%04d%s\";\n", i, i, strings.Repeat("x", bigLiteralBytes-4))
 		fmt.Fprintf(&b, "  n = n + s%d.len();\n", i)
 	}
 	fmt.Fprintf(&b, "  return n / %d;\n}\n", bigLiteralBytes)

@@ -24,8 +24,8 @@ func TestLiteralOnlySlotLosesItsRelease(t *testing.T) {
 	src := `function pairs(): string { return "00010203040506070809"; }
 @noinline function g(s: string, i: i32): i32 { return s.len() + i; }
 @noinline function lit(n: i32): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
         t = t + g(pairs(), i);
         i = i + 1;
@@ -33,10 +33,10 @@ func TestLiteralOnlySlotLosesItsRelease(t *testing.T) {
     return t;
 }
 @noinline function built(n: i32, k: string): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var s: string = pairs();
+        let s: string = pairs();
         if (i > 1) { s = k + "x"; }
         t = t + g(s, i);
         i = i + 1;

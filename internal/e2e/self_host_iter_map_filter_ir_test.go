@@ -13,7 +13,7 @@ import (
 // adapters that consume an Iterator and collect into a fresh array (#2691, the
 // iterator-protocol surface that feeds `collect` #2709). Like the predicate
 // adapters, the closure is applied inside a `match` arm, and the whole driver is
-// called in a `var` / `for-in` position; both lower on the self-host IR path now
+// called in a `let` / `for-in` position; both lower on the self-host IR path now
 // that the #2686 condition-lift gap is fixed. The inline prelude mirrors
 // core/iter's `map` / `filter` so both backends exercise byte-for-byte the same
 // shape.
@@ -27,12 +27,12 @@ impl Iterator[i32] for Range {
     }
 }
 pub function map[T, U, I: Iterator[T]](it: I, f: (T) => U): U[] {
-    var out: U[] = []; var cur = it; var go = true;
+    let out: U[] = []; let cur = it; let go = true;
     while (go) { match (cur.next()) { Some(t) => { out = out.append(f(t.0)); cur = t.1; }, None => { go = false; }, } }
     return out;
 }
 pub function filter[T, I: Iterator[T]](it: I, keep: (T) => boolean): T[] {
-    var out: T[] = []; var cur = it; var go = true;
+    let out: T[] = []; let cur = it; let go = true;
     while (go) { match (cur.next()) { Some(t) => { if (keep(t.0)) { out = out.append(t.0); } cur = t.1; }, None => { go = false; }, } }
     return out;
 }
@@ -44,14 +44,14 @@ var iterMapFilterCases = []struct {
 	want int
 }{
 	// map x -> x*x over [0,4): [0,1,4,9]; sum 14 + len 4 = 18.
-	{"map-square", `function main(): i32 { var sq = map(range(0, 4), (x: i32): i32 => { return x * x; }); var s = 0; for v in sq { s = s + v; } return s + sq.len(); }`, 18},
+	{"map-square", `function main(): i32 { let sq = map(range(0, 4), (x: i32): i32 => { return x * x; }); let s = 0; for v in sq { s = s + v; } return s + sq.len(); }`, 18},
 	// filter even over [0,8): [0,2,4,6]; sum 12 + len 4 = 16.
-	{"filter-even", `function main(): i32 { var ev = filter(range(0, 8), (x: i32): boolean => { return x % 2 == 0; }); var t = 0; for v in ev { t = t + v; } return t + ev.len(); }`, 16},
+	{"filter-even", `function main(): i32 { let ev = filter(range(0, 8), (x: i32): boolean => { return x % 2 == 0; }); let t = 0; for v in ev { t = t + v; } return t + ev.len(); }`, 16},
 	// map to a DIFFERENT element type (U ≠ T): i32 → boolean (is-even) over [0,5)
 	// = [T,F,T,F,T]; count the trues → 3.
-	{"map-to-bool", `function main(): i32 { var bs = map(range(0, 5), (x: i32): boolean => { return x % 2 == 0; }); var c = 0; for b in bs { if (b) { c = c + 1; } } return c; }`, 3},
+	{"map-to-bool", `function main(): i32 { let bs = map(range(0, 5), (x: i32): boolean => { return x % 2 == 0; }); let c = 0; for b in bs { if (b) { c = c + 1; } } return c; }`, 3},
 	// map over an empty range yields an empty array → len 0; +7 = 7.
-	{"map-empty", `function main(): i32 { var e = map(range(3, 3), (x: i32): i32 => { return x + 1; }); return e.len() + 7; }`, 7},
+	{"map-empty", `function main(): i32 { let e = map(range(3, 3), (x: i32): i32 => { return x + 1; }); return e.len() + 7; }`, 7},
 }
 
 func iterMapFilterProg(mainBody string) string { return iterMapFilterPrelude + mainBody + "\n" }
@@ -92,10 +92,10 @@ func TestNativeIterMapFilterArm64(t *testing.T) {
 func TestNativeIterMapFilterModule(t *testing.T) {
 	src := `import "core/iter" as iter;
 function main(): i32 {
-    var sq = iter.map(iter.range(0, 4), (x: i32): i32 => { return x * x; });   // [0,1,4,9]
-    var s = 0; for v in sq { s = s + v; }                                            // 14
-    var ev = iter.filter(iter.range(0, 8), (x: i32): boolean => { return x % 2 == 0; });  // [0,2,4,6]
-    var t = 0; for v in ev { t = t + v; }                                            // 12
+    let sq = iter.map(iter.range(0, 4), (x: i32): i32 => { return x * x; });   // [0,1,4,9]
+    let s = 0; for v in sq { s = s + v; }                                            // 14
+    let ev = iter.filter(iter.range(0, 8), (x: i32): boolean => { return x % 2 == 0; });  // [0,2,4,6]
+    let t = 0; for v in ev { t = t + v; }                                            // 12
     return s + t + sq.len() + ev.len();                                              // 14+12+4+4 = 34
 }
 `

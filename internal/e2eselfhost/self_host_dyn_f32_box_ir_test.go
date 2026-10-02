@@ -17,12 +17,12 @@ trait Show { function show(self: Self): string; }
 impl Show for i32 { function show(self: Self): string { return self.to_string(); } }
 impl Show for f32 { function show(self: Self): string { return "f" + self.to_string(); } }
 function main(): i32 {
-    var x: f32 = 2.5;
-    var y: f32 = 0.1;
-    var xs: dyn Show[] = [41, x, y];
-    var out: string = "";
+    let x: f32 = 2.5;
+    let y: f32 = 0.1;
+    let xs: dyn Show[] = [41, x, y];
+    let out: string = "";
     for d in xs { out = out + d.show() + ";"; }
-    var ds: dyn cmp.Display[] = [y, 7];
+    let ds: dyn cmp.Display[] = [y, 7];
     for d in ds { out = out + d.to_string() + ";"; }
     print(out);
     return 0;

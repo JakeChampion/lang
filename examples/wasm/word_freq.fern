@@ -22,7 +22,7 @@ import "std/string";
 import "std/i32";
 
 function read_all(r: Reader): string {
-  var out: string = "";
+  let out: string = "";
   while (true) {
     match (r.read_line()) {
       Some(line) => {
@@ -40,17 +40,17 @@ function read_all(r: Reader): string {
 // stays attached to words. A real version would walk bytes
 // and split on the wider whitespace + punctuation classes.
 function tokenize(s: string): string[] {
-  var lower: string = s.to_lower();
-  var out: string[] = [];
-  var i: i32 = 0;
-  var sLen: i32 = lower.len();
-  var start: i32 = 0;
+  let lower: string = s.to_lower();
+  let out: string[] = [];
+  let i: i32 = 0;
+  let sLen: i32 = lower.len();
+  let start: i32 = 0;
   while (i <= sLen) {
-    var b: i32 = 0;
+    let b: i32 = 0;
     if (i < sLen) {
       b = lower[i] as i32;
     }
-    var is_break: boolean = i == sLen || b == 32 || b == 9 || b == 10 || b == 13;
+    let is_break: boolean = i == sLen || b == 32 || b == 9 || b == 10 || b == 13;
     if (is_break) {
       if (i > start) {
         out = out.append(slice_unchecked(lower, start, i).to_owned());
@@ -68,12 +68,12 @@ function tokenize(s: string): string[] {
 // pair is returned to the caller as a tuple — the rebinds
 // inside this function aren't visible outside it.
 function sort_pairs(keys: string[], counts: i32[]): (string[], i32[]) {
-  var i: i32 = 1;
+  let i: i32 = 1;
   while (i < counts.len()) {
-    var j: i32 = i;
+    let j: i32 = i;
     while (j > 0 && counts[j] > counts[j - 1]) {
-      var tk: string = keys[j];
-      var tc: i32 = counts[j];
+      let tk: string = keys[j];
+      let tc: i32 = counts[j];
       keys = keys.with(j, keys[j - 1]);
       counts = counts.with(j, counts[j - 1]);
       keys = keys.with(j - 1, tk);
@@ -86,14 +86,14 @@ function sort_pairs(keys: string[], counts: i32[]): (string[], i32[]) {
 }
 
 function main(): i32 {
-  var r: Reader = stdin();
+  let r: Reader = stdin();
   defer r.close();
-  var text: string = read_all(r);
-  var words: string[] = tokenize(text);
-  var counts: Map[string, i32] = map_new(64);
-  var i: i32 = 0;
+  let text: string = read_all(r);
+  let words: string[] = tokenize(text);
+  let counts: Map[string, i32] = map_new(64);
+  let i: i32 = 0;
   while (i < words.len()) {
-    var w: string = words[i];
+    let w: string = words[i];
     match (counts.get(w)) {
       Some(n) => {
         counts = counts.insert(w, n + 1);
@@ -107,16 +107,16 @@ function main(): i32 {
   // Snapshot keys + values into parallel arrays for sort.
   // Insertion-order Map.iter() doesn't guarantee count
   // order — that's what sort_pairs is for.
-  var keys_arr: string[] = counts.keys();
-  var vals_arr: i32[] = counts.values();
-  var sorted: (string[], i32[]) = sort_pairs(keys_arr, vals_arr);
+  let keys_arr: string[] = counts.keys();
+  let vals_arr: i32[] = counts.values();
+  let sorted: (string[], i32[]) = sort_pairs(keys_arr, vals_arr);
   keys_arr = sorted.0;
   vals_arr = sorted.1;
-  var topN: i32 = 5;
+  let topN: i32 = 5;
   if (keys_arr.len() < topN) {
     topN = keys_arr.len();
   }
-  var k: i32 = 0;
+  let k: i32 = 0;
   while (k < topN) {
     print(vals_arr[k].to_string() + "\t" + keys_arr[k]);
     k = k + 1;

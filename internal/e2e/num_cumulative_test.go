@@ -13,22 +13,22 @@ import "testing"
 const numCumulativeProg = `
 import "std/num";
 function main(): i32 {
-    var xs: i32[] = [1, 2, 3, 4];
-    var cs: i32[] = num.cumsum(xs);
+    let xs: i32[] = [1, 2, 3, 4];
+    let cs: i32[] = num.cumsum(xs);
     if (cs.len() != 4 || cs[0] != 1 || cs[1] != 3 || cs[2] != 6 || cs[3] != 10) { return 1; }
-    var cp: i32[] = num.cumproduct(xs);
+    let cp: i32[] = num.cumproduct(xs);
     if (cp.len() != 4 || cp[0] != 1 || cp[1] != 2 || cp[2] != 6 || cp[3] != 24) { return 2; }
     // Empty and single-element.
-    var e: i32[] = [];
+    let e: i32[] = [];
     if (num.cumsum(e).len() != 0 || num.cumproduct(e).len() != 0) { return 3; }
-    var one: i32[] = [42];
+    let one: i32[] = [42];
     if (num.cumsum(one)[0] != 42 || num.cumproduct(one)[0] != 42) { return 4; }
     // Last element equals the full reduction.
     if (num.cumsum(xs)[3] != num.sum(xs)) { return 5; }
     if (num.cumproduct(xs)[3] != num.product(xs)) { return 6; }
     // i64 width.
-    var ls: i64[] = [1000000000, 2000000000, 3000000000];
-    var lcs: i64[] = num.cumsum(ls);
+    let ls: i64[] = [1000000000, 2000000000, 3000000000];
+    let lcs: i64[] = num.cumsum(ls);
     if (lcs[2] != 6000000000) { return 7; }
     return 42;
 }

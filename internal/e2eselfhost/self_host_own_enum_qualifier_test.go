@@ -28,10 +28,10 @@ import (
 const ownEnumQualifierLib = `enum E { Wrap(i32), Nil }
 
 pub function probe(n: i32): i32 {
-    var a: E = E.Wrap(3);
-    var b: E = E.Wrap(n);
-    var u: E = E.Nil;
-    var t: i32 = 0;
+    let a: E = E.Wrap(3);
+    let b: E = E.Wrap(n);
+    let u: E = E.Nil;
+    let t: i32 = 0;
     match (u) {
         E.Wrap(k) => { t = t + k; },
         E.Nil => { t = t + 1; }
@@ -163,7 +163,7 @@ func TestSelfHostOwnEnumQualifierCheckX86_64(t *testing.T) {
 enum Other { Text, Blah }
 
 pub function probe(n: i32): i32 {
-    var k: Kind = Kind.Text;
+    let k: Kind = Kind.Text;
     match (k) {
         Other.Text => { return 1; },
         Kind.Number => { return 2; }
@@ -190,7 +190,7 @@ pub function probe(n: i32): i32 {
 		out, code := check(t, `enum E { Wrap(i32, i32), Nil }
 
 pub function probe(n: i32): i32 {
-    var v: E = E.Wrap(1, 2);
+    let v: E = E.Wrap(1, 2);
     match (v) {
         E.Wrap { x: k, y: j } => { return k + j; },
         E.Nil => { return 0; }
@@ -220,7 +220,7 @@ pub function probe(n: i32): i32 {
 function want_str(s: string): i32 { return s.len(); }
 
 pub function probe(n: i32): i32 {
-    var v: E = E.Wrap(7);
+    let v: E = E.Wrap(7);
     match (v) {
         ` + pat + ` => { return want_str(k); },
         E.Nil => { return 0; }
@@ -254,7 +254,7 @@ pub function probe(n: i32): i32 {
 function want_str(s: string): i32 { return s.len(); }
 
 pub function probe(n: i32): i32 {
-    var v: E = E.Pair(1, 2);
+    let v: E = E.Pair(1, 2);
     match (v) {
         E.Pair(a, b) => { return a + want_str(b); },
         E.Nil => { return 0; }
@@ -281,9 +281,9 @@ enum B { W(string), Q }
 function want_i32(v: i32): i32 { return v; }
 
 pub function probe(n: i32): i32 {
-    var a: A = A.W(1);
-    var b: B = B.W("hi");
-    var t: i32 = 0;
+    let a: A = A.W(1);
+    let b: B = B.W("hi");
+    let t: i32 = 0;
     match (a) {
         A.W(k) => { t = t + want_i32(k); },
         A.P => { t = t + 1; }
@@ -321,7 +321,7 @@ pub function probe(n: i32): i32 {
 		return `enum E { Pair(i32, i32), Nil }
 
 pub function probe(n: i32): i32 {
-    var v: E = E.Pair(1, 2);
+    let v: E = E.Pair(1, 2);
     match (v) {
         ` + pat + ` => { return a; },
         E.Nil => { return 0; }
@@ -356,7 +356,7 @@ pub function probe(n: i32): i32 {
 enum B { W(i32, i32), Q }
 
 pub function probe(n: i32): i32 {
-    var b: B = B.W(1, 2);
+    let b: B = B.W(1, 2);
     match (b) {
         B.W(x, y) => { return x + y + n; },
         B.Q => { return 0; }

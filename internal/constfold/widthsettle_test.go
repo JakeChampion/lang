@@ -75,9 +75,9 @@ func TestConstSubstitutedInsideCompoundExprs(t *testing.T) {
 		src  string
 	}{
 		{"cast", `const N: i32 = 4; function main(): i32 { return N as i32; }`},
-		{"slice-bound", `const N: i32 = 2; function main(): i32 { var a = [9, 8, 7]; var b = a[0:N]; return 0; }`},
-		{"tuple-elem", `const N: i32 = 2; function main(): i32 { var t = (N, 5); return 0; }`},
-		{"lambda-body", `const N: i32 = 3; function main(): i32 { var f = (x: i32) => x + N; return f(1); }`},
+		{"slice-bound", `const N: i32 = 2; function main(): i32 { let a = [9, 8, 7]; let b = a[0:N]; return 0; }`},
+		{"tuple-elem", `const N: i32 = 2; function main(): i32 { let t = (N, 5); return 0; }`},
+		{"lambda-body", `const N: i32 = 3; function main(): i32 { let f = (x: i32) => x + N; return f(1); }`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

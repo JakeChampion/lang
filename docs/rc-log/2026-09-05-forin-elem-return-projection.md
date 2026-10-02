@@ -7,7 +7,7 @@ self-host side measured and found already in place.
 
 ```fern
 pub function decl_field_type(structs: StructTab, struct_name: string, field: string): string {
-    var si: i32 = stab_first(structs, struct_name);
+    let si: i32 = stab_first(structs, struct_name);
     if (si < 0) { return ""; }
     for fld in structs.decls[si].fields {
         if (fld.name == field) { return fld.type_name; }
@@ -84,7 +84,7 @@ stripped build by the symbol-table layout only:
 
 The `StructDecl` drop is not moved because its 401,939 remaining calls are
 not a for-in: they come from `parser.settle_field_type`'s
-`while (i < structs.len()) { var sd: StructDecl = structs[i]; … }` — an
+`while (i < structs.len()) { let sd: StructDecl = structs[i]; … }` — an
 index-bound element alias, the shape walk 2 (bare-Ident alias) and walk 3
 (the synthetic iter) both leave alone. That is the next lead for this drop,
 and it is a different rule from this one.

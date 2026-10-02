@@ -8,7 +8,7 @@ import (
 // arrayMain exercises std/array's gcd_all (which needs i32.gcd) on a
 // program importing ./array (+ ./sort for the sort_* funcs it refs).
 const arrayMain = "import \"std/array\";\n" +
-	"function main(): i32 { var xs: i32[] = [12, 18, 24]; match (xs.gcd_all()) { Some(g) => { return g; }, None => { return 0; } } return 0; }\n"
+	"function main(): i32 { let xs: i32[] = [12, 18, 24]; match (xs.gcd_all()) { Some(g) => { return g; }, None => { return 0; } } return 0; }\n"
 
 // TestSelfHostArrayX86_64 — the self-hosted compiler compiles real
 // std/array (needed i32.gcd/lcm); gcd_all([12,18,24]) == 6.

@@ -15,7 +15,7 @@ import (
 // slot names for nested loops.
 func TestForEachDesugarsToIndexLoop(t *testing.T) {
 	prog, err := parser.Parse(`function f(): i32 {
-		var sum: i32 = 0;
+		let sum: i32 = 0;
 		for x in [1, 2, 3] { sum = sum + x; }
 		return sum;
 	}`)
@@ -44,7 +44,7 @@ func TestForEachDesugarsToIndexLoop(t *testing.T) {
 
 func TestForEachNestedDesugarUniqueSlots(t *testing.T) {
 	prog, err := parser.Parse(`function f(): i32 {
-		var s: i32 = 0;
+		let s: i32 = 0;
 		for a in [1, 2] {
 			for b in [3, 4] { s = s + a + b; }
 		}
@@ -91,7 +91,7 @@ func TestForEachNestedDesugarUniqueSlots(t *testing.T) {
 func TestForEachInsideNestedFuncDesugars(t *testing.T) {
 	prog, err := parser.Parse(`function total(xs: i32[]): i32 {
 		function sum(acc: i32): i32 {
-			var n: i32 = acc;
+			let n: i32 = acc;
 			for x in xs { n = n + x; }
 			return n;
 		}

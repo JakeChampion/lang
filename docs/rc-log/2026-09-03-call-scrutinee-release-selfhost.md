@@ -33,7 +33,7 @@ Measured before the fix, x86-64, one payload position per probe:
 Every position leaks in the DIRECT position — including `Result[i32[],
 string]`, whose payload the release already knew — and the one bound form is
 clean. So the position is the finding, not the payload type: a scrutinee is a
-value with no name, and the whole call-bound release keys on a `var`.
+value with no name, and the whole call-bound release keys on a `let`.
 
 The bound rows for `string[]` and nested `Option` leaked too, which is the
 second half: the call-bound admission (`rcpayload_option_call_ptype`) took a
@@ -43,7 +43,7 @@ leak-safe array or a string, and no string[], no nested Option.
 
 **The scrutinee becomes a binding.** `hoist_call_scrutinees` runs first in
 `lower_func` and rewrites `match (mk(i)) { … }` into
-`var $mscrut_L_C: T = mk(i); match ($mscrut_L_C) { … }` when `mk` is in the
+`let $mscrut_L_C: T = mk(i); match ($mscrut_L_C) { … }` when `mk` is in the
 OPTFRESH or "RCE:" registry and its return type carries no type variable (a
 `$arg0` return would have to be resolved from the call's arguments first).
 Every analysis then sees a binding, so the direct form earns exactly the
@@ -82,7 +82,7 @@ Three probes say the position is not the cause:
 | shape (x86-64) | native | self-host |
 | --- | --- | --- |
 | `match (mk(i))`, direct | 168/168 | 201/0 **9648** |
-| `var e: E = mk(i); match (e)` | 168/168 | 201/0 **9648** |
+| `let e: E = mk(i); match (e)` | 168/168 | 201/0 **9648** |
 | `E { Full(string[]), Nil }`, direct | 150/150 | 200/0 **8800** |
 | `E { Note(string), Nil }`, direct | 100/100 | 150/0 **7200** |
 

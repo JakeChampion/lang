@@ -1,7 +1,7 @@
 // Package checker performs name-resolution and type-checking on a Program.
 //
 // Each function is checked against an environment chain that starts at the
-// top-level (functions) and is extended for parameters and `var`
+// top-level (functions) and is extended for parameters and `let`
 // declarations. Errors are accumulated rather than fatally aborting on the
 // first one, so a single run reports as much as possible.
 package checker
@@ -4016,7 +4016,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 	mapKV := ast.StructType{Name: "Map", Args: []ast.Type{keyParam, valueParam}}
 	optionV := ast.EnumType{Name: "Option", Args: []ast.Type{valueParam}}
 	// `map_new(cap)` returns a Map with no Args — the call
-	// site's destination type (e.g. `var m: Map[i32, string]
+	// site's destination type (e.g. `let m: Map[i32, string]
 	// = map_new(8)`) drives K and V via assignable's "empty-
 	// Args generic" relaxation. The IR lowering reads
 	// `n.TypeArgs` (stamped by the Var case from the
@@ -5275,7 +5275,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 		}
 		// Default a leftover-polymorphic integer op to i32. An integer
 		// `+`/`-`/`*`/… whose operands never got pinned to a concrete
-		// width (an unannotated `var x = 2147483647; var y = x + 1`)
+		// width (an unannotated `let x = 2147483647; let y = x + 1`)
 		// stays `IntWidth == 0`: the inference branch skips it
 		// (`!common.Polymorphic`) and no `settleInt` hint ever reached
 		// it. The compiled backends still compute it in a 32-bit
@@ -5918,7 +5918,7 @@ func (c *checker) validateDynTraitTypes(prog *ast.Program) {
 // walkDeclaredTypes invokes visit on every annotated type declared inside
 // a block, wherever it nests — see forEachDeclaredType for the node set.
 // The hand-rolled statement recursion this replaced descended only into
-// blocks, so it missed a `var` in an else-if chain (an *ast.If sits
+// blocks, so it missed a `let` in an else-if chain (an *ast.If sits
 // directly in the Else slot, not a Block) and in every expression-nested
 // position — the same class of gap #6996 found in resolveTypesInBlock,
 // which is why both now walk the tree the same way.
@@ -5937,7 +5937,7 @@ func (c *checker) walkDeclaredTypes(b *ast.Block, visit func(ast.Type, ast.Posit
 }
 
 // forEachDeclaredType invokes visit on every type a declaration node
-// ANNOTATES: a `var`'s type, a nested function's or a lambda's
+// ANNOTATES: a `let`'s type, a nested function's or a lambda's
 // parameter and return types, and the type arguments a call or a
 // struct literal writes out. The pointer is what lets the resolution
 // pass rewrite in place; the reporters just read through it.
@@ -5945,7 +5945,7 @@ func (c *checker) walkDeclaredTypes(b *ast.Block, visit func(ast.Type, ast.Posit
 // It exists because the three body walkers that care about annotated
 // types were each written separately and drifted: resolution covered all
 // three node kinds after #7003, while the two REPORTERS still looked at
-// `var` alone, so neither E064 nor E021 ever reached a lambda parameter
+// `let` alone, so neither E064 nor E021 ever reached a lambda parameter
 // (#7004). Sharing the node set is what stops that recurring.
 //
 // A nested function's own type-params would shadow the outer scope's; the
@@ -7277,7 +7277,7 @@ func synthOrd(sd *ast.StructDecl, recv ast.StructType) *ast.FuncDecl {
 	var stmts []ast.Stmt
 	for i, f := range sd.Fields {
 		vn := fmt.Sprintf("__c%d", i)
-		// var __ci: i32 = self.f.cmp(other.f);
+		// let __ci: i32 = self.f.cmp(other.f);
 		stmts = append(stmts, &ast.Var{
 			Name: vn, Type: ast.NumberType{},
 			Init: methodCall(selfField(f.Name), "cmp", otherField(f.Name)),
@@ -7987,13 +7987,13 @@ type checker struct {
 
 	// expectedType is the destination/result type a generic call's
 	// return-position type parameters can be inferred from when the
-	// arguments don't pin them. Set around `checkExpr` of a `var x:
+	// arguments don't pin them. Set around `checkExpr` of a `let x:
 	// T = call(...)` initializer and a `return call(...)` value;
 	// the generic-call completion seeds its substitution from this
 	// (return type ↔ expectedType) before reporting "could not
 	// infer". A call clears it before checking its own arguments so
 	// it never leaks into nested calls. Enables return-position
-	// inference like `var s: Set[i32] = set_new();` (#2668).
+	// inference like `let s: Set[i32] = set_new();` (#2668).
 	expectedType ast.Type
 
 	// requireMapImport is set when the program was loaded through
@@ -8171,10 +8171,10 @@ func (c *checker) resolveTypeNames(prog *ast.Program) {
 }
 
 // resolveTypesInBlock resolves every type a function body declares:
-// local `var` annotations, nested `function` signatures, and
+// local `let` annotations, nested `function` signatures, and
 // expression-position lambdas. It walks expressions as well as
 // statements because all three nest inside expressions — a lambda in a
-// call argument, a `var` in a value block or a match-expression arm —
+// call argument, a `let` in a value block or a match-expression arm —
 // and a declaration the walk misses keeps the parser's provisional
 // `StructType{Name}` for a name that is really an enum, a union or a
 // resource. Two spellings of one type then print identically and
@@ -8565,14 +8565,14 @@ func (c *checker) resolveType(slot *ast.Type, params map[string]bool, pos ast.Po
 }
 
 // validateKnownTypes reports any nominal type reference (E064) that names
-// no declared type — `var x: Wibble`, `function f(a: Wibble): Wibble`,
+// no declared type — `let x: Wibble`, `function f(a: Wibble): Wibble`,
 // `struct S { f: Wibble }`. It runs after resolveTypeNames, so type
 // parameters are already ParamType, enums are EnumType, and resources are
 // HandleType; a leftover StructType/EnumType is therefore either a declared
 // struct/enum or genuinely undefined. The per-decl type-parameter scope
 // mirrors resolveTypeNames exactly so an in-scope `T` is never flagged. A
 // function body uses a single type-param scope throughout (Fern has no
-// nested generic scopes), so every `var` annotation inside it — at any
+// nested generic scopes), so every `let` annotation inside it — at any
 // block depth — is validated against the function's own parameters.
 func (c *checker) validateKnownTypes(prog *ast.Program) {
 	for _, fn := range prog.Funcs {
@@ -8617,9 +8617,9 @@ func (c *checker) validateKnownTypes(prog *ast.Program) {
 
 // validateMapKeyTypes reports E045 for every WRITTEN `Map[K, V]` whose key
 // type cannot be a map key — a parameter, return type, field, enum payload,
-// impl type or `var` annotation, at any nesting depth. The map-literal paths
+// impl type or `let` annotation, at any nesting depth. The map-literal paths
 // check the key they INFER; without this, the annotated spelling of the same
-// program (`var m: Map[f64, i32] = map_new(2)`) was never asked, and reached
+// program (`let m: Map[f64, i32] = map_new(2)`) was never asked, and reached
 // codegen (#10009).
 //
 // It runs after the conformance pass because mapKeyTypeError consults
@@ -8639,7 +8639,7 @@ func (c *checker) validateMapKeyTypes(prog *ast.Program) {
 			continue
 		}
 		ast.Walk(fn.Body, func(n ast.Node) bool {
-			// A `var` initialised by a NON-EMPTY map literal is
+			// A `let` initialised by a NON-EMPTY map literal is
 			// left to the literal's own check, which reports at
 			// the offending key rather than at the annotation. An
 			// empty `Map {}` has no key to report at, so the
@@ -9007,7 +9007,7 @@ var arithOpTrait = map[string]string{
 // Trait]` (E implements Trait) lowers to a block-expr that maps the error
 // to `dyn Trait` then applies an ordinary exact-match `?`:
 //
-//	{ var __t: Result[T, dyn Trait] = match (inner) {
+//	{ let __t: Result[T, dyn Trait] = match (inner) {
 //	    Ok(__ok)  => Ok(__ok),
 //	    Err(__e)  => Err(__e as dyn Trait),
 //	  }; __t? }
@@ -9020,7 +9020,7 @@ var arithOpTrait = map[string]string{
 // operator (`+?` / `-?` / `*?`, #5542). The result is `Some(a <op> b)`
 // when the exact result fits `t`, else `None`:
 //
-//	{ var l: T = a; var r: T = b; var s: T = a <op> b;   // wrapped
+//	{ let l: T = a; let r: T = b; let s: T = a <op> b;   // wrapped
 //	  if (<overflowed>) { None } else { Some(s) } }
 //
 // The overflow predicate reads back the wrapped result `s` rather than
@@ -9230,7 +9230,7 @@ func (c *checker) compositeOpOverload(n *ast.Binary, lt, rt ast.Type, s *scope) 
 	// method (`+`→`Add.add`, `*`→`Mul.mul`, …) desugars to `a.add(b)` —
 	// resolved through the same deferred trait-bound dispatch as `a.cmp(b)`
 	// for `T: Ord`. This is the #2706 benefit: generic numeric code
-	// (`function sum[T: Num](xs: T[]): T { var acc = …; for x in xs { acc = acc + x } }`)
+	// (`function sum[T: Num](xs: T[]): T { let acc = …; for x in xs { acc = acc + x } }`)
 	// reads with operators instead of explicit `.add` calls. A type param
 	// WITHOUT the matching arithmetic bound falls through (handled=false) to
 	// the numeric path, which reports the usual E009.
@@ -9470,7 +9470,7 @@ func (c *checker) resolveProjections(prog *ast.Program) {
 // resolveProjInBlock walks a body applying resolveProj to every type
 // annotation slot (var decls, match binding types, lambda params/return,
 // cast targets) so projections written inside bodies (a generic's
-// `var x: T::Item`, concrete after monomorph) resolve too.
+// `let x: T::Item`, concrete after monomorph) resolve too.
 func (c *checker) resolveProjInBlock(b *ast.Block) {
 	if b == nil {
 		return
@@ -10118,7 +10118,7 @@ func unifyIfArms(a, b ast.Type) ast.Type {
 	// compatible with any concrete numeric / float type —
 	// return the concrete side and let the surrounding
 	// settle pass stamp the literal's width. Without this,
-	// `var n: i64 = if cond { a * b } else { 0 };` fails
+	// `let n: i64 = if cond { a * b } else { 0 };` fails
 	// the unify check because `0` is polymorphic while
 	// `a * b` is i64.
 	if an, aok := a.(ast.NumberType); aok && an.Polymorphic {
@@ -10136,7 +10136,7 @@ func unifyIfArms(a, b ast.Type) ast.Type {
 	// Polymorphic float (an unsettled FloatLit) is
 	// compatible with any concrete FloatType — let the
 	// settle pass stamp the literal's width. Without this,
-	// `var f: f32 = if cond { n.v } else { 0.0 };` rejects
+	// `let f: f32 = if cond { n.v } else { 0.0 };` rejects
 	// because `0.0` is float-polymorphic and `n.v` is
 	// concrete f32.
 	if af, aok := a.(ast.FloatType); aok && af.Polymorphic {
@@ -10598,7 +10598,7 @@ func (c *checker) unifyArrayArg(arg *ast.Expr, want, got ast.Type, sub map[strin
 // comment and nowhere the reader could see it. That dead-ends the most
 // ordinary string expression there is:
 //
-//	var t: string = s.trim();
+//	let t: string = s.trim();
 //	error[E003]: cannot assign str to variable of type string
 //
 // `.to_owned()` is the materialiser, and the stdlib already uses it at every
@@ -10695,7 +10695,7 @@ func (c *checker) assignableWith(dst, src ast.Type, dynBox bool) bool {
 	}
 	// `never` (bottom) is assignable to any type: it is the type of an
 	// expression that never yields a value (a value-position block whose
-	// statements always exit early), so `var x: T = { …; return … };`
+	// statements always exit early), so `let x: T = { …; return … };`
 	// type-checks for every T (#4522).
 	if _, ok := src.(ast.NeverType); ok {
 		return true
@@ -10862,7 +10862,7 @@ func (c *checker) assignableWith(dst, src ast.Type, dynBox bool) bool {
 	}
 	// Same relaxation for generic struct values: a builtin like
 	// `map_new(cap)` returns `StructType{Name: "Map"}` with no
-	// Args; the destination context (e.g. `var m: Map[i32,
+	// Args; the destination context (e.g. `let m: Map[i32,
 	// string] = map_new(8);`) names the concrete K + V. The
 	// Var / argument-checking sites stamp the resolved args
 	// back onto the source expression so the IR lowering can
@@ -11239,7 +11239,7 @@ func (c *checker) moduleAlreadyImports(mod string) bool {
 // correct only while the receiver is uniquely held — the moment an alias
 // exists the write is lost (docs/PURE-COLLECTION-API-PLAN.md §1). Require the
 // result be threaded back (`m = m.insert(k, v)`) or explicitly dropped
-// (`var _ = m.insert(k, v)`, a declaration rather than a bare call).
+// (`let _ = m.insert(k, v)`, a declaration rather than a bare call).
 //
 // Only source-level method calls fire (Method != nil), so the `arr[i] = v`
 // desugar and other synthesised `__method_*` calls are exempt; and only the
@@ -11258,7 +11258,7 @@ func (c *checker) checkUnusedCollectionResult(e ast.Expr) {
 		return
 	}
 	c.errfCode(call.Method.FieldPos, "E055",
-		"result of `.%s(...)` is unused; assign it back (e.g. `x = x.%s(...)`) — collection operations return a new value, they do not mutate in place (use `var _ = …` to discard intentionally)",
+		"result of `.%s(...)` is unused; assign it back (e.g. `x = x.%s(...)`) — collection operations return a new value, they do not mutate in place (use `let _ = …` to discard intentionally)",
 		call.Method.Field, call.Method.Field)
 }
 
@@ -11759,7 +11759,7 @@ func (c *checker) isUserFuncOrLocal(name string, s *scope) bool {
 type scope struct {
 	parent *scope
 	names  map[string]ast.Type
-	// vars maps the subset of `names` introduced by a `var` statement to
+	// vars maps the subset of `names` introduced by a `let` statement to
 	// the declaration itself, so a binding can be identified by NODE
 	// rather than by name. Names are not unique until shadowrename, which
 	// runs after the checker, so the capture-cycle rule (#8440) — which
@@ -11782,7 +11782,7 @@ func (s *scope) lookup(name string) (ast.Type, bool) {
 	return nil, false
 }
 
-// bindVar binds a `var` declaration's name, recording the declaration node
+// bindVar binds a `let` declaration's name, recording the declaration node
 // alongside the type.
 func (s *scope) bindVar(name string, t ast.Type, decl *ast.Var) {
 	s.names[name] = t
@@ -11792,10 +11792,10 @@ func (s *scope) bindVar(name string, t ast.Type, decl *ast.Var) {
 	s.vars[name] = decl
 }
 
-// lookupVarDecl resolves name to the `var` statement that declares it, or nil
+// lookupVarDecl resolves name to the `let` statement that declares it, or nil
 // when the nearest binding is a parameter, a pattern binding, or absent. It
-// stops at the first scope that binds the name so a nearer non-`var` binding
-// correctly shadows an outer `var`.
+// stops at the first scope that binds the name so a nearer non-`let` binding
+// correctly shadows an outer `let`.
 func (s *scope) lookupVarDecl(name string) *ast.Var {
 	for cur := s; cur != nil; cur = cur.parent {
 		if _, ok := cur.names[name]; ok {
@@ -11849,7 +11849,7 @@ func (c *checker) capturedType(name string, s *scope) (ast.Type, bool) {
 	return nil, false
 }
 
-// identValueBinding resolves `name` to a value — a parameter, a `var`,
+// identValueBinding resolves `name` to a value — a parameter, a `let`,
 // a match binding, or a captured outer local — and reports whether it
 // found one. It covers the two arms that precede `FuncSigs` in
 // checkExpr's *ast.Ident case (scope → captureChain → FuncSigs), so a
@@ -11868,7 +11868,7 @@ func (c *checker) identValueBinding(name string, s *scope) (ast.Type, bool) {
 	return c.capturedType(name, s)
 }
 
-// cellStore is one enclosing-scope `x = v` whose target is a `var`-declared
+// cellStore is one enclosing-scope `x = v` whose target is a `let`-declared
 // pointer-shaped local — a candidate boxcapture-cell store. The value's type
 // is kept because the cycle rule asks what the STORED value can reach, not
 // what the slot is declared to hold: `d: dyn Runner = Wrap { cb: f }` closes a
@@ -12204,7 +12204,7 @@ func anyLocalCursor(es []ast.Expr, env *escapeEnv, sources map[string][]ast.Expr
 	return false
 }
 
-// bindingSources maps each name in fn's body to every value a `var` binds it
+// bindingSources maps each name in fn's body to every value a `let` binds it
 // to or an assignment stores into it, whichever declaration of the name.
 func bindingSources(fn *ast.FuncDecl) map[string][]ast.Expr {
 	out := map[string][]ast.Expr{}
@@ -12635,7 +12635,7 @@ func viewedSource(e ast.Expr, env *escapeEnv, visiting map[string]bool) ast.Expr
 			return x.Args[0]
 		}
 	case *ast.Ident:
-		// `var t = s[a:b]; match (t) { … }` — the scrutinee is a local
+		// `let t = s[a:b]; match (t) { … }` — the scrutinee is a local
 		// holding the Option, so the view is whatever built it.
 		if visiting[x.Name] {
 			return nil
@@ -12673,7 +12673,7 @@ func (c *checker) stringSourceRoots(expr ast.Expr, env *escapeEnv, sums map[stri
 			if _, isString := v.Type.(ast.StringType); isString {
 				// A locally-declared owned `string` IS this frame's
 				// storage, whatever built it. Chasing its initialiser
-				// instead would call `var s: string = mk()` immortal
+				// instead would call `let s: string = mk()` immortal
 				// whenever mk happens to return a literal, which is a
 				// precision claim neither checker makes.
 				out.local = true
@@ -13723,7 +13723,7 @@ func (c *checker) checkBlock(b *ast.Block, parent *scope) {
 	// source-order rule and fail with `undefined identifier`
 	// just like before this change. This keeps the runtime
 	// env-init-order semantics intact for non-cycle siblings
-	// (whose `var <name> = MakeClosure{...}` IS initialised in
+	// (whose `let <name> = MakeClosure{...}` IS initialised in
 	// source order — a caller declared after the callee can
 	// still resolve a normal capture).
 	prevMutualRec := c.mutualRecSiblings
@@ -13774,7 +13774,7 @@ func (c *checker) checkBlockExpr(n *ast.BlockExpr, parent *scope) ast.Type {
 		// is not `void` (which would be a type error where a value is
 		// required) — it is the bottom type `never`, which is
 		// assignable to / unifies with any type. This lets
-		// `var x: i32 = { if (c) { return 1; } return 2; };` and the
+		// `let x: i32 = { if (c) { return 1; } return 2; };` and the
 		// `if`/`match`-arm forms type-check (#4522). Codegen lowers the
 		// statements only — the diverging terminal makes the enclosing
 		// store unreachable (the ssa lift skips it), so no tail value
@@ -14066,7 +14066,7 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		}
 		c.loopDepth--
 	case *ast.For:
-		// Init runs in a new scope so a `for (var i = 0; ...)` doesn't
+		// Init runs in a new scope so a `for (let i = 0; ...)` doesn't
 		// leak `i` to the surrounding block.
 		inner := newScope(s)
 		if n.Init != nil {
@@ -15246,7 +15246,7 @@ func (c *checker) checkMatch(n *ast.Match, s *scope) {
 }
 
 // widenGenericScrutinee settles a generic call in scrutinee position the way
-// an unannotated `var` initialiser settles one: a type parameter bound only by
+// an unannotated `let` initialiser settles one: a type parameter bound only by
 // literal arguments, one of which has no i32 reading, takes i64
 // (widenGenericCallByLiterals). Without it `match (pick(1, 2^62))` bound `T`
 // at the i32 default and the arm's payload compared at the wrong width (#8722).
@@ -16148,7 +16148,7 @@ func (c *checker) inferUseParam(fn *ast.FuncDecl, outer *scope) {
 		c.errfCode(fn.P, "E032", "use: cannot infer binding type for non-identifier source — add an explicit `: TYPE` annotation")
 		return
 	}
-	// A value binding — a fn-typed parameter, a `var` holding a
+	// A value binding — a fn-typed parameter, a `let` holding a
 	// closure, a local function — SHADOWS a module function of the
 	// same name, so it is consulted first. Reading FuncSigs first
 	// inferred the callback's parameter type from the module
@@ -16292,7 +16292,7 @@ func (c *checker) typeParamsInScope() map[string]bool {
 // offered: the construction-site type args of #6812, and the binding
 // annotation that has always worked.
 func (c *checker) errE040StructUninferred(p ast.Position, tp, name string) {
-	c.errfCode(p, "E040", "could not infer type parameter %s for struct %s — supply it explicitly at the construction site (e.g. %s[i32] { ... }) or annotate the binding (e.g. var x: %s[i32] = ...)",
+	c.errfCode(p, "E040", "could not infer type parameter %s for struct %s — supply it explicitly at the construction site (e.g. %s[i32] { ... }) or annotate the binding (e.g. let x: %s[i32] = ...)",
 		tp, name, name, name)
 }
 
@@ -16551,7 +16551,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		// The parser optimistically wraps a bare type name (`as? Color`)
 		// as a StructType because it can't tell structs from enums. If the
 		// name resolves to an enum, rewrite the target to an EnumType so
-		// the result `Option[T]` matches a `var c: Option[Color]`
+		// the result `Option[T]` matches a `let c: Option[Color]`
 		// annotation (which resolveType already canonicalised to
 		// EnumType). Without this, an enum downcast target would diverge —
 		// `Option[StructType{Color}]` vs `Option[EnumType{Color}]` — and
@@ -16655,7 +16655,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			// against u8 and rejects the canonical way to write a byte wrap.
 			//
 			// It only ever affected expressions with an UNSETTLED operand, which is
-			// what made it look arbitrary: `var x: i32 = …; (x % 256) as u8`
+			// what made it look arbitrary: `let x: i32 = …; (x % 256) as u8`
 			// was accepted all along, because x had already committed, while
 			// `for i in … { (i % 256) as u8 }` was rejected, because the loop
 			// variable had not. The same expression accepted or refused on
@@ -16751,7 +16751,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		// lets the user pin a type inline where the inference can't
 		// reach. The classic case is a payload-less variant —
 		// `None as Option[i32]`, `[] as i32[]` — but the rule
-		// generalises to anything the existing `var x: T = e`
+		// generalises to anything the existing `let x: T = e`
 		// destination-flow already accepts. Run the same flow
 		// (settle polymorphic numerics, stamp struct args, refine
 		// generic-call type args, union-wrap), then accept when the
@@ -16881,7 +16881,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 						}
 					}
 					// Note the DECLARATION, not the name: a store into a
-					// captured-and-assigned `var` goes through the shared
+					// captured-and-assigned `let` goes through the shared
 					// boxcapture cell, which is where a reference cycle can
 					// be closed (#8440, checkCaptureCycleStores).
 					if decl := ent.scope.lookupVarDecl(n.Name); decl != nil {
@@ -17011,7 +17011,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		}
 		// Union element hint: an `N[]` literal whose elements are bare
 		// variant structs (`[A { … }, B { … }]`) needs each element wrapped
-		// into the union the same way a single `var n: N = A { … }`, a
+		// into the union the same way a single `let n: N = A { … }`, a
 		// `return`, or an `arr.push(A { … })` argument is — otherwise the
 		// elements are stored as un-tagged structs and a later `match`
 		// misfires (the push path wraps via the Call-argument coercion; the
@@ -17146,7 +17146,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		return nil
 	case *ast.Call:
 		// Snapshot the destination type this call's result flows into
-		// (set by `var x: T = …` / `return …`) and clear the field so
+		// (set by `let x: T = …` / `return …`) and clear the field so
 		// it can't leak into the argument sub-expressions we check
 		// below — only *this* call's generic completion may consult it
 		// for return-position inference (#2668).
@@ -18050,7 +18050,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		if genericFn != nil {
 			// Return-position inference (#2668): if the arguments
 			// didn't pin every type parameter, fold in the call's
-			// destination type. `var s: Set[i32] = set_new();` and
+			// destination type. `let s: Set[i32] = set_new();` and
 			// `return set_new();` leave T unbound from the (empty)
 			// args, but the `Set[i32]` / declared-return type unifies
 			// against the function's result `Set[T]` to bind T = i32.
@@ -18622,7 +18622,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			c.requireInteger(n.P, t, n.Op)
 			// Propagate the operand's NumberType (including its
 			// Polymorphic flag) so unary minus on a polymorphic
-			// literal stays polymorphic; otherwise `var s: i64 =
+			// literal stays polymorphic; otherwise `let s: i64 =
 			// -7` couldn't settle the literal.
 			if nt, ok := t.(ast.NumberType); ok {
 				return nt
@@ -18694,7 +18694,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					"cannot assign to captured %s %q: a reference-typed closure capture is read-only (it could close a reference cycle); return the new value from the closure instead",
 					ct, id.Name)
 			} else if decl := s.lookupVarDecl(id.Name); decl != nil && lt != nil && ast.IsPointerType(lt) && !c.freshLambdaCannotReach(n.Value, decl, s) {
-				// An enclosing-scope store into a `var` that some closure
+				// An enclosing-scope store into a `let` that some closure
 				// also captures lands in the shared boxcapture cell. Whether
 				// that closes a cycle depends on the capture set, which is
 				// not complete until the whole function is checked, so the
@@ -18957,7 +18957,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		if len(sd.TypeParams) > 0 {
 			sub = make(map[string]ast.Type, len(sd.TypeParams))
 			// Seed the type-arg substitution from an explicit destination
-			// type (`var b: Box[i32] = Box { v: … }`) so each field is
+			// type (`let b: Box[i32] = Box { v: … }`) so each field is
 			// checked against the concrete instantiation instead of a free
 			// parameter. Without this a field mismatch (`v: "x"` for a
 			// Box[i32]) unifies the parameter to the wrong type, slips past
@@ -19076,7 +19076,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			}
 			// Implicit union-wrap: a bare variant struct literal in a
 			// field position widens to its union type, matching the
-			// `var x: Union = Variant{...}`, return, and call-argument
+			// `let x: Union = Variant{...}`, return, and call-argument
 			// behaviour. Mutates the real AST slot (Fields are values),
 			// so index rather than the loop copy.
 			vt = c.maybeWrapForUnion(expected, &n.Fields[i].Value, vt, s)
@@ -19113,7 +19113,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				// to `Option` with empty Args). Same shape as
 				// the array-element widening from #541.
 				//
-				// A field is a destination like a `var`, so what a `var`
+				// A field is a destination like a `let`, so what a `let`
 				// accepts is accepted here too: `m: map_new(4)` takes its
 				// key and value types from the field.
 				c.stampStructTypeArgs(f.Value, expected)
@@ -19194,7 +19194,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		// Pick K and V from the first entry's key / value
 		// types, then check the rest against those. Empty
 		// literals fall back to `Map[i32, i32]` so that a
-		// trailing `var m: Map[i32, i32] = Map {}` (or any
+		// trailing `let m: Map[i32, i32] = Map {}` (or any
 		// destination-typed empty map) keeps working without
 		// the destination-driven inference machinery.
 		var keyType ast.Type = ast.NumberType{}
@@ -19498,7 +19498,7 @@ func destEnumArgs(dst ast.Type, name string, want int) []ast.Type {
 // return types lack the inner Args, and the re-check rejects
 // with "Result has 2 type parameter(s), 0 supplied".
 //
-// The destination annotation (`var r: Result[i32, i32]`,
+// The destination annotation (`let r: Result[i32, i32]`,
 // `return ...` against a typed fn return) carries the full
 // type. We walk the generic fn's declared return type against
 // the destination pairwise; wherever the declared return
@@ -19715,12 +19715,12 @@ func (c *checker) settleNumeric(e ast.Expr, hint ast.Type) {
 	// hint applies to the inner expression's payload, not
 	// to the TryOp itself. Wrap the hint in the appropriate
 	// enum (Option / Result) so the inner variant-call gets
-	// its payload settled. Without this, `var v: f32 =
+	// its payload settled. Without this, `let v: f32 =
 	// Some(3.14)?;` left 3.14 unsettled (defaulting to f64)
 	// and wasm rejected the f32 destination load.
 	if to, ok := e.(*ast.TryOp); ok {
 		// Re-wrap the payload hint in the SOURCE enum so the inner
-		// variant-call settles its polymorphic payload — `var v: f32 =
+		// variant-call settles its polymorphic payload — `let v: f32 =
 		// Some(3.14)?` has to reach the 3.14. The enum comes off the node
 		// rather than being named here, so an `@try` enum settles the same
 		// way the two builtins do.
@@ -19759,12 +19759,12 @@ func (c *checker) settleNumeric(e ast.Expr, hint ast.Type) {
 		}
 		c.settleFloat(e, hn)
 	case ast.ArrayType:
-		// Array-literal element-type propagation: `var x: [u8] =
+		// Array-literal element-type propagation: `let x: [u8] =
 		// [1, 2, 3]` should settle each element to u8 so the IR
 		// emits 1-byte stores. Stamp the AST node's ElemType too
 		// so the IR's ArrayLit lowering picks the right stride.
 		// IfExpr / MatchExpr forms: recurse into each arm so
-		// `var arr: i64[] = if cond { [...] } else { [...] }`
+		// `let arr: i64[] = if cond { [...] } else { [...] }`
 		// reaches each branch's array literal.
 		if al, ok := e.(*ast.ArrayLit); ok {
 			if c.elemSettleable(al.ElemType, hn.Elem) {
@@ -19817,7 +19817,7 @@ func (c *checker) settleNumeric(e ast.Expr, hint ast.Type) {
 		}
 	case ast.TupleType:
 		// Tuple-literal element-type propagation. Without
-		// this, `var p: (string, i64) = ("hi", 100)` rejects
+		// this, `let p: (string, i64) = ("hi", 100)` rejects
 		// the i32-defaulted literal against the i64 slot —
 		// each element is checked in isolation by checkExpr.
 		// Walk in lockstep so element `i` settles to
@@ -19830,7 +19830,7 @@ func (c *checker) settleNumeric(e ast.Expr, hint ast.Type) {
 				}
 			}
 		case *ast.Call:
-			// `var p: (i64, string) = pair(1234567890123, "hello")`:
+			// `let p: (i64, string) = pair(1234567890123, "hello")`:
 			// the destination reaches the call's type parameters
 			// through the return type.
 			c.settleGenericCallByHint(tl, hint)
@@ -19860,7 +19860,7 @@ func (c *checker) settleNumeric(e ast.Expr, hint ast.Type) {
 		// (`Map { "a": 1234567890123 }`) needs the V to flow
 		// into each entry so polymorphic literals settle to
 		// the destination's slot width. Without this,
-		// `var m: Map[string, i64] = Map { "a": 1234567890123 };`
+		// `let m: Map[string, i64] = Map { "a": 1234567890123 };`
 		// keeps its inferred `Map[string, i32]` shape and
 		// the assignable check rejects.
 		if ml, ok := e.(*ast.MapLit); ok && hn.Name == "Map" && len(hn.Args) == 2 {
@@ -19872,7 +19872,7 @@ func (c *checker) settleNumeric(e ast.Expr, hint ast.Type) {
 			// K / V from the destination so the literal's type
 			// flows the right shape into the assignable check
 			// (via postSettleType) and into the IR's runtime
-			// keyKind / valKind tags. Without this, `var m:
+			// keyKind / valKind tags. Without this, `let m:
 			// Map[string, i32] = Map {};` keeps the
 			// checkExpr-default `Map[i32, i32]` shape and the
 			// assignment rejects.
@@ -19882,7 +19882,7 @@ func (c *checker) settleNumeric(e ast.Expr, hint ast.Type) {
 			}
 		} else if sl, ok := e.(*ast.StructLit); ok && len(hn.Args) > 0 && !sl.TypeArgsWritten {
 			// Generic struct literal with a destination
-			// annotation: `var b: Box[i64] = Box { v: 100 }`.
+			// annotation: `let b: Box[i64] = Box { v: 100 }`.
 			// A literal that names its own instantiation
 			// (`Box[i32] { v: 100 }`) has already had its fields
 			// settled against THAT one, and re-settling them here
@@ -19912,10 +19912,10 @@ func (c *checker) settleNumeric(e ast.Expr, hint ast.Type) {
 				sl.TypeArgs = append([]ast.Type{}, hn.Args...)
 			}
 		} else if call, ok := e.(*ast.Call); ok {
-			// `var b: Box[u64] = box(1)` reaches T through the return type.
+			// `let b: Box[u64] = box(1)` reaches T through the return type.
 			c.settleGenericCallByHint(call, hint)
 		} else if ie, ok := e.(*ast.IfExpr); ok {
-			// `var m: Map[K, V] = if cond { Map {...} } else
+			// `let m: Map[K, V] = if cond { Map {...} } else
 			// { Map {...} }` — fan out the destination Map type
 			// into both arms.
 			if ie.Then != nil {
@@ -19934,7 +19934,7 @@ func (c *checker) settleNumeric(e ast.Expr, hint ast.Type) {
 		}
 	case ast.EnumType:
 		// Variant constructor with a destination annotation:
-		// `var o: Option[i64] = Some(1);` — the literal `1`
+		// `let o: Option[i64] = Some(1);` — the literal `1`
 		// otherwise defaults to i32 and the assignment fails.
 		// Build the type-param substitution from the hint's
 		// Args, look up the variant's declared payload types,
@@ -19973,7 +19973,7 @@ func (c *checker) settleNumeric(e ast.Expr, hint ast.Type) {
 			return
 		}
 		if !resolved {
-			// An enum-returning GENERIC function: `var o: Option[i64] =
+			// An enum-returning GENERIC function: `let o: Option[i64] =
 			// wrap(1234567890123)` reaches T through the return type.
 			c.settleGenericCallByHint(call, hint)
 			return
@@ -19997,7 +19997,7 @@ func (c *checker) settleInt(e ast.Expr, hn ast.NumberType) {
 // odd number of unary minuses. A NumberLit holds its magnitude — the sign is
 // a separate Unary node — so the range check needs that bit to judge the value
 // the source actually wrote. Without it the most negative number of a width
-// had no literal spelling at all: `var x: i32 = -2147483648;` was refused for
+// had no literal spelling at all: `let x: i32 = -2147483648;` was refused for
 // a magnitude that is only out of range as a POSITIVE value. i64 never showed
 // it, because its range check returns early.
 func (c *checker) settleIntSigned(e ast.Expr, hn ast.NumberType, negated bool) {
@@ -20051,7 +20051,7 @@ func (c *checker) settleIntSigned(e ast.Expr, hn ast.NumberType, negated bool) {
 			}
 		}
 	case *ast.IfExpr:
-		// `var n: i64 = if cond { 1 } else { 2 }` — settle
+		// `let n: i64 = if cond { 1 } else { 2 }` — settle
 		// both arm bodies against the destination width.
 		// Without this, the literals stayed i32 and the i64
 		// load read garbage high bits.
@@ -20062,7 +20062,7 @@ func (c *checker) settleIntSigned(e ast.Expr, hn ast.NumberType, negated bool) {
 			c.settleInt(x.Else, hn)
 		}
 	case *ast.MatchExpr:
-		// Same fan-out for `var n: i64 = match (e) { A => 1,
+		// Same fan-out for `let n: i64 = match (e) { A => 1,
 		// B => 2 }` — every arm body is an expression that
 		// must reach the destination width.
 		for _, arm := range x.Arms {
@@ -20074,7 +20074,7 @@ func (c *checker) settleIntSigned(e ast.Expr, hn ast.NumberType, negated bool) {
 	case *ast.BlockExpr:
 		// Block-expression branch (`{ …; tail }`): the value is the
 		// trailing expression, so settle it against the destination
-		// width — `var n: i64 = if (c) { var k = 1; k } else { 0 }`.
+		// width — `let n: i64 = if (c) { let k = 1; k } else { 0 }`.
 		if x.Tail != nil {
 			c.settleInt(x.Tail, hn)
 		}
@@ -20143,13 +20143,13 @@ func unsettledNumericShape(e ast.Expr) bool {
 // unrelated type is not polymorphic, and stamping it anyway makes it CLAIM the
 // destination's type: postSettleType reports the stamp back as the literal's
 // type, so the assignment then compares i32[] against i32[] and passes. That is
-// how `var xs: i32[] = ["ab", "cd"]` type-checked, and why passing one to an
+// how `let xs: i32[] = ["ab", "cd"]` type-checked, and why passing one to an
 // `i32[]` parameter summed strings as integers rather than reporting E038.
 func (c *checker) elemSettleable(have, want ast.Type) bool {
 	if have == nil || want == nil {
 		return true
 	}
-	// A destination element that is still a type PARAMETER (`var local: T[] =
+	// A destination element that is still a type PARAMETER (`let local: T[] =
 	// [1, 2, 3]` inside a generic) names no concrete type for the literal to
 	// contradict — what it settles to is decided at monomorph, not here.
 	if containsParamType(want) {
@@ -20170,7 +20170,7 @@ func (c *checker) elemSettleable(have, want ast.Type) bool {
 		}
 	}
 	// So does a generic struct whose arguments literals bound: `[Same { a:
-	// 1, b: 2^62 }]` widens to `Same[i64][]`, and `[q]` for a `var q = Same {
+	// 1, b: 2^62 }]` widens to `Same[i64][]`, and `[q]` for a `let q = Same {
 	// a: 1, b: 2 }` settles to it, each element settling there (#10453).
 	if h, ok := have.(ast.StructType); ok {
 		if w, ok := want.(ast.StructType); ok && h.Name == w.Name && len(h.Args) == len(w.Args) && len(h.Args) > 0 {
@@ -20188,7 +20188,7 @@ func (c *checker) elemSettleable(have, want ast.Type) bool {
 	case ast.NumberType:
 		// A polymorphic INTEGER settles to any numeric width, float
 		// included: int-to-float is a legal promotion, and settleFloat
-		// exists for exactly it (`var xs: f64[] = [1, 2]`).
+		// exists for exactly it (`let xs: f64[] = [1, 2]`).
 		if h.Polymorphic || h.Width == 0 {
 			switch want.(type) {
 			case ast.NumberType, ast.FloatType:
@@ -20197,7 +20197,7 @@ func (c *checker) elemSettleable(have, want ast.Type) bool {
 		}
 	case ast.FloatType:
 		// A polymorphic FLOAT settles only to a float destination. Against
-		// an integer one it is a mismatch — `var x: i64 = 1.5` is already
+		// an integer one it is a mismatch — `let x: i64 = 1.5` is already
 		// E003 as a scalar, and the array literal must not be the one way
 		// round it.
 		if h.Polymorphic {
@@ -20264,7 +20264,7 @@ func (c *checker) settleFloat(e ast.Expr, hf ast.FloatType) {
 			}
 		}
 	case *ast.IfExpr:
-		// `var f: f64 = if cond { 3.14 } else { 0.0 }` —
+		// `let f: f64 = if cond { 3.14 } else { 0.0 }` —
 		// fan the float hint into both arms.
 		if x.Then != nil {
 			c.settleFloat(x.Then, hf)
@@ -20287,7 +20287,7 @@ func (c *checker) settleFloat(e ast.Expr, hf ast.FloatType) {
 	case *ast.Call:
 		// Generic-function call returning T against a float
 		// destination. Mirror the settleInt Call case so
-		// `var x: f64 = pick(true, 3.14, 0.0);` settles the
+		// `let x: f64 = pick(true, 3.14, 0.0);` settles the
 		// arg widths and re-stamps TypeArgs for monomorph.
 		// Without this, the arg literals stayed at the f32
 		// / Polymorphic default and the f64 destination
@@ -20370,7 +20370,7 @@ func (c *checker) postSettleType(e ast.Expr, prior ast.Type) ast.Type {
 		// codegen knows whether to emit `i32.eq` vs `i64.eq`
 		// vs `f32.eq` etc. — but their RESULT type is bool,
 		// not the operand width. Without this guard a
-		// `var b: boolean = a == b;` would re-type the rhs as
+		// `let b: boolean = a == b;` would re-type the rhs as
 		// the operand's NumberType and fail the assignment.
 		switch x.Op {
 		case "==", "!=", "<", "<=", ">", ">=":
@@ -20381,9 +20381,9 @@ func (c *checker) postSettleType(e ast.Expr, prior ast.Type) ast.Type {
 			// overflow predicate needs it), while the result is
 			// `Option[T]`. Re-typing it from IntWidth made `a +? b`
 			// read as a bare `i32` wherever a destination type exists
-			// — an annotated `var`, a `return`, a call argument — so
+			// — an annotated `let`, a `return`, a call argument — so
 			// the very shapes the operator is for were rejected, while
-			// an unannotated `var a = x +? 1` type-checked fine
+			// an unannotated `let a = x +? 1` type-checked fine
 			// because nothing triggered the settle path.
 			return prior
 		}
@@ -20403,7 +20403,7 @@ func (c *checker) postSettleType(e ast.Expr, prior ast.Type) ast.Type {
 		// After settleNumeric has propagated the destination's
 		// element types into the literal, recompute the tuple
 		// shape so the `assignable` check sees the resolved
-		// widths. Without this, a `var p: (string, i64) =
+		// widths. Without this, a `let p: (string, i64) =
 		// ("hi", 1)` keeps its pre-settle `(string, i32)`
 		// type and the assignment rejects.
 		if tt, ok := prior.(ast.TupleType); ok && len(tt.Elems) == len(x.Elems) {
@@ -20576,9 +20576,9 @@ func (c *checker) polymorphicIntDefault(es ...ast.Expr) ast.NumberType {
 // composite type to i64 where the matching part of the init holds a literal
 // with no i32 reading. A tuple or array init is not itself a numeric
 // expression, so polymorphicIntDefault above never reaches its elements and
-// `var t = (1, 4611686018427387904)` lowered the wide element at the i32
+// `let t = (1, 4611686018427387904)` lowered the wide element at the i32
 // default — a silent truncation (#8722). Slots whose elements all read at i32
-// are left polymorphic, so `var t = (1, 2)` settles exactly as before.
+// are left polymorphic, so `let t = (1, 2)` settles exactly as before.
 // Returns nil when no slot changed.
 func (c *checker) widenCompositeByLiterals(t ast.Type, es ...ast.Expr) ast.Type {
 	switch tt := t.(type) {
@@ -21330,7 +21330,7 @@ func isServeOptionsType(t ast.Type) bool {
 // The state pair is the two-phase lifecycle of docs/PLATFORM-RESEARCH.md
 // Rec §3 — build once at startup, thread through every request — and
 // the sanctioned answer to process-lifetime mutable state (#2679): the
-// value lives in the serve loop's frame, not in a module-level `var`
+// value lives in the serve loop's frame, not in a module-level `let`
 // the language does not have.
 //
 // A void `init` stays the Phase-1 shape: run for its side effects, then

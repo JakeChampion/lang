@@ -121,15 +121,15 @@ function main(): i32 {
     }
     // send's buffer is a plain local, so it grows in place.
     if (__arr_push_shared_count() != 0) { return 2; }
-    var h: i32 = fetch.ipv4(127, 0, 0, 1);
-    var none: u8[] = [];
-    var fs: async.Future[u8[]][] = [fetch.fetch_future(h, %[1]d, "/")];
-    var bodies: u8[][] = async.gather(fs, none);
+    let h: i32 = fetch.ipv4(127, 0, 0, 1);
+    let none: u8[] = [];
+    let fs: async.Future[u8[]][] = [fetch.fetch_future(h, %[1]d, "/")];
+    let bodies: u8[][] = async.gather(fs, none);
     if (bodies[0].len() != %[2]d) { return 3; }
     // A path that cannot stand on a request line resolves to the empty
     // body without connecting.
-    var bad: async.Future[u8[]][] = [fetch.fetch_future(h, %[1]d, "/a\r\nX-Injected: 1")];
-    var refused: u8[][] = async.gather(bad, none);
+    let bad: async.Future[u8[]][] = [fetch.fetch_future(h, %[1]d, "/a\r\nX-Injected: 1")];
+    let refused: u8[][] = async.gather(bad, none);
     if (refused[0].len() != 0) { return 6; }
     // __fetch_drain's list IS captured, so its appends cross the cliff —
     // pointer-sized, which is the whole point of carrying chunks.

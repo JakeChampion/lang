@@ -30,8 +30,8 @@ import (
 //	keep.m (7) + keep.xs.len() (3) + s.m (7) + s.xs.len() (3) + s.n (2) = 22
 const structUpdateSpreadSrc = `struct S { xs: i32[], n: i32, m: i32 }
 function main(): i32 {
-    var s: S = S { xs: [1, 2, 3], n: 0, m: 7 };
-    var keep: S = s;
+    let s: S = S { xs: [1, 2, 3], n: 0, m: 7 };
+    let keep: S = s;
     s = S { ...s, n: 1 };
     s = S { ...s, n: s.n + 1 };
     if (keep.n != 0) { return 253; }
@@ -52,8 +52,8 @@ function push(own s: S, v: i32): S {
     return s;
 }
 function main(): i32 {
-    var s: S = S { xs: [], n: 0 };
-    var i: i32 = 0;
+    let s: S = S { xs: [], n: 0 };
+    let i: i32 = 0;
     while (i < 10) { s = push(s, i); i = i + 1; }
     if (s.xs.len() != 20) { return 254; }
     return __arr_push_shared_count();

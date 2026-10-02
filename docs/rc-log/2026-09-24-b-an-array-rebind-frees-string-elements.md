@@ -10,7 +10,7 @@ function emit(prog: I[], n: N): I[] {
         C(c) => { return prog.append(IC(c)); },
         S(xs) => { ... },
         W(inner) => {
-            var pg: I[] = prog.append(IC(0));
+            let pg: I[] = prog.append(IC(0));
             pg = emit(pg, inner);
             return pg;
         },

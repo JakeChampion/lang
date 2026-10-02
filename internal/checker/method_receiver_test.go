@@ -32,14 +32,14 @@ function mk(a: i32): P { return P { n: a }; }
 			// as `string` despite the error inside it, so dispatch resolves
 			// and the receiver goes on to the argument list.
 			name: "nested f-string",
-			src:  `function main(): i32 { var s = f"x{f"y{qqq}"}"; return 0; }`,
+			src:  `function main(): i32 { let s = f"x{f"y{qqq}"}"; return 0; }`,
 			want: 1,
 		},
 		{
 			// Control: one level deep the receiver is `qqq` itself, which
 			// types as nil and bails before the second check.
 			name: "single-level f-string",
-			src:  `function main(): i32 { var s = f"x{qqq}"; return 0; }`,
+			src:  `function main(): i32 { let s = f"x{qqq}"; return 0; }`,
 			want: 1,
 		},
 		{

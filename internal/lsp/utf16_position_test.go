@@ -44,10 +44,10 @@ func TestUTF16LenCountsCodeUnits(t *testing.T) {
 // maps to a UTF-16 offset and back to itself.
 func TestPositionConvertersRoundTrip(t *testing.T) {
 	for _, line := range []string{
-		"var x: i32 = 7;",
-		"var é: i32 = 7;",
+		"let x: i32 = 7;",
+		"let é: i32 = 7;",
 		"// → arrow then code",
-		"var s: string = \"🐛\";",
+		"let s: string = \"🐛\";",
 		"日本語 mixed with ascii",
 	} {
 		for b := range line {
@@ -68,7 +68,7 @@ func startsRune(s string, i int) bool { return s[i]&0xC0 != 0x80 }
 // A line's UTF-16 offset must differ from its byte column exactly where a
 // multi-byte rune precedes it — the property the old pass-through violated.
 func TestUTF16OffsetDivergesFromByteColumn(t *testing.T) {
-	line := "var é = 1;" // `é` occupies bytes 4..5, one UTF-16 unit
+	line := "let é = 1;" // `é` occupies bytes 4..5, one UTF-16 unit
 	// `=` is at byte offset 7 (1-based column 8) but UTF-16 offset 6.
 	if got := line[7]; got != '=' {
 		t.Fatalf("fixture drifted: line[7] = %q, want '='", got)
@@ -118,7 +118,7 @@ func TestHoverAfterAMultiByteCharacterOnTheSameLine(t *testing.T) {
 			line := "  return f(" + c.lit + ", x);"
 			src := "function f(s: string, n: i32): i32 { return n; }\n" +
 				"function main(): i32 {\n" +
-				"  var x: i32 = 7;\n" +
+				"  let x: i32 = 7;\n" +
 				line + "\n}\n"
 			b := strings.LastIndex(line, "x")
 			if b < 0 {
@@ -155,7 +155,7 @@ func TestHoverAfterAMultiByteCharacterOnTheSameLine(t *testing.T) {
 // defensive, not a live bug, and this pins that it did not break the ASCII
 // case it is used for.
 func TestNameRangeIsOneUnitPerASCIIByte(t *testing.T) {
-	src := "function main(): i32 {\n  var count: i32 = 7;\n  return count;\n}\n"
+	src := "function main(): i32 {\n  let count: i32 = 7;\n  return count;\n}\n"
 	got := hoverFor(src, 2, 9) // on `count` in `return count;`
 	if got == nil || got.Range == nil {
 		t.Fatal("no hover range for `count`")

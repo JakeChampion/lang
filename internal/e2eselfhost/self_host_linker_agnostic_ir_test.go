@@ -56,15 +56,15 @@ func TestSelfHostLinkerAgnosticIRX86_64(t *testing.T) {
 		// The exact issue #4081 repro: nested string boxes, `.len()` on each
 		// element. 2 + 1 + 2 = 5.
 		{"issue-4081-repro",
-			`function main(): i32 { var g: string[][] = [["ab", "c"], ["de"]]; return g[0][0].len() + g[0][1].len() + g[1][0].len(); }`, 5},
+			`function main(): i32 { let g: string[][] = [["ab", "c"], ["de"]]; return g[0][0].len() + g[0][1].len() + g[1][0].len(); }`, 5},
 		// Deeper: every cell of a 2x2-ish ragged string grid, lengths chosen so
 		// the sum (4+3+2+1 = 10) is NOT a coincidence of rodata layout.
 		{"string-grid-len",
-			`function main(): i32 { var g: string[][] = [["abcd", "efg"], ["hi", "j"]]; return g[0][0].len() + g[0][1].len() + g[1][0].len() + g[1][1].len(); }`, 10},
+			`function main(): i32 { let g: string[][] = [["abcd", "efg"], ["hi", "j"]]; return g[0][0].len() + g[0][1].len() + g[1][0].len() + g[1][1].len(); }`, 10},
 		// A nested string element bound to a local, then `.len()` off the local —
-		// exercises the `var r = g[i][j]` rebind tracking the string kind.
+		// exercises the `let r = g[i][j]` rebind tracking the string kind.
 		{"nested-rebind-len",
-			`function main(): i32 { var g: string[][] = [["xyz", "w"], ["uv"]]; var r: string = g[0][0]; return r.len(); }`, 3},
+			`function main(): i32 { let g: string[][] = [["xyz", "w"], ["uv"]]; let r: string = g[0][0]; return r.len(); }`, 3},
 	}
 
 	// Discover the available linkers. bfd is gcc's default (always present);

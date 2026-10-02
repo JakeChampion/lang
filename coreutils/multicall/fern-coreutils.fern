@@ -145,8 +145,8 @@ function catalogue(): string[] {
 }
 
 function in_catalogue(n: string): boolean {
-  var names: string[] = catalogue();
-  var i: i32 = 0;
+  let names: string[] = catalogue();
+  let i: i32 = 0;
   while (i < names.len()) {
     if (names[i] == n) {
       return true;
@@ -161,8 +161,8 @@ function in_catalogue(n: string): boolean {
 // beyond that: a trailing slash cannot appear in an exec'd argv[0],
 // and a name with no slash is already its own basename.
 function basename(p: string): string {
-  var last: i32 = -1;
-  var i: i32 = 0;
+  let last: i32 = -1;
+  let i: i32 = 0;
   while (i < p.len()) {
     if (p[i] == b'/') {
       last = i;
@@ -173,7 +173,7 @@ function basename(p: string): string {
 }
 
 function help_text(): string {
-  var out: string = "";
+  let out: string = "";
   out = out + "Usage: " + gnu.prog() + " OPTION\n";
   out = out + "Every utility in one binary, selected by the name it is invoked as.\n";
   out = out + "\n";
@@ -196,11 +196,11 @@ function own_main(argv: string[]): i32 {
   if (argv.len() < 2) {
     gnu.die_usage("missing option", 1);
   }
-  var a: string = argv[1];
+  let a: string = argv[1];
   if (a == "--list") {
-    var names: string[] = catalogue();
-    var out: string = "";
-    var i: i32 = 0;
+    let names: string[] = catalogue();
+    let out: string = "";
+    let i: i32 = 0;
     while (i < names.len()) {
       out = out + names[i] + "\n";
       i = i + 1;
@@ -229,11 +229,11 @@ function own_main(argv: string[]): i32 {
 // fern-lint: allow cyclomatic-complexity
 // The catalogue is a flat table; splitting it would only hide the shape.
 function main(): i32 {
-  var argv: string[] = args();
+  let argv: string[] = args();
   if (argv.len() == 0) {
     return 1;
   }
-  var n: string = basename(argv[0]);
+  let n: string = basename(argv[0]);
   if (n == "[") {
     return u_bracket.main();
   }

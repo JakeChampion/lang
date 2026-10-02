@@ -37,13 +37,13 @@ import (
 const processAliveSelfHostSource = `function main(): i32 {
     // The process's OWN pid, read from the kernel rather than guessed: field 1
     // of /proc/self/stat is the pid of the process doing the reading.
-    var st: string = "";
+    let st: string = "";
     match (read_file("/proc/self/stat")) {
         Ok(v) => { st = v; },
         Err(e) => { return 10; }
     }
-    var fields: string[] = st.split(" ");
-    var me: i32 = 0;
+    let fields: string[] = st.split(" ");
+    let me: i32 = 0;
     for b in fields[0] { me = me * 10 + (b as i32) - 48; }
     if (me <= 0) { return 11; }
     if (!process_alive(me)) { return 1; }
@@ -55,11 +55,11 @@ const processAliveSelfHostSource = `function main(): i32 {
     // A pid that genuinely died: fork a child, ask while it is still in the
     // process table (running or a zombie — kill(2) sees both), then reap it and
     // ask again.
-    var kid: i32 = proc_fork();
+    let kid: i32 = proc_fork();
     if (kid == 0) { exit(0); }
     if (kid < 0) { return 12; }
     if (!process_alive(kid)) { return 3; }
-    var status: i32 = proc_waitpid(kid);
+    let status: i32 = proc_waitpid(kid);
     if (process_alive(kid)) { return 4; }
 
     // kill(2) reads these as process GROUPS, not processes, so they answer

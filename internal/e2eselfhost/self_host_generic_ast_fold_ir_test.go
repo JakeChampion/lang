@@ -57,7 +57,7 @@ function fold_expr[T](e: Expr, acc: T, visit: (Expr, T) => T): T {
 function count_node(e: Expr, acc: i32): i32 { return acc + 1i32; }
 
 function main(): i32 {
-    var e: Expr = EAdd { left: ENum { v: 1i32 }, right: EAdd { left: ENum { v: 2i32 }, right: ENum { v: 3i32 } } };
+    let e: Expr = EAdd { left: ENum { v: 1i32 }, right: EAdd { left: ENum { v: 2i32 }, right: ENum { v: 3i32 } } };
     return fold_expr(e, 0i32, count_node);
 }`, 5},
 	// The adopted shape: the visitor is a nested named function closing over
@@ -94,7 +94,7 @@ function count_over(e: Expr, want: i32): i32 {
 }
 
 function main(): i32 {
-    var e: Expr = EAdd { left: ENum { v: 1i32 }, right: EAdd { left: ENum { v: 5i32 }, right: ENum { v: 9i32 } } };
+    let e: Expr = EAdd { left: ENum { v: 1i32 }, right: EAdd { left: ENum { v: 5i32 }, right: ENum { v: 9i32 } } };
     return count_over(e, 0i32) * 10i32 + count_over(e, 5i32);
 }`, 31},
 	// The callback crosses a mutual recursion (expr half ↔ stmt half) and the
@@ -118,7 +118,7 @@ function fold_expr[T](e: Expr, acc: T, visit: (Expr, T) => T): T {
         EIdent(_) => { return acc; },
         ECall(c) => {
             acc = fold_expr(c.callee, acc, visit);
-            var i: i32 = 0;
+            let i: i32 = 0;
             while (i < c.args.len()) {
                 acc = fold_expr(c.args[i], acc, visit);
                 i = i + 1;
@@ -126,7 +126,7 @@ function fold_expr[T](e: Expr, acc: T, visit: (Expr, T) => T): T {
             return acc;
         },
         ELambda(lm) => {
-            var i: i32 = 0;
+            let i: i32 = 0;
             while (i < lm.body.len()) {
                 acc = fold_stmt(lm.body[i], acc, visit);
                 i = i + 1;
@@ -161,8 +161,8 @@ function collect(body: Stmt[], want: string): string[] {
         }
         return acc;
     }
-    var acc: string[] = [];
-    var i: i32 = 0;
+    let acc: string[] = [];
+    let i: i32 = 0;
     while (i < body.len()) {
         acc = fold_stmt(body[i], acc, hit);
         i = i + 1;
@@ -171,8 +171,8 @@ function collect(body: Stmt[], want: string): string[] {
 }
 
 function main(): i32 {
-    var inner: Stmt[] = [SReturn { value: ECall { callee: EIdent { name: "open" }, args: [ENum { v: 1i32 }] } }];
-    var body: Stmt[] = [
+    let inner: Stmt[] = [SReturn { value: ECall { callee: EIdent { name: "open" }, args: [ENum { v: 1i32 }] } }];
+    let body: Stmt[] = [
         SExpr { value: ECall { callee: EIdent { name: "open" }, args: [ECall { callee: EIdent { name: "read" }, args: [] }] } },
         SExpr { value: ELambda { body: inner } }
     ];
@@ -209,15 +209,15 @@ function hits_over(e: Expr, want: i32): Hit[] {
         }
         return acc;
     }
-    var seed: Hit[] = [];
+    let seed: Hit[] = [];
     return fold_expr(e, seed, hit);
 }
 
 function main(): i32 {
-    var e: Expr = EAdd { left: ENum { v: 2i32 }, right: EAdd { left: ENum { v: 7i32 }, right: ENum { v: 4i32 } } };
-    var hs: Hit[] = hits_over(e, 3i32);
-    var sum: i32 = 0;
-    var i: i32 = 0;
+    let e: Expr = EAdd { left: ENum { v: 2i32 }, right: EAdd { left: ENum { v: 7i32 }, right: ENum { v: 4i32 } } };
+    let hs: Hit[] = hits_over(e, 3i32);
+    let sum: i32 = 0;
+    let i: i32 = 0;
     while (i < hs.len()) { sum = sum + hs[i].v; i = i + 1; }
     return sum + hs.len();
 }`, 13},
@@ -281,7 +281,7 @@ function sum_num(e: Expr, acc: i32): i32 {
 }
 
 function main(): i32 {
-    var e: Expr = EAdd { left: ENum { v: 3i32 }, right: ELam { body: ENum { v: 4i32 } } };
+    let e: Expr = EAdd { left: ENum { v: 3i32 }, right: ELam { body: ENum { v: 4i32 } } };
     return fold_expr(e, 0i32, sum_num) * 10i32 + fold_expr_pruned(e, 0i32, sum_num, not_lambda);
 }`, 73},
 	// astwalk's `collect_idents_expr` shape exactly: the visitor's contribution
@@ -328,8 +328,8 @@ function free_of(e: Expr, acc: string[]): string[] {
     match (e) {
         EIdent(id) => { return acc.append(id.name); },
         ELam(lm) => {
-            var inner: string[] = free_vars(lm.body);
-            var i: i32 = 0;
+            let inner: string[] = free_vars(lm.body);
+            let i: i32 = 0;
             while (i < inner.len()) {
                 if (inner[i] != lm.param) { acc = acc.append(inner[i]); }
                 i = i + 1;
@@ -342,14 +342,14 @@ function free_of(e: Expr, acc: string[]): string[] {
 }
 
 function free_vars(e: Expr): string[] {
-    var seed: string[] = [];
+    let seed: string[] = [];
     return fold_expr_pruned(e, seed, free_of, not_lambda);
 }
 
 function main(): i32 {
-    var lam: Expr = ELam { param: "y", body: EAdd { left: EIdent { name: "x" }, right: EIdent { name: "y" } } };
-    var e: Expr = EAdd { left: EIdent { name: "z" }, right: lam };
-    var seed: string[] = [];
+    let lam: Expr = ELam { param: "y", body: EAdd { left: EIdent { name: "x" }, right: EIdent { name: "y" } } };
+    let e: Expr = EAdd { left: EIdent { name: "z" }, right: lam };
+    let seed: string[] = [];
     return free_vars(e).len() * 10i32 + fold_expr(e, seed, free_of).len();
 }`, 24},
 	// Prune and CAPTURE composed: a nested capturing visitor and a top-level
@@ -418,7 +418,7 @@ function count_named_all(e: Expr, want: string): i32 {
 }
 
 function main(): i32 {
-    var e: Expr = EAdd { left: EIdent { name: "x" }, right: EAdd { left: EIdent { name: "x" }, right: ELam { body: EIdent { name: "y" } } } };
+    let e: Expr = EAdd { left: EIdent { name: "x" }, right: EAdd { left: EIdent { name: "x" }, right: ELam { body: EIdent { name: "y" } } } };
     return count_named(e, "x") * 10i32 + count_named_all(e, "y") * 3i32 + count_named(e, "y");
 }`, 23},
 	// The monomorphisation profile astwalk actually has: ONE generic fold, three
@@ -473,17 +473,17 @@ function hit_of(e: Expr, acc: Hit[]): Hit[] {
 }
 
 function main(): i32 {
-    var e: Expr = EAdd { left: ENum { v: 5i32 }, right: EStr { s: "a" } };
-    var s0: string[] = [];
-    var h0: Hit[] = [];
-    var ns: string[] = fold_expr(e, s0, name_of);
-    var hs: Hit[] = fold_expr(e, h0, hit_of);
+    let e: Expr = EAdd { left: ENum { v: 5i32 }, right: EStr { s: "a" } };
+    let s0: string[] = [];
+    let h0: Hit[] = [];
+    let ns: string[] = fold_expr(e, s0, name_of);
+    let hs: Hit[] = fold_expr(e, h0, hit_of);
     return fold_expr(e, 0i32, count_node) * 10i32 + ns.len() * 2i32 + hs[0].v;
 }`, 37},
 	// --- the statement visitor (#6993 slice three) --------------------------
 	//
 	// The expression visitor cannot express every traversal: an assignment's
-	// TARGET and a `var` / `for` / match-arm BINDER are names carried on the
+	// TARGET and a `let` / `for` / match-arm BINDER are names carried on the
 	// STATEMENT, so a consumer contributing one is never handed a node for it.
 	// astwalk grew fold_expr_nodes / fold_stmt_nodes taking a second visitor
 	// for those, and the older folds became wrappers passing a no-op.
@@ -517,7 +517,7 @@ function fold_expr_nodes[T](e: Expr, acc: T, visit_stmt: (Stmt, T) => T, visit_e
             return fold_expr_nodes(b.right, acc, visit_stmt, visit_expr, descend);
         },
         ELambda(lm) => {
-            var i: i32 = 0;
+            let i: i32 = 0;
             while (i < lm.body.len()) {
                 acc = fold_stmt_nodes(lm.body[i], acc, visit_stmt, visit_expr, descend);
                 i = i + 1;
@@ -565,15 +565,15 @@ function binders_of(st: Stmt, acc: string[]): string[] {
 function binds_nothing(e: Expr, acc: string[]): string[] { return acc; }
 
 function reads(body: Stmt[]): string[] {
-    var acc: string[] = [];
-    var i: i32 = 0;
+    let acc: string[] = [];
+    let i: i32 = 0;
     while (i < body.len()) { acc = fold_stmt_nodes(body[i], acc, target_of, reads_of, descend_all); i = i + 1; }
     return acc;
 }
 
 function binders(body: Stmt[], into_lambdas: boolean): string[] {
-    var acc: string[] = [];
-    var i: i32 = 0;
+    let acc: string[] = [];
+    let i: i32 = 0;
     while (i < body.len()) {
         if (into_lambdas) { acc = fold_stmt_nodes(body[i], acc, binders_of, binds_nothing, descend_all); }
         else { acc = fold_stmt_nodes(body[i], acc, binders_of, binds_nothing, descend_none); }
@@ -583,8 +583,8 @@ function binders(body: Stmt[], into_lambdas: boolean): string[] {
 }
 
 function main(): i32 {
-    var inner: Stmt[] = [SVar { name: "q", init: EIdent { name: "w" } }];
-    var body: Stmt[] = [
+    let inner: Stmt[] = [SVar { name: "q", init: EIdent { name: "w" } }];
+    let body: Stmt[] = [
         SVar { name: "x", init: ENum { v: 1i32 } },
         SAssign { target: "y", value: EAdd { left: EIdent { name: "x" }, right: EIdent { name: "z" } } },
         SExpr { value: ELambda { body: inner } }
@@ -656,14 +656,14 @@ function hit_of(e: Expr, acc: Hit[]): Hit[] {
 }
 
 function main(): i32 {
-    var st: Stmt = SRet { value: EAdd { left: EIdent { name: "a" }, right: EAdd { left: ENum { v: 2i32 }, right: ENum { v: 3i32 } } } };
-    var seed_names: string[] = [];
-    var seed_hits: Hit[] = [];
-    var nodes: i32 = fold_stmt(st, 0i32, count_node);
-    var names: string[] = fold_stmt(st, seed_names, name_of);
-    var hits: Hit[] = fold_stmt(st, seed_hits, hit_of);
-    var sum: i32 = 0;
-    var i: i32 = 0;
+    let st: Stmt = SRet { value: EAdd { left: EIdent { name: "a" }, right: EAdd { left: ENum { v: 2i32 }, right: ENum { v: 3i32 } } } };
+    let seed_names: string[] = [];
+    let seed_hits: Hit[] = [];
+    let nodes: i32 = fold_stmt(st, 0i32, count_node);
+    let names: string[] = fold_stmt(st, seed_names, name_of);
+    let hits: Hit[] = fold_stmt(st, seed_hits, hit_of);
+    let sum: i32 = 0;
+    let i: i32 = 0;
     while (i < hits.len()) { sum = sum + hits[i].v; i = i + 1; }
     return nodes * 10i32 + names.len() * 5i32 + sum;
 }`, 60},

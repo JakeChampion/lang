@@ -4,8 +4,8 @@ import "std/json";
 function main(): i32 {
     match (json.json_parse("{\"a\": 40, \"b\": 2}")) {
         Some(v) => {
-            var a: i32 = 0;
-            var b: i32 = 0;
+            let a: i32 = 0;
+            let b: i32 = 0;
             match (json.json_get_i32(v, "a")) {
                 Some(x) => { a = x; },
                 None => { return 1; }

@@ -19,12 +19,12 @@ struct Pair[A, B] { a: A, b: B }
 function mk(): Box[i64] { return Box[i64] { val: 9 }; }
 
 function main(): i32 {
-    var b = Box[i32] { val: 20 };
-    var s = Stack[i32] { items: [] };
-    var p = Pair[i32, string] { a: 3, b: "hi" };
-    var upd = Box[i32] { ...b, val: 7 };
-    var m = mk();
-    var w = Box[i64] { val: 4294967301 };
+    let b = Box[i32] { val: 20 };
+    let s = Stack[i32] { items: [] };
+    let p = Pair[i32, string] { a: 3, b: "hi" };
+    let upd = Box[i32] { ...b, val: 7 };
+    let m = mk();
+    let w = Box[i64] { val: 4294967301 };
     return b.val + s.items.len() + p.a + p.b.len() + upd.val + (m.val as i32) + ((w.val - 4294967296) as i32);
 }
 `

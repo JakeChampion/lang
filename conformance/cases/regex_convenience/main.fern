@@ -5,7 +5,7 @@
 import "std/regex";
 
 function main(): i32 {
-    var r: i32 = 0;
+    let r: i32 = 0;
     if (regex.regex_full_match("a|aa", "aa")) { r = r + 1; }        // shorter alt exists; full still true
     if (regex.regex_full_match("[0-9]+", "12345")) { r = r + 2; }
     if (!regex.regex_full_match("[0-9]+", "12a45")) { r = r + 4; }  // not whole-string

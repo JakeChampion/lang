@@ -28,11 +28,11 @@ function unit(o: ir.Op): irtables.LowerResult[] {
 }
 
 function main(): i32 {
-    var mod: parser.Module = parser.parse_module(lexer.tokenize("function main(): i32 { return 0; }"));
-    var text: wasm_ir.WasmUnit = wasm_ir.WasmUnit { ns: "", text: "  (func $main (result i32) (i32.const 0))\n", strs: [], caggs: [], fns: [] };
+    let mod: parser.Module = parser.parse_module(lexer.tokenize("function main(): i32 { return 0; }"));
+    let text: wasm_ir.WasmUnit = wasm_ir.WasmUnit { ns: "", text: "  (func $main (result i32) (i32.const 0))\n", strs: [], caggs: [], fns: [] };
     for op in wasm_ir.need_ops() {
-        var o: ir.Op = ir.Op { decl: 0 - 1, kind_tag: ir.kind_id(op), i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
-        var needs: string[] = wasm_ir.needs_of(unit(o));
+        let o: ir.Op = ir.Op { decl: 0 - 1, kind_tag: ir.kind_id(op), i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+        let needs: string[] = wasm_ir.needs_of(unit(o));
         if (util.index_of_str(needs, op) < 0) {
             print("=== unrecorded: " + op);
             needs = needs.append(op);

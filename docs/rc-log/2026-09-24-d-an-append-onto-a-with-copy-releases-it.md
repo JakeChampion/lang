@@ -3,8 +3,8 @@
 2026-09-24. Native.
 
 ```
-var xs: i32[] = [1, 2, 3];
-var zs: i32[] = xs.with(2, i).append(8);
+let xs: i32[] = [1, 2, 3];
+let zs: i32[] = xs.with(2, i).append(8);
 return zs.len() + xs[1];
 ```
 

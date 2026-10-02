@@ -71,7 +71,7 @@ func TestSelfHostWasmComponentAdapter(t *testing.T) {
 		stdout string
 	}{
 		{"print", "function main(): i32 { write(\"hello from a component\\n\"); return 0; }", "hello from a component\n"},
-		{"loop-print", "function main(): i32 { var i: i32 = 0; while (i < 3) { print_int(i); i = i + 1; } return 0; }", "012"},
+		{"loop-print", "function main(): i32 { let i: i32 = 0; while (i < 3) { print_int(i); i = i + 1; } return 0; }", "012"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			// source → preview1 core WAT → preview1 core binary

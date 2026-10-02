@@ -29,12 +29,12 @@ var deriveOrdCases = []struct {
 	{"struct-i32", `import "core/cmp";
 @derive(cmp.Ord)
 struct P { x: i32, y: i32 }
-function main(): i32 { var a = P { x: 1, y: 2 }; var b = P { x: 1, y: 3 }; var c = P { x: 1, y: 2 }; if (a.cmp(b) < 0 && b.cmp(a) > 0 && a.cmp(c) == 0) { return 42; } return 0; }`, 42},
+function main(): i32 { let a = P { x: 1, y: 2 }; let b = P { x: 1, y: 3 }; let c = P { x: 1, y: 2 }; if (a.cmp(b) < 0 && b.cmp(a) > 0 && a.cmp(c) == 0) { return 42; } return 0; }`, 42},
 	// struct with a mix of numeric widths.
 	{"struct-i64", `import "core/cmp";
 @derive(cmp.Ord)
 struct Q { a: i64, b: i32 }
-function main(): i32 { var x = Q { a: 5, b: 1 }; var y = Q { a: 5, b: 2 }; var z = Q { a: 9, b: 0 }; if (x.cmp(y) < 0 && z.cmp(x) > 0 && x.cmp(x) == 0) { return 42; } return 0; }`, 42},
+function main(): i32 { let x = Q { a: 5, b: 1 }; let y = Q { a: 5, b: 2 }; let z = Q { a: 9, b: 0 }; if (x.cmp(y) < 0 && z.cmp(x) > 0 && x.cmp(x) == 0) { return 42; } return 0; }`, 42},
 	// nested struct: the outer cmp delegates to the inner struct's own derived
 	// `.cmp()` for the nominal field (exercises dv_cmp_stmts's non-numeric arm).
 	{"struct-nested", `import "core/cmp";
@@ -42,7 +42,7 @@ function main(): i32 { var x = Q { a: 5, b: 1 }; var y = Q { a: 5, b: 2 }; var z
 struct Inner { v: i32 }
 @derive(cmp.Ord)
 struct Outer { inner: Inner, tag: i32 }
-function main(): i32 { var a = Outer { inner: Inner { v: 5 }, tag: 1 }; var b = Outer { inner: Inner { v: 6 }, tag: 0 }; var c = Outer { inner: Inner { v: 5 }, tag: 1 }; if (a.cmp(b) < 0 && b.cmp(a) > 0 && a.cmp(c) == 0) { return 42; } return 0; }`, 42},
+function main(): i32 { let a = Outer { inner: Inner { v: 5 }, tag: 1 }; let b = Outer { inner: Inner { v: 6 }, tag: 0 }; let c = Outer { inner: Inner { v: 5 }, tag: 1 }; if (a.cmp(b) < 0 && b.cmp(a) > 0 && a.cmp(c) == 0) { return 42; } return 0; }`, 42},
 	// enum: variant order by declaration index; same variant compares payload.
 	{"enum-numeric", `import "core/cmp";
 @derive(cmp.Ord)
@@ -55,12 +55,12 @@ function main(): i32 { if (A(1).cmp(A(2)) < 0 && A(5).cmp(B(0)) < 0 && C.cmp(A(0
 	{"struct-operator", `import "core/cmp";
 @derive(cmp.Ord)
 struct P { x: i32, y: i32 }
-function main(): i32 { var a = P { x: 1, y: 2 }; var b = P { x: 1, y: 5 }; var c = P { x: 1, y: 2 }; if (a < b && b > a && a <= c && a >= c && !(a < c) && !(c > a)) { return 42; } return 0; }`, 42},
+function main(): i32 { let a = P { x: 1, y: 2 }; let b = P { x: 1, y: 5 }; let c = P { x: 1, y: 2 }; if (a < b && b > a && a <= c && a >= c && !(a < c) && !(c > a)) { return 42; } return 0; }`, 42},
 	// Enum operands, both freshly constructed and held in locals.
 	{"enum-operator", `import "core/cmp";
 @derive(cmp.Ord)
 enum E { A(i32), B(i32), C }
-function main(): i32 { var p = A(3); if (A(1) < A(2) && A(5) < B(0) && C > A(0) && !(A(3) < A(3)) && p <= A(3) && p >= A(3)) { return 42; } return 0; }`, 42},
+function main(): i32 { let p = A(3); if (A(1) < A(2) && A(5) < B(0) && C > A(0) && !(A(3) < A(3)) && p <= A(3) && p >= A(3)) { return 42; } return 0; }`, 42},
 }
 
 // TestNativeDeriveOrd runs the derived-Ord programs through the native

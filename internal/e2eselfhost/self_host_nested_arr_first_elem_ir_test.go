@@ -8,7 +8,7 @@ import (
 )
 
 // TestSelfHostNestedArrFirstElemIR pins the type-driven arr-of-arr
-// classification at a `var m = [<first>, …]` binding (#5326): the old
+// classification at a `let m = [<first>, …]` binding (#5326): the old
 // detection recognised only a LITERAL first element (`[[…], …]`), so a
 // call-shaped (`[mk(), …]`) or ident-shaped (`[inner, …]`) first element —
 // array-typed by the return/slot registries — left `m` un-arr-arr-marked and
@@ -34,36 +34,36 @@ func TestSelfHostNestedArrFirstElemIR(t *testing.T) {
 		// 4-byte stride -> 7.
 		{"f64-call-first",
 			`function mk(): f64[] { return [1.5, 2.5]; }
-function main(): i32 { var m = [mk(), [0.25]]; var s = m[0][0] + m[0][1] + m[1][0]; if (s > 4.24 && s < 4.26) { return 42; } return 7; }`, 42},
+function main(): i32 { let m = [mk(), [0.25]]; let s = m[0][0] + m[0][1] + m[1][0]; if (s > 4.24 && s < 4.26) { return 42; } return 7; }`, 42},
 		// f64[][] whose first element is an f64[]-marked local.
 		{"f64-ident-first",
 			`function mk(): f64[] { return [1.5, 2.5]; }
-function main(): i32 { var inner = mk(); var m = [inner, [0.25]]; var s = m[0][0] + m[0][1] + m[1][0]; if (s > 4.24 && s < 4.26) { return 42; } return 7; }`, 42},
+function main(): i32 { let inner = mk(); let m = [inner, [0.25]]; let s = m[0][0] + m[0][1] + m[1][0]; if (s > 4.24 && s < 4.26) { return 42; } return 7; }`, 42},
 		// string[][] whose first element is a string[]-returning call: nested
 		// element .len() must dispatch str_len (2+3+1 = 6 -> 42). Pre-fix the
 		// inner element read the array header as a string box -> 7.
 		{"string-call-first",
 			`function mk(): string[] { return ["ab", "cde"]; }
-function main(): i32 { var m = [mk(), ["f"]]; var s = m[0][0].len() + m[0][1].len() + m[1][0].len(); if (s == 6) { return 42; } return 7; }`, 42},
+function main(): i32 { let m = [mk(), ["f"]]; let s = m[0][0].len() + m[0][1].len() + m[1][0].len(); if (s == 6) { return 42; } return 7; }`, 42},
 		// i64[][] whose first element is an i64[]-returning call: 8-byte inner
 		// loads (values past 2^32).
 		{"i64-call-first",
 			`function mk(): i64[] { return [5000000000, 2]; }
-function main(): i32 { var m = [mk(), [1 as i64]]; if (m[0][0] + m[0][1] + m[1][0] == 5000000003) { return 42; } return 7; }`, 42},
+function main(): i32 { let m = [mk(), [1 as i64]]; if (m[0][0] + m[0][1] + m[1][0] == 5000000003) { return 42; } return 7; }`, 42},
 		// The literal-first shape that always worked — pinned against
 		// regression by the same classifier now serving all four shapes.
 		{"f64-literal-first",
-			`function main(): i32 { var m = [[1.5, 2.5], [0.25]]; var s = m[0][0] + m[0][1] + m[1][0]; if (s > 4.24 && s < 4.26) { return 42; } return 7; }`, 42},
+			`function main(): i32 { let m = [[1.5, 2.5], [0.25]]; let s = m[0][0] + m[0][1] + m[1][0]; if (s > 4.24 && s < 4.26) { return 42; } return 7; }`, 42},
 		// UNANNOTATED array-returning function (#5326, second cluster): the
 		// ret-type inferencer had no ExprArray arm, so `mk2` never entered
-		// f64arr_ret_fns and `var a = mk2()` element-reads took the 4-byte
+		// f64arr_ret_fns and `let a = mk2()` element-reads took the 4-byte
 		// default stride (silent wrong value pre-fix).
 		{"f64-unannotated-ret",
 			`function mk2() { return [1.5, 2.5]; }
-function main(): i32 { var a = mk2(); var s = a[0] + a[1]; if (s > 3.99 && s < 4.01) { return 42; } return 7; }`, 42},
+function main(): i32 { let a = mk2(); let s = a[0] + a[1]; if (s > 3.99 && s < 4.01) { return 42; } return 7; }`, 42},
 		{"string-unannotated-ret",
 			`function mk3() { return ["ab", "cde"]; }
-function main(): i32 { var a = mk3(); if (a[0].len() + a[1].len() == 5) { return 42; } return 7; }`, 42},
+function main(): i32 { let a = mk3(); if (a[0].len() + a[1].len() == 5) { return 42; } return 7; }`, 42},
 	}
 
 	for _, tc := range cases {

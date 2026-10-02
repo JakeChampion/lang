@@ -48,8 +48,8 @@ var determinismMatrix = map[string]string{
 	"single_generic_fn": `
 function id[T](x: T): T { return x; }
 function main(): i32 {
-	var a: i32 = id[i32](7);
-	var b: string = id[string]("hi");
+	let a: i32 = id[i32](7);
+	let b: string = id[string]("hi");
 	return a + b.len();
 }`,
 
@@ -61,12 +61,12 @@ function id[T](x: T): T { return x; }
 function pair[A, B](a: A, b: B): A { return a; }
 function third[X](x: X): X { return x; }
 function main(): i32 {
-	var i1: i32 = id[i32](1);
-	var s1: string = id[string]("a");
-	var i2: i32 = pair[i32, string](2, "b");
-	var s2: string = pair[string, i32]("c", 3);
-	var i3: i32 = third[i32](4);
-	var s3: string = third[string]("d");
+	let i1: i32 = id[i32](1);
+	let s1: string = id[string]("a");
+	let i2: i32 = pair[i32, string](2, "b");
+	let s2: string = pair[string, i32]("c", 3);
+	let i3: i32 = third[i32](4);
+	let s3: string = third[string]("d");
 	return i1 + s1.len() + i2 + s2.len() + i3 + s3.len();
 }`,
 
@@ -75,8 +75,8 @@ function main(): i32 {
 	"generic_struct": `
 struct Box[T] { val: T }
 function main(): i32 {
-	var bi: Box[i32] = Box { val: 7 };
-	var bs: Box[string] = Box { val: "hi" };
+	let bi: Box[i32] = Box { val: 7 };
+	let bs: Box[string] = Box { val: "hi" };
 	return bi.val + bs.val.len();
 }`,
 
@@ -88,9 +88,9 @@ struct Pair[A, B] { a: A, b: B }
 function fst[X, Y](p: Pair[X, Y]): X { return p.a; }
 struct Plain { v: i32 }
 function main(): i32 {
-	var p1: Pair[i32, string] = Pair { a: 10, b: "x" };
-	var p2: Pair[string, i32] = Pair { a: "y", b: 20 };
-	var pl: Plain = Plain { v: 30 };
+	let p1: Pair[i32, string] = Pair { a: 10, b: "x" };
+	let p2: Pair[string, i32] = Pair { a: "y", b: 20 };
+	let pl: Plain = Plain { v: 30 };
 	return fst[i32, string](p1) + fst[string, i32](p2).len() + pl.v;
 }`,
 
@@ -121,10 +121,10 @@ function gd[T](x: T): T { return x; }
 function ge[T](x: T): T { return x; }
 function outer[T](x: T): T { return ga(gb(gc(gd(ge(x))))); }
 function main(): i32 {
-	var a: i32 = outer[i32](1);
-	var b: string = outer[string]("s");
-	var c: boolean = outer[boolean](true);
-	var n: i32 = 0;
+	let a: i32 = outer[i32](1);
+	let b: string = outer[string]("s");
+	let c: boolean = outer[boolean](true);
+	let n: i32 = 0;
 	if (c) { n = 1; }
 	return a + b.len() + n;
 }`,

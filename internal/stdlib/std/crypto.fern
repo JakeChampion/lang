@@ -8,15 +8,15 @@
 //
 // Every digest is a STREAMING hasher — a value with `update` / `final`:
 //
-//   var h: crypto.Sha256 = crypto.sha256_new();
+//   let h: crypto.Sha256 = crypto.sha256_new();
 //   h = h.update(chunk);            // any length; a Reader.read_chunk piece
 //   h = h.update_bytes(more);       // the [u8] form: a u8[] or a slice of one
-//   var hex: string = h.final_hex();   // or final_bytes(): u8[]
+//   let hex: string = h.final_hex();   // or final_bytes(): u8[]
 //
 // The hasher is an immutable value in the rebind style (docs/CURSOR-IDIOM.md):
 // `h = h.update(chunk)` hands the state back to itself, and that rebind is
 // what lets the compiler reuse the pending-block buffer and the state box in
-// place instead of copying them per call. A state can be forked — `var h2 =
+// place instead of copying them per call. A state can be forked — `let h2 =
 // h.update("x")` while `h` stays live — and each side then owns its own
 // copy. `md5_hex(s)` / `sha256_bytes(s)` / … are the one-shot forms. SHA-224
 // shares `Sha256` (`sha224_new()`) and SHA-384 shares `Sha512`
@@ -44,8 +44,8 @@
 // zeroed memory on the AOT backends (a reused freelist block carries stale
 // bytes), so every buffer whose padding matters is zeroed explicitly.
 function __zero_u8(n: i32): u8[] {
-  var a: u8[] = __alloc_u8(n);
-  var i: i32 = 0;
+  let a: u8[] = __alloc_u8(n);
+  let i: i32 = 0;
   while (i < n) {
     a = a.with(i, 0 as u8);
     i = i + 1;
@@ -55,8 +55,8 @@ function __zero_u8(n: i32): u8[] {
 
 // __zero_u64 is the same for a 64-bit lane array, which Keccak's state is.
 function __zero_u64(n: i32): u64[] {
-  var a: u64[] = [];
-  var i: i32 = 0;
+  let a: u64[] = [];
+  let i: i32 = 0;
   while (i < n) {
     a = a.append(0 as u64);
     i = i + 1;
@@ -68,7 +68,7 @@ function __zero_u64(n: i32): u64[] {
 // consumed and rewritten in place. A `u8[]` argument lends itself as the
 // `[u8]` view without a copy.
 function __copy_in(own dst: u8[], at: i32, src: [u8], from: i32, len: i32): u8[] {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < len) {
     dst = dst.with(at + i, src[from + i]);
     i = i + 1;
@@ -94,7 +94,7 @@ function __put_le32(own d: u8[], at: i32, v: u32): u8[] {
 }
 
 function __put_be64(own d: u8[], at: i32, v: u64): u8[] {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < 8) {
     d = d.with(at + i, (v >> ((7 - i) * 8) as u64 & 255 as u64) as u8);
     i = i + 1;
@@ -103,7 +103,7 @@ function __put_be64(own d: u8[], at: i32, v: u64): u8[] {
 }
 
 function __put_le64(own d: u8[], at: i32, v: u64): u8[] {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < 8) {
     d = d.with(at + i, (v >> (i * 8) as u64 & 255 as u64) as u8);
     i = i + 1;
@@ -115,9 +115,9 @@ function __put_le64(own d: u8[], at: i32, v: u64): u8[] {
 // `s[i]` is a 0..255 byte). The MAC / KDF helpers work on `u8[]` arrays
 // (the same type __alloc_u8 builds for HMAC's intermediate blocks).
 function __str_to_bytes(s: string): u8[] {
-  var n: i32 = s.len();
-  var b: u8[] = __alloc_u8(n);
-  var i: i32 = 0;
+  let n: i32 = s.len();
+  let b: u8[] = __alloc_u8(n);
+  let i: i32 = 0;
   while (i < n) {
     b = b.with(i, s[i] as u8);
     i = i + 1;
@@ -140,14 +140,14 @@ function __hex_char(d: i32): i32 {
 // the whole prefix each step (O(n²) — the #4379 hot path). Same
 // preallocated-u8[] shape hex_encode uses; byte-for-byte identical.
 function __bytes_to_hex(b: u8[]): string {
-  var n: i32 = b.len();
+  let n: i32 = b.len();
   if (n == 0) {
     return "";
   }
-  var buf: u8[] = __alloc_u8(n * 2);
-  var i: i32 = 0;
+  let buf: u8[] = __alloc_u8(n * 2);
+  let i: i32 = 0;
   while (i < n) {
-    var v: i32 = b[i] as i32;
+    let v: i32 = b[i] as i32;
     buf = buf.with(i * 2, __hex_char(v >> 4 & 15) as u8);
     buf = buf.with(i * 2 + 1, __hex_char(v & 15) as u8);
     i = i + 1;
@@ -183,28 +183,28 @@ pub function md5_new(): Md5 {
 // variables renamed per round and the message schedule a rolling window of
 // locals, so the loop touches no array but the input.
 function __md5_blocks(st: Md5, bs: [u8], from: i32, nblocks: i32): Md5 {
-  var a: u32 = st.h0;
-  var b: u32 = st.h1;
-  var c: u32 = st.h2;
-  var d: u32 = st.h3;
-  var x0: u32 = 0;
-  var x1: u32 = 0;
-  var x2: u32 = 0;
-  var x3: u32 = 0;
-  var x4: u32 = 0;
-  var x5: u32 = 0;
-  var x6: u32 = 0;
-  var x7: u32 = 0;
-  var x8: u32 = 0;
-  var x9: u32 = 0;
-  var x10: u32 = 0;
-  var x11: u32 = 0;
-  var x12: u32 = 0;
-  var x13: u32 = 0;
-  var x14: u32 = 0;
-  var x15: u32 = 0;
-  var off: i32 = from;
-  var blk: i32 = 0;
+  let a: u32 = st.h0;
+  let b: u32 = st.h1;
+  let c: u32 = st.h2;
+  let d: u32 = st.h3;
+  let x0: u32 = 0;
+  let x1: u32 = 0;
+  let x2: u32 = 0;
+  let x3: u32 = 0;
+  let x4: u32 = 0;
+  let x5: u32 = 0;
+  let x6: u32 = 0;
+  let x7: u32 = 0;
+  let x8: u32 = 0;
+  let x9: u32 = 0;
+  let x10: u32 = 0;
+  let x11: u32 = 0;
+  let x12: u32 = 0;
+  let x13: u32 = 0;
+  let x14: u32 = 0;
+  let x15: u32 = 0;
+  let off: i32 = from;
+  let blk: i32 = 0;
   while (blk < nblocks) {
     x0 = bs[off] as u32 | bs[off + 1] as u32 << 8 | bs[off + 2] as u32 << 16 | bs[off + 3] as u32 << 24;
     x1 = bs[off + 4] as u32 | bs[off + 5] as u32 << 8 | bs[off + 6] as u32 << 16 | bs[off + 7] as u32 << 24;
@@ -222,10 +222,10 @@ function __md5_blocks(st: Md5, bs: [u8], from: i32, nblocks: i32): Md5 {
     x13 = bs[off + 52] as u32 | bs[off + 53] as u32 << 8 | bs[off + 54] as u32 << 16 | bs[off + 55] as u32 << 24;
     x14 = bs[off + 56] as u32 | bs[off + 57] as u32 << 8 | bs[off + 58] as u32 << 16 | bs[off + 59] as u32 << 24;
     x15 = bs[off + 60] as u32 | bs[off + 61] as u32 << 8 | bs[off + 62] as u32 << 16 | bs[off + 63] as u32 << 24;
-    var aa: u32 = a;
-    var bb: u32 = b;
-    var cc: u32 = c;
-    var dd: u32 = d;
+    let aa: u32 = a;
+    let bb: u32 = b;
+    let cc: u32 = c;
+    let dd: u32 = d;
     aa = bb + (aa + (dd ^ bb & (cc ^ dd)) + 0xd76aa478 + x0 >> 25 | aa + (dd ^ bb & (cc ^ dd)) + 0xd76aa478 + x0 << 7);
     dd = aa + (dd + (cc ^ aa & (bb ^ cc)) + 0xe8c7b756 + x1 >> 20 | dd + (cc ^ aa & (bb ^ cc)) + 0xe8c7b756 + x1 << 12);
     cc = dd + (cc + (bb ^ dd & (aa ^ bb)) + 0x242070db + x2 >> 15 | cc + (bb ^ dd & (aa ^ bb)) + 0x242070db + x2 << 17);
@@ -301,11 +301,11 @@ function __md5_blocks(st: Md5, bs: [u8], from: i32, nblocks: i32): Md5 {
 }
 
 function __md5_absorb(own h: Md5, bs: [u8]): Md5 {
-  var n: i32 = bs.len();
-  var pos: i32 = 0;
-  var bl: i32 = h.buf_len;
+  let n: i32 = bs.len();
+  let pos: i32 = 0;
+  let bl: i32 = h.buf_len;
   if (bl > 0) {
-    var take: i32 = 64 - bl;
+    let take: i32 = 64 - bl;
     if (take > n) {
       take = n;
     }
@@ -317,7 +317,7 @@ function __md5_absorb(own h: Md5, bs: [u8]): Md5 {
       bl = 0;
     }
   }
-  var nb: i32 = (n - pos) / 64;
+  let nb: i32 = (n - pos) / 64;
   if (nb > 0) {
     h = __md5_blocks(h, bs, pos, nb);
     pos = pos + nb * 64;
@@ -344,17 +344,17 @@ pub function (h: Md5) update_bytes(chunk: [u8]): Md5 {
 }
 
 pub function (h: Md5) final_bytes(): u8[] {
-  var bl: i32 = h.buf_len;
-  var plen: i32 = 64;
+  let bl: i32 = h.buf_len;
+  let plen: i32 = 64;
   if (bl >= 56) {
     plen = 128;
   }
-  var pad: u8[] = __copy_in(__zero_u8(plen), 0, h.buf, 0, bl);
+  let pad: u8[] = __copy_in(__zero_u8(plen), 0, h.buf, 0, bl);
   pad = pad.with(bl, 0x80 as u8);
-  var bits: u64 = h.total << 3 as u64;
+  let bits: u64 = h.total << 3 as u64;
   pad = __put_le64(pad, plen - 8, bits);
-  var st: Md5 = __md5_blocks(h, pad, 0, plen / 64);
-  var out: u8[] = __alloc_u8(st.out_len);
+  let st: Md5 = __md5_blocks(h, pad, 0, plen / 64);
+  let out: u8[] = __alloc_u8(st.out_len);
   out = __put_le32(out, 0, st.h0);
   out = __put_le32(out, 4, st.h1);
   out = __put_le32(out, 8, st.h2);
@@ -402,29 +402,29 @@ pub function sha1_new(): Sha1 {
 // variables renamed per round and the message schedule a rolling window of
 // locals, so the loop touches no array but the input.
 function __sha1_blocks(st: Sha1, bs: [u8], from: i32, nblocks: i32): Sha1 {
-  var a: u32 = st.h0;
-  var b: u32 = st.h1;
-  var c: u32 = st.h2;
-  var d: u32 = st.h3;
-  var e: u32 = st.h4;
-  var w0: u32 = 0;
-  var w1: u32 = 0;
-  var w2: u32 = 0;
-  var w3: u32 = 0;
-  var w4: u32 = 0;
-  var w5: u32 = 0;
-  var w6: u32 = 0;
-  var w7: u32 = 0;
-  var w8: u32 = 0;
-  var w9: u32 = 0;
-  var w10: u32 = 0;
-  var w11: u32 = 0;
-  var w12: u32 = 0;
-  var w13: u32 = 0;
-  var w14: u32 = 0;
-  var w15: u32 = 0;
-  var off: i32 = from;
-  var blk: i32 = 0;
+  let a: u32 = st.h0;
+  let b: u32 = st.h1;
+  let c: u32 = st.h2;
+  let d: u32 = st.h3;
+  let e: u32 = st.h4;
+  let w0: u32 = 0;
+  let w1: u32 = 0;
+  let w2: u32 = 0;
+  let w3: u32 = 0;
+  let w4: u32 = 0;
+  let w5: u32 = 0;
+  let w6: u32 = 0;
+  let w7: u32 = 0;
+  let w8: u32 = 0;
+  let w9: u32 = 0;
+  let w10: u32 = 0;
+  let w11: u32 = 0;
+  let w12: u32 = 0;
+  let w13: u32 = 0;
+  let w14: u32 = 0;
+  let w15: u32 = 0;
+  let off: i32 = from;
+  let blk: i32 = 0;
   while (blk < nblocks) {
     w0 = bs[off] as u32 << 24 | bs[off + 1] as u32 << 16 | bs[off + 2] as u32 << 8 | bs[off + 3] as u32;
     w1 = bs[off + 4] as u32 << 24 | bs[off + 5] as u32 << 16 | bs[off + 6] as u32 << 8 | bs[off + 7] as u32;
@@ -442,11 +442,11 @@ function __sha1_blocks(st: Sha1, bs: [u8], from: i32, nblocks: i32): Sha1 {
     w13 = bs[off + 52] as u32 << 24 | bs[off + 53] as u32 << 16 | bs[off + 54] as u32 << 8 | bs[off + 55] as u32;
     w14 = bs[off + 56] as u32 << 24 | bs[off + 57] as u32 << 16 | bs[off + 58] as u32 << 8 | bs[off + 59] as u32;
     w15 = bs[off + 60] as u32 << 24 | bs[off + 61] as u32 << 16 | bs[off + 62] as u32 << 8 | bs[off + 63] as u32;
-    var aa: u32 = a;
-    var bb: u32 = b;
-    var cc: u32 = c;
-    var dd: u32 = d;
-    var ee: u32 = e;
+    let aa: u32 = a;
+    let bb: u32 = b;
+    let cc: u32 = c;
+    let dd: u32 = d;
+    let ee: u32 = e;
     ee = ee + (aa >> 27 | aa << 5) + (dd ^ bb & (cc ^ dd)) + 0x5a827999 + w0;
     bb = bb >> 2 | bb << 30;
     dd = dd + (ee >> 27 | ee << 5) + (cc ^ aa & (bb ^ cc)) + 0x5a827999 + w1;
@@ -683,11 +683,11 @@ function __sha1_blocks(st: Sha1, bs: [u8], from: i32, nblocks: i32): Sha1 {
 }
 
 function __sha1_absorb(own h: Sha1, bs: [u8]): Sha1 {
-  var n: i32 = bs.len();
-  var pos: i32 = 0;
-  var bl: i32 = h.buf_len;
+  let n: i32 = bs.len();
+  let pos: i32 = 0;
+  let bl: i32 = h.buf_len;
   if (bl > 0) {
-    var take: i32 = 64 - bl;
+    let take: i32 = 64 - bl;
     if (take > n) {
       take = n;
     }
@@ -699,7 +699,7 @@ function __sha1_absorb(own h: Sha1, bs: [u8]): Sha1 {
       bl = 0;
     }
   }
-  var nb: i32 = (n - pos) / 64;
+  let nb: i32 = (n - pos) / 64;
   if (nb > 0) {
     h = __sha1_blocks(h, bs, pos, nb);
     pos = pos + nb * 64;
@@ -726,17 +726,17 @@ pub function (h: Sha1) update_bytes(chunk: [u8]): Sha1 {
 }
 
 pub function (h: Sha1) final_bytes(): u8[] {
-  var bl: i32 = h.buf_len;
-  var plen: i32 = 64;
+  let bl: i32 = h.buf_len;
+  let plen: i32 = 64;
   if (bl >= 56) {
     plen = 128;
   }
-  var pad: u8[] = __copy_in(__zero_u8(plen), 0, h.buf, 0, bl);
+  let pad: u8[] = __copy_in(__zero_u8(plen), 0, h.buf, 0, bl);
   pad = pad.with(bl, 0x80 as u8);
-  var bits: u64 = h.total << 3 as u64;
+  let bits: u64 = h.total << 3 as u64;
   pad = __put_be64(pad, plen - 8, bits);
-  var st: Sha1 = __sha1_blocks(h, pad, 0, plen / 64);
-  var out: u8[] = __alloc_u8(st.out_len);
+  let st: Sha1 = __sha1_blocks(h, pad, 0, plen / 64);
+  let out: u8[] = __alloc_u8(st.out_len);
   out = __put_be32(out, 0, st.h0);
   out = __put_be32(out, 4, st.h1);
   out = __put_be32(out, 8, st.h2);
@@ -795,32 +795,32 @@ pub function sha224_new(): Sha256 {
 // variables renamed per round and the message schedule a rolling window of
 // locals, so the loop touches no array but the input.
 function __sha256_blocks(st: Sha256, bs: [u8], from: i32, nblocks: i32): Sha256 {
-  var a: u32 = st.h0;
-  var b: u32 = st.h1;
-  var c: u32 = st.h2;
-  var d: u32 = st.h3;
-  var e: u32 = st.h4;
-  var f: u32 = st.h5;
-  var g: u32 = st.h6;
-  var h: u32 = st.h7;
-  var w0: u32 = 0;
-  var w1: u32 = 0;
-  var w2: u32 = 0;
-  var w3: u32 = 0;
-  var w4: u32 = 0;
-  var w5: u32 = 0;
-  var w6: u32 = 0;
-  var w7: u32 = 0;
-  var w8: u32 = 0;
-  var w9: u32 = 0;
-  var w10: u32 = 0;
-  var w11: u32 = 0;
-  var w12: u32 = 0;
-  var w13: u32 = 0;
-  var w14: u32 = 0;
-  var w15: u32 = 0;
-  var off: i32 = from;
-  var blk: i32 = 0;
+  let a: u32 = st.h0;
+  let b: u32 = st.h1;
+  let c: u32 = st.h2;
+  let d: u32 = st.h3;
+  let e: u32 = st.h4;
+  let f: u32 = st.h5;
+  let g: u32 = st.h6;
+  let h: u32 = st.h7;
+  let w0: u32 = 0;
+  let w1: u32 = 0;
+  let w2: u32 = 0;
+  let w3: u32 = 0;
+  let w4: u32 = 0;
+  let w5: u32 = 0;
+  let w6: u32 = 0;
+  let w7: u32 = 0;
+  let w8: u32 = 0;
+  let w9: u32 = 0;
+  let w10: u32 = 0;
+  let w11: u32 = 0;
+  let w12: u32 = 0;
+  let w13: u32 = 0;
+  let w14: u32 = 0;
+  let w15: u32 = 0;
+  let off: i32 = from;
+  let blk: i32 = 0;
   while (blk < nblocks) {
     w0 = bs[off] as u32 << 24 | bs[off + 1] as u32 << 16 | bs[off + 2] as u32 << 8 | bs[off + 3] as u32;
     w1 = bs[off + 4] as u32 << 24 | bs[off + 5] as u32 << 16 | bs[off + 6] as u32 << 8 | bs[off + 7] as u32;
@@ -838,14 +838,14 @@ function __sha256_blocks(st: Sha256, bs: [u8], from: i32, nblocks: i32): Sha256 
     w13 = bs[off + 52] as u32 << 24 | bs[off + 53] as u32 << 16 | bs[off + 54] as u32 << 8 | bs[off + 55] as u32;
     w14 = bs[off + 56] as u32 << 24 | bs[off + 57] as u32 << 16 | bs[off + 58] as u32 << 8 | bs[off + 59] as u32;
     w15 = bs[off + 60] as u32 << 24 | bs[off + 61] as u32 << 16 | bs[off + 62] as u32 << 8 | bs[off + 63] as u32;
-    var aa: u32 = a;
-    var bb: u32 = b;
-    var cc: u32 = c;
-    var dd: u32 = d;
-    var ee: u32 = e;
-    var ff: u32 = f;
-    var gg: u32 = g;
-    var hh: u32 = h;
+    let aa: u32 = a;
+    let bb: u32 = b;
+    let cc: u32 = c;
+    let dd: u32 = d;
+    let ee: u32 = e;
+    let ff: u32 = f;
+    let gg: u32 = g;
+    let hh: u32 = h;
     hh = hh + ((ee >> 6 | ee << 26) ^ (ee >> 11 | ee << 21) ^ (ee >> 25 | ee << 7)) + (gg ^ ee & (ff ^ gg)) + 0x428a2f98 + w0;
     dd = dd + hh;
     hh = hh + ((aa >> 2 | aa << 30) ^ (aa >> 13 | aa << 19) ^ (aa >> 22 | aa << 10)) + ((aa ^ bb) & cc ^ aa & bb);
@@ -1101,11 +1101,11 @@ function __sha256_blocks(st: Sha256, bs: [u8], from: i32, nblocks: i32): Sha256 
 }
 
 function __sha256_absorb(own h: Sha256, bs: [u8]): Sha256 {
-  var n: i32 = bs.len();
-  var pos: i32 = 0;
-  var bl: i32 = h.buf_len;
+  let n: i32 = bs.len();
+  let pos: i32 = 0;
+  let bl: i32 = h.buf_len;
   if (bl > 0) {
-    var take: i32 = 64 - bl;
+    let take: i32 = 64 - bl;
     if (take > n) {
       take = n;
     }
@@ -1117,7 +1117,7 @@ function __sha256_absorb(own h: Sha256, bs: [u8]): Sha256 {
       bl = 0;
     }
   }
-  var nb: i32 = (n - pos) / 64;
+  let nb: i32 = (n - pos) / 64;
   if (nb > 0) {
     h = __sha256_blocks(h, bs, pos, nb);
     pos = pos + nb * 64;
@@ -1144,17 +1144,17 @@ pub function (h: Sha256) update_bytes(chunk: [u8]): Sha256 {
 }
 
 pub function (h: Sha256) final_bytes(): u8[] {
-  var bl: i32 = h.buf_len;
-  var plen: i32 = 64;
+  let bl: i32 = h.buf_len;
+  let plen: i32 = 64;
   if (bl >= 56) {
     plen = 128;
   }
-  var pad: u8[] = __copy_in(__zero_u8(plen), 0, h.buf, 0, bl);
+  let pad: u8[] = __copy_in(__zero_u8(plen), 0, h.buf, 0, bl);
   pad = pad.with(bl, 0x80 as u8);
-  var bits: u64 = h.total << 3 as u64;
+  let bits: u64 = h.total << 3 as u64;
   pad = __put_be64(pad, plen - 8, bits);
-  var st: Sha256 = __sha256_blocks(h, pad, 0, plen / 64);
-  var out: u8[] = __alloc_u8(st.out_len);
+  let st: Sha256 = __sha256_blocks(h, pad, 0, plen / 64);
+  let out: u8[] = __alloc_u8(st.out_len);
   out = __put_be32(out, 0, st.h0);
   out = __put_be32(out, 4, st.h1);
   out = __put_be32(out, 8, st.h2);
@@ -1227,32 +1227,32 @@ pub function sha384_new(): Sha512 {
 // variables renamed per round and the message schedule a rolling window of
 // locals, so the loop touches no array but the input.
 function __sha512_blocks(st: Sha512, bs: [u8], from: i32, nblocks: i32): Sha512 {
-  var a: u64 = st.h0;
-  var b: u64 = st.h1;
-  var c: u64 = st.h2;
-  var d: u64 = st.h3;
-  var e: u64 = st.h4;
-  var f: u64 = st.h5;
-  var g: u64 = st.h6;
-  var h: u64 = st.h7;
-  var w0: u64 = 0 as u64;
-  var w1: u64 = 0 as u64;
-  var w2: u64 = 0 as u64;
-  var w3: u64 = 0 as u64;
-  var w4: u64 = 0 as u64;
-  var w5: u64 = 0 as u64;
-  var w6: u64 = 0 as u64;
-  var w7: u64 = 0 as u64;
-  var w8: u64 = 0 as u64;
-  var w9: u64 = 0 as u64;
-  var w10: u64 = 0 as u64;
-  var w11: u64 = 0 as u64;
-  var w12: u64 = 0 as u64;
-  var w13: u64 = 0 as u64;
-  var w14: u64 = 0 as u64;
-  var w15: u64 = 0 as u64;
-  var off: i32 = from;
-  var blk: i32 = 0;
+  let a: u64 = st.h0;
+  let b: u64 = st.h1;
+  let c: u64 = st.h2;
+  let d: u64 = st.h3;
+  let e: u64 = st.h4;
+  let f: u64 = st.h5;
+  let g: u64 = st.h6;
+  let h: u64 = st.h7;
+  let w0: u64 = 0 as u64;
+  let w1: u64 = 0 as u64;
+  let w2: u64 = 0 as u64;
+  let w3: u64 = 0 as u64;
+  let w4: u64 = 0 as u64;
+  let w5: u64 = 0 as u64;
+  let w6: u64 = 0 as u64;
+  let w7: u64 = 0 as u64;
+  let w8: u64 = 0 as u64;
+  let w9: u64 = 0 as u64;
+  let w10: u64 = 0 as u64;
+  let w11: u64 = 0 as u64;
+  let w12: u64 = 0 as u64;
+  let w13: u64 = 0 as u64;
+  let w14: u64 = 0 as u64;
+  let w15: u64 = 0 as u64;
+  let off: i32 = from;
+  let blk: i32 = 0;
   while (blk < nblocks) {
     w0 = bs[off] as u64 << 56 as u64 | bs[off + 1] as u64 << 48 as u64 | bs[off + 2] as u64 << 40 as u64 | bs[off + 3] as u64 << 32 as u64 | bs[off + 4] as u64 << 24 as u64 | bs[off + 5] as u64 << 16 as u64 | bs[off + 6] as u64 << 8 as u64 | bs[off + 7] as u64;
     w1 = bs[off + 8] as u64 << 56 as u64 | bs[off + 9] as u64 << 48 as u64 | bs[off + 10] as u64 << 40 as u64 | bs[off + 11] as u64 << 32 as u64 | bs[off + 12] as u64 << 24 as u64 | bs[off + 13] as u64 << 16 as u64 | bs[off + 14] as u64 << 8 as u64 | bs[off + 15] as u64;
@@ -1270,14 +1270,14 @@ function __sha512_blocks(st: Sha512, bs: [u8], from: i32, nblocks: i32): Sha512 
     w13 = bs[off + 104] as u64 << 56 as u64 | bs[off + 105] as u64 << 48 as u64 | bs[off + 106] as u64 << 40 as u64 | bs[off + 107] as u64 << 32 as u64 | bs[off + 108] as u64 << 24 as u64 | bs[off + 109] as u64 << 16 as u64 | bs[off + 110] as u64 << 8 as u64 | bs[off + 111] as u64;
     w14 = bs[off + 112] as u64 << 56 as u64 | bs[off + 113] as u64 << 48 as u64 | bs[off + 114] as u64 << 40 as u64 | bs[off + 115] as u64 << 32 as u64 | bs[off + 116] as u64 << 24 as u64 | bs[off + 117] as u64 << 16 as u64 | bs[off + 118] as u64 << 8 as u64 | bs[off + 119] as u64;
     w15 = bs[off + 120] as u64 << 56 as u64 | bs[off + 121] as u64 << 48 as u64 | bs[off + 122] as u64 << 40 as u64 | bs[off + 123] as u64 << 32 as u64 | bs[off + 124] as u64 << 24 as u64 | bs[off + 125] as u64 << 16 as u64 | bs[off + 126] as u64 << 8 as u64 | bs[off + 127] as u64;
-    var aa: u64 = a;
-    var bb: u64 = b;
-    var cc: u64 = c;
-    var dd: u64 = d;
-    var ee: u64 = e;
-    var ff: u64 = f;
-    var gg: u64 = g;
-    var hh: u64 = h;
+    let aa: u64 = a;
+    let bb: u64 = b;
+    let cc: u64 = c;
+    let dd: u64 = d;
+    let ee: u64 = e;
+    let ff: u64 = f;
+    let gg: u64 = g;
+    let hh: u64 = h;
     hh = hh + ((ee >> 14 as u64 | ee << 50 as u64) ^ (ee >> 18 as u64 | ee << 46 as u64) ^ (ee >> 41 as u64 | ee << 23 as u64)) + (gg ^ ee & (ff ^ gg)) + 0x428a2f98d728ae22 as u64 + w0;
     dd = dd + hh;
     hh = hh + ((aa >> 28 as u64 | aa << 36 as u64) ^ (aa >> 34 as u64 | aa << 30 as u64) ^ (aa >> 39 as u64 | aa << 25 as u64)) + ((aa ^ bb) & cc ^ aa & bb);
@@ -1597,11 +1597,11 @@ function __sha512_blocks(st: Sha512, bs: [u8], from: i32, nblocks: i32): Sha512 
 }
 
 function __sha512_absorb(own h: Sha512, bs: [u8]): Sha512 {
-  var n: i32 = bs.len();
-  var pos: i32 = 0;
-  var bl: i32 = h.buf_len;
+  let n: i32 = bs.len();
+  let pos: i32 = 0;
+  let bl: i32 = h.buf_len;
   if (bl > 0) {
-    var take: i32 = 128 - bl;
+    let take: i32 = 128 - bl;
     if (take > n) {
       take = n;
     }
@@ -1613,7 +1613,7 @@ function __sha512_absorb(own h: Sha512, bs: [u8]): Sha512 {
       bl = 0;
     }
   }
-  var nb: i32 = (n - pos) / 128;
+  let nb: i32 = (n - pos) / 128;
   if (nb > 0) {
     h = __sha512_blocks(h, bs, pos, nb);
     pos = pos + nb * 128;
@@ -1640,17 +1640,17 @@ pub function (h: Sha512) update_bytes(chunk: [u8]): Sha512 {
 }
 
 pub function (h: Sha512) final_bytes(): u8[] {
-  var bl: i32 = h.buf_len;
-  var plen: i32 = 128;
+  let bl: i32 = h.buf_len;
+  let plen: i32 = 128;
   if (bl >= 112) {
     plen = 256;
   }
-  var pad: u8[] = __copy_in(__zero_u8(plen), 0, h.buf, 0, bl);
+  let pad: u8[] = __copy_in(__zero_u8(plen), 0, h.buf, 0, bl);
   pad = pad.with(bl, 0x80 as u8);
-  var bits: u64 = h.total << 3 as u64;
+  let bits: u64 = h.total << 3 as u64;
   pad = __put_be64(pad, plen - 8, bits);
-  var st: Sha512 = __sha512_blocks(h, pad, 0, plen / 128);
-  var out: u8[] = __alloc_u8(st.out_len);
+  let st: Sha512 = __sha512_blocks(h, pad, 0, plen / 128);
+  let out: u8[] = __alloc_u8(st.out_len);
   out = __put_be64(out, 0, st.h0);
   out = __put_be64(out, 8, st.h1);
   out = __put_be64(out, 16, st.h2);
@@ -1718,40 +1718,40 @@ pub function sm3_new(): Sm3 {
 // variables renamed per round and the message schedule a rolling window of
 // locals, so the loop touches no array but the input.
 function __sm3_blocks(st: Sm3, bs: [u8], from: i32, nblocks: i32): Sm3 {
-  var a: u32 = st.h0;
-  var b: u32 = st.h1;
-  var c: u32 = st.h2;
-  var d: u32 = st.h3;
-  var e: u32 = st.h4;
-  var f: u32 = st.h5;
-  var g: u32 = st.h6;
-  var h: u32 = st.h7;
-  var w0: u32 = 0;
-  var w1: u32 = 0;
-  var w2: u32 = 0;
-  var w3: u32 = 0;
-  var w4: u32 = 0;
-  var w5: u32 = 0;
-  var w6: u32 = 0;
-  var w7: u32 = 0;
-  var w8: u32 = 0;
-  var w9: u32 = 0;
-  var w10: u32 = 0;
-  var w11: u32 = 0;
-  var w12: u32 = 0;
-  var w13: u32 = 0;
-  var w14: u32 = 0;
-  var w15: u32 = 0;
-  var w16: u32 = 0;
-  var w17: u32 = 0;
-  var w18: u32 = 0;
-  var w19: u32 = 0;
-  var sw: u32 = 0;
-  var tt: u32 = 0;
-  var t12: u32 = 0;
-  var ss1: u32 = 0;
-  var off: i32 = from;
-  var blk: i32 = 0;
+  let a: u32 = st.h0;
+  let b: u32 = st.h1;
+  let c: u32 = st.h2;
+  let d: u32 = st.h3;
+  let e: u32 = st.h4;
+  let f: u32 = st.h5;
+  let g: u32 = st.h6;
+  let h: u32 = st.h7;
+  let w0: u32 = 0;
+  let w1: u32 = 0;
+  let w2: u32 = 0;
+  let w3: u32 = 0;
+  let w4: u32 = 0;
+  let w5: u32 = 0;
+  let w6: u32 = 0;
+  let w7: u32 = 0;
+  let w8: u32 = 0;
+  let w9: u32 = 0;
+  let w10: u32 = 0;
+  let w11: u32 = 0;
+  let w12: u32 = 0;
+  let w13: u32 = 0;
+  let w14: u32 = 0;
+  let w15: u32 = 0;
+  let w16: u32 = 0;
+  let w17: u32 = 0;
+  let w18: u32 = 0;
+  let w19: u32 = 0;
+  let sw: u32 = 0;
+  let tt: u32 = 0;
+  let t12: u32 = 0;
+  let ss1: u32 = 0;
+  let off: i32 = from;
+  let blk: i32 = 0;
   while (blk < nblocks) {
     w0 = bs[off] as u32 << 24 | bs[off + 1] as u32 << 16 | bs[off + 2] as u32 << 8 | bs[off + 3] as u32;
     w1 = bs[off + 4] as u32 << 24 | bs[off + 5] as u32 << 16 | bs[off + 6] as u32 << 8 | bs[off + 7] as u32;
@@ -1769,14 +1769,14 @@ function __sm3_blocks(st: Sm3, bs: [u8], from: i32, nblocks: i32): Sm3 {
     w13 = bs[off + 52] as u32 << 24 | bs[off + 53] as u32 << 16 | bs[off + 54] as u32 << 8 | bs[off + 55] as u32;
     w14 = bs[off + 56] as u32 << 24 | bs[off + 57] as u32 << 16 | bs[off + 58] as u32 << 8 | bs[off + 59] as u32;
     w15 = bs[off + 60] as u32 << 24 | bs[off + 61] as u32 << 16 | bs[off + 62] as u32 << 8 | bs[off + 63] as u32;
-    var aa: u32 = a;
-    var bb: u32 = b;
-    var cc: u32 = c;
-    var dd: u32 = d;
-    var ee: u32 = e;
-    var ff: u32 = f;
-    var gg: u32 = g;
-    var hh: u32 = h;
+    let aa: u32 = a;
+    let bb: u32 = b;
+    let cc: u32 = c;
+    let dd: u32 = d;
+    let ee: u32 = e;
+    let ff: u32 = f;
+    let gg: u32 = g;
+    let hh: u32 = h;
     t12 = aa >> 20 | aa << 12;
     ss1 = t12 + ee + 0x79cc4519 >> 25 | t12 + ee + 0x79cc4519 << 7;
     tt = (ee ^ ff ^ gg) + hh + ss1 + w0;
@@ -2344,11 +2344,11 @@ function __sm3_blocks(st: Sm3, bs: [u8], from: i32, nblocks: i32): Sm3 {
 }
 
 function __sm3_absorb(own h: Sm3, bs: [u8]): Sm3 {
-  var n: i32 = bs.len();
-  var pos: i32 = 0;
-  var bl: i32 = h.buf_len;
+  let n: i32 = bs.len();
+  let pos: i32 = 0;
+  let bl: i32 = h.buf_len;
   if (bl > 0) {
-    var take: i32 = 64 - bl;
+    let take: i32 = 64 - bl;
     if (take > n) {
       take = n;
     }
@@ -2360,7 +2360,7 @@ function __sm3_absorb(own h: Sm3, bs: [u8]): Sm3 {
       bl = 0;
     }
   }
-  var nb: i32 = (n - pos) / 64;
+  let nb: i32 = (n - pos) / 64;
   if (nb > 0) {
     h = __sm3_blocks(h, bs, pos, nb);
     pos = pos + nb * 64;
@@ -2387,17 +2387,17 @@ pub function (h: Sm3) update_bytes(chunk: [u8]): Sm3 {
 }
 
 pub function (h: Sm3) final_bytes(): u8[] {
-  var bl: i32 = h.buf_len;
-  var plen: i32 = 64;
+  let bl: i32 = h.buf_len;
+  let plen: i32 = 64;
   if (bl >= 56) {
     plen = 128;
   }
-  var pad: u8[] = __copy_in(__zero_u8(plen), 0, h.buf, 0, bl);
+  let pad: u8[] = __copy_in(__zero_u8(plen), 0, h.buf, 0, bl);
   pad = pad.with(bl, 0x80 as u8);
-  var bits: u64 = h.total << 3 as u64;
+  let bits: u64 = h.total << 3 as u64;
   pad = __put_be64(pad, plen - 8, bits);
-  var st: Sm3 = __sm3_blocks(h, pad, 0, plen / 64);
-  var out: u8[] = __alloc_u8(st.out_len);
+  let st: Sm3 = __sm3_blocks(h, pad, 0, plen / 64);
+  let out: u8[] = __alloc_u8(st.out_len);
   out = __put_be32(out, 0, st.h0);
   out = __put_be32(out, 4, st.h1);
   out = __put_be32(out, 8, st.h2);
@@ -2445,14 +2445,14 @@ pub struct Blake2b {
 // blake2b_new(out_len) — a hasher producing an `out_len`-byte digest (1..64).
 // b2sum's default is 64; `-l N` is N bits, so pass N / 8.
 pub function blake2b_new(out_len: i32): Blake2b {
-  var n: i32 = out_len;
+  let n: i32 = out_len;
   if (n < 1) {
     n = 1;
   }
   if (n > 64) {
     n = 64;
   }
-  var h: Blake2b = Blake2b {
+  let h: Blake2b = Blake2b {
     h0: 0x6a09e667f3bcc908 as u64, h1: 0xbb67ae8584caa73b as u64, h2: 0x3c6ef372fe94f82b as u64, h3: 0xa54ff53a5f1d36f1 as u64, h4: 0x510e527fade682d1 as u64, h5: 0x9b05688c2b3e6c1f as u64, h6: 0x1f83d9abfb41bd6b as u64, h7: 0x5be0cd19137e2179 as u64,
     buf: __zero_u8(128), buf_len: 0, total: 0 as u64, out_len: n,
   };
@@ -2466,49 +2466,49 @@ pub function blake2b_new(out_len: i32): Blake2b {
 // SHA cores: the 12 rounds are unrolled over 16 state locals and 16 message
 // locals with the sigma permutation applied at generation time.
 function __blake2b_blocks(st: Blake2b, bs: [u8], from: i32, nblocks: i32, t: u64, last: boolean): Blake2b {
-  var h0: u64 = st.h0;
-  var h1: u64 = st.h1;
-  var h2: u64 = st.h2;
-  var h3: u64 = st.h3;
-  var h4: u64 = st.h4;
-  var h5: u64 = st.h5;
-  var h6: u64 = st.h6;
-  var h7: u64 = st.h7;
-  var m0: u64 = 0 as u64;
-  var m1: u64 = 0 as u64;
-  var m2: u64 = 0 as u64;
-  var m3: u64 = 0 as u64;
-  var m4: u64 = 0 as u64;
-  var m5: u64 = 0 as u64;
-  var m6: u64 = 0 as u64;
-  var m7: u64 = 0 as u64;
-  var m8: u64 = 0 as u64;
-  var m9: u64 = 0 as u64;
-  var m10: u64 = 0 as u64;
-  var m11: u64 = 0 as u64;
-  var m12: u64 = 0 as u64;
-  var m13: u64 = 0 as u64;
-  var m14: u64 = 0 as u64;
-  var m15: u64 = 0 as u64;
-  var v0: u64 = 0 as u64;
-  var v1: u64 = 0 as u64;
-  var v2: u64 = 0 as u64;
-  var v3: u64 = 0 as u64;
-  var v4: u64 = 0 as u64;
-  var v5: u64 = 0 as u64;
-  var v6: u64 = 0 as u64;
-  var v7: u64 = 0 as u64;
-  var v8: u64 = 0 as u64;
-  var v9: u64 = 0 as u64;
-  var v10: u64 = 0 as u64;
-  var v11: u64 = 0 as u64;
-  var v12: u64 = 0 as u64;
-  var v13: u64 = 0 as u64;
-  var v14: u64 = 0 as u64;
-  var v15: u64 = 0 as u64;
-  var counter: u64 = t;
-  var off: i32 = from;
-  var blk: i32 = 0;
+  let h0: u64 = st.h0;
+  let h1: u64 = st.h1;
+  let h2: u64 = st.h2;
+  let h3: u64 = st.h3;
+  let h4: u64 = st.h4;
+  let h5: u64 = st.h5;
+  let h6: u64 = st.h6;
+  let h7: u64 = st.h7;
+  let m0: u64 = 0 as u64;
+  let m1: u64 = 0 as u64;
+  let m2: u64 = 0 as u64;
+  let m3: u64 = 0 as u64;
+  let m4: u64 = 0 as u64;
+  let m5: u64 = 0 as u64;
+  let m6: u64 = 0 as u64;
+  let m7: u64 = 0 as u64;
+  let m8: u64 = 0 as u64;
+  let m9: u64 = 0 as u64;
+  let m10: u64 = 0 as u64;
+  let m11: u64 = 0 as u64;
+  let m12: u64 = 0 as u64;
+  let m13: u64 = 0 as u64;
+  let m14: u64 = 0 as u64;
+  let m15: u64 = 0 as u64;
+  let v0: u64 = 0 as u64;
+  let v1: u64 = 0 as u64;
+  let v2: u64 = 0 as u64;
+  let v3: u64 = 0 as u64;
+  let v4: u64 = 0 as u64;
+  let v5: u64 = 0 as u64;
+  let v6: u64 = 0 as u64;
+  let v7: u64 = 0 as u64;
+  let v8: u64 = 0 as u64;
+  let v9: u64 = 0 as u64;
+  let v10: u64 = 0 as u64;
+  let v11: u64 = 0 as u64;
+  let v12: u64 = 0 as u64;
+  let v13: u64 = 0 as u64;
+  let v14: u64 = 0 as u64;
+  let v15: u64 = 0 as u64;
+  let counter: u64 = t;
+  let off: i32 = from;
+  let blk: i32 = 0;
   while (blk < nblocks) {
     m0 = bs[off] as u64 | bs[off + 1] as u64 << 8 as u64 | bs[off + 2] as u64 << 16 as u64 | bs[off + 3] as u64 << 24 as u64 | bs[off + 4] as u64 << 32 as u64 | bs[off + 5] as u64 << 40 as u64 | bs[off + 6] as u64 << 48 as u64 | bs[off + 7] as u64 << 56 as u64;
     m1 = bs[off + 8] as u64 | bs[off + 9] as u64 << 8 as u64 | bs[off + 10] as u64 << 16 as u64 | bs[off + 11] as u64 << 24 as u64 | bs[off + 12] as u64 << 32 as u64 | bs[off + 13] as u64 << 40 as u64 | bs[off + 14] as u64 << 48 as u64 | bs[off + 15] as u64 << 56 as u64;
@@ -3330,17 +3330,17 @@ function __blake2b_blocks(st: Blake2b, bs: [u8], from: i32, nblocks: i32, t: u64
 }
 
 function __blake2b_absorb(own h: Blake2b, bs: [u8]): Blake2b {
-  var n: i32 = bs.len();
+  let n: i32 = bs.len();
   if (n == 0) {
     return h;
   }
-  var pos: i32 = 0;
-  var bl: i32 = h.buf_len;
-  var total: u64 = h.total;
+  let pos: i32 = 0;
+  let bl: i32 = h.buf_len;
+  let total: u64 = h.total;
   // Only compress once the input runs past a full block: the block that
   // ends the message must be the one compressed with `last` set.
   if (bl + n > 128) {
-    var take: i32 = 128 - bl;
+    let take: i32 = 128 - bl;
     if (take > 0) {
       h = Blake2b { ...h, buf: __copy_in(h.buf, bl, bs, 0, take) };
     }
@@ -3348,7 +3348,7 @@ function __blake2b_absorb(own h: Blake2b, bs: [u8]): Blake2b {
     h = __blake2b_blocks(h, h.buf, 0, 1, total, false);
     bl = 0;
     pos = take;
-    var nb: i32 = (n - pos - 1) / 128;
+    let nb: i32 = (n - pos - 1) / 128;
     if (nb > 0) {
       h = __blake2b_blocks(h, bs, pos, nb, total + 128 as u64, false);
       total = total + (nb * 128) as u64;
@@ -3374,11 +3374,11 @@ pub function (h: Blake2b) update_bytes(chunk: [u8]): Blake2b {
 }
 
 pub function (h: Blake2b) final_bytes(): u8[] {
-  var bl: i32 = h.buf_len;
+  let bl: i32 = h.buf_len;
   // The tail of the block must be zero; the buffer may hold stale bytes.
-  var pad: u8[] = __copy_in(__zero_u8(128), 0, h.buf, 0, bl);
-  var st: Blake2b = __blake2b_blocks(h, pad, 0, 1, h.total + bl as u64, true);
-  var full: u8[] = __alloc_u8(64);
+  let pad: u8[] = __copy_in(__zero_u8(128), 0, h.buf, 0, bl);
+  let st: Blake2b = __blake2b_blocks(h, pad, 0, 1, h.total + bl as u64, true);
+  let full: u8[] = __alloc_u8(64);
   full = __put_le64(full, 0, st.h0);
   full = __put_le64(full, 8, st.h1);
   full = __put_le64(full, 16, st.h2);
@@ -3417,19 +3417,19 @@ function __sha256_core(msg: u8[]): u8[] {
 // size: keys longer than 64 bytes are hashed first, then all keys are
 // zero-padded to 64 bytes.
 function __block_key(key: u8[]): u8[] {
-  var k: u8[] = key;
+  let k: u8[] = key;
   if (key.len() > 64) {
     k = __sha256_core(key);
   }
   // Zero the block explicitly (key padding) — __alloc_u8 isn't guaranteed
   // zeroed on the AOT backends.
-  var out: u8[] = __alloc_u8(64);
-  var z: i32 = 0;
+  let out: u8[] = __alloc_u8(64);
+  let z: i32 = 0;
   while (z < 64) {
     out = out.with(z, 0 as u8);
     z = z + 1;
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < k.len()) {
     out = out.with(i, k[i]);
     i = i + 1;
@@ -3440,22 +3440,22 @@ function __block_key(key: u8[]): u8[] {
 // __hmac_core computes HMAC-SHA256(key, msg) and returns the 32-byte
 // digest. inner = H((k0 ^ ipad) || msg); out = H((k0 ^ opad) || inner).
 function __hmac_core(key: u8[], msg: u8[]): u8[] {
-  var k0: u8[] = __block_key(key);
+  let k0: u8[] = __block_key(key);
   // Inner block: (k0 ^ 0x36) followed by the message.
-  var inner: u8[] = __alloc_u8(64 + msg.len());
-  var i: i32 = 0;
+  let inner: u8[] = __alloc_u8(64 + msg.len());
+  let i: i32 = 0;
   while (i < 64) {
     inner = inner.with(i, (k0[i] as i32 ^ 0x36) as u8);
     i = i + 1;
   }
-  var j: i32 = 0;
+  let j: i32 = 0;
   while (j < msg.len()) {
     inner = inner.with(64 + j, msg[j]);
     j = j + 1;
   }
-  var inner_hash: u8[] = __sha256_core(inner);
+  let inner_hash: u8[] = __sha256_core(inner);
   // Outer block: (k0 ^ 0x5c) followed by the inner hash (32 bytes).
-  var outer: u8[] = __alloc_u8(64 + 32);
+  let outer: u8[] = __alloc_u8(64 + 32);
   i = 0;
   while (i < 64) {
     outer = outer.with(i, (k0[i] as i32 ^ 0x5c) as u8);
@@ -3491,14 +3491,14 @@ pub function hmac_sha256_hex(key: u8[], msg: string): string {
 // mismatch is folded into the accumulator and returns false; equal-length
 // inputs are compared with no data-dependent branch or exit.
 pub function consteq(a: u8[], b: u8[]): boolean {
-  var la: i32 = a.len();
-  var lb: i32 = b.len();
-  var diff: i32 = la ^ lb;
-  var n: i32 = la;
+  let la: i32 = a.len();
+  let lb: i32 = b.len();
+  let diff: i32 = la ^ lb;
+  let n: i32 = la;
   if (lb < n) {
     n = lb;
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < n) {
     diff = diff | a[i] as i32 ^ b[i] as i32;
     i = i + 1;
@@ -3532,14 +3532,14 @@ pub function hmac_verify_hex(key: u8[], msg: string, mac_hex: string): boolean {
 //   U1 = HMAC(pw, salt || INT32_BE(i)); Uj = HMAC(pw, U(j-1));
 //   T_i = U1 xor U2 xor … xor U_iterations. DK = T_1 || T_2 || … .
 function __pbkdf2_core(pw: u8[], salt: u8[], iterations: i32, dk_len: i32): u8[] {
-  var hLen: i32 = 32;  // SHA-256 output size
-  var dk: u8[] = __alloc_u8(dk_len);
-  var offset: i32 = 0;
-  var block_index: i32 = 1;
+  let hLen: i32 = 32;  // SHA-256 output size
+  let dk: u8[] = __alloc_u8(dk_len);
+  let offset: i32 = 0;
+  let block_index: i32 = 1;
   while (offset < dk_len) {
     // msg = salt || INT32_BE(block_index)
-    var msg: u8[] = __alloc_u8(salt.len() + 4);
-    var s: i32 = 0;
+    let msg: u8[] = __alloc_u8(salt.len() + 4);
+    let s: i32 = 0;
     while (s < salt.len()) {
       msg = msg.with(s, salt[s]);
       s = s + 1;
@@ -3548,13 +3548,13 @@ function __pbkdf2_core(pw: u8[], salt: u8[], iterations: i32, dk_len: i32): u8[]
     msg = msg.with(salt.len() + 1, (block_index >> 16 & 255) as u8);
     msg = msg.with(salt.len() + 2, (block_index >> 8 & 255) as u8);
     msg = msg.with(salt.len() + 3, (block_index & 255) as u8);
-    var u: u8[] = __hmac_core(pw, msg);
-    var t: u8[] = u;  // T = U1
-    var c: i32 = 1;
+    let u: u8[] = __hmac_core(pw, msg);
+    let t: u8[] = u;  // T = U1
+    let c: i32 = 1;
     while (c < iterations) {
       u = __hmac_core(pw, u);
-      var nt: u8[] = __alloc_u8(hLen);
-      var x: i32 = 0;
+      let nt: u8[] = __alloc_u8(hLen);
+      let x: i32 = 0;
       while (x < hLen) {
         nt = nt.with(x, (t[x] as i32 ^ u[x] as i32) as u8);
         x = x + 1;
@@ -3562,7 +3562,7 @@ function __pbkdf2_core(pw: u8[], salt: u8[], iterations: i32, dk_len: i32): u8[]
       t = nt;
       c = c + 1;
     }
-    var k: i32 = 0;
+    let k: i32 = 0;
     while (k < hLen && offset + k < dk_len) {
       dk = dk.with(offset + k, t[k]);
       k = k + 1;
@@ -3620,10 +3620,10 @@ pub function pbkdf2_verify_hex(password: string, salt: u8[], iterations: i32, ex
 // hkdf_extract(salt, ikm) — the 32-byte PRK. PRK = HMAC(salt, IKM); an
 // empty salt is replaced by hLen (32) zero bytes, per RFC 5869 §2.2.
 pub function hkdf_extract(salt: u8[], ikm: u8[]): u8[] {
-  var s: u8[] = salt;
+  let s: u8[] = salt;
   if (salt.len() == 0) {
     s = __alloc_u8(32);
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 32) {
       s = s.with(i, 0 as u8);
       i = i + 1;
@@ -3637,15 +3637,15 @@ pub function hkdf_extract(salt: u8[], ikm: u8[]): u8[] {
 // T(i) = HMAC(PRK, T(i-1) || info || byte(i)) and T(0) is empty
 // (RFC 5869 §2.3). `length` must be ≤ 255*32 (the counter is one byte).
 pub function hkdf_expand(prk: u8[], info: u8[], length: i32): u8[] {
-  var hLen: i32 = 32;
-  var okm: u8[] = __alloc_u8(length);
-  var t: u8[] = [];  // T(0)
-  var offset: i32 = 0;
-  var i: i32 = 1;
+  let hLen: i32 = 32;
+  let okm: u8[] = __alloc_u8(length);
+  let t: u8[] = [];  // T(0)
+  let offset: i32 = 0;
+  let i: i32 = 1;
   while (offset < length) {
-    var msg: u8[] = __alloc_u8(t.len() + info.len() + 1);
-    var p: i32 = 0;
-    var k: i32 = 0;
+    let msg: u8[] = __alloc_u8(t.len() + info.len() + 1);
+    let p: i32 = 0;
+    let k: i32 = 0;
     while (k < t.len()) {
       msg = msg.with(p, t[k]);
       p = p + 1;
@@ -3659,7 +3659,7 @@ pub function hkdf_expand(prk: u8[], info: u8[], length: i32): u8[] {
     }
     msg = msg.with(p, (i & 255) as u8);
     t = __hmac_core(prk, msg);
-    var c: i32 = 0;
+    let c: i32 = 0;
     while (c < hLen && offset + c < length) {
       okm = okm.with(offset + c, t[c]);
       c = c + 1;
@@ -3695,22 +3695,22 @@ pub function hkdf_sha256_hex(salt: u8[], ikm: u8[], info: u8[], length: i32): st
 // `digits`-digit code.
 pub function hotp_sha256(key: u8[], counter: i64, digits: i32): i32 {
   // 8-byte big-endian counter.
-  var msg: u8[] = __alloc_u8(8);
-  var i: i32 = 0;
+  let msg: u8[] = __alloc_u8(8);
+  let i: i32 = 0;
   while (i < 8) {
-    var shift: i64 = ((7 - i) * 8) as i64;
+    let shift: i64 = ((7 - i) * 8) as i64;
     msg = msg.with(i, (counter >> shift & 255 as i64) as u8);
     i = i + 1;
   }
-  var hs: u8[] = __hmac_core(key, msg);
-  var offset: i32 = hs[hs.len() - 1] as i32 & 15;
+  let hs: u8[] = __hmac_core(key, msg);
+  let offset: i32 = hs[hs.len() - 1] as i32 & 15;
   // 31-bit dynamic-truncation value (top bit masked → stays non-negative).
-  var bin: i32 = (hs[offset] as i32 & 127) << 24
+  let bin: i32 = (hs[offset] as i32 & 127) << 24
     | hs[offset + 1] as i32 << 16
     | hs[offset + 2] as i32 << 8
     | hs[offset + 3] as i32;
-  var m: i32 = 1;
-  var d: i32 = 0;
+  let m: i32 = 1;
+  let d: i32 = 0;
   while (d < digits) {
     m = m * 10;
     d = d + 1;
@@ -3722,7 +3722,7 @@ pub function hotp_sha256(key: u8[], counter: i64, digits: i32): i32 {
 // password: HOTP over the time-step counter `floor(unix_time / period)`
 // (period is the step in seconds, typically 30).
 pub function totp_sha256(key: u8[], unix_time: i64, period: i32, digits: i32): i32 {
-  var counter: i64 = unix_time / (period as i64);
+  let counter: i64 = unix_time / (period as i64);
   return hotp_sha256(key, counter, digits);
 }
 
@@ -3772,7 +3772,7 @@ pub struct Sha3 {
 }
 
 function __sha3_with(bits: i32): Sha3 {
-  var bytes: i32 = bits / 8;
+  let bytes: i32 = bits / 8;
   return Sha3 { s00: 0 as u64, s01: 0 as u64, s02: 0 as u64, s03: 0 as u64, s04: 0 as u64, s05: 0 as u64, s06: 0 as u64, s07: 0 as u64, s08: 0 as u64, s09: 0 as u64, s10: 0 as u64, s11: 0 as u64, s12: 0 as u64, s13: 0 as u64, s14: 0 as u64, s15: 0 as u64, s16: 0 as u64, s17: 0 as u64, s18: 0 as u64, s19: 0 as u64, s20: 0 as u64, s21: 0 as u64, s22: 0 as u64, s23: 0 as u64, s24: 0 as u64, buf: __zero_u8(200 - 2 * bytes), buf_len: 0, rate: 200 - 2 * bytes, out_len: bytes };
 }
 
@@ -3796,75 +3796,75 @@ pub function sha3_512_new(): Sha3 {
 // state: each block is XORed in little-endian lane order, then the
 // permutation's 24 rounds run over the lanes in locals.
 function __sha3_blocks(st: Sha3, bs: [u8], from: i32, nblocks: i32): Sha3 {
-  var a00: u64 = st.s00;
-  var a01: u64 = st.s01;
-  var a02: u64 = st.s02;
-  var a03: u64 = st.s03;
-  var a04: u64 = st.s04;
-  var a05: u64 = st.s05;
-  var a06: u64 = st.s06;
-  var a07: u64 = st.s07;
-  var a08: u64 = st.s08;
-  var a09: u64 = st.s09;
-  var a10: u64 = st.s10;
-  var a11: u64 = st.s11;
-  var a12: u64 = st.s12;
-  var a13: u64 = st.s13;
-  var a14: u64 = st.s14;
-  var a15: u64 = st.s15;
-  var a16: u64 = st.s16;
-  var a17: u64 = st.s17;
-  var a18: u64 = st.s18;
-  var a19: u64 = st.s19;
-  var a20: u64 = st.s20;
-  var a21: u64 = st.s21;
-  var a22: u64 = st.s22;
-  var a23: u64 = st.s23;
-  var a24: u64 = st.s24;
-  var c0: u64 = 0 as u64;
-  var c1: u64 = 0 as u64;
-  var c2: u64 = 0 as u64;
-  var c3: u64 = 0 as u64;
-  var c4: u64 = 0 as u64;
-  var d0: u64 = 0 as u64;
-  var d1: u64 = 0 as u64;
-  var d2: u64 = 0 as u64;
-  var d3: u64 = 0 as u64;
-  var d4: u64 = 0 as u64;
-  var b00: u64 = 0 as u64;
-  var b01: u64 = 0 as u64;
-  var b02: u64 = 0 as u64;
-  var b03: u64 = 0 as u64;
-  var b04: u64 = 0 as u64;
-  var b05: u64 = 0 as u64;
-  var b06: u64 = 0 as u64;
-  var b07: u64 = 0 as u64;
-  var b08: u64 = 0 as u64;
-  var b09: u64 = 0 as u64;
-  var b10: u64 = 0 as u64;
-  var b11: u64 = 0 as u64;
-  var b12: u64 = 0 as u64;
-  var b13: u64 = 0 as u64;
-  var b14: u64 = 0 as u64;
-  var b15: u64 = 0 as u64;
-  var b16: u64 = 0 as u64;
-  var b17: u64 = 0 as u64;
-  var b18: u64 = 0 as u64;
-  var b19: u64 = 0 as u64;
-  var b20: u64 = 0 as u64;
-  var b21: u64 = 0 as u64;
-  var b22: u64 = 0 as u64;
-  var b23: u64 = 0 as u64;
-  var b24: u64 = 0 as u64;
-  var rc: u64[] = [0x0000000000000001 as u64, 0x0000000000008082 as u64, 0x800000000000808a as u64, 0x8000000080008000 as u64, 0x000000000000808b as u64, 0x0000000080000001 as u64, 0x8000000080008081 as u64, 0x8000000000008009 as u64, 0x000000000000008a as u64, 0x0000000000000088 as u64, 0x0000000080008009 as u64, 0x000000008000000a as u64, 0x000000008000808b as u64, 0x800000000000008b as u64, 0x8000000000008089 as u64, 0x8000000000008003 as u64, 0x8000000000008002 as u64, 0x8000000000000080 as u64, 0x000000000000800a as u64, 0x800000008000000a as u64, 0x8000000080008081 as u64, 0x8000000000008080 as u64, 0x0000000080000001 as u64, 0x8000000080008008 as u64];
-  var lanes: i32 = st.rate / 8;
-  var at: i32 = from;
-  var blk: i32 = 0;
+  let a00: u64 = st.s00;
+  let a01: u64 = st.s01;
+  let a02: u64 = st.s02;
+  let a03: u64 = st.s03;
+  let a04: u64 = st.s04;
+  let a05: u64 = st.s05;
+  let a06: u64 = st.s06;
+  let a07: u64 = st.s07;
+  let a08: u64 = st.s08;
+  let a09: u64 = st.s09;
+  let a10: u64 = st.s10;
+  let a11: u64 = st.s11;
+  let a12: u64 = st.s12;
+  let a13: u64 = st.s13;
+  let a14: u64 = st.s14;
+  let a15: u64 = st.s15;
+  let a16: u64 = st.s16;
+  let a17: u64 = st.s17;
+  let a18: u64 = st.s18;
+  let a19: u64 = st.s19;
+  let a20: u64 = st.s20;
+  let a21: u64 = st.s21;
+  let a22: u64 = st.s22;
+  let a23: u64 = st.s23;
+  let a24: u64 = st.s24;
+  let c0: u64 = 0 as u64;
+  let c1: u64 = 0 as u64;
+  let c2: u64 = 0 as u64;
+  let c3: u64 = 0 as u64;
+  let c4: u64 = 0 as u64;
+  let d0: u64 = 0 as u64;
+  let d1: u64 = 0 as u64;
+  let d2: u64 = 0 as u64;
+  let d3: u64 = 0 as u64;
+  let d4: u64 = 0 as u64;
+  let b00: u64 = 0 as u64;
+  let b01: u64 = 0 as u64;
+  let b02: u64 = 0 as u64;
+  let b03: u64 = 0 as u64;
+  let b04: u64 = 0 as u64;
+  let b05: u64 = 0 as u64;
+  let b06: u64 = 0 as u64;
+  let b07: u64 = 0 as u64;
+  let b08: u64 = 0 as u64;
+  let b09: u64 = 0 as u64;
+  let b10: u64 = 0 as u64;
+  let b11: u64 = 0 as u64;
+  let b12: u64 = 0 as u64;
+  let b13: u64 = 0 as u64;
+  let b14: u64 = 0 as u64;
+  let b15: u64 = 0 as u64;
+  let b16: u64 = 0 as u64;
+  let b17: u64 = 0 as u64;
+  let b18: u64 = 0 as u64;
+  let b19: u64 = 0 as u64;
+  let b20: u64 = 0 as u64;
+  let b21: u64 = 0 as u64;
+  let b22: u64 = 0 as u64;
+  let b23: u64 = 0 as u64;
+  let b24: u64 = 0 as u64;
+  let rc: u64[] = [0x0000000000000001 as u64, 0x0000000000008082 as u64, 0x800000000000808a as u64, 0x8000000080008000 as u64, 0x000000000000808b as u64, 0x0000000080000001 as u64, 0x8000000080008081 as u64, 0x8000000000008009 as u64, 0x000000000000008a as u64, 0x0000000000000088 as u64, 0x0000000080008009 as u64, 0x000000008000000a as u64, 0x000000008000808b as u64, 0x800000000000008b as u64, 0x8000000000008089 as u64, 0x8000000000008003 as u64, 0x8000000000008002 as u64, 0x8000000000000080 as u64, 0x000000000000800a as u64, 0x800000008000000a as u64, 0x8000000080008081 as u64, 0x8000000000008080 as u64, 0x0000000080000001 as u64, 0x8000000080008008 as u64];
+  let lanes: i32 = st.rate / 8;
+  let at: i32 = from;
+  let blk: i32 = 0;
   while (blk < nblocks) {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < lanes) {
-      var o: i32 = at + i * 8;
-      var v: u64 = bs[o] as u64 | bs[o + 1] as u64 << 8 as u64 | bs[o + 2] as u64 << 16 as u64 | bs[o + 3] as u64 << 24 as u64 | bs[o + 4] as u64 << 32 as u64 | bs[o + 5] as u64 << 40 as u64 | bs[o + 6] as u64 << 48 as u64 | bs[o + 7] as u64 << 56 as u64;
+      let o: i32 = at + i * 8;
+      let v: u64 = bs[o] as u64 | bs[o + 1] as u64 << 8 as u64 | bs[o + 2] as u64 << 16 as u64 | bs[o + 3] as u64 << 24 as u64 | bs[o + 4] as u64 << 32 as u64 | bs[o + 5] as u64 << 40 as u64 | bs[o + 6] as u64 << 48 as u64 | bs[o + 7] as u64 << 56 as u64;
       if (i == 0) {
         a00 = a00 ^ v;
       }
@@ -3921,7 +3921,7 @@ function __sha3_blocks(st: Sha3, bs: [u8], from: i32, nblocks: i32): Sha3 {
       }
       i = i + 1;
     }
-    var r: i32 = 0;
+    let r: i32 = 0;
     while (r < 24) {
       c0 = a00 ^ a05 ^ a10 ^ a15 ^ a20;
       c1 = a01 ^ a06 ^ a11 ^ a16 ^ a21;
@@ -4018,11 +4018,11 @@ function __sha3_blocks(st: Sha3, bs: [u8], from: i32, nblocks: i32): Sha3 {
 }
 
 function __sha3_absorb(own h: Sha3, bs: [u8]): Sha3 {
-  var n: i32 = bs.len();
-  var pos: i32 = 0;
-  var bl: i32 = h.buf_len;
+  let n: i32 = bs.len();
+  let pos: i32 = 0;
+  let bl: i32 = h.buf_len;
   if (bl > 0) {
-    var take: i32 = h.rate - bl;
+    let take: i32 = h.rate - bl;
     if (take > n) {
       take = n;
     }
@@ -4034,7 +4034,7 @@ function __sha3_absorb(own h: Sha3, bs: [u8]): Sha3 {
       bl = 0;
     }
   }
-  var nb: i32 = (n - pos) / h.rate;
+  let nb: i32 = (n - pos) / h.rate;
   if (nb > 0) {
     h = __sha3_blocks(h, bs, pos, nb);
     pos = pos + nb * h.rate;
@@ -4059,12 +4059,12 @@ pub function (h: Sha3) update_bytes(chunk: [u8]): Sha3 {
 // The pad is one block: `0x06` after the pending bytes and `0x80` in the
 // last, which coincide in a single `0x86` byte when one byte is left.
 pub function (h: Sha3) final_bytes(): u8[] {
-  var pad: u8[] = __copy_in(__zero_u8(h.rate), 0, h.buf, 0, h.buf_len);
+  let pad: u8[] = __copy_in(__zero_u8(h.rate), 0, h.buf, 0, h.buf_len);
   pad = pad.with(h.buf_len, 0x06 as u8);
   pad = pad.with(h.rate - 1, (pad[h.rate - 1] | 0x80) as u8);
-  var st: Sha3 = __sha3_blocks(h, pad, 0, 1);
-  var out: u8[] = __alloc_u8(h.out_len);
-  var i: i32 = 0;
+  let st: Sha3 = __sha3_blocks(h, pad, 0, 1);
+  let out: u8[] = __alloc_u8(h.out_len);
+  let i: i32 = 0;
   while (i < h.out_len) {
     out = out.with(i, (__sha3_lane(st, i / 8) >> (i % 8 * 8) as u64 & 255 as u64) as u8);
     i = i + 1;

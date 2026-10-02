@@ -18,15 +18,15 @@ var u32DivRemIRCases = []struct {
 	main string
 }{
 	// 3e9 / 3 = 1e9 (unsigned). Signed div of 3e9-as-i32 (negative) differs.
-	{"div-highbit", `function main(): i32 { var u: u32 = 3000000000 as u32; if (u / (3 as u32) == (1000000000 as u32)) { return 5; } return 9; }`},
+	{"div-highbit", `function main(): i32 { let u: u32 = 3000000000 as u32; if (u / (3 as u32) == (1000000000 as u32)) { return 5; } return 9; }`},
 	// 3000000003 % 10 = 3 (unsigned).
-	{"rem-highbit", `function main(): i32 { var u: u32 = 3000000003 as u32; if (u % (10 as u32) == (3 as u32)) { return 5; } return 9; }`},
+	{"rem-highbit", `function main(): i32 { let u: u32 = 3000000003 as u32; if (u % (10 as u32) == (3 as u32)) { return 5; } return 9; }`},
 	// 4e9 / 2 = 2e9 (unsigned).
-	{"div-4e9", `function main(): i32 { var u: u32 = 4000000000 as u32; if (u / (2 as u32) == (2000000000 as u32)) { return 5; } return 9; }`},
+	{"div-4e9", `function main(): i32 { let u: u32 = 4000000000 as u32; if (u / (2 as u32) == (2000000000 as u32)) { return 5; } return 9; }`},
 	// Low-value u32 div still works and fits the exit code directly: 100/4 = 25.
-	{"div-low", `function main(): i32 { var u: u32 = 100 as u32; return (u / (4 as u32)) as i32; }`},
+	{"div-low", `function main(): i32 { let u: u32 = 100 as u32; return (u / (4 as u32)) as i32; }`},
 	// u32 rem low value: 100 % 7 = 2.
-	{"rem-low", `function main(): i32 { var u: u32 = 100 as u32; return (u % (7 as u32)) as i32; }`},
+	{"rem-low", `function main(): i32 { let u: u32 = 100 as u32; return (u % (7 as u32)) as i32; }`},
 }
 
 // TestSelfHostU32DivRemIR compiles each case with the self-host CLI for

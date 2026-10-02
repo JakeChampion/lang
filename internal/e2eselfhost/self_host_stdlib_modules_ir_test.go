@@ -25,7 +25,7 @@ var stdlibModuleCases = []struct {
 	// fields), functional struct-spread `append`, `get` → Option[string], `len`.
 	{"headers", `import "std/headers";
 function main(): i32 {
-    var h = headers.header_map_new();
+    let h = headers.header_map_new();
     h = h.append("Content-Type", "text/html");
     h = h.append("X-Count", "7");
     match (h.get("Content-Type")) {
@@ -37,7 +37,7 @@ function main(): i32 {
 	// len. "hello" + "!" = 6 bytes * 7 = 42.
 	{"bytes-writer", `import "std/io_buffered";
 function main(): i32 {
-    var w = io_buffered.bytes_writer_new();
+    let w = io_buffered.bytes_writer_new();
     w = w.write_string("hello");
     w = w.write_string("!");
     return w.len() * 7;
@@ -45,7 +45,7 @@ function main(): i32 {
 	// std/stream Stream: u8[] + cursor reader. len("hello world") = 11 * 3 = 33.
 	{"stream", `import "std/stream";
 function main(): i32 {
-    var s = stream.stream_from_string("hello world");
+    let s = stream.stream_from_string("hello world");
     return s.len() * 3;
 }`},
 	// core/cmp's Eq-driven generic verbs (`contains` / `index_of` / `distinct`,
@@ -56,9 +56,9 @@ function main(): i32 {
 	// element types. #2689 / #5348 (the verbs' single home is core/cmp).
 	{"cmp-eq-verbs", `import "core/cmp" as cmp;
 function main(): i32 {
-    var a: i32[] = [10, 20, 30, 20];
-    var ss: string[] = ["a", "b", "a", "c", "b"];
-    var r: i32 = 0;
+    let a: i32[] = [10, 20, 30, 20];
+    let ss: string[] = ["a", "b", "a", "c", "b"];
+    let r: i32 = 0;
     if (cmp.contains(a, 20)) { r = r + 1; }
     if (!cmp.contains(a, 99)) { r = r + 2; }
     if (cmp.contains(ss, "c")) { r = r + 4; }
@@ -77,20 +77,20 @@ function main(): i32 {
 	{"array-index-of", `import "std/array";
 struct H { xs: i32[] }
 function main(): i32 {
-    var xs: i32[] = [7, 8, 9];
-    var ss: string[] = ["a", "b", "c"];
-    var h: H = H { xs: [7, 8, 9] };
+    let xs: i32[] = [7, 8, 9];
+    let ss: string[] = ["a", "b", "c"];
+    let h: H = H { xs: [7, 8, 9] };
     match (xs.index_of(9))  { Some(i) => { if (i != 2) { return 1; } }, None => { return 2; } }
     match (xs.index_of(99)) { Some(_) => { return 3; },                 None => {} }
     match (h.xs.index_of(9))  { Some(i) => { if (i != 2) { return 4; } }, None => { return 5; } }
     match (h.xs.index_of(99)) { Some(_) => { return 6; },                 None => {} }
     match (ss.index_of("c")) { Some(i) => { if (i != 2) { return 7; } }, None => { return 8; } }
     match (ss.index_of("z")) { Some(_) => { return 9; },                 None => {} }
-    var dup: i32[] = [5, 3, 5];
+    let dup: i32[] = [5, 3, 5];
     match (dup.index_of(5)) { Some(i) => { if (i != 0) { return 10; } }, None => { return 11; } }
-    var empty: i32[] = [];
+    let empty: i32[] = [];
     match (empty.index_of(0)) { Some(_) => { return 12; }, None => {} }
-    var o: Option[i32] = xs.index_of(8);
+    let o: Option[i32] = xs.index_of(8);
     match (o) { Some(i) => { if (i != 1) { return 13; } }, None => { return 14; } }
     if (!xs.contains(8))   { return 15; }
     if (xs.contains(88))   { return 16; }
@@ -103,8 +103,8 @@ function main(): i32 {
 	{"one-letter-struct-field-method", `import "std/array";
 struct P { ss: string[] }
 function main(): i32 {
-    var p: P = P { ss: ["a", "b", "c"] };
-    var ps: P[] = [p];
+    let p: P = P { ss: ["a", "b", "c"] };
+    let ps: P[] = [p];
     match (p.ss.index_of("c")) { Some(i) => { if (i != 2) { return 1; } }, None => { return 2; } }
     if (!ps[0].ss.contains("b")) { return 3; }
     return 42;
@@ -115,7 +115,7 @@ function main(): i32 {
 	{"map-snapshot-array-methods", `import "core/map";
 import "std/array";
 function main(): i32 {
-    var m: Map[string, i32] = Map { "a": 10, "b": 20, "c": 12 };
+    let m: Map[string, i32] = Map { "a": 10, "b": 20, "c": 12 };
     if (!m.keys().contains("b")) { return 1; }
     match (m.values().max()) { Some(v) => { if (v != 20) { return 2; } }, None => { return 3; } }
     return m.values().sum();
@@ -124,11 +124,11 @@ function main(): i32 {
 	// so the i32 instance is chosen, and min/max answer Some or None.
 	{"untyped-literal-array-methods", `import "std/array";
 function main(): i32 {
-    var a = [5, 3, 8, 1];
-    var t: i32 = a.sum() + a.product();
+    let a = [5, 3, 8, 1];
+    let t: i32 = a.sum() + a.product();
     match (a.min()) { Some(m) => { t = t + m; }, None => { return 1; } }
     match (a.max()) { Some(m) => { t = t + m; }, None => { return 2; } }
-    var e: i32[] = [];
+    let e: i32[] = [];
     match (e.max()) { Some(_) => { return 3; }, None => {} }
     return t; // 17 + 120 + 1 + 8
 }`},
@@ -137,9 +137,9 @@ function main(): i32 {
 	// negative exponent where the stdlib answers 0 (#10244).
 	{"i32-methods", `import "std/i32";
 function main(): i32 {
-    var n: i32 = 2;
-    var r: i32 = n.pow(0 - 1) + n.pow(5);
-    var g: i32 = 0 - 48;
+    let n: i32 = 2;
+    let r: i32 = n.pow(0 - 1) + n.pow(5);
+    let g: i32 = 0 - 48;
     r = r + g.gcd(18) + n.lcm(0 - 3);
     return r; // 0 + 32 + 6 + 6
 }`},
@@ -153,10 +153,10 @@ function main(): i32 {
 	// both the live value and the snapshot.
 	{"ordmap", `import "std/ordmap";
 function main(): i32 {
-    var m: ordmap.OrdMap[i32, string] = ordmap.ordmap_new();
-    var i: i32 = 0;
+    let m: ordmap.OrdMap[i32, string] = ordmap.ordmap_new();
+    let i: i32 = 0;
     while (i < 50) { m = m.insert((i * 7) % 50, "v"); i = i + 1; }
-    var snap: ordmap.OrdMap[i32, string] = m;
+    let snap: ordmap.OrdMap[i32, string] = m;
     m = m.remove(7);
     m = m.insert(100, "w");
     if (!m.is_valid() || !snap.is_valid()) { return 1; }
@@ -172,22 +172,22 @@ function main(): i32 {
 	// broadcast, and the two products.
 	{"ndarray", `import "std/ndarray";
 function main(): i32 {
-    var xs: i32[] = [];
-    var i: i32 = 0;
+    let xs: i32[] = [];
+    let i: i32 = 0;
     while (i < 12) { xs = xs.append(i); i = i + 1; }
-    var a: ndarray.NdArray[i32] = ndarray.from_flat(xs, [3, 4]);
-    var t: ndarray.NdArray[i32] = a.transpose();
+    let a: ndarray.NdArray[i32] = ndarray.from_flat(xs, [3, 4]);
+    let t: ndarray.NdArray[i32] = a.transpose();
     if (t.get([1, 2]) != 9 || a.get([2, 1]) != 9) { return 1; }
     if (a.reverse(1).get([0, 0]) != 3) { return 2; }
     if (a.slice(1, 1, 3).get([2, 1]) != 10) { return 3; }
     if (a.select(0, 2).get([3]) != 11) { return 4; }
     if (t.reshape([12]).get([1]) != 4) { return 5; }
-    var f: i32[] = t.to_flat();
+    let f: i32[] = t.to_flat();
     if (f.len() != 12 || f[1] != 4 || t.is_row_major() || !a.is_packed()) { return 6; }
     if (t.map((x: i32): i32 => x * 2).get([1, 2]) != 18) { return 7; }
     if (a.reduce_axis(1, 0, (acc: i32, x: i32): i32 => acc + x).get([2]) != 38) { return 8; }
     if (a.scan_axis(0, 0, (acc: i32, x: i32): i32 => acc + x).get([2, 1]) != 15) { return 9; }
-    var row: ndarray.NdArray[i32] = ndarray.from_flat([1, 2, 3, 4], [4]);
+    let row: ndarray.NdArray[i32] = ndarray.from_flat([1, 2, 3, 4], [4]);
     if (a.zip_with(row, (x: i32, y: i32): i32 => x + y).get([2, 3]) != 15) { return 10; }
     if (row.broadcast_to([3, 4]).get([2, 2]) != 3) { return 11; }
     if (a.inner(t, 0, (x: i32, y: i32): i32 => x * y, (x: i32, y: i32): i32 => x + y).get([1, 2]) != 214) { return 12; }
@@ -196,11 +196,11 @@ function main(): i32 {
 }`},
 	{"pmap", `import "std/pmap";
 function main(): i32 {
-    var m: pmap.PMap[string, i32] = pmap.pmap_new();
+    let m: pmap.PMap[string, i32] = pmap.pmap_new();
     m = m.insert("a", 1);
     m = m.insert("b", 2);
     m = m.insert("c", 3);
-    var snap: pmap.PMap[string, i32] = m;
+    let snap: pmap.PMap[string, i32] = m;
     m = m.remove("b");
     m = m.insert("d", 4);
     if (!m.is_valid() || !snap.is_valid()) { return 1; }
@@ -214,10 +214,10 @@ function main(): i32 {
 	// must retain, or the snapshot's leaf is freed under it.
 	{"pvec", `import "std/pvec";
 function main(): i32 {
-    var v: pvec.PVec[i32] = pvec.pvec_new();
-    var i: i32 = 0;
+    let v: pvec.PVec[i32] = pvec.pvec_new();
+    let i: i32 = 0;
     while (i < 100) { v = v.append(i); i = i + 1; }
-    var snap: pvec.PVec[i32] = v;
+    let snap: pvec.PVec[i32] = v;
     v = v.with(5, 500);
     v = v.pop();
     if (!v.is_valid() || !snap.is_valid()) { return 1; }
@@ -227,21 +227,21 @@ function main(): i32 {
 }`},
 	{"ordset", `import "std/ordset";
 function main(): i32 {
-    var s: ordset.OrdSet[i32] = ordset.ordset_of([5, 3, 9, 3, 1]);
-    var snap: ordset.OrdSet[i32] = s;
+    let s: ordset.OrdSet[i32] = ordset.ordset_of([5, 3, 9, 3, 1]);
+    let snap: ordset.OrdSet[i32] = s;
     s = s.remove(3);
     s = s.add(7);
     if (!s.is_valid() || !snap.is_valid()) { return 1; }
     if (s.len() != 4 || snap.len() != 4) { return 2; }
     if (s.contains(3) || !snap.contains(3) || !s.contains(7) || snap.contains(7)) { return 3; }
-    var xs: i32[] = s.to_array();
+    let xs: i32[] = s.to_array();
     if (xs.len() != 4 || xs[0] != 1 || xs[3] != 9) { return 4; }
     return 42;
 }`},
 	{"pset", `import "std/pset";
 function main(): i32 {
-    var s: pset.PSet[string] = pset.pset_of(["a", "b", "a", "c"]);
-    var snap: pset.PSet[string] = s;
+    let s: pset.PSet[string] = pset.pset_of(["a", "b", "a", "c"]);
+    let snap: pset.PSet[string] = s;
     s = s.remove("a");
     s = s.add("d");
     if (!s.is_valid() || !snap.is_valid()) { return 1; }

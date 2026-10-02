@@ -55,7 +55,7 @@ type renamer struct {
 	// declared holds every name bound anywhere in this function so far,
 	// including scopes already popped. `stack` alone only sees ENCLOSING
 	// scopes, so two declarations in DISJOINT SIBLING scopes — a match
-	// payload binding in one arm and a `var` of the same name in another —
+	// payload binding in one arm and a `let` of the same name in another —
 	// both kept the bare name and collapsed onto one slot in the IR
 	// builder's flat locals map. That is a real miscompile whenever the two
 	// have different types: the name-keyed type lookups
@@ -63,7 +63,7 @@ type renamer struct {
 	// declaration they find first, so one arm's binding is released with
 	// the other's drop plan. In the self-host compiler
 	// the AST lowering's alias_names_in_stmt was exactly this shape — a
-	// `parser.StmtAssign(a)` payload binding beside a `var a: string[]` in
+	// `parser.StmtAssign(a)` payload binding beside a `let a: string[]` in
 	// the StmtIf/StmtMatch arms — and it over-released once per assignment
 	// statement in every program the compiler saw.
 	declared map[string]bool
@@ -251,7 +251,7 @@ func (r *renamer) walkStmt(s ast.Stmt) {
 		r.popFrame()
 	case *ast.Var:
 		// RHS sees the *outer* scope, so walk it before the
-		// shadow-bind. `var x = x + 1` reads outer x for the
+		// shadow-bind. `let x = x + 1` reads outer x for the
 		// rhs and binds a fresh inner x for the lhs.
 		if n.Init != nil {
 			r.walkExpr(n.Init)

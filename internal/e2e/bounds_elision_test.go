@@ -25,32 +25,32 @@ var boundsElisionCases = []struct {
 }{
 	// i32 (stride 4).
 	{"i32-sum",
-		`function main(): i32 { var xs: i32[] = [10, 20, 30, 40]; var s: i32 = 0; for x in xs { s = s + x; } return s; }`, 100},
+		`function main(): i32 { let xs: i32[] = [10, 20, 30, 40]; let s: i32 = 0; for x in xs { s = s + x; } return s; }`, 100},
 	// u8 (stride 1) — the `_1` helper variant.
 	{"u8-sum",
-		`function main(): i32 { var xs: u8[] = [1u8, 2u8, 3u8, 4u8, 5u8]; var s: i32 = 0; for b in xs { s = s + (b as i32); } return s; }`, 15},
+		`function main(): i32 { let xs: u8[] = [1u8, 2u8, 3u8, 4u8, 5u8]; let s: i32 = 0; for b in xs { s = s + (b as i32); } return s; }`, 15},
 	// i64 (stride 8) — the `_8` helper variant.
 	{"i64-sum",
-		`function main(): i32 { var xs: i64[] = [100, 200, 300]; var s: i64 = 0; for x in xs { s = s + x; } if (s == 600) { return 42; } return 1; }`, 42},
+		`function main(): i32 { let xs: i64[] = [100, 200, 300]; let s: i64 = 0; for x in xs { s = s + x; } if (s == 600) { return 42; } return 1; }`, 42},
 	// Pointer elements (struct[]) — the loop var is bound by reference and the
 	// per-element field read composes with the elided address compute.
 	{"struct-field-sum",
-		`struct P { x: i32 } function main(): i32 { var ps: P[] = [P { x: 5 }, P { x: 7 }, P { x: 9 } ]; var s: i32 = 0; for p in ps { s = s + p.x; } return s; }`, 21},
+		`struct P { x: i32 } function main(): i32 { let ps: P[] = [P { x: 5 }, P { x: 7 }, P { x: 9 } ]; let s: i32 = 0; for p in ps { s = s + p.x; } return s; }`, 21},
 	// Empty array — the loop never runs; the elision must not misfire on a
 	// zero-length array (len captured as 0, guard false immediately).
 	{"empty",
-		`function main(): i32 { var xs: i32[] = []; var s: i32 = 7; for x in xs { s = s + x; } return s; }`, 7},
+		`function main(): i32 { let xs: i32[] = []; let s: i32 = 7; for x in xs { s = s + x; } return s; }`, 7},
 	// Nested for-loops over the same array — each desugar gets its own
 	// synthetic idx/len, both elided.
 	{"nested",
-		`function main(): i32 { var xs: i32[] = [1, 2, 3]; var t: i32 = 0; for a in xs { for b in xs { t = t + a * b; } } return t; }`, 36},
+		`function main(): i32 { let xs: i32[] = [1, 2, 3]; let t: i32 = 0; for a in xs { for b in xs { t = t + a * b; } } return t; }`, 36},
 	// A string in the len-bounded loop idiom — the `__str_idx_nc` variant,
 	// on a heap string and on an inline (SSO) one, whose byte address comes
 	// from the scratch spill rather than the data pointer.
 	{"string-bytes",
-		`function main(): i32 { var s: string = "abcdefghijkl"; var t: i32 = 0; var i: i32 = 0; while (i < s.len()) { t = t + (s[i] as i32) - 96; i = i + 1; } return t; }`, 78},
+		`function main(): i32 { let s: string = "abcdefghijkl"; let t: i32 = 0; let i: i32 = 0; while (i < s.len()) { t = t + (s[i] as i32) - 96; i = i + 1; } return t; }`, 78},
 	{"inline-string-bytes",
-		`function main(): i32 { var s: string = "abc"; var t: i32 = 0; var i: i32 = 0; while (i < s.len()) { t = t + (s[i] as i32) - 96; i = i + 1; } return t; }`, 6},
+		`function main(): i32 { let s: string = "abc"; let t: i32 = 0; let i: i32 = 0; while (i < s.len()) { t = t + (s[i] as i32) - 96; i = i + 1; } return t; }`, 6},
 }
 
 // TestX86_64BoundsElisionCorrect runs each case through the x86-64 native
@@ -99,10 +99,10 @@ func TestWASMBoundsElisionCorrect(t *testing.T) {
 // `_nc` routing regressing to the checked helper, and the elision pass
 // over-firing on shapes it cannot prove.
 func TestX86_64BoundsElisionEmitted(t *testing.T) {
-	forSrc := `function main(): i32 { var xs: i32[] = [10, 20, 30, 40]; var s: i32 = 0; for x in xs { s = s + x; } return s; }`
-	whileSrc := `function main(): i32 { var xs: i32[] = [10, 20, 30, 40]; var s: i32 = 0; var i: i32 = 0; while (i < xs.len()) { s = s + xs[i]; i = i + 1; } return s; }`
-	capturedSrc := `function main(): i32 { var xs: i32[] = [10, 20, 30, 40]; var n: i32 = xs.len(); var s: i32 = 0; var i: i32 = 0; while (i < n) { s = s + xs[i]; i = i + 1; } return s; }`
-	keptSrc := `function main(): i32 { var xs: i32[] = [10, 20, 30, 40]; var n: i32 = xs.len(); n = n - 1; var s: i32 = 0; var i: i32 = 0; while (i < n) { s = s + xs[i]; i = i + 1; } return s; }`
+	forSrc := `function main(): i32 { let xs: i32[] = [10, 20, 30, 40]; let s: i32 = 0; for x in xs { s = s + x; } return s; }`
+	whileSrc := `function main(): i32 { let xs: i32[] = [10, 20, 30, 40]; let s: i32 = 0; let i: i32 = 0; while (i < xs.len()) { s = s + xs[i]; i = i + 1; } return s; }`
+	capturedSrc := `function main(): i32 { let xs: i32[] = [10, 20, 30, 40]; let n: i32 = xs.len(); let s: i32 = 0; let i: i32 = 0; while (i < n) { s = s + xs[i]; i = i + 1; } return s; }`
+	keptSrc := `function main(): i32 { let xs: i32[] = [10, 20, 30, 40]; let n: i32 = xs.len(); n = n - 1; let s: i32 = 0; let i: i32 = 0; while (i < n) { s = s + xs[i]; i = i + 1; } return s; }`
 
 	forAsm := compileToX86Asm(t, forSrc)
 	if n := strings.Count(mainBody(forAsm), "mov edi, 134"); n != 0 {
@@ -122,7 +122,7 @@ func TestX86_64BoundsElisionEmitted(t *testing.T) {
 	}
 	// A string in the same idiom drops its check too (the SSO dispatch
 	// stays: it is how the byte address is found, not a check).
-	strSrc := `function main(): i32 { var s: string = "abcd"; var t: i32 = 0; var i: i32 = 0; while (i < s.len()) { t = t + (s[i] as i32); i = i + 1; } return t; }`
+	strSrc := `function main(): i32 { let s: string = "abcd"; let t: i32 = 0; let i: i32 = 0; while (i < s.len()) { t = t + (s[i] as i32); i = i + 1; } return t; }`
 	strAsm := compileToX86Asm(t, strSrc)
 	if n := strings.Count(mainBody(strAsm), "mov edi, 134"); n != 0 {
 		t.Errorf("len-guarded string index loop kept %d bounds-check trap(s); want 0\n%s", n, mainBody(strAsm))

@@ -19,7 +19,7 @@ import "std/string";
 import "./lib/gnu";
 
 function help_text(): string {
-  var out: string = "";
+  let out: string = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]...\n";
   out = out + "Print the full filename of the current working directory.\n";
   out = out + "\n";
@@ -44,15 +44,15 @@ function opt_physical(): i32 {
 // ends the string or is followed by another `/`. A name like `/a/.hidden`
 // or `/a/..b` has neither and is fine.
 function has_dot_component(wd: string): boolean {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i + 1 < wd.len()) {
     if (wd[i] as i32 == 47 && wd[i + 1] as i32 == 46) {
-      var after: i32 = i + 2;
+      let after: i32 = i + 2;
       if (after >= wd.len() || wd[after] as i32 == 47) {
         return true;
       }
       if (wd[after] as i32 == 46) {
-        var after2: i32 = after + 1;
+        let after2: i32 = after + 1;
         if (after2 >= wd.len() || wd[after2] as i32 == 47) {
           return true;
         }
@@ -65,7 +65,7 @@ function has_dot_component(wd: string): boolean {
 
 // $PWD when it is fit to print as the logical directory, else None.
 function logical_cwd(): Option[string] {
-  var wd: string = "";
+  let wd: string = "";
   match (env("PWD")) {
     Some(v) => {
       wd = v;
@@ -117,12 +117,12 @@ function die_errno(msg: string, e: IoError): void {
 // without moving the process. The diagnostics name the prefix, as GNU's
 // do, so a failure says how far up it got.
 function walked_cwd(): string {
-  var root: FileStat = stat_or_die(stat("/"), "failed to get attributes of " + gnu.quotea("/"));
-  var here: FileStat = stat_or_die(stat("."), "failed to stat " + gnu.quotea("."));
-  var name: string = "";
-  var prefix: string = "..";
+  let root: FileStat = stat_or_die(stat("/"), "failed to get attributes of " + gnu.quotea("/"));
+  let here: FileStat = stat_or_die(stat("."), "failed to stat " + gnu.quotea("."));
+  let name: string = "";
+  let prefix: string = "..";
   while (!(here.dev == root.dev && here.ino == root.ino)) {
-    var entries: string[] = [];
+    let entries: string[] = [];
     match (read_dir(prefix)) {
       Ok(es) => {
         entries = es;
@@ -131,10 +131,10 @@ function walked_cwd(): string {
         die_errno("cannot open directory " + gnu.quote(prefix), e);
       }
     }
-    var parent: FileStat = stat_or_die(stat(prefix), "failed to stat " + gnu.quote(prefix));
-    var found: string = "";
-    var matched: boolean = false;
-    var i: i32 = 0;
+    let parent: FileStat = stat_or_die(stat(prefix), "failed to stat " + gnu.quote(prefix));
+    let found: string = "";
+    let matched: boolean = false;
+    let i: i32 = 0;
     while (i < entries.len()) {
       // An entry that will not stat is skipped rather than fatal: it
       // cannot be the directory we are standing in, since that one we
@@ -179,14 +179,14 @@ function stat_or_die(r: Result[FileStat, IoError], msg: string): FileStat {
 }
 
 pub function main(): i32 {
-  var opts: gnu.Opt[] = [];
+  let opts: gnu.Opt[] = [];
   opts = opts.append(gnu.flag("L", "logical", opt_logical()));
   opts = opts.append(gnu.flag("P", "physical", opt_physical()));
 
   // POSIX wants -L; standalone implementations want -P. GNU splits the
   // difference on POSIXLY_CORRECT, and the last option on the line wins
   // over both.
-  var logical: boolean = false;
+  let logical: boolean = false;
   match (env("POSIXLY_CORRECT")) {
     Some(_) => {
       logical = true;
@@ -194,9 +194,9 @@ pub function main(): i32 {
     None => {}
   }
 
-  var g: gnu.Getopt = gnu.getopt_new(args(), opts, "pwd", help_text(), 1);
+  let g: gnu.Getopt = gnu.getopt_new(args(), opts, "pwd", help_text(), 1);
   while (true) {
-    var res: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    let res: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = res.1;
     match (res.0) {
       Some(m) => {
@@ -220,7 +220,7 @@ pub function main(): i32 {
       None => {}
     }
   }
-  var wd: string = getcwd();
+  let wd: string = getcwd();
   if (wd.len() > 0) {
     gnu.write_out(wd + "\n");
     return 0;

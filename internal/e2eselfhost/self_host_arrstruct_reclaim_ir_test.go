@@ -8,7 +8,7 @@ import (
 )
 
 // arrStructReclaimCases pin the #4365 `(<struct-with-array-field>)[]` array-of-structs
-// reclaim: a `var ps: P[] = [P { xs: [i, i+1] }, ...]` local — an array whose ELEMENTS
+// reclaim: a `let ps: P[] = [P { xs: [i, i+1] }, ...]` local — an array whose ELEMENTS
 // are struct boxes each carrying a fresh rc-array field — leaked all three levels (the
 // per-element field array buffers, the element struct boxes, and the outer buffer) per
 // loop iteration on the self-host IR path (native bounds it). The new "ARRSTRUCT:" class
@@ -22,7 +22,7 @@ import (
 // SOUNDNESS: the element field use is checked by arrstruct_elem_payload_escapes — a
 // scalar field read (ps[i].n), an indexed array-field read (ps[i].xs[j]) and
 // ps[i].xs.len() are borrows (reclaim proceeds); a BARE array-field extraction (store /
-// return / pass / alias / slice ps[i].xs) OR a bound element (var t = ps[i] / for t in ps,
+// return / pass / alias / slice ps[i].xs) OR a bound element (let t = ps[i] / for t in ps,
 // via arrarr_row_escapes) escapes and the local is left leak-safe (never over-released).
 var arrStructReclaimCases = []struct {
 	name string
@@ -32,13 +32,13 @@ var arrStructReclaimCases = []struct {
 	// Core churn: rebuilt per iteration, scalar/array read only.
 	{"arrstruct-churn", `struct P { xs: i32[] }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
-    while (i < 200) { var ps: P[] = [P { xs: [i, i + 1] }, P { xs: [i + 2, i + 3] }]; acc = (acc + ps[0].xs[0]) % 251; i = i + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
-    while (j < 5000) { var qs: P[] = [P { xs: [j, j + 1] }]; acc = (acc + qs[0].xs[0]) % 251; j = j + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 200) { let ps: P[] = [P { xs: [i, i + 1] }, P { xs: [i + 2, i + 3] }]; acc = (acc + ps[0].xs[0]) % 251; i = i + 1; }
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
+    while (j < 5000) { let qs: P[] = [P { xs: [j, j + 1] }]; acc = (acc + qs[0].xs[0]) % 251; j = j + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -48,17 +48,17 @@ function main(): i32 {
 	// ps[i].xs.len() are all admitted — still reclaims (bounded).
 	{"arrstruct-borrow-full", `struct P { n: i32, xs: i32[] }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 5000) {
-        var ps: P[] = [P { n: i, xs: [i, i + 1] }, P { n: i + 1, xs: [i + 2, i + 3] }];
+        let ps: P[] = [P { n: i, xs: [i, i + 1] }, P { n: i + 1, xs: [i + 2, i + 3] }];
         acc = (acc + ps[0].n + ps[1].xs[0] + ps[0].xs.len()) % 251;
         i = i + 1;
     }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
-    while (j < 5000) { var qs: P[] = [P { n: j, xs: [j, j + 1] }]; acc = (acc + qs[0].xs[1]) % 251; j = j + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
+    while (j < 5000) { let qs: P[] = [P { n: j, xs: [j, j + 1] }]; acc = (acc + qs[0].xs[1]) % 251; j = j + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -68,14 +68,14 @@ function main(): i32 {
 	// element — the local is NOT credited (leak-safe), and MUST NOT be over-released.
 	{"arrstruct-escape-store-safe", `struct P { xs: i32[] }
 function main(): i32 {
-    var keep: i32[] = [0, 0];
-    var i: i32 = 0;
+    let keep: i32[] = [0, 0];
+    let i: i32 = 0;
     while (i < 50) {
-        var ps: P[] = [P { xs: [i, i + 1] }];
+        let ps: P[] = [P { xs: [i, i + 1] }];
         keep = ps[0].xs;
         i = i + 1;
     }
-    var acc: i32 = keep[0] + keep[1];
+    let acc: i32 = keep[0] + keep[1];
     if (acc < 0) { return 97; }
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
@@ -85,10 +85,10 @@ function main(): i32 {
 	{"arrstruct-escape-call-safe", `struct P { xs: i32[] }
 function take(xs: i32[]): i32 { return xs[0]; }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 50) {
-        var ps: P[] = [P { xs: [i, i + 1] }];
+        let ps: P[] = [P { xs: [i, i + 1] }];
         acc = (acc + take(ps[0].xs)) % 251;
         i = i + 1;
     }
@@ -100,12 +100,12 @@ function main(): i32 {
 	// nothing freed, value exact (a[0].xs[0] + a[1].xs[1] = 5 + 8 = 13).
 	{"arrstruct-escape-fn-safe", `struct P { xs: i32[] }
 function mk(n: i32): P[] {
-    var ps: P[] = [P { xs: [n, n + 1] }, P { xs: [n + 2, n + 3] }];
+    let ps: P[] = [P { xs: [n, n + 1] }, P { xs: [n + 2, n + 3] }];
     return ps;
 }
 function main(): i32 {
-    var a = mk(5);
-    var v: i32 = a[0].xs[0] + a[1].xs[1];
+    let a = mk(5);
+    let v: i32 = a[0].xs[0] + a[1].xs[1];
     if (__rc_underflow_count() != 0) { return 99; }
     return v;
 }`, 13},

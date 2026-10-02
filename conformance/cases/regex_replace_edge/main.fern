@@ -9,7 +9,7 @@
 import "std/regex";
 
 function main(): i32 {
-    var r: i32 = 0;
+    let r: i32 = 0;
     if (regex.regex_replace_all("a", "aaa", "bb") == "bbbbbb") { r = r + 1; }              // multi-char repl grows output
     if (regex.regex_replace_all("", "abc", "-") == "-a-b-c-") { r = r + 2; }               // empty pattern → between every byte
     if (regex.regex_replace_all("x*", "axbxc", "<>") == "<>a<><>b<><>c<>") { r = r + 4; }  // nullable star, zero-width carry

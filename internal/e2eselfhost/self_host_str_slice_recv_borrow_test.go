@@ -43,14 +43,14 @@ function (s: string) view2(): str { return slice_unchecked(s, 1, s.len()); }
 // sits between the two measured deltas rather than at flat: this change frees
 // the SOURCE, and the view box it leaves behind is the next slice's business.
 func sliceRecvHeap(round string) string {
-	return sliceRecvPrelude + `function round(pre: string): i32 { var base: string = ww(pre); ` + round + ` }
-function churn(pre: string, n: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < n) { acc = (acc + round(pre)) % 251; i = i + 1; } return acc; }
+	return sliceRecvPrelude + `function round(pre: string): i32 { let base: string = ww(pre); ` + round + ` }
+function churn(pre: string, n: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < n) { acc = (acc + round(pre)) % 251; i = i + 1; } return acc; }
 function main(): i32 {
-    var pre: string = "abcdefgh";
-    var a: i32 = churn(pre, 400);
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var b: i32 = churn(pre, 400);
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let pre: string = "abcdefgh";
+    let a: i32 = churn(pre, 400);
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let b: i32 = churn(pre, 400);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (a != b) { return 97; }
     if (b2 - b1 >= @LIMIT@) { return 98; }
@@ -88,32 +88,32 @@ var strSliceRecvBorrowCases = []struct {
 	// The same view-returning method with the result NOT escaping the frame:
 	// both the view and the source are read afterwards and must survive.
 	{"str-slice-recv-view-method-live", sliceRecvPrelude + `function round(pre: string): i32 {
-    var base: string = w(pre);
-    var v: str = slice_unchecked(base, 2, base.len()).view2();
-    var p1: string = w("XXXXXXXX");
-    var p2: string = w("YYYYYYYY");
+    let base: string = w(pre);
+    let v: str = slice_unchecked(base, 2, base.len()).view2();
+    let p1: string = w("XXXXXXXX");
+    let p2: string = w("YYYYYYYY");
     if (p1.len() + p2.len() < 0) { return 0; }
     if (has_sub(v, "XXXX")) { return 0 - 1; }
     if (!has_prefix(v, "defgh")) { return 0 - 2; }
     if (!has_prefix(base, "abcdefgh-a-wide")) { return 0 - 3; }
     return base.len() + v.len();
 }
-function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 3000) { var r: i32 = round(pre); if (r != 209) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
+function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; while (i < 3000) { let r: i32 = round(pre); if (r != 209) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
 	// The ADMITTED method's result and the source both live: `own2` copies, so
 	// releasing nothing and reclaiming `base` at scope end must leave both intact.
 	{"str-slice-recv-owned-live", sliceRecvPrelude + `function round(pre: string): i32 {
-    var base: string = w(pre);
-    var c: string = slice_unchecked(base, 4, base.len()).own2();
-    var p1: string = w("XXXXXXXX");
-    var p2: string = w("YYYYYYYY");
-    var p3: string = w("ZZZZZZZZ");
+    let base: string = w(pre);
+    let c: string = slice_unchecked(base, 4, base.len()).own2();
+    let p1: string = w("XXXXXXXX");
+    let p2: string = w("YYYYYYYY");
+    let p3: string = w("ZZZZZZZZ");
     if (p1.len() + p2.len() + p3.len() < 0) { return 0; }
     if (has_sub(c, "XXXX")) { return 0 - 1; }
     if (!has_prefix(c, "efgh-a-wide")) { return 0 - 2; }
     if (!has_prefix(base, "abcdefgh-a-wide")) { return 0 - 3; }
     return base.len() + c.len();
 }
-function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 3000) { var r: i32 = round(pre); if (r != 208) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
+function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; while (i < 3000) { let r: i32 = round(pre); if (r != 208) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
 	// The key can only be spelled `string.<method>` — this scan has no types — so
 	// a same-named method on another type answers to it. Here `Hold.own2` RETAINS
 	// (it hands back a field holding `base`) while `string.own2` is proven
@@ -129,15 +129,15 @@ function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 
 function (h: Hold) own2(): string { return h.v; }
 function mk(s: string): Hold { return Hold { v: s }; }
 function leak2(pre: string): string {
-    var base: string = w(pre);
+    let base: string = w(pre);
     return mk(base).own2();
 }
 function main(): i32 {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 3000) {
-        var c: string = leak2("abcdefgh");
-        var p1: string = w("XXXXXXXX");
-        var p2: string = w("YYYYYYYY");
+        let c: string = leak2("abcdefgh");
+        let p1: string = w("XXXXXXXX");
+        let p2: string = w("YYYYYYYY");
         if (p1.len() + p2.len() < 0) { return 0; }
         if (has_sub(c, "XXXX")) { return 96; }
         if (c.len() != 106) { return 97; }

@@ -5,7 +5,7 @@
 import "std/regex";
 
 function main(): i32 {
-    var r: i32 = 0;
+    let r: i32 = 0;
     if (regex.regex_match("^a{3}$", "aaa")) { r = r + 1; }        // exactly 3
     if (!regex.regex_match("^a{3}$", "aa")) { r = r + 2; }        // too few
     if (!regex.regex_match("^a{3}$", "aaaa")) { r = r + 4; }      // too many

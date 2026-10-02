@@ -41,7 +41,7 @@ allocations.
 
 The production suite's control leg is the AST lowering, which segfaults
 on that call of a call, so the row binds the result first
-(`var add10 = mk(10); add10(0)`) and the conformance case carries the
+(`let add10 = mk(10); add10(0)`) and the conformance case carries the
 same-expression form. #9954's row (`a-lambda-declaring-a-callable-result-over-a-generic-struct`)
 pinned `function signature slot` as the refusal that stands; it now
 stops one step later, at the capturing lambda its `outer` returns

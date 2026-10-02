@@ -5,8 +5,8 @@ import "testing"
 // A parsed literal is a magnitude with the sign on the enclosing unary; a
 // literal constfold substituted carries its sign in Value. Both readings have
 // to agree: `const NEG = -5` arriving as a literal holding -5 was read as the
-// magnitude 2^64-5 and refused for every type, so `var x = NEG` widened to i64
-// and `var y: i32 = NEG` drew E047.
+// magnitude 2^64-5 and refused for every type, so `let x = NEG` widened to i64
+// and `let y: i32 = NEG` drew E047.
 func TestIntLitOutOfRangeReadsAFoldedSign(t *testing.T) {
 	i32 := NumberType{Width: 32, Signed: true}
 	i64 := NumberType{Width: 64, Signed: true}

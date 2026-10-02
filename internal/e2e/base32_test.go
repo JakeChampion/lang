@@ -20,8 +20,8 @@ function main(): i32 {
     if (string_from_bytes_unchecked(b32.base32_decode("")) != "" || b32.base32_encode("".bytes()) != "") { return 8; }
     // Arbitrary bytes (incl. 0x00 / 0xFF) stay u8[] end to end (#5730);
     // compare through the encoded text, since u8[] has no structural ==.
-    var raw: u8[] = [0 as u8, 255 as u8, 128 as u8, 1 as u8, 254 as u8];
-    var enc: string = b32.base32_encode(raw);
+    let raw: u8[] = [0 as u8, 255 as u8, 128 as u8, 1 as u8, 254 as u8];
+    let enc: string = b32.base32_encode(raw);
     if (b32.base32_encode(b32.base32_decode(enc)) != enc) { return 9; }
     return 42;
 }

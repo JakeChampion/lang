@@ -7,8 +7,8 @@
 function widen(v: i64): i64 { return v; }
 
 function main(): i32 {
-    var big: i64 = (match ((1i64) /? (0i64)) { Some(w) => w, None => widen(5000000000i64) });
-    var some: i64 = (match ((9000000000i64) /? (2i64)) { Some(w) => w, None => widen(0i64) });
+    let big: i64 = (match ((1i64) /? (0i64)) { Some(w) => w, None => widen(5000000000i64) });
+    let some: i64 = (match ((9000000000i64) /? (2i64)) { Some(w) => w, None => widen(0i64) });
     if (big != 5000000000i64) { return 1; }
     if (some != 4500000000i64) { return 2; }
     return 0;

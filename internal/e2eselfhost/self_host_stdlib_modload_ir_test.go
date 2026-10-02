@@ -20,14 +20,14 @@ var stdlibModloadIRCases = []struct {
 	name string
 	main string
 }{
-	{"u32-min", "import \"std/u32\";\nfunction main(): i32 { var a: u32 = 7 as u32; var b: u32 = 3 as u32; return a.min(b) as i32; }\n"},
-	{"u32-clamp", "import \"std/u32\";\nfunction main(): i32 { var a: u32 = 50 as u32; return a.clamp(0 as u32, 20 as u32) as i32; }\n"},
-	{"u64-max", "import \"std/u64\";\nfunction main(): i32 { var a: u64 = 100 as u64; var b: u64 = 40 as u64; return a.max(b) as i32; }\n"},
-	{"i64-abs", "import \"std/i64\";\nfunction main(): i32 { var a: i64 = 0 - 17; return a.abs() as i32; }\n"},
-	{"i64-gcd", "import \"std/i64\";\nfunction main(): i32 { var a: i64 = 48; var b: i64 = 36; return a.gcd(b) as i32; }\n"},
-	{"i64-pow", "import \"std/i64\";\nfunction main(): i32 { var a: i64 = 2; return a.pow(6) as i32; }\n"},
-	{"sort-i32-desc", "import \"core/cmp\";\nfunction main(): i32 { var a: i32[] = [3, 1, 4, 1, 5]; var s = cmp.sort_desc(a); return s[0] + s[4]; }\n"},
-	{"sort-u32-asc", "import \"core/cmp\";\nfunction main(): i32 { var a: u32[] = [9 as u32, 2 as u32, 7 as u32]; var s = cmp.sort(a); return s[0] as i32; }\n"},
+	{"u32-min", "import \"std/u32\";\nfunction main(): i32 { let a: u32 = 7 as u32; let b: u32 = 3 as u32; return a.min(b) as i32; }\n"},
+	{"u32-clamp", "import \"std/u32\";\nfunction main(): i32 { let a: u32 = 50 as u32; return a.clamp(0 as u32, 20 as u32) as i32; }\n"},
+	{"u64-max", "import \"std/u64\";\nfunction main(): i32 { let a: u64 = 100 as u64; let b: u64 = 40 as u64; return a.max(b) as i32; }\n"},
+	{"i64-abs", "import \"std/i64\";\nfunction main(): i32 { let a: i64 = 0 - 17; return a.abs() as i32; }\n"},
+	{"i64-gcd", "import \"std/i64\";\nfunction main(): i32 { let a: i64 = 48; let b: i64 = 36; return a.gcd(b) as i32; }\n"},
+	{"i64-pow", "import \"std/i64\";\nfunction main(): i32 { let a: i64 = 2; return a.pow(6) as i32; }\n"},
+	{"sort-i32-desc", "import \"core/cmp\";\nfunction main(): i32 { let a: i32[] = [3, 1, 4, 1, 5]; let s = cmp.sort_desc(a); return s[0] + s[4]; }\n"},
+	{"sort-u32-asc", "import \"core/cmp\";\nfunction main(): i32 { let a: u32[] = [9 as u32, 2 as u32, 7 as u32]; let s = cmp.sort(a); return s[0] as i32; }\n"},
 	// UTF-8 codepoint layer (#4416): decode a 2-byte é to its scalar U+00E9=233.
 	{"utf8-decode", "import \"std/string\";\nfunction main(): i32 { return \"é\".chars()[0] as i32; }\n"},
 	// chars() counts CODEPOINTS, not bytes (#7231): "aé😀" is 3 chars over 7 bytes.

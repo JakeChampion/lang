@@ -16,15 +16,15 @@ import (
 // scalar-element arrays, so `N[]` made `Seq` non-droppable — and
 // `enum_all_variants_rc_droppable` bails on the first non-droppable variant, so
 // the whole enum was refused. That took the *scalar* `Leaf` variant down with
-// it: `var n: N = Leaf(i)` leaked 40 B/iteration while the byte-identical
-// `var m: M = A(i)` on a non-recursive enum was flat.
+// it: `let n: N = Leaf(i)` leaked 40 B/iteration while the byte-identical
+// `let m: M = A(i)` on a non-recursive enum was flat.
 //
 // Measured on x86-64, `__heap_bump_bytes()` delta across two identical churn
 // calls, bytes per iteration (native is 0 on all three):
 //
-//	var n: N = Leaf(i);                              40  -> 0
-//	var n: N = Seq([Leaf(i)]);                      112  -> 0
-//	var kids: N[] = [Leaf(i), Leaf(8)]; Seq(kids);  160  -> 0
+//	let n: N = Leaf(i);                              40  -> 0
+//	let n: N = Seq([Leaf(i)]);                      112  -> 0
+//	let kids: N[] = [Leaf(i), Leaf(8)]; Seq(kids);  160  -> 0
 //
 // The release is `__fern_arrarr_free`: it rc-guards the buffer, decs each
 // element BOX (rc-guarded, so a shared element only decs), then frees the
@@ -48,13 +48,13 @@ var enumPayloadArrReclaimCases = []struct {
 	// an array — it leaked only because a sibling variant did.
 	{"recursive-enum-scalar-variant-flat", `enum N { Leaf(i32), Seq(N[]) }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
-    while (i < 200) { var n: N = Leaf(i); acc = (acc + 1) % 251; i = i + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
-    while (j < 2000) { var n2: N = Leaf(j); acc = (acc + 1) % 251; j = j + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 200) { let n: N = Leaf(i); acc = (acc + 1) % 251; i = i + 1; }
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
+    while (j < 2000) { let n2: N = Leaf(j); acc = (acc + 1) % 251; j = j + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -63,13 +63,13 @@ function main(): i32 {
 	// The array-payload variant: buffer plus element boxes, all per iteration.
 	{"recursive-enum-array-payload-flat", `enum N { Leaf(i32), Seq(N[]) }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
-    while (i < 200) { var n: N = Seq([Leaf(i), Leaf(8)]); acc = (acc + 1) % 251; i = i + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
-    while (j < 2000) { var n2: N = Seq([Leaf(j), Leaf(8)]); acc = (acc + 1) % 251; j = j + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 200) { let n: N = Seq([Leaf(i), Leaf(8)]); acc = (acc + 1) % 251; i = i + 1; }
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
+    while (j < 2000) { let n2: N = Seq([Leaf(j), Leaf(8)]); acc = (acc + 1) % 251; j = j + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -78,13 +78,13 @@ function main(): i32 {
 	// The payload built in a LOCAL first, which is #6758's third row verbatim.
 	{"recursive-enum-payload-via-local-flat", `enum N { Leaf(i32), Seq(N[]) }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
-    while (i < 200) { var kids: N[] = [Leaf(i), Leaf(8)]; var n: N = Seq(kids); acc = (acc + 1) % 251; i = i + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
-    while (j < 2000) { var k2: N[] = [Leaf(j), Leaf(8)]; var n2: N = Seq(k2); acc = (acc + 1) % 251; j = j + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 200) { let kids: N[] = [Leaf(i), Leaf(8)]; let n: N = Seq(kids); acc = (acc + 1) % 251; i = i + 1; }
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
+    while (j < 2000) { let k2: N[] = [Leaf(j), Leaf(8)]; let n2: N = Seq(k2); acc = (acc + 1) % 251; j = j + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -103,12 +103,12 @@ function first_leaf(n: N): i32 {
     return 0;
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 500) {
-        var n: N = Seq([Leaf(i), Leaf(8), Leaf(9)]);
+        let n: N = Seq([Leaf(i), Leaf(8), Leaf(9)]);
         if (first_leaf(n) != 3) { return 97; }
-        var m: N = Leaf(i);
+        let m: N = Leaf(i);
         if (first_leaf(m) != i) { return 97; }
         acc = (acc + 1) % 251;
         i = i + 1;
@@ -125,8 +125,8 @@ function depth_sum(n: N): i32 {
     match (n) {
         Leaf(v) => { return v; },
         Seq(kids) => {
-            var s: i32 = 0;
-            var i: i32 = 0;
+            let s: i32 = 0;
+            let i: i32 = 0;
             while (i < kids.len()) { s = s + depth_sum(kids[i]); i = i + 1; }
             return s;
         }
@@ -134,11 +134,11 @@ function depth_sum(n: N): i32 {
     return 0;
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var inner: N = Seq([Leaf(1), Leaf(2)]);
-        var outer: N = Seq([inner, Leaf(3)]);
+        let inner: N = Seq([Leaf(1), Leaf(2)]);
+        let outer: N = Seq([inner, Leaf(3)]);
         if (depth_sum(outer) != 6) { return 97; }
         acc = (acc + 1) % 251;
         i = i + 1;

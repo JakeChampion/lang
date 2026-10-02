@@ -31,7 +31,7 @@ pub function apply(f: (i32) => i32, v: i32): i32 { return f(v); }
 `)
 	mustWrite(t, proj, "mid.fern", `import "./shapes";
 pub function total(ps: shapes.Point[]): i32 {
-    var t: i32 = 0;
+    let t: i32 = 0;
     for p in ps { t = t + p.x + p.y + p.tag.len(); }
     return t;
 }

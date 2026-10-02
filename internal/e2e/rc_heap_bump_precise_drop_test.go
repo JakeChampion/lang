@@ -38,10 +38,10 @@ func pdLit(n int) string {
 func seqDead4Src() string {
 	l := pdLit(100) // 400-byte payload -> size-class block (recyclable)
 	return `function main(): i32 {
-    var a: i32[] = ` + l + `; var sa: i32 = a[0];
-    var b: i32[] = ` + l + `; var sb: i32 = b[0];
-    var c: i32[] = ` + l + `; var sc: i32 = c[0];
-    var d: i32[] = ` + l + `; var sd: i32 = d[0];
+    let a: i32[] = ` + l + `; let sa: i32 = a[0];
+    let b: i32[] = ` + l + `; let sb: i32 = b[0];
+    let c: i32[] = ` + l + `; let sc: i32 = c[0];
+    let d: i32[] = ` + l + `; let sd: i32 = d[0];
     return (__heap_bump_bytes() as i32) + sa + sb + sc + sd;
 }`
 }
@@ -51,19 +51,19 @@ func seqDead4Src() string {
 func live4Src() string {
 	l := pdLit(100)
 	return `function main(): i32 {
-    var a: i32[] = ` + l + `;
-    var b: i32[] = ` + l + `;
-    var c: i32[] = ` + l + `;
-    var d: i32[] = ` + l + `;
+    let a: i32[] = ` + l + `;
+    let b: i32[] = ` + l + `;
+    let c: i32[] = ` + l + `;
+    let d: i32[] = ` + l + `;
     return (__heap_bump_bytes() as i32) + a[0] + b[0] + c[0] + d[0];
 }`
 }
 
 // pdValuesSrc: distinct values across sequential precise-dropped arrays.
 const pdValuesSrc = `function main(): i32 {
-    var a: i32[] = [10, 20, 30]; var sa: i32 = a[0] + a[2];
-    var b: i32[] = [1, 2, 3]; var sb: i32 = b[1];
-    var c: i32[] = [100, 200]; var sc: i32 = c[0] + c[1];
+    let a: i32[] = [10, 20, 30]; let sa: i32 = a[0] + a[2];
+    let b: i32[] = [1, 2, 3]; let sb: i32 = b[1];
+    let c: i32[] = [100, 200]; let sc: i32 = c[0] + c[1];
     if (sa != 40) { return 901; }
     if (sb != 2) { return 902; }
     if (sc != 300) { return 903; }
@@ -75,13 +75,13 @@ const pdValuesSrc = `function main(): i32 {
 // allocation (junk) would corrupt a wrongly-freed buffer.
 const pdAliasSrc = `struct Holder { items: i32[], n: i32 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var a: i32[] = [i, i + 1, i + 2];
-        var h: Holder = Holder{ items: a, n: 0 };
-        var sa: i32 = a[0];
-        var junk: i32[] = [7, 7, 7];
+        let a: i32[] = [i, i + 1, i + 2];
+        let h: Holder = Holder{ items: a, n: 0 };
+        let sa: i32 = a[0];
+        let junk: i32[] = [7, 7, 7];
         acc = acc + sa + h.items[2] + junk[0];
         i = i + 1;
     }
@@ -98,19 +98,19 @@ function main(): i32 {
 // buffer. This pins the "precise drop is just a dec; a counted alias
 // survives" invariant for the function-return-of-arg shape.
 const pdArgReturnSrc = `function biggy(xs: i32[]): i32[] {
-    var w: i32 = 0;
-    var j: i32 = 0;
+    let w: i32 = 0;
+    let j: i32 = 0;
     while (j < 3) { w = w + xs[j]; j = j + 1; }
     if (w < -999999) { return xs; }
     return xs;
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var a: i32[] = [i, i + 1, i + 2];
-        var b: i32[] = biggy(a);
-        var junk: i32[] = [7, 7, 7];
+        let a: i32[] = [i, i + 1, i + 2];
+        let b: i32[] = biggy(a);
+        let junk: i32[] = [7, 7, 7];
         acc = acc + b[0] + b[2] + junk[0];
         i = i + 1;
     }
@@ -130,10 +130,10 @@ func rcArrDead4Src() string {
 	row := pdLit(64) // inner buffer, size-class
 	mk := "[" + row + ", " + row + ", " + row + ", " + row + "]"
 	return `function main(): i32 {
-    var a: i32[][] = ` + mk + `; var sa: i32 = a[0][0];
-    var b: i32[][] = ` + mk + `; var sb: i32 = b[0][0];
-    var c: i32[][] = ` + mk + `; var sc: i32 = c[0][0];
-    var d: i32[][] = ` + mk + `; var sd: i32 = d[0][0];
+    let a: i32[][] = ` + mk + `; let sa: i32 = a[0][0];
+    let b: i32[][] = ` + mk + `; let sb: i32 = b[0][0];
+    let c: i32[][] = ` + mk + `; let sc: i32 = c[0][0];
+    let d: i32[][] = ` + mk + `; let sd: i32 = d[0][0];
     return (__heap_bump_bytes() as i32) + sa + sb + sc + sd;
 }`
 }
@@ -142,10 +142,10 @@ func rcArrLive4Src() string {
 	row := pdLit(64)
 	mk := "[" + row + ", " + row + ", " + row + ", " + row + "]"
 	return `function main(): i32 {
-    var a: i32[][] = ` + mk + `;
-    var b: i32[][] = ` + mk + `;
-    var c: i32[][] = ` + mk + `;
-    var d: i32[][] = ` + mk + `;
+    let a: i32[][] = ` + mk + `;
+    let b: i32[][] = ` + mk + `;
+    let c: i32[][] = ` + mk + `;
+    let d: i32[][] = ` + mk + `;
     return (__heap_bump_bytes() as i32) + a[0][0] + b[0][0] + c[0][0] + d[0][0];
 }`
 }
@@ -155,12 +155,12 @@ func rcArrLive4Src() string {
 // element box, not free it.
 const rcArrValuesSrc = `struct P { x: i32, y: i32 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var ps: P[] = [P { x: i, y: i + 1 }, P { x: i + 2, y: i + 3 }];
-        var keep: P = ps[0];
-        var junk: i32[] = [7, 7, 7];
+        let ps: P[] = [P { x: i, y: i + 1 }, P { x: i + 2, y: i + 3 }];
+        let keep: P = ps[0];
+        let junk: i32[] = [7, 7, 7];
         acc = acc + ps[1].x + keep.y + junk[0];
         i = i + 1;
     }

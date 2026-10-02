@@ -6,7 +6,7 @@
 import "std/regex";
 
 function main(): i32 {
-    var r: i32 = 0;
+    let r: i32 = 0;
     if (regex.regex_match("\\d+", "abc123")) { r = r + 1; }       // \d digit class
     if (regex.regex_match("^\\w+$", "hello_42")) { r = r + 2; }   // \w word class
     if (!regex.regex_match("^\\d+$", "12a")) { r = r + 4; }       // \d negative

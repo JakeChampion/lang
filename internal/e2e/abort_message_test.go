@@ -21,7 +21,7 @@ type abortCase struct {
 var abortCases = []abortCase{
 	{
 		name:     "array_oob",
-		src:      `function main(): i32 { var xs: i32[] = [10, 20, 30]; return xs[7]; }`,
+		src:      `function main(): i32 { let xs: i32[] = [10, 20, 30]; return xs[7]; }`,
 		wantExit: 134,
 		wantErr:  "array index out of range",
 	},
@@ -30,19 +30,19 @@ var abortCases = []abortCase{
 		// checked `s[1:9]` answers None instead of aborting, so
 		// `slice_unchecked` is the only route left to this message.
 		name:     "string_slice_oob",
-		src:      `function main(): i32 { var s: string = "hi"; var t: str = slice_unchecked(s, 1, 9); return t.len(); }`,
+		src:      `function main(): i32 { let s: string = "hi"; let t: str = slice_unchecked(s, 1, 9); return t.len(); }`,
 		wantExit: 134,
 		wantErr:  "string index out of range",
 	},
 	{
 		name:     "slice_range_oob",
-		src:      `function main(): i32 { var xs: i32[] = [1, 2, 3]; var ys: [i32] = xs[1:9]; return ys.len(); }`,
+		src:      `function main(): i32 { let xs: i32[] = [1, 2, 3]; let ys: [i32] = xs[1:9]; return ys.len(); }`,
 		wantExit: 134,
 		wantErr:  "slice range out of bounds",
 	},
 	{
 		name:     "in_bounds_ok",
-		src:      `function main(): i32 { var xs: i32[] = [10, 20, 30]; return xs[1]; }`,
+		src:      `function main(): i32 { let xs: i32[] = [10, 20, 30]; return xs[1]; }`,
 		wantExit: 20,
 		wantErr:  "",
 	},

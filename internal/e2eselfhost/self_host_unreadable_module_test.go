@@ -23,7 +23,7 @@ func TestSelfHostUnreadableModuleIsReported(t *testing.T) {
 		}
 		return p
 	}
-	write("bad.fern", "pub function f(): i32 { var s: string = \"\xb2\"; return 0; }\n")
+	write("bad.fern", "pub function f(): i32 { let s: string = \"\xb2\"; return 0; }\n")
 	badEntry := write("uses_bad.fern", "import \"./bad\";\nfunction main(): i32 { return bad.f(); }\n")
 	missEntry := write("uses_gone.fern", "import \"./gone\";\nfunction main(): i32 { return 0; }\n")
 	// The importer named is the module that wrote the import, not the entry.
@@ -36,7 +36,7 @@ func TestSelfHostUnreadableModuleIsReported(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(dir, "std"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	write(filepath.Join("std", "mything.fern"), "pub function f(): i32 { var s: string = \"\xb2\"; return 1; }\n")
+	write(filepath.Join("std", "mything.fern"), "pub function f(): i32 { let s: string = \"\xb2\"; return 1; }\n")
 	write("mything.fern", "pub function f(): i32 { return 7; }\n")
 	shadowEntry := write("uses_mything.fern", "import \"std/mything\";\nfunction main(): i32 { return mything.f(); }\n")
 	noEntry := filepath.Join(dir, "nosuch.fern")

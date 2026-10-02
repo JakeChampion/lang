@@ -65,7 +65,7 @@ function (c: Color) rank(): i32 {
     return 0;
 }
 function main(): i32 {
-    var cs: Color[] = [Color.Red, Color.Green];
+    let cs: Color[] = [Color.Red, Color.Green];
     return cs[1:2][0].rank();
 }`},
 	// CARRIER: a struct FIELD declared at an enum type. fa_type_tag resolved the
@@ -77,7 +77,7 @@ function (c: Color) rank(): i32 {
     return 0;
 }
 struct R { c: Color }
-function main(): i32 { var r: R = R { c: Color.Green }; return r.c.rank(); }`},
+function main(): i32 { let r: R = R { c: Color.Green }; return r.c.rank(); }`},
 	// CARRIER: the TUPLE-element sibling of the case above, one token apart and
 	// through the same arm — the pairing docs/TYPED-IR-REWRITE.md records as the
 	// one that gets fixed singly.
@@ -86,7 +86,7 @@ function (c: Color) rank(): i32 {
     match (c) { Color.Red => { return 1; }, Color.Green => { return 42; }, _ => { return 3; } }
     return 0;
 }
-function main(): i32 { var t: (Color, i32) = (Color.Green, 1); return t.0.rank(); }`},
+function main(): i32 { let t: (Color, i32) = (Color.Green, 1); return t.0.rank(); }`},
 	// CARRIER: `mkf()()` — the callee is a CALL, so nothing but the stamp on the
 	// enclosing call names the result's type.
 	{"enum_fn_value_call_method", `enum Color { Red, Green, Blue }
@@ -117,7 +117,7 @@ function (c: Color) rank(): i32 {
     return 0;
 }
 function main(): i32 {
-    var b: boolean = true;
+    let b: boolean = true;
     return (if (b) { [Color.Green] } else { [Color.Red] })[0].rank();
 }`},
 
@@ -147,11 +147,11 @@ function main(): i32 { return (w() % 100u64) as i32; }`},
 struct Sq { s: i32 }
 impl Shape for Sq { function area(self: Self): i32 { return self.s * self.s; } }
 struct Holder { sh: dyn Shape }
-function main(): i32 { var h: Holder = Holder { sh: Sq { s: 6 } }; return h.sh.area() + 6; }`},
+function main(): i32 { let h: Holder = Holder { sh: Sq { s: 6 } }; return h.sh.area() + 6; }`},
 	// A struct field declared at a SCALAR type, through the arm whose guard
 	// changed from decl_is_struct to struct_tag_from_ty.
 	{"scalar_struct_field_method", `struct B { v: f64 }
-function main(): i32 { var b: B = B { v: 4.2 }; return (b.v * 10.0) as i32; }`},
+function main(): i32 { let b: B = B { v: 4.2 }; return (b.v * 10.0) as i32; }`},
 	// Two enums declaring the SAME variant name, in value position. The first
 	// draft of qual_variant_union resolved the owner with union_of_variant — a
 	// first-match scan over every union — which typed `B.Zed` as A and keyed the
@@ -171,7 +171,7 @@ function (b: B) rank(): i32 {
     match (b) { B.Zed => { return 42; }, B.Yy(n) => { return n; } }
     return 0;
 }
-function main(): i32 { var v: B = B.Zed; return v.rank(); }`},
+function main(): i32 { let v: B = B.Zed; return v.rank(); }`},
 	// Bare (unqualified) variant spellings, the form that always typed: the
 	// value-position rule must not change what they resolve to.
 	{"bare_variant_payload_method", `enum Color { Red, Green(i32), Blue }
@@ -180,7 +180,7 @@ function (c: Color) rank(): i32 {
     return 0;
 }
 function main(): i32 {
-    var b: boolean = true;
+    let b: boolean = true;
     return (if (b) { [Green(42)] } else { [Red] })[0].rank();
 }`},
 }

@@ -42,9 +42,9 @@ struct U { x: u32 }
     }
 }
 @noinline function rebuild(i: i32): i32 {
-    var a: P = P { x: i, y: i, on: true };
-    var n: i32 = a.x;
-    var b: P = P { x: 4, y: 5, on: false };
+    let a: P = P { x: i, y: i, on: true };
+    let n: i32 = a.x;
+    let b: P = P { x: 4, y: 5, on: false };
     return n + b.y;
 }
 @noinline function leaf(k: i32): Inst { return Inst { kind: k, args: [] }; }
@@ -52,70 +52,70 @@ struct U { x: u32 }
 @noinline function u_small(): U { return U { x: 12 }; }
 @noinline function u_big(): U { return U { x: 3000000000 }; }
 @noinline function unsigned_rounds(): i32 {
-    var before: i64 = __heap_alloc_count();
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let before: i64 = __heap_alloc_count();
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) { t = t + (u_small().x as i32) + ((u_big().x / 1000000) as i32); i = i + 1; }
     return t * 1000 + ((__heap_alloc_count() - before) as i32);
 }
 @noinline function leaf_rounds(): i32 {
-    var before: i64 = __heap_alloc_count();
-    var t: i32 = 0;
-    var i: i32 = 0;
-    while (i < 100) { var x: Inst = leaf(i); t = t + x.args.len() + x.kind; i = i + 1; }
+    let before: i64 = __heap_alloc_count();
+    let t: i32 = 0;
+    let i: i32 = 0;
+    while (i < 100) { let x: Inst = leaf(i); t = t + x.args.len() + x.kind; i = i + 1; }
     return t * 1000 + ((__heap_alloc_count() - before) as i32);
 }
 @noinline function later_rounds(): i32 {
-    var before: i64 = __heap_alloc_count();
-    var t: i32 = 0;
-    var i: i32 = 0;
-    while (i < 100) { var x: Inst = later(leaf(i), 7); t = t + x.args.len() + x.args[0]; i = i + 1; }
+    let before: i64 = __heap_alloc_count();
+    let t: i32 = 0;
+    let i: i32 = 0;
+    while (i < 100) { let x: Inst = later(leaf(i), 7); t = t + x.args.len() + x.args[0]; i = i + 1; }
     return t * 1000 + ((__heap_alloc_count() - before) as i32);
 }
 @noinline function origin_rounds(): i32 {
-    var before: i64 = __heap_alloc_count();
-    var t: i32 = 0;
-    var i: i32 = 0;
-    while (i < 100) { var p: P = origin(); t = t + p.x + p.y; if (p.on) { t = t + 1; } i = i + 1; }
+    let before: i64 = __heap_alloc_count();
+    let t: i32 = 0;
+    let i: i32 = 0;
+    while (i < 100) { let p: P = origin(); t = t + p.x + p.y; if (p.on) { t = t + 1; } i = i + 1; }
     return t * 1000 + ((__heap_alloc_count() - before) as i32);
 }
 @noinline function member_rounds(): i32 {
-    var before: i64 = __heap_alloc_count();
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let before: i64 = __heap_alloc_count();
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) { t = t + width(t_int()) + width(t_void()); i = i + 1; }
     return t * 1000 + ((__heap_alloc_count() - before) as i32);
 }
 @noinline function shade_rounds(): i32 {
-    var before: i64 = __heap_alloc_count();
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let before: i64 = __heap_alloc_count();
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) { t = t + shade(mixed()); i = i + 1; }
     return (0 - t) * 1000 + ((__heap_alloc_count() - before) as i32);
 }
 @noinline function named_rounds(): i32 {
-    var before: i64 = __heap_alloc_count();
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let before: i64 = __heap_alloc_count();
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) { t = t + width(named()); i = i + 1; }
     return t * 1000 + ((__heap_alloc_count() - before) as i32);
 }
 @noinline function fresh_rounds(): i32 {
-    var before: i64 = __heap_alloc_count();
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let before: i64 = __heap_alloc_count();
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) { t = t + fresh(i).x; i = i + 1; }
     return t * 1000 + ((__heap_alloc_count() - before) as i32);
 }
 @noinline function rebuild_rounds(): i32 {
-    var before: i64 = __heap_alloc_count();
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let before: i64 = __heap_alloc_count();
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) { t = t + rebuild(i); i = i + 1; }
     return t * 1000 + ((__heap_alloc_count() - before) as i32);
 }
 @noinline function lookup(k: i32): i32 {
-    var below: i32[] = [6, 11, 0 - 12];
+    let below: i32[] = [6, 11, 0 - 12];
     for e in below { if (k == e) { return 1; } }
     return 0;
 }
@@ -125,44 +125,44 @@ function seven(): i32 { return 7; }
 @noinline function flags(): boolean[] { return [true, false, true]; }
 @noinline function names(): string[] { return ["a", "b"]; }
 @noinline function lookup_rounds(): i32 {
-    var before: i64 = __heap_alloc_count();
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let before: i64 = __heap_alloc_count();
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) { t = t + lookup(i) + lookup(0 - i); i = i + 1; }
     return t * 1000 + ((__heap_alloc_count() - before) as i32);
 }
 @noinline function pushed_rounds(): i32 {
-    var before: i64 = __heap_alloc_count();
-    var t: i32 = 0;
-    var i: i32 = 0;
-    while (i < 100) { var xs: i32[] = table().append(i); t = t + xs.len() + xs[0]; i = i + 1; }
+    let before: i64 = __heap_alloc_count();
+    let t: i32 = 0;
+    let i: i32 = 0;
+    while (i < 100) { let xs: i32[] = table().append(i); t = t + xs.len() + xs[0]; i = i + 1; }
     return t * 1000 + ((__heap_alloc_count() - before) as i32);
 }
 @noinline function set_rounds(): i32 {
-    var before: i64 = __heap_alloc_count();
-    var t: i32 = 0;
-    var i: i32 = 0;
-    while (i < 100) { var xs: i32[] = table().with(0, 100); t = t + xs[0] + table()[0]; i = i + 1; }
+    let before: i64 = __heap_alloc_count();
+    let t: i32 = 0;
+    let i: i32 = 0;
+    while (i < 100) { let xs: i32[] = table().with(0, 100); t = t + xs[0] + table()[0]; i = i + 1; }
     return t * 1000 + ((__heap_alloc_count() - before) as i32);
 }
 @noinline function flag_rounds(): i32 {
-    var before: i64 = __heap_alloc_count();
-    var t: i32 = 0;
-    var i: i32 = 0;
-    while (i < 100) { var fs: boolean[] = flags(); if (fs[0] && !fs[1]) { t = t + fs.len(); } i = i + 1; }
+    let before: i64 = __heap_alloc_count();
+    let t: i32 = 0;
+    let i: i32 = 0;
+    while (i < 100) { let fs: boolean[] = flags(); if (fs[0] && !fs[1]) { t = t + fs.len(); } i = i + 1; }
     return t * 1000 + ((__heap_alloc_count() - before) as i32);
 }
 @noinline function spliced_rounds(): i32 {
-    var before: i64 = __heap_alloc_count();
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let before: i64 = __heap_alloc_count();
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) { t = t + spliced()[0]; i = i + 1; }
     return t * 1000 + ((__heap_alloc_count() - before) as i32);
 }
 @noinline function name_rounds(): i32 {
-    var before: i64 = __heap_alloc_count();
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let before: i64 = __heap_alloc_count();
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) { t = t + names().len(); i = i + 1; }
     return t * 1000 + ((__heap_alloc_count() - before) as i32);
 }
@@ -217,36 +217,36 @@ func TestSelfHostStaticBoxes(t *testing.T) {
 // buffer, which lends it, so its body is produced. Wasm is left out: it has no
 // emit arm for the raw byte store.
 const byteLiteralProgram = `@noinline function shorten(n: i32): i32 {
-    var b: u8[] = __alloc_u8(4);
+    let b: u8[] = __alloc_u8(4);
     __arr_set_len(b, n);
     return b.len();
 }
 @noinline function poke_len(): i32 {
-    var a: i32[] = [7, 8, 9];
+    let a: i32[] = [7, 8, 9];
     __store_i32(a as usize, 99);
     return a.len();
 }
 @noinline function shorten_lit(): i32 {
-    var a: u8[] = [7u8, 8u8, 9u8];
+    let a: u8[] = [7u8, 8u8, 9u8];
     __arr_set_len(a, 2);
     return a.len();
 }
 @noinline function raw_ptr_len(): i32 {
-    var a: i32[] = [7, 8, 9];
+    let a: i32[] = [7, 8, 9];
     __store_i32(__raw_arr_ptr(a), 99);
     return a.len();
 }
 @noinline function fresh_len(): i32 {
-    var v: i32[] = [7, 8, 9];
-    var w: u8[] = [7u8, 8u8, 9u8];
+    let v: i32[] = [7, 8, 9];
+    let w: u8[] = [7u8, 8u8, 9u8];
     return v.len() * 10 + w.len();
 }
 @noinline function bytes_rounds(): i32 {
-    var before: i64 = __heap_alloc_count();
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let before: i64 = __heap_alloc_count();
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
-        var b: u8[] = [104u8, 105u8, 106u8];
+        let b: u8[] = [104u8, 105u8, 106u8];
         t = t + b.len();
         __store_u8(b as usize, 1);
         t = t + b.len();

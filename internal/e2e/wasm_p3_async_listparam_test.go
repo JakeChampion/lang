@@ -52,7 +52,7 @@ func TestWasmP3AsyncListParamExportProvider(t *testing.T) {
 //
 //	@import("test:dep/d","recv") async function recv(xs: u8[]): i32;
 //	async function run(): i32 {
-//	    var xs: u8[] = [104 as u8, 101 as u8, 108 as u8, 108 as u8, 111 as u8];
+//	    let xs: u8[] = [104 as u8, 101 as u8, 108 as u8, 108 as u8, 111 as u8];
 //	    return recv(xs);
 //	}
 //
@@ -70,7 +70,7 @@ func TestWasmP3AsyncImportListParamFromFern(t *testing.T) {
 
 	src := `@import("test:dep/d", "recv") async function recv(xs: u8[]): i32;
 async function run(): i32 {
-	var xs: u8[] = [104 as u8, 101 as u8, 108 as u8, 108 as u8, 111 as u8];
+	let xs: u8[] = [104 as u8, 101 as u8, 108 as u8, 108 as u8, 111 as u8];
 	return recv(xs);
 }
 function main(): i32 { return 0; }

@@ -7,7 +7,7 @@ function box(w: i32, h: i32 = 2, d: i32 = 3): i32 { return w * 100 + h * 10 + d;
 function tag(n: i32, label: string = "ab"): i32 { return n + label.len(); }
 
 function main(): i32 {
-    var ok: i32 = 0;
+    let ok: i32 = 0;
     if (inc(10) == 11) { ok = ok + 1; }        // by defaults to 1
     if (inc(10, 5) == 15) { ok = ok + 1; }     // explicit override
     if (box(1) == 123) { ok = ok + 1; }        // h=2, d=3

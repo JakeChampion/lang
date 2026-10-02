@@ -60,7 +60,7 @@ function emit(p: Pf, s: string): Pf {
 // `diag(p, msg)` — a diagnostic the way error() prints one: stdout is
 // flushed first, and a flush that fails drops what it held.
 function diag(p: Pf, msg: string): Pf {
-  var o: io_buffered.BufWriter = p.o.flush();
+  let o: io_buffered.BufWriter = p.o.flush();
   gnu.error(msg);
   return Pf { ...p, o: o };
 }
@@ -79,7 +79,7 @@ function fatal(p: Pf, msg: string): void {
 }
 
 function help_text(): string {
-  var out: string = "";
+  let out: string = "";
   out = out + "Usage: " + gnu.prog() + " FORMAT [ARGUMENT]...\n";
   out = out + "  or:  " + gnu.prog() + " OPTION\n";
   out = out + "Print ARGUMENT(s) according to FORMAT, or execute according to OPTION:\n";
@@ -172,7 +172,7 @@ function byte_str(b: i32): string {
 }
 
 function octal3(b: i32): string {
-  var d: u8[] = [];
+  let d: u8[] = [];
   d = d.append((48 + b / 64) as u8);
   d = d.append((48 + b / 8 % 8) as u8);
   d = d.append((48 + b % 8) as u8);
@@ -210,8 +210,8 @@ function control_letter(b: i32): i32 {
 }
 
 function append_str(out: u8[], s: string): u8[] {
-  var bs: u8[] = out;
-  var i: i32 = 0;
+  let bs: u8[] = out;
+  let i: i32 = 0;
   while (i < s.len()) {
     bs = bs.append(s[i]);
     i = i + 1;
@@ -239,12 +239,12 @@ function shell_quote(s: string): string {
   if (s.len() == 0) {
     return "''";
   }
-  var needs: boolean = false;
-  var has_quote: boolean = false;
-  var blocks_dq: boolean = false;
-  var i: i32 = 0;
+  let needs: boolean = false;
+  let has_quote: boolean = false;
+  let blocks_dq: boolean = false;
+  let i: i32 = 0;
   while (i < s.len()) {
-    var b: i32 = s[i] as i32;
+    let b: i32 = s[i] as i32;
     if (shell_special(b)) {
       needs = true;
     }
@@ -255,7 +255,7 @@ function shell_quote(s: string): string {
     }
     i = i + 1;
   }
-  var first: i32 = s[0] as i32;
+  let first: i32 = s[0] as i32;
   if (first == 35 || first == 126) {
     needs = true;
   }
@@ -268,12 +268,12 @@ function shell_quote(s: string): string {
   if (has_quote && !blocks_dq) {
     return "\"" + s + "\"";
   }
-  var out: u8[] = [];
+  let out: u8[] = [];
   out = out.append(39 as u8);
-  var in_dollar: boolean = false;
+  let in_dollar: boolean = false;
   i = 0;
   while (i < s.len()) {
-    var b: i32 = s[i] as i32;
+    let b: i32 = s[i] as i32;
     if (b == 39) {
       out = out.append(39 as u8);
       out = out.append(92 as u8);
@@ -295,7 +295,7 @@ function shell_quote(s: string): string {
         in_dollar = true;
       }
       out = out.append(92 as u8);
-      var letter: i32 = control_letter(b);
+      let letter: i32 = control_letter(b);
       if (letter >= 0) {
         out = out.append(letter as u8);
       } else {
@@ -319,16 +319,16 @@ function shell_quote(s: string): string {
 // only ASCII can be encoded, so any other code point is written back
 // as its escape with upper-case hex; a surrogate is refused outright.
 function print_esc(p: Pf, s: string, i: i32, octal_0: boolean): (Pf, i32, boolean) {
-  var n: i32 = s.len();
-  var j: i32 = i + 1;
+  let n: i32 = s.len();
+  let j: i32 = i + 1;
   if (j >= n) {
     return (emit(p, "\\"), j, false);
   }
-  var c: i32 = s[j] as i32;
+  let c: i32 = s[j] as i32;
   j = j + 1;
   if (c == 120) {
-    var hex: i32 = 0;
-    var digits: i32 = 0;
+    let hex: i32 = 0;
+    let digits: i32 = 0;
     while (digits < 2 && j < n && hex_digit(s[j] as i32) >= 0) {
       hex = hex * 16 + hex_digit(s[j] as i32);
       j = j + 1;
@@ -340,12 +340,12 @@ function print_esc(p: Pf, s: string, i: i32, octal_0: boolean): (Pf, i32, boolea
     return (emit(p, byte_str(hex)), j, false);
   }
   if (is_octal_digit(c)) {
-    var oct: i32 = c - 48;
-    var more: i32 = 2;
+    let oct: i32 = c - 48;
+    let more: i32 = 2;
     if (c == 48 && octal_0) {
       more = 3;
     }
-    var taken: i32 = 0;
+    let taken: i32 = 0;
     while (taken < more && j < n && is_octal_digit(s[j] as i32)) {
       oct = oct * 8 + (s[j] as i32 - 48);
       j = j + 1;
@@ -354,12 +354,12 @@ function print_esc(p: Pf, s: string, i: i32, octal_0: boolean): (Pf, i32, boolea
     return (emit(p, byte_str(oct % 256)), j, false);
   }
   if (c == 117 || c == 85) {
-    var want: i32 = 4;
+    let want: i32 = 4;
     if (c == 85) {
       want = 8;
     }
-    var code: i64 = 0 as i64;
-    var got: i32 = 0;
+    let code: i64 = 0 as i64;
+    let got: i32 = 0;
     while (got < want && j < n && hex_digit(s[j] as i32) >= 0) {
       code = code * (16 as i64) + hex_digit(s[j] as i32) as i64;
       j = j + 1;
@@ -379,7 +379,7 @@ function print_esc(p: Pf, s: string, i: i32, octal_0: boolean): (Pf, i32, boolea
     }
     return (emit(p, "\\U" + hex_padded(code, 8, true)), j, false);
   }
-  var lit: i32 = 0 - 1;
+  let lit: i32 = 0 - 1;
   if (c == 97) {
     lit = 7;
   } else if (c == 98) {
@@ -408,19 +408,19 @@ function print_esc(p: Pf, s: string, i: i32, octal_0: boolean): (Pf, i32, boolea
 }
 
 function hex_padded(v: i64, width: i32, upper: boolean): string {
-  var digits: u8[] = [];
-  var x: i64 = v;
+  let digits: u8[] = [];
+  let x: i64 = v;
   while (x > 0 as i64) {
     digits = digits.append(hex_char((x % (16 as i64)) as i32, upper) as u8);
     x = x / (16 as i64);
   }
-  var out: u8[] = [];
-  var pad: i32 = width - digits.len();
+  let out: u8[] = [];
+  let pad: i32 = width - digits.len();
   while (pad > 0) {
     out = out.append(48 as u8);
     pad = pad - 1;
   }
-  var i: i32 = digits.len() - 1;
+  let i: i32 = digits.len() - 1;
   while (i >= 0) {
     out = out.append(digits[i]);
     i = i - 1;
@@ -431,11 +431,11 @@ function hex_padded(v: i64, width: i32, upper: boolean): string {
 // `print_b(p, s)` — %b: the argument with its escapes interpreted.
 // The boolean is true when `\c` ended the output.
 function print_b(p: Pf, s: string): (Pf, boolean) {
-  var q: Pf = p;
-  var n: i32 = s.len();
-  var i: i32 = 0;
+  let q: Pf = p;
+  let n: i32 = s.len();
+  let i: i32 = 0;
   while (i < n) {
-    var j: i32 = __memchr(s, 92, i);
+    let j: i32 = __memchr(s, 92, i);
     if (j < 0) {
       j = n;
     }
@@ -445,7 +445,7 @@ function print_b(p: Pf, s: string): (Pf, boolean) {
     if (j >= n) {
       break;
     }
-    var r: (Pf, i32, boolean) = print_esc(q, s, j, true);
+    let r: (Pf, i32, boolean) = print_esc(q, s, j, true);
     q = r.0;
     i = r.1;
     if (r.2) {
@@ -473,17 +473,17 @@ function i64_min_mag(): u64 {
 // leading `0` for octal, else decimal. Overflow keeps consuming digits
 // and clamps; an unsigned negative wraps modulo 2^64 as glibc does.
 function strtox(s: string, unsigned: boolean): IntParse {
-  var n: i32 = s.len();
-  var i: i32 = 0;
+  let n: i32 = s.len();
+  let i: i32 = 0;
   while (i < n && is_space(s[i] as i32)) {
     i = i + 1;
   }
-  var neg: boolean = false;
+  let neg: boolean = false;
   if (i < n && (s[i] as i32 == 45 || s[i] as i32 == 43)) {
     neg = s[i] as i32 == 45;
     i = i + 1;
   }
-  var base: u64 = 10 as u64;
+  let base: u64 = 10 as u64;
   if (i < n && s[i] as i32 == 48) {
     if (i + 2 < n && lower(s[i + 1] as i32) == 120 && hex_digit(s[i + 2] as i32) >= 0) {
       base = 16 as u64;
@@ -495,24 +495,24 @@ function strtox(s: string, unsigned: boolean): IntParse {
       base = 8 as u64;
     }
   }
-  var limit: u64 = u64_max();
+  let limit: u64 = u64_max();
   if (!unsigned) {
     limit = i64_min_mag();
     if (!neg) {
       limit = limit - 1 as u64;
     }
   }
-  var mag: u64 = 0 as u64;
-  var erange: boolean = false;
-  var digits: i32 = 0;
+  let mag: u64 = 0 as u64;
+  let erange: boolean = false;
+  let digits: i32 = 0;
   while (i < n) {
-    var d: i32 = hex_digit(s[i] as i32);
+    let d: i32 = hex_digit(s[i] as i32);
     if (d < 0 || d as u64 >= base) {
       break;
     }
     digits = digits + 1;
     if (!erange) {
-      var du: u64 = d as u64;
+      let du: u64 = d as u64;
       if (mag > (limit - du) / base) {
         erange = true;
         mag = limit;
@@ -525,7 +525,7 @@ function strtox(s: string, unsigned: boolean): IntParse {
   if (digits == 0) {
     return IntParse { bits: 0 as u64, erange: false, end: 0 };
   }
-  var bits: u64 = mag;
+  let bits: u64 = mag;
   if (neg && !(unsigned && erange)) {
     bits = 0 as u64 - mag;
   }
@@ -568,21 +568,21 @@ function verify_numeric(p: Pf, s: string, erange: boolean, end: i32): Pf {
 
 // `arg_int(p, s, unsigned)` — the integer an argument names, as bits.
 function arg_int(p: Pf, s: string, unsigned: boolean): (Pf, u64) {
-  var cc: i32 = char_constant(s);
+  let cc: i32 = char_constant(s);
   if (cc >= 0) {
     return (warn_char_rest(p, s), cc as u64);
   }
-  var r: IntParse = strtox(s, unsigned);
+  let r: IntParse = strtox(s, unsigned);
   return (verify_numeric(p, s, r.erange, r.end), r.bits);
 }
 
 // `arg_float(p, s)` — the long double an argument names.
 function arg_float(p: Pf, s: string): (Pf, ld.LD) {
-  var cc: i32 = char_constant(s);
+  let cc: i32 = char_constant(s);
   if (cc >= 0) {
     return (warn_char_rest(p, s), p.ldbl.from_i64(cc as i64));
   }
-  var r: ld.Parse = p.ldbl.strtold(s);
+  let r: ld.Parse = p.ldbl.strtold(s);
   return (verify_numeric(p, s, r.erange, r.end), r.v);
 }
 
@@ -645,10 +645,10 @@ function put_part(p: Pf, was: boolean, s: string): Pf {
 // `fill_part(p, was, ch, n)` — `n` copies of a one-byte string, a block
 // at a time.
 function fill_part(p: Pf, was: boolean, ch: string, n: i64): Pf {
-  var q: Pf = p;
-  var left: i64 = n;
+  let q: Pf = p;
+  let left: i64 = n;
   if (left >= fill_block() as i64) {
-    var block: string = ch.repeat(fill_block());
+    let block: string = ch.repeat(fill_block());
     while (left >= fill_block() as i64) {
       if (!was && stream_failed(q)) {
         return q;
@@ -669,17 +669,17 @@ function fill_part(p: Pf, was: boolean, ch: string, n: i64): Pf {
 // otherwise. A field glibc could not produce is dropped and remembered
 // (see the header).
 function pad(p: Pf, spec: Spec, f: Field, zero_ok: boolean): Pf {
-  var len: i64 = f.prefix.len() as i64 + f.head.len() as i64 + f.zeros + f.tail.len() as i64;
-  var total: i64 = len;
+  let len: i64 = f.prefix.len() as i64 + f.head.len() as i64 + f.zeros + f.tail.len() as i64;
+  let total: i64 = len;
   if (spec.width > total) {
     total = spec.width;
   }
   if (total >= ld.overflow_len()) {
     return Pf { ...p, werr: true };
   }
-  var fill: i64 = total - len;
-  var was: boolean = stream_failed(p);
-  var q: Pf = p;
+  let fill: i64 = total - len;
+  let was: boolean = stream_failed(p);
+  let q: Pf = p;
   if (spec.minus) {
     q = put_part(q, was, f.prefix);
     q = put_part(q, was, f.head);
@@ -717,14 +717,14 @@ function radix_digits(v: u64, base: u64, upper: boolean): string {
   if (v == 0 as u64) {
     return "0";
   }
-  var digits: u8[] = [];
-  var x: u64 = v;
+  let digits: u8[] = [];
+  let x: u64 = v;
   while (x > 0 as u64) {
     digits = digits.append(hex_char((x % base) as i32, upper) as u8);
     x = x / base;
   }
-  var out: u8[] = __alloc_u8(digits.len());
-  var i: i32 = 0;
+  let out: u8[] = __alloc_u8(digits.len());
+  let i: i32 = 0;
   while (i < digits.len()) {
     out = out.with(i, digits[digits.len() - 1 - i]);
     i = i + 1;
@@ -739,11 +739,11 @@ function top_bit(): u64 {
 
 // %d %i %o %u %x %X.
 function fmt_int(p: Pf, spec: Spec, bits: u64): Pf {
-  var conv: i32 = spec.conv;
-  var neg: boolean = false;
-  var mag: u64 = bits;
-  var prefix: string = "";
-  var digits: string = "";
+  let conv: i32 = spec.conv;
+  let neg: boolean = false;
+  let mag: u64 = bits;
+  let prefix: string = "";
+  let digits: string = "";
   if (conv == 100 || conv == 105) {
     neg = (bits & top_bit()) != 0 as u64;
     if (neg) {
@@ -766,7 +766,7 @@ function fmt_int(p: Pf, spec: Spec, bits: u64): Pf {
   }
   // Zeros a precision wider than the digits calls for go to `pad` as a
   // count: at INT_MAX they are not a string to build.
-  var zeros: i64 = 0 as i64;
+  let zeros: i64 = 0 as i64;
   if (spec.prec >= 0 as i64) {
     if (spec.prec == 0 as i64 && mag == 0 as u64) {
       digits = "";
@@ -785,11 +785,11 @@ function fmt_int(p: Pf, spec: Spec, bits: u64): Pf {
 
 // %f %F %e %E %g %G %a %A.
 function fmt_float(p: Pf, spec: Spec, v: ld.LD): Pf {
-  var conv: i32 = spec.conv;
-  var upper: boolean = conv == 70 || conv == 69 || conv == 71 || conv == 65;
-  var prefix: string = sign_prefix(spec, v.neg);
+  let conv: i32 = spec.conv;
+  let upper: boolean = conv == 70 || conv == 69 || conv == 71 || conv == 65;
+  let prefix: string = sign_prefix(spec, v.neg);
   if (v.kind != 0) {
-    var word: string = "inf";
+    let word: string = "inf";
     if (v.kind == 2) {
       word = "nan";
     }
@@ -798,16 +798,16 @@ function fmt_float(p: Pf, spec: Spec, v: ld.LD): Pf {
     }
     return pad(p, spec, signed(prefix, word), false);
   }
-  var lc: i32 = lower(conv);
+  let lc: i32 = lower(conv);
   if (lc == 97) {
     return fmt_hex_float(p, spec, v, prefix, upper);
   }
-  var prec: i64 = spec.prec;
+  let prec: i64 = spec.prec;
   if (prec < 0 as i64) {
     prec = 6 as i64;
   }
-  var extra: i64 = prefix.len() as i64;
-  var d: ld.Dec = v.dec();
+  let extra: i64 = prefix.len() as i64;
+  let d: ld.Dec = v.dec();
   if (lc == 102) {
     return emit_body(p, spec, prefix, ld.fixed(d, prec, spec.hash, extra));
   }
@@ -832,8 +832,8 @@ function emit_body(p: Pf, spec: Spec, prefix: string, b: ld.Body): Pf {
 // refusal check is here because the length it bounds counts the sign
 // and the `0x` this function adds.
 function fmt_hex_float(p: Pf, spec: Spec, v: ld.LD, prefix: string, upper: boolean): Pf {
-  var radix: string = "0x";
-  var b: ld.Body = p.ldbl.hex_parts(v, spec.prec, spec.hash);
+  let radix: string = "0x";
+  let b: ld.Body = p.ldbl.hex_parts(v, spec.prec, spec.hash);
   if (upper) {
     radix = "0X";
     b = ld.Body { ...b, head: b.head.to_upper(), tail: b.tail.to_upper() };
@@ -877,7 +877,7 @@ function arg_text(a: Args): string {
 // offset it read, which for an indexed format is not the count of
 // directives.
 function args_consumed(a: Args): i32 {
-  var n: i32 = a.used + 1;
+  let n: i32 = a.used + 1;
   if (n > arg_count(a)) {
     return arg_count(a);
   }
@@ -890,13 +890,13 @@ function args_consumed(a: Args): i32 {
 // the number in some locales; an N past INT_MAX becomes INT_MAX, which
 // is simply past the end of any argv.
 function index_arg(s: string, j: i32): (i32, i32) {
-  var n: i32 = s.len();
+  let n: i32 = s.len();
   if (j >= n || !is_digit(s[j] as i32)) {
     return (0, j);
   }
-  var k: i32 = j;
-  var v: i64 = 0 as i64;
-  var over: boolean = false;
+  let k: i32 = j;
+  let v: i64 = 0 as i64;
+  let over: boolean = false;
   while (k < n && is_digit(s[k] as i32)) {
     v = v * (10 as i64) + (s[k] as i32 - 48) as i64;
     if (v > 2147483647 as i64) {
@@ -920,11 +920,11 @@ function index_arg(s: string, j: i32): (i32, i32) {
 // the conversion; only the first three may carry an `N$`, and the
 // conversion falls back to the directive's own index when it has one.
 function cursor(pos: i32, s: string, j: i32, a: Args): (i32, Args) {
-  var ac: Args = a;
-  var nj: i32 = j;
-  var arg: i32 = 0;
+  let ac: Args = a;
+  let nj: i32 = j;
+  let arg: i32 = 0;
   if (pos < 3) {
-    var ix: (i32, i32) = index_arg(s, j);
+    let ix: (i32, i32) = index_arg(s, j);
     arg = ix.0;
     nj = ix.1;
   }
@@ -966,8 +966,8 @@ function is_conversion(b: i32): boolean {
 // Digits of a literal width or precision, saturating well past the
 // point glibc refuses.
 function read_number(s: string, i: i32): (i64, i32) {
-  var j: i32 = i;
-  var v: i64 = 0 as i64;
+  let j: i32 = i;
+  let v: i64 = 0 as i64;
   while (j < s.len() && is_digit(s[j] as i32)) {
     if (v < 1000000000000 as i64) {
       v = v * (10 as i64) + (s[j] as i32 - 48) as i64;
@@ -978,7 +978,7 @@ function read_number(s: string, i: i32): (i64, i32) {
 }
 
 function bad_spec(p: Pf, s: string, from: i32, to: i32): void {
-  var stop: i32 = to + 1;
+  let stop: i32 = to + 1;
   if (stop > s.len()) {
     stop = s.len();
   }
@@ -991,9 +991,9 @@ function star_width(p: Pf, a: Args): (Pf, i64) {
   if (!arg_present(a)) {
     return (p, 0 as i64);
   }
-  var text: string = arg_text(a);
-  var r: (Pf, u64) = arg_int(p, text, false);
-  var v: i64 = r.1 as i64;
+  let text: string = arg_text(a);
+  let r: (Pf, u64) = arg_int(p, text, false);
+  let v: i64 = r.1 as i64;
   if (v > 2147483647 as i64 || v < 0 as i64 - 2147483648 as i64) {
     fatal(r.0, "invalid field width: " + gnu.quote(text));
   }
@@ -1006,9 +1006,9 @@ function star_precision(p: Pf, a: Args): (Pf, i64) {
   if (!arg_present(a)) {
     return (p, 0 as i64);
   }
-  var text: string = arg_text(a);
-  var r: (Pf, u64) = arg_int(p, text, false);
-  var v: i64 = r.1 as i64;
+  let text: string = arg_text(a);
+  let r: (Pf, u64) = arg_int(p, text, false);
+  let v: i64 = r.1 as i64;
   if (v < 0 as i64) {
     return (r.0, none());
   }
@@ -1022,21 +1022,21 @@ function star_precision(p: Pf, a: Args): (Pf, i64) {
 // `s[i]`; returns the index after it and whether `\c` (inside a %b)
 // ended the output.
 function directive(p: Pf, s: string, i: i32, a: Args): (Pf, i32, Args, boolean) {
-  var n: i32 = s.len();
-  var j: i32 = i + 1;
-  var q: Pf = p;
-  var args: Args = a;
+  let n: i32 = s.len();
+  let j: i32 = i + 1;
+  let q: Pf = p;
+  let args: Args = a;
   if (j < n && s[j] as i32 == 37) {
     return (emit(q, "%"), j + 1, args, false);
   }
-  var c0: (i32, Args) = cursor(0, s, j, args);
+  let c0: (i32, Args) = cursor(0, s, j, args);
   j = c0.0;
   args = c0.1;
   if (j < n && (s[j] as i32 == 98 || s[j] as i32 == 113)) {
-    var cb: (i32, Args) = cursor(3, s, j, args);
+    let cb: (i32, Args) = cursor(3, s, j, args);
     args = cb.1;
     if (s[j] as i32 == 98) {
-      var rb: (Pf, boolean) = print_b(q, arg_text(args));
+      let rb: (Pf, boolean) = print_b(q, arg_text(args));
       return (rb.0, j + 1, args, rb.1);
     }
     if (!arg_present(args)) {
@@ -1044,9 +1044,9 @@ function directive(p: Pf, s: string, i: i32, a: Args): (Pf, i32, Args, boolean) 
     }
     return (emit(q, shell_quote(arg_text(args))), j + 1, args, false);
   }
-  var spec: Spec = Spec { minus: false, plus: false, space: false, hash: false, zero: false, width: none(), prec: none(), conv: 0 };
+  let spec: Spec = Spec { minus: false, plus: false, space: false, hash: false, zero: false, width: none(), prec: none(), conv: 0 };
   while (j < n && flag_byte(s[j] as i32)) {
-    var f: i32 = s[j] as i32;
+    let f: i32 = s[j] as i32;
     if (f == 45) {
       spec = Spec { ...spec, minus: true };
     } else if (f == 43) {
@@ -1060,13 +1060,13 @@ function directive(p: Pf, s: string, i: i32, a: Args): (Pf, i32, Args, boolean) 
     }
     j = j + 1;
   }
-  var has_prec: boolean = false;
+  let has_prec: boolean = false;
   if (j < n && s[j] as i32 == 42) {
     j = j + 1;
-    var c1: (i32, Args) = cursor(1, s, j, args);
+    let c1: (i32, Args) = cursor(1, s, j, args);
     j = c1.0;
     args = c1.1;
-    var sw: (Pf, i64) = star_width(q, args);
+    let sw: (Pf, i64) = star_width(q, args);
     q = sw.0;
     if (sw.1 < 0 as i64) {
       spec = Spec { ...spec, minus: true, width: 0 as i64 - sw.1 };
@@ -1074,7 +1074,7 @@ function directive(p: Pf, s: string, i: i32, a: Args): (Pf, i32, Args, boolean) 
       spec = Spec { ...spec, width: sw.1 };
     }
   } else {
-    var w: (i64, i32) = read_number(s, j);
+    let w: (i64, i32) = read_number(s, j);
     if (w.1 > j) {
       spec = Spec { ...spec, width: w.0 };
       j = w.1;
@@ -1085,14 +1085,14 @@ function directive(p: Pf, s: string, i: i32, a: Args): (Pf, i32, Args, boolean) 
     j = j + 1;
     if (j < n && s[j] as i32 == 42) {
       j = j + 1;
-      var c2: (i32, Args) = cursor(2, s, j, args);
+      let c2: (i32, Args) = cursor(2, s, j, args);
       j = c2.0;
       args = c2.1;
-      var sp: (Pf, i64) = star_precision(q, args);
+      let sp: (Pf, i64) = star_precision(q, args);
       q = sp.0;
       spec = Spec { ...spec, prec: sp.1 };
     } else {
-      var pr: (i64, i32) = read_number(s, j);
+      let pr: (i64, i32) = read_number(s, j);
       spec = Spec { ...spec, prec: pr.0 };
       j = pr.1;
     }
@@ -1103,57 +1103,57 @@ function directive(p: Pf, s: string, i: i32, a: Args): (Pf, i32, Args, boolean) 
   if (j >= n || !is_conversion(s[j] as i32)) {
     bad_spec(q, s, i, j);
   }
-  var conv: i32 = s[j] as i32;
+  let conv: i32 = s[j] as i32;
   spec = Spec { ...spec, conv: conv };
-  var is_c: boolean = conv == 99;
-  var is_s: boolean = conv == 115;
-  var no_hash: boolean = conv == 100 || conv == 105 || conv == 117 || is_c || is_s;
+  let is_c: boolean = conv == 99;
+  let is_s: boolean = conv == 115;
+  let no_hash: boolean = conv == 100 || conv == 105 || conv == 117 || is_c || is_s;
   if (spec.hash && no_hash || spec.zero && (is_c || is_s) || has_prec && is_c) {
     bad_spec(q, s, i, j);
   }
-  var c3: (i32, Args) = cursor(3, s, j, args);
+  let c3: (i32, Args) = cursor(3, s, j, args);
   args = c3.1;
-  var arg: string = arg_text(args);
-  var given: boolean = arg_present(args);
+  let arg: string = arg_text(args);
+  let given: boolean = arg_present(args);
   if (is_c) {
-    var b: i32 = 0;
+    let b: i32 = 0;
     if (arg.len() > 0) {
       b = arg[0] as i32;
     }
     return (pad(q, spec, plain(byte_str(b)), false), j + 1, args, false);
   }
   if (is_s) {
-    var body: string = arg;
+    let body: string = arg;
     if (spec.prec >= 0 as i64 && spec.prec < arg.len() as i64) {
       body = slice_unchecked(arg, 0, spec.prec as i32) + "";
     }
     return (pad(q, spec, plain(body), false), j + 1, args, false);
   }
-  var lc: i32 = lower(conv);
+  let lc: i32 = lower(conv);
   if (lc == 102 || lc == 101 || lc == 103 || lc == 97) {
     if (!given) {
       return (fmt_float(q, spec, q.ldbl.from_i64(0 as i64)), j + 1, args, false);
     }
-    var fr: (Pf, ld.LD) = arg_float(q, arg);
+    let fr: (Pf, ld.LD) = arg_float(q, arg);
     return (fmt_float(fr.0, spec, fr.1), j + 1, args, false);
   }
-  var unsigned: boolean = conv != 100 && conv != 105;
+  let unsigned: boolean = conv != 100 && conv != 105;
   if (!given) {
     return (fmt_int(q, spec, 0 as u64), j + 1, args, false);
   }
-  var ir: (Pf, u64) = arg_int(q, arg, unsigned);
+  let ir: (Pf, u64) = arg_int(q, arg, unsigned);
   return (fmt_int(ir.0, spec, ir.1), j + 1, args, false);
 }
 
 // `print_formatted(p, s, a)` — one pass over the format; the boolean
 // is true when `\c` ended the output.
 function print_formatted(p: Pf, s: string, a: Args): (Pf, Args, boolean) {
-  var q: Pf = p;
-  var args: Args = a;
-  var n: i32 = s.len();
-  var i: i32 = 0;
+  let q: Pf = p;
+  let args: Args = a;
+  let n: i32 = s.len();
+  let i: i32 = 0;
   while (i < n) {
-    var j: i32 = i;
+    let j: i32 = i;
     while (j < n && s[j] as i32 != 37 && s[j] as i32 != 92) {
       j = j + 1;
     }
@@ -1164,7 +1164,7 @@ function print_formatted(p: Pf, s: string, a: Args): (Pf, Args, boolean) {
       break;
     }
     if (s[j] as i32 == 92) {
-      var r: (Pf, i32, boolean) = print_esc(q, s, j, false);
+      let r: (Pf, i32, boolean) = print_esc(q, s, j, false);
       q = r.0;
       i = r.1;
       if (r.2) {
@@ -1172,7 +1172,7 @@ function print_formatted(p: Pf, s: string, a: Args): (Pf, Args, boolean) {
       }
       continue;
     }
-    var d: (Pf, i32, Args, boolean) = directive(q, s, j, args);
+    let d: (Pf, i32, Args, boolean) = directive(q, s, j, args);
     q = d.0;
     i = d.1;
     args = d.2;
@@ -1184,33 +1184,33 @@ function print_formatted(p: Pf, s: string, a: Args): (Pf, Args, boolean) {
 }
 
 pub function main(): i32 {
-  var argv: string[] = args();
+  let argv: string[] = args();
   gnu.sole_help_version(argv, "printf", help_text(), 0);
-  var first: i32 = 1;
+  let first: i32 = 1;
   if (argv.len() > 1 && argv[1] == "--") {
     first = 2;
   }
   if (argv.len() <= first) {
     gnu.die_usage("missing operand", 1);
   }
-  var format: string = argv[first];
-  var posix: boolean = false;
+  let format: string = argv[first];
+  let posix: boolean = false;
   match (env("POSIXLY_CORRECT")) {
     Some(_) => {
       posix = true;
     },
     None => {}
   }
-  var p: Pf = Pf { o: gnu.out_new(), status: 0, werr: false, posix: posix, ldbl: ld.format() };
-  var base: i32 = first + 1;
+  let p: Pf = Pf { o: gnu.out_new(), status: 0, werr: false, posix: posix, ldbl: ld.format() };
+  let base: i32 = first + 1;
   while (true) {
-    var a: Args = args_new(argv, base);
-    var r: (Pf, Args, boolean) = print_formatted(p, format, a);
+    let a: Args = args_new(argv, base);
+    let r: (Pf, Args, boolean) = print_formatted(p, format, a);
     p = r.0;
     if (r.2) {
       close_stdout(p, 0);
     }
-    var used: i32 = args_consumed(r.1);
+    let used: i32 = args_consumed(r.1);
     base = base + used;
     if (used <= 0 || base >= argv.len()) {
       break;

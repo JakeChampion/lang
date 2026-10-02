@@ -9,9 +9,9 @@ one.
 ## The shape
 
 ```fern
-var src: Option[i32[]] = Some([i, i + 1]);
-var x: Option[i32[]] = src;
-var out: i32[] = [0];
+let src: Option[i32[]] = Some([i, i + 1]);
+let x: Option[i32[]] = src;
+let out: i32[] = [0];
 match (x)   { Some(xs) => { out = xs; }, None => {} }   // payload carried out
 match (src) { Some(ys) => { … }, None => {} }           // source frees the box
 ```

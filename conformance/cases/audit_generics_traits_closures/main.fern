@@ -29,23 +29,23 @@ function sum_to(n: i32, acc: i32): i32 {
 function main(): i32 {
     // --- generic function + struct + method ---
     if (id(42) != 42) { print("FAIL generic-fn"); return 11; }
-    var box: Box[i32] = Box { v: 33 };
+    let box: Box[i32] = Box { v: 33 };
     if (box.v != 33 || box.get() != 33) { print("FAIL generic-struct"); return 12; }
 
     // --- trait + impl dispatch ---
     if ((21).dbl() != 42) { print("FAIL trait"); return 13; }
 
     // --- lambda ---
-    var inc: (i32) => i32 = (x: i32): i32 => { return x + 1; };
+    let inc: (i32) => i32 = (x: i32): i32 => { return x + 1; };
     if (inc(41) != 42) { print("FAIL lambda"); return 14; }
 
     // --- closure capture ---
-    var n: i32 = 10;
-    var addn: (i32) => i32 = (x: i32): i32 => { return x + n; };
+    let n: i32 = 10;
+    let addn: (i32) => i32 = (x: i32): i32 => { return x + n; };
     if (addn(5) != 15) { print("FAIL closure"); return 15; }
 
     // --- function value (named fn used as a value) ---
-    var fv: (i32) => i32 = named_inc;
+    let fv: (i32) => i32 = named_inc;
     if (fv(7) != 8) { print("FAIL fn-value"); return 16; }
 
     // --- higher-order: pass a closure to a function ---

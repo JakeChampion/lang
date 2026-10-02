@@ -24,8 +24,8 @@ func TestSelfHostFileBytesFaults(t *testing.T) {
 	bootstrap := buildLangBinForInterp(t)
 	src := filepath.Join(t.TempDir(), "fault.fern")
 	program := `function main(): i32 {
-  var bytes: u8[] = [0 as u8, 255 as u8, 65 as u8, 128 as u8];
-  var result = write_file_bytes("ignored", bytes);
+  let bytes: u8[] = [0 as u8, 255 as u8, 65 as u8, 128 as u8];
+  let result = write_file_bytes("ignored", bytes);
   if (bytes.len() != 4 || bytes[1] != 255 || bytes[3] != 128) { return 20; }
   match (result) {
     Ok(_) => { return 0; },

@@ -18,7 +18,7 @@ import (
 // The terminal is reached BY PATH, with fds 0-2 left as the driver's own, so
 // nothing here could be answered by a standard descriptor instead.
 const selfHostHandleTtySource = `function main(): i32 {
-    var a: string[] = args();
+    let a: string[] = args();
     if (a.len() < 2) { return 9; }
     match (open_reader_with(a[1], 2)) {
         Err(_) => { return 10; },
@@ -37,7 +37,7 @@ const selfHostHandleTtySource = `function main(): i32 {
                 Ok(t) => {
                     if (t.len() != 24) { return 17; }
                     if (t[5] != (3 as i64)) { return 18; }
-                    var off: i64[] = t.with(3, t[3] & (0 - 1 - 8));
+                    let off: i64[] = t.with(3, t[3] & (0 - 1 - 8));
                     match (r.termios_set(1, off)) { Err(_) => { return 19; }, Ok(_) => {} }
                     match (r.termios_get()) {
                         Err(_) => { return 20; },

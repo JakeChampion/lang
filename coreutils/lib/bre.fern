@@ -316,7 +316,7 @@ function mark_group_done(p: P, n: i32): P {
 }
 
 function add_node(p: P, n: Node): (P, i32) {
-  var out: P = P { ...p, nodes: p.nodes.append(n) };
+  let out: P = P { ...p, nodes: p.nodes.append(n) };
   return (out, out.nodes.len() - 1);
 }
 
@@ -351,9 +351,9 @@ function is_digit(b: i32): boolean {
 // The 256-byte membership table for one POSIX class name, or an empty
 // array when the name is not one.
 function class_name_table(name: string): u8[] {
-  var t: u8[] = __alloc_u8(256);
-  var b: i32 = 0;
-  var known: boolean = false;
+  let t: u8[] = __alloc_u8(256);
+  let b: i32 = 0;
+  let known: boolean = false;
   while (b < 256) {
     if (class_has(name, b)) {
       t = t.with(b, 1 as u8);
@@ -362,7 +362,7 @@ function class_name_table(name: string): u8[] {
   }
   known = is_class_name(name);
   if (!known) {
-    var none: u8[] = [];
+    let none: u8[] = [];
     return none;
   }
   return t;
@@ -464,22 +464,22 @@ function range_ok(b: BItem): boolean {
 // One `[: :]`, `[. .]` or `[= =]` item starting at `k` (which points at
 // the `[`), or a plain byte. `-` handling is the caller's.
 function bracket_item(p: P, k: i32): BItem {
-  var none: u8[] = [];
+  let none: u8[] = [];
   if (byte_at(p, k) == 91) {
-    var kind: i32 = byte_at(p, k + 1);
+    let kind: i32 = byte_at(p, k + 1);
     // `[:` opens a class only under RE_CHAR_CLASSES, which the Emacs
     // syntax lacks; `[.` and `[=` are recognised in every dialect.
     if (kind == 58 && p.emacs) {
       kind = 0;
     }
     if (kind == 58 || kind == 46 || kind == 61) {
-      var close: i32 = find_close(p, k + 2, kind);
+      let close: i32 = find_close(p, k + 2, kind);
       if (close < 0) {
         return BItem { byte: 0, kind: bi_byte(), table: none, err: err_ebrack(), next: k };
       }
-      var body: string = slice_unchecked(p.pat, k + 2, close) + "";
+      let body: string = slice_unchecked(p.pat, k + 2, close) + "";
       if (kind == 58) {
-        var t: u8[] = class_name_table(body);
+        let t: u8[] = class_name_table(body);
         if (t.len() == 0) {
           return BItem { byte: 0, kind: bi_byte(), table: none, err: err_ectype(), next: k };
         }
@@ -488,7 +488,7 @@ function bracket_item(p: P, k: i32): BItem {
       if (body.len() != 1) {
         return BItem { byte: 0, kind: bi_byte(), table: none, err: err_ecollate(), next: k };
       }
-      var which: i32 = bi_collate();
+      let which: i32 = bi_collate();
       if (kind == 61) {
         which = bi_equiv();
       }
@@ -500,7 +500,7 @@ function bracket_item(p: P, k: i32): BItem {
 
 // The index of the `<kind>]` closing a `[: :]`-style item, or -1.
 function find_close(p: P, from: i32, kind: i32): i32 {
-  var k: i32 = from;
+  let k: i32 = from;
   while (k + 1 < p.pat.len()) {
     if (byte_at(p, k) == kind && byte_at(p, k + 1) == 93) {
       return k;
@@ -513,9 +513,9 @@ function find_close(p: P, from: i32, kind: i32): i32 {
 // A bracket expression starting after the `[`. Returns the parser with
 // the class appended and the class index, or an error.
 function parse_bracket(p0: P): (P, i32) {
-  var p: P = p0;
-  var t: u8[] = __alloc_u8(256);
-  var negate: boolean = false;
+  let p: P = p0;
+  let t: u8[] = __alloc_u8(256);
+  let negate: boolean = false;
   if (byte_at(p, p.i) == 94) {
     negate = true;
     p = P { ...p, i: p.i + 1 };
@@ -523,9 +523,9 @@ function parse_bracket(p0: P): (P, i32) {
   if (at_end(p)) {
     return (fail(p, err_badpat()), 0);
   }
-  var first: boolean = true;
+  let first: boolean = true;
   while (true) {
-    var b: i32 = byte_at(p, p.i);
+    let b: i32 = byte_at(p, p.i);
     if (b < 0) {
       return (fail(p, err_ebrack()), 0);
     }
@@ -534,7 +534,7 @@ function parse_bracket(p0: P): (P, i32) {
       break;
     }
     first = false;
-    var r: (P, u8[]) = bracket_one(p, t);
+    let r: (P, u8[]) = bracket_one(p, t);
     p = r.0;
     t = r.1;
     if (p.err.len() > 0) {
@@ -542,7 +542,7 @@ function parse_bracket(p0: P): (P, i32) {
     }
   }
   if (negate) {
-    var k: i32 = 0;
+    let k: i32 = 0;
     while (k < 256) {
       if (t[k] as i32 == 0) {
         t = t.with(k, 1 as u8);
@@ -552,9 +552,9 @@ function parse_bracket(p0: P): (P, i32) {
       k = k + 1;
     }
   }
-  var idx: i32 = p.classes.len() / 256;
-  var cs: u8[] = p.classes;
-  var j: i32 = 0;
+  let idx: i32 = p.classes.len() / 256;
+  let cs: u8[] = p.classes;
+  let j: i32 = 0;
   while (j < 256) {
     cs = cs.append(t[j]);
     j = j + 1;
@@ -565,9 +565,9 @@ function parse_bracket(p0: P): (P, i32) {
 // One member of a bracket expression: a class, a collating element, a
 // range, or a byte. `-` is a member itself where no range can start.
 function bracket_one(p0: P, t0: u8[]): (P, u8[]) {
-  var p: P = p0;
-  var t: u8[] = t0;
-  var lo: BItem = bracket_item(p, p.i);
+  let p: P = p0;
+  let t: u8[] = t0;
+  let lo: BItem = bracket_item(p, p.i);
   if (lo.err.len() > 0) {
     return (fail(p, lo.err), t);
   }
@@ -581,7 +581,7 @@ function bracket_one(p0: P, t0: u8[]): (P, u8[]) {
   if (!range_ok(lo)) {
     return (fail(p, err_erange()), t);
   }
-  var hi: BItem = bracket_item(p, p.i + 1);
+  let hi: BItem = bracket_item(p, p.i + 1);
   if (hi.err.len() > 0) {
     return (fail(p, hi.err), t);
   }
@@ -589,7 +589,7 @@ function bracket_one(p0: P, t0: u8[]): (P, u8[]) {
     return (fail(p, err_erange()), t);
   }
   p = P { ...p, i: hi.next };
-  var b: i32 = lo.byte;
+  let b: i32 = lo.byte;
   while (b <= hi.byte) {
     t = t.with(b, 1 as u8);
     b = b + 1;
@@ -601,8 +601,8 @@ function bracket_one(p0: P, t0: u8[]): (P, u8[]) {
 }
 
 function union_table(t0: u8[], other: u8[]): u8[] {
-  var t: u8[] = t0;
-  var k: i32 = 0;
+  let t: u8[] = t0;
+  let k: i32 = 0;
   while (k < 256) {
     if (other[k] as i32 != 0) {
       t = t.with(k, 1 as u8);
@@ -614,17 +614,17 @@ function union_table(t0: u8[], other: u8[]): u8[] {
 
 // A class table built from a predicate, for the `\w` family.
 function shorthand_table(p0: P, which: i32): (P, i32) {
-  var t: u8[] = __alloc_u8(256);
-  var b: i32 = 0;
+  let t: u8[] = __alloc_u8(256);
+  let b: i32 = 0;
   while (b < 256) {
     if (shorthand_has(which, b)) {
       t = t.with(b, 1 as u8);
     }
     b = b + 1;
   }
-  var idx: i32 = p0.classes.len() / 256;
-  var cs: u8[] = p0.classes;
-  var j: i32 = 0;
+  let idx: i32 = p0.classes.len() / 256;
+  let cs: u8[] = p0.classes;
+  let j: i32 = 0;
   while (j < 256) {
     cs = cs.append(t[j]);
     j = j + 1;
@@ -634,7 +634,7 @@ function shorthand_table(p0: P, which: i32): (P, i32) {
 
 // `which`: 0 `\w`, 1 `\W`, 2 `\s`, 3 `\S`.
 function shorthand_has(which: i32, b: i32): boolean {
-  var word: boolean = is_alpha(b) || is_digit(b) || b == 95;
+  let word: boolean = is_alpha(b) || is_digit(b) || b == 95;
   if (which == 0) {
     return word;
   }
@@ -651,13 +651,13 @@ function shorthand_has(which: i32, b: i32): boolean {
 // (`RE_DOT_NOT_NULL`), every byte but newline under Emacs, where it is
 // `RE_DOT_NEWLINE` that is missing instead.
 function any_table(p0: P): (P, i32) {
-  var idx: i32 = p0.classes.len() / 256;
-  var cs: u8[] = p0.classes;
-  var skip: i32 = 0;
+  let idx: i32 = p0.classes.len() / 256;
+  let cs: u8[] = p0.classes;
+  let skip: i32 = 0;
   if (p0.emacs) {
     skip = 10;
   }
-  var j: i32 = 0;
+  let j: i32 = 0;
   while (j < 256) {
     if (j == skip) {
       cs = cs.append(0 as u8);
@@ -675,16 +675,16 @@ function any_table(p0: P): (P, i32) {
 // alternation, and the alternation leaves behind everything any of its
 // branches completed.
 function parse_alt(p0: P): (P, i32) {
-  var outer: i32 = p0.done;
-  var r: (P, i32) = parse_branch(p0);
-  var p: P = r.0;
-  var left: i32 = r.1;
+  let outer: i32 = p0.done;
+  let r: (P, i32) = parse_branch(p0);
+  let p: P = r.0;
+  let left: i32 = r.1;
   while (p.err.len() == 0 && esc_at(p, p.i, 124)) {
-    var sofar: i32 = p.done;
+    let sofar: i32 = p.done;
     p = P { ...p, i: p.i + 2, done: outer };
-    var r2: (P, i32) = parse_branch(p);
+    let r2: (P, i32) = parse_branch(p);
     p = P { ...r2.0, done: r2.0.done | sofar };
-    var n: (P, i32) = add_node(p, Node { kind: nd_alt(), a: left, b: r2.1, c: 0 });
+    let n: (P, i32) = add_node(p, Node { kind: nd_alt(), a: left, b: r2.1, c: 0 });
     p = n.0;
     left = n.1;
   }
@@ -693,8 +693,8 @@ function parse_alt(p0: P): (P, i32) {
 
 // One branch: pieces concatenated until `\|`, `\)` or the end.
 function parse_branch(p0: P): (P, i32) {
-  var p: P = p0;
-  var cur: i32 = 0 - 1;
+  let p: P = p0;
+  let cur: i32 = 0 - 1;
   while (true) {
     if (p.err.len() > 0) {
       return (p, empty_node(p, cur));
@@ -702,7 +702,7 @@ function parse_branch(p0: P): (P, i32) {
     if (at_end(p) || esc_at(p, p.i, 124) || esc_at(p, p.i, 41)) {
       break;
     }
-    var r: (P, i32) = parse_piece(p, cur < 0);
+    let r: (P, i32) = parse_piece(p, cur < 0);
     p = r.0;
     if (p.err.len() > 0) {
       return (p, empty_node(p, cur));
@@ -710,7 +710,7 @@ function parse_branch(p0: P): (P, i32) {
     if (cur < 0) {
       cur = r.1;
     } else {
-      var n: (P, i32) = add_node(p, Node { kind: nd_cat(), a: cur, b: r.1, c: 0 });
+      let n: (P, i32) = add_node(p, Node { kind: nd_cat(), a: cur, b: r.1, c: 0 });
       p = n.0;
       cur = n.1;
     }
@@ -735,16 +735,16 @@ function empty_node(p: P, cur: i32): i32 {
 // operator has nothing to repeat, so it is the literal asterisk and the
 // literal question mark.
 function parse_piece(p0: P, first: boolean): (P, i32) {
-  var r: (P, i32) = parse_atom(p0, first);
-  var p: P = r.0;
-  var node: i32 = r.1;
+  let r: (P, i32) = parse_atom(p0, first);
+  let p: P = r.0;
+  let node: i32 = r.1;
   if (p.err.len() > 0 || p.nodes[node].kind == nd_bol() || p.nodes[node].kind == nd_assert()) {
     return (p, node);
   }
   while (true) {
     if (byte_at(p, p.i) == 42) {
       p = P { ...p, i: p.i + 1 };
-      var s: (P, i32) = add_node(p, Node { kind: nd_rep(), a: node, b: 0, c: 0 - 1 });
+      let s: (P, i32) = add_node(p, Node { kind: nd_rep(), a: node, b: 0, c: 0 - 1 });
       p = s.0;
       node = s.1;
       continue;
@@ -753,20 +753,20 @@ function parse_piece(p0: P, first: boolean): (P, i32) {
     // backslashed under POSIX; the other spelling is a literal in each.
     if (plus_at(p, p.i)) {
       p = P { ...p, i: p.i + op_width(p) };
-      var pl: (P, i32) = add_node(p, Node { kind: nd_rep(), a: node, b: 1, c: 0 - 1 });
+      let pl: (P, i32) = add_node(p, Node { kind: nd_rep(), a: node, b: 1, c: 0 - 1 });
       p = pl.0;
       node = pl.1;
       continue;
     }
     if (query_at(p, p.i)) {
       p = P { ...p, i: p.i + op_width(p) };
-      var q: (P, i32) = add_node(p, Node { kind: nd_rep(), a: node, b: 0, c: 1 });
+      let q: (P, i32) = add_node(p, Node { kind: nd_rep(), a: node, b: 0, c: 1 });
       p = q.0;
       node = q.1;
       continue;
     }
     if (!p.emacs && esc_at(p, p.i, 123)) {
-      var iv: (P, i32) = parse_interval(p, node);
+      let iv: (P, i32) = parse_interval(p, node);
       p = iv.0;
       node = iv.1;
       if (p.err.len() > 0) {
@@ -805,15 +805,15 @@ function op_width(p: P): i32 {
 // (`RE_INTERVALS` off), so `\{` never reaches here from that dialect and
 // parse_escape reads it as a plain brace.
 function parse_interval(p0: P, node: i32): (P, i32) {
-  var p: P = P { ...p0, i: p0.i + 2 };
-  var lo: (i32, i32) = read_count(p, p.i);
-  var min: i32 = lo.0;
-  var k: i32 = lo.1;
-  var max: i32 = min;
-  var comma: boolean = false;
+  let p: P = P { ...p0, i: p0.i + 2 };
+  let lo: (i32, i32) = read_count(p, p.i);
+  let min: i32 = lo.0;
+  let k: i32 = lo.1;
+  let max: i32 = min;
+  let comma: boolean = false;
   if (byte_at(p, k) == 44) {
     comma = true;
-    var hi: (i32, i32) = read_count(p, k + 1);
+    let hi: (i32, i32) = read_count(p, k + 1);
     max = hi.0;
     k = hi.1;
   }
@@ -839,7 +839,7 @@ function parse_interval(p0: P, node: i32): (P, i32) {
 }
 
 function has_close_brace(p: P, from: i32): boolean {
-  var k: i32 = from;
+  let k: i32 = from;
   while (k + 1 < p.pat.len()) {
     if (esc_at(p, k, 125)) {
       return true;
@@ -852,8 +852,8 @@ function has_close_brace(p: P, from: i32): boolean {
 // A count: -1 when absent, and clamped past `dup_max` so an enormous one
 // is still refused rather than wrapping.
 function read_count(p: P, from: i32): (i32, i32) {
-  var k: i32 = from;
-  var v: i32 = 0 - 1;
+  let k: i32 = from;
+  let v: i32 = 0 - 1;
   while (is_digit(byte_at(p, k))) {
     if (v < 0) {
       v = 0;
@@ -881,7 +881,7 @@ function valid_interval(min: i32, max: i32, comma: boolean): boolean {
   if (max < 0) {
     return true;
   }
-  var lo: i32 = min;
+  let lo: i32 = min;
   if (lo < 0) {
     lo = 0;
   }
@@ -891,8 +891,8 @@ function valid_interval(min: i32, max: i32, comma: boolean): boolean {
 // One atom. `first` says the branch has nothing in it yet, which is what
 // makes `^` an anchor and `*` a literal.
 function parse_atom(p0: P, first: boolean): (P, i32) {
-  var p: P = p0;
-  var b: i32 = byte_at(p, p.i);
+  let p: P = p0;
+  let b: i32 = byte_at(p, p.i);
   if (b == 94 && first) {
     p = P { ...p, i: p.i + 1 };
     return add_node(p, Node { kind: nd_bol(), a: 0, b: 0, c: 0 });
@@ -903,12 +903,12 @@ function parse_atom(p0: P, first: boolean): (P, i32) {
   }
   if (b == 46) {
     p = P { ...p, i: p.i + 1 };
-    var an: (P, i32) = any_table(p);
+    let an: (P, i32) = any_table(p);
     return add_node(an.0, Node { kind: nd_class(), a: an.1, b: 0, c: 0 });
   }
   if (b == 91) {
     p = P { ...p, i: p.i + 1 };
-    var br: (P, i32) = parse_bracket(p);
+    let br: (P, i32) = parse_bracket(p);
     if (br.0.err.len() > 0) {
       return (br.0, 0);
     }
@@ -932,8 +932,8 @@ function dollar_is_anchor(p: P, next: i32): boolean {
 
 // Everything spelled `\<c>`.
 function parse_escape(p0: P): (P, i32) {
-  var p: P = p0;
-  var c: i32 = byte_at(p, p.i + 1);
+  let p: P = p0;
+  let c: i32 = byte_at(p, p.i + 1);
   if (c < 0) {
     return (fail(p, err_eescape()), 0);
   }
@@ -950,13 +950,13 @@ function parse_escape(p0: P): (P, i32) {
     }
     return add_node(p, Node { kind: nd_backref(), a: c - 48, b: 0, c: 0 });
   }
-  var sh: i32 = shorthand_index(c);
+  let sh: i32 = shorthand_index(c);
   if (sh >= 0) {
     p = P { ...p, i: p.i + 2 };
-    var st: (P, i32) = shorthand_table(p, sh);
+    let st: (P, i32) = shorthand_table(p, sh);
     return add_node(st.0, Node { kind: nd_class(), a: st.1, b: 0, c: 0 });
   }
-  var az: i32 = assert_index(c);
+  let az: i32 = assert_index(c);
   if (az >= 0) {
     p = P { ...p, i: p.i + 2 };
     return add_node(p, Node { kind: nd_assert(), a: az, b: 0, c: 0 });
@@ -1007,9 +1007,9 @@ function assert_index(c: i32): i32 {
 // groups are numbered by their opening parenthesis as glibc numbers them,
 // but the group only becomes referenceable at its `\)`.
 function parse_group(p0: P): (P, i32) {
-  var n: i32 = p0.ngroups + 1;
-  var r: (P, i32) = parse_alt(P { ...p0, ngroups: n });
-  var p: P = r.0;
+  let n: i32 = p0.ngroups + 1;
+  let r: (P, i32) = parse_alt(P { ...p0, ngroups: n });
+  let p: P = r.0;
   if (p.err.len() > 0) {
     return (p, 0);
   }
@@ -1038,21 +1038,21 @@ function emit(c: C, in: Inst): C {
 }
 
 function patch_a(c: C, at: i32, target: i32): C {
-  var in: Inst = c.insts[at];
+  let in: Inst = c.insts[at];
   return C { ...c, insts: c.insts.with(at, Inst { ...in, a: target }) };
 }
 
 function patch_b(c: C, at: i32, target: i32): C {
-  var in: Inst = c.insts[at];
+  let in: Inst = c.insts[at];
   return C { ...c, insts: c.insts.with(at, Inst { ...in, b: target }) };
 }
 
 function compile_node(c0: C, nodes: Node[], node: i32): C {
-  var c: C = c0;
+  let c: C = c0;
   if (c.err.len() > 0) {
     return c;
   }
-  var n: Node = nodes[node];
+  let n: Node = nodes[node];
   if (n.kind == nd_empty()) {
     return c;
   }
@@ -1092,7 +1092,7 @@ function compile_node(c0: C, nodes: Node[], node: i32): C {
 // steps: naming the emitter between the appends costs a copy of the
 // instruction array at each one (#8498).
 function compile_group(c: C, nodes: Node[], n: Node, optional: boolean): C {
-  var flag: i32 = 0;
+  let flag: i32 = 0;
   if (optional) {
     flag = 1;
   }
@@ -1111,9 +1111,9 @@ function compile_group(c: C, nodes: Node[], n: Node, optional: boolean): C {
 // laid out and the swap happens when it turns out to have emitted no
 // instruction, so the rule cannot drift from what the emitter does.
 function compile_alt(c0: C, nodes: Node[], n: Node): C {
-  var split: i32 = c0.insts.len();
-  var c: C = emit(c0, Inst { op: op_split(), a: 0, b: 0 });
-  var first: i32 = c.insts.len();
+  let split: i32 = c0.insts.len();
+  let c: C = emit(c0, Inst { op: op_split(), a: 0, b: 0 });
+  let first: i32 = c.insts.len();
   c = patch_a(c, split, first);
   c = compile_node(c, nodes, n.a);
   if (c.insts.len() == first && c.err.len() == 0) {
@@ -1125,7 +1125,7 @@ function compile_alt(c0: C, nodes: Node[], n: Node): C {
     }
     return patch_b(c, split, c.insts.len());
   }
-  var jump: i32 = c.insts.len();
+  let jump: i32 = c.insts.len();
   c = emit(c, Inst { op: op_jmp(), a: 0, b: 0 });
   c = patch_b(c, split, c.insts.len());
   c = compile_node(c, nodes, n.b);
@@ -1154,7 +1154,7 @@ function compile_alt(c0: C, nodes: Node[], n: Node): C {
 // `\(\|a\)\{1,3\}`, whose last copy is unmarked, reports the empty
 // group (#9092).
 function compile_rep(c0: C, nodes: Node[], n: Node): C {
-  var c: C = compile_copies(c0, nodes, n.a, rep_min(n));
+  let c: C = compile_copies(c0, nodes, n.a, rep_min(n));
   if (c.err.len() > 0) {
     return c;
   }
@@ -1167,7 +1167,7 @@ function compile_rep(c0: C, nodes: Node[], n: Node): C {
 // The first optional copy of a repeated element: a group is marked
 // optional (compile_rep), anything else compiles as it is.
 function compile_optional_copy(c: C, nodes: Node[], body: i32): C {
-  var n: Node = nodes[body];
+  let n: Node = nodes[body];
   if (n.kind == nd_group()) {
     return compile_group(c, nodes, n, true);
   }
@@ -1178,8 +1178,8 @@ function compile_copies(c0: C, nodes: Node[], body: i32, times: i32): C {
   if (times <= 0) {
     return c0;
   }
-  var empty: Inst[] = [];
-  var one: C = compile_node(C { insts: empty, nmarks: 0, err: "" }, nodes, body);
+  let empty: Inst[] = [];
+  let one: C = compile_node(C { insts: empty, nmarks: 0, err: "" }, nodes, body);
   if (one.err.len() > 0) {
     return C { ...c0, err: one.err };
   }
@@ -1194,12 +1194,12 @@ function splice(c: C, body: Inst[], times: i32, slot0: i32, slots: i32): C {
   if (c.insts.len() + body.len() * times > inst_max()) {
     return C { ...c, err: err_esize() };
   }
-  var out: Inst[] = c.insts;
-  var t: i32 = 0;
+  let out: Inst[] = c.insts;
+  let t: i32 = 0;
   while (t < times) {
-    var base: i32 = out.len();
-    var slot_base: i32 = slot0 + slots * t;
-    var k: i32 = 0;
+    let base: i32 = out.len();
+    let slot_base: i32 = slot0 + slots * t;
+    let k: i32 = 0;
     while (k < body.len()) {
       out = out.append(relocate(body[k], base, slot_base));
       k = k + 1;
@@ -1240,9 +1240,9 @@ function rep_min(n: Node): i32 {
 // pass runs the group's end, so an optional group goes back to its last
 // non-empty registers (regs_at_save).
 function compile_star(c0: C, nodes: Node[], body: i32): C {
-  var slot: i32 = c0.nmarks;
-  var c: C = C { ...c0, nmarks: slot + 1 };
-  var top: i32 = c.insts.len();
+  let slot: i32 = c0.nmarks;
+  let c: C = C { ...c0, nmarks: slot + 1 };
+  let top: i32 = c.insts.len();
   c = emit(c, Inst { op: op_split(), a: 0, b: 0 });
   c = patch_a(c, top, c.insts.len());
   c = emit(c, Inst { op: op_mark(), a: slot, b: 0 });
@@ -1250,7 +1250,7 @@ function compile_star(c0: C, nodes: Node[], body: i32): C {
   if (c.err.len() > 0) {
     return c;
   }
-  var progress: i32 = c.insts.len();
+  let progress: i32 = c.insts.len();
   c = emit(c, Inst { op: op_progress(), a: slot, b: 0 });
   c = emit(c, Inst { op: op_jmp(), a: top, b: 0 });
   return patch_b(patch_b(c, top, c.insts.len()), progress, c.insts.len());
@@ -1264,16 +1264,16 @@ function compile_optionals(c0: C, nodes: Node[], body: i32, count: i32): C {
   if (count <= 0) {
     return c0;
   }
-  var base: i32 = c0.insts.len();
-  var c: C = c0;
-  var k: i32 = 0;
+  let base: i32 = c0.insts.len();
+  let c: C = c0;
+  let k: i32 = 0;
   while (k < count) {
     c = emit(c, Inst { op: op_split(), a: base + k + 1, b: 0 });
     k = k + 1;
   }
   c = compile_optional_copy(c, nodes, body);
   c = patch_b(c, base + count - 1, c.insts.len());
-  var j: i32 = 2;
+  let j: i32 = 2;
   while (j <= count && c.err.len() == 0) {
     c = compile_node(c, nodes, body);
     c = patch_b(c, base + count - j, c.insts.len());
@@ -1285,7 +1285,7 @@ function compile_optionals(c0: C, nodes: Node[], body: i32, count: i32): C {
 // Whether the tree holds a backreference, which is what rules out
 // memoising failures during the match.
 function has_backref(nodes: Node[]): boolean {
-  var k: i32 = 0;
+  let k: i32 = 0;
   while (k < nodes.len()) {
     if (nodes[k].kind == nd_backref()) {
       return true;
@@ -1304,38 +1304,38 @@ pub function bre_compile(pat: string): Bre {
 
 // `bre_compile_syntax(pat, syntax)` — the same in the dialect asked for.
 pub function bre_compile_syntax(pat: string, syntax: Syntax): Bre {
-  var nodes: Node[] = [Node { kind: nd_empty(), a: 0, b: 0, c: 0 }];
-  var cls: u8[] = [];
-  var none_first: u8[] = [];
-  var no_alts: string[] = [];
-  var no_seen: i32[] = [];
-  var p: P = P { pat: pat, i: 0, nodes: nodes, classes: cls, ngroups: 0, done: 0, err: "", emacs: syntax.emacs };
-  var r: (P, i32) = parse_alt(p);
+  let nodes: Node[] = [Node { kind: nd_empty(), a: 0, b: 0, c: 0 }];
+  let cls: u8[] = [];
+  let none_first: u8[] = [];
+  let no_alts: string[] = [];
+  let no_seen: i32[] = [];
+  let p: P = P { pat: pat, i: 0, nodes: nodes, classes: cls, ngroups: 0, done: 0, err: "", emacs: syntax.emacs };
+  let r: (P, i32) = parse_alt(p);
   p = r.0;
   if (p.err.len() == 0 && !at_end(p)) {
     p = fail(p, err_eparen_close());
   }
   if (p.err.len() > 0) {
-    var no_insts: Inst[] = [];
+    let no_insts: Inst[] = [];
     return Bre { insts: no_insts, classes: p.classes, ngroups: 0, nmarks: 0, backref: false, err: p.err, newline_anchor: syntax.newline_anchor, first: none_first, empty_ok: true, pre: "", pre_bol: false, pre_eol: false, literal: false, alts: no_alts, seen0: no_seen };
   }
-  var empty: Inst[] = [];
-  var c: C = C { insts: empty, nmarks: 0, err: "" };
+  let empty: Inst[] = [];
+  let c: C = C { insts: empty, nmarks: 0, err: "" };
   // No `Save` pair around the whole program: the match is anchored, so
   // group 0 always spans 0 to the end, and a pattern with no groups of
   // its own then carries no capture vector at all.
   c = compile_node(C { ...c, insts: empty }, p.nodes, r.1);
   c = emit(c, Inst { op: op_match(), a: 0, b: 0 });
   if (c.err.len() > 0) {
-    var none: Inst[] = [];
+    let none: Inst[] = [];
     return Bre { insts: none, classes: p.classes, ngroups: 0, nmarks: 0, backref: false, err: c.err, newline_anchor: syntax.newline_anchor, first: none_first, empty_ok: true, pre: "", pre_bol: false, pre_eol: false, literal: false, alts: no_alts, seen0: no_seen };
   }
-  var fm: (u8[], boolean) = fastmap(c.insts, p.classes);
-  var pre: (string, boolean, i32) = prefix_scan(c.insts);
-  var tail: (boolean, boolean) = literal_tail(c.insts, pre.2);
+  let fm: (u8[], boolean) = fastmap(c.insts, p.classes);
+  let pre: (string, boolean, i32) = prefix_scan(c.insts);
+  let tail: (boolean, boolean) = literal_tail(c.insts, pre.2);
   // A program with a prefix run needs no branch literals: `pre` is that
   // one branch, and the stronger filter of the two.
-  var alts: string[] = no_alts;
+  let alts: string[] = no_alts;
   if (pre.0.len() == 0) {
     alts = branch_literals(c.insts);
   }
@@ -1348,21 +1348,21 @@ pub function bre_compile_syntax(pat: string, syntax: Syntax): Bre {
 // nothing, with each zero-width test assumed to pass. A backreference
 // stands for any byte or none, since what it repeats is not known yet.
 function fastmap(insts: Inst[], classes: u8[]): (u8[], boolean) {
-  var t: u8[] = __alloc_u8(256);
-  var seen: i32[] = fill(insts.len(), 0);
-  var work: i32[] = [0];
-  var empty_ok: boolean = false;
+  let t: u8[] = __alloc_u8(256);
+  let seen: i32[] = fill(insts.len(), 0);
+  let work: i32[] = [0];
+  let empty_ok: boolean = false;
   // `work` is a stack read by index: an array has no pop, and `take`
   // would copy it on every step.
-  var top: i32 = 1;
+  let top: i32 = 1;
   while (top > 0) {
     top = top - 1;
-    var pc: i32 = work[top];
+    let pc: i32 = work[top];
     if (seen[pc] != 0) {
       continue;
     }
     seen = seen.with(pc, 1);
-    var in: Inst = insts[pc];
+    let in: Inst = insts[pc];
     if (in.op == op_char()) {
       t = t.with(in.a, 1 as u8);
     } else if (in.op == op_class()) {
@@ -1396,8 +1396,8 @@ function push_at(own a: i32[], at: i32, v: i32): i32[] {
 }
 
 function class_table(classes: u8[], idx: i32): u8[] {
-  var t: u8[] = __alloc_u8(256);
-  var b: i32 = 0;
+  let t: u8[] = __alloc_u8(256);
+  let b: i32 = 0;
   while (b < 256) {
     t = t.with(b, classes[idx * 256 + b]);
     b = b + 1;
@@ -1406,8 +1406,8 @@ function class_table(classes: u8[], idx: i32): u8[] {
 }
 
 function all_bytes(): u8[] {
-  var t: u8[] = __alloc_u8(256);
-  var b: i32 = 0;
+  let t: u8[] = __alloc_u8(256);
+  let b: i32 = 0;
   while (b < 256) {
     t = t.with(b, 1 as u8);
     b = b + 1;
@@ -1425,13 +1425,13 @@ function all_bytes(): u8[] {
 // run in sequence, so those bytes are what EVERY match begins with,
 // whatever the rest of the program does.
 function prefix_scan(insts: Inst[]): (string, boolean, i32) {
-  var i: i32 = 0;
-  var bol: boolean = false;
+  let i: i32 = 0;
+  let bol: boolean = false;
   if (i < insts.len() && insts[i].op == op_bol()) {
     bol = true;
     i = i + 1;
   }
-  var bs: u8[] = [];
+  let bs: u8[] = [];
   while (i < insts.len() && insts[i].op == op_char()) {
     bs = bs.append(insts[i].a as u8);
     i = i + 1;
@@ -1444,8 +1444,8 @@ function prefix_scan(insts: Inst[]): (string, boolean, i32) {
 // `$` is there. A class, a repetition, an alternation or a group is
 // neither.
 function literal_tail(insts: Inst[], at: i32): (boolean, boolean) {
-  var i: i32 = at;
-  var eol: boolean = false;
+  let i: i32 = at;
+  let eol: boolean = false;
   if (i < insts.len() && insts[i].op == op_eol()) {
     eol = true;
     i = i + 1;
@@ -1483,22 +1483,22 @@ function alt_max(): i32 {
 // nothing and so cannot move where a match begins; walking through them
 // keeps the literal behind them.
 function branch_literals(insts: Inst[]): string[] {
-  var none: string[] = [];
-  var out: string[] = [];
-  var seen: i32[] = fill(insts.len(), 0);
-  var work: i32[] = [0];
-  var top: i32 = 1;
+  let none: string[] = [];
+  let out: string[] = [];
+  let seen: i32[] = fill(insts.len(), 0);
+  let work: i32[] = [0];
+  let top: i32 = 1;
   while (top > 0) {
     top = top - 1;
-    var pc: i32 = work[top];
+    let pc: i32 = work[top];
     if (seen[pc] != 0) {
       continue;
     }
     seen = seen.with(pc, 1);
-    var in: Inst = insts[pc];
+    let in: Inst = insts[pc];
     if (in.op == op_char()) {
-      var bs: u8[] = [];
-      var k: i32 = pc;
+      let bs: u8[] = [];
+      let k: i32 = pc;
       while (k < insts.len() && insts[k].op == op_char()) {
         bs = bs.append(insts[k].a as u8);
         k = k + 1;
@@ -1528,10 +1528,10 @@ function branch_literals(insts: Inst[]): string[] {
 // -1 where none does. A match begins with one of them, so that index is
 // the earliest position one can start at.
 function find_any_literal(text: string, lits: string[], lo: i32, hi: i32): i32 {
-  var best: i32 = 0 - 1;
-  var i: i32 = 0;
+  let best: i32 = 0 - 1;
+  let i: i32 = 0;
   while (i < lits.len()) {
-    var at: i32 = find_literal(text, lits[i], lo, hi);
+    let at: i32 = find_literal(text, lits[i], lo, hi);
     if (at >= 0 && (best < 0 || at < best)) {
       best = at;
       if (best == lo) {
@@ -1546,7 +1546,7 @@ function find_any_literal(text: string, lits: string[], lo: i32, hi: i32): i32 {
 // Whether one of `lits` sits at `at`. The caller has not checked the
 // room, since the literals differ in length.
 function any_bytes_at(text: string, at: i32, lits: string[], hi: i32): boolean {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < lits.len()) {
     if (at + lits[i].len() <= hi && bytes_at(text, at, lits[i])) {
       return true;
@@ -1558,7 +1558,7 @@ function any_bytes_at(text: string, at: i32, lits: string[], hi: i32): boolean {
 
 // Whether `lit` sits at `at` in `text`. The caller has checked the room.
 function bytes_at(text: string, at: i32, lit: string): boolean {
-  var k: i32 = 0;
+  let k: i32 = 0;
   while (k < lit.len()) {
     if (text[at + k] as i32 != lit[k] as i32) {
       return false;
@@ -1581,13 +1581,13 @@ function find_literal(text: string, lit: string, lo: i32, hi: i32): i32 {
   if (lit.len() == 0) {
     return lo;
   }
-  var first: i32 = lit[0] as i32;
+  let first: i32 = lit[0] as i32;
   // The last position with room for the whole literal.
-  var last: i32 = hi - lit.len();
-  var i: i32 = lo;
+  let last: i32 = hi - lit.len();
+  let i: i32 = lo;
   if (hi == text.len()) {
     while (true) {
-      var j: i32 = __memchr(text, first, i);
+      let j: i32 = __memchr(text, first, i);
       if (j < 0 || j > last) {
         return 0 - 1;
       }
@@ -1646,7 +1646,7 @@ function is_word_at(text: string, k: i32, lo: i32, hi: i32): boolean {
   if (k < lo || k >= hi) {
     return false;
   }
-  var b: i32 = text[k] as i32;
+  let b: i32 = text[k] as i32;
   return is_alpha(b) || is_digit(b) || b == 95;
 }
 
@@ -1668,8 +1668,8 @@ function eol_holds(re: Bre, text: string, pos: i32, hi: i32): boolean {
 }
 
 function assert_holds(text: string, which: i32, pos: i32, lo: i32, hi: i32): boolean {
-  var before: boolean = is_word_at(text, pos - 1, lo, hi);
-  var after: boolean = is_word_at(text, pos, lo, hi);
+  let before: boolean = is_word_at(text, pos - 1, lo, hi);
+  let after: boolean = is_word_at(text, pos, lo, hi);
   if (which == assert_wordb()) {
     return before != after;
   }
@@ -1704,12 +1704,12 @@ function byte_matches(re: Bre, in: Inst, b: i32): boolean {
 // this path has crossed one since it last consumed a byte; a match
 // reached with it set is held as a fallback while the search goes on.
 function step(m0: M, pc0: i32, pos0: i32, zw0: boolean): (boolean, M) {
-  var m: M = m0;
-  var pc: i32 = pc0;
-  var pos: i32 = pos0;
-  var zw: boolean = zw0;
+  let m: M = m0;
+  let pc: i32 = pc0;
+  let pos: i32 = pos0;
+  let zw: boolean = zw0;
   while (true) {
-    var in: Inst = m.re.insts[pc];
+    let in: Inst = m.re.insts[pc];
     if (in.op == op_char()) {
       if (pos >= m.hi || m.text[pos] as i32 != in.a) {
         return (false, m);
@@ -1777,12 +1777,12 @@ function step(m0: M, pc0: i32, pos0: i32, zw0: boolean): (boolean, M) {
       continue;
     }
     if (in.op == op_backref()) {
-      var s: i32 = m.caps[(in.a - 1) * 2];
-      var e: i32 = m.caps[(in.a - 1) * 2 + 1];
+      let s: i32 = m.caps[(in.a - 1) * 2];
+      let e: i32 = m.caps[(in.a - 1) * 2 + 1];
       if (s < 0 || e < 0) {
         return (false, m);
       }
-      var n: i32 = e - s;
+      let n: i32 = e - s;
       if (pos + n > m.hi || slice_unchecked(m.text, pos, pos + n) != slice_unchecked(m.text, s, e)) {
         return (false, m);
       }
@@ -1802,23 +1802,23 @@ function step(m0: M, pc0: i32, pos0: i32, zw0: boolean): (boolean, M) {
 // have to be able to put back what they changed.
 function branch(m0: M, pc: i32, pos: i32, in: Inst, zw: boolean): (boolean, M) {
   if (in.op == op_split()) {
-    var r: (boolean, M) = step(m0, in.a, pos, zw);
+    let r: (boolean, M) = step(m0, in.a, pos, zw);
     if (r.0) {
       return r;
     }
     return step(r.1, in.b, pos, zw);
   }
   if (in.op == op_save()) {
-    var old: i32[] = m0.caps;
-    var r2: (boolean, M) = step(M { ...m0, caps: regs_at_save(m0.caps, in, pos, m0.re.ngroups) }, pc + 1, pos, zw);
+    let old: i32[] = m0.caps;
+    let r2: (boolean, M) = step(M { ...m0, caps: regs_at_save(m0.caps, in, pos, m0.re.ngroups) }, pc + 1, pos, zw);
     if (r2.0) {
       return r2;
     }
     return (false, M { ...r2.1, caps: old });
   }
   if (in.op == op_mark()) {
-    var oldm: i32 = m0.marks[in.a];
-    var r3: (boolean, M) = step(M { ...m0, marks: m0.marks.with(in.a, pos) }, pc + 1, pos, zw);
+    let oldm: i32 = m0.marks[in.a];
+    let r3: (boolean, M) = step(M { ...m0, marks: m0.marks.with(in.a, pos) }, pc + 1, pos, zw);
     if (r3.0) {
       return r3;
     }
@@ -1836,14 +1836,14 @@ function branch(m0: M, pc: i32, pos: i32, in: Inst, zw: boolean): (boolean, M) {
 // every register goes back to the copy. That is how `\(a*\)*` keeps
 // its last non-empty pass, and inner groups go back with it.
 function regs_at_save(caps: i32[], in: Inst, pos: i32, ngroups: i32): i32[] {
-  var slot: i32 = in.a;
+  let slot: i32 = in.a;
   if (slot % 2 == 0) {
     return caps.with(slot, pos).with(slot + 1, 0 - 1);
   }
-  var n: i32 = ngroups * 2;
+  let n: i32 = ngroups * 2;
   if (caps[slot - 1] < pos) {
-    var ended: i32[] = caps.with(slot, pos);
-    var k: i32 = 0;
+    let ended: i32[] = caps.with(slot, pos);
+    let k: i32 = 0;
     while (k < n) {
       ended = ended.with(n + k, ended[k]);
       k = k + 1;
@@ -1851,8 +1851,8 @@ function regs_at_save(caps: i32[], in: Inst, pos: i32, ngroups: i32): i32[] {
     return ended;
   }
   if (in.b == 1 && caps[n + slot - 1] != 0 - 1) {
-    var back: i32[] = caps;
-    var j: i32 = 0;
+    let back: i32[] = caps;
+    let j: i32 = 0;
     while (j < n) {
       back = back.with(j, caps[n + j]);
       j = j + 1;
@@ -1863,8 +1863,8 @@ function regs_at_save(caps: i32[], in: Inst, pos: i32, ngroups: i32): i32[] {
 }
 
 function fresh_caps(n: i32): i32[] {
-  var c: i32[] = [];
-  var k: i32 = 0;
+  let c: i32[] = [];
+  let k: i32 = 0;
   while (k < n) {
     c = c.append(0 - 1);
     k = k + 1;
@@ -1884,7 +1884,7 @@ function (re: Bre) match_at(text: string, start: i32, hi: i32): i32 {
   if (!re.backref) {
     return longest_at(re, text, start, 0, hi);
   }
-  var m: BreMatch = exec_at(re, text, start, 0, hi);
+  let m: BreMatch = exec_at(re, text, start, 0, hi);
   if (!m.matched) {
     return 0 - 1;
   }
@@ -1898,23 +1898,23 @@ function (re: Bre) match_at(text: string, start: i32, hi: i32): i32 {
 // lists are sized once: a position holds each counter at most once, and
 // the closure's stack at most two entries per counter entered.
 function longest_at(re: Bre, text: string, start: i32, lo: i32, hi: i32): i32 {
-  var n: i32 = re.insts.len();
-  var seen: i32[] = fill(n, 0 - 1);
-  var cur: i32[] = fill(n, 0);
-  var stack: i32[] = fill(2 * n + 2, 0);
-  var nc: i32 = 0;
-  var sp: i32 = 1;
-  var best: i32 = 0 - 1;
-  var pos: i32 = start;
+  let n: i32 = re.insts.len();
+  let seen: i32[] = fill(n, 0 - 1);
+  let cur: i32[] = fill(n, 0);
+  let stack: i32[] = fill(2 * n + 2, 0);
+  let nc: i32 = 0;
+  let sp: i32 = 1;
+  let best: i32 = 0 - 1;
+  let pos: i32 = start;
   while (true) {
     while (sp > 0) {
       sp = sp - 1;
-      var pc: i32 = stack[sp];
+      let pc: i32 = stack[sp];
       if (seen[pc] == pos) {
         continue;
       }
       seen = seen.with(pc, pos);
-      var op: i32 = re.insts[pc].op;
+      let op: i32 = re.insts[pc].op;
       if (op == op_jmp()) {
         stack = stack.with(sp, re.insts[pc].a);
         sp = sp + 1;
@@ -1940,10 +1940,10 @@ function longest_at(re: Bre, text: string, start: i32, lo: i32, hi: i32): i32 {
     if (pos >= hi || nc == 0) {
       break;
     }
-    var b: i32 = text[pos] as i32;
-    var k: i32 = 0;
+    let b: i32 = text[pos] as i32;
+    let k: i32 = 0;
     while (k < nc) {
-      var at: i32 = cur[k];
+      let at: i32 = cur[k];
       if (byte_matches(re, re.insts[at], b)) {
         stack = stack.with(sp, at + 1);
         sp = sp + 1;
@@ -1963,13 +1963,13 @@ function longest_at(re: Bre, text: string, start: i32, lo: i32, hi: i32): i32 {
 // them, so a caller scanning a buffer for every match in turn asks with
 // bounds rather than with a cut-out suffix.
 pub function (re: Bre) search_from(text: string, lo: i32, hi: i32): (i32, i32) {
-  var start: i32 = lo;
+  let start: i32 = lo;
   while (start <= hi) {
     start = next_start(re, text, start, hi);
     if (start < 0) {
       break;
     }
-    var end: i32 = re.match_at(text, start, hi);
+    let end: i32 = re.match_at(text, start, hi);
     if (end >= 0) {
       return (start, end);
     }
@@ -1990,7 +1990,7 @@ function next_start(re: Bre, text: string, pos: i32, hi: i32): i32 {
   if (re.empty_ok) {
     return pos;
   }
-  var i: i32 = pos;
+  let i: i32 = pos;
   if (hi == text.len()) {
     i = __scan_set(text, pos, re.first);
   } else {
@@ -2010,10 +2010,10 @@ function next_start(re: Bre, text: string, pos: i32, hi: i32): i32 {
 // itself is never a start, which is what keeps tac's backward scan
 // from finding the same empty match twice.
 pub function (re: Bre) search_back(text: string, hi: i32): (i32, i32) {
-  var start: i32 = hi - 1;
+  let start: i32 = hi - 1;
   while (start >= 0) {
     if (can_start_at(re, text, start, hi)) {
-      var end: i32 = re.match_at(text, start, hi);
+      let end: i32 = re.match_at(text, start, hi);
       if (end >= 0) {
         return (start, end);
       }
@@ -2030,7 +2030,7 @@ pub function (re: Bre) search_back(text: string, hi: i32): (i32, i32) {
 // fastmap for such a program — so they replace it rather than run after
 // it.
 function can_start_at(re: Bre, text: string, pos: i32, hi: i32): boolean {
-  var n: i32 = re.pre.len();
+  let n: i32 = re.pre.len();
   if (n > 0) {
     return pos + n <= hi && bytes_at(text, pos, re.pre);
   }
@@ -2083,8 +2083,8 @@ pub function (re: Bre) search(text: string): boolean {
 // prefix no longer fixes the position it has to sit at and the first two
 // filters give way to the scan that assumes none.
 pub function (re: Bre) search_range(text: string, lo: i32, hi: i32): boolean {
-  var n: i32 = re.pre.len();
-  var pinned: boolean = !re.newline_anchor;
+  let n: i32 = re.pre.len();
+  let pinned: boolean = !re.newline_anchor;
   if (re.literal && (pinned || !re.pre_bol && !re.pre_eol)) {
     if (hi - lo < n) {
       return false;
@@ -2100,7 +2100,7 @@ pub function (re: Bre) search_range(text: string, lo: i32, hi: i32): boolean {
     }
     return find_literal(text, re.pre, lo, hi) >= 0;
   }
-  var from: i32 = lo;
+  let from: i32 = lo;
   if (n > 0) {
     if (hi - lo < n) {
       return false;
@@ -2110,7 +2110,7 @@ pub function (re: Bre) search_range(text: string, lo: i32, hi: i32): boolean {
         return false;
       }
     } else {
-      var at: i32 = find_literal(text, re.pre, lo, hi);
+      let at: i32 = find_literal(text, re.pre, lo, hi);
       if (at < 0) {
         return false;
       }
@@ -2120,14 +2120,14 @@ pub function (re: Bre) search_range(text: string, lo: i32, hi: i32): boolean {
     // No anchor case to split out: a branch literal is required at the
     // match's own start wherever that falls, so `^` and `$` only narrow
     // further what the simulation is then asked.
-    var first_at: i32 = find_any_literal(text, re.alts, lo, hi);
+    let first_at: i32 = find_any_literal(text, re.alts, lo, hi);
     if (first_at < 0) {
       return false;
     }
     from = first_at;
   }
   if (re.backref) {
-    var i: i32 = from;
+    let i: i32 = from;
     while (i <= hi) {
       if (can_start_at(re, text, i, hi) && exec_backtrack(re, text, i, lo, hi).matched) {
         return true;
@@ -2152,11 +2152,11 @@ function exec_at(re: Bre, text: string, start: i32, lo: i32, hi: i32): BreMatch 
 // The backtracking engine: ask for one end position at a time, longest
 // first, and take the first that answers yes.
 function exec_backtrack(re: Bre, text: string, start: i32, lo: i32, hi: i32): BreMatch {
-  var no: i32[] = [];
-  var end: i32 = hi;
+  let no: i32[] = [];
+  let end: i32 = hi;
   while (end >= start) {
-    var m: M = M { text: text, lo: lo, hi: hi, re: re, target: end, caps: fresh_caps(re.ngroups * 4), marks: fresh_caps(re.nmarks), have_zw: false, zw_caps: no };
-    var r: (boolean, M) = step(m, 0, start, false);
+    let m: M = M { text: text, lo: lo, hi: hi, re: re, target: end, caps: fresh_caps(re.ngroups * 4), marks: fresh_caps(re.nmarks), have_zw: false, zw_caps: no };
+    let r: (boolean, M) = step(m, 0, start, false);
     if (r.0) {
       return caps_to_match(r.1.caps, re, start, end);
     }
@@ -2200,7 +2200,7 @@ function zw_stamp(gen: i32): i32 {
 // instruction of the closure, which a pattern like `\(a*\)\{3200\}`
 // walks in full at every position.
 function add_thread(re: Bre, own t0: Threads, gen: i32, pc: i32, caps: i32[], pos: i32, text: string, lo: i32, hi: i32, zw: boolean): Threads {
-  var seen: i32 = t0.seen[pc];
+  let seen: i32 = t0.seen[pc];
   if (seen == gen) {
     return t0;
   }
@@ -2214,8 +2214,8 @@ function add_thread(re: Bre, own t0: Threads, gen: i32, pc: i32, caps: i32[], po
   // A path carrying no assertion — the overwhelming majority — reaches
   // the zw stamp only past a sign test, which a cleared -1 and every
   // plain stamp fail.
-  var mark: i32 = gen;
-  var over: boolean = false;
+  let mark: i32 = gen;
+  let over: boolean = false;
   if (zw) {
     mark = zw_stamp(gen);
     if (seen == mark) {
@@ -2224,7 +2224,7 @@ function add_thread(re: Bre, own t0: Threads, gen: i32, pc: i32, caps: i32[], po
   } else if (seen < 0 - 1 && seen == zw_stamp(gen)) {
     over = true;
   }
-  var in: Inst = re.insts[pc];
+  let in: Inst = re.insts[pc];
   if (in.op == op_jmp()) {
     return add_thread(re, stamp(t0, pc, mark), gen, in.a, caps, pos, text, lo, hi, zw);
   }
@@ -2239,7 +2239,7 @@ function add_thread(re: Bre, own t0: Threads, gen: i32, pc: i32, caps: i32[], po
     return add_thread(re, stamp(t0, pc, mark), gen, pc + 1, caps.with(mark_base(re) + in.a, pos), pos, text, lo, hi, zw);
   }
   if (in.op == op_progress()) {
-    var next: i32 = pc + 1;
+    let next: i32 = pc + 1;
     if (caps[mark_base(re) + in.a] == pos) {
       next = in.b;
     }
@@ -2253,7 +2253,7 @@ function add_thread(re: Bre, own t0: Threads, gen: i32, pc: i32, caps: i32[], po
   }
   if (in.op == op_match()) {
     if (over) {
-      var t1: Threads = stamp(t0, pc, mark);
+      let t1: Threads = stamp(t0, pc, mark);
       return Threads { ...t1, caps: t1.caps.with(t1.match_at, caps) };
     }
     return append_match_thread(stamp(t0, pc, mark), pc, caps);
@@ -2279,7 +2279,7 @@ function append_thread(own t: Threads, pc: i32, caps: i32[]): Threads {
 }
 
 function append_match_thread(own t: Threads, pc: i32, caps: i32[]): Threads {
-  var at: i32 = t.pcs.len();
+  let at: i32 = t.pcs.len();
   return Threads { ...t, pcs: t.pcs.append(pc), caps: t.caps.append(caps), match_at: at };
 }
 
@@ -2303,32 +2303,32 @@ function zero_width_holds(re: Bre, text: string, in: Inst, pos: i32, lo: i32, hi
 // The generation stamp is the position, so it starts at `start` and
 // `re.seen0` is below every one of them.
 function exec_threads_from(re: Bre, text: string, start: i32, lo: i32, hi: i32, unanchored: boolean): BreMatch {
-  var no_pcs: i32[] = [];
-  var no_caps: i32[][] = [];
-  var t: Threads = Threads { pcs: no_pcs, caps: no_caps, seen: re.seen0, match_at: 0 - 1 };
+  let no_pcs: i32[] = [];
+  let no_caps: i32[][] = [];
+  let t: Threads = Threads { pcs: no_pcs, caps: no_caps, seen: re.seen0, match_at: 0 - 1 };
   // One seed vector for the whole search: it is never written through,
   // since `.with` copies an array a second reference holds, so the
   // thread seeded at each position can share it rather than allocate
   // one per position — which for a pattern with no groups was an empty
   // array per byte.
-  var seed: i32[] = fresh_caps(mark_base(re) + re.nmarks);
+  let seed: i32[] = fresh_caps(mark_base(re) + re.nmarks);
   t = add_thread(re, t, start, 0, seed, start, text, lo, hi, false);
-  var best: i32 = 0 - 1;
-  var best_caps: i32[] = seed;
-  var pos: i32 = start;
+  let best: i32 = 0 - 1;
+  let best_caps: i32[] = seed;
+  let pos: i32 = start;
   while (true) {
     // The list being stepped is held apart from `t`, so `t` keeps sole
     // ownership of the stamp array — its own copy of `re.seen0` from
     // the first stamp — and updates it in place.
-    var pcs: i32[] = t.pcs;
-    var caps: i32[][] = t.caps;
-    var empty_pcs: i32[] = [];
-    var empty_caps: i32[][] = [];
+    let pcs: i32[] = t.pcs;
+    let caps: i32[][] = t.caps;
+    let empty_pcs: i32[] = [];
+    let empty_caps: i32[][] = [];
     t = Threads { ...t, pcs: empty_pcs, caps: empty_caps, match_at: 0 - 1 };
-    var found: boolean = false;
-    var k: i32 = 0;
+    let found: boolean = false;
+    let k: i32 = 0;
     while (k < pcs.len()) {
-      var in: Inst = re.insts[pcs[k]];
+      let in: Inst = re.insts[pcs[k]];
       if (in.op == op_match()) {
         if (!found) {
           best = pos;
@@ -2373,8 +2373,8 @@ function exec_threads_from(re: Bre, text: string, start: i32, lo: i32, hi: i32, 
 }
 
 function fill(n: i32, v: i32): i32[] {
-  var a: i32[] = [];
-  var k: i32 = 0;
+  let a: i32[] = [];
+  let k: i32 = 0;
   while (k < n) {
     a = a.append(v);
     k = k + 1;
@@ -2387,9 +2387,9 @@ function fill(n: i32, v: i32): i32[] {
 // so its group 0 begins where the scan did — `search_range`, the only
 // caller that runs one, reads nothing but `.matched`.
 function caps_to_match(caps: i32[], re: Bre, start: i32, end: i32): BreMatch {
-  var starts: i32[] = [start];
-  var ends: i32[] = [end];
-  var g: i32 = 0;
+  let starts: i32[] = [start];
+  let ends: i32[] = [end];
+  let g: i32 = 0;
   while (g < re.ngroups) {
     starts = starts.append(caps[g * 2]);
     ends = ends.append(caps[g * 2 + 1]);

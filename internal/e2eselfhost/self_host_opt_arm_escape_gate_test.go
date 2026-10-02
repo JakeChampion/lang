@@ -79,25 +79,25 @@ func TestSelfHostOptArmEscapeGateX86_64(t *testing.T) {
     return Some("va" + "lue");
 }
 function round(r: i32): i32 {
-    var held: string = "";
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let held: string = "";
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var v: Option[string] = mk(i);
+        let v: Option[string] = mk(i);
         match (v) { Some(s) => { held = s; acc = acc + s.len(); }, None => {} }
         i = i + 1;
     }
-    var junk: string = "";
-    var c: i32 = 0;
+    let junk: string = "";
+    let c: i32 = 0;
     while (c < 6) { junk = "zz" + "zzz"; c = c + 1; }
-    var sum: i32 = 0;
-    var k: i32 = 0;
+    let sum: i32 = 0;
+    let k: i32 = 0;
     while (k < held.len()) { sum = sum + (held[k] as i32); k = k + 1; }
     return acc + sum + junk.len() + r;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 251;
 }`
@@ -115,25 +115,25 @@ function main(): i32 {
     return Ok("va" + "lue");
 }
 function round(r: i32): i32 {
-    var held: string = "";
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let held: string = "";
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var v: Result[string, i32] = mk(i);
+        let v: Result[string, i32] = mk(i);
         match (v) { Ok(s) => { held = s; acc = acc + s.len(); }, Err(e) => { acc = acc + e; } }
         i = i + 1;
     }
-    var junk: string = "";
-    var c: i32 = 0;
+    let junk: string = "";
+    let c: i32 = 0;
     while (c < 6) { junk = "zz" + "zzz"; c = c + 1; }
-    var sum: i32 = 0;
-    var k: i32 = 0;
+    let sum: i32 = 0;
+    let k: i32 = 0;
     while (k < held.len()) { sum = sum + (held[k] as i32); k = k + 1; }
     return acc + sum + junk.len() + r;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 251;
 }`
@@ -151,18 +151,18 @@ function main(): i32 {
     return Some("va" + "lue");
 }
 function round(r: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var v: Option[string] = mk(i);
+        let v: Option[string] = mk(i);
         match (v) { Some(s) => { acc = acc + s.len(); }, None => {} }
         i = i + 1;
     }
     return acc + r;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`
@@ -179,22 +179,22 @@ function main(): i32 {
     return Some([i + 11, i + 22]);
 }
 function round(r: i32): i32 {
-    var held: i32[] = [];
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let held: i32[] = [];
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var v: Option[i32[]] = mk(i);
+        let v: Option[i32[]] = mk(i);
         match (v) { Some(xs) => { held = xs; acc = acc + xs[0]; }, None => {} }
         i = i + 1;
     }
-    var junk: i32[] = [];
-    var c: i32 = 0;
+    let junk: i32[] = [];
+    let c: i32 = 0;
     while (c < 6) { junk = [c + 90, c + 91]; c = c + 1; }
     return acc + held[0] + held[1] + junk[0] + r;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 251;
 }`
@@ -215,18 +215,18 @@ function main(): i32 {
     return Ok("v" + "x");
 }
 function round(r: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var v: Result[string, i32] = mk(i);
+        let v: Result[string, i32] = mk(i);
         match (v) { Ok(s) => { acc = acc + s.len(); }, Err(e) => { acc = acc + e; } }
         i = i + 1;
     }
     return acc + r;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`

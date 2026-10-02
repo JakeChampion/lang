@@ -17,7 +17,7 @@ func TestTryMarkerAccepted(t *testing.T) {
 			name: "payloadless failure variant",
 			src: `@try
 enum MyOpt[T] { Here(T), Gone }
-function pick(m: MyOpt[i32]): MyOpt[i32] { var v: i32 = m?; return Here(v + 1); }
+function pick(m: MyOpt[i32]): MyOpt[i32] { let v: i32 = m?; return Here(v + 1); }
 function main(): i32 { match (pick(Here(7))) { Here(v) => { return v; }, Gone => { return 0; } } }`,
 		},
 		{
@@ -26,7 +26,7 @@ function main(): i32 { match (pick(Here(7))) { Here(v) => { return v; }, Gone =>
 			name: "failure variant carries a payload",
 			src: `@try
 enum Outcome[T, E] { Good(T), Bad(E) }
-function step(o: Outcome[i32, string]): Outcome[i32, string] { var v: i32 = o?; return Good(v * 2); }
+function step(o: Outcome[i32, string]): Outcome[i32, string] { let v: i32 = o?; return Good(v * 2); }
 function main(): i32 { match (step(Good(21))) { Good(v) => { return v; }, Bad(e) => { return e.len(); } } }`,
 		},
 		{
@@ -35,14 +35,14 @@ function main(): i32 { match (step(Good(21))) { Good(v) => { return v; }, Bad(e)
 			name: "no type parameters",
 			src: `@try
 enum Flag { On(i32), Off }
-function pick(f: Flag): Flag { var v: i32 = f?; return On(v); }
+function pick(f: Flag): Flag { let v: i32 = f?; return On(v); }
 function main(): i32 { match (pick(On(3))) { On(v) => { return v; }, Off => { return 0; } } }`,
 		},
 		{
 			// The builtins keep working, and keep needing no marker.
 			name: "Option and Result still work unmarked",
-			src: `function o(x: Option[i32]): Option[i32] { var v: i32 = x?; return Some(v); }
-function r(x: Result[i32, string]): Result[i32, string] { var v: i32 = x?; return Ok(v); }
+			src: `function o(x: Option[i32]): Option[i32] { let v: i32 = x?; return Some(v); }
+function r(x: Result[i32, string]): Result[i32, string] { let v: i32 = x?; return Ok(v); }
 function main(): i32 { return 0; }`,
 		},
 	}
@@ -95,7 +95,7 @@ function main(): i32 { return 0; }`, `the failure variant "B" must carry at most
 // the marker as the reader's next action.
 func TestTryOnUnmarkedEnum(t *testing.T) {
 	src := `enum Plain[T] { Here(T), Gone }
-function pick(p: Plain[i32]): Plain[i32] { var v: i32 = p?; return Here(v); }
+function pick(p: Plain[i32]): Plain[i32] { let v: i32 = p?; return Here(v); }
 function main(): i32 { return 0; }`
 	err := checkSource(t, src)
 	if err == nil {
@@ -111,7 +111,7 @@ function main(): i32 { return 0; }`
 func TestTryRequiresMatchingReturnEnum(t *testing.T) {
 	src := `@try
 enum MyOpt[T] { Here(T), Gone }
-function pick(m: MyOpt[i32]): Option[i32] { var v: i32 = m?; return Some(v); }
+function pick(m: MyOpt[i32]): Option[i32] { let v: i32 = m?; return Some(v); }
 function main(): i32 { return 0; }`
 	err := checkSource(t, src)
 	if err == nil {

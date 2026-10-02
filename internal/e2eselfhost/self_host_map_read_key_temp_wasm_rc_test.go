@@ -28,7 +28,7 @@ import (
 //   - `without` — #9970, a deleted entry's key and value are never released;
 //   - every string-keyed program — whatever owns that column's keys;
 //   - `get` consumed by a `return` inside the match arm, or hoisted into a
-//     `var` — there the Option box is stranded whether the key is fresh or
+//     `let` — there the Option box is stranded whether the key is fresh or
 //     borrowed (#10083), so those shapes pin nothing. A get whose match FALLS
 //     THROUGH does release it: lower_stmt_match emits the scrutinee free after
 //     the body, which a `return` leaves before reaching and which a hoisted
@@ -43,33 +43,33 @@ func TestSelfHostMapReadKeyTempWasmRC(t *testing.T) {
 	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
 
-	const probe = `function main(): i32 { var acc: i32 = 0; var w: i32 = 0; while (w < 100) { acc = acc + build(w); w = w + 1; } ` +
-		`var s1: i32 = (__heap_bump_bytes() as i32); var j: i32 = 0; while (j < 1000) { acc = acc + build(j); j = j + 1; } ` +
-		`var s2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if ((s2 - s1) > 4096) { return 1; } return 0; }`
+	const probe = `function main(): i32 { let acc: i32 = 0; let w: i32 = 0; while (w < 100) { acc = acc + build(w); w = w + 1; } ` +
+		`let s1: i32 = (__heap_bump_bytes() as i32); let j: i32 = 0; while (j < 1000) { acc = acc + build(j); j = j + 1; } ` +
+		`let s2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if ((s2 - s1) > 4096) { return 1; } return 0; }`
 	const box = `import "core/cmp"; @derive(cmp.Eq, cmp.Hash) struct P { x: i32, y: i32 } `
 
 	cases := []struct {
 		name string
 		src  string
 	}{
-		{"box-has-fresh", box + `function build(n: i32): i32 { var m: Map[P, i32] = map_new(4); var k: P = P { x: n, y: n * 2 }; m = m.insert(k, 7); if (m.has(P { x: n, y: n * 2 })) { return 0; } return 0; } ` + probe},
-		{"box-has-borrowed", box + `function build(n: i32): i32 { var m: Map[P, i32] = map_new(4); var k: P = P { x: n, y: n * 2 }; m = m.insert(k, 7); if (m.has(k)) { return 0; } return 0; } ` + probe},
+		{"box-has-fresh", box + `function build(n: i32): i32 { let m: Map[P, i32] = map_new(4); let k: P = P { x: n, y: n * 2 }; m = m.insert(k, 7); if (m.has(P { x: n, y: n * 2 })) { return 0; } return 0; } ` + probe},
+		{"box-has-borrowed", box + `function build(n: i32): i32 { let m: Map[P, i32] = map_new(4); let k: P = P { x: n, y: n * 2 }; m = m.insert(k, 7); if (m.has(k)) { return 0; } return 0; } ` + probe},
 		// `get` is the arm this change restructures most. Its match must FALL
 		// THROUGH: lower_stmt_match emits the scrutinee free after the body
 		// (match_scrut_is_map_get), so a `return` inside an arm leaves before
 		// reaching it and strands the Option whatever the key is — as does
-		// hoisting the scrutinee into a `var`, which reaches that check as a
+		// hoisting the scrutinee into a `let`, which reaches that check as a
 		// bare ident. Either shape would give a red control and pin nothing.
-		{"box-get-fresh", box + `function build(n: i32): i32 { var m: Map[P, i32] = map_new(4); var k: P = P { x: n, y: n * 2 }; m = m.insert(k, 7); var acc: i32 = 0; match (m.get(P { x: n, y: n * 2 })) { Some(v) => { acc = acc + v - 7; }, None => { acc = acc - 1; } } return acc; } ` + probe},
-		{"box-get-borrowed", box + `function build(n: i32): i32 { var m: Map[P, i32] = map_new(4); var k: P = P { x: n, y: n * 2 }; m = m.insert(k, 7); var acc: i32 = 0; match (m.get(k)) { Some(v) => { acc = acc + v - 7; }, None => { acc = acc - 1; } } return acc; } ` + probe},
-		{"box-get_or-fresh", box + `function build(n: i32): i32 { var m: Map[P, i32] = map_new(4); var k: P = P { x: n, y: n * 2 }; m = m.insert(k, 7); return m.get_or(P { x: n, y: n * 2 }, 0) - 7; } ` + probe},
-		{"box-get_or-borrowed", box + `function build(n: i32): i32 { var m: Map[P, i32] = map_new(4); var k: P = P { x: n, y: n * 2 }; m = m.insert(k, 7); return m.get_or(k, 0) - 7; } ` + probe},
+		{"box-get-fresh", box + `function build(n: i32): i32 { let m: Map[P, i32] = map_new(4); let k: P = P { x: n, y: n * 2 }; m = m.insert(k, 7); let acc: i32 = 0; match (m.get(P { x: n, y: n * 2 })) { Some(v) => { acc = acc + v - 7; }, None => { acc = acc - 1; } } return acc; } ` + probe},
+		{"box-get-borrowed", box + `function build(n: i32): i32 { let m: Map[P, i32] = map_new(4); let k: P = P { x: n, y: n * 2 }; m = m.insert(k, 7); let acc: i32 = 0; match (m.get(k)) { Some(v) => { acc = acc + v - 7; }, None => { acc = acc - 1; } } return acc; } ` + probe},
+		{"box-get_or-fresh", box + `function build(n: i32): i32 { let m: Map[P, i32] = map_new(4); let k: P = P { x: n, y: n * 2 }; m = m.insert(k, 7); return m.get_or(P { x: n, y: n * 2 }, 0) - 7; } ` + probe},
+		{"box-get_or-borrowed", box + `function build(n: i32): i32 { let m: Map[P, i32] = map_new(4); let k: P = P { x: n, y: n * 2 }; m = m.insert(k, 7); return m.get_or(k, 0) - 7; } ` + probe},
 		// A variant key reaches the same arms through the other half of the
 		// freshness predicate.
 		{"variant-get_or-fresh", `import "core/cmp"; @derive(cmp.Eq, cmp.Hash) enum Tag { Lo(i32), Hi(i32) } ` +
-			`function build(n: i32): i32 { var m: Map[Tag, i32] = map_new(4); var k: Tag = Tag.Lo(n); m = m.insert(k, 7); return m.get_or(Tag.Lo(n), 0) - 7; } ` + probe},
+			`function build(n: i32): i32 { let m: Map[Tag, i32] = map_new(4); let k: Tag = Tag.Lo(n); m = m.insert(k, 7); return m.get_or(Tag.Lo(n), 0) - 7; } ` + probe},
 		{"variant-get_or-borrowed", `import "core/cmp"; @derive(cmp.Eq, cmp.Hash) enum Tag { Lo(i32), Hi(i32) } ` +
-			`function build(n: i32): i32 { var m: Map[Tag, i32] = map_new(4); var k: Tag = Tag.Lo(n); m = m.insert(k, 7); return m.get_or(k, 0) - 7; } ` + probe},
+			`function build(n: i32): i32 { let m: Map[Tag, i32] = map_new(4); let k: Tag = Tag.Lo(n); m = m.insert(k, 7); return m.get_or(k, 0) - 7; } ` + probe},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

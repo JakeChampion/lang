@@ -46,7 +46,7 @@ import (
 // both walkers now carry this tier and the "CNT:" one beside it.
 
 const arrenumBorrowDecl = `enum E { A(i32[]), B }
-function mkv(i: i32): E[] { var o: E[] = []; o = o.append(E.A([i, i + 1])); return o; }
+function mkv(i: i32): E[] { let o: E[] = []; o = o.append(E.A([i, i + 1])); return o; }
 function seed(): i32 { return 7; }
 `
 
@@ -58,8 +58,8 @@ function seed(): i32 { return 7; }
 func arrenumBorrowMain(src, use string) string {
 	return `
 function main(): i32 {
-    var keep: E[] = ` + src + `;
-    var t: i32 = 0; var r: i32 = 0;
+    let keep: E[] = ` + src + `;
+    let t: i32 = 0; let r: i32 = 0;
     while (r < 100) { t = t + ` + use + `; r = r + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
@@ -104,7 +104,7 @@ func arrenumBorrowCases() []arrenumShareCase {
 			// cannot go stale silently a second time.
 			name: "callee_stores_field",
 			src: mk(`struct P { f: E[], n: i32 }
-function rd(src: E[], i: i32): i32 { var p: P = P { f: src, n: i }; return (p.f.len() + p.n) % 101; }`,
+function rd(src: E[], i: i32): i32 { let p: P = P { f: src, n: i }; return (p.f.len() + p.n) % 101; }`,
 				producer, "rd(keep, r)"),
 			want: 6, balance: true,
 		},
@@ -113,7 +113,7 @@ function rd(src: E[], i: i32): i32 { var p: P = P { f: src, n: i }; return (p.f.
 			// is a zero-param IIFE, so the walker met an ExprLambda whose
 			// capture set holds the param and refused it as carried out of the
 			// frame — while the statement-form sibling above balanced, one
-			// token apart. lower_iife lowers such a body INLINE with no env
+			// token apart. Such a body lowers INLINE with no env
 			// box, so the read is the enclosing frame's own and earns the same
 			// admissions.
 			name: "callee_extracts_element_expr",
@@ -129,19 +129,19 @@ function rd(src: E[], i: i32): i32 { var p: P = P { f: src, n: i }; return (p.f.
 			name: "iife_element_handed_out",
 			src: `enum E { A(i32[]), B }
 struct H { e: E, n: i32 }
-function mkv(i: i32): E[] { var o: E[] = []; o = o.append(E.A([i, i + 1])); return o; }
+function mkv(i: i32): E[] { let o: E[] = []; o = o.append(E.A([i, i + 1])); return o; }
 function grab(src: E[], i: i32): H { return (if (i >= 0) { H { e: src[0], n: i } } else { H { e: E.B, n: 0 } }); }
-function f(i: i32): H { var keep: E[] = mkv(i); return grab(keep, i); }
+function f(i: i32): H { let keep: E[] = mkv(i); return grab(keep, i); }
 function round(i: i32): i32 {
-    var h: H = f(i);
-    var v: i32 = 0;
+    let h: H = f(i);
+    let v: i32 = 0;
     match (h.e) { E.A(xs) => { v = xs[0] + xs[1]; }, E.B => { v = 0 - 1; } }
     if (v != i + i + 1) { return 0 - 1; }
     return v % 101;
 }
 function main(): i32 {
-    var t: i32 = 0; var i: i32 = 0; var bad: i32 = 0;
-    while (i < 200) { var r: i32 = round(i); if (r < 0) { bad = bad + 1; } t = t + r; i = i + 1; }
+    let t: i32 = 0; let i: i32 = 0; let bad: i32 = 0;
+    while (i < 200) { let r: i32 = round(i); if (r < 0) { bad = bad + 1; } t = t + r; i = i + 1; }
     if (bad > 0) { return 100; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 83;
@@ -167,19 +167,19 @@ function rd(src: E[], i: i32): i32 { return (match (src[0]) { E.A(xs) => take(xs
 		},
 		{
 			// ADMITTED by the extract-then-die widening the old comment here
-			// asked for: `var e = src[0]` with a confined local keeps the flag
+			// asked for: `let e = src[0]` with a confined local keeps the flag
 			// (arrenum_param_escapes), so the caller's element walk is owed and
 			// granted — pinned at the balance, not only the exit, per the
 			// stale-row lesson the struct twin's callee_stores_field taught.
 			name: "callee_extracts_element",
-			src: mk(`function rd(src: E[], i: i32): i32 { var e: E = src[0]; return (match (e) { E.A(xs) => xs.len(), E.B => 0 }) + i; }`,
+			src: mk(`function rd(src: E[], i: i32): i32 { let e: E = src[0]; return (match (e) { E.A(xs) => xs.len(), E.B => 0 }) + i; }`,
 				producer, "rd(keep, r)"),
 			want: 9, balance: true,
 		},
 		{
 			// REFUSED: the element is pushed into another container.
 			name: "callee_appends_element",
-			src: mk(`function rd(src: E[], i: i32): i32 { var o: E[] = []; o = o.append(src[0]); return o.len() + i; }`,
+			src: mk(`function rd(src: E[], i: i32): i32 { let o: E[] = []; o = o.append(src[0]); return o.len() + i; }`,
 				producer, "rd(keep, r)"),
 			want: 6,
 		},
@@ -193,25 +193,25 @@ function rd(src: E[], i: i32): i32 { return (match (src[0]) { E.A(xs) => take(xs
 			name: "element_handed_out",
 			src: `enum E { A(i32[]), B }
 struct H { e: E, n: i32 }
-function mkv(i: i32): E[] { var o: E[] = []; o = o.append(E.A([i, i + 1])); return o; }
+function mkv(i: i32): E[] { let o: E[] = []; o = o.append(E.A([i, i + 1])); return o; }
 function grab(src: E[], i: i32): H { return H { e: src[0], n: i }; }
-function f(i: i32): H { var keep: E[] = mkv(i); return grab(keep, i); }
+function f(i: i32): H { let keep: E[] = mkv(i); return grab(keep, i); }
 function churn(i: i32): i32 {
-    var a: i32[] = [i, i + 1, i + 2, i + 3];
-    var b: i32[] = [i + 4, i + 5, i + 6, i + 7];
+    let a: i32[] = [i, i + 1, i + 2, i + 3];
+    let b: i32[] = [i + 4, i + 5, i + 6, i + 7];
     return a[0] + b[3];
 }
 function round(i: i32): i32 {
-    var h: H = f(i);
-    var junk: i32 = churn(i * 7 + 3);
-    var v: i32 = 0;
+    let h: H = f(i);
+    let junk: i32 = churn(i * 7 + 3);
+    let v: i32 = 0;
     match (h.e) { E.A(xs) => { v = xs[0] + xs[1]; }, E.B => { v = 0 - 1; } }
     if (v != i + i + 1) { return 0 - 1; }
     return v % 101;
 }
 function main(): i32 {
-    var t: i32 = 0; var i: i32 = 0; var bad: i32 = 0;
-    while (i < 200) { var r: i32 = round(i); if (r < 0) { bad = bad + 1; } t = t + r; i = i + 1; }
+    let t: i32 = 0; let i: i32 = 0; let bad: i32 = 0;
+    while (i < 200) { let r: i32 = round(i); if (r < 0) { bad = bad + 1; } t = t + r; i = i + 1; }
     if (bad > 0) { return 100; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 83;

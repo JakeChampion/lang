@@ -16,7 +16,7 @@ import (
 // run on BOTH, and assert printed VALUES rather than that the module loads.
 //
 // Covered:
-//   - #8458 `var (a, b, c) = <source>` over an (i64, f64, string) tuple, from
+//   - #8458 `let (a, b, c) = <source>` over an (i64, f64, string) tuple, from
 //     every source shape. The field / nested-field / receiver-field rows read
 //     the f64 element as its low 32 bits and truncated the i64 before the fix.
 //   - #8459 `p.ts[i].N` over a `(i32, f64)[]`, from every array shape.
@@ -41,10 +41,10 @@ const tupleElemWidthPrelude = `function dig(n: i64): string {
 }
 function d64(v: i64): string {
 	if (v == 0) { return "0"; }
-	var neg: boolean = v < 0;
-	var m: i64 = v;
+	let neg: boolean = v < 0;
+	let m: i64 = v;
 	if (neg) { m = 0 - v; }
-	var s: string = "";
+	let s: string = "";
 	while (m > 0) {
 		s = dig(m % 10) + s;
 		m = m / 10;
@@ -65,26 +65,26 @@ var tupleElemWidthCases = []struct {
 	// --- #8458: destructure source shapes, elements i64 / f64 / string. ---
 	// The literal's i64 element needs the suffix: an unsuffixed literal in an
 	// unannotated tuple literal is an i32 on both compilers.
-	{"destructure-literal", `function main(): i32 { var (a, b, c) = (5000000000i64, 1.5, "lit"); print("v: " + show(a, b, c)); return 0; }`,
+	{"destructure-literal", `function main(): i32 { let (a, b, c) = (5000000000i64, 1.5, "lit"); print("v: " + show(a, b, c)); return 0; }`,
 		"v: 5000000000|150|lit\n"},
-	{"destructure-local", `function main(): i32 { var t: (i64, f64, string) = (5000000001, 2.5, "loc"); var (a, b, c) = t; print("v: " + show(a, b, c)); return 0; }`,
+	{"destructure-local", `function main(): i32 { let t: (i64, f64, string) = (5000000001, 2.5, "loc"); let (a, b, c) = t; print("v: " + show(a, b, c)); return 0; }`,
 		"v: 5000000001|250|loc\n"},
-	{"destructure-param", `function via(t: (i64, f64, string)): string { var (a, b, c) = t; return show(a, b, c); }
+	{"destructure-param", `function via(t: (i64, f64, string)): string { let (a, b, c) = t; return show(a, b, c); }
 function main(): i32 { print("v: " + via((5000000002, 3.5, "par"))); return 0; }`,
 		"v: 5000000002|350|par\n"},
 	{"destructure-call", `function mkt(): (i64, f64, string) { return (5000000003, 4.5, "cal"); }
-function main(): i32 { var (a, b, c) = mkt(); print("v: " + show(a, b, c)); return 0; }`,
+function main(): i32 { let (a, b, c) = mkt(); print("v: " + show(a, b, c)); return 0; }`,
 		"v: 5000000003|450|cal\n"},
 	{"destructure-field", `struct P { t: (i64, f64, string) }
-function main(): i32 { var p: P = P { t: (5000000004, 5.5, "fld") }; var (a, b, c) = p.t; print("v: " + show(a, b, c)); return 0; }`,
+function main(): i32 { let p: P = P { t: (5000000004, 5.5, "fld") }; let (a, b, c) = p.t; print("v: " + show(a, b, c)); return 0; }`,
 		"v: 5000000004|550|fld\n"},
 	{"destructure-nested-field", `struct Q { t: (i64, f64, string) }
 struct P { q: Q }
-function main(): i32 { var p: P = P { q: Q { t: (5000000005, 6.5, "nst") } }; var (a, b, c) = p.q.t; print("v: " + show(a, b, c)); return 0; }`,
+function main(): i32 { let p: P = P { q: Q { t: (5000000005, 6.5, "nst") } }; let (a, b, c) = p.q.t; print("v: " + show(a, b, c)); return 0; }`,
 		"v: 5000000005|650|nst\n"},
 	{"destructure-receiver-field", `struct P { t: (i64, f64, string) }
-function (p: P) via(): string { var (a, b, c) = p.t; return show(a, b, c); }
-function main(): i32 { var p: P = P { t: (5000000006, 7.5, "rcv") }; print("v: " + p.via()); return 0; }`,
+function (p: P) via(): string { let (a, b, c) = p.t; return show(a, b, c); }
+function main(): i32 { let p: P = P { t: (5000000006, 7.5, "rcv") }; print("v: " + p.via()); return 0; }`,
 		"v: 5000000006|750|rcv\n"},
 
 	// --- #8656: the payload of a user enum's variant. A tuple sub-pattern in
@@ -130,13 +130,13 @@ function main(): i32 {
 function mk(): (i32, f64)[] { return [(1, 3.5)]; }
 function getp(): P { return P { ts: [(2, 4.5)] }; }
 function main(): i32 {
-	var p: P = P { ts: [(2, 4.5)] };
-	var ps: (i32, f64)[] = mk();
+	let p: P = P { ts: [(2, 4.5)] };
+	let ps: (i32, f64)[] = mk();
 	print("local: " + df(ps[0].1) + " " + d32(ps[0].0));
 	print("call: " + df(mk()[0].1) + " " + d32(mk()[0].0));
 	print("field: " + df(p.ts[0].1) + " " + d32(p.ts[0].0));
 	print("callfield: " + df(getp().ts[0].1) + " " + d32(getp().ts[0].0));
-	var f: f64 = p.ts[0].1;
+	let f: f64 = p.ts[0].1;
 	print("bind: " + df(f));
 	return 0;
 }`, "local: 350 1\ncall: 350 1\nfield: 450 2\ncallfield: 450 2\nbind: 450\n"},
@@ -151,21 +151,21 @@ function main(): i32 {
 	// the destructure row is written the way that function reads its pairs. ---
 	{"tuple-array-param", `function elems(ps: (i32, f64)[]): string { return df(ps[0].1) + " " + d32(ps[0].0); }
 function destr(ps: (i32, f64)[]): string {
-	var (k, v) = ps[0];
+	let (k, v) = ps[0];
 	return df(v) + " " + d32(k);
 }
 function loop_destr(ps: (i32, f64)[]): string {
-	var out: string = "";
-	var i: i32 = 0;
+	let out: string = "";
+	let i: i32 = 0;
 	while (i < ps.len()) {
-		var (k, v) = ps[i];
+		let (k, v) = ps[i];
 		out = out + df(v) + " " + d32(k) + ";";
 		i = i + 1;
 	}
 	return out;
 }
 function main(): i32 {
-	var ps: (i32, f64)[] = [(2, 4.5), (3, 5.5)];
+	let ps: (i32, f64)[] = [(2, 4.5), (3, 5.5)];
 	print("read: " + elems(ps));
 	print("destr: " + destr(ps));
 	print("loop: " + loop_destr(ps));
@@ -180,13 +180,13 @@ function main(): i32 {
 	// local used as an element of another tuple fell through to the "i32"
 	// default. ---
 	{"tuple-alias-and-containers", `function main(): i32 {
-	var t = (3, 4.5);
-	var u = t;
+	let t = (3, 4.5);
+	let u = t;
 	print("alias: " + df(u.1) + " " + df(t.1));
-	var t2 = (5, 6.5);
-	var arr = [t2];
+	let t2 = (5, 6.5);
+	let arr = [t2];
 	print("arrlit: " + df(arr[0].1) + " " + d32(arr[0].0));
-	var o = (t2, 99);
+	let o = (t2, 99);
 	print("intuple: " + df(o.0.1) + " " + d32(o.1));
 	return 0;
 }`, "alias: 450 450\narrlit: 650 5\nintuple: 650 99\n"},
@@ -196,19 +196,19 @@ function main(): i32 {
 	// 32-bit unary lowering: a plain `-b` in an i64-typed context is lowered by
 	// lower_i64, which was already width-correct.
 	{"unary-neg", `function main(): i32 {
-	var b: i64 = 5000000000;
+	let b: i64 = 5000000000;
 	print("i64: " + d64(-b));
-	var u: u64 = 5000000000;
+	let u: u64 = 5000000000;
 	print("u64: " + d64((0 - u) as i64));
-	var i: i32 = 12345;
+	let i: i32 = 12345;
 	print("i32: " + d32(-i));
-	var f: f64 = 2.5;
+	let f: f64 = 2.5;
 	print("f64: " + df(-f));
-	var g: f64 = (-b) as f64;
+	let g: f64 = (-b) as f64;
 	print("i64-as-f64: " + df(g / 1000000.0));
-	var h: i64 = 3;
+	let h: i64 = 3;
 	print("i64-div: " + d64((-b) / h));
-	var nu: u64 = (0 - u) / 4;
+	let nu: u64 = (0 - u) / 4;
 	print("u64-div: " + d64(nu as i64));
 	return 0;
 }`, "i64: -5000000000\nu64: -5000000000\ni32: -12345\nf64: -250\ni64-as-f64: -500000\ni64-div: -1666666666\nu64-div: 4611686017177387904\n"},
@@ -279,9 +279,9 @@ var untypedTupleElemCases = []struct {
 	src  string
 	want int
 }{
-	{"nested-tuple-array", `function main(): i32 { var ts: (i32, f64)[][] = [[(1, 2.5)]]; var (a, b) = ts[0][0]; return a + (b * 2.0) as i32; }`, 6},
+	{"nested-tuple-array", `function main(): i32 { let ts: (i32, f64)[][] = [[(1, 2.5)]]; let (a, b) = ts[0][0]; return a + (b * 2.0) as i32; }`, 6},
 	{"erased-generic-tuple-array", `function mk[T](x: T): (i32, T)[] { return [(1, x)]; }
-function main(): i32 { var e = mk(5); var (a, b) = e[0]; return a + b; }`, 6},
+function main(): i32 { let e = mk(5); let (a, b) = e[0]; return a + b; }`, 6},
 }
 
 func TestSelfHostUntypedTupleElemBailsX86_64(t *testing.T) {
@@ -328,7 +328,7 @@ func TestSelfHostTupleFieldTypeLabelParity(t *testing.T) {
 			src := "struct P { f: " + tc.field + " }\n" +
 				"function mkp(): P { return P { f: mkf() }; }\n" +
 				"function mkf(): " + tc.field + " { return mkf(); }\n" +
-				"function main(): i32 { var bad: i32 = mkp().f; return bad; }\n"
+				"function main(): i32 { let bad: i32 = mkp().f; return bad; }\n"
 
 			var cmd *exec.Cmd
 			if len(runner) == 0 {

@@ -49,7 +49,7 @@ function test_single(): test.TestOutcome {
 }
 
 function test_empty(): test.TestOutcome {
-  var e: i32[] = [];
+  let e: i32[] = [];
   match (e.max_index()) {
     Some(v) => {
       return test.fail("expected None for empty");
@@ -66,7 +66,7 @@ function test_all_equal(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("std/array min/max index");
+  let r: test.TestRunner = test.test_new("std/array min/max index");
   r = r.it("max_index", test_max_index);
   r = r.it("min_index tie first", test_min_index_tie_first);
   r = r.it("free fn", test_free_fn);

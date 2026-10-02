@@ -34,7 +34,7 @@ peak() { # peak() CMD... -> peak RSS in KB, or "OOM"
 printf '%-8s %14s %14s\n' arms native self-host
 for n in "${@:-100 200 400 800}"; do
   awk -v n="$n" 'BEGIN{
-    print "function pick(k: i32): i32 {"; print "    var r: i32 = 0;"
+    print "function pick(k: i32): i32 {"; print "    let r: i32 = 0;"
     for (i = 0; i < n; i++) printf "    %sif (k == %d) { r = %d; }\n", (i ? "else " : ""), i, i
     print "    else { r = 0 - 1; }"; print "    return r;"; print "}"
     print "function main(): i32 { return pick(3); }"

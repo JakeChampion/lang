@@ -40,8 +40,8 @@ const strFieldAppendAliasSrc = `struct B { buf: string, n: i32 }
 function heap(s: string): string { return s + ""; }
 
 function main(): i32 {
-    var b: B = B { buf: heap("0123456789abcdefghij"), n: 1 };
-    var al: B = b;
+    let b: B = B { buf: heap("0123456789abcdefghij"), n: 1 };
+    let al: B = b;
     b = B { ...b, buf: b.buf + "X", n: b.n + 1 };
     print(al.buf);
     print(b.buf);
@@ -54,8 +54,8 @@ function main(): i32 {
     // The BUFFER aliased while the box is unique: the box's own gate says
     // reuse, and the helper's rc test on the buffer is what must then decline
     // the in-place grow.
-    var c: B = B { buf: heap("jihgfedcba9876543210"), n: 0 };
-    var held: string = c.buf;
+    let c: B = B { buf: heap("jihgfedcba9876543210"), n: 0 };
+    let held: string = c.buf;
     c = B { ...c, buf: c.buf + "Z" };
     print(held);
     print(c.buf);
@@ -77,8 +77,8 @@ jihgfedcba9876543210Z`
 const strFieldAppendGrowSrc = `struct Acc { buf: string, xs: i32[], n: i32 }
 
 function grow(n: i32, piece: string): Acc {
-    var a: Acc = Acc { buf: "", xs: [0], n: 0 };
-    var i: i32 = 0;
+    let a: Acc = Acc { buf: "", xs: [0], n: 0 };
+    let i: i32 = 0;
     while (i < n) {
         a = Acc { ...a, buf: a.buf + piece, xs: [i], n: a.n + 1 };
         i = i + 1;
@@ -87,13 +87,13 @@ function grow(n: i32, piece: string): Acc {
 }
 
 function main(): i32 {
-    var a: Acc = grow(2000, "ab");
+    let a: Acc = grow(2000, "ab");
     if (a.buf.len() != 4000) { return 1; }
     if (a.n != 2000) { return 2; }
     if (a.xs[0] != 1999) { return 3; }
-    var e: Acc = grow(3, "");
+    let e: Acc = grow(3, "");
     if (e.buf.len() != 0) { return 4; }
-    var s: Acc = Acc { buf: "abcdefgh", xs: [1], n: 0 };
+    let s: Acc = Acc { buf: "abcdefgh", xs: [1], n: 0 };
     s = Acc { ...s, buf: s.buf + s.buf };
     if (s.buf != "abcdefghabcdefgh") { return 5; }
     return 0;
@@ -223,8 +223,8 @@ const strFieldAppendChainSrc = `struct Acc { buf: string, xs: i32[], n: i32 }
 function heap(s: string): string { return s + ""; }
 
 function grow(n: i32, piece: string): Acc {
-    var a: Acc = Acc { buf: "", xs: [0], n: 0 };
-    var i: i32 = 0;
+    let a: Acc = Acc { buf: "", xs: [0], n: 0 };
+    let i: i32 = 0;
     while (i < n) {
         a = Acc { ...a, buf: a.buf + piece + ",", xs: [i], n: a.n + 1 };
         i = i + 1;
@@ -233,26 +233,26 @@ function grow(n: i32, piece: string): Acc {
 }
 
 function main(): i32 {
-    var a: Acc = grow(1000, "ab");
+    let a: Acc = grow(1000, "ab");
     if (a.buf.len() != 3000) { return 1; }
     if (a.n != 1000) { return 2; }
     if (a.xs[0] != 999) { return 3; }
-    var e: Acc = grow(3, "");
+    let e: Acc = grow(3, "");
     if (e.buf.len() != 3) { return 4; }
 
-    var b: Acc = Acc { buf: heap("0123456789abcdefghij"), xs: [0], n: 0 };
-    var al: Acc = b;
+    let b: Acc = Acc { buf: heap("0123456789abcdefghij"), xs: [0], n: 0 };
+    let al: Acc = b;
     b = Acc { ...b, buf: b.buf + "X" + "Y" };
     print(al.buf);
     print(b.buf);
 
-    var c: Acc = Acc { buf: heap("jihgfedcba9876543210"), xs: [0], n: 0 };
-    var held: string = c.buf;
+    let c: Acc = Acc { buf: heap("jihgfedcba9876543210"), xs: [0], n: 0 };
+    let held: string = c.buf;
     c = Acc { ...c, buf: c.buf + "Z" + "W" };
     print(held);
     print(c.buf);
 
-    var d: Acc = Acc { buf: "ab", xs: [0], n: 0 };
+    let d: Acc = Acc { buf: "ab", xs: [0], n: 0 };
     d = Acc { ...d, buf: d.buf + "-" + d.buf };
     print(d.buf);
     return 0;
@@ -320,8 +320,8 @@ func TestWASMStrFieldAppendChainCorrect(t *testing.T) {
 // bytes.
 const strFieldAppendChainAllocSrc = `struct B { buf: string, n: i32 }
 function main(): i32 {
-    var b: B = B { buf: "", n: 0 };
-    var i: i32 = 0;
+    let b: B = B { buf: "", n: 0 };
+    let i: i32 = 0;
     while (i < 500) {
         b = B { ...b, buf: b.buf + "a" + "bb" + "ccc", n: b.n + 1 };
         i = i + 1;

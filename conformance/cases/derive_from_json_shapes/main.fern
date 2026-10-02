@@ -11,9 +11,9 @@ struct User { id: i32, tags: string[], nick: Option[string], home: Address, scor
 function show(r: Result[User, string]): string {
     match (r) {
         Ok(u) => {
-            var nick: string = "-";
+            let nick: string = "-";
             match (u.nick) { Some(s) => { nick = s; }, None => {} }
-            var flag: string = "n";
+            let flag: string = "n";
             if (u.ok) { flag = "y"; }
             return "ok id=" + u.id.to_string() + " tags=" + u.tags.len().to_string() + " nick=" + nick + " city=" + u.home.city + " zip=" + u.home.zip.to_string() + " score=" + u.score.to_string() + " big=" + u.big.to_string() + " wide=" + u.wide.to_string() + " huge=" + u.huge.to_string() + " ok=" + flag;
         },
@@ -23,7 +23,7 @@ function show(r: Result[User, string]): string {
 }
 
 function main(): i32 {
-    var rest: string = ",\"home\":{\"city\":\"Erebor\",\"zip\":42},\"score\":1.5,\"big\":9000000000,\"wide\":4000000000,\"huge\":18446744073709551615,\"ok\":true}";
+    let rest: string = ",\"home\":{\"city\":\"Erebor\",\"zip\":42},\"score\":1.5,\"big\":9000000000,\"wide\":4000000000,\"huge\":18446744073709551615,\"ok\":true}";
     print(show(User.from_json("{\"id\":7,\"tags\":[\"a\",\"b\"],\"nick\":\"gl\"" + rest)));
     print(show(json.decode[User]("{\"id\":7,\"tags\":[],\"nick\":null" + rest)));
     print(show(User.from_json("{\"id\":\"x\",\"tags\":[]" + rest)));

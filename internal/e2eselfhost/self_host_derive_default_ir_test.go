@@ -20,20 +20,20 @@ var deriveDefaultIRCases = []struct {
 }{
 	// Scalar + string + boolean fields all default to zero. 0 + 0 + 5 = 5.
 	{"basic-scalars",
-		`trait Default { function default(): Self; } @derive(Default) struct Cfg { a: i32, s: string, b: boolean } function main(): i32 { var c: Cfg = Cfg.default(); return c.a + c.s.len() + 5; }`, 5},
+		`trait Default { function default(): Self; } @derive(Default) struct Cfg { a: i32, s: string, b: boolean } function main(): i32 { let c: Cfg = Cfg.default(); return c.a + c.s.len() + 5; }`, 5},
 	// Chained: read a field straight off Cfg.default(). 0 + 6 = 6.
 	{"chained",
 		`trait Default { function default(): Self; } @derive(Default) struct Cfg { a: i32, s: string } function main(): i32 { return Cfg.default().a + Cfg.default().s.len() + 6; }`, 6},
-	// Inferred binding: `var c = Cfg.default()` (no annotation) recovers the
+	// Inferred binding: `let c = Cfg.default()` (no annotation) recovers the
 	// struct type from the associated-call return type. 0 + 7 = 7.
 	{"inferred-binding",
-		`trait Default { function default(): Self; } @derive(Default) struct Cfg { a: i32, b: i32 } function main(): i32 { var c = Cfg.default(); return c.a + c.b + 7; }`, 7},
+		`trait Default { function default(): Self; } @derive(Default) struct Cfg { a: i32, b: i32 } function main(): i32 { let c = Cfg.default(); return c.a + c.b + 7; }`, 7},
 	// Boolean field defaults to false. 0 + 8 = 8.
 	{"boolean-default",
-		`trait Default { function default(): Self; } @derive(Default) struct F { flag: boolean, x: i32 } function main(): i32 { var f: F = F.default(); if (f.flag) { return 1; } return f.x + 8; }`, 8},
+		`trait Default { function default(): Self; } @derive(Default) struct F { flag: boolean, x: i32 } function main(): i32 { let f: F = F.default(); if (f.flag) { return 1; } return f.x + 8; }`, 8},
 	// Several i32 fields, all zero. 0 + 0 + 0 + 10 = 10.
 	{"multi-i32",
-		`trait Default { function default(): Self; } @derive(Default) struct M { a: i32, b: i32, c: i32 } function main(): i32 { var m: M = M.default(); return m.a + m.b + m.c + 10; }`, 10},
+		`trait Default { function default(): Self; } @derive(Default) struct M { a: i32, b: i32, c: i32 } function main(): i32 { let m: M = M.default(); return m.a + m.b + m.c + 10; }`, 10},
 }
 
 // TestSelfHostDeriveDefaultIR compiles each case with the self-host CLI for

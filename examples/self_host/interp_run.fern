@@ -12,8 +12,8 @@ import "./rundriver";
 import "./interp";
 
 function main(): i32 {
-  var mod: parser.Module = rundriver.parse_stdin("interp_run");
-  var result: interp.Value = interp.eval_module(mod);
+  let mod: parser.Module = rundriver.parse_stdin("interp_run");
+  let result: interp.Value = interp.eval_module(mod);
   match (result) {
     interp.VInt(i) => {
       return i.v;

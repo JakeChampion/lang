@@ -44,7 +44,7 @@ function test_collapses_spaces_and_edges(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("std/textwrap");
+  let r: test.TestRunner = test.test_new("std/textwrap");
   r = r.it("greedy wrap", test_greedy_wrap);
   r = r.it("fits one line", test_fits_on_one_line);
   r = r.it("boundary", test_boundary);

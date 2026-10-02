@@ -33,16 +33,16 @@ function mk(): i32 {
     return 0;
 }
 function main(): i32 {
-    var total: i32 = 0;
-    var k: i32 = 0;
+    let total: i32 = 0;
+    let k: i32 = 0;
     while (k < 200) { total = total + mk(); k = k + 1; }
     return total + __rc_underflow_count();
 }`
 	}
-	const strDecl = `    var m: Map[string, i32] = map_new(8);
+	const strDecl = `    let m: Map[string, i32] = map_new(8);
     m = m.insert("ke" + "y", 7);
     m = m.insert("ot" + "her", 3);`
-	const intDecl = `    var m: Map[i32, i32] = map_new(8);
+	const intDecl = `    let m: Map[i32, i32] = map_new(8);
     m = m.insert(1, 7);
     m = m.insert(2, 3);`
 
@@ -58,13 +58,13 @@ function main(): i32 {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			for _, shape := range []struct{ name, decl, del string }{
-				{"string_key_hit", strDecl, `    var st = m.without("ke" + "y");
+				{"string_key_hit", strDecl, `    let st = m.without("ke" + "y");
     m = st.0;
     if (st.1) { }`},
-				{"string_key_miss", strDecl, `    var st = m.without("zz" + "zz");
+				{"string_key_miss", strDecl, `    let st = m.without("zz" + "zz");
     m = st.0;
     if (st.1) { }`},
-				{"i32_key_hit", intDecl, `    var st = m.without(1);
+				{"i32_key_hit", intDecl, `    let st = m.without(1);
     m = st.0;
     if (st.1) { }`},
 			} {

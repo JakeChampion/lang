@@ -78,22 +78,22 @@ function is_keep(e: Edit): boolean {
 // the bottom right so the backtrack below can walk forward and produce the
 // edit script in file order.
 function lcs_table(a: string[], b: string[]): i32[] {
-  var n: i32 = a.len();
-  var m: i32 = b.len();
-  var t: i32[] = [];
+  let n: i32 = a.len();
+  let m: i32 = b.len();
+  let t: i32[] = [];
   for k in 0..(n + 1) * (m + 1) {
     t = t.append(0);
   }
-  var i: i32 = n - 1;
+  let i: i32 = n - 1;
   while (i >= 0) {
-    var j: i32 = m - 1;
+    let j: i32 = m - 1;
     while (j >= 0) {
-      var v: i32 = 0;
+      let v: i32 = 0;
       if (a[i] == b[j]) {
         v = t[(i + 1) * (m + 1) + (j + 1)] + 1;
       } else {
-        var down: i32 = t[(i + 1) * (m + 1) + j];
-        var right: i32 = t[i * (m + 1) + (j + 1)];
+        let down: i32 = t[(i + 1) * (m + 1) + j];
+        let right: i32 = t[i * (m + 1) + (j + 1)];
         v = down;
         if (right > v) {
           v = right;
@@ -111,11 +111,11 @@ function lcs_table(a: string[], b: string[]): i32[] {
 // `-old` then `+new` rather than interleaved — the conventional shape, and
 // the one the round-trip parser is written against.
 function diff(a: string[], b: string[]): Edit[] {
-  var m: i32 = b.len();
-  var t: i32[] = lcs_table(a, b);
-  var edits: Edit[] = [];
-  var i: i32 = 0;
-  var j: i32 = 0;
+  let m: i32 = b.len();
+  let t: i32[] = lcs_table(a, b);
+  let edits: Edit[] = [];
+  let i: i32 = 0;
+  let j: i32 = 0;
   while (i < a.len() || j < b.len()) {
     if (i < a.len() && j < b.len() && a[i] == b[j]) {
       edits = edits.append(Keep(i, j));
@@ -136,7 +136,7 @@ function diff(a: string[], b: string[]): Edit[] {
 }
 
 function keep_count(edits: Edit[]): i32 {
-  var n: i32 = 0;
+  let n: i32 = 0;
   for k in 0..edits.len() {
     if (is_keep(edits[k])) {
       n = n + 1;
@@ -163,25 +163,25 @@ struct Hunk {
 // `context()` unchanged lines on each side, with adjacent runs merged when
 // their context would overlap.
 function hunks_of(edits: Edit[], a: string[], b: string[]): Hunk[] {
-  var out: Hunk[] = [];
-  var k: i32 = 0;
+  let out: Hunk[] = [];
+  let k: i32 = 0;
   while (k < edits.len()) {
     if (is_keep(edits[k])) {
       k = k + 1;
       continue;
     }
     // Walk back over the leading context.
-    var start: i32 = k;
-    var back: i32 = 0;
+    let start: i32 = k;
+    let back: i32 = 0;
     while (start > 0 && back < context() && is_keep(edits[start - 1])) {
       start = start - 1;
       back = back + 1;
     }
     // Extend forward while a change is within 2*context of the last one,
     // so two nearby runs share one hunk rather than repeating context.
-    var end: i32 = k;
-    var run: i32 = 0;
-    var p: i32 = k;
+    let end: i32 = k;
+    let run: i32 = 0;
+    let p: i32 = k;
     while (p < edits.len()) {
       if (!is_keep(edits[p])) {
         end = p;
@@ -194,8 +194,8 @@ function hunks_of(edits: Edit[], a: string[], b: string[]): Hunk[] {
       }
       p = p + 1;
     }
-    var stop: i32 = end + 1;
-    var fwd: i32 = 0;
+    let stop: i32 = end + 1;
+    let fwd: i32 = 0;
     while (stop < edits.len() && fwd < context() && is_keep(edits[stop])) {
       stop = stop + 1;
       fwd = fwd + 1;
@@ -207,14 +207,14 @@ function hunks_of(edits: Edit[], a: string[], b: string[]): Hunk[] {
 }
 
 function build_hunk(edits: Edit[], a: string[], b: string[], start: i32, stop: i32): Hunk {
-  var lines: string[] = [];
-  var a_count: i32 = 0;
-  var b_count: i32 = 0;
-  var a_first: i32 = -1;
-  var b_first: i32 = -1;
+  let lines: string[] = [];
+  let a_count: i32 = 0;
+  let b_count: i32 = 0;
+  let a_first: i32 = -1;
+  let b_first: i32 = -1;
   for k in start..stop {
-    var ai: i32 = edit_a(edits[k]);
-    var bi: i32 = edit_b(edits[k]);
+    let ai: i32 = edit_a(edits[k]);
+    let bi: i32 = edit_b(edits[k]);
     if (ai >= 0 && a_first < 0) {
       a_first = ai;
     }
@@ -239,11 +239,11 @@ function build_hunk(edits: Edit[], a: string[], b: string[], start: i32, stop: i
   }
   // A hunk with no lines from one side starts at 0 by unified-diff
   // convention (there is no line to point at), not at 1.
-  var a_start: i32 = 0;
+  let a_start: i32 = 0;
   if (a_count > 0) {
     a_start = a_first + 1;
   }
-  var b_start: i32 = 0;
+  let b_start: i32 = 0;
   if (b_count > 0) {
     b_start = b_first + 1;
   }
@@ -259,11 +259,11 @@ function hunk_header(h: Hunk): string {
 }
 
 function render(a: string[], b: string[], a_name: string, b_name: string): string {
-  var hs: Hunk[] = hunks_of(diff(a, b), a, b);
+  let hs: Hunk[] = hunks_of(diff(a, b), a, b);
   if (hs.len() == 0) {
     return "";
   }
-  var out: string = "--- " + a_name + "\n+++ " + b_name + "\n";
+  let out: string = "--- " + a_name + "\n+++ " + b_name + "\n";
   for i in 0..hs.len() {
     out = out + hunk_header(hs[i]) + "\n";
     for k in 0..hs[i].lines.len() {
@@ -283,10 +283,10 @@ function apply(a: string[], diff_text: string): Result[string[], string] {
   if (diff_text.len() == 0) {
     return Ok(a);
   }
-  var lines: string[] = diff_text.split("\n");
-  var out: string[] = [];
-  var cursor: i32 = 0;  // next unconsumed line of `a`, 0-based
-  var i: i32 = 0;
+  let lines: string[] = diff_text.split("\n");
+  let out: string[] = [];
+  let cursor: i32 = 0;  // next unconsumed line of `a`, 0-based
+  let i: i32 = 0;
   if (lines.len() < 2 || !lines[0].starts_with("--- ")
     || !lines[1].starts_with("+++ ")) {
     return Err("missing file headers");
@@ -300,8 +300,8 @@ function apply(a: string[], diff_text: string): Result[string[], string] {
     if (!lines[i].starts_with("@@ ")) {
       return Err("expected a hunk header, got \"" + lines[i] + "\"");
     }
-    var hdr: Result[i32[], string] = parse_header(lines[i]);
-    var nums: i32[] = [];
+    let hdr: Result[i32[], string] = parse_header(lines[i]);
+    let nums: i32[] = [];
     match (hdr) {
       Err(e) => {
         return Err(e);
@@ -311,11 +311,11 @@ function apply(a: string[], diff_text: string): Result[string[], string] {
       }
     }
     i = i + 1;
-    var a_start: i32 = nums[0];
-    var a_count: i32 = nums[1];
-    var b_count: i32 = nums[3];
+    let a_start: i32 = nums[0];
+    let a_count: i32 = nums[1];
+    let b_count: i32 = nums[3];
     // Copy the untouched lines before this hunk.
-    var upto: i32 = a_start - 1;
+    let upto: i32 = a_start - 1;
     if (a_count == 0) {
       upto = a_start;
     }
@@ -330,17 +330,17 @@ function apply(a: string[], diff_text: string): Result[string[], string] {
       out = out.append(a[cursor]);
       cursor = cursor + 1;
     }
-    var seen_a: i32 = 0;
-    var seen_b: i32 = 0;
+    let seen_a: i32 = 0;
+    let seen_b: i32 = 0;
     while (i < lines.len() && (seen_a < a_count || seen_b < b_count)) {
-      var ln: string = lines[i];
+      let ln: string = lines[i];
       if (ln.len() == 0) {
         return Err("hunk ended early: " + seen_a.to_string() + "/"
           + a_count.to_string() + " old, " + seen_b.to_string() + "/"
           + b_count.to_string() + " new");
       }
-      var tag: str = ln.take(1);
-      var body: string = ln.drop(1).to_owned();
+      let tag: str = ln.take(1);
+      let body: string = ln.drop(1).to_owned();
       if (tag == " ") {
         if (cursor >= a.len() || a[cursor] != body) {
           return Err("context line " + (cursor + 1).to_string()
@@ -380,22 +380,22 @@ function apply(a: string[], diff_text: string): Result[string[], string] {
 
 // "@@ -1,4 +1,5 @@" -> [1, 4, 1, 5]
 function parse_header(h: string): Result[i32[], string] {
-  var parts: string[] = h.split(" ");
+  let parts: string[] = h.split(" ");
   if (parts.len() < 4) {
     return Err("malformed hunk header: " + h);
   }
-  var old_side: string = parts[1];
-  var new_side: string = parts[2];
+  let old_side: string = parts[1];
+  let new_side: string = parts[2];
   if (!old_side.starts_with("-") || !new_side.starts_with("+")) {
     return Err("malformed hunk header: " + h);
   }
-  var a_nums: string[] = old_side.drop(1).split(",");
-  var b_nums: string[] = new_side.drop(1).split(",");
+  let a_nums: string[] = old_side.drop(1).split(",");
+  let b_nums: string[] = new_side.drop(1).split(",");
   if (a_nums.len() != 2 || b_nums.len() != 2) {
     return Err("malformed hunk ranges: " + h);
   }
-  var out: i32[] = [];
-  var raw: string[] = [a_nums[0], a_nums[1], b_nums[0], b_nums[1]];
+  let out: i32[] = [];
+  let raw: string[] = [a_nums[0], a_nums[1], b_nums[0], b_nums[1]];
   for k in 0..4 {
     match (raw[k].parse_int()) {
       None => {
@@ -470,9 +470,9 @@ function corpus(): Pair[] {
 // and require the target exactly. This is the property a diff exists to
 // have, and it covers the renderer and the parser at once.
 function test_the_diff_round_trips(): test.TestOutcome {
-  var cs: Pair[] = corpus();
+  let cs: Pair[] = corpus();
   for i in 0..cs.len() {
-    var text: string = render(cs[i].a, cs[i].b, "a", "b");
+    let text: string = render(cs[i].a, cs[i].b, "a", "b");
     match (apply(cs[i].a, text)) {
       Err(e) => {
         return test.fail("\"" + cs[i].name + "\": applying failed: " + e);
@@ -502,14 +502,14 @@ function same(x: string[], y: string[]): boolean {
 
 // A file against itself has no diff at all — not an empty hunk, no output.
 function test_no_difference_prints_nothing(): test.TestOutcome {
-  var cs: Pair[] = corpus();
+  let cs: Pair[] = corpus();
   for i in 0..cs.len() {
-    var text: string = render(cs[i].a, cs[i].a, "a", "a");
+    let text: string = render(cs[i].a, cs[i].a, "a", "a");
     if (text.len() != 0) {
       return test.fail("\"" + cs[i].name + "\" against itself produced:\n"
         + text);
     }
-    var edits: Edit[] = diff(cs[i].a, cs[i].a);
+    let edits: Edit[] = diff(cs[i].a, cs[i].a);
     if (keep_count(edits) != cs[i].a.len()) {
       return test.fail("\"" + cs[i].name + "\" against itself kept "
         + keep_count(edits).to_string() + " of "
@@ -522,14 +522,14 @@ function test_no_difference_prints_nothing(): test.TestOutcome {
 // Every hunk header's counts must equal what its body contains. A header
 // that lies is the failure the round trip catches too — this one names it.
 function test_hunk_headers_match_their_bodies(): test.TestOutcome {
-  var cs: Pair[] = corpus();
+  let cs: Pair[] = corpus();
   for i in 0..cs.len() {
-    var hs: Hunk[] = hunks_of(diff(cs[i].a, cs[i].b), cs[i].a, cs[i].b);
+    let hs: Hunk[] = hunks_of(diff(cs[i].a, cs[i].b), cs[i].a, cs[i].b);
     for k in 0..hs.len() {
-      var old_n: i32 = 0;
-      var new_n: i32 = 0;
+      let old_n: i32 = 0;
+      let new_n: i32 = 0;
       for l in 0..hs[k].lines.len() {
-        var tag: str = hs[k].lines[l].take(1);
+        let tag: str = hs[k].lines[l].take(1);
         if (tag == " ") {
           old_n = old_n + 1;
           new_n = new_n + 1;
@@ -547,9 +547,9 @@ function test_hunk_headers_match_their_bodies(): test.TestOutcome {
           + old_n.to_string() + "/" + new_n.to_string());
       }
       // A hunk must contain at least one change, or it is pure noise.
-      var changed: boolean = false;
+      let changed: boolean = false;
       for l in 0..hs[k].lines.len() {
-        var t2: str = hs[k].lines[l].take(1);
+        let t2: str = hs[k].lines[l].take(1);
         if (t2 == "-" || t2 == "+") {
           changed = true;
         }
@@ -568,13 +568,13 @@ function test_hunk_headers_match_their_bodies(): test.TestOutcome {
 // the true LCS length is known independently. A wrong recurrence still
 // yields an appliable diff — just a longer one — so nothing else finds it.
 function test_the_edit_script_is_minimal(): test.TestOutcome {
-  var cs: Pair[] = corpus();
+  let cs: Pair[] = corpus();
   for i in 0..cs.len() {
     if (cs[i].a.len() > 12) {  // 2^n enumeration below
       continue;
     }
-    var want: i32 = brute_force_lcs(cs[i].a, cs[i].b);
-    var got: i32 = keep_count(diff(cs[i].a, cs[i].b));
+    let want: i32 = brute_force_lcs(cs[i].a, cs[i].b);
+    let got: i32 = keep_count(diff(cs[i].a, cs[i].b));
     if (got != want) {
       return test.fail("\"" + cs[i].name + "\": kept " + got.to_string()
         + " lines, but the longest common subsequence is "
@@ -585,14 +585,14 @@ function test_the_edit_script_is_minimal(): test.TestOutcome {
 }
 
 function brute_force_lcs(a: string[], b: string[]): i32 {
-  var n: i32 = a.len();
-  var best: i32 = 0;
-  var total: i32 = 1;
+  let n: i32 = a.len();
+  let best: i32 = 0;
+  let total: i32 = 1;
   for k in 0..n {
     total = total * 2;
   }
   for mask in 0..total {
-    var pick: string[] = [];
+    let pick: string[] = [];
     for k in 0..n {
       if ((mask >> k & 1) == 1) {
         pick = pick.append(a[k]);
@@ -606,7 +606,7 @@ function brute_force_lcs(a: string[], b: string[]): i32 {
 }
 
 function is_subsequence(needle: string[], hay: string[]): boolean {
-  var j: i32 = 0;
+  let j: i32 = 0;
   for i in 0..hay.len() {
     if (j < needle.len() && needle[j] == hay[i]) {
       j = j + 1;
@@ -619,14 +619,14 @@ function is_subsequence(needle: string[], hay: string[]): boolean {
 // diff that is asymmetric in its tie-breaking still passes the round trip,
 // so this checks something the round trip cannot.
 function test_reversing_the_files_swaps_the_signs(): test.TestOutcome {
-  var cs: Pair[] = corpus();
+  let cs: Pair[] = corpus();
   for i in 0..cs.len() {
-    var fwd: Edit[] = diff(cs[i].a, cs[i].b);
-    var rev: Edit[] = diff(cs[i].b, cs[i].a);
-    var fwd_del: i32 = count_kind(fwd, 1);
-    var fwd_ins: i32 = count_kind(fwd, 2);
-    var rev_del: i32 = count_kind(rev, 1);
-    var rev_ins: i32 = count_kind(rev, 2);
+    let fwd: Edit[] = diff(cs[i].a, cs[i].b);
+    let rev: Edit[] = diff(cs[i].b, cs[i].a);
+    let fwd_del: i32 = count_kind(fwd, 1);
+    let fwd_ins: i32 = count_kind(fwd, 2);
+    let rev_del: i32 = count_kind(rev, 1);
+    let rev_ins: i32 = count_kind(rev, 2);
     if (fwd_del != rev_ins || fwd_ins != rev_del) {
       return test.fail("\"" + cs[i].name + "\": forward is -"
         + fwd_del.to_string() + "/+" + fwd_ins.to_string()
@@ -634,7 +634,7 @@ function test_reversing_the_files_swaps_the_signs(): test.TestOutcome {
         + rev_ins.to_string());
     }
     // And the accounting closes: kept + deleted = |a|, kept + inserted = |b|.
-    var keeps: i32 = keep_count(fwd);
+    let keeps: i32 = keep_count(fwd);
     if (keeps + fwd_del != cs[i].a.len()) {
       return test.fail("\"" + cs[i].name + "\": kept + deleted != |a|");
     }
@@ -646,7 +646,7 @@ function test_reversing_the_files_swaps_the_signs(): test.TestOutcome {
 }
 
 function count_kind(edits: Edit[], kind: i32): i32 {
-  var n: i32 = 0;
+  let n: i32 = 0;
   for k in 0..edits.len() {
     match (edits[k]) {
       Del(_) => {
@@ -673,10 +673,10 @@ function count_kind(edits: Edit[], kind: i32): i32 {
 // producing a plausible wrong result. A patch tool that guesses is worse
 // than one that stops.
 function test_a_mismatched_patch_is_refused(): test.TestOutcome {
-  var a: string[] = ["one", "two", "three", "four"];
-  var b: string[] = ["one", "TWO", "three", "four"];
-  var good: string = render(a, b, "a", "b");
-  var others: string[][] = [
+  let a: string[] = ["one", "two", "three", "four"];
+  let b: string[] = ["one", "TWO", "three", "four"];
+  let good: string = render(a, b, "a", "b");
+  let others: string[][] = [
     ["one", "different", "three", "four"],  // the context does not match
     ["totally", "unrelated"],  // too short
     [],  // empty
@@ -691,7 +691,7 @@ function test_a_mismatched_patch_is_refused(): test.TestOutcome {
     }
   }
   // Malformed diffs are refused too.
-  var bad: string[] = [
+  let bad: string[] = [
     "@@ -1,1 +1,1 @@\n one\n",  // no file headers
     "--- a\n+++ b\nnot a hunk header\n",
     "--- a\n+++ b\n@@ -1,9 +1,9 @@\n one\n",  // counts exceed the body
@@ -712,11 +712,11 @@ function test_a_mismatched_patch_is_refused(): test.TestOutcome {
 // before its first change or after its last. An unbounded context is how a
 // diff quietly becomes the whole file.
 function test_context_is_bounded(): test.TestOutcome {
-  var cs: Pair[] = corpus();
+  let cs: Pair[] = corpus();
   for i in 0..cs.len() {
-    var hs: Hunk[] = hunks_of(diff(cs[i].a, cs[i].b), cs[i].a, cs[i].b);
+    let hs: Hunk[] = hunks_of(diff(cs[i].a, cs[i].b), cs[i].a, cs[i].b);
     for k in 0..hs.len() {
-      var lead: i32 = 0;
+      let lead: i32 = 0;
       for l in 0..hs[k].lines.len() {
         if (hs[k].lines[l].take(1) != " ") {
           break;
@@ -727,8 +727,8 @@ function test_context_is_bounded(): test.TestOutcome {
         return test.fail("\"" + cs[i].name + "\" hunk " + k.to_string()
           + " leads with " + lead.to_string() + " context lines");
       }
-      var trail: i32 = 0;
-      var l2: i32 = hs[k].lines.len() - 1;
+      let trail: i32 = 0;
+      let l2: i32 = hs[k].lines.len() - 1;
       while (l2 >= 0 && hs[k].lines[l2].take(1) == " ") {
         trail = trail + 1;
         l2 = l2 - 1;
@@ -746,17 +746,17 @@ function test_context_is_bounded(): test.TestOutcome {
 
 function main(): i32 {
   eprint("unidiff — a unified diff, checked by applying it back");
-  var a: string[] = [
+  let a: string[] = [
     "the quick brown fox", "jumps over", "the lazy dog",
     "and keeps going", "line five", "line six", "line seven",
   ];
-  var b: string[] = [
+  let b: string[] = [
     "the quick brown fox", "leaps over", "the lazy dog",
     "and keeps going", "line five", "line six",
     "line six and a half", "line seven",
   ];
-  var text: string = render(a, b, "before.txt", "after.txt");
-  var out: string[] = text.split("\n");
+  let text: string = render(a, b, "before.txt", "after.txt");
+  let out: string[] = text.split("\n");
   for i in 0..out.len() {
     if (out[i].len() > 0) {
       eprint("  " + out[i]);
@@ -775,7 +775,7 @@ function main(): i32 {
     }
   }
 
-  var r: test.TestRunner = test.test_new("unidiff");
+  let r: test.TestRunner = test.test_new("unidiff");
   r = r.it("the diff round trips", test_the_diff_round_trips);
   r = r.it("no difference prints nothing", test_no_difference_prints_nothing);
   r = r.it("hunk headers match their bodies", test_hunk_headers_match_their_bodies);

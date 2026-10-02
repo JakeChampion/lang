@@ -248,7 +248,7 @@ type rcPlan struct {
 	// argument's slot once the value is on the operand stack. Filled by
 	// computeOwnedArgMoves, which also records each in moveSites.
 	ownedArgMoves map[*ast.Ident]bool
-	// ownArgRetains marks the `var` locals handed to an explicit `own`
+	// ownArgRetains marks the `let` locals handed to an explicit `own`
 	// parameter that computeOwnedArgMoves could not move — a borrowed alias —
 	// so the call site retains them for the callee instead (ownArgNeedsRetain).
 	ownArgRetains map[*ast.Ident]bool
@@ -261,7 +261,7 @@ type rcPlan struct {
 	// runtime and retains the value otherwise — see emitFieldOwnMove. Filled
 	// by computeFieldOwnMoves.
 	fieldOwnMoves map[*ast.FieldAccess]bool
-	// destructureMoves marks the struct destructures `var S { a, b } = x;`
+	// destructureMoves marks the struct destructures `let S { a, b } = x;`
 	// whose source is a frame-owned x never mentioned after them: x moves
 	// into the destructure's temp and each rc field moves out of it the way
 	// fieldOwnMoves does, so a binding is the field's only holder (#10084).
@@ -285,7 +285,7 @@ type rcPlan struct {
 	// rather than by a top-level index (computeNestedDrops).
 	nestedDrops map[ast.Stmt][]string
 	// Dead-alias dup/drop cancellation (#4402 opt 1): borrowedAlias[y] marks a
-	// `var y = x` alias local proven to be a pure BORROWED VIEW of an owned
+	// `let y = x` alias local proven to be a pure BORROWED VIEW of an owned
 	// local x for its whole life — its transfer inc and its exit-sweep dec are
 	// a guaranteed net-zero pair, so both are elided (the fusion Koka calls
 	// dup/drop cancellation, done in the analysis layer where the emission
@@ -297,7 +297,7 @@ type rcPlan struct {
 	borrowedAliasSites map[ast.Node]bool
 	borrowSources      map[string]bool
 	// borrowedMapFieldResults[name] marks a local bound to a Map COW-mutator
-	// call whose RECEIVER is a field access (`var m = s.m.insert(k, v)`). On
+	// call whose RECEIVER is a field access (`let m = s.m.insert(k, v)`). On
 	// the rc==1 in-place path the mutator returns the SAME handle the
 	// container's field `s.m` still holds, so `m` aliases the container's
 	// buffer. Wrapping such a local into a fresh struct field
@@ -312,8 +312,8 @@ type rcPlan struct {
 	// COW-seam retain (#6227) — the sites where something OTHER than the
 	// receiver's binding will release the handle the in-place branch hands
 	// back, so two names share one refcount unless the seam adds a second.
-	// That is every binding — `var m2 = m.insert(k, v)`,
-	// `var (m2, ok) = m.without(k)`, `var t = m.without(k)` binding the tuple
+	// That is every binding — `let m2 = m.insert(k, v)`,
+	// `let (m2, ok) = m.without(k)`, `let t = m.without(k)` binding the tuple
 	// whole — and a delete tuple PROJECTED without one (`m.without(k).0`),
 	// whose box the field read deep-drops (#8434).
 	// A position where the result is a temporary NOTHING drops is excluded,
@@ -1258,7 +1258,7 @@ func inferParamCountedRetain(prog *ast.Program, info *checker.Info, trmcFuncs ma
 // caller receives a count of its own and releasing its local leaves the
 // result's intact.
 //
-// Refusing that cost the caller its release: `var out = data; out = f(out);`
+// Refusing that cost the caller its release: `let out = data; out = f(out);`
 // — every buffer threaded through a helper with a pass-through path — kept
 // the seed's transfer inc with nothing to spend it, one reference per call.
 // `coreutils/dd.fern`'s `out = apply_case(out, tab, s.conv)` stranded a whole
@@ -1640,7 +1640,7 @@ func everyOccurrenceSafe(total, safe int) bool {
 }
 
 // countedSeedOccurrences names the occurrences of a PARAMETER that seed a
-// local which is later reassigned — `var cur: Scope = s;` followed by
+// local which is later reassigned — `let cur: Scope = s;` followed by
 // `cur = advance(stmt, cur)`. computeFreeEligible already treats exactly
 // that binding as a COUNTED alias rather than a borrow (its countedSeed
 // map): needsRcIncOnAlias holds for the initialiser and the source is a
@@ -1822,7 +1822,7 @@ func consumedStringParams(fn *ast.FuncDecl, info *checker.Info, trmcFuncs map[st
 }
 
 // frameBoundStringAliases names `pn` together with the locals that bind it
-// by a bare `var x: string = pn`, transitively. Such a local denotes the
+// by a bare `let x: string = pn`, transitively. Such a local denotes the
 // parameter's own buffer and changes nothing about who owns it:
 // computeFreeEligible's borrowed-alias leg cancels the transfer inc against
 // an exit sweep that never touches the slot, so the frame ends holding no
@@ -1835,7 +1835,7 @@ func consumedStringParams(fn *ast.FuncDecl, info *checker.Info, trmcFuncs map[st
 // before any builder exists — had no arm for the shape at all, so it refused
 // the parameter and the refusal reached every caller as computeFreeEligible's
 // native single-word string taint. `function tag(src: string, i: i32): i32 {
-// var x: string = src; return x.len() + i; }` stranded the caller's whole
+// let x: string = src; return x.len() + i; }` stranded the caller's whole
 // buffer, one per call: 400 allocations and 0 frees under FERN_LEAKCHECK
 // where the same body written `src.len()` freed all 400 (#9549).
 //
@@ -1898,7 +1898,7 @@ func frameBoundStringAliases(fn *ast.FuncDecl, pn string, credit bool) map[strin
 	for _, p := range fn.Params {
 		declared[p.Name] += 2
 	}
-	// `var a = p; var b = a;` chains, and ast.Walk's order is not the
+	// `let a = p; let b = a;` chains, and ast.Walk's order is not the
 	// binding order across nested blocks, so iterate to a fixpoint. It only
 	// ever adds names, so it terminates in at most len(binds) rounds.
 	for changed := true; changed; {
@@ -2020,7 +2020,7 @@ func stringParamCounted(fn *ast.FuncDecl, pn string, summary *summaryTable[[]boo
 			// lost the credit, and the CALLER's binding of that function's
 			// result stayed permanently taint-ineligible. The exit sweep then
 			// emitted the dec-only __fern_rc_dec instead of the freeing
-			// __fern_arr_dec, so a KMP-shaped `var f = table(p)` leaked its
+			// __fern_arr_dec, so a KMP-shaped `let f = table(p)` leaked its
 			// whole array once per call.
 			mark(x.Array)
 		case *ast.SliceExpr:
@@ -2122,7 +2122,7 @@ func stringParamCounted(fn *ast.FuncDecl, pn string, summary *summaryTable[[]boo
 			// and its absence here meant one FORWARDING frame disqualified the
 			// whole chain — a dispatcher like `check(kind, s) { return
 			// iban_valid(s); }` left every caller's freshly built string
-			// permanently taint-ineligible, so `var bad = rewrite(x);
+			// permanently taint-ineligible, so `let bad = rewrite(x);
 			// check(k, bad)` leaked it while the inline spelling was flat.
 			//
 			// Sound by the same fixpoint argument as the struct case: the
@@ -2897,7 +2897,7 @@ func (b *builder) computeCowThreadedMapParams() map[string]bool {
 // exists to avoid — while the checker guarantees the two types match, and
 // isOwnedRcLocal tests exactly the type set needsRcIncOnAlias does.
 //
-// Parameters are deliberately excluded: `var L = <param>` has its own, narrower
+// Parameters are deliberately excluded: `let L = <param>` has its own, narrower
 // untaint (countedSeed, gated on L being reassigned and uniquely named) with a
 // separate history (#6403, #4174), and widening it is not this rule's business.
 //
@@ -2965,7 +2965,7 @@ func (b *builder) computeFreeEligible() map[string]bool {
 	}
 	// assigns[name] = list of RHS expressions ever written to it.
 	assigns := map[string][]ast.Expr{}
-	// seedParamInit[L] is the `var L = <param>` initialiser of a local seeded
+	// seedParamInit[L] is the `let L = <param>` initialiser of a local seeded
 	// from a borrow-tainted PARAMETER, and reassignedIdent records the locals an
 	// *ast.Assign later overwrites. countedSeed below combines them.
 	seedParamInit := map[string]ast.Expr{}
@@ -3342,7 +3342,7 @@ func (b *builder) computeFreeEligible() map[string]bool {
 										// and nothing retains the string,
 										// so the binding must keep its
 										// scope-exit drop. Without this,
-										// `var msg = pfx + body;
+										// `let msg = pfx + body;
 										// strbuf_append(msg);` stranded
 										// msg's buffer once per call — the
 										// bound-local half of #7867's
@@ -3434,7 +3434,7 @@ func (b *builder) computeFreeEligible() map[string]bool {
 		}
 		return true
 	})
-	// `var L = <param>` where L is REASSIGNED later: the binding is a COUNTED
+	// `let L = <param>` where L is REASSIGNED later: the binding is a COUNTED
 	// alias, not a borrow. needsRcIncOnAlias holds for the initialiser and the
 	// source is a parameter, so no move site or borrowed-alias cancellation can
 	// reach it (both require an owned rc LOCAL source) and the *ast.Var lowering
@@ -3568,7 +3568,7 @@ func (b *builder) computeFreeEligible() map[string]bool {
 		// and every reference the frame can leave behind is counted — a
 		// returned payload takes the transfer inc, a stored one the
 		// construction inc — so the is_unique-gated deep drop cannot free
-		// under anything live. Alias taint alone (`var cur = t; cur = l`, the
+		// under anything live. Alias taint alone (`let cur = t; cur = l`, the
 		// walk every tree lookup is written as) used to keep the count
 		// forever: one whole tree per call.
 		if !p.Own && !b.paramOwnedByDefault(p.Type, i) && !b.rc.consumedParams[p.Name] {
@@ -3643,7 +3643,7 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 		return false
 	case *ast.MapLit:
 		// `Map { … }` lowers to a fresh `map_new` plus one `__method_Map_set`
-		// per entry — the same construction `var m = map_new(n)` followed by
+		// per entry — the same construction `let m = map_new(n)` followed by
 		// inserts produces — so the local owns the handle and aliases nothing.
 		// The entries' own sources take computeFreeEligible's MapLit arm,
 		// exactly as the insert form's `__method_Map_set` args do.
@@ -3681,7 +3681,7 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 		// A string literal has Static ownership (ExprResultOwnership) — it
 		// aliases nothing, so a local initialised from a bare literal is
 		// eligible, exactly like the scalar-literal case above. This is what
-		// makes the `var s = ""; loop { s = s + p }` accumulator reclaim each
+		// makes the `let s = ""; loop { s = s + p }` accumulator reclaim each
 		// intermediate concat: the dec-on-overwrite (ir.go ~17183) requires
 		// freeEligible[s], and without this case `""` fell to the tainted
 		// default and stranded every intermediate buffer (O(n²) bump-heap
@@ -3714,13 +3714,13 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 		// every container on the chain deep-drops the next one, so the
 		// counted-alias argument holds at each level, and the two-level
 		// read taints nothing the one-level read does not (#8179, the
-		// self-host LowerState's nested per-function box). A non-struct
+		// AST lowering's nested per-function box). A non-struct
 		// source, or a Map anywhere on the chain, keeps the conservative
 		// taint. The escape sink walk is unchanged, so a projection flowing
 		// into an UNCOUNTED sink (`m.set(k, r.field)`) still taints its
 		// source there.
 		// A TUPLE local is the same argument, and was one type short of it.
-		// `var q: P = p.1` incs at the binding site exactly as the struct read
+		// `let q: P = p.1` incs at the binding site exactly as the struct read
 		// does, and the tuple deep-drops its elements at scope exit
 		// (__drop_tuple_<…>), so the extracted element owns its own reference.
 		// Falling through to the conservative taint left `q` un-reclaimable
@@ -3810,7 +3810,7 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 		// needsRcIncOnAlias fires for a pointer-shaped element, so the binding
 		// site inc's it and the destination owns a reference of its own. The
 		// conservative taint instead pinned the destination for the whole
-		// function, so `var line = words[0]` followed by `line = line + …`
+		// function, so `let line = words[0]` followed by `line = line + …`
 		// stranded every intermediate concat (#6567) — a seed of `""` was flat
 		// all along, which is what made the shape easy to miss.
 		//
@@ -3820,7 +3820,7 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 		// its elements, and the binding takes its inc, so the element is
 		// counted at both ends exactly as the field read above is. The
 		// conservative taint left the serve loop's per-connection buffer
-		// (`var buf = c.bufs[at]; buf = buf.concat(…)`) stranding every
+		// (`let buf = c.bufs[at]; buf = buf.concat(…)`) stranding every
 		// concat result.
 		if !x.IsString && !x.IsSlice && !isMapType(b.exprType(x)) && needsRcIncOnAlias(x, b) {
 			if _, isArr := b.exprType(x.Array).(ast.ArrayType); isArr {
@@ -3985,7 +3985,7 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 				// and decs the receiver back ("the balance is: receiver keeps
 				// rc 1, the fresh copy is rc 1" — emitArraySet). So the
 				// receiver's borrow taint says nothing about the result: the
-				// frame owns it outright. Without this, `var w = xs.with(0, 9)`
+				// frame owns it outright. Without this, `let w = xs.with(0, 9)`
 				// in a callee taking a borrowed array param stranded the whole
 				// copy on every call — one buffer per call, unbounded.
 				//
@@ -4002,12 +4002,12 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 				// aliasing Args[0] only. The pushed element is a COUNTED store
 				// — emitArrayPush inc's an aliased element and the buffer's deep
 				// drop decs it — so an element's taint says nothing about the
-				// buffer's own provenance. Without this, `var out = []` followed
+				// buffer's own provenance. Without this, `let out = []` followed
 				// by `out = out.append(tok)` in a loop tainted `out` from the
 				// first append onward, stranding the whole accumulated buffer;
 				// it is what leaves lexer.tokenize reclaiming 8.8% of its blocks
 				// (docs/SELFHOST-AST-RETIREMENT.md). Sound only alongside the
-				// _move_ grow helpers: an ALIASED receiver (`var lg = g; lg =
+				// _move_ grow helpers: an ALIASED receiver (`let lg = g; lg =
 				// lg.append(v)`) makes both halves reclaimable, and the plain
 				// helper's non-retaining copy then let both walk-drops release
 				// the same elements (#3457).
@@ -4056,9 +4056,9 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 		// regardless of receiver/arg taint: the tainted inputs are only READ
 		// to build it. This is the same oracle the nested-call temp reclaim
 		// (rc_insert.go stage-b) already trusts to free a call result.
-		// Without it, `var t = f(x)` over any param-derived x stays
+		// Without it, `let t = f(x)` over any param-derived x stays
 		// permanently ineligible, and the dead intermediate in
-		// `var t = f(x); var u = g(t); return u;` leaks once per call — the
+		// `let t = f(x); let u = g(t); return u;` leaks once per call — the
 		// self-compile RSS driver (docs/SELFHOST-BSTATE-RECLAIM-PLAN.md
 		// "The real leak").
 		if id, ok := x.Callee.(*ast.Ident); ok && b.returnsNoParamEscape[id.Name] {
@@ -4099,7 +4099,7 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 	case *ast.MatchExpr:
 		// A match-expression is owned iff every arm body is — the exact
 		// mirror of IfExpr. Without this case it fell through to the tainted
-		// default, leaving `var s = match (k) { 0 => a + b, _ => b + a }` (all
+		// default, leaving `let s = match (k) { 0 => a + b, _ => b + a }` (all
 		// arms fresh concats) permanently ineligible and unreclaimed (leaked
 		// 240000 → 2400000 in a loop).
 		for _, arm := range x.Arms {
@@ -4198,7 +4198,7 @@ func (b *builder) computeMovedLocals() map[string]bool {
 			case *ast.Return:
 				val = s.Value
 			case *ast.Destructure:
-				// `var (a, b) = t` aliases the source tuple into the
+				// `let (a, b) = t` aliases the source tuple into the
 				// destructure temp (inc at the alias site below). When t
 				// is an owned rc local at its last use, that inc and t's
 				// exit-sweep dec cancel — move t into the temp, which
@@ -4394,7 +4394,7 @@ func walkAlwaysEvaluated(e ast.Expr, f func(ast.Node) bool) {
 // Phase 4 pair-cancellation: when a struct literal built at a
 // dominating top-level statement consumes an OWNED rc local in an
 // rc-tracked field at the local's LAST use
-// (`var s = Wrap{ inner: x }`, `x` dead after), the field-init inc and
+// (`let s = Wrap{ inner: x }`, `x` dead after), the field-init inc and
 // x's exit-sweep dec cancel — x's single reference is moved into the
 // struct's field. Skipping the inc (gated on b.rc.moveSites[fieldIdent] at
 // the StructLit lowering) and x's dec (moved[x] excludes it from the
@@ -4888,7 +4888,7 @@ func (b *builder) isParamName(name string) bool {
 // local names a box this frame allocated, so a field moved out of it is a
 // buffer the frame may give away.
 //
-// Every other binding form can name someone else's box — `var t = o.inner`
+// Every other binding form can name someone else's box — `let t = o.inner`
 // reads a container's field, a call result may be one of the callee's own
 // parameters — and a name bound twice cannot be told apart from a second
 // variable by an analysis that matches roots by NAME over the whole body.
@@ -5094,7 +5094,7 @@ func markLoopCallReceivers(n ast.Node, declared map[string]bool, isCall func(*as
 }
 
 // computeReuseSources is the general-FBIP pairing analysis: it matches a
-// construction site C (a `var c = T{…}` / `c = (…)` whose RHS is a plain
+// construction site C (a `let c = T{…}` / `c = (…)` whose RHS is a plain
 // StructLit or a TupleLit) with a DEAD, OWNED struct/tuple local D whose box C
 // can reuse in place — the Perceus reuse token threaded from D's drop to C's
 // allocation, generalised beyond the self-overwrite tryStructReuseOverwrite
@@ -5113,10 +5113,10 @@ func markLoopCallReceivers(n ast.Node, declared map[string]bool, isCall func(*as
 //     pointer fields is retained on eval as normal StructLit construction.
 //   - D and C are in the SAME statement list (block): the function body OR any
 //     nested block (loop body, if arm). Pairing within a loop body is the
-//     high-value case — a per-iteration `var a = T{…}; …; var b = T{…}` reuses
+//     high-value case — a per-iteration `let a = T{…}; …; let b = T{…}` reuses
 //     a's box for b every iteration. A block-scoped D dies at block exit, so
 //     "dead from C within the block" is sufficient.
-//   - D is a `var`, declared before C in the list, never reassigned,
+//   - D is a `let`, declared before C in the list, never reassigned,
 //     name-unique (no shadowing ambiguity), and `freeEligible` (OWNED — never
 //     a borrowed param; the runtime is_unique check at the reuse site is the
 //     second gate, so a shared D copies).
@@ -5134,8 +5134,8 @@ func markLoopCallReceivers(n ast.Node, declared map[string]bool, isCall func(*as
 // nothing released the source's reference per iteration:
 //
 //	while (k < n) {
-//	    var xs: i32[] = [1, 2, 3];
-//	    var t = (xs, 99);        // xs inc'd here, never dec'd per iteration
+//	    let xs: i32[] = [1, 2, 3];
+//	    let t = (xs, 99);        // xs inc'd here, never dec'd per iteration
 //	    …
 //	}
 //
@@ -5337,7 +5337,7 @@ func (b *builder) computeReuseSources() (map[ast.Expr]string, map[string]bool) {
 		return "", "", 0, false
 	}
 	// constructionAt extracts (targetName, constructionNode) from a
-	// `var c = T{…}` / `c = (…)` / `c = Variant(…)` (or the assign forms) whose
+	// `let c = T{…}` / `c = (…)` / `c = Variant(…)` (or the assign forms) whose
 	// RHS is a plain (non-update) StructLit, a TupleLit, or a payload-carrying
 	// enum variant constructor call. The node keys reuseSources.
 	constructionAt := func(st ast.Stmt) (string, ast.Expr) {
@@ -5432,7 +5432,7 @@ func (b *builder) computeReuseSources() (map[ast.Expr]string, map[string]bool) {
 			// freeEligible but no longer owns its box — that box is now reachable
 			// through the container. Reusing it in place for C would alias C's
 			// fresh value onto the element the container still points at
-			// (observed: `var a=[d]; var c=T{…}` made a[0] read as c). The exit
+			// (observed: `let a=[d]; let c=T{…}` made a[0] read as c). The exit
 			// sweep already excludes movedLocals (computePreciseDrops); the reuse
 			// pass must too.
 			if b.rc.movedLocals[dName] {
@@ -5476,7 +5476,7 @@ func (b *builder) computeReuseSources() (map[ast.Expr]string, map[string]bool) {
 	}
 
 	// declIndices / deadFromIn build the per-statement-list machinery shared by
-	// both passes: declIdx maps a top-level `var` name to its index, and
+	// both passes: declIdx maps a top-level `let` name to its index, and
 	// deadFrom reports whether a name is referenced in NO statement at index
 	// >= k of that list.
 	declIndices := func(stmts []ast.Stmt) map[string]int {
@@ -5553,7 +5553,7 @@ func (b *builder) computeReuseSources() (map[ast.Expr]string, map[string]bool) {
 	// local is tainted out) — and arrays are never reuse sources.
 	//
 	// This generalises the function-body case to EVERY block, so the dominant
-	// shape — a loop-body D (`var a = …`) reused by a construction nested in an
+	// shape — a loop-body D (`let a = …`) reused by a construction nested in an
 	// `if` inside the loop — fires every iteration (D is block-scoped, so it's
 	// re-declared and the slot reinit-dropped each turn). Only C's not already
 	// paired (same-block, or a CLOSER cross-block ancestor) are considered:
@@ -5734,7 +5734,7 @@ func (b *builder) computePreciseDrops() map[int][]string {
 	return out
 }
 
-// blockDeclIndices maps each name a `var` declares at the TOP level of one
+// blockDeclIndices maps each name a `let` declares at the TOP level of one
 // block's statement list to that statement's index, and marks a shadowed
 // redeclaration in `reassigned` so it bails out of precise-drop candidacy.
 func blockDeclIndices(stmts []ast.Stmt, reassigned map[string]bool) map[string]int {
@@ -5799,7 +5799,7 @@ func (b *builder) reassignedAnywhere() map[string]bool {
 // computePreciseDrops only ever considered TOP-LEVEL declarations, so a
 // binding made inside a loop held its reference for the rest of the iteration
 // no matter how early it died. That is what made a dead ALIAS expensive
-// (#6024): `var keep = acc` in a loop body leaves `acc` at rc 2, and
+// (#6024): `let keep = acc` in a loop body leaves `acc` at rc 2, and
 // __fern_arr_push_grow mutates in place only at rc 1, so all 200 appends
 // behind the alias copied the whole buffer — 199 wasted copies bought by a
 // binding nothing reads again. Releasing `keep` at its last read restores
@@ -5940,14 +5940,14 @@ func (b *builder) preciseDropTarget(stmts []ast.Stmt, di int, name string, reass
 	}
 	// The local's INIT may itself produce an uncounted alias of a still-
 	// live value — a slice (view), a pointer-typed if/match expr, or a
-	// call whose result could BE a pointer argument (`var v3 = id(v2)`).
+	// call whose result could BE a pointer argument (`let v3 = id(v2)`).
 	// Precise-dropping such a local would free a buffer the source still
 	// holds. A scalar-arg call (`fill(100)`) returns a fresh value and
 	// stays eligible (the common builder-call win). The OTHER end — the
 	// source flowing INTO the call — is handled by flowsIntoUncountedAlias
 	// below.
 	//
-	// A COUNTED-ALIAS init (`var y = x` / `x.field` / `x[i]` —
+	// A COUNTED-ALIAS init (`let y = x` / `x.field` / `x[i]` —
 	// needsRcIncOnAlias) is NOT excluded: the precise drop gives back
 	// exactly the inc the init took, and giving it back at the last read
 	// rather than at scope exit is what restores the source to rc 1 — the
@@ -5979,9 +5979,9 @@ func (b *builder) preciseDropTarget(stmts []ast.Stmt, di int, name string, reass
 		//
 		// A reference inside a pointer-producing call / slice / if-expr /
 		// match-expr can create an UNCOUNTED alias of `name` that outlives
-		// the drop point (e.g. `var v3 = id(v2)` — a generic identity
+		// the drop point (e.g. `let v3 = id(v2)` — a generic identity
 		// returns its borrowed arg with no inc). The inc'd-alias sites
-		// (`var y = x` / `x.field` / `x[i]`, container literals) are SAFE —
+		// (`let y = x` / `x.field` / `x[i]`, container literals) are SAFE —
 		// the precise drop only decs there. Bail on the uncounted-alias
 		// shapes (flowsIntoUncountedAlias walks the whole nested statement).
 		if b.flowsIntoUncountedAlias(stmts[i], name) {
@@ -6007,7 +6007,7 @@ func (b *builder) preciseDropTarget(stmts []ast.Stmt, di int, name string, reass
 	// is EXCLUDED from this nested placement: its deep drop dec's each
 	// element, and an element aliased out across the drop point (e.g.
 	// the self-host driver's `entry_path = av[1]` / `root = av[2]` from
-	// `var av: string[] = args()`, last-used at `av[2]` inside an `if`)
+	// `let av: string[] = args()`, last-used at `av[2]` inside an `if`)
 	// relies on the per-element retain/release balancing exactly on
 	// EVERY backend. On arm64 two-word heap strings that balance uses
 	// the native heap-string reclamation path the plan still defers
@@ -6153,7 +6153,7 @@ func (b *builder) initMayAliasLive(e ast.Expr) bool {
 		// that risk: whatever of it the result carries, it carries under a
 		// reference of its own, so the precise drop decs rather than freeing
 		// through to a live source — the same admission the counted-alias
-		// inits (`var y = x` / `x.field`) already get, and what lets a
+		// inits (`let y = x` / `x.field`) already get, and what lets a
 		// functional-update threading chain release each dead intermediate at
 		// its last read instead of at scope exit.
 		var counted []bool
@@ -6292,7 +6292,7 @@ func (b *builder) isOwnedRcLocal(name string) bool {
 // alias skips its transfer inc and the sweep skips the dec, a net-zero pair.
 //
 // Both roles qualify, and the parameter half is the one that matters for a
-// cursor threaded through a function. `var c: C = c0;` on an owned parameter
+// cursor threaded through a function. `let c: C = c0;` on an owned parameter
 // used to inc, leaving c0's reference alive to the exit sweep for the whole
 // body — so the container's array field sat at rc 2 and every field append
 // after it copied the buffer instead of growing in place. Three appends around
@@ -6310,7 +6310,7 @@ func (b *builder) movableAliasSource(name string) bool {
 // isOwnedRcParam reports whether `name` is a parameter the CALLEE owns and so
 // must release at exit — `own`-annotated, owned by default for its type, or
 // proven consumed. It is the param-side sibling of isOwnedRcLocal (which only
-// walks declared `var` locals), and the same predicate
+// walks declared `let` locals), and the same predicate
 // emitRcDecLocalsAtExitExcept's owned-param pass releases on, so a caller that
 // wants to know "will the sweep dec this name?" gets one answer for both roles.
 func (b *builder) isOwnedRcParam(name string) bool {
@@ -7306,9 +7306,9 @@ func (p place) samePlace(q place) bool {
 //     It excuses only reads through the NAME: an overlapping read inside the
 //     replacing expression is evaluated against the pre-append container
 //     (`inner: I { data: o.xs }`, the #6665 repro), and a bare read that binds
-//     the container elsewhere (`var old = o`) keeps the old one reachable
+//     the container elsewhere (`let old = o`) keeps the old one reachable
 //     under another name. A binding only counts when it CAN hold the
-//     container: `var n: i32 = len_of(o)` hands `o` to a call that gives back
+//     container: `let n: i32 = len_of(o)` hands `o` to a call that gives back
 //     a scalar, so nothing reachable afterwards names it (bindingHoldsContainer).
 //   - RETURN. The append sits in a return expression with no overlapping read
 //     later in that expression, so the function exits before anything here can
@@ -7323,7 +7323,7 @@ func (p place) samePlace(q place) bool {
 //     positions — any other read can bind the buffer to a name that outlives
 //     the site — and only for a root no defer or lambda mentions, since those
 //     run after the statement that spells them. This is the hash-index shape
-//     (`var bk = hash(o.head.len()); … o.head.with(bk, n)`), where the reads
+//     (`let bk = hash(o.head.len()); … o.head.with(bk, n)`), where the reads
 //     that force the copy all precede the write.
 //
 // A struct-update SPREAD base does not count as an overlapping read of the
@@ -7378,9 +7378,9 @@ func fieldPlaceMutationCopies(body ast.Node, noEsc argNoEscape) map[*ast.Call]bo
 	rebind := map[*ast.Call]*ast.Assign{}
 	retExpr := map[*ast.Call]ast.Expr{}
 	// Bare reads of a root that BIND the container somewhere it outlives the
-	// expression: a `var` initialiser or an assignment's value WHOSE BINDING
+	// expression: a `let` initialiser or an assignment's value WHOSE BINDING
 	// can hold the container. A scalar binding cannot, however the container
-	// reaches it — `var t: i32 = lookup(o, k)` passes `o` to a call that
+	// reaches it — `let t: i32 = lookup(o, k)` passes `o` to a call that
 	// returns an i32, and an i32 names nothing.
 	capturing := map[ast.Node]bool{}
 	declared := map[string]ast.Type{}
@@ -7579,7 +7579,7 @@ func overriddenSpread(lit *ast.StructLit, q, p place) bool {
 	return false
 }
 
-// computeBorrowedAliases finds `var y = x` aliases that are pure BORROWED
+// computeBorrowedAliases finds `let y = x` aliases that are pure BORROWED
 // VIEWS (#4402 opt 1 — dead-alias dup/drop cancellation): y's transfer inc
 // and exit-sweep dec are a guaranteed net-zero pair, so both are elided and
 // x is pinned to exit-sweep-only release. Soundness gates (all required):
@@ -7590,7 +7590,7 @@ func overriddenSpread(lit *ast.StructLit, q, p place) bool {
 //     params), and freeEligible (untainted, proven owner);
 //   - y is rc-tracked, never reassigned, not itself moved, freeEligible
 //     (untainted — no container escape), declared with the bare-Ident init
-//     `var y = x` (its ONLY inc site), name-unique in the function (the
+//     `let y = x` (its ONLY inc site), name-unique in the function (the
 //     slot-sharing hazard), and never referenced under a Return (a returned
 //     borrow would outlive x's sweep — conservative subtree check).
 //
@@ -7599,10 +7599,10 @@ func overriddenSpread(lit *ast.StructLit, q, p place) bool {
 // computePreciseDrops and computeReuseSources' donor gate.
 //
 // A second accepted shape, with its own gate set (documented at the walk):
-// the for-in element binding `var y = __foreach_iter_N[idx]`, whose
+// the for-in element binding `let y = __foreach_iter_N[idx]`, whose
 // container is the desugar's synthetic iterand local.
 // computeBorrowedMapFieldResults finds locals bound to a Map COW-mutator call
-// whose receiver is a field access (`var m = s.m.insert(k, v)`) — see the
+// whose receiver is a field access (`let m = s.m.insert(k, v)`) — see the
 // borrowedMapFieldResults field doc (issue #4871). Purely syntactic: the walk
 // runs on the already-mangled AST (`insert` → `__method_Map_set`), the same
 // form isMapMutatorCall matches at the construction site.
@@ -7623,8 +7623,8 @@ func (b *builder) computeBorrowedMapFieldResults() map[string]bool {
 
 // computeMapCowBindSites finds the Map COW-mutator calls bound directly to a
 // new local — see the mapCowBindSites field doc (#6227). `insert` / `cleared`
-// return the map and bind through `var`; `without` returns a (Map, boolean)
-// tuple, which destructuring and a plain `var t = m.without(k)` both bind, and
+// return the map and bind through `let`; `without` returns a (Map, boolean)
+// tuple, which destructuring and a plain `let t = m.without(k)` both bind, and
 // BOTH owe the retain. Reading the tuple whole and projecting `t.0` / `t.1` is
 // the spelling the rc corpus itself uses, and excluding it left the tuple's
 // map element aliasing the receiver's handle at rc 1: two names, one count,
@@ -7795,7 +7795,7 @@ func isMapMutatorLink(e ast.Expr) bool {
 	return ok && isMapMutatorCall(c) && len(c.Args) > 0
 }
 
-// statementValue returns the value a `var`, destructure or assignment
+// statementValue returns the value a `let`, destructure or assignment
 // statement binds, or nil.
 func statementValue(st ast.Stmt) ast.Expr {
 	switch x := st.(type) {
@@ -7922,7 +7922,7 @@ func (b *builder) computeBorrowedAliases() {
 		// base.len()]`, its own comment "a fresh, sole-owned full copy"),
 		// and lower_plain_arr_with_store's in-place arr_set is reached only
 		// from `a = a.with(i, v)`, whose reassignment da_scan already
-		// refuses for both names. Measured on `var b = a; var c = b.with(0,
+		// refuses for both names. Measured on `let b = a; let c = b.with(0,
 		// 99)` with a read back: same exit as native and `-interp`, balanced
 		// census. This guard is what the self-host would need if a
 		// value-position in-place path ever lands there.
@@ -7943,7 +7943,7 @@ func (b *builder) computeBorrowedAliases() {
 		b.rc.borrowSources[x] = true
 		return true
 	})
-	// Borrowed-parameter alias (#9244): `var y = p`, where p is a BORROWED
+	// Borrowed-parameter alias (#9244): `let y = p`, where p is a BORROWED
 	// parameter. Both legs above want an owned rc LOCAL as the source, so
 	// this shape fell between them: the Var lowering emitted the transfer
 	// inc (the site was not a proven borrowed view), and the exit sweep
@@ -8029,7 +8029,7 @@ func (b *builder) computeBorrowedAliases() {
 		b.rc.borrowSources[x] = true
 		return true
 	})
-	// Match-binding alias (#9923): `var y = c`, where c is a match ARM
+	// Match-binding alias (#9923): `let y = c`, where c is a match ARM
 	// BINDING. The same shape as the borrowed-parameter leg above and the
 	// same failure: a binding is bound WITHOUT an inc (bindingSlotScoped
 	// hands the arm a borrow), so it is not an owned rc local and neither of
@@ -8046,7 +8046,7 @@ func (b *builder) computeBorrowedAliases() {
 	//
 	// The source must be a binding and NOTHING else: matchBindingTypes is
 	// keyed by name over the whole function, so a local or parameter of the
-	// same name would make `var y = c` ambiguous, and leg one already owns
+	// same name would make `let y = c` ambiguous, and leg one already owns
 	// the owned-local case.
 	matchBindingSrc := map[string]bool{}
 	for name := range b.matchBindingTypes() {
@@ -8114,7 +8114,7 @@ func (b *builder) computeBorrowedAliases() {
 		return true
 	})
 	// For-in element borrow (#6888): the desugar's per-iteration element
-	// binding `var y = __foreach_iter_N[__foreach_idx_N]`
+	// binding `let y = __foreach_iter_N[__foreach_idx_N]`
 	// (ast.DesugarForEachArray) reads an element the iterand array owns.
 	// When every use of y is a read THROUGH the value (bindingConfinedToArm
 	// over the whole body — a bind, store, capture, or unproven call all
@@ -8138,7 +8138,7 @@ func (b *builder) computeBorrowedAliases() {
 	//     tainted precisely BECAUSE the caller owns it, which makes it a
 	//     safer borrow source, not a worse one.
 	//   - x may itself be a borrowed alias (the walk above marks
-	//     `var __foreach_iter_N = xs` when xs qualifies): xs is then already
+	//     `let __foreach_iter_N = xs` when xs qualifies): xs is then already
 	//     pinned to exit-sweep-only release, the same guarantee one level up.
 	ast.Walk(b.fn.Body, func(n ast.Node) bool {
 		f, ok := n.(*ast.For)
@@ -8354,7 +8354,7 @@ func projectionRoot(e ast.Expr) string {
 // function parameters are borrowed (no inc at the call site), so the
 // caller's binding aliases the same buffer at the same rc — and a callee
 // mutation that is unobservable *inside* the callee is fully observable to
-// a caller that keeps its argument live (`var c = grow(a, 3); a.len()`),
+// a caller that keeps its argument live (`let c = grow(a, 3); a.len()`),
 // silently diverging from the interpreter's copy-on-shared semantics
 // (issue #4873; the struct form `b.xs.append(x)` reaches the same hole
 // through the functional-update exemption).
@@ -8385,8 +8385,9 @@ func projectionRoot(e ast.Expr) string {
 // unresolvable field path, and makes every field of the struct growable.
 //
 // The field set is what keeps the caller-side bracket proportionate: a
-// `LowerState` has twenty-odd array fields, and bracketing all of them because
-// the callee appends to ONE forces a copy on each of the others as well.
+// struct can have twenty-odd array fields (the AST lowering's `LowerState` did),
+// and bracketing all of them because the callee appends to ONE forces a copy
+// on each of the others as well.
 type growParam struct {
 	buffer bool
 	fields map[string]bool
@@ -8834,7 +8835,7 @@ func computeGrowParams(prog *ast.Program, info *checker.Info, obs map[string][]f
 		}
 	}
 	// A rename resolves to the binding it renames, so a parameter threaded
-	// through `var c: C = c0;` still propagates as a growable position of c0.
+	// through `let c: C = c0;` still propagates as a growable position of c0.
 	renames := map[*ast.FuncDecl]map[string]string{}
 	paramIdx := func(fn *ast.FuncDecl, name string) int {
 		if fn.Body != nil {
@@ -9246,7 +9247,7 @@ func (b *builder) computeOwnedArgMoves() map[*ast.Ident]bool {
 	}
 	deaths := b.curCallArgDies()
 	esc := checker.DeferOrLambdaNames(b.fn.Body)
-	// The `var` locals: what E051's last-use admission covers.
+	// The `let` locals: what E051's last-use admission covers.
 	isParam := map[string]bool{}
 	for _, p := range b.fn.Params {
 		isParam[p.Name] = true
@@ -9383,7 +9384,7 @@ func (b *builder) computeFieldOwnMoves() map[*ast.FieldAccess]bool {
 		}
 		return true
 	})
-	// A field read into a new local, `var a = x.f;`, is the same move when
+	// A field read into a new local, `let a = x.f;`, is the same move when
 	// nothing after it can read x.f again: the declaration is a statement of
 	// the body itself, so no loop re-runs what came before it, and every
 	// later mention of x reads another field or is the base of an update
@@ -9747,7 +9748,7 @@ func (b *builder) frameOwnsIdent(name string) bool {
 //
 // Computed here rather than recorded during lowering because the consumer runs
 // EARLIER in the same pass: emitVarReinitDropOld fires when the loop body's
-// `var xs = …` is lowered, while the construction that retains xs is lowered
+// `let xs = …` is lowered, while the construction that retains xs is lowered
 // after it. A lowering-time set is therefore always empty at the point of use —
 // measured, not assumed: the first version of this recorded at the four
 // construction sites and moved no measurement at all.

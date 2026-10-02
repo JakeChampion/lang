@@ -456,11 +456,11 @@ func TestChainedTupleNumericAccess(t *testing.T) {
 }
 
 // Regression-pin that a `.<digit>` AFTER a non-dot context still
-// upgrades to a float literal. Covers `var f = 1.5;` and the
+// upgrades to a float literal. Covers `let f = 1.5;` and the
 // post-paren `(1.5)` case so the afterDot suppression doesn't
 // over-fire.
 func TestFloatLiteralStillWorksAfterNonDot(t *testing.T) {
-	toks, _, err := Tokenize("var f = 1.5;")
+	toks, _, err := Tokenize("let f = 1.5;")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -108,7 +108,7 @@ func TestSelfHostExternBoolArrayParamCustomProvider(t *testing.T) {
 	prog := `@import("local:test/sink@0.1.0", "count-true")
 function count_true(b: boolean[]): i32;
 function main(): i32 {
-    var b: boolean[] = [true, false, true];
+    let b: boolean[] = [true, false, true];
     if (count_true(b) == 2) { write("` + want + `"); } else { write("bp-bad"); }
     return 0;
 }`

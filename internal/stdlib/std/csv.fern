@@ -31,7 +31,7 @@ pub function csv_escape(s: string): string {
 }
 
 pub function csv_join(arr: string[]): string {
-  var n: i32 = arr.len();
+  let n: i32 = arr.len();
   if (n == 0) {
     return "";
   }
@@ -40,8 +40,8 @@ pub function csv_join(arr: string[]): string {
   // is a pure O(len) transform, so a sizing pass that escapes once per field
   // (plus the `,` separators) stays O(total) overall, then a fill pass
   // re-escapes into one __alloc_u8 buffer. Byte-for-byte identical output.
-  var total: i32 = 0;
-  var i: i32 = 0;
+  let total: i32 = 0;
+  let i: i32 = 0;
   while (i < n) {
     if (i > 0) {  // ","
       total = total + 1;
@@ -49,17 +49,17 @@ pub function csv_join(arr: string[]): string {
     total = total + csv_escape(arr[i]).len();
     i = i + 1;
   }
-  var buf: u8[] = __alloc_u8(total);
-  var pos: i32 = 0;
+  let buf: u8[] = __alloc_u8(total);
+  let pos: i32 = 0;
   i = 0;
   while (i < n) {
     if (i > 0) {  // ','
       buf = buf.with(pos, 44 as u8);
       pos = pos + 1;
     }
-    var f: string = csv_escape(arr[i]);
-    var fl: i32 = f.len();
-    var j: i32 = 0;
+    let f: string = csv_escape(arr[i]);
+    let fl: i32 = f.len();
+    let j: i32 = 0;
     while (j < fl) {
       buf = buf.with(pos, f[j] as u8);
       pos = pos + 1;
@@ -81,18 +81,18 @@ pub function csv_join(arr: string[]): string {
 // common single-line case (CSV header / a single record)
 // this helper covers the surface.
 pub function csv_parse_line(s: string): string[] {
-  var out: string[] = [];
-  var n: i32 = s.len();
-  var i: i32 = 0;
+  let out: string[] = [];
+  let n: i32 = s.len();
+  let i: i32 = 0;
   // Build each field in a growable u8[] rather than `field = field + s[i:i+1]`
   // (#4379): the char-at-a-time concat recopied the whole growing field on
   // every byte -- O(field²). A local u8[] append grows in place (amortized
   // O(1)); string_from_bytes_unchecked materialises the field when it terminates. Byte
   // indexing keeps the UTF-8-agnostic behaviour of the old 1-byte slices.
-  var field: u8[] = [];
-  var in_quotes: boolean = false;
+  let field: u8[] = [];
+  let in_quotes: boolean = false;
   while (i < n) {
-    var c: i32 = s[i] as i32;
+    let c: i32 = s[i] as i32;
     if (in_quotes) {
       if (c == 34) {
         // Doubled quote → literal "
@@ -136,15 +136,15 @@ pub function csv_parse_line(s: string): string[] {
 // records. Quotes are only special at the start of a field, matching
 // `csv_parse_line`.
 pub function csv_parse(s: string): string[][] {
-  var rows: string[][] = [];
-  var record: string[] = [];
-  var field: u8[] = [];
-  var in_quotes: boolean = false;
-  var seen: boolean = false;  // consumed any content for the pending record
-  var n: i32 = s.len();
-  var i: i32 = 0;
+  let rows: string[][] = [];
+  let record: string[] = [];
+  let field: u8[] = [];
+  let in_quotes: boolean = false;
+  let seen: boolean = false;  // consumed any content for the pending record
+  let n: i32 = s.len();
+  let i: i32 = 0;
   while (i < n) {
-    var c: i32 = s[i] as i32;
+    let c: i32 = s[i] as i32;
     if (in_quotes) {
       if (c == 34) {
         if (i + 1 < n && s[i + 1] == 34) {
@@ -207,7 +207,7 @@ pub function csv_parse(s: string): string[][] {
 // (`\r\n`, the RFC 4180 record separator). `csv_parse(csv_serialize(rs))`
 // round-trips `rs`.
 pub function csv_serialize(rows: string[][]): string {
-  var lines: string[] = [];
+  let lines: string[] = [];
   for row in rows {
     lines = lines.append(csv_join(row));
   }

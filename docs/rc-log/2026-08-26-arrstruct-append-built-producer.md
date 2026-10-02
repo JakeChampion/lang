@@ -17,9 +17,9 @@ The sharing path was already correct. Stripping the struct literal out entirely
 left the leak standing:
 
 ```fern
-function mkv(i: i32): Inner[] { var o: Inner[] = []; o = o.append(Inner { xs: [i, i + 1], k: i }); return o; }
+function mkv(i: i32): Inner[] { let o: Inner[] = []; o = o.append(Inner { xs: [i, i + 1], k: i }); return o; }
 function round(i: i32): i32 {
-    var src: Inner[] = mkv(i);
+    let src: Inner[] = mkv(i);
     return src.len() + src[0].k;
 }
 ```
@@ -33,7 +33,7 @@ struct literal in it is incidental, and its `mkv` is the whole story.
 `fn_returns_fresh_arrstruct` proved a producer by requiring every return to be a
 fresh array LITERAL (`arrstruct_lit_is_fresh`, `bare_ok=false`). `mkv` returns an
 append-built local, so it registered nothing, so `collect_fresh_arrstruct_names`
-refused the consumer's `var src: Inner[] = mkv(i)`, so the slot took the shallow
+refused the consumer's `let src: Inner[] = mkv(i)`, so the slot took the shallow
 buffer dec and every element box and element array field stranded.
 
 The one-statement diff that isolated it — the same producer written to return the
@@ -92,7 +92,7 @@ rc-gated walk is the next slice. Half of that pairing is not half a fix: with on
 owner gated and the other walking statically, both sweeps free the buffers and it
 surfaces as exit 99, invisible in the census.
 
-The enum-array sibling leaks the same way (`var src: E[] = mkv(i)`, 4/2) and is a
+The enum-array sibling leaks the same way (`let src: E[] = mkv(i)`, 4/2) and is a
 larger slice: `ARRENUM` has neither an append-built local credit nor a producer
 registry, so it needs both halves the struct side already had.
 

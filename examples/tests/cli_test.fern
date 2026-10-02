@@ -13,7 +13,7 @@ import "std/option";
 // (--shout/-s, --verbose/-v). Two bools let the short-cluster
 // tests exercise bundling.
 function spec(): cli.CliSpec {
-  var s: cli.CliSpec = cli.cli_new("greet", "print a greeting");
+  let s: cli.CliSpec = cli.cli_new("greet", "print a greeting");
   s = s.option("name", "n", "who to greet");
   s = s.flag("shout", "s", "upper-case the greeting");
   s = s.flag("verbose", "v", "explain what is happening");
@@ -21,40 +21,40 @@ function spec(): cli.CliSpec {
 }
 
 function test_option_long(): test.TestOutcome {
-  var a: cli.CliArgs = spec().parse(["greet", "--name", "Ada"]);
+  let a: cli.CliArgs = spec().parse(["greet", "--name", "Ada"]);
   return test.assert_eq(a.value_or("name", "world"), "Ada");
 }
 
 function test_option_equals(): test.TestOutcome {
-  var a: cli.CliArgs = spec().parse(["greet", "--name=Bob"]);
+  let a: cli.CliArgs = spec().parse(["greet", "--name=Bob"]);
   return test.assert_eq(a.value_or("name", "world"), "Bob");
 }
 
 function test_option_short(): test.TestOutcome {
-  var a: cli.CliArgs = spec().parse(["greet", "-n", "Cy"]);
+  let a: cli.CliArgs = spec().parse(["greet", "-n", "Cy"]);
   return test.assert_eq(a.value_or("name", "world"), "Cy");
 }
 
 function test_bool_flag(): test.TestOutcome {
   // Both the long and the short spelling set the same canonical key.
-  var a: cli.CliArgs = spec().parse(["greet", "--shout"]);
-  var b: cli.CliArgs = spec().parse(["greet", "-s"]);
+  let a: cli.CliArgs = spec().parse(["greet", "--shout"]);
+  let b: cli.CliArgs = spec().parse(["greet", "-s"]);
   return test.assert_true(a.is_set("shout") && b.is_set("shout"));
 }
 
 function test_positionals(): test.TestOutcome {
-  var a: cli.CliArgs = spec().parse(["greet", "--name", "Ada", "one", "two"]);
+  let a: cli.CliArgs = spec().parse(["greet", "--name", "Ada", "one", "two"]);
   return test.assert_eq_array(a.operands(), ["one", "two"]);
 }
 
 function test_end_of_options(): test.TestOutcome {
   // After `--`, dash-prefixed tokens are operands, not flags.
-  var a: cli.CliArgs = spec().parse(["greet", "--", "--name", "-s"]);
+  let a: cli.CliArgs = spec().parse(["greet", "--", "--name", "-s"]);
   return test.assert_true(a.operands().len() == 2 && !a.is_set("name") && !a.is_set("shout"));
 }
 
 function test_value_or_default(): test.TestOutcome {
-  var a: cli.CliArgs = spec().parse(["greet"]);
+  let a: cli.CliArgs = spec().parse(["greet"]);
   return test.assert_true(a.value_or("name", "world") == "world" && !a.is_set("shout"));
 }
 
@@ -71,45 +71,45 @@ function test_value_on_bool_errors(): test.TestOutcome {
 }
 
 function test_usage_lists_flags(): test.TestOutcome {
-  var u: string = spec().usage();
+  let u: string = spec().usage();
   return test.assert_true(u.contains("--name") && u.contains("--shout") && u.contains("greet"));
 }
 
 // ---- short-flag clustering ----
 // -n5 : a valued short option with its value glued to the token.
 function test_short_glued_value(): test.TestOutcome {
-  var a: cli.CliArgs = spec().parse(["greet", "-n5"]);
+  let a: cli.CliArgs = spec().parse(["greet", "-n5"]);
   return test.assert_eq(a.value_or("name", "x"), "5");
 }
 
 // -vs : two boolean short flags bundled in one token.
 function test_short_bundled_bools(): test.TestOutcome {
-  var a: cli.CliArgs = spec().parse(["greet", "-vs"]);
+  let a: cli.CliArgs = spec().parse(["greet", "-vs"]);
   return test.assert_true(a.is_set("verbose") && a.is_set("shout"));
 }
 
 // -vn5 : a bundle ending in a valued option that swallows the tail.
 function test_short_bundle_ending_valued(): test.TestOutcome {
-  var a: cli.CliArgs = spec().parse(["greet", "-vn5"]);
+  let a: cli.CliArgs = spec().parse(["greet", "-vn5"]);
   return test.assert_true(a.is_set("verbose") && a.value_or("name", "x") == "5");
 }
 
 // -vn 5 : same, but the value is the next token (nothing glued).
 function test_short_bundle_next_token_value(): test.TestOutcome {
-  var a: cli.CliArgs = spec().parse(["greet", "-vn", "5"]);
+  let a: cli.CliArgs = spec().parse(["greet", "-vn", "5"]);
   return test.assert_true(a.is_set("verbose") && a.value_or("name", "x") == "5" && a.operands().len() == 0);
 }
 
 // A lone "-" is a positional (stdin convention), not a flag cluster.
 function test_short_lone_dash_is_positional(): test.TestOutcome {
-  var a: cli.CliArgs = spec().parse(["greet", "-"]);
+  let a: cli.CliArgs = spec().parse(["greet", "-"]);
   return test.assert_true(a.operands().len() == 1 && !a.is_error());
 }
 
 // -é : a multibyte character in a short cluster is an unknown flag, and
 // the error names the whole character rather than a split byte.
 function test_short_multibyte_unknown(): test.TestOutcome {
-  var a: cli.CliArgs = spec().parse(["greet", "-é"]);
+  let a: cli.CliArgs = spec().parse(["greet", "-é"]);
   if (!a.is_error()) {
     return test.fail("expected an unknown-option error");
   }
@@ -120,7 +120,7 @@ function test_short_multibyte_unknown(): test.TestOutcome {
 // A coloriser wraps text in an SGR sequence when colour is on, and
 // is a passthrough when NO_COLOR disables it.
 function test_color_red(): test.TestOutcome {
-  var red: string = cli.cli_red("x");
+  let red: string = cli.cli_red("x");
   if (cli.cli_color_enabled()) {
     // ESC (byte 27) ... "31m" ... "x"
     return test.assert_true(red[0] == 27 && red.contains("31m") && red.contains("x"));
@@ -129,7 +129,7 @@ function test_color_red(): test.TestOutcome {
 }
 
 function test_color_bold(): test.TestOutcome {
-  var b: string = cli.cli_bold("hi");
+  let b: string = cli.cli_bold("hi");
   if (cli.cli_color_enabled()) {
     return test.assert_true(b[0] == 27 && b.contains("1m") && b.contains("hi"));
   }
@@ -140,9 +140,9 @@ function test_color_bold(): test.TestOutcome {
 // A tool with one parent flag and a `deploy` command carrying its own
 // valued option; `--env` exists only under `deploy`.
 function spec_cmds(): cli.CliSpec {
-  var deploy: cli.CliSpec = cli.cli_new("deploy", "push the build");
+  let deploy: cli.CliSpec = cli.cli_new("deploy", "push the build");
   deploy = deploy.option("env", "e", "target environment");
-  var s: cli.CliSpec = cli.cli_new("tool", "ship things");
+  let s: cli.CliSpec = cli.cli_new("tool", "ship things");
   s = s.flag("verbose", "v", "explain what is happening");
   s = s.option("name", "n", "who to ship as");
   return s.command(deploy);
@@ -151,7 +151,7 @@ function spec_cmds(): cli.CliSpec {
 // Parent flags before the command, the command's own after it, and
 // the operands that follow all land in one result.
 function test_subcommand_parses(): test.TestOutcome {
-  var a: cli.CliArgs = spec_cmds().parse(["tool", "-v", "deploy", "--env", "prod", "x"]);
+  let a: cli.CliArgs = spec_cmds().parse(["tool", "-v", "deploy", "--env", "prod", "x"]);
   if (a.is_error()) {
     return test.fail(a.error_text());
   }
@@ -160,7 +160,7 @@ function test_subcommand_parses(): test.TestOutcome {
 
 // The first operand of a spec with commands must name one.
 function test_unknown_command_errors(): test.TestOutcome {
-  var a: cli.CliArgs = spec_cmds().parse(["tool", "launch"]);
+  let a: cli.CliArgs = spec_cmds().parse(["tool", "launch"]);
   if (!a.is_error()) {
     return test.fail("expected an unknown-command error");
   }
@@ -170,14 +170,14 @@ function test_unknown_command_errors(): test.TestOutcome {
 // No command named: not an error, the caller decides (usually by
 // printing usage).
 function test_no_subcommand_is_none(): test.TestOutcome {
-  var a: cli.CliArgs = spec_cmds().parse(["tool", "-v"]);
+  let a: cli.CliArgs = spec_cmds().parse(["tool", "-v"]);
   return test.assert_true(!a.is_error() && a.subcommand().is_none() && a.is_set("verbose"));
 }
 
 // A command's flags are its own: the parent's `--name` is unknown
 // after `deploy`, and the error names it.
 function test_subcommand_scopes_flags(): test.TestOutcome {
-  var a: cli.CliArgs = spec_cmds().parse(["tool", "deploy", "--name", "x"]);
+  let a: cli.CliArgs = spec_cmds().parse(["tool", "deploy", "--name", "x"]);
   if (!a.is_error()) {
     return test.fail("expected an unknown-option error");
   }
@@ -185,7 +185,7 @@ function test_subcommand_scopes_flags(): test.TestOutcome {
 }
 
 function test_usage_lists_commands(): test.TestOutcome {
-  var u: string = spec_cmds().usage();
+  let u: string = spec_cmds().usage();
   return test.assert_true(u.contains("<command>") && u.contains("Commands:") && u.contains("deploy") && u.contains("push the build"));
 }
 
@@ -232,7 +232,7 @@ function test_completion_unknown_shell(): test.TestOutcome {
 // A quote in help text is closed and reopened, so the script it lands
 // in still parses.
 function test_completion_quotes_help(): test.TestOutcome {
-  var s: cli.CliSpec = cli.cli_new("q", "quoting");
+  let s: cli.CliSpec = cli.cli_new("q", "quoting");
   s = s.flag("it", "", "don't break");
   match (s.completion("fish")) {
     Some(c) => {
@@ -250,7 +250,7 @@ function test_completion_quotes_help(): test.TestOutcome {
 // a .TP entry whose tag is the bold dash spelling; a valued option adds
 // an italic <value>, a boolean flag does not.
 function test_manpage_sections(): test.TestOutcome {
-  var m: string = spec().manpage("1");
+  let m: string = spec().manpage("1");
   return test.assert_true(m.contains(".TH \"greet\" \"1\"")
     && m.contains(".SH NAME\ngreet \\- print a greeting")
     && m.contains(".SH SYNOPSIS\n\\fBgreet\\fR [options] [args]")
@@ -259,7 +259,7 @@ function test_manpage_sections(): test.TestOutcome {
 }
 
 function test_manpage_flags(): test.TestOutcome {
-  var m: string = spec().manpage("1");
+  let m: string = spec().manpage("1");
   // Valued option: dash spelling in bold, then an italic <value>.
   return test.assert_true(m.contains(".TP\n\\fB\\-n\\fR, \\fB\\-\\-name\\fR \\fI<value>\\fR\nwho to greet")
     // Boolean flag: no <value>.
@@ -269,7 +269,7 @@ function test_manpage_flags(): test.TestOutcome {
 
 // A spec with commands gets an admin section and a COMMANDS section.
 function test_manpage_commands(): test.TestOutcome {
-  var m: string = spec_cmds().manpage("8");
+  let m: string = spec_cmds().manpage("8");
   return test.assert_true(m.contains(".TH \"tool\" \"8\"")
     && m.contains("\\fBtool\\fR [options] <command> [args]")
     && m.contains(".SH COMMANDS\n.TP\n\\fBdeploy\\fR\npush the build"));
@@ -280,9 +280,9 @@ function test_manpage_commands(): test.TestOutcome {
 // shape (`return s.replace(...)`) that returns its argument unchanged
 // when there is no backslash — the #8409 fast path.
 function test_manpage_roff_escapes_backslash(): test.TestOutcome {
-  var s: cli.CliSpec = cli.cli_new("bs", "escaping");
+  let s: cli.CliSpec = cli.cli_new("bs", "escaping");
   s = s.flag("win", "", "a \\ separator");
-  var m: string = s.manpage("1");
+  let m: string = s.manpage("1");
   return test.assert_true(m.contains("a \\\\ separator") && !m.contains("a \\ separator"));
 }
 
@@ -290,16 +290,16 @@ function test_manpage_roff_escapes_backslash(): test.TestOutcome {
 // CONTROL line at column 0 and be swallowed as a request; __cli_roff
 // prefixes the zero-width `\&` so it renders as literal text instead.
 function test_manpage_roff_escapes_leading_dot(): test.TestOutcome {
-  var s: cli.CliSpec = cli.cli_new("dot", ".config tool");
+  let s: cli.CliSpec = cli.cli_new("dot", ".config tool");
   s = s.flag("run", "", "./build first");
-  var m: string = s.manpage("1");
+  let m: string = s.manpage("1");
   return test.assert_true(m.contains(".SH DESCRIPTION\n\\&.config tool")
     && m.contains("\\&./build first")
     && !m.contains("\n./build first"));
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("std/cli");
+  let r: test.TestRunner = test.test_new("std/cli");
   r = r.it("option --long V", test_option_long);
   r = r.it("option --long=V", test_option_equals);
   r = r.it("option -short V", test_option_short);

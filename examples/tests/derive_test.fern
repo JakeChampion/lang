@@ -23,8 +23,8 @@ struct Outer { a: Inner, tag: string }
 enum Shape { Circle(i32), Square(i32), Empty }
 
 function test_eq_reflexive(): test.TestOutcome {
-  var a: Point = Point { x: 3, y: 7 };
-  var b: Point = Point { x: 3, y: 7 };
+  let a: Point = Point { x: 3, y: 7 };
+  let b: Point = Point { x: 3, y: 7 };
   if (a.eq(b)) {
     return test.pass();
   }
@@ -32,8 +32,8 @@ function test_eq_reflexive(): test.TestOutcome {
 }
 
 function test_eq_distinguishes(): test.TestOutcome {
-  var a: Point = Point { x: 3, y: 7 };
-  var c: Point = Point { x: 3, y: 9 };
+  let a: Point = Point { x: 3, y: 7 };
+  let c: Point = Point { x: 3, y: 9 };
   if (!a.eq(c)) {
     return test.pass();
   }
@@ -41,18 +41,18 @@ function test_eq_distinguishes(): test.TestOutcome {
 }
 
 function test_display(): test.TestOutcome {
-  var a: Point = Point { x: 3, y: 7 };
+  let a: Point = Point { x: 3, y: 7 };
   return test.assert_eq(a.to_string(), "Point { x: 3, y: 7 }");
 }
 
 function test_display_nested(): test.TestOutcome {
-  var p: Outer = Outer { a: Inner { n: 5 }, tag: "hi" };
+  let p: Outer = Outer { a: Inner { n: 5 }, tag: "hi" };
   return test.assert_eq(p.to_string(), "Outer { a: Inner { n: 5 }, tag: hi }");
 }
 
 function test_eq_nested(): test.TestOutcome {
-  var p: Outer = Outer { a: Inner { n: 5 }, tag: "hi" };
-  var q: Outer = Outer { a: Inner { n: 5 }, tag: "hi" };
+  let p: Outer = Outer { a: Inner { n: 5 }, tag: "hi" };
+  let q: Outer = Outer { a: Inner { n: 5 }, tag: "hi" };
   if (p.eq(q)) {
     return test.pass();
   }
@@ -71,36 +71,36 @@ function sign(n: i32): string {
 
 function test_ord_first_field(): test.TestOutcome {
   // First field decides when it differs.
-  var a: Point = Point { x: 1, y: 9 };
-  var b: Point = Point { x: 2, y: 0 };
+  let a: Point = Point { x: 1, y: 9 };
+  let b: Point = Point { x: 2, y: 0 };
   return test.assert_eq(sign(a.cmp(b)), "lt");
 }
 
 function test_ord_second_field(): test.TestOutcome {
   // Equal first field falls through to the second.
-  var a: Point = Point { x: 3, y: 7 };
-  var c: Point = Point { x: 3, y: 9 };
+  let a: Point = Point { x: 3, y: 7 };
+  let c: Point = Point { x: 3, y: 9 };
   return test.assert_eq(sign(a.cmp(c)), "lt");
 }
 
 function test_ord_equal(): test.TestOutcome {
-  var a: Point = Point { x: 3, y: 7 };
-  var b: Point = Point { x: 3, y: 7 };
+  let a: Point = Point { x: 3, y: 7 };
+  let b: Point = Point { x: 3, y: 7 };
   return test.assert_eq(sign(a.cmp(b)), "eq");
 }
 
 function test_enum_display_payload(): test.TestOutcome {
-  var c: Shape = Circle(5);
+  let c: Shape = Circle(5);
   return test.assert_eq(c.to_string(), "Circle(5)");
 }
 
 function test_enum_display_unit(): test.TestOutcome {
-  var e: Shape = Empty;
+  let e: Shape = Empty;
   return test.assert_eq(e.to_string(), "Empty");
 }
 
 function test_enum_eq_same_variant(): test.TestOutcome {
-  var a: Shape = Circle(5);
+  let a: Shape = Circle(5);
   if (a.eq(Circle(5))) {
     return test.pass();
   }
@@ -108,8 +108,8 @@ function test_enum_eq_same_variant(): test.TestOutcome {
 }
 
 function test_enum_eq_diff_variant(): test.TestOutcome {
-  var a: Shape = Circle(5);
-  var b: Shape = Square(5);
+  let a: Shape = Circle(5);
+  let b: Shape = Square(5);
   if (!a.eq(b)) {
     return test.pass();
   }
@@ -117,8 +117,8 @@ function test_enum_eq_diff_variant(): test.TestOutcome {
 }
 
 function test_enum_eq_diff_payload(): test.TestOutcome {
-  var a: Shape = Circle(5);
-  var c: Shape = Circle(6);
+  let a: Shape = Circle(5);
+  let c: Shape = Circle(6);
   if (!a.eq(c)) {
     return test.pass();
   }
@@ -132,7 +132,7 @@ function test_enum_ord_within_variant(): test.TestOutcome {
 
 function test_enum_ord_across_variants(): test.TestOutcome {
   // Earlier-declared variant sorts first, regardless of payload.
-  var lt: test.TestOutcome = test.assert_eq(sign(Circle(9).cmp(Square(0))), "lt");
+  let lt: test.TestOutcome = test.assert_eq(sign(Circle(9).cmp(Square(0))), "lt");
   match (lt) {
     Fail(_) => {
       return lt;
@@ -150,8 +150,8 @@ function test_enum_ord_across_variants(): test.TestOutcome {
 
 function test_hash_law(): test.TestOutcome {
   // Eq ⇒ equal hashes: equal-valued points must hash the same.
-  var a: Point = Point { x: 3, y: 7 };
-  var b: Point = Point { x: 3, y: 7 };
+  let a: Point = Point { x: 3, y: 7 };
+  let b: Point = Point { x: 3, y: 7 };
   if (a.hash() == b.hash()) {
     return test.pass();
   }
@@ -167,7 +167,7 @@ function test_enum_hash_law(): test.TestOutcome {
 }
 
 function test_json_struct(): test.TestOutcome {
-  var p: Point = Point { x: 3, y: 7 };
+  let p: Point = Point { x: 3, y: 7 };
   return test.assert_eq(p.to_json(), "{\"x\":3,\"y\":7}");
 }
 
@@ -186,21 +186,21 @@ function test_json_enum_unit(): test.TestOutcome {
 // comma separators + the per-element derived struct to_json in one byte-exact
 // check, plus a scalar array to cover the primitive-impl element path.
 function test_json_array_struct(): test.TestOutcome {
-  var pts: Point[] = [Point { x: 1, y: 2 }, Point { x: 3, y: 4 }];
+  let pts: Point[] = [Point { x: 1, y: 2 }, Point { x: 3, y: 4 }];
   return test.assert_eq(pts.to_json(), "[{\"x\":1,\"y\":2},{\"x\":3,\"y\":4}]");
 }
 
 function test_json_array_scalar(): test.TestOutcome {
-  var ns: i32[] = [10, 20, 30];
+  let ns: i32[] = [10, 20, 30];
   if (ns.to_json() != "[10,20,30]") {
     return test.fail("i32 array: " + ns.to_json());
   }
-  var empty: i32[] = [];
+  let empty: i32[] = [];
   return test.assert_eq(empty.to_json(), "[]");
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("derive");
+  let r: test.TestRunner = test.test_new("derive");
   r = r.it("eq reflexive", test_eq_reflexive);
   r = r.it("eq distinguishes", test_eq_distinguishes);
   r = r.it("display", test_display);

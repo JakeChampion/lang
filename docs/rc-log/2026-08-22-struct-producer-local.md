@@ -3,8 +3,8 @@
 #7343, and the first thing built on a fully site-keyed credit table.
 
 ```fern
-function mk(): P { var p: P = P { xs: [1,2,3], s: w("p") }; return p; }
-function round(): i32 { var v: P = mk(); return v.xs.len(); }
+function mk(): P { let p: P = P { xs: [1,2,3], s: w("p") }; return p; }
+function round(): i32 { let v: P = mk(); return v.xs.len(); }
 ```
 
 | rounds | 200 | 400 | 800 |
@@ -26,7 +26,7 @@ statement index. That is a signature change rather than a two-line edit."
 
 That is the LOOSE registry, and its own doc says it is *"consumed only by
 `snapshot_local_names_of"`* — the reassigned-builder path, not the caller's
-binding. What actually gates `var v: P = mk()` is `collect_fresh_ret_call_names`
+binding. What actually gates `let v: P = mk()` is `collect_fresh_ret_call_names`
 reading `return_fresh_struct_ret_fns`, built through `fresh_struct_fwd_fixpoint`
 → **`return_value_is_strictfresh_struct`** — which already receives `fnbody`,
 `fnparams`, `arr_fresh`, `fwd` and `sfok`. Everything the proof wants was in
@@ -65,7 +65,7 @@ two entry points rather than a near-copy.
 
 ## One row moved that I did not intend, and it stays moved
 
-`var stolen: i32[] = p.xs;` before `return p` went from `200/0` (8000) to
+`let stolen: i32[] = p.xs;` before `return p` went from `200/0` (8000) to
 `200/200` (0). A field read takes a second reference to the buffer the caller's
 deep drop will free — but `stolen` is a local of the producer's own frame and
 dies at its exit, so the drop is balanced: underflow 0, both oracles agreeing.

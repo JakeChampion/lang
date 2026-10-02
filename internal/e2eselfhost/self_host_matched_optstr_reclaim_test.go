@@ -57,7 +57,7 @@ type matchedOptstrCase struct {
 	want int
 }
 
-const matchedOptstrMain = "\nfunction main(): i32 { var t: i32 = 0; var i: i32 = 0; " +
+const matchedOptstrMain = "\nfunction main(): i32 { let t: i32 = 0; let i: i32 = 0; " +
 	"while (i < 200) { t = t + round(i); i = i + 1; } " +
 	"if (__rc_underflow_count() != 0) { return 99; } return t % 83; }"
 
@@ -69,7 +69,7 @@ func matchedOptstrCases() []matchedOptstrCase {
 			// THE REPRO: matched, payload read. Was 600/0 live 14400.
 			name: "matched_payload_read",
 			src: matchedOptstrW + `function round(i: i32): i32 {
-    var o: Option[string] = Some(w("ab"));
+    let o: Option[string] = Some(w("ab"));
     match (o) { Some(v) => { return v.len(); }, None => { return 2; } }
     return 0;
 }` + matchedOptstrMain,
@@ -80,7 +80,7 @@ func matchedOptstrCases() []matchedOptstrCase {
 			// what showed this is the LOCAL's reclaim and not the binding's.
 			name: "matched_binding_unused",
 			src: matchedOptstrW + `function round(i: i32): i32 {
-    var o: Option[string] = Some(w("ab"));
+    let o: Option[string] = Some(w("ab"));
     match (o) { Some(v) => { return 5; }, None => { return 2; } }
     return 0;
 }` + matchedOptstrMain,
@@ -91,7 +91,7 @@ func matchedOptstrCases() []matchedOptstrCase {
 			// the releaser.
 			name: "matched_wildcard",
 			src: matchedOptstrW + `function round(i: i32): i32 {
-    var o: Option[string] = Some(w("ab"));
+    let o: Option[string] = Some(w("ab"));
     match (o) { Some(_) => { return 5; }, None => { return 2; } }
     return 0;
 }` + matchedOptstrMain,
@@ -103,7 +103,7 @@ func matchedOptstrCases() []matchedOptstrCase {
 			// would be an over-release, caught by the 99 guard.
 			name: "unmatched_control",
 			src: matchedOptstrW + `function round(i: i32): i32 {
-    var o: Option[string] = Some(w("ab"));
+    let o: Option[string] = Some(w("ab"));
     return i % 7;
 }` + matchedOptstrMain,
 			want: 13,
@@ -113,7 +113,7 @@ func matchedOptstrCases() []matchedOptstrCase {
 			// reason this was diagnosable at all.
 			name: "arr_matched_control",
 			src: `function round(i: i32): i32 {
-    var o: Option[i32[]] = Some([i, i + 1]);
+    let o: Option[i32[]] = Some([i, i + 1]);
     match (o) { Some(a) => { return a[0]; }, None => { return 2; } }
     return 0;
 }` + matchedOptstrMain,
@@ -124,7 +124,7 @@ func matchedOptstrCases() []matchedOptstrCase {
 			// collector this one is modelled on.
 			name: "arrarr_matched_control",
 			src: `function round(i: i32): i32 {
-    var o: Option[i32[][]] = Some([[i, i + 1], [i + 2]]);
+    let o: Option[i32[][]] = Some([[i, i + 1], [i + 2]]);
     match (o) { Some(_) => { return 5; }, None => { return 2; } }
     return 0;
 }` + matchedOptstrMain,
@@ -140,7 +140,7 @@ func matchedOptstrCases() []matchedOptstrCase {
 			// whose rebinds are all fresh.
 			name: "reassigned_all_rebinds_fresh",
 			src: matchedOptstrW + `function round(i: i32): i32 {
-    var o: Option[string] = Some(w("ab"));
+    let o: Option[string] = Some(w("ab"));
     if (i % 2 == 0) { o = Some(w("cd")); }
     match (o) { Some(v) => { return v.len(); }, None => { return 2; } }
     return 0;
@@ -153,7 +153,7 @@ func matchedOptstrCases() []matchedOptstrCase {
 			// stay working.
 			name: "reassigned_array_control",
 			src: `function round(i: i32): i32 {
-    var o: Option[i32[]] = Some([i, i + 1]);
+    let o: Option[i32[]] = Some([i, i + 1]);
     if (i % 2 == 0) { o = Some([i + 2, i + 3]); }
     match (o) { Some(a) => { return a[0]; }, None => { return 2; } }
     return 0;
@@ -166,12 +166,12 @@ func matchedOptstrCases() []matchedOptstrCase {
 			// which would release a live reference at the NEXT rebind.
 			name: "refuses_rebind_aliasing_param",
 			src: matchedOptstrW + `function run(p: string, i: i32): i32 {
-    var o: Option[string] = Some(w("ab"));
+    let o: Option[string] = Some(w("ab"));
     if (i % 2 == 0) { o = Some(p); }
     match (o) { Some(v) => { return v.len(); }, None => { return 2; } }
     return 0;
 }
-function round(i: i32): i32 { var s: string = w("zz"); return run(s, i); }` + matchedOptstrMain,
+function round(i: i32): i32 { let s: string = w("zz"); return run(s, i); }` + matchedOptstrMain,
 			want: 19,
 		},
 		{
@@ -179,8 +179,8 @@ function round(i: i32): i32 { var s: string = w("zz"); return run(s, i); }` + ma
 			// still apply once reassignment is admitted.
 			name: "refuses_reassigned_escaping",
 			src: matchedOptstrW + `function round(i: i32): i32 {
-    var held: string = "";
-    var o: Option[string] = Some(w("ab"));
+    let held: string = "";
+    let o: Option[string] = Some(w("ab"));
     if (i % 2 == 0) { o = Some(w("cd")); }
     match (o) { Some(v) => { held = v; }, None => {} }
     return held.len();
@@ -192,19 +192,19 @@ function round(i: i32): i32 { var s: string = w("zz"); return run(s, i); }` + ma
 			// Releasing it here is a use-after-free, not a double count.
 			name: "refuses_returned_payload",
 			src: matchedOptstrW + `function mk(i: i32): string {
-    var o: Option[string] = Some(w("ab"));
+    let o: Option[string] = Some(w("ab"));
     match (o) { Some(v) => { return v; }, None => { return "z"; } }
     return "y";
 }
-function round(i: i32): i32 { var s: string = mk(i); return s.len(); }` + matchedOptstrMain,
+function round(i: i32): i32 { let s: string = mk(i); return s.len(); }` + matchedOptstrMain,
 			want: 19,
 		},
 		{
 			// The payload is stored into a local that outlives the match.
 			name: "refuses_stored_outer",
 			src: matchedOptstrW + `function round(i: i32): i32 {
-    var held: string = "";
-    var o: Option[string] = Some(w("ab"));
+    let held: string = "";
+    let o: Option[string] = Some(w("ab"));
     match (o) { Some(v) => { held = v; }, None => {} }
     return held.len();
 }` + matchedOptstrMain,
@@ -215,7 +215,7 @@ function round(i: i32): i32 { var s: string = mk(i); return s.len(); }` + matche
 			name: "refuses_passed_to_callee",
 			src: matchedOptstrW + `function take(s: string): i32 { return s.len(); }
 function round(i: i32): i32 {
-    var o: Option[string] = Some(w("ab"));
+    let o: Option[string] = Some(w("ab"));
     match (o) { Some(v) => { return take(v); }, None => { return 2; } }
     return 0;
 }` + matchedOptstrMain,
@@ -225,8 +225,8 @@ function round(i: i32): i32 {
 			// The payload goes into a container.
 			name: "refuses_into_container",
 			src: matchedOptstrW + `function round(i: i32): i32 {
-    var keep: string[] = [];
-    var o: Option[string] = Some(w("ab"));
+    let keep: string[] = [];
+    let o: Option[string] = Some(w("ab"));
     match (o) { Some(v) => { keep = keep.append(v); }, None => {} }
     return keep.len();
 }` + matchedOptstrMain,
@@ -236,8 +236,8 @@ function round(i: i32): i32 {
 			// `v + "z"` BORROWS the payload.
 			name: "refuses_concat_conservative",
 			src: matchedOptstrW + `function round(i: i32): i32 {
-    var o: Option[string] = Some(w("ab"));
-    match (o) { Some(v) => { var t: string = v + "z"; return t.len(); }, None => { return 2; } }
+    let o: Option[string] = Some(w("ab"));
+    match (o) { Some(v) => { let t: string = v + "z"; return t.len(); }, None => { return 2; } }
     return 0;
 }` + matchedOptstrMain,
 			want: 53,
@@ -249,11 +249,11 @@ function round(i: i32): i32 {
 			// released under a live reference.
 			name: "refuses_aliased_param_payload",
 			src: matchedOptstrW + `function wrap(p: string, i: i32): i32 {
-    var o: Option[string] = Some(p);
+    let o: Option[string] = Some(p);
     match (o) { Some(v) => { return v.len(); }, None => { return 2; } }
     return 0;
 }
-function round(i: i32): i32 { var s: string = w("ab"); return wrap(s, i); }` + matchedOptstrMain,
+function round(i: i32): i32 { let s: string = w("ab"); return wrap(s, i); }` + matchedOptstrMain,
 			want: 19,
 		},
 	}

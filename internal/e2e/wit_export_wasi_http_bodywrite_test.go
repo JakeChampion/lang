@@ -44,12 +44,12 @@ function set_response_ok(out: own ResponseOutparam, resp: own OutgoingResponse):
 
 @export("wasi:http/incoming-handler@0.2.0", "handle")
 function on_request(request: own IncomingRequest, response_out: own ResponseOutparam): void {
-	var resp: own OutgoingResponse = response_new(fields_new());
+	let resp: own OutgoingResponse = response_new(fields_new());
 	match (response_body(resp)) {
 		Ok(body) => {
 			match (body_write(body)) {
 				Ok(stream) => {
-					var bytes: u8[] = [104 as u8, 105 as u8];
+					let bytes: u8[] = [104 as u8, 105 as u8];
 					match (stream_write(stream, bytes)) {
 						Ok(w) => {},
 						Err(e) => {},

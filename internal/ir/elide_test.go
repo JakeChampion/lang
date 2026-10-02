@@ -49,7 +49,7 @@ func TestElideDirectZeroCapture(t *testing.T) {
 	}
 }
 
-// Chain support: `var f = answer; f()` has an intermediate
+// Chain support: `let f = answer; f()` has an intermediate
 // OpStoreLocal whose writer is OpLoadLocal (not OpMakeClosure).
 // The fixed-point eligibility analysis must accept this shape
 // and rewrite the upstream OpMakeClosure to OpMakeEnv so the
@@ -57,7 +57,7 @@ func TestElideDirectZeroCapture(t *testing.T) {
 func TestElideChainedZeroCapture(t *testing.T) {
 	p := loweredAndDefuncdAndElided(t, `function main(): i32 {
 		function answer(): i32 { return 42; }
-		var f = answer;
+		let f = answer;
 		return f();
 	}`)
 	main := findFunc(p, "main")
@@ -72,16 +72,16 @@ func TestElideChainedZeroCapture(t *testing.T) {
 	}
 }
 
-// Multi-hop chain: `var a = answer; var b = a; var c = b; c()`
+// Multi-hop chain: `let a = answer; let b = a; let c = b; c()`
 // requires the fixed-point analysis to propagate eligibility
 // across three alias edges. A single-pass analysis would stop
 // at the first hop and leave the OpMakeClosure unrewritten.
 func TestElideMultiHopChain(t *testing.T) {
 	p := loweredAndDefuncdAndElided(t, `function main(): i32 {
 		function answer(): i32 { return 17; }
-		var a = answer;
-		var b = a;
-		var c = b;
+		let a = answer;
+		let b = a;
+		let c = b;
 		return c();
 	}`)
 	main := findFunc(p, "main")
@@ -100,9 +100,9 @@ func TestElideMultiHopChain(t *testing.T) {
 // fires for this case too.
 func TestElideChainedWithCapture(t *testing.T) {
 	p := loweredAndDefuncdAndElided(t, `function main(): i32 {
-		var n: i32 = 10;
+		let n: i32 = 10;
 		function add(x: i32): i32 { return x + n; }
-		var f = add;
+		let f = add;
 		return f(7);
 	}`)
 	main := findFunc(p, "main")
@@ -164,7 +164,7 @@ func TestElideRoutesErasedGenericResultDropThroughPair(t *testing.T) {
 	function id[T](x: T): T { return x; }
 	@noinline
 	function capturing(p: i32): i32 {
-		var v: (i32) => i32 = id(((a: i32) => (a + p)));
+		let v: (i32) => i32 = id(((a: i32) => (a + p)));
 		return v(1);
 	}
 	function main(): i32 { return capturing(6) - 7; }`)
@@ -205,8 +205,8 @@ func TestElideRoutesNonElidedScalarCaptureDropThroughPair(t *testing.T) {
 	p := loweredAndDefuncdAndElided(t, `@noinline
 	function apply(f: (i32) => i32, v: i32): i32 { return f(v); }
 	function main(): i32 {
-		var sink: i32 = 0;
-		var add = (x: i32) => sink + x;
+		let sink: i32 = 0;
+		let add = (x: i32) => sink + x;
 		return apply(add, 4) - 4;
 	}`)
 	main := findFunc(p, "main")

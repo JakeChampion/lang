@@ -16,7 +16,7 @@ import (
 //
 // It is the regression guard for the `close_needs` use-after-free that the
 // arm64 per-module self-build first surfaced: `EmitState.close_needs` snapshot
-// `var snap: string[] = cur.needed` aliased the needed buffer into a local
+// `let snap: string[] = cur.needed` aliased the needed buffer into a local
 // without an alias-inc, so the function-exit dec-sweep freed a box `cur.needed`
 // still referenced. The freed empty-needs box was reused for a `.rodata`
 // string, so `has_need` later read those bytes as the array length and walked

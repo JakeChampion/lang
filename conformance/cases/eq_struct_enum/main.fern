@@ -7,10 +7,10 @@ impl Eq for i32 { function eq(self: Self, other: Self): boolean { return self ==
 @derive(Eq) enum Shape { Dot, Line(i32), Box(i32, i32) }
 
 function main(): i32 {
-    var a: Point = Point { x: 3, y: 4 };
-    var b: Point = Point { x: 3, y: 4 };   // distinct heap object, equal value
-    var c: Point = Point { x: 3, y: 9 };
-    var r: i32 = 0;
+    let a: Point = Point { x: 3, y: 4 };
+    let b: Point = Point { x: 3, y: 4 };   // distinct heap object, equal value
+    let c: Point = Point { x: 3, y: 9 };
+    let r: i32 = 0;
     if (a == b) { r = r + 1; }              // structural: equal
     if (a != c) { r = r + 2; }              // structural: differ
     if (Dot == Dot) { r = r + 4; }

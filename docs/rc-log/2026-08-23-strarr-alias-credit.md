@@ -32,7 +32,7 @@ internally, so two "SARR:" credits cannot.
 - `strarr_alias_bind_sites_of` — `alias_bind_sites_of` with one substitution:
   the alias vets through the **strarr gate**, not `body_unsafe_for`, because
   a string[]'s release walks the elements — an element escaping from the
-  alias (`var e = x[0]`) is invisible to the plain walker and would dangle
+  alias (`let e = x[0]`) is invisible to the plain walker and would dangle
   under the deep free.
 - The "SARR:" arm grants `credit_alias_sites(out, "SARR:", sal)` when the
   source passes with the forgiveness.

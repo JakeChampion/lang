@@ -175,7 +175,7 @@ function produced_body(p: semsource.Produced, plan: ssaunits.Plan, structs: irta
   if (!plan.ok) {
     return declined(plan.why);
   }
-  var r: irtables.LowerResult = ssarc.lower(p.func, p.modes, plan, structs, grows, pure);
+  let r: irtables.LowerResult = ssarc.lower(p.func, p.modes, plan, structs, grows, pure);
   if (!r.ok) {
     return declined(r.why);
   }
@@ -184,7 +184,7 @@ function produced_body(p: semsource.Produced, plan: ssaunits.Plan, structs: irta
 
 // report_rows names every refused row on stderr (`report`).
 function report_rows(r: Rows, prefix: string): i32 {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < r.why.len()) {
     if (r.why[i].len() > 0) {
       report(prefix + r.n1[i], r.why[i]);
@@ -205,7 +205,7 @@ function produced_at(built: semsource.Built, mod: parser.Module, i: i32): semsou
 // No rows to take back: what the FIRST lowering of a module is handed, and
 // what makes `rows_of` compute every plan and every body.
 function no_reuse(): Rows {
-  var no_names: string[] = [];
+  let no_names: string[] = [];
   return Rows { body: [], n1: [], n2: [], keep: [], grows: ssaunits.no_grows(), pure: util.name_index(no_names), plans: [], why: [] };
 }
 
@@ -234,27 +234,27 @@ function row_reusable(prev: Rows, changed: boolean[], i: i32): boolean {
 function rows_of(mod: parser.Module, built: semsource.Built, structs: irtables.StructTab, prev: Rows, changed: boolean[]): Rows {
   // `FERN_SEM_REUSE=` (set but empty) turns the reuse off; an empty `prev`
   // is how a lowering reuses nothing.
-  var base: Rows = prev;
+  let base: Rows = prev;
   if (!sem_reuse_on()) {
     base = no_reuse();
   }
-  var r: Rows = no_reuse();
-  var plans: ssaunits.Plan[] = [];
-  var keys: string[] = [];
-  var funcs: ssasem.Func[] = [];
-  var i: i32 = 0;
+  let r: Rows = no_reuse();
+  let plans: ssaunits.Plan[] = [];
+  let keys: string[] = [];
+  let funcs: ssasem.Func[] = [];
+  let i: i32 = 0;
   while (i < mod.funcs.len()) {
-    var fd: parser.FuncDecl = mod.funcs[i];
+    let fd: parser.FuncDecl = mod.funcs[i];
     plans = plans.append(base_plan(base, changed, i, built.decls[i]));
     keys = keys.append(semsource.decl_key(fd));
     funcs = funcs.append(built.decls[i].func);
     r = Rows { ...r, n1: r.n1.append(fd.name), n2: r.n2.append(semsource.decl_key(fd)) };
     i = i + 1;
   }
-  var at: i32 = mod.funcs.len();
+  let at: i32 = mod.funcs.len();
   for p in built.instances {
     // A refused instance has no graph to name it; its symbol is the one requested.
-    var name: string = built.names[at];
+    let name: string = built.names[at];
     plans = plans.append(base_plan(base, changed, at, p));
     keys = keys.append(name);
     funcs = funcs.append(p.func);
@@ -264,7 +264,7 @@ function rows_of(mod: parser.Module, built: semsource.Built, structs: irtables.S
   r = Rows { ...r, grows: ssaunits.grow_table(keys, funcs, plans), pure: pure_rows(keys, funcs), plans: plans };
   i = 0;
   while (i < plans.len()) {
-    var body: irtables.LowerResult = reused_or_lowered(built, mod, structs, r, base, changed, i);
+    let body: irtables.LowerResult = reused_or_lowered(built, mod, structs, r, base, changed, i);
     r = Rows { ...r, body: r.body.append(body), keep: r.keep.append(body.ok), why: r.why.append(refusal(produced_at(built, mod, i), body)) };
     i = i + 1;
   }
@@ -283,7 +283,7 @@ function base_plan(prev: Rows, changed: boolean[], i: i32, p: semsource.Produced
 // Row `i`'s body: `prev`'s where the inference moved neither the row nor the
 // grow mask of any callee it names, freshly lowered otherwise.
 function reused_or_lowered(built: semsource.Built, mod: parser.Module, structs: irtables.StructTab, r: Rows, prev: Rows, changed: boolean[], i: i32): irtables.LowerResult {
-  var p: semsource.Produced = produced_at(built, mod, i);
+  let p: semsource.Produced = produced_at(built, mod, i);
   if (row_reusable(prev, changed, i)
     && ssaunits.grow_rows_agree(prev.grows, r.grows, ssasem.called_names(p.func))) {
     return prev.body[i];
@@ -298,23 +298,23 @@ function reused_or_lowered(built: semsource.Built, mod: parser.Module, structs: 
 // map is the only reader (ssarc.in_place_maps), so a module with no `map`
 // call to admit is answered with no rows at all.
 function pure_rows(keys: string[], funcs: ssasem.Func[]): util.NameIndex {
-  var none: string[] = [];
+  let none: string[] = [];
   if (!any_map_call(funcs)) {
     return util.name_index(none);
   }
-  var rows: util.NameIndex = util.name_index(keys);
-  var effects: util.NameIndex = util.name_index(effect_builtins());
-  var bad: boolean[] = [];
-  var callers: i32[][] = [];
+  let rows: util.NameIndex = util.name_index(keys);
+  let effects: util.NameIndex = util.name_index(effect_builtins());
+  let bad: boolean[] = [];
+  let callers: i32[][] = [];
   while (bad.len() < keys.len()) {
     bad = bad.append(false);
     callers = callers.append([]);
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < funcs.len()) {
     for b in funcs[i].graph.blocks {
       for ins in b.insts {
-        var callee: i32 = 0 - 1;
+        let callee: i32 = 0 - 1;
         if (ins.kind_tag == ssasem.call_value() || ins.kind_tag == ssasem.call() && ssasem.is_dyn_call(ins.str)) {
           bad = bad.with(i, true);
         } else if (ins.kind_tag == ssasem.call()) {
@@ -348,7 +348,7 @@ function any_map_call(funcs: ssasem.Func[]): boolean {
 }
 
 function effect_builtins(): string[] {
-  var out: string[] = util.append_all(caps.ungated(), caps.frontend_ungated());
+  let out: string[] = util.append_all(caps.ungated(), caps.frontend_ungated());
   for c in caps.builtin_caps() {
     out = out.append(c.builtin);
   }
@@ -357,16 +357,16 @@ function effect_builtins(): string[] {
 
 // `seed` closed over `callers`: a row calling a marked row is marked.
 function spread_marks(seed: boolean[], callers: i32[][]): boolean[] {
-  var marks: boolean[] = seed;
-  var work: i32[] = [];
-  var i: i32 = 0;
+  let marks: boolean[] = seed;
+  let work: i32[] = [];
+  let i: i32 = 0;
   while (i < marks.len()) {
     if (marks[i]) {
       work = work.append(i);
     }
     i = i + 1;
   }
-  var next: i32 = 0;
+  let next: i32 = 0;
   while (next < work.len()) {
     for c in callers[work[next]] {
       if (!marks[c]) {
@@ -380,8 +380,8 @@ function spread_marks(seed: boolean[], callers: i32[][]): boolean[] {
 }
 
 function unmarked(keys: string[], marks: boolean[]): string[] {
-  var out: string[] = [];
-  var i: i32 = 0;
+  let out: string[] = [];
+  let i: i32 = 0;
   while (i < keys.len()) {
     if (!marks[i]) {
       out = out.append(keys[i]);
@@ -404,7 +404,7 @@ struct Inference { built: semsource.Built, rows: Rows, records: parser.StructDec
 // erased body is not one — its instances stand for it — and neither is a
 // declaration with no body here.
 function lowers_whole_module(built: semsource.Built, r: Rows): boolean {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < r.keep.len()) {
     if (!r.keep[i]) {
       if (i >= built.decls.len()) {
@@ -425,16 +425,16 @@ function lowers_whole_module(built: semsource.Built, r: Rows): boolean {
 // refuse a plan (`ssaunits.mode_error`), and a module that stops lowering
 // whole under the inference keeps the modes it declared.
 function inferred_pass(mod: parser.Module, built: semsource.Built, r: Rows, structs: irtables.StructTab): Inference {
-  var same: Inference = Inference { built: built, rows: r, records: [] };
+  let same: Inference = Inference { built: built, rows: r, records: [] };
   if (!lowers_whole_module(built, r)) {
     return same;
   }
-  var widened: semsource.Built = semsource.with_inferred_modes(built);
-  var changed: boolean[] = semsource.changed_rows(built, widened);
+  let widened: semsource.Built = semsource.with_inferred_modes(built);
+  let changed: boolean[] = semsource.changed_rows(built, widened);
   if (!semsource.any_row_changed(changed)) {
     return same;
   }
-  var r2: Rows = rows_of(mod, widened, structs, r, changed);
+  let r2: Rows = rows_of(mod, widened, structs, r, changed);
   if (!lowers_whole_module(widened, r2)) {
     return same;
   }
@@ -444,13 +444,13 @@ function inferred_pass(mod: parser.Module, built: semsource.Built, r: Rows, stru
 // The module built, lowered and, when it lowers whole, lowered again under the
 // inferred modes.
 function produced_rows(mod: parser.Module, structs: irtables.StructTab): Inference {
-  var built: semsource.Built = semsource.build_module(mod);
+  let built: semsource.Built = semsource.build_module(mod);
   util.arr_push_cliff_report("sem:built", 0);
-  var records: parser.StructDecl[] = instance_records(built);
+  let records: parser.StructDecl[] = instance_records(built);
   if (records.len() > 0) {
     structs = irtables.struct_tab(util.append_all(structs.decls, records));
   }
-  var r: Rows = rows_of(mod, built, structs, no_reuse(), []);
+  let r: Rows = rows_of(mod, built, structs, no_reuse(), []);
   util.arr_push_cliff_report("sem:lowered", 0);
   return Inference { ...inferred_pass(mod, built, r, structs), records: records };
 }
@@ -462,15 +462,15 @@ function produced_rows(mod: parser.Module, structs: irtables.StructTab): Inferen
 // Named as ssarc.record_name names the record, appended after the module's
 // own so every declaration index before them is unchanged.
 function instance_records(built: semsource.Built): parser.StructDecl[] {
-  var out: parser.StructDecl[] = [];
-  var names: string[] = [];
+  let out: parser.StructDecl[] = [];
+  let names: string[] = [];
   for p in util.append_all(built.decls, built.instances) {
     for rec in p.func.records.list {
       if let typeinfo.TypeStruct(r) = rec.ty {
-        var name: string = ssasem.type_key(rec.ty);
+        let name: string = ssasem.type_key(rec.ty);
         if (r.args.len() > 0 && !semtypes.is_env(rec.ty) && util.index_of_str(names, name) < 0) {
           names = names.append(name);
-          var fields: parser.StructFieldDecl[] = [];
+          let fields: parser.StructFieldDecl[] = [];
           for fl in rec.fields {
             fields = fields.append(parser.StructFieldDecl { name: fl.name, type_name: field_spelling(fl.ty), fn_ret: "", fn_param_types: "" });
           }
@@ -498,16 +498,16 @@ function field_spelling(t: typeinfo.Type): string {
 }
 
 pub function substitution(mod: parser.Module, structs: irtables.StructTab, base: fnsigs.FnSigs): ircore.Sub {
-  var inf: Inference = produced_rows(mod, structs);
-  var built: semsource.Built = inf.built;
-  var r: Rows = inf.rows;
+  let inf: Inference = produced_rows(mod, structs);
+  let built: semsource.Built = inf.built;
+  let r: Rows = inf.rows;
   report_rows(r, "");
-  var sigs: fnsigs.FnSigs = base;
-  var helpers: ssarc.Helpers = ssarc.no_helpers();
-  var bodies: irtables.LowerResult[] = [];
-  var callees: ssarc.Callee[] = [];
-  var n: i32 = 0;
-  var i: i32 = 0;
+  let sigs: fnsigs.FnSigs = base;
+  let helpers: ssarc.Helpers = ssarc.no_helpers();
+  let bodies: irtables.LowerResult[] = [];
+  let callees: ssarc.Callee[] = [];
+  let n: i32 = 0;
+  let i: i32 = 0;
   while (i < mod.funcs.len()) {
     if (r.keep[i]) {
       callees = callees.append(ssarc.Callee { name: semsource.decl_key(mod.funcs[i]), f: built.decls[i].func, modes: built.decls[i].modes, plan: r.plans[i], receiver: semsource.has_receiver(mod.funcs[i]) });
@@ -530,8 +530,8 @@ pub function substitution(mod: parser.Module, structs: irtables.StructTab, base:
     }
     i = i + 1;
   }
-  var instances: irtables.LowerResult[] = [];
-  var at: i32 = 0;
+  let instances: irtables.LowerResult[] = [];
+  let at: i32 = 0;
   while (at < built.instances.len()) {
     if (r.keep[mod.funcs.len() + at]) {
       helpers = ssarc.with_drop_helpers(helpers, built.instances[at].func);
@@ -542,7 +542,7 @@ pub function substitution(mod: parser.Module, structs: irtables.StructTab, base:
   sigs = ssarc.caller_sigs(sigs, callees);
   util.arr_push_cliff_report("sem:substituted", 0);
   // A refused declaration or instance fails the compile.
-  var refused_n: i32 = mod.funcs.len() - n + built.instances.len() - instances.len();
+  let refused_n: i32 = mod.funcs.len() - n + built.instances.len() - instances.len();
   if (refused_n > 0) {
     eprint("FERN_SEM_IR: the typed lowering refused " + util.i32_to_string(refused_n) + " declarations and instances; the FERN_SEM_IR lines above name each");
     exit(3);
@@ -553,14 +553,14 @@ pub function substitution(mod: parser.Module, structs: irtables.StructTab, base:
     + util.i32_to_string(built.instances.len()) + " instances");
   // A module produced whole calls no template's erased body: every caller
   // is produced and calls an instance.
-  var i2: i32 = 0;
+  let i2: i32 = 0;
   while (i2 < mod.funcs.len()) {
     if (!bodies[i2].ok && built.decls[i2].template) {
       bodies = bodies.with(i2, superseded());
     }
     i2 = i2 + 1;
   }
-  var keys: typeinfo.Type[] = [];
+  let keys: typeinfo.Type[] = [];
   for d in built.decls {
     keys = structural_keys(keys, d.func);
   }
@@ -572,14 +572,14 @@ pub function substitution(mod: parser.Module, structs: irtables.StructTab, base:
   }
   // The declaration-less bodies are merged by symbol here, where the rule
   // lives, so the emit path's tail is a plain append.
-  var extra: irtables.LowerResult[] = ssarc.merge_helpers(instances, helpers.rows);
+  let extra: irtables.LowerResult[] = ssarc.merge_helpers(instances, helpers.rows);
   return ircore.Sub { ...ircore.no_sub(), bodies: bodies, extra: extra, sigs: sigs, records: inf.records };
 }
 
 // The structural key types the maps `f` holds name (#10020), each after the
 // ones nested in it, added to `seen` once.
 function structural_keys(seen: typeinfo.Type[], f: ssasem.Func): typeinfo.Type[] {
-  var out: typeinfo.Type[] = seen;
+  let out: typeinfo.Type[] = seen;
   for t in f.values {
     if (ssasem.is_map(t) && ssasem.structural_map_key(ssasem.map_key(t))) {
       out = with_structural(out, ssasem.map_key(t));
@@ -592,13 +592,13 @@ function with_structural(seen: typeinfo.Type[], k: typeinfo.Type): typeinfo.Type
   if (!ssasem.structural_map_key(k)) {
     return seen;
   }
-  var name: string = ssasem.keyed_map_key_name(k);
+  let name: string = ssasem.keyed_map_key_name(k);
   for t in seen {
     if (ssasem.keyed_map_key_name(t) == name) {
       return seen;
     }
   }
-  var out: typeinfo.Type[] = seen;
+  let out: typeinfo.Type[] = seen;
   if let typeinfo.TypeTuple(tup) = k {
     for e in tup.elements {
       out = with_structural(out, e);
@@ -615,25 +615,25 @@ function with_structural(seen: typeinfo.Type[], k: typeinfo.Type): typeinfo.Type
 // helpers when structural, and hashed into `h * 31 + element` with a string
 // folded byte by byte.
 function key_helper_source(keys: typeinfo.Type[]): string {
-  var src: string = "";
+  let src: string = "";
   for k in keys {
-    var ty: string = typeinfo.spelling(k);
+    let ty: string = typeinfo.spelling(k);
     src = src + "function " + ssasem.keyed_map_key_fn(k, "eq") + "(a: " + ty + ", b: " + ty + "): boolean { " + key_eq_body(k) + " }\n";
-    src = src + "function " + ssasem.keyed_map_key_fn(k, "hash") + "(a: " + ty + "): i32 { var h: i32 = 17; " + key_hash_body(k) + " return h; }\n";
+    src = src + "function " + ssasem.keyed_map_key_fn(k, "hash") + "(a: " + ty + "): i32 { let h: i32 = 17; " + key_hash_body(k) + " return h; }\n";
   }
   return src;
 }
 
 function key_eq_body(k: typeinfo.Type): string {
   if let typeinfo.TypeArray(arr) = k {
-    return "if (a.len() != b.len()) { return false; } var i: i32 = 0; while (i < a.len()) { if (!("
+    return "if (a.len() != b.len()) { return false; } let i: i32 = 0; while (i < a.len()) { if (!("
       + element_eq(arr.elem, "a[i]", "b[i]") + ")) { return false; } i = i + 1; } return true;";
   }
-  var out: string = "return true";
+  let out: string = "return true";
   if let typeinfo.TypeTuple(tup) = k {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < tup.elements.len()) {
-      var at: string = "." + util.i32_to_string(i);
+      let at: string = "." + util.i32_to_string(i);
       out = out + " && " + element_eq(tup.elements[i], "a" + at, "b" + at);
       i = i + 1;
     }
@@ -650,11 +650,11 @@ function element_eq(t: typeinfo.Type, x: string, y: string): string {
 
 function key_hash_body(k: typeinfo.Type): string {
   if let typeinfo.TypeArray(arr) = k {
-    return "var i: i32 = 0; while (i < a.len()) { " + element_hash(arr.elem, "a[i]", "e") + " i = i + 1; }";
+    return "let i: i32 = 0; while (i < a.len()) { " + element_hash(arr.elem, "a[i]", "e") + " i = i + 1; }";
   }
-  var out: string = "";
+  let out: string = "";
   if let typeinfo.TypeTuple(tup) = k {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < tup.elements.len()) {
       out = out + element_hash(tup.elements[i], "a." + util.i32_to_string(i), "e" + util.i32_to_string(i)) + " ";
       i = i + 1;
@@ -669,8 +669,8 @@ function element_hash(t: typeinfo.Type, x: string, sfx: string): string {
     return "h = h * 31 + " + ssasem.keyed_map_key_fn(t, "hash") + "(" + x + ");";
   }
   if (ssasem.is_string(t)) {
-    var j: string = "j" + sfx;
-    return "h = h * 31; var " + j + ": i32 = 0; while (" + j + " < " + x + ".len()) { h = h * 31 + ("
+    let j: string = "j" + sfx;
+    return "h = h * 31; let " + j + ": i32 = 0; while (" + j + " < " + x + ".len()) { h = h * 31 + ("
       + x + "[" + j + "] as i32); " + j + " = " + j + " + 1; }";
   }
   if (ssasem.is_bool(t)) {
@@ -683,22 +683,22 @@ function element_hash(t: typeinfo.Type, x: string, sfx: string): string {
 // (asmcore.rt_src_*), one body per function the source defines and in its
 // order. A refusal, including a source that does not type-check, exits 3.
 pub function runtime_bodies(src: string): irtables.LowerResult[] {
-  var parsed: parser.Module = parser.infer_ret_types_module(parser.parse_module(lexer.tokenize(src)));
+  let parsed: parser.Module = parser.infer_ret_types_module(parser.parse_module(lexer.tokenize(src)));
   // The builtin enums' variants (IoError's NotFound, …), which a program's
   // module carries from module_with_builtins.
-  var mod: parser.Module = parser.Module { ...parsed, structs: parser.inject_builtin_enums(parsed.structs) };
-  var diags: util.Diag[] = checker.build_gate_diags(mod);
+  let mod: parser.Module = parser.Module { ...parsed, structs: parser.inject_builtin_enums(parsed.structs) };
+  let diags: util.Diag[] = checker.build_gate_diags(mod);
   if (diags.len() > 0) {
     return runtime_refused(first_name(mod), "does not type-check: " + diags[0].message);
   }
-  var im: parser.Module = gated_module(checker.annotate_module(mod));
-  var inf: Inference = produced_rows(im, irtables.struct_tab(parser.erase_view_structs(im.structs)));
+  let im: parser.Module = gated_module(checker.annotate_module(mod));
+  let inf: Inference = produced_rows(im, irtables.struct_tab(parser.erase_view_structs(im.structs)));
   if (inf.built.instances.len() > 0) {
     return runtime_refused(first_name(im), "instantiates a generic");
   }
-  var out: irtables.LowerResult[] = [];
-  var helpers: ssarc.Helpers = ssarc.no_helpers();
-  var i: i32 = 0;
+  let out: irtables.LowerResult[] = [];
+  let helpers: ssarc.Helpers = ssarc.no_helpers();
+  let i: i32 = 0;
   while (i < im.funcs.len()) {
     if (!inf.rows.keep[i]) {
       return runtime_refused(im.funcs[i].name, inf.rows.why[i]);
@@ -708,7 +708,7 @@ pub function runtime_bodies(src: string): irtables.LowerResult[] {
     i = i + 1;
   }
   // The drop helpers follow the bodies, deduplicated by symbol.
-  var all: irtables.LowerResult[] = ssarc.merge_helpers(out, helpers.rows);
+  let all: irtables.LowerResult[] = ssarc.merge_helpers(out, helpers.rows);
   for h in all {
     if (!h.ok) {
       return runtime_refused(h.name, h.why);
@@ -752,7 +752,7 @@ pub function target_substitution(typed: parser.Module, target: string): ircore.S
   if (is_wasm(target)) {
     return substitution_of(wasm_gated(typed));
   }
-  var lifted: parser.Module = ircore.lift_lambdas_typed(typed);
+  let lifted: parser.Module = ircore.lift_lambdas_typed(typed);
   return ircore.Sub { ...substitution_of(gated_module(lifted)), lifted: lifted, has_lifted: true };
 }
 
@@ -767,10 +767,10 @@ function wasm_gated(typed: parser.Module): parser.Module {
 
 function substitution_of(im: parser.Module): ircore.Sub {
   // The typed lowering reads im; the AST lowering's tables read its erasure.
-  var lowered: parser.Module = parser.erase_view_module(im);
-  var stab: irtables.StructTab = irtables.struct_tab(lowered.structs);
+  let lowered: parser.Module = parser.erase_view_module(im);
+  let stab: irtables.StructTab = irtables.struct_tab(lowered.structs);
   util.arr_push_cliff_report("sem:gated", 0);
-  var sub: ircore.Sub = substitution(im, stab, ircore.wp_fn_sigs(lowered.funcs, stab));
+  let sub: ircore.Sub = substitution(im, stab, ircore.wp_fn_sigs(lowered.funcs, stab));
   return ircore.Sub { ...sub, rt_lower: runtime_bodies };
 }
 
@@ -786,7 +786,7 @@ pub function driven(mod: parser.Module, target: string): Driven {
 // `target_os()` / `target_arch()` are folded to the target's names first, as
 // the CLI folds them: no backend emits a body for either.
 pub function driven_annotated(annotated: parser.Module, target: string): Driven {
-  var typed: parser.Module = checked_typed(annotated, target);
+  let typed: parser.Module = checked_typed(annotated, target);
   return Driven { full: parser.erase_view_module(typed), sub: target_substitution(typed, target) };
 }
 
@@ -797,7 +797,7 @@ pub function driven_module(mod: parser.Module, target: string): parser.Module {
 }
 
 function checked_typed(annotated: parser.Module, target: string): parser.Module {
-  var t: Typed = typed_for(annotated, target);
+  let t: Typed = typed_for(annotated, target);
   if (t.errs.len() > 0) {
     eprint(util.format_diags(t.errs));
     exit(1);
@@ -811,9 +811,9 @@ function checked_typed(annotated: parser.Module, target: string): parser.Module 
 struct Typed { mod: parser.Module, errs: util.Diag[] }
 
 function typed_for(annotated: parser.Module, target: string): Typed {
-  var desc: platforms.Descriptor = platforms.for_target(target);
-  var folded: parser.Module = constfold.fold_target_name(annotated, desc.environment, desc.isa);
-  var typed: parser.Module = parser.module_with_builtins_typed(folded);
+  let desc: platforms.Descriptor = platforms.for_target(target);
+  let folded: parser.Module = constfold.fold_target_name(annotated, desc.environment, desc.isa);
+  let typed: parser.Module = parser.module_with_builtins_typed(folded);
   return Typed { mod: typed, errs: asmcore.entry_check_errors(checker.ensure_annotated(parser.erase_view_module(typed))) };
 }
 
@@ -838,22 +838,22 @@ pub function verdict(mod: parser.Module, target: string): Verdict {
 // verdict_annotated is verdict for a module the caller already checked and
 // annotated (`driven_annotated`).
 pub function verdict_annotated(annotated: parser.Module, target: string): Verdict {
-  var t: Typed = typed_for(annotated, target);
+  let t: Typed = typed_for(annotated, target);
   if (t.errs.len() > 0) {
     return Verdict { ok: false, errors: t.errs, rows: [] };
   }
-  var im: parser.Module = t.mod;
+  let im: parser.Module = t.mod;
   if (is_wasm(target)) {
     im = wasm_gated(t.mod);
   } else {
     im = gated_module(ircore.lift_lambdas_typed(t.mod));
   }
-  var inf: Inference = produced_rows(im, irtables.struct_tab(parser.erase_view_module(im).structs));
-  var rows: VerdictRow[] = [];
-  var ok: boolean = true;
-  var i: i32 = 0;
+  let inf: Inference = produced_rows(im, irtables.struct_tab(parser.erase_view_module(im).structs));
+  let rows: VerdictRow[] = [];
+  let ok: boolean = true;
+  let i: i32 = 0;
   while (i < inf.rows.keep.len()) {
-    var row: VerdictRow = verdict_row(im, inf, i);
+    let row: VerdictRow = verdict_row(im, inf, i);
     if (row.state == "refused") {
       ok = false;
     }
@@ -864,7 +864,7 @@ pub function verdict_annotated(annotated: parser.Module, target: string): Verdic
 }
 
 function verdict_row(im: parser.Module, inf: Inference, i: i32): VerdictRow {
-  var name: string = inf.rows.n1[i];
+  let name: string = inf.rows.n1[i];
   if (i < im.funcs.len()) {
     name = semsource.decl_key(im.funcs[i]);
   }
@@ -874,7 +874,7 @@ function verdict_row(im: parser.Module, inf: Inference, i: i32): VerdictRow {
   if (inf.rows.why[i].len() > 0) {
     return VerdictRow { name: name, state: "refused", why: inf.rows.why[i] };
   }
-  var p: semsource.Produced = produced_at(inf.built, im, i);
+  let p: semsource.Produced = produced_at(inf.built, im, i);
   if (p.bodyless) {
     return VerdictRow { name: name, state: "extern", why: "" };
   }
@@ -886,7 +886,7 @@ function verdict_row(im: parser.Module, inf: Inference, i: i32): VerdictRow {
 // produced row, `<name>: refused: <why>` for each refused one, the state of
 // the rest, and last the module's line, `module: IR` or `module: refused`.
 pub function verdict_text(v: Verdict): string {
-  var out: string = "";
+  let out: string = "";
   if (v.errors.len() > 0) {
     out = util.format_diags(v.errors);
     if (!util.str_has_suffix(out, "\n")) {
@@ -912,7 +912,7 @@ pub function verdict_text(v: Verdict): string {
 // a per-module build cuts into units (ircore.split_units). A module the gate
 // refuses is an error, as it is for the whole-module emit.
 pub function program(d: Driven): ircore.Gated {
-  var g: ircore.Gated = ircore.gate_program(ircore.sub_lifted(d.sub, checker.ensure_annotated(d.full)), d.sub);
+  let g: ircore.Gated = ircore.gate_program(ircore.sub_lifted(d.sub, checker.ensure_annotated(d.full)), d.sub);
   if (!g.ok) {
     ircore.eprint_ir_ineligible();
     exit(1);

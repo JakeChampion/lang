@@ -50,12 +50,12 @@ func TestSelfHostOverBudgetPerModuleIR(t *testing.T) {
 	const src = `import "std/array";
 import "std/string";
 function work(ss: string[]): i32 {
-    var a: i32 = ss.len();
-    var j: string = ss.join(",");
-    var r: string[] = ss.reverse();
-    var c: string[] = ss.concat(r);
-    var acc: i32 = a + j.len() + r.len() + c.len();
-    var i: i32 = 0;
+    let a: i32 = ss.len();
+    let j: string = ss.join(",");
+    let r: string[] = ss.reverse();
+    let c: string[] = ss.concat(r);
+    let acc: i32 = a + j.len() + r.len() + c.len();
+    let i: i32 = 0;
     while (i < ss.len()) {
         acc = acc + ss[i].len() + ss[i].trim().len();
         if (ss[i].starts_with("x")) { acc = acc + 1; }
@@ -65,8 +65,8 @@ function work(ss: string[]): i32 {
     return acc;
 }
 function main(): i32 {
-    var ss: string[] = ["ab", "cd", "ef"];
-    var v: i32 = work(ss);
+    let ss: string[] = ["ab", "cd", "ef"];
+    let v: i32 = work(ss);
     if (v > 0) { return 0; }
     return 1;
 }`

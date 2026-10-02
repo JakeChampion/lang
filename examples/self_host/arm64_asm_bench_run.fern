@@ -18,12 +18,12 @@ import "std/io";
 import "./arm64_native";
 
 function main(): i32 {
-  var av: string[] = args();
-  var dump: boolean = false;
-  var dump_data: boolean = false;
-  var dump_eh: boolean = false;
-  var dump_eh_darwin: boolean = false;
-  var i: i32 = 0;
+  let av: string[] = args();
+  let dump: boolean = false;
+  let dump_data: boolean = false;
+  let dump_eh: boolean = false;
+  let dump_eh_darwin: boolean = false;
+  let i: i32 = 0;
   while (i < av.len()) {
     if (av[i] == "-words") {
       dump = true;
@@ -39,17 +39,17 @@ function main(): i32 {
     }
     i = i + 1;
   }
-  var src: string = io.read_all_stdin();
-  var p: arm64_native.Arm64GasProg = arm64_native.arm64_gas_program(src);
-  var pa: arm64_native.Arm64Asm = p.asm;
-  var tv: i64 = arm64_native.macho_text_vaddr(pa.code.len(), 0, p.data.len(), p.bss_size);
-  var dv: i64 = arm64_native.macho_data_vaddr(pa.code.len(), 0, p.data.len(), p.bss_size);
+  let src: string = io.read_all_stdin();
+  let p: arm64_native.Arm64GasProg = arm64_native.arm64_gas_program(src);
+  let pa: arm64_native.Arm64Asm = p.asm;
+  let tv: i64 = arm64_native.macho_text_vaddr(pa.code.len(), 0, p.data.len(), p.bss_size);
+  let dv: i64 = arm64_native.macho_data_vaddr(pa.code.len(), 0, p.data.len(), p.bss_size);
   p = arm64_native.arm64_gas_link(p, tv, dv);
-  var pa2: arm64_native.Arm64Asm = p.asm;
+  let pa2: arm64_native.Arm64Asm = p.asm;
   print("text=" + pa2.code.len().to_string() + " data=" + p.data.len().to_string()
     + " bump=" + __heap_bump_bytes().to_string() + "\n");
   if (p.unknown.len() > 0) {
-    var u: i32 = 0;
+    let u: i32 = 0;
     while (u < p.unknown.len()) {
       print("unknown=" + p.unknown[u]);
       u = u + 1;
@@ -58,9 +58,9 @@ function main(): i32 {
   if (dump) {
     // Little-endian bytes back into 32-bit words, so the output is directly
     // comparable with the native assembler's instruction stream.
-    var b: i32 = 0;
+    let b: i32 = 0;
     while (b + 3 < pa2.code.len()) {
-      var w: i64 = pa2.code[b] as i64 | pa2.code[b + 1] as i64 << 8
+      let w: i64 = pa2.code[b] as i64 | pa2.code[b + 1] as i64 << 8
         | pa2.code[b + 2] as i64 << 16 | pa2.code[b + 3] as i64 << 24;
       print("word " + (b / 4).to_string() + " " + w.to_string());
       b = b + 4;
@@ -70,7 +70,7 @@ function main(): i32 {
   // here and nowhere the `-words` dump can see: an instruction stream is
   // identical whether `.ascii "\001"` assembled to one byte or to three.
   if (dump_data) {
-    var d: i32 = 0;
+    let d: i32 = 0;
     while (d < p.data.len()) {
       print("data " + d.to_string() + " " + p.data[d].to_string());
       d = d + 1;
@@ -81,13 +81,13 @@ function main(): i32 {
   // native ones at: .text 0x400000, .eh_frame_hdr 0x400080, .eh_frame
   // 0x400100.
   if (dump_eh) {
-    var eh: i32[] = arm64_native.arm64_eh_frame(p, 4194304 as i64, 4194560 as i64);
-    var e: i32 = 0;
+    let eh: i32[] = arm64_native.arm64_eh_frame(p, 4194304 as i64, 4194560 as i64);
+    let e: i32 = 0;
     while (e < eh.len()) {
       print("eh " + e.to_string() + " " + eh[e].to_string());
       e = e + 1;
     }
-    var hdr: i32[] = arm64_native.arm64_eh_frame_hdr(p, 4194304 as i64, 4194560 as i64, 4194432 as i64);
+    let hdr: i32[] = arm64_native.arm64_eh_frame_hdr(p, 4194304 as i64, 4194560 as i64, 4194432 as i64);
     e = 0;
     while (e < hdr.len()) {
       print("hdr " + e.to_string() + " " + hdr[e].to_string());
@@ -98,8 +98,8 @@ function main(): i32 {
   // There is no .eh_frame_hdr on Darwin: dyld hands the section to
   // libunwind directly, so nothing looks a function up through a table.
   if (dump_eh_darwin) {
-    var deh: i32[] = arm64_native.arm64_eh_frame_darwin(p, 4194304 as i64, 4194560 as i64);
-    var de: i32 = 0;
+    let deh: i32[] = arm64_native.arm64_eh_frame_darwin(p, 4194304 as i64, 4194560 as i64);
+    let de: i32 = 0;
     while (de < deh.len()) {
       print("eh " + de.to_string() + " " + deh[de].to_string());
       de = de + 1;

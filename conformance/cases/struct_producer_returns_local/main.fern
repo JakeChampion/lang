@@ -16,18 +16,18 @@ struct P { xs: i32[], s: string }
 
 function w(s: string): string { return s + ""; }
 
-function mk(i: i32): P { var p: P = P { xs: [i, i + 1], s: w("f") }; return p; }
+function mk(i: i32): P { let p: P = P { xs: [i, i + 1], s: w("f") }; return p; }
 function pass(p: P): P { return p; }
-function re(i: i32): P { var p: P = P { xs: [i], s: w("r") }; p = P { xs: [i, i, i], s: w("q") }; return p; }
+function re(i: i32): P { let p: P = P { xs: [i], s: w("r") }; p = P { xs: [i, i, i], s: w("q") }; return p; }
 
 function main(): i32 {
-    var keep: P = P { xs: [9, 9], s: w("k") };
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let keep: P = P { xs: [9, 9], s: w("k") };
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
-        var a: P = mk(i);      t = t + a.xs.len();
-        var b: P = pass(keep); t = t + b.xs.len();
-        var c: P = re(i);      t = t + c.xs.len();
+        let a: P = mk(i);      t = t + a.xs.len();
+        let b: P = pass(keep); t = t + b.xs.len();
+        let c: P = re(i);      t = t + c.xs.len();
         i = i + 1;
     }
     if (__rc_underflow_count() != 0) { return 99; }

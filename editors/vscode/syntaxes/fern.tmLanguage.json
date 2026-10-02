@@ -48,7 +48,7 @@
         },
         {
           "name": "storage.type.fern",
-          "match": "\\b(function|struct|enum|type|const|import|pub|var|let|use|as)\\b"
+          "match": "\\b(function|struct|enum|type|const|import|pub|let|use|as)\\b"
         },
         {
           "name": "constant.language.fern",

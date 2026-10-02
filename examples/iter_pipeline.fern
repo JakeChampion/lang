@@ -9,15 +9,15 @@ import "core/iter" as iter;
 import "core/cmp" as cmp;
 
 function main(): i32 {
-  var xs: i32[] = [5, 2, 8, 1, 4, 7, 6];
+  let xs: i32[] = [5, 2, 8, 1, 4, 7, 6];
 
   // Keep the evens, square them, sum the squares: 2² + 8² + 4² + 6² = 120.
-  var evens = iter.filter(iter.of(xs), (x: i32): boolean => x % 2 == 0);
-  var squares = iter.map(iter.of(evens), (x: i32): i32 => x * x);
-  var total = iter.sum(iter.of(squares));
+  let evens = iter.filter(iter.of(xs), (x: i32): boolean => x % 2 == 0);
+  let squares = iter.map(iter.of(evens), (x: i32): i32 => x * x);
+  let total = iter.sum(iter.of(squares));
 
   // Sort the evens ascending: [2, 4, 6, 8].
-  var asc = cmp.sort(evens);
+  let asc = cmp.sort(evens);
 
   // 120 + 2*10 + 8 = 148.
   return total + asc[0] * 10 + asc[3];

@@ -23,8 +23,8 @@ import "std/i32";
 function main(): i32 {
     // hash() == hash_fnv32() as i32, over inputs spanning empty / 1-byte /
     // multi-byte and two single-byte neighbours.
-    var xs: string[] = ["", "a", "b", "hello", "hello world", "Fern"];
-    var i: i32 = 0;
+    let xs: string[] = ["", "a", "b", "hello", "hello world", "Fern"];
+    let i: i32 = 0;
     while (i < xs.len()) {
         if (xs[i].hash() != (xs[i].hash_fnv32() as i32)) { return 1; }
         i = i + 1;

@@ -8,7 +8,7 @@ with it:
 enum MyOpt[T] { Here(T), Gone }
 
 function pick(m: MyOpt[i32]): MyOpt[i32] {
-    var v: i32 = m?;     // Gone → early-return Gone
+    let v: i32 = m?;     // Gone → early-return Gone
     return Here(v + 1);
 }
 ```

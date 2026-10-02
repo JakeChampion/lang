@@ -3,7 +3,7 @@ import "std/i64";
 // trailing_zeros, rotate_left, rotate_right. Distinct nonzero exit per
 // failure; 42 = all pass. Runs interp / x86-64 / arm64 / wasm.
 function main(): i32 {
-    var r: i32 = 0;
+    let r: i32 = 0;
     // count_zeros: count_ones(7)=3 -> zeros=61
     if ((7 as i64).count_zeros() != 61) { return 1; }
     if ((0 as i64).count_zeros() != 64) { return 2; }

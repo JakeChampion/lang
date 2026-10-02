@@ -7,7 +7,7 @@ balanced every program below already.
 
 ```fern
 t = t + sum(if (j > 1) { [j] } else { [1, j] });
-t = t + sum({ var q = [j, 1]; q });
+t = t + sum({ let q = [j, 1]; q });
 ```
 
 The value reaches the call through the `$ife` / `$vbi` temp, which nothing
@@ -43,19 +43,19 @@ A fresh string index base (`(s + "w")[2]`) is now spilled and freed as well.
 `check_call_expr` typed an if or match IIFE by its arms and returned unknown for
 a block, so annotate stamped no type on the call. The lowering then guessed:
 
-- `({ var q = s + "z"; q }).len()` read the string as an array: x86-64 answered
+- `({ let q = s + "z"; q }).len()` read the string as an array: x86-64 answered
   13 for 92.
-- `measure({ var q = s; q })` boxed a struct as an `i32` dyn cell, and dispatch
+- `measure({ let q = s; q })` boxed a struct as an `i32` dyn cell, and dispatch
   hit `unreachable` (the call-argument program of #10529's native fix: exit 134
   for 102).
-- `({ var q = P { … }; q }).y` refused to lower.
+- `({ let q = P { … }; q }).y` refused to lower.
 
 The block is now typed by its final `return` with the leading statements bound
 (an earlier `return` leaves the function). A bare literal tail stays unknown, as
 `inferred_lambda_result` keeps it. A literal local the tail returns
-(`var y: i64 = { var z = 5; z }`) takes the width the block is read at, an
-annotated `var`, a parameter or a return: `settle_literal_locals` demands the
-tail at that type, as it demands a plain `var`'s initializer. Without it the
+(`let y: i64 = { let z = 5; z }`) takes the width the block is read at, an
+annotated `let`, a parameter or a return: `settle_literal_locals` demands the
+tail at that type, as it demands a plain `let`'s initializer. Without it the
 local settled at i32 and the typed block drew E003 / E038 that native does not
 report. `type_to_irtag` spells a `dyn` type, so a
 block yielding a `dyn` local is typed too. The self-host checker now reports a
@@ -82,12 +82,12 @@ whole match made `return (match (o) { … })` read `o` twice.
 refused, and `TestSelfHostContainerSinkMatrixX86_64`'s `option__moved` and
 `option__live` cells, clean on main, leaked on the self-host: 60 / 0 for
 `condOptionMatchReturnSrc`, 60 / 60 on main and now. A local declared ahead of
-the match (a tuple match's value local, a block's own `var`) still stands in
+the match (a tuple match's value local, a block's own `let`) still stands in
 the view: `condBlockTailMatchSrc` is 40 / 40, where main is 40 / 20.
 
 ## A bound struct-array element
 
-`var p0 = q[0]` over a struct array refused the array's element credit. It is
+`let p0 = q[0]` over a struct array refused the array's element credit. It is
 now a counted share: the bind retains the element box, the binding takes a
 box-only struct credit (`ELSHARE:` + `NODEEP:`), and `structarr_elem_escapes`
 forgives exactly those sites. Admitted for an all-scalar element struct, over a

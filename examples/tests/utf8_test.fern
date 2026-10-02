@@ -14,7 +14,7 @@ import "std/string";
 
 function mixed(): string {
   // "A" + é + € + 😀 — 10 bytes, 4 codepoints.
-  var b: u8[] = [
+  let b: u8[] = [
     65 as u8, 195 as u8, 169 as u8, 226 as u8, 130 as u8,
     172 as u8, 240 as u8, 159 as u8, 152 as u8, 128 as u8,
   ];
@@ -48,17 +48,17 @@ function test_decode_ascii(): test.TestOutcome {
 }
 
 function test_decode_two_byte(): test.TestOutcome {
-  var s: string = string_from_bytes_unchecked([195 as u8, 169 as u8]);  // é
+  let s: string = string_from_bytes_unchecked([195 as u8, 169 as u8]);  // é
   return test.assert_true(decode_cp(s, 0) == 233 && decode_len(s, 0) == 2);
 }
 
 function test_decode_three_byte(): test.TestOutcome {
-  var s: string = string_from_bytes_unchecked([226 as u8, 130 as u8, 172 as u8]);  // €
+  let s: string = string_from_bytes_unchecked([226 as u8, 130 as u8, 172 as u8]);  // €
   return test.assert_true(decode_cp(s, 0) == 8364 && decode_len(s, 0) == 3);
 }
 
 function test_decode_four_byte(): test.TestOutcome {
-  var s: string = string_from_bytes_unchecked([240 as u8, 159 as u8, 152 as u8, 128 as u8]);  // 😀
+  let s: string = string_from_bytes_unchecked([240 as u8, 159 as u8, 152 as u8, 128 as u8]);  // 😀
   return test.assert_true(decode_cp(s, 0) == 128512 && decode_len(s, 0) == 4);
 }
 
@@ -69,25 +69,25 @@ function test_decode_at_offset(): test.TestOutcome {
 
 function test_decode_stray_continuation(): test.TestOutcome {
   // A lone 0x80 continuation byte is invalid.
-  var s: string = string_from_bytes_unchecked([128 as u8]);
+  let s: string = string_from_bytes_unchecked([128 as u8]);
   return test.assert_eq(decode_cp(s, 0), 0 - 1);
 }
 
 function test_decode_truncated(): test.TestOutcome {
   // First two bytes of a 3-byte sequence — no third byte.
-  var s: string = string_from_bytes_unchecked([226 as u8, 130 as u8]);
+  let s: string = string_from_bytes_unchecked([226 as u8, 130 as u8]);
   return test.assert_eq(decode_cp(s, 0), 0 - 1);
 }
 
 function test_decode_overlong(): test.TestOutcome {
   // Overlong encoding of U+0000 (C0 80) must be rejected.
-  var s: string = string_from_bytes_unchecked([192 as u8, 128 as u8]);
+  let s: string = string_from_bytes_unchecked([192 as u8, 128 as u8]);
   return test.assert_eq(decode_cp(s, 0), 0 - 1);
 }
 
 function test_decode_surrogate(): test.TestOutcome {
   // U+D800 encoded as ED A0 80 — a surrogate, not a scalar value.
-  var s: string = string_from_bytes_unchecked([237 as u8, 160 as u8, 128 as u8]);
+  let s: string = string_from_bytes_unchecked([237 as u8, 160 as u8, 128 as u8]);
   return test.assert_eq(decode_cp(s, 0), 0 - 1);
 }
 
@@ -115,9 +115,9 @@ function test_encode_invalid_is_replacement(): test.TestOutcome {
   // a literal outside the scalar range is E071 now (#5629 slice 5), and
   // the point here is the runtime sanitiser, which still has to hold —
   // a cast of a runtime value stays unchecked on purpose.
-  var neg: i32 = 0 - 1;
-  var surrogate: i32 = 55296;
-  var too_big: i32 = 1114112;
+  let neg: i32 = 0 - 1;
+  let surrogate: i32 = 55296;
+  let too_big: i32 = 1114112;
   return test.assert_true(
     decode_cp(utf8.utf8_encode(neg as char), 0) == 65533
       && decode_cp(utf8.utf8_encode(surrogate as char), 0) == 65533
@@ -128,12 +128,12 @@ function test_encode_invalid_is_replacement(): test.TestOutcome {
 function test_char_from_i32(): test.TestOutcome {
   // The checked constructor: Some for a scalar value, None for the two
   // ways an integer can fail to be one.
-  var ok_ascii: boolean = match (utf8.char_from_i32(65)) { Some(c) => c as i32 == 65, None => false };
-  var ok_max: boolean = match (utf8.char_from_i32(1114111)) { Some(c) => c as i32 == 1114111, None => false };
-  var no_big: boolean = match (utf8.char_from_i32(1114112)) { Some(_) => false, None => true };
-  var no_lo: boolean = match (utf8.char_from_i32(55296)) { Some(_) => false, None => true };
-  var no_hi: boolean = match (utf8.char_from_i32(57343)) { Some(_) => false, None => true };
-  var no_neg: boolean = match (utf8.char_from_i32(0 - 1)) { Some(_) => false, None => true };
+  let ok_ascii: boolean = match (utf8.char_from_i32(65)) { Some(c) => c as i32 == 65, None => false };
+  let ok_max: boolean = match (utf8.char_from_i32(1114111)) { Some(c) => c as i32 == 1114111, None => false };
+  let no_big: boolean = match (utf8.char_from_i32(1114112)) { Some(_) => false, None => true };
+  let no_lo: boolean = match (utf8.char_from_i32(55296)) { Some(_) => false, None => true };
+  let no_hi: boolean = match (utf8.char_from_i32(57343)) { Some(_) => false, None => true };
+  let no_neg: boolean = match (utf8.char_from_i32(0 - 1)) { Some(_) => false, None => true };
   return test.assert_true(ok_ascii && ok_max && no_big && no_lo && no_hi && no_neg);
 }
 
@@ -143,7 +143,7 @@ function test_codepoint_count(): test.TestOutcome {
 }
 
 function test_codepoints_array(): test.TestOutcome {
-  var cps: char[] = utf8.codepoints(mixed());
+  let cps: char[] = utf8.codepoints(mixed());
   if (cps.len() != 4) {
     return test.fail("codepoint count");
   }
@@ -153,7 +153,7 @@ function test_codepoints_array(): test.TestOutcome {
 
 function test_is_valid(): test.TestOutcome {
   // A well-formed mixed string is valid; a stray continuation isn't.
-  var bad: string = string_from_bytes_unchecked([65 as u8, 128 as u8]);
+  let bad: string = string_from_bytes_unchecked([65 as u8, 128 as u8]);
   return test.assert_true(utf8.is_valid_utf8(mixed()) && !utf8.is_valid_utf8(bad));
 }
 
@@ -248,7 +248,7 @@ function test_substring(): test.TestOutcome {
 // boundaries are exactly {0, 1, 3, 6, 10} and every other index in
 // 0..10 sits inside a multibyte encoding.
 function test_is_char_boundary(): test.TestOutcome {
-  var s: string = mixed();
+  let s: string = mixed();
   if (!utf8.is_char_boundary(s, 0)) {
     return test.fail("0 is a boundary");
   }
@@ -264,9 +264,9 @@ function test_is_char_boundary(): test.TestOutcome {
   if (!utf8.is_char_boundary(s, 10)) {
     return test.fail("len is a boundary");
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < 10) {
-    var inside: boolean = i == 2 || i >= 4 && i <= 5 || i >= 7 && i <= 9;
+    let inside: boolean = i == 2 || i >= 4 && i <= 5 || i >= 7 && i <= 9;
     if (inside && utf8.is_char_boundary(s, i)) {
       return test.fail("interior byte reported as a boundary");
     }
@@ -295,7 +295,7 @@ function test_is_char_boundary_edges(): test.TestOutcome {
 }
 
 function test_floor_char_boundary(): test.TestOutcome {
-  var s: string = mixed();
+  let s: string = mixed();
   // An index already on a boundary is returned unchanged.
   if (utf8.floor_char_boundary(s, 6) != 6) {
     return test.fail("boundary is its own floor");
@@ -318,7 +318,7 @@ function test_floor_char_boundary(): test.TestOutcome {
 }
 
 function test_ceil_char_boundary(): test.TestOutcome {
-  var s: string = mixed();
+  let s: string = mixed();
   if (utf8.ceil_char_boundary(s, 6) != 6) {
     return test.fail("boundary is its own ceil");
   }
@@ -343,11 +343,11 @@ function test_ceil_char_boundary(): test.TestOutcome {
 // ceil never shrinks it, and slicing at a snapped pair yields valid
 // UTF-8 even when the raw pair would have split a character.
 function test_boundary_snap_is_valid(): test.TestOutcome {
-  var s: string = mixed();
-  var a: i32 = 0;
+  let s: string = mixed();
+  let a: i32 = 0;
   while (a <= 10) {
-    var lo: i32 = utf8.floor_char_boundary(s, a);
-    var hi: i32 = utf8.ceil_char_boundary(s, a);
+    let lo: i32 = utf8.floor_char_boundary(s, a);
+    let hi: i32 = utf8.ceil_char_boundary(s, a);
     if (!utf8.is_char_boundary(s, lo)) {
       return test.fail("floor is not a boundary");
     }
@@ -360,9 +360,9 @@ function test_boundary_snap_is_valid(): test.TestOutcome {
     if (hi < a) {
       return test.fail("ceil shrank the index");
     }
-    var b: i32 = a;
+    let b: i32 = a;
     while (b <= 10) {
-      var cut: str = slice_unchecked(s, utf8.floor_char_boundary(s, a), utf8.ceil_char_boundary(s, b));
+      let cut: str = slice_unchecked(s, utf8.floor_char_boundary(s, a), utf8.ceil_char_boundary(s, b));
       if (!utf8.is_valid_utf8(cut.to_owned())) {
         return test.fail("snapped slice is not valid UTF-8");
       }
@@ -382,8 +382,8 @@ function test_boundary_snap_is_valid(): test.TestOutcome {
 // input the same way; they used to disagree (ED A0 80 was 3 from this
 // module and 1 from the string methods).
 function __lossy_len(b: u8[]): i32 {
-  var s: string = string_from_bytes_unchecked(b);
-  var a: i32 = utf8.codepoint_count(s);
+  let s: string = string_from_bytes_unchecked(b);
+  let a: i32 = utf8.codepoint_count(s);
   if (utf8.codepoints(s).len() != a) {
     return 0 - 1;
   }
@@ -447,8 +447,8 @@ function test_lossy_valid_neighbours(): test.TestOutcome {
 // step over an ill-formed run in the same units the count reports.
 function test_lossy_indexing(): test.TestOutcome {
   // 'a' F1 80 'b' — three characters: "a", U+FFFD, "b".
-  var s: string = string_from_bytes_unchecked([97 as u8, 241 as u8, 128 as u8, 98 as u8]);
-  var fffd: string = utf8.utf8_encode(65533 as char);
+  let s: string = string_from_bytes_unchecked([97 as u8, 241 as u8, 128 as u8, 98 as u8]);
+  let fffd: string = utf8.utf8_encode(65533 as char);
   match (utf8.char_at(s, 1)) {
     Some(c) => {
       if (c != fffd) {
@@ -476,8 +476,8 @@ function test_lossy_indexing(): test.TestOutcome {
 // sequence is one U+FFFD per maximal subpart, the rule `codepoints`
 // walks by.
 function test_from_bytes_lossy(): test.TestOutcome {
-  var fffd: string = utf8.utf8_encode(65533 as char);
-  var m: string = mixed();
+  let fffd: string = utf8.utf8_encode(65533 as char);
+  let m: string = mixed();
   if (utf8.from_bytes_lossy(m.bytes()) != m) {
     return test.fail("well-formed input changed");
   }
@@ -499,7 +499,7 @@ function test_from_bytes_lossy(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("std/utf8");
+  let r: test.TestRunner = test.test_new("std/utf8");
   r = r.it("decode ascii", test_decode_ascii);
   r = r.it("decode 2-byte", test_decode_two_byte);
   r = r.it("decode 3-byte", test_decode_three_byte);

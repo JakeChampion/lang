@@ -30,8 +30,8 @@ func TestSelfHostF64I64StructFieldIRX86_64(t *testing.T) {
 
 	prog := `struct V { fs: f64[], is: i64[], n: i32 }
 function use_v(): i32 {
-    var v: V = V { fs: [1.5, 2.5], is: [10, 20], n: 7 };
-    var sum: i32 = 0;
+    let v: V = V { fs: [1.5, 2.5], is: [10, 20], n: 7 };
+    let sum: i32 = 0;
     if (v.fs[0] < v.fs[1]) { sum = sum + 1; }
     if (v.is[1] > v.is[0]) { sum = sum + 10; }
     return sum + v.n;

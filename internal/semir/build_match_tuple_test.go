@@ -11,7 +11,7 @@ import (
 var tupleMatchCases = []struct{ name, source, want string }{
 	{"tuple-match-only-wildcard", `function pilot(): string { return match ((["held"], true)) { _ => "wildcard" }; }`, "wildcard\n"},
 	{"tuple-match-only-guarded-wildcards", `function pilot(): string {
-  var items = ["before"];
+  let items = ["before"];
   return match ((1i32, true)) { _ when { items = ["wildcard guard"]; false } => "wrong", _ => items[0] };
 }`, "wildcard guard\n"},
 	{"tuple-match-literal", `function pilot(): string { return choose((1i32, true)); }
@@ -32,43 +32,43 @@ function choose(pair: (i32, boolean)): string {
   return match ((9i32, ["whole"])) { whole @ (n, _) => { let (_, other) = whole; if (n == 9i32) { other[0] } else { "wrong" } } };
 }`, "whole\n"},
 	{"tuple-match-pattern-shadow", `function pilot(): string {
-  var items = ["outer"];
+  let items = ["outer"];
   return match ((["inner"], false)) { (items, true) => "wrong", _ => items[0] };
 }`, "outer\n"},
 	{"tuple-match-guard-shadow", `function pilot(): string {
-  var items = ["outer"];
+  let items = ["outer"];
   return match ((["inner"], true)) { (items, _) when { items = ["changed local"]; false } => "wrong", _ => items[0] };
 }`, "outer\n"},
 	{"tuple-match-false-guard-state", `function pilot(): string {
-  var parent = (["old"], true);
+  let parent = (["old"], true);
   return match (parent) {
     (items, _) when { parent = (["replacement"], false); false } => "wrong",
     (items, _) => { let (_, flag) = parent; if (!flag) { items[0] } else { "wrong" } }
   };
 }`, "old\n"},
 	{"tuple-match-guarded-wildcard", `function pilot(): string {
-  var items = ["before"];
+  let items = ["before"];
   return match ((1i32, true)) { _ when { items = ["guard"]; false } => "wrong", (_, _) => items[0] };
 }`, "guard\n"},
 	{"tuple-match-scrutinee-once", `function pilot(): string {
-  var count = 0i32;
-  var items = match ({ count = count + 1i32; (count, ["once"]) }) { (0i32, _) => ["wrong"], (_, items) => items };
+  let count = 0i32;
+  let items = match ({ count = count + 1i32; (count, ["once"]) }) { (0i32, _) => ["wrong"], (_, items) => items };
   if (count == 1i32) { return items[0]; } return "repeated";
 }`, "once\n"},
 	{"tuple-match-escaped-child", `function pilot(): string {
-  var items = match ((true, (["held"], 2i32))) { (true, (child, _)) => child, _ => ["wrong"] };
-  var i = 0i32; while (i < 64i32) { var churn = ((["churn"], 2i32), false); i = i + 1i32; }
+  let items = match ((true, (["held"], 2i32))) { (true, (child, _)) => child, _ => ["wrong"] };
+  let i = 0i32; while (i < 64i32) { let churn = ((["churn"], 2i32), false); i = i + 1i32; }
   return items[0];
 }`, "held\n"},
 	{"tuple-match-own-argument", `function pilot(): string {
-  var snapshot = ["shared"]; var child = choose((snapshot, true));
-  var i = 0i32; while (i < 64i32) { var churn = (["churn"], false); i = i + 1i32; }
+  let snapshot = ["shared"]; let child = choose((snapshot, true));
+  let i = 0i32; while (i < 64i32) { let churn = (["churn"], false); i = i + 1i32; }
   return [snapshot[0], child[0]][1];
 }
 function choose(own pair: (string[], boolean)): string[] { return match (pair) { (items, _) => items }; }`, "shared\n"},
 	{"tuple-match-borrow-argument", `function pilot(): string {
-  var child = choose((["borrowed"], false));
-  var i = 0i32; while (i < 64i32) { var churn = (["churn"], false); i = i + 1i32; }
+  let child = choose((["borrowed"], false));
+  let i = 0i32; while (i < 64i32) { let churn = (["churn"], false); i = i + 1i32; }
   return child[0];
 }
 function choose(pair: (string[], boolean)): string[] { return match (pair) { (items, _) => items }; }`, "borrowed\n"},
@@ -83,14 +83,14 @@ function choose(pair: (string[], boolean)): string[] { return match (pair) { (it
 }`, "ended guard\n"},
 	{"tuple-match-guard-no-continuation-join", `function pilot(): string { return choose(true); }
 function choose(flag: boolean): string {
-  var items = match ((flag, ["live"])) { (true, child) => child, (_, child) when { return "guard exit"; true } => child, _ => ["dead fallback"] };
+  let items = match ((flag, ["live"])) { (true, child) => child, (_, child) when { return "guard exit"; true } => child, _ => ["dead fallback"] };
   return items[0];
 }`, "live\n"},
 	{"tuple-match-continue", `function pilot(): string {
-  var i = 0i32; var items = ["before"];
+  let i = 0i32; let items = ["before"];
   while (i < 2i32) {
     i = i + 1i32;
-    var selected = match ((i, ["continued"])) { (1i32, child) => { items = child; continue; }, _ => items };
+    let selected = match ((i, ["continued"])) { (1i32, child) => { items = child; continue; }, _ => items };
     return selected[0];
   }
   return "wrong";

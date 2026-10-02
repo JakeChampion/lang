@@ -36,10 +36,10 @@ func TestExternImportWithBuiltinEnvArgsViaCLI(t *testing.T) {
 function rand_bytes(n: u64): u8[];
 
 function main(): i32 {
-	var a: string[] = args();
-	var g: string = "MISS";
+	let a: string[] = args();
+	let g: string = "MISS";
 	match (env("GREETING")) { Some(v) => { g = v; }, None => {} }
-	var b: u8[] = rand_bytes(8 as u64);
+	let b: u8[] = rand_bytes(8 as u64);
 	if (b.len() == 8 && a.len() == 3 && g == "` + want + `") { write(g); } else { write("bad"); }
 	return 0;
 }`

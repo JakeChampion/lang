@@ -29,7 +29,7 @@ function inner2(k: i32, own p: P): P { p = P { ...p, data: p.data.append(k) }; r
 `
 
 const ownMoveDriver = `
-function main(): i32 { var p: P = P { data: [], n: 0 }; p = outer(p, 1); return p.data.len(); }`
+function main(): i32 { let p: P = P { data: [], n: 0 }; p = outer(p, 1); return p.data.len(); }`
 
 // The claim's whole point: whether the transfer happens to be p's textually
 // LAST occurrence must stop mattering. These two functions differ only in

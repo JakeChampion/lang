@@ -33,15 +33,15 @@ function field(s: string): string {
 
 // encode renders the whole cache as one string.
 pub function encode(c: runtime.Cache): string {
-  var out: string = c.entries.len().to_string() + "\n";
-  var i: i32 = 0;
+  let out: string = c.entries.len().to_string() + "\n";
+  let i: i32 = 0;
   while (i < c.entries.len()) {
-    var e: runtime.CacheEntry = c.entries[i];
+    let e: runtime.CacheEntry = c.entries[i];
     out = out + field(e.key);
     out = out + field(e.status.to_string());
     out = out + field(e.reason);
     out = out + e.headers.names.len().to_string() + "\n";
-    var j: i32 = 0;
+    let j: i32 = 0;
     while (j < e.headers.names.len()) {
       out = out + field(e.headers.names[j]) + field(e.headers.values[j]);
       j = j + 1;
@@ -61,8 +61,8 @@ function read_int(s: string, cur: Cur): IntRead {
   if (!cur.ok) {
     return IntRead { value: 0, cur: cur };
   }
-  var nl: i32 = 0 - 1;
-  var i: i32 = cur.at;
+  let nl: i32 = 0 - 1;
+  let i: i32 = cur.at;
   while (i < s.len()) {
     if (s[i] == 10) {
       nl = i;
@@ -73,7 +73,7 @@ function read_int(s: string, cur: Cur): IntRead {
   if (nl < 0) {
     return IntRead { value: 0, cur: Cur { at: cur.at, ok: false } };
   }
-  var digits: string = slice_unchecked(s, cur.at, nl).to_owned();
+  let digits: string = slice_unchecked(s, cur.at, nl).to_owned();
   match (digits.parse_int()) {
     Some(n) => {
       return IntRead { value: n, cur: Cur { at: nl + 1, ok: true } };
@@ -88,11 +88,11 @@ function read_int(s: string, cur: Cur): IntRead {
 struct StrRead { value: string, cur: Cur }
 
 function read_field(s: string, cur: Cur): StrRead {
-  var n: IntRead = read_int(s, cur);
+  let n: IntRead = read_int(s, cur);
   if (!n.cur.ok) {
     return StrRead { value: "", cur: n.cur };
   }
-  var end: i32 = n.cur.at + n.value;
+  let end: i32 = n.cur.at + n.value;
   if (n.value < 0 || end > s.len()) {
     return StrRead { value: "", cur: Cur { at: n.cur.at, ok: false } };
   }
@@ -125,20 +125,20 @@ function to_f64(s: string): f64 {
 struct EntryRead { entry: runtime.CacheEntry, cur: Cur }
 
 function read_entry(s: string, cur: Cur): EntryRead {
-  var blank: runtime.CacheEntry = runtime.CacheEntry { key: "", status: 0, reason: "", headers: runtime.headers_new(), body: "", ttl: 0.0, hits: 0 };
-  var key: StrRead = read_field(s, cur);
-  var status: StrRead = read_field(s, key.cur);
-  var reason: StrRead = read_field(s, status.cur);
-  var nh: IntRead = read_int(s, reason.cur);
+  let blank: runtime.CacheEntry = runtime.CacheEntry { key: "", status: 0, reason: "", headers: runtime.headers_new(), body: "", ttl: 0.0, hits: 0 };
+  let key: StrRead = read_field(s, cur);
+  let status: StrRead = read_field(s, key.cur);
+  let reason: StrRead = read_field(s, status.cur);
+  let nh: IntRead = read_int(s, reason.cur);
   if (!nh.cur.ok) {
     return EntryRead { entry: blank, cur: nh.cur };
   }
-  var h: runtime.Headers = runtime.headers_new();
-  var c: Cur = nh.cur;
-  var j: i32 = 0;
+  let h: runtime.Headers = runtime.headers_new();
+  let c: Cur = nh.cur;
+  let j: i32 = 0;
   while (j < nh.value) {
-    var name: StrRead = read_field(s, c);
-    var value: StrRead = read_field(s, name.cur);
+    let name: StrRead = read_field(s, c);
+    let value: StrRead = read_field(s, name.cur);
     if (!value.cur.ok) {
       return EntryRead { entry: blank, cur: value.cur };
     }
@@ -146,13 +146,13 @@ function read_entry(s: string, cur: Cur): EntryRead {
     c = value.cur;
     j = j + 1;
   }
-  var body: StrRead = read_field(s, c);
-  var ttl: StrRead = read_field(s, body.cur);
-  var hits: StrRead = read_field(s, ttl.cur);
+  let body: StrRead = read_field(s, c);
+  let ttl: StrRead = read_field(s, body.cur);
+  let hits: StrRead = read_field(s, ttl.cur);
   if (!hits.cur.ok) {
     return EntryRead { entry: blank, cur: hits.cur };
   }
-  var e: runtime.CacheEntry = runtime.CacheEntry { key: key.value, status: to_i64(status.value), reason: reason.value, headers: h, body: body.value, ttl: to_f64(ttl.value), hits: to_i64(hits.value) };
+  let e: runtime.CacheEntry = runtime.CacheEntry { key: key.value, status: to_i64(status.value), reason: reason.value, headers: h, body: body.value, ttl: to_f64(ttl.value), hits: to_i64(hits.value) };
   return EntryRead { entry: e, cur: hits.cur };
 }
 
@@ -164,15 +164,15 @@ pub function decode(s: string): runtime.Cache {
   if (s.len() == 0) {
     return runtime.cache_new();
   }
-  var n: IntRead = read_int(s, Cur { at: 0, ok: true });
+  let n: IntRead = read_int(s, Cur { at: 0, ok: true });
   if (!n.cur.ok) {
     return runtime.cache_new();
   }
-  var out: runtime.CacheEntry[] = [];
-  var c: Cur = n.cur;
-  var i: i32 = 0;
+  let out: runtime.CacheEntry[] = [];
+  let c: Cur = n.cur;
+  let i: i32 = 0;
   while (i < n.value) {
-    var e: EntryRead = read_entry(s, c);
+    let e: EntryRead = read_entry(s, c);
     if (!e.cur.ok) {
       return runtime.cache_new();
     }

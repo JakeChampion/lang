@@ -18,26 +18,26 @@ function push_len(acc: i32[], x: string): i32[] { return acc.append(x.len()); }
 function add_len(acc: i32, x: string): i32 { return acc + x.len(); }
 
 function churn(): i32 {
-  var junk: string[] = [];
-  var i: i32 = 0;
+  let junk: string[] = [];
+  let i: i32 = 0;
   while (i < 300) { junk = junk.append("junk"); i = i + 1; }
   return junk.len();
 }
 
 function main(): i32 {
-  var names: string[] = [];
-  var i: i32 = 0;
+  let names: string[] = [];
+  let i: i32 = 0;
   while (i < 45) { names = names.append("name"); i = i + 1; }
-  var total: i32 = 0;
-  var round: i32 = 0;
+  let total: i32 = 0;
+  let round: i32 = 0;
   while (round < 20) {
-    var seed: string[] = [];
-    var got: string[] = fold(names, seed, push_name);
-    var iseed: i32[] = [];
-    var lens: i32[] = fold(names, iseed, push_len);
-    var n: i32 = fold(names, 0, add_len);
+    let seed: string[] = [];
+    let got: string[] = fold(names, seed, push_name);
+    let iseed: i32[] = [];
+    let lens: i32[] = fold(names, iseed, push_len);
+    let n: i32 = fold(names, 0, add_len);
     churn();
-    var k: i32 = 0;
+    let k: i32 = 0;
     while (k < got.len()) { total = total + got[k].len(); k = k + 1; }
     k = 0;
     while (k < lens.len()) { total = total + lens[k]; k = k + 1; }

@@ -77,8 +77,8 @@ function exclusive_child(r: Region, parent: i32, child: i32): boolean {
       return false;
     }
   }
-  var uses: i32 = 0;
-  var i: i32 = 0;
+  let uses: i32 = 0;
+  let i: i32 = 0;
   for v in r.values {
     for arg in v.args {
       if (arg == child) {
@@ -99,7 +99,7 @@ function exclusive_child(r: Region, parent: i32, child: i32): boolean {
 }
 
 function value_valid(r: Region, i: i32): boolean {
-  var v: Value = r.values[i];
+  let v: Value = r.values[i];
   for arg in v.args {
     if (arg < 0 || arg >= i) {
       return false;
@@ -126,14 +126,14 @@ function value_valid(r: Region, i: i32): boolean {
     if (v.variant < 0 || v.variant >= r.variants.len()) {
       return false;
     }
-    var decl: Variant = r.variants[v.variant];
+    let decl: Variant = r.variants[v.variant];
     if (!same(v.ty, decl.owner) || v.args.len() != decl.fields.len()) {
       return false;
     }
-    var j: i32 = 0;
+    let j: i32 = 0;
     while (j < v.args.len()) {
       // Construction moves only fresh literal arrays into its fields.
-      var child: Value = r.values[v.args[j]];
+      let child: Value = r.values[v.args[j]];
       if (!same(child.ty, decl.fields[j]) || !exclusive_child(r, i, v.args[j])) {
         return false;
       }
@@ -145,13 +145,13 @@ function value_valid(r: Region, i: i32): boolean {
     if (v.variant < 0 || v.variant >= r.callees.len()) {
       return false;
     }
-    var callee: Region = r.callees[v.variant];
+    let callee: Region = r.callees[v.variant];
     // Closed, nonrecursive summaries are derived from independently
     // verified semantic regions, never inferred from a function name.
     if (callee.callees.len() != 0 || !verify(callee).ok || !same(v.ty, callee.result) || v.args.len() != callee.params.len()) {
       return false;
     }
-    var j: i32 = 0;
+    let j: i32 = 0;
     while (j < v.args.len()) {
       if (!same(r.values[v.args[j]].ty, callee.values[callee.params[j]].ty)) {
         return false;
@@ -164,7 +164,7 @@ function value_valid(r: Region, i: i32): boolean {
     if (v.args.len() != 1 || v.variant < 0 || v.variant >= r.variants.len()) {
       return false;
     }
-    var decl: Variant = r.variants[v.variant];
+    let decl: Variant = r.variants[v.variant];
     return same(r.values[v.args[0]].ty, decl.owner) && v.field >= 0
       && v.field < decl.fields.len() && same(v.ty, decl.fields[v.field]);
   }
@@ -188,19 +188,19 @@ pub function verify(r: Region): Plan {
   if (!r.ok) {
     return refused();
   }
-  var guards: i32[] = [];
-  var variants: i32[] = [];
-  var depth: i32 = 0;
-  var next: i32 = 0;
-  var returns: i32 = 0;
+  let guards: i32[] = [];
+  let variants: i32[] = [];
+  let depth: i32 = 0;
+  let next: i32 = 0;
+  let returns: i32 = 0;
   for e in r.effects {
     if (e.kind == 0) {
       if (e.value != next || next >= r.values.len() || !value_valid(r, next)) {
         return refused();
       }
-      var v: Value = r.values[next];
+      let v: Value = r.values[next];
       if (v.kind == 5) {
-        var level: i32 = depth - 1;
+        let level: i32 = depth - 1;
         if (level < 0 || guards[level] != v.args[0] || variants[level] != v.variant) {
           return refused();
         }
@@ -246,7 +246,7 @@ pub function verify(r: Region): Plan {
   if (next != r.values.len() || depth != 0 || returns == 0) {
     return refused();
   }
-  var roots: string[] = [];
+  let roots: string[] = [];
   for b in r.bindings {
     if (b.value < 0 || b.value >= next || b.site == "") {
       return refused();
@@ -264,10 +264,10 @@ pub function verify(r: Region): Plan {
   }
   // A constructed root must have one owned binding, not a second credit for
   // an alias. Unbound temporaries have a different physical cleanup contract.
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < next) {
     if (r.values[i].kind == 3) {
-      var count: i32 = 0;
+      let count: i32 = 0;
       for b in r.bindings {
         if (b.value == i && b.owns_root) {
           count = count + 1;
@@ -279,8 +279,8 @@ pub function verify(r: Region): Plan {
     }
     i = i + 1;
   }
-  var borrowed: boolean[] = [];
-  var position: i32 = 0;
+  let borrowed: boolean[] = [];
+  let position: i32 = 0;
   for param in r.params {
     if (param != position || param >= next || r.values[param].kind != 0) {
       return refused();
@@ -303,8 +303,8 @@ function bad(r: Region): Imported {
 }
 
 function put(r: Region, ty: typeinfo.Type, kind: i32, args: i32[], variant: i32, field: i32): Imported {
-  var id: i32 = r.values.len();
-  var v: Value = Value { ty: ty, kind: kind, args: args, variant: variant, field: field };
+  let id: i32 = r.values.len();
+  let v: Value = Value { ty: ty, kind: kind, args: args, variant: variant, field: field };
   return Imported {
     region: Region {
       ...r, values: r.values.append(v),
@@ -315,7 +315,7 @@ function put(r: Region, ty: typeinfo.Type, kind: i32, args: i32[], variant: i32,
 }
 
 function resolve(scope: Scope, name: string): i32 {
-  var i: i32 = scope.names.len() - 1;
+  let i: i32 = scope.names.len() - 1;
   while (i >= 0) {
     if (scope.names[i] == name) {
       return scope.ids[i];
@@ -344,10 +344,10 @@ function declared(name: string, variants: Variant[]): typeinfo.Type {
 }
 
 function variant_index(r: Region, name: string, owner: string): i32 {
-  var found: i32 = 0 - 1;
-  var i: i32 = 0;
+  let found: i32 = 0 - 1;
+  let i: i32 = 0;
   while (i < r.variants.len()) {
-    var v: Variant = r.variants[i];
+    let v: Variant = r.variants[i];
     if ((v.name == name || typeinfo.spelling(v.owner) + "." + v.name == name)
       && (owner == "" || typeinfo.spelling(v.owner) == owner)) {
       if (found >= 0) {
@@ -366,11 +366,11 @@ function expr(e: ast.Expr, scope: Scope, r: Region): Imported {
   }
   match (e) {
     ast.ExprIdent(id) => {
-      var at: i32 = resolve(scope, id.name);
+      let at: i32 = resolve(scope, id.name);
       if (at >= 0) {
         return Imported { region: r, value: at };
       }
-      var vi: i32 = variant_index(r, id.name, "");
+      let vi: i32 = variant_index(r, id.name, "");
       if (vi >= 0 && r.variants[vi].fields.len() == 0) {
         return put(r, r.variants[vi].owner, 3, [], vi, 0);
       }
@@ -387,18 +387,18 @@ function expr(e: ast.Expr, scope: Scope, r: Region): Imported {
       if (a.elem_ty != "" && a.elem_ty != "i32") {
         return bad(r);
       }
-      var st: Region = r;
-      var args: i32[] = [];
+      let st: Region = r;
+      let args: i32[] = [];
       for el in a.elements {
-        var x: Imported = expr(el, scope, st);
+        let x: Imported = expr(el, scope, st);
         st = x.region;
         args = args.append(x.value);
       }
       return put(st, array_type(), 2, args, 0, 0);
     },
     ast.ExprBinary(b) => {
-      var left: Imported = expr(b.left, scope, r);
-      var right: Imported = expr(b.right, scope, left.region);
+      let left: Imported = expr(b.left, scope, r);
+      let right: Imported = expr(b.right, scope, left.region);
       if (!right.region.ok) {
         return bad(right.region);
       }
@@ -411,7 +411,7 @@ function expr(e: ast.Expr, scope: Scope, r: Region): Imported {
       if (!same(right.region.values[left.value].ty, integer()) || !same(right.region.values[right.value].ty, integer())) {
         return bad(right.region);
       }
-      var ty: typeinfo.Type = integer();
+      let ty: typeinfo.Type = integer();
       if (b.op == "==" || b.op == "!=" || b.op == "<" || b.op == ">" || b.op == "<=" || b.op == ">=") {
         ty = boolean_type();
       } else if (b.op != "+" && b.op != "-" && b.op != "*" && b.op != "/" && b.op != "%") {
@@ -420,8 +420,8 @@ function expr(e: ast.Expr, scope: Scope, r: Region): Imported {
       return put(right.region, ty, 6, [left.value, right.value], 0, 0);
     },
     ast.ExprIndex(ix) => {
-      var arr: Imported = expr(ix.array, scope, r);
-      var index: Imported = expr(ix.index, scope, arr.region);
+      let arr: Imported = expr(ix.array, scope, r);
+      let index: Imported = expr(ix.index, scope, arr.region);
       if (!index.region.ok || !same(index.region.values[arr.value].ty, array_type()) || !same(index.region.values[index.value].ty, integer())) {
         return bad(index.region);
       }
@@ -436,7 +436,7 @@ function expr(e: ast.Expr, scope: Scope, r: Region): Imported {
 }
 
 function call(c: ast.ExprCall, scope: Scope, r: Region): Imported {
-  var name: string = "";
+  let name: string = "";
   if let ast.ExprIdent(id) = c.callee {
     if (resolve(scope, id.name) < 0) {
       name = id.name;
@@ -444,7 +444,7 @@ function call(c: ast.ExprCall, scope: Scope, r: Region): Imported {
   }
   if let ast.ExprFieldAccess(f) = c.callee {
     if (f.field == "len" && c.args.len() == 0) {
-      var x: Imported = expr(f.obj, scope, r);
+      let x: Imported = expr(f.obj, scope, r);
       if (x.region.ok && same(x.region.values[x.value].ty, array_type())) {
         return put(x.region, integer(), 6, [x.value], 0, 0);
       }
@@ -456,20 +456,20 @@ function call(c: ast.ExprCall, scope: Scope, r: Region): Imported {
       }
     }
   }
-  var vi: i32 = variant_index(r, name, "");
+  let vi: i32 = variant_index(r, name, "");
   if (c.type_args.len() != 0) {
     return bad(r);
   }
-  var ci: i32 = 0;
+  let ci: i32 = 0;
   while (ci < r.callees.len()) {
     if (r.callees[ci].name == name) {
       if (vi >= 0) {
         return bad(r);
       }
-      var st: Region = r;
-      var args: i32[] = [];
+      let st: Region = r;
+      let args: i32[] = [];
       for arg in c.args {
-        var x: Imported = expr(arg, scope, st);
+        let x: Imported = expr(arg, scope, st);
         st = x.region;
         args = args.append(x.value);
       }
@@ -480,10 +480,10 @@ function call(c: ast.ExprCall, scope: Scope, r: Region): Imported {
   if (vi < 0) {
     return bad(r);
   }
-  var st: Region = r;
-  var args: i32[] = [];
+  let st: Region = r;
+  let args: i32[] = [];
   for arg in c.args {
-    var x: Imported = expr(arg, scope, st);
+    let x: Imported = expr(arg, scope, st);
     st = x.region;
     args = args.append(x.value);
   }
@@ -491,13 +491,13 @@ function call(c: ast.ExprCall, scope: Scope, r: Region): Imported {
 }
 
 function match_body(m: ast.StmtMatch, scope: Scope, r: Region): Region {
-  var scrut: Imported = expr(m.scrutinee, scope, r);
+  let scrut: Imported = expr(m.scrutinee, scope, r);
   if (!scrut.region.ok) {
     return scrut.region;
   }
-  var st: Region = scrut.region;
+  let st: Region = scrut.region;
   for arm in m.arms {
-    var inner: Scope = scope;
+    let inner: Scope = scope;
     if (arm.has_guard || arm.alt_cont) {
       return bad(st).region;
     }
@@ -509,12 +509,12 @@ function match_body(m: ast.StmtMatch, scope: Scope, r: Region): Region {
         if (p.nested.len() != 0 || p.at_binding != "" || p.has_lit_cond || p.tup_kinds.len() != 0 || p.field_names.len() != 0) {
           return bad(st).region;
         }
-        var vi: i32 = variant_index(st, p.type_name, typeinfo.spelling(st.values[scrut.value].ty));
+        let vi: i32 = variant_index(st, p.type_name, typeinfo.spelling(st.values[scrut.value].ty));
         if (vi < 0) {
           return bad(st).region;
         }
         st = Region { ...st, effects: st.effects.append(Effect { kind: 2, value: scrut.value, variant: vi }) };
-        var names: string[] = [];
+        let names: string[] = [];
         if (p.binding != "") {
           names = names.append(p.binding);
         }
@@ -524,10 +524,10 @@ function match_body(m: ast.StmtMatch, scope: Scope, r: Region): Region {
         if (names.len() > st.variants[vi].fields.len()) {
           return bad(st).region;
         }
-        var i: i32 = 0;
+        let i: i32 = 0;
         for name in names {
           if (name != "_") {
-            var x: Imported = put(st, st.variants[vi].fields[i], 5, [scrut.value], vi, i);
+            let x: Imported = put(st, st.variants[vi].fields[i], 5, [scrut.value], vi, i);
             st = x.region;
             inner = Scope { names: inner.names.append(name), ids: inner.ids.append(x.value) };
           }
@@ -545,16 +545,16 @@ function match_body(m: ast.StmtMatch, scope: Scope, r: Region): Region {
 }
 
 function body(stmts: ast.Stmt[], initial: Scope, r: Region): Region {
-  var st: Region = r;
-  var scope: Scope = initial;
+  let st: Region = r;
+  let scope: Scope = initial;
   for stmt in stmts {
     if (!st.ok) {
       return st;
     }
     match (stmt) {
       ast.StmtVar(v) => {
-        var before: i32 = st.values.len();
-        var x: Imported = expr(v.init, scope, st);
+        let before: i32 = st.values.len();
+        let x: Imported = expr(v.init, scope, st);
         st = x.region;
         if (!st.ok) {
           return st;
@@ -563,14 +563,14 @@ function body(stmts: ast.Stmt[], initial: Scope, r: Region): Region {
           return bad(st).region;
         }
         scope = Scope { names: scope.names.append(v.name), ids: scope.ids.append(x.value) };
-        var site: string = v.name + "@" + util.i32_to_string(v.line) + ":" + util.i32_to_string(v.col);
+        let site: string = v.name + "@" + util.i32_to_string(v.line) + ":" + util.i32_to_string(v.col);
         st = Region { ...st, bindings: st.bindings.append(Binding {
           site: site, value: x.value,
           owns_root: x.value >= before && st.values[x.value].kind == 3,
         }) };
       },
       ast.StmtReturn(ret) => {
-        var x: Imported = expr(ret.value, scope, st);
+        let x: Imported = expr(ret.value, scope, st);
         st = x.region;
         st = Region { ...st, effects: st.effects.append(Effect { kind: 1, value: x.value, variant: 0 - 1 }) };
       },
@@ -578,7 +578,7 @@ function body(stmts: ast.Stmt[], initial: Scope, r: Region): Region {
         st = match_body(m, scope, st);
       },
       ast.StmtIf(f) => {
-        var c: Imported = expr(f.cond, scope, st);
+        let c: Imported = expr(f.cond, scope, st);
         st = c.region;
         if (!st.ok || !same(st.values[c.value].ty, boolean_type())) {
           return bad(st).region;
@@ -599,16 +599,16 @@ pub function import_function(fn: parser.FuncDecl, decls: parser.StructDecl[]): R
 }
 
 function import_calls(fn: parser.FuncDecl, decls: parser.StructDecl[], callees: Region[]): Region {
-  var result: typeinfo.Type = declared(fn.ret_type, []);
-  var r: Region = Region { ok: false, name: fn.name, result: result, values: [], effects: [], bindings: [], variants: [], params: [], callees: callees };
+  let result: typeinfo.Type = declared(fn.ret_type, []);
+  let r: Region = Region { ok: false, name: fn.name, result: result, values: [], effects: [], bindings: [], variants: [], params: [], callees: callees };
   if (!same(result, array_type()) && !scalar(result) || fn.receiver_type != "" || fn.type_params.len() != 0 || fn.async) {
     return r;
   }
-  var variants: Variant[] = [];
+  let variants: Variant[] = [];
   for d in decls {
     if (d.enum_owner != "" && d.type_params.len() == 0) {
-      var fields: typeinfo.Type[] = [];
-      var supported: boolean = true;
+      let fields: typeinfo.Type[] = [];
+      let supported: boolean = true;
       for f in d.fields {
         if (f.type_name != "i32[]") {
           supported = false;
@@ -621,12 +621,12 @@ function import_calls(fn: parser.FuncDecl, decls: parser.StructDecl[], callees: 
     }
   }
   r = Region { ...r, ok: true, variants: variants };
-  var scope: Scope = Scope { names: [], ids: [] };
+  let scope: Scope = Scope { names: [], ids: [] };
   for p in fn.params {
     if (p.own) {
       return bad(r).region;
     }
-    var x: Imported = put(r, declared(p.type_name, variants), 0, [], 0, 0);
+    let x: Imported = put(r, declared(p.type_name, variants), 0, [], 0, 0);
     r = x.region;
     r = Region { ...r, params: r.params.append(x.value) };
     scope = Scope { names: scope.names.append(p.name), ids: scope.ids.append(x.value) };
@@ -648,7 +648,7 @@ function bool_key(v: boolean): string {
 }
 
 pub function region_key(r: Region): string {
-  var out: string = r.name + "|" + bool_key(r.ok) + "|" + typeinfo.spelling(r.result) + "|v";
+  let out: string = r.name + "|" + bool_key(r.ok) + "|" + typeinfo.spelling(r.result) + "|v";
   for v in r.values {
     out = out + typeinfo.spelling(v.ty) + ":" + util.i32_to_string(v.kind) + ":" + util.i32_to_string(v.variant) + ":" + util.i32_to_string(v.field) + ":";
     for a in v.args {
@@ -684,12 +684,12 @@ pub function region_key(r: Region): string {
 }
 
 pub function leaves(funcs: parser.FuncDecl[], decls: parser.StructDecl[]): Region[] {
-  var out: Region[] = [];
+  let out: Region[] = [];
   for fn in funcs {
-    var r: Region = import_function(fn, decls);
-    var p: Plan = verify(r);
+    let r: Region = import_function(fn, decls);
+    let p: Plan = verify(r);
     if (p.ok) {
-      var relevant: boolean = p.roots.len() > 0;
+      let relevant: boolean = p.roots.len() > 0;
       for borrowed in p.borrowed {
         if (borrowed) {
           relevant = true;

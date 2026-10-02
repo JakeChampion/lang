@@ -43,48 +43,48 @@ func TestSelfHostBuildGateX86_64(t *testing.T) {
 			// The issue's own repro: assignment type error, reported by both
 			// checkers, compiled clean by the self-host until the gate widened.
 			name:     "assign-mismatch-E003",
-			src:      "function main(): i32 { var s: string = 5; return 0; }\n",
+			src:      "function main(): i32 { let s: string = 5; return 0; }\n",
 			wantDiag: "error[E003]",
 		},
 		{
 			// #10094: native refuses a Map built outside core/map's import
 			// closure; the self-host lowers its own map and built it.
 			name:     "map-without-core-map-E001",
-			src:      "function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 2); return m.get_or(1, 0) - 2; }\n",
+			src:      "function main(): i32 { let m: Map[i32, i32] = map_new(8); m = m.insert(1, 2); return m.get_or(1, 0) - 2; }\n",
 			wantDiag: "error[E001]",
 		},
 		{
 			// core/map reached through another module's import is in the
 			// closure, as it is for native.
 			name: "map-with-core-map-through-an-import",
-			src:  "import \"std/dotenv\";\nfunction main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 2); return m.get_or(1, 0) - 2; }\n",
+			src:  "import \"std/dotenv\";\nfunction main(): i32 { let m: Map[i32, i32] = map_new(8); m = m.insert(1, 2); return m.get_or(1, 0) - 2; }\n",
 		},
 		{
 			// #10095: the retired in-place spelling. Accepted, it built a
 			// program the two lowerings answered differently.
 			name:     "retired-map-set-E043",
-			src:      "import \"core/map\";\nfunction main(): i32 { var m: Map[i32, i32] = map_new(8); m.set(1, 2); return m.get_or(1, 0); }\n",
+			src:      "import \"core/map\";\nfunction main(): i32 { let m: Map[i32, i32] = map_new(8); m.set(1, 2); return m.get_or(1, 0); }\n",
 			wantDiag: "error[E043]",
 		},
 		{
 			// A name Map has never had, refused against core/map's loaded
 			// method set; a core/map receiver method beside it stays legal.
 			name:     "map-unknown-method-E043",
-			src:      "import \"core/map\";\nfunction main(): i32 { var m: Map[i32, i32] = map_new(8); return m.entries().len() + m.frob(); }\n",
+			src:      "import \"core/map\";\nfunction main(): i32 { let m: Map[i32, i32] = map_new(8); return m.entries().len() + m.frob(); }\n",
 			wantDiag: "error[E043]",
 		},
 		{
 			name: "map-core-map-receiver-method",
-			src:  "import \"core/map\";\nfunction main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 2); return m.entries().len() - 1; }\n",
+			src:  "import \"core/map\";\nfunction main(): i32 { let m: Map[i32, i32] = map_new(8); m = m.insert(1, 2); return m.entries().len() - 1; }\n",
 		},
 		{
 			name:     "wildcard-arm-not-last-E026",
-			src:      "enum O { Sm(i32), Nn }\nfunction main(): i32 { var o: O = O.Nn; match (o) { _ => { return 1; }, Nn => { return 3; } } }\n",
+			src:      "enum O { Sm(i32), Nn }\nfunction main(): i32 { let o: O = O.Nn; match (o) { _ => { return 1; }, Nn => { return 3; } } }\n",
 			wantDiag: "error[E026]",
 		},
 		{
 			name:     "variant-covered-twice-E028",
-			src:      "enum O { Sm(i32), Nn }\nfunction main(): i32 { var o: O = O.Sm(1); match (o) { Sm(a) => { return a; }, Sm(b) => { return b; }, Nn => { return 3; } } }\n",
+			src:      "enum O { Sm(i32), Nn }\nfunction main(): i32 { let o: O = O.Sm(1); match (o) { Sm(a) => { return a; }, Sm(b) => { return b; }, Nn => { return 3; } } }\n",
 			wantDiag: "error[E028]",
 		},
 		{
@@ -116,7 +116,7 @@ func TestSelfHostBuildGateX86_64(t *testing.T) {
 			// One of the six codes that gated before this change, so the
 			// widening cannot be read as having replaced the old set.
 			name:     "field-assign-E048",
-			src:      "struct P { x: i32 }\nfunction main(): i32 { var p: P = P { x: 1 }; p.x = 5; return p.x; }\n",
+			src:      "struct P { x: i32 }\nfunction main(): i32 { let p: P = P { x: 1 }; p.x = 5; return p.x; }\n",
 			wantDiag: "error[E048]",
 		},
 		{
@@ -148,7 +148,7 @@ func TestSelfHostBuildGateX86_64(t *testing.T) {
 			// whole module as "not IR-eligible", naming neither the call nor
 			// the mistake.
 			name:     "array-builtin-arity-E004",
-			src:      "function main(): i32 { var a: i32[] = [1, 2]; return a.len(3); }\n",
+			src:      "function main(): i32 { let a: i32[] = [1, 2]; return a.len(3); }\n",
 			wantDiag: "error[E004]",
 		},
 		{
@@ -157,7 +157,7 @@ func TestSelfHostBuildGateX86_64(t *testing.T) {
 			// would reject real programs rather than merely mis-report them,
 			// because E004 gates the build (#7273).
 			name:     "array-builtins-at-correct-arity-compile",
-			src:      "function main(): i32 { var a: i32[] = [1, 2]; var b: i32[] = a.append(3); var c: i32[] = b.with(0, 9); return c.len(); }\n",
+			src:      "function main(): i32 { let a: i32[] = [1, 2]; let b: i32[] = a.append(3); let c: i32[] = b.with(0, 9); return c.len(); }\n",
 			wantDiag: "",
 		},
 		{
@@ -170,7 +170,7 @@ func TestSelfHostBuildGateX86_64(t *testing.T) {
 			// into two wasm drivers, never into the compiler. Native reports
 			// P001 here, so this is code-set parity as well as a better message.
 			name:     "keyword-fn-name-P001",
-			src:      "struct B { items: i32[] }\nfunction use(own p: B): i32 { return p.items.len(); }\nfunction main(): i32 { var a: B = B { items: [] }; return use(a); }\n",
+			src:      "struct B { items: i32[] }\nfunction use(own p: B): i32 { return p.items.len(); }\nfunction main(): i32 { let a: B = B { items: [] }; return use(a); }\n",
 			wantDiag: "error[P001]",
 		},
 		{
@@ -197,7 +197,7 @@ func TestSelfHostBuildGateX86_64(t *testing.T) {
 			// reports E004 at the call; now the self-host does too, and the
 			// gate makes it a build rejection.
 			name:     "string-builtin-arity-E004",
-			src:      "function main(): i32 { var s: string = \"abc\"; return s.len(1); }\n",
+			src:      "function main(): i32 { let s: string = \"abc\"; return s.len(1); }\n",
 			wantDiag: "error[E004]",
 		},
 		{
@@ -212,7 +212,7 @@ func TestSelfHostBuildGateX86_64(t *testing.T) {
 			// read its second argument out of whatever was in the register
 			// (the binary returned 121 rather than failing).
 			name:     "closure-call-arity-E004",
-			src:      "function main(): i32 { var g = (a: i32, b: i32): i32 => { return a + b; }; return g(1); }\n",
+			src:      "function main(): i32 { let g = (a: i32, b: i32): i32 => { return a + b; }; return g(1); }\n",
 			wantDiag: "error[E004]",
 		},
 		{
@@ -220,7 +220,7 @@ func TestSelfHostBuildGateX86_64(t *testing.T) {
 			// rather than a lambda: `g` is a plain local, so the callee it
 			// resolves to was never consulted for arity.
 			name:     "fn-value-call-arity-E004",
-			src:      "function dbl(a: i32, b: i32): i32 { return a + b; }\nfunction main(): i32 { var g = dbl; return g(1); }\n",
+			src:      "function dbl(a: i32, b: i32): i32 { return a + b; }\nfunction main(): i32 { let g = dbl; return g(1); }\n",
 			wantDiag: "error[E004]",
 		},
 		{
@@ -235,7 +235,7 @@ func TestSelfHostBuildGateX86_64(t *testing.T) {
 			// arity, including a zero-parameter callable — `()` must read as
 			// arity 0 and not as "no parameter list recorded". Runs to 10.
 			name:     "closure-and-fn-value-at-correct-arity-compile",
-			src:      "function dbl(a: i32, b: i32): i32 { return a + b; }\nfunction z(f: () => i32): i32 { var q = f; return q(); }\nfunction main(): i32 { var g = (a: i32, b: i32): i32 => { return a + b; }; var h = dbl; return g(1, 2) + h(3, 4) + z((): i32 => 0); }\n",
+			src:      "function dbl(a: i32, b: i32): i32 { return a + b; }\nfunction z(f: () => i32): i32 { let q = f; return q(); }\nfunction main(): i32 { let g = (a: i32, b: i32): i32 => { return a + b; }; let h = dbl; return g(1, 2) + h(3, 4) + z((): i32 => 0); }\n",
 			wantDiag: "",
 		},
 		{
@@ -252,7 +252,7 @@ func TestSelfHostBuildGateX86_64(t *testing.T) {
 			// segfaults. Native and the interpreter both answer 3. That defect
 			// predates this rule and is unrelated to arity.
 			name:     "fn-typed-struct-field-rebind-has-no-arity-to-check",
-			src:      "struct H { f: (i32) => i32 }\nfunction apply_h(h: H): i32 { var g = h.f; return g(2); }\nfunction inc(x: i32): i32 { return x + 1; }\nfunction main(): i32 { return apply_h(H { f: inc }); }\n",
+			src:      "struct H { f: (i32) => i32 }\nfunction apply_h(h: H): i32 { let g = h.f; return g(2); }\nfunction inc(x: i32): i32 { return x + 1; }\nfunction main(): i32 { return apply_h(H { f: inc }); }\n",
 			wantDiag: "",
 		},
 		{
@@ -261,7 +261,7 @@ func TestSelfHostBuildGateX86_64(t *testing.T) {
 			// as_bytes is u8[]) — a wrong arity constant or type arm here
 			// would reject real programs, because E004 gates the build.
 			name:     "string-and-free-builtins-at-correct-arity-compile",
-			src:      "function main(): i32 { print(\"a\"); var s: string = \"abc\"; return s.len() + s.as_bytes().len(); }\n",
+			src:      "function main(): i32 { print(\"a\"); let s: string = \"abc\"; return s.len() + s.as_bytes().len(); }\n",
 			wantDiag: "",
 		},
 		{
@@ -270,7 +270,7 @@ func TestSelfHostBuildGateX86_64(t *testing.T) {
 			// checkers are now silent here. The case stays as the regression
 			// guard for the width rule.
 			name:     "i64-program-compiles",
-			src:      "import \"std/i64\";\nfunction main(): i32 { var a: i64 = 9i64; var b: i64 = 3i64; return (a / b) as i32; }\n",
+			src:      "import \"std/i64\";\nfunction main(): i32 { let a: i64 = 9i64; let b: i64 = 3i64; return (a / b) as i32; }\n",
 			wantDiag: "",
 		},
 		{
@@ -283,17 +283,17 @@ func TestSelfHostBuildGateX86_64(t *testing.T) {
 			// One case per receiver kind, because the three take different
 			// resolution arms: scalar, array, string.
 			name:     "unimported-i32-method-E043",
-			src:      "function main(): i32 { var t: string = 7.to_string(); return t.len(); }\n",
+			src:      "function main(): i32 { let t: string = 7.to_string(); return t.len(); }\n",
 			wantDiag: "error[E043]",
 		},
 		{
 			name:     "unimported-array-method-E043",
-			src:      "function main(): i32 { var xs: string[] = [\"ab\", \"cd\"]; var t: string = xs.join(\",\"); return t.len(); }\n",
+			src:      "function main(): i32 { let xs: string[] = [\"ab\", \"cd\"]; let t: string = xs.join(\",\"); return t.len(); }\n",
 			wantDiag: "error[E043]",
 		},
 		{
 			name:     "unimported-string-method-E043",
-			src:      "function main(): i32 { var s: string = \"aXb\"; var t: string = s.replace(\"X\", \"Y\"); return t.len(); }\n",
+			src:      "function main(): i32 { let s: string = \"aXb\"; let t: string = s.replace(\"X\", \"Y\"); return t.len(); }\n",
 			wantDiag: "error[E043]",
 		},
 		{
@@ -302,7 +302,7 @@ func TestSelfHostBuildGateX86_64(t *testing.T) {
 			// valid, so a rule that rejected on the method NAME rather than on
 			// what is in scope would fail here.
 			name:     "imported-stdlib-methods-compile",
-			src:      "import \"std/i32\";\nimport \"std/array\";\nimport \"std/string\";\nfunction main(): i32 { var t: string = 7.to_string(); var xs: string[] = [\"ab\", \"cd\"]; var j: string = xs.join(\",\"); var r: string = \"aXb\".replace(\"X\", \"Y\"); return t.len() + j.len() + r.len(); }\n",
+			src:      "import \"std/i32\";\nimport \"std/array\";\nimport \"std/string\";\nfunction main(): i32 { let t: string = 7.to_string(); let xs: string[] = [\"ab\", \"cd\"]; let j: string = xs.join(\",\"); let r: string = \"aXb\".replace(\"X\", \"Y\"); return t.len() + j.len() + r.len(); }\n",
 			wantDiag: "",
 		},
 		{
@@ -314,7 +314,7 @@ func TestSelfHostBuildGateX86_64(t *testing.T) {
 			// the lookup (#6118); the self-host now erases a function's own type
 			// parameters when it resolves a spelling.
 			name:     "type-param-name-collision-compiles",
-			src:      "import \"std/array\";\nstruct T { z: i32 }\nstruct K { a: i32 }\nfunction main(): i32 { var xs: i32[] = [1, 2, 3]; var t: T = T { z: xs.sum() }; var k: K = K { a: xs.len() }; return t.z + k.a; }\n",
+			src:      "import \"std/array\";\nstruct T { z: i32 }\nstruct K { a: i32 }\nfunction main(): i32 { let xs: i32[] = [1, 2, 3]; let t: T = T { z: xs.sum() }; let k: K = K { a: xs.len() }; return t.z + k.a; }\n",
 			wantDiag: "",
 		},
 		{
@@ -326,7 +326,7 @@ func TestSelfHostBuildGateX86_64(t *testing.T) {
 			// 7 E021 + 2 E064 and `import "std/time"` 18 + 24, on programs
 			// whose only content was the import.
 			name:     "unknown-stdlib-type-not-reported-E064",
-			src:      "import \"std/io\";\nfunction main(): i32 { var r: i32 = 0; return r; }\n",
+			src:      "import \"std/io\";\nfunction main(): i32 { let r: i32 = 0; return r; }\n",
 			wantDiag: "",
 		},
 		{
@@ -346,14 +346,14 @@ func TestSelfHostBuildGateX86_64(t *testing.T) {
 			// unequal — a plausible wrong answer where both checkers knew the
 			// error. `-check` reported it the whole time.
 			name:     "array-equality-E041",
-			src:      "function main(): i32 { var xs: i32[] = [1, 2, 3]; var ys: i32[] = [1, 2, 3]; if (xs == ys) { return 1; } return 0; }\n",
+			src:      "function main(): i32 { let xs: i32[] = [1, 2, 3]; let ys: i32[] = [1, 2, 3]; if (xs == ys) { return 1; } return 0; }\n",
 			wantDiag: "error[E041]",
 		},
 		{
 			// The negative control: `==` on the ELEMENTS is what the E041
 			// message tells the author to write, so it must build.
 			name:     "array-element-equality-compiles",
-			src:      "function main(): i32 { var xs: i32[] = [1, 2, 3]; var ys: i32[] = [1, 2, 3]; if (xs[0] == ys[0]) { return 1; } return 0; }\n",
+			src:      "function main(): i32 { let xs: i32[] = [1, 2, 3]; let ys: i32[] = [1, 2, 3]; if (xs[0] == ys[0]) { return 1; } return 0; }\n",
 			wantDiag: "",
 		},
 		{
@@ -363,14 +363,14 @@ func TestSelfHostBuildGateX86_64(t *testing.T) {
 			// element the binding said to throw away
 			// (conformance/cases/underscore_not_readable).
 			name:     "discard-read-back-E001",
-			src:      "function pair(): (i32, i32) { return (1, 2); }\nfunction main(): i32 { var (a, _) = pair(); return _; }\n",
+			src:      "function pair(): (i32, i32) { return (1, 2); }\nfunction main(): i32 { let (a, _) = pair(); return _; }\n",
 			wantDiag: "error[E001]",
 		},
 		{
 			// E051: the `own`-param discipline. Passing the same value twice
 			// hands the callee a pointer it already consumed.
 			name:     "owned-arg-used-twice-E051",
-			src:      "struct B { items: i32[] }\nfunction consume(own p: B): i32 { return p.items.len(); }\nfunction main(): i32 { var a: B = B { items: [1] }; var n: i32 = consume(a); return n + consume(a); }\n",
+			src:      "struct B { items: i32[] }\nfunction consume(own p: B): i32 { return p.items.len(); }\nfunction main(): i32 { let a: B = B { items: [1] }; let n: i32 = consume(a); return n + consume(a); }\n",
 			wantDiag: "error[E051]",
 		},
 		{
@@ -394,15 +394,15 @@ func TestSelfHostBuildGateX86_64(t *testing.T) {
 			// two in one signature or one scope are neither E018 nor E013 —
 			// the last two codes the compile path had to exempt (#8852).
 			name:     "repeated-discard-compiles",
-			src:      "function constant(_: i32, _: string): i32 { return 7; }\nfunction main(): i32 { var _ = 99; var _ = 98; return constant(1, \"a\"); }\n",
+			src:      "function constant(_: i32, _: string): i32 { return 7; }\nfunction main(): i32 { let _ = 99; let _ = 98; return constant(1, \"a\"); }\n",
 			wantDiag: "",
 		},
 		{
 			// The same rename is what keeps a discard unreadable through every
-			// binding site: a plain `var`, a parameter, and a `for` header
+			// binding site: a plain `let`, a parameter, and a `for` header
 			// each introduce no name for `_` (#8852).
 			name:     "discard-var-read-back-E001",
-			src:      "function main(): i32 { var _ = 99; return _; }\n",
+			src:      "function main(): i32 { let _ = 99; return _; }\n",
 			wantDiag: "error[E001]",
 		},
 		{
@@ -412,7 +412,7 @@ func TestSelfHostBuildGateX86_64(t *testing.T) {
 		},
 		{
 			name:     "discard-for-header-read-back-E001",
-			src:      "function main(): i32 { var xs: (i32, i32)[] = [(1, 2)]; for (a, _) in xs { return _; } return 0; }\n",
+			src:      "function main(): i32 { let xs: (i32, i32)[] = [(1, 2)]; for (a, _) in xs { return _; } return 0; }\n",
 			wantDiag: "error[E001]",
 		},
 		{
@@ -425,13 +425,13 @@ func TestSelfHostBuildGateX86_64(t *testing.T) {
 			// it as a parenthesised group, and splitting on every comma bound
 			// "(a" and "b)" — E001 for both `a` and `b`.
 			name:     "for-nested-tuple-pattern-compiles",
-			src:      "function main(): i32 { var deep: ((i32, i32), string)[] = [((2, 3), \"xy\")]; var s: i32 = 0; for ((a, b), c) in deep { s = s + a * b + c.len(); } return s; }\n",
+			src:      "function main(): i32 { let deep: ((i32, i32), string)[] = [((2, 3), \"xy\")]; let s: i32 = 0; for ((a, b), c) in deep { s = s + a * b + c.len(); } return s; }\n",
 			wantDiag: "",
 		},
 		{
 			// The `@` whole-value binder names the scrutinee; nothing bound it.
 			name:     "at-binder-compiles",
-			src:      "enum One { Only(string) }\nfunction whole(o: One): i32 { return 1; }\nfunction main(): i32 { var o: One = Only(\"e\"); match (o) { w @ Only(v) => { return whole(w) + v.len(); } } }\n",
+			src:      "enum One { Only(string) }\nfunction whole(o: One): i32 { return 1; }\nfunction main(): i32 { let o: One = Only(\"e\"); match (o) { w @ Only(v) => { return whole(w) + v.len(); } } }\n",
 			wantDiag: "",
 		},
 		{
@@ -447,7 +447,7 @@ func TestSelfHostBuildGateX86_64(t *testing.T) {
 			// -variant arm claimed the call first and reported a variant
 			// nobody wrote (E036).
 			name:     "enum-associated-fn-compiles",
-			src:      "trait Empty { function empty(): Self; }\nenum Opt { Nothing, Just(i32) }\nimpl Empty for Opt { function empty(): Self { return Nothing; } }\nfunction main(): i32 { var o: Opt = Opt.empty(); match (o) { Nothing => { return 0; }, Just(n) => { return n; } } }\n",
+			src:      "trait Empty { function empty(): Self; }\nenum Opt { Nothing, Just(i32) }\nimpl Empty for Opt { function empty(): Self { return Nothing; } }\nfunction main(): i32 { let o: Opt = Opt.empty(); match (o) { Nothing => { return 0; }, Just(n) => { return n; } } }\n",
 			wantDiag: "",
 		},
 		{
@@ -464,7 +464,7 @@ func TestSelfHostBuildGateX86_64(t *testing.T) {
 			// this checker can model, not about the program, so it must never
 			// reject a build. `is_diagnostic_code` is what keeps it out.
 			name:     "uncoded-partial-checker-hint-does-not-gate",
-			src:      "enum W { Wrap(i32), Er2 }\nfunction main(): i32 { var w: W = W.Er2; match (w) { Wrap(Er2) => { return 1; }, Er2 => { return 2; } } }\n",
+			src:      "enum W { Wrap(i32), Er2 }\nfunction main(): i32 { let w: W = W.Er2; match (w) { Wrap(Er2) => { return 1; }, Er2 => { return 2; } } }\n",
 			wantDiag: "",
 		},
 		{
@@ -474,7 +474,7 @@ func TestSelfHostBuildGateX86_64(t *testing.T) {
 			// `string` passed here and the frame released storage the
 			// source owns. Native reports E003 on the same program.
 			name:     "slice-payload-is-a-view-E003",
-			src:      "function main(): i32 { var s: string = \"abcdef\"; match (s[0:3]) { Some(v) => { var w: string = v; return w.len(); }, None => { return 0; } } }\n",
+			src:      "function main(): i32 { let s: string = \"abcdef\"; match (s[0:3]) { Some(v) => { let w: string = v; return w.len(); }, None => { return 0; } } }\n",
 			wantDiag: "error[E003]",
 		},
 		{
@@ -482,7 +482,7 @@ func TestSelfHostBuildGateX86_64(t *testing.T) {
 			// must still compile, so the rule fires on the mismatch and not
 			// on the slice.
 			name:     "slice-payload-at-its-own-type-compiles",
-			src:      "function main(): i32 { var s: string = \"abcdef\"; match (s[0:3]) { Some(v) => { var w: str = v; return w.len(); }, None => { return 0; } } }\n",
+			src:      "function main(): i32 { let s: string = \"abcdef\"; match (s[0:3]) { Some(v) => { let w: str = v; return w.len(); }, None => { return 0; } } }\n",
 			wantDiag: "",
 		},
 	}
@@ -541,10 +541,10 @@ func TestSelfHostBuildGateMatchesCheckX86_64(t *testing.T) {
 	// would pass this test without the gate existing at all — IR lowering
 	// rejects it on its own — so it would prove nothing.
 	srcs := []string{
-		"function main(): i32 { var s: string = 5; return 0; }\n",
-		"enum O { Sm(i32), Nn }\nfunction main(): i32 { var o: O = O.Sm(1); match (o) { Sm(a) => { return a; }, Sm(b) => { return b; }, Nn => { return 3; } } }\n",
-		"struct P { x: i32 }\nfunction main(): i32 { var p: P = P { x: 1 }; p.x = 5; return p.x; }\n",
-		"enum O { Sm(i32), Nn }\nfunction main(): i32 { var o: O = O.Nn; match (o) { _ => { return 1; }, Nn => { return 3; } } }\n",
+		"function main(): i32 { let s: string = 5; return 0; }\n",
+		"enum O { Sm(i32), Nn }\nfunction main(): i32 { let o: O = O.Sm(1); match (o) { Sm(a) => { return a; }, Sm(b) => { return b; }, Nn => { return 3; } } }\n",
+		"struct P { x: i32 }\nfunction main(): i32 { let p: P = P { x: 1 }; p.x = 5; return p.x; }\n",
+		"enum O { Sm(i32), Nn }\nfunction main(): i32 { let o: O = O.Nn; match (o) { _ => { return 1; }, Nn => { return 3; } } }\n",
 		// #7273: this source is why the property matters — `-check` reported
 		// E004 and `-target` built it anyway, for as long as E004 sat on the
 		// exclusion list. IR lowering does not stop it either: the call is
@@ -613,22 +613,22 @@ func TestSelfHostFormerlyExemptCodesGateX86_64(t *testing.T) {
 	}
 
 	rows := []formerlyExemptCode{
-		{code: "E001", src: "function main(): i32 { var a: i32 = zz; return a; }\n"},
-		{code: "E009", src: "function main(): i32 { var s: string = \"x\"; if (s && true) { return 1; } return 0; }\n"},
-		{code: "E013", src: "function main(): i32 { var a: i32 = 1; var a: i32 = 2; return a; }\n"},
+		{code: "E001", src: "function main(): i32 { let a: i32 = zz; return a; }\n"},
+		{code: "E009", src: "function main(): i32 { let s: string = \"x\"; if (s && true) { return 1; } return 0; }\n"},
+		{code: "E013", src: "function main(): i32 { let a: i32 = 1; let a: i32 = 2; return a; }\n"},
 		{code: "E018", src: "function f(a: i32, a: i32): i32 { return a; }\nfunction main(): i32 { return f(1, 2); }\n"},
 		{code: "E019", src: "struct Box[T] { v: T }\nfunction f(b: Box[i32, string]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n"},
 		{code: "E021", src: "trait Greet { function hello(): i32; }\nstruct Dog {}\nimpl Greet for Dog {}\nfunction main(): i32 { return 0; }\n"},
-		{code: "E024", src: "function pair(): (i32, i32) { return (1, 2); }\nfunction main(): i32 { var (a, b, c) = pair(); return a; }\n"},
-		{code: "E031", src: "enum O { Aa, Bb }\nfunction main(): i32 { var o: O = O.Aa; var r = match (o) { Aa => 1, Bb => \"x\" }; return 0; }\n"},
-		{code: "E034", src: "function main(): i32 { var xs: i32[] = [1, \"two\"]; return xs.len(); }\n"},
-		{code: "E036", src: "enum O { Aa, Bb }\nfunction main(): i32 { var o: O = O.Cc; return 0; }\n"},
+		{code: "E024", src: "function pair(): (i32, i32) { return (1, 2); }\nfunction main(): i32 { let (a, b, c) = pair(); return a; }\n"},
+		{code: "E031", src: "enum O { Aa, Bb }\nfunction main(): i32 { let o: O = O.Aa; let r = match (o) { Aa => 1, Bb => \"x\" }; return 0; }\n"},
+		{code: "E034", src: "function main(): i32 { let xs: i32[] = [1, \"two\"]; return xs.len(); }\n"},
+		{code: "E036", src: "enum O { Aa, Bb }\nfunction main(): i32 { let o: O = O.Cc; return 0; }\n"},
 		{code: "E038", src: "function g(n: i32): i32 { return n; }\nfunction main(): i32 { return g(\"x\"); }\n"},
 		{code: "E040", src: "function pick[T](a: T): T { return a; }\nfunction main(): i32 { return pick[i32, string](1); }\n"},
-		{code: "E041", src: "function main(): i32 { var xs: i32[] = [1,2]; var ys: i32[] = [1,2]; if (xs == ys) { return 1; } return 0; }\n"},
-		{code: "E042", src: "function main(): i32 { var n: i32 = 5; var m: i32 = n?; return m; }\n"},
-		{code: "E044", src: "function nothing(): void { }\nfunction main(): i32 { var v = nothing(); var g = (): i32 => { v; return 2; }; return g(); }\n"},
-		{code: "E051", src: "struct B { items: i32[] }\nfunction consume(own p: B): i32 { return p.items.len(); }\nfunction main(): i32 { var a: B = B { items: [1] }; var n: i32 = consume(a); return n + consume(a); }\n"},
+		{code: "E041", src: "function main(): i32 { let xs: i32[] = [1,2]; let ys: i32[] = [1,2]; if (xs == ys) { return 1; } return 0; }\n"},
+		{code: "E042", src: "function main(): i32 { let n: i32 = 5; let m: i32 = n?; return m; }\n"},
+		{code: "E044", src: "function nothing(): void { }\nfunction main(): i32 { let v = nothing(); let g = (): i32 => { v; return 2; }; return g(); }\n"},
+		{code: "E051", src: "struct B { items: i32[] }\nfunction consume(own p: B): i32 { return p.items.len(); }\nfunction main(): i32 { let a: B = B { items: [1] }; let n: i32 = consume(a); return n + consume(a); }\n"},
 		{code: "E052", src: "function f(n: i32): i32 { if (n > 0) { return 1; } }\nfunction main(): i32 { return f(1); }\n"},
 		{code: "E064", src: "function f(a: Wibble): i32 { return 0; }\nfunction main(): i32 { return 0; }\n"},
 	}

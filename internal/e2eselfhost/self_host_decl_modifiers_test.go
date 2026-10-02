@@ -36,15 +36,15 @@ var declModifierCases = []struct {
 	{"pub-async-function",
 		`pub async function compute(): i32 { return 8; } function main(): i32 { return compute(); }`, 8},
 	{"opaque-struct",
-		`opaque struct E { a: i32 } function main(): i32 { var e: E = E { a: 3 }; return e.a; }`, 3},
+		`opaque struct E { a: i32 } function main(): i32 { let e: E = E { a: 3 }; return e.a; }`, 3},
 	{"pub-opaque-struct",
-		`pub opaque struct E { a: i32 } function main(): i32 { var e: E = E { a: 5 }; return e.a + 4; }`, 9},
+		`pub opaque struct E { a: i32 } function main(): i32 { let e: E = E { a: 5 }; return e.a + 4; }`, 9},
 	// Both declarations in one module, each still reachable.
 	{"both-modifiers",
-		`pub opaque struct E { a: i32 } async function compute(): i32 { return 2; } function main(): i32 { var e: E = E { a: 4 }; return e.a + compute(); }`, 6},
+		`pub opaque struct E { a: i32 } async function compute(): i32 { return 2; } function main(): i32 { let e: E = E { a: 4 }; return e.a + compute(); }`, 6},
 	// Contextual: neither name is reserved, so both stay usable as locals.
 	{"still-identifiers",
-		`function f(): i32 { var async: i32 = 3; var opaque: i32 = 4; return async + opaque; } function main(): i32 { return f(); }`, 7},
+		`function f(): i32 { let async: i32 = 3; let opaque: i32 = 4; return async + opaque; } function main(): i32 { return f(); }`, 7},
 	// `async` / `opaque` NOT followed by their keyword are ordinary
 	// identifiers at statement position too — the modifier probe must not
 	// swallow them.
@@ -208,11 +208,11 @@ func TestSelfHostOpaqueUnderAttributes(t *testing.T) {
 		plain, opaque string
 	}{
 		{"must-consume",
-			`@must_consume pub struct E { a: i32 } function take(e: E): i32 { return e.a; } function main(): i32 { var e: E = E { a: 6 }; return take(e); }`,
-			`@must_consume pub opaque struct E { a: i32 } function take(e: E): i32 { return e.a; } function main(): i32 { var e: E = E { a: 6 }; return take(e); }`},
+			`@must_consume pub struct E { a: i32 } function take(e: E): i32 { return e.a; } function main(): i32 { let e: E = E { a: 6 }; return take(e); }`,
+			`@must_consume pub opaque struct E { a: i32 } function take(e: E): i32 { return e.a; } function main(): i32 { let e: E = E { a: 6 }; return take(e); }`},
 		{"derive",
-			`trait Default { function default(): Self; } @derive(Default) pub struct Cfg { a: i32 } function main(): i32 { var c: Cfg = Cfg.default(); return c.a + 9; }`,
-			`trait Default { function default(): Self; } @derive(Default) pub opaque struct Cfg { a: i32 } function main(): i32 { var c: Cfg = Cfg.default(); return c.a + 9; }`},
+			`trait Default { function default(): Self; } @derive(Default) pub struct Cfg { a: i32 } function main(): i32 { let c: Cfg = Cfg.default(); return c.a + 9; }`,
+			`trait Default { function default(): Self; } @derive(Default) pub opaque struct Cfg { a: i32 } function main(): i32 { let c: Cfg = Cfg.default(); return c.a + 9; }`},
 	}
 
 	gcc, runner := x86_64Tooling(t)

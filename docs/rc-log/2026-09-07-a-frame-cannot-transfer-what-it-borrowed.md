@@ -18,9 +18,9 @@ struct S { buf: u8[], n: i32 }
 function bump(own s: S): S { s = S { ...s, n: s.n + 1 }; return s; }
 function (s: S) mbump(): S { s = bump(s); return s; }
 function main(): i32 {
-    var a: S = S { buf: zero(4), n: 0 };
-    var keep: S = a;
-    var b: S = a.mbump();
+    let a: S = S { buf: zero(4), n: 0 };
+    let keep: S = a;
+    let b: S = a.mbump();
     return b.n * 100 + keep.n * 10 + a.n;      // expect 100
 }
 ```
@@ -35,7 +35,7 @@ function main(): i32 {
 | self-host wasm32-wasi IR (node WASI) | **111** | 100 |
 
 111 is all three names reading `n == 1`: one box, reused under two aliases. The
-issue's own hasher spelling (`var keep = h; var forked = h.update(c)`, a u64
+issue's own hasher spelling (`let keep = h; let forked = h.update(c)`, a u64
 total over 100 rebinds) is the same row and moves 6 to 7 on all three targets.
 
 `emit_own_borrowed_param_arg` buys the reference the callee is about to spend,
@@ -99,7 +99,7 @@ such hole because its `.with` routes through `__fern_arr_cow_inplace`, which
 reads the count. The self-host emits no cow helper at all.
 
 That is #8874, it reproduces on `main` with no borrowed parameter anywhere
-(`a = S { ...a, buf: put(a.buf, 0, 9) }` under a live `var keep = a`: 9 on
+(`a = S { ...a, buf: put(a.buf, 0, 9) }` under a live `let keep = a`: 9 on
 interp and both natives, 99 on all three self-host targets), and it is why the
 array-field row here asserts on the SCALAR field. A row over `buf[0]` belongs
 with that fix.

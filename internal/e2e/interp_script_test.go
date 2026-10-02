@@ -25,7 +25,7 @@ function fact(n: i32): i32 {
     return n * fact(n - 1);
 }
 function main(): i32 {
-    var f: i32 = fact(5);
+    let f: i32 = fact(5);
     print(f.to_string());
     return f;
 }
@@ -81,7 +81,7 @@ func TestInterpScriptReadAllStdin(t *testing.T) {
 	if err := os.WriteFile(src, []byte(`
 import "std/io";
 function main(): i32 {
-    var s: string = io.read_all_stdin();
+    let s: string = io.read_all_stdin();
     print("read: " + s);
     return s.len();
 }
@@ -155,7 +155,7 @@ function eval(e: Expr): i32 {
 }
 
 function main(): i32 {
-    var e: Expr = Add { l: 10, r: 32 };
+    let e: Expr = Add { l: 10, r: 32 };
     return eval(e);
 }`)
 	_ = cmd.Run()
@@ -179,17 +179,17 @@ func TestInterpScriptStringPrelude(t *testing.T) {
 	cmd.Stdin = strings.NewReader(`
 import "std/string";
 function main(): i32 {
-    var s: string = "Hello";
-    var bs: u8[] = s.bytes();
+    let s: string = "Hello";
+    let bs: u8[] = s.bytes();
     if (bs.len() != 5) { return 1; }
     if (bs[0] != 72) { return 2; }
     if (bs[4] != 111) { return 3; }
-    var ab: [u8] = s.as_bytes();
+    let ab: [u8] = s.as_bytes();
     if (ab.len() != 5) { return 4; }
     if (ab[0] != 72) { return 5; }
     if (s.to_upper() != "HELLO") { return 6; }
     if (s.to_lower() != "hello") { return 7; }
-    var rt: string = string_from_bytes_unchecked(s.bytes());
+    let rt: string = string_from_bytes_unchecked(s.bytes());
     if (rt != "Hello") { return 8; }
     print(rt);
     print(s.to_upper());
@@ -227,14 +227,14 @@ func TestInterpScriptRandomAndBytes(t *testing.T) {
 	cmd.Stdin = strings.NewReader(`
 function main(): i32 {
     // random_i32 is live and varying.
-    var a: i32 = random_i32();
-    var b: i32 = random_i32();
+    let a: i32 = random_i32();
+    let b: i32 = random_i32();
     if (a == b) { return 1; }
     // random_bytes length is exact regardless of NUL bytes.
     if (random_bytes(8).len() != 8) { return 2; }
     if (random_bytes(0).len() != 0) { return 3; }
     // as_bytes view length + byte values match the source.
-    var bs: [u8] = "ABC".as_bytes();
+    let bs: [u8] = "ABC".as_bytes();
     if (bs.len() != 3) { return 4; }
     if ((bs[0] as i32) != 65) { return 5; }
     if ((bs[2] as i32) != 67) { return 6; }
@@ -277,12 +277,12 @@ func TestInterpScriptUuid(t *testing.T) {
 import "std/uuid";
 import "std/string";
 function main(): i32 {
-    var a: string = uuid.uuid_v4();
+    let a: string = uuid.uuid_v4();
     if (a.len() != 36) { return 1; }
     if (!a.is_uuid()) { return 2; }
     if (a[14] != 52) { return 3; }          // version '4'
     if (a[8] != 45 || a[13] != 45 || a[18] != 45 || a[23] != 45) { return 4; }
-    var b: string = uuid.uuid_v7();
+    let b: string = uuid.uuid_v7();
     if (b.len() != 36) { return 5; }
     if (!b.is_uuid()) { return 6; }
     if (b[14] != 55) { return 7; }          // version '7'
@@ -339,7 +339,7 @@ import "std/i32";
 import "core/int";
 
 function main(): i32 {
-    var x: i32 = 5;
+    let x: i32 = 5;
     print(x.to_string());
     return 0;
 }`,
@@ -349,7 +349,7 @@ function main(): i32 {
 			source: `import "std/json";
 
 function main(): i32 {
-    var x: i32 = 7;
+    let x: i32 = 7;
     print(x.to_string());
     return 0;
 }`,
@@ -359,7 +359,7 @@ function main(): i32 {
 			source: `import "core/int";
 
 function main(): i32 {
-    var s: string = int.int_to_string(11);
+    let s: string = int.int_to_string(11);
     print(s);
     return 0;
 }`,
@@ -369,7 +369,7 @@ function main(): i32 {
 			source: `
 import "std/i32";
 function main(): i32 {
-    var x: i32 = 42;
+    let x: i32 = 42;
     print(x.to_string());
     return 0;
 }`,
@@ -438,11 +438,11 @@ pub function shadow_param(x: i32): i32 {
 }
 
 pub function shadow_local(x: i32): i32 {
-    return apply((v: i32): i32 => { var add_one: i32 = 7; return v + add_one; }, x);
+    return apply((v: i32): i32 => { let add_one: i32 = 7; return v + add_one; }, x);
 }
 
 pub function shadow_capture(x: i32): i32 {
-    var add_one: i32 = 50;
+    let add_one: i32 = 50;
     return apply((v: i32): i32 => { return v + add_one; }, x);
 }
 `
@@ -494,7 +494,7 @@ func TestInterpScriptHeaderMap(t *testing.T) {
 			name: "case-insensitive get",
 			source: `import "std/headers";
 function main(): i32 {
-    var h: HeaderMap = headers.header_map_new();
+    let h: HeaderMap = headers.header_map_new();
     h = h.set("Content-Type", "application/json");
     match (h.get("CONTENT-TYPE")) {
         Some(v) => { print(v); },
@@ -508,12 +508,12 @@ function main(): i32 {
 			name: "get_all preserves duplicates in insertion order",
 			source: `import "std/headers";
 function main(): i32 {
-    var h: HeaderMap = headers.header_map_new();
+    let h: HeaderMap = headers.header_map_new();
     h = h.append("Set-Cookie", "a=1");
     h = h.append("Set-Cookie", "b=2");
     h = h.append("Set-Cookie", "c=3");
-    var all: string[] = h.get_all("set-cookie");
-    var i: i32 = 0;
+    let all: string[] = h.get_all("set-cookie");
+    let i: i32 = 0;
     while (i < all.len()) {
         print(all[i]);
         i = i + 1;
@@ -526,7 +526,7 @@ function main(): i32 {
 			name: "set replaces in place and drops other duplicates",
 			source: `import "std/headers";
 function main(): i32 {
-    var h: HeaderMap = headers.header_map_new();
+    let h: HeaderMap = headers.header_map_new();
     h = h.append("X", "first");
     h = h.append("Y", "y1");
     h = h.append("X", "second");
@@ -544,7 +544,7 @@ function main(): i32 {
 			name: "set on absent name appends",
 			source: `import "std/headers";
 function main(): i32 {
-    var h: HeaderMap = headers.header_map_new();
+    let h: HeaderMap = headers.header_map_new();
     h = h.set("X-First", "1");
     return h.len();
 }`,
@@ -554,7 +554,7 @@ function main(): i32 {
 			name: "get_all on missing name is empty",
 			source: `import "std/headers";
 function main(): i32 {
-    var h: HeaderMap = headers.header_map_new();
+    let h: HeaderMap = headers.header_map_new();
     h = h.append("X", "1");
     return (h.get_all("Y")).len();
 }`,
@@ -602,7 +602,7 @@ func TestInterpScriptHttpRequestHeaders(t *testing.T) {
 			source: `import "std/http";
 
 function main(): i32 {
-    var wire: string = "GET /x HTTP/1.1\r\nHost: example.com\r\nContent-Type: application/json\r\nContent-Length: 0\r\n\r\n";
+    let wire: string = "GET /x HTTP/1.1\r\nHost: example.com\r\nContent-Type: application/json\r\nContent-Length: 0\r\n\r\n";
     match (http.http_parse_request(wire)) {
         Some(req) => {
             match (req.headers.get("content-type")) {
@@ -626,11 +626,11 @@ function main(): i32 {
 			source: `import "std/http";
 
 function main(): i32 {
-    var wire: string = "GET / HTTP/1.1\r\nHost: h\r\nSet-Cookie: a=1\r\nSet-Cookie: b=2\r\nContent-Length: 0\r\n\r\n";
+    let wire: string = "GET / HTTP/1.1\r\nHost: h\r\nSet-Cookie: a=1\r\nSet-Cookie: b=2\r\nContent-Length: 0\r\n\r\n";
     match (http.http_parse_request(wire)) {
         Some(req) => {
-            var all: string[] = req.headers.get_all("Set-Cookie");
-            var i: i32 = 0;
+            let all: string[] = req.headers.get_all("Set-Cookie");
+            let i: i32 = 0;
             while (i < all.len()) {
                 print(all[i]);
                 i = i + 1;
@@ -648,7 +648,7 @@ function main(): i32 {
 			source: `import "std/http";
 
 function main(): i32 {
-    var wire: string = "GET / HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\n\r\n";
+    let wire: string = "GET / HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\n\r\n";
     match (http.http_parse_request(wire)) {
         Some(req) => {
             match (req.headers.get("X-Absent")) {
@@ -707,10 +707,10 @@ func TestInterpScriptHttpResponseHeaders(t *testing.T) {
 			source: `import "std/http";
 
 function main(): i32 {
-    var r: HttpResponse = http.ok("hello");
+    let r: HttpResponse = http.ok("hello");
     r = r.with_header("X-Trace-Id", "abc123");
     r = r.with_header("Cache-Control", "no-store");
-    var wire: string = http.http_serialize_response(r);
+    let wire: string = http.http_serialize_response(r);
     print(wire);
     return 0;
 }`,
@@ -721,7 +721,7 @@ function main(): i32 {
 			source: `import "std/http";
 
 function main(): i32 {
-    var r: HttpResponse = http.redirect("/login");
+    let r: HttpResponse = http.redirect("/login");
     match (r.headers.get("location")) {
         Some(v) => { print(v); },
         None => { print("MISSING"); }
@@ -735,9 +735,9 @@ function main(): i32 {
 			source: `import "std/http";
 
 function main(): i32 {
-    var r: HttpResponse = http.ok("hi");
+    let r: HttpResponse = http.ok("hi");
     r = r.with_header("Content-Length", "9999");
-    var wire: string = http.http_serialize_response(r);
+    let wire: string = http.http_serialize_response(r);
     print(wire);
     return 0;
 }`,
@@ -748,10 +748,10 @@ function main(): i32 {
 			source: `import "std/http";
 
 function main(): i32 {
-    var r: HttpResponse = http.ok("hi");
+    let r: HttpResponse = http.ok("hi");
     r = r.with_appended_header("Set-Cookie", "a=1");
     r = r.with_appended_header("Set-Cookie", "b=2");
-    var wire: string = http.http_serialize_response(r);
+    let wire: string = http.http_serialize_response(r);
     print(wire);
     return 0;
 }`,
@@ -803,7 +803,7 @@ func TestInterpScriptTimeTypes(t *testing.T) {
 import "std/i64";
 import "std/time";
 function main(): i32 {
-    var ts: Instant = time.instant_from_unix(1700000000 as i64);
+    let ts: Instant = time.instant_from_unix(1700000000 as i64);
     print(ts.sec.to_string());
     return ts.nsec;
 }`,
@@ -813,7 +813,7 @@ function main(): i32 {
 			name: "Date struct fields round-trip",
 			source: `import "std/time";
 function main(): i32 {
-    var d: Date = time.date_make(2026, 5, 19);
+    let d: Date = time.date_make(2026, 5, 19);
     print(d.year.to_string() + "-" + d.month.to_string() + "-" + d.day.to_string());
     return d.day;
 }`,
@@ -824,7 +824,7 @@ function main(): i32 {
 			name: "Time at second precision (nsec zero)",
 			source: `import "std/time";
 function main(): i32 {
-    var t: Time = time.time_make(14, 30, 45);
+    let t: Time = time.time_make(14, 30, 45);
     print(t.hour.to_string() + ":" + t.minute.to_string() + ":" + t.second.to_string());
     return t.nsec;
 }`,
@@ -834,7 +834,7 @@ function main(): i32 {
 			name: "DateTime composes Date + Time",
 			source: `import "std/time";
 function main(): i32 {
-    var dt: DateTime = time.datetime_make(time.date_make(2026, 1, 1), time.time_make(0, 0, 0));
+    let dt: DateTime = time.datetime_make(time.date_make(2026, 1, 1), time.time_make(0, 0, 0));
     print((dt.date.year - dt.time.hour).to_string());
     return 0;
 }`,
@@ -846,7 +846,7 @@ function main(): i32 {
 import "std/i64";
 import "std/time";
 function main(): i32 {
-    var d: Duration = time.duration_millis(2500 as i64);
+    let d: Duration = time.duration_millis(2500 as i64);
     print(d.sec.to_string());
     print(d.nsec.to_string());
     return 0;
@@ -857,8 +857,8 @@ function main(): i32 {
 			name: "Span days vs hours are distinct fields",
 			source: `import "std/time";
 function main(): i32 {
-    var dz: Span = time.span_days(7);
-    var hr: Span = time.span_hours(24);
+    let dz: Span = time.span_days(7);
+    let hr: Span = time.span_hours(24);
     print((dz.days * 100 + hr.hours).to_string());
     return 0;
 }`,
@@ -868,7 +868,7 @@ function main(): i32 {
 			name: "TimeZone UTC carries name + zero offset",
 			source: `import "std/time";
 function main(): i32 {
-    var utc: TimeZone = time.timezone_utc();
+    let utc: TimeZone = time.timezone_utc();
     print(utc.name);
     return utc.offset_seconds;
 }`,
@@ -878,7 +878,7 @@ function main(): i32 {
 			name: "Zoned struct composes Instant + TimeZone",
 			source: `import "std/time";
 function main(): i32 {
-    var z: Zoned = Zoned {
+    let z: Zoned = Zoned {
         instant: time.instant_from_unix(0 as i64),
         zone: time.timezone_utc(),
     };
@@ -935,7 +935,7 @@ import "std/string";
 import "std/time";
 
 function main(): i32 {
-    var ts: Instant = time.instant_now();
+    let ts: Instant = time.instant_now();
     // 1700000000 = 2023-11-14T22:13:20Z. Anything before is
     // either a badly wrong clock or a sign-handling bug.
     if (ts.sec < (1700000000 as i64)) { return 1; }
@@ -1322,7 +1322,7 @@ function main(): i32 {
 function main(): i32 {
     // Pick an arbitrary UTC instant. The wall-clock at the
     // zone offsets is exactly UTC ± offset hours.
-    var ts: Instant = Instant { sec: 1735689600 as i64, nsec: 0 };  // 2025-01-01T00:00:00Z
+    let ts: Instant = Instant { sec: 1735689600 as i64, nsec: 0 };  // 2025-01-01T00:00:00Z
     print(ts.in_zone(time.timezone_utc()).format_rfc3339());
     print(ts.in_zone(time.timezone_fixed_offset(9 * 3600)).format_rfc3339());
     print(ts.in_zone(time.timezone_fixed_offset(-5 * 3600)).format_rfc3339());
@@ -1335,7 +1335,7 @@ function main(): i32 {
 			name: "Zoned format preserves nanoseconds",
 			source: `import "std/time";
 function main(): i32 {
-    var ts: Instant = Instant { sec: 1735689600 as i64, nsec: 123456789 };
+    let ts: Instant = Instant { sec: 1735689600 as i64, nsec: 123456789 };
     print(ts.in_zone(time.timezone_fixed_offset(9 * 3600)).format_rfc3339());
     return 0;
 }`,
@@ -1531,12 +1531,12 @@ import "std/i64";
 import "std/time";
 function main(): i32 {
     // 1000.5 + 5.75 = 1006.25 (carry: 500e6 + 750e6 = 1.25e9 → +1 sec, 250e6 ns).
-    var t1: Instant = Instant { sec: 1000 as i64, nsec: 500000000 };
-    var sum: Instant = t1.add_duration(Duration { sec: 5 as i64, nsec: 750000000 });
+    let t1: Instant = Instant { sec: 1000 as i64, nsec: 500000000 };
+    let sum: Instant = t1.add_duration(Duration { sec: 5 as i64, nsec: 750000000 });
     print(sum.sec.to_string() + "." + sum.nsec.to_string());
 
     // Exact 1-second carry: 999_999_999 + 1 = 1_000_000_000 → +1 sec.
-    var edge: Instant = (Instant { sec: 0 as i64, nsec: 999999999 }).add_duration(Duration { sec: 0 as i64, nsec: 1 });
+    let edge: Instant = (Instant { sec: 0 as i64, nsec: 999999999 }).add_duration(Duration { sec: 0 as i64, nsec: 1 });
     print(edge.sec.to_string() + "." + edge.nsec.to_string());
     return 0;
 }`,
@@ -1548,8 +1548,8 @@ function main(): i32 {
 import "std/i64";
 import "std/time";
 function main(): i32 {
-    var t: Instant = Instant { sec: 1000 as i64, nsec: 0 };
-    var back: Instant = t.add_duration(Duration { sec: (0 as i64) - (10 as i64), nsec: 0 });
+    let t: Instant = Instant { sec: 1000 as i64, nsec: 0 };
+    let back: Instant = t.add_duration(Duration { sec: (0 as i64) - (10 as i64), nsec: 0 });
     print(back.sec.to_string());
     return 0;
 }`,
@@ -1561,14 +1561,14 @@ function main(): i32 {
 import "std/i64";
 import "std/time";
 function main(): i32 {
-    var a: Instant = Instant { sec: 1000 as i64, nsec: 200000000 };
-    var b: Instant = Instant { sec: 1005 as i64, nsec: 700000000 };
+    let a: Instant = Instant { sec: 1000 as i64, nsec: 200000000 };
+    let b: Instant = Instant { sec: 1005 as i64, nsec: 700000000 };
     // b - a = 5.5s
-    var fwd: Duration = b.duration_since(a);
+    let fwd: Duration = b.duration_since(a);
     print(fwd.sec.to_string() + "+" + fwd.nsec.to_string());
     // Borrow case: a - b should produce nsec >= 0 by adjustment.
     // a.nsec(200M) - b.nsec(700M) = -500M → borrow 1 sec, nsec = 500M.
-    var rev: Duration = a.duration_since(b);
+    let rev: Duration = a.duration_since(b);
     print(rev.sec.to_string() + "+" + rev.nsec.to_string());
     return 0;
 }`,
@@ -1578,9 +1578,9 @@ function main(): i32 {
 			name: "days_until is the Span counterpart to days_since",
 			source: `import "std/time";
 function main(): i32 {
-    var a: Date = time.date_make(2026, 1, 1);
-    var b: Date = time.date_make(2026, 12, 31);
-    var s: Span = a.days_until(b);
+    let a: Date = time.date_make(2026, 1, 1);
+    let b: Date = time.date_make(2026, 12, 31);
+    let s: Span = a.days_until(b);
     print(s.days.to_string());          // 364
     print(b.days_until(a).days.to_string());  // -364
     return 0;
@@ -1712,7 +1712,7 @@ function main(): i32 {
     // 2025-01-01T00:00:00Z + Asia/Tokyo (+9h) = 2025-01-01T09:00:00+09:00.
     match (time.timezone_iana("Asia/Tokyo")) {
         Some(jp) => {
-            var ts: Instant = Instant { sec: 1735689600 as i64, nsec: 0 };
+            let ts: Instant = Instant { sec: 1735689600 as i64, nsec: 0 };
             print(ts.in_zone(jp).format_rfc3339());
         },
         None => { return 1; }
@@ -1758,7 +1758,7 @@ func TestInterpScriptHttpRequestBodyShim(t *testing.T) {
 	src := `import "std/http";
 
 function main(): i32 {
-    var wire: string = "POST /upload HTTP/1.1\r\nHost: h\r\nContent-Length: 11\r\n\r\nhello world";
+    let wire: string = "POST /upload HTTP/1.1\r\nHost: h\r\nContent-Length: 11\r\n\r\nhello world";
     match (http.http_parse_request(wire)) {
         Some(req) => {
             match (req.body_string()) {
@@ -1766,7 +1766,7 @@ function main(): i32 {
                 Err(e) => { return 5; }
             }
             if (req.body_len() != 11) { return 2; }
-            var bs: u8[] = req.body_bytes();
+            let bs: u8[] = req.body_bytes();
             if (bs.len() != 11) { return 3; }
             if (bs[0] != 104) { return 4; }  // 'h'
             if (bs[10] != 100) { return 5; } // 'd'
@@ -1806,9 +1806,9 @@ func TestInterpScriptStreamPrimitive(t *testing.T) {
 			name: "stream_from_string + read_all_string round-trips",
 			source: `import "std/stream";
 function main(): i32 {
-    var s: Stream = stream.stream_from_string("hello world");
+    let s: Stream = stream.stream_from_string("hello world");
     print(s.len().to_string());
-    var (text, s2) = s.read_all_string();
+    let (text, s2) = s.read_all_string();
     match (text) { Some(value) => { print(value); }, None => { return 1; }, }
     if (s2.is_empty()) { print("done"); }
     return 0;
@@ -1819,9 +1819,9 @@ function main(): i32 {
 			name: "stream_from_bytes + read_all returns the byte buffer",
 			source: `import "std/stream";
 function main(): i32 {
-    var bs: u8[] = "abc".bytes();
-    var s: Stream = stream.stream_from_bytes(bs);
-    var (got, s2) = s.read_all();
+    let bs: u8[] = "abc".bytes();
+    let s: Stream = stream.stream_from_bytes(bs);
+    let (got, s2) = s.read_all();
     print(got.len().to_string());
     print((got[0] as i32).to_string());
     print((got[2] as i32).to_string());
@@ -1833,9 +1833,9 @@ function main(): i32 {
 			name: "remaining decrements as bytes are consumed",
 			source: `import "std/stream";
 function main(): i32 {
-    var s: Stream = stream.stream_from_string("abc");
+    let s: Stream = stream.stream_from_string("abc");
     print(s.remaining().to_string());
-    var (_, s2) = s.read_all();
+    let (_, s2) = s.read_all();
     // cursor idiom: the advanced Stream is s2; original s is unchanged.
     print(s2.remaining().to_string());
     print(s2.len().to_string());
@@ -1847,11 +1847,11 @@ function main(): i32 {
 			name: "stream_empty is consistent",
 			source: `import "std/stream";
 function main(): i32 {
-    var s: Stream = stream.stream_empty();
+    let s: Stream = stream.stream_empty();
     if (s.len() != 0) { return 1; }
     if (s.remaining() != 0) { return 2; }
     if (!s.is_empty()) { return 3; }
-    var (bs, s2) = s.read_all();
+    let (bs, s2) = s.read_all();
     if (bs.len() != 0) { return 4; }
     print("ok");
     return 0;
@@ -1900,7 +1900,7 @@ func TestInterpScriptMockPlatform(t *testing.T) {
 import "std/i32";
 import "std/mock_platform";
 function main(): i32 {
-    var m: MockPlatform = mock_platform.mock_platform_new();
+    let m: MockPlatform = mock_platform.mock_platform_new();
     m.record("fetch", "GET /users/42");
     m.record("kv_set", "user:42=Alice");
     print(m.call_count().to_string());
@@ -1914,7 +1914,7 @@ function main(): i32 {
 			name: "has_call distinguishes present / absent",
 			source: `import "std/mock_platform";
 function main(): i32 {
-    var m: MockPlatform = mock_platform.mock_platform_new();
+    let m: MockPlatform = mock_platform.mock_platform_new();
     m.record("fetch", "x");
     if (m.has_call("fetch")) { print("yes-fetch"); } else { print("no-fetch"); }
     if (m.has_call("write_file")) { print("yes-wf"); } else { print("no-wf"); }
@@ -1926,7 +1926,7 @@ function main(): i32 {
 			name: "find_call returns Some/None correctly",
 			source: `import "std/mock_platform";
 function main(): i32 {
-    var m: MockPlatform = mock_platform.mock_platform_new();
+    let m: MockPlatform = mock_platform.mock_platform_new();
     m.record("fetch", "first");
     m.record("kv_set", "second");
     m.record("fetch", "third");
@@ -1947,7 +1947,7 @@ function main(): i32 {
 			name: "reset clears the log",
 			source: `import "std/mock_platform";
 function main(): i32 {
-    var m: MockPlatform = mock_platform.mock_platform_new();
+    let m: MockPlatform = mock_platform.mock_platform_new();
     m.record("a", "1");
     m.record("b", "2");
     if (m.call_count() != 2) { return 1; }
@@ -1979,12 +1979,12 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
     return http.ok("ok");
 }
 function main(): i32 {
-    var m: MockPlatform = mock_platform.mock_platform_new();
-    var req: HttpRequest = HttpRequest { method: "GET", path: "/a", body: stream.stream_empty(), headers: headers.header_map_new(), trailers: headers.header_map_new() };
-    var resp: HttpResponse = handle(req, m.as_platform());
+    let m: MockPlatform = mock_platform.mock_platform_new();
+    let req: HttpRequest = HttpRequest { method: "GET", path: "/a", body: stream.stream_empty(), headers: headers.header_map_new(), trailers: headers.header_map_new() };
+    let resp: HttpResponse = handle(req, m.as_platform());
     print(resp.body_string());
-    var cs: MockCall[] = m.calls();
-    var i: i32 = 0;
+    let cs: MockCall[] = m.calls();
+    let i: i32 = 0;
     while (i < cs.len()) {
         print(cs[i].name + "=" + cs[i].args);
         i = i + 1;
@@ -2211,12 +2211,12 @@ func TestInterpScriptStreamReader(t *testing.T) {
 			name: "read_byte returns Some until exhausted",
 			source: `import "std/stream";
 function main(): i32 {
-    var s: Stream = stream.stream_from_string("ab");
-    var (b1, s2) = s.read_byte();
+    let s: Stream = stream.stream_from_string("ab");
+    let (b1, s2) = s.read_byte();
     match (b1) { Some(b) => { print(b.to_string()); }, None => { print("none"); } }
-    var (b2, s3) = s2.read_byte();
+    let (b2, s3) = s2.read_byte();
     match (b2) { Some(b) => { print(b.to_string()); }, None => { print("none"); } }
-    var (b3, _) = s3.read_byte();
+    let (b3, _) = s3.read_byte();
     match (b3) { Some(_) => { print("UNEXPECTED"); }, None => { print("none"); } }
     return 0;
 }`,
@@ -2226,12 +2226,12 @@ function main(): i32 {
 			name: "read_n caps at available bytes",
 			source: `import "std/stream";
 function main(): i32 {
-    var s: Stream = stream.stream_from_string("hello");
-    var (first, s2) = s.read_n(3);
+    let s: Stream = stream.stream_from_string("hello");
+    let (first, s2) = s.read_n(3);
     print(first.len().to_string());
-    var (rest, s3) = s2.read_n(99);
+    let (rest, s3) = s2.read_n(99);
     print(rest.len().to_string());
-    var (empty, _) = s3.read_n(1);
+    let (empty, _) = s3.read_n(1);
     print(empty.len().to_string());
     return 0;
 }`,
@@ -2241,14 +2241,14 @@ function main(): i32 {
 			name: "read_line strips both LF and CRLF",
 			source: `import "std/stream";
 function main(): i32 {
-    var s: Stream = stream.stream_from_string("unix\nwindows\r\nfinal");
-    var (l1, s2) = s.read_line();
+    let s: Stream = stream.stream_from_string("unix\nwindows\r\nfinal");
+    let (l1, s2) = s.read_line();
     match (l1) { Some(l) => { print(l); }, None => { print("none"); } }
-    var (l2, s3) = s2.read_line();
+    let (l2, s3) = s2.read_line();
     match (l2) { Some(l) => { print(l); }, None => { print("none"); } }
-    var (l3, s4) = s3.read_line();
+    let (l3, s4) = s3.read_line();
     match (l3) { Some(l) => { print(l); }, None => { print("none"); } }
-    var (l4, _) = s4.read_line();
+    let (l4, _) = s4.read_line();
     match (l4) { Some(_) => { print("UNEXPECTED"); }, None => { print("eof"); } }
     return 0;
 }`,
@@ -2291,7 +2291,7 @@ func TestInterpScriptBytesWriter(t *testing.T) {
 			name: "write_string + into_string round-trips",
 			source: `import "std/io_buffered";
 function main(): i32 {
-    var w: BytesWriter = io_buffered.bytes_writer_new();
+    let w: BytesWriter = io_buffered.bytes_writer_new();
     w = w.write_string("HTTP/1.1 200 OK\r\n");
     w = w.write_string("\r\nhello");
     print(w.len().to_string());
@@ -2304,7 +2304,7 @@ function main(): i32 {
 			name: "write_byte appends single bytes",
 			source: `import "std/io_buffered";
 function main(): i32 {
-    var w: BytesWriter = io_buffered.bytes_writer_new();
+    let w: BytesWriter = io_buffered.bytes_writer_new();
     w = w.write_byte(72);  // 'H'
     w = w.write_byte(105); // 'i'
     match (w.into_string()) { Some(s) => { print(s); }, None => { return 1; }, }
@@ -2316,7 +2316,7 @@ function main(): i32 {
 			name: "reset clears the buffer for reuse",
 			source: `import "std/io_buffered";
 function main(): i32 {
-    var w: BytesWriter = io_buffered.bytes_writer_new();
+    let w: BytesWriter = io_buffered.bytes_writer_new();
     w = w.write_string("first");
     if (w.len() != 5) { return 1; }
     w = w.reset();
@@ -2332,8 +2332,8 @@ function main(): i32 {
 			name: "write_bytes for raw u8[] payloads",
 			source: `import "std/io_buffered";
 function main(): i32 {
-    var w: BytesWriter = io_buffered.bytes_writer_new();
-    var bs: u8[] = "binary".bytes();
+    let w: BytesWriter = io_buffered.bytes_writer_new();
+    let bs: u8[] = "binary".bytes();
     w = w.write_bytes(bs);
     if (w.len() != 6) { return 1; }
     match (w.into_string()) { Some(s) => { print(s); }, None => { return 1; }, }

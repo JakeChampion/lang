@@ -15,14 +15,14 @@ import "std/i32";
 
 function main(): i32 {
     // Outer write, visible inside.
-    var n: i32 = 1;
-    var read = (): i32 => { return n; };
+    let n: i32 = 1;
+    let read = (): i32 => { return n; };
     n = 99;
     print(read().to_string());
 
     // Inner write, visible outside.
-    var m: i32 = 10;
-    var bump = (): i32 => { m = m + 1; return m; };
+    let m: i32 = 10;
+    let bump = (): i32 => { m = m + 1; return m; };
     print(bump().to_string());
     print(bump().to_string());
     print(m.to_string());

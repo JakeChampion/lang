@@ -63,27 +63,27 @@ func TestSelfHostX86Capstone(t *testing.T) {
 		want    int
 		wantOut string
 	}{
-		{"arith", "function main(): i32 { var x: i32 = 40; var y: i32 = 2; return x + y; }\n", 42, ""},
-		{"while", "function main(): i32 { var s: i32 = 0; var i: i32 = 0; while (i < 7) { s = s + 6; i = i + 1; } return s; }\n", 42, ""},
-		{"ifelse", "function main(): i32 { var x: i32 = 10; if (x > 5) { return 42; } return 0; }\n", 42, ""},
+		{"arith", "function main(): i32 { let x: i32 = 40; let y: i32 = 2; return x + y; }\n", 42, ""},
+		{"while", "function main(): i32 { let s: i32 = 0; let i: i32 = 0; while (i < 7) { s = s + 6; i = i + 1; } return s; }\n", 42, ""},
+		{"ifelse", "function main(): i32 { let x: i32 = 10; if (x > 5) { return 42; } return 0; }\n", 42, ""},
 		{"call", "function add(a: i32, b: i32): i32 { return a + b; }\nfunction main(): i32 { return add(40, 2); }\n", 42, ""},
 		{"recur", "function fib(n: i32): i32 { if (n < 2) { return n; } return fib(n - 1) + fib(n - 2); }\nfunction main(): i32 { return fib(9) + 8; }\n", 42, ""},
-		{"float", "function main(): i32 { var x: f64 = 84.0; var y: f64 = 2.0; var z: f64 = x / y; return z as i32; }\n", 42, ""},
+		{"float", "function main(): i32 { let x: f64 = 84.0; let y: f64 = 2.0; let z: f64 = x / y; return z as i32; }\n", 42, ""},
 		{"string", "function main(): i32 { write(\"hi!\"); return 0; }\n", 0, "hi!"},
 		// Heap programs: their asm is the whole alloc/RC/memcpy runtime — the
 		// mmap'd bump heap whose pointers live in `.bss` `.quad`s accessed via
 		// rip-relative movq, plus the `.skip` freelist — the full instruction
 		// + data-section surface.
-		{"struct", "struct P { x: i32, y: i32 }\nfunction main(): i32 { var p = P { x: 40, y: 2 }; return p.x + p.y; }\n", 42, ""},
-		{"array", "function main(): i32 { var a = [10, 20, 12]; var s = 0; var i = 0; while (i < 3) { s = s + a[i]; i = i + 1; } return s; }\n", 42, ""},
+		{"struct", "struct P { x: i32, y: i32 }\nfunction main(): i32 { let p = P { x: 40, y: 2 }; return p.x + p.y; }\n", 42, ""},
+		{"array", "function main(): i32 { let a = [10, 20, 12]; let s = 0; let i = 0; while (i < 3) { s = s + a[i]; i = i + 1; } return s; }\n", 42, ""},
 		// String length + indexing exercise movslq reg-reg (the .len() widen)
 		// and the byte-load char access.
-		{"strlen", "function main(): i32 { var s = \"hello world\"; return s.len() as i32 + 31; }\n", 42, ""},
-		{"strchar", "function main(): i32 { var s = \"*abc\"; return s[0] as i32; }\n", 42, ""},
+		{"strlen", "function main(): i32 { let s = \"hello world\"; return s.len() as i32 + 31; }\n", 42, ""},
+		{"strchar", "function main(): i32 { let s = \"*abc\"; return s[0] as i32; }\n", 42, ""},
 		// Maps exercise the full FNV-hash / open-addressing runtime, both
 		// i32-keyed and string-keyed.
-		{"mapi32", "function main(): i32 { var m = Map { 1: 40, 2: 2 }; return m.get_or(1, 0) + m.get_or(2, 0); }\n", 42, ""},
-		{"mapstr", "function main(): i32 { var m = Map { \"a\": 40, \"b\": 2 }; return m.get_or(\"a\", 0) + m.get_or(\"b\", 0); }\n", 42, ""},
+		{"mapi32", "function main(): i32 { let m = Map { 1: 40, 2: 2 }; return m.get_or(1, 0) + m.get_or(2, 0); }\n", 42, ""},
+		{"mapstr", "function main(): i32 { let m = Map { \"a\": 40, \"b\": 2 }; return m.get_or(\"a\", 0) + m.get_or(\"b\", 0); }\n", 42, ""},
 		// The packed-SSE2 kernels, end to end through this backend's OWN
 		// assembler: the IR emitter's vector body, the GAS front end's new
 		// movdqu / pcmpeqb / pmovmskb / pshufd / bsfl encodings, the ELF
@@ -91,21 +91,21 @@ func TestSelfHostX86Capstone(t *testing.T) {
 		// with its answer past the first one, so the vector loop runs and the
 		// scalar tail finishes — an SSE2 body that never executed would pass a
 		// short-string case unchanged.
-		{"memchr", "function main(): i32 { var s = \"aaaaaaaaaaaaaaaaaaaa*aaa\"; return __memchr(s, 42, 0) + 22; }\n", 42, ""},
-		{"asciirun", "function main(): i32 { var s = \"aaaaaaaaaaaaaaaaaaaaaaaa\"; return __ascii_run(s, 0) + 18; }\n", 42, ""},
+		{"memchr", "function main(): i32 { let s = \"aaaaaaaaaaaaaaaaaaaa*aaa\"; return __memchr(s, 42, 0) + 22; }\n", 42, ""},
+		{"asciirun", "function main(): i32 { let s = \"aaaaaaaaaaaaaaaaaaaaaaaa\"; return __ascii_run(s, 0) + 18; }\n", 42, ""},
 		// The backward kernel, whose vector body needs one encoding the other
 		// two do not: bsr. Its answer is at index 2 with a full block BELOW
 		// it, so the vector loop runs and then hands the tail a cursor — the
 		// two-entry-path shape, exercised end to end through this backend's
 		// own assembler rather than through gcc.
-		{"rmemchr", "function main(): i32 { var s = \"aa*aaaaaaaaaaaaaaaaaaaaa\"; return __rmemchr(s, 42, 23) + 40; }\n", 42, ""},
+		{"rmemchr", "function main(): i32 { let s = \"aa*aaaaaaaaaaaaaaaaaaaaa\"; return __rmemchr(s, 42, 23) + 40; }\n", 42, ""},
 		// The comparison kernel (#8791), whose two bands are separate bodies.
 		// The first pair is 24 bytes, so the SSE2 loop runs and the answer is
 		// past the first block; the second is 13, which never reaches a
 		// 16-byte load and takes the OVERLAPPING 8-byte windows instead —
 		// SIB-indexed 64-bit loads no scan kernel emits.
-		{"mismatch", "function main(): i32 { var a = \"aaaaaaaaaaaaaaaaaaaabaaa\"; var b = \"aaaaaaaaaaaaaaaaaaaacaaa\"; return __mismatch(a, 0, b, 0, 24) + 22; }\n", 42, ""},
-		{"mismatchwindow", "function main(): i32 { var a = \"abcdefghijklm\"; var b = \"abcdefghijXlm\"; return __mismatch(a, 0, b, 0, 13) + 32; }\n", 42, ""},
+		{"mismatch", "function main(): i32 { let a = \"aaaaaaaaaaaaaaaaaaaabaaa\"; let b = \"aaaaaaaaaaaaaaaaaaaacaaa\"; return __mismatch(a, 0, b, 0, 24) + 22; }\n", 42, ""},
+		{"mismatchwindow", "function main(): i32 { let a = \"abcdefghijklm\"; let b = \"abcdefghijXlm\"; return __mismatch(a, 0, b, 0, 13) + 32; }\n", 42, ""},
 		// NOTE: f64 `.sqrt()`/`.floor()`/`.ceil()`/`.trunc()` are an asm.fern
 		// gap — it emits `call __fn_f64__sqrt` etc. without emitting those
 		// method bodies (an undefined reference even for gcc), so they aren't
@@ -174,7 +174,7 @@ const x86CapstoneDriver = `
 function main(): i32 {
     match (read_file("in.s")) {
         Ok(asmtext) => {
-            var a: X86Asm = x86_gas_assemble(asmtext);
+            let a: X86Asm = x86_gas_assemble(asmtext);
             // An absolute .quad <label> in data is assembled as a zero
             // placeholder and patched only once the load address is known, so
             // this step is not optional — skipping it leaves every static
@@ -188,8 +188,8 @@ function main(): i32 {
                 // exit code says an instruction was refused but not which
                 // one. Several distinct causes can be live at once, so this
                 // reports the first few rather than only the first.
-                var i: i32 = 0;
-                var msg: string = "";
+                let i: i32 = 0;
+                let msg: string = "";
                 while (i < a.unknown.len() && i < 8) {
                     msg = msg + "unencodable: " + a.unknown[i] + "\n";
                     i = i + 1;
@@ -197,13 +197,13 @@ function main(): i32 {
                 eprint(msg);
                 return 2;
             }
-            var entry: i32 = x86_label_off(a, "_start");
-            var tv: i64 = elf_text_vaddr_x86() as i64;
-            var hdr_len: i32 = x86_eh_frame_hdr_len(a);
-            var hv: i64 = elf_eh_hdr_vaddr_x86(a.code.len()) as i64;
-            var ev: i64 = elf_eh_frame_vaddr_x86(a.code.len(), hdr_len) as i64;
-            var eh: i32[] = x86_eh_frame(a, tv, ev);
-            var hdr: i32[] = x86_eh_frame_hdr(a, tv, ev, hv);
+            let entry: i32 = x86_label_off(a, "_start");
+            let tv: i64 = elf_text_vaddr_x86() as i64;
+            let hdr_len: i32 = x86_eh_frame_hdr_len(a);
+            let hv: i64 = elf_eh_hdr_vaddr_x86(a.code.len()) as i64;
+            let ev: i64 = elf_eh_frame_vaddr_x86(a.code.len(), hdr_len) as i64;
+            let eh: i32[] = x86_eh_frame(a, tv, ev);
+            let hdr: i32[] = x86_eh_frame_hdr(a, tv, ev, hv);
             write(string_from_bytes_unchecked(to_u8(elf_program_x86(a.code, hdr, eh, a.rodata, a.bss_size, entry))));
             return 0;
         }

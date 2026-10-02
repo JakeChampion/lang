@@ -55,7 +55,7 @@ func writeConcatFixtureShape(t *testing.T, dir string, chained bool) (string, in
 			for f := 0; f < nFn-1; f++ {
 				fmt.Fprintf(&lib, "pub function m%d_f%d(x: i32): i32 { return m%d_f%d(x) + 1; }\n", m, f, m, f+1)
 			}
-			fmt.Fprintf(&lib, "pub function m%d_f%d(x: i32): i32 { var e: IoError = NotFound(\"p\"); match (e) { NotFound(_) => { return x; }, _ => { return 0 - 1; } } }\n", m, nFn-1)
+			fmt.Fprintf(&lib, "pub function m%d_f%d(x: i32): i32 { let e: IoError = NotFound(\"p\"); match (e) { NotFound(_) => { return x; }, _ => { return 0 - 1; } } }\n", m, nFn-1)
 			want += nFn // the argument 1, plus one per link of the chain
 		} else {
 			for f := 0; f < nFn; f++ {
@@ -72,7 +72,7 @@ func writeConcatFixtureShape(t *testing.T, dir string, chained bool) (string, in
 		}
 		fmt.Fprintf(&calls, "lib%d.m%d_f0(1)", m, m)
 	}
-	entry := fmt.Sprintf("%s\nfunction main(): i32 {\n    var t: i32 = %s;\n    if (t == %d) { return 0; }\n    return 1;\n}\n",
+	entry := fmt.Sprintf("%s\nfunction main(): i32 {\n    let t: i32 = %s;\n    if (t == %d) { return 0; }\n    return 1;\n}\n",
 		imports.String(), calls.String(), want)
 	entryPath := filepath.Join(proj, "entry.fern")
 	if err := os.WriteFile(entryPath, []byte(entry), 0o644); err != nil {

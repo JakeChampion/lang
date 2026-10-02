@@ -8,8 +8,8 @@
 import "core/int";
 
 function main(): i32 {
-    var arch: string = target_arch();
-    var named: boolean = arch == "arm64" || arch == "x86-64" || arch == "wasm32";
+    let arch: string = target_arch();
+    let named: boolean = arch == "arm64" || arch == "x86-64" || arch == "wasm32";
     if (named) {
         print("named");
     } else {
@@ -20,7 +20,7 @@ function main(): i32 {
     if (target_arch() != target_os()) {
         print("distinct halves");
     }
-    var width: i32 = 0;
+    let width: i32 = 0;
     if (target_arch() == "wasm32") {
         width = 32;
     } else if (target_arch() == "arm64" || target_arch() == "x86-64") {

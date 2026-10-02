@@ -35,11 +35,11 @@ import "core/cmp";
 struct Name { first: string, rank: i32 }
 
 function build(n: i32): i32 {
-    var ks: Name[] = [];
-    var t: i32 = 0;
+    let ks: Name[] = [];
+    let t: i32 = 0;
     {
-        var m: Map[Name, i32] = map_new(2);
-        var i: i32 = 0;
+        let m: Map[Name, i32] = map_new(2);
+        let i: i32 = 0;
         while (i < 6) {
             m = m.insert(Name { first: "k" + (i % 3).to_string(), rank: i }, i);
             i = i + 1;
@@ -57,13 +57,13 @@ function build(n: i32): i32 {
 }
 
 function main(): i32 {
-    var acc: i32 = 0;
-    var w: i32 = 0;
+    let acc: i32 = 0;
+    let w: i32 = 0;
     while (w < 100) { acc = acc + build(w); w = w + 1; }
-    var s1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let s1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 1000) { acc = acc + build(j); j = j + 1; }
-    var s2: i32 = (__heap_bump_bytes() as i32);
+    let s2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if ((s2 - s1) > 4096) { return 1; }
     if (acc != 1100 * 30) { return 88; }
@@ -84,8 +84,8 @@ enum Tag { A(i32), B, C(string) }
 struct Box { n: i32, tag: string }
 
 function build(n: i32): i32 {
-    var m: Map[Tag, Box] = map_new(2);
-    var i: i32 = 0;
+    let m: Map[Tag, Box] = map_new(2);
+    let i: i32 = 0;
     while (i < 20) {
         m = m.insert(A(i), Box { n: i, tag: "a" + i.to_string() });
         i = i + 1;
@@ -94,7 +94,7 @@ function build(n: i32): i32 {
     m = m.insert(C("x" + "y"), Box { n: 2000, tag: "c" });
     m = m.insert(C("xy"), Box { n: 3000, tag: "cc" });
     if (m.len() != 22) { return 0 - 1; }
-    var t: i32 = 0;
+    let t: i32 = 0;
     match (m.get(C("xy"))) { Some(b) => { t = t + b.n + b.tag.len(); }, None => { return 0 - 2; } }
     match (m.get(A(7))) { Some(b) => { t = t + b.n; }, None => { return 0 - 3; } }
     match (m.get(A(99))) { Some(b) => { return 0 - 4; }, None => {} }
@@ -103,13 +103,13 @@ function build(n: i32): i32 {
 }
 
 function main(): i32 {
-    var acc: i32 = 0;
-    var w: i32 = 0;
+    let acc: i32 = 0;
+    let w: i32 = 0;
     while (w < 100) { acc = acc + build(w); w = w + 1; }
-    var s1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let s1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 1000) { acc = acc + build(j); j = j + 1; }
-    var s2: i32 = (__heap_bump_bytes() as i32);
+    let s2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if ((s2 - s1) > 4096) { return 1; }
     if (acc != 1100 * 4019) { return 88; }
@@ -128,28 +128,28 @@ import "core/cmp";
 struct Coord { a: i32, b: i32 }
 
 function build(n: i32): i32 {
-    var k: Coord = Coord { a: n, b: 1 };
-    var m: Map[Coord, i32] = map_new(4);
+    let k: Coord = Coord { a: n, b: 1 };
+    let m: Map[Coord, i32] = map_new(4);
     m = m.insert(k, 5);
     m = m.insert(Coord { a: 1, b: 2 }, 6);
-    var shared: Map[Coord, i32] = m;
+    let shared: Map[Coord, i32] = m;
     m = m.insert(Coord { a: 2, b: 3 }, 7);
     if (shared.len() != 2 || m.len() != 3) { return 0 - 1; }
     if (shared.get_or(k, 0) != 5 || m.get_or(k, 0) != 5) { return 0 - 2; }
     if (k.a != n) { return 0 - 3; }
-    var t: i32 = 0;
+    let t: i32 = 0;
     for x in m.keys() { t = t + x.b; }
     return t + shared.get_or(Coord { a: 1, b: 2 }, 0);
 }
 
 function main(): i32 {
-    var acc: i32 = 0;
-    var w: i32 = 0;
+    let acc: i32 = 0;
+    let w: i32 = 0;
     while (w < 100) { acc = acc + build(w); w = w + 1; }
-    var s1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let s1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 1000) { acc = acc + build(j); j = j + 1; }
-    var s2: i32 = (__heap_bump_bytes() as i32);
+    let s2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if ((s2 - s1) > 4096) { return 1; }
     if (acc != 1100 * 12) { return 88; }

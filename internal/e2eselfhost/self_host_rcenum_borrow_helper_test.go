@@ -13,7 +13,7 @@ import (
 // it leaking:
 //
 //  1. `collect_fresh_rcenum_names` required a consuming `match` in the same block.
-//     A local with no match at all therefore earned nothing, so `var b = Val(…)`
+//     A local with no match at all therefore earned nothing, so `let b = Val(…)`
 //     declared in a loop and never read grew unboundedly.
 //
 //  2. `borrowable_params_interproc` — the fixpoint the EMIT path uses, not the
@@ -47,12 +47,12 @@ function head(b: Box): i32 {
     match (b) { Val(xs) => { return xs[0]; }, Empty => { return 0; } }
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var r: i32 = 0;
+    let acc: i32 = 0;
+    let r: i32 = 0;
     while (r < ROUNDS) {
-        var k: i32 = 0;
+        let k: i32 = 0;
         while (k < 4) {
-            var b: Box = Val([k, k + 7]);
+            let b: Box = Val([k, k + 7]);
             acc = acc + head(b);
             k = k + 1;
         }
@@ -67,12 +67,12 @@ function main(): i32 {
 const rcenumNeverUsedSrc = `import "core/int";
 enum Box { Val(i32[]), Empty }
 function main(): i32 {
-    var acc: i32 = 0;
-    var r: i32 = 0;
+    let acc: i32 = 0;
+    let r: i32 = 0;
     while (r < ROUNDS) {
-        var k: i32 = 0;
+        let k: i32 = 0;
         while (k < 4) {
-            var b: Box = Val([k, k + 7]);
+            let b: Box = Val([k, k + 7]);
             acc = acc + k;
             k = k + 1;
         }
@@ -88,12 +88,12 @@ function main(): i32 {
 const rcenumInlineMatchSrc = `import "core/int";
 enum Box { Val(i32[]), Empty }
 function main(): i32 {
-    var acc: i32 = 0;
-    var r: i32 = 0;
+    let acc: i32 = 0;
+    let r: i32 = 0;
     while (r < ROUNDS) {
-        var k: i32 = 0;
+        let k: i32 = 0;
         while (k < 4) {
-            var b: Box = Val([k, k + 7]);
+            let b: Box = Val([k, k + 7]);
             match (b) { Val(xs) => { acc = acc + xs[0]; }, Empty => { acc = acc + 1; } }
             k = k + 1;
         }
@@ -114,13 +114,13 @@ function take(b: Box): i32[] {
     match (b) { Val(xs) => { return xs; }, Empty => { return [0]; } }
 }
 function main(): i32 {
-    var held: i32[] = [0, 0];
-    var acc: i32 = 0;
-    var r: i32 = 0;
+    let held: i32[] = [0, 0];
+    let acc: i32 = 0;
+    let r: i32 = 0;
     while (r < ROUNDS) {
-        var k: i32 = 0;
+        let k: i32 = 0;
         while (k < 4) {
-            var b: Box = Val([k, k + 7]);
+            let b: Box = Val([k, k + 7]);
             held = take(b);
             acc = acc + held[0];
             k = k + 1;

@@ -10,7 +10,7 @@ import (
 // The lowering's "ARRARR:" credit routes a fresh, non-escaping arr-of-arr local to
 // the deep release (__fern_arrarr_free), which rc-decs each row buffer and then
 // frees the outer one. arrarr_row_escapes used to refuse that credit for ANY
-// bare single-index row read — `var row = g[i]` or `row = g[i]` — on the
+// bare single-index row read — `let row = g[i]` or `row = g[i]` — on the
 // grounds that the bound row would dangle when the reclaim ran.
 //
 // It would not: both index spellings take a Perceus dup at the bind (the
@@ -34,14 +34,14 @@ import (
 // arrarrRowBindChurnSrc: the minimal shape — a row bound out of a fresh
 // arr-of-arr and read locally. Nothing escapes the frame.
 const arrarrRowBindChurnSrc = `function round(n: i32): i32 {
-    var placed: i32[][] = [[n], [n, n, n, n, n, n, n, n, n]];
-    var row: i32[] = placed[0];
+    let placed: i32[][] = [[n], [n, n, n, n, n, n, n, n, n]];
+    let row: i32[] = placed[0];
     return row[0] + placed[1][8];
 }
 
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 200) { t = t + round(r); r = r + 1; }
     return t % 3;
 }`
@@ -49,15 +49,15 @@ function main(): i32 {
 // arrarrRowAssignChurnSrc: the ASSIGN spelling of the same read, which takes
 // the same dup and so earns the same credit.
 const arrarrRowAssignChurnSrc = `function round(n: i32): i32 {
-    var placed: i32[][] = [[n], [n, n, n, n, n, n, n, n, n]];
-    var row: i32[] = [0];
+    let placed: i32[][] = [[n], [n, n, n, n, n, n, n, n, n]];
+    let row: i32[] = [0];
     row = placed[0];
     return row[0] + placed[1][8];
 }
 
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 200) { t = t + round(r); r = r + 1; }
     return t % 3;
 }`
@@ -68,15 +68,15 @@ function main(): i32 {
 const arrarrRowEscapeChurnSrc = `struct G { text: string, lines: i32[] }
 
 function mk(n: i32): G {
-    var placed: i32[][] = [[n], [n, n, n, n, n, n, n, n, n]];
-    var row: i32[] = placed[0];
+    let placed: i32[][] = [[n], [n, n, n, n, n, n, n, n, n]];
+    let row: i32[] = placed[0];
     return G { text: "a", lines: row };
 }
 
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
-    while (r < 200) { var g: G = mk(r); t = t + g.lines[0] + g.lines.len(); r = r + 1; }
+    let t: i32 = 0;
+    let r: i32 = 0;
+    while (r < 200) { let g: G = mk(r); t = t + g.lines[0] + g.lines.len(); r = r + 1; }
     return t % 3;
 }`
 
@@ -130,15 +130,15 @@ func TestSelfHostArrArrRowReadReclaimX86_64(t *testing.T) {
 // the exit reclaim, so the borrow is transient and the credit holds. Rows are
 // distinct so a freed-and-recycled buffer would change the sum.
 const arrarrRowIterSrc = `function round(n: i32): i32 {
-    var placed: i32[][] = [[n, n + 1], [n + 2, n + 3], [n + 4, n + 5]];
-    var t: i32 = 0;
+    let placed: i32[][] = [[n, n + 1], [n + 2, n + 3], [n + 4, n + 5]];
+    let t: i32 = 0;
     for row in placed { t = t + row[0] + row[1]; }
     return t;
 }
 
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 200) { t = t + round(r); r = r + 1; }
     return t % 7;
 }`
@@ -149,15 +149,15 @@ function main(): i32 {
 // row outlives the loop with no counted reference, so a granted credit would
 // free a buffer `kept` still names.
 const arrarrRowIterEscapeHazardSrc = `function round(n: i32): i32 {
-    var placed: i32[][] = [[n], [n, n, n, n, n, n, n, n, n]];
-    var kept: i32[] = [0];
+    let placed: i32[][] = [[n], [n, n, n, n, n, n, n, n, n]];
+    let kept: i32[] = [0];
     for row in placed { kept = row; }
     return kept[0];
 }
 
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 200) { t = t + round(r); r = r + 1; }
     return t % 7;
 }`
@@ -168,10 +168,10 @@ function main(): i32 {
 // decs that row but cannot free it — so a correct answer here is the evidence
 // that granting the credit did not introduce an over-release.
 const arrarrRowRebindHazardSrc = `function round(n: i32): i32 {
-    var g: i32[][] = [];
-    var held: i32[] = [0];
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let g: i32[][] = [];
+    let held: i32[] = [0];
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 5) {
         g = g.append([i + n, i + n + 1, i + n + 2]);
         held = g[0];
@@ -182,8 +182,8 @@ const arrarrRowRebindHazardSrc = `function round(n: i32): i32 {
 }
 
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 200) { t = t + round(r); r = r + 1; }
     return t % 7;
 }`

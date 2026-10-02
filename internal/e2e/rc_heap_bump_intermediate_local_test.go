@@ -7,7 +7,7 @@ import (
 )
 
 // Dead NAMED intermediate consumed by a borrowing call (#4357). In
-// `var t = f(x); var u = g(t); return u;` the intermediate t dies after g
+// `let t = f(x); let u = g(t); return u;` the intermediate t dies after g
 // borrows it, but rhsTainted used to propagate the receiver/arg taint of f's
 // inputs into t, leaving it permanently free-INeligible — the missing drop
 // that dominates the self-compile RSS (docs/SELFHOST-BSTATE-RECLAIM-PLAN.md
@@ -27,16 +27,16 @@ import (
 const intermediateLocalFlat = `struct St { xs: i32[], n: i32 }
 function build(k: i32): St { return St { xs: [k, k + 1, k + 2], n: k }; }
 function bump(s: St): St { return St { xs: [s.n + 1, 2, 3], n: s.n + 1 }; }
-function f(s: St): i32 { var t: St = bump(s); var u: St = bump(t); return u.n + u.xs[0]; }
-function churn(m: i32): i32 { var s: St = build(1); var acc: i32 = 0; var i: i32 = 0; while (i < m) { acc = (acc + f(s)) % 251; i = i + 1; } return acc; }
-function main(): i32 { var w: i32 = churn(2000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(2000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`
+function f(s: St): i32 { let t: St = bump(s); let u: St = bump(t); return u.n + u.xs[0]; }
+function churn(m: i32): i32 { let s: St = build(1); let acc: i32 = 0; let i: i32 = 0; while (i < m) { acc = (acc + f(s)) % 251; i = i + 1; } return acc; }
+function main(): i32 { let w: i32 = churn(2000); let b1: i32 = (__heap_bump_bytes() as i32); let x: i32 = churn(2000); let b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`
 
 const intermediateLocalAliasedSafe = `struct St { xs: i32[], n: i32 }
 function build(k: i32): St { return St { xs: [k, k + 1, k + 2], n: k }; }
 function id(s: St): St { return s; }
-function f(s: St): i32 { var t: St = id(s); var u: i32 = t.n + t.xs[0]; return u + s.xs[1]; }
-function churn(m: i32): i32 { var s: St = build(1); var acc: i32 = 0; var i: i32 = 0; while (i < m) { acc = (acc + f(s)) % 251; i = i + 1; } return acc; }
-function main(): i32 { var w: i32 = churn(2000); var x: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } if (w != x) { return 97; } return 0; }`
+function f(s: St): i32 { let t: St = id(s); let u: i32 = t.n + t.xs[0]; return u + s.xs[1]; }
+function churn(m: i32): i32 { let s: St = build(1); let acc: i32 = 0; let i: i32 = 0; while (i < m) { acc = (acc + f(s)) % 251; i = i + 1; } return acc; }
+function main(): i32 { let w: i32 = churn(2000); let x: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } if (w != x) { return 97; } return 0; }`
 
 func TestX86_64IntermediateLocalReclaim(t *testing.T) {
 	if _, code := compileAndRunX86_64FreeOn(t, intermediateLocalFlat); code != 0 {

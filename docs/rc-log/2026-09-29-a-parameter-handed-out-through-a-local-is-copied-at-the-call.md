@@ -21,13 +21,13 @@ frame, which three later calls had reused.
 its `return` expressions. `emit_opt_payload_drop_via` in `irlower.fern` is
 
 ```
-var st: St = s;
+let st: St = s;
 st = st.emit(ir.op_call_direct(freefn, 1));
 return st;
 ```
 
 so its `return st` names no parameter, it was not in `handers`, and its caller
-lent `freefn` as a view. `hands_back` now collects the body's `var` and
+lent `freefn` as a view. `hands_back` now collects the body's `let` and
 bare-name assignment bindings (`bound_exprs`, through
 `astwalk.fold_stmt_spine`, so nested blocks and the `if` a `defer` desugars to
 are included) and closes the parameter names over them to a fixpoint before

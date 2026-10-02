@@ -1,6 +1,6 @@
 # A struct rebind freed a shared box's fields — the rc gate `__field_reclaim` was missing
 
-`var p: P = P { xs: [7, 8], n: i }; ps = ps.append(p); p = P { … };` then reading
+`let p: P = P { xs: [7, 8], n: i }; ps = ps.append(p); p = P { … };` then reading
 `ps[0].xs` returned garbage. Self-host 96, native 60. The two fresh arrays
 declared after the rebind had reused the buffer the rebind freed.
 

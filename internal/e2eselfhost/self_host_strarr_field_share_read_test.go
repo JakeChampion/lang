@@ -6,7 +6,7 @@ import (
 
 // --- A string[] FIELD READ handed into a string[] field ------------------------
 //
-// `var p: P = P { f: q.f, n: i }` — the RewriteCtx shape, string[] flavour, and
+// `let p: P = P { f: q.f, n: i }` — the RewriteCtx shape, string[] flavour, and
 // the last leaking cell of the construction-retain matrix (#5338):
 //
 //	800 allocs / 300 frees, 16800 live, against native's 600/600
@@ -29,7 +29,7 @@ import (
 // The read is also not walked as a read, so the SOURCE holder keeps its reclaim
 // — a share needs both ends alive to balance.
 //
-// The HOISTED spelling (`var tt = q.f; P { f: tt }`) was left leaking here and
+// The HOISTED spelling (`let tt = q.f; P { f: tt }`) was left leaking here and
 // is now closed too, by the local-BIND admission in
 // self_host_strarr_field_bind_share_test.go. It needed a proof this position
 // gets for free — that the bound local reaches nothing but the store — so it
@@ -53,13 +53,13 @@ import (
 
 const strarrShareReadDecl = `struct P { f: string[], n: i32 }
 function w(a: string): string { return a + "-past-the-sso-inline-threshold"; }
-function mkv(i: i32): string[] { var o: string[] = []; o = o.append(w("a")); o = o.append(w("b")); return o; }
+function mkv(i: i32): string[] { let o: string[] = []; o = o.append(w("a")); o = o.append(w("b")); return o; }
 `
 
 func strarrShareReadCases() []arrenumShareCase {
 	loop := `
 function main(): i32 {
-    var t: i32 = 0; var i: i32 = 0;
+    let t: i32 = 0; let i: i32 = 0;
     while (i < 100) { t = t + round(i); i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
@@ -69,8 +69,8 @@ function main(): i32 {
 			// The cell. 800/300 before, 800/800 now.
 			name: "inline_field_share",
 			src: strarrShareReadDecl + `function round(i: i32): i32 {
-    var q: P = P { f: mkv(i), n: i };
-    var p: P = P { f: q.f, n: i };
+    let q: P = P { f: mkv(i), n: i };
+    let p: P = P { f: q.f, n: i };
     return (p.f.len() + p.f[0].len() + p.n + q.n) % 101;
 }` + loop,
 			want: 72,
@@ -80,8 +80,8 @@ function main(): i32 {
 			// If this ever moves, the admission widened somewhere it should not.
 			name: "local_store_unchanged",
 			src: strarrShareReadDecl + `function round(i: i32): i32 {
-    var src: string[] = mkv(i);
-    var p: P = P { f: src, n: i };
+    let src: string[] = mkv(i);
+    let p: P = P { f: src, n: i };
     return (p.f.len() + p.f[0].len() + p.n) % 101;
 }` + loop,
 			want: 71,
@@ -94,9 +94,9 @@ function main(): i32 {
 			// so they must agree — on the exit AND on the accounting.
 			name: "hoisted_bind_now_clean",
 			src: strarrShareReadDecl + `function round(i: i32): i32 {
-    var q: P = P { f: mkv(i), n: i };
-    var tt: string[] = q.f;
-    var p: P = P { f: tt, n: i };
+    let q: P = P { f: mkv(i), n: i };
+    let tt: string[] = q.f;
+    let p: P = P { f: tt, n: i };
     return (p.f.len() + p.f[0].len() + p.n + q.n) % 101;
 }` + loop,
 			want: 72,
@@ -108,7 +108,7 @@ function main(): i32 {
 			// returns -1 or -2 (exit 100) or segfaults (139); native and
 			// interp both exit 8.
 			name: "escaping_holder",
-			src: strarrShareReadDecl + strarrEscapingChurn + `function make(i: i32): P { var q: P = P { f: mkv(i), n: i }; var p: P = P { f: q.f, n: i }; return p; }
+			src: strarrShareReadDecl + strarrEscapingChurn + `function make(i: i32): P { let q: P = P { f: mkv(i), n: i }; let p: P = P { f: q.f, n: i }; return p; }
 ` + strarrEscapingRound + strarrEscapingMain,
 			want: 8,
 		},
@@ -119,9 +119,9 @@ function main(): i32 {
 			// the last owner. Balances, and reads back after churn.
 			name: "escaping_holder_read_twice",
 			src: strarrShareReadDecl + strarrEscapingChurn + `function make(i: i32): P {
-    var q: P = P { f: mkv(i), n: i };
-    var p2: P = P { f: q.f, n: i + 1 };
-    var p: P = P { f: q.f, n: i + p2.f.len() - 2 };
+    let q: P = P { f: mkv(i), n: i };
+    let p2: P = P { f: q.f, n: i + 1 };
+    let p: P = P { f: q.f, n: i + p2.f.len() - 2 };
     return p;
 }
 ` + strarrEscapingRound + strarrEscapingMain,
@@ -132,8 +132,8 @@ function main(): i32 {
 			// other, so both holders escape `make`. Exit 8 on every engine.
 			name: "escaping_holder_source_returned",
 			src: strarrShareReadDecl + strarrEscapingChurn + `function make(i: i32): P {
-    var q: P = P { f: mkv(i), n: i };
-    var p: P = P { f: q.f, n: i };
+    let q: P = P { f: mkv(i), n: i };
+    let p: P = P { f: q.f, n: i };
     if (i % 2 == 0) { return q; }
     return p;
 }
@@ -149,10 +149,10 @@ function main(): i32 {
 			name: "escaping_holder_param_source",
 			src: strarrShareReadDecl + strarrEscapingChurn + `function make(q: P, i: i32): P { return P { f: q.f, n: i }; }
 function round(i: i32): i32 {
-    var want: i32 = w("a").len();
-    var q: P = P { f: mkv(i), n: i };
-    var p: P = make(q, i);
-    var junk: i32 = churn(i * 3 + 1);
+    let want: i32 = w("a").len();
+    let q: P = P { f: mkv(i), n: i };
+    let p: P = make(q, i);
+    let junk: i32 = churn(i * 3 + 1);
     if (p.f.len() != 2) { return 0 - 1; }
     if (p.f[0].len() != want) { return 0 - 2; }
     if (q.f[1].len() != want) { return 0 - 3; }
@@ -165,15 +165,15 @@ function round(i: i32): i32 {
 			// returned box is still reclaimed. Exit 76.
 			name: "escaping_holder_shadowed_holder",
 			src: strarrShareReadDecl + strarrEscapingChurn + `function make(q: P, i: i32): P {
-    var q: P = P { f: mkv(i), n: i };
-    var p: P = P { f: q.f, n: i };
+    let q: P = P { f: mkv(i), n: i };
+    let p: P = P { f: q.f, n: i };
     return p;
 }
 function round(i: i32): i32 {
-    var want: i32 = w("a").len();
-    var q0: P = P { f: mkv(i + 7), n: i };
-    var p: P = make(q0, i);
-    var junk: i32 = churn(i * 3 + 1);
+    let want: i32 = w("a").len();
+    let q0: P = P { f: mkv(i + 7), n: i };
+    let p: P = make(q0, i);
+    let junk: i32 = churn(i * 3 + 1);
     if (p.f.len() != 2) { return 0 - 1; }
     if (p.f[0].len() != want) { return 0 - 2; }
     return (p.f[1].len() + q0.f.len() + junk) % 101;
@@ -185,9 +185,9 @@ function round(i: i32): i32 {
 			// back after churn.
 			name: "escaping_holder_element_bound",
 			src: strarrShareReadDecl + strarrEscapingChurn + `function make(i: i32): P {
-    var q: P = P { f: mkv(i), n: i };
-    var e: string = q.f[0];
-    var p: P = P { f: q.f, n: e.len() };
+    let q: P = P { f: mkv(i), n: i };
+    let e: string = q.f[0];
+    let p: P = P { f: q.f, n: e.len() };
     return p;
 }
 ` + strarrEscapingRound + strarrEscapingMain,
@@ -198,13 +198,13 @@ function round(i: i32): i32 {
 
 // The escaping-holder rows share a caller that drops the returned holder only
 // after churn has recycled the freelist, then reads every element back.
-const strarrEscapingChurn = `function churn(i: i32): i32 { var a: string[] = mkv(i); var b: string[] = mkv(i + 1); return a[0].len() + b[1].len(); }
+const strarrEscapingChurn = `function churn(i: i32): i32 { let a: string[] = mkv(i); let b: string[] = mkv(i + 1); return a[0].len() + b[1].len(); }
 `
 
 const strarrEscapingRound = `function round(i: i32): i32 {
-    var want: i32 = w("a").len();
-    var p: P = make(i);
-    var junk: i32 = churn(i * 3 + 1);
+    let want: i32 = w("a").len();
+    let p: P = make(i);
+    let junk: i32 = churn(i * 3 + 1);
     if (p.f.len() != 2) { return 0 - 1; }
     if (p.f[0].len() != want) { return 0 - 2; }
     return (p.f[1].len() + junk) % 101;
@@ -212,8 +212,8 @@ const strarrEscapingRound = `function round(i: i32): i32 {
 
 const strarrEscapingMain = `
 function main(): i32 {
-    var t: i32 = 0; var i: i32 = 0; var bad: i32 = 0;
-    while (i < 200) { var r: i32 = round(i); if (r < 0) { bad = bad + 1; } t = t + r; i = i + 1; }
+    let t: i32 = 0; let i: i32 = 0; let bad: i32 = 0;
+    while (i < 200) { let r: i32 = round(i); if (r < 0) { bad = bad + 1; } t = t + r; i = i + 1; }
     if (bad > 0) { return 100; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 83;

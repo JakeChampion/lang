@@ -21,7 +21,7 @@ impl B for P { function scale(self: Self): i32 { return 100; } }
 function twice[T: A](v: T): i32 { return v.scale() + v.scale(); }
 
 function main(): i32 {
-    var v: P = P { x: 5 };
+    let v: P = P { x: 5 };
     print(twice(v).to_string());
     return 0;
 }

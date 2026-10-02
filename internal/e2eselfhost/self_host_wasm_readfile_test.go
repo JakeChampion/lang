@@ -17,15 +17,15 @@ import (
 const readFileLargeSrc = `import "std/string";
 
 function main(): i32 {
-    var a: string = "y".repeat(65530);
-    var c: string = "y".repeat(1048570);
-    var b: string = "z".repeat(100);
+    let a: string = "y".repeat(65530);
+    let c: string = "y".repeat(1048570);
+    let b: string = "z".repeat(100);
     a = "";
     c = "";
     match (read_file("big.txt")) {
         Ok(s) => {
             if (s.len() != 1500000) { return 1; }
-            var k: i32 = 0;
+            let k: i32 = 0;
             while (k < s.len()) {
                 if (s[k] as i32 != 48 + k % 61) { return 2; }
                 k = k + 1;

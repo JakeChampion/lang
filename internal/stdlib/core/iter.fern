@@ -90,9 +90,9 @@ impl[T] Iterator[T] for ArrayIter[T] {
 // for an empty iterator). Specialised to i32 — summing needs `+` on the element
 // type, which a numeric trait bound will later generalise.
 pub function sum[I: Iterator[i32]](it: I): i32 {
-  var total = 0;
-  var cur = it;
-  var go = true;
+  let total = 0;
+  let cur = it;
+  let go = true;
   while (go) {
     match (cur.next()) {
       Some(t) => {
@@ -110,9 +110,9 @@ pub function sum[I: Iterator[i32]](it: I): i32 {
 // count consumes any iterator, returning how many values it yields. Generic
 // over the element type `T` (which appears only in the bound).
 pub function count[T, I: Iterator[T]](it: I): i32 {
-  var n = 0;
-  var cur = it;
-  var go = true;
+  let n = 0;
+  let cur = it;
+  let go = true;
   while (go) {
     match (cur.next()) {
       Some(t) => {
@@ -130,9 +130,9 @@ pub function count[T, I: Iterator[T]](it: I): i32 {
 // to_array collects any iterator's values into a fresh `T[]`, in order. Generic
 // over the element type `T`.
 pub function to_array[T, I: Iterator[T]](it: I): T[] {
-  var out: T[] = [];
-  var cur = it;
-  var go = true;
+  let out: T[] = [];
+  let cur = it;
+  let go = true;
   while (go) {
     match (cur.next()) {
       Some(t) => {
@@ -155,9 +155,9 @@ pub function to_array[T, I: Iterator[T]](it: I): T[] {
 // the self-host IR path (the same bounded-collector shape `to_array` already
 // proves). The `Map` sink for a `(K, V)`-yielding iterator is `to_map`.
 pub function collect[T, I: Iterator[T]](it: I): T[] {
-  var out: T[] = [];
-  var cur = it;
-  var go = true;
+  let out: T[] = [];
+  let cur = it;
+  let go = true;
   while (go) {
     match (cur.next()) {
       Some(t) => {
@@ -185,9 +185,9 @@ pub function collect[T, I: Iterator[T]](it: I): T[] {
 // and the accumulator type `A` (so e.g. an i32 iterator can fold into a
 // string, or a count). The combining function is an ordinary closure value.
 pub function fold[T, A, I: Iterator[T]](it: I, init: A, f: (A, T) => A): A {
-  var acc = init;
-  var cur = it;
-  var go = true;
+  let acc = init;
+  let cur = it;
+  let go = true;
   while (go) {
     match (cur.next()) {
       Some(t) => {
@@ -207,8 +207,8 @@ pub function fold[T, A, I: Iterator[T]](it: I, init: A, f: (A, T) => A): A {
 // counterpart to the equality-only `contains`. Generic over the element type
 // `T`.
 pub function any[T, I: Iterator[T]](it: I, pred: (T) => boolean): boolean {
-  var cur = it;
-  var go = true;
+  let cur = it;
+  let go = true;
   while (go) {
     match (cur.next()) {
       Some(t) => {
@@ -229,8 +229,8 @@ pub function any[T, I: Iterator[T]](it: I, pred: (T) => boolean): boolean {
 // short-circuits on the first failure. Empty iterator → true (vacuously).
 // Generic over the element type `T`.
 pub function all[T, I: Iterator[T]](it: I, pred: (T) => boolean): boolean {
-  var cur = it;
-  var go = true;
+  let cur = it;
+  let go = true;
   while (go) {
     match (cur.next()) {
       Some(t) => {
@@ -251,8 +251,8 @@ pub function all[T, I: Iterator[T]](it: I, pred: (T) => boolean): boolean {
 // matches. The closure-taking counterpart to the equality-only `position`.
 // Generic over the element type `T`.
 pub function find[T, I: Iterator[T]](it: I, pred: (T) => boolean): Option[T] {
-  var cur = it;
-  var go = true;
+  let cur = it;
+  let go = true;
   while (go) {
     match (cur.next()) {
       Some(t) => {
@@ -273,9 +273,9 @@ pub function find[T, I: Iterator[T]](it: I, pred: (T) => boolean): Option[T] {
 // true, or -1 if none matches. The closure-taking, element-type-generic
 // counterpart to the i32-only `position` (which matches on `==` a target).
 pub function position_by[T, I: Iterator[T]](it: I, pred: (T) => boolean): i32 {
-  var cur = it;
-  var i = 0;
-  var go = true;
+  let cur = it;
+  let i = 0;
+  let go = true;
   while (go) {
     match (cur.next()) {
       Some(t) => {
@@ -297,9 +297,9 @@ pub function position_by[T, I: Iterator[T]](it: I, pred: (T) => boolean): i32 {
 // closure-taking, element-type-generic counterpart to the i32-only
 // `count_value` (which counts values `==` a target).
 pub function count_by[T, I: Iterator[T]](it: I, pred: (T) => boolean): i32 {
-  var cur = it;
-  var n = 0;
-  var go = true;
+  let cur = it;
+  let n = 0;
+  let go = true;
   while (go) {
     match (cur.next()) {
       Some(t) => {
@@ -322,9 +322,9 @@ pub function count_by[T, I: Iterator[T]](it: I, pred: (T) => boolean): i32 {
 // a later optimisation; see the module header). Generic over the element type
 // `T` and the result type `U`.
 pub function map[T, U, I: Iterator[T]](it: I, f: (T) => U): U[] {
-  var out: U[] = [];
-  var cur = it;
-  var go = true;
+  let out: U[] = [];
+  let cur = it;
+  let go = true;
   while (go) {
     match (cur.next()) {
       Some(t) => {
@@ -345,13 +345,13 @@ pub function map[T, U, I: Iterator[T]](it: I, f: (T) => U): U[] {
 // a multi-element array to fan it out). Generic over the element type `T` and the
 // per-element result element type `U`.
 pub function flat_map[T, U, I: Iterator[T]](it: I, f: (T) => U[]): U[] {
-  var out: U[] = [];
-  var cur = it;
-  var go = true;
+  let out: U[] = [];
+  let cur = it;
+  let go = true;
   while (go) {
     match (cur.next()) {
       Some(t) => {
-        var ys = f(t.0);
+        let ys = f(t.0);
         for y in ys {
           out = out.append(y);
         }
@@ -368,9 +368,9 @@ pub function flat_map[T, U, I: Iterator[T]](it: I, f: (T) => U[]): U[] {
 // filter eagerly collects the values for which `keep` is true into a fresh `T[]`,
 // preserving order. Generic over the element type `T`.
 pub function filter[T, I: Iterator[T]](it: I, keep: (T) => boolean): T[] {
-  var out: T[] = [];
-  var cur = it;
-  var go = true;
+  let out: T[] = [];
+  let cur = it;
+  let go = true;
   while (go) {
     match (cur.next()) {
       Some(t) => {
@@ -391,10 +391,10 @@ pub function filter[T, I: Iterator[T]](it: I, keep: (T) => boolean): T[] {
 // tuples into a fresh `(i32, T)[]` in order — the eager form of "number the
 // elements". Generic over the element type `T`.
 pub function enumerate[T, I: Iterator[T]](it: I): (i32, T)[] {
-  var out: (i32, T)[] = [];
-  var cur = it;
-  var i = 0;
-  var go = true;
+  let out: (i32, T)[] = [];
+  let cur = it;
+  let i = 0;
+  let go = true;
   while (go) {
     match (cur.next()) {
       Some(t) => {
@@ -414,10 +414,10 @@ pub function enumerate[T, I: Iterator[T]](it: I): (i32, T)[] {
 // `(T, U)[]` until EITHER runs out (so the result length is the shorter of the
 // two). Generic over both element types `T` and `U`.
 pub function zip[T, U, I: Iterator[T], J: Iterator[U]](a: I, b: J): (T, U)[] {
-  var out: (T, U)[] = [];
-  var ca = a;
-  var cb = b;
-  var go = true;
+  let out: (T, U)[] = [];
+  let ca = a;
+  let cb = b;
+  let go = true;
   while (go) {
     match (ca.next()) {
       Some(ta) => {
@@ -445,10 +445,10 @@ pub function zip[T, U, I: Iterator[T], J: Iterator[U]](a: I, b: J): (T, U)[] {
 // bounded-prefix collector — `take(it, k)` is the eager form of "the first k
 // elements". Generic over the element type `T`.
 pub function take[T, I: Iterator[T]](it: I, n: i32): T[] {
-  var out: T[] = [];
-  var cur = it;
-  var k = n;
-  var go = true;
+  let out: T[] = [];
+  let cur = it;
+  let k = n;
+  let go = true;
   while (go) {
     if (k <= 0) {
       go = false;
@@ -472,10 +472,10 @@ pub function take[T, I: Iterator[T]](it: I, n: i32): T[] {
 // the rest into a fresh `T[]`; `n <= 0` keeps everything, and skipping past the
 // end yields an empty array. Generic over the element type `T`.
 pub function skip[T, I: Iterator[T]](it: I, n: i32): T[] {
-  var out: T[] = [];
-  var cur = it;
-  var k = n;
-  var go = true;
+  let out: T[] = [];
+  let cur = it;
+  let k = n;
+  let go = true;
   while (go) {
     match (cur.next()) {
       Some(t) => {
@@ -497,9 +497,9 @@ pub function skip[T, I: Iterator[T]](it: I, n: i32): T[] {
 // nth returns the value at index `n` (0-based), or `None` if the iterator yields
 // fewer than `n + 1` values. Generic over the element type `T`.
 pub function nth[T, I: Iterator[T]](it: I, n: i32): Option[T] {
-  var cur = it;
-  var k = n;
-  var go = true;
+  let cur = it;
+  let k = n;
+  let go = true;
   while (go) {
     match (cur.next()) {
       Some(t) => {
@@ -519,10 +519,10 @@ pub function nth[T, I: Iterator[T]](it: I, n: i32): Option[T] {
 
 // min returns the smallest value an i32 iterator yields, or `None` if empty.
 pub function min[I: Iterator[i32]](it: I): Option[i32] {
-  var cur = it;
-  var best = 0;
-  var seen = false;
-  var go = true;
+  let cur = it;
+  let best = 0;
+  let seen = false;
+  let go = true;
   while (go) {
     match (cur.next()) {
       Some(t) => {
@@ -545,10 +545,10 @@ pub function min[I: Iterator[i32]](it: I): Option[i32] {
 
 // max returns the largest value an i32 iterator yields, or `None` if empty.
 pub function max[I: Iterator[i32]](it: I): Option[i32] {
-  var cur = it;
-  var best = 0;
-  var seen = false;
-  var go = true;
+  let cur = it;
+  let best = 0;
+  let seen = false;
+  let go = true;
   while (go) {
     match (cur.next()) {
       Some(t) => {
@@ -572,9 +572,9 @@ pub function max[I: Iterator[i32]](it: I): Option[i32] {
 // last returns the final value an iterator yields, or `None` if it is empty.
 // Generic over the element type `T`.
 pub function last[T, I: Iterator[T]](it: I): Option[T] {
-  var cur = it;
-  var acc: Option[T] = None;
-  var go = true;
+  let cur = it;
+  let acc: Option[T] = None;
+  let go = true;
   while (go) {
     match (cur.next()) {
       Some(t) => {
@@ -592,9 +592,9 @@ pub function last[T, I: Iterator[T]](it: I): Option[T] {
 // product returns the product of every value an i32 iterator yields (1 for an
 // empty iterator). i32-specialised — multiplication needs `*` on the element.
 pub function product[I: Iterator[i32]](it: I): i32 {
-  var p = 1;
-  var cur = it;
-  var go = true;
+  let p = 1;
+  let cur = it;
+  let go = true;
   while (go) {
     match (cur.next()) {
       Some(t) => {
@@ -613,9 +613,9 @@ pub function product[I: Iterator[i32]](it: I): i32 {
 // `None` if no value matches. i32-specialised (uses `==`); the closure-taking
 // `find` is the generic counterpart above.
 pub function position[I: Iterator[i32]](it: I, target: i32): Option[i32] {
-  var cur = it;
-  var i = 0;
-  var go = true;
+  let cur = it;
+  let i = 0;
+  let go = true;
   while (go) {
     match (cur.next()) {
       Some(t) => {
@@ -637,8 +637,8 @@ pub function position[I: Iterator[i32]](it: I, target: i32): Option[i32] {
 // i32-specialised (uses `==`); the closure-taking `any` is the generic
 // counterpart above.
 pub function contains[I: Iterator[i32]](it: I, target: i32): boolean {
-  var cur = it;
-  var go = true;
+  let cur = it;
+  let go = true;
   while (go) {
     match (cur.next()) {
       Some(t) => {
@@ -658,9 +658,9 @@ pub function contains[I: Iterator[i32]](it: I, target: i32): boolean {
 // count_value returns how many of the iterator's values equal `target`.
 // i32-specialised (uses `==`).
 pub function count_value[I: Iterator[i32]](it: I, target: i32): i32 {
-  var n = 0;
-  var cur = it;
-  var go = true;
+  let n = 0;
+  let cur = it;
+  let go = true;
   while (go) {
     match (cur.next()) {
       Some(t) => {

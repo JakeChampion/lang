@@ -18,31 +18,31 @@ import (
 func TestFormatArrowLambdaBodyShapes(t *testing.T) {
 	for _, tc := range []struct{ name, in, want string }{
 		{
-			"expression body", `function main(): i32 { var f = (x: i32) => x * 2; return f(1); }`,
-			"  var f = (x: i32) => x * 2;\n",
+			"expression body", `function main(): i32 { let f = (x: i32) => x * 2; return f(1); }`,
+			"  let f = (x: i32) => x * 2;\n",
 		},
 		{
 			// A one-statement `return` body reads as the expression it wraps.
-			"single return", `function main(): i32 { var f = (x: i32) => { return x * 2; }; return f(1); }`,
-			"  var f = (x: i32) => x * 2;\n",
+			"single return", `function main(): i32 { let f = (x: i32) => { return x * 2; }; return f(1); }`,
+			"  let f = (x: i32) => x * 2;\n",
 		},
 		{
-			"statement-only body", `function main(): i32 { var n: i32 = 0; var f = (x: i32) => { n = n + x; }; f(1); return n; }`,
-			"  var f = (x: i32) => { n = n + x; };\n",
+			"statement-only body", `function main(): i32 { let n: i32 = 0; let f = (x: i32) => { n = n + x; }; f(1); return n; }`,
+			"  let f = (x: i32) => { n = n + x; };\n",
 		},
 		{
-			"empty body", `function main(): i32 { var f = (x: i32) => {}; f(1); return 0; }`,
-			"  var f = (x: i32) => {};\n",
+			"empty body", `function main(): i32 { let f = (x: i32) => {}; f(1); return 0; }`,
+			"  let f = (x: i32) => {};\n",
 		},
 		{
 			// The body indents against the statement it sits in, not against
 			// column zero.
-			"multi-statement body", `function main(): i32 { var f = (x: i32) => { var y: i32 = x + 1; return y * 2; }; return f(1); }`,
-			"  var f = (x: i32) => {\n    var y: i32 = x + 1;\n    return y * 2;\n  };\n",
+			"multi-statement body", `function main(): i32 { let f = (x: i32) => { let y: i32 = x + 1; return y * 2; }; return f(1); }`,
+			"  let f = (x: i32) => {\n    let y: i32 = x + 1;\n    return y * 2;\n  };\n",
 		},
 		{
-			"annotated return type", `function main(): i32 { var n: i32 = 0; var f = (x: i32): void => { n = n + x; }; f(1); return n; }`,
-			"  var f = (x: i32): void => { n = n + x; };\n",
+			"annotated return type", `function main(): i32 { let n: i32 = 0; let f = (x: i32): void => { n = n + x; }; f(1); return n; }`,
+			"  let f = (x: i32): void => { n = n + x; };\n",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -74,28 +74,28 @@ func TestFormatArrowLambdaBodyShapes(t *testing.T) {
 func TestFormatArrowLambdaReturnTypeParens(t *testing.T) {
 	for _, tc := range []struct{ name, in, want string }{
 		{
-			"tuple return", `function main(): i32 { var g = (): (string, i32) => { return ("ab", 7); }; var t = g(); return t.1; }`,
-			"  var g = (): (string, i32) => (\"ab\", 7);\n",
+			"tuple return", `function main(): i32 { let g = (): (string, i32) => { return ("ab", 7); }; let t = g(); return t.1; }`,
+			"  let g = (): (string, i32) => (\"ab\", 7);\n",
 		},
 		{
 			// A single-element annotation is grouping, and prints as the type
 			// it groups.
-			"grouped scalar return", `function main(): i32 { var g = (): (i32) => { return 7; }; return g(); }`,
-			"  var g = (): i32 => 7;\n",
+			"grouped scalar return", `function main(): i32 { let g = (): (i32) => { return 7; }; return g(); }`,
+			"  let g = (): i32 => 7;\n",
 		},
 		{
-			"function return keeps its parens", `function main(): i32 { var h = (p: i32): ((i32) => i32) => (q: i32) => p + q; return h(1)(2); }`,
-			"  var h = (p: i32): ((i32) => i32) => (q: i32) => p + q;\n",
+			"function return keeps its parens", `function main(): i32 { let h = (p: i32): ((i32) => i32) => (q: i32) => p + q; return h(1)(2); }`,
+			"  let h = (p: i32): ((i32) => i32) => (q: i32) => p + q;\n",
 		},
 		{
 			// Written bare, it parses — the greedy read finds the lambda's
 			// arrow after the result — but it must not print back bare.
-			"function return gains parens", `function main(): i32 { var h = (p: i32): (i32) => i32 => (q: i32) => p + q; return h(1)(2); }`,
-			"  var h = (p: i32): ((i32) => i32) => (q: i32) => p + q;\n",
+			"function return gains parens", `function main(): i32 { let h = (p: i32): (i32) => i32 => (q: i32) => p + q; return h(1)(2); }`,
+			"  let h = (p: i32): ((i32) => i32) => (q: i32) => p + q;\n",
 		},
 		{
-			"function returning a tuple", `function main(): i32 { var m = (p: i32): ((i32) => (i32, i32)) => (q: i32) => (p, q); var r = m(1)(2); return r.0 + r.1; }`,
-			"  var m = (p: i32): ((i32) => (i32, i32)) => (q: i32) => (p, q);\n",
+			"function returning a tuple", `function main(): i32 { let m = (p: i32): ((i32) => (i32, i32)) => (q: i32) => (p, q); let r = m(1)(2); return r.0 + r.1; }`,
+			"  let m = (p: i32): ((i32) => (i32, i32)) => (q: i32) => (p, q);\n",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -51,9 +51,9 @@ func TestSelfHostStrIndexBoundsWasm(t *testing.T) {
 		{
 			name: "index past the end traps",
 			src: `function main(): i32 {
-  var s: string = "abc";
-  var i: i32 = 99;
-  var b: u8 = s[i];
+  let s: string = "abc";
+  let i: i32 = 99;
+  let b: u8 = s[i];
   if (b == 0) { print("zero"); } else { print("nonzero"); }
   return 0;
 }`,
@@ -61,9 +61,9 @@ func TestSelfHostStrIndexBoundsWasm(t *testing.T) {
 		{
 			name: "negative index traps",
 			src: `function main(): i32 {
-  var s: string = "abc";
-  var i: i32 = 0 - 1;
-  var b: u8 = s[i];
+  let s: string = "abc";
+  let i: i32 = 0 - 1;
+  let b: u8 = s[i];
   if (b == 0) { print("zero"); } else { print("nonzero"); }
   return 0;
 }`,
@@ -73,9 +73,9 @@ func TestSelfHostStrIndexBoundsWasm(t *testing.T) {
 			// exclude: `abc` has valid indices 0..2.
 			name: "index equal to the length traps",
 			src: `function main(): i32 {
-  var s: string = "abc";
-  var i: i32 = 3;
-  var b: u8 = s[i];
+  let s: string = "abc";
+  let i: i32 = 3;
+  let b: u8 = s[i];
   if (b == 0) { print("zero"); } else { print("nonzero"); }
   return 0;
 }`,
@@ -84,9 +84,9 @@ func TestSelfHostStrIndexBoundsWasm(t *testing.T) {
 			// In-range reads must be untouched, including the last valid index.
 			name: "in range still reads",
 			src: `function main(): i32 {
-  var s: string = "abc";
-  var i: i32 = 2;
-  var b: u8 = s[i];
+  let s: string = "abc";
+  let i: i32 = 2;
+  let b: u8 = s[i];
   if (b == 99) { print("c"); } else { print("other"); }
   return 0;
 }`,
@@ -96,9 +96,9 @@ func TestSelfHostStrIndexBoundsWasm(t *testing.T) {
 		{
 			name: "first byte still reads",
 			src: `function main(): i32 {
-  var s: string = "abc";
-  var i: i32 = 0;
-  var b: u8 = s[i];
+  let s: string = "abc";
+  let i: i32 = 0;
+  let b: u8 = s[i];
   if (b == 97) { print("a"); } else { print("other"); }
   return 0;
 }`,

@@ -115,7 +115,7 @@ func TestASCIIGutterFallback(t *testing.T) {
 // diagnostic reads as one consistently-guttered block (#4413 Rec §7).
 func TestColorGuttersSecondaryLabel(t *testing.T) {
 	defer SetColor(SetColor(true))
-	src := "function f(): i32 {\n    var x: i32 = 1;\n    x = \"oops\";\n    return x;\n}\n"
+	src := "function f(): i32 {\n    let x: i32 = 1;\n    x = \"oops\";\n    return x;\n}\n"
 	err := &fakeLabeledErr{
 		fakeErr: fakeErr{pos: ast.Position{Line: 3, Col: 9}, msg: "cannot assign string to i32"},
 		labels: []Label{

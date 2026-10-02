@@ -50,7 +50,7 @@ function main(): i32 { return make(3).count; }
 fip function bump(own s: State): State {
 	return State { ...s, count: s.count + 1 };
 }
-function main(): i32 { var s: State = bump(State { count: 0, total: 0 as i64 }); return s.count; }
+function main(): i32 { let s: State = bump(State { count: 0, total: 0 as i64 }); return s.count; }
 `
 	// A graded claim buys exactly the fresh site it names, so the same body
 	// the bare claim is refused for is accepted here. This is what keeps the
@@ -70,7 +70,7 @@ fbip function two(own s: S, k: i32): S {
 	if (k > 0) { return S { ...s, n: s.n + k }; }
 	return S { ...s, n: s.n - 1 };
 }
-function main(): i32 { var s: S = two(S { xs: [1, 2], n: 0 }, 1); return s.n; }
+function main(): i32 { let s: S = two(S { xs: [1, 2], n: 0 }, 1); return s.n; }
 `
 	fipNoClaimSrc = `struct State { count: i32, total: i64 }
 function make(n: i32): State {

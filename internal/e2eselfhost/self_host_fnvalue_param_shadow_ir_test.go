@@ -8,8 +8,8 @@ import (
 
 // fnValueParamShadowCases pin a local binding whose initialiser is an ident that
 // SHADOWS a same-named module function (#6854). The lift pass env-boxed
-// `var g = <module fn name>` into a `__mkclo$` trampoline without checking
-// whether the name was bound locally first, so `var cur = p` inside a function
+// `let g = <module fn name>` into a `__mkclo$` trampoline without checking
+// whether the name was bound locally first, so `let cur = p` inside a function
 // taking `p: SomeStruct` bound a closure slot: the struct type was lost and
 // every later `cur.field` bailed the whole module.
 //
@@ -25,7 +25,7 @@ var fnValueParamShadowCases = []struct {
 	{"struct_param_shadows_fn", `struct Q { s: string, pos: i32 }
 
 function q_skip(p: Q): i32 {
-    var cur: Q = p;
+    let cur: Q = p;
     return cur.s.len() + cur.pos;
 }
 
@@ -34,12 +34,12 @@ function p(x: i32): i32 { return x; }
 function main(): i32 {
     return q_skip(Q { s: "abc", pos: 1 }) * 10 + p(2);
 }`},
-	// A local `var` shadowing a module function, rebound to another local.
+	// A local `let` shadowing a module function, rebound to another local.
 	{"local_var_shadows_fn", `struct Q { s: string, pos: i32 }
 
 function run(): i32 {
-    var p: Q = Q { s: "abcd", pos: 2 };
-    var cur: Q = p;
+    let p: Q = Q { s: "abcd", pos: 2 };
+    let cur: Q = p;
     return cur.s.len() + cur.pos;
 }
 
@@ -48,12 +48,12 @@ function p(x: i32): i32 { return x + 1; }
 function main(): i32 {
     return run() * 10 + p(3);
 }`},
-	// The control: with no shadowing, `var g = <module fn>` still binds a
+	// The control: with no shadowing, `let g = <module fn>` still binds a
 	// callable function value.
 	{"unshadowed_fn_value_still_boxed", `function dbl(x: i32): i32 { return x * 2; }
 
 function main(): i32 {
-    var g = dbl;
+    let g = dbl;
     return g(21);
 }`},
 }

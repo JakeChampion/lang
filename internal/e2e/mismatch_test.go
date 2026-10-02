@@ -21,7 +21,7 @@ import "testing"
 // reports is provably the first one, because the leading window already proved
 // its own range equal — and lengths 8..15 are where a mistake in that shows.
 const mismatchSweepSrc = `function ref(a: string, ao: i32, b: string, bo: i32, n: i32): i32 {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
         if (a[ao + i] != b[bo + i]) { return i; }
         i = i + 1;
@@ -30,26 +30,26 @@ const mismatchSweepSrc = `function ref(a: string, ao: i32, b: string, bo: i32, n
 }
 
 function rep(c: string, n: i32): string {
-    var s: string = "";
-    var i: i32 = 0;
+    let s: string = "";
+    let i: i32 = 0;
     while (i < n) { s = s + c; i = i + 1; }
     return s;
 }
 
 function main(): i32 {
-    var n: i32 = 0;
+    let n: i32 = 0;
     while (n <= 100) {
-        var a: string = rep("a", n);
+        let a: string = rep("a", n);
         if (__mismatch(a, 0, a, 0, n) != n) { return 1; }
-        var d: i32 = 0;
+        let d: i32 = 0;
         while (d < n) {
-            var b: string = rep("a", d) + "b" + rep("a", n - d - 1);
+            let b: string = rep("a", d) + "b" + rep("a", n - d - 1);
             if (__mismatch(a, 0, b, 0, n) != ref(a, 0, b, 0, n)) { return 2; }
             if (__mismatch(b, 0, a, 0, n) != ref(b, 0, a, 0, n)) { return 3; }
             // Both ranges offset into a longer buffer, so a lowering that
             // ignores an operand's offset is caught rather than cancelling.
-            var pa: string = "zz" + a;
-            var pb: string = "qqq" + b;
+            let pa: string = "zz" + a;
+            let pb: string = "qqq" + b;
             if (__mismatch(pa, 2, pb, 3, n) != ref(pa, 2, pb, 3, n)) { return 4; }
             d = d + 1;
         }

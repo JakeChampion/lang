@@ -40,7 +40,7 @@ function test_extremes(): test.TestOutcome {
   if ((9223372036854775807 as i64).to_string_radix(16) != "7fffffffffffffff") {
     return test.fail("max");
   }
-  var mn: i64 = 0 as i64 - 9223372036854775807 as i64 - 1 as i64;
+  let mn: i64 = 0 as i64 - 9223372036854775807 as i64 - 1 as i64;
   return test.assert_true(mn.to_string_radix(16) == "-8000000000000000");
 }
 
@@ -52,7 +52,7 @@ function test_bad_base(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("std/i64 to_string_radix");
+  let r: test.TestRunner = test.test_new("std/i64 to_string_radix");
   r = r.it("hex", test_hex);
   r = r.it("binary", test_binary);
   r = r.it("zero", test_zero);

@@ -78,7 +78,7 @@ func TestSelfHostDiagnosticNamesItsFile(t *testing.T) {
 			// only the file tells them apart.
 			name: "sibling",
 			files: map[string]string{
-				"main.fern": "import \"./lib\";\nfunction main(): i32 {\n    var x: i32 = \"s\"; return lib.bad(); }\n",
+				"main.fern": "import \"./lib\";\nfunction main(): i32 {\n    let x: i32 = \"s\"; return lib.bad(); }\n",
 				"lib.fern":  "pub function bad(): i32 {\n    return \"x\";\n}\n",
 			},
 		},
@@ -109,7 +109,7 @@ func TestSelfHostDiagnosticNamesItsFile(t *testing.T) {
 			files: map[string]string{
 				"main.fern": "import \"./lib\";\nfunction main(): i32 { return lib.f(\"x\"); }\n",
 				"lib.fern": "pub function take(own s: string): i32 { return s.len(); }\n" +
-					"pub function f(own s: string): i32 {\n    var n: i32 = take(s);\n    return n + s.len();\n}\n",
+					"pub function f(own s: string): i32 {\n    let n: i32 = take(s);\n    return n + s.len();\n}\n",
 			},
 		},
 	} {

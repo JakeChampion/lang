@@ -18,8 +18,8 @@ import (
 // on `is_row_major()` / `is_packed()`. So two textually identical calls cost
 // different amounts, and nothing in the IR could tell them apart:
 //
-//	var a = nd.from_flat(xs, s);   var f1 = a.to_flat();            // free
-//	var t = a.transpose();         var f2 = t.to_flat();            // O(n)
+//	let a = nd.from_flat(xs, s);   let f1 = a.to_flat();            // free
+//	let t = a.transpose();         let f2 = t.to_flat();            // O(n)
 //
 // That is the avoidable O(n) copy #9734 says concise array code must not
 // conceal, sitting inside the IR unremarked. §8's licence for an in-place

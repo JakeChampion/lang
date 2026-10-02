@@ -88,7 +88,7 @@ func runNativeWasmCli(t *testing.T, src string) int {
 // TestWASMNativeAliasedArraySetCoW guards the fix for the native-path
 // copy-on-write bug: __fern_rc_inc's low-address guard (0x10000) used
 // to skip every increment on the native heap layout (objects at
-// ~1024), so `var ys = xs` never bumped xs's refcount and `ys.with(...)`
+// ~1024), so `let ys = xs` never bumped xs's refcount and `ys.with(...)`
 // took the rc==1 mutate-in-place fast path, corrupting xs. The
 // preview-1 adapter's higher heap base masked this; the native
 // `-target wasm32-wasi` path (and now the e2e suite) exercises it directly.
@@ -98,16 +98,16 @@ func TestWASMNativeAliasedArraySetCoW(t *testing.T) {
 		src  string
 	}{
 		{"array_set", `function main(): i32 {
-    var xs: i32[] = [10, 20, 30];
-    var ys = xs;
+    let xs: i32[] = [10, 20, 30];
+    let ys = xs;
     ys = ys.with(0, 999);
     if (xs[0] != 10) { return 1; }
     if (ys[0] != 999) { return 2; }
     return 0;
 }`},
 		{"array_index_assign", `function main(): i32 {
-    var xs: i32[] = [10, 20, 30];
-    var ys = xs;
+    let xs: i32[] = [10, 20, 30];
+    let ys = xs;
     ys = ys.with(1, 999);
     if (xs[1] != 20) { return 1; }
     if (ys[1] != 999) { return 2; }
@@ -116,9 +116,9 @@ func TestWASMNativeAliasedArraySetCoW(t *testing.T) {
 		{"map_set", `
 import "core/map";
 function main(): i32 {
-    var m: Map[string, i32] = map_new(8);
+    let m: Map[string, i32] = map_new(8);
     m = m.insert("a", 1);
-    var n = m;
+    let n = m;
     n = n.insert("a", 999);
     if (m.get_or("a", -1) != 1) { return 1; }
     if (n.get_or("a", -1) != 999) { return 2; }
@@ -150,22 +150,22 @@ func TestWASMNativeRcDecReclaim(t *testing.T) {
 	}{
 		// Drop must dec the nested element back to its pre-call rc.
 		{"drop_dec_fires", `function consume(inner: u8[]): i32 {
-    var outer: u8[][] = [inner];
+    let outer: u8[][] = [inner];
     return 0;
 }
 function main(): i32 {
-    var inner: u8[] = __alloc_u8(4);
-    var before: i32 = __rc_get(inner);
-    var ignore: i32 = consume(inner);
-    var after: i32 = __rc_get(inner);
+    let inner: u8[] = __alloc_u8(4);
+    let before: i32 = __rc_get(inner);
+    let ignore: i32 = consume(inner);
+    let after: i32 = __rc_get(inner);
     return (before - 1) + (after - 1);  // 0 iff drop balanced the inc
 }`},
 		// Nesting fresh + aliased elements and dropping the outer
 		// array yields correct values and no over-release.
 		{"drop_no_over_release", `function build(): i32 {
-    var inner: i32[] = [1, 2, 3];
-    var a: i32[][] = [inner];        // aliased element (inc'd)
-    var b: i32[][] = [[4, 5], [6]];  // fresh elements (not inc'd)
+    let inner: i32[] = [1, 2, 3];
+    let a: i32[][] = [inner];        // aliased element (inc'd)
+    let b: i32[][] = [[4, 5], [6]];  // fresh elements (not inc'd)
     return a[0][1] + b[1][0];        // 2 + 6
 }
 function main(): i32 {
@@ -175,19 +175,19 @@ function main(): i32 {
 		{"dec_on_overwrite", `
 import "core/map";
 function main(): i32 {
-    var m: Map[i32, i32[]] = map_new(4);
-    var i: i32 = 0;
+    let m: Map[i32, i32[]] = map_new(4);
+    let i: i32 = 0;
     while (i < 64) { m = m.insert(7, [i, i + 1, i + 2]); i = i + 1; }
-    var v: i32[] = m.get_or(7, []);
+    let v: i32[] = m.get_or(7, []);
     return (v[2] - 65) + __rc_underflow_count();
 }`},
 		// Freelist reuse: heavy alloc churn stays correct and bounded
 		// (a corrupted freelist would trap or mis-read here).
 		{"churn_freelist_reuse", `function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 500) {
-        var xs: i32[] = [i, i + 1, i + 2, i + 3];
+        let xs: i32[] = [i, i + 1, i + 2, i + 3];
         acc = acc + xs[3] - xs[0];   // always 3
         i = i + 1;
     }

@@ -64,7 +64,7 @@ function IMPLICIT(): u64 {  // 2^52
 }
 
 function decode(x: f64): Fields {
-  var b: u64 = f64_bits(x) as u64;
+  let b: u64 = f64_bits(x) as u64;
   return Fields {
     sign: (b >> 63 & 1) as i32,
     exp: (b >> 52 & EXP_MASK()) as i32,
@@ -187,9 +187,9 @@ function names(): string[] {
 // ------------------------------------------------------------- reporting
 
 function describe(x: f64): string {
-  var f: Fields = decode(x);
-  var c: i32 = classify(f);
-  var s: string = "sign=" + f.sign.to_string()
+  let f: Fields = decode(x);
+  let c: i32 = classify(f);
+  let s: string = "sign=" + f.sign.to_string()
     + " exp=" + f.exp.to_string()
     + " mantissa=" + f.mantissa.to_string()
     + " [" + class_name(c) + "]";
@@ -208,7 +208,7 @@ function describe(x: f64): string {
 // along with twelve other libm methods). Doubling uses only multiplication,
 // which every backend has as a single instruction.
 function pow2(e: i32): f64 {
-  var v: f64 = 1.0;
+  let v: f64 = 1.0;
   if (e >= 0) {
     for i in 0..e {
       v = v * 2.0;
@@ -228,11 +228,11 @@ function pow2(e: i32): f64 {
 // is false and `-0.0 == 0.0` is true, so a value comparison would reject every
 // correct answer for one and accept a wrong one for the other.
 function test_the_fields_rebuild_the_original_bits(): test.TestOutcome {
-  var xs: f64[] = corpus();
-  var ns: string[] = names();
+  let xs: f64[] = corpus();
+  let ns: string[] = names();
   for i in 0..xs.len() {
-    var want: u64 = f64_bits(xs[i]) as u64;
-    var got: u64 = encode(decode(xs[i]));
+    let want: u64 = f64_bits(xs[i]) as u64;
+    let got: u64 = encode(decode(xs[i]));
     if (got != want) {
       return test.fail(ns[i] + ": decoded to " + describe(xs[i])
         + ", which rebuilds as " + got.to_string() + " not "
@@ -247,9 +247,9 @@ function test_the_fields_rebuild_the_original_bits(): test.TestOutcome {
 // across all 64 positions covers each field's boundary from both sides.
 function test_every_single_bit_position_round_trips(): test.TestOutcome {
   for i in 0..64 {
-    var bits: i64 = (1 as u64 << i) as i64;
-    var x: f64 = f64_from_bits(bits);
-    var got: u64 = encode(decode(x));
+    let bits: i64 = (1 as u64 << i) as i64;
+    let x: f64 = f64_from_bits(bits);
+    let got: u64 = encode(decode(x));
     if (got != bits as u64) {
       return test.fail("bit " + i.to_string() + " set: " + describe(x)
         + " rebuilds as " + got.to_string() + " not "
@@ -264,15 +264,15 @@ function test_every_single_bit_position_round_trips(): test.TestOutcome {
 // This pins the fields to their MEANING: significand x 2^(e-52) must reproduce
 // the number, computed by arithmetic rather than by bit twiddling.
 function test_the_fields_reproduce_the_value(): test.TestOutcome {
-  var xs: f64[] = corpus();
-  var ns: string[] = names();
+  let xs: f64[] = corpus();
+  let ns: string[] = names();
   for i in 0..xs.len() {
-    var f: Fields = decode(xs[i]);
-    var c: i32 = classify(f);
+    let f: Fields = decode(xs[i]);
+    let c: i32 = classify(f);
     if (c != CLASS_NORMAL() && c != CLASS_SUBNORMAL()) {
       continue;
     }
-    var v: f64 = significand(f) as f64 * pow2(unbiased_exp(f) - MANT_BITS());
+    let v: f64 = significand(f) as f64 * pow2(unbiased_exp(f) - MANT_BITS());
     if (f.sign == 1) {
       v = 0.0 - v;
     }
@@ -288,11 +288,11 @@ function test_the_fields_reproduce_the_value(): test.TestOutcome {
 // through comparisons rather than bits. Both must agree on all five classes,
 // for every value in the corpus.
 function test_the_classifier_agrees_with_the_stdlib(): test.TestOutcome {
-  var xs: f64[] = corpus();
-  var ns: string[] = names();
+  let xs: f64[] = corpus();
+  let ns: string[] = names();
   for i in 0..xs.len() {
-    var c: i32 = classify(decode(xs[i]));
-    var x: f64 = xs[i];
+    let c: i32 = classify(decode(xs[i]));
+    let x: f64 = xs[i];
     if (c == CLASS_NAN() != x.is_nan()) {
       return test.fail(ns[i] + ": bits say " + class_name(c)
         + ", std/float says is_nan=" + x.is_nan().to_string());
@@ -301,7 +301,7 @@ function test_the_classifier_agrees_with_the_stdlib(): test.TestOutcome {
       return test.fail(ns[i] + ": bits say " + class_name(c)
         + ", std/float says is_inf=" + x.is_inf().to_string());
     }
-    var finite: boolean = c == CLASS_ZERO() || c == CLASS_SUBNORMAL()
+    let finite: boolean = c == CLASS_ZERO() || c == CLASS_SUBNORMAL()
       || c == CLASS_NORMAL();
     if (finite != x.is_finite()) {
       return test.fail(ns[i] + ": bits say " + class_name(c)
@@ -315,8 +315,8 @@ function test_the_classifier_agrees_with_the_stdlib(): test.TestOutcome {
 // only difference between 0.0 and -0.0, which compare EQUAL, and NaN carries
 // one that no arithmetic will show you.
 function test_the_sign_bit_survives_where_comparison_cannot(): test.TestOutcome {
-  var pz: f64 = 0.0;
-  var nz: f64 = -0.0;
+  let pz: f64 = 0.0;
+  let nz: f64 = -0.0;
   // `0.0 - 0.0` is +0.0, not -0.0 — subtraction of equals yields positive
   // zero under round-to-nearest, and only the unary minus produces the
   // negative one. Writing the corpus the other way is how this file first
@@ -335,8 +335,8 @@ function test_the_sign_bit_survives_where_comparison_cannot(): test.TestOutcome 
   if (encode(decode(pz)) == encode(decode(nz))) {
     return test.fail("0.0 and -0.0 decode to the same bits");
   }
-  var xs: f64[] = corpus();
-  var ns: string[] = names();
+  let xs: f64[] = corpus();
+  let ns: string[] = names();
   for i in 0..xs.len() {
     if (decode(xs[i]).sign == 1) {
       if (!xs[i].is_sign_negative()) {
@@ -359,10 +359,10 @@ function test_the_sign_bit_survives_where_comparison_cannot(): test.TestOutcome 
 // NOT change. A decoder that derives the exponent uniformly gets a value one
 // factor of two out on exactly one of these two.
 function test_the_subnormal_boundary_is_continuous(): test.TestOutcome {
-  var maxsub: f64 = f64_from_bits(4503599627370495);
-  var minnorm: f64 = f64_from_bits(4503599627370496);
-  var a: Fields = decode(maxsub);
-  var b: Fields = decode(minnorm);
+  let maxsub: f64 = f64_from_bits(4503599627370495);
+  let minnorm: f64 = f64_from_bits(4503599627370496);
+  let a: Fields = decode(maxsub);
+  let b: Fields = decode(minnorm);
   if (classify(a) != CLASS_SUBNORMAL()) {
     return test.fail("largest subnormal classified as " + class_name(classify(a)));
   }
@@ -389,9 +389,9 @@ function test_the_subnormal_boundary_is_continuous(): test.TestOutcome {
 // the exponent field is checked against something independent of the decoder:
 // the number of doublings.
 function test_powers_of_two_walk_the_exponent(): test.TestOutcome {
-  var x: f64 = 1.0;
+  let x: f64 = 1.0;
   for i in 0..64 {
-    var f: Fields = decode(x);
+    let f: Fields = decode(x);
     if (f.mantissa != 0) {
       return test.fail("2^" + i.to_string() + " has mantissa "
         + f.mantissa.to_string() + ", which should be empty");
@@ -412,8 +412,8 @@ function test_powers_of_two_walk_the_exponent(): test.TestOutcome {
 // NaN and keep their distinct mantissas — a decoder that normalised them, or a
 // test that used `==`, would call them the same thing.
 function test_nan_payloads_are_distinguishable(): test.TestOutcome {
-  var q: f64 = f64_from_bits(9221120237041090560);
-  var s: f64 = f64_from_bits(9218868437227405313);
+  let q: f64 = f64_from_bits(9221120237041090560);
+  let s: f64 = f64_from_bits(9218868437227405313);
   if (classify(decode(q)) != CLASS_NAN() || classify(decode(s)) != CLASS_NAN()) {
     return test.fail("a NaN pattern did not classify as nan");
   }
@@ -436,13 +436,13 @@ function test_nan_payloads_are_distinguishable(): test.TestOutcome {
 
 function main(): i32 {
   eprint("float_bits — the sign, exponent and mantissa of an f64");
-  var xs: f64[] = corpus();
-  var ns: string[] = names();
+  let xs: f64[] = corpus();
+  let ns: string[] = names();
   for i in 0..xs.len() {
     eprint("  " + ns[i] + ": " + describe(xs[i]));
   }
 
-  var t: test.TestRunner = test.test_new("float_bits");
+  let t: test.TestRunner = test.test_new("float_bits");
   t = t.it("the fields rebuild the original bits", test_the_fields_rebuild_the_original_bits);
   t = t.it("every single bit position round trips", test_every_single_bit_position_round_trips);
   t = t.it("the fields reproduce the value", test_the_fields_reproduce_the_value);

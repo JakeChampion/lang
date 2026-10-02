@@ -44,16 +44,16 @@ var arrOwnedRetReleaseCases = []struct {
 	{"arrown-method-len-recv", `struct H { xs: i32[] }
 function (h: H) get(): i32[] { return h.xs; }
 function churn(n: i32): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
-    while (i < n) { var keep: H = H { xs: [1, 2, 3] }; t = t + keep.get().len(); i = i + 1; }
+    let t: i32 = 0;
+    let i: i32 = 0;
+    while (i < n) { let keep: H = H { xs: [1, 2, 3] }; t = t + keep.get().len(); i = i + 1; }
     return t % 251;
 }
 function main(): i32 {
-    var w: i32 = churn(200);
-    var b1: i64 = __heap_bump_bytes();
-    var x: i32 = churn(200);
-    var b2: i64 = __heap_bump_bytes();
+    let w: i32 = churn(200);
+    let b1: i64 = __heap_bump_bytes();
+    let x: i32 = churn(200);
+    let b2: i64 = __heap_bump_bytes();
     if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return ((b2 - b1) / 200) as i32;
@@ -62,16 +62,16 @@ function main(): i32 {
 	{"arrown-method-discarded", `struct H { xs: i32[] }
 function (h: H) get(): i32[] { return h.xs; }
 function churn(n: i32): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
-    while (i < n) { var keep: H = H { xs: [1, 2, 3] }; keep.get(); t = t + keep.xs[0]; i = i + 1; }
+    let t: i32 = 0;
+    let i: i32 = 0;
+    while (i < n) { let keep: H = H { xs: [1, 2, 3] }; keep.get(); t = t + keep.xs[0]; i = i + 1; }
     return t % 251;
 }
 function main(): i32 {
-    var w: i32 = churn(200);
-    var b1: i64 = __heap_bump_bytes();
-    var x: i32 = churn(200);
-    var b2: i64 = __heap_bump_bytes();
+    let w: i32 = churn(200);
+    let b1: i64 = __heap_bump_bytes();
+    let x: i32 = churn(200);
+    let b2: i64 = __heap_bump_bytes();
     if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return ((b2 - b1) / 200) as i32;
@@ -80,16 +80,16 @@ function main(): i32 {
 	{"arrown-free-fn-index", `struct H { xs: i32[] }
 function grab(h: H): i32[] { return h.xs; }
 function churn(n: i32): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
-    while (i < n) { var keep: H = H { xs: [1, 2, 3] }; t = t + grab(keep)[1]; i = i + 1; }
+    let t: i32 = 0;
+    let i: i32 = 0;
+    while (i < n) { let keep: H = H { xs: [1, 2, 3] }; t = t + grab(keep)[1]; i = i + 1; }
     return t % 251;
 }
 function main(): i32 {
-    var w: i32 = churn(200);
-    var b1: i64 = __heap_bump_bytes();
-    var x: i32 = churn(200);
-    var b2: i64 = __heap_bump_bytes();
+    let w: i32 = churn(200);
+    let b1: i64 = __heap_bump_bytes();
+    let x: i32 = churn(200);
+    let b2: i64 = __heap_bump_bytes();
     if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return ((b2 - b1) / 200) as i32;
@@ -99,16 +99,16 @@ function main(): i32 {
 	// to give back the retain and nothing more.
 	{"arrown-borrowed-param-len-recv", `function id(a: i32[]): i32[] { return a; }
 function churn(n: i32): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
-    while (i < n) { var s: i32[] = [1, 2, 3]; t = t + id(s).len() + s[0]; i = i + 1; }
+    let t: i32 = 0;
+    let i: i32 = 0;
+    while (i < n) { let s: i32[] = [1, 2, 3]; t = t + id(s).len() + s[0]; i = i + 1; }
     return t % 251;
 }
 function main(): i32 {
-    var w: i32 = churn(200);
-    var b1: i64 = __heap_bump_bytes();
-    var x: i32 = churn(200);
-    var b2: i64 = __heap_bump_bytes();
+    let w: i32 = churn(200);
+    let b1: i64 = __heap_bump_bytes();
+    let x: i32 = churn(200);
+    let b2: i64 = __heap_bump_bytes();
     if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return ((b2 - b1) / 200) as i32;
@@ -119,16 +119,16 @@ function main(): i32 {
 	{"arrown-mixed-returns", `struct H { xs: i32[] }
 function pick(h: H, c: i32): i32[] { if (c > 0) { return h.xs; } return [7, 8]; }
 function churn(n: i32): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
-    while (i < n) { var keep: H = H { xs: [1, 2, 3] }; t = t + pick(keep, i % 2).len(); i = i + 1; }
+    let t: i32 = 0;
+    let i: i32 = 0;
+    while (i < n) { let keep: H = H { xs: [1, 2, 3] }; t = t + pick(keep, i % 2).len(); i = i + 1; }
     return t % 251;
 }
 function main(): i32 {
-    var w: i32 = churn(200);
-    var b1: i64 = __heap_bump_bytes();
-    var x: i32 = churn(200);
-    var b2: i64 = __heap_bump_bytes();
+    let w: i32 = churn(200);
+    let b1: i64 = __heap_bump_bytes();
+    let x: i32 = churn(200);
+    let b2: i64 = __heap_bump_bytes();
     if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return ((b2 - b1) / 200) as i32;
@@ -138,21 +138,21 @@ function main(): i32 {
 	{"arrown-bound-result-balanced", `struct H { xs: i32[] }
 function (h: H) get(): i32[] { return h.xs; }
 function churn(n: i32): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var keep: H = H { xs: [1, 2, 3] };
-        var a: i32[] = keep.get();
+        let keep: H = H { xs: [1, 2, 3] };
+        let a: i32[] = keep.get();
         t = t + a.len() + a[2] + keep.xs[0];
         i = i + 1;
     }
     return t % 251;
 }
 function main(): i32 {
-    var w: i32 = churn(200);
-    var b1: i64 = __heap_bump_bytes();
-    var x: i32 = churn(200);
-    var b2: i64 = __heap_bump_bytes();
+    let w: i32 = churn(200);
+    let b1: i64 = __heap_bump_bytes();
+    let x: i32 = churn(200);
+    let b2: i64 = __heap_bump_bytes();
     if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return ((b2 - b1) / 200) as i32;
@@ -164,20 +164,20 @@ function main(): i32 {
 	{"arrown-sibling-field-deep-drop", `struct H2 { xs: i32[], ys: i32[] }
 function (h: H2) get(): i32[] { return h.xs; }
 function churn(n: i32): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var keep: H2 = H2 { xs: [1, 2, 3], ys: [4, 5, 6, 7, 8] };
+        let keep: H2 = H2 { xs: [1, 2, 3], ys: [4, 5, 6, 7, 8] };
         t = t + keep.get().len() + keep.ys.len();
         i = i + 1;
     }
     return t % 251;
 }
 function main(): i32 {
-    var w: i32 = churn(200);
-    var b1: i64 = __heap_bump_bytes();
-    var x: i32 = churn(200);
-    var b2: i64 = __heap_bump_bytes();
+    let w: i32 = churn(200);
+    let b1: i64 = __heap_bump_bytes();
+    let x: i32 = churn(200);
+    let b2: i64 = __heap_bump_bytes();
     if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return ((b2 - b1) / 200) as i32;
@@ -189,16 +189,16 @@ function main(): i32 {
 	{"arrown-shared-buffer-still-live", `struct H { xs: i32[] }
 function (h: H) get(): i32[] { return h.xs; }
 function churn(n: i32): i32 {
-    var keep: H = H { xs: [11, 22, 33] };
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let keep: H = H { xs: [11, 22, 33] };
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < n) { t = (t + keep.get().len()) % 251; i = i + 1; }
-    var d1: i32[] = [777, 888, 999];
-    var d2: i32[] = [111, 222, 333];
+    let d1: i32[] = [777, 888, 999];
+    let d2: i32[] = [111, 222, 333];
     return (t + keep.xs[0] + keep.xs[1] + keep.xs[2] + d1[0] + d2[0]) % 9973;
 }
 function main(): i32 {
-    var w: i32 = churn(400);
+    let w: i32 = churn(400);
     if (__rc_underflow_count() != 0) { return 99; }
     if (w != 1150) { return 97; }
     return 0;
@@ -211,14 +211,14 @@ function main(): i32 {
 	// its leak instead; only the safety property is pinned here.
 	{"arrown-own-param-refused", `function id(own a: i32[]): i32[] { return a; }
 function churn(n: i32): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < n) { t = t + id([1, 2, 3]).len(); i = i + 1; }
     return t % 251;
 }
 function main(): i32 {
-    var w: i32 = churn(200);
-    var x: i32 = churn(200);
+    let w: i32 = churn(200);
+    let x: i32 = churn(200);
     if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return 0;
@@ -240,16 +240,16 @@ function main(): i32 {
 	{"strarr-producer-len-recv", `function w(a: string): string { return a + "!"; }
 function mks(): string[] { return [w("a"), w("b"), w("c")]; }
 function churn(n: i32): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < n) { t = t + mks().len(); i = i + 1; }
     return t % 251;
 }
 function main(): i32 {
-    var w1: i32 = churn(200);
-    var b1: i64 = __heap_bump_bytes();
-    var x: i32 = churn(200);
-    var b2: i64 = __heap_bump_bytes();
+    let w1: i32 = churn(200);
+    let b1: i64 = __heap_bump_bytes();
+    let x: i32 = churn(200);
+    let b2: i64 = __heap_bump_bytes();
     if (__rc_underflow_count() != 0) { return 99; }
     if (w1 != x) { return 97; }
     return ((b2 - b1) / 200) as i32;
@@ -258,15 +258,15 @@ function main(): i32 {
 	{"strarr-producer-discarded", `function w(a: string): string { return a + "!"; }
 function mks(): string[] { return [w("a"), w("b"), w("c")]; }
 function churn(n: i32): i32 {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < n) { mks(); i = i + 1; }
     return n % 251;
 }
 function main(): i32 {
-    var w1: i32 = churn(200);
-    var b1: i64 = __heap_bump_bytes();
-    var x: i32 = churn(200);
-    var b2: i64 = __heap_bump_bytes();
+    let w1: i32 = churn(200);
+    let b1: i64 = __heap_bump_bytes();
+    let x: i32 = churn(200);
+    let b2: i64 = __heap_bump_bytes();
     if (__rc_underflow_count() != 0) { return 99; }
     if (w1 != x) { return 97; }
     return ((b2 - b1) / 200) as i32;
@@ -277,16 +277,16 @@ function main(): i32 {
 	{"strarr-producer-index-unchanged", `function w(a: string): string { return a + "!"; }
 function mks(): string[] { return [w("a"), w("b"), w("c")]; }
 function churn(n: i32): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < n) { t = t + mks()[1].len(); i = i + 1; }
     return t % 251;
 }
 function main(): i32 {
-    var w1: i32 = churn(200);
-    var b1: i64 = __heap_bump_bytes();
-    var x: i32 = churn(200);
-    var b2: i64 = __heap_bump_bytes();
+    let w1: i32 = churn(200);
+    let b1: i64 = __heap_bump_bytes();
+    let x: i32 = churn(200);
+    let b2: i64 = __heap_bump_bytes();
     if (__rc_underflow_count() != 0) { return 99; }
     if (w1 != x) { return 97; }
     return ((b2 - b1) / 200) as i32;
@@ -298,16 +298,16 @@ function main(): i32 {
 	{"strarr-producer-bound-balanced", `function w(a: string): string { return a + "!"; }
 function mks(): string[] { return [w("a"), w("b"), w("c")]; }
 function churn(n: i32): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
-    while (i < n) { var v: string[] = mks(); t = t + v.len() + v[0].len(); i = i + 1; }
+    let t: i32 = 0;
+    let i: i32 = 0;
+    while (i < n) { let v: string[] = mks(); t = t + v.len() + v[0].len(); i = i + 1; }
     return t % 251;
 }
 function main(): i32 {
-    var w1: i32 = churn(200);
-    var b1: i64 = __heap_bump_bytes();
-    var x: i32 = churn(200);
-    var b2: i64 = __heap_bump_bytes();
+    let w1: i32 = churn(200);
+    let b1: i64 = __heap_bump_bytes();
+    let x: i32 = churn(200);
+    let b2: i64 = __heap_bump_bytes();
     if (__rc_underflow_count() != 0) { return 99; }
     if (w1 != x) { return 97; }
     return ((b2 - b1) / 200) as i32;
@@ -330,20 +330,20 @@ function main(): i32 {
 struct H { xs: string[] }
 function (h: H) get(): string[] { return h.xs; }
 function churn(n: i32): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var keep: H = H { xs: [w("a"), w("b"), w("c")] };
+        let keep: H = H { xs: [w("a"), w("b"), w("c")] };
         t = t + keep.get().len() + keep.get().len() + keep.xs[0].len() + keep.xs[2].len();
         i = i + 1;
     }
     return t % 251;
 }
 function main(): i32 {
-    var w1: i32 = churn(200);
-    var b1: i64 = __heap_bump_bytes();
-    var x: i32 = churn(200);
-    var b2: i64 = __heap_bump_bytes();
+    let w1: i32 = churn(200);
+    let b1: i64 = __heap_bump_bytes();
+    let x: i32 = churn(200);
+    let b2: i64 = __heap_bump_bytes();
     if (__rc_underflow_count() != 0) { return 99; }
     if (w1 != x) { return 97; }
     if (w1 != (200 * 10) % 251) { return 96; }
@@ -363,16 +363,16 @@ function main(): i32 {
 	{"arrstruct-producer-len-recv", `struct Inner { k: i32, ys: i32[] }
 function mk(): Inner[] { return [Inner { k: 1, ys: [1, 2] }, Inner { k: 2, ys: [3] }]; }
 function churn(n: i32): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < n) { t = t + mk().len(); i = i + 1; }
     return t % 251;
 }
 function main(): i32 {
-    var w1: i32 = churn(200);
-    var b1: i64 = __heap_bump_bytes();
-    var x: i32 = churn(200);
-    var b2: i64 = __heap_bump_bytes();
+    let w1: i32 = churn(200);
+    let b1: i64 = __heap_bump_bytes();
+    let x: i32 = churn(200);
+    let b2: i64 = __heap_bump_bytes();
     if (__rc_underflow_count() != 0) { return 99; }
     if (w1 != x) { return 97; }
     return ((b2 - b1) / 200) as i32;
@@ -381,15 +381,15 @@ function main(): i32 {
 	{"arrstruct-producer-discarded", `struct Inner { k: i32, ys: i32[] }
 function mk(): Inner[] { return [Inner { k: 1, ys: [1, 2] }, Inner { k: 2, ys: [3] }]; }
 function churn(n: i32): i32 {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < n) { mk(); i = i + 1; }
     return n % 251;
 }
 function main(): i32 {
-    var w1: i32 = churn(200);
-    var b1: i64 = __heap_bump_bytes();
-    var x: i32 = churn(200);
-    var b2: i64 = __heap_bump_bytes();
+    let w1: i32 = churn(200);
+    let b1: i64 = __heap_bump_bytes();
+    let x: i32 = churn(200);
+    let b2: i64 = __heap_bump_bytes();
     if (__rc_underflow_count() != 0) { return 99; }
     if (w1 != x) { return 97; }
     return ((b2 - b1) / 200) as i32;
@@ -399,16 +399,16 @@ function main(): i32 {
 struct P { s: string, n: i32 }
 function mkp(): P[] { return [P { s: w("p"), n: 1 }, P { s: w("q"), n: 2 }]; }
 function churn(n: i32): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < n) { t = t + mkp().len(); i = i + 1; }
     return t % 251;
 }
 function main(): i32 {
-    var w1: i32 = churn(200);
-    var b1: i64 = __heap_bump_bytes();
-    var x: i32 = churn(200);
-    var b2: i64 = __heap_bump_bytes();
+    let w1: i32 = churn(200);
+    let b1: i64 = __heap_bump_bytes();
+    let x: i32 = churn(200);
+    let b2: i64 = __heap_bump_bytes();
     if (__rc_underflow_count() != 0) { return 99; }
     if (w1 != x) { return 97; }
     return ((b2 - b1) / 200) as i32;
@@ -418,15 +418,15 @@ function main(): i32 {
 struct P { s: string, n: i32 }
 function mkp(): P[] { return [P { s: w("p"), n: 1 }, P { s: w("q"), n: 2 }]; }
 function churn(n: i32): i32 {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < n) { mkp(); i = i + 1; }
     return n % 251;
 }
 function main(): i32 {
-    var w1: i32 = churn(200);
-    var b1: i64 = __heap_bump_bytes();
-    var x: i32 = churn(200);
-    var b2: i64 = __heap_bump_bytes();
+    let w1: i32 = churn(200);
+    let b1: i64 = __heap_bump_bytes();
+    let x: i32 = churn(200);
+    let b2: i64 = __heap_bump_bytes();
     if (__rc_underflow_count() != 0) { return 99; }
     if (w1 != x) { return 97; }
     return ((b2 - b1) / 200) as i32;
@@ -441,18 +441,18 @@ function main(): i32 {
 	// arm, vouched by the function's own strict-fresh registry row.
 	{"struct-producer-reassigned-local", `struct P { xs: i32[], s: string }
 function w(s: string): string { return s + ""; }
-function re(i: i32): P { var p: P = P { xs: [i], s: w("r") }; p = P { xs: [i, i, i], s: w("q") }; return p; }
+function re(i: i32): P { let p: P = P { xs: [i], s: w("r") }; p = P { xs: [i, i, i], s: w("q") }; return p; }
 function churn(n: i32): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
-    while (i < n) { var c: P = re(i); t = t + c.xs.len(); i = i + 1; }
+    let t: i32 = 0;
+    let i: i32 = 0;
+    while (i < n) { let c: P = re(i); t = t + c.xs.len(); i = i + 1; }
     return t % 251;
 }
 function main(): i32 {
-    var w1: i32 = churn(200);
-    var b1: i64 = __heap_bump_bytes();
-    var x: i32 = churn(200);
-    var b2: i64 = __heap_bump_bytes();
+    let w1: i32 = churn(200);
+    let b1: i64 = __heap_bump_bytes();
+    let x: i32 = churn(200);
+    let b2: i64 = __heap_bump_bytes();
     if (__rc_underflow_count() != 0) { return 99; }
     if (w1 != x) { return 97; }
     return ((b2 - b1) / 200) as i32;
@@ -465,21 +465,21 @@ function main(): i32 {
 	{"struct-producer-reassigned-alias-refused", `struct P { xs: i32[], s: string }
 function w(s: string): string { return s + ""; }
 function re2(i: i32): P {
-    var p: P = P { xs: [i], s: w("r") };
-    var q: P = p;
+    let p: P = P { xs: [i], s: w("r") };
+    let q: P = p;
     p = P { xs: [i, i, i], s: w("q") };
     if (q.xs.len() != 1) { return p; }
     return p;
 }
 function churn(n: i32): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
-    while (i < n) { var c: P = re2(i); t = t + c.xs.len(); i = i + 1; }
+    let t: i32 = 0;
+    let i: i32 = 0;
+    while (i < n) { let c: P = re2(i); t = t + c.xs.len(); i = i + 1; }
     return t % 251;
 }
 function main(): i32 {
-    var w1: i32 = churn(200);
-    var x: i32 = churn(200);
+    let w1: i32 = churn(200);
+    let x: i32 = churn(200);
     if (__rc_underflow_count() != 0) { return 99; }
     if (w1 != x) { return 97; }
     if (w1 != (200 * 3) % 251) { return 96; }
@@ -491,16 +491,16 @@ function main(): i32 {
 	{"structarr-scalar-producer-len-recv", `struct Q { a: i32, b: i32 }
 function mkq(): Q[] { return [Q { a: 1, b: 2 }, Q { a: 3, b: 4 }]; }
 function churn(n: i32): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < n) { t = t + mkq().len(); i = i + 1; }
     return t % 251;
 }
 function main(): i32 {
-    var w1: i32 = churn(200);
-    var b1: i64 = __heap_bump_bytes();
-    var x: i32 = churn(200);
-    var b2: i64 = __heap_bump_bytes();
+    let w1: i32 = churn(200);
+    let b1: i64 = __heap_bump_bytes();
+    let x: i32 = churn(200);
+    let b2: i64 = __heap_bump_bytes();
     if (__rc_underflow_count() != 0) { return 99; }
     if (w1 != x) { return 97; }
     return ((b2 - b1) / 200) as i32;
@@ -513,16 +513,16 @@ function main(): i32 {
 	{"arrstruct-producer-index-field", `struct Inner { k: i32, ys: i32[] }
 function mk(): Inner[] { return [Inner { k: 1, ys: [1, 2] }, Inner { k: 2, ys: [3] }]; }
 function churn(n: i32): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < n) { t = t + mk()[0].k; i = i + 1; }
     return t % 251;
 }
 function main(): i32 {
-    var w1: i32 = churn(200);
-    var b1: i64 = __heap_bump_bytes();
-    var x: i32 = churn(200);
-    var b2: i64 = __heap_bump_bytes();
+    let w1: i32 = churn(200);
+    let b1: i64 = __heap_bump_bytes();
+    let x: i32 = churn(200);
+    let b2: i64 = __heap_bump_bytes();
     if (__rc_underflow_count() != 0) { return 99; }
     if (w1 != x) { return 97; }
     return ((b2 - b1) / 200) as i32;
@@ -532,16 +532,16 @@ function main(): i32 {
 struct P { s: string, n: i32 }
 function mkp(): P[] { return [P { s: w("p"), n: 1 }, P { s: w("q"), n: 2 }]; }
 function churn(n: i32): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < n) { t = t + mkp()[1].n; i = i + 1; }
     return t % 251;
 }
 function main(): i32 {
-    var w1: i32 = churn(200);
-    var b1: i64 = __heap_bump_bytes();
-    var x: i32 = churn(200);
-    var b2: i64 = __heap_bump_bytes();
+    let w1: i32 = churn(200);
+    let b1: i64 = __heap_bump_bytes();
+    let x: i32 = churn(200);
+    let b2: i64 = __heap_bump_bytes();
     if (__rc_underflow_count() != 0) { return 99; }
     if (w1 != x) { return 97; }
     return ((b2 - b1) / 200) as i32;
@@ -555,14 +555,14 @@ function main(): i32 {
 struct P { s: string, n: i32 }
 function mkp(): P[] { return [P { s: w("p"), n: 1 }, P { s: w("q"), n: 2 }]; }
 function churn(n: i32): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < n) { t = t + mkp()[0].s.len(); i = i + 1; }
     return t % 251;
 }
 function main(): i32 {
-    var w1: i32 = churn(200);
-    var x: i32 = churn(200);
+    let w1: i32 = churn(200);
+    let x: i32 = churn(200);
     if (__rc_underflow_count() != 0) { return 99; }
     if (w1 != x) { return 97; }
     if (w1 != (200 * 2) % 251) { return 96; }
@@ -575,16 +575,16 @@ function main(): i32 {
 	{"arrstruct-producer-bound-balanced", `struct Inner { k: i32, ys: i32[] }
 function mk(): Inner[] { return [Inner { k: 1, ys: [1, 2] }, Inner { k: 2, ys: [3] }]; }
 function churn(n: i32): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
-    while (i < n) { var v: Inner[] = mk(); t = t + v.len() + v[0].k; i = i + 1; }
+    let t: i32 = 0;
+    let i: i32 = 0;
+    while (i < n) { let v: Inner[] = mk(); t = t + v.len() + v[0].k; i = i + 1; }
     return t % 251;
 }
 function main(): i32 {
-    var w1: i32 = churn(200);
-    var b1: i64 = __heap_bump_bytes();
-    var x: i32 = churn(200);
-    var b2: i64 = __heap_bump_bytes();
+    let w1: i32 = churn(200);
+    let b1: i64 = __heap_bump_bytes();
+    let x: i32 = churn(200);
+    let b2: i64 = __heap_bump_bytes();
     if (__rc_underflow_count() != 0) { return 99; }
     if (w1 != x) { return 97; }
     return ((b2 - b1) / 200) as i32;
@@ -600,18 +600,18 @@ function main(): i32 {
 struct H { xs: Inner[] }
 function (h: H) get(): Inner[] { return h.xs; }
 function churn(n: i32): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var keep: H = H { xs: [Inner { k: 3, ys: [1] }, Inner { k: 4, ys: [2] }] };
+        let keep: H = H { xs: [Inner { k: 3, ys: [1] }, Inner { k: 4, ys: [2] }] };
         t = t + keep.get().len() + keep.xs[0].k + keep.xs[1].k;
         i = i + 1;
     }
     return t % 251;
 }
 function main(): i32 {
-    var w1: i32 = churn(200);
-    var x: i32 = churn(200);
+    let w1: i32 = churn(200);
+    let x: i32 = churn(200);
     if (__rc_underflow_count() != 0) { return 99; }
     if (w1 != x) { return 97; }
     if (w1 != (200 * 9) % 251) { return 96; }

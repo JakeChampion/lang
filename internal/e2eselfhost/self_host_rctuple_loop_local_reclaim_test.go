@@ -8,7 +8,7 @@ import (
 )
 
 // #4357 (tuple sibling of the struct loop-local reclaim #4733/#4735): a fresh
-// tuple loop-local carrying a fresh ARRAY-literal element (`while { var t: (i32,
+// tuple loop-local carrying a fresh ARRAY-literal element (`while { let t: (i32,
 // i32[]) = (i, [i, i+1]); }`) leaked the array element every iteration — the
 // scalar-tuple path (tuple_lit_is_fresh_scalar) only reclaims the box with a
 // shallow dec, never the elements, and a non-scalar tuple wasn't collected at all.
@@ -26,9 +26,9 @@ import (
 
 func rcTupleLoopLocalSrc(n string) string {
 	return `function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0; var acc: i32 = 0;
-    while (i < ` + n + `) { var t: (i32, i32[]) = (i, [i, i + 1]); acc = acc + t.0 + t.1[0]; i = i + 1; }
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0; let acc: i32 = 0;
+    while (i < ` + n + `) { let t: (i32, i32[]) = (i, [i, i + 1]); acc = acc + t.0 + t.1[0]; i = i + 1; }
     if (acc < 0) { return 5; }
     return (__heap_bump_bytes() as i32) - before;
 }`
@@ -36,8 +36,8 @@ func rcTupleLoopLocalSrc(n string) string {
 
 // per iter reads t.0 + t.1[0..2] = i + i + (i+1) + (i+2) = 4i+3; sum 0..199 = 80200.
 const rcTupleLoopLocalDetectorSrc = `function main(): i32 {
-    var i: i32 = 0; var acc: i32 = 0;
-    while (i < 200) { var t: (i32, i32[]) = (i, [i, i + 1, i + 2]); acc = acc + t.0 + t.1[0] + t.1[1] + t.1[2]; i = i + 1; }
+    let i: i32 = 0; let acc: i32 = 0;
+    while (i < 200) { let t: (i32, i32[]) = (i, [i, i + 1, i + 2]); acc = acc + t.0 + t.1[0] + t.1[1] + t.1[2]; i = i + 1; }
     if (acc != 80200) { return 99; }
     return __rc_underflow_count();
 }`
@@ -46,9 +46,9 @@ const rcTupleLoopLocalDetectorSrc = `function main(): i32 {
 // must NOT be freed by the deep reclaim — that would double-release xs. sum t.0 =
 // 0..99 = 4950; t.1[0] = 7 each iter -> 700. acc = 5650; __rc_underflow_count == 0.
 const rcTupleAliasSafetySrc = `function main(): i32 {
-    var xs: i32[] = [7, 8, 9];
-    var i: i32 = 0; var acc: i32 = 0;
-    while (i < 100) { var t: (i32, i32[]) = (i, xs); acc = acc + t.0 + t.1[0]; i = i + 1; }
+    let xs: i32[] = [7, 8, 9];
+    let i: i32 = 0; let acc: i32 = 0;
+    while (i < 100) { let t: (i32, i32[]) = (i, xs); acc = acc + t.0 + t.1[0]; i = i + 1; }
     if (acc != 5650) { return 99; }
     return __rc_underflow_count();
 }`

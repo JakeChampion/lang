@@ -28,7 +28,7 @@ import (
 //
 // The element rule is unchanged from the literal-built path: a fresh no-base
 // struct literal, so the element box is sole-owned and the deep walk frees only
-// what the array owns. A BOUND element (`var v = Val { .. }; vals.append(v)`)
+// what the array owns. A BOUND element (`let v = Val { .. }; vals.append(v)`)
 // is still refused — the live local and the buffer would both release the
 // element's field buffers — which is the move-site half of #6535 and a
 // separate mechanism.
@@ -36,15 +36,15 @@ import (
 const arrStructAppendChurnSrc = `struct Val { kind: i32, kids: i32[] }
 
 function build(n: i32): i32 {
-    var vals: Val[] = [];
-    var i: i32 = 0;
+    let vals: Val[] = [];
+    let i: i32 = 0;
     while (i < 4) { vals = vals.append(Val { kind: i, kids: [i, i + 1] }); i = i + 1; }
     return vals.len();
 }
 
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { t = t + build(r); r = r + 1; }
     return t / 100;
 }`
@@ -110,9 +110,9 @@ func TestSelfHostArrStructAppendHazardsX86_64(t *testing.T) {
 			name: "element_alias",
 			src: `struct Val { kind: i32, kids: i32[] }
 function main(): i32 {
-    var vals: Val[] = [];
+    let vals: Val[] = [];
     vals = vals.append(Val { kind: 2, kids: [7, 8] });
-    var q: Val = vals[0];
+    let q: Val = vals[0];
     return q.kids.len() + q.kind + vals.len();
 }`,
 			want: 5,
@@ -123,8 +123,8 @@ function main(): i32 {
 			name: "ident_element",
 			src: `struct Val { kind: i32, kids: i32[] }
 function main(): i32 {
-    var shared: Val = Val { kind: 5, kids: [1, 2, 3] };
-    var vals: Val[] = [];
+    let shared: Val = Val { kind: 5, kids: [1, 2, 3] };
+    let vals: Val[] = [];
     vals = vals.append(shared);
     return vals[0].kind + shared.kids.len();
 }`,
@@ -137,9 +137,9 @@ function main(): i32 {
 			name: "payload_extract",
 			src: `struct Val { kind: i32, kids: i32[] }
 function main(): i32 {
-    var vals: Val[] = [];
+    let vals: Val[] = [];
     vals = vals.append(Val { kind: 1, kids: [4, 5] });
-    var keep: i32[] = vals[0].kids;
+    let keep: i32[] = vals[0].kids;
     return keep.len() + keep[0] + vals.len();
 }`,
 			want: 7,
@@ -149,11 +149,11 @@ function main(): i32 {
 			name: "escaping_return",
 			src: `struct Val { kind: i32, kids: i32[] }
 function build(n: i32): Val[] {
-    var vals: Val[] = [];
+    let vals: Val[] = [];
     vals = vals.append(Val { kind: n, kids: [n, n + 1] });
     return vals;
 }
-function main(): i32 { var r: Val[] = build(3); return r[0].kind + r[0].kids.len(); }`,
+function main(): i32 { let r: Val[] = build(3); return r[0].kind + r[0].kids.len(); }`,
 			want: 5,
 		},
 		{
@@ -162,9 +162,9 @@ function main(): i32 { var r: Val[] = build(3); return r[0].kind + r[0].kids.len
 			name: "rebound_to_other",
 			src: `struct Val { kind: i32, kids: i32[] }
 function main(): i32 {
-    var vals: Val[] = [];
+    let vals: Val[] = [];
     vals = vals.append(Val { kind: 4, kids: [4] });
-    var qs: Val[] = [Val { kind: 9, kids: [9, 9] }];
+    let qs: Val[] = [Val { kind: 9, kids: [9, 9] }];
     vals = qs;
     return vals[0].kind + qs[0].kids.len();
 }`,
@@ -177,8 +177,8 @@ function main(): i32 {
 			name: "base_copy_element",
 			src: `struct Val { kind: i32, kids: i32[] }
 function main(): i32 {
-    var base: Val = Val { kind: 2, kids: [6, 7] };
-    var vals: Val[] = [];
+    let base: Val = Val { kind: 2, kids: [6, 7] };
+    let vals: Val[] = [];
     vals = vals.append(Val { ...base, kind: 3 });
     return vals[0].kind + base.kids.len();
 }`,
@@ -190,7 +190,7 @@ function main(): i32 {
 			name: "self_sourced_element",
 			src: `struct Val { kind: i32, kids: i32[] }
 function main(): i32 {
-    var vals: Val[] = [Val { kind: 1, kids: [3, 4] }];
+    let vals: Val[] = [Val { kind: 1, kids: [3, 4] }];
     vals = vals.append(Val { kind: 2, kids: vals[0].kids });
     return vals[1].kids.len() + vals[0].kind;
 }`,

@@ -2,7 +2,7 @@
 // "i32.<m>" and render the value as 1/0.
 //
 // The self-host slot model tracked no boolean fact for a LOCAL, so
-// `expr_is_bool` had no ExprIdent arm and `var ok = true; ok.to_json()` gave
+// `expr_is_bool` had no ExprIdent arm and `let ok = true; ok.to_json()` gave
 // `1` where native gives `true` (#6305). The array half is #6117, fixed
 // separately and pinned by json_array_field; this is the scalar half, and it
 // is what makes the two spellings of one read agree:
@@ -14,7 +14,7 @@
 // fact too.
 //
 // Every position below is a different carrier, and each was separately wrong:
-// the var binding, the param table, the `for` element binding, and the enum
+// the let binding, the param table, the `for` element binding, and the enum
 // payload binding. An i32 local is asserted to be UNAFFECTED, because the
 // failure mode of an over-broad predicate is the mirror image — integers
 // rendering as true/false.
@@ -24,18 +24,18 @@ struct Cfg { on: boolean, n: i32 }
 enum Verdict { Yes(boolean), No }
 
 // A boolean PARAMETER, which reaches its slot through the param table rather
-// than a var binding.
+// than a let binding.
 function show(b: boolean): string { return b.to_json(); }
 
 function main(): i32 {
     // The annotated local, and the inferred one — the reported shapes.
-    var ok: boolean = true;
+    let ok: boolean = true;
     if (ok.to_json() != "true") { return 1; }
-    var inferred = false;
+    let inferred = false;
     if (inferred.to_json() != "false") { return 2; }
 
     // An alias of a boolean local: the init predicate, not the annotation.
-    var alias = ok;
+    let alias = ok;
     if (alias.to_json() != "true") { return 3; }
 
     // Parameter, both from a local and from a literal argument.
@@ -43,22 +43,22 @@ function main(): i32 {
     if (show(false) != "false") { return 5; }
 
     // A boolean struct FIELD read directly, and bound to a local first.
-    var c: Cfg = Cfg { on: true, n: 5 };
+    let c: Cfg = Cfg { on: true, n: 5 };
     if (c.on.to_json() != "true") { return 6; }
-    var fromfield = c.on;
+    let fromfield = c.on;
     if (fromfield.to_json() != "true") { return 7; }
 
     // A comparison and a negation, which were already boolean-typed — kept so a
     // regression in the pre-existing arms of expr_is_bool fails here too.
-    var cmp = 1 < 2;
+    let cmp = 1 < 2;
     if (cmp.to_json() != "true") { return 8; }
-    var neg = !ok;
+    let neg = !ok;
     if (neg.to_json() != "false") { return 9; }
 
     // The `for` loop variable over a boolean[] — the shape that disagreed with
     // the indexed read of the same array.
-    var bs: boolean[] = [true, false];
-    var seen: string = "";
+    let bs: boolean[] = [true, false];
+    let seen: string = "";
     for b in bs { seen = seen + b.to_json() + ","; }
     if (seen != "true,false,") { return 10; }
     if (bs[0].to_json() != "true") { return 11; }
@@ -73,7 +73,7 @@ function main(): i32 {
 
     // An i32 local must NOT have become boolean. The overlay is per-slot; an
     // over-broad predicate renders integers as true/false.
-    var n: i32 = 7;
+    let n: i32 = 7;
     if (n.to_json() != "7") { return 16; }
     if (n.to_string() != "7") { return 17; }
     if (c.n.to_json() != "5") { return 18; }

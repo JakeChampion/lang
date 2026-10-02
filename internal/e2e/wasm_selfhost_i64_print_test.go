@@ -29,15 +29,15 @@ func TestWasmSelfHostI64Print(t *testing.T) {
 		source string
 		stdout string
 	}{
-		{"literal", "function main(): i32 { var x: i64 = 5000000000; print_i64(x); return 0; }", "5000000000"},
-		{"add", "function main(): i32 { var a: i64 = 3000000000; var b: i64 = 2000000000; print_i64(a + b); return 0; }", "5000000000"},
-		{"mul", "function main(): i32 { var a: i64 = 100000; var b: i64 = 100000; print_i64(a * b); return 0; }", "10000000000"},
-		{"negative", "function main(): i32 { var a: i64 = 0; var b: i64 = 5000000000; print_i64(a - b); return 0; }", "-5000000000"},
-		{"div", "function main(): i32 { var a: i64 = 10000000000; print_i64(a / 7); return 0; }", "1428571428"},
+		{"literal", "function main(): i32 { let x: i64 = 5000000000; print_i64(x); return 0; }", "5000000000"},
+		{"add", "function main(): i32 { let a: i64 = 3000000000; let b: i64 = 2000000000; print_i64(a + b); return 0; }", "5000000000"},
+		{"mul", "function main(): i32 { let a: i64 = 100000; let b: i64 = 100000; print_i64(a * b); return 0; }", "10000000000"},
+		{"negative", "function main(): i32 { let a: i64 = 0; let b: i64 = 5000000000; print_i64(a - b); return 0; }", "-5000000000"},
+		{"div", "function main(): i32 { let a: i64 = 10000000000; print_i64(a / 7); return 0; }", "1428571428"},
 		{"func-return", "function big(): i64 { return 9000000000; } function main(): i32 { print_i64(big()); return 0; }", "9000000000"},
 		{"param", "function dbl(x: i64): i64 { return x * 2; } function main(): i32 { print_i64(dbl(3000000000)); return 0; }", "6000000000"},
-		{"loop-accumulate", "function main(): i32 { var sum: i64 = 0; var i: i32 = 0; while (i < 5) { sum = sum + 1000000000; i = i + 1; } print_i64(sum); return 0; }", "5000000000"},
-		{"mixed-widths", "function main(): i32 { var n: i64 = 8000000000; print_int(42); print_i64(n); return 0; }", "428000000000"},
+		{"loop-accumulate", "function main(): i32 { let sum: i64 = 0; let i: i32 = 0; while (i < 5) { sum = sum + 1000000000; i = i + 1; } print_i64(sum); return 0; }", "5000000000"},
+		{"mixed-widths", "function main(): i32 { let n: i64 = 8000000000; print_int(42); print_i64(n); return 0; }", "428000000000"},
 	}
 
 	for _, tc := range cases {

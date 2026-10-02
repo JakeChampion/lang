@@ -55,18 +55,18 @@ import "./semlower";
 // stdlib methods reached through an import. The declared set is only complete
 // once the bundle is.
 function verify_provided_module(merged: parser.Module, target: string): i32 {
-  var d: semlower.Driven = semlower.driven(merged, target);
-  var names: string[] = [];
-  var bodies: ir.Op[][] = [];
-  var declared: string[] = [];
+  let d: semlower.Driven = semlower.driven(merged, target);
+  let names: string[] = [];
+  let bodies: ir.Op[][] = [];
+  let declared: string[] = [];
   // The bodies the emit reads: the typed lowering's, over the module
   // emit_module_ir_gated_sub gates, and the instances and drop helpers
   // it defines beside the declarations.
-  var im: parser.Module = ircore.with_records(parser.infer_ret_types_module(ircore.script_normalized(ircore.sub_lifted(d.sub, d.full))), d.sub);
-  var i: i32 = 0;
+  let im: parser.Module = ircore.with_records(parser.infer_ret_types_module(ircore.script_normalized(ircore.sub_lifted(d.sub, d.full))), d.sub);
+  let i: i32 = 0;
   while (i < im.funcs.len()) {
     declared = declared.append(fnsigs.grow_fn_key(im.funcs[i]));
-    var r: irtables.LowerResult = ircore.produced(d.sub.bodies, i, im.funcs[i]);
+    let r: irtables.LowerResult = ircore.produced(d.sub.bodies, i, im.funcs[i]);
     if (!r.superseded) {
       names = names.append(fnsigs.grow_fn_key(im.funcs[i]));
       bodies = bodies.append(r.ops);
@@ -83,13 +83,13 @@ function verify_provided_module(merged: parser.Module, target: string): i32 {
   // Every function the WHOLE program declares, keyed the way a call_direct
   // names it. `@import` externs are ordinary FuncDecls, so the host-supplied
   // half needs no separate arm.
-  var ix: irverify.NameIndex = irverify.name_index(declared);
-  var probs: irverify.Problem[] = [];
-  var calls: i32 = 0;
-  var cov: irverifystack.Coverage = irverifystack.coverage_new();
-  var k: i32 = 0;
+  let ix: irverify.NameIndex = irverify.name_index(declared);
+  let probs: irverify.Problem[] = [];
+  let calls: i32 = 0;
+  let cov: irverifystack.Coverage = irverifystack.coverage_new();
+  let k: i32 = 0;
   while (k < names.len()) {
-    var r: irverifyprovided.ProvidedResult = irverifyprovided.verify_provided_fn(names[k], bodies[k], ix);
+    let r: irverifyprovided.ProvidedResult = irverifyprovided.verify_provided_fn(names[k], bodies[k], ix);
     calls = calls + r.calls;
     for p in r.problems {
       probs = probs.append(p);
@@ -97,10 +97,10 @@ function verify_provided_module(merged: parser.Module, target: string): i32 {
     cov = irverifystack.coverage_add(cov, names[k], irverifystack.verify_stack_fn(names[k], bodies[k]).bail);
     k = k + 1;
   }
-  var checked: i32 = names.len();
-  var tally: string = "checked " + util.i32_to_string(checked) + " functions, "
+  let checked: i32 = names.len();
+  let tally: string = "checked " + util.i32_to_string(checked) + " functions, "
     + util.i32_to_string(calls) + " direct calls";
-  var stack: string = "irverifystack: " + irverifystack.coverage_str(cov) + "\n";
+  let stack: string = "irverifystack: " + irverifystack.coverage_str(cov) + "\n";
   if (probs.len() == 0) {
     write("irverifyprovided: clean (" + tally + ")\n" + stack);
     return 0;
@@ -121,9 +121,9 @@ function verify_provided_module(merged: parser.Module, target: string): i32 {
 // entry naming a helper no backend emits, which would silently excuse a real
 // missing body.
 function provided_audit(): i32 {
-  var names: string[] = irverifyprovided.provided_names();
-  var bad: string[] = [];
-  var i: i32 = 0;
+  let names: string[] = irverifyprovided.provided_names();
+  let bad: string[] = [];
+  let i: i32 = 0;
   while (i < names.len()) {
     if (!ircore.is_fern_helper(names[i])) {
       bad = bad.append(names[i]);
@@ -135,9 +135,9 @@ function provided_audit(): i32 {
       + " inventory entries are emitted by the backend\n");
     return 0;
   }
-  var out: string = "provided-audit: " + util.i32_to_string(bad.len())
+  let out: string = "provided-audit: " + util.i32_to_string(bad.len())
     + " inventory entrie(s) no backend emits:";
-  var j: i32 = 0;
+  let j: i32 = 0;
   while (j < bad.len()) {
     out = out + "\n    " + bad[j];
     j = j + 1;
@@ -161,11 +161,11 @@ struct View {
 // per_module_view builds the units of `parts`: the typed lowering lowers the
 // program the merged emit reads, whole, and cuts it into units.
 function per_module_view(entry: parser.Module, loaded: flatten.LoadedModule[], parts: flatten.PerModule[], target: string): View {
-  var d: semlower.Driven = semlower.driven(merged_program(entry, loaded, target), target);
-  var g: ircore.Gated = semlower.program(d);
-  var raw: parser.Module[] = [];
-  var entry_at: i32 = 0;
-  var k: i32 = 0;
+  let d: semlower.Driven = semlower.driven(merged_program(entry, loaded, target), target);
+  let g: ircore.Gated = semlower.program(d);
+  let raw: parser.Module[] = [];
+  let entry_at: i32 = 0;
+  let k: i32 = 0;
   while (k < parts.len()) {
     raw = raw.append(parts[k].mod);
     if (parts[k].is_entry) {
@@ -178,13 +178,13 @@ function per_module_view(entry: parser.Module, loaded: flatten.LoadedModule[], p
 
 // merged_program is the whole program the merged emit reads.
 function merged_program(entry: parser.Module, loaded: flatten.LoadedModule[], target: string): parser.Module {
-  var merged: parser.Module = flatten.bundle(entry, loaded, target);
+  let merged: parser.Module = flatten.bundle(entry, loaded, target);
   // target_os() / target_arch() are the -target's environment and ISA as
   // string literals, not calls: the compile driver folds them here
   // (fern.fern) and no backend emits a body for either, so a pipeline that
   // skips the fold hands every later pass a call to a symbol nothing
   // defines.
-  var md: platforms.Descriptor = platforms.for_target(target);
+  let md: platforms.Descriptor = platforms.for_target(target);
   return constfold.fold_target_name(merged, md.environment, md.isa);
 }
 
@@ -194,31 +194,31 @@ function merged_program(entry: parser.Module, loaded: flatten.LoadedModule[], ta
 // struct layouts resolve, and only the entry unit emits `_start` and the shared
 // runtime.
 function emit_per_module_concat(dir: string, entry_path: string, entry_mod: parser.Module, loaded: flatten.LoadedModule[], target: string, cache_dir: string): string {
-  var parts: flatten.PerModule[] = flatten.bundle_per_module(entry_mod, loaded, target);
-  var v: View = per_module_view(entry_mod, loaded, parts, target);
+  let parts: flatten.PerModule[] = flatten.bundle_per_module(entry_mod, loaded, target);
+  let v: View = per_module_view(entry_mod, loaded, parts, target);
   // The entry unit emits the ONE shared runtime; seed it with every root so a
   // library unit's `call __fern_*` resolves (ircore.all_runtime_need_roots —
   // the same superset the batched per-module build feeds it).
-  var needs: string[] = ircore.all_runtime_need_roots();
+  let needs: string[] = ircore.all_runtime_need_roots();
   // Signatures are hashed over the PRUNED modules, so a dependency whose
   // reach changed moves every dependent's key.
-  var keys: ircore.UnitKeys = view_keys(v, cache_dir);
-  var out: string = "";
-  var idx: i32 = 0;
+  let keys: ircore.UnitKeys = view_keys(v, cache_dir);
+  let out: string = "";
+  let idx: i32 = 0;
   while (idx < parts.len()) {
-    var extra: string[] = [];
+    let extra: string[] = [];
     if (parts[idx].is_entry) {
       extra = needs;
     }
-    var cachefile: string = "";
+    let cachefile: string = "";
     if (cache_dir.len() > 0) {
-      var src_hash: string = modloader.module_src_hash(modloader.no_overlay(), dir, entry_path, parts, idx);
-      var key: string = ircore.unit_cache_key(parts, v.u, keys, idx, src_hash, extra, 0, 0 - 1);
+      let src_hash: string = modloader.module_src_hash(modloader.no_overlay(), dir, entry_path, parts, idx);
+      let key: string = ircore.unit_cache_key(parts, v.u, keys, idx, src_hash, extra, 0, 0 - 1);
       if (key.len() > 0) {
         cachefile = cache_dir + "/" + parts[idx].ns + "_c__" + util.hash_key(key + "|kept" + kept_names(v.u.mods[idx])) + ".s";
       }
     }
-    var served: boolean = false;
+    let served: boolean = false;
     if (cachefile.len() > 0) {
       match (read_file(cachefile)) {
         Ok(cached) => {
@@ -230,7 +230,7 @@ function emit_per_module_concat(dir: string, entry_path: string, entry_mod: pars
       }
     }
     if (!served) {
-      var unit: string = emit_unit(v, idx, parts[idx].is_entry, parts[idx].ns, extra, 0, 0 - 1, target);
+      let unit: string = emit_unit(v, idx, parts[idx].is_entry, parts[idx].ns, extra, 0, 0 - 1, target);
       if (cachefile.len() > 0) {
         eprint("cache-miss " + parts[idx].ns);
         match (write_file(cachefile, unit)) {
@@ -251,7 +251,7 @@ function emit_per_module_concat(dir: string, entry_path: string, entry_mod: pars
 // the whole program's reach, so an edit anywhere can change what a module
 // keeps without touching its source.
 function kept_names(m: parser.Module): string {
-  var kept: string[] = [];
+  let kept: string[] = [];
   for f in m.funcs {
     kept = kept.append(f.receiver_type + "." + f.name + ",");
   }
@@ -281,11 +281,11 @@ function unit_cache_file(cache_dir: string, parts: flatten.PerModule[], v: View,
   if (cache_dir.len() == 0 || src_hash.len() == 0) {
     return "";
   }
-  var key: string = ircore.unit_cache_key(parts, v.u, keys, midx, src_hash, extra, wlo, whi);
+  let key: string = ircore.unit_cache_key(parts, v.u, keys, midx, src_hash, extra, wlo, whi);
   if (key.len() == 0) {
     return "";
   }
-  var shard_tag: string = "";
+  let shard_tag: string = "";
   if (wlo > 0) {
     shard_tag = "_s" + util.i32_to_string(wlo);
   }
@@ -302,18 +302,18 @@ function unit_cache_file(cache_dir: string, parts: flatten.PerModule[], v: View,
 // set; the unit FILE is written either way, since that is what the caller reads
 // back.
 function emit_unit_to_file(out_dir: string, unit_spec: string, v: View, parts: flatten.PerModule[], midx: i32, needs: string[], target: string, cachefile: string): boolean {
-  var wlo: i32 = nth_field_i32(unit_spec, 1);
-  var whi: i32 = nth_field_i32(unit_spec, 2);
-  var is_entry: boolean = parts[midx].is_entry;
-  var extra: string[] = [];
+  let wlo: i32 = nth_field_i32(unit_spec, 1);
+  let whi: i32 = nth_field_i32(unit_spec, 2);
+  let is_entry: boolean = parts[midx].is_entry;
+  let extra: string[] = [];
   if (is_entry) {
     extra = needs;
   }
-  var shard_ns: string = parts[midx].ns;
+  let shard_ns: string = parts[midx].ns;
   if (wlo > 0) {
     shard_ns = shard_ns + "_s" + util.i32_to_string(wlo);
   }
-  var outpath: string = out_dir + "/" + unit_file_name(unit_spec);
+  let outpath: string = out_dir + "/" + unit_file_name(unit_spec);
   if (cachefile.len() > 0) {
     match (read_file(cachefile)) {
       Ok(cached) => {
@@ -330,7 +330,7 @@ function emit_unit_to_file(out_dir: string, unit_spec: string, v: View, parts: f
       Err(e_ch) => {}
     }
   }
-  var unit: string = emit_unit(v, midx, is_entry, shard_ns, extra, wlo, whi, target);
+  let unit: string = emit_unit(v, midx, is_entry, shard_ns, extra, wlo, whi, target);
   match (write_file(outpath, unit)) {
     Err(werr) => {
       eprint("per-module: unit write failed: " + outpath);
@@ -359,13 +359,13 @@ function emit_unit_to_file(out_dir: string, unit_spec: string, v: View, parts: f
 // It also needs no pipes, because the child communicates through the unit FILES
 // it writes rather than through stdout.
 function spawn_batch(self_exe: string, entry_path: string, tmp: string, lo: i32, hi: i32, target: string, cache_dir: string): i32 {
-  var pid: i32 = proc_fork();
+  let pid: i32 = proc_fork();
   if (pid < 0) {
     return 0 - 1;
   }
   if (pid == 0) {
     // proc_exec supplies argv[0] from self_exe, so only real arguments here.
-    var argv: string[] = [
+    let argv: string[] = [
       entry_path, "-per-module-emit-all", "-out-dir", tmp,
       "-unit-range", util.i32_to_string(lo) + ":" + util.i32_to_string(hi),
       "-target", target,
@@ -374,7 +374,7 @@ function spawn_batch(self_exe: string, entry_path: string, tmp: string, lo: i32,
       argv = argv.append("-cache-dir");
       argv = argv.append(cache_dir);
     }
-    var rc: i32 = proc_exec(self_exe, argv);
+    let rc: i32 = proc_exec(self_exe, argv);
     // Only reached if exec failed; 127 is the shell's convention for it and
     // is distinguishable from any emit failure the child would report.
     exit(127);
@@ -433,12 +433,12 @@ function emit_per_module_spawned(dir: string, entry_path: string, entry: parser.
   // the same units and emits its slice of them. Over the typed lowering the
   // list still costs a whole-program lowering (about 52 s and 4.4 GB for the
   // compiler), paid here and again in every batch child.
-  var parts: flatten.PerModule[] = flatten.bundle_per_module(entry, loaded, target);
-  var units: string[] = flat_unit_list(dir, parts, per_module_view(entry, loaded, parts, target).u.mods, func_budget);
+  let parts: flatten.PerModule[] = flatten.bundle_per_module(entry, loaded, target);
+  let units: string[] = flat_unit_list(dir, parts, per_module_view(entry, loaded, parts, target).u.mods, func_budget);
   if (units.len() == 0) {
     return 1;
   }
-  var tmp: string = "";
+  let tmp: string = "";
   match (temp_dir("fern-pm")) {
     Ok(td) => {
       tmp = td;
@@ -448,16 +448,16 @@ function emit_per_module_spawned(dir: string, entry_path: string, entry: parser.
       return 1;
     }
   }
-  var lo: i32 = 0;
+  let lo: i32 = 0;
   while (lo < units.len()) {
-    var hi: i32 = lo + batch;
+    let hi: i32 = lo + batch;
     if (hi > units.len()) {
       hi = units.len();
     }
-    var rc: i32 = spawn_batch(self_exe, entry_path, tmp, lo, hi, target, cache_dir);
+    let rc: i32 = spawn_batch(self_exe, entry_path, tmp, lo, hi, target, cache_dir);
     if (rc != 0) {
       eprint("per-module spawned: unit batch " + util.i32_to_string(lo) + ":" + util.i32_to_string(hi) + " failed (exit " + util.i32_to_string(rc) + "), falling back to the merged IR emit");
-      var ce1: i32 = 0;
+      let ce1: i32 = 0;
       match (remove_dir_all(tmp)) {
         Err(rr1) => {
           ce1 = 1;
@@ -471,10 +471,10 @@ function emit_per_module_spawned(dir: string, entry_path: string, entry: parser.
   // A missing unit means the batch loop and the unit list disagreed, which
   // would silently drop code from the program. Check the whole set BEFORE
   // writing anything so that stays a clean fallback, not a truncated stream.
-  var vi: i32 = 0;
+  let vi: i32 = 0;
   while (vi < units.len()) {
-    var vpath: string = tmp + "/" + unit_file_name(units[vi]);
-    var present: boolean = false;
+    let vpath: string = tmp + "/" + unit_file_name(units[vi]);
+    let present: boolean = false;
     match (stat(vpath)) {
       Ok(st) => {
         present = true;
@@ -483,7 +483,7 @@ function emit_per_module_spawned(dir: string, entry_path: string, entry: parser.
     }
     if (!present) {
       eprint("per-module spawned: missing emitted unit " + vpath);
-      var ce2: i32 = 0;
+      let ce2: i32 = 0;
       match (remove_dir_all(tmp)) {
         Err(rr2) => {
           ce2 = 1;
@@ -494,11 +494,11 @@ function emit_per_module_spawned(dir: string, entry_path: string, entry: parser.
     }
     vi = vi + 1;
   }
-  var seen: string[] = [];
-  var ri: i32 = 0;
+  let seen: string[] = [];
+  let ri: i32 = 0;
   while (ri < units.len()) {
-    var rpath: string = tmp + "/" + unit_file_name(units[ri]);
-    var read_ok: boolean = false;
+    let rpath: string = tmp + "/" + unit_file_name(units[ri]);
+    let read_ok: boolean = false;
     match (read_file(rpath)) {
       Ok(text) => {
         strbuf_reset();
@@ -510,7 +510,7 @@ function emit_per_module_spawned(dir: string, entry_path: string, entry: parser.
     }
     if (!read_ok) {
       eprint("per-module spawned: unit vanished mid-stream: " + rpath);
-      var ce3: i32 = 0;
+      let ce3: i32 = 0;
       match (remove_dir_all(tmp)) {
         Err(rr3) => {
           ce3 = 1;
@@ -521,7 +521,7 @@ function emit_per_module_spawned(dir: string, entry_path: string, entry: parser.
     }
     ri = ri + 1;
   }
-  var ce4: i32 = 0;
+  let ce4: i32 = 0;
   match (remove_dir_all(tmp)) {
     Err(rr4) => {
       ce4 = 1;
@@ -559,8 +559,8 @@ function emit_per_module_spawned(dir: string, entry_path: string, entry: parser.
 // The flat-unit list encodes each unit as "modIdx:wlo:whi"; digits_to_i32 stops
 // at the ':' on its own, so only the field offset has to be found.
 function nth_field_i32(s: string, n: i32): i32 {
-  var i: i32 = 0;
-  var f: i32 = 0;
+  let i: i32 = 0;
+  let f: i32 = 0;
   while (f < n && i < s.len()) {
     if (s[i] == b':') {
       f = f + 1;
@@ -580,27 +580,27 @@ function nth_field_i32(s: string, n: i32): i32 {
 // Analysis only (function counts + source bytes, no codegen), so a caller can
 // afford to call it before deciding anything.
 function flat_unit_list(dir: string, parts: flatten.PerModule[], infmods: parser.Module[], func_budget: i32): string[] {
-  var units: string[] = [];
-  var idx: i32 = 0;
+  let units: string[] = [];
+  let idx: i32 = 0;
   while (idx < parts.len()) {
-    var fcount: i32 = infmods[idx].funcs.len();
-    var sbytes: i32 = 0;
+    let fcount: i32 = infmods[idx].funcs.len();
+    let sbytes: i32 = 0;
     match (read_file(dir + parts[idx].ns + ".fern")) {
       Ok(fsrc) => {
         sbytes = fsrc.len();
       },
       Err(e_fu) => {}
     }
-    var window: i32 = emit_window_size(fcount, sbytes, func_budget);
+    let window: i32 = emit_window_size(fcount, sbytes, func_budget);
     // The entry emits `_start`, the runtime and the declaration-less bodies,
     // which only one unit may.
     if (parts[idx].is_entry && fcount > window) {
       window = fcount;
     }
-    var wlo: i32 = 0;
-    var more: boolean = true;
+    let wlo: i32 = 0;
+    let more: boolean = true;
     while (more) {
-      var whi: i32 = wlo + window;
+      let whi: i32 = wlo + window;
       if (whi > fcount) {
         whi = fcount;
       }
@@ -618,9 +618,9 @@ function flat_unit_list(dir: string, parts: flatten.PerModule[], infmods: parser
 // unit_file_name maps a flat unit's "modIdx:wlo:whi" triple to the file name
 // the per-module emit writes it under: `unit_<modIdx>[_s<wlo>].s`.
 function unit_file_name(unit: string): string {
-  var idx: i32 = nth_field_i32(unit, 0);
-  var wlo: i32 = nth_field_i32(unit, 1);
-  var tag: string = "";
+  let idx: i32 = nth_field_i32(unit, 0);
+  let wlo: i32 = nth_field_i32(unit, 1);
+  let tag: string = "";
   if (wlo > 0) {
     tag = "_s" + util.i32_to_string(wlo);
   }
@@ -628,16 +628,16 @@ function unit_file_name(unit: string): string {
 }
 
 function emit_window_size(funcs: i32, bytes: i32, func_budget: i32): i32 {
-  var byte_budget: i32 = 300000;
-  var nwin: i32 = (funcs + func_budget - 1) / func_budget;
-  var bybytes: i32 = (bytes + byte_budget - 1) / byte_budget;
+  let byte_budget: i32 = 300000;
+  let nwin: i32 = (funcs + func_budget - 1) / func_budget;
+  let bybytes: i32 = (bytes + byte_budget - 1) / byte_budget;
   if (bybytes > nwin) {
     nwin = bybytes;
   }
   if (nwin < 1) {
     nwin = 1;
   }
-  var window: i32 = (funcs + nwin - 1) / nwin;
+  let window: i32 = (funcs + nwin - 1) / nwin;
   if (window < 1) {
     window = 1;
   }
@@ -645,21 +645,21 @@ function emit_window_size(funcs: i32, bytes: i32, func_budget: i32): i32 {
 }
 
 function run_per_module(dir: string, entry_path: string, entry: parser.Module, loaded: flatten.LoadedModule[], pm_mode: string, pm_index: i32, pm_extra: string[], cache_dir: string, pm_lo: i32, pm_hi: i32, target: string, out_dir: string, func_budget: i32, unit_lo: i32, unit_hi: i32): i32 {
-  var parts: flatten.PerModule[] = flatten.bundle_per_module(entry, loaded, target);
+  let parts: flatten.PerModule[] = flatten.bundle_per_module(entry, loaded, target);
   if (pm_mode == "count") {
     print(util.i32_to_string(parts.len()) + "\n");
     return 0;
   }
   // The units and the whole-program view they lower against, derived each
   // invocation.
-  var v: View = per_module_view(entry, loaded, parts, target);
-  var infmods: parser.Module[] = v.u.mods;
+  let v: View = per_module_view(entry, loaded, parts, target);
+  let infmods: parser.Module[] = v.u.mods;
   // Planning needs the post-lift counts and their module namespaces, not
   // emission side tables or incremental-cache signature hashes.
   if (pm_mode == "func-counts" || pm_mode == "shape") {
-    var fci: i32 = 0;
+    let fci: i32 = 0;
     while (fci < infmods.len()) {
-      var line: string = util.i32_to_string(infmods[fci].funcs.len());
+      let line: string = util.i32_to_string(infmods[fci].funcs.len());
       if (pm_mode == "shape") {
         line = parts[fci].ns + "|" + line;
       }
@@ -685,8 +685,8 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
     // the accumulation on exit while still sharing the base derivation across
     // its batch. The entry gets the full runtime-need roots as its extra_needs.
     // x86 shares the bases; -target arm64-linux uses the arm64 emitter unchanged.
-    var needs: string[] = ircore.all_runtime_need_roots();
-    var units: string[] = flat_unit_list(dir, parts, infmods, func_budget);
+    let needs: string[] = ircore.all_runtime_need_roots();
+    let units: string[] = flat_unit_list(dir, parts, infmods, func_budget);
     // Incremental object cache (#3451 step 6 / #3458). This is the mode the
     // DEFAULT build flow runs in — emit_per_module_spawned execs a child per
     // batch — so wiring the cache here is what makes an ordinary rebuild
@@ -695,31 +695,31 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
     // Both fingerprint tables are derived once per process and indexed by
     // module, not recomputed per unit: a module sharded into several windows
     // would otherwise re-read and re-hash its source once per shard.
-    var srchashes: string[] = [];
-    var keys_ea: ircore.UnitKeys = view_keys(v, cache_dir);
+    let srchashes: string[] = [];
+    let keys_ea: ircore.UnitKeys = view_keys(v, cache_dir);
     if (cache_dir.len() > 0) {
-      var chi: i32 = 0;
+      let chi: i32 = 0;
       while (chi < parts.len()) {
         srchashes = srchashes.append(modloader.module_src_hash(modloader.no_overlay(), dir, entry_path, parts, chi));
         chi = chi + 1;
       }
     }
-    var uidx: i32 = 0;
+    let uidx: i32 = 0;
     while (uidx < units.len()) {
       if (uidx < unit_lo || uidx >= unit_hi) {
         uidx = uidx + 1;
         continue;
       }
-      var idx: i32 = nth_field_i32(units[uidx], 0);
-      var uextra: string[] = [];
+      let idx: i32 = nth_field_i32(units[uidx], 0);
+      let uextra: string[] = [];
       if (parts[idx].is_entry) {
         uextra = needs;
       }
-      var usrc: string = "";
+      let usrc: string = "";
       if (srchashes.len() > 0) {
         usrc = srchashes[idx];
       }
-      var ucache: string = unit_cache_file(cache_dir, parts, v, keys_ea, usrc, idx, uextra, nth_field_i32(units[uidx], 1), nth_field_i32(units[uidx], 2));
+      let ucache: string = unit_cache_file(cache_dir, parts, v, keys_ea, usrc, idx, uextra, nth_field_i32(units[uidx], 1), nth_field_i32(units[uidx], 2));
       if (!emit_unit_to_file(out_dir, units[uidx], v, parts, idx, needs, target, ucache)) {
         return 1;
       }
@@ -733,9 +733,9 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
   // a plain `-per-module-emit N` must not pay this extra whole-program string
   // allocation, since the self-host runtime does not yet reclaim it (#3425) and
   // the whole-compiler emit is already at the memory ceiling.
-  var sighashes: string[] = [];
+  let sighashes: string[] = [];
   if (pm_mode == "manifest" || pm_mode == "emit" && cache_dir.len() > 0) {
-    var shi: i32 = 0;
+    let shi: i32 = 0;
     while (shi < parts.len()) {
       sighashes = sighashes.append(util.hash_key(modloader.module_sig_string(infmods[shi])));
       shi = shi + 1;
@@ -766,9 +766,9 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
     // sub-directory is hashed at its real path.  If it cannot be resolved at all,
     // src_hash is "?", which the orchestrator MUST treat as always-rebuild —
     // sound (never reuses stale), just not incremental for that module.
-    var mi: i32 = 0;
+    let mi: i32 = 0;
     while (mi < parts.len()) {
-      var src_hash: string = modloader.module_src_hash(modloader.no_overlay(), dir, entry_path, parts, mi);
+      let src_hash: string = modloader.module_src_hash(modloader.no_overlay(), dir, entry_path, parts, mi);
       print(parts[mi].ns + "|" + src_hash + "|" + sighashes[mi] + "|" + modloader.module_dep_ns(parts, infmods, mi) + "\n");
       mi = mi + 1;
     }
@@ -780,8 +780,8 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
     // deterministic over-approximation that avoids re-emitting every module
     // here via module_runtime_needs — that aggregation OOMs a self-host-built
     // driver (#3425), the one thing blocking a self-host per-module self-compile.
-    var needs: string[] = ircore.all_runtime_need_roots();
-    var no: i32 = 0;
+    let needs: string[] = ircore.all_runtime_need_roots();
+    let no: i32 = 0;
     while (no < needs.len()) {
       print(needs[no] + "\n");
       no = no + 1;
@@ -792,7 +792,7 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
     eprint("per-module: emit index out of range");
     return 1;
   }
-  var extra: string[] = [];
+  let extra: string[] = [];
   if (parts[pm_index].is_entry) {
     extra = pm_extra;
     if (pm_lo > 0 || pm_hi >= 0 && pm_hi < infmods[pm_index].funcs.len()) {
@@ -812,9 +812,9 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
   // reuse set; stdout stays exactly the unit asm. A "?" src_hash yields an empty
   // key, which disables the cache for that module (always emit — sound, see
   // module_src_hash).
-  var cachefile: string = "";
+  let cachefile: string = "";
   if (cache_dir.len() > 0) {
-    var src_hash: string = modloader.module_src_hash(modloader.no_overlay(), dir, entry_path, parts, pm_index);
+    let src_hash: string = modloader.module_src_hash(modloader.no_overlay(), dir, entry_path, parts, pm_index);
     cachefile = unit_cache_file(cache_dir, parts, v, view_keys(v, cache_dir), src_hash, pm_index, extra, pm_lo, pm_hi);
     if (cachefile.len() > 0) {
       match (read_file(cachefile)) {
@@ -836,11 +836,11 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
   // invariant), and disjoint windows have disjoint lo values → distinct ns.
   // -func-range composes with -cache-dir: the window is part of the cache key
   // and of the entry's file name, so two shards of one module never share one.
-  var shard_ns: string = parts[pm_index].ns;
+  let shard_ns: string = parts[pm_index].ns;
   if (pm_lo > 0) {
     shard_ns = shard_ns + "_s" + util.i32_to_string(pm_lo);
   }
-  var unit: string = emit_unit(v, pm_index, parts[pm_index].is_entry, shard_ns, extra, pm_lo, pm_hi, target);
+  let unit: string = emit_unit(v, pm_index, parts[pm_index].is_entry, shard_ns, extra, pm_lo, pm_hi, target);
   // Emit to stdout first, then populate the cache. Both consume `unit`; doing
   // the file write last keeps the ordering unambiguous and avoids relying on
   // write_file's borrow/consume semantics for the unit box.
@@ -863,9 +863,9 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
 // environment correctly on every native target and the ISA only on arm64 — so
 // a driver that knows its -target folds rather than taking that default.
 function fold_target_calls(entry: parser.Module, loaded: flatten.LoadedModule[], target: string): (parser.Module, flatten.LoadedModule[]) {
-  var d: platforms.Descriptor = platforms.for_target(target);
-  var e2: parser.Module = constfold.fold_target_name(entry, d.environment, d.isa);
-  var out: flatten.LoadedModule[] = [];
+  let d: platforms.Descriptor = platforms.for_target(target);
+  let e2: parser.Module = constfold.fold_target_name(entry, d.environment, d.isa);
+  let out: flatten.LoadedModule[] = [];
   for lm in loaded {
     out = out.append(flatten.LoadedModule { name: lm.name, ident: lm.ident, mod: constfold.fold_target_name(lm.mod, d.environment, d.isa) });
   }
@@ -873,7 +873,7 @@ function fold_target_calls(entry: parser.Module, loaded: flatten.LoadedModule[],
 }
 
 function main(): i32 {
-  var a: string[] = args();
+  let a: string[] = args();
   // `-ir-probe`: after real import resolution + bundling, report the typed
   // lowering's verdict (semlower.verdict_text) instead of emitting asm.
   // Unlike asm_ir_run's stdin probe, this loads imports off disk, so a
@@ -886,41 +886,41 @@ function main(): i32 {
   // -per-module-emit N [-extra-need X...]) drive the builtins-aware per-module
   // build (run_per_module) — routing every module through the IR path instead
   // of the merged AST emit below.
-  var probe: boolean = false;
-  var vprovided: boolean = false;
-  var paudit: boolean = false;
-  var entry_path: string = "";
-  var pm_mode: string = "";
-  var pm_index: i32 = 0 - 1;
-  var pm_extra: string[] = [];
-  var cache_dir: string = "";
+  let probe: boolean = false;
+  let vprovided: boolean = false;
+  let paudit: boolean = false;
+  let entry_path: string = "";
+  let pm_mode: string = "";
+  let pm_index: i32 = 0 - 1;
+  let pm_extra: string[] = [];
+  let cache_dir: string = "";
   // Function-index window [pm_lo, pm_hi) for the emitted module (#3425). The
   // default (pm_lo=0, pm_hi=-1) is the full range — inert / byte-identical.
   // `-func-range LO:HI` shards one oversized module's emit across processes.
-  var pm_lo: i32 = 0;
-  var pm_hi: i32 = 0 - 1;
+  let pm_lo: i32 = 0;
+  let pm_hi: i32 = 0 - 1;
   // `-target x86_64|arm64` selects the emit backend (#4398 part 1: the fold
   // that retired the asm_arm64_modload_run mirror). Default x86_64 keeps
   // every pre-fold caller byte-identical; module loading, the probe, and the
   // per-module analyses are target-agnostic.
-  var target: string = "x86-64-linux";
+  let target: string = "x86-64-linux";
   // `-per-module-emit-all -out-dir DIR` emits every unit in ONE process (#3457
   // slice 2), sharing the whole-program side-table bases. `-func-budget N` sets
   // the per-window function budget (default 100, matching the harness
   // shardThreshold); `-unit-range LO:HI` restricts a batch process to flat unit
   // indices [LO,HI) (default = every unit) so an orchestrator can batch the emit
   // across processes to bound the per-window accumulation.
-  var out_dir: string = "";
-  var func_budget: i32 = 100;
-  var unit_lo: i32 = 0;
-  var unit_hi: i32 = 2000000000;
+  let out_dir: string = "";
+  let func_budget: i32 = 100;
+  let unit_lo: i32 = 0;
+  let unit_hi: i32 = 2000000000;
   // Units per orchestrated batch process (see emit_per_module_spawned). Each
   // process lowers the whole program through the typed lowering before it
   // emits (52 s and 4.4 GB for the compiler), and its units add ~0.2 GB over
   // that, so a batch is large. `-unit-batch N` tunes it.
-  var unit_batch: i32 = 64;
-  var force_spawned: boolean = false;
-  var ai: i32 = 1;
+  let unit_batch: i32 = 64;
+  let force_spawned: boolean = false;
+  let ai: i32 = 1;
   while (ai < a.len()) {
     if (a[ai] == "-ir-probe") {
       probe = true;
@@ -959,8 +959,8 @@ function main(): i32 {
       func_budget = util.digits_to_i32(a[ai + 1]);
       ai = ai + 1;
     } else if (a[ai] == "-unit-range" && ai + 1 < a.len()) {
-      var urng: string = a[ai + 1];
-      var uci: i32 = 0;
+      let urng: string = a[ai + 1];
+      let uci: i32 = 0;
       while (uci < urng.len() && urng[uci] != b':') {
         uci = uci + 1;
       }
@@ -981,8 +981,8 @@ function main(): i32 {
     } else if (a[ai] == "-func-range" && ai + 1 < a.len()) {
       // Parse "LO:HI" — digits_to_i32 stops at the ':' for LO; slice past
       // the colon for HI.
-      var rng: string = a[ai + 1];
-      var ci: i32 = 0;
+      let rng: string = a[ai + 1];
+      let ci: i32 = 0;
       while (ci < rng.len() && rng[ci] != b':') {
         ci = ci + 1;
       }
@@ -1015,19 +1015,19 @@ function main(): i32 {
     eprint("usage: asm_modload_run <entry.fern> [-verifyprovided | -provided-audit | -ir-probe | -per-module-count | -per-module-needs | -per-module-func-counts | -per-module-shape | -per-module-manifest | -per-module-emit N [-func-range LO:HI] | -per-module-emit-all -out-dir DIR [-func-budget N] [-unit-range LO:HI]] [-cache-dir DIR]");
     return 2;
   }
-  var dir: string = modloader.dirname(entry_path);
+  let dir: string = modloader.dirname(entry_path);
   match (read_file(entry_path)) {
     Ok(src) => {
-      var entry: parser.Module = parser.parse_module(lexer.tokenize(src));
+      let entry: parser.Module = parser.parse_module(lexer.tokenize(src));
       let (imported, missing) = modloader.load_imports(modloader.no_overlay(), entry_path, entry);
       if (modloader.report_unresolved(missing, "asm_modload_run")) {
         return 1;
       }
-      var loaded: flatten.LoadedModule[] = imported;
+      let loaded: flatten.LoadedModule[] = imported;
       let (fentry, floaded) = fold_target_calls(entry, loaded, target);
       entry = fentry;
       loaded = floaded;
-      var parsed: parser.Module[] = [entry];
+      let parsed: parser.Module[] = [entry];
       for lm in loaded {
         parsed = parsed.append(lm.mod);
       }
@@ -1041,7 +1041,7 @@ function main(): i32 {
       if (pm_mode.len() > 0) {
         return run_per_module(dir, entry_path, entry, loaded, pm_mode, pm_index, pm_extra, cache_dir, pm_lo, pm_hi, target, out_dir, func_budget, unit_lo, unit_hi);
       }
-      var merged: parser.Module = merged_program(entry, loaded, target);
+      let merged: parser.Module = merged_program(entry, loaded, target);
       if (vprovided) {
         return verify_provided_module(merged, target);
       }
@@ -1053,7 +1053,7 @@ function main(): i32 {
       // single-process ceiling; see the measurement note on the x86
       // route below for why 1500 and why function count is only a
       // cheap pre-emit proxy for the real (arena) limit.
-      var single_process_max: i32 = 1500;
+      let single_process_max: i32 = 1500;
       if (target == "arm64-linux") {
         // Same single-process over-budget rescue the x86 leg below has:
         // a merged bundle past the 512-function IR budget but small
@@ -1065,8 +1065,7 @@ function main(): i32 {
         // Link-verified end to end by TestSelfHostPerModuleConcatArm64;
         // the first attempt (#5937) emitted a dangling __fn_i32__gcd and
         // was reverted, which is why that test asserts through the LINK.
-        // The batched spawned path stays x86-only for now.
-        var anfuncs: i32 = ircore.lift_lambdas(parser.module_with_builtins(merged)).funcs.len();
+        let anfuncs: i32 = ircore.lift_lambdas(parser.module_with_builtins(merged)).funcs.len();
         if (anfuncs > 512 || force_spawned) {
           if (anfuncs < single_process_max && !force_spawned) {
             write(emit_per_module_concat(dir, entry_path, entry, loaded, "arm64-linux", cache_dir));
@@ -1081,7 +1080,7 @@ function main(): i32 {
             // `-per-module-emit` child is the exact path
             // TestSelfHostModloadPerModuleWholeCompilerArm64 drives, so
             // this reuses a proven leg rather than adding one.
-            var asrc: i32 = emit_per_module_spawned(dir, entry_path, entry, loaded, target, func_budget, unit_batch, a[0], cache_dir);
+            let asrc: i32 = emit_per_module_spawned(dir, entry_path, entry, loaded, target, func_budget, unit_batch, a[0], cache_dir);
             if (asrc == 0) {
               return 0;
             }
@@ -1092,7 +1091,7 @@ function main(): i32 {
           }
         }
         // IR-or-error (#3457 slice 5) — see asm_load_run's arm64 leg.
-        var d64: semlower.Driven = semlower.driven(merged, target);
+        let d64: semlower.Driven = semlower.driven(merged, target);
         write(asm_arm64_ir.emit_module_or_error_sub(d64.full, false, d64.sub));
         return 0;
       }
@@ -1118,13 +1117,13 @@ function main(): i32 {
       // WORKLOAD, not the emitted function count; it stays the switch-over
       // point only because it is the one cheap signal available before any
       // emit happens.
-      var nfuncs: i32 = ircore.lift_lambdas(parser.module_with_builtins(merged)).funcs.len();
+      let nfuncs: i32 = ircore.lift_lambdas(parser.module_with_builtins(merged)).funcs.len();
       if (nfuncs > 512 || force_spawned) {
         if (nfuncs < single_process_max && !force_spawned) {
           write(emit_per_module_concat(dir, entry_path, entry, loaded, "x86-64-linux", cache_dir));
           return 0;
         } else {
-          var src: i32 = emit_per_module_spawned(dir, entry_path, entry, loaded, target, func_budget, unit_batch, a[0], cache_dir);
+          let src: i32 = emit_per_module_spawned(dir, entry_path, entry, loaded, target, func_budget, unit_batch, a[0], cache_dir);
           if (src == 0) {
             return 0;
           }
@@ -1139,7 +1138,7 @@ function main(): i32 {
       // whole-compiler merged bundle lands here, which is why the env-gated
       // merged fixpoints retire with this change — their own header says they
       // "go with" asm.fern.
-      var d: semlower.Driven = semlower.driven(merged, target);
+      let d: semlower.Driven = semlower.driven(merged, target);
       write(asm_ir.emit_module_or_error_sub(d.full, d.sub));
       return 0;
     },

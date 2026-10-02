@@ -115,7 +115,7 @@ Build a scratch driver with the five layers (patch `parser.fern`), patch
 `asm_load_run.fern`'s `-ir-probe` to run on
 `parser.module_with_builtins(merged)` (post-mono), then:
 `./alr t.fern internal/stdlib -ir-probe` on
-`import "core/iter"; function main(): i32 { var xs: i32[] = [1,2,3,4]; return iter.sum(iter.of(xs)); }`.
+`import "core/iter"; function main(): i32 { let xs: i32[] = [1,2,3,4]; return iter.sum(iter.of(xs)); }`.
 Oracle against `/tmp/fern -interp` (10). When `ArrayIter__i32.next` reports `ir`,
 add `TestSelfHostIterBoundedIR` (model on `self_host_u64_methods_ir_test.go`),
 make promotion targeted, and run the full self-host suite before the PR.
@@ -128,7 +128,7 @@ are the bounded-generic Iterator reducers, e.g.:
 
 ```fern
 pub function sum[I: Iterator[i32]](it: I): i32 {
-    var total = 0; var cur = it; var go = true;
+    let total = 0; let cur = it; let go = true;
     while (go) { match (cur.next()) { Some(t) => { total = total + t.0; cur = t.1; }, None => { go = false; } } }
     return total;
 }
@@ -224,7 +224,7 @@ just 1+2.
 2. Build the driver: `/tmp/fern -target x86-64-linux scratch/asm_load_run.fern > d.s`
    then `gcc -nostdlib -static -o alr d.s` (~3 min).
 3. Decide/probe a repro:
-   `echo 'import "core/iter"; function main(): i32 { var xs: i32[] = [1,2,3,4]; return iter.sum(iter.of(xs)); }' > t.fern`
+   `echo 'import "core/iter"; function main(): i32 { let xs: i32[] = [1,2,3,4]; return iter.sum(iter.of(xs)); }' > t.fern`
    then `./alr t.fern internal/stdlib -ir-probe` (post-mono patched) to see the
    per-function `BAIL` frontier; oracle the result against `/tmp/fern -interp`.
 

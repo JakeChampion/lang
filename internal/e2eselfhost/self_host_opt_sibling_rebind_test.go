@@ -21,7 +21,7 @@ import (
 // predicate they apply, so the fix is one relaxation applied three times:
 // a reassigned name is admitted when EVERY rebind is itself fresh, and the
 // StmtAssign path — which the family had never used, because refusing reassigned
-// names meant it could only ever reclaim at a `var` re-declaration — releases the
+// names meant it could only ever reclaim at a `let` re-declaration — releases the
 // superseded chain at the depth that payload kind needs.
 //
 // The per-rebind walk that #6225 wrote for the flat kind is now shared by all
@@ -80,16 +80,16 @@ func TestSelfHostOptSiblingRebindReclaimX86_64(t *testing.T) {
 
 	t.Run("opttup_rebound", func(t *testing.T) {
 		balanced(t, "opttup_rebound", `function round(i: i32): i32 {
-    var acc: i32 = 0;
-    var o: Option[(i32, i32[])] = Some((i, [i, i + 1]));
-    var k: i32 = 0;
+    let acc: i32 = 0;
+    let o: Option[(i32, i32[])] = Some((i, [i, i + 1]));
+    let k: i32 = 0;
     while (k < 4) { o = Some((k, [k, k + 1])); k = k + 1; }
     match (o) { Some(t) => { acc = t.0 + t.1.len(); }, None => {} }
     return acc;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`, 2)
@@ -98,16 +98,16 @@ function main(): i32 {
 	t.Run("optstruct_rebound", func(t *testing.T) {
 		balanced(t, "optstruct_rebound", `struct P { xs: i32[], n: i32 }
 function round(i: i32): i32 {
-    var acc: i32 = 0;
-    var o: Option[P] = Some(P { xs: [i, i + 1], n: i });
-    var k: i32 = 0;
+    let acc: i32 = 0;
+    let o: Option[P] = Some(P { xs: [i, i + 1], n: i });
+    let k: i32 = 0;
     while (k < 4) { o = Some(P { xs: [k, k + 1], n: k }); k = k + 1; }
     match (o) { Some(p) => { acc = p.n + p.xs.len(); }, None => {} }
     return acc;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`, 2)
@@ -115,16 +115,16 @@ function main(): i32 {
 
 	t.Run("optarrarr_rebound", func(t *testing.T) {
 		balanced(t, "optarrarr_rebound", `function round(i: i32): i32 {
-    var acc: i32 = 0;
-    var o: Option[i32[][]] = Some([[i, i + 1], [i + 2]]);
-    var k: i32 = 0;
+    let acc: i32 = 0;
+    let o: Option[i32[][]] = Some([[i, i + 1], [i + 2]]);
+    let k: i32 = 0;
     while (k < 4) { o = Some([[k, k + 1], [k + 2]]); k = k + 1; }
     match (o) { Some(g) => { acc = g.len(); }, None => {} }
     return acc;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`, 34)
@@ -134,14 +134,14 @@ function main(): i32 {
 		// Never reassigned, so it is still the consuming-match analysis's. If the
 		// widened collector also claimed it, its chain would be freed twice.
 		balanced(t, "opttup_single", `function round(i: i32): i32 {
-    var acc: i32 = 0;
-    var o: Option[(i32, i32[])] = Some((i, [i, i + 1]));
+    let acc: i32 = 0;
+    let o: Option[(i32, i32[])] = Some((i, [i, i + 1]));
     match (o) { Some(t) => { acc = t.0 + t.1.len(); }, None => {} }
     return acc;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`, 4)
@@ -149,14 +149,14 @@ function main(): i32 {
 
 	t.Run("optarrarr_single_bind_unchanged", func(t *testing.T) {
 		balanced(t, "optarrarr_single", `function round(i: i32): i32 {
-    var acc: i32 = 0;
-    var o: Option[i32[][]] = Some([[i, i + 1], [i + 2]]);
+    let acc: i32 = 0;
+    let o: Option[i32[][]] = Some([[i, i + 1], [i + 2]]);
     match (o) { Some(g) => { acc = g.len(); }, None => {} }
     return acc;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`, 34)
@@ -169,14 +169,14 @@ function main(): i32 {
 		// must not EXCEED allocs, which is what a wrongly-widened credit would do.
 		allocs, frees, _ := counts(t, "optstruct_single", `struct P { xs: i32[], n: i32 }
 function round(i: i32): i32 {
-    var acc: i32 = 0;
-    var o: Option[P] = Some(P { xs: [i, i + 1], n: i });
+    let acc: i32 = 0;
+    let o: Option[P] = Some(P { xs: [i, i + 1], n: i });
     match (o) { Some(p) => { acc = p.n + p.xs.len(); }, None => {} }
     return acc;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`, 4)
@@ -206,16 +206,16 @@ func TestSelfHostOptSiblingRebindHazardsX86_64(t *testing.T) {
 			name: "opttup_payload_escapes_into_call",
 			src: `function take(a: i32[]): i32 { return a.len(); }
 function round(i: i32): i32 {
-    var acc: i32 = 0;
-    var o: Option[(i32, i32[])] = Some((i, [i, i + 1]));
-    var k: i32 = 0;
+    let acc: i32 = 0;
+    let o: Option[(i32, i32[])] = Some((i, [i, i + 1]));
+    let k: i32 = 0;
     while (k < 3) { o = Some((k, [k, k + 1])); k = k + 1; }
     match (o) { Some(t) => { acc = take(t.1); }, None => {} }
     return acc;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 60) { x = x + round(r); r = r + 1; }
     return x % 71;
 }`,
@@ -226,17 +226,17 @@ function main(): i32 {
 			// next rebind would dangle `shared`, read after the match.
 			name: "opttup_rebind_payload_not_fresh",
 			src: `function round(i: i32): i32 {
-    var acc: i32 = 0;
-    var shared: i32[] = [i, i + 1];
-    var o: Option[(i32, i32[])] = Some((i, [i, i + 1]));
-    var k: i32 = 0;
+    let acc: i32 = 0;
+    let shared: i32[] = [i, i + 1];
+    let o: Option[(i32, i32[])] = Some((i, [i, i + 1]));
+    let k: i32 = 0;
     while (k < 3) { o = Some((k, shared)); k = k + 1; }
     match (o) { Some(t) => { acc = t.0 + t.1.len(); }, None => {} }
     return acc + shared[1];
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 60) { x = x + round(r); r = r + 1; }
     return x % 67;
 }`,
@@ -247,17 +247,17 @@ function main(): i32 {
 			// a freed box in the second.
 			name: "opttup_used_after_match",
 			src: `function round(i: i32): i32 {
-    var acc: i32 = 0;
-    var o: Option[(i32, i32[])] = Some((i, [i, i + 1]));
-    var k: i32 = 0;
+    let acc: i32 = 0;
+    let o: Option[(i32, i32[])] = Some((i, [i, i + 1]));
+    let k: i32 = 0;
     while (k < 3) { o = Some((k, [k, k + 1])); k = k + 1; }
     match (o) { Some(t) => { acc = t.1.len(); }, None => {} }
     match (o) { Some(u) => { acc = acc + u.0; }, None => {} }
     return acc;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 60) { x = x + round(r); r = r + 1; }
     return x % 61;
 }`,
@@ -268,19 +268,19 @@ function main(): i32 {
 			// consuming match in `build` at all, which is what refuses it.
 			name: "opttup_escaping_return",
 			src: `function build(i: i32): Option[(i32, i32[])] {
-    var o: Option[(i32, i32[])] = Some((i, [i, i + 1]));
-    var k: i32 = 0;
+    let o: Option[(i32, i32[])] = Some((i, [i, i + 1]));
+    let k: i32 = 0;
     while (k < 3) { o = Some((k, [k, k + 1])); k = k + 1; }
     return o;
 }
 function round(i: i32): i32 {
-    var r: Option[(i32, i32[])] = build(i);
+    let r: Option[(i32, i32[])] = build(i);
     match (r) { Some(t) => { return t.0 + t.1.len(); }, None => { return 0; } }
     return 0;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var q: i32 = 0;
+    let x: i32 = 0;
+    let q: i32 = 0;
     while (q < 60) { x = x + round(q); q = q + 1; }
     return x % 59;
 }`,
@@ -292,16 +292,16 @@ function main(): i32 {
 			name: "opttup_rebind_from_a_call",
 			src: `function mk(k: i32): Option[(i32, i32[])] { return Some((k, [k, k + 1])); }
 function round(i: i32): i32 {
-    var acc: i32 = 0;
-    var o: Option[(i32, i32[])] = Some((i, [i, i + 1]));
-    var k: i32 = 0;
+    let acc: i32 = 0;
+    let o: Option[(i32, i32[])] = Some((i, [i, i + 1]));
+    let k: i32 = 0;
     while (k < 3) { o = mk(k); k = k + 1; }
     match (o) { Some(t) => { acc = t.0 + t.1.len(); }, None => {} }
     return acc;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 60) { x = x + round(r); r = r + 1; }
     return x % 53;
 }`,
@@ -312,16 +312,16 @@ function main(): i32 {
 			src: `struct P { xs: i32[], n: i32 }
 function take(p: P): i32 { return p.n; }
 function round(i: i32): i32 {
-    var acc: i32 = 0;
-    var o: Option[P] = Some(P { xs: [i, i + 1], n: i });
-    var k: i32 = 0;
+    let acc: i32 = 0;
+    let o: Option[P] = Some(P { xs: [i, i + 1], n: i });
+    let k: i32 = 0;
     while (k < 3) { o = Some(P { xs: [k, k + 1], n: k }); k = k + 1; }
     match (o) { Some(p) => { acc = take(p); }, None => {} }
     return acc;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 60) { x = x + round(r); r = r + 1; }
     return x % 71;
 }`,
@@ -331,19 +331,19 @@ function main(): i32 {
 			name: "optstruct_escaping_return",
 			src: `struct P { xs: i32[], n: i32 }
 function build(i: i32): Option[P] {
-    var o: Option[P] = Some(P { xs: [i, i + 1], n: i });
-    var k: i32 = 0;
+    let o: Option[P] = Some(P { xs: [i, i + 1], n: i });
+    let k: i32 = 0;
     while (k < 3) { o = Some(P { xs: [k, k + 1], n: k }); k = k + 1; }
     return o;
 }
 function round(i: i32): i32 {
-    var r: Option[P] = build(i);
+    let r: Option[P] = build(i);
     match (r) { Some(p) => { return p.n + p.xs.len(); }, None => { return 0; } }
     return 0;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var q: i32 = 0;
+    let x: i32 = 0;
+    let q: i32 = 0;
     while (q < 60) { x = x + round(q); q = q + 1; }
     return x % 59;
 }`,
@@ -358,17 +358,17 @@ function main(): i32 {
 			name: "optstruct_rebind_field_aliases_a_local",
 			src: `struct P { xs: i32[], n: i32 }
 function round(i: i32): i32 {
-    var acc: i32 = 0;
-    var shared: i32[] = [i, i + 1];
-    var o: Option[P] = Some(P { xs: [i, i + 1], n: i });
-    var k: i32 = 0;
+    let acc: i32 = 0;
+    let shared: i32[] = [i, i + 1];
+    let o: Option[P] = Some(P { xs: [i, i + 1], n: i });
+    let k: i32 = 0;
     while (k < 3) { o = Some(P { xs: shared, n: k }); k = k + 1; }
     match (o) { Some(p) => { acc = p.n + p.xs.len(); }, None => {} }
     return acc + shared[1];
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 60) { x = x + round(r); r = r + 1; }
     return x % 67;
 }`,
@@ -377,17 +377,17 @@ function main(): i32 {
 		{
 			name: "optarrarr_rebind_payload_not_fresh",
 			src: `function round(i: i32): i32 {
-    var acc: i32 = 0;
-    var shared: i32[][] = [[i, i + 1], [i + 2]];
-    var o: Option[i32[][]] = Some([[i, i + 1], [i + 2]]);
-    var k: i32 = 0;
+    let acc: i32 = 0;
+    let shared: i32[][] = [[i, i + 1], [i + 2]];
+    let o: Option[i32[][]] = Some([[i, i + 1], [i + 2]]);
+    let k: i32 = 0;
     while (k < 3) { o = Some(shared); k = k + 1; }
     match (o) { Some(g) => { acc = g.len(); }, None => {} }
     return acc + shared.len();
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 60) { x = x + round(r); r = r + 1; }
     return x % 67;
 }`,
@@ -396,17 +396,17 @@ function main(): i32 {
 		{
 			name: "optarrarr_used_after_match",
 			src: `function round(i: i32): i32 {
-    var acc: i32 = 0;
-    var o: Option[i32[][]] = Some([[i, i + 1], [i + 2]]);
-    var k: i32 = 0;
+    let acc: i32 = 0;
+    let o: Option[i32[][]] = Some([[i, i + 1], [i + 2]]);
+    let k: i32 = 0;
     while (k < 3) { o = Some([[k, k + 1], [k + 2]]); k = k + 1; }
     match (o) { Some(g) => { acc = g.len(); }, None => {} }
     match (o) { Some(h) => { acc = acc + h.len(); }, None => {} }
     return acc;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 60) { x = x + round(r); r = r + 1; }
     return x % 61;
 }`,

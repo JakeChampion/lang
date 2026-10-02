@@ -21,28 +21,28 @@ var mixedStructReleaseCases = []struct {
 }{
 	{"loop_built_field", `struct Ints { n: i32, ys: i32[] }
 function build(k: i32): Ints {
-    var g: i32[] = [];
-    var i: i32 = 0;
+    let g: i32[] = [];
+    let i: i32 = 0;
     while (i < k) { g = g.append(i); i = i + 1; }
     return Ints { n: k, ys: g };
 }
-function main(): i32 { var r: Ints = build(3); return r.ys[1] + r.n; }
+function main(): i32 { let r: Ints = build(3); return r.ys[1] + r.n; }
 `, 4, true},
 	{"rebind_in_loop", `struct Ints { n: i32, ys: i32[] }
 function build(k: i32): Ints {
-    var g: i32[] = [];
-    var i: i32 = 0;
+    let g: i32[] = [];
+    let i: i32 = 0;
     while (i < k) { g = g.append(i); i = i + 1; }
     return Ints { n: k, ys: g };
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var r: Ints = build(3);
-    var j: i32 = 0;
+    let acc: i32 = 0;
+    let r: Ints = build(3);
+    let j: i32 = 0;
     while (j < 5) {
-        var t: Ints = build(j + 1);
+        let t: Ints = build(j + 1);
         r = build(j + 2);
-        var junk: i32[] = [9, 9, 9];
+        let junk: i32[] = [9, 9, 9];
         acc = acc + r.ys[1] + r.n + t.ys[0] + t.n + junk.len();
         j = j + 1;
     }
@@ -51,21 +51,21 @@ function main(): i32 {
 `, 61, true},
 	{"merged_returns", `struct Ints { n: i32, ys: i32[] }
 function build(k: i32): Ints {
-    var s: Ints = Ints { n: k, ys: [k, 1] };
+    let s: Ints = Ints { n: k, ys: [k, 1] };
     if (k > 2) {
-        var g: i32[] = [];
-        var i: i32 = 0;
+        let g: i32[] = [];
+        let i: i32 = 0;
         while (i < k) { g = g.append(i * 2); i = i + 1; }
         s = Ints { n: k + s.n, ys: g };
     }
     return s;
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var j: i32 = 0;
+    let acc: i32 = 0;
+    let j: i32 = 0;
     while (j < 5) {
-        var r: Ints = build(j);
-        var junk: i32[] = [9, 9, 9];
+        let r: Ints = build(j);
+        let junk: i32[] = [9, 9, 9];
         acc = acc + r.ys[1] + r.n + junk.len();
         j = j + 1;
     }
@@ -79,19 +79,19 @@ function main(): i32 {
 function pass(p: Ints): Ints { return p; }
 function pick(a: Ints, b: Ints, c: boolean): Ints { if (c) { return a; } return b; }
 function stash(k: i32, keep: Ints[]): Ints {
-    var s: Ints = Ints { n: k, ys: [k, k] };
-    var more: Ints[] = keep.append(s);
+    let s: Ints = Ints { n: k, ys: [k, k] };
+    let more: Ints[] = keep.append(s);
     return s;
 }
 function main(): i32 {
-    var base: Ints = Ints { n: 4, ys: [0, 1, 2, 3] };
-    var acc: i32 = 0;
-    var j: i32 = 0;
+    let base: Ints = Ints { n: 4, ys: [0, 1, 2, 3] };
+    let acc: i32 = 0;
+    let j: i32 = 0;
     while (j < 3) {
-        var q: Ints = pass(base);
-        var w: Ints = pick(base, q, j == 1);
-        var z: Ints = stash(j, [base]);
-        var junk: i32[] = [9, 9, 9];
+        let q: Ints = pass(base);
+        let w: Ints = pick(base, q, j == 1);
+        let z: Ints = stash(j, [base]);
+        let junk: i32[] = [9, 9, 9];
         acc = acc + q.ys[2] + w.n + z.ys[1] + junk.len();
         j = j + 1;
     }
@@ -105,13 +105,13 @@ function main(): i32 {
 function mk(p: Ints): Ints { return p; }
 function (s: Ints) mk(k: i32): Ints { return Ints { n: k, ys: [k, s.n] }; }
 function main(): i32 {
-    var base: Ints = Ints { n: 2, ys: [5, 6, 7] };
-    var acc: i32 = 0;
-    var j: i32 = 0;
+    let base: Ints = Ints { n: 2, ys: [5, 6, 7] };
+    let acc: i32 = 0;
+    let j: i32 = 0;
     while (j < 3) {
-        var r: Ints = mk(base);
-        var m: Ints = base.mk(j);
-        var junk: i32[] = [9, 9, 9, 9];
+        let r: Ints = mk(base);
+        let m: Ints = base.mk(j);
+        let junk: i32[] = [9, 9, 9, 9];
         acc = acc + r.ys[2] + m.ys[0] + junk.len();
         j = j + 1;
     }
@@ -122,18 +122,18 @@ function main(): i32 {
 	// results' counted class, and a discarded call's field walk.
 	{"method_array_result", `struct Ints { n: i32, ys: i32[] }
 function (s: Ints) arr(k: i32): i32[] {
-    var g: i32[] = s.ys;
+    let g: i32[] = s.ys;
     if (k > 1) { g = [k, k, k]; }
     return g;
 }
 function main(): i32 {
-    var base: Ints = Ints { n: 1, ys: [4, 5] };
-    var acc: i32 = 0;
-    var j: i32 = 0;
+    let base: Ints = Ints { n: 1, ys: [4, 5] };
+    let acc: i32 = 0;
+    let j: i32 = 0;
     while (j < 4) {
         acc = acc + base.arr(j)[1];
         base.arr(j + 1);
-        var junk: i32[] = [9, 9, 9];
+        let junk: i32[] = [9, 9, 9];
         acc = acc + junk.len();
         j = j + 1;
     }
@@ -142,26 +142,26 @@ function main(): i32 {
 `, 32, true},
 	{"method_record_results", `struct Ints { n: i32, ys: i32[] }
 function (s: Ints) spread(k: i32): Ints {
-    var t: Ints = Ints { n: k, ys: [k, s.n] };
+    let t: Ints = Ints { n: k, ys: [k, s.n] };
     t = Ints { ...t, n: k + 1 };
     return t;
 }
 function (s: Ints) looped(k: i32): Ints {
-    var t: Ints = Ints { n: 0, ys: [s.n] };
-    var i: i32 = 0;
+    let t: Ints = Ints { n: 0, ys: [s.n] };
+    let i: i32 = 0;
     while (i < k) { t = Ints { n: t.n + i, ys: [i, t.n] }; i = i + 1; }
     return t;
 }
 function main(): i32 {
-    var base: Ints = Ints { n: 1, ys: [4, 5] };
-    var acc: i32 = 0;
-    var j: i32 = 0;
+    let base: Ints = Ints { n: 1, ys: [4, 5] };
+    let acc: i32 = 0;
+    let j: i32 = 0;
     while (j < 4) {
-        var sp: Ints = base.spread(j);
-        var lp: Ints = base.looped(j + 1);
+        let sp: Ints = base.spread(j);
+        let lp: Ints = base.looped(j + 1);
         acc = acc + base.spread(j).n + base.looped(j).ys[0];
         base.spread(j);
-        var junk: i32[] = [9, 9, 9];
+        let junk: i32[] = [9, 9, 9];
         acc = acc + sp.ys[1] + lp.ys[1] + junk.len();
         j = j + 1;
     }
@@ -172,18 +172,18 @@ function main(): i32 {
 	// what releases a read-through array field.
 	{"free_record_read_through", `struct Ints { n: i32, ys: i32[] }
 function looped(s: Ints, k: i32): Ints {
-    var t: Ints = Ints { n: 0, ys: [s.n] };
-    var i: i32 = 0;
+    let t: Ints = Ints { n: 0, ys: [s.n] };
+    let i: i32 = 0;
     while (i < k) { t = Ints { n: t.n + i, ys: [i, t.n] }; i = i + 1; }
     return t;
 }
 function main(): i32 {
-    var base: Ints = Ints { n: 1, ys: [4, 5] };
-    var acc: i32 = 0;
-    var j: i32 = 0;
+    let base: Ints = Ints { n: 1, ys: [4, 5] };
+    let acc: i32 = 0;
+    let j: i32 = 0;
     while (j < 4) {
         acc = acc + looped(base, j).ys[0];
-        var junk: i32[] = [9, 9, 9];
+        let junk: i32[] = [9, 9, 9];
         acc = acc + junk.len();
         j = j + 1;
     }

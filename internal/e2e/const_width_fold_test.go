@@ -15,7 +15,7 @@ import (
 // shift counts to the operand width, so the two forms have to agree. This is
 // not a backend divergence — every backend agreed, and all four were right;
 // the const was the odd one out — so each case computes the expression twice
-// in ONE program, once as a const and once from a `var` seeded with the same
+// in ONE program, once as a const and once from a `let` seeded with the same
 // literal, and exits 7 when they disagree.
 func TestConstFoldMatchesRuntimeAtDeclaredWidth(t *testing.T) {
 	cases := []struct {
@@ -40,8 +40,8 @@ func TestConstFoldMatchesRuntimeAtDeclaredWidth(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			src := "const K: " + c.ty + " = " + strings.ReplaceAll(c.expr, "@", c.seed) + ";\n" +
 				"function main(): i32 {\n" +
-				"    var s: " + c.ty + " = " + c.seed + ";\n" +
-				"    var r: " + c.ty + " = " + strings.ReplaceAll(c.expr, "@", "s") + ";\n" +
+				"    let s: " + c.ty + " = " + c.seed + ";\n" +
+				"    let r: " + c.ty + " = " + strings.ReplaceAll(c.expr, "@", "s") + ";\n" +
 				"    if (K == r) { return 0; }\n" +
 				"    return 7;\n}\n"
 			assertExitsZeroEverywhere(t, src)

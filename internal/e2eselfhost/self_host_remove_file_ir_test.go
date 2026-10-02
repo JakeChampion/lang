@@ -30,7 +30,7 @@ func TestSelfHostRemoveFileIR(t *testing.T) {
             match (remove_file(d + "/f.txt")) { Err(_) => { return 2; }, Ok(_) => {}, }
             match (read_dir(d)) {
                 Ok(names) => {
-                    var n: i32 = names.len();
+                    let n: i32 = names.len();
                     match (remove_dir_all(d)) { Err(_) => { return 3; }, Ok(_) => {}, }
                     if (n != 0) { return 4; }
                     return 0;

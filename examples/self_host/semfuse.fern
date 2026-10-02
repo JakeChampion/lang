@@ -41,15 +41,15 @@ struct Def { block: i32, pos: i32 }
 
 // `usable[i]` says body i was produced and may be read and rewritten.
 pub function fuse_pipelines(funcs: ssasem.Func[], names: string[], usable: boolean[]): Fused {
-  var cx: Context = context(funcs, names, usable);
-  var out: ssasem.Func[] = [];
-  var rewritten: boolean[] = [];
-  var i: i32 = 0;
+  let cx: Context = context(funcs, names, usable);
+  let out: ssasem.Func[] = [];
+  let rewritten: boolean[] = [];
+  let i: i32 = 0;
   while (i < funcs.len()) {
-    var f: ssasem.Func = funcs[i];
-    var changed: boolean = false;
+    let f: ssasem.Func = funcs[i];
+    let changed: boolean = false;
     if (cx.any && usable[i] && cx.verbs[i] == "") {
-      var c: Chain = find_chain(f, cx);
+      let c: Chain = find_chain(f, cx);
       while (c.ok) {
         f = fuse(f, c);
         changed = true;
@@ -64,10 +64,10 @@ pub function fuse_pipelines(funcs: ssasem.Func[], names: string[], usable: boole
 }
 
 function context(funcs: ssasem.Func[], names: string[], usable: boolean[]): Context {
-  var index: util.NameIndex = util.name_index(names);
-  var verbs: string[] = [];
-  var any: boolean = false;
-  var i: i32 = 0;
+  let index: util.NameIndex = util.name_index(names);
+  let verbs: string[] = [];
+  let any: boolean = false;
+  let i: i32 = 0;
   while (i < funcs.len()) {
     verbs = verbs.append(combinator(funcs[i], names[i], usable[i]));
     any = any || verbs[i] != "";
@@ -90,7 +90,7 @@ function verb_of(name: string): string {
   if (!util.str_has_prefix(name, "__arrm_") && !util.str_has_prefix(name, "array__")) {
     return "";
   }
-  var v: string = slice_unchecked(name, 7, suffix_at(name, 7)) + "";
+  let v: string = slice_unchecked(name, 7, suffix_at(name, 7)) + "";
   if (v == "map" || v == "filter" || v == "fold" || v == "reduce") {
     return v;
   }
@@ -99,7 +99,7 @@ function verb_of(name: string): string {
 
 // Where the instance suffixes start: the first `$` or `__` at or after `from`.
 function suffix_at(name: string, from: i32): i32 {
-  var end: i32 = from;
+  let end: i32 = from;
   while (end < name.len() && name[end] != b'$' && !(name[end] == b'_' && end + 1 < name.len() && name[end + 1] == b'_')) {
     end = end + 1;
   }
@@ -111,7 +111,7 @@ function suffix_at(name: string, from: i32): i32 {
 // method, a user's included, so it counts only when its body delegates to the
 // free function of the same verb, as std/array's one-line wrappers do.
 function combinator(f: ssasem.Func, name: string, usable: boolean): string {
-  var v: string = verb_of(name);
+  let v: string = verb_of(name);
   if (!usable || v == "") {
     return "";
   }
@@ -129,7 +129,7 @@ function combinator(f: ssasem.Func, name: string, usable: boolean): string {
 }
 
 function verb_at(cx: Context, callee: string): string {
-  var at: i32 = cx.index.find(callee);
+  let at: i32 = cx.index.find(callee);
   if (at < 0) {
     return "";
   }
@@ -173,13 +173,13 @@ function direct_effect(f: ssasem.Func): boolean {
 // pure body of this module: a builtin, an unproduced body, or an effectful
 // one. Recursion between pure bodies stays pure: the walk only ever marks.
 function effectful(funcs: ssasem.Func[], usable: boolean[], index: util.NameIndex): boolean[] {
-  var bad: boolean[] = [];
-  var i: i32 = 0;
+  let bad: boolean[] = [];
+  let i: i32 = 0;
   while (i < funcs.len()) {
     bad = bad.append(!usable[i] || direct_effect(funcs[i]));
     i = i + 1;
   }
-  var changed: boolean = true;
+  let changed: boolean = true;
   while (changed) {
     changed = false;
     i = 0;
@@ -198,7 +198,7 @@ function calls_bad(f: ssasem.Func, bad: boolean[], index: util.NameIndex): boole
   for b in f.graph.blocks {
     for ins in b.insts {
       if (ins.kind_tag == ssasem.call()) {
-        var at: i32 = index.find(ins.str);
+        let at: i32 = index.find(ins.str);
         if (at < 0 || bad[at]) {
           return true;
         }
@@ -215,13 +215,13 @@ function no_chain(): Chain {
 }
 
 function find_chain(f: ssasem.Func, cx: Context): Chain {
-  var uses: i32[] = use_counts(f.graph);
-  var defs: Def[] = defs_of(f.graph);
-  var bi: i32 = 0;
+  let uses: i32[] = use_counts(f.graph);
+  let defs: Def[] = defs_of(f.graph);
+  let bi: i32 = 0;
   while (bi < f.graph.blocks.len()) {
-    var k: i32 = 0;
+    let k: i32 = 0;
     while (k < f.graph.blocks[bi].insts.len()) {
-      var c: Chain = chain_at(f, cx, uses, defs, bi, k);
+      let c: Chain = chain_at(f, cx, uses, defs, bi, k);
       if (c.ok) {
         return c;
       }
@@ -235,15 +235,15 @@ function find_chain(f: ssasem.Func, cx: Context): Chain {
 // The chain whose sink is the instruction at (bi, k), walked back from the
 // sink through every intermediate that only its next stage reads.
 function chain_at(f: ssasem.Func, cx: Context, uses: i32[], defs: Def[], bi: i32, k: i32): Chain {
-  var sink: ssa.SInst = f.graph.blocks[bi].insts[k];
-  var verb: string = sink_verb(sink, cx);
+  let sink: ssa.SInst = f.graph.blocks[bi].insts[k];
+  let verb: string = sink_verb(sink, cx);
   if (verb == "") {
     return no_chain();
   }
-  var c: Chain = Chain { ...no_chain(), block: bi, sink: k, verb: verb, base: sink.args[0] };
-  var d: Def = defs[c.base];
+  let c: Chain = Chain { ...no_chain(), block: bi, sink: k, verb: verb, base: sink.args[0] };
+  let d: Def = defs[c.base];
   while (d.block == bi && uses[c.base] == 1 && stage_verb(f.graph.blocks[bi].insts[d.pos], cx) != "") {
-    var p: ssa.SInst = f.graph.blocks[bi].insts[d.pos];
+    let p: ssa.SInst = f.graph.blocks[bi].insts[d.pos];
     c = Chain { ...c, stages: prepend(d.pos, c.stages), verbs: prepend_str(stage_verb(p, cx), c.verbs), fns: prepend(p.args[1], c.fns), base: p.args[0] };
     d = defs[c.base];
   }
@@ -254,7 +254,7 @@ function sink_verb(ins: ssa.SInst, cx: Context): string {
   if (ins.kind_tag != ssasem.call()) {
     return "";
   }
-  var v: string = verb_at(cx, ins.str);
+  let v: string = verb_at(cx, ins.str);
   if (v == "fold" && ins.args.len() == 3 || v == "reduce" && ins.args.len() == 2) {
     return v;
   }
@@ -269,7 +269,7 @@ function stage_verb(ins: ssa.SInst, cx: Context): string {
   if (ins.kind_tag != ssasem.call() || ins.args.len() != 2) {
     return "";
   }
-  var v: string = verb_at(cx, ins.str);
+  let v: string = verb_at(cx, ins.str);
   if (v == "map" || v == "filter") {
     return v;
   }
@@ -280,9 +280,9 @@ function stage_verb(ins: ssa.SInst, cx: Context): string {
 // their operands: the closures and the seed the stages are handed. A call
 // there would run before stages it used to follow.
 function inert_between(b: ssa.SBlock, c: Chain): boolean {
-  var p: i32 = c.stages[0] + 1;
+  let p: i32 = c.stages[0] + 1;
   while (p < c.sink) {
-    var k: i32 = b.insts[p].kind_tag;
+    let k: i32 = b.insts[p].kind_tag;
     if (index_of(c.stages, p) < 0 && (k == ssasem.call() || !pure_kind(k))) {
       return false;
     }
@@ -294,14 +294,14 @@ function inert_between(b: ssa.SBlock, c: Chain): boolean {
 // Every element function, and the sink's, is a closure built in this body
 // whose own body reaches no effect.
 function resolved_pure(f: ssasem.Func, cx: Context, defs: Def[], c: Chain): boolean {
-  var sink: ssa.SInst = f.graph.blocks[c.block].insts[c.sink];
+  let sink: ssa.SInst = f.graph.blocks[c.block].insts[c.sink];
   for v in c.fns.append(sink.args[sink.args.len() - 1]) {
-    var d: Def = defs[v];
+    let d: Def = defs[v];
     if (d.block < 0) {
       return false;
     }
-    var ins: ssa.SInst = f.graph.blocks[d.block].insts[d.pos];
-    var at: i32 = cx.index.find(ins.str);
+    let ins: ssa.SInst = f.graph.blocks[d.block].insts[d.pos];
+    let at: i32 = cx.index.find(ins.str);
     if (ins.kind_tag != ssasem.closure_new() || at < 0 || cx.bad[at]) {
       return false;
     }
@@ -323,8 +323,8 @@ function element(t: typeinfo.Type): typeinfo.Type {
 // The array the chain starts from, every intermediate, and the accumulator
 // are all scalars, so no value in the loop carries a count.
 function scalar_chain(f: ssasem.Func, c: Chain): boolean {
-  var b: ssa.SBlock = f.graph.blocks[c.block];
-  var sink: ssa.SInst = b.insts[c.sink];
+  let b: ssa.SBlock = f.graph.blocks[c.block];
+  let sink: ssa.SInst = b.insts[c.sink];
   if (!scalar(element(f.values[c.base]))) {
     return false;
   }
@@ -342,8 +342,8 @@ function scalar_chain(f: ssasem.Func, c: Chain): boolean {
 // ---- graph helpers --------------------------------------------------------
 
 function use_counts(g: ssa.SFunc): i32[] {
-  var out: i32[] = [];
-  var v: i32 = 0;
+  let out: i32[] = [];
+  let v: i32 = 0;
   while (v < g.nvals) {
     out = out.append(0);
     v = v + 1;
@@ -365,17 +365,17 @@ function use_counts(g: ssa.SFunc): i32[] {
 }
 
 function defs_of(g: ssa.SFunc): Def[] {
-  var out: Def[] = [];
-  var v: i32 = 0;
+  let out: Def[] = [];
+  let v: i32 = 0;
   while (v < g.nvals) {
     out = out.append(Def { block: 0 - 1, pos: 0 - 1 });
     v = v + 1;
   }
-  var bi: i32 = 0;
+  let bi: i32 = 0;
   while (bi < g.blocks.len()) {
-    var k: i32 = 0;
+    let k: i32 = 0;
     while (k < g.blocks[bi].insts.len()) {
-      var r: i32 = g.blocks[bi].insts[k].result;
+      let r: i32 = g.blocks[bi].insts[k].result;
       if (r >= 0 && r < out.len()) {
         out = out.with(r, Def { block: bi, pos: k });
       }
@@ -387,7 +387,7 @@ function defs_of(g: ssa.SFunc): Def[] {
 }
 
 function index_of(xs: i32[], x: i32): i32 {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < xs.len()) {
     if (xs[i] == x) {
       return i;
@@ -398,7 +398,7 @@ function index_of(xs: i32[], x: i32): i32 {
 }
 
 function prepend(x: i32, xs: i32[]): i32[] {
-  var out: i32[] = [x];
+  let out: i32[] = [x];
   for y in xs {
     out = out.append(y);
   }
@@ -406,7 +406,7 @@ function prepend(x: i32, xs: i32[]): i32[] {
 }
 
 function prepend_str(x: string, xs: string[]): string[] {
-  var out: string[] = [x];
+  let out: string[] = [x];
   for y in xs {
     out = out.append(y);
   }
@@ -414,7 +414,7 @@ function prepend_str(x: string, xs: string[]): string[] {
 }
 
 function next_block_id(g: ssa.SFunc): i32 {
-  var hi: i32 = 0;
+  let hi: i32 = 0;
   for b in g.blocks {
     if (b.id >= hi) {
       hi = b.id + 1;
@@ -449,8 +449,8 @@ struct Build { values: typeinfo.Type[], blocks: ssa.SBlock[], id: i32, preds: i3
 struct Emitted { s: Build, v: i32 }
 
 function emit(s: Build, kind: i32, t: typeinfo.Type, args: i32[], imm: i32, str: string): Emitted {
-  var v: i32 = s.values.len();
-  var ins: ssa.SInst = ssa.SInst { kind_tag: kind, result: v, args: args, imm: imm, str: str };
+  let v: i32 = s.values.len();
+  let ins: ssa.SInst = ssa.SInst { kind_tag: kind, result: v, args: args, imm: imm, str: str };
   return Emitted { s: Build { ...s, values: s.values.append(t), insts: s.insts.append(ins) }, v: v };
 }
 
@@ -485,17 +485,17 @@ struct Stepped { s: Build, l: Loop, e: i32 }
 // The stages' steps, concatenated: a `map` rebinds the element, a `filter`
 // whose predicate says no skips straight back to the header.
 function steps(f: ssasem.Func, c: Chain, s: Build, l: Loop, e: i32): Stepped {
-  var j: i32 = 0;
+  let j: i32 = 0;
   while (j < c.stages.len()) {
-    var fn: i32 = c.fns[j];
+    let fn: i32 = c.fns[j];
     if (c.verbs[j] == "map") {
-      var m: Emitted = emit(s, ssasem.call_value(), ssasem.func_result(f.values[fn]), [fn, e], 0, "");
+      let m: Emitted = emit(s, ssasem.call_value(), ssasem.func_result(f.values[fn]), [fn, e], 0, "");
       s = m.s;
       e = m.v;
     } else {
-      var keep: Emitted = emit(s, ssasem.call_value(), typeinfo.TypeBool { tag: 0 }, [fn, e], 0, "");
-      var from: i32 = keep.s.id;
-      var yes: i32 = keep.s.next;
+      let keep: Emitted = emit(s, ssasem.call_value(), typeinfo.TypeBool { tag: 0 }, [fn, e], 0, "");
+      let from: i32 = keep.s.id;
+      let yes: i32 = keep.s.next;
       s = close(fresh(keep.s, 2), brif(keep.v, yes, yes + 1));
       s = close(open(s, yes + 1, [from]), br(l.head));
       l = back(l, yes + 1, l.acc, l.seen);
@@ -510,19 +510,19 @@ function steps(f: ssasem.Func, c: Chain, s: Build, l: Loop, e: i32): Stepped {
 // first element to arrive as the accumulator and combines the rest, so its
 // combining function never sees a lone element.
 function sink_step(c: Chain, combine: i32, t: typeinfo.Type, st: Stepped, yes: i32): Stepped {
-  var s: Build = st.s;
-  var l: Loop = st.l;
+  let s: Build = st.s;
+  let l: Loop = st.l;
   if (c.verb == "fold") {
-    var a: Emitted = emit(s, ssasem.call_value(), t, [combine, l.acc, st.e], 0, "");
+    let a: Emitted = emit(s, ssasem.call_value(), t, [combine, l.acc, st.e], 0, "");
     return Stepped { s: close(a.s, br(l.head)), l: back(l, a.s.id, a.v, l.seen), e: st.e };
   }
-  var from: i32 = s.id;
-  var comb: i32 = s.next;
+  let from: i32 = s.id;
+  let comb: i32 = s.next;
   s = close(fresh(s, 3), brif(l.seen, comb, comb + 1));
-  var a: Emitted = emit(open(s, comb, [from]), ssasem.call_value(), t, [combine, l.acc, st.e], 0, "");
+  let a: Emitted = emit(open(s, comb, [from]), ssasem.call_value(), t, [combine, l.acc, st.e], 0, "");
   s = close(a.s, br(comb + 2));
   s = close(open(s, comb + 1, [from]), br(comb + 2));
-  var joined: Emitted = emit(open(s, comb + 2, [comb, comb + 1]), 8, t, [a.v, st.e], 0, "");
+  let joined: Emitted = emit(open(s, comb + 2, [comb, comb + 1]), 8, t, [a.v, st.e], 0, "");
   return Stepped { s: close(joined.s, br(l.head)), l: back(l, comb + 2, joined.v, yes), e: st.e };
 }
 
@@ -532,29 +532,29 @@ function finish(f: ssasem.Func, c: Chain, s: Build, l: Loop, result: i32): Build
   if (c.verb == "fold") {
     return emit_at(s, 7, [l.acc], result);
   }
-  var whole: typeinfo.Type = f.values[result];
-  var from: i32 = s.id;
-  var some: i32 = s.next;
+  let whole: typeinfo.Type = f.values[result];
+  let from: i32 = s.id;
+  let some: i32 = s.next;
   s = close(fresh(s, 3), brif(l.seen, some, some + 1));
-  var vs: Emitted = emit(open(s, some, [from]), ssasem.variant_new(), whole, [l.acc], 0, "Some");
+  let vs: Emitted = emit(open(s, some, [from]), ssasem.variant_new(), whole, [l.acc], 0, "Some");
   s = close(vs.s, br(some + 2));
-  var vn: Emitted = emit(open(s, some + 1, [from]), ssasem.variant_new(), whole, [], 0, "None");
+  let vn: Emitted = emit(open(s, some + 1, [from]), ssasem.variant_new(), whole, [], 0, "None");
   s = close(vn.s, br(some + 2));
   return emit_at(open(s, some + 2, [some, some + 1]), 8, [vs.v, vn.v], result);
 }
 
 // The header's phis, completed once every back edge is known.
 function header(s: Build, l: Loop, entry: i32, start: i32, init: i32, unseen: i32): Build {
-  var at: i32 = 0;
+  let at: i32 = 0;
   while (s.blocks[at].id != l.head) {
     at = at + 1;
   }
-  var h: ssa.SBlock = s.blocks[at];
-  var is: i32[] = [start];
+  let h: ssa.SBlock = s.blocks[at];
+  let is: i32[] = [start];
   for _ in l.backs {
     is = is.append(l.next_i);
   }
-  var phis: ssa.SInst[] = [
+  let phis: ssa.SInst[] = [
     ssa.SInst { kind_tag: 8, result: l.i, args: is, imm: 0, str: "" },
     ssa.SInst { kind_tag: 8, result: l.acc, args: prepend(init, l.accs), imm: 0, str: "" },
   ];
@@ -564,7 +564,7 @@ function header(s: Build, l: Loop, entry: i32, start: i32, init: i32, unseen: i3
   for ins in h.insts {
     phis = phis.append(ins);
   }
-  var full: ssa.SBlock = ssa.SBlock { ...h, insts: phis, preds: prepend(entry, l.backs) };
+  let full: ssa.SBlock = ssa.SBlock { ...h, insts: phis, preds: prepend(entry, l.backs) };
   return Build { ...s, blocks: s.blocks.with(at, full) };
 }
 
@@ -575,33 +575,33 @@ struct Opened { s: Build, l: Loop, init: i32, unseen: i32, yes: i32, start: i32 
 // element, and the accumulator's seed. Then the header: advance, and test
 // against the length.
 function enter(f: ssasem.Func, c: Chain, s: Build, acc_t: typeinfo.Type): Opened {
-  var i32t: typeinfo.Type = typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false };
-  var bool_t: typeinfo.Type = typeinfo.TypeBool { tag: 0 };
-  var n: Emitted = emit(s, ssasem.length(), i32t, [c.base], 0, "");
-  var start: Emitted = emit(n.s, 1, i32t, [], 0 - 1, "");
+  let i32t: typeinfo.Type = typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false };
+  let bool_t: typeinfo.Type = typeinfo.TypeBool { tag: 0 };
+  let n: Emitted = emit(s, ssasem.length(), i32t, [c.base], 0, "");
+  let start: Emitted = emit(n.s, 1, i32t, [], 0 - 1, "");
   s = start.s;
-  var sink: ssa.SInst = f.graph.blocks[c.block].insts[c.sink];
-  var o: Opened = Opened { s: s, l: Loop { head: 0, i: 0, acc: 0, seen: 0 - 1, next_i: 0, backs: [], accs: [], seens: [] }, init: 0, unseen: 0 - 1, yes: 0 - 1, start: start.v };
+  let sink: ssa.SInst = f.graph.blocks[c.block].insts[c.sink];
+  let o: Opened = Opened { s: s, l: Loop { head: 0, i: 0, acc: 0, seen: 0 - 1, next_i: 0, backs: [], accs: [], seens: [] }, init: 0, unseen: 0 - 1, yes: 0 - 1, start: start.v };
   if (c.verb == "fold") {
     o = Opened { ...o, init: sink.args[1] };
   } else {
-    var z: Emitted = emit(s, ssasem.zero(), acc_t, [], 0, "");
-    var no: Emitted = emit(z.s, 2, bool_t, [], 0, "");
-    var yes: Emitted = emit(no.s, 2, bool_t, [], 1, "");
+    let z: Emitted = emit(s, ssasem.zero(), acc_t, [], 0, "");
+    let no: Emitted = emit(z.s, 2, bool_t, [], 0, "");
+    let yes: Emitted = emit(no.s, 2, bool_t, [], 1, "");
     o = Opened { ...o, s: yes.s, init: z.v, unseen: no.v, yes: yes.v };
   }
   s = o.s;
-  var head: i32 = s.next;
-  var l: Loop = Loop { ...o.l, head: head, i: s.values.len(), acc: s.values.len() + 1 };
+  let head: i32 = s.next;
+  let l: Loop = Loop { ...o.l, head: head, i: s.values.len(), acc: s.values.len() + 1 };
   s = Build { ...fresh(s, 3), values: s.values.append(i32t).append(acc_t) };
   if (c.verb == "reduce") {
     l = Loop { ...l, seen: s.values.len() };
     s = Build { ...s, values: s.values.append(bool_t) };
   }
   s = open(close(s, br(head)), head, []);
-  var one: Emitted = emit(s, 1, i32t, [], 1, "");
-  var step: Emitted = emit(one.s, 9, i32t, [l.i, one.v], 0, "+");
-  var more: Emitted = emit(step.s, 9, bool_t, [step.v, n.v], 0, "<");
+  let one: Emitted = emit(s, 1, i32t, [], 1, "");
+  let step: Emitted = emit(one.s, 9, i32t, [l.i, one.v], 0, "+");
+  let more: Emitted = emit(step.s, 9, bool_t, [step.v, n.v], 0, "<");
   s = close(more.s, brif(more.v, head + 1, head + 2));
   return Opened { ...o, s: open(s, head + 1, [head]), l: Loop { ...l, next_i: step.v } };
 }
@@ -611,27 +611,27 @@ function enter(f: ssasem.Func, c: Chain, s: Build, acc_t: typeinfo.Type): Opened
 // came after the sink continues from the loop's exit under the old
 // terminator.
 function fuse(f: ssasem.Func, c: Chain): ssasem.Func {
-  var g: ssa.SFunc = f.graph;
-  var b: ssa.SBlock = g.blocks[c.block];
-  var sink: ssa.SInst = b.insts[c.sink];
-  var acc_t: typeinfo.Type = f.values[sink.result];
+  let g: ssa.SFunc = f.graph;
+  let b: ssa.SBlock = g.blocks[c.block];
+  let sink: ssa.SInst = b.insts[c.sink];
+  let acc_t: typeinfo.Type = f.values[sink.result];
   if (c.verb == "reduce") {
     acc_t = element(f.values[sink.args[0]]);
   }
-  var s: Build = Build { values: f.values, blocks: [], id: b.id, preds: b.preds, insts: kept_before(b, c), next: next_block_id(g) };
-  var o: Opened = enter(f, c, s, acc_t);
-  var fetched: Emitted = emit(o.s, ssasem.array_get(), element(f.values[c.base]), [c.base, o.l.next_i], 1, "");
-  var st: Stepped = steps(f, c, fetched.s, o.l, fetched.v);
+  let s: Build = Build { values: f.values, blocks: [], id: b.id, preds: b.preds, insts: kept_before(b, c), next: next_block_id(g) };
+  let o: Opened = enter(f, c, s, acc_t);
+  let fetched: Emitted = emit(o.s, ssasem.array_get(), element(f.values[c.base]), [c.base, o.l.next_i], 1, "");
+  let st: Stepped = steps(f, c, fetched.s, o.l, fetched.v);
   st = sink_step(c, sink.args[sink.args.len() - 1], acc_t, st, o.yes);
   s = finish(f, c, open(st.s, o.l.head + 2, [o.l.head]), st.l, sink.result);
-  var p: i32 = c.sink + 1;
+  let p: i32 = c.sink + 1;
   while (p < b.insts.len()) {
     s = Build { ...s, insts: s.insts.append(b.insts[p]) };
     p = p + 1;
   }
   s = header(close(s, b.term), st.l, b.id, o.start, o.init, o.unseen);
-  var graph: ssa.SFunc = ssa.SFunc { ...g, blocks: spliced(g, c.block, s.blocks), nvals: s.values.len() };
-  var gone: string[] = [sink.str];
+  let graph: ssa.SFunc = ssa.SFunc { ...g, blocks: spliced(g, c.block, s.blocks), nvals: s.values.len() };
+  let gone: string[] = [sink.str];
   for at in c.stages {
     gone = gone.append(b.insts[at].str);
   }
@@ -639,8 +639,8 @@ function fuse(f: ssasem.Func, c: Chain): ssasem.Func {
 }
 
 function kept_before(b: ssa.SBlock, c: Chain): ssa.SInst[] {
-  var out: ssa.SInst[] = [];
-  var p: i32 = 0;
+  let out: ssa.SInst[] = [];
+  let p: i32 = 0;
   while (p < c.sink) {
     if (index_of(c.stages, p) < 0) {
       out = out.append(b.insts[p]);
@@ -653,13 +653,13 @@ function kept_before(b: ssa.SBlock, c: Chain): ssa.SInst[] {
 // The old block's place takes the first built block; the rest go last. A
 // successor of the old block now follows the block its terminator moved to.
 function spliced(g: ssa.SFunc, at: i32, built: ssa.SBlock[]): ssa.SBlock[] {
-  var old: ssa.SBlock = g.blocks[at];
-  var last: i32 = built[built.len() - 1].id;
-  var targets: i32[] = term_targets(old.term);
-  var out: ssa.SBlock[] = [];
-  var i: i32 = 0;
+  let old: ssa.SBlock = g.blocks[at];
+  let last: i32 = built[built.len() - 1].id;
+  let targets: i32[] = term_targets(old.term);
+  let out: ssa.SBlock[] = [];
+  let i: i32 = 0;
   while (i < g.blocks.len()) {
-    var blk: ssa.SBlock = g.blocks[i];
+    let blk: ssa.SBlock = g.blocks[i];
     if (i == at) {
       blk = built[0];
     }
@@ -678,7 +678,7 @@ function spliced(g: ssa.SFunc, at: i32, built: ssa.SBlock[]): ssa.SBlock[] {
 }
 
 function renamed(xs: i32[], from: i32, to: i32): i32[] {
-  var out: i32[] = [];
+  let out: i32[] = [];
   for x in xs {
     if (x == from) {
       out = out.append(to);
@@ -691,7 +691,7 @@ function renamed(xs: i32[], from: i32, to: i32): i32[] {
 
 // The call table less the combinators the fusion removed the last call to.
 function still_called(calls: ssasem.Contract[], gone: string[], g: ssa.SFunc): ssasem.Contract[] {
-  var named: string[] = [];
+  let named: string[] = [];
   for b in g.blocks {
     for ins in b.insts {
       if (ins.kind_tag == ssasem.call()) {
@@ -699,7 +699,7 @@ function still_called(calls: ssasem.Contract[], gone: string[], g: ssa.SFunc): s
       }
     }
   }
-  var out: ssasem.Contract[] = [];
+  let out: ssasem.Contract[] = [];
   for c in calls {
     if (!util.has_str(gone, c.name) || util.has_str(named, c.name)) {
       out = out.append(c);

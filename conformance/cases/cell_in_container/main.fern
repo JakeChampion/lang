@@ -24,12 +24,12 @@ enum Holder { Has(Cell[string]), Nothing }
 
 function main(): i32 {
     // Tuple element, scalar cell.
-    var ti: (i32, Cell[i32]) = (7, cell_new(0));
+    let ti: (i32, Cell[i32]) = (7, cell_new(0));
     ti.1.set(ti.1.get() + ti.0);
     print(ti.1.get().to_string());          // 7
 
     // Enum payload, string cell, reached through a match binding.
-    var h: Holder = Has(cell_new("x"));
+    let h: Holder = Has(cell_new("x"));
     match (h) {
         Has(c) => {
             c.set(c.get() + "y");
@@ -41,9 +41,9 @@ function main(): i32 {
     // One cell, two tuples: each holder decrements and the last one frees,
     // which is what makes freeing here safe without borrow tracking — both
     // array helpers walk only at the cell's own rc == 1.
-    var shared: Cell[string] = cell_new("s");
-    var t1: (i32, Cell[string]) = (1, shared);
-    var t2: (i32, Cell[string]) = (2, shared);
+    let shared: Cell[string] = cell_new("s");
+    let t1: (i32, Cell[string]) = (1, shared);
+    let t2: (i32, Cell[string]) = (2, shared);
     t1.1.set("s!");
     print(t2.1.get());                      // s!
     return 0;

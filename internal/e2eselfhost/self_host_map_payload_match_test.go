@@ -14,13 +14,13 @@ var mapPayloadMatchCases = []struct {
 	// A Map payload bound from Some and read.
 	{"opt-map-payload-match", `import "core/map";
 function churn(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var m: Map[string, i32] = map_new(4);
+        let m: Map[string, i32] = map_new(4);
         m = m.insert("k", i);
-        var o: Option[Map[string, i32]] = Some(m);
-        var r: i32 = 0;
+        let o: Option[Map[string, i32]] = Some(m);
+        let r: i32 = 0;
         match (o) { Some(v) => { r = v.get_or("k", 0) + v.len(); }, None => {} }
         acc = (acc + r) % 83;
         i = i + 1;
@@ -28,8 +28,8 @@ function churn(n: i32): i32 {
     return acc;
 }
 function main(): i32 {
-    var w: i32 = churn(1000);
-    var x: i32 = churn(1000);
+    let w: i32 = churn(1000);
+    let x: i32 = churn(1000);
     if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return w % 83;
@@ -37,13 +37,13 @@ function main(): i32 {
 	// The payload BOUND BUT UNUSED.
 	{"opt-map-payload-unused", `import "core/map";
 function churn(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var m: Map[string, i32] = map_new(4);
+        let m: Map[string, i32] = map_new(4);
         m = m.insert("k", i);
-        var o: Option[Map[string, i32]] = Some(m);
-        var r: i32 = 0;
+        let o: Option[Map[string, i32]] = Some(m);
+        let r: i32 = 0;
         match (o) { Some(v) => { r = 1; }, None => {} }
         acc = (acc + r + m.get_or("k", 0)) % 83;
         i = i + 1;
@@ -51,8 +51,8 @@ function churn(n: i32): i32 {
     return acc;
 }
 function main(): i32 {
-    var w: i32 = churn(1000);
-    var x: i32 = churn(1000);
+    let w: i32 = churn(1000);
+    let x: i32 = churn(1000);
     if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return w % 83;
@@ -60,16 +60,16 @@ function main(): i32 {
 	// The Ok side of a Result.
 	{"result-map-ok-payload", `import "core/map";
 function pick(n: i32): Result[Map[string, i32], string] {
-    var m: Map[string, i32] = map_new(4);
+    let m: Map[string, i32] = map_new(4);
     m = m.insert("k", n);
     if (n < 0) { return Err("neg"); }
     return Ok(m);
 }
 function churn(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var r: i32 = 0;
+        let r: i32 = 0;
         match (pick(i)) { Ok(v) => { r = v.get_or("k", 0); }, Err(e) => { r = e.len(); } }
         acc = (acc + r) % 83;
         i = i + 1;
@@ -77,8 +77,8 @@ function churn(n: i32): i32 {
     return acc;
 }
 function main(): i32 {
-    var w: i32 = churn(1000);
-    var x: i32 = churn(1000);
+    let w: i32 = churn(1000);
+    let x: i32 = churn(1000);
     if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return w % 83;
@@ -87,16 +87,16 @@ function main(): i32 {
 	// T/E split.
 	{"result-map-err-payload", `import "core/map";
 function pick(n: i32): Result[i32, Map[string, i32]] {
-    var m: Map[string, i32] = map_new(4);
+    let m: Map[string, i32] = map_new(4);
     m = m.insert("k", n);
     if (n % 2 == 0) { return Err(m); }
     return Ok(n);
 }
 function churn(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var r: i32 = 0;
+        let r: i32 = 0;
         match (pick(i)) { Ok(v) => { r = v; }, Err(e) => { r = e.get_or("k", 0) + e.len(); } }
         acc = (acc + r) % 83;
         i = i + 1;
@@ -104,8 +104,8 @@ function churn(n: i32): i32 {
     return acc;
 }
 function main(): i32 {
-    var w: i32 = churn(1000);
-    var x: i32 = churn(1000);
+    let w: i32 = churn(1000);
+    let x: i32 = churn(1000);
     if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return w % 83;
@@ -114,13 +114,13 @@ function main(): i32 {
 	// brackets, and the bound slot must still dispatch `.get(k)` as a map op.
 	{"opt-map-of-array-payload", `import "core/map";
 function churn(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var m: Map[string, i32[]] = map_new(4);
+        let m: Map[string, i32[]] = map_new(4);
         m = m.insert("k", [i, i + 2]);
-        var o: Option[Map[string, i32[]]] = Some(m);
-        var r: i32 = 0;
+        let o: Option[Map[string, i32[]]] = Some(m);
+        let r: i32 = 0;
         match (o) {
             Some(v) => { match (v.get("k")) { Some(xs) => { r = xs[0] + xs[1]; }, None => {} } },
             None => {}
@@ -131,8 +131,8 @@ function churn(n: i32): i32 {
     return acc;
 }
 function main(): i32 {
-    var w: i32 = churn(1000);
-    var x: i32 = churn(1000);
+    let w: i32 = churn(1000);
+    let x: i32 = churn(1000);
     if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return w % 83;
@@ -141,14 +141,14 @@ function main(): i32 {
 	// map's.
 	{"opt-map-array-payload", `import "core/map";
 function churn(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var m: Map[string, i32] = map_new(4);
+        let m: Map[string, i32] = map_new(4);
         m = m.insert("k", i);
-        var ms: Map[string, i32][] = [m];
-        var o: Option[Map[string, i32][]] = Some(ms);
-        var r: i32 = 0;
+        let ms: Map[string, i32][] = [m];
+        let o: Option[Map[string, i32][]] = Some(ms);
+        let r: i32 = 0;
         match (o) { Some(v) => { r = v.len(); }, None => {} }
         acc = (acc + r) % 83;
         i = i + 1;
@@ -156,8 +156,8 @@ function churn(n: i32): i32 {
     return acc;
 }
 function main(): i32 {
-    var w: i32 = churn(1000);
-    var x: i32 = churn(1000);
+    let w: i32 = churn(1000);
+    let x: i32 = churn(1000);
     if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return w % 83;

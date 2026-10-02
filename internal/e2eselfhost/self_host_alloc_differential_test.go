@@ -87,8 +87,8 @@ var allocDiffCases = []allocDiffCase{
 		name: "append-threaded-through-call",
 		decls: `function step(acc: i32[], v: i32): i32[] { return acc.append(v); }
 function churn(n: i32): i32 {
-    var a: i32[] = [];
-    var i: i32 = 0;
+    let a: i32[] = [];
+    let i: i32 = 0;
     while (i < n) { a = step(a, i); i = i + 1; }
     return a.len();
 }`,
@@ -103,13 +103,13 @@ function churn(n: i32): i32 {
 		// native / 0 MB self-host.
 		name: "with-through-borrowed-param",
 		decls: `function fill(buf: i32[], n: i32): i32[] {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < n) { buf = buf.with(i, i * 2); i = i + 1; }
     return buf;
 }
 function churn(n: i32): i32 {
-    var b: i32[] = [];
-    var i: i32 = 0;
+    let b: i32[] = [];
+    let i: i32 = 0;
     while (i < n) { b = b.append(0); i = i + 1; }
     b = fill(b, n);
     return b[n - 1];
@@ -129,10 +129,10 @@ function churn(n: i32): i32 {
 		// diverges, the freelist itself has regressed on one side.
 		name: "fresh-array-per-iteration",
 		decls: `function churn(n: i32): i32 {
-    var i: i32 = 0;
-    var s: i32 = 0;
+    let i: i32 = 0;
+    let s: i32 = 0;
     while (i < n) {
-        var row: i32[] = [i, i + 1, i + 2];
+        let row: i32[] = [i, i + 1, i + 2];
         s = (s + row[0]) % 251;
         i = i + 1;
     }
@@ -151,10 +151,10 @@ function churn(n: i32): i32 {
 		decls: `struct Row { xs: i32[], k: i32 }
 function mk(k: i32): Row { return Row { xs: [k, k + 1, k + 2], k: k }; }
 function churn(n: i32): i32 {
-    var i: i32 = 0;
-    var s: i32 = 0;
+    let i: i32 = 0;
+    let s: i32 = 0;
     while (i < n) {
-        var r: Row = mk(i);
+        let r: Row = mk(i);
         s = (s + r.xs[1] + r.k) % 251;
         i = i + 1;
     }
@@ -176,11 +176,11 @@ function churn(n: i32): i32 {
 		name: "loop-push-behind-guard-clause",
 		decls: `struct Val { kind: i32, kids: i32[] }
 function churn(n: i32): i32 {
-    var vals: Val[] = [];
-    var total: i32 = 0;
+    let vals: Val[] = [];
+    let total: i32 = 0;
     for i in 0..n {
         if (i == 9999) { return 12345; }
-        var v = Val { kind: i, kids: [] };
+        let v = Val { kind: i, kids: [] };
         vals = vals.append(v);
         total = (total + vals.len()) % 251;
     }
@@ -201,11 +201,11 @@ function churn(n: i32): i32 {
 		name: "tuple-in-struct-field",
 		decls: `struct Hold { t: (i32, i32[]), n: i32 }
 function churn(n: i32): i32 {
-    var i: i32 = 0;
-    var s: i32 = 0;
+    let i: i32 = 0;
+    let s: i32 = 0;
     while (i < n) {
-        var k: (i32, i32[]) = (i, [i, i + 1]);
-        var h: Hold = Hold { t: k, n: i };
+        let k: (i32, i32[]) = (i, [i, i + 1]);
+        let h: Hold = Hold { t: k, n: i };
         s = (s + h.n + h.t.1[1]) % 251;
         i = i + 1;
     }
@@ -224,11 +224,11 @@ function churn(n: i32): i32 {
 		// out comparable amounts getting there.
 		name: "option-array-alias-match",
 		decls: `function churn(n: i32): i32 {
-    var i: i32 = 0;
-    var s: i32 = 0;
+    let i: i32 = 0;
+    let s: i32 = 0;
     while (i < n) {
-        var src: Option[i32[]] = Some([i, i + 1]);
-        var x: Option[i32[]] = src;
+        let src: Option[i32[]] = Some([i, i + 1]);
+        let x: Option[i32[]] = src;
         match (x) { Some(xs) => { s = (s + xs.len()) % 251; }, None => {} }
         match (src) { Some(ys) => { s = (s + ys[0]) % 251; }, None => {} }
         i = i + 1;
@@ -248,10 +248,10 @@ function churn(n: i32): i32 {
 		name: "option-array-struct-field",
 		decls: `struct H { o: Option[i32[]], n: i32 }
 function churn(n: i32): i32 {
-    var i: i32 = 0;
-    var s: i32 = 0;
+    let i: i32 = 0;
+    let s: i32 = 0;
     while (i < n) {
-        var h: H = H { o: Some([i, i + 1]), n: i };
+        let h: H = H { o: Some([i, i + 1]), n: i };
         match (h.o) { Some(xs) => { s = (s + xs.len() + h.n) % 251; }, None => {} }
         i = i + 1;
     }
@@ -271,10 +271,10 @@ function churn(n: i32): i32 {
 		name: "enum-rc-payload-per-iteration",
 		decls: `enum E { Full(i32[]), None }
 function churn(n: i32): i32 {
-    var i: i32 = 0;
-    var s: i32 = 0;
+    let i: i32 = 0;
+    let s: i32 = 0;
     while (i < n) {
-        var e: E = E.Full([i, i + 1, i + 2]);
+        let e: E = E.Full([i, i + 1, i + 2]);
         match (e) { E.Full(xs) => { s = (s + xs.len() + xs[0]) % 251; }, E.None => {} }
         i = i + 1;
     }
@@ -298,12 +298,12 @@ function churn(n: i32): i32 {
 func (c allocDiffCase) bumpSrc() string {
 	return fmt.Sprintf(`%s
 function main(): i32 {
-    var w: i32 = churn(%d);
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var x: i32 = churn(%d);
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let w: i32 = churn(%d);
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let x: i32 = churn(%d);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (w != x) { return 251; }
-    var kb: i32 = (b2 - b1) / 1024;
+    let kb: i32 = (b2 - b1) / 1024;
     if (kb > 240) { return 252; }
     return kb;
 }
@@ -314,9 +314,9 @@ function main(): i32 {
 func (c allocDiffCase) cliffSrc() string {
 	return fmt.Sprintf(`%s
 function main(): i32 {
-    var w: i32 = churn(%d);
+    let w: i32 = churn(%d);
     if (w < 0) { return 251; }
-    var n: i32 = __arr_push_shared_count();
+    let n: i32 = __arr_push_shared_count();
     if (n > 240) { return 240; }
     return n;
 }

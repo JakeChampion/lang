@@ -102,9 +102,9 @@ function st_bad_checksum(): i32 {
 // where a plain sum does not. Cheap enough that it is not what any variant's
 // throughput is measuring.
 function checksum(bytes: u8[], from: i32, n: i32): i32 {
-  var a: i32 = 0;
-  var b: i32 = 0;
-  var i: i32 = 0;
+  let a: i32 = 0;
+  let b: i32 = 0;
+  let i: i32 = 0;
   while (i < n) {
     a = (a + bytes[from + i] as i32) % 255;
     b = (b + a) % 255;
@@ -144,7 +144,7 @@ function known_type(t: i32): boolean {
 // The validation ladder, in the order a receiver can actually apply it: the
 // framing first, because a bad length makes every later read a guess.
 function parse(wire: u8[], wire_len: i32): Request {
-  var empty: u8[] = [];
+  let empty: u8[] = [];
   if (wire_len < header_len()) {
     return Request { status: st_truncated(), msg_type: 0, req_id: 0 as i64, payload: empty };
   }
@@ -154,9 +154,9 @@ function parse(wire: u8[], wire_len: i32): Request {
   if (wire[2] as i32 != version()) {
     return Request { status: st_bad_version(), msg_type: 0, req_id: 0 as i64, payload: empty };
   }
-  var t: i32 = wire[3] as i32;
-  var id: i64 = read_u32(wire, 6);
-  var plen: i32 = read_u16(wire, 10);
+  let t: i32 = wire[3] as i32;
+  let id: i64 = read_u32(wire, 6);
+  let plen: i32 = read_u16(wire, 10);
   if (plen > max_payload()) {
     return Request { status: st_oversize(), msg_type: t, req_id: id, payload: empty };
   }
@@ -170,8 +170,8 @@ function parse(wire: u8[], wire_len: i32): Request {
     return Request { status: st_bad_type(), msg_type: t, req_id: id, payload: empty };
   }
   // The copy. Every byte of every payload, into a new array per request.
-  var body: u8[] = [];
-  var i: i32 = 0;
+  let body: u8[] = [];
+  let i: i32 = 0;
   while (i < plen) {
     body = body.append(wire[header_len() + i]);
     i = i + 1;
@@ -185,10 +185,10 @@ function parse(wire: u8[], wire_len: i32): Request {
 // move the whole payload, upper moves it and rewrites some of it, sum reduces
 // it to eight bytes.
 function transform(req: Request): u8[] {
-  var out: u8[] = [];
-  var n: i32 = req.payload.len();
+  let out: u8[] = [];
+  let n: i32 = req.payload.len();
   if (req.msg_type == msg_echo()) {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
       out = out.append(req.payload[i]);
       i = i + 1;
@@ -196,7 +196,7 @@ function transform(req: Request): u8[] {
     return out;
   }
   if (req.msg_type == msg_reverse()) {
-    var j: i32 = n - 1;
+    let j: i32 = n - 1;
     while (j >= 0) {
       out = out.append(req.payload[j]);
       j = j - 1;
@@ -204,9 +204,9 @@ function transform(req: Request): u8[] {
     return out;
   }
   if (req.msg_type == msg_upper()) {
-    var k: i32 = 0;
+    let k: i32 = 0;
     while (k < n) {
-      var c: i32 = req.payload[k] as i32;
+      let c: i32 = req.payload[k] as i32;
       if (c >= 97 && c <= 122) {
         c = c - 32;
       }
@@ -216,13 +216,13 @@ function transform(req: Request): u8[] {
     return out;
   }
   // sum: eight little-endian bytes of the payload's byte sum.
-  var total: i64 = 0 as i64;
-  var s: i32 = 0;
+  let total: i64 = 0 as i64;
+  let s: i32 = 0;
   while (s < n) {
     total = total + req.payload[s] as i64;
     s = s + 1;
   }
-  var b: i32 = 0;
+  let b: i32 = 0;
   while (b < 8) {
     out = out.append((total / pow256(b) % (256 as i64)) as u8);
     b = b + 1;
@@ -231,8 +231,8 @@ function transform(req: Request): u8[] {
 }
 
 function pow256(k: i32): i64 {
-  var p: i64 = 1 as i64;
-  var i: i32 = 0;
+  let p: i64 = 1 as i64;
+  let i: i32 = 0;
   while (i < k) {
     p = p * (256 as i64);
     i = i + 1;
@@ -243,16 +243,16 @@ function pow256(k: i32): i64 {
 // ===================== THE ENCODE (allocating) =====================
 
 function encode(req: Request, body: u8[]): u8[] {
-  var out: u8[] = [];
-  var plen: i32 = body.len();
-  var ck: i32 = checksum(body, 0, plen);
+  let out: u8[] = [];
+  let plen: i32 = body.len();
+  let ck: i32 = checksum(body, 0, plen);
   out = out.append(magic0() as u8);
   out = out.append(magic1() as u8);
   out = out.append(version() as u8);
   out = out.append(req.msg_type as u8);
   out = out.append(req.status as u8);
   out = out.append(0 as u8);
-  var idb: i32 = 0;
+  let idb: i32 = 0;
   while (idb < 4) {
     out = out.append((req.req_id / pow256(idb) % (256 as i64)) as u8);
     idb = idb + 1;
@@ -263,7 +263,7 @@ function encode(req: Request, body: u8[]): u8[] {
   out = out.append((ck / 256) as u8);
   out = out.append(0 as u8);
   out = out.append(0 as u8);
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < plen) {
     out = out.append(body[i]);
     i = i + 1;
@@ -298,18 +298,18 @@ function corruption(n: i64): i32 {
 // is the harness, not the codec, and a borrowed `wire` would copy all 256
 // bytes on each `.with` — charging every variant for the instrument.
 function build_request(own wire: u8[], n: i64): u8[] {
-  var t: i32 = 1 + (n % (4 as i64)) as i32;
-  var plen: i32 = gen_payload_len(n);
-  var corrupt: i32 = corruption(n);
-  var i: i32 = 0;
+  let t: i32 = 1 + (n % (4 as i64)) as i32;
+  let plen: i32 = gen_payload_len(n);
+  let corrupt: i32 = corruption(n);
+  let i: i32 = 0;
   while (i < plen) {
     wire = wire.with(header_len() + i, gen_byte(n, i));
     i = i + 1;
   }
-  var ck: i32 = checksum(wire, header_len(), plen);
-  var m0: i32 = magic0();
-  var ver: i32 = version();
-  var wire_plen: i32 = plen;
+  let ck: i32 = checksum(wire, header_len(), plen);
+  let m0: i32 = magic0();
+  let ver: i32 = version();
+  let wire_plen: i32 = plen;
   if (corrupt == 0) {
     m0 = 1;
   }
@@ -331,7 +331,7 @@ function build_request(own wire: u8[], n: i64): u8[] {
   wire = wire.with(3, t as u8);
   wire = wire.with(4, 0 as u8);
   wire = wire.with(5, 0 as u8);
-  var idb: i32 = 0;
+  let idb: i32 = 0;
   while (idb < 4) {
     wire = wire.with(6 + idb, (n / pow256(idb) % (256 as i64)) as u8);
     idb = idb + 1;
@@ -345,7 +345,7 @@ function build_request(own wire: u8[], n: i64): u8[] {
 }
 
 function wire_len_for(n: i64): i32 {
-  var plen: i32 = gen_payload_len(n);
+  let plen: i32 = gen_payload_len(n);
   if (corruption(n) == 4) {
     return header_len() + plen - 1;
   }
@@ -356,7 +356,7 @@ function wire_len_for(n: i64): i32 {
 // agree only if this agrees, which is what makes the comparison a differential
 // test rather than three unrelated benchmarks.
 function mix(d: i64, b: i32): i64 {
-  var x: i64 = d ^ b as i64;
+  let x: i64 = d ^ b as i64;
   x = x * (1099511628211 as i64);
   x = x ^ x >> 29 as i64;
   if (x < 0 as i64) {
@@ -400,22 +400,22 @@ function tally(c: Counts, status: i32): Counts {
 }
 
 function serve(wire: u8[], n: i64, c: Counts): Counts {
-  var req: Request = parse(wire, wire_len_for(n));
-  var body: u8[] = [];
+  let req: Request = parse(wire, wire_len_for(n));
+  let body: u8[] = [];
   if (req.status == st_ok()) {
     body = transform(req);
   }
-  var resp: u8[] = encode(req, body);
-  var d: i64 = c.digest;
-  var i: i32 = 0;
+  let resp: u8[] = encode(req, body);
+  let d: i64 = c.digest;
+  let i: i32 = 0;
   while (i < resp.len()) {
     d = mix(d, resp[i] as i32);
     i = i + 1;
   }
   // Bytes moved on this request: the parse copy, the transform's output, and
   // the encode's copy of it into the response frame.
-  var moved: i64 = req.payload.len() as i64 + body.len() as i64 + resp.len() as i64;
-  var out: Counts = tally(c, req.status);
+  let moved: i64 = req.payload.len() as i64 + body.len() as i64 + resp.len() as i64;
+  let out: Counts = tally(c, req.status);
   return Counts { ...out, digest: d, copied: out.copied + moved };
 }
 
@@ -428,8 +428,8 @@ function zero_counts(): Counts {
 }
 
 function zeros_u8(n: i32): u8[] {
-  var xs: u8[] = __alloc_u8(n);
-  var i: i32 = 0;
+  let xs: u8[] = __alloc_u8(n);
+  let i: i32 = 0;
   while (i < n) {
     xs = xs.with(i, 0 as u8);
     i = i + 1;
@@ -438,37 +438,37 @@ function zeros_u8(n: i32): u8[] {
 }
 
 function main(): i32 {
-  var batch: i32 = 64;
+  let batch: i32 = 64;
   // 4000 rounds is 256,000 requests, which holds the per-request medians steady
   // while keeping this program the same weight as experiment 1's — it is run
   // under both backends, under qemu, by the SSA differential sweep over
   // examples/, and five times that was 5x the cost for no more signal.
-  var rounds: i32 = 4000;
-  var wire: u8[] = zeros_u8(max_packet());
-  var c: Counts = zero_counts();
+  let rounds: i32 = 4000;
+  let wire: u8[] = zeros_u8(max_packet());
+  let c: Counts = zero_counts();
   // One warm round before the mark, so first-touch costs are not measured.
-  var w: i32 = 0;
+  let w: i32 = 0;
   while (w < batch) {
     wire = build_request(wire, w as i64);
     c = serve(wire, w as i64, c);
     w = w + 1;
   }
   c = zero_counts();
-  var samples: i64[] = [];
-  var p: i32 = 0;
+  let samples: i64[] = [];
+  let p: i32 = 0;
   while (p < rounds) {
     samples = samples.append(0 as i64);
     p = p + 1;
   }
-  var at_allocs: i64 = bench.alloc_count();
-  var at_fresh: i64 = bench.bump_bytes();
-  var started_ns: i64 = monotonic_ns();
-  var r: i32 = 0;
+  let at_allocs: i64 = bench.alloc_count();
+  let at_fresh: i64 = bench.bump_bytes();
+  let started_ns: i64 = monotonic_ns();
+  let r: i32 = 0;
   while (r < rounds) {
-    var t0: i64 = monotonic_ns();
-    var k: i32 = 0;
+    let t0: i64 = monotonic_ns();
+    let k: i32 = 0;
     while (k < batch) {
-      var n: i64 = r as i64 * (batch as i64) + k as i64;
+      let n: i64 = r as i64 * (batch as i64) + k as i64;
       wire = build_request(wire, n);
       c = serve(wire, n, c);
       k = k + 1;
@@ -476,11 +476,11 @@ function main(): i32 {
     samples = samples.with(r, monotonic_ns() - t0);
     r = r + 1;
   }
-  var elapsed_ns: i64 = monotonic_ns() - started_ns;
-  var allocs: i64 = bench.allocs_after(at_allocs);
-  var fresh: i64 = bench.fresh_bytes_after(at_fresh);
-  var requests: i64 = rounds as i64 * (batch as i64);
-  var rep: bench.Report = bench.Report {
+  let elapsed_ns: i64 = monotonic_ns() - started_ns;
+  let allocs: i64 = bench.allocs_after(at_allocs);
+  let fresh: i64 = bench.fresh_bytes_after(at_fresh);
+  let requests: i64 = rounds as i64 * (batch as i64);
+  let rep: bench.Report = bench.Report {
     name: "baseline",
     iterations: rounds,
     wall_ns: elapsed_ns,

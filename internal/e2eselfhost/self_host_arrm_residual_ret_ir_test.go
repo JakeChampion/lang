@@ -44,13 +44,13 @@ var arrmResidualRetIRCases = []struct {
 }{
 	{"annotated-var", `import "std/array";
 function f(xs: i64[]): i64 {
-    var out: Option[i64] = xs.map((x: i64): i64 => x + (1 as i64)).reduce((a: i64, b: i64): i64 => a + b);
+    let out: Option[i64] = xs.map((x: i64): i64 => x + (1 as i64)).reduce((a: i64, b: i64): i64 => a + b);
     match (out) { Some(v) => { return v; }, None => { return 0 as i64; } }
 }
 function main(): i32 { return f([1 as i64, 2 as i64]) as i32; }`},
 	{"unannotated-var", `import "std/array";
 function f(xs: i64[]): i64 {
-    var out = xs.map((x: i64): i64 => x + (1 as i64)).reduce((a: i64, b: i64): i64 => a + b);
+    let out = xs.map((x: i64): i64 => x + (1 as i64)).reduce((a: i64, b: i64): i64 => a + b);
     match (out) { Some(v) => { return v; }, None => { return 0 as i64; } }
 }
 function main(): i32 { return f([1 as i64, 2 as i64]) as i32; }`},
@@ -68,7 +68,7 @@ function main(): i32 { return f([1 as i64, 2 as i64]) as i32; }`},
 	{"string-payload", `import "std/array";
 import "std/string";
 function f(xs: i64[]): i32 {
-    var out: Option[string] = xs.map((x: i64): string => "a").reduce((a: string, b: string): string => a + b);
+    let out: Option[string] = xs.map((x: i64): string => "a").reduce((a: string, b: string): string => a + b);
     match (out) { Some(v) => { return v.len(); }, None => { return 0; } }
 }
 function main(): i32 { return f([1 as i64, 2 as i64, 3 as i64]); }`},
@@ -76,7 +76,7 @@ function main(): i32 { return f([1 as i64, 2 as i64, 3 as i64]); }`},
 	// second chained method rather than only out of the first.
 	{"filter-map-reduce", `import "std/array";
 function f(xs: i64[]): i64 {
-    var out: Option[i64] = xs.filter((x: i64): boolean => x > (0 as i64))
+    let out: Option[i64] = xs.filter((x: i64): boolean => x > (0 as i64))
                              .map((x: i64): i64 => x + (1 as i64))
                              .reduce((a: i64, b: i64): i64 => a + b);
     match (out) { Some(v) => { return v; }, None => { return 0 as i64; } }
@@ -84,14 +84,14 @@ function f(xs: i64[]): i64 {
 function main(): i32 { return f([1 as i64, 2 as i64, 3 as i64]) as i32; }`},
 	{"control-reduce-alone", `import "std/array";
 function f(xs: i64[]): i64 {
-    var out: Option[i64] = xs.reduce((a: i64, b: i64): i64 => a + b);
+    let out: Option[i64] = xs.reduce((a: i64, b: i64): i64 => a + b);
     match (out) { Some(v) => { return v; }, None => { return 0 as i64; } }
 }
 function main(): i32 { return f([1 as i64, 2 as i64]) as i32; }`},
 	{"control-split-statements", `import "std/array";
 function f(xs: i64[]): i64 {
-    var ys: i64[] = xs.map((x: i64): i64 => x + (1 as i64));
-    var out: Option[i64] = ys.reduce((a: i64, b: i64): i64 => a + b);
+    let ys: i64[] = xs.map((x: i64): i64 => x + (1 as i64));
+    let out: Option[i64] = ys.reduce((a: i64, b: i64): i64 => a + b);
     match (out) { Some(v) => { return v; }, None => { return 0 as i64; } }
 }
 function main(): i32 { return f([1 as i64, 2 as i64]) as i32; }`},

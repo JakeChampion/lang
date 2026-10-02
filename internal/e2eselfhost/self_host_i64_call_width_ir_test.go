@@ -7,7 +7,7 @@ import "testing"
 // ExprCall arm lowered only i64-returning calls (and the 0-arg if/match IIFE)
 // and bailed everything else via `return s.fail()`, dropping the whole module to
 // the legacy AST emitter. #2691 widens it: a width-32 call result (not
-// i64-returning, not the IIFE) is lowered via lower_expr (the normal call path)
+// i64-returning, not the IIFE) was lowered via lower_expr (the normal call path)
 // and sign-extended to i64 (op_int_extend). This is provably safe — the checker
 // forbids i64 + f64/string/u32 and rejects binding a bare i32 call to an i64
 // (E009; it needs an explicit `as i64`), so a call reaching this point in a valid
@@ -20,17 +20,17 @@ var i64CallWidthIRCases = []struct {
 	main string
 }{
 	// i64 local + i32-returning free function. 30 + 12 = 42.
-	{"call-free", `function g(): i32 { return 12; } function main(): i32 { var s: i64 = 30; return (s + g()) as i32; }`},
+	{"call-free", `function g(): i32 { return 12; } function main(): i32 { let s: i64 = 30; return (s + g()) as i32; }`},
 	// Call with an argument. 30 + (6*2) = 42.
-	{"call-arg", `function g(x: i32): i32 { return x * 2; } function main(): i32 { var s: i64 = 30; return (s + g(6)) as i32; }`},
+	{"call-arg", `function g(x: i32): i32 { return x * 2; } function main(): i32 { let s: i64 = 30; return (s + g(6)) as i32; }`},
 	// Sign-extension: a call returning a NEGATIVE i32 must sign-extend. 50 + (-8) = 42.
-	{"call-neg", `function g(): i32 { return -8; } function main(): i32 { var s: i64 = 50; return (s + g()) as i32; }`},
+	{"call-neg", `function g(): i32 { return -8; } function main(): i32 { let s: i64 = 50; return (s + g()) as i32; }`},
 	// i32-returning METHOD call. 30 + 12 = 42.
-	{"call-method", `struct C { n: i32 } function (c: C) val(): i32 { return c.n; } function main(): i32 { var c: C = C { n: 12 }; var s: i64 = 30; return (s + c.val()) as i32; }`},
+	{"call-method", `struct C { n: i32 } function (c: C) val(): i32 { return c.n; } function main(): i32 { let c: C = C { n: 12 }; let s: i64 = 30; return (s + c.val()) as i32; }`},
 	// Call inside a for-range accumulating into i64. inc(0)+inc(1)+inc(2) = 1+2+3 = 6.
-	{"call-loop", `function inc(x: i32): i32 { return x + 1; } function main(): i32 { var s: i64 = 0; for i in 0..3 { s = s + inc(i); } return s as i32; }`},
+	{"call-loop", `function inc(x: i32): i32 { return x + 1; } function main(): i32 { let s: i64 = 0; for i in 0..3 { s = s + inc(i); } return s as i32; }`},
 	// Regression: an i64-returning call still lowers as a native i64. 0 + 42 = 42.
-	{"call-i64-keep", `function g(): i64 { return 42; } function main(): i32 { var s: i64 = 0; return (s + g()) as i32; }`},
+	{"call-i64-keep", `function g(): i64 { return 42; } function main(): i32 { let s: i64 = 0; return (s + g()) as i32; }`},
 }
 
 // TestSelfHostI64CallWidthIR compiles each case with the self-host CLI for

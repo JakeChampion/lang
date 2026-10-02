@@ -143,7 +143,7 @@ func TestSelfHostModloadPerModuleWholeCompilerX86_64(t *testing.T) {
 	// compiles the WHOLE compiler — its own ~1000-function multi-module source, the
 	// fixpoint gen2 input. This is the case the per-module bootstrap needs and the
 	// one that first surfaced the string[]-struct-field `.append()` aliasing UAF:
-	// the checker's `var actx = ctx` (StmtMatch) aliases asmcore.EmitState across a
+	// the checker's `let actx = ctx` (StmtMatch) aliases asmcore.EmitState across a
 	// match arm, and bind_local_typed's `s.local_names.append(name)` — a string[]
 	// FIELD read — took the in-place consume form, corrupting the shared local_names
 	// buffer (it desynced from the clone-form local_types, so local_type_of read out

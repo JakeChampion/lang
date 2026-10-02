@@ -140,7 +140,7 @@ function mul_checked(a: u64, b: u64): (u64, boolean) {
   if (a == 0 as u64 || b == 0 as u64) {
     return (0 as u64, false);
   }
-  var p: u64 = a * b;
+  let p: u64 = a * b;
   if (p / b != a) {
     return (0 as u64, true);
   }
@@ -165,17 +165,17 @@ pub function hex_digit(c: i32): i32 {
 // digits, overflowed); the index is `start` when there are none.
 pub function scan_number(s: string, start: i32): (u64, i32, boolean) {
   if (start + 1 < s.len() && s[start] as i32 == 48 && (s[start + 1] as i32 == 120 || s[start + 1] as i32 == 88)) {
-    var j: i32 = start + 2;
-    var hv: u64 = 0 as u64;
-    var hany: boolean = false;
-    var hover: boolean = false;
+    let j: i32 = start + 2;
+    let hv: u64 = 0 as u64;
+    let hany: boolean = false;
+    let hover: boolean = false;
     while (j < s.len()) {
-      var d: i32 = hex_digit(s[j] as i32);
+      let d: i32 = hex_digit(s[j] as i32);
       if (d < 0) {
         break;
       }
       hany = true;
-      var m: (u64, boolean) = mul_checked(hv, 16 as u64);
+      let m: (u64, boolean) = mul_checked(hv, 16 as u64);
       if (m.1) {
         hover = true;
       }
@@ -188,21 +188,21 @@ pub function scan_number(s: string, start: i32): (u64, i32, boolean) {
     }
     return (hv, j, hover);
   }
-  var base: u64 = 10 as u64;
+  let base: u64 = 10 as u64;
   if (start < s.len() && s[start] as i32 == 48) {
     base = 8 as u64;
   }
-  var i: i32 = start;
-  var v: u64 = 0 as u64;
-  var any: boolean = false;
-  var over: boolean = false;
+  let i: i32 = start;
+  let v: u64 = 0 as u64;
+  let any: boolean = false;
+  let over: boolean = false;
   while (i < s.len() && gnu.is_digit(s[i] as i32)) {
-    var d: i32 = s[i] as i32 - 48;
+    let d: i32 = s[i] as i32 - 48;
     if (base == 8 as u64 && d > 7) {
       break;
     }
     any = true;
-    var m: (u64, boolean) = mul_checked(v, base);
+    let m: (u64, boolean) = mul_checked(v, base);
     if (m.1) {
       over = true;
     }
@@ -224,12 +224,12 @@ function scan_unit(s: string, i: i32, wide: boolean): (u64, u64, i32) {
   if (!valid_suffix(s[i] as i32, wide)) {
     return (0 as u64, 0 as u64, size_bad_suffix());
   }
-  var p: i32 = suffix_power(s[i] as i32);
+  let p: i32 = suffix_power(s[i] as i32);
   if (p == 0) {
     return (0 as u64, 0 as u64, size_bad_suffix());
   }
-  var base: u64 = 1024 as u64;
-  var rest: i32 = i + 1;
+  let base: u64 = 1024 as u64;
+  let rest: i32 = i + 1;
   if (rest < s.len() && s[rest] as i32 == 66) {
     base = 1000 as u64;
     rest = rest + 1;
@@ -239,10 +239,10 @@ function scan_unit(s: string, i: i32, wide: boolean): (u64, u64, i32) {
   if (rest != s.len()) {
     return (0 as u64, 0 as u64, size_bad_suffix());
   }
-  var m: u64 = 1 as u64;
-  var k: i32 = 0;
+  let m: u64 = 1 as u64;
+  let k: i32 = 0;
   while (k < p) {
-    var r: (u64, boolean) = mul_checked(m, base);
+    let r: (u64, boolean) = mul_checked(m, base);
     if (r.1) {
       return (0 as u64, base, size_overflow());
     }
@@ -265,7 +265,7 @@ function bad_num(status: i32): Num {
 // every number. The count may be preceded by blanks (` 1K` is 1024) but
 // a bare unit may not: ` K` is invalid.
 pub function parse_num(spec: string, wide: boolean, words: boolean, signed: boolean): Num {
-  var s: string = spec;
+  let s: string = spec;
   if (words) {
     if (s.len() > 0 && s[0] as i32 == 39) {
       s = slice_unchecked(s, 1, s.len()) + "";
@@ -277,21 +277,21 @@ pub function parse_num(spec: string, wide: boolean, words: boolean, signed: bool
       return Num { value: 1 as u64, neg: false, base: 1000 as u64, with_b: false, show_suffix: false, human: 1000 as u64, status: size_ok() };
     }
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < s.len() && gnu.is_blank(s[i] as i32)) {
     i = i + 1;
   }
-  var neg: boolean = false;
+  let neg: boolean = false;
   if (i < s.len() && s[i] as i32 == 43) {
     i = i + 1;
   } else if (signed && i < s.len() && s[i] as i32 == 45) {
     neg = true;
     i = i + 1;
   }
-  var n: (u64, i32, boolean) = scan_number(s, i);
-  var value: u64 = 1 as u64;
-  var bare: boolean = false;
-  var after: i32 = n.1;
+  let n: (u64, i32, boolean) = scan_number(s, i);
+  let value: u64 = 1 as u64;
+  let bare: boolean = false;
+  let after: i32 = n.1;
   if (n.1 == i) {
     // No digits: a unit standing alone, which has to be at the front and
     // in the alphabet. Outside it there is no suffix to be wrong about,
@@ -306,11 +306,11 @@ pub function parse_num(spec: string, wide: boolean, words: boolean, signed: bool
     }
     value = n.0;
   }
-  var u: (u64, u64, i32) = scan_unit(s, after, wide);
+  let u: (u64, u64, i32) = scan_unit(s, after, wide);
   if (u.2 != size_ok()) {
     return bad_num(u.2);
   }
-  var m: (u64, boolean) = mul_checked(value, u.0);
+  let m: (u64, boolean) = mul_checked(value, u.0);
   if (m.1) {
     return bad_num(size_overflow());
   }
@@ -318,7 +318,7 @@ pub function parse_num(spec: string, wide: boolean, words: boolean, signed: bool
   if (words && m.0 == 0 as u64) {
     return bad_num(size_invalid());
   }
-  var with_b: boolean = false;
+  let with_b: boolean = false;
   if (after < s.len() && after + 1 < s.len() && s[after + 1] as i32 == 66) {
     with_b = true;
   }
@@ -333,8 +333,8 @@ pub function parse_num(spec: string, wide: boolean, words: boolean, signed: bool
 // `du --inodes` — which forces the divisor to 1 — leaves `-BKiB`
 // printing a bare `B`.
 pub function unit_text(divisor: u64, base: u64, with_b: boolean): string {
-  var exp: i32 = 0;
-  var d: u64 = divisor;
+  let exp: i32 = 0;
+  let d: u64 = divisor;
   while (d > 1 as u64 && d % base == 0 as u64) {
     d = d / base;
     exp = exp + 1;
@@ -342,7 +342,7 @@ pub function unit_text(divisor: u64, base: u64, with_b: boolean): string {
   if (d != 1 as u64) {
     exp = 0;
   }
-  var out: string = power_letter(exp, base);
+  let out: string = power_letter(exp, base);
   if (with_b) {
     if (exp > 0 && base == 1024 as u64) {
       out = out + "i";
@@ -362,8 +362,8 @@ pub function unit_text(divisor: u64, base: u64, with_b: boolean): string {
 // COLUMN keeps it; `df`'s `1M-blocks` header is the one place that does
 // not, and the two are otherwise the same renderer.
 pub function human(n: u64, base: u64, point_zero: boolean): string {
-  var div: u64 = 1 as u64;
-  var exp: i32 = 0;
+  let div: u64 = 1 as u64;
+  let exp: i32 = 0;
   while (n / div >= base) {
     div = div * base;
     exp = exp + 1;
@@ -371,10 +371,10 @@ pub function human(n: u64, base: u64, point_zero: boolean): string {
   if (exp == 0) {
     return n.to_string();
   }
-  var whole: u64 = n / div;
-  var rem: u64 = n % div;
+  let whole: u64 = n / div;
+  let rem: u64 = n % div;
   if (whole < 10 as u64) {
-    var tenths: u64 = whole * (10 as u64) + rem * (10 as u64) / div;
+    let tenths: u64 = whole * (10 as u64) + rem * (10 as u64) / div;
     if (rem * (10 as u64) % div != 0 as u64) {
       tenths = tenths + 1 as u64;
     }
@@ -385,7 +385,7 @@ pub function human(n: u64, base: u64, point_zero: boolean): string {
       return (tenths / (10 as u64)).to_string() + "." + (tenths % (10 as u64)).to_string() + power_letter(exp, base);
     }
   }
-  var up: u64 = whole;
+  let up: u64 = whole;
   if (rem > 0 as u64) {
     up = up + 1 as u64;
   }
@@ -425,11 +425,11 @@ pub function human_unit(base: u64): Unit {
 // the two shared ones — DU_BLOCK_SIZE / DF_BLOCK_SIZE, BLOCK_SIZE,
 // BLOCKSIZE.
 pub function env_unit(names: string[]): Unit {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < names.len()) {
     match (env(names[i])) {
       Some(v) => {
-        var n: Num = parse_num(v, false, true, false);
+        let n: Num = parse_num(v, false, true, false);
         if (n.status == size_ok()) {
           return unit_from(n);
         }
@@ -460,7 +460,7 @@ pub function format_size(n: u64, block_size: u64, suffix: string, human_base: u6
   if (human_base > 0 as u64) {
     return human(n, human_base, true);
   }
-  var q: u64 = n / block_size;
+  let q: u64 = n / block_size;
   if (n % block_size != 0 as u64) {
     q = q + 1 as u64;
   }

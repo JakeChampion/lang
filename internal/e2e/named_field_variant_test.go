@@ -33,8 +33,8 @@ function area(s: Shape): i32 {
 }
 
 function main(): i32 {
-    var rr: Shape = Rect(3, 4);
-    var c: Shape = Circle(2);
+    let rr: Shape = Rect(3, 4);
+    let c: Shape = Circle(2);
     print(rr.to_string());                 // Rect { w: 3, h: 4 }
     print("a=" + area(rr).to_string());    // a=12
     print("a=" + area(c).to_string());     // a=12

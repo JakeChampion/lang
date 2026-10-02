@@ -2,7 +2,7 @@
 
 `tuple_mixed__fnscope__alias_param` and `tuple_mixed__if_block__alias_param`
 sat at a constant 2 allocs / 0 frees / 80 live bytes: a callee that binds
-`var x = src` and only READS through the alias cost every caller of that
+`let x = src` and only READS through the alias cost every caller of that
 callee its `TUPRCS:` deep free. #7553 closed exactly this asymmetry one tier
 up — `borrowable_params_interproc` unions alias-bind and alias-reassign
 proofs into the box verdict — but `tuple_payload_borrow_flags` still passed
@@ -15,14 +15,14 @@ read the bind as an escape and `TUPB:round` param 0 stayed `'0'`.
 (the `param_alias_bind_sites` recursion shape, `StmtDefer` arm included) and
 vets each site with `rctuple_payload_escapes_alias` on the **alias's own
 name** — the `strarr_alias_bind_sites_of` lesson, one class over. Box-level
-vetting (`body_unsafe_for`) would bless `var x = src; return x.1;`: the box
+vetting (`body_unsafe_for`) would bless `let x = src; return x.1;`: the box
 flag only proves the callee never keeps the box, while the caller's `TUPRCS:`
 deep free walks every rc position and would free the handed-out element —
 the sanitizer-confirmed UAF (exit 124 / exit 99) that killed v1 of the TUPB
 tier (`2026-08-24-tuple-borrowed-arg-payload-tier.md`).
 
 Scanning the alias over the whole body with an empty `alias_ok` also keeps
-the conservative refusals for free: a chained alias (`var y = x`) reads as a
+the conservative refusals for free: a chained alias (`let y = x`) reads as a
 bare-ident escape of `x`, and an onward pass of `x` is an escape under the
 empty registry. A REASSIGNED alias stays forgivable when its uses pass the
 payload scan — the rebind ends the aliasing, the same box-level reasoning
@@ -48,7 +48,7 @@ report; a leak report on a refused row is the census's business):
 | fnscope alias, reads only (the cell) | 43 | balanced, live 0 |
 | if-block alias, reads only (the cell) | 75 | balanced, live 0 |
 | alias hands element out (`return x.1`) | 20 | frees pinned 101 — must stay refused |
-| chained alias (`var y = x`) | 43 | frees pinned 0 — refused |
+| chained alias (`let y = x`) | 43 | frees pinned 0 — refused |
 | reassigned alias | 11 | frees pinned 2 — flag sound, callee's fresh tuple leaks (pre-existing) |
 
 ## Gates

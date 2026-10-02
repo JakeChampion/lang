@@ -35,7 +35,7 @@ function u8_of(x: f64): i32 { return (x as u8) as i32; }
 function u8_of32(x: f32): i32 { return (x as u8) as i32; }
 
 function main(): i32 {
-    var zero: f64 = 0.0;
+    let zero: f64 = 0.0;
     if (u8_of(zero - 1.0) != 0) { return 1; }
     if (u8_of(zero - 5.0) != 0) { return 2; }
     if (u8_of(zero - 300.0) != 0) { return 3; }
@@ -47,7 +47,7 @@ function main(): i32 {
     if (u8_of(0.0) != 0) { return 9; }
     if (u8_of(255.0) != 255) { return 10; }
 
-    var z32: f32 = 0.0;
+    let z32: f32 = 0.0;
     if (u8_of32(z32 - 1.0) != 0) { return 11; }
     if (u8_of32(z32 - 300.0) != 0) { return 12; }
     if (u8_of32(300.7) != 44) { return 13; }

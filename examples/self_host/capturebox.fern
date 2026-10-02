@@ -14,13 +14,13 @@ pub function cell_name(name: string): string {
 }
 
 function cell_read(name: string, line: i32, col: i32): ast.Expr {
-  var cell: ast.Expr = ast.ExprIdent { name: cell_name(name), line: line, col: col, ty: "" };
+  let cell: ast.Expr = ast.ExprIdent { name: cell_name(name), line: line, col: col, ty: "" };
   return ast.ExprCall { callee: ast.ExprFieldAccess { obj: cell, field: "get", line: line, col: col, ty: "" }, args: [], line: line, col: col, type_args: [], ty: "" };
 }
 
-// cell_decl builds `var $cell$name: Cell[ty] = cell_new(init);`.
+// cell_decl builds `let $cell$name: Cell[ty] = cell_new(init);`.
 pub function cell_decl(name: string, ty: string, init: ast.Expr, line: i32, col: i32): ast.Stmt {
-  var cell: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: "cell_new", line: line, col: col, ty: "" }, args: [init], line: line, col: col, type_args: [], ty: "" };
+  let cell: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: "cell_new", line: line, col: col, ty: "" }, args: [init], line: line, col: col, type_args: [], ty: "" };
   return ast.StmtVar { name: cell_name(name), type_name: "Cell[" + ty + "]", init: cell, line: line, col: col, fn_ret: "", fn_param_types: "" };
 }
 
@@ -50,15 +50,15 @@ pub function box_rewrite_expr(e: ast.Expr, boxed: string[], btypes: string[], bs
       return ast.ExprUnary { op: u.op, operand: box_rewrite_expr(u.operand, boxed, btypes, bsites, bound), line: u.line, col: u.col, ty: u.ty };
     },
     ast.ExprCall(c) => {
-      var nargs: ast.Expr[] = [];
+      let nargs: ast.Expr[] = [];
       for arg in c.args {
         nargs = nargs.append(box_rewrite_expr(arg, boxed, btypes, bsites, bound));
       }
       return ast.ExprCall { callee: box_rewrite_expr(c.callee, boxed, btypes, bsites, bound), args: nargs, line: c.line, col: c.col, type_args: c.type_args, ty: c.ty };
     },
     ast.ExprArray(a) => {
-      var ne: ast.Expr[] = [];
-      var i: i32 = 0;
+      let ne: ast.Expr[] = [];
+      let i: i32 = 0;
       while (i < a.elements.len()) {
         ne = ne.append(box_rewrite_expr(a.elements[i], boxed, btypes, bsites, bound));
         i = i + 1;
@@ -66,7 +66,7 @@ pub function box_rewrite_expr(e: ast.Expr, boxed: string[], btypes: string[], bs
       return ast.ExprArray { ...a, elements: ne };
     },
     ast.ExprTuple(t) => {
-      var ne: ast.Expr[] = [];
+      let ne: ast.Expr[] = [];
       for el in t.elements {
         ne = ne.append(box_rewrite_expr(el, boxed, btypes, bsites, bound));
       }
@@ -79,11 +79,11 @@ pub function box_rewrite_expr(e: ast.Expr, boxed: string[], btypes: string[], bs
       return ast.ExprSlice { ...sl, array: box_rewrite_expr(sl.array, boxed, btypes, bsites, bound), start: box_rewrite_expr(sl.start, boxed, btypes, bsites, bound), end: box_rewrite_expr(sl.end, boxed, btypes, bsites, bound) };
     },
     ast.ExprStructLit(sl) => {
-      var nv: ast.Expr[] = [];
+      let nv: ast.Expr[] = [];
       for fv in sl.field_values {
         nv = nv.append(box_rewrite_expr(fv, boxed, btypes, bsites, bound));
       }
-      var nbase: ast.Expr = sl.base;
+      let nbase: ast.Expr = sl.base;
       if (sl.has_base) {
         nbase = box_rewrite_expr(sl.base, boxed, btypes, bsites, bound);
       }
@@ -95,8 +95,8 @@ pub function box_rewrite_expr(e: ast.Expr, boxed: string[], btypes: string[], bs
     ast.ExprLambda(lm) => {
       // A lambda PARAMETER of a boxed name is a different variable: inside
       // this body the spelling means the argument, not the enclosing cell.
-      var lb: string[] = bound;
-      var lp: i32 = 0;
+      let lb: string[] = bound;
+      let lp: i32 = 0;
       while (lp < lm.params.len()) {
         lb = lb.append(lm.params[lp].name);
         lp = lp + 1;
@@ -104,7 +104,7 @@ pub function box_rewrite_expr(e: ast.Expr, boxed: string[], btypes: string[], bs
       // The captured storage changes with the identifier, not later at
       // code generation. Keep the exact semantic element type, including
       // unknowns, function signatures, widths and borrowed views.
-      var caps: ast.TypedBinding[] = lm.captures;
+      let caps: ast.TypedBinding[] = lm.captures;
       if (lm.captures_known) {
         caps = [];
         for cap in lm.captures {
@@ -118,8 +118,8 @@ pub function box_rewrite_expr(e: ast.Expr, boxed: string[], btypes: string[], bs
       return ast.ExprLambda { ...lm, body: box_rewrite_stmts(lm.body, boxed, btypes, bsites, lb), captures: caps };
     },
     ast.ExprMapLit(m) => {
-      var keys: ast.Expr[] = [];
-      var vals: ast.Expr[] = [];
+      let keys: ast.Expr[] = [];
+      let vals: ast.Expr[] = [];
       for key in m.keys {
         keys = keys.append(box_rewrite_expr(key, boxed, btypes, bsites, bound));
       }
@@ -129,8 +129,8 @@ pub function box_rewrite_expr(e: ast.Expr, boxed: string[], btypes: string[], bs
       return ast.ExprMapLit { ...m, keys: keys, vals: vals };
     },
     ast.ExprFString(f) => {
-      var exprs: ast.Expr[] = [];
-      var i: i32 = 0;
+      let exprs: ast.Expr[] = [];
+      let i: i32 = 0;
       while (i < f.exprs.len()) {
         if (f.is_expr[i]) {
           exprs = exprs.append(box_rewrite_expr(f.exprs[i], boxed, btypes, bsites, bound));
@@ -165,7 +165,7 @@ pub function box_rewrite_expr(e: ast.Expr, boxed: string[], btypes: string[], bs
 function box_rewrite_stmt(st: ast.Stmt, boxed: string[], btypes: string[], bsites: string[], bound: string[]): ast.Stmt {
   match (st) {
     ast.StmtVar(v) => {
-      var bxi: i32 = util.index_of_str(boxed, v.name);
+      let bxi: i32 = util.index_of_str(boxed, v.name);
       // Only the declaration the cell was built from becomes the cell.
       // A re-declaration of the spelling is a different variable, and
       // rewriting it produced a SECOND `$cell$n` - typed from the first
@@ -185,8 +185,8 @@ function box_rewrite_stmt(st: ast.Stmt, boxed: string[], btypes: string[], bsite
     ast.StmtAssign(a) => {
       if (util.index_of_str(boxed, a.target) >= 0 && util.index_of_str(bound, a.target) < 0) {
         // x = v  ->  $cell$x.set(v)
-        var recv: ast.Expr = ast.ExprIdent { name: cell_name(a.target), line: a.target_line, col: a.target_col, ty: "" };
-        var scall: ast.Expr = ast.ExprCall { callee: ast.ExprFieldAccess { obj: recv, field: "set", line: a.line, col: a.col, ty: "" }, args: [box_rewrite_expr(a.value, boxed, btypes, bsites, bound)], line: a.line, col: a.col, type_args: [], ty: "" };
+        let recv: ast.Expr = ast.ExprIdent { name: cell_name(a.target), line: a.target_line, col: a.target_col, ty: "" };
+        let scall: ast.Expr = ast.ExprCall { callee: ast.ExprFieldAccess { obj: recv, field: "set", line: a.line, col: a.col, ty: "" }, args: [box_rewrite_expr(a.value, boxed, btypes, bsites, bound)], line: a.line, col: a.col, type_args: [], ty: "" };
         return ast.StmtExpr { value: scall, line: a.line };
       }
       return ast.StmtAssign { target: a.target, value: box_rewrite_expr(a.value, boxed, btypes, bsites, bound), line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col };
@@ -207,26 +207,26 @@ function box_rewrite_stmt(st: ast.Stmt, boxed: string[], btypes: string[], bsite
       // The loop BINDER shadows: `for n in xs` inside a function with a
       // boxed `n` means the element, not the cell. The iterable is still
       // in the enclosing scope, so only the body takes the extra binding.
-      var fb: string[] = bound;
+      let fb: string[] = bound;
       fb = astwalk.append_bound_name(fb, fr.var_name);
       return ast.StmtFor { var_name: fr.var_name, iter: box_rewrite_expr(fr.iter, boxed, btypes, bsites, bound), body: box_rewrite_stmts(fr.body, boxed, btypes, bsites, fb), label: fr.label, line: fr.line };
     },
     ast.StmtMatch(m) => {
-      var na: ast.MatchArm[] = [];
+      let na: ast.MatchArm[] = [];
       for arm in m.arms {
         // Rewrite a boxed var read in the guard too - else the guard read
         // the raw slot instead of the box (stale value). No-op when the
-        // guard references no boxed var (box_rewrite_expr returns it as-is).
+        // guard references no boxed let (box_rewrite_expr returns it as-is).
         // A payload binder shadows inside its own arm (body AND guard).
-        var ab: string[] = bound;
-        var bxj: i32 = 0;
+        let ab: string[] = bound;
+        let bxj: i32 = 0;
         while (bxj < boxed.len()) {
           if (util.has_str(astwalk.pattern_binders(arm.pattern, []), boxed[bxj])) {
             ab = ab.append(boxed[bxj]);
           }
           bxj = bxj + 1;
         }
-        var ng: ast.Expr = arm.guard;
+        let ng: ast.Expr = arm.guard;
         if (arm.has_guard) {
           ng = box_rewrite_expr(arm.guard, boxed, btypes, bsites, ab);
         }
@@ -244,14 +244,14 @@ function box_rewrite_stmt(st: ast.Stmt, boxed: string[], btypes: string[], bsite
   return st;
 }
 
-// box_rewrite_stmts walks a statement LIST, so it is where a `var` shadow takes
+// box_rewrite_stmts walks a statement LIST, so it is where a `let` shadow takes
 // effect: a re-declaration of a boxed name binds it for every LATER statement of
 // that list, and only the declaration the cell was built from is rewritten into
 // the cell (matched on its line:col, since the name alone cannot tell the two
 // apart).
 pub function box_rewrite_stmts(stmts: ast.Stmt[], boxed: string[], btypes: string[], bsites: string[], bound: string[]): ast.Stmt[] {
-  var out: ast.Stmt[] = [];
-  var bnd: string[] = bound;
+  let out: ast.Stmt[] = [];
+  let bnd: string[] = bound;
   for stmt in stmts {
     out = out.append(box_rewrite_stmt(stmt, boxed, btypes, bsites, bnd));
     bnd = shadow_after(stmt, boxed, bsites, bnd);
@@ -262,11 +262,11 @@ pub function box_rewrite_stmts(stmts: ast.Stmt[], boxed: string[], btypes: strin
 // Only later statements and the arm yield see a declaration. Its initializer
 // still sees the enclosing binding. Tuple declarations shadow each component.
 function shadow_after(stmt: ast.Stmt, boxed: string[], bsites: string[], bound: string[]): string[] {
-  var out: string[] = bound;
+  let out: string[] = bound;
   if let ast.StmtVar(v) = stmt {
-    var names = astwalk.append_bound_name([], v.name);
+    let names = astwalk.append_bound_name([], v.name);
     for name in names {
-      var i: i32 = util.index_of_str(boxed, name);
+      let i: i32 = util.index_of_str(boxed, name);
       if (i >= 0 && !util.has_str(out, name) && site_key(v.name, v.line, v.col) != bsites[i]) {
         out = out.append(name);
       }

@@ -11,7 +11,7 @@ import "testing"
 func TestSelfHostStructFieldDrop(t *testing.T) {
 	const prog = `struct Bag { items: i32[], n: i32 }
 function use_bag(): i32 {
-    var b: Bag = Bag { items: [1, 2, 3], n: 3 };
+    let b: Bag = Bag { items: [1, 2, 3], n: 3 };
     return b.items[0] + b.n;
 }
 function main(): i32 { return use_bag(); }

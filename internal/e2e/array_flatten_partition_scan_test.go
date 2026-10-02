@@ -13,16 +13,16 @@ import "std/array" as array;
 function is_even(x: i32): boolean { return x % 2 == 0; }
 function add(a: i32, x: i32): i32 { return a + x; }
 function main(): i32 {
-    var f: i32[] = array.flatten([[1, 2], [], [3, 4]]);
+    let f: i32[] = array.flatten([[1, 2], [], [3, 4]]);
     if (f.len() != 4 || f[0] != 1 || f[3] != 4) { return 1; }
-    var p: (i32[], i32[]) = array.partition([1, 2, 3, 4, 5], is_even);
+    let p: (i32[], i32[]) = array.partition([1, 2, 3, 4, 5], is_even);
     if (p.0.len() != 2 || p.1.len() != 3) { return 2; }
     if (p.0[0] != 2 || p.0[1] != 4 || p.1[0] != 1 || p.1[2] != 5) { return 3; }
-    var s: i32[] = array.scan([1, 2, 3, 4], 0, add);
+    let s: i32[] = array.scan([1, 2, 3, 4], 0, add);
     if (s.len() != 4 || s[0] != 1 || s[1] != 3 || s[2] != 6 || s[3] != 10) { return 4; }
-    var pm: (i32[], i32[]) = [1, 2, 3, 4].partition(is_even);
+    let pm: (i32[], i32[]) = [1, 2, 3, 4].partition(is_even);
     if (pm.0.len() != 2 || pm.1.len() != 2) { return 5; }
-    var sm: i32[] = [1, 2, 3].scan(0, add);
+    let sm: i32[] = [1, 2, 3].scan(0, add);
     if (sm[2] != 6) { return 6; }
     return 42;
 }

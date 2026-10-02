@@ -116,21 +116,21 @@ allocator pressure establishes correctness.
 
 ```fern
 function rebuild(names: string[]): string[] {
-    var out: string[] = [];
-    var alias = names;
+    let out: string[] = [];
+    let alias = names;
     out = out.append(alias[0]);
     out = out.append(alias[1]);
     return out;
 }
 function load(): string[] {
-    var names: string[] = [];
+    let names: string[] = [];
     names = names.append("aa" + "!");
     names = names.append("bb" + "!");
     return rebuild(names);
 }
 function churn(): i32 {
-    var junk: string[] = [];
-    var i: i32 = 0;
+    let junk: string[] = [];
+    let i: i32 = 0;
     while (i < 16) {
         junk = junk.append("cc" + "?");
         i = i + 1;
@@ -138,7 +138,7 @@ function churn(): i32 {
     return junk.len();
 }
 function main(): i32 {
-    var a: string[] = load();
+    let a: string[] = load();
     if (churn() != 16) { return 98; }
     print(a[0]);
     print(a[1]);

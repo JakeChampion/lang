@@ -70,13 +70,13 @@ func TestSelfHostEnumPayloadBorrowIRX86_64(t *testing.T) {
 	// freed Seq box comes straight back and the element reads as a Leaf.
 	run(t, `enum N { Leaf(i32), Seq(N[]) }
 struct P { node: N, pos: i32 }
-function mkp(): P { var kids: N[] = [Leaf(7), Leaf(8)]; return P { node: Seq(kids), pos: 1 }; }
-function build(): N[] { var first: P = mkp(); var out: N[] = [first.node]; return out; }
+function mkp(): P { let kids: N[] = [Leaf(7), Leaf(8)]; return P { node: Seq(kids), pos: 1 }; }
+function build(): N[] { let first: P = mkp(); let out: N[] = [first.node]; return out; }
 function describe(n: N): i32 { match (n) { Leaf(v) => { return v; }, Seq(xs) => { return 100 + xs.len(); } } }
 function main(): i32 {
-    var xs: N[] = build();
-    var churn: N[] = [Leaf(1), Leaf(2), Leaf(3)];
-    var churn2: N = Leaf(55);
+    let xs: N[] = build();
+    let churn: N[] = [Leaf(1), Leaf(2), Leaf(3)];
+    let churn2: N = Leaf(55);
     if (describe(xs[0]) != 102) { return 97; }
     if (describe(churn[0]) + describe(churn2) != 56) { return 97; }
     if (__rc_underflow_count() != 0) { return 99; }
@@ -88,13 +88,13 @@ function main(): i32 {
 	// reference exactly like the literal above.
 	run(t, `enum N { Leaf(i32), Seq(N[]) }
 struct P { node: N, pos: i32 }
-function mkp(): P { var kids: N[] = [Leaf(7), Leaf(8)]; return P { node: Seq(kids), pos: 1 }; }
-function build(): N[] { var first: P = mkp(); var out: N[] = []; out = out.append(first.node); return out; }
+function mkp(): P { let kids: N[] = [Leaf(7), Leaf(8)]; return P { node: Seq(kids), pos: 1 }; }
+function build(): N[] { let first: P = mkp(); let out: N[] = []; out = out.append(first.node); return out; }
 function describe(n: N): i32 { match (n) { Leaf(v) => { return v; }, Seq(xs) => { return 100 + xs.len(); } } }
 function main(): i32 {
-    var xs: N[] = build();
-    var churn: N[] = [Leaf(1), Leaf(2), Leaf(3)];
-    var churn2: N = Leaf(55);
+    let xs: N[] = build();
+    let churn: N[] = [Leaf(1), Leaf(2), Leaf(3)];
+    let churn2: N = Leaf(55);
     if (describe(xs[0]) != 102) { return 97; }
     if (describe(churn[0]) + describe(churn2) != 56) { return 97; }
     if (__rc_underflow_count() != 0) { return 99; }
@@ -110,20 +110,20 @@ function total(n: N): i32 {
     match (n) {
         Leaf(v) => { return v; },
         Seq(xs) => {
-            var t: i32 = 0;
-            var i: i32 = 0;
+            let t: i32 = 0;
+            let i: i32 = 0;
             while (i < xs.len()) { t = t + total(xs[i]); i = i + 1; }
             return t;
         }
     }
 }
 function main(): i32 {
-    var kids: N[] = [Leaf(1), Leaf(2), Leaf(4)];
-    var n: N = Seq(kids);
-    var k: i32 = 0;
+    let kids: N[] = [Leaf(1), Leaf(2), Leaf(4)];
+    let n: N = Seq(kids);
+    let k: i32 = 0;
     while (k < 8) {
         if (total(n) != 7) { return 97; }
-        var churn: i32[] = [k + 100, k + 200, k + 300];
+        let churn: i32[] = [k + 100, k + 200, k + 300];
         if (churn[0] != k + 100) { return 97; }
         k = k + 1;
     }
@@ -138,19 +138,19 @@ function width(d: Doc): i32 {
     match (d) {
         Empty => { return 0; },
         Lines(ls) => {
-            var w: i32 = 0;
-            var i: i32 = 0;
+            let w: i32 = 0;
+            let i: i32 = 0;
             while (i < ls.len()) { w = w + ls[i].len(); i = i + 1; }
             return w;
         }
     }
 }
 function main(): i32 {
-    var d: Doc = Lines(["ab", "cde"]);
-    var k: i32 = 0;
+    let d: Doc = Lines(["ab", "cde"]);
+    let k: i32 = 0;
     while (k < 8) {
         if (width(d) != 5) { return 97; }
-        var churn: i32[] = [k, k + 1, k + 2];
+        let churn: i32[] = [k, k + 1, k + 2];
         if (churn[2] != k + 2) { return 97; }
         k = k + 1;
     }
@@ -165,8 +165,8 @@ function main(): i32 {
 	run(t, `function width(d: Option[i32[]]): i32 {
     match (d) {
         Some(xs) => {
-            var w: i32 = 0;
-            var i: i32 = 0;
+            let w: i32 = 0;
+            let i: i32 = 0;
             while (i < xs.len()) { w = w + xs[i]; i = i + 1; }
             return w;
         },
@@ -174,12 +174,12 @@ function main(): i32 {
     }
 }
 function main(): i32 {
-    var base: i32[] = [1, 2, 4];
-    var d: Option[i32[]] = Some(base);
-    var k: i32 = 0;
+    let base: i32[] = [1, 2, 4];
+    let d: Option[i32[]] = Some(base);
+    let k: i32 = 0;
     while (k < 8) {
         if (width(d) != 7) { return 97; }
-        var churn: i32[] = [k + 9, k + 8, k + 7];
+        let churn: i32[] = [k + 9, k + 8, k + 7];
         if (churn[0] != k + 9) { return 97; }
         k = k + 1;
     }
@@ -189,7 +189,7 @@ function main(): i32 {
 }
 
 // #6121: routing the same enum field read through a LOCAL defeated #6049's
-// retain. `var tmp: N = first.node` binds an uncounted alias of the source
+// retain. `let tmp: N = first.node` binds an uncounted alias of the source
 // struct's enum box; the container store that follows is then a bare ident, and
 // the ident arm only retained an rc-CONTAINER slot (array / string / tuple), of
 // which an enum slot is none. So __struct_drop_P's k_enum arm freed the box the
@@ -212,13 +212,13 @@ var selfHostEnumFieldAliasCases = []struct {
 	// The issue's repro: the array LITERAL element is a bare ident.
 	{"alias-into-array-literal", `enum N { Leaf(i32), Seq(N[]) }
 struct P { node: N, pos: i32 }
-function mkp(): P { var kids: N[] = [Leaf(7), Leaf(8)]; return P { node: Seq(kids), pos: 1 }; }
-function build(): N[] { var first: P = mkp(); var tmp: N = first.node; var out: N[] = [tmp]; return out; }
+function mkp(): P { let kids: N[] = [Leaf(7), Leaf(8)]; return P { node: Seq(kids), pos: 1 }; }
+function build(): N[] { let first: P = mkp(); let tmp: N = first.node; let out: N[] = [tmp]; return out; }
 function describe(n: N): i32 { match (n) { Leaf(v) => { return v; }, Seq(xs) => { return 100 + xs.len(); } } }
 function main(): i32 {
-    var xs: N[] = build();
-    var churn: N[] = [Leaf(1), Leaf(2), Leaf(3)];
-    var churn2: N = Leaf(55);
+    let xs: N[] = build();
+    let churn: N[] = [Leaf(1), Leaf(2), Leaf(3)];
+    let churn2: N = Leaf(55);
     if (describe(xs[0]) != 102) { return 97; }
     if (describe(churn[0]) + describe(churn2) != 56) { return 97; }
     if (__rc_underflow_count() != 0) { return 99; }
@@ -228,13 +228,13 @@ function main(): i32 {
 	// inc bracket over the loaded slot rather than an inline inc.
 	{"alias-into-append", `enum N { Leaf(i32), Seq(N[]) }
 struct P { node: N, pos: i32 }
-function mkp(): P { var kids: N[] = [Leaf(7), Leaf(8)]; return P { node: Seq(kids), pos: 1 }; }
-function build(): N[] { var first: P = mkp(); var tmp: N = first.node; var out: N[] = []; out = out.append(tmp); return out; }
+function mkp(): P { let kids: N[] = [Leaf(7), Leaf(8)]; return P { node: Seq(kids), pos: 1 }; }
+function build(): N[] { let first: P = mkp(); let tmp: N = first.node; let out: N[] = []; out = out.append(tmp); return out; }
 function describe(n: N): i32 { match (n) { Leaf(v) => { return v; }, Seq(xs) => { return 100 + xs.len(); } } }
 function main(): i32 {
-    var xs: N[] = build();
-    var churn: N[] = [Leaf(1), Leaf(2), Leaf(3)];
-    var churn2: N = Leaf(55);
+    let xs: N[] = build();
+    let churn: N[] = [Leaf(1), Leaf(2), Leaf(3)];
+    let churn2: N = Leaf(55);
     if (describe(xs[0]) != 102) { return 97; }
     if (describe(churn[0]) + describe(churn2) != 56) { return 97; }
     if (__rc_underflow_count() != 0) { return 99; }
@@ -244,13 +244,13 @@ function main(): i32 {
 	// both references are counted and the struct's dec still leaves one live.
 	{"alias-into-two-containers", `enum N { Leaf(i32), Seq(N[]) }
 struct P { node: N, pos: i32 }
-function mkp(): P { var kids: N[] = [Leaf(7), Leaf(8)]; return P { node: Seq(kids), pos: 1 }; }
-function build(): N[] { var first: P = mkp(); var tmp: N = first.node; var a: N[] = [tmp]; var b: N[] = []; b = b.append(tmp); return a.append(b[0]); }
+function mkp(): P { let kids: N[] = [Leaf(7), Leaf(8)]; return P { node: Seq(kids), pos: 1 }; }
+function build(): N[] { let first: P = mkp(); let tmp: N = first.node; let a: N[] = [tmp]; let b: N[] = []; b = b.append(tmp); return a.append(b[0]); }
 function describe(n: N): i32 { match (n) { Leaf(v) => { return v; }, Seq(xs) => { return 100 + xs.len(); } } }
 function main(): i32 {
-    var xs: N[] = build();
-    var churn: N[] = [Leaf(1), Leaf(2), Leaf(3)];
-    var churn2: N = Leaf(55);
+    let xs: N[] = build();
+    let churn: N[] = [Leaf(1), Leaf(2), Leaf(3)];
+    let churn2: N = Leaf(55);
     if (xs.len() != 2) { return 96; }
     if (describe(xs[0]) != 102) { return 97; }
     if (describe(xs[1]) != 102) { return 97; }

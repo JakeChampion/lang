@@ -36,7 +36,7 @@ import "./lib/gnu";
 import "./lib/bre";
 
 function help_text(): string {
-  var out: string = "";
+  let out: string = "";
   out = out + "Usage: " + gnu.prog() + " EXPRESSION\n";
   out = out + "  or:  " + gnu.prog() + " OPTION\n";
   out = out + "\n";
@@ -104,7 +104,7 @@ function die(msg: string): void {
 // glibc's `looks_like_integer`: an optional `-`, then digits, then the
 // end. No `+`, no space, no `.`.
 function is_integer(s: string): boolean {
-  var i: i32 = 0;
+  let i: i32 = 0;
   if (s.len() > 0 && s[0] as i32 == 45) {
     i = 1;
   }
@@ -112,7 +112,7 @@ function is_integer(s: string): boolean {
     return false;
   }
   while (i < s.len()) {
-    var b: i32 = s[i] as i32;
+    let b: i32 = s[i] as i32;
     if (b < 48 || b > 57) {
       return false;
     }
@@ -127,7 +127,7 @@ function is_null(s: string): boolean {
   if (s.len() == 0) {
     return true;
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   if (s[0] as i32 == 45) {
     i = 1;
   }
@@ -163,14 +163,14 @@ function bool_value(b: boolean): string {
 
 // Byte comparison, unsigned, the way strcmp orders in the C locale.
 function str_cmp(a: string, b: string): i32 {
-  var n: i32 = a.len();
+  let n: i32 = a.len();
   if (b.len() < n) {
     n = b.len();
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < n) {
-    var x: i32 = a[i] as i32;
-    var y: i32 = b[i] as i32;
+    let x: i32 = a[i] as i32;
+    let y: i32 = b[i] as i32;
     if (x != y) {
       if (x < y) {
         return 0 - 1;
@@ -238,9 +238,9 @@ function do_length(s: string): string {
 // The 1-based position in `s` of the first byte that appears anywhere in
 // `chars`, or 0.
 function do_index(s: string, chars: string): string {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < s.len()) {
-    var k: i32 = 0;
+    let k: i32 = 0;
     while (k < chars.len()) {
       if (s[i] as i32 == chars[k] as i32) {
         return (i as i64 + 1 as i64).to_string();
@@ -259,16 +259,16 @@ function do_substr(s: string, pos: string, len: string): string {
   if (!is_integer(pos) || !is_integer(len)) {
     return "";
   }
-  var p: bigint.BigInt = to_int(pos);
-  var n: bigint.BigInt = to_int(len);
-  var one: bigint.BigInt = bigint.from_i64(1 as i64);
-  var size: bigint.BigInt = bigint.from_i64(s.len() as i64);
+  let p: bigint.BigInt = to_int(pos);
+  let n: bigint.BigInt = to_int(len);
+  let one: bigint.BigInt = bigint.from_i64(1 as i64);
+  let size: bigint.BigInt = bigint.from_i64(s.len() as i64);
   if (p.cmp(one) < 0 || p.cmp(size) > 0 || n.cmp(one) < 0) {
     return "";
   }
-  var start: i32 = p.low_u64() as i32 - 1;
-  var end: i32 = s.len();
-  var avail: bigint.BigInt = size.sub(p).add(one);
+  let start: i32 = p.low_u64() as i32 - 1;
+  let end: i32 = s.len();
+  let avail: bigint.BigInt = size.sub(p).add(one);
   if (n.cmp(avail) < 0) {
     end = start + n.low_u64() as i32;
   }
@@ -283,12 +283,12 @@ function do_colon(l: string, r: string, ev: boolean): string {
   if (!ev) {
     return "0";
   }
-  var re: bre.Bre = bre.bre_compile(r);
+  let re: bre.Bre = bre.bre_compile(r);
   if (re.err.len() > 0) {
     gnu.error(re.err);
     exit(invalid());
   }
-  var m: bre.BreMatch = re.exec(l);
+  let m: bre.BreMatch = re.exec(l);
   if (re.ngroups > 0) {
     if (!m.matched || m.starts[1] < 0) {
       return "";
@@ -310,8 +310,8 @@ function arith(op: string, l: string, r: string, ev: boolean): string {
     gnu.error("non-integer argument");
     exit(invalid());
   }
-  var a: bigint.BigInt = to_int(l);
-  var b: bigint.BigInt = to_int(r);
+  let a: bigint.BigInt = to_int(l);
+  let b: bigint.BigInt = to_int(r);
   if (op == "+") {
     return a.add(b).to_string();
   }
@@ -325,7 +325,7 @@ function arith(op: string, l: string, r: string, ev: boolean): string {
     gnu.error("division by zero");
     exit(invalid());
   }
-  var qr: (bigint.BigInt, bigint.BigInt) = a.divmod(b);
+  let qr: (bigint.BigInt, bigint.BigInt) = a.divmod(b);
   if (op == "/") {
     return qr.0.to_string();
   }
@@ -341,10 +341,10 @@ function arith(op: string, l: string, r: string, ev: boolean): string {
 // not reached.
 // The innermost level: a parenthesised expression or one token.
 function eval7(s0: S, ev: boolean): (string, S) {
-  var s: S = s0;
+  let s: S = s0;
   if (is_tok(s, "(")) {
     s = advance(s);
-    var r: (string, S) = eval_or(s, ev);
+    let r: (string, S) = eval_or(s, ev);
     s = r.1;
     if (!has(s)) {
       die("syntax error: expecting ')' after " + gnu.quote(prev(s)));
@@ -364,25 +364,25 @@ function eval7(s0: S, ev: boolean): (string, S) {
 // The keyword functions, and `+ TOKEN` — which quotes the next argument
 // whatever it is, so `expr + match` is the string "match".
 function eval6(s0: S, ev: boolean): (string, S) {
-  var s: S = s0;
+  let s: S = s0;
   if (is_tok(s, "length")) {
-    var a: (string, S) = eval6(advance(s), ev);
+    let a: (string, S) = eval6(advance(s), ev);
     return (do_length(a.0), a.1);
   }
   if (is_tok(s, "match")) {
-    var m1: (string, S) = eval6(advance(s), ev);
-    var m2: (string, S) = eval6(m1.1, ev);
+    let m1: (string, S) = eval6(advance(s), ev);
+    let m2: (string, S) = eval6(m1.1, ev);
     return (do_colon(m1.0, m2.0, ev), m2.1);
   }
   if (is_tok(s, "index")) {
-    var i1: (string, S) = eval6(advance(s), ev);
-    var i2: (string, S) = eval6(i1.1, ev);
+    let i1: (string, S) = eval6(advance(s), ev);
+    let i2: (string, S) = eval6(i1.1, ev);
     return (do_index(i1.0, i2.0), i2.1);
   }
   if (is_tok(s, "substr")) {
-    var t1: (string, S) = eval6(advance(s), ev);
-    var t2: (string, S) = eval6(t1.1, ev);
-    var t3: (string, S) = eval6(t2.1, ev);
+    let t1: (string, S) = eval6(advance(s), ev);
+    let t2: (string, S) = eval6(t1.1, ev);
+    let t3: (string, S) = eval6(t2.1, ev);
     return (do_substr(t1.0, t2.0, t3.0), t3.1);
   }
   if (is_tok(s, "+")) {
@@ -394,11 +394,11 @@ function eval6(s0: S, ev: boolean): (string, S) {
 }
 
 function eval5(s0: S, ev: boolean): (string, S) {
-  var r: (string, S) = eval6(s0, ev);
-  var l: string = r.0;
-  var s: S = r.1;
+  let r: (string, S) = eval6(s0, ev);
+  let l: string = r.0;
+  let s: S = r.1;
   while (is_tok(s, ":")) {
-    var r2: (string, S) = eval6(advance(s), ev);
+    let r2: (string, S) = eval6(advance(s), ev);
     l = do_colon(l, r2.0, ev);
     s = r2.1;
   }
@@ -406,12 +406,12 @@ function eval5(s0: S, ev: boolean): (string, S) {
 }
 
 function eval4(s0: S, ev: boolean): (string, S) {
-  var r: (string, S) = eval5(s0, ev);
-  var l: string = r.0;
-  var s: S = r.1;
+  let r: (string, S) = eval5(s0, ev);
+  let l: string = r.0;
+  let s: S = r.1;
   while (is_tok(s, "*") || is_tok(s, "/") || is_tok(s, "%")) {
-    var op: string = peek(s);
-    var r2: (string, S) = eval5(advance(s), ev);
+    let op: string = peek(s);
+    let r2: (string, S) = eval5(advance(s), ev);
     l = arith(op, l, r2.0, ev);
     s = r2.1;
   }
@@ -419,12 +419,12 @@ function eval4(s0: S, ev: boolean): (string, S) {
 }
 
 function eval3(s0: S, ev: boolean): (string, S) {
-  var r: (string, S) = eval4(s0, ev);
-  var l: string = r.0;
-  var s: S = r.1;
+  let r: (string, S) = eval4(s0, ev);
+  let l: string = r.0;
+  let s: S = r.1;
   while (is_tok(s, "+") || is_tok(s, "-")) {
-    var op: string = peek(s);
-    var r2: (string, S) = eval4(advance(s), ev);
+    let op: string = peek(s);
+    let r2: (string, S) = eval4(advance(s), ev);
     l = arith(op, l, r2.0, ev);
     s = r2.1;
   }
@@ -455,12 +455,12 @@ function relate(op: string, c: i32): boolean {
 }
 
 function eval2(s0: S, ev: boolean): (string, S) {
-  var r: (string, S) = eval3(s0, ev);
-  var l: string = r.0;
-  var s: S = r.1;
+  let r: (string, S) = eval3(s0, ev);
+  let l: string = r.0;
+  let s: S = r.1;
   while (has(s) && is_relop(peek(s))) {
-    var op: string = peek(s);
-    var r2: (string, S) = eval3(advance(s), ev);
+    let op: string = peek(s);
+    let r2: (string, S) = eval3(advance(s), ev);
     l = bool_value(relate(op, compare(l, r2.0)));
     s = r2.1;
   }
@@ -470,11 +470,11 @@ function eval2(s0: S, ev: boolean): (string, S) {
 // `&`: the left value when neither side is null or zero, else 0. The
 // right side is not evaluated when the left already settles it.
 function eval_and(s0: S, ev: boolean): (string, S) {
-  var r: (string, S) = eval2(s0, ev);
-  var l: string = r.0;
-  var s: S = r.1;
+  let r: (string, S) = eval2(s0, ev);
+  let l: string = r.0;
+  let s: S = r.1;
   while (is_tok(s, "&")) {
-    var r2: (string, S) = eval2(advance(s), ev && !is_null(l));
+    let r2: (string, S) = eval2(advance(s), ev && !is_null(l));
     s = r2.1;
     if (is_null(l) || is_null(r2.0)) {
       l = "0";
@@ -486,11 +486,11 @@ function eval_and(s0: S, ev: boolean): (string, S) {
 // `|`: the left value unless it is null or zero, else the right, and 0
 // when both are.
 function eval_or(s0: S, ev: boolean): (string, S) {
-  var r: (string, S) = eval_and(s0, ev);
-  var l: string = r.0;
-  var s: S = r.1;
+  let r: (string, S) = eval_and(s0, ev);
+  let l: string = r.0;
+  let s: S = r.1;
   while (is_tok(s, "|")) {
-    var r2: (string, S) = eval_and(advance(s), ev && is_null(l));
+    let r2: (string, S) = eval_and(advance(s), ev && is_null(l));
     s = r2.1;
     if (is_null(l)) {
       l = r2.0;
@@ -510,11 +510,11 @@ function sole_option(argv: string[]): void {
   if (argv.len() != 2) {
     return;
   }
-  var a: string = argv[1];
+  let a: string = argv[1];
   if (a.len() < 3 || !a.starts_with("--")) {
     return;
   }
-  var name: string = slice_unchecked(a, 2, a.len()) + "";
+  let name: string = slice_unchecked(a, 2, a.len()) + "";
   if ("help".starts_with(name)) {
     gnu.write_out_with(help_text(), failure());
     exit(0);
@@ -526,14 +526,14 @@ function sole_option(argv: string[]): void {
 }
 
 pub function main(): i32 {
-  var argv: string[] = args();
+  let argv: string[] = args();
   sole_option(argv);
-  var start: i32 = 1;
+  let start: i32 = 1;
   if (argv.len() > 1 && argv[1] == "--") {
     start = 2;
   }
-  var ops: string[] = [];
-  var k: i32 = start;
+  let ops: string[] = [];
+  let k: i32 = start;
   while (k < argv.len()) {
     ops = ops.append(argv[k]);
     k = k + 1;
@@ -541,12 +541,12 @@ pub function main(): i32 {
   if (ops.len() == 0) {
     gnu.die_usage("missing operand", invalid());
   }
-  var r: (string, S) = eval_or(S { ops: ops, i: 0 }, true);
-  var s: S = r.1;
+  let r: (string, S) = eval_or(S { ops: ops, i: 0 }, true);
+  let s: S = r.1;
   if (has(s)) {
     die("syntax error: unexpected argument " + gnu.quote(peek(s)));
   }
-  var o: io_buffered.BufWriter = gnu.out_with(r.0.len() + 1);
+  let o: io_buffered.BufWriter = gnu.out_with(r.0.len() + 1);
   o = gnu.put_with(o, r.0 + "\n", failure());
   gnu.finish_with(o, failure());
   if (is_null(r.0)) {

@@ -13,9 +13,9 @@ import (
 // grows a local accumulator well past the inline cap, and the fused
 // `acc + slice_unchecked(...)` form beside it.
 const strAppendSrc = `function main(): i32 {
-    var out: string = "";
-    var src: string = "abcdefghijklmnopqrstuvwxyz";
-    var i: i32 = 0;
+    let out: string = "";
+    let src: string = "abcdefghijklmnopqrstuvwxyz";
+    let i: i32 = 0;
     while (i < 40) {
         out = out + "abcdefgh";
         out = out + slice_unchecked(src, 0, 6);

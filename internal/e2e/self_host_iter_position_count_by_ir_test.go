@@ -25,12 +25,12 @@ impl Iterator[i32] for Range {
     }
 }
 pub function position_by[T, I: Iterator[T]](it: I, pred: (T) => boolean): i32 {
-    var cur = it; var i = 0; var go = true;
+    let cur = it; let i = 0; let go = true;
     while (go) { match (cur.next()) { Some(t) => { if (pred(t.0)) { return i; } i = i + 1; cur = t.1; }, None => { go = false; }, } }
     return 0 - 1;
 }
 pub function count_by[T, I: Iterator[T]](it: I, pred: (T) => boolean): i32 {
-    var cur = it; var n = 0; var go = true;
+    let cur = it; let n = 0; let go = true;
     while (go) { match (cur.next()) { Some(t) => { if (pred(t.0)) { n = n + 1; } cur = t.1; }, None => { go = false; }, } }
     return n;
 }
@@ -91,9 +91,9 @@ func TestNativeIterPositionCountByArm64(t *testing.T) {
 func TestNativeIterPositionCountByModule(t *testing.T) {
 	src := `import "core/iter" as iter;
 function main(): i32 {
-    var p = iter.position_by(iter.range(0, 10), (x: i32): boolean => { return x * x > 8; });  // 3
-    var c = iter.count_by(iter.range(0, 10), (x: i32): boolean => { return x % 3 == 0; });     // 4
-    var m = iter.position_by(iter.range(0, 4), (x: i32): boolean => { return x > 99; });        // -1
+    let p = iter.position_by(iter.range(0, 10), (x: i32): boolean => { return x * x > 8; });  // 3
+    let c = iter.count_by(iter.range(0, 10), (x: i32): boolean => { return x % 3 == 0; });     // 4
+    let m = iter.position_by(iter.range(0, 4), (x: i32): boolean => { return x > 99; });        // -1
     return p * 10 + c + (m + 1);                                                                      // 30+4+0 = 34
 }
 `

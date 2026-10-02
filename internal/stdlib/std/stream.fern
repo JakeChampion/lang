@@ -40,7 +40,7 @@ pub function stream_from_string(s: string): Stream {
 // `stream_empty()` — zero-length Stream. Useful as a default
 // / placeholder.
 pub function stream_empty(): Stream {
-  var empty: u8[] = [];
+  let empty: u8[] = [];
   return Stream { data: empty, pos: 0 };
 }
 
@@ -54,7 +54,7 @@ pub function (s: Stream) len(): i32 {
 // the end of the buffer. Zero when the Stream is fully
 // consumed.
 pub function (s: Stream) remaining(): i32 {
-  var total: i32 = s.data.len();
+  let total: i32 = s.data.len();
   if (s.pos >= total) {
     return 0;
   }
@@ -72,20 +72,20 @@ pub function (s: Stream) is_empty(): boolean {
 // as a fresh `u8[]`, returning `(bytes, advancedStream)` per
 // the cursor idiom (docs/CURSOR-IDIOM.md). The returned
 // Stream's cursor is at the end of the buffer; rebind it:
-// `var (bytes, s) = s.read_all();`.
+// `let (bytes, s) = s.read_all();`.
 //
 // Phase 2 will fold an IoError into the result once host-
 // side reads can fail; Phase 1's in-memory buffer can't
 // fail so the bare bytes return is fine.
 pub function (s: Stream) read_all(): (u8[], Stream) {
-  var rem: i32 = s.remaining();
+  let rem: i32 = s.remaining();
   if (rem == 0) {
-    var empty: u8[] = [];
+    let empty: u8[] = [];
     return (empty, s);
   }
-  var out: u8[] = [];
-  var i: i32 = s.pos;
-  var end: i32 = s.data.len();
+  let out: u8[] = [];
+  let i: i32 = s.pos;
+  let end: i32 = s.data.len();
   while (i < end) {
     out = out.append(s.data[i]);
     i = i + 1;
@@ -126,12 +126,12 @@ pub function (s: Stream) read_all_string(): (Option[string], Stream) {
 // `(s: Stream).read_byte()` — read a single byte from the
 // cursor. Returns `(Option[i32], advancedStream)`: Some(b)
 // + a Stream advanced past it, or None + the unchanged
-// Stream when exhausted. Rebind: `var (b, s) = s.read_byte();`.
+// Stream when exhausted. Rebind: `let (b, s) = s.read_byte();`.
 pub function (s: Stream) read_byte(): (Option[i32], Stream) {
   if (s.pos >= s.data.len()) {
     return (None, s);
   }
-  var b: i32 = s.data[s.pos] as i32;
+  let b: i32 = s.data[s.pos] as i32;
   return (Some(b), Stream { ...s, pos: s.pos + 1 });
 }
 
@@ -140,12 +140,12 @@ pub function (s: Stream) read_byte(): (Option[i32], Stream) {
 // holds the actual bytes consumed (possibly fewer than `n` at
 // EOF); empty when already exhausted or `n <= 0`.
 pub function (s: Stream) read_n(n: i32): (u8[], Stream) {
-  var out: u8[] = [];
+  let out: u8[] = [];
   if (n <= 0) {
     return (out, s);
   }
-  var pos: i32 = s.pos;
-  var end: i32 = pos + n;
+  let pos: i32 = s.pos;
+  let end: i32 = pos + n;
   if (end > s.data.len()) {
     end = s.data.len();
   }
@@ -169,18 +169,18 @@ pub function (s: Stream) read_line(): (Option[string], Stream) {
   if (s.pos >= s.data.len()) {
     return (None, s);
   }
-  var line_bytes: u8[] = [];
-  var pos: i32 = s.pos;
+  let line_bytes: u8[] = [];
+  let pos: i32 = s.pos;
   while (pos < s.data.len()) {
-    var b: i32 = s.data[pos] as i32;
+    let b: i32 = s.data[pos] as i32;
     pos = pos + 1;
     if (b == 10) {
       // \n — strip a trailing \r if present.
-      var n: i32 = line_bytes.len();
+      let n: i32 = line_bytes.len();
       if (n > 0) {
         if (line_bytes[n - 1] as i32 == 13) {
-          var stripped: u8[] = [];
-          var i: i32 = 0;
+          let stripped: u8[] = [];
+          let i: i32 = 0;
           while (i < n - 1) {
             stripped = stripped.append(line_bytes[i]);
             i = i + 1;

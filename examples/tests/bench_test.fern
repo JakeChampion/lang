@@ -32,8 +32,8 @@ function report_of(name: string, samples: i64[], allocs: i64): bench.Report {
 
 function ten_samples(): i64[] {
   // 10, 20, … 100 — sorted, as `run` leaves them.
-  var out: i64[] = [];
-  var i: i32 = 1;
+  let out: i64[] = [];
+  let i: i32 = 1;
   while (i <= 10) {
     out = out.append((i * 10) as i64);
     i = i + 1;
@@ -42,7 +42,7 @@ function ten_samples(): i64[] {
 }
 
 function test_percentiles_are_nearest_rank(): test.TestOutcome {
-  var r: bench.Report = report_of("p", ten_samples(), 0 as i64);
+  let r: bench.Report = report_of("p", ten_samples(), 0 as i64);
   // Nearest-rank over ten samples: p50 is the 5th, p95 the 10th.
   if (r.min_ns() != 10i64) {
     return test.fail("min " + r.min_ns().to_string());
@@ -63,10 +63,10 @@ function test_percentiles_are_nearest_rank(): test.TestOutcome {
 // one it did not — that is what makes "the p99.9 was 3.4us" a fact about the
 // program rather than about the arithmetic.
 function test_percentile_names_a_real_sample(): test.TestOutcome {
-  var r: bench.Report = report_of("p", [5i64, 7i64, 11i64], 0 as i64);
-  var per: i32 = 0;
+  let r: bench.Report = report_of("p", [5i64, 7i64, 11i64], 0 as i64);
+  let per: i32 = 0;
   while (per <= 1000) {
-    var v: i64 = r.percentile_ns(per);
+    let v: i64 = r.percentile_ns(per);
     if (v != 5i64 && v != 7i64 && v != 11i64) {
       return test.fail("percentile " + per.to_string() + " invented " + v.to_string());
     }
@@ -77,8 +77,8 @@ function test_percentile_names_a_real_sample(): test.TestOutcome {
 
 // An empty report answers 0 rather than indexing off the end of its samples.
 function test_empty_report_is_answerable(): test.TestOutcome {
-  var empty: i64[] = [];
-  var r: bench.Report = bench.Report {
+  let empty: i64[] = [];
+  let r: bench.Report = bench.Report {
     name: "empty", iterations: 0, wall_ns: 0 as i64,
     samples_ns: empty, allocs: 0 as i64, fresh_bytes: 0 as i64,
   };
@@ -101,7 +101,7 @@ function test_empty_report_is_answerable(): test.TestOutcome {
 }
 
 function test_mean_and_throughput(): test.TestOutcome {
-  var r: bench.Report = report_of("m", ten_samples(), 0 as i64);
+  let r: bench.Report = report_of("m", ten_samples(), 0 as i64);
   // (10 + … + 100) / 10 = 55.
   if (r.mean_ns() != 55i64) {
     return test.fail("mean " + r.mean_ns().to_string());
@@ -120,11 +120,11 @@ function test_mean_and_throughput(): test.TestOutcome {
 // every few iterations does not round to "allocates nothing" — the reading a
 // strict experiment would take as proof.
 function test_allocs_per_op_does_not_round_to_zero(): test.TestOutcome {
-  var r: bench.Report = report_of("a", ten_samples(), 1i64);
+  let r: bench.Report = report_of("a", ten_samples(), 1i64);
   if (r.allocs_per_op_milli() != 100i64) {
     return test.fail("one alloc over ten iterations read " + r.allocs_per_op_milli().to_string());
   }
-  var none: bench.Report = report_of("a", ten_samples(), 0 as i64);
+  let none: bench.Report = report_of("a", ten_samples(), 0 as i64);
   if (none.allocs_per_op_milli() != 0 as i64) {
     return test.fail("zero must read zero");
   }
@@ -132,8 +132,8 @@ function test_allocs_per_op_does_not_round_to_zero(): test.TestOutcome {
 }
 
 function test_json_carries_every_figure(): test.TestOutcome {
-  var r: bench.Report = report_of("json", ten_samples(), 3i64);
-  var j: string = r.to_json();
+  let r: bench.Report = report_of("json", ten_samples(), 3i64);
+  let j: string = r.to_json();
   return test.assert_contains_all(j, [
     "\"name\":\"json\"", "\"iterations\":10", "\"ops_per_sec\":10000",
     "\"p50_ns\":50", "\"p99_ns\":100", "\"p999_ns\":100",
@@ -144,11 +144,11 @@ function test_json_carries_every_figure(): test.TestOutcome {
 // A name with a quote in it must not break the JSON, and one with a comma must
 // not shift every later CSV column.
 function test_output_escapes_the_name(): test.TestOutcome {
-  var r: bench.Report = report_of("odd\"name", ten_samples(), 0 as i64);
+  let r: bench.Report = report_of("odd\"name", ten_samples(), 0 as i64);
   if (!r.to_json().contains("odd\\\"name")) {
     return test.fail("json: " + r.to_json());
   }
-  var c: bench.Report = report_of("a,b", ten_samples(), 0 as i64);
+  let c: bench.Report = report_of("a,b", ten_samples(), 0 as i64);
   if (!c.to_csv_row().starts_with("\"a,b\",10,")) {
     return test.fail("csv: " + c.to_csv_row());
   }
@@ -156,11 +156,11 @@ function test_output_escapes_the_name(): test.TestOutcome {
 }
 
 function test_csv_row_matches_its_header(): test.TestOutcome {
-  var r: bench.Report = report_of("csv", ten_samples(), 0 as i64);
-  var cols: i32 = bench.csv_header().split(",").len();
+  let r: bench.Report = report_of("csv", ten_samples(), 0 as i64);
+  let cols: i32 = bench.csv_header().split(",").len();
   // The name is quoted and holds no comma here, so a plain split counts the
   // row's columns.
-  var cells: i32 = r.to_csv_row().split(",").len();
+  let cells: i32 = r.to_csv_row().split(",").len();
   if (cols != cells) {
     return test.fail("header has " + cols.to_string() + " columns, row has " + cells.to_string());
   }
@@ -170,16 +170,16 @@ function test_csv_row_matches_its_header(): test.TestOutcome {
 // summarize reduces repeated runs to their spread: the best, the middle and
 // the worst, so a reader can see whether one run would have been enough.
 function test_summary_spreads_repeated_runs(): test.TestOutcome {
-  var fast: bench.Report = report_of("s", [10i64], 4i64);  // 1 iter / 1ms
-  var slow: bench.Report = bench.Report {
+  let fast: bench.Report = report_of("s", [10i64], 4i64);  // 1 iter / 1ms
+  let slow: bench.Report = bench.Report {
     name: "s", iterations: 1, wall_ns: 4000000i64,
     samples_ns: [40i64], allocs: 4i64, fresh_bytes: 0 as i64,
   };
-  var mid: bench.Report = bench.Report {
+  let mid: bench.Report = bench.Report {
     name: "s", iterations: 1, wall_ns: 2000000i64,
     samples_ns: [20i64], allocs: 4i64, fresh_bytes: 0 as i64,
   };
-  var s: bench.Summary = bench.summarize("s", [slow, fast, mid]);
+  let s: bench.Summary = bench.summarize("s", [slow, fast, mid]);
   if (s.runs != 3) {
     return test.fail("runs " + s.runs.to_string());
   }
@@ -205,9 +205,9 @@ function test_summary_spreads_repeated_runs(): test.TestOutcome {
 // says the amount allocated depends on something the benchmark does not
 // control.
 function test_summary_reports_unstable_allocation(): test.TestOutcome {
-  var a: bench.Report = report_of("u", [10i64], 4i64);
-  var b: bench.Report = report_of("u", [10i64], 9i64);
-  var s: bench.Summary = bench.summarize("u", [a, b]);
+  let a: bench.Report = report_of("u", [10i64], 4i64);
+  let b: bench.Report = report_of("u", [10i64], 9i64);
+  let s: bench.Summary = bench.summarize("u", [a, b]);
   if (s.allocation_is_stable()) {
     return test.fail("4 and 9 are not stable");
   }
@@ -219,8 +219,8 @@ function test_summary_reports_unstable_allocation(): test.TestOutcome {
 
 // The timed path, asserted only where the clock cannot change the answer.
 function test_run_measures_every_iteration(): test.TestOutcome {
-  var calls: i32 = 0;
-  var r: bench.Report = bench.run("counted", 2, 5, () => { calls = calls + 1; });
+  let calls: i32 = 0;
+  let r: bench.Report = bench.run("counted", 2, 5, () => { calls = calls + 1; });
   // Two warm-ups plus five measured.
   if (calls != 7) {
     return test.fail("body ran " + calls.to_string() + " times, want 7");
@@ -239,9 +239,9 @@ function test_run_measures_every_iteration(): test.TestOutcome {
 
 // The samples come back sorted, which is what makes a percentile an index.
 function test_run_returns_sorted_samples(): test.TestOutcome {
-  var sink: i32 = 0;
-  var r: bench.Report = bench.run("sorted", 1, 8, () => { sink = sink + 1; });
-  var i: i32 = 1;
+  let sink: i32 = 0;
+  let r: bench.Report = bench.run("sorted", 1, 8, () => { sink = sink + 1; });
+  let i: i32 = 1;
   while (i < r.samples_ns.len()) {
     if (r.samples_ns[i] < r.samples_ns[i - 1]) {
       return test.fail("samples are not sorted");
@@ -255,10 +255,10 @@ function test_run_returns_sorted_samples(): test.TestOutcome {
 // nothing after it must read clean — and under `-interp`, where the count is
 // always 0, this asserts the API answers rather than the arena's behaviour.
 function test_mark_reads_clean_over_a_quiet_region(): test.TestOutcome {
-  var a: i64 = bench.alloc_count();
-  var b: i64 = bench.bump_bytes();
-  var i: i32 = 0;
-  var sum: i32 = 0;
+  let a: i64 = bench.alloc_count();
+  let b: i64 = bench.bump_bytes();
+  let i: i32 = 0;
+  let sum: i32 = 0;
   while (i < 1000) {
     sum = sum + i;
     i = i + 1;
@@ -279,12 +279,12 @@ function test_mark_reads_clean_over_a_quiet_region(): test.TestOutcome {
 }
 
 function test_delta_describes_both_halves(): test.TestOutcome {
-  var d: bench.Delta = bench.Delta { allocs: 7i64, fresh_bytes: 64i64 };
+  let d: bench.Delta = bench.Delta { allocs: 7i64, fresh_bytes: 64i64 };
   return test.assert_eq(d.describe(), "allocs=7 fresh_bytes=64");
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("std/bench harness");
+  let r: test.TestRunner = test.test_new("std/bench harness");
   r = r.it("percentiles are nearest-rank", test_percentiles_are_nearest_rank);
   r = r.it("a percentile names a real sample", test_percentile_names_a_real_sample);
   r = r.it("an empty report is answerable", test_empty_report_is_answerable);

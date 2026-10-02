@@ -3,7 +3,7 @@
 ## What it was
 
 A lambda bound to a local that returns a lambda, with no result written
-(`var mk = () => { return (b: i32): i32 => b * 2; };`), was hoisted with an
+(`let mk = () => { return (b: i32): i32 => b * 2; };`), was hoisted with an
 empty result: `checker.inferred_lambda_ret` stamped the returned value's
 spelling, and a function type has none, since its signature lives in the
 `ret_fn_ret` / `ret_fn_param_types` sidecars. The signature table then typed
@@ -29,7 +29,7 @@ previous compiler produced 0 of 5.
 
 ## What it does not reach
 
-A CAPTURING returned lambda (`var curry = (a: i32) => { return (b: i32): i32
+A CAPTURING returned lambda (`let curry = (a: i32) => { return (b: i32): i32
 => a + b; };`) now types its call of a call, and is refused one step later:
 the lifted `__lam_N` body's tail lambda keeps `hoist_escaping_closure`
 (`unsupported expression`), because given the `$lamret$N` slot instead the AST

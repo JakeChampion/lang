@@ -23,25 +23,25 @@ var maxByKeyCases = []struct {
 	want int
 }{
 	// keys [30,10,50,20]; max is at index 2 -> tag 3; min at index 1 -> tag 2; 3*10+2 = 32.
-	{"max-min", `function max_by_i32_key[T](xs: T[], key: (T) => i32): Option[T] { if (xs.len() == 0) { return None; } var best: T = xs[0]; var bk: i32 = key(best); var i: i32 = 1; while (i < xs.len()) { var k: i32 = key(xs[i]); if (k > bk) { best = xs[i]; bk = k; } i = i + 1; } return Some(best); }
-function min_by_i32_key[T](xs: T[], key: (T) => i32): Option[T] { if (xs.len() == 0) { return None; } var best: T = xs[0]; var bk: i32 = key(best); var i: i32 = 1; while (i < xs.len()) { var k: i32 = key(xs[i]); if (k < bk) { best = xs[i]; bk = k; } i = i + 1; } return Some(best); }
+	{"max-min", `function max_by_i32_key[T](xs: T[], key: (T) => i32): Option[T] { if (xs.len() == 0) { return None; } let best: T = xs[0]; let bk: i32 = key(best); let i: i32 = 1; while (i < xs.len()) { let k: i32 = key(xs[i]); if (k > bk) { best = xs[i]; bk = k; } i = i + 1; } return Some(best); }
+function min_by_i32_key[T](xs: T[], key: (T) => i32): Option[T] { if (xs.len() == 0) { return None; } let best: T = xs[0]; let bk: i32 = key(best); let i: i32 = 1; while (i < xs.len()) { let k: i32 = key(xs[i]); if (k < bk) { best = xs[i]; bk = k; } i = i + 1; } return Some(best); }
 struct R { tag: i32, ts: i32 }
 function ts(r: R): i32 { return r.ts; }
 function pick(o: Option[R]): i32 { match (o) { Some(r) => { return r.tag; }, None => { return 0 - 1; } } }
-function main(): i32 { var rs: R[] = [R { tag: 1, ts: 30 }, R { tag: 2, ts: 10 }, R { tag: 3, ts: 50 }, R { tag: 4, ts: 20 }]; return pick(max_by_i32_key(rs, ts)) * 10 + pick(min_by_i32_key(rs, ts)); }`, 32},
+function main(): i32 { let rs: R[] = [R { tag: 1, ts: 30 }, R { tag: 2, ts: 10 }, R { tag: 3, ts: 50 }, R { tag: 4, ts: 20 }]; return pick(max_by_i32_key(rs, ts)) * 10 + pick(min_by_i32_key(rs, ts)); }`, 32},
 	// empty -> None for both; encode as 2 (max None) + 3 (min None) = 5.
-	{"empty-none", `function max_by_i32_key[T](xs: T[], key: (T) => i32): Option[T] { if (xs.len() == 0) { return None; } var best: T = xs[0]; var bk: i32 = key(best); var i: i32 = 1; while (i < xs.len()) { var k: i32 = key(xs[i]); if (k > bk) { best = xs[i]; bk = k; } i = i + 1; } return Some(best); }
-function min_by_i32_key[T](xs: T[], key: (T) => i32): Option[T] { if (xs.len() == 0) { return None; } var best: T = xs[0]; var bk: i32 = key(best); var i: i32 = 1; while (i < xs.len()) { var k: i32 = key(xs[i]); if (k < bk) { best = xs[i]; bk = k; } i = i + 1; } return Some(best); }
+	{"empty-none", `function max_by_i32_key[T](xs: T[], key: (T) => i32): Option[T] { if (xs.len() == 0) { return None; } let best: T = xs[0]; let bk: i32 = key(best); let i: i32 = 1; while (i < xs.len()) { let k: i32 = key(xs[i]); if (k > bk) { best = xs[i]; bk = k; } i = i + 1; } return Some(best); }
+function min_by_i32_key[T](xs: T[], key: (T) => i32): Option[T] { if (xs.len() == 0) { return None; } let best: T = xs[0]; let bk: i32 = key(best); let i: i32 = 1; while (i < xs.len()) { let k: i32 = key(xs[i]); if (k < bk) { best = xs[i]; bk = k; } i = i + 1; } return Some(best); }
 struct R { tag: i32, ts: i32 }
 function ts(r: R): i32 { return r.ts; }
-function main(): i32 { var e: R[] = []; var r = 0; match (max_by_i32_key(e, ts)) { Some(x) => {}, None => { r = r + 2; } } match (min_by_i32_key(e, ts)) { Some(x) => {}, None => { r = r + 3; } } return r; }`, 5},
+function main(): i32 { let e: R[] = []; let r = 0; match (max_by_i32_key(e, ts)) { Some(x) => {}, None => { r = r + 2; } } match (min_by_i32_key(e, ts)) { Some(x) => {}, None => { r = r + 3; } } return r; }`, 5},
 	// ties keep the FIRST extremum: two elements share ts 99; max returns the
 	// earlier one (tag 10), not tag 11.
-	{"ties-first", `function max_by_i32_key[T](xs: T[], key: (T) => i32): Option[T] { if (xs.len() == 0) { return None; } var best: T = xs[0]; var bk: i32 = key(best); var i: i32 = 1; while (i < xs.len()) { var k: i32 = key(xs[i]); if (k > bk) { best = xs[i]; bk = k; } i = i + 1; } return Some(best); }
+	{"ties-first", `function max_by_i32_key[T](xs: T[], key: (T) => i32): Option[T] { if (xs.len() == 0) { return None; } let best: T = xs[0]; let bk: i32 = key(best); let i: i32 = 1; while (i < xs.len()) { let k: i32 = key(xs[i]); if (k > bk) { best = xs[i]; bk = k; } i = i + 1; } return Some(best); }
 struct R { tag: i32, ts: i32 }
 function ts(r: R): i32 { return r.ts; }
 function pick(o: Option[R]): i32 { match (o) { Some(r) => { return r.tag; }, None => { return 0 - 1; } } }
-function main(): i32 { var rs: R[] = [R { tag: 10, ts: 99 }, R { tag: 7, ts: 5 }, R { tag: 11, ts: 99 }]; return pick(max_by_i32_key(rs, ts)); }`, 10},
+function main(): i32 { let rs: R[] = [R { tag: 10, ts: 99 }, R { tag: 7, ts: 5 }, R { tag: 11, ts: 99 }]; return pick(max_by_i32_key(rs, ts)); }`, 10},
 }
 
 // TestNativeArrayMaxByKey runs the inline programs on interp / x86-64 / wasm.
@@ -74,12 +74,12 @@ func TestNativeArrayMaxByKeyModule(t *testing.T) {
 struct Rec { id: i32, ts: i32 }
 function ts_of(r: Rec): i32 { return r.ts; }
 function main(): i32 {
-    var r = 0;
-    var rs: Rec[] = [Rec { id: 1, ts: 30 }, Rec { id: 2, ts: 10 }, Rec { id: 3, ts: 50 }, Rec { id: 4, ts: 20 }];
+    let r = 0;
+    let rs: Rec[] = [Rec { id: 1, ts: 30 }, Rec { id: 2, ts: 10 }, Rec { id: 3, ts: 50 }, Rec { id: 4, ts: 20 }];
     match (arr.max_by_i32_key(rs, ts_of)) { Some(x) => { if (x.id == 3) { r = r + 1; } }, None => {} }
     match (arr.min_by_i32_key(rs, ts_of)) { Some(x) => { if (x.id == 2) { r = r + 2; } }, None => {} }
     match (arr.min_by_i32_key(rs, (x: Rec): i32 => { return 0 - x.ts; })) { Some(x) => { if (x.id == 3) { r = r + 4; } }, None => {} }
-    var e: Rec[] = [];
+    let e: Rec[] = [];
     match (arr.max_by_i32_key(e, ts_of)) { Some(x) => {}, None => { r = r + 8; } }
     return r;
 }

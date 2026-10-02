@@ -110,7 +110,7 @@
 #
 # Eleven rows went DOWN with #8398 / #8405, two of them to 0: the I/O
 # helpers' per-call Option / Result box is a counted rc=1 block now, so the
-# match arm, the `var` local, the argument temp and the discarded statement
+# match arm, the `let` local, the argument temp and the discarded statement
 # all release it. stdin_double and multiline_stdin are the two that reach 0.
 # What every other row keeps is exactly its HANDLE — one stdin() for
 # alloc_flat_read_chunk (5 -> 1), read_all_stdin_chunks (3 -> 1), read_line

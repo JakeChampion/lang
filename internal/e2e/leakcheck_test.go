@@ -159,9 +159,9 @@ func parseLeakCheckLine(t *testing.T, stderr string) (allocs, frees, live int64)
 // leakCheckBalancedSrc: 100 paired __alloc/__free of one class. Fully
 // deterministic: allocs=100, frees=100, live_bytes=0.
 const leakCheckBalancedSrc = `function main(): i32 {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
-        var a: usize = __alloc(64);
+        let a: usize = __alloc(64);
         __free(a, 64);
         i = i + 1;
     }
@@ -177,10 +177,10 @@ const leakCheckBalancedSrc = `function main(): i32 {
 // isn't a free site — would show as live; this fixture deliberately has
 // no sharing.)
 const leakCheckRcDropSrc = `function main(): i32 {
-    var i: i32 = 0;
-    var sum: i32 = 0;
+    let i: i32 = 0;
+    let sum: i32 = 0;
     while (i < 50) {
-        var row: i32[] = [i, i + 1, i + 2];
+        let row: i32[] = [i, i + 1, i + 2];
         sum = sum + row[0];
         i = i + 1;
     }
@@ -193,9 +193,9 @@ const leakCheckRcDropSrc = `function main(): i32 {
 // numbers AND that the report doesn't clobber main's exit code:
 // allocs=3, frees=1, live_bytes=2*64=128.
 const leakCheckLeakySrc = `function main(): i32 {
-    var a: usize = __alloc(60);
-    var b: usize = __alloc(60);
-    var c: usize = __alloc(60);
+    let a: usize = __alloc(60);
+    let b: usize = __alloc(60);
+    let c: usize = __alloc(60);
     __free(a, 60);
     if (b == c) { return 9; }
     return 42;
@@ -206,7 +206,7 @@ const leakCheckLeakySrc = `function main(): i32 {
 // preserved and stdout (the print) clean of the report. alloc(100)
 // rounds to 112 live bytes.
 const leakCheckExitBuiltinSrc = `function main(): i32 {
-    var a: usize = __alloc(100);
+    let a: usize = __alloc(100);
     print("hello");
     exit(7);
     return 0;
@@ -337,11 +337,11 @@ const retainedParamSrc = `import "std/i32";
 struct Tk { name: string, line: i32 }
 function mkT(name: string, line: i32): Tk { return Tk { name: name, line: line }; }
 function main(): i32 {
-    var acc: i32 = 0;
-    var r: i32 = 0;
+    let acc: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) {
-        var s: string = "id" + r.to_string();
-        var t: Tk = mkT(s, r);
+        let s: string = "id" + r.to_string();
+        let t: Tk = mkT(s, r);
         acc = acc + t.name.len();
         r = r + 1;
     }
@@ -352,11 +352,11 @@ function main(): i32 {
 const retainedParamInlineSrc = `import "std/i32";
 struct Tk { name: string, line: i32 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var r: i32 = 0;
+    let acc: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) {
-        var s: string = "id" + r.to_string();
-        var t: Tk = Tk { name: s, line: r };
+        let s: string = "id" + r.to_string();
+        let t: Tk = Tk { name: s, line: r };
         acc = acc + t.name.len();
         r = r + 1;
     }
@@ -412,22 +412,22 @@ struct TEof {}
 type Tok = TId | TEof;
 struct Res { lex: Lx, tok: Tok }
 function scan(l: Lx): Res {
-    var t: Tok = TId { text: slice_unchecked(l.src, l.i, l.i + 1) + "" };
+    let t: Tok = TId { text: slice_unchecked(l.src, l.i, l.i + 1) + "" };
     return Res { lex: Lx { src: l.src, i: l.i + 1 }, tok: t };
 }
 function run(src: string): i32 {
-    var l: Lx = Lx { src: src, i: 0 };
-    var out: Tok[] = [];
+    let l: Lx = Lx { src: src, i: 0 };
+    let out: Tok[] = [];
     while (l.i < 5) {
-        var r = scan(l);
+        let r = scan(l);
         l = r.lex;
         out = out.append(r.tok);
     }
     return out.len();
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var n: i32 = 0;
+    let acc: i32 = 0;
+    let n: i32 = 0;
     while (n < 100) {
         acc = acc + run("abcdefgh");
         n = n + 1;
@@ -479,28 +479,28 @@ struct TEof { line: i32 }
 type Tok = TId | TPunct | TEof;
 struct Res { lex: Lx, tok: Tok }
 function scan(l: Lx, start_line: i32): Res {
-    var t: Tok = TId { text: slice_unchecked(l.src, l.i, l.i + 1) + "", line: start_line };
+    let t: Tok = TId { text: slice_unchecked(l.src, l.i, l.i + 1) + "", line: start_line };
     return Res { lex: Lx { src: l.src, i: l.i + 1, line: l.line + 1 }, tok: t };
 }
 function run(src: string): i32 {
-    var l: Lx = Lx { src: src, i: 0, line: 1 };
-    var out: Tok[] = [];
+    let l: Lx = Lx { src: src, i: 0, line: 1 };
+    let out: Tok[] = [];
     while (l.i < 8) {
-        var start_line: i32 = l.line;
+        let start_line: i32 = l.line;
         if (l.src[l.i] == 46) {
             out = out.append(TPunct { text: ".", line: start_line });
             l = Lx { src: l.src, i: l.i + 1, line: l.line };
             continue;
         }
-        var r = scan(l, start_line);
+        let r = scan(l, start_line);
         l = r.lex;
         out = out.append(r.tok);
     }
     return out.len();
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var n: i32 = 0;
+    let acc: i32 = 0;
+    let n: i32 = 0;
     while (n < 100) {
         acc = acc + run("abc.def.g");
         n = n + 1;
@@ -550,11 +550,11 @@ func TestLeakCheckScalarThreadReclaimArm64(t *testing.T) {
 // pinning all three together is what makes the gate meaningful: the fix must
 // close the leak WITHOUT moving a var that outlives the iteration.
 const loopConstructionMoveSrc = `function main(): i32 {
-    var s: i32 = 0;
-    var k: i32 = 0;
+    let s: i32 = 0;
+    let k: i32 = 0;
     while (k < 20) {
-        var xs: i32[] = [1, 2, 3];
-        var t = (xs, 99);
+        let xs: i32[] = [1, 2, 3];
+        let t = (xs, 99);
         s = s + t.0[2];
         k = k + 1;
     }
@@ -565,10 +565,10 @@ const loopConstructionMoveSrc = `function main(): i32 {
 // the construction inc and was already balanced. The control for the fixture
 // above — if this one ever regresses, the cause is not the move analysis.
 const loopConstructionFreshSrc = `function main(): i32 {
-    var s: i32 = 0;
-    var k: i32 = 0;
+    let s: i32 = 0;
+    let k: i32 = 0;
     while (k < 20) {
-        var t = ([1, 2, 3], 99);
+        let t = ([1, 2, 3], 99);
         s = s + t.0[2];
         k = k + 1;
     }
@@ -580,11 +580,11 @@ const loopConstructionFreshSrc = `function main(): i32 {
 // buffer later iterations still read — a use-after-free, not a leak. Pinned by
 // exit code as well as balance, since an over-release corrupts the read.
 const loopAliasNoIncSrc = `function main(): i32 {
-    var s: i32 = 0;
-    var k: i32 = 0;
-    var a0: i32[] = [1, 2, 3];
+    let s: i32 = 0;
+    let k: i32 = 0;
+    let a0: i32[] = [1, 2, 3];
     while (k < 20) {
-        var a1: i32[] = a0;
+        let a1: i32[] = a0;
         s = s + a1[2];
         k = k + 1;
     }
@@ -654,11 +654,11 @@ const pureReadLenSrc = `import "std/i32";
 struct Box { s: string, n: i32 }
 function mk(s: string): Box { return Box { s: s, n: s.len() }; }
 function main(): i32 {
-    var acc: i32 = 0;
-    var r: i32 = 0;
+    let acc: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) {
-        var key: string = "k" + r.to_string();
-        var b: Box = mk(key);
+        let key: string = "k" + r.to_string();
+        let b: Box = mk(key);
         acc = acc + b.s.len();
         r = r + 1;
     }
@@ -669,11 +669,11 @@ const pureReadNoLenSrc = `import "std/i32";
 struct Box { s: string, n: i32 }
 function mk(s: string): Box { return Box { s: s, n: 0 }; }
 function main(): i32 {
-    var acc: i32 = 0;
-    var r: i32 = 0;
+    let acc: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) {
-        var key: string = "k" + r.to_string();
-        var b: Box = mk(key);
+        let key: string = "k" + r.to_string();
+        let b: Box = mk(key);
         acc = acc + b.s.len();
         r = r + 1;
     }
@@ -728,11 +728,11 @@ func TestLeakCheckPureReadLenArm64(t *testing.T) {
 // covered before the gate came out, so it is the control — if it ever
 // regresses, the cause is the walk itself, not the gate.
 const tupleElemArrayScalarSrc = `function main(): i32 {
-    var total: i32 = 0;
-    var k: i32 = 0;
+    let total: i32 = 0;
+    let k: i32 = 0;
     while (k < 50) {
-        var t = (k, k + 1);
-        var c = [t, (7, 8)];
+        let t = (k, k + 1);
+        let c = [t, (7, 8)];
         total = total + c[0].0 + c[1].1;
         k = k + 1;
     }
@@ -740,12 +740,12 @@ const tupleElemArrayScalarSrc = `function main(): i32 {
 }`
 
 const tupleElemArrayStringSrc = `function main(): i32 {
-    var total: i32 = 0;
-    var k: i32 = 0;
+    let total: i32 = 0;
+    let k: i32 = 0;
     while (k < 50) {
-        var s: string = "ab" + "cd";
-        var t = (s, k);
-        var c = [t];
+        let s: string = "ab" + "cd";
+        let t = (s, k);
+        let c = [t];
         total = total + c[0].0.len();
         k = k + 1;
     }
@@ -815,11 +815,11 @@ func TestArm64LeakCheckTupleElemArray(t *testing.T) {
 // scalar tuple now reaches genTupleDropFn and emits an is_unique-gated
 // box_free with no element drops, which is exactly the free that was missing.
 const tupleInTupleScalarSrc = `function main(): i32 {
-    var total: i32 = 0;
-    var k: i32 = 0;
+    let total: i32 = 0;
+    let k: i32 = 0;
     while (k < 50) {
-        var t = (k, k + 1);
-        var o = (t, 99);
+        let t = (k, k + 1);
+        let o = (t, 99);
         total = total + o.0.1 + o.1;
         k = k + 1;
     }
@@ -830,11 +830,11 @@ const tupleInTupleScalarSrc = `function main(): i32 {
 // same per-element drop (dropStructField reaches it via __drop_struct_*).
 const tupleInStructScalarSrc = `struct Holder { pair: (i32, i32), n: i32 }
 function main(): i32 {
-    var total: i32 = 0;
-    var k: i32 = 0;
+    let total: i32 = 0;
+    let k: i32 = 0;
     while (k < 50) {
-        var t = (k, k + 1);
-        var h = Holder { pair: t, n: 3 };
+        let t = (k, k + 1);
+        let h = Holder { pair: t, n: 3 };
         total = total + h.pair.1 + h.n;
         k = k + 1;
     }
@@ -904,11 +904,11 @@ func TestArm64LeakCheckNestedTupleElem(t *testing.T) {
 // fires) and is the control: if it regresses, the cause is the move analysis,
 // not this release.
 const ctorRetainedSourceReadSrc = `function main(): i32 {
-    var s: i32 = 0;
-    var k: i32 = 0;
+    let s: i32 = 0;
+    let k: i32 = 0;
     while (k < 40) {
-        var xs: i32[] = [4, 5, 6];
-        var o = (xs, 9);
+        let xs: i32[] = [4, 5, 6];
+        let o = (xs, 9);
         s = s + xs[1] + o.1;
         k = k + 1;
     }
@@ -916,11 +916,11 @@ const ctorRetainedSourceReadSrc = `function main(): i32 {
 }`
 
 const ctorRetainedContainerReadSrc = `function main(): i32 {
-    var s: i32 = 0;
-    var k: i32 = 0;
+    let s: i32 = 0;
+    let k: i32 = 0;
     while (k < 40) {
-        var xs: i32[] = [4, 5, 6];
-        var o = (xs, 9);
+        let xs: i32[] = [4, 5, 6];
+        let o = (xs, 9);
         s = s + o.0[1] + o.1;
         k = k + 1;
     }
@@ -930,11 +930,11 @@ const ctorRetainedContainerReadSrc = `function main(): i32 {
 // Same retain through an ENUM payload rather than a tuple — the
 // EnumRcPayloads inc site, the fourth routing computeCtorAliasInced covers.
 const ctorRetainedEnumPayloadSrc = `function main(): i32 {
-    var s: i32 = 0;
-    var k: i32 = 0;
+    let s: i32 = 0;
+    let k: i32 = 0;
     while (k < 40) {
-        var xs: i32[] = [4, 5, 6];
-        var o = Some(xs);
+        let xs: i32[] = [4, 5, 6];
+        let o = Some(xs);
         s = s + xs[1];
         k = k + 1;
     }
@@ -946,12 +946,12 @@ const ctorRetainedEnumPayloadSrc = `function main(): i32 {
 // existing handling; releasing it per iteration would over-release a0's buffer.
 // Pinned on exit code too, since an over-release corrupts the read.
 const ctorOuterAliasSrc = `function main(): i32 {
-    var s: i32 = 0;
-    var k: i32 = 0;
-    var a0: i32[] = [7, 8, 9];
+    let s: i32 = 0;
+    let k: i32 = 0;
+    let a0: i32[] = [7, 8, 9];
     while (k < 40) {
-        var a1: i32[] = a0;
-        var o = (a1, 1);
+        let a1: i32[] = a0;
+        let o = (a1, 1);
         s = s + a1[2] + o.1;
         k = k + 1;
     }
@@ -974,9 +974,9 @@ const ctorOuterAliasSrc = `function main(): i32 {
 // no loop and no nested block in sight. retainsCtorAliasedSource keeps such a
 // container on the exit sweep.
 const ctorRetainedDropOrderSrc = `function main(): i32 {
-    var xs: i32[] = [4, 5, 6];
-    var o = (xs, 9);
-    var s: i32 = xs[1] + o.1;
+    let xs: i32[] = [4, 5, 6];
+    let o = (xs, 9);
+    let s: i32 = xs[1] + o.1;
     return s % 251;
 }`
 
@@ -1077,11 +1077,11 @@ func TestArm64LeakCheckCtorRetainedLoopSource(t *testing.T) {
 // box exactly. The array fixture is the control — Option[i32[]] always had a
 // pointer payload, so it was never affected.
 const enumStringPayloadBoxSrc = `function main(): i32 {
-    var t: i32 = 0;
-    var k: i32 = 0;
+    let t: i32 = 0;
+    let k: i32 = 0;
     while (k < 100) {
-        var st: string = "ab" + "cd";
-        var o = Some(st);
+        let st: string = "ab" + "cd";
+        let o = Some(st);
         t = t + st.len();
         k = k + 1;
     }
@@ -1089,11 +1089,11 @@ const enumStringPayloadBoxSrc = `function main(): i32 {
 }`
 
 const enumArrayPayloadBoxSrc = `function main(): i32 {
-    var t: i32 = 0;
-    var k: i32 = 0;
+    let t: i32 = 0;
+    let k: i32 = 0;
     while (k < 100) {
-        var xs: i32[] = [1, 2];
-        var o = Some(xs);
+        let xs: i32[] = [1, 2];
+        let o = Some(xs);
         t = t + xs[1];
         k = k + 1;
     }
@@ -1113,10 +1113,10 @@ const enumArrayPayloadBoxSrc = `function main(): i32 {
 // including one bound from a pair-form-eligible callee (the returned-from-callee
 // fixture below).
 const enumScalarPayloadNoBoxSrc = `function main(): i32 {
-    var t: i32 = 0;
-    var k: i32 = 0;
+    let t: i32 = 0;
+    let k: i32 = 0;
     while (k < 100) {
-        var o = Some(k);
+        let o = Some(k);
         t = t + 1;
         k = k + 1;
     }
@@ -1129,10 +1129,10 @@ const enumScalarPayloadNoBoxSrc = `function main(): i32 {
 // "pair-form ⇒ no box" for the local (#5917).
 const enumScalarFromCalleeSrc = `function mk(n: i32): Option[i32] { return Some(n); }
 function main(): i32 {
-    var t: i32 = 0;
-    var k: i32 = 0;
+    let t: i32 = 0;
+    let k: i32 = 0;
     while (k < 100) {
-        var o = mk(k);
+        let o = mk(k);
         t = t + 1;
         k = k + 1;
     }
@@ -1145,10 +1145,10 @@ function main(): i32 {
 // even once the direct-local case was fixed (#5917). Both gates are gone.
 const enumScalarNestedStructSrc = `struct H { o: Option[i32], n: i32 }
 function main(): i32 {
-    var t: i32 = 0;
-    var k: i32 = 0;
+    let t: i32 = 0;
+    let k: i32 = 0;
     while (k < 100) {
-        var h = H { o: Some(k), n: 1 };
+        let h = H { o: Some(k), n: 1 };
         t = t + h.n;
         k = k + 1;
     }
@@ -1156,10 +1156,10 @@ function main(): i32 {
 }`
 
 const enumScalarNestedTupleSrc = `function main(): i32 {
-    var t: i32 = 0;
-    var k: i32 = 0;
+    let t: i32 = 0;
+    let k: i32 = 0;
     while (k < 100) {
-        var p = (Some(k), 1);
+        let p = (Some(k), 1);
         t = t + p.1;
         k = k + 1;
     }
@@ -1248,13 +1248,13 @@ const toStringReclaimSrc = `import "std/i32";
 import "std/i64";
 import "std/u64";
 function main(): i32 {
-    var t: i32 = 0;
-    var k: i32 = 0;
+    let t: i32 = 0;
+    let k: i32 = 0;
     while (k < 50) {
-        var s: string = k.to_string();
-        var u: string = ((k as i64) * 1000000007).to_string();
-        var v: string = ((k as u64) * (1234567891 as u64)).to_string();
-        var w: string = (k * 1234567).to_binary();
+        let s: string = k.to_string();
+        let u: string = ((k as i64) * 1000000007).to_string();
+        let v: string = ((k as u64) * (1234567891 as u64)).to_string();
+        let w: string = (k * 1234567).to_binary();
         t = t + s.len() + u.len() + v.len() + w.len();
         k = k + 1;
     }
@@ -1268,12 +1268,12 @@ function main(): i32 {
 const radixReclaimSrc = `import "std/i32";
 import "core/int";
 function main(): i32 {
-    var acc: i32 = 0;
-    var k: i32 = 1;
+    let acc: i32 = 0;
+    let k: i32 = 1;
     while (k < 60) {
-        var h: string = int.int_to_string_radix(k * 7919, 16);
-        var b: string = int.int_to_string_radix(0 - (k * 7919), 2);
-        var i: i32 = 0;
+        let h: string = int.int_to_string_radix(k * 7919, 16);
+        let b: string = int.int_to_string_radix(0 - (k * 7919), 2);
+        let i: i32 = 0;
         while (i < h.len()) { acc = (acc * 31 + (h[i] as i32)) % 100003; i = i + 1; }
         i = 0;
         while (i < b.len()) { acc = (acc * 31 + (b[i] as i32)) % 100003; i = i + 1; }
@@ -1304,11 +1304,11 @@ function main(): i32 {
 // exceed the SSO window.
 const rgbHexReclaimSrc = `import "std/i32";
 function main(): i32 {
-    var acc: i32 = 0;
-    var k: i32 = 1;
+    let acc: i32 = 0;
+    let k: i32 = 1;
     while (k < 40) {
-        var s: string = (k * 66049).to_rgb_hex();
-        var i: i32 = 0;
+        let s: string = (k * 66049).to_rgb_hex();
+        let i: i32 = 0;
         while (i < s.len()) { acc = (acc * 31 + (s[i] as i32)) % 100003; i = i + 1; }
         k = k + 1;
     }
@@ -1363,7 +1363,7 @@ func TestArm64LeakCheckToStringReclaim(t *testing.T) {
 
 // A fresh string temp handed straight to a string-RETURNING call must be
 // reclaimed (#5942), or it costs one heap block per call, unbounded in a
-// loop. Binding the intermediate to a `var` first reclaims it, so the two shapes
+// loop. Binding the intermediate to a `let` first reclaims it, so the two shapes
 // below differ only in whether the intermediate has a name, and had to differ
 // only in that after the fix too.
 //
@@ -1399,11 +1399,11 @@ func TestArm64LeakCheckToStringReclaim(t *testing.T) {
 const argTempReclaimTempRecvSrc = `import "std/i32";
 import "std/string";
 function main(): i32 {
-    var acc: i32 = 0;
-    var k: i32 = 1;
+    let acc: i32 = 0;
+    let k: i32 = 1;
     while (k < 40) {
-        var s: string = (k * 66049).to_binary().pad_start(40, "0");
-        var i: i32 = 0;
+        let s: string = (k * 66049).to_binary().pad_start(40, "0");
+        let i: i32 = 0;
         while (i < s.len()) { acc = (acc * 31 + (s[i] as i32)) % 100003; i = i + 1; }
         k = k + 1;
     }
@@ -1416,12 +1416,12 @@ function main(): i32 {
 const argTempReclaimBoundRecvSrc = `import "std/i32";
 import "std/string";
 function main(): i32 {
-    var acc: i32 = 0;
-    var k: i32 = 1;
+    let acc: i32 = 0;
+    let k: i32 = 1;
     while (k < 40) {
-        var h: string = (k * 66049).to_binary();
-        var s: string = h.pad_start(40, "0");
-        var i: i32 = 0;
+        let h: string = (k * 66049).to_binary();
+        let s: string = h.pad_start(40, "0");
+        let i: i32 = 0;
         while (i < s.len()) { acc = (acc * 31 + (s[i] as i32)) % 100003; i = i + 1; }
         k = k + 1;
     }
@@ -1434,11 +1434,11 @@ function main(): i32 {
 const argTempReclaimPassThroughSrc = `import "std/i32";
 import "std/string";
 function main(): i32 {
-    var acc: i32 = 0;
-    var k: i32 = 1;
+    let acc: i32 = 0;
+    let k: i32 = 1;
     while (k < 40) {
-        var s: string = (k * 66049).to_binary().pad_start(2, "0");
-        var i: i32 = 0;
+        let s: string = (k * 66049).to_binary().pad_start(2, "0");
+        let i: i32 = 0;
         while (i < s.len()) { acc = (acc * 31 + (s[i] as i32)) % 100003; i = i + 1; }
         k = k + 1;
     }
@@ -1498,8 +1498,8 @@ func TestX86_64OpenPathCopyFreed(t *testing.T) {
 	const n = 64
 	prog := func(path string) string {
 		return `function main(): i32 {
-    var i: i32 = 0;
-    var errs: i32 = 0;
+    let i: i32 = 0;
+    let errs: i32 = 0;
     while (i < ` + fmt.Sprint(n) + `) {
         match (open_reader("` + path + `")) {
             Ok(r) => { r.close(); },

@@ -21,9 +21,9 @@ var printStrIRCases = []struct {
 }{
 	{"write-literal", `function main(): i32 { write("hi"); return 0; }`, "hi"},
 	{"print-literal", `function main(): i32 { print("hi"); return 0; }`, "hi\n"},
-	{"write-var", `function main(): i32 { var s: string = "abc"; write(s); return 0; }`, "abc"},
+	{"write-var", `function main(): i32 { let s: string = "abc"; write(s); return 0; }`, "abc"},
 	{"print-multi", `function main(): i32 { print("a"); print("b"); return 0; }`, "a\nb\n"},
-	{"write-concat", `function main(): i32 { var s: string = "x" + "y"; write(s); return 0; }`, "xy"},
+	{"write-concat", `function main(): i32 { let s: string = "x" + "y"; write(s); return 0; }`, "xy"},
 }
 
 func TestSelfHostPrintStrIRX86_64(t *testing.T) {

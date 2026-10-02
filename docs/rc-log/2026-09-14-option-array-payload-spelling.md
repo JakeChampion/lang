@@ -1,7 +1,7 @@
 # A `Some` of an array is spelled as the array
 
 #9190, from the `.with` probe set: `match (o) { Some(xs) => { xs =
-xs.append(4); } }` over `var o: Option[i32[]] = Some([1, 2, 3])` bailed the
+xs.append(4); } }` over `let o: Option[i32[]] = Some([1, 2, 3])` bailed the
 module with `i32.append`, and `xs.with(…)` with `i32.with`. Reads alone
 (`xs[i]`, `xs.len()`) lowered, which is what hid it: the generic 4-byte
 `arr_get` / `arr_len` run on any slot, and only the method dispatch keys on
@@ -49,7 +49,7 @@ Self-host x86-64, `FERN_LEAKCHECK=1` at emit, interpreter as oracle:
 | --- | --- | --- |
 | `Some([1, 2, 3])` local, `xs = xs.append(4)` | bail `i32.append` | 7, 3 / 3 |
 | the same, `xs = xs.with(0, 9)` | bail `i32.with` | 9, 3 / 3 |
-| `var o = Some([1, 2, 3])` (no annotation), a hundred `.with` | bail | 108, 3 / 1 |
+| `let o = Some([1, 2, 3])` (no annotation), a hundred `.with` | bail | 108, 3 / 1 |
 | `Option[i32[][]]` local, `g = g.append([4, 5])` | bail `i32.append` | 8, 6 / 0 |
 | `Option[i32[]]` local, reads only | 6, 2 / 2 | 6, 2 / 2 |
 | `Option[i32[][]]` local, reads only | 4, 4 / 4 | 4, 4 / 4 |
@@ -110,7 +110,7 @@ and `TestSelfHostNestedMatchBorrowHazards`'s two escaping rows (200 → 300)
 move to native's numbers; `option-payload-return` and
 `option-payload-call-arg` join the cow table.
 
-Not this entry: an `Option[T[]]` TUPLE element (`var t = (Some([1, 2]),
+Not this entry: an `Option[T[]]` TUPLE element (`let t = (Some([1, 2]),
 0)`; `match (t.0)`) still bails the same way, since `opt_elem_tag_from_ty`
 admits scalar and struct payloads alone for a tuple slot.
 

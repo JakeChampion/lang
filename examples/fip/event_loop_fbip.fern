@@ -100,8 +100,8 @@ fip function rsp_value(): i64 {
 // ===================== INITIALIZATION (allocating, once) =====================
 
 function zeros(n: i32): i64[] {
-  var xs: i64[] = [];
-  var i: i32 = 0;
+  let xs: i64[] = [];
+  let i: i32 = 0;
   while (i < n) {
     xs = xs.append(0 as i64);
     i = i + 1;
@@ -124,7 +124,7 @@ fbip function enqueue(own s: State, kind: i64, id: i64, value: i64): State {
   if (s.q_count >= queue_cap()) {
     return State { ...s, m_dropped: s.m_dropped + 1 as i64 };
   }
-  var slot: i32 = (s.q_head + s.q_count) % queue_cap();
+  let slot: i32 = (s.q_head + s.q_count) % queue_cap();
   return State {
     ...s,
     q_kind: s.q_kind.with(slot, kind),
@@ -142,7 +142,7 @@ fbip function respond(own s: State, code: i64): State {
 }
 
 fip function find_slot(keys: i64[], used: i64[], id: i64): i32 {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < max_entries()) {
     if (used[i] != 0 as i64 && keys[i] == id) {
       return i;
@@ -153,7 +153,7 @@ fip function find_slot(keys: i64[], used: i64[], id: i64): i32 {
 }
 
 fip function free_slot(used: i64[]): i32 {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < max_entries()) {
     if (used[i] == 0 as i64) {
       return i;
@@ -164,12 +164,12 @@ fip function free_slot(used: i64[]): i32 {
 }
 
 fbip function apply_create(own s: State, id: i64, value: i64): State {
-  var at: i32 = find_slot(s.keys, s.used, id);
+  let at: i32 = find_slot(s.keys, s.used, id);
   if (at >= 0) {
     s = State { ...s, vals: s.vals.with(at, value), m_ok: s.m_ok + 1 as i64 };
     return respond(s, rsp_ok());
   }
-  var slot: i32 = free_slot(s.used);
+  let slot: i32 = free_slot(s.used);
   if (slot < 0) {
     s = State { ...s, m_full: s.m_full + 1 as i64 };
     return respond(s, rsp_full());
@@ -186,7 +186,7 @@ fbip function apply_create(own s: State, id: i64, value: i64): State {
 }
 
 fbip function apply_update(own s: State, id: i64, delta: i64): State {
-  var at: i32 = find_slot(s.keys, s.used, id);
+  let at: i32 = find_slot(s.keys, s.used, id);
   if (at < 0) {
     s = State { ...s, m_miss: s.m_miss + 1 as i64 };
     return respond(s, rsp_missing());
@@ -198,13 +198,13 @@ fbip function apply_update(own s: State, id: i64, delta: i64): State {
   // events, all recycled and so invisible to `__heap_bump_bytes()`. #9605
   // fixed that, and both spellings now write in place; this file keeps the
   // shape its measurements were taken on.
-  var current: i64 = s.vals[at];
+  let current: i64 = s.vals[at];
   s = State { ...s, vals: s.vals.with(at, current + delta), m_ok: s.m_ok + 1 as i64 };
   return respond(s, rsp_ok());
 }
 
 fbip function apply_read(own s: State, id: i64): State {
-  var at: i32 = find_slot(s.keys, s.used, id);
+  let at: i32 = find_slot(s.keys, s.used, id);
   if (at < 0) {
     s = State { ...s, m_miss: s.m_miss + 1 as i64 };
     return respond(s, rsp_missing());
@@ -214,7 +214,7 @@ fbip function apply_read(own s: State, id: i64): State {
 }
 
 fbip function apply_delete(own s: State, id: i64): State {
-  var at: i32 = find_slot(s.keys, s.used, id);
+  let at: i32 = find_slot(s.keys, s.used, id);
   if (at < 0) {
     s = State { ...s, m_miss: s.m_miss + 1 as i64 };
     return respond(s, rsp_missing());
@@ -227,10 +227,10 @@ fbip function iteration(own s: State): State {
   if (s.q_count == 0) {
     return s;
   }
-  var head: i32 = s.q_head;
-  var kind: i64 = s.q_kind[head];
-  var id: i64 = s.q_id[head];
-  var value: i64 = s.q_val[head];
+  let head: i32 = s.q_head;
+  let kind: i64 = s.q_kind[head];
+  let id: i64 = s.q_id[head];
+  let value: i64 = s.q_val[head];
   s = State { ...s, q_head: (head + 1) % queue_cap(), q_count: s.q_count - 1 };
   if (kind == ev_create()) {
     return apply_create(s, id, value);
@@ -261,7 +261,7 @@ fbip function reset_metrics(own s: State): State {
 // state is held and in nothing else.
 
 fip function event_id(n: i64): i64 {
-  var x: i64 = n * (2654435761 as i64);
+  let x: i64 = n * (2654435761 as i64);
   x = x ^ x >> 15 as i64;
   x = x * (2246822519 as i64);
   x = x ^ x >> 13 as i64;
@@ -272,7 +272,7 @@ fip function event_id(n: i64): i64 {
 }
 
 fip function event_kind(n: i64): i64 {
-  var bucket: i64 = n % (10 as i64);
+  let bucket: i64 = n % (10 as i64);
   if (bucket == 0 as i64) {
     return ev_create();
   }
@@ -286,7 +286,7 @@ fip function event_kind(n: i64): i64 {
 }
 
 fbip function prefill(own s: State): State {
-  var id: i32 = 0;
+  let id: i32 = 0;
   while (id < max_entries()) {
     s = apply_create(s, id as i64, id as i64 * (10 as i64));
     id = id + 1;
@@ -295,13 +295,13 @@ fbip function prefill(own s: State): State {
 }
 
 fbip function round(own s: State, seed: i64, batch: i32): State {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < batch) {
-    var n: i64 = seed + i as i64;
+    let n: i64 = seed + i as i64;
     s = enqueue(s, event_kind(n), event_id(n), n);
     i = i + 1;
   }
-  var worked: i32 = 0;
+  let worked: i32 = 0;
   while (worked < batch) {
     s = iteration(s);
     worked = worked + 1;
@@ -312,25 +312,25 @@ fbip function round(own s: State, seed: i64, batch: i32): State {
 // ===================== DRIVER =====================
 
 function main(): i32 {
-  var s: State = new_state();
+  let s: State = new_state();
   s = prefill(s);
   s = round(s, 1 as i64, queue_cap());
   s = reset_metrics(s);
-  var rounds: i32 = 20000;
+  let rounds: i32 = 20000;
   // Built before the mark: the sample buffer is part of the instrument, not
   // of the steady state being measured.
-  var samples: i64[] = [];
-  var p: i32 = 0;
+  let samples: i64[] = [];
+  let p: i32 = 0;
   while (p < rounds) {
     samples = samples.append(0 as i64);
     p = p + 1;
   }
-  var at_allocs: i64 = bench.alloc_count();
-  var at_fresh: i64 = bench.bump_bytes();
-  var started_ns: i64 = monotonic_ns();
-  var r: i32 = 0;
+  let at_allocs: i64 = bench.alloc_count();
+  let at_fresh: i64 = bench.bump_bytes();
+  let started_ns: i64 = monotonic_ns();
+  let r: i32 = 0;
   while (r < rounds) {
-    var t0: i64 = monotonic_ns();
+    let t0: i64 = monotonic_ns();
     s = round(s, r as i64 * (7 as i64) + 1 as i64, queue_cap());
     // `.with` on a uniquely-owned array writes in place, so recording a
     // sample costs the measured region no allocation. The harness pins
@@ -338,15 +338,15 @@ function main(): i32 {
     samples = samples.with(r, monotonic_ns() - t0);
     r = r + 1;
   }
-  var elapsed_ns: i64 = monotonic_ns() - started_ns;
-  var allocs: i64 = bench.allocs_after(at_allocs);
-  var fresh: i64 = bench.fresh_bytes_after(at_fresh);
-  var events: i64 = rounds as i64 * (queue_cap() as i64);
+  let elapsed_ns: i64 = monotonic_ns() - started_ns;
+  let allocs: i64 = bench.allocs_after(at_allocs);
+  let fresh: i64 = bench.fresh_bytes_after(at_fresh);
+  let events: i64 = rounds as i64 * (queue_cap() as i64);
   // The per-round samples become a bench.Report, so the percentile and
   // throughput arithmetic is the harness's and identical across the three
   // variants. Sorting allocates, which is why it happens down here — after
   // the allocation figures have already been read.
-  var rep: bench.Report = bench.Report {
+  let rep: bench.Report = bench.Report {
     name: "fbip",
     iterations: rounds,
     wall_ns: elapsed_ns,

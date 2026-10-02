@@ -14,11 +14,11 @@ self-host before and after; the counts are the self-host's.
 
 | shape | native | before | after |
 |---|---|---|---|
-| `var q = m; m = m.insert("k", i)` (the repro) | 400/400, 0 | 1200/600, 19200 | 1200/1200, 0 |
+| `let q = m; m = m.insert("k", i)` (the repro) | 400/400, 0 | 1200/600, 19200 | 1200/1200, 0 |
 | the same at 200 rounds | 800/800, 0 | 2400/1200, 38400 | 2400/2400, 0 |
-| `m = m.insert(..); var q = m` (alias after) | 200/200, 0 | 1200/600, 19200 | 700/700, 0 |
-| `var q = m; if (..) { m = m.insert(..) }` | 300/300, 0 | 850/400, 12800 | 850/850, 0 |
-| `var q = m; while (k < 3) { m = m.insert(..) }` | 400/400, 0 | 2600/1400, 44800 | 2600/2600, 0 |
+| `m = m.insert(..); let q = m` (alias after) | 200/200, 0 | 1200/600, 19200 | 700/700, 0 |
+| `let q = m; if (..) { m = m.insert(..) }` | 300/300, 0 | 850/400, 12800 | 850/850, 0 |
+| `let q = m; while (k < 3) { m = m.insert(..) }` | 400/400, 0 | 2600/1400, 44800 | 2600/2600, 0 |
 | two aliases around two inserts | 600/600, 0 | 2000/1100, 32000 | 2000/2000, 0 |
 | `(i, m)` tuple + insert (#7212's residue) | 500/500, 0 | 1300/1000, 6400 | 1300/1300, 0 |
 | `Map[string, string]`, alias + insert | 500/500, 0 | 1300/600, 22400 | 1300/1200, 3200 |
@@ -27,7 +27,7 @@ self-host before and after; the counts are the self-host's.
 | the same with NO alias (control) | 700/700, 0 | 1100/600, 16000 | 1100/600, 16000 |
 | never aliased (control) | 200/200, 0 | 600/600, 0 | 600/600, 0 |
 | alias declared inside a loop (refused) | 600/600, 0 | 2000/1100, 32000 | unchanged |
-| `var q = m; var r = q` (refused) | 400/400, 0 | 1300/700, 19200 | unchanged |
+| `let q = m; let r = q` (refused) | 400/400, 0 | 1300/700, 19200 | unchanged |
 | the loop-snapshot program (answer 6) | 6 | 6 | 6 |
 
 The string row's residue is its no-alias control's, byte for byte: the value
@@ -38,13 +38,13 @@ group's own part of that row closes.
 
 ## The ownership argument
 
-A mapbox has no rc word, so `var q: Map[..] = m` is an UNCOUNTED share and
+A mapbox has no rc word, so `let q: Map[..] = m` is an UNCOUNTED share and
 the release of every box a set of names reaches has to be decided by the
 compiler. Before, the analysis decided it by refusing: an aliased map lost
 its "MAP:" credit outright, nothing freed either box, and the clone made a
 third box nobody was accounting for.
 
-The group: `m`, its plain aliases `var q = m` and the local tuples holding it
+The group: `m`, its plain aliases `let q = m` and the local tuples holding it
 at an element (#7212's override) — credited `MAPAL:<qsite>|<msite>` and
 `MAPTUP:<tsite>|<k>|<msite>` beside m's `MAP:`. The group holds one box until
 a clone, after which the holders bound before the clone keep the OLD box and
@@ -88,13 +88,13 @@ read names the box through it.
 
 ## The clone decision, flow-sensitive
 
-`is_aliased_name` was a whole-body scan, so `m = m.insert(..); var q = m`
+`is_aliased_name` was a whole-body scan, so `m = m.insert(..); let q = m`
 cloned for an alias that did not exist yet. `map_clone_insert_sites_of` now
 decides per insert: it clones when an alias of m is bound earlier in lowering
 order, anywhere inside a loop enclosing the insert, or inside a defer. The
 loop rule is the issue's 2026-09-02 comment made code: the back edge carries
 an alias bound textually after the insert into the next iteration, so the
-snapshot program (`m = m.insert(..); var alias = m; seen = seen.append(alias)`
+snapshot program (`m = m.insert(..); let alias = m; seen = seen.append(alias)`
 in a `while`) still clones every iteration and answers 6, where a scan that
 stopped at the current statement answers 12. That program is a row of the
 gate on all three backends.
@@ -120,13 +120,13 @@ census (see the PR for exit codes).
 
 ## What is left
 
-1. **A holder declared inside a loop body** (`while (..) { var q = m; m =
+1. **A holder declared inside a loop body** (`while (..) { let q = m; m =
    m.insert(..); .. }`) — refused, 320 B/round. Admitting it needs every
    holder's slot to exist before the first release is emitted: pre-allocating
-   the group's slots at function entry and having the alias's `var` claim its
+   the group's slots at function entry and having the alias's `let` claim its
    pre-allocated slot, which is a change to `bind_var_slot`'s slot
    discipline, not to the guard.
-2. **Alias chains** (`var q = m; var r = q`) — refused, 192 B/round. The
+2. **Alias chains** (`let q = m; let r = q`) — refused, 192 B/round. The
    chain machinery the string and string[] classes have (#7750) would admit
    it under the same guard; the rows are already keyed by site.
 3. **The string-column residue** above — a `Map[string, string]` whose value

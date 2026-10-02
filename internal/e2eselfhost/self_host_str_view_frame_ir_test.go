@@ -11,7 +11,7 @@ import "testing"
 // at all for the same program.
 //
 // Measured with FERN_LEAKCHECK=1, self-host x86-64, on the issue's reproducer
-// (`while (i < k) { var t: str = s[0:1]; n = n + t.len(); i = i + 1; }`):
+// (`while (i < k) { let t: str = s[0:1]; n = n + t.len(); i = i + 1; }`):
 //
 //	k    before                              after
 //	400  allocs=401 frees=0 live=9624        allocs=1 frees=0 live=24
@@ -43,14 +43,14 @@ var strViewFrameCases = []struct {
 	// The reproducer, heap-bump guarded: 5000 rounds of a borrow-only view must not
 	// move the bump pointer.
 	{"strview-loop-flat", `function main(): i32 {
-    var s: string = "hello world";
-    var acc: i32 = 0;
-    var i: i32 = 0;
-    while (i < 200) { var t: str = slice_unchecked(s, 0, 1); acc = (acc + t.len()) % 251; i = i + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
-    while (j < 5000) { var t2: str = slice_unchecked(s, 0, 1); acc = (acc + t2.len()) % 251; j = j + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let s: string = "hello world";
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 200) { let t: str = slice_unchecked(s, 0, 1); acc = (acc + t.len()) % 251; i = i + 1; }
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
+    while (j < 5000) { let t2: str = slice_unchecked(s, 0, 1); acc = (acc + t2.len()) % 251; j = j + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -59,11 +59,11 @@ var strViewFrameCases = []struct {
 	// VALUE guard on the same shape: varying bounds, and the bytes read back. A frame
 	// box the analysis placed wrongly shows up here as a wrong answer.
 	{"strview-value-exact", `function main(): i32 {
-    var s: string = "abcdefgh";
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let s: string = "abcdefgh";
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 6) {
-        var t: str = slice_unchecked(s, i, i + 2);
+        let t: str = slice_unchecked(s, i, i + 2);
         if (t.len() != 2) { return 96; }
         if (t[0] != s[i]) { return 95; }
         if (t[1] != s[i + 1]) { return 94; }
@@ -76,17 +76,17 @@ var strViewFrameCases = []struct {
 }`, 0},
 	// Concat and comparison operands are borrows too, and both read the bytes.
 	{"strview-concat-compare", `function main(): i32 {
-    var s: string = "hello world";
-    var hits: i32 = 0;
-    var i: i32 = 0;
+    let s: string = "hello world";
+    let hits: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var t: str = slice_unchecked(s, 1, 4);
+        let t: str = slice_unchecked(s, 1, 4);
         if (t == "ell") { hits = hits + 1; }
-        var wrapped: string = "<" + t + ">";
+        let wrapped: string = "<" + t + ">";
         if (wrapped.len() != 5) { return 96; }
         i = i + 1;
     }
-    var b1: i32 = (__heap_bump_bytes() as i32);
+    let b1: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (hits != 200) { return 97; }
     if (b1 < 0) { return 95; }
@@ -95,12 +95,12 @@ var strViewFrameCases = []struct {
 	// A slice OF a view: the inner view's data pointer aims at the source buffer, not at
 	// the outer box, so it outlives it — both are eligible.
 	{"strview-nested-slice", `function main(): i32 {
-    var s: string = "abcdefgh";
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let s: string = "abcdefgh";
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var t: str = slice_unchecked(s, 2, 6);
-        var u: str = slice_unchecked(t, 1, 3);
+        let t: str = slice_unchecked(s, 2, 6);
+        let u: str = slice_unchecked(t, 1, 3);
         if (u.len() != 2) { return 96; }
         if (u[0] != 100) { return 95; }
         acc = (acc + u.len()) % 251;
@@ -115,22 +115,22 @@ var strViewFrameCases = []struct {
 	// frame's slots before the view is read, which is what turns the dangle from
 	// "usually still there" into a wrong answer (it exits 96 with the borrow scan
 	// disabled).
-	{"strview-escape-return-safe", `function head(s: string): str { var t: str = slice_unchecked(s, 0, 4); return t; }
+	{"strview-escape-return-safe", `function head(s: string): str { let t: str = slice_unchecked(s, 0, 4); return t; }
 function churn(n: i32): i32 {
-    var a: i32 = n * 3;
-    var b: i32 = a + 7;
-    var c: i32 = b * 2;
-    var d: i32 = c - a;
-    var e: i32 = d + b;
-    var f: i32 = e % 97;
+    let a: i32 = n * 3;
+    let b: i32 = a + 7;
+    let c: i32 = b * 2;
+    let d: i32 = c - a;
+    let e: i32 = d + b;
+    let f: i32 = e % 97;
     return a + b + c + d + e + f;
 }
 function main(): i32 {
-    var s: string = "hello world";
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let s: string = "hello world";
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var v: str = head(s);
+        let v: str = head(s);
         acc = (acc + churn(i)) % 251;
         if (v.len() != 4) { return 96; }
         if (v[0] != 104) { return 95; }
@@ -145,12 +145,12 @@ function main(): i32 {
 	// NEXT iteration, where the site would have rewritten a shared frame box under it.
 	// This is the case a frame-only lifetime rule would get wrong.
 	{"strview-escape-alias-safe", `function main(): i32 {
-    var s: string = "abcdefgh";
-    var prev: str = slice_unchecked(s, 0, 2);
-    var acc: i32 = 0;
-    var i: i32 = 1;
+    let s: string = "abcdefgh";
+    let prev: str = slice_unchecked(s, 0, 2);
+    let acc: i32 = 0;
+    let i: i32 = 1;
     while (i < 6) {
-        var cur: str = slice_unchecked(s, i, i + 2);
+        let cur: str = slice_unchecked(s, i, i + 2);
         if (prev[0] != s[i - 1]) { return 95; }
         acc = acc + (prev[0] as i32);
         prev = cur;
@@ -166,17 +166,17 @@ function main(): i32 {
 	// even though the caller's frame is still alive at the call itself.
 	{"strview-escape-arg-safe", `function keep(v: str, xs: str[]): str[] { return xs.append(v); }
 function build(s: string, k: i32): str[] {
-    var xs: str[] = [];
-    var i: i32 = 0;
-    while (i < k) { var t: str = slice_unchecked(s, i, i + 2); xs = keep(t, xs); i = i + 1; }
+    let xs: str[] = [];
+    let i: i32 = 0;
+    while (i < k) { let t: str = slice_unchecked(s, i, i + 2); xs = keep(t, xs); i = i + 1; }
     return xs;
 }
-function churn(n: i32): i32 { var a: i32 = n * 3; var b: i32 = a + 7; var c: i32 = b * 2; return a + b + c; }
+function churn(n: i32): i32 { let a: i32 = n * 3; let b: i32 = a + 7; let c: i32 = b * 2; return a + b + c; }
 function main(): i32 {
-    var s: string = "abcdefgh";
-    var xs: str[] = build(s, 5);
-    var acc: i32 = churn(5) % 251;
-    var j: i32 = 0;
+    let s: string = "abcdefgh";
+    let xs: str[] = build(s, 5);
+    let acc: i32 = churn(5) % 251;
+    let j: i32 = 0;
     while (j < xs.len()) {
         if (xs[j].len() != 2) { return 96; }
         if (xs[j][0] != s[j]) { return 95; }
@@ -189,24 +189,24 @@ function main(): i32 {
 	// ESCAPE negative — the views are stored in a container the BUILDING frame returns,
 	// so every one of them outlives the frame that would have held its box.
 	{"strview-escape-store-safe", `function collect(s: string, k: i32): str[] {
-    var xs: str[] = [];
-    var i: i32 = 0;
-    while (i < k) { var t: str = slice_unchecked(s, i, i + 2); xs = xs.append(t); i = i + 1; }
+    let xs: str[] = [];
+    let i: i32 = 0;
+    while (i < k) { let t: str = slice_unchecked(s, i, i + 2); xs = xs.append(t); i = i + 1; }
     return xs;
 }
 function churn(n: i32): i32 {
-    var a: i32 = n * 3;
-    var b: i32 = a + 7;
-    var c: i32 = b * 2;
-    var d: i32 = c - a;
-    var e: i32 = d + b;
+    let a: i32 = n * 3;
+    let b: i32 = a + 7;
+    let c: i32 = b * 2;
+    let d: i32 = c - a;
+    let e: i32 = d + b;
     return a + b + c + d + e;
 }
 function main(): i32 {
-    var s: string = "abcdefgh";
-    var xs: str[] = collect(s, 5);
-    var acc: i32 = churn(3) % 251;
-    var j: i32 = 0;
+    let s: string = "abcdefgh";
+    let xs: str[] = collect(s, 5);
+    let acc: i32 = churn(3) % 251;
+    let j: i32 = 0;
     while (j < xs.len()) {
         if (xs[j].len() != 2) { return 96; }
         if (xs[j][0] != s[j]) { return 95; }
@@ -226,24 +226,24 @@ function main(): i32 {
 	// 64 / 0). The temps have no binding for view_frame_names_of to approve, which is
 	// why the whitelist for them lives at the lowering CALL SITE instead.
 	{"strview-temp-loop-flat", `function main(): i32 {
-    var s: string = "hello world";
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let s: string = "hello world";
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
         acc = (acc + slice_unchecked(s, 0, 4).len() + (slice_unchecked(s, 2, 6)[1] as i32) + ("<" + slice_unchecked(s, 1, 3)).len()) % 251;
         if (slice_unchecked(s, 0, 5) == "hello") { acc = (acc + 1) % 251; }
         acc = (acc + slice_unchecked(slice_unchecked(s, 1, 7), 2, 4).len()) % 251;
         i = i + 1;
     }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 5000) {
         acc = (acc + slice_unchecked(s, 0, 4).len() + (slice_unchecked(s, 2, 6)[1] as i32) + ("<" + slice_unchecked(s, 1, 3)).len()) % 251;
         if (slice_unchecked(s, 0, 5) == "hello") { acc = (acc + 1) % 251; }
         acc = (acc + slice_unchecked(slice_unchecked(s, 1, 7), 2, 4).len()) % 251;
         j = j + 1;
     }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     // The concat still allocates its RESULT per iteration; only the five VIEW boxes
     // are gone, so the bound is the concat's share rather than zero.
@@ -255,10 +255,10 @@ function main(): i32 {
 	// iteration. A temp placed in a slot another live view owns prints as a wrong
 	// answer here rather than as a byte count.
 	{"strview-temp-value-exact", `function main(): i32 {
-    var s: string = "abcdefgh";
-    var u: string = "wxyz";
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let s: string = "abcdefgh";
+    let u: string = "wxyz";
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 6) {
         if (("[" + slice_unchecked(s, i, i + 2) + "]").len() != 4) { return 96; }
         if (slice_unchecked(s, i, i + 2).len() != 2) { return 95; }
@@ -280,24 +280,24 @@ function main(): i32 {
 	// frame's slots before the views are read, so a wrongly-placed box is a wrong
 	// answer and not just a lucky read.
 	{"strview-temp-escape-arg-safe", `function collect(s: string, k: i32): str[] {
-    var xs: str[] = [];
-    var i: i32 = 0;
+    let xs: str[] = [];
+    let i: i32 = 0;
     while (i < k) { xs = xs.append(slice_unchecked(s, i, i + 2)); i = i + 1; }
     return xs;
 }
 function churn(n: i32): i32 {
-    var a: i32 = n * 3;
-    var b: i32 = a + 7;
-    var c: i32 = b * 2;
-    var d: i32 = c - a;
-    var e: i32 = d + b;
+    let a: i32 = n * 3;
+    let b: i32 = a + 7;
+    let c: i32 = b * 2;
+    let d: i32 = c - a;
+    let e: i32 = d + b;
     return a + b + c + d + e;
 }
 function main(): i32 {
-    var s: string = "abcdefgh";
-    var xs: str[] = collect(s, 5);
-    var acc: i32 = churn(4) % 251;
-    var j: i32 = 0;
+    let s: string = "abcdefgh";
+    let xs: str[] = collect(s, 5);
+    let acc: i32 = churn(4) % 251;
+    let j: i32 = 0;
     while (j < xs.len()) {
         if (xs[j].len() != 2) { return 96; }
         if (xs[j][0] != s[j]) { return 95; }
@@ -312,18 +312,18 @@ function main(): i32 {
 	// them, so the box must stay on the heap to survive the frame.
 	{"strview-temp-escape-return-safe", `function head(s: string): str { return slice_unchecked(s, 0, 4); }
 function churn(n: i32): i32 {
-    var a: i32 = n * 3;
-    var b: i32 = a + 7;
-    var c: i32 = b * 2;
-    var d: i32 = c - a;
+    let a: i32 = n * 3;
+    let b: i32 = a + 7;
+    let c: i32 = b * 2;
+    let d: i32 = c - a;
     return a + b + c + d;
 }
 function main(): i32 {
-    var s: string = "hello world";
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let s: string = "hello world";
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var v: str = head(s);
+        let v: str = head(s);
         acc = (acc + churn(i)) % 251;
         if (v.len() != 4) { return 96; }
         if (v[0] != 104) { return 95; }

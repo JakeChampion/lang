@@ -35,10 +35,10 @@ function drain(c: i32): Fut {
     return Pend(c, resume);
 }
 function main(): i32 {
-    var f: Fut = drain(0);
+    let f: Fut = drain(0);
     match (f) {
         Rdy(v) => { return v; },
-        Pend(fd, k) => { var r: Fut = k(1); match (r) { Rdy(v2) => { return v2; }, Pend(a, b) => { return 0; } } }
+        Pend(fd, k) => { let r: Fut = k(1); match (r) { Rdy(v2) => { return v2; }, Pend(a, b) => { return 0; } } }
     }
     return 99;
 }`},
@@ -50,10 +50,10 @@ function drain(c: i32, acc: i32): Fut {
     return Pend(c, resume);
 }
 function main(): i32 {
-    var f: Fut = drain(0, 41);
+    let f: Fut = drain(0, 41);
     match (f) {
         Rdy(v) => { return v; },
-        Pend(fd, k) => { var r: Fut = k(1); match (r) { Rdy(v2) => { return v2; }, Pend(a, b) => { return 0; } } }
+        Pend(fd, k) => { let r: Fut = k(1); match (r) { Rdy(v2) => { return v2; }, Pend(a, b) => { return 0; } } }
     }
     return 99;
 }`},
@@ -64,10 +64,10 @@ function drain(c: i32, a: i32, b: i32): Fut {
     return Pend(c, resume);
 }
 function main(): i32 {
-    var f: Fut = drain(0, 30, 11);
+    let f: Fut = drain(0, 30, 11);
     match (f) {
         Rdy(v) => { return v; },
-        Pend(fd, k) => { var r: Fut = k(1); match (r) { Rdy(v2) => { return v2; }, Pend(a, b) => { return 0; } } }
+        Pend(fd, k) => { let r: Fut = k(1); match (r) { Rdy(v2) => { return v2; }, Pend(a, b) => { return 0; } } }
     }
     return 99;
 }`},
@@ -75,7 +75,7 @@ function main(): i32 {
 	// `apply(add, 9)` with `add` capturing `base` -> 33 + 9.
 	{"hof_arg", `function apply(g: (i32) => i32, n: i32): i32 { return g(n); }
 function mk(base: i32): i32 {
-    var add = (x: i32): i32 => { return x + base; };
+    let add = (x: i32): i32 => { return x + base; };
     return apply(add, 9);
 }
 function main(): i32 { return mk(33); }`},

@@ -34,9 +34,9 @@ func TestSelfHostMapFreshBoxArgWasmRC(t *testing.T) {
 	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
 
-	const probe = `function main(): i32 { var acc: i32 = 0; var w: i32 = 0; while (w < 100) { acc = acc + build(w); w = w + 1; } ` +
-		`var s1: i32 = (__heap_bump_bytes() as i32); var j: i32 = 0; while (j < 1000) { acc = acc + build(j); j = j + 1; } ` +
-		`var s2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if ((s2 - s1) > 4096) { return 1; } ` +
+	const probe = `function main(): i32 { let acc: i32 = 0; let w: i32 = 0; while (w < 100) { acc = acc + build(w); w = w + 1; } ` +
+		`let s1: i32 = (__heap_bump_bytes() as i32); let j: i32 = 0; while (j < 1000) { acc = acc + build(j); j = j + 1; } ` +
+		`let s2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if ((s2 - s1) > 4096) { return 1; } ` +
 		`if (acc != 1100) { return 88; } return 0; }`
 
 	cases := []struct {
@@ -47,23 +47,23 @@ func TestSelfHostMapFreshBoxArgWasmRC(t *testing.T) {
 		// answers for it, is_fresh_str_temp does not.
 		{"struct-literal-key",
 			`import "core/cmp"; @derive(cmp.Eq, cmp.Hash) struct P { x: i32, y: i32 } ` +
-				`function build(n: i32): i32 { var m: Map[P, i32] = map_new(4); m = m.insert(P { x: n, y: n * 2 }, 7); return m.len(); } ` + probe},
+				`function build(n: i32): i32 { let m: Map[P, i32] = map_new(4); m = m.insert(P { x: n, y: n * 2 }, 7); return m.len(); } ` + probe},
 		// A variant construction is a fresh box exactly as a struct literal is,
 		// and reads as an ordinary call — so it exercises the other arm of the
 		// freshness test.
 		{"variant-key",
 			`import "core/cmp"; @derive(cmp.Eq, cmp.Hash) enum Tag { Lo(i32), Hi(i32) } ` +
-				`function build(n: i32): i32 { var m: Map[Tag, i32] = map_new(4); m = m.insert(Tag.Lo(n), 7); return m.len(); } ` + probe},
+				`function build(n: i32): i32 { let m: Map[Tag, i32] = map_new(4); m = m.insert(Tag.Lo(n), 7); return m.len(); } ` + probe},
 		// The VALUE column asks the same question, and knew struct literals but
 		// not variant constructions: this one leaked where its struct twin
 		// below was already flat, which is what says the two columns want one
 		// predicate rather than two that drift.
 		{"variant-value",
 			`import "core/cmp"; @derive(cmp.Eq, cmp.Hash) enum Tag { Lo(i32), Hi(i32) } ` +
-				`function build(n: i32): i32 { var m: Map[i32, Tag] = map_new(4); m = m.insert(n, Tag.Lo(n)); return m.len(); } ` + probe},
+				`function build(n: i32): i32 { let m: Map[i32, Tag] = map_new(4); m = m.insert(n, Tag.Lo(n)); return m.len(); } ` + probe},
 		{"struct-value",
 			`import "core/cmp"; @derive(cmp.Eq, cmp.Hash) struct P { x: i32, y: i32 } ` +
-				`function build(n: i32): i32 { var m: Map[i32, P] = map_new(4); m = m.insert(n, P { x: n, y: n * 2 }); return m.len(); } ` + probe},
+				`function build(n: i32): i32 { let m: Map[i32, P] = map_new(4); m = m.insert(n, P { x: n, y: n * 2 }); return m.len(); } ` + probe},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

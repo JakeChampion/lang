@@ -270,7 +270,7 @@ func TestVerifyStackCountsClosureDirectEnvOnce(t *testing.T) {
 	return add;
 }
 function main(): i32 {
-	var f = makeAdder(7);
+	let f = makeAdder(7);
 	if (f(35) > 3 && f(1) > 0) { return 1; }
 	return f(2);
 }`, ptrW)

@@ -21,7 +21,7 @@ func TestU8HasItsOwnMethodSurface(t *testing.T) {
 	src := `function (b: u8) doubled(): i32 { return (b as i32) * 2; }
 
 function main(): i32 {
-    var b: u8 = 21;
+    let b: u8 = 21;
     return b.doubled();
 }`
 	prog, err := parser.Parse(src)
@@ -39,7 +39,7 @@ func TestU8DoesNotInheritU32Methods(t *testing.T) {
 	src := `function (n: u32) only_on_u32(): i32 { return n as i32; }
 
 function main(): i32 {
-    var b: u8 = 7;
+    let b: u8 = 7;
     return b.only_on_u32();
 }`
 	prog, err := parser.Parse(src)
@@ -64,13 +64,13 @@ function main(): i32 {
 func TestOtherWidthDispatchUnchanged(t *testing.T) {
 	for _, tc := range []struct{ name, src string }{
 		{"u32", `function (n: u32) twice(): u32 { return n * 2; }
-			 function main(): i32 { var n: u32 = 4; return n.twice() as i32; }`},
+			 function main(): i32 { let n: u32 = 4; return n.twice() as i32; }`},
 		{"i32", `function (n: i32) twice(): i32 { return n * 2; }
-			 function main(): i32 { var n: i32 = 4; return n.twice(); }`},
+			 function main(): i32 { let n: i32 = 4; return n.twice(); }`},
 		{"i64", `function (n: i64) twice(): i64 { return n * 2; }
-			 function main(): i32 { var n: i64 = 4; return n.twice() as i32; }`},
+			 function main(): i32 { let n: i64 = 4; return n.twice() as i32; }`},
 		{"u64", `function (n: u64) twice(): u64 { return n * 2; }
-			 function main(): i32 { var n: u64 = 4; return n.twice() as i32; }`},
+			 function main(): i32 { let n: u64 = 4; return n.twice() as i32; }`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			prog, err := parser.Parse(tc.src)
@@ -92,8 +92,8 @@ func TestU8AndU32SameNameCoexist(t *testing.T) {
 function (n: u32) width(): i32 { return 32; }
 
 function main(): i32 {
-    var b: u8 = 1;
-    var n: u32 = 1;
+    let b: u8 = 1;
+    let n: u32 = 1;
     if (b.width() != 8) { return 1; }
     if (n.width() != 32) { return 2; }
     return 0;

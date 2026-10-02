@@ -78,12 +78,12 @@ pub function name(n: i32): string {
   if (n == 0) {
     return "EXIT";
   }
-  var ns: string[] = names();
+  let ns: string[] = names();
   if (n >= 1 && n <= ns.len()) {
     return ns[n - 1];
   }
-  var lo: i32 = rt_min();
-  var hi: i32 = rt_max();
+  let lo: i32 = rt_min();
+  let hi: i32 = rt_max();
   if (lo == 0 || n < lo || n > hi) {
     return "";
   }
@@ -140,21 +140,21 @@ function descriptions(): string[] {
 // Reading `sys_siglist` and stopping there is what got this wrong: the table
 // was right and the function that wraps it was never modelled.
 pub function description(n: i32): string {
-  var dar: boolean = target_os() == "darwin";
+  let dar: boolean = target_os() == "darwin";
   if (n == 0) {
     if (dar) {
       return "Unknown signal: 0";
     }
     return "Unknown signal 0";
   }
-  var ds: string[] = descriptions();
+  let ds: string[] = descriptions();
   if (n >= 1 && n <= ds.len()) {
     if (dar) {
       return ds[n - 1] + ": " + n.to_string();
     }
     return ds[n - 1];
   }
-  var lo: i32 = rt_min();
+  let lo: i32 = rt_min();
   if (lo == 0 || n < lo || n > rt_max()) {
     return "";
   }
@@ -228,7 +228,7 @@ pub function number(s: string): i32 {
   if (s.len() == 0) {
     return 0;
   }
-  var bare: string = upper(s);
+  let bare: string = upper(s);
   if (bare.starts_with("SIG")) {
     bare = slice_unchecked(bare, 3, bare.len()) + "";
   }
@@ -238,17 +238,17 @@ pub function number(s: string): i32 {
 // `table_number(bare)` — the names-and-alternates lookup both name paths share,
 // already upper case and already stripped of any `SIG`. 0 for no match.
 function table_number(bare: string): i32 {
-  var ns: string[] = names();
-  var i: i32 = 0;
+  let ns: string[] = names();
+  let i: i32 = 0;
   while (i < ns.len()) {
     if (ns[i] == bare) {
       return i + 1;
     }
     i = i + 1;
   }
-  var alt: string[] = alternates();
-  var av: i32[] = alternate_values();
-  var j: i32 = 0;
+  let alt: string[] = alternates();
+  let av: i32[] = alternate_values();
+  let j: i32 = 0;
   while (j < alt.len()) {
     if (alt[j] == bare) {
       return av[j];
@@ -269,14 +269,14 @@ function parse_u31(s: string): i32 {
   if (s.len() == 0) {
     return 0 - 1;
   }
-  var v: i32 = 0;
-  var i: i32 = 0;
+  let v: i32 = 0;
+  let i: i32 = 0;
   while (i < s.len()) {
-    var c: i32 = s[i] as i32;
+    let c: i32 = s[i] as i32;
     if (c < 48 || c > 57) {
       return 0 - 1;
     }
-    var d: i32 = c - 48;
+    let d: i32 = c - 48;
     if (v > 214748364) {
       return 0 - 1;
     }
@@ -300,9 +300,9 @@ function str2signum(bare: string): i32 {
   if (bare.len() == 0) {
     return 0 - 1;
   }
-  var c0: i32 = bare[0] as i32;
+  let c0: i32 = bare[0] as i32;
   if (c0 >= 48 && c0 <= 57) {
-    var v: i32 = parse_u31(bare);
+    let v: i32 = parse_u31(bare);
     if (v < 0 || v > highest()) {
       return 0 - 1;
     }
@@ -311,7 +311,7 @@ function str2signum(bare: string): i32 {
   if (bare == "EXIT") {
     return 0;
   }
-  var t: i32 = table_number(bare);
+  let t: i32 = table_number(bare);
   if (t != 0) {
     return t;
   }
@@ -341,13 +341,13 @@ pub function operand2sig(operand: string): i32 {
   if (operand.len() == 0) {
     return 0 - 1;
   }
-  var c0: i32 = operand[0] as i32;
+  let c0: i32 = operand[0] as i32;
   if (c0 >= 48 && c0 <= 57) {
-    var v: i32 = parse_u31(operand);
+    let v: i32 = parse_u31(operand);
     if (v < 0) {
       return 0 - 1;
     }
-    var n: i32 = v % 128;
+    let n: i32 = v % 128;
     if (v >= 255) {
       n = v % 256;
     }
@@ -359,8 +359,8 @@ pub function operand2sig(operand: string): i32 {
     }
     return n;
   }
-  var up: string = upper(operand);
-  var found: i32 = str2signum(up);
+  let up: string = upper(operand);
+  let found: i32 = str2signum(up);
   // The prefix is stripped only on a SECOND attempt, so `RTMIN+3` and
   // `SIGRTMIN+3` both resolve while `SIGSIGINT` does not.
   if (found < 0 && up.starts_with("SIG")) {
@@ -375,8 +375,8 @@ pub function operand2sig(operand: string): i32 {
 // The realtime spellings: RTMIN, RTMAX, and either with a signed offset. Linux
 // only; on Darwin `rt_min()` is 0 and every one of these answers 0.
 function realtime_number(bare: string): i32 {
-  var lo: i32 = rt_min();
-  var hi: i32 = rt_max();
+  let lo: i32 = rt_min();
+  let hi: i32 = rt_max();
   if (lo == 0) {
     return 0;
   }
@@ -386,7 +386,7 @@ function realtime_number(bare: string): i32 {
   if (bare == "RTMAX") {
     return hi;
   }
-  var base: i32 = 0;
+  let base: i32 = 0;
   if (bare.starts_with("RTMIN")) {
     base = lo;
   } else if (bare.starts_with("RTMAX")) {
@@ -394,17 +394,17 @@ function realtime_number(bare: string): i32 {
   } else {
     return 0;
   }
-  var rest: string = slice_unchecked(bare, 5, bare.len()) + "";
+  let rest: string = slice_unchecked(bare, 5, bare.len()) + "";
   if (rest.len() < 2) {
     return 0;
   }
-  var sign: string = slice_unchecked(rest, 0, 1) + "";
-  var digits: string = slice_unchecked(rest, 1, rest.len()) + "";
-  var off: i32 = parse_u31(digits);
+  let sign: string = slice_unchecked(rest, 0, 1) + "";
+  let digits: string = slice_unchecked(rest, 1, rest.len()) + "";
+  let off: i32 = parse_u31(digits);
   if (off < 0) {
     return 0;
   }
-  var n: i32 = 0;
+  let n: i32 = 0;
   if (sign == "+") {
     n = base + off;
   } else if (sign == "-") {
@@ -420,10 +420,10 @@ function realtime_number(bare: string): i32 {
 
 // ASCII upper-casing, which is all a signal name can contain.
 function upper(s: string): string {
-  var out: string = "";
-  var i: i32 = 0;
+  let out: string = "";
+  let i: i32 = 0;
   while (i < s.len()) {
-    var c: i32 = s[i] as i32;
+    let c: i32 = s[i] as i32;
     if (c >= 97 && c <= 122) {
       c = c - 32;
     }

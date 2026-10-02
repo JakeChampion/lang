@@ -34,9 +34,9 @@ import (
 func enumReusePayloadBumpSrc(n string) string {
 	return `enum E { Wrap(i32[]), Empty }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var e: E = Empty;
-    var i: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let e: E = Empty;
+    let i: i32 = 0;
     while (i < ` + n + `) {
         e = Wrap([i, i + 1, i + 2, i + 3]);
         i = i + 1;
@@ -49,9 +49,9 @@ function main(): i32 {
 // a match read each iteration — value-correctness + 0 over-release.
 const enumReuseCrossVariantSrc = `enum Bag { Keep(i32[]), Swap(i32[]) }
 function main(): i32 {
-    var b: Bag = Keep([0, 0, 0]);
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let b: Bag = Keep([0, 0, 0]);
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < 300) {
         b = Keep([i, i + 1, i + 2]);
         b = Swap([i + 10, i + 11, i + 12]);
@@ -71,12 +71,12 @@ function main(): i32 {
 // over-release.
 const enumReuseAliasedPayloadSrc = `enum Bag { Keep(i32[]), Swap(i32[]) }
 function main(): i32 {
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < 200) {
-        var a: i32[] = [i, i + 1, i + 2];
-        var b: Bag = Keep(a);
-        var junk: i32[] = [99, 99, 99];
+        let a: i32[] = [i, i + 1, i + 2];
+        let b: Bag = Keep(a);
+        let junk: i32[] = [99, 99, 99];
         acc = acc + a[0] + a[2] + junk[0];
         i = i + 1;
     }

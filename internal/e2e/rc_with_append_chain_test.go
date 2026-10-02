@@ -15,18 +15,18 @@ func TestAppendOntoAWithCopyReleasesTheCopy(t *testing.T) {
 		want      int
 	}{
 		{"scalar-elements", `function f(i: i32): i32 {
-    var xs: i32[] = [1, 2, 3];
-    var zs: i32[] = xs.with(2, i).append(8);
+    let xs: i32[] = [1, 2, 3];
+    let zs: i32[] = xs.with(2, i).append(8);
     return zs.len() + xs[1];
 }
-function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 3) { acc = acc + f(i); i = i + 1; } return acc; }`, 18},
+function main(): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < 3) { acc = acc + f(i); i = i + 1; } return acc; }`, 18},
 		{"string-elements", `function mk(a: string): string { return a + "!"; }
 function f(i: i32): i32 {
-    var xs: string[] = [mk("a string long enough for the heap"), mk("another heap string")];
-    var zs: string[] = xs.with(1, mk("a replacement heap string")).append(mk("an appended heap string"));
+    let xs: string[] = [mk("a string long enough for the heap"), mk("another heap string")];
+    let zs: string[] = xs.with(1, mk("a replacement heap string")).append(mk("an appended heap string"));
     return zs.len() + xs[1].len();
 }
-function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 3) { acc = acc + f(i); i = i + 1; } return acc % 200; }`, 69},
+function main(): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < 3) { acc = acc + f(i); i = i + 1; } return acc % 200; }`, 69},
 	}
 	for _, c := range cases {
 		t.Run("x86_64-sanitize/"+c.name, func(t *testing.T) {

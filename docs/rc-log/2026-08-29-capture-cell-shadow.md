@@ -1,7 +1,7 @@
 # The capture cell rewrote every binding of the spelling, not just the capture
 
 A capture the lambda WRITES is boxed into a one-element cell (#2850/#5394):
-`var n: i32 = 0` becomes `var $cell$n: i32[] = [0]`, every read of `n` becomes
+`let n: i32 = 0` becomes `let $cell$n: i32[] = [0]`, every read of `n` becomes
 `$cell$n[0]`, and every write becomes `$cell$n = $cell$n.with(0, v)`. That is
 what gives a captured scalar by-reference semantics.
 
@@ -26,7 +26,7 @@ capture it never had**. `lambda_captures` on the rewritten node now reports
 `$cell$n`, which changes the lift decision (`try_lift_binding` threads a capture
 argument that is not in the source) and the env-box layout in `make_clo_func`.
 
-A fourth shape — a nested `var n` re-declaration — is guarded and unwitnessed;
+A fourth shape — a nested `let n` re-declaration — is guarded and unwitnessed;
 the probe for it measured 55 on every side.
 
 ## Declining is NOT the fix here, and the probe said so
@@ -47,7 +47,7 @@ three functions, extended at each scope that introduces a binding —
 - a `for` binder, for the body but not the iterable (which is still outside);
 - an arm's pattern binders, for that arm's body **and its guard**;
 - a lambda's parameters, for its body;
-- a `var` re-declaration, for the rest of its statement list.
+- a `let` re-declaration, for the rest of its statement list.
 
 and the cell DECLARATION is matched on its binding site (`first_var_site`,
 first-in-source, which is the binding `cap_type_at` resolved the capture's type
@@ -73,5 +73,5 @@ Two more from the same audit are NOT fixed here and are worth carrying:
   measurement.
 - **`parser.fnv_rewrite_stmt`** stamps `type_name: "fn"` using
   `fnv_name_called_in_block(fd.body, …)` — always the whole function body, never
-  the enclosing block — so a nested `var f = mk` that is never called is stamped
+  the enclosing block — so a nested `let f = mk` that is never called is stamped
   because a sibling `f` is called elsewhere. Wrong TYPE on the slot.

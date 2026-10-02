@@ -48,7 +48,7 @@ func REPL(in io.Reader, out io.Writer) error {
 // should print val: true for the value of a final expression, false
 // for declarations and statements with no observable result.
 //
-// Statements run directly against Interp.Global, so `var x = 7` at
+// Statements run directly against Interp.Global, so `let x = 7` at
 // one prompt is visible at the next.
 func EvalLine(i *Interp, line string) (Value, bool, error) {
 	// Top-level function declaration(s).

@@ -43,9 +43,9 @@ func TestSelfHostArm64UnsignedDivIR(t *testing.T) {
 		"@noinline function umod_probe(a: u64, b: u64): u64 { return a % b; }\n" +
 		"@noinline function sdiv_probe(a: i32, b: i32): i32 { return a / b; }\n" +
 		"function main(): i32 {\n" +
-		"    var q: u64 = udiv_probe(10 as u64, 3 as u64);\n" +
-		"    var m: u64 = umod_probe(10 as u64, 3 as u64);\n" +
-		"    var s: i32 = sdiv_probe(9, 2);\n" +
+		"    let q: u64 = udiv_probe(10 as u64, 3 as u64);\n" +
+		"    let m: u64 = umod_probe(10 as u64, 3 as u64);\n" +
+		"    let s: i32 = sdiv_probe(9, 2);\n" +
 		"    return (q as i32) + (m as i32) + s;\n" +
 		"}\n"
 	srcFile := filepath.Join(t.TempDir(), "u64_div_ast.fern")

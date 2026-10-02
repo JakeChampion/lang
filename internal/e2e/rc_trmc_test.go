@@ -27,20 +27,20 @@ function inc_all(xs: List): List {
     }
 }
 function build(n: i32): List {
-    var acc: List = Nil;
-    var i: i32 = 0;
+    let acc: List = Nil;
+    let i: i32 = 0;
     while (i < n) { acc = Cons(i, acc); i = i + 1; }   // [n-1, .., 1, 0]
     return acc;
 }
 function sum(l: List): i32 {
-    var acc: i32 = 0;
-    var cur: List = l;
-    var go: boolean = true;
+    let acc: i32 = 0;
+    let cur: List = l;
+    let go: boolean = true;
     while (go) { match (cur) { Cons(h, t) => { acc = acc + h; cur = t; }, Nil => { go = false; } } }
     return acc;
 }
 function main(): i32 {
-    var ys: List = inc_all(build(50));   // sum(0..49) = 1225, +50 (one per elem) = 1275
+    let ys: List = inc_all(build(50));   // sum(0..49) = 1225, +50 (one per elem) = 1275
     if (sum(ys) != 1275) { return 1; }
     return __rc_underflow_count();
 }`
@@ -109,8 +109,8 @@ const trmcDeepSrc = `enum List { Cons(i32, List), Nil }
 function inc_all(xs: List): List {
     match (xs) { Cons(h, t) => { return Cons(h + 1, inc_all(t)); }, Nil => { return Nil; } }
 }
-function build(n: i32): List { var acc: List = Nil; var i: i32 = 0; while (i < n) { acc = Cons(1, acc); i = i + 1; } return acc; }
-function sum(l: List): i32 { var acc: i32 = 0; var cur: List = l; var go: boolean = true; while (go) { match (cur) { Cons(h, t) => { acc = acc + h; cur = t; }, Nil => { go = false; } } } return acc; }
+function build(n: i32): List { let acc: List = Nil; let i: i32 = 0; while (i < n) { acc = Cons(1, acc); i = i + 1; } return acc; }
+function sum(l: List): i32 { let acc: i32 = 0; let cur: List = l; let go: boolean = true; while (go) { match (cur) { Cons(h, t) => { acc = acc + h; cur = t; }, Nil => { go = false; } } } return acc; }
 function main(): i32 {
     if (sum(inc_all(build(300000))) != 600000) { return 1; }   // 300k elems, 1 -> 2 each
     return 0;

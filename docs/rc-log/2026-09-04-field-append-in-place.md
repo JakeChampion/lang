@@ -27,7 +27,7 @@ Per function, for an append whose receiver is exactly `<root>.<field>`:
 
 Everything else refuses: a bare read of the root, a read of the same field, a
 method call on the root, a root read from a defer action or a lambda, and a root
-bound to a second name anywhere (`var t = s`). The root must be the RECEIVER or
+bound to a second name anywhere (`let t = s`). The root must be the RECEIVER or
 a PARAMETER — a struct LOCAL's box is this frame's, so growing a buffer it names
 and handing the result out would let the frame's own reclaim free what the
 result holds.
@@ -95,7 +95,7 @@ Three more details are load-bearing:
 - **The SOLE-OCCURRENCE death had to start propagating.** `lower_stmt` unions
   grow_sole (#6048) into `grow_exempt` for every statement, so such a name
   reaches every call unbracketed — but `grow_dying_passes_stmt` recorded no edge
-  for it, so `function f(p: S): S { var t = g(p); return t; }` grew p's field in
+  for it, so `function f(p: S): S { let t = g(p); return t; }` grew p's field in
   place AND left f's own position unflagged. That gap predates this change (it
   is equally true of the #4873 array bit); the field half would have inherited
   it. The dying-pass walk now reaches every call in every statement, with the
@@ -177,7 +177,7 @@ normal and only the over-release report is armed, reaches the same crash with no
 the field hops, call the helper. The release side is therefore a SECOND
 evaluation of a place, and a place is not stable across the call it brackets.
 
-The window is real and reachable. `var s2 = lower_block(iff.then_body, s1)` with
+The window is real and reachable. `let s2 = lower_block(iff.then_body, s1)` with
 an EMPTY then-body hands `s1`'s own box straight back at rc 1;
 `release_last_use_source`'s pass-through arm then decs it, freeing a box `s2`
 still names (that is #8240, pre-existing and identical on main — harmless there
@@ -211,7 +211,7 @@ rows len=1341    next len=1342
 admits on the callee's own terms. Its caller is
 
 ```fern
-var struct_ret_fns_aug: SigReg = sg.struct_ret_fns;
+let struct_ret_fns_aug: SigReg = sg.struct_ret_fns;
 struct_ret_fns_aug = sig_reg_append(struct_ret_fns_aug, …);
 ```
 
@@ -323,10 +323,10 @@ or a double free with nothing at rc 0 to trip a detector:
 
 | route | shape | who frees the buffer the other still holds |
 |---|---|---|
-| return sweep of a bare-credit local | `var ms = S {…}; …; return ms.emit(4)` | the caller's `__struct_drop_S(ms)` — `emit` is in the receiver-borrow registry's `nomove` list, so `ms` is not NODEEP and the return-position death deep-drops it |
-| an `own` param's exit release | `function push(own b: S, v) { var ys = b.ops.append(v); … }` | the callee's OWNREL row: `__struct_drop_S(b)` at exit, on its own root |
+| return sweep of a bare-credit local | `let ms = S {…}; …; return ms.emit(4)` | the caller's `__struct_drop_S(ms)` — `emit` is in the receiver-borrow registry's `nomove` list, so `ms` is not NODEEP and the return-position death deep-drops it |
+| an `own` param's exit release | `function push(own b: S, v) { let ys = b.ops.append(v); … }` | the callee's OWNREL row: `__struct_drop_S(b)` at exit, on its own root |
 | the same, one call down | `function g(own s: S, v): S { return h(s, v); }` with `h` growing `s.ops` | `g`'s OWNREL exit release, after `h` handed the buffer to its result |
-| the VALUE's holder | `var ys = s.ops.append(v); var n = ys.len(); return S { ops: [], n }` | `ys` is swept at exit; the caller's `__field_reclaim_S` then frees `s.ops` again |
+| the VALUE's holder | `let ys = s.ops.append(v); let n = ys.len(); return S { ops: [], n }` | `ys` is swept at exit; the caller's `__field_reclaim_S` then frees `s.ops` again |
 
 The fix is at the site, not at the releases: on the identity arm
 `lower_field_append_inplace` STORES NULL into the source field. The grow was a
@@ -339,7 +339,7 @@ from the value, and the source's release frees it. `field_append_inplace_at`
 also asks that the root's box type resolves, since the store needs the field
 slot.
 
-Two consequences for the admission. A body-scope host (`var`, an expression
+Two consequences for the admission. A body-scope host (`let`, an expression
 statement, a condition) INSIDE A LOOP is refused: the next iteration would read
 the moved-out field. A return exits and a rebind of the root replaces it, so
 those keep their sites in loops. And the E051 caller side had a hole the `own`
@@ -367,7 +367,7 @@ self-built x86-64 compiler dies the same way on `lexer.fern`).
 `slc_walk` is the shape:
 
 ```fern
-var cur: Scope = s;            // a second name for the caller's box
+let cur: Scope = s;            // a second name for the caller's box
 for st in stmts {
     …slc_walk(body, cur, …)…   // recurses with cur; the callee does the same
     cur = bind_stmt(st, cur);  // Scope.bind grows cur.names in place
@@ -388,7 +388,7 @@ the receiver as an alias, so `cur` loses the dying exemption and the call is
 bracketed — the caller owns that box, which is what `grow_alias_names_of`'s
 own definition ("a container this frame does not own") already said. It has
 to be static, because the bind takes no count: `s` is never read again after
-`var cur = s`, so the dead-alias cancellation (#4402) makes it a plain store,
+`let cur = s`, so the dead-alias cancellation (#4402) makes it a plain store,
 and at runtime the box looks uniquely held.
 
 The runtime half: the site loads the root box, asks `__fern_rc_is_unique`, and

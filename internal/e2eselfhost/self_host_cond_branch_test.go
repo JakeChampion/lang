@@ -19,7 +19,7 @@ const condBranchProg = `@noinline function both(a: i32, b: i32, c: i32): i32 {
     return 2;
 }
 @noinline function either(a: i32, b: i32, c: i32): i32 {
-    var n: i32 = 0;
+    let n: i32 = 0;
     while (a < b || !(b < c)) { a = a + 1; n = n + 1; }
     return n;
 }

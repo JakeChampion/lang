@@ -158,11 +158,11 @@ func CheckServeNoDelay(t *testing.T, cmd *exec.Cmd, addr string) {
 func NetNoDelayProbe() string {
 	return `import "std/net";
 function main(): i32 {
-    var ln: i32 = 0;
+    let ln: i32 = 0;
     match (net.listen_with(0, net.listen_options())) { Ok(fd) => { ln = fd; }, Err(e) => { return 1; } }
-    var c: i32 = 0;
+    let c: i32 = 0;
     match (net.connect(net.socket_addr(net.ipv4_loopback(), tcp_local_port(ln)))) { Ok(fd) => { c = fd; }, Err(e) => { return 2; } }
-    var a: i32 = 0;
+    let a: i32 = 0;
     match (net.accept(ln)) { Ok(fd) => { a = fd; }, Err(e) => { return 3; } }
     print("ready");
     sleep_ms(60000 as i64);

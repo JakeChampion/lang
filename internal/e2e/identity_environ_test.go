@@ -29,7 +29,7 @@ func identitySource(uid, gid, euid, egid int, groups []int, envCount int, probe 
     if (getgid() != (%d as u32)) { return 2; }
     if (geteuid() != (%d as u32)) { return 3; }
     if (getegid() != (%d as u32)) { return 4; }
-    var gs: i64[] = getgroups();
+    let gs: i64[] = getgroups();
     if (gs.len() != %d) { return 5; }
 `, uid, gid, euid, egid, len(groups))
 	// The order is the kernel's and both sides read the same kernel, so
@@ -37,10 +37,10 @@ func identitySource(uid, gid, euid, egid int, groups []int, envCount int, probe 
 	for i, g := range groups {
 		fmt.Fprintf(&b, "    if (gs[%d] != %d) { return %d; }\n", i, g, 10+i)
 	}
-	fmt.Fprintf(&b, `    var e: string[] = environ();
+	fmt.Fprintf(&b, `    let e: string[] = environ();
     if (e.len() != %d) { return 6; }
-    var seen: i32 = 0;
-    var i: i32 = 0;
+    let seen: i32 = 0;
+    let i: i32 = 0;
     while (i < e.len()) {
         if (e[i] == %q) { seen = seen + 1; }
         i = i + 1;
@@ -48,11 +48,11 @@ func identitySource(uid, gid, euid, egid int, groups []int, envCount int, probe 
     if (seen != 1) { return 7; }
     // Every entry carries its '=' — that is what makes the raw list
     // usable without a second lookup.
-    var k: i32 = 0;
+    let k: i32 = 0;
     while (k < e.len()) {
-        var entry: string = e[k];
-        var eq: i32 = 0 - 1;
-        var j: i32 = 0;
+        let entry: string = e[k];
+        let eq: i32 = 0 - 1;
+        let j: i32 = 0;
         while (j < entry.len()) {
             if (entry[j] == b'=') { if (eq < 0) { eq = j; } }
             j = j + 1;
@@ -110,9 +110,9 @@ func TestInterpIdentityAndEnviron(t *testing.T) {
 // `environ()` is a real question on both previews.
 func TestWasmEnviron(t *testing.T) {
 	src := `function main(): i32 {
-    var e: string[] = environ();
-    var seen: i32 = 0;
-    var i: i32 = 0;
+    let e: string[] = environ();
+    let seen: i32 = 0;
+    let i: i32 = 0;
     while (i < e.len()) {
         if (e[i] == "FERN_ENVIRON_PROBE=identity-slice") { seen = seen + 1; }
         if (e[i] == "FERN_ENVIRON_OTHER=two") { seen = seen + 10; }
@@ -143,9 +143,9 @@ func TestWasmPreview1Environ(t *testing.T) {
 		t.Fatalf("wasmtime not on PATH — this leg needs it (mise.toml pins it; `eval \"$(scripts/toolchain-env)\"`)")
 	}
 	src := `function main(): i32 {
-    var e: string[] = environ();
-    var seen: i32 = 0;
-    var i: i32 = 0;
+    let e: string[] = environ();
+    let seen: i32 = 0;
+    let i: i32 = 0;
     while (i < e.len()) {
         if (e[i] == "FERN_ENVIRON_PROBE=identity-slice") { seen = seen + 1; }
         if (e[i] == "FERN_ENVIRON_OTHER=two") { seen = seen + 10; }

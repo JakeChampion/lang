@@ -58,7 +58,7 @@ var p3StreamSinkProviderCore = []byte{
 //
 //	@import("test:dep/d","sink") async function sink(s: stream[u8]): i32;
 //	async function run(): i32 {
-//	    var xs: u8[] = [10 as u8, 20 as u8, 12 as u8];
+//	    let xs: u8[] = [10 as u8, 20 as u8, 12 as u8];
 //	    return sink(xs);                       // colorless: streams xs out to the host
 //	}
 //
@@ -77,7 +77,7 @@ func TestWasmP3StreamParamFromFern(t *testing.T) {
 
 	src := `@import("test:dep/d", "sink") async function sink(s: stream[u8]): i32;
 async function run(): i32 {
-	var xs: u8[] = [10 as u8, 20 as u8, 12 as u8];
+	let xs: u8[] = [10 as u8, 20 as u8, 12 as u8];
 	return sink(xs);
 }
 function main(): i32 { return 0; }

@@ -36,7 +36,7 @@ import "std/array";
 function drain(path: string): string {
     match (open_reader(path)) {
         Ok(r) => {
-            var chunks: string[] = [];
+            let chunks: string[] = [];
             while (true) {
                 match (r.read_chunk(4096)) {
                     Ok(piece) => {
@@ -59,9 +59,9 @@ function drain(path: string): string {
 }
 
 function sum_bytes(s: string): i32 {
-    var bs: u8[] = s.bytes();
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let bs: u8[] = s.bytes();
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < bs.len()) {
         acc = acc + (bs[i] as i32) * (i % 7 + 1);
         i = i + 1;
@@ -83,28 +83,28 @@ function readable(path: string): boolean {
 }
 
 function agrees(path: string): boolean {
-    var want: string = drain(path);
-    var got: string = whole(path);
+    let want: string = drain(path);
+    let got: string = whole(path);
     if (got.len() != want.len()) { return false; }
     if (sum_bytes(got) != sum_bytes(want)) { return false; }
-    var n: i32 = match (read_file_bytes(path)) { Ok(b) => b.len(), Err(_) => 0 - 1 };
+    let n: i32 = match (read_file_bytes(path)) { Ok(b) => b.len(), Err(_) => 0 - 1 };
     return n == want.len();
 }
 
 function main(): i32 {
     // WASI resolves a path against a preopen, so the absolute form is
     // not openable there; fall back to the relative spelling.
-    var mounts: string = "/proc/self/mounts";
+    let mounts: string = "/proc/self/mounts";
     if (!readable(mounts)) { mounts = "proc/self/mounts"; }
-    var cmdline: string = "/proc/self/cmdline";
+    let cmdline: string = "/proc/self/cmdline";
     if (!readable(cmdline)) { cmdline = "proc/self/cmdline"; }
 
     if (!agrees(mounts)) { return fail("mounts-disagrees"); }
     if (!agrees(cmdline)) { return fail("cmdline-disagrees"); }
 
-    var m: string = whole(mounts);
+    let m: string = whole(mounts);
     if (m.len() == 0) { return fail("mounts-empty"); }
-    var mb: u8[] = m.bytes();
+    let mb: u8[] = m.bytes();
     if (mb[mb.len() - 1] != 10 as u8) { return fail("mounts-nul-padded"); }
 
     write("pseudo-read-ok\n");
@@ -120,9 +120,9 @@ import "std/i32";
 import "std/array";
 
 function sum_bytes(s: string): i32 {
-    var bs: u8[] = s.bytes();
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let bs: u8[] = s.bytes();
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < bs.len()) {
         acc = acc + (bs[i] as i32) * (i % 7 + 1);
         i = i + 1;
@@ -131,7 +131,7 @@ function sum_bytes(s: string): i32 {
 }
 
 function body(n: i32): string {
-    var out: string = "0123456789abcdef".repeat(n / 16);
+    let out: string = "0123456789abcdef".repeat(n / 16);
     return out + "z".repeat(n % 16);
 }
 
@@ -141,19 +141,19 @@ function fail(step: string, n: i32): i32 {
 }
 
 function round_trips(n: i32): boolean {
-    var want: string = body(n);
+    let want: string = body(n);
     if (want.len() != n) { return false; }
     match (write_file("size.bin", want)) { Ok(_) => {}, Err(_) => { return false; } }
-    var got: string = match (read_file("size.bin")) { Ok(t) => t, Err(_) => "READ-ERR-SENTINEL" };
+    let got: string = match (read_file("size.bin")) { Ok(t) => t, Err(_) => "READ-ERR-SENTINEL" };
     if (got.len() != n) { return false; }
     if (sum_bytes(got) != sum_bytes(want)) { return false; }
-    var bn: i32 = match (read_file_bytes("size.bin")) { Ok(b) => b.len(), Err(_) => 0 - 1 };
+    let bn: i32 = match (read_file_bytes("size.bin")) { Ok(b) => b.len(), Err(_) => 0 - 1 };
     return bn == n;
 }
 
 function main(): i32 {
-    var sizes: i32[] = [0, 1, 15, 16, 4095, 4096, 4097, 8192, 100000];
-    var i: i32 = 0;
+    let sizes: i32[] = [0, 1, 15, 16, 4095, 4096, 4097, 8192, 100000];
+    let i: i32 = 0;
     while (i < sizes.len()) {
         if (!round_trips(sizes[i])) { return fail("round-trip", sizes[i]); }
         i = i + 1;
@@ -320,9 +320,9 @@ func TestArm64SSAReadFileGrowsPastStatHint(t *testing.T) {
 func readFileCensusProgram(n int) string {
 	return fmt.Sprintf(`
 function main(): i32 {
-    var path: string = args()[1];
-    var i: i32 = 0;
-    var total: i32 = 0;
+    let path: string = args()[1];
+    let i: i32 = 0;
+    let total: i32 = 0;
     while (i < %d) {
         total = total + match (read_file(path)) { Ok(t) => t.len(), Err(_) => 0 - 1 };
         i = i + 1;

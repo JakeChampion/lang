@@ -118,7 +118,7 @@ use-after.
 
 ### Soundness test matrix (gate every step)
 
-- **Use-after-move rejected**: `var a = [...]; var b = f(a); g(a)` → `E050`.
+- **Use-after-move rejected**: `let a = [...]; let b = f(a); g(a)` → `E050`.
 - **Aliasing safe**: `a = pick(a, a)` (returns the receiver) stays
   value-correct with `__rc_underflow_count() == 0` (the move-checker must see
   the alias and *not* treat it as a clean move, or borrowed-return-retain must
@@ -226,7 +226,7 @@ walls make that unsound as-is:
 
 - **Cheapest high-value path:** annotate the self-host's threading so the
   accumulator is an **`own` parameter** wherever possible (pattern that already
-  works) and **restructure the few top-level `var out = []; out = f(.., out)`
+  works) and **restructure the few top-level `let out = []; out = f(.., out)`
   local accumulators** (e.g. `collect_assigned`) into `own`-param threading —
   sidestepping the LOCAL move-and-rebind design entirely. Measure the
   self-compile working set after annotating the hot builders.

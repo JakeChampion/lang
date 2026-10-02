@@ -2,7 +2,7 @@
 
 Five families in `irlower.fern` still resolved a reclaim fact by a bare
 variable NAME after #7358 deleted `reclaim_slot_name`. They are now keyed on
-the binding SITE (`name@line:col`) or, where no `var` binds the slot, on the
+the binding SITE (`name@line:col`) or, where no `let` binds the slot, on the
 slot number. One of the five was leaking on a shape two tokens away from a
 shape that was clean.
 
@@ -10,9 +10,9 @@ shape that was clean.
 
 ```fern
 function go(k: i32): i32 {
-    var t: i32 = 0;
+    let t: i32 = 0;
     if (k >= 0) {
-        var xs: dyn Show[] = [41, "hello"];   // <- inside a block
+        let xs: dyn Show[] = [41, "hello"];   // <- inside a block
         t = xs[0].show() + xs[1].show();
     }
     return t;
@@ -61,7 +61,7 @@ path, where `slot_of` routes through `defer_alias_slot` precisely because the
 declaring block has been retired — leak-direction, not measured here.
 
 **`SCENRB:`** — the probe is instructive and its null result is not evidence.
-Top-level admitted scalar-enum `e`, a sibling-block `var e` of another scalar
+Top-level admitted scalar-enum `e`, a sibling-block `let e` of another scalar
 enum reassigned inside the block:
 
 ```

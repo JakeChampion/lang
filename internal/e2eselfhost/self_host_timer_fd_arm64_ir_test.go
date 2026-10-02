@@ -30,13 +30,13 @@ func TestSelfHostTimerFdIRArm64(t *testing.T) {
 		asmNeedle string
 	}{
 		{"timerfd-ready", `function main(): i32 {
-    var fd: i32 = timer_fd(1);
-    var fds: i32[] = [fd];
+    let fd: i32 = timer_fd(1);
+    let fds: i32[] = [fd];
     return poll(fds, 500);
 }`, 0, "bl __fn___fern_timer_fd"},
 		{"shims", `function main(): i32 {
-    var p: i32 = wasm_timer_pollable(0);
-    var d: i32 = wasm_pollable_drop(p);
+    let p: i32 = wasm_timer_pollable(0);
+    let d: i32 = wasm_pollable_drop(p);
     return d - p;
 }`, 1, "bl __fern_wasm_timer_pollable"},
 	}

@@ -45,7 +45,7 @@ function s_ififo(): i32 {
 }
 
 function help_text(): string {
-  var out: string = "";
+  let out: string = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]... NAME...\n";
   out = out + "Create named pipes (FIFOs) with the given NAMEs.\n";
   out = out + "\n";
@@ -76,17 +76,17 @@ function security_context(named: boolean): void {
 struct Scan { mode_text: string, mode_given: boolean }
 
 function scan_options(): (Scan, string[]) {
-  var opts: gnu.Opt[] = [];
+  let opts: gnu.Opt[] = [];
   // Declaration order is visible: `mkfifo --=x` lists the long options
   // in it, and `--context` stands first.
   opts = opts.append(gnu.optional("", "context", opt_context()));
   opts = opts.append(gnu.valued("m", "mode", opt_mode()));
   opts = opts.append(gnu.flag("Z", "", opt_z()));
 
-  var s: Scan = Scan { mode_text: "", mode_given: false };
-  var g: gnu.Getopt = gnu.getopt_new(args(), opts, "mkfifo", help_text(), 1);
+  let s: Scan = Scan { mode_text: "", mode_given: false };
+  let g: gnu.Getopt = gnu.getopt_new(args(), opts, "mkfifo", help_text(), 1);
   while (true) {
-    var res: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    let res: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = res.1;
     match (res.0) {
       Some(m) => {
@@ -110,9 +110,9 @@ function scan_options(): (Scan, string[]) {
 function compile_mode(text: string): i32 {
   match (mode.compile(text)) {
     Some(c) => {
-      var mask: i32 = umask(0);
+      let mask: i32 = umask(0);
       umask(mask);
-      var a: mode.Adjusted = c.adjust(438, false, mask);
+      let a: mode.Adjusted = c.adjust(438, false, mask);
       if ((a.mode & mode.complement(mode.s_irwxugo())) != 0) {
         gnu.error("mode must specify only file permission bits");
         exit(1);
@@ -153,22 +153,22 @@ function make(name: string, perm: i32, mode_given: boolean): boolean {
 }
 
 pub function main(): i32 {
-  var scanned: (Scan, string[]) = scan_options();
-  var s: Scan = scanned.0;
-  var operands: string[] = scanned.1;
+  let scanned: (Scan, string[]) = scan_options();
+  let s: Scan = scanned.0;
+  let operands: string[] = scanned.1;
   // The operand count is read before the MODE, so `mkfifo -m bogus` is
   // the missing operand rather than the bad mode.
   if (operands.len() == 0) {
     gnu.die_usage("missing operand", 1);
   }
 
-  var perm: i32 = 438;
+  let perm: i32 = 438;
   if (s.mode_given) {
     perm = compile_mode(s.mode_text);
   }
 
-  var ok: boolean = true;
-  var i: i32 = 0;
+  let ok: boolean = true;
+  let i: i32 = 0;
   while (i < operands.len()) {
     if (!make(operands[i], perm, s.mode_given)) {
       ok = false;

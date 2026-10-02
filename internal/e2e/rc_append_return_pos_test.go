@@ -31,9 +31,9 @@ func appendReturnPosBumpSrc(n string) string {
     return acc;
 }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var acc: i32[] = [];
-    var i: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let acc: i32[] = [];
+    let i: i32 = 0;
     while (i < ` + n + `) { acc = step(acc, i); i = i + 1; }
     if (acc.len() != ` + n + `) { return 255; }
     return ((__heap_bump_bytes() as i32) - before) / 256;

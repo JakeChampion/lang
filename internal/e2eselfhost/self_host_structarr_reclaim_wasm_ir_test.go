@@ -13,7 +13,7 @@ import (
 // __fern_arrarr_free maps to the existing $__fern_arr_dec_ptr on wasm, which at
 // rc==1 $__fern_arr_dec's every element pointer (exactly the wasm struct-box
 // free — __fern_rc_dec also maps to $__fern_arr_dec) then frees the outer
-// buffer. So a fresh, non-escaping `var g = [P { .. }, P { .. }]` reclaims its
+// buffer. So a fresh, non-escaping `let g = [P { .. }, P { .. }]` reclaims its
 // element boxes with no new wasm runtime.
 func TestSelfHostStructArrReclaimWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
@@ -31,21 +31,21 @@ func TestSelfHostStructArrReclaimWasmIR(t *testing.T) {
 	}{
 		{"structarr-scalar-flat-wasm", `struct P { x: i32, y: i32 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var g = [P { x: i, y: i + 1 }, P { x: i + 2, y: i + 3 }];
+        let g = [P { x: i, y: i + 1 }, P { x: i + 2, y: i + 3 }];
         acc = acc + g.len() + g[0].x;
         i = i + 1;
     }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 2000) {
-        var g2 = [P { x: j, y: j + 1 }, P { x: j + 2, y: j + 3 }];
+        let g2 = [P { x: j, y: j + 1 }, P { x: j + 2, y: j + 3 }];
         acc = acc + g2.len() + g2[1].y;
         j = j + 1;
     }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 4096) { return 98; }
     if (acc < 0) { return 97; }
@@ -53,21 +53,21 @@ function main(): i32 {
 }`, 0},
 		{"structarr-iter-flat-wasm", `struct P { x: i32, y: i32 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var g = [P { x: i, y: i + 1 }, P { x: i + 2, y: i + 3 }];
+        let g = [P { x: i, y: i + 1 }, P { x: i + 2, y: i + 3 }];
         for p in g { acc = acc + p.x + p.y; }
         i = i + 1;
     }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 2000) {
-        var g2 = [P { x: j, y: j + 1 }, P { x: j + 2, y: j + 3 }];
+        let g2 = [P { x: j, y: j + 1 }, P { x: j + 2, y: j + 3 }];
         for p in g2 { acc = acc + p.x; }
         j = j + 1;
     }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 4096) { return 98; }
     if (acc < 0) { return 97; }
@@ -75,11 +75,11 @@ function main(): i32 {
 }`, 0},
 		{"structarr-elem-alias-safe-wasm", `struct P { x: i32, y: i32 }
 function main(): i32 {
-    var bad: i32 = 0;
-    var i: i32 = 0;
+    let bad: i32 = 0;
+    let i: i32 = 0;
     while (i < 500) {
-        var g = [P { x: i, y: i + 1 }, P { x: i + 2, y: i + 3 }];
-        var q = g[1];
+        let g = [P { x: i, y: i + 1 }, P { x: i + 2, y: i + 3 }];
+        let q = g[1];
         if (q.x != i + 2) { bad = 1; }
         if (q.y != i + 3) { bad = 1; }
         i = i + 1;

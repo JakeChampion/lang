@@ -44,10 +44,10 @@ function main(): i32 { return fact(5) - 100; }
 `},
 	{name: "fib_swap", src: `
 function fib(n: i32): i32 {
-    var a: i32 = 0;
-    var b: i32 = 1;
-    var i: i32 = 0;
-    while (i < n) { var t: i32 = a; a = b; b = t + b; i = i + 1; }
+    let a: i32 = 0;
+    let b: i32 = 1;
+    let i: i32 = 0;
+    while (i < n) { let t: i32 = a; a = b; b = t + b; i = i + 1; }
     return a;
 }
 function main(): i32 { return fib(10) % 256; }
@@ -58,10 +58,10 @@ function narrow(v: i64): i32 { return (v as i32) & 255; }
 function shifts(a: i32, k: i32): i32 { return ((a << k) | (a >> 1)) ^ (((a as u32) >> 2) as i32); }
 function unsigned(a: u32, b: u32): i32 { if (a < b) { return 1; } return 0; }
 function main(): i32 {
-    var m: i64 = mix(123456789, 987654321);
-    var s: i32 = shifts(1000, 3) + shifts(7, 40);
-    var u: i32 = unsigned(4000000000, 5) * 10 + unsigned(5, 4000000000);
-    var r: i32 = narrow(m) + s + u;
+    let m: i64 = mix(123456789, 987654321);
+    let s: i32 = shifts(1000, 3) + shifts(7, 40);
+    let u: i32 = unsigned(4000000000, 5) * 10 + unsigned(5, 4000000000);
+    let r: i32 = narrow(m) + s + u;
     return r & 127;
 }
 `},
@@ -74,9 +74,9 @@ function main(): i32 {
 struct P { x: i32, y: i32 }
 struct Q { a: i32, b: i32 }
 function f(): i32 {
-    var p: P = P { x: 1, y: 2 };
-    var t: i32 = p.x + p.y;
-    var q: Q = Q { a: 3, b: 4 };
+    let p: P = P { x: 1, y: 2 };
+    let t: i32 = p.x + p.y;
+    let q: Q = Q { a: 3, b: 4 };
     return t + q.a + q.b;
 }
 function main(): i32 { return f(); }
@@ -89,11 +89,11 @@ function main(): i32 { return f(); }
 	// The check is ordering only, so both builds print the same thing.
 	{name: "heap_bump_bytes", src: `
 function report(): i32 {
-    var before: i64 = __heap_bump_bytes();
-    var xs: i32[] = [];
-    var i: i32 = 0;
+    let before: i64 = __heap_bump_bytes();
+    let xs: i32[] = [];
+    let i: i32 = 0;
     while (i < 500) { xs = xs.append(i); i = i + 1; }
-    var after: i64 = __heap_bump_bytes();
+    let after: i64 = __heap_bump_bytes();
     if (before > after) { return 1; }
     if (after == 0i64) { return 2; }
     if (xs.len() != 500) { return 3; }
@@ -103,7 +103,7 @@ function main(): i32 { return report(); }
 `},
 	{name: "control_flow", src: `
 function first_square_over(limit: i32): i32 {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 1000) {
         if (i * i > limit) { return i; }
         i = i + 1;
@@ -111,10 +111,10 @@ function first_square_over(limit: i32): i32 {
     return 0 - 1;
 }
 function nested(n: i32): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var j: i32 = 0;
+        let j: i32 = 0;
         while (j < n) {
             if (j == 2) { j = j + 1; continue; }
             if (i + j > 7) { break; }
@@ -129,9 +129,9 @@ function signs(a: i32): i32 {
     if (a < 0) { return 0 - 1; } else if (a == 0) { return 0; } else { return 1; }
 }
 function main(): i32 {
-    var d: i32 = (0 - 2147483647 - 1) / (0 - 1);
-    var e: i32 = (0 - 7) % 3;
-    var k: i32 = first_square_over(50) + nested(5) + signs(0 - 9) + signs(0) + signs(4) + (d % 7) + e;
+    let d: i32 = (0 - 2147483647 - 1) / (0 - 1);
+    let e: i32 = (0 - 7) % 3;
+    let k: i32 = first_square_over(50) + nested(5) + signs(0 - 9) + signs(0) + signs(4) + (d % 7) + e;
     if (!(k > 1000)) { k = k + 100; }
     return k & 255;
 }
@@ -148,12 +148,12 @@ function count_up(i: i32, n: i32): i32 {
     return i;
 }
 function main(): i32 {
-    var seen: i32 = 0;
-    var i: i32 = 0;
+    let seen: i32 = 0;
+    let i: i32 = 0;
     outer: while (i < 3) {
         i = i + 1;
         loop {
-            var items: i32[] = [0];
+            let items: i32[] = [0];
             defer seen = seen * 3 + items[0];
             items = [i];
             continue outer;
@@ -171,15 +171,15 @@ function main(): i32 {
 @noinline
 function step(x: i32, i: i32): i32 { return x + i; }
 function forward(x: i32, rounds: i32): i32 {
-    var i: i32 = 0;
-    var acc: i32 = x;
+    let i: i32 = 0;
+    let acc: i32 = x;
     while (i < rounds) { acc = step(acc, i); i = i + 1; }
     return acc;
 }
 @noinline
 function bit(w: i32, i: i32): boolean { return ((w >> (i & 31)) & 1) == 1; }
 function count_bits(w: i32, n: i32): i32 {
-    var c: i32 = 0;
+    let c: i32 = 0;
     for i in 0..(n + 1) { if (bit(w, i)) { c = c + 1; } }
     return c;
 }
@@ -203,12 +203,12 @@ function area(s: Shape): i32 {
         Empty => { return 0; },
     }
 }
-function letters(): i32 { var s: string = "fern"; return s.len() * 100 + (s[1] as i32); }
+function letters(): i32 { let s: string = "fern"; return s.len() * 100 + (s[1] as i32); }
 function main(): i32 {
-    var p: P = mk(3, 4);
-    var xs: i32[] = [5, 6, 7];
-    var t: (i32, i32) = pair(9);
-    var total: i32 = sum(p) + third(xs) + t.0 + t.1 + unwrap(Some(11)) + unwrap(None)
+    let p: P = mk(3, 4);
+    let xs: i32[] = [5, 6, 7];
+    let t: (i32, i32) = pair(9);
+    let total: i32 = sum(p) + third(xs) + t.0 + t.1 + unwrap(Some(11)) + unwrap(None)
         + area(Dot(2)) + area(Line(3, 4)) + area(Empty) + letters();
     return total % 256;
 }
@@ -228,9 +228,9 @@ function mid(s: string, lo: i32, hi: i32): i32 {
     }
 }
 function main(): i32 {
-    var s: string = join("fe", "rn");
-    var xs: i32[] = grow([1, 2], 3);
-    var n: i32 = xs.len() * 10 + s.len() + xs[2] + mid(s, 1, 3) + mid("abcdef", 2, 5) + mid("ab", 1, 9);
+    let s: string = join("fe", "rn");
+    let xs: i32[] = grow([1, 2], 3);
+    let n: i32 = xs.len() * 10 + s.len() + xs[2] + mid(s, 1, 3) + mid("abcdef", 2, 5) + mid("ab", 1, 9);
     if (same(s, "fern")) { n = n + 100; }
     if (before("apple", s)) { n = n + 1; }
     return n % 256;
@@ -242,14 +242,14 @@ function main(): i32 {
 	// read both homes before it writes either.
 	{name: "byte_sieve", src: `
 function sieve(n: i32): boolean[] {
-    var s: boolean[] = [];
+    let s: boolean[] = [];
     for i in 0..(n + 1) { s = s.append(true); }
     if (n >= 0) { s = s.with(0, false); }
     if (n >= 1) { s = s.with(1, false); }
-    var i: i32 = 2;
+    let i: i32 = 2;
     while (i * i <= n) {
         if (s[i]) {
-            var j: i32 = i * i;
+            let j: i32 = i * i;
             while (j <= n) { s = s.with(j, false); j = j + i; }
         }
         i = i + 1;
@@ -257,7 +257,7 @@ function sieve(n: i32): boolean[] {
     return s;
 }
 function count(s: boolean[]): i32 {
-    var n: i32 = 0;
+    let n: i32 = 0;
     for b in s { if (b) { n = n + 1; } }
     return n;
 }
@@ -296,34 +296,34 @@ function classify(x: f64): i32 {
     return 1;
 }
 function rounding(x: f64): i32 {
-    var f: i32 = x.floor() as i32;
-    var c: i32 = x.ceil() as i32;
-    var t: i32 = x.trunc() as i32;
-    var r: i32 = x.round() as i32;
+    let f: i32 = x.floor() as i32;
+    let c: i32 = x.ceil() as i32;
+    let t: i32 = x.trunc() as i32;
+    let r: i32 = x.round() as i32;
     return f + c * 10 + t * 100 + r * 1000;
 }
 function convs(n: i32, u: u32, w: i64, v: u64): i64 {
-    var a: f64 = n as f64;
-    var b: f64 = u as f64;
-    var c: f64 = w as f64;
-    var d: f64 = v as f64;
-    var s: f64 = a + b + c + d;
+    let a: f64 = n as f64;
+    let b: f64 = u as f64;
+    let c: f64 = w as f64;
+    let d: f64 = v as f64;
+    let s: f64 = a + b + c + d;
     return (s as i64) + ((s / 3.0) as i32) as i64 + (((0.0 - s) as u32) as i64) + ((s * 1e30) as i32) as i64;
 }
 function bits(x: f64): i64 {
-    var b: i64 = f64_bits(x);
-    var y: f64 = f64_from_bits(b + 1);
-    var h: i32 = f32_bits(y as f32);
-    var zf: f32 = f32_from_bits(h);
-    var z: f64 = zf as f64;
+    let b: i64 = f64_bits(x);
+    let y: f64 = f64_from_bits(b + 1);
+    let h: i32 = f32_bits(y as f32);
+    let zf: f32 = f32_from_bits(h);
+    let z: f64 = zf as f64;
     return b + (z as i64) + (h as i64) % 7;
 }
 function neg(x: f64): f64 { return (0.0 - x).abs() - (0.0 - x); }
 function widen(x: f64): f64 { return area(2) + hyp(3, 4) + x; }
 function signs(): i32 {
-    var m: f64 = -2.5;
-    var z: f64 = -0.0;
-    var r: i32 = 0;
+    let m: f64 = -2.5;
+    let z: f64 = -0.0;
+    let r: i32 = 0;
     if (m < 0.0) { r = r + 1; }
     if (f64_bits(z) != 0) { r = r + 2; }
     if (z == 0.0) { r = r + 4; }
@@ -331,7 +331,7 @@ function signs(): i32 {
 }
 function trans(x: f64): i32 { return ((x.sin() * 1000.0) as i32) + ((x.cos() * 1000.0) as i32) + ((x.exp() * 10.0) as i32) + ((x.log() * 1000.0) as i32) + (x.pow(2.5) as i32); }
 function main(): i32 {
-    var acc: i64 = (area(2.0) * 1000.0) as i64;
+    let acc: i64 = (area(2.0) * 1000.0) as i64;
     acc = acc + (hyp(3.0, 4.0) as i64);
     acc = acc + (classify(0.0 - 2.5) + classify(0.0) + classify(2000.0) + classify(2.5) + classify(0.0 / 0.0) + classify(7.0)) as i64;
     acc = acc + (rounding(2.5) + rounding(0.0 - 2.5) + rounding(3.7)) as i64;
@@ -351,26 +351,26 @@ function main(): i32 {
 	{name: "host_calls", src: `
 import "std/i32";
 function probe_env(): i32 {
-    var n: i32 = 0;
+    let n: i32 = 0;
     match (env("FERN_SSA_HOST_PROBE_UNSET")) { Some(v) => { n = n + 100; }, None => { n = n + 1; } }
     match (env("PATH")) { Some(v) => { if (v.len() > 0) { n = n + 2; } }, None => { n = n + 200; } }
     return n;
 }
 function probe_fs(path: string): i32 {
-    var n: i32 = 0;
+    let n: i32 = 0;
     match (read_file(path)) { Ok(s) => { n = n + 300; }, Err(e) => { n = n + 4; } }
     match (stat("/")) { Ok(st) => { n = n + 8; }, Err(e) => { n = n + 400; } }
     match (stat(path)) { Ok(st) => { n = n + 500; }, Err(e) => { n = n + 16; } }
     return n;
 }
 function probe_clock(): i32 {
-    var a: i64 = monotonic_ns();
-    var b: i64 = monotonic_ns();
+    let a: i64 = monotonic_ns();
+    let b: i64 = monotonic_ns();
     if (a > 0 && b >= a) { return 32; }
     return 600;
 }
 function main(): i32 {
-    var n: i32 = probe_env() + probe_fs("/nonexistent/fern/ssa/host/probe") + probe_clock();
+    let n: i32 = probe_env() + probe_fs("/nonexistent/fern/ssa/host/probe") + probe_clock();
     print("host " + n.to_string() + "\n");
     exit(n % 100);
     return 7;
@@ -384,18 +384,18 @@ function main(): i32 {
 	{name: "os_floor", src: `
 import "std/i32";
 function probe_ids(): i32 {
-    var n: i32 = 0;
+    let n: i32 = 0;
     if (geteuid() < 1000000000) { n = n + 1; }
     if (cpu_count() > 0) { n = n + 2; }
     if (hostname().len() > 0) { n = n + 4; }
     if (getcwd().len() > 0) { n = n + 8; }
     if (uname_field(0).len() > 0) { n = n + 16; }
-    var old: i32 = umask(18);
+    let old: i32 = umask(18);
     if (umask(old) == 18) { n = n + 32; }
     return n;
 }
 function probe_handle(path: string): i32 {
-    var n: i32 = 0;
+    let n: i32 = 0;
     match (open_reader(path)) {
         Ok(r) => {
             match (r.stat()) { Ok(st) => { n = n + 100; }, Err(e) => { n = n + 1000; } }
@@ -408,7 +408,7 @@ function probe_handle(path: string): i32 {
     return n;
 }
 function main(): i32 {
-    var n: i32 = probe_ids() + probe_handle("/dev/null") + probe_handle("/nonexistent/fern/ssa/os/floor");
+    let n: i32 = probe_ids() + probe_handle("/dev/null") + probe_handle("/nonexistent/fern/ssa/os/floor");
     print("os " + n.to_string() + "\n");
     return n % 100;
 }
@@ -446,11 +446,11 @@ function measure(s: dyn Shape, k: i32): i32 { return s.area() * 100 + s.scaled(k
 function bump(n: i32): i32 { return n + 1; }
 function arg_from_call(s: dyn Shape, n: i32): i32 { return s.scaled(bump(n)); }
 function main(): i32 {
-    var a: dyn Shape = Square { side: 3 };
-    var b: dyn Shape = Round(5);
-    var c: dyn Shape = Flat;
-    var d: dyn Shape = 7;
-    var total: i32 = measure(a, 2) + measure(b, 3) + measure(c, 4) + measure(d, 5) + arg_from_call(a, 1);
+    let a: dyn Shape = Square { side: 3 };
+    let b: dyn Shape = Round(5);
+    let c: dyn Shape = Flat;
+    let d: dyn Shape = 7;
+    let total: i32 = measure(a, 2) + measure(b, 3) + measure(c, 4) + measure(d, 5) + arg_from_call(a, 1);
     print("dyn " + total.to_string() + "\n");
     return total % 256;
 }
@@ -463,17 +463,17 @@ function main(): i32 {
 import "core/map";
 import "std/i32";
 function build(n: i32): Map[string, i32] {
-    var m: Map[string, i32] = Map { };
-    var i: i32 = 0;
+    let m: Map[string, i32] = Map { };
+    let i: i32 = 0;
     while (i < n) { m = m.insert("k" + i.to_string(), i * 3); i = i + 1; }
     return m;
 }
 function main(): i32 {
-    var m: Map[string, i32] = build(50);
-    var ints: Map[i32, i32] = Map { };
-    var j: i32 = 0;
+    let m: Map[string, i32] = build(50);
+    let ints: Map[i32, i32] = Map { };
+    let j: i32 = 0;
     while (j < 40) { ints = ints.insert(j * 7, j); j = j + 1; }
-    var total: i32 = m.get_or("k7", 0) + m.get_or("zz", 100) + ints.get_or(21, 0) + ints.get_or(22, 1000);
+    let total: i32 = m.get_or("k7", 0) + m.get_or("zz", 100) + ints.get_or(21, 0) + ints.get_or(22, 1000);
     if (m.has("k9")) { total = total + 1; }
     if (!ints.has(5)) { total = total + 2; }
     total = total + m.len() * 10 + ints.keys().len() + ints.values().len();
@@ -497,10 +497,10 @@ import "core/cmp";
 struct Coarse { bucket: i32, id: i32 }
 impl cmp.Hash for Coarse { function hash(self: Coarse): i32 { return self.bucket; } }
 function main(): i32 {
-    var m: pmap.PMap[Coarse, i32] = pmap.pmap_new();
-    var i: i32 = 0;
+    let m: pmap.PMap[Coarse, i32] = pmap.pmap_new();
+    let i: i32 = 0;
     while (i < 40) { m = m.insert(Coarse { bucket: i % 5, id: i }, i); i = i + 1; }
-    var n: i32 = m.get_or(Coarse { bucket: 3, id: 13 }, -1) * 10 + m.get_or(Coarse { bucket: 3, id: 14 }, -1);
+    let n: i32 = m.get_or(Coarse { bucket: 3, id: 13 }, -1) * 10 + m.get_or(Coarse { bucket: 3, id: 14 }, -1);
     if (m.contains(Coarse { bucket: 1, id: 6 })) { n = n + 1000; }
     return n % 251;
 }
@@ -514,7 +514,7 @@ import "std/string";
 import "std/i32";
 import "std/i64";
 function strs(s: string): i32 {
-    var n: i32 = 0;
+    let n: i32 = 0;
     n = n + s.index_of("fern");
     if (s.starts_with("the")) { n = n + 100; }
     if (s.ends_with("end")) { n = n + 200; }
@@ -531,7 +531,7 @@ function bits(a: i32, b: i64): i32 {
     return a.count_ones() + a.leading_zeros() * 10 + a.trailing_zeros() * 100 + (b.count_ones() as i32) * 1000 + (b.leading_zeros() as i32) * 7 + (b.trailing_zeros() as i32) * 3;
 }
 function main(): i32 {
-    var s: string = "  the fern language\n has a fern end";
+    let s: string = "  the fern language\n has a fern end";
     return (strs(s) + bits(15790080, 280375465082880)) % 251;
 }
 `},
@@ -543,12 +543,12 @@ function main(): i32 {
 	// in to see it.
 	{name: "slice_bound_reuse", src: `
 function tail(s: string, lo: i32, hi: i32): i32 {
-    var v: str = slice_unchecked(s, lo, hi);
-    var x: i32 = hi + 1;
+    let v: str = slice_unchecked(s, lo, hi);
+    let x: i32 = hi + 1;
     return x * 1000 + v.len();
 }
 function main(): i32 {
-    var s: string = "abcdefghijkl";
+    let s: string = "abcdefghijkl";
     return (tail(s, 3, 9) + tail(s, 0, 4) + tail(s, 5, 12)) % 251;
 }
 `},
@@ -560,10 +560,10 @@ function main(): i32 {
 import "std/ordmap" as ordmap;
 import "core/cmp";
 function main(): i32 {
-    var m: ordmap.OrdMap[i32, i32] = ordmap.ordmap_new();
-    var i: i32 = 0;
+    let m: ordmap.OrdMap[i32, i32] = ordmap.ordmap_new();
+    let i: i32 = 0;
     while (i < 30) { m = m.insert((i * 7) % 31, i); i = i + 1; }
-    var total: i32 = m.fold(0, (acc: i32, k: i32, v: i32) => acc + k * 2 + v);
+    let total: i32 = m.fold(0, (acc: i32, k: i32, v: i32) => acc + k * 2 + v);
     return (total + m.len()) % 251;
 }
 `},
@@ -572,14 +572,14 @@ function main(): i32 {
 	// still left the string helpers to the stack machine.
 	{name: "mixed_module", src: `
 import "std/i32";
-function sum_to(n: i32): i32 { var s: i32 = 0; var i: i32 = 1; while (i <= n) { s = s + i; i = i + 1; } return s; }
-function gcd(a: i32, b: i32): i32 { while (b != 0) { var t: i32 = b; b = a % b; a = t; } return a; }
+function sum_to(n: i32): i32 { let s: i32 = 0; let i: i32 = 1; while (i <= n) { s = s + i; i = i + 1; } return s; }
+function gcd(a: i32, b: i32): i32 { while (b != 0) { let t: i32 = b; b = a % b; a = t; } return a; }
 function eight(a: i32, b: i32, c: i32, d: i32, e: i32, f: i32, g: i32, h: i32): i32 { return a - b + c - d + e - f + g - h; }
 function main(): i32 {
     print(sum_to(100).to_string());
     print(gcd(1071, 462).to_string());
     print(eight(1, 2, 3, 4, 5, 6, 7, 8).to_string());
-    var xs: i32[] = [3, 1, 2];
+    let xs: i32[] = [3, 1, 2];
     print((xs.len() + gcd(xs[0], xs[2])).to_string());
     return 3;
 }
@@ -594,16 +594,16 @@ function main(): i32 {
 	{name: "immediates", src: `
 import "std/i32";
 function mix(x: i32, y: i64, u: u32): i32 {
-    var a: i32 = x + 7;
-    var b: i32 = 7 - x;
-    var c: i32 = x - 7;
-    var d: i32 = 3 * x;
-    var e: i32 = x & 255;
-    var f: i32 = 4096 | x;
-    var g: i32 = x ^ -1;
-    var h: i32 = x * 1000003;
-    var w: i32 = x + 2147483647;
-    var k: i32 = 0;
+    let a: i32 = x + 7;
+    let b: i32 = 7 - x;
+    let c: i32 = x - 7;
+    let d: i32 = 3 * x;
+    let e: i32 = x & 255;
+    let f: i32 = 4096 | x;
+    let g: i32 = x ^ -1;
+    let h: i32 = x * 1000003;
+    let w: i32 = x + 2147483647;
+    let k: i32 = 0;
     if (x < 10) { k = k + 1; }
     if (10 < x) { k = k + 2; }
     if (x == -1) { k = k + 4; }
@@ -613,9 +613,9 @@ function mix(x: i32, y: i64, u: u32): i32 {
     if (u < 4000000000u32) { k = k + 64; }
     if (u > 100u32) { k = k + 128; }
     if (5000i64 - y < 0i64) { k = k + 256; }
-    var m: i64 = (y + 5000i64) * 3i64 - (y % 7i64) + (y >> 2i64);
-    var q: i32 = a + b + c + d + e + f + g + h + w + k + (x % 7) + (x / 3) + (m as i32);
-    var i: i32 = 0;
+    let m: i64 = (y + 5000i64) * 3i64 - (y % 7i64) + (y >> 2i64);
+    let q: i32 = a + b + c + d + e + f + g + h + w + k + (x % 7) + (x / 3) + (m as i32);
+    let i: i32 = 0;
     while (i < 3000) { q = q + 1; i = i + 1; }
     return q;
 }
@@ -636,9 +636,9 @@ function main(): i32 {
 	{name: "carried_pairs", src: `
 import "std/i32";
 function old_after_latch(n: i32): i32 {
-    var sum: i32 = 0;
-    var i: i32 = 0;
-    var old: i32 = 0;
+    let sum: i32 = 0;
+    let i: i32 = 0;
+    let old: i32 = 0;
     while (true) {
         old = sum;
         sum = sum + i * 3;
@@ -648,18 +648,18 @@ function old_after_latch(n: i32): i32 {
     return old * 1000 + sum;
 }
 function swap(n: i32): i32 {
-    var a: i32 = 1;
-    var b: i32 = 2;
-    var i: i32 = 0;
-    while (i < n) { var t: i32 = a; a = b; b = t; i = i + 1; }
+    let a: i32 = 1;
+    let b: i32 = 2;
+    let i: i32 = 0;
+    while (i < n) { let t: i32 = a; a = b; b = t; i = i + 1; }
     return a * 10 + b;
 }
 function inner_reads_outer(n: i32): i32 {
-    var acc: i32 = 1;
-    var o: i32 = 0;
+    let acc: i32 = 1;
+    let o: i32 = 0;
     while (o < n) {
-        var k: i32 = 0;
-        var step: i32 = 0;
+        let k: i32 = 0;
+        let step: i32 = 0;
         while (k < 3) { step = step + acc + k; k = k + 1; }
         acc = step;
         o = o + 1;
@@ -667,8 +667,8 @@ function inner_reads_outer(n: i32): i32 {
     return acc;
 }
 function two_latches(n: i32): i32 {
-    var s: i32 = 0;
-    var i: i32 = 0;
+    let s: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
         i = i + 1;
         if (i % 3 == 0) { s = s + 100; continue; }
@@ -677,10 +677,10 @@ function two_latches(n: i32): i32 {
     return s;
 }
 function exit_reads_both(n: i32): i32 {
-    var s: i32 = 0;
-    var i: i32 = 0;
+    let s: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var next: i32 = s + i;
+        let next: i32 = s + i;
         if (next > 50) { return next * 7 + s; }
         s = next;
         i = i + 1;
@@ -688,8 +688,8 @@ function exit_reads_both(n: i32): i32 {
     return s;
 }
 function shifted(n: i32): i32 {
-    var x: i32 = 1;
-    var i: i32 = 0;
+    let x: i32 = 1;
+    let i: i32 = 0;
     while (i < n) { x = ((x << 1) | 1) % 1000003; x = x / 3 + x; i = i + 1; }
     return x;
 }
@@ -711,17 +711,17 @@ function main(): i32 {
 	// keep their edges.
 	{name: "empty_blocks", src: `
 function empties(n: i32): i32 {
-    var k: i32 = 0;
-    var i: i32 = 0;
+    let k: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
         if (i % 2 == 0) { } else { }
-        if (i > 3) { var dead: i32 = i * 9; }
+        if (i > 3) { let dead: i32 = i * 9; }
         while (k > 100) { k = k - 1000; }
         k = k + i;
         i = i + 1;
     }
-    var j: i32 = 0;
-    while (j < n) { var unused: i32 = j * 2; j = j + 1; }
+    let j: i32 = 0;
+    while (j < n) { let unused: i32 = j * 2; j = j + 1; }
     if (n > 2) { } else { k = k + 7; }
     return k + j;
 }
@@ -1003,12 +1003,12 @@ func TestSelfHostSSAFrameIsSizedBySpills(t *testing.T) {
 	var b strings.Builder
 	b.WriteString("function wide(n: i32): i32 {\n")
 	for i := 0; i < 200; i++ {
-		fmt.Fprintf(&b, "    var v%d: i32 = n + %d;\n", i, i)
+		fmt.Fprintf(&b, "    let v%d: i32 = n + %d;\n", i, i)
 	}
 	for i := 0; i < 200; i++ {
 		fmt.Fprintf(&b, "    if (n > %d) { v%d = v%d + 1; }\n", i, i, (i+1)%200)
 	}
-	b.WriteString("    var s: i32 = 0;\n")
+	b.WriteString("    let s: i32 = 0;\n")
 	for i := 0; i < 200; i++ {
 		fmt.Fprintf(&b, "    s = s + v%d;\n", i)
 	}
@@ -1217,8 +1217,8 @@ func TestSelfHostSSALoopIsFourInstructions(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "count.fern")
 	prog := `function count(n: i64): i64 {
-    var sum: i64 = 0i64;
-    var i: i64 = 0i64;
+    let sum: i64 = 0i64;
+    let i: i64 = 0i64;
     while (i < n) { sum = sum + i; i = i + 1i64; }
     return sum;
 }
@@ -1288,13 +1288,13 @@ func TestSelfHostSSAResultTakesDyingOperandRegister(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "step.fern")
 	prog := `function step(x: i64, y: i64): i64 {
-    var a: i64 = x * 3i64;
-    var b: i64 = a + y;
+    let a: i64 = x * 3i64;
+    let b: i64 = a + y;
     if (b > 100i64) { return b - 7i64; }
     return b;
 }
 function first_over(n: i64): i64 {
-    var i: i64 = 0i64;
+    let i: i64 = 0i64;
     loop { if (i * i > n) { break; } i = i + 1i64; }
     return i;
 }
@@ -1354,8 +1354,8 @@ func TestSelfHostSSARcPrimitivesAreInline(t *testing.T) {
 	prog := `struct Blk { buf: i32[], note: string, n: i32 }
 function (b: Blk) put(i: i32, v: i32): Blk { return Blk { ...b, buf: b.buf.with(i, v) }; }
 function main(): i32 {
-    var b: Blk = Blk { buf: [0, 0, 0, 0], note: "a refcounted field the update carries", n: 0 };
-    var i: i32 = 0;
+    let b: Blk = Blk { buf: [0, 0, 0, 0], note: "a refcounted field the update carries", n: 0 };
+    let i: i32 = 0;
     while (i < 4) { b = b.put(i, i + 1); i = i + 1; }
     return b.buf[3];
 }
@@ -1460,7 +1460,7 @@ func TestSelfHostSSAStrEqComparesLengthsInline(t *testing.T) {
     return 0;
 }
 function main(): i32 {
-    var r: i32 = same("abc", "ab");
+    let r: i32 = same("abc", "ab");
     r = r + same("abc", "abd") * 2;
     r = r + same("abcdefghij", "abcdefghij") * 4;
     r = r + same("", "") * 8;
@@ -1538,7 +1538,7 @@ func TestSelfHostSSAStrEqTestsLiteralFirstByteInline(t *testing.T) {
     return 0;
 }
 function main(): i32 {
-    var r: i32 = code("add", "q") + code("and", "q") * 2 + code("sub", "q") * 4 + code("xor", "q") * 8 + code("", "q") * 16;
+    let r: i32 = code("add", "q") + code("and", "q") * 2 + code("sub", "q") * 4 + code("xor", "q") * 8 + code("", "q") * 16;
     r = r + code("sum", "sum") + code("adz", "q") * 64 + code("sum", "q") * 64;
     return r;
 }
@@ -1695,8 +1695,8 @@ func TestSelfHostSSAConstantsAreImmediates(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "count.fern")
 	prog := `function count(): i64 {
-    var sum: i64 = 0i64;
-    var i: i64 = 0i64;
+    let sum: i64 = 0i64;
+    let i: i64 = 0i64;
     while (i < 3000i64) { sum = sum + i; i = i + 1i64; }
     return (sum % 97i64) + (sum >> 3i64);
 }

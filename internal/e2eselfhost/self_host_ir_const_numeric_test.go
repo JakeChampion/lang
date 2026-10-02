@@ -17,15 +17,15 @@ import (
 // exactly as it does compiled normally. The driver also exits 3 when a NaN
 // payload, an infinity or negative zero loses its bits.
 const irConstNumericSrc = `function main(): i32 {
-    var big: i64 = 4294967303i64;
-    var neg: i64 = 0i64 - 9007199254740993i64;
-    var hex: i64 = 0x7fffffff00000001i64;
-    var um: u64 = 18446744073709551615u64;
-    var half: f64 = 1.5;
-    var nz: f64 = -0.0;
-    var huge: f64 = 1e300;
-    var tiny: f64 = 4.9e-324;
-    var bad: i32 = 0;
+    let big: i64 = 4294967303i64;
+    let neg: i64 = 0i64 - 9007199254740993i64;
+    let hex: i64 = 0x7fffffff00000001i64;
+    let um: u64 = 18446744073709551615u64;
+    let half: f64 = 1.5;
+    let nz: f64 = -0.0;
+    let huge: f64 = 1e300;
+    let tiny: f64 = 4.9e-324;
+    let bad: i32 = 0;
     if (big != 4294967296i64 + 7i64) { bad = bad + 1; }
     if (neg + 9007199254740993i64 != 0i64) { bad = bad + 2; }
     if ((hex >> 32) != 2147483647i64) { bad = bad + 4; }

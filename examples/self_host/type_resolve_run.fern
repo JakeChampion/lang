@@ -38,14 +38,14 @@ function callable_shape(t: typeinfo.Type): string {
 
 function main(): i32 {
   // Fixtures: two struct names, one union alias.
-  var structs: checker.StructSig[] = [
+  let structs: checker.StructSig[] = [
     checker.StructSig { name: "Foo", field_names: [], field_types: [], type_params: [], field_type_names: [], variant_field_names: [], derives: [], enum_owner: "" },
     checker.StructSig { name: "Bar", field_names: [], field_types: [], type_params: [], field_type_names: [], variant_field_names: [], derives: [], enum_owner: "" },
   ];
-  var unions: checker.UnionSig[] = [
+  let unions: checker.UnionSig[] = [
     checker.UnionSig { name: "Shape", variants: [], is_try: false, is_enum: true, module: "", type_params: [] },
   ];
-  var corpus: string[] = [
+  let corpus: string[] = [
     "i32", "i64", "u32", "u64", "bool", "boolean", "string", "f64", "f32", "float",
     "Foo", "Bar", "Shape", "Baz",
     "i32[]", "string[]", "Foo[]", "Shape[]", "i32[][]", "Foo[][]",
@@ -57,20 +57,20 @@ function main(): i32 {
     "Option[i32]", "Vec[T]", "Foo[T]",
     "Bogus[]", "mod.Thing", "",
   ];
-  var out: string = "";
-  var i: i32 = 0;
+  let out: string = "";
+  let i: i32 = 0;
   while (i < corpus.len()) {
-    var t: typeinfo.Type = checker.type_from_name_with_structs_unions(corpus[i], structs, unions);
+    let t: typeinfo.Type = checker.type_from_name_with_structs_unions(corpus[i], structs, unions);
     out = out + corpus[i] + " => " + checker.type_debug(t) + "\n";
     i = i + 1;
   }
-  var callables: string[] = [
+  let callables: string[] = [
     "() => i32[]", "((i32) => string[][])", "((i32) => string)[]",
     "((((i32) => string[][])))", "() => () => i32[]",
     "() => (() => i32[])[]", "fn",
   ];
   for spelling in callables {
-    var resolved: typeinfo.Type = checker.type_from_name_with_structs_unions(spelling, structs, unions);
+    let resolved: typeinfo.Type = checker.type_from_name_with_structs_unions(spelling, structs, unions);
     out = out + "callable " + spelling + " => " + callable_shape(resolved) + "\n";
   }
   write(out);

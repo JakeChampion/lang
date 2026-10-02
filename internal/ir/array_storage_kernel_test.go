@@ -26,9 +26,9 @@ func storageTags(t *testing.T, body string) map[string]int {
 
 func TestArrayReportNamesTheScaleKernel(t *testing.T) {
 	got := storageTags(t, `function main(): i32 {
-  var xs: f64[] = [1.0, 2.0, 3.0];
-  var ys: f64[] = xs.map((x: f64): f64 => x * 2.0);
-  var zs: f64[] = xs.map((x: f64): f64 => x + 1.0);
+  let xs: f64[] = [1.0, 2.0, 3.0];
+  let ys: f64[] = xs.map((x: f64): f64 => x * 2.0);
+  let zs: f64[] = xs.map((x: f64): f64 => x + 1.0);
   return (ys[0] + zs[0]) as i32;
 }`)
 	if got["scale-kernel"] != 1 {
@@ -48,12 +48,12 @@ func TestArrayReportScaleKernelCountMatchesThePass(t *testing.T) {
 	src := `import "std/array";
 function half(x: f64): f64 { return x * 0.5; }
 function main(): i32 {
-  var xs: f64[] = [1.0, 2.0, 3.0];
-  var a: f64[] = xs.map((x: f64): f64 => x * 2.0);
-  var b: f64[] = xs.map(half);
-  var c: f64[] = xs.map((x: f64): f64 => x + 1.0);
-  var d: i64[] = [1 as i64];
-  var e: i64[] = d.map((x: i64): i64 => x * (2 as i64));
+  let xs: f64[] = [1.0, 2.0, 3.0];
+  let a: f64[] = xs.map((x: f64): f64 => x * 2.0);
+  let b: f64[] = xs.map(half);
+  let c: f64[] = xs.map((x: f64): f64 => x + 1.0);
+  let d: i64[] = [1 as i64];
+  let e: i64[] = d.map((x: i64): i64 => x * (2 as i64));
   return (a[0] + b[0] + c[0]) as i32 + (e[0] as i32);
 }`
 	p := lowerPipelineSrc(t, src)
@@ -95,13 +95,13 @@ func TestR7AndTheScaleKernelTakeDisjointStages(t *testing.T) {
 function dbl(x: i64): i64 { return x * (2 as i64); }
 function twice(own xs: i64[]): i64[] { return xs.map((x: i64): i64 => dbl(x)); }
 function main(): i32 {
-  var ys: i64[] = twice([1 as i64, 2 as i64]);
+  let ys: i64[] = twice([1 as i64, 2 as i64]);
   return ys[0] as i32;
 }`
 	const ownF64 = `import "std/array";
 function twice(own xs: f64[]): f64[] { return xs.map((x: f64): f64 => x * 2.0); }
 function main(): i32 {
-  var ys: f64[] = twice([1.0, 2.0]);
+  let ys: f64[] = twice([1.0, 2.0]);
   return ys[0] as i32;
 }`
 
@@ -139,8 +139,8 @@ function main(): i32 {
 func TestArrayReportPrintsTheScaleKernel(t *testing.T) {
 	p := lowerPipelineSrc(t, `import "std/array";
 function main(): i32 {
-  var xs: f64[] = [1.0, 2.0];
-  var ys: f64[] = xs.map((x: f64): f64 => x * 2.0);
+  let xs: f64[] = [1.0, 2.0];
+  let ys: f64[] = xs.map((x: f64): f64 => x * 2.0);
   return ys[0] as i32;
 }`)
 	site := ir.FormatArrayPipelines(p)

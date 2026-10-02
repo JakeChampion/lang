@@ -146,7 +146,7 @@ cannot distinguish the two; read it beside the leak line or not at all.
 The produced compiler's output on `lexer.fern` differs from the AST-built
 compiler's, and did before this change: main's own semantic build emits the
 same 150 lines. Three zero-minus-one constants — the two
-`var b: i32 = 0 - 1;` in `match_multipunct` and the `return -1;` in
+`let b: i32 = 0 - 1;` in `match_multipunct` and the `return -1;` in
 `test_mixed` — come out as `xorl %eax, %eax; movq $o, %rcx; subq %rcx, %rax`
 instead of `movq $-1, %rax`. The `$o` is the tell: a constant op's immediate is printed
 from its `str` field, the literal's text, and `const_i32_readable` refuses

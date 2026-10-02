@@ -14,7 +14,7 @@ import (
 // allocs=601 frees=200 live_bytes=9624, scaling exactly x2 per doubling, where
 // native is 200/200/0.
 //
-// The same call BOUND to a local (`var t = mk(a);`) already reclaimed, which is
+// The same call BOUND to a local (`let t = mk(a);`) already reclaimed, which is
 // what made this easy to miss — the leak needs the result to be thrown away.
 //
 // str_fresh_ret_fns is the gate, for the same reason it is everywhere else: it
@@ -31,13 +31,13 @@ func discardedStrCallSrc(rounds int) string {
 	return `function mk(s: string): string { return s + "!"; }
 
 function churn(a: string, n: i32): i32 {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < n) { mk(a); i = i + 1; }
     return i;
 }
 
 function main(): i32 {
-    var a: string = "longer_string_one_here";
+    let a: string = "longer_string_one_here";
     return churn(a, ` + strconv.Itoa(rounds) + `) % 7;
 }`
 }
@@ -133,9 +133,9 @@ func TestSelfHostDiscardedStrCallHazardsX86_64(t *testing.T) {
 		{"borrowed_return_untouched", `function mk(s: string): string { return s + "!"; }
 function pick(a: string, b: string): string { if (a.len() > 3) { return a; } return b; }
 function main(): i32 {
-    var a: string = mk("abcdefg");
-    var b: string = "xy";
-    var i: i32 = 0;
+    let a: string = mk("abcdefg");
+    let b: string = "xy";
+    let i: i32 = 0;
     while (i < 200) { pick(a, b); i = i + 1; }
     if (a != "abcdefg!") { return 1; }
     if (b != "xy") { return 2; }
@@ -149,8 +149,8 @@ function main(): i32 {
     return a + "!";
 }
 function main(): i32 {
-    var a: string = "abcdefgh";
-    var i: i32 = 0;
+    let a: string = "abcdefgh";
+    let i: i32 = 0;
     while (i < 200) { half(a, true); i = i + 1; }
     if (a != "abcdefgh") { return 1; }
     return 6;
@@ -160,9 +160,9 @@ function main(): i32 {
 		// separately-bound result.
 		{"bound_and_discarded_coexist", `function mk(s: string): string { return s + "!"; }
 function main(): i32 {
-    var a: string = "abcdefgh";
-    var keep: string = mk(a);
-    var i: i32 = 0;
+    let a: string = "abcdefgh";
+    let keep: string = mk(a);
+    let i: i32 = 0;
     while (i < 200) { mk(a); i = i + 1; }
     if (keep != "abcdefgh!") { return 1; }
     return 7;

@@ -7,7 +7,7 @@ reclaim credit at all.
 ```fern
 enum R { Full(string), Empty }
 function w(a: string): string { return a + "!"; }
-if (i % 2 == 0) { var o: R = R.Full(w("x")); t = t + 1; }
+if (i % 2 == 0) { let o: R = R.Full(w("x")); t = t + 1; }
 ```
 
 | shape | self-host before | after | native |
@@ -72,7 +72,7 @@ credit is ever withdrawn. Same rename the log records for
 
 ## One measurement trap worth keeping
 
-The alias-refusal probe was first written with `var keep: string = "base" + "!"`
+The alias-refusal probe was first written with `let keep: string = "base" + "!"`
 and its counts read off the CLI build: `50/0`. The e2e harness then measured
 `250/0` on the same program — the CLI **const-folds** a literal-literal concat,
 the test driver does not, so a probe whose strings can fold pins different

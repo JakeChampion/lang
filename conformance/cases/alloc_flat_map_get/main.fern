@@ -22,8 +22,8 @@ import "std/i32";
 import "std/i64";
 
 function lookups(index: Map[string, i32], n: i32): i32 {
-    var i: i32 = 0;
-    var hits: i32 = 0;
+    let i: i32 = 0;
+    let hits: i32 = 0;
     while (i < n) {
         match (index.get("alpha")) {
             Some(g) => { hits = hits + g; },
@@ -39,14 +39,14 @@ function lookups(index: Map[string, i32], n: i32): i32 {
 }
 
 function main(): i32 {
-    var index: Map[string, i32] = map_new(64);
+    let index: Map[string, i32] = map_new(64);
     index = index.insert("alpha", 1);
 
-    var b0: i64 = __heap_bump_bytes();
-    var x: i32 = lookups(index, 50);
-    var b1: i64 = __heap_bump_bytes();
-    var y: i32 = lookups(index, 100);
-    var b2: i64 = __heap_bump_bytes();
+    let b0: i64 = __heap_bump_bytes();
+    let x: i32 = lookups(index, 50);
+    let b1: i64 = __heap_bump_bytes();
+    let y: i32 = lookups(index, 100);
+    let b2: i64 = __heap_bump_bytes();
 
     print(x.to_string());
     print(y.to_string());

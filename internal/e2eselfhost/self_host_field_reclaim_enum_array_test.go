@@ -34,20 +34,20 @@ var selfHostFieldReclaimEnumArrayCases = []struct {
 	src  string
 }{
 	// The reported shape: an enum-array field replaced on a rebind from a call.
-	{"enum-array-field-reclaim", "enum Payload { None, Some(i32[]) }\nstruct Asm { ps: Payload[], n: i32 }\n@noinline\nfunction step(a: Asm, v: i32): Asm {\n    return Asm { ...a, ps: [Payload.Some([v])] };\n}\nfunction main(): i32 {\n    var a: Asm = Asm { ps: [Payload.Some([9])], n: 0 };\n    a = step(a, 1);\n    return a.ps.len() + __rc_underflow_count();\n}"},
+	{"enum-array-field-reclaim", "enum Payload { None, Some(i32[]) }\nstruct Asm { ps: Payload[], n: i32 }\n@noinline\nfunction step(a: Asm, v: i32): Asm {\n    return Asm { ...a, ps: [Payload.Some([v])] };\n}\nfunction main(): i32 {\n    let a: Asm = Asm { ps: [Payload.Some([9])], n: 0 };\n    a = step(a, 1);\n    return a.ps.len() + __rc_underflow_count();\n}"},
 
 	// Two rc-carrying variants, so the walk's tag dispatch has to pick rather
 	// than fall into a single arm.
-	{"enum-array-two-rc-variants", "enum Payload { None, Some(i32[]), Many(i32[]) }\nstruct Asm { ps: Payload[], n: i32 }\n@noinline\nfunction step(a: Asm, v: i32): Asm {\n    return Asm { ...a, ps: [Payload.Some([v]), Payload.Many([v, v])] };\n}\nfunction main(): i32 {\n    var a: Asm = Asm { ps: [Payload.Some([9]), Payload.Many([8, 7])], n: 0 };\n    a = step(a, 1);\n    return a.ps.len() + __rc_underflow_count();\n}"},
+	{"enum-array-two-rc-variants", "enum Payload { None, Some(i32[]), Many(i32[]) }\nstruct Asm { ps: Payload[], n: i32 }\n@noinline\nfunction step(a: Asm, v: i32): Asm {\n    return Asm { ...a, ps: [Payload.Some([v]), Payload.Many([v, v])] };\n}\nfunction main(): i32 {\n    let a: Asm = Asm { ps: [Payload.Some([9]), Payload.Many([8, 7])], n: 0 };\n    a = step(a, 1);\n    return a.ps.len() + __rc_underflow_count();\n}"},
 
 	// Several rounds, so a per-round leak accumulates rather than resting on one
 	// missed walk.
-	{"enum-array-three-rounds", "enum Payload { None, Some(i32[]) }\nstruct Asm { ps: Payload[], n: i32 }\n@noinline\nfunction step(a: Asm, v: i32): Asm {\n    return Asm { ...a, ps: [Payload.Some([v])] };\n}\nfunction main(): i32 {\n    var a: Asm = Asm { ps: [Payload.Some([9])], n: 0 };\n    a = step(a, 1);\n    a = step(a, 2);\n    a = step(a, 3);\n    return a.ps.len() + __rc_underflow_count();\n}"},
+	{"enum-array-three-rounds", "enum Payload { None, Some(i32[]) }\nstruct Asm { ps: Payload[], n: i32 }\n@noinline\nfunction step(a: Asm, v: i32): Asm {\n    return Asm { ...a, ps: [Payload.Some([v])] };\n}\nfunction main(): i32 {\n    let a: Asm = Asm { ps: [Payload.Some([9])], n: 0 };\n    a = step(a, 1);\n    a = step(a, 2);\n    a = step(a, 3);\n    return a.ps.len() + __rc_underflow_count();\n}"},
 
 	// The SAME field one level down, so `__struct_drop_Inner` is what releases
 	// it. It was already clean; keeping it here is what says the two helpers
 	// agree now rather than that the reclaim side merely stopped leaking.
-	{"enum-array-via-struct-drop", "enum Payload { None, Some(i32[]) }\nstruct Inner { ps: Payload[] }\nstruct Asm { i: Inner, n: i32 }\n@noinline\nfunction step(a: Asm, v: i32): Asm {\n    return Asm { ...a, i: Inner { ps: [Payload.Some([v])] } };\n}\nfunction main(): i32 {\n    var a: Asm = Asm { i: Inner { ps: [Payload.Some([9])] }, n: 0 };\n    a = step(a, 1);\n    return a.i.ps.len() + __rc_underflow_count();\n}"},
+	{"enum-array-via-struct-drop", "enum Payload { None, Some(i32[]) }\nstruct Inner { ps: Payload[] }\nstruct Asm { i: Inner, n: i32 }\n@noinline\nfunction step(a: Asm, v: i32): Asm {\n    return Asm { ...a, i: Inner { ps: [Payload.Some([v])] } };\n}\nfunction main(): i32 {\n    let a: Asm = Asm { i: Inner { ps: [Payload.Some([9])] }, n: 0 };\n    a = step(a, 1);\n    return a.i.ps.len() + __rc_underflow_count();\n}"},
 
 	// A SECOND owner holds the buffer across the rebind, so the walk's rc==1
 	// gate must decline it — that owner still reads the payload afterwards. An
@@ -55,17 +55,17 @@ var selfHostFieldReclaimEnumArrayCases = []struct {
 	// a leak. The second owner is a struct on purpose: an enum-array LOCAL is
 	// released by a different path, which has a leak of its own (#8610) that
 	// would confound this row.
-	{"shared-via-second-struct-declines-walk", "enum Payload { None, Some(i32[]) }\nstruct Asm { ps: Payload[], n: i32 }\n@noinline\nfunction step(a: Asm, v: i32): Asm {\n    return Asm { ...a, ps: [Payload.Some([v])] };\n}\nfunction main(): i32 {\n    var a: Asm = Asm { ps: [Payload.Some([9, 9, 9])], n: 0 };\n    var b: Asm = Asm { ps: a.ps, n: 1 };\n    a = step(a, 1);\n    var r: i32 = 0;\n    match (b.ps[0]) { Payload.None => { r = 0; }, Payload.Some(g) => { r = g.len(); } }\n    return r + __rc_underflow_count();\n}"},
+	{"shared-via-second-struct-declines-walk", "enum Payload { None, Some(i32[]) }\nstruct Asm { ps: Payload[], n: i32 }\n@noinline\nfunction step(a: Asm, v: i32): Asm {\n    return Asm { ...a, ps: [Payload.Some([v])] };\n}\nfunction main(): i32 {\n    let a: Asm = Asm { ps: [Payload.Some([9, 9, 9])], n: 0 };\n    let b: Asm = Asm { ps: a.ps, n: 1 };\n    a = step(a, 1);\n    let r: i32 = 0;\n    match (b.ps[0]) { Payload.None => { r = 0; }, Payload.Some(g) => { r = g.len(); } }\n    return r + __rc_underflow_count();\n}"},
 
 	// Control: an enum array whose payloads are all SCALAR. enum_arr_elems_walk_ok
 	// requires a rc payload, so this must NOT gain a walk — nothing heap sits
 	// under those element boxes and a dec there would be an over-release.
-	{"scalar-payload-enum-array-control", "enum Payload { None, Some(i32) }\nstruct Asm { ps: Payload[], n: i32 }\n@noinline\nfunction step(a: Asm, v: i32): Asm {\n    return Asm { ...a, ps: [Payload.Some(v)] };\n}\nfunction main(): i32 {\n    var a: Asm = Asm { ps: [Payload.Some(0)], n: 0 };\n    a = step(a, 1);\n    return a.ps.len() + __rc_underflow_count();\n}"},
+	{"scalar-payload-enum-array-control", "enum Payload { None, Some(i32) }\nstruct Asm { ps: Payload[], n: i32 }\n@noinline\nfunction step(a: Asm, v: i32): Asm {\n    return Asm { ...a, ps: [Payload.Some(v)] };\n}\nfunction main(): i32 {\n    let a: Asm = Asm { ps: [Payload.Some(0)], n: 0 };\n    a = step(a, 1);\n    return a.ps.len() + __rc_underflow_count();\n}"},
 
 	// Control: the STRUCT-array sibling in the same helper, which already had its
 	// pre-walk. Clean either way — it says the arrarr_free mechanism was sound
 	// and the enum arm was what was missing.
-	{"struct-array-field-reclaim-control", "struct Slot { xs: i32[] }\nstruct Asm { cs: Slot[], n: i32 }\n@noinline\nfunction step(a: Asm, v: i32): Asm {\n    return Asm { ...a, cs: [Slot { xs: [v] }] };\n}\nfunction main(): i32 {\n    var a: Asm = Asm { cs: [Slot { xs: [9] }], n: 0 };\n    a = step(a, 1);\n    return a.cs.len() + __rc_underflow_count();\n}"},
+	{"struct-array-field-reclaim-control", "struct Slot { xs: i32[] }\nstruct Asm { cs: Slot[], n: i32 }\n@noinline\nfunction step(a: Asm, v: i32): Asm {\n    return Asm { ...a, cs: [Slot { xs: [v] }] };\n}\nfunction main(): i32 {\n    let a: Asm = Asm { cs: [Slot { xs: [9] }], n: 0 };\n    a = step(a, 1);\n    return a.cs.len() + __rc_underflow_count();\n}"},
 }
 
 // TestSelfHostFieldReclaimEnumArrayLeakCheck is the gate: clean under

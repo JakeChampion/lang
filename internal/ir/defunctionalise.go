@@ -47,11 +47,11 @@ package ir
 //
 // Two flavours of "monomorphic flow source" are recognised:
 //
-//  1. Direct MakeClosure: `var f = MakeClosure(T, [...])`. The
+//  1. Direct MakeClosure: `let f = MakeClosure(T, [...])`. The
 //     slot's writer is an OpStoreLocal directly preceded by
 //     an OpMakeClosure with target T.
 //
-//  2. Closure-factory return: `var f = makeAdder(7)` where
+//  2. Closure-factory return: `let f = makeAdder(7)` where
 //     makeAdder is a function that always returns a closure
 //     with the same target T (analysed in a phase-0 pre-pass
 //     below). Covers Roc's "closure factory" pattern.
@@ -206,7 +206,7 @@ func defunctionaliseFunc(fn *Func, returns map[string]string, pairEnvOffset int3
 	polySlot := map[int32]bool{}
 	hasFlowSource := false
 	// Phase 1 runs as a fixed-point loop so a chain like
-	// `var a = MakeClosure(T); var b = a; b()` propagates the
+	// `let a = MakeClosure(T); let b = a; b()` propagates the
 	// monomorphic target from `a` through `b` (and any further
 	// hops). Each iteration either tightens the analysis (new
 	// monoSlot entries) or terminates. Without the loop, only

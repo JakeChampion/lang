@@ -26,8 +26,8 @@ import (
 // the sweep is 1681 concatenations rather than the quadratic rebuild a `mk(n)`
 // helper would cost — it has to run under qemu.
 const strConcatBulkProgram = `function csum(s: string): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < s.len()) {
         t = (t + (s[i] as i32) * (i + 1)) % 1000003;
         i = i + 1;
@@ -36,14 +36,14 @@ const strConcatBulkProgram = `function csum(s: string): i32 {
 }
 
 function main(): i32 {
-    var a: string = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmn";
-    var b: string = "0123456789!@#$%^&*()nopqrstuvwxyzZYXWVUTS";
-    var acc: i32 = 0;
-    var la: i32 = 0;
+    let a: string = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmn";
+    let b: string = "0123456789!@#$%^&*()nopqrstuvwxyzZYXWVUTS";
+    let acc: i32 = 0;
+    let la: i32 = 0;
     while (la <= 40) {
-        var lb: i32 = 0;
+        let lb: i32 = 0;
         while (lb <= 40) {
-            var c: string = slice_unchecked(a, 0, la) + slice_unchecked(b, 0, lb);
+            let c: string = slice_unchecked(a, 0, la) + slice_unchecked(b, 0, lb);
             if (c.len() != la + lb) { return 90; }
             acc = (acc + csum(c)) % 89;
             lb = lb + 1;

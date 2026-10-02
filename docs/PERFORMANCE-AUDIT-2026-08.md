@@ -168,7 +168,7 @@ them:
 
 ```fern
 function (s: Scope) lookup_sig(name: string): FuncSig {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < s.sigs.len()) {
         if (s.sigs[i].name == name) { return s.sigs[i]; }
         i = i + 1;
@@ -302,14 +302,14 @@ weight.
 **The cause was `fieldPlaceAppendCopies` (#6665), and it is fixed.** That
 analysis forces a field-receiver append to copy when the container can still be
 read through afterwards. Its `capturing` set marked any bare read of the root
-under a `var` initialiser — without checking that the binding could hold the
-container. `var target: i32 = x86_label_off(a, name)` hands `a` to a call that
+under a `let` initialiser — without checking that the binding could hold the
+container. `let target: i32 = x86_label_off(a, name)` hands `a` to a call that
 gives back an i32, and an i32 names nothing; the append two lines later cloned
 the queue anyway. Minimal repro, two fields:
 
 ```fern
 function m(own a: T, v: i32): T {
-    var t: i32 = borrow(a);              // borrow(a: T): i32
+    let t: i32 = borrow(a);              // borrow(a: T): i32
     a = T { ...a, xs: a.xs.append(v) };  // cloned xs, once per call
     return a;
 }
@@ -354,7 +354,7 @@ Recorded so the next audit does not re-derive it, and because two of these
 contradict comments in the tree:
 
 - **String slicing does not allocate.** `str` views are real and they work:
-  `var part: str = src[i:i+16]` measures **0 bytes** per iteration via
+  `let part: str = src[i:i+16]` measures **0 bytes** per iteration via
   `__heap_bump_bytes()`, and so does the compiler's own
   `nm[nm.len()-tn : nm.len()] == target` shape, including when `nm` comes
   from a struct field. The comment at `irlower.fern:21187` claiming that
@@ -670,7 +670,7 @@ scans are 265 MB of the function's 458 MB.
 Probed individually, two of the six are the whole 265 MB and the other four are
 0.4 MB between them: `consumed_rcpayload_option_frees` (132.5 MB) and
 `consumed_scalar_enum_frees` (132.4 MB). Both open with the same line —
-`var reassigned: string[] = body_assign_targets(body);` — computed
+`let reassigned: string[] = body_assign_targets(body);` — computed
 unconditionally, before either has looked for a candidate. So does
 `consumed_rcpayload_enum_frees`.
 
@@ -712,7 +712,7 @@ with the same probes. Where the rest went, on the SAME reproducer:
 
 `emit` is `LowerState { ...s, ops: s.ops.append(op), ctrl: nctrl }`. Probed with a
 wrapper (`emit` → `emit_inner`, so the measured body is unchanged — the naive
-probe splits the append into a `var` and FORCES the copy it is trying to
+probe splits the append into a `let` and FORCES the copy it is trying to
 observe), **one emit allocated 16 bytes per op already in the buffer**, on 59% of
 2,807 emits. It is a full copy of the accumulated `ops` array, it is quadratic in
 the function's OP COUNT rather than its nesting depth, and a FLAT 400-statement
@@ -724,9 +724,9 @@ threading, not the state:
 
 ```fern
 function step(s: St, k: i32): St {
-    var a: St = s.emit(mkop(k));       // each link's receiver is at its last use
-    var b: St = a.emit(mkop(k + 1));
-    var c: St = b.emit(mkop(k + 2));
+    let a: St = s.emit(mkop(k));       // each link's receiver is at its last use
+    let b: St = a.emit(mkop(k + 1));
+    let c: St = b.emit(mkop(k + 2));
     return c;
 }
 ```
@@ -768,7 +768,7 @@ ratio corpus instead — 3.94x per doubling before, 1.95x after.
 **What remains, and why it was not taken.** `scripts/depth-repro` only moves
 1.84 GB → 1.69 GB at 1,600 arms, and `emit`'s own allocation only halves
 (40.2 MB → 20.4 MB). The residue is the same rc 1 → 2 ratchet on intermediates
-that are NOT `freeEligible` — `var sc: LowerState = lower_expr(iff.cond, s)`,
+that are NOT `freeEligible` — `let sc: LowerState = lower_expr(iff.cond, s)`,
 where `lower_expr` reads its state param in hundreds of positions and can never
 be `paramCountedRetain`. Those locals get the flat `__drop_struct_flat_*`, and
 only at the function-exit sweep, so the extra count sits there for the rest of
@@ -1000,7 +1000,7 @@ doubling INSIDE the loop** — a wrapper measures the call, not the scan.
 
 **One thing that did NOT work, and why.** `lower_block` calls
 `optfresh_names_of(s.reclaimable_names)` twice with the same argument, so
-hoisting it into a `var` looks free. It measured 33.3 s → 35.3 s — WORSE.
+hoisting it into a `let` looks free. It measured 33.3 s → 35.3 s — WORSE.
 Binding the list and passing it to two callees lifts its rc, so each callee
 copies where it previously consumed a fresh array: #6988's ratchet, met from the
 other direction. A CSE that is obvious in an rc-free language is not obviously a
@@ -1107,7 +1107,7 @@ per level:
 ```fern
 function lower_stmt_grow_exempt(st: parser.Stmt, s: LowerState): LowerState {
     …
-    var gr: LowerState = lower_stmt_inner(st, s.with_grow_exempt(gex));
+    let gr: LowerState = lower_stmt_inner(st, s.with_grow_exempt(gex));
 ```
 
 `s` is dead after that line and stays alive to the end of the frame, pinning
@@ -1187,13 +1187,13 @@ direction that produces exactly that number.** `internal/e2e`'s
 
 ```fern
 struct GBox[T] { xs: T[], }
-pub function (b: GBox[T]) push[T](x: T): GBox[T] { var ys: T[] = b.xs.append(x); return GBox { xs: ys }; }
+pub function (b: GBox[T]) push[T](x: T): GBox[T] { let ys: T[] = b.xs.append(x); return GBox { xs: ys }; }
 function main(): i32 {
-    var a: GBox[i32] = gbox_new();
+    let a: GBox[i32] = gbox_new();
     a = a.push(1); a = a.push(2);
-    var before: i32 = a.size();   // 2
-    var c: GBox[i32] = a.push(3); // must NOT mutate a
-    var after: i32 = a.size();    // 2 on main, 3 with the prototype
+    let before: i32 = a.size();   // 2
+    let c: GBox[i32] = a.push(3); // must NOT mutate a
+    let after: i32 = a.size();    // 2 on main, 3 with the prototype
 ```
 
 Traced at `__fern_arr_push_grow`, the two builds diverge on one refcount:

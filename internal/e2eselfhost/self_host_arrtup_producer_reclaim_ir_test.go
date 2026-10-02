@@ -9,7 +9,7 @@ import (
 
 // arrtupProducerReclaimCases pin the #4353 CALL-BOUND array-of-boxes reclaim.
 // `collect_fresh_arrtup_names` / `collect_fresh_arrstruct_names` admitted only a
-// direct array LITERAL initialiser, so `var ps: (i32, i32[])[] = mk(k)` — and its
+// direct array LITERAL initialiser, so `let ps: (i32, i32[])[] = mk(k)` — and its
 // array-of-structs sibling — leaked the buffer, every element box and every inner
 // array per round: 80 B (x86-64 / arm64) and 48 B (wasm), where native is flat and
 // the `string[]` equivalent has been flat since the "STRARR:" producer registry.
@@ -31,13 +31,13 @@ var arrtupProducerReclaimCases = []struct {
 	// Core churn, array of tuples from a producer call.
 	{"arrtup-producer-churn", `function mk(n: i32): (i32, i32[])[] { return [(n, [n, n + 1]), (n + 1, [n + 2, n + 3])]; }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
-    while (i < 200) { var ps: (i32, i32[])[] = mk(i); acc = (acc + ps[0].0) % 251; i = i + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
-    while (j < 5000) { var qs: (i32, i32[])[] = mk(j); acc = (acc + qs[0].0) % 251; j = j + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 200) { let ps: (i32, i32[])[] = mk(i); acc = (acc + ps[0].0) % 251; i = i + 1; }
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
+    while (j < 5000) { let qs: (i32, i32[])[] = mk(j); acc = (acc + qs[0].0) % 251; j = j + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -47,13 +47,13 @@ function main(): i32 {
 	{"arrstruct-producer-churn", `struct Q { xs: i32[] }
 function mkqs(n: i32): Q[] { return [Q { xs: [n, n + 1] }, Q { xs: [n + 2, n + 3] }]; }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
-    while (i < 200) { var ps: Q[] = mkqs(i); acc = (acc + ps[0].xs[0]) % 251; i = i + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
-    while (j < 5000) { var qs: Q[] = mkqs(j); acc = (acc + qs[0].xs[0]) % 251; j = j + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 200) { let ps: Q[] = mkqs(i); acc = (acc + ps[0].xs[0]) % 251; i = i + 1; }
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
+    while (j < 5000) { let qs: Q[] = mkqs(j); acc = (acc + qs[0].xs[0]) % 251; j = j + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -65,9 +65,9 @@ function main(): i32 {
 function mkps(n: i32): (i32, i32[])[] { return [(n, [n, n + 1]), (n + 1, [n + 2, n + 3])]; }
 function mkqs(n: i32): Q[] { return [Q { xs: [n, n + 1] }]; }
 function main(): i32 {
-    var ps: (i32, i32[])[] = mkps(5);
-    var qs: Q[] = mkqs(3);
-    var v: i32 = ps[0].0 + ps[0].1[0] + ps[1].1[1] + ps.len() + qs[0].xs[0] + qs[0].xs[1] + qs.len();
+    let ps: (i32, i32[])[] = mkps(5);
+    let qs: Q[] = mkqs(3);
+    let v: i32 = ps[0].0 + ps[0].1[0] + ps[1].1[1] + ps.len() + qs[0].xs[0] + qs[0].xs[1] + qs.len();
     if (__rc_underflow_count() != 0) { return 99; }
     return v;
 }`, 28},
@@ -77,11 +77,11 @@ function main(): i32 {
 	// reads after the loop would see freed bytes (97) or tick the detector (99).
 	{"arrtup-producer-nonfresh-safe", `function mkbad(xs: i32[], n: i32): (i32, i32[])[] { return [(n, xs)]; }
 function main(): i32 {
-    var shared: i32[] = [1, 2];
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let shared: i32[] = [1, 2];
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 50) {
-        var ps: (i32, i32[])[] = mkbad(shared, i);
+        let ps: (i32, i32[])[] = mkbad(shared, i);
         acc = (acc + ps[0].0 + ps[0].1[0]) % 251;
         i = i + 1;
     }
@@ -94,24 +94,24 @@ function main(): i32 {
 	// straight back, so its local escapes and must keep the shallow dec — the
 	// caller's own binding is the one that frees.
 	{"arrtup-producer-forwarded-safe", `function mk(n: i32): (i32, i32[])[] { return [(n, [n, n + 1])]; }
-function keepit(n: i32): (i32, i32[])[] { var ps: (i32, i32[])[] = mk(n); return ps; }
+function keepit(n: i32): (i32, i32[])[] { let ps: (i32, i32[])[] = mk(n); return ps; }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
-    while (i < 50) { var r: (i32, i32[])[] = keepit(i); acc = (acc + r[0].0 + r[0].1[1]) % 251; i = i + 1; }
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 50) { let r: (i32, i32[])[] = keepit(i); acc = (acc + r[0].0 + r[0].1[1]) % 251; i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// ELEMENT-ALIAS negative: `var t = ps[0]` holds an element tuple box past the
+	// ELEMENT-ALIAS negative: `let t = ps[0]` holds an element tuple box past the
 	// reclaim point, so arrarr_row_escapes must keep the local uncredited.
 	{"arrtup-producer-elem-alias-safe", `function mk(n: i32): (i32, i32[])[] { return [(n, [n, n + 1])]; }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 50) {
-        var ps: (i32, i32[])[] = mk(i);
-        var t: (i32, i32[]) = ps[0];
+        let ps: (i32, i32[])[] = mk(i);
+        let t: (i32, i32[]) = ps[0];
         acc = (acc + t.0 + t.1[1] + ps[0].1[0]) % 251;
         i = i + 1;
     }

@@ -63,7 +63,7 @@ the first insert grows out of and never frees. A struct column is a flag-1
 (raw-alias) column in `map_kv_elem_flag`, so the type-level `map_owncols` bit
 stays clear and the insert takes the leak-only push: `values()` on such a column
 hands out the raw buffer, and the reclaim-on-grow push would free it under a
-live `var vs = m.values()`.
+live `let vs = m.values()`.
 
 That reason is about a READ the body may or may not contain, so the credit
 that answers it is per LOCAL, not per type. A reclaimable map ("MAP:") whose
@@ -86,6 +86,6 @@ requires a balanced census. All three read `clean clean`.
 
 Not moved, found alongside: `m.get_or(i, S { name: "", k: 0 }).k` on this map
 leaks on NATIVE too (500/200, 12800 B) — the default-argument temp — and a
-struct value SHARED with a live local (`var s0 = S {…}; m = m.insert(i, s0)`)
+struct value SHARED with a live local (`let s0 = S {…}; m = m.insert(i, s0)`)
 leaks 9600 on native against 4800 self-host. Both are outside (b) and neither
 is a column-walk gap.

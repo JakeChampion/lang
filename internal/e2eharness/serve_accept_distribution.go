@@ -21,8 +21,8 @@ func AcceptDistributionServerSource(port, workers int) string {
 import "std/tcp";
 import "std/i64";
 function main(): i32 {
-    var id: Cell[i64] = cell_new(0 as i64);
-    var opts: tcp.ServeOptions = tcp.ServeOptions { ...tcp.serve_options(), workers: %d, max_connections: 16384, max_connections_per_ip: 0 };
+    let id: Cell[i64] = cell_new(0 as i64);
+    let opts: tcp.ServeOptions = tcp.ServeOptions { ...tcp.serve_options(), workers: %d, max_connections: 16384, max_connections_per_ip: 0 };
     return tcp.tcp_serve_supervised_opts(%d, opts, (req: HttpRequest, plat: Platform): HttpResponse => {
         if (id.get() == (0 as i64)) { id.set(monotonic_ns()); }
         return http.ok(id.get().to_string());

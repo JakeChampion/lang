@@ -3,11 +3,11 @@
 AST lowering (`irlower.fern`: `arrarr_from_init_shape`,
 `call_ret_arrarr_type`, `vb_tail_arrarr_fresh`).
 
-The issue read `var d = { var q = [[1, 2], [3, 4]]; q }` as a value block
+The issue read `let d = { let q = [[1, 2], [3, 4]]; q }` as a value block
 whose binding lost the tail's `is_arrarr`. That was only half of it. A block
 that captures nothing is lambda-lifted to `__lam_N()` before lowering, so the
 binding is a call result, and `arrarr_from_init_shape` had no call arm:
-`var d = mk()` with `mk(): i32[][]` leaked the same way. Only a capturing
+`let d = mk()` with `mk(): i32[][]` leaked the same way. Only a capturing
 block is inlined and reaches the `vbl` carry the issue named.
 
 ## Measured (x86-64, AST lowering, allocs / frees)
@@ -16,7 +16,7 @@ block is inlined and reaches the `vbl` carry the issue named.
 |---|---|---|
 | lifted block, `i32[][]` | 3 / 1 | 3 / 3 |
 | lifted block, `f64[][]`, `string[][]` | 3 / 1 | 3 / 3 |
-| `var d = mk()` | 3 / 1 | 3 / 3 |
+| `let d = mk()` | 3 / 1 | 3 / 3 |
 | inlined (capturing) block | 3 / 1 | 3 / 3 |
 | `vblock_arrarr` row, five rounds | 70 / 25 | 70 / 70 |
 

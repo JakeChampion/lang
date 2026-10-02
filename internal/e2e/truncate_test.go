@@ -60,7 +60,7 @@ func truncateSource(prefix string) string {
             if (b.len() != 20) { return 10; }
             if (b[0] != 104) { return 11; }
             if (b[4] != 111) { return 12; }
-            var i: i32 = 5;
+            let i: i32 = 5;
             while (i < 20) {
                 if (b[i] != 0) { return 13; }
                 i = i + 1;

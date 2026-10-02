@@ -54,12 +54,12 @@ function test_bit_length_extremes(): test.TestOutcome {
   if ((9223372036854775807 as i64).bit_length() != 63) {
     return test.fail("max");
   }
-  var mn: i64 = 0 as i64 - 9223372036854775807 as i64 - 1 as i64;
+  let mn: i64 = 0 as i64 - 9223372036854775807 as i64 - 1 as i64;
   return test.assert_true(mn.bit_length() == 64);
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("std/i64 bit ops");
+  let r: test.TestRunner = test.test_new("std/i64 bit ops");
   r = r.it("count_ones basic", test_count_ones_basic);
   r = r.it("count_ones all ones", test_count_ones_all);
   r = r.it("count_ones wide", test_count_ones_wide);
