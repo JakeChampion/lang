@@ -8483,15 +8483,19 @@ pub function str_case_helpers(): string {
 }
 
 // str_repeat_helper emits the IR-path $__fern_str_repeat(s, n) — n copies of `s`
-// in a fresh block via $__fern_str_box, transcribed verbatim from the
-// strcat_helpers bundle so the IR and AST paths agree byte-for-byte. Gated on
-// module_uses_str_repeat.
+// (none when n <= 0) in a fresh block via $__fern_str_box, the wasm form of
+// asmcore.rt_src_str_repeat. Gated on module_uses_str_repeat.
 pub function str_repeat_helper(): string {
   var o: string = "";
   o = o + "  (func $__fern_str_repeat (param $s i32) (param $n i32) (result i32)\n";
-  o = o + "    (local $l i32) (local $total i32) (local $p i32) (local $k i32) (local $i i32)\n";
+  o = o + "    (local $l i32) (local $total i32) (local $p i32) (local $k i32) (local $i i32) (local $t64 i64)\n";
   o = o + "    (local.set $l (i32.load (local.get $s)))\n";
-  o = o + "    (local.set $total (i32.mul (local.get $l) (local.get $n)))\n";
+  // A negative count repeats nothing, and the total is formed in 64 bits so an
+  // overflowing product traps instead of wrapping to a small block.
+  o = o + "    (if (i32.lt_s (local.get $n) (i32.const 0)) (then (local.set $n (i32.const 0))))\n";
+  o = o + "    (local.set $t64 (i64.mul (i64.extend_i32_u (local.get $l)) (i64.extend_i32_u (local.get $n))))\n";
+  o = o + "    (if (i64.gt_u (local.get $t64) (i64.const 2147483639)) (then (unreachable)))\n";
+  o = o + "    (local.set $total (i32.wrap_i64 (local.get $t64)))\n";
   o = o + "    (local.set $p (call $__fern_str_box (i32.add (i32.const 4) (local.get $total))))\n";
   o = o + "    (i32.store (local.get $p) (local.get $total))\n";
   o = o + "    (local.set $k (i32.const 0))\n";
@@ -8549,7 +8553,7 @@ pub function str_trim_helper(): string {
 
 // str_lines_helper emits the IR-path $__fern_str_lines(s) — split s on '\n' then
 // drop a trailing empty segment when s is empty or ends with '\n' (so "a\nb\n"
-// is 2 lines). Builds a "\n" delim block, calls $__fern_str_split, then
+// is 2 lines), and a trailing '\r' from each line. Builds a "\n" delim block, calls $__fern_str_split, then
 // decrements the result array's len by the trim flag, releasing the delimiter
 // and the trimmed-off element on the way out — both are this frame's alone, and
 // the trimmed one sits past the new len where no element walk can reach it.
@@ -8578,6 +8582,19 @@ pub function str_lines_helper(): string {
   o = o + "    (if (local.get $trim) (then\n";
   o = o + "      (drop (call $__fern_arr_dec (i32.load (i32.add (i32.add (local.get $arr) (i32.const 8)) (i32.mul (i32.sub (i32.load (local.get $arr)) (i32.const 1)) (i32.const 4))))))))\n";
   o = o + "    (i32.store (local.get $arr) (i32.sub (i32.load (local.get $arr)) (local.get $trim)))\n";
+  // Each line drops one trailing '\r', so CRLF input reads as LF. Every element
+  // is a fresh $__fern_substr block this array owns, so its len word is
+  // shortened in place.
+  o = o + "    (local.set $l (i32.const 0))\n";
+  o = o + "    (block $dr (loop $cr\n";
+  o = o + "      (br_if $dr (i32.ge_s (local.get $l) (i32.load (local.get $arr))))\n";
+  o = o + "      (local.set $delim (i32.load (i32.add (i32.add (local.get $arr) (i32.const 8)) (i32.mul (local.get $l) (i32.const 4)))))\n";
+  o = o + "      (local.set $trim (i32.load (local.get $delim)))\n";
+  o = o + "      (if (i32.gt_s (local.get $trim) (i32.const 0)) (then\n";
+  o = o + "        (if (i32.eq (i32.load8_u (i32.add (i32.add (local.get $delim) (i32.const 3)) (local.get $trim))) (i32.const 13)) (then\n";
+  o = o + "          (i32.store (local.get $delim) (i32.sub (local.get $trim) (i32.const 1)))))))\n";
+  o = o + "      (local.set $l (i32.add (local.get $l) (i32.const 1)))\n";
+  o = o + "      (br $cr)))\n";
   o = o + "    (local.get $arr))\n";
   return o;
 }
@@ -10336,7 +10353,6 @@ pub function reader_read_chunk_bytes_func(): string {
   var o: string = "  (func $__fern_reader_read_chunk_bytes (param $fd i32) (param $n i32) (result i32)\n";
   o = o + "    (local $a i32) (local $source i32) (local $got i32) (local $box i32) (local $err i32) (local $path i32) (local $i i32)\n";
   o = o + "    (if (i32.lt_s (local.get $n) (i32.const 0)) (then (local.set $err (i32.const 28))) (else\n";
-  o = o + "      (if (i64.gt_u (i64.mul (i64.extend_i32_u (local.get $n)) (i64.const 4)) (i64.const 2147483631)) (then (unreachable)))\n";
   o = o + "      (local.set $a (call $__fern_arr_elems (local.get $n) (i32.const 4)))\n";
   o = o + "      (i32.store (local.get $a) (i32.const 0)) (i32.store offset=4 (local.get $a) (local.get $n))\n";
   o = o + "      (i32.store (i32.const 0) (i32.add (local.get $a) (i32.const 8)))\n";
@@ -17009,7 +17025,7 @@ function emit_wasm_heap_bump_bytes(cagg_vals: string[], str_vals: string[], part
 
 function emit_wasm_alloc_u8(arrtmp: i32, eltmp: i32, parts: string[]): string[] {
   // stack: n -> a fresh n-element array. wasm has no $__fern_alloc_u8;
-  // synthesize via $__fern_arr_box(n*4) + the [len@0, cap@4] header
+  // synthesize via $__fern_arr_elems(n, 4) + the [len@0, cap@4] header
   // (matching arr_make), its slots cleared: a block off the free list
   // keeps its last owner's bytes, and the builtin promises zeros.
   parts = parts.append("    local.set " + util.i32_to_string(eltmp) + "\n");

@@ -1034,6 +1034,12 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		// sum(t)`) and a struct-payload `V(p) => g(p)` use the i32 result temp.
 		{"match-expr-recursive-sum", `enum L { C(i32, L), N } function sum(l: L): i32 { return match (l) { C(h, t) => h + sum(t), N => 0 }; } function main(): i32 { return sum(C(1, C(2, C(3, N)))); }`, 6},
 		{"match-expr-struct-payload-call", `struct S { v: i32 } enum E { A(S), N } function g(s: S): i32 { return s.v; } function f(e: E): i32 { return match (e) { A(s) => g(s), N => 0 }; } function main(): i32 { return f(A(S { v: 5 })); }`, 5},
+		// The wasm string runtime matches the register backends' Fern helpers:
+		// each line drops a trailing '\r', and a negative repeat count is none.
+		{"str-lines-crlf", `function main(): i32 { var c: string[] = "a\r\nb\r\nc".lines(); return c[0].len() * 100 + c.len(); }`, 103},
+		{"str-lines-tail-cr", `function main(): i32 { var c: string[] = "xy\r".lines(); return c[0].len() * 10 + c.len(); }`, 21},
+		{"str-repeat-negative", `function main(): i32 { return "x".repeat(-3).len() + 5; }`, 5},
+		{"str-repeat-three", `function main(): i32 { return "ab".repeat(3).len(); }`, 6},
 	}
 	for _, tc := range irOnly {
 		t.Run(tc.name, func(t *testing.T) {
