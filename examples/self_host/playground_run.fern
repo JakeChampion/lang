@@ -338,12 +338,14 @@ function emit(merged: parser.Module, files: string[], target: string, form: stri
   } else if (form == "core-module") {
     out = string_from_bytes_unchecked(util.to_u8(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error_sub(full, false, false, sub))));
   } else {
-    var comp: i32[] = emitforms.wasm_component(full, sub);
-    if (comp.len() == 0) {
-      eprint(emitforms.COMPONENT_REFUSED);
+    var comp: wit_compose.Composed = emitforms.wasm_component(full, sub);
+    if (comp.bytes.len() == 0) {
+      if (comp.refused.len() > 0) {
+        eprint(comp.refused);
+      }
       return 2;
     }
-    out = string_from_bytes_unchecked(util.to_u8(comp));
+    out = string_from_bytes_unchecked(util.to_u8(comp.bytes));
   }
   if (out.len() == 0) {
     return 2;
