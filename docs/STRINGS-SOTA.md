@@ -26,6 +26,11 @@ invariant from holding across the stdlib.
 | `BytesWriter.into_string` | the program's own `write_byte` | `None` (#10950); `into_bytes` is raw |
 | `HttpResponse.body_string` | the program's own `BodyBytes` | U+FFFD; `body_bytes` is raw |
 
+HTTP response serialization now has `*_bytes` siblings that preserve the
+body and frame its byte length. The text siblings retain replacement decoding
+and count the decoded bytes they emit. Both evaluate chunk producers once.
+See [HTTP byte serialization](STRING-HTTP-SERIALIZATION-2026-10-02.md).
+
 The rule the table follows: where the API has an error channel the
 bytes are refused through it; where it has none they decode as U+FFFD,
 one per maximal subpart (`utf8.from_bytes_lossy`, the rule the string
